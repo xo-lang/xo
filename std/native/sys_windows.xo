@@ -108,3 +108,7 @@ fn RtlLookupFunctionEntry(pc: Int, base: Int, history: Int) -> Int
 fn RtlVirtualUnwind(kind: Int, base: Int, pc: Int, f: Int, cx: Int, data: Int, establisher: Int, ptrs: Int) -> Int
 /// RtlRestoreContext: resumes the CONTEXT at cx (does not return).
 fn RtlRestoreContext(cx: Int, rec: Int)
+
+/// GetActiveProcessorCount: the active processors of a group, or of
+/// every group (ALL_PROCESSOR_GROUPS, 0xffff).
+fn GetActiveProcessorCount(group: Int) -> UInt32

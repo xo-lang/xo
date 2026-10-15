@@ -250,8 +250,15 @@ static void obj_heap_init(xo_heap *h) {
 // (gotchas/runtime-c-no-constructors.md).
 #ifdef XO_RT_NO_MAIN
 static void fault_init(void);
+void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+#ifndef _WIN32
+extern char **environ;
+#endif
 __attribute__((constructor)) static void obj_heap_words(void) {
 	obj_heap_init(&main_heap);
+	// the environment for the runtime's settings (poolsetup.xo reads
+	// XO_THREADS)
+	xo_x_proc_start(0, 0, (int64_t)(intptr_t)environ);
 	fault_init();
 }
 #endif
@@ -1779,7 +1786,6 @@ void xo_x_budget_charge(int64_t c, int64_t check);
 void xo_x_budget_pause(int64_t c);
 void xo_x_budget_resume(int64_t c);
 
-static void bud_retain(xo_budget *b) { xo_x_budget_retain(XO_ADDR(b)); }
 static void bud_release(xo_budget *b) { xo_x_budget_release(XO_ADDR(b)); }
 static void bud_mark(xo_ctx *c) { xo_x_budget_mark(XO_ADDR(c)); }
 static void bud_charge(xo_ctx *c, int check) { xo_x_budget_charge(XO_ADDR(c), check); }
@@ -1941,39 +1947,19 @@ static struct {
 	int64_t worker_main;       // where a worker thread starts (pool.xo)
 	void *dlk;                 // the deadlock counts (pool.xo's parks)
 	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
-	pthread_once_t once;
-} pool = {.once = PTHREAD_ONCE_INIT, .dlk = &dlk}; // a root waits before the pool starts
+} pool = {.dlk = &dlk}; // a root waits before the pool starts
 
 __attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal[XO_TLS_W]; }
-__attribute__((noinline)) static void w_set(xo_worker *w) { xo_tlocal[XO_TLS_W] = XO_ADDR(w); }
 
 static void rt_init(void) {}
 
 // fibers_setup reads the fiber stacks' settings (below).
 static void fibers_setup(void);
 
-static void pool_init(void) {
-	xo_rt_threads_begin();
-	stats_init();
-	long n = sysconf(_SC_NPROCESSORS_ONLN);
-	const char *e = getenv("XO_THREADS");
-	if (e && atoi(e) > 0) {
-		n = atoi(e);
-	}
-	if (n < 1) {
-		n = 1;
-	}
-	if (n > 256) {
-		n = 256;
-	}
-	pool.spin_rounds = 16;
-	e = getenv("XO_SPIN_ROUNDS"); // tuning (decision 0077)
-	if (e && atoi(e) >= 0) {
-		pool.spin_rounds = atoi(e);
-	}
-	fibers_setup();
-	__atomic_store_n(&pool.ncpu, (int64_t)n, __ATOMIC_RELEASE);
-}
+// The pool's setup (pool_init until B20) and the root threads' worker
+// records are poolsetup.xo's ready and root_worker; root_worker calls it from
+// the C.
+int64_t xo_x_pool_root_worker(int64_t p);
 
 // The worker pool in Xo (decision 0212 stage 2): std/native/llrt/pool.xo
 // through the C ABI exports of cabi.xo, over the records above (their
@@ -1984,7 +1970,6 @@ void xo_x_register_worker(int64_t p, int64_t w);
 int64_t xo_x_any_work(int64_t p);
 int64_t xo_x_worker_main(int64_t w);
 
-static void register_worker(xo_worker *w) { xo_x_register_worker(XO_ADDR(&pool), XO_ADDR(w)); }
 static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
@@ -2017,6 +2002,7 @@ static struct {
 	void (*scope_free)(void *);
 	int64_t tsan;
 	int *stats;
+	xo_lock once; // poolsetup.xo ready's lock
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
@@ -2026,7 +2012,7 @@ static struct {
 	&rtstats};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40,
                "ctx.xo SV_*");
 
 static int64_t svc_addr(void) { return XO_ADDR(&svc); }
@@ -2065,26 +2051,7 @@ static void sched_hooks(xo_worker *w);
 // root_worker returns the record of the calling root thread, made on
 // first use: its spawns go to its deque, and while it waits it runs work
 // (decision 0077).
-static xo_worker *root_worker(void) {
-	xo_worker *w = w_get();
-	if (w) {
-		return w;
-	}
-	pthread_once(&pool.once, pool_init);
-	w = calloc(1, sizeof(xo_worker));
-	if (!w) {
-		xo_oom();
-	}
-	w->live = 1;
-	w->root = 1;
-	tsan_worker(w);
-	sched_hooks(w);
-	lk(&pool.mu);
-	register_worker(w);
-	unlk(&pool.mu);
-	w_set(w);
-	return w;
-}
+static xo_worker *root_worker(void) { return (xo_worker *)(intptr_t)xo_x_pool_root_worker(XO_ADDR(&pool)); }
 
 // park_wait_n blocks the current context until its park is signaled or,
 // when cancelable, its node is canceled. A task on a fiber parks: its
@@ -2311,7 +2278,6 @@ static void scope_units_done(xo_scope *s, int64_t units) {
 	}
 }
 
-static int claim_task(xo_task *t) { return (int)xo_x_task_claim(XO_ADDR(t)); }
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
 // or a thread that helps).
@@ -2355,13 +2321,6 @@ static void run_claimed(xo_task *t, int64_t units) {
 	__atomic_fetch_add(&t->gone, (int)(units / 2), __ATOMIC_RELEASE);
 	// the last touch of s: the scope's join may free it after
 	scope_units_done(s, units);
-}
-
-// run_task runs t on this thread if nobody has started it.
-static void run_task(xo_task *t) {
-	if (claim_task(t)) {
-		run_claimed(t, 2); // its queue entry is still queued
-	}
 }
 
 // dequeued records that a worker took t's queue entry (and ran it, or
@@ -2706,11 +2665,12 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 19: // drop a reference to handle a (h_release)
 		h_release((void *)(intptr_t)a);
 		return 0;
-	case 20: // the pool's setup, once (tasks.xo's first spawn)
-		pthread_once(&pool.once, pool_init);
+	case 20: // the runtime switches to several threads (pool.xo's setup)
+		xo_rt_threads_begin();
 		return 0;
-	case 21: // the calling root thread's worker record, made on first use
-		return XO_ADDR(root_worker());
+	case 26: // the fiber stacks' settings (pool.xo's setup)
+		fibers_setup();
+		return 0;
 	case 22:
 		TSAN_RELEASE((void *)(intptr_t)a);
 		return 0;

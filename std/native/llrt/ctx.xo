@@ -82,6 +82,8 @@ pub const SV_TASK_FREE = 8
 pub const SV_SCOPE_FREE = 16
 pub const SV_TSAN = 24
 pub const SV_STATS = 32
+/// The lock word of the pool's setup (poolsetup.xo ready).
+pub const SV_ONCE = 40
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).

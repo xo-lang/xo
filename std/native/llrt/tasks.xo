@@ -17,6 +17,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/poolsetup
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
@@ -104,8 +105,6 @@ const RT_RUN_CLAIMED = 16
 const RT_PARK_WAIT = 17
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
-const RT_POOL_INIT = 20
-const RT_ROOT_WORKER = 21
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
 const RT_DEADLINE_DEL = 24
@@ -359,9 +358,7 @@ pub fn prog_group() -> Int {
 /// count, the spin rounds, the fiber stacks' settings, the statistics).
 fn pool_ready() -> Int {
   let pl = ctx.pool()
-  if rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) == 0 {
-    let _r = rt.sched_rt(RT_POOL_INIT, 0, 0)
-  }
+  poolsetup.ready(pl)
   pl
 }
 
@@ -412,7 +409,7 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
   if w == 0 {
-    w = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+    w = poolsetup.root_worker(pl)
   }
   let t = new_object(T_SIZE, ctx.SV_TASK_FREE)
   // references: the handle returned, and the scope's list (which keeps
@@ -508,7 +505,7 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   let f = rt.tlocal_get(TLS_FIB)
   var rw = 0
   if f == 0 && rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) != 0 {
-    rw = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+    rw = poolsetup.root_worker(pl)
   }
   pool.scope_join(pl, s, c, f, rw)
   tsan(RT_TSAN_ACQUIRE, c + ctx.C_PARK)

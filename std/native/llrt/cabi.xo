@@ -22,6 +22,7 @@ use native/llrt/num
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
+use native/llrt/poolsetup
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
@@ -647,3 +648,7 @@ fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site
 fn scope_open() -> Int { tasks.scope_open() }
 
 fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
+
+/// The calling root thread's worker record of pool p (poolsetup.xo
+/// root_worker), made on first use.
+fn pool_root_worker(p: Int) -> Int { poolsetup.root_worker(p) }

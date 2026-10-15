@@ -33,6 +33,9 @@ fn getentropy(buf: Int, n: Int) -> Int32
 fn exit(code: Int)
 /// The address of the calling thread's errno (a C int).
 fn __error() -> Int
+/// sysctlbyname(3): the value of the zero terminated name into the
+/// buffer at oldp (its length at oldlenp, a size_t); 0, or -1 with errno.
+fn sysctlbyname(name: Bytes, oldp: Int, oldlenp: Int, newp: Int, newlen: Int) -> Int32
 /// clock_gettime_nsec_np(3): the clock's time in nanoseconds (a uint64_t),
 /// 0 with errno set on failure.
 fn clock_gettime_nsec_np(clock: Int) -> Int

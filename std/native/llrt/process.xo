@@ -201,6 +201,13 @@ pub fn env_get(name: Str) -> List[Str] {
   if testworld.fake(TW_ENV) {
     return testworld.env_get_raw(raw.data(name), name.len())
   }
+  env_real(name)
+}
+
+/// The process's own environment variable name, as env_get, never the
+/// test world's FakeEnv (the runtime's settings: XO_THREADS, XO_RTSTATS,
+/// as the C's getenv read them).
+pub fn env_real(name: Str) -> List[Str] {
   let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
   if envp == 0 {
     return []
