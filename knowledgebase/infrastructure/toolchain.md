@@ -126,9 +126,11 @@ The bootstrap chain, as release.sh runs it:
     darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
                                            -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
                                               XO_WIN_CLANG, an upstream clang with lld-link beside it,
-                                              and XO_WINSYSROOT from xwin; not tried on the Mac yet,
-                                              whose 24 GB is below the 29.5 GB the Linux run used;
-                                              XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
+                                              and XO_WINSYSROOT from xwin; the toolchain is set up on the
+                                              Mac since 2026-10-15 (below, "Windows cross builds on the Mac"),
+                                              but xo1 itself not built there: its 24 GB is below the 29.5 GB
+                                              the Linux run used; XO_RELEASE_WIN_JOBS defaults to 4.
+                                              Last verified: 2026-10-15)
 
 After a release exists, the previous release's xo is the seed
 (`XO_SEED`, or `scripts/bootstrap-xo.sh SEED`, below). xo1 needs its
@@ -3306,6 +3308,35 @@ XO_LLVM_LTO=none is slower here (1,571 s cross: each -O2 module takes
 built by Xo for Windows". Last verified: 2026-10-13 (i-EXAMPLE07,
 i-EXAMPLE03).
 
+
+### Windows cross builds on the Mac
+
+Set up 2026-10-15 (xo-fa; the owner accepted Microsoft's SDK license
+for this Mac, for xwin). Homebrew could not install llvm, lld, or xwin
+(it does not know macOS 27: "unknown or unsupported macOS version"), so
+everything is in the user cache, `~/Library/Caches/xo/winxc` (9.3 GB:
+the LLVM release 7.6 GB unpacked, the sysroot 1.1 GB, a minimal Rust
+toolchain and xwin the rest), no sudo, no shell profile change:
+
+    X=~/Library/Caches/xo/winxc
+    gh release download llvmorg-23.1.3 -R llvm/llvm-project -p 'LLVM-23.1.3-macOS-ARM64.tar.zst' -D $X
+    zstd --long=30 -dc $X/LLVM-23.1.3-macOS-ARM64.tar.zst > $X/llvm.tar && tar -xf $X/llvm.tar -C $X
+    # (zstd without --long=30 refuses the 1 GiB window)
+    curl -sSfL -o $X/rustup-init https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+    CARGO_HOME=$X/cargo RUSTUP_HOME=$X/rustup $X/rustup-init -y --no-modify-path --profile minimal
+    CARGO_HOME=$X/cargo RUSTUP_HOME=$X/rustup $X/cargo/bin/cargo install xwin --version 0.10.0 --locked --root $X/xwin
+    $X/xwin/bin/xwin --accept-license --arch x86_64,aarch64 --cache-dir $X/xwin-cache splat \
+      --use-winsysroot-style --preserve-ms-arch-notation --output $X/winsysroot   # 58 s
+    rm -rf $X/xwin-cache   # 1.2 GB of downloads
+
+(xwin publishes no macOS binary, hence the build; the case insensitive
+volume makes it splat without symlinks.) A cross build:
+
+    XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_AR=$X/LLVM-23.1.3-macOS-ARM64/bin/llvm-ar \
+    XO_WINSYSROOT=$X/winsysroot xo build --backend=llvm --target=windows/amd64 -o prog.exe .
+
+(windows/arm64 the same). It links a PE32+ executable; nothing runs it
+on the Mac. Last verified: 2026-10-15 (clang 23.1.3, xwin 0.10.0).
 
 ### xo1 on x86-64 hosts
 

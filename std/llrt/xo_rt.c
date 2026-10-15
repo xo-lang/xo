@@ -2748,8 +2748,9 @@ static void *poller_main(void *arg);
 // afd_open opens the AFD device for polls, its completions on iocp; NULL
 // when it cannot (the poller uses WSAPoll then).
 static HANDLE afd_open(HANDLE iocp) {
-	const char *e = getenv("XO_WINPOLL");
-	if (e && strcmp(e, "wsapoll") == 0) {
+	char e[16];
+	DWORD en = GetEnvironmentVariableA("XO_WINPOLL", e, sizeof e);
+	if (en > 0 && en < sizeof e && strcmp(e, "wsapoll") == 0) {
 		return NULL;
 	}
 	xo_wsa_init();
@@ -3301,8 +3302,8 @@ void xo_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 // The process environment, which C main hands to process.xo
 // (xo_x_proc_start below).
 #ifdef _WIN32
-#undef environ // the C runtime's (stdlib.h)
-#define environ (xo_w_environ()) // UTF-8 (xo_win.c)
+#undef environ // the C runtime's (stdlib.h): process.xo reads Windows' own
+#define environ ((char **)0)
 #else
 extern char **environ;
 #endif
@@ -3513,9 +3514,9 @@ int main(int argc, char **argv) {
 	_setmode(2, _O_BINARY);
 #endif
 	// the arguments and the environment (env.args, env.program, env.get,
-	// and env.vars read them in Xo; `environ` is xo_w_environ() on
-	// Windows), XO_HEAP_MID_MAX, then the test world (XO_TEST) or the
-	// signal handlers
+	// and env.vars read them in Xo; on Windows process.xo takes the
+	// environment from Windows in UTF-8), XO_HEAP_MID_MAX, then the test
+	// world (XO_TEST) or the signal handlers
 	xo_x_entry_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);

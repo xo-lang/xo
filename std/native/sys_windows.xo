@@ -220,6 +220,12 @@ fn GetCommandLineW() -> Int
 fn CommandLineToArgvW(cmd: Int, n: Int) -> Int
 /// LocalFree: 0 on success.
 fn LocalFree(h: Int) -> Int
+/// GetEnvironmentStringsW: the process's environment block, UTF-16
+/// NAME=VALUE strings each ending in a 0 unit, an empty one last
+/// (process.xo win_env).
+fn GetEnvironmentStringsW() -> Int
+/// FreeEnvironmentStringsW: nonzero on success.
+fn FreeEnvironmentStringsW(block: Int) -> Int32
 /// WideCharToMultiByte: the bytes written (or needed, when outn is 0)
 /// for the UTF-16 at w (n -1: zero terminated, the zero counted), or 0.
 fn WideCharToMultiByte(cp: Int, flags: Int, w: Int, n: Int, out: Int, outn: Int, def: Int, used: Int) -> Int32

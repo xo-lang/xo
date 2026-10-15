@@ -70,7 +70,58 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   let w = rt.static_word(WORDS)
   rt.mem_store(w, ARGC, argc, 8)
   rt.mem_store(w, ARGV, argv, 8)
-  rt.mem_store(w, ENVP, envp, 8)
+  let e = match target.os {
+    // the C runtime's environ is in the ANSI code page (a value outside
+    // it comes out as '?'): the environment from Windows in UTF-8
+    TargetOs.Windows => win_env()
+    _ => envp
+  }
+  rt.mem_store(w, ENVP, e, 8)
+}
+
+/// The environment as an environ array in UTF-8 (was xo_win.c
+/// xo_w_environ): GetEnvironmentStringsW's NAME=VALUE strings converted,
+/// the per drive directories (`=C:=C:\...`) left out, in malloc'd strings
+/// and an array ending in 0, kept for the program's life (Xo programs do
+/// not set variables). UNTESTED on windows.
+fn win_env() -> Int {
+  let blk = sys_windows.GetEnvironmentStringsW()
+  var n = 0
+  var p = blk
+  while p != 0 && rt.mem_load(p, 0, 2) != 0 {
+    n += 1
+    p = next_wstr(p)
+  }
+  let arr = rt.heap_large(8 * (n + 1))
+  var k = 0
+  p = blk
+  while p != 0 && rt.mem_load(p, 0, 2) != 0 {
+    if rt.mem_load(p, 0, 2) != 61 {
+      // CP_UTF8, the terminating 0 converted too
+      let u = Int(sys_windows.WideCharToMultiByte(65001, 0, p, -1, 0, 0, 0, 0))
+      if u > 0 {
+        let s = rt.heap_large(u)
+        let _c = sys_windows.WideCharToMultiByte(65001, 0, p, -1, s, u, 0, 0)
+        rt.mem_store(arr, 8 * k, s, 8)
+        k += 1
+      }
+    }
+    p = next_wstr(p)
+  }
+  rt.mem_store(arr, 8 * k, 0, 8)
+  if blk != 0 {
+    let _f = sys_windows.FreeEnvironmentStringsW(blk)
+  }
+  arr
+}
+
+/// The address after the 0 unit that ends the UTF-16 string at p.
+fn next_wstr(p0: Int) -> Int {
+  var p = p0
+  while rt.mem_load(p, 0, 2) != 0 {
+    p += 2
+  }
+  p + 2
 }
 
 /// The zero terminated string at address a.

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows runtime (zero-C B32 part 1): xo_win.c 914 to 484 lines, the
+  shims nothing reached deleted; the UTF-8 environment built in Xo
+  (process.xo win_env). Windows cross builds now link on the Mac
+  (toolchain.md). UNTESTED on windows.
 - Native backends (generated-code entries E2): both backends allocate
   and free strings, boxes, and closure environments, and free handles,
   through obj.xo's exports (xo_x_obj_rc_alloc, rc_free, h_free) instead

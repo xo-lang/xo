@@ -208,39 +208,9 @@ static inline int pthread_join(pthread_t t, void **ret) {
 	return 0;
 }
 
-static inline int sched_yield(void) {
-	SwitchToThread();
-	return 0;
-}
-
 // ---------------------------------------------------------------------------
-// System facts and clocks
+// Clocks
 
-#define _SC_PAGESIZE 1
-#define _SC_NPROCESSORS_ONLN 2
-
-static long xo_sysconf(int name) {
-	SYSTEM_INFO si;
-	GetSystemInfo(&si);
-	switch (name) {
-	case _SC_PAGESIZE:
-		return (long)si.dwPageSize;
-	case _SC_NPROCESSORS_ONLN:
-		return (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-	}
-	return -1;
-}
-#define sysconf(n) xo_sysconf(n)
-
-// nanosleep sleeps at least ts (millisecond resolution)
-static inline int nanosleep(const struct timespec *ts, struct timespec *rem) {
-	(void)rem;
-	int64_t ms = (int64_t)ts->tv_sec * 1000 + (ts->tv_nsec + 999999) / 1000000;
-	Sleep((DWORD)(ms > 0x7FFFFFFF ? 0x7FFFFFFF : ms));
-	return 0;
-}
-
-static inline struct tm *gmtime_r(const time_t *t, struct tm *out) { return gmtime_s(out, t) == 0 ? out : NULL; }
 static inline struct tm *localtime_r(const time_t *t, struct tm *out) { return localtime_s(out, t) == 0 ? out : NULL; }
 
 // ---------------------------------------------------------------------------
@@ -252,17 +222,6 @@ static inline struct tm *localtime_r(const time_t *t, struct tm *out) { return l
 #define SHUT_RDWR SD_BOTH
 #endif
 
-#define F_GETFD 1
-#define F_SETFD 2
-#define F_GETFL 3
-#define F_SETFL 4
-#define FD_CLOEXEC 1
-#ifndef O_NONBLOCK
-#define O_NONBLOCK 0x4000
-#endif
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
 
 // xo_wsa_init starts Winsock once.
 static void xo_wsa_once(void) {
@@ -359,13 +318,9 @@ static int xo_wsa_errno(void) { return xo_wsa_map(WSAGetLastError()); }
 static int xo_w_bind(int fd, const struct sockaddr *a, int n) { XO_WSA_INT(bind((SOCKET)fd, a, n)); }
 static int xo_w_listen(int fd, int n) { XO_WSA_INT(listen((SOCKET)fd, n)); }
 static int xo_w_getsockname(int fd, struct sockaddr *a, int *n) { XO_WSA_INT(getsockname((SOCKET)fd, a, n)); }
-static int xo_w_getpeername(int fd, struct sockaddr *a, int *n) { XO_WSA_INT(getpeername((SOCKET)fd, a, n)); }
-static int xo_w_shutdown(int fd, int how) { XO_WSA_INT(shutdown((SOCKET)fd, how)); }
 #define bind(fd, a, n) xo_w_bind((fd), (a), (int)(n))
 #define listen(fd, n) xo_w_listen((fd), (n))
 #define getsockname(fd, a, n) xo_w_getsockname((fd), (a), (n))
-#define getpeername(fd, a, n) xo_w_getpeername((fd), (a), (n))
-#define shutdown(fd, how) xo_w_shutdown((fd), (how))
 
 // Descriptors and sockets are both ints (stage 5): a socket is its
 // SOCKET handle's value (a multiple of 4), and a C runtime descriptor above
@@ -376,28 +331,11 @@ static int xo_w_shutdown(int fd, int how) { XO_WSA_INT(shutdown((SOCKET)fd, how)
 // socket's handle: closing the file closed the socket.
 #define XO_W_FD 0x40000000
 
-// xo_w_fd tags a C runtime descriptor (negative: an error, as it is).
-static inline int xo_w_fd(int raw) { return raw > 2 ? raw | XO_W_FD : raw; }
-
 // xo_w_raw is the C runtime's number of a descriptor.
 static inline int xo_w_raw(int fd) { return fd > 2 && (fd & XO_W_FD) ? fd & ~XO_W_FD : fd; }
 
 // xo_w_is_sock reports whether fd names a socket.
 static inline int xo_w_is_sock(int fd) { return fd > 2 && !(fd & XO_W_FD); }
-
-// sockets are numbered as ints, like descriptors (a SOCKET is a kernel
-// handle, a multiple of 4 below 2^32 in practice)
-static int xo_w_socket(int af, int type, int proto) {
-	xo_wsa_init();
-	// not inherited by child processes (CLOEXEC)
-	SOCKET s = WSASocketW(af, type, proto, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT | WSA_FLAG_OVERLAPPED);
-	if (s == INVALID_SOCKET) {
-		errno = xo_wsa_errno();
-		return -1;
-	}
-	return (int)s;
-}
-#define socket(a, t, p) xo_w_socket((a), (t), (p))
 
 // xo_w_socketpair connects two nonblocking loopback TCP sockets (the
 // poller's self pipe: WSAPoll waits on sockets only)
@@ -434,22 +372,6 @@ static int xo_w_socketpair(int sv[2]) {
 	return 0;
 }
 
-static int xo_w_fcntl(int fd, int cmd, ...) {
-	va_list ap;
-	va_start(ap, cmd);
-	int v = cmd == F_SETFL || cmd == F_SETFD ? va_arg(ap, int) : 0;
-	va_end(ap);
-	if (cmd == F_SETFL) {
-		u_long nb = (v & O_NONBLOCK) ? 1 : 0;
-		if (ioctlsocket((SOCKET)fd, FIONBIO, &nb) != 0) {
-			errno = xo_wsa_errno();
-			return -1;
-		}
-	}
-	return 0;
-}
-#define fcntl(...) xo_w_fcntl(__VA_ARGS__)
-
 // close closes a socket or a C runtime descriptor
 static int xo_w_close(int fd) {
 	if (fd < 0) {
@@ -466,296 +388,6 @@ static int xo_w_close(int fd) {
 	return _close(xo_w_raw(fd));
 }
 #define close(fd) xo_w_close(fd)
-
-// Winsock's option values are char pointers
-#define getsockopt(s, l, o, v, n) getsockopt((SOCKET)(s), (l), (o), (char *)(v), (n))
-#define setsockopt(s, l, o, v, n) setsockopt((SOCKET)(s), (l), (o), (const char *)(v), (n))
-
-#define strncasecmp(a, b, n) _strnicmp((a), (b), (n))
-#define strcasecmp(a, b) _stricmp((a), (b))
-#define strtok_r(s, d, p) strtok_s((s), (d), (p))
-#define timegm(tm) _mkgmtime(tm)
-
-static int xo_w_pipe(int p[2]) {
-	if (_pipe(p, 1 << 16, _O_BINARY) != 0) {
-		return -1;
-	}
-	p[0] = xo_w_fd(p[0]);
-	p[1] = xo_w_fd(p[1]);
-	return 0;
-}
-#define pipe(p) xo_w_pipe(p)
-
-static int xo_w_fix(const char *path, int e, int isopen);
-
-// open takes a UTF-8 path (converted to UTF-16) and opens in binary mode
-static int xo_w_open(const char *path, int flags, ...) {
-	int mode = 0;
-	if (flags & _O_CREAT) {
-		va_list ap;
-		va_start(ap, flags);
-		mode = va_arg(ap, int);
-		va_end(ap);
-	}
-	int n = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-	if (n <= 0) {
-		errno = ENOENT;
-		return -1;
-	}
-	wchar_t *w = malloc((size_t)n * sizeof(wchar_t));
-	if (!w) {
-		errno = ENOMEM;
-		return -1;
-	}
-	MultiByteToWideChar(CP_UTF8, 0, path, -1, w, n);
-	// the owner's write bit decides the read-only attribute of a new file
-	int fd = _wopen(w, flags | _O_BINARY | _O_NOINHERIT, _S_IREAD | ((flags & _O_CREAT) && !(mode & 0200) ? 0 : _S_IWRITE));
-	free(w);
-	if (fd < 0) {
-		errno = xo_w_fix(path, errno, 1);
-	}
-	return xo_w_fd(fd);
-}
-#define open(...) xo_w_open(__VA_ARGS__)
-
-// fopen for reading ("rb", the runtime's only mode), through open
-static FILE *xo_w_fopen_rb(const char *path) {
-	int fd = xo_w_open(path, _O_RDONLY);
-	if (fd < 0) {
-		return NULL;
-	}
-	FILE *f = _fdopen(xo_w_raw(fd), "rb");
-	if (!f) {
-		_close(xo_w_raw(fd));
-	}
-	return f;
-}
-#define fopen(p, m) xo_w_fopen_rb(p)
-
-// ---------------------------------------------------------------------------
-// Files by path (xo_fs.c, xo_time.c): UTF-8 paths converted to UTF-16 for
-// the wide Win32 calls, and the Win32 error as errno.
-
-// xo_w_path converts a UTF-8 path to a malloc'd UTF-16 one (NULL: errno).
-static wchar_t *xo_w_path(const char *path) {
-	int n = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-	if (n <= 0) {
-		errno = ENOENT;
-		return NULL;
-	}
-	wchar_t *w = malloc((size_t)n * sizeof(wchar_t));
-	if (!w) {
-		errno = ENOMEM;
-		return NULL;
-	}
-	MultiByteToWideChar(CP_UTF8, 0, path, -1, w, n);
-	return w;
-}
-
-// xo_w_utf8 converts UTF-16 to UTF-8 into buf (size n): the length, -1
-// when it does not fit.
-static int xo_w_utf8(const wchar_t *w, int wn, char *buf, size_t n) {
-	int k = WideCharToMultiByte(CP_UTF8, 0, w, wn, buf, (int)n, NULL, NULL);
-	return k > 0 || wn == 0 ? k : -1;
-}
-
-// xo_w_errno is errno for a Win32 error
-static int xo_w_errno(DWORD e) {
-	switch (e) {
-	case ERROR_FILE_NOT_FOUND:
-	case ERROR_PATH_NOT_FOUND:
-	case ERROR_INVALID_NAME:
-	case ERROR_BAD_NETPATH:
-		return ENOENT;
-	case ERROR_ACCESS_DENIED:
-	case ERROR_SHARING_VIOLATION:
-	case ERROR_LOCK_VIOLATION:
-	case ERROR_PRIVILEGE_NOT_HELD:
-		return EACCES;
-	case ERROR_ALREADY_EXISTS:
-	case ERROR_FILE_EXISTS:
-		return EEXIST;
-	case ERROR_DIR_NOT_EMPTY:
-		return ENOTEMPTY;
-	case ERROR_DIRECTORY:
-		return ENOTDIR;
-	case ERROR_NOT_ENOUGH_MEMORY:
-	case ERROR_OUTOFMEMORY:
-		return ENOMEM;
-	case ERROR_NOT_A_REPARSE_POINT:
-		return EINVAL;
-	default:
-		return EIO;
-	}
-}
-
-// xo_w_attrs is the attributes of a UTF-8 path, INVALID_FILE_ATTRIBUTES
-// when it does not exist.
-static DWORD xo_w_attrs(const char *path) {
-	wchar_t *w = xo_w_path(path);
-	if (!w) {
-		return INVALID_FILE_ATTRIBUTES;
-	}
-	DWORD a = GetFileAttributesW(w);
-	free(w);
-	return a;
-}
-
-// xo_w_fix refines the errno e of a call on path as POSIX reports it,
-// which is what the Fs errors are defined by: ENOTDIR when a parent of
-// path is a file (Windows: path not found), EISDIR when an open of a
-// directory was refused (Windows: access denied).
-static int xo_w_fix(const char *path, int e, int isopen) {
-	if (e == EACCES && isopen) {
-		DWORD a = xo_w_attrs(path);
-		if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) {
-			return EISDIR;
-		}
-		return e;
-	}
-	if (e != ENOENT) {
-		return e;
-	}
-	size_t n = strlen(path);
-	char *p = malloc(n + 1);
-	if (!p) {
-		return e;
-	}
-	memcpy(p, path, n + 1);
-	for (size_t i = 1; i < n; i++) {
-		if (p[i] != '/' && p[i] != '\\') {
-			continue;
-		}
-		if (i == 2 && p[1] == ':') {
-			continue; // the drive
-		}
-		char c = p[i];
-		p[i] = 0;
-		DWORD a = xo_w_attrs(p);
-		p[i] = c;
-		if (a == INVALID_FILE_ATTRIBUTES) {
-			break;
-		}
-		if (!(a & FILE_ATTRIBUTE_DIRECTORY)) {
-			e = ENOTDIR;
-			break;
-		}
-	}
-	free(p);
-	return e;
-}
-
-#ifndef S_IFLNK
-#define S_IFLNK 0xA000
-#endif
-#ifndef S_ISREG
-#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
-#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
-#endif
-#define S_ISLNK(m) (((m) & 0xF000) == S_IFLNK)
-
-// struct xo_wstat replaces the C library's struct stat (the macro renames
-// both the tag and the calls): the fields the runtime reads, with
-// nanosecond times as on Linux.
-struct xo_wstat {
-	unsigned st_mode;
-	int64_t st_size;
-	struct timespec st_mtim;
-};
-
-static int64_t xo_w_filetime_ns(FILETIME ft) {
-	int64_t t = (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000LL;
-	return t * 100;
-}
-
-static int xo_w_fill_stat(HANDLE h, struct xo_wstat *st, int link) {
-	BY_HANDLE_FILE_INFORMATION fi;
-	if (!GetFileInformationByHandle(h, &fi)) {
-		errno = xo_w_errno(GetLastError());
-		return -1;
-	}
-	unsigned perm = (fi.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444 : 0666;
-	if (fi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-		st->st_mode = _S_IFDIR | 0777;
-	} else {
-		st->st_mode = _S_IFREG | perm;
-	}
-	if (link && (fi.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
-		st->st_mode = S_IFLNK | 0777;
-	}
-	st->st_size = (int64_t)(((uint64_t)fi.nFileSizeHigh << 32) | fi.nFileSizeLow);
-	int64_t ns = xo_w_filetime_ns(fi.ftLastWriteTime);
-	st->st_mtim.tv_sec = (time_t)(ns / 1000000000);
-	st->st_mtim.tv_nsec = (long)(ns % 1000000000);
-	return 0;
-}
-
-// xo_w_open_meta opens path for its attributes (a directory too); link
-// opens a symbolic link itself.
-static HANDLE xo_w_open_meta(const char *path, DWORD access, int link) {
-	wchar_t *w = xo_w_path(path);
-	if (!w) {
-		return INVALID_HANDLE_VALUE;
-	}
-	HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-		FILE_FLAG_BACKUP_SEMANTICS | (link ? FILE_FLAG_OPEN_REPARSE_POINT : 0), NULL);
-	DWORD e = GetLastError();
-	if (h == INVALID_HANDLE_VALUE && !link && e == ERROR_CANT_ACCESS_FILE) {
-		// a reparse point the system cannot follow (an AF_UNIX socket
-		// file): the point itself, as Go's os.Stat
-		h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-		e = GetLastError();
-	}
-	free(w);
-	if (h == INVALID_HANDLE_VALUE) {
-		errno = xo_w_fix(path, xo_w_errno(e), 0);
-	}
-	return h;
-}
-
-static int xo_w_stat_path(const char *path, struct xo_wstat *st, int link) {
-	HANDLE h = xo_w_open_meta(path, FILE_READ_ATTRIBUTES, link);
-	if (h == INVALID_HANDLE_VALUE) {
-		return -1;
-	}
-	int r = xo_w_fill_stat(h, st, link);
-	CloseHandle(h);
-	return r;
-}
-
-static int xo_w_fstat(int fd, struct xo_wstat *st) {
-	HANDLE h = (HANDLE)_get_osfhandle(xo_w_raw(fd));
-	if (h == INVALID_HANDLE_VALUE) {
-		errno = EBADF;
-		return -1;
-	}
-	if (GetFileType(h) != FILE_TYPE_DISK) {
-		// a console or a pipe: neither regular file nor directory
-		memset(st, 0, sizeof *st);
-		st->st_mode = _S_IFCHR;
-		return 0;
-	}
-	return xo_w_fill_stat(h, st, 0);
-}
-
-#define stat xo_wstat
-#define xo_wstat(p, st) xo_w_stat_path((p), (st), 0)
-#define lstat(p, st) xo_w_stat_path((p), (st), 1)
-#define fstat(fd, st) xo_w_fstat((fd), (st))
-
-static char *xo_w_getcwd(char *buf, size_t n) {
-	wchar_t w[4096];
-	DWORD k = GetCurrentDirectoryW(4096, w);
-	int u = k == 0 || k >= 4096 ? -1 : xo_w_utf8(w, (int)k, buf, n - 1);
-	if (u < 0) {
-		errno = ERANGE;
-		return NULL;
-	}
-	buf[u] = 0;
-	return buf;
-}
-#define getcwd(b, n) xo_w_getcwd((b), (n))
 
 #define read(fd, p, n) _read(xo_w_raw(fd), (p), (unsigned)(n))
 #define write(fd, p, n) _write(xo_w_raw(fd), (p), (unsigned)(n))
@@ -848,67 +480,5 @@ static int xo_w_pump(HANDLE h, int out, int close_h) {
 	}
 	return sv[0];
 }
-
-// ---------------------------------------------------------------------------
-// The environment in UTF-8 (stage 5): the C runtime's _environ and getenv
-// are in the ANSI code page, so a value outside it came out as '?'. The
-// runtime reads a UTF-8 copy of GetEnvironmentStringsW, taken once (Xo
-// programs do not set variables), and getenv looks names up in it
-// without case, as Windows does.
-
-static char **xo_w_env;
-static INIT_ONCE xo_w_env_o = INIT_ONCE_STATIC_INIT;
-
-static BOOL CALLBACK xo_w_env_init(PINIT_ONCE o, PVOID p, PVOID *c) {
-	(void)o;
-	(void)p;
-	(void)c;
-	WCHAR *block = GetEnvironmentStringsW();
-	size_t n = 0;
-	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
-		n++;
-	}
-	char **env = calloc(n + 1, sizeof(char *));
-	if (!env) {
-		abort();
-	}
-	size_t k = 0;
-	for (WCHAR *w = block; w && *w; w += wcslen(w) + 1) {
-		if (w[0] == L'=') {
-			continue; // the per drive directories (=C:=C:\...)
-		}
-		int u = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
-		char *e = u > 0 ? malloc((size_t)u) : NULL;
-		if (!e) {
-			continue;
-		}
-		WideCharToMultiByte(CP_UTF8, 0, w, -1, e, u, NULL, NULL);
-		env[k++] = e;
-	}
-	env[k] = NULL;
-	if (block) {
-		FreeEnvironmentStringsW(block);
-	}
-	xo_w_env = env;
-	return TRUE;
-}
-
-// xo_w_environ is the environment as UTF-8 NAME=VALUE entries.
-static char **xo_w_environ(void) {
-	InitOnceExecuteOnce(&xo_w_env_o, xo_w_env_init, NULL, NULL);
-	return xo_w_env;
-}
-
-// xo_w_getenv is getenv over xo_w_environ (names without case).
-static const char *xo_w_getenv(const char *name) {
-	size_t n = strlen(name);
-	for (char **e = xo_w_environ(); *e; e++) {
-		if (_strnicmp(*e, name, n) == 0 && (*e)[n] == '=') {
-			return *e + n + 1;
-		}
-	}
-	return NULL;
-}
-#define getenv(n) xo_w_getenv(n)
 
 #endif
