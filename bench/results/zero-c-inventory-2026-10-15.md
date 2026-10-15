@@ -15,7 +15,45 @@ hours, L a day or more).
 
 ## Ranked (lines freed per unit of effort)
 
-(merged once both halves are in)
+Effort units: S = 1, M = 4, L = 12. Line counts are the halves'
+estimates (the second half's are measured by deletion where marked);
+items that need another first are marked. Both halves' details are
+below.
+
+No work:
+
+| Item | Lines | When |
+|---|---|---|
+| Seed-only forwarders and their helpers: the clock, network, stop forwarders and their helpers (195, measured), the fault forwarders, str_eq and str_cmp, the number builders, the personality forwarder (about 110) | about 300 | after the next seed |
+| Dead now: deadline(), pd_wait, the net_peername and net_ntop declarations and stubs | about 25 | now |
+
+Work, by lines per unit:
+
+| Rank | Item | Lines | Effort | Lines per unit | Needs |
+|---|---|---|---|---|---|
+| 1 | Layout-only record types and their asserts (xo_scope, xo_mutex, xo_atomic, xo_cq, xo_sarm; xo_select after the seed) | about 130 | S | 130 | nothing |
+| 2 | Windows' WSAPoll fallback loop and its registration list | about 150 | S | 150 | a decision that every supported Windows has \Device\Afd (UNTESTED on windows) |
+| 3 | rt.fn_addr: an Xo export's address as a word, then the services records filled from Xo (svc, pd_svc, stop_svc), poll.xo's and stop.xo's callbacks as exports, the signal handlers as exports, the scheduler services that only forward back into Xo | about 300 | M | 75 | the owner's approval of an rt intrinsic; both emitters |
+| 4 | The test world record tw into twflags.xo's static words | about 45 | S | 45 | the clock forwarders' deletion (seed) |
+| 5 | The handle code h_init, h_release, h_free (rt.sched_rt ops 19 and 25 already gone, 26326187) | about 60 | S | 60 once stop.xo's release calls tasks.h_release | stop.xo's release (with rank 3) |
+| 6 | heap_libc's dead C library mapping arm (finding) | about 20 | S | 20 | a choice: delete it, or restore it before the sanitizer macros |
+| 7 | xo_worker and xo_fiber record types, after sched_hooks, fiber_map_failed, xo_sched_run_task move | about 100 | M | 25 | part of rank 3's scheduler services |
+| 8 | The C allocator entries and the main heap record (xo_alloc, xo_free, xo_resize, heap(), main_heap; xo_rt_threads_begin, obj_heap_init) | about 285 | M | 70 | the C that still allocates: the network lists (seed), the handle code (rank 5) |
+| 9 | Entry: main as a short call into entry.xo | about 55 | M | 14 | rank 8 for the heap setup |
+| 10 | heap_large, resize, release onto libcmem.xo's malloc on every build | about 28, and no C library malloc | M | 7 | nothing |
+| 11 | The event loop's records ev, xo_pd, xo_timer and their asserts | about 100 | M | 25 | the Windows poller (ranks 2 and 12), the C tests rawpoll.c and evloop.c moved or retired |
+| 12 | Windows' AFD start and registration in poll.xo over sys_windows | about 180 | M | 45 | rank 2 (UNTESTED on windows) |
+| 13 | Contexts, parks, nodes, locks and their asserts | about 250 | L | 21 | ranks 3, 11, 14 |
+| 14 | Fault unwinding's C (Windows, XO_UNWIND_LIBGCC) and the C personality with lsda_read | about 240 | L | 20 | decision 0221 stage 2 on x86-64; RtlCaptureContext through sys_c.xo |
+| 15 | run_entry and run_main's boundary frame | about 15 | M | 4 | a frame address rt intrinsic (the owner's approval) |
+
+Order this suggests: the next seed (about 300 lines) and the dead lines
+now; ranks 1, 4, 5 and 6 (small, independent, about 255 lines); the
+owner's decisions on rt.fn_addr (rank 3, the largest unlock, about 300
+lines plus most of ranks 5, 7 and 9) and on Windows' WSAPoll fallback
+(rank 2); then rank 8 and the rest. Of xo_rt.c's 3,213 lines, about
+1,700 have a route out short of decision 0221 stage 2 and the Windows
+pass; about 550 wait for those.
 
 ## First half (Xo Lang 3)
 
