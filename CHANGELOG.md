@@ -73,6 +73,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of a thread, the exit polled with waitpid in cancelable steps; Linux
   UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
   children until stage 4b.
+- Native runtime (zero-C audit item B29, HTTP/2 client): the client's
+  HTTP/2 connections, the pool of idle ones, and the exchange's records
+  are Xo (hclient.xo); xo_h2.c keeps only the server.
 - Native runtime (zero-C audit item B29, HTTP/1.1): the client's
   connection reads and writes, the request it writes (net/http's
   Request.write with Transport's additions), the reading side of the

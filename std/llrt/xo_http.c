@@ -928,7 +928,7 @@ xo_rlist *xo_stream_get(int64_t id, int64_t take) {
 	return l;
 }
 
-static void h2_pool_free(void);
+int64_t xo_x_h2_pool_free(void);
 
 __attribute__((unused)) static void xo_streams_free(void) {
 	pthread_mutex_lock(&streams.mu);
@@ -940,7 +940,7 @@ __attribute__((unused)) static void xo_streams_free(void) {
 	}
 	pthread_mutex_unlock(&streams.mu);
 	// the client's idle HTTP/2 connections (xo_h2.c)
-	h2_pool_free();
+	xo_x_h2_pool_free();
 }
 
 // xo_hc_close closes the connection and ends its registration.
@@ -1030,7 +1030,7 @@ typedef struct {
 	int64_t status;
 	hlist hdr;
 	nbuf body;
-	struct h2x *h2; // an HTTP/2 exchange Xo drives (http1.xo h2_exchange)
+	void *h2;       // an HTTP/2 exchange Xo drives (hclient.xo X_*, http1.xo h2_exchange)
 	int retry;      // it goes again on a new connection
 	// an HTTP/1.1 exchange whose response Xo reads
 	int reading;
@@ -1053,17 +1053,40 @@ static void cl_close(xo_cresp *r) {
 	r->reading = 0;
 }
 
-// HTTP/2 (xo_h2.c)
-typedef struct h2cc h2cc;
-typedef struct h2x h2x;
-static h2cc *h2_pool_take(xo_troots *roots, const char *key);
-static h2cc *h2cc_new(xo_conn *cn, ccon *c, xo_troots *roots, const char *key);
-static void h2x_start(xo_cresp *r, h2cc *pc, int pooled, const char *method, const char *body, int64_t bn, int64_t when, hlist *hdr);
-static void h2x_free(h2x *x);
+// HTTP/2's connections, their pool and exchanges (hclient.xo); a
+// program without std/http links the weak definitions: it never makes
+// one, and its exit frees no pool.
+int64_t xo_x_h2_conn_new(int64_t cn, int64_t c, int64_t roots, int64_t kp, int64_t kn);
+int64_t xo_x_h2_pool_take(int64_t roots, int64_t kp, int64_t kn);
+int64_t xo_x_h2_exchange_start(int64_t r, int64_t pc, int64_t pooled, int64_t body, int64_t bn, int64_t when);
+int64_t xo_x_h2_exchange_free(int64_t x);
+int64_t xo_x_h2_pool_free(void);
+
+__attribute__((weak)) int64_t xo_x_h2_conn_new(int64_t cn, int64_t c, int64_t roots, int64_t kp, int64_t kn) {
+	(void)cn, (void)c, (void)roots, (void)kp, (void)kn;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_pool_take(int64_t roots, int64_t kp, int64_t kn) {
+	(void)roots, (void)kp, (void)kn;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_exchange_start(int64_t r, int64_t pc, int64_t pooled, int64_t body, int64_t bn, int64_t when) {
+	(void)r, (void)pc, (void)pooled, (void)body, (void)bn, (void)when;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_exchange_free(int64_t x) {
+	(void)x;
+	return 0;
+}
+
+__attribute__((weak)) int64_t xo_x_h2_pool_free(void) { return 0; }
 
 static void cresp_free(void *p) {
 	xo_cresp *r = p;
-	h2x_free(r->h2);
+	xo_x_h2_exchange_free(XO_ADDR(r->h2));
 	cl_close(r);
 	free(r->msg);
 	free(r->prefix);
@@ -1140,22 +1163,15 @@ int64_t xo_cl_deadline(int64_t timeout) { return deadline(timeout); }
 xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, int64_t an, const char *tp, int64_t tn, const char *gp,
                       int64_t gn, const char *hp, int64_t hn, xo_rlist *names, xo_rlist *values, const char *body, int64_t bn, int64_t when,
                       xo_troots *roots, const char *pp, int64_t pn, int64_t pool) {
-	(void)gp, (void)gn, (void)hp, (void)hn; // the target and Host: Xo writes the requests
+	// the method, target, Host and header: Xo writes the requests (hclient.xo
+	// request, http1.xo h2_exchange)
+	(void)m, (void)mn, (void)gp, (void)gn, (void)hp, (void)hn, (void)names, (void)values;
 	xo_cresp *r = xo_alloc(sizeof(xo_cresp));
 	memset(r, 0, sizeof *r);
 	h_init(r, cresp_free);
 	r->prefix = cstr_of(pp, pn);
-	char *method = cstr_of(m, mn);
 	char *addr = cstr_of(ap, an);
 	char *tls_host = https ? cstr_of(tp, tn) : NULL;
-	hlist hdr = {0};
-	for (int64_t i = 0; i < names->len && i < values->len; i++) {
-		xo_rstr *k = ((xo_rstr **)rl_data(names))[2 * i];
-		int64_t kn = ((int64_t *)rl_data(names))[2 * i + 1];
-		xo_rstr *v = ((xo_rstr **)rl_data(values))[2 * i];
-		int64_t vn = ((int64_t *)rl_data(values))[2 * i + 1];
-		hl_add(&hdr, hs_dup(k->data, kn), hs_dup(v->data, vn));
-	}
 	char *key = NULL;
 	xo_conn *cn = NULL;
 	ccon c = {0};
@@ -1168,9 +1184,9 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		nbuf_str(&k, tls_host);
 		nbuf_byte(&k, 0);
 		key = k.p;
-		h2cc *pc = pool ? h2_pool_take(roots, key) : NULL;
+		int64_t pc = pool ? xo_x_h2_pool_take(XO_ADDR(roots), XO_ADDR(key), (int64_t)strlen(key)) : 0;
 		if (pc) {
-			h2x_start(r, pc, 1, method, body, bn, when, &hdr);
+			xo_x_h2_exchange_start(XO_ADDR(r), pc, 1, XO_ADDR(body), bn, when);
 			goto out;
 		}
 	}
@@ -1218,7 +1234,8 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		}
 	}
 	if (c.tls && tls_alpn_h2(c.tls)) {
-		h2x_start(r, h2cc_new(cn, &c, roots, key), 0, method, body, bn, when, &hdr);
+		int64_t pc = xo_x_h2_conn_new(XO_ADDR(cn), XO_ADDR(&c), XO_ADDR(roots), XO_ADDR(key), (int64_t)strlen(key));
+		xo_x_h2_exchange_start(XO_ADDR(r), pc, 0, XO_ADDR(body), bn, when);
 		goto out;
 	}
 	// Xo sends the request and reads the response (hclient.xo request)
@@ -1228,10 +1245,8 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 	goto out;
 out:
 	free(key);
-	free(method);
 	free(addr);
 	free(tls_host);
-	hl_free(&hdr);
 	return r;
 }
 
@@ -1244,6 +1259,10 @@ int64_t xo_cl_tls_read(int64_t t, int64_t p, int64_t n) { return tls_read((tls_c
 
 int64_t xo_cl_tls_write(int64_t t, int64_t p, int64_t n) { return tls_write((tls_conn *)(intptr_t)t, (const char *)(intptr_t)p, n); }
 
+void xo_cl_tls_free(int64_t t) { tls_conn_free((tls_conn *)(intptr_t)t); }
+
+void xo_cl_tls_set_when(int64_t t, int64_t when) { tls_set_when((tls_conn *)(intptr_t)t, when); }
+
 xo_rstr *xo_cl_tls_alert(int64_t t, int64_t *len) {
 	const char *a = tls_alert((tls_conn *)(intptr_t)t);
 	return nstr(a ? a : "", a ? (int64_t)strlen(a) : 0, len);
@@ -1251,12 +1270,12 @@ xo_rstr *xo_cl_tls_alert(int64_t t, int64_t *len) {
 
 // The records hclient.xo reads (R_*, C_*).
 _Static_assert(offsetof(xo_cresp, err) == 16 && offsetof(xo_cresp, msg) == 24 && offsetof(xo_cresp, status) == 32 && offsetof(xo_cresp, hdr) == 40 &&
-                   offsetof(xo_cresp, body) == 64 && offsetof(xo_cresp, reading) == 100 && offsetof(xo_cresp, c) == 104 && offsetof(xo_cresp, prefix) == 184,
+                   offsetof(xo_cresp, body) == 64 && offsetof(xo_cresp, h2) == 88 && offsetof(xo_cresp, retry) == 96 && offsetof(xo_cresp, reading) == 100 && offsetof(xo_cresp, c) == 104 && offsetof(xo_cresp, prefix) == 184,
                "hclient.xo R_*");
 _Static_assert(offsetof(ccon, pd) == 0 && offsetof(ccon, fd) == 8 && offsetof(ccon, when) == 16 && offsetof(ccon, buf) == 24 && offsetof(ccon, n) == 32 &&
                    offsetof(ccon, cap) == 40 && offsetof(ccon, off) == 48 && offsetof(ccon, eof) == 56 && offsetof(ccon, tls) == 64,
                "hclient.xo C_*");
-_Static_assert(sizeof(hpair) == 32, "http1w.xo key_p");
+_Static_assert(sizeof(hpair) == 32 && offsetof(hlist, cap) == 16 && offsetof(nbuf, cap) == 16 && sizeof(ccon) == 72, "http1w.xo key_p, hclient.xo R_*_CAP, P_C");
 
 // HTTP/2 (decision 0121)
 #include "xo_h2.c"

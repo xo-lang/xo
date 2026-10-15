@@ -103,3 +103,26 @@ fn cl_finish(r: Int, s: Int, wp: Int, wn: Int, ap: Int, an: Int) -> Int {
   hclient.finish_at(r, s, raw.str_at(wp, wn), if an < 0 { "" } else { raw.str_at(ap, an) })
   0
 }
+
+/// The HTTP client's HTTP/2 connections (hclient.xo): a new one over
+/// net.Conn cn and the ccon at c (TLS up), for roots and the key (the kn
+/// bytes at kp); an idle one from the pool, or 0; an exchange's start on
+/// the xo_cresp at r and its end; the pool's end at exit.
+fn h2_conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int) -> Int { hclient.conn_new(cn, c, roots, kp, kn) }
+
+fn h2_pool_take(roots: Int, kp: Int, kn: Int) -> Int { hclient.pool_take(roots, kp, kn) }
+
+fn h2_exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: Int) -> Int {
+  hclient.exchange_start(r, pc, pooled, body, bn, when)
+  0
+}
+
+fn h2_exchange_free(x: Int) -> Int {
+  hclient.exchange_free(x)
+  0
+}
+
+fn h2_pool_free() -> Int {
+  hclient.pool_free()
+  0
+}

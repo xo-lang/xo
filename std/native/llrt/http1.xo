@@ -2307,12 +2307,12 @@ pub fn (var c: H2Conn) next() -> Bool {
 // as httpcommon.EncodeHeaders lists them, the connection's encoder) and
 // DATA within the server's windows, then the server's frames (SETTINGS,
 // PING, WINDOW_UPDATE, GOAWAY, RST_STREAM, HEADERS and CONTINUATION,
-// DATA) until the response ends, with Go's error texts. The C keeps the
-// socket and TLS (rthttp.cl_h2_write, cl_h2_read), the pool of
-// connections, and the end (rthttp.cl_h2_end: the retry on a new
-// connection, the failure's text). The connection's state between
-// requests (HPACK, the windows, the server's settings, the next stream)
-// is an H2State the C keeps with the connection.
+// DATA) until the response ends, with Go's error texts. hclient.xo keeps
+// the connection's reads and writes (h2_write, h2_read), the pool of
+// connections, and the end (h2_end: the retry on a new connection, the
+// failure's text); the C makes the connection (the dial, TLS). The
+// connection's state between requests (HPACK, the windows, the server's
+// settings, the next stream) is an H2State kept with the connection.
 
 /// The state of a client HTTP/2 connection between requests.
 struct H2State {
@@ -2570,7 +2570,7 @@ fn (var x: H2X) flush(r: rthttp.CResp) -> Bool {
   if x.out.is_empty() {
     return true
   }
-  x.res = rthttp.cl_h2_write(r, x.out)
+  x.res = hclient.h2_write(r, x.out)
   x.out = ""
   x.res == CC_OK
 }
@@ -2719,7 +2719,7 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
       return (false, "protocol error: received DATA before a HEADERS frame")
     }
     if x.method != "HEAD" && dn > 0 {
-      rthttp.cl_h2_data(r, rt.str_slice(f, d, d + dn))
+      hclient.h2_data(r, rt.str_slice(f, d, d + dn))
     }
     if len > 0 && (flags & H2F_END_STREAM) == 0 {
       let (a, un, u) = inflow_add(x.sin_avail - len, x.sin_unsent, len)
@@ -2821,7 +2821,7 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
     }
     i += 1
   }
-  rthttp.cl_h2_response(r, code, hk, hv)
+  hclient.h2_response(r, code, hk, hv)
   if end {
     x.ended = true
   }
@@ -2830,18 +2830,18 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
 
 /// Makes the HTTP/2 request rthttp.cl_start set up on r (http2
 /// Transport.RoundTrip on one stream), then hands the connection and its
-/// state back to the C (rthttp.cl_h2_end). rthttp.cl_retry tells whether
+/// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
 fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) {
   var st = h2_state()
-  let kept = rthttp.cl_h2_take(r)
+  let kept = hclient.h2_take(r)
   if let Some(a) = kept.get(0) {
     if let Some(s) = rt.any_get[H2State](a) {
       st = s
     }
   }
   let (cv, has_c) = h2_field(names, values, "Connection")
-  var x = H2X{st: st, method: method, body: rthttp.cl_h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
+  var x = H2X{st: st, method: method, body: hclient.h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
   x.st.enc.set_sizes(x.st.sizes)
   x.st.sizes = ""
   let why = h2_check(names, values)
@@ -2908,9 +2908,9 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
         continue
       }
     }
-    let f = rthttp.cl_h2_read(r)
+    let f = hclient.h2_read(r)
     if f.is_empty() {
-      let c = rthttp.cl_h2_rres(r)
+      let c = hclient.h2_rres(r)
       if c == CC_EOF {
         x.broken = true
         if x.goaway {
@@ -2964,7 +2964,7 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
   if x.goaway {
     fl = fl | XF_GOAWAY
   }
-  rthttp.cl_h2_end(r, rt.any_of(x.st), x.res, x.why, fl)
+  hclient.h2_end(r, rt.any_of(x.st), x.res, x.why, fl)
 }
 
 // ---------------------------------------------------------------------------
@@ -3396,13 +3396,13 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     let prefix = url_op(method) + " " + q
     var r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, true)
-    if rthttp.cl_h2(r) {
+    if hclient.h2(r) {
       h2_exchange(r, method, target, u.host, hk, hv, body.len())
-      if rthttp.cl_retry(r) {
+      if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
         r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, false)
-        if rthttp.cl_h2(r) {
+        if hclient.h2(r) {
           h2_exchange(r, method, target, u.host, hk, hv, body.len())
         }
       }

@@ -93,39 +93,12 @@ fn cl_deadline(timeout: Int) -> Int
 /// values, the body, the deadline (0: none), and the start of its
 /// errors (the method and the quoted URL); pool: an idle HTTP/2
 /// connection to the same address may take it. Over HTTP/2 (ALPN h2)
-/// cl_h2 is true and Xo makes the exchange (cl_h2_take to cl_h2_end),
-/// whose response is then in the CResp (hclient.xo status, ...); over
+/// hclient.h2 is true and Xo makes the exchange (hclient.h2_take to
+/// h2_end), whose response is then in the CResp (hclient.status, ...); over
 /// HTTP/1.1 the connection is up (hclient.reading) and Xo sends the
 /// request and reads the response (hclient.xo). A failure sets the
 /// CResp's error (hclient.err).
 fn cl_start(method: Str, https: Bool, addr: Str, tls_host: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, when: Int, roots: Roots, prefix: Str, pool: Bool) -> CResp
-/// An HTTP/2 exchange waits for Xo (audit items B11 and B29,
-/// std/native/llrt/http1.xo h2_exchange).
-fn cl_h2(r: CResp) -> Bool
-/// The connection's state (http1.H2State), moved out: a list of one,
-/// empty for a new connection.
-fn cl_h2_take(r: CResp) -> List[rt.Any]
-/// The request's body.
-fn cl_h2_body(r: CResp) -> Str
-/// Sends the connection's queued bytes (a new connection's preface and
-/// SETTINGS) and then b; the CC_* result.
-fn cl_h2_write(r: CResp, b: Str) -> Int
-/// The server's next frame (its 9 byte header and payload), or "" with
-/// the reason in cl_h2_rres (CC_EOF, 104 for a frame over 16 KiB, or a
-/// failure).
-fn cl_h2_read(r: CResp) -> Str
-fn cl_h2_rres(r: CResp) -> Int
-/// The response's status and header (canonical names, each once).
-fn cl_h2_response(r: CResp, status: Int, names: List[Str], values: List[Str])
-/// More of the response's body.
-fn cl_h2_data(r: CResp, b: Str)
-/// Ends the exchange: res (CC_*) and why, its failure; flags (http1.xo
-/// XF_*) of the stream and the connection. The connection keeps st and
-/// goes back to the pool (or closes), and a failure sets hclient.err, unless
-/// cl_retry: the server did not take the request on a pooled
-/// connection, which goes on a new one (cl_start without pool).
-fn cl_h2_end(r: CResp, st: rt.Any, res: Int, why: Str, flags: Int)
-fn cl_retry(r: CResp) -> Bool
 /// Closes r's connection (TLS, the poll descriptor, the socket), if it
 /// has one: an HTTP/1.1 exchange ends (std/native/llrt/hclient.xo).
 fn cl_close(r: CResp)
@@ -135,6 +108,9 @@ fn cl_close(r: CResp)
 fn cl_tls_read(t: Int, p: Int, n: Int) -> Int
 fn cl_tls_write(t: Int, p: Int, n: Int) -> Int
 fn cl_tls_alert(t: Int) -> Str
+/// Frees a TLS connection (0: none); sets its deadline.
+fn cl_tls_free(t: Int)
+fn cl_tls_set_when(t: Int, when: Int)
 
 /// Streamed bodies (http.stream, decision 0083): a sink takes a stream's
 /// writes, into a buffer or to a connection as net/http sends them.

@@ -103,6 +103,9 @@ pub const SV_ATOMIC_FREE = 72
 pub const SV_FIBERS = 80
 pub const SV_FIBER_MAIN = 88
 pub const SV_WORKER_MAIN = 96
+/// The HTTP client's idle HTTP/2 connections (hclient.xo PL_*: a lock
+/// word, the first, the count).
+pub const SV_H2_POOL = 104
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).
