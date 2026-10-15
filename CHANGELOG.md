@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233 step 2): Windows' console handler
+  (Ctrl-C, Ctrl-Break, closing the console, shutdown) is poll.xo
+  on_console (cabi.xo on_console) instead of xo_rt.c's, which goes with
+  the C's pointer to the event loop's record. on_overflow stays C by
+  design (it runs on the overflowed stack's small reserve). UNTESTED on
+  windows; cross linked for windows/amd64 and arm64.
 - Native runtime (zero-C inventory rank 10): the runtime's records
   (rt.heap_large, its resize, rt.heap_release) come from libcmem.xo's
   allocator on every build, through a cache per thread, not from the C

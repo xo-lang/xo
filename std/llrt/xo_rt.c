@@ -1292,21 +1292,14 @@ typedef struct xo_atomic xo_atomic;
 // The event loop is std/native/llrt/poll.xo's (B22): its record, the
 // timers, the descriptors, the poller thread on every OS (kqueue on
 // Darwin, epoll on Linux, AFD polls through a completion port or the
-// WSAPoll fallback on Windows). What stays here: Windows' console
-// handler (on_console: it counts the signal in the record and wakes the
-// poller; SIGINT and SIGTERM's handler is poll.xo on_signal). The records' layouts are poll.xo's own (EV_*, D_*, T_*;
+// WSAPoll fallback on Windows), and the signal handlers (poll.xo
+// on_signal and on_console). The records' layouts are poll.xo's own (EV_*, D_*, T_*;
 // asserted in C until 2026-10-15).
 
 #if defined(_WIN32)
 // the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
 #pragma comment(lib, "ntdll")
 #endif
-
-// ev is the event loop's record, which poll.xo makes (poll_svc): Windows'
-// console handler counts a signal in its word EV_SIGS (atomic) and wakes
-// the poller (poll.xo on_signal does both on Linux and macOS).
-static int64_t *ev;
-enum { EV_SIGS_W = 5 };
 
 // The network's system calls (decision 0206 stage 3, the zero-C audit's
 // B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
@@ -1330,7 +1323,7 @@ XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
 #endif
 
 // ev_poke wakes the poller (a new first timer): poll.xo poke (the C
-// tests and Windows' console handler call this).
+// tests call this).
 void xo_x_poll_poke(void);
 static void ev_poke(void) { xo_x_poll_poke(); }
 
@@ -1348,14 +1341,13 @@ _Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOv
 
 // The poller thread
 
-// pd_svc_init has poll.xo make the event loop's record (poll_svc), whose
-// address the console handler keeps; poll.xo's services record went in
+// pd_svc_init has poll.xo make the event loop's record (poll_svc); poll.xo's services record went in
 // decision 0233 step 2 (its wait, a context's park offset, the poller
 // thread's start, cancellation, park signals and the shutdown's steps
 // are Xo).
 int64_t xo_x_poll_svc(void);
 static void pd_svc_init(void) {
-	ev = (int64_t *)(intptr_t)xo_x_poll_svc();
+	(void)xo_x_poll_svc();
 }
 
 // The poller thread's loop is std/native/llrt/poll.xo's (poll_thread,
@@ -1424,19 +1416,8 @@ void xo_x_on_signal(int64_t sig);
 
 #ifdef _WIN32
 // Ctrl-C, Ctrl-Break, and closing the console are Windows' SIGINT and
-// SIGTERM: the handler runs on a thread of its own and wakes the poller.
-static BOOL WINAPI on_console(DWORD kind) {
-	switch (kind) {
-	case CTRL_C_EVENT:
-	case CTRL_BREAK_EVENT:
-	case CTRL_CLOSE_EVENT:
-	case CTRL_SHUTDOWN_EVENT:
-		__atomic_fetch_add(&ev[EV_SIGS_W], 1, __ATOMIC_ACQ_REL);
-		ev_poke();
-		return TRUE;
-	}
-	return FALSE;
-}
+// SIGTERM: poll.xo on_console counts them and wakes the poller.
+int64_t xo_x_on_console(int64_t kind);
 
 // on_overflow reports a stack overflow (decision 0197, stage 5): not a
 // fault (decision 0085), so nothing unwinds; the program ends as the Go
@@ -1479,7 +1460,7 @@ static void stop_svc_init(void) {
 	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
 	stop_svc[12] = XO_ADDR(&ev_start);
 #ifdef _WIN32
-	stop_svc[13] = XO_ADDR(&on_console);
+	stop_svc[13] = XO_ADDR(&xo_x_on_console);
 	stop_svc[14] = XO_ADDR(&on_overflow);
 #else
 	stop_svc[13] = XO_ADDR(&xo_x_on_signal);

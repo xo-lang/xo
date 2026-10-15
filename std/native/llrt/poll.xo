@@ -275,9 +275,8 @@ pub const CLOSED = 2
 pub const TIMEOUT = 3
 
 /// Makes the event loop's record at start (before any descriptor),
-/// zeroed and never freed: its address, which the C's Windows console
-/// handler keeps (it counts a signal and wakes the poller). Static word
-/// 44, the C's services record until decision 0233 step 2, is unused.
+/// zeroed and never freed: its address. Static word 44, the C's
+/// services record until decision 0233 step 2, is unused.
 pub fn poll_svc() -> Int {
   let e = rt.heap_large(EV_SIZE)
   rt.mem_set(e, 0, EV_SIZE)
@@ -793,6 +792,36 @@ pub fn on_signal() {
     }
     TargetOs.Windows | TargetOs.Wasi => {}
   }
+}
+
+/// Windows' console handler (cabi.xo on_console, which entry.xo installs
+/// with SetConsoleCtrlHandler; was xo_rt.c's): Ctrl-C, Ctrl-Break,
+/// closing the console, and shutdown (CTRL_C_EVENT 0, CTRL_BREAK_EVENT
+/// 1, CTRL_CLOSE_EVENT 2, CTRL_SHUTDOWN_EVENT 6) are SIGINT and SIGTERM:
+/// it counts the signal and wakes the poller, and returns 1 (handled);
+/// 0 for any other event. It runs on a thread Windows starts, which has
+/// no thread table: no scratch buffer (the byte sent is a literal's).
+/// UNTESTED on windows (cross links only).
+pub fn on_console(kind0: Int) -> Int {
+  // a DWORD: the register's high half is not defined
+  let kind = kind0 & 4294967295
+  if kind != 0 && kind != 1 && kind != 2 && kind != 6 {
+    return 0
+  }
+  let e = ev()
+  let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  match target.os {
+    TargetOs.Windows => {
+      if rt.mem_load(e, EV_AFD, 8) != 0 {
+        let _p = sys_windows.PostQueuedCompletionStatus(rt.mem_load(e, EV_IOCP, 8), 0, 1, 0)
+      } else {
+        let b = "w"
+        let _s = sys_windows.send(rt.mem_load(e, EV_WW, 8), raw.data(b), 1, 0)
+      }
+    }
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+  }
+  1
 }
 
 /// Starts the event loop once (xo_rt.c ev_start): the self pipe, the

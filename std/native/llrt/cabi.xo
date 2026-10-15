@@ -475,6 +475,10 @@ fn stop_signal() { stop.signal() }
 /// handler: the signal number, unused).
 fn on_signal(sig: Int) { poll.on_signal() }
 
+/// Windows' console handler that entry.xo installs (SetConsoleCtrlHandler:
+/// the event, a DWORD; 1 when handled).
+fn on_console(kind: Int) -> Int { poll.on_console(kind) }
+
 fn stop_cancel() { stop.cancel() }
 
 fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
