@@ -142,6 +142,17 @@ pub fn sig_alg(scheme: Int) -> Int {
   }
 }
 
+/// The hash of an x509 signature algorithm (sha256.xo's id).
+pub fn alg_hash(alg: Int) -> Int {
+  if alg == x509.SIG_ECDSA_SHA384 || alg == x509.SIG_RSA_SHA384 || alg == x509.SIG_PSS_SHA384 {
+    sha256.HASH_SHA384
+  } else if alg == x509.SIG_ECDSA_SHA512 || alg == x509.SIG_RSA_SHA512 || alg == x509.SIG_PSS_SHA512 {
+    sha256.HASH_SHA512
+  } else {
+    sha256.HASH_SHA256
+  }
+}
+
 /// Whether the algorithm signs with RSA (PKCS #1 v1.5 or PSS).
 pub fn alg_rsa(alg: Int) -> Bool { (alg >= x509.SIG_RSA_SHA256 && alg <= x509.SIG_RSA_SHA512) || (alg >= x509.SIG_PSS_SHA256 && alg <= x509.SIG_PSS_SHA512) }
 

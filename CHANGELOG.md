@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (B31, TLS 1.2 part 2): the TLS 1.2 server in Xo
+  (std/native/llrt/tls12srv.xo, as Go's handshake_server.go): the
+  server's suite order (ChaCha20-Poly1305 first when the client prefers
+  it), the client's curve and signature scheme order, ECDHE over X25519,
+  P-256 and P-384 signed with ECDSA, Ed25519, RSA-PSS or PKCS #1 v1.5,
+  the extended master secret, ALPN with Go's h2 fallback, the downgrade
+  sentinel when it also speaks TLS 1.3; tls12srv.resume takes over from
+  tls13srv.xo's HANDOFF. The golden tls12_server replays crypto/tls's
+  client against crypto/tls's own server as the Go reference: RSA-PSS
+  and PKCS #1 v1.5 signatures byte for byte, ECDSA through the trace's
+  signature and checked when made here, 21 cases on Go, LLVM and arm64.
 - Native runtime (zero-C audit item B31, part 8, decision 0202): the Xo
   client negotiates TLS 1.2 and 1.3 as Go's does: one ClientHello
   offering both (Go 1.26's suites, extensions and signature schemes in

@@ -1,0 +1,1019 @@
+// The TLS 1.2 server of the native backends' TLS (RFC 5246, as Go's
+// crypto/tls handshake_server.go and key_agreement.go: decision 0202,
+// replacing Mbed TLS's TLS 1.2 server): a state machine over bytes (no
+// I/O here: the caller feeds what the client sent and takes what to
+// send) on tls12.xo's PRF, key schedule, and records. Go's defaults: the
+// server's order of suites (ChaCha20-Poly1305 first when the client
+// prefers it), the client's order of curves and signature schemes, ECDHE
+// over X25519, P-256, and P-384 signed with the certificate's ECDSA or
+// RSA key (PSS or PKCS #1 v1.5), the extended master secret, ALPN (with
+// Go's h2 to http/1.1 fallback); no client certificates, no session
+// tickets or resumption, no renegotiation. Error texts and alerts are
+// crypto/tls's.
+use native/llrt/asn1
+use native/llrt/ct
+use native/llrt/ed25519
+use native/llrt/nistec
+use native/llrt/rand
+use native/llrt/rsa
+use native/llrt/sha256
+use native/llrt/tls12
+use native/llrt/tls13
+use native/llrt/tlsname
+use native/llrt/x509
+
+// the server's handshake states
+pub const WAIT_CH: Int = 0
+pub const WAIT_CKE: Int = 1
+pub const WAIT_CCS: Int = 2
+pub const WAIT_FIN: Int = 3
+pub const DONE: Int = 4
+pub const FAILED: Int = 5
+
+// the alerts the server sends besides tls12.xo's
+const ALERT_INAPPROPRIATE_FALLBACK: Int = 86
+const ALERT_MISSING_EXTENSION: Int = 109
+
+/// TLS_FALLBACK_SCSV and TLS_EMPTY_RENEGOTIATION_INFO_SCSV.
+const SCSV_FALLBACK: Int = 0x5600
+const SCSV_RENEGOTIATION: Int = 0x00ff
+
+/// A server's settings: its certificate chain (DER, the leaf first) and
+/// the leaf's private key (RSA: a PKCS #1 or PKCS #8 DER; ECDSA P-256 or
+/// P-384: the scalar; Ed25519: the seed; key_alg is the leaf's key type,
+/// x509.KEY_*), the suites and curves
+/// enabled, the ALPN protocols in order of preference, and max13 when
+/// the server speaks TLS 1.3 too (a TLS 1.2 handshake then marks the
+/// random with RFC 8446's downgrade sentinel). The tests' hooks: random
+/// (the ServerHello's random), priv (the ECDHE private key), salt (RSA-PSS
+/// salts are its first bytes), sig (the ServerKeyExchange's signature, sent
+/// instead of one made here).
+pub struct Conf {
+  pub certs: List[Bytes]
+  pub key_alg: Int
+  pub key: Bytes
+  pub suites: List[Int]
+  pub groups: List[Int]
+  pub alpn: List[Str]
+  pub max13: Bool
+  pub random: Bytes
+  pub priv: Bytes
+  pub salt: Bytes
+  pub sig: Bytes
+}
+
+/// Go's defaults for a certificate chain and its leaf's key.
+pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
+  let key_alg = if certs.is_empty() { x509.KEY_UNKNOWN } else { x509.parse(certs[0]).cert.key_alg }
+  Conf{certs: certs, key_alg: key_alg, key: key, suites: tls12.default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b""}
+}
+
+/// A server connection: the state, the error (Go's text) once FAILED,
+/// whether the client closed (close_notify), the suite, curve, and ALPN
+/// protocol negotiated, the client's server name; and the bytes in and
+/// out, the transcript and keys.
+pub struct Server {
+  pub conf: Conf
+  pub state: Int
+  pub err: Str
+  pub closed: Bool
+  pub suite: Int
+  pub group: Int
+  pub alpn: Str
+  pub host: Str
+  have_vers: Bool
+  rin: Bytes
+  hs: Bytes
+  app: Bytes
+  out: Bytes
+  tr: Bytes
+  cr: Bytes
+  sr: Bytes
+  ems: Bool
+  priv: Bytes
+  master: Bytes
+  next_rk: tls12.Keys
+  next_wk: tls12.Keys
+  rk: tls12.Keys
+  wk: tls12.Keys
+}
+
+/// A new server for conf, waiting for a ClientHello.
+pub fn server(cf: Conf) -> Server { Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", host: "", have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", cr: b"", sr: b"", ems: false, priv: b"", master: b"", next_rk: tls12.plain(), next_wk: tls12.plain(), rk: tls12.plain(), wk: tls12.plain()} }
+
+/// A server taking over after tls13srv.xo read a first ClientHello that
+/// offers TLS 1.2 and not 1.3 (its HANDOFF state, through tlssrv.xo): ch
+/// is that ClientHello message (header included), rest the record bytes
+/// received after it. ch is processed as this server's first
+/// ClientHello, then rest is fed.
+pub fn resume(cf: Conf, ch: Bytes, rest: Bytes) -> Server {
+  var s = server(cf)
+  s.hs = ch
+  drain(s)
+  feed(s, rest)
+  s
+}
+
+/// The bytes to send to the client, taken.
+pub fn take(var s: Server) -> Bytes {
+  let o = s.out
+  s.out = b""
+  o
+}
+
+/// The application data received, taken.
+pub fn recv(var s: Server) -> Bytes {
+  let a = s.app
+  s.app = b""
+  a
+}
+
+/// At most n bytes of the application data received, taken.
+pub fn recv_some(var s: Server, n: Int) -> Bytes {
+  if s.app.len() <= n {
+    return recv(s)
+  }
+  let a = s.app[0..n]
+  s.app = s.app[n..s.app.len()]
+  a
+}
+
+/// Whether the handshake is complete and the connection usable.
+pub fn ready(s: Server) -> Bool { s.state == DONE && !s.closed }
+
+/// Sends application data (after the handshake).
+pub fn send(var s: Server, data: Bytes) {
+  if s.state == DONE && data.len() > 0 {
+    s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_APP, data, 0x0303))
+  }
+}
+
+/// Sends close_notify (Go's Close after the handshake).
+pub fn close(var s: Server) { s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_ALERT, b"\x01\x00", 0x0303)) }
+
+/// Takes bytes the client sent: every complete record is processed.
+pub fn feed(var s: Server, data: Bytes) {
+  s.rin = cat2(s.rin, data)
+  while s.state != FAILED && !s.closed && s.rin.len() >= 5 {
+    let ct = Int(s.rin[0])
+    let vers = tls12.u16_at(s.rin, 1)
+    let n = tls12.u16_at(s.rin, 3)
+    if !s.have_vers && ct == 0x80 {
+      fail(s, tls12.ALERT_PROTOCOL_VERSION, "tls: unsupported SSLv2 handshake received")
+      return
+    }
+    if s.have_vers && vers != 0x0303 {
+      fail(s, tls12.ALERT_PROTOCOL_VERSION, "tls: received record with version ${tls12.hex(vers)} when expecting version 303")
+      return
+    }
+    if !s.have_vers && ((ct != tls12.CT_ALERT && ct != tls12.CT_HANDSHAKE) || vers >= 0x1000) {
+      s.state = FAILED
+      s.err = "tls: first record does not look like a TLS handshake"
+      return
+    }
+    if n > tls12.MAX_CIPHER {
+      fail(s, tls12.ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
+      return
+    }
+    if s.rin.len() < 5 + n {
+      return
+    }
+    let hdr = s.rin[0..5]
+    let body = s.rin[5..5 + n]
+    s.rin = s.rin[5 + n..s.rin.len()]
+    record(s, hdr, body)
+  }
+}
+
+/// A local error: Go's sendAlert's error.
+fn local(var s: Server, alert: Int) { fail(s, alert, "local error: tls: ${tlsname.alert_text(alert)}") }
+
+/// One record.
+fn record(var s: Server, hdr: Bytes, body: Bytes) {
+  let inner = tls12.open(s.rk, hdr, body)
+  if inner.ct == -1 {
+    local(s, tls12.ALERT_BAD_RECORD_MAC)
+    return
+  }
+  if inner.ct == -2 {
+    local(s, tls12.ALERT_RECORD_OVERFLOW)
+    return
+  }
+  let ct = inner.ct
+  let data = inner.data
+  if !s.rk.on && ct == tls12.CT_APP {
+    local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if ct == tls12.CT_ALERT {
+    if data.len() != 2 {
+      local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    let a = Int(data[1])
+    if a == tls12.ALERT_CLOSE_NOTIFY {
+      if s.state == DONE {
+        s.closed = true
+      } else {
+        s.state = FAILED
+        s.err = "EOF"
+      }
+      return
+    }
+    if data[0] == 1 {
+      return
+    }
+    if data[0] == 2 {
+      s.state = FAILED
+      s.err = "remote error: tls: ${tlsname.alert_text(a)}"
+      return
+    }
+    local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if ct == tls12.CT_CCS {
+    if data.len() != 1 || data[0] != 1 {
+      local(s, tls12.ALERT_DECODE_ERROR)
+      return
+    }
+    if s.hs.len() > 0 || s.state != WAIT_CCS {
+      local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    s.rk = s.next_rk
+    s.state = WAIT_FIN
+    return
+  }
+  if ct == tls12.CT_APP {
+    if s.state != DONE {
+      local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    s.app = cat2(s.app, data)
+    return
+  }
+  if ct == tls12.CT_HANDSHAKE {
+    if data.is_empty() || s.state == WAIT_CCS {
+      local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    s.hs = cat2(s.hs, data)
+    drain(s)
+    return
+  }
+  local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+}
+
+/// The complete handshake messages buffered.
+fn drain(var s: Server) {
+  while s.state != FAILED && s.hs.len() >= 4 {
+    let t = Int(s.hs[0])
+    let n = tls12.u24_at(s.hs, 1)
+    let most = if s.have_vers && t == tls12.HS_CERTIFICATE { tls12.MAX_CERTIFICATE_MSG } else { tls12.MAX_HANDSHAKE }
+    if n > most {
+      fail(s, tls12.ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
+      return
+    }
+    if s.hs.len() < 4 + n {
+      return
+    }
+    let msg = s.hs[0..4 + n]
+    s.hs = s.hs[4 + n..s.hs.len()]
+    handshake(s, t, msg)
+  }
+}
+
+/// One handshake message of type t.
+fn handshake(var s: Server, t: Int, msg: Bytes) {
+  if !tls12.known_type(t) {
+    local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if t == tls12.HS_CLIENT_KEY_EXCHANGE && tls12.u24_at(msg, 1) != msg.len() - 4 {
+    local(s, tls12.ALERT_DECODE_ERROR)
+    return
+  }
+  if s.state == DONE {
+    if t != tls12.HS_HELLO_REQUEST {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_HELLO_REQUEST, t))
+      return
+    }
+    fail(s, tls12.ALERT_NO_RENEGOTIATION, "local error: tls: no renegotiation")
+    return
+  }
+  if s.state == WAIT_CH {
+    if t != tls12.HS_CLIENT_HELLO {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_CLIENT_HELLO, t))
+      return
+    }
+    client_hello(s, msg)
+    return
+  }
+  if s.state == WAIT_CKE {
+    if t != tls12.HS_CLIENT_KEY_EXCHANGE {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_CLIENT_KEY_EXCHANGE, t))
+      return
+    }
+    client_key_exchange(s, msg)
+    return
+  }
+  if s.state == WAIT_FIN {
+    if t != tls12.HS_FINISHED {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_FINISHED, t))
+      return
+    }
+    finished(s, msg)
+    return
+  }
+  local(s, tls12.ALERT_UNEXPECTED_MESSAGE)
+}
+
+// ---------------------------------------------------------------------------
+// ClientHello
+
+/// The fields of a ClientHello the server reads (Go's clientHelloMsg).
+pub struct Hello {
+  pub ok: Bool
+  pub vers: Int
+  pub random: Bytes
+  pub sid: Bytes
+  pub suites: List[Int]
+  pub comps: Bytes
+  pub sni: Str
+  pub curves: List[Int]
+  pub points: Bytes
+  pub sigalgs: List[Int]
+  pub reneg_ok: Bool
+  pub reneg: Bytes
+  pub ems: Bool
+  pub alpn: List[Str]
+  pub versions: List[Int]
+}
+
+/// The 2 byte numbers of a list of n bytes at p in m.
+fn u16_list(m: Bytes, p: Int, n: Int) -> List[Int] {
+  var out: List[Int] = []
+  var q = p
+  while q + 2 <= p + n {
+    out.push(tls12.u16_at(m, q))
+    q += 2
+  }
+  out
+}
+
+/// Go's clientHelloMsg.unmarshal.
+pub fn parse_hello(m: Bytes) -> Hello {
+  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: []}
+  var p = 4
+  if m.len() < p + 35 {
+    return h
+  }
+  h.vers = tls12.u16_at(m, p)
+  h.random = m[p + 2..p + 34]
+  p += 34
+  let sn = Int(m[p])
+  if m.len() < p + 1 + sn + 2 {
+    return h
+  }
+  h.sid = m[p + 1..p + 1 + sn]
+  p += 1 + sn
+  let cn = tls12.u16_at(m, p)
+  if cn & 1 != 0 || m.len() < p + 2 + cn + 1 {
+    return h
+  }
+  h.suites = u16_list(m, p + 2, cn)
+  h.reneg_ok = tls12.has(h.suites, SCSV_RENEGOTIATION)
+  p += 2 + cn
+  let mn = Int(m[p])
+  if m.len() < p + 1 + mn {
+    return h
+  }
+  h.comps = m[p + 1..p + 1 + mn]
+  p += 1 + mn
+  if p == m.len() {
+    h.ok = true
+    return h
+  }
+  if m.len() < p + 2 || p + 2 + tls12.u16_at(m, p) != m.len() {
+    return h
+  }
+  p += 2
+  var seen: List[Int] = []
+  while p < m.len() {
+    if m.len() < p + 4 {
+      return h
+    }
+    let t = tls12.u16_at(m, p)
+    let n = tls12.u16_at(m, p + 2)
+    if m.len() < p + 4 + n || tls12.has(seen, t) {
+      return h
+    }
+    seen.push(t)
+    let d = m[p + 4..p + 4 + n]
+    p += 4 + n
+    if !extension(h, t, d, p == m.len()) {
+      return h
+    }
+  }
+  h.ok = true
+  h
+}
+
+/// One extension of a ClientHello: false when it does not parse (last
+/// tells whether it is the last extension).
+fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
+  let n = d.len()
+  if t == tls12.EXT_SERVER_NAME {
+    if n < 2 || tls12.u16_at(d, 0) != n - 2 || n == 2 {
+      return false
+    }
+    var q = 2
+    while q < n {
+      if n < q + 3 {
+        return false
+      }
+      let typ = Int(d[q])
+      let l = tls12.u16_at(d, q + 1)
+      if l == 0 || n < q + 3 + l {
+        return false
+      }
+      if typ == 0 {
+        if h.sni != "" {
+          return false
+        }
+        h.sni = d[q + 3..q + 3 + l].to_str() ?? ""
+        if h.sni.ends_with(".") {
+          return false
+        }
+      }
+      q += 3 + l
+    }
+    return true
+  }
+  if t == tls12.EXT_STATUS_REQUEST {
+    if n < 5 || n < 3 + tls12.u16_at(d, 1) + 2 {
+      return false
+    }
+    let a = tls12.u16_at(d, 1)
+    return n == 5 + a + tls12.u16_at(d, 3 + a) || n > 5 + a + tls12.u16_at(d, 3 + a)
+  }
+  if t == tls12.EXT_SUPPORTED_GROUPS || t == tls12.EXT_SIGNATURE_ALGORITHMS || t == tls12.EXT_SIGNATURE_ALGORITHMS_CERT {
+    if n < 2 || tls12.u16_at(d, 0) != n - 2 || n == 2 || n & 1 != 0 {
+      return false
+    }
+    if t == tls12.EXT_SUPPORTED_GROUPS {
+      h.curves = u16_list(d, 2, n - 2)
+    } else if t == tls12.EXT_SIGNATURE_ALGORITHMS {
+      h.sigalgs = u16_list(d, 2, n - 2)
+    }
+    return true
+  }
+  if t == tls12.EXT_POINT_FORMATS {
+    if n < 2 || Int(d[0]) != n - 1 {
+      return false
+    }
+    h.points = d[1..n]
+    return true
+  }
+  if t == tls12.EXT_RENEGOTIATION_INFO {
+    if n < 1 || Int(d[0]) != n - 1 {
+      return false
+    }
+    h.reneg = d[1..n]
+    h.reneg_ok = true
+    return true
+  }
+  if t == tls12.EXT_EMS {
+    h.ems = true
+    return true
+  }
+  if t == tls12.EXT_ALPN {
+    if n < 2 || tls12.u16_at(d, 0) != n - 2 || n == 2 {
+      return false
+    }
+    var q = 2
+    while q < n {
+      let l = Int(d[q])
+      if l == 0 || n < q + 1 + l {
+        return false
+      }
+      h.alpn.push(d[q + 1..q + 1 + l].to_str() ?? "")
+      q += 1 + l
+    }
+    return true
+  }
+  if t == tls12.EXT_SUPPORTED_VERSIONS {
+    if n < 1 || Int(d[0]) != n - 1 || n == 1 || (n - 1) & 1 != 0 {
+      return false
+    }
+    h.versions = u16_list(d, 1, n - 1)
+    return true
+  }
+  if t == 44 {
+    // cookie
+    return n >= 2 && tls12.u16_at(d, 0) == n - 2 && n > 2
+  }
+  if t == 51 {
+    // key_share: the shares, each a group and non-empty data
+    if n < 2 || tls12.u16_at(d, 0) != n - 2 {
+      return false
+    }
+    var q = 2
+    while q < n {
+      if n < q + 4 || tls12.u16_at(d, q + 2) == 0 || n < q + 4 + tls12.u16_at(d, q + 2) {
+        return false
+      }
+      q += 4 + tls12.u16_at(d, q + 2)
+    }
+    return true
+  }
+  if t == 45 {
+    // psk_key_exchange_modes
+    return n >= 1 && Int(d[0]) == n - 1
+  }
+  if t == 41 {
+    // pre_shared_key, which must be the last
+    return last && n >= 2
+  }
+  true
+}
+
+/// Go's supportedVersionsFromMax: the versions it knows up to max.
+fn versions_from(max: Int) -> List[Int] {
+  var out: List[Int] = []
+  for v in [0x0304, 0x0303, 0x0302, 0x0301] {
+    if v <= max {
+      out.push(v)
+    }
+  }
+  out
+}
+
+/// Go's %x of a []uint16: "[c02b 1301]".
+fn hex_list(xs: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for x in xs {
+    parts.push(tls12.hex(x))
+  }
+  "[${parts.join(" ")}]"
+}
+
+/// Go's %q of a []string.
+fn quote_list(xs: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for x in xs {
+    // (ALPN protocols are printable; Go would escape quotes)
+    parts.push("\"${x}\"")
+  }
+  "[${parts.join(" ")}]"
+}
+
+/// Go's isAESGCMPreferred: the first suite of the client's that Go knows
+/// tells whether it prefers AES-GCM.
+fn aes_preferred(suites: List[Int]) -> Bool {
+  let aes = [0x009c, 0x009d, 0xc02b, 0xc02c, 0xc02f, 0xc030, 0x1301, 0x1302]
+  let other = [0x0005, 0x000a, 0x002f, 0x0035, 0x003c, 0xc007, 0xc009, 0xc00a, 0xc011, 0xc012, 0xc013, 0xc014, 0xc023, 0xc027, 0xcca8, 0xcca9, 0x1303]
+  for s in suites {
+    if tls12.has(aes, s) {
+      return true
+    }
+    if tls12.has(other, s) {
+      return false
+    }
+  }
+  false
+}
+
+/// The server's order of preference: Go's, ChaCha20-Poly1305 first when
+/// the client does not prefer AES-GCM.
+fn preference(aes: Bool) -> List[Int] {
+  if aes {
+    tls12.default_suites()
+  } else {
+    [tls12.ECDHE_ECDSA_CHACHA20, tls12.ECDHE_RSA_CHACHA20, tls12.ECDHE_ECDSA_AES128_GCM, tls12.ECDHE_RSA_AES128_GCM, tls12.ECDHE_ECDSA_AES256_GCM, tls12.ECDHE_RSA_AES256_GCM]
+  }
+}
+
+/// Go's negotiateALPN: the server's first protocol the client offers;
+/// none when either has none or the server offers h2 and the client
+/// http/1.1; an error's text otherwise.
+fn negotiate_alpn(server: List[Str], client: List[Str]) -> (Str, Str) {
+  if server.is_empty() || client.is_empty() {
+    return ("", "")
+  }
+  var fallback = false
+  for sp in server {
+    for cp in client {
+      if sp == cp {
+        return (sp, "")
+      }
+      if sp == "h2" && cp == "http/1.1" {
+        fallback = true
+      }
+    }
+  }
+  if fallback {
+    return ("", "")
+  }
+  ("", "tls: client requested unsupported application protocols (${quote_list(client)})")
+}
+
+/// Go's readClientHello and processClientHello, pickCipherSuite, then the
+/// server's flight (ServerHello, Certificate, ServerKeyExchange,
+/// ServerHelloDone, each its own record).
+fn client_hello(var s: Server, msg: Bytes) {
+  let h = parse_hello(msg)
+  if !h.ok {
+    local(s, tls12.ALERT_DECODE_ERROR)
+    return
+  }
+  var cv = h.versions
+  if cv.is_empty() {
+    cv = versions_from(if h.vers >= 0x0304 { 0x0303 } else { h.vers })
+  }
+  if !tls12.has(cv, 0x0303) {
+    fail(s, tls12.ALERT_PROTOCOL_VERSION, "tls: client offered only unsupported versions: ${hex_list(cv)}")
+    return
+  }
+  s.have_vers = true
+  let cf = s.conf
+  var none = false
+  for m in h.comps {
+    if m == 0 {
+      none = true
+    }
+  }
+  if !none {
+    fail(s, tls12.ALERT_ILLEGAL_PARAMETER, "tls: client does not support uncompressed connections")
+    return
+  }
+  var sr = if cf.random.len() == 32 { cf.random } else { rand.next_bytes(32) }
+  if cf.max13 {
+    sr = cat2(sr[0..24], b"DOWNGRD\x01")
+  }
+  if h.reneg.len() != 0 {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: initial handshake had non-empty renegotiation extension")
+    return
+  }
+  let (proto, perr) = negotiate_alpn(cf.alpn, h.alpn)
+  if perr != "" {
+    fail(s, tls12.ALERT_NO_APPLICATION_PROTOCOL, perr)
+    return
+  }
+  var curve_ok = false
+  for g in h.curves {
+    if tls12.has(cf.groups, g) {
+      curve_ok = true
+    }
+  }
+  var uncompressed = h.points.is_empty()
+  var other = false
+  for f in h.points {
+    if f == 0 {
+      uncompressed = true
+    } else {
+      other = true
+    }
+  }
+  if !h.points.is_empty() && other && !uncompressed {
+    fail(s, ALERT_MISSING_EXTENSION, "tls: client offered only incompatible point formats")
+    return
+  }
+  let ecdhe_ok = curve_ok && uncompressed
+  let ec_key = cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 || cf.key_alg == x509.KEY_ED25519
+  var suite = 0
+  for c in preference(aes_preferred(h.suites)) {
+    if suite == 0 && tls12.has(cf.suites, c) && tls12.has(h.suites, c) && ecdhe_ok && (if tls12.suite_rsa(c) { cf.key_alg == x509.KEY_RSA } else { ec_key }) {
+      suite = c
+    }
+  }
+  if suite == 0 {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: no cipher suite supported by both client and server; client offered: ${hex_list(h.suites)}")
+    return
+  }
+  if tls12.has(h.suites, SCSV_FALLBACK) && h.vers < 0x0303 {
+    fail(s, ALERT_INAPPROPRIATE_FALLBACK, "tls: client using inappropriate protocol fallback")
+    return
+  }
+  s.suite = suite
+  s.cr = h.random
+  s.sr = sr
+  s.ems = h.ems
+  s.alpn = proto
+  s.host = h.sni
+  s.tr = msg
+  // ServerHello (Go's extension order)
+  var exts: List[Bytes] = []
+  if h.reneg_ok {
+    exts.push(tls12.ext(tls12.EXT_RENEGOTIATION_INFO, tls12.vec8(b"")))
+  }
+  if h.ems {
+    exts.push(tls12.ext(tls12.EXT_EMS, b""))
+  }
+  if proto != "" {
+    exts.push(tls12.ext(tls12.EXT_ALPN, tls12.vec16(tls12.vec8(proto.bytes()))))
+  }
+  if !h.points.is_empty() {
+    exts.push(tls12.ext(tls12.EXT_POINT_FORMATS, tls12.vec8(tls12.u8(0))))
+  }
+  if h.sni != "" {
+    exts.push(tls12.ext(tls12.EXT_SERVER_NAME, b""))
+  }
+  var body = asn1.cat([tls12.u16(0x0303), sr, tls12.vec8(b""), tls12.u16(suite), tls12.u8(0)])
+  if !exts.is_empty() {
+    body = cat2(body, tls12.vec16(asn1.cat(exts)))
+  }
+  // ServerHello and Certificate are written before the key exchange is
+  // made (a failure there follows them, as Go's)
+  write(s, tls12.message(tls12.HS_SERVER_HELLO, body))
+  write(s, tls12.certificate_msg(cf.certs))
+  let ske = key_exchange(s, h)
+  if s.state == FAILED {
+    return
+  }
+  write(s, ske)
+  write(s, tls12.message(tls12.HS_SERVER_HELLO_DONE, b""))
+  s.state = WAIT_CKE
+}
+
+/// A handshake message in its own record, in the transcript.
+fn write(var s: Server, m: Bytes) {
+  s.tr = cat2(s.tr, m)
+  s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_HANDSHAKE, m, 0x0303))
+}
+
+/// The signature schemes the key can make in TLS 1.2 (Go's
+/// signatureSchemesForPublicKey less the disabled SHA-1 ones): ECDSA with
+/// any hash, RSA by the modulus' size (PSS first).
+fn key_schemes(cf: Conf) -> List[Int] {
+  if cf.key_alg == x509.KEY_ED25519 {
+    return [0x0807]
+  }
+  if cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 {
+    return [0x0403, 0x0503, 0x0603]
+  }
+  if cf.key_alg != x509.KEY_RSA {
+    return []
+  }
+  let size = match rsa.private_key(cf.key) {
+    Some(k) => k.n.len()
+    None => 0
+  }
+  var out: List[Int] = []
+  // the schemes and the least modulus (bytes) each needs
+  let scs = [0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601]
+  let mins = [66, 98, 130, 62, 78, 94]
+  for i in 0..scs.len() {
+    if size >= mins[i] {
+      out.push(scs[i])
+    }
+  }
+  out
+}
+
+/// Go's ecdheKeyAgreement.generateServerKeyExchange: the client's first
+/// curve the server has, a key, the parameters signed with the client's
+/// first scheme the key can make.
+fn key_exchange(var s: Server, h: Hello) -> Bytes {
+  var group = 0
+  for g in h.curves {
+    if group == 0 && tls12.has(s.conf.groups, g) {
+      group = g
+    }
+  }
+  if group == 0 {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: no supported elliptic curves offered")
+    return b""
+  }
+  s.group = group
+  s.priv = if s.conf.priv.len() > 0 { s.conf.priv } else { tls13.keygen(group) }
+  let params = asn1.cat([tls12.u8(3), tls12.u16(group), tls12.vec8(tls13.public_key(group, s.priv))])
+  let mine = key_schemes(s.conf)
+  if mine.is_empty() {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: unsupported certificate: private key of type ${tls12.key_type(s.conf.key_alg)}")
+    return b""
+  }
+  if h.sigalgs.is_empty() {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: missing signature_algorithms from TLS 1.2 peer")
+    return b""
+  }
+  var scheme = 0
+  for a in h.sigalgs {
+    if scheme == 0 && tls12.has(mine, a) {
+      scheme = a
+    }
+  }
+  if scheme == 0 {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: peer doesn't support any of the certificate's signature algorithms")
+    return b""
+  }
+  let alg = tls12.sig_alg(scheme)
+  if tls12.alg_rsa(alg) != tls12.suite_rsa(s.suite) {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: certificate cannot be used with the selected cipher suite")
+    return b""
+  }
+  let signed = asn1.cat([s.cr, s.sr, params])
+  let sig = if s.conf.sig.len() > 0 { s.conf.sig } else { sign(s.conf, alg, signed) }
+  if sig.is_empty() {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: failed to sign ECDHE parameters")
+    return b""
+  }
+  tls12.message(tls12.HS_SERVER_KEY_EXCHANGE, asn1.cat([params, tls12.u16(scheme), tls12.vec16(sig)]))
+}
+
+/// The signature of signed with alg by the server's key (crypto.Signer's
+/// SignMessage: the data hashed with the scheme's hash).
+fn sign(cf: Conf, alg: Int, signed: Bytes) -> Bytes {
+  if alg == x509.SIG_ED25519 {
+    return ed25519.sign(cf.key, signed)
+  }
+  let hash = tls12.alg_hash(alg)
+  let hashed = sha256.sum(hash, signed)
+  if cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 {
+    return nistec.sign(if cf.key_alg == x509.KEY_P384 { nistec.P384 } else { nistec.P256 }, cf.key, hashed)
+  }
+  let k = match rsa.private_key(cf.key) {
+    Some(k) => k
+    None => return b""
+  }
+  if alg >= x509.SIG_PSS_SHA256 && alg <= x509.SIG_PSS_SHA512 {
+    let n = rsa.hash_len(hash)
+    if cf.salt.len() >= n {
+      return rsa.sign_pss_salt(k, hash, hashed, cf.salt[0..n])
+    }
+    return rsa.sign_pss(k, hash, hashed)
+  }
+  rsa.sign_pkcs1(k, hash, hashed)
+}
+
+// ---------------------------------------------------------------------------
+// The client's flight
+
+/// Go's ecdheKeyAgreement.processClientKeyExchange, then the master
+/// secret and keys.
+fn client_key_exchange(var s: Server, msg: Bytes) {
+  let bad = "tls: invalid ClientKeyExchange message"
+  let ck = msg[4..msg.len()]
+  if ck.is_empty() || Int(ck[0]) != ck.len() - 1 {
+    fail(s, tls12.ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  let pms = match tls13.shared_secret(s.group, s.priv, ck[1..ck.len()]) {
+    Some(p) => p
+    None => {
+      fail(s, tls12.ALERT_ILLEGAL_PARAMETER, bad)
+      return
+    }
+  }
+  s.tr = cat2(s.tr, msg)
+  s.master = tls12.master_secret(tls12.suite_hash(s.suite), pms, s.ems, s.tr, s.cr, s.sr)
+  s.priv = b""
+  let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
+  s.next_rk = tls12.keys(s.suite, kb[0], kb[2])
+  s.next_wk = tls12.keys(s.suite, kb[1], kb[3])
+  s.state = WAIT_CCS
+}
+
+/// The client's Finished, then the server's ChangeCipherSpec and
+/// Finished.
+fn finished(var s: Server, msg: Bytes) {
+  let want = tls12.verify_data(s.suite, s.master, "client finished", s.tr)
+  let got = msg[4..msg.len()]
+  if got.len() != want.len() || !ct.bytes_equal(got, want) {
+    fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: client's Finished message is incorrect")
+    return
+  }
+  s.tr = cat2(s.tr, msg)
+  s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_CCS, b"\x01", 0x0303))
+  s.wk = s.next_wk
+  let fin = tls12.message(tls12.HS_FINISHED, tls12.verify_data(s.suite, s.master, "server finished", s.tr))
+  s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_HANDSHAKE, fin, 0x0303))
+  s.tr = b""
+  s.state = DONE
+}
+
+/// Fails the connection with a fatal alert and Go's error text (the
+/// first failure stays).
+fn fail(var s: Server, alert: Int, msg: Str) {
+  if s.state != FAILED {
+    s.err = msg
+    s.state = FAILED
+    let level = if alert == tls12.ALERT_NO_RENEGOTIATION { 1 } else { 2 }
+    s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_ALERT, asn1.cat([tls12.u8(level), tls12.u8(alert)]), 0x0303))
+  }
+}
+
+fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
+
+// ---------------------------------------------------------------------------
+// The tests' op
+
+/// The ServerKeyExchange in the server's handshake records out (in the
+/// clear), with its signature checked against the leaf's key (the client
+/// random the traces', 32 bytes of 0x11) and replaced
+/// by "<sig-ok>" or "<sig-bad>" in the hex (crypto/tls's ECDSA signatures
+/// cannot be repeated; std/rt internal_tls12.go does the same).
+pub fn mask_sig(hexout: Str, out: Bytes, leaf_der: Bytes) -> Str {
+  var p = 0
+  var cr = b""
+  while p + 5 <= out.len() && out[p] == 22 {
+    let n = tls12.u16_at(out, p + 3)
+    let body = out[p + 5..p + 5 + n]
+    if body.len() > 4 && Int(body[0]) == tls12.HS_SERVER_HELLO {
+      cr = body[6..38]
+    }
+    if body.len() > 8 && Int(body[0]) == tls12.HS_SERVER_KEY_EXCHANGE {
+      let k = body[4..body.len()]
+      let pl = Int(k[3])
+      let params = k[0..4 + pl]
+      let scheme = tls12.u16_at(k, 4 + pl)
+      let sig = k[4 + pl + 4..k.len()]
+      let leaf = x509.parse(leaf_der).cert
+      let ok = tls12.check_sig(tls12.sig_alg(scheme), leaf.key_alg, leaf.key, asn1.cat([tls12.fill(0x11, 32), cr, params]), sig) == ""
+      let h = sig.to_hex()
+      let at = hexout.find(h) ?? -1
+      if at >= 0 {
+        let b = hexout.bytes()
+        return "${b[0..at].to_str() ?? ""}<${if ok { "sig-ok" } else { "sig-bad" }}>${b[at + h.len()..b.len()].to_str() ?? ""}"
+      }
+    }
+    p += 5 + n
+  }
+  hexout
+}
+
+/// internal.crypto_op's tls12.server (std/internal.xo): a server against
+/// a recorded client (crypto/tls's; std/rt internal_tls12.go drives
+/// crypto/tls's server the same way): a is the ECDHE private key for the
+/// curve it picks (the trace's; Go's server makes the same from its
+/// random source of 0x22 bytes, which also gives the random and RSA-PSS
+/// salts), b's parts the client's handshake records, its records after
+/// the handshake, the leaf's DER, its key (RSA: PKCS #1 DER; ECDSA: the
+/// scalar), and the ServerKeyExchange's signature to send (empty: sign
+/// here); d is "suites groups alpn keytype chunk mask" (chunk "r" goes
+/// through resume with the first record's ClientHello; keytype rsa, p256,
+/// or p384, which Go's reference needs to read the key; mask 1 to show
+/// the signature as its check). The result: what
+/// the server sent in the handshake, its outcome, what it read and sent
+/// while reading, its reply ("pong:" and the data), and its close_notify.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what != "server" {
+    return None
+  }
+  let parts = tls12.unpack(b)
+  let args = (d.to_str() ?? "").split(" ")
+  if parts.len() != 5 || args.len() != 6 {
+    return Some(b"args")
+  }
+  var cf = conf([parts[2]], parts[3])
+  cf.suites = tls12.nums(args[0], 16)
+  cf.groups = tls12.nums(args[1], 10)
+  cf.alpn = if args[2] == "-" { [] } else { args[2].split(",") }
+  cf.random = tls12.fill(0x22, 32)
+  cf.salt = tls12.fill(0x22, 64)
+  cf.priv = a
+  cf.sig = parts[4]
+  let chunk = Int.parse(args[4]) ?? 0
+  var sv = server(cf)
+  if args[4] == "r" && parts[0].len() >= 5 && parts[0].len() >= 5 + tls12.u16_at(parts[0], 3) {
+    // tls13srv.xo's hand-off: its first record's ClientHello, then the rest
+    let n = tls12.u16_at(parts[0], 3)
+    sv = resume(cf, parts[0][5..5 + n], parts[0][5 + n..parts[0].len()])
+  } else {
+    feed_in(sv, parts[0], chunk)
+  }
+  let hs = take(sv)
+  var hx = hs.to_hex()
+  if args[5] == "1" {
+    hx = mask_sig(hx, hs, parts[2])
+  }
+  var o = "hs ${hx}\n"
+  if sv.state != DONE {
+    let e = if sv.state == FAILED { sv.err } else { "EOF" }
+    return Some("${o}result ${e}\n".bytes())
+  }
+  o = "${o}result ok ${tls12.hex4(sv.suite)} ${sv.group} ${if sv.alpn == "" { "-" } else { sv.alpn }}\n"
+  feed_in(sv, parts[1], chunk)
+  let got = recv(sv)
+  let end = if sv.state == FAILED { sv.err } else { "EOF" }
+  o = "${o}got ${got.to_hex()} ${take(sv).to_hex()} ${end}\n"
+  send(sv, cat2(b"pong:", got))
+  o = "${o}app ${take(sv).to_hex()}\n"
+  close(sv)
+  o = "${o}bye ${take(sv).to_hex()}\n"
+  Some(o.bytes())
+}
+
+/// Feeds data in pieces of chunk bytes (0 at once).
+fn feed_in(var s: Server, data: Bytes, chunk: Int) {
+  if chunk <= 0 {
+    feed(s, data)
+    return
+  }
+  var i = 0
+  while i < data.len() {
+    let j = if i + chunk < data.len() { i + chunk } else { data.len() }
+    feed(s, data[i..j])
+    i = j
+  }
+}

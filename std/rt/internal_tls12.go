@@ -2,6 +2,12 @@ package rt
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -25,6 +31,9 @@ import (
 // 1.3 and 1.2 in one ClientHello (b's first part, the trace's, is the one
 // crypto/tls builds itself here). The lines it returns are tls12.xo op's.
 func cryptoTLS12(what string, a, b, c, d Bytes) (Bytes, bool) {
+	if what == "server" {
+		return tls12Server(b, d)
+	}
 	if what != "client" && what != "combined" {
 		return "", false
 	}
@@ -172,3 +181,167 @@ func (c *tls12Conn) RemoteAddr() net.Addr               { return nil }
 func (c *tls12Conn) SetDeadline(t time.Time) error      { return nil }
 func (c *tls12Conn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *tls12Conn) SetWriteDeadline(t time.Time) error { return nil }
+
+// tls12Server is tls12srv.xo op's reference: tls.Server (TLS 1.2 only,
+// no session tickets) over b's parts (the client's handshake records,
+// its records after the handshake, the leaf's DER, its key: PKCS #1 DER
+// or an ECDSA scalar, and a signature the Xo server is given, not needed
+// here) with d "suites groups alpn keytype chunk mask"; its random
+// source repeats 0x22, so its random, ECDHE key, and RSA-PSS salts are
+// the trace's.
+func tls12Server(b, d Bytes) (Bytes, bool) {
+	parts := tls12Unpack([]byte(b))
+	args := strings.Split(string(d), " ")
+	if len(parts) != 5 || len(args) != 6 {
+		return "args", true
+	}
+	old, had := os.LookupEnv("GODEBUG")
+	os.Setenv("GODEBUG", "cryptocustomrand=1")
+	defer func() {
+		if had {
+			os.Setenv("GODEBUG", old)
+		} else {
+			os.Unsetenv("GODEBUG")
+		}
+	}()
+	var key crypto.Signer
+	var err error
+	switch args[3] {
+	case "rsa":
+		key, err = x509.ParsePKCS1PrivateKey(parts[3])
+	case "p384":
+		key, err = ecdsa.ParseRawPrivateKey(elliptic.P384(), parts[3])
+	default:
+		key, err = ecdsa.ParseRawPrivateKey(elliptic.P256(), parts[3])
+	}
+	if err != nil {
+		return "key", true
+	}
+	cfg := &tls.Config{
+		Rand:                   tls12Const(0x22),
+		Certificates:           []tls.Certificate{{Certificate: [][]byte{parts[2]}, PrivateKey: key}},
+		MinVersion:             tls.VersionTLS12,
+		MaxVersion:             tls.VersionTLS12,
+		SessionTicketsDisabled: true,
+	}
+	for _, s := range strings.Split(args[0], ",") {
+		v, _ := strconv.ParseUint(s, 16, 16)
+		cfg.CipherSuites = append(cfg.CipherSuites, uint16(v))
+	}
+	for _, g := range strings.Split(args[1], ",") {
+		v, _ := strconv.Atoi(g)
+		cfg.CurvePreferences = append(cfg.CurvePreferences, tls.CurveID(v))
+	}
+	if args[2] != "-" {
+		cfg.NextProtos = strings.Split(args[2], ",")
+	}
+	chunk, _ := strconv.Atoi(args[4])
+	conn := &tls12Conn{in: append(append([]byte(nil), parts[0]...), parts[1]...), chunk: chunk}
+	sv := tls.Server(conn, cfg)
+	err = sv.Handshake()
+	raw := append([]byte(nil), conn.out.Bytes()...)
+	hs := conn.take()
+	if args[5] == "1" {
+		hs = tls12MaskSig(hs, raw, parts[2])
+	}
+	out := "hs " + hs + "\n"
+	if err != nil {
+		return Bytes(out + "result " + err.Error() + "\n"), true
+	}
+	st := sv.ConnectionState()
+	proto := st.NegotiatedProtocol
+	if proto == "" {
+		proto = "-"
+	}
+	out += fmt.Sprintf("result ok %04x %d %s\n", st.CipherSuite, st.CurveID, proto)
+	var got []byte
+	buf := make([]byte, 4096)
+	for {
+		n, err := sv.Read(buf)
+		got = append(got, buf[:n]...)
+		if err != nil {
+			out += "got " + hex.EncodeToString(got) + " " + conn.take() + " " + err.Error() + "\n"
+			break
+		}
+	}
+	sv.Write(append([]byte("pong:"), got...))
+	out += "app " + conn.take() + "\n"
+	sv.Close()
+	out += "bye " + conn.take() + "\n"
+	return Bytes(out), true
+}
+
+// tls12MaskSig replaces the ServerKeyExchange's signature in the hex of
+// the server's records with its check against the leaf's key ("<sig-ok>"
+// or "<sig-bad>"; the client random is the traces', 32 bytes of
+// 0x11), as tls12srv.xo mask_sig.
+func tls12MaskSig(hx string, out, leafDER []byte) string {
+	var sr []byte
+	for len(out) >= 5 && out[0] == 22 {
+		n := int(out[3])<<8 | int(out[4])
+		body := out[5 : 5+n]
+		out = out[5+n:]
+		if len(body) > 4 && body[0] == 2 {
+			sr = body[6:38]
+		}
+		if len(body) <= 8 || body[0] != 12 {
+			continue
+		}
+		k := body[4:]
+		pl := int(k[3])
+		params := k[:4+pl]
+		scheme := int(k[4+pl])<<8 | int(k[5+pl])
+		sig := k[8+pl:]
+		leaf, err := x509.ParseCertificate(leafDER)
+		if err != nil {
+			return hx
+		}
+		signed := append(append(bytes.Repeat([]byte{0x11}, 32), sr...), params...)
+		ok := tls12Verify(scheme, leaf.PublicKey, signed, sig)
+		word := "<sig-bad>"
+		if ok {
+			word = "<sig-ok>"
+		}
+		return strings.Replace(hx, hex.EncodeToString(sig), word, 1)
+	}
+	return hx
+}
+
+func tls12Verify(scheme int, pub any, signed, sig []byte) bool {
+	var h crypto.Hash
+	var digest []byte
+	switch scheme & 0xff00 {
+	case 0x0400, 0x0800:
+		h = crypto.SHA256
+	case 0x0500:
+		h = crypto.SHA384
+	case 0x0600:
+		h = crypto.SHA512
+	}
+	if scheme == 0x0805 {
+		h = crypto.SHA384
+	} else if scheme == 0x0806 {
+		h = crypto.SHA512
+	}
+	switch h {
+	case crypto.SHA256:
+		s := sha256.Sum256(signed)
+		digest = s[:]
+	case crypto.SHA384:
+		s := sha512.Sum384(signed)
+		digest = s[:]
+	default:
+		s := sha512.Sum512(signed)
+		digest = s[:]
+	}
+	switch k := pub.(type) {
+	case *ecdsa.PublicKey:
+		return ecdsa.VerifyASN1(k, digest, sig)
+	case *rsa.PublicKey:
+		if scheme>>8 == 8 {
+			return rsa.VerifyPSS(k, h, digest, sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}) == nil
+		}
+		return rsa.VerifyPKCS1v15(k, h, digest, sig) == nil
+	}
+	return false
+}

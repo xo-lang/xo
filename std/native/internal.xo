@@ -12,6 +12,7 @@ use native/llrt/sysio
 use native/llrt/x509
 use native/llrt/x25519
 use native/llrt/tls12
+use native/llrt/tls12srv
 use native/llrt/tls13
 use native/llrt/tls13srv
 use native/llrt/x509verify
@@ -61,7 +62,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "chain" => x509verify.op(what, a, b, c, d)
     "x25519" => x25519.op(what, a, b, c, d)
     "tls13" => tls13.op(what, a, b, c, d)
-    "tls12" => tls12.op(what, a, b, c, d)
+    "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
     _ => None
   }

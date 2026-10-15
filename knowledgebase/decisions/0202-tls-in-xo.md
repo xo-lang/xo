@@ -118,6 +118,14 @@ std (decision 0074) unless the owner decides to expose a user marker.
   RFC's signature), recorded flights of Go 1.26's crypto/tls client
   (its X25519MLKEM768 share ignored), and the in-memory pair of
   tls13.xo's client and this server against Go's client and server.
+- 2026-10-15 (TLS 1.2 server, tls12srv.xo): tls13srv.xo reads the first
+  ClientHello; one offering 1.2 and not 1.3 stops it in HANDOFF, and
+  tlssrv.xo calls tls12srv.resume(conf, hello, rest). No client
+  certificates, tickets, or renegotiation. crypto/tls's ECDSA nonces
+  cannot be repeated from its random source, so the golden hands the
+  server the trace's ECDSA signature and checks one the server makes
+  separately; RSA signatures (PSS salts from the same source) match
+  byte for byte.
 
 ## Alternatives
 
