@@ -242,7 +242,13 @@ func tls12Server(b, d Bytes) (Bytes, bool) {
 	raw := append([]byte(nil), conn.out.Bytes()...)
 	hs := conn.take()
 	if args[5] == "1" {
-		hs = tls12MaskSig(hs, raw, parts[2])
+		cr := bytes.Repeat([]byte{0x11}, 32)
+		if in := parts[0]; len(in) >= 43 && in[0] == 22 && in[5] == 1 {
+			cr = in[11:43]
+		} else if all := append(append([]byte(nil), parts[0]...), parts[1]...); len(all) >= 43 && all[0] == 22 && all[5] == 1 {
+			cr = all[11:43]
+		}
+		hs = tls12MaskSig(raw, parts[2], cr)
 	}
 	out := "hs " + hs + "\n"
 	if err != nil {
@@ -271,40 +277,41 @@ func tls12Server(b, d Bytes) (Bytes, bool) {
 	return Bytes(out), true
 }
 
-// tls12MaskSig replaces the ServerKeyExchange's signature in the hex of
-// the server's records with its check against the leaf's key ("<sig-ok>"
-// or "<sig-bad>"; the client random is the traces', 32 bytes of
-// 0x11), as tls12srv.xo mask_sig.
-func tls12MaskSig(hx string, out, leafDER []byte) string {
+// tls12MaskSig is tls12srv.xo mask_sig: the hex of the server's records
+// with the ServerKeyExchange's record replaced by "<ske-ok>" or
+// "<ske-bad>", its signature checked against the leaf's key over the
+// client random cr.
+func tls12MaskSig(out, leafDER, cr []byte) string {
+	var b strings.Builder
 	var sr []byte
-	for len(out) >= 5 && out[0] == 22 {
+	for len(out) >= 5 && out[0] == 22 && 5+(int(out[3])<<8|int(out[4])) <= len(out) {
 		n := int(out[3])<<8 | int(out[4])
 		body := out[5 : 5+n]
-		out = out[5+n:]
-		if len(body) > 4 && body[0] == 2 {
+		if len(body) > 38 && body[0] == 2 {
 			sr = body[6:38]
 		}
-		if len(body) <= 8 || body[0] != 12 {
-			continue
+		if len(body) > 8 && body[0] == 12 {
+			k := body[4:]
+			pl := int(k[3])
+			ok := false
+			if len(k) >= 8+pl {
+				if leaf, err := x509.ParseCertificate(leafDER); err == nil {
+					signed := append(append(append([]byte(nil), cr...), sr...), k[:4+pl]...)
+					ok = tls12Verify(int(k[4+pl])<<8|int(k[5+pl]), leaf.PublicKey, signed, k[8+pl:])
+				}
+			}
+			if ok {
+				b.WriteString("<ske-ok>")
+			} else {
+				b.WriteString("<ske-bad>")
+			}
+		} else {
+			b.WriteString(hex.EncodeToString(out[:5+n]))
 		}
-		k := body[4:]
-		pl := int(k[3])
-		params := k[:4+pl]
-		scheme := int(k[4+pl])<<8 | int(k[5+pl])
-		sig := k[8+pl:]
-		leaf, err := x509.ParseCertificate(leafDER)
-		if err != nil {
-			return hx
-		}
-		signed := append(append(bytes.Repeat([]byte{0x11}, 32), sr...), params...)
-		ok := tls12Verify(scheme, leaf.PublicKey, signed, sig)
-		word := "<sig-bad>"
-		if ok {
-			word = "<sig-ok>"
-		}
-		return strings.Replace(hx, hex.EncodeToString(sig), word, 1)
+		out = out[5+n:]
 	}
-	return hx
+	b.WriteString(hex.EncodeToString(out))
+	return b.String()
 }
 
 func tls12Verify(scheme int, pub any, signed, sig []byte) bool {

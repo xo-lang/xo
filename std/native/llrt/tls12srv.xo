@@ -143,6 +143,10 @@ pub fn recv_some(var s: Server, n: Int) -> Bytes {
 /// Whether the handshake is complete and the connection usable.
 pub fn ready(s: Server) -> Bool { s.state == DONE && !s.closed }
 
+/// The bytes of a record received only in part (the input ending there
+/// is crypto/tls's "unexpected EOF").
+pub fn pending(s: Server) -> Int { s.rin.len() }
+
 /// Sends application data (after the handshake).
 pub fn send(var s: Server, data: Bytes) {
   if s.state == DONE && data.len() > 0 {
@@ -342,6 +346,7 @@ pub struct Hello {
   pub suites: List[Int]
   pub comps: Bytes
   pub sni: Str
+  pub has_sni: Bool
   pub curves: List[Int]
   pub points: Bytes
   pub sigalgs: List[Int]
@@ -365,7 +370,7 @@ fn u16_list(m: Bytes, p: Int, n: Int) -> List[Int] {
 
 /// Go's clientHelloMsg.unmarshal.
 pub fn parse_hello(m: Bytes) -> Hello {
-  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: []}
+  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", has_sni: false, curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: []}
   var p = 4
   if m.len() < p + 35 {
     return h
@@ -440,11 +445,13 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
         return false
       }
       if typ == 0 {
-        if h.sni != "" {
+        if h.has_sni {
           return false
         }
+        // the name's bytes as Go's string (not checked as UTF-8)
+        h.has_sni = true
         h.sni = d[q + 3..q + 3 + l].to_str() ?? ""
-        if h.sni.ends_with(".") {
+        if d[q + 2 + l] == 0x2e {
           return false
         }
       }
@@ -727,7 +734,7 @@ fn client_hello(var s: Server, msg: Bytes) {
   if !h.points.is_empty() {
     exts.push(tls12.ext(tls12.EXT_POINT_FORMATS, tls12.vec8(tls12.u8(0))))
   }
-  if h.sni != "" {
+  if h.has_sni {
     exts.push(tls12.ext(tls12.EXT_SERVER_NAME, b""))
   }
   var body = asn1.cat([tls12.u16(0x0303), sr, tls12.vec8(b""), tls12.u16(suite), tls12.u8(0)])
@@ -797,7 +804,7 @@ fn key_exchange(var s: Server, h: Hello) -> Bytes {
     return b""
   }
   s.group = group
-  s.priv = if s.conf.priv.len() > 0 { s.conf.priv } else { tls13.keygen(group) }
+  s.priv = group_key(s.conf.priv, group)
   let params = asn1.cat([tls12.u8(3), tls12.u16(group), tls12.vec8(tls13.public_key(group, s.priv))])
   let mine = key_schemes(s.conf)
   if mine.is_empty() {
@@ -824,12 +831,36 @@ fn key_exchange(var s: Server, h: Hello) -> Bytes {
     return b""
   }
   let signed = asn1.cat([s.cr, s.sr, params])
-  let sig = if s.conf.sig.len() > 0 { s.conf.sig } else { sign(s.conf, alg, signed) }
+  // the tests' signature only when it signs this exchange (a changed
+  // ClientHello gets its own, as crypto/tls's would)
+  var sig = s.conf.sig
+  if sig.is_empty() || !sig_fits(s.conf, alg, signed, sig) {
+    sig = sign(s.conf, alg, signed)
+  }
   if sig.is_empty() {
     fail(s, tls12.ALERT_HANDSHAKE_FAILURE, "tls: failed to sign ECDHE parameters")
     return b""
   }
   tls12.message(tls12.HS_SERVER_KEY_EXCHANGE, asn1.cat([params, tls12.u16(scheme), tls12.vec16(sig)]))
+}
+
+/// The ECDHE private key for group: the tests' hook (one key, or the
+/// X25519, P-256, and P-384 keys one after another: 112 bytes), else a
+/// fresh one.
+fn group_key(hook: Bytes, group: Int) -> Bytes {
+  if hook.len() == 112 {
+    return if group == tls13.GROUP_X25519 { hook[0..32] } else if group == tls13.GROUP_P256 { hook[32..64] } else { hook[64..112] }
+  }
+  if hook.len() > 0 { hook } else { tls13.keygen(group) }
+}
+
+/// Whether sig is the leaf's signature of signed with alg.
+fn sig_fits(cf: Conf, alg: Int, signed: Bytes, sig: Bytes) -> Bool {
+  if cf.certs.is_empty() {
+    return false
+  }
+  let leaf = x509.parse(cf.certs[0]).cert
+  tls12.check_sig(alg, leaf.key_alg, leaf.key, signed, sig) == ""
 }
 
 /// The signature of signed with alg by the server's key (crypto.Signer's
@@ -910,7 +941,9 @@ fn fail(var s: Server, alert: Int, msg: Str) {
     s.err = msg
     s.state = FAILED
     let level = if alert == tls12.ALERT_NO_RENEGOTIATION { 1 } else { 2 }
-    s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_ALERT, asn1.cat([tls12.u8(level), tls12.u8(alert)]), 0x0303))
+    // before the version is agreed crypto/tls's records say TLS 1.0
+    let vers = if s.have_vers { 0x0303 } else { 0x0301 }
+    s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_ALERT, asn1.cat([tls12.u8(level), tls12.u8(alert)]), vers))
   }
 }
 
@@ -919,49 +952,59 @@ fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
 // ---------------------------------------------------------------------------
 // The tests' op
 
-/// The ServerKeyExchange in the server's handshake records out (in the
-/// clear), with its signature checked against the leaf's key (the client
-/// random the traces', 32 bytes of 0x11) and replaced
-/// by "<sig-ok>" or "<sig-bad>" in the hex (crypto/tls's ECDSA signatures
-/// cannot be repeated; std/rt internal_tls12.go does the same).
-pub fn mask_sig(hexout: Str, out: Bytes, leaf_der: Bytes) -> Str {
+/// The hex of the server's handshake records out (in the clear) with the
+/// ServerKeyExchange's record replaced by "<ske-ok>" or "<ske-bad>", its
+/// signature checked against the leaf's key over the client random cr
+/// (crypto/tls's ECDSA signatures cannot be repeated and vary in length;
+/// std/rt internal_tls12.go does the same).
+pub fn mask_sig(out: Bytes, leaf_der: Bytes, cr: Bytes) -> Str {
+  var parts: List[Str] = []
   var p = 0
-  var cr = b""
-  while p + 5 <= out.len() && out[p] == 22 {
+  var sr = b""
+  while p + 5 <= out.len() && out[p] == 22 && p + 5 + tls12.u16_at(out, p + 3) <= out.len() {
     let n = tls12.u16_at(out, p + 3)
     let body = out[p + 5..p + 5 + n]
-    if body.len() > 4 && Int(body[0]) == tls12.HS_SERVER_HELLO {
-      cr = body[6..38]
+    if body.len() > 38 && Int(body[0]) == tls12.HS_SERVER_HELLO {
+      sr = body[6..38]
     }
     if body.len() > 8 && Int(body[0]) == tls12.HS_SERVER_KEY_EXCHANGE {
       let k = body[4..body.len()]
       let pl = Int(k[3])
-      let params = k[0..4 + pl]
-      let scheme = tls12.u16_at(k, 4 + pl)
-      let sig = k[4 + pl + 4..k.len()]
-      let leaf = x509.parse(leaf_der).cert
-      let ok = tls12.check_sig(tls12.sig_alg(scheme), leaf.key_alg, leaf.key, asn1.cat([tls12.fill(0x11, 32), cr, params]), sig) == ""
-      let h = sig.to_hex()
-      let at = hexout.find(h) ?? -1
-      if at >= 0 {
-        let b = hexout.bytes()
-        return "${b[0..at].to_str() ?? ""}<${if ok { "sig-ok" } else { "sig-bad" }}>${b[at + h.len()..b.len()].to_str() ?? ""}"
+      var ok = false
+      if k.len() >= 8 + pl {
+        let leaf = x509.parse(leaf_der).cert
+        ok = tls12.check_sig(tls12.sig_alg(tls12.u16_at(k, 4 + pl)), leaf.key_alg, leaf.key, asn1.cat([cr, sr, k[0..4 + pl]]), k[8 + pl..k.len()]) == ""
       }
+      parts.push(if ok { "<ske-ok>" } else { "<ske-bad>" })
+    } else {
+      parts.push(out[p..p + 5 + n].to_hex())
     }
     p += 5 + n
   }
-  hexout
+  parts.push(out[p..out.len()].to_hex())
+  parts.join("")
+}
+
+/// The client random of the ClientHello at the start of the client's
+/// bytes (32 bytes of 0x11 when there is none).
+fn client_random(b: Bytes) -> Bytes {
+  if b.len() >= 43 && b[0] == 22 && b[5] == 1 {
+    return b[11..43]
+  }
+  tls12.fill(0x11, 32)
 }
 
 /// internal.crypto_op's tls12.server (std/internal.xo): a server against
 /// a recorded client (crypto/tls's; std/rt internal_tls12.go drives
 /// crypto/tls's server the same way): a is the ECDHE private key for the
-/// curve it picks (the trace's; Go's server makes the same from its
-/// random source of 0x22 bytes, which also gives the random and RSA-PSS
-/// salts), b's parts the client's handshake records, its records after
-/// the handshake, the leaf's DER, its key (RSA: PKCS #1 DER; ECDSA: the
-/// scalar), and the ServerKeyExchange's signature to send (empty: sign
-/// here); d is "suites groups alpn keytype chunk mask" (chunk "r" goes
+/// curve it picks, or the X25519, P-256, and P-384 keys one after
+/// another (the traces'; Go's server makes the same from its random
+/// source of 0x22 bytes, which also gives the random and RSA-PSS salts),
+/// b's parts the client's handshake records and its records after the
+/// handshake (one stream, as crypto/tls reads them), the leaf's DER, its
+/// key (RSA: PKCS #1 DER; ECDSA: the scalar), and a ServerKeyExchange
+/// signature to send when it signs this exchange (empty, or when it does
+/// not: signed here); d is "suites groups alpn keytype chunk mask" (chunk "r" goes
 /// through resume with the first record's ClientHello; keytype rsa, p256,
 /// or p384, which Go's reference needs to read the key; mask 1 to show
 /// the signature as its check). The result: what
@@ -987,33 +1030,55 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.sig = parts[4]
   let chunk = Int.parse(args[4]) ?? 0
   var sv = server(cf)
-  if args[4] == "r" && parts[0].len() >= 5 && parts[0].len() >= 5 + tls12.u16_at(parts[0], 3) {
+  // the client's bytes are one stream, as crypto/tls's connection reads
+  // them: the handshake takes records until it ends, the rest waits
+  let all = cat2(parts[0], parts[1])
+  var pos = 0
+  if args[4] == "r" && all.len() >= 5 && all.len() >= 5 + tls12.u16_at(all, 3) {
     // tls13srv.xo's hand-off: its first record's ClientHello, then the rest
-    let n = tls12.u16_at(parts[0], 3)
-    sv = resume(cf, parts[0][5..5 + n], parts[0][5 + n..parts[0].len()])
-  } else {
-    feed_in(sv, parts[0], chunk)
+    let n = tls12.u16_at(all, 3)
+    sv = resume(cf, all[5..5 + n], b"")
+    pos = 5 + n
   }
+  pos = handshake_in(sv, all, pos, chunk)
   let hs = take(sv)
   var hx = hs.to_hex()
   if args[5] == "1" {
-    hx = mask_sig(hx, hs, parts[2])
+    hx = mask_sig(hs, parts[2], client_random(all))
   }
   var o = "hs ${hx}\n"
   if sv.state != DONE {
-    let e = if sv.state == FAILED { sv.err } else { "EOF" }
+    let e = if sv.state == FAILED { sv.err } else if pending(sv) > 0 { "unexpected EOF" } else { "EOF" }
     return Some("${o}result ${e}\n".bytes())
   }
   o = "${o}result ok ${tls12.hex4(sv.suite)} ${sv.group} ${if sv.alpn == "" { "-" } else { sv.alpn }}\n"
-  feed_in(sv, parts[1], chunk)
+  feed_in(sv, all[pos..all.len()], chunk)
   let got = recv(sv)
-  let end = if sv.state == FAILED { sv.err } else { "EOF" }
+  let end = if sv.state == FAILED { sv.err } else if pending(sv) > 0 { "unexpected EOF" } else { "EOF" }
   o = "${o}got ${got.to_hex()} ${take(sv).to_hex()} ${end}\n"
   send(sv, cat2(b"pong:", got))
   o = "${o}app ${take(sv).to_hex()}\n"
   close(sv)
   o = "${o}bye ${take(sv).to_hex()}\n"
   Some(o.bytes())
+}
+
+/// Feeds data from pos a record at a time (each in pieces of chunk
+/// bytes, 0 whole) until the handshake ends or the data does: where the
+/// handshake stopped reading.
+fn handshake_in(var s: Server, data: Bytes, pos0: Int, chunk: Int) -> Int {
+  var pos = pos0
+  while pos < data.len() && s.state != DONE && s.state != FAILED {
+    // up to the end of the record at pos (its header read from the data;
+    // fed records leave the server's buffer empty)
+    var end = data.len()
+    if data.len() - pos >= 5 && pos + 5 + tls12.u16_at(data, pos + 3) < data.len() {
+      end = pos + 5 + tls12.u16_at(data, pos + 3)
+    }
+    feed_in(s, data[pos..end], chunk)
+    pos = end
+  }
+  pos
 }
 
 /// Feeds data in pieces of chunk bytes (0 at once).

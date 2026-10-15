@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS 1.2 (xo-2b's server differential fuzz, 137 differences to
+  0): alerts before the version is agreed use record version 0x0301 as
+  crypto/tls (server and client); a ClientHello's server name is
+  acknowledged whatever its bytes; the tls12 ops read the peer's bytes as
+  one stream and report "unexpected EOF" inside a record; the server op
+  takes the three groups' ECDHE keys and uses a hooked signature only
+  when it signs the exchange, and its mask covers the ServerKeyExchange
+  record (ECDSA signatures vary in length).
 - Native runtime (zero-C audit item B31, part 9, decision 0202): X.509
   parsing and chain errors as strict as Go's, with Go's texts.
   std/native/llrt/x509.xo's parser is now a port of Go 1.26's

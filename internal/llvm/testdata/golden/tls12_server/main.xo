@@ -149,9 +149,9 @@ fn with_sigalgs(rec: Bytes, algs: Bytes) -> Bytes {
 fn named(w: Str, s_hs: Str) -> Str {
   if w == s_hs {
     "<server flight>"
-  } else if w.contains("<sig-ok>") {
+  } else if w.contains("<ske-ok>") {
     "<server flight, signature verified, ${w.len() / 2} bytes>"
-  } else if w.contains("<sig-bad>") {
+  } else if w.contains("<ske-bad>") {
     "<server flight, signature BAD>"
   } else if w.len() > 120 {
     "${w.bytes()[0..32].to_str() ?? ""}...${w.bytes()[w.len() - 16..w.len()].to_str() ?? ""} (${w.len() / 2} bytes)"

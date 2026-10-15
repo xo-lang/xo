@@ -55,10 +55,10 @@ A through resume (tls13srv.xo's hand-off):
   app 1703030021000000000000000110a2271226239457616d7ef3712b4d3e0ac5902c526f59bec6
   bye 150303001a0000000000000002cf08b4902957eef4da303ca0873e2861dfa0
 ecdsa p256 signed here (masked):
-  hs <server flight, signature verified, 537 bytes>
+  hs <server flight, signature verified, 488 bytes>
   result EOF
 ecdsa p384 signed here (masked):
-  hs <server flight, signature verified, 599 bytes>
+  hs <server flight, signature verified, 517 bytes>
   result EOF
 rsa pkcs1 v1.5 signed here:
   hs 160303003f0200003b03032222222222...030300040e000000 (992 bytes)

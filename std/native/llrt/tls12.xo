@@ -771,6 +771,9 @@ pub fn hello_schemes(ch: Bytes) -> List[Int] {
   out
 }
 
+/// The bytes of a record received only in part.
+pub fn pending(c: Client) -> Int { c.rin.len() }
+
 /// The bytes to send to the server, taken.
 pub fn take(var c: Client) -> Bytes {
   let o = c.out
@@ -1443,7 +1446,9 @@ fn fail(var c: Client, alert: Int, msg: Str) {
     c.err = msg
     c.state = FAILED
     let level = if alert == ALERT_NO_RENEGOTIATION { 1 } else { 2 }
-    c.out = cat2(c.out, seal(c.wk, CT_ALERT, asn1.cat([u8(level), u8(alert)]), 0x0303))
+    // before the version is agreed crypto/tls's records say TLS 1.0
+    let vers = if c.have_vers { 0x0303 } else { 0x0301 }
+    c.out = cat2(c.out, seal(c.wk, CT_ALERT, asn1.cat([u8(level), u8(alert)]), vers))
   }
 }
 
@@ -1610,20 +1615,27 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.iv = fill(0x11, 16)
   cf.priv = a
   let chunk = Int.parse(args[5]) ?? 0
-  var cl = if ch.is_empty() { client(cf) } else { handed(cf, ch, parts[0]) }
-  if ch.is_empty() {
-    feed_in(cl, parts[0], chunk)
+  // the server's bytes are one stream, as crypto/tls's connection reads
+  // them: the handshake takes records until it ends, the rest waits
+  let all = cat2(parts[0], parts[1])
+  var cl = client(cf)
+  var pos = 0
+  if !ch.is_empty() {
+    let n = if all.len() >= 5 && all[0] == 22 && all.len() >= 5 + u16_at(all, 3) { u16_at(all, 3) } else { 0 }
+    cl = handed(cf, ch, all[0..if n > 0 { 5 + n } else { 0 }])
+    pos = if n > 0 { 5 + n } else { 0 }
   }
+  pos = handshake_in(cl, all, pos, chunk)
   var s = "hs ${take(cl).to_hex()}\n"
   if cl.state != DONE {
-    let e = if cl.state == FAILED { cl.err } else { "EOF" }
+    let e = if cl.state == FAILED { cl.err } else if pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
     return Some("${s}result ${e}\n".bytes())
   }
   s = "${s}result ok ${hex4(cl.suite)} ${cl.group} ${if cl.alpn == "" { "-" } else { cl.alpn }}\n"
   send(cl, parts[2])
   s = "${s}app ${take(cl).to_hex()}\n"
-  feed_in(cl, parts[1], chunk)
-  let end = if cl.state == FAILED { cl.err } else { "EOF" }
+  feed_in(cl, all[pos..all.len()], chunk)
+  let end = if cl.state == FAILED { cl.err } else if pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
   s = "${s}got ${recv(cl).to_hex()} ${take(cl).to_hex()} ${end}\n"
   close(cl)
   s = "${s}bye ${take(cl).to_hex()}\n"
@@ -1647,6 +1659,22 @@ fn handed(cf: Conf, ch: Bytes, server: Bytes) -> Client {
   feed(c, server[if n > 0 { 5 + n } else { 0 }..server.len()])
   c.out = cat2(hello_rec, c.out)
   c
+}
+
+/// Feeds data from pos a record at a time (each in pieces of chunk
+/// bytes, 0 whole) until the handshake ends or the data does: where the
+/// handshake stopped reading.
+fn handshake_in(var c: Client, data: Bytes, pos0: Int, chunk: Int) -> Int {
+  var pos = pos0
+  while pos < data.len() && c.state != DONE && c.state != FAILED {
+    var end = data.len()
+    if data.len() - pos >= 5 && pos + 5 + u16_at(data, pos + 3) < data.len() {
+      end = pos + 5 + u16_at(data, pos + 3)
+    }
+    feed_in(c, data[pos..end], chunk)
+    pos = end
+  }
+  pos
 }
 
 /// Feeds data in pieces of chunk bytes (0 at once).
