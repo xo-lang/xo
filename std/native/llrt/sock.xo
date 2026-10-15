@@ -121,7 +121,7 @@ pub fn loopback_pair() -> (Int, Int) {
 }
 
 /// The C runtime's errno (the Windows CRT's numbers, asserted in
-/// xo_win.c) for Winsock error code e (xo_win.c xo_wsa_map).
+/// xo_rt.c) for Winsock error code e (was xo_win.c xo_wsa_map).
 fn wsa_errno(e: Int) -> Int {
   match e {
     10035 => 140 // WSAEWOULDBLOCK: EWOULDBLOCK

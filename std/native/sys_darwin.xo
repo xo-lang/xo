@@ -125,6 +125,9 @@ fn pthread_attr_setdetachstate(attr: Int, state: Int) -> Int32
 fn pthread_attr_destroy(attr: Int) -> Int32
 /// pthread_create: the thread runs the C function at f with arg.
 fn pthread_create(tid: Int, attr: Int, f: Int, arg: Int) -> Int32
+/// pthread_join: waits for the thread tid to end (ret: 0, its result not
+/// kept).
+fn pthread_join(tid: Int, ret: Int) -> Int32
 
 // The image lookups of std/native/llrt/unwind.xo's compact unwind
 // walker (decision 0221 stage 3, macOS).

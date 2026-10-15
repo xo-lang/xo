@@ -1767,7 +1767,8 @@ first, AST based prototype, since deleted) and
   `--targets` other than the host. `build.Options.Backend`.
 - Hosts (2026-10-12): darwin/arm64, linux/arm64, linux/amd64,
   darwin/amd64 (Intel Mac), and windows/amd64 (decision 0197: the
-  runtime's Win32 layer is std/llrt/xo_win.c; clang's default
+  runtime's Win32 layer is Xo (std/native/llrt windows.xo, sock.xo,
+  poll.xo; std/llrt/xo_win.c was deleted 2026-10-15); clang's default
   x86_64-pc-windows-msvc target with lld; XO1504 for the std APIs not
   ported yet, none since stage 2 (processes, 2026-10-12); see "Windows
   runs"). The one

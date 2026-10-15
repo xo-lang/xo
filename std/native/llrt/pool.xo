@@ -297,6 +297,60 @@ pub fn thread_start(f: Int, arg: Int) -> Bool {
   }
 }
 
+/// Runs the C function f with arg on n threads at once, each with a stack
+/// of size bytes reserved, and waits for them all (main's thread, which
+/// xo_rt.c main starts with run_main: 1 GiB, n 1, or N with
+/// XO_RT_TEST_THREADS): whether every one started (those that did are
+/// waited for).
+pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
+  match layer() {
+    2 => {
+      // pthread_attr_t (64 bytes), then the n pthread_t
+      let a = rt.heap_large(64 + n * 8)
+      let ts = rt.int_wrap(0, a, 64)
+      var started = 0
+      if Int(sys_darwin.pthread_attr_init(a)) == 0 {
+        let _s = sys_darwin.pthread_attr_setstacksize(a, size)
+        while started < n && Int(sys_darwin.pthread_create(rt.int_wrap(0, ts, started * 8), a, f, arg)) == 0 {
+          started = started + 1
+        }
+        let _x = sys_darwin.pthread_attr_destroy(a)
+      }
+      var i = 0
+      while i < started {
+        let _j = sys_darwin.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
+        i = i + 1
+      }
+      rt.heap_release(rt.int_wrap(1, a, 8))
+      started == n
+    }
+    3 => {
+      // STACK_SIZE_PARAM_IS_A_RESERVATION; run_main sets its stack
+      // guarantee (the stack overflow handler's)
+      let hs = rt.heap_large(n * 8)
+      var started = 0
+      while started < n {
+        let h = sys_windows.CreateThread(0, size, f, arg, 65536, 0)
+        if h == 0 {
+          break
+        }
+        rt.mem_store(hs, started * 8, h, 8)
+        started = started + 1
+      }
+      var i = 0
+      while i < started {
+        let h = rt.mem_load(hs, i * 8, 8)
+        let _w = sys_windows.WaitForSingleObject(h, 4294967295)
+        let _c = sys_windows.CloseHandle(h)
+        i = i + 1
+      }
+      rt.heap_release(rt.int_wrap(1, hs, 8))
+      started == n
+    }
+    _ => sanhook.thread_run(f, arg, size, n)
+  }
+}
+
 /// Starts a worker thread, which starts spinning (the pool's lock held, a
 /// spinning count already taken for it): whether it started.
 fn start_worker(p: Int) -> Bool {

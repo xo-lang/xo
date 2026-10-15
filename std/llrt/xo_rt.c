@@ -35,11 +35,58 @@
 // structs by value), so it does not depend on the C ABI of aggregates.
 
 #ifdef _WIN32
-// Windows (decision 0197): the POSIX subset on Win32 and Winsock
-#include "xo_win.c"
+// Windows (decision 0197): the Win32 and Winsock headers (clang
+// --target=x86_64-pc-windows-msvc or aarch64-pc-windows-msvc, with the
+// MSVC C runtime and the Windows SDK; xo_win.c's POSIX subset was ported
+// to Xo and deleted, the zero-C audit's B32, 2026-10-15)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+#ifndef _CRT_NONSTDC_NO_DEPRECATE
+#define _CRT_NONSTDC_NO_DEPRECATE
+#endif
+#ifndef _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#endif
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <afunix.h>
+#include <windows.h>
+#include <shellapi.h>
+#include <winioctl.h>
+#include <wincrypt.h>
+#include <bcrypt.h>
+#include <io.h>
+#include <fcntl.h>
+#include <process.h>
+#include <direct.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <math.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#pragma comment(lib, "ws2_32")
+#pragma comment(lib, "bcrypt")
+#pragma comment(lib, "synchronization")
+#pragma comment(lib, "kernel32")
+#pragma comment(lib, "shell32")
+#pragma comment(lib, "crypt32")
 #else
 #include <math.h>
-#include <pthread.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -61,6 +108,28 @@
 #endif
 #include <stddef.h>
 #include <unwind.h>
+
+#ifdef _WIN32
+// std/native/llrt/sock.xo's wsa_errno returns these numbers (the Windows
+// C runtime's errno.h) for Winsock's codes, and sock.xo and cabi_net.xo
+// take Winsock's constants and layouts below
+_Static_assert(EWOULDBLOCK == 140 && EINPROGRESS == 112 && ECONNREFUSED == 107 && ECONNRESET == 108 && ECONNABORTED == 106 &&
+                   EPIPE == 32 && ETIMEDOUT == 138 && EADDRINUSE == 100 && EADDRNOTAVAIL == 101 && EACCES == 13 && EINVAL == 22 &&
+                   EINTR == 4 && ENOTSOCK == 128 && ENETUNREACH == 118 && EHOSTUNREACH == 110 && ENOTCONN == 126 &&
+                   EAFNOSUPPORT == 102 && EIO == 5,
+               "sock.xo wsa_errno");
+_Static_assert(WSAEWOULDBLOCK == 10035 && WSAEINPROGRESS == 10036 && WSAEALREADY == 10037 && WSAECONNREFUSED == 10061 &&
+                   WSAECONNRESET == 10054 && WSAECONNABORTED == 10053 && WSAESHUTDOWN == 10058 && WSAETIMEDOUT == 10060 &&
+                   WSAEADDRINUSE == 10048 && WSAEADDRNOTAVAIL == 10049 && WSAEACCES == 10013 && WSAEINVAL == 10022 &&
+                   WSAEINTR == 10004 && WSAENOTSOCK == 10038 && WSAENETUNREACH == 10051 && WSAEHOSTUNREACH == 10065 &&
+                   WSAENOTCONN == 10057 && WSAEAFNOSUPPORT == 10047,
+               "sock.xo wsa_errno");
+_Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECOVERY == 11003 && WSANO_DATA == 11004 &&
+                   WSATYPE_NOT_FOUND == 10109 && AI_NUMERICSERV == 8 && FIONBIO == (long)0x8004667E && SOL_SOCKET == 0xffff &&
+                   SO_ERROR == 0x1007 && AF_INET6 == 23 && sizeof(WSADATA) <= 512 && offsetof(struct addrinfo, ai_addrlen) == 16 &&
+                   offsetof(struct addrinfo, ai_addr) == 32 && offsetof(struct addrinfo, ai_next) == 40,
+               "sock.xo and cabi_net.xo Windows constants");
+#endif
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
 
@@ -2733,6 +2802,12 @@ extern void xo_entry(void);
 
 static void *run_main(void *arg) {
 	(void)arg;
+#ifdef _WIN32
+	// the stack the thread keeps for its stack overflow handler
+	// (on_overflow), past the guard page
+	ULONG g = 64 << 10;
+	SetThreadStackGuarantee(&g);
+#endif
 	// main's root context: the second shutdown signal cancels it
 	xo_x_stop_set_root(XO_ADDR(ctx()->node));
 	// a fault that unwinds main reaches this frame: reported, status 70
@@ -2749,6 +2824,7 @@ void xo_x_streams_free(void);
 // the program's start and end (std/native/llrt/entry.xo)
 void xo_x_entry_start(int64_t argc, int64_t argv, int64_t envp);
 void xo_x_entry_finish(void);
+int64_t xo_x_main_threads(int64_t f, int64_t n);
 void xo_x_rt_stats(void);
 
 int main(int argc, char **argv) {
@@ -2765,30 +2841,19 @@ int main(int argc, char **argv) {
 	// environment from Windows in UTF-8), XO_HEAP_MID_MAX, then the test
 	// world (XO_TEST) or the signal handlers
 	xo_x_entry_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
+	// main runs on a thread of its own with a 1 GiB stack, which pool.xo
+	// thread_run starts and waits for
 #ifdef XO_RT_TEST_THREADS
 	// N copies of the program at once: every thread has its own heap,
 	// literals are shared (and never written)
-	pthread_attr_setstacksize(&attr, (size_t)1 << 30);
 	xo_rt_threads_begin();
-	pthread_t ts[XO_RT_TEST_THREADS];
-	for (int i = 0; i < XO_RT_TEST_THREADS; i++) {
-		if (pthread_create(&ts[i], &attr, run_main, NULL) != 0) {
-			fputs("pthread_create failed\n", stderr);
-			return 1;
-		}
-	}
-	for (int i = 0; i < XO_RT_TEST_THREADS; i++) {
-		pthread_join(ts[i], NULL);
+	if (!xo_x_main_threads(XO_ADDR(run_main), XO_RT_TEST_THREADS)) {
+		fputs("pthread_create failed\n", stderr);
+		return 1;
 	}
 #else
-	pthread_attr_setstacksize(&attr, (size_t)1 << 30);
-	pthread_t t;
-	if (pthread_create(&t, &attr, run_main, NULL) != 0) {
+	if (!xo_x_main_threads(XO_ADDR(run_main), 1)) {
 		run_main(NULL);
-	} else {
-		pthread_join(t, NULL);
 	}
 #endif
 	xo_flush();

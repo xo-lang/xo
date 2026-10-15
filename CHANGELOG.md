@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C B32 part 5): main's 1 GiB thread is started
+  and joined from Xo (pool.xo thread_run: pthreads on Linux and macOS,
+  CreateThread on Windows); run_main stays C as the fault boundary.
+  std/llrt/xo_win.c is deleted: its Windows headers and Winsock asserts
+  are in xo_rt.c's _WIN32 block. UNTESTED on windows (the 17 http, net,
+  fs, proc and stdin goldens cross link for both architectures).
 - Native runtime (xo_rt.c inventory rank 1 and its dead code): the C
   record types of a scope, a Mutex and an Atomic, which no C read, are
   opaque declarations, and their layout asserts are gone (tasks.xo,

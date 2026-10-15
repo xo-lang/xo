@@ -10,6 +10,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include <pthread.h> // the test's own threads (xo_rt.c no longer includes it)
 #include "xcalls.h"
 
 // Atomic's operations on the runtime's object, as the generated code

@@ -470,6 +470,11 @@ fn entry_start(argc: Int, argv: Int, envp: Int) { entry.start(argc, argv, envp) 
 
 fn entry_finish() { entry.finish() }
 
+/// Main's threads (xo_rt.c main): the C function f (run_main, the fault
+/// boundary) on n threads with 1 GiB stacks, waited for; 1 when every
+/// one started.
+fn main_threads(f: Int, n: Int) -> Int { if pool.thread_run(f, 0, 1073741824, n) { 1 } else { 0 } }
+
 fn rt_stats() { entry.rt_stats() }
 
 // ---------------------------------------------------------------------------

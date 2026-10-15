@@ -153,6 +153,30 @@ pub fn thread_start(f: Int, arg: Int, size: Int) -> Bool {
   ok
 }
 
+/// Runs the C function f with arg on n joinable threads at once, each on
+/// a stack of size bytes, through the C library (Linux), and waits for
+/// them: whether every one started (pool.xo thread_run).
+pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
+  // pthread_attr_t (at most 64 bytes), then the n pthread_t
+  let a = rt.heap_large(64 + n * 8)
+  let ts = rt.int_wrap(0, a, 64)
+  var started = 0
+  if Int(sys_c.pthread_attr_init(a)) == 0 {
+    let _s = sys_c.pthread_attr_setstacksize(a, size)
+    while started < n && Int(sys_c.pthread_create(rt.int_wrap(0, ts, started * 8), a, f, arg)) == 0 {
+      started = started + 1
+    }
+    let _x = sys_c.pthread_attr_destroy(a)
+  }
+  var i = 0
+  while i < started {
+    let _j = sys_c.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
+    i = i + 1
+  }
+  rt.heap_release(rt.int_wrap(1, a, 8))
+  started == n
+}
+
 /// A fiber stack of size bytes with a guard page of page bytes at its
 /// bottom, from the C library's mmap (Linux under ThreadSanitizer):
 /// its address, or 0 with errno in the scratch word of the thread's

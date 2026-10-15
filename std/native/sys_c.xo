@@ -37,6 +37,7 @@ fn pthread_attr_setstacksize(attr: Int, size: Int) -> Int32
 fn pthread_attr_setdetachstate(attr: Int, state: Int) -> Int32
 fn pthread_attr_destroy(attr: Int) -> Int32
 fn pthread_create(thread: Int, attr: Int, f: Int, arg: Int) -> Int32
+fn pthread_join(thread: Int, ret: Int) -> Int32
 
 /// Fiber stacks under ThreadSanitizer on Linux (sanhook.xo stack_map):
 /// its mmap interceptor keeps the mapping in its application ranges,
