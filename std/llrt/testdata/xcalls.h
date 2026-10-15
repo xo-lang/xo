@@ -3,6 +3,8 @@
 // typed for the C tests that play generated code.
 // Include after ../xo_rt.c.
 
+#include "xrec.h"
+
 int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
 void xo_x_chan_close(int64_t c);
 int64_t xo_x_task_spawn(int64_t s, int64_t fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, int64_t lp, int64_t ln);

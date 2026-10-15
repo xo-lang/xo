@@ -292,9 +292,9 @@ static void test_wakeups(void) {
 	t_clock_sleep(5 * MS);
 	t_scope_cancel(s);
 	CHECK(t_scope_close(s, 0) == 0);
-	CHECK(__atomic_load_n(&ta->state, __ATOMIC_ACQUIRE) == T_DONE && __atomic_load_n(&tr->state, __ATOMIC_ACQUIRE) == T_DONE);
-	CHECK(ta->result && first(ta->result) == 5);
-	CHECK(tr->result && first(tr->result) == 5);
+	CHECK(t_task_state(ta) == T_DONE && t_task_state(tr) == T_DONE);
+	CHECK(t_task_result_of(ta) && first(t_task_result_of(ta)) == 5);
+	CHECK(t_task_result_of(tr) && first(t_task_result_of(tr)) == 5);
 	release(ta);
 	release(tr);
 	release(s);

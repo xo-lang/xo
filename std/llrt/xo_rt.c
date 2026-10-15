@@ -107,7 +107,6 @@
 #include <sys/socket.h>
 #endif
 #include <stddef.h>
-#include <unwind.h>
 
 #ifdef _WIN32
 // std/native/llrt/sock.xo's wsa_errno returns these numbers (the Windows
@@ -548,94 +547,15 @@ xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
 #define empty_list xo_empty_list
 
 // ---------------------------------------------------------------------------
-// Parks, nodes, contexts
-
-// Runtime statistics (decision 0077): std/native/llrt/rtstats.xo.
-
-// ---------------------------------------------------------------------------
-// Real-time sections (core 6.5, decision 0133): std/native/llrt/rtsec.xo,
-// through cabi.xo's exports, which generated code calls.
-
-void xo_x_rt_fault_leave(void);
-
-// rt_fault_leave ends the thread's real-time sections when a fault
-// unwinds out of them.
-static void rt_fault_leave(void) { xo_x_rt_fault_leave(); }
-
-// Futexes (decision 0077): wait while a 32 bit word holds a value, and
-// wake the threads waiting on a word. Darwin has no public futex; its
-// __ulock calls are what libc++ uses for std::atomic::wait. Both are
-// never inlined: they may set errno (Linux), which must not be read
-// across a fiber switch (gotchas/fiber-thread-local-address.md).
-// Decision 0212 stage 2: they and the lock's slow path are Xo
-// (std/native/llrt/pool.xo, through cabi.xo).
-void xo_x_futex_wake(int64_t a);
-void xo_x_lock_slow(int64_t l);
-static void futex_wake(void *a) { xo_x_futex_wake(XO_ADDR(a)); }
-
-// xo_lock is the lock of the task runtime's objects (decision 0077): a
-// word that is 0 (free), 1 (held), or 2 (held, a thread may sleep on
-// it; the futex word is its low half). A contended lock spins a little,
-// then sleeps on the word; an unlock makes a system call only when
-// someone may sleep. Unlike a pthread mutex it needs no initialization
-// (zero is free) and has no fair share hand off
-// (gotchas/darwin-mutex-fairshare.md). A word of 64 bits: the slot
-// atomics of std/native/llrt/pool.xo, which takes and releases the
-// pool's locks too, are of words (decision 0212 stage 2).
-typedef struct {
-	int64_t v;
-} xo_lock;
-
-// the slow path in Xo, then a load ThreadSanitizer sees acquire the
-// word's last release (the Xo code is not instrumented)
-static void lock_slow(xo_lock *l) {
-	xo_x_lock_slow(XO_ADDR(l));
-	(void)__atomic_load_n(&l->v, __ATOMIC_ACQUIRE);
-}
-
-static inline void lk(xo_lock *l) {
-	int64_t z = 0;
-	if (!__atomic_compare_exchange_n(&l->v, &z, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-		lock_slow(l);
-	}
-}
-
-static inline void unlk(xo_lock *l) {
-	if (__atomic_exchange_n(&l->v, 0, __ATOMIC_RELEASE) == 2) {
-		futex_wake(&l->v);
-	}
-}
-
-// Deadlock detection (core 11.4, fault XO-F001), decision 0077 (pool.xo
-// dl_check, its counts in the pool record's P_DLK): the
-// program is deadlocked when nothing runs and nothing can wake anything:
-// every worker thread is idle and no queue holds an item, every root
-// context (a thread that runs Xo code outside tasks: the program's main)
-// sleeps in a counted wait, and no context waits for a timer, a socket,
-// or a signal (uncounted waits). Fibers parked in counted waits need no
-// count: only a running context can wake them. The check runs under
-// pool.mu when a worker goes idle and when a root goes to sleep, and
-// workers count themselves idle under that lock too, so a worker that
-// signaled a root before it went idle is seen with the root awake. (The
-// counts used to be updated by every spawn and every task end, an atomic
-// that all workers contended for.)
-
-// A park is where one context waits. signaled is also the futex word of
-// a thread (a root context) that sleeps on it; a fiber that waits parks
-// instead (decision 0069). All zero is a fresh park.
-typedef struct {
-	xo_lock mu;
-	int64_t signaled; // written under mu, read atomically (the futex word: its low half)
-	int sleeping;     // a thread sleeps on signaled
-	int counted;      // a root asleep here counts in the blocked roots (pool.xo DLK_BLOCKED)
-	// the fiber parked here (decision 0069): a signal makes it runnable
-	struct xo_fiber *fiber;
-} xo_park;
+// Parks, nodes, contexts, locks: their records are Xo's (pool.xo PK_*
+// and N_*, ctx.xo C_*, tasks.xo, chan.xo, selects.xo, budget.xo), laid
+// out and read there only; the C keeps no copy of their layouts (the
+// zero-C inventory's rank 13, 2026-10-15). What stays: ThreadSanitizer's
+// annotation of a claimed task (xo_sched_rt).
 
 // ThreadSanitizer does not see the synchronization of the Xo code (it is
-// not instrumented): the C around the parks of std/native/llrt/pool.xo
-// tells it that a signal releases the park and a wait that returns
-// acquires it (decision 0212 stage 2).
+// not instrumented): the C tells it that a task claimed from a queue
+// acquires its spawn's release (decision 0212 stage 2).
 #if defined(__has_feature)
 #if __has_feature(thread_sanitizer)
 #define XO_TSAN_ANN 1
@@ -653,159 +573,6 @@ void __tsan_release(void *addr);
 #define TSAN_ACQUIRE(a) ((void)(a))
 #define TSAN_RELEASE(a) ((void)(a))
 #endif
-
-// The parks and the cancellation tree in Xo (decision 0212 stage 2):
-// std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
-// record.
-static void park_reset(xo_park *p);
-
-// The cancellation tree: every node has a lock for its list of children
-// and its waiter. A walk that cancels a subtree holds the locks from the
-// node down to the one it visits, so locks are always taken parent
-// first; linking and unlinking take only the parent's (decision 0077:
-// one lock for the whole tree serialized every spawn and every wait).
-typedef struct xo_node {
-	struct xo_node *parent, *child, *prev, *next;
-	int64_t canceled; // atomic reads; written under the parent's and its own lock
-	xo_park *waiter; // the park of a context blocked at this node (mu)
-	xo_lock mu;      // child, the children's prev and next, waiter
-} xo_node;
-
-static void node_link(xo_node *n, xo_node *parent);
-static void node_unlink(xo_node *n);
-
-typedef struct {
-	void *m;
-	const char *loc;
-	int64_t n;
-} xo_held;
-
-struct xo_task;
-
-// A wait list entry: a context's park in the list of an object it waits
-// on (tasks.xo E_*).
-typedef struct xo_went {
-	xo_park *park;
-	struct xo_went *prev, *next;
-	int writer;  // a Mutex waiter that wants the lock exclusively
-	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
-} xo_went;
-
-// A channel's queue entry: a waiter's park in a channel's queue
-// (chan.xo E_*).
-typedef struct xo_cent {
-	xo_park *park;
-	int64_t *fired; // claimed by the first waker (atomic)
-	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
-	int shut;       // the channel closed while a send waited
-	// a select's arm: the waker stores idx in *chosen
-	int64_t idx, *chosen;
-	struct xo_cent *prev, *next;
-} xo_cent;
-
-// xo_ctx is a running context: the main program, or a task.
-typedef struct xo_ctx {
-	xo_node *node; // innermost: a scope body, or the task's node
-	int unwinding;
-	// shield counts the deferred code running (core 3.5, decision 0022):
-	// while it is not zero, cancellation points do not report
-	// cancellation
-	int shield;
-	xo_park park;
-	// the mutexes this context holds (re-entrant use faults, XO-F004)
-	xo_held *held;
-	int nheld, capheld;
-	// the outcome of the last network operation (decision 0069): 0, or
-	// the tag of its NetErr (1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io,
-	// 5 Canceled) and the message of Io
-	int64_t net_status;
-	char *net_msg;
-	// a fault unwinding this context (decision 0085): its message,
-	// location, and the values line of a failed contract (malloc'd)
-	int faulting;
-	char *fault_msg, *fault_loc, *fault_detail;
-	// the frame address the unwinding never passes: the C function that
-	// runs the context's code (0: the end of the stack)
-	uintptr_t boundary;
-	// the exception object of the fault unwinding this context. It lives
-	// here, not in fault_raise's frame: a cleanup that resumes the unwind
-	// (_Unwind_Resume) reads it after the raising frames are gone, and
-	// ThreadSanitizer gives every function such a cleanup (its
-	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md).
-	// The unwinder declares it 16 byte aligned, which a context from the
-	// Xo heap is not (tasks.xo run_claimed: a block is 8 mod 16, after
-	// its header), so this 8 aligned area holds it at its first 16
-	// byte aligned address (ctx_exc; a context never moves).
-	// gotchas/xo-heap-records-8-aligned.md
-	unsigned char fault_exc[sizeof(struct _Unwind_Exception) + 8];
-	// resource budgets (decision 0175): the budget the context works
-	// under (a reference) or NULL, the polls left before its next charge
-	// and the quantum they started from, and the stretch being charged:
-	// its start (monotonic ns) and the allocation count of its thread's
-	// heap then
-	struct xo_budget *bud;
-	int64_t bud_left, bud_q, bud_run, bud_amark;
-	struct xo_heap *bud_heap;
-	int bud_paused; // bud_pause depth
-	// the context's entry in the wait list it waits on (wl_wait_as,
-	// tasks.xo wl_wait: one at a time, decision 0212 stage 3)
-	xo_went went;
-	// the context's entry in the channel queue it waits on and the word
-	// its waker claims (chan.xo; one at a time)
-	xo_cent cent;
-	int64_t fired;
-} xo_ctx;
-
-// Thread locals are read and written only through these functions, which
-// are never inlined (decision 0069): a task on a fiber may go on on
-// another thread after it parks, and within one function the compiler may
-// keep a thread local's address (it treats it as a constant, also after
-// link time inlining), which would then be the old thread's.
-// Decision 0212: the thread locals are words of the table the compiler
-// emits for rt.tlocal_get and rt.tlocal_set (xo_tlocal, a thread local
-// of the program's code; std/native/llrt/sched.xo reads and writes the
-// same words through the emitted xo_tlocal_get and xo_tlocal_set). The C
-// reads the table itself, through these accessors only (above).
-extern __thread int64_t xo_tlocal[16];
-// the words (sched.xo TLS_*): the current context, the fiber running on
-// the thread, and the thread's worker record
-enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
-
-__attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
-
-// ctx returns the current context; a thread that runs Xo code outside
-// any task (the program's main thread) gets a root context from ctx.xo
-// root.
-int64_t xo_x_ctx_root(void);
-static xo_ctx *ctx(void) {
-	xo_ctx *c = cur_get();
-	if (__builtin_expect(c != NULL, 1)) {
-		return c;
-	}
-	return (xo_ctx *)(intptr_t)xo_x_ctx_root();
-}
-
-// The context record's layout, which ctx.xo's C_* name (decision 0229).
-_Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 && offsetof(xo_ctx, shield) == 12 &&
-                   offsetof(xo_ctx, park) == 16 && offsetof(xo_ctx, held) == 48 && offsetof(xo_ctx, nheld) == 56 &&
-                   offsetof(xo_ctx, capheld) == 60 && offsetof(xo_ctx, net_status) == 64 && offsetof(xo_ctx, net_msg) == 72 &&
-                   offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 && offsetof(xo_ctx, fault_loc) == 96 &&
-                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 120,
-               "ctx.xo C_*");
-_Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
-                   offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
-                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && offsetof(xo_ctx, cent) == 248 && offsetof(xo_ctx, fired) == 312 && sizeof(xo_ctx) == 320 &&
-                   sizeof(xo_went) == 32 && offsetof(xo_went, writer) == 24,
-               "ctx.xo C_BUD_*");
-
-// tasks.xo allocates contexts from the Xo heap, 8 aligned
-// (gotchas/xo-heap-records-8-aligned.md).
-_Static_assert(_Alignof(xo_ctx) <= 8, "xo_ctx from the Xo heap");
-
-// ctx_exc is the fault's exception object in c's fault_exc area.
-static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
-	return (struct _Unwind_Exception *)(((uintptr_t)c->fault_exc + 15) & ~(uintptr_t)15);
-}
 
 // ---------------------------------------------------------------------------
 // Fault unwinding (core 8, decision 0085)
@@ -828,67 +595,26 @@ static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
 // Frames of C with cleanups between a fault and its catch are passed
 // over, their cleanups not run (the runtime's C has none).
 
-#define XO_EXC_CLASS 0x584f00004641554cULL // "XO\0\0FAUL"
-
-// The fault record (faulting, fault_msg, fault_loc, fault_detail) is
-// kept by std/native/llrt/fault.xo (the zero-C audit's B06).
-_Static_assert(offsetof(xo_ctx, unwinding) == 8 && offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 &&
-                   offsetof(xo_ctx, fault_loc) == 96 && offsetof(xo_ctx, fault_detail) == 104,
-               "fault.xo C_*");
-void xo_x_fault_record_set(int64_t c, int64_t mp, int64_t mn, int64_t lp, int64_t ln);
-void xo_x_fault_record_exit(int64_t c);
-
-// fault_exit reports the fault of c that nothing caught and ends the
-// process with status 70 (fault.xo exit).
-XO_NORETURN static void fault_exit(xo_ctx *c) {
-	xo_x_fault_record_exit(XO_ADDR(c));
-	__builtin_unreachable();
-}
-
-int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old, int64_t wcx);
+// Raising a fault is cabi.xo's fault_raise_cur (the record, the
+// context's flags, unwind.xo's walk, the report: the zero-C inventory's
+// rank 13); fault_raise_msg, whose address fault.xo's raisers call, gives
+// it the personality routines' addresses: xo_x_personality, which the
+// emitters name, and on Windows the language handler xo_personality.
+void xo_x_fault_raise_cur(int64_t m, int64_t loc, int64_t pers, int64_t pers_old);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #if defined(_WIN32)
 EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
-#endif
-
-// fault_raise on Linux, macOS, and Windows (decision 0221; Windows,
-// decision 0197 and the zero-C audit's B06): the unwinder is Xo
-// (std/native/llrt/unwind.xo over the .eh_frame_hdr tables of the
-// program and its shared objects on Linux, the compact unwind of
-// __unwind_info and __eh_frame on macOS, the system's RtlVirtualUnwind
-// on Windows, win_raise), which runs the first landing pad of
-// a frame of generated code (its personality is xo_x_personality; on
-// Windows the language handler xo_personality too) below the context's
-// boundary, and returns when nothing catches the fault.
-XO_NORETURN static void fault_raise(xo_ctx *c) {
-	rt_fault_leave();
-	c->faulting = 1;
-	c->unwinding = 1;
-	// on Windows unwind.xo win_raise captures its own CONTEXT
-	// (RtlCaptureContext from sys_windows.xo) and walks from there; the
-	// language handler xo_personality marks generated code there too
-#ifdef _WIN32
-	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
+#define XO_PERS_OLD XO_ADDR(xo_personality)
 #else
-	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_x_personality), 0);
+#define XO_PERS_OLD XO_ADDR(xo_x_personality)
 #endif
-	fault_exit(c);
-}
-
-// fault_set records a fault in c (fault.xo set).
-static void fault_set(xo_ctx *c, const char *msg, const char *loc) {
-	xo_x_fault_record_set(XO_ADDR(c), XO_ADDR(msg), (int64_t)strlen(msg), XO_ADDR(loc), (int64_t)strlen(loc));
-}
 
 // fault_raise_msg records the fault msg at loc in the current context and
 // raises it; with a null msg it raises the fault already recorded (fault.xo
 // cont, a landing pad handing it on).
 XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
-	xo_ctx *c = ctx();
-	if (msg) {
-		fault_set(c, msg, loc);
-	}
-	fault_raise(c);
+	xo_x_fault_raise_cur(XO_ADDR(msg), XO_ADDR(loc), XO_ADDR(xo_x_personality), XO_PERS_OLD);
+	__builtin_unreachable();
 }
 
 // xo_personality: the Xo unwinder reads the call site tables itself and
@@ -925,23 +651,7 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 // budget's scope, and the poll unwinds the context like a cancellation
 // point. A task started under a budget works under it (tasks.xo task_spawn).
 
-// The budget record; std/native/llrt/budget.xo reads and writes it
-// (decision 0229), the C only takes and drops references.
-typedef struct xo_budget {
-	struct xo_budget *parent; // a reference
-	int64_t refs;             // atomic: the contexts and tasks under it, its children
-	int64_t cpu, alloc, steps; // ceilings, 0: none
-	int64_t used_cpu, used_alloc, used_steps; // atomic
-	int64_t over;              // atomic: the resource passed first, 1 cpu 2 alloc 3 steps
-	xo_lock mu;                // node
-	xo_node *node;             // the scope body a passed ceiling cancels (NULL once with_budget returned)
-	char *loc;                 // the with_budget call (the location of XO-F008)
-} xo_budget;
-
-_Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 && offsetof(xo_budget, used_cpu) == 40 &&
-                   offsetof(xo_budget, over) == 64 && offsetof(xo_budget, mu) == 72 && offsetof(xo_budget, node) == 80 &&
-                   offsetof(xo_budget, loc) == 88 && sizeof(xo_budget) == 96,
-               "budget.xo B_*");
+// The budget record is std/native/llrt/budget.xo's (B_*).
 
 // The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
 // (decision 0229), which generated code calls through its exports.
@@ -975,18 +685,8 @@ _Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 
 // park_wait_n calls it).
 
 // The worker pool in Xo (decision 0212 stage 2): std/native/llrt/pool.xo
-// through the C ABI exports of cabi.xo, over the records above (their
-// layout is asserted below). The C keeps the records, their setup, the
-// root threads' records, and the deadlock check; the Xo code calls back
-// for the services in xo_sched_rt.
-
-void xo_x_park_reset(int64_t p);
-void xo_x_node_link(int64_t n, int64_t parent);
-void xo_x_node_unlink(int64_t n);
-
-static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
-static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
-static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
+// through the C ABI exports of cabi.xo, over records that are Xo's too;
+// the Xo code calls back for the services in xo_sched_rt.
 
 // netconn.xo's (cabi_net.xo): weak, as the other network exports (see
 // XO_NX_REF below)
@@ -1000,54 +700,12 @@ static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 // (twrun.xo kick) checks again after it.
 
 
-// A wait list: the parks of the contexts waiting on an object, signaled
-// all at once when its state changes (tasks.xo wl_*). The entry
-// (xo_went, above) is the waiting context's own (xo_ctx.went).
-typedef struct {
-	xo_went *first, *last;
-} xo_wl;
 
 // ---------------------------------------------------------------------------
 // Scopes and tasks
 
-// A scope is tasks.xo's record (its S_* offsets, budget.xo's and
-// poll.xo's copies): the C never reads one.
-typedef struct xo_scope xo_scope;
-
-typedef void (*xo_run_fn)(xo_rlist *, struct xo_task *);
-
-typedef struct xo_task {
-	xo_hdr h;
-	xo_node node;
-	// the scope (not counted: the scope's join waits for its tasks, and
-	// only a running task or its worker uses it)
-	xo_scope *scope;
-	int64_t state; // atomic: 0 queued, 1 running, 2 done
-	xo_run_fn run;
-	xo_ldrop drop;
-	xo_rlist *fl;     // the closure (a list of one) until the task runs
-	xo_rlist *result; // the result (a shared list of one) when it ran to the end
-	int unwound;      // the task ended by unwinding (canceled, or a fault)
-	int background, consumed;
-	int64_t site;
-	xo_lock mu; // waiters
-	xo_wl waiters;
-	struct xo_task *snext;
-	int64_t gone; // atomic: 2 when its run and its queue entry are over (scope_prune)
-	// the fault that ended it (decision 0085), malloc'd (last: the fields
-	// above keep their places)
-	char *fault_msg, *fault_loc, *fault_detail;
-	// the budget it was started under (a reference until it runs,
-	// decision 0175)
-	struct xo_budget *bud;
-} xo_task;
-
-enum { T_QUEUED, T_RUNNING, T_DONE };
-
-// `s.group()`, the program's task group (os.tasks), and s.cancel() are
-// tasks.xo's (B18), which generated code calls through its exports.
-
-_Static_assert(sizeof(xo_node) == 56, "tasks.xo: the node's size");
+// A scope and a task are tasks.xo's records (S_*, T_*); the C never
+// reads one.
 
 // The task states in Xo (decision 0212, std/native/llrt/sched.xo).
 
@@ -1056,7 +714,7 @@ void xo_x_run_claimed(int64_t t, int64_t units);
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
 // or a thread that helps): tasks.xo run_claimed (B18), with its entry
 // call (tasks.xo run_entry, decision 0233).
-static void run_claimed(xo_task *t, int64_t units) { xo_x_run_claimed(XO_ADDR(t), units); }
+static void run_claimed(int64_t t, int64_t units) { xo_x_run_claimed(t, units); }
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -1145,7 +803,7 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
-		run_claimed((xo_task *)(intptr_t)a, b);
+		run_claimed(a, b);
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
@@ -1157,71 +815,16 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	return 0;
 }
 
-// The layout std/native/llrt/sched.xo reads and writes (decision 0212:
-// its constants are these offsets).
-_Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
-_Static_assert(T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
-// and std/native/llrt/pool.xo (decision 0212 stage 2)
-_Static_assert(sizeof(xo_lock) == 8, "pool.xo's locks are words");
-_Static_assert(offsetof(xo_park, signaled) == 8 && offsetof(xo_park, sleeping) == 16 && offsetof(xo_park, counted) == 20 && offsetof(xo_park, fiber) == 24, "pool.xo PK_*");
-_Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 && offsetof(xo_node, prev) == 16 && offsetof(xo_node, next) == 24 &&
-                   offsetof(xo_node, canceled) == 32 && offsetof(xo_node, waiter) == 40 && offsetof(xo_node, mu) == 48,
-               "pool.xo N_*");
-_Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
-_Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
-
-// The spawn and the scope's open and close are tasks.xo's (B18 part 2),
-// which generated code calls through its exports.
-
-_Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && offsetof(xo_task, fl) == 104 &&
-                   offsetof(xo_task, background) == 124 && offsetof(xo_task, snext) == 168 && offsetof(xo_task, bud) == 208 &&
-                   sizeof(xo_task) == 216 && offsetof(xo_hdr, free) == 8,
-               "tasks.xo T_*, H_FREE");
-
-// The task's end, await, and the scope's failed task are tasks.xo's
-// (B18), which generated code calls through its exports.
-
-_Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 112 && offsetof(xo_task, unwound) == 120 &&
-                   offsetof(xo_task, consumed) == 128 && offsetof(xo_task, site) == 136 && offsetof(xo_task, mu) == 144 &&
-                   offsetof(xo_task, waiters) == 152 && offsetof(xo_task, fault_msg) == 184 && offsetof(xo_task, fault_loc) == 192 &&
-                   offsetof(xo_task, fault_detail) == 200,
-               "tasks.xo T_*");
+// The spawn, the scope's open and close, the task's end and await are
+// tasks.xo's (B18), which generated code calls through its exports.
 
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)
 
-// The queue entry (xo_cent) is above, with xo_ctx: a waiting context's
-// is its own (xo_ctx.cent), a select's arms' the select's.
-
-typedef struct {
-	xo_cent *head, *tail;
-} xo_cq;
-
-typedef struct {
-	xo_hdr h;
-	xo_lock mu;
-	int64_t cap, head, len;
-	xo_rlist **buf;
-	int closed;
-	// closed from outside the program's tasks (task.stopping()): waiting
-	// for it does not count as blocked
-	int ext;
-	xo_ldrop drop;
-	xo_cq recvq, sendq;
-} xo_chan;
-
-// The channel operations are chan.xo's (B19), which generated code calls
-// through its exports (task.stopping's channel too: stop.xo through
-// cabi.xo's stop_chan_new; the C tests through xcalls.h). chan_free stays
-// C (the free function the handle names).
-
-_Static_assert(offsetof(xo_cent, fired) == 8 && offsetof(xo_cent, item) == 16 && offsetof(xo_cent, shut) == 24 && offsetof(xo_cent, idx) == 32 &&
-                   offsetof(xo_cent, chosen) == 40 && offsetof(xo_cent, prev) == 48 && offsetof(xo_cent, next) == 56 && sizeof(xo_cent) == 64,
-               "chan.xo E_*");
-_Static_assert(offsetof(xo_chan, mu) == 16 && offsetof(xo_chan, cap) == 24 && offsetof(xo_chan, head) == 32 && offsetof(xo_chan, len) == 40 &&
-                   offsetof(xo_chan, buf) == 48 && offsetof(xo_chan, closed) == 56 && offsetof(xo_chan, ext) == 60 && offsetof(xo_chan, drop) == 64 &&
-                   offsetof(xo_chan, recvq) == 72 && offsetof(xo_chan, sendq) == 88 && sizeof(xo_chan) == 104,
-               "chan.xo CH_*");
+// A channel and its queue entries are chan.xo's records (CH_*, E_*);
+// its operations are chan.xo's (B19), which generated code calls through
+// its exports (task.stopping's channel too: stop.xo through cabi.xo's
+// stop_chan_new; the C tests through xcalls.h).
 
 // select (core 7.3): arms are added in source order, then
 // selects.xo select_wait performs the first arm that can proceed, or waits for
@@ -1230,47 +833,16 @@ _Static_assert(offsetof(xo_chan, mu) == 16 && offsetof(xo_chan, cap) == 24 && of
 // channels (taken in address order), so no waker sees a half registered
 // select.
 
-typedef struct {
-	xo_chan *ch; // a reference
-	int send;
-	xo_rlist *item; // a send's value until sent; what a receive got
-	xo_cent e;
-} xo_sarm;
-
-typedef struct {
-	xo_hdr h;
-	xo_sarm *arms;
-	int n, cap;
-	int64_t fired, chosen;
-	// an `after` arm (xo_select_after): its duration, and the park its
-	// timer signals
-	int has_after;
-	int64_t after;
-	xo_park *park;
-} xo_select;
-
-// The select's operations are selects.xo's (B19), which generated code
-// calls through its exports. select_free stays C (the free function the handle names); the `after`
-// arm's timer is poll.xo's (FN_SELECT).
-
-_Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && offsetof(xo_sarm, e) == 24 && sizeof(xo_sarm) == 88 &&
-                   offsetof(xo_select, arms) == 16 && offsetof(xo_select, n) == 24 && offsetof(xo_select, cap) == 28 &&
-                   offsetof(xo_select, fired) == 32 && offsetof(xo_select, chosen) == 40 && offsetof(xo_select, has_after) == 48 &&
-                   offsetof(xo_select, after) == 56 && offsetof(xo_select, park) == 64 && sizeof(xo_select) == 72,
-               "selects.xo A_*, SE_*; poll.xo SEL_*");
+// A select and its arms are selects.xo's records (SE_*, A_*); its
+// operations are selects.xo's (B19), which generated code calls through
+// its exports; the `after` arm's timer is poll.xo's (FN_SELECT).
 
 // ---------------------------------------------------------------------------
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
 // writers preferred, holding its value in a shared list of one.
 
-// A Mutex is mutex.xo's record (its M_* offsets): the C never reads one.
-typedef struct xo_mutex xo_mutex;
-
-// The Mutex's operations are mutex.xo's (B19), which generated code calls
-// through its exports. mutex_free stays C (the free function the handle names, through the services
-// record).
-
-_Static_assert(offsetof(xo_went, granted) == 28, "mutex.xo W_GRANTED");
+// A Mutex is mutex.xo's record (M_*), its operations mutex.xo's (B19),
+// which generated code calls through its exports.
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)
@@ -1283,7 +855,6 @@ _Static_assert(offsetof(xo_went, granted) == 28, "mutex.xo W_GRANTED");
 
 // An Atomic is tasks.xo's record (atomic_new: 136 bytes, the value at
 // byte 128, XO_ATOMIC_V): the C never reads one.
-typedef struct xo_atomic xo_atomic;
 #define XO_ATOMIC_V 128
 
 // ---------------------------------------------------------------------------

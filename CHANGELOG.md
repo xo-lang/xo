@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C inventory rank 13): xo_rt.c keeps no copy of
+  the task runtime's record layouts: the context, park, node, lock, wait
+  list and queue entries, task, budget, channel and select structs and
+  their layout asserts are gone (the records are pool.xo's, ctx.xo's,
+  tasks.xo's, chan.xo's, selects.xo's and budget.xo's), and raising a
+  fault is cabi.xo's fault_raise_cur (the C passes the personality
+  routines' addresses); ctx(), cur_get and the C lock helpers are gone.
+  The C tests see the records through testdata/xrec.h.
 - Native runtime (decision 0233 step 2): Windows' console handler
   (Ctrl-C, Ctrl-Break, closing the console, shutdown) is poll.xo
   on_console (cabi.xo on_console) instead of xo_rt.c's, which goes with

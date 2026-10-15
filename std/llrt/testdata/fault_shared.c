@@ -38,7 +38,7 @@ void catcher(void);
 
 int main(void) {
 	// the fault is reported once it unwinds past this frame
-	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
+	t_ctx_boundary((uintptr_t)__builtin_frame_address(0));
 	catcher();
 	fputs("unreachable: catcher returned\n", stderr);
 	return 1;

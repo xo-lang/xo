@@ -42,7 +42,7 @@ __attribute__((noinline)) static void middle(void) {
 
 __attribute__((noinline)) static void outer(void) {
 	// the fault is reported once it unwinds past this frame
-	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
+	t_ctx_boundary((uintptr_t)__builtin_frame_address(0));
 	middle();
 	fputs("unreachable: middle returned\n", stderr);
 }

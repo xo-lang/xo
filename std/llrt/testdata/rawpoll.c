@@ -17,6 +17,14 @@
 #include "../xo_rt.c"
 #include "xcalls.h"
 
+// pd's read readiness under its lock (poll.xo D_MU at 0, D_RREADY at 20)
+static int pd_rready(xo_pd *pd) {
+	lk((xo_lock *)pd);
+	int r = *(int *)((char *)pd + 20);
+	unlk((xo_lock *)pd);
+	return r;
+}
+
 // pd_new registers fd with the poller (poll.xo pd_open, which xo_rt.c no
 // longer wraps): NULL when the poller refuses it.
 int64_t xo_x_poll_pd_open(int64_t fd, int64_t write);
@@ -50,14 +58,10 @@ int main(void) {
 			bad++;
 		}
 		usleep(5000);
-		lk(&pd->mu);
-		int ready = pd->rready;
-		unlk(&pd->mu);
+		int ready = pd_rready(pd);
 		if (!ready) {
 			usleep(50000);
-			lk(&pd->mu);
-			ready = pd->rready;
-			unlk(&pd->mu);
+			ready = pd_rready(pd);
 		}
 		bad += !ready;
 		pd_free(pd);

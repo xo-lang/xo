@@ -583,6 +583,30 @@ fn fault_record_set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) { fault.set(c, m
 /// Reports the fault of c and ends the process with status 70.
 fn fault_record_exit(c: Int) { fault.exit(c) }
 
+/// Raises a fault in the current context (xo_rt.c fault_raise_msg, the
+/// address fault.xo's raisers call): with a message m (zero terminated,
+/// at the zero terminated location loc) it records it first; m 0 hands
+/// on the fault already recorded (fault.xo cont). The context's real-time
+/// sections end, it is marked faulting and unwinding, and unwind.xo
+/// walks from here with its exception object (ctx.xo C_FAULT_EXC, at the
+/// area's first 16 byte aligned address) up to its boundary, the frames
+/// of generated code named by pers or pers_old (the personality's
+/// addresses, the C's to give); nothing caught reports it and ends the
+/// program (fault.xo exit). Never returns. Was xo_rt.c's fault_raise
+/// and fault_set over the C's xo_ctx (the zero-C inventory's rank 13).
+fn fault_raise_cur(m: Int, loc: Int, pers: Int, pers_old: Int) {
+  let c = ctx.cur()
+  if m != 0 {
+    fault.set(c, m, raw.cstr_len(m), loc, raw.cstr_len(loc))
+  }
+  rtsec.fault_leave()
+  rt.mem_store(c, ctx.C_FAULTING, 1, 4)
+  rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
+  let exc = rt.int_wrap(0, c, ctx.C_FAULT_EXC + 15) & -16
+  let _r = unwind.raise(exc, rt.mem_load(c, ctx.C_BOUNDARY, 8), pers, pers_old, 0)
+  fault.exit(c)
+}
+
 // ---------------------------------------------------------------------------
 // Contexts (std/native/llrt/ctx.xo, decision 0229; the zero-C audit's
 // B17): arm64 generated code calls the shields directly; xo_rt.c's
@@ -638,6 +662,9 @@ fn ctx_pool() -> Int { ctx.pool() }
 /// The current context of a thread with none yet (xo_rt.c ctx's slow
 /// path): ctx.xo root.
 fn ctx_root() -> Int { ctx.root() }
+
+/// The current context (ctx.xo cur; the C tests' t_ctx_boundary).
+fn ctx_cur() -> Int { ctx.cur() }
 
 // Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
 // open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and
