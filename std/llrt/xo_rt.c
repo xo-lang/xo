@@ -1071,17 +1071,9 @@ _Static_assert(sizeof(xo_node) == 56, "tasks.xo: the node's size");
 void xo_x_run_claimed(int64_t t, int64_t units);
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
-// or a thread that helps): tasks.xo run_claimed (B18), which calls
-// run_entry for the entry function itself.
+// or a thread that helps): tasks.xo run_claimed (B18), with its entry
+// call (tasks.xo run_entry, decision 0233).
 static void run_claimed(xo_task *t, int64_t units) { xo_x_run_claimed(XO_ADDR(t), units); }
-
-// run_entry calls t's entry function on the current context (tasks.xo
-// run_claimed made it): the entry function catches a fault in the task,
-// and the unwinding never goes past this frame (decision 0085).
-__attribute__((noinline)) static void run_entry(xo_task *t, xo_rlist *fl) {
-	cur_get()->boundary = (uintptr_t)__builtin_frame_address(0);
-	t->run(fl, t);
-}
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -1171,9 +1163,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
-		return 0;
-	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
-		run_entry((xo_task *)(intptr_t)a, (xo_rlist *)(intptr_t)b);
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
@@ -1443,8 +1432,6 @@ extern char **environ;
 // the services record whose words 88 on entry.xo reads (its E_ words).
 
 void xo_x_stop_init(int64_t svc);
-void xo_x_stop_set_root(int64_t n);
-void xo_x_stop_end(void);
 
 
 #ifndef _WIN32
@@ -1536,32 +1523,21 @@ void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
-static void *run_main(void *arg) {
-	(void)arg;
-#ifdef _WIN32
-	// the stack the thread keeps for its stack overflow handler
-	// (on_overflow), past the guard page
-	ULONG g = 64 << 10;
-	SetThreadStackGuarantee(&g);
-#endif
-	// main's root context: the second shutdown signal cancels it
-	xo_x_stop_set_root(XO_ADDR(ctx()->node));
-	// a fault that unwinds main reaches this frame: reported, status 70
-	// (decision 0085)
-	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
-	xo_entry();
-	return NULL;
-}
-
 // std/http's streamed responses and idle HTTP/2 client connections
-// (cabi_http.xo; weak in xo_http.c)
+// (cabi_http.xo; weak in xo_http.c), and the values the test world keeps
+// (cabi_tw.xo xo_x_tw_end; weak above): entry.xo main calls them at the
+// end
 void xo_x_streams_free(void);
 
-// the program's start and end (std/native/llrt/entry.xo)
-void xo_x_entry_start(int64_t argc, int64_t argv, int64_t envp);
-void xo_x_entry_finish(void);
-int64_t xo_x_main_threads(int64_t f, int64_t n);
-void xo_x_rt_stats(void);
+// the program (std/native/llrt/entry.xo main: the start, main's thread,
+// the end, decision 0233)
+int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry, int64_t n, int64_t sf, int64_t te);
+
+#ifdef XO_RT_TEST_THREADS
+#define XO_MAIN_THREADS XO_RT_TEST_THREADS
+#else
+#define XO_MAIN_THREADS 1
+#endif
 
 int main(int argc, char **argv) {
 	obj_heap_init(&main_heap);
@@ -1572,35 +1548,8 @@ int main(int argc, char **argv) {
 	_setmode(1, _O_BINARY);
 	_setmode(2, _O_BINARY);
 #endif
-	// the arguments and the environment (env.args, env.program, env.get,
-	// and env.vars read them in Xo; on Windows process.xo takes the
-	// environment from Windows in UTF-8), XO_HEAP_MID_MAX, then the test
-	// world (XO_TEST) or the signal handlers
-	xo_x_entry_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
-	// main runs on a thread of its own with a 1 GiB stack, which pool.xo
-	// thread_run starts and waits for
-#ifdef XO_RT_TEST_THREADS
-	// N copies of the program at once: every thread has its own heap,
-	// literals are shared (and never written)
-	xo_rt_threads_begin();
-	if (!xo_x_main_threads(XO_ADDR(run_main), XO_RT_TEST_THREADS)) {
-		fputs("pthread_create failed\n", stderr);
-		return 1;
-	}
-#else
-	if (!xo_x_main_threads(XO_ADDR(run_main), 1)) {
-		run_main(NULL);
-	}
-#endif
-	xo_flush();
-	xo_x_stop_end();
-	xo_x_rt_stats();
-	xo_x_streams_free();
-	// the values the test world keeps (twrun.xo end; nothing outside it)
-	xo_x_tw_end();
-	// XO_LEAKCHECK's and XO_HEAPSTATS' reports
-	xo_x_entry_finish();
-	return 0;
+	return (int)xo_x_entry_main(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ, XO_ADDR(xo_entry), XO_MAIN_THREADS,
+	                            XO_ADDR(xo_x_streams_free), XO_ADDR(xo_x_tw_end));
 }
 #endif
 

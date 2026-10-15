@@ -202,6 +202,21 @@ cuts anyway, so no extra seed and no chain hop.
   on both backends, go test -short, rt_addrs on LLVM and arm64,
   codegen 6 of 6.
 
+## Implementation (step 2, entry: 2026-10-15)
+
+- tasks.xo run_entry stores rt.frame_addr in the context's C_BOUNDARY and
+  calls the task's entry function through rt.call_c2; run_claimed calls
+  it directly (rt.sched_rt op 29 and xo_rt.c run_entry are gone).
+- entry.xo run_main (cabi.xo's run_main export is the main thread's C
+  function, its argument xo_entry's address) sets main's root context,
+  the boundary, and Windows' stack guarantee, then calls xo_entry.
+- entry.xo main does what C main did after the heap's and the faults'
+  setup (inventory rank 9). C main is one call of cabi.xo's entry_main
+  after those two lines. The weak stand-ins of exports only some
+  programs carry (cabi_http.xo streams_free, cabi_tw.xo tw_end) stay in
+  C and are passed in by address. rt.fn_addr has no weak form, so it
+  cannot name them.
+
 ## Consequences
 
 - About 535 lines of xo_rt.c and xo_http.c can move. The services

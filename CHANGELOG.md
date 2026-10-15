@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233 step 2, entry; zero-C inventory ranks 9
+  and 15): main's program is entry.xo main (the start, main's threads,
+  the end: flush, the stop record's end, statistics, the leak check),
+  and C main keeps only the heap's and the faults' setup, Windows'
+  binary streams, and one call of cabi.xo's entry_main. run_main is
+  entry.xo run_main (cabi.xo's export is main's thread function), and a
+  task's entry call is tasks.xo run_entry: both set the unwinding's
+  boundary with rt.frame_addr, so xo_rt.c's run_main, run_entry and
+  rt.sched_rt op 29 are gone. The weak stand-ins of cabi_http.xo's
+  streams_free and cabi_tw.xo's tw_end stay in C (only some programs
+  carry the exports): C main passes their addresses to entry_main.
 - Native runtime (decision 0233 step 2, poll.xo's services): the park
   wait (cabi.xo poll_park_wait through rt.fn_addr), a context's park
   offset (ctx.xo C_PARK) and the poller thread's start

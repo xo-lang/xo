@@ -494,19 +494,16 @@ fn stop_reset(n: Int) { stop.reset(n) }
 
 fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
 
-/// The program's start and end around C main (entry.xo, B26 part 2):
-/// the arguments, XO_HEAP_MID_MAX, the test world or the handlers; the
-/// leak check's and heap statistics' report; XO_RTSTATS' line.
-fn entry_start(argc: Int, argv: Int, envp: Int) { entry.start(argc, argv, envp) }
+/// The program from C main on (entry.xo main, B26 part 2 and decision
+/// 0233): the start, main's threads, the end; the status.
+fn entry_main(argc: Int, argv: Int, envp: Int, f: Int, n: Int, sf: Int, te: Int) -> Int { entry.main(argc, argv, envp, f, n, sf, te) }
 
-fn entry_finish() { entry.finish() }
-
-/// Main's threads (xo_rt.c main): the C function f (run_main, the fault
-/// boundary) on n threads with 1 GiB stacks, waited for; 1 when every
-/// one started.
-fn main_threads(f: Int, n: Int) -> Int { if pool.thread_run(f, 0, 1073741824, n) { 1 } else { 0 } }
-
-fn rt_stats() { entry.rt_stats() }
+/// The C function main's threads run (entry.xo run_main, the fault
+/// boundary), with xo_entry's address.
+fn run_main(entry_fn: Int) -> Int {
+  entry.run_main(entry_fn)
+  0
+}
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task

@@ -17,4 +17,3 @@
 __attribute__((weak)) void xo_x_streams_free(void) {}
 
 // A std function's fault at its caller: generated code calls this name.
-void xo_x_fault_at(int64_t p, int64_t n, int64_t lp, int64_t ln);

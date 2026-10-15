@@ -12,8 +12,10 @@
 // record (rt.static_word 61), from E_TW_INIT on. Nothing here allocates
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
+use native/llrt/ctx
 use native/llrt/heapos
 use native/llrt/linux
+use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/stdio
@@ -63,6 +65,70 @@ const W_GUARANTEE = 65536
 const ACQUIRE = 1
 
 fn call(k: Int, a: Int) -> Int { rt.call_c2(stop.svc_word(k), a, 0) }
+
+/// The program from C main on (rank 9 of the zero-C inventory, decision
+/// 0233), after the heap's and the faults' setup, which stay C: the
+/// process's start, main's thread (n copies with XO_RT_TEST_THREADS,
+/// 1 GiB stacks, pool.xo thread_run; main itself on this thread if no
+/// thread starts), then the end: standard output flushed, the stop
+/// record's end, the statistics, and the leak check's frees and reports.
+/// entry is xo_entry's address (the program's main); streams_free and
+/// tw_end are the C's weak references to cabi_http.xo's and
+/// cabi_tw.xo's exports, which only some programs carry. The status.
+pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int, streams_free: Int, tw_end: Int) -> Int {
+  start(argc, argv, envp)
+  let f = rt.fn_addr("run_main")
+  if n > 1 {
+    // N copies of the program at once: every thread has its own heap,
+    // literals are shared (and never written)
+    let _b = rt.sched_rt(RT_THREADS_BEGIN, 0, 0)
+    if !pool.thread_run(f, entry, MAIN_STACK, n) {
+      stdio.eprint("pthread_create failed", true)
+      return 1
+    }
+  } else if !pool.thread_run(f, entry, MAIN_STACK, 1) {
+    run_main(entry)
+  }
+  stdio.flush()
+  stop.end()
+  rt_stats()
+  let _s = rt.call_c2(streams_free, 0, 0)
+  // the values the test world keeps (twrun.xo end; nothing outside it)
+  let _t = rt.call_c2(tw_end, 0, 0)
+  // XO_LEAKCHECK's and XO_HEAPSTATS' reports
+  finish()
+  0
+}
+
+/// The size of main's stack.
+const MAIN_STACK = 1073741824
+
+/// rt.sched_rt's op that switches the runtime to several threads (pool.xo
+/// setup; xo_rt.c xo_rt_threads_begin).
+const RT_THREADS_BEGIN = 20
+
+/// The program's main on its own thread (cabi.xo run_main, the thread's
+/// C function; was xo_rt.c run_main): on Windows the stack the thread
+/// keeps for its stack overflow handler, main's root context for the
+/// second shutdown signal, and this frame as the unwinding's boundary (a
+/// fault that unwinds main is reported here with status 70, decision
+/// 0085), then xo_entry at entry.
+pub fn run_main(entry: Int) {
+  match target.os {
+    TargetOs.Windows => {
+      // past the guard page (ULONG, the size in its first 4 bytes)
+      let g = rt.heap_large(8)
+      rt.mem_store(g, 0, W_GUARANTEE, 4)
+      let _r = sys_windows.SetThreadStackGuarantee(g)
+      rt.heap_release(g - 8)
+    }
+    _ => {}
+  }
+  let c = ctx.cur()
+  stop.set_root(rt.mem_load(c, ctx.C_NODE, 8))
+  rt.mem_store(c, ctx.C_BOUNDARY, rt.frame_addr(), 8)
+  let _r = rt.call_c2(entry, 0, 0)
+}
 
 /// Starts the process (C main, after the heap and the faults' setup,
 /// before the program's thread): the arguments (as UTF-8 from the UTF-16
