@@ -698,14 +698,13 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
 // XO_RT_NO_MAIN's constructor).
-void xo_x_ctx_init(int64_t root, int64_t pl);
-static int64_t ctx_root(int64_t a, int64_t b);
+void xo_x_ctx_init(int64_t pl);
 static int64_t svc_addr(void);
 static void pd_svc_init(void);
 static void stop_svc_init(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	xo_x_ctx_init(XO_ADDR(ctx_root), svc_addr());
+	xo_x_ctx_init(svc_addr());
 	pd_svc_init();
 	stop_svc_init();
 }
@@ -1130,8 +1129,6 @@ void __tsan_release(void *addr);
 #define TSAN_RELEASE(a) ((void)(a))
 #endif
 
-static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
-
 // The parks and the cancellation tree in Xo (decision 0212 stage 2):
 // std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
 // record.
@@ -1254,33 +1251,18 @@ extern __thread int64_t xo_tlocal[16];
 enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
-__attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
 __attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 
-static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
-
-// rt_init gives the runtime's global mutexes their policy (mu_init)
-// before the first context uses them.
-static void rt_init(void);
-
-// ctx returns the current context, making a root for a thread that runs
-// Xo code outside any task (the program's main thread).
+// ctx returns the current context; a thread that runs Xo code outside
+// any task (the program's main thread) gets a root context from ctx.xo
+// root.
+int64_t xo_x_ctx_root(void);
 static xo_ctx *ctx(void) {
 	xo_ctx *c = cur_get();
 	if (__builtin_expect(c != NULL, 1)) {
 		return c;
 	}
-	pthread_once(&rt_once, rt_init);
-	c = calloc(1, sizeof(xo_ctx));
-	xo_node *root = calloc(1, sizeof(xo_node));
-	if (!c || !root) {
-		xo_oom();
-	}
-	c->node = root;
-	park_init(&c->park);
-	cur_set(c);
-	__atomic_fetch_add(&dlk.roots, 1, __ATOMIC_SEQ_CST);
-	return c;
+	return (xo_ctx *)(intptr_t)xo_x_ctx_root();
 }
 
 // The context record's layout, which ctx.xo's C_* name (decision 0229).
@@ -1303,13 +1285,6 @@ _Static_assert(_Alignof(xo_ctx) <= 8, "xo_ctx from the Xo heap");
 // ctx_exc is the fault's exception object in c's fault_exc area.
 static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
 	return (struct _Unwind_Exception *)(((uintptr_t)c->fault_exc + 15) & ~(uintptr_t)15);
-}
-
-// ctx_root is ctx for ctx.xo cur (its address in rt.static_word 15).
-static int64_t ctx_root(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	return XO_ADDR(ctx());
 }
 
 // xo_unwinding is ctx.xo unwinding, which generated code calls directly
@@ -1809,8 +1784,6 @@ static struct {
 	void *dlk;                 // the deadlock counts (pool.xo's parks)
 	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
 } pool = {.dlk = &dlk}; // a root waits before the pool starts
-
-static void rt_init(void) {}
 
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker; root_worker calls it from

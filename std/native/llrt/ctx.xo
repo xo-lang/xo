@@ -70,11 +70,9 @@ pub const C_CENT = 248
 pub const C_FIRED = 312
 pub const C_SIZE = 320
 
-/// rt.static_word: the address of xo_rt.c ctx_root (two ignored
-/// arguments; the current context, made for a thread that runs Xo code
-/// outside any task), and the address of the C's services record
-/// (xo_rt.c xo_svc: SV_*), set by init.
-const ROOT = 15
+/// rt.static_word: the address of the C's services record (xo_rt.c
+/// xo_svc: SV_*), set by init. (Word 15 held the C's ctx_root until the
+/// root context moved here, root.)
 const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
@@ -133,12 +131,8 @@ pub const SV_LISTENER_FREE = 216
 pub const SV_CONN_FREE = 224
 pub const SV_DNS = 232
 
-/// Sets the address of the C's ctx_root and of its services record (at
-/// start).
-pub fn init(root: Int, svc: Int) {
-  rt.mem_store(rt.static_word(ROOT), 0, root, 8)
-  rt.mem_store(rt.static_word(SVC), 0, svc, 8)
-}
+/// Sets the address of the C's services record (at start).
+pub fn init(svc: Int) { rt.mem_store(rt.static_word(SVC), 0, svc, 8) }
 
 /// The C's services record.
 pub fn svc() -> Int { rt.mem_load(rt.static_word(SVC), 0, 8) }
@@ -149,14 +143,37 @@ pub fn pool() -> Int { rt.mem_load(svc(), SV_POOL, 8) }
 /// The address of the word holding the program's task group.
 pub fn prog_group_word() -> Int { rt.static_word(PROG) }
 
-/// The current context: thread local word 0, or a root context the C
-/// makes for a thread that has none yet.
+/// The current context: thread local word 0, or a root context made for
+/// a thread that has none yet.
 pub fn cur() -> Int {
   let c = rt.tlocal_get(0)
   if c != 0 {
     return c
   }
-  rt.call_c2(rt.mem_load(rt.static_word(ROOT), 0, 8), 0, 0)
+  root()
+}
+
+/// The bytes of a cancellation node (xo_rt.c xo_node, asserted there),
+/// the pool record's word of the deadlock counts (pool.xo P_DLK), and
+/// the counts' word of the roots made.
+const N_BYTES = 56
+const P_DLK = 120
+const DLK_ROOTS = 0
+
+/// A root context for a thread that runs Xo code outside any task (the
+/// program's main thread; was xo_rt.c ctx): a zeroed context and
+/// cancellation node from the runtime's malloc (never freed, as the C's
+/// calloc), current on this thread from now on, and counted as a root by
+/// the deadlock check.
+pub fn root() -> Int {
+  let c = rt.heap_large(C_SIZE)
+  rt.mem_set(c, 0, C_SIZE)
+  let n = rt.heap_large(N_BYTES)
+  rt.mem_set(n, 0, N_BYTES)
+  rt.mem_store(c, C_NODE, n, 8)
+  rt.tlocal_set(0, c)
+  let _r = rt.slot_add[Int](rt.mem_load(pool(), P_DLK, 8), DLK_ROOTS, 1, 4)
+  c
 }
 
 /// Starts deferred code (xo_shield_begin): it is shielded from

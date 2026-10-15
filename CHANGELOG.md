@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, xo_rt.c's main thread context): the root
+  context of a thread running Xo code outside any task is ctx.xo root
+  (the C's ctx forwards; rt_once, rt_init, cur_set, park_init deleted).
+  The rest of "Fault unwinding" and the process environment is labelled
+  GLUE for the end pass (generated code and seed entry points, Windows
+  and libgcc x86_64 paths) in the audit row.
 - Native runtime (zero-C audit item B31, part 10, decision 0202): the
   net/url parser of std/http (url_parse, unescape, ports, IPv4 and IPv6
   literals, go_quote) moves from http1.xo into std/native/llrt/neturl.xo,

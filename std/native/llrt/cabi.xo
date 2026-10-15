@@ -480,7 +480,11 @@ fn ctx_unwinding() -> Int { ctx.unwinding() }
 
 /// The addresses of xo_rt.c ctx_root and its services record, at start
 /// (ctx.xo init).
-fn ctx_init(root: Int, svc: Int) { ctx.init(root, svc) }
+fn ctx_init(svc: Int) { ctx.init(svc) }
+
+/// The current context of a thread with none yet (xo_rt.c ctx's slow
+/// path): ctx.xo root.
+fn ctx_root() -> Int { ctx.root() }
 
 // Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
 // open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and
