@@ -26,6 +26,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   stopsvc_chan, stopsvc_close, stop_grace_fire and on_signal go;
   stop_svc keeps only the entry's words (88 on).
 - ctx.xo's services record is Xo (decision 0233 step 2): ctx.xo init makes it, and every handle constructor names its free function with rt.fn_addr, so the C record, its initializer, asserts, free function declarations, pool_rec and the weak HTTP and network free stand-ins are gone.
+- Native runtime (after seed 0.13.0-d770aa15): the C forwarders only
+  older compilers' code called are deleted, std/llrt 2325 to 1967
+  lines: the fault raisers and fault_raise, continue, take, msg, loc,
+  detail (and xo_http.c's xo_fault_at), string equality and order, the
+  number text builders, the entries batches N1 to N3 (scope deadlines,
+  stop requests, task.stopping, real-time sections, the network, the
+  clock and cancellation checks) with their helpers and the network's
+  weak declarations, and the xo_personality forwarder off Windows (the
+  unwinder gets xo_x_personality twice there). cabi_net.xo's
+  nc_listener_addr and nc_conn_read, which only those forwarders
+  called, go too. The C tests call the exports through
+  std/llrt/testdata/xcalls.h.
 - Native runtime (the event loop): poll.xo checks a context's
   cancellation (budget.xo canceled), signals a park (pool.xo
   park_signal, released for ThreadSanitizer first) and runs a signal's

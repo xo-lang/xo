@@ -97,8 +97,8 @@ static unsigned char pattern(int64_t i) { return (unsigned char)(i * 7 + (i >> 9
 // stream
 static void echo(xo_conn *c) {
 	for (;;) {
-		xo_rlist *l = xo_conn_read(c, 65536);
-		if (xo_net_status() != 0 || l->len == 0) {
+		xo_rlist *l = t_conn_read(c, 65536);
+		if (t_net_status() != 0 || l->len == 0) {
 			if (l != &empty_list) {
 				drop_str_list(l);
 			}
@@ -106,9 +106,9 @@ static void echo(xo_conn *c) {
 		}
 		xo_rstr *s = ((xo_rstr **)rl_data(l))[0];
 		int64_t n = ((int64_t *)rl_data(l))[1];
-		xo_conn_write(c, s->data, n);
+		t_conn_write(c, s->data, n);
 		drop_str_list(l);
-		if (xo_net_status() != 0) {
+		if (t_net_status() != 0) {
 			return;
 		}
 	}
@@ -120,14 +120,14 @@ static void run_job(xo_rlist *fl, xo_task *t) {
 	int64_t res = 0;
 	switch (j.kind) {
 	case J_SLEEP:
-		xo_clock_sleep(j.arg * MS);
+		t_clock_sleep(j.arg * MS);
 		res = 1;
 		break;
 	case J_ECHO_ONE: {
-		xo_conn *c = xo_listener_accept(j.obj);
-		CHECK(xo_net_status() == 0);
+		xo_conn *c = t_listener_accept(j.obj);
+		CHECK(t_net_status() == 0);
 		echo(c);
-		xo_conn_close(c);
+		t_conn_close(c);
 		release(c);
 		break;
 	}
@@ -137,22 +137,22 @@ static void run_job(xo_rlist *fl, xo_task *t) {
 		for (int64_t i = 0; i < j.arg; i++) {
 			buf[i] = (char)pattern(i);
 		}
-		xo_conn_write(j.obj, buf, j.arg);
-		res = xo_net_status();
+		t_conn_write(j.obj, buf, j.arg);
+		res = t_net_status();
 		free(buf);
 		break;
 	}
 	case J_READ_ONCE: {
-		xo_rlist *l = xo_conn_read(j.obj, 16);
-		res = xo_net_status();
+		xo_rlist *l = t_conn_read(j.obj, 16);
+		res = t_net_status();
 		if (l != &empty_list) {
 			drop_str_list(l);
 		}
 		break;
 	}
 	case J_ACCEPT_ONCE: {
-		xo_conn *c = xo_listener_accept(j.obj);
-		res = xo_net_status();
+		xo_conn *c = t_listener_accept(j.obj);
+		res = t_net_status();
 		release(c);
 		break;
 	}
@@ -184,7 +184,7 @@ static int64_t await_int(xo_task *t) {
 
 static void test_timers(void) {
 	int64_t start = xo_x_mono_ns();
-	xo_clock_sleep(10 * MS);
+	t_clock_sleep(10 * MS);
 	CHECK(xo_x_mono_ns() - start >= 10 * MS);
 	// many sleepers at once park; the workers stay few
 	start = xo_x_mono_ns();
@@ -210,13 +210,13 @@ static void test_timers(void) {
 	start = xo_x_mono_ns();
 	s = t_scope_open();
 	release(spawn(s, J_SLEEP, 3600 * 1000, NULL, 1));
-	xo_clock_sleep(5 * MS);
+	t_clock_sleep(5 * MS);
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	CHECK(xo_x_mono_ns() - start < 10000 * MS);
 	// select with only `after`
 	xo_select *sel = t_select_new();
-	xo_select_after(sel, 5 * MS);
+	t_select_after(sel, 5 * MS);
 	CHECK(t_select_wait(sel, LOC) == -2);
 	release(sel);
 	fputs("timers: ok\n", stderr);
@@ -224,16 +224,16 @@ static void test_timers(void) {
 
 static void test_echo(void) {
 	static const char a[] = "127.0.0.1:0";
-	xo_listener *l = xo_net_listen("", 0, a, (int64_t)sizeof a - 1);
-	CHECK(xo_net_status() == 0);
-	xo_rlist *al = xo_listener_addr(l);
+	xo_listener *l = t_net_listen("", 0, a, (int64_t)sizeof a - 1);
+	CHECK(t_net_status() == 0);
+	xo_rlist *al = t_listener_addr(l);
 	xo_rstr *as = ((xo_rstr **)rl_data(al))[0];
 	int64_t an = ((int64_t *)rl_data(al))[1];
 	CHECK(an > 10 && memcmp(as->data, "127.0.0.1:", 10) == 0);
 	xo_scope *s = t_scope_open();
 	release(spawn(s, J_ECHO_ONE, 0, l, 0));
-	xo_conn *c = xo_net_dial("", 0, as->data, an);
-	CHECK(xo_net_status() == 0);
+	xo_conn *c = t_net_dial("", 0, as->data, an);
+	CHECK(t_net_status() == 0);
 	drop_str_list(al);
 	// more than the socket buffers hold: the writer parks until the echo
 	// and this reader drain them
@@ -241,8 +241,8 @@ static void test_echo(void) {
 	xo_task *w = spawn(s, J_WRITE, BYTES, c, 2);
 	int64_t got = 0, bad = 0;
 	while (got < BYTES) {
-		xo_rlist *r = xo_conn_read(c, 1 << 20);
-		if (xo_net_status() != 0 || r->len == 0) {
+		xo_rlist *r = t_conn_read(c, 1 << 20);
+		if (t_net_status() != 0 || r->len == 0) {
 			break;
 		}
 		xo_rstr *rs = ((xo_rstr **)rl_data(r))[0];
@@ -255,7 +255,7 @@ static void test_echo(void) {
 	}
 	CHECK(await_int(w) == 0);
 	CHECK(got == BYTES && bad == 0);
-	xo_conn_close(c);
+	t_conn_close(c);
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	release(c);
@@ -265,31 +265,31 @@ static void test_echo(void) {
 
 static void test_wakeups(void) {
 	static const char a[] = "127.0.0.1:0";
-	xo_listener *l = xo_net_listen("", 0, a, (int64_t)sizeof a - 1);
-	xo_rlist *al = xo_listener_addr(l);
+	xo_listener *l = t_net_listen("", 0, a, (int64_t)sizeof a - 1);
+	xo_rlist *al = t_listener_addr(l);
 	xo_rstr *as = ((xo_rstr **)rl_data(al))[0];
 	int64_t an = ((int64_t *)rl_data(al))[1];
-	xo_conn *c = xo_net_dial("", 0, as->data, an);
-	CHECK(xo_net_status() == 0);
-	xo_conn *peer = xo_listener_accept(l);
-	CHECK(xo_net_status() == 0);
+	xo_conn *c = t_net_dial("", 0, as->data, an);
+	CHECK(t_net_status() == 0);
+	xo_conn *peer = t_listener_accept(l);
+	CHECK(t_net_status() == 0);
 	// close wakes a parked read: Io
 	xo_scope *s = t_scope_open();
 	xo_task *t = spawn(s, J_READ_ONCE, 0, c, 2);
-	xo_clock_sleep(5 * MS);
-	xo_conn_close(c);
+	t_clock_sleep(5 * MS);
+	t_conn_close(c);
 	CHECK(await_int(t) == 4);
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	// cancellation wakes a parked accept and read: Canceled (the read is
 	// on a second connection: peer saw c close)
-	xo_conn *c2 = xo_net_dial("", 0, as->data, an);
-	xo_conn *peer2 = xo_listener_accept(l);
-	CHECK(xo_net_status() == 0);
+	xo_conn *c2 = t_net_dial("", 0, as->data, an);
+	xo_conn *peer2 = t_listener_accept(l);
+	CHECK(t_net_status() == 0);
 	s = t_scope_open();
 	xo_task *ta = spawn(s, J_ACCEPT_ONCE, 0, l, 2);
 	xo_task *tr = spawn(s, J_READ_ONCE, 0, peer2, 2);
-	xo_clock_sleep(5 * MS);
+	t_clock_sleep(5 * MS);
 	t_scope_cancel(s);
 	CHECK(t_scope_close(s, 0) == 0);
 	CHECK(__atomic_load_n(&ta->state, __ATOMIC_ACQUIRE) == T_DONE && __atomic_load_n(&tr->state, __ATOMIC_ACQUIRE) == T_DONE);
@@ -303,9 +303,9 @@ static void test_wakeups(void) {
 	release(c2);
 	release(c);
 	// a closed listener refuses
-	xo_listener_close(l);
-	xo_conn *r = xo_net_dial("", 0, as->data, an);
-	CHECK(xo_net_status() == 2);
+	t_listener_close(l);
+	xo_conn *r = t_net_dial("", 0, as->data, an);
+	CHECK(t_net_status() == 2);
 	release(r);
 	drop_str_list(al);
 	release(l);

@@ -15,6 +15,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 static void scrub(void) {
 	// runs on the stack below the cleanup's frame: where the frames of
@@ -36,7 +37,7 @@ __attribute__((noinline)) static void middle(void) {
 	(void)guard;
 	static const char msg[] = "boom";
 	static const char loc[] = "fault_resume.xo:3:5";
-	xo_fault_raise(msg, (int64_t)sizeof msg - 1, loc, (int64_t)sizeof loc - 1);
+	t_fault_raise(msg, (int64_t)sizeof msg - 1, loc, (int64_t)sizeof loc - 1);
 }
 
 __attribute__((noinline)) static void outer(void) {

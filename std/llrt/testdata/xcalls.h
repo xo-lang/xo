@@ -3,6 +3,8 @@
 // typed for the C tests that play generated code.
 // Include after ../xo_rt.c.
 
+int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
+void xo_x_chan_close(int64_t c);
 int64_t xo_x_task_spawn(int64_t s, int64_t fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, int64_t lp, int64_t ln);
 int64_t xo_x_scope_open(void);
 int64_t xo_x_scope_close(int64_t s, int64_t mode);
@@ -107,3 +109,53 @@ void xo_x_poll_pd_free(int64_t pd);
 #define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
 int64_t xo_x_fd_nonblock(int64_t fd);
 static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }
+
+// the elements of a list (was xo_rt.c's rl_data, which only the tests used
+// at the end)
+static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
+
+// a fault raised by C code (was xo_rt.c's xo_fault_raise): cabi.xo's
+// fault_raise export
+void xo_x_fault_raise(int64_t p, int64_t n, int64_t lp, int64_t ln);
+XO_NORETURN static void t_fault_raise(const char *msg, int64_t n, const char *loc, int64_t ln) {
+	xo_x_fault_raise(XO_ADDR(msg), n, XO_ADDR(loc), ln);
+	__builtin_unreachable();
+}
+
+// The entries generated code calls through Xo exports since the entries
+// batches N1 to N3 (selfhost/ssa exports.xo rt_export): xo_rt.c's
+// forwarders of them went with seed 0.13.0. A 0 result of the list and
+// handle ones is the empty list or the zero handle, as the emitters
+// choose it (rt_export_none).
+void xo_x_clock_sleep(int64_t d);
+int64_t xo_x_is_canceled(void);
+void xo_x_select_after(int64_t s, int64_t d);
+void xo_x_rt_enter(void);
+void xo_x_rt_exit(int64_t np, int64_t n, int64_t lp, int64_t ln);
+int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
+int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
+int64_t xo_x_nc_listener_accept(int64_t l);
+void xo_x_nc_listener_close(int64_t l);
+int64_t xo_x_nc_listener_addr_list(int64_t l);
+void xo_x_nc_conn_write(int64_t cn, int64_t p, int64_t n);
+void xo_x_nc_conn_close(int64_t cn);
+int64_t xo_x_nc_conn_read_list(int64_t cn, int64_t max);
+int64_t xo_x_nc_status(void);
+
+static void *t_handle_or_zero(int64_t r) { return r ? (void *)(intptr_t)r : (void *)&zero_handle; }
+static xo_rlist *t_list_or_empty(int64_t r) { return r ? (xo_rlist *)(intptr_t)r : &empty_list; }
+
+static void t_clock_sleep(int64_t d) { xo_x_clock_sleep(d); }
+static int64_t t_is_canceled(void) { return xo_x_is_canceled(); }
+static void t_select_after(xo_select *s, int64_t d) { xo_x_select_after(XO_ADDR(s), d); }
+static void t_realtime_enter(void) { xo_x_rt_enter(); }
+static void t_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) { xo_x_rt_exit(XO_ADDR(name), n, XO_ADDR(loc), ln); }
+static xo_listener *t_net_listen(const char *lp, int64_t ln, const char *p, int64_t n) { return t_handle_or_zero(xo_x_nc_listen(XO_ADDR(lp), ln, XO_ADDR(p), n)); }
+static xo_conn *t_net_dial(const char *lp, int64_t ln, const char *p, int64_t n) { return t_handle_or_zero(xo_x_nc_dial(XO_ADDR(lp), ln, XO_ADDR(p), n)); }
+static xo_conn *t_listener_accept(xo_listener *l) { return t_handle_or_zero(xo_x_nc_listener_accept(XO_ADDR(l))); }
+static void t_listener_close(xo_listener *l) { xo_x_nc_listener_close(XO_ADDR(l)); }
+static xo_rlist *t_listener_addr(xo_listener *l) { return t_list_or_empty(xo_x_nc_listener_addr_list(XO_ADDR(l))); }
+static void t_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_write(XO_ADDR(cn), XO_ADDR(p), n); }
+static void t_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
+static xo_rlist *t_conn_read(xo_conn *cn, int64_t max) { return t_list_or_empty(xo_x_nc_conn_read_list(XO_ADDR(cn), max)); }
+static int64_t t_net_status(void) { return xo_x_nc_status(); }

@@ -346,7 +346,7 @@ static void test_cancel(void) {
 		release(spawn(s, J_RECV_FOREVER, 0, c, 0));
 	}
 	t_scope_cancel(s);
-	CHECK(!xo_is_canceled());
+	CHECK(!t_is_canceled());
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	release(c);

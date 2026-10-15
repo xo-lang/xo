@@ -12,23 +12,20 @@ use native/llrt/netconn
 use native/llrt/raw
 
 // ---------------------------------------------------------------------------
-// The network's operations (netconn.xo): a handle's address, 0 for none
-// (the C forwarder's zero handle or empty list), the error in the
-// context.
+// The network's operations (netconn.xo) for generated code, which
+// calls them directly (selfhost/ssa exports.xo): a handle's address, 0
+// for none (the emitters turn it into the zero handle), the error in
+// the context.
 
 fn nc_listen(lp: Int, ln: Int, p: Int, n: Int) -> Int { netconn.listen(raw.str_at(lp, ln), raw.str_at(p, n)) }
 
 fn nc_dial(lp: Int, ln: Int, p: Int, n: Int) -> Int { netconn.dial(raw.str_at(lp, ln), raw.str_at(p, n)) }
-
-fn nc_listener_addr(l: Int, np: Int) -> Int { netconn.listener_addr(l, np) }
 
 fn nc_listener_accept(l: Int) -> Int { netconn.listener_accept(l) }
 
 fn nc_listener_close(l: Int) { netconn.listener_close(l) }
 
 fn nc_listener_free(l: Int) { netconn.listener_free(l) }
-
-fn nc_conn_read(cn: Int, max: Int, np: Int) -> Int { netconn.conn_read(cn, max, np) }
 
 fn nc_conn_write(cn: Int, p: Int, n: Int) { netconn.conn_write(cn, p, n) }
 

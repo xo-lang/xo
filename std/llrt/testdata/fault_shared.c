@@ -12,13 +12,14 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 static int cmp(const void *a, const void *b) {
 	(void)a;
 	(void)b;
 	static const char msg[] = "boom in qsort";
 	static const char loc[] = "fault_shared.xo:1:1";
-	xo_fault_raise(msg, (int64_t)sizeof msg - 1, loc, (int64_t)sizeof loc - 1);
+	t_fault_raise(msg, (int64_t)sizeof msg - 1, loc, (int64_t)sizeof loc - 1);
 }
 
 // call_qsort sorts through the C library's qsort, which calls cmp.

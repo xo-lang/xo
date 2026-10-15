@@ -362,10 +362,7 @@ int64_t xo_x_heap_chunks(void);
 
 // The heap, strings and lists in Xo (decisions 0198 and 0207, zero-C
 // audit B13): std/native/llrt/alloc.xo and obj.xo through cabi.xo's
-// exports; the C's own blocks are strings and lists (rs_new, rl_new).
-int64_t xo_x_obj_rs_new(int64_t n);
-int64_t xo_x_obj_rl_new_cap(int64_t cap, int64_t esize);
-
+// exports.
 
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058)
@@ -437,23 +434,9 @@ void xo_x_flush_try(void);
 
 void xo_flush(void) { xo_x_flush(); }
 
-// ---------------------------------------------------------------------------
-// C ABI exports (decisions 0204, 0207): functions of
-// std/native/llrt/cabi.xo that every native program carries, called here
-// by name. Addresses pass as int64_t; each writes its text and a zero
-// byte into the buffer it is given and returns the text's length.
-
-int64_t xo_x_fmt_int(int64_t buf, int64_t v);
-int64_t xo_x_fmt_float(int64_t buf, double f);
-
+// Addresses pass to the C ABI exports of std/native/llrt/cabi.xo
+// (decisions 0204, 0207) as int64_t.
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
-
-// Number text (the Go backend's: strconv.FormatInt, and FloatStr, the
-// shortest 'g' form with ".0" added to whole numbers), in Xo (num.xo):
-// buf holds at least 32 bytes for an Int, 48 for a Float.
-static int fmt_int(char *buf, int64_t v) { return (int)xo_x_fmt_int(XO_ADDR(buf), v); }
-
-static int fmt_float(char *buf, double f) { return (int)xo_x_fmt_float(XO_ADDR(buf), f); }
 
 // ---------------------------------------------------------------------------
 // Faults (core 8): the same messages as std/rt, exit status 70
@@ -463,63 +446,11 @@ static int fmt_float(char *buf, double f) { return (int)xo_x_fmt_float(XO_ADDR(b
 // context and raises.
 XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc);
 
-// xo_fault_detail sets the line printed under the next fault (the values
-// of a failed contract, core 9.1).
-void xo_fault_detail(const char *p, int64_t n);
-
 // The fault entry points of generated code are cabi.xo's fault_raise_*
 // exports (decision 0228: fault.xo writes the message and calls
 // fault_raise_msg, whose address fault_init gives it), which the
-// emitters name. These forward to them for code from an xo whose
-// emitters named xo_fault_* (seed 0.11.0 builds the next xo with them):
-// delete them once a seed names the exports.
-void xo_x_fault_raise_text(int64_t p, int64_t n, int64_t loc);
-void xo_x_fault_raise_overflow(int64_t a, int64_t op, int64_t b, int64_t loc);
-void xo_x_fault_raise_shl(int64_t a, int64_t b, int64_t loc);
-void xo_x_fault_raise_shift(int64_t n, int64_t loc);
-void xo_x_fault_raise_divzero(int64_t a, int64_t op, int64_t loc);
-void xo_x_fault_raise_neg(int64_t a, int64_t loc);
-void xo_x_fault_raise_abs(int64_t a, int64_t loc);
-void xo_x_fault_raise_index(int64_t i, int64_t n, int64_t loc);
-void xo_x_fault_raise_float_int(double f, int64_t loc);
+// emitters name.
 void xo_x_fault_init(int64_t raise_msg);
-
-XO_NORETURN void xo_fault(const char *msg, int64_t n, const char *loc) {
-	xo_x_fault_raise_text(XO_ADDR(msg), n, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_overflow(int64_t a, int64_t op, int64_t b, const char *loc) {
-	xo_x_fault_raise_overflow(a, op, b, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_shl(int64_t a, int64_t b, const char *loc) {
-	xo_x_fault_raise_shl(a, b, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_shift(int64_t n, const char *loc) {
-	xo_x_fault_raise_shift(n, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_divzero(int64_t a, int64_t op, const char *loc) {
-	xo_x_fault_raise_divzero(a, op, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_neg(int64_t a, const char *loc) {
-	xo_x_fault_raise_neg(a, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_abs(int64_t a, const char *loc) {
-	xo_x_fault_raise_abs(a, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_index(int64_t i, int64_t n, const char *loc) {
-	xo_x_fault_raise_index(i, n, XO_ADDR(loc));
-	__builtin_unreachable();
-}
-XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
-	xo_x_fault_raise_float_int(f, XO_ADDR(loc));
-	__builtin_unreachable();
-}
 
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
@@ -538,19 +469,6 @@ static void fault_init(void) {
 // ---------------------------------------------------------------------------
 // Strings
 
-int32_t xo_str_eq(const char *a, int64_t an, const char *b, int64_t bn) {
-	return an == bn && (a == b || memcmp(a, b, (size_t)an) == 0);
-}
-
-int64_t xo_str_cmp(const char *a, int64_t an, const char *b, int64_t bn) {
-	int64_t n = an < bn ? an : bn;
-	int c = memcmp(a, b, (size_t)n);
-	if (c != 0) {
-		return c < 0 ? -1 : 1;
-	}
-	return an < bn ? -1 : (an > bn ? 1 : 0);
-}
-
 // ---------------------------------------------------------------------------
 // Reference counted strings and lists (code lowered from internal/ssa)
 
@@ -559,63 +477,11 @@ typedef struct {
 	char data[];
 } xo_rstr;
 
-// rs_new is a new string object with room for at least n bytes (obj.xo
-// rs_new_obj).
-static xo_rstr *rs_new(int64_t n) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_new(n); }
-
-// rs_append appends the n bytes at p to a (of length an), consuming a:
-// in place when a is unique (doubling when it is full: Perceus reuse, so
-// a loop of `s = s + x` is linear), else into a new string: obj.xo's
-// (zero-C audit B13).
-int64_t xo_x_obj_rs_append_at(int64_t a, int64_t an, int64_t p, int64_t n);
-static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
-	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append_at(XO_ADDR(a), an, XO_ADDR(p), n);
-}
-
-// xo_rs_concat_int is `a + "${v}"` without a temporary string.
-xo_rstr *xo_rs_concat_int(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
-	char t[32];
-	int n = fmt_int(t, v);
-	*len = an + n;
-	return rs_append(a, an, t, n);
-}
-
-// xo_rs_concat_float is `a + "${v}"` for a Float.
-xo_rstr *xo_rs_concat_float(xo_rstr *a, int64_t an, double v, int64_t *len) {
-	char t[48];
-	int n = fmt_float(t, v);
-	*len = an + n;
-	return rs_append(a, an, t, n);
-}
-
-xo_rstr *xo_rs_of_int(int64_t v, int64_t *len) {
-	char t[32];
-	int n = fmt_int(t, v);
-	xo_rstr *s = rs_new(n);
-	memcpy(s->data, t, (size_t)n);
-	*len = n;
-	return s;
-}
-
-xo_rstr *xo_rs_of_float(double v, int64_t *len) {
-	char t[48];
-	int n = fmt_float(t, v);
-	xo_rstr *s = rs_new(n);
-	memcpy(s->data, t, (size_t)n);
-	*len = n;
-	return s;
-}
-
 typedef struct {
 	int64_t rc, len, cap;
 } xo_rlist;
 
 typedef void (*xo_elem_fn)(void *);
-
-static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
-
-// rl_new is an empty list with room for cap elements (obj.xo rl_new).
-static xo_rlist *rl_new(int64_t cap, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_new_cap(cap, esize); }
 
 // The entries LLVM generated code calls (arm64 generated code calls the
 // obj_*_n exports directly): they forward to obj.xo's entries, which find
@@ -733,15 +599,9 @@ _Static_assert(offsetof(__typeof__(st), rt_section) == 18 * 8 && offsetof(__type
 
 // ---------------------------------------------------------------------------
 // Real-time sections (core 6.5, decision 0133): std/native/llrt/rtsec.xo,
-// through cabi.xo's exports; these entries are generated code's.
+// through cabi.xo's exports, which generated code calls.
 
-void xo_x_rt_enter(void);
-void xo_x_rt_exit(int64_t np, int64_t n, int64_t lp, int64_t ln);
 void xo_x_rt_fault_leave(void);
-
-void xo_realtime_enter(void) { xo_x_rt_enter(); }
-
-void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) { xo_x_rt_exit(XO_ADDR(name), n, XO_ADDR(loc), ln); }
 
 // rt_fault_leave ends the thread's real-time sections when a fault
 // unwinds out of them.
@@ -855,8 +715,6 @@ typedef struct xo_node {
 	xo_park *waiter; // the park of a context blocked at this node (mu)
 	xo_lock mu;      // child, the children's prev and next, waiter
 } xo_node;
-
-static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __ATOMIC_ACQUIRE) != 0; }
 
 static void node_link(xo_node *n, xo_node *parent);
 static void node_unlink(xo_node *n);
@@ -1036,10 +894,6 @@ int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t p
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #if defined(_WIN32)
 EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
-#elif defined(XO_NOLIBC)
-int xo_personality(void); // the link's --defsym of xo_x_personality
-#else
-int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
 #endif
 
 // fault_raise on Linux, macOS, and Windows (decision 0221; Windows,
@@ -1048,17 +902,21 @@ int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc);
 // program and its shared objects on Linux, the compact unwind of
 // __unwind_info and __eh_frame on macOS, the system's RtlVirtualUnwind
 // on Windows, win_raise), which runs the first landing pad of
-// a frame of generated code (its personality is xo_x_personality, or
-// the forwarder xo_personality that an xo before decision 0221's
-// emitter change names) below the context's boundary, and returns when
-// nothing catches the fault.
+// a frame of generated code (its personality is xo_x_personality; on
+// Windows the language handler xo_personality too) below the context's
+// boundary, and returns when nothing catches the fault.
 XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
 	// on Windows unwind.xo win_raise captures its own CONTEXT
-	// (RtlCaptureContext from sys_windows.xo) and walks from there
+	// (RtlCaptureContext from sys_windows.xo) and walks from there; the
+	// language handler xo_personality marks generated code there too
+#ifdef _WIN32
 	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
+#else
+	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_x_personality), 0);
+#endif
 	fault_exit(c);
 }
 
@@ -1078,57 +936,12 @@ XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
 	fault_raise(c);
 }
 
-// The fault entries below are cabi.xo's fault_* exports (fault.xo), which
-// the emitters name; these forward for code from an xo whose emitters
-// named the C (seed 0.12.0 and older).
-void xo_x_fault_raise(int64_t p, int64_t n, int64_t lp, int64_t ln);
-void xo_x_fault_continue(void);
-int64_t xo_x_fault_take(void);
-int64_t xo_x_fault_msg(int64_t lenp);
-int64_t xo_x_fault_loc(int64_t lenp);
-void xo_x_fault_detail(int64_t p, int64_t n);
-
-void xo_fault_detail(const char *p, int64_t n) { xo_x_fault_detail(XO_ADDR(p), n); }
-
-// xo_fault_raise is `fault(msg)` and a failed contract at loc.
-XO_NORETURN void xo_fault_raise(const char *msg, int64_t n, const char *loc, int64_t ln) {
-	xo_x_fault_raise(XO_ADDR(msg), n, XO_ADDR(loc), ln);
-	__builtin_unreachable();
-}
-
-// xo_fault_continue runs at the unwind exit of a function: a fault goes
-// on to the caller; otherwise (cancellation) the function returns.
-void xo_fault_continue(void) { xo_x_fault_continue(); }
-
-// xo_fault_take catches the fault unwinding the current context (for
-// `task.isolate`): 1 and the context goes on normally, its message
-// available to xo_fault_msg and xo_fault_loc; 0 when it is not a fault
-// (cancellation, which goes on unwinding).
-int64_t xo_fault_take(void) { return xo_x_fault_take(); }
-
-// xo_fault_msg is the message of the fault xo_fault_take caught.
-xo_rstr *xo_fault_msg(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_msg(XO_ADDR(len)); }
-
-// xo_fault_loc is its location; the record is cleared after it.
-xo_rstr *xo_fault_loc(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_loc(XO_ADDR(len)); }
-
 // xo_personality: the Xo unwinder reads the call site tables itself and
 // only compares a frame's personality with the address of the export
-// xo_x_personality, which the emitters name (on x86_64 Linux and macOS
-// too since decision 0221's stage 2, 2026-10-15). With no C library the
-// link defines xo_personality as the export; otherwise it is the
-// forwarder below, for code from an xo whose emitters still name
-// xo_personality (seed 0.12.0's on x86_64 Linux and macOS): delete it
-// once a seed names the export there. On Windows it is the language
+// xo_x_personality, which the emitters name (seed 0.13.0's too, so the
+// C forwarder for older emitters is gone). With no C library the link
+// defines xo_personality as the export. On Windows it is the language
 // handler below.
-#if !defined(_WIN32) && !defined(XO_NOLIBC)
-int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
-
-int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc) {
-	return (int)xo_x_personality(version, actions, (int64_t)cls, XO_ADDR(e), XO_ADDR(uc));
-}
-#endif
-
 #if defined(_WIN32)
 // xo_personality is, on Windows, the language handler the system's
 // exception dispatcher calls for frames of generated code (and the
@@ -1142,11 +955,6 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 	return ExceptionContinueSearch;
 }
 #endif
-
-
-int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
-
-
 
 // ---------------------------------------------------------------------------
 // Resource budgets (std.md 7, decisions 0173 and 0175): std/rt budget.go.
@@ -1182,19 +990,6 @@ _Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 
 
 // The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
 // (decision 0229), which generated code calls through its exports.
-
-// ctx_canceled reports whether c is canceled and not shielded.
-static int ctx_canceled(xo_ctx *c) { return !c->shield && node_canceled(c->node); }
-
-// canceled reports whether a cancellation point in c reports
-// cancellation (and marks c unwinding when it does).
-static int canceled(xo_ctx *c) {
-	if (ctx_canceled(c)) {
-		c->unwinding = 1;
-		return 1;
-	}
-	return 0;
-}
 
 // ---------------------------------------------------------------------------
 // The worker pool (decisions 0068, 0069, 0077)
@@ -1630,8 +1425,6 @@ typedef struct {
 // through its exports (task.stopping's channel too: stop.xo through
 // cabi.xo's stop_chan_new; the C tests through xcalls.h). chan_free stays
 // C (the free function the handle names).
-int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
-void xo_x_chan_close(int64_t c);
 
 _Static_assert(offsetof(xo_cent, fired) == 8 && offsetof(xo_cent, item) == 16 && offsetof(xo_cent, shut) == 24 && offsetof(xo_cent, idx) == 32 &&
                    offsetof(xo_cent, chosen) == 40 && offsetof(xo_cent, prev) == 48 && offsetof(xo_cent, next) == 56 && sizeof(xo_cent) == 64,
@@ -1729,37 +1522,22 @@ enum { EV_SIGS_W = 5 };
 
 // The network's system calls (decision 0206 stage 3, the zero-C audit's
 // B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
-// accept, reads and writes) from Xo. The netconn.xo operations and the
-// handles' free functions, which a program carries when it dials,
-// listens, or uses std/http (cabi_net.xo), are weak references
+// accept, reads and writes) from Xo, and generated code calls
+// cabi_net.xo's exports for them. The handles' free functions, which a
+// program carries when it dials, listens, or uses std/http
+// (cabi_net.xo), and proc.xo's child free function are weak references
 // everywhere (XO_NC_REF, above the services record); Mach-O takes no
 // undefined weak reference (and PE/COFF's are weak externals with a
-// default), so weak definitions stand in there until cabi_net.xo's
+// default), so weak definitions stand in there until the exports
 // replace them.
-XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
-XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
-XO_NC_REF int64_t xo_x_nc_listener_addr(int64_t l, int64_t np);
-XO_NC_REF int64_t xo_x_nc_listener_accept(int64_t l);
-XO_NC_REF void xo_x_nc_listener_close(int64_t l);
 XO_NC_REF void xo_x_nc_listener_free(int64_t l);
-XO_NC_REF int64_t xo_x_nc_conn_read(int64_t cn, int64_t max, int64_t np);
-XO_NC_REF void xo_x_nc_conn_write(int64_t cn, int64_t p, int64_t n);
-XO_NC_REF void xo_x_nc_conn_close(int64_t cn);
 XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 #if (defined(__APPLE__) || defined(_WIN32)) && !defined(XO_NOLIBC)
 #define XO_NX_STUB(name, ...)                                                                                                 \
 	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
 #define XO_NX_VSTUB(name, ...)                                                                                                \
 	__attribute__((weak)) void name(__VA_ARGS__) {}
-XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
-XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
-XO_NX_STUB(xo_x_nc_listener_addr, int64_t a, int64_t b)
-XO_NX_STUB(xo_x_nc_listener_accept, int64_t a)
-XO_NX_VSTUB(xo_x_nc_listener_close, int64_t a)
 XO_NX_VSTUB(xo_x_nc_listener_free, int64_t a)
-XO_NX_STUB(xo_x_nc_conn_read, int64_t a, int64_t b, int64_t c)
-XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
-XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
 XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
 #endif
 
@@ -1813,72 +1591,16 @@ static void pd_svc_init(void) {
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
 // ns (the Go backend's representation)
 
-// xo_clock_now is the test world's virtual clock while it runs, else the
-// wall clock (poll.xo wall_now), for code of earlier compilers.
-int64_t xo_x_clock_now(void);
-int64_t xo_clock_now(void) { return xo_x_clock_now(); }
-
-// clock_wait sleeps d unless the task is or becomes canceled; it returns
-// 1 when cancellation ended (or prevented) the sleep, without starting
-// an unwind (poll.xo clock_wait). The test world records the sleep first
-// (FakeClock.sleeps() lists every sleep asked for).
-int64_t xo_x_poll_clock_wait(int64_t c, int64_t d);
-static int clock_wait(xo_ctx *c, int64_t d) {
-	if (!ctx_canceled(c)) {
-		xo_x_tw_sleep(d);
-	}
-	return (int)xo_x_poll_clock_wait(XO_ADDR(c), d);
-}
-
-// xo_clock_sleep is `clock.sleep(d)`: a cancellation point that unwinds
-// (core 7.2), also while it waits.
-void xo_clock_sleep(int64_t d) {
-	xo_ctx *c = ctx();
-	if (clock_wait(c, d)) {
-		canceled(c);
-	}
-}
-
-// xo_clock_sleep_or_cancel is `clock.sleep_or_cancel(d)` (decision 0088):
-// 1 when the task was canceled before or during the sleep, which the
-// caller returns as ClockErr.Canceled instead of unwinding.
-int64_t xo_clock_sleep_or_cancel(int64_t d) {
-	return clock_wait(ctx(), d);
-}
-
-// xo_select_after adds the `after d` arm to select s: when no other arm
-// proceeds within d, select_wait returns -2.
-void xo_select_after(xo_select *s, int64_t d) {
-	if (!s->has_after || d < s->after) {
-		s->after = d;
-	}
-	s->has_after = 1;
-}
-
-// task.with_timeout (std.md 7): the scope s runs the closure as its body;
-// at the deadline its body is canceled and xo_scope_timed_out tells it
-// (tasks.xo scope_deadline, scope_timed_out; the timer is poll.xo's
-// FN_SCOPE).
-void xo_x_scope_deadline(int64_t s, int64_t d);
-int64_t xo_x_scope_timed_out(int64_t s);
-
-void xo_scope_deadline(xo_scope *s, int64_t d) { xo_x_scope_deadline(XO_ADDR(s), d); }
-
-// xo_scope_timed_out reports, after scope s closed while its body
-// unwound, whether the unwinding came from its deadline (and not from a
-// cancellation of the code around it): the unwinding then stops.
-int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)); }
-
 // ---------------------------------------------------------------------------
 // Network (std.md 3.2): TCP listeners and connections are
 // std/native/llrt/netconn.xo's (the zero-C audit's B22 and B23
 // remnants), through cabi_net.xo's exports, which generated code calls
-// directly (selfhost/ssa/exports.xo); code of compilers up to 0.12.0
-// calls the names below. Each operation records its outcome in the context
-// (net_status, net_msg), which the generated code reads to build the
-// NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg), 5 Canceled,
-// 6 Denied (the Go backend's tags). A handle is the zero handle, and a
-// list the empty one, when netconn.xo returns 0.
+// directly (selfhost/ssa/exports.xo). Each operation records its outcome
+// (cabi_net.xo nc_status, nc_msg), which the generated code reads to
+// build the NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg),
+// 5 Canceled, 6 Denied (the Go backend's tags). A handle is the zero
+// handle, and a list the empty one, when netconn.xo returns 0. The
+// records below are the evloop.c test's view of the handles.
 
 typedef struct {
 	xo_hdr h;
@@ -1896,73 +1618,6 @@ typedef struct {
 	void *pd;
 } xo_conn;
 _Static_assert(offsetof(xo_conn, pd) == 16 && sizeof(xo_conn) == 24, "netconn.xo C_*");
-
-int64_t xo_net_status(void) { return ctx()->net_status; }
-
-// str_list is a new List[Str] of one element: the n bytes at p.
-static xo_rlist *str_list(const char *p, int64_t n) {
-	xo_rstr *s = rs_new(n);
-	memcpy(s->data, p, (size_t)n);
-	xo_rlist *l = rl_new(1, 16);
-	l->len = 1;
-	((xo_rstr **)rl_data(l))[0] = s;
-	((int64_t *)rl_data(l))[1] = n;
-	return l;
-}
-
-// xo_net_msg is the message of the last Io error, in a list of one.
-xo_rlist *xo_net_msg(void) {
-	xo_ctx *c = ctx();
-	const char *m = c->net_msg ? c->net_msg : "";
-	return str_list(m, (int64_t)strlen(m));
-}
-
-// nc_handle maps an export's 0 (an error) to the zero handle; nc_list
-// puts the Str an export hands over (counted for the list, its length
-// stored at n) in a list of one, and 0 (an error, or the end of the
-// stream) is the empty list.
-// Functions, not macros: a macro evaluated the export call twice (two
-// listens, two accepts).
-static inline void *nc_handle(int64_t r) { return r ? (void *)(intptr_t)r : (void *)&zero_handle; }
-static xo_rlist *nc_list(int64_t r, int64_t n) {
-	if (!r) {
-		return &empty_list;
-	}
-	xo_rstr *s = (xo_rstr *)(intptr_t)r;
-	xo_rlist *l = rl_new(1, 16);
-	l->len = 1;
-	((xo_rstr **)rl_data(l))[0] = s;
-	((int64_t *)rl_data(l))[1] = n;
-	return l;
-}
-
-xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n) {
-	return nc_handle(xo_x_nc_listen(XO_ADDR(lp), ln, XO_ADDR(p), n));
-}
-
-xo_conn *xo_net_dial(const char *lp, int64_t ln, const char *p, int64_t n) {
-	return nc_handle(xo_x_nc_dial(XO_ADDR(lp), ln, XO_ADDR(p), n));
-}
-
-xo_rlist *xo_listener_addr(xo_listener *l) {
-	int64_t n = 0;
-	int64_t r = xo_x_nc_listener_addr(XO_ADDR(l), XO_ADDR(&n));
-	return nc_list(r, n);
-}
-
-xo_conn *xo_listener_accept(xo_listener *l) { return nc_handle(xo_x_nc_listener_accept(XO_ADDR(l))); }
-
-void xo_listener_close(xo_listener *l) { xo_x_nc_listener_close(XO_ADDR(l)); }
-
-xo_rlist *xo_conn_read(xo_conn *cn, int64_t max) {
-	int64_t n = 0;
-	int64_t r = xo_x_nc_conn_read(XO_ADDR(cn), max, XO_ADDR(&n));
-	return nc_list(r, n);
-}
-
-void xo_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_write(XO_ADDR(cn), XO_ADDR(p), n); }
-
-void xo_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 
 // The process environment, which C main hands to process.xo
 // (xo_x_proc_start below).
@@ -1982,8 +1637,6 @@ extern char **environ;
 // the services record whose words 88 on entry.xo reads (its E_ words).
 
 void xo_x_stop_init(int64_t svc);
-int64_t xo_x_stop_requested(void);
-int64_t xo_x_stop_stopping(int64_t drop);
 void xo_x_stop_set_root(int64_t n);
 void xo_x_stop_end(void);
 
@@ -2062,12 +1715,6 @@ static void stop_svc_init(void) {
 	stop_svc[19] = XO_ADDR(&rtstats);
 	xo_x_stop_init(XO_ADDR(stop_svc));
 }
-
-int64_t xo_stop_requested(void) { return xo_x_stop_requested(); }
-
-// xo_task_stopping is `task.stopping()`: a channel closed when a stop is
-// requested (drop releases values someone sends on it).
-xo_chan *xo_task_stopping(int64_t drop) { return (xo_chan *)(intptr_t)xo_x_stop_stopping(drop); }
 
 // xo_set_grace is `proc.set_grace(d)` (the SSA builders' rt.set_grace):
 // after a stop request the deadline moves to the stop time plus d.

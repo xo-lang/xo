@@ -1,7 +1,7 @@
 // realtime.c: a test of real-time sections (decision 0133), run by
 // internal/llvm's TestRuntimeRealtime under ThreadSanitizer and optimized
 // without it. It includes the runtime and plays the part of generated
-// code: xo_realtime_enter and xo_realtime_exit bracket a section, and
+// code: t_realtime_enter and t_realtime_exit bracket a section, and
 // releases go through t_rc_free, t_rl_free, and t_rc_defer as the
 // generated drop paths do.
 //
@@ -86,7 +86,7 @@ static void test_defer(void) {
 	e->s = mkstr("captured");
 	int64_t before = live();
 	CHECK(before == base + 54);
-	xo_realtime_enter();
+	t_realtime_enter();
 	release_str(s);
 	release_list(l);
 	if (rc_dec(&e->rc)) {
@@ -94,7 +94,7 @@ static void test_defer(void) {
 	}
 	CHECK(live() == before); // nothing freed inside the section
 	CHECK(heap()->rt_n == 3);
-	xo_realtime_exit("defer", 5, "realtime.c:1", 12);
+	t_realtime_exit("defer", 5, "realtime.c:1", 12);
 	CHECK(live() == base);
 	CHECK(heap()->rt_n == 0);
 }
@@ -102,13 +102,13 @@ static void test_defer(void) {
 static void test_nested(void) {
 	int64_t base = live();
 	xo_rstr *a = mkstr("a"), *b = mkstr("b");
-	xo_realtime_enter();
+	t_realtime_enter();
 	release_str(a);
-	xo_realtime_enter();
+	t_realtime_enter();
 	release_str(b);
-	xo_realtime_exit("inner", 5, "realtime.c:2", 12);
+	t_realtime_exit("inner", 5, "realtime.c:2", 12);
 	CHECK(live() == base + 2); // the inner exit does not drain
-	xo_realtime_exit("outer", 5, "realtime.c:3", 12);
+	t_realtime_exit("outer", 5, "realtime.c:3", 12);
 	CHECK(live() == base);
 }
 
@@ -119,24 +119,24 @@ static void test_overflow(void) {
 	for (int i = 0; i < N; i++) {
 		ss[i] = mkstr("x");
 	}
-	xo_realtime_enter();
+	t_realtime_enter();
 	for (int i = 0; i < N; i++) {
 		release_str(ss[i]);
 	}
 	CHECK(heap()->rt_n == XO_RTQ);
 	CHECK(live() == base + XO_RTQ); // the rest were freed at once
-	xo_realtime_exit("overflow", 8, "realtime.c:4", 12);
+	t_realtime_exit("overflow", 8, "realtime.c:4", 12);
 	CHECK(live() == base);
 }
 
 static void test_allocs(void) {
 	int64_t base = live();
-	xo_realtime_enter();
+	t_realtime_enter();
 	xo_rstr *s = mkstr("allocated inside");
 	CHECK(heap()->rt_allocs == 1);
 	release_str(s);
 	heap()->rt_allocs = 0; // the exit would fault with XO-F007
-	xo_realtime_exit("allocs", 6, "realtime.c:5", 12);
+	t_realtime_exit("allocs", 6, "realtime.c:5", 12);
 	CHECK(live() == base);
 }
 
@@ -146,10 +146,10 @@ static void *section_thread(void *arg) {
 	(void)arg;
 	for (int i = 0; i < 200; i++) {
 		xo_rlist *l = mklist(8);
-		xo_realtime_enter();
+		t_realtime_enter();
 		release_list(l);
 		CHECK(heap()->rt_n == 1);
-		xo_realtime_exit("thread", 6, "realtime.c:6", 12);
+		t_realtime_exit("thread", 6, "realtime.c:6", 12);
 		CHECK(heap()->rt_n == 0);
 	}
 	return NULL;

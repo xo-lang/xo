@@ -84,3 +84,8 @@ set_grace, failed to link. Before deleting an xo_<name>, also grep the
 builders for `b.rt("<name>"` and check the emitters' redirects
 (selfhost/arm64 calls.xo, selfhost/llvm call.xo xo_export), which send
 most rt names to Xo exports.
+
+Closed again (2026-10-15, seed 0.13.0-d770aa15): the forwarders the
+entries batches (E1 to E3, N1 to N3, the faults, strings and number
+text) kept for seed 0.12.0's code are deleted; checked the same way
+(the 0.13.0 seed run directly builds selfhost/xo).
