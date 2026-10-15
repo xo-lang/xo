@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0232, items 1 and 2): std/native/sys_c.xo
+  calls C library and sanitizer functions on every native OS, with weak
+  references and rt.sym_present for symbols a build may not link (arm64:
+  .weak_reference/.weak and GOT loads, which selfhost/macho now
+  assembles and links; LLVM: extern_weak). On macOS the driver passes
+  -Wl,-U for each weak reference. New golden sys_c and test
+  TestSysCTSan. UNTESTED on linux and windows.
 - Fix (B31 parts 15 and 16): the Xo TLS client left one allocation live
   at exit (http_tls and http_tls_keys on LLVM; xo-2b bisected it to
   165eb6a3): tzrules.load_host kept the host's zone in tzhost's table,

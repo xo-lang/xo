@@ -114,6 +114,14 @@ fn label_op(b: Bytes) -> (Bytes, Str) {
   if b.len() > 6 && bstr(b[0..6]) == ":lo12:" {
     return (b[6..], "PAGEOFF")
   }
+  // ELF's GOT slot of a symbol (decision 0232), as Mach-O's
+  // @GOTPAGE and @GOTPAGEOFF
+  if b.len() > 5 && bstr(b[0..5]) == ":got:" {
+    return (b[5..], "GOTPAGE")
+  }
+  if b.len() > 11 && bstr(b[0..11]) == ":got_lo12:" {
+    return (b[11..], "GOTPAGEOFF")
+  }
   // ELF's local exec thread local offsets (decision 0212)
   if b.len() > 12 && bstr(b[0..12]) == ":tprel_hi12:" {
     return (b[12..], "TPREL_HI12")
@@ -341,6 +349,10 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
         if op == "TLVPPAGE" && !a.elf {
           // a thread local's TLV descriptor (decision 0212)
           a.word_fix(0x90000000 | r, FX_TLVP_PAGE21, name)
+          return
+        }
+        if op == "GOTPAGE" {
+          a.word_fix(0x90000000 | r, FX_GOT_PAGE21, name)
           return
         }
         // ELF: a bare label is its page
@@ -1438,7 +1450,7 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
       opc = 2
     }
   }
-  if m == "ldr" && kt == RX && ops.len() == 2 && !a.elf {
+  if m == "ldr" && kt == RX && ops.len() == 2 {
     // [base, sym@TLVPPAGEOFF]: a thread local's TLV descriptor (decision
     // 0212)
     let b = ops[1]
@@ -1447,8 +1459,12 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
       if parts.len() == 2 {
         let (name, op) = label_op(parts[1])
         let (base, kb) = reg(parts[0])
-        if op == "TLVPPAGEOFF" && kb == RX {
+        if op == "TLVPPAGEOFF" && kb == RX && !a.elf {
           a.word_fix(0xf9400000 | (base * 32) | t, FX_TLVP_PAGEOFF12, name)
+          return
+        }
+        if op == "GOTPAGEOFF" && kb == RX {
+          a.word_fix(0xf9400000 | (base * 32) | t, FX_GOT_PAGEOFF12, name)
           return
         }
       }

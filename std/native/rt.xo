@@ -120,6 +120,10 @@ fn u64_mul_hi(a: Int, b: Int) -> Int
 /// mask is 0 or all ones and turn a masked select into a branch; a
 /// call of an identity function on wasm.
 fn ct_barrier(x: Int) -> Int
+/// Whether the C symbol name (a string literal), weakly referenced by a
+/// `weak_` declaration of std/native/sys_c.xo, was linked (decision
+/// 0232): its address compared with 0; false in a wasm module.
+fn sym_present(name: Str) -> Bool
 /// The IEEE 754 bits of f (lowered inline).
 fn float_bits(f: Float) -> Int
 /// The Float of the IEEE 754 bits b (lowered inline).

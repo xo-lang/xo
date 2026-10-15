@@ -20,6 +20,7 @@ use native/llrt/tls12srv
 use native/llrt/tls13
 use native/llrt/tls13srv
 use native/llrt/x509verify
+use native/sys_c
 use native/rt
 
 struct SharedLock {
@@ -50,6 +51,21 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
 
 fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
 
+/// The check of std/native/sys_c.xo (decision 0232): "present", three
+/// bytes: whether getpid returned a positive process ID (a strong C call),
+/// whether getpid is linked, whether ThreadSanitizer is (rt.sym_present
+/// of weak references; 0 in a build without it).
+fn sysc_op(what: Str) -> Bytes? {
+  if what != "present" {
+    return None
+  }
+  var s = rt.rs_with_cap(3)
+  s = rt.rs_push_byte(s, if Int(sys_c.getpid()) > 0 { 1 } else { 0 })
+  s = rt.rs_push_byte(s, if rt.sym_present("getpid") { 1 } else { 0 })
+  s = rt.rs_push_byte(s, if rt.sym_present("__tsan_acquire") { 1 } else { 0 })
+  Some(s.bytes())
+}
+
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
   let area = op.split(".")[0]
   let what = op.trim_prefix("${area}.")
@@ -68,6 +84,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "tls13" => tls13.op(what, a, b, c, d)
     "sha1" => sha1.op(what, a, b, c, d)
     "cpu" => cpu.op(what, a, b, c, d)
+    "sysc" => sysc_op(what)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
     "sha3" => sha3.op(what, a, b, c, d)

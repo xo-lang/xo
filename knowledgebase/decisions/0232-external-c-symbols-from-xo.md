@@ -1,9 +1,9 @@
 # 0232: External C symbols from Xo on every native OS
 
-Status: Proposed (2026-10-15). Not started: the lead parked it for the
-owner (a language level choice of an external symbol ABI); until then
-the C it would delete stays, labelled "GLUE: needs ADR 0232" in the
-zero-C audit (bench/results/zero-c-audit-refresh-2026-10-13.md).
+Status: Accepted (owner, 2026-10-15). Items 1 and 2 implemented
+2026-10-15 (xo-fa, zero-c); item 3 replaced, see Implementation. The C
+it deletes stays until the port lands, labelled "GLUE: needs ADR 0232"
+in the zero-C audit (bench/results/zero-c-audit-refresh-2026-10-13.md).
 
 ## Context
 
@@ -35,7 +35,7 @@ compiles the calls under #ifdef XO_TSAN or XO_ASAN; a plain reference
 from Xo would fail every other link. Xo has no compile time switch for a
 sanitizer build.
 
-## Decision (proposed)
+## Decision
 
 1. A declaration module std/native/sys_c.xo, imported only by runtime
    modules (decision 0074), whose bodiless functions are C ABI calls of
@@ -56,6 +56,50 @@ sanitizer build.
    driver for a sanitizer build (the C's XO_TSAN and XO_ASAN switches), so
    `match target.sanitizer` folds the sanitizer calls away in every other
    build, as `match target.os` folds OS arms.
+
+## Implementation (2026-10-15)
+
+- std/native/sys_c.xo: the sanitizers' fiber API and edges (all
+  `weak_`), and getpid for the module's own check. selfhost/ssa lowers a
+  call as `rt.pc.c.<sym>` (`rt.pc.cw.<sym>` for `weak_`), and
+  rt.sym_present("sym") (a string literal) as `rt.pc.cp.<sym>`; a wasm
+  module faults on a call and gets false from sym_present.
+- arm64: the call as a platform call on every OS; a weak reference adds
+  `.weak_reference _sym` (Mach-O) or `.weak sym` (ELF) to the function's
+  text; sym_present loads the address through the GOT (adrp @GOTPAGE and
+  ldr @GOTPAGEOFF, `:got:` and `:got_lo12:` on ELF) and compares it
+  with 0. selfhost/macho assembles both GOT forms, marks a
+  `.weak_reference` symbol N_WEAK_REF, and its linker binds an import
+  every reference to which is weak as a weak import (dyld leaves it 0).
+  Windows: sym_present is false (no weak references yet; UNTESTED).
+- LLVM: `declare extern_weak`, and sym_present an `icmp ne ptr @sym,
+  null`.
+- macOS ld rejects a weak reference to a symbol no image defines, so
+  the driver (selfhost/xo link.xo weak_undefined_args) and the Go tests'
+  links (internal/xotool WeakUndefinedFlags) add `-Wl,-U,_sym` for each
+  weak reference of the program's .s or .ll
+  (gotchas/macos-weak-reference-needs-U.md).
+- Item 3 (target.sanitizer) is not done: the 0.11.0 seed's SSA builder
+  builds `target` only as a struct of exactly two fields, so a third
+  field in std/prelude.xo would stop the seed from building every
+  runtime module that matches on target.os. A sanitizer build is also
+  chosen when clang compiles the C runtime (`-fsanitize`), after xo has
+  emitted the program, so xo cannot know it then. The runtime asks at
+  run time instead: rt.sym_present of the sanitizer's symbols (one GOT
+  load and compare), which is true exactly in a sanitizer build
+  (internal/llvm TestSysCTSan). A constant can come with a seed that
+  knows a three field Target, if a measurement ever wants the fold.
+- Seeds: a sys_c call compiled by an xo older than this decision is an
+  rt call of `xo_<name>`, which nothing defines. The 0.11.0 seed builds
+  xo from these sources because nothing xo's own build reaches calls
+  sys_c yet (the `sysc` op is unreachable there). The port of the
+  scheduler's hooks will reach it, so it needs C forwarders of those
+  names for the seed until a seed has this decision (the pattern of
+  gotchas/seed-older-than-intrinsics.md).
+- Tests: the sys_c golden (getpid called and linked, every backend),
+  internal/llvm TestSysCTSan (a ThreadSanitizer build sees its symbols),
+  test/codegen/intrinsics (the call, the weak directive, the GOT load,
+  the null compare), selfhost/macho's encoder tests.
 
 ## Consequences
 

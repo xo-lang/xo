@@ -1096,7 +1096,15 @@ fn (var g: Gen) platform_call(v: Int) {
   let x = g.f.values[v]
   let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
   let rk = g.kind(x.ty)
-  if os != g.os() {
+  if os == "cp" {
+    // rt.sym_present (decision 0232): the weak symbol's address against
+    // null (a function declaration, so a symbol with a C call
+    // declaration too must be declared extern_weak the same way)
+    g.llvm_decl("@${sym}", "declare extern_weak void @${sym}()")
+    g.set(v, "icmp ne ptr @${sym}, null")
+    return
+  }
+  if os != g.os() && os != "c" && os != "cw" {
     g.llvm_decl("@llvm.trap", "declare void @llvm.trap() cold noreturn nounwind")
     g.emit("call void @llvm.trap()")
     match rk {
@@ -1157,7 +1165,7 @@ fn (var g: Gen) platform_call(v: Int) {
     decl_params = fixed.join(", ")
     fty = "(${decl_params}) "
   }
-  let dll = if os == "windows" { "dllimport " } else { "" }
+  let dll = if os == "windows" { "dllimport " } else if os == "cw" { "extern_weak " } else { "" }
   g.llvm_decl("@${sym}", "declare ${dll}${ret} @${sym}(${decl_params}) nounwind")
   let c = "call ${ret} ${fty}@${sym}(${args.join(", ")})"
   match rk {

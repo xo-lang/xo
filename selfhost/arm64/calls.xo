@@ -1388,6 +1388,28 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
   (parts[0], sv[0], n)
 }
 
+/// The directive that makes sym a weak reference (decision 0232): the
+/// linker leaves it 0 when nothing defines it (macOS's ld needs `-U` for
+/// that, which the driver adds for each weak reference).
+fn (var g: G) weak_ref(sym: Str) {
+  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
+  g.store("${d} ${g.sym(sym)}", [])
+}
+
+/// rt.sym_present (decision 0232): sym's address through the GOT,
+/// compared with 0 (UNTESTED on Linux; false on Windows, where the
+/// arm64 emitter makes no weak references yet).
+fn (var g: G) sym_present(v: Int, sym: Str) {
+  if g.os == "windows" {
+    g.set(v, [g.def1(false, "mov $d0, #0", [])])
+    return
+  }
+  g.weak_ref(sym)
+  let s = g.sym(sym)
+  let load = if g.os == "darwin" { "adrp $d0, ${s}@GOTPAGE\nldr $d0, [$d0, ${s}@GOTPAGEOFF]" } else { "adrp $d0, :got:${s}\nldr $d0, [$d0, :got_lo12:${s}]" }
+  g.set(v, [g.def1(false, "${load}\ncmp $d0, #0\ncset $d0, ne", [])])
+}
+
 /// Lowers a call of a platform library function (decision 0213,
 /// std/native/sys_<os>.xo): a call of the bare C symbol with the C ABI,
 /// an Int or Int32 argument one word, a Float a double, Bytes its data
@@ -1399,10 +1421,17 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 fn (var g: G) platform_call(v: Int) {
   let x = g.f.values[v]
   let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
-  if os != g.os {
+  if os == "cp" {
+    g.sym_present(v, sym)
+    return
+  }
+  if os != g.os && os != "c" && os != "cw" {
     g.store("brk #1", [])
     g.set(v, g.zeros(x.ty))
     return
+  }
+  if os == "cw" {
+    g.weak_ref(sym)
   }
   var args: List[Src] = []
   var us: List[Int] = []

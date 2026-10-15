@@ -157,6 +157,9 @@ func compileC(flags, srcs []string, bin string) error {
 		} else {
 			args = append(args, "-lm", "-lpthread")
 		}
+		if runtime.GOOS == "darwin" {
+			args = append(args, WeakUndefinedFlags(srcs)...)
+		}
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
@@ -193,4 +196,39 @@ func compileC(flags, srcs []string, bin string) error {
 		return errors.New("clang: no SDK to try")
 	}
 	return &ClangError{Output: first}
+}
+
+// WeakUndefinedFlags is selfhost/xo link.xo weak_undefined_args: the
+// weak references of the LLVM IR or assembly sources (decision 0232:
+// `declare extern_weak ... @sym(`, `.weak_reference _sym`) as macOS ld's
+// -U flags, which leave a symbol no image defines 0.
+func WeakUndefinedFlags(srcs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, src := range srcs {
+		if !strings.HasSuffix(src, ".ll") && !strings.HasSuffix(src, ".s") {
+			continue
+		}
+		b, err := os.ReadFile(src)
+		if err != nil || (!bytes.Contains(b, []byte("extern_weak")) && !bytes.Contains(b, []byte(".weak_reference"))) {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			l := strings.TrimSpace(line)
+			sym := ""
+			if rest, ok := strings.CutPrefix(l, ".weak_reference "); ok {
+				sym = strings.TrimSpace(rest)
+			} else if strings.HasPrefix(l, "declare extern_weak ") {
+				if _, at, ok := strings.Cut(l, "@"); ok {
+					name, _, _ := strings.Cut(at, "(")
+					sym = "_" + name
+				}
+			}
+			if sym != "" && !seen[sym] {
+				seen[sym] = true
+				out = append(out, "-Wl,-U,"+sym)
+			}
+		}
+	}
+	return out
 }

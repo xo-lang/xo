@@ -123,6 +123,10 @@ struct Linker {
   objs: List[IObj] = []
   globals: Map[Bytes, (Int, Int)] = {}
   imports: List[Bytes] = []
+  /// the imports every reference to which is weak (N_WEAK_REF, decision
+  /// 0232): bound as weak imports, which dyld leaves 0 when no image
+  /// defines them
+  weak_imports: Set[Bytes] = #{}
   import_ix: Map[Bytes, Int] = {}
   /// GOT slots, by import or by defined symbol (obj, sym)
   got_imp: Map[Int, Int] = {}
@@ -281,6 +285,7 @@ fn (var l: Linker) resolve() {
   }
   // the imports, sorted by name
   var names: Set[Bytes] = #{}
+  var strong: Set[Bytes] = #{}
   for o in l.objs {
     if !o.live {
       continue
@@ -288,7 +293,15 @@ fn (var l: Linker) resolve() {
     for s in o.syms {
       if is_ext(s) && !is_defined(s) && !l.globals.contains(s.name) {
         names.add(s.name)
+        if (s.desc & 0x40) == 0 {
+          strong.add(s.name)
+        }
       }
+    }
+  }
+  for n in names {
+    if !strong.contains(n) {
+      l.weak_imports.add(n)
     }
   }
   l.imports = names.to_list().sort_by(fn(n: Bytes) -> Str { bstr(n) })
@@ -1203,8 +1216,9 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
     names.u8(0)
     st.u8(N_EXT)
     st.u8(0)
-    // the library ordinal in the high byte (flat lookup: 0xfe)
-    st.u16(if flat { 0xfe00 } else { 0x100 })
+    // the library ordinal in the high byte (flat lookup: 0xfe), and
+    // N_WEAK_REF for a weak import
+    st.u16((if flat { 0xfe00 } else { 0x100 }) | (if l.weak_imports.contains(n) { 0x40 } else { 0 }))
     st.u64(0)
   }
   names.pad(8)
@@ -1297,7 +1311,8 @@ fn (l: Linker) fixups_blob() -> Bytes {
   names.u8(0)
   for n in l.imports {
     let ord = if flat { 0xfe } else { 1 }
-    imps.u32(ord | (names.n * 512))
+    // DYLD_CHAINED_IMPORT: the ordinal, weak_import, the name's offset
+    imps.u32(ord | (if l.weak_imports.contains(n) { 256 } else { 0 }) | (names.n * 512))
     names.bytes(n)
     names.u8(0)
   }

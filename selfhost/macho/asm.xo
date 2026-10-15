@@ -36,6 +36,10 @@ const FX_TLVP_PAGE21 = 9
 const FX_TLVP_PAGEOFF12 = 10
 const FX_TPREL_HI12 = 11
 const FX_TPREL_LO12 = 12
+/// a symbol's GOT slot: its page and the load of its page offset (the
+/// weak references of decision 0232)
+const FX_GOT_PAGE21 = 13
+const FX_GOT_PAGEOFF12 = 14
 
 /// Relocation types (mach-o/arm64/reloc.h).
 const R_UNSIGNED = 0
@@ -502,6 +506,13 @@ fn (var a: Asm) directive(l: Bytes) {
   let d = bstr(l[0..k])
   let rest = trim(l[k..])
   if a.elf && a.elf_directive(d, rest) {
+    return
+  }
+  if d == ".weak_reference" {
+    // an undefined symbol the linker may leave 0 (N_WEAK_REF, decision
+    // 0232)
+    let i = a.sym(rest)
+    a.syms[i].weak = true
     return
   }
   if d == ".arch_extension" {
@@ -1078,6 +1089,11 @@ fn (var a: Asm) apply_fixes() {
     if f.kind == FX_TLVP_PAGE21 || f.kind == FX_TLVP_PAGEOFF12 {
       let typ = if f.kind == FX_TLVP_PAGE21 { R_TLVP_LOAD_PAGE21 } else { R_TLVP_LOAD_PAGEOFF12 }
       a.reloc_to(f.sect, pc, typ, f.kind == FX_TLVP_PAGE21, f.sym)
+      continue
+    }
+    if f.kind == FX_GOT_PAGE21 || f.kind == FX_GOT_PAGEOFF12 {
+      let typ = if f.kind == FX_GOT_PAGE21 { R_GOT_LOAD_PAGE21 } else { R_GOT_LOAD_PAGEOFF12 }
+      a.reloc_to(f.sect, pc, typ, f.kind == FX_GOT_PAGE21, f.sym)
       continue
     }
     if !local {

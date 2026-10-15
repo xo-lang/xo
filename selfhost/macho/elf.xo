@@ -355,6 +355,10 @@ fn (var a: Asm) elf_apply_fixes() {
       a.elf_reloc(f.sect, pc, R_AARCH64_ADD_ABS_LO12_NC, f.sym, 0)
       continue
     }
+    if f.kind == FX_GOT_PAGE21 || f.kind == FX_GOT_PAGEOFF12 {
+      a.elf_reloc(f.sect, pc, if f.kind == FX_GOT_PAGE21 { R_AARCH64_ADR_GOT_PAGE } else { R_AARCH64_LD64_GOT_LO12_NC }, f.sym, 0)
+      continue
+    }
     if f.kind == FX_TPREL_HI12 || f.kind == FX_TPREL_LO12 {
       // a thread local symbol (decision 0212): STT_TLS, as LLVM marks
       // the symbols of TLS relocations

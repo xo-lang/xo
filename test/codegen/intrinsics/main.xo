@@ -11,7 +11,8 @@ fn main(os: Os) {
   let k = "0123456789abcdef0123456789abcde${n}".bytes()
   let p = internal.crypto_op("p256.public", k, b"", b"", b"")
   let g = internal.crypto_op("aes.seal", k[0..16], k[0..12], k, b"")
-  os.stdio.println("${p.to_hex()} ${g.to_hex()}")
+  let c = internal.crypto_op("sysc.present", b"", b"", b"", b"")
+  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()}")
 }
 
 // P-256's Montgomery product: the carries are flags (the branches
@@ -34,3 +35,9 @@ fn main(os: Os) {
 // func aesgcm.Gcm.mul_hw
 // arm64: "pmull v30.1q, v30.1d, v31.1d" "umov x[0-9]+, v30.d\[1\]"
 // llvm: "pmull \$0.1q"
+
+// std/native/sys_c.xo (decision 0232): a strong C call, and weak
+// references read through the GOT (arm64) or compared with null (LLVM).
+// func internal.sysc_op
+// arm64: "bl _getpid" "\.weak_reference ___tsan_acquire" "adrp x[0-9]+, ___tsan_acquire@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, ___tsan_acquire@GOTPAGEOFF\]"
+// llvm: "call i32 @getpid\(\)" "icmp ne ptr @__tsan_acquire, null"

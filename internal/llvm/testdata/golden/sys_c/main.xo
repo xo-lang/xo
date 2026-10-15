@@ -1,0 +1,10 @@
+// std/native/sys_c.xo (decision 0232): a strong C call (getpid) and weak
+// references through rt.sym_present on every native OS: getpid is
+// linked. (The third byte, whether ThreadSanitizer is linked, differs
+// in the sanitizer runs of the goldens; internal/llvm's TestSysCTSan
+// checks it.)
+use std/internal
+
+fn main(os: Os) {
+  os.stdio.println(internal.crypto_op("sysc.present", b"", b"", b"", b"").to_hex()[0..4])
+}

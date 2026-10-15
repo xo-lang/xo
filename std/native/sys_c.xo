@@ -1,0 +1,29 @@
+// The C library and sanitizer runtime functions the native runtime calls
+// from Xo on every native OS (decision 0232): a declaration file like
+// sys_darwin.xo, imported only by runtime modules (decision 0074). Each
+// bodiless function is a C ABI call of the symbol of its name (an Int
+// argument one word, Bytes the address of its data, an Int32 result a C
+// int, sign extended); a call in a wasm module is a fault. A name that
+// starts with `weak_` is a weak reference to the symbol after the prefix:
+// it links when nothing defines it (the address is then 0, which
+// rt.sym_present("name") tells), so the sanitizers' functions can be
+// called from a build that may or may not link their runtime. Every
+// declaration says why the runtime needs it rather than a system call.
+
+/// ThreadSanitizer's fiber API and its happens-before edges (the
+/// sanitizer hooks of fiber switches, std/native/llrt/sanhook.xo): Xo
+/// code is not instrumented, so it tells the sanitizer what it does.
+fn weak___tsan_get_current_fiber() -> Int
+fn weak___tsan_create_fiber(flags: Int) -> Int
+fn weak___tsan_destroy_fiber(fiber: Int)
+fn weak___tsan_switch_to_fiber(fiber: Int, flags: Int)
+fn weak___tsan_acquire(addr: Int)
+fn weak___tsan_release(addr: Int)
+
+/// AddressSanitizer's fiber API: which stack runs.
+fn weak___sanitizer_start_switch_fiber(fake_stack_save: Int, bottom: Int, size: Int)
+fn weak___sanitizer_finish_switch_fiber(fake_stack_save: Int, bottom_old: Int, size_old: Int)
+
+/// getpid(2), for the check of this module itself (internal.crypto_op's
+/// "sysc." op, the sys_c golden): a strong reference every C library has.
+fn getpid() -> Int32

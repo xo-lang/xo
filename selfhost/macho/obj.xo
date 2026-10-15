@@ -209,7 +209,8 @@ fn (var a: Asm) write_object() -> Bytes {
     if s.sect < 0 {
       o.u8(N_EXT)
       o.u8(0)
-      o.u16(0)
+      // N_WEAK_REF: `.weak_reference` (decision 0232)
+      o.u16(if s.weak { 0x40 } else { 0 })
       o.u64(0)
     } else {
       o.u8(N_SECT | (if s.global { N_EXT } else { 0 }) | (if s.global && s.hidden { N_PEXT } else { 0 }))

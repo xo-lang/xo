@@ -68,6 +68,10 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoSHA1(what, a, b)
 	case "cpu":
 		r, ok = cryptoCPU(what, a, b, c)
+	case "sysc":
+		// std/native/internal.xo sysc_op: getpid called and linked, no
+		// ThreadSanitizer in a Go build
+		r, ok = Bytes([]byte{1, 1, 0}), what == "present"
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
 	case "sha3":

@@ -1228,8 +1228,11 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   }
   let name = b.obj_name(fo)
   let mpath = b.c.mods[b.obj_mod(fo)].path
-  if mpath is "native/sys_darwin" | "native/sys_windows" {
+  if mpath is "native/sys_darwin" | "native/sys_windows" | "native/sys_c" {
     return b.platform_call(x, fo, mpath.trim_prefix("native/sys_"), name, es)
+  }
+  if name == "sym_present" {
+    return b.sym_present(x, es)
   }
   if name is "fs_root" | "fs_mode" {
     let v = b.expr(es[0] ?? fault("arg"))
@@ -1312,6 +1315,25 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   b.rt(name, nt, vs)
 }
 
+/// rt.sym_present("name") (decision 0232): whether the C symbol name,
+/// weakly referenced (sys_c.xo's `weak_` declarations), was linked: the
+/// call `rt.pc.cp.<name>`, its address compared with 0; false in a wasm
+/// module. The argument is a string literal.
+fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
+  let sym = match es[0] ?? fault("arg") {
+    StringLit(s) => if s.parts.len() == 1 && s.parts[0].expr == None { check.text(s.parts[0].text) } else { "" }
+    _ => ""
+  }
+  if sym.is_empty() {
+    b.unsupported("rt.sym_present of anything but a string literal")
+    return b.cbool(false)
+  }
+  if b.wasm {
+    return b.cbool(false)
+  }
+  b.add(Op.Call, b.bool_t(), Aux.S(s: "rt.pc.cp.${sym}"), [])
+}
+
 /// Whether rt.<name> is served only by a wasm module's runtime: the calls
 /// of sysio.xo's and fsops.xo's layer 0 arms (std/native/rt.xo fs_read
 /// through fs_unlock, and the error record fs_set_err, fs_status,
@@ -1332,8 +1354,17 @@ fn wasm_only_rt(name: Str) -> Bool {
 /// address). For another OS, or a wasm module, the call is a fault: the
 /// passes keep every arm of a `match` on `target`, and the symbol may not
 /// exist there.
-fn (var b: Builder) platform_call(x: Expr, fo: Int, os: Str, name: Str, es: List[Expr?]) -> Int {
-  if b.wasm || os != b.target_os() {
+fn (var b: Builder) platform_call(x: Expr, fo: Int, os0: Str, name0: Str, es: List[Expr?]) -> Int {
+  // std/native/sys_c.xo (decision 0232): the C library's symbol on every
+  // native OS (`rt.pc.c.<sym>`), a weak reference when the name starts
+  // with `weak_` (`rt.pc.cw.<sym>`, the prefix dropped)
+  var os = os0
+  var name = name0
+  if os == "c" && name.starts_with("weak_") {
+    os = "cw"
+    name = name.trim_prefix("weak_")
+  }
+  if b.wasm || (os != "c" && os != "cw" && os != b.target_os()) {
     let (span, _, _) = call_parts(x)
     b.fault(b.const_str("the platform call `${name}` of ${os} on another OS"), b.pos_line(span))
     b.dead()

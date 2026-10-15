@@ -1,0 +1,7 @@
+// TestSysCTSan: std/native/sys_c.xo's weak references in a
+// ThreadSanitizer build (decision 0232): all three bytes 1.
+use std/internal
+
+fn main(os: Os) {
+  os.stdio.println(internal.crypto_op("sysc.present", b"", b"", b"", b"").to_hex())
+}

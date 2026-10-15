@@ -513,3 +513,31 @@ func TestDeadlock(t *testing.T) {
 		}
 	}
 }
+
+// TestSysCTSan: rt.sym_present of a weak reference (decision 0232,
+// std/native/sys_c.xo) is true when ThreadSanitizer's runtime is linked
+// (testdata/sysc_tsan prints 010101; the sys_c golden, without it,
+// 0101 and a 00 the goldens do not show).
+func TestSysCTSan(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	ir, err := xotool.LLVMIR(filepath.Join("testdata", "sysc_tsan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := tsanBuild(t, append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...), []string{ll, filepath.Join(rtDir, "xo_rt.c")})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), tsanOptions())
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "010101" {
+		t.Fatalf("got %q (%v), want 010101", out, err)
+	}
+}
