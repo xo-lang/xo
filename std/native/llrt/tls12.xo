@@ -36,8 +36,8 @@ pub const ECDHE_ECDSA_CHACHA20: Int = 0xcca9
 pub const ECDHE_RSA_CHACHA20: Int = 0xcca8
 
 // the ECDHE CBC-SHA suites Go's server enables by default (RFC 4492; HMAC
-// SHA-1, MAC then encrypt), after the AEADs in its order; tls12srv.xo
-// only
+// SHA-1, MAC then encrypt), after the AEADs in its order; Go's client
+// offers them too
 pub const ECDHE_ECDSA_AES128_CBC_SHA: Int = 0xc009
 pub const ECDHE_RSA_AES128_CBC_SHA: Int = 0xc013
 pub const ECDHE_ECDSA_AES256_CBC_SHA: Int = 0xc00a
@@ -103,8 +103,9 @@ pub const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
 pub const MAX_HANDSHAKE: Int = 65536
 pub const MAX_CERTIFICATE_MSG: Int = 262144
 
-/// The suites this file runs, in Go's order of preference.
-pub fn default_suites() -> List[Int] { [ECDHE_ECDSA_AES128_GCM, ECDHE_RSA_AES128_GCM, ECDHE_ECDSA_AES256_GCM, ECDHE_RSA_AES256_GCM, ECDHE_ECDSA_CHACHA20, ECDHE_RSA_CHACHA20] }
+/// The suites this file runs, in Go's order of preference: the AEADs,
+/// then the CBC-SHA ones (Go's defaults for TLS 1.2 with ECDHE).
+pub fn default_suites() -> List[Int] { [ECDHE_ECDSA_AES128_GCM, ECDHE_RSA_AES128_GCM, ECDHE_ECDSA_AES256_GCM, ECDHE_RSA_AES256_GCM, ECDHE_ECDSA_CHACHA20, ECDHE_RSA_CHACHA20, ECDHE_ECDSA_AES128_CBC_SHA, ECDHE_RSA_AES128_CBC_SHA, ECDHE_ECDSA_AES256_CBC_SHA, ECDHE_RSA_AES256_CBC_SHA] }
 
 /// Whether s is one of them.
 pub fn suite_ok(s: Int) -> Bool { has(default_suites(), s) }
@@ -636,8 +637,9 @@ pub const FAILED: Int = 9
 /// seconds), the ALPN protocols offered, the suites and groups in order
 /// of preference, and insecure to skip the certificate's checks (Go's
 /// InsecureSkipVerify). The tests' hooks: random (the 32 bytes of the
-/// ClientHello's random and session id) and priv (the ECDHE private key
-/// for the group the server picks) instead of fresh ones.
+/// ClientHello's random and session id), priv (the ECDHE private key for
+/// the group the server picks), and iv (16 bytes: every CBC record's
+/// explicit IV) instead of fresh ones.
 pub struct Conf {
   pub host: Str
   pub roots: List[x509.Cert]
@@ -648,10 +650,11 @@ pub struct Conf {
   pub insecure: Bool
   pub random: Bytes
   pub priv: Bytes
+  pub iv: Bytes
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
-pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], insecure: false, random: b"", priv: b""} }
+pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], insecure: false, random: b"", priv: b"", iv: b""} }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
 /// whether the server closed (close_notify), the suite, group, and ALPN
@@ -1411,7 +1414,7 @@ fn client_flight(var c: Client) {
   c.pms = b""
   let kb = key_block(c.suite, c.master, c.random, c.server_random)
   c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
-  c.wk = direction(c.suite, kb, true, b"")
+  c.wk = direction(c.suite, kb, true, c.conf.iv)
   c.next_rk = direction(c.suite, kb, false, b"")
   let fin = message(HS_FINISHED, verify_data(c.suite, c.master, "client finished", c.tr))
   c.tr = cat2(c.tr, fin)
@@ -1604,6 +1607,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.groups = nums(args[3], 10)
   cf.alpn = if args[4] == "-" { [] } else { args[4].split(",") }
   cf.random = fill(0x11, 32)
+  cf.iv = fill(0x11, 16)
   cf.priv = a
   let chunk = Int.parse(args[5]) ?? 0
   var cl = if ch.is_empty() { client(cf) } else { handed(cf, ch, parts[0]) }

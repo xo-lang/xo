@@ -170,7 +170,8 @@ std (decision 0074) unless the owner decides to expose a user marker.
   extractPadding in constant time over the last 256 bytes, the MAC over
   a constant amount of data (tls10MAC hashes the rest after its sum),
   one bad_record_mac for a bad length, bad padding, or a bad MAC. Server
-  side only; the client offering them as Go's does is a follow-up.
+  side first; the client offers them too since the follow-up (Go's
+  client default), in tls13.xo's combined hello as well.
 
 ## Alternatives
 

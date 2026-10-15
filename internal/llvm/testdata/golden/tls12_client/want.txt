@@ -105,4 +105,10 @@ H downgrade sentinel 1.2:
 H downgrade sentinel 1.1:
   hs 16030100fd010000f903031111111111...131503030002022f (265 bytes)
   result tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox
+I ecdsa p256, x25519, aes128-cbc-sha:
+  hs <client flight>
+  result ok c009 29 -
+  app 1703030030111111111111111111111111111111111ac9bbd317a24e0007a05cbd435ab49948cd69eec35f5a14d4994cb7ff6b4b05
+  got 706f6e673a70696e67  EOF
+  bye 150303003011111111111111111111111111111111c9f242501918ca5988f76ebb4a2fd6e976dc398d33dc255e947bb6c75bcd8584
 --- stderr

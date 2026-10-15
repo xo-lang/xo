@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS 1.2 client: offers the four ECDHE CBC-SHA suites after the
+  AEADs, as Go's client does by default (tls12.default_suites, which
+  tlsio.xo's combined ClientHello uses too); golden tls12_client adds a
+  CBC trace.
 - bench/results/tls-perf-2026-10-15.md: a proposal for three compiler
   intrinsics the remaining TLS gap needs (add and subtract with carry,
   AES rounds, carry-less multiply), with measurements.
