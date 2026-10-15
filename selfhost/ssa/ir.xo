@@ -265,7 +265,16 @@ pub struct Module {
   /// the thread pointer, main's stack, the call of main), unless the
   /// driver keeps std/llrt/xo_nolibc.c's C entry (XO_NOLIBC_C_START=1).
   pub nolibc_start: Bool = false
+  /// A Linux program with no C library (XO_NOLIBC=1): the emitters define
+  /// the C library's data symbols (nolibc_data, decision 0234).
+  pub nolibc: Bool = false
 }
+
+/// The C library's data symbols of a program with no C library (Module
+/// nolibc, decision 0234): one word each, zero at start, defined by the
+/// emitters and set by cabi_nolibc.xo nl_start (environ and the
+/// standard streams' FILE records).
+pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr"] }
 
 /// The process entry of a program linked with no C library (Module
 /// nolibc_start), as assembly for arm64 Linux (the same text through

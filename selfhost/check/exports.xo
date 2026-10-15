@@ -7,9 +7,10 @@
 use github.com/xo-lang/xo/selfhost/parser
 
 /// Whether module path is a C ABI export module whose functions are
-/// xo_x_<name> (cabi_libc's keep their C names, malloc and the rest).
+/// xo_x_<name> (cabi_libc's keep their C names, malloc and the rest, and
+/// cabi_c's theirs, main: decision 0234).
 fn xo_x_export_module(path: Str) -> Bool {
-  path == "native/llrt/cabi" || (path.starts_with("native/llrt/cabi_") && path != "native/llrt/cabi_libc")
+  path == "native/llrt/cabi" || (path.starts_with("native/llrt/cabi_") && !(path is "native/llrt/cabi_libc" | "native/llrt/cabi_c"))
 }
 
 /// The pairs (first, second) of indices into names whose names are equal,

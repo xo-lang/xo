@@ -1016,8 +1016,10 @@ fn (var g: Gen) instr_body(v: Int) {
     }
     FuncAddr => {
       let n = aux_str(x.aux)
-      // rt.fn_addr (decision 0233): `@` and a C ABI export's symbol
-      let p = if n.starts_with("@") { n } else { fname(n) }
+      // rt.fn_addr (decision 0233): `@` and a C ABI export's symbol;
+      // rt.sym_addr (decision 0234): `&` and a C level symbol, declared
+      // unless the module defines it
+      let p = if n.starts_with("@") { n } else if n.starts_with("&") { g.c_sym(n[1..n.len()]) } else { fname(n) }
       g.set(v, "ptrtoint ptr ${p} to i64")
     }
     Rebind => {

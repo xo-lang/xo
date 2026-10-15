@@ -264,18 +264,14 @@ fn pthread_join(th: Int, r: Int) -> Int {
 fn pthread_detach(th: Int) -> Int { 0 }
 
 // ---------------------------------------------------------------------------
-// The environment, formatted output, streams, and directories (libcio.xo,
-// B04 stage (e)): snprintf, sprintf, fprintf, and printf stay C shells in
-// xo_nolibc.c (va_start) over vsnprintf and vfprintf; stdin, stdout, and
-// stderr are C pointers to libcio.xo's records (libcio.std_file).
+// The environment, streams, and directories (libcio.xo, B04 stage (e));
+// stdin, stdout, and stderr are the emitters' data symbols, pointers to
+// libcio.xo's records (libcio.std_file, decision 0234). No printf: no C
+// of an XO_NOLIBC build calls it (decision 0234).
 
 fn getauxval(k: Int) -> Int { libcio.getauxval(k) }
 
 fn getenv(name: Int) -> Int { libcio.getenv(name) }
-
-fn vsnprintf(buf: Int, cap: Int, f: Int, ap: Int) -> Int { libcio.vsnprintf(buf, cap, f, ap) }
-
-fn vfprintf(f: Int, fmt: Int, ap: Int) -> Int { libcio.vfprintf(f, fmt, ap) }
 
 fn fwrite(p: Int, size: Int, n: Int, f: Int) -> Int { libcio.fwrite(p, size, n, f) }
 

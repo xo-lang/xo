@@ -149,6 +149,12 @@ fn (g: G) end_data(var out: List[Str]) {
   let zh = g.sym("xo_zero_handle")
   out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
     "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
+  if g.os == "linux" && g.m.nolibc {
+    // the C library's data symbols (decision 0234)
+    for d in ssa.nolibc_data() {
+      out.push("\t.globl ${d}\n\t.type ${d}, %object\n\t.size ${d}, 8\n\t.p2align 3\n${d}:\n\t.quad 0\n")
+    }
+  }
   if g.os == "linux" && g.m.nolibc_start {
     out.push(ssa.entry_stub_arm64())
   }

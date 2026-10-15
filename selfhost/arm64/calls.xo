@@ -1570,6 +1570,20 @@ fn (var g: G) weak_ref(sym: Str) {
   g.store("${d} ${g.sym(sym)}", [])
 }
 
+/// rt.sym_addr (decision 0234): the address of the C level symbol name,
+/// directly for xo_entry and the C library's data symbols of an
+/// XO_NOLIBC build (this module defines them), any other's through the
+/// GOT, as one in a shared library (libSystem, glibc) has no fixed
+/// distance from the code (on Windows directly, UNTESTED).
+fn (var g: G) c_sym_addr(name: Str) -> Int {
+  if name == "xo_entry" || g.os == "windows" || (g.m.nolibc && ssa.nolibc_data().contains(name)) {
+    return g.sym_addr(g.sym(name))
+  }
+  let s = g.sym(name)
+  let load = if g.os == "darwin" { "adrp $d0, ${s}@GOTPAGE\nldr $d0, [$d0, ${s}@GOTPAGEOFF]" } else { "adrp $d0, :got:${s}\nldr $d0, [$d0, :got_lo12:${s}]" }
+  g.def1(false, load, [])
+}
+
 /// rt.sym_present (decision 0232): sym's address through the GOT,
 /// compared with 0 (UNTESTED on Linux; false on Windows, where the
 /// arm64 emitter makes no weak references yet).

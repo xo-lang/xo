@@ -388,6 +388,12 @@ fn fiber_start_addr() -> Int
 /// module imports (ctx.xo, poll.xo) can name it; a name no export of
 /// the program has is a compile error.
 fn fn_addr(name: Str) -> Int
+/// The address of the C level symbol named by the string literal name,
+/// under that exact name (decision 0234): xo_entry (the generated
+/// program entry), a symbol the emitters define (the data symbols of an
+/// XO_NOLIBC build: environ, stdin, stdout, stderr), or a function of the
+/// C runtime (std/llrt). A fault when run in a wasm module.
+fn sym_addr(name: Str) -> Int
 /// The frame address of the calling function (C's
 /// __builtin_frame_address(0)): its frame record, valid until it
 /// returns. The calling function always keeps a frame and is never

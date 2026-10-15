@@ -3,18 +3,25 @@
 // hook (std/native/internal.xo rt_op): cabi.xo's fmt_int called through
 // rt.fn_addr's address (05 31: the length of "12345" and its "1"), and
 // rt.frame_addr (01 01 01: not 0, a callee's frame below it, within
-// 64 KiB).
+// 64 KiB); rt.sym_addr (decision 0234): xo_entry's and strlen's addresses.
 use std/internal
 
 fn main(os: Os) {
   os.stdio.println(internal.crypto_op("rt.fn_addr", b"", b"", b"", b"").to_hex())
   os.stdio.println(internal.crypto_op("rt.frame_addr", b"", b"", b"", b"").to_hex())
+  os.stdio.println(internal.crypto_op("rt.sym_addr", b"", b"", b"", b"").to_hex())
 }
 
 // rt.fn_addr is the export's symbol address, no call.
 // func internal.rt_op
 // arm64: "adrp[^\n]*xo_x_fmt_int"
 // llvm: "ptrtoint ptr @xo_x_fmt_int to i64"
+
+// rt.sym_addr is the C symbol's address under its exact name, declared
+// when the module does not define it.
+// func internal.rt_op
+// arm64: "adrp[^\n]*xo_entry" "adrp[^\n]*strlen@GOTPAGE"
+// llvm: "ptrtoint ptr @xo_entry to i64" "ptrtoint ptr @strlen to i64"
 
 // rt.frame_addr is the frame pointer of a function that keeps its frame
 // record (a leaf otherwise) and is never inlined.

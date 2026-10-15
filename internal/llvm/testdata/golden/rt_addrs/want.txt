@@ -2,4 +2,5 @@ exit 0
 --- stdout
 0531
 010101
+0107
 --- stderr

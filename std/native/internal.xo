@@ -88,6 +88,17 @@ fn rt_op(what: Str) -> Bytes? {
     rt.heap_release(buf - 8)
     return Some(s.bytes())
   }
+  if what == "sym_addr" {
+    // decision 0234: the generated entry's address, and the C library's
+    // strlen (an XO_NOLIBC build's too) called through its own, of
+    // "xxxxxxx"
+    s = rt.rs_push_byte(s, if rt.sym_addr("xo_entry") != 0 { 1 } else { 0 })
+    let buf = rt.heap_large(8)
+    rt.mem_store(buf, 0, 33909456017848440, 8)
+    s = rt.rs_push_byte(s, rt.call_c2(rt.sym_addr("strlen"), buf, 0))
+    rt.heap_release(buf - 8)
+    return Some(s.bytes())
+  }
   if what == "frame_addr" {
     let a = rt.frame_addr()
     let c = frame_below()

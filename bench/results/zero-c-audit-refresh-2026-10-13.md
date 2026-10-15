@@ -35,6 +35,18 @@ script rule), and each group in one bin:
 | third_party/fiat-crypto/src (p256_64.c 2,011, p256_scalar_64.c 2,215) | 4,226 | 4,226 |
 | **All C native builds compile** | 231,584 | **227,658** |
 
+### Decision 0234 (2026-10-15): main, data symbols, no printf
+
+Step 1 (built by seed 0.14.0): the runtime C is 343 lines (xo_rt.c
+244, xo_nolibc.c 99; 380 at add01079): the XO_NOLIBC data symbols are
+the emitters' and the printf family is gone (no C of such a build calls
+it). Step 2 (after seed 0.15.0) moves main and fault_init to Xo
+(cabi_c.xo main, entry.xo init): 262 lines (xo_rt.c 162, xo_nolibc.c
+100). What stays then: Windows' on_overflow and its services record,
+the Windows headers and constant asserts, the C tests' constructor, and
+xo_nolibc.c's C start while XO_NOLIBC_C_START is kept (the backends'
+_start replaces it, Xo lang 5).
+
 ### End state (2026-10-15, after seed 0.14.0)
 
 The runtime C is **372 lines**: std/llrt/xo_rt.c 244 and xo_nolibc.c

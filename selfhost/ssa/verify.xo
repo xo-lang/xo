@@ -509,7 +509,12 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     }
     FuncAddr => {
       let fname = aux_name(x.aux)
-      if fname.starts_with("@") {
+      if fname.starts_with("&") {
+        // rt.sym_addr (decision 0234): a C level symbol by its exact name
+        if fname.len() < 2 || n != 0 || x.ty < 0 || tk != Kind.Int {
+          return "funcaddr of an empty C symbol, or not an Int"
+        }
+      } else if fname.starts_with("@") {
         // rt.fn_addr (decision 0233): a C ABI export's symbol
         var found = false
         for f in m.funcs {

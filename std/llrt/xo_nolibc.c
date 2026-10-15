@@ -10,18 +10,18 @@
 // std/native/llrt/cabi_libc.xo (the zero-C audit's B04): malloc and
 // friends (libcmem.xo), the mem* and str* functions, strerror, the strto*
 // family, and qsort (libcstr.xo), exit, errno, and the system call
-// wrappers (libcsys.xo), the environment, getauxval, vsnprintf and
-// vfprintf, FILE, and directories (libcio.xo), and signals, locks, and
-// threads (cabi_nolibc.xo). Floating point printf conversions and strtod
-// end the program with a message; getaddrinfo is not defined (the network
-// is cabi_net.xo's); unwinding is Xo (decision 0221, unwind.xo).
+// wrappers (libcsys.xo), the environment, getauxval, FILE, and
+// directories (libcio.xo), and signals, locks, and threads
+// (cabi_nolibc.xo). strtod ends the program with a message; getaddrinfo
+// is not defined (the network is cabi_net.xo's); unwinding is Xo
+// (decision 0221, unwind.xo); there is no printf family (no C of such a
+// build calls it, decision 0234).
 //
-// What stays here needs C: the data symbols environ, stdin, stdout, and
-// stderr, and the variadic printf functions (va_start), which hand their
-// va_list to Xo. The process entry (_start, the thread pointer, the switch
-// to main's 1 GiB stack, the call of main) is the backends' (selfhost/ssa
-// ir.xo entry_stub_arm64); the C one below is built only with
-// XO_NOLIBC_C_START=1, until CI has run the stubs.
+// The data symbols environ, stdin, stdout, and stderr are the emitters'
+// (decision 0234), and the process entry (_start, the thread pointer, the
+// switch to main's 1 GiB stack, the call of main) the backends'
+// (selfhost/ssa ir.xo entry_stub_arm64); the C one below is built only
+// with XO_NOLIBC_C_START=1, until CI has run the stubs.
 
 // The Xo exports the start calls (std/native/llrt/cabi_nolibc.xo), before
 // the main thread has its thread pointer.
@@ -40,10 +40,9 @@ int64_t xo_x_nl_main_stack(void);
 // ---------------------------------------------------------------------------
 // Process entry
 
-char **environ;
-FILE *stdin;
-FILE *stdout;
-FILE *stderr;
+// environ, stdin, stdout, and stderr are the emitters' (decision 0234),
+// which cabi_nolibc.xo nl_start sets
+extern char **environ;
 
 #ifdef XO_NOLIBC_C_START
 // The C process entry, kept selectable (XO_NOLIBC_C_START=1) until CI has
@@ -96,41 +95,5 @@ __asm__(".text\n.global _start\n.type _start, @function\n_start:\n"
 #error "XO_NOLIBC: arm64 or x86_64 Linux only"
 #endif
 #endif // XO_NOLIBC_C_START
-
-// ---------------------------------------------------------------------------
-// The variadic printf functions: va_start, then Xo's vsnprintf and
-// vfprintf (libcio.xo), which read the va_list by the target's ABI
-
-NL_USED int snprintf(char *restrict buf, size_t cap, const char *restrict f, ...) {
-	va_list ap;
-	va_start(ap, f);
-	int n = vsnprintf(buf, cap, f, ap);
-	va_end(ap);
-	return n;
-}
-
-NL_USED int sprintf(char *restrict buf, const char *restrict f, ...) {
-	va_list ap;
-	va_start(ap, f);
-	int n = vsnprintf(buf, (size_t)1 << 30, f, ap);
-	va_end(ap);
-	return n;
-}
-
-NL_USED int fprintf(FILE *restrict f, const char *restrict fmt, ...) {
-	va_list ap;
-	va_start(ap, fmt);
-	int n = vfprintf(f, fmt, ap);
-	va_end(ap);
-	return n;
-}
-
-NL_USED int printf(const char *restrict fmt, ...) {
-	va_list ap;
-	va_start(ap, fmt);
-	int n = vfprintf(stdout, fmt, ap);
-	va_end(ap);
-	return n;
-}
 
 #endif

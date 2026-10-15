@@ -954,7 +954,10 @@ fn (var g: G) instr1(v: Int) {
     Box => g.box_op(v)
     FuncAddr => {
       let n = aux_str(x.aux)
-      if n.starts_with("@") {
+      if n.starts_with("&") {
+        // rt.sym_addr (decision 0234): a C level symbol by its exact name
+        g.set(v, [g.c_sym_addr(n[1..n.len()])])
+      } else if n.starts_with("@") {
         // rt.fn_addr (decision 0233): a C ABI export's symbol
         g.set(v, [g.sym_addr(g.sym(n[1..n.len()]))])
       } else {

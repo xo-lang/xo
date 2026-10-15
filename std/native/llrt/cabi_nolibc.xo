@@ -18,8 +18,17 @@ use native/rt
 // thread pointer; libcio.xo, the zero-C audit's B04)
 
 /// Records the environment and the auxiliary vector of the initial stack
-/// at sp and makes the standard streams: envp, for the C's environ.
-fn nl_start(sp: Int) -> Int { libcio.start(sp) }
+/// at sp and makes the standard streams, and sets the C library's data
+/// symbols environ, stdin, stdout, and stderr, which the emitters define
+/// (decision 0234): envp.
+fn nl_start(sp: Int) -> Int {
+  let env = libcio.start(sp)
+  rt.mem_store(rt.sym_addr("environ"), 0, env, 8)
+  rt.mem_store(rt.sym_addr("stdin"), 0, libcio.std_file(0), 8)
+  rt.mem_store(rt.sym_addr("stdout"), 0, libcio.std_file(1), 8)
+  rt.mem_store(rt.sym_addr("stderr"), 0, libcio.std_file(2), 8)
+  env
+}
 
 /// The FILE record of standard stream i, for the C's stdin, stdout, and
 /// stderr.

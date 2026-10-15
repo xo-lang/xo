@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Decision 0234, step 1: std/native/llrt/cabi_c.xo exports under exact
+  C names in every native program (for `main`, step 2 after seed
+  0.15.0); rt.sym_addr("name") gives a C level symbol's address
+  (xo_entry, a C function: adrp/add or a GOT load on arm64, a declared
+  `@name` on LLVM); an XO_NOLIBC build's environ, stdin, stdout, and
+  stderr are defined by the emitters and set by cabi_nolibc.xo nl_start
+  (xo_nolibc.c no longer defines them); the XO_NOLIBC printf family
+  (four C shells, cabi_libc.xo vsnprintf and vfprintf, libcio.xo's
+  formatter) is deleted, as no C of such a build calls it.
 - Compiler speed: the compiler's identity for the back-end caches (the
   SHA-256 of the 54 MB xo executable, computed by three phases on every
   build) is memoized in <backend cache>/selfid/ under the hash of the
