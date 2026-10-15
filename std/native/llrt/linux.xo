@@ -639,6 +639,9 @@ pub fn readlink(path: Str) -> (Str, Int) {
 
 /// getcwd(2): the working directory, "." when the system has none to
 /// give (as the C runtime's).
+/// kill(2) of signal sig to pid: 0, or the negative errno.
+pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0, 0) }
+
 pub fn getcwd() -> Str {
   let buf = raw.bytes_buf(4096)
   let a = raw.bytes_addr(buf)

@@ -546,28 +546,6 @@ typedef struct {
 	char *cmdline; // Windows: the command line std/native/llrt/procspec.xo built
 } pr_cmd;
 
-// xo_proc_environ is the program's environment as exec passes it on
-// (std/native/llrt/procspec.xo builds a child's from it).
-xo_rlist *xo_proc_environ(void) {
-	int n = 0;
-	while (environ[n]) {
-		n++;
-	}
-	xo_rlist *l = n_str_list_new(n);
-	for (int k = 0; k < n; k++) {
-		l = n_str_list_add(l, environ[k], (int64_t)strlen(environ[k]));
-	}
-	return l;
-}
-
-// xo_proc_getcwd is the working directory (filepath.Abs of a command's
-// directory, procspec.xo).
-xo_rstr *xo_proc_getcwd(int64_t *len) {
-	char cwd[4096];
-	const char *w = getcwd(cwd, sizeof cwd) ? cwd : ".";
-	return nstr(w, (int64_t)strlen(w), len);
-}
-
 static char *pr_lstr(xo_rlist *l, int64_t i) {
 	if (i >= l->len) {
 		return cstr_of("", 0);
@@ -1773,88 +1751,4 @@ void xo_proc_child_kill(xo_child *ch) {
 	if (!ch->fake && ch->st == '0' && !ch->reaped) {
 		pr_kill9(ch->pid);
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Proc.kill (std.md 3.7, decision 0190)
-
-// the signals of std/native/prelude.xo proc_kill, by index
-#ifdef _WIN32
-static const int pr_signals[] = {1, 2, 3, 9, 15, 10, 12, 18, 19}; // KILL (3) only is sent
-#else
-static const int pr_signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGKILL, SIGTERM, SIGUSR1, SIGUSR2, SIGCONT, SIGSTOP};
-#endif
-static const char *const pr_signal_names[] = {"HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"};
-
-// the signals a test's FakeProc.kill recorded, "NAME PID"
-static struct {
-	xo_lock mu;
-	char **v;
-	int n;
-} pr_killed;
-
-// xo_proc_kill sends signal number sig (an index of pr_signals) to pid,
-// which proc_kill checked is positive: the empty list, or the error's
-// message (Go's errno text) in a list of one. FakeProc records it.
-xo_rlist *xo_proc_kill(int64_t pid, int64_t sig) {
-	if (sig < 0 || sig >= (int64_t)(sizeof pr_signals / sizeof pr_signals[0]) || pid <= 0) {
-		xo_rlist *l = n_str_list_new(1);
-		return n_str_list_add(l, "invalid signal or process id", 28);
-	}
-	if (tw_is_fake(TW_REAL_PROC)) {
-		char t[64];
-		snprintf(t, sizeof t, "%s %lld", pr_signal_names[sig], (long long)pid);
-		lk(&pr_killed.mu);
-		pr_killed.v = tw_grow(pr_killed.v, pr_killed.n, sizeof(char *));
-		pr_killed.v[pr_killed.n++] = strdup(t);
-		unlk(&pr_killed.mu);
-		return n_str_list_new(0);
-	}
-#ifdef _WIN32
-	// no signals: KILL terminates the process (std/rt's sendSignal)
-	char wm[600];
-	if (sig != 3) {
-		snprintf(wm, sizeof wm, "signal %s is not supported on this system", pr_signal_names[sig]);
-		xo_rlist *wl = n_str_list_new(1);
-		return n_str_list_add(wl, wm, (int64_t)strlen(wm));
-	}
-	HANDLE h = pid > 0xFFFFFFFFLL ? NULL : OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid);
-	DWORD we = h ? 0 : (pid > 0xFFFFFFFFLL ? ERROR_INVALID_PARAMETER : GetLastError());
-	if (h) {
-		if (!TerminateProcess(h, PR_KILLED)) {
-			we = GetLastError();
-		}
-		CloseHandle(h);
-	}
-	if (we == 0) {
-		return n_str_list_new(0);
-	}
-	char wt[512];
-	pr_w_text(we, wt, sizeof wt);
-	snprintf(wm, sizeof wm, "%s: %s", h ? "TerminateProcess" : "OpenProcess", wt);
-	xo_rlist *wl = n_str_list_new(1);
-	return n_str_list_add(wl, wm, (int64_t)strlen(wm));
-#else
-	if (kill((pid_t)pid, pr_signals[sig]) == 0) {
-		return n_str_list_new(0);
-	}
-	char m[128];
-	snprintf(m, sizeof m, "%s", strerror(errno));
-	if (m[0] >= 'A' && m[0] <= 'Z') {
-		m[0] = (char)(m[0] + 32); // Go's errno texts start in lower case
-	}
-	xo_rlist *l = n_str_list_new(1);
-	return n_str_list_add(l, m, (int64_t)strlen(m));
-#endif
-}
-
-// xo_proc_killed is FakeProc.killed: the recorded signals, oldest first.
-xo_rlist *xo_proc_killed(void) {
-	lk(&pr_killed.mu);
-	xo_rlist *l = n_str_list_new(pr_killed.n);
-	for (int i = 0; i < pr_killed.n; i++) {
-		l = n_str_list_add(l, pr_killed.v[i], (int64_t)strlen(pr_killed.v[i]));
-	}
-	unlk(&pr_killed.mu);
-	return l;
 }

@@ -233,6 +233,7 @@ fn prefetch(a: Int)
 ///   22-29 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library, the list of heap records, its lock, a record's size
 ///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity
+///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
@@ -522,12 +523,6 @@ fn time_ns(t: Time) -> Int
 /// "3" canceled), the exit code in decimal or the error's message, and
 /// when it ran standard output and error.
 fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
-/// Proc.kill (decision 0190): sends signal number sig of the list HUP,
-/// INT, QUIT, KILL, TERM, USR1, USR2, CONT, STOP to pid; the empty list,
-/// or the error's message. A test's FakeProc records it instead.
-fn proc_kill(pid: Int, sig: Int) -> List[Str]
-/// FakeProc.killed: the signals proc_kill recorded, as "NAME PID".
-fn proc_killed() -> List[Str]
 
 // Commands, children, and pipelines (decisions 0161 and 0172). A command
 // is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
@@ -543,10 +538,6 @@ struct ProcChild {}
 /// of them) with input as the first one's standard input when has_input:
 /// "0", the status, standard output, standard error.
 fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
-/// The program's environment as exec passes it on, and the working
-/// directory (std/native/llrt/procspec.xo, decision 0193 step 6).
-fn proc_environ() -> List[Str]
-fn proc_getcwd() -> Str
 /// Starts the command; proc_child_start tells how that went.
 fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
 fn proc_child_start(c: ProcChild) -> List[Str]

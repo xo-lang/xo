@@ -80,6 +80,28 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
 /// The zero terminated string at address a.
 fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
 
+/// The program's environment as exec passes it on, NAME=VALUE in the
+/// order of environ (std/native/llrt/procspec.xo builds a child's from
+/// it; not the test world's fake: xo_proc.c's xo_proc_environ read the
+/// real one).
+pub fn environ() -> List[Str] {
+  let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
+  var out: List[Str] = []
+  if envp == 0 {
+    return out
+  }
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    out.push(cstr(e))
+    k += 1
+  }
+  out
+}
+
 /// argv[i] (0 <= i < argc).
 fn arg(i: Int) -> Str { cstr(rt.mem_load(rt.mem_load(rt.static_word(WORDS), ARGV, 8), 8 * i, 8)) }
 

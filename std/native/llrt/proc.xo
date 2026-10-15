@@ -1,0 +1,111 @@
+// The processes of the native runtime, written in Xo (work item B25 of
+// bench/results/zero-c-audit-refresh-2026-10-13.md; they were
+// std/llrt/xo_proc.c): Proc.kill and the signals a test's FakeProc.kill
+// records. Process creation, pipes, and waiting follow in later stages.
+use native/llrt/darwin
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/sysio
+use native/llrt/testworld
+use native/llrt/windows
+use native/rt
+
+// FakeProc.kill's record in the program's static words (rt.xo's table):
+// its lock, then a vector (the address of its entries from
+// rt.heap_large, its length, its capacity) of blocks ("NAME PID": the
+// length, then the bytes).
+const W_LOCK = 48
+const W_VEC = 49
+const W_LEN = 50
+const W_CAP = 51
+
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// The signals of Proc.kill by index (std/native/prelude.xo proc_kill).
+const NAMES: List[Str] = ["HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"]
+
+/// The signal number of index i on the target (Linux and macOS differ
+/// for USR1, USR2, CONT, and STOP).
+fn signo(i: Int) -> Int {
+  let linux_nums = [1, 2, 3, 9, 15, 10, 12, 18, 19]
+  let darwin_nums = [1, 2, 3, 9, 15, 30, 31, 19, 17]
+  match target.os {
+    TargetOs.Darwin => darwin_nums[i]
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => linux_nums[i]
+  }
+}
+
+/// Proc.kill: sends signal index sig to pid (proc_kill checked both): the
+/// empty list, or the error's message (Go's errno text) in a list of
+/// one. A test's FakeProc records "NAME PID" instead.
+pub fn kill(pid: Int, sig: Int) -> List[Str] {
+  if sig < 0 || sig >= NAMES.len() || pid <= 0 {
+    return ["invalid signal or process id"]
+  }
+  if testworld.fake(testworld.REAL_PROC) {
+    record("${NAMES[sig]} ${pid}")
+    return []
+  }
+  let l = sysio.layer()
+  if l == 3 {
+    // no signals: KILL terminates the process (std/rt's sendSignal)
+    if sig != 3 {
+      return ["signal ${NAMES[sig]} is not supported on this system"]
+    }
+    let m = windows.terminate(pid)
+    return if m.is_empty() { [] } else { [m] }
+  }
+  let r = if l == 2 { darwin.kill(pid, signo(sig)) } else { linux.kill(pid, signo(sig)) }
+  if r == 0 {
+    return []
+  }
+  [sysio.err_msg(l, -r)]
+}
+
+fn lock() {
+  let w = rt.static_word(W_LOCK)
+  if !rt.slot_cas(w, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(w)
+  }
+}
+
+fn unlock() {
+  let w = rt.static_word(W_LOCK)
+  if rt.slot_swap(w, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(w)
+  }
+}
+
+/// Appends s to FakeProc.kill's record.
+fn record(s: Str) {
+  lock()
+  let n = rt.mem_load(rt.static_word(W_LEN), 0, 8)
+  if n == rt.mem_load(rt.static_word(W_CAP), 0, 8) {
+    let c = if n == 0 { 8 } else { 2 * n }
+    let old = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+    let v = if old == 0 { rt.heap_large(8 * c) } else { rt.heap_large_resize(old - 8, 8 * c) }
+    rt.mem_store(rt.static_word(W_VEC), 0, v, 8)
+    rt.mem_store(rt.static_word(W_CAP), 0, c, 8)
+  }
+  let b = rt.heap_large(s.len() + 8)
+  rt.mem_store(b, 0, s.len(), 8)
+  rt.mem_copy(b + 8, raw.data(s), s.len())
+  rt.mem_store(rt.mem_load(rt.static_word(W_VEC), 0, 8), 8 * n, b, 8)
+  rt.mem_store(rt.static_word(W_LEN), 0, n + 1, 8)
+  unlock()
+}
+
+/// FakeProc.killed: the recorded signals, oldest first.
+pub fn killed() -> List[Str] {
+  lock()
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  var out: List[Str] = []
+  for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
+    let b = rt.mem_load(v, 8 * i, 8)
+    out.push(raw.str_at(b + 8, rt.mem_load(b, 0, 8)))
+  }
+  unlock()
+  out
+}

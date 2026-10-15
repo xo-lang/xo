@@ -27,6 +27,10 @@ fn GetStdHandle(n: Int) -> Int
 fn GetLastError() -> UInt32
 /// ExitProcess: ends the process with exit code code.
 fn ExitProcess(code: Int)
+/// OpenProcess: a process handle, or 0 (std/native/llrt/proc.xo).
+fn OpenProcess(access: Int, inherit: Int, pid: Int) -> Int
+/// TerminateProcess: nonzero on success.
+fn TerminateProcess(h: Int, code: Int) -> Int32
 /// GetFileInformationByHandle into the BY_HANDLE_FILE_INFORMATION (52
 /// bytes) at the address info.
 fn GetFileInformationByHandle(h: Int, info: Int) -> Int32

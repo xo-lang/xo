@@ -55,6 +55,8 @@ fn readlink(path: Bytes, buf: Int, n: Int) -> Int
 fn utimensat(fd: Int, path: Bytes, ts: Int, flags: Int) -> Int32
 /// getcwd(3) into n bytes at the address buf: buf, or 0.
 fn getcwd(buf: Int, n: Int) -> Int
+/// kill(2): 0, or -1 with errno set (std/native/llrt/proc.xo).
+fn kill(pid: Int, sig: Int) -> Int32
 fn flock(fd: Int, op: Int) -> Int32
 /// __getdirentries64 (what readdir(3) calls): the next entries of the
 /// directory fd as struct dirent (64 bit inodes) records into n bytes at

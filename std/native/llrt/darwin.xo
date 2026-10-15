@@ -440,6 +440,9 @@ pub fn strerror(e: Int) -> Str {
 
 /// The message of errno e as the C runtime records a file error: the
 /// strerror text with its first letter lowered.
+/// kill(2) of signal sig to pid: 0, or the negative errno.
+pub fn kill(pid: Int, sig: Int) -> Int { ret(Int(sys_darwin.kill(pid, sig))) }
+
 pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()

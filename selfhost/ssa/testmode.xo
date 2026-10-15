@@ -364,8 +364,13 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.pop_one(l, nt))
     }
     "Proc.killed" => {
-      // the signals FakeProc.kill recorded (decision 0190)
-      return Some(b.rt("proc_killed", b.m.list(st), []))
+      // the signals FakeProc.kill recorded (decision 0190): the native
+      // prelude's llrt_proc_killed (std/native/llrt/proc.xo, work item
+      // B25), else the C runtime's
+      if b.prelude_impl("llrt_proc_killed") < 0 {
+        return Some(b.rt("proc_killed", b.m.list(st), []))
+      }
+      return Some(b.llrt("proc_killed", b.m.list(st), []))
     }
     "Proc.on_run" => {
       // the outputs a later run of the command gives

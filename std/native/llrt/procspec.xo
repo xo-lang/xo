@@ -8,6 +8,8 @@
 // (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote; decision
 // 0198 deleted that C path, `XO_LLRT_C=procspec`); process creation stays
 // C.
+use native/llrt/fsops
+use native/llrt/process
 use native/rt
 
 /// Whether the target is Windows.
@@ -31,7 +33,7 @@ pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], e
   // os/exec sets no PWD on Windows; the program's environment as it is
   // needs none
   if env_set || !extra.is_empty() || (!win && !dir.is_empty()) {
-    var all: List[Str] = if env_set { env } else { rt.proc_environ() }
+    var all: List[Str] = if env_set { env } else { process.environ() }
     if !env_set && extra.is_empty() {
       // Cmd.environ: PWD is the directory when the environment is the
       // program's
@@ -156,7 +158,7 @@ fn critical(env: List[Str]) -> List[Str] {
       return env
     }
   }
-  for kv in rt.proc_environ() {
+  for kv in process.environ() {
     if key_len(kv) == 10 && key_eq(kv.bytes(), "SYSTEMROOT".bytes(), 10, true) {
       var out = env
       out.push("SYSTEMROOT=" + rt.str_slice(kv, 11, kv.len()))
@@ -169,7 +171,7 @@ fn critical(env: List[Str]) -> List[Str] {
 /// filepath.Abs of dir: joined to the working directory when relative,
 /// and cleaned (empty and . segments dropped, .. resolved lexically).
 fn abs(dir: Str) -> Str {
-  let full = if dir.starts_with("/") { dir } else { rt.proc_getcwd() + "/" + dir }
+  let full = if dir.starts_with("/") { dir } else { fsops.raw_getcwd() + "/" + dir }
   var segs: List[Str] = []
   for s in full.split("/") {
     if s.is_empty() || s == "." {

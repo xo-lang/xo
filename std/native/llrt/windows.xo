@@ -148,6 +148,26 @@ pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
 /// system has a time zone setting (std/native/llrt/tzhost.xo).
 pub fn zone_info(z: Int) -> Bool { Int(sys_windows.GetDynamicTimeZoneInformation(z)) != -1 }
 
+/// Proc.kill's KILL on Windows (std/rt's sendSignal): TerminateProcess of
+/// pid with exit code 137; "" or the error's text, prefixed by the call
+/// that failed. UNTESTED on Windows (the zero-C push, 2026-10-14).
+pub fn terminate(pid: Int) -> Str {
+  // PROCESS_TERMINATE 1; ERROR_INVALID_PARAMETER 87
+  if pid > 4294967295 {
+    return "OpenProcess: " + strerror(dos_errno(87))
+  }
+  let h = sys_windows.OpenProcess(1, 0, pid)
+  if h == 0 {
+    return "OpenProcess: " + strerror(dos_errno(Int(sys_windows.GetLastError())))
+  }
+  var msg = ""
+  if Int(sys_windows.TerminateProcess(h, 137)) == 0 {
+    msg = "TerminateProcess: " + strerror(dos_errno(Int(sys_windows.GetLastError())))
+  }
+  let _c = sys_windows.CloseHandle(h)
+  msg
+}
+
 /// CloseHandle: 0, or the negative errno.
 pub fn close(h: Int) -> Int {
   if Int(sys_windows.CloseHandle(h)) == 0 {
