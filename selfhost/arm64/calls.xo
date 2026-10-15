@@ -864,7 +864,22 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // the carry-less product's halves and the AES rounds (cpu.xo, run
     // only when cpu.hw() has them), in the scratch registers v30 and v31
     "rt.clmul_lo" | "rt.clmul_hi" => {
-      let out = if aux_str(x.aux) == "rt.clmul_lo" { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
+      if g.has_val[v] {
+        // its other half's pmull gave it
+        return true
+      }
+      let lo = aux_str(x.aux) == "rt.clmul_lo"
+      let other = g.clmul_pair(v, if lo { "rt.clmul_hi" } else { "rt.clmul_lo" })
+      if other >= 0 {
+        // one pmull for both halves of the product
+        let d = g.new_vreg(false)
+        let e = g.new_vreg(false)
+        let _i = g.plain("fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\nfmov $d0, d30\numov $d1, v30.d[1]", [d, e], [g.word(x.args[0]), g.word(x.args[1])])
+        g.set(if lo { v } else { other }, [d])
+        g.set(if lo { other } else { v }, [e])
+        return true
+      }
+      let out = if lo { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
       g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
     }
     "rt.aes_round" => {
@@ -873,6 +888,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.aes_last" => {
       g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.set(v, [])
+    }
+    "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
+      // the whole block unrolled, the state in v30, each round key
+      // loaded once into v31
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      var t = "ldr q30, [$u0]"
+      for r in 0..nr - 1 {
+        t = t + "\nldr q31, [$u1, #${16 * r}]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b"
+      }
+      t = t + "\nldr q31, [$u1, #${16 * (nr - 1)}]\naese v30.16b, v31.16b\nldr q31, [$u1, #${16 * nr}]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
+      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
     // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
@@ -1213,6 +1240,27 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
     k += 1
   }
   false
+}
+
+/// A value among the next few of the block that is the call want of the
+/// same two operands as v and not selected yet (the other half of a
+/// carry-less product), else -1.
+fn (var g: G) clmul_pair(v: Int, want: Str) -> Int {
+  if g.cur_sb < 0 {
+    return -1
+  }
+  let a = g.f.values[v].args
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 6 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 && y.args[0] == a[0] && y.args[1] == a[1] {
+      return u
+    }
+    k += 1
+  }
+  -1
 }
 
 /// The memory order of argument k of value v (decision 0200): its

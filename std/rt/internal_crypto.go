@@ -670,6 +670,16 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		binary.LittleEndian.PutUint64(out, lo)
 		binary.LittleEndian.PutUint64(out[8:], hi)
 		return Bytes(out), true
+	case "aes_enc":
+		// AES-128's ten rounds of the block a with the 176 bytes of
+		// round keys b
+		s := []byte(a[:16])
+		for r := 0; r < 9; r++ {
+			o, _ := cryptoCPU("aes_round", Bytes(s), b[16*r:16*r+16], "")
+			s = []byte(o)
+		}
+		o, _ := cryptoCPU("aes_last", Bytes(s), b[144:160], b[160:176])
+		return o, true
 	case "aes_round", "aes_last":
 		var s [16]byte
 		for i := range s {

@@ -23,7 +23,13 @@ fn main(os: Os) {
       let m = internal.crypto_op("cpu.clmul${sfx}", a, b, b"", b"")
       let r = internal.crypto_op("cpu.aes_round${sfx}", a, b, b"", b"")
       let l = internal.crypto_op("cpu.aes_last${sfx}", a, b, c, b"")
-      os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()}")
+      // eleven round keys from the inputs after a
+      var ks = b""
+      for j in 1..12 {
+        ks = ks + inputs[(i + j) % inputs.len()]
+      }
+      let e = internal.crypto_op("cpu.aes_enc${sfx}", a, ks, b"", b"")
+      os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()} enc ${e.to_hex()}")
     }
   }
 }

@@ -1471,11 +1471,13 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
     }
   }
   let mo = mem_op(ops, 1)
-  if !mo.ok || (kt == RQ && (mo.mode != 3 || mo.sh >= 0)) {
+  // a q register: a register offset, or an unsigned offset in 16 byte
+  // units (the unrolled AES rounds of decision 0231)
+  if !mo.ok || (kt == RQ && !((mo.mode == 3 && mo.sh < 0) || mo.mode == 0)) {
     return a.bad(m, ops)
   }
   let head = (size * 0x40000000) | 0x38000000 | (v * 0x4000000)
-  let scale = pow2(size)
+  let scale = if kt == RQ { 16 } else { pow2(size) }
   let rn = mo.base * 32
   if mo.mode == 3 {
     // register offset, lsl #0 or #size (S)

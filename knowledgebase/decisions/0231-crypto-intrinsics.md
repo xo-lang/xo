@@ -87,6 +87,10 @@ and the software GHASH multiply. The owner approved three intrinsics
 - The arm64 emitter selects an add (subtract) and its cpu.carry
   (cpu.borrow) of the same operands, a few values apart in a block, as
   one adds (subs) and a cset (2026-10-15, results file step 7).
+- cpu.aes_enc10, aes_enc12, aes_enc14 encrypt a whole block with the
+  rounds unrolled and the state in a register; the arm64 emitter gives
+  both halves of a carry-less product one pmull (2026-10-15, results
+  file step 8). cpu_prims checks aes_enc and its body too.
 - A new function of cpu.xo needs its emitter lowering on both native
   backends and its name in cpu_call; until then it runs its body.
 - UNTESTED: Linux (AT_HWCAP, the `.arch_extension` header, GNU as),

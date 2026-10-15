@@ -390,24 +390,26 @@ fn keep(xs: List[Int]) {
   }
 }
 
-/// encrypt4 with the CPU's rounds (cpu.aes_round and aes_last, on a
-/// state of two words written in place).
+/// encrypt4 with the CPU's rounds (cpu.aes_round and aes_last), each
+/// block in place in io's words (a list its callers made, so not
+/// shared), the round keys walked by address with wrapping arithmetic
+/// (no checks in the loop).
 fn hw4(c: Cipher, var io: List[Int]) {
-  let st = raw.zero_ints(2)
-  let sp = addr(st)
   let kp = addr(c.rk)
+  var st = addr(io)
+  let end = rt.int_wrap(0, st, 64)
   let nr = c.nr
-  for b in 0..4 {
-    rt.mem_store(sp, 0, io[2 * b], 8)
-    rt.mem_store(sp, 8, io[2 * b + 1], 8)
-    for r in 0..nr - 1 {
-      cpu.aes_round(sp, kp + 16 * r)
+  while st != end {
+    // the whole block in one unrolled intrinsic: the state stays in a
+    // register
+    match nr {
+      10 => cpu.aes_enc10(st, kp)
+      12 => cpu.aes_enc12(st, kp)
+      _ => cpu.aes_enc14(st, kp)
     }
-    cpu.aes_last(sp, kp + 16 * (nr - 1), kp + 16 * nr)
-    io[2 * b] = rt.mem_load(sp, 0, 8)
-    io[2 * b + 1] = rt.mem_load(sp, 8, 8)
+    st = rt.int_wrap(0, st, 16)
   }
-  keep(st)
+  keep(io)
   keep(c.rk)
 }
 

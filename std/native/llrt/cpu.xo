@@ -159,6 +159,26 @@ pub fn aes_last_soft(st: Int, rk: Int, rk2: Int) {
   rt.mem_store(st, 8, b ^ rt.mem_load(rk2, 8, 8), 8)
 }
 
+/// The encryption of the 16 byte block at st in place with the nr + 1
+/// round keys at rk (FIPS 197's byte order, 16 bytes each): AES-128 (nr
+/// 10), AES-192 (12), AES-256 (14). The native emitters unroll the
+/// rounds with the state in a register (arm64: one load of each round
+/// key; AESENC and AESENCLAST on x86-64).
+pub fn aes_enc10(st: Int, rk: Int) { aes_enc_soft(st, rk, 10) }
+
+pub fn aes_enc12(st: Int, rk: Int) { aes_enc_soft(st, rk, 12) }
+
+pub fn aes_enc14(st: Int, rk: Int) { aes_enc_soft(st, rk, 14) }
+
+/// aes_enc10's, aes_enc12's, and aes_enc14's body.
+pub fn aes_enc_soft(st: Int, rk: Int, nr: Int) {
+  for r in 0..nr - 1 {
+    aes_round_soft(st, rt.int_wrap(0, rk, rt.int_wrap(3, r, 4)))
+  }
+  let last = rt.int_wrap(0, rk, rt.int_wrap(3, nr - 1, 4))
+  aes_last_soft(st, last, rt.int_wrap(0, last, 16))
+}
+
 const B01 = 0x0101010101010101
 const B7F = 0x7F7F7F7F7F7F7F7F
 
@@ -270,6 +290,24 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       let x = rt.bytes_word(a, 0)
       let y = rt.bytes_word(b, 0)
       Some(if soft { words16(clmul_lo_soft(x, y), clmul_hi_soft(x, y)) } else { words16(clmul_lo(x, y), clmul_hi(x, y)) })
+    }
+    "aes_enc" => {
+      // a 16 byte key (AES-128's ten rounds) expanded by the caller: b
+      // is the 176 bytes of round keys
+      let st = block(a)
+      var k: List[Int] = []
+      for i in 0..22 {
+        k.push(rt.bytes_word(b, 8 * i))
+      }
+      if soft {
+        aes_enc_soft(addr(st), addr(k), 10)
+      } else {
+        aes_enc10(addr(st), addr(k))
+      }
+      let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
+      keep(st)
+      keep(k)
+      Some(r)
     }
     "aes_round" | "aes_last" => {
       let st = block(a)

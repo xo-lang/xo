@@ -593,6 +593,33 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.emit("store <16 x i8> ${r}, ptr ${p}, align 1")
     }
+    "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
+      // the whole block unrolled, the state an SSA value (the rounds of
+      // rt.aes_round without the loads and stores between them)
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      let p = g.raw_ptr(x.args[0])
+      let kp = g.raw_ptr(x.args[1])
+      var ks: List[Str] = []
+      for r in 0..nr + 1 {
+        let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
+        ks.push(g.def("load <16 x i8>, ptr ${q}, align 1"))
+      }
+      var s = g.def("load <16 x i8>, ptr ${p}, align 1")
+      if g.arch() == "amd64" {
+        s = g.def("xor <16 x i8> ${s}, ${ks[0]}")
+        for r in 1..nr {
+          s = g.def("call <16 x i8> asm \"aesenc $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${ks[r]})")
+        }
+        s = g.def("call <16 x i8> asm \"aesenclast $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${ks[nr]})")
+      } else {
+        for r in 0..nr - 1 {
+          s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\\0Aaesmc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[r]})")
+        }
+        s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[nr - 1]})")
+        s = g.def("xor <16 x i8> ${s}, ${ks[nr]}")
+      }
+      g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
+    }
     "rt.cpuid1_ecx" => {
       if g.arch() == "amd64" {
         let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 1, i32 0)")

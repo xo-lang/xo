@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- AES-GCM: whole block AES intrinsics (cpu.aes_enc10/12/14, the state
+  in a register) and one pmull for both halves of a GHASH product on
+  arm64. Bulk AES-128-GCM on LLVM 27.3M to 17.9M instructions a MiB
+  (Mbed 14.0M), on arm64 37.8M to 26.3M. UNTESTED on linux, x86-64,
+  and windows.
 - Compiler (selfhost/ssa): `==` and `!=` on two enum variants known at
   build time, such as `target.os == TargetOs.Darwin`, fold to a
   constant on every backend. The arm64 backend used to call the enum's
