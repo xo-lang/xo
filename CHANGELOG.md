@@ -42,6 +42,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   certificate's expiry text gives the time in UTC, not the local zone.
   The server's TLS stays Mbed's until xo-2b's tls13srv.xo lands.
 
+- Native runtime (zero-C audit item B31, TLS 1.3 server, decision 0202):
+  the TLS 1.3 server in Xo, sans I/O (std/native/llrt/tls13srv.xo, as
+  Go's handshake_server_tls13.go: ClientHello checks, Go's choice of
+  suite and group, HelloRetryRequest, ALPN, EncryptedExtensions,
+  Certificate, CertificateVerify signed with RSA-PSS, ECDSA P-256 or
+  P-384, or Ed25519, Finished, KeyUpdate, Go's error texts and alerts)
+  over tls13.xo's key schedule and tlsrec.xo's records. internal.crypto_op
+  gains the tls13srv area (std/rt/internal_tls13srv.go, the server in Go
+  and a pair over Go's crypto/tls); the golden tls13_server replays RFC
+  8448 section 3 from the server's side (ServerHello, encrypted flight,
+  ticket, data and alert records equal the RFC's, whole and a byte at a
+  time), ten failures and choices, three recorded Go 1.26 client
+  handshakes, and ten client and server pairs. Not on the TLS path yet
+  (Mbed TLS stays selectable).
 - Native runtime (zero-C audit item B31, part 6, decision 0202): the
   TLS 1.3 client checked against Go's crypto/tls server. The golden
   tls13_go replays traces recorded from a Go server (HelloRetryRequest

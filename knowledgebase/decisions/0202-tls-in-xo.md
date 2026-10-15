@@ -93,6 +93,22 @@ std (decision 0074) unless the owner decides to expose a user marker.
   tls12.feed with the unread bytes. A failed handshake is never retried
   with a 1.2 only hello (that would be a downgrade hole). Both sides
   check the downgrade sentinels (DOWNGRD 01 and 00).
+- 2026-10-15 (B31 server, tls13srv.xo): the TLS 1.3 server is sans I/O
+  like the client and follows Go's handshake_server_tls13.go: Go's suite
+  order (AES-GCM first unless the client lists ChaCha20-Poly1305 first),
+  the server's group preference with a key share first, else a
+  HelloRetryRequest, Go's ALPN rule (with the h2 to http/1.1 fallback),
+  the signature scheme in the client's order among the certificate's,
+  the dummy ChangeCipherSpec always, and Go's error texts. It sends no
+  session tickets and asks for no client certificate (Go's defaults
+  less tickets: no resumption yet). The client's Finished is compared
+  with ct.bytes_equal. Test hooks (Conf: random, ECDHE key, PSS salt,
+  the RFC 8448 encoding, fixed EncryptedExtensions, a ticket) are empty
+  on the TLS path. Checked by golden tls13_server: RFC 8448 section 3
+  byte for byte from the server's side (its PSS salt recovered from the
+  RFC's signature), recorded flights of Go 1.26's crypto/tls client
+  (its X25519MLKEM768 share ignored), and the in-memory pair of
+  tls13.xo's client and this server against Go's client and server.
 
 ## Alternatives
 

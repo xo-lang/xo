@@ -1,0 +1,127 @@
+exit 0
+--- stdout
+rfc 8448:
+  f0 2 <ServerHello><server flight> - false 
+  f1 3 <ticket><server data> - false 
+  params TLS_AES_128_GCM_SHA256 29 - 804 server false
+  f2 3 - <client data> true 
+  bye <server close_notify>
+byte at a time:
+  f0 2 <ServerHello><server flight> - false 
+  f1 3 <ticket><server data> - false 
+  params TLS_AES_128_GCM_SHA256 29 - 804 server false
+  f2 3 - <client data> true 
+  bye <server close_notify>
+corrupt client finished:
+  f0 2 <ServerHello><server flight> - false 
+  f1 4 17030300133c7f9a63b6f3a8d98bbc832bdee53e2855f655 - false local error: tls: bad record MAC
+  bye -
+hello retry for p-256:
+  f0 1 1603030038020000340303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8...(67 bytes) - false 
+  f1 4 1503030002020a - false local error: tls: unexpected message
+  f2 4 - - false local error: tls: unexpected message
+  bye -
+aes-256-gcm:
+  f0 2 160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3...(766 bytes) - false 
+  bye 17030300134602af0b5e31d65d12ec0fe41f164e3a015dea
+chacha20-poly1305:
+  f0 2 160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3...(750 bytes) - false 
+  bye 17030300135e9c116e9e16f9e1f2f50828ab4f1143dd6b42
+no common suite:
+  f0 4 15030300020228 - false tls: no cipher suite supported by both client and server; client offered: [1301 1303 1302]
+  bye -
+no common group:
+  f0 4 15030300020228 - false tls: no key exchanges supported by both client and server
+  bye -
+low order share:
+  f0 4 1503030002022f - false tls: invalid client key share
+  bye -
+short hello:
+  f0 4 15030300020232 - false local error: tls: error decoding message
+  bye -
+tls 1.2 hello:
+  f0 4 15030300020246 - false tls: client offered only unsupported versions: [303 302 301]
+  bye -
+go client, rsa, alpn h2:
+  f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(791 bytes) - false 
+  f1 3 170303001ee6521b454662ac3866a42aeeb77b09867bf96b4bf758c17bec1532dccf3b 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 29 h2 804 xo.test false
+  f2 3 - - true 
+  bye 1703030013c59cf71bb75c6c2ac677827e00b7ba7be7d263
+go client, hello retry to p-256:
+  f0 1 1603030058020000540303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8...(99 bytes) - false 
+  f1 1 - - false 
+  f2 2 160303009b020000970303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(809 bytes) - false 
+  f3 3 170303001ec74ed2b7b66c792d7f296a8cd441de331518b862e59da45b110e1ecb9f60 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 23 - 804 xo.test true
+  f4 3 - - true 
+  bye 1703030013b6742c859910631c37a2dc9b5686b6379d9cad
+go client, ed25519, chacha20-poly1305, p-384:
+  f0 2 16030300bb020000b70303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(630 bytes) - false 
+  f1 3 170303001e5f6f6207f3ed729cd0bca84bd813da6f37dce0f0ae0ae1fddea75ea3c9e9 474554202f207472616365 false 
+  params TLS_CHACHA20_POLY1305_SHA256 24 - 807 xo.test false
+  f2 3 - - true 
+  bye 1703030013005d70bae162fd169cb770ca7b428ab1be0172
+rsa:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 - - xo.test
+  server got ping
+  client got pong
+  closed true
+p-256:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 - - xo.test
+  server got ping
+  client got pong
+  closed true
+p-384:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 - - -
+  server got ping
+  client got pong
+  closed true
+ed25519:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 - - xo.test
+  server got ping
+  client got pong
+  closed true
+alpn:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 http/1.1 http/1.1 xo.test
+  server got ping
+  client got pong
+  closed true
+alpn refused:
+  client remote error: tls: no application protocol
+  server tls: client requested unsupported application protocols (["h3"])
+alpn h2 fallback:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 29 - - xo.test
+  server got ping
+  client got pong
+  closed true
+p-256 group:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 23 - - xo.test
+  server got ping
+  client got pong
+  closed true
+hello retry to p-384:
+  client -
+  server -
+  params TLS_AES_128_GCM_SHA256 24 - - xo.test
+  server got ping
+  client got pong
+  closed true
+no common group:
+  client remote error: tls: handshake failure
+  server tls: no key exchanges supported by both client and server
+--- stderr
