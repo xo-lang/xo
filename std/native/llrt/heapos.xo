@@ -28,6 +28,7 @@ use native/llrt/linux
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
+use native/llrt/sanhook
 use native/llrt/stdio
 use native/rt
 use native/sys_darwin
@@ -35,12 +36,12 @@ use native/sys_windows
 
 /// rt.static_word: the central lists' lock word, the chunks mapped (the
 /// C runtime's heap statistics and its tests read it through cabi.xo),
-/// whether to map through the C library (a sanitizer build, set by
-/// obj.heap_init), the large block cache's lock word, and the cache's
-/// table (0 until the first large block is given back).
+/// the mappings made through the C library (a sanitizer build; the
+/// sysc.heap_libc op reads it), the large block cache's lock word, and
+/// the cache's table (0 until the first large block is given back).
 const W_LOCK = 22
 const W_CHUNKS = 23
-const W_LIBC = 26
+const W_LIBC_MAPS = 26
 const W_CLOCK = 24
 const W_CACHE = 25
 
@@ -64,14 +65,22 @@ const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
 
-/// Whether the build maps through the C library.
-pub fn set_libc(on: Int) { rt.mem_store(rt.static_word(W_LIBC), 0, on, 8) }
+/// The mappings made through the C library so far.
+pub fn libc_maps() -> Int { rt.slot_load(rt.static_word(W_LIBC_MAPS), 0, RELAXED) }
 
 /// size bytes of zeroed memory, readable and writable, from the system:
-/// its address. Out of memory ends the process.
+/// its address. Out of memory ends the process. A sanitizer build maps
+/// through the C library (sanhook.xo heap_map): ThreadSanitizer and
+/// AddressSanitizer see a mapping through their mmap interceptors, which
+/// a system call bypasses.
 fn map(size: Int) -> Int {
-  if rt.mem_load(rt.static_word(W_LIBC), 0, 8) != 0 {
-    return rt.sched_rt(11, size, 0)
+  if sanhook.sanitized() {
+    let m = sanhook.heap_map(size)
+    if m == 0 {
+      oom()
+    }
+    let _n = rt.slot_add(rt.static_word(W_LIBC_MAPS), 0, 1, RELAXED)
+    return m
   }
   var m = 0
   match target.os {
@@ -103,8 +112,8 @@ fn map(size: Int) -> Int {
 
 /// Gives back the mapping of size bytes at m.
 fn unmap(m: Int, size: Int) {
-  if rt.mem_load(rt.static_word(W_LIBC), 0, 8) != 0 {
-    let _u = rt.sched_rt(12, m, size)
+  if sanhook.sanitized() {
+    sanhook.heap_unmap(m, size)
     return
   }
   match target.os {

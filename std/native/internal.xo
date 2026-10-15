@@ -4,6 +4,7 @@ use native/llrt/aesgcm
 use native/llrt/chacha
 use native/llrt/cpu
 use native/llrt/fsops
+use native/llrt/heapos
 use native/llrt/hkdf
 use native/llrt/hmac
 use native/llrt/mlkem
@@ -56,6 +57,11 @@ fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
 /// whether getpid is linked, whether ThreadSanitizer is (rt.sym_present
 /// of weak references; 0 in a build without it).
 fn sysc_op(what: Str) -> Bytes? {
+  if what == "heap_libc" {
+    // whether the heap was mapped through the C library (a sanitizer
+    // build, heapos.xo map)
+    return Some(rt.rs_push_byte(rt.rs_with_cap(1), if heapos.libc_maps() > 0 { 1 } else { 0 }).bytes())
+  }
   if what != "present" {
     return None
   }

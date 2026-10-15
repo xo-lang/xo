@@ -196,3 +196,23 @@ pub fn stack_map(size: Int, page: Int) -> Int {
 pub fn stack_unmap(m: Int, size: Int) {
   let _u = sys_c.munmap(m, size)
 }
+
+/// Whether a sanitizer's runtime is linked (ThreadSanitizer, or
+/// AddressSanitizer's fiber API): heapos.xo then maps the heap through
+/// the C library (heap_map).
+pub fn sanitized() -> Bool { tsan() || rt.sym_present("__sanitizer_start_switch_fiber") }
+
+/// size bytes of zeroed memory from the C library's mmap (a sanitizer
+/// build's heap, heapos.xo map): its address, or 0.
+pub fn heap_map(size: Int) -> Int {
+  // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS (Linux 0x22,
+  // macOS 0x1002)
+  let flags = if target.os == TargetOs.Darwin { 4098 } else { 34 }
+  let m = sys_c.mmap(0, size, 3, flags, -1, 0)
+  if m == -1 { 0 } else { m }
+}
+
+/// Gives back a mapping heap_map made.
+pub fn heap_unmap(m: Int, size: Int) {
+  let _u = sys_c.munmap(m, size)
+}

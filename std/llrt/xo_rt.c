@@ -281,16 +281,7 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t libc, int64_t hsize);
-
-// heap_libc tells heapos.xo to map the heap's memory through the C
-// library: ThreadSanitizer and AddressSanitizer see the mappings
-// through their mmap interceptors, which a system call bypasses.
-#if defined(XO_TSAN) || defined(XO_ASAN)
-#define heap_libc 1
-#else
-#define heap_libc 0
-#endif
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t hsize);
 
 // hw_slow_c is the calling thread's heap record for obj.xo's heap_word
 // (called through rt.call_c2: two Int arguments, unused).
@@ -300,7 +291,7 @@ static int64_t hw_slow_c(int64_t a, int64_t b) {
 	return (int64_t)(intptr_t)heap_slow();
 }
 
-static void obj_heap_init(xo_heap *h) { xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, heap_libc, (int64_t)sizeof(xo_heap)); }
+static void obj_heap_init(xo_heap *h) { xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)sizeof(xo_heap)); }
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
 // calls without a C level) are set before anything allocates: first in

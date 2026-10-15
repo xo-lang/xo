@@ -257,9 +257,8 @@ fn obj_rc_free(p: Int) { obj.rc_free_n(p) }
 
 fn obj_h_free(p: Int) { obj.h_free_n(p) }
 
-fn obj_heap_init(h: Int, slow: Int, libc: Int, hsize: Int) {
+fn obj_heap_init(h: Int, slow: Int, hsize: Int) {
   obj.heap_init(h, slow)
-  heapos.set_libc(libc)
   if h != 0 {
     heapos.records_init(h, hsize)
   }

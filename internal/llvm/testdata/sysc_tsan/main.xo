@@ -1,7 +1,11 @@
 // TestSysCTSan: std/native/sys_c.xo's weak references in a
-// ThreadSanitizer build (decision 0232): all three bytes 1.
+// ThreadSanitizer build (decision 0232): all three bytes 1; and the heap
+// mapped through the C library, where ThreadSanitizer's mmap
+// interceptor sees it (heapos.xo map): the fourth byte 1.
 use std/internal
 
 fn main(os: Os) {
-  os.stdio.println(internal.crypto_op("sysc.present", b"", b"", b"", b"").to_hex())
+  let p = internal.crypto_op("sysc.present", b"", b"", b"", b"")
+  let h = internal.crypto_op("sysc.heap_libc", b"", b"", b"", b"")
+  os.stdio.println(p.to_hex() + h.to_hex())
 }

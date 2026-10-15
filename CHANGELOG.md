@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: sanitizer builds map the heap through the C library's
+  mmap (heapos.xo over sanhook.xo heap_map, decided at run time with
+  rt.sym_present, as the fiber stacks are), so ThreadSanitizer and
+  AddressSanitizer see the heap. xo_rt.c's heap_libc switch never took
+  effect (gotchas/c-macro-tested-before-defined.md) and is deleted with
+  heapos.xo's W_LIBC arm and its calls of rt.sched_rt ops 11 and 12,
+  which the C no longer had. TestSysCTSan checks a ThreadSanitizer
+  build's heap mapping.
 - Native runtime (zero-C B32 part 5): main's 1 GiB thread is started
   and joined from Xo (pool.xo thread_run: pthreads on Linux and macOS,
   CreateThread on Windows); run_main stays C as the fault boundary.

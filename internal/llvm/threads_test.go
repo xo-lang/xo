@@ -518,7 +518,9 @@ func TestDeadlock(t *testing.T) {
 // TestSysCTSan: rt.sym_present of a weak reference (decision 0232,
 // std/native/sys_c.xo) is true when ThreadSanitizer's runtime is linked
 // (testdata/sysc_tsan prints 010101; the sys_c golden, without it,
-// 0101 and a 00 the goldens do not show).
+// 0101 and a 00 the goldens do not show), and the heap is then mapped
+// through the C library, where ThreadSanitizer's mmap interceptor sees
+// it (heapos.xo map counts those mappings: a fourth byte 01).
 func TestSysCTSan(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program with ThreadSanitizer")
@@ -538,7 +540,7 @@ func TestSysCTSan(t *testing.T) {
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), tsanOptions())
 	out, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "010101" {
-		t.Fatalf("got %q (%v), want 010101", out, err)
+	if err != nil || strings.TrimSpace(string(out)) != "01010101" {
+		t.Fatalf("got %q (%v), want 01010101 (the last byte: the heap mapped through the C library)", out, err)
 	}
 }
