@@ -119,6 +119,9 @@ pub struct Conf {
   /// verifies with the framework there, tlscert.apple_trust); 0 for
   /// x509verify.xo with roots.
   pub apple_svc: Int
+  /// The local zone's offset from UTC in seconds at now (Go's texts show
+  /// the time in time.Local).
+  pub zone_off: Int
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -130,7 +133,7 @@ pub struct Conf {
 /// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES), X25519
 /// then P-256 and P-384 (Go's order less its post-quantum hybrid).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
-  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, apple_svc: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
+  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, apple_svc: 0, zone_off: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
 }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
@@ -774,7 +777,7 @@ fn certificate(var c: Client, msg: Bytes) {
 }
 
 /// The text of x509.Verify's error.
-fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text(r, leaf, cf.host, cf.now) }
+fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, cf.host, cf.now, cf.zone_off) }
 
 fn certificate_verify(var c: Client, msg: Bytes) {
   if msg.len() < 8 || u16_at(msg, 6) != msg.len() - 8 {

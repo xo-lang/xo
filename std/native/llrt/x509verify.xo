@@ -48,7 +48,11 @@ pub struct Outcome {
 /// Go's text of a verification's error (x509.Verify's err.Error()):
 /// "" when it is OK; the time now (Unix seconds, shown in UTC) and host
 /// name are the verification's.
-pub fn full_text(r: Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str {
+pub fn full_text(r: Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str { full_text_zone(r, leaf, host, now, 0) }
+
+/// full_text with the time now shown in the zone off seconds east of UTC
+/// (Go's time.Now() is in time.Local).
+pub fn full_text_zone(r: Outcome, leaf: x509.Cert, host: Str, now: Int, off: Int) -> Str {
   if r.code == OK {
     return ""
   }
@@ -56,7 +60,7 @@ pub fn full_text(r: Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str {
     let b = r.bad
     let rel = if now < b.not_before { "before" } else { "after" }
     let limit = if now < b.not_before { b.not_before } else { b.not_after }
-    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, 0)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, off)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
   }
   if r.code == HOSTNAME {
     return tlsname.hostname_msg(names(leaf), leaf.has_san, leaf.cn, host)

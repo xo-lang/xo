@@ -57,6 +57,8 @@ fn tls_c_roots_crt(roots: Int) -> Int
 /// The Security framework's table when roots are the system's on macOS
 /// (Go verifies with the framework there), else 0.
 fn tls_c_apple_svc(roots: Int) -> Int
+/// The local zone's offset from UTC at the Unix time t, in seconds.
+fn tls_c_local_off(t: Int) -> Int
 
 /// TLS (decision 0105, std/llrt/xo_tls.c): a certificate chain with its
 /// private key (xo_tcert) and the roots a client trusts (xo_troots).

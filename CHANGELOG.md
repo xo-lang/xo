@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 14, decision 0202): the
+  Xo client's certificate expiry text shows the current time in the
+  local zone as Go's (time.Local: "current time
+  2026-10-15T04:43:17-04:00 is after 2001-01-01T00:00:00Z"; checked with
+  TZ unset, UTC and Asia/Kolkata), through x509verify.full_text_zone and
+  tls13.Conf.zone_off. The offset comes from xo_tls.c's localtime
+  (xo_tls_c_local_off): tz.xo would bring std/time's embedded zone table
+  into every https program, so the end pass needs tz.xo's host lookup
+  apart from the table before this C goes.
+
 - Native runtime (zero-C audit item B31, part 13, decision 0202): the
   Xo client's custom roots (Client.with_roots) are parsed once, in Xo,
   as Go's AppendCertsFromPEM (x509.xo, so exactly the certificates Go

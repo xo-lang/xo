@@ -226,6 +226,9 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   // parse them
   var cf = tls13.conf(name, if !system { mine } else if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
   cf.apple_svc = apple
+  // Go's texts show the time in time.Local (C's localtime: tz.xo would
+  // bring std/time's zone table into every https program)
+  cf.zone_off = rthttp.tls_c_local_off(cf.now)
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]
   cf.legacy_suites = tls12.default_suites()
