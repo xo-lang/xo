@@ -2,7 +2,7 @@
 // internal/llvm's TestRuntimeRealtime under ThreadSanitizer and optimized
 // without it. It includes the runtime and plays the part of generated
 // code: xo_realtime_enter and xo_realtime_exit bracket a section, and
-// releases go through xo_rc_free, xo_rl_free, and xo_rc_defer as the
+// releases go through t_rc_free, t_rl_free, and t_rc_defer as the
 // generated drop paths do.
 //
 // Tests: frees inside a section are deferred to its end (the live count
@@ -14,6 +14,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 static int failures;
 
@@ -27,7 +28,7 @@ static int failures;
 
 static int64_t live(void) {
 	int64_t l, t;
-	xo_rt_live(&l, &t);
+	t_rt_live(&l, &t);
 	return l;
 }
 
@@ -40,8 +41,8 @@ static xo_rstr *mkstr(const char *s) {
 }
 
 static void release_str(xo_rstr *o) {
-	if (xo_rc_dec(&o->rc)) {
-		xo_rc_free(o);
+	if (rc_dec(&o->rc)) {
+		t_rc_free(o);
 	}
 }
 
@@ -49,7 +50,7 @@ static void str_drop(void *p) { release_str(*(xo_rstr **)p); }
 
 // a List[Str] of n strings
 static xo_rlist *mklist(int n) {
-	xo_rlist *l = xo_rl_new(n, sizeof(xo_rstr *));
+	xo_rlist *l = rl_new(n, sizeof(xo_rstr *));
 	for (int i = 0; i < n; i++) {
 		((xo_rstr **)rl_data(l))[i] = mkstr("element");
 	}
@@ -58,12 +59,12 @@ static xo_rlist *mklist(int n) {
 }
 
 static void release_list(xo_rlist *l) {
-	if (xo_rc_dec(&l->rc)) {
-		xo_rl_free(l, sizeof(xo_rstr *), str_drop);
+	if (rc_dec(&l->rc)) {
+		t_rl_free(l, sizeof(xo_rstr *), str_drop);
 	}
 }
 
-// a closure environment holding one string, freed through xo_rc_defer
+// a closure environment holding one string, freed through t_rc_defer
 typedef struct {
 	int64_t rc;
 	xo_rstr *s;
@@ -72,14 +73,14 @@ typedef struct {
 static void env_drop(void *p) {
 	env *e = p;
 	release_str(e->s);
-	xo_rc_free(e);
+	t_rc_free(e);
 }
 
 static void test_defer(void) {
 	int64_t base = live();
 	xo_rstr *s = mkstr("old value");
 	xo_rlist *l = mklist(50);
-	env *e = xo_rc_alloc(sizeof(env));
+	env *e = t_rc_alloc(sizeof(env));
 	e->rc = 1;
 	e->s = mkstr("captured");
 	int64_t before = live();
@@ -87,8 +88,8 @@ static void test_defer(void) {
 	xo_realtime_enter();
 	release_str(s);
 	release_list(l);
-	if (xo_rc_dec(&e->rc)) {
-		xo_rc_defer(e, env_drop);
+	if (rc_dec(&e->rc)) {
+		t_rc_defer(e, env_drop);
 	}
 	CHECK(live() == before); // nothing freed inside the section
 	CHECK(heap()->rt_n == 3);

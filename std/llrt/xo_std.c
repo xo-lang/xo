@@ -59,61 +59,11 @@ static void nbuf_put(nbuf *b, const char *p, int64_t n) {
 // (cabi.xo utf8_encode; decision 0207).
 static inline int n_utf8_encode(char *p, int32_t r) { return (int)xo_x_utf8_encode(XO_ADDR(p), r); }
 
-// ---------------------------------------------------------------------------
-// Seed compatibility (zero-C audit end pass): the native prelude's
-// llrt_str_slice and llrt_str_repeat (raw.xo) and obj.xo's rs_append
-// export replace these in the code of this compiler (selfhost/ssa
-// show.xo, selfhost/llvm and selfhost/arm64 call the exports); the seed
-// (0.11.0) still calls them. Delete them when the seed has 5dc4de24 and
-// this change (gotchas/runtime-c-the-seed-still-calls.md).
-
-xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t *len) {
-	if (lo < 0) {
-		lo = 0;
-	}
-	if (hi > n) {
-		hi = n;
-	}
-	if (hi < lo) {
-		hi = lo;
-	}
-	return nstr(p + lo, hi - lo, len);
-}
-
-xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
-	if (k <= 0 || n == 0) {
-		return nstr(p, 0, len);
-	}
-	if (n > INT64_MAX / k) {
-		fault_text("strings: Repeat output length overflow", "?");
-	}
-	xo_rstr *s = rs_new(n * k);
-	for (int64_t i = 0; i < k; i++) {
-		memcpy(s->data + i * n, p, (size_t)n);
-	}
-	*len = n * k;
-	return s;
-}
-
-int64_t xo_x_obj_rs_append(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t lenp);
-xo_rstr *xo_rs_append(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
-	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append(XO_ADDR(a), an, XO_ADDR(b), bn, XO_ADDR(len));
-}
-
-// Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
+// the fault of an index out of range on Bytes (decisions 0079, 0081)
 #include "xo_bytes.c"
-
-// the faulting stubs of the Xo layers' wasm arms (decision 0206)
-#include "xo_sys.c"
 
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
-
-// the Fs operations besides read (decision 0102), compiled only into
-// programs that call them (XO_FS, internal/build ioFlags)
-#ifdef XO_FS
-#include "xo_fs.c"
-#endif
 
 // standard input reads are std/native/llrt/stdin.xo's on every OS (the
 // zero-C audit's B32 part 2 removed xo_stdin.c; XO_STDIN, still passed

@@ -28,6 +28,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   xo_fault_loc and xo_fault_detail forward to them for code from seed
   0.12.0 and older. The unwind itself (fault_raise, the Windows context
   capture and the libgcc path of x86_64 with a C library) stays in C.
+- Native runtime (zero-C audit end pass, after seed 0.12.0-26641183):
+  the C entries no generated code of 0.12.0 or later calls are
+  deleted, 4486 to 3832 lines of std/llrt C. Gone: xo_rt.c's
+  forwarders of channels, select, Mutex, Atomic.new, tasks, scopes,
+  shields, the program's group, budgets, xo_tick, xo_unwinding,
+  xo_fault_rethrow, xo_landing, xo_net_dial_timeout, the
+  heap's platform calls (heap_big, heap_grow, heap_lock), the counted
+  objects' entries (rc_alloc, rc_free, rc_defer, rc_inc, rc_dec,
+  rc_claim, rc_mark, rs_concat, rl_new, rl_new_n, rl_share, rl_free,
+  h_free, h_zero, rl_empty, rt_live) and decision 0232's seed shims
+  (xo_sched_hook, xo_sym_present, the weak sanitizer, pthread, mmap
+  and errno names); xo_bytes.c's builders, slices, const_once, the
+  Float32 conversions and the -DXO_INTS_C intrinsics; xo_std.c's
+  str_slice, str_repeat, rs_append; xo_http.c's xo_any_new and
+  xo_any_get; all of xo_fs.c and xo_sys.c, with
+  -DXO_FS and -DXO_INTS_C in the drivers (link.xo io_flags, xotool
+  IOFlags). The C tests that play generated code call the Xo exports
+  through std/llrt/testdata/xcalls.h. xo_set_grace stays: the SSA
+  builders still lower Proc.set_grace to it, which no golden reached
+  until the new proc_set_grace golden (every backend).
 - LLVM backend: the module head no longer declares the C entries
   generated code stopped calling in the entries batches E1 to E3
   (xo_rc_alloc, rc_free, rc_defer, rs_concat, rl_new, rl_new_n,

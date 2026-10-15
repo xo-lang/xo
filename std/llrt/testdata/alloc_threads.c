@@ -27,6 +27,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 #ifndef ITER
 #define ITER 3000
@@ -176,7 +177,7 @@ static void churn(blk *slots, uint64_t *s, uint64_t id, int iters, void (*send)(
 
 static int leaks(const char *name) {
 	int64_t live, total;
-	xo_rt_live(&live, &total);
+	t_rt_live(&live, &total);
 	CHECK(live == 0);
 	printf("%s: %s (%lld allocations, %lld live)\n", name, failures ? "FAIL" : "ok", (long long)total, (long long)live);
 	return live == 0;

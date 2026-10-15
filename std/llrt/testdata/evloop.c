@@ -12,6 +12,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 #ifndef _WIN32
 #include <spawn.h>
 #include <sys/wait.h>
@@ -28,7 +29,7 @@ static int failures;
 	} while (0)
 
 static xo_rlist *one(int64_t v) {
-	xo_rlist *l = xo_rl_new(1, 8);
+	xo_rlist *l = rl_new(1, 8);
 	l->len = 1;
 	*(int64_t *)rl_data(l) = v;
 	return l;
@@ -37,17 +38,17 @@ static xo_rlist *one(int64_t v) {
 static int64_t first(xo_rlist *l) { return *(int64_t *)rl_data(l); }
 
 static void drop_int_list(xo_rlist *l) {
-	if (xo_rc_dec(&l->rc)) {
-		xo_rl_free(l, 8, NULL);
+	if (rc_dec(&l->rc)) {
+		t_rl_free(l, 8, NULL);
 	}
 }
 
 // a List[Str] of one, as conn_read returns it
 static void drop_str_list(xo_rlist *l) {
-	if (xo_rc_dec(&l->rc)) {
+	if (rc_dec(&l->rc)) {
 		for (int64_t i = 0; i < l->len; i++) {
 			xo_rstr *s = ((xo_rstr **)rl_data(l))[2 * i];
-			if (xo_rc_dec(&s->rc)) {
+			if (rc_dec(&s->rc)) {
 				xo_free(s);
 			}
 		}
@@ -56,8 +57,8 @@ static void drop_str_list(xo_rlist *l) {
 }
 
 static void release(void *h) {
-	if (xo_rc_dec(&((xo_hdr *)h)->rc)) {
-		xo_h_free(h);
+	if (rc_dec(&((xo_hdr *)h)->rc)) {
+		h_free(h);
 	}
 }
 
@@ -147,23 +148,23 @@ static void run_job(xo_rlist *fl, xo_task *t) {
 		break;
 	}
 	}
-	if (xo_unwinding()) {
-		xo_task_unwound(t);
+	if (t_unwinding()) {
+		t_task_unwound(t);
 	} else {
 		xo_rlist *r = one(res);
-		xo_rc_mark(&r->rc);
-		xo_task_done(t, r, 0);
+		rc_mark(&r->rc);
+		t_task_done(t, r, 0);
 	}
 	release(t);
 }
 
 static xo_task *spawn(xo_scope *s, int64_t kind, int64_t arg, void *obj, int64_t flags) {
 	int64_t id = mkjob(kind, arg, obj);
-	return xo_task_spawn(s, one(id), (int64_t)run_job, (int64_t)drop_int_list, (int64_t)drop_int_list, flags, 0, LOC);
+	return t_task_spawn(s, one(id), (int64_t)run_job, (int64_t)drop_int_list, (int64_t)drop_int_list, flags, 0, LOC);
 }
 
 static int64_t await_int(xo_task *t) {
-	xo_rlist *r = xo_task_await(t, LOC);
+	xo_rlist *r = t_task_await(t, LOC);
 	int64_t v = first(r);
 	drop_int_list(r);
 	release(t);
@@ -178,7 +179,7 @@ static void test_timers(void) {
 	CHECK(mono_ns() - start >= 10 * MS);
 	// many sleepers at once park; the workers stay few
 	start = mono_ns();
-	xo_scope *s = xo_scope_open();
+	xo_scope *s = t_scope_open();
 	enum { SLEEPERS = 2000 };
 	xo_task **ts = malloc(SLEEPERS * sizeof *ts);
 	for (int i = 0; i < SLEEPERS; i++) {
@@ -189,7 +190,7 @@ static void test_timers(void) {
 		done += await_int(ts[i]);
 	}
 	free(ts);
-	CHECK(xo_scope_close(s, 0) == 0);
+	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	CHECK(done == SLEEPERS);
 	CHECK(mono_ns() - start >= 20 * MS);
@@ -198,16 +199,16 @@ static void test_timers(void) {
 	CHECK(LOAD(pw[4]) <= pw[1] + 1);
 	// a canceled sleeper wakes and unwinds
 	start = mono_ns();
-	s = xo_scope_open();
+	s = t_scope_open();
 	release(spawn(s, J_SLEEP, 3600 * 1000, NULL, 1));
 	xo_clock_sleep(5 * MS);
-	CHECK(xo_scope_close(s, 0) == 0);
+	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	CHECK(mono_ns() - start < 10000 * MS);
 	// select with only `after`
-	xo_select *sel = xo_select_new();
+	xo_select *sel = t_select_new();
 	xo_select_after(sel, 5 * MS);
-	CHECK(xo_select_wait(sel, LOC) == -2);
+	CHECK(t_select_wait(sel, LOC) == -2);
 	release(sel);
 	fputs("timers: ok\n", stderr);
 }
@@ -220,7 +221,7 @@ static void test_echo(void) {
 	xo_rstr *as = ((xo_rstr **)rl_data(al))[0];
 	int64_t an = ((int64_t *)rl_data(al))[1];
 	CHECK(an > 10 && memcmp(as->data, "127.0.0.1:", 10) == 0);
-	xo_scope *s = xo_scope_open();
+	xo_scope *s = t_scope_open();
 	release(spawn(s, J_ECHO_ONE, 0, l, 0));
 	xo_conn *c = xo_net_dial("", 0, as->data, an);
 	CHECK(xo_net_status() == 0);
@@ -246,7 +247,7 @@ static void test_echo(void) {
 	CHECK(await_int(w) == 0);
 	CHECK(got == BYTES && bad == 0);
 	xo_conn_close(c);
-	CHECK(xo_scope_close(s, 0) == 0);
+	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	release(c);
 	release(l);
@@ -264,24 +265,24 @@ static void test_wakeups(void) {
 	xo_conn *peer = xo_listener_accept(l);
 	CHECK(xo_net_status() == 0);
 	// close wakes a parked read: Io
-	xo_scope *s = xo_scope_open();
+	xo_scope *s = t_scope_open();
 	xo_task *t = spawn(s, J_READ_ONCE, 0, c, 2);
 	xo_clock_sleep(5 * MS);
 	xo_conn_close(c);
 	CHECK(await_int(t) == 4);
-	CHECK(xo_scope_close(s, 0) == 0);
+	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	// cancellation wakes a parked accept and read: Canceled (the read is
 	// on a second connection: peer saw c close)
 	xo_conn *c2 = xo_net_dial("", 0, as->data, an);
 	xo_conn *peer2 = xo_listener_accept(l);
 	CHECK(xo_net_status() == 0);
-	s = xo_scope_open();
+	s = t_scope_open();
 	xo_task *ta = spawn(s, J_ACCEPT_ONCE, 0, l, 2);
 	xo_task *tr = spawn(s, J_READ_ONCE, 0, peer2, 2);
 	xo_clock_sleep(5 * MS);
-	xo_scope_cancel(s);
-	CHECK(xo_scope_close(s, 0) == 0);
+	t_scope_cancel(s);
+	CHECK(t_scope_close(s, 0) == 0);
 	CHECK(__atomic_load_n(&ta->state, __ATOMIC_ACQUIRE) == T_DONE && __atomic_load_n(&tr->state, __ATOMIC_ACQUIRE) == T_DONE);
 	CHECK(ta->result && first(ta->result) == 5);
 	CHECK(tr->result && first(tr->result) == 5);
@@ -345,7 +346,7 @@ static void test_inherited(void) {
 
 static void leaks(const char *name) {
 	int64_t live, total;
-	xo_rt_live(&live, &total);
+	t_rt_live(&live, &total);
 	if (live != 0) {
 		fprintf(stderr, "%s: %lld live of %lld allocations\n", name, (long long)live, (long long)total);
 		failures++;

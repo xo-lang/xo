@@ -64,3 +64,23 @@ xo_fault_bytes_index, xo_const_once; all of xo_fs.c and xo_sys.c; the
 non-Windows stubs of xo_stdin.c; xo_rt.c's B19 forwarders (channels,
 select, Mutex, Atomic.new). Delete them with the next seed, checked by
 building selfhost/xo with that seed and nm as above.
+
+Closed again (2026-10-15, seed 0.12.0-26641183): that seed has the
+change, and the labeled shims above are deleted (all of xo_fs.c and
+xo_sys.c, xo_bytes.c's forwarders, xo_std.c's three, xo_rt.c's B19
+forwarders, decision 0232's seed shims), together with every other C
+entry the 0.12.0 code does not call. Checked by building selfhost/xo
+with the unpacked 0.12.0 seed run directly (not through xobuild,
+which falls back to an older build:
+seed-0.11-links-frameworks-only-for-mbed.md) and the fixed point.
+xo_fault_bytes_index and the xo_fault_* raisers are not shims: the
+emitters still name them.
+
+A list of what generated code calls, taken from the goldens and
+selfhost/xo, misses a runtime call no golden reaches: xo_set_grace
+(the SSA builders' rt.set_grace for Proc.set_grace) was on it as
+callerless, and only internal/llvm's signal tests, whose program calls
+set_grace, failed to link. Before deleting an xo_<name>, also grep the
+builders for `b.rt("<name>"` and check the emitters' redirects
+(selfhost/arm64 calls.xo, selfhost/llvm call.xo xo_export), which send
+most rt names to Xo exports.

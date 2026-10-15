@@ -213,7 +213,6 @@ static inline xo_heap *heap(void) {
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
 void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t libc, int64_t hsize);
-void xo_x_heap_live(int64_t lp, int64_t tp);
 int64_t xo_x_heap_nfree(int64_t c);
 
 // heap_libc tells heapos.xo to map the heap's memory through the C
@@ -268,13 +267,6 @@ void xo_rt_threads_begin(void) {
 	xo_x_stdio_threads();
 }
 
-// xo_rt_live returns the blocks allocated and not freed, and the blocks
-// allocated, over all heaps (for the leak check, when no other thread
-// runs).
-void xo_rt_live(int64_t *live, int64_t *total) {
-	xo_x_heap_live((int64_t)(intptr_t)live, (int64_t)(intptr_t)total);
-}
-
 // The runtime's records from malloc (std/native rt.heap_large): the C
 // frees some of them with free (tasks.xo task_free), so these stay
 // the C library's until the runtime has an allocator of its own for them.
@@ -305,34 +297,8 @@ void xo_heap_release(int64_t b) { free((void *)(intptr_t)b); }
 
 // The heap's platform calls (zero-C audit B21): std/native/llrt/heapos.xo
 // maps the chunks and alloc.xo's big blocks (above mid_max) from the
-// system and locks the central lists; alloc.xo calls these as rt.heap_*,
-// which forward to cabi.xo's exports.
-int64_t xo_x_heap_big(int64_t n);
-int64_t xo_x_heap_big_resize(int64_t b, int64_t n);
-void xo_x_heap_big_release(int64_t b);
-int64_t xo_x_heap_grow(int64_t h, int64_t n);
-void xo_x_heap_lock(void);
-void xo_x_heap_unlock(void);
+// system and locks the central lists.
 int64_t xo_x_heap_chunks(void);
-
-// xo_heap_big returns a big block of n bytes (its prefix minus n): the
-// address after the prefix.
-int64_t xo_heap_big(int64_t n) { return xo_x_heap_big(n); }
-
-// xo_heap_big_resize makes the big block whose prefix is at b n bytes.
-int64_t xo_heap_big_resize(int64_t b, int64_t n) { return xo_x_heap_big_resize(b, n); }
-
-// xo_heap_big_release gives back the big block whose prefix is at b.
-void xo_heap_big_release(int64_t b) { xo_x_heap_big_release(b); }
-
-// xo_heap_grow gives heap h a new chunk and allocates n bytes again (the
-// heap in Xo calls it last, so its arm64 code keeps no register across
-// a call).
-int64_t xo_heap_grow(int64_t h, int64_t n) { return xo_x_heap_grow(h, n); }
-
-void xo_heap_lock(void) { xo_x_heap_lock(); }
-
-void xo_heap_unlock(void) { xo_x_heap_unlock(); }
 
 // xo_chunks is the chunks mapped so far (std/llrt/testdata/tasks.c and
 // alloc_threads.c check that blocks freed on another thread come back
@@ -419,14 +385,11 @@ __attribute__((noinline)) static void *xo_resize(void *p, int64_t old, int64_t n
 	return q;
 }
 
-void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
-
 // The lists in Xo (zero-C audit B13): std/native/llrt/obj.xo
 // through cabi.xo's obj_* exports. hw is the heap word they take: the
 // calling thread's heap record, plus 1 when other threads run (obj.xo
 // then takes alloc_mt's, free_mt's, and xo_resize's paths).
 int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
-void xo_x_obj_rl_share(int64_t l, int64_t esize, int64_t share);
 
 __attribute__((noinline)) static int64_t hw_slow(void) { return (int64_t)(intptr_t)heap_slow() | 1; }
 
@@ -445,28 +408,6 @@ int64_t xo_x_obj_rt_defer(int64_t h, int64_t kind, int64_t obj, int64_t esize, i
 static inline int rt_defer(xo_heap *h, int kind, void *obj) { return (int)xo_x_obj_rt_defer((int64_t)(intptr_t)h, kind, (int64_t)(intptr_t)obj, 0, 0); }
 
 enum { RT_STR = 1, RT_LIST, RT_DEFER, RT_HANDLE };
-
-void xo_rc_free(void *p) {
-	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p)) {
-		return;
-	}
-	xo_free(p);
-}
-
-// xo_rc_defer runs drop(obj) for an object whose count reached zero
-// (a closure environment or a box). drop releases the object's children
-// and frees it; a child that reaches zero meanwhile is queued instead of
-// dropped recursively, so freeing a long chain (a list built from boxes,
-// closures capturing closures) uses a worklist, not the C stack. Marking
-// a value shared uses the same worklist (drop is then the function that
-// marks the children of a box or an environment). The worklist is the
-// calling thread's (obj.xo rc_defer_n, which arm64 generated code calls
-// directly; LLVM generated code and the seed's call this entry, which LTO
-// folds into its callers).
-void xo_x_obj_rc_defer_n(int64_t obj, int64_t drop);
-
-void xo_rc_defer(void *obj, xo_drop_fn drop) { XO_INLINE_CALL xo_x_obj_rc_defer_n((int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop); }
 
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058)
@@ -510,27 +451,10 @@ static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_R
 void xo_x_rc_inc(int64_t p);
 int64_t xo_x_rc_dec(int64_t p);
 int64_t xo_x_rc_dec_shared(int64_t p);
-int64_t xo_x_rc_claim(int64_t p);
-int64_t xo_x_rc_mark(int64_t p);
 
 static inline __attribute__((always_inline)) void rc_inc(int64_t *p) { xo_x_rc_inc((int64_t)(intptr_t)p); }
 static inline __attribute__((always_inline)) int rc_dec_shared(int64_t *p) { return (int)xo_x_rc_dec_shared((int64_t)(intptr_t)p); }
 static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
-static inline __attribute__((always_inline)) int rc_claim(int64_t *p) { return (int)xo_x_rc_claim((int64_t)(intptr_t)p); }
-static inline __attribute__((always_inline)) int rc_mark(int64_t *p) { return (int)xo_x_rc_mark((int64_t)(intptr_t)p); }
-
-// xo_rc_inc adds a reference (rc_threads.c plays generated code with it).
-void xo_rc_inc(int64_t *p) { rc_inc(p); }
-
-// xo_rc_dec drops a reference and reports whether it was the last one.
-int xo_rc_dec(int64_t *p) { return rc_dec(p); }
-
-// xo_rc_claim reports whether the caller holds the only reference.
-int xo_rc_claim(int64_t *p) { return rc_claim(p); }
-
-// xo_rc_mark makes the count at p shared and reports whether it was
-// thread local (the caller then marks the object's children).
-int xo_rc_mark(int64_t *p) { return rc_mark(p); }
 
 // ---------------------------------------------------------------------------
 // The test world (decision 0083): a test binary run with XO_TEST set runs
@@ -627,11 +551,9 @@ static int fmt_float(char *buf, double f) { return (int)xo_x_fmt_float(XO_ADDR(b
 // Faults (core 8): the same messages as std/rt, exit status 70
 
 // A fault unwinds the task that raised it (decision 0085, "Fault
-// unwinding" below): fault_text records the message in the running
+// unwinding" below): fault_raise_msg records the message in the running
 // context and raises.
 XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc);
-
-XO_NORETURN static void fault_text(const char *msg, const char *loc) { fault_raise_msg(msg, loc); }
 
 // xo_fault_detail sets the line printed under the next fault (the values
 // of a failed contract, core 9.1).
@@ -760,14 +682,6 @@ static xo_rstr *rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) {
 	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append_at(XO_ADDR(a), an, XO_ADDR(p), n);
 }
 
-// xo_rs_concat is `a + b` (consumes a, borrows b): obj.xo's rs_append
-// (zero-C audit B13), which arm64 generated code calls directly; LLVM
-// generated code and the seed call this.
-int64_t xo_x_obj_rs_concat(int64_t a, int64_t an, int64_t b, int64_t bn);
-xo_rstr *xo_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) {
-	return (xo_rstr *)(intptr_t)xo_x_obj_rs_concat(XO_ADDR(a), an, XO_ADDR(b), bn);
-}
-
 // xo_rs_concat_int is `a + "${v}"` without a temporary string.
 xo_rstr *xo_rs_concat_int(xo_rstr *a, int64_t an, int64_t v, int64_t *len) {
 	char t[32];
@@ -810,31 +724,18 @@ typedef void (*xo_elem_fn)(void *);
 
 static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
 
-// xo_rl_new is an empty list with room for cap elements (obj.xo rl_new).
-xo_rlist *xo_rl_new(int64_t cap, int64_t esize) {
+// rl_new is an empty list with room for cap elements (obj.xo rl_new).
+static xo_rlist *rl_new(int64_t cap, int64_t esize) {
 	int64_t l;
 	XO_INLINE_CALL l = xo_x_obj_rl_new(hw(), cap, esize);
 	return (xo_rlist *)(intptr_t)l;
 }
 
-// The entries generated code calls (LLVM generated code and the seed's;
-// arm64 generated code calls the obj_*_n exports directly): they forward
-// to obj.xo's entries, which find the heap themselves, so LTO folds this
-// level into the caller.
-int64_t xo_x_obj_rl_new_n(int64_t n, int64_t esize);
+// The entries LLVM generated code calls (arm64 generated code calls the
+// obj_*_n exports directly): they forward to obj.xo's entries, which find
+// the heap themselves, so LTO folds this level into the caller.
 int64_t xo_x_obj_rl_grow_n(int64_t l, int64_t esize);
-void xo_x_obj_rl_free_n(int64_t l, int64_t esize, int64_t drop);
 int64_t xo_x_obj_rl_copy_n(int64_t l, int64_t esize, int64_t dup, int64_t drop);
-
-// xo_rl_new_n is an empty list with room for n elements (at least 4):
-// `list.new` with a size, for results whose length is known.
-xo_rlist *xo_rl_new_n(int64_t n, int64_t esize) {
-	int64_t l;
-	XO_INLINE_CALL l = xo_x_obj_rl_new_n(n, esize);
-	return (xo_rlist *)(intptr_t)l;
-}
-
-void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop);
 
 #define XO_A(p) ((int64_t)(intptr_t)(p))
 
@@ -844,18 +745,8 @@ __attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_el
 	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy_n(XO_A(l), esize, XO_A(dup), XO_A(drop));
 }
 
-// xo_rl_share marks the elements of a list that was just marked shared
-// (obj.xo rl_share; boxes and environments below go through
-// xo_rc_defer's worklist, so the stack is bounded by the nesting of
-// types, not of values).
-void xo_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) { xo_x_obj_rl_share(XO_A(l), esize, XO_A(share)); }
-
 // xo_rl_grow doubles the capacity of a unique full list (obj.xo rl_grow).
 __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow_n(XO_A(l), esize); }
-
-// xo_rl_free frees a list whose count reached zero, releasing its
-// elements first (obj.xo rl_free_n); a real-time section defers it.
-void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { XO_INLINE_CALL xo_x_obj_rl_free_n(XO_A(l), esize, XO_A(drop)); }
 
 // ---------------------------------------------------------------------------
 // Tasks (decision 0068): structured concurrency on threads
@@ -872,8 +763,8 @@ void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { XO_INLINE_CALL xo
 //   - Handles. Task, Scope (and task.Group, the same object), Chan,
 //     Mutex, and Atomic are reference counted objects {count, free, ...}
 //     created shared (count -1): they cross threads by design. Generated
-//     code retains and releases them like lists and calls xo_h_free at
-//     zero.
+//     code retains and releases them like lists and frees them at zero
+//     (obj.xo's h_free).
 //   - Threads. A pool of worker threads, started on demand, one per CPU
 //     (XO_THREADS overrides), each with a run queue; every task runs on
 //     a fiber (decision 0069), so a task that waits gives its worker back.
@@ -912,8 +803,8 @@ typedef struct {
 	xo_free_fn free;
 } xo_hdr;
 
-// xo_h_free frees a handle whose count reached zero.
-void xo_h_free(void *p) {
+// h_free frees a handle whose count reached zero.
+static void h_free(void *p) {
 	xo_heap *h = heap();
 	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p)) {
 		return;
@@ -931,7 +822,7 @@ static void h_retain(void *p) { rc_inc(&((xo_hdr *)p)->rc); }
 
 static void h_release(void *p) {
 	if (rc_dec(&((xo_hdr *)p)->rc)) {
-		xo_h_free(p);
+		h_free(p);
 	}
 }
 
@@ -943,22 +834,6 @@ xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
 xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
 #define zero_handle xo_zero_handle
 #define empty_list xo_empty_list
-
-void *xo_h_zero(void) { return &zero_handle; }
-
-xo_rlist *xo_rl_empty(void) { return &empty_list; }
-
-static char *cstr_of(const char *p, int64_t n) {
-	char *s = malloc((size_t)n + 1);
-	if (!s) {
-		xo_oom();
-	}
-	memcpy(s, p, (size_t)n);
-	s[n] = 0;
-	return s;
-}
-
-XO_NORETURN static void fault_at(const char *msg, const char *loc, int64_t n) { fault_text(msg, cstr_of(loc, n)); }
 
 // ---------------------------------------------------------------------------
 // Parks, nodes, contexts
@@ -1258,11 +1133,6 @@ static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
 	return (struct _Unwind_Exception *)(((uintptr_t)c->fault_exc + 15) & ~(uintptr_t)15);
 }
 
-// xo_unwinding is ctx.xo unwinding, which generated code calls directly
-// (this forwards for older xo's code).
-int64_t xo_x_ctx_unwinding(void);
-int64_t xo_unwinding(void) { return xo_x_ctx_unwinding(); }
-
 // ---------------------------------------------------------------------------
 // Fault unwinding (core 8, decision 0085)
 //
@@ -1276,7 +1146,7 @@ int64_t xo_unwinding(void) { return xo_x_ctx_unwinding(); }
 // Mutexes, and release what the frame owns, then hand the fault on
 // (xo_fault_continue raises it again from there). The fault is caught by
 // the entry function of a task (it ends the task as faulted:
-// xo_task_unwound), by `task.isolate` (xo_fault_take), or, past the
+// tasks.xo task_unwound), by `task.isolate` (xo_fault_take), or, past the
 // boundary of the context (the C function running the program's main),
 // reported and the process exits with status 70. The personality routine
 // (xo_personality) reads the call site table of the language specific
@@ -1423,10 +1293,6 @@ XO_NORETURN void xo_fault_raise(const char *msg, int64_t n, const char *loc, int
 // xo_fault_continue runs at the unwind exit of a function: a fault goes
 // on to the caller; otherwise (cancellation) the function returns.
 void xo_fault_continue(void) { xo_x_fault_continue(); }
-
-// xo_landing is never called: generated code branches on it only to
-// mark a check that only a fault takes (internal/ssa landing.go).
-int64_t xo_landing(void) { return 0; }
 
 // xo_fault_take catches the fault unwinding the current context (for
 // `task.isolate`): 1 and the context goes on normally, its message
@@ -1590,7 +1456,7 @@ static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_
 // allocated (its thread's heap counts them, xo_heap.abytes) to its
 // budget and the budgets enclosing it; a passed ceiling cancels the
 // budget's scope, and the poll unwinds the context like a cancellation
-// point. A task started under a budget works under it (xo_task_spawn).
+// point. A task started under a budget works under it (tasks.xo task_spawn).
 
 // The budget record; std/native/llrt/budget.xo reads and writes it
 // (decision 0229), the C only takes and drops references.
@@ -1610,27 +1476,10 @@ _Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 
                    offsetof(xo_budget, loc) == 88 && sizeof(xo_budget) == 96,
                "budget.xo B_*");
 
-void xo_x_budget_tick(void);
-void xo_x_budget_open(int64_t s, int64_t cpu, int64_t alloc, int64_t steps, int64_t lp, int64_t ln);
-int64_t xo_x_budget_end(int64_t s);
 void xo_x_budget_retain(int64_t b);
 
-// xo_tick is the budget poll of generated code (budget.xo tick, which
-// arm64 code calls directly).
-void xo_tick(void) { xo_x_budget_tick(); }
-
 // The shields of deferred code (core 3.5, decision 0022) are ctx.xo's
-// (decision 0229), which arm64 generated code calls through its exports;
-// these forward to them for LLVM code and older xo's code.
-int64_t xo_x_ctx_shield_begin(void);
-void xo_x_ctx_shield_end(int64_t tok, int64_t lp, int64_t ln);
-void xo_x_ctx_shield_abort(int64_t tok);
-
-int64_t xo_shield_begin(void) { return xo_x_ctx_shield_begin(); }
-
-void xo_shield_end(int64_t tok, const char *loc, int64_t n) { xo_x_ctx_shield_end(tok, XO_ADDR(loc), n); }
-
-void xo_shield_abort(int64_t tok) { xo_x_ctx_shield_abort(tok); }
+// (decision 0229), which generated code calls through its exports.
 
 // ctx_canceled reports whether c is canceled and not shielded.
 static int ctx_canceled(xo_ctx *c) { return !c->shield && node_canceled(c->node); }
@@ -1917,24 +1766,8 @@ typedef struct xo_task {
 
 enum { T_QUEUED, T_RUNNING, T_DONE };
 
-// xo_scope_group is `s.group()` (tasks.xo scope_group).
-int64_t xo_x_scope_group(int64_t s);
-xo_scope *xo_scope_group(xo_scope *s) { return (xo_scope *)(intptr_t)xo_x_scope_group(XO_ADDR(s)); }
-
-// The program's task group (os.tasks) and s.cancel() are tasks.xo's
-// (B18), which generated code calls through its exports; these forward
-// for older xo's code.
-void xo_x_prog_group_set(int64_t s);
-int64_t xo_x_prog_group(void);
-void xo_x_scope_cancel(int64_t s);
-
-void xo_prog_group_set(xo_scope *s) { xo_x_prog_group_set(XO_ADDR(s)); }
-
-void xo_prog_group_clear(void) { xo_x_prog_group_set(0); }
-
-xo_scope *xo_prog_group(void) { return (xo_scope *)(intptr_t)xo_x_prog_group(); }
-
-void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
+// `s.group()`, the program's task group (os.tasks), and s.cancel() are
+// tasks.xo's (B18), which generated code calls through its exports.
 
 _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
                "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
@@ -2008,7 +1841,6 @@ typedef struct xo_fiber {
 #define XO_TSAN 1
 #endif
 
-
 // AddressSanitizer must know which stack runs (its fiber API): a fault
 // unwinds with __asan_handle_no_return, which unpoisons the current stack
 // up to its top (decision 0085).
@@ -2020,7 +1852,6 @@ typedef struct xo_fiber {
 #if defined(__SANITIZE_ADDRESS__)
 #define XO_ASAN 1
 #endif
-
 
 #if defined(__has_attribute)
 #if __has_attribute(disable_sanitizer_instrumentation)
@@ -2092,50 +1923,6 @@ XO_NORETURN static void fiber_map_failed(int en) {
 	xo_oom();
 }
 
-// The hooks around a fiber switch are std/native/llrt/sanhook.xo's hook
-// (decision 0232), the export xo_x_sched_hook that generated code calls
-// for rt.sched_hook. Seed shim: xo_sched_hook forwards for code from an
-// xo older than decision 0232; delete it with the first seed that has
-// the decision. Not instrumented: a sanitizer's fiber switch in an
-// instrumented callee pops the other fiber's entry
-// (gotchas/tsan-fiber-switch-in-callee.md).
-void xo_x_sched_hook(int64_t kind, int64_t wa, int64_t fa);
-XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) { xo_x_sched_hook(kind, wa, fa); }
-
-// Seed shims (decision 0232): an xo older than the decision compiles a
-// call of std/native/sys_c.xo's f, and rt.sym_present, as the C function
-// xo_<f>. These define them for its build of xo (the scheduler's
-// sanhook.xo is in every program), which is never a sanitizer build: the
-// weak sanitizer calls are never reached there. Delete them with the
-// first seed that has the decision.
-int64_t xo_sym_present(const char *p, int64_t n) { (void)p, (void)n; return 0; }
-int64_t xo_weak___tsan_get_current_fiber(void) { return 0; }
-int64_t xo_weak___tsan_create_fiber(int64_t f) { (void)f; return 0; }
-void xo_weak___tsan_destroy_fiber(int64_t f) { (void)f; }
-void xo_weak___tsan_switch_to_fiber(int64_t f, int64_t fl) { (void)f, (void)fl; }
-void xo_weak___tsan_acquire(int64_t a) { (void)a; }
-void xo_weak___tsan_release(int64_t a) { (void)a; }
-void xo_weak___sanitizer_start_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
-void xo_weak___sanitizer_finish_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
-int64_t xo_pthread_attr_init(int64_t a) { return pthread_attr_init((pthread_attr_t *)(intptr_t)a); }
-int64_t xo_pthread_attr_setstacksize(int64_t a, int64_t n) { return pthread_attr_setstacksize((pthread_attr_t *)(intptr_t)a, (size_t)n); }
-int64_t xo_pthread_attr_setdetachstate(int64_t a, int64_t s) { return pthread_attr_setdetachstate((pthread_attr_t *)(intptr_t)a, (int)s); }
-int64_t xo_pthread_attr_destroy(int64_t a) { return pthread_attr_destroy((pthread_attr_t *)(intptr_t)a); }
-int64_t xo_pthread_create(int64_t t, int64_t a, int64_t f, int64_t arg) {
-	return pthread_create((pthread_t *)(intptr_t)t, (pthread_attr_t *)(intptr_t)a, (void *(*)(void *))(intptr_t)f, (void *)(intptr_t)arg);
-}
-#ifndef _WIN32
-int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { return XO_ADDR(mmap((void *)(intptr_t)a, (size_t)n, (int)p, (int)fl, (int)fd, (off_t)o)); }
-int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { return mprotect((void *)(intptr_t)a, (size_t)n, (int)p); }
-int64_t xo_munmap(int64_t a, int64_t n) { return munmap((void *)(intptr_t)a, (size_t)n); }
-int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
-#else
-int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { (void)a, (void)n, (void)p, (void)fl, (void)fd, (void)o; return -1; }
-int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { (void)a, (void)n, (void)p; return -1; }
-int64_t xo_munmap(int64_t a, int64_t n) { (void)a, (void)n; return -1; }
-int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
-#endif
-
 // xo_sched_run_task runs the task of the fiber that just started (Xo's
 // fiber_main): it came from a queue, so its entry and its run end here.
 void xo_sched_run_task(int64_t fa) {
@@ -2192,7 +1979,7 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		xo_rt_threads_begin();
 		return 0;
 	case 25: // free handle a, whose last reference went (tasks.xo h_release)
-		xo_h_free((void *)(intptr_t)a);
+		h_free((void *)(intptr_t)a);
 		return 0;
 	}
 	(void)b;
@@ -2233,19 +2020,7 @@ _Static_assert(offsetof(xo_fiber, mem) == 8 && offsetof(xo_fiber, size) == 16 &&
                "pool.xo F_*");
 
 // The spawn and the scope's open and close are tasks.xo's (B18 part 2),
-// which generated code calls through its exports; these forward for
-// older xo's code.
-int64_t xo_x_task_spawn(int64_t s, int64_t fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, int64_t lp, int64_t ln);
-int64_t xo_x_scope_open(void);
-int64_t xo_x_scope_close(int64_t s, int64_t mode);
-
-xo_task *xo_task_spawn(xo_scope *s, xo_rlist *fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, const char *loc, int64_t n) {
-	return (xo_task *)(intptr_t)xo_x_task_spawn(XO_ADDR(s), XO_ADDR(fl), run, drop, fdrop, flags, site, XO_ADDR(loc), n);
-}
-
-xo_scope *xo_scope_open(void) { return (xo_scope *)(intptr_t)xo_x_scope_open(); }
-
-int64_t xo_scope_close(xo_scope *s, int64_t mode) { return xo_x_scope_close(XO_ADDR(s), mode); }
+// which generated code calls through its exports.
 
 _Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && offsetof(xo_task, fl) == 104 &&
                    offsetof(xo_task, background) == 124 && offsetof(xo_task, snext) == 168 && offsetof(xo_task, bud) == 208 &&
@@ -2257,33 +2032,7 @@ _Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list)
                "tasks.xo S_*; poll.xo SC_*");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
-// (B18), which generated code calls through its exports; these forward
-// to them for older xo's code.
-void xo_x_task_done(int64_t t, int64_t rl, int64_t failed);
-void xo_x_task_unwound(int64_t t);
-int64_t xo_x_task_await(int64_t t, int64_t lp, int64_t ln);
-int64_t xo_x_task_result(int64_t t);
-int64_t xo_x_scope_fail_task(int64_t s);
-int64_t xo_x_scope_fail_site(int64_t s);
-int64_t xo_x_scope_group(int64_t s);
-void xo_x_fault_rethrow(int64_t s);
-
-void xo_task_done(xo_task *t, xo_rlist *rl, int64_t failed) { xo_x_task_done(XO_ADDR(t), XO_ADDR(rl), failed); }
-
-void xo_task_unwound(xo_task *t) { xo_x_task_unwound(XO_ADDR(t)); }
-
-XO_NORETURN void xo_fault_rethrow(xo_scope *s) {
-	xo_x_fault_rethrow(XO_ADDR(s));
-	__builtin_unreachable();
-}
-
-xo_rlist *xo_task_await(xo_task *t, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_task_await(XO_ADDR(t), XO_ADDR(loc), n); }
-
-xo_rlist *xo_task_result(xo_task *t) { return (xo_rlist *)(intptr_t)xo_x_task_result(XO_ADDR(t)); }
-
-xo_task *xo_scope_fail_task(xo_scope *s) { return (xo_task *)(intptr_t)xo_x_scope_fail_task(XO_ADDR(s)); }
-
-int64_t xo_scope_fail_site(xo_scope *s) { return xo_x_scope_fail_site(XO_ADDR(s)); }
+// (B18), which generated code calls through its exports.
 
 _Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 112 && offsetof(xo_task, unwound) == 120 &&
                    offsetof(xo_task, consumed) == 128 && offsetof(xo_task, site) == 136 && offsetof(xo_task, mu) == 144 &&
@@ -2316,29 +2065,10 @@ typedef struct {
 } xo_chan;
 
 // The channel operations are chan.xo's (B19), which generated code calls
-// through its exports; these forward for older xo's code. chan_free stays
+// through its exports (the stop service's channel too). chan_free stays
 // C (the free function the handle names).
 int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
-void xo_x_chan_send(int64_t c, int64_t l, int64_t lp, int64_t ln);
-int64_t xo_x_chan_recv(int64_t c);
-int64_t xo_x_chan_try_send(int64_t c, int64_t l);
-int64_t xo_x_chan_try_recv(int64_t c);
 void xo_x_chan_close(int64_t c);
-int64_t xo_x_chan_len(int64_t c);
-
-xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) { return (xo_chan *)(intptr_t)xo_x_chan_new(cap, drop, XO_ADDR(loc), n); }
-
-void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) { xo_x_chan_send(XO_ADDR(c), XO_ADDR(l), XO_ADDR(loc), n); }
-
-xo_rlist *xo_chan_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_recv(XO_ADDR(c)); }
-
-int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) { return xo_x_chan_try_send(XO_ADDR(c), XO_ADDR(l)); }
-
-xo_rlist *xo_chan_try_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_try_recv(XO_ADDR(c)); }
-
-void xo_chan_close(xo_chan *c) { xo_x_chan_close(XO_ADDR(c)); }
-
-int64_t xo_chan_len(xo_chan *c) { return xo_x_chan_len(XO_ADDR(c)); }
 
 _Static_assert(offsetof(xo_cent, fired) == 8 && offsetof(xo_cent, item) == 16 && offsetof(xo_cent, shut) == 24 && offsetof(xo_cent, idx) == 32 &&
                    offsetof(xo_cent, chosen) == 40 && offsetof(xo_cent, prev) == 48 && offsetof(xo_cent, next) == 56 && sizeof(xo_cent) == 64,
@@ -2349,7 +2079,7 @@ _Static_assert(offsetof(xo_chan, mu) == 16 && offsetof(xo_chan, cap) == 24 && of
                "chan.xo CH_*");
 
 // select (core 7.3): arms are added in source order, then
-// xo_select_wait performs the first arm that can proceed, or waits for
+// selects.xo select_wait performs the first arm that can proceed, or waits for
 // one (a cancellation point that unwinds). While it decides, and while
 // it takes its arms off the queues, it holds the locks of all its
 // channels (taken in address order), so no waker sees a half registered
@@ -2375,24 +2105,8 @@ typedef struct {
 } xo_select;
 
 // The select's operations are selects.xo's (B19), which generated code
-// calls through its exports; these forward for older xo's code.
-// select_free stays C (the free function the handle names); the `after`
+// calls through its exports. select_free stays C (the free function the handle names); the `after`
 // arm's timer is poll.xo's (FN_SELECT).
-int64_t xo_x_select_new(void);
-void xo_x_select_recv(int64_t s, int64_t c);
-void xo_x_select_send(int64_t s, int64_t c, int64_t l);
-int64_t xo_x_select_wait(int64_t s, int64_t lp, int64_t ln);
-int64_t xo_x_select_take(int64_t s, int64_t i);
-
-xo_select *xo_select_new(void) { return (xo_select *)(intptr_t)xo_x_select_new(); }
-
-void xo_select_recv(xo_select *s, xo_chan *c) { xo_x_select_recv(XO_ADDR(s), XO_ADDR(c)); }
-
-void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { xo_x_select_send(XO_ADDR(s), XO_ADDR(c), XO_ADDR(l)); }
-
-int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) { return xo_x_select_wait(XO_ADDR(s), XO_ADDR(loc), n); }
-
-xo_rlist *xo_select_take(xo_select *s, int64_t i) { return (xo_rlist *)(intptr_t)xo_x_select_take(XO_ADDR(s), i); }
 
 _Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && offsetof(xo_sarm, e) == 24 && sizeof(xo_sarm) == 88 &&
                    offsetof(xo_select, arms) == 16 && offsetof(xo_select, n) == 24 && offsetof(xo_select, cap) == 28 &&
@@ -2415,24 +2129,8 @@ typedef struct {
 } xo_mutex;
 
 // The Mutex's operations are mutex.xo's (B19), which generated code calls
-// through its exports; these forward for older xo's code. mutex_free
-// stays C (the free function the handle names, through the services
+// through its exports. mutex_free stays C (the free function the handle names, through the services
 // record).
-int64_t xo_x_mutex_new(int64_t l, int64_t drop);
-int64_t xo_x_mutex_lock(int64_t m, int64_t lp, int64_t ln);
-void xo_x_mutex_unlock(int64_t m, int64_t l);
-int64_t xo_x_mutex_rlock(int64_t m, int64_t lp, int64_t ln);
-void xo_x_mutex_runlock(int64_t m, int64_t l);
-
-xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) { return (xo_mutex *)(intptr_t)xo_x_mutex_new(XO_ADDR(l), drop); }
-
-xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_lock(XO_ADDR(m), XO_ADDR(loc), n); }
-
-void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_unlock(XO_ADDR(m), XO_ADDR(l)); }
-
-xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_rlock(XO_ADDR(m), XO_ADDR(loc), n); }
-
-void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_runlock(XO_ADDR(m), XO_ADDR(l)); }
 
 _Static_assert(offsetof(xo_mutex, mu) == 16 && offsetof(xo_mutex, writer) == 24 && offsetof(xo_mutex, readers) == 32 &&
                    offsetof(xo_mutex, wwait) == 40 && offsetof(xo_mutex, rwait) == 48 && offsetof(xo_mutex, slot) == 56 &&
@@ -2458,11 +2156,6 @@ typedef struct {
 } xo_atomic;
 
 _Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
-
-// xo_atomic_new is tasks.xo atomic_new (B19), which generated code calls
-// through its export; this forwards for older xo's code.
-int64_t xo_x_atomic_new(int64_t v);
-xo_atomic *xo_atomic_new(int64_t v) { return (xo_atomic *)(intptr_t)xo_x_atomic_new(v); }
 
 _Static_assert(sizeof(xo_atomic) == 136, "tasks.xo atomic_new");
 
@@ -3146,7 +2839,7 @@ int64_t xo_clock_sleep_or_cancel(int64_t d) {
 }
 
 // xo_select_after adds the `after d` arm to select s: when no other arm
-// proceeds within d, xo_select_wait returns -2.
+// proceeds within d, select_wait returns -2.
 void xo_select_after(xo_select *s, int64_t d) {
 	if (!s->has_after || d < s->after) {
 		s->after = d;
@@ -3167,14 +2860,6 @@ void xo_scope_deadline(xo_scope *s, int64_t d) { xo_x_scope_deadline(XO_ADDR(s),
 // unwound, whether the unwinding came from its deadline (and not from a
 // cancellation of the code around it): the unwinding then stops.
 int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)); }
-
-// xo_budget_open and xo_budget_end are budget.xo open and end (which
-// arm64 code calls directly).
-void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, const char *loc, int64_t n) {
-	xo_x_budget_open(XO_ADDR(s), cpu, alloc, steps, XO_ADDR(loc), n);
-}
-
-int64_t xo_budget_end(xo_scope *s) { return xo_x_budget_end(XO_ADDR(s)); }
 
 // ---------------------------------------------------------------------------
 // Network (std.md 3.2): TCP listeners and connections are
@@ -3209,7 +2894,7 @@ int64_t xo_net_status(void) { return ctx()->net_status; }
 static xo_rlist *str_list(const char *p, int64_t n) {
 	xo_rstr *s = rs_new(n);
 	memcpy(s->data, p, (size_t)n);
-	xo_rlist *l = xo_rl_new(1, 16);
+	xo_rlist *l = rl_new(1, 16);
 	l->len = 1;
 	((xo_rstr **)rl_data(l))[0] = s;
 	((int64_t *)rl_data(l))[1] = n;
@@ -3229,13 +2914,13 @@ xo_rlist *xo_net_msg(void) {
 // stream) is the empty list.
 // Functions, not macros: a macro evaluated the export call twice (two
 // listens, two accepts).
-static inline void *nc_handle(int64_t r) { return r ? (void *)(intptr_t)r : xo_h_zero(); }
+static inline void *nc_handle(int64_t r) { return r ? (void *)(intptr_t)r : (void *)&zero_handle; }
 static xo_rlist *nc_list(int64_t r, int64_t n) {
 	if (!r) {
 		return &empty_list;
 	}
 	xo_rstr *s = (xo_rstr *)(intptr_t)r;
-	xo_rlist *l = xo_rl_new(1, 16);
+	xo_rlist *l = rl_new(1, 16);
 	l->len = 1;
 	((xo_rstr **)rl_data(l))[0] = s;
 	((int64_t *)rl_data(l))[1] = n;
@@ -3249,10 +2934,6 @@ xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n)
 xo_conn *xo_net_dial(const char *lp, int64_t ln, const char *p, int64_t n) {
 	return nc_handle(xo_x_nc_dial(XO_ADDR(lp), ln, XO_ADDR(p), n));
 }
-
-// xo_net_dial_timeout is xo_net_dial giving up after d ns (d <= 0: no
-// limit), with no attenuation lists (xo_http.c's client).
-xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) { return nc_handle(xo_x_nc_dial_timeout(XO_ADDR(p), n, d)); }
 
 xo_rlist *xo_listener_addr(xo_listener *l) {
 	int64_t n = 0;
@@ -3297,7 +2978,6 @@ void xo_x_stop_cancel(void);
 int64_t xo_x_stop_requested(void);
 int64_t xo_x_stop_canceled(void);
 int64_t xo_x_stop_stopping(int64_t drop);
-void xo_x_stop_set_grace(int64_t d);
 int64_t xo_x_stop_root(void);
 void xo_x_stop_set_root(int64_t n);
 void xo_x_stop_end(void);
@@ -3315,13 +2995,13 @@ static int64_t stopsvc_cancel(int64_t n, int64_t b) {
 static int64_t stopsvc_chan(int64_t drop, int64_t b) {
 	(void)b;
 	static const char loc[] = "task.stopping";
-	xo_chan *ch = xo_chan_new(0, drop, loc, (int64_t)sizeof loc - 1);
+	xo_chan *ch = (xo_chan *)(intptr_t)xo_x_chan_new(0, drop, XO_ADDR(loc), (int64_t)sizeof loc - 1);
 	ch->ext = 1;
 	return XO_ADDR(ch);
 }
 static int64_t stopsvc_close(int64_t ch, int64_t b) {
 	(void)b;
-	xo_chan_close((xo_chan *)(intptr_t)ch);
+	xo_x_chan_close(ch);
 	return 0;
 }
 static int64_t stopsvc_retain(int64_t ch, int64_t b) {
@@ -3448,8 +3128,9 @@ int64_t xo_stop_requested(void) { return xo_x_stop_requested(); }
 // requested (drop releases values someone sends on it).
 xo_chan *xo_task_stopping(int64_t drop) { return (xo_chan *)(intptr_t)xo_x_stop_stopping(drop); }
 
-// xo_set_grace is `proc.set_grace(d)`: after a stop request the deadline
-// moves to the stop time plus d.
+// xo_set_grace is `proc.set_grace(d)` (the SSA builders' rt.set_grace):
+// after a stop request the deadline moves to the stop time plus d.
+void xo_x_stop_set_grace(int64_t d);
 void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 
 // ---------------------------------------------------------------------------

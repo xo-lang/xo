@@ -112,7 +112,9 @@ sanitizer build.
   sys_c yet (the `sysc` op is unreachable there). The port of the
   scheduler's hooks will reach it, so it needs C forwarders of those
   names for the seed until a seed has this decision (the pattern of
-  gotchas/seed-older-than-intrinsics.md).
+  gotchas/seed-older-than-intrinsics.md). Seed 0.12.0-26641183 has it,
+  and the forwarders (xo_sched_hook, xo_sym_present, the xo_weak_*,
+  xo_pthread_* and xo_mmap family) were deleted on 2026-10-15.
 - Tests: the sys_c golden (getpid called and linked, every backend),
   internal/llvm TestSysCTSan (a ThreadSanitizer build sees its symbols),
   test/codegen/intrinsics (the call, the weak directive, the GOT load,

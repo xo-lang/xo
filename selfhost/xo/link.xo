@@ -334,22 +334,14 @@ fn find_cc(os: Os) -> Str {
   ""
 }
 
-/// The C compiler flags of the runtime's Fs operations, standard input,
-/// and Proc.run, when the code calls them (internal/build IOFlags).
+/// The C compiler flags of the runtime's standard input and Proc.run,
+/// when the code calls them (internal/build IOFlags).
 fn io_flags(code: Str) -> List[Str] {
   // one scan of the code for the runtime names, where a scan per name
   // took about a minute on the 437 MB of selfhost/xo's assembly
   // (bench/results/fast-builds-2026-10-13.md)
   let syms = code_syms(code)
   var out: List[Str] = []
-  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock", "xo_fs_raw_"] {
-    // handles, copies, modes, links, locks (decision 0172)
-    // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
-    if has_sym(syms, sym) {
-      out.push("-DXO_FS")
-      break
-    }
-  }
   for sym in ["xo_stdin_"] {
     if has_sym(syms, sym) {
       out.push("-DXO_STDIN")
@@ -363,15 +355,8 @@ fn io_flags(code: Str) -> List[Str] {
   // fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
   // with their -D flags, and no C defines xo_fs_mkdir_all,
   // xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
-  // the C path of text (-DXO_TEXT_C).
-  // The C versions of the intrinsics (a non-constant op of int_wrap;
-  // decision 0195)
-  for sym in ["xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"] {
-    if has_sym(syms, sym) {
-      out.push("-DXO_INTS_C")
-      break
-    }
-  }
+  // the C path of text (-DXO_TEXT_C); the C Fs operations (-DXO_FS)
+  // and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed.
   out
 }
 

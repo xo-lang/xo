@@ -1,0 +1,13 @@
+// Proc.set_grace (core 7.5) with no stop requested: it only moves the
+// deadline a later stop would get, so the program runs on. The SSA
+// builders lower it to the runtime's xo_set_grace; this golden keeps
+// that call in the generated code the classifications of runtime C
+// entries look at (gotchas/runtime-c-the-seed-still-calls.md). The real
+// signal path is internal/llvm's TestNativeSignalGrace.
+use std/task
+
+fn main(os: Os) {
+  os.proc.set_grace(300ms)
+  os.proc.set_grace(0ms)
+  os.stdio.println("grace set, stop requested ${task.stop_requested()}")
+}

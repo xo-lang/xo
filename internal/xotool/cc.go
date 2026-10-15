@@ -18,23 +18,12 @@ import (
 // that finds a working macOS SDK. xo (selfhost/xo link.xo io_flags and
 // clang.xo) has its own; TestIOFlagsMatchXo keeps the tables the same.
 
-// IOFlags returns the C compiler flags that compile the runtime's Fs
-// operations (std/llrt/xo_fs.c, XO_FS) and standard input reads
-// (xo_stdin.c, XO_STDIN), and Proc.run (xo_proc.c, XO_PROC) into a
+// IOFlags returns the C compiler flags that compile the runtime's
+// standard input reads (XO_STDIN), and Proc.run (xo_proc.c, XO_PROC) into a
 // native program whose code calls them
 // (decision 0102), so programs without them do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
-	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
-		// handles, copies, modes, links, locks (decision 0172)
-		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock",
-		// the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
-		"xo_fs_raw_"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_FS")
-			break
-		}
-	}
 	for _, sym := range []string{"xo_stdin_"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_STDIN")
@@ -49,15 +38,8 @@ func IOFlags(code []byte) []string {
 	// fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
 	// with their -D flags, and no C defines xo_fs_mkdir_all,
 	// xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
-	// the C path of text (-DXO_TEXT_C).
-	// The C versions of the intrinsics (a non-constant op of int_wrap;
-	// decision 0195)
-	for _, sym := range []string{"xo_int_wrap", "xo_u64_mul_hi", "xo_float_bits", "xo_float_from_bits", "xo_bytes_word", "xo_int_fits", "xo_u64_to_float", "xo_f32_round", "xo_i64_to_f32"} {
-		if callsSym(code, sym) {
-			out = append(out, "-DXO_INTS_C")
-			break
-		}
-	}
+	// the C path of text (-DXO_TEXT_C); the C Fs operations (-DXO_FS)
+	// and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed.
 	return out
 }
 

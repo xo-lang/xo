@@ -3,7 +3,7 @@
 // TestRuntimeThreads under ThreadSanitizer (clang -fsanitize=thread) and
 // optimized without it. It includes the runtime and plays the part of
 // generated code: the inline count paths of internal/llvm and
-// internal/arm64 are xo_rc_inc and xo_rc_dec here, the share walkers are
+// internal/arm64 are rc_inc and rc_dec here, the share walkers are
 // written by hand, and pthreads stand in for tasks (tasks.c tests the
 // task runtime itself).
 //
@@ -14,6 +14,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 #include <assert.h>
 
@@ -47,21 +48,21 @@ static str mkstr(const char *s) {
 	return (str){o, n};
 }
 
-static void str_dup(void *p) { xo_rc_inc(&((str *)p)->obj->rc); }
+static void str_dup(void *p) { rc_inc(&((str *)p)->obj->rc); }
 
 static void str_drop(void *p) {
 	xo_rstr *o = ((str *)p)->obj;
-	if (xo_rc_dec(&o->rc)) {
-		xo_rc_free(o);
+	if (rc_dec(&o->rc)) {
+		t_rc_free(o);
 	}
 }
 
-static void str_share(void *p) { xo_rc_mark(&((str *)p)->obj->rc); }
+static void str_share(void *p) { rc_mark(&((str *)p)->obj->rc); }
 
 static str *elems(xo_rlist *l) { return (str *)rl_data(l); }
 
 static xo_rlist *list_of(int n) {
-	xo_rlist *l = xo_rl_new(n, sizeof(str));
+	xo_rlist *l = rl_new(n, sizeof(str));
 	for (int i = 0; i < n; i++) {
 		char b[32];
 		snprintf(b, sizeof b, "item-%d", i);
@@ -72,15 +73,15 @@ static xo_rlist *list_of(int n) {
 }
 
 static void list_drop(xo_rlist *l) {
-	if (xo_rc_dec(&l->rc)) {
-		xo_rl_free(l, sizeof(str), str_drop);
+	if (rc_dec(&l->rc)) {
+		t_rl_free(l, sizeof(str), str_drop);
 	}
 }
 
 // the share walker of List[Str] (generated code: xo.share.List[Str])
 static void list_share(xo_rlist *l) {
-	if (xo_rc_mark(&l->rc)) {
-		xo_rl_share(l, sizeof(str), str_share);
+	if (rc_mark(&l->rc)) {
+		t_rl_share(l, sizeof(str), str_share);
 	}
 }
 
@@ -121,8 +122,8 @@ static str shared_s;
 static void *t_string(void *arg) {
 	(void)arg;
 	for (int i = 0; i < ITER; i++) {
-		xo_rc_inc(&shared_s.obj->rc);
-		xo_rc_inc(&shared_s.obj->rc);
+		rc_inc(&shared_s.obj->rc);
+		rc_inc(&shared_s.obj->rc);
 		CHECK(shared_s.len == 5 && memcmp(shared_s.obj->data, "hello", 5) == 0);
 		str_drop(&shared_s);
 		str_drop(&shared_s);
@@ -133,9 +134,9 @@ static void *t_string(void *arg) {
 
 static void test_string(void) {
 	shared_s = mkstr("hello");
-	xo_rc_mark(&shared_s.obj->rc);
+	rc_mark(&shared_s.obj->rc);
 	for (int i = 1; i < NT; i++) {
-		xo_rc_inc(&shared_s.obj->rc); // one per thread; the creator's goes to the last
+		rc_inc(&shared_s.obj->rc); // one per thread; the creator's goes to the last
 	}
 	run(t_string, NULL);
 }
@@ -151,7 +152,7 @@ static xo_rlist *shared_l;
 static void *t_list(void *arg) {
 	(void)arg;
 	for (int i = 0; i < ITER / 8; i++) {
-		xo_rc_inc(&shared_l->rc); // a copy of the value, about to be updated
+		rc_inc(&shared_l->rc); // a copy of the value, about to be updated
 		xo_rlist *mine = xo_rl_copy(shared_l, sizeof(str), str_dup, str_drop);
 		CHECK(mine != shared_l);
 		CHECK(mine->rc == 1);
@@ -174,7 +175,7 @@ static void test_list(void) {
 	list_share(shared_l);
 	CHECK(shared_l->rc == -1 && elems(shared_l)[0].obj->rc == -1);
 	for (int i = 1; i < NT; i++) {
-		xo_rc_inc(&shared_l->rc);
+		rc_inc(&shared_l->rc);
 	}
 	run(t_list, NULL);
 }
@@ -209,7 +210,7 @@ static void test_claim(void) {
 		shared_l = list_of(NL);
 		list_share(shared_l);
 		for (int i = 1; i < NT; i++) {
-			xo_rc_inc(&shared_l->rc);
+			rc_inc(&shared_l->rc);
 		}
 		in_place = 0;
 		run(t_claim, NULL);
@@ -225,8 +226,8 @@ static void *t_append(void *arg) {
 	(void)arg;
 	for (int i = 0; i < ITER; i++) {
 		str bang = mkstr("!");
-		xo_rc_inc(&shared_s.obj->rc);
-		xo_rstr *r = xo_rs_concat(shared_s.obj, shared_s.len, bang.obj, 1);
+		rc_inc(&shared_s.obj->rc);
+		xo_rstr *r = t_rs_concat(shared_s.obj, shared_s.len, bang.obj, 1);
 		CHECK(r != shared_s.obj);
 		CHECK(memcmp(r->data, "hello!", 6) == 0);
 		str rs = {r, 6};
@@ -244,16 +245,16 @@ static void *t_append(void *arg) {
 
 static void test_append(void) {
 	shared_s = mkstr("hello");
-	xo_rc_mark(&shared_s.obj->rc);
+	rc_mark(&shared_s.obj->rc);
 	for (int i = 1; i < NT; i++) {
-		xo_rc_inc(&shared_s.obj->rc);
+		rc_inc(&shared_s.obj->rc);
 	}
 	run(t_append, NULL);
 }
 
 // ---------------------------------------------------------------------------
 // 5. Boxes: a chain of counted cells {rc, next}, freed and marked shared
-// through xo_rc_defer's worklist (generated code: boxdrop and boxshare).
+// through t_rc_defer's worklist (generated code: boxdrop and boxshare).
 
 typedef struct box {
 	int64_t rc;
@@ -264,22 +265,22 @@ typedef struct box {
 static void box_free(void *p);
 
 static void box_release(box *b) {
-	if (b && xo_rc_dec(&b->rc)) {
-		xo_rc_defer(b, box_free);
+	if (b && rc_dec(&b->rc)) {
+		t_rc_defer(b, box_free);
 	}
 }
 
 static void box_free(void *p) {
 	box *b = p;
 	box_release(b->next);
-	xo_rc_free(b);
+	t_rc_free(b);
 }
 
 static void box_share_contents(void *p);
 
 static void box_share(box *b) {
-	if (b && xo_rc_mark(&b->rc)) {
-		xo_rc_defer(b, box_share_contents);
+	if (b && rc_mark(&b->rc)) {
+		t_rc_defer(b, box_share_contents);
 	}
 }
 
@@ -300,7 +301,7 @@ static void *t_box(void *arg) {
 	for (int i = 0; i < NB / 2; i++) {
 		mid = mid->next;
 	}
-	xo_rc_inc(&mid->rc);
+	rc_inc(&mid->rc);
 	box_release(shared_b);
 	CHECK(mid->v == NB / 2);
 	box_release(mid);
@@ -310,7 +311,7 @@ static void *t_box(void *arg) {
 static void test_box(void) {
 	box *head = NULL;
 	for (int i = NB - 1; i >= 0; i--) {
-		box *b = xo_rc_alloc(sizeof(box));
+		box *b = t_rc_alloc(sizeof(box));
 		b->rc = 1;
 		b->next = head;
 		b->v = i;
@@ -320,7 +321,7 @@ static void test_box(void) {
 	box_share(shared_b);
 	CHECK(shared_b->rc == -1 && shared_b->next->next->rc == -1);
 	for (int i = 1; i < NT; i++) {
-		xo_rc_inc(&shared_b->rc);
+		rc_inc(&shared_b->rc);
 	}
 	run(t_box, NULL);
 }
@@ -342,7 +343,7 @@ static void *t_producer(void *arg) {
 		char b[32];
 		snprintf(b, sizeof b, "msg-%d", i);
 		str s = mkstr(b);
-		xo_rc_mark(&s.obj->rc); // crossing to another thread
+		rc_mark(&s.obj->rc); // crossing to another thread
 		pthread_mutex_lock(&qmu);
 		while (qt - qh == QN) {
 			pthread_cond_wait(&qcv, &qmu);
@@ -403,14 +404,14 @@ static struct {
 static void *t_literal(void *arg) {
 	(void)arg;
 	for (int i = 0; i < ITER; i++) {
-		xo_rc_inc(&lit.rc);
-		CHECK(!xo_rc_dec(&lit.rc));
-		CHECK(!xo_rc_claim(&lit.rc));
-		CHECK(!xo_rc_mark(&lit.rc));
+		rc_inc(&lit.rc);
+		CHECK(!rc_dec(&lit.rc));
+		CHECK(!rc_claim(&lit.rc));
+		CHECK(!rc_mark(&lit.rc));
 		// `"lit!" + x` copies and leaves the literal alone
 		xo_rstr *r = rs_append((xo_rstr *)&lit, 4, "?", 1);
 		CHECK(r != (xo_rstr *)&lit && r->rc == 1);
-		xo_rc_free(r);
+		t_rc_free(r);
 	}
 	return NULL;
 }
@@ -458,18 +459,18 @@ static void *t_model(void *arg) {
 		switch ((r >> 32) % 4) {
 		case 0:
 			if (held[o] < 8) {
-				xo_rc_inc(rc);
+				rc_inc(rc);
 				held[o]++;
 			}
 			break;
 		case 1:
 			if (held[o] > 1) {
-				CHECK(!xo_rc_dec(rc)); // another of this thread's references remains
+				CHECK(!rc_dec(rc)); // another of this thread's references remains
 				held[o]--;
 			}
 			break;
 		case 2: {
-			int c = xo_rc_claim(rc);
+			int c = rc_claim(rc);
 			if (held[o] > 1) {
 				CHECK(!c);
 			}
@@ -477,12 +478,12 @@ static void *t_model(void *arg) {
 				// the only reference: thread local again
 				CHECK(__atomic_load_n(rc, __ATOMIC_RELAXED) == 1);
 				__atomic_fetch_add(&mclaims, 1, __ATOMIC_RELAXED);
-				CHECK(xo_rc_mark(rc)); // shared again before others can see it
+				CHECK(rc_mark(rc)); // shared again before others can see it
 			}
 			break;
 		}
 		default:
-			CHECK(!xo_rc_mark(rc)); // already shared
+			CHECK(!rc_mark(rc)); // already shared
 			break;
 		}
 	}
@@ -490,10 +491,10 @@ static void *t_model(void *arg) {
 		CHECK(mobj[o].len >= 3 && memcmp(mobj[o].obj->data, "m-", 2) == 0);
 		while (held[o] > 0) {
 			held[o]--;
-			if (xo_rc_dec(&mobj[o].obj->rc)) {
+			if (rc_dec(&mobj[o].obj->rc)) {
 				CHECK(held[o] == 0);
 				__atomic_fetch_add(&mlast, 1, __ATOMIC_RELAXED);
-				xo_rc_free(mobj[o].obj);
+				t_rc_free(mobj[o].obj);
 			}
 		}
 	}
@@ -505,10 +506,10 @@ static void test_model(void) {
 		char b[32];
 		snprintf(b, sizeof b, "m-%d", o);
 		mobj[o] = mkstr(b);
-		CHECK(xo_rc_mark(&mobj[o].obj->rc));
+		CHECK(rc_mark(&mobj[o].obj->rc));
 		CHECK(mobj[o].obj->rc == -1);
 		for (int i = 1; i < NT; i++) {
-			xo_rc_inc(&mobj[o].obj->rc); // one per thread
+			rc_inc(&mobj[o].obj->rc); // one per thread
 		}
 		CHECK(mobj[o].obj->rc == -NT);
 	}
@@ -538,7 +539,7 @@ int main(void) {
 		int before = failures;
 		tests[i].fn();
 		int64_t live, total;
-		xo_rt_live(&live, &total);
+		t_rt_live(&live, &total);
 		CHECK(live == 0);
 		printf("%s: %s (%lld allocations, %lld live)\n", tests[i].name, failures == before ? "ok" : "FAIL", (long long)total,
 			   (long long)live);
