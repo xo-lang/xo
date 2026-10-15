@@ -97,6 +97,12 @@ pub const SV_CHAN_FREE = 56
 pub const SV_SELECT_FREE = 64
 /// An Atomic's free function (tasks.xo atomic_new).
 pub const SV_ATOMIC_FREE = 72
+/// The fiber cache's record (pool.xo FS_*), and where a fiber and a
+/// worker thread start (the exports xo_x_fiber_main, xo_x_worker_main):
+/// poolsetup.xo's setup.
+pub const SV_FIBERS = 80
+pub const SV_FIBER_MAIN = 88
+pub const SV_WORKER_MAIN = 96
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).

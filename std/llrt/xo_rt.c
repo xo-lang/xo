@@ -1940,8 +1940,6 @@ static struct {
 
 static void rt_init(void) {}
 
-// fibers_setup reads the fiber stacks' settings (below).
-static void fibers_setup(void);
 
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker; root_worker calls it from
@@ -1998,19 +1996,21 @@ static struct {
 	void (*chan_free)(void *);
 	void (*select_free)(void *);
 	void (*atomic_free)(void *);
+	void *fibers;
+	int64_t fiber_main, worker_main;
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, 0, mutex_free, chan_free, select_free, atomic_free};
+	&rtstats, {0}, mutex_free, chan_free, select_free, atomic_free, NULL, 0, 0};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96,
                "ctx.xo SV_*");
 
-static int64_t svc_addr(void) { return XO_ADDR(&svc); }
+
 
 XO_NORETURN static void deadlock(void) {
 	xo_flush();
@@ -2468,43 +2468,15 @@ static struct {
 	int64_t main;  // where a fiber starts (pool.xo: xo_x_fiber_main)
 } fibers;
 
-static void fibers_init(void) {
-	// 64 MiB reserved, like the worker threads before fibers (deep
-	// recursion in a task behaves the same); XO_TASK_STACK_MB overrides
-	size_t mb = 64;
-#if defined(XO_TSAN) && defined(__linux__)
-	// ThreadSanitizer on Linux confines the program's mmaps to its
-	// application ranges (the rest is shadow, reserved PROT_NONE): 31.8
-	// GiB on arm64 with 48 bit addresses (508 stacks of 64 MiB, clang 15,
-	// 2026-10-13), which ThreadSanitizer's own mappings share. 64 MiB
-	// stacks ran out after about 880 fibers (2026-10-12); 8 MiB ones
-	// after 2988 to 3150 (23.3 to 24.6 GiB), and conc_stress run four
-	// times at once (TestGoldenThreads) had up to 5378 fibers under load
-	// and can park 8000 (2026-10-13, gotcha linux-tsan-fiber-stacks).
-	// 2 MiB stacks hold its bound of 8352 fibers on 32 CPUs in 16.3 GiB.
-	mb = 2;
-#endif
-	const char *e = getenv("XO_TASK_STACK_MB");
-	if (e && atoi(e) > 0) {
-		mb = (size_t)atoi(e);
-	}
-	fibers.stack = (int64_t)(mb << 20);
-}
-
-// The fiber code in Xo (decision 0212): std/native/llrt/sched.xo through
-// the C ABI exports of cabi.xo. xo_x_fiber_main is where a new fiber
-// starts (xo_fiber_entry, the emitted start, calls it with the fiber).
+// The fiber stacks' settings are poolsetup.xo's fibers_setup (B20),
+// through the services record (the fiber cache's record and the entry
+// points, set here at start).
 void xo_x_fiber_main(int64_t f);
-
-// fibers_setup reads the stacks' settings when the pool starts (before
-// the first fiber), and gives the Xo pool the
-// records and the addresses where fibers and worker threads start.
-static void fibers_setup(void) {
-	fibers_init();
-	fibers.page = (int64_t)sysconf(_SC_PAGESIZE);
-	fibers.main = XO_ADDR(xo_x_fiber_main);
-	pool.fibers = &fibers;
-	pool.worker_main = XO_ADDR(xo_x_worker_main);
+static int64_t svc_addr(void) {
+	svc.fibers = &fibers;
+	svc.fiber_main = XO_ADDR(xo_x_fiber_main);
+	svc.worker_main = XO_ADDR(xo_x_worker_main);
+	return XO_ADDR(&svc);
 }
 
 // fiber_counted counts a fiber stack mapped (d 1) or unmapped (-1), and
@@ -2665,9 +2637,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 20: // the runtime switches to several threads (pool.xo's setup)
 		xo_rt_threads_begin();
-		return 0;
-	case 26: // the fiber stacks' settings (pool.xo's setup)
-		fibers_setup();
 		return 0;
 	case 27: // select a's `after` arm: its timer (selects.xo wait)
 		return select_timer_op(a);

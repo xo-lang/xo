@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B20, part 2): the fiber stacks'
+  settings (XO_TASK_STACK_MB, the page size per OS) are Xo
+  (poolsetup.xo fibers_setup).
 - Native runtime (zero-C audit item B26, part 1): two phase shutdown's
   state machine (core 7.5: the signals counted, the stop request, the
   grace timer, task.stopping's channel, proc.set_grace, main's root

@@ -112,3 +112,6 @@ fn RtlRestoreContext(cx: Int, rec: Int)
 /// GetActiveProcessorCount: the active processors of a group, or of
 /// every group (ALL_PROCESSOR_GROUPS, 0xffff).
 fn GetActiveProcessorCount(group: Int) -> UInt32
+
+/// GetSystemInfo: the SYSTEM_INFO (48 bytes) at info.
+fn GetSystemInfo(info: Int)
