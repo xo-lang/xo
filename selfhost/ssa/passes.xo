@@ -185,24 +185,54 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
 
 /// Gives every operation that can fault and has no landing yet a check
 /// whose cleanup goes to the function's unwind exit (addLandings).
+///
+/// The rest of a split block is filled when the walk reaches it (lazy:
+/// its instructions are those of src from off up to its own first
+/// operation that can fault), so each instruction moves once: copying the
+/// whole rest at every split was quadratic in the operations of a block
+/// (examples/notes-service: 1.4 s of every build, 2026-10-15). The blocks
+/// are made in the same order as before.
 pub fn (var b: Builder) add_landings() {
   let faults = b.m.may_fault()
   let n = b.m.funcs.len()
   for fi in 0..n {
     let saved = b.begin(fi, -1)
+    var lazy_src: Map[Int, List[Int]] = {}
+    var lazy_off: Map[Int, Int] = {}
     var bi = 0
     while bi < b.s.f.blocks.len() {
-      var i = 0
-      while i < b.s.f.blocks[bi].instrs.len() {
-        let v = b.s.f.blocks[bi].instrs[i]
-        let x = b.s.f.values[v]
-        if x.pad >= 0 || is_terminator(x.op) || !raises(b.m, b.s.f, x, faults) {
-          i += 1
-          continue
+      let lazy = lazy_src.contains(bi)
+      let src = if lazy { lazy_src.get(bi) ?? [] } else { b.s.f.blocks[bi].instrs }
+      let off = lazy_off.get(bi) ?? 0
+      var end = src.len()
+      var at = -1
+      var i = off
+      while i < src.len() {
+        let x = b.s.f.values[src[i]]
+        if x.pad < 0 && !is_terminator(x.op) && raises(b.m, b.s.f, x, faults) {
+          at = i
+          end = i + 1
+          break
         }
-        b.land_at(bi, i)
-        // the rest of the block moved to a new block
-        break
+        i += 1
+      }
+      if lazy || at >= 0 {
+        b.s.f.blocks[bi].instrs = src[off..end]
+      }
+      if lazy {
+        for k in off..end {
+          let v = src[k]
+          b.s.f.values[v].block = bi
+          for e in b.s.f.values[v].succs {
+            b.s.f.edges[e].from = bi
+          }
+        }
+        lazy_src.remove(bi)
+      }
+      if at >= 0 {
+        let rest = b.land_at(bi, src[at])
+        lazy_src[rest] = src
+        lazy_off[rest] = at + 1
       }
       bi += 1
     }
@@ -211,21 +241,11 @@ pub fn (var b: Builder) add_landings() {
   b.run_gens()
 }
 
-/// Splits block bl after its instruction i and gives it a check only a
-/// fault takes, whose cleanup goes to the unwind exit (landAt).
-fn (var b: Builder) land_at(bl: Int, i: Int) {
-  let w = b.s.f.blocks[bl].instrs[i]
+/// Ends block bl, whose last instruction is w, with a check only a fault
+/// takes, whose cleanup goes to the unwind exit, and returns the new
+/// block for the rest of the block, which add_landings fills (landAt).
+fn (var b: Builder) land_at(bl: Int, w: Int) -> Int {
   let rest = b.s.f.new_block()
-  let n = b.s.f.blocks[bl].instrs.len()
-  b.s.f.blocks[rest].instrs = b.s.f.blocks[bl].instrs[i + 1..n]
-  for k in i + 1..n {
-    let v = b.s.f.blocks[bl].instrs[k]
-    b.s.f.values[v].block = rest
-    for e in b.s.f.values[v].succs {
-      b.s.f.edges[e].from = rest
-    }
-  }
-  b.s.f.blocks[bl].instrs = b.s.f.blocks[bl].instrs[0..i + 1]
   b.s.f.land_rest[rest] = true
   let u = b.s.f.add(bl, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
   b.s.f.values[w].pad = u
@@ -233,6 +253,7 @@ fn (var b: Builder) land_at(bl: Int, i: Int) {
   b.s.f.branch(bl, u, pad, rest)
   let exit = b.unwind_exit()
   b.s.f.jump(pad, exit, [])
+  rest
 }
 
 /// The function's unwind exit, made when it has none: it hands a fault on

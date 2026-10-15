@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Compiler speed: the SSA pass add_landings fills the rest of a split
+  block once, when it reaches it, instead of copying the block's tail at
+  every operation that can fault (quadratic in a block's operations):
+  examples/notes-service's arm64 test build spent 1,407 ms in it on every
+  run, warm or cold, now 32 ms; the generated code is byte identical
+  (notes-service, conc_scopes, json_text).
 - XO_NOLIBC=1 (Linux, no C library): the process entry is emitted by
   the backends (selfhost/ssa ir.xo entry_stub_arm64 and
   entry_stub_amd64, through the arm64 emitter's assembly and the LLVM
