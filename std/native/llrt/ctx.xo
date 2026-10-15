@@ -46,8 +46,10 @@ pub const C_FAULT_LOC = 96
 pub const C_FAULT_DETAIL = 104
 /// boundary: the stack address the unwinding never passes.
 pub const C_BOUNDARY = 112
-/// fault_exc: the exception object (32 bytes, 16 aligned).
-pub const C_FAULT_EXC = 128
+/// fault_exc: the area holding the exception object (32 bytes) at its
+/// first 16 byte aligned address (xo_rt.c ctx_exc): 40 bytes, since a
+/// context from the Xo heap is 8 aligned.
+pub const C_FAULT_EXC = 120
 /// The budget (decision 0175): its record (a reference) or 0, the polls
 /// left and the quantum, the charged stretch's start, allocation mark,
 /// and heap, and the pause depth (a C int).

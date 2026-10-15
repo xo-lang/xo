@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime fix: a task's context, allocated from the Xo heap
+  (8 aligned) since B18 part 3, embedded the unwinder's 16 aligned
+  exception object, which UndefinedBehaviorSanitizer reported as a
+  misaligned xo_ctx in every program with tasks (TestGoldenASan). The
+  exception now sits at the first 16 byte aligned address of an 8
+  aligned area in the context (xo_rt.c ctx_exc); no offset moved.
 - Native runtime (zero-C audit item B31, part 5, decision 0202): the
   TLS 1.3 client's key exchange over X25519 (x25519.xo), now its default
   share before P-256 and P-384, a low order share refused as

@@ -1333,8 +1333,13 @@ typedef struct xo_ctx {
 	// here, not in fault_raise's frame: a cleanup that resumes the unwind
 	// (_Unwind_Resume) reads it after the raising frames are gone, and
 	// ThreadSanitizer gives every function such a cleanup (its
-	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md)
-	struct _Unwind_Exception fault_exc;
+	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md).
+	// The unwinder declares it 16 byte aligned, which a context from the
+	// Xo heap is not (tasks.xo run_claimed: a block is 8 mod 16, after
+	// its header), so this 8 aligned area holds it at its first 16
+	// byte aligned address (ctx_exc; a context never moves).
+	// gotchas/xo-heap-records-8-aligned.md
+	unsigned char fault_exc[sizeof(struct _Unwind_Exception) + 8];
 	// resource budgets (decision 0175): the budget the context works
 	// under (a reference) or NULL, the polls left before its next charge
 	// and the quantum they started from, and the stretch being charged:
@@ -1403,13 +1408,22 @@ _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 &
                    offsetof(xo_ctx, park) == 16 && offsetof(xo_ctx, held) == 48 && offsetof(xo_ctx, nheld) == 56 &&
                    offsetof(xo_ctx, capheld) == 60 && offsetof(xo_ctx, net_status) == 64 && offsetof(xo_ctx, net_msg) == 72 &&
                    offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 && offsetof(xo_ctx, fault_loc) == 96 &&
-                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 128,
+                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 120,
                "ctx.xo C_*");
 _Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
                    offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
                    offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && offsetof(xo_ctx, cent) == 248 && offsetof(xo_ctx, fired) == 312 && sizeof(xo_ctx) == 320 &&
                    sizeof(xo_went) == 32 && offsetof(xo_went, writer) == 24,
                "ctx.xo C_BUD_*");
+
+// tasks.xo allocates contexts from the Xo heap, 8 aligned
+// (gotchas/xo-heap-records-8-aligned.md).
+_Static_assert(_Alignof(xo_ctx) <= 8, "xo_ctx from the Xo heap");
+
+// ctx_exc is the fault's exception object in c's fault_exc area.
+static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
+	return (struct _Unwind_Exception *)(((uintptr_t)c->fault_exc + 15) & ~(uintptr_t)15);
+}
 
 // ctx_root is ctx for ctx.xo cur (its address in rt.static_word 15).
 static int64_t ctx_root(int64_t a, int64_t b) {
@@ -1502,9 +1516,9 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	// on every raise (unwind.xo win_raise)
 	CONTEXT cx;
 	RtlCaptureContext(&cx);
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
+	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
 #else
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
+	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
 #endif
 	fault_exit(c);
 }
@@ -1539,7 +1553,7 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-	struct _Unwind_Exception *exc = &c->fault_exc;
+	struct _Unwind_Exception *exc = ctx_exc(c);
 	memset(exc, 0, sizeof *exc);
 	exc->exception_class = XO_EXC_CLASS;
 	exc->exception_cleanup = fault_cleanup;
