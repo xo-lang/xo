@@ -95,7 +95,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
       } else if kind == "drop" {
         let free = g.local("xo_${g.ns}${kind}${id}_free")
         b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
-        b.push("${free}:\n\tb ${g.sym("xo_h_free")}\n")
+        b.push("${free}:\n\tb ${g.sym("xo_x_obj_h_free")}\n")
       } else {
         b.push("\tret\n")
       }
@@ -120,7 +120,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
         b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
         b.push("${free}:\n")
         if g.kind(t) == ssa.Kind.Str {
-          b.push("\tb ${g.sym("xo_rc_free")}\n")
+          b.push("\tb ${g.sym("xo_x_obj_rc_free")}\n")
         } else {
           let et = g.m.types[t].elems[0]
           b.push(imm_text(g.esize(et), "x1"))
@@ -504,7 +504,7 @@ fn (var g: G) box_drop(t: Int) -> Str {
   b.push("// boxdrop ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
-  g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_rc_free"))
+  g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_x_obj_rc_free"))
   g.helpers.push(b.join(""))
   sym
 }

@@ -820,7 +820,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       } else if kind == "drop" {
         rc_dec(b, obj)
         if k == ssa.Kind.Str {
-          b.w("free:\n  call void @xo_rc_free(ptr ${obj})\n  br label %done\n")
+          let po = b.tmp()
+          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rc_free(i64 ${po}) #8\n  br label %done\n")
         } else {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
@@ -851,7 +852,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         rc_inc(b, "%x")
       } else if kind == "drop" {
         rc_dec(b, "%x")
-        b.w("free:\n  call void @xo_h_free(ptr %x)\n  br label %done\n")
+        let px = b.tmp()
+        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_h_free(i64 ${px}) #8\n  br label %done\n")
       } else {
         b.w("  br label %done\n")
       }
@@ -1125,7 +1127,7 @@ fn (var g: Gen) box_drop_fn(t: Int) -> Str {
     let df = g.rc_fn("drop", et)
     b.push("  call void ${df}(${g.ll(et)} %v)\n")
   }
-  b.push("  call void @xo_rc_free(ptr %p)\n  ret void\n}\n\n")
+  b.push("  %pi = ptrtoint ptr %p to i64\n  call void @xo_x_obj_rc_free(i64 %pi) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
   name
 }
@@ -1160,7 +1162,7 @@ fn (var g: Gen) env_drop_fn(fi: Int) -> Str {
     let df = g.rc_fn("drop", c)
     b.push("  call void ${df}(${g.ll(c)} %c${i})\n")
   }
-  b.push("  call void @xo_rc_free(ptr %e)\n  ret void\n}\n\n")
+  b.push("  %ei = ptrtoint ptr %e to i64\n  call void @xo_x_obj_rc_free(i64 %ei) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
   name
 }

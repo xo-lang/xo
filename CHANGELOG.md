@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (generated-code entries E2): both backends allocate
+  and free strings, boxes, and closure environments, and free handles,
+  through obj.xo's exports (xo_x_obj_rc_alloc, rc_free, h_free) instead
+  of the C entries, which stay for code of earlier compilers. arm64 at or
+  under the step before; LLVM string heavy text 1.02
+  (bench/results/generated-entries-2026-10-15.md).
 - Fix: `xo test --no-gc` hung on tests that sleep under the virtual
   clock since B22 remnants batch 2 (0e1771fd): poll.xo read the virtual
   clock at a word index where its constant was a byte offset

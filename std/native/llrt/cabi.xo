@@ -240,6 +240,15 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
+/// A string, box, or closure environment object's block and its free at
+/// zero, and a handle's free at zero, for generated code (xo_rc_alloc,
+/// xo_rc_free, xo_h_free stay for code of earlier compilers).
+fn obj_rc_alloc(n: Int) -> Int { obj.alloc_obj(n) }
+
+fn obj_rc_free(p: Int) { obj.rc_free_n(p) }
+
+fn obj_h_free(p: Int) { obj.h_free_n(p) }
+
 fn obj_heap_init(h: Int, slow: Int, libc: Int, hsize: Int) {
   obj.heap_init(h, slow)
   heapos.set_libc(libc)

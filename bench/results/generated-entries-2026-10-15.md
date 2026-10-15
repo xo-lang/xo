@@ -65,3 +65,63 @@ rows are within that band; a rerun with 11 runs each gave 0.924 to 1.079,
 and conc mutex on LLVM interleaved 21 times gave a least of 1.023 and a
 median of 0.990 of A. Nothing passes the 5% bar; LLVM alloc strings
 (0.950) and text quote (0.975) gain from rs_concat's direct call.
+
+## Batch E2
+
+Both emitters call obj.xo's exports for a string's, box's, and closure
+environment's block (xo_x_obj_rc_alloc, xo_x_obj_rc_free) and a
+handle's free at zero (xo_x_obj_h_free) instead of the C entries
+xo_rc_alloc, xo_rc_free, and xo_h_free (kept for code of earlier
+compilers). obj.rc_free_n is rl_free_n with no elements to drop, which
+reuses its fast path (the one thread's heap word and free1 inlined; a
+third call site of free1 would stop the inliner copying it). On LLVM
+the calls are `nounwind noinline` (`#8`): inlined into every drop
+helper, text split and lines took 1.05 to 1.07 times the instructions;
+with rl_free_n inlined at the call (as the list drop does), 1.05 to
+1.07 again. A is zero-c at 51dec8c7, B adds E2:
+
+| Program | Workload | Backend | A instr | B instr | B/A |
+|---|---|---|---|---|---|
+| alloc | small | arm64 | 290,987,034 | 289,223,357 | 0.994 |
+| alloc | mixed | arm64 | 471,449,577 | 471,220,265 | 1.000 |
+| alloc | grow | arm64 | 65,861,410 | 65,870,044 | 1.000 |
+| alloc | strings | arm64 | 301,902,919 | 300,699,815 | 0.996 |
+| alloc | maps | arm64 | 302,314,615 | 302,182,054 | 1.000 |
+| alloc | tasks | arm64 | 886,180,459 | 887,795,059 | 1.002 |
+| alloc | small | llvm | 246,268,308 | 246,035,558 | 0.999 |
+| alloc | mixed | llvm | 462,171,612 | 462,254,804 | 1.000 |
+| alloc | grow | llvm | 64,581,630 | 64,552,387 | 1.000 |
+| alloc | strings | llvm | 245,140,182 | 249,727,315 | 1.019 |
+| alloc | maps | llvm | 266,426,273 | 266,414,270 | 1.000 |
+| alloc | tasks | llvm | 784,886,493 | 785,779,078 | 1.001 |
+| text | parse_int | arm64 | 45,608,208 | 45,701,292 | 1.002 |
+| text | quote | arm64 | 129,642,512 | 129,312,636 | 0.997 |
+| text | split | arm64 | 97,472,707 | 96,808,756 | 0.993 |
+| text | lines | arm64 | 155,020,653 | 153,913,698 | 0.993 |
+| text | replace | arm64 | 81,415,535 | 81,120,221 | 0.996 |
+| text | int_fmt | arm64 | 78,762,787 | 78,418,218 | 0.996 |
+| text | base64 | arm64 | 166,210,939 | 165,734,698 | 0.997 |
+| text | hex | arm64 | 100,493,905 | 100,038,016 | 0.995 |
+| text | parse_int | llvm | 43,828,667 | 43,845,895 | 1.000 |
+| text | quote | llvm | 100,901,577 | 101,380,214 | 1.005 |
+| text | split | llvm | 81,615,399 | 83,138,114 | 1.019 |
+| text | lines | llvm | 138,638,642 | 141,448,160 | 1.020 |
+| text | replace | llvm | 57,400,286 | 58,001,288 | 1.010 |
+| text | int_fmt | llvm | 61,854,080 | 62,904,696 | 1.017 |
+| text | base64 | llvm | 123,863,515 | 124,781,203 | 1.007 |
+| text | hex | llvm | 83,908,566 | 84,822,647 | 1.011 |
+| conc_spawn | - | arm64 | 620,574,104 | 626,850,224 | 1.010 |
+| conc_spawn | - | llvm | 500,465,042 | 515,945,216 | 1.031 |
+| conc_fanout | - | arm64 | 298,325,256 | 306,638,015 | 1.028 |
+| conc_fanout | - | llvm | 241,186,897 | 264,813,246 | 1.098 |
+| conc_pingpong | - | arm64 | 379,637,636 | 384,670,402 | 1.013 |
+| conc_pingpong | - | llvm | 319,175,314 | 314,308,115 | 0.985 |
+| conc_mutex | - | arm64 | 136,032,241 | 146,676,056 | 1.078 |
+| conc_mutex | - | llvm | 105,194,257 | 109,434,310 | 1.040 |
+
+conc stays in its noise band: a rerun with 11 runs each gave 0.940 to
+1.041 except conc mutex on arm64 (1.120), whose interleaved 21 runs give
+medians of 128.1M (A) and 129.1M (B), spread 80M to 200M. LLVM keeps
+about 2% on string heavy workloads (text split, lines, alloc strings
+1.019 to 1.020), inside the 5% bar; arm64 is at or under A.
+

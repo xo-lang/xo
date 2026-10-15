@@ -263,6 +263,26 @@ fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
   rl_free(hw, l, esize, drop)
 }
 
+/// Frees the string or box object p whose count reached zero, for
+/// generated code (xo_rc_free); a real-time section defers it.
+pub fn rc_free_n(p: Int) {
+  // rl_free_n with no elements to drop: its fast path (the one thread's
+  // heap word, free1 inlined) and its real-time deferral; a third call
+  // site of free1 would keep the inliner from copying it (see halloc)
+  rl_free_n(p, 0, 0)
+}
+
+/// Frees the handle p whose count reached zero, for generated code
+/// (xo_h_free): its free function (word 1), unless a real-time section
+/// defers it.
+pub fn h_free_n(p: Int) {
+  let h = heap_word() & -2
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_HANDLE, p, 0, 0) {
+    return
+  }
+  let _f = rt.call_c2(rt.mem_load(p, 8, 8), p, 0)
+}
+
 /// rl_copy for generated code (xo_rl_copy).
 pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_word(), l, esize, dup, drop) }
 

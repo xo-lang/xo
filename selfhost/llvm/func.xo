@@ -978,7 +978,8 @@ fn (var g: Gen) instr_body(v: Int) {
           }
         }
         size = align_up(size, align)
-        env = g.def("call ptr @xo_rc_alloc(i64 ${size})")
+        let ei = g.def("call i64 @xo_x_obj_rc_alloc(i64 ${size}) #8")
+        env = g.def("inttoptr i64 ${ei} to ptr")
         g.emit("store i64 1, ptr ${env}${TBAA_RC}")
         let dp = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 1")
         let df = g.env_drop_fn(callee)
@@ -1009,7 +1010,8 @@ fn (var g: Gen) instr_body(v: Int) {
       var size = align_up(0, 8) + 8
       size = align_up(size, ea) + es
       size = align_up(size, if ea > 8 { ea } else { 8 })
-      let p = g.def("call ptr @xo_rc_alloc(i64 ${size})")
+      let pi = g.def("call i64 @xo_x_obj_rc_alloc(i64 ${size}) #8")
+      let p = g.def("inttoptr i64 ${pi} to ptr")
       g.emit("store i64 1, ptr ${p}${TBAA_RC}")
       if !g.is_void(et) {
         let bl = g.box_ll(vt)

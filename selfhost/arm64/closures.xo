@@ -46,7 +46,7 @@ fn (var g: G) closure_op(v: Int) {
   if ENV_HDR + 8 * n > 32760 {
     g.fail("closure of `${name}` captures too many words")
   }
-  let env = g.rt("xo_rc_alloc", [isrc(ENV_HDR + 8 * n)], [false])[0]
+  let env = g.rt("xo_x_obj_rc_alloc", [isrc(ENV_HDR + 8 * n)], [false])[0]
   g.store("str $u0, [$u1]", [g.cimm(1), env])
   let d = g.sym_addr(g.env_drop(ci))
   g.store("str $u0, [$u1, #8]", [d, env])
@@ -113,7 +113,7 @@ fn (var g: G) env_drop(fi: Int) -> Str {
     let (off, _) = g.capture_words(fi, i)
     g.heap_leaves(c, off, ls)
   }
-  g.leaves_and_then(b, "drop", ls, ENV_HDR, g.sym("xo_rc_free"))
+  g.leaves_and_then(b, "drop", ls, ENV_HDR, g.sym("xo_x_obj_rc_free"))
   g.helpers.push(b.join(""))
   sym
 }
@@ -236,7 +236,7 @@ fn (var g: G) box_op(v: Int) {
   if BOX_HDR + 8 * n > 32760 {
     g.fail("box of `${g.tname(g.vty(a))}` (too many words)")
   }
-  let p = g.rt("xo_rc_alloc", [isrc(BOX_HDR + 8 * n)], [false])[0]
+  let p = g.rt("xo_x_obj_rc_alloc", [isrc(BOX_HDR + 8 * n)], [false])[0]
   g.store("str $u0, [$u1]", [g.cimm(1), p])
   for (k, w) in g.store_words(a).indexed() {
     g.store("str $u0, [$u1, #${BOX_HDR + 8 * k}]", [w, p])
