@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (after seed 0.14.0): the C only the 0.13.0 seed's code
+  called is deleted: xo_heap_large, xo_heap_large_resize and
+  xo_heap_release (libcmem.xo's exports), xo_sched_run_task (cabi.xo
+  fiber_run_task), xo_flush and xo_set_grace (cabi.xo flush and
+  stop_set_grace), xo_rl_copy and xo_rl_grow (obj.xo rl_copy_n and
+  rl_grow_n), and the weak definitions of the immortal placeholders
+  (every program defines them). The C tests call obj.xo's exports
+  through testdata/xcalls.h.
 - ML-KEM and SHA-3 (std/native/llrt mlkem.xo, sha3.xo): Keccak in locals
   in Go's in-place form, wrapping field arithmetic, in-place sums of
   products, constant tables read once, lane-wide squeezes. ML-KEM-768

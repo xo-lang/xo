@@ -115,16 +115,6 @@ __attribute__((constructor)) static void obj_heap_words(void) {
 }
 #endif
 
-// rt.heap_large and friends are libcmem.xo's (cabi.xo heap_large);
-// these forward for code of compilers whose emitters named the C (the
-// 0.13.0 seed's).
-int64_t xo_x_heap_large(int64_t n);
-int64_t xo_x_heap_large_resize(int64_t b, int64_t n);
-void xo_x_heap_release(int64_t b);
-int64_t xo_heap_large(int64_t n) { return xo_x_heap_large(n); }
-int64_t xo_heap_large_resize(int64_t b, int64_t n) { return xo_x_heap_large_resize(b, n); }
-void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
-
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058) are rc.xo's: a count c > 0 is
 // thread local, -n is shared by n, XO_RC_IMMORTAL marks a literal (never
@@ -133,13 +123,8 @@ void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
 #define XO_RC_IMMORTAL INT64_MIN
 
 // ---------------------------------------------------------------------------
-// Output is stdio.xo's; xo_flush is the C name std's rt.flush lowered
-// to before the emitters called cabi.xo's flush (seed-only: 0.13.0).
-
-void xo_x_flush(void);
+// Output is stdio.xo's; the stack overflow handler flushes it.
 void xo_x_flush_try(void);
-
-void xo_flush(void) { xo_x_flush(); }
 
 // an address as the int64_t the C ABI exports (cabi.xo) take
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
@@ -151,9 +136,7 @@ void xo_flush(void) { xo_x_flush(); }
 static void fault_init(void);
 
 // ---------------------------------------------------------------------------
-// Strings and lists: the layouts the C tests use; a list's slow paths
-// (obj.xo's) for LLVM code of compilers before the emitter called
-// obj.xo's rl_copy_n and rl_grow_n itself (seed-only: 0.13.0).
+// Strings and lists: the layouts the C tests use.
 
 typedef struct {
 	int64_t rc, cap;
@@ -165,20 +148,6 @@ typedef struct {
 } xo_rlist;
 
 typedef void (*xo_elem_fn)(void *);
-
-int64_t xo_x_obj_rl_grow_n(int64_t l, int64_t esize);
-int64_t xo_x_obj_rl_copy_n(int64_t l, int64_t esize, int64_t dup, int64_t drop);
-
-#define XO_A(p) ((int64_t)(intptr_t)(p))
-
-// xo_rl_copy is the slow path of `reuse`: l's count is not 1 (obj.xo
-// rl_copy).
-__attribute__((noinline)) xo_rlist *xo_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup, xo_elem_fn drop) {
-	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy_n(XO_A(l), esize, XO_A(dup), XO_A(drop));
-}
-
-// xo_rl_grow doubles the capacity of a unique full list (obj.xo rl_grow).
-__attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow_n(XO_A(l), esize); }
 
 // ---------------------------------------------------------------------------
 // Tasks (decisions 0068, 0069, 0077, 0212): scopes, tasks, channels,
@@ -193,12 +162,10 @@ typedef struct {
 	xo_free_fn free;
 } xo_hdr;
 
-// the immortal placeholders a canceled operation returns; generated code
-// takes their addresses (rt.rl_empty, rt.h_zero), and every program
-// defines them since 0.14.0's compiler: these weak ones are for code of
-// earlier compilers (seed-only: 0.13.0)
-__attribute__((weak)) xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
-__attribute__((weak)) xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
+// the immortal placeholders a canceled operation returns, which every
+// program defines (arm64 end_data, LLVM linkonce_odr globals)
+extern xo_hdr xo_zero_handle;
+extern xo_rlist xo_empty_list;
 #define zero_handle xo_zero_handle
 #define empty_list xo_empty_list
 
@@ -228,11 +195,6 @@ static void fault_init(void) {
 // 0233 step 2): the empty list is a `[]` in tasks.xo, a claimed task runs
 // through tasks.xo's run_claimed, the virtual clock's kick through
 // twflags.xo.
-
-// the C name of cabi.xo fiber_run_task for code of compilers before the
-// emitters named the export (the 0.13.0 seed's)
-void xo_x_fiber_run_task(int64_t f);
-void xo_sched_run_task(int64_t f) { xo_x_fiber_run_task(f); }
 
 // ---------------------------------------------------------------------------
 // The event loop is poll.xo's (B22): fault_init has it make its record;
@@ -303,13 +265,6 @@ static void stop_svc_init(void) {
 #endif
 	xo_x_stop_init(XO_ADDR(stop_svc));
 }
-
-// xo_set_grace is `proc.set_grace(d)` (the SSA builders' rt.set_grace):
-// after a stop request the deadline moves to the stop time plus d. The
-// emitters call cabi.xo's stop_set_grace since 0.14.0's compiler
-// (seed-only: 0.13.0).
-void xo_x_stop_set_grace(int64_t d);
-void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 
 // ---------------------------------------------------------------------------
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata

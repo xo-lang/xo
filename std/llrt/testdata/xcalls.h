@@ -186,3 +186,12 @@ static void t_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_w
 static void t_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 static xo_rlist *t_conn_read(xo_conn *cn, int64_t max) { return t_list_or_empty(xo_x_nc_conn_read_list(XO_ADDR(cn), max)); }
 static int64_t t_net_status(void) { return xo_x_nc_status(); }
+
+// a list's slow paths (obj.xo rl_copy_n and rl_grow_n, which generated
+// code calls; xo_rt.c's xo_rl_copy and xo_rl_grow went with seed 0.14.0)
+int64_t xo_x_obj_rl_copy_n(int64_t l, int64_t esize, int64_t dup, int64_t drop);
+int64_t xo_x_obj_rl_grow_n(int64_t l, int64_t esize);
+static xo_rlist *t_rl_copy(xo_rlist *l, int64_t esize, xo_elem_fn dup, xo_elem_fn drop) {
+	return (xo_rlist *)(intptr_t)xo_x_obj_rl_copy_n(XO_ADDR(l), esize, XO_ADDR(dup), XO_ADDR(drop));
+}
+static xo_rlist *t_rl_grow(xo_rlist *l, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_grow_n(XO_ADDR(l), esize); }

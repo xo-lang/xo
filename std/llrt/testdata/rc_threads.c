@@ -145,7 +145,7 @@ static void test_string(void) {
 
 // ---------------------------------------------------------------------------
 // 2. A shared List[Str]: threads read it, retain and drop elements, and
-// update their own copy (`reuse`: xo_rl_copy copies a list others hold,
+// update their own copy (`reuse`: t_rl_copy copies a list others hold,
 // dup retaining the shared elements), then drop everything.
 
 static xo_rlist *shared_l;
@@ -155,7 +155,7 @@ static void *t_list(void *arg) {
 	(void)arg;
 	for (int i = 0; i < ITER / 8; i++) {
 		rc_inc(&shared_l->rc); // a copy of the value, about to be updated
-		xo_rlist *mine = xo_rl_copy(shared_l, sizeof(str), str_dup, str_drop);
+		xo_rlist *mine = t_rl_copy(shared_l, sizeof(str), str_dup, str_drop);
 		CHECK(mine != shared_l);
 		CHECK(mine->rc == 1);
 		// mine[3] = "changed": release the old element, store a new one
@@ -194,7 +194,7 @@ static void *t_claim(void *arg) {
 	(void)arg;
 	xo_rlist *mine = shared_l;
 	if (rc_load(&mine->rc) != 1) { // the inline check of `reuse` (an unordered load)
-		mine = xo_rl_copy(shared_l, sizeof(str), str_dup, str_drop);
+		mine = t_rl_copy(shared_l, sizeof(str), str_dup, str_drop);
 	}
 	if (mine == shared_l) {
 		__atomic_fetch_add(&in_place, 1, __ATOMIC_RELAXED);
