@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit items B25 stages 2 and 3, B15 part 1):
+  commands start from Xo (std/native/llrt/proc.xo: the PATH lookup,
+  posix_spawn on macOS, fork and execve on Linux), one Proc.run path for
+  every OS, and a test binary's report channel in testworld.xo;
+  xo_proc.c and xo_testing.c lose about 400 lines.
 - Native runtime (zero-C audit item B19, part 1): Mutex[T] (lock,
   unlock, with_read's shares, the reader handoff, XO-F004's held list)
   is Xo (std/native/llrt/mutex.xo), which generated code calls directly.
