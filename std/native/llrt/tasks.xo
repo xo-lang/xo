@@ -125,7 +125,18 @@ fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
 
 /// The list the C returns while a canceled operation unwinds (immortal).
-fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+pub fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+
+/// Blocks the context c until its park is signaled or, when cancelable,
+/// its node is canceled (the C's park_wait: it flushes the pending
+/// output, helps on a root thread, tells ThreadSanitizer).
+pub fn park_wait(c: Int, cancelable: Bool) {
+  let _r = rt.sched_rt(RT_PARK_WAIT, c, if cancelable { 1 } else { 0 })
+}
+
+/// A new object of n bytes, zeroed, with one reference and the C free
+/// function in services record word k (ctx.xo SV_*_FREE).
+pub fn new_handle(n: Int, k: Int) -> Int { new_object(n, k) }
 
 /// A cancellation point of the context c (xo_rt.c canceled): whether it
 /// reports cancellation, c then unwinding.
@@ -138,7 +149,7 @@ fn canceled(c: Int) -> Bool {
 }
 
 /// Adds entry e at the end of wait list l (the oldest waiter is first).
-fn wl_add(l: Int, e: Int) {
+pub fn wl_add(l: Int, e: Int) {
   st(e, E_NEXT, 0)
   let last = ld(l, WL_LAST)
   st(e, E_PREV, last)
@@ -150,7 +161,7 @@ fn wl_add(l: Int, e: Int) {
   st(l, WL_LAST, e)
 }
 
-fn wl_del(l: Int, e: Int) {
+pub fn wl_del(l: Int, e: Int) {
   let p = ld(e, E_PREV)
   let n = ld(e, E_NEXT)
   if p != 0 {
@@ -168,15 +179,19 @@ fn wl_del(l: Int, e: Int) {
 /// Waits on wait list l of an object whose lock mu is held, mu held
 /// again on return (xo_rt.c wl_wait): false when the context c was
 /// canceled (and cancelable).
-fn wl_wait(c: Int, mu: Int, l: Int, cancelable: Bool) -> Bool {
+fn wl_wait(c: Int, mu: Int, l: Int, cancelable: Bool) -> Bool { wl_wait_as(c, mu, l, cancelable, 0) }
+
+/// wl_wait with the entry's writer flag (a Mutex waiter that wants the
+/// lock exclusively: 1).
+pub fn wl_wait_as(c: Int, mu: Int, l: Int, cancelable: Bool, writer: Int) -> Bool {
   let e = c + ctx.C_WENT
   st(e, E_PARK, c + ctx.C_PARK)
-  st4(e, E_WRITER, 0)
+  st4(e, E_WRITER, writer)
   st4(e, E_WRITER + 4, 0)
   pool.park_reset(c + ctx.C_PARK)
   wl_add(l, e)
   pool.unlock(mu)
-  let _r = rt.sched_rt(RT_PARK_WAIT, c, if cancelable { 1 } else { 0 })
+  park_wait(c, cancelable)
   pool.lock(mu)
   wl_del(l, e)
   !(cancelable && budget.canceled(c))
@@ -380,6 +395,13 @@ fn h_release(p: Int) {
   if rc.dec(p) != 0 {
     let _r = rt.sched_rt(RT_H_FREE, p, 0)
   }
+}
+
+/// Signals the park p (the C's park_signal: ThreadSanitizer's release,
+/// then pool.xo park_signal).
+pub fn park_signal(p: Int) {
+  tsan(RT_TSAN_RELEASE, p)
+  pool.park_signal(ctx.pool(), p)
 }
 
 /// Tells ThreadSanitizer (when the C runtime is built with it) that a

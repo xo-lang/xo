@@ -18,6 +18,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
 use native/llrt/netpolicy
+use native/llrt/mutex
 use native/llrt/num
 use native/llrt/obj
 use native/llrt/poll
@@ -652,3 +653,16 @@ fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
 /// The calling root thread's worker record of pool p (poolsetup.xo
 /// root_worker), made on first use.
 fn pool_root_worker(p: Int) -> Int { poolsetup.root_worker(p) }
+
+// Mutex[T] (std/native/llrt/mutex.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. m a Mutex, l its value list.
+
+fn mutex_new(l: Int, drop: Int) -> Int { mutex.new(l, drop) }
+
+fn mutex_lock(m: Int, lp: Int, ln: Int) -> Int { mutex.lock(m, lp, ln) }
+
+fn mutex_unlock(m: Int, l: Int) { mutex.unlock(m, l) }
+
+fn mutex_rlock(m: Int, lp: Int, ln: Int) -> Int { mutex.rlock(m, lp, ln) }
+
+fn mutex_runlock(m: Int, l: Int) { mutex.runlock(m, l) }

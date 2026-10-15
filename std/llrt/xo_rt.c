@@ -1822,38 +1822,6 @@ static int canceled(xo_ctx *c) {
 	return 0;
 }
 
-// held_check and held_del (the Mutexes a context holds, XO-F004) stay C
-// with the C Mutex code that calls them on every Mutex.with: a call into
-// Xo from there cost about 67 instructions per with on arm64 (B17,
-// bench/perf/ctx mutex 1.146); they move with the Mutexes (B19).
-static void held_check(xo_ctx *c, void *m, const char *what, const char *loc, int64_t n) {
-	for (int i = 0; i < c->nheld; i++) {
-		if (c->held[i].m == m) {
-			char *prev = cstr_of(c->held[i].loc, c->held[i].n);
-			char *msg = malloc(strlen(prev) + 128);
-			sprintf(msg, "XO-F004: Mutex.%s called re-entrantly in one task; the mutex is already held from %s", what, prev);
-			fault_at(msg, loc, n);
-		}
-	}
-	if (c->nheld == c->capheld) {
-		c->capheld = c->capheld ? c->capheld * 2 : 4;
-		c->held = realloc(c->held, (size_t)c->capheld * sizeof(xo_held));
-		if (!c->held) {
-			xo_oom();
-		}
-	}
-	c->held[c->nheld++] = (xo_held){m, loc, n};
-}
-
-static void held_del(xo_ctx *c, void *m) {
-	for (int i = 0; i < c->nheld; i++) {
-		if (c->held[i].m == m) {
-			c->held[i] = c->held[--c->nheld];
-			return;
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // The worker pool (decisions 0068, 0069, 0077)
 //
@@ -1949,7 +1917,6 @@ static struct {
 	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
 } pool = {.dlk = &dlk}; // a root waits before the pool starts
 
-__attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal[XO_TLS_W]; }
 
 static void rt_init(void) {}
 
@@ -1991,6 +1958,7 @@ static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n
 
 static void task_free(void *p);
 static void scope_free(void *p);
+static void mutex_free(void *p);
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -2003,16 +1971,17 @@ static struct {
 	int64_t tsan;
 	int *stats;
 	xo_lock once; // poolsetup.xo ready's lock
+	void (*mutex_free)(void *);
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats};
+	&rtstats, 0, mutex_free};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48,
                "ctx.xo SV_*");
 
 static int64_t svc_addr(void) { return XO_ADDR(&svc); }
@@ -3305,188 +3274,37 @@ typedef struct {
 	xo_wl waiters;
 } xo_mutex;
 
-// mutex_wake wakes the waiters that can take m now (m->mu held). Phase
-// fair, as Go's RWMutex: after a writer's release the readers waiting
-// then get the lock together (handed over: mutex_grant_readers), and the
-// next writer waits for them; after the last reader's release (or when
-// no reader waits) the oldest waiting writer is woken. Waking every
-// waiter at each release made 32 contending request tasks park about 12
-// times per request and convoy on m->mu
-// (bench/results/perf-throughput-2026-10-08.md, "Native backends");
-// waking readers that then checked again parked them again whenever a
-// writer had queued meanwhile, 3.6 parks per access with 64 tasks
-// (bench/results/native-runtime-2026-10-10.md, decision 0118). A woken
-// writer checks again and waits again when another writer took m first
-// (barging); whoever holds m wakes the next one when it releases, so no
-// wake up is lost.
-// mutex_signal wakes a waiter of a Mutex into the waking thread's ring,
-// not its next: the waker still holds the thread for the rest of its
-// request, and a fiber in next waits for that (thieves leave next alone
-// for XO_NEXT_GRACE_NS) while the lock sits free; in the ring a spinning
-// worker takes it at once. Measured on bench/perf/http: p99 900 to 800
-// us (bench/results/perf-throughput-2026-10-08.md, "Native backends").
-static void mutex_signal(xo_park *p) {
-	xo_worker *w = w_get();
-	if (w) {
-		w->nonext = 1;
-	}
-	park_signal(p);
-	if (w) {
-		w->nonext = 0;
-	}
-}
-
-// mutex_grant_readers hands m to every waiting reader (m->mu held, no
-// writer holds m): each is counted in m->readers, taken off the list, and
-// marked granted before it is woken, so it runs without taking m->mu or
-// checking again. Its list entry lives on its stack: nothing here
-// touches it after the wake up.
-static void mutex_grant_readers(xo_mutex *m) {
-	xo_went *e = m->waiters.first;
-	while (e) {
-		xo_went *next = e->next;
-		if (!e->writer) {
-			xo_park *p = e->park;
-			wl_del(&m->waiters, e);
-			m->readers++;
-			m->rwait--;
-			__atomic_store_n(&e->granted, 1, __ATOMIC_RELEASE);
-			mutex_signal(p);
-		}
-		e = next;
-	}
-}
-
-// after_writer: a writer just released m (readers go first).
-static void mutex_wake(xo_mutex *m, int after_writer) {
-	if (m->writer || !m->waiters.first) {
-		return;
-	}
-	if (m->rwait > 0 && (after_writer || m->wwait == 0)) {
-		mutex_grant_readers(m);
-		return;
-	}
-	if (m->wwait > 0 && m->readers == 0) {
-		for (xo_went *e = m->waiters.first; e; e = e->next) {
-			if (e->writer) {
-				mutex_signal(e->park);
-				return;
-			}
-		}
-	}
-}
-
+// The Mutex's operations are mutex.xo's (B19), which generated code calls
+// through its exports; these forward for older xo's code. mutex_free
+// stays C (the free function the handle names, through the services
+// record).
 static void mutex_free(void *p) {
 	xo_mutex *m = p;
 	list_release(m->slot, m->drop);
 	xo_free(m);
 }
 
-xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) {
-	xo_mutex *m = xo_alloc(sizeof(xo_mutex));
-	memset(m, 0, sizeof *m);
-	h_init(m, mutex_free);
-	m->slot = l;
-	m->drop = (xo_ldrop)drop;
-	return m;
-}
+int64_t xo_x_mutex_new(int64_t l, int64_t drop);
+int64_t xo_x_mutex_lock(int64_t m, int64_t lp, int64_t ln);
+void xo_x_mutex_unlock(int64_t m, int64_t l);
+int64_t xo_x_mutex_rlock(int64_t m, int64_t lp, int64_t ln);
+void xo_x_mutex_runlock(int64_t m, int64_t l);
 
-// xo_mutex_lock takes m exclusively for `with` (waiting is a
-// cancellation point that unwinds) and moves its value out to the
-// caller, who gives it back with xo_mutex_unlock.
-xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	held_check(c, m, "with", loc, n);
-	lk(&m->mu);
-	if (m->writer || m->readers > 0) {
-		m->wwait++;
-		while (m->writer || m->readers > 0) {
-			if (!wl_wait_as(c, &m->mu, &m->waiters, 1, 1)) {
-				m->wwait--;
-				mutex_wake(m, 0); // readers held back by this writer, or the next writer
-				unlk(&m->mu);
-				held_del(c, m);
-				c->unwinding = 1;
-				return &empty_list;
-			}
-		}
-		m->wwait--;
-	}
-	m->writer = 1;
-	xo_rlist *l = m->slot;
-	m->slot = NULL;
-	unlk(&m->mu);
-	return l;
-}
+xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) { return (xo_mutex *)(intptr_t)xo_x_mutex_new(XO_ADDR(l), drop); }
 
-void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
-	lk(&m->mu);
-	m->slot = l;
-	m->writer = 0;
-	mutex_wake(m, 1);
-	unlk(&m->mu);
-	held_del(ctx(), m);
-}
+xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_lock(XO_ADDR(m), XO_ADDR(loc), n); }
 
-// xo_mutex_rlock takes m shared for `with_read` and returns a reference
-// to its value.
-xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	held_check(c, m, "with_read", loc, n);
-	lk(&m->mu);
-	if (m->writer || m->wwait > 0) {
-		// wait until a writer's release hands m over (mutex_grant_readers);
-		// a cancellation unwinds unless m was handed over first
-		xo_went e = {.park = &c->park};
-		park_reset(&c->park);
-		wl_add(&m->waiters, &e);
-		m->rwait++;
-		unlk(&m->mu);
-		for (;;) {
-			park_wait(c, 1);
-			if (__atomic_load_n(&e.granted, __ATOMIC_ACQUIRE)) {
-				// the last writer set m->slot under m->mu before the
-				// grant, and none can change it while this share is held
-				xo_rlist *l = m->slot;
-				rc_inc(&l->rc);
-				return l;
-			}
-			lk(&m->mu);
-			if (e.granted) {
-				break;
-			}
-			if (ctx_canceled(c)) {
-				wl_del(&m->waiters, &e);
-				m->rwait--;
-				unlk(&m->mu);
-				held_del(c, m);
-				c->unwinding = 1;
-				return &empty_list;
-			}
-			park_reset(&c->park);
-			unlk(&m->mu);
-		}
-	} else {
-		m->readers++;
-	}
-	xo_rlist *l = m->slot;
-	rc_inc(&l->rc);
-	unlk(&m->mu);
-	return l;
-}
+void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_unlock(XO_ADDR(m), XO_ADDR(l)); }
 
-// xo_mutex_runlock gives back a reader's reference and its share of m.
-void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
-	if (rc_dec(&l->rc)) {
-		list_release(l, m->drop); // not reached: the mutex holds it
-	}
-	lk(&m->mu);
-	if (--m->readers == 0) {
-		mutex_wake(m, 0);
-	}
-	unlk(&m->mu);
-	held_del(ctx(), m);
-}
+xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_rlock(XO_ADDR(m), XO_ADDR(loc), n); }
+
+void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_runlock(XO_ADDR(m), XO_ADDR(l)); }
+
+_Static_assert(offsetof(xo_mutex, mu) == 16 && offsetof(xo_mutex, writer) == 24 && offsetof(xo_mutex, readers) == 32 &&
+                   offsetof(xo_mutex, wwait) == 40 && offsetof(xo_mutex, rwait) == 48 && offsetof(xo_mutex, slot) == 56 &&
+                   offsetof(xo_mutex, drop) == 64 && offsetof(xo_mutex, waiters) == 72 && sizeof(xo_mutex) == 88 &&
+                   offsetof(xo_went, granted) == 28,
+               "mutex.xo M_*");
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)

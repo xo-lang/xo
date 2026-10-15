@@ -1,0 +1,289 @@
+// Mutex[T] (core 5.4, std.md 2.7; the zero-C audit's B19, decision
+// 0229's rules): a readers and writer lock with writers preferred,
+// holding its value in a shared list of one. The record is the C's
+// xo_mutex (asserted, `mutex.xo M_*`), a handle whose free function
+// (the C's mutex_free) releases the value. A context's held Mutexes
+// (re-entrant use faults, XO-F004) are the context's C_HELD array.
+//
+// Generated code calls the exports (cabi.xo mutex_*) directly; the C
+// entry points forward for older xo's code.
+use native/llrt/budget
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/tasks
+use native/rt
+
+/// xo_mutex (88 bytes): the header, the lock of the fields below, a
+/// writer holds it (a C int), the readers holding it, the writers and
+/// readers waiting, the value (a list of one; 0 while a writer has it),
+/// the value's drop function, the wait list.
+const M_MU = 16
+const M_WRITER = 24
+const M_READERS = 32
+const M_WWAIT = 40
+const M_RWAIT = 48
+const M_SLOT = 56
+const M_DROP = 64
+const M_WAITERS = 72
+const M_SIZE = 88
+
+/// A wait list's first entry, an entry's park, next, writer, and granted
+/// (tasks.xo E_*).
+const WL_FIRST = 0
+const E_PARK = 0
+const E_NEXT = 16
+const E_WRITER = 24
+const E_GRANTED = 28
+
+/// The thread's worker record's flag that puts the fibers it wakes in
+/// its ring, not its next (pool.xo W_NONEXT), and its thread local
+/// (sched.xo TLS_W).
+const W_NONEXT = 2256
+const TLS_W = 2
+
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
+
+fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
+
+/// Wakes a waiter of a Mutex into the waking thread's ring, not its next
+/// (mutex_signal): the waker still holds the thread for the rest of its
+/// request, and a fiber in next waits for that while the lock sits free;
+/// in the ring a spinning worker takes it at once (bench/perf/http p99
+/// 900 to 800 us, bench/results/perf-throughput-2026-10-08.md).
+fn signal(p: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    st(w, W_NONEXT, 1)
+  }
+  tasks.park_signal(p)
+  if w != 0 {
+    st(w, W_NONEXT, 0)
+  }
+}
+
+/// Hands m to every waiting reader (m's lock held, no writer holds m):
+/// each is counted in the readers, taken off the list, and marked
+/// granted before it is woken, so it runs without taking the lock or
+/// checking again. Nothing here touches its entry after the wake up.
+fn grant_readers(m: Int) {
+  let l = m + M_WAITERS
+  var e = ld(l, WL_FIRST)
+  while e != 0 {
+    let next = ld(e, E_NEXT)
+    if ld4(e, E_WRITER) == 0 {
+      let p = ld(e, E_PARK)
+      tasks.wl_del(l, e)
+      st(m, M_READERS, ld(m, M_READERS) + 1)
+      st(m, M_RWAIT, ld(m, M_RWAIT) - 1)
+      // granted is a C int beside writer: a release fence, then the
+      // store (C11's fence to store order)
+      rt.fence(RELEASE)
+      rt.mem_store(e, E_GRANTED, 1, 4)
+      signal(p)
+    }
+    e = next
+  }
+}
+
+/// Wakes the waiters that can take m now (m's lock held), phase fair as
+/// Go's RWMutex (xo_rt.c mutex_wake, its comment the measurements):
+/// after a writer's release (after_writer) the readers waiting then get
+/// the lock together, the next writer waits for them; after the last
+/// reader's release (or when no reader waits) the oldest waiting writer
+/// is woken.
+fn wake(m: Int, after_writer: Bool) {
+  if ld4(m, M_WRITER) != 0 || ld(m, M_WAITERS + WL_FIRST) == 0 {
+    return
+  }
+  if ld(m, M_RWAIT) > 0 && (after_writer || ld(m, M_WWAIT) == 0) {
+    grant_readers(m)
+    return
+  }
+  if ld(m, M_WWAIT) > 0 && ld(m, M_READERS) == 0 {
+    var e = ld(m, M_WAITERS + WL_FIRST)
+    while e != 0 {
+      if ld4(e, E_WRITER) != 0 {
+        signal(ld(e, E_PARK))
+        return
+      }
+      e = ld(e, E_NEXT)
+    }
+  }
+}
+
+/// `Mutex.new(v)` (xo_mutex_new): l is the value in a list of one
+/// (consumed), drop its drop function.
+pub fn new(l: Int, drop: Int) -> Int {
+  let m = tasks.new_handle(M_SIZE, ctx.SV_MUTEX_FREE)
+  st(m, M_SLOT, l)
+  st(m, M_DROP, drop)
+  m
+}
+
+/// Records that the context c holds m, taken by the method whose name is
+/// the wn bytes at wp (with, with_read) at the ln bytes at lp; a Mutex
+/// the context already holds faults there (XO-F004: re-entrant use would
+/// deadlock). The entries (24 bytes: the Mutex, the location's address
+/// and length) are a malloc'd array the C frees with the context.
+fn held_add(c: Int, m: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
+  let n = ld4(c, ctx.C_NHELD)
+  let h = ld(c, ctx.C_HELD)
+  for i in 0..n {
+    let e = h + 24 * i
+    if ld(e, 0) == m {
+      let prev = raw.str_at(ld(e, 8), ld(e, 16))
+      let what = raw.str_at(wp, wn)
+      fault.raise_str_at("XO-F004: Mutex.${what} called re-entrantly in one task; the mutex is already held from ${prev}", lp, ln)
+    }
+  }
+  var a = h
+  let cap = ld4(c, ctx.C_CAPHELD)
+  if n == cap {
+    let nc = if cap == 0 { 4 } else { 2 * cap }
+    // malloc'd at the block's own address, as the C's realloc kept it
+    // (gotchas/heap-large-prefix-not-malloc-address.md)
+    a = if h == 0 { rt.heap_large(24 * nc) - 8 } else { rt.heap_large_resize(h, 24 * nc) - 8 }
+    st(c, ctx.C_HELD, a)
+    st4(c, ctx.C_CAPHELD, nc)
+  }
+  let e = a + 24 * n
+  st(e, 0, m)
+  st(e, 8, lp)
+  st(e, 16, ln)
+  st4(c, ctx.C_NHELD, n + 1)
+}
+
+/// Removes m from the Mutexes the context c holds.
+fn held_del(c: Int, m: Int) {
+  let n = ld4(c, ctx.C_NHELD)
+  let h = ld(c, ctx.C_HELD)
+  for i in 0..n {
+    let e = h + 24 * i
+    if ld(e, 0) == m {
+      rt.mem_copy(e, h + 24 * (n - 1), 24)
+      st4(c, ctx.C_NHELD, n - 1)
+      return
+    }
+  }
+}
+
+/// Takes m exclusively for `with` (xo_mutex_lock; waiting is a
+/// cancellation point that unwinds) and moves its value out to the
+/// caller, who gives it back with unlock. The location is the ln bytes at
+/// lp.
+pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
+  let c = ctx.cur()
+  let w = "with"
+  held_add(c, m, raw.data(w), 4, lp, ln)
+  pool.lock(m + M_MU)
+  if ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
+    st(m, M_WWAIT, ld(m, M_WWAIT) + 1)
+    while ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
+      if !tasks.wl_wait_as(c, m + M_MU, m + M_WAITERS, true, 1) {
+        st(m, M_WWAIT, ld(m, M_WWAIT) - 1)
+        // readers held back by this writer, or the next writer
+        wake(m, false)
+        pool.unlock(m + M_MU)
+        held_del(c, m)
+        st4(c, ctx.C_UNWINDING, 1)
+        return tasks.empty_list()
+      }
+    }
+    st(m, M_WWAIT, ld(m, M_WWAIT) - 1)
+  }
+  st4(m, M_WRITER, 1)
+  let l = ld(m, M_SLOT)
+  st(m, M_SLOT, 0)
+  pool.unlock(m + M_MU)
+  l
+}
+
+/// Gives the value l back and releases m (xo_mutex_unlock).
+pub fn unlock(m: Int, l: Int) {
+  pool.lock(m + M_MU)
+  st(m, M_SLOT, l)
+  st4(m, M_WRITER, 0)
+  wake(m, true)
+  pool.unlock(m + M_MU)
+  held_del(ctx.cur(), m)
+}
+
+/// Takes m shared for `with_read` (xo_mutex_rlock) and returns a
+/// reference to its value. A reader that waits is handed m by a writer's
+/// release (grant_readers); a cancellation unwinds unless m was handed
+/// over first.
+pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
+  let c = ctx.cur()
+  let w = "with_read"
+  held_add(c, m, raw.data(w), 9, lp, ln)
+  pool.lock(m + M_MU)
+  if ld4(m, M_WRITER) != 0 || ld(m, M_WWAIT) > 0 {
+    let e = c + ctx.C_WENT
+    st(e, E_PARK, c + ctx.C_PARK)
+    st4(e, E_WRITER, 0)
+    st4(e, E_GRANTED, 0)
+    pool.park_reset(c + ctx.C_PARK)
+    tasks.wl_add(m + M_WAITERS, e)
+    st(m, M_RWAIT, ld(m, M_RWAIT) + 1)
+    pool.unlock(m + M_MU)
+    while true {
+      tasks.park_wait(c, true)
+      let granted = rt.mem_load(e, E_GRANTED, 4)
+      rt.fence(ACQUIRE)
+      if granted != 0 {
+        // the last writer set the value under m's lock before the grant,
+        // and none can change it while this share is held
+        let l = ld(m, M_SLOT)
+        rc.inc(l)
+        return l
+      }
+      pool.lock(m + M_MU)
+      if ld4(e, E_GRANTED) != 0 {
+        break
+      }
+      if budget.canceled(c) {
+        tasks.wl_del(m + M_WAITERS, e)
+        st(m, M_RWAIT, ld(m, M_RWAIT) - 1)
+        pool.unlock(m + M_MU)
+        held_del(c, m)
+        st4(c, ctx.C_UNWINDING, 1)
+        return tasks.empty_list()
+      }
+      pool.park_reset(c + ctx.C_PARK)
+      pool.unlock(m + M_MU)
+    }
+  } else {
+    st(m, M_READERS, ld(m, M_READERS) + 1)
+  }
+  let l = ld(m, M_SLOT)
+  rc.inc(l)
+  pool.unlock(m + M_MU)
+  l
+}
+
+/// Gives back a reader's reference l and its share of m
+/// (xo_mutex_runlock).
+pub fn runlock(m: Int, l: Int) {
+  if rc.dec(l) != 0 {
+    // not reached: the Mutex holds the value
+    let _d = rt.call_c2(ld(m, M_DROP), l, 0)
+  }
+  pool.lock(m + M_MU)
+  let r = ld(m, M_READERS) - 1
+  st(m, M_READERS, r)
+  if r == 0 {
+    wake(m, false)
+  }
+  pool.unlock(m + M_MU)
+  held_del(ctx.cur(), m)
+}

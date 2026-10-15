@@ -11,8 +11,8 @@
 // unwinding flag, which generated code reaches through cabi.xo's exports
 // (the arm64 and LLVM emitters call them directly; older xo's code
 // through the C xo_shield_* and xo_unwinding forwarders). The budgets
-// are budget.xo's. The Mutexes a context holds (C_HELD, XO-F004) stay
-// with the C Mutex code until B19. Making a root context for a bare thread stays C (ctx_root:
+// are budget.xo's, the Mutexes a context holds (C_HELD, XO-F004)
+// mutex.xo's. Making a root context for a bare thread stays C (ctx_root:
 // the deadlock counter and the park's setup are the scheduler's, B18 to
 // B20).
 //
@@ -84,6 +84,8 @@ pub const SV_TSAN = 24
 pub const SV_STATS = 32
 /// The lock word of the pool's setup (poolsetup.xo ready).
 pub const SV_ONCE = 40
+/// A Mutex's free function (mutex.xo).
+pub const SV_MUTEX_FREE = 48
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).

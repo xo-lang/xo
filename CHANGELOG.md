@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B19, part 1): Mutex[T] (lock,
+  unlock, with_read's shares, the reader handoff, XO-F004's held list)
+  is Xo (std/native/llrt/mutex.xo), which generated code calls directly.
 - Native runtime (zero-C audit item B29, part 1): the HTTP/2 client's
   exchange is Xo (std/native/llrt/http1.xo h2_exchange, H2X): the
   request's HEADERS and DATA within the server's windows, the server's
