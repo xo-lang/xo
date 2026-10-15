@@ -49,23 +49,54 @@ pub const GROUP_SECP384R1_MLKEM1024: Int = 0x11ed
 // ---------------------------------------------------------------------------
 // The field and the ring
 
+// The field's arithmetic wraps (rt.int_wrap: no overflow check): every
+// value here is a field element below q (12 bits), a sum or difference
+// of two below 2q, or a product of two below 2^24 (with a gamma or zeta
+// factor, a sum of two such products below 2^25), so nothing comes near
+// 2^63.
+
+fn add(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn sub(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mul(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+// The field operations are written on rt.int_wrap directly, calling no
+// other Xo function: the arm64 inliner copies a callee's body as it was
+// before its own calls were inlined, so a helper that calls a helper
+// stays a call in the NTT's loop (2026-10-15).
+
 /// a - q when a >= q, for a < 2q.
 fn reduce_once(a: Int) -> Int {
-  let x = a - Q
-  x + (rt.int_wrap(4, x, 63) * Q)
+  let x = rt.int_wrap(1, a, Q)
+  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
 }
 
-fn fadd(a: Int, b: Int) -> Int { reduce_once(a + b) }
+fn fadd(a: Int, b: Int) -> Int {
+  let x = rt.int_wrap(1, rt.int_wrap(0, a, b), Q)
+  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
+}
 
-fn fsub(a: Int, b: Int) -> Int { reduce_once(a - b + Q) }
+/// a - b + q, reduced once: a - b when it is not negative.
+fn fsub(a: Int, b: Int) -> Int {
+  let x = rt.int_wrap(1, a, b)
+  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
+}
 
 /// Barrett reduction of a < 2^25 (Go's fieldReduce).
 fn freduce(a: Int) -> Int {
-  let quotient = (a * 5039) >> 24
-  reduce_once(a - quotient * Q)
+  let quotient = rt.int_wrap(4, rt.int_wrap(2, a, 5039), 24)
+  let x = rt.int_wrap(1, rt.int_wrap(1, a, rt.int_wrap(2, quotient, Q)), Q)
+  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
 }
 
-fn fmul(a: Int, b: Int) -> Int { freduce(a * b) }
+/// freduce of a * b.
+fn fmul(a: Int, b: Int) -> Int {
+  let p = rt.int_wrap(2, a, b)
+  let quotient = rt.int_wrap(4, rt.int_wrap(2, p, 5039), 24)
+  let x = rt.int_wrap(1, rt.int_wrap(1, p, rt.int_wrap(2, quotient, Q)), Q)
+  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
+}
 
 /// Go's compress: round(2^d x / q) mod 2^d.
 fn compress(x: Int, d: Int) -> Int {
@@ -84,7 +115,7 @@ fn decompress(y: Int, d: Int) -> Int {
 }
 
 fn zeros() -> List[Int] {
-  var p: List[Int] = []
+  var p: List[Int] = List.with_capacity(N)
   for _ in 0..N {
     p.push(0)
   }
@@ -92,45 +123,56 @@ fn zeros() -> List[Int] {
 }
 
 fn padd(a: List[Int], b: List[Int]) -> List[Int] {
-  var s = zeros()
-  for i in 0..N {
-    s[i] = fadd(a[i], b[i])
-  }
+  var s = a
+  add_into(s, b)
   s
 }
 
-fn psub(a: List[Int], b: List[Int]) -> List[Int] {
-  var s = zeros()
+/// a += b, in place.
+fn add_into(var a: List[Int], b: List[Int]) {
   for i in 0..N {
-    s[i] = fsub(a[i], b[i])
+    a[i] = fadd(a[i], b[i])
+  }
+}
+
+fn psub(a: List[Int], b: List[Int]) -> List[Int] {
+  var s = a
+  for i in 0..N {
+    s[i] = fsub(s[i], b[i])
   }
   s
 }
 
 const ZETAS: List[Int] = [1, 1729, 2580, 3289, 2642, 630, 1897, 848, 1062, 1919, 193, 797, 2786, 3260, 569, 1746, 296, 2447, 1339, 1476, 3046, 56, 2240, 1333, 1426, 2094, 535, 2882, 2393, 2879, 1974, 821, 289, 331, 3253, 1756, 1197, 2304, 2277, 2055, 650, 1977, 2513, 632, 2865, 33, 1320, 1915, 2319, 1435, 807, 452, 1438, 2868, 1534, 2402, 2647, 2617, 1481, 648, 2474, 3110, 1227, 910, 17, 2761, 583, 2649, 1637, 723, 2288, 1100, 1409, 2662, 3281, 233, 756, 2156, 3015, 3050, 1703, 1651, 2789, 1789, 1847, 952, 1461, 2687, 939, 2308, 2437, 2388, 733, 2337, 268, 641, 1584, 2298, 2037, 3220, 375, 2549, 2090, 1645, 1063, 319, 2773, 757, 2099, 561, 2466, 2594, 2804, 1092, 403, 1026, 1143, 2150, 2775, 886, 1722, 1212, 1874, 1029, 2110, 2935, 885, 2154]
 
-fn zeta(i: Int) -> Int { ZETAS[i] }
 
 const GAMMAS: List[Int] = [17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692, 723, 2606, 2288, 1041, 1100, 2229, 1409, 1920, 2662, 667, 3281, 48, 233, 3096, 756, 2573, 2156, 1173, 3015, 314, 3050, 279, 1703, 1626, 1651, 1678, 2789, 540, 1789, 1540, 1847, 1482, 952, 2377, 1461, 1868, 2687, 642, 939, 2390, 2308, 1021, 2437, 892, 2388, 941, 733, 2596, 2337, 992, 268, 3061, 641, 2688, 1584, 1745, 2298, 1031, 2037, 1292, 3220, 109, 375, 2954, 2549, 780, 2090, 1239, 1645, 1684, 1063, 2266, 319, 3010, 2773, 556, 757, 2572, 2099, 1230, 561, 2768, 2466, 863, 2594, 735, 2804, 525, 1092, 2237, 403, 2926, 1026, 2303, 1143, 2186, 2150, 1179, 2775, 554, 886, 2443, 1722, 1607, 1212, 2117, 1874, 1455, 1029, 2300, 2110, 1219, 2935, 394, 885, 2444, 2154, 1175]
 
-fn gamma(i: Int) -> Int { GAMMAS[i] }
 
 /// The NTT (FIPS 203 Algorithm 9), in place.
 fn ntt(f0: List[Int]) -> List[Int] {
+  // the constant list once (a constant's every use reads it through
+  // const_once)
+  let zetas = ZETAS
   var f = f0
   var k = 1
   var len = 128
   while len >= 2 {
     var start = 0
     while start < N {
-      let z = zeta(k)
+      let z = zetas[k]
       k += 1
-      for j in start..start + len {
-        let t = fmul(z, f[j + len])
-        f[j + len] = fsub(f[j], t)
-        f[j] = fadd(f[j], t)
+      var j = start
+      let end = add(start, len)
+      while j < end {
+        let jl = add(j, len)
+        let t = fmul(z, f[jl])
+        let fj = f[j]
+        f[jl] = fsub(fj, t)
+        f[j] = fadd(fj, t)
+        j = add(j, 1)
       }
-      start += 2 * len
+      start = add(start, add(len, len))
     }
     len = len / 2
   }
@@ -139,20 +181,26 @@ fn ntt(f0: List[Int]) -> List[Int] {
 
 /// The inverse NTT (FIPS 203 Algorithm 10).
 fn inverse_ntt(f0: List[Int]) -> List[Int] {
+  let zetas = ZETAS
   var f = f0
   var k = 127
   var len = 2
   while len <= 128 {
     var start = 0
     while start < N {
-      let z = zeta(k)
+      let z = zetas[k]
       k -= 1
-      for j in start..start + len {
+      var j = start
+      let end = add(start, len)
+      while j < end {
+        let jl = add(j, len)
         let t = f[j]
-        f[j] = fadd(t, f[j + len])
-        f[j + len] = freduce(z * (f[j + len] - t + Q))
+        let u = f[jl]
+        f[j] = fadd(t, u)
+        f[jl] = freduce(mul(z, add(sub(u, t), Q)))
+        j = add(j, 1)
       }
-      start += 2 * len
+      start = add(start, add(len, len))
     }
     len = len * 2
   }
@@ -162,20 +210,21 @@ fn inverse_ntt(f0: List[Int]) -> List[Int] {
   f
 }
 
-/// The product in the NTT domain (FIPS 203 Algorithm 11).
-fn ntt_mul(f: List[Int], g: List[Int]) -> List[Int] {
-  var h = zeros()
+/// h += f * g in the NTT domain, in place (the sums of products of
+/// K-PKE, without a product's own list).
+fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
+  let gammas = GAMMAS
   var i = 0
   while i < N {
+    let i1 = add(i, 1)
     let a0 = f[i]
-    let a1 = f[i + 1]
+    let a1 = f[i1]
     let b0 = g[i]
-    let b1 = g[i + 1]
-    h[i] = freduce(a0 * b0 + fmul(a1, b1) * gamma(i / 2))
-    h[i + 1] = freduce(a0 * b1 + a1 * b0)
-    i += 2
+    let b1 = g[i1]
+    h[i] = fadd(h[i], freduce(add(mul(a0, b0), mul(fmul(a1, b1), gammas[rt.int_wrap(4, i, 1)]))))
+    h[i1] = fadd(h[i1], freduce(add(mul(a0, b1), mul(a1, b0))))
+    i = add(i, 2)
   }
-  h
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +235,7 @@ fn ntt_mul(f: List[Int], g: List[Int]) -> List[Int] {
 fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
   var s = sha3.new_shake128()
   sha3.write(s, asn1.cat([rho, byte(ii), byte(jj)]))
-  var a: List[Int] = []
+  var a: List[Int] = List.with_capacity(N)
   while a.len() < N {
     let b = sha3.read(s, 24)
     var off = 0
@@ -333,7 +382,7 @@ fn expand(seed: Bytes, k: Int) -> Key {
   for i in 0..k {
     var ti = e[i]
     for j in 0..k {
-      ti = padd(ti, ntt_mul(a[i * k + j], s[j]))
+      ntt_mul_acc(ti, a[i * k + j], s[j])
     }
     t.push(ti)
   }
@@ -370,14 +419,14 @@ fn pke_encrypt(a: List[List[Int]], t: List[List[Int]], m: Bytes, rnd: Bytes, k: 
   for i in 0..k {
     var uh = zeros()
     for j in 0..k {
-      uh = padd(uh, ntt_mul(a[j * k + i], r[j]))
+      ntt_mul_acc(uh, a[j * k + i], r[j])
     }
     parts.push(encode_d(padd(e1[i], inverse_ntt(uh)), du(k)))
   }
   let mu = decode_d(m, 1)
   var vh = zeros()
   for i in 0..k {
-    vh = padd(vh, ntt_mul(t[i], r[i]))
+    ntt_mul_acc(vh, t[i], r[i])
   }
   parts.push(encode_d(padd(padd(inverse_ntt(vh), e2), mu), dv(k)))
   asn1.cat(parts)
@@ -389,7 +438,7 @@ fn pke_decrypt(s: List[List[Int]], c: Bytes, k: Int) -> Bytes {
   let ul = 32 * du(k)
   for i in 0..k {
     let u = decode_d(c[ul * i..ul * (i + 1)], du(k))
-    mask = padd(mask, ntt_mul(s[i], ntt(u)))
+    ntt_mul_acc(mask, s[i], ntt(u))
   }
   let v = decode_d(c[ul * k..ct_size(k)], dv(k))
   encode_d(psub(v, inverse_ntt(mask)), 1)

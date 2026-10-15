@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- ML-KEM and SHA-3 (std/native/llrt mlkem.xo, sha3.xo): Keccak in locals
+  in Go's in-place form, wrapping field arithmetic, in-place sums of
+  products, constant tables read once, lane-wide squeezes. ML-KEM-768
+  per TLS handshake: arm64 4.66M to 1.64M instructions, llvm 1.90M to
+  1.31M (bench/results/tls-perf-2026-10-15.md); outputs unchanged.
 - Native runtime (decision 0233 step 2, the last services): rt.sched_rt
   and xo_rt.c's xo_sched_rt are gone (the empty list a canceled
   operation returns is a `[]` in tasks.xo; op 16 had no caller left).
