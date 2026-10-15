@@ -7,12 +7,13 @@
 // (2026-10-14) also the exchange's start (cl_start: the pool, the dial,
 // the TLS handshake) and the response's record (R_*, a handle made here,
 // freed by cresp_free) with its ccon (C_*). The C keeps the dial's
-// sockets (xo_net_dial_timeout) and TLS (xo_tls.c on Mbed TLS, through
+// sockets (netconn.xo dial_timeout) and TLS (xo_tls.c on Mbed TLS, through
 // rthttp.cl_tls_* and tls_c_*).
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hconn
 use native/llrt/http1w
+use native/llrt/netconn
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
@@ -896,16 +897,6 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   h
 }
 
-/// The address of cn with a reference added for the record. A parameter
-/// keeps cn alive through the count's update; in start, the local cn is
-/// released at its last use, obj_addr, before an rc.inc after it could
-/// run, and a Conn whose only reference that was is freed.
-fn retain(cn: Conn) -> Int {
-  let a = rt.obj_addr(cn)
-  rc.inc(a)
-  a
-}
-
 fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool) {
   // an idle HTTP/2 connection to the same address, server name, and
   // roots
@@ -922,7 +913,8 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     fail(r, 3, "")
     return
   }
-  let cn = rthttp.net_dial_timeout(raw.data(addr), addr.len(), d)
+  // the connection's handle (its reference is the record's), or 0
+  let cna = netconn.dial_timeout(addr, d)
   let x = ctx.cur()
   let ns = ld(x, ctx.C_NET_STATUS)
   if ns != 0 {
@@ -939,7 +931,6 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     return
   }
   // the record (or the HTTP/2 connection) keeps the net.Conn
-  let cna = retain(cn)
   let pd = ld(cna, 16)
   let c = r + R_C
   st(c, C_PD, pd)

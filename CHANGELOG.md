@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, the xo_rt.c memory block): real-time
+  sections (core 6.5, decision 0133) are Xo: obj.xo queues and drains
+  the deferred frees, std/native/llrt/rtsec.xo enters and leaves the
+  sections and faults with XO-F007; xo_rt.c 144 lines deleted, 24
+  added. hclient.xo dials through netconn.xo's dial_timeout.
+  TestSpecListsEveryFaultCode reads std/native's .xo files too.
+  UNTESTED on linux and windows.
 - Native runtime fix: a task's context, allocated from the Xo heap
   (8 aligned) since B18 part 3, embedded the unwinder's 16 aligned
   exception object, which UndefinedBehaviorSanitizer reported as a

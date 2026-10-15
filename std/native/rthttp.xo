@@ -18,11 +18,6 @@ struct CResp {}
 /// (hserve.xo SK_*).
 struct Sink {}
 
-/// net.dial's connection to the address (host:port) in the n bytes at p
-/// giving up after d ns (0: no limit); a failure is the context's
-/// net_status and net_msg (ctx.xo C_NET_*), with a zero handle.
-fn net_dial_timeout(p: Int, n: Int, d: Int) -> Conn
-
 /// A TLS connection's (xo_tls.c) read into the n bytes at p: the count,
 /// 0 at the end, or -CC_*; its write of n bytes at p: CC_*; the server's
 /// alert after a failure, "" for none (hclient.xo's connection).

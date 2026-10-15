@@ -31,6 +31,7 @@ use native/llrt/poolsetup
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/rtsec
 use native/llrt/sched
 use native/llrt/selects
 use native/llrt/tasks
@@ -234,8 +235,8 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
-fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int, libc: Int, hsize: Int) {
-  obj.heap_init(h, slow, rl_free_rt, rc_defer_rt)
+fn obj_heap_init(h: Int, slow: Int, libc: Int, hsize: Int) {
+  obj.heap_init(h, slow)
   heapos.set_libc(libc)
   if h != 0 {
     heapos.records_init(h, hsize)
@@ -253,9 +254,18 @@ fn heap_nfree(c: Int) -> Int { heapos.nfree(c) }
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
 
-fn obj_rl_free(hw: Int, l: Int, esize: Int, drop: Int) { obj.rl_free(hw, l, esize, drop) }
+/// Queues a free in heap record h's real-time section (xo_rc_free's
+/// string, xo_h_free's handle): 1, or 0 when the queue is full.
+fn obj_rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Int { if obj.rt_defer(h, kind, o, esize, f) { 1 } else { 0 } }
 
-fn obj_rc_defer(h: Int, o: Int, drop: Int) { obj.rc_defer(h, o, drop) }
+/// Real-time sections (rtsec.xo): xo_realtime_enter, xo_realtime_exit
+/// (the function's name and the call's location, as bytes), and a
+/// fault's leaving of the thread's sections.
+fn rt_enter() { rtsec.enter() }
+
+fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
+
+fn rt_fault_leave() { rtsec.fault_leave() }
 
 // Strings (zero-C audit B13): xo_rt.c xo_rs_concat and xo_rs_append,
 // xo_bytes.c's builders, in obj.xo, called by arm64 generated code

@@ -5,8 +5,10 @@ Status: Accepted, implemented (2026-10-10). Spec: core 6.5 (new), 3.5
 `internal/check/realtime.go` (the rules), `internal/parser` and
 `selfhost/parser` (`bound`), `internal/ssa/build_stmt.go` and
 `internal/gen` (the bound check), `internal/ssa/build_call.go` (section
-entry and exit), `std/llrt/xo_rt.c` (`xo_realtime_enter`,
-`xo_realtime_exit`, the deferred free queue). Tests: the
+entry and exit), `std/llrt/xo_rt.c` (`xo_realtime_enter` and
+`xo_realtime_exit`, forwarders since 2026-10-15 to
+`std/native/llrt/rtsec.xo`; the deferred free queue is
+`std/native/llrt/obj.xo` rt_defer and rt_drain). Tests: the
 `internal/check/testdata/golden/realtime_*` goldens, the
 `internal/llvm/testdata/golden/realtime_*` goldens (Go, LLVM, and arm64
 agree), `internal/gen/testdata/golden/test_loop_bound` (fuzzing),

@@ -1,0 +1,93 @@
+// Real-time sections (core 6.5, decision 0133) in Xo (the zero-C audit's
+// memory block; they were std/llrt/xo_rt.c's). A call from code that is
+// not real-time to a function declared `uses realtime` is bracketed by
+// xo_realtime_enter and xo_realtime_exit (C forwarders of cabi.xo's
+// rt_enter and rt_exit). While the thread's depth is above zero, an
+// object whose count reaches zero is queued instead of freed (with what
+// it holds: a list's elements, a closure's captures; obj.xo rt_defer),
+// so the section does work bounded by its own code; the outermost exit
+// frees the queue (obj.xo rt_drain). A full queue frees at once and
+// counts rt_overflow. An allocation inside a section is counted
+// (alloc.xo), and the outermost exit faults with XO-F007 when there was
+// one. A fault leaves every section of the thread (a real-time function
+// cannot catch it).
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/obj
+use native/llrt/process
+use native/llrt/raw
+use native/rt
+
+/// The heap record's section depth and the allocations since the
+/// outermost section began (xo_rt.c xo_heap rt_depth, rt_allocs).
+const RT_DEPTH = 40
+const RT_ALLOCS = 48
+
+/// rt.sched_rt's statistic op and the counter of sections run (xo_rt.c
+/// st rt_section).
+const RT_STAT = 0
+const ST_RT_SECTION = 18
+
+/// The statistics switch (a C int, ctx.xo SV_STATS: -1 until read, then
+/// 0 or 1) read as 4 bytes, zero extended.
+const STATS_UNREAD = 4294967295
+
+/// Enters a real-time section (xo_realtime_enter): the outermost resets
+/// the count of allocations and counts a section (reading XO_RTSTATS
+/// first when nothing read it yet: its list is allocated before the
+/// section begins, so it is not counted).
+pub fn enter() {
+  let h = obj.heap()
+  let d = rt.mem_load(h, RT_DEPTH, 8)
+  if d == 0 {
+    let a = rt.mem_load(ctx.svc(), ctx.SV_STATS, 8)
+    if rt.mem_load(a, 0, 4) == STATS_UNREAD {
+      rt.mem_store(a, 0, if stats_env() { 1 } else { 0 }, 4)
+    }
+    rt.mem_store(h, RT_ALLOCS, 0, 8)
+    if rt.mem_load(a, 0, 4) == 1 {
+      let _s = rt.sched_rt(RT_STAT, ST_RT_SECTION, 0)
+    }
+  }
+  rt.mem_store(h, RT_DEPTH, d + 1, 8)
+}
+
+/// Whether XO_RTSTATS asks for the statistics (set, and not starting
+/// with 0; poolsetup.xo reads it the same way).
+fn stats_env() -> Bool {
+  let e = process.env_real("XO_RTSTATS")
+  !e.is_empty() && !e[0].is_empty() && rt.mem_load(raw.data(e[0]), 0, 1) != 48
+}
+
+/// Leaves a real-time section (xo_realtime_exit) of the function whose
+/// name is the n bytes at np, called at the location of the ln bytes at
+/// lp: the outermost frees what the sections deferred, then faults with
+/// XO-F007 when they allocated.
+pub fn exit(np: Int, n: Int, lp: Int, ln: Int) {
+  let h = obj.heap()
+  let d = rt.mem_load(h, RT_DEPTH, 8) - 1
+  rt.mem_store(h, RT_DEPTH, d, 8)
+  if d > 0 {
+    return
+  }
+  obj.rt_drain(h)
+  let k = rt.mem_load(h, RT_ALLOCS, 8)
+  if k == 0 {
+    return
+  }
+  rt.mem_store(h, RT_ALLOCS, 0, 8)
+  let name = raw.str_at(np, if n < 128 { n } else { 128 })
+  let times = if k == 1 { "time" } else { "times" }
+  fault.raise_str_at("XO-F007: real-time function `${name}` allocated ${k} ${times}", lp, ln)
+}
+
+/// Ends the thread's real-time sections when a fault unwinds out of them
+/// (xo_rt.c fault_raise).
+pub fn fault_leave() {
+  let h = obj.heap()
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    rt.mem_store(h, RT_DEPTH, 0, 8)
+    rt.mem_store(h, RT_ALLOCS, 0, 8)
+    obj.rt_drain(h)
+  }
+}

@@ -34,4 +34,7 @@ Fix: take the reference through a parameter, which the caller keeps alive
 for the whole call: `fn retain(cn: Conn) -> Int { let a =
 rt.obj_addr(cn); rc.inc(a); a }`. Adding to the count of a parameter
 (`rc.inc(rt.obj_addr(param))`) is safe; doing it to a local after its
-last use is not.
+last use is not. Better still, keep the handle as an Int from an Xo
+function that returns it owned: hclient.xo now dials with
+`netconn.dial_timeout` (2026-10-15), whose Int result carries the
+reference, so no typed local and no retain are involved.

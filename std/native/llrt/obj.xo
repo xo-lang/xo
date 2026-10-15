@@ -40,23 +40,35 @@ const DEFER_BUSY = 1856
 
 /// rt.static_word: the heap words (rt.xo's table, set by heap_init):
 /// the single threaded heap record (0 once several threads run), then
-/// the addresses of three C functions of two Int arguments (called
-/// through rt.call_c2): the calling thread's heap record (xo_rt.c
-/// heap_slow), a list freed in a real-time section (xo_rl_free with the
-/// heap record's PEND words), and an object deferred in one
-/// (xo_rc_defer).
+/// the address of a C function of two Int arguments (called through
+/// rt.call_c2): the calling thread's heap record (xo_rt.c heap_slow).
 const HEAP = 10
 const H_SLOW = 8
-const H_RL_FREE = 16
-const H_RC_DEFER = 24
-
-/// The heap record's words that carry xo_rl_free's element size and drop
-/// to the C in a real-time section (xo_rt.c pend_esize, pend_drop).
-const PEND_ESIZE = 1864
-const PEND_DROP = 1872
 
 /// The heap record's real-time section depth (alloc.xo RT_DEPTH).
 const RT_DEPTH = 40
+
+/// The heap record's queue of the frees real-time sections deferred
+/// (xo_rt.c xo_heap rt_n and rt_q, checked there): its length, then
+/// RTQ entries of 32 bytes: the kind (RT_*, an int), the object, a
+/// list's element size, and the list's element drop or the object's
+/// drop.
+const RT_N = 2144
+const RT_Q = 2152
+const RTQ = 256
+
+/// What a deferred free frees (xo_rt.c RT_*): a string object, a list
+/// object, an object of the drop worklist, a handle.
+pub const RT_STR = 1
+pub const RT_LIST = 2
+pub const RT_DEFER = 3
+pub const RT_HANDLE = 4
+
+/// rt.sched_rt's statistic op and the counters of the frees deferred and
+/// of those done at once because the queue was full (xo_rt.c st).
+const RT_STAT = 0
+const ST_RT_DEFER = 19
+const ST_RT_OVERFLOW = 20
 
 /// The thread local word of the calling thread's heap record (sched.xo
 /// TLS_HEAP, xo_rt.c tls_heap).
@@ -245,10 +257,7 @@ pub fn rl_free_n(l: Int, esize: Int, drop: Int) {
 fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
   let hw = heap_word()
   let h = hw & -2
-  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
-    rt.mem_store(h, PEND_ESIZE, esize, 8)
-    rt.mem_store(h, PEND_DROP, drop, 8)
-    let _r = rt.call_c2(rt.mem_load(rt.static_word(HEAP), H_RL_FREE, 8), l, h)
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_LIST, l, esize, drop) {
     return
   }
   rl_free(hw, l, esize, drop)
@@ -258,14 +267,59 @@ fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
 pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_word(), l, esize, dup, drop) }
 
 /// rc_defer for generated code (xo_rc_defer); a real-time section defers
-/// the object (the C's queue) unless a drain runs.
+/// the object (its queue) unless a drain runs.
 pub fn rc_defer_n(obj: Int, drop: Int) {
   let h = heap_word() & -2
-  if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt.mem_load(h, DEFER_BUSY, 8) == 0 {
-    let _r = rt.call_c2(rt.mem_load(rt.static_word(HEAP), H_RC_DEFER, 8), obj, drop)
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt.mem_load(h, DEFER_BUSY, 8) == 0 && rt_defer(h, RT_DEFER, obj, 0, drop) {
     return
   }
   rc_defer(h, obj, drop)
+}
+
+// ---------------------------------------------------------------------------
+// Real-time sections' deferred frees (core 6.5, decision 0133; rtsec.xo
+// has the sections; they were xo_rt.c's)
+
+/// Queues a free (kind RT_*, the object o, a list's element size and the
+/// drop f) in heap record h's real-time section: false when the queue is
+/// full (the caller frees at once, counted).
+pub fn rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Bool {
+  let n = rt.mem_load(h, RT_N, 8)
+  if n == RTQ {
+    let _s = rt.sched_rt(RT_STAT, ST_RT_OVERFLOW, 0)
+    return false
+  }
+  let e = addw(addw(h, RT_Q), mulw(n, 32))
+  rt.mem_store(e, 0, kind, 4)
+  rt.mem_store(e, 8, o, 8)
+  rt.mem_store(e, 16, esize, 8)
+  rt.mem_store(e, 24, f, 8)
+  rt.mem_store(h, RT_N, addw(n, 1), 8)
+  let _s = rt.sched_rt(RT_STAT, ST_RT_DEFER, 0)
+  true
+}
+
+/// Frees what heap record h's real-time sections deferred; the depth is
+/// zero, so what those frees release is freed at once.
+pub fn rt_drain(h: Int) {
+  var i = 0
+  while i < rt.mem_load(h, RT_N, 8) {
+    let e = addw(addw(h, RT_Q), mulw(i, 32))
+    let kind = rt.mem_load(e, 0, 4)
+    let o = rt.mem_load(e, 8, 8)
+    if kind == RT_STR {
+      free_obj(o)
+    } else if kind == RT_LIST {
+      rl_free_n(o, rt.mem_load(e, 16, 8), rt.mem_load(e, 24, 8))
+    } else if kind == RT_DEFER {
+      rc_defer_n(o, rt.mem_load(e, 24, 8))
+    } else if kind == RT_HANDLE {
+      // the handle's free function (its word 1)
+      let _f = rt.call_c2(rt.mem_load(o, 8, 8), o, 0)
+    }
+    i = addw(i, 1)
+  }
+  rt.mem_store(h, RT_N, 0, 8)
 }
 
 /// The calling thread's 256 byte scratch for the structures of system
@@ -296,12 +350,10 @@ fn heap_word() -> Int {
 
 /// Sets the heap words (C main, before the program runs, with the main
 /// heap record; xo_rt_threads_begin with 0, before a second thread runs).
-pub fn heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int) {
+pub fn heap_init(h: Int, slow: Int) {
   let w = rt.static_word(HEAP)
   rt.mem_store(w, 0, h, 8)
   rt.mem_store(w, H_SLOW, slow, 8)
-  rt.mem_store(w, H_RL_FREE, rl_free_rt, 8)
-  rt.mem_store(w, H_RC_DEFER, rc_defer_rt, 8)
 }
 
 /// Calls f (a C function of generated code) on each element of the list

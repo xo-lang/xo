@@ -102,8 +102,9 @@ static int64_t xo_mid_max = XO_MID_MAX;
 
 typedef void (*xo_drop_fn)(void *);
 
-// A free deferred by a real-time section (decision 0133, "Real-time
-// sections" below): what reached a count of zero and how to free it.
+// A free deferred by a real-time section (decision 0133,
+// std/native/llrt/rtsec.xo; the queue is obj.xo's rt_defer and rt_drain):
+// what reached a count of zero and how to free it.
 #define XO_RTQ 256
 typedef struct {
 	int kind; // RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
@@ -147,8 +148,7 @@ typedef struct xo_heap {
 	void *defer_q;
 	int64_t defer_n, defer_cap;
 	int64_t defer_busy;
-	// xo_rl_free's element size and drop, from obj.xo rl_free_n_slow to
-	// rl_free_rt (a real-time section; rt.call_c2 passes two words)
+	// unused (they carried a real-time section's list free to the C)
 	int64_t pend_esize, pend_drop;
 	// the thread's scratch for the structures of system calls (timespec,
 	// statx, sigaction; obj.xo scratch, work item B02)
@@ -166,6 +166,7 @@ _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) =
 _Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872 && offsetof(xo_heap, scratch) == 1880, "obj.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, next) == 2136, "heapos.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, rt_n) == 2144 && offsetof(xo_heap, rt_q) == 2152 && sizeof(xo_rtdef) == 32 && offsetof(xo_rtdef, obj) == 8 && offsetof(xo_rtdef, esize) == 16 && offsetof(xo_rtdef, fn) == 24, "obj.xo's RT_N, RT_Q");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second
@@ -211,7 +212,7 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt, int64_t libc, int64_t hsize);
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t libc, int64_t hsize);
 void xo_x_heap_live(int64_t lp, int64_t tp);
 int64_t xo_x_heap_nfree(int64_t c);
 
@@ -232,15 +233,7 @@ static int64_t hw_slow_c(int64_t a, int64_t b) {
 	return (int64_t)(intptr_t)heap_slow();
 }
 
-// rl_free_rt and rc_defer_rt are obj.xo's way back to the C in a
-// real-time section (its queue, rt_defer): rl_free_n_slow and
-// rc_defer_n call them through rt.call_c2.
-static int64_t rl_free_rt(int64_t l, int64_t h);
-static int64_t rc_defer_rt(int64_t obj, int64_t drop);
-
-static void obj_heap_init(xo_heap *h) {
-	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt, heap_libc, (int64_t)sizeof(xo_heap));
-}
+static void obj_heap_init(xo_heap *h) { xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, heap_libc, (int64_t)sizeof(xo_heap)); }
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
 // calls without a C level) are set before anything allocates: first in
@@ -434,8 +427,6 @@ void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 // then takes alloc_mt's, free_mt's, and xo_resize's paths).
 int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
 void xo_x_obj_rl_share(int64_t l, int64_t esize, int64_t share);
-void xo_x_obj_rl_free(int64_t hw, int64_t l, int64_t esize, int64_t drop);
-void xo_x_obj_rc_defer(int64_t h, int64_t obj, int64_t drop);
 
 __attribute__((noinline)) static int64_t hw_slow(void) { return (int64_t)(intptr_t)heap_slow() | 1; }
 
@@ -447,18 +438,17 @@ static inline __attribute__((always_inline)) int64_t hw(void) {
 	return (int64_t)(intptr_t)h;
 }
 
-#define XO_HW_HEAP(w) ((xo_heap *)(intptr_t)((w) & ~(int64_t)1))
-
-// rt_defer queues a free in the calling thread's real-time section; it
-// returns 0 when no section runs or the queue is full (the caller frees
-// at once).
-static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn);
+// rt_defer queues a free in the calling thread's real-time section
+// (obj.xo rt_defer); it returns 0 when the queue is full (the caller
+// frees at once).
+int64_t xo_x_obj_rt_defer(int64_t h, int64_t kind, int64_t obj, int64_t esize, int64_t fn);
+static inline int rt_defer(xo_heap *h, int kind, void *obj) { return (int)xo_x_obj_rt_defer((int64_t)(intptr_t)h, kind, (int64_t)(intptr_t)obj, 0, 0); }
 
 enum { RT_STR = 1, RT_LIST, RT_DEFER, RT_HANDLE };
 
 void xo_rc_free(void *p) {
 	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p, 0, NULL)) {
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p)) {
 		return;
 	}
 	xo_free(p);
@@ -477,16 +467,6 @@ void xo_rc_free(void *p) {
 void xo_x_obj_rc_defer_n(int64_t obj, int64_t drop);
 
 void xo_rc_defer(void *obj, xo_drop_fn drop) { XO_INLINE_CALL xo_x_obj_rc_defer_n((int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop); }
-
-// rc_defer_c is xo_rc_defer in a real-time section (obj.xo rc_defer_n
-// through rc_defer_rt): the section's queue, else the worklist.
-static void rc_defer_c(void *obj, xo_drop_fn drop) {
-	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && !h->defer_busy && rt_defer(h, RT_DEFER, obj, 0, (void *)drop)) {
-		return;
-	}
-	XO_INLINE_CALL xo_x_obj_rc_defer((int64_t)(intptr_t)h, (int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop);
-}
 
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058)
@@ -882,34 +862,6 @@ __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { ret
 // elements first (obj.xo rl_free_n); a real-time section defers it.
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { XO_INLINE_CALL xo_x_obj_rl_free_n(XO_A(l), esize, XO_A(drop)); }
 
-// rl_free_c is xo_rl_free in a real-time section (obj.xo rl_free_n
-// through rl_free_rt): the section's queue, else freed at once.
-static void rl_free_c(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
-	int64_t w = hw();
-	xo_heap *h = XO_HW_HEAP(w);
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_LIST, l, esize, (void *)drop)) {
-		return;
-	}
-	if (!drop) {
-		// no elements to release: the free alone (obj.xo's loop would
-		// save its registers on this path too)
-		xo_free(l);
-		return;
-	}
-	xo_x_obj_rl_free(w, XO_A(l), esize, XO_A(drop));
-}
-
-static int64_t rl_free_rt(int64_t l, int64_t h) {
-	xo_heap *hp = (xo_heap *)(intptr_t)h;
-	rl_free_c((xo_rlist *)(intptr_t)l, hp->pend_esize, (xo_elem_fn)(intptr_t)hp->pend_drop);
-	return 0;
-}
-
-static int64_t rc_defer_rt(int64_t obj, int64_t drop) {
-	rc_defer_c((void *)(intptr_t)obj, (xo_drop_fn)(intptr_t)drop);
-	return 0;
-}
-
 // ---------------------------------------------------------------------------
 // Tasks (decision 0068): structured concurrency on threads
 //
@@ -968,7 +920,7 @@ typedef struct {
 // xo_h_free frees a handle whose count reached zero.
 void xo_h_free(void *p) {
 	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p, 0, NULL)) {
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p)) {
 		return;
 	}
 	((xo_hdr *)p)->free(p);
@@ -1038,10 +990,8 @@ static struct {
 	int64_t fiber_live, fiber_peak;
 } st;
 
-static void stats_init(void) {
-	const char *e = getenv("XO_RTSTATS");
-	__atomic_store_n(&rtstats, e && *e && *e != '0', __ATOMIC_RELAXED);
-}
+// rtsec.xo and obj.xo count the real-time sections' events by index
+_Static_assert(offsetof(__typeof__(st), rt_section) == 18 * 8 && offsetof(__typeof__(st), rt_overflow) == 20 * 8, "rtsec.xo and obj.xo ST_RT_*");
 
 #define STAT(f)                                                                     \
 	do {                                                                            \
@@ -1051,90 +1001,20 @@ static void stats_init(void) {
 	} while (0)
 
 // ---------------------------------------------------------------------------
-// Real-time sections (core 6.5, decision 0133)
-//
-// A call from code that is not real-time to a function declared `uses
-// realtime` is bracketed by xo_realtime_enter and xo_realtime_exit. While
-// the thread's depth is above zero, an object whose count reaches zero is
-// queued instead of freed (with what it holds: a list's elements, a
-// closure's captures), so the section does work bounded by its own code;
-// the outermost exit frees the queue. A full queue frees at once and
-// counts rt_overflow. An allocation inside a section is counted, and the
-// outermost exit faults with XO-F007 when there was one. A fault leaves
-// every section of the thread (a real-time function cannot catch it).
+// Real-time sections (core 6.5, decision 0133): std/native/llrt/rtsec.xo,
+// through cabi.xo's exports; these entries are generated code's.
 
-static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn) {
-	if (h->rt_n == XO_RTQ) {
-		STAT(rt_overflow);
-		return 0;
-	}
-	xo_rtdef *e = &h->rt_q[h->rt_n++];
-	e->kind = kind;
-	e->obj = obj;
-	e->esize = esize;
-	e->fn = fn;
-	STAT(rt_defer);
-	return 1;
-}
+void xo_x_rt_enter(void);
+void xo_x_rt_exit(int64_t np, int64_t n, int64_t lp, int64_t ln);
+void xo_x_rt_fault_leave(void);
 
-// rt_drain frees what the section deferred; the depth is zero, so what
-// those frees release is freed at once.
-static void rt_drain(xo_heap *h) {
-	for (int64_t i = 0; i < h->rt_n; i++) {
-		xo_rtdef e = h->rt_q[i];
-		switch (e.kind) {
-		case RT_STR:
-			xo_free(e.obj);
-			break;
-		case RT_LIST:
-			xo_rl_free(e.obj, e.esize, (xo_elem_fn)e.fn);
-			break;
-		case RT_DEFER:
-			xo_rc_defer(e.obj, (xo_drop_fn)e.fn);
-			break;
-		case RT_HANDLE:
-			((xo_hdr *)e.obj)->free(e.obj);
-			break;
-		}
-	}
-	h->rt_n = 0;
-}
+void xo_realtime_enter(void) { xo_x_rt_enter(); }
 
-void xo_realtime_enter(void) {
-	xo_heap *h = heap();
-	if (h->rt_depth++ == 0) {
-		h->rt_allocs = 0;
-		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) < 0, 0)) {
-			stats_init();
-		}
-		STAT(rt_section);
-	}
-}
-
-void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) {
-	xo_heap *h = heap();
-	if (--h->rt_depth > 0) {
-		return;
-	}
-	rt_drain(h);
-	if (h->rt_allocs != 0) {
-		char m[256];
-		snprintf(m, sizeof m, "XO-F007: real-time function `%.*s` allocated %lld time%s", (int)(n < 128 ? n : 128), name, (long long)h->rt_allocs, h->rt_allocs == 1 ? "" : "s");
-		h->rt_allocs = 0;
-		fault_at(m, loc, ln);
-	}
-}
+void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) { xo_x_rt_exit(XO_ADDR(name), n, XO_ADDR(loc), ln); }
 
 // rt_fault_leave ends the thread's real-time sections when a fault
 // unwinds out of them.
-static void rt_fault_leave(void) {
-	xo_heap *h = heap();
-	if (h->rt_depth != 0) {
-		h->rt_depth = 0;
-		h->rt_allocs = 0;
-		rt_drain(h);
-	}
-}
+static void rt_fault_leave(void) { xo_x_rt_fault_leave(); }
 
 // Futexes (decision 0077): wait while a 32 bit word holds a value, and
 // wake the threads waiting on a word. Darwin has no public futex; its
