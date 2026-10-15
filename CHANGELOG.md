@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 backend: an add or subtract and its carry or borrow
+  (std/native/llrt/cpu.xo) become one adds or subs and a cset; the SSA
+  builder folds + and - of two Int constants that do not overflow;
+  nistec.xo's mul4 and mul6 lose their terms of 0. arm64 TLS handshakes
+  12 to 22% fewer instructions (P-256 group 4930M to 3989M for 200).
 - Mbed TLS path (XO_LLRT_C=tlssrv, and main's C): http.tls_cert accepts
   an RSA certificate with its PKCS#8 key. TF-PSA-Crypto 1.1.1's PKCS#8
   parse left the RSA public half unset, so mbedtls_pk_check_pair failed;

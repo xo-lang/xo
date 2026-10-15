@@ -831,6 +831,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if op == 0 && g.fused_add(v) {
         return true
       }
+      if (op == 0 || op == 1) && g.add_with_flag(v, op) {
+        return true
+      }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op <= 1 && imm12(k) {
@@ -847,8 +850,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
     // decision 0231: the carry out of a + b and the borrow out of a - b
     // (std/native/llrt/cpu.xo), the flag of one instruction
-    "rt.u64_carry" => g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
-    "rt.u64_borrow" => g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
+    "rt.u64_carry" => {
+      // set already when its add was selected (add_with_flag)
+      if !g.has_val[v] {
+        g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
+      }
+    }
+    "rt.u64_borrow" => {
+      if !g.has_val[v] {
+        g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
+      }
+    }
     // the carry-less product's halves and the AES rounds (cpu.xo, run
     // only when cpu.hw() has them), in the scratch registers v30 and v31
     "rt.clmul_lo" | "rt.clmul_hi" => {
@@ -1165,6 +1177,40 @@ fn (var g: G) fused_add(v: Int) -> Bool {
         return true
       }
     }
+  }
+  false
+}
+
+/// The add (op 0) or subtract (op 1) v = a op b with its carry or borrow
+/// (decision 0231): when one of the next few values of the block is
+/// rt.u64_carry(a, b) (rt.u64_borrow(a, b) for a subtract) not selected
+/// yet, one adds or subs gives both, its flag read by cset; whether it
+/// did.
+fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
+  if g.cur_sb < 0 {
+    return false
+  }
+  let a = g.f.values[v].args[1]
+  let b = g.f.values[v].args[2]
+  let want = if op == 0 { "rt.u64_carry" } else { "rt.u64_borrow" }
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 6 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 {
+      let same = (y.args[0] == a && y.args[1] == b) || (op == 0 && y.args[0] == b && y.args[1] == a)
+      if same {
+        let d = g.new_vreg(false)
+        let c = g.new_vreg(false)
+        let text = if op == 0 { "adds $d0, $u0, $u1\ncset $d1, cs" } else { "subs $d0, $u0, $u1\ncset $d1, cc" }
+        let _i = g.plain(text, [d, c], [g.word(a), g.word(b)])
+        g.set(v, [d])
+        g.set(u, [c])
+        return true
+      }
+    }
+    k += 1
   }
   false
 }

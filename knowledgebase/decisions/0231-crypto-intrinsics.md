@@ -84,6 +84,9 @@ and the software GHASH multiply. The owner approved three intrinsics
 - Parts 2 and 3 (bulk, M instructions a MiB, LLVM then arm64):
   AES-128-GCM 138.6 to 27.1 and 205.0 to 38.0, AES-256-GCM 171.6 to
   30.2 and 253.6 to 41.6 (Mbed TLS 14.0 and 15.0).
+- The arm64 emitter selects an add (subtract) and its cpu.carry
+  (cpu.borrow) of the same operands, a few values apart in a block, as
+  one adds (subs) and a cset (2026-10-15, results file step 7).
 - A new function of cpu.xo needs its emitter lowering on both native
   backends and its name in cpu_call; until then it runs its body.
 - UNTESTED: Linux (AT_HWCAP, the `.arch_extension` header, GNU as),

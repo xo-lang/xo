@@ -560,9 +560,12 @@ fn (var g: G) isel() {
         }
       }
     }
-    for v in g.f.blocks[b].instrs {
+    g.cur_sb = b
+    for (ix, v) in g.f.blocks[b].instrs.indexed() {
+      g.cur_ix = ix
       g.instr(v)
     }
+    g.cur_sb = -1
   }
 }
 

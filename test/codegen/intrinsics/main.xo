@@ -15,15 +15,16 @@ fn main(os: Os) {
   os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()}")
 }
 
-// P-256's Montgomery product: the carries are flags (the branches
-// left are the prologue's checks, on no data).
+// P-256's Montgomery product: each add and its carry are one adds and
+// a cset (the arm64 emitter's add_with_flag), with no overflow check
+// (the carries are summed with wrapping adds).
 // func nistec.mul4
-// arm64: "cmn x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cs"
+// arm64: "adds x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cs" -"b\.vs"
 // llvm: "llvm.uadd.with.overflow.i64"
 
 // The final subtraction's borrows.
 // func nistec.sub4
-// arm64: "cmp x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cc"
+// arm64: "subs x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cc"
 // llvm: "llvm.usub.with.overflow.i64"
 
 // The CPU's AES rounds.

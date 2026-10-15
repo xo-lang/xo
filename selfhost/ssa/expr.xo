@@ -904,6 +904,19 @@ fn (var b: Builder) arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
     return b.undef(lt)
   }
   let oo = o ?? Op.Add
+  if b.tkind(lt) == Kind.Int && oo is Op.Add | Op.Sub {
+    // two constants that do not overflow fold (an offset like
+    // `MLIMBS + 8`); one that overflows stays the checked operation,
+    // which faults at run time
+    let (x, xc) = b.int_const_of(l)
+    let (y, yc) = b.int_const_of(r)
+    if xc && yc {
+      let z = if oo == Op.Add { x.checked_add(y) } else { x.checked_sub(y) }
+      if let Some(n) = z {
+        return b.add(Op.Const, lt, Aux.I(n: n), [])
+      }
+    }
+  }
   let v = b.add(oo, lt, Aux.None, [l, r])
   if b.m.is_f32(lt) {
     if oo is Op.Add | Op.Sub | Op.Mul | Op.Div {
@@ -916,6 +929,19 @@ fn (var b: Builder) arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
     }
   }
   v
+}
+
+/// The value of v when it is an Int constant: (n, true), else (0,
+/// false).
+fn (b: Builder) int_const_of(v: Int) -> (Int, Bool) {
+  let x = b.s.f.values[v]
+  if x.op != Op.Const {
+    return (0, false)
+  }
+  match x.aux {
+    I(n) => (n, true)
+    _ => (0, false)
+  }
 }
 
 fn (var b: Builder) binary(e: Expr) -> Int {

@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [arm64-template-cmp-cset-folded.md](arm64-template-cmp-cset-folded.md): Observed 2026-10-15: a def1 template ending in cmp and cset loses the cset to a branch fold; give the compare its own template.
 - [git-stash-shared-across-worktrees.md](git-stash-shared-across-worktrees.md): Observed 2026-10-15: `git stash pop` in a worktree can apply another agent's stash; use `git pull --rebase --autostash`.
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
