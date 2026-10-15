@@ -14,7 +14,8 @@
 // (an hlist: pairs of a name and a value, each an address and a length)
 // and calls these functions through the exports of cabi_http.xo
 // (decision 0204), writing into room it reserved (bound below). HTTP/2's
-// h2_head (xo_h2.c) takes the sniffed type and the Date from here too.
+// h2w.head (the server, h2srv.xo) takes the sniffed type and the Date
+// from here too.
 use native/llrt/http1_tables
 use native/llrt/raw
 use native/llrt/sysio

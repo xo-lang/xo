@@ -7,7 +7,7 @@
 //
 //   - certificates: http.tls_cert checks a PEM chain and key as
 //     tls.X509KeyPair does, with its error texts;
-//   - the server: ALPN "h2" or "http/1.1" (HTTP/2, xo_h2.c, decision
+//   - the server: ALPN "h2" or "http/1.1" (HTTP/2, std/native/llrt/h2srv.xo, decision
 //     0121, preferred as net/http's server prefers it), the first certificate
 //     unless SNI names another one's DNS name (getCertificate), no client
 //     certificates, session tickets (TLS 1.3 psk_dhe_ke and TLS 1.2,
@@ -399,7 +399,7 @@ static int bio_recv(void *p, unsigned char *buf, size_t len) {
 			continue;
 		}
 		if ((r == -EAGAIN || r == -EWOULDBLOCK) && t->nb) {
-			// the HTTP/2 connection's fiber waits itself (h2_wait)
+			// the HTTP/2 connection's fiber waits itself (h2srv.xo)
 			pd_end(t->pd);
 			return MBEDTLS_ERR_SSL_WANT_READ;
 		}

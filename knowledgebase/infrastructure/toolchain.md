@@ -1333,7 +1333,7 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_bytes.c,
-                        xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
+                        xo_http.c (decisions 0074, 0081; HTTP/2's server is std/native/llrt/h2srv.xo),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
@@ -1912,10 +1912,11 @@ first, AST based prototype, since deleted) and
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no `http.stream`). HTTPS (std.md 4.6) is
   std/llrt/xo_tls.c on Mbed TLS since 2026-10-09 (decisions 0105, 0106;
-  see "TLS library"), with HTTP/2 over it in std/llrt/xo_h2.c since
-  2026-10-10 (decision 0121): serve_conn asks `hc_h2` after the
-  handshake, then runs each stream's request as a task of a scope of the
-  connection's task (`h2_next`, `h2_take`, `h2_end`).
+  see "TLS library"), with HTTP/2 over it since 2026-10-10 (decision
+  0121; std/native/llrt/h2srv.xo since 2026-10-14, xo_h2.c before):
+  serve_conn asks `hc_h2` after the handshake, then runs each stream's
+  request as a task of a scope of the connection's task (`h2srv`
+  `H2Conn.next`, `end`).
 - std/time natively (2026-10-09, decision 0094 "Native implementation"):
   std/native/time.xo (civil time, layouts, format, parse) over
   std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
@@ -2319,11 +2320,12 @@ Last verified: 2026-10-10.
   227 us on the Go backend, `bench/results/native-runtime-2026-10-10.md`
   sections 1 and 6). `CONFIGS="xo-base-llvm ..." XO_BASE=<old xo>` builds
   the LLVM server with another compiler for before and after runs.
-- HTTP/2 (decision 0121, `std/llrt/xo_h2.c`): ALPN offers `h2` then
+- HTTP/2 (decision 0121, `std/native/llrt/h2srv.xo` since 2026-10-14,
+  `std/llrt/xo_h2.c` before): ALPN offers `h2` then
   `http/1.1` on the server and the client (`tls_alpn`); the server's
   connection fiber reads TLS without waiting (`tls_nb_read`: the bio's
   `nb` flag turns EAGAIN into `MBEDTLS_ERR_SSL_WANT_READ`) and parks on
-  the socket and its streams at once (`h2_wait`); TLS 1.2 with a CBC
+  the socket and its streams at once (`poll.pd_wait_or_signal`); TLS 1.2 with a CBC
   suite gets GOAWAY INADEQUATE_SECURITY (`tls_h2_bad_cipher`). Load:
   `SCHEME=https H2=1 CONFIGS="xo xo-llvm xo-arm64" bench/perf/http/run.sh`
   (loadgen `-h2`: the workers' requests are streams of one connection;

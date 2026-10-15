@@ -11,15 +11,16 @@
 // item B10 (2026-10-14) the client is here too (client_do: the URL, the
 // redirects, the reading of a response, parse_response), and so is the
 // parse of an HTTP/2 request's :path (h2_target); xo_http.c's C parser
-// is test data only (std/llrt/testdata/http_ref.c). The header blocks of
-// HTTP/2 pass through here to hpack.xo: the server's (H2Conn) and, since
-// audit item B11, the client's (h2_exchange).
+// is test data only (std/llrt/testdata/http_ref.c). The client's HTTP/2
+// header blocks pass through here to hpack.xo (h2_exchange, since audit
+// item B11); the HTTP/2 server is h2srv.xo (B28 part 2).
 //
 // The server's HTTP/1.1 connection is here too since audit item B28
 // (Reader, respond, emit): the connection's task (std/native/http.xo,
 // serve_conn) reads, parses, answers errors, and writes the response in
-// Xo; the C keeps the socket and TLS reads and writes, the server's
-// registration, and HTTP/2.
+// Xo; the C keeps the socket and TLS reads and writes and the server's
+// registration. An HTTP/2 stream's response header is here too (hdr_*,
+// for h2srv.xo).
 use native/llrt/hclient
 use native/llrt/hpack
 use native/llrt/http1_tables
@@ -1000,7 +1001,7 @@ fn server_token(v: Str, tok: Str) -> Bool {
 
 /// httpguts.headerValueContainsToken (shouldClose): tok (lower case) is
 /// one of the comma separated elements of v.
-fn has_token(v: Str, tok: Str) -> Bool {
+pub fn has_token(v: Str, tok: Str) -> Bool {
   let b = v.bytes()
   let t = tok.bytes()
   let n = b.len()
@@ -1641,7 +1642,7 @@ fn x_free(p: Int) {
 }
 
 /// The largest body (XO_HTTP_MAX_BODY, else HTTP_MAX_BODY).
-fn max_body() -> Int {
+pub fn max_body() -> Int {
   let e = process.real_env_get("XO_HTTP_MAX_BODY")
   if e.is_empty() {
     return HTTP_MAX_BODY
@@ -1726,6 +1727,19 @@ fn hdr_set(x: Int, k: Str, v: Str) {
   rt.mem_store(e, 24, v.len(), 8)
   xs(x, X_HN, n + 1)
 }
+
+/// The response header of h (an HTTP/2 stream's too, h2srv.xo): its
+/// fields (http1w.xo's 32 byte form) and their count; whether it has
+/// field k (canonical); setting k (canonical) to v; emptying it.
+pub fn hdr_addr(h: rthttp.HConn) -> Int { xl(x1_of(h), X_HDR) }
+
+pub fn hdr_len(h: rthttp.HConn) -> Int { xl(x1_of(h), X_HN) }
+
+pub fn hdr_has(h: rthttp.HConn, k: Str) -> Bool { http1w.find(hdr_addr(h), hdr_len(h), k) >= 0 }
+
+pub fn hdr_put(h: rthttp.HConn, k: Str, v: Str) { hdr_set(x1_of(h), k, v) }
+
+pub fn hdr_reset(h: rthttp.HConn) { hdr_clear(x1_of(h)) }
 
 /// Sends the n bytes at p on h: false when the connection broke.
 fn send(h: rthttp.HConn, p: Int, n: Int) -> Bool { rthttp.hc_send_at(h, p, n) }
@@ -2244,57 +2258,6 @@ pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
     off += nn + vn
   }
   []
-}
-
-// ---------------------------------------------------------------------------
-// The HTTP/2 server's header blocks (xo_h2.c, decision 0193 step 6)
-//
-// The connection's frames are read and written by C under the
-// connection's lock, which stream tasks share. So the HTTP/2
-// connection's fiber (std/native/http.xo, serve_conn) calls the C
-// (rthttp.h2_next) until it stops at a header block: 2, a block fragment
-// to decode (rthttp.h2_block gives it, rthttp.h2_fields takes the
-// fields, with the parse of their :path by h2_target); 3, response heads
-// to encode in the order they go out (rthttp.h2_enc_job,
-// rthttp.h2_encoded; the C holds the connection's lock until they are
-// in, so the order and the table stay the peer's). A 100 Continue is
-// encoded the same way when rthttp.h2_fields asks for one.
-
-/// The HPACK state of an HTTP/2 server connection.
-pub struct H2Conn {
-  h: rthttp.HConn
-  dec: hpack.Dec
-  enc: hpack.Enc
-}
-
-/// The HPACK state of the connection, whose header blocks pass through
-/// Xo.
-pub fn h2_conn(h: rthttp.HConn) -> H2Conn {
-  H2Conn{h: h, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder()}
-}
-
-/// The largest header list (and string) the server takes (H2_MAX_HLIST:
-/// DefaultMaxHeaderBytes plus 10 times 32).
-const H2_MAX_HLIST: Int = 1048896
-
-/// Runs the HTTP/2 connection until a request is ready for a handler
-/// (true; rthttp.h2_take hands it out) or the connection is done.
-pub fn (var c: H2Conn) next() -> Bool {
-  while true {
-    let r = rthttp.h2_next(c.h)
-    if r == 2 {
-      let f = c.dec.decode_part(rthttp.h2_block(c.h), rthttp.h2_block_first(c.h), H2_MAX_HLIST)
-      if rthttp.h2_fields(c.h, f.ok, f.used, f.data, f.lens, f.first, h2_target(f.data, f.lens)) {
-        // a 100 Continue goes out after the request's HEADERS
-        rthttp.h2_encoded(c.h, c.enc.encode_job(rthttp.h2_enc_job(c.h)))
-      }
-    } else if r == 3 {
-      rthttp.h2_encoded(c.h, c.enc.encode_job(rthttp.h2_enc_job(c.h)))
-    } else {
-      return r == 1
-    }
-  }
-  false
 }
 
 // ---------------------------------------------------------------------------

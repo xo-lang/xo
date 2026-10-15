@@ -25,6 +25,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   xo_stdin.c 226 to 66 lines, xo_sys.c 64 to 24, xo_bytes.c 272 to 232,
   xo_std.c 226 to 191. UNTESTED on linux and windows.
 
+- Native runtime (zero-C audit item B28, part 2): the HTTP/2 server is
+  Xo (std/native/llrt/h2srv.xo): the connection's fiber (the preface,
+  the frames and their checks, header blocks through hpack.xo, flow
+  control, the stream table, the handler queue and its rapid reset
+  limit, GOAWAY and the deadlines), the responses of the stream tasks
+  (whole, streamed, the backlog wait, the reset after a handler's fault)
+  and the sending (HPACK encoding in send order, DATA within the
+  windows). The connection's and the streams' shared state are malloc'd
+  records under a lock word; the fiber waits with poll.xo's new
+  pd_wait_or_signal. The C keeps the TLS handshake and non-blocking
+  reads, the socket's writes, and the stream connections (xo_h2_stream).
+  std/llrt/xo_h2.c is deleted (2,068 lines), xo_http.c 1,284 to 1,079;
+  a stream's response header is http1.xo's (hdr_*), so the C header
+  list, request record, and their accessors went too. Windows' linger
+  after a weak cipher GOAWAY is untested on windows.
 - Native runtime (zero-C audit item B26, part 2): the program's start
   and end around C main are Xo (std/native/llrt/entry.xo): the
   arguments (UTF-8 from the UTF-16 command line on Windows),

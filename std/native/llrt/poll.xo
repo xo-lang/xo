@@ -493,6 +493,70 @@ pub fn sleep_until(deadline: Int) -> Int {
   res
 }
 
+/// Signals the park p (xo_rt.c park_signal): its context's wait returns.
+pub fn park_signal(p: Int) { signal(p) }
+
+/// Waits in context c until its park is signaled (park_wait_n(c, 1, 0));
+/// the caller reset the park and handed it out first.
+pub fn park_wait(c: Int) {
+  let _w = svc(S_WAIT, c)
+}
+
+/// One wait of the HTTP/2 server connection's fiber (context c, its park
+/// reset and handed to the stream tasks first; xo_h2.c's h2_wait until
+/// B28 part 2): until pd has input, the park is signaled (a stream task
+/// queued output), or the monotonic time deadline (0: none) passes.
+/// False when the connection must end: pd closed, the deadline passed.
+pub fn pd_wait_or_signal(pd: Int, c: Int, deadline: Int) -> Bool {
+  let park = park_of(c)
+  var ok = true
+  lk(addw(pd, D_MU))
+  if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+    ok = false
+  } else if rt.mem_load(pd, D_RREADY, 4) != 0 {
+    rt.mem_store(pd, D_RREADY, 0, 4)
+  } else {
+    rt.mem_store(pd, D_RWAIT, park, 8)
+    let win = windows()
+    if win && afd() != 0 {
+      // the poller watches what someone waits for (pd_wait_until)
+      pd_arm(pd)
+    }
+    unlk(addw(pd, D_MU))
+    if win && afd() == 0 && svc_word(S_POKE) != 0 {
+      let _p = rt.call_c2(svc_word(S_POKE), 0, 0)
+    }
+    var t = 0
+    var due = false
+    if deadline != 0 {
+      if sysio.mono_ns() >= deadline {
+        due = true
+      } else {
+        t = timer_park(deadline, park)
+      }
+    }
+    if !due {
+      let _w = svc(S_WAIT, c)
+    }
+    if t != 0 {
+      due = fired(t)
+      timer_end(t)
+    }
+    if deadline != 0 && (due || sysio.mono_ns() >= deadline) {
+      ok = false
+    }
+    lk(addw(pd, D_MU))
+    if rt.mem_load(pd, D_RWAIT, 8) == park {
+      rt.mem_store(pd, D_RWAIT, 0, 8)
+    }
+    if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+      ok = false
+    }
+  }
+  unlk(addw(pd, D_MU))
+  ok
+}
+
 // ---------------------------------------------------------------------------
 // The poller thread (xo_rt.c poller_main)
 

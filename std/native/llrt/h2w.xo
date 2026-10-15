@@ -8,9 +8,9 @@
 // cases, whose fields now keep their order (Go's sort.Strings of the
 // keys keeps each key's values in order; qsort did not promise it).
 //
-// The C connection code keeps the connection's buffers and calls these
-// through the exports of cabi_http.xo (decision 0204), writing into room
-// it reserved (each function says how much).
+// The server (h2srv.xo, B28 part 2) keeps the connection's buffers and
+// calls these, writing into room it reserved (each function says how
+// much).
 use native/llrt/http1_tables
 use native/llrt/http1w
 use native/llrt/raw

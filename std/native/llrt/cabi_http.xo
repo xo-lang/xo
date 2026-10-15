@@ -1,11 +1,12 @@
 // The C ABI exports of the HTTP runtime (decisions 0204, 0207): like
 // cabi.xo, every top level function here is called by the C runtime as
-// xo_x_<name>; xo_http.c and xo_h2.c call them, so std/native/http.xo
+// xo_x_<name>; xo_http.c calls them, so std/native/http.xo
 // imports this module and only programs that use std/http carry them
 // (the C has weak definitions that fault, for the programs without).
 // The response writer is http1w.xo (the zero-C audit's B12), the
-// HTTP/1.1 connection http1.xo (B28), the HTTP/2 frame writer h2w.xo.
-use native/llrt/h2w
+// HTTP/1.1 connection http1.xo (B28), the HTTP/2 server h2srv.xo (B28
+// part 2).
+use native/llrt/h2srv
 use native/llrt/hclient
 use native/llrt/http1
 use native/llrt/raw
@@ -32,57 +33,36 @@ fn h1_respond(hc: Int, status: Int, p: Int, n: Int) -> Int { if http1.respond(rt
 fn h1_stream_end(hc: Int, status: Int, state: Int, p: Int, n: Int) -> Int { if http1.stream_end(rt.obj_at[rthttp.HConn](hc), status, state, p, n) { 1 } else { 0 } }
 
 // ---------------------------------------------------------------------------
-// HTTP/2 frames and response heads (h2w.xo, the zero-C audit's B28):
-// each writes at d, into the room the C reserved, and returns the bytes
-// written.
+// The HTTP/2 server (h2srv.xo, the zero-C audit's B28 part 2): the C's
+// connection makes and frees the connection record and stops it; a
+// stream's connection drops its stream, and its sink writes through it.
 
-/// A frame's 9 byte header.
-fn h2_fh(d: Int, len: Int, ty: Int, flags: Int, sid: Int) -> Int { h2w.frame_head(d, len, ty, flags, sid) }
+/// A connection record after the TLS handshake chose h2: why (the wn
+/// bytes at wp, wn 0 for none) a weak cipher suite, linger 1 to drop
+/// input a second after its GOAWAY instead of closing (Windows).
+fn h2s_new(wp: Int, wn: Int, linger: Int) -> Int { h2srv.conn_new(if wn > 0 { raw.str_at(wp, wn) } else { "" }, linger != 0) }
 
-/// RST_STREAM (13 bytes).
-fn h2_rst(d: Int, sid: Int, code: Int) -> Int { h2w.rst(d, sid, code) }
+/// The server stops: GOAWAY, then close when the streams are done.
+fn h2s_stop(c: Int) { h2srv.conn_stop(c) }
 
-/// WINDOW_UPDATE (13 bytes).
-fn h2_winup(d: Int, sid: Int, inc: Int) -> Int { h2w.winup(d, sid, inc) }
+/// Frees connection record c (its connection is freed).
+fn h2s_free(c: Int) { h2srv.conn_free(c) }
 
-/// GOAWAY with the dn bytes of debug data at dp (17 + dn bytes).
-fn h2_goaway(d: Int, last: Int, code: Int, dp: Int, dn: Int) -> Int { h2w.goaway(d, last, code, dp, dn) }
+/// A stream's connection is freed: its reference to stream st goes.
+fn h2s_release(st: Int) { h2srv.stream_release(st) }
 
-/// One setting of a SETTINGS payload (6 bytes).
-fn h2_setting(d: Int, id: Int, v: Int) -> Int { h2w.setting(d, id, v) }
+/// A stream that never left its buffer, answered whole (the n bytes at
+/// p).
+fn h2s_respond(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(rt.obj_at[rthttp.HConn](hc), status, p, n) }
 
-/// The header block of bn bytes at bp as HEADERS and CONTINUATION frames
-/// of at most max bytes (bn + 9 * (bn / max + 1) bytes of room).
-fn h2_block(d: Int, sid: Int, bp: Int, bn: Int, end_stream: Int, max: Int) -> Int { h2w.block(d, sid, bp, bn, end_stream != 0, max) }
+/// A stream's write of the n bytes at p (started 1: the head went out):
+/// 1 when the head went out, plus 2 when the stream is alive.
+fn h2s_emit(hc: Int, status: Int, started: Int, p: Int, n: Int) -> Int { h2srv.emit(rt.obj_at[rthttp.HConn](hc), status, started != 0, p, n) }
 
-/// The room h2_head needs for the hn fields at ha.
-fn h2_head_room(ha: Int, hn: Int) -> Int { h2w.head_room(ha, hn) }
-
-/// A response head in the encoder job's form (h2w.head); 1 at res when
-/// the handler asked for Connection: close.
-fn h2_head(d: Int, ha: Int, hn: Int, status: Int, head_req: Int, p: Int, pn: Int, done: Int, res: Int) -> Int { h2w.head(d, ha, hn, status, head_req != 0, p, pn, done != 0, res) }
-
-/// Checks a frame (h2w.frame_check: the 9 byte header at h, the payload
-/// at p; hb_on 1 while a header block on stream hb_sid is open): one of
-/// h2w.FC_*, with three words at res.
-fn h2_frame_check(h: Int, p: Int, hb_on: Int, hb_sid: Int, res: Int) -> Int { h2w.frame_check(h, p, hb_on != 0, hb_sid, res) }
-
-/// 1 when a received header field is kept (h2w.field_keep: the name's nn
-/// bytes at np, the value's vn at vp, the block's four words at st).
-fn h2_field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Int { if h2w.field_keep(np, nn, vp, vn, st) { 1 } else { 0 } }
-
-/// 1 when the pseudo fields of the hn fields at ha are valid
-/// (h2w.pseudos_ok); 1 at resp when :status was one.
-fn h2_pseudos_ok(ha: Int, hn: Int, resp: Int) -> Int { if h2w.pseudos_ok(ha, hn, resp) { 1 } else { 0 } }
-
-/// What a request of the hn checked fields at ha is (h2w.request_check:
-/// one of h2w.K_*, the 400's text at msg).
-fn h2_request_check(ha: Int, hn: Int, truncated: Int, msg: Int) -> Int { h2w.request_check(ha, hn, truncated != 0, msg) }
-
-/// The stateless checks of a SETTINGS payload (h2w.settings_check: the
-/// failing setting's index times 16 plus its code, else the count times
-/// 16).
-fn h2_settings_check(p: Int, n: Int) -> Int { h2w.settings_check(p, n) }
+/// The end of a stream whose head went out, with the n bytes at p.
+fn h2s_finish(hc: Int, p: Int, n: Int) {
+  let _ok = h2srv.finish(rt.obj_at[rthttp.HConn](hc), p, n)
+}
 
 /// The HTTP client connection's reads and writes (xo_http.c cc_fill and
 /// cc_send, hclient.xo; the C's HTTP/2 client calls them): CC_*.

@@ -34,55 +34,26 @@ fn hc_shut_wr(h: HConn)
 /// http1.xo's X1 record of the connection (0: none yet), and setting it.
 fn hc_x1(h: HConn) -> Int
 fn hc_set_x1(h: HConn, x: Int)
-fn hc_method(h: HConn) -> Str
-fn hc_path(h: HConn) -> Str
-fn hc_scheme(h: HConn) -> Str
-/// The request's Host as received (http1.host_name splits off the port).
-fn hc_host(h: HConn) -> Str
-/// The host of an absolute request target's URL, "" for none
-/// (http1.host_port reads its port).
-fn hc_urlhost(h: HConn) -> Str
-fn hc_nheaders(h: HConn) -> Int
-fn hc_hname(h: HConn, i: Int) -> Str
-fn hc_hval(h: HConn, i: Int) -> Str
-fn hc_nquery(h: HConn) -> Int
-fn hc_qkey(h: HConn, i: Int) -> Str
-fn hc_qval(h: HConn, i: Int) -> Str
-fn hc_body(h: HConn) -> Bytes
 fn hc_remote_ip(h: HConn) -> Str
-/// Sets a field of an HTTP/2 stream's response header.
-fn hc_header(h: HConn, name: Str, value: Str)
-/// Writes an HTTP/2 stream's response; false: close the connection.
-fn hc_respond(h: HConn, status: Int, body: Bytes) -> Bool
 fn hc_close(h: HConn)
 
-/// HTTP/2 (decision 0121, std/llrt/xo_h2.c): finishes the TLS handshake
-/// of a server connection; true when ALPN chose h2, so its requests come
-/// from h2_next instead of http1.Reader.
-fn hc_h2(h: HConn) -> Bool
-/// Runs the HTTP/2 connection until a request is ready for a handler
-/// (1) or the connection is done (0); with HPACK in Xo also 2,
-/// a header block fragment to decode, and 3, response heads to encode
-/// (std/native/llrt/hpack.xo, decision 0193 step 6).
-fn h2_next(h: HConn) -> Int
-/// The fragment to decode (after 2) and whether its block's first
-/// representation is still to come.
-fn h2_block(h: HConn) -> Str
-fn h2_block_first(h: HConn) -> Bool
-/// Goes on with the decoded fields (hpack.Fields) and the parse of their
-/// first :path (http1.h2_target); true when a 100 Continue is to be
-/// encoded now (h2_enc_job, h2_encoded).
-fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: List[Int], first: Bool, target: List[Str]) -> Bool
-/// The table size settings and heads to encode (after 3, or h2_fields
-/// true), and the blocks encoded for them.
-fn h2_enc_job(h: HConn) -> Str
-fn h2_encoded(h: HConn, blocks: Str)
-/// The request h2_next found: a stream, answered as a connection is
-/// (hc_header, hc_respond, sink_conn).
-fn h2_take(h: HConn) -> HConn
-/// The stream's handler is done; a response it did not finish resets
-/// the stream.
-fn h2_end(h: HConn)
+/// HTTP/2 (decision 0121; the server is std/native/llrt/h2srv.xo):
+/// finishes the TLS handshake of a server connection; when ALPN chose h2
+/// the connection's record (h2srv.conn_new, freed with the connection),
+/// else 0 (HTTP/1.1: http1.Reader).
+fn hc_h2(h: HConn) -> Int
+/// Reads what the TLS connection has into the cap bytes at p, without
+/// waiting: the count, 0 at the end of the stream, -1 on an error, -2
+/// when nothing is there.
+fn hc_h2_read(h: HConn, p: Int, cap: Int) -> Int
+/// The connection's poll descriptor (poll.xo's xo_pd).
+fn hc_pd(h: HConn) -> Int
+/// A stream's connection for its handler: answered as a connection is
+/// (http1.header_set, h2srv.respond, sink_conn); it takes over a
+/// reference to the stream record st and holds h.
+fn h2_stream(h: HConn, st: Int) -> HConn
+/// The stream record of a stream's connection (0: not a stream).
+fn hc_h2s(h: HConn) -> Int
 
 /// Client (std/native/llrt/http1.xo client_do drives it, redirects
 /// included): the deadline of a timeout in ns (> 0).

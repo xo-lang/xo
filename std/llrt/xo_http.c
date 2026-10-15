@@ -14,20 +14,18 @@
 //     own under main's root, so canceling serve lets requests in flight
 //     finish (std/rt's reqRoot); a stop or the end of serve closes idle
 //     connections and waits for the others;
-//   - the client's connections, TLS, HTTP/2, and request writing
-//     (xo_cl_start; http1.xo client_do drives it and reads HTTP/1.1
-//     responses).
+//   - HTTP/2 over TLS (ALPN h2): the TLS handshake and non-blocking
+//     reads (xo_hc_h2, xo_hc_h2_read) and the stream connections
+//     (xo_h2_stream) of std/native/llrt/h2srv.xo's server (the zero-C
+//     audit's B28 part 2; xo_h2.c until then);
+//   - the client's connections and TLS (xo_cl_start; http1.xo client_do
+//     drives it, hclient.xo reads and writes).
 //
 // internal/llvm's TestHTTPParseDiff sends the same bytes to this code and
 // to a Go net/http server and compares what both answer; it is fuzzed
 // there with AddressSanitizer (with testdata/http_ref.c, the C request
 // parser, in http1.xo's place); TestHTTP1ParseDiff and
 // TestHTTP1ClientDiff test the Xo parsers in programs.
-
-// A request body longer than this is cut short like a body whose client
-// went away (the handler gets what was read, the connection closes).
-// Go has no limit; XO_HTTP_MAX_BODY overrides (bytes).
-#define HTTP_MAX_BODY ((int64_t)64 << 20)
 
 // The results of socket operations of the client (and of TLS ones)
 enum { CC_OK, CC_EOF, CC_TIMEOUT, CC_CANCELED, CC_ERR };
@@ -68,39 +66,12 @@ typedef struct {
 	int64_t n, cap;
 } hlist;
 
-// The strings and pair arrays of requests and responses come from the
-// runtime's allocator (xo_alloc: per thread free lists), not malloc: a
-// request made about twenty of them, and macOS malloc's free path showed
-// in server profiles (with mach_absolute_time under it).
-static hstr hs_dup(const char *p, int64_t n) {
-	hstr s = {xo_alloc(n + 1), n};
-	if (n) {
-		memcpy(s.p, p, (size_t)n);
-	}
-	s.p[n] = 0;
-	return s;
-}
-
 static void hs_free(hstr *s) {
 	if (s->p) {
 		xo_free(s->p);
 	}
 	s->p = NULL;
 	s->n = 0;
-}
-
-static int hs_eq(hstr a, const char *b) { return a.n == (int64_t)strlen(b) && memcmp(a.p, b, (size_t)a.n) == 0; }
-
-static void hl_add(hlist *l, hstr k, hstr v) {
-	if (l->n == l->cap) {
-		int64_t old = l->cap;
-		l->cap = l->cap ? l->cap * 2 : 8;
-		int64_t sz = l->cap * (int64_t)sizeof(hpair);
-		l->a = l->a ? xo_resize(l->a, old * (int64_t)sizeof(hpair), sz) : xo_alloc(sz);
-	}
-	l->a[l->n].k = k;
-	l->a[l->n].v = v;
-	l->n++;
 }
 
 // hl_clear empties l and keeps its array for reuse.
@@ -121,178 +92,6 @@ static void hl_free(hlist *l) {
 	l->n = l->cap = 0;
 }
 
-static int64_t hl_find(hlist *l, const char *k) {
-	for (int64_t i = 0; i < l->n; i++) {
-		if (hs_eq(l->a[i].k, k)) {
-			return i;
-		}
-	}
-	return -1;
-}
-
-static void hl_del(hlist *l, const char *k) {
-	int64_t i = hl_find(l, k);
-	if (i < 0) {
-		return;
-	}
-	hs_free(&l->a[i].k);
-	hs_free(&l->a[i].v);
-	memmove(l->a + i, l->a + i + 1, (size_t)(l->n - i - 1) * sizeof(hpair));
-	l->n--;
-}
-
-// token bytes of RFC 7230 (textproto validHeaderFieldByte, httpguts
-// isTokenTable)
-static int h_tchar(unsigned c) {
-	if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-		return 1;
-	}
-	switch (c) {
-	case '!':
-	case '#':
-	case '$':
-	case '%':
-	case '&':
-	case '\'':
-	case '*':
-	case '+':
-	case '-':
-	case '.':
-	case '^':
-	case '_':
-	case '`':
-	case '|':
-	case '~':
-		return 1;
-	}
-	return 0;
-}
-
-// textproto validHeaderValueByte: VCHAR, SP, HTAB, obs-text
-static int h_lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
-
-// h_canon is textproto.CanonicalMIMEHeaderKey (in place): unchanged when
-// a byte is not a token byte.
-static void h_canon(char *p, int64_t n) {
-	for (int64_t i = 0; i < n; i++) {
-		if (!h_tchar((unsigned char)p[i])) {
-			return;
-		}
-	}
-	int upper = 1;
-	for (int64_t i = 0; i < n; i++) {
-		char c = p[i];
-		if (upper && c >= 'a' && c <= 'z') {
-			c = (char)(c - 32);
-		} else if (!upper && c >= 'A' && c <= 'Z') {
-			c = (char)(c + 32);
-		}
-		p[i] = c;
-		upper = c == '-';
-	}
-}
-
-// h_has_token is httpguts.headerValueContainsToken (shouldClose).
-static int h_has_token(const char *v, int64_t n, const char *tok) {
-	int64_t tl = (int64_t)strlen(tok);
-	int64_t i = 0;
-	while (i <= n) {
-		int64_t j = i;
-		while (j < n && v[j] != ',') {
-			j++;
-		}
-		int64_t a = i, b = j;
-		while (a < b && (v[a] == ' ' || v[a] == '\t')) {
-			a++;
-		}
-		while (b > a && (v[b - 1] == ' ' || v[b - 1] == '\t')) {
-			b--;
-		}
-		if (b - a == tl) {
-			int eq = 1;
-			for (int64_t k = 0; k < tl; k++) {
-				unsigned c = (unsigned char)v[a + k];
-				if (c >= 0x80 || h_lower((int)c) != h_lower(tok[k])) {
-					eq = 0;
-					break;
-				}
-			}
-			if (eq) {
-				return 1;
-			}
-		}
-		i = j + 1;
-	}
-	return 0;
-}
-
-// ---------------------------------------------------------------------------
-// The parts of a request's URL. Request targets (net/url ParseRequestURI)
-// and queries are parsed in Xo (std/native/llrt/http1.xo): HTTP/1.1's
-// with the head, HTTP/2's in h2_fields (xo_h2.c h2_request).
-
-
-typedef struct {
-	hstr scheme, host, path, rawquery;
-	int has_query;
-} hurl;
-
-static void hu_free(hurl *u) {
-	hs_free(&u->scheme);
-	hs_free(&u->host);
-	hs_free(&u->path);
-	hs_free(&u->rawquery);
-}
-
-// ---------------------------------------------------------------------------
-// Reading a request
-
-enum {
-	HP_NEED = 0,      // more bytes needed
-	HP_OK = 1,        // the head is complete
-	HP_EOF = 2,       // the end of the stream before a request: close quietly
-	HP_BAD = 3,       // "400 Bad Request"
-	HP_STATUS = 4,    // statusError: code and text (400 and 505)
-	HP_TOO_LARGE = 5, // 431
-	HP_BAD_TE = 6,    // 501 unsupported transfer encoding
-};
-
-typedef struct {
-	hstr method, target;
-	int major, minor;
-	hlist hdr;           // canonical names, values joined with ", ", in first appearance order
-	hstr host;           // req.Host
-	hurl url;
-	hlist query;         // the URL's query: sorted keys, first values
-	int64_t clen;        // ContentLength: -1 chunked
-	int chunked;
-	int close;           // req.Close
-	int wants10ka, wantsclose;
-	int expect100, expect_other;
-	int h2up;            // "PRI * HTTP/2.0" (closed after the answer)
-	int status;          // HP_STATUS: the code
-	const char *reason;  // HP_STATUS: the text
-} hreq;
-
-static void hr_free(hreq *r) {
-	hs_free(&r->method);
-	hs_free(&r->target);
-	hl_free(&r->hdr);
-	hs_free(&r->host);
-	hu_free(&r->url);
-	hl_free(&r->query);
-	memset(r, 0, sizeof *r);
-}
-
-// The results of a chunked body's decoding (http1.xo chunked).
-enum { HB_NEED, HB_OK, HB_ERR };
-
-// ---------------------------------------------------------------------------
-// Writing a response: HTTP/1.1's is std/native/llrt/http1.xo's (write,
-// respond, emit over http1w.xo; the zero-C audit's B12 and B28).
-
-static int h_body_allowed(int64_t st) { return !((st >= 100 && st <= 199) || st == 204 || st == 304); }
-
 // ---------------------------------------------------------------------------
 // The server (std.md 4.4): handles for std/native/http.xo
 //
@@ -300,8 +99,10 @@ static int h_body_allowed(int64_t st) { return !((st >= 100 && st <= 199) || st 
 // for their tasks, linked under main's root: canceling the serving task
 // does not cancel requests in flight (std/rt's reqRoot); ending main
 // (the grace period, a second signal) does. A connection (xo_hconn) owns
-// its input buffer, the request being served, and the header of the
-// response being built.
+// http1.xo's X1 record (its input, request, and response header) or,
+// over HTTP/2, h2srv.xo's connection record; a stream's connection
+// (xo_h2_stream) holds a stream record and its own X1 record (the
+// response header).
 
 typedef struct xo_srv {
 	xo_hdr h;
@@ -322,22 +123,16 @@ typedef struct xo_hconn {
 	struct xo_hconn *prev, *next; // in srv->conns while registered
 	int registered;
 	int idle;                     // waiting for the first byte of a request
-	char *buf;
-	int64_t n, cap, off; // unconsumed input is buf[off:n]
-	hreq req;     // an HTTP/2 stream's request
-	int have_req;
-	nbuf body;    // an HTTP/2 stream's request body
-	hlist resp;   // an HTTP/2 stream's response header
 	char ip[INET6_ADDRSTRLEN];
 	// HTTP/1.1: http1.xo's X1 record (its input, request, and response
 	// state), freed with the connection
 	int64_t x1;
 	tls_conn *tls; // a connection of a TLS server (xo_tls.c)
-	// HTTP/2 (xo_h2.c): a connection whose ALPN chose h2 has h2; a
-	// stream's request (h2_take) has h2s and holds its connection in
-	// h2owner
-	struct h2c *h2;
-	struct h2s *h2s;
+	// HTTP/2 (std/native/llrt/h2srv.xo): a connection whose ALPN chose
+	// h2 has its record in h2; a stream's connection (xo_h2_stream) has
+	// its stream record in h2s and holds its connection in h2owner
+	int64_t h2;
+	int64_t h2s;
 	struct xo_hconn *h2owner;
 } xo_hconn;
 
@@ -354,14 +149,22 @@ __attribute__((weak)) int64_t xo_x_h1_stream_end(int64_t hc, int64_t status, int
 	return (void)hc, (void)status, (void)state, (void)p, (void)n, 0;
 }
 
-// HTTP/2 (xo_h2.c, included at the end of this file)
-static void h2c_free(struct h2c *c);
-static void h2_stop(struct h2c *c);
-static struct xo_hconn *h2_untake(struct h2c *c);
-static void h2_stream_release(xo_hconn *hc);
-static int64_t h2_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn);
-static int h2_sink_emit(xo_hconn *hc, int64_t status, int *started, const char *p, int64_t n);
-static int h2_sink_finish(xo_hconn *hc, const char *p, int64_t n);
+// HTTP/2's server (std/native/llrt/h2srv.xo, the zero-C audit's B28
+// part 2; xo_h2.c until then): cabi_http.xo's h2s_* exports
+__attribute__((weak)) int64_t xo_x_h2s_new(int64_t wp, int64_t wn, int64_t linger) {
+	(void)wp, (void)wn, (void)linger;
+	fault_text("HTTP without std/http's exports", "");
+}
+__attribute__((weak)) void xo_x_h2s_stop(int64_t c) { (void)c; }
+__attribute__((weak)) void xo_x_h2s_free(int64_t c) { (void)c; }
+__attribute__((weak)) void xo_x_h2s_release(int64_t st) { (void)st; }
+__attribute__((weak)) void xo_x_h2s_respond(int64_t hc, int64_t status, int64_t p, int64_t n) {
+	(void)hc, (void)status, (void)p, (void)n;
+}
+__attribute__((weak)) int64_t xo_x_h2s_emit(int64_t hc, int64_t status, int64_t started, int64_t p, int64_t n) {
+	return (void)hc, (void)status, (void)started, (void)p, (void)n, 0;
+}
+__attribute__((weak)) void xo_x_h2s_finish(int64_t hc, int64_t p, int64_t n) { (void)hc, (void)p, (void)n; }
 
 static void srv_unregister(xo_hconn *hc) {
 	xo_srv *s = hc->srv;
@@ -386,34 +189,28 @@ static void srv_unregister(xo_hconn *hc) {
 static void hconn_free(void *p) {
 	xo_hconn *hc = p;
 	if (hc->h2owner) {
-		// an HTTP/2 stream's request
+		// an HTTP/2 stream's connection
 		if (hc->h2s) {
-			h2_stream_release(hc);
+			xo_x_h2s_release(hc->h2s);
 		}
-		if (hc->have_req) {
-			hr_free(&hc->req);
+		if (hc->x1) {
+			xo_x_h1_free(hc->x1);
 		}
-		free(hc->body.p);
-		hl_free(&hc->resp);
 		xo_hconn *owner = hc->h2owner;
 		xo_free(hc);
 		h_release(owner);
 		return;
 	}
 	srv_unregister(hc);
-	h2c_free(hc->h2);
+	if (hc->h2) {
+		xo_x_h2s_free(hc->h2);
+	}
 	pd_close(hc->conn->pd);
 	h_release(hc->conn);
 	h_release(hc->srv);
-	free(hc->buf);
-	if (hc->have_req) {
-		hr_free(&hc->req);
-	}
 	if (hc->x1) {
 		xo_x_h1_free(hc->x1);
 	}
-	free(hc->body.p);
-	hl_free(&hc->resp);
 	tls_conn_free(hc->tls);
 	xo_free(hc);
 }
@@ -464,7 +261,7 @@ void xo_srv_stop(xo_srv *s) {
 	for (xo_hconn *hc = s->conns; hc; hc = hc->next) {
 		if (hc->h2) {
 			// GOAWAY, then the streams in flight finish
-			h2_stop(hc->h2);
+			xo_x_h2s_stop(hc->h2);
 		} else if (hc->idle) {
 			pd_close(hc->conn->pd);
 		}
@@ -648,23 +445,6 @@ static int hc_send(xo_hconn *hc, const char *p, int64_t n) {
 	return 1;
 }
 
-// http_max_body is the largest request body HTTP/2's server reads
-// (HTTP_MAX_BODY, XO_HTTP_MAX_BODY overrides; http1.xo max_body for
-// HTTP/1.1).
-static int64_t http_max_body(void) {
-	static int64_t max = -1;
-	int64_t m = __atomic_load_n(&max, __ATOMIC_RELAXED);
-	if (m < 0) {
-		const char *e = getenv("XO_HTTP_MAX_BODY");
-		m = e ? atoll(e) : HTTP_MAX_BODY;
-		if (m <= 0) {
-			m = HTTP_MAX_BODY;
-		}
-		__atomic_store_n(&max, m, __ATOMIC_RELAXED);
-	}
-	return m;
-}
-
 // xo_hc_send_at is hc_send for http1.xo.
 int64_t xo_hc_send_at(xo_hconn *hc, int64_t p, int64_t n) { return hc_send(hc, (const char *)(intptr_t)p, n); }
 
@@ -691,65 +471,84 @@ int64_t xo_hc_x1(xo_hconn *hc) { return hc->x1; }
 
 void xo_hc_set_x1(xo_hconn *hc, int64_t x) { hc->x1 = x; }
 
-static xo_rstr *hstr_out(hstr s, int64_t *len) { return nstr(s.p ? s.p : "", s.n, len); }
-
-xo_rstr *xo_hc_method(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.method, len); }
-
-// xo_hc_path is the request's URL path (unescaped; Request.path).
-xo_rstr *xo_hc_path(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.path, len); }
-
-xo_rstr *xo_hc_scheme(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.scheme, len); }
-
-// xo_hc_host is the request's Host as received; std/native/llrt/
-// http1.xo host_name splits off the port (the zero-C audit's B28).
-xo_rstr *xo_hc_host(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.host, len); }
-
-// xo_hc_urlhost is the host of an absolute request target's URL;
-// http1.xo host_port reads its port.
-xo_rstr *xo_hc_urlhost(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.host, len); }
-
-int64_t xo_hc_nheaders(xo_hconn *hc) { return hc->req.hdr.n; }
-
-xo_rstr *xo_hc_hname(xo_hconn *hc, int64_t i, int64_t *len) { return hstr_out(hc->req.hdr.a[i].k, len); }
-
-xo_rstr *xo_hc_hval(xo_hconn *hc, int64_t i, int64_t *len) { return hstr_out(hc->req.hdr.a[i].v, len); }
-
-// the query parameters: sorted keys, first values (std/rt's urlOf)
-int64_t xo_hc_nquery(xo_hconn *hc) { return hc->req.query.n; }
-
-xo_rstr *xo_hc_qkey(xo_hconn *hc, int64_t i, int64_t *len) { return hstr_out(hc->req.query.a[i].k, len); }
-
-xo_rstr *xo_hc_qval(xo_hconn *hc, int64_t i, int64_t *len) { return hstr_out(hc->req.query.a[i].v, len); }
-
-xo_rstr *xo_hc_body(xo_hconn *hc, int64_t *len) { return nstr(hc->body.p ? hc->body.p : "", hc->body.n, len); }
-
 xo_rstr *xo_hc_remote_ip(xo_hconn *hc, int64_t *len) { return nstr(hc->ip, (int64_t)strlen(hc->ip), len); }
 
-// xo_hc_header sets a field of the response header (Header.Set: the name
-// canonical, a later value replaces an earlier one).
-void xo_hc_header(xo_hconn *hc, const char *k, int64_t kn, const char *v, int64_t vn) {
-	hstr key = hs_dup(k, kn);
-	h_canon(key.p, kn);
-	for (int64_t i = 0; i < hc->resp.n; i++) {
-		if (hc->resp.a[i].k.n == kn && memcmp(hc->resp.a[i].k.p, key.p, (size_t)kn) == 0) {
-			hs_free(&key);
-			hs_free(&hc->resp.a[i].v);
-			hc->resp.a[i].v = hs_dup(v, vn);
-			return;
-		}
+// xo_hc_h2 finishes the TLS handshake of a server connection; when
+// ALPN chose HTTP/2, the connection's record (std/native/llrt/h2srv.xo
+// conn_new; its requests come from h2srv's H2Conn), else 0: HTTP/1.1
+// (or the handshake failed, which http1.xo's reads find).
+int64_t xo_hc_h2(xo_hconn *hc) {
+	if (!hc->tls || !hc->conn) {
+		return 0;
 	}
-	hl_add(&hc->resp, key, hs_dup(v, vn));
+	xo_srv *s = hc->srv;
+	if (s) {
+		pthread_mutex_lock(&s->mu);
+		if (s->stopping) {
+			pthread_mutex_unlock(&s->mu);
+			return 0;
+		}
+		hc->idle = 1;
+		pthread_mutex_unlock(&s->mu);
+	}
+	int ok = !ctx_canceled(ctx()) && tls_server_handshake(hc->tls);
+	if (s) {
+		pthread_mutex_lock(&s->mu);
+		hc->idle = 0;
+		pthread_mutex_unlock(&s->mu);
+	}
+	if (!ok || !tls_alpn_h2(hc->tls)) {
+		return 0;
+	}
+	// rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
+	char why[80];
+	int bad = tls_h2_bad_cipher(hc->tls, why, sizeof why);
+	int linger = 0;
+#ifdef _WIN32
+	// Windows resets a connection closed with unread input (the client's
+	// preface, gotchas/windows-shutdown-resets-unread-input.md), and the
+	// reset can overtake the GOAWAY: linger as after a connection error,
+	// dropping input, until the client closes or a second passes
+	linger = 1;
+#endif
+	int64_t c = xo_x_h2s_new(bad ? XO_ADDR(why) : 0, bad ? (int64_t)strlen(why) : 0, linger);
+	if (s) {
+		pthread_mutex_lock(&s->mu);
+		hc->h2 = c;
+		if (s->stopping) {
+			xo_x_h2s_stop(c);
+		}
+		pthread_mutex_unlock(&s->mu);
+	} else {
+		hc->h2 = c;
+	}
+	return c;
 }
 
-// xo_hc_respond writes an HTTP/2 stream's response (HTTP/1.1's is
-// http1.xo respond): 1 when the connection stays open for another
-// request.
-int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn) {
-	if (hc->h2s) {
-		return h2_respond(hc, status, body, bn);
-	}
-	return xo_x_h1_respond(XO_ADDR(hc), status, XO_ADDR(body), bn);
+// xo_hc_h2_read reads what the TLS connection has into p without
+// waiting (h2srv.xo's fiber waits itself): the bytes read, 0 at the end
+// of the stream, -1 on an error, -2 when nothing is there.
+int64_t xo_hc_h2_read(xo_hconn *hc, int64_t p, int64_t cap) { return tls_nb_read(hc->tls, (char *)(intptr_t)p, cap); }
+
+// xo_hc_pd is the connection's poll descriptor.
+int64_t xo_hc_pd(xo_hconn *hc) { return XO_ADDR(hc->conn->pd); }
+
+// xo_h2_stream is the connection of HTTP/2 stream record st for its
+// handler (h2srv.xo next): it takes over a reference to st (dropped
+// when it is freed, xo_x_h2s_release) and holds hc.
+xo_hconn *xo_h2_stream(xo_hconn *hc, int64_t st) {
+	xo_hconn *t = xo_alloc(sizeof(xo_hconn));
+	memset(t, 0, sizeof *t);
+	h_init(t, hconn_free);
+	h_retain(hc);
+	t->h2owner = hc;
+	t->h2s = st;
+	memcpy(t->ip, hc->ip, sizeof t->ip);
+	return t;
 }
+
+// xo_hc_h2s is a stream connection's stream record (0: not a stream).
+int64_t xo_hc_h2s(xo_hconn *hc) { return hc->h2s; }
 
 // ---------------------------------------------------------------------------
 // Streamed bodies (http.stream, decision 0083)
@@ -811,9 +610,10 @@ static void sink_emit(xo_sink *s, const char *p, int64_t n) {
 	}
 	xo_hconn *hc = s->hc;
 	if (hc->h2s) {
-		if (!h2_sink_emit(hc, s->status, &s->started, p, n)) {
-			s->failed = 1;
-		}
+		// h2srv.xo emit
+		int64_t r = xo_x_h2s_emit(XO_ADDR(hc), s->status, s->started, XO_ADDR(p), n);
+		s->started = (r & 1) != 0;
+		s->failed = (r & 2) == 0;
 		return;
 	}
 	s->state = xo_x_h1_emit(XO_ADDR(hc), s->status, s->state, XO_ADDR(p), n);
@@ -865,11 +665,15 @@ int64_t xo_sink_flush(xo_sink *s) {
 int64_t xo_sink_end(xo_sink *s) {
 	xo_hconn *hc = s->hc;
 	if (!s->started) {
-		return xo_hc_respond(hc, s->status, s->buf.p ? s->buf.p : "", s->buf.n);
+		if (hc->h2s) {
+			xo_x_h2s_respond(XO_ADDR(hc), s->status, XO_ADDR(s->buf.p ? s->buf.p : ""), s->buf.n);
+			return 0;
+		}
+		return xo_x_h1_respond(XO_ADDR(hc), s->status, XO_ADDR(s->buf.p ? s->buf.p : ""), s->buf.n);
 	}
 	if (hc->h2s) {
-		// the rest with the end of the stream
-		(void)h2_sink_finish(hc, s->buf.p ? s->buf.p : "", s->buf.n);
+		// the rest with the end of the stream (h2srv.xo finish)
+		xo_x_h2s_finish(XO_ADDR(hc), XO_ADDR(s->buf.p ? s->buf.p : ""), s->buf.n);
 		s->buf.n = 0;
 		return 0;
 	}
@@ -939,7 +743,7 @@ __attribute__((unused)) static void xo_streams_free(void) {
 		}
 	}
 	pthread_mutex_unlock(&streams.mu);
-	// the client's idle HTTP/2 connections (xo_h2.c)
+	// the client's idle HTTP/2 connections (hclient.xo)
 	xo_x_h2_pool_free();
 }
 
@@ -948,14 +752,6 @@ void xo_hc_close(xo_hconn *hc) {
 	tls_close_notify(hc->tls);
 	pd_close(hc->conn->pd);
 	srv_unregister(hc);
-	if (hc->h2) {
-		// a request h2_next found that no task took (the serving task
-		// was canceled): it holds the connection
-		xo_hconn *t = h2_untake(hc->h2);
-		if (t) {
-			h_release(t);
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,7 +822,7 @@ typedef struct {
 	xo_hdr h;
 	int err; // 0, or the ClientErr tag
 	char *msg;
-	// an HTTP/2 response (xo_h2.c); Xo reads HTTP/1.1's itself
+	// an HTTP/2 response (hclient.xo); Xo reads HTTP/1.1's itself
 	int64_t status;
 	hlist hdr;
 	nbuf body;
@@ -1152,7 +948,7 @@ int64_t xo_cl_deadline(int64_t timeout) { return deadline(timeout); }
 // request target (escaped path and query), the Host, the header of names
 // and values (canonical, each once), the body, and the deadline (0:
 // none); prefix is the start of its errors. An https server whose ALPN
-// chose h2 gets the request over HTTP/2 (xo_h2.c) on a connection kept
+// chose h2 gets the request over HTTP/2 (hclient.xo) on a connection kept
 // for the next request with the same addr and tls_host (key), as
 // net/http's Transport keeps it (pool: an idle one may take it): r is
 // set up for the exchange, which Xo makes (cl_h2 is true; its header
@@ -1278,7 +1074,6 @@ _Static_assert(offsetof(ccon, pd) == 0 && offsetof(ccon, fd) == 8 && offsetof(cc
 _Static_assert(sizeof(hpair) == 32 && offsetof(hlist, cap) == 16 && offsetof(nbuf, cap) == 16 && sizeof(ccon) == 72, "http1w.xo key_p, hclient.xo R_*_CAP, P_C");
 
 // HTTP/2 (decision 0121)
-#include "xo_h2.c"
 
 // TLS (decision 0105)
 #include "xo_tls.c"

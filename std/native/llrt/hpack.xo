@@ -9,10 +9,8 @@
 // HTTP/2 sends. Decision 0198 deleted the server's C path
 // (`XO_LLRT_C=hpack`), B11 the client's C copy.
 //
-// C never calls compiled Xo (decision 0180), so the C stops where a
-// header block is to be encoded or decoded and Xo goes on with it:
-// http1.xo drives both sides (the server's H2Conn.next through
-// rthttp.h2_next, the client's h2_exchange through rthttp.cl_h2_next).
+// The HTTP/2 server (h2srv.xo, B28 part 2) and client (http1.xo
+// h2_exchange, hclient.xo) are Xo and call this module directly.
 use native/llrt/hpack_tables
 use native/rt
 use native/llrt/raw
@@ -573,8 +571,8 @@ pub fn (var e: Enc) set_sizes(s: Str) {
   }
 }
 
-/// Encodes the response heads of a job of the server's
-/// rthttp.h2_enc_job: the peer's table size settings since the last job
+/// Encodes the response heads of a job of the server (h2srv.xo
+/// encode): the peer's table size settings since the last job
 /// (a count, then each), then for each head its number of fields and
 /// each field's name and value lengths and the name and the value, the
 /// numbers 4 bytes little endian. The blocks, each after its length.
