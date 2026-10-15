@@ -37,6 +37,7 @@ type matrixCert struct {
 	cert, key  []byte // PEM (the key PKCS #8)
 	tls        tls.Certificate
 	ecdsaSuite bool // TLS 1.2's ECDHE_ECDSA suites (else ECDHE_RSA)
+	goOnly     bool // only Go's servers have it (P-521: the Xo server's is tls13srv.xo's owner's)
 }
 
 func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
@@ -59,6 +60,7 @@ func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
 	rk, _ := rsa.GenerateKey(rand.Reader, 2048)
 	p256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p521, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	_, ed, _ := ed25519.GenerateKey(rand.Reader)
 	var out []matrixCert
 	for i, k := range []struct {
@@ -66,7 +68,7 @@ func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
 		priv  any
 		pub   any
 		ecdsa bool
-	}{{"rsa", rk, &rk.PublicKey, false}, {"p256", p256, &p256.PublicKey, true}, {"p384", p384, &p384.PublicKey, true}, {"ed25519", ed, ed.Public(), true}} {
+	}{{"rsa", rk, &rk.PublicKey, false}, {"p256", p256, &p256.PublicKey, true}, {"p384", p384, &p384.PublicKey, true}, {"ed25519", ed, ed.Public(), true}, {"p521", p521, &p521.PublicKey, true}} {
 		lt := &x509.Certificate{SerialNumber: big.NewInt(int64(10 + i)), Subject: pkix.Name{CommonName: k.name}, NotBefore: now.Add(-time.Hour),
 			NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
@@ -78,7 +80,7 @@ func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mc := matrixCert{name: k.name, cert: pemOf("CERTIFICATE", der), key: pemOf("PRIVATE KEY", kd), ecdsaSuite: k.ecdsa}
+		mc := matrixCert{name: k.name, cert: pemOf("CERTIFICATE", der), key: pemOf("PRIVATE KEY", kd), ecdsaSuite: k.ecdsa, goOnly: k.name == "p521"}
 		if mc.tls, err = tls.X509KeyPair(mc.cert, mc.key); err != nil {
 			t.Fatal(err)
 		}
@@ -102,6 +104,13 @@ var matrixGroups = []struct {
 	name string
 	id   tls.CurveID
 }{{"x25519", tls.X25519}, {"p256", tls.CurveP256}, {"p384", tls.CurveP384}}
+
+// matrixClientGroups are the groups of the Go servers the Xo client
+// calls: the Xo server's P-521 is its owner's (tls13srv.xo).
+var matrixClientGroups = append(matrixGroups, struct {
+	name string
+	id   tls.CurveID
+}{"p521", tls.CurveP521})
 
 // matrixState is what one side of a connection saw.
 func matrixState(cs tls.ConnectionState) string {
@@ -146,9 +155,17 @@ func startMatrixPeers(t *testing.T, certs []matrixCert) map[string]string {
 		}
 	}
 	p := []tls.Certificate{certs[1].tls}
-	for _, g := range matrixGroups {
+	for _, g := range matrixClientGroups {
 		serve("go p256 tls1.3 "+g.name, &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}})
 		serve("go p256 tls1.2 "+g.name, &tls.Config{Certificates: p, MaxVersion: tls.VersionTLS12, CurvePreferences: []tls.CurveID{g.id}})
+	}
+	// Go 1.26's other hybrids, TLS 1.3 only (the Xo server's are its
+	// owner's: tls13srv.xo)
+	for _, g := range []struct {
+		name string
+		id   tls.CurveID
+	}{{"secp256r1mlkem768", tls.SecP256r1MLKEM768}, {"secp384r1mlkem1024", tls.SecP384r1MLKEM1024}} {
+		serve("go p256 tls1.3 "+g.name, &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}})
 	}
 	serve("go p256 tls1.3 alpn http/1.1", &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13})
 	serve("go p256 tls1.2 alpn http/1.1", &tls.Config{Certificates: p, MaxVersion: tls.VersionTLS12})
@@ -264,8 +281,9 @@ func probeMatrix(out *strings.Builder, addrs map[string]string, certs []matrixCe
 // against Go's servers, Go's clients against the Xo servers, and the Xo
 // client against the Xo servers, across TLS 1.3 and 1.2, suites (GCM,
 // ChaCha20-Poly1305, CBC on 1.2), groups (X25519, P-256, P-384, a
-// HelloRetryRequest), certificate keys (RSA, ECDSA P-256 and P-384,
-// Ed25519), ALPN, and resumption. The program built with the Go backend
+// HelloRetryRequest; P-521 for the Xo client), certificate keys (RSA,
+// ECDSA P-256 and P-384, Ed25519; ECDSA P-521 on Go's servers for the Xo
+// client), ALPN, and resumption. The program built with the Go backend
 // is crypto/tls on both ends: the native backends must print the same.
 // TLS 1.3's suite is the server's choice among Go's offers (AES-128-GCM);
 // ChaCha20-Poly1305 and AES-256-GCM on TLS 1.3 are covered by the
@@ -279,8 +297,14 @@ func TestTLSInteropMatrix(t *testing.T) {
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
-	caPEM, roots, certs := newMatrixPKI(t)
-	peers := startMatrixPeers(t, certs)
+	caPEM, roots, all := newMatrixPKI(t)
+	peers := startMatrixPeers(t, all)
+	var certs []matrixCert
+	for _, c := range all {
+		if !c.goOnly {
+			certs = append(certs, c)
+		}
+	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(matrixProgram(caPEM, certs, peers)), 0o644); err != nil {
 		t.Fatal(err)
@@ -301,15 +325,9 @@ func TestTLSInteropMatrix(t *testing.T) {
 		outs[i] = runMatrix(t, res.Binaries[xotool.Host()], certs, roots)
 	}
 	t.Logf("go backend:\n%s", outs[0])
-	// X25519MLKEM768, Go's default: the Xo server takes it (mlkem.xo);
-	// the Xo client offers it once tls13.xo does (Xo Lang 2's, in
-	// progress), X25519 until then
+	// X25519MLKEM768, Go's default: the Xo server takes it (mlkem.xo)
+	// and the Xo client offers it first (tls13.xo, B31 part 17)
 	want := strings.Split(outs[0], "\n")
-	for j, w := range want {
-		if strings.HasPrefix(w, "xo client -> ") {
-			want[j] = strings.ReplaceAll(w, "X25519MLKEM768", "X25519")
-		}
-	}
 	for i, be := range backends[1:] {
 		got := strings.Split(outs[i+1], "\n")
 		if len(got) != len(want) {

@@ -1,11 +1,12 @@
-// The NIST curves P-256 and P-384 (FIPS 186-5, SEC 1) for TLS (the zero-C
+// The NIST curves P-256, P-384 and P-521, and P-224 for signatures
+// (FIPS 186-5, SEC 1) for TLS (the zero-C
 // audit's B31, decision 0202: Go's crypto/internal/fips140/nistec and
 // ecdsa designs in Xo, replacing Mbed TLS's ecp and ecdsa): ECDH (the
 // key shares of TLS 1.3 and ECDHE of TLS 1.2) and ECDSA signing and
 // verification over a hash the caller computed.
 //
-// Field elements are L 64 bit limbs, the lowest first (L = 4 for P-256,
-// 6 for P-384), in the Montgomery domain (x R mod m, R = 2^(64L)), with
+// Field elements are L 64 bit limbs, the lowest first (L = 4 for P-256
+// and P-224, 6 for P-384, 9 for P-521), in the Montgomery domain (x R mod m, R = 2^(64L)), with
 // one generic Montgomery product (CIOS) for both the field (mod p) and
 // the scalars (mod n). Points are projective (X:Y:Z) with the complete
 // addition formulas for a = -3 of Renes, Costello and Batina (eprint
@@ -21,8 +22,8 @@
 //
 // Everything of one operation lives in one List[Int], the workspace,
 // reached through raw memory as ed25519.xo's: `c` is the address of its
-// first word, an element takes 6 words (48 bytes) whatever L is, a point
-// three elements (X, Y, Z at +0, +48, +96).
+// first word, an element takes 9 words (ES, 72 bytes) whatever L is, a
+// point three elements (X, Y, Z at +0, +ES, +2 ES; PS bytes).
 use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/nistec_g256
@@ -33,43 +34,50 @@ use native/rt
 /// The curves (the `curve` argument of the functions below).
 pub const P256: Int = 0
 pub const P384: Int = 1
+pub const P521: Int = 2
+/// P-224: ECDSA verification of certificates (Go's crypto/ecdsa); no TLS
+/// key exchange uses it.
+pub const P224: Int = 3
 
-// The workspace, in bytes: L, then a modulus block for p and one for n
-// (MINV: -m^-1 mod 2^64; MLIMBS: m; MRR: R^2 mod m; MONE: R mod m; ME2:
-// m - 2, the exponent of an inversion).
-const MP: Int = 8
-const MN: Int = 208
+// The workspace, in bytes: L, the curve's byte size (SZW), then a modulus
+// block for p and one for n (MINV: -m^-1 mod 2^64; MLIMBS: m; MRR: R^2
+// mod m; MONE: R mod m; ME2: m - 2, the exponent of an inversion).
+const SZW: Int = 8
+const ES: Int = 72
+const PS: Int = 216
+const MP: Int = 16
+const MN: Int = 312
 const MINV: Int = 0
 const MLIMBS: Int = 8
-const MRR: Int = 56
-const MONE: Int = 104
-const ME2: Int = 152
+const MRR: Int = 80
+const MONE: Int = 152
+const ME2: Int = 224
 // b (Montgomery), the 1 of the integers (to leave the Montgomery domain)
-const CB: Int = 408
-const ONE1: Int = 456
+const CB: Int = 608
+const ONE1: Int = 680
 // the product's L + 2 words, then a difference's L words
-const TMPW: Int = 504
-const DIFF: Int = 568
+const TMPW: Int = 752
+const DIFF: Int = 840
 // pt_add's t0 to t4, X3, Y3, Z3
-const T0: Int = 624
+const T0: Int = 912
 // pow's accumulator
-const PW: Int = 1008
+const PW: Int = 1488
 // points: the base point, three of the operations, the multiplication's
 // accumulator and selection
-const PG: Int = 1056
-const PA: Int = 1200
-const PB: Int = 1344
-const PC: Int = 1488
-const ACC: Int = 1632
-const SEL: Int = 1776
+const PG: Int = 1560
+const PA: Int = 1776
+const PB: Int = 1992
+const PC: Int = 2208
+const ACC: Int = 2424
+const SEL: Int = 2640
 // the multiplication's table of [0]P to [15]P
-const TABLE: Int = 1920
+const TABLE: Int = 2856
 // the elements of ECDH and ECDSA
-const S0: Int = 4224
+const S0: Int = 6312
 // pow's table of f^1 to f^15 (the inversion chain's temporaries too)
-const POWT: Int = 4608
+const POWT: Int = 6888
 // the workspace in words
-const WSIZE: Int = 666
+const WSIZE: Int = 996
 
 fn at(c: Int, off: Int) -> Int { rt.int_wrap(0, c, off) }
 
@@ -78,12 +86,26 @@ fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
 /// The element S0 + k.
-fn sk(c: Int, k: Int) -> Int { at(c, S0 + 48 * k) }
+fn sk(c: Int, k: Int) -> Int { at(c, S0 + ES * k) }
 
 fn limbs(c: Int) -> Int { ld(c, 0) }
 
 /// The bytes of an element or scalar of the curve.
-pub fn size(curve: Int) -> Int { if curve == P384 { 48 } else { 32 } }
+pub fn size(curve: Int) -> Int {
+  if curve == P384 {
+    return 48
+  }
+  if curve == P521 {
+    return 66
+  }
+  if curve == P224 {
+    return 28
+  }
+  32
+}
+
+/// The byte size of the workspace's curve.
+fn csize(c: Int) -> Int { ld(c, SZW) }
 
 // ---------------------------------------------------------------------------
 // Words
@@ -1203,7 +1225,7 @@ fn pow(c: Int, h: Int, f: Int, e: Int, md: Int) {
   copy(c, tab, f)
   var i = 1
   while i < 15 {
-    mul(c, at(tab, 48 * i), at(tab, 48 * (i - 1)), f, md)
+    mul(c, at(tab, ES * i), at(tab, ES * (i - 1)), f, md)
     i += 1
   }
   let acc = at(c, PW)
@@ -1220,9 +1242,9 @@ fn pow(c: Int, h: Int, f: Int, e: Int, md: Int) {
     let d = rt.int_wrap(4, ld(e, 8 * (w / 16)), 4 * (w % 16)) & 15
     if d != 0 {
       if started {
-        mul(c, acc, acc, at(tab, 48 * (d - 1)), md)
+        mul(c, acc, acc, at(tab, ES * (d - 1)), md)
       } else {
-        copy(c, acc, at(tab, 48 * (d - 1)))
+        copy(c, acc, at(tab, ES * (d - 1)))
         started = true
       }
     }
@@ -1246,13 +1268,13 @@ fn inv_p256(c: Int, h: Int, f: Int) {
   let mp = at(c, MP)
   let t = at(c, POWT)
   let x11 = t
-  let x111 = at(t, 48)
-  let x111111 = at(t, 96)
-  let x15 = at(t, 144)
-  let x16 = at(t, 192)
-  let x47 = at(t, 240)
-  let z = at(t, 288)
-  let u = at(t, 336)
+  let x111 = at(t, ES)
+  let x111111 = at(t, 2 * ES)
+  let x15 = at(t, 3 * ES)
+  let x16 = at(t, 4 * ES)
+  let x47 = at(t, 5 * ES)
+  let z = at(t, 6 * ES)
+  let u = at(t, 7 * ES)
   // _11 = f^3, _111 = f^7
   mul(c, x11, f, f, mp)
   mul(c, x11, x11, f, mp)
@@ -1291,7 +1313,7 @@ fn inv_p256(c: Int, h: Int, f: Int) {
 
 /// h = 1/f (Montgomery; 0 for 0).
 fn inv(c: Int, h: Int, f: Int, md: Int) {
-  if limbs(c) == 4 && md == at(c, MP) {
+  if csize(c) == 32 && md == at(c, MP) {
     inv_p256(c, h, f)
     return
   }
@@ -1337,22 +1359,47 @@ fn from_mont(c: Int, h: Int, f: Int, md: Int) { mul(c, h, f, at(c, ONE1), md) }
 // ---------------------------------------------------------------------------
 // Bytes
 
-/// h = the big endian integer of the size(curve) bytes of b from off.
+/// h = the big endian integer of the csize(c) bytes of b from off (the
+/// top limb short of 8 bytes on P-521 and P-224).
 fn load(c: Int, h: Int, b: Bytes, off: Int) {
   let n = limbs(c)
+  let sz = csize(c)
   var i = 0
   while i < n {
-    st(h, 8 * i, rt.int_wrap(7, rt.bytes_word(b, off + 8 * (n - 1 - i)), 0))
+    let lo = off + sz - 8 * (i + 1)
+    if lo >= off {
+      st(h, 8 * i, rt.int_wrap(7, rt.bytes_word(b, lo), 0))
+    } else {
+      var v = 0
+      var j = off
+      while j < lo + 8 {
+        v = rt.int_wrap(3, v, 8) | Int(b[j])
+        j += 1
+      }
+      st(h, 8 * i, v)
+    }
     i += 1
   }
 }
 
-/// s with the big endian bytes of f.
+/// s with the csize(c) big endian bytes of f.
 fn put(c: Int, s: Str, f: Int) -> Str {
   var out = s
-  var i = limbs(c) - 1
+  let n = limbs(c)
+  var top = csize(c) - 8 * (n - 1)
+  var i = n - 1
   while i >= 0 {
-    out = rt.rs_push_word(out, rt.int_wrap(7, ld(f, 8 * i), 0), 8)
+    if top < 8 {
+      let v = ld(f, 8 * i)
+      var j = top - 1
+      while j >= 0 {
+        out = rt.rs_push_byte(out, rt.int_wrap(4, v, 8 * j) & 255)
+        j -= 1
+      }
+      top = 8
+    } else {
+      out = rt.rs_push_word(out, rt.int_wrap(7, ld(f, 8 * i), 0), 8)
+    }
     i -= 1
   }
   out
@@ -1385,9 +1432,9 @@ fn set_hex(c: Int, h: Int, s: Str) {
 // The curve
 
 /// Fills m's block from its hex digits: -m^-1 mod 2^64 (Newton's
-/// iteration doubles the correct low bits of 1/m0 each step), R mod m =
-/// 2^(64L) - m (m is above 2^(64L - 1)), R^2 mod m by 64 L doublings,
-/// and m - 2.
+/// iteration doubles the correct low bits of 1/m0 each step), R mod m
+/// (2^(64L) - m when m is above 2^(64L - 1), else 1 doubled 64 L times:
+/// P-521 and P-224), R^2 mod m by 64 L doublings, and m - 2.
 fn modulus(c: Int, md: Int, hex: Str) {
   let n = limbs(c)
   let m = at(md, MLIMBS)
@@ -1401,17 +1448,30 @@ fn modulus(c: Int, md: Int, hex: Str) {
   let one = at(md, MONE)
   var b = 0
   var i = 0
-  while i < n {
-    b = sbb(one, 8 * i, 0, ld(m, 8 * i), b)
-    i += 1
+  if ld(m, 8 * (n - 1)) < 0 {
+    while i < n {
+      b = sbb(one, 8 * i, 0, ld(m, 8 * i), b)
+      i += 1
+    }
+  } else {
+    set_zero(c, one)
+    st(one, 0, 1)
+    for _ in 0..64 * n {
+      add(c, one, one, one, md)
+    }
   }
   let rr = at(md, MRR)
   copy(c, rr, one)
   for _ in 0..64 * n {
     add(c, rr, rr, rr, md)
   }
-  copy(c, at(md, ME2), m)
-  st(md, ME2, rt.int_wrap(1, m0, 2))
+  let e2 = at(md, ME2)
+  b = 2
+  i = 0
+  while i < n {
+    b = sbb(e2, 8 * i, ld(m, 8 * i), b, 0)
+    i += 1
+  }
 }
 
 /// A new workspace for the curve: its moduli, b, and the base point.
@@ -1419,26 +1479,41 @@ fn workspace(curve: Int) -> List[Int] {
   let w = raw.zero_ints(WSIZE)
   let c = rt.int_wrap(0, rt.obj_addr(w), rt.layout(2))
   let mp = at(c, MP)
-  if curve == P384 {
+  st(c, SZW, size(curve))
+  if curve == P521 {
+    st(c, 0, 9)
+    modulus(c, mp, "00000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    modulus(c, at(c, MN), "00000000000001fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409")
+    set_hex(c, at(c, CB), "0000000000000051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00")
+    set_hex(c, at(c, PG), "00000000000000c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66")
+    set_hex(c, at(c, PG + ES), "000000000000011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650")
+  } else if curve == P224 {
+    st(c, 0, 4)
+    modulus(c, mp, "00000000ffffffffffffffffffffffffffffffff000000000000000000000001")
+    modulus(c, at(c, MN), "00000000ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d")
+    set_hex(c, at(c, CB), "00000000b4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4")
+    set_hex(c, at(c, PG), "00000000b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21")
+    set_hex(c, at(c, PG + ES), "00000000bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34")
+  } else if curve == P384 {
     st(c, 0, 6)
     modulus(c, mp, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff")
     modulus(c, at(c, MN), "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973")
     set_hex(c, at(c, CB), "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef")
     set_hex(c, at(c, PG), "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7")
-    set_hex(c, at(c, PG + 48), "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
+    set_hex(c, at(c, PG + ES), "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
   } else {
     st(c, 0, 4)
     modulus(c, mp, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff")
     modulus(c, at(c, MN), "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")
     set_hex(c, at(c, CB), "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b")
     set_hex(c, at(c, PG), "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296")
-    set_hex(c, at(c, PG + 48), "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
+    set_hex(c, at(c, PG + ES), "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
   }
   st(c, ONE1, 1)
   to_mont(c, at(c, CB), at(c, CB), mp)
   to_mont(c, at(c, PG), at(c, PG), mp)
-  to_mont(c, at(c, PG + 48), at(c, PG + 48), mp)
-  copy(c, at(c, PG + 96), at(mp, MONE))
+  to_mont(c, at(c, PG + ES), at(c, PG + ES), mp)
+  copy(c, at(c, PG + 2 * ES), at(mp, MONE))
   w
 }
 
@@ -1459,19 +1534,19 @@ fn pt_add(c: Int, r: Int, p: Int, q: Int) {
   let mp = at(c, MP)
   let b = at(c, CB)
   let t0 = at(c, T0)
-  let t1 = at(c, T0 + 48)
-  let t2 = at(c, T0 + 96)
-  let t3 = at(c, T0 + 144)
-  let t4 = at(c, T0 + 192)
-  let x3 = at(c, T0 + 240)
-  let y3 = at(c, T0 + 288)
-  let z3 = at(c, T0 + 336)
+  let t1 = at(c, T0 + ES)
+  let t2 = at(c, T0 + 2 * ES)
+  let t3 = at(c, T0 + 3 * ES)
+  let t4 = at(c, T0 + 4 * ES)
+  let x3 = at(c, T0 + 5 * ES)
+  let y3 = at(c, T0 + 6 * ES)
+  let z3 = at(c, T0 + 7 * ES)
   let x1 = p
-  let y1 = at(p, 48)
-  let z1 = at(p, 96)
+  let y1 = at(p, ES)
+  let z1 = at(p, 2 * ES)
   let x2 = q
-  let y2 = at(q, 48)
-  let z2 = at(q, 96)
+  let y2 = at(q, ES)
+  let z2 = at(q, 2 * ES)
   mul(c, t0, x1, x2, mp)
   mul(c, t1, y1, y2, mp)
   mul(c, t2, z1, z2, mp)
@@ -1516,8 +1591,8 @@ fn pt_add(c: Int, r: Int, p: Int, q: Int) {
   mul(c, t1, t3, t0, mp)
   add(c, z3, z3, t1, mp)
   copy(c, r, x3)
-  copy(c, at(r, 48), y3)
-  copy(c, at(r, 96), z3)
+  copy(c, at(r, ES), y3)
+  copy(c, at(r, 2 * ES), z3)
 }
 
 /// r = 2p (Go's nistec Double: Renes, Costello and Batina's algorithm 6
@@ -1526,15 +1601,15 @@ fn pt_double(c: Int, r: Int, p: Int) {
   let mp = at(c, MP)
   let b = at(c, CB)
   let t0 = at(c, T0)
-  let t1 = at(c, T0 + 48)
-  let t2 = at(c, T0 + 96)
-  let t3 = at(c, T0 + 144)
-  let x3 = at(c, T0 + 240)
-  let y3 = at(c, T0 + 288)
-  let z3 = at(c, T0 + 336)
+  let t1 = at(c, T0 + ES)
+  let t2 = at(c, T0 + 2 * ES)
+  let t3 = at(c, T0 + 3 * ES)
+  let x3 = at(c, T0 + 5 * ES)
+  let y3 = at(c, T0 + 6 * ES)
+  let z3 = at(c, T0 + 7 * ES)
   let x = p
-  let y = at(p, 48)
-  let z = at(p, 96)
+  let y = at(p, ES)
+  let z = at(p, 2 * ES)
   mul(c, t0, x, x, mp)
   mul(c, t1, y, y, mp)
   mul(c, t2, z, z, mp)
@@ -1570,14 +1645,14 @@ fn pt_double(c: Int, r: Int, p: Int) {
   add(c, z3, z3, z3, mp)
   add(c, z3, z3, z3, mp)
   copy(c, r, x3)
-  copy(c, at(r, 48), y3)
-  copy(c, at(r, 96), z3)
+  copy(c, at(r, ES), y3)
+  copy(c, at(r, 2 * ES), z3)
 }
 
 fn pt_identity(c: Int, r: Int) {
   set_zero(c, r)
-  copy(c, at(r, 48), at(at(c, MP), MONE))
-  set_zero(c, at(r, 96))
+  copy(c, at(r, ES), at(at(c, MP), MONE))
+  set_zero(c, at(r, 2 * ES))
 }
 
 /// r = [k]p, k the address of a scalar's L words (normal, below n): a
@@ -1589,7 +1664,7 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
   pt_identity(c, tab)
   var i = 1
   while i < 16 {
-    pt_add(c, at(tab, 144 * i), at(tab, 144 * (i - 1)), p)
+    pt_add(c, at(tab, PS * i), at(tab, PS * (i - 1)), p)
     i += 1
   }
   let acc = at(c, ACC)
@@ -1604,13 +1679,13 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
       pt_double(c, acc, acc)
     }
     let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
-    rt.mem_set(sel, 0, 144)
+    rt.mem_set(sel, 0, PS)
     i = 0
     while i < 16 {
       let m = ct.mask_eq(i, digit)
-      let e = at(tab, 144 * i)
+      let e = at(tab, PS * i)
       var j = 0
-      while j < 18 {
+      while j < PS / 8 {
         st(sel, 8 * j, ld(sel, 8 * j) | (ld(e, 8 * j) & m))
         j += 1
       }
@@ -1622,12 +1697,13 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
   copy_pt(r, acc)
 }
 
-fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, 144) }
+fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, PS) }
 
 /// r = [k]G, the curve's base point: P-256's from the fixed base table
-/// (pt_mul_g), P-384's by pt_mul.
+/// (pt_mul_g), the others' by pt_mul (P-521's table would be 35,370
+/// words: compiled in, it costs every TLS build about 27 s and 2.5 MB).
 fn pt_mul_base(c: Int, r: Int, k: Int) {
-  if limbs(c) == 4 {
+  if csize(c) == 32 {
     pt_mul_g(c, r, k)
   } else {
     pt_mul(c, r, at(c, PG), k)
@@ -1675,14 +1751,14 @@ fn pt_mul_g(c: Int, r: Int, k: Int) {
     st(sel, 8, x1)
     st(sel, 16, x2)
     st(sel, 24, x3)
-    st(sel, 48, y0 | (ld(one, 0) & z))
-    st(sel, 56, y1 | (ld(one, 8) & z))
-    st(sel, 64, y2 | (ld(one, 16) & z))
-    st(sel, 72, y3 | (ld(one, 24) & z))
-    st(sel, 96, ld(one, 0) & ~z)
-    st(sel, 104, ld(one, 8) & ~z)
-    st(sel, 112, ld(one, 16) & ~z)
-    st(sel, 120, ld(one, 24) & ~z)
+    st(sel, ES, y0 | (ld(one, 0) & z))
+    st(sel, ES + 8, y1 | (ld(one, 8) & z))
+    st(sel, ES + 16, y2 | (ld(one, 16) & z))
+    st(sel, ES + 24, y3 | (ld(one, 24) & z))
+    st(sel, 2 * ES, ld(one, 0) & ~z)
+    st(sel, 2 * ES + 8, ld(one, 8) & ~z)
+    st(sel, 2 * ES + 16, ld(one, 16) & ~z)
+    st(sel, 2 * ES + 24, ld(one, 24) & ~z)
     pt_add(c, acc, acc, sel)
     w += 1
   }
@@ -1693,12 +1769,12 @@ fn pt_mul_g(c: Int, r: Int, k: Int) {
 fn pt_affine(c: Int, x: Int, y: Int, p: Int) -> Int {
   let mp = at(c, MP)
   let z = sk(c, 7)
-  inv(c, z, at(p, 96), mp)
+  inv(c, z, at(p, 2 * ES), mp)
   mul(c, x, p, z, mp)
-  mul(c, y, at(p, 48), z, mp)
+  mul(c, y, at(p, ES), z, mp)
   from_mont(c, x, x, mp)
   from_mont(c, y, y, mp)
-  ~is_zero(c, at(p, 96))
+  ~is_zero(c, at(p, 2 * ES))
 }
 
 /// p = the point of the uncompressed encoding (0x04, x, y) of b (public);
@@ -1710,18 +1786,18 @@ fn pt_decode(c: Int, p: Int, b: Bytes, curve: Int) -> Bool {
   }
   let mp = at(c, MP)
   load(c, p, b, 1)
-  load(c, at(p, 48), b, 1 + sz)
-  if below(c, p, mp) == 0 || below(c, at(p, 48), mp) == 0 {
+  load(c, at(p, ES), b, 1 + sz)
+  if below(c, p, mp) == 0 || below(c, at(p, ES), mp) == 0 {
     return false
   }
   to_mont(c, p, p, mp)
-  to_mont(c, at(p, 48), at(p, 48), mp)
-  copy(c, at(p, 96), at(mp, MONE))
+  to_mont(c, at(p, ES), at(p, ES), mp)
+  copy(c, at(p, 2 * ES), at(mp, MONE))
   // y^2 = x^3 - 3x + b
   let l = sk(c, 6)
   let r = sk(c, 7)
   let t = at(c, PW)
-  mul(c, l, at(p, 48), at(p, 48), mp)
+  mul(c, l, at(p, ES), at(p, ES), mp)
   mul(c, r, p, p, mp)
   mul(c, r, r, p, mp)
   add(c, t, p, p, mp)
@@ -1743,7 +1819,7 @@ fn scalar(c: Int, k: Int, b: Bytes, curve: Int) -> Bool {
 
 /// The uncompressed encoding of the point (x, y) (normal).
 fn encode(c: Int, x: Int, y: Int) -> Bytes {
-  var s = rt.rs_with_cap(1 + 16 * limbs(c))
+  var s = rt.rs_with_cap(1 + 2 * csize(c))
   s = rt.rs_push_byte(s, 4)
   s = put(c, s, x)
   put(c, s, y).bytes()
@@ -1752,13 +1828,26 @@ fn encode(c: Int, x: Int, y: Int) -> Bytes {
 // ---------------------------------------------------------------------------
 // ECDH
 
+/// size(curve) random bytes, P-521's top byte masked to its one bit of
+/// the order's 521 (Go's randomPoint and ECDSA nonces: excess bits off,
+/// so a candidate is below n half the time, not once in 128).
+fn random_scalar(curve: Int) -> Bytes {
+  let b = rand.next_bytes(size(curve))
+  if curve != P521 {
+    return b
+  }
+  var s = rt.rs_with_cap(b.len())
+  s = rt.rs_push_byte(s, Int(b[0]) & 1)
+  rt.rs_append_bytes(s, b, 1, b.len(), 0).bytes()
+}
+
 /// A new private key: a scalar in [1, n) by rejection sampling from the
 /// system's generator (Go's randomPoint), size(curve) bytes.
 pub fn generate(curve: Int) -> Bytes {
   let w = workspace(curve)
   let c = base(w)
   while true {
-    let b = rand.next_bytes(size(curve))
+    let b = random_scalar(curve)
     if scalar(c, sk(c, 0), b, curve) {
       keep(w)
       return b
@@ -1795,7 +1884,7 @@ pub fn ecdh(curve: Int, priv: Bytes, peer: Bytes) -> Bytes? {
   }
   pt_mul(c, at(c, PB), at(c, PA), sk(c, 0))
   let ok = pt_affine(c, sk(c, 1), sk(c, 2), at(c, PB))
-  var s = rt.rs_with_cap(8 * limbs(c))
+  var s = rt.rs_with_cap(csize(c))
   s = put(c, s, sk(c, 1))
   keep(w)
   if ok == 0 {
@@ -1807,8 +1896,9 @@ pub fn ecdh(curve: Int, priv: Bytes, peer: Bytes) -> Bytes? {
 // ---------------------------------------------------------------------------
 // ECDSA
 
-/// e = the hash as an integer modulo n (SEC 1 4.1.3 step 5: its leftmost
-/// bits up to n's length, which is 8 size(curve) for both curves).
+/// e = the hash as an integer modulo n (SEC 1 4.1.3 step 5, Go's
+/// hashToNat: its leftmost size(curve) bytes, shifted right by the bits
+/// they have past n's length: 7 for a hash of 66 bytes or more on P-521).
 fn hash_int(c: Int, e: Int, hash: Bytes, curve: Int) {
   let sz = size(curve)
   var s = rt.rs_with_cap(sz)
@@ -1820,7 +1910,17 @@ fn hash_int(c: Int, e: Int, hash: Bytes, curve: Int) {
   let k = if hash.len() > sz { sz } else { hash.len() }
   s = rt.rs_append_bytes(s, hash, 0, k, 0)
   load(c, e, s.bytes(), 0)
-  // e < 2^(64L) < 2n
+  if curve == P521 && k == sz {
+    // e >>= 7 (public: the hash)
+    let n = limbs(c)
+    var j = 0
+    while j < n {
+      let hi = if j + 1 < n { rt.int_wrap(3, ld(e, 8 * (j + 1)), 57) } else { 0 }
+      st(e, 8 * j, rt.int_wrap(4, ld(e, 8 * j), 7) | hi)
+      j += 1
+    }
+  }
+  // e < 2^(8 sz) and below 2n
   let mn = at(c, MN)
   let z = sk(c, 7)
   set_zero(c, z)
@@ -1846,7 +1946,7 @@ pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes {
   let t = sk(c, 5)
   hash_int(c, e, hash, curve)
   while true {
-    if scalar(c, k, rand.next_bytes(size(curve)), curve) {
+    if scalar(c, k, random_scalar(curve), curve) {
       // r = x([k]G) mod n
       pt_mul_base(c, at(c, PA), k)
       pt_affine(c, r, t, at(c, PA))
@@ -1861,9 +1961,9 @@ pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes {
         inv(c, t, t, mn)
         mul(c, s, s, t, mn)
         if is_zero(c, s) == 0 {
-          var rb = rt.rs_with_cap(8 * limbs(c))
+          var rb = rt.rs_with_cap(csize(c))
           rb = put(c, rb, r)
-          var sb = rt.rs_with_cap(8 * limbs(c))
+          var sb = rt.rs_with_cap(csize(c))
           sb = put(c, sb, s)
           keep(w)
           return der_sig(rb.bytes(), sb.bytes())
@@ -1991,13 +2091,17 @@ fn der_uint(b: Bytes) -> Bytes {
   rt.rs_append_bytes(out, b, a, b.len(), 0).bytes()
 }
 
-/// internal.crypto_op's ops of the curve (std/internal.xo): `public` the
+/// internal.crypto_op's ops of the curve (std/internal.xo; P-224 has
+/// public, sign and verify only, as Go's crypto/ecdh has no P-224): `public` the
 /// public point of the private key a, `ecdh` the shared secret of the
 /// private key a and the point b (empty when either is invalid),
 /// `generate` a private key, `sign` the DER signature of the hash b by the
 /// private key a, `verify` [1] when c is a signature of the hash b by the
 /// point a, else [0]; none for another what.
 pub fn op(curve: Int, what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if curve == P224 && what != "public" && what != "sign" && what != "verify" {
+    return None
+  }
   match what {
     "public" => Some(public_key(curve, a))
     "ecdh" => Some(ecdh(curve, a, b) ?? b"")

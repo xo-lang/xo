@@ -552,3 +552,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [mbedtls-pkcs8-rsa-check-pair.md](mbedtls-pkcs8-rsa-check-pair.md): Observed: TF-PSA-Crypto's PKCS#8 parse of an RSA key leaves the public half unset, so check_pair fails; xo_tls.c sets it.
 - [wasm-rejects-calls-in-dead-native-arms.md](wasm-rejects-calls-in-dead-native-arms.md): Observed: a native-only rt call behind sysio.layer() == 0 failed the wasm build; selfhost/wasm/call.xo lists those that fault when run.
 - [thread-local-word-collision.md](thread-local-word-collision.md): Observed: tasks.xo took thread local word 12, already sysio.xo's fs message: xo build exited 137; sched.xo's table and TestThreadLocalWordOwners now guard the words.
+- [large-const-list-costs-every-build.md](large-const-list-costs-every-build.md): Observed: a 35,370 Int const List (a P-521 base table) added 27 s to every TLS build and 2.5 MB to the binary; constant Lists compile to code.

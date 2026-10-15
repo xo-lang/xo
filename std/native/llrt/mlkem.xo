@@ -1,6 +1,7 @@
-// ML-KEM-768 (FIPS 203) and TLS's X25519MLKEM768 hybrid for the native
+// ML-KEM-768 and ML-KEM-1024 (FIPS 203) and TLS's hybrids
+// (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024) for the native
 // backends' TLS (the zero-C audit's B31, decision 0202), as Go's
-// crypto/internal/fips140/mlkem (mlkem768.go, field.go) and
+// crypto/internal/fips140/mlkem (mlkem768.go, mlkem1024.go, field.go) and
 // crypto/tls key_schedule.go's hybridKeyExchange: key generation from a
 // 64 byte seed (d || z), encapsulation, decapsulation with the implicit
 // rejection (the shared key of a ciphertext that does not re-encrypt is
@@ -9,6 +10,7 @@
 // rejection sampling of the matrix A reads only the public seed.
 use native/llrt/asn1
 use native/llrt/ct
+use native/llrt/nistec
 use native/llrt/rand
 use native/llrt/sha3
 use native/llrt/x25519
@@ -16,15 +18,33 @@ use native/rt
 
 const N: Int = 256
 const Q: Int = 3329
-const K: Int = 3
 
-/// The sizes: an encapsulation key, a ciphertext, a seed.
+/// The sizes: an encapsulation key, a ciphertext (ML-KEM-768's, then
+/// ML-KEM-1024's), a seed.
 pub const EK_SIZE: Int = 1184
 pub const CT_SIZE: Int = 1088
+pub const EK_SIZE_1024: Int = 1568
+pub const CT_SIZE_1024: Int = 1568
 pub const SEED_SIZE: Int = 64
 
-/// TLS's X25519MLKEM768 group (draft-ietf-tls-ecdhe-mlkem).
+// The parameter sets' k (ML-KEM-768: 3, ML-KEM-1024: 4); du and dv,
+// the ciphertext's compressions, follow from it (10 and 4, 11 and 5).
+const K768: Int = 3
+const K1024: Int = 4
+
+fn du(k: Int) -> Int { if k == K1024 { 11 } else { 10 } }
+
+fn dv(k: Int) -> Int { if k == K1024 { 5 } else { 4 } }
+
+fn ek_size(k: Int) -> Int { 384 * k + 32 }
+
+fn ct_size(k: Int) -> Int { 32 * (du(k) * k + dv(k)) }
+
+/// TLS's hybrid groups (draft-ietf-tls-ecdhe-mlkem): X25519MLKEM768,
+/// SecP256r1MLKEM768, SecP384r1MLKEM1024.
 pub const GROUP_X25519_MLKEM768: Int = 0x11ec
+pub const GROUP_SECP256R1_MLKEM768: Int = 0x11eb
+pub const GROUP_SECP384R1_MLKEM1024: Int = 0x11ed
 
 // ---------------------------------------------------------------------------
 // The field and the ring
@@ -283,10 +303,10 @@ struct Key {
   ek: Bytes
 }
 
-fn matrix(rho: Bytes) -> List[List[Int]] {
+fn matrix(rho: Bytes, k: Int) -> List[List[Int]] {
   var a: List[List[Int]] = []
-  for i in 0..K {
-    for j in 0..K {
+  for i in 0..k {
+    for j in 0..k {
       a.push(sample_ntt(rho, j, i))
     }
   }
@@ -294,26 +314,26 @@ fn matrix(rho: Bytes) -> List[List[Int]] {
 }
 
 /// ML-KEM.KeyGen_internal (FIPS 203 Algorithms 13 and 16) from d || z.
-fn expand(seed: Bytes) -> Key {
+fn expand(seed: Bytes, k: Int) -> Key {
   let d = seed[0..32]
   let z = seed[32..64]
-  let g = sha3.sha3_512(asn1.cat([d, byte(K)]))
+  let g = sha3.sha3_512(asn1.cat([d, byte(k)]))
   let rho = g[0..32]
   let sigma = g[32..64]
-  let a = matrix(rho)
+  let a = matrix(rho, k)
   var s: List[List[Int]] = []
   var e: List[List[Int]] = []
-  for i in 0..K {
+  for i in 0..k {
     s.push(ntt(sample_cbd(sigma, i)))
   }
-  for i in 0..K {
-    e.push(ntt(sample_cbd(sigma, K + i)))
+  for i in 0..k {
+    e.push(ntt(sample_cbd(sigma, k + i)))
   }
   var t: List[List[Int]] = []
-  for i in 0..K {
+  for i in 0..k {
     var ti = e[i]
-    for j in 0..K {
-      ti = padd(ti, ntt_mul(a[i * K + j], s[j]))
+    for j in 0..k {
+      ti = padd(ti, ntt_mul(a[i * k + j], s[j]))
     }
     t.push(ti)
   }
@@ -327,47 +347,51 @@ fn expand(seed: Bytes) -> Key {
 }
 
 /// The encapsulation key of a seed (1184 bytes).
-pub fn public_key(seed: Bytes) -> Bytes { expand(seed).ek }
+pub fn public_key(seed: Bytes) -> Bytes { expand(seed, K768).ek }
+
+/// The ML-KEM-1024 encapsulation key of a seed (1568 bytes).
+pub fn public_key_1024(seed: Bytes) -> Bytes { expand(seed, K1024).ek }
 
 /// A new seed from the system's generator.
 pub fn generate() -> Bytes { rand.next_bytes(SEED_SIZE) }
 
 /// K-PKE.Encrypt (FIPS 203 Algorithm 14).
-fn pke_encrypt(a: List[List[Int]], t: List[List[Int]], m: Bytes, rnd: Bytes) -> Bytes {
+fn pke_encrypt(a: List[List[Int]], t: List[List[Int]], m: Bytes, rnd: Bytes, k: Int) -> Bytes {
   var r: List[List[Int]] = []
-  for i in 0..K {
+  for i in 0..k {
     r.push(ntt(sample_cbd(rnd, i)))
   }
   var e1: List[List[Int]] = []
-  for i in 0..K {
-    e1.push(sample_cbd(rnd, K + i))
+  for i in 0..k {
+    e1.push(sample_cbd(rnd, k + i))
   }
-  let e2 = sample_cbd(rnd, 2 * K)
+  let e2 = sample_cbd(rnd, 2 * k)
   var parts: List[Bytes] = []
-  for i in 0..K {
+  for i in 0..k {
     var uh = zeros()
-    for j in 0..K {
-      uh = padd(uh, ntt_mul(a[j * K + i], r[j]))
+    for j in 0..k {
+      uh = padd(uh, ntt_mul(a[j * k + i], r[j]))
     }
-    parts.push(encode_d(padd(e1[i], inverse_ntt(uh)), 10))
+    parts.push(encode_d(padd(e1[i], inverse_ntt(uh)), du(k)))
   }
   let mu = decode_d(m, 1)
   var vh = zeros()
-  for i in 0..K {
+  for i in 0..k {
     vh = padd(vh, ntt_mul(t[i], r[i]))
   }
-  parts.push(encode_d(padd(padd(inverse_ntt(vh), e2), mu), 4))
+  parts.push(encode_d(padd(padd(inverse_ntt(vh), e2), mu), dv(k)))
   asn1.cat(parts)
 }
 
 /// K-PKE.Decrypt (FIPS 203 Algorithm 15).
-fn pke_decrypt(s: List[List[Int]], c: Bytes) -> Bytes {
+fn pke_decrypt(s: List[List[Int]], c: Bytes, k: Int) -> Bytes {
   var mask = zeros()
-  for i in 0..K {
-    let u = decode_d(c[320 * i..320 * (i + 1)], 10)
+  let ul = 32 * du(k)
+  for i in 0..k {
+    let u = decode_d(c[ul * i..ul * (i + 1)], du(k))
     mask = padd(mask, ntt_mul(s[i], ntt(u)))
   }
-  let v = decode_d(c[960..CT_SIZE], 4)
+  let v = decode_d(c[ul * k..ct_size(k)], dv(k))
   encode_d(psub(v, inverse_ntt(mask)), 1)
 }
 
@@ -375,35 +399,46 @@ fn pke_decrypt(s: List[List[Int]], c: Bytes) -> Bytes {
 /// Algorithm 17): the shared key (32 bytes) and the ciphertext; none
 /// when ek is not a valid encapsulation key (Go's
 /// NewEncapsulationKey768: the length, every coefficient below q).
-pub fn encapsulate(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? {
-  if ek.len() != EK_SIZE || m.len() != 32 {
+pub fn encapsulate(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? { encaps_k(ek, m, K768) }
+
+/// encapsulate for ML-KEM-1024 (a 1568 byte key and ciphertext).
+pub fn encapsulate_1024(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? { encaps_k(ek, m, K1024) }
+
+fn encaps_k(ek: Bytes, m: Bytes, k: Int) -> (Bytes, Bytes)? {
+  if ek.len() != ek_size(k) || m.len() != 32 {
     return None
   }
   var t: List[List[Int]] = []
-  for i in 0..K {
+  for i in 0..k {
     t.push(decode12(ek[384 * i..384 * (i + 1)])?)
   }
-  let a = matrix(ek[1152..EK_SIZE])
+  let a = matrix(ek[384 * k..ek_size(k)], k)
   let g = sha3.sha3_512(asn1.cat([m, sha3.sha3_256(ek)]))
-  Some((g[0..32], pke_encrypt(a, t, m, g[32..64])))
+  Some((g[0..32], pke_encrypt(a, t, m, g[32..64], k)))
 }
 
 /// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18) of a ciphertext by the
 /// key of seed: the shared key, J(z || c) when c does not re-encrypt to
 /// itself (chosen in constant time); none for a ciphertext of another
 /// length.
-pub fn decapsulate(seed: Bytes, c: Bytes) -> Bytes? {
-  if seed.len() != SEED_SIZE || c.len() != CT_SIZE {
+pub fn decapsulate(seed: Bytes, c: Bytes) -> Bytes? { decaps_k(seed, c, K768) }
+
+/// decapsulate for ML-KEM-1024.
+pub fn decapsulate_1024(seed: Bytes, c: Bytes) -> Bytes? { decaps_k(seed, c, K1024) }
+
+fn decaps_k(seed: Bytes, c: Bytes, k: Int) -> Bytes? {
+  let n = ct_size(k)
+  if seed.len() != SEED_SIZE || c.len() != n {
     return None
   }
-  let key = expand(seed)
-  let m = pke_decrypt(key.s, c)
+  let key = expand(seed, k)
+  let m = pke_decrypt(key.s, c, k)
   let g = sha3.sha3_512(asn1.cat([m, key.h]))
   let kprime = g[0..32]
   let kbar = sha3.shake256(asn1.cat([key.z, c]), 32)
-  let c1 = pke_encrypt(key.a, key.t, m, g[32..64])
+  let c1 = pke_encrypt(key.a, key.t, m, g[32..64], k)
   var diff = 0
-  for i in 0..CT_SIZE {
+  for i in 0..n {
     diff = diff | (Int(c[i]) ^ Int(c1[i]))
   }
   let same = ct.mask_eq(diff, 0)
@@ -415,11 +450,134 @@ pub fn decapsulate(seed: Bytes, c: Bytes) -> Bytes? {
 }
 
 // ---------------------------------------------------------------------------
-// X25519MLKEM768 (Go's key_schedule.go hybridKeyExchange)
+// The hybrids (Go's key_schedule.go hybridKeyExchange)
+//
+// A hybrid private key is the ML-KEM seed (64 bytes), then the ECDH
+// private key (X25519's 32 bytes, P-256's 32, P-384's 48). The shares and
+// the secret put ML-KEM first for X25519MLKEM768 and the ECDH part first
+// for the other two (draft-ietf-tls-ecdhe-mlkem-02 section 4.1).
+
+/// Whether the group is a hybrid.
+pub fn is_hybrid(group: Int) -> Bool { group == GROUP_X25519_MLKEM768 || group == GROUP_SECP256R1_MLKEM768 || group == GROUP_SECP384R1_MLKEM1024 }
+
+/// The ECDH group of a hybrid (X25519 29, P-256 23, P-384 24): the
+/// second key share a client sends with it, from the same ECDH key.
+pub fn hybrid_ecdh_group(group: Int) -> Int {
+  if group == GROUP_SECP256R1_MLKEM768 {
+    return 23
+  }
+  if group == GROUP_SECP384R1_MLKEM1024 {
+    return 24
+  }
+  29
+}
+
+fn kem_k(group: Int) -> Int { if group == GROUP_SECP384R1_MLKEM1024 { K1024 } else { K768 } }
+
+fn ecdh_pub_size(group: Int) -> Int {
+  if group == GROUP_SECP256R1_MLKEM768 {
+    return 65
+  }
+  if group == GROUP_SECP384R1_MLKEM1024 {
+    return 97
+  }
+  32
+}
+
+/// The size of a hybrid private key of the group.
+pub fn hybrid_priv_size(group: Int) -> Int { if group == GROUP_SECP384R1_MLKEM1024 { 112 } else { 96 } }
+
+/// A new hybrid private key of the group.
+pub fn hybrid_keygen_for(group: Int) -> Bytes {
+  let e = if group == GROUP_SECP256R1_MLKEM768 {
+    nistec.generate(nistec.P256)
+  } else if group == GROUP_SECP384R1_MLKEM1024 {
+    nistec.generate(nistec.P384)
+  } else {
+    rand.next_bytes(32)
+  }
+  asn1.cat([generate(), e])
+}
+
+/// The ECDH private key of a hybrid private key.
+pub fn hybrid_ecdh_priv(priv: Bytes) -> Bytes { priv[SEED_SIZE..priv.len()] }
+
+fn ecdh_public(group: Int, priv: Bytes) -> Bytes {
+  if group == GROUP_SECP256R1_MLKEM768 {
+    return nistec.public_key(nistec.P256, priv)
+  }
+  if group == GROUP_SECP384R1_MLKEM1024 {
+    return nistec.public_key(nistec.P384, priv)
+  }
+  x25519.base(priv)
+}
+
+/// The ECDH secret; none for an invalid point or an all zero X25519
+/// secret (crypto/ecdh's checks).
+fn ecdh_secret(group: Int, priv: Bytes, peer: Bytes) -> Bytes? {
+  if group == GROUP_SECP256R1_MLKEM768 {
+    return nistec.ecdh(nistec.P256, priv, peer)
+  }
+  if group == GROUP_SECP384R1_MLKEM1024 {
+    return nistec.ecdh(nistec.P384, priv, peer)
+  }
+  let x = x25519.scalar_mult(priv, peer)
+  if all_zero(x) { None } else { Some(x) }
+}
+
+/// A client's hybrid key share of the group.
+pub fn hybrid_share_for(group: Int, priv: Bytes) -> Bytes {
+  let ek = expand(priv[0..SEED_SIZE], kem_k(group)).ek
+  let e = ecdh_public(group, hybrid_ecdh_priv(priv))
+  if group == GROUP_X25519_MLKEM768 { asn1.cat([ek, e]) } else { asn1.cat([e, ek]) }
+}
+
+/// The client's shared secret from the server's share of the group;
+/// none on a share of another length, an invalid ECDH share, or a
+/// ciphertext that does not decapsulate.
+pub fn hybrid_client_shared_for(group: Int, priv: Bytes, share: Bytes) -> Bytes? {
+  let k = kem_k(group)
+  let ec = ecdh_pub_size(group)
+  let cn = ct_size(k)
+  if share.len() != cn + ec {
+    return None
+  }
+  let x25519_first = group == GROUP_X25519_MLKEM768
+  let e_share = if x25519_first { share[cn..cn + ec] } else { share[0..ec] }
+  let c = if x25519_first { share[0..cn] } else { share[ec..ec + cn] }
+  let x = ecdh_secret(group, hybrid_ecdh_priv(priv), e_share)?
+  let key = decaps_k(priv[0..SEED_SIZE], c, k)?
+  Some(if x25519_first { asn1.cat([key, x]) } else { asn1.cat([x, key]) })
+}
+
+/// The server's side for a client's hybrid share of the group, with its
+/// ECDH private key and the 32 byte ML-KEM message: the shared secret and
+/// its share; none on a share of another length, an invalid
+/// encapsulation key, or an invalid ECDH share.
+pub fn hybrid_server_for(group: Int, share: Bytes, e_priv: Bytes, m: Bytes) -> (Bytes, Bytes)? {
+  let k = kem_k(group)
+  let ec = ecdh_pub_size(group)
+  let en = ek_size(k)
+  if share.len() != en + ec {
+    return None
+  }
+  let x25519_first = group == GROUP_X25519_MLKEM768
+  let e_share = if x25519_first { share[en..en + ec] } else { share[0..ec] }
+  let ek = if x25519_first { share[0..en] } else { share[ec..ec + en] }
+  let x = ecdh_secret(group, e_priv, e_share)?
+  let (key, c) = encaps_k(ek, m, k)?
+  let e = ecdh_public(group, e_priv)
+  if x25519_first {
+    return Some((asn1.cat([key, x]), asn1.cat([c, e])))
+  }
+  Some((asn1.cat([x, key]), asn1.cat([e, c])))
+}
+
+// X25519MLKEM768's names (tls13srv.xo's, and the tests')
 
 /// A hybrid private key: the ML-KEM seed (64 bytes), then the X25519
 /// private key (32).
-pub fn hybrid_keygen() -> Bytes { asn1.cat([generate(), rand.next_bytes(32)]) }
+pub fn hybrid_keygen() -> Bytes { hybrid_keygen_for(GROUP_X25519_MLKEM768) }
 
 /// The X25519 private key of a hybrid private key (for the plain X25519
 /// share a client sends next to the hybrid one, as Go's).
@@ -427,40 +585,20 @@ pub fn hybrid_x25519_priv(priv: Bytes) -> Bytes { priv[64..96] }
 
 /// A client's hybrid key share: the encapsulation key, then the X25519
 /// public key (1216 bytes).
-pub fn hybrid_share(priv: Bytes) -> Bytes { asn1.cat([public_key(priv[0..64]), x25519.base(priv[64..96])]) }
+pub fn hybrid_share(priv: Bytes) -> Bytes { hybrid_share_for(GROUP_X25519_MLKEM768, priv) }
 
 /// The client's shared secret from the server's share (the ciphertext,
 /// then its X25519 public key): ML-KEM's key, then the X25519 secret;
 /// none on a share of another length, a ciphertext that does not
 /// decapsulate, or an all zero X25519 secret.
-pub fn hybrid_client_shared(priv: Bytes, share: Bytes) -> Bytes? {
-  if share.len() != CT_SIZE + 32 {
-    return None
-  }
-  let x = x25519.scalar_mult(priv[64..96], share[CT_SIZE..CT_SIZE + 32])
-  if all_zero(x) {
-    return None
-  }
-  let k = decapsulate(priv[0..64], share[0..CT_SIZE])?
-  Some(asn1.cat([k, x]))
-}
+pub fn hybrid_client_shared(priv: Bytes, share: Bytes) -> Bytes? { hybrid_client_shared_for(GROUP_X25519_MLKEM768, priv, share) }
 
 /// The server's side for a client's hybrid share, with its X25519
 /// private key and the 32 byte ML-KEM message: the shared secret and its
 /// share (the ciphertext, then its X25519 public key); none on a share of
 /// another length, an invalid encapsulation key, or a low order X25519
 /// point.
-pub fn hybrid_server(share: Bytes, x_priv: Bytes, m: Bytes) -> (Bytes, Bytes)? {
-  if share.len() != EK_SIZE + 32 {
-    return None
-  }
-  let x = x25519.scalar_mult(x_priv, share[EK_SIZE..EK_SIZE + 32])
-  if all_zero(x) {
-    return None
-  }
-  let (k, c) = encapsulate(share[0..EK_SIZE], m)?
-  Some((asn1.cat([k, x]), asn1.cat([c, x25519.base(x_priv)])))
-}
+pub fn hybrid_server(share: Bytes, x_priv: Bytes, m: Bytes) -> (Bytes, Bytes)? { hybrid_server_for(GROUP_X25519_MLKEM768, share, x_priv, m) }
 
 fn all_zero(b: Bytes) -> Bool {
   var acc = 0
@@ -482,10 +620,33 @@ fn all_zero(b: Bytes) -> Bool {
 /// key b, message c; `hybrid_client` the secret of the private key a and
 /// server share b; `accumulated` C2SP CCTV's accumulated test of a
 /// (decimal) iterations (Go's crypto/mlkem TestAccumulated): the
-/// SHAKE128 digest of every key, ciphertext and shared key. None for
-/// another what.
+/// SHAKE128 digest of every key, ciphertext and shared key; the same
+/// with a `_1024` suffix for ML-KEM-1024 (public, encaps, decaps,
+/// accumulated); `p256_hybrid_share`, `p256_hybrid_server`,
+/// `p256_hybrid_client` and the `p384_` ones for SecP256r1MLKEM768 and
+/// SecP384r1MLKEM1024 (as the X25519MLKEM768 ones). None for another what.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what.starts_with("p256_hybrid_") || what.starts_with("p384_hybrid_") {
+    let g = if what.starts_with("p256") { GROUP_SECP256R1_MLKEM768 } else { GROUP_SECP384R1_MLKEM1024 }
+    let w = what.trim_prefix("p256_").trim_prefix("p384_")
+    return match w {
+      "hybrid_share" => Some(hybrid_share_for(g, a))
+      "hybrid_server" => match hybrid_server_for(g, a, b, c) {
+        Some((k, sh)) => Some(asn1.cat([k, sh]))
+        None => Some(b"")
+      }
+      "hybrid_client" => Some(hybrid_client_shared_for(g, a, b) ?? b"")
+      _ => None
+    }
+  }
   match what {
+    "public_1024" => Some(public_key_1024(a))
+    "encaps_1024" => match encapsulate_1024(a, b) {
+      Some((k, ct)) => Some(asn1.cat([k, ct]))
+      None => Some(b"")
+    }
+    "decaps_1024" => Some(decapsulate_1024(a, b) ?? b"")
+    "accumulated_1024" => Some(accumulated_k(Int.parse(a.to_str() ?? "") ?? 0, K1024))
     "public" => Some(public_key(a))
     "encaps" => match encapsulate(a, b) {
       Some((k, ct)) => Some(asn1.cat([k, ct]))
@@ -498,7 +659,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       None => Some(b"")
     }
     "hybrid_client" => Some(hybrid_client_shared(a, b) ?? b"")
-    "accumulated" => Some(accumulated(Int.parse(a.to_str() ?? "") ?? 0))
+    "accumulated" => Some(accumulated_k(Int.parse(a.to_str() ?? "") ?? 0, K768))
     _ => None
   }
 }
@@ -508,23 +669,23 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
 /// encapsulation of the next 32 bytes and its decapsulation (which must
 /// agree), and the decapsulation of 1088 more bytes as a ciphertext
 /// (the implicit rejection); every output into a SHAKE128 digest of 32
-/// bytes.
-fn accumulated(n: Int) -> Bytes {
+/// bytes. ML-KEM-1024's (k 4) the same with its sizes.
+fn accumulated_k(n: Int, k: Int) -> Bytes {
   var s = sha3.new_shake128()
   var o = sha3.new_shake128()
   for _ in 0..n {
     let seed = sha3.read(s, SEED_SIZE)
-    let ek = public_key(seed)
+    let ek = expand(seed, k).ek
     sha3.write(o, ek)
     let msg = sha3.read(s, 32)
-    let (k, c) = encapsulate(ek, msg) ?? (b"", b"")
+    let (key, c) = encaps_k(ek, msg, k) ?? (b"", b"")
     sha3.write(o, c)
-    sha3.write(o, k)
-    if decapsulate(seed, c) != Some(k) {
+    sha3.write(o, key)
+    if decaps_k(seed, c, k) != Some(key) {
       return b"decapsulation differs"
     }
-    let c1 = sha3.read(s, CT_SIZE)
-    sha3.write(o, decapsulate(seed, c1) ?? b"")
+    let c1 = sha3.read(s, ct_size(k))
+    sha3.write(o, decaps_k(seed, c1, k) ?? b"")
   }
   sha3.read(o, 32)
 }

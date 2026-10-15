@@ -244,3 +244,13 @@ std (decision 0074) unless the owner decides to expose a user marker.
   1,216 byte hybrid share, Go 1.26's client too (1 in 16 for Go, 4 in
   16 for Xo, 2026-10-15); not an Xo protocol difference (the hellos match
   Go's, extension for extension, but for Go's extra groups).
+
+- 2026-10-15 (B31 part 19, xo-4b): Go 1.26's full group list on the
+  client (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519,
+  P-256, P-384, P-521), ML-KEM-1024, P-521 ECDH and ECDSA, P-224 ECDSA
+  verification. P-521's fixed base table was measured and rejected: a
+  compiled in table (35,370 Ints) added 27 s to every arm64 TLS build
+  (29.6 s against 3.0 s) and 2.5 MB to the binary; Go builds its P-521
+  table lazily, which needs a process wide slot (all 64 static words are
+  claimed). The lead chose the windowed pt_mul for P-521 and P-384; a
+  lazy table is the follow-up once a slot registry exists.

@@ -34,4 +34,26 @@ p384 sign 2 01 other hash 00
 p384 sign fixed 01
 p384 short hash 01
 p384 long hash 01
+p521 public 1 04016dbe8db91a5a0b987e3ecf20031fb0fd1f818ea773cd70d32c1e8c1d9d76f375e5cb33d248166f56ee74c36998ef24b956635874239d3b8c3f1a0677cc6f5acbe0004f9372e8c8373e3fe1be9aa6af5c0f7e2d39e42e043bd99bd6278ea60977e0c808195447eab268e1c5e15fc94b6f92b6514f788c505932c94b174b043e475f8de1
+p521 public 2 0401a73d352443de29195dd91d6a64b5959479b52a6e5b123d9ab9e5ad7a112d7a8dd1ad3f164a3a4832051da6bd16b59fe21baeb490862c32ea05a5919d2ede37ad7d013e9b03b97dfa62ddd9979f86c6cab814f2f1557fa82a9d0317d2f8ab1fa355ceec2e2dd4cf8dc575b02d5aced1dec3c70cf105c9bc93a590425f588ca1ee86c0e5
+p521 ecdh 01d99baac025d88f5061040bc477ffee6b366a422bf32076ae0f1d3507dece6b570aae5ef64d200ab4d1a13db9ee20ca67038806c79629bbdedf7e3d7eaeca2deb57 same true
+p521 ecdh off curve 0
+p521 ecdh short 0
+p521 public zero 0 n 0
+p521 fixed public true
+p521 verify go 01
+p521 verify changed hash 00
+p521 verify changed sig 00
+p521 verify other key 00
+p521 sign 0 01 other hash 00
+p521 sign 1 01 other hash 00
+p521 sign 2 01 other hash 00
+p521 sign fixed 01
+p521 short hash 01
+p521 long hash 01
+p224 fixed public true n 0
+p224 verify go 01
+p224 verify changed hash 00
+p224 verify changed sig 00
+p224 sign fixed 01 other hash 00
 --- stderr

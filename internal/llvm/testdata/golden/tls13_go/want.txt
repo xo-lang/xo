@@ -49,10 +49,52 @@ x25519mlkem768, a byte at a time:
   app <client data>
   got "hello, GET / trace" closed false  
   bye <client close_notify>
+p-521 key share and ecdsa p-521 sha-512 certificate, aes-256-gcm:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+p-521, a byte at a time:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+secp256r1mlkem768 (the p-256 share first):
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_128_GCM_SHA256 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+secp256r1mlkem768, a byte at a time:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_128_GCM_SHA256 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+secp384r1mlkem1024 (ml-kem-1024), aes-256-gcm, p-384 certificate:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+secp384r1mlkem1024, a byte at a time:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
 expired:
   ch <ClientHello>
-  flight 7 1403030001011703030013e1907449301a6a9b1f62a5201506026279d065 tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2028-05-27T20:26:40Z is after 2027-05-28T20:26:40Z
+  flight 7 14030300010117030300132872e4eacaeccc65d5f8e2d704515979e79ad7 tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2028-05-27T20:26:40Z is after 2027-05-28T20:26:40Z
 no root:
   ch <ClientHello>
-  flight 7 1403030001011703030013e18d741bc7aa8e15e74be1a9aab91e1da2158f tls: failed to verify certificate: x509: certificate signed by unknown authority
+  flight 7 1403030001011703030013286fe4b7ab7a41e70e2d3ac66faac9f3bdd754 tls: failed to verify certificate: x509: certificate signed by unknown authority
 --- stderr

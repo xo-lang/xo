@@ -37,9 +37,9 @@ func cryptoTLS13(what string, a, b, c, d Bytes) (Bytes, bool) {
 		// tls13.xo groups_op: what the HTTP client's hello offers
 		// (http_net.go's noMLKEM; that file is not in every program)
 		if os.Getenv("XO_TLS_MLKEM") == "0" {
-			return "groups=1d,17,18 shares=1d", true
+			return "groups=1d,17,18,19 shares=1d", true
 		}
-		return "groups=11ec,1d,17,18 shares=11ec,1d", true
+		return "groups=11ec,11eb,11ed,1d,17,18,19 shares=11ec,1d", true
 	}
 	if what != "replay" {
 		return "", false
@@ -119,9 +119,42 @@ const (
 	t13Failed
 )
 
-const t13X25519, t13P256, t13P384, t13Hybrid = 29, 23, 24, 0x11ec
+const t13X25519, t13P256, t13P384, t13P521, t13Hybrid = 29, 23, 24, 25, 0x11ec
 
-var t13Schemes = []int{0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601}
+// The other two hybrids of Go 1.26's defaults (the ECDH part first).
+const t13HybridP256, t13HybridP384 = 0x11eb, 0x11ed
+
+func t13IsHybrid(g int) bool { return g == t13Hybrid || g == t13HybridP256 || g == t13HybridP384 }
+
+// t13HybridECDH is a hybrid's ECDH group.
+func t13HybridECDH(g int) int {
+	switch g {
+	case t13HybridP256:
+		return t13P256
+	case t13HybridP384:
+		return t13P384
+	}
+	return t13X25519
+}
+
+// t13MLKEM is a hybrid's ML-KEM key from its seed: the encapsulation
+// key's bytes, the ciphertext size, and the decapsulation.
+func t13MLKEM(g int, seed []byte) ([]byte, int, func([]byte) ([]byte, error)) {
+	if g == t13HybridP384 {
+		dk, err := mlkem.NewDecapsulationKey1024(seed)
+		if err != nil {
+			panic(err)
+		}
+		return dk.EncapsulationKey().Bytes(), mlkem.CiphertextSize1024, dk.Decapsulate
+	}
+	dk, err := mlkem.NewDecapsulationKey768(seed)
+	if err != nil {
+		panic(err)
+	}
+	return dk.EncapsulationKey().Bytes(), mlkem.CiphertextSize768, dk.Decapsulate
+}
+
+var t13Schemes = []int{0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601, 0x0603}
 
 type t13Conf struct {
 	host                             string
@@ -359,8 +392,9 @@ func (c *t13Client) hello() []byte {
 	share := t13U16(nil, c.shareGroup)
 	share = append(share, t13Vec16(t13PublicKey(c.shareGroup, c.priv))...)
 	if len(c.t13SharedGroups()) == 2 {
-		share = t13U16(share, t13X25519)
-		share = append(share, t13Vec16(t13PublicKey(t13X25519, c.priv[64:96]))...)
+		g := t13HybridECDH(c.shareGroup)
+		share = t13U16(share, g)
+		share = append(share, t13Vec16(t13PublicKey(g, c.priv[64:]))...)
 	}
 	exts = t13Ext(exts, 51, t13Vec16(share))
 	body := []byte{3, 3}
@@ -493,7 +527,7 @@ func (c *t13Client) serverHello(msg []byte) {
 		}
 		priv := c.priv
 		if h.group != c.shareGroup {
-			priv = c.priv[64:96]
+			priv = c.priv[64:]
 		}
 		var ok bool
 		if shared, ok = t13Shared(h.group, priv, h.key); !ok {
@@ -630,10 +664,8 @@ func (c *t13Client) certificate(msg []byte) {
 	switch k := certs[0].PublicKey.(type) {
 	case *rsa.PublicKey, ed25519.PublicKey:
 	case *ecdsa.PublicKey:
-		if k.Curve.Params().BitSize != 256 && k.Curve.Params().BitSize != 384 {
-			c.fail(43, "tls: server's certificate contains an unsupported type of public key")
-			return
-		}
+		// any curve, as crypto/tls (P-224's has no TLS 1.3 scheme)
+		_ = k
 	default:
 		c.fail(43, "tls: server's certificate contains an unsupported type of public key")
 		return
@@ -683,6 +715,9 @@ func (c *t13Client) certificateVerify(msg []byte) {
 			ok = ecdsa.VerifyASN1(k, d[:], sig)
 		case scheme == 0x0503 && k.Curve.Params().BitSize == 384:
 			d := sha512.Sum384(content)
+			ok = ecdsa.VerifyASN1(k, d[:], sig)
+		case scheme == 0x0603 && k.Curve.Params().BitSize == 521:
+			d := sha512.Sum512(content)
 			ok = ecdsa.VerifyASN1(k, d[:], sig)
 		default:
 			known = false
@@ -892,6 +927,8 @@ func t13Curve(group int) ecdh.Curve {
 		return ecdh.X25519()
 	case t13P384:
 		return ecdh.P384()
+	case t13P521:
+		return ecdh.P521()
 	}
 	return ecdh.P256()
 }
@@ -899,19 +936,21 @@ func t13Curve(group int) ecdh.Curve {
 // t13SharedGroups are the groups of the ClientHello's key shares: the
 // first group's, and X25519 next to the hybrid (from its own key).
 func (c *t13Client) t13SharedGroups() []int {
-	if c.shareGroup == t13Hybrid && t13Contains(c.conf.groups, t13X25519) {
-		return []int{t13Hybrid, t13X25519}
+	// not after a HelloRetryRequest (Go: no fallback ECDH share then)
+	if !c.hrr && t13IsHybrid(c.shareGroup) && t13Contains(c.conf.groups, t13HybridECDH(c.shareGroup)) {
+		return []int{c.shareGroup, t13HybridECDH(c.shareGroup)}
 	}
 	return []int{c.shareGroup}
 }
 
 func t13PublicKey(group int, priv []byte) []byte {
-	if group == t13Hybrid {
-		dk, err := mlkem.NewDecapsulationKey768(priv[:64])
-		if err != nil {
-			panic(err)
+	if t13IsHybrid(group) {
+		ek, _, _ := t13MLKEM(group, priv[:64])
+		e := t13PublicKey(t13HybridECDH(group), priv[64:])
+		if group == t13Hybrid {
+			return append(ek, e...)
 		}
-		return append(dk.EncapsulationKey().Bytes(), t13PublicKey(t13X25519, priv[64:96])...)
+		return append(e, ek...)
 	}
 	k, err := t13Curve(group).NewPrivateKey(priv)
 	if err != nil {
@@ -921,23 +960,29 @@ func t13PublicKey(group int, priv []byte) []byte {
 }
 
 func t13Shared(group int, priv, peer []byte) ([]byte, bool) {
-	if group == t13Hybrid {
-		if len(peer) != 1088+32 {
+	if t13IsHybrid(group) {
+		eg := t13HybridECDH(group)
+		es := len(t13PublicKey(eg, priv[64:]))
+		_, cs, decaps := t13MLKEM(group, priv[:64])
+		if len(peer) != cs+es {
 			return nil, false
 		}
-		x, ok := t13Shared(t13X25519, priv[64:96], peer[1088:])
+		eShare, ct := peer[:es], peer[es:]
+		if group == t13Hybrid {
+			ct, eShare = peer[:cs], peer[cs:]
+		}
+		x, ok := t13Shared(eg, priv[64:], eShare)
 		if !ok {
 			return nil, false
 		}
-		dk, err := mlkem.NewDecapsulationKey768(priv[:64])
-		if err != nil {
-			panic(err)
-		}
-		k, err := dk.Decapsulate(peer[:1088])
+		k, err := decaps(ct)
 		if err != nil {
 			return nil, false
 		}
-		return append(k, x...), true
+		if group == t13Hybrid {
+			return append(k, x...), true
+		}
+		return append(x, k...), true
 	}
 	k, err := t13Curve(group).NewPrivateKey(priv)
 	if err != nil {

@@ -30,9 +30,12 @@ use native/rt
 // the named groups (RFC 8446 4.2.7)
 pub const GROUP_P256: Int = 23
 pub const GROUP_P384: Int = 24
+pub const GROUP_P521: Int = 25
 pub const GROUP_X25519: Int = 29
 /// X25519MLKEM768 (Go's default first group: ML-KEM-768 with X25519).
 pub const GROUP_HYBRID: Int = 0x11ec
+pub const GROUP_SECP256_MLKEM: Int = 0x11eb
+pub const GROUP_SECP384_MLKEM: Int = 0x11ed
 
 // the handshake states (Go's order of messages)
 pub const WAIT_SH: Int = 0
@@ -97,8 +100,9 @@ const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
 const MAX_HANDSHAKE: Int = 65536
 const MAX_CERTIFICATE_MSG: Int = 262144
 
-/// The signature schemes the client offers (Go's defaults less P-521's).
-pub fn schemes() -> List[Int] { [0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601] }
+/// The signature schemes a TLS 1.3 only client offers (a test hook: the
+/// HTTP client sends schemes_go in Go 1.26's combined hello).
+pub fn schemes() -> List[Int] { [0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601, 0x0603] }
 
 /// A connection's settings: the server's name (a host name or an IP
 /// address; "" checks no name), the trusted roots, the time (Unix
@@ -135,9 +139,10 @@ pub struct Conf {
 
 /// The settings Go's client has by default for host: both AES-GCM suites
 /// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES),
-/// X25519MLKEM768, X25519, P-256 and P-384 (Go's order less P-521).
+/// X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256,
+/// P-384 and P-521 (Go 1.26's order).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
-  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_HYBRID, GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, apple_svc: 0, zone_off: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
+  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_HYBRID, GROUP_SECP256_MLKEM, GROUP_SECP384_MLKEM, GROUP_X25519, GROUP_P256, GROUP_P384, GROUP_P521], insecure: false, apple_svc: 0, zone_off: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
 }
 
 /// The groups an HTTP client offers (tlsio.xo): conf's, less
@@ -145,9 +150,9 @@ pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
 /// compatibility and measurement switch mirroring Go's
 /// GODEBUG=tlsmlkem=0 (X25519 then is the first and only key share).
 pub fn client_groups() -> List[Int] {
-  let all = [GROUP_HYBRID, GROUP_X25519, GROUP_P256, GROUP_P384]
+  let all = [GROUP_HYBRID, GROUP_SECP256_MLKEM, GROUP_SECP384_MLKEM, GROUP_X25519, GROUP_P256, GROUP_P384, GROUP_P521]
   if (process.real_env_get("XO_TLS_MLKEM").get(0) ?? "") == "0" {
-    return all.filter(fn(g) { g != GROUP_HYBRID })
+    return all.filter(fn(g) { !mlkem.is_hybrid(g) })
   }
   all
 }
@@ -446,8 +451,9 @@ fn hello(c: Client) -> Bytes {
   }
   var shares = [u16(c.share_group), vec16(public_key(c.share_group, c.priv))]
   if shared_groups(c).len() == 2 {
-    shares.push(u16(GROUP_X25519))
-    shares.push(vec16(x25519.base(mlkem.hybrid_x25519_priv(c.priv))))
+    let eg = mlkem.hybrid_ecdh_group(c.share_group)
+    shares.push(u16(eg))
+    shares.push(vec16(public_key(eg, mlkem.hybrid_ecdh_priv(c.priv))))
   }
   exts.push(ext(EXT_KEY_SHARE, vec16(asn1.cat(shares))))
   let body = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00", vec16(asn1.cat(exts))])
@@ -602,8 +608,8 @@ fn server_hello(var c: Client, msg: Bytes) {
       fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported group")
       return
     }
-    // X25519 next to the hybrid: the hybrid's own X25519 key
-    let priv = if h.group != c.share_group { mlkem.hybrid_x25519_priv(c.priv) } else { c.priv }
+    // the ECDH group next to the hybrid: the hybrid's own ECDH key
+    let priv = if h.group != c.share_group { mlkem.hybrid_ecdh_priv(c.priv) } else { c.priv }
     shared = match shared_secret(h.group, priv, h.key) {
       Some(s) => s
       None => {
@@ -764,7 +770,7 @@ fn certificate(var c: Client, msg: Bytes) {
     return
   }
   let leaf = certs[0]
-  if leaf.key_alg != x509.KEY_RSA && leaf.key_alg != x509.KEY_P256 && leaf.key_alg != x509.KEY_P384 && leaf.key_alg != x509.KEY_ED25519 {
+  if leaf.key_alg != x509.KEY_RSA && !x509.is_ec(leaf.key_alg) && leaf.key_alg != x509.KEY_ED25519 {
     fail(c, ALERT_UNSUPPORTED_CERTIFICATE, "tls: server's certificate contains an unsupported type of public key")
     return
   }
@@ -840,6 +846,7 @@ pub fn sig_alg(scheme: Int, key: Int) -> Int {
   match scheme {
     0x0403 => if key == x509.KEY_P256 { x509.SIG_ECDSA_SHA256 } else { x509.SIG_UNKNOWN }
     0x0503 => if key == x509.KEY_P384 { x509.SIG_ECDSA_SHA384 } else { x509.SIG_UNKNOWN }
+    0x0603 => if key == x509.KEY_P521 { x509.SIG_ECDSA_SHA512 } else { x509.SIG_UNKNOWN }
     0x0804 => if key == x509.KEY_RSA { x509.SIG_PSS_SHA256 } else { x509.SIG_UNKNOWN }
     0x0805 => if key == x509.KEY_RSA { x509.SIG_PSS_SHA384 } else { x509.SIG_UNKNOWN }
     0x0806 => if key == x509.KEY_RSA { x509.SIG_PSS_SHA512 } else { x509.SIG_UNKNOWN }
@@ -852,7 +859,7 @@ pub fn sig_alg(scheme: Int, key: Int) -> Int {
 fn sig_err(alg: Int) -> Str {
   if alg == x509.SIG_ED25519 {
     "Ed25519 verification failure"
-  } else if alg == x509.SIG_ECDSA_SHA256 || alg == x509.SIG_ECDSA_SHA384 {
+  } else if alg == x509.SIG_ECDSA_SHA256 || alg == x509.SIG_ECDSA_SHA384 || alg == x509.SIG_ECDSA_SHA512 {
     "ECDSA verification failure"
   } else {
     "crypto/rsa: verification error"
@@ -960,38 +967,48 @@ fn fail(var c: Client, alert: Int, msg: Str) -> Client {
 // Encoding
 
 /// The nistec curve of a group.
-fn curve(g: Int) -> Int { if g == GROUP_P384 { nistec.P384 } else { nistec.P256 } }
+fn curve(g: Int) -> Int {
+  if g == GROUP_P384 {
+    return nistec.P384
+  }
+  if g == GROUP_P521 {
+    return nistec.P521
+  }
+  nistec.P256
+}
 
 /// The private key for the group: the test hook's when it fits, else a
 /// new one.
 fn key_for(cf: Conf, group: Int) -> Bytes {
-  if group == GROUP_HYBRID {
-    return if cf.priv.len() == 96 { cf.priv } else { keygen(group) }
+  if mlkem.is_hybrid(group) {
+    return if cf.priv.len() == mlkem.hybrid_priv_size(group) { cf.priv } else { keygen(group) }
   }
-  if cf.priv.len() == 32 && group != GROUP_P384 { cf.priv } else { keygen(group) }
+  let n = if group == GROUP_X25519 { 32 } else { nistec.size(curve(group)) }
+  if cf.priv.len() == n { cf.priv } else { keygen(group) }
 }
 
 /// The groups the ClientHello has key shares for: the first group's, and
 /// with the hybrid first X25519 too from the same key (Go's client).
 fn shared_groups(c: Client) -> List[Int] {
-  if c.share_group == GROUP_HYBRID && has(c.conf.groups, GROUP_X25519) {
-    return [GROUP_HYBRID, GROUP_X25519]
+  // not after a HelloRetryRequest: Go sends no fallback ECDH share then
+  if !c.hrr && mlkem.is_hybrid(c.share_group) && has(c.conf.groups, mlkem.hybrid_ecdh_group(c.share_group)) {
+    return [c.share_group, mlkem.hybrid_ecdh_group(c.share_group)]
   }
   [c.share_group]
 }
 
 /// A new private key for the group (X25519: 32 random bytes, RFC 7748).
 pub fn keygen(group: Int) -> Bytes {
-  if group == GROUP_HYBRID {
-    return mlkem.hybrid_keygen()
+  if mlkem.is_hybrid(group) {
+    return mlkem.hybrid_keygen_for(group)
   }
   if group == GROUP_X25519 { rand.next_bytes(32) } else { nistec.generate(curve(group)) }
 }
 
 /// The key share (public key) of the private key for the group.
 pub fn public_key(group: Int, priv: Bytes) -> Bytes {
-  if group == GROUP_HYBRID {
-    return mlkem.hybrid_share(priv)
+  if mlkem.is_hybrid(group) {
+    return mlkem.hybrid_share_for(group, priv)
   }
   if group == GROUP_X25519 { x25519.base(priv) } else { nistec.public_key(curve(group), priv) }
 }
@@ -1000,8 +1017,8 @@ pub fn public_key(group: Int, priv: Bytes) -> Bytes {
 /// the share is invalid (X25519: not 32 bytes, or an all zero result,
 /// which crypto/ecdh refuses; the check reveals only that).
 pub fn shared_secret(group: Int, priv: Bytes, peer: Bytes) -> Bytes? {
-  if group == GROUP_HYBRID {
-    return mlkem.hybrid_client_shared(priv, peer)
+  if mlkem.is_hybrid(group) {
+    return mlkem.hybrid_client_shared_for(group, priv, peer)
   }
   if group != GROUP_X25519 {
     return nistec.ecdh(curve(group), priv, peer)

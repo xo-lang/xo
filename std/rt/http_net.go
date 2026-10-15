@@ -370,7 +370,7 @@ func newTransport(roots *x509.CertPool) *http.Transport {
 		t.TLSClientConfig = &tls.Config{RootCAs: roots}
 	}
 	if noMLKEM() {
-		t.TLSClientConfig.CurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384}
+		t.TLSClientConfig.CurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521}
 	}
 	return t
 }

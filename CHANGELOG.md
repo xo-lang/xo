@@ -85,6 +85,34 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   anyval.xo's Any directly; the C forwarders stay for code of earlier
   compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
   alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
+- Native runtime (zero-C audit item B31, part 19, decision 0202): the
+  Xo TLS client offers Go 1.26's groups in its order: X25519MLKEM768,
+  SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521
+  (key shares for the first and its ECDH part, as Go's).
+  - nistec.xo: P-521 (ECDH, ECDSA sign and verify, constant time, nine
+    limbs; Go's masking of the top byte of random scalars, hashToNat's
+    shift) and P-224 (ECDSA sign and verify, for certificates). The
+    workspace's elements widened to 72 bytes; R mod m and m - 2 made
+    general. P-521's base point multiplication is the windowed pt_mul,
+    as P-384's: a compiled in fixed base table cost every TLS build 27 s
+    and 2.5 MB (gotchas/large-const-list-costs-every-build.md).
+  - x509.xo: KEY_P521 and KEY_P224 (KEY_EC_OTHER gone); P-521 and P-224
+    ECDSA signatures checked (the "P-521 signatures refused" gap closed).
+  - The clients: P-521 ECDHE on TLS 1.3 and 1.2, ECDSA P-521 SHA-512
+    (0x0603) on TLS 1.3, P-224 and P-521 leaves accepted as Go's.
+  - mlkem.xo: ML-KEM-1024 (k 4, du 11, dv 5; ML-KEM-768 unchanged byte
+    for byte) and the hybrids by group (SecP256r1MLKEM768 and
+    SecP384r1MLKEM1024 put the ECDH part first).
+  - Checks: a scratch diff of 40 random cases per curve against Go
+    (public keys, ECDH, signatures both ways, hashes of 20 to 70 bytes);
+    golden tls_nistec (P-521, P-224), crypto_mlkem (ML-KEM-1024's
+    accumulated 100, crypto/mlkem's digest: Go's tests carry no CCTV value
+    for 1024; the SecP hybrids) equal to the Go backend; tls13_go replays
+    Go 1.26 server traces of P-521 with a P-521 certificate,
+    SecP256r1MLKEM768 and SecP384r1MLKEM1024, whole and a byte at a time,
+    and TestTLS13ReplayDiff fuzzes them; TestTLSInteropMatrix adds Go
+    servers on P-521 (certificate and group) and each hybrid for the Xo
+    client. The Xo server's P-521 and hybrids are next (xo-2b).
 - Native runtime (zero-C audit item B31, part 18, decision 0202): a
   default https program links no Mbed TLS and no fiat-crypto (nm: 0
   mbedtls, fiat or psa symbols on arm64 and LLVM, http_tls). tlscert.xo

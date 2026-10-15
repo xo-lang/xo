@@ -199,7 +199,7 @@ pub fn check_sig(alg: Int, key_alg: Int, key: Bytes, signed: Bytes, sig: Bytes) 
     }
     return if x509.check(alg, key_alg, key, signed, sig) { "" } else { "crypto/rsa: verification error" }
   }
-  if key_alg != x509.KEY_P256 && key_alg != x509.KEY_P384 {
+  if !x509.is_ec(key_alg) {
     return "expected an ECDSA public key, got ${key_type(key_alg)}"
   }
   if x509.check(alg, key_alg, key, signed, sig) { "" } else { "ECDSA verification failure" }
@@ -662,7 +662,7 @@ pub struct Conf {
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
-pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], insecure: false, apple_svc: 0, random: b"", priv: b"", iv: b""} }
+pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384, tls13.GROUP_P521], insecure: false, apple_svc: 0, random: b"", priv: b"", iv: b""} }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
 /// whether the server closed (close_notify), the suite, group, and ALPN
@@ -1318,7 +1318,7 @@ fn verify_certificates(var c: Client) -> Bool {
       return false
     }
   }
-  if leaf.key_alg != x509.KEY_RSA && leaf.key_alg != x509.KEY_P256 && leaf.key_alg != x509.KEY_P384 && leaf.key_alg != x509.KEY_ED25519 {
+  if leaf.key_alg != x509.KEY_RSA && !x509.is_ec(leaf.key_alg) && leaf.key_alg != x509.KEY_ED25519 {
     fail(c, ALERT_UNSUPPORTED_CERTIFICATE, "tls: server's certificate contains an unsupported type of public key: <nil>")
     return false
   }
@@ -1382,7 +1382,7 @@ fn server_key_exchange(var c: Client, msg: Bytes) {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unoffered curve")
     return
   }
-  if group != tls13.GROUP_X25519 && group != tls13.GROUP_P256 && group != tls13.GROUP_P384 {
+  if group != tls13.GROUP_X25519 && group != tls13.GROUP_P256 && group != tls13.GROUP_P384 && group != tls13.GROUP_P521 {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported curve")
     return
   }

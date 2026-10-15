@@ -37,8 +37,8 @@ pub const KEY_RSA: Int = 1
 pub const KEY_P256: Int = 2
 pub const KEY_P384: Int = 3
 pub const KEY_ED25519: Int = 4
-// an EC key on another curve (P-521, ...)
-pub const KEY_EC_OTHER: Int = 5
+pub const KEY_P521: Int = 5
+pub const KEY_P224: Int = 6
 
 // KeyUsage's flags (bit i of the BIT STRING is 1 << i, as Go's)
 pub const KU_DIGITAL_SIGNATURE: Int = 1
@@ -689,7 +689,7 @@ fn public_key(o: Str, params: Bytes, data: Bytes, var c: Cert) -> Str {
     if err != "" {
       return err
     }
-    c.key_alg = if bits == 256 { KEY_P256 } else if bits == 384 { KEY_P384 } else { KEY_EC_OTHER }
+    c.key_alg = if bits == 256 { KEY_P256 } else if bits == 384 { KEY_P384 } else if bits == 521 { KEY_P521 } else { KEY_P224 }
     c.key = data
     return ""
   }
@@ -1513,6 +1513,23 @@ fn sig_hash_id(alg: Int) -> Int {
   sha256.HASH_SHA256
 }
 
+/// Whether the key is an ECDSA one (P-256, P-384, P-521 or P-224).
+pub fn is_ec(key_alg: Int) -> Bool { key_alg == KEY_P256 || key_alg == KEY_P384 || key_alg == KEY_P521 || key_alg == KEY_P224 }
+
+/// nistec.xo's curve of an ECDSA key.
+pub fn ec_curve(key_alg: Int) -> Int {
+  if key_alg == KEY_P384 {
+    return nistec.P384
+  }
+  if key_alg == KEY_P521 {
+    return nistec.P521
+  }
+  if key_alg == KEY_P224 {
+    return nistec.P224
+  }
+  nistec.P256
+}
+
 /// Whether sig is a signature of data by the public key (key_alg, key)
 /// with the algorithm alg (Go's checkSignature: the key's type must fit
 /// the algorithm; SHA-1 and MD5 are refused).
@@ -1521,11 +1538,10 @@ pub fn check(alg: Int, key_alg: Int, key: Bytes, data: Bytes, sig: Bytes) -> Boo
     return key_alg == KEY_ED25519 && ed25519.verify(key, data, sig)
   }
   if alg == SIG_ECDSA_SHA256 || alg == SIG_ECDSA_SHA384 || alg == SIG_ECDSA_SHA512 {
-    if key_alg != KEY_P256 && key_alg != KEY_P384 {
+    if !is_ec(key_alg) {
       return false
     }
-    let curve = if key_alg == KEY_P384 { nistec.P384 } else { nistec.P256 }
-    return nistec.verify(curve, key, sha256.sum(sig_hash_id(alg), data), sig)
+    return nistec.verify(ec_curve(key_alg), key, sha256.sum(sig_hash_id(alg), data), sig)
   }
   if (alg >= SIG_RSA_SHA256 && alg <= SIG_RSA_SHA512) || (alg >= SIG_PSS_SHA256 && alg <= SIG_PSS_SHA512) {
     if key_alg != KEY_RSA {
@@ -1585,7 +1601,7 @@ fn check_err(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes) -> Str {
   }
   let have = if parent.key_alg == KEY_RSA {
     "*rsa.PublicKey"
-  } else if parent.key_alg == KEY_P256 || parent.key_alg == KEY_P384 || parent.key_alg == KEY_EC_OTHER {
+  } else if is_ec(parent.key_alg) {
     "*ecdsa.PublicKey"
   } else if parent.key_alg == KEY_ED25519 {
     "ed25519.PublicKey"

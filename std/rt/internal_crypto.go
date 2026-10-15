@@ -48,6 +48,11 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoEC(elliptic.P256(), ecdh.P256(), what, a, b, c)
 	case "p384":
 		r, ok = cryptoEC(elliptic.P384(), ecdh.P384(), what, a, b, c)
+	case "p521":
+		r, ok = cryptoEC(elliptic.P521(), ecdh.P521(), what, a, b, c)
+	case "p224":
+		// signatures only, as nistec.xo's P224 (crypto/ecdh has no P-224)
+		r, ok = cryptoEC(elliptic.P224(), nil, what, a, b, c)
 	case "rsa":
 		r, ok = cryptoRSA(what, a, b, c, d)
 	case "x509":
@@ -166,8 +171,22 @@ func cryptoFlag(x bool) Bytes {
 
 // cryptoEC is nistec.xo's op.
 func cryptoEC(curve elliptic.Curve, ec ecdh.Curve, what string, a, b, c Bytes) (Bytes, bool) {
+	if ec == nil && what != "public" && what != "sign" && what != "verify" {
+		return "", false
+	}
 	switch what {
 	case "public":
+		if ec == nil {
+			k, err := ecdsa.ParseRawPrivateKey(curve, []byte(a))
+			if err != nil {
+				return "", true
+			}
+			pb, err := k.PublicKey.Bytes()
+			if err != nil {
+				return "", true
+			}
+			return Bytes(pb), true
+		}
 		k, err := ec.NewPrivateKey([]byte(a))
 		if err != nil {
 			return "", true
@@ -334,6 +353,8 @@ func describeCert(c *x509.Certificate) string {
 			keyAlg = 2
 		case elliptic.P384():
 			keyAlg = 3
+		case elliptic.P224():
+			keyAlg = 6
 		}
 		key, _ = k.Bytes()
 	case ed25519.PublicKey:

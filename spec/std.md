@@ -1165,17 +1165,23 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
 - Tests: `FakeNet` (8.1) and in memory listeners serve `https` URLs and
   `with_tls` servers in process, without TLS.
 - The native backends (`--no-gc`) implement this in Xo (decision 0202):
-  TLS 1.3 and 1.2, client and server, Go 1.26's defaults and texts,
-  the post quantum `X25519MLKEM768` group offered first, and on macOS the system's roots checked by the Security
-  framework through the same calls Go makes. `XO_LLRT_C=tlsio` and
+  TLS 1.3 and 1.2, client and server, Go 1.26's defaults and texts.
+  The client offers Go 1.26's groups in its order (the post quantum
+  hybrids `X25519MLKEM768`, `SecP256r1MLKEM768` and
+  `SecP384r1MLKEM1024`, then X25519, P-256, P-384 and P-521) and takes
+  ECDSA certificates on P-256, P-384 and P-521 (P-224 too in chains and
+  on TLS 1.2, as Go); the server takes `X25519MLKEM768`, X25519, P-256
+  and P-384, and P-256 and P-384 ECDSA certificate keys. On macOS the
+  system's roots are checked by the Security framework through the same
+  calls Go makes. `XO_LLRT_C=tlsio` and
   `XO_LLRT_C=tlssrv` select the earlier Mbed TLS client and server
   (decision 0105): the same texts, except that Ed25519 certificate keys
-  are not accepted and the key exchange never uses `X25519MLKEM768`.
+  are not accepted and the key exchange never uses the hybrids or P-521.
 - Environment switches, for compatibility and debugging (read by the
   runtime, every backend unless noted):
-  - `XO_TLS_MLKEM=0`: the client offers no `X25519MLKEM768`, so X25519
-    is its first and only key share (groups X25519, P-256, P-384), as
-    Go's `GODEBUG=tlsmlkem=0`; for a server that mishandles a large
+  - `XO_TLS_MLKEM=0`: the client offers none of the ML-KEM hybrids, so
+    X25519 is its first and only key share (groups X25519, P-256, P-384,
+    P-521), as Go's `GODEBUG=tlsmlkem=0`; for a server that mishandles a large
     ClientHello, and for handshake measurements without ML-KEM.
   - `XO_HTTP_MAX_BODY=<bytes>` (native backends): the largest request
     body the server reads (default 64 MiB; a longer one is cut short as

@@ -92,6 +92,9 @@ func tls13Traces(t *testing.T) []tls13Trace {
 		{"CERTREQ_AES256", "1302", "29", "-"},
 		{"ED25519_P256", "1301", "23", "-"},
 		{"HYBRID", "1301", "4588,29", "-"},
+		{"P521", "1302", "25", "-"},
+		{"HYBRID_P256", "1301", "4587,23", "-"},
+		{"HYBRID_P384", "1302", "4589,24", "-"},
 	} {
 		tr := tls13Trace{name: x.p, a: g[x.p+"_START"], c: g[x.p+"_KEY"], hs: g[x.p+"_SERVER_HS"], post: g[x.p+"_SERVER_POST"],
 			data: []byte("GET / trace"), root: g["ROOT"],
@@ -115,7 +118,33 @@ func tls13Traces(t *testing.T) []tls13Trace {
 				tr.shared = k
 				group, share, key = 29, share[1088:], tr.c[64:96]
 			}
-			curve := map[int]ecdh.Curve{29: ecdh.X25519(), 23: ecdh.P256(), 24: ecdh.P384()}[group]
+			var tail []byte
+			if group == 0x11eb || group == 0x11ed {
+				// the ECDH part first, then ML-KEM-768's or -1024's ciphertext
+				es, eg := 65, 23
+				var k []byte
+				var err error
+				if group == 0x11eb {
+					dk, e := mlkem.NewDecapsulationKey768(tr.c[:64])
+					if e != nil {
+						t.Fatal(e)
+					}
+					k, err = dk.Decapsulate(share[es:])
+				} else {
+					es, eg = 97, 24
+					dk, e := mlkem.NewDecapsulationKey1024(tr.c[:64])
+					if e != nil {
+						t.Fatal(e)
+					}
+					k, err = dk.Decapsulate(share[es:])
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				tail = k
+				group, share, key = eg, share[:es], tr.c[64:]
+			}
+			curve := map[int]ecdh.Curve{29: ecdh.X25519(), 23: ecdh.P256(), 24: ecdh.P384(), 25: ecdh.P521()}[group]
 			priv, err := curve.NewPrivateKey(key)
 			if err != nil {
 				t.Fatal(err)
@@ -125,7 +154,7 @@ func tls13Traces(t *testing.T) []tls13Trace {
 				t.Fatal(err)
 			}
 			x, _ := priv.ECDH(pub)
-			tr.shared = append(tr.shared, x...)
+			tr.shared = append(append(tr.shared, x...), tail...)
 			tr.clientHello = ch
 		}
 		traces = append(traces, tr)

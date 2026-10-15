@@ -19,4 +19,22 @@ client secret 999932e16ea266de2421e4b1a9e2156ddc31c963da2afd9a75e56a33f131149e05
 server, short share: 
 server, low order x25519: 
 client, short share: 
+accumulated 1024, 100: 800018fec3e2723f73f1d657fe239b4d5d8782efaade297e8cd448e54cc2ac00
+ek 1024 e755581cb133ed80563783c34052b8a6..199a31ff652042ada7f1f48c7b22f76f (1568)
+encaps 1024 1dfda63ece9642a562497e63810e877628ae03db34fce3998e8c0f56fb6e377a 2e59d494dfd319e854624b40ec4d1209..314d0a0b394cfecaa2a68b6362a4040a (1568)
+decaps 1024 1dfda63ece9642a562497e63810e877628ae03db34fce3998e8c0f56fb6e377a
+decaps 1024, corrupted: 85bd4acb97be828b435f78688f31bf736bff9f898feaa9bb3fce5fe381b4d3cc
+decaps 1024 of 1088 bytes: 
+p256 client share 0476a3b1bbfd1553ce5be1ee2e260190..24965557ee2d27153b32afd5402e6413 (1249)
+p256 server secret 51a199cbf905adf332de7a55ea4f7fb4afcafa2995fe6db26357cd0be8c28c07497cfc0af6027f15413c9a68a700bacbda422c02bc42e94e0defc00e6e1d0a25
+p256 server share 04038db1c3a975a4828c848debca4a52..29a83b29049a31b8f105c7b0ac10b840 (1153)
+p256 client secret equal true
+p256 server, point off the curve: 
+p256 client, short share: 
+p384 client share 0427efca0a667105c58fd88f97d110c4..9ccb441e60ea2415aa969f801b7c9b86 (1665)
+p384 server secret 132f94f804dae16c53c0fa9f5b7006abadeb6052726666c56a315947e5a0aa86b5ef5e4188327566f24c83cc9545e1ac91c354bd8fa09ea4b96e834ca3f7ef846787622676ecb4b7dd0193cc85667b1f
+p384 server share 0442ce61fb84840bfc1d8cd68e00f104..1dfe3c6d27bbea876375947a0738e742 (1665)
+p384 client secret equal true
+p384 server, point off the curve: 
+p384 client, short share: 
 --- stderr

@@ -75,6 +75,8 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "hkdf" => hkdf.op(what, a, b, c, d)
     "p256" => nistec.op(nistec.P256, what, a, b, c, d)
     "p384" => nistec.op(nistec.P384, what, a, b, c, d)
+    "p521" => nistec.op(nistec.P521, what, a, b, c, d)
+    "p224" => nistec.op(nistec.P224, what, a, b, c, d)
     "rsa" => rsa.op(what, a, b, c, d)
     "x509" => x509.op(what, a, b, c, d)
     "aes" => aesgcm.op(what, a, b, c, d)
