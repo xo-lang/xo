@@ -3640,12 +3640,12 @@ static xo_pd *pd_new(int fd, int write) {
 	return pd;
 }
 
-// On Linux and macOS a descriptor's operations, close, and waits are
+// A descriptor's operations, close, and waits are
 // std/native/llrt/poll.xo's (B22 stage 5: pd_begin, pd_end, pd_close,
-// pd_free, pd_wait_ctx, which other Xo code calls too); the C keeps
-// pd_new (the registration) and Windows' versions below. poll.xo calls
-// the services record pd_svc for the C's parts.
-#ifndef XO_WINPOLL
+// pd_free, pd_wait_ctx, which other Xo code calls too; on Windows since
+// stage 4, with the AFD poll's arm, pd_arm); the C keeps pd_new (the
+// registration). poll.xo calls the services record pd_svc for the C's
+// parts.
 int64_t xo_x_poll_pd_begin(int64_t pd);
 void xo_x_poll_pd_end(int64_t pd);
 void xo_x_poll_pd_close(int64_t pd);
@@ -3656,243 +3656,17 @@ int64_t xo_x_poll_pd_wait(int64_t pd, int64_t write, int64_t c, int64_t when);
 #define pd_close(pd) xo_x_poll_pd_close(XO_ADDR(pd))
 #define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
 #define pd_wait_until(pd, write, c, when) ((int)xo_x_poll_pd_wait(XO_ADDR(pd), (write), XO_ADDR(c), (when)))
-#endif
-
 #ifdef XO_WINPOLL
-// pd_begin starts an operation: 0 when the descriptor is closed.
-static int pd_begin(xo_pd *pd) {
-	lk(&pd->mu);
-	int ok = !pd->closed;
-	if (ok) {
-		pd->ops++;
-	}
-	unlk(&pd->mu);
-	return ok;
-}
-
-static void pd_end(xo_pd *pd) {
-	int fd = -1;
-	lk(&pd->mu);
-	if (--pd->ops == 0 && pd->closed && pd->fd >= 0) {
-		fd = pd->fd;
-		pd->fd = -1;
-	}
-	unlk(&pd->mu);
-	if (fd >= 0) {
-		nx_close(fd);
-	}
-}
-
-// pd_close closes the descriptor: waiting operations return, and the
-// socket closes once no operation runs.
-static void pd_close(xo_pd *pd) {
-	int fd = -1;
-	lk(&pd->mu);
-	if (!pd->closed) {
-		pd->closed = 1;
-		if (pd->fd >= 0) {
-#if !defined(XO_KQUEUE) && !defined(XO_WINPOLL)
-			// unregister now: epoll keys a registration by the open file,
-			// not the descriptor, so close alone leaves it while a child
-			// process still holds the file, and its next event would name
-			// this xo_pd after the poller freed it (2026-10-12, gotcha
-			// linux-epoll-inherited-socket)
-			nx_epoll_ctl(ev.poll, EPOLL_CTL_DEL, pd->fd, NULL);
-#endif
-#ifdef XO_WINPOLL
-			// Windows resets a connection shut down for receiving while
-			// input is unread, and the reset discards what the peer has
-			// not read of ours yet (a 400 just written): drop the input
-			// first (the socket is nonblocking)
-			char drop[4096];
-			while (recv((SOCKET)pd->fd, drop, sizeof drop, 0) > 0) {
-			}
-#endif
-			nx_shutdown(pd->fd, SHUT_RDWR);
-		}
-		if (pd->rwait) {
-			park_signal(pd->rwait);
-			pd->rwait = NULL;
-		}
-		if (pd->wwait) {
-			park_signal(pd->wwait);
-			pd->wwait = NULL;
-		}
-	}
-	if (pd->ops == 0 && pd->fd >= 0) {
-		fd = pd->fd;
-		pd->fd = -1;
-	}
-	unlk(&pd->mu);
-	if (fd >= 0) {
-		nx_close(fd);
-	}
-}
-
-#endif
-#ifdef XO_WINPOLL
-// pd_arm (pd->mu held, AFD polling) starts a poll of pd's socket for the
-// directions someone waits in, unless one runs; a running poll that lacks
-// a direction now waited in is cancelled, and its completion starts the
-// wider one.
-static void pd_arm(xo_pd *pd) {
-	if (pd->closed || pd->fd < 0 || pd->dying) {
-		return;
-	}
-	ULONG want = (pd->rwait ? XO_AFD_READ : 0) | (pd->wwait ? XO_AFD_WRITE : 0);
-	if (!want) {
-		return;
-	}
-	if (pd->armed) {
-		if ((want & ~pd->armed) && !pd->rearm) {
-			pd->rearm = 1;
-			CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
-		}
-		return;
-	}
-	pd->info.timeout.QuadPart = INT64_MAX;
-	pd->info.n = 1;
-	pd->info.exclusive = FALSE;
-	pd->info.h[0].handle = (HANDLE)pd->base;
-	pd->info.h[0].events = want;
-	pd->info.h[0].status = 0;
-	pd->iosb.Status = STATUS_PENDING;
-	NTSTATUS st = NtDeviceIoControlFile(ev.afd, NULL, NULL, pd, &pd->iosb, XO_IOCTL_AFD_POLL, &pd->info, sizeof pd->info, &pd->info,
-		sizeof pd->info);
-	if (st == 0 || st == STATUS_PENDING) {
-		pd->armed = want; // the completion comes through the port either way
-		return;
-	}
-	// the poll was refused (a closed socket): let the operations run and
-	// meet the error
-	if (pd->rwait) {
-		park_signal(pd->rwait);
-		pd->rwait = NULL;
-	}
-	if (pd->wwait) {
-		park_signal(pd->wwait);
-		pd->wwait = NULL;
-	}
-}
-
-// afd_done handles the completion of pd's poll (on the poller thread):
-// the readiness to its waiters, then a new poll while someone waits; a
-// descriptor pd_free gave up is freed now that no poll runs.
-static void afd_done(xo_pd *pd) {
-	lk(&pd->mu);
-	pd->armed = 0;
-	pd->rearm = 0;
-	int mode = 0;
-	if (NT_SUCCESS(pd->iosb.Status) && pd->info.n >= 1) {
-		ULONG e = pd->info.h[0].events;
-		mode = ((e & XO_AFD_READ) ? 1 : 0) | ((e & XO_AFD_WRITE) ? 2 : 0);
-	}
-	int dying = pd->dying;
-	unlk(&pd->mu);
-	if (dying) {
-		free(pd);
-		return;
-	}
-	if (mode) {
-		pd_ready(pd, mode);
-	}
-	lk(&pd->mu);
-	pd_arm(pd);
-	unlk(&pd->mu);
-}
-#endif
-
-#ifdef XO_WINPOLL
-// pd_free closes the descriptor and hands it to the poller to free.
-static void pd_free(xo_pd *pd) {
-	if (!pd) {
-		return;
-	}
-	pd_close(pd);
-	lk(&ev.mu);
-	pd->next = ev.dead;
-	ev.dead = pd;
-	unlk(&ev.mu);
-}
-
+void xo_x_poll_pd_arm(int64_t pd);
+#define pd_arm(pd) xo_x_poll_pd_arm(XO_ADDR(pd))
+_Static_assert(offsetof(xo_pd, iosb) == 56 && offsetof(xo_pd, info) == 72 && offsetof(xo_pd, base) == 104 && offsetof(xo_pd, armed) == 112 &&
+                   offsetof(xo_pd, rearm) == 116 && offsetof(xo_pd, dying) == 120 && sizeof(xo_afd_poll) == 32 &&
+                   offsetof(xo_afd_poll, h) == 16 && offsetof(IO_STATUS_BLOCK, Status) == 0 && sizeof(OVERLAPPED_ENTRY) == 32 &&
+                   offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8,
+               "poll.xo's Windows D_* and OVERLAPPED_ENTRY");
 #endif
 
 enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
-
-#ifdef XO_WINPOLL
-// pd_wait_until waits until the socket is ready for reading (or
-// writing), the context is canceled, the descriptor is closed, or (when
-// is not 0) the monotonic time when passes.
-static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
-	xo_park **slot = write ? &pd->wwait : &pd->rwait;
-	int *ready = write ? &pd->wready : &pd->rready;
-	xo_timer t = {.when = when, .idx = -1, .park = &c->park};
-	int timed = 0;
-	int res;
-	for (;;) {
-		if (ctx_canceled(c)) {
-			res = PD_CANCELED;
-			break;
-		}
-		lk(&pd->mu);
-		if (pd->closed) {
-			unlk(&pd->mu);
-			res = PD_CLOSED;
-			break;
-		}
-		if (*ready) {
-			*ready = 0;
-			unlk(&pd->mu);
-			res = PD_READY;
-			break;
-		}
-		park_reset(&c->park);
-		*slot = &c->park;
-#ifdef XO_WINPOLL
-		if (ev.afd) {
-			pd_arm(pd);
-		}
-#endif
-		unlk(&pd->mu);
-#ifdef XO_WINPOLL
-		if (!ev.afd) {
-			ev_poke(); // the poller polls the directions waited in
-		}
-#endif
-		if (when && !timed) {
-			timed = 1;
-			timer_add(&t);
-		}
-		if (!(when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE))) {
-			park_wait_n(c, 1, 0);
-		}
-		lk(&pd->mu);
-		int mine = *slot == &c->park;
-		if (mine) {
-			*slot = NULL;
-		}
-		int closed = pd->closed;
-		unlk(&pd->mu);
-		if (closed) {
-			res = PD_CLOSED;
-			break;
-		}
-		if (!mine) {
-			res = PD_READY; // the poller handed it readiness
-			break;
-		}
-		if (when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE)) {
-			res = PD_TIMEOUT;
-			break;
-		}
-	}
-	if (timed) {
-		timer_del(&t);
-	}
-	return res;
-}
-
-#endif
 
 // pd_wait is pd_wait_until without a deadline.
 static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, write, c, 0); }
@@ -3923,6 +3697,15 @@ static int64_t pdsvc_shut(int64_t fd, int64_t b) {
 	// poller freed it (2026-10-12, gotcha linux-epoll-inherited-socket)
 	nx_epoll_ctl(ev.poll, EPOLL_CTL_DEL, (int)fd, NULL);
 #endif
+#ifdef XO_WINPOLL
+	// Windows resets a connection shut down for receiving while input is
+	// unread, and the reset discards what the peer has not read of ours
+	// yet (a 400 just written): drop the input first (the socket is
+	// nonblocking)
+	char drop[4096];
+	while (recv((SOCKET)fd, drop, sizeof drop, 0) > 0) {
+	}
+#endif
 	nx_shutdown((int)fd, SHUT_RDWR);
 	return 0;
 }
@@ -3945,7 +3728,15 @@ static int64_t pdsvc_tdel(int64_t t, int64_t b) {
 	timer_del((xo_timer *)(intptr_t)t);
 	return 0;
 }
-static int64_t pd_svc[11];
+#ifdef XO_WINPOLL
+static int64_t pdsvc_poke(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	ev_poke();
+	return 0;
+}
+#endif
+static int64_t pd_svc[13];
 void xo_x_poll_svc(int64_t rec);
 static void pd_svc_init(void) {
 	pd_svc[0] = XO_ADDR(&pdsvc_open);
@@ -3959,6 +3750,10 @@ static void pd_svc_init(void) {
 	pd_svc[8] = XO_ADDR(&ev.mu);
 	pd_svc[9] = XO_ADDR(&ev.dead);
 	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
+#ifdef XO_WINPOLL
+	pd_svc[11] = XO_ADDR(&ev.afd);
+	pd_svc[12] = XO_ADDR(&pdsvc_poke);
+#endif
 	xo_x_poll_svc(XO_ADDR(pd_svc));
 }
 _Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
@@ -3977,6 +3772,9 @@ typedef struct {
 // creating the poll descriptor, the self pipe, and the thread (ev_init),
 // and Windows' loop below (B22 stage 4); poll.xo calls back into these.
 void xo_x_poll_main(int64_t poll, int64_t pipe_r, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
+#ifdef XO_WINPOLL
+void xo_x_poll_main_win(int64_t iocp, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
+#endif
 static int64_t poll_signal_cb(int64_t p, int64_t b) {
 	(void)b;
 	park_signal((xo_park *)(intptr_t)p);
@@ -4001,6 +3799,14 @@ static void *poller_main(void *arg) {
 	               XO_ADDR(&poll_free_cb));
 	return NULL;
 #else
+	if (ev.afd) {
+		// AFD polls through the completion port: poll.xo's loop (B22
+		// stage 4)
+		xo_x_poll_main_win((int64_t)(intptr_t)ev.iocp, XO_ADDR(&ev.mu), XO_ADDR(&ev.dead), XO_ADDR(&ev.sigs), XO_ADDR(&poll_signal_cb),
+		                   XO_ADDR(&poll_stop_cb), XO_ADDR(&poll_free_cb));
+		return NULL;
+	}
+	// WSAPoll (no AFD device, or XO_WINPOLL=wsapoll)
 	xo_event evs[64];
 	for (;;) {
 		lk(&ev.mu);
@@ -4008,19 +3814,6 @@ static void *poller_main(void *arg) {
 			xo_pd *pd = ev.dead;
 			ev.dead = pd->next;
 #ifdef XO_WINPOLL
-			if (ev.afd) {
-				// a poll in flight still names it: freed by its completion
-				lk(&pd->mu);
-				int armed = pd->armed != 0;
-				if (armed) {
-					pd->dying = 1;
-					CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
-				}
-				unlk(&pd->mu);
-				if (armed) {
-					continue;
-				}
-			}
 			for (int i = 0; i < ev.nreg; i++) {
 				if (ev.regs[i] == pd) {
 					ev.regs[i] = ev.regs[--ev.nreg];
@@ -4047,24 +3840,6 @@ static void *poller_main(void *arg) {
 		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
 		if (wait > (int64_t)1 << 40) {
 			ms = 1 << 30;
-		}
-		if (ev.afd) {
-			OVERLAPPED_ENTRY es[64];
-			ULONG got = 0;
-			if (!GetQueuedCompletionStatusEx(ev.iocp, es, 64, &got, ms, FALSE)) {
-				got = 0;
-			}
-			STAT(poll_return);
-			for (ULONG i = 0; i < got; i++) {
-				if (es[i].lpOverlapped) {
-					afd_done((xo_pd *)es[i].lpOverlapped);
-				}
-			}
-			for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
-				stop_signal();
-			}
-			(void)evs;
-			continue;
 		}
 		// the descriptors someone waits on, in the directions waited for
 		lk(&ev.mu);

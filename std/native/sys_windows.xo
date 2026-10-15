@@ -179,3 +179,17 @@ fn FormatMessageW(flags: Int, source: Int, id: Int, lang: Int, buf: Int, n: Int,
 /// GetFullPathNameW of the UTF-16 name into the n units at buf: the
 /// units written without the NUL, or the size needed.
 fn GetFullPathNameW(name: Bytes, n: Int, buf: Int, part: Int) -> UInt32
+
+// The event loop's poller on Windows (std/native/llrt/poll.xo's Windows
+// section, the zero-C audit's B22 stage 4): AFD polls completed through
+// an I/O completion port.
+
+/// GetQueuedCompletionStatusEx: up to count OVERLAPPED_ENTRY records (32
+/// bytes) at entries, how many at the ULONG at removed; nonzero on
+/// success.
+fn GetQueuedCompletionStatusEx(port: Int, entries: Int, count: Int, removed: Int, ms: Int, alertable: Int) -> Int32
+/// CancelIoEx of the operation whose IO_STATUS_BLOCK (OVERLAPPED) is at ov.
+fn CancelIoEx(h: Int, ov: Int) -> Int32
+/// NtDeviceIoControlFile (ntdll.dll): an NTSTATUS (0, STATUS_PENDING
+/// 0x103, or an error).
+fn NtDeviceIoControlFile(h: Int, event: Int, apc: Int, ctx: Int, iosb: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int) -> Int32

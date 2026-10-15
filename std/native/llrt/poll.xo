@@ -14,6 +14,7 @@ use native/llrt/sock
 use native/llrt/sysio
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// A timer's words (xo_rt.c struct xo_timer).
 const T_WHEN = 0
@@ -226,6 +227,11 @@ const S_SIGNAL = 56
 const S_MU = 64
 const S_DEAD = 72
 const S_PARK = 80
+/// Windows (0 elsewhere): the address of the event loop's AFD device
+/// handle (ev.afd: 0 when the poller fell back to WSAPoll), and the C's
+/// ev_poke (the WSAPoll loop polls the directions waited in).
+const S_AFD = 88
+const S_POKE = 96
 
 const D_FD = 8
 const D_CLOSED = 12
@@ -248,8 +254,19 @@ pub const CANCELED = 1
 pub const CLOSED = 2
 pub const TIMEOUT = 3
 
-/// Sets the C's services record (at start, before any descriptor).
-pub fn poll_svc(rec: Int) { rt.mem_store(rt.static_word(W_SVC), 0, rec, 8) }
+/// Sets the C's services record (at start, before any descriptor), and
+/// the C's park_signal from it (the poller's loop sets it too).
+pub fn poll_svc(rec: Int) {
+  rt.mem_store(rt.static_word(W_SVC), 0, rec, 8)
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, rt.mem_load(rec, S_SIGNAL, 8), 8)
+}
+
+/// The AFD device handle on Windows (0: none, the WSAPoll loop; always 0
+/// elsewhere).
+fn afd() -> Int {
+  let a = svc_word(S_AFD)
+  if a == 0 { 0 } else { rt.mem_load(a, 0, 8) }
+}
 
 fn svc(k: Int, a: Int) -> Int {
   let rec = rt.mem_load(rt.static_word(W_SVC), 0, 8)
@@ -376,7 +393,15 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
     }
     pool.park_reset(park)
     rt.mem_store(pd, slot, park, 8)
+    let win = windows()
+    if win && afd() != 0 {
+      // the poller watches what someone waits for
+      pd_arm(pd)
+    }
     unlk(addw(pd, D_MU))
+    if win && afd() == 0 && svc_word(S_POKE) != 0 {
+      let _p = rt.call_c2(svc_word(S_POKE), 0, 0)
+    }
     if deadline != 0 && t == 0 {
       t = rt.heap_large(T_SIZE)
       rt.mem_set(t, 0, T_SIZE)
@@ -602,5 +627,193 @@ fn read_fd(fd: Int, a: Int, n: Int) -> Int {
     TargetOs.Darwin => sys_darwin.read(fd, a, n)
     TargetOs.Linux => sock.read(fd, a, n)
     TargetOs.Windows | TargetOs.Wasi => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Windows (B22 stage 4; xo_rt.c's XO_WINPOLL code, UNTESTED on windows):
+// a waiter arms a one shot AFD poll of its socket (IOCTL_AFD_POLL on
+// \Device\Afd, the driver under Winsock's select and WSAPoll, as wepoll
+// and mio use it) for the directions waited in, and the poll's
+// completion, read from the I/O completion port by poll_main_win, hands
+// the readiness over. The C keeps opening the device and the port
+// (ev_init), registering a descriptor (pd_new: its base socket), and the
+// WSAPoll loop used when the device cannot be opened.
+
+/// xo_pd's Windows words (asserted in xo_rt.c): the poll's
+/// IO_STATUS_BLOCK (its status a 32 bit NTSTATUS), the poll's buffer
+/// (AFD_POLL_INFO: the timeout, the count, exclusive, then one handle,
+/// its events, and its status), the socket's base handle, the events of
+/// the poll in flight (0 none), whether to poll again once it ends, and
+/// whether its completion frees the record (pd_free ran).
+const D_IOSB = 56
+const D_INFO = 72
+const D_BASE = 104
+const D_ARMED = 112
+const D_REARM = 116
+const D_DYING = 120
+
+/// The AFD events of reading and writing (xo_rt.c XO_AFD_READ, WRITE:
+/// receive, expedited, disconnect, abort, local close, accept, connect
+/// failure; send, abort, local close, connect failure).
+const AFD_READ = 443
+const AFD_WRITE = 308
+const IOCTL_AFD_POLL = 73764
+const STATUS_PENDING = 259
+const INFINITE = 4294967295
+
+fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+  }
+}
+
+fn s32(v: Int) -> Int {
+  let w = v & 4294967295
+  if w >= 2147483648 { subw(w, 4294967296) } else { w }
+}
+
+/// Starts (the record's lock held) an AFD poll of pd's socket for the
+/// directions someone waits in, unless one runs; a running poll that
+/// lacks a direction now waited in is cancelled, and its completion
+/// starts the wider one (xo_rt.c pd_arm).
+pub fn pd_arm(pd: Int) {
+  let dev = afd()
+  if dev == 0 || rt.mem_load(pd, D_CLOSED, 4) != 0 || s32(rt.mem_load(pd, D_FD, 4)) < 0 || rt.mem_load(pd, D_DYING, 4) != 0 {
+    return
+  }
+  let want = (if rt.mem_load(pd, D_RWAIT, 8) != 0 { AFD_READ } else { 0 }) | (if rt.mem_load(pd, D_WWAIT, 8) != 0 { AFD_WRITE } else { 0 })
+  if want == 0 {
+    return
+  }
+  let armed = rt.mem_load(pd, D_ARMED, 4)
+  if armed != 0 {
+    if (want & (armed ^ 4294967295)) != 0 && rt.mem_load(pd, D_REARM, 4) == 0 {
+      rt.mem_store(pd, D_REARM, 1, 4)
+      let _c = sys_windows.CancelIoEx(dev, addw(pd, D_IOSB))
+    }
+    return
+  }
+  // AFD_POLL_INFO: no timeout (INT64_MAX), one handle, not exclusive
+  let info = addw(pd, D_INFO)
+  rt.mem_store(info, 0, 9223372036854775807, 8)
+  rt.mem_store(info, 8, 1, 4)
+  rt.mem_store(info, 12, 0, 4)
+  rt.mem_store(info, 16, rt.mem_load(pd, D_BASE, 8), 8)
+  rt.mem_store(info, 24, want, 4)
+  rt.mem_store(info, 28, 0, 4)
+  rt.mem_store(pd, D_IOSB, STATUS_PENDING, 4)
+  // the completion's OVERLAPPED pointer is the APC context: pd
+  let st = s32(Int(sys_windows.NtDeviceIoControlFile(dev, 0, 0, pd, addw(pd, D_IOSB), IOCTL_AFD_POLL, info, 32, info, 32)))
+  if st == 0 || st == STATUS_PENDING {
+    // the completion comes through the port either way
+    rt.mem_store(pd, D_ARMED, want, 4)
+    return
+  }
+  // the poll was refused (a closed socket): the operations run and meet
+  // the error
+  wake(pd, D_RWAIT)
+  wake(pd, D_WWAIT)
+}
+
+/// The completion of pd's poll (on the poller thread): the readiness to
+/// its waiters, then a new poll while someone waits; a record pd_free
+/// gave up is freed now that no poll runs (xo_rt.c afd_done).
+fn afd_done(pd: Int, free_fn: Int) {
+  lk(addw(pd, D_MU))
+  rt.mem_store(pd, D_ARMED, 0, 4)
+  rt.mem_store(pd, D_REARM, 0, 4)
+  var mode = 0
+  if s32(rt.mem_load(pd, D_IOSB, 4)) >= 0 && rt.mem_load(pd, addw(D_INFO, 8), 4) >= 1 {
+    let e = rt.mem_load(pd, addw(D_INFO, 24), 4)
+    mode = (if (e & AFD_READ) != 0 { 1 } else { 0 }) | (if (e & AFD_WRITE) != 0 { 2 } else { 0 })
+  }
+  let dying = rt.mem_load(pd, D_DYING, 4) != 0
+  unlk(addw(pd, D_MU))
+  if dying {
+    let _f = rt.call_c2(free_fn, pd, 0)
+    return
+  }
+  if mode != 0 {
+    pd_ready(pd, mode)
+  }
+  lk(addw(pd, D_MU))
+  pd_arm(pd)
+  unlk(addw(pd, D_MU))
+}
+
+/// The poller thread's loop on Windows with the AFD device (never
+/// returns; xo_rt.c poller_main's XO_WINPOLL loop): frees the dead
+/// records (one with a poll in flight once its cancelled poll completes),
+/// fires the timers that are due, waits on the completion port iocp, and
+/// handles the completions and the signals (ev.sigs, which the console
+/// handler counts and ev_poke wakes the port for).
+pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+  let dev = afd()
+  // 64 OVERLAPPED_ENTRY records of 32 bytes, then the count removed
+  let es = rt.heap_large(64 * 32 + 16)
+  let got = addw(es, 64 * 32)
+  while true {
+    lk(mu)
+    var pd = rt.mem_load(dead, 0, 8)
+    while pd != 0 {
+      let next = rt.mem_load(pd, D_NEXT, 8)
+      lk(addw(pd, D_MU))
+      let armed = rt.mem_load(pd, D_ARMED, 4) != 0
+      if armed {
+        // a poll in flight still names it: freed by its completion
+        rt.mem_store(pd, D_DYING, 1, 4)
+        let _c = sys_windows.CancelIoEx(dev, addw(pd, D_IOSB))
+      }
+      unlk(addw(pd, D_MU))
+      if !armed {
+        let _f = rt.call_c2(free_fn, pd, 0)
+      }
+      pd = next
+    }
+    rt.mem_store(dead, 0, 0, 8)
+    let now = sysio.mono_ns()
+    var t = timer_first()
+    while t != 0 && dl(t) <= now {
+      timer_remove(t)
+      rt.fence(RELEASE)
+      rt.mem_store(t, T_FIRED, 1, 4)
+      let p = rt.mem_load(t, T_PARK, 8)
+      if p != 0 {
+        signal(p)
+      } else {
+        let _c = rt.call_c2(rt.mem_load(t, T_FN, 8), t, 0)
+      }
+      t = timer_first()
+    }
+    let first = timer_first()
+    let wait = if first == 0 { -1 } else { subw(dl(first), now) }
+    unlk(mu)
+    var ms = if wait < 0 { INFINITE } else { addw(wait, 999999) / 1000000 }
+    if wait > 1099511627776 {
+      ms = 1073741824
+    }
+    rt.mem_store(got, 0, 0, 8)
+    var n = 0
+    if Int(sys_windows.GetQueuedCompletionStatusEx(iocp, es, 64, got, ms, 0)) != 0 {
+      n = rt.mem_load(got, 0, 4)
+    }
+    stat(ST_POLL_RETURN)
+    var i = 0
+    while i < n {
+      // OVERLAPPED_ENTRY: the key, then lpOverlapped (the record)
+      let ov = rt.mem_load(es, addw(rt.int_wrap(2, i, 32), 8), 8)
+      if ov != 0 {
+        afd_done(ov, free_fn)
+      }
+      i = addw(i, 1)
+    }
+    var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
+    while k > 0 {
+      let _s = rt.call_c2(stop_fn, 0, 0)
+      k = subw(k, 1)
+    }
   }
 }

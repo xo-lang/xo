@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B22, stage 4): on Windows the event
+  loop's descriptor operations and waits are Xo too (poll.xo), and so are
+  the AFD polls (pd_arm, their completions) and the poller thread's loop
+  over the I/O completion port (poll_main_win); the C keeps opening the
+  device, registering a socket, and the WSAPoll fallback. Written on
+  macOS and untested on Windows.
 - Native runtime (zero-C audit item B25, stage 5): on Windows, Proc.run,
   Cmd.output, run, and spawn, pipelines, and children are Xo too
   (std/native/llrt/proc.xo over windows.xo: CreateProcessW with an
