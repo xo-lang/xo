@@ -165,3 +165,94 @@ about 330 Windows only, half of it the WSAPoll fallback.
   body is calls into Xo and the first half (above).
 - The signal handlers: not by design; any C ABI function can be a
   handler, and cabi.xo's exports are C ABI.
+
+## Function by function after rank 13 (xo-fa, 2026-10-15, main f5a58ac8)
+
+The runtime C on main f5a58ac8 is 1,258 lines: xo_rt.c 1,098, xo_nolibc.c
+128, xo_http.c 19, xo_std.c 13. Each block is in one class. **Seed-only** means
+generated code of seed 0.13.0 (d770aa15), or std it compiles, still names it;
+it can go once 0.14.0 is the seed. The check was `git grep` of the name in
+selfhost/ and of the `rt.` call in std/native at f5a58ac8 and at v0.13.0,
+plus selfhost/ssa/exports.xo's mapping at each. **Still used** names the root
+caller and what would move it. **By design** gives the reason. Line counts
+include each block's comments. Xo Lang 3's rank 8 (the heap record) was in
+flight at the time and is counted under "still used" here.
+
+### xo_rt.c (1,098 lines)
+
+| Lines | Block | Class | Root caller, and what moves it |
+|---|---|---|---|
+| 324-333 (10) | xo_heap_large, xo_heap_large_resize, xo_heap_release | seed-only | 0.13.0 lowers rt.heap_* to these (0e0ce261 added the export mapping after the cut) |
+| 790-794 (5) | xo_sched_run_task | seed-only | 0.13.0 has no rt.sched_run_task mapping |
+| 620-638 (19) | xo_personality (Windows language handler) | dead now | no generated code names it since 69ef16a8 (before 0.13.0); fault_raise_msg's pers_old can be xo_x_personality on Windows too |
+| 748-777 (30) | XO_TSAN, XO_ASAN, XO_NO_SANITIZE | dead now | defined, never used |
+| 856-858 (3) | XO_ATOMIC_V | dead now | defined, never used |
+| 251-254 (4) | xo_oom | test-only | only the C tests call it: move to testdata/xrec.h |
+| 338-343 (6) | xo_chunks_now | test-only | tasks.c, alloc_threads.c |
+| 381-392 (12) | XO_RC_IMMORTAL, rc_load, rc_inc, rc_dec | test-only | the C tests |
+| 896-899 (4) | ev_poke | test-only | evloop.c |
+| 935-961 (27) | xo_listener, xo_conn and asserts | test-only | evloop.c's view of netconn.xo's handles |
+| 135-249 (115) | the heap record xo_heap, its asserts, central lists, main_heap, tls_heap | still used | alloc.xo and obj.xo through obj_heap_init; Xo Lang 3's rank 8 moves it (in flight) |
+| 256-322 (67) | heap_slow, heap, hw_slow_c, obj_heap_init, obj_heap_words, xo_rt_threads_begin | still used | main, the test constructor, xo_sched_rt op 20; rank 8 |
+| 1020-1025 (6) | entrysvc_mid_max | still used | entry.xo (stop_svc word 15) writes main_heap.mid_max; rank 8 |
+| 409-417 (9) | xo_flush | still used | generated code: std fsops.xo rt.flush, which lowers to xo_flush (no exports.xo mapping). Move: map rt.flush to xo_x_flush |
+| 1049-1052 (4) | xo_set_grace | still used | generated code: the SSA builder's rt.set_grace for Proc.set_grace. Move: map rt.set_grace to xo_x_stop_set_grace |
+| 451-483 (33) | xo_rl_copy, xo_rl_grow, the xo_rstr and xo_rlist types | still used | the LLVM emitter (call.xo, func.xo, gen.xo's head) calls them. Move: call obj.xo's rl_copy_n and rl_grow_n exports as arm64 does |
+| 526-547 (22) | xo_hdr, xo_zero_handle, xo_empty_list | still used | data symbols whose addresses both emitters take (E3). Move: the compiler emits them (as xo_tlocal), or static words |
+| 423-449 (27) | fault_init and the init declarations | still used | main and the test constructor. Move: entry.xo main does the inits (ctx, poll, stop) itself |
+| 577-618 (42) | fault_raise_msg | still used | fault.xo's RAISE word. Move: fault.xo fire calls cabi.xo fault_raise_cur with rt.fn_addr of xo_x_personality |
+| 704-717, 796-816 (35) | run_claimed, xo_sched_rt | still used | pool.xo's rt.sched_rt ops 2 (tw kick), 16 (run claimed), 18 (empty list), 20 (threads begin). Move: the ops to exports or Xo calls; op 16's TSan acquire through sanhook.xo's weak __tsan_acquire (decision 0232) |
+| 780-788 (9) | ctx_init | still used | tells ctx.xo whether the C was built with TSan. Move: sanhook.sanitized() at run time (decision 0232) |
+| 394-407, 875-894 (34) | weak stand-ins: xo_x_tw_*, nc listener and conn free | still used | the C's services records name them. Move: the Xo callers test rt.sym_present (decision 0232) |
+| 901-903, 913-922, 963-991, 1013-1019, 1027-1047 (69) | ev_start, pd_svc_init, environ, the handlers' declarations, the entry services, stop_svc_init | still used | stop.xo and entry.xo read stop_svc. Move: rt.fn_addr of the exports and Xo inits (decision 0233's pattern) |
+| 549-575 (27) | TSAN_ACQUIRE annotation | by design | ThreadSanitizer annotation (the C is instrumented; it goes with op 16 if sanhook's weak call is used) |
+| 992-1011 (20) | on_overflow | by design | the Windows stack overflow handler: runs on the thread's guarantee, after the guard page |
+| 1054-1089 (36) | main | by design | the C library's start calls `main` (Windows: _setmode too); its body is Xo calls. Could be a bare-named export, as cabi_libc.xo's |
+| the rest (423) | the header, includes, Windows Winsock and errno asserts (OS header layouts sock.xo relies on), section comments of what is Xo now, the xo_std.c and xo_nolibc.c includes | overhead | shrinks with the code; the Winsock asserts could move to a test that compiles them |
+
+### xo_nolibc.c (128 lines): by design
+
+| Lines | Block | Reason |
+|---|---|---|
+| 1-48 | header, declarations, the data symbols environ, stdin, stdout, stderr | data symbols the C library's users name |
+| 50-78 | nl_run, xo_nolibc_start | the thread pointer (msr tpidr_el0) and the switch to main's 1 GiB stack (asm) |
+| 80-92 | _start | asm: the initial stack pointer |
+| 94-128 | snprintf, sprintf, fprintf, printf | variadic (va_start); they hand the va_list to libcio.xo |
+
+### xo_http.c (19) and xo_std.c (13)
+
+| Block | Class | Root caller, and what moves it |
+|---|---|---|
+| xo_x_streams_free (weak stand-in) | still used | entry.xo main's end. Move: rt.sym_present in entry.xo |
+| xo_http.c's last line, "A std function's fault at its caller: generated code calls this name." | dead | a stale comment with no function after it |
+| xo_std.c: the include of xo_http.c and comments | overhead | goes with xo_http.c |
+
+### Totals
+
+| Class | Lines |
+|---|---|
+| seed-only (goes after 0.14.0) | 15 |
+| dead now (delete) | 52, plus 1 stale comment line |
+| test-only (move to testdata/xrec.h) | 53 |
+| still used: the heap record (rank 8, in flight) | 188 |
+| still used: generated code names it (needs an emitter or mapping change) | 68 |
+| still used: C glue to Xo (movable now) | 216 + 19 (xo_http.c's stand-in) |
+| by design | 83 in xo_rt.c + 128 xo_nolibc.c |
+| overhead (includes, asserts, comments) | 423 + 13 (xo_std.c) |
+| **total** | **1,258** |
+
+### After 0.14.0
+
+The four "generated code names it" items have to land before 0.14.0 is cut for
+their C to go after it: the rt.flush and rt.set_grace mappings, LLVM's
+rl_copy and rl_grow through obj.xo's exports, and the placeholders as emitted
+data. If they do, and rank 8 and the movable glue land too, what is left after
+0.14.0 is the by-design C:
+- xo_rt.c: main, on_overflow and the TSan annotation (83 lines, about 40
+  of them code). The annotation goes too if op 16 uses sanhook.xo's weak call.
+- xo_nolibc.c: 128 lines.
+- The includes and Windows asserts those need: about 150 lines.
+
+That is about 350 lines in all, down from 1,258. Without the four emitter
+changes before the cut, their 68 lines and the forwarders stay one release
+longer (until 0.15.0).
