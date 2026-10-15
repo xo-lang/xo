@@ -44,8 +44,11 @@ one line wrappers already, and the forwarders would not shrink it.
    malloc; alloc.xo counts every block for the leak check and the
    resource budgets, which the C runtime's records (from malloc for the
    life of the program) must not be; and malloc must not route back into
-   rt.heap_large, the runtime's malloc. Its lock and the address of its
-   state are static words 30 and 31.
+   rt.heap_large, the runtime's malloc. The address of its state, a
+   mapped page whose first word is its lock and whose second holds
+   strerror's table, is static word 63 (stage (a) used words 30 and 31,
+   which the test world's twrun.xo took on 2026-10-14; no word was free,
+   so malloc and strerror share one).
 
 ## Consequences
 
@@ -62,7 +65,7 @@ one line wrappers already, and the forwarders would not shrink it.
   CI that day, so written on macOS and UNTESTED on linux: the
   linux/arm64 XO_NOLIBC build's code generation is their only check):
   libcstr.xo (mem*, str*, strerror over linux.xo's texts as malloc'd C
-  strings kept in a table at static word 63, the strto* family, qsort)
+  strings kept in a table off libcmem.xo's state record, the strto* family, qsort)
   and libcsys.xo (the system call wrappers, exit, gmtime_r, sysconf,
   syscall, signal sets); the pthread and signal functions call
   cabi_nolibc.xo's work directly. errno is Xo too: the low 32 bits of
@@ -72,6 +75,20 @@ one line wrappers already, and the forwarders would not shrink it.
   rt.mem_move, or rt.mem_cmp, which the emitters may lower to calls of
   memcpy and the rest. What stays C: _start and the TLS setup,
   getauxval, getenv, FILE and the printf family, directories, strtod.
+- Stage (e), 2026-10-14 (UNTESTED on linux, same check): libcio.xo
+  has the start's work (the environment and the auxiliary vector kept in
+  libcmem.xo's state record, the main thread's TLS block and 1 GiB
+  stack), getenv, getauxval, vsnprintf and vfprintf (reading the C's
+  va_list by the AAPCS64 and SysV x86_64 layouts), FILE (the standard
+  streams' records in the state record), opendir and readdir, and
+  strtod's message. libcthr.xo has the clock, lock, signal, thread, and
+  TLS work cabi_nolibc.xo had: every top level function of a cabi module
+  is an export, and cabi_nolibc.xo's mutex_lock collided with cabi.xo's
+  (Mutex[T], B19) as xo_x_mutex_lock, so cabi_nolibc.xo keeps only the
+  four start exports. xo_nolibc.c keeps _start, the stack switch and
+  arm64's thread pointer (asm), the data symbols environ, stdin, stdout,
+  and stderr, and the variadic snprintf, sprintf, fprintf, and printf
+  (va_start), 128 lines.
 - A future platform without a C library (decision 0195) can reuse the
   mechanism; the bare names are a property of cabi_libc.xo alone.
 

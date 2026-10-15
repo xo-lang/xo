@@ -20,14 +20,24 @@ use native/rt
 // which the C runtime's records (from malloc for the life of the
 // program) must not be (decision 0230).
 
-/// rt.static_word: the lock word, and the address of the state (a mapped
-/// page, made by the first malloc).
-const W_LOCK = 30
-const W_STATE = 31
+/// rt.static_word: the address of the C library's state (a mapped page,
+/// made by the first use; no static word is free, so the other modules
+/// of the C library keep their words here too).
+const W_STATE = 63
 
-/// The state's words: the free list heads by class (classes 4 to 16, at
-/// 8 * class), the current region's next and end addresses, then the kept
-/// mappings (address, size) in 16 pairs.
+/// The state's words: the lock (at 0), the words of the other modules
+/// (S_ERRS to S_STD's records), the free list heads by class (classes 4
+/// to 16, at 8 * class), the current region's next and end addresses,
+/// then the kept mappings (address, size) in 16 pairs.
+/// libcstr.xo: strerror's table of C strings.
+pub const S_ERRS = 8
+/// libcio.xo: the environment (envp) and the auxiliary vector _start
+/// found.
+pub const S_ENV = 16
+pub const S_AUXV = 24
+/// libcio.xo: the FILE records of stdin, stdout, and stderr (16 bytes
+/// each, 416 to 463).
+pub const S_STD = 416
 const S_CUR = 136
 const S_END = 144
 const S_BIG = 152
@@ -59,34 +69,48 @@ fn map(n: Int) -> Int {
   r
 }
 
-fn lock() {
-  let l = rt.static_word(W_LOCK)
-  while !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+/// The state's address, mapped on the first use (0 when the mapping
+/// failed): the first of racing threads to store its page keeps it.
+pub fn state() -> Int {
+  let w = rt.static_word(W_STATE)
+  let s = rt.slot_load(w, 0, ACQUIRE)
+  if s != 0 {
+    return s
+  }
+  let m = map(STATE_SIZE)
+  if m == 0 {
+    return 0
+  }
+  if rt.slot_cas(w, 0, 0, m, RELEASE) {
+    return m
+  }
+  let _r = linux.munmap(m, STATE_SIZE)
+  rt.slot_load(w, 0, ACQUIRE)
+}
+
+/// The address of the state's word at off (one of the S_ words), or 0
+/// when the state could not be mapped.
+pub fn word(off: Int) -> Int {
+  let s = state()
+  if s == 0 { 0 } else { addw(s, off) }
+}
+
+/// Takes the state's lock (its first word).
+fn lock(s: Int) {
+  while !rt.slot_cas(s, 0, 0, 1, ACQUIRE) {
     // FUTEX_WAIT_PRIVATE while held (2 tells the holder to wake)
-    if rt.slot_swap(l, 0, 2, ACQUIRE) == 0 {
+    if rt.slot_swap(s, 0, 2, ACQUIRE) == 0 {
       return
     }
-    linux.futex(l, 128, 2, 0)
+    linux.futex(s, 128, 2, 0)
   }
 }
 
-fn unlock() {
-  let l = rt.static_word(W_LOCK)
-  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+fn unlock(s: Int) {
+  if rt.slot_swap(s, 0, 0, RELEASE) == 2 {
     // FUTEX_WAKE_PRIVATE
-    linux.futex(l, 129, 1, 0)
+    linux.futex(s, 129, 1, 0)
   }
-}
-
-/// The state's address (lock held), mapped on the first use.
-fn state() -> Int {
-  let w = rt.static_word(W_STATE)
-  var s = rt.mem_load(w, 0, 8)
-  if s == 0 {
-    s = map(STATE_SIZE)
-    rt.mem_store(w, 0, s, 8)
-  }
-  s
 }
 
 /// A kept mapping of total bytes to twice that (lock held), or 0.
@@ -129,10 +153,13 @@ pub fn malloc(n0: Int) -> Int {
   let n = if n0 == 0 { 1 } else { n0 }
   if addw(n, 16) > rt.int_wrap(3, 1, MAX_SHIFT) {
     let total = addw(n, 16 + PAGE - 1) & (0 - PAGE)
-    lock()
     let s = state()
-    var p = if s == 0 { 0 } else { big_take(s, total) }
-    unlock()
+    var p = 0
+    if s != 0 {
+      lock(s)
+      p = big_take(s, total)
+      unlock(s)
+    }
     if p == 0 {
       p = map(total)
       if p == 0 {
@@ -146,12 +173,11 @@ pub fn malloc(n0: Int) -> Int {
   while rt.int_wrap(3, 1, c) < addw(n, 16) {
     c = addw(c, 1)
   }
-  lock()
   let s = state()
   if s == 0 {
-    unlock()
     return 0
   }
+  lock(s)
   let head = addw(s, rt.int_wrap(3, c, 3))
   var b = rt.mem_load(head, 0, 8)
   if b != 0 {
@@ -162,7 +188,7 @@ pub fn malloc(n0: Int) -> Int {
     if cur == 0 || subw(rt.mem_load(s, S_END, 8), cur) < size {
       cur = map(REGION)
       if cur == 0 {
-        unlock()
+        unlock(s)
         return 0
       }
       rt.mem_store(s, S_END, addw(cur, REGION), 8)
@@ -170,7 +196,7 @@ pub fn malloc(n0: Int) -> Int {
     b = cur
     rt.mem_store(s, S_CUR, addw(cur, size), 8)
   }
-  unlock()
+  unlock(s)
   rt.mem_store(b, 0, c, 8)
   addw(b, 16)
 }
@@ -183,21 +209,25 @@ pub fn free(p: Int) {
   let h = subw(p, 16)
   let c = rt.mem_load(h, 0, 8)
   if c < 0 {
-    lock()
     let s = state()
-    let kept = s != 0 && big_keep(s, h, subw(0, c))
-    unlock()
+    var kept = false
+    if s != 0 {
+      lock(s)
+      kept = big_keep(s, h, subw(0, c))
+      unlock(s)
+    }
     if !kept {
       let _r = linux.munmap(h, subw(0, c))
     }
     return
   }
-  lock()
+  // a small block came from malloc, so the state exists
   let s = state()
+  lock(s)
   let head = addw(s, rt.int_wrap(3, c, 3))
   rt.mem_store(h, 0, rt.mem_load(head, 0, 8), 8)
   rt.mem_store(head, 0, h, 8)
-  unlock()
+  unlock(s)
 }
 
 /// calloc(n, m): n * m zeroed bytes, or 0 (also when the product

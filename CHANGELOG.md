@@ -19,6 +19,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   test are Xo (std/native/llrt/twrun.xo); xo_testing.c keeps the clock's
   move when every context waits, the signal timer's callback, and
   forwarders (617 to 252 lines).
+- Native runtime (zero-C audit item B04, stage (e), decision 0230): in a
+  program built with no C library (XO_NOLIBC=1, Linux) the start (the
+  environment, the auxiliary vector, the main thread's TLS block and
+  stack), getenv, getauxval, vsnprintf and vfprintf, FILE, and
+  directories are Xo (std/native/llrt/libcio.xo), and the thread and
+  lock work moved from cabi_nolibc.xo to libcthr.xo, which fixes a
+  duplicate `xo_x_mutex_lock` (cabi.xo's Mutex[T]) that broke every
+  XO_NOLIBC arm64 link; xo_nolibc.c 658 to 128 lines. The malloc state
+  and strerror's table share static word 63 (words 30 and 31 freed).
+  Written on macOS and untested on Linux.
 - Native runtime (zero-C audit item B04, decision 0230): a program built
   with no C library (XO_NOLIBC=1, Linux) takes its C library from Xo,
   exported under the C names (std/native/llrt/cabi_libc.xo): malloc and

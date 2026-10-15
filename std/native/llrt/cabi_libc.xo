@@ -11,10 +11,11 @@
 // Every function takes and returns Int words (addresses are Ints); none
 // may fault or allocate Xo values (rt.int_wrap for the arithmetic).
 
-use native/llrt/cabi_nolibc
+use native/llrt/libcio
 use native/llrt/libcmem
 use native/llrt/libcstr
 use native/llrt/libcsys
+use native/llrt/libcthr
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ fn sysconf(name: Int) -> Int { libcsys.sysconf(name) }
 fn syscall(n: Int, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int { libcsys.syscall(n, a, b, c, d, e, f) }
 
 // ---------------------------------------------------------------------------
-// Signals, locks, and threads (cabi_nolibc.xo's work, called here under
+// Signals, locks, and threads (libcthr.xo's work, called here under
 // the C names; glibc's layouts: a mutex is the first word of its
 // pthread_mutex_t, an attribute's first word its stack size)
 
@@ -194,16 +195,16 @@ fn sigemptyset(s: Int) -> Int { libcsys.sigemptyset(s) }
 
 fn sigaddset(s: Int, sig: Int) -> Int { libcsys.sigaddset(s, sig) }
 
-fn sigaction(sig: Int, act: Int, old: Int) -> Int { libcsys.ret(cabi_nolibc.sigaction(libcstr.s32(sig), act, old)) }
+fn sigaction(sig: Int, act: Int, old: Int) -> Int { libcsys.ret(libcthr.sigaction(libcstr.s32(sig), act, old)) }
 
 /// signal: the previous handler, or SIG_ERR (-1) with errno set.
-fn signal(sig: Int, h: Int) -> Int { libcsys.ret(cabi_nolibc.signal(libcstr.s32(sig), h)) }
+fn signal(sig: Int, h: Int) -> Int { libcsys.ret(libcthr.signal(libcstr.s32(sig), h)) }
 
-fn sigprocmask(how: Int, set: Int, old: Int) -> Int { libcsys.ret(cabi_nolibc.sigprocmask(libcstr.s32(how), set, old)) }
+fn sigprocmask(how: Int, set: Int, old: Int) -> Int { libcsys.ret(libcthr.sigprocmask(libcstr.s32(how), set, old)) }
 
 /// pthread_sigmask: 0, or the error number (not errno).
 fn pthread_sigmask(how: Int, set: Int, old: Int) -> Int {
-  let r = cabi_nolibc.sigprocmask(libcstr.s32(how), set, old)
+  let r = libcthr.sigprocmask(libcstr.s32(how), set, old)
   if r < 0 { 0 - r } else { 0 }
 }
 
@@ -215,13 +216,13 @@ fn pthread_mutex_init(m: Int, a: Int) -> Int {
 
 fn pthread_mutex_destroy(m: Int) -> Int { 0 }
 
-fn pthread_mutex_lock(m: Int) -> Int { cabi_nolibc.mutex_lock(m) }
+fn pthread_mutex_lock(m: Int) -> Int { libcthr.mutex_lock(m) }
 
-fn pthread_mutex_trylock(m: Int) -> Int { cabi_nolibc.mutex_trylock(m) }
+fn pthread_mutex_trylock(m: Int) -> Int { libcthr.mutex_trylock(m) }
 
-fn pthread_mutex_unlock(m: Int) -> Int { cabi_nolibc.mutex_unlock(m) }
+fn pthread_mutex_unlock(m: Int) -> Int { libcthr.mutex_unlock(m) }
 
-fn pthread_once(o: Int, f: Int) -> Int { cabi_nolibc.once_run(o, f) }
+fn pthread_once(o: Int, f: Int) -> Int { libcthr.once_run(o, f) }
 
 /// pthread_attr_init: the stack size 8 MiB (the attribute's first word).
 fn pthread_attr_init(a: Int) -> Int {
@@ -242,7 +243,7 @@ fn pthread_attr_setdetachstate(a: Int, s: Int) -> Int { 0 }
 /// pthread_create: 0 with the handle at tp, or the error number.
 fn pthread_create(tp: Int, a: Int, f: Int, arg: Int) -> Int {
   let stack = if a != 0 { rt.mem_load(a, 0, 8) } else { 8388608 }
-  let r = cabi_nolibc.thread_create(stack, f, arg)
+  let r = libcthr.thread_create(stack, f, arg)
   if r < 0 {
     return 0 - r
   }
@@ -253,7 +254,7 @@ fn pthread_create(tp: Int, a: Int, f: Int, arg: Int) -> Int {
 /// pthread_join: the runtime's threads return nothing it reads (r gets
 /// 0).
 fn pthread_join(th: Int, r: Int) -> Int {
-  let _j = cabi_nolibc.thread_join(th)
+  let _j = libcthr.thread_join(th)
   if r != 0 {
     rt.mem_store(r, 0, 0, 8)
   }
@@ -261,3 +262,52 @@ fn pthread_join(th: Int, r: Int) -> Int {
 }
 
 fn pthread_detach(th: Int) -> Int { 0 }
+
+// ---------------------------------------------------------------------------
+// The environment, formatted output, streams, and directories (libcio.xo,
+// B04 stage (e)): snprintf, sprintf, fprintf, and printf stay C shells in
+// xo_nolibc.c (va_start) over vsnprintf and vfprintf; stdin, stdout, and
+// stderr are C pointers to libcio.xo's records (libcio.std_file).
+
+fn getauxval(k: Int) -> Int { libcio.getauxval(k) }
+
+fn getenv(name: Int) -> Int { libcio.getenv(name) }
+
+fn vsnprintf(buf: Int, cap: Int, f: Int, ap: Int) -> Int { libcio.vsnprintf(buf, cap, f, ap) }
+
+fn vfprintf(f: Int, fmt: Int, ap: Int) -> Int { libcio.vfprintf(f, fmt, ap) }
+
+fn fwrite(p: Int, size: Int, n: Int, f: Int) -> Int { libcio.fwrite(p, size, n, f) }
+
+fn fputs(s: Int, f: Int) -> Int { libcio.fputs(s, f) }
+
+fn fputc(c: Int, f: Int) -> Int { libcio.fputc(c, f) }
+
+fn putc(c: Int, f: Int) -> Int { libcio.fputc(c, f) }
+
+fn puts(s: Int) -> Int { libcio.puts(s) }
+
+fn putchar(c: Int) -> Int { libcio.fputc(c, libcio.std_file(1)) }
+
+fn fflush(f: Int) -> Int { 0 }
+
+fn fopen(path: Int, mode: Int) -> Int { libcio.fopen(path, mode) }
+
+fn fread(p: Int, size: Int, n: Int, f: Int) -> Int { libcio.fread(p, size, n, f) }
+
+fn ferror(f: Int) -> Int { libcio.ferror(f) }
+
+fn fclose(f: Int) -> Int { libcio.fclose(f) }
+
+fn opendir(p: Int) -> Int { libcio.opendir(p) }
+
+fn readdir(d: Int) -> Int { libcio.readdir(d) }
+
+fn closedir(d: Int) -> Int { libcio.closedir(d) }
+
+/// strtod (floating point text in C) is not available: it ends the
+/// program (its double result is never returned).
+fn strtod(s: Int, end: Int) -> Int {
+  libcio.die("strtod (floating point text in C) is not available")
+  0
+}

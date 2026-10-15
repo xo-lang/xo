@@ -1,0 +1,645 @@
+// The process start, environment, formatted output, stream, and
+// directory functions of the C library of an XO_NOLIBC build (getenv,
+// getauxval, vsnprintf, vfprintf, FILE, opendir; the zero-C audit's B04,
+// decision 0230): std/native/llrt/cabi_libc.xo exports them under the C
+// names, and cabi_nolibc.xo the start's work to std/llrt/xo_nolibc.c's
+// _start. The variadic printf functions stay C shells in xo_nolibc.c
+// (va_start needs the callee's register save), calling vsnprintf and
+// vfprintf here with their va_list, read here by the target's ABI. None
+// may fault or allocate Xo values; the start's functions run before the
+// main thread has its thread pointer, so they touch no thread local word.
+//
+// Written on macOS: checked by the linux/arm64 XO_NOLIBC build's code
+// generation only, UNTESTED on linux.
+use native/llrt/libcmem
+use native/llrt/libcstr
+use native/llrt/libcsys
+use native/llrt/raw
+use native/rt
+
+const AT_FDCWD = -100
+const O_RDONLY = 0
+const O_WRONLY = 1
+const O_RDWR = 2
+const O_CREAT = 64
+const O_TRUNC = 512
+const O_APPEND = 1024
+const O_CLOEXEC = 524288
+const EINTR = 4
+
+/// A FILE: the descriptor (32 bits at 0), the error flag (32 bits at 4),
+/// whether fclose frees it (at 8: fopen's, not the standard streams').
+const F_FD = 0
+const F_ERR = 4
+const F_HEAP = 8
+const FILE_SIZE = 16
+
+/// A DIR: the descriptor, the next entry's offset, the bytes read, then
+/// getdents64's buffer (glibc's struct dirent on 64 bit Linux is the
+/// kernel's linux_dirent64).
+const D_FD = 0
+const D_POS = 8
+const D_LEN = 16
+const D_BUF = 24
+const DIR_BUF = 16384
+
+/// vsnprintf's scratch: the output's buffer, length, and capacity, a
+/// conversion's text (72 bytes at 24), its digits reversed (64 at 96).
+const O_BUF = 0
+const O_N = 8
+const O_CAP = 16
+const O_NUM = 24
+const O_DIG = 96
+const O_SIZE = 160
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+
+/// a < b as unsigned words (sizes).
+fn ult(a: Int, b: Int) -> Bool {
+  let m = rt.int_wrap(3, 1, 63)
+  (a ^ m) < (b ^ m)
+}
+
+fn byte(a: Int, i: Int) -> Int { rt.mem_load(a, i, 1) }
+
+/// The system call number of the target's architecture: arm64 (the
+/// asm-generic table) or x86_64.
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+fn sys(n: Int, a: Int, b: Int, c: Int) -> Int { rt.sys6(n, a, b, c, 0, 0, 0) }
+
+/// Writes the C string s to standard error.
+fn err_text(s: Str) {
+  let _w = sys(nr(64, 1), 2, raw.data(s), s.len())
+}
+
+/// Writes msg to standard error and ends the program with status 70 (a
+/// C library function this C library does not provide, or a start that
+/// failed).
+pub fn die(msg: Str) {
+  err_text("xo: no C library (XO_NOLIBC, decision 0206): ")
+  err_text(msg)
+  err_text("\n")
+  libcsys.exit(70)
+}
+
+// ---------------------------------------------------------------------------
+// Process start (before the thread pointer: no errno, no thread local
+// word)
+
+/// Records the environment and the auxiliary vector of the initial stack
+/// at sp (argc, argv, envp, the auxiliary vector) and makes the standard
+/// streams' FILE records: envp, for the C's environ.
+pub fn start(sp: Int) -> Int {
+  let argc = rt.mem_load(sp, 0, 8)
+  let envp = addw(sp, mulw(addw(argc, 2), 8))
+  var e = envp
+  while rt.mem_load(e, 0, 8) != 0 {
+    e = addw(e, 8)
+  }
+  let w = libcmem.word(libcmem.S_ENV)
+  if w == 0 {
+    die("the C library's state could not be mapped")
+  }
+  rt.mem_store(w, 0, envp, 8)
+  rt.mem_store(libcmem.word(libcmem.S_AUXV), 0, addw(e, 8), 8)
+  var i = 0
+  while i < 3 {
+    let f = std_file(i)
+    rt.mem_store(f, F_FD, i, 4)
+    rt.mem_store(f, F_ERR, 0, 4)
+    rt.mem_store(f, F_HEAP, 0, 8)
+    i += 1
+  }
+  envp
+}
+
+/// The FILE record of standard stream i (0 stdin, 1 stdout, 2 stderr).
+pub fn std_file(i: Int) -> Int { addw(libcmem.word(libcmem.S_STD), mulw(i, FILE_SIZE)) }
+
+/// getauxval(k): the auxiliary vector's value of k, or 0.
+pub fn getauxval(k: Int) -> Int {
+  let w = libcmem.word(libcmem.S_AUXV)
+  if w == 0 {
+    return 0
+  }
+  var a = rt.mem_load(w, 0, 8)
+  if a == 0 {
+    return 0
+  }
+  while true {
+    let t = rt.mem_load(a, 0, 8)
+    if t == 0 {
+      // AT_NULL
+      return 0
+    }
+    if t == k {
+      return rt.mem_load(a, 8, 8)
+    }
+    a = addw(a, 16)
+  }
+  0
+}
+
+/// getenv(name): the value of the variable name in the environment, or 0.
+pub fn getenv(name: Int) -> Int {
+  let w = libcmem.word(libcmem.S_ENV)
+  if w == 0 {
+    return 0
+  }
+  var e = rt.mem_load(w, 0, 8)
+  if e == 0 {
+    return 0
+  }
+  let n = libcstr.strlen(name)
+  while true {
+    let s = rt.mem_load(e, 0, 8)
+    if s == 0 {
+      return 0
+    }
+    if libcstr.strncmp(s, name, n) == 0 && byte(s, n) == 61 {
+      return addw(s, addw(n, 1))
+    }
+    e = addw(e, 8)
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// va_list: the next integer or pointer argument (a 64 bit slot) of the
+// va_list at ap, which a C caller passes by address on both ABIs (an
+// array on x86_64; a 32 byte struct on arm64, passed as the address of
+// its copy)
+
+/// The va_list's size, for va_copy.
+fn va_size() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => 32
+    TargetArch.Amd64 | TargetArch.Wasm32 => 24
+  }
+}
+
+fn va_next(ap: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => {
+      // __stack (0), __gr_top (8), __vr_top (16), __gr_offs (32 bits at
+      // 24), __vr_offs: a general register's slot while __gr_offs is
+      // below zero, else the stack's
+      let gr = libcstr.s32(rt.mem_load(ap, 24, 4))
+      if gr < 0 {
+        let next = addw(gr, 8)
+        rt.mem_store(ap, 24, next, 4)
+        if next <= 0 {
+          return rt.mem_load(addw(rt.mem_load(ap, 8, 8), gr), 0, 8)
+        }
+      }
+      let st = rt.mem_load(ap, 0, 8)
+      rt.mem_store(ap, 0, addw(st, 8), 8)
+      rt.mem_load(st, 0, 8)
+    }
+    TargetArch.Amd64 => {
+      // gp_offset (32 bits at 0), fp_offset, overflow_arg_area (8),
+      // reg_save_area (16): the six registers' 48 bytes, then the stack
+      let gp = rt.mem_load(ap, 0, 4)
+      if gp <= 40 {
+        rt.mem_store(ap, 0, addw(gp, 8), 4)
+        return rt.mem_load(addw(rt.mem_load(ap, 16, 8), gp), 0, 8)
+      }
+      let ov = rt.mem_load(ap, 8, 8)
+      rt.mem_store(ap, 8, addw(ov, 8), 8)
+      rt.mem_load(ov, 0, 8)
+    }
+    TargetArch.Wasm32 => 0
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Formatted output (no floating point: a float conversion ends the
+// program)
+
+fn put(o: Int, c: Int) {
+  let n = rt.mem_load(o, O_N, 8)
+  if ult(addw(n, 1), rt.mem_load(o, O_CAP, 8)) {
+    rt.mem_store(rt.mem_load(o, O_BUF, 8), n, c, 1)
+  }
+  rt.mem_store(o, O_N, addw(n, 1), 8)
+}
+
+fn pad(o: Int, c: Int, k: Int) {
+  var i = 0
+  while i < k {
+    put(o, c)
+    i += 1
+  }
+}
+
+/// v / 10 as UInt64s.
+fn udiv10(v: Int) -> Int {
+  if v >= 0 {
+    return v / 10
+  }
+  rt.int_wrap(4, v, 1) / 5
+}
+
+/// vsnprintf(buf, cap, f, ap): f formatted into the cap bytes at buf
+/// (zero terminated when cap is above 0); the length of the whole text.
+/// Flags - 0 + space #, a width and a precision (digits or *), the
+/// lengths hh h l ll z j t, and the conversions % c s d i u x X o p.
+pub fn vsnprintf(buf: Int, cap: Int, f0: Int, ap: Int) -> Int {
+  let o = libcmem.malloc(O_SIZE)
+  if o == 0 {
+    return -1
+  }
+  rt.mem_store(o, O_BUF, buf, 8)
+  rt.mem_store(o, O_N, 0, 8)
+  rt.mem_store(o, O_CAP, cap, 8)
+  let num = addw(o, O_NUM)
+  let dig = addw(o, O_DIG)
+  var f = f0
+  while byte(f, 0) != 0 {
+    if byte(f, 0) != 37 {
+      put(o, byte(f, 0))
+      f = addw(f, 1)
+      continue
+    }
+    f = addw(f, 1)
+    var left = false
+    var zero = false
+    var plus = false
+    var space = false
+    var alt = false
+    while true {
+      let c = byte(f, 0)
+      if c == 45 {
+        left = true
+      } else if c == 48 {
+        zero = true
+      } else if c == 43 {
+        plus = true
+      } else if c == 32 {
+        space = true
+      } else if c == 35 {
+        alt = true
+      } else {
+        break
+      }
+      f = addw(f, 1)
+    }
+    var width = 0
+    var prec = -1
+    if byte(f, 0) == 42 {
+      width = libcstr.s32(va_next(ap))
+      if width < 0 {
+        left = true
+        width = subw(0, width)
+      }
+      f = addw(f, 1)
+    } else {
+      while byte(f, 0) >= 48 && byte(f, 0) <= 57 && width < 100000000 {
+        width = width * 10 + (byte(f, 0) - 48)
+        f = addw(f, 1)
+      }
+    }
+    if byte(f, 0) == 46 {
+      f = addw(f, 1)
+      prec = 0
+      if byte(f, 0) == 42 {
+        prec = libcstr.s32(va_next(ap))
+        f = addw(f, 1)
+      } else {
+        while byte(f, 0) >= 48 && byte(f, 0) <= 57 && prec < 100000000 {
+          prec = prec * 10 + (byte(f, 0) - 48)
+          f = addw(f, 1)
+        }
+      }
+    }
+    // 1 long, 2 long long, -1 short, -2 char
+    var lng = 0
+    while true {
+      let c = byte(f, 0)
+      if c == 108 {
+        lng += 1
+      } else if c == 122 || c == 106 || c == 116 {
+        lng = 2
+      } else if c == 104 {
+        lng -= 1
+      } else {
+        break
+      }
+      f = addw(f, 1)
+    }
+    let c = byte(f, 0)
+    if c == 0 {
+      break
+    }
+    f = addw(f, 1)
+    var s = num
+    var sn = 0
+    var sign = 0
+    if c == 37 {
+      put(o, 37)
+      continue
+    } else if c == 99 {
+      rt.mem_store(num, 0, va_next(ap), 1)
+      sn = 1
+    } else if c == 115 {
+      s = va_next(ap)
+      if s == 0 {
+        s = raw.data("(null)")
+      }
+      while byte(s, sn) != 0 && (prec < 0 || sn < prec) {
+        sn += 1
+      }
+    } else if c == 100 || c == 105 || c == 117 || c == 120 || c == 88 || c == 111 || c == 112 {
+      var v = va_next(ap)
+      // the shift of each digit: 4 hexadecimal, 3 octal, 0 decimal
+      let sh = if c == 120 || c == 88 || c == 112 { 4 } else if c == 111 { 3 } else { 0 }
+      if c == 112 {
+        alt = true
+      } else if c == 100 || c == 105 {
+        if lng <= -2 {
+          v = rt.int_wrap(4, rt.int_wrap(3, v, 56), 56)
+          if v >= 128 { v = subw(v, 256) }
+        } else if lng == -1 {
+          v = v & 65535
+          if v >= 32768 { v = subw(v, 65536) }
+        } else if lng == 0 {
+          v = libcstr.s32(v)
+        }
+        if v < 0 {
+          sign = 45
+          v = subw(0, v)
+        } else if plus {
+          sign = 43
+        } else if space {
+          sign = 32
+        }
+      } else if lng <= -2 {
+        v = v & 255
+      } else if lng == -1 {
+        v = v & 65535
+      } else if lng == 0 {
+        v = v & 4294967295
+      }
+      let digits = if c == 88 { "0123456789ABCDEF" } else { "0123456789abcdef" }
+      var k = 0
+      while true {
+        if sh == 0 {
+          let q = udiv10(v)
+          rt.mem_store(dig, k, byte(raw.data(digits), subw(v, mulw(q, 10))), 1)
+          v = q
+        } else {
+          let m = subw(rt.int_wrap(3, 1, sh), 1)
+          rt.mem_store(dig, k, byte(raw.data(digits), v & m), 1)
+          v = rt.int_wrap(4, v, sh)
+        }
+        k += 1
+        if v == 0 {
+          break
+        }
+      }
+      while k < prec && k < 64 {
+        rt.mem_store(dig, k, 48, 1)
+        k += 1
+      }
+      if alt && sh == 4 {
+        rt.mem_store(num, 0, 48, 1)
+        rt.mem_store(num, 1, if c == 88 { 88 } else { 120 }, 1)
+        sn = 2
+      }
+      while k > 0 {
+        k -= 1
+        rt.mem_store(num, sn, byte(dig, k), 1)
+        sn += 1
+      }
+    } else {
+      die("printf of a floating point value is not available")
+    }
+    let body = sn + (if sign != 0 { 1 } else { 0 })
+    let zpad = zero && prec < 0 && c != 115 && c != 99
+    if !left && !zpad {
+      pad(o, 32, width - body)
+    }
+    if sign != 0 {
+      put(o, sign)
+    }
+    if !left && zpad {
+      pad(o, 48, width - body)
+    }
+    var i = 0
+    while i < sn {
+      put(o, byte(s, i))
+      i += 1
+    }
+    if left {
+      pad(o, 32, width - body)
+    }
+  }
+  let n = rt.mem_load(o, O_N, 8)
+  libcmem.free(o)
+  if cap != 0 {
+    rt.mem_store(buf, if ult(n, cap) { n } else { subw(cap, 1) }, 0, 1)
+  }
+  libcstr.s32(n)
+}
+
+/// vfprintf(f, fmt, ap): fmt formatted and written to the stream f; the
+/// text's length.
+pub fn vfprintf(f: Int, fmt: Int, ap: Int) -> Int {
+  // va_copy, for a second pass when the text passes the first buffer
+  let aq = libcmem.malloc(32)
+  let small = libcmem.malloc(1024)
+  if aq == 0 || small == 0 {
+    libcmem.free(aq)
+    libcmem.free(small)
+    return -1
+  }
+  let _c = libcstr.memcpy(aq, ap, va_size())
+  let n = vsnprintf(small, 1024, fmt, ap)
+  if n >= 0 && n < 1024 {
+    let _w = fwrite(small, 1, n, f)
+  } else if n >= 0 {
+    let big = libcmem.malloc(addw(n, 1))
+    if big != 0 {
+      let _v = vsnprintf(big, addw(n, 1), fmt, aq)
+      let _w = fwrite(big, 1, n, f)
+      libcmem.free(big)
+    }
+  }
+  libcmem.free(small)
+  libcmem.free(aq)
+  n
+}
+
+// ---------------------------------------------------------------------------
+// Streams: a FILE is a descriptor (unbuffered: the runtime buffers
+// standard output itself)
+
+fn fd_of(f: Int) -> Int { libcstr.s32(rt.mem_load(f, F_FD, 4)) }
+
+/// Writes the n bytes at p to fd, retrying after a signal: the bytes
+/// written.
+fn write_all(fd: Int, p: Int, n: Int) -> Int {
+  var off = 0
+  while ult(off, n) {
+    let w = sys(nr(64, 1), fd, addw(p, off), subw(n, off))
+    if w == 0 - EINTR {
+      continue
+    }
+    if w <= 0 {
+      break
+    }
+    off = addw(off, w)
+  }
+  off
+}
+
+pub fn fwrite(p: Int, size: Int, n: Int, f: Int) -> Int {
+  let t = mulw(size, n)
+  let w = write_all(fd_of(f), p, t)
+  if ult(w, t) {
+    rt.mem_store(f, F_ERR, 1, 4)
+  }
+  if size > 0 { w / size } else { 0 }
+}
+
+pub fn fputs(s: Int, f: Int) -> Int {
+  let n = libcstr.strlen(s)
+  if fwrite(s, 1, n, f) == n { 0 } else { -1 }
+}
+
+pub fn fputc(c: Int, f: Int) -> Int {
+  let b = libcmem.malloc(16)
+  if b == 0 {
+    return -1
+  }
+  rt.mem_store(b, 0, c, 1)
+  let w = fwrite(b, 1, 1, f)
+  libcmem.free(b)
+  if w == 1 { c & 255 } else { -1 }
+}
+
+pub fn puts(s: Int) -> Int {
+  let _p = fputs(s, std_file(1))
+  fputc(10, std_file(1))
+}
+
+pub fn ferror(f: Int) -> Int { rt.mem_load(f, F_ERR, 4) }
+
+/// fopen(path, mode): r, w, and a, each with an optional +.
+pub fn fopen(path: Int, mode: Int) -> Int {
+  var flags = O_RDONLY
+  if byte(mode, 0) == 119 {
+    flags = O_WRONLY | O_CREAT | O_TRUNC
+  } else if byte(mode, 0) == 97 {
+    flags = O_WRONLY | O_CREAT | O_APPEND
+  }
+  if libcstr.strchr(mode, 43) != 0 {
+    flags = subw(flags, flags & 3) | O_RDWR
+  }
+  let fd = libcsys.ret(rt.sys6(nr(56, 257), AT_FDCWD, path, flags | O_CLOEXEC, 438, 0, 0))
+  if fd < 0 {
+    return 0
+  }
+  let f = libcmem.malloc(FILE_SIZE)
+  if f == 0 {
+    let _c = sys(nr(57, 3), fd, 0, 0)
+    return 0
+  }
+  rt.mem_store(f, F_FD, fd, 4)
+  rt.mem_store(f, F_ERR, 0, 4)
+  rt.mem_store(f, F_HEAP, 1, 8)
+  f
+}
+
+pub fn fread(p: Int, size: Int, n: Int, f: Int) -> Int {
+  let t = mulw(size, n)
+  var off = 0
+  while ult(off, t) {
+    let r = sys(nr(63, 0), fd_of(f), addw(p, off), subw(t, off))
+    if r == 0 - EINTR {
+      continue
+    }
+    if r < 0 {
+      let _e = libcsys.ret(r)
+      rt.mem_store(f, F_ERR, 1, 4)
+      break
+    }
+    if r == 0 {
+      break
+    }
+    off = addw(off, r)
+  }
+  if size > 0 { off / size } else { 0 }
+}
+
+pub fn fclose(f: Int) -> Int {
+  let r = sys(nr(57, 3), fd_of(f), 0, 0)
+  if rt.mem_load(f, F_HEAP, 8) != 0 {
+    libcmem.free(f)
+  }
+  libcsys.ret(r)
+}
+
+// ---------------------------------------------------------------------------
+// Directories
+
+/// O_DIRECTORY, which differs between arm64 and x86_64.
+fn o_directory() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => 16384
+    TargetArch.Amd64 | TargetArch.Wasm32 => 65536
+  }
+}
+
+pub fn opendir(p: Int) -> Int {
+  let fd = libcsys.ret(rt.sys6(nr(56, 257), AT_FDCWD, p, O_RDONLY | o_directory() | O_CLOEXEC, 0, 0, 0))
+  if fd < 0 {
+    return 0
+  }
+  let d = libcmem.malloc(D_BUF + DIR_BUF)
+  if d == 0 {
+    let _c = sys(nr(57, 3), fd, 0, 0)
+    return 0
+  }
+  rt.mem_store(d, D_FD, fd, 8)
+  rt.mem_store(d, D_POS, 0, 8)
+  rt.mem_store(d, D_LEN, 0, 8)
+  d
+}
+
+/// readdir(d): the next entry, or 0 at the end (errno set on an error).
+pub fn readdir(d: Int) -> Int {
+  if rt.mem_load(d, D_POS, 8) >= rt.mem_load(d, D_LEN, 8) {
+    // getdents64
+    let n = sys(nr(61, 217), rt.mem_load(d, D_FD, 8), addw(d, D_BUF), DIR_BUF)
+    if n <= 0 {
+      if n < 0 {
+        let _e = libcsys.ret(n)
+      }
+      return 0
+    }
+    rt.mem_store(d, D_LEN, n, 8)
+    rt.mem_store(d, D_POS, 0, 8)
+  }
+  let e = addw(addw(d, D_BUF), rt.mem_load(d, D_POS, 8))
+  // d_reclen: 16 bits at 16
+  rt.mem_store(d, D_POS, addw(rt.mem_load(d, D_POS, 8), rt.mem_load(e, 16, 2)), 8)
+  e
+}
+
+pub fn closedir(d: Int) -> Int {
+  let r = libcsys.ret(sys(nr(57, 3), rt.mem_load(d, D_FD, 8), 0, 0))
+  libcmem.free(d)
+  r
+}

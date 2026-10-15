@@ -15,9 +15,9 @@ use native/llrt/linux
 use native/llrt/raw
 use native/rt
 
-/// rt.static_word: strerror's table of C strings (134 words from
-/// malloc, an entry made by the first strerror of its errno).
-const W_ERRS = 63
+// strerror's table of C strings (134 words from malloc, an entry made
+// by the first strerror of its errno) hangs off libcmem.xo's state
+// record (libcmem.S_ERRS, static word 63).
 
 /// The errno values strerror has texts for (0 to NERR - 1).
 const NERR = 134
@@ -350,7 +350,10 @@ pub fn strerror(e0: Int) -> Int {
   if e < 0 || e >= NERR {
     return unknown(e)
   }
-  let w = rt.static_word(W_ERRS)
+  let w = libcmem.word(libcmem.S_ERRS)
+  if w == 0 {
+    return unknown(e)
+  }
   var tab = rt.slot_load(w, 0, ACQUIRE)
   if tab == 0 {
     let t = libcmem.calloc(NERR, 8)
