@@ -98,3 +98,29 @@ fn _dyld_get_image_header(i: Int) -> Int
 /// dladdr(3): fills the Dl_info at info (dli_fbase, the header of the
 /// image holding addr, at 8); 0 when no image holds it.
 fn dladdr(addr: Int, info: Int) -> Int32
+
+// The network (the zero-C audit's B23, std/native/llrt/sock.xo's darwin
+// arms): addresses are Ints (struct sockaddr and the C's buffers); a
+// result of -1 sets errno.
+
+fn socket(domain: Int, ty: Int, proto: Int) -> Int32
+fn bind(fd: Int, sa: Int, n: Int) -> Int32
+fn listen(fd: Int, backlog: Int) -> Int32
+fn accept(fd: Int, sa: Int, lenp: Int) -> Int32
+fn connect(fd: Int, sa: Int, n: Int) -> Int32
+fn getsockname(fd: Int, sa: Int, lenp: Int) -> Int32
+fn getpeername(fd: Int, sa: Int, lenp: Int) -> Int32
+fn send(fd: Int, buf: Int, n: Int, flags: Int) -> Int
+fn recv(fd: Int, buf: Int, n: Int, flags: Int) -> Int
+fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int32
+fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int32
+fn shutdown(fd: Int, how: Int) -> Int32
+/// fcntl(2) with an int argument (variadic: on the stack on Apple arm64).
+fn fcntl(fd: Int, cmd: Int, va_arg: Int) -> Int32
+/// getaddrinfo(3) of the zero terminated host (0: none) and service with
+/// the struct addrinfo hints: 0 with the list at the word at res, or an
+/// EAI code.
+fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
+fn freeaddrinfo(ai: Int)
+/// gai_strerror(3): a zero terminated text.
+fn gai_strerror(code: Int) -> Int

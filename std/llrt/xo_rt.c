@@ -3720,11 +3720,21 @@ __attribute__((noinline, unused)) static int64_t x_ret(int64_t r) {
 // without sockets reaches too (the poller's epoll, its pipe made
 // nonblocking, a descriptor's shutdown and close) goes through the
 // exports (cabi_poll.xo), which every program has. Each nx_
-// function keeps the C library's convention (-1 and errno).
-#if defined(__linux__)
+// function keeps the C library's convention (-1 and errno). macOS takes
+// the same path (sock.xo's darwin arms over libSystem, getaddrinfo in
+// cabi_net.xo; the zero-C audit's B23).
+#if defined(__linux__) || defined(__APPLE__)
 #ifdef XO_NOLIBC
 #define XO_NX_REF
 #define NX_LIBC(call) (void)0
+#elif defined(__APPLE__)
+// Mach-O takes no undefined weak reference: weak definitions below stand
+// in (net_raw 0: the C library) until cabi_net.xo's exports replace them
+#define XO_NX_REF
+#define NX_LIBC(call)                                                                                                         \
+	if (!nx_on()) {                                                                                                           \
+		return call;                                                                                                          \
+	}
 #else
 #define XO_NX_REF __attribute__((weak))
 #define NX_LIBC(call)                                                                                                         \
@@ -3749,6 +3759,26 @@ XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t p
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
 XO_NX_REF int64_t xo_x_net_pton6(int64_t p, int64_t dst);
 XO_NX_REF int64_t xo_x_net_gai_text(int64_t code, int64_t buf, int64_t bn);
+#if defined(__APPLE__) && !defined(XO_NOLIBC)
+#define XO_NX_STUB(name, ...)                                                                                                 \
+	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
+__attribute__((weak)) int64_t xo_x_net_raw(void) { return 0; }
+XO_NX_STUB(xo_x_net_socket, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_bind, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_listen, int64_t a, int64_t b)
+XO_NX_STUB(xo_x_net_accept, int64_t a, int64_t b)
+XO_NX_STUB(xo_x_net_connect, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_sock_err, int64_t a)
+XO_NX_STUB(xo_x_net_setsockopt, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_net_sockname, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_read, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_send, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_resolve, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, int64_t i)
+XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_net_pton6, int64_t a, int64_t b)
+XO_NX_STUB(xo_x_net_gai_text, int64_t a, int64_t b, int64_t c)
+#endif
 int64_t xo_x_fd_close(int64_t fd);
 int64_t xo_x_fd_nonblock(int64_t fd);
 int64_t xo_x_fd_shutdown(int64_t fd, int64_t how);
@@ -3764,7 +3794,11 @@ static int nx_on(void) {
 	static int on = -1;
 	int v = __atomic_load_n(&on, __ATOMIC_RELAXED);
 	if (v < 0) {
+#ifdef __APPLE__
+		v = xo_x_net_raw() == 1;
+#else
 		v = xo_x_net_raw && xo_x_net_raw() == 1;
+#endif
 		__atomic_store_n(&on, v, __ATOMIC_RELAXED);
 	}
 	return v;
@@ -3822,6 +3856,7 @@ static int nx_close(int fd) {
 	return nx_ret(xo_x_fd_close(fd));
 }
 
+#if defined(__linux__)
 static int nx_epoll_create(void) {
 	NX_LIBC(epoll_create1(EPOLL_CLOEXEC));
 	return nx_ret(xo_x_poll_create());
@@ -3853,6 +3888,7 @@ static int nx_epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
 	}
 	return r;
 }
+#endif
 
 // nx_getaddrinfo is getaddrinfo(host, port, hints) for the runtime's
 // hints (a numeric port, AI_PASSIVE or not, AF_UNSPEC or one family):
@@ -3964,7 +4000,7 @@ __attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
 #if defined(XO_NOLIBC)
 	return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
 #else
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 	if (nx_on()) {
 		return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
 	}
@@ -3978,7 +4014,7 @@ __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n
 #if defined(XO_NOLIBC)
 	return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
 #else
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 	if (nx_on()) {
 		return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
 	}
@@ -4031,6 +4067,13 @@ __attribute__((noinline)) static int64_t x_accept(int fd) {
 	}
 	return x_ret(accept4(fd, NULL, NULL, SOCK_CLOEXEC));
 }
+#elif defined(__APPLE__)
+__attribute__((noinline)) static int64_t x_accept(int fd) {
+	if (nx_on()) {
+		return xo_x_net_accept(fd, 0);
+	}
+	return x_ret(accept(fd, NULL, NULL));
+}
 #elif defined(_WIN32)
 __attribute__((noinline)) static int64_t x_accept(int fd) {
 	SOCKET s = accept((SOCKET)fd, NULL, NULL);
@@ -4052,7 +4095,7 @@ __attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr
 }
 #else
 __attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 	if (nx_on()) {
 		return xo_x_net_connect(fd, XO_ADDR(a), n);
 	}
@@ -4065,7 +4108,7 @@ __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 #if defined(XO_NOLIBC)
 	return xo_x_net_sock_err(fd);
 #else
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 	if (nx_on()) {
 		return xo_x_net_sock_err(fd);
 	}
@@ -4087,7 +4130,7 @@ __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 __attribute__((noinline)) static int x_errno(void) { return errno; }
 
 static void set_nonblock(int fd) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 	if (nx_on()) {
 		xo_x_fd_nonblock(fd);
 		return;

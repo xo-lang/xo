@@ -36,6 +36,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the HPACK encoder as bytes instead of a C header list. xo_h2.c loses
   152 lines and gains 78 (40 of them the weak definitions). A handler
   setting one name twice keeps the values' order (qsort did not).
+- Native runtime (zero-C audit item B23, stage 1): on macOS the network's
+  socket calls go through Xo (std/native/llrt/sock.xo's darwin arms over
+  libSystem; names through libSystem's getaddrinfo in cabi_net.xo), as on
+  Linux.
+- Native runtime (zero-C audit item B22): the event loop's timer heap and
+  the poller thread's loop (kqueue on macOS, epoll on Linux) are Xo
+  (std/native/llrt/poll.xo); Windows' loop stays C for now.
 - Native runtime (zero-C audit item B25, stage 1): Proc.kill,
   FakeProc.killed, and the environment and working directory a command
   starts from are Xo (std/native/llrt/proc.xo); xo_proc.c loses 106

@@ -13,6 +13,7 @@ use native/llrt/net
 use native/llrt/raw
 use native/llrt/sock
 use native/rt
+use native/sys_darwin
 
 /// 1 when the network's system calls and name resolution are these
 /// (net.raw: Linux, and not `XO_LLRT_C=net`), else 0.
@@ -70,6 +71,12 @@ fn net_send(fd: Int, p: Int, n: Int) -> Int { sock.send(fd, p, n, 16384) }
 /// negative EAI code (dns.xo). A numeric IPv4 host is read in place,
 /// with no allocation.
 fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, state: Int, out: Int, cap: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => {
+      return resolve_darwin(hp, hn, pp, pn, family, passive, out, cap)
+    }
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+  }
   var pv = 0
   for i in 0..pn {
     let d = rt.mem_load(pp, i, 1) - 48
@@ -85,7 +92,7 @@ fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, st
   if cap < 1 {
     return dns.EAI_NONAME
   }
-  if family != sock.AF_INET6 {
+  if family != sock.af_inet6() {
     let w = dns.v4_at(hp, hn)
     if w >= 0 {
       // struct sockaddr_in: the family, the port and the address in
@@ -127,7 +134,7 @@ fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, st
 /// AF_INET6), written zero terminated into the buffer of bn bytes at buf
 /// (cut to fit); its length, -1 for another family.
 fn net_ntop(family: Int, src: Int, buf: Int, bn: Int) -> Int {
-  let n = if family == sock.AF_INET { 4 } else if family == sock.AF_INET6 { 16 } else { 0 }
+  let n = if family == sock.AF_INET { 4 } else if family == sock.af_inet6() { 16 } else { 0 }
   if n == 0 || bn < 1 {
     return -1
   }
@@ -158,9 +165,68 @@ fn net_gai_text(code: Int, buf: Int, bn: Int) -> Int {
   if bn < 1 {
     return 0
   }
-  let s = dns.gai_text(code)
+  let s = match target.os {
+    // libSystem's own texts on macOS (as its getaddrinfo's codes)
+    TargetOs.Darwin => {
+      // resolve_darwin returns minus libSystem's (positive) code
+      let t = sys_darwin.gai_strerror(if code < 0 { 0 - code } else { code })
+      raw.str_at(t, raw.cstr_len(t))
+    }
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => dns.gai_text(code)
+  }
   let k = if s.len() < bn { s.len() } else { bn - 1 }
   rt.mem_copy(buf, raw.data(s), k)
   rt.mem_store(buf, k, 0, 1)
   k
+}
+
+/// net_resolve on macOS: libSystem's getaddrinfo (decision 0195 allows it:
+/// mDNSResponder, .local names, the system's DNS configuration), each
+/// result's struct sockaddr copied into an entry of 32 bytes; an error is
+/// minus libSystem's (positive) EAI code, which net_gai_text takes back.
+fn resolve_darwin(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, out: Int, cap: Int) -> Int {
+  // the host and the port zero terminated, the hints (struct addrinfo,
+  // 48 bytes: flags, family, socktype at 0, 4, 8), and the result's word
+  let hb = raw.bytes_buf(hn + 1)
+  let pb = raw.bytes_buf(pn + 1)
+  let hints = raw.bytes_buf(56)
+  let ha = raw.bytes_addr(hb)
+  let pa = raw.bytes_addr(pb)
+  let ia = raw.bytes_addr(hints)
+  rt.mem_copy(ha, hp, hn)
+  rt.mem_store(ha, hn, 0, 1)
+  rt.mem_copy(pa, pp, pn)
+  rt.mem_store(pa, pn, 0, 1)
+  rt.mem_set(ia, 0, 56)
+  // AI_NUMERICSERV 0x1000, AI_PASSIVE 1; SOCK_STREAM 1
+  rt.mem_store(ia, 0, 4096 | (if passive == 1 { 1 } else { 0 }), 4)
+  rt.mem_store(ia, 4, family, 4)
+  rt.mem_store(ia, 8, 1, 4)
+  let resp = ia + 48
+  let g = Int(sys_darwin.getaddrinfo(if hn == 0 { 0 } else { ha }, pa, ia, resp))
+  if g != 0 {
+    let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
+    return 0 - g
+  }
+  let first = rt.mem_load(resp, 0, 8)
+  var a = first
+  var n = 0
+  while a != 0 && n < cap {
+    // struct addrinfo: ai_addrlen (32 bits) at 16, ai_addr at 32, ai_next
+    // at 40
+    let len = rt.mem_load(a, 16, 4)
+    let sa = rt.mem_load(a, 32, 8)
+    let at = out + 32 * n
+    rt.mem_set(at, 0, 32)
+    rt.mem_copy(at, sa, if len < 32 { len } else { 32 })
+    n += 1
+    a = rt.mem_load(a, 40, 8)
+  }
+  sys_darwin.freeaddrinfo(first)
+  let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
+  if n == 0 {
+    // libSystem's EAI_NONAME
+    return -8
+  }
+  n
 }
