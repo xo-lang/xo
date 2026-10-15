@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B26, part 1): two phase shutdown's
+  state machine (core 7.5: the signals counted, the stop request, the
+  grace timer, task.stopping's channel, proc.set_grace, main's root
+  context, testing.run_main's fresh state) is Xo
+  (std/native/llrt/stop.xo); the C keeps the signal and console
+  handlers, the entry, and a services record of the C calls it needs.
 - Native runtime (zero-C audit item B19, part 3): `select` (its arms,
   the wait over every channel's lock in address order, take) is Xo
   (std/native/llrt/selects.xo), which generated code calls directly.
@@ -70,9 +76,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Linux.
 - Native runtime (zero-C audit item B22): the event loop's timer heap and
   the poller thread's loop (kqueue on macOS, epoll on Linux) are Xo
-  (std/native/llrt/poll.xo); Windows' loop stays C for now. A descriptor's
-  waits (with a deadline), close, and free are poll.xo's too (pd_wait,
-  pd_close, pd_free), callable from Xo.
+  (std/native/llrt/poll.xo); Windows' loop stays C for now. The event
+  loop's mutex and a descriptor's are lock words and the pending signals
+  a word; the epoll arms were written on macOS and are untested on Linux.
+  A descriptor's waits (with a deadline), close, and free are poll.xo's
+  too (pd_wait, pd_close, pd_free), callable from Xo.
 - Native runtime (zero-C audit item B25, stage 1): Proc.kill,
   FakeProc.killed, and the environment and working directory a command
   starts from are Xo (std/native/llrt/proc.xo); xo_proc.c loses 106

@@ -717,10 +717,12 @@ void xo_x_ctx_init(int64_t root, int64_t pl);
 static int64_t ctx_root(int64_t a, int64_t b);
 static int64_t svc_addr(void);
 static void pd_svc_init(void);
+static void stop_svc_init(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
 	xo_x_ctx_init(XO_ADDR(ctx_root), svc_addr());
 	pd_svc_init();
+	stop_svc_init();
 }
 
 // ---------------------------------------------------------------------------
@@ -5045,86 +5047,85 @@ extern char **environ;
 #endif
 
 // ---------------------------------------------------------------------------
-// Signals and two phase shutdown (core 7.5, decision 0042)
+// Signals and two phase shutdown (core 7.5, decision 0042): the state
+// (the signals counted, the stop request, the grace timer, task.stopping's
+// channel, main's root context) is std/native/llrt/stop.xo's (the zero-C
+// audit's B26, part 1). The C keeps the handlers, which count a signal
+// and wake the poller (whose thread calls stop_signal), and stop_svc, the
+// services record stop.xo calls through rt.call_c2 (its S_ words).
 
-#define XO_DEFAULT_GRACE ((int64_t)30 * 1000000000)
-
-static struct {
-	pthread_mutex_t mu;
-	int signals;
-	int requested; // atomic
-	int canceled;  // atomic
-	int exited;    // a third signal in the test world: run_main gives 130
-	int64_t stop_at, grace;
-	// the test world: set_grace before testing.run_main sets the grace of
-	// the next run (std/rt's FakeProc.set_grace)
-	int has_next_grace;
-	int64_t next_grace;
-	xo_timer grace_t;
-	xo_chan *stopping; // task.stopping(), made on first use
-	xo_node *root;     // main's root context
-} stop = {.mu = PTHREAD_MUTEX_INITIALIZER, .grace = XO_DEFAULT_GRACE, .grace_t = {.idx = -1}};
-
-// stop_cancel enters phase 2: main's root context is canceled.
-static void stop_cancel(void) {
-	int z = 0;
-	if (stop.root && __atomic_compare_exchange_n(&stop.canceled, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-		node_cancel(stop.root);
-	}
-}
-
-static void grace_fire(xo_timer *t) {
-	(void)t;
-	stop_cancel();
-}
-
-// arm_grace (stop.mu held) arms the grace timer for the time left.
-static void arm_grace(void) {
-	timer_del(&stop.grace_t);
-	if (__atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE)) {
-		return;
-	}
-	int64_t left = stop.grace - (tnow() - stop.stop_at);
-	if (left <= 0) {
-		stop_cancel();
-		return;
-	}
-	stop.grace_t.when = deadline(left);
-	stop.grace_t.fn = grace_fire;
-	stop.grace_t.park = NULL;
-	timer_add(&stop.grace_t);
-}
+void xo_x_stop_init(int64_t svc);
+void xo_x_stop_signal(void);
+void xo_x_stop_cancel(void);
+int64_t xo_x_stop_requested(void);
+int64_t xo_x_stop_canceled(void);
+int64_t xo_x_stop_stopping(int64_t drop);
+void xo_x_stop_set_grace(int64_t d);
+int64_t xo_x_stop_root(void);
+void xo_x_stop_set_root(int64_t n);
+void xo_x_stop_end(void);
+void xo_x_stop_reset(int64_t n);
+int64_t xo_x_stop_unroot(int64_t n);
 
 // stop_signal handles SIGINT or SIGTERM (on the poller thread).
-static void stop_signal(void) {
-	pthread_mutex_lock(&stop.mu);
-	stop.signals++;
-	switch (stop.signals) {
-	case 1:
-		stop.stop_at = tnow();
-		__atomic_store_n(&stop.requested, 1, __ATOMIC_RELEASE);
-		if (stop.stopping) {
-			xo_chan_close(stop.stopping);
-		}
-		arm_grace();
-		break;
-	case 2:
-		stop_cancel();
-		break;
-	default:
-		if (tw_is_fake(TW_REAL_PROC)) {
-			// a test's run_main returns 130 once main has unwound
-			// (std/rt's stopState.exited), FakeProc.exit_code is Some(130)
-			stop.exited = 1;
-			stop_cancel();
-			break;
-		}
-		pthread_mutex_unlock(&stop.mu);
-		stop_cancel();
-		xo_flush();
-		_exit(130);
-	}
-	pthread_mutex_unlock(&stop.mu);
+static void stop_signal(void) { xo_x_stop_signal(); }
+
+static int64_t stopsvc_cancel(int64_t n, int64_t b) {
+	(void)b;
+	node_cancel((xo_node *)(intptr_t)n);
+	return 0;
+}
+static int64_t stopsvc_chan(int64_t drop, int64_t b) {
+	(void)b;
+	static const char loc[] = "task.stopping";
+	xo_chan *ch = xo_chan_new(0, drop, loc, (int64_t)sizeof loc - 1);
+	ch->ext = 1;
+	return XO_ADDR(ch);
+}
+static int64_t stopsvc_close(int64_t ch, int64_t b) {
+	(void)b;
+	xo_chan_close((xo_chan *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_retain(int64_t ch, int64_t b) {
+	(void)b;
+	h_retain((void *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_release(int64_t ch, int64_t b) {
+	(void)b;
+	h_release((void *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_exit(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	xo_flush();
+	_exit(130);
+}
+static int64_t stopsvc_now(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	return tnow();
+}
+static void stop_grace_fire(xo_timer *t) {
+	(void)t;
+	xo_x_stop_cancel();
+}
+static int64_t stop_svc[11];
+static void stop_svc_init(void) {
+	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
+	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
+	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
+	stop_svc[3] = XO_ADDR(&stopsvc_chan);
+	stop_svc[4] = XO_ADDR(&stopsvc_close);
+	stop_svc[5] = XO_ADDR(&stopsvc_retain);
+	stop_svc[6] = XO_ADDR(&stopsvc_release);
+	stop_svc[7] = XO_ADDR(&stopsvc_exit);
+	stop_svc[8] = XO_ADDR(&stopsvc_now);
+	stop_svc[9] = XO_ADDR(&stop_grace_fire);
+	stop_svc[10] = XO_ADDR(&tw.in_main);
+	xo_x_stop_init(XO_ADDR(stop_svc));
 }
 
 #ifndef _WIN32
@@ -5196,43 +5197,15 @@ __attribute__((unused)) static void xo_signals_init(void) {
 }
 #endif
 
-int64_t xo_stop_requested(void) { return __atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE); }
+int64_t xo_stop_requested(void) { return xo_x_stop_requested(); }
 
 // xo_task_stopping is `task.stopping()`: a channel closed when a stop is
 // requested (drop releases values someone sends on it).
-xo_chan *xo_task_stopping(int64_t drop) {
-	pthread_mutex_lock(&stop.mu);
-	if (!stop.stopping) {
-		static const char loc[] = "task.stopping";
-		stop.stopping = xo_chan_new(0, drop, loc, (int64_t)sizeof loc - 1);
-		stop.stopping->ext = 1;
-		if (__atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE)) {
-			xo_chan_close(stop.stopping);
-		}
-	}
-	xo_chan *ch = stop.stopping;
-	h_retain(ch);
-	pthread_mutex_unlock(&stop.mu);
-	return ch;
-}
+xo_chan *xo_task_stopping(int64_t drop) { return (xo_chan *)(intptr_t)xo_x_stop_stopping(drop); }
 
 // xo_set_grace is `proc.set_grace(d)`: after a stop request the deadline
 // moves to the stop time plus d.
-void xo_set_grace(int64_t d) {
-	pthread_mutex_lock(&stop.mu);
-	if (tw_is_fake(TW_REAL_PROC) && !__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
-		// before testing.run_main: the grace period of the next run
-		stop.has_next_grace = 1;
-		stop.next_grace = d < 0 ? 0 : d;
-		pthread_mutex_unlock(&stop.mu);
-		return;
-	}
-	stop.grace = d < 0 ? 0 : d;
-	if (__atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE)) {
-		arm_grace();
-	}
-	pthread_mutex_unlock(&stop.mu);
-}
+void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 
 // select's `after` timer (a timer on the heap of the waiting call)
 static void select_timer(xo_select *s, struct xo_timer **tp) {
@@ -5286,8 +5259,7 @@ extern void xo_entry(void);
 static void *run_main(void *arg) {
 	(void)arg;
 	// main's root context: the second shutdown signal cancels it
-	xo_node *none = NULL;
-	__atomic_compare_exchange_n(&stop.root, &none, ctx()->node, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+	xo_x_stop_set_root(XO_ADDR(ctx()->node));
 	// a fault that unwinds main reaches this frame: reported, status 70
 	// (decision 0085)
 	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
@@ -5385,12 +5357,7 @@ int main(int argc, char **argv) {
 	}
 #endif
 	xo_flush();
-	pthread_mutex_lock(&stop.mu);
-	if (stop.stopping) {
-		h_release(stop.stopping);
-		stop.stopping = NULL;
-	}
-	pthread_mutex_unlock(&stop.mu);
+	xo_x_stop_end();
 	xo_rt_stats();
 	xo_streams_free();
 	if (tw.on) {

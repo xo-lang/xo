@@ -583,7 +583,7 @@ xo_srv *xo_srv_new(void) {
 	h_init(sc, scope_free);
 	sc->prune_at = 64; // finished connections leave the list (scope_prune)
 	sc->parent_node = c->node;
-	xo_node *root = __atomic_load_n(&stop.root, __ATOMIC_ACQUIRE);
+	xo_node *root = (xo_node *)(intptr_t)xo_x_stop_root();
 	node_link(&sc->body, root ? root : c->node);
 	sc->tasks = calloc(1, sizeof(xo_node));
 	if (!sc->tasks) {

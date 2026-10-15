@@ -32,6 +32,7 @@ use native/llrt/sched
 use native/llrt/selects
 use native/llrt/tasks
 use native/llrt/stdio
+use native/llrt/stop
 use native/llrt/sysio
 use native/llrt/text
 use native/llrt/unicode
@@ -512,6 +513,33 @@ fn poll_pd_wait(pd: Int, write: Int, c: Int, deadline: Int) -> Int { poll.pd_wai
 fn poll_main(pfd: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
   poll.poll_main(pfd, pipe_r, mu, dead, sigs, signal_fn, stop_fn, free_fn)
 }
+
+/// Two phase shutdown (stop.xo, B26 part 1): its start, a signal, the
+/// grace timer's end, task.stop_requested, task.stopping,
+/// proc.set_grace, main's root, and testing.run_main's start and end.
+fn stop_init(svc: Int) { stop.init(svc) }
+
+fn stop_signal() { stop.signal() }
+
+fn stop_cancel() { stop.cancel() }
+
+fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
+
+fn stop_canceled() -> Int { if stop.canceled() { 1 } else { 0 } }
+
+fn stop_stopping(drop: Int) -> Int { stop.stopping(drop) }
+
+fn stop_set_grace(d: Int) { stop.set_grace(d) }
+
+fn stop_root() -> Int { stop.root() }
+
+fn stop_set_root(n: Int) { stop.set_root(n) }
+
+fn stop_end() { stop.end() }
+
+fn stop_reset(n: Int) { stop.reset(n) }
+
+fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task

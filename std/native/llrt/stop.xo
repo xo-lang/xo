@@ -1,0 +1,276 @@
+// Two phase shutdown in Xo (core 7.5, decision 0042; the zero-C audit's
+// work item B26, part 1): the first SIGINT or SIGTERM requests a stop
+// (task.stop_requested, task.stopping's channel closes, the grace timer
+// starts), the grace period's end or a second signal cancels main's root
+// context, and a third exits with status 130 (in a test binary,
+// testing.run_main returns 130 instead). The signal handlers (on_signal,
+// on_console) and the entry stay C (xo_rt.c): a handler only counts the
+// signal and wakes the poller, whose thread calls signal here.
+//
+// The state is a record from the C runtime's malloc (rt.heap_large),
+// made at start (init) and kept for the program's life, under its lock
+// word. The C functions it needs (timers, the channel, cancellation, the
+// clock, exit) are in the C's services record (S_ words).
+use native/llrt/pool
+use native/rt
+
+/// rt.static_word: the state record, the C's services record.
+const W_REC = 60
+const W_SVC = 61
+
+/// The state record's words: the lock word, the signals so far, whether
+/// a stop was requested and main's root canceled (words read with
+/// acquire), whether a third signal ended a test's main, when the stop
+/// was requested (monotonic ns), the grace period, the next run_main's
+/// grace period and whether one was set, the grace timer (a C xo_timer,
+/// 64 bytes, from heap_large), task.stopping's channel (or 0), and main's
+/// root node (or 0).
+const R_MU = 0
+const R_SIGNALS = 8
+const R_REQUESTED = 16
+const R_CANCELED = 24
+const R_EXITED = 32
+const R_STOP_AT = 40
+const R_GRACE = 48
+const R_HAS_NEXT = 56
+const R_NEXT_GRACE = 64
+const R_TIMER = 72
+const R_STOPPING = 80
+const R_ROOT = 88
+const R_SIZE = 96
+
+/// The services record's words: timer_add (t), timer_del (t),
+/// node_cancel (n), the stopping channel's constructor (drop: a new
+/// channel), xo_chan_close (ch), h_retain (ch), h_release (ch), flush and
+/// _exit(130), the clock (tnow: monotonic ns, virtual in the test world),
+/// the grace timer's C function (it calls cancel), and the address of
+/// the test world's in_main (a C int).
+const S_TADD = 0
+const S_TDEL = 8
+const S_CANCEL = 16
+const S_CHAN = 24
+const S_CLOSE = 32
+const S_RETAIN = 40
+const S_RELEASE = 48
+const S_EXIT = 56
+const S_NOW = 64
+const S_FIRE = 72
+const S_IN_MAIN = 80
+
+/// A timer's words (xo_rt.c struct xo_timer).
+const T_WHEN = 0
+const T_IDX = 8
+const T_PARK = 16
+const T_FN = 24
+const T_SIZE = 64
+
+/// The grace period by default: 30 s.
+pub const DEFAULT_GRACE = 30000000000
+
+/// The test world's real process effect (xo_rt.c TW_REAL_PROC).
+const REAL_PROC = 64
+
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+fn rec() -> Int { rt.mem_load(rt.static_word(W_REC), 0, 8) }
+
+fn svc(k: Int, a: Int) -> Int { rt.call_c2(rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8), a, 0) }
+
+fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
+
+fn lk() {
+  let l = rec()
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlk() {
+  let l = rec()
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+fn get(k: Int) -> Int { rt.mem_load(rec(), k, 8) }
+
+fn put(k: Int, v: Int) { rt.mem_store(rec(), k, v, 8) }
+
+/// Makes the state record and sets the C's services record (at start,
+/// before any thread but main's).
+pub fn init(svc_rec: Int) {
+  rt.mem_store(rt.static_word(W_SVC), 0, svc_rec, 8)
+  let r = rt.heap_large(R_SIZE)
+  rt.mem_set(r, 0, R_SIZE)
+  rt.mem_store(r, R_GRACE, DEFAULT_GRACE, 8)
+  let t = rt.heap_large(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  rt.mem_store(t, T_IDX, -1, 8)
+  rt.mem_store(r, R_TIMER, t, 8)
+  rt.mem_store(rt.static_word(W_REC), 0, r, 8)
+}
+
+/// Whether a stop was requested (task.stop_requested).
+pub fn requested() -> Bool { rt.slot_load(rec(), R_REQUESTED / 8, ACQUIRE) != 0 }
+
+/// Whether the stop canceled main's root context.
+pub fn canceled() -> Bool { rt.slot_load(rec(), R_CANCELED / 8, ACQUIRE) != 0 }
+
+/// Main's root context (a node), or 0.
+pub fn root() -> Int { rt.slot_load(rec(), R_ROOT / 8, ACQUIRE) }
+
+/// Sets main's root context to n unless one is set (run_main's start).
+pub fn set_root(n: Int) {
+  let _ok = rt.slot_cas(rec(), R_ROOT / 8, 0, n, ACQ_REL)
+}
+
+/// Enters phase 2: main's root context is canceled (once).
+pub fn cancel() {
+  let n = root()
+  if n != 0 && rt.slot_cas(rec(), R_CANCELED / 8, 0, 1, ACQ_REL) {
+    let _r = svc(S_CANCEL, n)
+  }
+}
+
+/// The monotonic time d from now (saturating).
+fn deadline(d: Int) -> Int {
+  let now = svc(S_NOW, 0)
+  if d > 0 && now > 9223372036854775807 - d {
+    return 9223372036854775807
+  }
+  now + d
+}
+
+/// Arms the grace timer for the time left (the lock held).
+fn arm_grace() {
+  let t = get(R_TIMER)
+  let _d = svc(S_TDEL, t)
+  if canceled() {
+    return
+  }
+  let left = get(R_GRACE) - (svc(S_NOW, 0) - get(R_STOP_AT))
+  if left <= 0 {
+    cancel()
+    return
+  }
+  rt.mem_store(t, T_WHEN, deadline(left), 8)
+  rt.mem_store(t, T_FN, svc_word(S_FIRE), 8)
+  rt.mem_store(t, T_PARK, 0, 8)
+  let _a = svc(S_TADD, t)
+}
+
+/// Handles SIGINT or SIGTERM (on the poller thread, or a test's
+/// FakeProc.signal_after timer).
+pub fn signal() {
+  lk()
+  let n = get(R_SIGNALS) + 1
+  put(R_SIGNALS, n)
+  if n == 1 {
+    put(R_STOP_AT, svc(S_NOW, 0))
+    rt.slot_store(rec(), R_REQUESTED / 8, 1, RELEASE)
+    let ch = get(R_STOPPING)
+    if ch != 0 {
+      let _c = svc(S_CLOSE, ch)
+    }
+    arm_grace()
+  } else if n == 2 {
+    cancel()
+  } else if rt.tw_fake(REAL_PROC) {
+    // a test's run_main returns 130 once main has unwound
+    // (FakeProc.exit_code is Some(130))
+    put(R_EXITED, 1)
+    cancel()
+  } else {
+    unlk()
+    cancel()
+    let _e = svc(S_EXIT, 0)
+    return
+  }
+  unlk()
+}
+
+/// task.stopping(): the channel closed when a stop is requested, made on
+/// first use (drop releases values someone sends on it); a new reference.
+pub fn stopping(drop: Int) -> Int {
+  lk()
+  var ch = get(R_STOPPING)
+  if ch == 0 {
+    ch = svc(S_CHAN, drop)
+    put(R_STOPPING, ch)
+    if requested() {
+      let _c = svc(S_CLOSE, ch)
+    }
+  }
+  let _r = svc(S_RETAIN, ch)
+  unlk()
+  ch
+}
+
+fn in_main() -> Bool {
+  let v = rt.mem_load(svc_word(S_IN_MAIN), 0, 4)
+  rt.fence(ACQUIRE)
+  v != 0
+}
+
+/// proc.set_grace(d): after a stop request the deadline moves to the stop
+/// time plus d; in a test binary before testing.run_main, the grace
+/// period of the next run.
+pub fn set_grace(d0: Int) {
+  let d = if d0 < 0 { 0 } else { d0 }
+  lk()
+  if rt.tw_fake(REAL_PROC) && !in_main() {
+    put(R_HAS_NEXT, 1)
+    put(R_NEXT_GRACE, d)
+    unlk()
+    return
+  }
+  put(R_GRACE, d)
+  if requested() {
+    arm_grace()
+  }
+  unlk()
+}
+
+/// Releases task.stopping's channel (at exit).
+pub fn end() {
+  lk()
+  let ch = get(R_STOPPING)
+  put(R_STOPPING, 0)
+  unlk()
+  if ch != 0 {
+    let _r = svc(S_RELEASE, ch)
+  }
+}
+
+/// testing.run_main's start: a fresh state with root n.
+pub fn reset(n: Int) {
+  lk()
+  put(R_SIGNALS, 0)
+  rt.slot_store(rec(), R_REQUESTED / 8, 0, RELEASE)
+  rt.slot_store(rec(), R_CANCELED / 8, 0, RELEASE)
+  put(R_EXITED, 0)
+  put(R_GRACE, if get(R_HAS_NEXT) != 0 { get(R_NEXT_GRACE) } else { DEFAULT_GRACE })
+  rt.slot_store(rec(), R_ROOT / 8, n, RELEASE)
+  let ch = get(R_STOPPING)
+  put(R_STOPPING, 0)
+  unlk()
+  if ch != 0 {
+    let _r = svc(S_RELEASE, ch)
+  }
+}
+
+/// testing.run_main's end: root n is gone and the grace timer disarmed;
+/// whether a third signal ended main (1 or 0).
+pub fn unroot(n: Int) -> Int {
+  lk()
+  if root() == n {
+    rt.slot_store(rec(), R_ROOT / 8, 0, RELEASE)
+  }
+  let e = get(R_EXITED)
+  put(R_EXITED, 0)
+  let _d = svc(S_TDEL, get(R_TIMER))
+  unlk()
+  e
+}

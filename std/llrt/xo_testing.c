@@ -516,8 +516,8 @@ __attribute__((unused)) static void tw_cleanup(void) {
 // testing.run_main and FakeProc.signal_after (core 7.5)
 
 static void tw_signal_fire(xo_timer *t) {
-	// ev.mu is held: stop_signal takes stop.mu, then may add a timer
-	// (ev.mu): run it unlocked
+	// ev.mu is held: stop_signal takes stop.xo's lock, then may add a
+	// timer (ev.mu): run it unlocked
 	unlk(&ev.mu);
 	stop_signal();
 	lk(&ev.mu);
@@ -562,19 +562,7 @@ void xo_test_main_begin(xo_rlist *args) {
 	tws.outer = c->node;
 	tws.main_node = n;
 	c->node = n;
-	pthread_mutex_lock(&stop.mu);
-	stop.signals = 0;
-	__atomic_store_n(&stop.requested, 0, __ATOMIC_RELEASE);
-	__atomic_store_n(&stop.canceled, 0, __ATOMIC_RELEASE);
-	stop.exited = 0;
-	stop.grace = stop.has_next_grace ? stop.next_grace : XO_DEFAULT_GRACE;
-	stop.root = n;
-	xo_chan *old = stop.stopping;
-	stop.stopping = NULL;
-	pthread_mutex_unlock(&stop.mu);
-	if (old) {
-		h_release(old);
-	}
+	xo_x_stop_reset(XO_ADDR(n));
 	__atomic_store_n(&tw.in_main, 1, __ATOMIC_RELEASE);
 	lk(&tws.mu);
 	int64_t *sigs = tws.signals;
@@ -597,14 +585,7 @@ static int64_t tw_main_status(int64_t code, int *exited) {
 	__atomic_store_n(&tw.in_main, 0, __ATOMIC_RELEASE);
 	xo_node *n = tws.main_node;
 	c->node = tws.outer;
-	pthread_mutex_lock(&stop.mu);
-	if (stop.root == n) {
-		stop.root = NULL;
-	}
-	*exited = stop.exited;
-	stop.exited = 0;
-	timer_del(&stop.grace_t);
-	pthread_mutex_unlock(&stop.mu);
+	*exited = (int)xo_x_stop_unroot(XO_ADDR(n));
 	if (n) {
 		node_unlink(n);
 		free(n);
@@ -615,7 +596,7 @@ static int64_t tw_main_status(int64_t code, int *exited) {
 		c->unwinding = 0;
 		return xo_x_tw_exit_value();
 	}
-	if (c->unwinding && __atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE) && !node_canceled(c->node)) {
+	if (c->unwinding && xo_x_stop_canceled() && !node_canceled(c->node)) {
 		c->unwinding = 0;
 		return 0;
 	}
