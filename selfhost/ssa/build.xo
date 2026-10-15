@@ -407,7 +407,7 @@ fn (var b: Builder) declare_exports() {
       }
     } else if p == "native/llrt/cabi_libc" {
       // the C library of an XO_NOLIBC build, under the C names (malloc,
-      // memcpy, read): the C runtime and mbedtls call them; a libc build
+      // memcpy, read): the C runtime calls them; a libc build
       // links the system's
       if b.nolibc {
         b.declare_exports_of(mi, true)

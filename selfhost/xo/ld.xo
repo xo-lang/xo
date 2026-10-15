@@ -1,16 +1,17 @@
 // --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
 // links the program's object (assembled by selfhost/macho) with the
-// prebuilt runtime of a pack (decision 0157), and for std/http the pack's
-// TLS library and the frameworks it uses, into a signed executable; for
+// prebuilt runtime of a pack (decision 0157), and the Security and
+// CoreFoundation frameworks when the program calls them (framework_args),
+// into a signed executable; for
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/selfhost/macho
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not.
-fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str) -> Str {
   if tgoos == "linux" {
-    return elf_link(os, ctx, flags, srcs, out, tls)
+    return elf_link(os, ctx, flags, srcs, out)
   }
   if ctx.goos != "darwin" {
     return "--ld=macho links darwin/arm64 executables on darwin only"
@@ -19,7 +20,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   if !bad.is_empty() {
     return bad
   }
-  let (obj, lib) = shipped_runtime(os, ctx, ctx.std, flags, tls)
+  let obj = shipped_runtime(os, ctx, ctx.std, flags)
   if obj.is_empty() {
     return "--ld=macho needs a prebuilt runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, ctx, ctx.std, "arm64")}"
   }
@@ -31,13 +32,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     }
   }
   var dylibs = ["/usr/lib/libSystem.B.dylib"]
-  if tls {
-    match os.fs.read(lib) {
-      Ok(b) => ins.push(macho.LinkInput{path: lib, data: b})
-      Err(e) => return "${lib}: ${e}"
-    }
-  }
-  if tls || !framework_args(os, srcs).is_empty() {
+  if !framework_args(os, srcs).is_empty() {
     dylibs.push("/System/Library/Frameworks/Security.framework/Versions/A/Security")
     dylibs.push("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation")
   }
@@ -88,25 +83,21 @@ fn ld_objects(srcs: List[Str]) -> (List[Str], Str) {
 }
 
 /// The ELF link of stage 3:the program's object (and the zone data's)
-/// with the linux/arm64 pack's runtime (and TLS library) into out; "" on
+/// with the linux/arm64 pack's runtime into out; "" on
 /// success, else why not.
-fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, tls: Bool) -> Str {
+fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str) -> Str {
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
     return bad
   }
   var lctx = ctx
   lctx.goos = "linux"
-  let (obj, lib) = shipped_runtime(os, lctx, ctx.std, flags, tls)
+  let obj = shipped_runtime(os, lctx, ctx.std, flags)
   if obj.is_empty() {
     return "--ld=macho needs a prebuilt linux/arm64 runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, lctx, ctx.std, "arm64")}"
   }
   var ins: List[macho.LinkInput] = []
-  var paths = objs + [obj]
-  if tls {
-    paths.push(lib)
-  }
-  for p in paths {
+  for p in objs + [obj] {
     match os.fs.read(p) {
       Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
       Err(e) => return "${p}: ${e}"

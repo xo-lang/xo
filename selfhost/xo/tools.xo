@@ -277,8 +277,7 @@ fn dir_name(p: Str) -> Str {
 fn files_under(os: Os, dir: Str) -> List[Str] ! FsErr {
   var out: List[Str] = []
   // the walk joins paths as Go's filepath.Join does, which drops a
-  // leading "./" (the root "." when --std is the relative "std"; the
-  // TLS tree then read third_party/mbedtls/xo/third_party/...)
+  // leading "./" (the root "." when --std is the relative "std")
   var base = dir
   while base.starts_with("./") {
     base = base.trim_prefix("./")

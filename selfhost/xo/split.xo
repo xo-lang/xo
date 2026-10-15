@@ -450,7 +450,7 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
 /// clang processes), then links their objects with the other sources
 /// into bin through cc_build. The compiler's output of a failure, "" on
 /// success.
-fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], bin: Str, c: SplitConfig, flags: List[Str], tls: Bool) -> Str {
+fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], bin: Str, c: SplitConfig, flags: List[Str]) -> Str {
   var objs: List[Str] = []
   for ll in lls {
     objs.push(ll.trim_suffix(".ll") + ".o")
@@ -502,5 +502,5 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     return fails[0]
   }
   let lf = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module"]
-  cc_build(os, ctx, clang, lf + flags, objs + others, bin, tls)
+  cc_build(os, ctx, clang, lf + flags, objs + others, bin)
 }

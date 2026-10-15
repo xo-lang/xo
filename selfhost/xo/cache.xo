@@ -202,10 +202,10 @@ fn rtpack_id(os: Os, ctx: Ctx) -> Str {
 
 /// nativeBinKey: the cache key of a native link of srcs (all in dir)
 /// with cc and flags: the C compiler's identity, the flags, the sources'
-/// paths, the macOS SDK, the prebuilt runtime, the TLS sources when the
-/// program uses TLS, and every file of dir but its bin directory. "" when
+/// paths, the macOS SDK, the prebuilt runtime, and every file of dir but
+/// its bin directory. "" when
 /// the cache is off or an input cannot be read.
-fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: List[Str], tls: Bool) -> Str {
+fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: List[Str]) -> Str {
   if bin_cache_dir(os).is_empty() {
     return ""
   }
@@ -225,12 +225,6 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
   }
   k.str("sysroot ${root} ${os.env.get("XO_SYSROOT") ?? ""}")
   k.str("rtpack ${rtpack_id(os, ctx)}")
-  if tls {
-    match tls_source_hash(os, ctx.xo) {
-      Ok(h) => k.str("tls ${h}")
-      Err(_) => return ""
-    }
-  }
   if !key_tree(os, k, dir, ["bin"]) {
     return ""
   }

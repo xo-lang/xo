@@ -1,16 +1,15 @@
 // `xo rtpack` (cmd/xo rtpack.go, internal/build BuildRTPack; decision
 // 0157): the prebuilt runtime of the arm64 backend for a release.
 //
-//   xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o dir]
+//   xo rtpack [--target=os/arch] [--cc="cmd args"] [-o dir]
 //   xo rtpack --status
 //   xo rtpack --key [--target=os/arch]
 //
-// The first form compiles every variant of the C runtime (std/llrt) and
-// the TLS library into dir/<os>-<arch> (default lib/xo/rtpack) with the
-// manifest rtpack.json, the files byte for byte the Go command's for the
-// same compiler and sources; scripts/release.sh runs it. --cc and --ar
-// are command lines split at spaces (a cross compiler for another
-// target). --status prints the pack this xo uses for the host; --key the
+// The first form compiles every variant of the C runtime (std/llrt)
+// into dir/<os>-<arch> (default lib/xo/rtpack) with the manifest
+// rtpack.json; scripts/release.sh runs it (the TLS library and its
+// archive went with Mbed TLS, 2026-10-15). --cc is a command line split
+// at spaces (a cross compiler for another target). --status prints the pack this xo uses for the host; --key the
 // key a pack for the target must have.
 
 use github.com/xo-lang/xo/selfhost/check
@@ -24,7 +23,6 @@ fn rtpack_cmd(os: Os, args: List[Str]) -> Int {
   var fl = core.new_flags("rtpack")
   fl.str_flag("target", "${goos}/${host_arch()}", "target os/arch")
   fl.str_flag("cc", "", "C compiler command (default the host's C compiler)")
-  fl.str_flag("ar", "", "archiver command (default $XO_AR, ar, llvm-ar)")
   fl.str_flag("o", "lib/xo/rtpack", "pack root")
   fl.bool_flag("status", "print the pack this xo uses for the host")
   fl.bool_flag("key", "print the key of a pack for the target")
@@ -32,7 +30,7 @@ fn rtpack_cmd(os: Os, args: List[Str]) -> Int {
     return 2
   }
   if !fl.args.is_empty() {
-    os.stdio.eprintln("usage: xo rtpack [--target=os/arch] [--cc=cmd] [--ar=cmd] [-o dir] | --status | --key")
+    os.stdio.eprintln("usage: xo rtpack [--target=os/arch] [--cc=cmd] [-o dir] | --status | --key")
     return 2
   }
   if fl.get_bool("status") {
@@ -64,7 +62,7 @@ fn rtpack_cmd(os: Os, args: List[Str]) -> Int {
     }
     return 0
   }
-  let (dir, err) = build_rtpack(os, ctx, tos, tarch, words(fl.get_str("cc")), words(fl.get_str("ar")), fl.get_str("o"))
+  let (dir, err) = build_rtpack(os, ctx, tos, tarch, words(fl.get_str("cc")), fl.get_str("o"))
   if !err.is_empty() {
     os.stdio.eprintln("xo rtpack: ${err}")
     return 1
@@ -84,12 +82,11 @@ fn words(s: Str) -> List[Str] {
   out
 }
 
-/// BuildRTPack: every variant of the runtime and the TLS library compiled
-/// with rtpack_flags into a work directory mapped to /xo
-/// (-ffile-prefix-map), the archive's member headers normalized, the
-/// manifest written, and the directory moved to out/<os>-<arch>. Returns
-/// that directory, or an error text.
-fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], ar0: List[Str], out: Str) -> (Str, Str) {
+/// BuildRTPack: every variant of the runtime compiled with rtpack_flags
+/// into a work directory mapped to /xo (-ffile-prefix-map), the manifest
+/// written, and the directory moved to out/<os>-<arch>. Returns that
+/// directory, or an error text.
+fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], out: Str) -> (Str, Str) {
   if !(tarch == "arm64" && (tos == "darwin" || tos == "linux")) {
     return ("", "prebuilt runtimes are built for [darwin/arm64 linux/arm64], not ${tos}/${tarch}")
   }
@@ -104,14 +101,6 @@ fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], ar0: Lis
     }
     cc = [c]
   }
-  var ar = ar0
-  if ar.is_empty() {
-    let a = find_ar(os)
-    if a.is_empty() {
-      return ("", "the TLS library of std/http needs an archiver: install ar (binutils) or llvm-ar, or set XO_AR")
-    }
-    ar = [a]
-  }
   let key = match rtpack_key(os, ctx, ctx.std, tos) {
     Ok(k) => k
     Err(e) => return ("", "${e}")
@@ -122,14 +111,13 @@ fn build_rtpack(os: Os, ctx: Ctx, tos: Str, tarch: Str, cc0: List[Str], ar0: Lis
     tmp_root = "/tmp"
   }
   let work = "${tmp_root.trim_suffix("/")}/xo-rtpack-${os.rand.bytes(6).to_hex()}"
-  let (dir, err) = build_rtpack_in(os, ctx, work, tos, cc, ar, key, out)
+  let (dir, err) = build_rtpack_in(os, ctx, work, tos, cc, key, out)
   os.fs.remove_all(work).ignore_err("a temporary directory")
   (dir, err)
 }
 
-fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: List[Str], key: Str, out: Str) -> (Str, Str) {
-  // the sources: the runtime (writeRuntime: std/llrt/*.c) and the TLS
-  // library's tree
+fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], key: Str, out: Str) -> (Str, Str) {
+  // the sources: the runtime (writeRuntime: std/llrt/*.c)
   let llrt = "${work}/llrt"
   match os.fs.create_dir_all(llrt) {
     Ok(_) => {}
@@ -152,43 +140,23 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: Lis
     }
   }
   let rt = "${llrt}/xo_rt.c"
-  let tls_dir = "${work}/tls"
-  let tls_srcs = match write_tls_tree(os, ctx.xo, tls_dir) {
-    Ok(s) => s
-    Err(e) => return ("", "${e}")
-  }
   let stage = "${work}/pack"
   match os.fs.create_dir_all(stage) {
     Ok(_) => {}
     Err(e) => return ("", "${e}")
   }
   let base = rtpack_flags(tos) + ["-ffile-prefix-map=${work}=/xo"]
-  // the variants, then the library
+  // the variants
   var cmds: List[List[Str]] = []
   var labels: List[Str] = []
-  for i in 0..32 {
-    var args = cc + base + variant_defines(i)
-    if i >= 16 {
-      args = args + ["-DXO_TLS"] + tls_defines()
-      for inc in tls_include_dirs(tos) {
-        args = args + ["-I", "${tls_dir}/${inc}"]
-      }
-    }
+  for i in 0..16 {
+    let args = cc + base + variant_defines(i)
     cmds.push(args + ["-c", "-o", "${stage}/${variant_file(i)}", rt])
     labels.push("compiling the runtime (${variant_file(i)})")
   }
   let failed = run_jobs(os, "${work}/jobs", cmds, labels)
   if !failed.is_empty() {
     return ("", failed)
-  }
-  let lib = "${stage}/libxotls.a"
-  let lerr = compile_tls_archive(os, tos, tls_dir, cc, ["-c"] + base + ["-w"], tls_srcs, ar, lib)
-  if !lerr.is_empty() {
-    return ("", lerr)
-  }
-  let nerr = normalize_ar(os, lib)
-  if !nerr.is_empty() {
-    return ("", nerr)
   }
   // the manifest (json.MarshalIndent with a tab); the compiler is the
   // first line of its --version output whatever its exit status (zig cc
@@ -210,7 +178,7 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: Lis
     }
   }
   let flags = rtpack_flags(tos).map(fn(f: Str) -> Str { "\t\t${core.jstr_html(f)}" })
-  let m = "{\n\t\"format\": 1,\n\t\"target\": ${core.jstr_html("${tos}/arm64")},\n\t\"key\": ${core.jstr_html(key)},\n\t\"compiler\": ${core.jstr_html(compiler)},\n\t\"flags\": [\n${flags.join(",\n")}\n\t],\n\t\"files\": {\n${files.join(",\n")}\n\t}\n}\n"
+  let m = "{\n\t\"format\": 2,\n\t\"target\": ${core.jstr_html("${tos}/arm64")},\n\t\"key\": ${core.jstr_html(key)},\n\t\"compiler\": ${core.jstr_html(compiler)},\n\t\"flags\": [\n${flags.join(",\n")}\n\t],\n\t\"files\": {\n${files.join(",\n")}\n\t}\n}\n"
   match os.fs.write("${stage}/rtpack.json", m.bytes()) {
     Ok(_) => {}
     Err(e) => return ("", "${e}")
@@ -246,50 +214,57 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], ar: Lis
   (dst, "")
 }
 
-/// normalizeAr: the member headers of the ar archive at path rewritten
-/// with zero times, owners, and groups and mode 644 (the headers have
-/// fixed widths, so the symbol table's offsets stay valid).
-fn normalize_ar(os: Os, path: Str) -> Str {
-  let data = match os.fs.read(path) {
-    Ok(d) => d
+/// run_jobs runs each command of cmds (its words) from a shell script
+/// under job_dir, as many at once as the host has cores (`xargs -P`), and
+/// returns "" when every one succeeds, else the first failed one's output
+/// followed by its label. job_dir is removed after.
+fn run_jobs(os: Os, job_dir: Str, cmds: List[List[Str]], labels: List[Str]) -> Str {
+  match os.fs.create_dir_all(job_dir) {
+    Ok(_) => {}
     Err(e) => return "${e}"
   }
-  if data.len() < 8 || (data[0..8].to_str() ?? "") != "!<arch>\n" {
-    return "${path}: not an ar archive"
-  }
-  var b = BytesBuilder.with_capacity(data.len())
-  b.write(data[0..8])
-  var off = 8
-  while off < data.len() {
-    if off + 60 > data.len() || (data[off + 58..off + 60].to_str() ?? "") != "`\n" {
-      return "${path}: bad member header at ${off}"
+  var list = StrBuilder.new()
+  for (i, words) in cmds.indexed() {
+    var line = StrBuilder.new()
+    var first = true
+    for w in words {
+      if !first {
+        line.write(" ")
+      }
+      first = false
+      line.write(sh_q(w))
     }
-    let size = match Int.parse((data[off + 48..off + 58].to_str() ?? "").trim()) {
-      Some(n) => n
-      None => return "${path}: bad member size at ${off}"
+    let log = "${job_dir}/${i}.log"
+    let script = "${job_dir}/${i}.sh"
+    let body = "${line.freeze()} > ${sh_q(log)} 2>&1 || { echo ${sh_q(labels[i])} >> ${sh_q(log)}; exit 1; }\nrm -f ${sh_q(log)}\n"
+    match os.fs.write(script, body.bytes()) {
+      Ok(_) => {}
+      Err(e) => return "${e}"
     }
-    b.write(data[off..off + 16])
-    b.write_str(ar_field("0", 12) + ar_field("0", 6) + ar_field("0", 6) + ar_field("644", 8))
-    b.write(data[off + 48..off + 60])
-    var end = off + 60 + size
-    end += end % 2
-    if end > data.len() {
-      end = data.len()
+    list.write("${script}\n")
+  }
+  match os.fs.write("${job_dir}/all", list.freeze().bytes()) {
+    Ok(_) => {}
+    Err(e) => return "${e}"
+  }
+  let (n, _) = combined(os, "getconf", ["_NPROCESSORS_ONLN"])
+  var jobs = Int.parse(n.trim()) ?? 4
+  if jobs < 1 {
+    jobs = 1
+  }
+  let (out, err) = combined(os, "sh", ["-c", "xargs -P ${jobs} -n 1 sh < ${sh_q(job_dir + "/all")}"])
+  var failed = ""
+  if !err.is_empty() {
+    // the first failed command's output
+    for k in 0..cmds.len() {
+      if failed.is_empty() {
+        failed = os.fs.read_text("${job_dir}/${k}.log").ok() ?? ""
+      }
     }
-    b.write(data[off + 60..end])
-    off = end
+    if failed.is_empty() {
+      failed = "${labels.join(", ")}: ${err}\n${out}"
+    }
   }
-  match os.fs.write(path, b.freeze()) {
-    Ok(_) => ""
-    Err(e) => "${e}"
-  }
-}
-
-/// v padded with spaces to n bytes.
-fn ar_field(v: Str, n: Int) -> Str {
-  var s = v
-  while s.len() < n {
-    s = s + " "
-  }
-  s
+  os.fs.remove_all(job_dir).ignore_err("only space")
+  failed
 }

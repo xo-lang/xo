@@ -44,9 +44,8 @@
 // directory, or --go-tree.
 //
 // The runtime sources are read from DIR/llrt (DIR the std directory,
-// default std), the TLS library's from DIR/../third_party. A link takes
-// the runtime from a prebuilt pack or the runtime object cache, the TLS
-// library of std/http, the zone data of std/time, and the C inputs of
+// default std). A link takes the runtime from a prebuilt pack or the
+// runtime object cache, the zone data of std/time, and the C inputs of
 // `use c`, keyed as internal/build keys them, so both drivers share the
 // caches. A target other than the host gets its assembly only, as
 // internal/build does. It is not the released `xo` (decision 0150: that
@@ -460,16 +459,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       mode_flags = mode_flags + ["split", split.lto]
     }
     let srcs = lls + lk.srcs
-    // no TLS library with no C library (XO_NOLIBC=1): the runtime's stubs
-    let tls = needs_tls(code) && !nolibc(os, lctx.tgoos)
-    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs, tls)
+    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs)
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       let msg = if lls.len() > 1 {
-        split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags, tls)
+        split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags)
       } else {
-        cc_build(os, lctx, cc, [split.opt, "-flto", "-Wno-override-module"] + lk.flags, srcs, bin, tls)
+        cc_build(os, lctx, cc, [split.opt, "-flto", "-Wno-override-module"] + lk.flags, srcs, bin)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
@@ -592,10 +589,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cache_note(os, phases, "objects", srcs.len() - nasm, srcs.len())
     }
     let srcs = progs + lk.srcs
-    let tls = needs_tls(code) && !nolibc(os, tgoos)
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, tls)
+      let why = macho_link(os, ctx, tgoos, flags, srcs, bin)
       if !why.is_empty() {
         fail(os, why)
       }
@@ -603,7 +599,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       bins.push((tg, bin))
       continue
     }
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs, tls) }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs) }
     let (hit, entry) = fetch_bin(os, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -619,7 +615,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
         cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
-      let msg = cc_build(os, ctx, cc, flags, lsrcs, bin, tls)
+      let msg = cc_build(os, ctx, cc, flags, lsrcs, bin)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
@@ -668,8 +664,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
   if uses_time {
     flags.push("-DXO_TIME")
   }
-  let (obj, _) = shipped_runtime(os, ctx, ctx.std, flags + io_flags(code), needs_tls(code))
-  !obj.is_empty()
+  !shipped_runtime(os, ctx, ctx.std, flags + io_flags(code)).is_empty()
 }
 
 /// A program lowered to SSA for one target OS, with the passes run: the
@@ -806,12 +801,6 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if no_cc {
       fail(os, "XO_NOLIBC=1 links with cc (--ld=cc): the ELF linker of decision 0182 has no static mode yet (decision 0206)")
     }
-    if code.contains("xo_tls_") || code.contains("xo_srv_tls") {
-      // certificates and roots: Mbed TLS needs the C library until TLS
-      // is Xo (decision 0202); plain HTTP links without it (the
-      // runtime's TLS stubs: https fails at run time)
-      fail(os, "XO_NOLIBC=1: std/http's TLS needs the C library (decision 0202); a program without certificates or roots links without it")
-    }
     for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
       if n.trim() == "net" {
         // the C path of the network is the C library's sockets and
@@ -858,21 +847,11 @@ fn write_or_fail(os: Os, dir: Str, path: Str, data: Bytes) {
 /// `xo1 keys`: the cache keys and directories this driver computes, to
 /// compare with the Go driver's (`xo rtpack --key`, the directories under
 /// the user cache): the prebuilt runtime keys of both targets, the pack
-/// status, the TLS library directory for the C compiler with the SDK of
-/// the last link, and the runtime object of a plain program.
-fn keys(os: Os, ctx: Ctx, cc0: Str) -> () ! FsErr {
-  let cc = if cc0.is_empty() { find_cc(os) } else { cc0 }
+/// status, and the runtime object of a plain program.
+fn keys(os: Os, ctx: Ctx, _cc: Str) -> () ! FsErr {
   os.stdio.println("rtpack darwin/arm64 ${rtpack_key(os, ctx, ctx.std, "darwin")?}")
   os.stdio.println("rtpack linux/arm64 ${rtpack_key(os, ctx, ctx.std, "linux")?}")
   os.stdio.println(rtpack_status(os, ctx, ctx.std))
-  os.stdio.println("tls source ${tls_source_hash(os, ctx.xo)?}")
-  var root = ""
-  let memo = sysroot_memo(os, ctx)
-  if !memo.is_empty() {
-    root = (os.fs.read_text(memo).ok() ?? "").trim()
-  }
-  let (_, dir, err) = tls_dir(os, ctx, cc, [], root)
-  os.stdio.println("tls ${dir}${err} (cc ${cc}, sysroot ${root})")
 }
 
 /// The directory fault positions are relative to (internal/build

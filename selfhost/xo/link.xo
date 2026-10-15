@@ -1,11 +1,11 @@
 // The native link (internal/build ccBuild): the C compiler driver
-// assembles the program and links it with the C runtime (std/llrt), the
-// TLS library when the program uses std/http, and the system libraries,
+// assembles the program and links it with the C runtime (std/llrt) and
+// the system libraries,
 // trying the macOS SDKs internal/build tries until one links.
 use github.com/xo-lang/xo/selfhost/macho
 
 /// What every step needs: the host, the std directory, the repository
-/// root (std/.. : third_party), and the user cache directory.
+/// root (std/..), and the user cache directory.
 struct Ctx {
   goos: Str
   std: Str
@@ -24,8 +24,8 @@ fn link_os(ctx: Ctx) -> Str {
 /// ccBuild: compiles and links srcs into bin with cc and flags; returns
 /// the compiler's output of the failed link, "" on success. The sources
 /// are the program's assembly, the runtime (xo_rt.c), and other C
-/// sources; tls says the program calls std/http's runtime.
-fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str, tls: Bool) -> Str {
+/// sources.
+fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str) -> Str {
   // libraries of `use c` go after the objects (splitLibs)
   var flags: List[Str] = []
   var libs: List[Str] = []
@@ -39,9 +39,9 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   // the C runtime from a release's prebuilt objects when one matches
   // the flags and these sources (decision 0157)
   let rti = runtime_index(srcs, flags)
-  var shipped = ("", "")
+  var shipped = ""
   if rti >= 0 {
-    shipped = shipped_runtime(os, ctx, ctx.std, flags, tls)
+    shipped = shipped_runtime(os, ctx, ctx.std, flags)
   }
   var cands: List[Str] = []
   let memo = sysroot_memo(os, ctx)
@@ -54,7 +54,7 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   cands = cands + sysroot_candidates(os, ctx)
   var first = ""
   for root in cands {
-    let (out, ok, rt_fail) = try_link(os, ctx, cc, flags, libs, srcs, bin, tls, root, rti, shipped)
+    let (out, ok, rt_fail) = try_link(os, ctx, cc, flags, libs, srcs, bin, root, rti, shipped)
     if ok {
       if !memo.is_empty() {
         os.fs.create_dir_all(dir_name(memo)).ignore_err("the memo only saves time")
@@ -86,10 +86,10 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
 /// The Security and CoreFoundation frameworks on macOS when a generated
 /// source calls the framework (std/native/sys_darwin.xo's declarations,
 /// tlscert.xo apple_trust: the Xo TLS client's system roots, decision
-/// 0202), whether or not the program links Mbed TLS (needs_tls).
+/// 0202).
 fn framework_args(os: Os, srcs: List[Str]) -> List[Str] {
-  // made at run time, as needs_tls's names: a literal would be in xo1's
-  // own assembly
+  // made at run time: a literal would be in xo1's own assembly (whose
+  // link would then take the frameworks)
   let mark = ["SecTrust", "EvaluateWithError"].join("")
   for s in srcs {
     var paths = [s]
@@ -154,8 +154,8 @@ fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
 /// One link with the SDK root ("" the compiler's default): its output,
 /// whether it succeeded, and whether the local compile of the runtime
 /// failed. rti is the index of the runtime in srcs (-1 for none), shipped
-/// the pack's object and TLS library ("" when none is used).
-fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, tls: Bool, root: Str, rti: Int, shipped: (Str, Str)) -> (Str, Bool, Bool) {
+/// the pack's object ("" when none is used).
+fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, root: Str, rti: Int, shipped: Str) -> (Str, Bool, Bool) {
   // the C runtime raises faults through the frames of generated code
   // and its own (decision 0085): every frame needs unwind tables
   var args = flags + ["-fexceptions", "-funwind-tables", "-o", bin]
@@ -163,28 +163,13 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
     args = args + ["-isysroot", root]
   }
   var srcs = srcs0
-  var tls_link: List[Str] = []
-  let (sobj, slib) = shipped
+  let sobj = shipped
   if !sobj.is_empty() {
     srcs[rti] = sobj
-    if tls {
-      tls_link = [slib] + tls_system_libs(link_os(ctx))
-    }
   } else {
-    var tls_compile: List[Str] = []
-    if tls {
-      // std/http's TLS (decision 0105)
-      let t = tls_args(os, ctx, cc, flags, root)
-      if !t.err.is_empty() {
-        return (t.err, false, false)
-      }
-      tls_compile = t.compile
-      tls_link = t.link
-      args = args + t.compile
-    }
     // the C runtime compiled once per flags and sources (rtobj.go)
     if rti >= 0 && !rtobj_dir(os, ctx).is_empty() {
-      let r = runtime_object(os, ctx, cc, flags, root, tls_compile, srcs[rti])
+      let r = runtime_object(os, ctx, cc, flags, root, srcs[rti])
       if r.failed {
         return (r.out, false, true)
       }
@@ -193,7 +178,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
       }
     }
   }
-  args = args + srcs + tls_link + libs + sys_link_args(link_os(ctx), flags)
+  args = args + srcs + libs + sys_link_args(link_os(ctx), flags)
   if link_os(ctx) == "darwin" {
     args = args + weak_undefined_args(os, srcs0) + framework_args(os, srcs0)
   }

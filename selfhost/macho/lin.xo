@@ -1,5 +1,5 @@
 // The linker's inputs: Mach-O relocatable objects (MH_OBJECT, arm64)
-// and BSD archives of them (`ar`, as libxotls.a).
+// and BSD archives of them (`ar`).
 
 /// Section types (the low byte of the flags).
 const S_ZEROFILL = 0x1

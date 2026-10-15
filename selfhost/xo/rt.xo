@@ -53,22 +53,14 @@ struct RTObj {
 }
 
 /// runtimeObject: the object of src (the runtime) compiled with cc,
-/// flags, the SDK root, and the extra compile arguments (TLS), compiled
-/// when the cache has none. The key covers every .c and .h file of src's
+/// flags and the SDK root, compiled when the cache has none. The key covers every .c and .h file of src's
 /// directory except the program's zone data.
-fn runtime_object(os: Os, ctx: Ctx, cc: Str, flags: List[Str], root: Str, extra: List[Str], src: Str) -> RTObj {
+fn runtime_object(os: Os, ctx: Ctx, cc: Str, flags: List[Str], root: Str, src: Str) -> RTObj {
   let cache = rtobj_dir(os, ctx)
   var k = new_key("rtobj")
   k.str(tool_id(os, ctx.goos, cc, ["--version"]))
   k.strs(flags)
   k.str("sysroot ${root}")
-  k.strs(extra)
-  if extra.contains("-DXO_TLS") {
-    match tls_source_hash(os, ctx.xo) {
-      Ok(h) => k.str("tls ${h}")
-      Err(_) => return RTObj{}
-    }
-  }
   let dir = dir_name(src)
   let ents = match os.fs.read_dir(dir) {
     Ok(e) => e
@@ -113,7 +105,7 @@ fn runtime_object(os: Os, ctx: Ctx, cc: Str, flags: List[Str], root: Str, extra:
   if !root.is_empty() {
     args = args + ["-isysroot", root]
   }
-  args = args + extra + [src]
+  args = args + [src]
   let (out, err) = combined(os, cc, args)
   if !err.is_empty() {
     os.fs.remove(tmp).ignore_err("a failed compile")
@@ -198,8 +190,8 @@ fn rtpack_flags(goos: Str) -> List[Str] {
   f
 }
 
-/// A variant of the runtime: XO_TIME, XO_FS, XO_STDIN, XO_PROC, TLS as
-/// the bits 1, 2, 4, 8, 16 of i (RTVariants' order).
+/// A variant of the runtime: XO_TIME, XO_FS, XO_STDIN, XO_PROC as the
+/// bits 1, 2, 4, 8 of i (RTVariants' order).
 fn variant_defines(i: Int) -> List[Str] {
   var out: List[Str] = []
   if i % 2 == 1 {
@@ -217,10 +209,10 @@ fn variant_defines(i: Int) -> List[Str] {
   out
 }
 
-/// RTVariant.File: rt-time-fs-stdin-proc-tls.o with the parts it has.
+/// RTVariant.File: rt-time-fs-stdin-proc.o with the parts it has.
 fn variant_file(i: Int) -> Str {
   var n = "rt"
-  let parts = ["time", "fs", "stdin", "proc", "tls"]
+  let parts = ["time", "fs", "stdin", "proc"]
   var bit = 1
   for p in parts {
     if i / bit % 2 == 1 {
@@ -232,8 +224,7 @@ fn variant_file(i: Int) -> Str {
 }
 
 /// RTPackKey for the target goos/arm64: the pack format, target, flags,
-/// variants, the runtime sources (std/llrt *.c and *.h), and the TLS
-/// library's sources and configuration.
+/// variants, and the runtime sources (std/llrt *.c and *.h).
 fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
   rtpack_key_for(os, ctx, std_dir, goos, "arm64")
 }
@@ -241,9 +232,11 @@ fn rtpack_key(os: Os, ctx: Ctx, std_dir: Str, goos: Str) -> Str ! FsErr {
 /// RTPackKey for any target goos/goarch (`xo rtpack --key`).
 fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str ! FsErr {
   var b = BytesBuilder.new()
-  b.write_str("xo rtpack 1\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\ntls flags ${go_q(["-w"])}\n")
-  for i in 0..32 {
-    b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))} ${i >= 16}\n")
+  // format 2: no TLS library or TLS variants (Mbed TLS removed,
+  // 2026-10-15)
+  b.write_str("xo rtpack 2\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\n")
+  for i in 0..16 {
+    b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))}\n")
   }
   var names: List[Str] = []
   for fi in os.fs.read_dir("${std_dir}/llrt")? {
@@ -256,8 +249,6 @@ fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str
     b.write_str("file ${n} ${data.len()}\n")
     b.write(data)
   }
-  let src = tls_source_hash(os, ctx.xo)?
-  b.write_str("tls ${tls_version()} ${src} ${go_q(tls_defines())} ${go_q(tls_include_dirs(goos))} ${tls_file_defines_v()}\n")
   Ok(crypto.sha256(b.freeze()).to_hex())
 }
 
@@ -315,8 +306,8 @@ fn load_rtpack_for(os: Os, ctx: Ctx, std_dir: Str, arch: Str) -> Pack? {
     Err(e) => return Some(Pack{dir: dir, why: "${e}"})
   }
   var p = Pack{dir: dir, files: m.files, compiler: m.compiler, key: m.key}
-  if m.format != "1" {
-    p.why = "the prebuilt runtime in ${dir} has format ${m.format}, this xo reads 1"
+  if m.format != "2" {
+    p.why = "the prebuilt runtime in ${dir} has format ${m.format}, this xo reads 2"
   } else if m.target != target {
     p.why = "the prebuilt runtime in ${dir} is for ${m.target}, not ${target}"
   } else if m.key != key {
@@ -406,10 +397,9 @@ fn pack_file(os: Os, p: Pack, name: Str) -> Str {
 }
 
 /// shippedRuntime: the pack's object of a link with flags (exactly -O2
-/// and a variant's defines) and, with tls, its TLS library; ("", "")
-/// when no usable pack has them.
-fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str], tls: Bool) -> (Str, Str) {
-  var v = if tls { 16 } else { 0 }
+/// and a variant's defines); "" when no usable pack has it.
+fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str]) -> Str {
+  var v = 0
   var opt = 0
   for f in flags {
     if f == "-O2" {
@@ -423,28 +413,17 @@ fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str], tls: Bool) 
     } else if f == "-DXO_PROC" {
       v = v + if v / 8 % 2 == 1 { 0 } else { 8 }
     } else {
-      return ("", "")
+      return ""
     }
   }
   if opt != 1 {
-    return ("", "")
+    return ""
   }
   let p = match load_rtpack(os, ctx, std_dir) {
     Some(p) => p
-    None => return ("", "")
+    None => return ""
   }
-  let obj = pack_file(os, p, variant_file(v))
-  if obj.is_empty() {
-    return ("", "")
-  }
-  if !tls {
-    return (obj, "")
-  }
-  let lib = pack_file(os, p, "libxotls.a")
-  if lib.is_empty() {
-    return ("", "")
-  }
-  (obj, lib)
+  pack_file(os, p, variant_file(v))
 }
 
 /// RTPackStatus: the pack xo1 uses for the host (its OS and
