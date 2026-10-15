@@ -23,6 +23,7 @@ use native/llrt/rc
 use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/stdio
+use native/llrt/twflags
 use native/rt
 
 /// xo_task (216 bytes): the header (count, free function), the
@@ -105,9 +106,6 @@ const E_WRITER = 24
 
 /// The C's services (pool.xo RT_*).
 const RT_RUN_CLAIMED = 16
-/// The C's test world record (pool.xo RT_TW) and its virt word (a C int).
-const RT_TW = 30
-const TW_VIRT = 40
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
@@ -152,9 +150,10 @@ pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
   if f == 0 && rt.slot_load(pl + P_NCPU, 0, ACQUIRE) != 0 {
     rw = poolsetup.root_worker(pl)
   }
-  // in the test world nothing outside the program ends a wait
-  let virt = rt.mem_load(rt.sched_rt(RT_TW, 0, 0), TW_VIRT, 4) != 0
-  pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counted || virt { 1 } else { 0 }, f, rw)
+  // in the test world nothing outside the program ends a wait (the
+  // flags' static words: no C call on the wait's path)
+  let counts = counted || twflags.virt()
+  pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counts { 1 } else { 0 }, f, rw)
   sanhook.acquire(c + ctx.C_PARK)
   budget.resume(c)
 }

@@ -225,6 +225,17 @@ pub fn flush() {
   if rt.slot_load[Int](w, 1, 0) == 0 {
     return
   }
+  flush_out(w)
+}
+
+/// flush's work, kept out of line (it calls itself on a path never taken:
+/// selfhost/arm64/inline.xo inlines no function on a call cycle), so the
+/// empty check above inlines into every wait (tasks.xo park_wait_n).
+fn flush_out(w: Int) {
+  if w == 0 {
+    flush_out(rt.static_word(WORDS)) // not taken: the inliner's cycle
+    return
+  }
   let m = rt.mem_load(w, MODE, 8)
   lock(w, m)
   flush_locked(w)

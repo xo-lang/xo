@@ -436,3 +436,54 @@ arm64, and the sweep's 8c1d123d build on LLVM.
 | tls tls12 | llvm | 1150.39M | 2208.11M | **1.919** | 0.5% | 0.5% | wall 140.0 / 190.0 ms |
 | tls x25519 | arm64 | 1058.77M | 3166.59M | **2.991** | 0.5% | 0.5% | wall 120.0 / 210.0 ms |
 | tls x25519 | llvm | 1057.13M | 2155.11M | **2.039** | 1.6% | 0.9% | wall 200.0 / 340.0 ms |
+
+## Follow up: the scheduler paths (zc-b19, 2026-10-15)
+
+Three fixes on zero-c after the sweep:
+
+- tasks.xo park_wait_n (scheduler S1) made two C calls the C version
+  never made on every wait: rt.sched_rt for the test world's record
+  (now twflags.virt, two static words) and for ThreadSanitizer's
+  acquire (now only when the services record's tsan word is set, as the
+  C's TSAN_ACQUIRE compiled to nothing elsewhere).
+- ctx.cur was not inlined: root() counted inside it put it over the
+  arm64 inliner's budget. root is now behind root_out, kept out of line
+  by a call cycle on a path never taken, so cur inlines (28 call sites
+  in bench/perf/ctx).
+- stdio.flush, called on every wait, was a real call to find an empty
+  buffer: its work is now flush_out, out of line the same way, so the
+  check inlines.
+
+Instructions retired against main (dd33dd13, xo built from that tip),
+the median of 9 interleaved runs per side (scratch script, the same
+`/usr/bin/time -l` metric), zero-c at e6e502f0 plus the fixes:
+
+| Workload | Backend | Sweep zero-c/main | Now zero-c/main |
+|---|---|---|---|
+| sysio chan | arm64 | 1.17 | 1.090 |
+| sysio chan | llvm | 1.11 | 1.028 |
+| ctx spawn | arm64 | 1.06 | 1.076 |
+| ctx mutex | arm64 | 1.20 | 1.122 |
+| ctx budget | arm64 | 1.13 | 0.999 |
+| ctx defer | arm64 | 1.05 | 0.999 |
+| ctx spawn | llvm | 1.08 | 1.072 |
+| ctx mutex | llvm | - | 0.943 |
+| ctx budget | llvm | - | 1.030 |
+| ctx defer | llvm | - | 1.011 |
+| conc pingpong | arm64 | 1.14 | 1.210 |
+| conc pingpong | llvm | 1.12 | 1.007 |
+| conc fanout | arm64 | 1.10 | 1.038 |
+| conc fanout | llvm | - | 1.018 |
+| conc spawn | arm64 | - | 1.115 |
+| conc spawn | llvm | 1.08 | 1.081 |
+
+ctx budget and defer are back to main's count. ctx mutex on arm64 is
+xo-2b's (mutex.xo held_add and held_del). What remains above 5% is
+spawning (ctx spawn, conc spawn: tasks.xo's spawn and run_claimed
+against the C's) and chan on arm64 (chan.xo's send and receive against
+the C's: a profile of 20,000,000 messages before these fixes, 1.108
+times main's instructions, had chan.send and recv at 63 and 47 samples
+against the C's 80 and 52, and tasks.park_wait_n at 78 with no
+counterpart in main; not profiled again after them); conc pingpong on arm64 moves by 10% between runs of
+the same binaries (threads), so its row is not conclusive.
+

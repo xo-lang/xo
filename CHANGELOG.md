@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime performance (the zero-C perf sweep's scheduler paths):
+  a context's wait makes no C call outside ThreadSanitizer builds
+  (tasks.xo park_wait_n reads the test world's flags from static words),
+  ctx.cur inlines again (root behind an out of line function), and the
+  output flush before a wait inlines its empty check. ctx budget and
+  defer are back to main's instruction counts, sysio chan from 1.17 to
+  1.09 of main on arm64 (bench/results/zero-c-perf-sweep-2026-10-15.md).
 - arm64 backend: an add or subtract and its carry or borrow
   (std/native/llrt/cpu.xo) become one adds or subs and a cset; the SSA
   builder folds + and - of two Int constants that do not overflow;
