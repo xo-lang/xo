@@ -550,3 +550,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-direct-export-call-inlines-slow-path.md](llvm-direct-export-call-inlines-slow-path.md): Observed: the LLVM emitter calling heapos.xo's exports directly let the heap's slow paths inline into alloc.xo's fast paths (alloc tasks 1.10x); call them noinline.
 - [arm64-target-enum-eq-not-folded.md](arm64-target-enum-eq-not-folded.md): Observed: `target.os == TargetOs.X` called the enum equality at run time on arm64; fixed in selfhost/ssa (constant variants fold).
 - [mbedtls-pkcs8-rsa-check-pair.md](mbedtls-pkcs8-rsa-check-pair.md): Observed: TF-PSA-Crypto's PKCS#8 parse of an RSA key leaves the public half unset, so check_pair fails; xo_tls.c sets it.
+- [wasm-rejects-calls-in-dead-native-arms.md](wasm-rejects-calls-in-dead-native-arms.md): Observed: a native-only rt call behind sysio.layer() == 0 failed the wasm build; selfhost/wasm/call.xo lists those that fault when run.

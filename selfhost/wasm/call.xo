@@ -400,11 +400,13 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" {
+      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "heap_large" | "heap_release" | "heap_large_resize" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
-        // in `target.os` arms the passes may leave in a WASI module, and
-        // std/native/log.xo's test world record behind rt.test_on (false)
+        // in `target.os` arms the passes may leave in a WASI module,
+        // std/native/log.xo's test world record behind rt.test_on (false),
+        // and the native heap's blocks of sysio.set_err's native arm
+        // (behind sysio.layer() == 0 in a WASI module)
         let msg = "the wasm backend does not support the call `${name}`"
         g.e("i32.const ${g.str_obj(msg.bytes())}")
         g.e("i32.const ${msg.len()}")

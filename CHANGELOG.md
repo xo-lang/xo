@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Wasm backend: rt.heap_large, rt.heap_release and rt.heap_large_resize
+  in native-only arms (sysio.set_err behind layer() == 0) compile to a
+  fault when run, as sys6 and fs_set_err do. TestSelfhostWasmFsWrite
+  passes again; it had failed since a4ed9cd0
+  (gotchas/wasm-rejects-calls-in-dead-native-arms.md).
+
 - AES-GCM: whole block AES intrinsics (cpu.aes_enc10/12/14, the state
   in a register) and one pmull for both halves of a GHASH product on
   arm64. Bulk AES-128-GCM on LLVM 27.3M to 17.9M instructions a MiB
