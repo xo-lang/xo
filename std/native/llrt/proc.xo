@@ -1,7 +1,10 @@
 // The processes of the native runtime, written in Xo (work item B25 of
 // bench/results/zero-c-audit-refresh-2026-10-13.md; they were
 // std/llrt/xo_proc.c): Proc.kill and the signals a test's FakeProc.kill
-// records. Process creation, pipes, and waiting follow in later stages.
+// records; Proc.run, Cmd.output, run, and spawn, pipelines, and children
+// on macOS and Linux (stage 4) and Windows (stage 5: CreateProcessW and
+// PIPE_NOWAIT pipes through windows.xo, polled in steps; UNTESTED on
+// windows).
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/poll
@@ -116,8 +119,8 @@ pub fn killed() -> List[Str] {
 }
 
 // ---------------------------------------------------------------------------
-// Starting a command (xo_proc.c's pr_start on macOS and Linux; Windows
-// keeps the C's CreateProcessW until its stage)
+// Starting a command (xo_proc.c's pr_start on macOS and Linux; Windows'
+// is launch_windows below, over windows.xo's CreateProcessW)
 
 /// The standard stream descriptors of start: the null device, the
 /// program's own, and (standard error) a copy of standard output.
@@ -386,7 +389,10 @@ fn wait_any(pid: Int) -> Int { linux.wait4(pid, 0) }
 // pipes that wait on the event loop's poller, the standard input data is
 // written to its pipe in the same loop (nonblocking; the C wrote it from
 // a thread of its own), and the exit is polled with waitpid in steps
-// that a cancellation ends (killing the command). UNTESTED on Linux.
+// that a cancellation ends (killing the command). UNTESTED on Linux. On
+// Windows (UNTESTED on windows) the commands start through
+// launch_windows, the program's pipe ends are PIPE_NOWAIT handles polled
+// in steps (no poller records), and the exit is the process handle's.
 
 /// A command of a spec (std/native/llrt/procspec.xo's words, xo_proc.c's
 /// pr_parse): its name, its directory ("" the program's), its flags (1 an
@@ -398,6 +404,8 @@ struct Spec {
   flags: Int
   argv: List[Str]
   env: List[Str]
+  /// the Windows command line (procspec.xo quoted it)
+  cmdline: Str = ""
 }
 
 /// Word i of l, "" past its end.
@@ -442,8 +450,9 @@ fn parse(spec: List[Str]) -> List[Spec] {
     }
     i += ne
     i += count(spec, i) + 1
+    let cl = word(spec, i)
     i += 1
-    out.push(Spec{name: name, dir: dir, flags: flags, argv: argv, env: env})
+    out.push(Spec{name: name, dir: dir, flags: flags, argv: argv, env: env, cmdline: cl})
   }
   out
 }
@@ -473,6 +482,9 @@ fn c_strs(ss: List[Str]) -> Int {
 /// or FD_*): the status ("0" started, "1" not found, "2" failed), the
 /// pid, and the failure's message.
 fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
+  if sysio.layer() == 3 {
+    return launch_windows(c, inf, outf, errf)
+  }
   let nd = c_strs([c.name, c.dir])
   let argv = c_strs(c.argv)
   let envp = if (c.flags & 1) != 0 { c_strs(c.env) } else { 0 }
@@ -495,28 +507,96 @@ fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
   (rt.str_of_byte(st), pid, msg)
 }
 
+/// launch on Windows (xo_proc.c pr_start and pr_w_spawn): exec.LookPath
+/// with PATHEXT, the directory checked first, then CreateProcessW; the
+/// process handle is the pid. UNTESTED on windows.
+fn launch_windows(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
+  let path = process.real_env_get("PATH")
+  let pe = process.real_env_get("PATHEXT")
+  let file = windows.look_path(c.name, if path.is_empty() { "" } else { path[0] }, if pe.is_empty() { "" } else { pe[0] })
+  if file.is_empty() {
+    return ("1", 0, c.name)
+  }
+  if !c.dir.is_empty() {
+    // os.StartProcess checks the directory first
+    let (_st, e) = windows.stat(c.dir, true)
+    if e != 0 {
+      if e == windows.ENOENT {
+        return ("1", 0, c.name)
+      }
+      return ("2", 0, "chdir ${c.dir}: " + lower_first(sysio.err_msg(3, e)))
+    }
+  }
+  if outf == FD_INHERIT || errf == FD_INHERIT || errf == FD_DUP_OUT {
+    // the program's output so far comes first
+    stdio.flush()
+  }
+  var cl = c.cmdline
+  if cl.is_empty() {
+    // Proc.run has no spec: its arguments quoted as procspec.xo quotes
+    var parts: List[Str] = []
+    for a in c.argv {
+      parts.push(windows.cmd_quote(a))
+    }
+    cl = parts.join(" ")
+  }
+  let (h, e) = windows.spawn(file, cl, c.dir, c.env, (c.flags & 1) != 0, [inf, outf, errf])
+  if e == 0 {
+    return ("0", h, "")
+  }
+  if windows.not_found(e) {
+    return ("1", 0, c.name)
+  }
+  ("2", 0, "fork/exec ${file}: " + windows.win_text(e))
+}
+
 /// EAGAIN on layer l.
-fn eagain(l: Int) -> Int { if l == 2 { 35 } else { 11 } }
+fn eagain(l: Int) -> Int {
+  if l == 3 {
+    return windows.EAGAIN
+  }
+  if l == 2 { 35 } else { 11 }
+}
 
 const EINTR = 4
 
+/// Closes descriptor (or on Windows handle) fd unless it is negative.
 fn close_fd(l: Int, fd: Int) {
   if fd >= 0 {
-    let _r = if l == 2 { darwin.close(fd) } else { linux.close(fd) }
+    let _r = if l == 3 { windows.close(fd) } else if l == 2 { darwin.close(fd) } else { linux.close(fd) }
   }
 }
 
-fn read_fd(l: Int, fd: Int, a: Int, n: Int) -> Int { if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) } }
+fn read_fd(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.pipe_read(fd, a, n)
+  }
+  if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
+}
 
-fn write_fd(l: Int, fd: Int, a: Int, n: Int) -> Int { if l == 2 { darwin.write_at(fd, a, n) } else { linux.write_at(fd, a, n) } }
+fn write_fd(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.pipe_write(fd, a, n)
+  }
+  if l == 2 { darwin.write_at(fd, a, n) } else { linux.write_at(fd, a, n) }
+}
 
 fn kill9(l: Int, pid: Int) {
+  if l == 3 {
+    windows.kill_proc(pid)
+    return
+  }
   let _r = if l == 2 { darwin.kill(pid, 9) } else { linux.kill(pid, 9) }
 }
 
 /// A pipe whose ends close on exec, its end nb (0 or 1; -1 neither)
 /// nonblocking: the read end, the write end, and 0, or the errno.
 fn pipe(l: Int, nb: Int) -> (Int, Int, Int) {
+  if l == 3 {
+    // PIPE_NOWAIT handles no child inherits (CreateProcessW names its
+    // three)
+    return windows.pipe(nb)
+  }
   let a = rt.heap_large(8)
   let r = if l == 2 { darwin.pipe_at(a) } else { linux.pipe2(a, linux.O_CLOEXEC) }
   let fds = [rt.mem_load(a, 0, 4), rt.mem_load(a, 4, 4)]
@@ -546,7 +626,8 @@ fn collect(l: Int, fds: List[Int], feed: Int, data: Bytes) -> (List[Str], Bool) 
   var pds: List[Int] = []
   var open: List[Bool] = []
   for fd in fds {
-    pds.push(poll.pd_new(fd, false))
+    // Windows' pipes are not the poller's: 0, polled in steps
+    pds.push(if l == 3 { 0 } else { poll.pd_new(fd, false) })
     open.push(true)
   }
   // the bytes read, in pieces, and the stream of each piece
@@ -664,6 +745,9 @@ fn exit_code(ws: Int) -> Int {
 /// already): its exit status, and whether the task was canceled
 /// (xo_proc.c pr_wait).
 fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
+  if l == 3 {
+    return wait_windows(pid, canceled0)
+  }
   var canceled = canceled0
   let st = rt.heap_large(8)
   rt.mem_store(st, 0, 0, 8)
@@ -699,6 +783,37 @@ fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
   }
   rt.heap_release(st - 8)
   (code, canceled)
+}
+
+/// wait_exit on Windows (xo_proc.c pr_wait): the process handle reaped
+/// (and closed) with its exit code.
+fn wait_windows(h: Int, canceled0: Bool) -> (Int, Bool) {
+  var canceled = canceled0
+  var step = 1000000
+  while true {
+    let (done, code) = windows.reap(h, canceled)
+    if done {
+      return (code, canceled)
+    }
+    if canceled {
+      // a blocking wait that failed: the handle is not a process
+      return (-1, canceled)
+    }
+    if poll.canceled() {
+      canceled = true
+      windows.kill_proc(h)
+      continue
+    }
+    stdio.flush()
+    if poll.sleep_until(sysio.mono_ns() + step) == poll.CANCELED {
+      canceled = true
+      windows.kill_proc(h)
+    }
+    if step < 50000000 {
+      step *= 2
+    }
+  }
+  (-1, canceled)
 }
 
 /// Proc.run (xo_proc.c xo_proc_run): cmd with args, its standard input
@@ -896,7 +1011,9 @@ pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[S
 // count and free function: xo_proc.c's child_free_x, which calls
 // child_free here) and the words below. Standard input data is written
 // to its pipe by every wait of the child's operations (the C wrote it
-// from a thread of its own). UNTESTED on Linux.
+// from a thread of its own). UNTESTED on Linux; on Windows (UNTESTED on
+// windows) the pid word holds the process handle and the pipes have no
+// poller records.
 
 /// The record's words: the pid, the start's status ('0' started, '1' not
 /// found, '2' an error, '3' canceled) and its message (a malloc'd block
@@ -1086,7 +1203,7 @@ pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
   st(ch, CH_FD + 8, e0)
   for i in 0..2 {
     let fd = ld(ch, CH_FD + 8 * i)
-    if fd >= 0 {
+    if fd >= 0 && l != 3 {
       st(ch, CH_PD + 8 * i, poll.pd_new(fd, false))
     }
   }
@@ -1142,7 +1259,10 @@ pub fn child_free(ch: Int) {
     }
     free_block(ld(ch, CH_FBUF + 8 * i))
   }
-  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+  if l == 3 && ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    // a process handle not reaped: forgotten (xo_proc.c pr_release)
+    close_fd(l, ld(ch, CH_PID))
+  } else if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
     let sb = rt.heap_large(8)
     let _w = if l == 2 { darwin.waitpid_at(ld(ch, CH_PID), sb, 1) } else { linux.wait4_at(ld(ch, CH_PID), sb, 1) }
     rt.heap_release(sb - 8)
@@ -1167,7 +1287,14 @@ pub fn child_start(h: rt.ProcChild) -> List[Str] {
 /// c.pid(): 0 for FakeProc's child.
 pub fn child_pid(h: rt.ProcChild) -> Int {
   let ch = rt.obj_addr(h)
-  if ld(ch, CH_FAKE) != 0 { 0 } else { ld(ch, CH_PID) }
+  if ld(ch, CH_FAKE) != 0 {
+    return 0
+  }
+  if sysio.layer() == 3 && ld(ch, CH_ST) == 48 {
+    // the pid of the process handle
+    return windows.pid_of(ld(ch, CH_PID))
+  }
+  ld(ch, CH_PID)
 }
 
 /// "2" and "<what>: <errno text>" (xo_proc.c pr_io).

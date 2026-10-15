@@ -1547,10 +1547,8 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if testworld.fake(testworld.REAL_PROC) {
     // FakeProc.on_run's outputs (std/native/llrt/testworld.xo)
     r = if rt.fs_canceled() { ["3", ""] } else { testworld.proc_run(cmd) }
-  } else if sysio.layer() == 3 {
-    r = rt.proc_run(cmd, args)
   } else {
-    // std/native/llrt/proc.xo on macOS and Linux (work item B25)
+    // std/native/llrt/proc.xo (work item B25)
     r = proc.run(cmd, args)
   }
   let st = r.get(0) ?? "2"
@@ -1813,15 +1811,12 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
   ProcOutput{code: text.parse_int(d) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
 }
 
-/// rt.proc_exec of the specs, or in the test world the outputs
+/// proc.xo exec of the specs, or in the test world the outputs
 /// FakeProc.on_run registered (std/native/llrt/testworld.xo): canceled,
 /// no command, or std/rt's fakeProc output, runTerm, and pipeline.
 fn proc_exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
   if !testworld.fake(testworld.REAL_PROC) {
-    if sysio.layer() == 3 {
-      return rt.proc_exec(spec, input, has_input, mode)
-    }
-    // std/native/llrt/proc.xo on macOS and Linux (work item B25)
+    // std/native/llrt/proc.xo (work item B25)
     return proc.exec(spec, input, has_input, mode)
   }
   if rt.fs_canceled() {
@@ -1862,10 +1857,9 @@ fn cmd_spawn(c: Cmd) -> Child ! ProcErr uses proc {
   cmd_check(c)?
   var spec: List[Str] = []
   cmd_spec(c, spec)
-  // std/native/llrt/proc.xo's children on macOS and Linux (work item B25)
-  let win = sysio.layer() == 3
-  let h = if win { rt.proc_spawn(spec, c.input, c.has_input) } else { proc.spawn(spec, c.input, c.has_input) }
-  let r = if win { rt.proc_child_start(h) } else { proc.child_start(h) }
+  // std/native/llrt/proc.xo's children (work item B25)
+  let h = proc.spawn(spec, c.input, c.has_input)
+  let r = proc.child_start(h)
   let st = r.get(0) ?? "2"
   if st != "0" {
     return Err(proc_err(st, r.get(1) ?? ""))
@@ -1896,26 +1890,20 @@ fn proc_pipeline(p: Proc, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc {
   proc_outcome(proc_exec(spec, cmds[0].input, cmds[0].has_input, 2))
 }
 
-fn child_pid(c: Child) -> Int { if sysio.layer() == 3 { rt.proc_child_pid(c.h) } else { proc.child_pid(c.h) } }
+fn child_pid(c: Child) -> Int { proc.child_pid(c.h) }
 
 fn child_write(c: Child, data: Bytes) -> () ! ProcErr uses proc {
-  let r = if sysio.layer() == 3 { rt.proc_child_write(c.h, data) } else { proc.child_write(c.h, data) }
+  let r = proc.child_write(c.h, data)
   let st = r.get(0) ?? "2"
   if st != "0" {
     return Err(proc_err(st, r.get(1) ?? ""))
   }
 }
 
-fn child_close_stdin(c: Child) {
-  if sysio.layer() == 3 {
-    rt.proc_child_close_stdin(c.h)
-  } else {
-    proc.child_close_stdin(c.h)
-  }
-}
+fn child_close_stdin(c: Child) { proc.child_close_stdin(c.h) }
 
 fn child_read_from(c: Child, err: Bool, max: Int) -> Bytes? ! ProcErr {
-  let r = if sysio.layer() == 3 { rt.proc_child_read(c.h, err, max) } else { proc.child_read(c.h, err, max) }
+  let r = proc.child_read(c.h, err, max)
   let st = r.get(0) ?? "2"
   if st == "e" {
     return None
@@ -1931,7 +1919,7 @@ fn child_read(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_fro
 fn child_read_err(c: Child, max: Int) -> Bytes? ! ProcErr uses proc { child_read_from(c, true, max) }
 
 fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
-  let r = if sysio.layer() == 3 { rt.proc_child_read_line(c.h) } else { proc.child_read_line(c.h) }
+  let r = proc.child_read_line(c.h)
   let st = r.get(0) ?? "2"
   if st == "e" {
     return None
@@ -1943,7 +1931,7 @@ fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
 }
 
 fn child_wait(c: Child) -> Int ! ProcErr uses proc {
-  let r = if sysio.layer() == 3 { rt.proc_child_wait(c.h) } else { proc.child_wait(c.h) }
+  let r = proc.child_wait(c.h)
   let st = r.get(0) ?? "2"
   if st != "0" {
     return Err(proc_err(st, r.get(1) ?? ""))
@@ -1951,13 +1939,7 @@ fn child_wait(c: Child) -> Int ! ProcErr uses proc {
   text.parse_int(r.get(1) ?? "0") ?? 0
 }
 
-fn child_kill(c: Child) {
-  if sysio.layer() == 3 {
-    rt.proc_child_kill(c.h)
-  } else {
-    proc.child_kill(c.h)
-  }
-}
+fn child_kill(c: Child) { proc.child_kill(c.h) }
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
   let (line, st, msg) = stdinrt.read(false)

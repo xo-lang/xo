@@ -11,6 +11,7 @@
 use native/llrt/cabi_proc
 use native/llrt/fsops
 use native/llrt/process
+use native/llrt/windows as winlayer
 use native/rt
 
 /// Whether the target is Windows.
@@ -21,7 +22,7 @@ fn windows() -> Bool {
   }
 }
 
-/// The spec of a command for rt.proc_exec and rt.proc_spawn, appended to
+/// The spec of a command for proc.xo's exec and spawn, appended to
 /// out: name, dir, flags, the arguments, the environment, the variables
 /// added (none: Xo merged them), and the Windows command line. Flag 8
 /// tells xo_proc.c that the environment is final (flag 1: there is one,
@@ -62,9 +63,9 @@ pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], e
   }
   out.push("0")
   if win {
-    var cl = quote(name)
+    var cl = winlayer.cmd_quote(name)
     for a in args {
-      cl = cl + " " + quote(a)
+      cl = cl + " " + winlayer.cmd_quote(a)
     }
     out.push(cl)
   } else {
@@ -192,59 +193,3 @@ fn abs(dir: Str) -> Str {
   "/" + segs.join("/")
 }
 
-/// s quoted as Go's syscall.EscapeArg (the rules CommandLineToArgvW and
-/// the C runtime parse a command line by), and also when s holds a line
-/// end or another space character.
-fn quote(s: Str) -> Str {
-  let b = s.bytes()
-  var n = 0
-  while n < b.len() && b[n] != 0 {
-    n += 1
-  }
-  if n == 0 {
-    return "\"\""
-  }
-  var bs = false
-  var sp = false
-  var i = 0
-  while i < n {
-    let c = Int(b[i])
-    bs = bs || c == 34 || c == 92
-    sp = sp || c == 32 || (c >= 9 && c <= 13)
-    i += 1
-  }
-  let t = if n == b.len() { s } else { rt.str_slice(s, 0, n) }
-  if !bs && !sp {
-    return t
-  }
-  if !bs {
-    return "\"" + t + "\""
-  }
-  var out = if sp { "\"" } else { "" }
-  var slashes = 0
-  i = 0
-  while i < n {
-    let c = Int(b[i])
-    if c == 92 {
-      slashes += 1
-    } else if c == 34 {
-      while slashes > 0 {
-        out = rt.rs_push_byte(out, 92)
-        slashes -= 1
-      }
-      out = rt.rs_push_byte(out, 92)
-    } else {
-      slashes = 0
-    }
-    out = rt.rs_push_byte(out, c)
-    i += 1
-  }
-  if sp {
-    while slashes > 0 {
-      out = rt.rs_push_byte(out, 92)
-      slashes -= 1
-    }
-    out = rt.rs_push_byte(out, 34)
-  }
-  out
-}

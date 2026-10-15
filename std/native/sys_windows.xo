@@ -148,3 +148,34 @@ fn ioctlsocket(s: Int, cmd: Int, arg: Int) -> Int32
 /// and the rest); the result list is freeaddrinfo's.
 fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
 fn freeaddrinfo(ai: Int)
+
+// Processes (std/native/llrt/windows.xo's process section, the zero-C
+// audit's B25; was xo_proc.c's Windows code).
+
+/// CreatePipe: the read and write handles at the addresses r and w (the
+/// SECURITY_ATTRIBUTES at sa, 0 for not inherited), size the buffer.
+fn CreatePipe(r: Int, w: Int, sa: Int, size: Int) -> Int32
+/// SetNamedPipeHandleState with the DWORD mode at the address mode
+/// (PIPE_NOWAIT 1: reads and writes return at once).
+fn SetNamedPipeHandleState(h: Int, mode: Int, count: Int, timeout: Int) -> Int32
+/// DuplicateHandle into the handle at the address target.
+fn DuplicateHandle(sproc: Int, h: Int, tproc: Int, target: Int, access: Int, inherit: Int, options: Int) -> Int32
+/// CreateProcessW: nonzero on success, the PROCESS_INFORMATION (24
+/// bytes) at pi.
+fn CreateProcessW(app: Int, cmdline: Int, pattrs: Int, tattrs: Int, inherit: Int, flags: Int, env: Int, dir: Int, si: Int, pi: Int) -> Int32
+/// InitializeProcThreadAttributeList: the size needed at the address
+/// size (list 0 asks for it).
+fn InitializeProcThreadAttributeList(list: Int, count: Int, flags: Int, size: Int) -> Int32
+fn UpdateProcThreadAttribute(list: Int, flags: Int, attr: Int, value: Int, size: Int, prev: Int, ret: Int) -> Int32
+fn DeleteProcThreadAttributeList(list: Int)
+/// WaitForSingleObject: 0 (WAIT_OBJECT_0) when h is signaled within ms
+/// (INFINITE 0xFFFFFFFF).
+fn WaitForSingleObject(h: Int, ms: Int) -> UInt32
+/// GetExitCodeProcess into the DWORD at the address code.
+fn GetExitCodeProcess(h: Int, code: Int) -> Int32
+fn GetProcessId(h: Int) -> UInt32
+/// FormatMessageW into the n UTF-16 units at buf: the units written.
+fn FormatMessageW(flags: Int, source: Int, id: Int, lang: Int, buf: Int, n: Int, args: Int) -> UInt32
+/// GetFullPathNameW of the UTF-16 name into the n units at buf: the
+/// units written without the NUL, or the size needed.
+fn GetFullPathNameW(name: Bytes, n: Int, buf: Int, part: Int) -> UInt32

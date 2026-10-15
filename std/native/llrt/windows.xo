@@ -923,3 +923,411 @@ fn utf8_of(b: Bytes, off: Int, n: Int, slash: Bool) -> Str {
   keep(u, 0)
   r
 }
+
+// ---------------------------------------------------------------------------
+// Processes (std/native/llrt/proc.xo's Windows arms, the zero-C audit's
+// B25; xo_proc.c's Windows code): UNTESTED on windows.
+
+/// s quoted as Go's syscall.EscapeArg (the rules CommandLineToArgvW and
+/// the C runtime parse a command line by), and also when s holds a line
+/// end or another space character.
+pub fn cmd_quote(s: Str) -> Str {
+  let b = s.bytes()
+  var n = 0
+  while n < b.len() && b[n] != 0 {
+    n += 1
+  }
+  if n == 0 {
+    return "\"\""
+  }
+  var bs = false
+  var sp = false
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    bs = bs || c == 34 || c == 92
+    sp = sp || c == 32 || (c >= 9 && c <= 13)
+    i += 1
+  }
+  let t = if n == b.len() { s } else { rt.str_slice(s, 0, n) }
+  if !bs && !sp {
+    return t
+  }
+  if !bs {
+    return "\"" + t + "\""
+  }
+  var out = if sp { "\"" } else { "" }
+  var slashes = 0
+  i = 0
+  while i < n {
+    let c = Int(b[i])
+    if c == 92 {
+      slashes += 1
+    } else if c == 34 {
+      while slashes > 0 {
+        out = rt.rs_push_byte(out, 92)
+        slashes -= 1
+      }
+      out = rt.rs_push_byte(out, 92)
+    } else {
+      slashes = 0
+    }
+    out = rt.rs_push_byte(out, c)
+    i += 1
+  }
+  if sp {
+    while slashes > 0 {
+      out = rt.rs_push_byte(out, 92)
+      slashes -= 1
+    }
+    out = rt.rs_push_byte(out, 34)
+  }
+  out
+}
+
+/// errno EAGAIN of the Microsoft C runtime: what pipe_read and
+/// pipe_write return (negated) when a PIPE_NOWAIT pipe has nothing now.
+pub const EAGAIN: Int = 11
+
+const PIPE_NOWAIT: Int = 1
+const ERROR_FILE_NOT_FOUND: Int = 2
+const ERROR_PATH_NOT_FOUND: Int = 3
+const ERROR_NO_DATA: Int = 232
+const STD_INPUT_HANDLE: Int = 4294967286
+const INFINITE: Int = 4294967295
+const DUPLICATE_SAME_ACCESS: Int = 2
+const STARTF_USESTDHANDLES: Int = 256
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: Int = 131074
+const CREATE_UNICODE_ENVIRONMENT: Int = 1024
+const EXTENDED_STARTUPINFO_PRESENT: Int = 524288
+/// The status a killed process gets: 128 plus SIGKILL's number, as on
+/// Unix (std.md 3.7).
+const KILLED: Int = 137
+
+/// A pipe no child inherits (CreateProcessW's handle list names what a
+/// child gets), its end nb (0 the read end, 1 the write end; -1 neither)
+/// in PIPE_NOWAIT mode, so the program's reads and writes return at once
+/// (xo_proc.c pumped such an end through a socket for the poller; Xo
+/// polls it in steps instead): the read and write handles and 0, or -1,
+/// -1, and the errno.
+pub fn pipe(nb: Int) -> (Int, Int, Int) {
+  let b = raw.bytes_buf(16)
+  let a = raw.bytes_addr(b)
+  if Int(sys_windows.CreatePipe(a, a + 8, 0, 65536)) == 0 {
+    return (-1, -1, dos_errno(Int(sys_windows.GetLastError())))
+  }
+  let r = rt.mem_load(a, 0, 8)
+  let w = rt.mem_load(a, 8, 8)
+  if nb >= 0 {
+    rt.mem_store(a, 0, PIPE_NOWAIT, 4)
+    let _s = keep(b, Int(sys_windows.SetNamedPipeHandleState(if nb == 0 { r } else { w }, a, 0, 0)))
+  }
+  (r, w, 0)
+}
+
+/// Reads at most n bytes of the pipe h to the address a: the count, 0 at
+/// its end (the writer closed it), -EAGAIN when it has nothing now, or
+/// the negative errno.
+pub fn pipe_read(h: Int, a: Int, n: Int) -> Int {
+  let b = raw.bytes_buf(8)
+  let done = raw.bytes_addr(b)
+  rt.mem_store(done, 0, 0, 8)
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  if Int(sys_windows.ReadFile(h, a, k, done, 0)) == 0 {
+    let e = Int(sys_windows.GetLastError())
+    if e == ERROR_BROKEN_PIPE {
+      return 0
+    }
+    if e == ERROR_NO_DATA {
+      return -EAGAIN
+    }
+    return -dos_errno(e)
+  }
+  let got = keep(b, rt.mem_load(done, 0, 8) & 4294967295)
+  if got == 0 { -EAGAIN } else { got }
+}
+
+/// Writes at most n bytes at the address a to the pipe h: the count,
+/// -EAGAIN when it takes none now, or the negative errno (the reader
+/// closed it: ERROR_NO_DATA).
+pub fn pipe_write(h: Int, a: Int, n: Int) -> Int {
+  let b = raw.bytes_buf(8)
+  let done = raw.bytes_addr(b)
+  rt.mem_store(done, 0, 0, 8)
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  if Int(sys_windows.WriteFile(h, a, k, done, 0)) == 0 {
+    return -dos_errno(Int(sys_windows.GetLastError()))
+  }
+  let put = keep(b, rt.mem_load(done, 0, 8) & 4294967295)
+  if put == 0 { -EAGAIN } else { put }
+}
+
+/// Whether process h exited (waiting for it when block): true and its
+/// exit code, the handle closed; else false.
+pub fn reap(h: Int, block: Bool) -> (Bool, Int) {
+  if Int(sys_windows.WaitForSingleObject(h, if block { INFINITE } else { 0 })) != 0 {
+    return (false, 0)
+  }
+  let b = raw.bytes_buf(8)
+  let a = raw.bytes_addr(b)
+  rt.mem_store(a, 0, 0, 8)
+  let _g = sys_windows.GetExitCodeProcess(h, a)
+  let code = keep(b, rt.mem_load(a, 0, 4))
+  let _c = sys_windows.CloseHandle(h)
+  (true, code)
+}
+
+/// Ends the started process h (Child.kill, cancellation) with status 137.
+pub fn kill_proc(h: Int) {
+  let _t = sys_windows.TerminateProcess(h, KILLED)
+}
+
+/// The process id of the process handle h.
+pub fn pid_of(h: Int) -> Int { Int(sys_windows.GetProcessId(h)) }
+
+/// The system's message for Win32 error e (Go's syscall.Errno.Error on
+/// Windows: FormatMessage in US English without the line end).
+pub fn win_text(e: Int) -> Str {
+  let b = raw.bytes_buf(1024)
+  let a = raw.bytes_addr(b)
+  // FORMAT_MESSAGE_FROM_SYSTEM | IGNORE_INSERTS | MAX_WIDTH_MASK; English
+  // (United States)
+  var k = Int(sys_windows.FormatMessageW(4096 | 512 | 255, 0, e, 1033, a, 512, 0))
+  while k > 0 {
+    let c = rt.mem_load(a, 2 * (k - 1), 2)
+    if c != 10 && c != 13 && c != 32 {
+      break
+    }
+    k -= 1
+  }
+  if k == 0 {
+    return "winapi error #${e}"
+  }
+  narrow(b, 0, k)
+}
+
+/// Whether path names an existing file that is not a directory.
+fn is_file(path: Str) -> Bool {
+  let a = attrs(cpath(path))
+  a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) == 0
+}
+
+fn lower_ascii(s: Str) -> Str {
+  var out = ""
+  for c in s.bytes() {
+    out = rt.rs_push_byte(out, if c >= 65 && c <= 90 { Int(c) + 32 } else { Int(c) })
+  }
+  out
+}
+
+/// exec's findExecutable on Windows: path itself when it has an
+/// extension and exists, else path with each extension of pathext (";"
+/// separated, PATHEXT) in turn, or "".
+fn find_exe(path: Str, pathext: Str) -> Str {
+  let pe = if pathext.is_empty() { ".com;.exe;.bat;.cmd" } else { pathext }
+  let b = path.bytes()
+  var dot = -1
+  var sep = -1
+  for i in 0..b.len() {
+    if b[i] == 46 {
+      dot = i
+    }
+    if b[i] == 47 || b[i] == 92 {
+      sep = i
+    }
+  }
+  if dot >= 0 && sep < dot && is_file(path) {
+    return path
+  }
+  for ext in pe.split(";") {
+    if !ext.is_empty() {
+      let full = path + lower_ascii(ext)
+      if is_file(full) {
+        return full
+      }
+    }
+  }
+  ""
+}
+
+/// exec.LookPath on Windows: a command naming a path (any of \ / :) is
+/// found with PATHEXT's extensions; a name is looked up in each directory
+/// of path (";" separated, quotes taken off). The file, or "".
+pub fn look_path(cmd: Str, path: Str, pathext: Str) -> Str {
+  if cmd.contains("/") || cmd.contains("\\") || cmd.contains(":") {
+    return find_exe(cmd, pathext)
+  }
+  for d0 in path.split(";") {
+    var d = d0
+    if d.len() >= 2 && d.starts_with("\"") && d.ends_with("\"") {
+      d = rt.str_slice(d, 1, d.len() - 1)
+    }
+    if !d.is_empty() {
+      let f = find_exe(d + "\\" + cmd, pathext)
+      if !f.is_empty() {
+        return f
+      }
+    }
+  }
+  ""
+}
+
+/// An inheritable copy of handle h (0 when h is not a handle).
+fn inheritable(h: Int) -> Int {
+  if h == 0 || h == -1 {
+    return 0
+  }
+  let b = raw.bytes_buf(8)
+  let a = raw.bytes_addr(b)
+  rt.mem_store(a, 0, 0, 8)
+  // the current process's pseudo handle is -1
+  if Int(sys_windows.DuplicateHandle(-1, h, -1, a, 0, 1, DUPLICATE_SAME_ACCESS)) == 0 {
+    return 0
+  }
+  keep(b, rt.mem_load(a, 0, 8))
+}
+
+/// NUL opened for a child's standard stream k, inheritable (0 on
+/// failure).
+fn null_for(k: Int) -> Int {
+  // SECURITY_ATTRIBUTES: its size, no descriptor, inheritable
+  let b = raw.bytes_buf(24)
+  let sa = raw.bytes_addr(b)
+  rt.mem_set(sa, 0, 24)
+  rt.mem_store(sa, 0, 24, 4)
+  rt.mem_store(sa, 16, 1, 4)
+  let h = sys_windows.CreateFileW(wide(cpath("NUL")), if k == 0 { GENERIC_READ } else { GENERIC_WRITE }, FILE_SHARE_READ | FILE_SHARE_WRITE, sa, OPEN_EXISTING, 0, 0)
+  keep(b, if h == -1 { 0 } else { h })
+}
+
+/// The absolute UTF-16 form (with its NUL) of directory dir, or empty.
+fn full_dir(dir: Str) -> Bytes {
+  let w = wide(cpath(dir))
+  let n = Int(sys_windows.GetFullPathNameW(w, 0, 0, 0))
+  if n == 0 {
+    return b""
+  }
+  let out = raw.bytes_buf(2 * n + 2)
+  let k = Int(sys_windows.GetFullPathNameW(w, n, raw.bytes_addr(out), 0))
+  if k == 0 || k >= n {
+    return b""
+  }
+  out
+}
+
+/// The UTF-16 environment block of env ("NAME=VALUE" each, with its NUL,
+/// then a NUL; an empty block is two NULs).
+fn env_block(env: List[Str]) -> Bytes {
+  var s = BytesBuilder.with_capacity(256)
+  var any = false
+  for e in env {
+    if !e.is_empty() {
+      s.write(wide(cpath(e)))
+      any = true
+    }
+  }
+  unit(s, 0)
+  if !any {
+    unit(s, 0)
+  }
+  s.freeze()
+}
+
+/// Starts file with the command line cmdline (procspec.xo's quoting),
+/// the directory dir ("" the program's), the environment env when
+/// has_env (else the program's), and the standard streams fds (a pipe's
+/// handle, or proc.xo's FD_NULL -1, FD_INHERIT -2, FD_DUP_OUT -3):
+/// CreateProcessW with exactly those three handles inherited (an explicit
+/// handle list, STARTUPINFOEXW). The process handle and 0, or 0 and the
+/// Win32 error. UNTESTED on windows.
+pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int]) -> (Int, Int) {
+  var hs = [0, 0, 0]
+  for k in 0..3 {
+    let fd = fds[k]
+    if fd == -3 {
+      hs[k] = inheritable(hs[1])
+    } else if fd == -2 {
+      hs[k] = inheritable(sys_windows.GetStdHandle(STD_INPUT_HANDLE - k))
+    } else if fd >= 0 {
+      hs[k] = inheritable(fd)
+    }
+    if hs[k] == 0 {
+      hs[k] = null_for(k)
+    }
+  }
+  // the handle list: each handle once
+  let lb = raw.bytes_buf(24)
+  let la = raw.bytes_addr(lb)
+  var nl = 0
+  for k in 0..3 {
+    var dup = false
+    for j in 0..nl {
+      dup = dup || rt.mem_load(la, 8 * j, 8) == hs[k]
+    }
+    if hs[k] != 0 && !dup {
+      rt.mem_store(la, 8 * nl, hs[k], 8)
+      nl += 1
+    }
+  }
+  let szb = raw.bytes_buf(8)
+  let sz = raw.bytes_addr(szb)
+  rt.mem_store(sz, 0, 0, 8)
+  let _q = sys_windows.InitializeProcThreadAttributeList(0, 1, 0, sz)
+  let alb = raw.bytes_buf(rt.mem_load(sz, 0, 8) + 16)
+  let al = raw.bytes_addr(alb)
+  var ok = Int(sys_windows.InitializeProcThreadAttributeList(al, 1, 0, sz)) != 0
+  var e = 0
+  var started = false
+  if !ok {
+    e = Int(sys_windows.GetLastError())
+  } else if nl > 0 && Int(sys_windows.UpdateProcThreadAttribute(al, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, la, 8 * nl, 0, 0)) == 0 {
+    e = Int(sys_windows.GetLastError())
+    ok = false
+  }
+  // STARTUPINFOEXW (112 bytes): cb, dwFlags at 60, the standard handles
+  // at 80, 88, 96, the attribute list at 104; PROCESS_INFORMATION after it
+  let sib = raw.bytes_buf(144)
+  let si = raw.bytes_addr(sib)
+  rt.mem_set(si, 0, 144)
+  rt.mem_store(si, 0, 112, 4)
+  rt.mem_store(si, 60, STARTF_USESTDHANDLES, 4)
+  rt.mem_store(si, 80, hs[0], 8)
+  rt.mem_store(si, 88, hs[1], 8)
+  rt.mem_store(si, 96, hs[2], 8)
+  rt.mem_store(si, 104, al, 8)
+  let pi = si + 112
+  let wfile = wide(cpath(file))
+  // CreateProcessW may write to the command line: a copy of its own
+  let wcl = wide(cpath(cmdline))
+  let wdir = if dir.is_empty() { b"" } else { full_dir(dir) }
+  let wenv = if has_env { env_block(env) } else { b"" }
+  if ok {
+    let r = sys_windows.CreateProcessW(raw.bytes_addr(wfile), raw.bytes_addr(wcl), 0, 0, if nl > 0 { 1 } else { 0 }, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, if has_env { raw.bytes_addr(wenv) } else { 0 }, if wdir.is_empty() { 0 } else { raw.bytes_addr(wdir) }, si, pi)
+    if Int(r) == 0 {
+      e = Int(sys_windows.GetLastError())
+    } else {
+      started = true
+    }
+  }
+  if ok {
+    sys_windows.DeleteProcThreadAttributeList(al)
+  }
+  for k in 0..3 {
+    if hs[k] != 0 {
+      let _c = sys_windows.CloseHandle(hs[k])
+    }
+  }
+  let proc = rt.mem_load(pi, 0, 8)
+  let thread = rt.mem_load(pi, 8, 8)
+  let _k = keep(lb, keep(szb, keep(alb, keep(wfile, keep(wcl, keep(wdir, keep(wenv, 0)))))))
+  let _s = keep(sib, 0)
+  if !started {
+    // ERROR_INVALID_PARAMETER when the call gave no error
+    return (0, if e == 0 { 87 } else { e })
+  }
+  let _t = sys_windows.CloseHandle(thread)
+  (proc, 0)
+}
+
+/// Whether Win32 error e means the file was not found.
+pub fn not_found(e: Int) -> Bool { e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND }

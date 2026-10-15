@@ -893,8 +893,8 @@ pub fn proc_run(cmd: Str) -> List[Str] {
 }
 
 /// std/rt's fakeProc output, runTerm, and pipeline of the commands of
-/// the specs (procspec.xo spec; mode as rt.proc_exec's): the outcome as
-/// rt.proc_exec gives it.
+/// the specs (procspec.xo spec; mode as proc.xo exec's): the outcome as
+/// proc.xo exec gives it.
 pub fn proc_exec(specs: List[Str], mode: Int) -> List[Str] {
   var out = ""
   var errs = ""

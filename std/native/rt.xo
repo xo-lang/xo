@@ -522,14 +522,7 @@ fn time_of(ns: Int) -> Time
 fn time_ns(t: Time) -> Int
 
 // ---------------------------------------------------------------------------
-// Processes (decision 0107)
-
-/// Runs cmd with args: the status ("0" ran, "1" not found, "2" an error,
-/// "3" canceled), the exit code in decimal or the error's message, and
-/// when it ran standard output and error.
-fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
-
-// Commands, children, and pipelines (decisions 0161 and 0172). A command
+// Processes (decision 0107): commands, children, and pipelines (decisions 0161 and 0172). A command
 // is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
 // 2 inherit, 4 merge_stderr), the count of args and the args, the count
 // of env entries and the entries, the count of set_env entries and the
@@ -537,28 +530,11 @@ fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
 // done (then the values), "e" the end of a stream, "1" not found (the
 // command), "2" an error (the message), "3" canceled.
 
-/// A started command (Child): a handle of the C runtime.
+/// A started command (Child): a record of std/native/llrt/proc.xo's (its
+/// words CH_*) behind the C runtime's object header.
 struct ProcChild {}
-/// Runs the specs (mode 0 output, 1 on the terminal, 2 a pipeline of all
-/// of them) with input as the first one's standard input when has_input:
-/// "0", the status, standard output, standard error.
-fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
-/// Starts the command; proc_child_start tells how that went.
-fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
-fn proc_child_start(c: ProcChild) -> List[Str]
-fn proc_child_pid(c: ProcChild) -> Int
-fn proc_child_write(c: ProcChild, data: Bytes) -> List[Str]
-fn proc_child_close_stdin(c: ProcChild)
-/// At most max bytes of the output (or the error stream): "0" and the
-/// bytes, or "e" at the end.
-fn proc_child_read(c: ProcChild, err: Bool, max: Int) -> List[Str]
-fn proc_child_read_line(c: ProcChild) -> List[Str]
-/// "0" and the exit status.
-fn proc_child_wait(c: ProcChild) -> List[Str]
-fn proc_child_kill(c: ProcChild)
 /// A new child record of std/native/llrt/proc.xo's (CH_SIZE bytes,
-/// zeroed, its free function the C's, which calls proc.xo child_free):
-/// Cmd.spawn off Windows.
+/// zeroed, its free function the C's, which calls proc.xo child_free).
 fn proc_child_new() -> ProcChild
 
 // ---------------------------------------------------------------------------

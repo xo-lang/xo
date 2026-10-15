@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B25, stage 5): on Windows, Proc.run,
+  Cmd.output, run, and spawn, pipelines, and children are Xo too
+  (std/native/llrt/proc.xo over windows.xo: CreateProcessW with an
+  explicit handle list, exec.LookPath with PATHEXT, the program's pipe
+  ends in PIPE_NOWAIT mode polled in short steps instead of the C's
+  socket pumps). xo_proc.c's Windows code is deleted (1,431 to 24
+  lines). Written on macOS and untested on Windows.
 - Native runtime (zero-C audit item B15, part 2): the test world's
   FakeClock (sleeps, advance, set), FakeNet's in memory listeners,
   testing.run_main, FakeProc.signal_after, and os.proc.exit's unwind in a
