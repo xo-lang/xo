@@ -1,27 +1,21 @@
 // ---------------------------------------------------------------------------
-// The Fs operations past read, write, and stat (std.md 3.1, decisions 0102,
-// 0163, 0172) are Xo: std/native/llrt/fsops.xo over linux.xo, darwin.xo,
-// and windows.xo (work item B16), the file and lock handles' records too
-// (fsops.xo raw_file, raw_lock, freed through the services record). What
-// stays here: Time's conversions, the cancellation check, and the stubs
-// that keep fsops.xo's layer 0 arms linked.
+// The Fs operations (std.md 3.1, decisions 0102, 0163, 0172) are Xo:
+// std/native/llrt/fsops.xo and sysio.xo over linux.xo, darwin.xo, and
+// windows.xo (work item B16), the file and lock handles' records too
+// (fsops.xo raw_file, raw_lock, freed through the services record). A
+// Time's conversions are std's own arithmetic (Time.UNIX_EPOCH), the
+// cancellation check the native prelude's llrt_fs_canceled (poll.xo).
+//
+// Seed compatibility (zero-C audit end pass): everything here. This
+// compiler lowers rt.fs_canceled to llrt_fs_canceled and the calls of
+// fsops.xo's and sysio.xo's layer 0 arms (a wasm module's) to a fault on
+// the native targets (selfhost/ssa call.xo wasm_only_rt), so it never
+// names these and never sets XO_FS; the seed (0.11.0) does, for every
+// arm of a `match` on target (gotchas/dead-target-arm-still-links.md).
+// Delete the file, XO_FS, and its include when the seed has this change.
 
-// xo_time_of and xo_time_ns convert between a Time and its Unix
-// nanoseconds, which is how a Time is lowered.
-int64_t xo_time_of(int64_t ns) { return ns; }
-int64_t xo_time_ns(int64_t t) { return t; }
-
-// xo_fs_canceled reports whether an Fs operation reports Canceled: the
-// task is canceled and not in deferred code (std/rt Task.Canceled is
-// shield aware too).
 int64_t xo_fs_canceled(void) { return ctx_canceled(ctx()); }
 
-// ---------------------------------------------------------------------------
-// fsops.xo's and sysio.xo's layer 0 arms (a wasm module's, whose own
-// runtime serves them) name these on the native targets too: every arm of
-// a `match` on target lowers, and a development build (XO_LLVM_OPT=O0,
-// decision 0220) keeps the calls (gotchas/dead-target-arm-still-links.md).
-// They are never run.
 XO_NORETURN static void fs_dead(void) {
 	static const char m[] = "a C Fs operation on a native target";
 	xo_fault_raise(m, sizeof m - 1, "", 0);

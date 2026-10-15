@@ -7,8 +7,8 @@
 // native backends (decision 0198).
 //
 // The searches are scan.xo (decision 0201: find, split, lines,
-// rune_count); the copies stay C (rt.str_slice, rt.rs_append_bytes,
-// Str.repeat, List[Str].join).
+// rune_count); the copies are raw.xo's and obj.xo's (raw.str_slice,
+// rt.rs_append_bytes, Str.repeat, List[Str].join).
 use native/llrt/scan
 use native/llrt/unicode
 use native/rt

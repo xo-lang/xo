@@ -1398,9 +1398,9 @@ fn gunzip(data: Bytes) -> Bytes ! archive.ArchiveErr {
 // ---------------------------------------------------------------------------
 // Entries and paths (std/rt archive.go)
 
-fn file(path: Str, data: Bytes) -> archive.Entry { archive.Entry{path: path, data: data, mode: 0o644, is_dir: false, modified: rt.time_of(0)} }
+fn file(path: Str, data: Bytes) -> archive.Entry { archive.Entry{path: path, data: data, mode: 0o644, is_dir: false, modified: Time.UNIX_EPOCH} }
 
-fn dir(path: Str) -> archive.Entry { archive.Entry{path: path, data: b"", mode: 0o755, is_dir: true, modified: rt.time_of(0)} }
+fn dir(path: Str) -> archive.Entry { archive.Entry{path: path, data: b"", mode: 0o755, is_dir: true, modified: Time.UNIX_EPOCH} }
 
 /// path.Clean.
 fn clean_path(p: Str) -> Str {
@@ -1675,7 +1675,7 @@ fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       size = 0
     }
     let mode = e.mode & 0o7777
-    let ns = rt.time_ns(e.modified)
+    let ns = (e.modified - Time.UNIX_EPOCH).nanos()
     let secs = floor_div(ns, 1000000000)
     var mtime_rec = ""
     var path_rec = ""
@@ -2088,7 +2088,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       Some(x) => x
       None => return Err("untar: entry path ${name.quote()} leaves the archive")
     }
-    var e = archive.Entry{path: p, data: b"", mode: mode & 0o7777, is_dir: false, modified: rt.time_of(mtime_ns)}
+    var e = archive.Entry{path: p, data: b"", mode: mode & 0o7777, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(mtime_ns)}
     if typ == 53 {
       e.is_dir = true
     } else if typ == 48 {
@@ -2211,7 +2211,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     if require && valid {
       flags = flags | 0x800
     }
-    let ns = rt.time_ns(e.modified)
+    let ns = (e.modified - Time.UNIX_EPOCH).nanos()
     let secs = floor_div(ns, 1000000000)
     let days = floor_div(secs, 86400)
     let sod = secs - days * 86400
@@ -2484,7 +2484,7 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
         perm = perm & 0o555
       }
     }
-    var e = archive.Entry{path: p, data: b"", mode: perm, is_dir: false, modified: rt.time_of(zip_modified(zf))}
+    var e = archive.Entry{path: p, data: b"", mode: perm, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf))}
     if typ == 0x4000 || zf.name.ends_with("/") {
       e.is_dir = true
     } else if typ == 0x8000 || typ == 0 {

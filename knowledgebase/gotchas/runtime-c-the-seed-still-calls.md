@@ -54,3 +54,13 @@ prelude's stdio_write (`Stdio.write`) still calling `rt.print`, the C
 and rt.print is gone. A shim's removal is checked by building with the
 seed, not by reading the compiler: the std's own calls of `rt.<name>`
 count too.
+
+Open seed shims again (2026-10-15, the zero-C audit's small files): the
+calls this compiler no longer makes but seed 0.11.0 does, labeled
+"Seed compatibility (zero-C audit end pass)" in the files: xo_std.c
+xo_str_slice, xo_str_repeat, xo_rs_append; xo_bytes.c's builder
+forwarders, xo_rs_push_rune, xo_str_slice_at, xo_bytes_slice_at,
+xo_fault_bytes_index, xo_const_once; all of xo_fs.c and xo_sys.c; the
+non-Windows stubs of xo_stdin.c; xo_rt.c's B19 forwarders (channels,
+select, Mutex, Atomic.new). Delete them with the next seed, checked by
+building selfhost/xo with that seed and nm as above.

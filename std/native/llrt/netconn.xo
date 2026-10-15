@@ -586,7 +586,7 @@ fn unix_addr(path: Str) -> Int {
 /// `net.listen("unix:PATH")` (decision 0190): Go's net.Listen("unix",
 /// PATH), its messages, and the address as given.
 fn unix_listen(c: Int, addr: Str) -> Int {
-  let path = rt.str_slice(addr, 5, addr.len())
+  let path = raw.str_slice(addr, 5, addr.len())
   let sa = unix_addr(path)
   if sa == 0 {
     fail(c, 4, "listen unix ${path}: bind: invalid argument")
@@ -640,7 +640,7 @@ pub fn listener_close(l: Int) {
     // as Go's UnixListener.Close: the socket file goes, once
     rt.mem_store(l, L_UNLINK, 0, 4)
     let a = str_of(ld(l, L_ADDR))
-    unlink(rt.str_slice(a, 5, a.len()))
+    unlink(raw.str_slice(a, 5, a.len()))
   }
 }
 
@@ -665,7 +665,7 @@ pub fn listener_accept(l: Int) -> Int {
     return 0
   }
   let unix = a.starts_with("unix:")
-  let what = if unix { "accept unix ${rt.str_slice(a, 5, a.len())}" } else { "accept tcp ${a}" }
+  let what = if unix { "accept unix ${raw.str_slice(a, 5, a.len())}" } else { "accept tcp ${a}" }
   let pd = ld(l, L_PD)
   if !poll.pd_begin(pd) {
     fail(c, 4, "${what}: ${CLOSED_TEXT}")
@@ -820,7 +820,7 @@ pub fn dial_timeout(addr: Str, d: Int) -> Int {
 /// `net.dial("unix:PATH")` (decision 0190): a socket file with no
 /// listener is Refused, as in Go.
 fn unix_dial(c: Int, addr: Str, when: Int) -> Int {
-  let path = rt.str_slice(addr, 5, addr.len())
+  let path = raw.str_slice(addr, 5, addr.len())
   let sa = unix_addr(path)
   if sa == 0 {
     fail(c, 4, "dial unix ${path}: connect: invalid argument")

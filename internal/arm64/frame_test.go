@@ -53,9 +53,9 @@ func TestFarOutSlot(t *testing.T) {
 			t.Fatalf("an add immediate out of range: %q", m[0])
 		}
 	}
-	if !regexp.MustCompile(`\tadd x\d+, sp, #1, lsl #12\n\tadd x\d+, x\d+, #\d+\n(?:\.L\w+:\n)?\tbl _?xo_rs_push_rune`).MatchString(asm) {
-		i := strings.Index(asm, "xo_rs_push_rune")
-		t.Fatalf("no shifted add for the $OUT slot of the rs_push_rune call:\n%s", asm[max(0, i-400):i+50])
+	if !regexp.MustCompile(`\tadd x\d+, sp, #1, lsl #12\n\tadd x\d+, x\d+, #\d+\n(?:\.L\w+:\n)?\tbl _?xo_x_obj_rs_push_byte`).MatchString(asm) {
+		i := strings.Index(asm, "xo_x_obj_rs_push_byte")
+		t.Fatalf("no shifted add for the $OUT slot of the rs_push_byte call:\n%s", asm[max(0, i-400):i+50])
 	}
 }
 

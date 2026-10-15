@@ -49,6 +49,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   move), and the end's releases for the leak check (twrun.xo end).
   cabi_tw.xo drops five exports no C called. UNTESTED on linux and
   windows.
+- Native runtime (zero-C audit, small files, 2026-10-15): a Time's Unix
+  nanoseconds are std arithmetic (xo_time_of and xo_time_ns deleted);
+  the Fs cancellation check is the native prelude's llrt_fs_canceled;
+  on the native targets the SSA builders lower the wasm layer 0 calls
+  (rt.fs_*) and rt.stdin_* off Windows to a fault, so xo_fs.c, xo_sys.c,
+  and xo_stdin.c's stubs are kept only for the seed; BytesBuilder.write_rune
+  is raw.xo push_rune; the LLVM backend calls obj.xo's string builder
+  exports and both native backends cabi.xo's const_once, as arm64 did.
+  xo_std.c's unused helpers and seven unused cabi.xo exports deleted;
+  the C kept for the seed is labeled for the end pass. UNTESTED on linux
+  and windows.
 - Native runtime (zero-C audit item B28, part 3): the HTTP server's
   registration and connections, streamed bodies (sinks and the streams
   table), request values (the peer's address), and the client's dial,

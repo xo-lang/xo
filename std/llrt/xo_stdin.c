@@ -4,9 +4,14 @@
 // Windows registration and read (decision 0197, stage 5): the poller
 // waits on sockets only, so a pipe or the console is read by a thread of
 // its own into a loopback socket (xo_w_pump, xo_win.c), whose end the
-// reads use and the poller waits on. Elsewhere stdin.xo's Windows arm
-// still names them (gotchas/dead-target-arm-still-links.md): faulting
-// stubs.
+// reads use and the poller waits on.
+//
+// End pass, two kinds: the Windows part is the Windows pump (stays C
+// until xo_win.c's pump is Xo); the stubs below the #else are seed
+// compatibility: this compiler lowers stdin.xo's rt.stdin_* calls to a
+// fault off Windows (selfhost/ssa call.xo), the seed (0.11.0) names them
+// (gotchas/dead-target-arm-still-links.md). Delete the stubs when the
+// seed has this change.
 
 #ifdef _WIN32
 static int sin_sock = -1; // the pumped socket the poller watches

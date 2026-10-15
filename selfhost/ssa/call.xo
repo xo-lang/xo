@@ -1249,6 +1249,22 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
       return v
     }
   }
+  if name == "fs_canceled" {
+    // the native prelude's llrt_fs_canceled (poll.xo); rt.fs_canceled
+    // only in a wasm module (its runtime's)
+    if let Some(v) = b.llrt_or_none(name, nt, vs) {
+      return v
+    }
+  }
+  if !b.wasm && (wasm_only_rt(name) || (name.starts_with("stdin_") && b.target_os() != "windows")) {
+    // the calls of a layer 0 or Windows arm that this target never takes
+    // (the passes keep every arm, gotchas/dead-target-arm-still-links.md):
+    // a fault, as a platform call of another OS, so no C stub is needed
+    let (span, _, _) = call_parts(x)
+    b.fault(b.const_str("the runtime call `rt.${name}` on ${b.target_os()}"), b.pos_line(span))
+    b.dead()
+    return b.undef(nt)
+  }
   if b.is_never(b.c.objs[fo].result) {
     b.rt(name, -1, vs)
     b.add(Op.Unreachable, -1, Aux.None, [])
@@ -1256,6 +1272,17 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     return b.undef(nt)
   }
   b.rt(name, nt, vs)
+}
+
+/// Whether rt.<name> is served only by a wasm module's runtime: the calls
+/// of sysio.xo's and fsops.xo's layer 0 arms (std/native/rt.xo fs_read
+/// through fs_unlock, and the error record fs_set_err, fs_status,
+/// fs_msg).
+fn wasm_only_rt(name: Str) -> Bool {
+  if name is "fs_root" | "fs_mode" | "fs_new" | "fs_canceled" {
+    return false
+  }
+  name.starts_with("fs_")
 }
 
 /// A call of a platform library function declared in
@@ -1835,7 +1862,8 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       }
       "write_rune" => {
         let a = b.io_arg(fo, es, 0, b.m.int_type("Rune"))
-        b.place_set(p, b.rt("rs_push_rune", st, [cur, a]))
+        // the native prelude's llrt_rs_push_rune (raw.xo push_rune)
+        b.place_set(p, b.llrt_or_rt("rs_push_rune", st, [cur, a]))
       }
       _ => {
         let a = b.io_arg(fo, es, 0, st)

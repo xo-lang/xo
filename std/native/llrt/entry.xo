@@ -26,7 +26,7 @@ use native/sys_windows
 /// test binary's: cabi_tw.xo tw_start, weak in xo_rt.c), ev_start (the poller), the signal handler (C
 /// on_signal; on Windows on_console), on_overflow (Windows; 0
 /// elsewhere), the setter of the heap's mid_max (main_heap's and the
-/// C's xo_mid_max), xo_consts_free, xo_x_tz_free (0 without std/time),
+/// C's xo_mid_max), xo_x_consts_free (consts.xo), xo_x_tz_free (0 without std/time),
 /// the runtime statistics' counters (an array of int64, xo_rt.c's st),
 /// and the address of the C int that enables them.
 const E_TW_INIT = 88

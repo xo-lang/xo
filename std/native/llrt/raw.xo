@@ -230,3 +230,23 @@ pub fn str_repeat(s: Str, k: Int) -> Str {
   }
   out
 }
+
+/// s + the UTF-8 of r, U+FFFD when r is not a scalar value
+/// (BytesBuilder.write_rune, utf8.AppendRune; xo_bytes.c's
+/// xo_rs_push_rune before).
+pub fn push_rune(s: Str, r0: Int) -> Str {
+  var r = r0
+  if r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
+    r = 0xFFFD
+  }
+  if r < 0x80 {
+    return rt.rs_push_byte(s, r)
+  }
+  if r < 0x800 {
+    return rt.rs_push_word(s, (0xC0 | (r >> 6)) | ((0x80 | (r & 0x3F)) << 8), 2)
+  }
+  if r < 0x10000 {
+    return rt.rs_push_word(s, (0xE0 | (r >> 12)) | ((0x80 | ((r >> 6) & 0x3F)) << 8) | ((0x80 | (r & 0x3F)) << 16), 3)
+  }
+  rt.rs_push_word(s, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
+}

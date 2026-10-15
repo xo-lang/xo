@@ -636,14 +636,7 @@ static void flush_pending(void) { xo_x_flush(); }
 
 int64_t xo_x_fmt_int(int64_t buf, int64_t v);
 int64_t xo_x_fmt_float(int64_t buf, double f);
-int64_t xo_x_utf8_decode(int64_t p, int64_t n);
 int64_t xo_x_utf8_encode(int64_t p, int64_t r);
-int64_t xo_x_is_space(int64_t r);
-int64_t xo_x_parse_int(int64_t p, int64_t n, int64_t out);
-int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
-int64_t xo_x_fmt_time(int64_t buf, int64_t t);
-int64_t xo_x_b64_val(int64_t c);
-int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
@@ -3963,7 +3956,7 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 // The entry's services (std/native/llrt/entry.xo E_ words): functions
 // that take no arguments are called through rt.call_c2 as they are (the
 // two arguments it passes are ignored on every target's C convention).
-void xo_consts_free(void);
+void xo_x_consts_free(void);
 #ifdef XO_TIME
 void xo_x_tz_free(void);
 #endif
@@ -3996,7 +3989,7 @@ static void stop_svc_init(void) {
 	stop_svc[13] = XO_ADDR(&on_signal);
 #endif
 	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
-	stop_svc[16] = XO_ADDR(&xo_consts_free);
+	stop_svc[16] = XO_ADDR(&xo_x_consts_free);
 #ifdef XO_TIME
 	stop_svc[17] = XO_ADDR(&xo_x_tz_free);
 #endif

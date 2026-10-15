@@ -130,7 +130,7 @@ fn memfs_load() -> MemState {
     }
   }
   var nodes: Map[Str, MemNode] = {}
-  nodes.put("", MemNode{dir: true, data: b"", modified: rt.time_of(0), name: ""})
+  nodes.put("", MemNode{dir: true, data: b"", modified: Time.UNIX_EPOCH, name: ""})
   MemState{nodes: nodes, case_sensitive: true, fails: [], temp_seq: 0}
 }
 
@@ -256,7 +256,7 @@ fn memfs_mkdirs(var st: MemState, full: Str, self_too: Bool) -> Str? {
   for i in 1..end + 1 {
     let p = segs[0..i].join("/")
     match memfs_get(st, p) {
-      None => memfs_put(st, p, memfs_dir_node(rt.time_of(rt.clock_now())))
+      None => memfs_put(st, p, memfs_dir_node(Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now())))
       Some(n) => {
         if !n.dir {
           return Some(p)
@@ -432,7 +432,7 @@ fn memfs_write_in(var st: MemState, f: Fs, full: Str, p: Str, data: Bytes) -> ()
       return Err(memfs_err(5, p))
     }
   }
-  memfs_put(st, full, MemNode{dir: false, data: data, modified: rt.time_of(rt.clock_now()), name: ""})
+  memfs_put(st, full, MemNode{dir: false, data: data, modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: ""})
 }
 
 fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
@@ -466,7 +466,7 @@ fn memfs_create_temp_in(var st: MemState, f: Fs, full: Str, dir: Str, prefix: St
       }
     }
   }
-  memfs_put(st, file, MemNode{dir: false, data: b"", modified: rt.time_of(rt.clock_now()), name: ""})
+  memfs_put(st, file, MemNode{dir: false, data: b"", modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: ""})
   memfs_rel(f, file)
 }
 

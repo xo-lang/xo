@@ -55,30 +55,17 @@ static void nbuf_put(nbuf *b, const char *p, int64_t n) {
 	b->n += n;
 }
 
-static void nbuf_byte(nbuf *b, char c) {
-	nbuf_grow(b, 1);
-	b->p[b->n++] = c;
-}
-
-static void nbuf_str(nbuf *b, const char *s) { nbuf_put(b, s, (int64_t)strlen(s)); }
-
-// The UTF-8 helpers of the C code are Xo (std/native/llrt/cabi.xo,
-// decision 0207): utf8_decode is utf8.DecodeRune of the n > 0 bytes at
-// p, an invalid or short sequence U+FFFD of size 1.
-static inline int32_t n_utf8_decode(const unsigned char *p, int64_t n, int *size) {
-	int64_t x = xo_x_utf8_decode(XO_ADDR(p), n);
-	*size = (int)(x & 7);
-	return (int32_t)(x >> 3);
-}
-
-// utf8_encode writes r (a valid rune) to p and returns its size.
+// n_utf8_encode writes r (a valid rune) to p and returns its size
+// (cabi.xo utf8_encode; decision 0207).
 static inline int n_utf8_encode(char *p, int32_t r) { return (int)xo_x_utf8_encode(XO_ADDR(p), r); }
 
-// is_space is Go's unicode.IsSpace.
-static inline int n_is_space(int32_t r) { return (int)xo_x_is_space(r); }
-
 // ---------------------------------------------------------------------------
-// Strings (std.md 2.2)
+// Seed compatibility (zero-C audit end pass): the native prelude's
+// llrt_str_slice and llrt_str_repeat (raw.xo) and obj.xo's rs_append
+// export replace these in the code of this compiler (selfhost/ssa
+// show.xo, selfhost/llvm and selfhost/arm64 call the exports); the seed
+// (0.11.0) still calls them. Delete them when the seed has 5dc4de24 and
+// this change (gotchas/runtime-c-the-seed-still-calls.md).
 
 xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t *len) {
 	if (lo < 0) {
@@ -91,23 +78,6 @@ xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t 
 		hi = lo;
 	}
 	return nstr(p + lo, hi - lo, len);
-}
-
-// str_list_new is an empty List[Str] with room for cap elements.
-static xo_rlist *n_str_list_new(int64_t cap) { return xo_rl_new(cap < 4 ? 4 : cap, 16); }
-
-// str_list_add appends the n bytes at p to a List[Str] made by
-// str_list_new (growing it).
-static xo_rlist *n_str_list_add(xo_rlist *l, const char *p, int64_t n) {
-	if (l->len == l->cap) {
-		l = xo_rl_grow(l, 16);
-	}
-	int64_t len;
-	xo_rstr *s = nstr(p, n, &len);
-	((xo_rstr **)rl_data(l))[2 * l->len] = s;
-	((int64_t *)rl_data(l))[2 * l->len + 1] = n;
-	l->len++;
-	return l;
 }
 
 xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
@@ -125,34 +95,10 @@ xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
 	return s;
 }
 
-// xo_rs_append is s + t (consumes s; appended in place when unique):
-// obj.xo's (zero-C audit B13), as the builders of xo_bytes.c.
 int64_t xo_x_obj_rs_append(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t lenp);
 xo_rstr *xo_rs_append(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *len) {
 	return (xo_rstr *)(intptr_t)xo_x_obj_rs_append(XO_ADDR(a), an, XO_ADDR(b), bn, XO_ADDR(len));
 }
-
-// ---------------------------------------------------------------------------
-// Numbers
-
-// parse_int is strconv.ParseInt(s, 10, 64): an optional sign and decimal
-// digits, in range (cabi.xo).
-static inline int n_parse_int(const char *p, int64_t n, int64_t *out) { return (int)xo_x_parse_int(XO_ADDR(p), n, XO_ADDR(out)); }
-
-// ---------------------------------------------------------------------------
-// Duration and Time (std.md 2.6)
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// Conversions for std/json: durations, RFC 3339 times
-
-
-// n_days_from_civil is the days since 1970-01-01 of a date.
-static inline int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) { return xo_x_days_from_civil(y, m, d); }
-
 
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"

@@ -45,7 +45,8 @@ fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
 fn rs_append_rune_quote(s: Str, r: Int) -> Str
 fn rs_append_u64(s: Str, v: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
-/// (BytesBuilder.write_rune).
+/// (BytesBuilder.write_rune in a wasm module; the native targets call
+/// raw.xo push_rune).
 fn rs_push_rune(s: Str, r: Int) -> Str
 /// An empty string with room for n bytes (BytesBuilder.with_capacity).
 fn rs_with_cap(n: Int) -> Str
@@ -410,10 +411,11 @@ fn fs_root(f: Fs) -> Str
 fn fs_mode(f: Fs) -> Int
 /// The Fs value with root and mode.
 fn fs_new(root: Str, mode: Int) -> Fs
-// fs_read through fs_unlock below (not fs_status, fs_msg, fs_canceled):
-// the calls of sysio.xo's and fsops.xo's layer 0 arms, which only a wasm module takes (its runtime serves or
-// faults them); on the native targets they are faulting stubs (work item
-// B16).
+// fs_read through fs_unlock below (not fs_canceled), and fs_set_err:
+// the calls of sysio.xo's and fsops.xo's layer 0 arms, which only a wasm
+// module takes (its runtime serves or faults them); on the native targets
+// the SSA builders lower them to a fault (selfhost/ssa call.xo
+// wasm_only_rt; the C's faulting stubs stay for the seed's code).
 
 /// The contents of the file in a list of one, or empty with the status set.
 fn fs_read(path: Str) -> List[Bytes]
@@ -448,7 +450,8 @@ fn fs_raw_getcwd() -> Str
 /// Records err (0: success) for the Xo path x: the operation's status.
 fn fs_raw_fail(err: Int, x: Str) -> Int
 fn fs_case_sensitive() -> Bool
-/// Whether an Fs operation reports Canceled (not in deferred code).
+/// Whether an Fs operation reports Canceled (not in deferred code): the
+/// native prelude's llrt_fs_canceled on the native targets.
 fn fs_canceled() -> Bool
 /// File handles, copies, modes, links, and locks (decisions 0163, 0172):
 /// a handle of the C runtime; the status as for the other operations.
@@ -484,9 +487,6 @@ fn fs_unlock(l: FsLock)
 fn clock_sleep_or_cancel(d: Int) -> Int
 /// Writes what standard output holds buffered.
 fn flush()
-/// A Time of Unix nanoseconds, and back (both lowered as Int).
-fn time_of(ns: Int) -> Time
-fn time_ns(t: Time) -> Int
 
 // ---------------------------------------------------------------------------
 // Processes (decision 0107): commands, children, and pipelines (decisions 0161 and 0172). A command
@@ -528,6 +528,6 @@ fn env_vars() -> List[Str]
 /// Standard input's Windows part (xo_stdin.c) under stdin.xo: the
 /// poller's registration of the pumped descriptor (0: read directly) and
 /// a raw read into p (the count, 0 at the end, -1000000 to wait, else
-/// minus errno); faulting stubs elsewhere.
+/// minus errno); a fault elsewhere (selfhost/ssa call.xo).
 fn stdin_open() -> Int
 fn stdin_sysread(p: Int, n: Int, pd: Int) -> Int

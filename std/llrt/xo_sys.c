@@ -4,8 +4,13 @@
 // twflags.xo's, the clock's scratch and the outcome of a file operation
 // sysio.xo's, getauxval linux.xo's (work items B16 and B24 of the zero-C
 // audit). Their layer 0 arms (a wasm module's, whose own runtime serves
-// them) name these on the native targets too
+// them) named these on the native targets too
 // (gotchas/dead-target-arm-still-links.md); they are never run.
+//
+// Seed compatibility (zero-C audit end pass): this compiler lowers those
+// calls to a fault on the native targets (selfhost/ssa call.xo
+// wasm_only_rt); the seed (0.11.0) still names these. Delete the file
+// and its include when the seed has this change.
 
 XO_NORETURN static void sys_dead(void) {
 	static const char m[] = "a wasm layer call on a native target";

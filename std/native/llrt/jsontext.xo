@@ -540,7 +540,7 @@ fn quote_char(c: Int) -> Str {
   if c <= 0xA0 || c == 0xAD {
     return rt.rs_push_word("'\\u00", Int(HEX[c >> 4]) | (Int(HEX[c & 15]) << 8) | (39 << 16), 3)
   }
-  rt.rs_push_byte(rt.rs_push_rune("'", c), 39)
+  rt.rs_push_byte(raw.push_rune("'", c), 39)
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +608,7 @@ fn unquote(b: Bytes, lo: Int, hi: Int) -> Str {
         } else if r >= 0xDC00 && r < 0xE000 {
           r = 0xFFFD
         }
-        o = rt.rs_push_rune(o, r)
+        o = raw.push_rune(o, r)
       } else {
         let x = if e == 98 { 8 } else if e == 102 { 12 } else if e == 110 { 10 } else if e == 114 { 13 } else if e == 116 { 9 } else { e }
         o = rt.rs_push_byte(o, x)

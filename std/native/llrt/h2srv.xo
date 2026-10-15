@@ -961,7 +961,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   var parts: List[Str] = []
   for _k in 0..5 {
     let n = u32_at(b, i)
-    parts.push(rt.str_slice(s, i + 4, i + 4 + n))
+    parts.push(raw.str_slice(s, i + 4, i + 4 + n))
     i += 4 + n
   }
   var lists: List[List[Str]] = []
@@ -971,7 +971,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
     var xs: List[Str] = []
     for _e in 0..cnt {
       let n = u32_at(b, i)
-      xs.push(rt.str_slice(s, i + 4, i + 4 + n))
+      xs.push(raw.str_slice(s, i + 4, i + 4 + n))
       i += 4 + n
     }
     lists.push(xs)
@@ -1273,8 +1273,8 @@ fn (var h: H2Conn) fragment() {
       break
     }
     if h2w.field_keep(d + off, nn, d + off + nn, vn, c + C_HF) {
-      h.names.push(rt.str_slice(f.data, off, off + nn))
-      h.values.push(rt.str_slice(f.data, off + nn, off + nn + vn))
+      h.names.push(raw.str_slice(f.data, off, off + nn))
+      h.values.push(raw.str_slice(f.data, off + nn, off + nn + vn))
     }
     off += nn + vn
   }
@@ -1298,7 +1298,7 @@ fn (var h: H2Conn) encode(head: Str) -> Str {
   let job = rt.rs_append(word(rt.rs_append(word("", h.sizes.len() / 4), h.sizes), 1), head)
   h.sizes = ""
   let out = h.enc.encode_job(job)
-  rt.str_slice(out, 4, out.len())
+  raw.str_slice(out, 4, out.len())
 }
 
 /// Goes on with a header block fragment whose fields were decoded up to

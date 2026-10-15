@@ -189,7 +189,7 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
       if run < i {
         o = rt.rs_append_bytes(o, b, run, i, mode)
       }
-      o = rt.rs_push_rune(o, x)
+      o = raw.push_rune(o, x)
       run = i + size
     }
     i += size
@@ -273,7 +273,7 @@ fn quote_rune_append(out: Str, r: Int, quote: Int) -> Str {
     return rt.rs_push_byte(o, r)
   }
   if is_print(r) {
-    return rt.rs_push_rune(o, r)
+    return raw.push_rune(o, r)
   }
   o = rt.rs_push_byte(o, 92)
   let e = escape_letter(r)

@@ -1323,7 +1323,7 @@ fn (var g: G) rt_call(v: Int) {
     // entries stay for LLVM and older xo's code)
     name = "xo_x_ctx_${name0.trim_prefix("rt.")}"
   }
-  if name0 is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" | "rt.mutex_new" | "rt.mutex_lock" | "rt.mutex_unlock" | "rt.mutex_rlock" | "rt.mutex_runlock" | "rt.chan_new" | "rt.chan_send" | "rt.chan_recv" | "rt.chan_try_send" | "rt.chan_try_recv" | "rt.chan_close" | "rt.chan_len" | "rt.select_new" | "rt.select_recv" | "rt.select_send" | "rt.select_wait" | "rt.select_take" | "rt.atomic_new" {
+  if name0 is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" | "rt.mutex_new" | "rt.mutex_lock" | "rt.mutex_unlock" | "rt.mutex_rlock" | "rt.mutex_runlock" | "rt.chan_new" | "rt.chan_send" | "rt.chan_recv" | "rt.chan_try_send" | "rt.chan_try_recv" | "rt.chan_close" | "rt.chan_len" | "rt.select_new" | "rt.select_recv" | "rt.select_send" | "rt.select_wait" | "rt.select_take" | "rt.atomic_new" | "rt.const_once" {
     // tasks.xo through its exports (B18), likewise
     name = "xo_x_${name0.trim_prefix("rt.")}"
   }

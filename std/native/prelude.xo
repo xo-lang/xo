@@ -17,6 +17,7 @@ use native/llrt/ints
 use native/llrt/jsontext
 use native/llrt/logstate
 use native/llrt/num
+use native/llrt/poll
 use native/llrt/process
 use native/llrt/proc
 use native/llrt/procspec
@@ -776,7 +777,7 @@ fn fs_check(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
 
 // fs_info_of is the FileInfo of the facts i of OS path op (sysio.fs_stat).
 fn fs_info_of(f: Fs, op: Str, given: Str, i: sysio.Info) -> FileInfo {
-  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: i.is_dir, size: i.size, modified: rt.time_of(i.modified)}
+  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: i.is_dir, size: i.size, modified: Time.UNIX_EPOCH + Duration.from_nanos(i.modified)}
 }
 
 fn fs_sub(f: Fs, dir: Str) -> Fs {
@@ -991,7 +992,7 @@ fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
 
 fn fs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
   let op = fs_check(f, p, true)?
-  let st = fsops.chtimes(op, rt.time_ns(t), p)
+  let st = fsops.chtimes(op, (t - Time.UNIX_EPOCH).nanos(), p)
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -2302,6 +2303,12 @@ fn llrt_eprint(s: Str) { stdiort.eprint(s, false) }
 
 fn llrt_eprintln(s: Str) { stdiort.eprint(s, true) }
 
+/// rt.fs_canceled (the SSA builders call this in its place; a wasm
+/// module's runtime serves rt.fs_canceled): whether an Fs operation
+/// reports Canceled, the task canceled and not in deferred code (std/rt
+/// Task.Canceled is shield aware too). xo_fs.c's xo_fs_canceled before.
+fn llrt_fs_canceled() -> Bool { poll.canceled() }
+
 /// os.proc.exit, and the end of a program whose main returned an error
 /// (std/native/llrt/process.xo).
 fn llrt_exit(code: Int) {
@@ -2347,6 +2354,9 @@ fn slice_check(lo: Int, hi: Int, n: Int, what: Str, loc: Str) {
 fn llrt_str_slice(s: Str, lo: Int, hi: Int) -> Str { raw.str_slice(s, lo, hi) }
 
 fn llrt_str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
+
+/// BytesBuilder.write_rune (the SSA builders call it with a Rune value).
+fn llrt_rs_push_rune(s: Str, r: Rune) -> Str { raw.push_rune(s, Int(r)) }
 
 /// `stdio.set_tty(width)` of a test binary (selfhost/ssa testmode.xo).
 fn llrt_tw_set_tty(width: Int) { stdinrt.set_tty(width) }
