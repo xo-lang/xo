@@ -50,10 +50,6 @@ fn tls_c_srv_free(s: Int)
 /// text (zero terminated) to the mn bytes at msg, its kind (2: a Connect
 /// error, 4: Protocol) to the C int at kind.
 fn tls_c_client(pd: Int, host: Int, roots: Int, when: Int, out: Int, msg: Int, mn: Int, kind: Int) -> Int
-/// The certificate chain (an mbedtls_x509_crt) of roots (a Roots
-/// record), the system's loaded at the first call; 0 when it has none
-/// (the Xo client's roots, tlsio.xo).
-fn tls_c_roots_crt(roots: Int) -> Int
 /// The Security framework's table when roots are the system's on macOS
 /// (Go verifies with the framework there), else 0.
 fn tls_c_apple_svc(roots: Int) -> Int

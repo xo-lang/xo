@@ -18,6 +18,7 @@ use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/tls12
 use native/llrt/tls13
+use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tzrules
 use native/llrt/x509
@@ -36,11 +37,9 @@ const NOSIGNAL = 16384
 /// http.DefaultTransport's TLSHandshakeTimeout (10 s).
 const HANDSHAKE_NS = 10000000000
 
-/// The mbedtls_x509_crt chain's fields (tlscert.xo): the DER's length
-/// and address, the next certificate.
-const CRT_RAW_LEN = 16
-const CRT_RAW_P = 24
-const CRT_NEXT = 1288
+/// The orders of the slot atomics (C11's): acquire, acq_rel.
+const ACQUIRE = 1
+const ACQ_REL = 3
 
 /// A connection: the client (TLS 1.3's; TLS 1.2's in cl12 once the
 /// server chose it), its poll descriptor and deadline (monotonic ns, 0
@@ -210,24 +209,27 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 /// xo_tls.c's tls_client_start.
 pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   let system = roots == rt.obj_addr(rthttp.tls_roots_system())
-  let crt = if system { rthttp.tls_c_roots_crt(roots) } else { 0 }
   let apple = if system { rthttp.tls_c_apple_svc(roots) } else { 0 }
-  let mine = if system { [] } else {
+  // the framework decides on macOS with the system's roots; elsewhere
+  // they are parsed once per process
+  let certs = if !system {
     match roots_data(roots) {
       Some(d) => d.certs
       None => []
     }
+  } else if apple != 0 {
+    []
+  } else {
+    system_certs()
   }
-  if system && crt == 0 {
+  if system && apple == 0 && certs.is_empty() {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
   var name = host
   if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
     name = raw.str_slice(name, 1, name.len() - 1)
   }
-  // the framework decides on macOS with the system's roots: no need to
-  // parse them
-  var cf = tls13.conf(name, if !system { mine } else if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
+  var cf = tls13.conf(name, certs, sysio.real_ns() / 1000000000)
   cf.apple_svc = apple
   // Go's texts show the time in time.Local
   cf.zone_off = local_offset(cf.now)
@@ -294,21 +296,32 @@ fn local_offset(now: Int) -> Int {
   }
 }
 
-/// The certificates of an mbedtls_x509_crt chain that parse.
-fn chain(crt: Int) -> List[x509.Cert] {
-  var out: List[x509.Cert] = []
-  var p = crt
-  while p != 0 {
-    let n = rt.mem_load(p, CRT_RAW_LEN, 8)
-    if n > 0 {
-      let parsed = x509.parse(raw.str_at(rt.mem_load(p, CRT_RAW_P, 8), n).bytes())
-      if parsed.err == "" {
-        out.push(parsed.cert)
+/// The system's roots (tlscert.system_ders, parsed by x509.xo) once per
+/// process: static word 31 holds the record of an rt.Any with them,
+/// published with a compare and swap (a loser releases its own).
+fn system_certs() -> List[x509.Cert] {
+  let w = rt.static_word(31)
+  var s = rt.slot_load(w, 0, ACQUIRE)
+  if s == 0 {
+    var certs: List[x509.Cert] = []
+    for der in tlscert.system_ders() {
+      let p = x509.parse(der)
+      if p.err == "" {
+        certs.push(p.cert)
       }
     }
-    p = rt.mem_load(p, CRT_NEXT, 8)
+    let mine = keep(rt.any_of(RootsData{certs: certs, err: ""}))
+    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
+      s = mine
+    } else {
+      tasks.h_release(mine)
+      s = rt.slot_load(w, 0, ACQUIRE)
+    }
   }
-  out
+  match roots_data(s) {
+    Some(d) => d.certs
+    None => []
+  }
 }
 
 /// Sends what the client has to send: whether it all went.

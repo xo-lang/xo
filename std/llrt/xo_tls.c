@@ -309,16 +309,6 @@ int64_t xo_tls_c_apple_svc(int64_t p) {
 	return 0;
 }
 
-// xo_tls_c_roots_crt is the certificate chain of roots r for the Xo
-// client (tlsio.xo), the system's loaded first: NULL when it has none.
-int64_t xo_tls_c_roots_crt(int64_t p) {
-	xo_troots *r = (xo_troots *)(intptr_t)p;
-	if (r == &sys_roots) {
-		pthread_once(&sys_once, sys_roots_load);
-	}
-	return r->n > 0 ? XO_ADDR(&r->crt) : 0;
-}
-
 // ---------------------------------------------------------------------------
 // Connections
 
@@ -1084,10 +1074,6 @@ static int tls_h2_bad_cipher(tls_conn *t, char *why, size_t wn) {
 static const char *tls_alert(tls_conn *t) {
 	(void)t;
 	return NULL;
-}
-int64_t xo_tls_c_roots_crt(int64_t p) {
-	(void)p;
-	return 0;
 }
 int64_t xo_tls_c_apple_svc(int64_t p) {
 	(void)p;

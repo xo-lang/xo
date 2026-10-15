@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 16, decision 0202): the
+  Xo client's system roots off macOS are Xo's: tlscert.xo collects the
+  DERs (Linux: $SSL_CERT_FILE or the distribution's bundle, then
+  $SSL_CERT_DIR or the default directories, as crypto/x509's
+  root_unix.go; Windows: the ROOT store), and tlsio.xo parses them once
+  per process with x509.xo into static word 31 (published with a
+  compare and swap). The Xo path no longer reads Mbed TLS's chain
+  (xo_tls_c_roots_crt removed); macOS keeps the Security framework. The
+  Mbed path still loads its roots through tlscert.xo's Mbed loaders.
+  UNTESTED on linux and windows (cross built for linux/arm64; Windows
+  needs XO_WINSYSROOT).
+
 - Native runtime (zero-C audit item B31, part 15; decision 0193 step
   5's zones): tz.xo splits so that the host's zones link without
   std/time's zone table: tzrules.xo (the rules: TZif parsing, lookup,

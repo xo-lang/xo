@@ -356,6 +356,18 @@ fn roots_darwin(svc: Int, crt: Int) -> Int {
 
 /// UNTESTED on windows.
 fn roots_windows(svc: Int, crt: Int) -> Int {
+  var n = 0
+  for der in windows_ders() {
+    if parse_der(svc, crt, raw.bytes_addr(der), der.len()) {
+      n += 1
+    }
+  }
+  n
+}
+
+/// The certificates (DER) of the system's ROOT store.
+fn windows_ders() -> List[Bytes] {
+  var out: List[Bytes] = []
   // L"ROOT"
   var w = BytesBuilder.with_capacity(10)
   for ch in [82, 79, 79, 84, 0] {
@@ -364,9 +376,8 @@ fn roots_windows(svc: Int, crt: Int) -> Int {
   }
   let st = sys_windows.CertOpenSystemStoreW(0, w.freeze())
   if st == 0 {
-    return 0
+    return out
   }
-  var n = 0
   var c = 0
   while true {
     c = sys_windows.CertEnumCertificatesInStore(st, c)
@@ -374,12 +385,51 @@ fn roots_windows(svc: Int, crt: Int) -> Int {
       break
     }
     // CERT_CONTEXT: the encoding type, pbCertEncoded, cbCertEncoded
-    if parse_der(svc, crt, rt.mem_load(c, 8, 8), rt.mem_load(c, 16, 4)) {
-      n += 1
-    }
+    out.push(raw.str_at(rt.mem_load(c, 8, 8), rt.mem_load(c, 16, 4)).bytes())
   }
   let _c = sys_windows.CertCloseStore(st, 0)
-  n
+  out
+}
+
+/// The system's root certificates (DER) for the Xo client off macOS
+/// (where the Security framework verifies): Linux's files as
+/// crypto/x509's root_unix.go reads them, Windows's ROOT store (Go asks
+/// CertGetCertificateChain there: a later stage). UNTESTED on linux and
+/// windows.
+pub fn system_ders() -> List[Bytes] {
+  match target.os {
+    TargetOs.Linux => {
+      var out: List[Bytes] = []
+      for b in unix_pems() {
+        for d in pem_certs(b) {
+          out.push(d)
+        }
+      }
+      out
+    }
+    TargetOs.Windows => windows_ders()
+    TargetOs.Darwin | TargetOs.Wasi => []
+  }
+}
+
+/// The DER of each CERTIFICATE block of a PEM text.
+pub fn pem_certs(pem: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  let n = pem.len()
+  let der = block(n + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(raw.bytes_addr(pem), n, pos, der)
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" {
+      out.push(raw.str_at(der, k).bytes())
+    }
+  }
+  release(der)
+  out
 }
 
 /// The bundle files of crypto/x509's root_linux.go, in its order.
@@ -393,12 +443,24 @@ fn cert_files() -> List[Str] {
 /// directory read once, as that file (readUniqueDirectoryEntries).
 fn roots_unix(svc: Int, crt: Int) -> Int {
   var n = 0
+  for b in unix_pems() {
+    n += roots_bytes(svc, crt, b)
+  }
+  n
+}
+
+/// The files crypto/x509's root_unix.go reads: the first of
+/// $SSL_CERT_FILE or the distribution's bundles that reads, then each
+/// regular file of $SSL_CERT_DIR or the default directories (symbolic
+/// links to a name in the same directory skipped).
+fn unix_pems() -> List[Bytes] {
+  var out: List[Bytes] = []
   let fenv = process.env_real("SSL_CERT_FILE")
   let files = if !fenv.is_empty() && !fenv[0].is_empty() { [fenv[0]] } else { cert_files() }
   for f in files {
     let (b, e) = sysio.read_whole(f)
     if e == 0 {
-      n += roots_bytes(svc, crt, b)
+      out.push(b)
       break
     }
   }
@@ -426,11 +488,11 @@ fn roots_unix(svc: Int, crt: Int) -> Int {
       }
       let (b, e) = sysio.read_whole(path)
       if e == 0 {
-        n += roots_bytes(svc, crt, b)
+        out.push(b)
       }
     }
   }
-  n
+  out
 }
 
 // ---------------------------------------------------------------------------
