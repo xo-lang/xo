@@ -3,8 +3,8 @@
 // defined (clang --target=x86_64-pc-windows-msvc or aarch64-pc-windows-msvc,
 // with the MSVC C runtime and the Windows SDK). It maps:
 //
-//   - threads: pthread_create/join on _beginthreadex, mutexes on SRW
-//     locks, pthread_once on InitOnceExecuteOnce;
+//   - threads: pthread_create/join on _beginthreadex (the Windows
+//     poller's thread and sanhook.xo's seed shims);
 //   - the futex: WaitOnAddress and WakeByAddressSingle (xo_rt.c);
 //   - clocks: QueryPerformanceCounter (monotonic) and
 //     GetSystemTimePreciseAsFileTime (wall clock);
@@ -71,10 +71,6 @@ typedef intptr_t ssize_t;
 // Threads
 
 typedef HANDLE pthread_t;
-typedef SRWLOCK pthread_mutex_t;
-#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
-typedef INIT_ONCE pthread_once_t;
-#define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
 #define PTHREAD_CREATE_DETACHED 1
 #define PTHREAD_CREATE_JOINABLE 0
 
@@ -98,61 +94,6 @@ static inline int pthread_attr_setstacksize(pthread_attr_t *a, size_t n) {
 }
 static inline int pthread_attr_setdetachstate(pthread_attr_t *a, int d) {
 	a->detached = d;
-	return 0;
-}
-
-static inline int pthread_mutex_init(pthread_mutex_t *m, const void *a) {
-	(void)a;
-	InitializeSRWLock(m);
-	return 0;
-}
-static inline int pthread_mutex_destroy(pthread_mutex_t *m) {
-	(void)m;
-	return 0;
-}
-static inline int pthread_mutex_lock(pthread_mutex_t *m) {
-	AcquireSRWLockExclusive(m);
-	return 0;
-}
-static inline int pthread_mutex_unlock(pthread_mutex_t *m) {
-	ReleaseSRWLockExclusive(m);
-	return 0;
-}
-
-static inline int pthread_mutex_trylock(pthread_mutex_t *m) { return TryAcquireSRWLockExclusive(m) ? 0 : EBUSY; }
-
-// condition variables (Mbed TLS's threading took these; xo-fa removes
-// what only it used)
-#define XO_WIN_PTHREAD_H 1
-typedef CONDITION_VARIABLE pthread_cond_t;
-#define PTHREAD_COND_INITIALIZER CONDITION_VARIABLE_INIT
-static inline int pthread_cond_init(pthread_cond_t *c, const void *a) {
-	(void)a;
-	InitializeConditionVariable(c);
-	return 0;
-}
-static inline int pthread_cond_destroy(pthread_cond_t *c) {
-	(void)c;
-	return 0;
-}
-static inline int pthread_cond_signal(pthread_cond_t *c) {
-	WakeConditionVariable(c);
-	return 0;
-}
-static inline int pthread_cond_broadcast(pthread_cond_t *c) {
-	WakeAllConditionVariable(c);
-	return 0;
-}
-static inline int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m) { return SleepConditionVariableSRW(c, m, INFINITE, 0) ? 0 : EINVAL; }
-
-static BOOL CALLBACK xo_once_tramp(PINIT_ONCE o, PVOID fn, PVOID *ctx) {
-	(void)o;
-	(void)ctx;
-	((void (*)(void))fn)();
-	return TRUE;
-}
-static inline int pthread_once(pthread_once_t *o, void (*fn)(void)) {
-	InitOnceExecuteOnce(o, xo_once_tramp, (PVOID)fn, NULL);
 	return 0;
 }
 
@@ -207,11 +148,6 @@ static inline int pthread_join(pthread_t t, void **ret) {
 	CloseHandle(t);
 	return 0;
 }
-
-// ---------------------------------------------------------------------------
-// Clocks
-
-static inline struct tm *localtime_r(const time_t *t, struct tm *out) { return localtime_s(out, t) == 0 ? out : NULL; }
 
 // ---------------------------------------------------------------------------
 // Descriptors and sockets

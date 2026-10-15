@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows runtime (zero-C B32 part 3): with Mbed TLS gone, xo_win.c's
+  shims only its threading and xo_tls.c used (pthread mutexes, condition
+  variables, pthread_once, localtime_r) are deleted; xo_win.c is at 331
+  lines. UNTESTED on windows (the 15 http, net, fs, proc and stdin
+  goldens cross link for both architectures on the Mac).
 - Native backends (generated-code entries N1): task.with_timeout's
   deadline and check, proc stop requests and task.stopping, real-time
   section enter and exit, and a connection's write and close and a
