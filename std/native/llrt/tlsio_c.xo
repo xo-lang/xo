@@ -39,3 +39,10 @@ pub fn set_when(h: Int, dl: Int) { rthttp.cl_tls_set_when(h, dl) }
 pub fn alpn_h2(h: Int) -> Bool { rthttp.tls_c_alpn_h2(h) != 0 }
 
 pub fn free(h: Int) { rthttp.cl_tls_free(h) }
+
+/// Client.with_roots's roots and their error, the system's (xo_tls.c).
+pub fn roots_pem(pem: Bytes) -> rthttp.Roots { rthttp.tls_roots(pem) }
+
+pub fn roots_err(r: rthttp.Roots) -> Str { rthttp.tls_roots_err(r) }
+
+pub fn roots_system() -> rthttp.Roots { rthttp.tls_roots_system() }

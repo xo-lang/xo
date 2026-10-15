@@ -11,6 +11,7 @@ use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
 use native/llrt/tlssrv
+use native/llrt/tlsio
 use native/llrt/cabi_http
 use native/llrt/cabi_tls
 use native/llrt/cabi_net
@@ -724,11 +725,11 @@ fn stream_request(q: h2srv.H2Req) -> Request {
 // ---------------------------------------------------------------------------
 // Client (std.md 4.5)
 
-fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: rthttp.tls_roots_system(), lists: rt.net_lists(net)} }
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: tlsio.roots_system(), lists: rt.net_lists(net)} }
 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
-  let r = rthttp.tls_roots(pem)
-  let e = rthttp.tls_roots_err(r)
+  let r = tlsio.roots_pem(pem)
+  let e = tlsio.roots_err(r)
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }

@@ -17,6 +17,7 @@ use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/tls12
 use native/llrt/tls13
+use native/llrt/tlsname
 use native/llrt/x509
 use native/rt
 use native/rthttp
@@ -137,6 +138,57 @@ fn keep(a: rt.Any) -> Int {
   s
 }
 
+// ---------------------------------------------------------------------------
+// Roots
+
+/// The roots of Client.with_roots, parsed once (x509.xo, Go's
+/// AppendCertsFromPEM: the CERTIFICATE blocks that parse), and the error
+/// of a PEM with none. A Roots value holding them is the record of an
+/// rt.Any (a handle, which the pool of HTTP/2 connections counts); the
+/// system's roots stay the C's record (xo_tls.c sys_roots).
+struct RootsData {
+  certs: List[x509.Cert]
+  err: Str
+}
+
+fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
+
+/// Client.with_roots(pem)'s roots.
+pub fn roots_pem(pem: Bytes) -> rthttp.Roots {
+  var certs: List[x509.Cert] = []
+  let n = pem.len()
+  let der = raw.bytes_buf(n + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(raw.bytes_addr(pem), n, pos, raw.bytes_addr(der))
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" {
+      let p = x509.parse(raw.str_at(raw.bytes_addr(der), k).bytes())
+      if p.err == "" {
+        certs.push(p.cert)
+      }
+    }
+  }
+  let err = if certs.is_empty() { "tls: no certificates found in PEM input" } else { "" }
+  as_roots(rt.any_of(RootsData{certs: certs, err: err}))
+}
+
+fn roots_data(r: Int) -> RootsData? { rt.any_get[RootsData](rt.obj_at[rt.Any](r)) }
+
+/// The error of with_roots's PEM, "" when it had certificates.
+pub fn roots_err(r: rthttp.Roots) -> Str {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => d.err
+    None => ""
+  }
+}
+
+/// The client's default roots: the system's (the C's record).
+pub fn roots_system() -> rthttp.Roots { rthttp.tls_roots_system() }
+
 /// The outcome of a handshake: CC_*, the connection (0 on a failure),
 /// the ClientErr tag of a failure (2 Connect for a server's alert, else
 /// 4 Protocol) and its text.
@@ -154,9 +206,16 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 /// deadline dl (0 none; and the 10 s TLSHandshakeTimeout), as
 /// xo_tls.c's tls_client_start.
 pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
-  let crt = rthttp.tls_c_roots_crt(roots)
-  let apple = rthttp.tls_c_apple_svc(roots)
-  if crt == 0 {
+  let system = roots == rt.obj_addr(rthttp.tls_roots_system())
+  let crt = if system { rthttp.tls_c_roots_crt(roots) } else { 0 }
+  let apple = if system { rthttp.tls_c_apple_svc(roots) } else { 0 }
+  let mine = if system { [] } else {
+    match roots_data(roots) {
+      Some(d) => d.certs
+      None => []
+    }
+  }
+  if system && crt == 0 {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
   var name = host
@@ -165,7 +224,7 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   }
   // the framework decides on macOS with the system's roots: no need to
   // parse them
-  var cf = tls13.conf(name, if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
+  var cf = tls13.conf(name, if !system { mine } else if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
   cf.apple_svc = apple
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]

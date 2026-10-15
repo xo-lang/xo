@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 13, decision 0202): the
+  Xo client's custom roots (Client.with_roots) are parsed once, in Xo,
+  as Go's AppendCertsFromPEM (x509.xo, so exactly the certificates Go
+  takes), into a record the HTTP/2 pool counts; Mbed TLS no longer parses
+  them on the Xo path and a connection no longer re-parses them.
+  std/native/http.xo asks tlsio.xo (or tlsio_c.xo, XO_LLRT_C=tlsio) for
+  roots. The system's roots stay the C's record: macOS verifies through
+  the Security framework; on Linux and Windows the Xo client still reads
+  them from Mbed's chain (the next step).
+
 - TLS 1.2 server session tickets (tls12srv.xo with tlsticket.xo, RFC
   5077): golden tls12_tickets, crypto/tls's client resuming against the
   Xo server byte for byte (a ticket issued, resumed, resumed a byte at a
