@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (two phase shutdown): stop.xo cancels main's root
+  (pool.xo node_cancel), reads the timers' clock and makes the third
+  signal's exit (stdio.xo flush, process.xo os_exit(130)) itself instead
+  of through the C's services record; xo_rt.c's stopsvc_cancel,
+  stopsvc_exit, stopsvc_now, tnow and node_cancel, and cabi.xo's
+  node_cancel export, go. Services words 2, 7 and 8 are unused.
 - Faults on x86_64 Linux and macOS unwind in Xo (decision 0221 stage
   2): unwind.xo reads x86_64's DWARF registers and macOS's x86_64
   compact unwind, the LLVM emitter writes x86_64 save and resume

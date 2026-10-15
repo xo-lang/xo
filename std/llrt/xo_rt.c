@@ -861,7 +861,6 @@ static int node_canceled(xo_node *n) { return __atomic_load_n(&n->canceled, __AT
 
 static void node_link(xo_node *n, xo_node *parent);
 static void node_unlink(xo_node *n);
-static void node_cancel(xo_node *n);
 
 typedef struct {
 	void *m;
@@ -1155,10 +1154,6 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
 
-// tnow is the time of timers: monotonic ns, or the virtual clock in the
-// test world (poll.xo now).
-int64_t xo_x_poll_now(void);
-static int64_t tnow(void) { return xo_x_poll_now(); }
 
 // ---------------------------------------------------------------------------
 // Resource budgets (std.md 7, decisions 0173 and 0175): std/rt budget.go.
@@ -1300,7 +1295,6 @@ void xo_x_park_reset(int64_t p);
 void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
-void xo_x_node_cancel(int64_t pl, int64_t n);
 
 static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
 static void park_signal(xo_park *p) {
@@ -1309,7 +1303,6 @@ static void park_signal(xo_park *p) {
 }
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
-static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(pool_rec()), XO_ADDR(n)); }
 
 // the handles' free functions: cabi.xo's exports (tasks.xo, mutex.xo,
 // chan.xo, selects.xo; B18)
@@ -2295,11 +2288,6 @@ void xo_x_stop_end(void);
 // stop_signal handles SIGINT or SIGTERM (on the poller thread).
 static void stop_signal(void) { xo_x_stop_signal(); }
 
-static int64_t stopsvc_cancel(int64_t n, int64_t b) {
-	(void)b;
-	node_cancel((xo_node *)(intptr_t)n);
-	return 0;
-}
 static int64_t stopsvc_chan(int64_t drop, int64_t b) {
 	(void)b;
 	static const char loc[] = "task.stopping";
@@ -2311,17 +2299,6 @@ static int64_t stopsvc_close(int64_t ch, int64_t b) {
 	(void)b;
 	xo_x_chan_close(ch);
 	return 0;
-}
-static int64_t stopsvc_exit(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	xo_flush();
-	_exit(130);
-}
-static int64_t stopsvc_now(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	return tnow();
 }
 static void stop_grace_fire(xo_timer *t) {
 	(void)t;
@@ -2393,11 +2370,8 @@ static int64_t stop_svc[20];
 static void stop_svc_init(void) {
 	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
 	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
-	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
 	stop_svc[3] = XO_ADDR(&stopsvc_chan);
 	stop_svc[4] = XO_ADDR(&stopsvc_close);
-	stop_svc[7] = XO_ADDR(&stopsvc_exit);
-	stop_svc[8] = XO_ADDR(&stopsvc_now);
 	stop_svc[9] = XO_ADDR(&stop_grace_fire);
 	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
 	stop_svc[12] = XO_ADDR(&ev_start);

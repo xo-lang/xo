@@ -10,11 +10,19 @@
 //
 // The state is a record from the C runtime's malloc (rt.heap_large),
 // made at start (init) and kept for the program's life, under its lock
-// word. The C functions it needs (timers, the channel, cancellation, the
-// clock, exit) are in the C's services record (S_ words).
+// word. The cancellation of main's root, the clock, and the exit are Xo
+// (pool.xo, the timers' clock as poll.xo now reads it, stdio.xo and
+// process.xo), and the stopping channel's references (rc.xo and obj.xo);
+// the C functions it still needs (timers and the channel, which sit
+// above this module in the imports) are in the C's services record (S_
+// words).
+use native/llrt/ctx
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/rc
+use native/llrt/stdio
+use native/llrt/sysio
 use native/llrt/twflags
 use native/rt
 
@@ -43,21 +51,17 @@ const R_STOPPING = 80
 const R_ROOT = 88
 const R_SIZE = 96
 
-/// The services record's words: timer_add (t), timer_del (t),
-/// node_cancel (n), the stopping channel's constructor (drop: a new
-/// channel), xo_chan_close (ch), two unused words (were the C's
-/// h_retain and h_release; rc.xo and obj.xo do them), flush and
-/// _exit(130), the clock (tnow: monotonic ns, virtual in the test world),
-/// the grace timer's C function (it calls cancel), and an unused word
-/// (was the address of the C's tw.in_main). Words 88 on are the entry's
+/// The services record's words: timer_add (t), timer_del (t), the
+/// stopping channel's constructor (drop: a new channel), xo_chan_close
+/// (ch), and the grace timer's C function (it calls cancel). Unused:
+/// words 16, 56 and 64 (node_cancel, the exit, the clock: done here), 40
+/// and 48 (h_retain and h_release: rc.xo and obj.xo), and 80 (was the
+/// address of the C's tw.in_main). Words 88 on are the entry's
 /// (entry.xo).
 const S_TADD = 0
 const S_TDEL = 8
-const S_CANCEL = 16
 const S_CHAN = 24
 const S_CLOSE = 32
-const S_EXIT = 56
-const S_NOW = 64
 const S_FIRE = 72
 
 /// A timer's words (xo_rt.c struct xo_timer).
@@ -134,13 +138,24 @@ pub fn set_root(n: Int) {
 pub fn cancel() {
   let n = root()
   if n != 0 && rt.slot_cas(rec(), R_CANCELED / 8, 0, 1, ACQ_REL) {
-    let _r = svc(S_CANCEL, n)
+    pool.node_cancel(ctx.pool(), n)
   }
+}
+
+/// The timers' clock (poll.xo now, which this module sits below): the
+/// test world's virtual one while it runs, else the monotonic one.
+fn now() -> Int {
+  let tw = twflags.vclock()
+  if tw != 0 {
+    // TW_VNOW is a byte offset; a slot's index counts words
+    return rt.slot_load(tw + twflags.TW_VNOW, 0, ACQUIRE)
+  }
+  sysio.mono_ns()
 }
 
 /// The monotonic time d from now (saturating).
 fn deadline(d: Int) -> Int {
-  let now = svc(S_NOW, 0)
+  let now = now()
   if d > 0 && now > 9223372036854775807 - d {
     return 9223372036854775807
   }
@@ -154,7 +169,7 @@ fn arm_grace() {
   if canceled() {
     return
   }
-  let left = get(R_GRACE) - (svc(S_NOW, 0) - get(R_STOP_AT))
+  let left = get(R_GRACE) - (now() - get(R_STOP_AT))
   if left <= 0 {
     cancel()
     return
@@ -172,7 +187,7 @@ pub fn signal() {
   let n = get(R_SIGNALS) + 1
   put(R_SIGNALS, n)
   if n == 1 {
-    put(R_STOP_AT, svc(S_NOW, 0))
+    put(R_STOP_AT, now())
     rt.slot_store(rec(), R_REQUESTED / 8, 1, RELEASE)
     let ch = get(R_STOPPING)
     if ch != 0 {
@@ -189,7 +204,9 @@ pub fn signal() {
   } else {
     unlk()
     cancel()
-    let _e = svc(S_EXIT, 0)
+    // the third signal: status 130 at once, the output flushed
+    stdio.flush()
+    process.os_exit(130)
     return
   }
   unlk()

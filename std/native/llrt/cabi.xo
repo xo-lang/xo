@@ -412,9 +412,6 @@ fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else 
 /// clock.
 fn clock_now() -> Int { poll.wall_now() }
 
-/// The timers' clock now (xo_rt.c tnow, stop.xo's S_NOW).
-fn poll_now() -> Int { poll.now() }
-
 /// `clock.sleep(d)`: a cancellation point that unwinds, also while it
 /// waits (core 7.2). The test world records the sleep first
 /// (FakeClock.sleeps()).
@@ -522,7 +519,6 @@ fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 
 fn node_unlink(n: Int) { pool.node_unlink(n) }
 
-fn node_cancel(pl: Int, n: Int) { pool.node_cancel(pl, n) }
 
 fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int { pool.scope_add(pl, s, t, w) }
 
