@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS performance, step 1: ChaCha20 on 16 local words with 32
+  bit rotates, Poly1305 absorbing the AEAD's pieces in place (no copy of
+  the ciphertext): ChaCha20-Poly1305 bulk reads 107M to 41M instructions
+  a MiB on LLVM, 173M to 57M on arm64 (bench/results/tls-perf-2026-10-15.md).
 - bench/perf/tls: TLS handshakes per group and server key, and bulk
   reads per AEAD, of std/http's client with the Xo TLS against Mbed TLS
   (`XO_LLRT_C=tlsio`), against crypto/tls servers. Baseline in

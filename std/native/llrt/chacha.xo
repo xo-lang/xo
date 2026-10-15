@@ -18,79 +18,140 @@ fn shr(x: Int, s: Int) -> Int { rt.int_wrap(4, x, s) }
 /// The 4 bytes of b at i, little endian.
 fn le32(b: Bytes, i: Int) -> Int { Int(b[i]) | shl(Int(b[i + 1]), 8) | shl(Int(b[i + 2]), 16) | shl(Int(b[i + 3]), 24) }
 
-/// x (32 bits) rotated left by n.
-fn rotl(x: Int, n: Int) -> Int { (shl(x, n) | shr(x, 32 - n)) & M32 }
-
 // ---------------------------------------------------------------------------
 // ChaCha20 (RFC 8439 2.3)
 
-/// The quarter round on words a, b, c, d of x.
-fn qr(var x: List[Int], a: Int, b: Int, c: Int, d: Int) {
-  x[a] = (x[a] + x[b]) & M32
-  x[d] = rotl(x[d] ^ x[a], 16)
-  x[c] = (x[c] + x[d]) & M32
-  x[b] = rotl(x[b] ^ x[c], 12)
-  x[a] = (x[a] + x[b]) & M32
-  x[d] = rotl(x[d] ^ x[a], 8)
-  x[c] = (x[c] + x[d]) & M32
-  x[b] = rotl(x[b] ^ x[c], 7)
-}
-
-/// The initial state of key (32 bytes), block counter ctr, and nonce (12
-/// bytes).
-fn state(key: Bytes, ctr: Int, nonce: Bytes) -> List[Int] {
-  var s = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]
-  for i in 0..8 {
-    s.push(le32(key, 4 * i))
-  }
-  s.push(ctr & M32)
-  for i in 0..3 {
-    s.push(le32(nonce, 4 * i))
-  }
-  s
-}
-
-/// The 16 words of the key stream block of state s0.
-fn block_words(s0: List[Int]) -> List[Int] {
-  var x = s0
-  for _ in 0..10 {
-    qr(x, 0, 4, 8, 12)
-    qr(x, 1, 5, 9, 13)
-    qr(x, 2, 6, 10, 14)
-    qr(x, 3, 7, 11, 15)
-    qr(x, 0, 5, 10, 15)
-    qr(x, 1, 6, 11, 12)
-    qr(x, 2, 7, 8, 13)
-    qr(x, 3, 4, 9, 14)
-  }
-  for i in 0..16 {
-    x[i] = (x[i] + s0[i]) & M32
-  }
-  x
-}
-
 /// The 64 byte key stream block of key, counter ctr, and nonce.
-pub fn block(key: Bytes, ctr: Int, nonce: Bytes) -> Bytes {
-  let x = block_words(state(key, ctr, nonce))
-  var out = rt.rs_with_cap(64)
-  for i in 0..8 {
-    out = rt.rs_push_word(out, x[2 * i] | shl(x[2 * i + 1], 32), 8)
+pub fn block(key: Bytes, ctr: Int, nonce: Bytes) -> Bytes { xor_stream(rt.rs_with_cap(64), key, ctr, nonce, zeros64()).bytes() }
+
+/// 64 zero bytes.
+fn zeros64() -> Bytes {
+  var z = rt.rs_with_cap(64)
+  for _ in 0..8 {
+    z = rt.rs_push_word(z, 0, 8)
   }
-  out.bytes()
+  z.bytes()
 }
 
 /// The bytes of src xor ChaCha20's key stream from block counter ctr0
-/// (RFC 8439 2.4), onto s0.
+/// (RFC 8439 2.4), onto s0: the state in 16 local words and the 20
+/// rounds written out (a List's element writes cost a check each), the
+/// rotations 32 bit rotates right (rt.int_wrap op 6: ror, fshr).
 fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes) -> Str {
+  let c0 = 0x61707865
+  let c1 = 0x3320646e
+  let c2 = 0x79622d32
+  let c3 = 0x6b206574
+  let kw0 = rt.bytes_word(key, 0)
+  let kw1 = rt.bytes_word(key, 8)
+  let kw2 = rt.bytes_word(key, 16)
+  let kw3 = rt.bytes_word(key, 24)
+  let k0 = kw0 & M32
+  let k1 = rt.int_wrap(4, kw0, 32)
+  let k2 = kw1 & M32
+  let k3 = rt.int_wrap(4, kw1, 32)
+  let k4 = kw2 & M32
+  let k5 = rt.int_wrap(4, kw2, 32)
+  let k6 = kw3 & M32
+  let k7 = rt.int_wrap(4, kw3, 32)
+  let n0 = le32(nonce, 0)
+  let n1 = le32(nonce, 4)
+  let n2 = le32(nonce, 8)
   var s = s0
-  var st = state(key, ctr0, nonce)
+  var ctr = ctr0 & M32
   var i = 0
   while i < src.len() {
-    let x = block_words(st)
-    for k in 0..8 {
-      s = push_xor(s, src, i + 8 * k, x[2 * k] | shl(x[2 * k + 1], 32))
+    var x0 = c0
+    var x1 = c1
+    var x2 = c2
+    var x3 = c3
+    var x4 = k0
+    var x5 = k1
+    var x6 = k2
+    var x7 = k3
+    var x8 = k4
+    var x9 = k5
+    var x10 = k6
+    var x11 = k7
+    var x12 = ctr
+    var x13 = n0
+    var x14 = n1
+    var x15 = n2
+    for _ in 0..10 {
+      x0 = (x0 + x4) & M32
+      x12 = rt.int_wrap(6, x12 ^ x0, 16)
+      x8 = (x8 + x12) & M32
+      x4 = rt.int_wrap(6, x4 ^ x8, 20)
+      x0 = (x0 + x4) & M32
+      x12 = rt.int_wrap(6, x12 ^ x0, 24)
+      x8 = (x8 + x12) & M32
+      x4 = rt.int_wrap(6, x4 ^ x8, 25)
+      x1 = (x1 + x5) & M32
+      x13 = rt.int_wrap(6, x13 ^ x1, 16)
+      x9 = (x9 + x13) & M32
+      x5 = rt.int_wrap(6, x5 ^ x9, 20)
+      x1 = (x1 + x5) & M32
+      x13 = rt.int_wrap(6, x13 ^ x1, 24)
+      x9 = (x9 + x13) & M32
+      x5 = rt.int_wrap(6, x5 ^ x9, 25)
+      x2 = (x2 + x6) & M32
+      x14 = rt.int_wrap(6, x14 ^ x2, 16)
+      x10 = (x10 + x14) & M32
+      x6 = rt.int_wrap(6, x6 ^ x10, 20)
+      x2 = (x2 + x6) & M32
+      x14 = rt.int_wrap(6, x14 ^ x2, 24)
+      x10 = (x10 + x14) & M32
+      x6 = rt.int_wrap(6, x6 ^ x10, 25)
+      x3 = (x3 + x7) & M32
+      x15 = rt.int_wrap(6, x15 ^ x3, 16)
+      x11 = (x11 + x15) & M32
+      x7 = rt.int_wrap(6, x7 ^ x11, 20)
+      x3 = (x3 + x7) & M32
+      x15 = rt.int_wrap(6, x15 ^ x3, 24)
+      x11 = (x11 + x15) & M32
+      x7 = rt.int_wrap(6, x7 ^ x11, 25)
+      x0 = (x0 + x5) & M32
+      x15 = rt.int_wrap(6, x15 ^ x0, 16)
+      x10 = (x10 + x15) & M32
+      x5 = rt.int_wrap(6, x5 ^ x10, 20)
+      x0 = (x0 + x5) & M32
+      x15 = rt.int_wrap(6, x15 ^ x0, 24)
+      x10 = (x10 + x15) & M32
+      x5 = rt.int_wrap(6, x5 ^ x10, 25)
+      x1 = (x1 + x6) & M32
+      x12 = rt.int_wrap(6, x12 ^ x1, 16)
+      x11 = (x11 + x12) & M32
+      x6 = rt.int_wrap(6, x6 ^ x11, 20)
+      x1 = (x1 + x6) & M32
+      x12 = rt.int_wrap(6, x12 ^ x1, 24)
+      x11 = (x11 + x12) & M32
+      x6 = rt.int_wrap(6, x6 ^ x11, 25)
+      x2 = (x2 + x7) & M32
+      x13 = rt.int_wrap(6, x13 ^ x2, 16)
+      x8 = (x8 + x13) & M32
+      x7 = rt.int_wrap(6, x7 ^ x8, 20)
+      x2 = (x2 + x7) & M32
+      x13 = rt.int_wrap(6, x13 ^ x2, 24)
+      x8 = (x8 + x13) & M32
+      x7 = rt.int_wrap(6, x7 ^ x8, 25)
+      x3 = (x3 + x4) & M32
+      x14 = rt.int_wrap(6, x14 ^ x3, 16)
+      x9 = (x9 + x14) & M32
+      x4 = rt.int_wrap(6, x4 ^ x9, 20)
+      x3 = (x3 + x4) & M32
+      x14 = rt.int_wrap(6, x14 ^ x3, 24)
+      x9 = (x9 + x14) & M32
+      x4 = rt.int_wrap(6, x4 ^ x9, 25)
     }
-    st[12] = (st[12] + 1) & M32
+    s = push_xor(s, src, i + 0, ((x0 + c0) & M32) | rt.int_wrap(3, (x1 + c1) & M32, 32))
+    s = push_xor(s, src, i + 8, ((x2 + c2) & M32) | rt.int_wrap(3, (x3 + c3) & M32, 32))
+    s = push_xor(s, src, i + 16, ((x4 + k0) & M32) | rt.int_wrap(3, (x5 + k1) & M32, 32))
+    s = push_xor(s, src, i + 24, ((x6 + k2) & M32) | rt.int_wrap(3, (x7 + k3) & M32, 32))
+    s = push_xor(s, src, i + 32, ((x8 + k4) & M32) | rt.int_wrap(3, (x9 + k5) & M32, 32))
+    s = push_xor(s, src, i + 40, ((x10 + k6) & M32) | rt.int_wrap(3, (x11 + k7) & M32, 32))
+    s = push_xor(s, src, i + 48, ((x12 + ctr) & M32) | rt.int_wrap(3, (x13 + n0) & M32, 32))
+    s = push_xor(s, src, i + 56, ((x14 + n1) & M32) | rt.int_wrap(3, (x15 + n2) & M32, 32))
+    ctr = (ctr + 1) & M32
     i += 64
   }
   s
@@ -117,45 +178,62 @@ pub fn xor(key: Bytes, ctr: Int, nonce: Bytes, src: Bytes) -> Bytes { xor_stream
 // ---------------------------------------------------------------------------
 // Poly1305 (RFC 8439 2.5, poly1305-donna's 32 bit limbs)
 
-/// The Poly1305 tag of msg under the one time key (32 bytes: r, then s).
-pub fn poly1305(key: Bytes, msg: Bytes) -> Bytes {
+/// Poly1305's state: the accumulator's five 26 bit limbs, then r's and
+/// 5r's (poly1305-donna).
+struct Poly {
+  h0: Int
+  h1: Int
+  h2: Int
+  h3: Int
+  h4: Int
+  r0: Int
+  r1: Int
+  r2: Int
+  r3: Int
+  r4: Int
+  s1: Int
+  s2: Int
+  s3: Int
+  s4: Int
+}
+
+/// The state of the one time key (32 bytes: r, then s).
+fn poly_new(key: Bytes) -> Poly {
   let r0 = le32(key, 0) & 0x3ffffff
   let r1 = shr(le32(key, 3), 2) & 0x3ffff03
   let r2 = shr(le32(key, 6), 4) & 0x3ffc0ff
   let r3 = shr(le32(key, 9), 6) & 0x3f03fff
   let r4 = shr(le32(key, 12), 8) & 0x00fffff
-  let s1 = r1 * 5
-  let s2 = r2 * 5
-  let s3 = r3 * 5
-  let s4 = r4 * 5
-  var h0 = 0
-  var h1 = 0
-  var h2 = 0
-  var h3 = 0
-  var h4 = 0
-  let n = msg.len()
-  var i = 0
-  while i < n {
-    // a full block gets 2^128 added; the last partial one is padded
-    // with a 1 byte and zeros instead
-    var m = msg
-    var o = i
-    var hibit = shl(1, 24)
-    if n - i < 16 {
-      var t = rt.rs_append_bytes(rt.rs_with_cap(16), msg, i, n, 0)
-      t = rt.rs_push_byte(t, 1)
-      while t.len() < 16 {
-        t = rt.rs_push_byte(t, 0)
-      }
-      m = t.bytes()
-      o = 0
-      hibit = 0
-    }
-    h0 += le32(m, o) & M26
-    h1 += shr(le32(m, o + 3), 2) & M26
-    h2 += shr(le32(m, o + 6), 4) & M26
-    h3 += shr(le32(m, o + 9), 6) & M26
-    h4 += shr(le32(m, o + 12), 8) | hibit
+  Poly{h0: 0, h1: 0, h2: 0, h3: 0, h4: 0, r0: r0, r1: r1, r2: r2, r3: r3, r4: r4, s1: r1 * 5, s2: r2 * 5, s3: r3 * 5, s4: r4 * 5}
+}
+
+/// p after the 16 byte blocks of m from off to end (a multiple of 16
+/// apart), each with hibit added above its 128 bits (2^128 for a full
+/// block, 0 for a padded last one).
+fn absorb(p: Poly, m: Bytes, off: Int, end: Int, hibit: Int) -> Poly {
+  var h0 = p.h0
+  var h1 = p.h1
+  var h2 = p.h2
+  var h3 = p.h3
+  var h4 = p.h4
+  let r0 = p.r0
+  let r1 = p.r1
+  let r2 = p.r2
+  let r3 = p.r3
+  let r4 = p.r4
+  let s1 = p.s1
+  let s2 = p.s2
+  let s3 = p.s3
+  let s4 = p.s4
+  var o = off
+  while o < end {
+    let w0 = rt.bytes_word(m, o)
+    let w1 = rt.bytes_word(m, o + 8)
+    h0 += w0 & M26
+    h1 += shr(w0, 26) & M26
+    h2 += (shr(w0, 52) | shl(w1, 12)) & M26
+    h3 += shr(w1, 14) & M26
+    h4 += shr(w1, 40) | hibit
     let d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
     var d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
     var d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
@@ -173,9 +251,39 @@ pub fn poly1305(key: Bytes, msg: Bytes) -> Bytes {
     h0 += shr(d4, 26) * 5
     h1 += shr(h0, 26)
     h0 = h0 & M26
-    i += 16
+    o += 16
   }
-  // carry fully, then h - p, kept when it does not borrow
+  Poly{h0: h0, h1: h1, h2: h2, h3: h3, h4: h4, r0: r0, r1: r1, r2: r2, r3: r3, r4: r4, s1: s1, s2: s2, s3: s3, s4: s4}
+}
+
+/// p after the bytes of m from off to its end: the full blocks, then the
+/// rest as one block padded with zeros (after a 1 byte and with no 2^128
+/// when pad1, as Poly1305's own last block; with 2^128 when not, as the
+/// AEAD's pad16).
+fn absorb_tail(p: Poly, m: Bytes, off: Int, pad1: Bool) -> Poly {
+  let full = off + (m.len() - off) / 16 * 16
+  var q = absorb(p, m, off, full, shl(1, 24))
+  if full < m.len() {
+    var t = rt.rs_append_bytes(rt.rs_with_cap(16), m, full, m.len(), 0)
+    if pad1 {
+      t = rt.rs_push_byte(t, 1)
+    }
+    while t.len() < 16 {
+      t = rt.rs_push_byte(t, 0)
+    }
+    q = absorb(q, t.bytes(), 0, 16, if pad1 { 0 } else { shl(1, 24) })
+  }
+  q
+}
+
+/// The tag of state p: h fully carried, h - p kept when it does not
+/// borrow, then h mod 2^128 plus s (the key's second half).
+fn poly_finish(p: Poly, key: Bytes) -> Bytes {
+  var h0 = p.h0
+  var h1 = p.h1
+  var h2 = p.h2
+  var h3 = p.h3
+  var h4 = p.h4
   var c = shr(h1, 26)
   h1 = h1 & M26
   h2 += c
@@ -211,7 +319,6 @@ pub fn poly1305(key: Bytes, msg: Bytes) -> Bytes {
   h2 = ct.pick(keep, g2, h2)
   h3 = ct.pick(keep, g3, h3)
   h4 = ct.pick(keep, g4 & M26, h4)
-  // h mod 2^128 plus s
   let w0 = (h0 | shl(h1, 26)) & M32
   let w1 = (shr(h1, 6) | shl(h2, 20)) & M32
   let w2 = (shr(h2, 12) | shl(h3, 14)) & M32
@@ -227,28 +334,20 @@ pub fn poly1305(key: Bytes, msg: Bytes) -> Bytes {
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), o0 | shl(o1, 32), 8), o2 | shl(o3, 32), 8).bytes()
 }
 
+/// The Poly1305 tag of msg under the one time key (32 bytes: r, then s).
+pub fn poly1305(key: Bytes, msg: Bytes) -> Bytes { poly_finish(absorb_tail(poly_new(key), msg, 0, true), key) }
+
 // ---------------------------------------------------------------------------
 // The AEAD (RFC 8439 2.8)
 
-/// s after zeros up to a multiple of 16 bytes past n.
-fn pad16(s: Str, n: Int) -> Str {
-  var t = s
-  var k = (16 - n % 16) % 16
-  while k > 0 {
-    t = rt.rs_push_byte(t, 0)
-    k -= 1
-  }
-  t
-}
-
-/// The tag of ciphertext data and additional data aad.
+/// The tag of ciphertext data and additional data aad: each padded to
+/// 16 bytes, then their lengths, absorbed where they are (no copy).
 fn tag(key: Bytes, nonce: Bytes, data: Bytes, aad: Bytes) -> Bytes {
   let otk = block(key, 0, nonce)
-  var m = rt.rs_with_cap(aad.len() + data.len() + 48)
-  m = pad16(rt.rs_append_bytes(m, aad, 0, aad.len(), 0), aad.len())
-  m = pad16(rt.rs_append_bytes(m, data, 0, data.len(), 0), data.len())
-  m = rt.rs_push_word(rt.rs_push_word(m, aad.len(), 8), data.len(), 8)
-  poly1305(otk, m.bytes())
+  var p = absorb_tail(poly_new(otk), aad, 0, false)
+  p = absorb_tail(p, data, 0, false)
+  let lens = rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), aad.len(), 8), data.len(), 8).bytes()
+  poly_finish(absorb(p, lens, 0, 16, shl(1, 24)), otk)
 }
 
 /// The ciphertext of plaintext pt under key (32 bytes) and nonce (12
