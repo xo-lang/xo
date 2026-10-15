@@ -1,0 +1,37 @@
+exit 0
+--- stdout
+p256 public 1 049462088f6ab0bec19cbc27adbf42d568b2ee40d88c37573a271d808c343cef8fb3527211d0fb2976fc490413def089c6b119434d92ba757d98b943dcf596d7fe
+p256 public 2 045ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032
+p256 ecdh 690799e59a1ad8c5c030a6a992d55c19b9e1b8a31deaeb8e8b2067836afcadde same true
+p256 ecdh off curve 0
+p256 ecdh short 0
+p256 public zero 0 n 0
+p256 fixed public true
+p256 verify go 01
+p256 verify changed hash 00
+p256 verify changed sig 00
+p256 verify other key 00
+p256 sign 0 01 other hash 00
+p256 sign 1 01 other hash 00
+p256 sign 2 01 other hash 00
+p256 sign fixed 01
+p256 short hash 01
+p256 long hash 01
+p384 public 1 046f00c95fcde026dc97ea7f3468b1089eeba501d3ed08b1f6a7a0001723037f864917a1d4491d9c2fb8961c39c1e83902d1be73837e50e15e0d5ed06a0b199cc5e218a57747e1b6fdab371499f05312b596b9a8a14233c79fe2297af826bc78c3
+p384 public 2 04aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7c9e821b569d9d390a26167406d6d23d6070be242d765eb831625ceec4a0f473ef59f4e30e2817e6285bce2846f15f1a0
+p384 ecdh 6f00c95fcde026dc97ea7f3468b1089eeba501d3ed08b1f6a7a0001723037f864917a1d4491d9c2fb8961c39c1e83902 same true
+p384 ecdh off curve 0
+p384 ecdh short 0
+p384 public zero 0 n 0
+p384 fixed public true
+p384 verify go 01
+p384 verify changed hash 00
+p384 verify changed sig 00
+p384 verify other key 00
+p384 sign 0 01 other hash 00
+p384 sign 1 01 other hash 00
+p384 sign 2 01 other hash 00
+p384 sign fixed 01
+p384 short hash 01
+p384 long hash 01
+--- stderr

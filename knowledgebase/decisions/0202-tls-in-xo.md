@@ -35,6 +35,20 @@ std (decision 0074) unless the owner decides to expose a user marker.
   prerequisite (5) design must make branches and memory accesses on
   secret values impossible to introduce, and be checked (for example by
   timing tests and inspecting the emitted code).
+- 2026-10-14 (B31 part 2, nistec.xo, bigmod.xo, rsa.xo): every secret
+  dependent selection goes through ct.xo's masks (ct.mask_eq,
+  ct.mask_bit, ct.pick, each behind rt.ct_barrier): the scalar and
+  exponent windows' table reads, the Montgomery product's final
+  subtraction, modular subtraction's add back. Carries and borrows are
+  computed with bitwise operations (bits.Add64's formulas), which an
+  optimizer may turn into flag arithmetic (adc, sbc) but has no reason to
+  turn into a branch; the places where it could still matter are the
+  carry chains in nistec.xo and bigmod.xo (mac, adc, sbb), which have no
+  barrier, and are worth adding to test/codegen/consttime when its
+  patterns grow. The branches that remain are on public values: the
+  exponent bits of an inversion (m - 2), a public RSA exponent,
+  rejection sampling of a nonce (only the accepted one is used), an
+  ECDSA signature's r or s being zero, and the RSA fault check.
 
 ## Alternatives
 

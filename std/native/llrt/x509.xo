@@ -1,0 +1,721 @@
+// X.509 certificates (RFC 5280) for TLS (the zero-C audit's B31, decision
+// 0202: Go's crypto/x509 parser in Xo, replacing Mbed TLS's x509_crt):
+// the fields chain building and verification use (names as their raw
+// DER, which Go compares byte for byte too, validity, the public key,
+// the extensions of RFC 5280 4.2.1 that Go acts on) and the signature
+// checks of a certificate by its issuer's key. Every input is public.
+use native/llrt/asn1
+use native/llrt/ed25519
+use native/llrt/nistec
+use native/llrt/rsa
+use native/llrt/sha256
+
+// signature algorithms (Cert.sig_alg)
+pub const SIG_UNKNOWN: Int = 0
+pub const SIG_RSA_SHA256: Int = 1
+pub const SIG_RSA_SHA384: Int = 2
+pub const SIG_RSA_SHA512: Int = 3
+pub const SIG_ECDSA_SHA256: Int = 4
+pub const SIG_ECDSA_SHA384: Int = 5
+pub const SIG_ECDSA_SHA512: Int = 6
+pub const SIG_ED25519: Int = 7
+pub const SIG_PSS_SHA256: Int = 8
+pub const SIG_PSS_SHA384: Int = 9
+pub const SIG_PSS_SHA512: Int = 10
+// SHA-1 and MD5 signatures, which Go refuses to verify
+pub const SIG_INSECURE: Int = 11
+
+// public key algorithms (Cert.key_alg)
+pub const KEY_UNKNOWN: Int = 0
+pub const KEY_RSA: Int = 1
+pub const KEY_P256: Int = 2
+pub const KEY_P384: Int = 3
+pub const KEY_ED25519: Int = 4
+// an EC key on another curve (P-521, ...)
+pub const KEY_EC_OTHER: Int = 5
+
+// KeyUsage's flags (bit i of the BIT STRING is 1 << i, as Go's)
+pub const KU_DIGITAL_SIGNATURE: Int = 1
+pub const KU_KEY_ENCIPHERMENT: Int = 4
+pub const KU_CERT_SIGN: Int = 32
+
+pub const EKU_ANY: Str = "2.5.29.37.0"
+pub const EKU_SERVER: Str = "1.3.6.1.5.5.7.3.1"
+pub const EKU_CLIENT: Str = "1.3.6.1.5.5.7.3.2"
+
+/// A parsed certificate.
+pub struct Cert {
+  /// The whole certificate (DER) and its signed part.
+  pub raw: Bytes
+  pub tbs: Bytes
+  /// 1 to 3.
+  pub version: Int
+  /// The serial number's magnitude (big endian).
+  pub serial: Bytes
+  pub sig_alg: Int
+  pub signature: Bytes
+  /// The issuer's and subject's Names as their DER, and the subject's
+  /// last common name.
+  pub issuer: Bytes
+  pub subject: Bytes
+  pub cn: Str
+  /// Unix seconds.
+  pub not_before: Int
+  pub not_after: Int
+  pub key_alg: Int
+  /// RSA: the RSAPublicKey (SEQUENCE of n and e); EC: the uncompressed
+  /// point; Ed25519: the 32 bytes.
+  pub key: Bytes
+  /// The SubjectPublicKeyInfo's DER.
+  pub spki: Bytes
+  /// The subject alternative names: DNS names and IP addresses (4 or 16
+  /// bytes), and whether the extension is there.
+  pub dns: List[Str]
+  pub ips: List[Bytes]
+  pub has_san: Bool
+  /// Basic constraints: present, cA, pathLenConstraint (-1 none).
+  pub has_bc: Bool
+  pub is_ca: Bool
+  pub max_path: Int
+  /// KeyUsage's flags, -1 without the extension.
+  pub key_usage: Int
+  /// The ExtendedKeyUsage OIDs (dotted), none without the extension.
+  pub ext_usage: List[Str]
+  pub has_eku: Bool
+  pub ski: Bytes
+  pub aki: Bytes
+  /// The DNS name constraints (RFC 5280 4.2.1.10): permitted and
+  /// excluded subtrees.
+  pub permitted_dns: List[Str]
+  pub excluded_dns: List[Str]
+  /// The critical extensions this parser does not act on, which make
+  /// verification fail (Go's UnhandledCriticalExtensions).
+  pub unhandled: Int
+}
+
+fn empty() -> Cert {
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0}
+}
+
+/// The result of parse: the certificate, or the error text (Go's).
+pub struct Parsed {
+  pub cert: Cert
+  pub err: Str
+}
+
+fn fail(msg: Str) -> Parsed { Parsed{cert: empty(), err: "x509: ${msg}"} }
+
+/// The certificate of the DER der.
+pub fn parse(der: Bytes) -> Parsed {
+  let top = asn1.whole(der, asn1.SEQUENCE)
+  if top.tag < 0 {
+    return fail("malformed certificate")
+  }
+  let parts = asn1.children(der, top)
+  if asn1.any_bad(parts) || parts.len() != 3 || parts[0].tag != asn1.SEQUENCE || parts[1].tag != asn1.SEQUENCE {
+    return fail("malformed certificate")
+  }
+  var c = empty()
+  c.raw = der
+  c.tbs = der[top.lo..parts[0].next]
+  let outer_alg = der[parts[0].next..parts[1].next]
+  match asn1.bits(der, parts[2]) {
+    Some(s) => c.signature = s
+    None => return fail("malformed signature")
+  }
+  let b = c.tbs
+  let tbs = asn1.whole(b, asn1.SEQUENCE)
+  if tbs.tag < 0 {
+    return fail("malformed tbs certificate")
+  }
+  let f = asn1.children(b, tbs)
+  if asn1.any_bad(f) || f.len() < 6 {
+    return fail("malformed tbs certificate")
+  }
+  var i = 0
+  c.version = 1
+  if f[0].tag == 0xa0 {
+    let v = asn1.read(b, f[0].lo, f[0].hi)
+    match asn1.small_int(b, v) {
+      Some(n) => c.version = n + 1
+      None => return fail("malformed version")
+    }
+    if v.next != f[0].hi || c.version < 1 || c.version > 3 {
+      return fail("invalid version")
+    }
+    i = 1
+  }
+  if f.len() < i + 6 {
+    return fail("malformed tbs certificate")
+  }
+  match asn1.uint_bytes(b, f[i]) {
+    Some(s) => c.serial = s
+    None => return fail("malformed serial number")
+  }
+  let inner_alg = b[f[i].next..f[i + 1].next]
+  if f[i + 1].tag != asn1.SEQUENCE || inner_alg != outer_alg {
+    return fail("inner and outer signature algorithm identifiers don't match")
+  }
+  c.sig_alg = sig_algorithm(b, f[i + 1])
+  if f[i + 2].tag != asn1.SEQUENCE || f[i + 4].tag != asn1.SEQUENCE {
+    return fail("malformed issuer")
+  }
+  c.issuer = b[f[i + 1].next..f[i + 2].next]
+  c.subject = b[f[i + 3].next..f[i + 4].next]
+  match common_name(b, f[i + 4]) {
+    Some(s) => c.cn = s
+    None => return fail("malformed subject")
+  }
+  // validity
+  let val = asn1.children(b, f[i + 3])
+  if f[i + 3].tag != asn1.SEQUENCE || asn1.any_bad(val) || val.len() != 2 {
+    return fail("malformed validity")
+  }
+  match asn1.time(b, val[0]) {
+    Some(t) => c.not_before = t
+    None => return fail("malformed validity")
+  }
+  match asn1.time(b, val[1]) {
+    Some(t) => c.not_after = t
+    None => return fail("malformed validity")
+  }
+  // subjectPublicKeyInfo
+  if f[i + 5].tag != asn1.SEQUENCE {
+    return fail("malformed spki")
+  }
+  c.spki = b[f[i + 4].next..f[i + 5].next]
+  let err = public_key(b, f[i + 5], c)
+  if err != "" {
+    return fail(err)
+  }
+  var k = i + 6
+  // issuerUniqueID and subjectUniqueID
+  while k < f.len() && (f[k].tag == 0x81 || f[k].tag == 0xa1 || f[k].tag == 0x82 || f[k].tag == 0xa2) {
+    k += 1
+  }
+  if k < f.len() && f[k].tag == 0xa3 {
+    if c.version != 3 {
+      return fail("malformed extensions")
+    }
+    let e = extensions(b, f[k], c)
+    if e != "" {
+      return fail(e)
+    }
+    k += 1
+  }
+  if k != f.len() {
+    return fail("malformed tbs certificate")
+  }
+  Parsed{cert: c, err: ""}
+}
+
+/// The algorithm of an AlgorithmIdentifier of a signature.
+fn sig_algorithm(b: Bytes, t: asn1.Tlv) -> Int {
+  let parts = asn1.children(b, t)
+  if asn1.any_bad(parts) || parts.len() == 0 {
+    return SIG_UNKNOWN
+  }
+  let o = asn1.oid(b, parts[0])
+  if o == "1.2.840.113549.1.1.11" {
+    return SIG_RSA_SHA256
+  }
+  if o == "1.2.840.113549.1.1.12" {
+    return SIG_RSA_SHA384
+  }
+  if o == "1.2.840.113549.1.1.13" {
+    return SIG_RSA_SHA512
+  }
+  if o == "1.2.840.10045.4.3.2" {
+    return SIG_ECDSA_SHA256
+  }
+  if o == "1.2.840.10045.4.3.3" {
+    return SIG_ECDSA_SHA384
+  }
+  if o == "1.2.840.10045.4.3.4" {
+    return SIG_ECDSA_SHA512
+  }
+  if o == "1.3.101.112" {
+    return SIG_ED25519
+  }
+  if o == "1.2.840.113549.1.1.10" && parts.len() == 2 {
+    return pss_algorithm(b, parts[1])
+  }
+  if o == "1.2.840.113549.1.1.5" || o == "1.2.840.113549.1.1.4" || o == "1.2.840.10045.4.1" || o == "1.3.14.3.2.29" {
+    return SIG_INSECURE
+  }
+  SIG_UNKNOWN
+}
+
+/// The hash of the hash algorithm OID: 256, 384, 512, or 0.
+fn hash_bits(o: Str) -> Int {
+  if o == "2.16.840.1.101.3.4.2.1" {
+    return 256
+  }
+  if o == "2.16.840.1.101.3.4.2.2" {
+    return 384
+  }
+  if o == "2.16.840.1.101.3.4.2.3" {
+    return 512
+  }
+  0
+}
+
+/// RSASSA-PSS-params (RFC 4055 3.1) as Go accepts them: the hash
+/// SHA-256, SHA-384, or SHA-512, MGF1 with the same hash, the salt the
+/// hash's length, and the trailer field 1.
+fn pss_algorithm(b: Bytes, t: asn1.Tlv) -> Int {
+  let ps = asn1.children(b, t)
+  if t.tag != asn1.SEQUENCE || asn1.any_bad(ps) {
+    return SIG_UNKNOWN
+  }
+  var hash = 0
+  var mgf = 0
+  var salt = 20
+  for p in ps {
+    let inner = asn1.read(b, p.lo, p.hi)
+    if inner.tag < 0 || inner.next != p.hi {
+      return SIG_UNKNOWN
+    }
+    if p.tag == 0xa0 {
+      let a = asn1.children(b, inner)
+      if asn1.any_bad(a) || a.len() == 0 {
+        return SIG_UNKNOWN
+      }
+      hash = hash_bits(asn1.oid(b, a[0]))
+    } else if p.tag == 0xa1 {
+      let a = asn1.children(b, inner)
+      if asn1.any_bad(a) || a.len() != 2 || asn1.oid(b, a[0]) != "1.2.840.113549.1.1.8" {
+        return SIG_UNKNOWN
+      }
+      let h = asn1.children(b, a[1])
+      if asn1.any_bad(h) || h.len() == 0 {
+        return SIG_UNKNOWN
+      }
+      mgf = hash_bits(asn1.oid(b, h[0]))
+    } else if p.tag == 0xa2 {
+      match asn1.small_int(b, inner) {
+        Some(n) => salt = n
+        None => return SIG_UNKNOWN
+      }
+    } else if p.tag == 0xa3 {
+      if asn1.small_int(b, inner) != Some(1) {
+        return SIG_UNKNOWN
+      }
+    } else {
+      return SIG_UNKNOWN
+    }
+  }
+  if hash == 0 || mgf != hash || salt != hash / 8 {
+    return SIG_UNKNOWN
+  }
+  if hash == 256 {
+    return SIG_PSS_SHA256
+  }
+  if hash == 384 {
+    return SIG_PSS_SHA384
+  }
+  SIG_PSS_SHA512
+}
+
+/// The last common name (2.5.4.3) of the Name t; "" without one; none
+/// for a malformed Name.
+fn common_name(b: Bytes, t: asn1.Tlv) -> Str? {
+  let sets = asn1.children(b, t)
+  if asn1.any_bad(sets) {
+    return None
+  }
+  var cn = ""
+  for s in sets {
+    let atvs = asn1.children(b, s)
+    if s.tag != asn1.SET || asn1.any_bad(atvs) {
+      return None
+    }
+    for a in atvs {
+      let tv = asn1.children(b, a)
+      if a.tag != asn1.SEQUENCE || asn1.any_bad(tv) || tv.len() != 2 {
+        return None
+      }
+      if asn1.oid(b, tv[0]) == "2.5.4.3" {
+        match asn1.text(b, tv[1]) {
+          Some(x) => cn = x
+          None => return None
+        }
+      }
+    }
+  }
+  Some(cn)
+}
+
+/// Fills c's key from the SubjectPublicKeyInfo t; the error text.
+fn public_key(b: Bytes, t: asn1.Tlv, var c: Cert) -> Str {
+  let parts = asn1.children(b, t)
+  if asn1.any_bad(parts) || parts.len() != 2 || parts[0].tag != asn1.SEQUENCE {
+    return "malformed spki"
+  }
+  let alg = asn1.children(b, parts[0])
+  if asn1.any_bad(alg) || alg.len() == 0 {
+    return "malformed spki"
+  }
+  let key = match asn1.bits(b, parts[1]) {
+    Some(k) => k
+    None => return "malformed subjectPublicKey"
+  }
+  let o = asn1.oid(b, alg[0])
+  if o == "1.2.840.113549.1.1.1" {
+    // the parameters must be NULL
+    if alg.len() != 2 || alg[1].tag != asn1.NULL || alg[1].hi != alg[1].lo {
+      return "RSA key missing NULL parameters"
+    }
+    let k = asn1.whole(key, asn1.SEQUENCE)
+    let ne = asn1.children(key, k)
+    if k.tag < 0 || asn1.any_bad(ne) || ne.len() != 2 || asn1.uint_bytes(key, ne[0]) == None || asn1.uint_bytes(key, ne[1]) == None {
+      return "invalid RSA public key"
+    }
+    c.key_alg = KEY_RSA
+  } else if o == "1.2.840.10045.2.1" {
+    if alg.len() != 2 {
+      return "invalid ECDSA parameters"
+    }
+    let curve = asn1.oid(b, alg[1])
+    if curve == "1.2.840.10045.3.1.7" {
+      c.key_alg = KEY_P256
+    } else if curve == "1.3.132.0.34" {
+      c.key_alg = KEY_P384
+    } else if curve == "1.3.132.0.35" {
+      c.key_alg = KEY_EC_OTHER
+    } else {
+      return "unsupported elliptic curve"
+    }
+    if c.key_alg != KEY_EC_OTHER && key.len() != 1 + 2 * nistec.size(if c.key_alg == KEY_P384 { nistec.P384 } else { nistec.P256 }) {
+      return "invalid ECDSA public key"
+    }
+  } else if o == "1.3.101.112" {
+    if alg.len() != 1 {
+      return "Ed25519 key encoded with illegal parameters"
+    }
+    if key.len() != 32 {
+      return "wrong Ed25519 public key size"
+    }
+    c.key_alg = KEY_ED25519
+  }
+  c.key = key
+  ""
+}
+
+/// Fills c's fields from the [3] extensions t; the error text.
+fn extensions(b: Bytes, t: asn1.Tlv, var c: Cert) -> Str {
+  let seq = asn1.read(b, t.lo, t.hi)
+  if seq.tag != asn1.SEQUENCE || seq.next != t.hi {
+    return "malformed extensions"
+  }
+  let exts = asn1.children(b, seq)
+  if asn1.any_bad(exts) || exts.len() == 0 {
+    return "malformed extensions"
+  }
+  var seen: List[Str] = []
+  for e in exts {
+    let parts = asn1.children(b, e)
+    if e.tag != asn1.SEQUENCE || asn1.any_bad(parts) || parts.len() < 2 || parts.len() > 3 {
+      return "malformed extension"
+    }
+    let o = asn1.oid(b, parts[0])
+    if o == "" {
+      return "malformed extension OID field"
+    }
+    for s in seen {
+      if s == o {
+        return "certificate contains duplicate extensions"
+      }
+    }
+    seen.push(o)
+    var critical = false
+    var vi = 1
+    if parts.len() == 3 {
+      match asn1.boolean(b, parts[1]) {
+        Some(v) => critical = v
+        None => return "malformed extension critical field"
+      }
+      vi = 2
+    }
+    if parts[vi].tag != asn1.OCTET_STRING {
+      return "malformed extension value field"
+    }
+    let v = asn1.contents(b, parts[vi])
+    let err = extension(o, v, critical, c)
+    if err != "" {
+      return err
+    }
+  }
+  ""
+}
+
+/// One extension: o its OID, v its value's DER.
+fn extension(o: Str, v: Bytes, critical: Bool, var c: Cert) -> Str {
+  if o == "2.5.29.17" {
+    c.has_san = true
+    return san(v, c)
+  }
+  if o == "2.5.29.19" {
+    c.has_bc = true
+    let s = asn1.whole(v, asn1.SEQUENCE)
+    let xs = asn1.children(v, s)
+    if s.tag < 0 || asn1.any_bad(xs) || xs.len() > 2 {
+      return "invalid basic constraints"
+    }
+    var k = 0
+    if k < xs.len() && xs[k].tag == asn1.BOOLEAN {
+      match asn1.boolean(v, xs[k]) {
+        Some(x) => c.is_ca = x
+        None => return "invalid basic constraints"
+      }
+      k += 1
+    }
+    if k < xs.len() {
+      match asn1.small_int(v, xs[k]) {
+        Some(n) => c.max_path = n
+        None => return "invalid basic constraints"
+      }
+      if c.max_path < 0 {
+        return "invalid basic constraints"
+      }
+      k += 1
+    }
+    if k != xs.len() {
+      return "invalid basic constraints"
+    }
+    return ""
+  }
+  if o == "2.5.29.15" {
+    let t = asn1.whole(v, asn1.BIT_STRING)
+    match asn1.bit_flags(v, t) {
+      Some(f) => c.key_usage = f
+      None => return "invalid key usage"
+    }
+    return ""
+  }
+  if o == "2.5.29.37" {
+    c.has_eku = true
+    let s = asn1.whole(v, asn1.SEQUENCE)
+    let xs = asn1.children(v, s)
+    if s.tag < 0 || asn1.any_bad(xs) {
+      return "invalid extended key usages"
+    }
+    for x in xs {
+      let u = asn1.oid(v, x)
+      if u == "" {
+        return "invalid extended key usages"
+      }
+      c.ext_usage.push(u)
+    }
+    return ""
+  }
+  if o == "2.5.29.14" {
+    let t = asn1.whole(v, asn1.OCTET_STRING)
+    if t.tag < 0 {
+      return "invalid subject key identifier"
+    }
+    c.ski = asn1.contents(v, t)
+    return ""
+  }
+  if o == "2.5.29.35" {
+    let s = asn1.whole(v, asn1.SEQUENCE)
+    let xs = asn1.children(v, s)
+    if s.tag < 0 || asn1.any_bad(xs) {
+      return "invalid authority key identifier"
+    }
+    for x in xs {
+      if x.tag == 0x80 {
+        c.aki = asn1.contents(v, x)
+      }
+    }
+    return ""
+  }
+  if o == "2.5.29.30" {
+    return name_constraints(v, critical, c)
+  }
+  // certificate policies, CRL distribution points, authority information
+  // access, SCTs: read by nothing here, as Go's verifier reads none of
+  // them but the policies
+  if o == "2.5.29.32" {
+    return ""
+  }
+  if critical {
+    c.unhandled += 1
+  }
+  ""
+}
+
+/// The subject alternative names (RFC 5280 4.2.1.6).
+fn san(v: Bytes, var c: Cert) -> Str {
+  let s = asn1.whole(v, asn1.SEQUENCE)
+  let xs = asn1.children(v, s)
+  if s.tag < 0 || asn1.any_bad(xs) {
+    return "invalid subject alternative names"
+  }
+  for x in xs {
+    if x.tag == 0x82 {
+      let d = asn1.contents(v, x)
+      if !ascii(d) {
+        return "SAN dNSName is malformed"
+      }
+      c.dns.push(d.to_str() ?? "")
+    } else if x.tag == 0x87 {
+      let ip = asn1.contents(v, x)
+      if ip.len() != 4 && ip.len() != 16 {
+        return "cannot parse IP address of length ${ip.len()}"
+      }
+      c.ips.push(ip)
+    } else if x.tag == 0x81 || x.tag == 0x86 {
+      if !ascii(asn1.contents(v, x)) {
+        return "SAN is malformed"
+      }
+    }
+  }
+  ""
+}
+
+fn ascii(d: Bytes) -> Bool {
+  for x in d {
+    if Int(x) >= 128 {
+      return false
+    }
+  }
+  true
+}
+
+/// NameConstraints (RFC 5280 4.2.1.10): the DNS subtrees; a critical
+/// extension with any other kind of name is not acted on (unhandled).
+fn name_constraints(v: Bytes, critical: Bool, var c: Cert) -> Str {
+  let s = asn1.whole(v, asn1.SEQUENCE)
+  let xs = asn1.children(v, s)
+  if s.tag < 0 || asn1.any_bad(xs) {
+    return "invalid NameConstraints extension"
+  }
+  var other = false
+  for x in xs {
+    if x.tag != 0xa0 && x.tag != 0xa1 {
+      return "invalid NameConstraints extension"
+    }
+    let subtrees = asn1.children(v, x)
+    if asn1.any_bad(subtrees) {
+      return "invalid NameConstraints extension"
+    }
+    for st in subtrees {
+      let base = asn1.read(v, st.lo, st.hi)
+      if st.tag != asn1.SEQUENCE || base.tag < 0 {
+        return "invalid NameConstraints extension"
+      }
+      // a minimum other than 0 or a maximum is not supported (as Go)
+      if base.next != st.hi {
+        return "invalid NameConstraints extension"
+      }
+      if base.tag == 0x82 {
+        let d = asn1.contents(v, base)
+        if !ascii(d) {
+          return "invalid constraint value"
+        }
+        let name = d.to_str() ?? ""
+        if x.tag == 0xa0 {
+          c.permitted_dns.push(name)
+        } else {
+          c.excluded_dns.push(name)
+        }
+      } else {
+        other = true
+      }
+    }
+  }
+  if other && critical {
+    c.unhandled += 1
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Signatures
+
+/// The sha256.xo hash id of the signature algorithm.
+fn sig_hash_id(alg: Int) -> Int {
+  if alg == SIG_ECDSA_SHA384 || alg == SIG_RSA_SHA384 || alg == SIG_PSS_SHA384 {
+    return sha256.HASH_SHA384
+  }
+  if alg == SIG_ECDSA_SHA512 || alg == SIG_RSA_SHA512 || alg == SIG_PSS_SHA512 {
+    return sha256.HASH_SHA512
+  }
+  sha256.HASH_SHA256
+}
+
+/// Whether sig is a signature of data by the public key (key_alg, key)
+/// with the algorithm alg (Go's checkSignature: the key's type must fit
+/// the algorithm; SHA-1 and MD5 are refused).
+pub fn check(alg: Int, key_alg: Int, key: Bytes, data: Bytes, sig: Bytes) -> Bool {
+  if alg == SIG_ED25519 {
+    return key_alg == KEY_ED25519 && ed25519.verify(key, data, sig)
+  }
+  if alg == SIG_ECDSA_SHA256 || alg == SIG_ECDSA_SHA384 || alg == SIG_ECDSA_SHA512 {
+    if key_alg != KEY_P256 && key_alg != KEY_P384 {
+      return false
+    }
+    let curve = if key_alg == KEY_P384 { nistec.P384 } else { nistec.P256 }
+    return nistec.verify(curve, key, sha256.sum(sig_hash_id(alg), data), sig)
+  }
+  if (alg >= SIG_RSA_SHA256 && alg <= SIG_RSA_SHA512) || (alg >= SIG_PSS_SHA256 && alg <= SIG_PSS_SHA512) {
+    if key_alg != KEY_RSA {
+      return false
+    }
+    let h = sig_hash_id(alg)
+    return match rsa.public_key(key) {
+      Some(k) => if alg >= SIG_PSS_SHA256 { rsa.verify_pss(k, h, sha256.sum(h, data), sig, sha256.size(h)) } else { rsa.verify_pkcs1(k, h, sha256.sum(h, data), sig) }
+      None => false
+    }
+  }
+  false
+}
+
+/// Whether the certificate c is signed by the key of parent.
+pub fn signed_by(c: Cert, parent: Cert) -> Bool { check(c.sig_alg, parent.key_alg, parent.key, c.tbs, c.signature) }
+
+/// A description of c, one field a line (the test vectors' format; see
+/// std/rt internal_crypto.go).
+pub fn describe(c: Cert) -> Str {
+  var s = "version ${c.version}\nserial ${c.serial.to_hex()}\nsig_alg ${c.sig_alg}\nsignature ${c.signature.to_hex()}\n"
+  s = "${s}issuer ${c.issuer.to_hex()}\nsubject ${c.subject.to_hex()}\ncn ${c.cn}\n"
+  s = "${s}not_before ${c.not_before}\nnot_after ${c.not_after}\nkey_alg ${c.key_alg}\nkey ${c.key.to_hex()}\nspki ${c.spki.to_hex()}\n"
+  var ips: List[Str] = []
+  for ip in c.ips {
+    ips.push(ip.to_hex())
+  }
+  s = "${s}dns ${join(c.dns)}\nips ${join(ips)}\n"
+  s = "${s}ca ${c.is_ca} bc ${c.has_bc} max_path ${c.max_path}\nkey_usage ${if c.key_usage < 0 { 0 } else { c.key_usage }}\n"
+  s = "${s}ext_usage ${join(c.ext_usage)}\nski ${c.ski.to_hex()}\naki ${c.aki.to_hex()}\n"
+  s = "${s}permitted ${join(c.permitted_dns)}\nexcluded ${join(c.excluded_dns)}\nunhandled ${c.unhandled}\n"
+  "${s}tbs ${c.tbs.len()}\n"
+}
+
+fn join(xs: List[Str]) -> Str {
+  var s = ""
+  for (i, x) in xs.indexed() {
+    s = if i == 0 { x } else { "${s},${x}" }
+  }
+  s
+}
+
+/// internal.crypto_op's x509 ops (std/internal.xo): `parse` the fields of
+/// the certificate a, one a line (describe), or `error`; `signed_by` [1]
+/// when the certificate a carries a signature by the key of the
+/// certificate b, else [0]; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what == "parse" {
+    let p = parse(a)
+    if p.err != "" {
+      return Some(b"error")
+    }
+    return Some(describe(p.cert).bytes())
+  }
+  if what == "signed_by" {
+    let x = parse(a)
+    let parent = parse(b)
+    return Some(nistec.flag(x.err == "" && parent.err == "" && signed_by(x.cert, parent.cert)))
+  }
+  None
+}

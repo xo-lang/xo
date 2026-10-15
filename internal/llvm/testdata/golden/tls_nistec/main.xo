@@ -1,0 +1,67 @@
+// P-256 and P-384 of the native backends' TLS (std/native/llrt/nistec.xo,
+// the zero-C audit's B31) against Go's crypto/ecdh and crypto/ecdsa
+// through internal.crypto_op: public keys and ECDH of fixed keys, invalid
+// keys and points, a fixed signature from Go, and signatures made here
+// verified here.
+use std/crypto
+use std/internal
+
+fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+fn op(name: Str, a: Bytes, b: Bytes, c: Bytes) -> Bytes { internal.crypto_op(name, a, b, c, b"") }
+
+/// b with its last byte changed.
+fn flip(b: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  for i in 0..b.len() {
+    if i == b.len() - 1 {
+      out.write_byte(b[i] ^ 1)
+    } else {
+      out.write_byte(b[i])
+    }
+  }
+  out.freeze()
+}
+
+fn curve(os: Os, c: Str, priv1: Str, priv2: Str, pubhex: Str, hash: Bytes, sig: Str, n: Str) uses stdio {
+  let k1 = hex(priv1)
+  let k2 = hex(priv2)
+  let p1 = op("${c}.public", k1, b"", b"")
+  let p2 = op("${c}.public", k2, b"", b"")
+  os.stdio.println("${c} public 1 ${p1.to_hex()}")
+  os.stdio.println("${c} public 2 ${p2.to_hex()}")
+  let s12 = op("${c}.ecdh", k1, p2, b"")
+  let s21 = op("${c}.ecdh", k2, p1, b"")
+  os.stdio.println("${c} ecdh ${s12.to_hex()} same ${s12 == s21}")
+  os.stdio.println("${c} ecdh off curve ${op("${c}.ecdh", k1, flip(p2), b"").len()}")
+  os.stdio.println("${c} ecdh short ${op("${c}.ecdh", k1, p2[0..p2.len() - 1], b"").len()}")
+  let zero = hex(n).len()
+  var zb = BytesBuilder.new()
+  for _ in 0..zero {
+    zb.write_byte(0)
+  }
+  os.stdio.println("${c} public zero ${op("${c}.public", zb.freeze(), b"", b"").len()} n ${op("${c}.public", hex(n), b"", b"").len()}")
+  let pk = hex(pubhex)
+  os.stdio.println("${c} fixed public ${op("${c}.public", hex(priv1), b"", b"") == pk}")
+  os.stdio.println("${c} verify go ${op("${c}.verify", pk, hash, hex(sig)).to_hex()}")
+  os.stdio.println("${c} verify changed hash ${op("${c}.verify", pk, flip(hash), hex(sig)).to_hex()}")
+  os.stdio.println("${c} verify changed sig ${op("${c}.verify", pk, hash, flip(hex(sig))).to_hex()}")
+  os.stdio.println("${c} verify other key ${op("${c}.verify", p2, hash, hex(sig)).to_hex()}")
+  for i in 0..3 {
+    let g = op("${c}.generate", b"", b"", b"")
+    let gp = op("${c}.public", g, b"", b"")
+    let s = op("${c}.sign", g, hash, b"")
+    os.stdio.println("${c} sign ${i} ${op("${c}.verify", gp, hash, s).to_hex()} other hash ${op("${c}.verify", gp, flip(hash), s).to_hex()}")
+  }
+  let s1 = op("${c}.sign", k1, hash, b"")
+  os.stdio.println("${c} sign fixed ${op("${c}.verify", pk, hash, s1).to_hex()}")
+  // a short hash is left padded, a long one cut
+  os.stdio.println("${c} short hash ${op("${c}.verify", pk, hash[0..20], op("${c}.sign", k1, hash[0..20], b"")).to_hex()}")
+  let long = crypto.sha256(b"a").to_hex() + crypto.sha256(b"b").to_hex()
+  os.stdio.println("${c} long hash ${op("${c}.verify", pk, hex(long), op("${c}.sign", k1, hex(long), b"")).to_hex()}")
+}
+
+fn main(os: Os) uses stdio, rand {
+  curve(os, "p256", "864472153187d9a7b81a6e4b4f5061ac4502b4b8e36900fe0d8a7f651a861410", "0000000000000000000000000000000000000000000000000000000000000003", "049462088f6ab0bec19cbc27adbf42d568b2ee40d88c37573a271d808c343cef8fb3527211d0fb2976fc490413def089c6b119434d92ba757d98b943dcf596d7fe", crypto.sha256(b"xo"), "304502207b7b626834bd6bf42409e8e4537f07a4f3f9b09a034f4e36db123114351fd8f80221009fa07c16588fa7c0a02802acdb12ca3e21a8ee07126bcfae10c87271d330813f", "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")
+  curve(os, "p384", "d6da806e23e92187716f6a96b970d5c0a6b09072d2304439e27f776e28f9a1b65e345c32670ffb3869cf50cf7c6d5b9d", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52972", "046f00c95fcde026dc97ea7f3468b1089eeba501d3ed08b1f6a7a0001723037f864917a1d4491d9c2fb8961c39c1e83902d1be73837e50e15e0d5ed06a0b199cc5e218a57747e1b6fdab371499f05312b596b9a8a14233c79fe2297af826bc78c3", hex("66b7bdbf6b3933c8de946adb7964b54e0044263b3069f173765acaba3b1e1249b122b72e7723f65b05ebe4545307519d"), "3066023100f98d6ababd4d850b38cc2a0f764bca28164913ffa1a4543fa704c63a53dc01512e0d565046fcf739e454390ad4ec42be023100b5199f9e769a6fccbbce5001ce88400f8e083e578f7968b772c4af14f3d910eb45a19482a8a4ae08877332c8c30868d2", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973")
+}

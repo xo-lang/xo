@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 2, decision 0202): P-256
+  and P-384 (std/native/llrt/nistec.xo: ECDH and ECDSA signing and
+  verification, Montgomery field arithmetic and the complete addition
+  formulas of Renes, Costello, and Batina, a masked 4 bit window, as Go's
+  nistec), DER (asn1.xo, as cryptobyte), X.509 certificate parsing and
+  signature checks (x509.xo, as Go's crypto/x509 parser: names as raw
+  DER, validity, keys, SANs, basic and DNS name constraints, key and
+  extended key usages, unhandled critical extensions), constant time
+  integers modulo any odd modulus (bigmod.xo, as Go's bigmod), and RSA
+  (rsa.xo: PKCS #1 v1.5 and PSS verification and signing, PKCS #1 and
+  PKCS #8 private keys, CRT with a fault check). internal.crypto_op gains
+  the areas p256, p384, rsa, and x509; the goldens tls_nistec, tls_x509
+  (under -short), and tls_rsa diff them against Go's crypto/ecdh,
+  crypto/ecdsa, crypto/rsa, and crypto/x509 (PKCS #1 v1.5 signatures byte
+  for byte). Not on the TLS path yet.
+
 - Native runtime (zero-C audit item B31, part 1 of the TLS primitives,
   decision 0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
   incremental with clone, SHA-384 and SHA-512 on B08's SHA-512

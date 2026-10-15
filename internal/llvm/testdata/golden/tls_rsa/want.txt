@@ -1,0 +1,29 @@
+exit 0
+--- stdout
+key 0 public 270 e9257799b2c82ee850009254aefc5ab0dde841a1f88349b6668a3e4c996ae4df
+key 0 pkcs1 0 6699f401e5a1b505fa599a52cdac8b9170ae094c7755d3cea23c62ab56c6e5c8 verify 01 changed 00
+key 0 pss 0 256 verify 01 changed 00 as pkcs1 00
+key 0 pkcs1 1 fc60c1402225bd3dabf28d0fcfaa80e2eb6ae745d1aa4c8db8da6fd268376a2d verify 01 changed 00
+key 0 pss 1 256 verify 01 changed 00 as pkcs1 00
+key 0 pkcs1 2 12c8467b5142633f67a69aeaa4783d39691b22ae37c43e7cc3b5f4d36e6a4f23 verify 01 changed 00
+key 0 pss 2 256 verify 01 changed 00 as pkcs1 00
+key 0 go pss 01 wrong hash id 00
+key 1 public 204 749d581ba43e7bc69d4b102e36ec9c44a23b796e5f2d52b66cf8e09455ee3f81
+key 1 pkcs1 0 ae1becd8f809d72c9075fc1a3d0d8737c36a062eb621fff160663a41e677fe4c verify 01 changed 00
+key 1 pss 0 192 verify 01 changed 00 as pkcs1 00
+key 1 pkcs1 1 1f04ae0ad53ab9757534a9a31e18b74047befad34f6a2d7ca4be8ba7c9fa7241 verify 01 changed 00
+key 1 pss 1 192 verify 01 changed 00 as pkcs1 00
+key 1 pkcs1 2 9026f53b8d944906d95e2ca10c2e98061b1240b461ceae613a8154411be7c714 verify 01 changed 00
+key 1 pss 2 192 verify 01 changed 00 as pkcs1 00
+key 1 go pss 01 wrong hash id 00
+key 2 public 389 a6b350a2b9d060ce43fe437394f4d599b1555ae90eba584c686af3ef58558033
+key 2 pkcs1 0 a2ba399468e4b9b4425dfd742bf2c6882eaf4b584f6eba2d3e3e0f74b4995085 verify 01 changed 00
+key 2 pss 0 376 verify 01 changed 00 as pkcs1 00
+key 2 pkcs1 1 8c7518e2e0354a37c8b3c9d9754828ef6972a0bf61a456143cde3594474d2b8f verify 01 changed 00
+key 2 pss 1 376 verify 01 changed 00 as pkcs1 00
+key 2 pkcs1 2 e6ac0cfe4c8b0e600e55cfede37a7e43342230f0b04fcf956aa5bf5be262a098 verify 01 changed 00
+key 2 pss 2 376 verify 01 changed 00 as pkcs1 00
+key 2 go pss 01 wrong hash id 00
+bad key 0 0
+short hash 0 long sig 00
+--- stderr

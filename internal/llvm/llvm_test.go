@@ -206,7 +206,7 @@ var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 // shortGoldens are the golden programs TestGolden runs under -short too
 // (about a second each): native parity checked on every commit for the
 // cases with no Go backend golden of their own.
-var shortGoldens = map[string]bool{"crypto_prims": true, "fault_defer_chain": true, "request_eq": true}
+var shortGoldens = map[string]bool{"crypto_prims": true, "tls_x509": true, "fault_defer_chain": true, "request_eq": true}
 
 func TestGolden(t *testing.T) {
 	if _, err := xotool.Clang(); err != nil {

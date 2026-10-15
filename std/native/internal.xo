@@ -3,8 +3,11 @@
 use native/llrt/fsops
 use native/llrt/hkdf
 use native/llrt/hmac
+use native/llrt/nistec
+use native/llrt/rsa
 use native/llrt/sha256
 use native/llrt/sysio
+use native/llrt/x509
 use native/rt
 
 struct SharedLock {
@@ -42,6 +45,10 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "hash" => sha256.op(what, a, b, c, d)
     "hmac" => hmac.op(what, a, b, c, d)
     "hkdf" => hkdf.op(what, a, b, c, d)
+    "p256" => nistec.op(nistec.P256, what, a, b, c, d)
+    "p384" => nistec.op(nistec.P384, what, a, b, c, d)
+    "rsa" => rsa.op(what, a, b, c, d)
+    "x509" => x509.op(what, a, b, c, d)
     _ => None
   }
   r ?? fault("internal.crypto_op: unknown op ${op}")

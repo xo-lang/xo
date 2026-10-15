@@ -1,0 +1,435 @@
+// Integers modulo an odd modulus of any size in constant time, for RSA
+// (the zero-C audit's B31, decision 0202: Go's
+// crypto/internal/fips140/bigmod design in Xo, replacing Mbed TLS's
+// bignum). A number is a List[Int] of 64 bit limbs, the lowest first;
+// every number of one modulus has its limb count. Values in a modulus's
+// arithmetic are in the Montgomery domain (x R mod m, R = 2^(64 L)), and
+// the operations follow ct.xo's rules for secret values: wrapping
+// arithmetic, rt.u64_mul_hi, masks, no branch or index on a secret; the
+// sizes (limb counts, an exponent's length) are public. exp_public is
+// the one variable time operation, for public exponents.
+use native/llrt/ct
+use native/llrt/raw
+use native/rt
+
+/// An odd modulus m > 1 of n limbs and its constants: the words of w are
+/// -m^-1 mod 2^64, m, R^2 mod m, R mod m, then the product's scratch (n +
+/// 2 words) and a difference's (n words).
+pub struct Mod {
+  pub n: Int
+  pub bits: Int
+  w: List[Int]
+}
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The address of the first limb of xs (valid while xs is alive and not
+/// resized).
+pub fn addr(xs: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(xs), rt.layout(2)) }
+
+fn wbase(md: Mod) -> Int { addr(md.w) }
+
+fn m_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8) }
+
+fn rr_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 8 * md.n) }
+
+fn one_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 16 * md.n) }
+
+fn t_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 24 * md.n) }
+
+fn d_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 24 + 32 * md.n) }
+
+/// A use of xs after its last raw access (nistec.xo's keep).
+pub fn keep(xs: List[Int]) {
+  if xs.len() < 0 {
+    return
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Words (nistec.xo's)
+
+fn carry(x: Int, y: Int, s: Int) -> Int { rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63) }
+
+fn borrow(x: Int, y: Int, d: Int) -> Int { rt.int_wrap(4, (~x & y) | (~(x ^ y) & d), 63) }
+
+fn adc(h: Int, off: Int, x: Int, y: Int, cin: Int) -> Int {
+  let s1 = rt.int_wrap(0, x, y)
+  let s = rt.int_wrap(0, s1, cin)
+  st(h, off, s)
+  carry(x, y, s1) | carry(s1, cin, s)
+}
+
+fn sbb(h: Int, off: Int, x: Int, y: Int, bin: Int) -> Int {
+  let d1 = rt.int_wrap(1, x, y)
+  let d = rt.int_wrap(1, d1, bin)
+  st(h, off, d)
+  borrow(x, y, d1) | borrow(d1, bin, d)
+}
+
+fn mac(t: Int, off: Int, a: Int, b: Int, cin: Int) -> Int {
+  let lo = rt.int_wrap(2, a, b)
+  let hi = rt.u64_mul_hi(a, b)
+  let x = ld(t, off)
+  let s1 = rt.int_wrap(0, lo, x)
+  let s2 = rt.int_wrap(0, s1, cin)
+  st(t, off, s2)
+  rt.int_wrap(0, hi, carry(lo, x, s1) + carry(s1, cin, s2))
+}
+
+// ---------------------------------------------------------------------------
+// Numbers
+
+/// n zero limbs.
+pub fn zero(n: Int) -> List[Int] { raw.zero_ints(n) }
+
+/// The big endian bytes b as n limbs; none when the value needs more.
+pub fn from_bytes(b: Bytes, n: Int) -> List[Int]? {
+  var xs = zero(n)
+  for i in 0..b.len() {
+    let x = Int(b[i])
+    let k = b.len() - 1 - i
+    if k / 8 >= n {
+      if x != 0 {
+        return None
+      }
+    } else {
+      xs[k / 8] = xs[k / 8] | rt.int_wrap(3, x, 8 * (k % 8))
+    }
+  }
+  Some(xs)
+}
+
+/// The value of xs as len big endian bytes (the higher bytes dropped).
+pub fn to_bytes(xs: List[Int], len: Int) -> Bytes {
+  var s = rt.rs_with_cap(len)
+  var k = len - 1
+  while k >= 0 {
+    let v = if k / 8 < xs.len() { rt.int_wrap(4, xs[k / 8], 8 * (k % 8)) & 255 } else { 0 }
+    s = rt.rs_push_byte(s, v)
+    k -= 1
+  }
+  s.bytes()
+}
+
+/// The bit length of xs (public values only: it branches).
+pub fn bit_len(xs: List[Int]) -> Int {
+  var i = xs.len() - 1
+  while i >= 0 {
+    if xs[i] != 0 {
+      return 64 * i + 64 - rt.clz(xs[i])
+    }
+    i -= 1
+  }
+  0
+}
+
+/// Whether a and b hold the same value (the limb counts are public).
+pub fn equal(a: List[Int], b: List[Int]) -> Bool {
+  var d = 0
+  let n = if a.len() > b.len() { a.len() } else { b.len() }
+  for i in 0..n {
+    let x = if i < a.len() { a[i] } else { 0 }
+    let y = if i < b.len() { b[i] } else { 0 }
+    d = rt.ct_barrier(d | (x ^ y))
+  }
+  ct.mask_nonzero(d) == 0
+}
+
+/// Whether x < m (x of m's limb count; a mask).
+fn below_at(md: Mod, x: Int) -> Int {
+  let d = d_at(md)
+  let m = m_at(md)
+  var b = 0
+  var i = 0
+  while i < md.n {
+    b = sbb(d, 8 * i, ld(x, 8 * i), ld(m, 8 * i), b)
+    i += 1
+  }
+  ct.mask_bit(b)
+}
+
+/// Whether xs (of m's limb count) is below m.
+pub fn below(md: Mod, xs: List[Int]) -> Bool {
+  let r = below_at(md, addr(xs)) != 0
+  keep(xs)
+  keep(md.w)
+  r
+}
+
+/// The product a b (a.len() + b.len() limbs; constant time).
+pub fn mul_plain(a: List[Int], b: List[Int]) -> List[Int] {
+  let out = zero(a.len() + b.len())
+  let o = addr(out)
+  let pa = addr(a)
+  let pb = addr(b)
+  for i in 0..b.len() {
+    let bi = ld(pb, 8 * i)
+    var cy = 0
+    for j in 0..a.len() {
+      cy = mac(o, 8 * (i + j), ld(pa, 8 * j), bi, cy)
+    }
+    st(o, 8 * (i + a.len()), cy)
+  }
+  keep(a)
+  keep(b)
+  out
+}
+
+/// a + b, a.len() limbs (b no longer; the carry out of the top dropped).
+pub fn add_plain(a: List[Int], b: List[Int]) -> List[Int] {
+  let out = zero(a.len())
+  let o = addr(out)
+  var cy = 0
+  for i in 0..a.len() {
+    let y = if i < b.len() { b[i] } else { 0 }
+    cy = adc(o, 8 * i, a[i], y, cy)
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The modulus
+
+/// The modulus of the limbs m (odd, above 1, its top limb not 0; the
+/// caller checks).
+pub fn modulus(m: List[Int]) -> Mod {
+  let n = m.len()
+  let md = Mod{n: n, bits: bit_len(m), w: zero(3 + 5 * n)}
+  let w = wbase(md)
+  rt.mem_copy(m_at(md), addr(m), 8 * n)
+  let m0 = m[0]
+  var y = 1
+  for _ in 0..6 {
+    y = rt.int_wrap(2, y, rt.int_wrap(1, 2, rt.int_wrap(2, m0, y)))
+  }
+  st(w, 0, rt.int_wrap(1, 0, y))
+  // R mod m and R^2 mod m by doublings from 1
+  let one = one_at(md)
+  st(one, 0, 1)
+  for _ in 0..64 * n {
+    add_at(md, one, one, one)
+  }
+  let rr = rr_at(md)
+  rt.mem_copy(rr, one, 8 * n)
+  for _ in 0..64 * n {
+    add_at(md, rr, rr, rr)
+  }
+  keep(m)
+  md
+}
+
+/// The limbs of m.
+pub fn limbs(md: Mod) -> List[Int] {
+  let out = zero(md.n)
+  rt.mem_copy(addr(out), m_at(md), 8 * md.n)
+  keep(md.w)
+  out
+}
+
+/// h = t - m when t + top 2^(64 n) >= m, else t.
+fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
+  let n = md.n
+  let d = d_at(md)
+  let m = m_at(md)
+  var b = 0
+  var i = 0
+  while i < n {
+    b = sbb(d, 8 * i, ld(t, 8 * i), ld(m, 8 * i), b)
+    i += 1
+  }
+  let keepm = ct.mask_bit(b & (top ^ 1))
+  i = 0
+  while i < n {
+    st(h, 8 * i, ct.pick(keepm, ld(t, 8 * i), ld(d, 8 * i)))
+    i += 1
+  }
+}
+
+/// h = f g / R mod m (CIOS; f g < m R).
+fn mul_at(md: Mod, h: Int, f: Int, g: Int) {
+  let n = md.n
+  let t = t_at(md)
+  let m = m_at(md)
+  let inv = ld(wbase(md), 0)
+  rt.mem_set(t, 0, 8 * (n + 2))
+  var i = 0
+  while i < n {
+    let gi = ld(g, 8 * i)
+    var cy = 0
+    var j = 0
+    while j < n {
+      cy = mac(t, 8 * j, ld(f, 8 * j), gi, cy)
+      j += 1
+    }
+    let x = ld(t, 8 * n)
+    let s = rt.int_wrap(0, x, cy)
+    st(t, 8 * n, s)
+    st(t, 8 * (n + 1), carry(x, cy, s))
+    let q = rt.int_wrap(2, ld(t, 0), inv)
+    cy = mac(t, 0, q, ld(m, 0), 0)
+    j = 1
+    while j < n {
+      cy = mac(t, 8 * j, q, ld(m, 8 * j), cy)
+      st(t, 8 * (j - 1), ld(t, 8 * j))
+      j += 1
+    }
+    let x2 = ld(t, 8 * n)
+    let s2 = rt.int_wrap(0, x2, cy)
+    st(t, 8 * (n - 1), s2)
+    st(t, 8 * n, rt.int_wrap(0, ld(t, 8 * (n + 1)), carry(x2, cy, s2)))
+    i += 1
+  }
+  final_sub(md, h, t, ld(t, 8 * n))
+}
+
+/// h = f + g mod m.
+fn add_at(md: Mod, h: Int, f: Int, g: Int) {
+  let t = t_at(md)
+  var cy = 0
+  var i = 0
+  while i < md.n {
+    cy = adc(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), cy)
+    i += 1
+  }
+  final_sub(md, h, t, cy)
+}
+
+/// h = f - g mod m.
+fn sub_at(md: Mod, h: Int, f: Int, g: Int) {
+  let t = t_at(md)
+  let m = m_at(md)
+  var b = 0
+  var i = 0
+  while i < md.n {
+    b = sbb(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), b)
+    i += 1
+  }
+  let mask = ct.mask_bit(b)
+  var cy = 0
+  i = 0
+  while i < md.n {
+    cy = adc(h, 8 * i, ld(t, 8 * i), ld(m, 8 * i) & mask, cy)
+    i += 1
+  }
+}
+
+/// a b (Montgomery).
+pub fn mul(md: Mod, a: List[Int], b: List[Int]) -> List[Int] {
+  let out = zero(md.n)
+  mul_at(md, addr(out), addr(a), addr(b))
+  keep(a)
+  keep(b)
+  keep(md.w)
+  out
+}
+
+/// a - b mod m.
+pub fn sub(md: Mod, a: List[Int], b: List[Int]) -> List[Int] {
+  let out = zero(md.n)
+  sub_at(md, addr(out), addr(a), addr(b))
+  keep(a)
+  keep(b)
+  keep(md.w)
+  out
+}
+
+/// x R mod m (the Montgomery form of x mod m) of x of any limb count:
+/// Horner's rule over x's chunks of n limbs, each chunk c turned into c R
+/// by a product with R^2 (c < R and R^2 mod m < m, so c R^2 < m R).
+pub fn reduce(md: Mod, x: List[Int]) -> List[Int] {
+  let n = md.n
+  let k = (x.len() + n - 1) / n
+  let acc = zero(n)
+  let c = zero(n)
+  let pa = addr(acc)
+  let pc = addr(c)
+  let rr = rr_at(md)
+  var i = k - 1
+  while i >= 0 {
+    // acc = acc R (as a value: acc R^2 / R)
+    mul_at(md, pa, pa, rr)
+    for j in 0..n {
+      st(pc, 8 * j, if i * n + j < x.len() { x[i * n + j] } else { 0 })
+    }
+    mul_at(md, pc, pc, rr)
+    add_at(md, pa, pa, pc)
+    i -= 1
+  }
+  keep(c)
+  keep(md.w)
+  acc
+}
+
+/// x / R mod m: the plain value of the Montgomery form x.
+pub fn from_mont(md: Mod, x: List[Int]) -> List[Int] {
+  var one = zero(md.n)
+  one[0] = 1
+  mul(md, x, one)
+}
+
+/// x^e (Montgomery in and out), e the limbs of a secret exponent: a
+/// fixed window of 4 bits over all of e's limbs (their count is public),
+/// each step 4 squarings and a product with a table entry chosen under a
+/// mask from all 16.
+pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
+  let n = md.n
+  let tab = zero(16 * n)
+  let pt = addr(tab)
+  let px = addr(x)
+  rt.mem_copy(pt, one_at(md), 8 * n)
+  for i in 1..16 {
+    mul_at(md, pt + 8 * n * i, pt + 8 * n * (i - 1), px)
+  }
+  let acc = zero(n)
+  let sel = zero(n)
+  let pa = addr(acc)
+  let ps = addr(sel)
+  rt.mem_copy(pa, one_at(md), 8 * n)
+  var w = 16 * e.len() - 1
+  while w >= 0 {
+    for _ in 0..4 {
+      mul_at(md, pa, pa, pa)
+    }
+    let digit = rt.int_wrap(4, e[w / 16], 4 * (w % 16)) & 15
+    rt.mem_set(ps, 0, 8 * n)
+    for i in 0..16 {
+      let m = ct.mask_eq(i, digit)
+      let ent = pt + 8 * n * i
+      var j = 0
+      while j < n {
+        st(ps, 8 * j, ld(ps, 8 * j) | (ld(ent, 8 * j) & m))
+        j += 1
+      }
+    }
+    mul_at(md, pa, pa, ps)
+    w -= 1
+  }
+  keep(tab)
+  keep(sel)
+  keep(x)
+  keep(md.w)
+  acc
+}
+
+/// x^e (Montgomery in and out) for a public exponent e > 0: square and
+/// multiply, variable time in e only.
+pub fn exp_public(md: Mod, x: List[Int], e: Int) -> List[Int] {
+  let acc = zero(md.n)
+  let pa = addr(acc)
+  let px = addr(x)
+  rt.mem_copy(pa, px, 8 * md.n)
+  var i = 62 - rt.clz(e)
+  while i >= 0 {
+    mul_at(md, pa, pa, pa)
+    if (rt.int_wrap(4, e, i) & 1) == 1 {
+      mul_at(md, pa, pa, px)
+    }
+    i -= 1
+  }
+  keep(x)
+  keep(md.w)
+  acc
+}
