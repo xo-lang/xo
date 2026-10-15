@@ -577,7 +577,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       match l.accept() {
         Ok(c) => {
           let hc = hserve.hc_new(srv, c)
-          conns.spawn_background(fn() { serve_conn(hc, r) })
+          conns.spawn_background(fn() { serve_conn_isolated(hc, r) })
         }
         Err(NetErr.Io(msg)) => {
           if !task.stop_requested() && !task.is_canceled() {
@@ -606,6 +606,19 @@ fn serve_mem(l: Listener, r: Router) {
   if task.stopping().recv() is None {
     twrun.mem_unserve(l)
     twrun.mem_drain(l)
+  }
+}
+
+/// serve_conn with a fault in the connection's own code (not a
+/// handler's, which is isolated in dispatch) ending that connection only,
+/// as net/http recovers per connection ("http: panic serving"): logged,
+/// the connection closed (serve_conn's defer), the server serving on. It
+/// once stopped the server (gotchas/native-server-unisolated-fault-wedges.md).
+fn serve_conn_isolated(hc: rthttp.HConn, r: Router) {
+  match task.isolate(fn() -> () ! () { serve_conn(hc, r) }) {
+    // the message alone: the location is the runtime's, not the program's
+    Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
+    _ => ()
   }
 }
 
@@ -705,6 +718,7 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
 
 /// The request of an HTTP/2 stream (std/rt's serve).
 fn stream_request(q: h2srv.H2Req) -> Request {
+  http1.fault_probe(q.path, "stream")
   var headers: Map[Str, Str] = {}
   var i = 0
   while i + 1 < q.headers.len() {

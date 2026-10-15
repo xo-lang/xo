@@ -979,6 +979,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   let body = bstr(st, S_BODY).bytes()
   bfree(st, S_REQ)
   bfree(st, S_BODY)
+  http1.fault_probe(parts[1], "frame")
   H2Req{conn: hconn.stream(h.h, st), method: parts[0], path: parts[1], scheme: parts[2], urlhost: parts[3], host: parts[4], headers: lists[0], query: lists[1], body: body}
 }
 

@@ -435,7 +435,8 @@ func TestGoldenTasks(t *testing.T) {
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
+				// the golden's env.txt too (http_conn_fault's probe)
+				cmd.Env = append(append(os.Environ(), progEnv(dir)...), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				err := cmd.Run()

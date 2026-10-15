@@ -50,6 +50,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	recording := sch != nil && sch.rec != nil
 	sc := &serveCtx{s: s, tk: tk, reqRoot: reqRoot, sch: sch}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
+		faultProbe(tk, hr)
 		var a *Arena
 		if useArena {
 			a = getArena()
@@ -397,4 +398,26 @@ func rootsTransport(pem []byte) (any, error) {
 		return nil, errors.New("tls: no certificates found in PEM input")
 	}
 	return newTransport(pool), nil
+}
+
+// faultProbe is std/native/llrt/http1.xo's fault_probe on the Go backend
+// (a test hook, golden http_conn_fault): with XO_HTTP_FAULT_PROBE=1 a
+// request for /xo-fault-probe/<at> faults outside the handler's
+// isolation. "conn" (HTTP/1.1) and "frame" (HTTP/2) end the connection
+// as the native server's isolation of a connection does: logged as
+// "http: panic serving", then http.ErrAbortHandler (net/http closes
+// without a response or a log line of its own); "stream" (HTTP/2) panics
+// in the handler, which net/http answers by resetting the stream.
+func faultProbe(tk *Task, hr *http.Request) {
+	at, ok := strings.CutPrefix(hr.URL.Path, "/xo-fault-probe/")
+	if !ok || os.Getenv("XO_HTTP_FAULT_PROBE") != "1" {
+		return
+	}
+	switch {
+	case hr.ProtoMajor == 2 && at == "stream":
+		FaultHere("http fault probe: stream")
+	case (hr.ProtoMajor == 1 && at == "conn") || (hr.ProtoMajor == 2 && at == "frame"):
+		logRecord(tk, levelError, "http: panic serving", []logField{{k: "fault", v: "http fault probe: " + at}}, "")
+		panic(http.ErrAbortHandler)
+	}
 }

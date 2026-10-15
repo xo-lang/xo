@@ -120,6 +120,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   anyval.xo's Any directly; the C forwarders stay for code of earlier
   compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
   alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
+- std/http (native): a fault in the server's own connection code ends
+  that connection only, as net/http recovers per connection: each
+  connection's task is isolated (std/native/http.xo
+  serve_conn_isolated), logged `ERROR http: panic serving fault=<msg>`,
+  the connection closed, the server serving on, nothing live at exit.
+  Before, such a fault stopped the server for every client (shown with
+  the new test probe). A test hook, XO_HTTP_FAULT_PROBE=1, faults on
+  /xo-fault-probe/conn (http1.xo's reader), /frame (h2srv.xo's frame
+  handling) and /stream (an HTTP/2 stream's request; the stream is
+  reset), on the native and Go backends (std/rt faultProbe: logged the
+  same, then http.ErrAbortHandler). Golden http_conn_fault (HTTP/1.1 and
+  HTTP/2, every backend, the leak check). main is affected too: with
+  main's own bin/xo and std (4be43460), a fault in an `r.wrap`
+  middleware leaves the native server answering nobody (checked
+  2026-10-15); main has neither fix.
 - Tests (zero-C audit B28 follow up): the HTTP parser coverage the C
   drivers had is back, in Xo. TestHTTPParseDiff and FuzzHTTPDiff send
   their corpus and random requests (3,081 inputs) to http1DiffProgram

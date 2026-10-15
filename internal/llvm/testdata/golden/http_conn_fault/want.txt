@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+http/1.1 ok: 200 ok
+http/1.1 connection fault: closed, 0 bytes answered
+http/1.1 ok after: 200 ok
+http/2 ok: 200 ok
+http/2 stream fault: failed
+http/2 ok after stream: 200 ok
+http/2 frame fault: failed
+http/2 ok after frame: 200 ok
+servers stopped
+--- stderr
+<time> ERROR http: panic serving fault=http fault probe: conn
+<time> ERROR http: panic serving fault=http fault probe: frame

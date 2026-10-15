@@ -1351,7 +1351,9 @@ pub fn (var r: Reader) read() -> Req? {
   while true {
     let k = r.read_one()
     if k == 1 {
-      return Some(req_of(r.head))
+      let q = req_of(r.head)
+      fault_probe(q.path, "conn")
+      return Some(q)
     }
     if k != 2 {
       return None
@@ -1362,6 +1364,20 @@ pub fn (var r: Reader) read() -> Req? {
 
 /// The connection.
 pub fn (r: Reader) conn() -> rthttp.HConn { r.h }
+
+/// The servers' fault probe, a test hook (internal/llvm golden
+/// http_conn_fault): with XO_HTTP_FAULT_PROBE=1, a request for
+/// /xo-fault-probe/<at> faults where this is called (at: "conn", in the
+/// HTTP/1.1 reader; "frame", in h2srv.xo's frame handling; "stream", in
+/// an HTTP/2 stream's request), outside a handler's isolation. A string
+/// compare a request otherwise; std/rt's serve has the same probe.
+pub fn fault_probe(path: Str, at: Str) {
+  if path.len() == 16 + at.len() && path.starts_with("/xo-fault-probe/") && path.ends_with(at) {
+    if (process.real_env_get("XO_HTTP_FAULT_PROBE").get(0) ?? "") == "1" {
+      fault("http fault probe: ${at}")
+    }
+  }
+}
 
 /// The body of the request read last.
 pub fn (r: Reader) body() -> Bytes {

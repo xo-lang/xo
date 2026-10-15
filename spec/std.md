@@ -965,7 +965,11 @@ When a handler returns `Err(e)`:
 
 A fault in a handler or a middleware is isolated: 500, logged, crash
 bundle written (the middleware registered before a faulting one sees no
-response: the 500 replaces the whole chain's). On the
+response: the 500 replaces the whole chain's). A fault in the server's
+own code for a connection ends that connection alone (HTTP/2: a fault
+in a stream's handling resets the stream), logged as `http: panic
+serving` with the fault's message, as net/http recovers per connection;
+the server serves on. On the
 native backends (`--no-gc`, decisions 0074, 0083, and 0085) it is isolated
 the same way (the handler unwinds, the server keeps serving) but no crash
 bundle is written, and the error of a 500 is logged without frames.

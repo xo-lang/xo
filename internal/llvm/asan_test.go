@@ -58,7 +58,8 @@ func TestGoldenASan(t *testing.T) {
 			for _, threads := range []string{"1", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1", "XO_THREADS="+threads)
+				// the golden's env.txt too (http_conn_fault's probe)
+				cmd.Env = append(append(os.Environ(), progEnv(dir)...), "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1", "XO_THREADS="+threads)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				err := cmd.Run()
