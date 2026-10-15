@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 3): HTTP/2 the checks of
+  each received header field (readMetaFrame: values, names, pseudo
+  fields after regular ones, the header list's size) and checkPseudos
+  are Xo (h2w.xo field_keep, pseudos_ok).
 - Native runtime (zero-C audit item B28, part 2): HTTP/2 the server's
   frame checks before it acts on a frame (checkFrameOrder and the
   Framer's parsers: lengths, stream ids, padding, priority) are Xo

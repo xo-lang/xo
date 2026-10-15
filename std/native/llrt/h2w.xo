@@ -400,3 +400,91 @@ fn fail(res: Int, kind: Int, code: Int) -> Int {
   rt.mem_store(res, 0, code, 8)
   kind
 }
+
+// ---------------------------------------------------------------------------
+// Received header fields
+
+/// validWireHeaderFieldName: token bytes, no upper case.
+fn wire_name_ok(p: Int, n: Int) -> Bool {
+  if n == 0 {
+    return false
+  }
+  var i = 0
+  while i < n {
+    let c = rt.mem_load(p, i, 1)
+    if (c >= 65 && c <= 90) || (Int(http1_tables.CLASS[c & 255]) & 1) == 0 {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// The checks Framer.readMetaFrame makes of each field of a header block
+/// (the nn bytes of the name at np, the vn of the value at vp) with the
+/// block's state in four words at st: the size the header list may still
+/// take, then whether a field was invalid, whether the list was cut, and
+/// whether a regular field came (after which a pseudo field is invalid).
+/// True when the field is kept.
+pub fn field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Bool {
+  if rt.mem_load(st, 8, 8) != 0 || rt.mem_load(st, 16, 8) != 0 {
+    return false
+  }
+  if !value_ok(vp, vn) {
+    rt.mem_store(st, 8, 1, 8)
+    return false
+  }
+  if nn > 0 && rt.mem_load(np, 0, 1) == 58 {
+    if rt.mem_load(st, 24, 8) != 0 {
+      rt.mem_store(st, 8, 1, 8)
+      return false
+    }
+  } else {
+    rt.mem_store(st, 24, 1, 8)
+    if !wire_name_ok(np, nn) {
+      rt.mem_store(st, 8, 1, 8)
+      return false
+    }
+  }
+  let size = nn + vn + 32
+  let remain = rt.mem_load(st, 0, 8)
+  if size > remain {
+    rt.mem_store(st, 16, 1, 8)
+    rt.mem_store(st, 0, 0, 8)
+    return false
+  }
+  rt.mem_store(st, 0, remain - size, 8)
+  true
+}
+
+/// MetaHeadersFrame.checkPseudos of the hn fields at ha: the pseudo
+/// fields known, none twice, not both a request's and a response's.
+/// Stores 1 at resp when there was :status, else 0.
+pub fn pseudos_ok(ha: Int, hn: Int, resp: Int) -> Bool {
+  var req = false
+  var res = false
+  var i = 0
+  while i < hn {
+    let kp = http1w.key_p(ha, i)
+    let kn = http1w.key_n(ha, i)
+    if kn > 0 && rt.mem_load(kp, 0, 1) == 58 {
+      if http1w.mem_is(kp, kn, ":method") || http1w.mem_is(kp, kn, ":path") || http1w.mem_is(kp, kn, ":scheme") || http1w.mem_is(kp, kn, ":authority") || http1w.mem_is(kp, kn, ":protocol") {
+        req = true
+      } else if http1w.mem_is(kp, kn, ":status") {
+        res = true
+      } else {
+        return false
+      }
+      var j = 0
+      while j < i {
+        if http1w.key_n(ha, j) == kn && raw.mem_eq(http1w.key_p(ha, j), kp, kn) {
+          return false
+        }
+        j += 1
+      }
+    }
+    i += 1
+  }
+  rt.mem_store(resp, 0, if res { 1 } else { 0 }, 8)
+  !(req && res)
+}

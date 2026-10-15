@@ -73,3 +73,11 @@ fn h2_head(d: Int, ha: Int, hn: Int, status: Int, head_req: Int, p: Int, pn: Int
 /// at p; hb_on 1 while a header block on stream hb_sid is open): one of
 /// h2w.FC_*, with three words at res.
 fn h2_frame_check(h: Int, p: Int, hb_on: Int, hb_sid: Int, res: Int) -> Int { h2w.frame_check(h, p, hb_on != 0, hb_sid, res) }
+
+/// 1 when a received header field is kept (h2w.field_keep: the name's nn
+/// bytes at np, the value's vn at vp, the block's four words at st).
+fn h2_field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Int { if h2w.field_keep(np, nn, vp, vn, st) { 1 } else { 0 } }
+
+/// 1 when the pseudo fields of the hn fields at ha are valid
+/// (h2w.pseudos_ok); 1 at resp when :status was one.
+fn h2_pseudos_ok(ha: Int, hn: Int, resp: Int) -> Int { if h2w.pseudos_ok(ha, hn, resp) { 1 } else { 0 } }

@@ -138,6 +138,16 @@ __attribute__((weak)) int64_t xo_x_h2_head(int64_t d, int64_t ha, int64_t hn, in
 	fault_text("HTTP without std/http's exports", "");
 }
 
+__attribute__((weak)) int64_t xo_x_h2_field_keep(int64_t np, int64_t nn, int64_t vp, int64_t vn, int64_t st) {
+	(void)np, (void)nn, (void)vp, (void)vn, (void)st;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_h2_pseudos_ok(int64_t ha, int64_t hn, int64_t resp) {
+	(void)ha, (void)hn, (void)resp;
+	fault_text("HTTP without std/http's exports", "");
+}
+
 // frame_check's results
 enum { H2_FC_OK, H2_FC_IGNORE, H2_FC_CONN, H2_FC_STREAM };
 
@@ -196,32 +206,6 @@ static int64_t h2_inflow_add(h2_inflow *f, int64_t n) {
 	return u;
 }
 
-// h2_valid_name is validWireHeaderFieldName: token bytes, no upper case.
-static int h2_valid_name(const char *n, int64_t nn) {
-	if (nn == 0) {
-		return 0;
-	}
-	for (int64_t i = 0; i < nn; i++) {
-		unsigned c = (unsigned char)n[i];
-		if (!h_tchar(c) || (c >= 'A' && c <= 'Z')) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
-// h2_valid_value is httpguts.ValidHeaderFieldValue: no control bytes but
-// tab.
-static int h2_valid_value(const char *v, int64_t vn) {
-	for (int64_t i = 0; i < vn; i++) {
-		unsigned c = (unsigned char)v[i];
-		if ((c < ' ' && c != '\t') || c == 0x7f) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
 // ---------------------------------------------------------------------------
 // The server
 //
@@ -240,8 +224,8 @@ enum { H2K_APP, H2K_431, H2K_400, H2K_OPTIONS };
 // The header fields of a block, checked as Framer.readMetaFrame does.
 typedef struct {
 	hlist f;
-	int64_t remain;
-	int invalid, truncated, regular;
+	// h2w.xo field_keep's four words
+	int64_t remain, invalid, truncated, regular;
 } h2_fields;
 
 typedef struct h2s h2s;
@@ -469,62 +453,23 @@ static void h2_stream_err(h2c *c, uint32_t sid, uint32_t code) {
 }
 
 
+// h2_collect adds a decoded field to f when readMetaFrame's checks keep
+// it (std/native/llrt/h2w.xo field_keep).
 static void h2_collect(void *arg, const char *n, int64_t nn, const char *v, int64_t vn) {
 	h2_fields *f = arg;
-	if (f->invalid || f->truncated) {
-		return;
+	if (xo_x_h2_field_keep(XO_ADDR(n), nn, XO_ADDR(v), vn, XO_ADDR(&f->remain))) {
+		hl_add(&f->f, hs_dup(n, nn), hs_dup(v, vn));
 	}
-	if (!h2_valid_value(v, vn)) {
-		f->invalid = 1;
-		return;
-	}
-	if (nn > 0 && n[0] == ':') {
-		if (f->regular) {
-			f->invalid = 1;
-			return;
-		}
-	} else {
-		f->regular = 1;
-		if (!h2_valid_name(n, nn)) {
-			f->invalid = 1;
-			return;
-		}
-	}
-	int64_t size = nn + vn + 32;
-	if (size > f->remain) {
-		f->truncated = 1;
-		f->remain = 0;
-		return;
-	}
-	f->remain -= size;
-	hl_add(&f->f, hs_dup(n, nn), hs_dup(v, vn));
 }
 
-// h2_pseudos_ok is MetaHeadersFrame.checkPseudos.
+// h2_pseudos_ok is MetaHeadersFrame.checkPseudos (h2w.xo pseudos_ok).
 static int h2_pseudos_ok(hlist *f, int *response) {
-	int req = 0, resp = 0;
-	for (int64_t i = 0; i < f->n; i++) {
-		hstr k = f->a[i].k;
-		if (k.n == 0 || k.p[0] != ':') {
-			continue;
-		}
-		if (hs_eq(k, ":method") || hs_eq(k, ":path") || hs_eq(k, ":scheme") || hs_eq(k, ":authority") || hs_eq(k, ":protocol")) {
-			req = 1;
-		} else if (hs_eq(k, ":status")) {
-			resp = 1;
-		} else {
-			return 0;
-		}
-		for (int64_t j = 0; j < i; j++) {
-			if (f->a[j].k.n == k.n && memcmp(f->a[j].k.p, k.p, (size_t)k.n) == 0) {
-				return 0;
-			}
-		}
-	}
+	int64_t resp = 0;
+	int ok = (int)xo_x_h2_pseudos_ok(XO_ADDR(f->a), f->n, XO_ADDR(&resp));
 	if (response) {
-		*response = resp;
+		*response = (int)resp;
 	}
-	return !(req && resp);
+	return ok;
 }
 
 static hstr h2_pseudo(hlist *f, const char *name) {
