@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- bench/results/tls-perf-2026-10-15.md: a proposal for three compiler
+  intrinsics the remaining TLS gap needs (add and subtract with carry,
+  AES rounds, carry-less multiply), with measurements.
 - Native TLS performance, step 3: P-384's field arithmetic unrolled, and
   RSA's modulus setup by Go's rr chain (12 squarings in place of 4,096
   doublings): P-384 handshakes 56.3M to 36.9M instructions on LLVM (Mbed
