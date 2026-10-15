@@ -282,12 +282,30 @@ fn obj_rs_new(n: Int) -> Int { obj.rs_new_obj(n) }
 
 fn obj_rl_new_cap(cap: Int, esize: Int) -> Int { obj.rl_new_obj(cap, esize) }
 
-fn obj_heap_init(h: Int, slow: Int, hsize: Int) {
-  obj.heap_init(h, slow)
-  if h != 0 {
-    heapos.records_init(h, hsize)
+/// The main heap record and the heap words, first in C main (before
+/// anything allocates; was xo_rt.c main_heap and obj_heap_init).
+fn heap_start() { obj.heap_init(heapos.main_record(), rt.fn_addr("heap_thread")) }
+
+/// The switch to one heap record per thread, before a second thread runs
+/// Xo code (pool.xo's setup; xo_rt_threads_begin): the calling thread
+/// keeps the main record, every other thread makes its own on first use
+/// (heap_thread), and standard output takes its lock from now on.
+fn heap_threads() {
+  let h = obj.solo_heap()
+  if h == 0 {
+    return
   }
+  heapos.set_thread_heap(h)
+  obj.heap_init(0, rt.fn_addr("heap_thread"))
+  stdio.threads()
 }
+
+/// XO_HEAP_MID_MAX's limit of the size classes (entry.xo, at start).
+fn heap_set_mid_max(m: Int) { heapos.set_mid_max(m) }
+
+/// The calling thread's heap record (the C tests, std/llrt/testdata
+/// xcalls.h).
+fn heap_now() -> Int { obj.heap_now() }
 
 /// The calling thread's heap record (xo_rt.c heap_slow after its thread
 /// local was empty); the leak check's sums at lp and tp; class c's free

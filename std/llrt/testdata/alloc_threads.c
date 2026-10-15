@@ -320,7 +320,7 @@ static void test_waves(void) {
 int main(void) {
 	test_solo();
 	leaks("solo");
-	xo_rt_threads_begin();
+	xo_x_heap_threads();
 	test_threads();
 	leaks("threads");
 	test_waves();

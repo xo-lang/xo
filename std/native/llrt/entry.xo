@@ -80,7 +80,7 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   if n > 1 {
     // N copies of the program at once: every thread has its own heap,
     // literals are shared (and never written)
-    let _b = rt.sched_rt(RT_THREADS_BEGIN, 0, 0)
+    let _b = rt.call_c2(rt.fn_addr("heap_threads"), 0, 0)
     if !pool.thread_run(f, entry, MAIN_STACK, n) {
       stdio.eprint("pthread_create failed", true)
       return 1
@@ -103,9 +103,6 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
 /// The size of main's stack.
 const MAIN_STACK = 1073741824
 
-/// rt.sched_rt's op that switches the runtime to several threads (pool.xo
-/// setup; xo_rt.c xo_rt_threads_begin).
-const RT_THREADS_BEGIN = 20
 
 /// The program's main on its own thread (cabi.xo run_main, the thread's
 /// C function; was xo_rt.c run_main): on Windows the stack the thread

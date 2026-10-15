@@ -329,12 +329,34 @@ const W_HEAPS = 27
 const W_HLOCK = 28
 const W_HSIZE = 29
 
-/// Sets the list to the main heap record m (C main, before anything
-/// allocates) and the size of a record.
-pub fn records_init(m: Int, size: Int) {
-  rt.mem_store(rt.static_word(W_HEAPS), 0, m, 8)
-  rt.mem_store(rt.static_word(W_HSIZE), 0, size, 8)
+/// A heap record's size (alloc.xo's and obj.xo's fields, then the
+/// real-time section's queue of 256 entries of 32 bytes: xo_rt.c's
+/// xo_heap until decision 0233 step 2), the size classes' limit
+/// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
+/// per size class, 1 to 72).
+const H_SIZE = 2152 + 32 * 256
+const MID_MAX = 262144
+const NCLASS1 = 73
+
+/// Makes the main heap record and the central lists (C main, before
+/// anything allocates) and starts the list of every record with it: its
+/// address.
+pub fn main_record() -> Int {
+  let h = map(H_SIZE)
+  rt.mem_store(h, H_MID_MAX, MID_MAX, 8)
+  rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)
+  rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
+  rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
+  h
 }
+
+/// Lowers the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
+/// main record, which the others copy).
+pub fn set_mid_max(m: Int) { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_MID_MAX, m, 8) }
+
+/// Makes record h the calling thread's (the main thread, when a second
+/// thread is about to run Xo code).
+pub fn set_thread_heap(h: Int) { rt.tlocal_set(TLS_HEAP, h) }
 
 /// The calling thread's heap record, made on its first use: the size
 /// classes' limit and the central lists are the other records'.

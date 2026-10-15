@@ -135,159 +135,15 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
 // ---------------------------------------------------------------------------
 // Memory
 //
-// Every block has an 8 byte prefix before the pointer handed out: the
-// size class (1 to XO_NCLASS) or, for a block from malloc, minus its
-// size. Freed blocks of a class go on that class's free list (the next
-// pointer is stored in the block); new ones are carved from 4 MiB chunks.
-//
-// Threads (decision 0058): the free lists, the chunk, the counters, and
-// xo_rc_defer's worklist live in a heap. While the program has one
-// thread every call uses main_heap (obj.xo's static word HEAP), so
-// single threaded code pays one load and a predicted branch.
-// xo_rt_threads_begin, called before a second thread runs Xo code,
-// switches to one heap per thread: the calling thread keeps main_heap,
-// every other thread gets its own on first use. A block may be freed by
-// another thread than the one that allocated it: it goes on the freeing
-// thread's list (the size class is in its prefix), and the leak check
-// sums the counters of all heaps. Heaps are never freed.
-//
-// Central lists (decision 0118): a thread that frees what others
-// allocate (a server's connection tasks free what its accept loop made)
-// would keep those blocks for good while the allocating thread carves new
-// chunks, so memory grew with every connection. With more than one
-// thread, free lists move between threads as magazines through a central
-// list per class (alloc_mt, free_mt); one thread alone never touches it.
+// The heap is Xo (decisions 0058, 0118, 0198, 0207; decision 0233 step 2
+// moved the last of it): std/native/llrt/alloc.xo (the size classes,
+// free lists, magazines and central lists), obj.xo (the heap words, the
+// deferred frees) and heapos.xo (the records, one per thread, and their
+// mappings), through cabi.xo's exports. heap_start makes the main record
+// before anything allocates; heap_threads switches to one record per
+// thread before a second thread runs Xo code.
 
-#define XO_CHUNK (4 << 20)
-#define XO_SMALL_MAX 1024
-#define XO_MID_MAX (256 << 10)
-// the largest block the size classes serve (the rest is malloc's): at
-// most XO_MID_MAX, lowered by XO_HEAP_MID_MAX (an experiment of the xo1
-// speed work: blocks on a class's free list are never reused for another
-// class nor returned, so growing lists leave their old blocks behind)
-static int64_t xo_mid_max = XO_MID_MAX;
-#define XO_NCLASS (64 + 8) // 16..1024 by 16, then 2 KiB..256 KiB
-
-typedef void (*xo_drop_fn)(void *);
-
-// A free deferred by a real-time section (decision 0133,
-// std/native/llrt/rtsec.xo; the queue is obj.xo's rt_defer and rt_drain):
-// what reached a count of zero and how to free it.
-#define XO_RTQ 256
-typedef struct {
-	int kind; // obj.xo RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
-	void *obj;
-	int64_t esize;
-	void *fn;
-} xo_rtdef;
-
-typedef struct xo_heap {
-	// The words std/native/llrt/alloc.xo reads and writes, at the offsets
-	// of its constants (checked below): with the heap in Xo (decision
-	// 0207 stage 3) the C finds a thread's heap and hands its address
-	// to the cabi.xo exports.
-	//
-	// blocks allocated, and blocks freed, by this heap's thread (the
-	// leak check reports the difference): one counter per call
-	int64_t allocs;
-	int64_t frees;
-	// bytes allocated by this heap's thread (resource budgets, decision
-	// 0175: a context charges what its thread's count grew by while it
-	// ran)
-	int64_t abytes;
-	char *bump_cur;
-	char *bump_end;
-	// real-time sections (decision 0133): calls of real-time functions
-	// entered and not left on this thread, allocations since the
-	// outermost one began
-	int64_t rt_depth;
-	int64_t rt_allocs;
-	// xo_mid_max, and the central lists (every heap has the same)
-	int64_t mid_max;
-	void **central;
-	// the usable bytes of the block alloc.xo returned last (rs_new reads
-	// it for a string's capacity)
-	int64_t last_size;
-	void *free_lists[XO_NCLASS + 1];
-	int64_t nfree[XO_NCLASS + 1]; // blocks on each free list (about: a magazine taken counts as full)
-	void *mag[XO_NCLASS + 1];     // a full magazine per class (threaded: free_mt)
-	// the worklist of xo_rc_defer (std/native/llrt/obj.xo rc_defer):
-	// pairs of words {object, drop}, from malloc
-	void *defer_q;
-	int64_t defer_n, defer_cap;
-	int64_t defer_busy;
-	// unused (they carried a real-time section's list free to the C)
-	int64_t pend_esize, pend_drop;
-	// the thread's scratch for the structures of system calls (timespec,
-	// statx, sigaction; obj.xo scratch, work item B02)
-	char scratch[256];
-	struct xo_heap *next; // all heaps, for the leak check (heapos.xo's list)
-	// the frees deferred by real-time sections (a fixed queue, so
-	// deferring never allocates)
-	int64_t rt_n;
-	xo_rtdef rt_q[XO_RTQ];
-} xo_heap;
-
-#include <stddef.h>
-_Static_assert(offsetof(xo_heap, rt_depth) == 40 && offsetof(xo_heap, mid_max) == 56 && offsetof(xo_heap, central) == 64 && offsetof(xo_heap, last_size) == 72, "alloc.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) == 664 && offsetof(xo_heap, mag) == 1248, "alloc.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872 && offsetof(xo_heap, scratch) == 1880, "obj.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, next) == 2136, "heapos.xo's heap record offsets");
-_Static_assert(offsetof(xo_heap, rt_n) == 2144 && offsetof(xo_heap, rt_q) == 2152 && sizeof(xo_rtdef) == 32 && offsetof(xo_rtdef, obj) == 8 && offsetof(xo_rtdef, esize) == 16 && offsetof(xo_rtdef, fn) == 24, "obj.xo's RT_N, RT_Q");
-
-// The central lists: per class, a stack of magazines (free lists of
-// about central_batch(c) blocks) linked by their first block's second
-// word (every block has at least 16 bytes).
-static void *central[XO_NCLASS + 1];
-
-static xo_heap main_heap = {.mid_max = XO_MID_MAX, .central = central};
-static int xo_threaded; // set once, before a second thread runs Xo code
-// the calling thread's heap is word 3 of the thread local table the
-// compiler emits (decision 0212; std/native/llrt/sched.xo TLS_HEAP)
-extern __thread int64_t xo_tlocal[16];
-#define tls_heap (*(xo_heap **)&xo_tlocal[3])
-
-XO_NORETURN static void xo_oom(void) {
-	fputs("fault: out of memory\n", stderr);
-	exit(70);
-}
-
-// heap_slow is the calling thread's heap: its thread local, else a new
-// record that std/native/llrt/heapos.xo maps and links into the list of
-// every record (work item B21 part 2).
-int64_t xo_x_heap_thread(void);
-__attribute__((noinline)) static xo_heap *heap_slow(void) {
-	xo_heap *h = tls_heap;
-	if (h) {
-		return h;
-	}
-	return (xo_heap *)(intptr_t)xo_x_heap_thread();
-}
-
-// heap returns the calling thread's heap.
-static inline xo_heap *heap(void) {
-	if (__builtin_expect(!__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED), 1)) {
-		return &main_heap;
-	}
-	return heap_slow();
-}
-
-// xo_rt_threads_begin switches the runtime to several threads. The
-// thread that ran so far calls it before it starts another thread
-// (thread creation orders it before everything the new thread does).
-void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t hsize);
-
-// hw_slow_c is the calling thread's heap record for obj.xo's heap_word
-// (called through rt.call_c2: two Int arguments, unused).
-static int64_t hw_slow_c(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	return (int64_t)(intptr_t)heap_slow();
-}
-
-static void obj_heap_init(xo_heap *h) { xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)sizeof(xo_heap)); }
+void xo_x_heap_start(void);
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
 // calls without a C level) are set before anything allocates: first in
@@ -302,24 +158,13 @@ void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
 extern char **environ;
 #endif
 __attribute__((constructor)) static void obj_heap_words(void) {
-	obj_heap_init(&main_heap);
+	xo_x_heap_start();
 	// the environment for the runtime's settings (poolsetup.xo reads
 	// XO_THREADS)
 	xo_x_proc_start(0, 0, (int64_t)(intptr_t)environ);
 	fault_init();
 }
 #endif
-
-void xo_rt_threads_begin(void) {
-	if (__atomic_load_n(&xo_threaded, __ATOMIC_RELAXED)) {
-		return;
-	}
-	tls_heap = &main_heap;
-	obj_heap_init(NULL);
-	__atomic_store_n(&xo_threaded, 1, __ATOMIC_RELAXED);
-	// standard output's buffer takes its lock from now on (stdio.xo)
-	xo_x_stdio_threads();
-}
 
 // The runtime's records (std/native rt.heap_large) are libcmem.xo's
 // (cabi.xo heap_large; the zero-C inventory's rank 10, 2026-10-15), not
@@ -806,9 +651,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
-	case 20: // the runtime switches to several threads (pool.xo's setup)
-		xo_rt_threads_begin();
-		return 0;
 	}
 	(void)b;
 	return 0;
@@ -1013,10 +855,10 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 // that take no arguments are called through rt.call_c2 as they are (the
 // two arguments it passes are ignored on every target's C convention).
 void xo_x_consts_free(void);
+void xo_x_heap_set_mid_max(int64_t m);
 static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
 	(void)b;
-	xo_mid_max = m;
-	main_heap.mid_max = m;
+	xo_x_heap_set_mid_max(m);
 	return 0;
 }
 
@@ -1063,7 +905,7 @@ int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry,
 #endif
 
 int main(int argc, char **argv) {
-	obj_heap_init(&main_heap);
+	xo_x_heap_start();
 	fault_init();
 #ifdef _WIN32
 	// standard streams in binary mode (no \n to \r\n)

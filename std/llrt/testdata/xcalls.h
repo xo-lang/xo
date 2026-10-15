@@ -93,6 +93,29 @@ static void *t_rc_alloc(int64_t n) { return t_alloc(n); }
 
 #define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 
+typedef void (*xo_drop_fn)(void *);
+
+// Out of memory in the C tests' own allocations (the runtime's is
+// heapos.xo oom).
+XO_NORETURN static void xo_oom(void) {
+	fputs("fault: out of memory\n", stderr);
+	exit(70);
+}
+
+// The calling thread's heap record (heapos.xo; xo_rt.c's xo_heap until
+// decision 0233 step 2): the fields realtime.c reads, at obj.xo's
+// offsets (RT_ALLOCS, RT_N), and the real-time queue's length.
+#define XO_RTQ 256
+typedef struct {
+	char pad0[48];
+	int64_t rt_allocs;
+	char pad1[2144 - 56];
+	int64_t rt_n;
+} t_heap;
+int64_t xo_x_heap_now(void);
+void xo_x_heap_threads(void);
+static t_heap *heap(void) { return (t_heap *)(intptr_t)xo_x_heap_now(); }
+
 // The worker pool's record (ctx.xo's services record, decision 0233).
 int64_t xo_x_ctx_pool(void);
 static void *pool_rec(void) { return (void *)(intptr_t)xo_x_ctx_pool(); }

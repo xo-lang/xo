@@ -178,7 +178,7 @@ int main(void) {
 		tests[i].fn();
 		printf("%s: %s\n", tests[i].name, failures == before ? "ok" : "FAIL");
 	}
-	xo_rt_threads_begin();
+	xo_x_heap_threads();
 	int before = failures;
 	test_threads();
 	CHECK(live() == 0);

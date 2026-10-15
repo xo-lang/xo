@@ -32,6 +32,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the C's pointer to the event loop's record. on_overflow stays C by
   design (it runs on the overflowed stack's small reserve). UNTESTED on
   windows; cross linked for windows/amd64 and arm64.
+- The heap's last C leaves (zero-C rank 8, decision 0233 step 2): heapos.xo makes the main heap record and the central lists, cabi.xo heap_start and heap_threads replace obj_heap_init and xo_rt_threads_begin, so main_heap, the xo_heap type and its asserts, heap(), heap_slow, hw_slow_c, xo_oom and rt.sched_rt op 20 are gone.
 - Native runtime (zero-C inventory rank 10): the runtime's records
   (rt.heap_large, its resize, rt.heap_release) come from libcmem.xo's
   allocator on every build, through a cache per thread, not from the C

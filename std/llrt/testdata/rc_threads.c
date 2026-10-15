@@ -528,7 +528,7 @@ static void test_model(void) {
 }
 
 int main(void) {
-	xo_rt_threads_begin();
+	xo_x_heap_threads();
 	struct {
 		const char *name;
 		void (*fn)(void);

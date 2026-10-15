@@ -36,9 +36,6 @@ const W_LIVE = 2200
 const W_ROOT = 2204
 const TLS_W = 2
 
-/// The C's services (pool.xo RT_*).
-const RT_THREADS_BEGIN = 20
-
 const ACQUIRE = 1
 const RELEASE = 2
 
@@ -61,7 +58,8 @@ pub fn ready(p: Int) {
 }
 
 fn setup(p: Int) {
-  let _t = rt.sched_rt(RT_THREADS_BEGIN, 0, 0)
+  // one heap record per thread from now on (cabi.xo heap_threads)
+  let _t = rt.call_c2(rt.fn_addr("heap_threads"), 0, 0)
   let st = process.env_real("XO_RTSTATS")
   var on = 0
   if !st.is_empty() && !st[0].is_empty() && bt(st[0], 0) != 48 {
