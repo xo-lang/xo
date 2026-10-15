@@ -274,3 +274,106 @@ pub fn unlock() {
     pool.futex_wake(l)
   }
 }
+
+// ---------------------------------------------------------------------------
+// The heap records of threads (xo_rt.c heap_slow, work item B21 part 2):
+// a thread's first allocation after the program went threaded gets a
+// record of its own, mapped (zeroed) and linked into the list of every
+// record, which the leak check and the heap statistics sum. Records are
+// never freed (the threads that use them are the pool's, which live as
+// long as the program).
+
+/// The heap record's words this module reads and writes (xo_rt.c struct
+/// xo_heap, its offsets asserted there): the largest block the classes
+/// serve, the central lists' address, the counts of blocks allocated and
+/// freed (alloc.xo ALLOCS, FREES), the per class free list lengths
+/// (alloc.xo NFREE), and the link of the list of every record.
+const H_ALLOCS = 0
+const H_FREES = 8
+const H_MID_MAX = 56
+const H_CENTRAL = 64
+const H_NFREE = 664
+const H_NEXT = 2136
+
+/// The thread local word of the calling thread's heap record (sched.xo
+/// TLS_HEAP).
+const TLS_HEAP = 3
+
+/// rt.static_word: the list of every heap record (its first record, the
+/// main one at start), its lock word, and a record's size.
+const W_HEAPS = 27
+const W_HLOCK = 28
+const W_HSIZE = 29
+
+/// Sets the list to the main heap record m (C main, before anything
+/// allocates) and the size of a record.
+pub fn records_init(m: Int, size: Int) {
+  rt.mem_store(rt.static_word(W_HEAPS), 0, m, 8)
+  rt.mem_store(rt.static_word(W_HSIZE), 0, size, 8)
+}
+
+/// The calling thread's heap record, made on its first use: the size
+/// classes' limit and the central lists are the other records'.
+pub fn thread_heap() -> Int {
+  let t = rt.tlocal_get(TLS_HEAP)
+  if t != 0 {
+    return t
+  }
+  let h = map(rt.mem_load(rt.static_word(W_HSIZE), 0, 8))
+  let w = rt.static_word(W_HEAPS)
+  hlock_take()
+  let first = rt.mem_load(w, 0, 8)
+  rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
+  rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
+  rt.mem_store(h, H_NEXT, first, 8)
+  rt.mem_store(w, 0, h, 8)
+  hlock_give()
+  rt.tlocal_set(TLS_HEAP, h)
+  h
+}
+
+/// The blocks allocated and not freed, and the blocks allocated, over
+/// every record, stored at lp and tp (the leak check).
+pub fn live(lp: Int, tp: Int) {
+  var l = 0
+  var t = 0
+  hlock_take()
+  var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  while h != 0 {
+    let a = rt.mem_load(h, H_ALLOCS, 8)
+    l = rt.int_wrap(0, l, rt.int_wrap(1, a, rt.mem_load(h, H_FREES, 8)))
+    t = rt.int_wrap(0, t, a)
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+  hlock_give()
+  rt.mem_store(lp, 0, l, 8)
+  rt.mem_store(tp, 0, t, 8)
+}
+
+/// The blocks on class c's free lists over every record (the heap
+/// statistics).
+pub fn nfree(c: Int) -> Int {
+  var n = 0
+  hlock_take()
+  var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  while h != 0 {
+    n = rt.int_wrap(0, n, rt.mem_load(h, rt.int_wrap(0, H_NFREE, rt.int_wrap(3, c, 3)), 8))
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+  hlock_give()
+  n
+}
+
+fn hlock_take() {
+  let l = rt.static_word(W_HLOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn hlock_give() {
+  let l = rt.static_word(W_HLOCK)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}

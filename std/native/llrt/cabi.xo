@@ -411,10 +411,22 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
-fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int, libc: Int) {
+fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int, libc: Int, hsize: Int) {
   obj.heap_init(h, slow, rl_free_rt, rc_defer_rt)
   heapos.set_libc(libc)
+  if h != 0 {
+    heapos.records_init(h, hsize)
+  }
 }
+
+/// The calling thread's heap record (xo_rt.c heap_slow after its thread
+/// local was empty); the leak check's sums at lp and tp; class c's free
+/// blocks over every record (heap statistics).
+fn heap_thread() -> Int { heapos.thread_heap() }
+
+fn heap_live(lp: Int, tp: Int) { heapos.live(lp, tp) }
+
+fn heap_nfree(c: Int) -> Int { heapos.nfree(c) }
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
 
