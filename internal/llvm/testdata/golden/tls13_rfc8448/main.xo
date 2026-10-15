@@ -6,9 +6,13 @@
 // a byte at a time, the client's Finished, application data and alert
 // records equal to the RFC's; then the failures: the certificate past
 // its validity, a host it does not name, no root, a corrupted record, a
-// wrong shared secret, a suite not offered.
+// wrong shared secret, a suite not offered; then the trace with the
+// client's X25519 private key in place of the secret, and a server
+// share of low order.
 use std/internal
 
+const CLIENT_KEY: Str = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"
+const SERVER_SHARE: Str = "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f"
 const HELLO: Str = "010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001"
 const HELLO_RECORD: Str = "16030100c4010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001"
 const SHARED: Str = "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d"
@@ -28,6 +32,9 @@ const CERT: Str = "308201ac30820115a003020102020102300d06092a864886f70d01010b050
 // 2026-07-30), and 2027-01-15 after it
 const NOW: Int = 1600000000
 const LATE: Int = 1800000000
+
+// a low order X25519 point (zero)
+const ZERO_SHARE: Str = "0000000000000000000000000000000000000000000000000000000000000000"
 
 fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
 
@@ -68,9 +75,11 @@ fn splice(s: Str, lo: Int, hi: Int, r: Str) -> Str {
   "${b[0..lo].to_str() ?? ""}${r}${b[hi..b.len()].to_str() ?? ""}"
 }
 
-fn replay(os: Os, title: Str, flight: Str, shared: Str, root: Str, now: Int, host: Str, suite: Str, chunk: Int) uses stdio {
-  let parts = pack([hex("${SERVER_HELLO}${flight}"), hex("${TICKET}${SERVER_DATA_RECORD}${SERVER_ALERT}"), hex(CLIENT_DATA), hex(root)])
-  let r = internal.crypto_op("tls13.replay", hex(HELLO), parts, hex(shared), "${now} ${host} ${suite} ${chunk}".bytes())
+fn replay(os: Os, title: Str, flight: Str, shared: Str, root: Str, now: Int, host: Str, suite: Str, chunk: Int) uses stdio { replay_with(os, title, SERVER_HELLO, flight, shared, "shared", root, now, host, suite, chunk) }
+
+fn replay_with(os: Os, title: Str, hello: Str, flight: Str, key: Str, kind: Str, root: Str, now: Int, host: Str, suite: Str, chunk: Int) uses stdio {
+  let parts = pack([hex("${hello}${flight}"), hex("${TICKET}${SERVER_DATA_RECORD}${SERVER_ALERT}"), hex(CLIENT_DATA), hex(root)])
+  let r = internal.crypto_op("tls13.replay", hex(HELLO), parts, hex(key), "${now} ${host} ${suite} ${chunk} ${kind}".bytes())
   os.stdio.println("${title}:")
   for line in (r.to_str() ?? "").split("\n") {
     if line != "" {
@@ -92,4 +101,7 @@ fn main(os: Os) uses stdio {
   replay(os, "corrupt record", splice(SERVER_FLIGHT, 40, 42, "00"), SHARED, CERT, NOW, "-", "1301", 0)
   replay(os, "wrong secret", SERVER_FLIGHT, splice(SHARED, 0, 2, "00"), CERT, NOW, "-", "1301", 0)
   replay(os, "suite not offered", SERVER_FLIGHT, SHARED, CERT, NOW, "-", "1302", 0)
+  replay_with(os, "x25519", SERVER_HELLO, SERVER_FLIGHT, CLIENT_KEY, "x25519", CERT, NOW, "-", "1301", 0)
+  let at = SERVER_HELLO.find(SERVER_SHARE) ?? 0
+  replay_with(os, "x25519 low order share", splice(SERVER_HELLO, at, at + 64, ZERO_SHARE), SERVER_FLIGHT, CLIENT_KEY, "x25519", CERT, NOW, "-", "1301", 0)
 }

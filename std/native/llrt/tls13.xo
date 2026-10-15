@@ -5,8 +5,8 @@
 // server sent and takes what to send), the key schedule (7.1) over
 // hkdf.xo, records through tlsrec.xo, the server's certificate checked
 // by x509verify.xo and its CertificateVerify by x509.check. Full
-// handshakes only (no PSK, no early data), ECDHE over P-256 and P-384
-// (X25519 waits for its curve), compatibility mode (a legacy session id
+// handshakes only (no PSK, no early data), ECDHE over X25519 (the
+// default share), P-256 and P-384, compatibility mode (a legacy session id
 // and a dummy ChangeCipherSpec, as Go), HelloRetryRequest, an empty
 // client certificate when one is requested, KeyUpdate. Error texts are
 // Go's.
@@ -21,6 +21,7 @@ use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tlsrec
 use native/llrt/x509
+use native/llrt/x25519
 use native/llrt/x509verify
 use native/rt
 
@@ -92,8 +93,8 @@ pub fn schemes() -> List[Int] { [0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806,
 /// of preference (the first group gets a key share), and insecure to
 /// skip the certificate's checks (Go's InsecureSkipVerify). The tests'
 /// hooks: hello a whole ClientHello message to send instead of the
-/// client's own, shared the ECDHE secret to use instead of the
-/// exchange's.
+/// client's own (its key share the first group's, of the private key
+/// priv), shared the ECDHE secret to use instead of the exchange's.
 pub struct Conf {
   pub host: Str
   pub roots: List[x509.Cert]
@@ -103,14 +104,15 @@ pub struct Conf {
   pub groups: List[Int]
   pub insecure: Bool
   pub hello: Bytes
+  pub priv: Bytes
   pub shared: Bytes
 }
 
 /// The settings Go's client has by default for host: both AES-GCM suites
-/// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES), P-256
-/// then P-384.
+/// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES), X25519
+/// then P-256 and P-384 (Go's order less its post-quantum hybrid).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
-  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [GROUP_P256, GROUP_P384], insecure: false, hello: b"", shared: b""}
+  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, hello: b"", priv: b"", shared: b""}
 }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
@@ -157,11 +159,13 @@ pub fn client(cf: Conf) -> Client {
       return fail(c, ALERT_INTERNAL_ERROR, "tls: no supported elliptic curves for ECDHE")
     }
     c.share_group = cf.groups[0]
-    c.priv = nistec.generate(curve(c.share_group))
+    c.priv = keygen(c.share_group)
     ch = hello(c)
   } else if ch.len() > 38 {
     let n = Int(ch[38])
     c.sid = ch[39..39 + n]
+    c.priv = cf.priv
+    c.share_group = if cf.groups.is_empty() { 0 } else { cf.groups[0] }
   }
   c.tr = ch
   c.out = tlsrec.seal(c.wk, tlsrec.CT_HANDSHAKE, ch, 0x0301)
@@ -355,7 +359,7 @@ fn hello(c: Client) -> Bytes {
   if !c.cookie.is_empty() {
     exts.push(ext(EXT_COOKIE, vec16(c.cookie)))
   }
-  let share = asn1.cat([u16(c.share_group), vec16(nistec.public_key(curve(c.share_group), c.priv))])
+  let share = asn1.cat([u16(c.share_group), vec16(public_key(c.share_group, c.priv))])
   exts.push(ext(EXT_KEY_SHARE, vec16(share)))
   let body = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00", vec16(asn1.cat(exts))])
   message(HS_CLIENT_HELLO, body)
@@ -441,7 +445,7 @@ fn parse_hello(m: Bytes) -> Hello {
 }
 
 /// SHA-256("HelloRetryRequest"), a HelloRetryRequest's random.
-fn hrr_random() -> Bytes { sha256.sum(sha256.HASH_SHA256, "HelloRetryRequest".bytes()) }
+pub fn hrr_random() -> Bytes { sha256.sum(sha256.HASH_SHA256, "HelloRetryRequest".bytes()) }
 
 fn server_hello(var c: Client, msg: Bytes) {
   let h = parse_hello(msg)
@@ -481,7 +485,7 @@ fn server_hello(var c: Client, msg: Bytes) {
       fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported group")
       return
     }
-    shared = match nistec.ecdh(curve(h.group), c.priv, h.key) {
+    shared = match shared_secret(h.group, c.priv, h.key) {
       Some(s) => s
       None => {
         fail(c, ALERT_ILLEGAL_PARAMETER, "tls: invalid server key share")
@@ -494,14 +498,10 @@ fn server_hello(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
     return
   }
-  // RFC 8446 7.1: the early secret of no PSK, then the handshake secret
-  let l = sha256.size(hash)
-  let early = hkdf.extract(hash, b"", zeros(l))
-  let derived = hkdf.expand_label(hash, early, "derived", sha256.sum(hash, b""), l)
-  c.hs_secret = hkdf.extract(hash, derived, shared)
-  let th = sha256.sum(hash, c.tr)
-  c.c_hs = hkdf.expand_label(hash, c.hs_secret, "c hs traffic", th, l)
-  c.s_hs = hkdf.expand_label(hash, c.hs_secret, "s hs traffic", th, l)
+  let sec = handshake_secrets(hash, shared, c.tr)
+  c.hs_secret = sec[0]
+  c.c_hs = sec[1]
+  c.s_hs = sec[2]
   dummy_ccs(c)
   c.wk = tlsrec.keys(c.suite, c.c_hs)
   c.rk = tlsrec.keys(c.suite, c.s_hs)
@@ -534,7 +534,7 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
       return
     }
     c.share_group = h.group
-    c.priv = nistec.generate(curve(h.group))
+    c.priv = keygen(h.group)
   }
   c.hrr = true
   c.cookie = h.cookie
@@ -707,7 +707,7 @@ fn certificate_verify(var c: Client, msg: Bytes) {
 }
 
 /// 64 spaces, the CertificateVerify content's prefix.
-fn pad64() -> Bytes {
+pub fn pad64() -> Bytes {
   var parts: List[Bytes] = []
   for _ in 0..64 {
     parts.push(b" ")
@@ -718,7 +718,7 @@ fn pad64() -> Bytes {
 /// The x509 algorithm of a TLS 1.3 signature scheme for a key type
 /// (Go's typeAndHashFromSignatureScheme with TLS 1.3's rules: ECDSA tied
 /// to its curve, RSA only as PSS); SIG_UNKNOWN when it does not fit.
-fn sig_alg(scheme: Int, key: Int) -> Int {
+pub fn sig_alg(scheme: Int, key: Int) -> Int {
   match scheme {
     0x0403 => if key == x509.KEY_P256 { x509.SIG_ECDSA_SHA256 } else { x509.SIG_UNKNOWN }
     0x0503 => if key == x509.KEY_P384 { x509.SIG_ECDSA_SHA384 } else { x509.SIG_UNKNOWN }
@@ -741,9 +741,33 @@ fn sig_err(alg: Int) -> Str {
   }
 }
 
+/// RFC 8446 7.1's handshake secrets for the ECDHE secret over the
+/// transcript through ServerHello: the handshake secret, then the
+/// client's and the server's handshake traffic secrets (no PSK: the early
+/// secret of zeros).
+pub fn handshake_secrets(hash: Int, shared: Bytes, tr: Bytes) -> List[Bytes] {
+  let l = sha256.size(hash)
+  let early = hkdf.extract(hash, b"", zeros(l))
+  let derived = hkdf.expand_label(hash, early, "derived", sha256.sum(hash, b""), l)
+  let hs = hkdf.extract(hash, derived, shared)
+  let th = sha256.sum(hash, tr)
+  [hs, hkdf.expand_label(hash, hs, "c hs traffic", th, l), hkdf.expand_label(hash, hs, "s hs traffic", th, l)]
+}
+
+/// RFC 8446 7.1's application traffic secrets from the handshake secret
+/// over the transcript through the server's Finished: the client's, then
+/// the server's.
+pub fn app_secrets(hash: Int, hs: Bytes, tr: Bytes) -> List[Bytes] {
+  let l = sha256.size(hash)
+  let derived = hkdf.expand_label(hash, hs, "derived", sha256.sum(hash, b""), l)
+  let master = hkdf.extract(hash, derived, zeros(l))
+  let th = sha256.sum(hash, tr)
+  [hkdf.expand_label(hash, master, "c ap traffic", th, l), hkdf.expand_label(hash, master, "s ap traffic", th, l)]
+}
+
 /// The Finished verify data of a base traffic secret over the transcript
 /// so far (RFC 8446 4.4.4).
-fn verify_data(hash: Int, base: Bytes, tr: Bytes) -> Bytes {
+pub fn verify_data(hash: Int, base: Bytes, tr: Bytes) -> Bytes {
   let key = hkdf.expand_label(hash, base, "finished", b"", sha256.size(hash))
   hmac.mac(hash, key, sha256.sum(hash, tr))
 }
@@ -760,14 +784,9 @@ fn finished(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: handshake buffer not empty before setting read traffic secret")
     return
   }
-  // the master secret and the application traffic secrets (over the
-  // transcript through the server's Finished)
-  let l = sha256.size(hash)
-  let derived = hkdf.expand_label(hash, c.hs_secret, "derived", sha256.sum(hash, b""), l)
-  let master = hkdf.extract(hash, derived, zeros(l))
-  let th = sha256.sum(hash, c.tr)
-  let c_ap = hkdf.expand_label(hash, master, "c ap traffic", th, l)
-  let s_ap = hkdf.expand_label(hash, master, "s ap traffic", th, l)
+  let ap = app_secrets(hash, c.hs_secret, c.tr)
+  let c_ap = ap[0]
+  let s_ap = ap[1]
   c.rk = tlsrec.keys(c.suite, s_ap)
   // the client's flight: an empty Certificate when one was asked for,
   // then Finished
@@ -825,7 +844,31 @@ fn fail(var c: Client, alert: Int, msg: Str) -> Client {
 /// The nistec curve of a group.
 fn curve(g: Int) -> Int { if g == GROUP_P384 { nistec.P384 } else { nistec.P256 } }
 
-fn zeros(n: Int) -> Bytes {
+/// A new private key for the group (X25519: 32 random bytes, RFC 7748).
+pub fn keygen(group: Int) -> Bytes { if group == GROUP_X25519 { rand.next_bytes(32) } else { nistec.generate(curve(group)) } }
+
+/// The key share (public key) of the private key for the group.
+pub fn public_key(group: Int, priv: Bytes) -> Bytes { if group == GROUP_X25519 { x25519.base(priv) } else { nistec.public_key(curve(group), priv) } }
+
+/// The ECDHE secret of the private key and the peer's share; none when
+/// the share is invalid (X25519: not 32 bytes, or an all zero result,
+/// which crypto/ecdh refuses; the check reveals only that).
+pub fn shared_secret(group: Int, priv: Bytes, peer: Bytes) -> Bytes? {
+  if group != GROUP_X25519 {
+    return nistec.ecdh(curve(group), priv, peer)
+  }
+  if peer.len() != 32 {
+    return None
+  }
+  let s = x25519.scalar_mult(priv, peer)
+  var acc = 0
+  for b in s {
+    acc = acc | Int(b)
+  }
+  if acc == 0 { None } else { Some(s) }
+}
+
+pub fn zeros(n: Int) -> Bytes {
   var parts: List[Bytes] = []
   for _ in 0..n {
     parts.push(b"\x00")
@@ -833,25 +876,25 @@ fn zeros(n: Int) -> Bytes {
   asn1.cat(parts)
 }
 
-fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
+pub fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
 
-fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
+pub fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
 
-fn u16(x: Int) -> Bytes { asn1.cat([u8(x >> 8), u8(x)]) }
+pub fn u16(x: Int) -> Bytes { asn1.cat([u8(x >> 8), u8(x)]) }
 
-fn u24(x: Int) -> Bytes { asn1.cat([u8(x >> 16), u8(x >> 8), u8(x)]) }
+pub fn u24(x: Int) -> Bytes { asn1.cat([u8(x >> 16), u8(x >> 8), u8(x)]) }
 
-fn vec8(b: Bytes) -> Bytes { asn1.cat([u8(b.len()), b]) }
+pub fn vec8(b: Bytes) -> Bytes { asn1.cat([u8(b.len()), b]) }
 
-fn vec16(b: Bytes) -> Bytes { asn1.cat([u16(b.len()), b]) }
+pub fn vec16(b: Bytes) -> Bytes { asn1.cat([u16(b.len()), b]) }
 
-fn ext(t: Int, d: Bytes) -> Bytes { asn1.cat([u16(t), vec16(d)]) }
+pub fn ext(t: Int, d: Bytes) -> Bytes { asn1.cat([u16(t), vec16(d)]) }
 
-fn message(t: Int, body: Bytes) -> Bytes { asn1.cat([u8(t), u24(body.len()), body]) }
+pub fn message(t: Int, body: Bytes) -> Bytes { asn1.cat([u8(t), u24(body.len()), body]) }
 
-fn u16_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 256 + Int(b[p + 1]) }
+pub fn u16_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 256 + Int(b[p + 1]) }
 
-fn u24_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 65536 + Int(b[p + 1]) * 256 + Int(b[p + 2]) }
+pub fn u24_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 65536 + Int(b[p + 1]) * 256 + Int(b[p + 2]) }
 
 fn has(xs: List[Int], x: Int) -> Bool {
   for v in xs {
@@ -894,9 +937,10 @@ fn hex(x: Int) -> Str {
 /// traces) through b's parts, each a 3 byte big endian length then the
 /// bytes: the server's handshake records, its records after the
 /// handshake, the client's application data, the root's DER (none for no
-/// root); d is "time host suite chunk" (host "-" for none, the suite
-/// offered in hex, chunk the size of the pieces the server's bytes are
-/// fed in, 0 whole). The result is a line per step: what the client
+/// root); d is "time host suite chunk key" (host "-" for none, the
+/// suite offered in hex, chunk the size of the pieces the server's bytes
+/// are fed in, 0 whole; key "shared" when c is the ECDHE secret,
+/// "x25519" when it is the client's X25519 private key). The result is a line per step: what the client
 /// sent (hex), then its state and error, the data received and whether
 /// the server closed.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
@@ -911,7 +955,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
     i += 3 + n
   }
   let args = (d.to_str() ?? "").split(" ")
-  if parts.len() != 4 || args.len() != 4 {
+  if parts.len() != 4 || args.len() != 5 {
     return Some(b"args")
   }
   var roots: List[x509.Cert] = []
@@ -926,7 +970,12 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   let sb = Bytes.from_hex(args[2]) ?? b"\x00\x00"
   cf.suites = [if sb.len() == 2 { u16_at(sb, 0) } else { 0 }]
   cf.hello = a
-  cf.shared = c
+  if args[4] == "x25519" {
+    cf.groups = [GROUP_X25519]
+    cf.priv = c
+  } else {
+    cf.shared = c
+  }
   let chunk = Int.parse(args[3]) ?? 0
   var cl = client(cf)
   var s = "ch ${take(cl).to_hex()}\n"

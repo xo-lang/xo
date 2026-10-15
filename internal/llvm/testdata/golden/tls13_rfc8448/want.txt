@@ -30,4 +30,13 @@ wrong secret:
 suite not offered:
   ch <ClientHello>
   flight 7 1503030002022f tls: server chose an unconfigured cipher suite
+x25519:
+  ch <ClientHello>
+  flight 6 <client Finished> 
+  app <client data>
+  got <server data> closed true  
+  bye <client close_notify>
+x25519 low order share:
+  ch <ClientHello>
+  flight 7 1503030002022f tls: invalid server key share
 --- stderr

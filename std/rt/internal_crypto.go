@@ -579,7 +579,8 @@ func cryptoX25519(what string, a, b Bytes) (Bytes, bool) {
 // cryptoTLS13 is std/native/llrt/tls13.xo's replay: a TLS 1.3 client
 // with a fixed ClientHello (a) and ECDHE secret (c) over the parts of b
 // (3 byte lengths: the server's handshake records, its later records,
-// the client's data, the root's DER), d "time host suite chunk". Written
+// the client's data, the root's DER), d "time host suite chunk key" (key
+// "x25519" when c is the client's X25519 private key). Written
 // out for RFC 8448's trace (one suite, an RSA-PSS or ECDSA P-256 server,
 // no HelloRetryRequest), with crypto/tls's error texts; the chunk size
 // does not change the result.
@@ -594,10 +595,10 @@ func cryptoTLS13(what string, a, b, c, d Bytes) (Bytes, bool) {
 		rest = rest[3+n:]
 	}
 	args := strings.Split(string(d), " ")
-	if len(parts) != 4 || len(args) != 4 {
+	if len(parts) != 4 || len(args) != 5 {
 		return "args", true
 	}
-	t := &tls13Replay{shared: []byte(c), host: args[1], suite: args[2]}
+	t := &tls13Replay{shared: []byte(c), host: args[1], suite: args[2], x25519: args[4] == "x25519"}
 	t.now, _ = strconv.ParseInt(args[0], 10, 64)
 	if len(parts[3]) > 0 {
 		root, err := x509.ParseCertificate(parts[3])
@@ -632,7 +633,7 @@ type tls13Replay struct {
 	now                       int64
 	roots                     []*x509.Certificate
 	state                     int
-	closed                    bool
+	closed, x25519            bool
 	r, w                      *tls13Keys
 }
 
@@ -756,6 +757,30 @@ func (t *tls13Replay) serverHello(m []byte) {
 	if suite != t.suite {
 		t.fail(47, "tls: server chose an unconfigured cipher suite")
 		return
+	}
+	if t.x25519 {
+		// the server's key share: the extensions after the compression byte
+		var share []byte
+		for e := m[44+sn:]; len(e) >= 4; {
+			typ, n := int(e[0])<<8|int(e[1]), int(e[2])<<8|int(e[3])
+			if typ == 51 && n >= 4 {
+				share = e[8 : 4+n]
+			}
+			e = e[4+n:]
+		}
+		priv, err := ecdh.X25519().NewPrivateKey(t.shared)
+		if err != nil {
+			panic(err)
+		}
+		pub, err := ecdh.X25519().NewPublicKey(share)
+		if err != nil {
+			t.fail(47, "tls: invalid server key share")
+			return
+		}
+		if t.shared, err = priv.ECDH(pub); err != nil {
+			t.fail(47, "tls: invalid server key share")
+			return
+		}
 	}
 	t.tr = append(t.tr, m...)
 	zero := make([]byte, 32)

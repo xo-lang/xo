@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 5, decision 0202): the
+  TLS 1.3 client's key exchange over X25519 (x25519.xo), now its default
+  share before P-256 and P-384, a low order share refused as
+  crypto/ecdh does; tls13.xo exposes its message encoders, the key
+  schedule (handshake_secrets, app_secrets), Finished, the signature
+  scheme mapping and key shares for the TLS 1.3 server. The golden
+  tls13_rfc8448 also replays RFC 8448's trace from the client's X25519
+  private key and a low order server share.
+
 - Native runtime (zero-C audit items B22 and B23, remnants batch 1): the
   network is Xo (std/native/llrt/netconn.xo): Net.listen and Net.dial
   (TCP and "unix:PATH"), Listener.accept, addr and close, Conn.read,
