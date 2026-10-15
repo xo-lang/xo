@@ -159,19 +159,18 @@ static int tw_kick_once(void) {
 	// odd while the clock moves: a check that reads the epoch now is
 	// stale too (a signal's callback runs with ev.mu released)
 	__atomic_fetch_add(&tw.vepoch, 1, __ATOMIC_SEQ_CST);
-	if (ev.n == 0) {
+	if (!th_first()) {
 		pthread_mutex_unlock(&ev.mu);
 		// std/rt's test world names the timers too
 		static const char m[] = "fault: XO-F001: deadlock: every task is blocked and no timer is pending\n";
 		write_all(2, m, sizeof m - 1);
 		_exit(70);
 	}
-	int64_t at = ev.heap[0]->when;
+	int64_t at = th_first()->when;
 	if (at > __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE)) {
 		__atomic_store_n(&tw.vnow, at, __ATOMIC_RELEASE);
 	}
-	while (ev.n > 0 && ev.heap[0]->when <= at) {
-		xo_timer *t = ev.heap[0];
+	for (xo_timer *t = th_first(); t && t->when <= at; t = th_first()) {
 		th_remove(t);
 		__atomic_store_n(&t->fired, 1, __ATOMIC_RELEASE);
 		if (t->park) {

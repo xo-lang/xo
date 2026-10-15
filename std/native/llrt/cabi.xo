@@ -20,6 +20,7 @@ use native/llrt/heapos
 use native/llrt/netpolicy
 use native/llrt/num
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -475,6 +476,16 @@ fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
   rt.mem_store(lenp, 0, 0, 8)
   obj.rs_with_cap(n)
 }
+
+// ---------------------------------------------------------------------------
+// The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
+// timer record (xo_rt.c struct xo_timer); the C holds ev.mu.
+
+fn poll_timer_push(t: Int) -> Int { poll.timer_push(t) }
+
+fn poll_timer_remove(t: Int) { poll.timer_remove(t) }
+
+fn poll_timer_first() -> Int { poll.timer_first() }
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task

@@ -1,0 +1,110 @@
+// The event loop's poller in Xo (the zero-C audit's work item B22,
+// decision 0069's design): stage 1, the timer heap. A timer is the C
+// runtime's record (xo_rt.c struct xo_timer, its offsets asserted there):
+// its deadline in monotonic ns and its place in the heap (-1 when not in
+// it); the heap is an array of timer addresses ordered by deadline (a
+// binary heap), from the C runtime's malloc (rt.heap_large). The C holds
+// the event loop's mutex (ev.mu) around every call here. Nothing here
+// allocates Xo values or faults.
+use native/rt
+
+/// A timer's words (xo_rt.c struct xo_timer).
+const T_WHEN = 0
+const T_IDX = 8
+
+/// rt.static_word: the heap's array (the address after its prefix), its
+/// length, and its capacity.
+const W_HEAP = 40
+const W_N = 41
+const W_CAP = 42
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn at(i: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_HEAP), 0, 8), rt.int_wrap(3, i, 3), 8) }
+
+fn set(i: Int, t: Int) {
+  rt.mem_store(rt.mem_load(rt.static_word(W_HEAP), 0, 8), rt.int_wrap(3, i, 3), t, 8)
+  rt.mem_store(t, T_IDX, i, 8)
+}
+
+fn dl(t: Int) -> Int { rt.mem_load(t, T_WHEN, 8) }
+
+fn up(i0: Int) {
+  var i = i0
+  let t = at(i)
+  while i > 0 {
+    let p = rt.int_wrap(4, subw(i, 1), 1)
+    if dl(at(p)) <= dl(t) {
+      break
+    }
+    set(i, at(p))
+    i = p
+  }
+  set(i, t)
+}
+
+fn down(i0: Int) {
+  var i = i0
+  let t = at(i)
+  let n = rt.mem_load(rt.static_word(W_N), 0, 8)
+  while true {
+    var c = addw(rt.int_wrap(3, i, 1), 1)
+    if c >= n {
+      break
+    }
+    if addw(c, 1) < n && dl(at(addw(c, 1))) < dl(at(c)) {
+      c = addw(c, 1)
+    }
+    if dl(t) <= dl(at(c)) {
+      break
+    }
+    set(i, at(c))
+    i = c
+  }
+  set(i, t)
+}
+
+/// Adds timer t (its deadline set): 1 when it is the first to fire now
+/// (the poller must wake to wait less), else 0.
+pub fn timer_push(t: Int) -> Int {
+  let wn = rt.static_word(W_N)
+  let wc = rt.static_word(W_CAP)
+  let n = rt.mem_load(wn, 0, 8)
+  let cap = rt.mem_load(wc, 0, 8)
+  if n == cap {
+    let ncap = if cap == 0 { 64 } else { addw(cap, cap) }
+    let old = rt.mem_load(rt.static_word(W_HEAP), 0, 8)
+    let nh = if old == 0 { rt.heap_large(rt.int_wrap(3, ncap, 3)) } else { rt.heap_large_resize(subw(old, 8), rt.int_wrap(3, ncap, 3)) }
+    rt.mem_store(rt.static_word(W_HEAP), 0, nh, 8)
+    rt.mem_store(wc, 0, ncap, 8)
+  }
+  rt.mem_store(wn, 0, addw(n, 1), 8)
+  set(n, t)
+  up(n)
+  if rt.mem_load(t, T_IDX, 8) == 0 { 1 } else { 0 }
+}
+
+/// Takes timer t (in the heap) out of it; its place becomes -1.
+pub fn timer_remove(t: Int) {
+  let wn = rt.static_word(W_N)
+  let i = rt.mem_load(t, T_IDX, 8)
+  let n = subw(rt.mem_load(wn, 0, 8), 1)
+  rt.mem_store(wn, 0, n, 8)
+  let last = at(n)
+  rt.mem_store(t, T_IDX, -1, 8)
+  if last != t {
+    set(i, last)
+    down(i)
+    up(rt.mem_load(last, T_IDX, 8))
+  }
+}
+
+/// The timer that fires first, or 0 when none is armed.
+pub fn timer_first() -> Int {
+  if rt.mem_load(rt.static_word(W_N), 0, 8) == 0 {
+    return 0
+  }
+  at(0)
+}

@@ -3644,6 +3644,15 @@ struct xo_timer {
 	void *arg;
 	int fired; // atomic
 };
+_Static_assert(offsetof(struct xo_timer, when) == 0 && offsetof(struct xo_timer, idx) == 8, "poll.xo's timer offsets");
+
+// The timer heap is std/native/llrt/poll.xo's (zero-C audit B22 stage 1),
+// ev.mu held around each call.
+int64_t xo_x_poll_timer_push(int64_t t);
+void xo_x_poll_timer_remove(int64_t t);
+int64_t xo_x_poll_timer_first(void);
+#define th_first() ((xo_timer *)(intptr_t)xo_x_poll_timer_first())
+#define th_remove(t) xo_x_poll_timer_remove((int64_t)(intptr_t)(t))
 
 typedef struct xo_pd {
 	pthread_mutex_t mu;
@@ -3669,8 +3678,6 @@ typedef struct xo_pd {
 static struct {
 	pthread_once_t once;
 	pthread_mutex_t mu; // the timer heap and ev.dead
-	xo_timer **heap;
-	int64_t n, cap;
 	int pfd[2]; // the self pipe
 	int poll;   // the kqueue or epoll descriptor
 	xo_pd *dead;
@@ -4184,56 +4191,6 @@ static void ev_init(void) {
 // ev_start starts the poller thread once.
 static void ev_start(void) { pthread_once(&ev.once, ev_init); }
 
-// Timer heap (ev.mu held)
-
-static void th_set(int64_t i, xo_timer *t) {
-	ev.heap[i] = t;
-	t->idx = i;
-}
-
-static void th_up(int64_t i) {
-	xo_timer *t = ev.heap[i];
-	while (i > 0) {
-		int64_t p = (i - 1) / 2;
-		if (ev.heap[p]->when <= t->when) {
-			break;
-		}
-		th_set(i, ev.heap[p]);
-		i = p;
-	}
-	th_set(i, t);
-}
-
-static void th_down(int64_t i) {
-	xo_timer *t = ev.heap[i];
-	for (;;) {
-		int64_t c = 2 * i + 1;
-		if (c >= ev.n) {
-			break;
-		}
-		if (c + 1 < ev.n && ev.heap[c + 1]->when < ev.heap[c]->when) {
-			c++;
-		}
-		if (t->when <= ev.heap[c]->when) {
-			break;
-		}
-		th_set(i, ev.heap[c]);
-		i = c;
-	}
-	th_set(i, t);
-}
-
-static void th_remove(xo_timer *t) {
-	int64_t i = t->idx;
-	xo_timer *last = ev.heap[--ev.n];
-	t->idx = -1;
-	if (last != t) {
-		th_set(i, last);
-		th_down(i);
-		th_up(last->idx);
-	}
-}
-
 // timer_add arms t (when, and park or fn, set).
 static void timer_add(xo_timer *t) {
 	if (!tw.virt) {
@@ -4242,17 +4199,7 @@ static void timer_add(xo_timer *t) {
 		ev_start();
 	}
 	pthread_mutex_lock(&ev.mu);
-	if (ev.n == ev.cap) {
-		ev.cap = ev.cap ? ev.cap * 2 : 64;
-		ev.heap = realloc(ev.heap, (size_t)ev.cap * sizeof(xo_timer *));
-		if (!ev.heap) {
-			xo_oom();
-		}
-	}
-	ev.heap[ev.n] = t;
-	t->idx = ev.n++;
-	th_up(t->idx);
-	int first = t->idx == 0;
+	int first = (int)xo_x_poll_timer_push((int64_t)(intptr_t)t);
 	pthread_mutex_unlock(&ev.mu);
 	if (first && !tw.virt) {
 		ev_poke();
@@ -4661,8 +4608,7 @@ static void *poller_main(void *arg) {
 			free(pd);
 		}
 		int64_t now = mono_ns();
-		while (ev.n > 0 && ev.heap[0]->when <= now) {
-			xo_timer *t = ev.heap[0];
+		for (xo_timer *t = th_first(); t && t->when <= now; t = th_first()) {
 			th_remove(t);
 			__atomic_store_n(&t->fired, 1, __ATOMIC_RELEASE);
 			if (t->park) {
@@ -4671,7 +4617,8 @@ static void *poller_main(void *arg) {
 				t->fn(t);
 			}
 		}
-		int64_t wait = ev.n > 0 ? ev.heap[0]->when - now : -1;
+		xo_timer *first = th_first();
+		int64_t wait = first ? first->when - now : -1;
 		pthread_mutex_unlock(&ev.mu);
 #if defined(XO_WINPOLL)
 		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
