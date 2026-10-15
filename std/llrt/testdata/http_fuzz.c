@@ -152,7 +152,7 @@ static void run_server(const char *in, int64_t n) {
 		int64_t l;
 		xo_rstr *s = xo_hc_host(&hc, &l);
 		xo_free(s);
-		(void)xo_hc_port(&hc);
+		(void)ref_hc_port(&hc);
 		for (int64_t i = 0; i < r->hdr.n; i++) {
 			xo_hc_header(&hc, r->hdr.a[i].k.p, r->hdr.a[i].k.n, r->hdr.a[i].v.p, r->hdr.a[i].v.n);
 		}
@@ -256,7 +256,7 @@ static void run_h2_server(const char *in, int64_t n) {
 		int64_t l;
 		xo_rstr *s = xo_hc_host(t, &l);
 		xo_free(s);
-		(void)xo_hc_port(t);
+		(void)ref_hc_port(t);
 		for (int64_t i = 0; i < t->req.hdr.n; i++) {
 			xo_hc_header(t, t->req.hdr.a[i].k.p, t->req.hdr.a[i].k.n, t->req.hdr.a[i].v.p, t->req.hdr.a[i].v.n);
 		}

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 6): a server request's
+  url.host (net.SplitHostPort of the Host) and url.port (of an absolute
+  target) are Xo (std/native/llrt/http1.xo host_name, host_port); the C
+  hands over the raw Host and URL host (xo_hc_host, xo_hc_urlhost), and
+  its splitting moved to the test copies in std/llrt/testdata/http_ref.c.
 - Native runtime (zero-C audit item B28, part 5): HTTP/2 the SETTINGS
   checks that need no state (the payload's shape, duplicates,
   ENABLE_PUSH, INITIAL_WINDOW, MAX_FRAME_SIZE) are Xo (h2w.xo

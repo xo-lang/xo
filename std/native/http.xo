@@ -695,11 +695,11 @@ fn conn_request(hc: rthttp.HConn) -> Request {
     upath = "/"
   }
   var port: Int? = None
-  let p = rthttp.hc_port(hc)
+  let p = http1.host_port(rthttp.hc_urlhost(hc))
   if p >= 0 {
     port = Some(p)
   }
-  let url = http.Url{scheme: rthttp.hc_scheme(hc), host: rthttp.hc_host(hc), port: port, path: upath, query: query}
+  let url = http.Url{scheme: rthttp.hc_scheme(hc), host: http1.host_name(rthttp.hc_host(hc)), port: port, path: upath, query: query}
   Request{method: rthttp.hc_method(hc), path: path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
 }
 

@@ -240,21 +240,6 @@ static int h_has_token(const char *v, int64_t n, const char *tok) {
 // and queries are parsed in Xo (std/native/llrt/http1.xo): HTTP/1.1's
 // with the head, HTTP/2's in h2_fields (xo_h2.c h2_request).
 
-// h_valid_port is url.validOptionalPort of p (":digits" or empty).
-static int h_valid_port(const char *p, int64_t n) {
-	if (n == 0) {
-		return 1;
-	}
-	if (p[0] != ':') {
-		return 0;
-	}
-	for (int64_t i = 1; i < n; i++) {
-		if (p[i] < '0' || p[i] > '9') {
-			return 0;
-		}
-	}
-	return 1;
-}
 
 typedef struct {
 	hstr scheme, host, path, rawquery;
@@ -1139,68 +1124,13 @@ xo_rstr *xo_hc_path(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.pa
 
 xo_rstr *xo_hc_scheme(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.scheme, len); }
 
-// xo_hc_host is Request.url.host: the Host without a port (net.
-// SplitHostPort), or all of it when it has none.
-xo_rstr *xo_hc_host(xo_hconn *hc, int64_t *len) {
-	hstr h = hc->req.host;
-	const char *p = h.p ? h.p : "";
-	int64_t n = h.n;
-	// net.SplitHostPort
-	const char *colon = NULL;
-	for (int64_t i = n - 1; i >= 0; i--) {
-		if (p[i] == ':') {
-			colon = p + i;
-			break;
-		}
-	}
-	if (colon) {
-		const char *hp = p;
-		int64_t hn = colon - p;
-		int ok = 1;
-		int64_t j = 0, k = 0; // no '[' from j, no ']' from k
-		if (n > 0 && p[0] == '[') {
-			const char *end = memchr(p, ']', (size_t)n);
-			if (!end || end + 1 != colon) {
-				ok = 0;
-			} else {
-				hp = p + 1;
-				hn = end - p - 1;
-				j = 1;
-				k = end - p + 1;
-			}
-		} else if (memchr(p, ':', (size_t)hn)) {
-			ok = 0;
-		}
-		if (ok && (memchr(p + j, '[', (size_t)(n - j)) || memchr(p + k, ']', (size_t)(n - k)))) {
-			ok = 0;
-		}
-		if (ok) {
-			return nstr(hp, hn, len);
-		}
-	}
-	return nstr(p, n, len);
-}
+// xo_hc_host is the request's Host as received; std/native/llrt/
+// http1.xo host_name splits off the port (the zero-C audit's B28).
+xo_rstr *xo_hc_host(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.host, len); }
 
-// xo_hc_port is the URL's port (an absolute request target), or -1.
-int64_t xo_hc_port(xo_hconn *hc) {
-	hstr h = hc->req.url.host;
-	if (!h.p) {
-		return -1;
-	}
-	for (int64_t i = h.n - 1; i >= 0; i--) {
-		if (h.p[i] == ':') {
-			if (!h_valid_port(h.p + i, h.n - i) || i + 1 == h.n) {
-				return -1;
-			}
-			int64_t v;
-			if (!n_parse_int(h.p + i + 1, h.n - i - 1, &v)) {
-				return -1;
-			}
-			return v;
-		}
-	}
-	return -1;
-}
+// xo_hc_urlhost is the host of an absolute request target's URL;
+// http1.xo host_port reads its port.
+xo_rstr *xo_hc_urlhost(xo_hconn *hc, int64_t *len) { return hstr_out(hc->req.url.host, len); }
 
 int64_t xo_hc_nheaders(xo_hconn *hc) { return hc->req.hdr.n; }
 

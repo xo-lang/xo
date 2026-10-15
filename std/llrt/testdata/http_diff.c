@@ -84,11 +84,11 @@ static void serve(const char *in, int64_t n, nbuf *out) {
 		nbuf_put(&d, r->url.scheme.p, r->url.scheme.n);
 		nbuf_byte(&d, '|');
 		int64_t hl;
-		xo_rstr *hs = xo_hc_host(&hc, &hl);
+		xo_rstr *hs = ref_hc_host(&hc, &hl);
 		nbuf_put(&d, hs->data, hl);
 		xo_free(hs);
 		nbuf_byte(&d, '|');
-		int64_t port = xo_hc_port(&hc);
+		int64_t port = ref_hc_port(&hc);
 		if (port >= 0) {
 			char pb[32];
 			snprintf(pb, sizeof pb, "%lld", (long long)port);

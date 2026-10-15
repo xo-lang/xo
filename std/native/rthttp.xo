@@ -39,9 +39,11 @@ fn hc_chunked(h: HConn, res: Int, used: Int, body: Str)
 fn hc_method(h: HConn) -> Str
 fn hc_path(h: HConn) -> Str
 fn hc_scheme(h: HConn) -> Str
+/// The request's Host as received (http1.host_name splits off the port).
 fn hc_host(h: HConn) -> Str
-/// The port of an absolute request target, or -1.
-fn hc_port(h: HConn) -> Int
+/// The host of an absolute request target's URL, "" for none
+/// (http1.host_port reads its port).
+fn hc_urlhost(h: HConn) -> Str
 fn hc_nheaders(h: HConn) -> Int
 fn hc_hname(h: HConn, i: Int) -> Str
 fn hc_hval(h: HConn, i: Int) -> Str
