@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- AES-GCM: the keystream xor written in place into the output, and the
+  body read in place for its tag (no copy). AES-128-GCM on LLVM 17.9M to
+  15.6M instructions a MiB (Mbed 14.0M), on arm64 26.3M to 21.0M.
 - ChaCha20-Poly1305: wrapping arithmetic in the quarter rounds and
   Poly1305's products (no overflow branches), and on arm64 a 32 bit add
   for an add masked to 32 bits. Bulk on LLVM 2652M to 2086M

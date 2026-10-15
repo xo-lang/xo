@@ -656,11 +656,11 @@ fn reduce(v0a: Int, v1a: Int, v2a: Int, v3a: Int) -> (Int, Int) {
   (v3b, v2)
 }
 
-/// GHASH of b (zero padded to a block) after the state (y1, y0).
-fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes) -> (Int, Int) {
+/// GHASH of the first n bytes of b (zero padded to a block) after the
+/// state (y1, y0).
+fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
   var y1 = y1a
   var y0 = y0a
-  let n = b.len()
   var i = 0
   while n - i >= 16 {
     let (a1, a0) = g.mul(y1 ^ be64(b, i), y0 ^ be64(b, i + 8))
@@ -696,11 +696,12 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   Gcm{c: c, hw: c.hw, h0: h0, h1: h1, h2: h0 ^ h1, h0r: h0r, h1r: h1r, h2r: h0r ^ h1r}
 }
 
-/// The bytes of src xor the key stream from counter ctr (32 bits, big
-/// endian after the 12 byte nonce), onto s.
-fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes) -> Str {
+/// The first n bytes of src xor the key stream from counter ctr (32
+/// bits, big endian after the 12 byte nonce), written in place into s0,
+/// a new empty string with room for n + 8 bytes (a word at a time, the
+/// last one past n; the length is set to n).
+fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str {
   var s = s0
-  let n = src.len()
   let nlo = rt.bytes_word(nonce, 0)
   let nhi = le32(nonce, 8)
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
@@ -709,38 +710,43 @@ fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes) -> Str {
   while i < n {
     for b in 0..4 {
       io[2 * b] = nlo
-      io[2 * b + 1] = nhi | shl(shr(rt.int_wrap(7, (ctr + b) & 0xFFFFFFFF, 0), 32), 32)
+      io[2 * b + 1] = nhi | shl(rt.int_wrap(7, rt.int_wrap(0, ctr, b) & 0xFFFFFFFF, 0) & ~0xFFFFFFFF, 0)
     }
     encrypt4(g.c, io)
-    for k in 0..8 {
-      s = push_xor(s, src, i + 8 * k, io[k])
+    var k = 0
+    while k < 8 {
+      let off = rt.int_wrap(0, i, rt.int_wrap(3, k, 3))
+      if off >= n {
+        break
+      }
+      let w = if rt.int_wrap(0, off, 8) <= n { rt.bytes_word(src, off) } else { tail_word(src, off, n) }
+      s = rt.rs_put_word(s, off, w ^ io[k])
+      k = rt.int_wrap(0, k, 1)
     }
-    ctr += 4
-    i += 64
+    ctr = rt.int_wrap(0, ctr, 4)
+    i = rt.int_wrap(0, i, 64)
   }
-  s
+  rt.rs_set_len(s, n)
 }
 
-/// s after the bytes of src from off (at most 8 of them) xor those of w.
-fn push_xor(s: Str, src: Bytes, off: Int, w: Int) -> Str {
-  let n = src.len()
-  if off + 8 <= n {
-    return rt.rs_push_word(s, rt.bytes_word(src, off) ^ w, 8)
-  }
-  var t = s
+/// The bytes of src from off to n (fewer than 8), little endian, zeros
+/// above.
+fn tail_word(src: Bytes, off: Int, n: Int) -> Int {
+  var w = 0
   var k = 0
   while off + k < n {
-    t = rt.rs_push_byte(t, (Int(src[off + k]) ^ shr(w, 8 * k)) & 255)
+    w = w | shl(Int(src[off + k]), 8 * k)
     k += 1
   }
-  t
+  w
 }
 
-/// The tag of ciphertext data and additional data aad.
-fn (g: Gcm) tag(nonce: Bytes, data: Bytes, aad: Bytes) -> Bytes {
-  let (a1, a0) = g.ghash(0, 0, aad)
-  let (b1, b0) = g.ghash(a1, a0, data)
-  let (y1, y0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * data.len()))
+/// The tag of the first n bytes of ciphertext data and additional data
+/// aad.
+fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
+  let (a1, a0) = g.ghash(0, 0, aad, aad.len())
+  let (b1, b0) = g.ghash(a1, a0, data, n)
+  let (y1, y0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * n))
   var io = [rt.bytes_word(nonce, 0), le32(nonce, 8) | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
   encrypt4(g.c, io)
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), rt.int_wrap(7, y1, 0) ^ io[0], 8), rt.int_wrap(7, y0, 0) ^ io[1], 8).bytes()
@@ -749,24 +755,24 @@ fn (g: Gcm) tag(nonce: Bytes, data: Bytes, aad: Bytes) -> Bytes {
 /// The ciphertext of plaintext pt with its 16 byte tag after it (the
 /// nonce is 12 bytes; cipher.AEAD's Seal).
 pub fn (g: Gcm) seal(nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
-  let ct = g.ctr(rt.rs_with_cap(pt.len() + 16), nonce, 2, pt)
-  let t = g.tag(nonce, ct.bytes(), aad)
+  let n = pt.len()
+  let ct = g.ctr(rt.rs_with_cap(n + 16), nonce, 2, pt, n)
+  let t = g.tag(nonce, ct.bytes(), n, aad)
   rt.rs_append_bytes(ct, t, 0, 16, 0).bytes()
 }
 
 /// The plaintext of ciphertext and tag sealed, or None when the tag does
-/// not match (cipher.AEAD's Open).
+/// not match (cipher.AEAD's Open). The body is read in place.
 pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
   let n = sealed.len() - 16
   if n < 0 {
     return None
   }
-  let body = rt.rs_append_bytes(rt.rs_with_cap(n), sealed, 0, n, 0).bytes()
   let want = rt.rs_append_bytes(rt.rs_with_cap(16), sealed, n, n + 16, 0).bytes()
-  if !ct.bytes_equal(g.tag(nonce, body, aad), want) {
+  if !ct.bytes_equal(g.tag(nonce, sealed, n, aad), want) {
     return None
   }
-  g.ctr(rt.rs_with_cap(n), nonce, 2, body).bytes()
+  g.ctr(rt.rs_with_cap(n + 8), nonce, 2, sealed, n).bytes()
 }
 
 /// AES-GCM's seal under key.
