@@ -22,7 +22,6 @@ use native/llrt/entry
 use native/llrt/fault
 use native/llrt/fsops
 use native/llrt/heapos
-use native/llrt/netpolicy
 use native/llrt/mutex
 use native/llrt/num
 use native/llrt/obj
@@ -283,41 +282,6 @@ fn b64_val(c: Int) -> Int {
     return 63
   }
   -1
-}
-
-// ---------------------------------------------------------------------------
-// The address policy of Net.only (xo_rt.c's, now netpolicy.xo): the
-// lists, hosts, ports, and addresses are bytes at an address and a length,
-// or zero terminated where the C keeps them so.
-
-/// 1 when the lists admit the dial or listen address of the n bytes at a
-/// (onlyNet.admitsAddr), else 0.
-fn net_admits_addr(lp: Int, ln: Int, a: Int, n: Int) -> Int {
-  if netpolicy.admits_addr(raw.str_at(lp, ln), raw.str_at(a, n)) {
-    return 1
-  }
-  0
-}
-
-/// Splits the zero terminated address at a into its host (brackets
-/// removed) and port, written zero terminated into the buffers of hn and
-/// pn bytes: 0, or -1 without a colon or when one does not fit.
-fn split_hostport(a: Int, host: Int, hn: Int, port: Int, pn: Int) -> Int {
-  let (ok, h, p) = netpolicy.split_hostport(raw.str_at(a, raw.cstr_len(a)))
-  if !ok || h.len() >= hn || p.len() >= pn {
-    return -1
-  }
-  let _h = raw.put_cstr(host, h)
-  let _p = raw.put_cstr(port, p)
-  0
-}
-
-/// 1 when the zero terminated port at p is a number above 65535, else 0.
-fn port_out_of_range(p: Int) -> Int {
-  if netpolicy.port_out_of_range(raw.str_at(p, raw.cstr_len(p))) {
-    return 1
-  }
-  0
 }
 
 /// The days since 1970-01-01 of a date (H. Hinnant's days_from_civil).

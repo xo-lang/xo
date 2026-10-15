@@ -1,0 +1,982 @@
+// The network of std.md 3.2 in Xo (the zero-C audit's B22 and B23
+// remnants, formerly xo_rt.c's): Net.listen and Net.dial (TCP and
+// "unix:PATH", decision 0190), Listener.accept, addr and close, and
+// Conn.read, write and close, over sock.xo's system calls, dns.xo's (or
+// the system's) name resolution, and poll.xo's descriptors. cabi_net.xo
+// exports them; the C keeps one line forwarders under the names the
+// generated code calls (xo_net_listen and the rest). Each operation
+// records its outcome in the context (ctx.xo C_NET_STATUS, C_NET_MSG, a
+// malloc'd C string), which the generated code reads to build the
+// NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg), 5 Canceled,
+// 6 Denied (the Go backend's tags).
+//
+// Written and run on macOS: the Linux arms are UNTESTED on linux, and the
+// Windows arms (ws2_32 through sock.xo, the C runtime's errno numbers)
+// are UNTESTED on windows.
+use native/llrt/ctx
+use native/llrt/darwin
+use native/llrt/dns
+use native/llrt/linux
+use native/llrt/netpolicy
+use native/llrt/obj
+use native/llrt/poll
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/twflags
+use native/llrt/twrun
+use native/llrt/windows
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// A handle's header (xo_rt.c xo_hdr): its count and its free function.
+const H_RC = 0
+const H_FREE = 8
+
+/// A listener (xo_rt.c xo_listener, asserted there): its descriptor, its
+/// address (a malloc'd C string: "ip:port", or "unix:PATH" as given), the
+/// test world's in memory record (twrun.xo ML, or 0), and whether close
+/// removes the socket file (a C int).
+const L_PD = 16
+const L_ADDR = 24
+const L_MEM = 32
+const L_UNLINK = 40
+const L_SIZE = 48
+
+/// A connection (xo_rt.c xo_conn): its descriptor.
+const C_PD = 16
+const C_SIZE = 24
+
+/// The test world's real network (xo_rt.c TW_REAL_NET).
+const TW_REAL_NET = 4
+
+/// rt.sched_rt's statistics (xo_rt.c st: net_read, net_write, net_again).
+const ST_NET_READ = 12
+const ST_NET_WRITE = 13
+const ST_NET_AGAIN = 14
+
+/// A resolution's most addresses, each a struct sockaddr in 32 bytes.
+const NADDR = 32
+const SA = 32
+
+const CLOSED_TEXT = "use of closed network connection"
+
+fn ld(p: Int, k: Int) -> Int { rt.mem_load(p, k, 8) }
+
+fn st(p: Int, k: Int, v: Int) { rt.mem_store(p, k, v, 8) }
+
+fn stat(k: Int) {
+  let _r = rt.sched_rt(0, k, 0)
+}
+
+// ---------------------------------------------------------------------------
+// The target's numbers: 1 Linux, 2 macOS, 3 Windows (sysio.layer); errno
+// values as sock.xo returns them (the C runtime's on Windows).
+
+fn os() -> Int { sysio.layer() }
+
+fn pick(l: Int, d: Int, w: Int) -> Int {
+  let k = os()
+  if k == 2 {
+    return d
+  }
+  if k == 3 {
+    return w
+  }
+  l
+}
+
+const EINTR = 4
+const EPIPE = 32
+const EACCES = 13
+const ENOENT = 2
+const EINVAL = 22
+const ENOTDIR = 20
+
+fn eagain() -> Int { pick(11, 35, 11) }
+
+fn ewouldblock() -> Int { pick(11, 35, 140) }
+
+fn einprogress() -> Int { pick(115, 36, 112) }
+
+fn econnrefused() -> Int { pick(111, 61, 107) }
+
+fn econnreset() -> Int { pick(104, 54, 108) }
+
+fn econnaborted() -> Int { pick(103, 53, 106) }
+
+fn eaddrinuse() -> Int { pick(98, 48, 100) }
+
+fn eaddrnotavail() -> Int { pick(99, 49, 101) }
+
+fn etimedout() -> Int { pick(110, 60, 138) }
+
+fn eprototype() -> Int { pick(91, 41, 136) }
+
+/// Whether r (a negative errno) says the call would block, counted as
+/// xo_rt.c's x_ret did.
+fn would_block(r: Int) -> Bool {
+  if r == 0 - eagain() || r == 0 - ewouldblock() {
+    stat(ST_NET_AGAIN)
+    return true
+  }
+  false
+}
+
+fn sol_socket() -> Int { pick(1, 65535, 65535) }
+
+fn so_reuseaddr() -> Int { pick(2, 4, 4) }
+
+fn ipv6_v6only() -> Int { pick(26, 27, 27) }
+
+fn somaxconn() -> Int { pick(4096, 128, 2147483647) }
+
+/// SOCK_CLOEXEC where socket(2) takes it (Linux; elsewhere nonblock sets
+/// FD_CLOEXEC, and Windows sockets are not inherited).
+fn cloexec() -> Int { pick(sock.SOCK_CLOEXEC, 0, 0) }
+
+/// The size of struct sockaddr_un and of its path.
+fn sun_size() -> Int { pick(110, 106, 110) }
+
+fn sun_path_max() -> Int { pick(108, 104, 108) }
+
+/// The family of the struct sockaddr at sa (a byte after sin_len on
+/// macOS, else 16 bits).
+fn family(sa: Int) -> Int {
+  if os() == 2 {
+    return rt.mem_load(sa, 1, 1)
+  }
+  rt.mem_load(sa, 0, 2)
+}
+
+fn sa_len(f: Int) -> Int { if f == sock.AF_INET { 16 } else { 28 } }
+
+/// The text of errno e in a NetErr (xo_rt.c err_text: Go's texts for the
+/// common ones, else strerror's).
+fn err_text(e: Int) -> Str {
+  if e == econnrefused() {
+    return "connection refused"
+  }
+  if e == econnreset() {
+    return "connection reset by peer"
+  }
+  if e == EPIPE {
+    return "broken pipe"
+  }
+  if e == eaddrinuse() {
+    return "address already in use"
+  }
+  if e == eaddrnotavail() {
+    return "can't assign requested address"
+  }
+  if e == EACCES {
+    return "permission denied"
+  }
+  if e == etimedout() {
+    return "operation timed out"
+  }
+  if e == ENOENT {
+    return "no such file or directory"
+  }
+  if e == EINVAL {
+    return "invalid argument"
+  }
+  if e == ENOTDIR {
+    return "not a directory"
+  }
+  if e == eprototype() {
+    return "protocol wrong type for socket"
+  }
+  let k = os()
+  if k == 2 {
+    return darwin.strerror(e)
+  }
+  if k == 3 {
+    return windows.strerror(e)
+  }
+  linux.strerror(e)
+}
+
+// ---------------------------------------------------------------------------
+// The outcome in the context
+
+/// A malloc'd zero terminated copy of s (the C frees it).
+fn cstr(s: Str) -> Int {
+  let a = rt.int_wrap(1, rt.heap_large(s.len() + 1), 8)
+  let _n = raw.put_cstr(a, s)
+  a
+}
+
+fn mfree(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+fn ok(c: Int) { st(c, ctx.C_NET_STATUS, 0) }
+
+fn fail(c: Int, status: Int, msg: Str) {
+  mfree(ld(c, ctx.C_NET_MSG))
+  st(c, ctx.C_NET_MSG, cstr(msg))
+  st(c, ctx.C_NET_STATUS, status)
+}
+
+/// s for the C caller, which puts it in a list of one (xo_rt.c's
+/// nc_list): its object, counted once more (testworld.hand_str), with
+/// its length stored at np. A list literal handed out by obj_addr was
+/// freed early (its Str garbage after the next spawn).
+fn list_of(s: Str, np: Int) -> Int {
+  st(np, 0, s.len())
+  let a = rt.obj_addr(s)
+  rc.inc(a)
+  a
+}
+
+/// A new handle of n bytes, zeroed, with one reference and the free
+/// function in the services record's word k.
+fn new_handle(n: Int, k: Int) -> Int {
+  let o = obj.alloc_obj(n)
+  rt.mem_set(o, 0, n)
+  st(o, H_RC, -1)
+  st(o, H_FREE, ld(ctx.svc(), k))
+  o
+}
+
+/// The descriptor's socket (xo_rt.c xo_pd fd, a C int; stable while an
+/// operation runs).
+fn pd_fd(pd: Int) -> Int {
+  let fd = rt.mem_load(pd, 8, 4)
+  if fd >= 2147483648 { fd - 4294967296 } else { fd }
+}
+
+/// The C string at a as a Str.
+fn str_of(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
+
+/// unlink(2) of path.
+fn unlink(path: Str) {
+  let k = os()
+  let _r = if k == 2 { darwin.unlink(path, false) } else if k == 3 { windows.unlink(path, false) } else { linux.unlink(path, false) }
+}
+
+// ---------------------------------------------------------------------------
+// Names (moved from cabi_net.xo net_resolve)
+
+/// getaddrinfo of host and the numeric port (AI_NUMERICSERV), of family
+/// (0 AF_UNSPEC, AF_INET, the target's AF_INET6), passive (AI_PASSIVE):
+/// at most cap entries of SA bytes written at out, each a sockaddr_in or
+/// sockaddr_in6 zero padded, in the order to try; their count, or a
+/// negative EAI code (gai_text's). A numeric IPv4 host is read in place.
+fn resolve(host: Str, port: Str, family: Int, passive: Bool, out: Int, cap: Int) -> Int {
+  let hp = raw.data(host)
+  let hn = host.len()
+  let pp = raw.data(port)
+  let pn = port.len()
+  if os() != 1 {
+    return resolve_libc(hp, hn, pp, pn, family, passive, out, cap)
+  }
+  var pv = 0
+  for i in 0..pn {
+    let d = rt.mem_load(pp, i, 1) - 48
+    if d < 0 || d > 9 || pv > 65535 {
+      // not a number (AI_NUMERICSERV)
+      return dns.EAI_NONAME
+    }
+    pv = pv * 10 + d
+  }
+  if pv > 65535 {
+    return dns.EAI_SERVICE
+  }
+  if cap < 1 {
+    return dns.EAI_NONAME
+  }
+  if family != sock.af_inet6() {
+    let w = dns.v4_at(hp, hn)
+    if w >= 0 {
+      // struct sockaddr_in: the family, the port and the address in
+      // network order
+      rt.mem_set(out, 0, SA)
+      rt.mem_store(out, 0, sock.AF_INET, 2)
+      rt.mem_store(out, 2, (pv >> 8) & 255, 1)
+      rt.mem_store(out, 3, pv & 255, 1)
+      rt.mem_store(out, 4, (w >> 24) & 255, 1)
+      rt.mem_store(out, 5, (w >> 16) & 255, 1)
+      rt.mem_store(out, 6, (w >> 8) & 255, 1)
+      rt.mem_store(out, 7, w & 255, 1)
+      return 1
+    }
+  }
+  let f = dns.lookup(host, family, passive, ctx.svc() + ctx.SV_DNS)
+  if f.err != 0 {
+    return f.err
+  }
+  var n = 0
+  for a in f.addrs {
+    if n == cap {
+      break
+    }
+    let sa = sock.sockaddr(a.ip, pv, a.zone)
+    let at = out + SA * n
+    rt.mem_set(at, 0, SA)
+    rt.mem_copy(at, raw.bytes_addr(sa), sa.len())
+    let _k = sock.keep(sa, 0)
+    n += 1
+  }
+  if n == 0 {
+    return dns.EAI_NONAME
+  }
+  n
+}
+
+/// resolve on macOS and Windows: the system's getaddrinfo (decision 0195
+/// allows it: mDNSResponder, .local names, the system's DNS
+/// configuration; ws2_32's on Windows, UNTESTED on windows), each
+/// result's struct sockaddr copied into an entry (struct addrinfo has the
+/// same offsets on both). An error on macOS is minus libSystem's
+/// (positive) EAI code, which gai_text takes back; on Windows dns.xo's EAI
+/// code for the Winsock error (dns.wsa_eai), so the texts are glibc's.
+fn resolve_libc(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Bool, out: Int, cap: Int) -> Int {
+  // the host and the port zero terminated, the hints (struct addrinfo,
+  // 48 bytes: flags, family, socktype at 0, 4, 8), and the result's word
+  let hb = raw.bytes_buf(hn + 1)
+  let pb = raw.bytes_buf(pn + 1)
+  let hints = raw.bytes_buf(56)
+  let ha = raw.bytes_addr(hb)
+  let pa = raw.bytes_addr(pb)
+  let ia = raw.bytes_addr(hints)
+  rt.mem_copy(ha, hp, hn)
+  rt.mem_store(ha, hn, 0, 1)
+  rt.mem_copy(pa, pp, pn)
+  rt.mem_store(pa, pn, 0, 1)
+  rt.mem_set(ia, 0, 56)
+  // AI_NUMERICSERV 0x1000 on macOS, 8 on Windows; AI_PASSIVE 1;
+  // SOCK_STREAM 1
+  let numeric = if sock.windows() { 8 } else { 4096 }
+  rt.mem_store(ia, 0, numeric | (if passive { 1 } else { 0 }), 4)
+  rt.mem_store(ia, 4, family, 4)
+  rt.mem_store(ia, 8, 1, 4)
+  let resp = ia + 48
+  let host = if hn == 0 { 0 } else { ha }
+  let g = if sock.windows() { Int(sys_windows.getaddrinfo(host, pa, ia, resp)) } else { Int(sys_darwin.getaddrinfo(host, pa, ia, resp)) }
+  if g != 0 {
+    let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
+    return if sock.windows() { dns.wsa_eai(g) } else { 0 - g }
+  }
+  let first = rt.mem_load(resp, 0, 8)
+  var a = first
+  var n = 0
+  while a != 0 && n < cap {
+    // struct addrinfo: ai_addrlen (32 bits) at 16, ai_addr at 32, ai_next
+    // at 40
+    let len = rt.mem_load(a, 16, 4)
+    let sa = rt.mem_load(a, 32, 8)
+    let at = out + SA * n
+    rt.mem_set(at, 0, SA)
+    rt.mem_copy(at, sa, if len < SA { len } else { SA })
+    n += 1
+    a = rt.mem_load(a, 40, 8)
+  }
+  if sock.windows() {
+    sys_windows.freeaddrinfo(first)
+  } else {
+    sys_darwin.freeaddrinfo(first)
+  }
+  let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
+  if n == 0 {
+    // EAI_NONAME: libSystem's, dns.xo's on Windows
+    return if sock.windows() { dns.EAI_NONAME } else { -8 }
+  }
+  n
+}
+
+/// The text of resolve's error code (glibc's gai_strerror texts;
+/// libSystem's own on macOS).
+pub fn gai_text(code: Int) -> Str {
+  if os() == 2 {
+    let t = sys_darwin.gai_strerror(if code < 0 { 0 - code } else { code })
+    return raw.str_at(t, raw.cstr_len(t))
+  }
+  dns.gai_text(code)
+}
+
+/// The address of the struct sockaddr at sa as "ip:port" or "[ip]:port"
+/// (xo_rt.c fmt_addr); an unspecified address becomes the loopback one
+/// (std.md 3.2).
+fn fmt_addr(sa: Int) -> Str {
+  let port = rt.mem_load(sa, 2, 1) * 256 + rt.mem_load(sa, 3, 1)
+  if family(sa) == sock.AF_INET {
+    var ip = "127.0.0.1"
+    if rt.mem_load(sa, 4, 4) != 0 {
+      ip = dns.ntop(raw.str_at(sa + 4, 4).bytes())
+    }
+    return "${ip}:${port}"
+  }
+  var ip = "::1"
+  if rt.mem_load(sa, 8, 8) != 0 || rt.mem_load(sa, 16, 8) != 0 {
+    ip = dns.ntop(raw.str_at(sa + 8, 16).bytes())
+  }
+  "[${ip}]:${port}"
+}
+
+// ---------------------------------------------------------------------------
+// Handles
+
+/// A connection handle of the connected socket fd (and its descriptor, or
+/// 0 to register one), or 0 with the error recorded.
+fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
+  // IPPROTO_TCP 6, TCP_NODELAY 1 (a Unix domain socket refuses it)
+  let _n = sock.set_int(fd, 6, 1, 1)
+  if os() == 2 {
+    // SO_NOSIGPIPE
+    let _s = sock.set_int(fd, 65535, 4130, 1)
+  }
+  var pd = pd0
+  if pd == 0 {
+    pd = poll.pd_open(fd, true)
+    if pd < 0 {
+      let _c = sock.close(fd)
+      fail(c, 4, err_text(0 - pd))
+      return 0
+    }
+  }
+  let cn = new_handle(C_SIZE, ctx.SV_CONN_FREE)
+  st(cn, C_PD, pd)
+  ok(c)
+  cn
+}
+
+/// A connection's free function (the services record's).
+pub fn conn_free(cn: Int) {
+  poll.pd_free(ld(cn, C_PD))
+  obj.free_obj(cn)
+}
+
+/// A listener's free function (the services record's).
+pub fn listener_free(l: Int) {
+  let ml = ld(l, L_MEM)
+  if ml != 0 {
+    twrun.ml_free(ml)
+  } else {
+    poll.pd_free(ld(l, L_PD))
+  }
+  mfree(ld(l, L_ADDR))
+  obj.free_obj(l)
+}
+
+fn listener_new(pd: Int, addr: Str, unlink_path: Bool) -> Int {
+  let l = new_handle(L_SIZE, ctx.SV_LISTENER_FREE)
+  st(l, L_PD, pd)
+  st(l, L_ADDR, cstr(addr))
+  rt.mem_store(l, L_UNLINK, if unlink_path { 1 } else { 0 }, 4)
+  l
+}
+
+// ---------------------------------------------------------------------------
+// Listening
+
+/// `net.listen(addr)` on a Net of the attenuation lists (decision 0175):
+/// the listener, or 0 with the error recorded. An address the lists do
+/// not admit is NetErr.Denied before anything else.
+pub fn listen(lists: Str, addr: Str) -> Int {
+  let c = ctx.cur()
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(c, 6, addr)
+    return 0
+  }
+  if poll.canceled() {
+    fail(c, 5, "")
+    return 0
+  }
+  if twflags.fake(TW_REAL_NET) {
+    // FakeNet.listen: an in memory listener (std/rt's memListener)
+    let l = new_handle(L_SIZE, ctx.SV_LISTENER_FREE)
+    let ml = twrun.listen(addr, l)
+    st(l, L_MEM, ml)
+    st(l, L_ADDR, twrun.ml_caddr(ml))
+    ok(c)
+    return l
+  }
+  if addr.starts_with("unix:") {
+    return unix_listen(c, addr)
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(c, 4, "listen tcp ${addr}: address ${addr}: missing port in address")
+    return 0
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(c, 4, "listen tcp ${addr}: address ${port}: invalid port")
+    return 0
+  }
+  let out = rt.int_wrap(1, rt.heap_large(NADDR * SA), 8)
+  let n = resolve(host, port, if host.is_empty() { sock.af_inet6() } else { 0 }, true, out, NADDR)
+  if n < 0 {
+    mfree(out)
+    fail(c, 4, "listen tcp ${addr}: ${gai_text(n)}")
+    return 0
+  }
+  var fd = -1
+  var e = 0
+  for i in 0..n {
+    let sa = out + SA * i
+    let f = family(sa)
+    let s = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+    if s < 0 {
+      e = 0 - s
+      continue
+    }
+    let _r = sock.set_int(s, sol_socket(), so_reuseaddr(), 1)
+    if f == sock.af_inet6() && host.is_empty() {
+      // IPPROTO_IPV6 41: a dual stack wildcard
+      let _v = sock.set_int(s, 41, ipv6_v6only(), 0)
+    }
+    var r = sock.bind(s, sa, sa_len(f))
+    if r == 0 {
+      r = sock.listen(s, somaxconn())
+    }
+    if r == 0 {
+      fd = s
+      break
+    }
+    e = 0 - r
+    let _c = sock.close(s)
+  }
+  mfree(out)
+  if fd < 0 {
+    fail(c, 4, "listen tcp ${addr}: bind: ${err_text(e)}")
+    return 0
+  }
+  let _b = sock.nonblock(fd)
+  let pd = poll.pd_open(fd, false)
+  if pd < 0 {
+    let _c = sock.close(fd)
+    fail(c, 4, "listen tcp: ${err_text(0 - pd)}")
+    return 0
+  }
+  // the address bound (a port 0 picked), from getsockname
+  let sa = rt.int_wrap(1, rt.heap_large(136), 8)
+  rt.mem_set(sa, 0, 136)
+  rt.mem_store(sa, 128, 128, 4)
+  let _g = sock.sockname(fd, sa, sa + 128)
+  let l = listener_new(pd, fmt_addr(sa), false)
+  mfree(sa)
+  ok(c)
+  l
+}
+
+/// The struct sockaddr_un of the path of a `unix:PATH` address, malloc'd
+/// (sun_size bytes), or 0 when the path does not fit (Go's "invalid
+/// argument").
+fn unix_addr(path: Str) -> Int {
+  if path.len() >= sun_path_max() {
+    return 0
+  }
+  let sa = rt.int_wrap(1, rt.heap_large(sun_size()), 8)
+  rt.mem_set(sa, 0, sun_size())
+  if os() == 2 {
+    rt.mem_store(sa, 1, sock.AF_UNIX, 1)
+  } else {
+    rt.mem_store(sa, 0, sock.AF_UNIX, 2)
+  }
+  let _p = raw.put_cstr(sa + 2, path)
+  sa
+}
+
+/// `net.listen("unix:PATH")` (decision 0190): Go's net.Listen("unix",
+/// PATH), its messages, and the address as given.
+fn unix_listen(c: Int, addr: Str) -> Int {
+  let path = rt.str_slice(addr, 5, addr.len())
+  let sa = unix_addr(path)
+  if sa == 0 {
+    fail(c, 4, "listen unix ${path}: bind: invalid argument")
+    return 0
+  }
+  let fd = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM | cloexec(), 0)
+  if fd < 0 {
+    mfree(sa)
+    fail(c, 4, "listen unix ${path}: socket: ${err_text(0 - fd)}")
+    return 0
+  }
+  let b = sock.bind(fd, sa, sun_size())
+  mfree(sa)
+  if b != 0 {
+    let _c = sock.close(fd)
+    fail(c, 4, "listen unix ${path}: bind: ${err_text(0 - b)}")
+    return 0
+  }
+  let r = sock.listen(fd, somaxconn())
+  if r != 0 {
+    let _c = sock.close(fd)
+    unlink(path)
+    fail(c, 4, "listen unix ${path}: listen: ${err_text(0 - r)}")
+    return 0
+  }
+  let _n = sock.nonblock(fd)
+  let pd = poll.pd_open(fd, false)
+  if pd < 0 {
+    let _c = sock.close(fd)
+    unlink(path)
+    fail(c, 4, "listen unix: ${err_text(0 - pd)}")
+    return 0
+  }
+  let l = listener_new(pd, addr, true)
+  ok(c)
+  l
+}
+
+/// `l.addr()`, for a list of one (list_of).
+pub fn listener_addr(l: Int, np: Int) -> Int { list_of(str_of(ld(l, L_ADDR)), np) }
+
+/// `l.close()`.
+pub fn listener_close(l: Int) {
+  let ml = ld(l, L_MEM)
+  if ml != 0 {
+    twrun.ml_close(ml)
+    return
+  }
+  poll.pd_close(ld(l, L_PD))
+  if rt.mem_load(l, L_UNLINK, 4) != 0 {
+    // as Go's UnixListener.Close: the socket file goes, once
+    rt.mem_store(l, L_UNLINK, 0, 4)
+    let a = str_of(ld(l, L_ADDR))
+    unlink(rt.str_slice(a, 5, a.len()))
+  }
+}
+
+/// `l.accept()`: waits for a connection (canceled: NetErr.Canceled); the
+/// connection, or 0 with the error recorded.
+pub fn listener_accept(l: Int) -> Int {
+  let c = ctx.cur()
+  if poll.canceled() {
+    fail(c, 5, "")
+    return 0
+  }
+  let a = str_of(ld(l, L_ADDR))
+  let ml = ld(l, L_MEM)
+  if ml != 0 {
+    // the test world: requests reach a served router in process, never
+    // as connections, so accept waits until the listener closes
+    if !twrun.ml_accept(ml) {
+      fail(c, 5, "")
+    } else {
+      fail(c, 4, "accept tcp ${a}: ${CLOSED_TEXT}")
+    }
+    return 0
+  }
+  let unix = a.starts_with("unix:")
+  let what = if unix { "accept unix ${rt.str_slice(a, 5, a.len())}" } else { "accept tcp ${a}" }
+  let pd = ld(l, L_PD)
+  if !poll.pd_begin(pd) {
+    fail(c, 4, "${what}: ${CLOSED_TEXT}")
+    return 0
+  }
+  let flags = if os() == 1 { sock.SOCK_CLOEXEC } else { 0 }
+  while true {
+    let fd = sock.accept(pd_fd(pd), flags)
+    if fd >= 0 {
+      poll.pd_end(pd)
+      let _n = sock.nonblock(fd)
+      return conn_new(c, fd, 0)
+    }
+    if fd == 0 - EINTR || fd == 0 - econnaborted() {
+      continue
+    }
+    if would_block(fd) {
+      let w = poll.pd_wait_ctx(pd, false, c, 0)
+      if w == poll.READY {
+        continue
+      }
+      poll.pd_end(pd)
+      if w == poll.CANCELED {
+        fail(c, 5, "")
+      } else {
+        fail(c, 4, "${what}: ${CLOSED_TEXT}")
+      }
+      return 0
+    }
+    poll.pd_end(pd)
+    fail(c, 4, "${what}: ${err_text(0 - fd)}")
+    return 0
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Dialing
+
+/// `net.dial(addr)` (std.md 3.2): connection refused is NetErr.Refused; it
+/// gives up after 30 s like the Go backend's net.DialTimeout (NetErr.Io
+/// "i/o timeout"). Net.only's lists first (decision 0175).
+pub fn dial(lists: Str, addr: Str) -> Int {
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(ctx.cur(), 6, addr)
+    return 0
+  }
+  dial_timeout(addr, 30000000000)
+}
+
+/// Waits for the connect in progress on fd: 0 connected, a negative
+/// errno, 1 canceled, 2 the time is up.
+fn connect_wait(c: Int, pd: Int, fd: Int, when: Int) -> Int {
+  let w = poll.pd_wait_ctx(pd, true, c, when)
+  if w == poll.READY {
+    return sock.sock_err(fd)
+  }
+  if w == poll.CANCELED {
+    return 1
+  }
+  if w == poll.TIMEOUT {
+    return 2
+  }
+  0 - econnaborted()
+}
+
+/// dial giving up after d ns (d <= 0: no limit): the connection, or 0
+/// with the error recorded (xo_http.c's client dials with it too).
+pub fn dial_timeout(addr: Str, d: Int) -> Int {
+  let when = if d > 0 { poll.deadline(d) } else { 0 }
+  let c = ctx.cur()
+  if poll.canceled() {
+    fail(c, 5, "")
+    return 0
+  }
+  if twflags.fake(TW_REAL_NET) {
+    // FakeNet.dial: raw connections are not faked (Refused)
+    fail(c, 2, "")
+    return 0
+  }
+  if addr.starts_with("unix:") {
+    return unix_dial(c, addr, when)
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(c, 4, "dial tcp ${addr}: address ${addr}: missing port in address")
+    return 0
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(c, 4, "dial tcp ${addr}: address ${port}: invalid port")
+    return 0
+  }
+  let out = rt.int_wrap(1, rt.heap_large(NADDR * SA), 8)
+  let n = resolve(if host.is_empty() { "localhost" } else { host }, port, 0, false, out, NADDR)
+  if n < 0 {
+    mfree(out)
+    fail(c, 4, "dial tcp ${addr}: ${gai_text(n)}")
+    return 0
+  }
+  var e = 0
+  var cn = 0
+  for i in 0..n {
+    let sa = out + SA * i
+    let f = family(sa)
+    let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+    if fd < 0 {
+      e = fd
+      continue
+    }
+    let _b = sock.nonblock(fd)
+    let pd = poll.pd_open(fd, true)
+    if pd < 0 {
+      e = pd
+      let _c = sock.close(fd)
+      continue
+    }
+    let _g = poll.pd_begin(pd)
+    e = sock.connect(fd, sa, sa_len(f))
+    while e == 0 - EINTR {
+      e = sock.connect(fd, sa, sa_len(f))
+    }
+    if e == 0 - einprogress() {
+      e = connect_wait(c, pd, fd, when)
+    }
+    poll.pd_end(pd)
+    if e == 0 {
+      cn = conn_new(c, fd, pd)
+      break
+    }
+    poll.pd_free(pd)
+    if e == 1 || e == 2 {
+      // canceled, or the time is up
+      break
+    }
+  }
+  mfree(out)
+  if cn != 0 {
+    return cn
+  }
+  if e == 1 {
+    fail(c, 5, "")
+  } else if e == 2 {
+    fail(c, 4, "dial tcp ${addr}: i/o timeout")
+  } else if e == 0 - econnrefused() {
+    fail(c, 2, "")
+  } else {
+    fail(c, 4, "dial tcp ${addr}: connect: ${err_text(0 - e)}")
+  }
+  0
+}
+
+/// `net.dial("unix:PATH")` (decision 0190): a socket file with no
+/// listener is Refused, as in Go.
+fn unix_dial(c: Int, addr: Str, when: Int) -> Int {
+  let path = rt.str_slice(addr, 5, addr.len())
+  let sa = unix_addr(path)
+  if sa == 0 {
+    fail(c, 4, "dial unix ${path}: connect: invalid argument")
+    return 0
+  }
+  let fd = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM | cloexec(), 0)
+  if fd < 0 {
+    mfree(sa)
+    fail(c, 4, "dial unix ${path}: socket: ${err_text(0 - fd)}")
+    return 0
+  }
+  let _b = sock.nonblock(fd)
+  let pd = poll.pd_open(fd, true)
+  if pd < 0 {
+    mfree(sa)
+    let _c = sock.close(fd)
+    fail(c, 4, "dial unix ${path}: ${err_text(0 - pd)}")
+    return 0
+  }
+  let _g = poll.pd_begin(pd)
+  var e = sock.connect(fd, sa, sun_size())
+  while e == 0 - EINTR {
+    e = sock.connect(fd, sa, sun_size())
+  }
+  mfree(sa)
+  if e == 0 - einprogress() || e == 0 - eagain() {
+    e = connect_wait(c, pd, fd, when)
+  }
+  poll.pd_end(pd)
+  if e == 0 {
+    return conn_new(c, fd, pd)
+  }
+  poll.pd_free(pd)
+  if os() == 3 && e == 0 - econnrefused() {
+    // Windows refuses a connect to a missing socket file; POSIX (and the
+    // Fs view of it) says it does not exist
+    let (_s, se) = windows.stat(path, true)
+    if se != 0 {
+      e = 0 - ENOENT
+    }
+  }
+  if e == 1 {
+    fail(c, 5, "")
+  } else if e == 2 {
+    fail(c, 4, "dial unix ${path}: i/o timeout")
+  } else if e == 0 - econnrefused() {
+    fail(c, 2, "")
+  } else {
+    fail(c, 4, "dial unix ${path}: connect: ${err_text(0 - e)}")
+  }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Reading and writing
+
+/// `c.read(max)`: at most max bytes (at most 1 MiB) for a list of one, or
+/// 0 for the empty list at the end of the stream or on an error (None).
+pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
+  let c = ctx.cur()
+  if poll.canceled() {
+    fail(c, 5, "")
+    return 0
+  }
+  if max0 <= 0 {
+    ok(c)
+    return list_of(raw.str_at(0, 0), np)
+  }
+  let max = if max0 > 1048576 { 1048576 } else { max0 }
+  let pd = ld(cn, C_PD)
+  if !poll.pd_begin(pd) {
+    fail(c, 4, "read tcp: ${CLOSED_TEXT}")
+    return 0
+  }
+  let buf = raw.bytes_buf(max)
+  let a = raw.bytes_addr(buf)
+  while true {
+    stat(ST_NET_READ)
+    let r = sock.read(pd_fd(pd), a, max)
+    if r > 0 {
+      poll.pd_end(pd)
+      ok(c)
+      return list_of(rt.cast[Bytes, Str](raw.bytes_len(buf, r)), np)
+    }
+    if r == 0 {
+      poll.pd_end(pd)
+      ok(c)
+      return 0
+    }
+    if r == 0 - EINTR {
+      continue
+    }
+    if would_block(r) {
+      let w = poll.pd_wait_ctx(pd, false, c, 0)
+      if w == poll.READY {
+        continue
+      }
+      poll.pd_end(pd)
+      if w == poll.CANCELED {
+        fail(c, 5, "")
+      } else {
+        fail(c, 4, "read tcp: ${CLOSED_TEXT}")
+      }
+      return 0
+    }
+    poll.pd_end(pd)
+    fail(c, 4, "read tcp: ${err_text(0 - r)}")
+    return 0
+  }
+  0
+}
+
+/// `c.write(data)` of the n bytes at p: writes every byte.
+pub fn conn_write(cn: Int, p: Int, n: Int) {
+  let c = ctx.cur()
+  if poll.canceled() {
+    fail(c, 5, "")
+    return
+  }
+  let pd = ld(cn, C_PD)
+  if !poll.pd_begin(pd) {
+    fail(c, 4, "write tcp: ${CLOSED_TEXT}")
+    return
+  }
+  var off = 0
+  while off < n {
+    stat(ST_NET_WRITE)
+    // MSG_NOSIGNAL 0x4000 (Linux; SO_NOSIGPIPE on macOS)
+    let w = sock.send(pd_fd(pd), p + off, n - off, 16384)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == 0 - EINTR {
+      continue
+    }
+    if would_block(w) {
+      let r = poll.pd_wait_ctx(pd, true, c, 0)
+      if r == poll.READY {
+        continue
+      }
+      poll.pd_end(pd)
+      if r == poll.CANCELED {
+        fail(c, 5, "")
+      } else {
+        fail(c, 4, "write tcp: ${CLOSED_TEXT}")
+      }
+      return
+    }
+    poll.pd_end(pd)
+    fail(c, 4, "write tcp: ${err_text(0 - w)}")
+    return
+  }
+  poll.pd_end(pd)
+  ok(c)
+}
+
+/// `c.close()`.
+pub fn conn_close(cn: Int) { poll.pd_close(ld(cn, C_PD)) }

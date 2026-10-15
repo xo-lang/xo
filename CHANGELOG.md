@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit items B22 and B23, remnants batch 1): the
+  network is Xo (std/native/llrt/netconn.xo): Net.listen and Net.dial
+  (TCP and "unix:PATH"), Listener.accept, addr and close, Conn.read,
+  write and close, and the NetErr outcomes, over sock.xo, dns.xo and
+  poll.xo. xo_rt.c keeps one line forwarders under the names the
+  generated code calls. The C library's network path (XO_LLRT_C=net,
+  net.xo, net_c.xo) and the test world's listener exports (tw_listen, tw_ml_*) are
+  deleted; xo_rt.c 4,959 to 4,108 lines. Linux and Windows code
+  untested (written on macOS); the Winsock shim stays C until the
+  Windows pass.
 - Native runtime (zero-C audit item B31, part 4, decision 0202): the
   TLS 1.3 client in Xo, sans I/O (std/native/llrt/tls13.xo, as Go's
   handshake_client_tls13.go: ClientHello with compatibility mode,

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Measures bench/perf/net (decision 0206 stage 3) on Linux: builds the
 # program with the xo1 binary given for each backend and each variant
-# (xo: the Xo path; c: XO_LLRT_C=net, the C library's sockets, epoll, and
-# getaddrinfo; nolibc: the Xo path linked with XO_NOLIBC=1), runs every
+# (xo: the Xo path; nolibc: the Xo path linked with XO_NOLIBC=1; the
+# c variant, XO_LLRT_C=net, went with net_c.xo in B22, 2026-10-14), runs every
 # workload 5 times, and prints "<workload> <backend> <variant> <min user
 # instructions> <min kernel instructions> <min ms> <checksum>" (perf
 # stat; run as a user who may count kernel events, e.g. with sudo or
@@ -19,12 +19,11 @@ shift 3
 SRC=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
 for be in "$@"; do
-	for v in ${VARIANTS:-xo c nolibc}; do
+	for v in ${VARIANTS:-xo nolibc}; do
 		rm -rf "$OUT/src-$be-$v"
 		mkdir -p "$OUT/src-$be-$v"
 		cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be-$v/"
 		case $v in
-		c) env="XO_LLRT_C=net" ;;
 		nolibc) env="XO_NOLIBC=1" ;;
 		*) env="XO_LLRT_C=" ;;
 		esac
@@ -36,7 +35,7 @@ for be in "$@"; do
 done
 for w in ${WORKLOADS:-none echo dial resolve}; do
 	for be in "$@"; do
-		for v in ${VARIANTS:-xo c nolibc}; do
+		for v in ${VARIANTS:-xo nolibc}; do
 			[ -x "$OUT/t-$be-$v" ] || continue
 			bu=""
 			bk=""

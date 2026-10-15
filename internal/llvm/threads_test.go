@@ -302,8 +302,9 @@ func TestRuntimeTasks(t *testing.T) {
 func TestRuntimeEventLoop(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "evloop.c")
-	// the scheduler core in Xo (decision 0212)
-	bin := tsanBuild(t, nil, cOnly(t, src))
+	// the scheduler core in Xo (decision 0212); listeners and connections
+	// in Xo (netconn.xo, B22), built only into a program that listens
+	bin := tsanBuild(t, nil, cOnlyNet(t, src))
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
 		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
@@ -316,10 +317,24 @@ func TestRuntimeEventLoop(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2"}, cOnlyNet(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
+}
+
+// netExportsMain listens, so the LLVM IR of the program carries the C ABI
+// exports of std/native/llrt/cabi_net.xo (listeners and connections,
+// netconn.xo) that xo_rt.c's xo_net_listen and xo_conn_read forward to.
+const netExportsMain = `fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  os.stdio.println(l.addr())
+}
+`
+
+// cOnlyNet is cOnly for evloop.c: with the network's exports.
+func cOnlyNet(t *testing.T, src string) []string {
+	return cOnlyWith(t, src, "cexports-net", netExportsMain)
 }
 
 // TestRuntimeRawPoll registers descriptors with the poller from another

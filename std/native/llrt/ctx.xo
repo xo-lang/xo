@@ -123,6 +123,13 @@ pub const SV_CRESP_FREE = 184
 /// The table of streamed responses (hserve.xo ST_*: a lock word, the
 /// array, the count).
 pub const SV_STREAMS = 192
+/// The free functions of netconn.xo's listener and connection handles
+/// (cabi_net.xo nc_listener_free, nc_conn_free; the C's stubs in programs
+/// without the network), and the resolver's state (dns.xo lookup, two
+/// words).
+pub const SV_LISTENER_FREE = 216
+pub const SV_CONN_FREE = 224
+pub const SV_DNS = 232
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).

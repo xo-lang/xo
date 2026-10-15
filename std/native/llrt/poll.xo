@@ -277,9 +277,40 @@ fn svc(k: Int, a: Int) -> Int {
 fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
 
 /// Registers descriptor fd with the poller (for reading, and writing when
-/// write): its record, or 0 when the poller refuses it (a regular file).
-/// Start the event loop if it is not running.
-pub fn pd_new(fd: Int, write: Bool) -> Int { svc(S_OPEN, fd + (if write { 4294967296 } else { 0 })) }
+/// write): its record, or minus the errno when the poller refuses it (a
+/// regular file). Starts the event loop if it is not running.
+pub fn pd_open(fd: Int, write: Bool) -> Int { svc(S_OPEN, fd + (if write { 4294967296 } else { 0 })) }
+
+/// pd_open, with 0 for a refusal.
+pub fn pd_new(fd: Int, write: Bool) -> Int {
+  let pd = pd_open(fd, write)
+  if pd < 0 { 0 } else { pd }
+}
+
+/// rt.sched_rt: the test world's record (xo_rt.c tw), its virtual clock
+/// (an atomic word) and whether the clock is virtual (a C int).
+const RT_TW = 30
+const TW_VNOW = 8
+const TW_VIRT = 40
+
+/// The timers' clock now (xo_rt.c tnow): the test world's virtual one
+/// while it runs, else the monotonic one.
+pub fn now() -> Int {
+  let tw = rt.sched_rt(RT_TW, 0, 0)
+  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+    return rt.slot_load(tw, TW_VNOW, ACQUIRE)
+  }
+  sysio.mono_ns()
+}
+
+/// The timers' time d ns from now, saturating (xo_rt.c deadline).
+pub fn deadline(d: Int) -> Int {
+  let n = now()
+  if d > 0 && n > 9223372036854775807 - d {
+    return 9223372036854775807
+  }
+  addw(n, d)
+}
 
 /// Starts an operation on pd: false when it is closed.
 pub fn pd_begin(pd: Int) -> Bool {

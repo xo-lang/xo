@@ -602,12 +602,6 @@ TW_WEAK void xo_x_tw_start(void) {}
 TW_WEAK void xo_x_tw_end(void) {}
 TW_WEAK void xo_x_tw_kick(void) {}
 TW_WEAK void xo_x_tw_sleep(int64_t d) { (void)d; }
-TW_WEAK int64_t xo_x_tw_listen(int64_t p, int64_t n, int64_t l) { return (void)p, (void)n, (void)l, 0; }
-TW_WEAK int64_t xo_x_tw_ml_caddr(int64_t ml) { return (void)ml, 0; }
-TW_WEAK void xo_x_tw_ml_free(int64_t ml) { (void)ml; }
-TW_WEAK void xo_x_tw_ml_close(int64_t ml) { (void)ml; }
-TW_WEAK int64_t xo_x_tw_ml_accept(int64_t ml) { return (void)ml, 0; }
-
 
 // ---------------------------------------------------------------------------
 // Output: standard output's buffer is Xo (std/native/llrt/stdio.xo, the
@@ -650,9 +644,6 @@ int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
 int64_t xo_x_fmt_time(int64_t buf, int64_t t);
 int64_t xo_x_b64_val(int64_t c);
 int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
-int64_t xo_x_split_hostport(int64_t a, int64_t host, int64_t hn, int64_t port, int64_t pn);
-int64_t xo_x_port_out_of_range(int64_t p);
-int64_t xo_x_net_admits_addr(int64_t lp, int64_t ln, int64_t a, int64_t n);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
@@ -1267,7 +1258,6 @@ void __tsan_release(void *addr);
 #endif
 
 static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
-
 
 // The parks and the cancellation tree in Xo (decision 0212 stage 2):
 // std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
@@ -1933,9 +1923,7 @@ static struct {
 	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
 } pool = {.dlk = &dlk}; // a root waits before the pool starts
 
-
 static void rt_init(void) {}
-
 
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker; root_worker calls it from
@@ -1988,6 +1976,15 @@ void xo_x_hc_free(int64_t p);
 void xo_x_sink_free(int64_t p);
 void xo_x_cresp_free(int64_t p);
 #define XO_FREE_FN(f) ((void (*)(void *))(void *)(f))
+// netconn.xo's (cabi_net.xo): weak, as the other network exports (see
+// XO_NX_REF below)
+#if defined(__APPLE__) || defined(_WIN32)
+#define XO_NC_REF
+#else
+#define XO_NC_REF __attribute__((weak))
+#endif
+XO_NC_REF void xo_x_nc_listener_free(int64_t l);
+XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -2015,6 +2012,9 @@ static struct {
 	void (*sink_free)(void *);
 	void (*cresp_free)(void *);
 	int64_t streams[3]; // hserve.xo's table of streamed responses
+	void (*listener_free)(void *); // netconn.xo's handles' free functions (ctx.xo SV_LISTENER_FREE)
+	void (*conn_free)(void *);
+	int64_t dns[2]; // the resolver's state (dns.xo lookup)
 } svc = {&pool, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
@@ -2022,14 +2022,14 @@ static struct {
 	0,
 #endif
 	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
-         XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0}};
+         XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0},
+	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
                    offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
-                   offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192,
+                   offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
+                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232,
                "ctx.xo SV_*");
-
-
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
 // (twrun.xo kick) checks again after it.
@@ -2258,7 +2258,6 @@ static void dequeued(xo_task *t) {
 // (shared: -1) nobody else has it, and nobody can get it again. The
 // close never prunes (its helpers walk the list without the lock), and a
 // spawn prunes only when the list doubled since the last time.
-
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2691,7 +2690,6 @@ _Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 11
                "tasks.xo T_*");
 _Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 && offsetof(xo_scope, fault) == 424, "tasks.xo S_*");
 
-
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)
 
@@ -2863,7 +2861,6 @@ typedef struct {
 
 _Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
-
 // xo_atomic_new is tasks.xo atomic_new (B19), which generated code calls
 // through its export; this forwards for older xo's code.
 int64_t xo_x_atomic_new(int64_t v);
@@ -3014,87 +3011,62 @@ _Static_assert(offsetof(xo_pd, mu) == 0 && offsetof(xo_pd, fd) == 8 && offsetof(
 _Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, fired) == 40,
                "poll.xo's timer offsets");
 
-__attribute__((noinline, unused)) static int64_t x_ret(int64_t r) {
-	if (r < 0) {
-		int e = errno;
-		if (e == EAGAIN || e == EWOULDBLOCK) {
-			STAT(net_again);
-		}
-		return -(int64_t)e;
-	}
-	return r;
-}
-
-// The network's system calls and name resolution from Xo on Linux
-// (decision 0206 stage 3): the exports of std/native/llrt/cabi_net.xo
-// (over sock.xo and dns.xo), which a program carries when it dials or
-// listens or uses std/http. They are weak references, so a program
-// without them, or whose net_raw says 0 (XO_LLRT_C=net), calls the C
-// library as before; a program linked with no C library (XO_NOLIBC) has
-// no C path, and they are strong references there. What a program
-// without sockets reaches too (the poller's epoll, its pipe made
-// nonblocking, a descriptor's shutdown and close) goes through the
-// exports (cabi_poll.xo), which every program has. Each nx_
-// function keeps the C library's convention (-1 and errno). macOS takes
-// the same path (sock.xo's darwin arms over libSystem, getaddrinfo in
-// cabi_net.xo; the zero-C audit's B23), and Windows (its arms over
-// ws2_32, B23 stage 2: UNTESTED on windows).
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+// The network's system calls (decision 0206 stage 3, the zero-C audit's
+// B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
+// accept, reads and writes) from Xo. What the C still calls is below:
+// the poller's (its epoll, its pipe made nonblocking, a descriptor's
+// shutdown and close) through cabi_poll.xo's exports, which every
+// program has; xo_http.c's and xo_tls.c's reads and writes, and the
+// server's peer address, through cabi_net.xo's, which a program carries
+// when it dials, listens, or uses std/http. Those are weak references
+// on ELF, so a program without them links (a program linked with no C
+// library has them as strong references, as before); Mach-O takes no
+// undefined weak reference (and PE/COFF's are weak externals with a
+// default), so weak definitions stand in there until cabi_net.xo's
+// replace them. The netconn.xo operations and the handles' free
+// functions are weak everywhere (XO_NC_REF, above the services record).
 #ifdef XO_NOLIBC
 #define XO_NX_REF
-#define NX_LIBC(call) (void)0
 #elif defined(__APPLE__) || defined(_WIN32)
-// Mach-O takes no undefined weak reference (and PE/COFF's are weak
-// externals with a default): weak definitions below stand in (net_raw
-// 0: the C library) until cabi_net.xo's exports replace them
 #define XO_NX_REF
-#define NX_LIBC(call)                                                                                                         \
-	if (!nx_on()) {                                                                                                           \
-		return call;                                                                                                          \
-	}
 #else
 #define XO_NX_REF __attribute__((weak))
-#define NX_LIBC(call)                                                                                                         \
-	if (!nx_on()) {                                                                                                           \
-		return call;                                                                                                          \
-	}
 #endif
-XO_NX_REF int64_t xo_x_net_raw(void);
-XO_NX_REF int64_t xo_x_net_socket(int64_t family, int64_t ty, int64_t proto);
-XO_NX_REF int64_t xo_x_net_bind(int64_t fd, int64_t sa, int64_t n);
-XO_NX_REF int64_t xo_x_net_listen(int64_t fd, int64_t backlog);
-XO_NX_REF int64_t xo_x_net_accept(int64_t fd, int64_t flags);
-XO_NX_REF int64_t xo_x_net_connect(int64_t fd, int64_t sa, int64_t n);
-XO_NX_REF int64_t xo_x_net_sock_err(int64_t fd);
-XO_NX_REF int64_t xo_x_net_setsockopt(int64_t fd, int64_t level, int64_t opt, int64_t v);
-XO_NX_REF int64_t xo_x_net_sockname(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_read(int64_t fd, int64_t p, int64_t n);
 XO_NX_REF int64_t xo_x_net_send(int64_t fd, int64_t p, int64_t n);
-XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t pn, int64_t family, int64_t passive, int64_t state,
-	int64_t out, int64_t cap);
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
-XO_NX_REF int64_t xo_x_net_pton6(int64_t p, int64_t dst);
-XO_NX_REF int64_t xo_x_net_gai_text(int64_t code, int64_t buf, int64_t bn);
+XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
+XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
+XO_NC_REF int64_t xo_x_nc_dial_timeout(int64_t p, int64_t n, int64_t d);
+XO_NC_REF int64_t xo_x_nc_listener_addr(int64_t l, int64_t np);
+XO_NC_REF int64_t xo_x_nc_listener_accept(int64_t l);
+XO_NC_REF void xo_x_nc_listener_close(int64_t l);
+XO_NC_REF void xo_x_nc_listener_free(int64_t l);
+XO_NC_REF int64_t xo_x_nc_conn_read(int64_t cn, int64_t max, int64_t np);
+XO_NC_REF void xo_x_nc_conn_write(int64_t cn, int64_t p, int64_t n);
+XO_NC_REF void xo_x_nc_conn_close(int64_t cn);
+XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 #if (defined(__APPLE__) || defined(_WIN32)) && !defined(XO_NOLIBC)
 #define XO_NX_STUB(name, ...)                                                                                                 \
 	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
-__attribute__((weak)) int64_t xo_x_net_raw(void) { return 0; }
-XO_NX_STUB(xo_x_net_socket, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_bind, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_listen, int64_t a, int64_t b)
-XO_NX_STUB(xo_x_net_accept, int64_t a, int64_t b)
-XO_NX_STUB(xo_x_net_connect, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_sock_err, int64_t a)
-XO_NX_STUB(xo_x_net_setsockopt, int64_t a, int64_t b, int64_t c, int64_t d)
-XO_NX_STUB(xo_x_net_sockname, int64_t a, int64_t b, int64_t c)
+#define XO_NX_VSTUB(name, ...)                                                                                                \
+	__attribute__((weak)) void name(__VA_ARGS__) {}
 XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
 XO_NX_STUB(xo_x_net_read, int64_t a, int64_t b, int64_t c)
 XO_NX_STUB(xo_x_net_send, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_resolve, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, int64_t i)
 XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
-XO_NX_STUB(xo_x_net_pton6, int64_t a, int64_t b)
-XO_NX_STUB(xo_x_net_gai_text, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_nc_dial_timeout, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_nc_listener_addr, int64_t a, int64_t b)
+XO_NX_STUB(xo_x_nc_listener_accept, int64_t a)
+XO_NX_VSTUB(xo_x_nc_listener_close, int64_t a)
+XO_NX_VSTUB(xo_x_nc_listener_free, int64_t a)
+XO_NX_STUB(xo_x_nc_conn_read, int64_t a, int64_t b, int64_t c)
+XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
+XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
+XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
 #endif
 int64_t xo_x_fd_close(int64_t fd);
 int64_t xo_x_fd_nonblock(int64_t fd);
@@ -3102,25 +3074,6 @@ int64_t xo_x_fd_shutdown(int64_t fd, int64_t how);
 int64_t xo_x_poll_create(void);
 int64_t xo_x_poll_ctl(int64_t ep, int64_t op, int64_t fd, int64_t ev);
 int64_t xo_x_poll_wait(int64_t ep, int64_t evs, int64_t n, int64_t ms);
-
-// nx_on reports whether the network goes through Xo (computed once).
-static int nx_on(void) {
-#ifdef XO_NOLIBC
-	return 1;
-#else
-	static int on = -1;
-	int v = __atomic_load_n(&on, __ATOMIC_RELAXED);
-	if (v < 0) {
-#if defined(__APPLE__) || defined(_WIN32)
-		v = xo_x_net_raw() == 1;
-#else
-		v = xo_x_net_raw && xo_x_net_raw() == 1;
-#endif
-		__atomic_store_n(&on, v, __ATOMIC_RELAXED);
-	}
-	return v;
-#endif
-}
 
 // nx_ret is a system call's result in the C library's convention.
 static int nx_ret(int64_t r) {
@@ -3131,45 +3084,12 @@ static int nx_ret(int64_t r) {
 	return (int)r;
 }
 
-static int nx_socket(int family, int ty, int proto) {
-	NX_LIBC(socket(family, ty, proto));
-	return nx_ret(xo_x_net_socket(family, ty, proto));
-}
+static int nx_getpeername(int fd, struct sockaddr *sa, socklen_t *n) { return nx_ret(xo_x_net_peername(fd, XO_ADDR(sa), XO_ADDR(n))); }
 
-static int nx_bind(int fd, const struct sockaddr *sa, socklen_t n) {
-	NX_LIBC(bind(fd, sa, n));
-	return nx_ret(xo_x_net_bind(fd, XO_ADDR(sa), n));
-}
-
-static int nx_listen(int fd, int backlog) {
-	NX_LIBC(listen(fd, backlog));
-	return nx_ret(xo_x_net_listen(fd, backlog));
-}
-
-// nx_setsockopt_int sets the int option opt to v.
-static int nx_setsockopt_int(int fd, int level, int opt, int v) {
-	NX_LIBC(setsockopt(fd, level, opt, &v, sizeof v));
-	return nx_ret(xo_x_net_setsockopt(fd, level, opt, v));
-}
-
-static int nx_getsockname(int fd, struct sockaddr *sa, socklen_t *n) {
-	NX_LIBC(getsockname(fd, sa, n));
-	return nx_ret(xo_x_net_sockname(fd, XO_ADDR(sa), XO_ADDR(n)));
-}
-
-static int nx_getpeername(int fd, struct sockaddr *sa, socklen_t *n) {
-	NX_LIBC(getpeername(fd, sa, n));
-	return nx_ret(xo_x_net_peername(fd, XO_ADDR(sa), XO_ADDR(n)));
-}
-
-static int nx_shutdown(int fd, int how) {
-	NX_LIBC(shutdown(fd, how));
-	return nx_ret(xo_x_fd_shutdown(fd, how));
-}
+static int nx_shutdown(int fd, int how) { return nx_ret(xo_x_fd_shutdown(fd, how)); }
 
 // nx_close closes a socket (or the poller's pipe ends).
 static int nx_close(int fd) {
-	NX_LIBC(close(fd));
 #ifdef _WIN32
 	if (!xo_w_is_sock(fd)) {
 		// a C runtime descriptor (xo_win.c's tag)
@@ -3180,10 +3100,7 @@ static int nx_close(int fd) {
 }
 
 #if defined(__linux__)
-static int nx_epoll_create(void) {
-	NX_LIBC(epoll_create1(EPOLL_CLOEXEC));
-	return nx_ret(xo_x_poll_create());
-}
+static int nx_epoll_create(void) { return nx_ret(xo_x_poll_create()); }
 
 // nx_poll_sync stands for the epoll instance in ThreadSanitizer builds.
 // A registration publishes its xo_pd (calloc'd and initialized on the
@@ -3198,179 +3115,43 @@ static int nx_epoll_create(void) {
 static char nx_poll_sync;
 
 static int nx_epoll_ctl(int ep, int op, int fd, struct epoll_event *e) {
-	NX_LIBC(epoll_ctl(ep, op, fd, e));
 	TSAN_RELEASE(&nx_poll_sync);
 	return nx_ret(xo_x_poll_ctl(ep, op, fd, XO_ADDR(e)));
 }
-
-static int nx_epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
-	NX_LIBC(epoll_wait(ep, evs, n, ms));
-	int r = nx_ret(xo_x_poll_wait(ep, XO_ADDR(evs), n, ms));
-	if (r > 0) {
-		TSAN_ACQUIRE(&nx_poll_sync);
-	}
-	return r;
-}
 #endif
-
-// nx_getaddrinfo is getaddrinfo(host, port, hints) for the runtime's
-// hints (a numeric port, AI_PASSIVE or not, AF_UNSPEC or one family):
-// dns.xo's lookup, at most 32 addresses in one block that
-// nx_freeaddrinfo frees. nx_dns is the resolver's state: resolv.conf's
-// rotate counter and the order of nsswitch.conf with its file's key.
-static int nx_getaddrinfo(const char *host, const char *port, const struct addrinfo *hints, struct addrinfo **res) {
-	NX_LIBC(getaddrinfo(host, port, hints, res));
-	enum { NX_MAX = 32, NX_SA = 32 };
-	static int64_t nx_dns[2];
-	unsigned char buf[NX_MAX * NX_SA];
-	int64_t n = xo_x_net_resolve(XO_ADDR(host ? host : ""), host ? (int64_t)strlen(host) : 0, XO_ADDR(port), (int64_t)strlen(port),
-		hints->ai_family, (hints->ai_flags & AI_PASSIVE) ? 1 : 0, XO_ADDR(nx_dns), XO_ADDR(buf), NX_MAX);
-	if (n <= 0) {
-		return n < 0 ? (int)n : EAI_NONAME;
-	}
-	struct addrinfo *a = calloc((size_t)n, sizeof(struct addrinfo) + NX_SA);
-	if (!a) {
-		xo_oom();
-	}
-	unsigned char *sas = (unsigned char *)(a + n);
-	memcpy(sas, buf, (size_t)n * NX_SA);
-	for (int64_t i = 0; i < n; i++) {
-		struct sockaddr *sa = (struct sockaddr *)(sas + NX_SA * i);
-		a[i].ai_family = sa->sa_family;
-		a[i].ai_socktype = hints->ai_socktype;
-		a[i].ai_protocol = hints->ai_socktype == SOCK_STREAM ? IPPROTO_TCP : 0;
-		a[i].ai_addrlen = sa->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-		a[i].ai_addr = sa;
-		a[i].ai_next = i + 1 < n ? &a[i + 1] : NULL;
-	}
-	*res = a;
-	return 0;
-}
-
-static void nx_freeaddrinfo(struct addrinfo *a) {
-#ifndef XO_NOLIBC
-	if (!nx_on()) {
-		freeaddrinfo(a);
-		return;
-	}
-#endif
-	free(a);
-}
-
-// nx_gai_strerror is gai_strerror(g): glibc's texts.
-static const char *nx_gai_strerror(int g) {
-	NX_LIBC(gai_strerror(g));
-	static __thread char buf[64];
-	xo_x_net_gai_text(g, XO_ADDR(buf), sizeof buf);
-	return buf;
-}
 
 // nx_ntop is inet_ntop(family, src, dst, n).
 static const char *nx_ntop(int family, const void *src, char *dst, socklen_t n) {
-	NX_LIBC(inet_ntop(family, src, dst, n));
 	return xo_x_net_ntop(family, XO_ADDR(src), XO_ADDR(dst), n) < 0 ? NULL : dst;
 }
 
-// nx_pton6 is inet_pton(AF_INET6, src, dst).
-static int nx_pton6(const char *src, void *dst) {
-	NX_LIBC(inet_pton(AF_INET6, src, dst));
-	return (int)xo_x_net_pton6(XO_ADDR(src), XO_ADDR(dst));
-}
-#else
-#define nx_socket socket
-#define nx_bind bind
-#define nx_listen listen
-#define nx_getsockname getsockname
-#define nx_getpeername getpeername
-#define nx_shutdown shutdown
-#define nx_getaddrinfo getaddrinfo
-#define nx_freeaddrinfo freeaddrinfo
-#define nx_gai_strerror gai_strerror
-#define nx_ntop inet_ntop
-#define nx_pton6(src, dst) inet_pton(AF_INET6, src, dst)
-#define nx_close close
-#define nx_setsockopt_int(fd, level, opt, v)                                                                                  \
-	({                                                                                                                        \
-		int nx_v_ = (v);                                                                                                      \
-		setsockopt((fd), (level), (opt), &nx_v_, sizeof nx_v_);                                                               \
-	})
-#endif
-
-#ifdef _WIN32
-// Winsock reports errors in WSAGetLastError, not errno
-__attribute__((noinline)) static int64_t x_wsa(int64_t r) { return r < 0 ? -(int64_t)xo_wsa_errno() : r; }
-
+// x_read and x_write are a socket's read and write for xo_http.c and
+// xo_tls.c: the count, or minus the errno (the C runtime's on Windows).
 __attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
 	STAT(net_read);
-	if (nx_on()) {
-		return xo_x_net_read(fd, XO_ADDR(b), (int64_t)n);
-	}
-	return x_wsa(recv((SOCKET)fd, b, (int)n, 0));
-}
-
-__attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
-	STAT(net_write);
-	if (nx_on()) {
-		return xo_x_net_send(fd, XO_ADDR(b), (int64_t)n);
-	}
-	return x_wsa(send((SOCKET)fd, b, (int)n, 0));
-}
-#else
-// x_nx counts a would block result of the Xo path as x_ret does.
-__attribute__((unused)) static int64_t x_nx(int64_t r) {
+	int64_t r = xo_x_net_read(fd, XO_ADDR(b), (int64_t)n);
 	if (r == -EAGAIN || r == -EWOULDBLOCK) {
 		STAT(net_again);
 	}
 	return r;
 }
 
-__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
-	STAT(net_read);
-#if defined(XO_NOLIBC)
-	return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
-#else
-#if defined(__linux__) || defined(__APPLE__)
-	if (nx_on()) {
-		return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
-	}
-#endif
-	return x_ret(read(fd, b, n));
-#endif
-}
-
 __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
 	STAT(net_write);
-#if defined(XO_NOLIBC)
-	return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
-#else
-#if defined(__linux__) || defined(__APPLE__)
-	if (nx_on()) {
-		return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
+	int64_t r = xo_x_net_send(fd, XO_ADDR(b), (int64_t)n);
+	if (r == -EAGAIN || r == -EWOULDBLOCK) {
+		STAT(net_again);
 	}
-#endif
-#ifdef MSG_NOSIGNAL
-	return x_ret(send(fd, b, n, MSG_NOSIGNAL));
-#else
-	return x_ret(write(fd, b, n));
-#endif
-#endif
+	return r;
 }
-#endif
 
-// Descriptors are close-on-exec from birth on Linux (SOCK_CLOEXEC,
-// accept4, pipe2): with FD_CLOEXEC set just after, a process spawned by
-// another thread in between inherited the socket or pipe and held it open
-// for its life (2026-10-12, gotcha linux-epoll-inherited-socket). macOS has
-// neither accept4 nor pipe2, and kqueue drops a closed descriptor's events
-// anyway.
-#if defined(__linux__)
-#if !defined(_GNU_SOURCE)
-int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags);
+// The poller's pipe is close-on-exec from birth on Linux (pipe2): with
+// FD_CLOEXEC set just after, a process spawned by another thread in
+// between inherited it and held it open for its life (2026-10-12, gotcha
+// linux-epoll-inherited-socket; netconn.xo's sockets take SOCK_CLOEXEC).
+// macOS has no pipe2.
+#if defined(__linux__) && !defined(_GNU_SOURCE)
 int pipe2(int fds[2], int flags);
-#endif
-#define XO_SOCK_CLOEXEC SOCK_CLOEXEC
-#else
-#define XO_SOCK_CLOEXEC 0
 #endif
 
 // xo_pipe is pipe(2) with both ends close-on-exec.
@@ -3387,93 +3168,10 @@ static int xo_pipe(int p[2]) {
 #endif
 }
 
-#if defined(XO_NOLIBC)
-__attribute__((noinline)) static int64_t x_accept(int fd) { return xo_x_net_accept(fd, SOCK_CLOEXEC); }
-#elif defined(__linux__)
-__attribute__((noinline)) static int64_t x_accept(int fd) {
-	if (nx_on()) {
-		return xo_x_net_accept(fd, SOCK_CLOEXEC);
-	}
-	return x_ret(accept4(fd, NULL, NULL, SOCK_CLOEXEC));
-}
-#elif defined(__APPLE__)
-__attribute__((noinline)) static int64_t x_accept(int fd) {
-	if (nx_on()) {
-		return xo_x_net_accept(fd, 0);
-	}
-	return x_ret(accept(fd, NULL, NULL));
-}
-#elif defined(_WIN32)
-__attribute__((noinline)) static int64_t x_accept(int fd) {
-	if (nx_on()) {
-		return xo_x_net_accept(fd, 0);
-	}
-	SOCKET s = accept((SOCKET)fd, NULL, NULL);
-	return s == INVALID_SOCKET ? -(int64_t)xo_wsa_errno() : (int64_t)(int)s;
-}
-#else
-__attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept(fd, NULL, NULL)); }
-#endif
-
-#ifdef _WIN32
-// a nonblocking connect in progress is WSAEWOULDBLOCK
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-	if (nx_on()) {
-		return xo_x_net_connect(fd, XO_ADDR(a), n);
-	}
-	int64_t r = x_wsa(connect((SOCKET)fd, a, n));
-	return r == -EWOULDBLOCK ? -EINPROGRESS : r;
-}
-#elif defined(XO_NOLIBC)
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-	return xo_x_net_connect(fd, XO_ADDR(a), n);
-}
-#else
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-#if defined(__linux__) || defined(__APPLE__)
-	if (nx_on()) {
-		return xo_x_net_connect(fd, XO_ADDR(a), n);
-	}
-#endif
-	return x_ret(connect(fd, a, n));
-}
-#endif
-
-__attribute__((noinline)) static int64_t x_sockerr(int fd) {
-#if defined(XO_NOLIBC)
-	return xo_x_net_sock_err(fd);
-#else
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
-	if (nx_on()) {
-		return xo_x_net_sock_err(fd);
-	}
-#endif
-	int e = 0;
-	socklen_t n = sizeof e;
-	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &n) < 0) {
-		return -(int64_t)errno;
-	}
-#ifdef _WIN32
-	return e ? -(int64_t)xo_wsa_map(e) : 0; // a Winsock error code
-#else
-	return -(int64_t)e;
-#endif
-#endif
-}
-
 // x_errno is errno now (for calls that report errors in it).
 __attribute__((noinline)) static int x_errno(void) { return errno; }
 
-static void set_nonblock(int fd) {
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
-	if (nx_on()) {
-		xo_x_fd_nonblock(fd);
-		return;
-	}
-#endif
-	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
-}
+static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }
 
 // ev_poke wakes the poller (a new first timer).
 static void ev_poke(void) {
@@ -3708,7 +3406,8 @@ static void stop_signal(void);
 static int64_t poll_signal_cb(int64_t p, int64_t b);
 static int64_t pdsvc_open(int64_t a, int64_t b) {
 	(void)b;
-	return XO_ADDR(pd_new((int)(a & 0xffffffff), (int)(a >> 32)));
+	xo_pd *pd = pd_new((int)(a & 0xffffffff), (int)(a >> 32));
+	return pd ? XO_ADDR(pd) : -(int64_t)x_errno();
 }
 static int64_t pdsvc_close(int64_t fd, int64_t b) {
 	(void)b;
@@ -4041,37 +3740,31 @@ void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, cons
 int64_t xo_budget_end(xo_scope *s) { return xo_x_budget_end(XO_ADDR(s)); }
 
 // ---------------------------------------------------------------------------
-// Network (std.md 3.2): TCP listeners and connections. Each operation
-// records its outcome in the context (net_status, net_msg), which the
-// generated code reads to build the NetErr: 1 InvalidAddr, 2 Refused,
-// 3 Timeout, 4 Io(msg), 5 Canceled (the Go backend's tags).
+// Network (std.md 3.2): TCP listeners and connections are
+// std/native/llrt/netconn.xo's (the zero-C audit's B22 and B23
+// remnants), through cabi_net.xo's exports; the generated code calls the
+// names below. Each operation records its outcome in the context
+// (net_status, net_msg), which the generated code reads to build the
+// NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg), 5 Canceled,
+// 6 Denied (the Go backend's tags). A handle is the zero handle, and a
+// list the empty one, when netconn.xo returns 0.
 
 typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 	char *addr;
-	void *mem; // the test world's in memory listener (twrun.xo's ML record), or NULL
+	void *mem; // the test world's in memory listener (twrun.xo), or NULL
 	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
 } xo_listener;
-_Static_assert(offsetof(xo_listener, mem) == 32, "twrun.xo L_MEM");
+_Static_assert(offsetof(xo_listener, pd) == 16 && offsetof(xo_listener, addr) == 24 && offsetof(xo_listener, mem) == 32 &&
+                   offsetof(xo_listener, unlink_path) == 40 && sizeof(xo_listener) == 48,
+               "netconn.xo L_*");
 
 typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 } xo_conn;
-
-static void net_ok(xo_ctx *c) { c->net_status = 0; }
-
-static void net_fail(xo_ctx *c, int st, const char *fmt, ...) {
-	char buf[512];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof buf, fmt, ap);
-	va_end(ap);
-	free(c->net_msg);
-	c->net_msg = strdup(buf);
-	c->net_status = st;
-}
+_Static_assert(offsetof(xo_conn, pd) == 16 && sizeof(xo_conn) == 24, "netconn.xo C_*");
 
 int64_t xo_net_status(void) { return ctx()->net_status; }
 
@@ -4093,624 +3786,56 @@ xo_rlist *xo_net_msg(void) {
 	return str_list(m, (int64_t)strlen(m));
 }
 
-static void conn_free(void *p) {
-	xo_conn *cn = p;
-	pd_free(cn->pd);
-	xo_free(cn);
-}
-
-static void listener_free(void *p) {
-	xo_listener *l = p;
-	if (l->mem) {
-		xo_x_tw_ml_free(XO_ADDR(l->mem));
-	} else {
-		pd_free(l->pd);
+// nc_handle maps an export's 0 (an error) to the zero handle; nc_list
+// puts the Str an export hands over (counted for the list, its length
+// stored at n) in a list of one, and 0 (an error, or the end of the
+// stream) is the empty list.
+// Functions, not macros: a macro evaluated the export call twice (two
+// listens, two accepts).
+static inline void *nc_handle(int64_t r) { return r ? (void *)(intptr_t)r : xo_h_zero(); }
+static xo_rlist *nc_list(int64_t r, int64_t n) {
+	if (!r) {
+		return &empty_list;
 	}
-	free(l->addr);
-	xo_free(l);
-}
-
-// The address policy of Net.only (decisions 0156, 0175, 0190; std/rt
-// attenuate.go onlyNet) is Xo (std/native/llrt/netpolicy.xo, through
-// cabi.xo, decision 0207): splitting "host:port", "[v6]:port", or
-// ":port"; a numeric port above 65535 (Darwin's getaddrinfo rejects one,
-// glibc's truncates it: gotchas/glibc-getaddrinfo-port-truncation.md);
-// whether the lists admit a host and port, or a dial or listen address.
-
-static int split_hostport(const char *a, char *host, size_t hn, char *port, size_t pn) {
-	return (int)xo_x_split_hostport(XO_ADDR(a), XO_ADDR(host), (int64_t)hn, XO_ADDR(port), (int64_t)pn);
-}
-
-static int port_out_of_range(const char *port) { return (int)xo_x_port_out_of_range(XO_ADDR(port)); }
-
-static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n) {
-	return (int)xo_x_net_admits_addr(XO_ADDR(lp), ln, XO_ADDR(a), n);
-}
-
-// net_denied records NetErr.Denied(addr) (tag 6) for the n bytes at a.
-static void net_denied(xo_ctx *c, const char *a, int64_t n) {
-	free(c->net_msg);
-	c->net_msg = cstr_of(a, n);
-	c->net_status = 6;
-}
-
-// fmt_addr formats a socket address as "ip:port" or "[ip]:port"; an
-// unspecified address becomes the loopback address (std.md 3.2).
-static char *fmt_addr(const struct sockaddr *sa) {
-	char ip[INET6_ADDRSTRLEN];
-	char *out = malloc(INET6_ADDRSTRLEN + 16);
-	if (!out) {
-		xo_oom();
-	}
-	if (sa->sa_family == AF_INET) {
-		const struct sockaddr_in *a = (const struct sockaddr_in *)sa;
-		if (a->sin_addr.s_addr == htonl(INADDR_ANY)) {
-			strcpy(ip, "127.0.0.1");
-		} else {
-			nx_ntop(AF_INET, &a->sin_addr, ip, sizeof ip);
-		}
-		sprintf(out, "%s:%d", ip, ntohs(a->sin_port));
-	} else {
-		const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)sa;
-		if (IN6_IS_ADDR_UNSPECIFIED(&a->sin6_addr)) {
-			strcpy(ip, "::1");
-		} else {
-			nx_ntop(AF_INET6, &a->sin6_addr, ip, sizeof ip);
-		}
-		sprintf(out, "[%s]:%d", ip, ntohs(a->sin6_port));
-	}
-	return out;
-}
-
-static const char *err_text(int e) {
-	switch (e) {
-	case ECONNREFUSED:
-		return "connection refused";
-	case ECONNRESET:
-		return "connection reset by peer";
-	case EPIPE:
-		return "broken pipe";
-	case EADDRINUSE:
-		return "address already in use";
-	case EADDRNOTAVAIL:
-		return "can't assign requested address";
-	case EACCES:
-		return "permission denied";
-	case ETIMEDOUT:
-		return "operation timed out";
-	case ENOENT:
-		return "no such file or directory";
-	case EINVAL:
-		return "invalid argument";
-	case ENOTDIR:
-		return "not a directory";
-	case EPROTOTYPE:
-		return "protocol wrong type for socket";
-	}
-	return strerror(e);
-}
-
-static const char closed_text[] = "use of closed network connection";
-
-static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd);
-
-// unix_addr fills a sockaddr_un with the path of a `unix:PATH` address:
-// -1 when it does not fit (Go's "invalid argument").
-static int unix_addr(const char *addr, struct sockaddr_un *sa) {
-	const char *path = addr + 5;
-	memset(sa, 0, sizeof *sa);
-	sa->sun_family = AF_UNIX;
-	if (strlen(path) >= sizeof sa->sun_path) {
-		return -1;
-	}
-	strcpy(sa->sun_path, path);
-	return 0;
-}
-
-// unix_listen is `net.listen("unix:PATH")` (decision 0190): Go's
-// net.Listen("unix", PATH), its messages, and the address as given.
-static xo_listener *unix_listen(xo_ctx *c, char *addr) {
-	const char *path = addr + 5;
-	struct sockaddr_un sa;
-	if (unix_addr(addr, &sa) < 0) {
-		net_fail(c, 4, "listen unix %s: bind: invalid argument", path);
-		free(addr);
-		return xo_h_zero();
-	}
-	int fd = nx_socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		net_fail(c, 4, "listen unix %s: socket: %s", path, err_text(x_errno()));
-		free(addr);
-		return xo_h_zero();
-	}
-	if (nx_bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
-		int e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "listen unix %s: bind: %s", path, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	if (nx_listen(fd, SOMAXCONN) != 0) {
-		int e = x_errno();
-		nx_close(fd);
-		unlink(path);
-		net_fail(c, 4, "listen unix %s: listen: %s", path, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 0);
-	if (!pd) {
-		int e = x_errno();
-		nx_close(fd);
-		unlink(path);
-		net_fail(c, 4, "listen unix: %s", err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	xo_listener *l = xo_alloc(sizeof(xo_listener));
-	h_init(l, listener_free);
-	l->pd = pd;
-	l->mem = NULL;
-	l->addr = addr;
-	l->unlink_path = 1;
-	net_ok(c);
+	xo_rstr *s = (xo_rstr *)(intptr_t)r;
+	xo_rlist *l = xo_rl_new(1, 16);
+	l->len = 1;
+	((xo_rstr **)rl_data(l))[0] = s;
+	((int64_t *)rl_data(l))[1] = n;
 	return l;
 }
 
-// unix_dial is `net.dial("unix:PATH")` (decision 0190): a socket file
-// with no listener is Refused, as in Go.
-static xo_conn *unix_dial(xo_ctx *c, const char *addr, int64_t when) {
-	const char *path = addr + 5;
-	struct sockaddr_un sa;
-	if (unix_addr(addr, &sa) < 0) {
-		net_fail(c, 4, "dial unix %s: connect: invalid argument", path);
-		return xo_h_zero();
-	}
-	int fd = nx_socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		net_fail(c, 4, "dial unix %s: socket: %s", path, err_text(x_errno()));
-		return xo_h_zero();
-	}
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 1);
-	if (!pd) {
-		int e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "dial unix %s: %s", path, err_text(e));
-		return xo_h_zero();
-	}
-	pd_begin(pd);
-	int64_t e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
-	while (e == -EINTR) {
-		e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
-	}
-	if (e == -EINPROGRESS || e == -EAGAIN) {
-		int w = pd_wait_until(pd, 1, c, when);
-		e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
-	}
-	pd_end(pd);
-	if (e == 0) {
-		return conn_new(c, fd, pd);
-	}
-	pd_free(pd);
-#ifdef _WIN32
-	// Windows refuses a connect to a missing socket file; POSIX (and the
-	// Fs view of it) says it does not exist
-	if (e == -ECONNREFUSED && xo_w_attrs(path) == INVALID_FILE_ATTRIBUTES) {
-		e = -ENOENT;
-	}
-#endif
-	if (e == 1) {
-		net_fail(c, 5, "");
-	} else if (e == 2) {
-		net_fail(c, 4, "dial unix %s: i/o timeout", path);
-	} else if (e == -ECONNREFUSED) {
-		net_fail(c, 2, "");
-	} else {
-		net_fail(c, 4, "dial unix %s: connect: %s", path, err_text((int)-e));
-	}
-	return xo_h_zero();
-}
-
-// xo_net_listen is `net.listen(addr)` (std.md 3.2) on a Net of the
-// attenuation lists lp (decision 0175): an address they do not admit is
-// NetErr.Denied before anything else.
 xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n) {
-	xo_ctx *c = ctx();
-	if (!net_admits_addr(lp, ln, p, n)) {
-		net_denied(c, p, n);
-		return xo_h_zero();
-	}
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	char *addr = cstr_of(p, n);
-	if (tw_is_fake(TW_REAL_NET)) {
-		// FakeNet.listen: an in memory listener (std/rt's
-		// memListener), whose record and address are twrun.xo's
-		xo_listener *ml = xo_alloc(sizeof(xo_listener));
-		h_init(ml, listener_free);
-		ml->pd = NULL;
-		ml->unlink_path = 0;
-		ml->mem = (void *)(intptr_t)xo_x_tw_listen(XO_ADDR(addr), (int64_t)strlen(addr), XO_ADDR(ml));
-		ml->addr = (char *)(intptr_t)xo_x_tw_ml_caddr(XO_ADDR(ml->mem));
-		free(addr);
-		net_ok(c);
-		return ml;
-	}
-	if (strncmp(addr, "unix:", 5) == 0) {
-		return unix_listen(c, addr);
-	}
-	char host[256], port[32];
-	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
-		net_fail(c, 4, "listen tcp %s: address %s: missing port in address", addr, addr);
-		free(addr);
-		return xo_h_zero();
-	}
-	if (port_out_of_range(port)) {
-		net_fail(c, 4, "listen tcp %s: address %s: invalid port", addr, port);
-		free(addr);
-		return xo_h_zero();
-	}
-	struct addrinfo hints = {.ai_socktype = SOCK_STREAM, .ai_flags = AI_PASSIVE | AI_NUMERICSERV};
-	hints.ai_family = host[0] ? AF_UNSPEC : AF_INET6;
-	struct addrinfo *res = NULL;
-	int g = nx_getaddrinfo(host[0] ? host : NULL, port, &hints, &res);
-	if (g != 0) {
-		net_fail(c, 4, "listen tcp %s: %s", addr, nx_gai_strerror(g));
-		free(addr);
-		return xo_h_zero();
-	}
-	int fd = -1, e = 0;
-	for (struct addrinfo *a = res; a; a = a->ai_next) {
-		fd = nx_socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
-		if (fd < 0) {
-			e = x_errno();
-			continue;
-		}
-		nx_setsockopt_int(fd, SOL_SOCKET, SO_REUSEADDR, 1);
-		if (a->ai_family == AF_INET6 && !host[0]) {
-			nx_setsockopt_int(fd, IPPROTO_IPV6, IPV6_V6ONLY, 0);
-		}
-		if (nx_bind(fd, a->ai_addr, a->ai_addrlen) == 0 && nx_listen(fd, SOMAXCONN) == 0) {
-			break;
-		}
-		e = x_errno();
-		nx_close(fd);
-		fd = -1;
-	}
-	nx_freeaddrinfo(res);
-	if (fd < 0) {
-		net_fail(c, 4, "listen tcp %s: bind: %s", addr, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	free(addr);
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 0);
-	if (!pd) {
-		e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "listen tcp: %s", err_text(e));
-		return xo_h_zero();
-	}
-	struct sockaddr_storage ss;
-	socklen_t sl = sizeof ss;
-	nx_getsockname(fd, (struct sockaddr *)&ss, &sl);
-	xo_listener *l = xo_alloc(sizeof(xo_listener));
-	h_init(l, listener_free);
-	l->pd = pd;
-	l->mem = NULL;
-	l->addr = fmt_addr((struct sockaddr *)&ss);
-	l->unlink_path = 0;
-	net_ok(c);
-	return l;
+	return nc_handle(xo_x_nc_listen(XO_ADDR(lp), ln, XO_ADDR(p), n));
 }
-
-// xo_listener_addr is `l.addr()`, in a list of one.
-xo_rlist *xo_listener_addr(xo_listener *l) { return str_list(l->addr, (int64_t)strlen(l->addr)); }
-
-void xo_listener_close(xo_listener *l) {
-	if (l->mem) {
-		xo_x_tw_ml_close(XO_ADDR(l->mem));
-		return;
-	}
-	pd_close(l->pd);
-	if (l->unlink_path) {
-		// as Go's UnixListener.Close: the socket file goes, once
-		l->unlink_path = 0;
-		unlink(l->addr + 5);
-	}
-}
-
-// conn_new makes a connection handle of a connected socket.
-static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd) {
-	nx_setsockopt_int(fd, IPPROTO_TCP, TCP_NODELAY, 1);
-#ifdef SO_NOSIGPIPE
-	nx_setsockopt_int(fd, SOL_SOCKET, SO_NOSIGPIPE, 1);
-#endif
-	if (!pd) {
-		pd = pd_new(fd, 1);
-		if (!pd) {
-			int e = x_errno();
-			nx_close(fd);
-			net_fail(c, 4, "%s", err_text(e));
-			return xo_h_zero();
-		}
-	}
-	xo_conn *cn = xo_alloc(sizeof(xo_conn));
-	h_init(cn, conn_free);
-	cn->pd = pd;
-	net_ok(c);
-	return cn;
-}
-
-// xo_listener_accept is `l.accept()`: waits for a connection (canceled:
-// NetErr.Canceled).
-xo_conn *xo_listener_accept(xo_listener *l) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	if (l->mem) {
-		// an in memory listener waits until it closes or the context
-		// is canceled: requests reach a served router in process,
-		// never as connections
-		if (!xo_x_tw_ml_accept(XO_ADDR(l->mem))) {
-			net_fail(c, 5, "");
-		} else {
-			net_fail(c, 4, "accept tcp %s: %s", l->addr, closed_text);
-		}
-		return xo_h_zero();
-	}
-	xo_pd *pd = l->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
-		return xo_h_zero();
-	}
-	for (;;) {
-		int64_t fd = x_accept(pd->fd);
-		if (fd >= 0) {
-			pd_end(pd);
-			set_nonblock((int)fd);
-			return conn_new(c, (int)fd, NULL);
-		}
-		if (fd == -EINTR || fd == -ECONNABORTED) {
-			continue;
-		}
-		if (fd == -EAGAIN || fd == -EWOULDBLOCK) {
-			int w = pd_wait(pd, 0, c);
-			if (w == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			if (w == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
-			}
-			return xo_h_zero();
-		}
-		pd_end(pd);
-		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, err_text((int)-fd));
-		return xo_h_zero();
-	}
-}
-
-// xo_net_dial is `net.dial(addr)` (std.md 3.2): connection refused is
-// NetErr.Refused; it gives up after 30 s like the Go backend's
-// net.DialTimeout (NetErr.Io "i/o timeout").
-xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d);
 
 xo_conn *xo_net_dial(const char *lp, int64_t ln, const char *p, int64_t n) {
-	if (!net_admits_addr(lp, ln, p, n)) {
-		// Net.only (decision 0175): denied before anything else
-		net_denied(ctx(), p, n);
-		return xo_h_zero();
-	}
-	return xo_net_dial_timeout(p, n, (int64_t)30 * 1000000000);
+	return nc_handle(xo_x_nc_dial(XO_ADDR(lp), ln, XO_ADDR(p), n));
 }
 
 // xo_net_dial_timeout is xo_net_dial giving up after d ns (d <= 0: no
-// limit).
-xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
-	int64_t when = d > 0 ? deadline(d) : 0;
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	if (tw_is_fake(TW_REAL_NET)) {
-		// FakeNet.dial: raw connections are not faked (Refused)
-		net_fail(c, 2, "");
-		return xo_h_zero();
-	}
-	char *addr = cstr_of(p, n);
-	if (strncmp(addr, "unix:", 5) == 0) {
-		xo_conn *u = unix_dial(c, addr, when);
-		free(addr);
-		return u;
-	}
-	char host[256], port[32];
-	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
-		net_fail(c, 4, "dial tcp %s: address %s: missing port in address", addr, addr);
-		free(addr);
-		return xo_h_zero();
-	}
-	if (port_out_of_range(port)) {
-		net_fail(c, 4, "dial tcp %s: address %s: invalid port", addr, port);
-		free(addr);
-		return xo_h_zero();
-	}
-	struct addrinfo hints = {.ai_family = AF_UNSPEC, .ai_socktype = SOCK_STREAM, .ai_flags = AI_NUMERICSERV};
-	struct addrinfo *res = NULL;
-	int g = nx_getaddrinfo(host[0] ? host : "localhost", port, &hints, &res);
-	if (g != 0) {
-		net_fail(c, 4, "dial tcp %s: %s", addr, nx_gai_strerror(g));
-		free(addr);
-		return xo_h_zero();
-	}
-	int64_t e = 0;
-	xo_conn *out = NULL;
-	for (struct addrinfo *a = res; a && !out; a = a->ai_next) {
-		int fd = nx_socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
-		if (fd < 0) {
-			e = -x_errno();
-			continue;
-		}
-		set_nonblock(fd);
-		xo_pd *pd = pd_new(fd, 1);
-		if (!pd) {
-			e = -x_errno();
-			nx_close(fd);
-			continue;
-		}
-		pd_begin(pd);
-		e = x_connect(fd, a->ai_addr, a->ai_addrlen);
-		while (e == -EINTR) {
-			e = x_connect(fd, a->ai_addr, a->ai_addrlen);
-		}
-		if (e == -EINPROGRESS) {
-			int w = pd_wait_until(pd, 1, c, when);
-			e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
-		}
-		pd_end(pd);
-		if (e == 0) {
-			out = conn_new(c, fd, pd);
-			break;
-		}
-		pd_free(pd);
-		if (e == 1 || e == 2) {
-			break; // canceled, or the time is up
-		}
-	}
-	nx_freeaddrinfo(res);
-	if (out) {
-		free(addr);
-		return out;
-	}
-	if (e == 1) {
-		net_fail(c, 5, "");
-	} else if (e == 2) {
-		net_fail(c, 4, "dial tcp %s: i/o timeout", addr);
-	} else if (e == -ECONNREFUSED) {
-		net_fail(c, 2, "");
-	} else {
-		net_fail(c, 4, "dial tcp %s: connect: %s", addr, err_text((int)-e));
-	}
-	free(addr);
-	return xo_h_zero();
+// limit), with no attenuation lists (xo_http.c's client).
+xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) { return nc_handle(xo_x_nc_dial_timeout(XO_ADDR(p), n, d)); }
+
+xo_rlist *xo_listener_addr(xo_listener *l) {
+	int64_t n = 0;
+	int64_t r = xo_x_nc_listener_addr(XO_ADDR(l), XO_ADDR(&n));
+	return nc_list(r, n);
 }
 
-// xo_conn_read is `c.read(max)`: at most max bytes (at most 1 MiB) in a
-// list of one, or the empty list at the end of the stream (None).
+xo_conn *xo_listener_accept(xo_listener *l) { return nc_handle(xo_x_nc_listener_accept(XO_ADDR(l))); }
+
+void xo_listener_close(xo_listener *l) { xo_x_nc_listener_close(XO_ADDR(l)); }
+
 xo_rlist *xo_conn_read(xo_conn *cn, int64_t max) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return &empty_list;
-	}
-	if (max <= 0) {
-		net_ok(c);
-		return str_list("", 0);
-	}
-	if (max > (1 << 20)) {
-		max = 1 << 20;
-	}
-	xo_pd *pd = cn->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "read tcp: %s", closed_text);
-		return &empty_list;
-	}
-	xo_rstr *s = rs_new(max);
-	for (;;) {
-		int64_t r = x_read(pd->fd, s->data, (size_t)max);
-		if (r > 0) {
-			pd_end(pd);
-			xo_rlist *l = xo_rl_new(1, 16);
-			l->len = 1;
-			((xo_rstr **)rl_data(l))[0] = s;
-			((int64_t *)rl_data(l))[1] = r;
-			net_ok(c);
-			return l;
-		}
-		if (r == 0) {
-			pd_end(pd);
-			xo_free(s);
-			net_ok(c);
-			return &empty_list;
-		}
-		if (r == -EINTR) {
-			continue;
-		}
-		if (r == -EAGAIN || r == -EWOULDBLOCK) {
-			int w = pd_wait(pd, 0, c);
-			if (w == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			xo_free(s);
-			if (w == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "read tcp: %s", closed_text);
-			}
-			return &empty_list;
-		}
-		pd_end(pd);
-		xo_free(s);
-		net_fail(c, 4, "read tcp: %s", err_text((int)-r));
-		return &empty_list;
-	}
+	int64_t n = 0;
+	int64_t r = xo_x_nc_conn_read(XO_ADDR(cn), max, XO_ADDR(&n));
+	return nc_list(r, n);
 }
 
-// xo_conn_write is `c.write(data)`: writes every byte.
-void xo_conn_write(xo_conn *cn, const char *p, int64_t n) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return;
-	}
-	xo_pd *pd = cn->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "write tcp: %s", closed_text);
-		return;
-	}
-	int64_t off = 0;
-	while (off < n) {
-		int64_t w = x_write(pd->fd, p + off, (size_t)(n - off));
-		if (w >= 0) {
-			off += w;
-			continue;
-		}
-		if (w == -EINTR) {
-			continue;
-		}
-		if (w == -EAGAIN || w == -EWOULDBLOCK) {
-			int r = pd_wait(pd, 1, c);
-			if (r == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			if (r == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "write tcp: %s", closed_text);
-			}
-			return;
-		}
-		pd_end(pd);
-		net_fail(c, 4, "write tcp: %s", err_text((int)-w));
-		return;
-	}
-	pd_end(pd);
-	net_ok(c);
-}
+void xo_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_write(XO_ADDR(cn), XO_ADDR(p), n); }
 
-void xo_conn_close(xo_conn *cn) { pd_close(cn->pd); }
+void xo_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 
 // The process environment, which C main hands to process.xo
 // (xo_x_proc_start below).

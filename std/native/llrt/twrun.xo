@@ -64,8 +64,8 @@ const RT_TW = 30
 const TW_REAL_CLOCK = 8
 const TW_EPOCH = 1767225600000000000
 
-/// An in memory listener (std/rt's memListener): its listener (the C's
-/// xo_listener, not counted: the listener frees its record), its address
+/// An in memory listener: its listener (netconn.xo's listener record,
+/// not counted: the listener frees its record), its address
 /// and its alias (localhost:<port> for 127.0.0.1; blocks: the length,
 /// then the bytes, or 0), the router serving it (an rt.Any's object,
 /// counted, or 0), whether it is closed, whether serve started once,
@@ -86,7 +86,7 @@ const ML_WAITERS = 72
 const ML_NEXT = 88
 const ML_SIZE = 96
 
-/// xo_listener's mem (xo_rt.c, asserted there): the ML record.
+/// A listener's mem (netconn.xo L_MEM, asserted in xo_rt.c): the ML record.
 const L_MEM = 32
 
 /// A context's node, and its unwinding flag (an int; ctx.xo).
@@ -413,9 +413,9 @@ fn last_colon(s: Str) -> Int {
   i
 }
 
-/// FakeNet.listen(addr) (the C's listen in the test world): the ML
-/// record of a new in memory listener for the C's listener l (an
-/// xo_listener); ":0" (and port 0) picks the next port from 49152; a
+/// FakeNet.listen(addr) (netconn.xo listen in the test world): the ML
+/// record of a new in memory listener for the listener l (a
+/// netconn.xo record); ":0" (and port 0) picks the next port from 49152; a
 /// "unix:" address is an in memory Unix domain socket (decision 0190).
 pub fn listen(addr: Str, l: Int) -> Int {
   let ml = rt.heap_large(ML_SIZE)
@@ -450,7 +450,7 @@ pub fn listen(addr: Str, l: Int) -> Int {
   ml
 }
 
-/// The address of ml as a malloc'd C string for the C's listener (its
+/// The address of ml as a malloc'd C string for the listener (its
 /// addr, which listener_free frees).
 pub fn ml_caddr(ml: Int) -> Int {
   let b = ld(ml, ML_ADDR)
@@ -467,7 +467,7 @@ fn ml_release(ml: Int) {
   rt.heap_release(ml - 8)
 }
 
-/// The listener of ml is freed (xo_rt.c listener_free): ml leaves the
+/// The listener of ml is freed (netconn.xo listener_free): ml leaves the
 /// list and closes; a client still waiting for a serve that never came
 /// wakes and fails, and frees ml when it leaves
 /// (gotchas/mem-listener-backlog-after-serve.md).

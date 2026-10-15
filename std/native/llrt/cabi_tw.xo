@@ -5,7 +5,6 @@
 // them only in the test world (tw.on), and has weak definitions for the
 // programs without them (std/llrt/xo_rt.c, the test world). The state is
 // testworld.xo's and twrun.xo's.
-use native/llrt/raw
 use native/llrt/twrun
 
 /// Starts the test world (entry.xo's E_TW_INIT word).
@@ -23,10 +22,3 @@ fn tw_kick() { twrun.kick() }
 
 /// A sleep for FakeClock.sleeps (xo_rt.c clock_wait).
 fn tw_sleep(d: Int) { twrun.sleep_record(d) }
-/// FakeNet.listen of the n bytes at p for the C's listener l: its ML
-/// record.
-fn tw_listen(p: Int, n: Int, l: Int) -> Int { twrun.listen(raw.str_at(p, n), l) }
-fn tw_ml_caddr(ml: Int) -> Int { twrun.ml_caddr(ml) }
-fn tw_ml_free(ml: Int) { twrun.ml_free(ml) }
-fn tw_ml_close(ml: Int) { twrun.ml_close(ml) }
-fn tw_ml_accept(ml: Int) -> Int { if twrun.ml_accept(ml) { 1 } else { 0 } }
