@@ -192,7 +192,7 @@ func (c *tls12Conn) SetWriteDeadline(t time.Time) error { return nil }
 func tls12Server(b, d Bytes) (Bytes, bool) {
 	parts := tls12Unpack([]byte(b))
 	args := strings.Split(string(d), " ")
-	if len(parts) != 5 || len(args) != 6 {
+	if len(parts) != 5 || (len(args) != 6 && len(args) != 7) {
 		return "args", true
 	}
 	old, had := os.LookupEnv("GODEBUG")
@@ -235,6 +235,13 @@ func tls12Server(b, d Bytes) (Bytes, bool) {
 	if args[2] != "-" {
 		cfg.NextProtos = strings.Split(args[2], ",")
 	}
+	if len(args) == 7 && args[6] != "-" {
+		// session tickets, at that time (the automatic ticket key comes
+		// from the random source too)
+		now, _ := strconv.ParseInt(args[6], 10, 64)
+		cfg.SessionTicketsDisabled = false
+		cfg.Time = func() time.Time { return time.Unix(now, 0).UTC() }
+	}
 	chunk, _ := strconv.Atoi(args[4])
 	conn := &tls12Conn{in: append(append([]byte(nil), parts[0]...), parts[1]...), chunk: chunk}
 	sv := tls.Server(conn, cfg)
@@ -259,7 +266,11 @@ func tls12Server(b, d Bytes) (Bytes, bool) {
 	if proto == "" {
 		proto = "-"
 	}
-	out += fmt.Sprintf("result ok %04x %d %s\n", st.CipherSuite, st.CurveID, proto)
+	resumed := ""
+	if len(args) == 7 {
+		resumed = fmt.Sprintf(" resumed=%v", st.DidResume)
+	}
+	out += fmt.Sprintf("result ok %04x %d %s%s\n", st.CipherSuite, st.CurveID, proto, resumed)
 	var got []byte
 	buf := make([]byte, 4096)
 	for {

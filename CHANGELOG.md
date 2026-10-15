@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS 1.2 server: session tickets (RFC 5077, as Go's
+  handshake_server.go: the extension, NewSessionTicket after a full
+  handshake, the abbreviated handshake with Go's resumption checks;
+  tls12srv.Conf ticket_keys, now, Server.resumed; tlsticket.xo seals),
+  dormant until tlssrv.xo passes keys. Fuzz fixes: "unexpected EOF" only
+  when the stream did not close; no handshake message read while waiting
+  for ChangeCipherSpec (server and client).
 - Native TLS 1.2 client: tls12.Conf.apple_svc, the chain verified by the
   Security framework on macOS with system roots (tlscert.apple_trust, as
   tls13.xo and Go's systemVerify; bad_certificate for every failure);

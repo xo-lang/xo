@@ -918,7 +918,9 @@ fn record(var c: Client, hdr: Bytes, body: Bytes) {
 
 /// The complete handshake messages buffered.
 fn drain(var c: Client) {
-  while c.state != FAILED && c.hs.len() >= 4 {
+  // waiting for ChangeCipherSpec, crypto/tls reads no handshake message
+  // (what is buffered makes the ChangeCipherSpec unexpected)
+  while c.state != FAILED && c.state != WAIT_CCS && c.hs.len() >= 4 {
     let t = Int(c.hs[0])
     let n = u24_at(c.hs, 1)
     let most = if c.have_vers && t == HS_CERTIFICATE { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
@@ -1648,7 +1650,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   send(cl, parts[2])
   s = "${s}app ${take(cl).to_hex()}\n"
   feed_in(cl, all[pos..all.len()], chunk)
-  let end = if cl.state == FAILED { cl.err } else if pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
+  let end = if cl.state == FAILED { cl.err } else if !cl.closed && pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
   s = "${s}got ${recv(cl).to_hex()} ${take(cl).to_hex()} ${end}\n"
   close(cl)
   s = "${s}bye ${take(cl).to_hex()}\n"

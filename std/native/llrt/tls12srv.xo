@@ -8,8 +8,11 @@
 // over X25519, P-256, and P-384 signed with the certificate's ECDSA or
 // RSA key (PSS or PKCS #1 v1.5), the extended master secret, ALPN (with
 // Go's h2 to http/1.1 fallback); no client certificates, no session
-// tickets or resumption, no renegotiation. Error texts and alerts are
-// crypto/tls's.
+// renegotiation. Session tickets (RFC 5077) as Go's: issued after a
+// full handshake when the client offers the extension and the server has
+// ticket keys, and a ticket's session resumed (an abbreviated handshake)
+// under Go's checks; the keys and their sealing are tlsticket.xo's.
+// Error texts and alerts are crypto/tls's.
 use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/ed25519
@@ -19,6 +22,7 @@ use native/llrt/rsa
 use native/llrt/sha256
 use native/llrt/tls12
 use native/llrt/tls13
+use native/llrt/tlsticket
 use native/llrt/tlsname
 use native/llrt/x509
 
@@ -48,7 +52,10 @@ const SCSV_RENEGOTIATION: Int = 0x00ff
 /// (the ServerHello's random), priv (the ECDHE private key), salt (RSA-PSS
 /// salts are its first bytes), sig (the ServerKeyExchange's signature, sent
 /// instead of one made here), iv (16 bytes: every CBC record's explicit
-/// IV, as crypto/tls reading a source of one repeated byte).
+/// IV, as crypto/tls reading a source of one repeated byte). Tickets:
+/// ticket_keys (tlsticket.xo's, the first sealing; none turns tickets
+/// off), now (Unix seconds: a session's creation time, and the lifetime
+/// check), and the tests' ticket_iv (16 bytes) for every ticket's IV.
 pub struct Conf {
   pub certs: List[Bytes]
   pub key_alg: Int
@@ -62,12 +69,15 @@ pub struct Conf {
   pub salt: Bytes
   pub sig: Bytes
   pub iv: Bytes
+  pub ticket_keys: List[tlsticket.Key]
+  pub now: Int
+  pub ticket_iv: Bytes
 }
 
 /// Go's defaults for a certificate chain and its leaf's key.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
   let key_alg = if certs.is_empty() { x509.KEY_UNKNOWN } else { x509.parse(certs[0]).cert.key_alg }
-  Conf{certs: certs, key_alg: key_alg, key: key, suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b"", iv: b""}
+  Conf{certs: certs, key_alg: key_alg, key: key, suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b"", iv: b"", ticket_keys: [], now: 0, ticket_iv: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -83,6 +93,9 @@ pub struct Server {
   pub group: Int
   pub alpn: Str
   pub host: Str
+  pub resumed: Bool
+  ticket: Bool
+  created: Int
   have_vers: Bool
   rin: Bytes
   hs: Bytes
@@ -101,7 +114,7 @@ pub struct Server {
 }
 
 /// A new server for conf, waiting for a ClientHello.
-pub fn server(cf: Conf) -> Server { Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", host: "", have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", cr: b"", sr: b"", ems: false, priv: b"", master: b"", next_rk: tls12.plain(), next_wk: tls12.plain(), rk: tls12.plain(), wk: tls12.plain()} }
+pub fn server(cf: Conf) -> Server { Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", host: "", resumed: false, ticket: false, created: 0, have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", cr: b"", sr: b"", ems: false, priv: b"", master: b"", next_rk: tls12.plain(), next_wk: tls12.plain(), rk: tls12.plain(), wk: tls12.plain()} }
 
 /// A server taking over after tls13srv.xo read a first ClientHello that
 /// offers TLS 1.2 and not 1.3 (its HANDOFF state, through tlssrv.xo): ch
@@ -272,7 +285,9 @@ fn record(var s: Server, hdr: Bytes, body: Bytes) {
 
 /// The complete handshake messages buffered.
 fn drain(var s: Server) {
-  while s.state != FAILED && s.hs.len() >= 4 {
+  // waiting for ChangeCipherSpec, crypto/tls reads no handshake message
+  // (what is buffered makes the ChangeCipherSpec unexpected)
+  while s.state != FAILED && s.state != WAIT_CCS && s.hs.len() >= 4 {
     let t = Int(s.hs[0])
     let n = tls12.u24_at(s.hs, 1)
     let most = if s.have_vers && t == tls12.HS_CERTIFICATE { tls12.MAX_CERTIFICATE_MSG } else { tls12.MAX_HANDSHAKE }
@@ -355,6 +370,8 @@ pub struct Hello {
   pub ems: Bool
   pub alpn: List[Str]
   pub versions: List[Int]
+  pub has_ticket: Bool
+  pub ticket: Bytes
 }
 
 /// The 2 byte numbers of a list of n bytes at p in m.
@@ -370,7 +387,7 @@ fn u16_list(m: Bytes, p: Int, n: Int) -> List[Int] {
 
 /// Go's clientHelloMsg.unmarshal.
 pub fn parse_hello(m: Bytes) -> Hello {
-  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", has_sni: false, curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: []}
+  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comps: b"", sni: "", has_sni: false, curves: [], points: b"", sigalgs: [], reneg_ok: false, reneg: b"", ems: false, alpn: [], versions: [], has_ticket: false, ticket: b""}
   var p = 4
   if m.len() < p + 35 {
     return h
@@ -494,6 +511,11 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
   }
   if t == tls12.EXT_EMS {
     h.ems = true
+    return true
+  }
+  if t == tls12.EXT_SESSION_TICKET {
+    h.has_ticket = true
+    h.ticket = d
     return true
   }
   if t == tls12.EXT_ALPN {
@@ -699,6 +721,23 @@ fn client_hello(var s: Server, msg: Bytes) {
   }
   let ecdhe_ok = curve_ok && uncompressed
   let ec_key = cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 || cf.key_alg == x509.KEY_ED25519
+  s.cr = h.random
+  s.sr = sr
+  s.alpn = proto
+  s.host = h.sni
+  s.tr = msg
+  s.ticket = h.has_ticket && !cf.ticket_keys.is_empty()
+  // Go's checkForResumption
+  match resumable(s, h, ecdhe_ok, ec_key) {
+    Some(st) => {
+      resume_session(s, h, st)
+      return
+    }
+    None => {}
+  }
+  if s.state == FAILED {
+    return
+  }
   var suite = 0
   for c in preference(aes_preferred(h.suites)) {
     if suite == 0 && tls12.has(cf.suites, c) && tls12.has(h.suites, c) && ecdhe_ok && (if tls12.suite_rsa(c) { cf.key_alg == x509.KEY_RSA } else { ec_key }) {
@@ -714,36 +753,8 @@ fn client_hello(var s: Server, msg: Bytes) {
     return
   }
   s.suite = suite
-  s.cr = h.random
-  s.sr = sr
   s.ems = h.ems
-  s.alpn = proto
-  s.host = h.sni
-  s.tr = msg
-  // ServerHello (Go's extension order)
-  var exts: List[Bytes] = []
-  if h.reneg_ok {
-    exts.push(tls12.ext(tls12.EXT_RENEGOTIATION_INFO, tls12.vec8(b"")))
-  }
-  if h.ems {
-    exts.push(tls12.ext(tls12.EXT_EMS, b""))
-  }
-  if proto != "" {
-    exts.push(tls12.ext(tls12.EXT_ALPN, tls12.vec16(tls12.vec8(proto.bytes()))))
-  }
-  if !h.points.is_empty() {
-    exts.push(tls12.ext(tls12.EXT_POINT_FORMATS, tls12.vec8(tls12.u8(0))))
-  }
-  if h.has_sni {
-    exts.push(tls12.ext(tls12.EXT_SERVER_NAME, b""))
-  }
-  var body = asn1.cat([tls12.u16(0x0303), sr, tls12.vec8(b""), tls12.u16(suite), tls12.u8(0)])
-  if !exts.is_empty() {
-    body = cat2(body, tls12.vec16(asn1.cat(exts)))
-  }
-  // ServerHello and Certificate are written before the key exchange is
-  // made (a failure there follows them, as Go's)
-  write(s, tls12.message(tls12.HS_SERVER_HELLO, body))
+  write(s, server_hello(s, h, b""))
   write(s, tls12.certificate_msg(cf.certs))
   let ske = key_exchange(s, h)
   if s.state == FAILED {
@@ -752,6 +763,107 @@ fn client_hello(var s: Server, msg: Bytes) {
   write(s, ske)
   write(s, tls12.message(tls12.HS_SERVER_HELLO_DONE, b""))
   s.state = WAIT_CKE
+}
+
+/// The ServerHello (Go's extension order) echoing sid.
+fn server_hello(s: Server, h: Hello, sid: Bytes) -> Bytes {
+  var exts: List[Bytes] = []
+  if s.ticket {
+    exts.push(tls12.ext(tls12.EXT_SESSION_TICKET, b""))
+  }
+  if h.reneg_ok {
+    exts.push(tls12.ext(tls12.EXT_RENEGOTIATION_INFO, tls12.vec8(b"")))
+  }
+  if h.ems {
+    exts.push(tls12.ext(tls12.EXT_EMS, b""))
+  }
+  if s.alpn != "" {
+    exts.push(tls12.ext(tls12.EXT_ALPN, tls12.vec16(tls12.vec8(s.alpn.bytes()))))
+  }
+  if !h.points.is_empty() {
+    exts.push(tls12.ext(tls12.EXT_POINT_FORMATS, tls12.vec8(tls12.u8(0))))
+  }
+  // the name is acknowledged in a full handshake only (Go sets
+  // serverNameAck in doFullHandshake)
+  if h.has_sni && !s.resumed {
+    exts.push(tls12.ext(tls12.EXT_SERVER_NAME, b""))
+  }
+  var body = asn1.cat([tls12.u16(0x0303), s.sr, tls12.vec8(sid), tls12.u16(s.suite), tls12.u8(0)])
+  if !exts.is_empty() {
+    body = cat2(body, tls12.vec16(asn1.cat(exts)))
+  }
+  tls12.message(tls12.HS_SERVER_HELLO, body)
+}
+
+/// The session of the ClientHello's ticket when Go's checkForResumption
+/// resumes it: tickets on, a ticket that opens and parses, younger than
+/// the lifetime, TLS 1.2, its suite offered, enabled and usable, and the
+/// extended master secret as before (a session that had it and a client
+/// that drops it fails the handshake, without an alert).
+fn resumable(var s: Server, h: Hello, ecdhe_ok: Bool, ec_key: Bool) -> tlsticket.State? {
+  let cf = s.conf
+  if cf.ticket_keys.is_empty() || !h.has_ticket {
+    return None
+  }
+  let plain = match tlsticket.open(h.ticket, cf.ticket_keys) {
+    Some(p) => p
+    None => return None
+  }
+  let st = match tlsticket.parse(plain) {
+    Some(x) => x
+    None => return None
+  }
+  if cf.now - st.created > tlsticket.LIFETIME || st.version != 0x0303 {
+    return None
+  }
+  if !tls12.has(h.suites, st.suite) || !tls12.has(cf.suites, st.suite) || !ecdhe_ok || !(if tls12.suite_rsa(st.suite) { cf.key_alg == x509.KEY_RSA } else { ec_key }) {
+    return None
+  }
+  if !st.ems && h.ems {
+    return None
+  }
+  if st.ems && !h.ems {
+    s.state = FAILED
+    s.err = "tls: session supported extended_master_secret but client does not"
+    return None
+  }
+  Some(st)
+}
+
+/// Go's doResumeHandshake, then its ticket and Finished: the ServerHello
+/// echoing the client's session id, a new ticket for the session, the
+/// keys from its master secret, ChangeCipherSpec and Finished; the
+/// client's ChangeCipherSpec and Finished follow.
+fn resume_session(var s: Server, h: Hello, st: tlsticket.State) {
+  s.resumed = true
+  s.ticket = true
+  s.suite = st.suite
+  s.group = st.curve
+  s.ems = st.ems
+  s.created = st.created
+  s.master = st.secret
+  write(s, server_hello(s, h, h.sid))
+  let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
+  s.next_rk = tls12.direction(s.suite, kb, true, b"")
+  s.next_wk = tls12.direction(s.suite, kb, false, s.conf.iv)
+  write(s, new_ticket(s))
+  s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_CCS, b"\x01", 0x0303))
+  s.wk = s.next_wk
+  let fin = tls12.message(tls12.HS_FINISHED, tls12.verify_data(s.suite, s.master, "server finished", s.tr))
+  s.tr = cat2(s.tr, fin)
+  s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_HANDSHAKE, fin, 0x0303))
+  s.state = WAIT_CCS
+}
+
+/// A NewSessionTicket for the session (Go's sendSessionTicket: a
+/// lifetime hint of 0, the state sealed under the first key; a resumed
+/// session keeps its creation time).
+fn new_ticket(s: Server) -> Bytes {
+  let created = if s.resumed { s.created } else { s.conf.now }
+  let state = tlsticket.state(0x0303, s.suite, created, s.master, s.ems, s.group)
+  let iv = if s.conf.ticket_iv.len() == 16 { s.conf.ticket_iv } else { rand.next_bytes(16) }
+  let t = tlsticket.seal(s.conf.ticket_keys[0], state, iv)
+  tls12.message(tls12.HS_NEW_SESSION_TICKET, asn1.cat([tls12.u16(0), tls12.u16(0), tls12.vec16(t)]))
 }
 
 /// A handshake message in its own record, in the transcript.
@@ -926,6 +1038,14 @@ fn finished(var s: Server, msg: Bytes) {
     return
   }
   s.tr = cat2(s.tr, msg)
+  if s.resumed {
+    s.tr = b""
+    s.state = DONE
+    return
+  }
+  if s.ticket {
+    write(s, new_ticket(s))
+  }
   s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_CCS, b"\x01", 0x0303))
   s.wk = s.next_wk
   let fin = tls12.message(tls12.HS_FINISHED, tls12.verify_data(s.suite, s.master, "server finished", s.tr))
@@ -1004,7 +1124,8 @@ fn client_random(b: Bytes) -> Bytes {
 /// handshake (one stream, as crypto/tls reads them), the leaf's DER, its
 /// key (RSA: PKCS #1 DER; ECDSA: the scalar), and a ServerKeyExchange
 /// signature to send when it signs this exchange (empty, or when it does
-/// not: signed here); d is "suites groups alpn keytype chunk mask" (chunk "r" goes
+/// not: signed here); d is "suites groups alpn keytype chunk mask [now]"
+/// (now, Unix seconds, turns session tickets on; chunk "r" goes
 /// through resume with the first record's ClientHello; keytype rsa, p256,
 /// or p384, which Go's reference needs to read the key; mask 1 to show
 /// the signature as its check). The result: what
@@ -1016,7 +1137,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   }
   let parts = tls12.unpack(b)
   let args = (d.to_str() ?? "").split(" ")
-  if parts.len() != 5 || args.len() != 6 {
+  if parts.len() != 5 || (args.len() != 6 && args.len() != 7) {
     return Some(b"args")
   }
   var cf = conf([parts[2]], parts[3])
@@ -1026,6 +1147,13 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.random = tls12.fill(0x22, 32)
   cf.salt = tls12.fill(0x22, 64)
   cf.iv = tls12.fill(0x22, 16)
+  // tickets: the time, and Go's automatic key from its random source
+  let tickets = args.len() == 7 && args[6] != "-"
+  if tickets {
+    cf.now = Int.parse(args[6]) ?? 0
+    cf.ticket_keys = [tlsticket.key(tls12.fill(0x22, 32), cf.now)]
+    cf.ticket_iv = tls12.fill(0x22, 16)
+  }
   cf.priv = a
   cf.sig = parts[4]
   let chunk = Int.parse(args[4]) ?? 0
@@ -1051,10 +1179,10 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
     let e = if sv.state == FAILED { sv.err } else if pending(sv) > 0 { "unexpected EOF" } else { "EOF" }
     return Some("${o}result ${e}\n".bytes())
   }
-  o = "${o}result ok ${tls12.hex4(sv.suite)} ${sv.group} ${if sv.alpn == "" { "-" } else { sv.alpn }}\n"
+  o = "${o}result ok ${tls12.hex4(sv.suite)} ${sv.group} ${if sv.alpn == "" { "-" } else { sv.alpn }}${if args.len() == 7 { " resumed=${sv.resumed}" } else { "" }}\n"
   feed_in(sv, all[pos..all.len()], chunk)
   let got = recv(sv)
-  let end = if sv.state == FAILED { sv.err } else if pending(sv) > 0 { "unexpected EOF" } else { "EOF" }
+  let end = if sv.state == FAILED { sv.err } else if !sv.closed && pending(sv) > 0 { "unexpected EOF" } else { "EOF" }
   o = "${o}got ${got.to_hex()} ${take(sv).to_hex()} ${end}\n"
   send(sv, cat2(b"pong:", got))
   o = "${o}app ${take(sv).to_hex()}\n"
