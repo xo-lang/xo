@@ -563,7 +563,7 @@ fn (var g: G) call_op(v: Int) {
       // the shared empty list, immortal: the first push allocates
       // (xo_rl_grow), so a `[]` that stays empty costs no allocation
       // (bench/results/xo1-speed-2026-10-13.md)
-      g.set(v, g.rt("xo_rl_empty", [], [false]))
+      g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
     }
     "list.len" => g.set(v, [g.list_len(g.word(x.args[0]))])
     "list.index" => {
@@ -998,6 +998,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.sched_ref = true
       g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
     }
+    // the runtime's immortal placeholders (an unwinding operation's
+    // result, the empty list): their addresses, no call (xo_rt.c
+    // xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero stay for
+    // code of earlier compilers)
+    "rt.rl_empty" => g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
+    "rt.h_zero" => g.set(v, [g.sym_addr(g.sym("xo_zero_handle"))])
     "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
     "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])

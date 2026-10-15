@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (generated-code entries E3): the empty list and the
+  unwinding placeholders are the addresses of xo_rt.c's xo_empty_list
+  and xo_zero_handle in generated code, not calls (xo_rl_empty and
+  xo_h_zero stay for code of earlier compilers); alloc small 0.98 on
+  arm64, nothing slower.
 - Native runtime (zero-C audit item B31, part 20, decision 0202): the
   Xo HTTPS server takes Go 1.26's groups (SecP256r1MLKEM768,
   SecP384r1MLKEM1024 and P-521 next to X25519MLKEM768, X25519, P-256

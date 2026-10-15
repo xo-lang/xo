@@ -54,7 +54,7 @@ fn (var g: Gen) call(v: Int) {
       }
       // the shared empty list, immortal: the first push allocates
       // (xo_rl_grow), as on arm64
-      g.set(v, "call ptr @xo_rl_empty()")
+      g.alias(v, g.empty_list())
     }
     "list.len" => {
       let a0 = g.op(args[0])
@@ -486,6 +486,13 @@ fn runtime_raises(name: Str) -> Bool {
   ssa.faulting_rt(name) || name == "rt.fault_continue"
 }
 
+/// The address of the runtime's immortal empty list (xo_rt.c
+/// xo_empty_list), declared once.
+fn (var g: Gen) empty_list() -> Str {
+  g.llvm_decl("@xo_empty_list", "@xo_empty_list = external global [3 x i64]")
+  "@xo_empty_list"
+}
+
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
 /// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
@@ -707,6 +714,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       g.sched_tlocal()
       return false
+    }
+    // the runtime's immortal placeholders: their addresses, no call
+    // (xo_rt.c xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero
+    // stay for code of earlier compilers)
+    "rt.rl_empty" => g.alias(v, g.empty_list())
+    "rt.h_zero" => {
+      g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
+      g.alias(v, "@xo_zero_handle")
     }
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")

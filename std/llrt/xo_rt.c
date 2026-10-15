@@ -937,8 +937,12 @@ static void h_release(void *p) {
 
 // The placeholders a canceled operation returns while it unwinds (never
 // written: their counts are immortal).
-static xo_hdr zero_handle = {XO_RC_IMMORTAL, NULL};
-static xo_rlist empty_list = {XO_RC_IMMORTAL, 0, 0};
+// Generated code takes their addresses directly (rt.rl_empty, rt.h_zero;
+// the generated-code entries' batch E3).
+xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
+xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
+#define zero_handle xo_zero_handle
+#define empty_list xo_empty_list
 
 void *xo_h_zero(void) { return &zero_handle; }
 

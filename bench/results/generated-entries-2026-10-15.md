@@ -125,3 +125,55 @@ medians of 128.1M (A) and 129.1M (B), spread 80M to 200M. LLVM keeps
 about 2% on string heavy workloads (text split, lines, alloc strings
 1.019 to 1.020), inside the 5% bar; arm64 is at or under A.
 
+## Batch E3
+
+rt.rl_empty and rt.h_zero (the immortal empty list a `[]` starts as, and
+the placeholders an unwinding operation returns) are the addresses of
+xo_rt.c's xo_empty_list and xo_zero_handle, emitted inline (arm64
+adrp and add, LLVM an external global), instead of calls of xo_rl_empty
+and xo_h_zero (kept for code of earlier compilers). internal/arm64's
+sieve assembly golden changed by exactly that (`bl _xo_rl_empty; mov`
+to `adrp; add`). A is zero-c at 83992919, B adds E3:
+
+| Program | Workload | Backend | A instr | B instr | B/A |
+|---|---|---|---|---|---|
+| alloc | small | arm64 | 289,580,194 | 283,727,080 | 0.980 |
+| alloc | mixed | arm64 | 471,592,128 | 470,795,240 | 0.998 |
+| alloc | grow | arm64 | 65,861,676 | 65,871,051 | 1.000 |
+| alloc | strings | arm64 | 300,408,153 | 300,373,234 | 1.000 |
+| alloc | maps | arm64 | 302,445,300 | 301,162,434 | 0.996 |
+| alloc | tasks | arm64 | 889,421,524 | 883,497,433 | 0.993 |
+| alloc | small | llvm | 246,650,231 | 246,981,004 | 1.001 |
+| alloc | mixed | llvm | 462,346,603 | 462,443,474 | 1.000 |
+| alloc | grow | llvm | 64,544,686 | 64,555,611 | 1.000 |
+| alloc | strings | llvm | 249,745,593 | 249,829,669 | 1.000 |
+| alloc | maps | llvm | 266,529,513 | 266,570,792 | 1.000 |
+| alloc | tasks | llvm | 783,173,984 | 782,754,287 | 0.999 |
+| text | parse_int | arm64 | 45,604,678 | 45,633,749 | 1.001 |
+| text | quote | arm64 | 129,330,245 | 129,386,218 | 1.000 |
+| text | split | arm64 | 96,834,231 | 96,660,346 | 0.998 |
+| text | lines | arm64 | 154,001,877 | 153,926,309 | 1.000 |
+| text | replace | arm64 | 81,164,744 | 81,100,423 | 0.999 |
+| text | int_fmt | arm64 | 78,289,810 | 78,236,834 | 0.999 |
+| text | base64 | arm64 | 165,631,606 | 165,578,020 | 1.000 |
+| text | hex | arm64 | 100,038,765 | 99,971,243 | 0.999 |
+| text | parse_int | llvm | 43,707,901 | 43,779,858 | 1.002 |
+| text | quote | llvm | 101,467,351 | 101,439,273 | 1.000 |
+| text | split | llvm | 83,083,217 | 83,101,459 | 1.000 |
+| text | lines | llvm | 141,468,996 | 141,460,490 | 1.000 |
+| text | replace | llvm | 58,032,586 | 58,022,768 | 1.000 |
+| text | int_fmt | llvm | 62,919,437 | 62,889,288 | 1.000 |
+| text | base64 | llvm | 124,888,390 | 124,863,753 | 1.000 |
+| text | hex | llvm | 84,922,017 | 84,952,410 | 1.000 |
+| conc_spawn | - | arm64 | 667,803,244 | 676,961,590 | 1.014 |
+| conc_spawn | - | llvm | 579,688,989 | 582,925,044 | 1.006 |
+| conc_fanout | - | arm64 | 321,334,434 | 323,097,181 | 1.005 |
+| conc_fanout | - | llvm | 277,879,514 | 274,114,904 | 0.986 |
+| conc_pingpong | - | arm64 | 393,053,621 | 387,506,007 | 0.986 |
+| conc_pingpong | - | llvm | 322,961,913 | 317,072,773 | 0.982 |
+| conc_mutex | - | arm64 | 164,105,989 | 148,421,429 | 0.904 |
+| conc_mutex | - | llvm | 124,030,043 | 97,437,276 | 0.786 |
+
+conc mutex's 0.904 and 0.786 are within its run to run spread (80M to
+200M instructions on arm64, above).
+
