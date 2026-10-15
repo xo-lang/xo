@@ -700,7 +700,7 @@ struct Lowered {
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
   var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, tgoos))
-  b.m.nolibc_start = !wasm && nolibc(os, tgoos) && !nolibc_c_start(os)
+  b.m.nolibc_start = !wasm && nolibc(os, tgoos)
   b.m.nolibc = !wasm && nolibc(os, tgoos)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
@@ -837,9 +837,6 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     // host's: arm64 flags and atomics assembly for an x86_64 link)
     let arch = tgoarch
     lk.flags = lk.flags + nolibc_flags(arch)
-    if nolibc_c_start(os) {
-      lk.flags.push("-DXO_NOLIBC_C_START")
-    }
     if arch == "arm64" {
       // the arm64 emitter's read modify writes call libgcc's outline
       // atomics on Linux, which a link with no C library lacks

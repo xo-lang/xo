@@ -223,11 +223,6 @@ fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
 /// (decisions 0203, 0206; stage 1 is opt in).
 fn nolibc(os: Os, tgoos: Str) -> Bool { tgoos == "linux" && (os.env.get("XO_NOLIBC") ?? "") == "1" }
 
-/// Whether an XO_NOLIBC=1 program keeps std/llrt/xo_nolibc.c's C process
-/// entry (XO_NOLIBC_C_START=1) instead of the backend's
-/// (ssa.entry_stub_arm64), until CI has run the stubs.
-fn nolibc_c_start(os: Os) -> Bool { (os.env.get("XO_NOLIBC_C_START") ?? "") == "1" }
-
 /// The C compiler flags of the runtime with no C library (decision 0206):
 /// std/llrt/xo_nolibc.c defines the C library functions it calls, each
 /// function in its own section for --gc-sections; no stack protector or

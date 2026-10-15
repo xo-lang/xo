@@ -262,8 +262,7 @@ pub struct Module {
   pub goarch: Str = ""
   /// A Linux program with no C library (XO_NOLIBC=1) whose process entry
   /// the backend emits (entry_stub_arm64 and entry_stub_amd64: _start,
-  /// the thread pointer, main's stack, the call of main), unless the
-  /// driver keeps std/llrt/xo_nolibc.c's C entry (XO_NOLIBC_C_START=1).
+  /// the thread pointer, main's stack, the call of main).
   pub nolibc_start: Bool = false
   /// A Linux program with no C library (XO_NOLIBC=1): the emitters define
   /// the C library's data symbols (nolibc_data, decision 0234).
@@ -280,21 +279,17 @@ pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr"] }
 /// nolibc_start), as assembly for arm64 Linux (the same text through
 /// the arm64 emitter and the LLVM emitter's module asm). From the
 /// initial stack (argc, argv, envp, the auxiliary vector): Xo records
-/// it and returns environ (xo_x_nl_start), makes the standard streams
-/// (xo_x_nl_std), maps the main thread's TLS block (xo_x_nl_main_tp,
-/// set in tpidr_el0) and its 1 GiB stack (xo_x_nl_main_stack, 0 to stay
-/// on the initial one); then main(argc, argv, envp) and exit with its
-/// result. _start has no unwind information, so the unwinder's walk
-/// ends there (std/native/llrt unwind.xo: a pc with no frame). The
-/// stores of environ and the streams go to the C library's data
-/// symbols (std/llrt/xo_nolibc.c for now).
+/// it, sets environ, stdin, stdout and stderr (the emitters' data
+/// symbols, decision 0234) and returns environ (xo_x_nl_start), maps the
+/// main thread's TLS block (xo_x_nl_main_tp, set in tpidr_el0) and its
+/// 1 GiB stack (xo_x_nl_main_stack, 0 to stay on the initial one); then
+/// main(argc, argv, envp) and exit with its result. _start has no unwind
+/// information, so the unwinder's walk ends there (std/native/llrt
+/// unwind.xo: a pc with no frame).
 pub fn entry_stub_arm64() -> Str {
   "\t.text\n\t.globl _start\n\t.type _start, %function\n\t.p2align 2\n_start:\n" +
     "\tmov x29, #0\n\tmov x30, #0\n\tmov x19, sp\n\tand sp, x19, #-16\n" +
-    "\tmov x0, x19\n\tbl xo_x_nl_start\n\tmov x20, x0\n\tadrp x9, environ\n\tstr x0, [x9, :lo12:environ]\n" +
-    "\tmov x0, #0\n\tbl xo_x_nl_std\n\tadrp x9, stdin\n\tstr x0, [x9, :lo12:stdin]\n" +
-    "\tmov x0, #1\n\tbl xo_x_nl_std\n\tadrp x9, stdout\n\tstr x0, [x9, :lo12:stdout]\n" +
-    "\tmov x0, #2\n\tbl xo_x_nl_std\n\tadrp x9, stderr\n\tstr x0, [x9, :lo12:stderr]\n" +
+    "\tmov x0, x19\n\tbl xo_x_nl_start\n\tmov x20, x0\n" +
     "\tbl xo_x_nl_main_tp\n\tmsr tpidr_el0, x0\n" +
     "\tbl xo_x_nl_main_stack\n\tcbz x0, 1f\n\tmov sp, x0\n1:\n" +
     "\tmov x29, #0\n\tldr x0, [x19]\n\tadd x1, x19, #8\n\tmov x2, x20\n\tbl main\n\tbl exit\n\tbrk #1\n" +
@@ -307,10 +302,7 @@ pub fn entry_stub_arm64() -> Str {
 pub fn entry_stub_amd64() -> Str {
   "\t.text\n\t.globl _start\n\t.type _start, @function\n\t.p2align 4\n_start:\n" +
     "\txorl %ebp, %ebp\n\tmovq %rsp, %rbx\n\tandq $-16, %rsp\n" +
-    "\tmovq %rbx, %rdi\n\tcall xo_x_nl_start\n\tmovq %rax, %r12\n\tmovq %rax, environ(%rip)\n" +
-    "\txorl %edi, %edi\n\tcall xo_x_nl_std\n\tmovq %rax, stdin(%rip)\n" +
-    "\tmovl $1, %edi\n\tcall xo_x_nl_std\n\tmovq %rax, stdout(%rip)\n" +
-    "\tmovl $2, %edi\n\tcall xo_x_nl_std\n\tmovq %rax, stderr(%rip)\n" +
+    "\tmovq %rbx, %rdi\n\tcall xo_x_nl_start\n\tmovq %rax, %r12\n" +
     "\tcall xo_x_nl_main_tp\n" +
     "\tcall xo_x_nl_main_stack\n\ttestq %rax, %rax\n\tjz 1f\n\tmovq %rax, %rsp\n1:\n" +
     "\txorl %ebp, %ebp\n\tmovq (%rbx), %rdi\n\tleaq 8(%rbx), %rsi\n\tmovq %r12, %rdx\n\tcall main\n\tmovl %eax, %edi\n\tcall exit\n\thlt\n" +

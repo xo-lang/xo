@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- XO_NOLIBC=1: the backends' process entry ran in Docker (linux/arm64
+  native, linux/amd64 emulated: hello and five goldens, cross linked on
+  the Mac), so std/llrt/xo_nolibc.c's C entry (_start, xo_nolibc_start,
+  nl_run) and XO_NOLIBC_C_START are deleted, and with the data symbols
+  already the emitters' (decision 0234) the whole file goes: an
+  XO_NOLIBC build has no C beyond xo_rt.c. The entry stubs no longer
+  store environ and the standard streams (cabi_nolibc.xo nl_start does).
+  New scripts/docker-linux.sh (a command in a Debian container with
+  clang and lld, either architecture) and scripts/golden-run.sh (a built
+  golden program against its want.txt).
 - The test binary cache (XO_BIN_CACHE, `<user cache>/xo/testbin`)
   prunes itself to 4 GiB (XO_BIN_CACHE_MAX bytes or XO_CACHE_MAX_GB),
   least recently used first, at most every 2 minutes, keeping only

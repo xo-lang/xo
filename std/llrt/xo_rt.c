@@ -58,7 +58,6 @@
 #pragma comment(lib, "shell32")
 #pragma comment(lib, "crypt32")
 #else
-// xo_nolibc.c's FILE, va_list and exit
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -155,8 +154,8 @@ int64_t xo_c_stop_svc(void) {
 	return XO_ADDR(stop_svc);
 }
 
-// The C library functions of a Linux program linked with no C library
-// (XO_NOLIBC=1 builds, decisions 0203 and 0206).
-#ifdef XO_NOLIBC
-#include "xo_nolibc.c"
-#endif
+// A Linux program linked with no C library (XO_NOLIBC=1 builds, decisions
+// 0203, 0206, 0230 and 0234) has no C of its own beyond this file: its C
+// library is Xo (std/native/llrt/cabi_libc.xo), its data symbols and
+// process entry the backends' (selfhost/ssa ir.xo entry_stub_arm64);
+// std/llrt/xo_nolibc.c was deleted on 2026-10-15.

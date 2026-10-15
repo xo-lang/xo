@@ -80,8 +80,10 @@ fn (g: G) file_header(var out: List[Str]) {
     out.push("\t.file \"prog.s\"\n")
     // the crypto instructions of std/native/llrt/cpu.xo (decision 0231),
     // which an assembler for plain ARMv8 rejects without it (the code
-    // runs them only when the CPU has them)
-    out.push("\t.arch_extension crypto\n")
+    // runs them only when the CPU has them); LLVM 14's assembler (Debian
+    // bookworm's clang) takes aes and sha2 only by those names
+    // (gotchas/clang14-arch-extension-crypto.md)
+    out.push("\t.arch_extension crypto\n\t.arch_extension aes\n\t.arch_extension sha2\n")
   }
 }
 
