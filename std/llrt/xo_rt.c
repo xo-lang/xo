@@ -1707,154 +1707,25 @@ typedef struct xo_atomic xo_atomic;
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals
 //
-// One poller thread waits in kqueue (Darwin) or epoll (Linux) for socket
-// readiness, the next timer, and its self pipe (wake ups and signals). A
-// context that waits for a timer or a socket parks (a task on a fiber
-// gives its worker back) and the poller signals its park. These waits do
-// not count as blocked for deadlock detection: something outside the
-// program's tasks ends them.
-//
-//   - Timers: a binary heap by deadline (monotonic ns). A timer either
-//     signals a park or calls a function on the poller thread with ev.mu
-//     held (the function must not take a lock that is held while timers
-//     are added or removed).
-//   - Sockets: nonblocking, registered once for read and write readiness,
-//     edge triggered (EV_CLEAR, EPOLLET); a descriptor (xo_pd) keeps the
-//     waiting park of each direction, or that readiness came while nobody
-//     waited. A descriptor closes its socket only when no operation runs
-//     (so a socket number is never reused under one), and is freed by the
-//     poller between two waits (an event it already collected may name
-//     it).
-//   - Signals: SIGINT and SIGTERM write to the self pipe; the poller runs
-//     the two phase shutdown (core 7.5): stop requested (the stopping
-//     channel closes, the grace timer starts), then main's root context is
-//     canceled (grace over or a second signal), and a third signal exits
-//     with status 130.
-//
-// System calls that set errno go through the x_* wrappers, which are never
-// inlined and return -errno: errno is a thread local (see cur_get).
+// The event loop is std/native/llrt/poll.xo's (B22): its record, the
+// timers, the descriptors, the poller thread on every OS (kqueue on
+// Darwin, epoll on Linux, AFD polls through a completion port or the
+// WSAPoll fallback on Windows). What stays here: the signal handlers
+// (on_signal, on_console: async signal safe, they count the signal in
+// the record and wake the poller), and the services the poller calls
+// back (pd_svc). The records' layouts are poll.xo's own (EV_*, D_*, T_*;
+// asserted in C until 2026-10-15).
 
 #if defined(_WIN32)
-// Windows (decision 0197): the poller waits on an I/O completion port.
-// Socket readiness comes from AFD polls (IOCTL_AFD_POLL on \Device\Afd,
-// the driver under Winsock's select and WSAPoll, as wepoll and mio use
-// it): a waiter arms a one shot poll of its socket for the directions
-// waited in, and its completion hands the readiness over (stage 5). When
-// the AFD device cannot be opened the poller falls back to WSAPoll over
-// every descriptor someone waits on (stage 1), with a loopback socket
-// pair as the self pipe; XO_WINPOLL=wsapoll forces that (to compare).
-#define XO_WINPOLL 1
-#include <winternl.h>
+// the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
 #pragma comment(lib, "ntdll")
-typedef struct {
-	HANDLE handle;
-	ULONG events;
-	NTSTATUS status;
-} xo_afd_handle;
-typedef struct {
-	LARGE_INTEGER timeout;
-	ULONG n;
-	ULONG exclusive;
-	xo_afd_handle h[1];
-} xo_afd_poll;
-#define XO_IOCTL_AFD_POLL 0x00012024
-#define XO_AFD_RECEIVE 0x0001
-#define XO_AFD_RECEIVE_EXPEDITED 0x0002
-#define XO_AFD_SEND 0x0004
-#define XO_AFD_DISCONNECT 0x0008
-#define XO_AFD_ABORT 0x0010
-#define XO_AFD_LOCAL_CLOSE 0x0020
-#define XO_AFD_ACCEPT 0x0080
-#define XO_AFD_CONNECT_FAIL 0x0100
-#define XO_AFD_READ (XO_AFD_RECEIVE | XO_AFD_RECEIVE_EXPEDITED | XO_AFD_DISCONNECT | XO_AFD_ABORT | XO_AFD_LOCAL_CLOSE | XO_AFD_ACCEPT | XO_AFD_CONNECT_FAIL)
-#define XO_AFD_WRITE (XO_AFD_SEND | XO_AFD_ABORT | XO_AFD_LOCAL_CLOSE | XO_AFD_CONNECT_FAIL)
-#ifndef STATUS_PENDING
-#define STATUS_PENDING ((NTSTATUS)0x00000103L)
-#endif
-#ifndef SIO_BASE_HANDLE
-#define SIO_BASE_HANDLE _WSAIORW(IOC_WS2, 34) // mswsock.h
-#endif
-#elif defined(__APPLE__) || defined(__FreeBSD__)
-#include <sys/event.h>
-#define XO_KQUEUE 1
-#else
-#include <sys/epoll.h>
 #endif
 
-typedef struct xo_timer xo_timer;
-typedef void (*xo_timer_fn)(xo_timer *);
-
-struct xo_timer {
-	int64_t when;   // monotonic ns
-	int64_t idx;    // its place in the heap, -1 when not in it
-	xo_park *park;  // signaled when it fires, or
-	xo_timer_fn fn; // called on the poller thread (ev.mu held)
-	void *arg;
-	int fired; // atomic
-};
-_Static_assert(offsetof(struct xo_timer, when) == 0 && offsetof(struct xo_timer, idx) == 8, "poll.xo's timer offsets");
-
-// The timer heap is std/native/llrt/poll.xo's (zero-C audit B22 stage 1),
-// ev.mu held around each call.
-void xo_x_poll_timer_remove(int64_t t);
-int64_t xo_x_poll_timer_first(void);
-#define th_first() ((xo_timer *)(intptr_t)xo_x_poll_timer_first())
-#define th_remove(t) xo_x_poll_timer_remove((int64_t)(intptr_t)(t))
-
-typedef struct xo_pd {
-	xo_lock mu; // a lock word (std/native/llrt/poll.xo takes it too)
-	int fd;
-	int closed; // close was called
-	int ops;    // operations running (the socket closes when none runs)
-	int rready, wready;
-	xo_park *rwait, *wwait;
-	struct xo_pd *next; // ev.dead
-#ifdef XO_WINPOLL
-	// AFD polling (pd_arm): the poll's status block and buffer, the
-	// socket's base handle, the events of the poll in flight (0 none),
-	// whether to poll again once it ends (it was cancelled for more
-	// events), and whether the poller frees it once it ends (pd_free ran)
-	IO_STATUS_BLOCK iosb;
-	xo_afd_poll info;
-	SOCKET base;
-	ULONG armed;
-	int rearm, dying;
-#endif
-} xo_pd;
-
-// ev is the event loop's state, which poll.xo starts (ev_start) and
-// reads through the services record (pd_svc, poll.xo EV_*); the signal
-// handler writes its pipe and counts its signals (on_signal).
-static struct {
-	int64_t once; // 0 not started, 1 starting, 2 running (atomic, poll.xo ev_start)
-	xo_lock mu;   // the timer heap and ev.dead (a lock word: poll.xo takes it too)
-	int pfd[2];   // the self pipe
-	int poll;     // the kqueue or epoll descriptor
-	xo_pd *dead;
-	int64_t sigs; // signals not handled yet (atomic; a word: poll.xo swaps it)
-#ifdef XO_WINPOLL
-	// poll.xo's Windows words (EV_IOCP to EV_CREG): the completion port,
-	// the AFD device, the WSAPoll fallback's socket pair, and its
-	// registered descriptors (address, length, capacity)
-	int64_t win[7];
-#endif
-} ev;
-_Static_assert(offsetof(__typeof__(ev), once) == 0 && offsetof(__typeof__(ev), mu) == 8 && offsetof(__typeof__(ev), pfd) == 16 &&
-                   offsetof(__typeof__(ev), poll) == 24 && offsetof(__typeof__(ev), dead) == 32 && offsetof(__typeof__(ev), sigs) == 40,
-               "poll.xo EV_*");
-#ifdef XO_WINPOLL
-_Static_assert(offsetof(__typeof__(ev), win) == 48, "poll.xo EV_IOCP");
-#endif
-#ifndef XO_WINPOLL
-_Static_assert(sizeof(xo_pd) == 56, "poll.xo D_SIZE");
-#endif
-_Static_assert(offsetof(xo_pd, mu) == 0 && offsetof(xo_pd, fd) == 8 && offsetof(xo_pd, closed) == 12 && offsetof(xo_pd, ops) == 16 &&
-                   offsetof(xo_pd, rready) == 20 && offsetof(xo_pd, wready) == 24 && offsetof(xo_pd, rwait) == 32 &&
-                   offsetof(xo_pd, wwait) == 40 && offsetof(xo_pd, next) == 48,
-               "poll.xo's descriptor offsets");
-_Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, arg) == 32 &&
-                   offsetof(struct xo_timer, fired) == 40,
-               "poll.xo's timer offsets");
+// ev is the event loop's record, which poll.xo makes (poll_svc): Windows'
+// console handler counts a signal in its word EV_SIGS (atomic) and wakes
+// the poller (poll.xo on_signal does both on Linux and macOS).
+static int64_t *ev;
+enum { EV_SIGS_W = 5 };
 
 // The network's system calls (decision 0206 stage 3, the zero-C audit's
 // B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
@@ -1891,9 +1762,6 @@ XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
 XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
 XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
 #endif
-int64_t xo_x_fd_nonblock(int64_t fd);
-
-static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }
 
 // ev_poke wakes the poller (a new first timer): poll.xo poke (the C
 // tests and Windows' console handler call this).
@@ -1905,38 +1773,12 @@ void xo_x_poll_ev_start(void);
 static void ev_start(void) { xo_x_poll_ev_start(); }
 
 
-// Socket descriptors
-
-// pd_ready hands readiness mode (1 read, 2 write) to pd's waiters, or
-// keeps it for the next wait: std/native/llrt/poll.xo's (B22).
-void xo_x_poll_pd_ready(int64_t pd, int64_t mode);
-static void pd_ready(xo_pd *pd, int mode) { xo_x_poll_pd_ready(XO_ADDR(pd), mode); }
-
-// A descriptor's operations, close, and waits are
-// std/native/llrt/poll.xo's (B22 stage 5: pd_begin, pd_end, pd_close,
-// pd_free, pd_wait_ctx, which other Xo code calls too; on Windows since
-// stage 4, with the AFD poll's arm, pd_arm, and since 2026-10-15 the
-// registration, pd_open). poll.xo calls the services record pd_svc for
-// the C's parts.
-int64_t xo_x_poll_pd_begin(int64_t pd);
-void xo_x_poll_pd_end(int64_t pd);
-void xo_x_poll_pd_close(int64_t pd);
-void xo_x_poll_pd_free(int64_t pd);
-#define pd_begin(pd) ((int)xo_x_poll_pd_begin(XO_ADDR(pd)))
-#define pd_end(pd) xo_x_poll_pd_end(XO_ADDR(pd))
-#define pd_close(pd) xo_x_poll_pd_close(XO_ADDR(pd))
-#define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
-#ifdef XO_WINPOLL
-void xo_x_poll_pd_arm(int64_t pd);
-#define pd_arm(pd) xo_x_poll_pd_arm(XO_ADDR(pd))
-_Static_assert(offsetof(xo_pd, iosb) == 56 && offsetof(xo_pd, info) == 72 && offsetof(xo_pd, base) == 104 && offsetof(xo_pd, armed) == 112 &&
-                   offsetof(xo_pd, rearm) == 116 && offsetof(xo_pd, dying) == 120 && sizeof(xo_afd_poll) == 32 &&
-                   offsetof(xo_afd_poll, h) == 16 && offsetof(IO_STATUS_BLOCK, Status) == 0 && sizeof(OVERLAPPED_ENTRY) == 32 &&
-                   offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8,
-               "poll.xo's Windows D_* and OVERLAPPED_ENTRY");
+// Socket descriptors are poll.xo's (B22: registration, operations,
+// close, waits, and on Windows the AFD poll's arm); the C keeps none.
+#ifdef _WIN32
+// poll.xo reads the completions GetQueuedCompletionStatusEx returns
+_Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8, "poll.xo's OVERLAPPED_ENTRY");
 #endif
-
-enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
 
 // The poller thread
 
@@ -1952,17 +1794,13 @@ static int64_t pdsvc_wait(int64_t c, int64_t b) {
 }
 int64_t xo_x_poll_thread(int64_t a);
 static int64_t pd_svc[17];
-void xo_x_poll_svc(int64_t rec);
+int64_t xo_x_poll_svc(int64_t rec);
 static void pd_svc_init(void) {
 	pd_svc[4] = XO_ADDR(&pdsvc_wait);
-	pd_svc[8] = XO_ADDR(&ev.mu);
-	pd_svc[9] = XO_ADDR(&ev.dead);
 	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
-	pd_svc[13] = XO_ADDR(&ev);
 	pd_svc[14] = XO_ADDR(&xo_x_poll_thread);
-	xo_x_poll_svc(XO_ADDR(pd_svc));
+	ev = (int64_t *)(intptr_t)xo_x_poll_svc(XO_ADDR(pd_svc));
 }
-_Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
 
 // The poller thread's loop is std/native/llrt/poll.xo's (poll_thread,
 // poll_main on Linux and macOS, B22; poll_main_win over Windows' AFD
@@ -2044,7 +1882,7 @@ int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)
 
 typedef struct {
 	xo_hdr h;
-	xo_pd *pd;
+	void *pd; // poll.xo's descriptor record
 	char *addr;
 	void *mem; // the test world's in memory listener (twrun.xo), or NULL
 	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
@@ -2055,7 +1893,7 @@ _Static_assert(offsetof(xo_listener, pd) == 16 && offsetof(xo_listener, addr) ==
 
 typedef struct {
 	xo_hdr h;
-	xo_pd *pd;
+	void *pd;
 } xo_conn;
 _Static_assert(offsetof(xo_conn, pd) == 16 && sizeof(xo_conn) == 24, "netconn.xo C_*");
 
@@ -2164,7 +2002,7 @@ static BOOL WINAPI on_console(DWORD kind) {
 	case CTRL_BREAK_EVENT:
 	case CTRL_CLOSE_EVENT:
 	case CTRL_SHUTDOWN_EVENT:
-		__atomic_fetch_add(&ev.sigs, 1, __ATOMIC_ACQ_REL);
+		__atomic_fetch_add(&ev[EV_SIGS_W], 1, __ATOMIC_ACQ_REL);
 		ev_poke();
 		return TRUE;
 	}

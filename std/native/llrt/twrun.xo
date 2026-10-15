@@ -98,7 +98,7 @@ const RELEASE = 2
 const ACQ_REL = 3
 const SEQ_CST = 4
 
-/// A timer's words (xo_rt.c struct xo_timer: its deadline, its place in
+/// A timer's words (poll.xo T_*: its deadline, its place in
 /// the heap, its park, its function; 64 bytes, as poll.xo's).
 const T_WHEN = 0
 const T_IDX = 8

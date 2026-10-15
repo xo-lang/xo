@@ -34,7 +34,7 @@ const W_SVC = 61
 /// a stop was requested and main's root canceled (words read with
 /// acquire), whether a third signal ended a test's main, when the stop
 /// was requested (monotonic ns), the grace period, the next run_main's
-/// grace period and whether one was set, the grace timer (a C xo_timer,
+/// grace period and whether one was set, the grace timer (a poll.xo timer record,
 /// 64 bytes, from heap_large), task.stopping's channel (or 0), and main's
 /// root node (or 0).
 const R_MU = 0
@@ -59,7 +59,7 @@ const R_SIZE = 96
 /// imports); the cancellation, the clock, the exit and the channel's
 /// references are Xo calls.
 
-/// A timer's words (xo_rt.c struct xo_timer).
+/// A timer's words (poll.xo T_*).
 const T_WHEN = 0
 const T_IDX = 8
 const T_PARK = 16

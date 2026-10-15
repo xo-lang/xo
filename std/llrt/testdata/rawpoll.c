@@ -15,6 +15,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 
 // pd_new registers fd with the poller (poll.xo pd_open, which xo_rt.c no
 // longer wraps): NULL when the poller refuses it.

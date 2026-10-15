@@ -98,3 +98,12 @@ static void t_rl_share(xo_rlist *l, int64_t esize, xo_elem_fn share) { xo_x_obj_
 static void t_rt_live(int64_t *live, int64_t *total) { xo_x_heap_live(XO_ADDR(live), XO_ADDR(total)); }
 static xo_atomic *t_atomic_new(int64_t v) { return (xo_atomic *)(intptr_t)xo_x_atomic_new(v); }
 static int64_t t_unwinding(void) { return xo_x_ctx_unwinding(); }
+
+// The event loop's descriptors (poll.xo's records, opaque here; xo_rt.c
+// keeps no layout of them since 2026-10-15): registration, freeing, and
+// a descriptor made nonblocking.
+typedef struct xo_pd xo_pd;
+void xo_x_poll_pd_free(int64_t pd);
+#define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
+int64_t xo_x_fd_nonblock(int64_t fd);
+static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }

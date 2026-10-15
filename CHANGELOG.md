@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C inventory rank 11): the event loop's record is
+  made and owned by poll.xo (static word 45); xo_rt.c's ev, xo_pd and
+  xo_timer structs, the AFD types and their layout asserts are gone
+  (the C keeps a pointer for its signal handlers). The C tests evloop.c
+  and rawpoll.c treat descriptors as opaque (testdata/xcalls.h).
 - Windows faults (zero-C inventory rank 14, the Windows part): the C
   fault_raise no longer captures a CONTEXT; unwind.xo win_raise captures
   its own (RtlCaptureContext through sys_windows.xo) and walks from

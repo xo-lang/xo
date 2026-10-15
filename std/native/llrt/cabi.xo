@@ -352,7 +352,7 @@ fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
 
 // ---------------------------------------------------------------------------
 // The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
-// timer record (xo_rt.c struct xo_timer); the C holds ev.mu.
+// timer record (poll.xo T_*); the event loop's lock is held.
 
 fn poll_timer_push(t: Int) -> Int { poll.timer_push(t) }
 
@@ -364,7 +364,7 @@ fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
 
 /// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
 /// pd_begin and the rest on Linux and macOS), and the C's services record.
-fn poll_svc(rec: Int) { poll.poll_svc(rec) }
+fn poll_svc(rec: Int) -> Int { poll.poll_svc(rec) }
 
 fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
 

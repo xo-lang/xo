@@ -272,7 +272,7 @@ fn new_handle(n: Int, f: Int) -> Int {
   o
 }
 
-/// The descriptor's socket (xo_rt.c xo_pd fd, a C int; stable while an
+/// The descriptor's socket (poll.xo D_FD, a C int; stable while an
 /// operation runs).
 fn pd_fd(pd: Int) -> Int {
   let fd = rt.mem_load(pd, 8, 4)

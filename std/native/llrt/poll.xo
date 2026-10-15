@@ -2,12 +2,12 @@
 // decision 0069's design): the timer heap, the readiness of the
 // descriptors, the event loop's start, and the poller thread's loop over
 // kqueue (macOS), epoll (Linux), and on Windows AFD polls through a
-// completion port or the WSAPoll fallback. A timer is the C
-// runtime's record (xo_rt.c struct xo_timer, its offsets asserted there):
-// its deadline in monotonic ns and its place in the heap (-1 when not in
-// it); the heap is an array of timer addresses ordered by deadline (a
-// binary heap), from the C runtime's malloc (rt.heap_large). The C holds
-// the event loop's mutex (ev.mu) around every call here. Nothing here
+// completion port or the WSAPoll fallback. A timer is a record laid out
+// here (T_*; was xo_rt.c struct xo_timer until 2026-10-15): its deadline
+// in monotonic ns and its place in the heap (-1 when not in it); the heap
+// is an array of timer addresses ordered by deadline (a binary heap),
+// from the C runtime's malloc (rt.heap_large). The event loop's lock
+// (EV_MU) is held around every call of the heap's. Nothing here
 // allocates Xo values or faults.
 use native/llrt/budget
 use native/llrt/ctx
@@ -127,7 +127,7 @@ pub fn timer_first() -> Int {
 }
 
 // ---------------------------------------------------------------------------
-// Descriptors (xo_rt.c xo_pd, its offsets asserted there): a lock word,
+// Descriptors (D_*, laid out here; was xo_rt.c xo_pd): a lock word,
 // the socket (-1 once closed), whether close was called, the operations
 // running, readiness that came while nobody waited (read, write), the
 // parks waiting (read, write), and the link of the dead list.
@@ -208,33 +208,34 @@ pub fn pd_ready(pd: Int, mode: Int) {
 }
 
 // ---------------------------------------------------------------------------
-// Waiting on a descriptor (xo_rt.c pd_new, pd_begin, pd_end, pd_close,
-// pd_free, pd_wait_until on Linux and macOS; Windows keeps the C's until
-// B22 stage 4). A descriptor's record is xo_rt.c struct xo_pd (D_ above,
-// fd at 8, closed at 12, ops at 16, all under its lock word). The C's
+// Waiting on a descriptor (was xo_rt.c pd_new, pd_begin, pd_end,
+// pd_close, pd_free, pd_wait_until). A descriptor's record (D_ above, fd
+// at 8, closed at 12, ops at 16, all under its lock word). The C's
 // services record (set at start, poll_svc) holds the addresses of C
-// functions called through rt.call_c2 and two of the event loop's words.
+// functions called through rt.call_c2.
 
 /// rt.static_word: the C's services record.
 const W_SVC = 44
 
-/// The services record's words: wait (c: park_wait_n(c, 1, 0)), the
-/// address of ev.mu, of ev.dead, and the offset of a context's park
-/// (words 0 to 16, 40, 48, 88, 96 and 128 unused: the C's Windows open,
-/// close, shutdown, AFD handle, poke and start until 2026-10-15; 24, 56
-/// and 120 too: canceled, park_signal and stop_signal, which this module
-/// calls in Xo since 2026-10-15: budget.xo canceled, pool.xo
-/// park_signal, stop.xo signal).
+/// The services record's words: wait (c: park_wait_n(c, 1, 0)) and the
+/// offset of a context's park (words 0 to 16, 40, 48, 64, 72, 88 to 104
+/// and 128 unused: the C's Windows open, close, shutdown, AFD handle,
+/// poke and start, and the C's ev record's lock, dead list and address
+/// until 2026-10-15; 24, 56 and 120 too: canceled, park_signal and
+/// stop_signal, which this module calls in Xo since 2026-10-15:
+/// budget.xo canceled, pool.xo park_signal, stop.xo signal).
 const S_WAIT = 32
-const S_MU = 64
-const S_DEAD = 72
 const S_PARK = 80
-/// The C's ev record (EV_ below) and the export where the poller thread
-/// starts (xo_x_poll_thread).
-const S_EV = 104
+/// The export where the poller thread starts (xo_x_poll_thread).
 const S_THREAD = 112
 
-/// The ev record's words (xo_rt.c ev, asserted there): the start's state
+/// rt.static_word: the event loop's record (EV_ below), made by poll_svc
+/// (was xo_rt.c's static ev).
+const W_EV = 45
+/// Its size: the words below, Windows' last.
+const EV_SIZE = 112
+
+/// The event loop's record's words: the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
 /// pipe's read and write ends and the kqueue or epoll descriptor (C
 /// ints), the list of descriptors to free, and the count of signals not
@@ -246,7 +247,7 @@ const EV_PIPE_W = 20
 const EV_POLL = 24
 const EV_DEAD = 32
 const EV_SIGS = 40
-/// Windows' words of the ev record (xo_rt.c ev.win): the completion port,
+/// Windows' words of the ev record: the completion port,
 /// the AFD device (0: the WSAPoll fallback), the fallback's self pipe (a
 /// loopback socket pair: the read end, the write end), and its
 /// registered descriptors (the array's address, length, and capacity;
@@ -259,15 +260,15 @@ const EV_REGS = 80
 const EV_NREG = 88
 const EV_CREG = 96
 
-/// A descriptor record's size off Windows (xo_rt.c xo_pd without its
-/// AFD words).
+/// A descriptor record's size off Windows (without the AFD words of
+/// D_SIZE_WIN).
 const D_SIZE = 56
 
 const D_FD = 8
 const D_CLOSED = 12
 const D_OPS = 16
 
-/// A timer record's size (xo_rt.c struct xo_timer, 48 bytes).
+/// A timer record's size (its words end at 48).
 const T_SIZE = 64
 
 /// Whether timer t fired (a C int the poller stores after a release
@@ -284,8 +285,17 @@ pub const CANCELED = 1
 pub const CLOSED = 2
 pub const TIMEOUT = 3
 
-/// Sets the C's services record (at start, before any descriptor).
-pub fn poll_svc(rec: Int) { rt.mem_store(rt.static_word(W_SVC), 0, rec, 8) }
+/// Sets the C's services record (at start, before any descriptor), and
+/// makes the event loop's record, zeroed (never freed): its address,
+/// which the C's signal handlers keep (they count a signal and wake the
+/// poller).
+pub fn poll_svc(rec: Int) -> Int {
+  rt.mem_store(rt.static_word(W_SVC), 0, rec, 8)
+  let e = rt.heap_large(EV_SIZE)
+  rt.mem_set(e, 0, EV_SIZE)
+  rt.mem_store(rt.static_word(W_EV), 0, e, 8)
+  e
+}
 
 /// The AFD device handle on Windows (0: none, the WSAPoll loop; always 0
 /// elsewhere).
@@ -511,8 +521,8 @@ pub fn pd_free(pd: Int) {
     return
   }
   pd_close(pd)
-  let mu = svc_word(S_MU)
-  let dead = svc_word(S_DEAD)
+  let mu = addw(ev(), EV_MU)
+  let dead = addw(ev(), EV_DEAD)
   lk(mu)
   rt.mem_store(pd, D_NEXT, rt.mem_load(dead, 0, 8), 8)
   rt.mem_store(dead, 0, pd, 8)
@@ -768,8 +778,8 @@ pub fn poke() {
   }
 }
 
-/// The C's ev record.
-fn ev() -> Int { svc_word(S_EV) }
+/// The event loop's record (poll_svc made it).
+fn ev() -> Int { rt.mem_load(rt.static_word(W_EV), 0, 8) }
 
 /// The SIGINT and SIGTERM handler (cabi.xo on_signal, which entry.xo
 /// installs; was xo_rt.c's): counts the signal and wakes the poller
@@ -892,9 +902,9 @@ pub fn poll_thread() {
   poll_main(s32(rt.mem_load(e, EV_POLL, 4)), s32(rt.mem_load(e, EV_PIPE_R, 4)), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS))
 }
 
-/// The event loop's lock word (xo_rt.c ev.mu), and taking and releasing
+/// The event loop's lock word (EV_MU), and taking and releasing
 /// it.
-pub fn ev_mu() -> Int { svc_word(S_MU) }
+pub fn ev_mu() -> Int { addw(ev(), EV_MU) }
 
 pub fn ev_lock() { lk(ev_mu()) }
 
@@ -1143,7 +1153,7 @@ fn read_fd(fd: Int, a: Int, n: Int) -> Int {
 // (ev_init), registering a descriptor (pd_new: its base socket), and the
 // WSAPoll loop used when the device cannot be opened.
 
-/// xo_pd's Windows words (asserted in xo_rt.c): the poll's
+/// A descriptor record's Windows words (D_SIZE_WIN): the poll's
 /// IO_STATUS_BLOCK (its status a 32 bit NTSTATUS), the poll's buffer
 /// (AFD_POLL_INFO: the timeout, the count, exclusive, then one handle,
 /// its events, and its status), the socket's base handle, the events of
