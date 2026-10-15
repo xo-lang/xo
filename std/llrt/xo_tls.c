@@ -170,9 +170,25 @@ static int64_t tlssvc_crt_der(int64_t a, int64_t b) {
 
 // the key's parse into c (args: DER, length): 0, 1 for an unknown key
 // algorithm, 2 for another error
+// TF-PSA-Crypto 1.1.1's PKCS#8 parse of an RSA key leaves the public
+// half unset (its PKCS#1 path sets it), and mbedtls_pk_check_pair then
+// fails on a matching pair: set it here (extras/pk_internal.h's
+// mbedtls_pk_set_pubkey_from_prv, a no-op once set;
+// gotchas/mbedtls-pkcs8-rsa-check-pair.md).
+int mbedtls_pk_set_pubkey_from_prv(mbedtls_pk_context *pk);
+
 static int64_t tlssvc_key(int64_t c, int64_t a) {
 	int64_t *v = (int64_t *)(intptr_t)a;
-	int r = mbedtls_pk_parse_key(&((xo_tcert *)(intptr_t)c)->pk, (const unsigned char *)(intptr_t)v[0], (size_t)v[1], NULL, 0);
+	mbedtls_pk_context *pk = &((xo_tcert *)(intptr_t)c)->pk;
+	int r = mbedtls_pk_parse_key(pk, (const unsigned char *)(intptr_t)v[0], (size_t)v[1], NULL, 0);
+	if (r == 0 && mbedtls_pk_set_pubkey_from_prv(pk) != 0) {
+		r = -1;
+	}
+	// X25519 and X448 (RFC 8410) parse, but Go's ParsePKCS8PrivateKey
+	// does not return them to X509KeyPair: an unknown key type there
+	if (r == 0 && PSA_KEY_TYPE_ECC_GET_FAMILY(mbedtls_pk_get_key_type(pk)) == PSA_ECC_FAMILY_MONTGOMERY) {
+		r = MBEDTLS_ERR_PK_UNKNOWN_PK_ALG;
+	}
 	return r == 0 ? 0 : r == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ? 1 : 2;
 }
 

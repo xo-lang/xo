@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Mbed TLS path (XO_LLRT_C=tlssrv, and main's C): http.tls_cert accepts
+  an RSA certificate with its PKCS#8 key. TF-PSA-Crypto 1.1.1's PKCS#8
+  parse left the RSA public half unset, so mbedtls_pk_check_pair failed;
+  xo_tls.c now sets it after the parse. X25519 and X448 PKCS#8 keys are
+  an unknown key type, as Go's (gotchas/mbedtls-pkcs8-rsa-check-pair.md).
+
 - Native runtime (decision 0232, the port): the sanitizer fiber hooks,
   ThreadSanitizer's edges, pthread_create on the Linux C library, and
   fiber stacks mapped through libc under ThreadSanitizer moved from

@@ -548,3 +548,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [xo-heap-records-8-aligned.md](xo-heap-records-8-aligned.md): Observed: Xo heap blocks are 8 mod 16; a C struct needing 16 (xo_ctx's _Unwind_Exception) is misaligned (UBSan in TestGoldenASan).
 - [llvm-direct-export-call-inlines-slow-path.md](llvm-direct-export-call-inlines-slow-path.md): Observed: the LLVM emitter calling heapos.xo's exports directly let the heap's slow paths inline into alloc.xo's fast paths (alloc tasks 1.10x); call them noinline.
 - [arm64-target-enum-eq-not-folded.md](arm64-target-enum-eq-not-folded.md): Observed: `target.os == TargetOs.X` calls the enum equality at run time on arm64; test the target with `match`.
+- [mbedtls-pkcs8-rsa-check-pair.md](mbedtls-pkcs8-rsa-check-pair.md): Observed: TF-PSA-Crypto's PKCS#8 parse of an RSA key leaves the public half unset, so check_pair fails; xo_tls.c sets it.
