@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/hmac"
+	"crypto/mlkem"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -109,7 +110,7 @@ const (
 	t13Failed
 )
 
-const t13X25519, t13P256, t13P384 = 29, 23, 24
+const t13X25519, t13P256, t13P384, t13Hybrid = 29, 23, 24, 0x11ec
 
 var t13Schemes = []int{0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601}
 
@@ -348,6 +349,10 @@ func (c *t13Client) hello() []byte {
 	}
 	share := t13U16(nil, c.shareGroup)
 	share = append(share, t13Vec16(t13PublicKey(c.shareGroup, c.priv))...)
+	if len(c.t13SharedGroups()) == 2 {
+		share = t13U16(share, t13X25519)
+		share = append(share, t13Vec16(t13PublicKey(t13X25519, c.priv[64:96]))...)
+	}
 	exts = t13Ext(exts, 51, t13Vec16(share))
 	body := []byte{3, 3}
 	body = append(body, c.random...)
@@ -473,12 +478,16 @@ func (c *t13Client) serverHello(msg []byte) {
 	}
 	shared := c.conf.shared
 	if len(shared) == 0 {
-		if h.group != c.shareGroup || len(h.key) == 0 {
+		if !t13Contains(c.t13SharedGroups(), h.group) || len(h.key) == 0 {
 			c.fail(47, "tls: server selected unsupported group")
 			return
 		}
+		priv := c.priv
+		if h.group != c.shareGroup {
+			priv = c.priv[64:96]
+		}
 		var ok bool
-		if shared, ok = t13Shared(h.group, c.priv, h.key); !ok {
+		if shared, ok = t13Shared(h.group, priv, h.key); !ok {
 			c.fail(47, "tls: invalid server key share")
 			return
 		}
@@ -519,7 +528,7 @@ func (c *t13Client) retry(msg []byte, h t13Hello) {
 			c.fail(47, "tls: server selected unsupported group")
 			return
 		}
-		if h.group == c.shareGroup {
+		if t13Contains(c.t13SharedGroups(), h.group) {
 			c.fail(47, "tls: server sent an unnecessary HelloRetryRequest key_share")
 			return
 		}
@@ -878,7 +887,23 @@ func t13Curve(group int) ecdh.Curve {
 	return ecdh.P256()
 }
 
+// t13SharedGroups are the groups of the ClientHello's key shares: the
+// first group's, and X25519 next to the hybrid (from its own key).
+func (c *t13Client) t13SharedGroups() []int {
+	if c.shareGroup == t13Hybrid && t13Contains(c.conf.groups, t13X25519) {
+		return []int{t13Hybrid, t13X25519}
+	}
+	return []int{c.shareGroup}
+}
+
 func t13PublicKey(group int, priv []byte) []byte {
+	if group == t13Hybrid {
+		dk, err := mlkem.NewDecapsulationKey768(priv[:64])
+		if err != nil {
+			panic(err)
+		}
+		return append(dk.EncapsulationKey().Bytes(), t13PublicKey(t13X25519, priv[64:96])...)
+	}
 	k, err := t13Curve(group).NewPrivateKey(priv)
 	if err != nil {
 		panic(err)
@@ -887,6 +912,24 @@ func t13PublicKey(group int, priv []byte) []byte {
 }
 
 func t13Shared(group int, priv, peer []byte) ([]byte, bool) {
+	if group == t13Hybrid {
+		if len(peer) != 1088+32 {
+			return nil, false
+		}
+		x, ok := t13Shared(t13X25519, priv[64:96], peer[1088:])
+		if !ok {
+			return nil, false
+		}
+		dk, err := mlkem.NewDecapsulationKey768(priv[:64])
+		if err != nil {
+			panic(err)
+		}
+		k, err := dk.Decapsulate(peer[:1088])
+		if err != nil {
+			return nil, false
+		}
+		return append(k, x...), true
+	}
 	k, err := t13Curve(group).NewPrivateKey(priv)
 	if err != nil {
 		panic(err)

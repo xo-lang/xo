@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 17, decision 0202): the
+  Xo TLS 1.3 client offers X25519MLKEM768 (0x11ec) first, as Go 1.26's
+  client: groups [X25519MLKEM768, X25519, P-256, P-384], the hybrid key
+  share and an X25519 share from the hybrid's own X25519 key, either
+  taken from the ServerHello, a HelloRetryRequest for a group already
+  shared refused as Go's; the hybrid itself is xo-2b's mlkem.xo
+  (ML-KEM-768 and sha3.xo). Go 1.26's server negotiates X25519MLKEM768
+  with it (by hand: curve=X25519MLKEM768), as do google.com,
+  cloudflare.com, github.com and pq.cloudflareresearch.com. The Go
+  reference port does the hybrid with crypto/mlkem; tls13_go replays a
+  Go server's X25519MLKEM768 trace (whole and a byte at a time), and
+  TestTLS13ReplayDiff fuzzes it too (0 differences).
+
 - Native runtime (decision 0232, items 1 and 2): std/native/sys_c.xo
   calls C library and sanitizer functions on every native OS, with weak
   references and rt.sym_present for symbols a build may not link (arm64:
