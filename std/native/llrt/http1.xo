@@ -1794,22 +1794,44 @@ pub fn (var c: H2Conn) next() -> Bool {
 }
 
 // ---------------------------------------------------------------------------
-// The HTTP/2 client's header blocks (xo_h2.c's hp_encode and hp_decode
-// until audit item B11, 2026-10-14)
+// The HTTP/2 client (xo_h2.c's hp_encode and hp_decode until audit item
+// B11, its exchange until B29, 2026-10-14)
 //
 // rthttp.cl_start sets an HTTP/2 exchange up (a pooled connection, or a
-// new one whose ALPN chose h2) and returns before its HEADERS: Xo lists
-// the request's fields (httpcommon.EncodeHeaders) and encodes them with
-// the connection's encoder (rthttp.cl_h2_send), then the C runs the
-// exchange (rthttp.cl_h2_next) and stops at each response header block,
-// which Xo decodes (rthttp.cl_h2_block, rthttp.cl_h2_fields). The
-// connection's HPACK state is Xo's: the C keeps it with the connection
-// between requests (rthttp.cl_h2_take, rthttp.cl_h2_end).
+// new one whose ALPN chose h2, its preface and SETTINGS queued) and
+// returns before the request: Xo makes the exchange of http2
+// Transport.RoundTrip (h2_exchange): the request's HEADERS (its fields
+// as httpcommon.EncodeHeaders lists them, the connection's encoder) and
+// DATA within the server's windows, then the server's frames (SETTINGS,
+// PING, WINDOW_UPDATE, GOAWAY, RST_STREAM, HEADERS and CONTINUATION,
+// DATA) until the response ends, with Go's error texts. The C keeps the
+// socket and TLS (rthttp.cl_h2_write, cl_h2_read), the pool of
+// connections, and the end (rthttp.cl_h2_end: the retry on a new
+// connection, the failure's text). The connection's state between
+// requests (HPACK, the windows, the server's settings, the next stream)
+// is an H2State the C keeps with the connection.
 
-/// The HPACK state of a client HTTP/2 connection.
+/// The state of a client HTTP/2 connection between requests.
 struct H2State {
   dec: hpack.Dec
   enc: hpack.Enc
+  // the server's SETTINGS_HEADER_TABLE_SIZE values the encoder has not
+  // applied (4 bytes little endian each)
+  sizes: Str
+  peer_frame: Int
+  // the server's initial stream window and its connection window
+  peer_win: Int
+  win: Int
+  // our connection window (http2inflow)
+  in_avail: Int
+  in_unsent: Int
+  next_id: Int
+}
+
+/// A new connection's state (h2cc_new's settings: the server's defaults,
+/// our 1 GiB connection window).
+fn h2_state() -> H2State {
+  H2State{dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", peer_frame: 16384, peer_win: 65535, win: 65535, in_avail: 1073741824, in_unsent: 0, next_id: 1}
 }
 
 /// The largest response header block (and string) the client decodes:
@@ -1930,31 +1952,516 @@ fn (var st: H2State) block(method: Str, target: Str, host: Str, names: List[Str]
   blk
 }
 
-/// Makes the HTTP/2 request rthttp.cl_start set up on r: its header
-/// block, then the response's (the body went with the C), and the
-/// connection's HPACK state back to the C. rthttp.cl_retry tells
-/// whether the request goes again on a new connection.
+/// cl_h2_read's result for a frame over our 16 KiB SETTINGS_MAX_FRAME_SIZE.
+const CC_TOO_LARGE: Int = 104
+
+// The frame types and flags the client reads and writes (RFC 9113 6).
+const H2T_DATA: Int = 0
+const H2T_HEADERS: Int = 1
+const H2T_RST: Int = 3
+const H2T_SETTINGS: Int = 4
+const H2T_PING: Int = 6
+const H2T_GOAWAY: Int = 7
+const H2T_WINUP: Int = 8
+const H2T_CONT: Int = 9
+const H2F_END_STREAM: Int = 1
+const H2F_ACK: Int = 1
+const H2F_END_HEADERS: Int = 4
+const H2F_PADDED: Int = 8
+const H2F_PRIORITY: Int = 0x20
+
+// cl_h2_end's flags.
+const XF_BROKEN: Int = 1
+const XF_REFUSED: Int = 2
+const XF_SEEN: Int = 4
+const XF_HEADERS: Int = 8
+const XF_UNSENT: Int = 16
+const XF_GOAWAY: Int = 32
+/// the connection's stream ids ran out: not pooled
+const XF_SPENT: Int = 64
+
+/// http2ErrCode.String.
+fn h2_err_name(c: Int) -> Str {
+  let names = ["NO_ERROR", "PROTOCOL_ERROR", "INTERNAL_ERROR", "FLOW_CONTROL_ERROR", "SETTINGS_TIMEOUT", "STREAM_CLOSED", "FRAME_SIZE_ERROR", "REFUSED_STREAM", "CANCEL", "COMPRESSION_ERROR", "CONNECT_ERROR", "ENHANCE_YOUR_CALM", "INADEQUATE_SECURITY", "HTTP_1_1_REQUIRED"]
+  if c >= 0 && c < names.len() {
+    return names[c]
+  }
+  "unknown error code 0x" + hex_text(c)
+}
+
+/// The lower case hexadecimal text of v (at least one digit).
+fn hex_text(v: Int) -> Str {
+  let hex = b"0123456789abcdef"
+  var out = ""
+  var x = v
+  while true {
+    out = rt.rs_push_byte("", Int(hex[x & 15])) + out
+    x = x >> 4
+    if x == 0 {
+      break
+    }
+  }
+  out
+}
+
+fn be32_at(b: Bytes, i: Int) -> Int { (Int(b[i]) << 24) | (Int(b[i + 1]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 3]) }
+
+fn push_be32(s: Str, v: Int) -> Str {
+  rt.rs_push_word(s, ((v >> 24) & 255) | (((v >> 16) & 255) << 8) | (((v >> 8) & 255) << 16) | ((v & 255) << 24), 4)
+}
+
+/// s with the 9 byte header of a frame.
+fn push_frame(s: Str, len: Int, ty: Int, flags: Int, sid: Int) -> Str {
+  let a = rt.rs_push_word(s, ((len >> 16) & 255) | (((len >> 8) & 255) << 8) | ((len & 255) << 16), 3)
+  push_be32(rt.rs_push_word(a, ty | (flags << 8), 2), sid & 0x7FFFFFFF)
+}
+
+/// http2inflow.add: n more bytes received in a window of avail with
+/// unsent owed; the new avail and unsent and the WINDOW_UPDATE to send (0:
+/// none yet).
+fn inflow_add(avail: Int, unsent: Int, n: Int) -> (Int, Int, Int) {
+  let u = unsent + n
+  if u < 4096 && u < avail {
+    return (avail, u, 0)
+  }
+  (avail + u, 0, u)
+}
+
+/// One HTTP/2 exchange (xo_h2.c's h2x and h2rq until audit item B29).
+struct H2X {
+  st: H2State
+  method: Str
+  body: Str
+  off: Int
+  close: Bool
+  /// the frames to send next
+  out: Str
+  res: Int
+  why: Str
+  /// the connection is not to be used again, the server sent GOAWAY
+  broken: Bool
+  goaway: Bool
+  goaway_last: Int
+  goaway_code: Int
+  goaway_debug: Str
+  // the request's stream
+  id: Int
+  swin: Int
+  sin_avail: Int
+  sin_unsent: Int
+  headers: Bool
+  ended: Bool
+  seen: Bool
+  refused: Bool
+  hb: Str
+  hb_on: Bool
+  hb_flags: Int
+  hb_sid: Int
+  dec: Bool
+  // the response
+  status: Int
+}
+
+/// Sends x.out; false when the write failed (x.res).
+fn (var x: H2X) flush(r: rthttp.CResp) -> Bool {
+  if x.out.is_empty() {
+    return true
+  }
+  x.res = rthttp.cl_h2_write(r, x.out)
+  x.out = ""
+  x.res == CC_OK
+}
+
+/// Fails the request with why (with a body read failure's mark once the
+/// response header came, as net/http reports it from the body's Read).
+fn (var x: H2X) fail(had: Bool, why: Str) {
+  x.why = (if had { "\u{1}" } else { "" }) + why
+  x.res = CC_ERR
+}
+
+/// The server's frame f (header and payload; h2cc_process): false when
+/// the request failed (its text in why, the caller marks it).
+fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
+  let b = f.bytes()
+  let len = (Int(b[0]) << 16) | (Int(b[1]) << 8) | Int(b[2])
+  let ty = Int(b[3])
+  let flags = Int(b[4])
+  let sid = be32_at(b, 5) & 0x7FFFFFFF
+  if sid == x.id && sid != 0 {
+    x.seen = true
+  }
+  if x.hb_on && (ty != H2T_CONT || sid != x.hb_sid) {
+    x.broken = true
+    return (false, "connection error: PROTOCOL_ERROR")
+  }
+  if ty == H2T_SETTINGS {
+    if (flags & H2F_ACK) == 0 {
+      var i = 0
+      while i + 6 <= len {
+        let id = (Int(b[9 + i]) << 8) | Int(b[10 + i])
+        let v = be32_at(b, 11 + i)
+        if id == 4 && v <= 0x7FFFFFFF {
+          x.swin += v - x.st.peer_win
+          x.st.peer_win = v
+        } else if id == 5 && v >= 16384 && v < 16777216 {
+          x.st.peer_frame = v
+        } else if id == 1 {
+          // for the encoder, before the next request's block
+          x.st.sizes = rt.rs_push_word(x.st.sizes, v, 4)
+        }
+        i += 6
+      }
+      x.out = push_frame(x.out, 0, H2T_SETTINGS, H2F_ACK, 0)
+    }
+  } else if ty == H2T_PING {
+    if (flags & H2F_ACK) == 0 && len == 8 {
+      x.out = push_frame(x.out, 8, H2T_PING, H2F_ACK, 0) + rt.str_slice(f, 9, 17)
+    }
+  } else if ty == H2T_WINUP {
+    if len == 4 {
+      let inc = be32_at(b, 9) & 0x7FFFFFFF
+      if sid == 0 {
+        x.st.win += inc
+      } else if sid == x.id {
+        x.swin += inc
+      }
+    }
+  } else if ty == H2T_GOAWAY {
+    if len >= 8 {
+      x.goaway = true
+      x.goaway_last = be32_at(b, 9) & 0x7FFFFFFF
+      x.goaway_code = be32_at(b, 13)
+      // the debug data as a C string (to its first zero byte)
+      var e = 17
+      while e < 9 + len && b[e] != 0 {
+        e += 1
+      }
+      x.goaway_debug = rt.str_slice(f, 17, e)
+      if x.goaway_last < x.id && !x.seen {
+        // the server will not answer this stream: another connection will
+        x.refused = true
+        return (false, "http2: server sent GOAWAY")
+      }
+    }
+  } else if ty == H2T_RST {
+    if sid == x.id && len == 4 {
+      let code = be32_at(b, 9)
+      if code == 7 && !x.headers {
+        x.refused = true
+      }
+      if code == 1 {
+        x.broken = true
+      }
+      return (false, "stream error: stream ID ${x.id}; ${h2_err_name(code)}; received from peer")
+    }
+  } else if ty == H2T_HEADERS || ty == H2T_CONT {
+    var d = 9
+    var dn = len
+    if ty == H2T_HEADERS {
+      if (flags & H2F_PADDED) != 0 {
+        if dn < 1 || Int(b[9]) > dn - 1 {
+          x.broken = true
+          return (false, "connection error: PROTOCOL_ERROR")
+        }
+        dn -= 1 + Int(b[9])
+        d += 1
+      }
+      if (flags & H2F_PRIORITY) != 0 {
+        if dn < 5 {
+          x.broken = true
+          return (false, "connection error: PROTOCOL_ERROR")
+        }
+        d += 5
+        dn -= 5
+      }
+      x.hb = ""
+      x.hb_flags = flags
+      x.hb_sid = sid
+    }
+    x.hb = x.hb + rt.str_slice(f, d, d + dn)
+    if x.hb.len() > H2_MAX_RESP {
+      x.broken = true
+      return (false, "http2: response header list larger than advertised limit")
+    }
+    if (flags & H2F_END_HEADERS) == 0 {
+      x.hb_on = true
+    } else {
+      x.hb_on = false
+      x.dec = true
+    }
+  } else if ty == H2T_DATA {
+    var d = 9
+    var dn = len
+    if (flags & H2F_PADDED) != 0 {
+      if dn < 1 || Int(b[9]) > dn - 1 {
+        x.broken = true
+        return (false, "connection error: PROTOCOL_ERROR")
+      }
+      dn -= 1 + Int(b[9])
+      d += 1
+    }
+    if len > 0 {
+      let (a, un, u) = inflow_add(x.st.in_avail - len, x.st.in_unsent, len)
+      x.st.in_avail = a
+      x.st.in_unsent = un
+      if u > 0 {
+        x.out = push_be32(push_frame(x.out, 4, H2T_WINUP, 0, 0), u)
+      }
+    }
+    if sid != x.id {
+      return (true, "") // an old stream's
+    }
+    if !x.headers {
+      x.broken = true
+      return (false, "protocol error: received DATA before a HEADERS frame")
+    }
+    if x.method != "HEAD" && dn > 0 {
+      rthttp.cl_h2_data(r, rt.str_slice(f, d, d + dn))
+    }
+    if len > 0 && (flags & H2F_END_STREAM) == 0 {
+      let (a, un, u) = inflow_add(x.sin_avail - len, x.sin_unsent, len)
+      x.sin_avail = a
+      x.sin_unsent = un
+      if u > 0 {
+        x.out = push_be32(push_frame(x.out, 4, H2T_WINUP, 0, x.id), u)
+      }
+    }
+    if (flags & H2F_END_STREAM) != 0 {
+      x.ended = true
+    }
+  }
+  (true, "")
+}
+
+/// The response header block in x.hb, decoded (h2rq_headers): false
+/// when it is malformed (why says how).
+fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
+  x.dec = false
+  let f = x.st.dec.decode_part(x.hb, true, H2_MAX_RESP)
+  let end = (x.hb_flags & H2F_END_STREAM) != 0
+  if f.ok != 1 || f.used != x.hb.len() {
+    x.broken = true
+    return (false, "connection error: COMPRESSION_ERROR")
+  }
+  if x.hb_sid != x.id {
+    return (true, "") // another stream's (an old one's trailers): only the table counts
+  }
+  if x.headers {
+    // trailers: dropped (std/rt does not read them)
+    if end {
+      x.ended = true
+    }
+    return (true, "")
+  }
+  // the fields: names and values one after the other in f.data
+  var names: List[Str] = []
+  var values: List[Str] = []
+  var off = 0
+  for l in f.lens {
+    let nn = l & 0xFFFFFFFF
+    let vn = l >> 32
+    if off + nn + vn > f.data.len() {
+      break
+    }
+    names.push(rt.str_slice(f.data, off, off + nn))
+    values.push(rt.str_slice(f.data, off + nn, off + nn + vn))
+    off += nn + vn
+  }
+  var si = -1
+  var i = 0
+  while i < names.len() {
+    if names[i] == ":status" {
+      si = i
+      break
+    }
+    i += 1
+  }
+  if si < 0 {
+    return (false, "malformed response from server: missing status pseudo header")
+  }
+  let sb = values[si].bytes()
+  if sb.len() == 0 || sb.len() > 9 {
+    return (false, "malformed response from server: malformed non-numeric status pseudo header")
+  }
+  var code = 0
+  for c in sb {
+    if Int(c) < 48 || Int(c) > 57 {
+      return (false, "malformed response from server: malformed non-numeric status pseudo header")
+    }
+    code = code * 10 + Int(c) - 48
+  }
+  if code >= 100 && code <= 199 && !end {
+    return (true, "") // informational: the response follows
+  }
+  x.headers = true
+  x.status = code
+  // the header: canonical names, each once, values joined
+  var hk: List[Str] = []
+  var hv: List[Str] = []
+  i = 0
+  while i < names.len() {
+    let k = names[i]
+    if !k.is_empty() && k.bytes()[0] == 58 {
+      i += 1
+      continue
+    }
+    let ck = canonical_key(k)
+    var j = 0
+    while j < hk.len() && hk[j] != ck {
+      j += 1
+    }
+    if j < hk.len() {
+      hv[j] = hv[j] + (if ck == "Cookie" { "; " } else { ", " }) + values[i]
+    } else {
+      hk.push(ck)
+      hv.push(values[i])
+    }
+    i += 1
+  }
+  rthttp.cl_h2_response(r, code, hk, hv)
+  if end {
+    x.ended = true
+  }
+  (true, "")
+}
+
+/// Makes the HTTP/2 request rthttp.cl_start set up on r (http2
+/// Transport.RoundTrip on one stream), then hands the connection and its
+/// state back to the C (rthttp.cl_h2_end). rthttp.cl_retry tells whether
+/// the request goes again on a new connection.
 fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) {
-  var st = H2State{dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder()}
+  var st = h2_state()
   let kept = rthttp.cl_h2_take(r)
   if let Some(a) = kept.get(0) {
     if let Some(s) = rt.any_get[H2State](a) {
       st = s
     }
   }
-  st.enc.set_sizes(rthttp.cl_h2_sizes(r))
+  let (cv, has_c) = h2_field(names, values, "Connection")
+  var x = H2X{st: st, method: method, body: rthttp.cl_h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
+  x.st.enc.set_sizes(x.st.sizes)
+  x.st.sizes = ""
   let why = h2_check(names, values)
-  if why.is_empty() {
-    rthttp.cl_h2_send(r, st.block(method, target, host, names, values, bn), "")
+  if !why.is_empty() {
+    x.why = why
+    x.res = CC_ERR
   } else {
-    rthttp.cl_h2_send(r, "", why)
+    if x.close {
+      x.broken = true // not reused after this request
+    }
+    x.id = x.st.next_id
+    x.st.next_id += 2
+    x.swin = x.st.peer_win
+    x.sin_avail = 4194304
+    let blk = x.st.block(method, target, host, names, values, x.body.len())
+    // HEADERS and CONTINUATION frames of at most the server's frame size
+    var off = 0
+    var first = true
+    while first || off < blk.len() {
+      let k = if blk.len() - off > x.st.peer_frame { x.st.peer_frame } else { blk.len() - off }
+      var fl = 0
+      if off + k == blk.len() {
+        fl = fl | H2F_END_HEADERS
+      }
+      if first && x.body.is_empty() {
+        fl = fl | H2F_END_STREAM
+      }
+      x.out = push_frame(x.out, k, if first { H2T_HEADERS } else { H2T_CONT }, fl, x.id) + rt.str_slice(blk, off, off + k)
+      off += k
+      first = false
+    }
+    let _ok = x.flush(r)
   }
-  while rthttp.cl_h2_next(r) {
-    let blk = rthttp.cl_h2_block(r)
-    let f = st.dec.decode_part(blk, true, H2_MAX_RESP)
-    rthttp.cl_h2_fields(r, f.ok == 1 && f.used == blk.len(), f.data, f.lens)
+  let bn2 = x.body.len()
+  while x.res == CC_OK && !x.ended {
+    // the body, as the windows allow
+    while x.off < bn2 && !x.ended {
+      var k = bn2 - x.off
+      if k > x.st.peer_frame {
+        k = x.st.peer_frame
+      }
+      if k > x.swin {
+        k = x.swin
+      }
+      if k > x.st.win {
+        k = x.st.win
+      }
+      if k <= 0 {
+        break
+      }
+      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 { H2F_END_STREAM } else { 0 }, x.id) + rt.str_slice(x.body, x.off, x.off + k)
+      x.off += k
+      x.swin -= k
+      x.st.win -= k
+      if x.out.len() >= 65536 {
+        break
+      }
+    }
+    if !x.out.is_empty() {
+      if !x.flush(r) {
+        break
+      }
+      if x.off < bn2 && x.swin > 0 && x.st.win > 0 {
+        continue
+      }
+    }
+    let f = rthttp.cl_h2_read(r)
+    if f.is_empty() {
+      let c = rthttp.cl_h2_rres(r)
+      if c == CC_EOF {
+        x.broken = true
+        if x.goaway {
+          x.fail(x.headers, "http2: server sent GOAWAY and closed the connection; LastStreamID=${x.goaway_last}, ErrCode=${h2_err_name(x.goaway_code)}, debug=${go_quote(x.goaway_debug)}")
+        } else {
+          x.fail(x.headers, "unexpected EOF")
+        }
+      } else if c == CC_TOO_LARGE {
+        x.broken = true
+        x.fail(x.headers, "http2: frame too large")
+      } else {
+        x.res = c
+      }
+      break
+    }
+    let had = x.headers
+    let (ok, m) = x.frame(r, f)
+    if !ok {
+      x.fail(had, m)
+      break
+    }
+    if x.dec {
+      let had2 = x.headers
+      let (ok2, m2) = x.block_done(r)
+      if !ok2 {
+        x.fail(had2, m2)
+      }
+      continue
+    }
+    let _ok = x.flush(r)
   }
-  rthttp.cl_h2_end(r, rt.any_of(st))
+  var fl = 0
+  if x.broken {
+    fl = fl | XF_BROKEN
+  }
+  if x.st.next_id > 0x7FFFFFF0 {
+    fl = fl | XF_SPENT
+  }
+  if x.refused {
+    fl = fl | XF_REFUSED
+  }
+  if x.seen {
+    fl = fl | XF_SEEN
+  }
+  if x.headers {
+    fl = fl | XF_HEADERS
+  }
+  if x.off < bn2 {
+    fl = fl | XF_UNSENT
+  }
+  if x.goaway {
+    fl = fl | XF_GOAWAY
+  }
+  rthttp.cl_h2_end(r, rt.any_of(x.st), x.res, x.why, fl)
 }
 
 // ---------------------------------------------------------------------------

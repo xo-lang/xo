@@ -1489,64 +1489,6 @@ XO_NORETURN void xo_fault_at(const char *msg, int64_t n, const char *loc, int64_
 // Text of the HTTP/2 client's errors (the rest of std/http's text
 // helpers are std/native/llrt/http1.xo's)
 
-// h_go_quote appends strconv.Quote(s) (printable: ASCII graphic and
-// every rune from U+00A1 but U+00AD; an approximation of IsPrint):
-// http1.xo go_quote's C copy, for xo_h2.c's client until it moves.
-static void h_go_quote(nbuf *o, const char *p, int64_t n) {
-	nbuf_byte(o, '"');
-	const unsigned char *s = (const unsigned char *)p;
-	for (int64_t i = 0; i < n;) {
-		int size;
-		int32_t r = n_utf8_decode(s + i, n - i, &size);
-		char t[16];
-		if (r == 0xFFFD && size == 1) {
-			snprintf(t, sizeof t, "\\x%02x", s[i]);
-			nbuf_str(o, t);
-		} else if (r == '"' || r == '\\') {
-			t[0] = '\\';
-			t[1] = (char)r;
-			nbuf_put(o, t, 2);
-		} else if ((r >= 0x20 && r < 0x7f) || (r >= 0xA1 && r != 0xAD && r != 0x2028 && r != 0x2029)) {
-			nbuf_put(o, p + i, size);
-		} else {
-			switch (r) {
-			case '\a':
-				nbuf_str(o, "\\a");
-				break;
-			case '\b':
-				nbuf_str(o, "\\b");
-				break;
-			case '\f':
-				nbuf_str(o, "\\f");
-				break;
-			case '\n':
-				nbuf_str(o, "\\n");
-				break;
-			case '\r':
-				nbuf_str(o, "\\r");
-				break;
-			case '\t':
-				nbuf_str(o, "\\t");
-				break;
-			case '\v':
-				nbuf_str(o, "\\v");
-				break;
-			default:
-				if (r < 0x20 || r == 0x7f) {
-					snprintf(t, sizeof t, "\\x%02x", (unsigned)r);
-				} else if (r < 0x10000) {
-					snprintf(t, sizeof t, "\\u%04x", (unsigned)r);
-				} else {
-					snprintf(t, sizeof t, "\\U%08x", (unsigned)r);
-				}
-				nbuf_str(o, t);
-			}
-		}
-		i += size;
-	}
-	nbuf_byte(o, '"');
-}
-
 // ---------------------------------------------------------------------------
 // The client (std.md 4.5): one exchange over a connection of its own, or
 // a stream of a pooled HTTP/2 connection. Xo drives it (std/native/llrt/

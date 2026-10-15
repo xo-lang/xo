@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B29, part 1): the HTTP/2 client's
+  exchange is Xo (std/native/llrt/http1.xo h2_exchange, H2X): the
+  request's HEADERS and DATA within the server's windows, the server's
+  frames (SETTINGS, PING, WINDOW_UPDATE, GOAWAY, RST_STREAM, HEADERS and
+  CONTINUATION, DATA), the response's status and header, and Go's error
+  texts; the connection's windows, settings, and next stream are part of
+  its H2State. The C keeps the socket and TLS reads and writes, the pool,
+  and the retry (xo_cl_h2_read, write, end). http_fuzz.c no longer runs
+  the client's frame code (it is Xo's).
 - Native runtime (zero-C audit item B24): standard input's reading
   (read_line, read_all, lines, read_bytes, the buffer kept across a
   canceled read, the readers' turn) is Xo (std/native/llrt/stdin.xo); the

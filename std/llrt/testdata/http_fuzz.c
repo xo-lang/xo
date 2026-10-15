@@ -11,7 +11,7 @@
 //   - HTTP/2 (xo_h2.c, decision 0121): mutated frame sequences through the
 //     server's frame code (preface, frames, HPACK, streams, the handlers'
 //     whole and streamed responses and resets, the sending of it all)
-//     and the client's (h2cc_process).
+//     (the client's is Xo's since the zero-C audit's B29).
 //
 // No crash, no sanitizer report, no leak of the runtime's allocator (the
 // leak counter is checked after each input). Prints the number of inputs
@@ -171,8 +171,7 @@ static void run_server(const char *in, int64_t n) {
 }
 
 // HTTP/2 (decision 0121): frame sequences for the server's frame code
-// (h2_input, the handlers' responses, h2_schedule) and the client's
-// (h2cc_process), without sockets.
+// (h2_input, the handlers' responses, h2_schedule), without sockets.
 
 static void fz_frame(nbuf *b, int type, int flags, uint32_t sid, const char *p, int64_t n) {
 	h2_fh(b, (uint32_t)n, type, flags, sid);
@@ -286,45 +285,6 @@ static void run_h2_server(const char *in, int64_t n) {
 	h2c_free(c);
 }
 
-// run_h2_client feeds a server's frames to the client's frame code.
-static void run_h2_client(const char *in, int64_t n) {
-	h2cc pc;
-	memset(&pc, 0, sizeof pc);
-	pc.peer_frame = 16384;
-	pc.peer_win = pc.win = 65535;
-	pc.in.avail = (int64_t)1 << 30;
-	pc.c = (ccon){.fd = -1};
-	pc.c.buf = malloc((size_t)n + 1);
-	memcpy(pc.c.buf, in, (size_t)n);
-	pc.c.n = pc.c.cap = n;
-	pc.c.eof = 1;
-	h2rq q;
-	memset(&q, 0, sizeof q);
-	q.id = 1;
-	q.swin = 65535;
-	q.sin.avail = (int64_t)4 << 20;
-	xo_cresp r;
-	memset(&r, 0, sizeof r);
-	char why[300];
-	const char *method = rnd() % 4 == 0 ? "HEAD" : "GET";
-	for (;;) {
-		const uint8_t *h;
-		// a header block's decoding is Xo's (http1.xo h2_exchange): the
-		// run stops there, as run_h2_server's does
-		if (h2cc_frame(&pc.c, &h) != CC_OK || !h2cc_process(&pc, &q, h, &r, method, why, sizeof why) || q.ended || q.dec) {
-			break;
-		}
-	}
-	free(pc.c.buf);
-	free(pc.sizes.p);
-	free(pc.out.p);
-	free(pc.goaway_debug);
-	hl_free(&q.fields);
-	free(q.hb.p);
-	hl_free(&r.hdr);
-	free(r.body.p);
-}
-
 int main(void) {
 	const char *sec = getenv("FUZZ_SECONDS");
 	const char *seed = getenv("FUZZ_SEED");
@@ -349,22 +309,20 @@ int main(void) {
 			free(b.p);
 			// HTTP/2 frames
 			nbuf h = {0};
-			int hk = (int)(rnd() % 6);
+			// a client's frames (the client's frame code is Xo's since
+			// the zero-C audit's B29: a server's seeds are not run)
+			int hk = 2 * (int)(rnd() % 3);
 			h2_seed(&h, hk);
 			rounds = 1 + (int)(rnd() % 4);
 			for (int j = 0; j < rounds; j++) {
 				mutate(&h);
 			}
-			if (hk % 2 == 1) {
-				run_h2_client(h.p ? h.p : "", h.n);
-			} else {
-				// the client preface stays whole (mostly)
-				nbuf in = {0};
-				nbuf_str(&in, rnd() % 16 == 0 ? "PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n" : H2_PREFACE);
-				nbuf_put(&in, h.p, h.n);
-				run_h2_server(in.p, in.n);
-				free(in.p);
-			}
+			// the client preface stays whole (mostly)
+			nbuf in = {0};
+			nbuf_str(&in, rnd() % 16 == 0 ? "PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n" : H2_PREFACE);
+			nbuf_put(&in, h.p, h.n);
+			run_h2_server(in.p, in.n);
+			free(in.p);
 			free(h.p);
 			runs++;
 		}

@@ -76,21 +76,6 @@ enum { H2S_HEADER_TABLE = 1, H2S_ENABLE_PUSH, H2S_MAX_STREAMS, H2S_INITIAL_WINDO
 // a stream task waits while more than this of its body is unsent
 #define H2_BACKLOG ((int64_t)256 << 10)
 
-// h2_err_name is http2ErrCode.String.
-static const char *h2_err_name(uint32_t c, char *buf, size_t bn) {
-	static const char *names[] = {"NO_ERROR",  "PROTOCOL_ERROR",    "INTERNAL_ERROR",    "FLOW_CONTROL_ERROR", "SETTINGS_TIMEOUT",
-	                              "STREAM_CLOSED", "FRAME_SIZE_ERROR", "REFUSED_STREAM", "CANCEL",             "COMPRESSION_ERROR",
-	                              "CONNECT_ERROR", "ENHANCE_YOUR_CALM", "INADEQUATE_SECURITY", "HTTP_1_1_REQUIRED"};
-	if (c < sizeof names / sizeof names[0]) {
-		return names[c];
-	}
-	snprintf(buf, bn, "unknown error code 0x%x", (unsigned)c);
-	return buf;
-}
-
-// ---------------------------------------------------------------------------
-// Frames
-
 static uint32_t h2_get32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 
 // The frames are written by Xo (std/native/llrt/h2w.xo, the zero-C
@@ -2098,35 +2083,13 @@ typedef struct h2cc {
 	char *key; // the address and the server name
 	xo_conn *cn;
 	ccon c;
-	xo_any *hp;   // the HPACK state, Xo's (http1.xo H2State); NULL before the first request
-	nbuf sizes;   // the server's SETTINGS_HEADER_TABLE_SIZE values Xo's encoder has not applied
-	uint32_t peer_frame;
-	int64_t peer_win, win; // the server's initial stream window, its connection window
-	h2_inflow in;          // our connection window
-	uint32_t next_id;
-	int goaway;
-	uint32_t goaway_last, goaway_code;
-	char *goaway_debug;
+	xo_any *hp; // the connection's state, Xo's (http1.xo H2State); NULL before the first request
 	int broken; // not to be used again
+	int goaway; // the server sent GOAWAY
+	int spent;  // its stream ids ran out
 	int64_t idle_since;
-	nbuf out;
+	nbuf out; // the preface and SETTINGS of a new connection, sent before the first request
 } h2cc;
-
-// A request's stream.
-typedef struct {
-	uint32_t id;
-	int64_t swin;
-	h2_inflow sin;
-	int headers; // the final response header arrived
-	int ended;   // the response ended
-	int seen;    // a frame of the stream arrived
-	int refused; // REFUSED_STREAM, or a GOAWAY that excludes the stream
-	nbuf hb;
-	int hb_on, hb_flags;
-	uint32_t hb_sid;
-	int dec; // the block in hb waits for Xo's decoder (cl_h2_block, cl_h2_fields)
-	hlist fields;
-} h2rq;
 
 static struct {
 	pthread_mutex_t mu;
@@ -2146,10 +2109,8 @@ static void h2cc_free(h2cc *pc) {
 	if (pc->hp) {
 		h_release(pc->hp);
 	}
-	free(pc->sizes.p);
 	free(pc->out.p);
 	free(pc->key);
-	free(pc->goaway_debug);
 	free(pc);
 }
 
@@ -2164,11 +2125,6 @@ static h2cc *h2cc_new(xo_conn *cn, ccon *c, xo_troots *roots, const char *key) {
 	h_retain(roots);
 	pc->roots = roots;
 	pc->key = strdup(key);
-	pc->peer_frame = 16384;
-	pc->peer_win = 65535;
-	pc->win = 65535;
-	pc->in.avail = (int64_t)1 << 30;
-	pc->next_id = 1;
 	// the preface and settings of net/http's client
 	nbuf_str(&pc->out, H2_PREFACE);
 	h2_fh(&pc->out, 18, H2_SETTINGS, 0, 0);
@@ -2212,7 +2168,7 @@ static h2cc *h2_pool_take(xo_troots *roots, const char *key) {
 
 // h2_pool_put keeps pc for the next request, or closes it.
 static void h2_pool_put(h2cc *pc) {
-	if (pc->broken || pc->goaway || pc->next_id > 0x7ffffff0) {
+	if (pc->broken || pc->goaway || pc->spent) {
 		h2cc_free(pc);
 		return;
 	}
@@ -2276,273 +2232,23 @@ static int h2cc_frame(ccon *c, const uint8_t **h) {
 	}
 }
 
-// h2rq_headers takes a header block of the response into r, the fields
-// Xo decoded from it (ok: 0 a decoding error; the names and values one
-// after the other in d, their lengths in lens as xo_h2_fields'): 0 when
-// it is malformed (why says how).
-static int h2rq_headers(h2cc *pc, h2rq *q, xo_cresp *r, int ok, const char *d, int64_t dn, xo_rlist *lens, char *why, size_t wn) {
-	int end = q->hb_flags & H2F_END_STREAM;
-	hl_clear(&q->fields);
-	if (!ok) {
-		pc->broken = 1;
-		snprintf(why, wn, "connection error: COMPRESSION_ERROR");
-		return 0;
-	}
-	int64_t off = 0;
-	const int64_t *l = (const int64_t *)rl_data(lens);
-	for (int64_t i = 0; i < lens->len; i++) {
-		int64_t nn = l[i] & 0xffffffff, vn = (int64_t)((uint64_t)l[i] >> 32);
-		if (off + nn + vn > dn) {
-			break;
-		}
-		hl_add(&q->fields, hs_dup(d + off, nn), hs_dup(d + off + nn, vn));
-		off += nn + vn;
-	}
-	if (q->hb_sid != q->id) {
-		return 1; // another stream's (an old one's trailers): only the table counts
-	}
-	if (q->headers) {
-		// trailers: dropped (std/rt does not read them)
-		if (end) {
-			q->ended = 1;
-		}
-		return 1;
-	}
-	hstr st = h2_pseudo(&q->fields, ":status");
-	if (!st.p) {
-		snprintf(why, wn, "malformed response from server: missing status pseudo header");
-		return 0;
-	}
-	int64_t code = 0;
-	for (int64_t i = 0; i < st.n; i++) {
-		if (st.p[i] < '0' || st.p[i] > '9' || i >= 9) {
-			snprintf(why, wn, "malformed response from server: malformed non-numeric status pseudo header");
-			return 0;
-		}
-		code = code * 10 + (st.p[i] - '0');
-	}
-	if (st.n == 0) {
-		snprintf(why, wn, "malformed response from server: malformed non-numeric status pseudo header");
-		return 0;
-	}
-	if (code >= 100 && code <= 199 && !end) {
-		return 1; // informational: the response follows
-	}
-	q->headers = 1;
-	r->status = code;
-	hl_free(&r->hdr);
-	for (int64_t i = 0; i < q->fields.n; i++) {
-		hstr k = q->fields.a[i].k;
-		if (k.n > 0 && k.p[0] == ':') {
-			continue;
-		}
-		char *ck = xo_alloc(k.n + 1);
-		memcpy(ck, k.p, (size_t)k.n);
-		ck[k.n] = 0;
-		h_canon(ck, k.n);
-		h2_add_field(&r->hdr, ck, k.n, q->fields.a[i].v.p, q->fields.a[i].v.n);
-		xo_free(ck);
-	}
-	if (end) {
-		q->ended = 1;
-	}
-	return 1;
-}
-
-// h2cc_process handles one frame of the server: 0 when the request
-// failed (why set).
-static int h2cc_process(h2cc *pc, h2rq *q, const uint8_t *h, xo_cresp *r, const char *method, char *why, size_t wn) {
-	uint32_t len = (uint32_t)h[0] << 16 | (uint32_t)h[1] << 8 | h[2];
-	int type = h[3], flags = h[4];
-	uint32_t sid = h2_get32(h + 5) & 0x7fffffff;
-	const uint8_t *p = h + 9;
-	if (sid == q->id && sid != 0) {
-		q->seen = 1;
-	}
-	if (q->hb_on && (type != H2_CONT || sid != q->hb_sid)) {
-		pc->broken = 1;
-		snprintf(why, wn, "connection error: PROTOCOL_ERROR");
-		return 0;
-	}
-	switch (type) {
-	case H2_SETTINGS:
-		if (flags & H2F_ACK) {
-			break;
-		}
-		for (uint32_t i = 0; i + 6 <= len; i += 6) {
-			int id = p[i] << 8 | p[i + 1];
-			uint32_t v = h2_get32(p + i + 2);
-			if (id == H2S_INITIAL_WINDOW && v <= 0x7fffffff) {
-				q->swin += (int64_t)v - pc->peer_win;
-				pc->peer_win = v;
-			} else if (id == H2S_MAX_FRAME && v >= 16384 && v < (1 << 24)) {
-				pc->peer_frame = v;
-			} else if (id == H2S_HEADER_TABLE) {
-				// for Xo's encoder, before the next request's block
-				char w[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)};
-				nbuf_put(&pc->sizes, w, 4);
-			}
-		}
-		h2_fh(&pc->out, 0, H2_SETTINGS, H2F_ACK, 0);
-		break;
-	case H2_PING:
-		if (!(flags & H2F_ACK) && len == 8) {
-			h2_fh(&pc->out, 8, H2_PING, H2F_ACK, 0);
-			nbuf_put(&pc->out, (const char *)p, 8);
-		}
-		break;
-	case H2_WINUP:
-		if (len == 4) {
-			uint32_t inc = h2_get32(p) & 0x7fffffff;
-			if (sid == 0) {
-				pc->win += inc;
-			} else if (sid == q->id) {
-				q->swin += inc;
-			}
-		}
-		break;
-	case H2_GOAWAY:
-		if (len >= 8) {
-			pc->goaway = 1;
-			pc->goaway_last = h2_get32(p) & 0x7fffffff;
-			pc->goaway_code = h2_get32(p + 4);
-			free(pc->goaway_debug);
-			pc->goaway_debug = cstr_of((const char *)p + 8, len - 8);
-			if (pc->goaway_last < q->id && !q->seen) {
-				// the server will not answer this stream: another
-				// connection will
-				q->refused = 1;
-				snprintf(why, wn, "http2: server sent GOAWAY");
-				return 0;
-			}
-		}
-		break;
-	case H2_RST:
-		if (sid == q->id && len == 4) {
-			uint32_t code = h2_get32(p);
-			if (code == H2E_REFUSED && !q->headers) {
-				q->refused = 1;
-			}
-			if (code == H2E_PROTOCOL) {
-				pc->broken = 1;
-			}
-			char nb[40];
-			snprintf(why, wn, "stream error: stream ID %u; %s; received from peer", (unsigned)q->id, h2_err_name(code, nb, sizeof nb));
-			return 0;
-		}
-		break;
-	case H2_HEADERS:
-	case H2_CONT: {
-		const uint8_t *d = p;
-		int64_t dn = len;
-		if (type == H2_HEADERS) {
-			if (flags & H2F_PADDED) {
-				if (dn < 1 || p[0] > dn - 1) {
-					pc->broken = 1;
-					snprintf(why, wn, "connection error: PROTOCOL_ERROR");
-					return 0;
-				}
-				dn -= 1 + p[0];
-				d++;
-			}
-			if (flags & H2F_PRIORITY) {
-				if (dn < 5) {
-					pc->broken = 1;
-					snprintf(why, wn, "connection error: PROTOCOL_ERROR");
-					return 0;
-				}
-				d += 5;
-				dn -= 5;
-			}
-			q->hb.n = 0;
-			q->hb_flags = flags;
-			q->hb_sid = sid;
-		}
-		nbuf_put(&q->hb, (const char *)d, dn);
-		if (q->hb.n > (10 << 20)) {
-			pc->broken = 1;
-			snprintf(why, wn, "http2: response header list larger than advertised limit");
-			return 0;
-		}
-		if (!(flags & H2F_END_HEADERS)) {
-			q->hb_on = 1;
-			break;
-		}
-		q->hb_on = 0;
-		q->dec = 1; // Xo decodes it (xo_cl_h2_next returns)
-		break;
-	}
-	case H2_DATA: {
-		const uint8_t *d = p;
-		int64_t dn = len;
-		if (flags & H2F_PADDED) {
-			if (dn < 1 || p[0] > dn - 1) {
-				pc->broken = 1;
-				snprintf(why, wn, "connection error: PROTOCOL_ERROR");
-				return 0;
-			}
-			dn -= 1 + p[0];
-			d++;
-		}
-		if (len > 0) {
-			pc->in.avail -= len;
-			int64_t u = h2_inflow_add(&pc->in, len);
-			if (u > 0) {
-				h2_put_winup(&pc->out, 0, (uint32_t)u);
-			}
-		}
-		if (sid != q->id) {
-			break; // an old stream's
-		}
-		if (!q->headers) {
-			pc->broken = 1;
-			snprintf(why, wn, "protocol error: received DATA before a HEADERS frame");
-			return 0;
-		}
-		if (strcmp(method, "HEAD") != 0) {
-			nbuf_put(&r->body, (const char *)d, dn);
-		}
-		if (len > 0 && !(flags & H2F_END_STREAM)) {
-			q->sin.avail -= len;
-			int64_t u = h2_inflow_add(&q->sin, len);
-			if (u > 0) {
-				h2_put_winup(&pc->out, q->id, (uint32_t)u);
-			}
-		}
-		if (flags & H2F_END_STREAM) {
-			q->ended = 1;
-		}
-		break;
-	}
-	default:
-		break;
-	}
-	return 1;
-}
-
-// An exchange on HTTP/2 connection pc (http2 Transport.RoundTrip), which
-// Xo drives (http1.xo h2_exchange) since its header blocks are Xo's: C
-// never calls compiled Xo (decision 0180), so it stops where Xo encodes
-// the request's block (xo_cl_h2_send) and at each response block Xo
-// decodes (xo_cl_h2_next, xo_cl_h2_fields), then xo_cl_h2_end puts the
-// connection back and sets the response or the failure. A failure after
-// the response header came (reading the body) has why starting with \1:
-// net/http reports it from the body's Read, without the method and URL.
+// An exchange on HTTP/2 connection pc (http2 Transport.RoundTrip) is
+// Xo's (std/native/llrt/http1.xo h2_exchange, the zero-C audit's B29):
+// the C gives it the connection's state (xo_cl_h2_take), the body, the
+// socket's reads and writes, and takes the response; xo_cl_h2_end puts
+// the connection back and sets the failure or the retry.
 struct h2x {
 	h2cc *pc;
 	int pooled; // pc came from the pool (a failure before an answer is retried)
-	h2rq q;
-	char *method;
 	char *body;
-	int64_t bn, off; // the body and how much of it went out
-	int close;       // Connection: close (pc is not reused)
-	int res;         // CC_OK while the exchange goes on, else how it ended
-	char why[400];
+	int64_t bn;
+	int rres; // why xo_cl_h2_read gave no frame (CC_*, CC_ERR + 100: too large)
 };
 
-// h2x_start sets r up for the exchange of the request on pc (the method,
-// the body, the deadline, the header: names canonical, each once).
+// h2x_start sets r up for the exchange of the request on pc (the body,
+// the deadline).
 static void h2x_start(xo_cresp *r, h2cc *pc, int pooled, const char *method, const char *body, int64_t bn, int64_t when, hlist *hdr) {
+	(void)method, (void)hdr;
 	h2x *x = calloc(1, sizeof(h2x));
 	char *b = malloc(bn > 0 ? (size_t)bn : 1);
 	if (!x || !b) {
@@ -2551,12 +2257,8 @@ static void h2x_start(xo_cresp *r, h2cc *pc, int pooled, const char *method, con
 	memcpy(b, body, (size_t)bn);
 	x->pc = pc;
 	x->pooled = pooled;
-	x->method = strdup(method);
 	x->body = b;
 	x->bn = bn;
-	int64_t ci = hl_find(hdr, "Connection");
-	x->close = ci >= 0 && hs_eq(hdr->a[ci].v, "close");
-	x->res = CC_OK;
 	r->h2 = x;
 	pc->c.when = when;
 	tls_set_when(pc->c.tls, when);
@@ -2568,9 +2270,6 @@ static void h2x_free(h2x *x) {
 		return;
 	}
 	h2cc_free(x->pc);
-	hl_free(&x->q.fields);
-	free(x->q.hb.p);
-	free(x->method);
 	free(x->body);
 	free(x);
 }
@@ -2579,8 +2278,8 @@ int64_t xo_cl_h2(xo_cresp *r) { return r->h2 != NULL; }
 
 int64_t xo_cl_retry(xo_cresp *r) { return r->retry; }
 
-// xo_cl_h2_take moves the connection's HPACK state out to Xo: a list of
-// one, empty before the connection's first request.
+// xo_cl_h2_take moves the connection's state out to Xo: a list of one,
+// empty before the connection's first request.
 xo_rlist *xo_cl_h2_take(xo_cresp *r) {
 	h2cc *pc = r->h2->pc;
 	xo_rlist *l = xo_rl_new(4, 8);
@@ -2592,169 +2291,85 @@ xo_rlist *xo_cl_h2_take(xo_cresp *r) {
 	return l;
 }
 
-// xo_cl_h2_sizes is the server's SETTINGS_HEADER_TABLE_SIZE values since
-// the connection's last request (4 bytes little endian each), for Xo's
-// encoder.
-xo_rstr *xo_cl_h2_sizes(xo_cresp *r, int64_t *len) {
-	h2cc *pc = r->h2->pc;
-	xo_rstr *s = nstr(pc->sizes.p ? pc->sizes.p : "", pc->sizes.n, len);
-	pc->sizes.n = 0;
-	return s;
-}
-
-// xo_cl_h2_send sends the HEADERS of the request with the block Xo
-// encoded (and as much of the body as the windows allow, in
-// xo_cl_h2_next), or fails the request with why (checkConnHeaders).
-void xo_cl_h2_send(xo_cresp *r, const char *blk, int64_t bn, const char *why, int64_t wn) {
-	h2x *x = r->h2;
-	h2cc *pc = x->pc;
-	h2rq *q = &x->q;
-	if (wn > 0) {
-		snprintf(x->why, sizeof x->why, "%.*s", (int)wn, why);
-		x->res = CC_ERR;
-		return;
-	}
-	if (x->close) {
-		pc->broken = 1; // not reused after this request
-	}
-	q->id = pc->next_id;
-	pc->next_id += 2;
-	q->swin = pc->peer_win;
-	q->sin.avail = (int64_t)4 << 20;
-	h2_put_block(&pc->out, q->id, blk, bn, x->bn == 0, pc->peer_frame);
-	x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
-	pc->out.n = 0;
+// xo_cl_h2_body is the request's body (the response's is empty so far).
+xo_rstr *xo_cl_h2_body(xo_cresp *r, int64_t *len) {
 	r->body.n = 0;
+	return nstr(r->h2->body, r->h2->bn, len);
 }
 
-// xo_cl_h2_next runs the exchange: 1 when a response header block waits
-// for Xo's decoder (xo_cl_h2_block, xo_cl_h2_fields), 0 when the
-// exchange is over (xo_cl_h2_end).
-int64_t xo_cl_h2_next(xo_cresp *r) {
-	h2x *x = r->h2;
-	h2cc *pc = x->pc;
-	h2rq *q = &x->q;
-	while (x->res == CC_OK && !q->ended) {
-		// the body, as the windows allow
-		while (x->off < x->bn && !q->ended) {
-			int64_t k = x->bn - x->off;
-			if (k > pc->peer_frame) {
-				k = pc->peer_frame;
-			}
-			if (k > q->swin) {
-				k = q->swin;
-			}
-			if (k > pc->win) {
-				k = pc->win;
-			}
-			if (k <= 0) {
-				break;
-			}
-			h2_fh(&pc->out, (uint32_t)k, H2_DATA, x->off + k == x->bn ? H2F_END_STREAM : 0, q->id);
-			nbuf_put(&pc->out, x->body + x->off, k);
-			x->off += k;
-			q->swin -= k;
-			pc->win -= k;
-			if (pc->out.n >= (64 << 10)) {
-				break;
-			}
-		}
-		if (pc->out.n > 0) {
-			x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
-			pc->out.n = 0;
-			if (x->res != CC_OK) {
-				break;
-			}
-			if (x->off < x->bn && q->swin > 0 && pc->win > 0) {
-				continue;
-			}
-		}
-		const uint8_t *h;
-		int f = h2cc_frame(&pc->c, &h);
-		if (f == CC_EOF) {
-			pc->broken = 1;
-			if (pc->goaway) {
-				char nb[40];
-				nbuf gq = {0};
-				h_go_quote(&gq, pc->goaway_debug ? pc->goaway_debug : "", pc->goaway_debug ? (int64_t)strlen(pc->goaway_debug) : 0);
-				nbuf_byte(&gq, 0);
-				snprintf(x->why, sizeof x->why, "%shttp2: server sent GOAWAY and closed the connection; LastStreamID=%u, ErrCode=%s, debug=%s",
-				         q->headers ? "\1" : "", (unsigned)pc->goaway_last, h2_err_name(pc->goaway_code, nb, sizeof nb), gq.p);
-				free(gq.p);
-			} else {
-				snprintf(x->why, sizeof x->why, "%sunexpected EOF", q->headers ? "\1" : "");
-			}
-			x->res = CC_ERR;
-			break;
-		}
-		if (f == CC_ERR + 100) {
-			pc->broken = 1;
-			snprintf(x->why, sizeof x->why, "%shttp2: frame too large", q->headers ? "\1" : "");
-			x->res = CC_ERR;
-			break;
-		}
-		if (f != CC_OK) {
-			x->res = f;
-			break;
-		}
-		int had = q->headers;
-		char m[300] = "";
-		if (!h2cc_process(pc, q, h, r, x->method, m, sizeof m)) {
-			snprintf(x->why, sizeof x->why, "%s%s", had ? "\1" : "", m);
-			x->res = CC_ERR;
-			break;
-		}
-		if (q->dec) {
-			return 1;
-		}
-		if (pc->out.n > 0) {
-			x->res = cc_send(&pc->c, pc->out.p, pc->out.n);
-			pc->out.n = 0;
-		}
+// xo_cl_h2_write sends what the connection queued (a new one's preface)
+// and then the n bytes at p: a CC_* result.
+int64_t xo_cl_h2_write(xo_cresp *r, const char *p, int64_t n) {
+	h2cc *pc = r->h2->pc;
+	if (pc->out.n == 0) {
+		return cc_send(&pc->c, p, n);
 	}
-	return 0;
+	nbuf_put(&pc->out, p, n);
+	int res = cc_send(&pc->c, pc->out.p, pc->out.n);
+	pc->out.n = 0;
+	return res;
 }
 
-// xo_cl_h2_block is the response header block Xo decodes.
-xo_rstr *xo_cl_h2_block(xo_cresp *r, int64_t *len) {
-	h2rq *q = &r->h2->q;
-	return nstr(q->hb.p ? q->hb.p : "", q->hb.n, len);
-}
-
-// xo_cl_h2_fields takes the fields Xo decoded from the block (ok: 0 a
-// decoding error; d and lens as xo_h2_fields'); xo_cl_h2_next goes on.
-void xo_cl_h2_fields(xo_cresp *r, int64_t ok, const char *d, int64_t dn, xo_rlist *lens) {
+// xo_cl_h2_read is the server's next frame (the header and the payload),
+// or "" with the reason in xo_cl_h2_rres.
+xo_rstr *xo_cl_h2_read(xo_cresp *r, int64_t *len) {
 	h2x *x = r->h2;
-	h2rq *q = &x->q;
-	q->dec = 0;
-	int had = q->headers;
-	char m[300] = "";
-	if (!h2rq_headers(x->pc, q, r, (int)ok, d, dn, lens, m, sizeof m)) {
-		snprintf(x->why, sizeof x->why, "%s%s", had ? "\1" : "", m);
-		x->res = CC_ERR;
+	const uint8_t *h;
+	int f = h2cc_frame(&x->pc->c, &h);
+	if (f != CC_OK) {
+		x->rres = f;
+		return nstr("", 0, len);
+	}
+	return nstr((const char *)h, 9 + ((int64_t)h[0] << 16 | (int64_t)h[1] << 8 | h[2]), len);
+}
+
+int64_t xo_cl_h2_rres(xo_cresp *r) { return r->h2->rres; }
+
+// xo_cl_h2_response sets the response's status and header (canonical
+// names, each once).
+void xo_cl_h2_response(xo_cresp *r, int64_t status, xo_rlist *names, xo_rlist *values) {
+	r->status = status;
+	hl_free(&r->hdr);
+	for (int64_t i = 0; i < names->len && i < values->len; i++) {
+		xo_rstr *k = ((xo_rstr **)rl_data(names))[2 * i];
+		int64_t kn = ((int64_t *)rl_data(names))[2 * i + 1];
+		xo_rstr *v = ((xo_rstr **)rl_data(values))[2 * i];
+		int64_t vn = ((int64_t *)rl_data(values))[2 * i + 1];
+		hl_add(&r->hdr, hs_dup(k->data, kn), hs_dup(v->data, vn));
 	}
 }
 
-// xo_cl_h2_end ends the exchange: the connection keeps Xo's HPACK state
-// st and goes back to the pool (or closes), and r gets the failure. A
-// request the server did not take on a pooled connection (it closed it,
-// a GOAWAY that excludes it, REFUSED_STREAM) sets cl_retry instead: Xo
-// sends it again on a new connection, as Transport retries it.
-void xo_cl_h2_end(xo_cresp *r, xo_any *st) {
+// xo_cl_h2_data adds the n bytes at p to the response's body.
+void xo_cl_h2_data(xo_cresp *r, const char *p, int64_t n) { nbuf_put(&r->body, p, n); }
+
+// http1.xo's flags of xo_cl_h2_end
+enum { XF_BROKEN = 1, XF_REFUSED = 2, XF_SEEN = 4, XF_HEADERS = 8, XF_UNSENT = 16, XF_GOAWAY = 32, XF_SPENT = 64 };
+
+// xo_cl_h2_end ends the exchange: res (CC_*) and the wn bytes of why at
+// wp are how it ended, flags (XF_*) the stream's and the connection's
+// state. The connection keeps Xo's state st and goes back to the pool
+// (or closes), and r gets the failure. A request the server did not take
+// on a pooled connection (it closed it, a GOAWAY that excludes it,
+// REFUSED_STREAM) sets cl_retry instead: Xo sends it again on a new
+// connection, as Transport retries it.
+void xo_cl_h2_end(xo_cresp *r, xo_any *st, int64_t res, const char *wp, int64_t wn, int64_t flags) {
 	h2x *x = r->h2;
 	h2cc *pc = x->pc;
-	h2rq *q = &x->q;
 	h_retain(st);
 	if (pc->hp) {
 		h_release(pc->hp);
 	}
 	pc->hp = st;
-	int res = x->res;
+	char why[400];
+	snprintf(why, sizeof why, "%.*s", (int)wn, wn > 0 ? wp : "");
+	pc->broken = (flags & XF_BROKEN) != 0;
+	pc->goaway = (flags & XF_GOAWAY) != 0;
+	pc->spent = (flags & XF_SPENT) != 0;
 	if (res != CC_OK && res != CC_ERR) {
 		pc->broken = 1; // a timeout or cancellation left the stream open
 	}
-	int retry = q->refused || (res != CC_OK && !q->seen && res == CC_ERR && pc->broken && !q->headers);
-	if (res == CC_OK && x->off < x->bn) {
+	int retry = (flags & XF_REFUSED) || (res != CC_OK && !(flags & XF_SEEN) && res == CC_ERR && pc->broken && !(flags & XF_HEADERS));
+	if (res == CC_OK && (flags & XF_UNSENT)) {
 		// the response came before the whole body: the stream is reset
 		pc->broken = 1;
 	}
@@ -2767,12 +2382,12 @@ void xo_cl_h2_end(xo_cresp *r, xo_any *st) {
 		r->retry = 1;
 	} else {
 		char *alert = NULL;
-		if (!x->pooled && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && !x->why[0]) {
+		if (!x->pooled && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && !why[0]) {
 			const char *ta = tls_alert(pc->c.tls);
 			alert = ta ? strdup(ta) : NULL;
 		}
 		h2_pool_put(pc);
-		cl_finish(r, res, x->why, alert);
+		cl_finish(r, (int)res, why, alert);
 		free(alert);
 	}
 	r->h2 = NULL;
