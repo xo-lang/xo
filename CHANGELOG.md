@@ -25,6 +25,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   cases against Go's x509.Verify (outcome and chain). Not on the TLS path
   yet.
 
+- Native runtime (zero-C audit item B31, TLS primitives 4, decision
+  0202): X25519 in Xo (std/native/llrt/x25519.xo), RFC 7748, as Go's
+  crypto/ecdh X25519, constant time: the Montgomery ladder over all 255
+  bits with masked swaps on ed25519.xo's field arithmetic (now shared:
+  its field functions are pub, field_workspace gives x25519.xo its own
+  slots). A low order point gives all zeros, which the TLS layer must
+  reject as Go's ECDH does. crypto_op's "x25519" area; the golden
+  crypto_prims checks RFC 7748's 5.2 vectors and 1,000 iterations, 6.1's
+  key exchange, low order and non canonical points, and random scalars
+  against Go. Not on the TLS path yet.
+
 - Native runtime (zero-C audit item B31, TLS primitives 3, decision
   0202): ChaCha20, Poly1305, and the ChaCha20-Poly1305 AEAD in Xo
   (std/native/llrt/chacha.xo), RFC 8439 (12 byte nonce, 16 byte tag),

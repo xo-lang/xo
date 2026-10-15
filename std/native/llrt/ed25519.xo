@@ -73,6 +73,15 @@ const TABLE: Int = 2512
 // the workspace in words
 const WSIZE: Int = 634
 
+/// The byte offset past this file's slots in a workspace from
+/// field_workspace (8 * WSIZE): x25519.xo's elements start there.
+pub const SPARE: Int = 5072
+
+/// A zeroed workspace for the field operations alone (fe_inv's
+/// temporaries) and extra words more from SPARE, without the curve's
+/// constants (x25519.xo).
+pub fn field_workspace(extra: Int) -> List[Int] { raw.zero_ints(WSIZE + extra) }
+
 fn at(m: Int, off: Int) -> Int { rt.int_wrap(0, m, off) }
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
@@ -96,7 +105,7 @@ fn workspace() -> List[Int] {
 }
 
 /// The address of the workspace's first word.
-fn base(w: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(w), rt.layout(2)) }
+pub fn base(w: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(w), rt.layout(2)) }
 
 fn set5(h: Int, a: Int, b: Int, c: Int, d: Int, e: Int) {
   st(h, 0, a)
@@ -127,10 +136,10 @@ fn carry_store(h: Int, a0: Int, a1: Int, a2: Int, a3: Int, a4: Int) {
   st(h, 32, v4 & M51)
 }
 
-fn fe_set(h: Int, x: Int) { set5(h, x, 0, 0, 0, 0) }
+pub fn fe_set(h: Int, x: Int) { set5(h, x, 0, 0, 0, 0) }
 
 /// h = f + g, carried.
-fn fe_add(h: Int, f: Int, g: Int) {
+pub fn fe_add(h: Int, f: Int, g: Int) {
   let a0 = rt.int_wrap(0, ld(f, 0), ld(g, 0))
   let a1 = rt.int_wrap(0, ld(f, 8), ld(g, 8))
   let a2 = rt.int_wrap(0, ld(f, 16), ld(g, 16))
@@ -150,7 +159,7 @@ fn fe_add(h: Int, f: Int, g: Int) {
 
 /// h = f - g, carried: f + 4p - g limb by limb, so that no limb goes
 /// below zero (g carried).
-fn fe_sub(h: Int, f: Int, g: Int) {
+pub fn fe_sub(h: Int, f: Int, g: Int) {
   let a0 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 0), 0x1FFFFFFFFFFFB4), ld(g, 0))
   let a1 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 8), 0x1FFFFFFFFFFFFC), ld(g, 8))
   let a2 = rt.int_wrap(1, rt.int_wrap(0, ld(f, 16), 0x1FFFFFFFFFFFFC), ld(g, 16))
@@ -181,7 +190,7 @@ fn fe_neg(h: Int, f: Int, z: Int) {
 /// mod 2^51 (limb 1: shifts of 12, then p >> 52 counts twice); the low
 /// parts add to their column, the high parts to the next, and the top
 /// column's wrap to limbs 0 and 1 times 19.
-fn fe_mul(h: Int, f: Int, g: Int) {
+pub fn fe_mul(h: Int, f: Int, g: Int) {
   let e0 = rt.int_wrap(3, ld(f, 0), 13)
   let e1 = rt.int_wrap(3, ld(f, 8), 12)
   let e2 = rt.int_wrap(3, ld(f, 16), 13)
@@ -263,7 +272,7 @@ fn fe_mul(h: Int, f: Int, g: Int) {
 
 /// h = f * f (h may be f; limbs as fe_mul's f): fe_mul's products, each
 /// pair once and doubled.
-fn fe_sq(h: Int, f: Int) {
+pub fn fe_sq(h: Int, f: Int) {
   let f0 = ld(f, 0)
   let f1 = ld(f, 8)
   let f2 = ld(f, 16)
@@ -368,7 +377,7 @@ fn fe_pow250(m: Int, z: Int) {
 }
 
 /// h = z^(p - 2) = 1/z.
-fn fe_inv(m: Int, h: Int, z: Int) {
+pub fn fe_inv(m: Int, h: Int, z: Int) {
   fe_pow250(m, z)
   fe_sqn(at(m, IT), at(m, Z250), 5)
   fe_mul(h, at(m, IT), at(m, Z11))
@@ -383,7 +392,7 @@ fn fe_pow22523(m: Int, h: Int, z: Int) {
 
 /// The canonical encoding of f (reduced below p) as four little endian
 /// words at BW.
-fn fe_bytes(m: Int, f: Int) {
+pub fn fe_bytes(m: Int, f: Int) {
   let c = at(m, FB)
   copy(c, f, 5)
   carry_store(c, ld(c, 0), ld(c, 8), ld(c, 16), ld(c, 24), ld(c, 32))
@@ -417,14 +426,14 @@ fn fe_bytes(m: Int, f: Int) {
 }
 
 /// The four words at BW.
-fn bw(m: Int) -> List[Int] {
+pub fn bw(m: Int) -> List[Int] {
   let o = at(m, BW)
   [ld(o, 0), ld(o, 8), ld(o, 16), ld(o, 24)]
 }
 
 /// h = the 255 low bits of the little endian words s (not reduced: a
 /// value of p or more is kept, as edwards25519's SetBytes).
-fn fe_from_words(h: Int, s: List[Int]) {
+pub fn fe_from_words(h: Int, s: List[Int]) {
   st(h, 0, s[0] & M51)
   st(h, 8, (rt.int_wrap(4, s[0], 51) | rt.int_wrap(3, s[1], 13)) & M51)
   st(h, 16, (rt.int_wrap(4, s[1], 38) | rt.int_wrap(3, s[2], 26)) & M51)

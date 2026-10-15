@@ -55,6 +55,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoAES(what, a, b, c, d)
 	case "chacha":
 		r, ok = cryptoChaCha(what, a, b, c, d)
+	case "x25519":
+		r, ok = cryptoX25519(what, a, b)
 	case "chain":
 		r, ok = cryptoChain(what, a, b, c, d)
 	}
@@ -546,4 +548,28 @@ func chachaTag(key, nonce, ct, aad []byte) []byte {
 	m = binary.LittleEndian.AppendUint64(m, uint64(len(aad)))
 	m = binary.LittleEndian.AppendUint64(m, uint64(len(ct)))
 	return poly1305(chachaBlock(key, 0, nonce)[:32], m)
+}
+
+// cryptoX25519 is x25519.xo's op: all zeros where Go's ECDH reports a
+// low order point.
+func cryptoX25519(what string, a, b Bytes) (Bytes, bool) {
+	k, err := ecdh.X25519().NewPrivateKey([]byte(a))
+	if err != nil {
+		panic(err)
+	}
+	switch what {
+	case "base":
+		return Bytes(k.PublicKey().Bytes()), true
+	case "mult":
+		p, err := ecdh.X25519().NewPublicKey([]byte(b))
+		if err != nil {
+			panic(err)
+		}
+		s, err := k.ECDH(p)
+		if err != nil {
+			return Bytes(make([]byte, 32)), true
+		}
+		return Bytes(s), true
+	}
+	return "", false
 }

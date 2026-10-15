@@ -109,6 +109,7 @@ fn main(os: Os) {
   os.stdio.println("label384 ${hex(op("hkdf.label384", prk384, b"key", e, b"32"))}")
   aes_checks(os)
   chacha_checks(os)
+  x25519_checks(os)
 }
 
 fn aes_checks(os: Os) {
@@ -214,4 +215,46 @@ fn chacha_checks(os: Os) {
     }
   }
   os.stdio.println("chacha sweep ${hex(op("hash.sha256", all.freeze(), e, e, e))} opened ${opened}")
+}
+
+fn x25519_checks(os: Os) {
+  let e = b""
+  check(os, "x25519 7748 5.2 1", op("x25519.mult", unhex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"), unhex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"), e, e), "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
+  os.stdio.println("x25519 7748 5.2 2 ${hex(op("x25519.mult", unhex("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"), unhex("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"), e, e))}")
+  // RFC 7748 5.2's iteration: k, u = X25519(k, u), k
+  var k = unhex("0900000000000000000000000000000000000000000000000000000000000000")
+  var u = k
+  for i in 0..1000 {
+    let r = op("x25519.mult", k, u, e, e)
+    u = k
+    k = r
+    if i == 0 {
+      check(os, "x25519 7748 iter 1", k, "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079")
+    }
+  }
+  check(os, "x25519 7748 iter 1000", k, "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51")
+  // RFC 7748 6.1
+  let ak = unhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+  let bk = unhex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
+  let ap = op("x25519.base", ak, e, e, e)
+  let bp = op("x25519.base", bk, e, e, e)
+  check(os, "x25519 7748 6.1 alice", ap, "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+  check(os, "x25519 7748 6.1 bob", bp, "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
+  let s1 = op("x25519.mult", ak, bp, e, e)
+  os.stdio.println("x25519 7748 6.1 shared ${hex(s1)} agree ${hex(op("x25519.mult", bk, ap, e, e)) == hex(s1)}")
+  // edge points (Wycheproof's kinds): zero, one, low order, p, p + 1,
+  // the top bit set, all ones
+  let edges = ["0000000000000000000000000000000000000000000000000000000000000000", "0100000000000000000000000000000000000000000000000000000000000000", "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800", "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1ccc", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+  for p in edges {
+    os.stdio.println("x25519 edge ${p[0..8]} ${hex(op("x25519.mult", ak, unhex(p), e, e))}")
+  }
+  // random scalars and points, hashed
+  var all = BytesBuilder.new()
+  var seed = op("hash.sha512", b"x25519 sweep", e, e, e)
+  for _ in 0..64 {
+    seed = op("hash.sha512", seed, e, e, e)
+    all.write(op("x25519.mult", seed[0..32], seed[32..64], e, e))
+    all.write(op("x25519.base", seed[32..64], e, e, e))
+  }
+  os.stdio.println("x25519 sweep ${hex(op("hash.sha256", all.freeze(), e, e, e))}")
 }
