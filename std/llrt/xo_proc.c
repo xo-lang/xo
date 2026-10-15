@@ -117,33 +117,6 @@ static int pr_pipe2(int p[2], int nb) {
 	p[nb] = s;
 	return 0;
 }
-#else
-#include <spawn.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-
-extern char **environ;
-
-#define pr_rd read
-#define pr_wr write
-
-// pr_reap reaps pid when it has exited (waiting when block): 1 and its
-// wait status in *ws, else 0 (-1 on an error).
-static int pr_reap(pid_t pid, int *ws, int block) {
-	pid_t r = waitpid(pid, ws, block ? 0 : WNOHANG);
-	if (r == pid) {
-		return 1;
-	}
-	return r < 0 && errno != EINTR ? -1 : 0;
-}
-
-static void pr_kill9(pid_t pid) { kill(pid, SIGKILL); }
-
-static void pr_release(pid_t pid) {
-	int ws;
-	waitpid(pid, &ws, WNOHANG);
-}
-#endif
 
 
 // FakeProc.on_run's outputs are std/native/llrt/testworld.xo's (the
@@ -159,7 +132,6 @@ __attribute__((weak)) int64_t xo_x_tw_proc_find(int64_t p, int64_t n) {
 	return 0;
 }
 
-#ifdef _WIN32
 static xo_rlist *pr_outputs(int64_t code, const char *o, int64_t on, const char *e, int64_t en) {
 	char t[32];
 	int k = snprintf(t, sizeof t, "%lld", (long long)code);
@@ -169,7 +141,6 @@ static xo_rlist *pr_outputs(int64_t code, const char *o, int64_t on, const char 
 	l = n_str_list_add(l, o, on);
 	return n_str_list_add(l, e, en);
 }
-#endif
 
 static xo_rlist *pr_fail(char st, const char *msg) {
 	xo_rlist *l = n_str_list_new(2);
@@ -177,7 +148,6 @@ static xo_rlist *pr_fail(char st, const char *msg) {
 	return n_str_list_add(l, msg, (int64_t)strlen(msg));
 }
 
-#ifdef _WIN32
 // pr_has_slash reports whether a command names a path rather than a name
 // looked up in PATH (exec.LookPath on Windows: any of \ / :)
 static int pr_has_slash(const char *cmd) { return strpbrk(cmd, "/\\:") != NULL; }
@@ -271,9 +241,7 @@ static char *pr_look_path(const char *cmd) {
 		p = end + 1;
 	}
 }
-#endif
 
-#ifdef _WIN32
 // pr_drain reads what fd has now into b; 1 at the end of the output.
 static int pr_drain(int fd, nbuf *b) {
 	char t[65536];
@@ -292,7 +260,6 @@ static int pr_drain(int fd, nbuf *b) {
 		return 1;
 	}
 }
-#endif
 
 // ---------------------------------------------------------------------------
 // Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172),
@@ -302,11 +269,6 @@ static int pr_drain(int fd, nbuf *b) {
 // standard streams), wait on the event loop's poller for their pipes, and
 // poll waitpid. Standard input data goes through a pipe written by a
 // thread of its own, as os/exec copies it from a goroutine.
-
-#ifdef __linux__
-// glibc 2.29 and later (the Linux runtime pack needs 2.31)
-extern int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *, const char *);
-#endif
 
 // PR_INHERIT as a descriptor of pr_start: the program's own descriptor of
 // that number; PR_DUP_OUT as standard error: a copy of standard output.
@@ -398,21 +360,6 @@ static void pr_cmd_free(pr_cmd *c) {
 
 // pr_pipe2 makes a pipe whose ends close on exec; the end nb (0 or 1, -1
 // neither) is nonblocking.
-#ifndef _WIN32
-static int pr_pipe2(int p[2], int nb) {
-	if (xo_pipe(p) < 0) {
-		p[0] = p[1] = -1;
-		return -1;
-	}
-	for (int i = 0; i < 2; i++) {
-		fcntl(p[i], F_SETFD, FD_CLOEXEC);
-	}
-	if (nb >= 0) {
-		fcntl(p[nb], F_SETFL, fcntl(p[nb], F_GETFL) | O_NONBLOCK);
-	}
-	return 0;
-}
-#endif
 
 static void pr_close(int *fd) {
 	if (*fd >= 0) {
@@ -426,36 +373,9 @@ static void pr_close(int *fd) {
 // program's, PR_DUP_OUT error as output): 0 started, else the status of
 // an outcome ('1' not found, '2' an error) with *msg its detail
 // (malloc'd).
-#ifdef _WIN32
 static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, char **msg);
-#endif
-
-// std/native/llrt/cabi_proc.xo's export, built when the program builds
-// procspec.xo (it runs commands); a program that only fakes them (a
-// test's FakeProc) never starts one and links this weak stand in.
-__attribute__((weak)) int64_t xo_x_proc_spawn_start(int64_t name, int64_t dir, int64_t argv, int64_t envp, int64_t in, int64_t out, int64_t err, int64_t res) {
-	(void)name;
-	(void)dir;
-	(void)argv;
-	(void)envp;
-	(void)in;
-	(void)out;
-	(void)err;
-	((int64_t *)(intptr_t)res)[0] = 0;
-	((int64_t *)(intptr_t)res)[1] = 0;
-	return '2';
-}
 
 static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg) {
-#ifndef _WIN32
-	// std/native/llrt/proc.xo start (work item B25): posix_spawn on macOS,
-	// fork and execve on Linux
-	int64_t r[2] = {0, 0};
-	char st = (char)xo_x_proc_spawn_start(XO_ADDR(c->name), XO_ADDR(c->dir), XO_ADDR(c->argv), XO_ADDR(c->envp), in, out, err, XO_ADDR(r));
-	*pid = (pid_t)r[0];
-	*msg = (char *)(intptr_t)r[1];
-	return st;
-#else
 	char *file = pr_look_path(c->name); // PATHEXT's extensions apply to paths too
 	if (!file) {
 		*msg = cstr_of(c->name, (int64_t)strlen(c->name));
@@ -488,10 +408,8 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 	char wst = pr_w_spawn(c, file, wfds, pid, msg);
 	free(file);
 	return wst;
-#endif
 }
 
-#ifdef _WIN32
 // pr_w_inheritable is an inheritable copy of h (NULL when h is not a
 // handle)
 static HANDLE pr_w_inheritable(HANDLE h) {
@@ -640,22 +558,11 @@ static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, 
 	*msg = cstr_of(m, (int64_t)strlen(m));
 	return '2';
 }
-#endif
 
 // pr_code is the status of a finished command: its exit code, or 128
 // plus the signal that ended it.
 static int64_t pr_code(int ws) {
-#ifdef _WIN32
 	return (int64_t)(uint32_t)ws; // the exit code (os.ProcessState.ExitCode)
-#else
-	if (WIFEXITED(ws)) {
-		return WEXITSTATUS(ws);
-	}
-	if (WIFSIGNALED(ws)) {
-		return 128 + WTERMSIG(ws);
-	}
-	return -1;
-#endif
 }
 
 // pr_wait waits for pid, killing it when the task is canceled (*canceled
@@ -721,7 +628,6 @@ static void pr_feed(int fd, const char *p, int64_t n) {
 	pthread_attr_destroy(&at);
 }
 
-#ifdef _WIN32
 // pr_collect reads the descriptors fds (nonblocking) into bufs until each
 // ends: 1 when the task was canceled first.
 static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
@@ -780,9 +686,7 @@ static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
 	free(open);
 	return canceled;
 }
-#endif
 
-#ifdef _WIN32
 // pr_w_quote appends s quoted as procspec.xo's quote (Go's
 // syscall.EscapeArg, and also when s holds a line end or another space).
 static void pr_w_quote(nbuf *b, const char *s) {
@@ -850,7 +754,6 @@ static char *pr_w_cmdline(char **argv) {
 	return b.p;
 }
 
-#endif
 
 // pr_specs parses every command of specs (*n of them, malloc'd).
 static pr_cmd *pr_specs(xo_rlist *specs, int *n) {
@@ -873,7 +776,6 @@ static void pr_specs_free(pr_cmd *cs, int n) {
 	free(cs);
 }
 
-#ifdef _WIN32
 // xo_proc_run runs cmd with args, standard input NUL and its output and
 // error collected, through pr_start (as xo_proc_exec's Cmd.output): its
 // standard output and error (a list of two), or an empty list with the
@@ -896,9 +798,7 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	for (int64_t i = 0; i < na; i++) {
 		pc.argv[i + 1] = pr_lstr(args, i);
 	}
-#ifdef _WIN32
 	pc.cmdline = pr_w_cmdline(pc.argv);
-#endif
 	int o[2] = {-1, -1}, e[2] = {-1, -1};
 	char st = '2';
 	char *msg = NULL;
@@ -1080,23 +980,6 @@ xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has
 	pr_specs_free(cs, total);
 	return l;
 }
-#else
-// Proc.run, Cmd.output and run, and pipelines are std/native/llrt/proc.xo's
-// on macOS and Linux (work item B25 stage 4); the prelude's Windows branch
-// still names these (gotchas/dead-target-arm-still-links.md). Never run.
-XO_NORETURN static void pr_dead(void) {
-	static const char m[] = "a C process operation off Windows";
-	xo_fault_raise(m, sizeof m - 1, "", 0);
-}
-xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
-	(void)c, (void)cn, (void)args;
-	pr_dead();
-}
-xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has_in, int64_t mode) {
-	(void)specs, (void)in, (void)inn, (void)has_in, (void)mode;
-	pr_dead();
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // Children (Cmd.spawn)
@@ -1239,11 +1122,7 @@ xo_rlist *xo_proc_child_start(xo_child *ch) {
 	return pr_fail(ch->st, ch->msg ? ch->msg : "");
 }
 
-#ifdef _WIN32
 int64_t xo_proc_child_pid(xo_child *ch) { return ch->fake || ch->st != '0' ? 0 : (int64_t)GetProcessId((HANDLE)ch->pid); }
-#else
-int64_t xo_proc_child_pid(xo_child *ch) { return ch->fake ? 0 : (int64_t)ch->pid; }
-#endif
 
 // pr_data is the outcome "0" with the n bytes at p.
 static xo_rlist *pr_data(const char *p, int64_t n) {
@@ -1504,3 +1383,49 @@ void xo_proc_child_kill(xo_child *ch) {
 		pr_kill9(ch->pid);
 	}
 }
+
+// xo_proc_child_new: Cmd.spawn off Windows only.
+void *xo_proc_child_new(void) { return NULL; }
+#else
+// macOS and Linux: Proc.run, Cmd.output and run, pipelines, and Cmd.spawn's
+// children are std/native/llrt/proc.xo's (work item B25 stage 4). A child
+// is a record of the object header and proc.xo's words (CHILD_X_SIZE
+// bytes, proc.xo CH_SIZE), freed by proc.xo child_free through
+// cabi_proc.xo's export (a program that only fakes commands links the
+// weak stand in: its fake children hold no descriptors).
+enum { CHILD_X_SIZE = 240 };
+
+__attribute__((weak)) void xo_x_proc_child_free(int64_t ch) { (void)ch; }
+
+static void child_free_x(void *p) {
+	xo_x_proc_child_free((int64_t)(intptr_t)p);
+	xo_free(p);
+}
+
+void *xo_proc_child_new(void) {
+	void *ch = xo_alloc(CHILD_X_SIZE);
+	memset(ch, 0, CHILD_X_SIZE);
+	h_init(ch, child_free_x);
+	return ch;
+}
+
+// The prelude's Windows branch still names these
+// (gotchas/dead-target-arm-still-links.md). Never run.
+XO_NORETURN static void pr_dead(void) {
+	static const char m[] = "a C process operation off Windows";
+	xo_fault_raise(m, sizeof m - 1, "", 0);
+}
+#define PR_DEAD(t, name, ...)                                                                                              \
+	t name(__VA_ARGS__) { pr_dead(); }
+PR_DEAD(xo_rlist *, xo_proc_run, const char *c, int64_t cn, xo_rlist *args)
+PR_DEAD(xo_rlist *, xo_proc_exec, xo_rlist *specs, const char *in, int64_t inn, int64_t has_in, int64_t mode)
+PR_DEAD(void *, xo_proc_spawn, xo_rlist *spec, const char *in, int64_t inn, int64_t has_in)
+PR_DEAD(xo_rlist *, xo_proc_child_start, void *ch)
+PR_DEAD(int64_t, xo_proc_child_pid, void *ch)
+PR_DEAD(xo_rlist *, xo_proc_child_write, void *ch, const char *p, int64_t n)
+PR_DEAD(void, xo_proc_child_close_stdin, void *ch)
+PR_DEAD(xo_rlist *, xo_proc_child_read, void *ch, int64_t err, int64_t max)
+PR_DEAD(xo_rlist *, xo_proc_child_read_line, void *ch)
+PR_DEAD(xo_rlist *, xo_proc_child_wait, void *ch)
+PR_DEAD(void, xo_proc_child_kill, void *ch)
+#endif

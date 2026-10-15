@@ -5,5 +5,6 @@
 // them, and other programs do not grow.
 use native/llrt/proc
 
-/// xo_proc.c's pr_start on macOS and Linux: std/native/llrt/proc.xo start.
-fn proc_spawn_start(name: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, res: Int) -> Int { proc.start(name, dir, argv, envp, inf, outf, errf, res) }
+/// The free function of a child record off Windows (xo_proc.c
+/// child_free_x): std/native/llrt/proc.xo child_free.
+fn proc_child_free(ch: Int) { proc.child_free(ch) }

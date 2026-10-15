@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B25, stage 4b): Cmd.spawn's
+  children (write, close_stdin, read, read_err, read_line, wait, kill,
+  and FakeProc's children) are Xo on macOS and Linux
+  (std/native/llrt/proc.xo; standard input data is written by the
+  child's own waits instead of a thread; Linux UNTESTED). Off Windows,
+  xo_proc.c is a 40 line shim (the child record's allocation and free
+  function, and faulting stubs the prelude's Windows branch names); the
+  rest of it compiles on Windows only (UNTESTED there: the Mac cannot
+  build Windows).
 - Native runtime (zero-C audit item B23, stage 2a): on Windows the
   network's socket calls go through Xo too (sock.xo's Windows arms over
   ws2_32, Winsock errors mapped to the C runtime's errno; names through

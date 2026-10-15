@@ -554,6 +554,10 @@ fn proc_child_read_line(c: ProcChild) -> List[Str]
 /// "0" and the exit status.
 fn proc_child_wait(c: ProcChild) -> List[Str]
 fn proc_child_kill(c: ProcChild)
+/// A new child record of std/native/llrt/proc.xo's (CH_SIZE bytes,
+/// zeroed, its free function the C's, which calls proc.xo child_free):
+/// Cmd.spawn off Windows.
+fn proc_child_new() -> ProcChild
 
 // ---------------------------------------------------------------------------
 // The environment (decision 0172)

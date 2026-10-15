@@ -889,3 +889,563 @@ pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[S
   }
   ["0", "${code}", out, errs.join("")]
 }
+
+// ---------------------------------------------------------------------------
+// Children (Cmd.spawn; xo_proc.c's xo_child, stage 4b of B25) on macOS
+// and Linux. A child is a record of the C runtime's object header (its
+// count and free function: xo_proc.c's child_free_x, which calls
+// child_free here) and the words below. Standard input data is written
+// to its pipe by every wait of the child's operations (the C wrote it
+// from a thread of its own). UNTESTED on Linux.
+
+/// The record's words: the pid, the start's status ('0' started, '1' not
+/// found, '2' an error, '3' canceled) and its message (a malloc'd block
+/// and its length), its input pipe's write end (-1 when not a pipe) and
+/// whether close_stdin closed it, its output's and error's read ends (-1
+/// when not pipes) and their poller records, the output read ahead by
+/// read_line (a malloc'd block, its length and capacity, and where the
+/// unread bytes start), whether the output ended, whether it was reaped,
+/// its status, whether it is FakeProc's (then the registered output and
+/// error, malloc'd blocks and lengths, and how much of each was read),
+/// and the standard input data still to write (its write end, -1 when
+/// none; a malloc'd copy, its length, and how much was written).
+const CH_PID = 16
+const CH_ST = 24
+const CH_MSG = 32
+const CH_MSGN = 40
+const CH_IN = 48
+const CH_IN_CLOSED = 56
+const CH_FD = 64
+const CH_PD = 80
+const CH_AHEAD = 96
+const CH_AHEAD_N = 104
+const CH_AHEAD_CAP = 112
+const CH_AHEAD_AT = 120
+const CH_EOF = 128
+const CH_REAPED = 136
+const CH_CODE = 144
+const CH_FAKE = 152
+const CH_FBUF = 160
+const CH_FBUF_N = 176
+const CH_FAT = 192
+const CH_FEED = 208
+const CH_FEED_P = 216
+const CH_FEED_N = 224
+const CH_FEED_AT = 232
+/// The record's size (xo_proc.c CHILD_X_SIZE).
+pub const CH_SIZE = 240
+
+fn ld(ch: Int, k: Int) -> Int { rt.mem_load(ch, k, 8) }
+
+fn st(ch: Int, k: Int, v: Int) { rt.mem_store(ch, k, v, 8) }
+
+/// A malloc'd copy of the n bytes at p (0 when n is 0).
+fn block(p: Int, n: Int) -> Int {
+  if n == 0 {
+    return 0
+  }
+  let b = rt.heap_large(n) - 8
+  rt.mem_copy(b, p, n)
+  b
+}
+
+fn free_block(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+/// The outcome of a failed start or operation: status s and message m.
+fn set_fail(ch: Int, s: Int, m: Str) {
+  st(ch, CH_ST, s)
+  st(ch, CH_MSG, block(raw.data(m), m.len()))
+  st(ch, CH_MSGN, m.len())
+}
+
+/// Cmd.spawn (xo_proc.c xo_proc_spawn): starts the command of spec, its
+/// input the data when has_input, else the program's with inherit, else
+/// a pipe; its output and error stream pipes, or the program's with
+/// inherit. proc_child_start tells how the start went.
+pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
+  let h = rt.proc_child_new()
+  let ch = rt.obj_addr(h)
+  st(ch, CH_ST, 48)
+  st(ch, CH_IN, -1)
+  st(ch, CH_FD, -1)
+  st(ch, CH_FD + 8, -1)
+  st(ch, CH_FEED, -1)
+  if poll.canceled() {
+    st(ch, CH_ST, 51)
+    return h
+  }
+  let cs = parse(spec)
+  if cs.is_empty() {
+    set_fail(ch, 50, "no command")
+    return h
+  }
+  let c = cs[0]
+  let inherit = (c.flags & 2) != 0
+  let merge = (c.flags & 4) != 0
+  if testworld.fake(testworld.REAL_PROC) {
+    // FakeProc.on_run's entry: the command, the status, the output, and
+    // the error, each text a block of its length and then the bytes
+    let f = testworld.proc_find_raw(raw.data(c.name), c.name.len())
+    if f == 0 {
+      set_fail(ch, 49, c.name)
+      return h
+    }
+    st(ch, CH_FAKE, 1)
+    st(ch, CH_CODE, ld(f, 8))
+    let o = ld(f, 16)
+    let e = ld(f, 24)
+    if merge {
+      let n = ld(o, 0) + ld(e, 0)
+      let b = if n == 0 { 0 } else { rt.heap_large(n) - 8 }
+      rt.mem_copy(b, o + 8, ld(o, 0))
+      rt.mem_copy(b + ld(o, 0), e + 8, ld(e, 0))
+      st(ch, CH_FBUF, b)
+      st(ch, CH_FBUF_N, n)
+    } else {
+      st(ch, CH_FBUF, block(o + 8, ld(o, 0)))
+      st(ch, CH_FBUF_N, ld(o, 0))
+      st(ch, CH_FBUF + 8, block(e + 8, ld(e, 0)))
+      st(ch, CH_FBUF_N + 8, ld(e, 0))
+    }
+    return h
+  }
+  let l = sysio.layer()
+  var fi0 = -1
+  var fi1 = -1
+  var pi0 = -1
+  var pi1 = -1
+  var o0 = -1
+  var o1 = -1
+  var e0 = -1
+  var e1 = -1
+  var ifd = FD_NULL
+  var ofd = FD_INHERIT
+  var efd = if merge { FD_DUP_OUT } else { FD_INHERIT }
+  if has_input {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      fi0 = r
+      fi1 = w
+      ifd = r
+    }
+  } else if inherit {
+    ifd = FD_INHERIT
+  } else {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      pi0 = r
+      pi1 = w
+      ifd = r
+    }
+  }
+  if !inherit {
+    let (r, w, e) = pipe(l, 0)
+    if e == 0 {
+      o0 = r
+      o1 = w
+      ofd = w
+      efd = w
+    }
+    if !merge {
+      let (r2, w2, e2) = pipe(l, 0)
+      if e2 == 0 {
+        e0 = r2
+        e1 = w2
+        efd = w2
+      }
+    }
+  }
+  let (s, pid, msg) = launch(c, ifd, ofd, efd)
+  close_fd(l, fi0)
+  close_fd(l, pi0)
+  close_fd(l, o1)
+  close_fd(l, e1)
+  if s != "0" {
+    close_fd(l, fi1)
+    close_fd(l, pi1)
+    close_fd(l, o0)
+    close_fd(l, e0)
+    set_fail(ch, if s == "1" { 49 } else { 50 }, msg)
+    return h
+  }
+  st(ch, CH_PID, pid)
+  if fi1 >= 0 {
+    st(ch, CH_FEED, fi1)
+    st(ch, CH_FEED_P, block(raw.bytes_addr(input), input.len()))
+    st(ch, CH_FEED_N, input.len())
+    feed(l, ch)
+  }
+  // writes to its input poll (a pipe's write end is not registered with
+  // the poller)
+  st(ch, CH_IN, pi1)
+  st(ch, CH_FD, o0)
+  st(ch, CH_FD + 8, e0)
+  for i in 0..2 {
+    let fd = ld(ch, CH_FD + 8 * i)
+    if fd >= 0 {
+      st(ch, CH_PD + 8 * i, poll.pd_new(fd, false))
+    }
+  }
+  h
+}
+
+/// Writes what the pipe takes now of the child's standard input data;
+/// closes it once written (or once the child stops reading it): whether
+/// some is left.
+fn feed(l: Int, ch: Int) -> Bool {
+  let fd = ld(ch, CH_FEED)
+  if fd < 0 {
+    return false
+  }
+  let n = ld(ch, CH_FEED_N)
+  var at = ld(ch, CH_FEED_AT)
+  while at < n {
+    let w = write_fd(l, fd, ld(ch, CH_FEED_P) + at, n - at)
+    if w > 0 {
+      at += w
+      continue
+    }
+    if w == -EINTR {
+      continue
+    }
+    if w == -eagain(l) {
+      st(ch, CH_FEED_AT, at)
+      return true
+    }
+    // EPIPE: the child does not read it (os/exec stops too)
+    break
+  }
+  close_fd(l, fd)
+  st(ch, CH_FEED, -1)
+  free_block(ld(ch, CH_FEED_P))
+  st(ch, CH_FEED_P, 0)
+  false
+}
+
+/// The free function's work (xo_proc.c child_free): the descriptors, the
+/// blocks, and a pid not waited for (reaped now if it exited).
+pub fn child_free(ch: Int) {
+  let l = sysio.layer()
+  close_fd(l, ld(ch, CH_FEED))
+  free_block(ld(ch, CH_FEED_P))
+  close_fd(l, ld(ch, CH_IN))
+  for i in 0..2 {
+    let pd = ld(ch, CH_PD + 8 * i)
+    if pd != 0 {
+      poll.pd_free(pd)
+    } else {
+      close_fd(l, ld(ch, CH_FD + 8 * i))
+    }
+    free_block(ld(ch, CH_FBUF + 8 * i))
+  }
+  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    let sb = rt.heap_large(8)
+    let _w = if l == 2 { darwin.waitpid_at(ld(ch, CH_PID), sb, 1) } else { linux.wait4_at(ld(ch, CH_PID), sb, 1) }
+    rt.heap_release(sb - 8)
+  }
+  free_block(ld(ch, CH_AHEAD))
+  free_block(ld(ch, CH_MSG))
+}
+
+/// The bytes of the malloc'd block at b from at, n of them.
+fn bytes_of(b: Int, at: Int, n: Int) -> Str { if n <= 0 { "" } else { raw.str_at(b + at, n) } }
+
+/// `Child`'s start (xo_proc.c xo_proc_child_start): "0", or the failure.
+pub fn child_start(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  let s = ld(ch, CH_ST)
+  if s == 48 {
+    return ["0", ""]
+  }
+  [rt.str_of_byte(s), bytes_of(ld(ch, CH_MSG), 0, ld(ch, CH_MSGN))]
+}
+
+/// c.pid(): 0 for FakeProc's child.
+pub fn child_pid(h: rt.ProcChild) -> Int {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) != 0 { 0 } else { ld(ch, CH_PID) }
+}
+
+/// "2" and "<what>: <errno text>" (xo_proc.c pr_io).
+fn io_fail(l: Int, what: Str, e: Int) -> List[Str] { ["2", "${what}: " + lower_first(sysio.err_msg(l, e))] }
+
+/// Waits a step of a child's operation that has nothing to do now:
+/// writes standard input data meanwhile; CANCELED, or READY (or CLOSED
+/// for the poller record pd, 0 none).
+fn step_wait(l: Int, ch: Int, pd: Int) -> Int {
+  stdio.flush()
+  let feeding = feed(l, ch)
+  if pd != 0 {
+    let dl = if feeding { sysio.mono_ns() + 1000000 } else { 0 }
+    let w = poll.pd_wait(pd, false, dl)
+    return if w == poll.TIMEOUT { poll.READY } else { w }
+  }
+  if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED { poll.CANCELED } else { poll.READY }
+}
+
+/// c.write(data) (xo_proc.c xo_proc_child_write): to its input's pipe.
+pub fn child_write(h: rt.ProcChild, data: Bytes) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  if ld(ch, CH_FAKE) != 0 {
+    return ["0", ""]
+  }
+  if ld(ch, CH_IN_CLOSED) != 0 {
+    return ["2", "write |1: file already closed"]
+  }
+  if ld(ch, CH_IN) < 0 {
+    return ["2", "the child's input is not a pipe (stdin data or inherit was set)"]
+  }
+  let l = sysio.layer()
+  var off = 0
+  let n = data.len()
+  while off < n {
+    let w = write_fd(l, ld(ch, CH_IN), raw.bytes_addr(data) + off, n - off)
+    if w > 0 {
+      off += w
+      continue
+    }
+    if w == -EINTR {
+      continue
+    }
+    if w == -eagain(l) {
+      if step_wait(l, ch, 0) == poll.CANCELED {
+        return ["3", ""]
+      }
+      continue
+    }
+    return io_fail(l, "write |1", if w < 0 { -w } else { 5 })
+  }
+  ["0", ""]
+}
+
+/// c.close_stdin().
+pub fn child_close_stdin(h: rt.ProcChild) { close_in(rt.obj_addr(h)) }
+
+fn close_in(ch: Int) {
+  if ld(ch, CH_IN) < 0 || ld(ch, CH_IN_CLOSED) != 0 {
+    return
+  }
+  st(ch, CH_IN_CLOSED, 1)
+  close_fd(sysio.layer(), ld(ch, CH_IN))
+  st(ch, CH_IN, -1)
+}
+
+/// Reads at most n bytes of stream i into the address b, waiting on the
+/// poller: the count, 0 at the end, -1 canceled, or -2 - errno
+/// (xo_proc.c ch_read).
+fn ch_read(l: Int, ch: Int, i: Int, b: Int, n: Int) -> Int {
+  while true {
+    let r = read_fd(l, ld(ch, CH_FD + 8 * i), b, n)
+    if r >= 0 {
+      return r
+    }
+    if r == -EINTR {
+      continue
+    }
+    if r != -eagain(l) {
+      return -2 + r
+    }
+    let w = step_wait(l, ch, ld(ch, CH_PD + 8 * i))
+    if w == poll.CANCELED {
+      return -1
+    }
+    if w == poll.CLOSED {
+      return 0
+    }
+  }
+  0
+}
+
+/// c.read(max) (err false) or c.read_err(max) (xo_proc.c
+/// xo_proc_child_read): "0" and at most max bytes (at most 1 MiB), "e"
+/// at the end.
+pub fn child_read(h: rt.ProcChild, err: Bool, max: Int) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  let i = if err { 1 } else { 0 }
+  if ld(ch, CH_FAKE) != 0 {
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    let at = ld(ch, CH_FAT + 8 * i)
+    let left = ld(ch, CH_FBUF_N + 8 * i) - at
+    if left <= 0 {
+      return ["e", ""]
+    }
+    if max <= 0 {
+      return ["0", ""]
+    }
+    let k = if left < max { left } else { max }
+    let out = bytes_of(ld(ch, CH_FBUF + 8 * i), at, k)
+    st(ch, CH_FAT + 8 * i, at + k)
+    return ["0", out]
+  }
+  let ahead = ld(ch, CH_AHEAD_N) - ld(ch, CH_AHEAD_AT)
+  if !err && ahead > 0 {
+    // bytes read ahead by read_line come first
+    var k = if ahead < max { ahead } else { max }
+    if k < 0 {
+      k = 0
+    }
+    let out = bytes_of(ld(ch, CH_AHEAD), ld(ch, CH_AHEAD_AT), k)
+    st(ch, CH_AHEAD_AT, ld(ch, CH_AHEAD_AT) + k)
+    return ["0", out]
+  }
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  if ld(ch, CH_FD + 8 * i) < 0 {
+    return ["2", if err { "the child's error stream is not a pipe (inherit or merge_stderr was set)" } else { "the child's output is not a pipe (inherit or merge_stderr was set)" }]
+  }
+  if max <= 0 {
+    return ["0", ""]
+  }
+  let n = if max < 1048576 { max } else { 1048576 }
+  let b = rt.heap_large(n)
+  let l = sysio.layer()
+  let r = ch_read(l, ch, i, b, n)
+  var out: List[Str] = []
+  if r > 0 {
+    out = ["0", raw.str_at(b, r)]
+  } else if r == 0 {
+    out = ["e", ""]
+  } else if r == -1 {
+    out = ["3", ""]
+  } else {
+    out = io_fail(l, "read |0", -2 - r)
+  }
+  rt.heap_release(b - 8)
+  out
+}
+
+/// A line of n bytes at p, without the \r at its end.
+fn line_of(p: Int, n0: Int) -> List[Str] {
+  var n = n0
+  if n > 0 && rt.mem_load(p, n - 1, 1) == 13 {
+    n -= 1
+  }
+  ["0", if n > 0 { raw.str_at(p, n) } else { "" }]
+}
+
+/// The offset of the first \n in the n bytes at p, or -1.
+fn find_nl(p: Int, n: Int) -> Int {
+  for k in 0..n {
+    if rt.mem_load(p, k, 1) == 10 {
+      return k
+    }
+  }
+  -1
+}
+
+/// c.read_line() (xo_proc.c xo_proc_child_read_line): "0" and a line of
+/// its output without \n or \r\n, "e" at the end.
+pub fn child_read_line(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) != 0 {
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    let b = ld(ch, CH_FBUF)
+    let n = ld(ch, CH_FBUF_N)
+    let at = ld(ch, CH_FAT)
+    if at >= n {
+      return ["e", ""]
+    }
+    let nl = find_nl(b + at, n - at)
+    let k = if nl >= 0 { nl } else { n - at }
+    st(ch, CH_FAT, at + k + (if nl >= 0 { 1 } else { 0 }))
+    return line_of(b + at, k)
+  }
+  if ld(ch, CH_FD) < 0 {
+    return ["2", "the child's output is not a pipe (inherit was set)"]
+  }
+  let l = sysio.layer()
+  while true {
+    let at = ld(ch, CH_AHEAD_AT)
+    let left = ld(ch, CH_AHEAD_N) - at
+    let s = ld(ch, CH_AHEAD) + at
+    let nl = if left > 0 { find_nl(s, left) } else { -1 }
+    let eof = ld(ch, CH_EOF) != 0
+    if nl >= 0 || (eof && left > 0) {
+      let k = if nl >= 0 { nl } else { left }
+      let out = line_of(s, k)
+      st(ch, CH_AHEAD_AT, at + k + (if nl >= 0 { 1 } else { 0 }))
+      if ld(ch, CH_AHEAD_AT) == ld(ch, CH_AHEAD_N) {
+        st(ch, CH_AHEAD_N, 0)
+        st(ch, CH_AHEAD_AT, 0)
+      }
+      return out
+    }
+    if eof {
+      return ["e", ""]
+    }
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    if at > 0 {
+      rt.mem_move(ld(ch, CH_AHEAD), s, left)
+      st(ch, CH_AHEAD_N, left)
+      st(ch, CH_AHEAD_AT, 0)
+    }
+    // room for 4096 more bytes
+    let need = ld(ch, CH_AHEAD_N) + 4096
+    if need > ld(ch, CH_AHEAD_CAP) {
+      var c = if ld(ch, CH_AHEAD_CAP) == 0 { 8192 } else { 2 * ld(ch, CH_AHEAD_CAP) }
+      while c < need {
+        c *= 2
+      }
+      let old = ld(ch, CH_AHEAD)
+      let b = if old == 0 { rt.heap_large(c) } else { rt.heap_large_resize(old, c) }
+      st(ch, CH_AHEAD, b - 8)
+      st(ch, CH_AHEAD_CAP, c)
+    }
+    let r = ch_read(l, ch, 0, ld(ch, CH_AHEAD) + ld(ch, CH_AHEAD_N), 4096)
+    if r == -1 {
+      return ["3", ""]
+    }
+    if r < -1 {
+      return io_fail(l, "read |0", -2 - r)
+    }
+    if r == 0 {
+      st(ch, CH_EOF, 1)
+    }
+    st(ch, CH_AHEAD_N, ld(ch, CH_AHEAD_N) + r)
+  }
+  ["e", ""]
+}
+
+/// c.wait() (xo_proc.c xo_proc_child_wait): closes its input, writes the
+/// rest of its standard input data, waits, and gives "0" and its status.
+pub fn child_wait(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_REAPED) == 0 {
+    close_in(ch)
+    let l = sysio.layer()
+    while feed(l, ch) {
+      if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+        break
+      }
+    }
+    let (code, canceled) = wait_exit(l, ld(ch, CH_PID), false)
+    st(ch, CH_REAPED, 1)
+    st(ch, CH_CODE, code)
+    if canceled {
+      return ["3", ""]
+    }
+  }
+  ["0", "${ld(ch, CH_CODE)}"]
+}
+
+/// c.kill().
+pub fn child_kill(h: rt.ProcChild) {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    kill9(sysio.layer(), ld(ch, CH_PID))
+  }
+}
