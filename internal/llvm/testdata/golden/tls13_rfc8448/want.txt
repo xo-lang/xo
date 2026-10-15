@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+rfc 8448:
+  ch <ClientHello>
+  flight 6 <client Finished> 
+  app <client data>
+  got <server data> closed true  
+  bye <client close_notify>
+byte at a time:
+  ch <ClientHello>
+  flight 6 <client Finished> 
+  app <client data>
+  got <server data> closed true  
+  bye <client close_notify>
+expired:
+  ch <ClientHello>
+  flight 7 170303001363c1580d2c075cb40118e83b1df2a23e5f2b6b tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2027-01-15T08:00:00Z is after 2026-07-30T01:23:59Z
+host:
+  ch <ClientHello>
+  flight 7 170303001363c658020c5060290b4823daebc3e4afa8b170 tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match example.com
+no root:
+  ch <ClientHello>
+  flight 7 170303001363dc5873162aa74446465f2a54511492a6abd9 tls: failed to verify certificate: x509: certificate signed by unknown authority
+corrupt record:
+  ch <ClientHello>
+  flight 7 170303001363f8583695cfb1d83d832fa23d1e3a5ac4136d local error: tls: bad record MAC
+wrong secret:
+  ch <ClientHello>
+  flight 7 17030300137881a3a1d497b34ac25c84421c33ba0c21eeab local error: tls: bad record MAC
+suite not offered:
+  ch <ClientHello>
+  flight 7 1503030002022f tls: server chose an unconfigured cipher suite
+--- stderr

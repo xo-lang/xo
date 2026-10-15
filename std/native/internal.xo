@@ -11,6 +11,7 @@ use native/llrt/sha256
 use native/llrt/sysio
 use native/llrt/x509
 use native/llrt/x25519
+use native/llrt/tls13
 use native/llrt/x509verify
 use native/rt
 
@@ -57,6 +58,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "chacha" => chacha.op(what, a, b, c, d)
     "chain" => x509verify.op(what, a, b, c, d)
     "x25519" => x25519.op(what, a, b, c, d)
+    "tls13" => tls13.op(what, a, b, c, d)
     _ => None
   }
   r ?? fault("internal.crypto_op: unknown op ${op}")

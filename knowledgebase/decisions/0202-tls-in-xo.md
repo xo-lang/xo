@@ -59,6 +59,16 @@ std (decision 0074) unless the owner decides to expose a user marker.
   given (roots, then intermediates); the tls_verify golden has one valid
   chain per case. Everything chain verification reads is public, so it
   has no constant time requirement.
+- 2026-10-15 (B31 part 4, tls13.xo and tlsrec.xo): the client is sans
+  I/O (feed the server's bytes, take the bytes to send), so the TLS
+  boundary keeps the sockets and the tests replay traces without a
+  network. Its secrets go through hkdf.xo, hmac.xo and the AEADs; the
+  server's Finished is compared with ct.bytes_equal; a record's padding
+  is scanned from the end after the AEAD opened it, which shows only the
+  padding length (RFC 8446 5.4 allows this). The test hooks (a fixed
+  ClientHello and ECDHE secret) are Conf fields that the TLS path leaves
+  empty. Certificate expiry texts use UTC, where Go's use the local
+  zone; the integration passes the zone offset as tlscert.xo does.
 
 ## Alternatives
 

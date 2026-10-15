@@ -59,6 +59,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoX25519(what, a, b)
 	case "chain":
 		r, ok = cryptoChain(what, a, b, c, d)
+	case "tls13":
+		r, ok = cryptoTLS13(what, a, b, c, d)
 	}
 	if !ok {
 		panic("internal.crypto_op: unknown op " + op)
@@ -572,4 +574,315 @@ func cryptoX25519(what string, a, b Bytes) (Bytes, bool) {
 		return Bytes(s), true
 	}
 	return "", false
+}
+
+// cryptoTLS13 is std/native/llrt/tls13.xo's replay: a TLS 1.3 client
+// with a fixed ClientHello (a) and ECDHE secret (c) over the parts of b
+// (3 byte lengths: the server's handshake records, its later records,
+// the client's data, the root's DER), d "time host suite chunk". Written
+// out for RFC 8448's trace (one suite, an RSA-PSS or ECDSA P-256 server,
+// no HelloRetryRequest), with crypto/tls's error texts; the chunk size
+// does not change the result.
+func cryptoTLS13(what string, a, b, c, d Bytes) (Bytes, bool) {
+	if what != "replay" {
+		return "", false
+	}
+	var parts [][]byte
+	for rest := []byte(b); len(rest) >= 3; {
+		n := int(rest[0])<<16 | int(rest[1])<<8 | int(rest[2])
+		parts = append(parts, rest[3:3+n])
+		rest = rest[3+n:]
+	}
+	args := strings.Split(string(d), " ")
+	if len(parts) != 4 || len(args) != 4 {
+		return "args", true
+	}
+	t := &tls13Replay{shared: []byte(c), host: args[1], suite: args[2]}
+	t.now, _ = strconv.ParseInt(args[0], 10, 64)
+	if len(parts[3]) > 0 {
+		root, err := x509.ParseCertificate(parts[3])
+		if err != nil {
+			return "parse", true
+		}
+		t.roots = append(t.roots, root)
+	}
+	hello := []byte(a)
+	t.tr = append(t.tr, hello...)
+	if len(hello) > 38 {
+		t.sid = hello[39 : 39+int(hello[38])]
+	}
+	out := "ch " + hex.EncodeToString(tls13Record(22, 0x0301, hello)) + "\n"
+	t.handshake(parts[0])
+	out += fmt.Sprintf("flight %d %s %s\n", t.state, hex.EncodeToString(t.out), t.err)
+	t.out = nil
+	if t.state == 6 {
+		out += "app " + hex.EncodeToString(t.w.seal(23, parts[2])) + "\n"
+		t.after(parts[1])
+		out += fmt.Sprintf("got %s closed %v %s %s\n", hex.EncodeToString(t.app), t.closed, hex.EncodeToString(t.out), t.err)
+		out += "bye " + hex.EncodeToString(t.w.seal(21, []byte{1, 0})) + "\n"
+	}
+	return Bytes(out), true
+}
+
+type tls13Replay struct {
+	shared, sid, tr, out, app []byte
+	hs, cHS, sHS              []byte
+	leaf                      *x509.Certificate
+	host, suite, err          string
+	now                       int64
+	roots                     []*x509.Certificate
+	state                     int
+	closed                    bool
+	r, w                      *tls13Keys
+}
+
+type tls13Keys struct {
+	aead   cipher.AEAD
+	iv     []byte
+	secret []byte
+	seq    uint64
+}
+
+func tls13Record(ct byte, vers int, data []byte) []byte {
+	return append([]byte{ct, byte(vers >> 8), byte(vers), byte(len(data) >> 8), byte(len(data))}, data...)
+}
+
+func tls13ExpandLabel(secret []byte, label string, context []byte, n int) []byte {
+	info := []byte{byte(n >> 8), byte(n), byte(6 + len(label))}
+	info = append(info, "tls13 "+label...)
+	info = append(info, byte(len(context)))
+	info = append(info, context...)
+	out, _ := hkdf.Expand(sha256.New, secret, string(info), n)
+	return out
+}
+
+func tls13Hash(b []byte) []byte { h := sha256.Sum256(b); return h[:] }
+
+func tls13NewKeys(secret []byte) *tls13Keys {
+	blk, _ := aes.NewCipher(tls13ExpandLabel(secret, "key", nil, 16))
+	g, _ := cipher.NewGCM(blk)
+	return &tls13Keys{aead: g, iv: tls13ExpandLabel(secret, "iv", nil, 12), secret: secret}
+}
+
+func (k *tls13Keys) nonce() []byte {
+	n := append([]byte(nil), k.iv...)
+	var s [8]byte
+	binary.BigEndian.PutUint64(s[:], k.seq)
+	for i := range s {
+		n[4+i] ^= s[i]
+	}
+	k.seq++
+	return n
+}
+
+func (k *tls13Keys) seal(ct byte, data []byte) []byte {
+	hdr := []byte{23, 3, 3, byte((len(data) + 17) >> 8), byte(len(data) + 17)}
+	return k.aead.Seal(hdr, k.nonce(), append(append([]byte(nil), data...), ct), hdr)
+}
+
+func (k *tls13Keys) open(hdr, body []byte) (byte, []byte, bool) {
+	pt, err := k.aead.Open(nil, k.nonce(), body, hdr)
+	if err != nil {
+		return 0, nil, false
+	}
+	i := len(pt) - 1
+	for i >= 0 && pt[i] == 0 {
+		i--
+	}
+	if i < 0 {
+		return 0, nil, false
+	}
+	return pt[i], pt[:i], true
+}
+
+// fail records the first error and sends the fatal alert.
+func (t *tls13Replay) fail(alert byte, msg string) {
+	if t.state == 7 {
+		return
+	}
+	t.state, t.err = 7, msg
+	if t.w != nil {
+		t.out = append(t.out, t.w.seal(21, []byte{2, alert})...)
+	} else {
+		t.out = append(t.out, tls13Record(21, 0x0303, []byte{2, alert})...)
+	}
+}
+
+// records splits data into records.
+func tls13Records(data []byte) (out [][]byte) {
+	for len(data) >= 5 {
+		n := 5 + (int(data[3])<<8 | int(data[4]))
+		out = append(out, data[:n])
+		data = data[n:]
+	}
+	return out
+}
+
+func (t *tls13Replay) handshake(data []byte) {
+	var hs []byte
+	for _, rec := range tls13Records(data) {
+		if t.state == 7 {
+			return
+		}
+		switch {
+		case rec[0] == 22 && t.r == nil:
+			t.serverHello(rec[5:])
+		case rec[0] == 23 && t.r != nil:
+			ct, pt, ok := t.r.open(rec[:5], rec[5:])
+			if !ok {
+				t.fail(20, "local error: tls: bad record MAC")
+				return
+			}
+			if ct != 22 {
+				t.fail(10, "local error: tls: unexpected message")
+				return
+			}
+			hs = append(hs, pt...)
+			for len(hs) >= 4 && t.state != 7 {
+				n := 4 + (int(hs[1])<<16 | int(hs[2])<<8 | int(hs[3]))
+				if len(hs) < n {
+					break
+				}
+				t.message(hs[:n])
+				hs = hs[n:]
+			}
+		}
+	}
+}
+
+func (t *tls13Replay) serverHello(m []byte) {
+	sn := int(m[38])
+	suite := hex.EncodeToString(m[39+sn : 41+sn])
+	if suite != t.suite {
+		t.fail(47, "tls: server chose an unconfigured cipher suite")
+		return
+	}
+	t.tr = append(t.tr, m...)
+	zero := make([]byte, 32)
+	early, _ := hkdf.Extract(sha256.New, zero, nil)
+	derived := tls13ExpandLabel(early, "derived", tls13Hash(nil), 32)
+	hs, _ := hkdf.Extract(sha256.New, t.shared, derived)
+	th := tls13Hash(t.tr)
+	t.hs = hs
+	t.cHS = tls13ExpandLabel(hs, "c hs traffic", th, 32)
+	t.sHS = tls13ExpandLabel(hs, "s hs traffic", th, 32)
+	t.w = tls13NewKeys(t.cHS)
+	t.r = tls13NewKeys(t.sHS)
+	t.state = 1
+}
+
+func (t *tls13Replay) message(m []byte) {
+	switch {
+	case m[0] == 8 && t.state == 1:
+		t.state = 2
+	case m[0] == 11 && t.state == 2:
+		// one certificate entry: context 0, list length, entry length
+		n := int(m[8])<<16 | int(m[9])<<8 | int(m[10])
+		leaf, err := x509.ParseCertificate(m[11 : 11+n])
+		if err != nil {
+			t.fail(42, "tls: failed to parse certificate from server: "+err.Error())
+			return
+		}
+		pool := x509.NewCertPool()
+		for _, r := range t.roots {
+			pool.AddCert(r)
+		}
+		opts := x509.VerifyOptions{Roots: pool, CurrentTime: time.Unix(t.now, 0).UTC(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		if t.host != "-" {
+			opts.DNSName = t.host
+		}
+		if _, err := leaf.Verify(opts); err != nil {
+			alert := byte(42)
+			var ua x509.UnknownAuthorityError
+			var ci x509.CertificateInvalidError
+			if errors.As(err, &ua) {
+				alert = 48
+			} else if errors.As(err, &ci) && ci.Reason == x509.Expired {
+				alert = 45
+			}
+			t.fail(alert, "tls: failed to verify certificate: "+err.Error())
+			return
+		}
+		t.leaf = leaf
+		t.state = 4
+	case m[0] == 15 && t.state == 4:
+		scheme := int(m[4])<<8 | int(m[5])
+		sig := m[8:]
+		content := append(bytes64(0x20), "TLS 1.3, server CertificateVerify\x00"...)
+		digest := tls13Hash(append(content, tls13Hash(t.tr)...))
+		ok := false
+		switch k := t.leaf.PublicKey.(type) {
+		case *rsa.PublicKey:
+			ok = scheme == 0x0804 && rsa.VerifyPSS(k, crypto.SHA256, digest, sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}) == nil
+		case *ecdsa.PublicKey:
+			ok = scheme == 0x0403 && ecdsa.VerifyASN1(k, digest, sig)
+		}
+		if !ok {
+			why := "crypto/rsa: verification error"
+			if _, ec := t.leaf.PublicKey.(*ecdsa.PublicKey); ec {
+				why = "ECDSA verification failure"
+			}
+			t.fail(51, "tls: invalid signature by the server certificate: "+why)
+			return
+		}
+		t.state = 5
+	case m[0] == 20 && t.state == 5:
+		if !hmac.Equal(m[4:], tls13Finished(t.sHS, t.tr)) {
+			t.fail(51, "tls: invalid server finished hash")
+			return
+		}
+		t.tr = append(t.tr, m...)
+		derived := tls13ExpandLabel(t.hs, "derived", tls13Hash(nil), 32)
+		master, _ := hkdf.Extract(sha256.New, make([]byte, 32), derived)
+		th := tls13Hash(t.tr)
+		cAP := tls13ExpandLabel(master, "c ap traffic", th, 32)
+		t.r = tls13NewKeys(tls13ExpandLabel(master, "s ap traffic", th, 32))
+		fin := append([]byte{20, 0, 0, 32}, tls13Finished(t.cHS, t.tr)...)
+		t.out = append(t.out, t.w.seal(22, fin)...)
+		t.w = tls13NewKeys(cAP)
+		t.state = 6
+		return
+	default:
+		t.fail(10, "tls: unexpected message")
+		return
+	}
+	t.tr = append(t.tr, m...)
+}
+
+func bytes64(c byte) []byte {
+	b := make([]byte, 64)
+	for i := range b {
+		b[i] = c
+	}
+	return b
+}
+
+func tls13Finished(base, tr []byte) []byte {
+	m := hmac.New(sha256.New, tls13ExpandLabel(base, "finished", nil, 32))
+	m.Write(tls13Hash(tr))
+	return m.Sum(nil)
+}
+
+// after takes the server's records after the handshake: tickets dropped,
+// data kept, close_notify closing.
+func (t *tls13Replay) after(data []byte) {
+	for _, rec := range tls13Records(data) {
+		if t.state == 7 || t.closed {
+			return
+		}
+		ct, pt, ok := t.r.open(rec[:5], rec[5:])
+		if !ok {
+			t.fail(20, "local error: tls: bad record MAC")
+			return
+		}
+		switch {
+		case ct == 23:
+			t.app = append(t.app, pt...)
+		case ct == 21 && len(pt) == 2 && pt[1] == 0:
+			t.closed = true
+		case ct == 22 && pt[0] == 4:
+		default:
+			t.fail(10, "tls: unexpected message")
+		}
+	}
 }

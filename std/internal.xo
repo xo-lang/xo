@@ -28,5 +28,6 @@ fn (l: SharedLock) unlock()
 /// whats. Areas: "hash" (std/native/llrt/sha256.xo), "hmac" (hmac.xo),
 /// "hkdf" (hkdf.xo), "aes" (aesgcm.xo), "chacha" (chacha.xo), "x25519"
 /// (x25519.xo), "p256" and "p384" (nistec.xo), "rsa" (rsa.xo), "x509"
-/// (x509.xo), "chain" (x509verify.xo). An unknown op faults.
+/// (x509.xo), "chain" (x509verify.xo), "tls13" (tls13.xo). An unknown op
+/// faults.
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes

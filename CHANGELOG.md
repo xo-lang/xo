@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 4, decision 0202): the
+  TLS 1.3 client in Xo, sans I/O (std/native/llrt/tls13.xo, as Go's
+  handshake_client_tls13.go: ClientHello with compatibility mode,
+  ServerHello and HelloRetryRequest checks, the RFC 8446 key schedule
+  over hkdf.xo, EncryptedExtensions with ALPN, the server's Certificate
+  checked by x509verify.xo, CertificateVerify by x509.check, Finished,
+  an empty client Certificate when asked, NewSessionTicket dropped,
+  KeyUpdate, Go's error texts and alerts; ECDHE over P-256 and P-384)
+  and its record layer (std/native/llrt/tlsrec.xo: AES-128-GCM,
+  AES-256-GCM, ChaCha20-Poly1305 records, the nonce, inner content type,
+  key updates). internal.crypto_op gains the tls13 area; the golden
+  tls13_rfc8448 replays RFC 8448's 1-RTT trace (the client's Finished,
+  data and alert records equal the RFC's, fed whole and a byte at a
+  time) and six failures against a Go replay. X25519 (x25519.xo) is next;
+  not on the TLS path yet (Mbed TLS stays, decision 0193).
+
 - Native runtime (zero-C audit item B15, part 3): the rest of the test
   world is Xo and std/llrt/xo_testing.c is deleted (252 lines): the
   start (twrun.xo start; SIGPIPE in entry.xo), the virtual clock's move
