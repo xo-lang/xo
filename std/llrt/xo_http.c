@@ -6,19 +6,10 @@
 // std/rt/http.go, which reads the whole body before the handler runs and
 // writes the response in one piece. This file reproduces it:
 //
-//   - reading a request (hc_read_one): the parsing is Xo's
-//     (std/native/llrt/http1.xo: the request line, MIME headers with
-//     continuation lines, Go's validation, the request target, chunked
-//     bodies), the C reads the socket and the body and gives Go's error
-//     answers (400 with or without a reason, 431, 501, 505, 417),
-//     Expect: 100-continue, keep-alive (shouldClose), pipelining;
-//   - writing a response (hw_response, whose rules are
-//     std/native/llrt/http1w.xo since the zero-C audit's B12): chunkWriter.writeHeader with a
-//     whole body: the status line, the handler's headers sorted, Date,
-//     Content-Length when the body fits the 2048 byte buffer of
-//     net/http (chunked above that, in 2048 byte chunks), Content-Type
-//     sniffed (DetectContentType) when the handler set none, the
-//     Connection header and whether the connection stays open;
+//   - reading a request and writing the response on HTTP/1.1 are Xo's
+//     (std/native/llrt/http1.xo Reader and respond, over http1w.xo; the
+//     zero-C audit's B12 and B28): the C reads and writes the socket or
+//     TLS for it (xo_hc_recv, xo_hc_send_at);
 //   - the server (xo_srv, xo_hconn): connection tasks in a scope of their
 //     own under main's root, so canceling serve lets requests in flight
 //     finish (std/rt's reqRoot); a stop or the end of serve closes idle
@@ -297,140 +288,10 @@ static void hr_free(hreq *r) {
 enum { HB_NEED, HB_OK, HB_ERR };
 
 // ---------------------------------------------------------------------------
-// Writing a response
-//
-// The writer is std/native/llrt/http1w.xo (the zero-C audit's B12): the
-// status text, DetectContentType, the Date header, and the rules of
-// chunkWriter.writeHeader, through the C ABI exports of cabi_http.xo
-// (decision 0204), which a program carries when it uses std/http. A
-// program without std/http never reaches the server but links this C:
-// the weak definitions here keep it linking, and fault if one ever ran.
-// The C reserves the room each writes into.
-
-__attribute__((weak)) int64_t xo_x_hw_response(int64_t d, int64_t ha, int64_t hn, int64_t status, int64_t body, int64_t bn, int64_t flags, int64_t res) {
-	(void)d, (void)ha, (void)hn, (void)status, (void)body, (void)bn, (void)flags, (void)res;
-	fault_text("HTTP without std/http's exports", "");
-}
-
-__attribute__((weak)) int64_t xo_x_hw_fields(int64_t d, int64_t ha, int64_t hn, int64_t excl) {
-	(void)d, (void)ha, (void)hn, (void)excl;
-	fault_text("HTTP without std/http's exports", "");
-}
-
-__attribute__((weak)) int64_t xo_x_hw_error(int64_t d, int64_t kind, int64_t code, int64_t rp, int64_t rn) {
-	(void)d, (void)kind, (void)code, (void)rp, (void)rn;
-	fault_text("HTTP without std/http's exports", "");
-}
-
-__attribute__((weak)) int64_t xo_x_hw_sniff(int64_t buf, int64_t p, int64_t n) {
-	(void)buf, (void)p, (void)n;
-	fault_text("HTTP without std/http's exports", "");
-}
-
-__attribute__((weak)) int64_t xo_x_hw_date(int64_t buf) {
-	(void)buf;
-	fault_text("HTTP without std/http's exports", "");
-}
-
-// http1w.xo's request flags (F_*), results (R_*), and left out fields (X_*)
-enum {
-	HW_F_HTTP11 = 1,
-	HW_F_HEAD = 2,
-	HW_F_H2UP = 4,
-	HW_F_WANTS10KA = 8,
-	HW_F_WANTSCLOSE = 16,
-	HW_F_HAS_BODY = 32,
-	HW_F_EXPECT_UNREAD = 64,
-	HW_F_BODY_BAD = 128,
-	HW_F_TOO_BIG = 256,
-	HW_F_STREAM = 512,
-	HW_R_KEEP = 1,
-	HW_R_CHUNKED = 2,
-	HW_X_CONTENT_LENGTH = 1,
-	HW_X_TRANSFER_ENCODING = 2,
-	HW_X_HOST = 16,
-	HW_X_USER_AGENT = 32,
-	HW_X_TRAILER = 64,
-};
-
-// h_sniff is net/http's DetectContentType of p (http1w.xo), written into
-// buf (64 bytes).
-static const char *h_sniff(const char *p, int64_t n, char *buf) {
-	xo_x_hw_sniff(XO_ADDR(buf), XO_ADDR(p), n);
-	return buf;
-}
-
-// h_date writes the Date header value of now (http.TimeFormat) and a
-// zero byte at out (32 bytes).
-static void h_date(char *out) { xo_x_hw_date(XO_ADDR(out)); }
+// Writing a response: HTTP/1.1's is std/native/llrt/http1.xo's (write,
+// respond, emit over http1w.xo; the zero-C audit's B12 and B28).
 
 static int h_body_allowed(int64_t st) { return !((st >= 100 && st <= 199) || st == 204 || st == 304); }
-
-// hw_fields_room is the room hw_fields needs for h: its names and values
-// with 4 bytes each.
-static int64_t hw_fields_room(hlist *h) {
-	int64_t n = 0;
-	for (int64_t i = 0; i < h->n; i++) {
-		n += h->a[i].k.n + h->a[i].v.n + 4;
-	}
-	return n;
-}
-
-// hw_fields writes the fields of h but those of excl (HW_X_*) sorted by
-// name, as Header.writeSubset (http1w.fields).
-static void hw_fields(nbuf *o, hlist *h, int64_t excl) {
-	if (h->n == 0) {
-		return;
-	}
-	nbuf_grow(o, hw_fields_room(h));
-	o->n += xo_x_hw_fields(XO_ADDR(o->p + o->n), XO_ADDR(h->a), h->n, excl);
-}
-
-// hw_response_x writes the response to request r (handler header h,
-// status, body of bn bytes) as net/http does when a handler sets the
-// header and writes the whole body at once (std/rt's serve), or with
-// stream the head of a stream with its first write, and reports whether
-// the connection stays open (http1w.response). expect_unread: the
-// request expected 100-continue and its body was not read to the end;
-// body_bad: reading the request body failed; too_big: 256 KiB or more of
-// a Content-Length body were never sent. *chunked: the body goes chunked.
-static int hw_response_x(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big, int stream, int *chunked) {
-	int64_t f = 0;
-	if (r->major > 1 || (r->major == 1 && r->minor >= 1)) {
-		f |= HW_F_HTTP11;
-	}
-	f |= hs_eq(r->method, "HEAD") ? HW_F_HEAD : 0;
-	f |= r->h2up ? HW_F_H2UP : 0;
-	f |= r->wants10ka ? HW_F_WANTS10KA : 0;
-	f |= r->wantsclose ? HW_F_WANTSCLOSE : 0;
-	f |= r->clen != 0 ? HW_F_HAS_BODY : 0;
-	f |= expect_unread ? HW_F_EXPECT_UNREAD : 0;
-	f |= body_bad ? HW_F_BODY_BAD : 0;
-	f |= too_big ? HW_F_TOO_BIG : 0;
-	f |= stream ? HW_F_STREAM : 0;
-	// the room: the status lines and the fields the server adds, the
-	// handler's fields twice (an informational status repeats them), the
-	// body, and a chunk's size line and end per 2048 bytes
-	nbuf_grow(o, 640 + 2 * hw_fields_room(h) + bn + 24 * (bn / 2048 + 2));
-	int64_t res = 0;
-	o->n += xo_x_hw_response(XO_ADDR(o->p + o->n), XO_ADDR(h->a), h->n, status, XO_ADDR(body), bn, f, XO_ADDR(&res));
-	if (chunked) {
-		*chunked = (res & HW_R_CHUNKED) != 0;
-	}
-	return (res & HW_R_KEEP) != 0;
-}
-
-static int hw_response(nbuf *o, hreq *r, hlist *h, int64_t status, const char *body, int64_t bn, int expect_unread, int body_bad, int too_big) {
-	return hw_response_x(o, r, h, status, body, bn, expect_unread, body_bad, too_big, 0, NULL);
-}
-
-// hw_error is the answer of conn.serve to a request it could not read
-// (http1w.error_answer, at most 255 bytes).
-static void hw_error(nbuf *o, int kind, int code, const char *reason) {
-	const char *rs = kind == HP_STATUS && reason ? reason : "";
-	nbuf_grow(o, 256);
-	o->n += xo_x_hw_error(XO_ADDR(o->p + o->n), kind, code, XO_ADDR(rs), (int64_t)strlen(rs));
-}
 
 // ---------------------------------------------------------------------------
 // The server (std.md 4.4): handles for std/native/http.xo
@@ -463,21 +324,14 @@ typedef struct xo_hconn {
 	int idle;                     // waiting for the first byte of a request
 	char *buf;
 	int64_t n, cap, off; // unconsumed input is buf[off:n]
-	int eof;
-	int last_post;
-	int served; // a response was written
-	hreq req;
+	hreq req;     // an HTTP/2 stream's request
 	int have_req;
-	nbuf body;
-	int body_bad;
-	int too_big;
-	int expect_unread;
-	hlist resp;
-	nbuf out; // the response being written (reused)
+	nbuf body;    // an HTTP/2 stream's request body
+	hlist resp;   // an HTTP/2 stream's response header
 	char ip[INET6_ADDRSTRLEN];
-	// tests (http_diff.c): no socket, no server; the input is in buf
-	// and the output goes to sink
-	nbuf *sink;
+	// HTTP/1.1: http1.xo's X1 record (its input, request, and response
+	// state), freed with the connection
+	int64_t x1;
 	tls_conn *tls; // a connection of a TLS server (xo_tls.c)
 	// HTTP/2 (xo_h2.c): a connection whose ALPN chose h2 has h2; a
 	// stream's request (h2_take) has h2s and holds its connection in
@@ -485,15 +339,20 @@ typedef struct xo_hconn {
 	struct h2c *h2;
 	struct h2s *h2s;
 	struct xo_hconn *h2owner;
-	// the parsing in Xo (decision 0193 step 6): where hc_read_one goes
-	// on, and the result Xo passed (xo_hc_head, xo_hc_chunked)
-	int rd_phase;
-	int rd_have, rd_res;
-	int64_t rd_used;
-	char *rd_reason;
 } xo_hconn;
 
-enum { RD_START, RD_HEAD, RD_BODY };
+// cabi_http.xo's exports (std/http's programs carry them; the weak
+// definitions keep other programs linking, which never serve HTTP/1.1)
+__attribute__((weak)) void xo_x_h1_free(int64_t x) { (void)x; }
+__attribute__((weak)) int64_t xo_x_h1_emit(int64_t hc, int64_t status, int64_t state, int64_t p, int64_t n) {
+	return (void)hc, (void)status, (void)p, (void)n, state;
+}
+__attribute__((weak)) int64_t xo_x_h1_respond(int64_t hc, int64_t status, int64_t p, int64_t n) {
+	return (void)hc, (void)status, (void)p, (void)n, 0;
+}
+__attribute__((weak)) int64_t xo_x_h1_stream_end(int64_t hc, int64_t status, int64_t state, int64_t p, int64_t n) {
+	return (void)hc, (void)status, (void)state, (void)p, (void)n, 0;
+}
 
 // HTTP/2 (xo_h2.c, included at the end of this file)
 static void h2c_free(struct h2c *c);
@@ -535,7 +394,6 @@ static void hconn_free(void *p) {
 			hr_free(&hc->req);
 		}
 		free(hc->body.p);
-		free(hc->out.p);
 		hl_free(&hc->resp);
 		xo_hconn *owner = hc->h2owner;
 		xo_free(hc);
@@ -551,9 +409,10 @@ static void hconn_free(void *p) {
 	if (hc->have_req) {
 		hr_free(&hc->req);
 	}
-	free(hc->rd_reason);
+	if (hc->x1) {
+		xo_x_h1_free(hc->x1);
+	}
 	free(hc->body.p);
-	free(hc->out.p);
 	hl_free(&hc->resp);
 	tls_conn_free(hc->tls);
 	xo_free(hc);
@@ -711,71 +570,56 @@ xo_hconn *xo_hc_new(xo_srv *s, xo_conn *cn) {
 	return hc;
 }
 
-// hc_fill reads more input: bytes read, 0 at the end of the stream, -1
-// when the connection was closed or the task canceled.
-static int64_t hc_fill(xo_hconn *hc) {
-	if (!hc->conn) {
-		return 0;
-	}
-	xo_ctx *c = ctx();
-	xo_pd *pd = hc->conn->pd;
-	if (hc->off > 0 && hc->off == hc->n) {
-		hc->off = hc->n = 0;
-	}
-	if (hc->cap - hc->n < 4096) {
-		if (hc->off > 0) {
-			memmove(hc->buf, hc->buf + hc->off, (size_t)(hc->n - hc->off));
-			hc->n -= hc->off;
-			hc->off = 0;
-		}
-		if (hc->cap - hc->n < 4096) {
-			hc->cap = hc->cap ? hc->cap * 2 : 8192;
-			hc->buf = realloc(hc->buf, (size_t)hc->cap);
-			if (!hc->buf) {
-				xo_oom();
-			}
-		}
-	}
-	if (hc->tls) {
-		// the handshake first, then decrypted bytes (xo_tls.c)
-		if (ctx_canceled(c)) {
+// xo_hc_recv reads at most cap bytes into p (http1.xo fill): bytes read,
+// 0 at the end of the stream, -1 when the connection was closed or the
+// task canceled, or (idle: nothing of a request came yet, so a stop
+// closes it) the server is stopping.
+int64_t xo_hc_recv(xo_hconn *hc, char *p, int64_t cap, int64_t idle) {
+	xo_srv *s = hc->srv;
+	if (s) {
+		pthread_mutex_lock(&s->mu);
+		if (s->stopping && idle) {
+			pthread_mutex_unlock(&s->mu);
 			return -1;
 		}
-		int64_t r = tls_hc_read(hc->tls, hc->buf + hc->n, hc->cap - hc->n);
-		if (r > 0) {
-			hc->n += r;
-		}
-		return r;
+		hc->idle = (int)idle;
+		pthread_mutex_unlock(&s->mu);
 	}
-	if (ctx_canceled(c) || !pd_begin(pd)) {
-		return -1;
-	}
-	for (;;) {
-		int64_t r = x_read(pd->fd, hc->buf + hc->n, (size_t)(hc->cap - hc->n));
-		if (r >= 0) {
-			pd_end(pd);
-			hc->n += r;
-			return r;
+	int64_t r = -1;
+	xo_ctx *c = ctx();
+	if (hc->tls) {
+		// the handshake first, then decrypted bytes (xo_tls.c)
+		if (!ctx_canceled(c)) {
+			r = tls_hc_read(hc->tls, p, cap);
 		}
-		if (r == -EINTR) {
-			continue;
-		}
-		if (r == -EAGAIN || r == -EWOULDBLOCK) {
-			if (pd_wait(pd, 0, c) == PD_READY) {
+	} else if (!ctx_canceled(c) && pd_begin(hc->conn->pd)) {
+		xo_pd *pd = hc->conn->pd;
+		for (;;) {
+			r = x_read(pd->fd, p, (size_t)cap);
+			if (r >= 0) {
+				break;
+			}
+			if (r == -EINTR) {
 				continue;
 			}
+			if ((r == -EAGAIN || r == -EWOULDBLOCK) && pd_wait(pd, 0, c) == PD_READY) {
+				continue;
+			}
+			r = -1;
+			break;
 		}
 		pd_end(pd);
-		return -1;
 	}
+	if (s) {
+		pthread_mutex_lock(&s->mu);
+		hc->idle = 0;
+		pthread_mutex_unlock(&s->mu);
+	}
+	return r < 0 ? -1 : r;
 }
 
 // hc_send writes the bytes of o: 0 when the connection broke.
 static int hc_send(xo_hconn *hc, const char *p, int64_t n) {
-	if (hc->sink) {
-		nbuf_put(hc->sink, p, n);
-		return 1;
-	}
 	if (hc->tls) {
 		return tls_write(hc->tls, p, n) == CC_OK;
 	}
@@ -804,6 +648,9 @@ static int hc_send(xo_hconn *hc, const char *p, int64_t n) {
 	return 1;
 }
 
+// http_max_body is the largest request body HTTP/2's server reads
+// (HTTP_MAX_BODY, XO_HTTP_MAX_BODY overrides; http1.xo max_body for
+// HTTP/1.1).
 static int64_t http_max_body(void) {
 	static int64_t max = -1;
 	int64_t m = __atomic_load_n(&max, __ATOMIC_RELAXED);
@@ -818,302 +665,31 @@ static int64_t http_max_body(void) {
 	return m;
 }
 
-// hc_read_one reads a request: 1 when it is ready for the handler, 2
-// when it was answered here (OPTIONS *), 0 when the connection is done.
-// The parsing is Xo's (std/native/llrt/http1.xo): also 3, a request
-// head to parse at the unread input, and 4, a chunked body to decode
-// there: the fiber's Xo code parses and passes the result
-// (xo_hc_head, xo_hc_chunked), then calls again, which goes on where it
-// stopped (hc->rd_phase).
-static int64_t hc_read_one(xo_hconn *hc) {
-	xo_srv *s = hc->srv;
-	int64_t max = http_max_body();
-	int skip = 0, peek = 0, short_body = 0;
-	hreq *q = &hc->req;
-	int phase = hc->rd_phase;
-	hc->rd_phase = RD_START;
-	if (phase == RD_BODY) {
-		goto body;
-	}
-	if (phase == RD_START) {
-		if (hc->have_req) {
-			hr_free(&hc->req);
-			hc->have_req = 0;
-		}
-		hc->body.n = 0;
-		hc->body_bad = 0;
-		hc->too_big = 0;
-		hc->expect_unread = 0;
-		hl_clear(&hc->resp);
-		// after a POST, up to 4 CR or LF bytes before the next request
-		// (conn.readRequest's tolerance for old clients)
-		skip = hc->last_post;
-		// after a response, conn.serve peeks 4 bytes before it reads the
-		// next request: fewer at the end of the stream close the
-		// connection
-		peek = hc->served;
-	}
-	for (;;) {
-		int64_t have = hc->n - hc->off;
-		if (peek) {
-			if (have >= 4) {
-				peek = 0;
-			} else if (hc->eof) {
-				return 0;
-			}
-		}
-		if (!peek && skip && (have >= 4 || hc->eof)) {
-			for (int k = 0; k < 4 && hc->off < hc->n && (hc->buf[hc->off] == '\r' || hc->buf[hc->off] == '\n'); k++) {
-				hc->off++;
-			}
-			skip = 0;
-		}
-		int64_t used = 0;
-		int r;
-		if (peek || skip) {
-			r = HP_NEED;
-		} else {
-			if (!hc->rd_have) {
-				hc->rd_phase = RD_HEAD;
-				return 3;
-			}
-			hc->rd_have = 0;
-			r = hc->rd_res;
-			used = hc->rd_used;
-		}
-		if (r == HP_NEED) {
-			if (hc->eof) {
-				skip = 0;
-				continue;
-			}
-			// wait for more; idle when nothing of a request came yet
-			if (s) {
-				pthread_mutex_lock(&s->mu);
-				if (s->stopping && hc->off == hc->n) {
-					pthread_mutex_unlock(&s->mu);
-					return 0;
-				}
-				hc->idle = hc->off == hc->n;
-				pthread_mutex_unlock(&s->mu);
-			}
-			int64_t got = hc_fill(hc);
-			if (s) {
-				pthread_mutex_lock(&s->mu);
-				hc->idle = 0;
-				pthread_mutex_unlock(&s->mu);
-			}
-			if (got < 0) {
-				return 0;
-			}
-			if (got == 0) {
-				hc->eof = 1;
-			}
-			continue;
-		}
-		if (r == HP_EOF) {
-			return 0;
-		}
-		if (r != HP_OK) {
-			nbuf o = {0};
-			hw_error(&o, r, hc->req.status, hc->req.reason);
-			if (r == HP_STATUS) {
-				hr_free(&hc->req);
-			}
-			hc_send(hc, o.p, o.n);
-			free(o.p);
-			if (r == HP_TOO_LARGE && hc->conn) {
-				nx_shutdown(hc->conn->pd->fd, SHUT_WR);
-			}
-			return 0;
-		}
-		hc->have_req = 1;
-		hc->off += used;
-		break;
-	}
-	hc->last_post = hs_eq(q->method, "POST");
-	if (q->expect_other) {
-		// sendExpectationFailed
-		hlist h = {0};
-		hl_add(&h, hs_dup("Connection", 10), hs_dup("close", 5));
-		nbuf o = {0};
-		hw_response(&o, q, &h, 417, "", 0, 0, 0, 0);
-		hl_free(&h);
-		hc_send(hc, o.p, o.n);
-		free(o.p);
+// xo_hc_send_at is hc_send for http1.xo.
+int64_t xo_hc_send_at(xo_hconn *hc, int64_t p, int64_t n) { return hc_send(hc, (const char *)(intptr_t)p, n); }
+
+// xo_hc_stopping reports whether hc's server is stopping (no other
+// request on the connection).
+int64_t xo_hc_stopping(xo_hconn *hc) {
+	if (!hc->srv) {
 		return 0;
 	}
-	if (q->clen != 0) {
-		if (q->expect100) {
-			hc_send(hc, "HTTP/1.1 100 Continue\r\n\r\n", 25);
-		}
-	body:
-		for (;;) {
-			int64_t have = hc->n - hc->off;
-			if (q->chunked) {
-				int64_t used = 0;
-				if (!hc->rd_have) {
-					hc->rd_phase = RD_BODY;
-					return 4;
-				}
-				hc->rd_have = 0;
-				int b = hc->rd_res;
-				used = hc->rd_used;
-				if (b == HB_OK) {
-					hc->off += used;
-					break;
-				}
-				if (b == HB_ERR || hc->body.n > max) {
-					// a sticky error of the chunked reader: net/http
-					// closes the connection after the response
-					hc->body_bad = 1;
-					hc->off = hc->n;
-					break;
-				}
-			} else {
-				int64_t want = q->clen < max ? q->clen : max;
-				if (have >= want) {
-					nbuf_put(&hc->body, hc->buf + hc->off, want);
-					hc->off += want;
-					if (q->clen > max) {
-						hc->too_big = 1;
-					}
-					break;
-				}
-				if (hc->eof) {
-					// the client ended the body early: the handler gets
-					// what came (std/rt ignores the error)
-					nbuf_put(&hc->body, hc->buf + hc->off, have);
-					hc->off = hc->n;
-					short_body = 1;
-					hc->too_big = q->clen - have >= 256 << 10;
-					break;
-				}
-			}
-			int64_t got = hc_fill(hc);
-			if (got < 0) {
-				return 0;
-			}
-			if (got == 0) {
-				hc->eof = 1;
-			}
-		}
-		// the 100-continue reader saw no end of the body: net/http
-		// closes after the response
-		hc->expect_unread = q->expect100 && (short_body || hc->body_bad);
-	}
-	if (hs_eq(q->method, "OPTIONS") && hs_eq(q->target, "*")) {
-		// net/http answers it itself (globalOptionsHandler), reading at
-		// most 4 KiB of its body
-		hlist h = {0};
-		hl_add(&h, hs_dup("Content-Length", 14), hs_dup("0", 1));
-		if (hc->body.n > 4096) {
-			// MaxBytesReader: requestTooLarge sets the handler's header
-			hl_add(&h, hs_dup("Connection", 10), hs_dup("close", 5));
-		}
-		nbuf o = {0};
-		int keep = hw_response(&o, q, &h, 200, "", 0, hc->expect_unread, hc->body_bad, hc->too_big);
-		hl_free(&h);
-		int ok = hc_send(hc, o.p, o.n);
-		free(o.p);
-		hc->served = 1;
-		return ok && keep ? 2 : 0;
-	}
-	return 1;
+	pthread_mutex_lock(&hc->srv->mu);
+	int stopping = hc->srv->stopping;
+	pthread_mutex_unlock(&hc->srv->mu);
+	return stopping;
 }
 
-// xo_hc_read reads the next request for the handler: 1 when one is
-// ready (its body read), 0 when the connection is done (the end of the
-// stream, an error answered, the server stopping, the task canceled);
-// also 3 and 4 for the parsing in Xo (hc_read_one).
-int64_t xo_hc_read(xo_hconn *hc) {
-	for (;;) {
-		int64_t r = hc_read_one(hc);
-		if (r != 2) {
-			return r;
-		}
+// xo_hc_shut_wr shuts down hc's sending side (after a 431 answer).
+void xo_hc_shut_wr(xo_hconn *hc) {
+	if (hc->conn) {
+		nx_shutdown(hc->conn->pd->fd, SHUT_WR);
 	}
 }
 
-// head_len is the length of p[:n] up to the end of its first head (the
-// first empty line: \n\n or \n\r\n), or n when it has none yet.
-static int64_t head_len(const char *p, int64_t n) {
-	for (const char *nl = memchr(p, '\n', (size_t)n); nl; nl = memchr(nl + 1, '\n', (size_t)(n - (nl + 1 - p)))) {
-		int64_t e = nl + 1 - p;
-		if (e < n && p[e] == '\n') {
-			return e + 1;
-		}
-		if (e + 1 < n && p[e] == '\r' && p[e + 1] == '\n') {
-			return e + 2;
-		}
-	}
-	return n;
-}
+int64_t xo_hc_x1(xo_hconn *hc) { return hc->x1; }
 
-// xo_hc_input is the unread input (what hc_read stopped at), or a part
-// of it whose parse is the whole's (pipelined requests would otherwise be
-// copied again for each): mode 0 up to the end of the first head
-// (head_len), mode 1 at most 4 KiB (a chunked body's first try), 2 all.
-xo_rstr *xo_hc_input(xo_hconn *hc, int64_t mode, int64_t *len) {
-	const char *p = hc->buf ? hc->buf + hc->off : "";
-	int64_t n = hc->n - hc->off;
-	if (mode == 0) {
-		n = head_len(p, n);
-	} else if (mode == 1 && n > 4096) {
-		n = 4096;
-	}
-	return nstr(p, n, len);
-}
-
-// xo_hc_avail is the length of the unread input.
-int64_t xo_hc_avail(xo_hconn *hc) { return hc->n - hc->off; }
-
-int64_t xo_hc_eof(xo_hconn *hc) { return hc->eof; }
-
-// xo_hc_head takes the parse of a head: its result (HP_*) and length,
-// and for HP_OK what the C reads the body and answers with (the method,
-// the version in the low 8 bits of flags, then chunked, close,
-// wants10ka, wantsclose, expect100, expect_other, h2up, and a target of
-// "*" from bit 8 on; the Content-Length), for HP_STATUS the code and
-// text.
-void xo_hc_head(xo_hconn *hc, int64_t res, int64_t used, const char *m, int64_t mn, int64_t flags, int64_t clen, int64_t status, const char *rs, int64_t rn) {
-	hreq *r = &hc->req;
-	hr_free(r);
-	free(hc->rd_reason);
-	hc->rd_reason = NULL;
-	hc->rd_res = (int)res;
-	hc->rd_used = used;
-	hc->rd_have = 1;
-	if (res == HP_STATUS) {
-		r->status = (int)status;
-		hc->rd_reason = cstr_of(rs, rn);
-		r->reason = hc->rd_reason;
-	}
-	if (res != HP_OK) {
-		return;
-	}
-	r->method = hs_dup(m, mn);
-	r->target = flags & 0x8000 ? hs_dup("*", 1) : hs_dup("", 0);
-	r->major = (int)(flags & 15);
-	r->minor = (int)((flags >> 4) & 15);
-	r->chunked = (flags & 0x100) != 0;
-	r->close = (flags & 0x200) != 0;
-	r->wants10ka = (flags & 0x400) != 0;
-	r->wantsclose = (flags & 0x800) != 0;
-	r->expect100 = (flags & 0x1000) != 0;
-	r->expect_other = (flags & 0x2000) != 0;
-	r->h2up = (flags & 0x4000) != 0;
-	r->clen = clen;
-}
-
-// xo_hc_chunked takes the decoding of a chunked body: its result (HB_*),
-// its length, and the data decoded (before an error too).
-void xo_hc_chunked(xo_hconn *hc, int64_t res, int64_t used, const char *p, int64_t n) {
-	hc->body.n = 0;
-	nbuf_put(&hc->body, p, n);
-	hc->rd_res = (int)res;
-	hc->rd_used = used;
-	hc->rd_have = 1;
-}
+void xo_hc_set_x1(xo_hconn *hc, int64_t x) { hc->x1 = x; }
 
 static xo_rstr *hstr_out(hstr s, int64_t *len) { return nstr(s.p ? s.p : "", s.n, len); }
 
@@ -1165,40 +741,14 @@ void xo_hc_header(xo_hconn *hc, const char *k, int64_t kn, const char *v, int64_
 	hl_add(&hc->resp, key, hs_dup(v, vn));
 }
 
-// xo_hc_respond writes the response: 1 when the connection stays open
-// for another request.
+// xo_hc_respond writes an HTTP/2 stream's response (HTTP/1.1's is
+// http1.xo respond): 1 when the connection stays open for another
+// request.
 int64_t xo_hc_respond(xo_hconn *hc, int64_t status, const char *body, int64_t bn) {
 	if (hc->h2s) {
 		return h2_respond(hc, status, body, bn);
 	}
-	nbuf *o = &hc->out;
-	o->n = 0;
-	if (bn > 2048 && h_body_allowed(status) && hl_find(&hc->resp, "Content-Length") < 0) {
-		// std/rt sets Content-Length on a whole body net/http would
-		// otherwise chunk (above its 2048 byte buffer); match it
-		char cl[32];
-		int cn = fmt_int(cl, bn);
-		hl_add(&hc->resp, hs_dup("Content-Length", 14), hs_dup(cl, cn));
-	}
-	int keep = hw_response(o, &hc->req, &hc->resp, status, body, bn, hc->expect_unread, hc->body_bad, hc->too_big);
-	int ok = hc_send(hc, o->p, o->n);
-	if (o->cap > (64 << 10)) {
-		// a large body: do not keep its buffer for the connection's life
-		free(o->p);
-		*o = (nbuf){0};
-	}
-	hl_clear(&hc->resp);
-	hc->served = 1;
-	if (!ok || !keep) {
-		return 0;
-	}
-	if (!hc->srv) {
-		return 1;
-	}
-	pthread_mutex_lock(&hc->srv->mu);
-	int stopping = hc->srv->stopping;
-	pthread_mutex_unlock(&hc->srv->mu);
-	return !stopping;
+	return xo_x_h1_respond(XO_ADDR(hc), status, XO_ADDR(body), bn);
 }
 
 // ---------------------------------------------------------------------------
@@ -1219,7 +769,8 @@ typedef struct {
 	nbuf buf;
 	xo_hconn *hc;
 	int64_t status;
-	int started, chunking, raw, keep, failed;
+	int started, failed;
+	int64_t state; // HTTP/1.1: http1.xo's SK_* bits
 } xo_sink;
 
 static void sink_free(void *p) {
@@ -1253,7 +804,7 @@ xo_sink *xo_sink_conn(xo_hconn *hc, int64_t status) {
 }
 
 // sink_emit writes p as net/http's chunkWriter does: the head with the
-// first data, then a chunk per write.
+// first data, then a chunk per write (HTTP/1.1: http1.xo emit).
 static void sink_emit(xo_sink *s, const char *p, int64_t n) {
 	if (s->failed) {
 		return;
@@ -1265,28 +816,9 @@ static void sink_emit(xo_sink *s, const char *p, int64_t n) {
 		}
 		return;
 	}
-	nbuf *o = &hc->out;
-	o->n = 0;
-	if (!s->started) {
-		s->started = 1;
-		int ch = 0;
-		s->keep = hw_response_x(o, &hc->req, &hc->resp, s->status, p, n, hc->expect_unread, hc->body_bad, hc->too_big, 1, &ch);
-		s->chunking = ch;
-		s->raw = !ch && !hs_eq(hc->req.method, "HEAD") && h_body_allowed(s->status);
-		hl_clear(&hc->resp);
-	} else if (n > 0 && s->chunking) {
-		char hx[24];
-		snprintf(hx, sizeof hx, "%llx\r\n", (long long)n);
-		nbuf_str(o, hx);
-		nbuf_put(o, p, n);
-		nbuf_put(o, "\r\n", 2);
-	} else if (n > 0 && s->raw) {
-		nbuf_put(o, p, n);
-	}
-	if (o->n > 0 && !hc_send(hc, o->p, o->n)) {
-		s->failed = 1;
-	}
-	o->n = 0;
+	s->state = xo_x_h1_emit(XO_ADDR(hc), s->status, s->state, XO_ADDR(p), n);
+	s->started = (s->state & 1) != 0;
+	s->failed = (s->state & 16) != 0;
 }
 
 // xo_sink_write is BodyWriter.write: 0 when the connection failed.
@@ -1341,28 +873,10 @@ int64_t xo_sink_end(xo_sink *s) {
 		s->buf.n = 0;
 		return 0;
 	}
-	if (s->buf.n > 0) {
-		sink_emit(s, s->buf.p, s->buf.n);
-		s->buf.n = 0;
-	}
-	if (s->chunking && !s->failed && !hc_send(hc, "0\r\n\r\n", 5)) {
-		s->failed = 1;
-	}
-	if (hc->out.cap > (64 << 10)) {
-		free(hc->out.p);
-		hc->out = (nbuf){0};
-	}
-	hc->served = 1;
-	if (s->failed || !s->keep) {
-		return 0;
-	}
-	if (!hc->srv) {
-		return 1;
-	}
-	pthread_mutex_lock(&hc->srv->mu);
-	int stopping = hc->srv->stopping;
-	pthread_mutex_unlock(&hc->srv->mu);
-	return !stopping;
+	// HTTP/1.1 (http1.xo stream_end): the rest, the last chunk
+	int64_t keep = xo_x_h1_stream_end(XO_ADDR(hc), s->status, s->state, XO_ADDR(s->buf.p ? s->buf.p : ""), s->buf.n);
+	s->buf.n = 0;
+	return keep;
 }
 
 // xo_sink_take is the body a buffer sink collected.

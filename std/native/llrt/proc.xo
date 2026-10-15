@@ -1527,9 +1527,9 @@ pub fn child_read_line(h: rt.ProcChild) -> List[Str] {
       while c < need {
         c *= 2
       }
-      let old = ld(ch, CH_AHEAD)
-      let b = if old == 0 { rt.heap_large(c) } else { rt.heap_large_resize(old, c) }
-      st(ch, CH_AHEAD, b - 8)
+      // used from its malloc'd address: raw.c_resize keeps word 0
+      // (gotchas/heap-large-resize-overwrites-word-0.md)
+      st(ch, CH_AHEAD, raw.c_resize(ld(ch, CH_AHEAD), c))
       st(ch, CH_AHEAD_CAP, c)
     }
     let r = ch_read(l, ch, 0, ld(ch, CH_AHEAD) + ld(ch, CH_AHEAD_N), 4096)

@@ -3,41 +3,33 @@
 // xo_x_<name>; xo_http.c and xo_h2.c call them, so std/native/http.xo
 // imports this module and only programs that use std/http carry them
 // (the C has weak definitions that fault, for the programs without).
-// The response writer itself is http1w.xo (the zero-C audit's B12), the
-// HTTP/2 frame writer h2w.xo (B28).
+// The response writer is http1w.xo (the zero-C audit's B12), the
+// HTTP/1.1 connection http1.xo (B28), the HTTP/2 frame writer h2w.xo.
 use native/llrt/h2w
 use native/llrt/hclient
-use native/llrt/http1w
+use native/llrt/http1
 use native/llrt/raw
 use native/rt
+use native/rthttp
 
-/// Writes at d the response of status with the handler's header (hn
-/// pairs at ha) and the bn bytes of body at body for a request of flags
-/// (http1w.F_*); stores http1w.R_* at res; the bytes written. The caller
-/// reserved hw_room's bytes at d.
-fn hw_response(d: Int, ha: Int, hn: Int, status: Int, body: Int, bn: Int, flags: Int, res: Int) -> Int { http1w.response(d, ha, hn, status, body, bn, flags, res) }
+// HTTP/1.1's server connection (std/native/llrt/http1.xo, the zero-C
+// audit's B28): the C's connection frees its X1 record, and a stream's
+// sink writes through it.
 
-/// Writes at d the hn fields at ha sorted, but the names of excl
-/// (http1w.X_*), as Header.writeSubset; the bytes written (at most the
-/// fields' names and values and 4 bytes each).
-fn hw_fields(d: Int, ha: Int, hn: Int, excl: Int) -> Int { http1w.fields(d, 0, ha, hn, excl) }
+/// Frees http1.xo's X1 record x.
+fn h1_free(x: Int) { http1.x1_free(x) }
 
-/// Writes at d (256 bytes of room) the answer to a request that could
-/// not be read: kind of http1.xo's parse results, code and the rn bytes
-/// of the reason at rp for a status answer; its length.
-fn hw_error(d: Int, kind: Int, code: Int, rp: Int, rn: Int) -> Int { http1w.error_answer(d, kind, code, raw.str_at(rp, rn)) }
+/// A stream's write of the n bytes at p on connection hc (status, state:
+/// the sink's bits): the new state.
+fn h1_emit(hc: Int, status: Int, state: Int, p: Int, n: Int) -> Int { http1.emit(rt.obj_at[rthttp.HConn](hc), status, state, p, n) }
 
-/// Writes DetectContentType of the n bytes at p and a zero byte at buf
-/// (64 bytes of room); its length.
-fn hw_sniff(buf: Int, p: Int, n: Int) -> Int { raw.put_cstr(buf, http1w.sniff(p, n)) }
+/// A stream that never left its buffer, answered whole: 1 when the
+/// connection stays open.
+fn h1_respond(hc: Int, status: Int, p: Int, n: Int) -> Int { if http1.respond(rt.obj_at[rthttp.HConn](hc), status, raw.str_at(p, n).bytes()) { 1 } else { 0 } }
 
-/// Writes the Date header value of now and a zero byte at buf (32 bytes
-/// of room); its length (29).
-fn hw_date(buf: Int) -> Int {
-  let n = http1w.put_date(buf, 0)
-  rt.mem_store(buf, n, 0, 1)
-  n
-}
+/// The end of a stream whose head went out: 1 when the connection stays
+/// open.
+fn h1_stream_end(hc: Int, status: Int, state: Int, p: Int, n: Int) -> Int { if http1.stream_end(rt.obj_at[rthttp.HConn](hc), status, state, p, n) { 1 } else { 0 } }
 
 // ---------------------------------------------------------------------------
 // HTTP/2 frames and response heads (h2w.xo, the zero-C audit's B28):

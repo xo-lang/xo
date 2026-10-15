@@ -18,24 +18,22 @@ fn srv_wait(s: Srv)
 fn srv_close(s: Srv)
 
 fn hc_new(s: Srv, c: Conn) -> HConn
-/// The next request is read (its body too): 1, or 0 to close the
-/// connection; with the parsing in Xo also 3, a request head to
-/// parse at hc_input (the result to hc_head), and 4, a chunked body to
-/// decode there (the result to hc_chunked) (std/native/llrt/http1.xo,
-/// decision 0193 step 6).
-fn hc_read(h: HConn) -> Int
-/// The unread input (mode 2), up to the end of its first head (mode 0),
-/// or at most 4 KiB of it (mode 1); its length; whether no more will
-/// come.
-fn hc_input(h: HConn, mode: Int) -> Str
-fn hc_avail(h: HConn) -> Int
-fn hc_eof(h: HConn) -> Bool
-/// The parse of a head (http1.Parse): its result and length; for the C,
-/// the method, the version and flags (http1.Reader.read), the
-/// Content-Length, and a status error's code and text.
-fn hc_head(h: HConn, res: Int, used: Int, method: Str, flags: Int, clen: Int, status: Int, reason: Str)
-/// The decoding of a chunked body (http1.Chunked).
-fn hc_chunked(h: HConn, res: Int, used: Int, body: Str)
+// HTTP/1.1's connection is std/native/llrt/http1.xo's (the zero-C
+// audit's B28); the C reads and writes the socket (or TLS) for it.
+
+/// Reads at most cap bytes to the address p: the count, 0 at the end of
+/// the stream, -1 when closed, canceled, or (idle: no part of a request
+/// came yet) the server stopping.
+fn hc_recv(h: HConn, p: Int, cap: Int, idle: Bool) -> Int
+/// Sends the n bytes at p: false when the connection broke.
+fn hc_send_at(h: HConn, p: Int, n: Int) -> Bool
+/// Whether the connection's server is stopping.
+fn hc_stopping(h: HConn) -> Bool
+/// Shuts down the sending side (after a 431 answer).
+fn hc_shut_wr(h: HConn)
+/// http1.xo's X1 record of the connection (0: none yet), and setting it.
+fn hc_x1(h: HConn) -> Int
+fn hc_set_x1(h: HConn, x: Int)
 fn hc_method(h: HConn) -> Str
 fn hc_path(h: HConn) -> Str
 fn hc_scheme(h: HConn) -> Str
@@ -52,15 +50,15 @@ fn hc_qkey(h: HConn, i: Int) -> Str
 fn hc_qval(h: HConn, i: Int) -> Str
 fn hc_body(h: HConn) -> Bytes
 fn hc_remote_ip(h: HConn) -> Str
-/// Sets a field of the response header.
+/// Sets a field of an HTTP/2 stream's response header.
 fn hc_header(h: HConn, name: Str, value: Str)
-/// Writes the response; false: close the connection.
+/// Writes an HTTP/2 stream's response; false: close the connection.
 fn hc_respond(h: HConn, status: Int, body: Bytes) -> Bool
 fn hc_close(h: HConn)
 
 /// HTTP/2 (decision 0121, std/llrt/xo_h2.c): finishes the TLS handshake
 /// of a server connection; true when ALPN chose h2, so its requests come
-/// from h2_next instead of hc_read.
+/// from h2_next instead of http1.Reader.
 fn hc_h2(h: HConn) -> Bool
 /// Runs the HTTP/2 connection until a request is ready for a handler
 /// (1) or the connection is done (0); with HPACK in Xo also 2,

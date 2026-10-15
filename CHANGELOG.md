@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 1): the HTTP/1.1 server
+  connection is Xo (std/native/llrt/http1.xo Reader, respond, emit,
+  stream_end: the input buffer, the request's body, Go's error answers,
+  Expect: 100-continue, the response and a stream's chunks over
+  http1w.xo); the C keeps the socket and TLS reads and writes, the
+  server's registration, and HTTP/2. The C drivers of TestHTTPParseDiff
+  and TestHTTPFuzz are skipped until they become Xo programs (end pass).
+  xo_http.c 1,909 to 1,265 lines (with B29's client).
 - Native runtime (zero-C audit item B22, stage 4): on Windows the event
   loop's descriptor operations and waits are Xo too (poll.xo), and so are
   the AFD polls (pd_arm, their completions) and the poller thread's loop

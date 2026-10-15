@@ -15,17 +15,18 @@
 // HTTP/2 pass through here to hpack.xo: the server's (H2Conn) and, since
 // audit item B11, the client's (h2_exchange).
 //
-// C never calls compiled Xo (decision 0180), so the connection's task
-// (std/native/http.xo, serve_conn) calls the C reader (rthttp.hc_read)
-// until it stops at a parse: 3, a request head at the unread input
-// (rthttp.hc_input, rthttp.hc_eof; the result to rthttp.hc_head); 4, a
-// chunked body (the result to rthttp.hc_chunked). The C keeps the socket,
-// the buffer, the body reading, and the error answers; the parsed head
-// stays here and becomes the Request.
+// The server's HTTP/1.1 connection is here too since audit item B28
+// (Reader, respond, emit): the connection's task (std/native/http.xo,
+// serve_conn) reads, parses, answers errors, and writes the response in
+// Xo; the C keeps the socket and TLS reads and writes, the server's
+// registration, and HTTP/2.
 use native/llrt/hclient
 use native/llrt/hpack
 use native/llrt/http1_tables
+use native/llrt/http1w
 use native/llrt/netpolicy
+use native/llrt/process
+use native/llrt/raw
 use native/llrt/scan
 use native/rt
 use native/rthttp
@@ -1562,20 +1563,234 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
 }
 
 // ---------------------------------------------------------------------------
-// The connection's reader
+// The server's HTTP/1.1 connections (xo_http.c's hc_read_one, the
+// response, and a stream's writes; the zero-C audit's B28): the input
+// buffer, the request's body, the response header, and the flags the
+// writer (http1w.xo) answers with are a record of this module, X1, whose
+// address the C's connection keeps (xo_hc_set_x1) and frees with it
+// (cabi_http.xo h1_free). The C keeps the socket and TLS reads and
+// writes (rthttp.hc_recv, hc_send), the server's registration, and
+// HTTP/2.
+
+/// The X1 record's words: the input (a malloc'd block, its length, its
+/// capacity, the unread input's start), the end of the stream seen,
+/// whether the last request was a POST, whether a response was written,
+/// the writer's request flags (http1w.F_*), the response header (a
+/// vector of http1w.xo's 32 byte fields, each name and value a malloc'd
+/// block: the address, the count, the capacity), the request's body (a
+/// malloc'd block, its length, its capacity), and the largest body read.
+const X_BUF = 0
+const X_N = 8
+const X_CAP = 16
+const X_OFF = 24
+const X_EOF = 32
+const X_LAST_POST = 40
+const X_SERVED = 48
+const X_FLAGS = 56
+const X_HDR = 64
+const X_HN = 72
+const X_HCAP = 80
+const X_BODY = 88
+const X_BODY_N = 96
+const X_BODY_CAP = 104
+const X_MAX = 112
+const X_SIZE = 120
+
+/// A request body longer than this is cut short like a body whose client
+/// went away (the handler gets what was read, the connection closes); Go
+/// has no limit; XO_HTTP_MAX_BODY overrides (bytes).
+const HTTP_MAX_BODY: Int = 67108864
+
+fn xl(x: Int, k: Int) -> Int { rt.mem_load(x, k, 8) }
+
+fn xs(x: Int, k: Int, v: Int) { rt.mem_store(x, k, v, 8) }
+
+/// Room for n more bytes in the block at x+k (address, length, capacity
+/// at k, k+8, k+16).
+fn x_room(x: Int, k: Int, n: Int) {
+  let len = xl(x, k + 8)
+  let cap = xl(x, k + 16)
+  if len + n <= cap {
+    return
+  }
+  var c = if cap == 0 { 8192 } else { 2 * cap }
+  while c < len + n {
+    c = 2 * c
+  }
+  // a block used from its malloc'd address: raw.c_resize keeps word 0
+  // (gotchas/heap-large-resize-overwrites-word-0.md)
+  xs(x, k, raw.c_resize(xl(x, k), c))
+  xs(x, k + 16, c)
+}
+
+/// Appends the n bytes at p to the block at x+k.
+fn x_put(x: Int, k: Int, p: Int, n: Int) {
+  if n <= 0 {
+    return
+  }
+  x_room(x, k, n)
+  rt.mem_copy(xl(x, k) + xl(x, k + 8), p, n)
+  xs(x, k + 8, xl(x, k + 8) + n)
+}
+
+fn x_free(p: Int) {
+  if p != 0 {
+    rt.heap_release(p)
+  }
+}
+
+/// The largest body (XO_HTTP_MAX_BODY, else HTTP_MAX_BODY).
+fn max_body() -> Int {
+  let e = process.real_env_get("XO_HTTP_MAX_BODY")
+  if e.is_empty() {
+    return HTTP_MAX_BODY
+  }
+  // atoll: the leading digits
+  var v = 0
+  for c in e[0].bytes() {
+    if c < 48 || c > 57 {
+      break
+    }
+    v = v * 10 + Int(c) - 48
+  }
+  if v > 0 { v } else { HTTP_MAX_BODY }
+}
+
+/// The X1 record of connection h, made on first use.
+fn x1_of(h: rthttp.HConn) -> Int {
+  var x = rthttp.hc_x1(h)
+  if x == 0 {
+    x = rt.heap_large(X_SIZE)
+    rt.mem_set(x, 0, X_SIZE)
+    xs(x, X_MAX, max_body())
+    rthttp.hc_set_x1(h, x)
+  }
+  x
+}
+
+/// Frees an X1 record (the C's connection is freed).
+pub fn x1_free(x: Int) {
+  x_free(xl(x, X_BUF))
+  x_free(xl(x, X_BODY))
+  hdr_clear(x)
+  x_free(xl(x, X_HDR))
+  rt.heap_release(x - 8)
+}
+
+/// Empties the response header.
+fn hdr_clear(x: Int) {
+  let a = xl(x, X_HDR)
+  for i in 0..xl(x, X_HN) {
+    x_free(rt.mem_load(a, 32 * i, 8))
+    x_free(rt.mem_load(a, 32 * i + 16, 8))
+  }
+  xs(x, X_HN, 0)
+}
+
+/// A malloc'd copy of s (its address; 0 for "").
+fn blk_of(s: Str) -> Int {
+  if s.is_empty() {
+    return 0
+  }
+  let b = rt.heap_large(s.len()) - 8
+  rt.mem_copy(b, raw.data(s), s.len())
+  b
+}
+
+/// Header.Set of the response: the name canonical, a later value
+/// replaces an earlier one (xo_hc_header).
+pub fn header_set(h: rthttp.HConn, name: Str, value: Str) { hdr_set(x1_of(h), canonical_key(name), value) }
+
+fn hdr_set(x: Int, k: Str, v: Str) {
+  let a = xl(x, X_HDR)
+  let n = xl(x, X_HN)
+  for i in 0..n {
+    let e = a + 32 * i
+    if http1w.mem_is(rt.mem_load(e, 0, 8), rt.mem_load(e, 8, 8), k) {
+      x_free(rt.mem_load(e, 16, 8))
+      rt.mem_store(e, 16, blk_of(v), 8)
+      rt.mem_store(e, 24, v.len(), 8)
+      return
+    }
+  }
+  if n == xl(x, X_HCAP) {
+    let c = if n == 0 { 8 } else { 2 * n }
+    xs(x, X_HDR, raw.c_resize(a, 32 * c))
+    xs(x, X_HCAP, c)
+  }
+  let e = xl(x, X_HDR) + 32 * n
+  rt.mem_store(e, 0, blk_of(k), 8)
+  rt.mem_store(e, 8, k.len(), 8)
+  rt.mem_store(e, 16, blk_of(v), 8)
+  rt.mem_store(e, 24, v.len(), 8)
+  xs(x, X_HN, n + 1)
+}
+
+/// Sends the n bytes at p on h: false when the connection broke.
+fn send(h: rthttp.HConn, p: Int, n: Int) -> Bool { rthttp.hc_send_at(h, p, n) }
+
+fn send_str(h: rthttp.HConn, s: Str) -> Bool { send(h, raw.data(s), s.len()) }
+
+/// Reads more input into x: the bytes read, 0 at the end of the stream,
+/// -1 when the connection was closed, the task canceled, or (idle: no
+/// part of a request came yet) the server stopping.
+fn fill(h: rthttp.HConn, x: Int) -> Int {
+  if xl(x, X_OFF) > 0 && xl(x, X_OFF) == xl(x, X_N) {
+    xs(x, X_OFF, 0)
+    xs(x, X_N, 0)
+  }
+  if xl(x, X_CAP) - xl(x, X_N) < 4096 {
+    let off = xl(x, X_OFF)
+    if off > 0 {
+      rt.mem_move(xl(x, X_BUF), xl(x, X_BUF) + off, xl(x, X_N) - off)
+      xs(x, X_N, xl(x, X_N) - off)
+      xs(x, X_OFF, 0)
+    }
+    x_room(x, X_BUF, 4096)
+  }
+  let idle = xl(x, X_OFF) == xl(x, X_N)
+  let r = rthttp.hc_recv(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle)
+  if r > 0 {
+    xs(x, X_N, xl(x, X_N) + r)
+  }
+  r
+}
+
+/// The unread input up to n bytes of it.
+fn input(x: Int, n: Int) -> Str { if n <= 0 { "" } else { raw.str_at(xl(x, X_BUF) + xl(x, X_OFF), n) } }
+
+/// The length of the unread input up to the end of its first head (the
+/// first empty line: \n\n or \n\r\n), or all of it when it has none yet:
+/// a pipelined request's parse is the whole input's.
+fn head_len(x: Int) -> Int {
+  let p = xl(x, X_BUF) + xl(x, X_OFF)
+  let n = xl(x, X_N) - xl(x, X_OFF)
+  var i = 0
+  while i < n {
+    if rt.mem_load(p, i, 1) == 10 {
+      let e = i + 1
+      if e < n && rt.mem_load(p, e, 1) == 10 {
+        return e + 1
+      }
+      if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
+        return e + 2
+      }
+    }
+    i += 1
+  }
+  n
+}
 
 /// The HTTP/1.1 requests of a server connection.
 pub struct Reader {
   h: rthttp.HConn
+  x: Int
   /// The head of the request being read.
   head: Head
 }
 
-/// The reader of the connection, whose request heads and chunked bodies
-/// parse in Xo.
-pub fn reader(h: rthttp.HConn) -> Reader {
-  Reader{h: h, head: no_head()}
-}
+/// The reader of the connection.
+pub fn reader(h: rthttp.HConn) -> Reader { Reader{h: h, x: x1_of(h), head: no_head()} }
 
 /// The request std/rt's serve hands to Xo code (Request's parts).
 pub struct Req {
@@ -1594,59 +1809,346 @@ pub struct Req {
   pub query: List[Str]
 }
 
-/// The next request (its body read; rthttp.hc_body), or None when the
-/// connection is done.
+/// The next request (its body read: body), or None when the connection
+/// is done (the end of the stream, an error answered, the server
+/// stopping, the task canceled).
 pub fn (var r: Reader) read() -> Req? {
   while true {
-    let k = rthttp.hc_read(r.h)
-    if k == 3 {
-      // up to the end of the head (the rest does not change the parse)
-      let p = parse_head(rthttp.hc_input(r.h, 0), rthttp.hc_eof(r.h))
-      let hd = p.head
-      var flags = hd.major | (hd.minor << 4)
-      if hd.chunked {
-        flags = flags | 0x100
-      }
-      if hd.close {
-        flags = flags | 0x200
-      }
-      if hd.wants10ka {
-        flags = flags | 0x400
-      }
-      if hd.wantsclose {
-        flags = flags | 0x800
-      }
-      if hd.expect100 {
-        flags = flags | 0x1000
-      }
-      if hd.expect_other {
-        flags = flags | 0x2000
-      }
-      if hd.h2up {
-        flags = flags | 0x4000
-      }
-      if hd.target == "*" {
-        flags = flags | 0x8000
-      }
-      rthttp.hc_head(r.h, p.res, p.used, hd.method, flags, hd.clen, p.status, p.reason)
-      r.head = hd
-    } else if k == 4 {
-      // the first 4 KiB, then (when they end before the body does) all
-      let s = rthttp.hc_input(r.h, 1)
-      let cut = s.len() < rthttp.hc_avail(r.h)
-      var c = chunked(s, rthttp.hc_eof(r.h) && !cut)
-      // (an error too: a line cut by the window's end looks too long)
-      if c.res != HB_OK && cut {
-        c = chunked(rthttp.hc_input(r.h, 2), rthttp.hc_eof(r.h))
-      }
-      rthttp.hc_chunked(r.h, c.res, c.used, c.body)
-    } else if k == 1 {
+    let k = r.read_one()
+    if k == 1 {
       return Some(req_of(r.head))
-    } else {
+    }
+    if k != 2 {
       return None
     }
   }
   None
+}
+
+/// The connection.
+pub fn (r: Reader) conn() -> rthttp.HConn { r.h }
+
+/// The body of the request read last.
+pub fn (r: Reader) body() -> Bytes {
+  let n = xl(r.x, X_BODY_N)
+  if n == 0 { b"" } else { raw.str_at(xl(r.x, X_BODY), n).bytes() }
+}
+
+/// Reads a request (xo_http.c hc_read_one): 1 when it is ready for the
+/// handler, 2 when it was answered here (OPTIONS *), 0 when the
+/// connection is done.
+fn (var r: Reader) read_one() -> Int {
+  let h = r.h
+  let x = r.x
+  xs(x, X_BODY_N, 0)
+  xs(x, X_FLAGS, 0)
+  hdr_clear(x)
+  // after a POST, up to 4 CR or LF bytes before the next request
+  // (conn.readRequest's tolerance for old clients)
+  var skip = xl(x, X_LAST_POST) != 0
+  // after a response, conn.serve peeks 4 bytes before it reads the next
+  // request: fewer at the end of the stream close the connection
+  var peek = xl(x, X_SERVED) != 0
+  var p = fail(NEED)
+  while true {
+    let have = xl(x, X_N) - xl(x, X_OFF)
+    let eof = xl(x, X_EOF) != 0
+    if peek {
+      if have >= 4 {
+        peek = false
+      } else if eof {
+        return 0
+      }
+    }
+    if !peek && skip && (have >= 4 || eof) {
+      var k = 0
+      while k < 4 && xl(x, X_OFF) < xl(x, X_N) {
+        let c = rt.mem_load(xl(x, X_BUF), xl(x, X_OFF), 1)
+        if c != 13 && c != 10 {
+          break
+        }
+        xs(x, X_OFF, xl(x, X_OFF) + 1)
+        k += 1
+      }
+      skip = false
+    }
+    var res = NEED
+    if !peek && !skip {
+      p = parse_head(input(x, head_len(x)), eof)
+      res = p.res
+    }
+    if res == NEED {
+      if eof {
+        skip = false
+        continue
+      }
+      // wait for more; idle when nothing of a request came yet
+      let got = fill(h, x)
+      if got < 0 {
+        return 0
+      }
+      if got == 0 {
+        xs(x, X_EOF, 1)
+      }
+      continue
+    }
+    if res == EOF {
+      return 0
+    }
+    if res != OK {
+      let d = rt.heap_large(256)
+      let n = http1w.error_answer(d, res, p.status, if res == STATUS { p.reason } else { "" })
+      let _s = send(h, d, n)
+      rt.heap_release(d - 8)
+      if res == TOO_LARGE {
+        rthttp.hc_shut_wr(h)
+      }
+      return 0
+    }
+    xs(x, X_OFF, xl(x, X_OFF) + p.used)
+    break
+  }
+  let q = p.head
+  r.head = q
+  xs(x, X_LAST_POST, if q.method == "POST" { 1 } else { 0 })
+  var f = 0
+  if q.major > 1 || (q.major == 1 && q.minor >= 1) {
+    f = f | http1w.F_HTTP11
+  }
+  if q.method == "HEAD" {
+    f = f | http1w.F_HEAD
+  }
+  if q.h2up {
+    f = f | http1w.F_H2UP
+  }
+  if q.wants10ka {
+    f = f | http1w.F_WANTS10KA
+  }
+  if q.wantsclose {
+    f = f | http1w.F_WANTSCLOSE
+  }
+  if q.clen != 0 {
+    f = f | http1w.F_HAS_BODY
+  }
+  xs(x, X_FLAGS, f)
+  if q.expect_other {
+    // sendExpectationFailed
+    hdr_set(x, "Connection", "close")
+    let _k = write(h, x, 417, 0, 0, 0)
+    hdr_clear(x)
+    return 0
+  }
+  if q.clen != 0 {
+    if q.expect100 {
+      let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
+    }
+    let max = xl(x, X_MAX)
+    var short_body = false
+    while true {
+      let have = xl(x, X_N) - xl(x, X_OFF)
+      let eof = xl(x, X_EOF) != 0
+      if q.chunked {
+        // the first 4 KiB, then (when they end before the body does) all
+        let win = if have > 4096 { 4096 } else { have }
+        let cut = win < have
+        var c = chunked(input(x, win), eof && !cut)
+        // (an error too: a line cut by the window's end looks too long)
+        if c.res != HB_OK && cut {
+          c = chunked(input(x, have), eof)
+        }
+        xs(x, X_BODY_N, 0)
+        x_put(x, X_BODY, raw.data(c.body), c.body.len())
+        if c.res == HB_OK {
+          xs(x, X_OFF, xl(x, X_OFF) + c.used)
+          break
+        }
+        if c.res == HB_ERR || xl(x, X_BODY_N) > max {
+          // a sticky error of the chunked reader: net/http closes the
+          // connection after the response
+          xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_BODY_BAD)
+          xs(x, X_OFF, xl(x, X_N))
+          break
+        }
+      } else {
+        let want = if q.clen < max { q.clen } else { max }
+        if have >= want {
+          x_put(x, X_BODY, xl(x, X_BUF) + xl(x, X_OFF), want)
+          xs(x, X_OFF, xl(x, X_OFF) + want)
+          if q.clen > max {
+            xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_TOO_BIG)
+          }
+          break
+        }
+        if eof {
+          // the client ended the body early: the handler gets what came
+          // (std/rt ignores the error)
+          x_put(x, X_BODY, xl(x, X_BUF) + xl(x, X_OFF), have)
+          xs(x, X_OFF, xl(x, X_N))
+          short_body = true
+          if q.clen - have >= 262144 {
+            xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_TOO_BIG)
+          }
+          break
+        }
+      }
+      let got = fill(h, x)
+      if got < 0 {
+        return 0
+      }
+      if got == 0 {
+        xs(x, X_EOF, 1)
+      }
+    }
+    // the 100-continue reader saw no end of the body: net/http closes
+    // after the response
+    if q.expect100 && (short_body || (xl(x, X_FLAGS) & http1w.F_BODY_BAD) != 0) {
+      xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_EXPECT_UNREAD)
+    }
+  }
+  if q.method == "OPTIONS" && q.target == "*" {
+    // net/http answers it itself (globalOptionsHandler), reading at most
+    // 4 KiB of its body
+    hdr_set(x, "Content-Length", "0")
+    if xl(x, X_BODY_N) > 4096 {
+      // MaxBytesReader: requestTooLarge sets the handler's header
+      hdr_set(x, "Connection", "close")
+    }
+    let k = write(h, x, 200, 0, 0, 0)
+    hdr_clear(x)
+    xs(x, X_SERVED, 1)
+    return if (k & 4) == 0 && (k & http1w.R_KEEP) != 0 { 2 } else { 0 }
+  }
+  1
+}
+
+/// Writes the response of status with the bn bytes at body as net/http
+/// does (http1w.response; stream: the head of a stream with its first
+/// write) and sends it: http1w.R_* of the writer, with 4 when the send
+/// failed.
+fn write(h: rthttp.HConn, x: Int, status: Int, body: Int, bn: Int, stream: Int) -> Int {
+  var room = 640 + bn + 24 * (bn / 2048 + 2)
+  let a = xl(x, X_HDR)
+  for i in 0..xl(x, X_HN) {
+    room += 2 * (rt.mem_load(a, 32 * i + 8, 8) + rt.mem_load(a, 32 * i + 24, 8) + 4)
+  }
+  let d = rt.heap_large(room + 8)
+  let res = d + room
+  rt.mem_store(res, 0, 0, 8)
+  let f = xl(x, X_FLAGS) | (if stream != 0 { http1w.F_STREAM } else { 0 })
+  let n = http1w.response(d, a, xl(x, X_HN), status, body, bn, f, res)
+  var r = rt.mem_load(res, 0, 8)
+  if !send(h, d, n) {
+    r = r | 4
+  }
+  rt.heap_release(d - 8)
+  r
+}
+
+/// The response on h (xo_hc_respond for HTTP/1.1): whether the
+/// connection stays open for another request.
+pub fn respond(h: rthttp.HConn, status: Int, body: Bytes) -> Bool {
+  let x = x1_of(h)
+  let bn = body.len()
+  if bn > 2048 && http1w.body_allowed(status) && http1w.find(xl(x, X_HDR), xl(x, X_HN), "Content-Length") < 0 {
+    // std/rt sets Content-Length on a whole body net/http would
+    // otherwise chunk (above its 2048 byte buffer); match it
+    hdr_set(x, "Content-Length", "${bn}")
+  }
+  let k = write(h, x, status, raw.bytes_addr(body), bn, 0)
+  let _keep = body.len()
+  hdr_clear(x)
+  xs(x, X_SERVED, 1)
+  if (k & 4) != 0 || (k & http1w.R_KEEP) == 0 {
+    return false
+  }
+  !rthttp.hc_stopping(h)
+}
+
+/// A stream's sink state bits (xo_http.c xo_sink): the head went out,
+/// the body is chunked, the body goes raw, the connection stays open, a
+/// send failed.
+const SK_STARTED = 1
+const SK_CHUNKING = 2
+const SK_RAW = 4
+const SK_KEEP = 8
+const SK_FAILED = 16
+
+/// Writes the n bytes at p of a stream on HTTP/1.1 connection h (status
+/// its status; state the sink's SK_* bits) as net/http's chunkWriter
+/// does: the head with the first data, then a chunk per write. The new
+/// state.
+pub fn emit(h: rthttp.HConn, status: Int, state: Int, p: Int, n: Int) -> Int {
+  if (state & SK_FAILED) != 0 {
+    return state
+  }
+  let x = x1_of(h)
+  var s = state
+  if (s & SK_STARTED) == 0 {
+    s = s | SK_STARTED
+    let k = write(h, x, status, p, n, 1)
+    if (k & http1w.R_CHUNKED) != 0 {
+      s = s | SK_CHUNKING
+    } else if (xl(x, X_FLAGS) & http1w.F_HEAD) == 0 && http1w.body_allowed(status) {
+      s = s | SK_RAW
+    }
+    if (k & http1w.R_KEEP) != 0 {
+      s = s | SK_KEEP
+    }
+    if (k & 4) != 0 {
+      s = s | SK_FAILED
+    }
+    hdr_clear(x)
+    return s
+  }
+  if n > 0 && (s & SK_CHUNKING) != 0 {
+    if !send_str(h, "${hex(n)}\r\n") || !send(h, p, n) || !send_str(h, "\r\n") {
+      s = s | SK_FAILED
+    }
+  } else if n > 0 && (s & SK_RAW) != 0 {
+    if !send(h, p, n) {
+      s = s | SK_FAILED
+    }
+  }
+  s
+}
+
+/// n in lower case hexadecimal.
+fn hex(n: Int) -> Str {
+  if n == 0 {
+    return "0"
+  }
+  let digits = "0123456789abcdef".bytes()
+  var out: List[Str] = []
+  var v = n
+  while v > 0 {
+    out.push(rt.str_of_byte(Int(digits[v % 16])))
+    v = v / 16
+  }
+  var s = ""
+  var i = out.len() - 1
+  while i >= 0 {
+    s = s + out[i]
+    i -= 1
+  }
+  s
+}
+
+/// Ends a stream on HTTP/1.1 connection h whose head went out (state its
+/// sink's bits, the n bytes at p still buffered): whether the
+/// connection stays open for another request.
+pub fn stream_end(h: rthttp.HConn, status: Int, state: Int, p: Int, n: Int) -> Bool {
+  var s = state
+  if n > 0 {
+    s = emit(h, status, s, p, n)
+  }
+  if (s & SK_CHUNKING) != 0 && (s & SK_FAILED) == 0 && !send_str(h, "0\r\n\r\n") {
+    s = s | SK_FAILED
+  }
+  xs(x1_of(h), X_SERVED, 1)
+  if (s & SK_FAILED) != 0 || (s & SK_KEEP) == 0 {
+    return false
+  }
+  !rthttp.hc_stopping(h)
 }
 
 /// The parts of the Request of a head (xo_http.c's hc_* accessors).

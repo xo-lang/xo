@@ -616,7 +616,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
   while true {
     match rd.read() {
       Some(q) => {
-        if !respond(hc, head_request(hc, q), r) {
+        if !respond(hc, true, head_request(rd, q), r) {
           break
         }
       }
@@ -630,14 +630,20 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
 /// connection's other streams go on.
 fn serve_stream(st: rthttp.HConn, r: Router) {
   defer rthttp.h2_end(st)
-  task.isolate(fn() -> Bool ! () { respond(st, conn_request(st), r) }).ignore_err("a fault resets the stream (h2_end)")
+  task.isolate(fn() -> Bool ! () { respond(st, false, conn_request(st), r) }).ignore_err("a fault resets the stream (h2_end)")
 }
 
-/// Answers req, read on hc: whether the connection stays open.
-fn respond(hc: rthttp.HConn, req: Request, r: Router) -> Bool {
+/// Answers req, read on hc (h1: an HTTP/1.1 connection, whose response
+/// is std/native/llrt/http1.xo's; else an HTTP/2 stream): whether the
+/// connection stays open.
+fn respond(hc: rthttp.HConn, h1: Bool, req: Request, r: Router) -> Bool {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
   for (k, v) in resp.headers {
-    rthttp.hc_header(hc, k, v)
+    if h1 {
+      http1.header_set(hc, k, v)
+    } else {
+      rthttp.hc_header(hc, k, v)
+    }
   }
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
@@ -650,11 +656,14 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> Bool {
     }
     return rthttp.sink_end(s)
   }
+  if h1 {
+    return http1.respond(hc, resp.status, resp.body)
+  }
   rthttp.hc_respond(hc, resp.status, resp.body)
 }
 
-/// The request of an HTTP/1.1 head read on hc (std/rt's serve).
-fn head_request(hc: rthttp.HConn, q: http1.Req) -> Request {
+/// The request of an HTTP/1.1 head read by rd (std/rt's serve).
+fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
   var headers: Map[Str, Str] = {}
   var i = 0
   while i + 1 < q.headers.len() {
@@ -676,7 +685,7 @@ fn head_request(hc: rthttp.HConn, q: http1.Req) -> Request {
     port = Some(q.port)
   }
   let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: rthttp.hc_remote_ip(rd.conn())}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
