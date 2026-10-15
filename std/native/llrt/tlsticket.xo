@@ -31,11 +31,12 @@ pub struct Key {
   pub created: Int
 }
 
-/// Go's ticketKeyFromBytes: the keys of a 32 byte seed (SHA-512's first
-/// 16 and next 16 bytes).
+/// Go's ticketKeyFromBytes: the keys of a 32 byte seed, SHA-512's bytes
+/// 16 to 32 and 32 to 48 (its first 16 were the wire's key name once and
+/// are never a secret).
 pub fn key(seed: Bytes, created: Int) -> Key {
   let h = sha256.sum(sha256.HASH_SHA512, seed)
-  Key{aes: h[0..16], hmac: h[16..32], created: created}
+  Key{aes: h[16..32], hmac: h[32..48], created: created}
 }
 
 /// Go's Config.ticketKeys for automatic keys at time now: keys[0] seals

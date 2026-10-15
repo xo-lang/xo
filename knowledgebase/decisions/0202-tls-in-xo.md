@@ -185,6 +185,27 @@ std (decision 0074) unless the owner decides to expose a user marker.
   one bad_record_mac for a bad length, bad padding, or a bad MAC. Server
   side first; the client offers them too since the follow-up (Go's
   client default), in tls13.xo's combined hello as well.
+- 2026-10-15 (B31 server checks): TestTLSServerReplayDiff
+  (internal/llvm, not -short) is the server half of the differential
+  fuzzing. It mutates the recorded clients of the tls13_server and
+  tls12_server goldens: bytes flipped, cut, inserted; records dropped,
+  repeated, swapped, moved; flights dropped or repeated; the RFC 8448
+  client's Finished altered under its valid keys; the input chunked. It
+  diffs tls13srv.xo and tls12srv.xo on LLVM and arm64 against the Go
+  references. It found Go's alert record version (0x0301 before the
+  version is chosen) missing in both servers, and tls12srv.xo's stream
+  and EOF handling (fixed by xo-fa). The TLS 1.3 reference is our Go
+  port, so the fuzz checks Xo against it. Agreement with crypto/tls
+  itself comes from the recorded Go client traces, TestTLSDiff, and
+  TestTLSInteropMatrix, which runs the same Xo program on the Go backend
+  (crypto/tls on both ends) and the native backends: the Xo client
+  against Go servers and Go clients against the Xo servers, for each TLS
+  version, suite, group, certificate key, ALPN, and resumption.
+  X25519MLKEM768, Go's default hybrid group, has no Xo counterpart: the
+  matrix reads it as X25519. The ticket key derivation was wrong in
+  both tlsticket.xo and its Go copy, which agreed with each other; xo-fa
+  found it against crypto/tls's own TLS 1.2 tickets.
+  std/rt's TestTicketsAsGo now opens Go's tickets and has Go open ours.
 
 ## Alternatives
 

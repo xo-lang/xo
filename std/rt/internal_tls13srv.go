@@ -139,18 +139,18 @@ type t13sConf struct {
 }
 
 type t13Server struct {
-	conf                       t13sConf
-	state                      int
-	err                        string
-	closed, hrr, ccsSent, seen bool
-	resumed, tickets           bool
-	suite, group, scheme       int
-	alpn, sni                  string
-	rin, hs, app, out, tr      []byte
-	random                     []byte
-	ch1                        t13sHello
-	cHS, clientFin, cAP        []byte
-	rk, wk                     *t13Keys
+	conf                             t13sConf
+	state                            int
+	err                              string
+	closed, hrr, ccsSent, seen, vers bool
+	resumed, tickets                 bool
+	suite, group, scheme             int
+	alpn, sni                        string
+	rin, hs, app, out, tr            []byte
+	random                           []byte
+	ch1                              t13sHello
+	cHS, clientFin, cAP              []byte
+	rk, wk                           *t13Keys
 }
 
 func (s *t13Server) keys() {
@@ -515,6 +515,7 @@ func (s *t13Server) clientHello(msg []byte) {
 		s.fail(70, "tls: client offered only unsupported versions: "+t13sHexList(versions))
 		return
 	}
+	s.vers = true
 	if len(h.comp) != 1 || h.comp[0] != 0 {
 		s.fail(47, "tls: TLS 1.3 client supports illegal compression methods")
 		return
@@ -863,7 +864,11 @@ func (s *t13Server) keyUpdate(msg []byte) {
 func (s *t13Server) fail(alert int, msg string) {
 	if s.state != t13sFailed {
 		s.err, s.state = msg, t13sFailed
-		s.out = append(s.out, s.wk.seal(21, []byte{2, byte(alert)}, 0x0303)...)
+		vers := 0x0301
+		if s.vers {
+			vers = 0x0303
+		}
+		s.out = append(s.out, s.wk.seal(21, []byte{2, byte(alert)}, vers)...)
 	}
 }
 
@@ -1124,7 +1129,7 @@ type t13sTicketKey struct {
 
 func t13sKeyFrom(seed []byte, created int64) t13sTicketKey {
 	h := sha512.Sum512(seed)
-	return t13sTicketKey{aes: h[:16], hmac: h[16:32], created: created}
+	return t13sTicketKey{aes: h[16:32], hmac: h[32:48], created: created}
 }
 
 type t13sState struct {

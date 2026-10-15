@@ -155,6 +155,7 @@ pub struct Server {
   pub hello: Bytes
   pub rest: Bytes
   seen: Bool
+  vers: Bool
   rin: Bytes
   hs: Bytes
   app: Bytes
@@ -173,7 +174,7 @@ pub struct Server {
 
 /// A new server for conf, waiting for a ClientHello.
 pub fn server(cf: Conf) -> Server {
-  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, resumed: false, hello: b"", rest: b"", seen: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", tickets: false, rk: tlsrec.plain(), wk: tlsrec.plain()}
+  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, resumed: false, hello: b"", rest: b"", seen: false, vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", tickets: false, rk: tlsrec.plain(), wk: tlsrec.plain()}
 }
 
 /// The bytes to send to the client, taken.
@@ -621,6 +622,7 @@ fn client_hello(var s: Server, msg: Bytes) {
     fail(s, ALERT_PROTOCOL_VERSION, "tls: client offered only unsupported versions: ${hex_list(versions)}")
     return
   }
+  s.vers = true
   if h.comp.len() != 1 || h.comp[0] != 0 {
     fail(s, ALERT_ILLEGAL_PARAMETER, "tls: TLS 1.3 client supports illegal compression methods")
     return
@@ -1037,7 +1039,8 @@ fn fail(var s: Server, alert: Int, msg: Str) {
   if s.state != FAILED {
     s.err = msg
     s.state = FAILED
-    s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_ALERT, asn1.cat([tls13.u8(2), tls13.u8(alert)]), 0x0303))
+    // Go's record version: TLS 1.0's until the version is chosen
+    s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_ALERT, asn1.cat([tls13.u8(2), tls13.u8(alert)]), if s.vers { 0x0303 } else { 0x0301 }))
   }
 }
 

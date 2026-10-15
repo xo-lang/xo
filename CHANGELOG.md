@@ -68,6 +68,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   inversion by addition chain (P-256's field) or a fixed window (the
   other exponents): handshakes about 8% fewer instructions on LLVM
   (X25519 with a P-256 chain 15.9M to 14.7M, Mbed 5.3M).
+- TLS server checks (zero-C audit item B31, decision 0202):
+  TestTLSServerReplayDiff fuzzes tls13srv.xo and tls12srv.xo with mutated
+  client records against the Go references on LLVM and arm64 (64,000
+  cases over four seeds). TestTLSInteropMatrix crosses the Xo and Go
+  clients and servers over TLS 1.2 and 1.3, suites, groups, certificate
+  keys, ALPN, and resumption against crypto/tls on both ends. Fixes: the
+  servers' alerts before version negotiation use record version 0x0301
+  as Go's, and session ticket keys use Go's SHA-512 slices (tickets
+  interoperate with crypto/tls's, checked by std/rt's TestTicketsAsGo).
 - Native TLS 1.2 server: session tickets (RFC 5077, as Go's
   handshake_server.go: the extension, NewSessionTicket after a full
   handshake, the abbreviated handshake with Go's resumption checks;

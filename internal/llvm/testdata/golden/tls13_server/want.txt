@@ -37,10 +37,10 @@ low order share:
   f0 4 1503030002022f - false tls: invalid client key share
   bye -
 short hello:
-  f0 4 15030300020232 - false local error: tls: error decoding message
+  f0 4 15030100020232 - false local error: tls: error decoding message
   bye -
 tls 1.2 hello:
-  f0 4 15030300020246 - false tls: client offered only unsupported versions: [303 302 301]
+  f0 4 15030100020246 - false tls: client offered only unsupported versions: [303 302 301]
   bye -
 go client, rsa, alpn h2:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(791 bytes) - false 
@@ -64,27 +64,27 @@ go client, ed25519, chacha20-poly1305, p-384:
   bye 1703030013005d70bae162fd169cb770ca7b428ab1be0172
 go client, ticket:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
-  f1 3 170303001e8ea596d065d9613ab5a068bc2275bc9e0ba54c6bcdd676987ab11080cadb 474554202f207472616365 false 
+  f1 3 170303001edd00aef07aea5c6539f25a2a1464fe46a2f4aa9f684dfea5c67774aa8b70 474554202f207472616365 false 
   params TLS_AES_128_GCM_SHA256 29 - 807 xo.test false false
   f2 3 - - true 
-  bye 170303001357f3e5189b2dbd5f0d1cf996ab31075f7b0dd6
+  bye 1703030013ae6dbc12af7f0826c8a5b3dba2e5d94e18cd67
 go client, resumed:
   f0 2 16030300800200007c0303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(347 bytes) - false 
-  f1 3 170303001eccc8a5d1e5ef12298183e927f1e412c7cb641457eac004e82ab53cc18649 474554202f207472616365 false 
+  f1 3 170303001e1c7e8401f2d550a55fce84c18454f686e63dc42c3cd60c2f36b38722bb27 474554202f207472616365 false 
   params TLS_AES_128_GCM_SHA256 29 - 0 xo.test false true
   f2 3 - - true 
-  bye 170303001352b775a541b1b57012ea91cdb2525cd540b5e6
+  bye 17030300134cc244bf1d4af0776feb5263a6e5bbbecca1dd
 go client, bad binder:
   f0 4 15030300020233 - false tls: invalid PSK binder
   f1 4 - - false tls: invalid PSK binder
   bye -
 go client, ticket expired:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
-  f1 4 17030300137c1feb6958321881d60f4514613697cafa9826 - false local error: tls: bad record MAC
+  f1 4 170303001342afecae469c53b38fe76d7afbc63e527d5536 - false local error: tls: bad record MAC
   bye -
 go client, ticket of another key:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
-  f1 4 17030300137c1feb6958321881d60f4514613697cafa9826 - false local error: tls: bad record MAC
+  f1 4 170303001342afecae469c53b38fe76d7afbc63e527d5536 - false local error: tls: bad record MAC
   bye -
 rsa:
   client -

@@ -623,6 +623,9 @@ fn feed(var c: Conn, data: Bytes) {
         var cf = tls12srv.conf(certs, key)
         cf.alpn = c.s.conf.alpn
         cf.max13 = true
+        // RFC 5077 tickets under the server's keys (tlsticket.xo)
+        cf.ticket_keys = c.s.conf.ticket_keys
+        cf.now = c.s.conf.now
         c.s12 = Some(tls12srv.resume(cf, c.s.hello, c.s.rest))
       }
     }
