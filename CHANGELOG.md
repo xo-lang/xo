@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (the event loop): poll.xo checks a context's
+  cancellation (budget.xo canceled), signals a park (pool.xo
+  park_signal, released for ThreadSanitizer first) and runs a signal's
+  shutdown step (stop.xo signal) itself instead of through the C's
+  services record; xo_rt.c's pdsvc_canceled, poll_signal_cb,
+  poll_stop_cb, stop_signal and park_signal, and cabi.xo's park_signal
+  export, go.
 - Native runtime (two phase shutdown): stop.xo cancels main's root
   (pool.xo node_cancel), reads the timers' clock and makes the third
   signal's exit (stdio.xo flush, process.xo os_exit(130)) itself instead

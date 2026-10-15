@@ -9,6 +9,7 @@
 // binary heap), from the C runtime's malloc (rt.heap_large). The C holds
 // the event loop's mutex (ev.mu) around every call here. Nothing here
 // allocates Xo values or faults.
+use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/heapos
 use native/llrt/linux
@@ -143,10 +144,6 @@ const T_PARK = 16
 const T_FN = 24
 const T_FIRED = 40
 
-/// rt.static_word: the C's park_signal (called through rt.call_c2, which
-/// keeps its ThreadSanitizer annotation), set by poll_main.
-const W_SIGNAL = 43
-
 /// rt.sched_rt's statistics (xo_rt.c st: poll_return, poll_event,
 /// poll_wake).
 const ST_POLL_RETURN = 15
@@ -175,8 +172,11 @@ fn unlk(l: Int) {
   }
 }
 
+/// Signals the park p (xo_rt.c park_signal until 2026-10-15): released
+/// for ThreadSanitizer first, as tasks.xo park_signal does.
 fn signal(p: Int) {
-  let _r = rt.call_c2(rt.mem_load(rt.static_word(W_SIGNAL), 0, 8), p, 0)
+  sanhook.release(p)
+  pool.park_signal(ctx.pool(), p)
 }
 
 /// Hands readiness mode (1 read, 2 write, 3 both) to the descriptor pd's
@@ -218,24 +218,21 @@ pub fn pd_ready(pd: Int, mode: Int) {
 /// rt.static_word: the C's services record.
 const W_SVC = 44
 
-/// The services record's words: canceled (c: whether the context is
-/// canceled and not shielded), wait (c: park_wait_n(c, 1, 0)), signal (a
-/// park), the address of ev.mu, of ev.dead, and the offset of a
-/// context's park (words 0 to 16, 40, 48, 88, 96 and 128 unused: the
-/// C's Windows open, close, shutdown, AFD handle, poke and start until
-/// 2026-10-15).
-const S_CANCELED = 24
+/// The services record's words: wait (c: park_wait_n(c, 1, 0)), the
+/// address of ev.mu, of ev.dead, and the offset of a context's park
+/// (words 0 to 16, 40, 48, 88, 96 and 128 unused: the C's Windows open,
+/// close, shutdown, AFD handle, poke and start until 2026-10-15; 24, 56
+/// and 120 too: canceled, park_signal and stop_signal, which this module
+/// calls in Xo since 2026-10-15: budget.xo canceled, pool.xo
+/// park_signal, stop.xo signal).
 const S_WAIT = 32
-const S_SIGNAL = 56
 const S_MU = 64
 const S_DEAD = 72
 const S_PARK = 80
-/// The C's ev record (EV_ below), the export where the poller thread
-/// starts (xo_x_poll_thread), and the C's stop_signal (the poller runs
-/// the shutdown's steps).
+/// The C's ev record (EV_ below) and the export where the poller thread
+/// starts (xo_x_poll_thread).
 const S_EV = 104
 const S_THREAD = 112
-const S_STOP = 120
 
 /// The ev record's words (xo_rt.c ev, asserted there): the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
@@ -287,12 +284,8 @@ pub const CANCELED = 1
 pub const CLOSED = 2
 pub const TIMEOUT = 3
 
-/// Sets the C's services record (at start, before any descriptor), and
-/// the C's park_signal from it (the poller's loop sets it too).
-pub fn poll_svc(rec: Int) {
-  rt.mem_store(rt.static_word(W_SVC), 0, rec, 8)
-  rt.mem_store(rt.static_word(W_SIGNAL), 0, rt.mem_load(rec, S_SIGNAL, 8), 8)
-}
+/// Sets the C's services record (at start, before any descriptor).
+pub fn poll_svc(rec: Int) { rt.mem_store(rt.static_word(W_SVC), 0, rec, 8) }
 
 /// The AFD device handle on Windows (0: none, the WSAPoll loop; always 0
 /// elsewhere).
@@ -540,7 +533,7 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   var t = 0
   var res = READY
   while true {
-    if svc(S_CANCELED, c) != 0 {
+    if budget.canceled(c) {
       res = CANCELED
       break
     }
@@ -607,7 +600,7 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
 }
 
 /// Whether the current task is canceled (and not shielded).
-pub fn canceled() -> Bool { svc(S_CANCELED, ctx.cur()) != 0 }
+pub fn canceled() -> Bool { budget.canceled(ctx.cur()) }
 
 /// A timer that signals the park p at deadline (ns, the timers' clock:
 /// the virtual one in the test world, else rt.clock_now's monotonic
@@ -699,7 +692,7 @@ pub fn timer_fn(d: Int, f: Int, arg: Int) -> Int {
 /// cancellation ended (or prevented) the sleep, without starting an
 /// unwind.
 pub fn clock_wait(c: Int, d: Int) -> Bool {
-  if svc(S_CANCELED, c) != 0 {
+  if budget.canceled(c) {
     return true
   }
   if d <= 0 {
@@ -708,12 +701,12 @@ pub fn clock_wait(c: Int, d: Int) -> Bool {
   let park = park_of(c)
   pool.park_reset(park)
   let t = timer_park(deadline(d), park)
-  while !fired(t) && svc(S_CANCELED, c) == 0 {
+  while !fired(t) && !budget.canceled(c) {
     let _w = svc(S_WAIT, c)
   }
   let f = fired(t)
   timer_end(t)
-  !f && svc(S_CANCELED, c) != 0
+  !f && budget.canceled(c)
 }
 
 /// Adds timer t (its deadline, and its park or function, set; its place
@@ -865,13 +858,13 @@ pub fn poll_thread() {
   let e = ev()
   if windows() {
     if rt.mem_load(e, EV_AFD, 8) != 0 {
-      poll_main_win(rt.mem_load(e, EV_IOCP, 8), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS), svc_word(S_SIGNAL), svc_word(S_STOP))
+      poll_main_win(rt.mem_load(e, EV_IOCP, 8), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS))
     } else {
       poll_main_wsa(e)
     }
     return
   }
-  poll_main(s32(rt.mem_load(e, EV_POLL, 4)), s32(rt.mem_load(e, EV_PIPE_R, 4)), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS), svc_word(S_SIGNAL), svc_word(S_STOP))
+  poll_main(s32(rt.mem_load(e, EV_POLL, 4)), s32(rt.mem_load(e, EV_PIPE_R, 4)), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS))
 }
 
 /// The event loop's lock word (xo_rt.c ev.mu), and taking and releasing
@@ -905,7 +898,7 @@ pub fn sleep_until(deadline: Int) -> Int {
   let t = timer_park(deadline, park)
   var res = TIMEOUT
   while true {
-    if svc(S_CANCELED, c) != 0 {
+    if budget.canceled(c) {
       res = CANCELED
       break
     }
@@ -992,10 +985,9 @@ const NEVENTS = 64
 /// epoll descriptor, pipe_r the self pipe's read end, mu the event loop's
 /// lock word (ev.mu), dead the address of the list of descriptors to
 /// free (each from rt.heap_large: pd_open), sigs the address of the
-/// count of signals not handled yet, and signal_fn and stop_fn the C's
-/// park_signal and stop_signal (called through rt.call_c2).
-pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int) {
-  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+/// count of signals not handled yet (each a step of stop.xo's
+/// shutdown).
+pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int) {
   // the events (struct kevent of 32 bytes, struct epoll_event of 16 or
   // 12), a struct timespec, and the pipe's drain buffer
   let evs = rt.heap_large(addw(rt.int_wrap(2, NEVENTS, 32), 16 + 64))
@@ -1032,7 +1024,7 @@ pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_f
         while read_fd(pipe_r, drain, 64) > 0 {}
         var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
         while k > 0 {
-          let _s = rt.call_c2(stop_fn, 0, 0)
+          stop.signal()
           k = subw(k, 1)
         }
       }
@@ -1235,8 +1227,7 @@ fn afd_done(pd: Int) {
 /// fires the timers that are due, waits on the completion port iocp, and
 /// handles the completions and the signals (ev.sigs, which the console
 /// handler counts and ev_poke wakes the port for).
-pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int) {
-  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int) {
   let dev = afd()
   // 64 OVERLAPPED_ENTRY records of 32 bytes, then the count removed
   let es = rt.heap_large(64 * 32 + 16)
@@ -1291,7 +1282,7 @@ pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, s
     }
     var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
     while k > 0 {
-      let _s = rt.call_c2(stop_fn, 0, 0)
+      stop.signal()
       k = subw(k, 1)
     }
   }
@@ -1472,7 +1463,6 @@ fn unregister(e: Int, pd: Int) {
 /// for), hands the readiness over, drains the self pipe, and runs the
 /// signals' shutdown steps.
 fn poll_main_wsa(e: Int) {
-  rt.mem_store(rt.static_word(W_SIGNAL), 0, svc_word(S_SIGNAL), 8)
   let mu = addw(e, EV_MU)
   let dead = addw(e, EV_DEAD)
   let wr = rt.mem_load(e, EV_WR, 8)
@@ -1557,7 +1547,7 @@ fn poll_main_wsa(e: Int) {
     }
     var sg = rt.slot_swap(addw(e, EV_SIGS), 0, 0, ACQ_REL)
     while sg > 0 {
-      let _s = rt.call_c2(svc_word(S_STOP), 0, 0)
+      stop.signal()
       sg = subw(sg, 1)
     }
   }

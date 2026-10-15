@@ -509,7 +509,6 @@ fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 
 fn park_reset(p: Int) { pool.park_reset(p) }
 
-fn park_signal(pl: Int, p: Int) { pool.park_signal(pl, p) }
 
 /// Context c waits on its park (tasks.xo park_wait_n; xo_rt.c's
 /// park_wait_n forwards here).

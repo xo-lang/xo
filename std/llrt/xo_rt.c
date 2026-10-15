@@ -843,7 +843,6 @@ void __tsan_release(void *addr);
 // std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
 // record.
 static void park_reset(xo_park *p);
-static void park_signal(xo_park *p);
 
 // The cancellation tree: every node has a lock for its list of children
 // and its waiter. A walk that cancels a subtree holds the locks from the
@@ -1292,15 +1291,10 @@ static void *pool_rec(void);
 int64_t xo_x_worker_main(int64_t w);
 
 void xo_x_park_reset(int64_t p);
-void xo_x_park_signal(int64_t pl, int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
 void xo_x_node_unlink(int64_t n);
 
 static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
-static void park_signal(xo_park *p) {
-	TSAN_RELEASE(p);
-	xo_x_park_signal(XO_ADDR(pool_rec()), XO_ADDR(p));
-}
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 
@@ -2040,19 +2034,11 @@ enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
 
 // The poller thread
 
-static void stop_signal(void);
-
-// pd_svc is poll.xo's services record (its S_ words): the C functions it
-// calls through rt.call_c2, the event loop's lock word and dead list and
+// pd_svc is poll.xo's services record (its S_ words): the wait it calls
+// through rt.call_c2 (park_wait_n), the event loop's lock word and dead list and
 // record, the offset of a context's park, and where the poller thread
 // starts (Windows' start, registration, and loops are poll.xo's too
 // since 2026-10-15).
-static int64_t poll_signal_cb(int64_t p, int64_t b);
-static int64_t poll_stop_cb(int64_t a, int64_t b);
-static int64_t pdsvc_canceled(int64_t c, int64_t b) {
-	(void)b;
-	return ctx_canceled((xo_ctx *)(intptr_t)c);
-}
 static int64_t pdsvc_wait(int64_t c, int64_t b) {
 	(void)b;
 	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
@@ -2074,15 +2060,12 @@ int64_t xo_x_poll_thread(int64_t a);
 static int64_t pd_svc[17];
 void xo_x_poll_svc(int64_t rec);
 static void pd_svc_init(void) {
-	pd_svc[3] = XO_ADDR(&pdsvc_canceled);
 	pd_svc[4] = XO_ADDR(&pdsvc_wait);
-	pd_svc[7] = XO_ADDR(&poll_signal_cb);
 	pd_svc[8] = XO_ADDR(&ev.mu);
 	pd_svc[9] = XO_ADDR(&ev.dead);
 	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
 	pd_svc[13] = XO_ADDR(&ev);
 	pd_svc[14] = XO_ADDR(&xo_x_poll_thread);
-	pd_svc[15] = XO_ADDR(&poll_stop_cb);
 	xo_x_poll_svc(XO_ADDR(pd_svc));
 }
 _Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
@@ -2091,19 +2074,8 @@ _Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
 // poll_main on Linux and macOS, B22; poll_main_win over Windows' AFD
 // polls, stage 4; poll_main_wsa, Windows' WSAPoll fallback): it frees the
 // dead descriptors, fires the timers that are due, waits for readiness,
-// hands it to the descriptors, and runs the signals' shutdown steps;
-// poll.xo calls back into these.
-static int64_t poll_signal_cb(int64_t p, int64_t b) {
-	(void)b;
-	park_signal((xo_park *)(intptr_t)p);
-	return 0;
-}
-static int64_t poll_stop_cb(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	stop_signal();
-	return 0;
-}
+// hands it to the descriptors, and runs the signals' shutdown steps
+// (stop.xo signal).
 
 // ---------------------------------------------------------------------------
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
@@ -2274,19 +2246,16 @@ extern char **environ;
 // (the signals counted, the stop request, the grace timer, task.stopping's
 // channel, main's root context) is std/native/llrt/stop.xo's (the zero-C
 // audit's B26, part 1). The C keeps the handlers, which count a signal
-// and wake the poller (whose thread calls stop_signal), and stop_svc, the
+// and wake the poller (whose thread calls stop.xo signal), and stop_svc, the
 // services record stop.xo calls through rt.call_c2 (its S_ words).
 
 void xo_x_stop_init(int64_t svc);
-void xo_x_stop_signal(void);
 void xo_x_stop_cancel(void);
 int64_t xo_x_stop_requested(void);
 int64_t xo_x_stop_stopping(int64_t drop);
 void xo_x_stop_set_root(int64_t n);
 void xo_x_stop_end(void);
 
-// stop_signal handles SIGINT or SIGTERM (on the poller thread).
-static void stop_signal(void) { xo_x_stop_signal(); }
 
 static int64_t stopsvc_chan(int64_t drop, int64_t b) {
 	(void)b;
