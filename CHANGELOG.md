@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 emitter: Int operations on constants are folded again after
+  inlining (selfhost/arm64 inline.xo fold_consts), so a helper's
+  parameter that is a constant at the call (a shift or rotation by
+  64 - n) no longer leaves a run-time subtraction whose result is
+  hoisted and spilled; the whole bench/perf set on arm64: 14 workloads
+  faster (up to 1.6%), none slower beyond noise. Counting one-block
+  callees as no block was measured and rejected (41 workloads slower);
+  bench/results/arm64-inline-2026-10-15.md, and
+  gotchas/arm64-inline-one-level.md corrected (nested inlining works;
+  the block limit is what kept such helpers calls).
 - Native runtime: xo_rt.c keeps only what is C by design (244 lines,
   with xo_nolibc.c 372 lines of runtime C): the C tests' types,
   placeholders, ev_start and XO_NORETURN moved to

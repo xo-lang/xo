@@ -146,6 +146,7 @@ fn inline_module(var m: ssa.Module) -> Bool {
   for fi in 0..m.funcs.len() {
     var f = m.funcs[fi]
     m.funcs[fi] = ssa.Func{name: ""}
+    var here = false
     for _ in 0..200 {
       let v = find_call(f, m, small, by_name)
       if v < 0 {
@@ -154,10 +155,99 @@ fn inline_module(var m: ssa.Module) -> Bool {
       let ci = by_name.get(aux_str(f.values[v].aux)) ?? -1
       inline_call(f, v, m.funcs[ci])
       changed = true
+      here = true
+    }
+    if here {
+      fold_consts(f, m.types)
     }
     m.funcs[fi] = f
   }
   changed
+}
+
+/// Folds the Int operations of f whose operands are constants, in place
+/// (the value becomes the constant): the SSA builder folds before
+/// inlining, so a helper's parameter that is a constant at the call (a
+/// rotation by 64 - n with n constant) left an operation on two
+/// constants that the emitter computed at run time, its result hoisted
+/// out of a loop and spilled (2026-10-15,
+/// gotchas/arm64-inline-one-level.md). A checked operation is folded only
+/// when it does not overflow (otherwise it stays, and faults as before);
+/// shifts only by 0 to 62; rt.int_wrap's add, subtract and multiply
+/// wrap. Left alone: sized integers (bits), and a value with a landing
+/// check (pad), whose branch refers to it (folding one broke the
+/// module's verification: tzrules.set_offset, a release of a value not
+/// held).
+fn fold_consts(var f: ssa.Func, types: List[ssa.SType]) {
+  var again = true
+  var rounds = 0
+  while again && rounds < 4 {
+    again = false
+    rounds += 1
+    for bi in 0..f.blocks.len() {
+      for v in f.blocks[bi].instrs {
+        let x = f.values[v]
+        if x.pad >= 0 || x.ty < 0 || x.ty >= types.len() || types[x.ty].kind != ssa.Kind.Int || types[x.ty].bits != 0 {
+          continue
+        }
+        if let Some(r) = fold_value(f, x) {
+          f.values[v] = ssa.Value{op: ssa.Op.Const, ty: x.ty, aux: ssa.Aux.I(n: r), block: x.block}
+          again = true
+        }
+      }
+    }
+  }
+}
+
+/// The integer constant v is, if it is one.
+fn const_int(f: ssa.Func, v: Int) -> Int? {
+  let x = f.values[v]
+  if x.op != ssa.Op.Const {
+    return None
+  }
+  match x.aux {
+    I(n) => Some(n)
+    _ => None
+  }
+}
+
+/// The constant value of x when its operands are constants and the
+/// operation cannot fault.
+fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
+  if x.op == ssa.Op.Call {
+    if aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 {
+      return None
+    }
+    let op = const_int(f, x.args[0])?
+    let a = const_int(f, x.args[1])?
+    let b = const_int(f, x.args[2])?
+    return match op {
+      0 => Some(a.wrapping_add(b))
+      1 => Some(a.wrapping_sub(b))
+      2 => Some(a.wrapping_mul(b))
+      _ => None
+    }
+  }
+  if x.op == ssa.Op.Neg && x.args.len() == 1 {
+    let a = const_int(f, x.args[0])?
+    return 0.checked_sub(a)
+  }
+  if x.args.len() != 2 || !(x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.And | ssa.Op.Or | ssa.Op.Xor | ssa.Op.Shl | ssa.Op.Shr) {
+    return None
+  }
+  let a = const_int(f, x.args[0])?
+  let b = const_int(f, x.args[1])?
+  match x.op {
+    Add => a.checked_add(b)
+    Sub => a.checked_sub(b)
+    Mul => a.checked_mul(b)
+    And => Some(a & b)
+    Or => Some(a | b)
+    Xor => Some(a ^ b)
+    Shl => if b < 0 || b > 62 { None } else { a.checked_mul(1 << b) }
+    Shr => if b < 0 || b > 62 { None } else { Some(a >> b) }
+    _ => None
+  }
 }
 
 fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
