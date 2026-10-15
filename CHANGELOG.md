@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS 1.2 client: tls12.Conf.apple_svc, the chain verified by the
+  Security framework on macOS with system roots (tlscert.apple_trust, as
+  tls13.xo and Go's systemVerify; bad_certificate for every failure);
+  x509verify.error_text for the other verification errors (Go's
+  unknown-authority hint).
 - Native TLS 1.2 (xo-2b's server differential fuzz, 137 differences to
   0): alerts before the version is agreed use record version 0x0301 as
   crypto/tls (server and client); a ClientHello's server name is

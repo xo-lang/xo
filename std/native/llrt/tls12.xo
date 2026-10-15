@@ -636,7 +636,10 @@ pub const FAILED: Int = 9
 /// address; "" checks no name), the trusted roots, the time (Unix
 /// seconds), the ALPN protocols offered, the suites and groups in order
 /// of preference, and insecure to skip the certificate's checks (Go's
-/// InsecureSkipVerify). The tests' hooks: random (the 32 bytes of the
+/// InsecureSkipVerify), and apple_svc (macOS with system roots: the
+/// tls_svc record whose Security framework verifies the chain, as Go's
+/// systemVerify, tlscert.apple_trust; 0 for the roots given). The tests'
+/// hooks: random (the 32 bytes of the
 /// ClientHello's random and session id), priv (the ECDHE private key for
 /// the group the server picks), and iv (16 bytes: every CBC record's
 /// explicit IV) instead of fresh ones.
@@ -648,13 +651,14 @@ pub struct Conf {
   pub suites: List[Int]
   pub groups: List[Int]
   pub insecure: Bool
+  pub apple_svc: Int
   pub random: Bytes
   pub priv: Bytes
   pub iv: Bytes
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
-pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], insecure: false, random: b"", priv: b"", iv: b""} }
+pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], insecure: false, apple_svc: 0, random: b"", priv: b"", iv: b""} }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
 /// whether the server closed (close_notify), the suite, group, and ALPN
@@ -1285,7 +1289,23 @@ fn verify_certificates(var c: Client) -> Bool {
     certs.push(parsed.cert)
   }
   let leaf = certs[0]
-  if !c.conf.insecure {
+  if !c.conf.insecure && c.conf.apple_svc != 0 {
+    // Go's systemVerify on macOS (tls13.xo's path; TLS 1.2 sends
+    // bad_certificate for every failure)
+    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, c.certs, c.conf.host) }
+    let code = if r.code == 0 && c.conf.host != "" && !x509verify.host_ok(leaf, c.conf.host) { 7 } else { r.code }
+    if code != 0 {
+      let msg = if code == 1 {
+        "x509: certificate signed by unknown authority"
+      } else if code == 7 {
+        tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, c.conf.host)
+      } else {
+        r.msg
+      }
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${msg}")
+      return false
+    }
+  } else if !c.conf.insecure {
     let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
       fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf.host, c.conf.now)}")
@@ -1300,26 +1320,19 @@ fn verify_certificates(var c: Client) -> Bool {
   true
 }
 
-/// The text of x509.Verify's error.
+/// The text of x509.Verify's error (x509verify.error_text, with the
+/// expiry's times and the host name's text written here).
 pub fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str {
-  match r.code {
-    1 => "x509: certificate signed by unknown authority"
-    2 => {
-      let b = r.bad
-      if now < b.not_before {
-        "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, 0)} is before ${tlscert.rfc3339(b.not_before, 0)}"
-      } else {
-        "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, 0)} is after ${tlscert.rfc3339(b.not_after, 0)}"
-      }
-    }
-    3 => "x509: certificate is not authorized to sign other certificates"
-    4 => "x509: too many intermediates for path length constraint"
-    5 => "x509: a root or intermediate certificate is not authorized for this name"
-    6 => "x509: certificate specifies an incompatible key usage"
-    7 => tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, host)
-    8 => "x509: unhandled critical extension"
-    _ => "x509: verification failed"
+  if r.code == x509verify.EXPIRED {
+    let b = r.bad
+    let rel = if now < b.not_before { "before" } else { "after" }
+    let limit = if now < b.not_before { b.not_before } else { b.not_after }
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, 0)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
   }
+  if r.code == x509verify.HOSTNAME {
+    return tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, host)
+  }
+  x509verify.error_text(r)
 }
 
 /// The ECDHE group's private key: the test hook's, else a fresh one.
