@@ -716,9 +716,11 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 void xo_x_ctx_init(int64_t root, int64_t pl);
 static int64_t ctx_root(int64_t a, int64_t b);
 static int64_t svc_addr(void);
+static void pd_svc_init(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
 	xo_x_ctx_init(XO_ADDR(ctx_root), svc_addr());
+	pd_svc_init();
 }
 
 // ---------------------------------------------------------------------------
@@ -4110,6 +4112,25 @@ static xo_pd *pd_new(int fd, int write) {
 	return pd;
 }
 
+// On Linux and macOS a descriptor's operations, close, and waits are
+// std/native/llrt/poll.xo's (B22 stage 5: pd_begin, pd_end, pd_close,
+// pd_free, pd_wait_ctx, which other Xo code calls too); the C keeps
+// pd_new (the registration) and Windows' versions below. poll.xo calls
+// the services record pd_svc for the C's parts.
+#ifndef XO_WINPOLL
+int64_t xo_x_poll_pd_begin(int64_t pd);
+void xo_x_poll_pd_end(int64_t pd);
+void xo_x_poll_pd_close(int64_t pd);
+void xo_x_poll_pd_free(int64_t pd);
+int64_t xo_x_poll_pd_wait(int64_t pd, int64_t write, int64_t c, int64_t when);
+#define pd_begin(pd) ((int)xo_x_poll_pd_begin(XO_ADDR(pd)))
+#define pd_end(pd) xo_x_poll_pd_end(XO_ADDR(pd))
+#define pd_close(pd) xo_x_poll_pd_close(XO_ADDR(pd))
+#define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
+#define pd_wait_until(pd, write, c, when) ((int)xo_x_poll_pd_wait(XO_ADDR(pd), (write), XO_ADDR(c), (when)))
+#endif
+
+#ifdef XO_WINPOLL
 // pd_begin starts an operation: 0 when the descriptor is closed.
 static int pd_begin(xo_pd *pd) {
 	lk(&pd->mu);
@@ -4180,6 +4201,7 @@ static void pd_close(xo_pd *pd) {
 	}
 }
 
+#endif
 #ifdef XO_WINPOLL
 // pd_arm (pd->mu held, AFD polling) starts a poll of pd's socket for the
 // directions someone waits in, unless one runs; a running poll that lacks
@@ -4252,6 +4274,7 @@ static void afd_done(xo_pd *pd) {
 }
 #endif
 
+#ifdef XO_WINPOLL
 // pd_free closes the descriptor and hands it to the poller to free.
 static void pd_free(xo_pd *pd) {
 	if (!pd) {
@@ -4264,8 +4287,11 @@ static void pd_free(xo_pd *pd) {
 	unlk(&ev.mu);
 }
 
+#endif
+
 enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
 
+#ifdef XO_WINPOLL
 // pd_wait_until waits until the socket is ready for reading (or
 // writing), the context is canceled, the descriptor is closed, or (when
 // is not 0) the monotonic time when passes.
@@ -4338,12 +4364,76 @@ static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
 	return res;
 }
 
+#endif
+
 // pd_wait is pd_wait_until without a deadline.
 static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, write, c, 0); }
 
 // The poller thread
 
 static void stop_signal(void);
+
+// pd_svc is poll.xo's services record (its S_ words): the C functions it
+// calls through rt.call_c2 for a descriptor, the event loop's lock word
+// and dead list, and the offset of a context's park.
+static int64_t poll_signal_cb(int64_t p, int64_t b);
+static int64_t pdsvc_open(int64_t a, int64_t b) {
+	(void)b;
+	return XO_ADDR(pd_new((int)(a & 0xffffffff), (int)(a >> 32)));
+}
+static int64_t pdsvc_close(int64_t fd, int64_t b) {
+	(void)b;
+	nx_close((int)fd);
+	return 0;
+}
+static int64_t pdsvc_shut(int64_t fd, int64_t b) {
+	(void)b;
+#if !defined(XO_KQUEUE) && !defined(XO_WINPOLL)
+	// unregister now: epoll keys a registration by the open file, not the
+	// descriptor, so close alone leaves it while a child process still
+	// holds the file, and its next event would name this xo_pd after the
+	// poller freed it (2026-10-12, gotcha linux-epoll-inherited-socket)
+	nx_epoll_ctl(ev.poll, EPOLL_CTL_DEL, (int)fd, NULL);
+#endif
+	nx_shutdown((int)fd, SHUT_RDWR);
+	return 0;
+}
+static int64_t pdsvc_canceled(int64_t c, int64_t b) {
+	(void)b;
+	return ctx_canceled((xo_ctx *)(intptr_t)c);
+}
+static int64_t pdsvc_wait(int64_t c, int64_t b) {
+	(void)b;
+	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
+	return 0;
+}
+static int64_t pdsvc_tadd(int64_t t, int64_t b) {
+	(void)b;
+	timer_add((xo_timer *)(intptr_t)t);
+	return 0;
+}
+static int64_t pdsvc_tdel(int64_t t, int64_t b) {
+	(void)b;
+	timer_del((xo_timer *)(intptr_t)t);
+	return 0;
+}
+static int64_t pd_svc[11];
+void xo_x_poll_svc(int64_t rec);
+static void pd_svc_init(void) {
+	pd_svc[0] = XO_ADDR(&pdsvc_open);
+	pd_svc[1] = XO_ADDR(&pdsvc_close);
+	pd_svc[2] = XO_ADDR(&pdsvc_shut);
+	pd_svc[3] = XO_ADDR(&pdsvc_canceled);
+	pd_svc[4] = XO_ADDR(&pdsvc_wait);
+	pd_svc[5] = XO_ADDR(&pdsvc_tadd);
+	pd_svc[6] = XO_ADDR(&pdsvc_tdel);
+	pd_svc[7] = XO_ADDR(&poll_signal_cb);
+	pd_svc[8] = XO_ADDR(&ev.mu);
+	pd_svc[9] = XO_ADDR(&ev.dead);
+	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
+	xo_x_poll_svc(XO_ADDR(pd_svc));
+}
+_Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
 
 #if defined(XO_WINPOLL)
 typedef struct {

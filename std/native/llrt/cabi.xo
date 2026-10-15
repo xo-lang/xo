@@ -491,6 +491,20 @@ fn poll_timer_first() -> Int { poll.timer_first() }
 
 fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
 
+/// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
+/// pd_begin and the rest on Linux and macOS), and the C's services record.
+fn poll_svc(rec: Int) { poll.poll_svc(rec) }
+
+fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
+
+fn poll_pd_end(pd: Int) { poll.pd_end(pd) }
+
+fn poll_pd_close(pd: Int) { poll.pd_close(pd) }
+
+fn poll_pd_free(pd: Int) { poll.pd_free(pd) }
+
+fn poll_pd_wait(pd: Int, write: Int, c: Int, deadline: Int) -> Int { poll.pd_wait_ctx(pd, write != 0, c, deadline) }
+
 /// The poller thread's loop (never returns; xo_rt.c poller_main on Linux
 /// and macOS).
 fn poll_main(pfd: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {

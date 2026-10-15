@@ -8,6 +8,7 @@
 // binary heap), from the C runtime's malloc (rt.heap_large). The C holds
 // the event loop's mutex (ev.mu) around every call here. Nothing here
 // allocates Xo values or faults.
+use native/llrt/ctx
 use native/llrt/pool
 use native/llrt/sock
 use native/llrt/sysio
@@ -195,6 +196,224 @@ pub fn pd_ready(pd: Int, mode: Int) {
     }
   }
   unlk(addw(pd, D_MU))
+}
+
+// ---------------------------------------------------------------------------
+// Waiting on a descriptor (xo_rt.c pd_new, pd_begin, pd_end, pd_close,
+// pd_free, pd_wait_until on Linux and macOS; Windows keeps the C's until
+// B22 stage 4). A descriptor's record is xo_rt.c struct xo_pd (D_ above,
+// fd at 8, closed at 12, ops at 16, all under its lock word). The C's
+// services record (set at start, poll_svc) holds the addresses of C
+// functions called through rt.call_c2 and two of the event loop's words.
+
+/// rt.static_word: the C's services record.
+const W_SVC = 44
+
+/// The services record's words: open (fd, write: a new registered
+/// record, or 0), close (fd), shutdown (fd: unregistered and shut down),
+/// canceled (c: whether the context is canceled and not shielded), wait
+/// (c: park_wait_n(c, 1, 0)), timer_add (t), timer_del (t), signal (a
+/// park), the address of ev.mu, of ev.dead, and the offset of a
+/// context's park.
+const S_OPEN = 0
+const S_CLOSE = 8
+const S_SHUT = 16
+const S_CANCELED = 24
+const S_WAIT = 32
+const S_TADD = 40
+const S_TDEL = 48
+const S_SIGNAL = 56
+const S_MU = 64
+const S_DEAD = 72
+const S_PARK = 80
+
+const D_FD = 8
+const D_CLOSED = 12
+const D_OPS = 16
+
+/// A timer record's size (xo_rt.c struct xo_timer, 48 bytes).
+const T_SIZE = 64
+
+/// Whether timer t fired (a C int the poller stores after a release
+/// fence).
+fn fired(t: Int) -> Bool {
+  let f = rt.mem_load(t, T_FIRED, 4)
+  rt.fence(ACQUIRE)
+  f != 0
+}
+
+/// pd_wait's results (xo_rt.c PD_READY and the rest).
+pub const READY = 0
+pub const CANCELED = 1
+pub const CLOSED = 2
+pub const TIMEOUT = 3
+
+/// Sets the C's services record (at start, before any descriptor).
+pub fn poll_svc(rec: Int) { rt.mem_store(rt.static_word(W_SVC), 0, rec, 8) }
+
+fn svc(k: Int, a: Int) -> Int {
+  let rec = rt.mem_load(rt.static_word(W_SVC), 0, 8)
+  rt.call_c2(rt.mem_load(rec, k, 8), a, 0)
+}
+
+fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
+
+/// Registers descriptor fd with the poller (for reading, and writing when
+/// write): its record, or 0 when the poller refuses it (a regular file).
+/// Start the event loop if it is not running.
+pub fn pd_new(fd: Int, write: Bool) -> Int { svc(S_OPEN, fd + (if write { 4294967296 } else { 0 })) }
+
+/// Starts an operation on pd: false when it is closed.
+pub fn pd_begin(pd: Int) -> Bool {
+  lk(addw(pd, D_MU))
+  let ok = rt.mem_load(pd, D_CLOSED, 4) == 0
+  if ok {
+    rt.mem_store(pd, D_OPS, rt.mem_load(pd, D_OPS, 4) + 1, 4)
+  }
+  unlk(addw(pd, D_MU))
+  ok
+}
+
+/// The descriptor's fd now, unless taken to close it (-1).
+fn take_fd(pd: Int) -> Int {
+  let fd = rt.mem_load(pd, D_FD, 4)
+  let f = if fd >= 2147483648 { fd - 4294967296 } else { fd }
+  if f >= 0 {
+    rt.mem_store(pd, D_FD, 4294967295, 4)
+  }
+  f
+}
+
+/// Ends an operation on pd: the last one after a close closes the fd.
+pub fn pd_end(pd: Int) {
+  lk(addw(pd, D_MU))
+  let ops = rt.mem_load(pd, D_OPS, 4) - 1
+  rt.mem_store(pd, D_OPS, ops, 4)
+  var fd = -1
+  if ops == 0 && rt.mem_load(pd, D_CLOSED, 4) != 0 {
+    fd = take_fd(pd)
+  }
+  unlk(addw(pd, D_MU))
+  if fd >= 0 {
+    let _r = svc(S_CLOSE, fd)
+  }
+}
+
+fn wake(pd: Int, k: Int) {
+  let w = rt.mem_load(pd, k, 8)
+  if w != 0 {
+    signal(w)
+    rt.mem_store(pd, k, 0, 8)
+  }
+}
+
+/// Closes pd: its waiters return CLOSED, and the fd closes once no
+/// operation runs.
+pub fn pd_close(pd: Int) {
+  lk(addw(pd, D_MU))
+  if rt.mem_load(pd, D_CLOSED, 4) == 0 {
+    rt.mem_store(pd, D_CLOSED, 1, 4)
+    let fd = rt.mem_load(pd, D_FD, 4)
+    if fd < 2147483648 {
+      let _r = svc(S_SHUT, fd)
+    }
+    wake(pd, D_RWAIT)
+    wake(pd, D_WWAIT)
+  }
+  var fd = -1
+  if rt.mem_load(pd, D_OPS, 4) == 0 {
+    fd = take_fd(pd)
+  }
+  unlk(addw(pd, D_MU))
+  if fd >= 0 {
+    let _r = svc(S_CLOSE, fd)
+  }
+}
+
+/// Closes pd and hands its record to the poller thread to free.
+pub fn pd_free(pd: Int) {
+  if pd == 0 {
+    return
+  }
+  pd_close(pd)
+  let mu = svc_word(S_MU)
+  let dead = svc_word(S_DEAD)
+  lk(mu)
+  rt.mem_store(pd, D_NEXT, rt.mem_load(dead, 0, 8), 8)
+  rt.mem_store(dead, 0, pd, 8)
+  unlk(mu)
+}
+
+/// Waits in the current task until pd is ready for reading (or writing),
+/// the task is canceled, pd is closed, or (when deadline is not 0) the
+/// monotonic time deadline (ns, rt.clock_now's clock) passes: READY,
+/// CANCELED, CLOSED, or TIMEOUT.
+pub fn pd_wait(pd: Int, write: Bool, deadline: Int) -> Int { pd_wait_ctx(pd, write, ctx.cur(), deadline) }
+
+/// pd_wait for context c (xo_rt.c pd_wait_until).
+pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
+  let slot = if write { D_WWAIT } else { D_RWAIT }
+  let ready = if write { D_WREADY } else { D_RREADY }
+  let park = addw(c, svc_word(S_PARK))
+  var t = 0
+  var res = READY
+  while true {
+    if svc(S_CANCELED, c) != 0 {
+      res = CANCELED
+      break
+    }
+    lk(addw(pd, D_MU))
+    if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+      unlk(addw(pd, D_MU))
+      res = CLOSED
+      break
+    }
+    if rt.mem_load(pd, ready, 4) != 0 {
+      rt.mem_store(pd, ready, 0, 4)
+      unlk(addw(pd, D_MU))
+      res = READY
+      break
+    }
+    pool.park_reset(park)
+    rt.mem_store(pd, slot, park, 8)
+    unlk(addw(pd, D_MU))
+    if deadline != 0 && t == 0 {
+      t = rt.heap_large(T_SIZE)
+      rt.mem_set(t, 0, T_SIZE)
+      rt.mem_store(t, T_WHEN, deadline, 8)
+      rt.mem_store(t, T_IDX, -1, 8)
+      rt.mem_store(t, T_PARK, park, 8)
+      let _r = svc(S_TADD, t)
+    }
+    if !(t != 0 && fired(t)) {
+      let _r = svc(S_WAIT, c)
+    }
+    lk(addw(pd, D_MU))
+    let mine = rt.mem_load(pd, slot, 8) == park
+    if mine {
+      rt.mem_store(pd, slot, 0, 8)
+    }
+    let closed = rt.mem_load(pd, D_CLOSED, 4) != 0
+    unlk(addw(pd, D_MU))
+    if closed {
+      res = CLOSED
+      break
+    }
+    if !mine {
+      // the poller handed it readiness
+      res = READY
+      break
+    }
+    if t != 0 && fired(t) {
+      res = TIMEOUT
+      break
+    }
+  }
+  if t != 0 {
+    let _r = svc(S_TDEL, t)
+    rt.heap_release(t - 8)
+  }
+  res
 }
 
 // ---------------------------------------------------------------------------
