@@ -75,4 +75,55 @@ x86-64 and the Windows pass.
 
 ## Second half (xo-4b)
 
-(in progress)
+xo_rt.c lines 1,701 to 3,213 on main 275a0750. Line counts come from
+reading each section and from a call graph of clang's AST of the macOS
+build (`clang -Xclang -ast-dump=json`); the Windows lines come from
+the `_WIN32` and `XO_WINPOLL` blocks (355 of the event loop's 629).
+"Seed" as above.
+
+| Section (lines) | Lines (code) | What keeps it | Freed if the root moves | Effort |
+|---|---|---|---|---|
+| Clock and network forwarders (2,790 to 2,960, with the stop forwarders xo_stop_requested and xo_task_stopping at 3,113 to 3,118) | about 140 (90) | seed: generated code calls Xo since entries N1 to N3 (77d6b6dd, 70269e7e, e2d5762d) | 195 in all after the next seed, measured by deleting them from a copy that still compiles: the 25 forwarders, the helpers that lose their last caller (str_list, nc_list, nc_handle, clock_wait, canceled, rl_new, rl_data, hw, hw_slow; the last five are in the first half), 17 declarations or weak stubs, the xo_listener and xo_conn types | none |
+| Layout-only record types and their asserts: xo_scope, xo_mutex, xo_atomic, xo_cq, xo_sarm and xo_select, with the asserts at 1,986 to 2,039, 2,070 to 2,076, 2,108 to 2,112, 2,132 to 2,136, 2,155 to 2,157 | about 130 (90) | nothing but their own _Static_asserts: no C reads a field of xo_scope, xo_mutex, xo_atomic, xo_cq or xo_sarm; xo_select only in xo_select_after (seed) | about 130 (select's 35 after the next seed); the Xo constants (tasks.xo S_*, mutex.xo M_*, selects.xo SE_*) stay the layouts' only definition | S |
+| Scheduler services: xo_sched_rt (51 lines), xo_sched_run_task, run_claimed, run_entry, sched_hooks, fiber_counted, fiber_map_failed, svc_addr, the fibers record (1,773 to 1,790, 1,862 to 1,985) | about 150 (75) | rt.sched_rt calls from pool.xo, tasks.xo, sched.xo, twrun.xo, heapos.xo (16 call sites, 14 ops). Ops that only forward back into Xo: 2 (twrun.xo kick), 16 (tasks.xo run_claimed), 31 (deadlock). Ops on first half C: 0, 4, 5 (the st counters), 9 (oom), 19, 25 (h_release, h_free), 20 (threads_begin), 30 (tw's address). Op 18 is xo_empty_list's address. Op 29 (run_entry) sets the boundary frame and calls t->run | about 120. The forwards back into Xo go once their callers can call an Xo function across the import layering: an Xo export's address in a service word (the rt.fn_addr intrinsic the first half also names) or a direct call where no import cycle stands in the way; the rest goes with the first half's st, h_* and tw moves. run_entry: see below | M |
+| Event loop, Windows: the AFD types and constants, nx_ret, nx_close, nx_shutdown, x_errno, ev_poke, afd_open, ev_init_win, pd_new's registration, pdsvc_open, close, shut and poke, the WSAPoll fallback loop poller_main, ev's Windows fields, the Windows D_* asserts | 355 (about 230) | Windows only: poll.xo's S_OPEN, S_CLOSE, S_SHUT, S_POKE and S_START_WIN service words, and the fallback when the AFD device does not open or XO_WINPOLL=wsapoll | about 150 for the WSAPoll fallback loop and the registration list it needs (S plus a decision: every supported Windows has \\Device\\Afd, and poll.xo's poll_main_win already runs the AFD path); about 180 more for afd_open, ev_init_win and the pd registration in poll.xo over sys_windows (NtCreateFile, CreateIoCompletionPort, SetFileCompletionNotificationModes, WSAIoctl SIO_BASE_HANDLE, CreateThread) | S plus a decision, then M; UNTESTED on windows (cross links only) |
+| poll.xo's and stop.xo's callbacks into C: pdsvc_canceled, pdsvc_wait, pdsvc_tadd, pdsvc_tdel, poll_signal_cb, poll_stop_cb, stop_signal, pd_svc and pd_svc_init; stopsvc_cancel, chan, close, retain, release, exit and now, stop_grace_fire, entrysvc_mid_max, stop_svc and stop_svc_init (2,610 to 2,675, 2,966 to 3,020, 3,068 to 3,112) | about 130 (85) | poll.xo (svc S_CANCELED, S_WAIT, S_SIGNAL, S_STOP) and stop.xo (its S_ words) call back through the records, because they sit below tasks.xo, chan.xo and twrun.xo in the imports. Most targets are Xo already: park_wait_n, stop_signal, chan_new, chan_close and stop_cancel are exports; ctx_canceled is budget.xo canceled; tnow is poll.xo now. node_cancel, h_retain, h_release, xo_flush and _exit are first half C | about 110: the Xo targets through export addresses in the records (the same rt.fn_addr) or direct calls where the imports allow; the data words (ev.mu, ev.dead, tw.in_main, st, rtstats) move with their owners | M |
+| Signal handlers: on_signal; on_console and on_overflow (Windows) (3,021 to 3,066) | about 45 (30) | stop.xo installs them from stop_svc words 13 and 14 | about 45: a handler can be a cabi.xo export (C ABI; on_signal only bumps ev.sigs and writes ev.pfd[1], both poll.xo's words, and saves errno, which Xo's raw system calls do not touch) | S with the export address |
+| The event loop's records: ev, xo_pd, struct xo_timer, their asserts, the timer heap and descriptor forwarders (2,236 to 2,310, 2,465 to 2,570 without the Windows lines) | about 110 (60) | the Windows poller and on_signal (ev), pd_new on Windows (xo_pd); the C tests in std/llrt/testdata (rawpoll.c, evloop.c) call set_nonblock, pd_ready, pd_new, pd_free, ev_poke and ev_start | about 100 once the Windows poller and the handlers are Xo and those two C tests move to Xo (or go: poll.xo has Xo tests) | M |
+| Dead now: deadline() (no caller), pd_wait (no caller), xo_x_net_peername and xo_x_net_ntop's declarations and weak stubs (no C caller since the C TLS went), the XO_NX_REF block they need | about 25 (15) | nothing | 25 now, no seed needed | S |
+| Fibers: the ThreadSanitizer and AddressSanitizer macros, XO_NO_SANITIZE, XO_FIBER_CACHE and XO_WIN_FIBER_COMMIT (1,831 to 1,871) | about 40 (25) | first half C (TSAN_ACQUIRE and friends) and pool.xo's asserted constants | with the first half's lock and context code | none of its own |
+| Entry: main, run_main, XO_RT_TEST_THREADS (3,126 to 3,213) | 88 (60) | the C library's start calls main; XO_NOLIBC builds start in xo_nolibc.c. run_main sets main's boundary frame | about 55: main can be five lines calling an entry.xo export with argc, argv and environ (heap and fault setup, the main thread's creation and join, the flush and the end reports are calls into Xo or the first half's C already); run_main's boundary as run_entry's | M |
+
+Totals for the second half: 195 lines after the next seed with no work
+(about 155 of them here, the rest in the first half); about 25 dead
+now; about 130 of layout-only types (S); about 440 more after S and M
+root moves, most behind one mechanism, an Xo export's address as a
+word (rt.fn_addr, which needs the owner's approval as an rt intrinsic);
+about 330 Windows only, half of it the WSAPoll fallback.
+
+### Findings while reading
+
+- heap_libc is always 0. Its `#if defined(XO_TSAN) || defined(XO_ASAN)`
+  (line 220) comes before the lines that define those macros (1,834 to
+  1,850), and no build passes them with -D. So heapos.xo's C library
+  mapping arm (W_LIBC, rt.sched_rt ops 11 and 12) never runs, and
+  xo_sched_rt has had no cases 11 and 12 since 694cc542: sanitizer
+  builds map the heap with raw system calls, out of sight of the
+  sanitizers' mmap interceptors. Either move the sanitizer macros above
+  line 220 and restore the two ops (or make heapos.xo call mmap through
+  sys_c.xo), or delete the libc arm, heap_libc and obj_heap_init's libc
+  parameter (about 20 lines). TestGoldenASan net_only passes either way
+  today.
+
+### Challenged "by design" items
+
+- run_entry and run_main (decision 0085's boundary frame): only the
+  frame address is native. The arm64 and LLVM emitters already emit
+  frame and stack code for fibers (rt.stack_switch, rt.fiber_start_addr,
+  decision 0212), so a frame address intrinsic would move both (an rt
+  intrinsic: the owner's approval). Until then about 15 lines stay C by
+  design.
+- main: by design only as the symbol the C library's start calls; its
+  body is calls into Xo and the first half (above).
+- The signal handlers: not by design; any C ABI function can be a
+  handler, and cabi.xo's exports are C ABI.
