@@ -1,0 +1,53 @@
+// The zone data compiled into a std/time program (decision 0193 step 5,
+// work item B27; moved out of tzhost.xo on 2026-10-15 so that a module
+// needing only the host's zones does not link it): the TZif data of each
+// constant zone name, or the embedded zoneinfo.zip, through
+// rttime.tz_table (selfhost/xo/ld.xo emits xo_tz_table for std/time
+// programs only).
+use native/llrt/raw
+use native/llrt/tzhost
+use native/rt
+use native/rttime
+
+/// The TZif data that may hold the zone named name, in the order to try
+/// them: from the program's zone data (the data of its constant name,
+/// the whole embedded zoneinfo.zip, or with --tzdata=system the
+/// host's), or with host set from the host's database. tz.xo checks the
+/// name first and parses each until one is TZif.
+pub fn data(name: Str, host: Bool) -> List[Bytes] {
+  let t = rttime.tz_table()
+  let mode = rt.mem_load(t, 0, 8)
+  if host || mode == 2 {
+    return tzhost.host_data(name)
+  }
+  if mode == 1 {
+    return tzhost.zip_entry(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8), name)
+  }
+  let p = raw.data(name)
+  let n = name.len()
+  var b = rt.mem_load(t, 24, 8)
+  while true {
+    let np = rt.mem_load(b, 0, 8)
+    if np == 0 {
+      break
+    }
+    if cstr_is(np, p, n) {
+      return [raw.str_at(rt.mem_load(b, 8, 8), rt.mem_load(b, 16, 8)).bytes()]
+    }
+    b += 24
+  }
+  []
+}
+
+/// Whether the C string at c is the n bytes at p.
+fn cstr_is(c: Int, p: Int, n: Int) -> Bool { rt.mem_load(c, n, 1) == 0 && raw.mem_eq(c, p, n) && no_zero(c, n) }
+
+/// Whether the n bytes at c hold no zero byte (so the C string is n long).
+fn no_zero(c: Int, n: Int) -> Bool {
+  for i in 0..n {
+    if rt.mem_load(c, i, 1) == 0 {
+      return false
+    }
+  }
+  true
+}

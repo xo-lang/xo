@@ -10,6 +10,7 @@
 // Windows and Linux are UNTESTED.
 use native/llrt/hconn
 use native/llrt/poll
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sock
@@ -18,6 +19,7 @@ use native/llrt/tasks
 use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/tlsname
+use native/llrt/tzrules
 use native/llrt/x509
 use native/rt
 use native/rthttp
@@ -104,6 +106,7 @@ fn take_in(var c: Conn, data: Bytes) {
     let hs = tls13.hello_state(c.cl)
     var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
     cf.apple_svc = c.cl.conf.apple_svc
+    cf.zone_off = c.cl.conf.zone_off
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -226,9 +229,8 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   // parse them
   var cf = tls13.conf(name, if !system { mine } else if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
   cf.apple_svc = apple
-  // Go's texts show the time in time.Local (C's localtime: tz.xo would
-  // bring std/time's zone table into every https program)
-  cf.zone_off = rthttp.tls_c_local_off(cf.now)
+  // Go's texts show the time in time.Local
+  cf.zone_off = local_offset(cf.now)
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]
   cf.legacy_suites = tls12.default_suites()
@@ -266,6 +268,30 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
     return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake")
   }
   failed(CC_ERR, 4, "EOF")
+}
+
+/// Go's time.Local offset from UTC at now: TZ ("" or UTC: UTC; else that
+/// zone from the host's database), else the machine's zone, else UTC.
+/// tzrules.xo, not tz.xo: the program's zone table is std/time's.
+fn local_offset(now: Int) -> Int {
+  let tzv = process.env_get("TZ")
+  let r = if !tzv.is_empty() {
+    let name = tzv[0].trim_prefix(":")
+    if name == "" || name == "UTC" {
+      return 0
+    }
+    tzrules.load_host(name)
+  } else {
+    let name = tzrules.local_name()
+    match if name != "Local" { tzrules.load_host(name) } else { None } {
+      Some(x) => Some(x)
+      None => tzrules.load_host("Local")
+    }
+  }
+  match r {
+    Some(x) => tzrules.offset(x, now)
+    None => 0
+  }
 }
 
 /// The certificates of an mbedtls_x509_crt chain that parse.

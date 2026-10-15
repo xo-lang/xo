@@ -296,11 +296,6 @@ static void sys_roots_load(void) {
 // handle that is never freed), loaded at the first https request.
 xo_troots *xo_tls_roots_system(void) { return &sys_roots; }
 
-// xo_tls_c_local_off is the local zone's offset from UTC at the Unix time
-// t (the Xo client's expiry texts, as Go's time.Local).
-static long local_off(time_t t);
-int64_t xo_tls_c_local_off(int64_t t) { return (int64_t)local_off((time_t)t); }
-
 // xo_tls_c_apple_svc is the Security framework's table (tls_svc) when
 // roots r are the system's on macOS, where Go asks the framework to verify
 // (tlscert.xo apple_trust, for tlsio.xo); else 0.
@@ -1098,10 +1093,7 @@ int64_t xo_tls_c_apple_svc(int64_t p) {
 	(void)p;
 	return 0;
 }
-int64_t xo_tls_c_local_off(int64_t t) {
-	(void)t;
-	return 0;
-}
+
 static int tls_client_start(xo_pd *pd, const char *host, xo_troots *roots, int64_t when, tls_conn **out, char *msg, size_t mn, int *kind) {
 	(void)pd, (void)host, (void)roots, (void)when;
 	*out = NULL;

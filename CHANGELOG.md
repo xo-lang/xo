@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 15; decision 0193 step
+  5's zones): tz.xo splits so that the host's zones link without
+  std/time's zone table: tzrules.xo (the rules: TZif parsing, lookup,
+  load_host from the host's database), tztable.xo (the program's zone
+  data through rttime.tz_table, moved out of tzhost.xo), and tz.xo
+  (load over both, as before; std/time names tzrules.Rules). The Xo TLS
+  client's expiry text takes Go's time.Local offset from tzrules.xo
+  (TZ, the machine's zone, /etc/localtime), so part 14's C accessor
+  (xo_tls_c_local_off) is gone again; the TLS 1.2 hand-off passes it too
+  (xo-fa's tls12 zone_off). The time goldens (clock_timers, realtime_*,
+  sys_files_clock, tz_table) pass.
+
 - TLS 1.2 server (tls12srv.xo): every handshake message is decoded as
   Go's unmarshalHandshakeMessage does for its type before the state
   check (decode_error, not unexpected_message, for a message of the
@@ -22,7 +34,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tls13.Conf.zone_off. The offset comes from xo_tls.c's localtime
   (xo_tls_c_local_off): tz.xo would bring std/time's embedded zone table
   into every https program, so the end pass needs tz.xo's host lookup
-  apart from the table before this C goes.
+  apart from the table before this C goes (done in part 15).
 
 - Native runtime (zero-C audit item B31, part 13, decision 0202): the
   Xo client's custom roots (Client.with_roots) are parsed once, in Xo,
