@@ -17,6 +17,8 @@ struct SplitConfig {
   /// The LTO of a single module build ($XO_LLVM_LTO: full, thin, none;
   /// "" picks by opt, single_lto)
   single: Str = ""
+  /// $XO_LLVM_OPT named the level (a test build is -O0 otherwise)
+  opt_set: Bool = false
 }
 
 /// LLVMSplitConfig from the environment.
@@ -41,6 +43,7 @@ fn split_config(os: Os) -> SplitConfig {
   let o = os.env.get("XO_LLVM_OPT") ?? ""
   if o is "O0" | "O1" | "O2" | "O3" {
     c.opt = "-${o}"
+    c.opt_set = true
   }
   c
 }

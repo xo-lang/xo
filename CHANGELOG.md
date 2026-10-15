@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test` (decision 0236): the LLVM backend builds test binaries at
+  -O0 with no LTO unless `XO_LLVM_OPT` names a level, and test binaries
+  are cached in the user cache's xo/testbin when `XO_BIN_CACHE` is unset
+  (`off` turns it off). examples/notes-service on LLVM: 42.8 s to
+  11.9 s cold, 43.2 s to 6.4 s when nothing changed
+  (bench/results/xo-test-time-2026-10-15.md).
 - Decision 0234, step 1: std/native/llrt/cabi_c.xo exports under exact
   C names in every native program (for `main`, step 2 after seed
   0.15.0); rt.sym_addr("name") gives a C level symbol's address

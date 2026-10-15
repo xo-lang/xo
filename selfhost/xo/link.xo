@@ -14,6 +14,8 @@ struct Ctx {
   // the OS a link targets when it is not goos (an LLVM cross build for
   // Windows, decision 0197); "" for the host
   tgoos: Str = ""
+  // the cache of linked binaries (bin_cache_dir), "" when it is off
+  bin_cache: Str = ""
 }
 
 /// The OS the link of ctx targets: the host unless a cross build set it.

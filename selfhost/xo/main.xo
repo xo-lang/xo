@@ -99,7 +99,8 @@ fn main(os: Os) ! {
   }
   var o = parse_args(os, args)
   let goos = host_os(os)
-  let ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
+  ctx.bin_cache = bin_cache_dir(os, ctx, o.cmd == "test")
   if o.cmd == "keys" {
     keys(os, ctx, o.cc)?
     return
@@ -430,6 +431,10 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     var split = split_config(os)
     if release {
       split.opt = "-O2"
+    } else if tests && !split.opt_set {
+      // a test binary is built at -O0, so with no LTO (decision 0236:
+      // examples/notes-service's link 38.7 s at -O2, 5.4 s at -O0)
+      split.opt = "-O0"
     }
     let parts = split_ir(code, split.modules)
     var dir = "${bdir}/llvm"
@@ -464,7 +469,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     let srcs = lls + lk.srcs
     let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs)
-    let (hit, entry) = fetch_bin(os, key, bin)
+    let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       let msg = if lls.len() > 1 {
@@ -476,7 +481,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
       }
-      store_bin(os, entry, bin)
+      store_bin(os, ctx, entry, bin)
     }
     lap(os, phases, "cc", t)
     return finish(os, o, c, root, [(ltarget, bin)], tests)
@@ -604,7 +609,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       continue
     }
     let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs) }
-    let (hit, entry) = fetch_bin(os, key, bin)
+    let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       var lsrcs = srcs
@@ -624,7 +629,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
       }
-      store_bin(os, entry, bin)
+      store_bin(os, ctx, entry, bin)
     }
     t = lap(os, phases, "cc", t)
     bins.push((tg, bin))

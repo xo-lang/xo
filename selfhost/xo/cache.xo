@@ -137,10 +137,15 @@ fn cap_env(os: Os, p: prune.Policy, name: Str) -> prune.Policy {
   q
 }
 
-/// BinCacheDir: $XO_BIN_CACHE, "" (off) when unset or "off".
-fn bin_cache_dir(os: Os) -> Str {
-  let d = os.env.get("XO_BIN_CACHE") ?? ""
-  if d == "off" { "" } else { d }
+/// BinCacheDir: $XO_BIN_CACHE, "" (off) when "off"; unset, the user
+/// cache's xo/testbin for a test build (decision 0236: an unchanged test
+/// binary is not linked again; the directory the Go tests use) and off
+/// otherwise.
+fn bin_cache_dir(os: Os, ctx: Ctx, tests: Bool) -> Str {
+  match os.env.get("XO_BIN_CACHE") {
+    Some(d) => if d == "off" { "" } else { d }
+    None => if tests && !ctx.cache.is_empty() { "${ctx.cache}/xo/testbin" } else { "" }
+  }
 }
 
 /// binKey.tree: every regular file under dir, path relative to dir and
@@ -206,7 +211,7 @@ fn rtpack_id(os: Os, ctx: Ctx) -> Str {
 /// its bin directory. "" when
 /// the cache is off or an input cannot be read.
 fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: List[Str]) -> Str {
-  if bin_cache_dir(os).is_empty() {
+  if ctx.bin_cache.is_empty() {
     return ""
   }
   var k = new_key("native")
@@ -236,7 +241,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
 /// target, the race detector's C toolchain, and every file of dir but the
 /// binaries and the native backends' directories.
 fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, race: Bool) -> Str {
-  if bin_cache_dir(os).is_empty() {
+  if ctx.bin_cache.is_empty() {
     return ""
   }
   var k = new_key("go")
@@ -259,8 +264,8 @@ fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, r
 /// withBinCache, first half: when the cache holds the binary of key, bin
 /// becomes a copy of it and the result is true. The entry path of key
 /// for bin is returned for store_bin ("" when the cache is off).
-fn fetch_bin(os: Os, key: Str, bin: Str) -> (Bool, Str) {
-  let dir = bin_cache_dir(os)
+fn fetch_bin(os: Os, ctx: Ctx, key: Str, bin: Str) -> (Bool, Str) {
+  let dir = ctx.bin_cache
   if dir.is_empty() || key.is_empty() {
     return (false, "")
   }
@@ -298,7 +303,7 @@ fn fetch_bin(os: Os, key: Str, bin: Str) -> (Bool, Str) {
 /// $XO_CACHE_MAX_AGE (default 24h), then the least recently used over
 /// XO_BIN_CACHE_MAX bytes (default 6 GiB); entries used within two hours
 /// stay (decision 0223).
-fn store_bin(os: Os, entry: Str, bin: Str) {
+fn store_bin(os: Os, ctx: Ctx, entry: Str, bin: Str) {
   if entry.is_empty() {
     return
   }
@@ -320,5 +325,5 @@ fn store_bin(os: Os, entry: Str, bin: Str) {
     }
   }
   let p = prune.from_env(os.env, prune.Policy{max_bytes: 6 * prune.GB, every: 1m})
-  prune.run(os.fs, os.clock, bin_cache_dir(os), cap_env(os, p, "XO_BIN_CACHE_MAX"))
+  prune.run(os.fs, os.clock, ctx.bin_cache, cap_env(os, p, "XO_BIN_CACHE_MAX"))
 }

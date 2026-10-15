@@ -63,7 +63,7 @@ the same program.
 - Not done, in the order they matter: tests with `uses` (`--real`): the
   Xo SSA builder leaves them out; the contract fuzz tests the Go driver
   lists as skipped; a time limit on a test process; the binary cache
-  (XO_BIN_CACHE, off by default); linking linux/arm64 from a Mac (not
+  (XO_BIN_CACHE, off by default; on by default for `xo test` since decision 0236); linking linux/arm64 from a Mac (not
   in internal/build either); the zone use of `let n = "X"; zone(n)`
   next to a literal `zone("X")` of the same name is taken as constant
   (the Go builder embeds the whole database there).

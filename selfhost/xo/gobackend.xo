@@ -290,7 +290,7 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
     args.push("-race")
   }
   let key = go_bin_key(os, ctx, gocmd, tree, args + ["."], tg, race)
-  let (hit, entry) = fetch_bin(os, key, out)
+  let (hit, entry) = fetch_bin(os, ctx, key, out)
   if hit {
     return Ok((0, ""))
   }
@@ -307,7 +307,7 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
   }
   release_go_cache(held)
   if br.code == 0 {
-    store_bin(os, entry, out)
+    store_bin(os, ctx, entry, out)
   }
   prune_go_cache(os, ctx)
   Ok((br.code, (br.stdout + br.stderr).to_str() ?? ""))
