@@ -76,6 +76,15 @@ std (decision 0074) unless the owner decides to expose a user marker.
   client is in. The connection's state lives in an rt.Any kept by
   address (replaced after each call, values being values), its roots in
   the C's records until the root loading moves to Xo.
+- 2026-10-15 (B31 part 8): the client negotiates the version in one
+  ClientHello, as Go: tls13.xo builds it (TLS 1.2's suites and
+  extensions when its Conf has legacy_suites), checks the downgrade
+  sentinel, and stops in HANDOFF when the server picks 1.2; tls12.xo's
+  resume goes on from the ServerHello with the hello's random, session
+  id and transcript. A failed 1.3 handshake is never retried as 1.2
+  (that would let an attacker force the downgrade). The differential
+  fuzzing compares behavior (state, bytes sent, error class) and counts
+  differences only in a refused certificate's text separately.
 - 2026-10-15 (TLS 1.2 client, tls12.xo): TLS 1.2 is in scope as Go's
   defaults (ECDHE over X25519, P-256 and P-384; ECDSA, RSA PKCS #1 v1.5,
   RSA-PSS and Ed25519 signatures; the AES-GCM and ChaCha20-Poly1305

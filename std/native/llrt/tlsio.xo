@@ -1,13 +1,12 @@
 // The HTTP client's TLS connections in Xo (the zero-C audit's B31,
-// decision 0202): the TLS 1.3 client of tls13.xo over the connection's
-// socket, with the waits of xo_tls.c's bio_send and bio_recv (the poll
+// decision 0202): the client of tls13.xo over the connection's socket,
+// one ClientHello offering TLS 1.3 and 1.2 as Go's does, the handshake
+// going on in tls12.xo when the server chooses 1.2 (no second try), with the waits of xo_tls.c's bio_send and bio_recv (the poll
 // descriptor, the deadline, cancellation) and its texts of a failed
 // handshake. hclient.xo calls this file; its C path, tlsio_c.xo
 // (XO_LLRT_C=tlsio, decision 0193), forwards the same calls to xo_tls.c
-// on Mbed TLS. Known gaps until they land: a server that only speaks TLS
-// 1.2 is refused (xo-fa's tls12.xo), and macOS's system roots are
-// checked by x509verify.xo, not the Security framework (Go asks the
-// framework). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
+// on Mbed TLS. Known gap: macOS's system roots are checked by
+// x509verify.xo, not the Security framework (Go asks the framework). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
 // Windows and Linux are UNTESTED.
 use native/llrt/hconn
 use native/llrt/poll
@@ -16,6 +15,7 @@ use native/llrt/rc
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/x509
 use native/rt
@@ -39,17 +39,77 @@ const CRT_RAW_LEN = 16
 const CRT_RAW_P = 24
 const CRT_NEXT = 1288
 
-/// A connection: the client, its poll descriptor and deadline (monotonic
-/// ns, 0 none), why the last socket operation failed (CC_*, 0 none), the
-/// first bytes received (for the texts of a server that is not TLS), and
-/// whether the server's input ended.
+/// A connection: the client (TLS 1.3's; TLS 1.2's in cl12 once the
+/// server chose it), its poll descriptor and deadline (monotonic ns, 0
+/// none), why the last socket operation failed (CC_*, 0 none), the first
+/// bytes received (for the texts of a server that is not TLS), whether
+/// the server's input ended, and data received that a read did not take.
 struct Conn {
   cl: tls13.Client
+  cl12: List[tls12.Client]
   pd: Int
   when: Int
   status: Int
   first: Bytes
   eof: Bool
+  pending: Bytes
+}
+
+// The client of either version.
+
+fn v12(c: Conn) -> Bool { !c.cl12.is_empty() }
+
+fn done(c: Conn) -> Bool { if v12(c) { c.cl12[0].state == tls12.DONE } else { c.cl.state == tls13.DONE } }
+
+fn broken(c: Conn) -> Bool { if v12(c) { c.cl12[0].state == tls12.FAILED } else { c.cl.state == tls13.FAILED } }
+
+fn err(c: Conn) -> Str { if v12(c) { c.cl12[0].err } else { c.cl.err } }
+
+fn closed(c: Conn) -> Bool { if v12(c) { c.cl12[0].closed } else { c.cl.closed } }
+
+fn alpn(c: Conn) -> Str { if v12(c) { c.cl12[0].alpn } else { c.cl.alpn } }
+
+fn take_out(var c: Conn) -> Bytes {
+  if v12(c) {
+    return tls12.take(c.cl12[0])
+  }
+  tls13.take(c.cl)
+}
+
+fn take_app(var c: Conn) -> Bytes {
+  if v12(c) {
+    return tls12.recv(c.cl12[0])
+  }
+  tls13.recv(c.cl)
+}
+
+fn put(var c: Conn, data: Bytes) {
+  if v12(c) {
+    tls12.send(c.cl12[0], data)
+  } else {
+    tls13.send(c.cl, data)
+  }
+}
+
+/// Feeds the server's bytes; when the server chose TLS 1.2, the
+/// handshake goes on in tls12.xo from its ServerHello.
+fn take_in(var c: Conn, data: Bytes) {
+  if v12(c) {
+    tls12.feed(c.cl12[0], data)
+    return
+  }
+  tls13.feed(c.cl, data)
+  if c.cl.state == tls13.HANDOFF {
+    let hs = tls13.hello_state(c.cl)
+    var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
+    cf.alpn = c.cl.conf.alpn
+    // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
+    cf.suites = c.cl.conf.legacy_suites
+    cf.groups = c.cl.conf.groups
+    var c12 = tls12.resume(cf, hs[0], hs[1], hs[2], c.cl.handoff)
+    tls12.feed(c12, tls13.unread(c.cl))
+    c.cl12 = [c12]
+  }
 }
 
 /// A connection's handle: a block whose word holds the record of an Any
@@ -101,16 +161,19 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
     name = raw.str_slice(name, 1, name.len() - 1)
   }
-  let cf = tls13.conf(name, chain(crt), sysio.real_ns() / 1000000000)
+  var cf = tls13.conf(name, chain(crt), sysio.real_ns() / 1000000000)
+  // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
+  cf.alpn = ["h2", "http/1.1"]
+  cf.legacy_suites = tls12.default_suites()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
-  var c = Conn{cl: tls13.client(cf), pd: pd, when: limit, status: 0, first: b"", eof: false}
-  while c.cl.state != tls13.DONE && c.cl.state != tls13.FAILED {
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
+  while !done(c) && !broken(c) {
     if !flush(c) || !fill(c) {
       break
     }
   }
-  if c.cl.state == tls13.DONE {
+  if done(c) {
     c.when = dl
     let h = rt.heap_large(8)
     rt.mem_store(h, 0, 0, 8)
@@ -125,12 +188,12 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   if c.first.len() >= 5 && c.first[0..5] == b"HTTP/" {
     return failed(CC_ERR, 4, "http: server gave HTTP response to HTTPS client")
   }
-  let err = c.cl.err
-  if err.starts_with("remote error: ") {
-    return failed(CC_ERR, 2, err)
+  let e = err(c)
+  if e.starts_with("remote error: ") {
+    return failed(CC_ERR, 2, e)
   }
-  if !err.is_empty() {
-    return failed(CC_ERR, 4, err)
+  if !e.is_empty() {
+    return failed(CC_ERR, 4, e)
   }
   if c.first.len() >= 1 && c.first[0] != 21 && c.first[0] != 22 {
     return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake")
@@ -157,7 +220,7 @@ fn chain(crt: Int) -> List[x509.Cert] {
 
 /// Sends what the client has to send: whether it all went.
 fn flush(var c: Conn) -> Bool {
-  let b = tls13.take(c.cl)
+  let b = take_out(c)
   let n = b.len()
   if n == 0 {
     return true
@@ -204,7 +267,7 @@ fn fill(var c: Conn) -> Bool {
         let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
         c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
       }
-      tls13.feed(c.cl, got)
+      take_in(c, got)
       return true
     }
     if r == 0 {
@@ -238,16 +301,20 @@ pub fn read(h: Int, p: Int, n: Int) -> Int {
   var out = 0
   while true {
     // what does not fit stays for the next read
-    let app = tls13.recv_some(c.cl, n)
-    if app.len() > 0 {
-      rt.mem_copy(p, raw.bytes_addr(app), app.len())
-      out = app.len()
+    if c.pending.is_empty() {
+      c.pending = take_app(c)
+    }
+    if c.pending.len() > 0 {
+      let k = if c.pending.len() < n { c.pending.len() } else { n }
+      rt.mem_copy(p, raw.bytes_addr(c.pending), k)
+      c.pending = c.pending[k..c.pending.len()]
+      out = k
       break
     }
-    if c.cl.closed || c.eof {
+    if closed(c) || c.eof {
       break
     }
-    if c.cl.state == tls13.FAILED {
+    if broken(c) {
       c.status = CC_ERR
       out = -CC_ERR
       break
@@ -271,10 +338,10 @@ pub fn write(h: Int, p: Int, n: Int) -> Int {
     Some(x) => x
     None => return CC_ERR
   }
-  if c.cl.state != tls13.DONE {
+  if !done(c) {
     return CC_ERR
   }
-  tls13.send(c.cl, raw.str_at(p, n).bytes())
+  put(c, raw.str_at(p, n).bytes())
   let ok = flush(c)
   save(h, c)
   if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
@@ -284,7 +351,7 @@ pub fn write(h: Int, p: Int, n: Int) -> Int {
 /// none.
 pub fn alert(h: Int) -> Str {
   match load(h) {
-    Some(c) => if c.cl.err.starts_with("remote error: ") { c.cl.err } else { "" }
+    Some(c) => if err(c).starts_with("remote error: ") { err(c) } else { "" }
     None => ""
   }
 }
@@ -302,7 +369,7 @@ pub fn set_when(h: Int, dl: Int) {
 /// Whether ALPN chose HTTP/2.
 pub fn alpn_h2(h: Int) -> Bool {
   match load(h) {
-    Some(c) => c.cl.alpn == "h2"
+    Some(c) => alpn(c) == "h2"
     None => false
   }
 }

@@ -6,6 +6,27 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 8, decision 0202): the Xo
+  client negotiates TLS 1.2 and 1.3 as Go's does: one ClientHello
+  offering both (Go 1.26's suites, extensions and signature schemes in
+  its order), RFC 8446's downgrade sentinel checked, and on a ServerHello
+  choosing 1.2 tls13.xo stops (HANDOFF) and tlsio.xo goes on in xo-fa's
+  tls12.xo (resume) from that ServerHello; no second try. ALPN offers h2
+  and http/1.1 as the C path does. This closes part 7's TLS 1.2 gap: by
+  hand on 2026-10-15, badssl.com's TLS 1.2 hosts (tls-v1-2, rsa2048,
+  rsa4096, ecc256, ecc384) answer 200 and its expired, wrong host,
+  self-signed and untrusted root hosts fail with Go's texts.
+  TestTLS13ReplayDiff (internal/llvm, not -short; decision 0202's
+  differential fuzzing) feeds the TLS 1.3 client mutated server records
+  (bytes flipped, cut, inserted; records dropped, repeated, swapped;
+  handshake messages changed under a valid record protection; fed in
+  pieces) and diffs the Xo client on LLVM and arm64 against the Go
+  reference port: 60,000 cases over three seeds, no difference in what
+  the client does; about 19 percent differ only in a refused
+  certificate's text (x509.xo parses some certificates Go's parser
+  refuses, such as a malformed OID or an invalid PrintableString, and
+  Go adds a hint to an unknown authority), the next item to tighten.
+
 - Native runtime (B31, TLS 1.2 version negotiation): tls12.resume takes
   over from tls13.xo when a TLS 1.2 ServerHello answers one ClientHello
   offering TLS 1.3 and 1.2 (as Go's client: no second, 1.2 only hello),
@@ -37,8 +58,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   name error), cloudflare.com, letsencrypt.org and apple.com.
   Known gaps before merge: the Xo client refuses servers that only
   speak TLS 1.2 (all of badssl.com, for one) until xo-fa's tls12 client
-  lands, and XO_LLRT_C=tlsio restores Mbed; macOS's system roots are
-  checked by x509verify.xo, not the Security framework as Go does; a
+  lands (closed by part 8), and XO_LLRT_C=tlsio restores Mbed;
+  macOS's system roots are checked by x509verify.xo, not the Security framework as Go does; a
   certificate's expiry text gives the time in UTC, not the local zone.
   The server's TLS stays Mbed's until xo-2b's tls13srv.xo lands.
 
