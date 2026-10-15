@@ -255,11 +255,8 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]
   cf.legacy_suites = tls12.default_suites()
-  if godebug("tlsmlkem") == "0" {
-    // Go 1.24+: GODEBUG=tlsmlkem=0 offers no X25519MLKEM768, so X25519
-    // is the first share
-    cf.groups = cf.groups.filter(fn(g) { g != tls13.GROUP_HYBRID })
-  }
+  // XO_TLS_MLKEM=0: no X25519MLKEM768 (Go's GODEBUG=tlsmlkem=0)
+  cf.groups = tls13.client_groups()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
   var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
@@ -314,19 +311,6 @@ fn local_offset(now: Int) -> Int {
     Some(x) => x
     None => tzrules.host_offset("Local", now) ?? 0
   }
-}
-
-/// A GODEBUG setting as Go reads it: the last key=value of the comma
-/// separated list, "" when absent.
-fn godebug(key: Str) -> Str {
-  var v = ""
-  for kv in (process.real_env_get("GODEBUG").get(0) ?? "").split(",") {
-    let t = kv.trim()
-    if t.starts_with("${key}=") {
-      v = raw.str_slice(t, key.len() + 1, t.len())
-    }
-  }
-  v
 }
 
 /// Frees the system's roots record (at exit, before the leak check:

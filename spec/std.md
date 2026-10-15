@@ -1166,13 +1166,20 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   `with_tls` servers in process, without TLS.
 - The native backends (`--no-gc`) implement this in Xo (decision 0202):
   TLS 1.3 and 1.2, client and server, Go 1.26's defaults and texts,
-  the post quantum `X25519MLKEM768` group offered first (with
-  `GODEBUG=tlsmlkem=0` in the environment the client offers it not, as
-  Go's), and on macOS the system's roots checked by the Security
+  the post quantum `X25519MLKEM768` group offered first, and on macOS the system's roots checked by the Security
   framework through the same calls Go makes. `XO_LLRT_C=tlsio` and
   `XO_LLRT_C=tlssrv` select the earlier Mbed TLS client and server
   (decision 0105): the same texts, except that Ed25519 certificate keys
   are not accepted and the key exchange never uses `X25519MLKEM768`.
+- Environment switches, for compatibility and debugging (read by the
+  runtime, every backend unless noted):
+  - `XO_TLS_MLKEM=0`: the client offers no `X25519MLKEM768`, so X25519
+    is its first and only key share (groups X25519, P-256, P-384), as
+    Go's `GODEBUG=tlsmlkem=0`; for a server that mishandles a large
+    ClientHello, and for handshake measurements without ML-KEM.
+  - `XO_HTTP_MAX_BODY=<bytes>` (native backends): the largest request
+    body the server reads (default 64 MiB; a longer one is cut short as
+    a body whose client went away). Go has no such limit.
 
 ---
 

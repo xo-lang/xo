@@ -83,10 +83,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   roots are an Xo record (tlsio.roots_system, static word 31) instead of
   the C's sys_roots. needs_tls (selfhost/xo tls.xo, internal/xotool
   tls.go) compiles -DXO_TLS and links libxotls.a only for the C paths'
-  symbols (xo_tls_, xo_cl_tls_: XO_LLRT_C=tlsio or tlssrv). The client
-  honors GODEBUG=tlsmlkem=0 as Go's: no X25519MLKEM768, X25519 the first
-  share (a 291 byte ClientHello instead of 1,513), for like with like
-  handshake measurements against Mbed.
+  symbols (xo_tls_, xo_cl_tls_: XO_LLRT_C=tlsio or tlssrv). XO_TLS_MLKEM=0
+  (spec/std.md section 4, mirroring Go's GODEBUG=tlsmlkem=0, on the
+  native and Go backends) makes the client offer no X25519MLKEM768, X25519
+  the only key share (a 291 byte ClientHello instead of 1,513), for
+  like with like handshake measurements against Mbed; golden
+  tls_mlkem_off (tls13.xo client_groups through the tls13.groups op; the
+  Go backend's op states the same groups). spec/std.md also documents
+  XO_HTTP_MAX_BODY, which it lacked.
 - Native runtime (zero-C audit item B31, part 17, decision 0202): the
   Xo TLS 1.3 client offers X25519MLKEM768 (0x11ec) first, as Go 1.26's
   client: groups [X25519MLKEM768, X25519, P-256, P-384], the hybrid key

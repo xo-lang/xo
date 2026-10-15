@@ -1,0 +1,10 @@
+// The HTTP client's groups (std/native/llrt/tls13.xo client_groups) with
+// XO_TLS_MLKEM=0 in the environment (env.txt), the switch mirroring Go's
+// GODEBUG=tlsmlkem=0: no X25519MLKEM768 in supported_groups, X25519 the
+// only key share. Without it: golden tls13_go's hybrid hello.
+use std/internal
+
+fn main(os: Os) {
+  let r = internal.crypto_op("tls13.groups", b"", b"", b"", b"")
+  os.stdio.println(r.to_str() ?? "?")
+}

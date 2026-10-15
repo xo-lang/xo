@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,14 @@ import (
 
 // cryptoTLS13 is tls13.xo's op: `replay` (see its doc).
 func cryptoTLS13(what string, a, b, c, d Bytes) (Bytes, bool) {
+	if what == "groups" {
+		// tls13.xo groups_op: what the HTTP client's hello offers
+		// (http_net.go's noMLKEM; that file is not in every program)
+		if os.Getenv("XO_TLS_MLKEM") == "0" {
+			return "groups=1d,17,18 shares=1d", true
+		}
+		return "groups=11ec,1d,17,18 shares=11ec,1d", true
+	}
 	if what != "replay" {
 		return "", false
 	}

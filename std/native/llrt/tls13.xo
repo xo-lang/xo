@@ -16,6 +16,7 @@ use native/llrt/hkdf
 use native/llrt/hmac
 use native/llrt/mlkem
 use native/llrt/nistec
+use native/llrt/process
 use native/llrt/rand
 use native/llrt/sha256
 use native/llrt/tlscert
@@ -137,6 +138,18 @@ pub struct Conf {
 /// X25519MLKEM768, X25519, P-256 and P-384 (Go's order less P-521).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
   Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_HYBRID, GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, apple_svc: 0, zone_off: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
+}
+
+/// The groups an HTTP client offers (tlsio.xo): conf's, less
+/// X25519MLKEM768 when the environment has XO_TLS_MLKEM=0, a
+/// compatibility and measurement switch mirroring Go's
+/// GODEBUG=tlsmlkem=0 (X25519 then is the first and only key share).
+pub fn client_groups() -> List[Int] {
+  let all = [GROUP_HYBRID, GROUP_X25519, GROUP_P256, GROUP_P384]
+  if (process.real_env_get("XO_TLS_MLKEM").get(0) ?? "") == "0" {
+    return all.filter(fn(g) { g != GROUP_HYBRID })
+  }
+  all
 }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
@@ -1083,7 +1096,48 @@ fn hex(x: Int) -> Str {
 /// client builds its ClientHellos). The result is a line per step: what
 /// the client sent (hex), its state and error, the suite and protocol
 /// negotiated, the data received and whether the server closed.
+/// The "groups" op (golden tls_mlkem_off): the ClientHello of a client
+/// with client_groups(), as "groups=<hex,...> shares=<hex,...>" from its
+/// supported_groups and key_share extensions.
+fn groups_op() -> Bytes {
+  var cf = conf("tls.example", [], 0)
+  cf.groups = client_groups()
+  let ch = client(cf).tr
+  var groups: List[Str] = []
+  var shares: List[Str] = []
+  // the extensions: past the header, version, random, session id,
+  // suites and compression methods
+  var p = 4 + 2 + 32
+  p += 1 + Int(ch[p])
+  p += 2 + u16_at(ch, p)
+  p += 1 + Int(ch[p])
+  p += 2
+  while p + 4 <= ch.len() {
+    let t = u16_at(ch, p)
+    let n = u16_at(ch, p + 2)
+    if t == EXT_SUPPORTED_GROUPS {
+      var q = p + 6
+      while q + 2 <= p + 4 + n {
+        groups.push(hex(u16_at(ch, q)))
+        q += 2
+      }
+    }
+    if t == EXT_KEY_SHARE {
+      var q = p + 6
+      while q + 4 <= p + 4 + n {
+        shares.push(hex(u16_at(ch, q)))
+        q += 4 + u16_at(ch, q + 2)
+      }
+    }
+    p += 4 + n
+  }
+  "groups=${groups.join(",")} shares=${shares.join(",")}".bytes()
+}
+
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what == "groups" {
+    return Some(groups_op())
+  }
   if what != "replay" {
     return None
   }

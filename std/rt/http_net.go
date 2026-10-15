@@ -366,11 +366,19 @@ func newTransport(roots *x509.CertPool) *http.Transport {
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
-	if roots != nil {
+	if roots != nil || noMLKEM() {
 		t.TLSClientConfig = &tls.Config{RootCAs: roots}
+	}
+	if noMLKEM() {
+		t.TLSClientConfig.CurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384}
 	}
 	return t
 }
+
+// noMLKEM is XO_TLS_MLKEM=0 (spec/std.md section 4): the client offers
+// no post quantum hybrid, as the native client (std/native/llrt/tls13.xo
+// client_groups) and Go's GODEBUG=tlsmlkem=0.
+func noMLKEM() bool { return os.Getenv("XO_TLS_MLKEM") == "0" }
 
 // tlsKeyPair is http.tls_cert: a *tls.Certificate.
 func tlsKeyPair(certPEM, keyPEM []byte) (any, error) {
