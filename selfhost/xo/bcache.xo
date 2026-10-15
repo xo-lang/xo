@@ -34,15 +34,48 @@ fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
 
 /// The identity of the running compiler: the SHA-256 of its executable;
 /// "" when it cannot be read (the cache is then not used).
+///
+/// Memoized in the cache's selfid/ directory under the hash of the
+/// executable's path, size, and modified time (a rebuilt or replaced
+/// binary has another): hashing the 54 MB executable took about 0.1 s,
+/// and three phases (rc_cached, fn_cache_load, the assembly parts) did it
+/// on every build (2026-10-15). A limit: an executable rewritten in
+/// place within the same millisecond at the same size keeps the old
+/// identity (FileInfo has no inode or change time; xobuild and seed
+/// installs write a new file); XO_BACKEND_CACHE=off avoids the memo.
 fn self_id(os: Os) -> Str {
   let p = check.executable(os.env, os.fs)
   if p.is_empty() {
     return ""
   }
-  match os.fs.read(p) {
+  var memo = ""
+  match os.fs.stat(p) {
+    Ok(Some(st)) => {
+      let dir = backend_cache_dir(os, Ctx{goos: host_os(os), std: "", xo: "", cache: user_cache_dir(os, host_os(os))})
+      if !dir.is_empty() {
+        let k = crypto.sha256("xo self id v1\n${p.len()}:${p}\n${st.size}\n${st.modified.unix_millis()}\n".bytes()).to_hex()
+        memo = "${dir}/selfid/${k}"
+        match os.fs.read(memo) {
+          Ok(b) => {
+            let id = b.to_str() ?? ""
+            if id.len() == 64 {
+              return id
+            }
+          }
+          Err(_) => {}
+        }
+      }
+    }
+    _ => {}
+  }
+  let id = match os.fs.read(p) {
     Ok(b) => crypto.sha256(b).to_hex()
     Err(_) => ""
   }
+  if !memo.is_empty() && !id.is_empty() {
+    cache_put(os, memo, id.bytes())
+  }
+  id
 }
 
 /// The per-function cache of an arm64 generation of m for tgoos (stage

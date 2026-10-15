@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Compiler speed: the compiler's identity for the back-end caches (the
+  SHA-256 of the 54 MB xo executable, computed by three phases on every
+  build) is memoized in <backend cache>/selfid/ under the hash of the
+  executable's path, size, and modified time (selfhost/xo bcache.xo
+  self_id). With the add_landings fix, a warm arm64 `xo test` of
+  examples/notes-service went from 3.8 s to 2.3 s (insert_rc about 390 to
+  280 ms, fn_keys 210 to 107 ms).
 - Compiler speed: the SSA pass add_landings fills the rest of a split
   block once, when it reaches it, instead of copying the block's tail at
   every operation that can fault (quadratic in a block's operations):
