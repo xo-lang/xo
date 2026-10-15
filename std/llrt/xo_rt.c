@@ -283,7 +283,7 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 }
 
 // The runtime's records from malloc (std/native rt.heap_large): the C
-// frees some of them with free (xo_testing.c, tasks.xo task_free), so these stay
+// frees some of them with free (tasks.xo task_free), so these stay
 // the C library's until the runtime has an allocator of its own for them.
 //
 // xo_heap_large returns a block of n bytes from malloc (the prefix is
@@ -553,18 +553,19 @@ int xo_rc_claim(int64_t *p) { return rc_claim(p); }
 int xo_rc_mark(int64_t *p) { return rc_mark(p); }
 
 // ---------------------------------------------------------------------------
-// The test world (decision 0083, xo_testing.c): a test binary run with
-// XO_TEST set runs one test against fakes. tw.on switches the clock,
-// timers, standard streams, environment, network listeners, and random
-// numbers of this file to the test world; the rest of it is in
-// xo_testing.c (included at the end).
+// The test world (decision 0083): a test binary run with XO_TEST set runs
+// one test against fakes. tw.on switches the clock, timers, network
+// listeners, and file system of this file to the test world; the test
+// world itself is Xo (std/native/llrt/testworld.xo and twrun.xo, which
+// sets this record at start and moves the virtual clock), reached through
+// cabi_tw.xo's exports (xo_x_tw_*).
 
 static struct {
 	int on;
 	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
 	// every context is blocked: advance the clock (atomic): 0, or 1 +
 	// the vepoch the deadlock check that found every context blocked
-	// read first; tw_kick moves the clock only while vepoch is still
+	// read first; twrun.xo kick moves the clock only while vepoch is still
 	// that one (gotchas/virtual-clock-double-kick.md)
 	int64_t vpending;
 	int64_t vepoch; // moves of the clock begun and ended, 2 per move (atomic, ev.mu)
@@ -586,6 +587,26 @@ static struct {
 
 // tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
 static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
+
+// twrun.xo reads and writes tw through its address (rt.sched_rt 30) at
+// these offsets (its TW_*), and a listener's in memory record (an ML
+// record) through mem.
+_Static_assert(offsetof(__typeof__(tw), on) == 0 && offsetof(__typeof__(tw), vnow) == 8 && offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), in_main) == 32 && offsetof(__typeof__(tw), real) == 36 && offsetof(__typeof__(tw), virt) == 40,
+               "twrun.xo TW_*");
+
+// The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
+// the weak definitions keep other programs linking (they never reach
+// them: the C calls them only in the test world).
+#define TW_WEAK __attribute__((weak))
+TW_WEAK void xo_x_tw_start(void) {}
+TW_WEAK void xo_x_tw_end(void) {}
+TW_WEAK void xo_x_tw_kick(void) {}
+TW_WEAK void xo_x_tw_sleep(int64_t d) { (void)d; }
+TW_WEAK int64_t xo_x_tw_listen(int64_t p, int64_t n, int64_t l) { return (void)p, (void)n, (void)l, 0; }
+TW_WEAK int64_t xo_x_tw_ml_caddr(int64_t ml) { return (void)ml, 0; }
+TW_WEAK void xo_x_tw_ml_free(int64_t ml) { (void)ml; }
+TW_WEAK void xo_x_tw_ml_close(int64_t ml) { (void)ml; }
+TW_WEAK int64_t xo_x_tw_ml_accept(int64_t ml) { return (void)ml, 0; }
 
 
 // ---------------------------------------------------------------------------
@@ -2011,11 +2032,9 @@ _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(
 
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
-// (tw_kick) checks again after it.
+// (twrun.xo kick) checks again after it.
 void xo_x_dl_check(int64_t p);
 XO_NORETURN void xo_x_deadlock(void);
-
-static void tw_kick(void);
 
 static void tsan_worker(xo_worker *w);
 static void sched_hooks(xo_worker *w);
@@ -2464,8 +2483,10 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 			__atomic_fetch_add(&((int64_t *)&st)[a], 1, __ATOMIC_RELAXED);
 		}
 		return 0;
-	case 2:
-		tw_kick();
+	case 2: // the virtual clock's move (twrun.xo kick)
+		if (tw.virt) {
+			xo_x_tw_kick();
+		}
 		return 0;
 	case 4: { // fiber a got a new stack
 		xo_fiber *f = (xo_fiber *)(intptr_t)a;
@@ -3558,7 +3579,7 @@ static void ev_start(void) { pthread_once(&ev.once, ev_init); }
 static void timer_add(xo_timer *t) {
 	if (!tw.virt) {
 		// the test world has no poller: its timers fire when the
-		// virtual clock moves (tw_kick)
+		// virtual clock moves (twrun.xo kick)
 		ev_start();
 	}
 	lk(&ev.mu);
@@ -3907,8 +3928,6 @@ static void *poller_main(void *arg) {
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
 // ns (the Go backend's representation)
 
-static void tw_sleep_record(int64_t d);
-
 // xo_clock_now is the test world's virtual clock while it runs, else the
 // wall clock read in Xo (sysio.xo real_ns through cabi.xo; work item
 // B01). Clock.now itself is sysio.xo's clock_now, which calls this only
@@ -3930,7 +3949,7 @@ static int clock_wait(xo_ctx *c, int64_t d) {
 	}
 	if (tw.on) {
 		// FakeClock.sleeps() lists every sleep asked for
-		tw_sleep_record(d);
+		xo_x_tw_sleep(d);
 	}
 	if (d <= 0) {
 		return 0;
@@ -4031,9 +4050,10 @@ typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 	char *addr;
-	void *mem; // the test world's in memory listener (xo_testing.c), or NULL
+	void *mem; // the test world's in memory listener (twrun.xo's ML record), or NULL
 	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
 } xo_listener;
+_Static_assert(offsetof(xo_listener, mem) == 32, "twrun.xo L_MEM");
 
 typedef struct {
 	xo_hdr h;
@@ -4079,15 +4099,10 @@ static void conn_free(void *p) {
 	xo_free(cn);
 }
 
-static void tw_listener_free(xo_listener *l);
-static xo_listener *tw_listen(xo_ctx *c, const char *addr);
-static void tw_listener_close(xo_listener *l);
-static xo_conn *tw_listener_accept(xo_ctx *c, xo_listener *l);
-
 static void listener_free(void *p) {
 	xo_listener *l = p;
 	if (l->mem) {
-		tw_listener_free(l);
+		xo_x_tw_ml_free(XO_ADDR(l->mem));
 	} else {
 		pd_free(l->pd);
 	}
@@ -4313,9 +4328,16 @@ xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n)
 	}
 	char *addr = cstr_of(p, n);
 	if (tw_is_fake(TW_REAL_NET)) {
-		// FakeNet.listen: an in memory listener (std/rt's memListener)
-		xo_listener *ml = tw_listen(c, addr);
+		// FakeNet.listen: an in memory listener (std/rt's
+		// memListener), whose record and address are twrun.xo's
+		xo_listener *ml = xo_alloc(sizeof(xo_listener));
+		h_init(ml, listener_free);
+		ml->pd = NULL;
+		ml->unlink_path = 0;
+		ml->mem = (void *)(intptr_t)xo_x_tw_listen(XO_ADDR(addr), (int64_t)strlen(addr), XO_ADDR(ml));
+		ml->addr = (char *)(intptr_t)xo_x_tw_ml_caddr(XO_ADDR(ml->mem));
 		free(addr);
+		net_ok(c);
 		return ml;
 	}
 	if (strncmp(addr, "unix:", 5) == 0) {
@@ -4392,7 +4414,7 @@ xo_rlist *xo_listener_addr(xo_listener *l) { return str_list(l->addr, (int64_t)s
 
 void xo_listener_close(xo_listener *l) {
 	if (l->mem) {
-		tw_listener_close(l);
+		xo_x_tw_ml_close(XO_ADDR(l->mem));
 		return;
 	}
 	pd_close(l->pd);
@@ -4434,7 +4456,15 @@ xo_conn *xo_listener_accept(xo_listener *l) {
 		return xo_h_zero();
 	}
 	if (l->mem) {
-		return tw_listener_accept(c, l);
+		// an in memory listener waits until it closes or the context
+		// is canceled: requests reach a served router in process,
+		// never as connections
+		if (!xo_x_tw_ml_accept(XO_ADDR(l->mem))) {
+			net_fail(c, 5, "");
+		} else {
+			net_fail(c, 4, "accept tcp %s: %s", l->addr, closed_text);
+		}
+		return xo_h_zero();
 	}
 	xo_pd *pd = l->pd;
 	if (!pd_begin(pd)) {
@@ -4808,7 +4838,6 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 // The entry's services (std/native/llrt/entry.xo E_ words): functions
 // that take no arguments are called through rt.call_c2 as they are (the
 // two arguments it passes are ignored on every target's C convention).
-static void tw_init(void);
 void xo_consts_free(void);
 #ifdef XO_TIME
 void xo_x_tz_free(void);
@@ -4833,7 +4862,7 @@ static void stop_svc_init(void) {
 	stop_svc[8] = XO_ADDR(&stopsvc_now);
 	stop_svc[9] = XO_ADDR(&stop_grace_fire);
 	stop_svc[10] = XO_ADDR(&tw.in_main);
-	stop_svc[11] = XO_ADDR(&tw_init);
+	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
 	stop_svc[12] = XO_ADDR(&ev_start);
 #ifdef _WIN32
 	stop_svc[13] = XO_ADDR(&on_console);
@@ -4907,7 +4936,6 @@ static void *run_main(void *arg) {
 	return NULL;
 }
 
-static void tw_cleanup(void);
 // std/http's streamed responses and idle HTTP/2 client connections
 // (cabi_http.xo; weak in xo_http.c)
 void xo_x_streams_free(void);
@@ -4962,7 +4990,8 @@ int main(int argc, char **argv) {
 	xo_x_rt_stats();
 	xo_x_streams_free();
 	if (tw.on) {
-		tw_cleanup();
+		// the values the test world keeps (twrun.xo end)
+		xo_x_tw_end();
 	}
 	// XO_LEAKCHECK's and XO_HEAPSTATS' reports
 	xo_x_entry_finish();

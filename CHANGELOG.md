@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B15, part 3): the rest of the test
+  world is Xo and std/llrt/xo_testing.c is deleted (252 lines): the
+  start (twrun.xo start; SIGPIPE in entry.xo), the virtual clock's move
+  when every context waits (twrun.xo kick), FakeProc.signal_after's
+  timer (poll.xo fire, FN_SIGNAL, on the poller thread or the clock's
+  move), and the end's releases for the leak check (twrun.xo end).
+  cabi_tw.xo drops five exports no C called. UNTESTED on linux and
+  windows.
 - Native runtime (zero-C audit item B28, part 3): the HTTP server's
   registration and connections, streamed bodies (sinks and the streams
   table), request values (the peer's address), and the client's dial,

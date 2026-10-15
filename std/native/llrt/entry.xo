@@ -22,8 +22,8 @@ use native/rt
 use native/sys_darwin
 use native/sys_windows
 
-/// The services record's words of the entry: tw_init (a test binary's
-/// world, xo_testing.c), ev_start (the poller), the signal handler (C
+/// The services record's words of the entry: the test world's start (a
+/// test binary's: cabi_tw.xo tw_start, weak in xo_rt.c), ev_start (the poller), the signal handler (C
 /// on_signal; on Windows on_console), on_overflow (Windows; 0
 /// elsewhere), the setter of the heap's mid_max (main_heap's and the
 /// C's xo_mid_max), xo_consts_free, xo_x_tz_free (0 without std/time),
@@ -83,6 +83,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   }
   if process.env_real_at("XO_TEST") != 0 {
     let _t = call(E_TW_INIT, 0)
+    ignore_sigpipe()
   } else {
     signals()
   }
@@ -150,6 +151,22 @@ fn signals() {
       release(g)
     }
     TargetOs.Wasi => {}
+  }
+}
+
+/// Ignores SIGPIPE in a test binary, whose other signals are the test
+/// world's (FakeProc.signal_after).
+fn ignore_sigpipe() {
+  match target.os {
+    TargetOs.Linux => {
+      let _p = linux.sigaction(SIGPIPE, SIG_IGN, 0)
+    }
+    TargetOs.Darwin => {
+      let sa = rt.heap_large(16)
+      darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
+      release(sa)
+    }
+    _ => {}
   }
 }
 

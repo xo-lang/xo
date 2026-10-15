@@ -800,7 +800,7 @@ fn chan_free(c: Int) { chan.free(c) }
 
 fn select_free(s: Int) { selects.free(s) }
 
-/// The deadlock check, pool p's lock held (xo_testing.c tw_kick).
+/// The deadlock check, pool p's lock held (twrun.xo kick).
 fn dl_check(p: Int) { pool.dl_check(p) }
 
 /// The deadlock fault (XO-F001, decision 0077): standard output flushed,

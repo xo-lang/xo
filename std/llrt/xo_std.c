@@ -174,9 +174,6 @@ static inline int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) { retur
 #include "xo_stdin.c"
 #endif
 
-// the test world of test binaries (decision 0083)
-#include "xo_testing.c"
-
 // Proc.run and FakeProc.on_run (decision 0107), compiled only into
 // programs that call them (XO_PROC)
 #ifdef XO_PROC

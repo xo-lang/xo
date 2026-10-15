@@ -1,7 +1,7 @@
 // std/testing on the native backends (decision 0083). The fakes of a test
-// are the capabilities themselves, run in the C runtime's test world
-// (std/llrt/xo_testing.c); internal/ssa lowers their control methods
-// (build_testmode.go) and testing.run_main. What needs Xo values is here:
+// are the capabilities themselves, run in the runtime's test world
+// (std/native/llrt/testworld.xo and twrun.xo); internal/ssa lowers their
+// control methods (build_testmode.go) and testing.run_main. What needs Xo values is here:
 // the captured log records, FakeNet's handlers, failures, and requests,
 // and MemFs.
 use std/http
@@ -12,7 +12,6 @@ use std/testing
 use native/llrt/glob
 use native/llrt/testworld
 use native/rt
-use native/rttest
 use native/llrt/raw
 
 /// The records logged so far in this test, oldest first (std.md 8.6).
@@ -257,7 +256,7 @@ fn memfs_mkdirs(var st: MemState, full: Str, self_too: Bool) -> Str? {
   for i in 1..end + 1 {
     let p = segs[0..i].join("/")
     match memfs_get(st, p) {
-      None => memfs_put(st, p, memfs_dir_node(rttest.test_now()))
+      None => memfs_put(st, p, memfs_dir_node(rt.time_of(rt.clock_now())))
       Some(n) => {
         if !n.dir {
           return Some(p)
@@ -433,7 +432,7 @@ fn memfs_write_in(var st: MemState, f: Fs, full: Str, p: Str, data: Bytes) -> ()
       return Err(memfs_err(5, p))
     }
   }
-  memfs_put(st, full, MemNode{dir: false, data: data, modified: rttest.test_now(), name: ""})
+  memfs_put(st, full, MemNode{dir: false, data: data, modified: rt.time_of(rt.clock_now()), name: ""})
 }
 
 fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
@@ -467,7 +466,7 @@ fn memfs_create_temp_in(var st: MemState, f: Fs, full: Str, dir: Str, prefix: St
       }
     }
   }
-  memfs_put(st, file, MemNode{dir: false, data: b"", modified: rttest.test_now(), name: ""})
+  memfs_put(st, file, MemNode{dir: false, data: b"", modified: rt.time_of(rt.clock_now()), name: ""})
   memfs_rel(f, file)
 }
 

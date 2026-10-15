@@ -11,6 +11,7 @@
 use native/llrt/ctx
 use native/llrt/pool
 use native/llrt/sock
+use native/llrt/stop
 use native/llrt/sysio
 use native/rt
 use native/sys_darwin
@@ -457,6 +458,50 @@ pub fn timer_park(deadline: Int, p: Int) -> Int {
   t
 }
 
+/// The function word of the test world's FakeProc.signal_after timer
+/// (twrun.xo signal_arm), which no C function has: firing it runs the
+/// stop state's signal, then frees the timer.
+pub const FN_SIGNAL = 1
+
+/// Fires timer t, already off the heap, with the event loop's lock word
+/// mu held (the poller's loops, and twrun.xo's move of the virtual
+/// clock): signals its park or calls its C function. The signal timer's
+/// signal runs with mu released (stop.xo takes its own lock, then may
+/// add a timer).
+pub fn fire(t: Int, mu: Int) {
+  rt.fence(RELEASE)
+  rt.mem_store(t, T_FIRED, 1, 4)
+  let p = rt.mem_load(t, T_PARK, 8)
+  if p != 0 {
+    signal(p)
+    return
+  }
+  let f = rt.mem_load(t, T_FN, 8)
+  if f == FN_SIGNAL {
+    unlk(mu)
+    stop.signal()
+    lk(mu)
+    rt.heap_release(subw(t, 8))
+    return
+  }
+  let _c = rt.call_c2(f, t, 0)
+}
+
+/// Adds timer t (its deadline, and its park or function, set; its place
+/// -1) to the heap, starting the poller outside the virtual clock
+/// (xo_rt.c timer_add).
+pub fn timer_add(t: Int) {
+  let _a = svc(S_TADD, t)
+}
+
+/// The event loop's lock word (xo_rt.c ev.mu), and taking and releasing
+/// it.
+pub fn ev_mu() -> Int { svc_word(S_MU) }
+
+pub fn ev_lock() { lk(ev_mu()) }
+
+pub fn ev_unlock() { unlk(ev_mu()) }
+
 /// Whether timer t (of timer_park) fired.
 pub fn timer_fired(t: Int) -> Bool { fired(t) }
 
@@ -589,14 +634,7 @@ pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_f
     var t = timer_first()
     while t != 0 && dl(t) <= now {
       timer_remove(t)
-      rt.fence(RELEASE)
-      rt.mem_store(t, T_FIRED, 1, 4)
-      let p = rt.mem_load(t, T_PARK, 8)
-      if p != 0 {
-        signal(p)
-      } else {
-        let _c = rt.call_c2(rt.mem_load(t, T_FN, 8), t, 0)
-      }
+      fire(t, mu)
       t = timer_first()
     }
     let first = timer_first()
@@ -842,14 +880,7 @@ pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, s
     var t = timer_first()
     while t != 0 && dl(t) <= now {
       timer_remove(t)
-      rt.fence(RELEASE)
-      rt.mem_store(t, T_FIRED, 1, 4)
-      let p = rt.mem_load(t, T_PARK, 8)
-      if p != 0 {
-        signal(p)
-      } else {
-        let _c = rt.call_c2(rt.mem_load(t, T_FN, 8), t, 0)
-      }
+      fire(t, mu)
       t = timer_first()
     }
     let first = timer_first()

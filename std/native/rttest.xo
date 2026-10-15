@@ -1,8 +1,7 @@
-// Intrinsics of the test world of native test binaries (decision 0083),
-// implemented in std/llrt/xo_testing.c; imported by std/native/testing.xo,
-// and llrt/report.xo, testworld.xo, and twrun.xo as `use native/rttest`.
-// What the C kept of part 1 (the records, the generators, the fakes) is
-// std/native/llrt/testworld.xo since the zero-C audit's B14.
+// Runtime calls of the test world of native test binaries (decision
+// 0083) that the SSA builders make without the native prelude; no native
+// runtime has them (the test world is std/native/llrt/testworld.xo and
+// twrun.xo, the zero-C audit's B14, B15 and B29).
 use native/rt
 
 // The report of a property test's case (std/native/llrt/report.xo,
@@ -27,11 +26,3 @@ fn gen_rune(g: Int) -> Int
 fn gen_str(g: Int) -> Str
 fn gen_duration(g: Int) -> Int
 fn gen_time(g: Int) -> Int
-
-/// Arms FakeProc.signal_after's signal d from now (xo_testing.c: a
-/// timer whose C callback runs the stop state's signal; inside
-/// testing.run_main, std/native/llrt/twrun.xo).
-fn test_signal_arm(d: Int)
-
-/// The test world's virtual now.
-fn test_now() -> Time

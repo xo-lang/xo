@@ -6,8 +6,8 @@
 // streams, the fake environment and arguments, FakeProc.exit_code, the
 // log records of testing.logs, FakeNet's handlers, failures, and the
 // requests seen, the MemFs state, and the cleanup at the end. Part 2
-// (the virtual clock, the in memory listeners, testing.run_main) stays
-// C (xo_testing.c), as do the reads of the C's `tw` switches.
+// (the virtual clock, the in memory listeners, testing.run_main, the
+// start and the end) is twrun.xo; the C reads its `tw` switches.
 //
 // The state is process wide: words of rt.static_word (the table in
 // rt.xo) and a record from rt.heap_large (the C's malloc) whose

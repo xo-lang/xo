@@ -4,12 +4,12 @@
 // http.server serves by registering its router and the test's http
 // client reaches in process (std/native/http.xo); testing.run_main
 // (main below a node of its own, the stop state reset for it); and
-// FakeProc.signal_after. The virtual clock's move when every context
-// waits (xo_testing.c tw_kick) and the signal timer's callback stay C.
+// FakeProc.signal_after; the virtual clock's move when every context
+// waits (kick), and the test world's end (end).
 //
 // The C's `tw` record (xo_rt.c: tw.on, the virtual now, in_main, the
 // effects made real, whether the clock is virtual) is read through its
-// address, which tw_init hands over (init; offsets asserted there). The
+// address, which start keeps (offsets asserted there). The
 // state of this module is a record from rt.heap_large whose address is
 // the first of testworld.xo's run_words, guarded by the second (a lock
 // word): the 64 static words are all taken.
@@ -20,14 +20,15 @@
 use native/llrt/ctx
 use native/llrt/poll
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/stop
+use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/testworld
 use native/rt
-use native/rttest
 
 /// The state record (byte offsets): the C's tw record, FakeClock.sleeps'
 /// vector and signal_after's (before run_main) vector (the address of
@@ -44,14 +45,26 @@ const R_MAIN = 80
 const R_EXITING = 88
 const R_SIZE = 96
 
-/// The C's tw record (xo_rt.c, asserted there): the virtual now (ns, a
-/// word), whether run_main runs main (an int), whether the clock is
-/// virtual (an int).
+/// The C's tw record (xo_rt.c, asserted there): on (an int), the
+/// virtual now (ns, a word), the verdict for the next move of the clock and the moves'
+/// epoch (words; pool.xo dl_check), whether run_main runs main, the
+/// effects made real, whether the clock is virtual (ints).
+const TW_ON = 0
 const TW_VNOW = 8
+const TW_VPENDING = 16
+const TW_VEPOCH = 24
+const TW_REAL = 36
 const TW_IN_MAIN = 32
 const TW_VIRT = 40
 
-/// An in memory listener (xo_testing.c tw_ml): its listener (the C's
+/// rt.sched_rt's op for the C's tw record (pool.xo RT_TW), the clock's
+/// bit of the effects made real (xo_rt.c TW_REAL_CLOCK), and the virtual
+/// clock's start, 2026-01-01T00:00:00Z.
+const RT_TW = 30
+const TW_REAL_CLOCK = 8
+const TW_EPOCH = 1767225600000000000
+
+/// An in memory listener (std/rt's memListener): its listener (the C's
 /// xo_listener, not counted: the listener frees its record), its address
 /// and its alias (localhost:<port> for 127.0.0.1; blocks: the length,
 /// then the bytes, or 0), the router serving it (an rt.Any's object,
@@ -88,6 +101,15 @@ const N_SIZE = 64
 const ACQUIRE = 1
 const RELEASE = 2
 const ACQ_REL = 3
+const SEQ_CST = 4
+
+/// A timer's words (xo_rt.c struct xo_timer: its deadline, its place in
+/// the heap, its park, its function; 64 bytes, as poll.xo's).
+const T_WHEN = 0
+const T_IDX = 8
+const T_PARK = 16
+const T_FN = 24
+const T_SIZE = 64
 
 fn ld(p: Int, k: Int) -> Int { rt.mem_load(p, k, 8) }
 
@@ -116,9 +138,27 @@ fn lock() { pool.lock(lock_word()) }
 
 fn unlock() { pool.unlock(lock_word()) }
 
-/// Hands over the address of the C's tw record (tw_init, at start, one
-/// thread).
-pub fn init(tw: Int) { st(state(), R_TW, tw) }
+/// Starts the test world (a test binary's start, one thread; entry.xo
+/// through the C's services record): testworld.xo's variables (its V_*)
+/// and effects made real, then the C's tw record (rt.sched_rt 30): the
+/// effects, whether the clock is virtual (`xo test --real` with
+/// `clock`, `net`, or `proc` makes it real: a socket or child process
+/// wait is not a virtual wait, and its deadlines are real time), the
+/// virtual now at 2026-01-01T00:00:00Z, and on.
+pub fn start() {
+  let vars = ["XO_TEST_REAL", "XO_TEST_SEED", "XO_TEST", "XO_PROP_REPLAY", "XO_PROP_SEED", "XO_PROP_BEST"]
+  for k in 0..vars.len() {
+    let a = process.env_real_at(vars[k])
+    testworld.setenv(k, a, if a == 0 { -1 } else { raw.cstr_len(a) })
+  }
+  let w = rt.sched_rt(RT_TW, 0, 0)
+  st(state(), R_TW, w)
+  let real = testworld.init()
+  rt.mem_store(w, TW_REAL, real, 4)
+  rt.mem_store(w, TW_VIRT, if (real & TW_REAL_CLOCK) == 0 { 1 } else { 0 }, 4)
+  st(w, TW_VNOW, TW_EPOCH)
+  rt.mem_store(w, TW_ON, 1, 4)
+}
 
 fn tw() -> Int { ld(state(), R_TW) }
 
@@ -230,12 +270,24 @@ pub fn advance(d: Int) {
 /// it d from run_main's start.
 pub fn signal_after(d: Int) {
   if in_main() {
-    rttest.test_signal_arm(d)
+    signal_arm(d)
     return
   }
   lock()
   vec_push(state() + R_SIGNALS, d)
   unlock()
+}
+
+/// Arms FakeProc.signal_after's signal d from now: a timer of the event
+/// loop whose firing runs the stop state's signal and frees it (poll.xo
+/// fire, FN_SIGNAL).
+fn signal_arm(d: Int) {
+  let t = rt.heap_large(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  st(t, T_WHEN, deadline(if d < 0 { 0 } else { d }))
+  st(t, T_IDX, -1)
+  st(t, T_FN, poll.FN_SIGNAL)
+  poll.timer_add(t)
 }
 
 fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
@@ -258,7 +310,7 @@ pub fn main_begin(args: List[Str]) {
   let sigs = vec_take(s + R_SIGNALS)
   unlock()
   for d in sigs {
-    rttest.test_signal_arm(d)
+    signal_arm(d)
   }
 }
 
@@ -594,9 +646,21 @@ pub fn mem_end(hp: Str) {
   unlock()
 }
 
-/// Releases the routers served when the test ends (for the leak check;
-/// xo_testing.c tw_cleanup, on the C main thread).
-pub fn cleanup() {
+/// Releases the values the test world keeps when the test ends, for the
+/// leak check (on the C main thread, after main's thread ended):
+/// testworld.xo's, handed over as a block of the count and the objects,
+/// then the routers served.
+pub fn end() {
+  let kept = testworld.cleanup()
+  for i in 1..ld(kept, 0) + 1 {
+    tasks.h_release(ld(kept, 8 * i))
+  }
+  rt.heap_release(kept - 8)
+  cleanup()
+}
+
+/// Releases the routers served when the test ends.
+fn cleanup() {
   var routers: List[Int] = []
   lock()
   var m = ld(state(), R_MLS)
@@ -611,4 +675,77 @@ pub fn cleanup() {
   for r in routers {
     tasks.h_release(r)
   }
+}
+
+// ---------------------------------------------------------------------------
+// The virtual clock's move (the scheduler calls kick after a deadlock
+// check, xo_rt.c xo_sched_rt; it was xo_testing.c's)
+
+/// Runs after a deadlock check found every context blocked: the clock
+/// moves to the earliest timer and every timer due then fires; with none
+/// the program is deadlocked. When the timers that fired woke no context
+/// (a FakeProc.signal_after signal whose stop wakes nobody), every
+/// context still waits and none would check again: the check runs again
+/// here, and the clock moves on.
+pub fn kick() {
+  while kick_once() {
+    let p = ctx.pool()
+    pool.lock(p)
+    pool.dl_check(p)
+    pool.unlock(p)
+  }
+}
+
+/// One move of the clock: true when only callback timers fired (no park
+/// was signaled by the clock itself).
+fn kick_once() -> Bool {
+  let w = tw()
+  if rt.mem_load(w, TW_VIRT, 4) == 0 {
+    return false
+  }
+  let verdict = rt.slot_swap[Int](w + TW_VPENDING, 0, 0, SEQ_CST)
+  if verdict == 0 {
+    return false
+  }
+  let mu = poll.ev_mu()
+  pool.lock(mu)
+  let v = verdict - 1
+  if v % 2 != 0 || v != rt.slot_load[Int](w + TW_VEPOCH, 0, SEQ_CST) {
+    // stale: two threads can each find every context blocked at the
+    // same instant and both take the verdict (one from the other's
+    // store); the clock moved since (or was moving), and what it woke
+    // may not have run yet (gotchas/virtual-clock-double-kick.md)
+    pool.unlock(mu)
+    return false
+  }
+  // odd while the clock moves: a check that reads the epoch now is stale
+  // too (a signal's callback runs with the lock released)
+  let _b = rt.slot_add[Int](w + TW_VEPOCH, 0, 1, SEQ_CST)
+  var t = poll.timer_first()
+  if t == 0 {
+    pool.unlock(mu)
+    // std/rt's test world names the timers too; straight to the
+    // descriptor, as the C did (not the test world's fake)
+    let m = "fault: XO-F001: deadlock: every task is blocked and no timer is pending\n"
+    stdio.write_all(2, raw.data(m), m.len())
+    process.os_exit(70)
+  }
+  let at = ld(t, T_WHEN)
+  if at > rt.slot_load[Int](w, 1, ACQUIRE) {
+    rt.slot_store[Int](w, 1, at, RELEASE)
+  }
+  var parks = 0
+  while t != 0 && ld(t, T_WHEN) <= at {
+    poll.timer_remove(t)
+    if ld(t, T_PARK) != 0 {
+      parks += 1
+    }
+    poll.fire(t, mu)
+    t = poll.timer_first()
+  }
+  // what the timers woke is visible (queued, or a root counted awake):
+  // checks that read the epoch from here on see it
+  let _e = rt.slot_add[Int](w + TW_VEPOCH, 0, 1, SEQ_CST)
+  pool.unlock(mu)
+  parks == 0
 }
