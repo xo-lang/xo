@@ -655,6 +655,10 @@ pub struct Conf {
   pub random: Bytes
   pub priv: Bytes
   pub iv: Bytes
+  /// The local zone's offset from UTC in seconds: Go prints the current
+  /// time of an expired certificate's error in time.Local (tlsio sets
+  /// it; tls13.Conf's zone_off).
+  pub zone_off: Int = 0
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -1310,7 +1314,7 @@ fn verify_certificates(var c: Client) -> Bool {
   } else if !c.conf.insecure {
     let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
-      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf.host, c.conf.now)}")
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf.host, c.conf.now, c.conf.zone_off)}")
       return false
     }
   }
@@ -1324,12 +1328,12 @@ fn verify_certificates(var c: Client) -> Bool {
 
 /// The text of x509.Verify's error (x509verify.error_text, with the
 /// expiry's times and the host name's text written here).
-pub fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str {
+pub fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, host: Str, now: Int, off: Int) -> Str {
   if r.code == x509verify.EXPIRED {
     let b = r.bad
     let rel = if now < b.not_before { "before" } else { "after" }
     let limit = if now < b.not_before { b.not_before } else { b.not_after }
-    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, 0)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, off)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
   }
   if r.code == x509verify.HOSTNAME {
     return tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, host)
