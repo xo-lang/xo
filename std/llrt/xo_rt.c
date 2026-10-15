@@ -1981,6 +1981,7 @@ static void scope_free(void *p);
 static void mutex_free(void *p);
 static void chan_free(void *p);
 static void select_free(void *p);
+static void atomic_free(void *p);
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -1996,16 +1997,17 @@ static struct {
 	void (*mutex_free)(void *);
 	void (*chan_free)(void *);
 	void (*select_free)(void *);
+	void (*atomic_free)(void *);
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, 0, mutex_free, chan_free, select_free};
+	&rtstats, 0, mutex_free, chan_free, select_free, atomic_free};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72,
                "ctx.xo SV_*");
 
 static int64_t svc_addr(void) { return XO_ADDR(&svc); }
@@ -2993,12 +2995,12 @@ _Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value 
 
 static void atomic_free(void *p) { xo_free(p); }
 
-xo_atomic *xo_atomic_new(int64_t v) {
-	xo_atomic *a = xo_alloc(sizeof(xo_atomic));
-	h_init(a, atomic_free);
-	a->v = v;
-	return a;
-}
+// xo_atomic_new is tasks.xo atomic_new (B19), which generated code calls
+// through its export; this forwards for older xo's code.
+int64_t xo_x_atomic_new(int64_t v);
+xo_atomic *xo_atomic_new(int64_t v) { return (xo_atomic *)(intptr_t)xo_x_atomic_new(v); }
+
+_Static_assert(sizeof(xo_atomic) == 136, "tasks.xo atomic_new");
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals

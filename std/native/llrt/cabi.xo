@@ -740,3 +740,7 @@ fn select_send(s: Int, c: Int, l: Int) { selects.send(s, c, l) }
 fn select_wait(s: Int, lp: Int, ln: Int) -> Int { selects.wait(s, lp, ln) }
 
 fn select_take(s: Int, i: Int) -> Int { selects.take(s, i) }
+
+/// `Atomic.new(v)` (tasks.xo atomic_new): generated code calls it
+/// directly; xo_rt.c's xo_atomic_new forwards.
+fn atomic_new(v: Int) -> Int { tasks.atomic_new(v) }

@@ -95,6 +95,8 @@ pub const SV_MUTEX_FREE = 48
 pub const SV_CHAN_FREE = 56
 /// A select's free function (selects.xo).
 pub const SV_SELECT_FREE = 64
+/// An Atomic's free function (tasks.xo atomic_new).
+pub const SV_ATOMIC_FREE = 72
 
 /// Sets the address of the C's ctx_root and of its services record (at
 /// start).

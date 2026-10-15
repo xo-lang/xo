@@ -577,3 +577,12 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   }
   1
 }
+
+/// `Atomic.new(v)` (xo_atomic_new, B19): the value at byte 128 (slot 13
+/// of the slot atomics, decision 0200), on a cache line apart from the
+/// count; a handle whose free function is the C's atomic_free.
+pub fn atomic_new(v: Int) -> Int {
+  let a = new_object(136, ctx.SV_ATOMIC_FREE)
+  st(a, 128, v)
+  a
+}
