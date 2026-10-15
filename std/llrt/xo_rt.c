@@ -1207,8 +1207,6 @@ static struct {
 	int64_t uncounted; // contexts in a wait a timer, the network, or a signal can end
 } dlk;
 
-XO_NORETURN static void deadlock(void);
-
 // mu_init initializes a pthread mutex of the runtime (the event loop's,
 // the network's, the HTTP server's). On Darwin the default policy hands
 // a contended mutex over in FIFO order through the kernel, which cost a
@@ -2006,31 +2004,10 @@ _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(
 
 
 
-XO_NORETURN static void deadlock(void) {
-	xo_flush();
-	static const char m[] = "fault: XO-F001: deadlock: every task is blocked\n";
-	write_all(2, m, sizeof m - 1);
-	exit(70);
-}
-
-// dl_check_locked faults when the program is deadlocked (pool.mu held;
-// see dlk).
-static void dl_check_locked(void) {
-	// read before the counts: a move of the clock in progress or ended
-	// since then makes this check's verdict stale (tw_kick_once)
-	int64_t epoch = __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST);
-	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
-	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
-	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
-		if (tw.virt) {
-			// the test world's clock jumps to the next timer
-			// (tw_kick, after pool.mu is released), or it deadlocked
-			__atomic_store_n(&tw.vpending, epoch + 1, __ATOMIC_SEQ_CST);
-			return;
-		}
-		deadlock();
-	}
-}
+// The deadlock check is pool.xo dl_check; the test world's clock move
+// (tw_kick) checks again after it.
+void xo_x_dl_check(int64_t p);
+XO_NORETURN void xo_x_deadlock(void);
 
 static void tw_kick(void);
 
@@ -2481,9 +2458,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 			__atomic_fetch_add(&((int64_t *)&st)[a], 1, __ATOMIC_RELAXED);
 		}
 		return 0;
-	case 1: // a worker went idle (pool.mu held)
-		dl_check_locked();
-		return 0;
 	case 2:
 		tw_kick();
 		return 0;
@@ -2548,6 +2522,10 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 17: // context a waits on its park (b bit 0: cancelable, bit 1: not counted as blocked)
 		park_wait_n((xo_ctx *)(intptr_t)a, (int)(b & 1), !(b & 2));
 		return 0;
+	case 30: // the test world's record (pool.xo TW_*)
+		return XO_ADDR(&tw);
+	case 31: // the program is deadlocked (pool.xo dl_check)
+		xo_x_deadlock();
 	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
 		run_entry((xo_task *)(intptr_t)a, (xo_rlist *)(intptr_t)b);
 		return 0;
@@ -2605,6 +2583,7 @@ _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, mu) == 104 
                    offsetof(xo_scope, closed) == 400 && offsetof(xo_scope, nlist) == 432 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448,
                "pool.xo S_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
+_Static_assert(offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), virt) == 40, "pool.xo TW_*");
 _Static_assert(offsetof(__typeof__(dlk), blocked) == 8 && offsetof(__typeof__(dlk), uncounted) == 16 && offsetof(__typeof__(pool), dlk) == 120, "pool.xo DLK_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&

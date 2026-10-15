@@ -130,7 +130,7 @@ static int tw_kick_once(void);
 static void tw_kick(void) {
 	while (tw_kick_once()) {
 		lk(&pool.mu);
-		dl_check_locked();
+		xo_x_dl_check(XO_ADDR(&pool));
 		unlk(&pool.mu);
 	}
 }

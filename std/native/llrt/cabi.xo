@@ -763,3 +763,16 @@ fn mutex_free(m: Int) { mutex.free(m) }
 fn chan_free(c: Int) { chan.free(c) }
 
 fn select_free(s: Int) { selects.free(s) }
+
+/// The deadlock check, pool p's lock held (xo_testing.c tw_kick).
+fn dl_check(p: Int) { pool.dl_check(p) }
+
+/// The deadlock fault (XO-F001, decision 0077): standard output flushed,
+/// the message on standard error, status 70.
+fn deadlock() {
+  stdio.flush()
+  // straight to the descriptor, as the C did (not the test world's fake)
+  let m = "fault: XO-F001: deadlock: every task is blocked\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}

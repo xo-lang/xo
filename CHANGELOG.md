@@ -36,6 +36,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of a thread, the exit polled with waitpid in cancelable steps; Linux
   UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
   children until stage 4b.
+- Native runtime (zero-C audit item B20, part 3): the deadlock check
+  (XO-F001) is Xo (pool.xo dl_check, cabi.xo deadlock); in the test
+  world with a virtual clock it still records the verdict for the C's
+  clock move (tw_kick).
 - Native runtime (zero-C audit item B18): running a claimed task is Xo
   (tasks.xo run_claimed: the task's context, from the heap, its budget,
   the end of its run and its scope's counts); only the call of the entry
