@@ -69,7 +69,23 @@ void xo_x_obj_h_free(int64_t p);
 static int rc_claim(int64_t *p) { return (int)xo_x_rc_claim(XO_ADDR(p)); }
 static int rc_mark(int64_t *p) { return (int)xo_x_rc_mark(XO_ADDR(p)); }
 
-static void *t_rc_alloc(int64_t n) { return xo_alloc(n); }
+int64_t xo_x_obj_rc_alloc(int64_t n);
+void xo_x_obj_free(int64_t p);
+int64_t xo_x_obj_resize(int64_t p, int64_t old, int64_t n);
+int64_t xo_x_obj_rs_new(int64_t n);
+int64_t xo_x_obj_rl_new_cap(int64_t cap, int64_t esize);
+int64_t xo_x_obj_rs_append_at(int64_t a, int64_t an, int64_t p, int64_t n);
+
+// The runtime's blocks, strings and lists through obj.xo's exports (the
+// C allocator's xo_alloc, xo_free, xo_resize, rs_new, rs_append, rl_new).
+static void *t_alloc(int64_t n) { return (void *)(intptr_t)xo_x_obj_rc_alloc(n); }
+static void t_free(void *p) { xo_x_obj_free(XO_ADDR(p)); }
+static void *t_resize(void *p, int64_t old, int64_t n) { return (void *)(intptr_t)xo_x_obj_resize(XO_ADDR(p), old, n); }
+static xo_rstr *t_rs_new(int64_t n) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_new(n); }
+static xo_rstr *t_rs_append(xo_rstr *a, int64_t an, const char *p, int64_t n) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_append_at(XO_ADDR(a), an, XO_ADDR(p), n); }
+static xo_rlist *t_rl_new(int64_t cap, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_new_cap(cap, esize); }
+
+static void *t_rc_alloc(int64_t n) { return t_alloc(n); }
 static void t_rc_free(void *p) { xo_x_obj_rc_free(XO_ADDR(p)); }
 static void t_rc_defer(void *obj, xo_drop_fn drop) { xo_x_obj_rc_defer_n(XO_ADDR(obj), XO_ADDR(drop)); }
 static xo_rstr *t_rs_concat(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_concat(XO_ADDR(a), an, XO_ADDR(b), bn); }

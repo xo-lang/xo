@@ -62,7 +62,7 @@ static int failures;
 
 // lists of one Int, as generated code makes them
 static xo_rlist *one(int64_t v) {
-	xo_rlist *l = rl_new(1, 8);
+	xo_rlist *l = t_rl_new(1, 8);
 	l->len = 1;
 	*(int64_t *)rl_data(l) = v;
 	return l;
@@ -500,7 +500,7 @@ static void *mag_blocks[MAG_BLOCKS];
 static void *mag_free_all(void *arg) {
 	(void)arg;
 	for (int i = 0; i < MAG_BLOCKS; i++) {
-		xo_free(mag_blocks[i]);
+		t_free(mag_blocks[i]);
 	}
 	return NULL;
 }
@@ -513,7 +513,7 @@ static void test_magazines(void) {
 			before = xo_chunks_now();
 		}
 		for (int i = 0; i < MAG_BLOCKS; i++) {
-			mag_blocks[i] = xo_alloc(56);
+			mag_blocks[i] = t_alloc(56);
 		}
 		pthread_t th;
 		CHECK(pthread_create(&th, NULL, mag_free_all, NULL) == 0);

@@ -22,6 +22,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   builds xo; the services records, callbacks, signal handlers and entry
   move onto them after seed 0.13.0. Golden rt_addrs and codegen test
   fnaddr.
+- The C allocator entries (xo_alloc, xo_free, xo_resize, alloc_in, free_in, alloc_mt, free_mt, alloc_usable, hw, solo_heap) are gone (zero-C inventory rank 8, first part): the C's strings and lists come from obj.xo's exports, and the C tests allocate through them (xcalls.h t_alloc and friends).
 - The C handle code (h_init, h_retain, h_release, h_free, rt_defer, rc_dec_shared) is gone (zero-C inventory rank 5): stop.xo retains and releases its stopping channel itself, and the C tests free through obj.xo's exports.
 - Native runtime: sanitizer builds map the heap through the C library's
   mmap (heapos.xo over sanhook.xo heap_map, decided at run time with

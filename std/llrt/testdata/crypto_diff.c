@@ -15,6 +15,7 @@
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
+#include "xcalls.h"
 // the hashes' C that decision 0198 deleted from the runtime, kept as
 // test data until this test goes (decision 0215)
 #include "crypto_ref.c"
@@ -72,20 +73,20 @@ int main(void) {
 			uint8_t *a = unhex(f[1], &an);
 			xo_rstr *r = xo_crypto_sha256((const char *)a, an, &len);
 			puthex((uint8_t *)r->data, len);
-			xo_free(r);
+			t_free(r);
 			free(a);
 		} else if (strcmp(f[0], "hmac") == 0 && nf == 3) {
 			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
 			xo_rstr *r = xo_crypto_hmac_sha256((const char *)a, an, (const char *)b, bn, &len);
 			puthex((uint8_t *)r->data, len);
-			xo_free(r);
+			t_free(r);
 			free(a);
 			free(b);
 		} else if (strcmp(f[0], "pbkdf2") == 0 && nf == 5) {
 			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);
 			xo_rstr *r = xo_crypto_pbkdf2((const char *)a, an, (const char *)b, bn, atoll(f[3]), atoll(f[4]), &len);
 			puthex((uint8_t *)r->data, len);
-			xo_free(r);
+			t_free(r);
 			free(a);
 			free(b);
 		} else if (strcmp(f[0], "argon2") == 0 && nf == 10) {
@@ -103,7 +104,7 @@ int main(void) {
 			uint8_t *a = unhex(f[2], &an);
 			xo_rstr *r = xo_crypto_b64((const char *)a, an, atoi(f[1]), &len);
 			puthex((uint8_t *)r->data, len);
-			xo_free(r);
+			t_free(r);
 			free(a);
 		} else if (strcmp(f[0], "verify") == 0 && nf == 3) {
 			uint8_t *a = unhex(f[1], &an), *b = unhex(f[2], &bn);

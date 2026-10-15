@@ -85,7 +85,7 @@ static void nbuf_put(nbuf *b, const char *p, int64_t n) {
 }
 
 static xo_rstr *nstr(const char *p, int64_t n, int64_t *len) {
-	xo_rstr *s = rs_new(n);
+	xo_rstr *s = t_rs_new(n);
 	if (n > 0) {
 		memcpy(s->data, p, (size_t)n);
 	}
@@ -760,7 +760,7 @@ xo_rstr *xo_crypto_hmac_sha256(const char *k, int64_t kn, const char *p, int64_t
 
 // xo_crypto_pbkdf2 is PBKDF2-HMAC-SHA256 of the password and salt.
 xo_rstr *xo_crypto_pbkdf2(const char *pw, int64_t pn, const char *salt, int64_t sn, int64_t iter, int64_t keylen, int64_t *len) {
-	xo_rstr *s = rs_new(keylen);
+	xo_rstr *s = t_rs_new(keylen);
 	cr_pbkdf2((const uint8_t *)pw, pn, (const uint8_t *)salt, sn, iter, (uint8_t *)s->data, keylen);
 	*len = keylen;
 	return s;
@@ -769,7 +769,7 @@ xo_rstr *xo_crypto_pbkdf2(const char *pw, int64_t pn, const char *salt, int64_t 
 // xo_crypto_argon2id is Argon2id of the password and salt (no secret, no
 // associated data), as std/rt's argon2Key(argon2ModeID, ...).
 xo_rstr *xo_crypto_argon2id(const char *pw, int64_t pn, const char *salt, int64_t sn, int64_t t, int64_t m, int64_t p, int64_t keylen, int64_t *len) {
-	xo_rstr *s = rs_new(keylen);
+	xo_rstr *s = t_rs_new(keylen);
 	cr_argon2(CR_ARGON2ID, (const uint8_t *)pw, pn, (const uint8_t *)salt, sn, NULL, 0, NULL, 0, (uint32_t)t, (uint32_t)m, (uint32_t)p, (uint8_t *)s->data, (uint32_t)keylen);
 	*len = keylen;
 	return s;

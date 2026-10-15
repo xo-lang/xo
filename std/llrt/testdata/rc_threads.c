@@ -44,7 +44,7 @@ typedef struct {
 
 static str mkstr(const char *s) {
 	int64_t n = (int64_t)strlen(s);
-	xo_rstr *o = rs_new(n);
+	xo_rstr *o = t_rs_new(n);
 	memcpy(o->data, s, (size_t)n);
 	return (str){o, n};
 }
@@ -63,7 +63,7 @@ static void str_share(void *p) { rc_mark(&((str *)p)->obj->rc); }
 static str *elems(xo_rlist *l) { return (str *)rl_data(l); }
 
 static xo_rlist *list_of(int n) {
-	xo_rlist *l = rl_new(n, sizeof(str));
+	xo_rlist *l = t_rl_new(n, sizeof(str));
 	for (int i = 0; i < n; i++) {
 		char b[32];
 		snprintf(b, sizeof b, "item-%d", i);
@@ -237,7 +237,7 @@ static void *t_append(void *arg) {
 	}
 	// this thread's own reference: the last thread to get here may
 	// append in place (the claim), the others copy
-	xo_rstr *r = rs_append(shared_s.obj, shared_s.len, "?", 1);
+	xo_rstr *r = t_rs_append(shared_s.obj, shared_s.len, "?", 1);
 	CHECK(r->rc == 1 && memcmp(r->data, "hello?", 6) == 0);
 	str rs = {r, 6};
 	str_drop(&rs);
@@ -410,7 +410,7 @@ static void *t_literal(void *arg) {
 		CHECK(!rc_claim(&lit.rc));
 		CHECK(!rc_mark(&lit.rc));
 		// `"lit!" + x` copies and leaves the literal alone
-		xo_rstr *r = rs_append((xo_rstr *)&lit, 4, "?", 1);
+		xo_rstr *r = t_rs_append((xo_rstr *)&lit, 4, "?", 1);
 		CHECK(r != (xo_rstr *)&lit && r->rc == 1);
 		t_rc_free(r);
 	}

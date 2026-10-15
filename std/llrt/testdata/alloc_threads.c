@@ -118,7 +118,7 @@ typedef struct {
 
 // put allocates a block of n bytes for b and fills it.
 static void put(blk *b, int64_t n, uint64_t tag) {
-	b->p = xo_alloc(n);
+	b->p = t_alloc(n);
 	CHECK(((uintptr_t)b->p & 7) == 0);
 	b->n = n;
 	b->tag = tag;
@@ -128,14 +128,14 @@ static void put(blk *b, int64_t n, uint64_t tag) {
 // drop checks and frees b's block.
 static void drop(blk *b) {
 	CHECK(check(b->p, b->n, b->n, b->tag));
-	xo_free(b->p);
+	t_free(b->p);
 	b->p = NULL;
 }
 
 // grow resizes b's block to n bytes, checks what it kept, and refills it.
 static void grow(blk *b, int64_t n, uint64_t tag) {
 	CHECK(check(b->p, b->n, b->n, b->tag));
-	b->p = xo_resize(b->p, b->n, n);
+	b->p = t_resize(b->p, b->n, n);
 	int64_t kept = b->n < n ? b->n : n;
 	CHECK(check(b->p, kept, b->n, b->tag));
 	b->n = n;
@@ -161,10 +161,10 @@ static void churn(blk *slots, uint64_t *s, uint64_t id, int iters, void (*send)(
 		} else if (r < 85) {
 			// a string's capacity is the usable size of its block
 			int64_t want = (int64_t)(rnd(s) % 2000);
-			xo_rstr *o = rs_new(want);
+			xo_rstr *o = t_rs_new(want);
 			CHECK(o->cap >= want);
 			memset(o->data, 0x5a, (size_t)o->cap);
-			xo_free(o);
+			t_free(o);
 		} else {
 			CHECK(check(b->p, b->n, b->n, b->tag));
 		}
@@ -280,7 +280,7 @@ static void *wave_free(void *arg) {
 	int k = (int)(intptr_t)arg;
 	for (int i = 0; i < WAVE; i++) {
 		CHECK(((uint8_t *)wave_blocks[k][i])[0] == (uint8_t)(k + 1));
-		xo_free(wave_blocks[k][i]);
+		t_free(wave_blocks[k][i]);
 	}
 	return NULL;
 }
@@ -294,7 +294,7 @@ static void test_waves(void) {
 		}
 		for (int k = 0; k < 2; k++) {
 			for (int i = 0; i < WAVE; i++) {
-				uint8_t *p = xo_alloc(56);
+				uint8_t *p = t_alloc(56);
 				memset(p, k + 1, 56);
 				wave_blocks[k][i] = p;
 			}

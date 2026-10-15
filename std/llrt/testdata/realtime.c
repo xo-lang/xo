@@ -36,7 +36,7 @@ static int64_t live(void) {
 // a string object as generated code holds it
 static xo_rstr *mkstr(const char *s) {
 	int64_t n = (int64_t)strlen(s);
-	xo_rstr *o = rs_new(n);
+	xo_rstr *o = t_rs_new(n);
 	memcpy(o->data, s, (size_t)n);
 	return o;
 }
@@ -51,7 +51,7 @@ static void str_drop(void *p) { release_str(*(xo_rstr **)p); }
 
 // a List[Str] of n strings
 static xo_rlist *mklist(int n) {
-	xo_rlist *l = rl_new(n, sizeof(xo_rstr *));
+	xo_rlist *l = t_rl_new(n, sizeof(xo_rstr *));
 	for (int i = 0; i < n; i++) {
 		((xo_rstr **)rl_data(l))[i] = mkstr("element");
 	}

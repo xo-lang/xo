@@ -38,7 +38,7 @@ static int failures;
 	} while (0)
 
 static xo_rlist *one(int64_t v) {
-	xo_rlist *l = rl_new(1, 8);
+	xo_rlist *l = t_rl_new(1, 8);
 	l->len = 1;
 	*(int64_t *)rl_data(l) = v;
 	return l;
@@ -58,10 +58,10 @@ static void drop_str_list(xo_rlist *l) {
 		for (int64_t i = 0; i < l->len; i++) {
 			xo_rstr *s = ((xo_rstr **)rl_data(l))[2 * i];
 			if (rc_dec(&s->rc)) {
-				xo_free(s);
+				t_free(s);
 			}
 		}
-		xo_free(l);
+		t_free(l);
 	}
 }
 

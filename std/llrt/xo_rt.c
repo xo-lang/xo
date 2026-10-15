@@ -143,8 +143,8 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
 //
 // Threads (decision 0058): the free lists, the chunk, the counters, and
 // xo_rc_defer's worklist live in a heap. While the program has one
-// thread every call uses solo_heap (main_heap), so single threaded code
-// pays one load and a predicted branch.
+// thread every call uses main_heap (obj.xo's static word HEAP), so
+// single threaded code pays one load and a predicted branch.
 // xo_rt_threads_begin, called before a second thread runs Xo code,
 // switches to one heap per thread: the calling thread keeps main_heap,
 // every other thread gets its own on first use. A block may be freed by
@@ -244,9 +244,6 @@ static void *central[XO_NCLASS + 1];
 
 static xo_heap main_heap = {.mid_max = XO_MID_MAX, .central = central};
 static int xo_threaded; // set once, before a second thread runs Xo code
-// solo_heap is main_heap while one thread runs, null after (one load
-// both tells the case and gives the heap)
-static xo_heap *solo_heap = &main_heap;
 // the calling thread's heap is word 3 of the thread local table the
 // compiler emits (decision 0212; std/native/llrt/sched.xo TLS_HEAP)
 extern __thread int64_t xo_tlocal[16];
@@ -319,7 +316,6 @@ void xo_rt_threads_begin(void) {
 		return;
 	}
 	tls_heap = &main_heap;
-	__atomic_store_n(&solo_heap, NULL, __ATOMIC_RELAXED);
 	obj_heap_init(NULL);
 	__atomic_store_n(&xo_threaded, 1, __ATOMIC_RELAXED);
 	// standard output's buffer takes its lock from now on (stdio.xo)
@@ -364,101 +360,11 @@ int64_t xo_x_heap_chunks(void);
 // instead, decision 0118).
 #define xo_chunks_now() xo_x_heap_chunks()
 
-// The heap in Xo (decision 0207 stage 3): std/native/llrt/alloc.xo
-// through the C ABI exports of cabi.xo (its C path was deleted by
-// decision 0198); the C finds the calling thread's heap record.
-int64_t xo_x_heap_alloc(int64_t n, int64_t h);
-void xo_x_heap_free(int64_t p, int64_t h);
-void xo_x_heap_refill(int64_t h, int64_t n);
-void xo_x_heap_free_mt(int64_t h, int64_t p);
-int64_t xo_x_heap_resize(int64_t h, int64_t p, int64_t old, int64_t n, int64_t mt);
-
-#define HA(h) ((int64_t)(intptr_t)(h))
-// With LTO (the LLVM backend) the calls of the single threaded paths are
-// inlined as the C's alloc_in and free_in were (always_inline on the
-// call: LLVM's own cost model kept the Xo function out of line in the
-// hot string builders, bench/results/raw-memory-2026-10-13.md stage 3).
-// The statement form needs clang 17 (LLVM; Apple clang 16): older ones,
-// such as Amazon Linux's clang 15, fail on `[[` in C and even on
-// `__has_c_attribute(clang::always_inline)`.
-#if defined(__clang__) && ((defined(__apple_build_version__) && __clang_major__ >= 16) || (!defined(__apple_build_version__) && __clang_major__ >= 17))
-#define XO_INLINE_CALL [[clang::always_inline]]
-#endif
-#ifndef XO_INLINE_CALL
-#define XO_INLINE_CALL
-#endif
-static inline __attribute__((always_inline)) void *alloc_in(xo_heap *h, int64_t n) {
-	int64_t p;
-	XO_INLINE_CALL p = xo_x_heap_alloc(n, HA(h));
-	return (void *)(intptr_t)p;
-}
-static inline __attribute__((always_inline)) void free_in(xo_heap *h, void *p) {
-	XO_INLINE_CALL xo_x_heap_free(HA(p), HA(h));
-}
-__attribute__((noinline)) static void *alloc_mt(int64_t n) {
-	xo_heap *h = heap_slow();
-	xo_x_heap_refill(HA(h), n);
-	return alloc_in(h, n);
-}
-__attribute__((noinline)) static void free_mt(void *p) { xo_x_heap_free_mt(HA(heap_slow()), HA(p)); }
-static inline void *resize_in(xo_heap *h, void *p, int64_t old, int64_t n, int64_t mt) { return (void *)(intptr_t)xo_x_heap_resize(HA(h), HA(p), old, n, mt); }
-#undef HA
-
-void *xo_alloc(int64_t n) {
-	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
-	if (__builtin_expect(!h, 0)) {
-		return alloc_mt(n);
-	}
-	return alloc_in(h, n);
-}
-
-void xo_free(void *p) {
-	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
-	if (__builtin_expect(!h, 0)) {
-		free_mt(p);
-		return;
-	}
-	free_in(h, p);
-}
-
-// xo_resize returns a block of n bytes with the first old bytes of p (a
-// block of old bytes, which is freed). Out of line: rs_append is its only
-// caller since the lists went to obj.xo, and inlined there it made the
-// in place append save registers on every call (LLVM text replace and
-// json enc_small 1.03 to 1.05 times the instructions).
-__attribute__((noinline)) static void *xo_resize(void *p, int64_t old, int64_t n) {
-	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
-	int64_t mt = 0;
-	if (__builtin_expect(!h, 0)) {
-		h = heap_slow();
-		mt = 1;
-	}
-	// the heap in Xo moves a block itself unless mt
-	void *q = resize_in(h, p, old, n, mt);
-	if (q) {
-		return q;
-	}
-	q = xo_alloc(n);
-	memcpy(q, p, (size_t)(old < n ? old : n));
-	xo_free(p);
-	return q;
-}
-
-// The lists in Xo (zero-C audit B13): std/native/llrt/obj.xo
-// through cabi.xo's obj_* exports. hw is the heap word they take: the
-// calling thread's heap record, plus 1 when other threads run (obj.xo
-// then takes alloc_mt's, free_mt's, and xo_resize's paths).
-int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
-
-__attribute__((noinline)) static int64_t hw_slow(void) { return (int64_t)(intptr_t)heap_slow() | 1; }
-
-static inline __attribute__((always_inline)) int64_t hw(void) {
-	xo_heap *h = __atomic_load_n(&solo_heap, __ATOMIC_RELAXED);
-	if (__builtin_expect(!h, 0)) {
-		return hw_slow();
-	}
-	return (int64_t)(intptr_t)h;
-}
+// The heap, strings and lists in Xo (decisions 0198 and 0207, zero-C
+// audit B13): std/native/llrt/alloc.xo and obj.xo through cabi.xo's
+// exports; the C's own blocks are strings and lists (rs_new, rl_new).
+int64_t xo_x_obj_rs_new(int64_t n);
+int64_t xo_x_obj_rl_new_cap(int64_t cap, int64_t esize);
 
 
 // ---------------------------------------------------------------------------
@@ -653,27 +559,9 @@ typedef struct {
 	char data[];
 } xo_rstr;
 
-// alloc_usable returns a block of at least n bytes and in *bytes the
-// bytes it really has (its size class), so strings can grow into the
-// slack. The heap in Xo leaves them in the heap record's last_size (one
-// call instead of two, decision 0207 stage 3).
-static inline void *alloc_usable(int64_t n, int64_t *bytes) {
-	void *p = xo_alloc(n);
-	*bytes = heap()->last_size;
-	return p;
-}
-
-// rs_new is a new string object with room for at least n bytes: the C
-// callers' (xo_str_slice, the number text, standard input, ...), kept in
-// C so clang inlines the allocation into them (forwarding it to obj.xo
-// took text lines to 1.054 on LLVM; obj.xo's rs_new_n is the same).
-static xo_rstr *rs_new(int64_t n) {
-	int64_t bytes;
-	xo_rstr *s = alloc_usable((int64_t)sizeof(xo_rstr) + n, &bytes);
-	s->rc = 1;
-	s->cap = bytes - (int64_t)sizeof(xo_rstr);
-	return s;
-}
+// rs_new is a new string object with room for at least n bytes (obj.xo
+// rs_new_obj).
+static xo_rstr *rs_new(int64_t n) { return (xo_rstr *)(intptr_t)xo_x_obj_rs_new(n); }
 
 // rs_append appends the n bytes at p to a (of length an), consuming a:
 // in place when a is unique (doubling when it is full: Perceus reuse, so
@@ -727,11 +615,7 @@ typedef void (*xo_elem_fn)(void *);
 static inline char *rl_data(xo_rlist *l) { return (char *)(l + 1); }
 
 // rl_new is an empty list with room for cap elements (obj.xo rl_new).
-static xo_rlist *rl_new(int64_t cap, int64_t esize) {
-	int64_t l;
-	XO_INLINE_CALL l = xo_x_obj_rl_new(hw(), cap, esize);
-	return (xo_rlist *)(intptr_t)l;
-}
+static xo_rlist *rl_new(int64_t cap, int64_t esize) { return (xo_rlist *)(intptr_t)xo_x_obj_rl_new_cap(cap, esize); }
 
 // The entries LLVM generated code calls (arm64 generated code calls the
 // obj_*_n exports directly): they forward to obj.xo's entries, which find
