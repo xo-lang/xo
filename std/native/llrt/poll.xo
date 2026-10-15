@@ -419,7 +419,8 @@ const TW_VIRT = 40
 pub fn now() -> Int {
   let tw = rt.sched_rt(RT_TW, 0, 0)
   if rt.mem_load(tw, TW_VIRT, 4) != 0 {
-    return rt.slot_load(tw, TW_VNOW, ACQUIRE)
+    // TW_VNOW is a byte offset; a slot's index counts words
+    return rt.slot_load(tw + TW_VNOW, 0, ACQUIRE)
   }
   sysio.mono_ns()
 }

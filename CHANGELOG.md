@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix: `xo test --no-gc` hung on tests that sleep under the virtual
+  clock since B22 remnants batch 2 (0e1771fd): poll.xo read the virtual
+  clock at a word index where its constant was a byte offset
+  (gotchas/slot-atomics-index-words.md).
 - arm64 builds say so when the inlined module does not verify (they go
   on without inlining, slower) instead of falling back silently, and
   fail with XO_INLINE_STRICT=1, which the Go tests set.
