@@ -121,11 +121,11 @@ pub fn cert(cert_pem: Bytes, key_pem: Bytes) -> (Cert, Str) {
     if !same {
       return (none, "tls: private key does not match public key")
     }
-  } else if pk == x509.KEY_P256 || pk == x509.KEY_P384 {
-    if kind != x509.KEY_P256 && kind != x509.KEY_P384 {
+  } else if x509.is_ec(pk) {
+    if !x509.is_ec(kind) {
       return (none, "tls: private key type does not match public key type")
     }
-    if kind != pk || nistec.public_key(if pk == x509.KEY_P384 { nistec.P384 } else { nistec.P256 }, key) != leaf.cert.key {
+    if kind != pk || nistec.public_key(x509.ec_curve(pk), key) != leaf.cert.key {
       return (none, "tls: private key does not match public key")
     }
   } else if pk == x509.KEY_ED25519 {
@@ -160,8 +160,8 @@ fn pem_blocks(b: Bytes) -> List[(Str, Bytes)] {
   out
 }
 
-/// Go's parsePrivateKey: PKCS #1 RSA, then PKCS #8 (RSA, ECDSA,
-/// Ed25519), then SEC 1 EC; the key's x509 KEY_* type and its form for
+/// Go's parsePrivateKey: PKCS #1 RSA, then PKCS #8 (RSA, ECDSA on
+/// P-224, P-256, P-384 and P-521, Ed25519), then SEC 1 EC; the key's x509 KEY_* type and its form for
 /// tls13srv.xo, or Go's error text.
 fn private_key(der: Bytes) -> (Int, Bytes, Str) {
   let t = asn1.whole(der, asn1.SEQUENCE)
@@ -224,7 +224,14 @@ fn ec_key(der: Bytes, curve0: Str) -> (Int, Bytes, Str) {
       }
     }
   }
-  let (kind, size, c) = if curve == "1.2.840.10045.3.1.7" { (x509.KEY_P256, 32, nistec.P256) } else if curve == "1.3.132.0.34" { (x509.KEY_P384, 48, nistec.P384) } else { (0, 0, 0) }
+  // Go's ParseECPrivateKey: P-224, P-256, P-384, P-521
+  let (kind, size, c) = match curve {
+    "1.2.840.10045.3.1.7" => (x509.KEY_P256, 32, nistec.P256)
+    "1.3.132.0.34" => (x509.KEY_P384, 48, nistec.P384)
+    "1.3.132.0.35" => (x509.KEY_P521, 66, nistec.P521)
+    "1.3.132.0.33" => (x509.KEY_P224, 28, nistec.P224)
+    _ => (0, 0, 0)
+  }
   if kind == 0 {
     return bad
   }

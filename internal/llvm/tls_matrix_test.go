@@ -37,7 +37,7 @@ type matrixCert struct {
 	cert, key  []byte // PEM (the key PKCS #8)
 	tls        tls.Certificate
 	ecdsaSuite bool // TLS 1.2's ECDHE_ECDSA suites (else ECDHE_RSA)
-	goOnly     bool // only Go's servers have it (P-521: the Xo server's is tls13srv.xo's owner's)
+	goOnly     bool // only Go's servers have it
 }
 
 func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
@@ -80,7 +80,7 @@ func newMatrixPKI(t *testing.T) ([]byte, *x509.CertPool, []matrixCert) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mc := matrixCert{name: k.name, cert: pemOf("CERTIFICATE", der), key: pemOf("PRIVATE KEY", kd), ecdsaSuite: k.ecdsa, goOnly: k.name == "p521"}
+		mc := matrixCert{name: k.name, cert: pemOf("CERTIFICATE", der), key: pemOf("PRIVATE KEY", kd), ecdsaSuite: k.ecdsa, goOnly: false}
 		if mc.tls, err = tls.X509KeyPair(mc.cert, mc.key); err != nil {
 			t.Fatal(err)
 		}
@@ -103,14 +103,18 @@ func matrixSuites12(ecdsaKey bool) []uint16 {
 var matrixGroups = []struct {
 	name string
 	id   tls.CurveID
-}{{"x25519", tls.X25519}, {"p256", tls.CurveP256}, {"p384", tls.CurveP384}}
+}{{"x25519", tls.X25519}, {"p256", tls.CurveP256}, {"p384", tls.CurveP384}, {"p521", tls.CurveP521}}
 
 // matrixClientGroups are the groups of the Go servers the Xo client
-// calls: the Xo server's P-521 is its owner's (tls13srv.xo).
-var matrixClientGroups = append(matrixGroups, struct {
+// calls (all of matrixGroups).
+var matrixClientGroups = matrixGroups
+
+// matrixHybrids are Go 1.26's hybrids other than X25519MLKEM768 (its
+// default), TLS 1.3 only.
+var matrixHybrids = []struct {
 	name string
 	id   tls.CurveID
-}{"p521", tls.CurveP521})
+}{{"secp256r1mlkem768", tls.SecP256r1MLKEM768}, {"secp384r1mlkem1024", tls.SecP384r1MLKEM1024}}
 
 // matrixState is what one side of a connection saw.
 func matrixState(cs tls.ConnectionState) string {
@@ -159,12 +163,7 @@ func startMatrixPeers(t *testing.T, certs []matrixCert) map[string]string {
 		serve("go p256 tls1.3 "+g.name, &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}})
 		serve("go p256 tls1.2 "+g.name, &tls.Config{Certificates: p, MaxVersion: tls.VersionTLS12, CurvePreferences: []tls.CurveID{g.id}})
 	}
-	// Go 1.26's other hybrids, TLS 1.3 only (the Xo server's are its
-	// owner's: tls13srv.xo)
-	for _, g := range []struct {
-		name string
-		id   tls.CurveID
-	}{{"secp256r1mlkem768", tls.SecP256r1MLKEM768}, {"secp384r1mlkem1024", tls.SecP384r1MLKEM1024}} {
+	for _, g := range matrixHybrids {
 		serve("go p256 tls1.3 "+g.name, &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}})
 	}
 	serve("go p256 tls1.3 alpn http/1.1", &tls.Config{Certificates: p, MinVersion: tls.VersionTLS13})
@@ -267,6 +266,12 @@ func probeMatrix(out *strings.Builder, addrs map[string]string, certs []matrixCe
 		dial("p256 tls1.3 "+g.name, a, &tls.Config{MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}}, false)
 		dial("p256 tls1.2 "+g.name, a, &tls.Config{MaxVersion: tls.VersionTLS12, CurvePreferences: []tls.CurveID{g.id}}, false)
 	}
+	for _, g := range matrixHybrids {
+		dial("p256 tls1.3 "+g.name, a, &tls.Config{MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id}}, false)
+		// with the X25519 hybrid too: Go's server order takes the first
+		// hybrid (post-quantum first), the Xo server must agree
+		dial("p256 tls1.3 "+g.name+" and default", a, &tls.Config{MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{g.id, tls.X25519MLKEM768, tls.X25519}}, false)
+	}
 	for _, p := range [][]string{{"h2"}, {"http/1.1"}, {"h2", "http/1.1"}} {
 		dial("p256 tls1.3 alpn "+strings.Join(p, ","), a, &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: p}, false)
 		dial("p256 tls1.2 alpn "+strings.Join(p, ","), a, &tls.Config{MaxVersion: tls.VersionTLS12, NextProtos: p}, false)
@@ -281,9 +286,9 @@ func probeMatrix(out *strings.Builder, addrs map[string]string, certs []matrixCe
 // against Go's servers, Go's clients against the Xo servers, and the Xo
 // client against the Xo servers, across TLS 1.3 and 1.2, suites (GCM,
 // ChaCha20-Poly1305, CBC on 1.2), groups (X25519, P-256, P-384, a
-// HelloRetryRequest; P-521 for the Xo client), certificate keys (RSA,
-// ECDSA P-256 and P-384, Ed25519; ECDSA P-521 on Go's servers for the Xo
-// client), ALPN, and resumption. The program built with the Go backend
+// HelloRetryRequest, P-521, and Go 1.26's SecP256r1MLKEM768 and
+// SecP384r1MLKEM1024 on TLS 1.3), certificate keys (RSA, ECDSA P-256,
+// P-384 and P-521, Ed25519), ALPN, and resumption. The program built with the Go backend
 // is crypto/tls on both ends: the native backends must print the same.
 // TLS 1.3's suite is the server's choice among Go's offers (AES-128-GCM);
 // ChaCha20-Poly1305 and AES-256-GCM on TLS 1.3 are covered by the

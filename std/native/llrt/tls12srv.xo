@@ -77,7 +77,7 @@ pub struct Conf {
 /// Go's defaults for a certificate chain and its leaf's key.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
   let key_alg = if certs.is_empty() { x509.KEY_UNKNOWN } else { x509.parse(certs[0]).cert.key_alg }
-  Conf{certs: certs, key_alg: key_alg, key: key, suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b"", iv: b"", ticket_keys: [], now: 0, ticket_iv: b""}
+  Conf{certs: certs, key_alg: key_alg, key: key, suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384, tls13.GROUP_P521], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b"", iv: b"", ticket_keys: [], now: 0, ticket_iv: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -930,7 +930,7 @@ fn client_hello(var s: Server, msg: Bytes) {
     return
   }
   let ecdhe_ok = curve_ok && uncompressed
-  let ec_key = cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 || cf.key_alg == x509.KEY_ED25519
+  let ec_key = x509.is_ec(cf.key_alg) || cf.key_alg == x509.KEY_ED25519
   s.cr = h.random
   s.sr = sr
   s.alpn = proto
@@ -1089,7 +1089,8 @@ fn key_schemes(cf: Conf) -> List[Int] {
   if cf.key_alg == x509.KEY_ED25519 {
     return [0x0807]
   }
-  if cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 {
+  if x509.is_ec(cf.key_alg) {
+    // any curve, P-224 and P-521 too: TLS 1.2 ties no curve to a hash
     return [0x0403, 0x0503, 0x0603]
   }
   if cf.key_alg != x509.KEY_RSA {
@@ -1193,8 +1194,8 @@ fn sign(cf: Conf, alg: Int, signed: Bytes) -> Bytes {
   }
   let hash = tls12.alg_hash(alg)
   let hashed = sha256.sum(hash, signed)
-  if cf.key_alg == x509.KEY_P256 || cf.key_alg == x509.KEY_P384 {
-    return nistec.sign(if cf.key_alg == x509.KEY_P384 { nistec.P384 } else { nistec.P256 }, cf.key, hashed)
+  if x509.is_ec(cf.key_alg) {
+    return nistec.sign(x509.ec_curve(cf.key_alg), cf.key, hashed)
   }
   let k = match rsa.private_key(cf.key) {
     Some(k) => k
@@ -1337,7 +1338,7 @@ fn client_random(b: Bytes) -> Bytes {
 /// not: signed here); d is "suites groups alpn keytype chunk mask [now]"
 /// (now, Unix seconds, turns session tickets on; chunk "r" goes
 /// through resume with the first record's ClientHello; keytype rsa, p256,
-/// or p384, which Go's reference needs to read the key; mask 1 to show
+/// p384, p521 or p224, which Go's reference needs to read the key; mask 1 to show
 /// the signature as its check). The result: what
 /// the server sent in the handshake, its outcome, what it read and sent
 /// while reading, its reply ("pong:" and the data), and its close_notify.

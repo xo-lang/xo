@@ -136,7 +136,7 @@ pub struct Alt {
 /// (Go 1.26's order less SecP256r1MLKEM768, SecP384r1MLKEM1024 and
 /// P-521), no ALPN.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
-  Conf{certs: certs, key: key, alts: [], handoff: false, ticket_keys: [], now: 0, ticket_iv: b"", age_add: b"", alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [mlkem.GROUP_X25519_MLKEM768, tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", mlkem_m: b"", rfc: false, ee: None, ticket: b""}
+  Conf{certs: certs, key: key, alts: [], handoff: false, ticket_keys: [], now: 0, ticket_iv: b"", age_add: b"", alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [mlkem.GROUP_X25519_MLKEM768, mlkem.GROUP_SECP256R1_MLKEM768, mlkem.GROUP_SECP384R1_MLKEM1024, tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384, tls13.GROUP_P521], random: b"", priv: b"", salt: b"", mlkem_m: b"", rfc: false, ee: None, ticket: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -657,11 +657,12 @@ fn client_hello(var s: Server, msg: Bytes) {
     fail(s, ALERT_HANDSHAKE_FAILURE, "tls: no cipher suite supported by both client and server; client offered: ${hex_list(h.suites)}")
     return
   }
-  // the group: the server's preference among the client's groups, one
-  // with a key share first
+  // the group (Go 1.26): a post-quantum hybrid first, then one the
+  // client sent a share for, then the server's preference (its two
+  // stable sorts)
   var shared: List[Int] = []
   for g in s.conf.groups {
-    if has(h.groups, g) && g is 23 | 24 | 29 | 0x11ec {
+    if has(h.groups, g) && (g is 23 | 24 | 25 | 29 || mlkem.is_hybrid(g)) {
       shared.push(g)
     }
   }
@@ -670,8 +671,11 @@ fn client_hello(var s: Server, msg: Bytes) {
     return
   }
   var group = shared[0]
+  var best = -1
   for g in shared {
-    if has(h.shares, g) && !has(h.shares, group) {
+    let rank = (if mlkem.is_hybrid(g) { 2 } else { 0 }) + (if has(h.shares, g) { 1 } else { 0 })
+    if rank > best {
+      best = rank
       group = g
     }
   }
@@ -741,18 +745,19 @@ fn respond(var s: Server, h: Hello) {
       peer = h.share_keys[i]
     }
   }
-  // the X25519MLKEM768 hybrid (Go's hybridKeyExchange): its X25519 key
-  // is the group's private key
-  let ecdh_group = if s.group == mlkem.GROUP_X25519_MLKEM768 { tls13.GROUP_X25519 } else { s.group }
+  // a hybrid (Go's hybridKeyExchange): its ECDH key is the group's
+  // private key
+  let hybrid = mlkem.is_hybrid(s.group)
+  let ecdh_group = if hybrid { mlkem.hybrid_ecdh_group(s.group) } else { s.group }
   var priv = s.conf.priv
   if priv.is_empty() {
     priv = tls13.keygen(ecdh_group)
   }
   var share = b""
   var exchanged: Bytes? = None
-  if s.group == mlkem.GROUP_X25519_MLKEM768 {
+  if hybrid {
     let m = if s.conf.mlkem_m.len() == 32 { s.conf.mlkem_m } else { rand.next_bytes(32) }
-    if let Some((sec, sh)) = mlkem.hybrid_server(peer, priv, m) {
+    if let Some((sec, sh)) = mlkem.hybrid_server_for(s.group, peer, priv, m) {
       share = sh
       exchanged = Some(sec)
     }
@@ -1127,6 +1132,9 @@ fn schemes_for(key_alg: Int, key: Bytes) -> List[Int] {
   if key_alg == x509.KEY_P384 {
     return [0x0503]
   }
+  if key_alg == x509.KEY_P521 {
+    return [0x0603]
+  }
   if key_alg == x509.KEY_ED25519 {
     return [0x0807]
   }
@@ -1156,9 +1164,9 @@ fn sign(scheme: Int, key_alg: Int, key: Bytes, content: Bytes, salt: Bytes) -> B
     }
     return ed25519.sign(key, content)
   }
-  if scheme == 0x0403 || scheme == 0x0503 {
-    let curve = if scheme == 0x0503 { nistec.P384 } else { nistec.P256 }
-    let hash = if scheme == 0x0503 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
+  if scheme == 0x0403 || scheme == 0x0503 || scheme == 0x0603 {
+    let curve = if scheme == 0x0603 { nistec.P521 } else if scheme == 0x0503 { nistec.P384 } else { nistec.P256 }
+    let hash = if scheme == 0x0603 { sha256.HASH_SHA512 } else if scheme == 0x0503 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
     return nistec.sign(curve, key, sha256.sum(hash, content))
   }
   let hash = if scheme == 0x0806 { sha256.HASH_SHA512 } else if scheme == 0x0805 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }

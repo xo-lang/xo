@@ -211,6 +211,10 @@ func tls12Server(b, d Bytes) (Bytes, bool) {
 		key, err = x509.ParsePKCS1PrivateKey(parts[3])
 	case "p384":
 		key, err = ecdsa.ParseRawPrivateKey(elliptic.P384(), parts[3])
+	case "p521":
+		key, err = ecdsa.ParseRawPrivateKey(elliptic.P521(), parts[3])
+	case "p224":
+		key, err = ecdsa.ParseRawPrivateKey(elliptic.P224(), parts[3])
 	default:
 		key, err = ecdsa.ParseRawPrivateKey(elliptic.P256(), parts[3])
 	}

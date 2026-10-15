@@ -24,6 +24,7 @@ import (
 	"hash"
 	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,7 +78,7 @@ func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 	if len(sv) != ncerts+4 || (len(hooks) != 3 && len(hooks) != 7 && len(hooks) != 8) {
 		return "args\n"
 	}
-	cf := t13sConf{certs: sv[:ncerts], key: sv[ncerts], suites: []int{0x1301, 0x1302, 0x1303}, groups: []int{0x11ec, t13X25519, t13P256, t13P384}}
+	cf := t13sConf{certs: sv[:ncerts], key: sv[ncerts], suites: []int{0x1301, 0x1302, 0x1303}, groups: []int{0x11ec, t13HybridP256, t13HybridP384, t13X25519, t13P256, t13P384, t13P521}}
 	if args[0] != "-" {
 		cf.suites = t13sInts(args[0], 16)
 	}
@@ -559,7 +560,7 @@ func (s *t13Server) clientHello(msg []byte) {
 	}
 	var shared []int
 	for _, g := range s.conf.groups {
-		if t13Contains(h.groups, g) && (g == 23 || g == 24 || g == 29 || g == 0x11ec) {
+		if t13Contains(h.groups, g) && (g == 23 || g == 24 || g == 25 || g == 29 || t13IsHybrid(g)) {
 			shared = append(shared, g)
 		}
 	}
@@ -567,12 +568,14 @@ func (s *t13Server) clientHello(msg []byte) {
 		s.fail(40, "tls: no key exchanges supported by both client and server")
 		return
 	}
+	// Go 1.26's two stable sorts: a hybrid first, then a group with a share
+	sort.SliceStable(shared, func(i, j int) bool {
+		return t13Contains(h.shares, shared[i]) && !t13Contains(h.shares, shared[j])
+	})
+	sort.SliceStable(shared, func(i, j int) bool {
+		return t13IsHybrid(shared[i]) && !t13IsHybrid(shared[j])
+	})
 	group := shared[0]
-	for _, g := range shared {
-		if t13Contains(h.shares, g) && !t13Contains(h.shares, group) {
-			group = g
-		}
-	}
 	s.group, s.ch1, s.tr = group, h, append([]byte(nil), msg...)
 	if !t13Contains(h.shares, group) {
 		s.retry(msg)
@@ -627,8 +630,8 @@ func (s *t13Server) respond(h t13sHello) {
 		}
 	}
 	ecdhGroup := s.group
-	if s.group == 0x11ec {
-		ecdhGroup = t13X25519
+	if t13IsHybrid(s.group) {
+		ecdhGroup = t13HybridECDH(s.group)
 	}
 	priv := s.conf.priv
 	if len(priv) == 0 {
@@ -637,13 +640,13 @@ func (s *t13Server) respond(h t13sHello) {
 	}
 	var share, shared []byte
 	ok := false
-	if s.group == 0x11ec {
+	if t13IsHybrid(s.group) {
 		m := s.conf.mlkemM
 		if len(m) != 32 {
 			m = make([]byte, 32)
 			rand.Read(m)
 		}
-		shared, share, ok = t13sHybridServer(peer, priv, m)
+		shared, share, ok = t13sHybridServer(s.group, peer, priv, m)
 	} else {
 		share = t13PublicKey(s.group, priv)
 		shared, ok = t13Shared(s.group, priv, peer)
@@ -923,6 +926,9 @@ func t13sSchemesFor(pub any) []int {
 		if k.Curve == elliptic.P384() {
 			return []int{0x0503}
 		}
+		if k.Curve == elliptic.P521() {
+			return []int{0x0603}
+		}
 	case ed25519.PublicKey:
 		return []int{0x0807}
 	case *rsa.PublicKey:
@@ -944,10 +950,12 @@ func t13sSign(scheme int, key, content, salt []byte) []byte {
 			return nil
 		}
 		return ed25519.Sign(ed25519.NewKeyFromSeed(key), content)
-	case 0x0403, 0x0503:
+	case 0x0403, 0x0503, 0x0603:
 		curve, h := elliptic.P256(), crypto.SHA256
 		if scheme == 0x0503 {
 			curve, h = elliptic.P384(), crypto.SHA384
+		} else if scheme == 0x0603 {
+			curve, h = elliptic.P521(), crypto.SHA512
 		}
 		k, err := ecdsa.ParseRawPrivateKey(curve, key)
 		if err != nil {
@@ -1266,24 +1274,48 @@ func t13sTicketOpen(t []byte, keys []t13sTicketKey) ([]byte, bool) {
 }
 
 // t13sHybridServer is crypto/tls's hybridKeyExchange.serverSharedSecret
-// for X25519MLKEM768 with the X25519 key priv and the ML-KEM message m:
-// the secret (ML-KEM's, then X25519's) and the share (the ciphertext,
-// then the X25519 public key).
-func t13sHybridServer(peer, priv, m []byte) ([]byte, []byte, bool) {
-	if len(peer) != mlkem.EncapsulationKeySize768+32 {
+// for the hybrid group with the ECDH key priv and the ML-KEM message m:
+// the secret and the share, ML-KEM's part first for X25519MLKEM768 and
+// the ECDH part first for SecP256r1MLKEM768 and SecP384r1MLKEM1024.
+func t13sHybridServer(group int, peer, priv, m []byte) ([]byte, []byte, bool) {
+	eg := t13HybridECDH(group)
+	es := len(t13PublicKey(eg, priv))
+	en := mlkem.EncapsulationKeySize768
+	if group == t13HybridP384 {
+		en = mlkem.EncapsulationKeySize1024
+	}
+	if len(peer) != en+es {
 		return nil, nil, false
 	}
-	xs, ok := t13Shared(t13X25519, priv, peer[mlkem.EncapsulationKeySize768:])
+	eShare, ekb := peer[:es], peer[es:]
+	if group == t13Hybrid {
+		ekb, eShare = peer[:en], peer[en:]
+	}
+	xs, ok := t13Shared(eg, priv, eShare)
 	if !ok {
 		return nil, nil, false
 	}
-	ek, err := mlkem.NewEncapsulationKey768(peer[:mlkem.EncapsulationKeySize768])
+	var k, ct []byte
+	var err error
+	if group == t13HybridP384 {
+		ek, e := mlkem.NewEncapsulationKey1024(ekb)
+		if e != nil {
+			return nil, nil, false
+		}
+		k, ct, err = mlkemtest.Encapsulate1024(ek, m)
+	} else {
+		ek, e := mlkem.NewEncapsulationKey768(ekb)
+		if e != nil {
+			return nil, nil, false
+		}
+		k, ct, err = mlkemtest.Encapsulate768(ek, m)
+	}
 	if err != nil {
 		return nil, nil, false
 	}
-	k, ct, err := mlkemtest.Encapsulate768(ek, m)
-	if err != nil {
-		return nil, nil, false
+	pub := t13PublicKey(eg, priv)
+	if group == t13Hybrid {
+		return append(k, xs...), append(ct, pub...), true
 	}
-	return append(k, xs...), append(ct, t13PublicKey(t13X25519, priv)...), true
+	return append(xs, k...), append(pub, ct...), true
 }

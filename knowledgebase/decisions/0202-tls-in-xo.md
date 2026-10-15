@@ -254,3 +254,21 @@ std (decision 0074) unless the owner decides to expose a user marker.
   table lazily, which needs a process wide slot (all 64 static words are
   claimed). The lead chose the windowed pt_mul for P-521 and P-384; a
   lazy table is the follow-up once a slot registry exists.
+- 2026-10-15 (B31 part 20, xo-4, the server side of part 19):
+  - The Xo server (tls13srv.xo) takes Go 1.26's groups: X25519MLKEM768,
+    SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521.
+    It chooses as Go's server does: a post-quantum hybrid first, then a
+    group the client sent a share for, then the server's order. The
+    hybrid key exchange is mlkem.hybrid_server_for.
+  - ECDSA P-521 certificates sign with 0x0603 in TLS 1.3. P-224 has no
+    TLS 1.3 scheme, so Go's server refuses it.
+  - tls12srv signs with ECDSA on any curve (P-224 and P-521 too) and
+    takes CurveP521 for ECDHE (xo-fa's file, done at their request).
+  - tlssrv's key parsing reads P-224 and P-521 SEC 1 and PKCS #8 keys,
+    as Go's ParseECPrivateKey does.
+  - The Go reference port (internal_tls13srv.go, internal_tls12.go)
+    does the same.
+  - The interop matrix now has the P-521 certificate on the Xo server,
+    P-521 on TLS 1.3 and 1.2, and both new hybrids on TLS 1.3 (alone and
+    next to X25519MLKEM768) for Go's clients against the Xo server: 0
+    cells differ on LLVM and arm64.

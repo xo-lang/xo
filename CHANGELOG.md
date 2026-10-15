@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 20, decision 0202): the
+  Xo HTTPS server takes Go 1.26's groups (SecP256r1MLKEM768,
+  SecP384r1MLKEM1024 and P-521 next to X25519MLKEM768, X25519, P-256
+  and P-384), chosen as Go's server chooses: post-quantum first, then
+  a group with a key share. ECDSA P-521 certificates work on TLS 1.3
+  (0x0603) and 1.2, and P-224 on TLS 1.2. The interop matrix checks
+  them against Go's clients.
+
 - Windows standard input (zero-C B32 part 2): the pump that joins a pipe
   or the console to a loopback socket is Xo (stdin.xo); xo_stdin.c is
   deleted and xo_win.c is at 395 lines. UNTESTED on windows (the 15
