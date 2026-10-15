@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B19, part 2): channels (new, send,
+  recv, try_send, try_recv, close, len) are Xo
+  (std/native/llrt/chan.xo), which generated code calls directly; a
+  waiting context's queue entry is part of the context.
 - Native runtime (zero-C audit items B25 stages 2 and 3, B15 part 1):
   commands start from Xo (std/native/llrt/proc.xo: the PATH lookup,
   posix_spawn on macOS, fork and execve on Linux), one Proc.run path for

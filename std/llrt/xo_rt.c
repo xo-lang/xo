@@ -1304,6 +1304,18 @@ typedef struct xo_went {
 	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
 } xo_went;
 
+// A channel's queue entry: a waiter's park in a channel's queue
+// (chan.xo E_*).
+typedef struct xo_cent {
+	xo_park *park;
+	int64_t *fired; // claimed by the first waker (atomic)
+	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
+	int shut;       // the channel closed while a send waited
+	// a select's arm: the waker stores idx in *chosen
+	int64_t idx, *chosen;
+	struct xo_cent *prev, *next;
+} xo_cent;
+
 // xo_ctx is a running context: the main program, or a task.
 typedef struct xo_ctx {
 	xo_node *node; // innermost: a scope body, or the task's node
@@ -1346,6 +1358,10 @@ typedef struct xo_ctx {
 	// the context's entry in the wait list it waits on (wl_wait_as,
 	// tasks.xo wl_wait: one at a time, decision 0212 stage 3)
 	xo_went went;
+	// the context's entry in the channel queue it waits on and the word
+	// its waker claims (chan.xo; one at a time)
+	xo_cent cent;
+	int64_t fired;
 } xo_ctx;
 
 // Thread locals are read and written only through these functions, which
@@ -1402,7 +1418,7 @@ _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 &
                "ctx.xo C_*");
 _Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
                    offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
-                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && sizeof(xo_ctx) == 256 &&
+                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && offsetof(xo_ctx, cent) == 248 && offsetof(xo_ctx, fired) == 312 && sizeof(xo_ctx) == 320 &&
                    sizeof(xo_went) == 32 && offsetof(xo_went, writer) == 24,
                "ctx.xo C_BUD_*");
 
@@ -1961,6 +1977,7 @@ static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n
 static void task_free(void *p);
 static void scope_free(void *p);
 static void mutex_free(void *p);
+static void chan_free(void *p);
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
 // tasks.xo reach pool.xo through it), the free functions of a task and a
@@ -1974,16 +1991,17 @@ static struct {
 	int *stats;
 	xo_lock once; // poolsetup.xo ready's lock
 	void (*mutex_free)(void *);
+	void (*chan_free)(void *);
 } svc = {&pool, task_free, scope_free,
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, 0, mutex_free};
+	&rtstats, 0, mutex_free, chan_free};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56,
                "ctx.xo SV_*");
 
 static int64_t svc_addr(void) { return XO_ADDR(&svc); }
@@ -2628,8 +2646,8 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
 		return 0;
-	case 17: // context a waits on its park (cancelable: b; tasks.xo wl_wait)
-		park_wait((xo_ctx *)(intptr_t)a, (int)b);
+	case 17: // context a waits on its park (b bit 0: cancelable, bit 1: not counted as blocked)
+		park_wait_n((xo_ctx *)(intptr_t)a, (int)(b & 1), !(b & 2));
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
@@ -2767,15 +2785,8 @@ _Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)
 
-typedef struct xo_cent {
-	xo_park *park;
-	int64_t *fired; // claimed by the first waker (atomic)
-	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
-	int shut;       // the channel closed while a send waited
-	// a select's arm: the waker stores idx in *chosen
-	int64_t idx, *chosen;
-	struct xo_cent *prev, *next;
-} xo_cent;
+// The queue entry (xo_cent) is above, with xo_ctx: a waiting context's
+// is its own (xo_ctx.cent), a select's arms' the select's.
 
 typedef struct {
 	xo_cent *head, *tail;
@@ -2847,25 +2858,6 @@ static void chan_free(void *p) {
 	xo_free(c);
 }
 
-xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) {
-	if (cap < 0) {
-		char m[96];
-		snprintf(m, sizeof m, "negative channel capacity %lld", (long long)cap);
-		fault_at(m, loc, n);
-	}
-	xo_chan *c = xo_alloc(sizeof(xo_chan));
-	memset(c, 0, sizeof *c);
-	h_init(c, chan_free);
-	c->cap = cap;
-	c->drop = (xo_ldrop)drop;
-	if (cap > 0) {
-		c->buf = malloc((size_t)cap * sizeof(xo_rlist *));
-		if (!c->buf) {
-			xo_oom();
-		}
-	}
-	return c;
-}
 
 // hand wakes the waiter of e, which a waker claimed and gave its value
 // (c->mu held).
@@ -2920,147 +2912,39 @@ static int try_recv_locked(xo_chan *c, xo_rlist **out) {
 	return 0;
 }
 
-// xo_chan_send is `ch.send(x)` with x in a list of one (consumed): blocks
-// while the channel is full, a cancellation point that unwinds; sending
-// on a closed channel faults.
-void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		list_release(l, c->drop);
-		return;
-	}
-	lk(&c->mu);
-	if (c->closed) {
-		unlk(&c->mu);
-		list_release(l, c->drop); // the fault unwinds the sender (decision 0085)
-		fault_at("send on a closed channel", loc, n);
-	}
-	if (try_send_locked(c, l)) {
-		unlk(&c->mu);
-		return;
-	}
-	int64_t fired = 0;
-	xo_cent e = {.park = &x->park, .fired = &fired, .item = l};
-	park_reset(&x->park);
-	cq_push(&c->sendq, &e);
-	unlk(&c->mu);
-	for (;;) {
-		park_wait_n(x, 1, !c->ext);
-		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
-			break;
-		}
-		if (ctx_canceled(x)) {
-			lk(&c->mu);
-			if (claim(&fired)) {
-				cq_del(&c->sendq, &e);
-				unlk(&c->mu);
-				list_release(l, c->drop);
-				x->unwinding = 1;
-				return;
-			}
-			unlk(&c->mu);
-			break; // taken meanwhile: sent
-		}
-	}
-	lk(&c->mu); // the waker's writes
-	int shut = e.shut;
-	unlk(&c->mu);
-	if (shut) {
-		list_release(l, c->drop);
-		fault_at("send on a closed channel", loc, n);
-	}
-}
+// The channel operations are chan.xo's (B19), which generated code calls
+// through its exports; these forward for older xo's code. chan_free stays
+// C (the free function the handle names). The queue helpers above stay
+// for the select (B19's next part).
+int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
+void xo_x_chan_send(int64_t c, int64_t l, int64_t lp, int64_t ln);
+int64_t xo_x_chan_recv(int64_t c);
+int64_t xo_x_chan_try_send(int64_t c, int64_t l);
+int64_t xo_x_chan_try_recv(int64_t c);
+void xo_x_chan_close(int64_t c);
+int64_t xo_x_chan_len(int64_t c);
 
-// xo_chan_recv is `ch.recv()`: the value in a list of one, or the empty
-// list when the channel is closed and drained (and while unwinding); a
-// cancellation point that unwinds.
-xo_rlist *xo_chan_recv(xo_chan *c) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		return &empty_list;
-	}
-	xo_rlist *out;
-	lk(&c->mu);
-	if (try_recv_locked(c, &out)) {
-		unlk(&c->mu);
-		return out ? out : &empty_list;
-	}
-	int64_t fired = 0;
-	xo_cent e = {.park = &x->park, .fired = &fired};
-	park_reset(&x->park);
-	cq_push(&c->recvq, &e);
-	unlk(&c->mu);
-	for (;;) {
-		park_wait_n(x, 1, !c->ext);
-		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
-			break;
-		}
-		if (ctx_canceled(x)) {
-			lk(&c->mu);
-			if (claim(&fired)) {
-				cq_del(&c->recvq, &e);
-				unlk(&c->mu);
-				x->unwinding = 1;
-				return &empty_list;
-			}
-			unlk(&c->mu);
-			break; // a value came meanwhile: it wins
-		}
-	}
-	lk(&c->mu);
-	out = e.item;
-	unlk(&c->mu);
-	return out ? out : &empty_list;
-}
+xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) { return (xo_chan *)(intptr_t)xo_x_chan_new(cap, drop, XO_ADDR(loc), n); }
 
-// xo_chan_try_send is `ch.try_send(x)`: false (and x released) when the
-// channel is full or closed.
-int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) {
-	lk(&c->mu);
-	int ok = !c->closed && try_send_locked(c, l);
-	unlk(&c->mu);
-	if (!ok) {
-		list_release(l, c->drop);
-	}
-	return ok;
-}
+void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) { xo_x_chan_send(XO_ADDR(c), XO_ADDR(l), XO_ADDR(loc), n); }
 
-// xo_chan_try_recv is `ch.try_recv()`: never blocks.
-xo_rlist *xo_chan_try_recv(xo_chan *c) {
-	xo_rlist *out = NULL;
-	lk(&c->mu);
-	if (!try_recv_locked(c, &out)) {
-		out = NULL;
-	}
-	unlk(&c->mu);
-	return out ? out : &empty_list;
-}
+xo_rlist *xo_chan_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_recv(XO_ADDR(c)); }
 
-// xo_chan_close is `ch.close()`: waiting receivers get None, waiting
-// senders fault. Closing twice has no effect.
-void xo_chan_close(xo_chan *c) {
-	lk(&c->mu);
-	if (!c->closed) {
-		c->closed = 1;
-		xo_cent *e;
-		while ((e = cq_take(&c->recvq))) {
-			e->item = NULL;
-			hand(e);
-		}
-		while ((e = cq_take(&c->sendq))) {
-			e->shut = 1;
-			hand(e);
-		}
-	}
-	unlk(&c->mu);
-}
+int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) { return xo_x_chan_try_send(XO_ADDR(c), XO_ADDR(l)); }
 
-int64_t xo_chan_len(xo_chan *c) {
-	lk(&c->mu);
-	int64_t n = c->len;
-	unlk(&c->mu);
-	return n;
-}
+xo_rlist *xo_chan_try_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_try_recv(XO_ADDR(c)); }
+
+void xo_chan_close(xo_chan *c) { xo_x_chan_close(XO_ADDR(c)); }
+
+int64_t xo_chan_len(xo_chan *c) { return xo_x_chan_len(XO_ADDR(c)); }
+
+_Static_assert(offsetof(xo_cent, fired) == 8 && offsetof(xo_cent, item) == 16 && offsetof(xo_cent, shut) == 24 && offsetof(xo_cent, idx) == 32 &&
+                   offsetof(xo_cent, chosen) == 40 && offsetof(xo_cent, prev) == 48 && offsetof(xo_cent, next) == 56 && sizeof(xo_cent) == 64,
+               "chan.xo E_*");
+_Static_assert(offsetof(xo_chan, mu) == 16 && offsetof(xo_chan, cap) == 24 && offsetof(xo_chan, head) == 32 && offsetof(xo_chan, len) == 40 &&
+                   offsetof(xo_chan, buf) == 48 && offsetof(xo_chan, closed) == 56 && offsetof(xo_chan, ext) == 60 && offsetof(xo_chan, drop) == 64 &&
+                   offsetof(xo_chan, recvq) == 72 && offsetof(xo_chan, sendq) == 88 && sizeof(xo_chan) == 104,
+               "chan.xo CH_*");
 
 // select (core 7.3): arms are added in source order, then
 // xo_select_wait performs the first arm that can proceed, or waits for

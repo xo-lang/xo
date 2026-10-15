@@ -14,6 +14,7 @@
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
 use native/llrt/budget
+use native/llrt/chan
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
@@ -680,3 +681,20 @@ fn mutex_unlock(m: Int, l: Int) { mutex.unlock(m, l) }
 fn mutex_rlock(m: Int, lp: Int, ln: Int) -> Int { mutex.rlock(m, lp, ln) }
 
 fn mutex_runlock(m: Int, l: Int) { mutex.runlock(m, l) }
+
+// Channels (std/native/llrt/chan.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. c a channel, l a value list.
+
+fn chan_new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int { chan.new(cap, drop, lp, ln) }
+
+fn chan_send(c: Int, l: Int, lp: Int, ln: Int) { chan.send(c, l, lp, ln) }
+
+fn chan_recv(c: Int) -> Int { chan.recv(c) }
+
+fn chan_try_send(c: Int, l: Int) -> Int { chan.try_send(c, l) }
+
+fn chan_try_recv(c: Int) -> Int { chan.try_recv(c) }
+
+fn chan_close(c: Int) { chan.close(c) }
+
+fn chan_len(c: Int) -> Int { chan.len(c) }

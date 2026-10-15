@@ -130,8 +130,14 @@ pub fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
 /// Blocks the context c until its park is signaled or, when cancelable,
 /// its node is canceled (the C's park_wait: it flushes the pending
 /// output, helps on a root thread, tells ThreadSanitizer).
-pub fn park_wait(c: Int, cancelable: Bool) {
-  let _r = rt.sched_rt(RT_PARK_WAIT, c, if cancelable { 1 } else { 0 })
+pub fn park_wait(c: Int, cancelable: Bool) { park_wait_n(c, cancelable, true) }
+
+/// park_wait; counted tells that the wait counts as blocked for the
+/// deadlock check (a wait that something outside the program's tasks can
+/// end does not).
+pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
+  let b = (if cancelable { 1 } else { 0 }) + (if counted { 0 } else { 2 })
+  let _r = rt.sched_rt(RT_PARK_WAIT, c, b)
 }
 
 /// A new object of n bytes, zeroed, with one reference and the C free
@@ -140,7 +146,7 @@ pub fn new_handle(n: Int, k: Int) -> Int { new_object(n, k) }
 
 /// A cancellation point of the context c (xo_rt.c canceled): whether it
 /// reports cancellation, c then unwinding.
-fn canceled(c: Int) -> Bool {
+pub fn canceled(c: Int) -> Bool {
   if budget.canceled(c) {
     st4(c, ctx.C_UNWINDING, 1)
     return true
