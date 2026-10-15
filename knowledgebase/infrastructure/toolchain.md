@@ -3242,6 +3242,30 @@ volume makes it splat without symlinks.) A cross build:
 (windows/arm64 the same). It links a PE32+ executable; nothing runs it
 on the Mac. Last verified: 2026-10-15 (clang 23.1.3, xwin 0.10.0).
 
+### x86_64 cross builds on the Mac
+
+Since 2026-10-15 (xo-fa, decision 0221 stage 2) the LLVM backend also
+cross builds from darwin/arm64 to darwin/amd64 (the macOS SDK carries
+both architectures; nothing else to set) and from macOS to linux/amd64
+with a glibc sysroot in XO_LINUXSYSROOT and a clang that has lld (the
+winxc LLVM above):
+
+    R=<scratch>/lxsys/root
+    for u in g/glibc/libc6-dev_2.31-13+deb11u11_amd64.deb g/glibc/libc6_2.31-13+deb11u11_amd64.deb \
+             g/gcc-10/libgcc-10-dev_10.2.1-6_amd64.deb g/gcc-10/libgcc-s1_10.2.1-6_amd64.deb \
+             l/linux/linux-libc-dev_5.10.223-1_amd64.deb; do
+      curl -sfLO https://deb.debian.org/debian/pool/main/$u; done
+    for d in *.deb; do mkdir -p x/$d && (cd x/$d && ar x ../../$d && tar -xf data.tar.* -C $R); done
+    # Debian's links are absolute: make them relative (gotchas/debian-sysroot-absolute-links.md)
+    ln -sfn ../lib/x86_64-linux-gnu/ld-2.31.so $R/lib64/ld-linux-x86-64.so.2
+    find $R/usr/lib/x86_64-linux-gnu -maxdepth 1 -type l -lname '/lib/*' | while read l; do ln -sfn ../../..$(readlink $l) $l; done
+    XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_LINUXSYSROOT=$R \
+      xo build --backend=llvm --target=linux/amd64 -o prog .
+    xo build --backend=llvm --target=darwin/amd64 -o prog .
+
+Both link (an x86-64 PIE ELF against glibc 2.31; an x86_64 Mach-O);
+neither runs on this Mac (no Rosetta). Last verified: 2026-10-15.
+
 ### xo1 on x86-64 hosts
 
     scripts/xo1-host-check.sh [OUTDIR]          # on the host, Go on PATH

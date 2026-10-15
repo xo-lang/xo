@@ -4,8 +4,10 @@ Status: Accepted (2026-10-14, the lead's B05 assignment from the zero-C
 audit, bench/results/zero-c-audit-refresh-2026-10-13.md item B05 and row
 11 of its ordered list). Stage 1 implemented for XO_NOLIBC linux/arm64
 (both native backends); stage 3 implemented 2026-10-14 for glibc
-linux/arm64 and macOS (below, "Stage 3"); stage 2 (linux/amd64) not
-started, so glibc linux/amd64 keeps libgcc's forced unwind.
+linux/arm64 and macOS (below, "Stage 3"); stage 2 implemented
+2026-10-15 for glibc linux/amd64 and darwin/amd64 (below, "Stage 2,
+implementation"), UNTESTED on both: it compiles and links on the Mac
+(cross builds), nothing ran it yet.
 
 Evidence (stage 1, commit c38a15f8, linux/arm64 warm EC2 r8g, xo built
 from the checkout): with XO_NOLIBC=1 the 12 fault goldens that failed
@@ -214,6 +216,35 @@ Mac instruction counts and Linux CI's, against the C path.
    system's dispatcher, and the C stub stays only for older xo's code
    (delete after a seed). Only x86_64 Linux and macOS still name
    xo_personality (stage 2).
+
+### Stage 2, implementation (2026-10-15, xo-fa)
+
+- unwind.xo raise runs on x86_64 too: the register set is DWARF's
+  numbering of the target (rbx 3, rbp 6, rsp 7, r12 to r15 12 to 15,
+  the return address column 16; sp_off and ra_off pick the words), the
+  personality's two registers are DWARF 0 and 1 on both (rax and rdx on
+  x86_64), and on macOS a compact encoding is arm64's (cstep_a64) or
+  x86_64's (cstep_x64, libunwind's CompactUnwinder_x86_64: RBP_FRAME,
+  STACK_IMMD, STACK_IND with the permutation of the saved registers);
+  UNWIND_X86_64_MODE_DWARF is 0x04000000 (arm64's 0x03000000).
+- selfhost/llvm sched.xo unwind_fns: x86_64 xo_unwind_save stores rbx,
+  rbp, r12 to r15, the caller's rsp and the return address; the resume
+  loads them, rax and rdx, and jumps to the pc word (windows/amd64 keeps
+  the trap stubs: win_raise uses RtlRestoreContext).
+- The LLVM emitter names xo_x_personality on every target (gen.xo
+  personality); the head's `declare @xo_personality` is gone.
+- xo_rt.c: XO_UNWIND_LIBGCC, the libgcc fault_raise (fault_stop,
+  fault_cleanup, _Unwind_ForcedUnwind) and the C personality with its
+  LSDA reader are deleted (about 130 lines); the C xo_personality
+  forwarder stays on x86_64 Linux and macOS for seed 0.12.0's code
+  (delete with a seed that has this).
+- To check it on the Mac, the driver cross builds darwin/amd64 from
+  darwin/arm64 (the SDK has both) and linux/amd64 from macOS given a
+  glibc sysroot in XO_LINUXSYSROOT (toolchain.md, "x86_64 cross builds
+  on the Mac"): the fault goldens compile and link for both, with no
+  _Unwind reference left. Rosetta is not installed on this Mac, and
+  Docker's daemon was not running, so nothing ran: the first run is CI's
+  linux/amd64 job or the Intel laptop.
 
 ## Consequences
 

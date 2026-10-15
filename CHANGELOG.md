@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faults on x86_64 Linux and macOS unwind in Xo (decision 0221 stage
+  2): unwind.xo reads x86_64's DWARF registers and macOS's x86_64
+  compact unwind, the LLVM emitter writes x86_64 save and resume
+  trampolines and names xo_x_personality everywhere, and xo_rt.c's
+  libgcc forced unwind and C personality are deleted. The LLVM backend
+  cross builds darwin/amd64 on Apple silicon and linux/amd64 from macOS
+  with XO_LINUXSYSROOT. UNTESTED on linux/amd64 and darwin/amd64 (the
+  fault goldens compile and link for both).
 - Native backends (decision 0233, step 1): rt.fn_addr("name"), the
   address of the C ABI export xo_x_<name> as a word, and rt.frame_addr,
   the calling function's frame address (its frame kept, never inlined),

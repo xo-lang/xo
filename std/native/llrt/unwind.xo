@@ -13,8 +13,8 @@
 // it points to), and at the first frame
 // of generated code (its CIE names xo_x_personality) whose call site has a
 // landing pad it restores that frame's registers and jumps there
-// (rt.unwind_resume), with the exception in x0 as the personality
-// routine's protocol sets it. Frames with another personality (C
+// (rt.unwind_resume), with the exception in x0 (rax on x86_64) as the
+// personality routine's protocol sets it. Frames with another personality (C
 // cleanups, C++) are passed over: their cleanups do not run, as with C's
 // longjmp (`use c` cannot call back into Xo, so only the runtime's own C
 // sits between a fault and its catch). The landing pad runs the cleanups and calls
@@ -24,10 +24,12 @@
 // (a DWARF expression, an unknown instruction); fault_raise then reports
 // it and ends the program, as before this module.
 //
-// arm64 only for now: on x86_64 raise returns 0 at once (the registers
-// and the trampolines are arm64's), and with a C library x86_64 keeps the
-// platform's forced unwind (libgcc, libunwind) and the C personality
-// (stage 2).
+// arm64 and x86_64 (stage 2, 2026-10-15: glibc linux/amd64 and
+// darwin/amd64 left libgcc's and libunwind's forced unwind and the C
+// personality; UNTESTED on linux/amd64 and darwin/amd64): the register
+// sets are DWARF's numbering of the target (sp_off, ra_off), the
+// trampolines the emitters' (selfhost/llvm sched.xo unwind_fns), and a
+// macOS compact encoding is arm64's (cstep_a64) or x86_64's (cstep_x64).
 //
 // Nothing here allocates, faults, or keeps a counted value: the scratch
 // record is one mapping per thread, kept in thread local word UNW_TLS;
@@ -89,13 +91,31 @@ const H_THI = 184
 /// The cached CIE's personality routine (H_PERS is the frame's: a
 /// compact frame on macOS sets it without reading a CIE).
 const H_CIE_PERS = 192
-/// The register set: word n is DWARF register n (x0 to x30, sp 31, v0
-/// to v31 at 64 to 95), word 96 the frame's pc (its return address).
-/// step updates it in place to the caller's.
+/// The register set: word n is DWARF register n (arm64: x0 to x30, sp
+/// 31, v0 to v31 at 64 to 95; x86_64: rax, rdx, rcx, rbx, rsi, rdi, rbp,
+/// rsp 7, r8 to r15, the return address 16, xmm0 to xmm15 at 17 to 32),
+/// word 96 the frame's pc (its return address). step updates it in
+/// place to the caller's.
 const REGS_A = 256
 const PC = 768
 const SP = 248
 const NREG = 96
+
+/// Whether the target is x86_64.
+fn x64() -> Bool {
+  match target.arch {
+    TargetArch.Amd64 => true
+    TargetArch.Arm64 | TargetArch.Wasm32 => false
+  }
+}
+
+/// The stack pointer's word in the register set (DWARF 31 on arm64, 7
+/// on x86_64).
+fn sp_off() -> Int { if x64() { 56 } else { SP } }
+
+/// The word where rt.unwind_save leaves its return address (x30 on
+/// arm64, the return address column 16 on x86_64).
+fn ra_off() -> Int { if x64() { 128 } else { 240 } }
 /// The rule sets: the rule kind of register n at word n, its operand at
 /// S_VAL + 8 * n, then the CFA's register and offset, whether the return
 /// address is signed (DW_CFA_AARCH64_negate_ra_state), whether the CFA
@@ -160,8 +180,8 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
   }
   match target.arch {
-    TargetArch.Arm64 => {}
-    TargetArch.Amd64 | TargetArch.Wasm32 => return 0
+    TargetArch.Arm64 | TargetArch.Amd64 => {}
+    TargetArch.Wasm32 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -187,7 +207,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
   rt.mem_set(cur, 0, PC + 8)
   rt.unwind_save(cur)
   // this function's frame first: its pc is the save's return address
-  rt.mem_store(cur, PC, rt.mem_load(cur, 240, 8), 8)
+  rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
   var first = true
   while true {
     let pc = rt.mem_load(cur, PC, 8)
@@ -199,7 +219,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
       // fault_stop: the frames past the boundary are the runtime's,
       // where nothing catches a fault (_Unwind_GetCFA is the frame's
       // stack pointer at its call)
-      if boundary != 0 && rt.mem_load(cur, SP, 8) > boundary {
+      if boundary != 0 && rt.mem_load(cur, sp_off(), 8) > boundary {
         return 0
       }
       // a frame of generated code with a call site table; another
@@ -215,7 +235,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
     }
     first = false
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(cur, enc) } else { step(s, cur) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {
       return 0
     }
   }
@@ -224,8 +244,9 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
 
 /// The personality routine of generated code over raise's record ctx:
 /// every landing pad is a cleanup, entered on the second phase. At a
-/// landing pad the frame's registers get the exception in x0, 0 in x1,
-/// and the pad as the pc (_URC_INSTALL_CONTEXT).
+/// landing pad the frame's registers get the exception in x0, 0 in x1
+/// (rax and rdx on x86_64: DWARF 0 and 1 on both), and the pad as the pc
+/// (_URC_INSTALL_CONTEXT).
 fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int {
   if (version & 4294967295) != 1 {
     return URC_FATAL_PHASE1_ERROR
@@ -594,9 +615,9 @@ fn dframe(s: Int, pc: Int) -> Bool {
     // no unwind information
     return false
   }
-  if (enc & 251658240) == 50331648 {
-    // UNWIND_ARM64_MODE_DWARF: the FDE at the low 24 bits' offset in
-    // __eh_frame
+  if (enc & 251658240) == (if x64() { 67108864 } else { 50331648 }) {
+    // UNWIND_ARM64_MODE_DWARF (UNWIND_X86_64_MODE_DWARF): the FDE at the
+    // low 24 bits' offset in __eh_frame
     let ehf = rt.mem_load(img, 16, 8)
     if ehf == 0 || !read_fde(s, ehf + (enc & 16777215), pc - 1) {
       return false
@@ -653,13 +674,20 @@ fn last_le(a: Int, n: Int, size: Int, v: Int, mask: Int) -> Int {
 }
 
 /// The registers of the caller of the frame whose registers are at regs,
+/// in place, by its compact encoding enc (the frame's function starts at
+/// s's H_BEGIN): arm64's or x86_64's. Whether enc is one cstep reads.
+fn cstep(s: Int, regs: Int, enc: Int) -> Bool {
+  if x64() { cstep_x64(s, regs, enc) } else { cstep_a64(regs, enc) }
+}
+
+/// The registers of the caller of the frame whose registers are at regs,
 /// in place, by its arm64 compact encoding enc (libunwind's
 /// CompactUnwinder_arm64): a frame (UNWIND_ARM64_MODE_FRAME, and
 /// FRAME_PAUTH_LR) has the frame record at x29 and the saved pairs right
 /// below it; a frameless leaf (MODE_FRAMELESS) has its pairs right below
 /// sp plus its stack size and the return address in x30. Whether enc is
 /// one of those.
-fn cstep(regs: Int, enc: Int) -> Bool {
+fn cstep_a64(regs: Int, enc: Int) -> Bool {
   let mode = enc & 251658240
   if mode == 67108864 || mode == 83886080 {
     let fp = rt.mem_load(regs, 8 * 29, 8)
@@ -695,6 +723,139 @@ fn restore_pairs(regs: Int, enc: Int, top: Int) {
       loc -= 8
       rt.mem_store(regs, 8 * (r + 1), rt.mem_load(loc, 0, 8), 8)
     }
+  }
+}
+
+/// The registers of the caller of the frame whose registers are at regs,
+/// in place, by its x86_64 compact encoding enc (libunwind's
+/// CompactUnwinder_x86_64): an rbp frame (UNWIND_X86_64_MODE_RBP_FRAME)
+/// has its saved registers at rbp minus the encoded offset, then rbp's
+/// caller's value at rbp, the return address above it; a frameless one
+/// (MODE_STACK_IMMD, or MODE_STACK_IND with the size read from the
+/// function's sub instruction) has its saved registers, in the encoded
+/// permutation, right below the return address at sp plus its size.
+/// Whether enc is one of those.
+fn cstep_x64(s: Int, regs: Int, enc: Int) -> Bool {
+  let mode = enc & 251658240
+  if mode == 16777216 {
+    let rbp = rt.mem_load(regs, 48, 8)
+    var at = rbp - 8 * ((enc / 65536) & 255)
+    var locs = enc & 32767
+    for _ in 0..5 {
+      let r = x64_reg(locs & 7)
+      if r < 0 {
+        return false
+      }
+      if r > 0 {
+        rt.mem_store(regs, 8 * r, rt.mem_load(at, 0, 8), 8)
+      }
+      at += 8
+      locs = locs / 8
+    }
+    rt.mem_store(regs, 48, rt.mem_load(rbp, 0, 8), 8)
+    rt.mem_store(regs, 56, rbp + 16, 8)
+    rt.mem_store(regs, PC, rt.mem_load(rbp, 8, 8), 8)
+    return true
+  }
+  if mode != 33554432 && mode != 50331648 {
+    return false
+  }
+  var size = 8 * ((enc / 65536) & 255)
+  if mode == 50331648 {
+    // the 32 bit immediate of the function's sub at the encoded offset,
+    // plus the adjustment's words
+    size = rt.mem_load(rt.mem_load(s, H_BEGIN, 8) + ((enc / 65536) & 255), 0, 4) + 8 * ((enc / 8192) & 7)
+  }
+  let count = (enc / 1024) & 7
+  var perm = enc & 1023
+  if count > 6 {
+    return false
+  }
+  // the permutation's digits (libunwind's permunreg), then each digit as
+  // the index among the registers not taken yet (1 rbx to 6 rbp)
+  let digits = s + TMP
+  for i in 0..count {
+    let r = radix(count, i)
+    let d = perm / r
+    perm -= d * r
+    rt.mem_store(digits, 8 * i, d, 8)
+  }
+  let sp = rt.mem_load(regs, 56, 8)
+  var at = sp + size - 8 - 8 * count
+  var used = 0
+  for i in 0..count {
+    var renum = 0
+    var u = 1
+    var reg = 0
+    while u < 7 && reg == 0 {
+      if (used & rt.int_wrap(3, 1, u)) == 0 {
+        if renum == rt.mem_load(digits, 8 * i, 8) {
+          reg = u
+          used = used | rt.int_wrap(3, 1, u)
+        }
+        renum += 1
+      }
+      u += 1
+    }
+    let r = x64_reg(reg)
+    if r <= 0 {
+      return false
+    }
+    rt.mem_store(regs, 8 * r, rt.mem_load(at, 0, 8), 8)
+    at += 8
+  }
+  rt.mem_store(regs, PC, rt.mem_load(sp + size - 8, 0, 8), 8)
+  rt.mem_store(regs, 56, sp + size, 8)
+  true
+}
+
+/// The place value of digit i of a frameless x86_64 encoding's
+/// permutation of count saved registers (libunwind's permunreg: a
+/// factorial number system; six registers' last digit is 0).
+fn radix(count: Int, i: Int) -> Int {
+  if count >= 5 {
+    return match i {
+      0 => 120
+      1 => 24
+      2 => 6
+      3 => 2
+      4 => 1
+      _ => 1000000
+    }
+  }
+  if count == 4 {
+    return match i {
+      0 => 60
+      1 => 12
+      2 => 3
+      _ => 1
+    }
+  }
+  if count == 3 {
+    return match i {
+      0 => 20
+      1 => 4
+      _ => 1
+    }
+  }
+  if count == 2 && i == 0 {
+    return 5
+  }
+  1
+}
+
+/// The DWARF number of compact unwind's x86_64 register r (0 none, 1
+/// rbx, 2 to 5 r12 to r15, 6 rbp), 0 for none, -1 for another value.
+fn x64_reg(r: Int) -> Int {
+  match r {
+    0 => 0
+    1 => 3
+    2 => 12
+    3 => 13
+    4 => 14
+    5 => 15
+    6 => 6
+    _ => -1
   }
 }
 
@@ -1358,8 +1519,9 @@ fn step(s: Int, regs: Int) -> Bool {
     }
     w += 1
   }
-  if !has_rule(st, SP / 8) || rt.mem_load(st, SP, 8) == R_SAME {
-    rt.mem_store(regs, SP, cfa, 8)
+  let sp = sp_off()
+  if !has_rule(st, sp / 8) || rt.mem_load(st, sp, 8) == R_SAME {
+    rt.mem_store(regs, sp, cfa, 8)
   }
   let rar = rt.mem_load(s, H_RAREG, 8)
   if rar < 0 || rar >= NREG {

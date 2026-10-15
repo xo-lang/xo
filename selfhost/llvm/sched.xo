@@ -33,17 +33,27 @@ fn (var g: Gen) sched_switch() {
 /// Defines xo_unwind_save and xo_unwind_resume (rt.unwind_save and
 /// rt.unwind_resume, decision 0221) at the first use: the lines of
 /// selfhost/arm64 sched.xo unwind_save_body and unwind_resume_body on
-/// arm64; on x86_64, which has no Xo unwinder yet, the save stores
-/// nothing and the resume traps.
+/// arm64. On x86_64 (stage 2) the save stores the callee saved rbx, rbp,
+/// r12 to r15 at their DWARF numbers' words (3, 6, 12 to 15), the
+/// caller's rsp (7) and the return address (16, the return address
+/// column); the resume loads them, the exception and selector into rax
+/// and rdx (words 0 and 1), and jumps to the pc word (96). Windows does
+/// not call them (unwind.xo win_raise resumes with RtlRestoreContext):
+/// on windows/amd64 the save stores nothing and the resume traps.
 fn (var g: Gen) unwind_fns() {
   if g.emitted.contains("@xo_unwind_save") {
     return
   }
   g.emitted["@xo_unwind_save"] = true
   g.emitted["@xo_unwind_resume"] = true
-  if g.arch() == "amd64" {
+  if g.os() == "windows" && g.arch() == "amd64" {
     g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["retq"]))
     g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["ud2"]))
+    return
+  }
+  if g.arch() == "amd64" {
+    g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["movq %rbx, 24(%rdi)", "movq %rbp, 48(%rdi)", "movq %r12, 96(%rdi)", "movq %r13, 104(%rdi)", "movq %r14, 112(%rdi)", "movq %r15, 120(%rdi)", "leaq 8(%rsp), %rax", "movq %rax, 56(%rdi)", "movq (%rsp), %rax", "movq %rax, 128(%rdi)", "retq"]))
+    g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["movq %rdi, %r11", "movq 24(%r11), %rbx", "movq 48(%r11), %rbp", "movq 96(%r11), %r12", "movq 104(%r11), %r13", "movq 112(%r11), %r14", "movq 120(%r11), %r15", "movq 0(%r11), %rax", "movq 8(%r11), %rdx", "movq 56(%r11), %rsp", "jmpq *768(%r11)"]))
     return
   }
   g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["stp x19, x20, [x0, #152]", "stp x21, x22, [x0, #168]", "stp x23, x24, [x0, #184]", "stp x25, x26, [x0, #200]", "stp x27, x28, [x0, #216]", "stp x29, x30, [x0, #232]", "mov x9, sp", "str x9, [x0, #248]", "str d8, [x0, #576]", "str d9, [x0, #584]", "str d10, [x0, #592]", "str d11, [x0, #600]", "str d12, [x0, #608]", "str d13, [x0, #616]", "str d14, [x0, #624]", "str d15, [x0, #632]", "ret"]))

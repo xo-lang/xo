@@ -204,8 +204,6 @@ fn runtime_decls() -> Str {
     "declare i64 @llvm.cttz.i64(i64, i1)",
     "declare i64 @llvm.ctlz.i64(i64, i1)",
     "",
-    "declare i32 @xo_personality(...)",
-    "",
     "; faults unwind (decision 0085): the fault functions and generated code",
     "; may unwind, and every generated function has unwind tables",
     "attributes #0 = { noreturn cold }",
@@ -1023,15 +1021,9 @@ fn (g: Gen) arch() -> Str {
 /// The personality routine the unwind tables name (decision 0221): the
 /// runtime's export xo_x_personality (std/native/llrt/cabi.xo, defined
 /// in the module; on Windows the language handler, which passes every
-/// system exception on, decision 0197), but the C xo_personality on
-/// x86_64 Linux and macOS, whose C library builds still unwind with
-/// libgcc or libunwind until decision 0221's stage 2.
-fn (g: Gen) personality() -> Str {
-  if g.os() != "windows" && g.arch() == "amd64" {
-    return "xo_personality"
-  }
-  "xo_x_personality"
-}
+/// system exception on, decision 0197), on every target since stage 2
+/// (x86_64 Linux and macOS unwind in Xo too, 2026-10-15).
+fn (g: Gen) personality() -> Str { "xo_x_personality" }
 
 /// The rt_sigreturn trampoline that rt_sigaction's sa_restorer names
 /// (decision 0206), written at its first use: a naked function of the

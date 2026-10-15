@@ -1116,9 +1116,9 @@ static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
 // Fault unwinding (core 8, decision 0085)
 //
 // A fault is raised as a forced unwind (decision 0221): on Linux and
-// macOS the Xo unwinder walks the frames (std/native/llrt/unwind.xo
-// raise), on Windows the system's unwinder (decision 0197); glibc
-// linux/amd64 keeps libgcc's forced unwind until decision 0221's stage 2.
+// macOS, on arm64 and x86_64 (stage 2, 2026-10-15), the Xo unwinder
+// walks the frames (std/native/llrt/unwind.xo raise), on Windows the
+// system's unwinder (decision 0197).
 // Every frame of generated code has unwind tables, and its landing pads (the
 // cleanup paths of internal/ssa's checks, landing.go) run the deferred
 // code of the blocks the fault leaves, close their scopes, unlock their
@@ -1127,19 +1127,11 @@ static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
 // the entry function of a task (it ends the task as faulted:
 // tasks.xo task_unwound), by `task.isolate` (xo_fault_take), or, past the
 // boundary of the context (the C function running the program's main),
-// reported and the process exits with status 70. The personality routine
-// (xo_personality) reads the call site table of the language specific
-// data area that both backends emit (the GCC format for cleanups).
+// reported and the process exits with status 70. unwind.xo reads the
+// call site table of the language specific data area that both backends
+// emit (the GCC format for cleanups).
 // Frames of C with cleanups between a fault and its catch are passed
 // over, their cleanups not run (the runtime's C has none).
-
-// XO_UNWIND_LIBGCC: x86_64 with a C library (glibc linux/amd64 and
-// darwin/amd64), which still raise a fault with the platform's
-// _Unwind_ForcedUnwind (libgcc, libunwind) and the C personality below,
-// until decision 0221's stage 2 gives the Xo unwinder x86_64.
-#if !defined(_WIN32) && !defined(XO_NOLIBC) && !defined(__aarch64__)
-#define XO_UNWIND_LIBGCC 1
-#endif
 
 #define XO_EXC_CLASS 0x584f00004641554cULL // "XO\0\0FAUL"
 
@@ -1158,7 +1150,6 @@ XO_NORETURN static void fault_exit(xo_ctx *c) {
 	__builtin_unreachable();
 }
 
-#if !defined(XO_UNWIND_LIBGCC)
 int64_t xo_x_unwind_fault(int64_t exc, int64_t boundary, int64_t pers, int64_t pers_old, int64_t wcx);
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #if defined(_WIN32)
@@ -1194,46 +1185,6 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 #endif
 	fault_exit(c);
 }
-#else
-static _Unwind_Reason_Code fault_stop(int version, _Unwind_Action actions, _Unwind_Exception_Class cls,
-	struct _Unwind_Exception *e, struct _Unwind_Context *uc, void *arg) {
-	(void)version;
-	(void)cls;
-	(void)e;
-	xo_ctx *c = arg;
-	if (actions & _UA_END_OF_STACK) {
-		fault_exit(c);
-	}
-	if (c->boundary && (uintptr_t)_Unwind_GetCFA(uc) > c->boundary) {
-		// the frames past the boundary are the runtime's: nothing there
-		// catches a fault
-		fault_exit(c);
-	}
-	return _URC_NO_REASON;
-}
-
-static void fault_cleanup(_Unwind_Reason_Code r, struct _Unwind_Exception *e) {
-	(void)r;
-	(void)e;
-}
-
-// fault_raise unwinds the current context with the fault it records. The
-// exception object is the context's: generated landing pads never resume
-// it (xo_fault_continue raises anew, reusing it), but a sanitizer's
-// cleanup in a C frame does, after the frame of this call is gone.
-XO_NORETURN static void fault_raise(xo_ctx *c) {
-	rt_fault_leave();
-	c->faulting = 1;
-	c->unwinding = 1;
-	struct _Unwind_Exception *exc = ctx_exc(c);
-	memset(exc, 0, sizeof *exc);
-	exc->exception_class = XO_EXC_CLASS;
-	exc->exception_cleanup = fault_cleanup;
-	_Unwind_ForcedUnwind(exc, fault_stop, c);
-	// the unwinder found no way up
-	fault_exit(c);
-}
-#endif
 
 // fault_set records a fault in c (fault.xo set).
 static void fault_set(xo_ctx *c, const char *msg, const char *loc) {
@@ -1285,20 +1236,16 @@ xo_rstr *xo_fault_msg(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_msg
 // xo_fault_loc is its location; the record is cleared after it.
 xo_rstr *xo_fault_loc(int64_t *len) { return (xo_rstr *)(intptr_t)xo_x_fault_loc(XO_ADDR(len)); }
 
-// xo_personality is the personality routine of generated code: every
-// landing pad is a cleanup, entered on the second phase. The language
-// specific data is GCC's: an LPStart and a TType encoding (omitted), the
-// call site encoding, and the call sites (start, length, landing pad,
-// action), offsets from the function's start. It is C on Windows and
-// x86_64 (glibc linux/amd64 and darwin/amd64, until decision 0221's
-// stage 2). Elsewhere the Xo unwinder reads the call site tables itself
-// and only compares a frame's personality with the address of the
-// export xo_x_personality, which the emitters name. With
-// no C library the link defines xo_personality as the export; otherwise
-// it is the forwarder below, for code from an xo whose emitters still
-// name xo_personality (the seed 0.11.0 builds the next xo with them):
-// delete it once the seed names the export.
-#if !defined(_WIN32) && !defined(XO_UNWIND_LIBGCC) && !defined(XO_NOLIBC)
+// xo_personality: the Xo unwinder reads the call site tables itself and
+// only compares a frame's personality with the address of the export
+// xo_x_personality, which the emitters name (on x86_64 Linux and macOS
+// too since decision 0221's stage 2, 2026-10-15). With no C library the
+// link defines xo_personality as the export; otherwise it is the
+// forwarder below, for code from an xo whose emitters still name
+// xo_personality (seed 0.12.0's on x86_64 Linux and macOS): delete it
+// once a seed names the export there. On Windows it is the language
+// handler below.
+#if !defined(_WIN32) && !defined(XO_NOLIBC)
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 
 int xo_personality(int version, int actions, uint64_t cls, void *e, void *uc) {
@@ -1320,97 +1267,6 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 }
 #endif
 
-#if defined(XO_UNWIND_LIBGCC)
-static uintptr_t lsda_read(const uint8_t **p, uint8_t enc) {
-	const uint8_t *q = *p;
-	uintptr_t v = 0;
-	switch (enc & 0x0f) {
-	case 0x01: { // uleb128
-		int shift = 0;
-		uint8_t byte;
-		do {
-			byte = *q++;
-			v |= (uintptr_t)(byte & 0x7f) << shift;
-			shift += 7;
-		} while (byte & 0x80);
-		break;
-	}
-	case 0x02: {
-		uint16_t x;
-		memcpy(&x, q, 2);
-		q += 2;
-		v = x;
-		break;
-	}
-	case 0x03:
-	case 0x0b: {
-		uint32_t x;
-		memcpy(&x, q, 4);
-		q += 4;
-		v = (enc & 0x0f) == 0x0b ? (uintptr_t)(intptr_t)(int32_t)x : x;
-		break;
-	}
-	default: { // absptr, udata8, sdata8
-		uint64_t x;
-		memcpy(&x, q, 8);
-		q += 8;
-		v = (uintptr_t)x;
-		break;
-	}
-	}
-	*p = q;
-	return v;
-}
-
-static uintptr_t uleb(const uint8_t **p) { return lsda_read(p, 0x01); }
-
-_Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t cls,
-	struct _Unwind_Exception *e, struct _Unwind_Context *uc) {
-	(void)cls;
-	if (version != 1) {
-		return _URC_FATAL_PHASE1_ERROR;
-	}
-	if (!(actions & _UA_CLEANUP_PHASE)) {
-		return _URC_CONTINUE_UNWIND;
-	}
-	const uint8_t *p = (const uint8_t *)_Unwind_GetLanguageSpecificData(uc);
-	if (!p) {
-		return _URC_CONTINUE_UNWIND;
-	}
-	uintptr_t func = _Unwind_GetRegionStart(uc);
-	uintptr_t ip = _Unwind_GetIP(uc) - 1;
-	uint8_t lpenc = *p++;
-	if (lpenc != 0xff) {
-		lsda_read(&p, lpenc);
-	}
-	uint8_t ttenc = *p++;
-	if (ttenc != 0xff) {
-		uleb(&p);
-	}
-	uint8_t csenc = *p++;
-	uintptr_t cslen = uleb(&p);
-	const uint8_t *end = p + cslen;
-	while (p < end) {
-		uintptr_t start = lsda_read(&p, csenc);
-		uintptr_t len = lsda_read(&p, csenc);
-		uintptr_t lp = lsda_read(&p, csenc);
-		uleb(&p); // action
-		if (ip < func + start) {
-			break;
-		}
-		if (ip < func + start + len) {
-			if (lp == 0) {
-				return _URC_CONTINUE_UNWIND;
-			}
-			_Unwind_SetGR(uc, __builtin_eh_return_data_regno(0), (uintptr_t)e);
-			_Unwind_SetGR(uc, __builtin_eh_return_data_regno(1), 0);
-			_Unwind_SetIP(uc, func + lp);
-			return _URC_INSTALL_CONTEXT;
-		}
-	}
-	return _URC_CONTINUE_UNWIND;
-}
-#endif // XO_UNWIND_LIBGCC
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 

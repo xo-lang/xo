@@ -30,8 +30,19 @@ fn clang_target_attrs(os: Os, clang: Str, cross: List[Str]) -> Str {
 /// it: on Windows (decision 0197, stage 3) the MSVC build tools carry both
 /// the x64 and the ARM64 libraries, so windows/amd64 builds windows/arm64
 /// and the reverse; on any other host, both Windows targets when winsysroot
-/// (XO_WINSYSROOT) names a Windows sysroot. "" otherwise.
+/// (XO_WINSYSROOT) names a Windows sysroot; on darwin/arm64, darwin/amd64
+/// (the macOS SDK carries both architectures), and from macOS linux/amd64
+/// when sysroot (XO_LINUXSYSROOT) names a glibc sysroot (2026-10-15, to
+/// build the x86_64 unwinder of decision 0221 stage 2 on the Mac). ""
+/// otherwise. sysroot: XO_WINSYSROOT for a Windows target, else
+/// XO_LINUXSYSROOT.
 fn llvm_cross_triple(host: Str, t: Str, winsysroot: Str) -> Str {
+  if host == "darwin/arm64" && t == "darwin/amd64" {
+    return "x86_64-apple-macosx"
+  }
+  if host.starts_with("darwin/") && t == "linux/amd64" && !winsysroot.is_empty() {
+    return "x86_64-linux-gnu"
+  }
   if !t.starts_with("windows/") || host == t {
     return ""
   }
@@ -51,7 +62,12 @@ fn llvm_cross_triple(host: Str, t: Str, winsysroot: Str) -> Str {
 /// `xwin splat --use-winsysroot-style`), where clang finds the headers
 /// and lld-link the libraries (decision 0197, cross builds).
 fn llvm_cross_flags(host: Str, triple: Str, winsysroot: Str) -> List[Str] {
-  if host.starts_with("windows/") {
+  if triple.contains("linux") {
+    // a glibc sysroot (Debian's libc6-dev, linux-libc-dev, libgcc-10-dev
+    // unpacked), linked with lld (clang $XO_CLANG must carry it)
+    return ["--target=${triple}", "--sysroot=${winsysroot}", "-fuse-ld=lld"]
+  }
+  if host.starts_with("windows/") || !triple.contains("windows") {
     return ["--target=${triple}"]
   }
   ["--target=${triple}", "-Xmicrosoft-windows-sys-root", winsysroot]
