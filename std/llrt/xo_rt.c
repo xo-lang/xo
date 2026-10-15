@@ -1017,14 +1017,6 @@ static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 // (twrun.xo kick) checks again after it.
 
 
-// park_wait_n blocks the current context until its park is signaled or,
-// when cancelable, its node is canceled (tasks.xo park_wait_n): a task on
-// a fiber parks, a root thread runs queued work while it waits. counted
-// tells that the wait counts as blocked for deadlock detection; a wait
-// that a timer, the network, or a signal can end does not.
-void xo_x_park_wait_n(int64_t c, int64_t cancelable, int64_t counted);
-static void park_wait_n(xo_ctx *c, int cancelable, int counted) { xo_x_park_wait_n(XO_ADDR(c), cancelable, counted); }
-
 // A wait list: the parks of the contexts waiting on an object, signaled
 // all at once when its state changes (tasks.xo wl_*). The entry
 // (xo_went, above) is the waiting context's own (xo_ctx.went).
@@ -1328,10 +1320,9 @@ typedef struct xo_atomic xo_atomic;
 // The event loop is std/native/llrt/poll.xo's (B22): its record, the
 // timers, the descriptors, the poller thread on every OS (kqueue on
 // Darwin, epoll on Linux, AFD polls through a completion port or the
-// WSAPoll fallback on Windows). What stays here: the signal handlers
-// (on_signal, on_console: async signal safe, they count the signal in
-// the record and wake the poller), and the services the poller calls
-// back (pd_svc). The records' layouts are poll.xo's own (EV_*, D_*, T_*;
+// WSAPoll fallback on Windows). What stays here: Windows' console
+// handler (on_console: it counts the signal in the record and wakes the
+// poller; SIGINT and SIGTERM's handler is poll.xo on_signal). The records' layouts are poll.xo's own (EV_*, D_*, T_*;
 // asserted in C until 2026-10-15).
 
 #if defined(_WIN32)
@@ -1385,24 +1376,14 @@ _Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOv
 
 // The poller thread
 
-// pd_svc is poll.xo's services record (its S_ words): the wait it calls
-// through rt.call_c2 (park_wait_n), the event loop's lock word and dead list and
-// record, the offset of a context's park, and where the poller thread
-// starts (Windows' start, registration, and loops are poll.xo's too
-// since 2026-10-15).
-static int64_t pdsvc_wait(int64_t c, int64_t b) {
-	(void)b;
-	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
-	return 0;
-}
-int64_t xo_x_poll_thread(int64_t a);
-static int64_t pd_svc[17];
-int64_t xo_x_poll_svc(int64_t rec);
+// pd_svc_init has poll.xo make the event loop's record (poll_svc), whose
+// address the console handler keeps; poll.xo's services record went in
+// decision 0233 step 2 (its wait, a context's park offset, the poller
+// thread's start, cancellation, park signals and the shutdown's steps
+// are Xo).
+int64_t xo_x_poll_svc(void);
 static void pd_svc_init(void) {
-	pd_svc[4] = XO_ADDR(&pdsvc_wait);
-	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
-	pd_svc[14] = XO_ADDR(&xo_x_poll_thread);
-	ev = (int64_t *)(intptr_t)xo_x_poll_svc(XO_ADDR(pd_svc));
+	ev = (int64_t *)(intptr_t)xo_x_poll_svc();
 }
 
 // The poller thread's loop is std/native/llrt/poll.xo's (poll_thread,

@@ -365,7 +365,7 @@ fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
 
 /// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
 /// pd_begin and the rest on Linux and macOS), and the C's services record.
-fn poll_svc(rec: Int) -> Int { poll.poll_svc(rec) }
+fn poll_svc() -> Int { poll.poll_svc() }
 
 fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
 
@@ -400,6 +400,10 @@ fn poll_pd_open(fd: Int, write: Int) -> Int { poll.pd_open(fd, write != 0) }
 fn poll_timer_add(t: Int) { poll.timer_add(t) }
 
 fn poll_timer_del(t: Int) { poll.timer_del(t) }
+
+/// A wait of poll.xo's (through rt.fn_addr): park context c until its
+/// park is signaled or it is canceled, not counted as blocked.
+fn poll_park_wait(c: Int) { tasks.park_wait_n(c, true, false) }
 
 /// clock.sleep's wait in context c (xo_rt.c clock_wait): 1 when
 /// cancellation ended or prevented it.
@@ -526,9 +530,6 @@ fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 fn park_reset(p: Int) { pool.park_reset(p) }
 
 
-/// Context c waits on its park (tasks.xo park_wait_n; xo_rt.c's
-/// park_wait_n forwards here).
-fn park_wait_n(c: Int, cancelable: Int, counted: Int) { tasks.park_wait_n(c, cancelable != 0, counted != 0) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233 step 2, poll.xo's services): the park
+  wait (cabi.xo poll_park_wait through rt.fn_addr), a context's park
+  offset (ctx.xo C_PARK) and the poller thread's start
+  (rt.fn_addr("poll_thread")) are Xo; xo_rt.c's pdsvc_wait, park_wait_n
+  and pd_svc go (poll.xo's services record is gone: static word 44 is
+  unused), with cabi.xo's park_wait_n export.
 - Native runtime (zero-C inventory rank 11): the event loop's record is
   made and owned by poll.xo (static word 45); xo_rt.c's ev, xo_pd and
   xo_timer structs, the AFD types and their layout asserts are gone

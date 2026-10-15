@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [duplicate-cabi-export-name.md](duplicate-cabi-export-name.md): Observed 2026-10-15: two cabi*.xo modules with the same function name collide as xo_x_<name> only at assembly; grep the cabi modules before adding an export.
 - [c-macro-tested-before-defined.md](c-macro-tested-before-defined.md): Observed 2026-10-15: xo_rt.c tested XO_TSAN and XO_ASAN 1,600 lines before defining them, so sanitizer builds never mapped the heap through the C library; heapos.xo now decides at run time.
 - [arm64-inline-verify-fallback.md](arm64-inline-verify-fallback.md): Observed 2026-10-15: an inlined module that fails verification is dropped for the uninlined one, silently; check verification when changing the inliner.
 - [arm64-template-cmp-cset-folded.md](arm64-template-cmp-cset-folded.md): Observed 2026-10-15: a def1 template ending in cmp and cset loses the cset to a branch fold; give the compare its own template.

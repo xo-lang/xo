@@ -210,23 +210,13 @@ pub fn pd_ready(pd: Int, mode: Int) {
 // Waiting on a descriptor (was xo_rt.c pd_new, pd_begin, pd_end,
 // pd_close, pd_free, pd_wait_until). A descriptor's record (D_ above, fd
 // at 8, closed at 12, ops at 16, all under its lock word). The C's
-// services record (set at start, poll_svc) holds the addresses of C
-// functions called through rt.call_c2.
+// services record of earlier steps is gone (decision 0233 step 2,
+// 2026-10-15): the wait is cabi.xo poll_park_wait through rt.fn_addr, a
+// context's park ctx.xo C_PARK, the poller thread's start
+// rt.fn_addr("poll_thread"); cancellation, park signals and the
+// shutdown's steps are Xo calls; the event loop's record is this
+// module's (W_EV).
 
-/// rt.static_word: the C's services record.
-const W_SVC = 44
-
-/// The services record's words: wait (c: park_wait_n(c, 1, 0)) and the
-/// offset of a context's park (words 0 to 16, 40, 48, 64, 72, 88 to 104
-/// and 128 unused: the C's Windows open, close, shutdown, AFD handle,
-/// poke and start, and the C's ev record's lock, dead list and address
-/// until 2026-10-15; 24, 56 and 120 too: canceled, park_signal and
-/// stop_signal, which this module calls in Xo since 2026-10-15:
-/// budget.xo canceled, pool.xo park_signal, stop.xo signal).
-const S_WAIT = 32
-const S_PARK = 80
-/// The export where the poller thread starts (xo_x_poll_thread).
-const S_THREAD = 112
 
 /// rt.static_word: the event loop's record (EV_ below), made by poll_svc
 /// (was xo_rt.c's static ev).
@@ -284,12 +274,11 @@ pub const CANCELED = 1
 pub const CLOSED = 2
 pub const TIMEOUT = 3
 
-/// Sets the C's services record (at start, before any descriptor), and
-/// makes the event loop's record, zeroed (never freed): its address,
-/// which the C's signal handlers keep (they count a signal and wake the
-/// poller).
-pub fn poll_svc(rec: Int) -> Int {
-  rt.mem_store(rt.static_word(W_SVC), 0, rec, 8)
+/// Makes the event loop's record at start (before any descriptor),
+/// zeroed and never freed: its address, which the C's Windows console
+/// handler keeps (it counts a signal and wakes the poller). Static word
+/// 44, the C's services record until decision 0233 step 2, is unused.
+pub fn poll_svc() -> Int {
   let e = rt.heap_large(EV_SIZE)
   rt.mem_set(e, 0, EV_SIZE)
   rt.mem_store(rt.static_word(W_EV), 0, e, 8)
@@ -300,12 +289,6 @@ pub fn poll_svc(rec: Int) -> Int {
 /// elsewhere).
 fn afd() -> Int { if windows() { rt.mem_load(ev(), EV_AFD, 8) } else { 0 } }
 
-fn svc(k: Int, a: Int) -> Int {
-  let rec = rt.mem_load(rt.static_word(W_SVC), 0, 8)
-  rt.call_c2(rt.mem_load(rec, k, 8), a, 0)
-}
-
-fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
 
 /// Registers descriptor fd with the poller (for reading, and writing when
 /// write): its record, or minus the errno when the poller refuses it (a
@@ -538,7 +521,7 @@ pub fn pd_wait(pd: Int, write: Bool, deadline: Int) -> Int { pd_wait_ctx(pd, wri
 pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   let slot = if write { D_WWAIT } else { D_RWAIT }
   let ready = if write { D_WREADY } else { D_RREADY }
-  let park = addw(c, svc_word(S_PARK))
+  let park = addw(c, ctx.C_PARK)
   var t = 0
   var res = READY
   while true {
@@ -578,7 +561,7 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
       timer_add(t)
     }
     if !(t != 0 && fired(t)) {
-      let _r = svc(S_WAIT, c)
+      wait(c)
     }
     lk(addw(pd, D_MU))
     let mine = rt.mem_load(pd, slot, 8) == park
@@ -711,7 +694,7 @@ pub fn clock_wait(c: Int, d: Int) -> Bool {
   pool.park_reset(park)
   let t = timer_park(deadline(d), park)
   while !fired(t) && !budget.canceled(c) {
-    let _w = svc(S_WAIT, c)
+    wait(c)
   }
   let f = fired(t)
   timer_end(t)
@@ -779,6 +762,13 @@ pub fn poke() {
 
 /// The event loop's record (poll_svc made it).
 fn ev() -> Int { rt.mem_load(rt.static_word(W_EV), 0, 8) }
+
+/// Parks context c until its park is signaled or it is canceled, not
+/// counted as blocked (tasks.xo park_wait_n through cabi.xo poll_park_wait:
+/// tasks.xo sits above this module in the imports).
+fn wait(c: Int) {
+  let _r = rt.call_c2(rt.fn_addr("poll_park_wait"), c, 0)
+}
 
 /// The SIGINT and SIGTERM handler (cabi.xo on_signal, which entry.xo
 /// installs; was xo_rt.c's): counts the signal and wakes the poller
@@ -880,7 +870,7 @@ fn ev_init() {
       heapos.oom()
     }
   }
-  if !pool.thread_start(svc_word(S_THREAD), 0) {
+  if !pool.thread_start(rt.fn_addr("poll_thread"), 0) {
     heapos.oom()
   }
 }
@@ -919,7 +909,7 @@ pub fn timer_end(t: Int) {
 }
 
 /// The park of context c.
-pub fn park_of(c: Int) -> Int { addw(c, svc_word(S_PARK)) }
+pub fn park_of(c: Int) -> Int { addw(c, ctx.C_PARK) }
 
 /// Waits in the current task until the monotonic time deadline (ns,
 /// rt.clock_now's clock) passes or the task is canceled: TIMEOUT or
@@ -939,7 +929,7 @@ pub fn sleep_until(deadline: Int) -> Int {
     if fired(t) {
       break
     }
-    let _w = svc(S_WAIT, c)
+    wait(c)
   }
   timer_end(t)
   res
@@ -951,7 +941,7 @@ pub fn park_signal(p: Int) { signal(p) }
 /// Waits in context c until its park is signaled (park_wait_n(c, 1, 0));
 /// the caller reset the park and handed it out first.
 pub fn park_wait(c: Int) {
-  let _w = svc(S_WAIT, c)
+  wait(c)
 }
 
 /// One wait of the HTTP/2 server connection's fiber (context c, its park
@@ -988,7 +978,7 @@ pub fn pd_wait_or_signal(pd: Int, c: Int, deadline: Int) -> Bool {
       }
     }
     if !due {
-      let _w = svc(S_WAIT, c)
+      wait(c)
     }
     if t != 0 {
       due = fired(t)
@@ -1363,7 +1353,7 @@ fn ev_init_win() {
     rt.mem_store(e, EV_WR, r, 8)
     rt.mem_store(e, EV_WW, w, 8)
   }
-  if !pool.thread_start(svc_word(S_THREAD), 0) {
+  if !pool.thread_start(rt.fn_addr("poll_thread"), 0) {
     heapos.oom()
   }
 }
