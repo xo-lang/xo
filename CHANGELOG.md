@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: xo_bytes.c is deleted. Its xo_fault_bytes_index had
+  no caller: the arm64 emitter's Bytes index check goes through
+  isel.xo fault_entry to cabi.xo's fault_raise_bytes_index export, and
+  LLVM calls that export directly, in this compiler and in seed 0.12.0
+  alike.
 - Windows event loop (zero-C B22's Windows pass, B32 part 4): the
   poller's start (completion port and AFD device, or the WSAPoll
   fallback's socket pair), a socket's registration, close and shutdown,

@@ -2,9 +2,6 @@
 // included at the end of xo_rt.c. Its intrinsics are Xo now
 // (std/native/llrt); what is left is the files below.
 
-// the fault of an index out of range on Bytes (decisions 0079, 0081)
-#include "xo_bytes.c"
-
 // HTTP/1.1 (std.md 4)
 #include "xo_http.c"
 
