@@ -20,6 +20,7 @@ use native/llrt/linux
 use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/sysio
+use native/llrt/twflags
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -128,7 +129,6 @@ const RT_MAP_FAILED = 6
 const RT_WORKER_START = 7
 const RT_OOM = 9
 const RT_RUN_CLAIMED = 16
-const RT_TW = 30
 const RT_DEADLOCK = 31
 
 /// The statistics' counters (xo_rt.c st, in its order).
@@ -692,7 +692,9 @@ fn go_idle(p: Int, w: Int) -> Int {
   rt.slot_add(p, P_NIDLE, 1, SEQ_CST)
   dl_check(p)
   unlock(p)
-  let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+  if twflags.vclock() != 0 {
+    let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+  }
   // a push before the count went up was not seen by its wakep: look
   if any_work(p) != 0 {
     if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
@@ -996,12 +998,10 @@ const DLK_ROOTS = 0
 const DLK_BLOCKED = 1
 const DLK_UNCOUNTED = 2
 
-/// The test world's record (xo_rt.c tw, byte offsets): the verdict for
-/// the next move of the virtual clock, the moves' epoch, whether the
-/// clock is virtual (an int).
-const TW_VPENDING = 16
-const TW_VEPOCH = 24
-const TW_VIRT = 40
+/// The test world's record (twflags.xo, byte offsets): the verdict for
+/// the next move of the virtual clock, the moves' epoch.
+const TW_VPENDING = twflags.TW_VPENDING
+const TW_VEPOCH = twflags.TW_VEPOCH
 
 /// Faults when the program is deadlocked, the lock of pool p held
 /// (xo_rt.c dlk, decision 0077): every root context sleeps in a counted
@@ -1010,10 +1010,10 @@ const TW_VIRT = 40
 /// virtual clock it records the verdict instead, and the clock jumps to
 /// the next timer (xo_testing.c tw_kick, after the lock is released).
 pub fn dl_check(p: Int) {
-  let tw = rt.sched_rt(RT_TW, 0, 0)
+  let tw = twflags.vclock()
   // read before the counts: a move of the clock in progress or ended
   // since then makes this check's verdict stale (tw_kick_once)
-  let epoch = rt.slot_load[Int](tw + TW_VEPOCH, 0, SEQ_CST)
+  let epoch = if tw == 0 { 0 } else { rt.slot_load[Int](tw + TW_VEPOCH, 0, SEQ_CST) }
   let dlk = rt.mem_load(p, P_DLK, 8)
   let roots = rt.slot_load(dlk, DLK_ROOTS, SEQ_CST)
   if roots <= 0 || rt.slot_load(dlk, DLK_BLOCKED, SEQ_CST) != roots {
@@ -1025,7 +1025,7 @@ pub fn dl_check(p: Int) {
   if rt.slot_load(dlk, DLK_UNCOUNTED, SEQ_CST) != 0 || any_work(p) != 0 {
     return
   }
-  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+  if tw != 0 {
     rt.slot_store[Int](tw + TW_VPENDING, 0, epoch + 1, SEQ_CST)
     return
   }
@@ -1253,7 +1253,9 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
       rt.slot_add(dlk, DLK_BLOCKED, 1, SEQ_CST)
       dl_check(pl)
       unlock(pl)
-      let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+      if twflags.vclock() != 0 {
+        let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+      }
     }
     stat(ST_THREAD_WAIT)
     futex_wait(rt.int_wrap(0, p, PK_SIGNALED_AT), 0)

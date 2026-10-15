@@ -19,6 +19,7 @@ use native/llrt/sanhook
 use native/llrt/sock
 use native/llrt/stop
 use native/llrt/sysio
+use native/llrt/twflags
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -410,17 +411,14 @@ pub fn pd_new(fd: Int, write: Bool) -> Int {
   if pd < 0 { 0 } else { pd }
 }
 
-/// rt.sched_rt: the test world's record (xo_rt.c tw), its virtual clock
-/// (an atomic word) and whether the clock is virtual (a C int).
-const RT_TW = 30
-const TW_VNOW = 8
-const TW_VIRT = 40
+/// The test world's virtual clock (twflags.xo, an atomic word).
+const TW_VNOW = twflags.TW_VNOW
 
 /// The timers' clock now (xo_rt.c tnow): the test world's virtual one
 /// while it runs, else the monotonic one.
 pub fn now() -> Int {
-  let tw = rt.sched_rt(RT_TW, 0, 0)
-  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+  let tw = twflags.vclock()
+  if tw != 0 {
     // TW_VNOW is a byte offset; a slot's index counts words
     return rt.slot_load(tw + TW_VNOW, 0, ACQUIRE)
   }
@@ -431,8 +429,8 @@ pub fn now() -> Int {
 /// wall clock (xo_rt.c xo_clock_now, which generated code calls as
 /// rt.clock_now through cabi.xo's clock_now).
 pub fn wall_now() -> Int {
-  let tw = rt.sched_rt(RT_TW, 0, 0)
-  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+  let tw = twflags.vclock()
+  if tw != 0 {
     return rt.slot_load(tw + TW_VNOW, 0, ACQUIRE)
   }
   sysio.real_ns()
@@ -750,7 +748,7 @@ pub fn timer_del(t: Int) {
 
 /// Whether the timers' clock is the test world's virtual one (xo_rt.c
 /// tw.virt).
-fn virt() -> Bool { rt.mem_load(rt.sched_rt(RT_TW, 0, 0), TW_VIRT, 4) != 0 }
+fn virt() -> Bool { twflags.vclock() != 0 }
 
 /// Wakes the poller (a new first timer; xo_rt.c ev_poke): a byte in the
 /// self pipe (a full pipe wakes it anyway); on Windows a completion

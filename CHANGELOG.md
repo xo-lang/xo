@@ -33,6 +33,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   isel.xo fault_entry to cabi.xo's fault_raise_bytes_index export, and
   LLVM calls that export directly, in this compiler and in seed 0.12.0
   alike.
+- The test world's record (on, the virtual clock, in_main, the effects made real) moved from the C runtime into twflags.xo (zero-C inventory rank 4): rt.sched_rt op 30 and the record's C readers are gone.
 - Windows event loop (zero-C B22's Windows pass, B32 part 4): the
   poller's start (completion port and AFD device, or the WSAPoll
   fallback's socket pair), a socket's registration, close and shutdown,

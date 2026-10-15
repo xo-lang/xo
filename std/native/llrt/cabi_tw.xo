@@ -2,23 +2,33 @@
 // audit's B14): like cabi.xo, every top level function here is called
 // by the C runtime as xo_x_<name>. The SSA builders build them in test
 // binaries only (selfhost/ssa build.xo declare_exports); the C calls
-// them only in the test world (tw.on), and has weak definitions for the
+// them where the test world may run, and has weak definitions for the
 // programs without them (std/llrt/xo_rt.c, the test world). The state is
-// testworld.xo's and twrun.xo's.
+// testworld.xo's, twrun.xo's and twflags.xo's.
+use native/llrt/twflags
 use native/llrt/twrun
 
 /// Starts the test world (entry.xo's E_TW_INIT word).
 fn tw_start() { twrun.start() }
 
 /// Releases the values the test world keeps, at the end of the test (C
-/// main, after main's thread).
-fn tw_end() { twrun.end() }
+/// main, after main's thread); nothing outside the test world.
+fn tw_end() {
+  if twflags.on() {
+    twrun.end()
+  }
+}
 
 /// Moves the virtual clock after a deadlock check (xo_rt.c
-/// xo_sched_rt's op 2, while the clock is virtual).
+/// xo_sched_rt's op 2; pool.xo calls it while the clock is virtual).
 fn tw_kick() { twrun.kick() }
 
 // Part 2 (std/native/llrt/twrun.xo, the zero-C audit's B15)
 
-/// A sleep for FakeClock.sleeps (xo_rt.c clock_wait).
-fn tw_sleep(d: Int) { twrun.sleep_record(d) }
+/// A sleep for FakeClock.sleeps (xo_rt.c clock_wait); nothing outside
+/// the test world.
+fn tw_sleep(d: Int) {
+  if twflags.on() {
+    twrun.sleep_record(d)
+  }
+}

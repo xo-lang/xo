@@ -4,10 +4,25 @@
 // test them without the import cycle; testworld.xo sets them at start.
 use native/rt
 
-/// rt.static_word: whether the test world runs, the effects made real
-/// (testworld.xo REAL_* bits).
+/// rt.static_word: 0, or the test world's record once it runs (below);
+/// the effects made real (testworld.xo REAL_* bits).
 const W_ON = 32
 const W_REAL = 33
+
+/// The test world's record (byte offsets; was xo_rt.c tw, the zero-C
+/// inventory's rank 4), from rt.heap_large at start and kept to the
+/// end: on (an int), the virtual now (ns, an atomic word), the verdict
+/// for the next move of the clock and the moves' epoch (atomic words;
+/// pool.xo dl_check, twrun.xo kick), whether testing.run_main runs main,
+/// the effects made real, whether the clock is virtual (ints).
+pub const TW_ON = 0
+pub const TW_VNOW = 8
+pub const TW_VPENDING = 16
+pub const TW_VEPOCH = 24
+pub const TW_IN_MAIN = 32
+pub const TW_REAL = 36
+pub const TW_VIRT = 40
+const TW_SIZE = 48
 
 /// The bit of testworld.xo REAL_CLOCK.
 const REAL_CLOCK = 8
@@ -17,6 +32,26 @@ const RELEASE = 2
 
 /// Whether the program runs in the test world.
 pub fn on() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+
+/// The test world's record (TW_*), 0 outside the test world.
+pub fn rec() -> Int { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) }
+
+/// The test world's record while its clock is virtual, else 0.
+pub fn vclock() -> Int {
+  let w = rec()
+  if w != 0 && rt.mem_load(w, TW_VIRT, 4) != 0 { w } else { 0 }
+}
+
+/// Whether testing.run_main runs main.
+pub fn in_main() -> Bool {
+  let w = rec()
+  if w == 0 {
+    return false
+  }
+  let v = rt.mem_load(w, TW_IN_MAIN, 4)
+  rt.fence(ACQUIRE)
+  v != 0
+}
 
 /// Whether the effect real (REAL_*) is a fake here: the test world
 /// without `xo test --real` for it.
@@ -33,5 +68,10 @@ pub fn real() -> Int { rt.mem_load(rt.static_word(W_REAL), 0, 8) }
 /// at start).
 pub fn set(bits: Int) {
   rt.mem_store(rt.static_word(W_REAL), 0, bits, 8)
-  rt.slot_store(rt.static_word(W_ON), 0, 1, RELEASE)
+  let w = rt.heap_large(TW_SIZE)
+  for k in 0..TW_SIZE / 8 {
+    rt.mem_store(w, 8 * k, 0, 8)
+  }
+  rt.mem_store(w, TW_ON, 1, 4)
+  rt.slot_store(rt.static_word(W_ON), 0, w, RELEASE)
 }

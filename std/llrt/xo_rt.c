@@ -517,49 +517,13 @@ static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (in
 
 // ---------------------------------------------------------------------------
 // The test world (decision 0083): a test binary run with XO_TEST set runs
-// one test against fakes. tw.on switches the clock, timers, network
-// listeners, and file system of this file to the test world; the test
-// world itself is Xo (std/native/llrt/testworld.xo and twrun.xo, which
-// sets this record at start and moves the virtual clock), reached through
-// cabi_tw.xo's exports (xo_x_tw_*).
-
-static struct {
-	int on;
-	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
-	// every context is blocked: advance the clock (atomic): 0, or 1 +
-	// the vepoch the deadlock check that found every context blocked
-	// read first; twrun.xo kick moves the clock only while vepoch is still
-	// that one (gotchas/virtual-clock-double-kick.md)
-	int64_t vpending;
-	int64_t vepoch; // moves of the clock begun and ended, 2 per move (atomic, ev.mu)
-	int in_main;     // testing.run_main is running main
-	// real capabilities of `xo test --real` (decision 0120): the effects
-	// the test declares (TW_REAL_*, from XO_TEST_REAL); virt: the clock
-	// is virtual (the test world without `clock` or `net`)
-	int real;
-	int virt;
-} tw;
-
-#define TW_REAL_FS_READ 1
-#define TW_REAL_FS_WRITE 2
-#define TW_REAL_NET 4
-#define TW_REAL_CLOCK 8
-#define TW_REAL_ENV 16
-#define TW_REAL_STDIO 32
-#define TW_REAL_PROC 64
-
-// tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
-static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
-
-// twrun.xo reads and writes tw through its address (rt.sched_rt 30) at
-// these offsets (its TW_*), and a listener's in memory record (an ML
-// record) through mem.
-_Static_assert(offsetof(__typeof__(tw), on) == 0 && offsetof(__typeof__(tw), vnow) == 8 && offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), in_main) == 32 && offsetof(__typeof__(tw), real) == 36 && offsetof(__typeof__(tw), virt) == 40,
-               "twrun.xo TW_*");
+// one test against fakes. The test world is Xo (std/native/llrt/
+// testworld.xo, twrun.xo, and twflags.xo, which keeps its record: on, the
+// virtual clock, in_main, the effects made real), reached through
+// cabi_tw.xo's exports (xo_x_tw_*), which do nothing outside it.
 
 // The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
-// the weak definitions keep other programs linking (they never reach
-// them: the C calls them only in the test world).
+// the weak definitions keep other programs linking.
 #define TW_WEAK __attribute__((weak))
 TW_WEAK void xo_x_tw_start(void) {}
 TW_WEAK void xo_x_tw_end(void) {}
@@ -1482,14 +1446,11 @@ _Unwind_Reason_Code xo_personality(int version, _Unwind_Action actions, uint64_t
 
 int64_t xo_is_canceled(void) { return node_canceled(ctx()->node); }
 
-// mono_ns is the monotonic clock in nanoseconds, read in Xo
-// (std/native/llrt/sysio.xo mono_ns through cabi.xo; work item B01).
-int64_t xo_x_mono_ns(void);
-static inline int64_t mono_ns(void) { return xo_x_mono_ns(); }
 
 // tnow is the time of timers: monotonic ns, or the virtual clock in the
-// test world.
-static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE) : mono_ns(); }
+// test world (poll.xo now).
+int64_t xo_x_poll_now(void);
+static int64_t tnow(void) { return xo_x_poll_now(); }
 
 // ---------------------------------------------------------------------------
 // Resource budgets (std.md 7, decisions 0173 and 0175): std/rt budget.go.
@@ -1957,10 +1918,8 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 			__atomic_fetch_add(&((int64_t *)&st)[a], 1, __ATOMIC_RELAXED);
 		}
 		return 0;
-	case 2: // the virtual clock's move (twrun.xo kick)
-		if (tw.virt) {
-			xo_x_tw_kick();
-		}
+	case 2: // the virtual clock's move (twrun.xo kick; pool.xo asks while it is virtual)
+		xo_x_tw_kick();
 		return 0;
 	case 4: // fiber a got a new stack (its ThreadSanitizer fiber: sanhook.xo)
 		fiber_counted(1);
@@ -1979,8 +1938,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
 		return 0;
-	case 30: // the test world's record (pool.xo TW_*)
-		return XO_ADDR(&tw);
 	case 31: // the program is deadlocked (pool.xo dl_check)
 		xo_x_deadlock();
 	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
@@ -2011,7 +1968,6 @@ _Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 &
                "pool.xo N_*");
 _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
-_Static_assert(offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), virt) == 40, "pool.xo TW_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
                    offsetof(xo_worker, fcache) == 2264 && offsetof(xo_worker, nfcache) == 2328 && offsetof(xo_worker, pool) == 2360 &&
@@ -2453,16 +2409,9 @@ static int64_t poll_stop_cb(int64_t a, int64_t b) {
 // ns (the Go backend's representation)
 
 // xo_clock_now is the test world's virtual clock while it runs, else the
-// wall clock read in Xo (sysio.xo real_ns through cabi.xo; work item
-// B01). Clock.now itself is sysio.xo's clock_now, which calls this only
-// for the virtual clock.
-int64_t xo_x_real_ns(void);
-int64_t xo_clock_now(void) {
-	if (tw.virt) {
-		return __atomic_load_n(&tw.vnow, __ATOMIC_ACQUIRE);
-	}
-	return xo_x_real_ns();
-}
+// wall clock (poll.xo wall_now), for code of earlier compilers.
+int64_t xo_x_clock_now(void);
+int64_t xo_clock_now(void) { return xo_x_clock_now(); }
 
 // clock_wait sleeps d unless the task is or becomes canceled; it returns
 // 1 when cancellation ended (or prevented) the sleep, without starting
@@ -2470,7 +2419,7 @@ int64_t xo_clock_now(void) {
 // (FakeClock.sleeps() lists every sleep asked for).
 int64_t xo_x_poll_clock_wait(int64_t c, int64_t d);
 static int clock_wait(xo_ctx *c, int64_t d) {
-	if (tw.on && !ctx_canceled(c)) {
+	if (!ctx_canceled(c)) {
 		xo_x_tw_sleep(d);
 	}
 	return (int)xo_x_poll_clock_wait(XO_ADDR(c), d);
@@ -2754,7 +2703,6 @@ static void stop_svc_init(void) {
 	stop_svc[7] = XO_ADDR(&stopsvc_exit);
 	stop_svc[8] = XO_ADDR(&stopsvc_now);
 	stop_svc[9] = XO_ADDR(&stop_grace_fire);
-	stop_svc[10] = XO_ADDR(&tw.in_main);
 	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
 	stop_svc[12] = XO_ADDR(&ev_start);
 #ifdef _WIN32
@@ -2851,10 +2799,8 @@ int main(int argc, char **argv) {
 	xo_x_stop_end();
 	xo_x_rt_stats();
 	xo_x_streams_free();
-	if (tw.on) {
-		// the values the test world keeps (twrun.xo end)
-		xo_x_tw_end();
-	}
+	// the values the test world keeps (twrun.xo end; nothing outside it)
+	xo_x_tw_end();
 	// XO_LEAKCHECK's and XO_HEAPSTATS' reports
 	xo_x_entry_finish();
 	return 0;

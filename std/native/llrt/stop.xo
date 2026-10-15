@@ -45,8 +45,8 @@ const R_SIZE = 96
 /// node_cancel (n), the stopping channel's constructor (drop: a new
 /// channel), xo_chan_close (ch), h_retain (ch), h_release (ch), flush and
 /// _exit(130), the clock (tnow: monotonic ns, virtual in the test world),
-/// the grace timer's C function (it calls cancel), and the address of
-/// the test world's in_main (a C int). Words 88 on are the entry's
+/// the grace timer's C function (it calls cancel), and an unused word
+/// (was the address of the C's tw.in_main). Words 88 on are the entry's
 /// (entry.xo).
 const S_TADD = 0
 const S_TDEL = 8
@@ -58,7 +58,6 @@ const S_RELEASE = 48
 const S_EXIT = 56
 const S_NOW = 64
 const S_FIRE = 72
-const S_IN_MAIN = 80
 
 /// A timer's words (xo_rt.c struct xo_timer).
 const T_WHEN = 0
@@ -212,19 +211,13 @@ pub fn stopping(drop: Int) -> Int {
   ch
 }
 
-fn in_main() -> Bool {
-  let v = rt.mem_load(svc_word(S_IN_MAIN), 0, 4)
-  rt.fence(ACQUIRE)
-  v != 0
-}
-
 /// proc.set_grace(d): after a stop request the deadline moves to the stop
 /// time plus d; in a test binary before testing.run_main, the grace
 /// period of the next run.
 pub fn set_grace(d0: Int) {
   let d = if d0 < 0 { 0 } else { d0 }
   lk()
-  if twflags.fake(REAL_PROC) && !in_main() {
+  if twflags.fake(REAL_PROC) && !twflags.in_main() {
     put(R_HAS_NEXT, 1)
     put(R_NEXT_GRACE, d)
     unlk()

@@ -13,6 +13,7 @@
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 #include "xcalls.h"
+int64_t xo_x_mono_ns(void);
 
 // pd_new registers fd with the poller (poll.xo pd_open, which xo_rt.c no
 // longer wraps): NULL when the poller refuses it.
@@ -182,11 +183,11 @@ static int64_t await_int(xo_task *t) {
 // ---------------------------------------------------------------------------
 
 static void test_timers(void) {
-	int64_t start = mono_ns();
+	int64_t start = xo_x_mono_ns();
 	xo_clock_sleep(10 * MS);
-	CHECK(mono_ns() - start >= 10 * MS);
+	CHECK(xo_x_mono_ns() - start >= 10 * MS);
 	// many sleepers at once park; the workers stay few
-	start = mono_ns();
+	start = xo_x_mono_ns();
 	xo_scope *s = t_scope_open();
 	enum { SLEEPERS = 2000 };
 	xo_task **ts = malloc(SLEEPERS * sizeof *ts);
@@ -201,18 +202,18 @@ static void test_timers(void) {
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
 	CHECK(done == SLEEPERS);
-	CHECK(mono_ns() - start >= 20 * MS);
+	CHECK(xo_x_mono_ns() - start >= 20 * MS);
 	// the pool record's alive and ncpu words (pool.xo P_ALIVE, P_NCPU)
 	int64_t *pw = pool_rec();
 	CHECK(LOAD(pw[4]) <= pw[1] + 1);
 	// a canceled sleeper wakes and unwinds
-	start = mono_ns();
+	start = xo_x_mono_ns();
 	s = t_scope_open();
 	release(spawn(s, J_SLEEP, 3600 * 1000, NULL, 1));
 	xo_clock_sleep(5 * MS);
 	CHECK(t_scope_close(s, 0) == 0);
 	release(s);
-	CHECK(mono_ns() - start < 10000 * MS);
+	CHECK(xo_x_mono_ns() - start < 10000 * MS);
 	// select with only `after`
 	xo_select *sel = t_select_new();
 	xo_select_after(sel, 5 * MS);

@@ -400,6 +400,9 @@ fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else 
 /// clock.
 fn clock_now() -> Int { poll.wall_now() }
 
+/// The timers' clock now (xo_rt.c tnow, stop.xo's S_NOW).
+fn poll_now() -> Int { poll.now() }
+
 /// `clock.sleep(d)`: a cancellation point that unwinds, also while it
 /// waits (core 7.2). The test world records the sleep first
 /// (FakeClock.sleeps()).

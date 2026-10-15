@@ -7,9 +7,9 @@
 // FakeProc.signal_after; the virtual clock's move when every context
 // waits (kick), and the test world's end (end).
 //
-// The C's `tw` record (xo_rt.c: tw.on, the virtual now, in_main, the
-// effects made real, whether the clock is virtual) is read through its
-// address, which start keeps (offsets asserted there). The
+// The test world's record (twflags.xo TW_*: on, the virtual now,
+// in_main, the effects made real, whether the clock is virtual) is read
+// through its address, which start keeps. The
 // state of this module is a record from rt.heap_large whose address is
 // the first of testworld.xo's run_words, guarded by the second (a lock
 // word): the 64 static words are all taken.
@@ -28,6 +28,7 @@ use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/testworld
+use native/llrt/twflags
 use native/rt
 
 /// The state record (byte offsets): the C's tw record, FakeClock.sleeps'
@@ -45,22 +46,16 @@ const R_MAIN = 80
 const R_EXITING = 88
 const R_SIZE = 96
 
-/// The C's tw record (xo_rt.c, asserted there): on (an int), the
-/// virtual now (ns, a word), the verdict for the next move of the clock and the moves'
-/// epoch (words; pool.xo dl_check), whether run_main runs main, the
-/// effects made real, whether the clock is virtual (ints).
-const TW_ON = 0
-const TW_VNOW = 8
-const TW_VPENDING = 16
-const TW_VEPOCH = 24
-const TW_REAL = 36
-const TW_IN_MAIN = 32
-const TW_VIRT = 40
-
-/// rt.sched_rt's op for the C's tw record (pool.xo RT_TW), the clock's
-/// bit of the effects made real (xo_rt.c TW_REAL_CLOCK), and the virtual
+/// The test world's record's fields (twflags.xo), the clock's bit of
+/// the effects made real (testworld.xo REAL_CLOCK), and the virtual
 /// clock's start, 2026-01-01T00:00:00Z.
-const RT_TW = 30
+const TW_ON = twflags.TW_ON
+const TW_VNOW = twflags.TW_VNOW
+const TW_VPENDING = twflags.TW_VPENDING
+const TW_VEPOCH = twflags.TW_VEPOCH
+const TW_REAL = twflags.TW_REAL
+const TW_IN_MAIN = twflags.TW_IN_MAIN
+const TW_VIRT = twflags.TW_VIRT
 const TW_REAL_CLOCK = 8
 const TW_EPOCH = 1767225600000000000
 
@@ -140,7 +135,7 @@ fn unlock() { pool.unlock(lock_word()) }
 
 /// Starts the test world (a test binary's start, one thread; entry.xo
 /// through the C's services record): testworld.xo's variables (its V_*)
-/// and effects made real, then the C's tw record (rt.sched_rt 30): the
+/// and effects made real, then the test world's record (twflags.xo): the
 /// effects, whether the clock is virtual (`xo test --real` with
 /// `clock`, `net`, or `proc` makes it real: a socket or child process
 /// wait is not a virtual wait, and its deadlines are real time), the
@@ -151,9 +146,10 @@ pub fn start() {
     let a = process.env_real_at(vars[k])
     testworld.setenv(k, a, if a == 0 { -1 } else { raw.cstr_len(a) })
   }
-  let w = rt.sched_rt(RT_TW, 0, 0)
-  st(state(), R_TW, w)
+  // testworld.init makes the record (twflags.set)
   let real = testworld.init()
+  let w = twflags.rec()
+  st(state(), R_TW, w)
   rt.mem_store(w, TW_REAL, real, 4)
   rt.mem_store(w, TW_VIRT, if (real & TW_REAL_CLOCK) == 0 { 1 } else { 0 }, 4)
   st(w, TW_VNOW, TW_EPOCH)
