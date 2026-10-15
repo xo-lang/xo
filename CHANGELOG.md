@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS performance, step 4: Go's point doubling formula and
+  inversion by addition chain (P-256's field) or a fixed window (the
+  other exponents): handshakes about 8% fewer instructions on LLVM
+  (X25519 with a P-256 chain 15.9M to 14.7M, Mbed 5.3M).
 - Native TLS 1.2 server: session tickets (RFC 5077, as Go's
   handshake_server.go: the extension, NewSessionTicket after a full
   handshake, the abbreviated handshake with Go's resumption checks;

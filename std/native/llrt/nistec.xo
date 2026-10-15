@@ -65,8 +65,10 @@ const SEL: Int = 1776
 const TABLE: Int = 1920
 // the elements of ECDH and ECDSA
 const S0: Int = 4224
+// pow's table of f^1 to f^15 (the inversion chain's temporaries too)
+const POWT: Int = 4608
 // the workspace in words
-const WSIZE: Int = 576
+const WSIZE: Int = 666
 
 fn at(c: Int, off: Int) -> Int { rt.int_wrap(0, c, off) }
 
@@ -1275,24 +1277,109 @@ fn sub(c: Int, h: Int, f: Int, g: Int, md: Int) {
 }
 
 /// h = f^e (Montgomery), e the address of L words, a public exponent:
-/// left to right square and multiply, the same steps for every f.
+/// a fixed window of 4 bits from the top over a table of f^1 to f^15,
+/// the same steps for every f (the window's digits are the public
+/// exponent's).
 fn pow(c: Int, h: Int, f: Int, e: Int, md: Int) {
   let n = limbs(c)
+  let tab = at(c, POWT)
+  copy(c, tab, f)
+  var i = 1
+  while i < 15 {
+    mul(c, at(tab, 48 * i), at(tab, 48 * (i - 1)), f, md)
+    i += 1
+  }
   let acc = at(c, PW)
   copy(c, acc, at(md, MONE))
-  var i = 64 * n - 1
-  while i >= 0 {
-    mul(c, acc, acc, acc, md)
-    if (rt.int_wrap(4, ld(e, 8 * (i / 64)), i % 64) & 1) == 1 {
-      mul(c, acc, acc, f, md)
+  var started = false
+  var w = 16 * n - 1
+  while w >= 0 {
+    if started {
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
     }
-    i -= 1
+    let d = rt.int_wrap(4, ld(e, 8 * (w / 16)), 4 * (w % 16)) & 15
+    if d != 0 {
+      if started {
+        mul(c, acc, acc, at(tab, 48 * (d - 1)), md)
+      } else {
+        copy(c, acc, at(tab, 48 * (d - 1)))
+        started = true
+      }
+    }
+    w -= 1
   }
   copy(c, h, acc)
 }
 
+/// k squarings of z in place.
+fn sqn(c: Int, z: Int, k: Int, md: Int) {
+  var i = 0
+  while i < k {
+    mul(c, z, z, z, md)
+    i += 1
+  }
+}
+
+/// h = 1/f in P-256's field: f^(p-2) by Go's addition chain (p256Invert,
+/// from mmcloughlin/addchain: 255 squarings and 12 multiplications).
+fn inv_p256(c: Int, h: Int, f: Int) {
+  let mp = at(c, MP)
+  let t = at(c, POWT)
+  let x11 = t
+  let x111 = at(t, 48)
+  let x111111 = at(t, 96)
+  let x15 = at(t, 144)
+  let x16 = at(t, 192)
+  let x47 = at(t, 240)
+  let z = at(t, 288)
+  let u = at(t, 336)
+  // _11 = f^3, _111 = f^7
+  mul(c, x11, f, f, mp)
+  mul(c, x11, x11, f, mp)
+  mul(c, x111, x11, x11, mp)
+  mul(c, x111, x111, f, mp)
+  // _111111 = _111 << 3 + _111
+  copy(c, u, x111)
+  sqn(c, u, 3, mp)
+  mul(c, x111111, x111, u, mp)
+  // x12 = _111111 << 6 + _111111; x15 = x12 << 3 + _111
+  copy(c, u, x111111)
+  sqn(c, u, 6, mp)
+  mul(c, u, u, x111111, mp)
+  sqn(c, u, 3, mp)
+  mul(c, x15, u, x111, mp)
+  // x16 = 2 x15 + 1; x32 = x16 << 16 + x16
+  mul(c, x16, x15, x15, mp)
+  mul(c, x16, x16, f, mp)
+  copy(c, u, x16)
+  sqn(c, u, 16, mp)
+  mul(c, u, u, x16, mp)
+  // i53 = x32 << 15; x47 = x15 + i53
+  sqn(c, u, 15, mp)
+  mul(c, x47, x15, u, mp)
+  // ((i53 << 17 + 1) << 143 + x47) << 47, then (x47 + that) << 2 + 1
+  copy(c, z, u)
+  sqn(c, z, 17, mp)
+  mul(c, z, z, f, mp)
+  sqn(c, z, 143, mp)
+  mul(c, z, z, x47, mp)
+  sqn(c, z, 47, mp)
+  mul(c, z, z, x47, mp)
+  sqn(c, z, 2, mp)
+  mul(c, h, z, f, mp)
+}
+
 /// h = 1/f (Montgomery; 0 for 0).
-fn inv(c: Int, h: Int, f: Int, md: Int) { pow(c, h, f, at(md, ME2), md) }
+fn inv(c: Int, h: Int, f: Int, md: Int) {
+  if limbs(c) == 4 && md == at(c, MP) {
+    inv_p256(c, h, f)
+    return
+  }
+  pow(c, h, f, at(md, ME2), md)
+}
 
 fn copy(c: Int, h: Int, f: Int) { rt.mem_copy(h, f, 8 * limbs(c)) }
 
@@ -1516,6 +1603,60 @@ fn pt_add(c: Int, r: Int, p: Int, q: Int) {
   copy(c, at(r, 96), z3)
 }
 
+/// r = 2p (Go's nistec Double: Renes, Costello and Batina's algorithm 6
+/// for a = -3, complete; r may be p).
+fn pt_double(c: Int, r: Int, p: Int) {
+  let mp = at(c, MP)
+  let b = at(c, CB)
+  let t0 = at(c, T0)
+  let t1 = at(c, T0 + 48)
+  let t2 = at(c, T0 + 96)
+  let t3 = at(c, T0 + 144)
+  let x3 = at(c, T0 + 240)
+  let y3 = at(c, T0 + 288)
+  let z3 = at(c, T0 + 336)
+  let x = p
+  let y = at(p, 48)
+  let z = at(p, 96)
+  mul(c, t0, x, x, mp)
+  mul(c, t1, y, y, mp)
+  mul(c, t2, z, z, mp)
+  mul(c, t3, x, y, mp)
+  add(c, t3, t3, t3, mp)
+  mul(c, z3, x, z, mp)
+  add(c, z3, z3, z3, mp)
+  mul(c, y3, b, t2, mp)
+  sub(c, y3, y3, z3, mp)
+  add(c, x3, y3, y3, mp)
+  add(c, y3, x3, y3, mp)
+  sub(c, x3, t1, y3, mp)
+  add(c, y3, t1, y3, mp)
+  mul(c, y3, x3, y3, mp)
+  mul(c, x3, x3, t3, mp)
+  add(c, t3, t2, t2, mp)
+  add(c, t2, t2, t3, mp)
+  mul(c, z3, b, z3, mp)
+  sub(c, z3, z3, t2, mp)
+  sub(c, z3, z3, t0, mp)
+  add(c, t3, z3, z3, mp)
+  add(c, z3, z3, t3, mp)
+  add(c, t3, t0, t0, mp)
+  add(c, t0, t3, t0, mp)
+  sub(c, t0, t0, t2, mp)
+  mul(c, t0, t0, z3, mp)
+  add(c, y3, y3, t0, mp)
+  mul(c, t0, y, z, mp)
+  add(c, t0, t0, t0, mp)
+  mul(c, z3, t0, z3, mp)
+  sub(c, x3, x3, z3, mp)
+  mul(c, z3, t0, t1, mp)
+  add(c, z3, z3, z3, mp)
+  add(c, z3, z3, z3, mp)
+  copy(c, r, x3)
+  copy(c, at(r, 48), y3)
+  copy(c, at(r, 96), z3)
+}
+
 fn pt_identity(c: Int, r: Int) {
   set_zero(c, r)
   copy(c, at(r, 48), at(at(c, MP), MONE))
@@ -1540,10 +1681,10 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
   var w = 16 * n - 1
   while w >= 0 {
     if w != 16 * n - 1 {
-      pt_add(c, acc, acc, acc)
-      pt_add(c, acc, acc, acc)
-      pt_add(c, acc, acc, acc)
-      pt_add(c, acc, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
     }
     let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
     rt.mem_set(sel, 0, 144)
