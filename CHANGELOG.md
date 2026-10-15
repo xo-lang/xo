@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS performance, step 2: P-256's field arithmetic unrolled over
+  local limbs and a fixed base table for [k]G (nistec_g256.xo, made by
+  scripts/nistecg256): an X25519 handshake with a P-256 chain 47.3M to
+  15.9M instructions on LLVM (Mbed 5.3M), the P-256 group 62.2M to 20.2M
+  (Mbed 12.9M) (bench/results/tls-perf-2026-10-15.md).
 - Native TLS performance, step 1: ChaCha20 on 16 local words with 32
   bit rotates, Poly1305 absorbing the AEAD's pieces in place (no copy of
   the ciphertext): ChaCha20-Poly1305 bulk reads 107M to 41M instructions

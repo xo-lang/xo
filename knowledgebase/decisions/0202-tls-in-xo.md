@@ -142,6 +142,13 @@ std (decision 0074) unless the owner decides to expose a user marker.
   CBC suites (the scope of tls12srv.xo), and the client's roots are still
   Mbed's (no Ed25519 roots).
 
+- 2026-10-15 (performance, xo-fa): P-256's base point multiplications
+  read a fixed base table that is a generated constant
+  (std/native/llrt/nistec_g256.xo, 7,680 Int words, made by
+  scripts/nistecg256 and checked by tls_nistec), since Xo has no
+  process wide mutable state for a table built at run time; its entries
+  are chosen under masks, so the multiplication stays constant time.
+
 ## Alternatives
 
 - (b) Keep Mbed TLS as the one C exception: rejected by the owner; it
