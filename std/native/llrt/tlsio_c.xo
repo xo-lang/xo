@@ -46,3 +46,6 @@ pub fn roots_pem(pem: Bytes) -> rthttp.Roots { rthttp.tls_roots(pem) }
 pub fn roots_err(r: rthttp.Roots) -> Str { rthttp.tls_roots_err(r) }
 
 pub fn roots_system() -> rthttp.Roots { rthttp.tls_roots_system() }
+
+/// Nothing to free: xo_tls.c keeps the roots.
+pub fn roots_free() {}

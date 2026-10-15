@@ -116,6 +116,28 @@ pub fn parse_kept(name: Str, datas: List[Bytes]) -> List[Int] {
 /// Whether name may be an IANA zone name.
 pub fn valid(name: Str) -> Bool { valid_name(name) }
 
+/// The offset from UTC at sec of the host's zone named name ("Local":
+/// the machine's), without keeping it: a zone std/time kept is used as it
+/// is, else the data is parsed and dropped (tzhost's table is freed at
+/// exit for std/time programs only; tlsio.xo's time.Local).
+pub fn host_offset(name: Str, sec: Int) -> Int? {
+  let w = tzhost.find(name)
+  if w.len() != 0 {
+    return Some(offset(Rules{id: w[H_ID], w: w}, sec))
+  }
+  if !valid_name(name) && name != "Local" {
+    return None
+  }
+  let now = tzhost.now()
+  for data in tzhost.host_data(name) {
+    match parse(data, now) {
+      Some(p) => return Some(offset(Rules{id: 0, w: p}, sec))
+      None => {}
+    }
+  }
+  None
+}
+
 /// The rules of a kept zone.
 pub fn of(w: List[Int]) -> Rules { Rules{id: w[H_ID], w: w} }
 

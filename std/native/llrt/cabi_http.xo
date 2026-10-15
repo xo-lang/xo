@@ -8,6 +8,7 @@
 // responses at exit.
 use native/llrt/hclient
 use native/llrt/hserve
+use native/llrt/tlsio
 
 /// The free functions of a server, a connection, a sink, and a client
 /// response (ctx.xo SV_SRV_FREE to SV_CRESP_FREE): the record at p, whose
@@ -22,4 +23,8 @@ fn cresp_free(p: Int) { hclient.cresp_free(p) }
 
 /// At exit: the streamed responses' functions and the client's idle
 /// HTTP/2 connections (the leak check).
-fn streams_free() { hserve.streams_free() }
+fn streams_free() {
+  hserve.streams_free()
+  // the system's roots the Xo client parsed (tlsio.xo)
+  tlsio.roots_free()
+}

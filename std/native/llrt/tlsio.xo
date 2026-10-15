@@ -277,22 +277,27 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
 /// tzrules.xo, not tz.xo: the program's zone table is std/time's.
 fn local_offset(now: Int) -> Int {
   let tzv = process.env_get("TZ")
-  let r = if !tzv.is_empty() {
+  if !tzv.is_empty() {
     let name = tzv[0].trim_prefix(":")
     if name == "" || name == "UTC" {
       return 0
     }
-    tzrules.load_host(name)
-  } else {
-    let name = tzrules.local_name()
-    match if name != "Local" { tzrules.load_host(name) } else { None } {
-      Some(x) => Some(x)
-      None => tzrules.load_host("Local")
-    }
+    return tzrules.host_offset(name, now) ?? 0
   }
-  match r {
-    Some(x) => tzrules.offset(x, now)
-    None => 0
+  let name = tzrules.local_name()
+  let first = if name != "Local" { tzrules.host_offset(name, now) } else { None }
+  match first {
+    Some(x) => x
+    None => tzrules.host_offset("Local", now) ?? 0
+  }
+}
+
+/// Frees the system's roots parsed once (at exit, before the leak check:
+/// cabi_http.xo's streams_free).
+pub fn roots_free() {
+  let s = rt.slot_swap(rt.static_word(31), 0, 0, ACQ_REL)
+  if s != 0 {
+    tasks.h_release(s)
   }
 }
 

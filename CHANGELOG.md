@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix (B31 parts 15 and 16): the Xo TLS client left one allocation live
+  at exit (http_tls and http_tls_keys on LLVM; xo-2b bisected it to
+  165eb6a3): tzrules.load_host kept the host's zone in tzhost's table,
+  which only std/time programs free at exit. The offset now comes from
+  tzrules.host_offset, which parses without keeping (a zone std/time
+  kept is used as it is), and the system roots part 16 parses once
+  (static word 31) are freed at exit too (tlsio.roots_free from
+  cabi_http.xo's streams_free). TestGolden and TestGoldenRun pass for
+  http_tls and http_tls_keys on both TLS paths.
+
 - Native runtime (zero-C audit item B31, part 16, decision 0202): the
   Xo client's system roots off macOS are Xo's: tlscert.xo collects the
   DERs (Linux: $SSL_CERT_FILE or the distribution's bundle, then
