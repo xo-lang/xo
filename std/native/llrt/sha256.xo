@@ -1,0 +1,167 @@
+// SHA-256, SHA-384, and SHA-512 (FIPS 180-4) for TLS (work item B31, decision
+// 0202): one shot (sum) and incremental (Hasher: write, a sum that does
+// not consume it, clone), as Go's crypto/sha256 and crypto/sha512. The
+// compressions are digest_tables.xo's (sha256_block, and sha512_block,
+// which SHA-384 shares with SHA-512's Ed25519 use in digest.xo). Nothing
+// branches on the data, only on lengths.
+use native/llrt/digest_tables
+use native/llrt/raw
+use native/rt
+
+/// The hash ids of sha256.xo, hmac.xo, and hkdf.xo.
+pub const HASH_SHA256 = 0
+pub const HASH_SHA384 = 1
+pub const HASH_SHA512 = 2
+
+/// An incremental hash: the state words, the bytes of a partial block
+/// held, and the bytes written.
+pub struct Hasher {
+  pub hash: Int
+  st: List[Int]
+  held: Bytes
+  total: Int
+}
+
+/// The digest's size in bytes.
+pub fn size(hash: Int) -> Int { if hash == HASH_SHA256 { 32 } else if hash == HASH_SHA384 { 48 } else { 64 } }
+
+/// The block size in bytes (HMAC's padded key).
+pub fn block_size(hash: Int) -> Int { if hash == HASH_SHA256 { 64 } else { 128 } }
+
+/// A new hash of hash (HASH_SHA256, HASH_SHA384, or HASH_SHA512).
+pub fn new(hash: Int) -> Hasher {
+  let st = if hash == HASH_SHA256 {
+    // FIPS 180-4 5.3.3
+    [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+  } else if hash == HASH_SHA512 {
+    // FIPS 180-4 5.3.5
+    [7640891576956012808, -4942790177534073029, 4354685564936845355, -6534734903238641935, 5840696475078001361, -7276294671716946913, 2270897969802886507, 6620516959819538809]
+  } else {
+    // FIPS 180-4 5.3.4
+    [-3766243637369397544, 7105036623409894663, -7973340178411365097, 1526699215303891257, 7436329637833083697, -8163818279084223215, -2662702644619276377, 5167115440072839076]
+  }
+  Hasher{hash: hash, st: st, held: b"", total: 0}
+}
+
+/// The digest of data.
+pub fn sum(hash: Int, data: Bytes) -> Bytes {
+  var h = new(hash)
+  h.write(data)
+  h.sum()
+}
+
+/// One block of b from i into st.
+fn compress(hash: Int, var st: List[Int], b: Bytes, i: Int) {
+  if hash == HASH_SHA256 {
+    digest_tables.sha256_block(st, b, i)
+    return
+  }
+  digest_tables.sha512_block(st, rt.int_wrap(0, raw.bytes_addr(b), i))
+  keep(b)
+}
+
+/// b is known alive up to here (darwin.xo's keep): reference counting
+/// releases a value after its last use, and sha512_block reads its memory.
+fn keep(b: Bytes) {
+  if b.len() < 0 {
+    return
+  }
+}
+
+/// The bytes lo..hi of b after a.
+fn cat(a: Bytes, b: Bytes, lo: Int, hi: Int) -> Bytes { rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(a.len() + hi - lo), a, 0, a.len(), 0), b, lo, hi, 0).bytes() }
+
+/// Hashes data after what was written.
+pub fn (var h: Hasher) write(data: Bytes) {
+  let bs = block_size(h.hash)
+  let n = data.len()
+  h.total = h.total + n
+  var st = h.st
+  var i = 0
+  if h.held.len() > 0 {
+    let m = if bs - h.held.len() < n { bs - h.held.len() } else { n }
+    let held = cat(h.held, data, 0, m)
+    i = m
+    if held.len() < bs {
+      h.held = held
+      return
+    }
+    compress(h.hash, st, held, 0)
+    h.held = b""
+  }
+  while n - i >= bs {
+    compress(h.hash, st, data, i)
+    i += bs
+  }
+  if i < n {
+    h.held = cat(b"", data, i, n)
+  }
+  h.st = st
+}
+
+/// The digest of what was written; h is unchanged and can be written to
+/// further.
+pub fn (h: Hasher) sum() -> Bytes {
+  let bs = block_size(h.hash)
+  var st = h.st
+  // the held bytes, 0x80, zeros, and the length in bits big endian (8
+  // bytes for SHA-256, 16 for SHA-384): one block or two
+  let r = h.held.len()
+  let lenb = if bs == 64 { 8 } else { 16 }
+  var t = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_with_cap(2 * bs), h.held, 0, r, 0), 0x80)
+  var k = if r + 1 + lenb <= bs { bs - lenb - r - 1 } else { 2 * bs - lenb - r - 1 }
+  k += lenb - 8
+  while k > 0 {
+    t = rt.rs_push_word(t, 0, if k < 8 { k } else { 8 })
+    k -= 8
+  }
+  t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, h.total, 3), 0), 8)
+  let tb = t.bytes()
+  var i = 0
+  while i < tb.len() {
+    compress(h.hash, st, tb, i)
+    i += bs
+  }
+  var out = rt.rs_with_cap(size(h.hash))
+  if h.hash == HASH_SHA256 {
+    for w in st {
+      out = rt.rs_push_word(out, rt.int_wrap(7, rt.int_wrap(3, w, 32), 0), 4)
+    }
+  } else {
+    for j in 0..size(h.hash) / 8 {
+      out = rt.rs_push_word(out, rt.int_wrap(7, st[j], 0), 8)
+    }
+  }
+  out.bytes()
+}
+
+/// An independent copy of h.
+pub fn (h: Hasher) clone() -> Hasher { Hasher{hash: h.hash, st: h.st, held: h.held, total: h.total} }
+
+/// The hash an internal.crypto_op name ends in ("...256", "...384", or
+/// "...512").
+pub fn hash_of(what: Str) -> Int {
+  if what.ends_with("384") {
+    return HASH_SHA384
+  }
+  if what.ends_with("512") { HASH_SHA512 } else { HASH_SHA256 }
+}
+
+/// internal.crypto_op's "hash." ops (std/internal.xo): sha256, sha384,
+/// and sha512 of a; split256, split384, and split512, a then b written separately, the sum
+/// after a, after b, and of a clone taken after a. None if unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  let h = hash_of(what)
+  match what.trim_suffix("256").trim_suffix("384").trim_suffix("512") {
+    "sha" => sum(h, a)
+    "split" => {
+      var x = new(h)
+      x.write(a)
+      let s1 = x.sum()
+      let y = x.clone()
+      x.write(b)
+      s1 + x.sum() + y.sum()
+    }
+    _ => None
+  }
+}

@@ -1,0 +1,32 @@
+exit 0
+--- stdout
+sha256 empty ok
+sha256 abc ok
+sha256 448 ok
+sha384 empty ok
+sha384 abc ok
+sha384 896 ok
+sha512 empty ok
+sha512 abc ok
+sha512 896 ok
+split256 bad 0
+split384 bad 0
+split512 bad 0
+hmac256 rfc4231 1 ok
+hmac384 rfc4231 1 ok
+hmac256 rfc4231 2 ok
+hmac384 rfc4231 2 ok
+hmac512 rfc4231 1 ok
+hmac512 rfc4231 2 ok
+hmac256 rfc4231 6 ok
+hmac384 rfc4231 6 ok
+hkdf rfc5869 1 prk ok
+hkdf rfc5869 1 okm ok
+hkdf rfc5869 3 prk ok
+hkdf rfc5869 3 okm ok
+hkdf384 prk 704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade
+hkdf384 okm 9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5d95d1da3e62587b22eb8943d0fab6bb631a2fe9df1a68c6ce5d56116a52005b3f122b88b39b7251fcd6c44d3ef25f20ed96802bf1b2c1d98bf74
+tls13 early ok
+tls13 derived ok
+label384 5b3f5b4a195b1b5045834df3c054d938dddceec519ac9c2258b01b5ee4dd0346
+--- stderr

@@ -1,6 +1,9 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
 use native/llrt/fsops
+use native/llrt/hkdf
+use native/llrt/hmac
+use native/llrt/sha256
 use native/llrt/sysio
 use native/rt
 
@@ -31,3 +34,15 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
 }
 
 fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
+
+fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
+  let area = op.split(".")[0]
+  let what = op.trim_prefix("${area}.")
+  let r = match area {
+    "hash" => sha256.op(what, a, b, c, d)
+    "hmac" => hmac.op(what, a, b, c, d)
+    "hkdf" => hkdf.op(what, a, b, c, d)
+    _ => None
+  }
+  r ?? fault("internal.crypto_op: unknown op ${op}")
+}

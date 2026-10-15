@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 1 of the TLS primitives,
+  decision 0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
+  incremental with clone, SHA-384 and SHA-512 on B08's SHA-512
+  compression), HMAC (hmac.xo) and HKDF with TLS 1.3's
+  HKDF-Expand-Label (hkdf.xo), as Go's crypto/sha256, crypto/sha512,
+  crypto/hmac, and crypto/hkdf. std/internal's crypto_op runs them: one
+  dispatcher, an arm per area calling that file's op (std/rt's
+  internal_crypto.go is the Go backend's, over Go's crypto packages); the
+  golden crypto_prims checks FIPS 180-4, RFC 4231, RFC 5869, and RFC
+  8448 vectors and runs under -short. Not on the TLS path yet.
+
 - Native runtime (zero-C audit, next small files batch): file and lock
   handles are records of fsops.xo with Xo free functions (the services
   record's words 128 and 136); collection constants are consts.xo's

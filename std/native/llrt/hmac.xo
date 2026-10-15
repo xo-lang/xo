@@ -1,0 +1,54 @@
+// HMAC (RFC 2104, FIPS 198-1) over SHA-256 and SHA-384 for TLS (work item
+// B31, decision 0202), as Go's crypto/hmac: one shot (mac) and keyed
+// state (new, then write and sum per message, which TLS 1.2's PRF reuses).
+use native/llrt/sha256
+use native/rt
+
+/// A keyed HMAC: the inner hash after the inner padded key, and the outer
+/// padded key.
+pub struct Mac {
+  inner: sha256.Hasher
+  opad: Bytes
+}
+
+/// The key padded to the block and xored with x.
+fn pad(hash: Int, key0: Bytes, x: Int) -> Bytes {
+  let bs = sha256.block_size(hash)
+  let key = if key0.len() > bs { sha256.sum(hash, key0) } else { key0 }
+  var t = rt.rs_with_cap(bs)
+  for i in 0..bs {
+    let k = if i < key.len() { Int(key[i]) } else { 0 }
+    t = rt.rs_push_byte(t, k ^ x)
+  }
+  t.bytes()
+}
+
+/// A MAC of hash keyed with key.
+pub fn new(hash: Int, key: Bytes) -> Mac {
+  var h = sha256.new(hash)
+  h.write(pad(hash, key, 0x36))
+  Mac{inner: h, opad: pad(hash, key, 0x5c)}
+}
+
+/// The MAC of msg (m stays keyed for the next message).
+pub fn (m: Mac) sum(msg: Bytes) -> Bytes {
+  var h = m.inner.clone()
+  h.write(msg)
+  let d = h.sum()
+  var o = sha256.new(m.inner.hash)
+  o.write(m.opad)
+  o.write(d)
+  o.sum()
+}
+
+/// HMAC-hash(key, msg).
+pub fn mac(hash: Int, key: Bytes, msg: Bytes) -> Bytes { new(hash, key).sum(msg) }
+
+/// internal.crypto_op's "hmac." ops (std/internal.xo): sha256, sha384, and sha512,
+/// key a and message b. None if unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  match what {
+    "sha256" | "sha384" | "sha512" => mac(sha256.hash_of(what), a, b)
+    _ => None
+  }
+}

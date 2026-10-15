@@ -1,0 +1,71 @@
+// HKDF (RFC 5869) over HMAC-SHA-256 and HMAC-SHA-384, and TLS 1.3's
+// HKDF-Expand-Label (RFC 8446 7.1) for the key schedule (work item B31,
+// decision 0202), as Go's crypto/hkdf and crypto/tls.
+use native/llrt/hmac
+use native/llrt/sha256
+use native/rt
+
+/// HKDF-Extract(salt, ikm): the pseudorandom key (an empty salt is the
+/// hash's size of zeros).
+pub fn extract(hash: Int, salt: Bytes, ikm: Bytes) -> Bytes {
+  if salt.len() > 0 {
+    return hmac.mac(hash, salt, ikm)
+  }
+  var z = rt.rs_with_cap(sha256.size(hash))
+  for _ in 0..sha256.size(hash) {
+    z = rt.rs_push_byte(z, 0)
+  }
+  hmac.mac(hash, z.bytes(), ikm)
+}
+
+/// HKDF-Expand(prk, info, n): n bytes of output keying material (n at
+/// most 255 times the hash's size).
+pub fn expand(hash: Int, prk: Bytes, info: Bytes, n: Int) -> Bytes {
+  let m = hmac.new(hash, prk)
+  var out = rt.rs_with_cap(n)
+  var t = b""
+  var i = 1
+  var have = 0
+  while have < n {
+    var msg = rt.rs_append_bytes(rt.rs_with_cap(t.len() + info.len() + 1), t, 0, t.len(), 0)
+    msg = rt.rs_append_bytes(msg, info, 0, info.len(), 0)
+    msg = rt.rs_push_byte(msg, i)
+    t = m.sum(msg.bytes())
+    let k = if n - have < t.len() { n - have } else { t.len() }
+    out = rt.rs_append_bytes(out, t, 0, k, 0)
+    have += k
+    i += 1
+  }
+  out.bytes()
+}
+
+/// HKDF-Expand-Label(secret, label, context, n) of TLS 1.3: the info is
+/// the HkdfLabel structure (n as two bytes, "tls13 " + label and context
+/// each after their length byte).
+pub fn expand_label(hash: Int, secret: Bytes, label: Str, context: Bytes, n: Int) -> Bytes {
+  let full = "tls13 ${label}".bytes()
+  var info = rt.rs_with_cap(4 + full.len() + context.len())
+  info = rt.rs_push_byte(info, (n >> 8) & 255)
+  info = rt.rs_push_byte(info, n & 255)
+  info = rt.rs_push_byte(info, full.len())
+  info = rt.rs_append_bytes(info, full, 0, full.len(), 0)
+  info = rt.rs_push_byte(info, context.len())
+  info = rt.rs_append_bytes(info, context, 0, context.len(), 0)
+  expand(hash, secret, info.bytes(), n)
+}
+
+/// internal.crypto_op's "hkdf." ops (std/internal.xo), each with 256,
+/// 384, or 512: extract (salt a, ikm b), expand (prk a, info b, length c), label
+/// (secret a, label b, context c, length d), lengths as decimal text.
+/// None if unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  let h = sha256.hash_of(what)
+  match what.trim_suffix("256").trim_suffix("384").trim_suffix("512") {
+    "extract" => extract(h, a, b)
+    "expand" => expand(h, a, b, num(c))
+    "label" => expand_label(h, a, b.to_str() ?? "", c, num(d))
+    _ => None
+  }
+}
+
+fn num(b: Bytes) -> Int { Int.parse(b.to_str() ?? "") ?? 0 }
