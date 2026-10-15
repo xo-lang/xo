@@ -6,6 +6,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- ctx.xo's services record is Xo (decision 0233 step 2): ctx.xo init makes it, and every handle constructor names its free function with rt.fn_addr, so the C record, its initializer, asserts, free function declarations, pool_rec and the weak HTTP and network free stand-ins are gone.
 - Native runtime (the event loop): poll.xo checks a context's
   cancellation (budget.xo canceled), signals a park (pool.xo
   park_signal, released for ThreadSanitizer first) and runs a signal's

@@ -264,11 +264,11 @@ pub fn msg_list() -> Int {
 
 /// A new handle of n bytes, zeroed, with one reference and the free
 /// function in the services record's word k.
-fn new_handle(n: Int, k: Int) -> Int {
+fn new_handle(n: Int, f: Int) -> Int {
   let o = obj.alloc_obj(n)
   rt.mem_set(o, 0, n)
   st(o, H_RC, -1)
-  st(o, H_FREE, ld(ctx.svc(), k))
+  st(o, H_FREE, f)
   o
 }
 
@@ -468,7 +468,7 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
       return 0
     }
   }
-  let cn = new_handle(C_SIZE, ctx.SV_CONN_FREE)
+  let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
   st(cn, C_PD, pd)
   ok(c)
   cn
@@ -493,7 +493,7 @@ pub fn listener_free(l: Int) {
 }
 
 fn listener_new(pd: Int, addr: Str, unlink_path: Bool) -> Int {
-  let l = new_handle(L_SIZE, ctx.SV_LISTENER_FREE)
+  let l = new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
   st(l, L_PD, pd)
   st(l, L_ADDR, cstr(addr))
   rt.mem_store(l, L_UNLINK, if unlink_path { 1 } else { 0 }, 4)
@@ -518,7 +518,7 @@ pub fn listen(lists: Str, addr: Str) -> Int {
   }
   if twflags.fake(TW_REAL_NET) {
     // FakeNet.listen: an in memory listener (std/rt's memListener)
-    let l = new_handle(L_SIZE, ctx.SV_LISTENER_FREE)
+    let l = new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
     let ml = twrun.listen(addr, l)
     st(l, L_MEM, ml)
     st(l, L_ADDR, twrun.ml_caddr(ml))

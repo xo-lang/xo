@@ -125,7 +125,7 @@ fn wake(m: Int, after_writer: Bool) {
 /// `Mutex.new(v)` (xo_mutex_new): l is the value in a list of one
 /// (consumed), drop its drop function.
 pub fn new(l: Int, drop: Int) -> Int {
-  let m = tasks.new_handle(M_SIZE, ctx.SV_MUTEX_FREE)
+  let m = tasks.new_handle(M_SIZE, rt.fn_addr("mutex_free"))
   st(m, M_SLOT, l)
   st(m, M_DROP, drop)
   m

@@ -13,11 +13,10 @@
 //
 // A handle is a record of this module's behind the runtime's object
 // header (raw_file, raw_lock: tasks.xo new_handle, its free function
-// file_free or lock_free through ctx.xo's services record), so a handle
+// file_free or lock_free, named by rt.fn_addr at the handle's creation), so a handle
 // dropped without close still closes its descriptor (and releases its
 // lock); its words are read and written through rt.obj_addr. The status and message of the last operation stay
 // sysio.xo's thread locals (set_err, status, msg).
-use native/llrt/ctx
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/raw
@@ -52,7 +51,7 @@ const L_SIZE = 32
 /// the 64 KiB read buffer when buffered: freeing it closes fd (was
 /// xo_fs.c xo_fs_raw_file).
 fn raw_file(fd: Int, buffered: Bool) -> rt.FsFile {
-  let f = tasks.new_handle(F_SIZE, ctx.SV_FS_FILE_FREE)
+  let f = tasks.new_handle(F_SIZE, rt.fn_addr("fs_file_free"))
   rt.mem_store(f, F_FD, fd, 8)
   if buffered {
     rt.mem_store(f, F_BUF, rt.heap_large(FS_BUF), 8)
@@ -66,7 +65,7 @@ fn raw_file(fd: Int, buffered: Bool) -> rt.FsFile {
 /// The lock handle of the descriptor fd (-1: none), held or not: freeing
 /// it closes fd, which releases the lock (was xo_fs.c xo_fs_raw_lock).
 fn raw_lock(fd: Int, held: Bool) -> rt.FsLock {
-  let k = tasks.new_handle(L_SIZE, ctx.SV_FS_LOCK_FREE)
+  let k = tasks.new_handle(L_SIZE, rt.fn_addr("fs_lock_free"))
   rt.mem_store(k, L_FD, fd, 8)
   rt.mem_store(k, L_HELD, if held { 1 } else { 0 }, 8)
   let h = rt.obj_at[rt.FsLock](k)

@@ -70,33 +70,25 @@ pub const C_CENT = 248
 pub const C_FIRED = 312
 pub const C_SIZE = 320
 
-/// rt.static_word: the address of the C's services record (xo_rt.c
-/// xo_svc: SV_*), set by init. (Word 15 held the C's ctx_root until the
-/// root context moved here, root.)
+/// rt.static_word: the address of the services record (SV_*), made by
+/// init. (Word 15 held the C's ctx_root until the root context moved
+/// here, root.)
 const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
 const PROG = 17
 
-/// The C's services record (xo_svc, asserted): the worker pool record
-/// (pool.xo's pl), the free functions of a task and a scope, whether
+/// The services record (made by init; was xo_rt.c's svc, decision 0233
+/// step 2): the worker pool record (pool.xo's pl), whether
 /// ThreadSanitizer is on (a word), and the address of the statistics'
-/// switch (a C int, > 0 when they count).
+/// switch (a C int, > 0 when they count). The handles' free functions
+/// are no longer here: each constructor names its export (rt.fn_addr),
+/// so a program without a feature never names that feature's exports.
 pub const SV_POOL = 0
-pub const SV_TASK_FREE = 8
-pub const SV_SCOPE_FREE = 16
 pub const SV_TSAN = 24
 pub const SV_STATS = 32
 /// The lock word of the pool's setup (poolsetup.xo ready).
 pub const SV_ONCE = 40
-/// A Mutex's free function (mutex.xo).
-pub const SV_MUTEX_FREE = 48
-/// A channel's free function (chan.xo).
-pub const SV_CHAN_FREE = 56
-/// A select's free function (selects.xo).
-pub const SV_SELECT_FREE = 64
-/// An Atomic's free function (tasks.xo atomic_new).
-pub const SV_ATOMIC_FREE = 72
 /// The fiber cache's record (pool.xo FS_*), and where a fiber and a
 /// worker thread start (the exports xo_x_fiber_main, xo_x_worker_main):
 /// poolsetup.xo's setup.
@@ -106,52 +98,42 @@ pub const SV_WORKER_MAIN = 96
 /// The HTTP client's idle HTTP/2 connections (hclient.xo PL_*: a lock
 /// word, the first, the count).
 pub const SV_H2_POOL = 104
-/// The free functions of fsops.xo's file and lock handles (the exports
-/// xo_x_fs_file_free, xo_x_fs_lock_free), and obj.xo's table of the
-/// collection constants (consts.xo; 0 until the first).
-pub const SV_FS_FILE_FREE = 128
-pub const SV_FS_LOCK_FREE = 136
+/// obj.xo's table of the collection constants (consts.xo; 0 until the
+/// first).
 pub const SV_CONSTS = 144
-/// The free functions of an rt.Any (cabi.xo any_free) and of std/http's
-/// handles (cabi_http.xo: a server, a connection, a sink, a client
-/// response; the C's weak stand-ins in programs without std/http).
-pub const SV_ANY_FREE = 152
-pub const SV_SRV_FREE = 160
-pub const SV_HC_FREE = 168
-pub const SV_SINK_FREE = 176
-pub const SV_CRESP_FREE = 184
 /// The table of streamed responses (hserve.xo ST_*: a lock word, the
 /// array, the count).
 pub const SV_STREAMS = 192
-/// The free functions of netconn.xo's listener and connection handles
-/// (cabi_net.xo nc_listener_free, nc_conn_free; the C's stubs in programs
-/// without the network), and the resolver's state (dns.xo lookup, two
-/// words).
-pub const SV_LISTENER_FREE = 216
-pub const SV_CONN_FREE = 224
+/// The resolver's state (dns.xo lookup, two words).
 pub const SV_DNS = 232
 /// The address of cabi.xo's stdin_pump_main, standard input's pump
-/// thread on Windows (stdin.xo win_open; 0 elsewhere).
+/// thread on Windows (stdin.xo win_open).
 pub const SV_STDIN_PUMP = 248
-/// The free function of a child process's record (cabi_proc.xo
-/// proc_child_drop; the C's stand in in programs without processes).
-pub const SV_PROC_CHILD_FREE = 256
+const SV_SIZE = 264
 
-/// Sets the address of the C's services record (at start).
-pub fn init(svc: Int) {
-  rt.mem_store(rt.static_word(SVC), 0, svc, 8)
+/// Makes the services record at start, with whether ThreadSanitizer is
+/// on and the addresses of the C's statistics switch and fiber cache
+/// record (xo_rt.c fault_init).
+pub fn init(tsan: Int, stats: Int, fibers: Int) {
+  let svc = rt.heap_large(SV_SIZE)
+  rt.mem_set(svc, 0, SV_SIZE)
+  rt.mem_store(svc, SV_TSAN, tsan, 8)
+  rt.mem_store(svc, SV_STATS, stats, 8)
+  rt.mem_store(svc, SV_FIBERS, fibers, 8)
+  rt.mem_store(svc, SV_FIBER_MAIN, rt.fn_addr("fiber_main"), 8)
+  rt.mem_store(svc, SV_WORKER_MAIN, rt.fn_addr("worker_main"), 8)
+  rt.mem_store(svc, SV_STDIN_PUMP, rt.fn_addr("stdin_pump_main"), 8)
   // the worker pool's record (a root waits before the pool starts)
-  if rt.mem_load(svc, SV_POOL, 8) == 0 {
-    let p = rt.heap_large(P_SIZE)
-    rt.mem_set(p, 0, P_SIZE)
-    let d = rt.heap_large(DLK_SIZE)
-    rt.mem_set(d, 0, DLK_SIZE)
-    rt.mem_store(p, P_DLK, d, 8)
-    rt.mem_store(svc, SV_POOL, p, 8)
-  }
+  let p = rt.heap_large(P_SIZE)
+  rt.mem_set(p, 0, P_SIZE)
+  let d = rt.heap_large(DLK_SIZE)
+  rt.mem_set(d, 0, DLK_SIZE)
+  rt.mem_store(p, P_DLK, d, 8)
+  rt.mem_store(svc, SV_POOL, p, 8)
+  rt.mem_store(rt.static_word(SVC), 0, svc, 8)
 }
 
-/// The C's services record.
+/// The services record.
 pub fn svc() -> Int { rt.mem_load(rt.static_word(SVC), 0, 8) }
 
 /// The worker pool's record (pool.xo's pl, made by init).

@@ -6,19 +6,14 @@
 // server (h2srv.xo), the server's registration, connections, sinks and
 // streamed responses (hconn.xo, hserve.xo), and the client (hclient.xo).
 // TLS is Xo too (decision 0202; Mbed TLS was removed on 2026-10-15).
-// What stays C: the weak stand-ins of cabi_http.xo's exports, which the
-// services record names, and the forwarder of a std function's fault,
-// which generated code calls by its name (rt.Any is anyval.xo's exports
-// directly).
+// What stays C: the weak stand-in of cabi_http.xo's streams_free, and
+// the forwarder of a std function's fault, which generated code calls by
+// its name (rt.Any is anyval.xo's exports directly).
 
-// cabi_http.xo's exports (std/http's programs carry them; the weak
-// definitions keep other programs linking, which never make a server, a
-// connection, a sink, or a client response, and have no streamed
-// responses or HTTP/2 connections to free at exit)
-__attribute__((weak)) void xo_x_srv_free(int64_t p) { (void)p; }
-__attribute__((weak)) void xo_x_hc_free(int64_t p) { (void)p; }
-__attribute__((weak)) void xo_x_sink_free(int64_t p) { (void)p; }
-__attribute__((weak)) void xo_x_cresp_free(int64_t p) { (void)p; }
+// cabi_http.xo's export the C calls at exit (std/http's programs carry
+// it; the weak definition keeps other programs linking, which have no
+// streamed responses or HTTP/2 connections to free). The handles' free
+// functions are named by their constructors (rt.fn_addr, decision 0233).
 __attribute__((weak)) void xo_x_streams_free(void) {}
 
 // A std function's fault at its caller: generated code calls this name.

@@ -5,7 +5,6 @@
 // code reaches any_new and any_get through the C's xo_any_new and
 // xo_any_get, which forward to cabi.xo's exports (older xo's code calls
 // those names).
-use native/llrt/ctx
 use native/llrt/obj
 use native/llrt/rc
 use native/llrt/tasks
@@ -26,7 +25,7 @@ fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 /// A new Any holding list l (consumed) with its drop function, of the
 /// type whose tag is the tn bytes at tag.
 pub fn new(l: Int, drop: Int, tag: Int, tn: Int) -> Int {
-  let a = tasks.new_handle(A_SIZE, ctx.SV_ANY_FREE)
+  let a = tasks.new_handle(A_SIZE, rt.fn_addr("any_free"))
   st(a, A_L, l)
   st(a, A_DROP, drop)
   let t = rt.heap_large(tn + 1) - 8

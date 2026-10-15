@@ -889,7 +889,7 @@ pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
 /// method, target, Host and header are the writers' (request,
 /// h2_exchange).
 pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool) -> rthttp.CResp {
-  let r = tasks.new_handle(R_SIZE, ctx.SV_CRESP_FREE)
+  let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
   st(r, R_PREFIX, cstr_dup(prefix))
   start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool)
   let h = rt.obj_at[rthttp.CResp](r)

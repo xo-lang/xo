@@ -11,7 +11,7 @@ use native/llrt/hserve
 use native/llrt/tlsio
 
 /// The free functions of a server, a connection, a sink, and a client
-/// response (ctx.xo SV_SRV_FREE to SV_CRESP_FREE): the record at p, whose
+/// response (the handles' free functions, hserve.xo and hclient.xo rt.fn_addr): the record at p, whose
 /// last reference went.
 fn srv_free(p: Int) { hserve.srv_free(p) }
 

@@ -11,7 +11,6 @@
 // The server's TLS connections are tlssrv.xo's (decision 0202). The
 // Windows arms are UNTESTED on
 // windows: written on macOS and checked by the cross build only.
-use native/llrt/ctx
 use native/llrt/dns
 use native/llrt/obj
 use native/llrt/poll
@@ -329,7 +328,7 @@ pub fn pd(h: rthttp.HConn) -> Int { conn_pd(rec(h)) }
 /// and holds h.
 pub fn stream(h: rthttp.HConn, sr: Int) -> rthttp.HConn {
   let hc = rec(h)
-  let t = tasks.new_handle(HC_SIZE, ctx.SV_HC_FREE)
+  let t = tasks.new_handle(HC_SIZE, rt.fn_addr("hc_free"))
   rc.inc(hc)
   st(t, HC_OWNER, hc)
   st(t, HC_H2S, sr)

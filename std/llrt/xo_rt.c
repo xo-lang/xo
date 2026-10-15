@@ -524,13 +524,13 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
 // XO_RT_NO_MAIN's constructor).
-void xo_x_ctx_init(int64_t pl);
-static int64_t svc_addr(void);
+void xo_x_ctx_init(int64_t tsan, int64_t stats, int64_t fibers);
+static void ctx_init(void);
 static void pd_svc_init(void);
 static void stop_svc_init(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	xo_x_ctx_init(svc_addr());
+	ctx_init();
 	pd_svc_init();
 	stop_svc_init();
 }
@@ -1274,11 +1274,6 @@ typedef struct xo_worker {
 	void *batch[XO_RUNQ / 2 + 1];
 } xo_worker;
 
-// The pool's record is pool.xo's (new_record, made at start by ctx.xo
-// init, with its deadlock counts): the C reaches it through the services
-// record (pool_rec).
-static void *pool_rec(void);
-
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker (tasks.xo
 // park_wait_n calls it).
@@ -1288,7 +1283,6 @@ static void *pool_rec(void);
 // layout is asserted below). The C keeps the records, their setup, the
 // root threads' records, and the deadlock check; the Xo code calls back
 // for the services in xo_sched_rt.
-int64_t xo_x_worker_main(int64_t w);
 
 void xo_x_park_reset(int64_t p);
 void xo_x_node_link(int64_t n, int64_t parent);
@@ -1298,24 +1292,6 @@ static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 
-// the handles' free functions: cabi.xo's exports (tasks.xo, mutex.xo,
-// chan.xo, selects.xo; B18)
-void xo_x_task_free(int64_t p);
-void xo_x_scope_free(int64_t p);
-void xo_x_mutex_free(int64_t p);
-void xo_x_chan_free(int64_t p);
-void xo_x_select_free(int64_t p);
-void xo_x_atomic_free(int64_t p);
-void xo_x_fs_file_free(int64_t p);
-void xo_x_fs_lock_free(int64_t p);
-void xo_x_any_free(int64_t p);
-// std/http's handles (cabi_http.xo; weak in xo_http.c for the programs
-// without it, which never make one)
-void xo_x_srv_free(int64_t p);
-void xo_x_hc_free(int64_t p);
-void xo_x_sink_free(int64_t p);
-void xo_x_cresp_free(int64_t p);
-#define XO_FREE_FN(f) ((void (*)(void *))(void *)(f))
 // netconn.xo's (cabi_net.xo): weak, as the other network exports (see
 // XO_NX_REF below)
 #if defined(__APPLE__) || defined(_WIN32)
@@ -1323,63 +1299,6 @@ void xo_x_cresp_free(int64_t p);
 #else
 #define XO_NC_REF __attribute__((weak))
 #endif
-XO_NC_REF void xo_x_nc_listener_free(int64_t l);
-XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
-// proc.xo's child records (cabi_proc.xo): weak likewise
-XO_NC_REF void xo_x_proc_child_drop(int64_t ch);
-
-// The services record of ctx.xo (SV_*): the pool record (pool.xo's,
-// which ctx.xo init makes; budget.xo and tasks.xo reach pool.xo through
-// it), the free functions of a task and a
-// scope (tasks.xo makes them), whether ThreadSanitizer is on, and the
-// statistics' switch.
-#ifdef _WIN32
-int64_t xo_x_stdin_pump_main(int64_t rec);
-#endif
-static struct {
-	void *pool;
-	void (*task_free)(void *);
-	void (*scope_free)(void *);
-	int64_t tsan;
-	int *stats;
-	xo_lock once; // poolsetup.xo ready's lock
-	void (*mutex_free)(void *);
-	void (*chan_free)(void *);
-	void (*select_free)(void *);
-	void (*atomic_free)(void *);
-	void *fibers;
-	int64_t fiber_main, worker_main;
-	int64_t h2_pool[3]; // hclient.xo's idle HTTP/2 connections
-	void (*fs_file_free)(void *), (*fs_lock_free)(void *); // fsops.xo's handles
-	int64_t consts; // consts.xo's table
-	void (*any_free)(void *);
-	void (*srv_free)(void *);
-	void (*hc_free)(void *);
-	void (*sink_free)(void *);
-	void (*cresp_free)(void *);
-	int64_t streams[3]; // hserve.xo's table of streamed responses
-	void (*listener_free)(void *); // netconn.xo's handles' free functions (ctx.xo SV_LISTENER_FREE)
-	void (*conn_free)(void *);
-	int64_t dns[2]; // the resolver's state (dns.xo lookup)
-	int64_t stdin_pump; // stdin.xo's pump thread on Windows (cabi.xo stdin_pump_main)
-	void (*proc_child_free)(void *); // proc.xo's child records (ctx.xo SV_PROC_CHILD_FREE)
-} svc = {NULL, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
-#ifdef XO_TSAN_ANN
-	1,
-#else
-	0,
-#endif
-	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
-         XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0},
-	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}, 0, XO_FREE_FN(xo_x_proc_child_drop)};
-
-_Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
-                   offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
-                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232 && offsetof(__typeof__(svc), stdin_pump) == 248 && offsetof(__typeof__(svc), proc_child_free) == 256,
-               "ctx.xo SV_*");
-
-static void *pool_rec(void) { return svc.pool; }
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
 // (twrun.xo kick) checks again after it.
@@ -1557,17 +1476,15 @@ static struct {
 } fibers;
 
 // The fiber stacks' settings are poolsetup.xo's fibers_setup (B20),
-// through the services record (the fiber cache's record and the entry
-// points, set here at start).
-void xo_x_fiber_main(int64_t f);
-static int64_t svc_addr(void) {
-	svc.fibers = &fibers;
-	svc.fiber_main = XO_ADDR(xo_x_fiber_main);
-	svc.worker_main = XO_ADDR(xo_x_worker_main);
-#ifdef _WIN32
-	svc.stdin_pump = XO_ADDR(xo_x_stdin_pump_main);
+// through ctx.xo's services record, which ctx_init gives the fiber
+// cache's record and the statistics' switch at start.
+static void ctx_init(void) {
+#ifdef XO_TSAN_ANN
+	int64_t tsan = 1;
+#else
+	int64_t tsan = 0;
 #endif
-	return XO_ADDR(&svc);
+	xo_x_ctx_init(tsan, XO_ADDR(&rtstats), XO_ADDR(&fibers));
 }
 
 // fiber_counted counts a fiber stack mapped (d 1) or unmapped (-1), and
@@ -1978,7 +1895,6 @@ XO_NX_STUB(xo_x_nc_conn_read, int64_t a, int64_t b, int64_t c)
 XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
 XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
 XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
-XO_NX_VSTUB(xo_x_proc_child_drop, int64_t a)
 #endif
 int64_t xo_x_fd_nonblock(int64_t fd);
 

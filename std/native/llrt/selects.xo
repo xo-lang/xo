@@ -54,7 +54,7 @@ fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
 fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 
 /// A new select (xo_select_new).
-pub fn new() -> Int { tasks.new_handle(SE_SIZE, ctx.SV_SELECT_FREE) }
+pub fn new() -> Int { tasks.new_handle(SE_SIZE, rt.fn_addr("select_free")) }
 
 /// Adds an arm on channel c (a reference taken): a receive, or a send of
 /// l (a list of one, consumed).

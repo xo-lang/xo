@@ -566,9 +566,13 @@ fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 
 fn ctx_unwinding() -> Int { ctx.unwinding() }
 
-/// The addresses of xo_rt.c ctx_root and its services record, at start
-/// (ctx.xo init).
-fn ctx_init(svc: Int) { ctx.init(svc) }
+/// The services record, at start (ctx.xo init): whether ThreadSanitizer
+/// is on, the addresses of xo_rt.c's statistics switch and fiber cache.
+fn ctx_init(tsan: Int, stats: Int, fibers: Int) { ctx.init(tsan, stats, fibers) }
+
+/// The worker pool's record (the C tests' pool_rec, std/llrt/testdata
+/// xcalls.h).
+fn ctx_pool() -> Int { ctx.pool() }
 
 /// The current context of a thread with none yet (xo_rt.c ctx's slow
 /// path): ctx.xo root.
@@ -722,7 +726,7 @@ fn deadlock() {
 
 // ---------------------------------------------------------------------------
 // fsops.xo's handles and consts.xo's constants (the zero-C audit's small
-// files batch: the services record's SV_FS_FILE_FREE and SV_FS_LOCK_FREE;
+// files batch: the handles fsops.xo makes with these free functions;
 // xo_bytes.c's xo_const_once and xo_consts_free forward here)
 
 fn fs_file_free(p: Int) { fsops.file_free(p) }

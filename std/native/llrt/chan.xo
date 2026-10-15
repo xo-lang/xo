@@ -135,7 +135,7 @@ pub fn new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int {
   if cap < 0 {
     fault.raise_str_at("negative channel capacity ${cap}", lp, ln)
   }
-  let c = tasks.new_handle(CH_SIZE, ctx.SV_CHAN_FREE)
+  let c = tasks.new_handle(CH_SIZE, rt.fn_addr("chan_free"))
   st(c, CH_CAP, cap)
   st(c, CH_DROP, drop)
   if cap > 0 {

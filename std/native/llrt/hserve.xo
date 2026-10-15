@@ -82,7 +82,7 @@ fn srec(s: rthttp.Srv) -> Int { rt.obj_addr(s) }
 
 /// A new server, with the scope of its connections open.
 pub fn srv_new() -> rthttp.Srv {
-  let s = tasks.new_handle(hconn.SR_SIZE, ctx.SV_SRV_FREE)
+  let s = tasks.new_handle(hconn.SR_SIZE, rt.fn_addr("srv_free"))
   let root = stop.root()
   st(s, hconn.SR_SCOPE, tasks.scope_detached(if root != 0 { root } else { ld(ctx.cur(), ctx.C_NODE) }))
   let h = rt.obj_at[rthttp.Srv](s)
@@ -210,7 +210,7 @@ pub fn srv_free(a: Int) {
 pub fn hc_new(s: rthttp.Srv, c: Conn) -> rthttp.HConn {
   let a = srec(s)
   let cn = rt.obj_addr(c)
-  let hc = tasks.new_handle(hconn.HC_SIZE, ctx.SV_HC_FREE)
+  let hc = tasks.new_handle(hconn.HC_SIZE, rt.fn_addr("hc_free"))
   rc.inc(a)
   rc.inc(cn)
   st(hc, hconn.HC_SRV, a)
@@ -337,7 +337,7 @@ pub fn hc_free(hc: Int) {
 // ---------------------------------------------------------------------------
 // Streamed bodies (http.stream, decision 0083)
 
-fn sink_new() -> Int { tasks.new_handle(SK_SIZE, ctx.SV_SINK_FREE) }
+fn sink_new() -> Int { tasks.new_handle(SK_SIZE, rt.fn_addr("sink_free")) }
 
 fn sink_take_handle(k: Int) -> rthttp.Sink {
   let h = rt.obj_at[rthttp.Sink](k)

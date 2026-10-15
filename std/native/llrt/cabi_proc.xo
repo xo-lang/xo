@@ -5,7 +5,7 @@
 use native/llrt/obj
 use native/llrt/proc
 
-/// A child record's free function (ctx.xo SV_PROC_CHILD_FREE, the
+/// A child record's free function (proc.xo spawn's rt.fn_addr, the
 /// handles proc.xo spawn makes): its descriptors and process, then the
 /// block.
 fn proc_child_drop(ch: Int) {
