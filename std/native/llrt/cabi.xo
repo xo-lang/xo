@@ -16,6 +16,7 @@ use native/llrt/alloc
 use native/llrt/budget
 use native/llrt/chan
 use native/llrt/ctx
+use native/llrt/entry
 use native/llrt/fault
 use native/llrt/heapos
 use native/llrt/netpolicy
@@ -549,6 +550,15 @@ fn stop_end() { stop.end() }
 fn stop_reset(n: Int) { stop.reset(n) }
 
 fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
+
+/// The program's start and end around C main (entry.xo, B26 part 2):
+/// the arguments, XO_HEAP_MID_MAX, the test world or the handlers; the
+/// leak check's and heap statistics' report; XO_RTSTATS' line.
+fn entry_start(argc: Int, argv: Int, envp: Int) { entry.start(argc, argv, envp) }
+
+fn entry_finish() { entry.finish() }
+
+fn rt_stats() { entry.rt_stats() }
 
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task

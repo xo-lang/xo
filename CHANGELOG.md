@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B26, part 2): the program's start
+  and end around C main are Xo (std/native/llrt/entry.xo): the
+  arguments (UTF-8 from the UTF-16 command line on Windows),
+  XO_HEAP_MID_MAX, the choice of the test world or the signal handlers
+  and their installation (sigaction on Linux and macOS,
+  SetConsoleCtrlHandler, the vectored stack overflow handler and the
+  stack guarantee on Windows), XO_LEAKCHECK's and XO_HEAPSTATS' reports,
+  and XO_RTSTATS' line. C keeps the handlers themselves, the program
+  thread and its fault boundary, and the standard streams' binary mode on
+  Windows. Linux and Windows code untested (written on macOS).
 - Native runtime (zero-C audit item B28, part 1): the HTTP/1.1 server
   connection is Xo (std/native/llrt/http1.xo Reader, respond, emit,
   stream_end: the input buffer, the request's body, Go's error answers,

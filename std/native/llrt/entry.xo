@@ -1,0 +1,344 @@
+// The program's start and end around the C entry's main, in Xo (the
+// zero-C audit's work item B26, part 2; this was xo_rt.c's main,
+// win_init, xo_signals_init, and xo_rt_stats). C main keeps what needs
+// C: the heap and fault setup before any Xo runs, the thread that runs
+// the program (its frame address is the fault boundary), and the
+// handlers themselves (on_signal, on_console, on_overflow), which run
+// where Xo cannot (a signal handler's interrupted thread, the end of an
+// overflowed stack) and whose addresses the services record hands over.
+// Xo has no address of its own functions to install.
+//
+// The entry's C functions and data are words of stop.xo's services
+// record (rt.static_word 61), from E_TW_INIT on. Nothing here allocates
+// from the program's heap (the leak check counts every block): scratch
+// memory is rt.heap_large's, from malloc.
+use native/llrt/heapos
+use native/llrt/linux
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/stdio
+use native/llrt/stop
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// The services record's words of the entry: tw_init (a test binary's
+/// world, xo_testing.c), ev_start (the poller), the signal handler (C
+/// on_signal; on Windows on_console), on_overflow (Windows; 0
+/// elsewhere), the setter of the heap's mid_max (main_heap's and the
+/// C's xo_mid_max), xo_consts_free, xo_x_tz_free (0 without std/time),
+/// the runtime statistics' counters (an array of int64, xo_rt.c's st),
+/// and the address of the C int that enables them.
+const E_TW_INIT = 88
+const E_EV_START = 96
+const E_HANDLER = 104
+const E_OVERFLOW = 112
+const E_MID_MAX = 120
+const E_CONSTS_FREE = 128
+const E_TZ_FREE = 136
+const E_STATS = 144
+const E_STATS_ON = 152
+
+/// xo_rt.c XO_MID_MAX: the largest block the size classes serve.
+const MID_MAX = 262144
+
+/// XO_NCLASS (64 + 8 classes) and XO_CHUNK (4 MiB).
+const NCLASS = 72
+const CHUNK_MB = 4
+
+/// Signals: SIGINT, SIGTERM, SIGPIPE; SIG_IGN; SA_RESTART on Linux and
+/// macOS.
+const SIGINT = 2
+const SIGTERM = 15
+const SIGPIPE = 13
+const SIG_IGN = 1
+const SA_RESTART_LINUX = 268435456
+const SA_RESTART_DARWIN = 2
+
+/// Windows: CP_UTF8, and the stack the main thread keeps for its
+/// overflow handler (xo_win.c XO_W_GUARANTEE, 64 KiB).
+const CP_UTF8 = 65001
+const W_GUARANTEE = 65536
+
+const ACQUIRE = 1
+
+fn call(k: Int, a: Int) -> Int { rt.call_c2(stop.svc_word(k), a, 0) }
+
+/// Starts the process (C main, after the heap and the faults' setup,
+/// before the program's thread): the arguments (as UTF-8 from the UTF-16
+/// command line on Windows, whose argv is in the ANSI code page) and
+/// the environment for process.xo, XO_HEAP_MID_MAX, then the test world
+/// (XO_TEST: a test binary runs one test) or the signal handlers.
+pub fn start(argc: Int, argv: Int, envp: Int) {
+  match target.os {
+    TargetOs.Windows => win_start(argc, argv, envp)
+    _ => process.start(argc, argv, envp)
+  }
+  let mid = process.env_real_at("XO_HEAP_MID_MAX")
+  if mid != 0 {
+    let m = atoll(mid)
+    if m >= 1024 && m < MID_MAX {
+      let _m = call(E_MID_MAX, m)
+    }
+  }
+  if process.env_real_at("XO_TEST") != 0 {
+    let _t = call(E_TW_INIT, 0)
+  } else {
+    signals()
+  }
+}
+
+/// C's atoll: optional blanks and sign, then decimal digits (wrapping,
+/// as the C's did not check).
+fn atoll(a: Int) -> Int {
+  var i = 0
+  while true {
+    let c = rt.mem_load(a, i, 1)
+    if c != 32 && (c < 9 || c > 13) {
+      break
+    }
+    i += 1
+  }
+  var neg = false
+  let s = rt.mem_load(a, i, 1)
+  if s == 45 || s == 43 {
+    neg = s == 45
+    i += 1
+  }
+  var v = 0
+  while true {
+    let c = rt.mem_load(a, i, 1)
+    if c < 48 || c > 57 {
+      break
+    }
+    v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c - 48)
+    i += 1
+  }
+  if neg { rt.int_wrap(1, 0, v) } else { v }
+}
+
+/// Installs the handlers (not in a test binary): SIGINT and SIGTERM
+/// count a signal and wake the poller, which the C's ev_start starts
+/// first; SIGPIPE is ignored (a write to a closed socket returns EPIPE).
+/// On Windows Ctrl-C, Ctrl-Break, and closing the console are SIGINT
+/// and SIGTERM, and a stack overflow ends the program with "fatal error:
+/// stack overflow" and status 2 (decision 0197, stage 5).
+fn signals() {
+  let _e = call(E_EV_START, 0)
+  let h = stop.svc_word(E_HANDLER)
+  match target.os {
+    TargetOs.Linux => {
+      let _i = linux.sigaction(SIGINT, h, SA_RESTART_LINUX)
+      let _t = linux.sigaction(SIGTERM, h, SA_RESTART_LINUX)
+      let _p = linux.sigaction(SIGPIPE, SIG_IGN, 0)
+    }
+    TargetOs.Darwin => {
+      // struct sigaction: the handler, the mask (4 bytes), the flags
+      let sa = rt.heap_large(16)
+      darwin_sig(sa, SIGINT, h, SA_RESTART_DARWIN)
+      darwin_sig(sa, SIGTERM, h, SA_RESTART_DARWIN)
+      darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
+      release(sa)
+    }
+    TargetOs.Windows => {
+      // UNTESTED on windows
+      let _c = sys_windows.SetConsoleCtrlHandler(h, 1)
+      let _v = sys_windows.AddVectoredExceptionHandler(1, stop.svc_word(E_OVERFLOW))
+      let g = rt.heap_large(8)
+      rt.mem_store(g, 0, W_GUARANTEE, 4)
+      let _g = sys_windows.SetThreadStackGuarantee(g)
+      release(g)
+    }
+    TargetOs.Wasi => {}
+  }
+}
+
+fn darwin_sig(sa: Int, sig: Int, h: Int, flags: Int) {
+  rt.mem_store(sa, 0, h, 8)
+  rt.mem_store(sa, 8, 0, 4)
+  rt.mem_store(sa, 12, flags, 4)
+  let _r = sys_darwin.sigaction(sig, sa, 0)
+}
+
+/// Windows' start: UTF-8 console output and the arguments as UTF-8 from
+/// CommandLineToArgvW, in malloc'd strings kept for the program's life
+/// (main's argv when that fails). UNTESTED on windows.
+fn win_start(argc: Int, argv: Int, envp: Int) {
+  let _cp = sys_windows.SetConsoleOutputCP(CP_UTF8)
+  let np = rt.heap_large(8)
+  rt.mem_store(np, 0, 0, 8)
+  let w = sys_windows.CommandLineToArgvW(sys_windows.GetCommandLineW(), np)
+  if w == 0 {
+    release(np)
+    process.start(argc, argv, envp)
+    return
+  }
+  let n = rt.mem_load(np, 0, 4)
+  release(np)
+  let v = rt.heap_large(8 * (n + 1))
+  rt.mem_store(v, 8 * n, 0, 8)
+  for i in 0..n {
+    let wi = rt.mem_load(w, 8 * i, 8)
+    let k = Int(sys_windows.WideCharToMultiByte(CP_UTF8, 0, wi, -1, 0, 0, 0, 0))
+    let s = rt.heap_large(if k > 0 { k } else { 1 })
+    rt.mem_store(s, 0, 0, 1)
+    if k > 0 {
+      let _k = sys_windows.WideCharToMultiByte(CP_UTF8, 0, wi, -1, s, k, 0, 0)
+    }
+    rt.mem_store(v, 8 * i, s, 8)
+  }
+  let _f = sys_windows.LocalFree(w)
+  process.start(n, v, envp)
+}
+
+/// Ends the process's report (C main, after the program's thread
+/// joined, standard output flushed, the streams and the test world
+/// freed): XO_LEAKCHECK's count of the blocks left (after the
+/// collection constants and the zones are freed) and XO_HEAPSTATS' free
+/// lists and chunks, on standard error.
+pub fn finish() {
+  if process.env_real_at("XO_LEAKCHECK") != 0 {
+    let _c = call(E_CONSTS_FREE, 0)
+    if stop.svc_word(E_TZ_FREE) != 0 {
+      let _z = call(E_TZ_FREE, 0)
+    }
+    let b = rt.heap_large(256)
+    heapos.live(b, b + 8)
+    let live = rt.mem_load(b, 0, 8)
+    let total = rt.mem_load(b, 8, 8)
+    var at = put(b, 0, "xo leakcheck: ")
+    at = put_int(b, at, live)
+    at = put(b, at, " live of ")
+    at = put_int(b, at, total)
+    at = put(b, at, " allocations\n")
+    emit(b, at)
+    release(b)
+  }
+  if process.env_real_at("XO_HEAPSTATS") != 0 {
+    heapstats()
+  }
+}
+
+/// Where the heap's memory went: the blocks on each class's free list at
+/// exit (every block ever carved, when nothing is live) and the chunks
+/// carved (diagnostics, bench/results/xo1-speed).
+fn heapstats() {
+  let b = rt.heap_large(256)
+  var sum = 0
+  for c in 1..NCLASS + 1 {
+    let n = heapos.nfree(c)
+    let size = if c <= 64 { c * 16 } else { rt.int_wrap(3, 2048, c - 65) }
+    if n > 0 {
+      var at = put(b, 0, "xo heapstats: class ")
+      at = put_int(b, at, c)
+      at = put(b, at, " size ")
+      at = put_int(b, at, size)
+      at = put(b, at, " free blocks ")
+      at = put_int(b, at, n)
+      at = put(b, at, " bytes ")
+      at = put_int(b, at, n * (size + 8))
+      at = put(b, at, "\n")
+      emit(b, at)
+    }
+    sum += n * (size + 8)
+  }
+  let ch = heapos.chunks()
+  var at = put(b, 0, "xo heapstats: chunks ")
+  at = put_int(b, at, ch)
+  at = put(b, at, " (")
+  at = put_int(b, at, ch * CHUNK_MB)
+  at = put(b, at, " MB), on free lists ")
+  at = put_int(b, at, rt.int_wrap(4, sum, 20))
+  at = put(b, at, " MB\n")
+  emit(b, at)
+  release(b)
+}
+
+/// The names of the runtime statistics' counters, in the order of
+/// xo_rt.c's st, each followed by a blank.
+const STAT_NAMES = "spawn steal inject wake idle_sleep spin_round fiber_park fiber_new thread_wait thread_wake lock_slow spin_yield net_read net_write net_again poll_return poll_event poll_wake rt_section rt_defer rt_overflow fiber_live fiber_peak "
+
+/// XO_RTSTATS=1's counts of the scheduler's events (decision 0077), one
+/// line on standard error (at exit, and on demand).
+pub fn rt_stats() {
+  // the C int is -1 (not read yet), 0, or 1
+  if rt.mem_load(stop.svc_word(E_STATS_ON), 0, 4) != 1 {
+    return
+  }
+  let st = stop.svc_word(E_STATS)
+  let b = rt.heap_large(64)
+  let p = raw.data(STAT_NAMES)
+  let n = STAT_NAMES.len()
+  var at = put(b, 0, "xo rtstats:")
+  emit(b, at)
+  at = 0
+  var k = 0
+  for i in 0..n {
+    let c = rt.mem_load(p, i, 1)
+    if c != 32 {
+      if at == 0 {
+        rt.mem_store(b, 0, 32, 1)
+        at = 1
+      }
+      rt.mem_store(b, at, c, 1)
+      at += 1
+      continue
+    }
+    at = put(b, at, "=")
+    at = put_int(b, at, rt.slot_load(st, k, 0))
+    emit(b, at)
+    at = 0
+    k += 1
+  }
+  at = put(b, 0, "\n")
+  emit(b, at)
+  release(b)
+}
+
+/// Copies s to b at at: the offset after it.
+fn put(b: Int, at: Int, s: Str) -> Int {
+  let n = s.len()
+  let p = raw.data(s)
+  for i in 0..n {
+    rt.mem_store(b, at + i, rt.mem_load(p, i, 1), 1)
+  }
+  at + n
+}
+
+/// Writes v in decimal to b at at: the offset after it.
+fn put_int(b: Int, at: Int, v: Int) -> Int {
+  var o = at
+  if v < 0 {
+    rt.mem_store(b, o, 45, 1)
+    o += 1
+  }
+  // the digits backwards from the value made negative (the most negative
+  // Int has no positive), then reversed
+  var u = if v > 0 { 0 - v } else { v }
+  let s = o
+  while true {
+    rt.mem_store(b, o, 48 - u % 10, 1)
+    o += 1
+    u = u / 10
+    if u == 0 {
+      break
+    }
+  }
+  var l = s
+  var r = o - 1
+  while l < r {
+    let t = rt.mem_load(b, l, 1)
+    rt.mem_store(b, l, rt.mem_load(b, r, 1), 1)
+    rt.mem_store(b, r, t, 1)
+    l += 1
+    r -= 1
+  }
+  o
+}
+
+/// Frees the rt.heap_large block b (heap_release takes its prefix's
+/// address).
+fn release(b: Int) { rt.heap_release(b - 8) }
+
+/// Writes the first n bytes of b to standard error.
+fn emit(b: Int, n: Int) { stdio.write_all(2, b, n) }

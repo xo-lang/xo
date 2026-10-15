@@ -208,9 +208,21 @@ pub fn env_get(name: Str) -> List[Str] {
 /// test world's FakeEnv (the runtime's settings: XO_THREADS, XO_RTSTATS,
 /// as the C's getenv read them).
 pub fn env_real(name: Str) -> List[Str] {
+  let v = env_real_at(name)
+  if v == 0 {
+    return []
+  }
+  [cstr(v)]
+}
+
+/// The address of the zero terminated value of the process's own
+/// environment variable name, or 0 when it is not set: env_real with no
+/// allocation (the C entry's leak check reads XO_LEAKCHECK after the
+/// count would see a new block).
+pub fn env_real_at(name: Str) -> Int {
   let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
   if envp == 0 {
-    return []
+    return 0
   }
   let fold = fold_case()
   let p = raw.data(name)
@@ -222,12 +234,11 @@ pub fn env_real(name: Str) -> List[Str] {
       break
     }
     if entry_is(e, p, n, fold) {
-      let v = rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
-      return [cstr(v)]
+      return rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
     }
     k = rt.int_wrap(0, k, 1)
   }
-  []
+  0
 }
 
 /// env.vars(): the NAME=VALUE entries of the environment, sorted as

@@ -18,3 +18,7 @@ Fix: when C will free the block, keep the malloc'd address,
 needed outside alloc.xo (std/native/llrt/fault.xo dup). Blocks only Xo
 frees can keep the usual address, freed with
 `rt.heap_release(b - 8)` (testworld.xo blk_free).
+
+Observed again 2026-10-14 (B26 part 2, entry.xo): rt.heap_release(b) of
+an rt.heap_large result trapped in libmalloc (mfm_free, SIGTRAP, exit
+133) on the first program start; release b - 8.

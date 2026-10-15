@@ -1014,8 +1014,9 @@ XO_NORETURN static void fault_at(const char *msg, const char *loc, int64_t n) { 
 // Parks, nodes, contexts
 
 // Runtime statistics (decision 0077): XO_RTSTATS=1 prints counts of the
-// scheduler's events to stderr at exit (and xo_rt_stats prints them on
-// demand). Each count is one relaxed atomic add, done only when enabled.
+// scheduler's events to stderr at exit (std/native/llrt/entry.xo
+// rt_stats prints them from st, in its order of names). Each count is one
+// relaxed atomic add, done only when enabled.
 static int rtstats = -1; // -1 not read yet
 static struct {
 	int64_t spawn, steal, inject, wake, idle_sleep, spin_round, fiber_park, fiber_new, thread_wait, thread_wake, lock_slow, spin_yield;
@@ -1031,9 +1032,6 @@ static struct {
 	// (gotchas/linux-tsan-fiber-stacks.md)
 	int64_t fiber_live, fiber_peak;
 } st;
-static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield",
-                                       "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake",
-                                       "rt_section", "rt_defer", "rt_overflow", "fiber_live", "fiber_peak"};
 
 static void stats_init(void) {
 	const char *e = getenv("XO_RTSTATS");
@@ -1046,18 +1044,6 @@ static void stats_init(void) {
 			__atomic_fetch_add(&st.f, 1, __ATOMIC_RELAXED);                         \
 		}                                                                           \
 	} while (0)
-
-void xo_rt_stats(void) {
-	if (__atomic_load_n(&rtstats, __ATOMIC_RELAXED) <= 0) {
-		return;
-	}
-	int64_t *v = (int64_t *)&st;
-	fputs("xo rtstats:", stderr);
-	for (size_t i = 0; i < sizeof st_names / sizeof st_names[0]; i++) {
-		fprintf(stderr, " %s=%lld", st_names[i], (long long)__atomic_load_n(&v[i], __ATOMIC_RELAXED));
-	}
-	fputc('\n', stderr);
-}
 
 // ---------------------------------------------------------------------------
 // Real-time sections (core 6.5, decision 0133)
@@ -4752,22 +4738,6 @@ static void stop_grace_fire(xo_timer *t) {
 	(void)t;
 	xo_x_stop_cancel();
 }
-static int64_t stop_svc[11];
-static void stop_svc_init(void) {
-	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
-	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
-	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
-	stop_svc[3] = XO_ADDR(&stopsvc_chan);
-	stop_svc[4] = XO_ADDR(&stopsvc_close);
-	stop_svc[5] = XO_ADDR(&stopsvc_retain);
-	stop_svc[6] = XO_ADDR(&stopsvc_release);
-	stop_svc[7] = XO_ADDR(&stopsvc_exit);
-	stop_svc[8] = XO_ADDR(&stopsvc_now);
-	stop_svc[9] = XO_ADDR(&stop_grace_fire);
-	stop_svc[10] = XO_ADDR(&tw.in_main);
-	xo_x_stop_init(XO_ADDR(stop_svc));
-}
-
 #ifndef _WIN32
 static void on_signal(int sig) {
 	(void)sig;
@@ -4814,28 +4784,53 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 	TerminateProcess(GetCurrentProcess(), 2);
 	return EXCEPTION_CONTINUE_SEARCH;
 }
-
-__attribute__((unused)) static void xo_signals_init(void) {
-	ev_start();
-	SetConsoleCtrlHandler(on_console, TRUE);
-	AddVectoredExceptionHandler(1, on_overflow);
-	ULONG g = XO_W_GUARANTEE;
-	SetThreadStackGuarantee(&g);
-}
-#else
-// xo_signals_init installs the handlers (main, before the program runs).
-__attribute__((unused)) static void xo_signals_init(void) {
-	ev_start();
-	struct sigaction sa;
-	memset(&sa, 0, sizeof sa);
-	sa.sa_handler = on_signal;
-	sa.sa_flags = SA_RESTART;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGTERM, &sa, NULL);
-	signal(SIGPIPE, SIG_IGN);
-}
 #endif
+
+// The entry's services (std/native/llrt/entry.xo E_ words): functions
+// that take no arguments are called through rt.call_c2 as they are (the
+// two arguments it passes are ignored on every target's C convention).
+static void tw_init(void);
+void xo_consts_free(void);
+#ifdef XO_TIME
+void xo_x_tz_free(void);
+#endif
+static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
+	(void)b;
+	xo_mid_max = m;
+	main_heap.mid_max = m;
+	return 0;
+}
+
+static int64_t stop_svc[20];
+static void stop_svc_init(void) {
+	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
+	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
+	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
+	stop_svc[3] = XO_ADDR(&stopsvc_chan);
+	stop_svc[4] = XO_ADDR(&stopsvc_close);
+	stop_svc[5] = XO_ADDR(&stopsvc_retain);
+	stop_svc[6] = XO_ADDR(&stopsvc_release);
+	stop_svc[7] = XO_ADDR(&stopsvc_exit);
+	stop_svc[8] = XO_ADDR(&stopsvc_now);
+	stop_svc[9] = XO_ADDR(&stop_grace_fire);
+	stop_svc[10] = XO_ADDR(&tw.in_main);
+	stop_svc[11] = XO_ADDR(&tw_init);
+	stop_svc[12] = XO_ADDR(&ev_start);
+#ifdef _WIN32
+	stop_svc[13] = XO_ADDR(&on_console);
+	stop_svc[14] = XO_ADDR(&on_overflow);
+#else
+	stop_svc[13] = XO_ADDR(&on_signal);
+#endif
+	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
+	stop_svc[16] = XO_ADDR(&xo_consts_free);
+#ifdef XO_TIME
+	stop_svc[17] = XO_ADDR(&xo_x_tz_free);
+#endif
+	stop_svc[18] = XO_ADDR(&st);
+	stop_svc[19] = XO_ADDR(&rtstats);
+	xo_x_stop_init(XO_ADDR(stop_svc));
+}
 
 int64_t xo_stop_requested(void) { return xo_x_stop_requested(); }
 
@@ -4879,20 +4874,6 @@ static void select_untimer_op(int64_t t) { select_untimer((struct xo_timer *)(in
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata
 // include this file and bring their own main)
 
-// the program's arguments, for env.args (std.md 3.5)
-static int xo_argc;
-static char **xo_argv;
-
-// constants of collection types (xo_bytes.c)
-void xo_consts_free(void);
-
-// xo_x_tz_free (std/native/llrt/cabi_time.xo) releases the zones
-// std/native/llrt/tzhost.xo kept, in programs that use std/time
-// (XO_TIME): the leak check sees them freed.
-#ifdef XO_TIME
-void xo_x_tz_free(void);
-#endif
-
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
@@ -4907,69 +4888,28 @@ static void *run_main(void *arg) {
 	return NULL;
 }
 
-static void tw_init(void);
 static void tw_cleanup(void);
 static void xo_streams_free(void);
 
-#ifdef _WIN32
-// win_init sets up the process on Windows: standard streams in binary
-// mode (no \n to \r\n), UTF-8 console output, and the arguments as UTF-8
-// (from the UTF-16 command line; main's argv is in the ANSI code page).
-static void win_init(int *argc, char ***argv) {
-	_setmode(0, _O_BINARY);
-	_setmode(1, _O_BINARY);
-	_setmode(2, _O_BINARY);
-	SetConsoleOutputCP(CP_UTF8);
-	int n = 0;
-	LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
-	if (!w) {
-		return;
-	}
-	char **v = calloc((size_t)n + 1, sizeof(char *));
-	if (!v) {
-		xo_oom();
-	}
-	for (int i = 0; i < n; i++) {
-		int k = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
-		v[i] = malloc((size_t)(k > 0 ? k : 1));
-		if (!v[i]) {
-			xo_oom();
-		}
-		v[i][0] = 0;
-		if (k > 0) {
-			WideCharToMultiByte(CP_UTF8, 0, w[i], -1, v[i], k, NULL, NULL);
-		}
-	}
-	LocalFree(w);
-	*argc = n;
-	*argv = v;
-}
-#endif
-
-void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+// the program's start and end (std/native/llrt/entry.xo)
+void xo_x_entry_start(int64_t argc, int64_t argv, int64_t envp);
+void xo_x_entry_finish(void);
+void xo_x_rt_stats(void);
 
 int main(int argc, char **argv) {
 	obj_heap_init(&main_heap);
 	fault_init();
 #ifdef _WIN32
-	win_init(&argc, &argv);
+	// standard streams in binary mode (no \n to \r\n)
+	_setmode(0, _O_BINARY);
+	_setmode(1, _O_BINARY);
+	_setmode(2, _O_BINARY);
 #endif
-	xo_argc = argc;
-	xo_argv = argv;
-	// env.args, env.program, env.get, and env.vars read them in Xo
-	// (std/native/llrt/process.xo; `environ` is xo_w_environ() on Windows)
-	xo_x_proc_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
-	const char *mid = getenv("XO_HEAP_MID_MAX");
-	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
-		xo_mid_max = atoll(mid);
-		main_heap.mid_max = xo_mid_max;
-	}
-	if (getenv("XO_TEST")) {
-		// a test binary runs one test in the test world (xo_testing.c)
-		tw_init();
-	} else {
-		xo_signals_init();
-	}
+	// the arguments and the environment (env.args, env.program, env.get,
+	// and env.vars read them in Xo; `environ` is xo_w_environ() on
+	// Windows), XO_HEAP_MID_MAX, then the test world (XO_TEST) or the
+	// signal handlers
+	xo_x_entry_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 #ifdef XO_RT_TEST_THREADS
@@ -4998,35 +4938,13 @@ int main(int argc, char **argv) {
 #endif
 	xo_flush();
 	xo_x_stop_end();
-	xo_rt_stats();
+	xo_x_rt_stats();
 	xo_streams_free();
 	if (tw.on) {
 		tw_cleanup();
 	}
-	if (getenv("XO_LEAKCHECK")) {
-		xo_consts_free();
-#ifdef XO_TIME
-		xo_x_tz_free();
-#endif
-		int64_t live, total;
-		xo_rt_live(&live, &total);
-		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);
-	}
-	if (getenv("XO_HEAPSTATS")) {
-		// where the heap's memory went: the blocks on each class's free
-		// list at exit (every block ever carved, when nothing is live)
-		// and the chunks carved (diagnostics, bench/results/xo1-speed)
-		int64_t sum = 0;
-		for (int64_t c = 1; c <= XO_NCLASS; c++) {
-			int64_t n = xo_x_heap_nfree(c);
-			int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
-			if (n > 0) {
-				fprintf(stderr, "xo heapstats: class %lld size %lld free blocks %lld bytes %lld\n", (long long)c, (long long)size, (long long)n, (long long)(n * (size + 8)));
-			}
-			sum += n * (size + 8);
-		}
-		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks_now(), (long long)(xo_chunks_now() * (XO_CHUNK >> 20)), (long long)(sum >> 20));
-	}
+	// XO_LEAKCHECK's and XO_HEAPSTATS' reports
+	xo_x_entry_finish();
 	return 0;
 }
 #endif

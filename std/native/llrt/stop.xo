@@ -5,7 +5,8 @@
 // context, and a third exits with status 130 (in a test binary,
 // testing.run_main returns 130 instead). The signal handlers (on_signal,
 // on_console) and the entry stay C (xo_rt.c): a handler only counts the
-// signal and wakes the poller, whose thread calls signal here.
+// signal and wakes the poller, whose thread calls signal here (their
+// installation and the entry's work around main are entry.xo's).
 //
 // The state is a record from the C runtime's malloc (rt.heap_large),
 // made at start (init) and kept for the program's life, under its lock
@@ -44,7 +45,8 @@ const R_SIZE = 96
 /// channel), xo_chan_close (ch), h_retain (ch), h_release (ch), flush and
 /// _exit(130), the clock (tnow: monotonic ns, virtual in the test world),
 /// the grace timer's C function (it calls cancel), and the address of
-/// the test world's in_main (a C int).
+/// the test world's in_main (a C int). Words 88 on are the entry's
+/// (entry.xo).
 const S_TADD = 0
 const S_TDEL = 8
 const S_CANCEL = 16
@@ -76,9 +78,10 @@ const ACQ_REL = 3
 
 fn rec() -> Int { rt.mem_load(rt.static_word(W_REC), 0, 8) }
 
-fn svc(k: Int, a: Int) -> Int { rt.call_c2(rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8), a, 0) }
+fn svc(k: Int, a: Int) -> Int { rt.call_c2(svc_word(k), a, 0) }
 
-fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
+/// Word k of the C's services record (entry.xo reads its own).
+pub fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
 
 fn lk() {
   let l = rec()
