@@ -2503,6 +2503,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0605` | error | checker | name is not `pub` in its module, or the std type is an opaque handle (core 1.5) |
 | `XO0606` | error | checker | method declared outside the module of its type (core 3.4) |
 | `XO0607` | error | checker | `break` or `continue` outside a loop, or an unknown label (core 3.5) |
+| `XO0608` | error | checker | two C ABI export modules of the native std (std/native/llrt/cabi*.xo) define the same function name, one symbol `xo_x_<name>` (decision 0207) |
 | `XO0701` | error | checker | effect performed outside the declared set (core 6.2) |
 | `XO0702` | error | checker | unknown effect label (core 6.1) |
 | `XO0703` | warning | vet | effect declared in `uses` is never performed (core 6.2) |

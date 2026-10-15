@@ -256,3 +256,17 @@ test "real_path follows the links of every element, as getcwd reports" {
   expect(real_path(os.fs, "rel/../a")) == "a"
   expect(real_path(os.fs, "/")) == "/"
 }
+
+test "C ABI export names that two export modules define are paired, XO0608's check" {
+  expect(export_clashes(["a", "b", "c"]).len()) == 0
+  let got = export_clashes(["a", "poll_wait", "b", "poll_wait", "a"])
+  expect(got.len()) == 2
+  expect(got[0].0) == 1
+  expect(got[0].1) == 3
+  expect(got[1].0) == 0
+  expect(got[1].1) == 4
+  expect(xo_x_export_module("native/llrt/cabi")) == true
+  expect(xo_x_export_module("native/llrt/cabi_poll")) == true
+  expect(xo_x_export_module("native/llrt/cabi_libc")) == false
+  expect(xo_x_export_module("native/llrt/poll")) == false
+}

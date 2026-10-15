@@ -1,0 +1,64 @@
+// The C ABI export modules' shared namespace (decision 0207): every top
+// level function of std/native/llrt/cabi.xo and cabi_*.xo is the symbol
+// xo_x_<name>, so two of those modules defining the same name collide.
+// The backends only noticed when the assembler or linker saw the second
+// definition (gotchas/duplicate-cabi-export-name.md); the checker reports
+// XO0608 at the second definition, with the first as a note.
+use github.com/xo-lang/xo/selfhost/parser
+
+/// Whether module path is a C ABI export module whose functions are
+/// xo_x_<name> (cabi_libc's keep their C names, malloc and the rest).
+fn xo_x_export_module(path: Str) -> Bool {
+  path == "native/llrt/cabi" || (path.starts_with("native/llrt/cabi_") && path != "native/llrt/cabi_libc")
+}
+
+/// The pairs (first, second) of indices into names whose names are equal,
+/// the second the later one: each repeat is paired with the name's first
+/// index.
+fn export_clashes(names: List[Str]) -> List[(Int, Int)] {
+  var first: Map[Str, Int] = {}
+  var out: List[(Int, Int)] = []
+  for (i, n) in names.indexed() {
+    match first.get(n) {
+      Some(j) => out.push((j, i))
+      None => first[n] = i
+    }
+  }
+  out
+}
+
+/// XO0608: a function name two C ABI export modules both define. The
+/// modules go in path order and their functions in name order, so the
+/// report does not depend on the load order.
+fn (var c: Checker) check_export_names() {
+  var paths: List[Str] = []
+  var by_path: Map[Str, Int] = {}
+  for m in c.order {
+    if c.mods[m].native && xo_x_export_module(c.mods[m].path) {
+      paths.push(c.mods[m].path)
+      by_path[c.mods[m].path] = m
+    }
+  }
+  var names: List[Str] = []
+  var objs: List[Int] = []
+  for p in paths.sort() {
+    let m = by_path.get(p) ?? -1
+    var fns: List[Str] = []
+    for (n, o) in c.mods[m].members {
+      if c.objs[o].kind == ObjKind.Func && c.objs[o].recv < 0 {
+        fns.push(text(n))
+      }
+    }
+    for n in fns.sort() {
+      names.push(n)
+      objs.push(c.mods[m].members.get(n.bytes()) ?? -1)
+    }
+  }
+  for (a, b) in export_clashes(names) {
+    let o = objs[b]
+    let name = c.objs[o].name
+    let sp = Span{start: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}, end: parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col + name.len()}}
+    let d = c.report(c.objs[o].file, "XO0608", sp, "C ABI export `${names[b]}` is defined in two export modules; both would be the symbol `xo_x_${names[b]}` (decision 0207)")
+    c.note_obj(d, objs[a], "the other definition")
+  }
+}

@@ -13,6 +13,7 @@ fn (var c: Checker) run() -> () ! Str {
   if !missing.is_empty() {
     return Err(missing)
   }
+  c.check_export_names()
   for m in c.order {
     c.resolve_types(m)
   }

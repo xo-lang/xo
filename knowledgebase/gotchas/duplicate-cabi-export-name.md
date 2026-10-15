@@ -15,6 +15,9 @@ export names of different modules, so the clash shows up only when the
 backend writes both symbols.
 
 Fix: give the export a name no cabi module has (`poll_park_wait`).
-Before adding one, `grep -n "^fn <name>" std/native/llrt/cabi*.xo`. A
-check in selfhost/ssa build.xo declare_exports_of, reporting a name
-two export modules define, would turn this into a compile error.
+Since 2026-10-15 the checker reports it as XO0608 (selfhost/check
+exports.xo, run after the declarations), at the second definition with
+the first as a note, before any code is generated. The native runtime's
+modules are loaded with `native` set and `is_std` false
+(load_runtime_module), so a check over them must test `native`: the
+first version tested `is_std` and never fired.

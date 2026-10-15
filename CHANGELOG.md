@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Checker: XO0608, a function name two C ABI export modules of the
+  native std (std/native/llrt/cabi*.xo, not cabi_libc) both define,
+  which would be one symbol xo_x_<name>; reported at check time with
+  the other definition as a note, where the assembler or linker failed
+  before (gotchas/duplicate-cabi-export-name.md).
 - Native runtime (decision 0233): optional features register their own
   end functions when they start (std/native/llrt/atexit.xo): tzhost.xo
   keep registers cabi_time.xo's tz_free, hserve.xo, hclient.xo and
