@@ -130,6 +130,9 @@ pub const SV_STREAMS = 192
 pub const SV_LISTENER_FREE = 216
 pub const SV_CONN_FREE = 224
 pub const SV_DNS = 232
+/// The address of cabi.xo's stdin_pump_main, standard input's pump
+/// thread on Windows (stdin.xo win_open; 0 elsewhere).
+pub const SV_STDIN_PUMP = 248
 
 /// Sets the address of the C's services record (at start).
 pub fn init(svc: Int) {

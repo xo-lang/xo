@@ -1790,6 +1790,9 @@ XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 // it), the free functions of a task and a
 // scope (tasks.xo makes them), whether ThreadSanitizer is on, and the
 // statistics' switch.
+#ifdef _WIN32
+int64_t xo_x_stdin_pump_main(int64_t rec);
+#endif
 static struct {
 	void *pool;
 	void (*task_free)(void *);
@@ -1815,6 +1818,7 @@ static struct {
 	void (*listener_free)(void *); // netconn.xo's handles' free functions (ctx.xo SV_LISTENER_FREE)
 	void (*conn_free)(void *);
 	int64_t dns[2]; // the resolver's state (dns.xo lookup)
+	int64_t stdin_pump; // stdin.xo's pump thread on Windows (cabi.xo stdin_pump_main)
 } svc = {NULL, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
@@ -1823,12 +1827,12 @@ static struct {
 #endif
 	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
          XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0},
-	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}};
+	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}, 0};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
                    offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
                    offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
-                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232,
+                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232 && offsetof(__typeof__(svc), stdin_pump) == 248,
                "ctx.xo SV_*");
 
 static void *pool_rec(void) { return svc.pool; }
@@ -2064,6 +2068,9 @@ static int64_t svc_addr(void) {
 	svc.fibers = &fibers;
 	svc.fiber_main = XO_ADDR(xo_x_fiber_main);
 	svc.worker_main = XO_ADDR(xo_x_worker_main);
+#ifdef _WIN32
+	svc.stdin_pump = XO_ADDR(xo_x_stdin_pump_main);
+#endif
 	return XO_ADDR(&svc);
 }
 

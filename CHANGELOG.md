@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows standard input (zero-C B32 part 2): the pump that joins a pipe
+  or the console to a loopback socket is Xo (stdin.xo); xo_stdin.c is
+  deleted and xo_win.c is at 395 lines. UNTESTED on windows (the 15
+  http, net, fs, proc, and stdin goldens cross link for both
+  architectures).
 - Windows runtime (zero-C B32 part 1): xo_win.c 914 to 484 lines, the
   shims nothing reached deleted; the UTF-8 environment built in Xo
   (process.xo win_env). Windows cross builds now link on the Mac

@@ -115,10 +115,9 @@ xo_rstr *xo_rs_append(xo_rstr *a, int64_t an, xo_rstr *b, int64_t bn, int64_t *l
 #include "xo_fs.c"
 #endif
 
-// standard input reads (decisions 0088, 0102), likewise (XO_STDIN)
-#ifdef XO_STDIN
-#include "xo_stdin.c"
-#endif
+// standard input reads are std/native/llrt/stdin.xo's on every OS (the
+// zero-C audit's B32 part 2 removed xo_stdin.c; XO_STDIN, still passed
+// by the driver for programs that read standard input, selects nothing)
 
 // Proc.run and FakeProc.on_run (decision 0107), compiled only into
 // programs that call them (XO_PROC)

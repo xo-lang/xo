@@ -35,6 +35,7 @@ use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/selects
 use native/llrt/tasks
+use native/llrt/stdin
 use native/llrt/stdio
 use native/llrt/stop
 use native/llrt/sysio
@@ -121,6 +122,11 @@ fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
 
 /// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
 fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
+
+/// Standard input's pump thread on Windows (stdin.xo pump_main): its
+/// address is the services record's (ctx.xo SV_STDIN_PUMP), a
+/// CreateThread entry taking the pump's record.
+fn stdin_pump_main(rec: Int) -> Int { stdin.pump_main(rec) }
 
 /// The hooks around a fiber switch (sanhook.xo hook, decision 0232):
 /// rt.sched_hook of sched.xo calls this export (xo_rt.c's xo_sched_hook

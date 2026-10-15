@@ -10,8 +10,11 @@
 // calls; on Windows only the registration and the read stay C
 // (xo_stdin.c: a pump thread into a loopback socket, xo_win.c).
 use native/llrt/obj
+use native/llrt/ctx
 use native/llrt/poll
+use native/llrt/pool
 use native/llrt/raw
+use native/llrt/sock
 use native/llrt/stdio
 use native/llrt/stop
 use native/llrt/sysio
@@ -274,7 +277,7 @@ fn open() -> Int {
   if target.os == TargetOs.Windows {
     // the poller waits on sockets only: a pipe or the console is pumped
     // into a loopback socket by a thread of its own (decision 0197)
-    return rt.stdin_open()
+    return win_open()
   }
   if e == 0 && (mode & 61440) != 32768 {
     return poll.pd_new(0, false)
@@ -312,12 +315,151 @@ fn lnr(arm64: Int, amd64: Int) -> Int {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Windows (was xo_stdin.c and xo_win.c's pump, the zero-C audit's B32
+// part 2; UNTESTED on windows): the poller waits on sockets only, so a
+// pipe or the console is read by a thread of its own and copied into a
+// loopback socket pair, whose program end the reads use and the poller
+// waits on.
+
+/// The poller record's descriptor (poll.xo D_FD, a C int: the socket).
+const PD_FD = 8
+/// GetFileType's FILE_TYPE_CHAR (the console) and FILE_TYPE_PIPE.
+const FT_CHAR = 2
+const FT_PIPE = 3
+/// The pump's buffer.
+const PUMP_BUF = 65536
+
+/// Registers standard input: its pd when it is a pipe or the console
+/// (pumped), else 0 (a file, read directly).
+fn win_open() -> Int {
+  let h = sys_windows.GetStdHandle(-10)
+  let ft = Int(sys_windows.GetFileType(h))
+  if ft != FT_PIPE && ft != FT_CHAR {
+    return 0
+  }
+  let (prog, thr) = loopback_pair()
+  if prog < 0 {
+    return 0
+  }
+  // the thread's end blocks (ioctlsocket FIONBIO with a u_long 0)
+  let z = obj_scratch()
+  rt.mem_store(z, 0, 0, 4)
+  let _b = sys_windows.ioctlsocket(thr, 2147772030, z)
+  let rec = rt.heap_large(16)
+  rt.mem_store(rec, 0, h, 8)
+  rt.mem_store(rec, 8, thr, 8)
+  if !pool.thread_start(rt.mem_load(ctx.svc(), ctx.SV_STDIN_PUMP, 8), rec) {
+    let _c = sock.close(prog)
+    let _d = sock.close(thr)
+    rt.heap_release(rt.int_wrap(1, rec, 8))
+    return 0
+  }
+  poll.pd_new(prog, false)
+}
+
+/// Two connected loopback TCP sockets, both nonblocking (was xo_win.c
+/// xo_w_socketpair): (the accepted one, the connecting one), or (-1, -1).
+fn loopback_pair() -> (Int, Int) {
+  // AF_INET 2, SOCK_STREAM 1, IPPROTO_TCP 6
+  let l = sock.socket(2, 1, 6)
+  if l < 0 {
+    return (-1, -1)
+  }
+  // a sockaddr_in for 127.0.0.1, port 0 (the system picks): family 2,
+  // the port, the address in network order
+  let sa = obj_scratch()
+  rt.mem_set(sa, 0, 16)
+  rt.mem_store(sa, 0, 2, 2)
+  rt.mem_store(sa, 4, 16777343, 4)
+  let lenp = rt.int_wrap(0, sa, 16)
+  rt.mem_store(lenp, 0, 16, 4)
+  var c = -1
+  var s = -1
+  if sock.bind(l, sa, 16) == 0 && sock.listen(l, 1) == 0 && sock.sockname(l, sa, lenp) == 0 {
+    c = sock.socket(2, 1, 6)
+    if c >= 0 && sock.connect(c, sa, 16) == 0 {
+      s = sock.accept(l, 0)
+    }
+  }
+  let _l = sock.close(l)
+  if s < 0 {
+    if c >= 0 {
+      let _c = sock.close(c)
+    }
+    return (-1, -1)
+  }
+  let _n = sock.nonblock(s)
+  let _m = sock.nonblock(c)
+  (s, c)
+}
+
+/// The pump's thread (cabi.xo's stdin_pump_main, its address in the
+/// services record, ctx.xo SV_STDIN_PUMP): copies what standard input
+/// reads to the socket until the end of input (every writer closed the
+/// pipe, or the console's Ctrl-Z) or the program closed its end, then
+/// closes its socket. rec: the handle and the socket.
+pub fn pump_main(rec: Int) -> Int {
+  let h = rt.mem_load(rec, 0, 8)
+  let s = rt.mem_load(rec, 8, 8)
+  rt.heap_release(rt.int_wrap(1, rec, 8))
+  let buf = rt.heap_large(PUMP_BUF + 8)
+  let done = rt.int_wrap(0, buf, PUMP_BUF)
+  var go = true
+  while go {
+    rt.mem_store(done, 0, 0, 4)
+    if Int(sys_windows.ReadFile(h, buf, PUMP_BUF, done, 0)) == 0 {
+      break
+    }
+    let n = rt.mem_load(done, 0, 4)
+    if n == 0 && Int(sys_windows.GetFileType(h)) == FT_CHAR {
+      break
+    }
+    var at = 0
+    while at < n {
+      let w = sock.send(s, rt.int_wrap(0, buf, at), rt.int_wrap(1, n, at), 0)
+      if w <= 0 {
+        go = false
+        break
+      }
+      at = rt.int_wrap(0, at, w)
+    }
+  }
+  let _c = sock.close(s)
+  rt.heap_release(rt.int_wrap(1, buf, 8))
+  0
+}
+
+/// sysread on Windows: the pumped socket's recv (WAIT when it has
+/// nothing yet), or a direct ReadFile of a file (0 at its end).
+fn win_sysread(p: Int, n: Int, pd: Int) -> Int {
+  if pd != 0 {
+    let k = sock.recv(rt.mem_load(pd, PD_FD, 4), p, n, 0)
+    // the Windows C runtime's EWOULDBLOCK (sock.xo wsa_errno)
+    if k == -140 {
+      return WAIT
+    }
+    return k
+  }
+  let done = obj_scratch()
+  rt.mem_store(done, 0, 0, 4)
+  if Int(sys_windows.ReadFile(sys_windows.GetStdHandle(-10), p, n, done, 0)) == 0 {
+    // ERROR_BROKEN_PIPE (109) and ERROR_HANDLE_EOF (38): the end
+    let e = Int(sys_windows.GetLastError())
+    if e == 109 || e == 38 {
+      return 0
+    }
+    return -5
+  }
+  rt.mem_load(done, 0, 4)
+}
+
 /// Reads at most n bytes into p: their count, 0 at the end of input, WAIT
 /// when the poller's descriptor (pd, not 0) has nothing yet, else minus
 /// errno. EINTR and EAGAIN on a direct read are retried.
 fn sysread(p: Int, n: Int, pd: Int) -> Int {
   if target.os == TargetOs.Windows {
-    return rt.stdin_sysread(p, n, pd)
+    return win_sysread(p, n, pd)
   }
   let darwin = target.os == TargetOs.Darwin
   let eagain = if darwin { 35 } else { 11 }

@@ -531,9 +531,3 @@ fn env_vars() -> List[Str]
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 
-/// Standard input's Windows part (xo_stdin.c) under stdin.xo: the
-/// poller's registration of the pumped descriptor (0: read directly) and
-/// a raw read into p (the count, 0 at the end, -1000000 to wait, else
-/// minus errno); a fault elsewhere (selfhost/ssa call.xo).
-fn stdin_open() -> Int
-fn stdin_sysread(p: Int, n: Int, pd: Int) -> Int
