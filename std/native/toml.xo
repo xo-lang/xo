@@ -6,7 +6,6 @@
 use std/toml
 use std/json as js
 use native/llrt/scan
-use native/rt
 use native/llrt/raw
 
 enum TomlVal {
