@@ -664,13 +664,15 @@ fn (var g: G) call_op(v: Int) {
     "str.concat_int" | "str.concat_float" => {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
-      let fname = if name == "str.concat_float" { "xo_rs_concat_float" } else { "xo_rs_concat_int" }
+      // obj.xo and cabi.xo through their exports (the C entries stay for
+      // code of earlier compilers)
+      let fname = if name == "str.concat_float" { "xo_x_obj_rs_concat_float" } else { "xo_x_obj_rs_concat_int" }
       let obj = g.rt(fname, [rsrc(a[0]), rsrc(a[1]), rsrc(b[0]), framesrc()], [false])
       let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
       g.set(v, [obj[0], n])
     }
     "str.of_int" | "str.of_float" => {
-      let fname = if name == "str.of_float" { "xo_rs_of_float" } else { "xo_rs_of_int" }
+      let fname = if name == "str.of_float" { "xo_x_obj_rs_of_float" } else { "xo_x_obj_rs_of_int" }
       let a = g.words(x.args[0])
       let obj = g.rt(fname, [rsrc(a[0]), framesrc()], [false])
       let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
@@ -1486,6 +1488,11 @@ fn (var g: G) rt_call(v: Int) {
   if name0 is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     // budget.xo through its exports, likewise
     name = "xo_x_budget_${name0.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  if name0 is "rt.fault_raise" | "rt.fault_continue" | "rt.fault_take" | "rt.fault_msg" | "rt.fault_loc" | "rt.fault_detail" | "rt.fault_at" {
+    // fault.xo's raise, continue, and record through their exports,
+    // likewise
+    name = "xo_x_${name0.trim_prefix("rt.")}"
   }
   if name0 is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
     // heapos.xo's platform calls (B21) and anyval.xo through their

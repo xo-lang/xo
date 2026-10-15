@@ -705,3 +705,29 @@ fn consts_free() { consts.free_all() }
 fn obj_str_eq(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.str_eq(a, an, b, bn) }
 
 fn obj_str_cmp(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.str_cmp(a, an, b, bn) }
+
+/// Number text for generated code (xo_rs_concat_int, rs_concat_float,
+/// rs_of_int, rs_of_float stay for code of earlier compilers): the string
+/// object, its length stored at lenp.
+fn obj_rs_concat_int(a: Int, an: Int, v: Int, lenp: Int) -> Int { obj.rs_concat_int(a, an, v, lenp) }
+
+fn obj_rs_of_int(v: Int, lenp: Int) -> Int { obj.rs_of_int(v, lenp) }
+
+fn obj_rs_concat_float(a: Int, an: Int, f: Float, lenp: Int) -> Int {
+  let t = num.float_text(f)
+  let n = t.len()
+  rt.mem_store(lenp, 0, rt.int_wrap(0, an, n), 8)
+  let s = obj.rs_append(a, an, raw.data(t), n)
+  // t is used after the copy, so it is released only then
+  let _k = t.len()
+  s
+}
+
+fn obj_rs_of_float(f: Float, lenp: Int) -> Int {
+  let t = num.float_text(f)
+  let n = t.len()
+  rt.mem_store(lenp, 0, n, 8)
+  let s = obj.rs_append(obj.rs_with_cap(n), 0, raw.data(t), n)
+  let _k = t.len()
+  s
+}

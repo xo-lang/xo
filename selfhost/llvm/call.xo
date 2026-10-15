@@ -251,11 +251,16 @@ fn (var g: Gen) call(v: Int) {
       let (ao, _, an) = g.str_parts(a0)
       let slot = g.alloca("i64")
       let a1 = g.op(args[1])
-      let obj = if name == "str.concat_int" {
-        g.def("call ptr @xo_rs_concat_int(ptr ${ao}, i64 ${an}, i64 ${a1}, ptr ${slot})")
+      // obj.xo and cabi.xo through their exports, not inlined (the C
+      // entries stay for code of earlier compilers)
+      let pa = g.def("ptrtoint ptr ${ao} to i64")
+      let ps = g.def("ptrtoint ptr ${slot} to i64")
+      let r = if name == "str.concat_int" {
+        g.def("call i64 @xo_x_obj_rs_concat_int(i64 ${pa}, i64 ${an}, i64 ${a1}, i64 ${ps}) #8")
       } else {
-        g.def("call ptr @xo_rs_concat_float(ptr ${ao}, i64 ${an}, double ${a1}, ptr ${slot})")
+        g.def("call i64 @xo_x_obj_rs_concat_float(i64 ${pa}, i64 ${an}, double ${a1}, i64 ${ps}) #8")
       }
+      let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("load i64, ptr ${slot}")
       g.mk_str(v, obj, n)
     }
@@ -282,9 +287,11 @@ fn (var g: Gen) call(v: Int) {
     }
     "str.of_int" | "str.of_float" => {
       let slot = g.alloca("i64")
-      let (fnn, at) = if name == "str.of_float" { ("@xo_rs_of_float", "double") } else { ("@xo_rs_of_int", "i64") }
+      let (fnn, at) = if name == "str.of_float" { ("@xo_x_obj_rs_of_float", "double") } else { ("@xo_x_obj_rs_of_int", "i64") }
       let a0 = g.op(args[0])
-      let obj = g.def("call ptr ${fnn}(${at} ${a0}, ptr ${slot})")
+      let ps = g.def("ptrtoint ptr ${slot} to i64")
+      let r = g.def("call i64 ${fnn}(${at} ${a0}, i64 ${ps}) #8")
+      let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("load i64, ptr ${slot}")
       g.mk_str(v, obj, n)
     }
@@ -1272,6 +1279,11 @@ fn xo_export(name: Str) -> Str {
   }
   if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     return "xo_x_budget_${name.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  if name is "rt.fault_raise" | "rt.fault_continue" | "rt.fault_take" | "rt.fault_msg" | "rt.fault_loc" | "rt.fault_detail" | "rt.fault_at" {
+    // fault.xo's raise, continue, and record through their exports
+    // (xo-fa; the C xo_fault_* stay for code of earlier compilers)
+    return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
     // heapos.xo's platform calls (B21) and anyval.xo through their

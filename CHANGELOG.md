@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (generated-code entries): faults (raise, continue,
+  take, msg, loc, detail, at) through fault.xo's exports, and a number's
+  text (`a + "${n}"`, `"${n}"` for Int and Float) through obj.xo's and
+  cabi.xo's, on both backends; the LLVM module head drops the
+  declarations of the C fault raisers and number builders. The C entries
+  stay for seed 0.12.0's code.
 - Native backends (generated-code entries): string equality and order
   are obj.xo's str_eq and str_cmp (rt.mem_cmp) called through their
   exports on both backends; xo_str_eq and xo_str_cmp stay for code of

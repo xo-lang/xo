@@ -138,7 +138,7 @@ xo_f_main:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	b xo_fault_continue
+	b xo_x_fault_continue
 .LpGL1jtk_f1_fault1:
 	sub x15, x20, x0
 	mov x2, x0
@@ -302,7 +302,7 @@ xo_f_sieve:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
 .LpGL1jtk_f2_b26:
-	bl xo_fault_continue
+	bl xo_x_fault_continue
 	mov x0, #0
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]

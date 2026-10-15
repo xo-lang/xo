@@ -306,6 +306,57 @@ pub fn str_cmp(a: Int, an: Int, b: Int, bn: Int) -> Int {
   if an < bn { -1 } else if an > bn { 1 } else { 0 }
 }
 
+/// The bytes of the decimal text of v (and its sign).
+fn int_text_len(v: Int) -> Int {
+  var n = if v < 0 { 2 } else { 1 }
+  var x = v / 10
+  while x != 0 {
+    n = addw(n, 1)
+    x = x / 10
+  }
+  n
+}
+
+/// Writes the n bytes of v's decimal text at p (int_text_len(v) bytes).
+fn put_int(p: Int, n: Int, v: Int) {
+  var i = n
+  var x = v
+  while true {
+    var d = x % 10
+    if d < 0 {
+      d = 0 - d
+    }
+    i = subw(i, 1)
+    rt.mem_store(p, i, addw(48, d), 1)
+    x = x / 10
+    if x == 0 {
+      break
+    }
+  }
+  if v < 0 {
+    rt.mem_store(p, 0, 45, 1)
+  }
+}
+
+/// a + "${v}" for generated code (xo_rs_concat_int): the string object,
+/// its length (an plus the digits') stored at lenp.
+pub fn rs_concat_int(a: Int, an: Int, v: Int, lenp: Int) -> Int {
+  let n = int_text_len(v)
+  rt.mem_store(lenp, 0, addw(an, n), 8)
+  let s = reserve(a, an, n)
+  put_int(addw(addw(s, S_HDR), an), n, v)
+  s
+}
+
+/// "${v}" for generated code (xo_rs_of_int), its length stored at lenp.
+pub fn rs_of_int(v: Int, lenp: Int) -> Int {
+  let n = int_text_len(v)
+  rt.mem_store(lenp, 0, n, 8)
+  let s = rs_with_cap(n)
+  put_int(addw(s, S_HDR), n, v)
+  s
+}
+
 /// rl_copy for generated code (xo_rl_copy).
 pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_word(), l, esize, dup, drop) }
 
