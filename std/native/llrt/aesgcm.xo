@@ -656,9 +656,56 @@ fn reduce(v0a: Int, v1a: Int, v2a: Int, v3a: Int) -> (Int, Int) {
   (v3b, v2)
 }
 
+/// ghash with the CPU's carry-less multiply: a free function over H's
+/// words (no Gcm passed per block), the products and the reduction in
+/// the loop, wrapping indexes.
+fn ghash_hw(h0: Int, h1: Int, h2: Int, y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
+  var y1 = y1a
+  var y0 = y0a
+  var i = 0
+  while i < n {
+    var w1 = 0
+    var w0 = 0
+    if rt.int_wrap(0, i, 16) <= n {
+      w1 = be64(b, i)
+      w0 = be64(b, rt.int_wrap(0, i, 8))
+    } else {
+      // the last block, zero padded
+      let j = rt.int_wrap(0, i, 8)
+      w1 = if j <= n { be64(b, i) } else { rt.int_wrap(7, tail_word(b, i, n), 0) }
+      w0 = if j < n { rt.int_wrap(7, tail_word(b, j, n), 0) } else { 0 }
+    }
+    let x1 = y1 ^ w1
+    let x0 = y0 ^ w0
+    let x2 = x0 ^ x1
+    let a0 = cpu.clmul_lo(x0, h0)
+    let b0 = cpu.clmul_hi(x0, h0)
+    let a1 = cpu.clmul_lo(x1, h1)
+    let b1 = cpu.clmul_hi(x1, h1)
+    let z2l = cpu.clmul_lo(x2, h2) ^ a0 ^ a1
+    let z2h = cpu.clmul_hi(x2, h2) ^ b0 ^ b1
+    // reduce, inline
+    let v1a = b0 ^ z2l
+    let v2a = a1 ^ z2h
+    let v3 = shl(b1, 1) | shr(v2a, 63)
+    var v2 = shl(v2a, 1) | shr(v1a, 63)
+    var v1 = shl(v1a, 1) | shr(a0, 63)
+    let v0 = shl(a0, 1)
+    v2 = v2 ^ v0 ^ shr(v0, 1) ^ shr(v0, 2) ^ shr(v0, 7)
+    v1 = v1 ^ shl(v0, 63) ^ shl(v0, 62) ^ shl(v0, 57)
+    y1 = v3 ^ v1 ^ shr(v1, 1) ^ shr(v1, 2) ^ shr(v1, 7)
+    y0 = v2 ^ shl(v1, 63) ^ shl(v1, 62) ^ shl(v1, 57)
+    i = rt.int_wrap(0, i, 16)
+  }
+  (y1, y0)
+}
+
 /// GHASH of the first n bytes of b (zero padded to a block) after the
 /// state (y1, y0).
 fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
+  if (g.hw & cpu.HW_CLMUL) != 0 {
+    return ghash_hw(g.h0, g.h1, g.h2, y1a, y0a, b, n)
+  }
   var y1 = y1a
   var y0 = y0a
   var i = 0

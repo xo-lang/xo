@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- AES-GCM: GHASH with the CPU's multiply as a loop over H's words (no
+  Gcm passed per block). AES-128-GCM on LLVM 14.1M instructions a MiB
+  (Mbed 14.0M; TLS 1.3 13.4M against 13.9M), on arm64 17.7M.
 - AES-GCM: the keystream xor written in place into the output, and the
   body read in place for its tag (no copy). AES-128-GCM on LLVM 17.9M to
   15.6M instructions a MiB (Mbed 14.0M), on arm64 26.3M to 21.0M.
