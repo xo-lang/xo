@@ -5,6 +5,8 @@ use std/http
 use std/json as js
 use std/log
 use std/task
+use native/llrt/hconn
+use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
@@ -478,7 +480,7 @@ fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.deco
 /// The body is produced by f while the response is sent; dispatched in
 /// process it is collected (std.md 4.3, decision 0083).
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> http.Response uses fx {
-  let r = Response{status: status, headers: {}, body: "".bytes(), stream: rthttp.stream_put(rt.any_of(f))}
+  let r = Response{status: status, headers: {}, body: "".bytes(), stream: hserve.stream_put(rt.any_of(f))}
   rt.cast[Response, http.Response](r)
 }
 
@@ -490,12 +492,12 @@ fn collect(r0: http.Response) -> http.Response {
     return r0
   }
   var body = "".bytes()
-  let fs = rthttp.stream_get(r.stream, false)
+  let fs = hserve.stream_get(r.stream, false)
   if !fs.is_empty() {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
-      let s = rthttp.sink_buf()
+      let s = hserve.sink_buf()
       f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as std/rt's collect")
-      body = rthttp.sink_take(s)
+      body = hserve.sink_take(s)
     }
   }
   rt.cast[Response, http.Response](r with {body: body, stream: 0})
@@ -505,7 +507,7 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if !rthttp.sink_write(w.s, data) {
+  if !hserve.sink_write(w.s, data) {
     return Err(IoErr.Io(msg: "write: connection closed"))
   }
 }
@@ -514,7 +516,7 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if !rthttp.sink_flush(w.s) {
+  if !hserve.sink_flush(w.s) {
     return Err(IoErr.Io(msg: "flush: connection closed"))
   }
 }
@@ -545,12 +547,12 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   if s.tls_on && s.tls.is_empty() {
     return Err(http.HttpErr.Io(msg: "http: with_tls needs a certificate"))
   }
-  let srv = rthttp.srv_new()
-  defer rthttp.srv_close(srv)
+  let srv = hserve.srv_new()
+  defer hserve.srv_close(srv)
   for c in s.tls {
     rthttp.srv_tls(srv, c.c)
   }
-  let conns = rthttp.srv_group(srv)
+  let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
   var failed = ""
@@ -559,13 +561,13 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       // a stop request (core 7.5): stop accepting, close idle
       // connections
       let _ = task.stopping().recv()
-      rthttp.srv_stop(srv)
+      hserve.srv_stop(srv)
       l.close()
     })
     while {
       match l.accept() {
         Ok(c) => {
-          let hc = rthttp.hc_new(srv, c)
+          let hc = hserve.hc_new(srv, c)
           conns.spawn_background(fn() { serve_conn(hc, r) })
         }
         Err(NetErr.Io(msg)) => {
@@ -578,8 +580,8 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       }
     }
   }
-  rthttp.srv_stop(srv)
-  rthttp.srv_wait(srv)
+  hserve.srv_stop(srv)
+  hserve.srv_wait(srv)
   if !failed.is_empty() {
     return Err(http.HttpErr.Io(msg: failed))
   }
@@ -600,8 +602,8 @@ fn serve_mem(l: Listener, r: Router) {
 
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router) {
-  defer rthttp.hc_close(hc)
-  let h2 = rthttp.hc_h2(hc)
+  defer hserve.hc_close(hc)
+  let h2 = hserve.hc_h2(hc)
   if h2 != 0 {
     // HTTP/2 (decision 0121, std/native/llrt/h2srv.xo): each request is
     // a task of its own, as net/http runs a handler per stream; the
@@ -651,14 +653,14 @@ fn respond(hc: rthttp.HConn, h1: Bool, req: Request, r: Router) -> Bool {
   }
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
-    let s = rthttp.sink_conn(hc, resp.status)
-    let fs = rthttp.stream_get(resp.stream, true)
+    let s = hserve.sink_conn(hc, resp.status)
+    let fs = hserve.stream_get(resp.stream, true)
     if !fs.is_empty() {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
         f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
       }
     }
-    return rthttp.sink_end(s)
+    return hserve.sink_end(s)
   }
   if h1 {
     return http1.respond(hc, resp.status, resp.body)
@@ -689,7 +691,7 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
     port = Some(q.port)
   }
   let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: rthttp.hc_remote_ip(rd.conn())}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn())}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
@@ -716,7 +718,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
     port = Some(p)
   }
   let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: rthttp.hc_remote_ip(q.conn)}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn)}
 }
 
 // ---------------------------------------------------------------------------

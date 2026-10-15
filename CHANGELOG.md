@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 3): the HTTP server's
+  registration and connections, streamed bodies (sinks and the streams
+  table), request values (the peer's address), and the client's dial,
+  TLS start, and close are Xo (std/native/llrt/hconn.xo, hserve.xo,
+  hclient.xo); Any values and fault_at are anyval.xo and cabi.xo's, with
+  C forwarders kept for generated code. xo_http.c 1,079 to 115 lines
+  (the Mbed TLS wrappers, weak free functions, and forwarders).
+  UNTESTED on linux and windows.
 - Native runtime (zero-C audit item B31, part 3, decision 0202): X.509
   chain verification in Xo (std/native/llrt/x509verify.xo, as Go 1.26's
   Certificate.Verify: chains through the intermediates to a root, roots

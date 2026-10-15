@@ -1959,6 +1959,13 @@ void xo_x_select_free(int64_t p);
 void xo_x_atomic_free(int64_t p);
 void xo_x_fs_file_free(int64_t p);
 void xo_x_fs_lock_free(int64_t p);
+void xo_x_any_free(int64_t p);
+// std/http's handles (cabi_http.xo; weak in xo_http.c for the programs
+// without it, which never make one)
+void xo_x_srv_free(int64_t p);
+void xo_x_hc_free(int64_t p);
+void xo_x_sink_free(int64_t p);
+void xo_x_cresp_free(int64_t p);
 #define XO_FREE_FN(f) ((void (*)(void *))(void *)(f))
 
 // The services record of ctx.xo (SV_*): the pool record (budget.xo and
@@ -1981,16 +1988,24 @@ static struct {
 	int64_t h2_pool[3]; // hclient.xo's idle HTTP/2 connections
 	void (*fs_file_free)(void *), (*fs_lock_free)(void *); // fsops.xo's handles
 	int64_t consts; // consts.xo's table
+	void (*any_free)(void *);
+	void (*srv_free)(void *);
+	void (*hc_free)(void *);
+	void (*sink_free)(void *);
+	void (*cresp_free)(void *);
+	int64_t streams[3]; // hserve.xo's table of streamed responses
 } svc = {&pool, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0};
+	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
+         XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0}};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
+                   offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192,
                "ctx.xo SV_*");
 
 
@@ -4893,7 +4908,9 @@ static void *run_main(void *arg) {
 }
 
 static void tw_cleanup(void);
-static void xo_streams_free(void);
+// std/http's streamed responses and idle HTTP/2 client connections
+// (cabi_http.xo; weak in xo_http.c)
+void xo_x_streams_free(void);
 
 // the program's start and end (std/native/llrt/entry.xo)
 void xo_x_entry_start(int64_t argc, int64_t argv, int64_t envp);
@@ -4943,7 +4960,7 @@ int main(int argc, char **argv) {
 	xo_flush();
 	xo_x_stop_end();
 	xo_x_rt_stats();
-	xo_streams_free();
+	xo_x_streams_free();
 	if (tw.on) {
 		tw_cleanup();
 	}

@@ -1,108 +1,25 @@
 // The C ABI exports of the HTTP runtime (decisions 0204, 0207): like
 // cabi.xo, every top level function here is called by the C runtime as
-// xo_x_<name>; xo_http.c calls them, so std/native/http.xo
-// imports this module and only programs that use std/http carry them
-// (the C has weak definitions that fault, for the programs without).
-// The response writer is http1w.xo (the zero-C audit's B12), the
-// HTTP/1.1 connection http1.xo (B28), the HTTP/2 server h2srv.xo (B28
-// part 2).
-use native/llrt/h2srv
+// xo_x_<name>; std/native/http.xo imports this module and only programs
+// that use std/http carry them (the C has weak definitions for the
+// programs without). Since the zero-C audit's B28 part 3 (2026-10-14)
+// the C only frees std/http's handles through these (the services
+// record's free functions, xo_h_free) and empties the table of streamed
+// responses at exit.
 use native/llrt/hclient
-use native/llrt/http1
-use native/llrt/raw
-use native/rt
-use native/rthttp
+use native/llrt/hserve
 
-// HTTP/1.1's server connection (std/native/llrt/http1.xo, the zero-C
-// audit's B28): the C's connection frees its X1 record, and a stream's
-// sink writes through it.
+/// The free functions of a server, a connection, a sink, and a client
+/// response (ctx.xo SV_SRV_FREE to SV_CRESP_FREE): the record at p, whose
+/// last reference went.
+fn srv_free(p: Int) { hserve.srv_free(p) }
 
-/// Frees http1.xo's X1 record x.
-fn h1_free(x: Int) { http1.x1_free(x) }
+fn hc_free(p: Int) { hserve.hc_free(p) }
 
-/// A stream's write of the n bytes at p on connection hc (status, state:
-/// the sink's bits): the new state.
-fn h1_emit(hc: Int, status: Int, state: Int, p: Int, n: Int) -> Int { http1.emit(rt.obj_at[rthttp.HConn](hc), status, state, p, n) }
+fn sink_free(p: Int) { hserve.sink_free(p) }
 
-/// A stream that never left its buffer, answered whole: 1 when the
-/// connection stays open.
-fn h1_respond(hc: Int, status: Int, p: Int, n: Int) -> Int { if http1.respond(rt.obj_at[rthttp.HConn](hc), status, raw.str_at(p, n).bytes()) { 1 } else { 0 } }
+fn cresp_free(p: Int) { hclient.cresp_free(p) }
 
-/// The end of a stream whose head went out: 1 when the connection stays
-/// open.
-fn h1_stream_end(hc: Int, status: Int, state: Int, p: Int, n: Int) -> Int { if http1.stream_end(rt.obj_at[rthttp.HConn](hc), status, state, p, n) { 1 } else { 0 } }
-
-// ---------------------------------------------------------------------------
-// The HTTP/2 server (h2srv.xo, the zero-C audit's B28 part 2): the C's
-// connection makes and frees the connection record and stops it; a
-// stream's connection drops its stream, and its sink writes through it.
-
-/// A connection record after the TLS handshake chose h2: why (the wn
-/// bytes at wp, wn 0 for none) a weak cipher suite, linger 1 to drop
-/// input a second after its GOAWAY instead of closing (Windows).
-fn h2s_new(wp: Int, wn: Int, linger: Int) -> Int { h2srv.conn_new(if wn > 0 { raw.str_at(wp, wn) } else { "" }, linger != 0) }
-
-/// The server stops: GOAWAY, then close when the streams are done.
-fn h2s_stop(c: Int) { h2srv.conn_stop(c) }
-
-/// Frees connection record c (its connection is freed).
-fn h2s_free(c: Int) { h2srv.conn_free(c) }
-
-/// A stream's connection is freed: its reference to stream st goes.
-fn h2s_release(st: Int) { h2srv.stream_release(st) }
-
-/// A stream that never left its buffer, answered whole (the n bytes at
-/// p).
-fn h2s_respond(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(rt.obj_at[rthttp.HConn](hc), status, p, n) }
-
-/// A stream's write of the n bytes at p (started 1: the head went out):
-/// 1 when the head went out, plus 2 when the stream is alive.
-fn h2s_emit(hc: Int, status: Int, started: Int, p: Int, n: Int) -> Int { h2srv.emit(rt.obj_at[rthttp.HConn](hc), status, started != 0, p, n) }
-
-/// The end of a stream whose head went out, with the n bytes at p.
-fn h2s_finish(hc: Int, p: Int, n: Int) {
-  let _ok = h2srv.finish(rt.obj_at[rthttp.HConn](hc), p, n)
-}
-
-/// The HTTP client connection's reads and writes (xo_http.c cc_fill and
-/// cc_send, hclient.xo; the C's HTTP/2 client calls them): CC_*.
-fn cc_fill(c: Int) -> Int { hclient.fill(c) }
-
-fn cc_send(c: Int, p: Int, n: Int) -> Int { hclient.send(c, p, n) }
-
-/// The client's error on the xo_cresp at r (hclient.xo fail and finish):
-/// the tag and the n bytes of text at p; an exchange's end with s, the
-/// wn bytes of why at wp, and the an bytes of a TLS alert at ap (an < 0:
-/// none).
-fn cl_fail(r: Int, tag: Int, p: Int, n: Int) -> Int {
-  hclient.fail_at(r, tag, raw.str_at(p, n))
-  0
-}
-
-fn cl_finish(r: Int, s: Int, wp: Int, wn: Int, ap: Int, an: Int) -> Int {
-  hclient.finish_at(r, s, raw.str_at(wp, wn), if an < 0 { "" } else { raw.str_at(ap, an) })
-  0
-}
-
-/// The HTTP client's HTTP/2 connections (hclient.xo): a new one over
-/// net.Conn cn and the ccon at c (TLS up), for roots and the key (the kn
-/// bytes at kp); an idle one from the pool, or 0; an exchange's start on
-/// the xo_cresp at r and its end; the pool's end at exit.
-fn h2_conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int) -> Int { hclient.conn_new(cn, c, roots, kp, kn) }
-
-fn h2_pool_take(roots: Int, kp: Int, kn: Int) -> Int { hclient.pool_take(roots, kp, kn) }
-
-fn h2_exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: Int) -> Int {
-  hclient.exchange_start(r, pc, pooled, body, bn, when)
-  0
-}
-
-fn h2_exchange_free(x: Int) -> Int {
-  hclient.exchange_free(x)
-  0
-}
-
-fn h2_pool_free() -> Int {
-  hclient.pool_free()
-  0
-}
+/// At exit: the streamed responses' functions and the client's idle
+/// HTTP/2 connections (the leak check).
+fn streams_free() { hserve.streams_free() }

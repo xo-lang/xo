@@ -13,6 +13,7 @@
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
+use native/llrt/anyval
 use native/llrt/budget
 use native/llrt/chan
 use native/llrt/consts
@@ -775,6 +776,20 @@ fn task_free(t: Int) { tasks.task_free(t) }
 fn scope_free(s: Int) { tasks.scope_free(s) }
 
 fn atomic_free(a: Int) { tasks.atomic_free(a) }
+
+// ---------------------------------------------------------------------------
+// Values of any type (rt.Any, anyval.xo; the C's xo_any_new and
+// xo_any_get forward here) and a std function's fault at its caller
+
+fn any_new(l: Int, drop: Int, tag: Int, tn: Int) -> Int { anyval.new(l, drop, tag, tn) }
+
+fn any_get(a: Int, tag: Int, tn: Int) -> Int { anyval.get(a, tag, tn) }
+
+fn any_free(a: Int) { anyval.free(a) }
+
+/// Faults with the n bytes of msg at p at the ln bytes of location at lp
+/// (xo_fault_at).
+fn fault_at(p: Int, n: Int, lp: Int, ln: Int) { fault.raise_str_at(raw.str_at(p, n), lp, ln) }
 
 /// A claimed task's run (xo_rt.c run_claimed, B18).
 fn run_claimed(t: Int, units: Int) { tasks.run_claimed(t, units) }

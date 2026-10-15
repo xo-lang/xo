@@ -18,13 +18,14 @@
 // decodes requests (HPACK, hpack.xo) and hands each complete one (its
 // body read, as std/rt reads it before the handler) to http.xo, which
 // runs it as a task of its own on a stream connection
-// (rthttp.h2_stream). A stream task queues its response on the stream
+// (hconn.stream). A stream task queues its response on the stream
 // (respond, emit, finish, under the connection's lock word) and wakes
 // the connection's fiber, which encodes the head and sends it and the
 // body within the peer's flow control windows. The frame writers and
-// checks are h2w.xo's; the C keeps the TLS handshake and its
-// non-blocking reads (rthttp.hc_h2, hc_h2_read), the socket's writes
-// (hc_send_at), and the stream connections the handlers get.
+// checks are h2w.xo's; the connection's TLS reads and socket writes and
+// the stream connections the handlers get are hconn.xo's (h2_read,
+// send_at, stream), the TLS handshake hserve.xo's hc_h2 (Mbed TLS stays
+// C, xo_tls.c).
 //
 // The state the stream tasks share is in two malloc'd records, the
 // connection's (C_*) and a stream's (S_*), under the connection's lock
@@ -35,7 +36,7 @@
 // with output to send, and by its stream connection once dispatched; it
 // is freed when no reference is left (S_REFS, under the lock). A stream
 // connection holds its connection's C record, so the connection record
-// (freed with it, cabi_http.xo h2_free) outlives the streams.
+// (freed with it, hserve.xo hc_free) outlives the streams.
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hpack
@@ -45,6 +46,7 @@ use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sysio
+use native/llrt/hconn
 use native/rt
 use native/rthttp
 
@@ -675,7 +677,7 @@ fn after_end(c: Int, st: Int) {
 // ---------------------------------------------------------------------------
 // The connection's records (cabi_http.xo's exports call these)
 
-/// A new connection record (xo_hc_h2, after the handshake chose h2):
+/// A new connection record (hserve.hc_h2, after the handshake chose h2):
 /// the server's preface queued. why (not ""): the cipher suite is too
 /// weak for HTTP/2 (rejectConn), a GOAWAY INADEQUATE_SECURITY then
 /// close, or with linger (Windows, which resets a connection closed with
@@ -766,7 +768,7 @@ pub fn stream_release(st: Int) {
 
 /// The stream's handler ended (std/native/http.xo serve_stream).
 pub fn end(h: rthttp.HConn) {
-  let st = rthttp.hc_h2s(h)
+  let st = hconn.h2s(h)
   if st == 0 {
     return
   }
@@ -803,10 +805,10 @@ fn head_queue(h: rthttp.HConn, st: Int, status: Int, p: Int, pn: Int, done: Bool
   unlk(c)
 }
 
-/// The whole response of stream connection h (xo_hc_respond on a
+/// The whole response of stream connection h (hserve.xo sink_end on a
 /// stream): the n bytes at p.
 pub fn respond_at(h: rthttp.HConn, status: Int, p: Int, n: Int) {
-  let st = rthttp.hc_h2s(h)
+  let st = hconn.h2s(h)
   if n > 2048 && http1w.body_allowed(status) && !http1.hdr_has(h, "Content-Length") {
     // std/rt: Content-Length on a body over net/http's 2048 bytes
     http1.hdr_put(h, "Content-Length", "${n}")
@@ -856,7 +858,7 @@ fn wait_backlog(st: Int) -> Bool {
 /// the first bytes, then data. 1 when the head went out, plus 2 when the
 /// stream is alive.
 pub fn emit(h: rthttp.HConn, status: Int, started: Bool, p: Int, n: Int) -> Int {
-  let st = rthttp.hc_h2s(h)
+  let st = hconn.h2s(h)
   let c = ld(st, S_C)
   if !started {
     head_queue(h, st, status, p, n, false, false)
@@ -871,7 +873,7 @@ pub fn emit(h: rthttp.HConn, status: Int, started: Bool, p: Int, n: Int) -> Int 
 /// Ends a streamed body whose head went out with the n bytes at p:
 /// whether the stream was alive.
 pub fn finish(h: rthttp.HConn, p: Int, n: Int) -> Bool {
-  let st = rthttp.hc_h2s(h)
+  let st = hconn.h2s(h)
   let c = ld(st, S_C)
   lk(c)
   let ok = !on(st, S_DEAD)
@@ -921,7 +923,7 @@ pub struct H2Conn {
   msg: Str
 }
 
-/// The fiber's state of connection h (rthttp.hc_h2 chose HTTP/2; c its
+/// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
 /// record).
 pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
   H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
@@ -977,7 +979,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   let body = bstr(st, S_BODY).bytes()
   bfree(st, S_REQ)
   bfree(st, S_BODY)
-  H2Req{conn: rthttp.h2_stream(h.h, st), method: parts[0], path: parts[1], scheme: parts[2], urlhost: parts[3], host: parts[4], headers: lists[0], query: lists[1], body: body}
+  H2Req{conn: hconn.stream(h.h, st), method: parts[0], path: parts[1], scheme: parts[2], urlhost: parts[3], host: parts[4], headers: lists[0], query: lists[1], body: body}
 }
 
 /// Runs the connection until a request is ready for a handler (then its
@@ -1013,7 +1015,7 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     sto(c, C_WB + 8, 0)
     unlk(c)
     if ld(c, C_OUT + 8) > 0 {
-      let ok = rthttp.hc_send_at(h.h, ld(c, C_OUT), ld(c, C_OUT + 8))
+      let ok = hconn.send_at(h.h, ld(c, C_OUT), ld(c, C_OUT + 8))
       sto(c, C_OUT + 8, 0)
       if ld(c, C_OUT + 16) > 262144 {
         bfree(c, C_OUT)
@@ -1069,7 +1071,7 @@ fn (h: H2Conn) read() -> Int {
       sto(c, C_BUF + 16, cap)
     }
   }
-  let r = rthttp.hc_h2_read(h.h, tail(c, C_BUF), ld(c, C_BUF + 16) - ld(c, C_BUF + 8))
+  let r = hconn.h2_read(h.h, tail(c, C_BUF), ld(c, C_BUF + 16) - ld(c, C_BUF + 8))
   if r > 0 {
     grew(c, C_BUF, r)
   }
@@ -1092,7 +1094,7 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
   sto(c, C_WAITER, park)
   let when = ld(c, C_DEADLINE)
   unlk(c)
-  var ok = poll.pd_wait_or_signal(rthttp.hc_pd(h.h), x, when)
+  var ok = poll.pd_wait_or_signal(hconn.pd(h.h), x, when)
   lk(c)
   if ld(c, C_WAITER) == park {
     sto(c, C_WAITER, 0)

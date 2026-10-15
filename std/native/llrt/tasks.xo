@@ -496,6 +496,24 @@ pub fn scope_open() -> Int {
   s
 }
 
+/// A scope of its own for an HTTP server's connection tasks (hserve.xo
+/// srv_new; xo_http.c's xo_srv_new until the zero-C audit's B28 part 3):
+/// as scope_open's, but its body's node hangs below link (main's root, so
+/// canceling the serving task leaves the requests in flight alone) and
+/// the context's node stays.
+pub fn scope_detached(link: Int) -> Int {
+  let c = ctx.cur()
+  let s = new_object(S_SIZE, ctx.SV_SCOPE_FREE)
+  st(s, S_PRUNE_AT, 64)
+  st(s, S_PARENT_NODE, ld(c, ctx.C_NODE))
+  pool.node_link(s + S_BODY, link)
+  let tn = rt.heap_large(56) - 8
+  rt.mem_set(tn, 0, 56)
+  st(s, S_TASKS, tn)
+  pool.node_link(tn, s + S_BODY)
+  s
+}
+
 /// Ends scope s (xo_scope_close, core 7.1 exit rules). mode 0: the body
 /// completed (background tasks are canceled); 1: it exits early (return,
 /// break, an error: every task is canceled); 2: it unwinds (canceled).
@@ -650,7 +668,7 @@ const S_JOINER = 248
 const RELEASE = 2
 
 /// Wakes every context waiting in the list l (its mutex held).
-fn wl_wake(l: Int) {
+pub fn wl_wake(l: Int) {
   var e = ld(l, 0)
   while e != 0 {
     park_signal(ld(e, E_PARK))

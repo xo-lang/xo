@@ -29,6 +29,7 @@ use native/llrt/netpolicy
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/scan
+use native/llrt/hconn
 use native/rt
 use native/rthttp
 use native/llrt/raw as rawb
@@ -1571,7 +1572,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
 // writer (http1w.xo) answers with are a record of this module, X1, whose
 // address the C's connection keeps (xo_hc_set_x1) and frees with it
 // (cabi_http.xo h1_free). The C keeps the socket and TLS reads and
-// writes (rthttp.hc_recv, hc_send), the server's registration, and
+// writes (hconn.recv, hc_send), the server's registration, and
 // HTTP/2.
 
 /// The X1 record's words: the input (a malloc'd block, its length, its
@@ -1660,12 +1661,12 @@ pub fn max_body() -> Int {
 
 /// The X1 record of connection h, made on first use.
 fn x1_of(h: rthttp.HConn) -> Int {
-  var x = rthttp.hc_x1(h)
+  var x = hconn.x1(h)
   if x == 0 {
     x = rt.heap_large(X_SIZE)
     rt.mem_set(x, 0, X_SIZE)
     xs(x, X_MAX, max_body())
-    rthttp.hc_set_x1(h, x)
+    hconn.set_x1(h, x)
   }
   x
 }
@@ -1742,7 +1743,7 @@ pub fn hdr_put(h: rthttp.HConn, k: Str, v: Str) { hdr_set(x1_of(h), k, v) }
 pub fn hdr_reset(h: rthttp.HConn) { hdr_clear(x1_of(h)) }
 
 /// Sends the n bytes at p on h: false when the connection broke.
-fn send(h: rthttp.HConn, p: Int, n: Int) -> Bool { rthttp.hc_send_at(h, p, n) }
+fn send(h: rthttp.HConn, p: Int, n: Int) -> Bool { hconn.send_at(h, p, n) }
 
 fn send_str(h: rthttp.HConn, s: Str) -> Bool { send(h, raw.data(s), s.len()) }
 
@@ -1764,7 +1765,7 @@ fn fill(h: rthttp.HConn, x: Int) -> Int {
     x_room(x, X_BUF, 4096)
   }
   let idle = xl(x, X_OFF) == xl(x, X_N)
-  let r = rthttp.hc_recv(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle)
+  let r = hconn.recv(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle)
   if r > 0 {
     xs(x, X_N, xl(x, X_N) + r)
   }
@@ -1916,7 +1917,7 @@ fn (var r: Reader) read_one() -> Int {
       let _s = send(h, d, n)
       rt.heap_release(d - 8)
       if res == TOO_LARGE {
-        rthttp.hc_shut_wr(h)
+        hconn.shut_wr(h)
       }
       return 0
     }
@@ -2076,7 +2077,7 @@ pub fn respond(h: rthttp.HConn, status: Int, body: Bytes) -> Bool {
   if (k & 4) != 0 || (k & http1w.R_KEEP) == 0 {
     return false
   }
-  !rthttp.hc_stopping(h)
+  !hconn.stopping(h)
 }
 
 /// A stream's sink state bits (xo_http.c xo_sink): the head went out,
@@ -2163,7 +2164,7 @@ pub fn stream_end(h: rthttp.HConn, status: Int, state: Int, p: Int, n: Int) -> B
   if (s & SK_FAILED) != 0 || (s & SK_KEEP) == 0 {
     return false
   }
-  !rthttp.hc_stopping(h)
+  !hconn.stopping(h)
 }
 
 /// The parts of the Request of a head (xo_http.c's hc_* accessors).
@@ -2264,7 +2265,7 @@ pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
 // The HTTP/2 client (xo_h2.c's hp_encode and hp_decode until audit item
 // B11, its exchange until B29, 2026-10-14)
 //
-// rthttp.cl_start sets an HTTP/2 exchange up (a pooled connection, or a
+// hclient.cl_start sets an HTTP/2 exchange up (a pooled connection, or a
 // new one whose ALPN chose h2, its preface and SETTINGS queued) and
 // returns before the request: Xo makes the exchange of http2
 // Transport.RoundTrip (h2_exchange): the request's HEADERS (its fields
@@ -2792,7 +2793,7 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
   (true, "")
 }
 
-/// Makes the HTTP/2 request rthttp.cl_start set up on r (http2
+/// Makes the HTTP/2 request hclient.cl_start set up on r (http2
 /// Transport.RoundTrip on one stream), then hands the connection and its
 /// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
@@ -2936,7 +2937,7 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
 // B10, 2026-10-14): the URL and the redirects of net/http's Client, and
 // the reading of an HTTP/1.1 response (ReadResponse, readTransfer). The
 // C keeps the dial, TLS, and HTTP/2's connections (its header blocks
-// are h2_exchange's); an HTTP/1.1 exchange returns from rthttp.cl_start
+// are h2_exchange's); an HTTP/1.1 exchange returns from hclient.cl_start
 // connected, and hclient.xo sends the request, reads the response
 // (hclient.input, more, take), and ends it (hclient.end).
 
@@ -3272,7 +3273,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     n += 1
   }
-  let when = if timeout > 0 { rthttp.cl_deadline(timeout) } else { 0 }
+  let when = if timeout > 0 { hclient.cl_deadline(timeout) } else { 0 }
   let op = url_op(m)
   var method = m
   var raw = url
@@ -3359,13 +3360,13 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       target = target + "?" + u.rawquery
     }
     let prefix = url_op(method) + " " + q
-    var r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, true)
+    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true)
     if hclient.h2(r) {
       h2_exchange(r, method, target, u.host, hk, hv, body.len())
       if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
-        r = rthttp.cl_start(method, https, addr, name, target, u.host, hk, hv, body, when, roots, prefix, false)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
         if hclient.h2(r) {
           h2_exchange(r, method, target, u.host, hk, hv, body.len())
         }

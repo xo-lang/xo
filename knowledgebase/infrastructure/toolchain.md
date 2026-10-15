@@ -1333,7 +1333,8 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_bytes.c,
-                        xo_http.c (decisions 0074, 0081; HTTP/2's server is std/native/llrt/h2srv.xo),
+                        xo_http.c (decisions 0074, 0081; TLS wrappers only: the server, its connections,
+                        sinks, and the client are std/native/llrt/hconn.xo, hserve.xo, h2srv.xo, hclient.xo),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
