@@ -604,10 +604,6 @@ void xo_x_flush_try(void);
 
 void xo_flush(void) { xo_x_flush(); }
 
-// flush_pending writes buffered output before the caller waits (decision
-// 0069; nothing when the buffer is empty).
-static void flush_pending(void) { xo_x_flush(); }
-
 // ---------------------------------------------------------------------------
 // C ABI exports (decisions 0204, 0207): functions of
 // std/native/llrt/cabi.xo that every native program carries, called here
@@ -948,12 +944,6 @@ void *xo_h_zero(void) { return &zero_handle; }
 
 xo_rlist *xo_rl_empty(void) { return &empty_list; }
 
-static void list_release(xo_rlist *l, xo_ldrop drop) {
-	if (l && l != &empty_list) {
-		drop(l);
-	}
-}
-
 static char *cstr_of(const char *p, int64_t n) {
 	char *s = malloc((size_t)n + 1);
 	if (!s) {
@@ -1076,24 +1066,6 @@ static struct {
 	int64_t blocked;   // roots asleep in a counted wait
 	int64_t uncounted; // contexts in a wait a timer, the network, or a signal can end
 } dlk;
-
-// mu_init initializes a pthread mutex of the runtime (the event loop's,
-// the network's, the HTTP server's). On Darwin the default policy hands
-// a contended mutex over in FIFO order through the kernel, which cost a
-// spawn heavy program four times its user time in system time; first
-// fit lets a running thread take it again
-// (gotchas/darwin-mutex-fairshare.md).
-static void mu_init(pthread_mutex_t *m) {
-#ifdef __APPLE__
-	pthread_mutexattr_t a;
-	pthread_mutexattr_init(&a);
-	pthread_mutexattr_setpolicy_np(&a, PTHREAD_MUTEX_POLICY_FIRSTFIT_NP);
-	pthread_mutex_init(m, &a);
-	pthread_mutexattr_destroy(&a);
-#else
-	pthread_mutex_init(m, NULL);
-#endif
-}
 
 // A park is where one context waits. signaled is also the futex word of
 // a thread (a root context) that sleeps on it; a fiber that waits parks
@@ -1251,7 +1223,6 @@ extern __thread int64_t xo_tlocal[16];
 enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
-__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 
 // ctx returns the current context; a thread that runs Xo code outside
 // any task (the program's main thread) gets a root context from ctx.xo
@@ -1654,11 +1625,6 @@ void xo_x_budget_tick(void);
 void xo_x_budget_open(int64_t s, int64_t cpu, int64_t alloc, int64_t steps, int64_t lp, int64_t ln);
 int64_t xo_x_budget_end(int64_t s);
 void xo_x_budget_retain(int64_t b);
-void xo_x_budget_pause(int64_t c);
-void xo_x_budget_resume(int64_t c);
-
-static void bud_pause(xo_ctx *c) { xo_x_budget_pause(XO_ADDR(c)); }
-static void bud_resume(xo_ctx *c) { xo_x_budget_resume(XO_ADDR(c)); }
 
 // xo_tick is the budget poll of generated code (budget.xo tick, which
 // arm64 code calls directly).
@@ -1786,20 +1752,15 @@ static struct {
 } pool = {.dlk = &dlk}; // a root waits before the pool starts
 
 // The pool's setup (pool_init until B20) and the root threads' worker
-// records are poolsetup.xo's ready and root_worker; root_worker calls it from
-// the C.
-int64_t xo_x_pool_root_worker(int64_t p);
+// records are poolsetup.xo's ready and root_worker (tasks.xo
+// park_wait_n calls it).
 
 // The worker pool in Xo (decision 0212 stage 2): std/native/llrt/pool.xo
 // through the C ABI exports of cabi.xo, over the records above (their
 // layout is asserted below). The C keeps the records, their setup, the
 // root threads' records, and the deadlock check; the Xo code calls back
 // for the services in xo_sched_rt.
-void xo_x_register_worker(int64_t p, int64_t w);
-int64_t xo_x_any_work(int64_t p);
 int64_t xo_x_worker_main(int64_t w);
-
-static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
 int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t, int64_t w);
@@ -1899,96 +1860,20 @@ XO_NORETURN void xo_x_deadlock(void);
 static void tsan_worker(xo_worker *w);
 static void sched_hooks(xo_worker *w);
 
-// root_worker returns the record of the calling root thread, made on
-// first use: its spawns go to its deque, and while it waits it runs work
-// (decision 0077).
-static xo_worker *root_worker(void) { return (xo_worker *)(intptr_t)xo_x_pool_root_worker(XO_ADDR(&pool)); }
-
 // park_wait_n blocks the current context until its park is signaled or,
-// when cancelable, its node is canceled. A task on a fiber parks: its
-// worker runs other work meanwhile (decision 0069). A root thread runs
-// queued work while it waits, and sleeps only when it finds none
-// (decision 0077). counted tells that the wait counts as blocked for
-// deadlock detection; a wait that a timer, the network, or a signal can
-// end does not.
-void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted, int64_t f, int64_t rw);
-
-// wait_where finds the fiber the current context runs on, or the record
-// of its root thread when that helps while it waits (a root helps once
-// the pool exists: a program that only sleeps stays single threaded).
-static void wait_where(int64_t *f, int64_t *rw) {
-	*f = XO_ADDR(fib_get());
-	*rw = *f || !__atomic_load_n(&pool.ncpu, __ATOMIC_ACQUIRE) ? 0 : XO_ADDR(root_worker());
-}
-
-static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
-	flush_pending();
-	bud_pause(c); // waiting is not running time (decision 0175)
-	int64_t f, rw;
-	wait_where(&f, &rw);
-	// in the test world nothing outside the program ends a wait
-	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted || tw.virt, f, rw);
-	TSAN_ACQUIRE(&c->park);
-	bud_resume(c);
-}
-
-static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1); }
+// when cancelable, its node is canceled (tasks.xo park_wait_n): a task on
+// a fiber parks, a root thread runs queued work while it waits. counted
+// tells that the wait counts as blocked for deadlock detection; a wait
+// that a timer, the network, or a signal can end does not.
+void xo_x_park_wait_n(int64_t c, int64_t cancelable, int64_t counted);
+static void park_wait_n(xo_ctx *c, int cancelable, int counted) { xo_x_park_wait_n(XO_ADDR(c), cancelable, counted); }
 
 // A wait list: the parks of the contexts waiting on an object, signaled
-// all at once when its state changes (they check again). The entry
+// all at once when its state changes (tasks.xo wl_*). The entry
 // (xo_went, above) is the waiting context's own (xo_ctx.went).
-
 typedef struct {
 	xo_went *first, *last;
 } xo_wl;
-
-// wl_add adds e at the end of l (the oldest waiter is first).
-static void wl_add(xo_wl *l, xo_went *e) {
-	e->next = NULL;
-	e->prev = l->last;
-	if (l->last) {
-		l->last->next = e;
-	} else {
-		l->first = e;
-	}
-	l->last = e;
-}
-
-static void wl_del(xo_wl *l, xo_went *e) {
-	if (e->prev) {
-		e->prev->next = e->next;
-	} else {
-		l->first = e->next;
-	}
-	if (e->next) {
-		e->next->prev = e->prev;
-	} else {
-		l->last = e->prev;
-	}
-}
-
-static void wl_wake(xo_wl *l) {
-	for (xo_went *e = l->first; e; e = e->next) {
-		park_signal(e->park);
-	}
-}
-
-// wl_wait_as waits on list l of an object whose lock mu is held; mu is
-// held again on return. It reports 0 when the context was canceled.
-// writer marks a Mutex waiter that wants the lock exclusively.
-static int wl_wait_as(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable, int writer) {
-	xo_went *e = &c->went;
-	*e = (xo_went){.park = &c->park, .writer = writer};
-	park_reset(&c->park);
-	wl_add(l, e);
-	unlk(mu);
-	park_wait(c, cancelable);
-	lk(mu);
-	wl_del(l, e);
-	return !(cancelable && ctx_canceled(c));
-}
-
-static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) { return wl_wait_as(c, mu, l, cancelable, 0); }
 
 // ---------------------------------------------------------------------------
 // Scopes and tasks
@@ -2078,8 +1963,6 @@ _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 
                "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
 
 // The task states in Xo (decision 0212, std/native/llrt/sched.xo).
-int64_t xo_x_task_claim(int64_t t);
-int64_t xo_x_task_dequeued(int64_t t, int64_t s);
 
 void xo_x_run_claimed(int64_t t, int64_t units);
 
@@ -2095,27 +1978,6 @@ __attribute__((noinline)) static void run_entry(xo_task *t, xo_rlist *fl) {
 	cur_get()->boundary = (uintptr_t)__builtin_frame_address(0);
 	t->run(fl, t);
 }
-
-// dequeued records that a worker took t's queue entry (and ran it, or
-// found it run by a helper). The scope's join waits for this too, so no
-// queue holds a task the scope frees.
-static void dequeued(xo_task *t) {
-	xo_scope *s = t->scope;
-	if (xo_x_task_dequeued(XO_ADDR(t), XO_ADDR(s))) {
-		park_signal(s->joiner);
-	}
-}
-
-// scope_prune takes the tasks that are over and that only s's list
-// holds out of the list (s->mu held) and returns them, linked by snext,
-// for scope_drop_pruned. A scope that lives long and starts many tasks
-// whose handles are dropped (a server's connections, decision 0118) kept
-// every one, with its result, until it closed: about 1 KB per connection.
-// A task is over when its run ended and its queue entry was taken
-// (gone == 2: nothing touches it after either); with a count of one
-// (shared: -1) nobody else has it, and nobody can get it again. The
-// close never prunes (its helpers walk the list without the lock), and a
-// spawn prunes only when the list doubled since the last time.
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2381,9 +2243,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	}
 	case 9:
 		xo_oom();
-	case 10: // a worker took the queue entry of task a, which a helper ran
-		dequeued((xo_task *)(intptr_t)a);
-		return 0;
 #ifndef _WIN32
 	case 11: { // a fiber stack of a bytes, a guard page of b, from the C library's mmap
 		void *m = mmap(NULL, (size_t)a, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
@@ -2400,9 +2259,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
-		return 0;
-	case 17: // context a waits on its park (b bit 0: cancelable, bit 1: not counted as blocked)
-		park_wait_n((xo_ctx *)(intptr_t)a, (int)(b & 1), !(b & 2));
 		return 0;
 	case 30: // the test world's record (pool.xo TW_*)
 		return XO_ADDR(&tw);

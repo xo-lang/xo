@@ -127,7 +127,7 @@ const RT_MAP_FAILED = 6
 const RT_WORKER_START = 7
 const RT_THREAD = 8
 const RT_OOM = 9
-const RT_DEQUEUED = 10
+const RT_TSAN_RELEASE = 22
 const RT_MAP = 11
 const RT_UNMAP = 12
 const RT_RUN_CLAIMED = 16
@@ -731,8 +731,15 @@ pub fn run_item(p: Int, w: Int, it: Int) {
     return
   }
   if sched.task_claim(it) == 0 {
-    // run by a thread that helped: its queue entry is over
-    let _d = rt.sched_rt(RT_DEQUEUED, it, 0)
+    // run by a thread that helped: its queue entry is over, and the
+    // scope's join waits for that too (no queue holds a task the scope
+    // frees)
+    let s = rt.mem_load(it, T_SCOPE, 8)
+    if sched.task_dequeued(it, s) != 0 {
+      let j = rt.mem_load(s, S_JOINER, 8)
+      let _t = rt.sched_rt(RT_TSAN_RELEASE, j, 0)
+      park_signal(p, j)
+    }
     return
   }
   // claimed: the entry is counted taken when the task ends (one atomic

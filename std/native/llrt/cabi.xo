@@ -27,7 +27,6 @@ use native/llrt/num
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
-use native/llrt/poolsetup
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
@@ -421,19 +420,11 @@ fn rt_stats() { entry.rt_stats() }
 
 fn fiber_main(f: Int) { sched.fiber_main(f) }
 
-fn task_claim(t: Int) -> Int { sched.task_claim(t) }
-
 fn scope_units_done(s: Int, units: Int) -> Int { sched.scope_units_done(s, units) }
-
-fn task_dequeued(t: Int, s: Int) -> Int { sched.task_dequeued(t, s) }
 
 fn lock_slow(l: Int) { pool.lock_slow(l) }
 
 fn futex_wake(a: Int) { pool.futex_wake(a) }
-
-fn any_work(p: Int) -> Int { pool.any_work(p) }
-
-fn register_worker(p: Int, w: Int) { pool.register_worker(p, w) }
 
 fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 
@@ -441,7 +432,9 @@ fn park_reset(p: Int) { pool.park_reset(p) }
 
 fn park_signal(pl: Int, p: Int) { pool.park_signal(pl, p) }
 
-fn park_wait(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, rw: Int) { pool.park_wait(pl, c, cancelable, counted, f, rw) }
+/// Context c waits on its park (tasks.xo park_wait_n; xo_rt.c's
+/// park_wait_n forwards here).
+fn park_wait_n(c: Int, cancelable: Int, counted: Int) { tasks.park_wait_n(c, cancelable != 0, counted != 0) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 
@@ -528,9 +521,6 @@ fn budget_mark(c: Int) { budget.mark(c) }
 
 fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
 
-fn budget_pause(c: Int) { budget.pause(c) }
-
-fn budget_resume(c: Int) { budget.resume(c) }
 
 // ---------------------------------------------------------------------------
 // Tasks and scopes (std/native/llrt/tasks.xo, the zero-C audit's B18):
@@ -567,9 +557,6 @@ fn scope_open() -> Int { tasks.scope_open() }
 
 fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
 
-/// The calling root thread's worker record of pool p (poolsetup.xo
-/// root_worker), made on first use.
-fn pool_root_worker(p: Int) -> Int { poolsetup.root_worker(p) }
 
 // Mutex[T] (std/native/llrt/mutex.xo, B19): generated code calls these
 // directly; xo_rt.c's entry points forward. m a Mutex, l its value list.

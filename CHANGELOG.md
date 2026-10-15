@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, scheduler block S1): a context's wait
+  on its park is Xo (std/native/llrt/tasks.xo park_wait_n: the output
+  flush, the budget's pause, the root thread's helping record, the test
+  world's counted wait), and a helper's dequeue signals the scope's
+  joiner from pool.xo; rt.sched_rt ops 10 and 17, the dead C wait lists
+  and helpers, and eight cabi.xo exports only the C called are deleted.
+  xo_rt.c 3,809 to 3,665 lines.
 - TLS performance (decision 0231 part 1): the carries of the P-256,
   P-384, and RSA field products are CPU flags (std/native/llrt/cpu.xo,
   cmn/cmp and cset on arm64, llvm.uadd.with.overflow on LLVM, a

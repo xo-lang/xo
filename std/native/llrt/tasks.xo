@@ -104,7 +104,9 @@ const E_WRITER = 24
 
 /// The C's services (pool.xo RT_*).
 const RT_RUN_CLAIMED = 16
-const RT_PARK_WAIT = 17
+/// The C's test world record (pool.xo RT_TW) and its virt word (a C int).
+const RT_TW = 30
+const TW_VIRT = 40
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
 const RT_TSAN_RELEASE = 22
@@ -137,8 +139,22 @@ pub fn park_wait(c: Int, cancelable: Bool) { park_wait_n(c, cancelable, true) }
 /// deadlock check (a wait that something outside the program's tasks can
 /// end does not).
 pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
-  let b = (if cancelable { 1 } else { 0 }) + (if counted { 0 } else { 2 })
-  let _r = rt.sched_rt(RT_PARK_WAIT, c, b)
+  stdio.flush()
+  // waiting is not running time (decision 0175)
+  budget.pause(c)
+  // a fiber parks; a root thread helps while it waits once the pool
+  // exists (a program that only sleeps stays single threaded)
+  let pl = ctx.pool()
+  let f = rt.tlocal_get(TLS_FIB)
+  var rw = 0
+  if f == 0 && rt.slot_load(pl + P_NCPU, 0, ACQUIRE) != 0 {
+    rw = poolsetup.root_worker(pl)
+  }
+  // in the test world nothing outside the program ends a wait
+  let virt = rt.mem_load(rt.sched_rt(RT_TW, 0, 0), TW_VIRT, 4) != 0
+  pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counted || virt { 1 } else { 0 }, f, rw)
+  let _a = rt.sched_rt(RT_TSAN_ACQUIRE, c + ctx.C_PARK, 0)
+  budget.resume(c)
 }
 
 /// A new object of n bytes, zeroed, with one reference and the C free
