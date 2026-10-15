@@ -1958,14 +1958,8 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
-	case 19: // drop a reference to handle a (h_release)
-		h_release((void *)(intptr_t)a);
-		return 0;
 	case 20: // the runtime switches to several threads (pool.xo's setup)
 		xo_rt_threads_begin();
-		return 0;
-	case 25: // free handle a, whose last reference went (tasks.xo h_release)
-		h_free((void *)(intptr_t)a);
 		return 0;
 	}
 	(void)b;

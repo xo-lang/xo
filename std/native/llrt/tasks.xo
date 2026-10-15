@@ -110,11 +110,9 @@ const E_WRITER = 24
 /// The C's services (pool.xo RT_*).
 const RT_RUN_CLAIMED = 16
 const RT_EMPTY_LIST = 18
-const RT_H_RELEASE = 19
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
-const RT_H_FREE = 25
 const RT_STAT = 0
 const ACQ_REL = 3
 
@@ -420,11 +418,11 @@ fn new_object(n: Int, k: Int) -> Int {
 }
 
 /// Drops a reference to the object at p (xo_rt.c h_release): the last
-/// one frees it through the C (xo_h_free: its free function, deferred in
-/// a real-time section).
+/// one frees it (obj.xo h_free_n: its free function, deferred in a
+/// real-time section).
 pub fn h_release(p: Int) {
   if rc.dec(p) != 0 {
-    let _r = rt.sched_rt(RT_H_FREE, p, 0)
+    obj.h_free_n(p)
   }
 }
 
