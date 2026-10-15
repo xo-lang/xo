@@ -29,4 +29,18 @@ hkdf384 okm 9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6
 tls13 early ok
 tls13 derived ok
 label384 5b3f5b4a195b1b5045834df3c054d938dddceec519ac9c2258b01b5ee4dd0346
+aes128 fips197 ok
+aes192 fips197 ok
+aes256 fips197 ok
+gcm 1 ok
+gcm 2 ok
+gcm 3 ok
+gcm 4 ok
+gcm 15 tag ok
+gcm 16 tag ok
+gcm 4 open ok
+gcm 4 open bad tag ok
+gcm 4 open bad aad ok
+gcm open short ok
+gcm sweep 0e93c369f5f9c9a5d227950c80f7e65a0f9e2448fa4cd932b047f8907da6825e opened 81
 --- stderr

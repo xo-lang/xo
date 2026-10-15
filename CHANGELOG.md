@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 2 of the TLS primitives,
+  decision 0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
+  as Go's crypto/aes and cipher.NewGCM (12 byte nonce, 16 byte tag),
+  constant time: BearSSL's bitsliced aes_ct64 (no table indexed by a
+  secret) and ghash_ctmul64 GHASH; open checks the tag with
+  ct.bytes_equal before decrypting. crypto_op's "aes" area; the golden
+  crypto_prims checks FIPS 197 appendix C, the GCM test cases 1 to 4,
+  15, 16, tag failures, and every length to 80 against Go. Not on the
+  TLS path yet.
+
 - Native runtime (zero-C audit item B31, part 2, decision 0202): P-256
   and P-384 (std/native/llrt/nistec.xo: ECDH and ECDSA signing and
   verification, Montgomery field arithmetic and the complete addition

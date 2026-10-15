@@ -2,6 +2,8 @@ package rt
 
 import (
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -43,6 +45,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoRSA(what, a, b, c, d)
 	case "x509":
 		r, ok = cryptoX509(what, a, b)
+	case "aes":
+		r, ok = cryptoAES(what, a, b, c, d)
 	}
 	if !ok {
 		panic("internal.crypto_op: unknown op " + op)
@@ -303,6 +307,34 @@ func cryptoRSA(what string, a, b, c, d Bytes) (Bytes, bool) {
 			return "", true
 		}
 		return Bytes(sig), true
+	}
+	return "", false
+}
+
+// cryptoAES is aesgcm.xo's op.
+func cryptoAES(what string, a, b, c, d Bytes) (Bytes, bool) {
+	blk, err := aes.NewCipher([]byte(a))
+	if err != nil {
+		panic(err)
+	}
+	if what == "block" {
+		out := make([]byte, 16)
+		blk.Encrypt(out, []byte(b))
+		return Bytes(out), true
+	}
+	g, err := cipher.NewGCM(blk)
+	if err != nil {
+		panic(err)
+	}
+	switch what {
+	case "seal":
+		return Bytes(g.Seal(nil, []byte(b), []byte(c), []byte(d))), true
+	case "open":
+		p, err := g.Open(nil, []byte(b), []byte(c), []byte(d))
+		if err != nil {
+			return "\x00", true
+		}
+		return "\x01" + Bytes(p), true
 	}
 	return "", false
 }

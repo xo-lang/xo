@@ -1,5 +1,6 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
+use native/llrt/aesgcm
 use native/llrt/fsops
 use native/llrt/hkdf
 use native/llrt/hmac
@@ -49,6 +50,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "p384" => nistec.op(nistec.P384, what, a, b, c, d)
     "rsa" => rsa.op(what, a, b, c, d)
     "x509" => x509.op(what, a, b, c, d)
+    "aes" => aesgcm.op(what, a, b, c, d)
     _ => None
   }
   r ?? fault("internal.crypto_op: unknown op ${op}")
