@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS performance, step 3: P-384's field arithmetic unrolled, and
+  RSA's modulus setup by Go's rr chain (12 squarings in place of 4,096
+  doublings): P-384 handshakes 56.3M to 36.9M instructions on LLVM (Mbed
+  22.9M), RSA-2048 18.5M to 13.1M (Mbed 4.9M).
 - Native TLS 1.2 server: the four ECDHE CBC-SHA suites Go's server
   enables by default (c009, c013, c00a, c014), after the AEADs: SHA-1
   and HMAC-SHA1 (std/native/llrt/sha1.xo), AES decryption and CBC

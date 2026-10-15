@@ -206,16 +206,29 @@ pub fn modulus(m: List[Int]) -> Mod {
     y = rt.int_wrap(2, y, rt.int_wrap(1, 2, rt.int_wrap(2, m0, y)))
   }
   st(w, 0, rt.int_wrap(1, 0, y))
-  // R mod m and R^2 mod m by doublings from 1
+  // R mod m: from 2^(bits-1), below m (m is odd, so above it), doubled
+  // up to 2^(64 n) (as Go's rr; the modulus is public)
   let one = one_at(md)
-  st(one, 0, 1)
-  for _ in 0..64 * n {
+  let top = md.bits - 1
+  st(one, 8 * (top / 64), rt.int_wrap(3, 1, top % 64))
+  var k = top
+  while k < 64 * n {
     add_at(md, one, one, one)
+    k += 1
   }
+  // R^2 mod m, the Montgomery form of R = 2^(64 n): from the form of 1,
+  // square and double over the bits of 64 n (each square doubles the
+  // exponent, each doubling adds one)
   let rr = rr_at(md)
   rt.mem_copy(rr, one, 8 * n)
-  for _ in 0..64 * n {
-    add_at(md, rr, rr, rr)
+  let e = 64 * n
+  var i = 63 - rt.clz(e)
+  while i >= 0 {
+    mul_at(md, rr, rr, rr)
+    if (rt.int_wrap(4, e, i) & 1) == 1 {
+      add_at(md, rr, rr, rr)
+    }
+    i -= 1
   }
   keep(m)
   md
