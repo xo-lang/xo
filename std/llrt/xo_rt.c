@@ -1263,7 +1263,6 @@ void __tsan_release(void *addr);
 
 static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
 
-static void park_destroy(xo_park *p) { (void)p; }
 
 // The parks and the cancellation tree in Xo (decision 0212 stage 2):
 // std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
@@ -1768,15 +1767,13 @@ static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_
 // budget (xo_budget_open) every context working in it charges: the
 // generated code of a program that calls with_budget polls (xo_tick) at
 // the start of every loop iteration and at the entry of every function
-// of the program's own modules. Every BUD_QUANTUM polls a context
+// of the program's own modules. Every 1024 polls (budget.xo QUANTUM) a context
 // charges its steps, its running time (monotonic time outside waits:
 // park_wait_n and a task run inline stop the stretch), and the bytes it
 // allocated (its thread's heap counts them, xo_heap.abytes) to its
 // budget and the budgets enclosing it; a passed ceiling cancels the
 // budget's scope, and the poll unwinds the context like a cancellation
 // point. A task started under a budget works under it (xo_task_spawn).
-
-#define BUD_QUANTUM 1024
 
 // The budget record; std/native/llrt/budget.xo reads and writes it
 // (decision 0229), the C only takes and drops references.
@@ -1800,15 +1797,9 @@ void xo_x_budget_tick(void);
 void xo_x_budget_open(int64_t s, int64_t cpu, int64_t alloc, int64_t steps, int64_t lp, int64_t ln);
 int64_t xo_x_budget_end(int64_t s);
 void xo_x_budget_retain(int64_t b);
-void xo_x_budget_release(int64_t b);
-void xo_x_budget_mark(int64_t c);
-void xo_x_budget_charge(int64_t c, int64_t check);
 void xo_x_budget_pause(int64_t c);
 void xo_x_budget_resume(int64_t c);
 
-static void bud_release(xo_budget *b) { xo_x_budget_release(XO_ADDR(b)); }
-static void bud_mark(xo_ctx *c) { xo_x_budget_mark(XO_ADDR(c)); }
-static void bud_charge(xo_ctx *c, int check) { xo_x_budget_charge(XO_ADDR(c), check); }
 static void bud_pause(xo_ctx *c) { xo_x_budget_pause(XO_ADDR(c)); }
 static void bud_resume(xo_ctx *c) { xo_x_budget_resume(XO_ADDR(c)); }
 
@@ -2226,66 +2217,23 @@ void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
 _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
                "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
 
-// scope_units_done records that one of s's tasks ended or one of its
-// queue entries was taken (units 2), or both (4); the last one wakes the
-// joiner if it waits. It is
-// the caller's last touch of s (decision 0077: the counts were under the
-// scope's mutex, which every worker took twice per task).
 // The task states in Xo (decision 0212, std/native/llrt/sched.xo).
-int64_t xo_x_scope_units_done(int64_t s, int64_t units);
 int64_t xo_x_task_claim(int64_t t);
 int64_t xo_x_task_dequeued(int64_t t, int64_t s);
 
-static void scope_units_done(xo_scope *s, int64_t units) {
-	if (xo_x_scope_units_done(XO_ADDR(s), units)) {
-		// the joiner waits for this signal, so s is still there
-		park_signal(s->joiner);
-	}
-}
-
+void xo_x_run_claimed(int64_t t, int64_t units);
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
-// or a thread that helps).
-static void run_claimed(xo_task *t, int64_t units) {
-	xo_ctx c = {.node = &t->node};
-	park_init(&c.park);
-	// the entry function catches a fault in the task; the unwinding never
-	// goes past this frame (decision 0085)
-	c.boundary = (uintptr_t)__builtin_frame_address(0);
-	xo_ctx *saved = cur_get();
-	// a task started under a budget works under it (decision 0175); the
-	// context it runs inline on does not run meanwhile
-	bud_pause(saved);
-	c.bud = t->bud;
-	t->bud = NULL;
-	if (c.bud) {
-		c.bud_q = c.bud_left = BUD_QUANTUM;
-		bud_mark(&c);
-	}
-	cur_set(&c);
-	xo_rlist *fl = t->fl;
-	t->fl = NULL;
-	h_retain(t); // the entry function's own reference
+// or a thread that helps): tasks.xo run_claimed (B18), which calls
+// run_entry for the entry function itself.
+static void run_claimed(xo_task *t, int64_t units) { xo_x_run_claimed(XO_ADDR(t), units); }
+
+// run_entry calls t's entry function on the current context (tasks.xo
+// run_claimed made it): the entry function catches a fault in the task,
+// and the unwinding never goes past this frame (decision 0085).
+__attribute__((noinline)) static void run_entry(xo_task *t, xo_rlist *fl) {
+	cur_get()->boundary = (uintptr_t)__builtin_frame_address(0);
 	t->run(fl, t);
-	if (c.bud) {
-		bud_charge(&c, 0);
-		bud_release(c.bud);
-	}
-	cur_set(saved);
-	bud_resume(saved);
-	park_destroy(&c.park);
-	free(c.held);
-	free(c.net_msg);
-	fault_clear(&c);
-	xo_scope *s = t->scope;
-	lk(&t->mu);
-	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
-	wl_wake(&t->waiters);
-	unlk(&t->mu);
-	// the last touch of t: a spawn may prune it after (scope_prune)
-	__atomic_fetch_add(&t->gone, (int)(units / 2), __ATOMIC_RELEASE);
-	// the last touch of s: the scope's join may free it after
-	scope_units_done(s, units);
 }
 
 // dequeued records that a worker took t's queue entry (and ran it, or
@@ -2599,6 +2547,9 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 17: // context a waits on its park (b bit 0: cancelable, bit 1: not counted as blocked)
 		park_wait_n((xo_ctx *)(intptr_t)a, (int)(b & 1), !(b & 2));
+		return 0;
+	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
+		run_entry((xo_task *)(intptr_t)a, (xo_rlist *)(intptr_t)b);
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);

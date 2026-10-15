@@ -54,7 +54,7 @@ const H_ABYTES = 16
 /// A cancellation node's canceled word (pool.xo N_CANCELED).
 const N_CANCELED = 32
 
-const QUANTUM = 1024
+pub const QUANTUM = 1024
 /// Polls between looks for a budget when there is none.
 const NONE = 4611686018427387904
 

@@ -638,3 +638,69 @@ pub fn scope_free(s: Int) {
 
 /// An Atomic's (atomic_free).
 pub fn atomic_free(a: Int) { obj.free_obj(a) }
+
+// ---------------------------------------------------------------------------
+// Running a task (run_claimed, B18): a context of its own, from the heap
+// (Xo has no stack slots), for the task's run; the entry call itself
+// stays the C's (RT_RUN_ENTRY: the unwinding's boundary is that frame).
+
+const RT_RUN_ENTRY = 29
+const T_GONE = 176
+const S_JOINER = 248
+const RELEASE = 2
+
+/// Wakes every context waiting in the list l (its mutex held).
+fn wl_wake(l: Int) {
+  var e = ld(l, 0)
+  while e != 0 {
+    park_signal(ld(e, E_PARK))
+    e = ld(e, E_NEXT)
+  }
+}
+
+/// Runs task t, which the caller claimed, on this stack (a fiber, or a
+/// thread that helps); units (sched.xo scope_units_done) are over after.
+pub fn run_claimed(t: Int, units: Int) {
+  let c = obj.alloc_obj(ctx.C_SIZE)
+  rt.mem_set(c, 0, ctx.C_SIZE)
+  st(c, ctx.C_NODE, t + T_NODE)
+  let saved = rt.tlocal_get(0)
+  // a task started under a budget works under it (decision 0175); the
+  // context it runs inline on does not run meanwhile
+  budget.pause(saved)
+  let b = ld(t, T_BUD)
+  st(c, ctx.C_BUD, b)
+  st(t, T_BUD, 0)
+  if b != 0 {
+    st(c, ctx.C_BUD_Q, budget.QUANTUM)
+    st(c, ctx.C_BUD_LEFT, budget.QUANTUM)
+    budget.mark(c)
+  }
+  rt.tlocal_set(0, c)
+  let fl = ld(t, T_FL)
+  st(t, T_FL, 0)
+  rc.inc(t) // the entry function's own reference
+  let _r = rt.sched_rt(RT_RUN_ENTRY, t, fl)
+  if b != 0 {
+    budget.charge(c, false)
+    budget.release(b)
+  }
+  rt.tlocal_set(0, saved)
+  budget.resume(saved)
+  mfree(ld(c, ctx.C_HELD))
+  mfree(ld(c, ctx.C_NET_MSG))
+  fault.clear(c)
+  obj.free_obj(c)
+  let s = ld(t, T_SCOPE)
+  pool.lock(t + T_MU)
+  rt.slot_store[Int](t + T_STATE, 0, T_DONE, RELEASE)
+  wl_wake(t + T_WAITERS)
+  pool.unlock(t + T_MU)
+  // the last touch of t: a spawn may prune it after (scope_prune)
+  rt.slot_add[Int](t + T_GONE, 0, units / 2, RELEASE)
+  // the last touch of s: the scope's join may free it after
+  if sched.scope_units_done(s, units) != 0 {
+    // the joiner waits for this signal, so s is still there
+    park_signal(ld(s, S_JOINER))
+  }
+}

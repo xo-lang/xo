@@ -28,6 +28,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of a thread, the exit polled with waitpid in cancelable steps; Linux
   UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
   children until stage 4b.
+- Native runtime (zero-C audit item B18): running a claimed task is Xo
+  (tasks.xo run_claimed: the task's context, from the heap, its budget,
+  the end of its run and its scope's counts); only the call of the entry
+  function stays C (xo_rt.c run_entry, sched_rt op 29), whose frame is
+  the unwinding's boundary.
 - Native runtime (zero-C audit item B18): the free functions of tasks,
   scopes, mutexes, channels, selects and Atomics are Xo (tasks.xo,
   mutex.xo, chan.xo, selects.xo), and runtime objects allocate through

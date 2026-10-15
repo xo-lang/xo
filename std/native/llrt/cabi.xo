@@ -755,6 +755,9 @@ fn scope_free(s: Int) { tasks.scope_free(s) }
 
 fn atomic_free(a: Int) { tasks.atomic_free(a) }
 
+/// A claimed task's run (xo_rt.c run_claimed, B18).
+fn run_claimed(t: Int, units: Int) { tasks.run_claimed(t, units) }
+
 fn mutex_free(m: Int) { mutex.free(m) }
 
 fn chan_free(c: Int) { chan.free(c) }
