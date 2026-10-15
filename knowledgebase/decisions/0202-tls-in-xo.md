@@ -206,6 +206,22 @@ std (decision 0074) unless the owner decides to expose a user marker.
   both tlsticket.xo and its Go copy, which agreed with each other; xo-fa
   found it against crypto/tls's own TLS 1.2 tickets.
   std/rt's TestTicketsAsGo now opens Go's tickets and has Go open ours.
+- 2026-10-15 (B31 post-quantum, mlkem.xo and sha3.xo): ML-KEM-768
+  (FIPS 203) as Go's crypto/internal/fips140/mlkem, over a Keccak of 64
+  bit lanes (sha3.xo: SHA3-256 and SHA3-512, SHAKE128 and SHAKE256). The
+  decapsulation's implicit rejection picks between the two keys in
+  constant time. TLS's X25519MLKEM768 hybrid (0x11ec) is Go's
+  hybridKeyExchange: the client share is the encapsulation key then
+  X25519, the server share the ciphertext then X25519, the secret
+  ML-KEM's then X25519's. tls13srv.xo prefers it as Go 1.26's server
+  does (less SecP256r1MLKEM768, SecP384r1MLKEM1024 and P-521, which Xo
+  does not have). The client hello change is Xo Lang 2's, in tls13.xo.
+  Checks: C2SP CCTV's accumulated test (100 in golden crypto_mlkem,
+  10,000 in TestMLKEMAccumulated) and a diff against crypto/mlkem and
+  crypto/sha3; a recorded Go 1.26 default client negotiating the hybrid
+  in tls13_server; TestTLSInteropMatrix with Go's clients taking the
+  hybrid against the Xo servers. Wycheproof's ML-KEM vectors are not in
+  the repository yet.
 
 ## Alternatives
 

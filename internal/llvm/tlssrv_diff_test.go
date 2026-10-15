@@ -102,6 +102,12 @@ func tlsSrvTraces(t *testing.T) []tlsSrvTrace {
 			sv:      [][]byte{g["ED_CERT"], g["ED_KEY"], []byte("-"), nil, []byte("hello from xo")}, hooks: tk,
 			d: []string{"-", "29,23,24", "-", "0", "0", "1"}})
 	}
+	// X25519MLKEM768: Go's default client, the server's default groups
+	out = append(out, tlsSrvTrace{name: "go x25519mlkem768", op: "tls13srv.replay",
+		flights: [][]byte{g["HY_F0"], g["HY_F1"], g["HY_F2"]},
+		sv:      [][]byte{g["ED_CERT"], g["ED_KEY"], []byte("-"), nil, []byte("hello from xo")},
+		hooks:   append(goHooks(g["GO_KEY"]), nil, nil, nil, nil, g["HY_M"]),
+		d:       []string{"-", "-", "-", "0", "0", "1"}})
 	// TLS 1.2: crypto/tls's clients of the tls12_server golden
 	t2 := tls13Consts(t, "tls12_server")
 	// a: the X25519, P-256 and P-384 keys, the one of the group chosen

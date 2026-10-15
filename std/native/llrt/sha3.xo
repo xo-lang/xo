@@ -1,0 +1,231 @@
+// SHA-3 (FIPS 202) for ML-KEM (the zero-C audit's B31, decision 0202):
+// Keccak-f[1600] on 25 lanes of 64 bits, the sponge, SHA3-256 and
+// SHA3-512, and the extendable output functions SHAKE128 and SHAKE256
+// read in pieces (Go's crypto/internal/fips140/sha3). Nothing here
+// branches on or indexes by the data.
+use native/rt
+
+/// A sponge: the 25 lanes, its rate in bytes, its domain separator
+/// (0x06 SHA-3, 0x1f SHAKE), the bytes absorbed into the current block
+/// (absorbing) or left to squeeze from it (squeezing).
+pub struct Sponge {
+  lanes: List[Int]
+  rate: Int
+  dsbyte: Int
+  pos: Int
+  squeezing: Bool
+}
+
+/// The rotation offset of lane x + 5 y (FIPS 202 3.2.2).
+fn rot_of(i: Int) -> Int {
+  match i {
+    0 => 0
+    1 => 1
+    2 => 62
+    3 => 28
+    4 => 27
+    5 => 36
+    6 => 44
+    7 => 6
+    8 => 55
+    9 => 20
+    10 => 3
+    11 => 10
+    12 => 43
+    13 => 25
+    14 => 39
+    15 => 41
+    16 => 45
+    17 => 15
+    18 => 21
+    19 => 8
+    20 => 18
+    21 => 2
+    22 => 61
+    23 => 56
+    _ => 14
+  }
+}
+
+/// The round constants, as their high and low 32 bits.
+fn rc(i: Int) -> Int {
+  let (hi, lo) = match i {
+    0 => (0, 0x00000001)
+    1 => (0, 0x00008082)
+    2 => (0x80000000, 0x0000808a)
+    3 => (0x80000000, 0x80008000)
+    4 => (0, 0x0000808b)
+    5 => (0, 0x80000001)
+    6 => (0x80000000, 0x80008081)
+    7 => (0x80000000, 0x00008009)
+    8 => (0, 0x0000008a)
+    9 => (0, 0x00000088)
+    10 => (0, 0x80008009)
+    11 => (0, 0x8000000a)
+    12 => (0, 0x8000808b)
+    13 => (0x80000000, 0x0000008b)
+    14 => (0x80000000, 0x00008089)
+    15 => (0x80000000, 0x00008003)
+    16 => (0x80000000, 0x00008002)
+    17 => (0x80000000, 0x00000080)
+    18 => (0, 0x0000800a)
+    19 => (0x80000000, 0x8000000a)
+    20 => (0x80000000, 0x80008081)
+    21 => (0x80000000, 0x00008080)
+    22 => (0, 0x80000001)
+    _ => (0x80000000, 0x80008008)
+  }
+  rt.int_wrap(3, hi, 32) | lo
+}
+
+fn rotl(x: Int, n: Int) -> Int {
+  if n == 0 {
+    return x
+  }
+  rt.int_wrap(3, x, n) | rt.int_wrap(4, x, 64 - n)
+}
+
+/// Keccak-f[1600] on the 25 lanes.
+fn keccak(var a: List[Int]) {
+  var c: List[Int] = [0, 0, 0, 0, 0]
+  var b: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  for round in 0..24 {
+    // θ
+    for x in 0..5 {
+      c[x] = a[x] ^ a[x + 5] ^ a[x + 10] ^ a[x + 15] ^ a[x + 20]
+    }
+    for x in 0..5 {
+      let d = c[(x + 4) % 5] ^ rotl(c[(x + 1) % 5], 1)
+      for y in 0..5 {
+        a[x + 5 * y] = a[x + 5 * y] ^ d
+      }
+    }
+    // ρ and π
+    for x in 0..5 {
+      for y in 0..5 {
+        b[y + 5 * ((2 * x + 3 * y) % 5)] = rotl(a[x + 5 * y], rot_of(x + 5 * y))
+      }
+    }
+    // χ
+    for y in 0..5 {
+      for x in 0..5 {
+        a[x + 5 * y] = b[x + 5 * y] ^ (~b[(x + 1) % 5 + 5 * y] & b[(x + 2) % 5 + 5 * y])
+      }
+    }
+    // ι
+    a[0] = a[0] ^ rc(round)
+  }
+}
+
+fn sponge(rate: Int, dsbyte: Int) -> Sponge {
+  Sponge{lanes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], rate: rate, dsbyte: dsbyte, pos: 0, squeezing: false}
+}
+
+/// A SHA3-256 sponge (rate 136), SHA3-512 (72), SHAKE128 (168),
+/// SHAKE256 (136).
+pub fn new_sha3_256() -> Sponge { sponge(136, 0x06) }
+pub fn new_sha3_512() -> Sponge { sponge(72, 0x06) }
+pub fn new_shake128() -> Sponge { sponge(168, 0x1f) }
+pub fn new_shake256() -> Sponge { sponge(136, 0x1f) }
+
+/// XORs byte v into byte i of the state.
+fn xor_byte(var s: Sponge, i: Int, v: Int) {
+  let l = i / 8
+  s.lanes[l] = s.lanes[l] ^ rt.int_wrap(3, v & 255, 8 * (i % 8))
+}
+
+fn get_byte(s: Sponge, i: Int) -> Int { rt.int_wrap(4, s.lanes[i / 8], 8 * (i % 8)) & 255 }
+
+/// Absorbs data (before any squeeze).
+pub fn write(var s: Sponge, data: Bytes) {
+  var i = 0
+  let n = data.len()
+  while i < n {
+    if s.pos == 0 && n - i >= s.rate {
+      // a whole block, a lane at a time
+      for l in 0..s.rate / 8 {
+        s.lanes[l] = s.lanes[l] ^ rt.bytes_word(data, i + 8 * l)
+      }
+      i += s.rate
+      keccak(s.lanes)
+      continue
+    }
+    xor_byte(s, s.pos, Int(data[i]))
+    s.pos += 1
+    i += 1
+    if s.pos == s.rate {
+      keccak(s.lanes)
+      s.pos = 0
+    }
+  }
+}
+
+/// Pads (the domain separator, then 0x80 at the block's last byte) and
+/// switches to squeezing.
+fn finish(var s: Sponge) {
+  xor_byte(s, s.pos, s.dsbyte)
+  xor_byte(s, s.rate - 1, 0x80)
+  keccak(s.lanes)
+  s.pos = 0
+  s.squeezing = true
+}
+
+/// The next n bytes of output.
+pub fn read(var s: Sponge, n: Int) -> Bytes {
+  if !s.squeezing {
+    finish(s)
+  }
+  var out = rt.rs_with_cap(n)
+  var k = 0
+  while k < n {
+    if s.pos == s.rate {
+      keccak(s.lanes)
+      s.pos = 0
+    }
+    out = rt.rs_push_byte(out, get_byte(s, s.pos))
+    s.pos += 1
+    k += 1
+  }
+  out.bytes()
+}
+
+/// The digest of a SHA-3 sponge (its output length: 32 or 64 bytes).
+pub fn sum(var s: Sponge) -> Bytes { read(s, (200 - s.rate) / 2) }
+
+pub fn sha3_256(data: Bytes) -> Bytes {
+  var s = new_sha3_256()
+  write(s, data)
+  sum(s)
+}
+
+pub fn sha3_512(data: Bytes) -> Bytes {
+  var s = new_sha3_512()
+  write(s, data)
+  sum(s)
+}
+
+pub fn shake128(data: Bytes, n: Int) -> Bytes {
+  var s = new_shake128()
+  write(s, data)
+  read(s, n)
+}
+
+pub fn shake256(data: Bytes, n: Int) -> Bytes {
+  var s = new_shake256()
+  write(s, data)
+  read(s, n)
+}
+
+/// internal.crypto_op's sha3 ops (std/internal.xo): sha3_256 and
+/// sha3_512 of a, shake128 and shake256 of a for the decimal length in
+/// b; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  let n = Int.parse(b.to_str() ?? "") ?? 0
+  match what {
+    "sha3_256" => Some(sha3_256(a))
+    "sha3_512" => Some(sha3_512(a))
+    "shake128" => Some(shake128(a, n))
+    "shake256" => Some(shake256(a, n))
+    _ => None
+  }
+}

@@ -14,6 +14,7 @@ use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/ed25519
 use native/llrt/hkdf
+use native/llrt/mlkem
 use native/llrt/nistec
 use native/llrt/rand
 use native/llrt/rsa
@@ -86,7 +87,8 @@ const MAX_HANDSHAKE: Int = 65536
 /// the leaf's private key (RSA: PKCS #1 or PKCS #8 DER; ECDSA: the
 /// scalar's bytes; Ed25519: the 32 byte seed), the ALPN protocols in
 /// order of preference, the suites and groups the server accepts (groups
-/// in order of preference). The tests' hooks: random the ServerHello's
+/// in order of preference, X25519MLKEM768 the hybrid). The tests'
+/// hooks: random the ServerHello's
 /// random, priv the ECDHE private key, salt the RSA-PSS salt, rfc the
 /// RFC 8448 traces' encoding (key_share before supported_versions in the
 /// ServerHello, no compatibility ChangeCipherSpec), ee the
@@ -115,6 +117,9 @@ pub struct Conf {
   pub random: Bytes
   pub priv: Bytes
   pub salt: Bytes
+  /// the 32 byte ML-KEM message of an X25519MLKEM768 exchange (a test
+  /// hook; random when empty)
+  pub mlkem_m: Bytes
   pub rfc: Bool
   pub ee: Bytes?
   pub ticket: Bytes
@@ -127,10 +132,11 @@ pub struct Alt {
 }
 
 /// The settings Go's server has by default for a certificate chain and
-/// key: every TLS 1.3 suite, X25519 then P-256 and P-384 (Go's order less
-/// its post-quantum hybrid and P-521), no ALPN.
+/// key: every TLS 1.3 suite, X25519MLKEM768 then X25519, P-256 and P-384
+/// (Go 1.26's order less SecP256r1MLKEM768, SecP384r1MLKEM1024 and
+/// P-521), no ALPN.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
-  Conf{certs: certs, key: key, alts: [], handoff: false, ticket_keys: [], now: 0, ticket_iv: b"", age_add: b"", alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", rfc: false, ee: None, ticket: b""}
+  Conf{certs: certs, key: key, alts: [], handoff: false, ticket_keys: [], now: 0, ticket_iv: b"", age_add: b"", alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [mlkem.GROUP_X25519_MLKEM768, tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", mlkem_m: b"", rfc: false, ee: None, ticket: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -655,7 +661,7 @@ fn client_hello(var s: Server, msg: Bytes) {
   // with a key share first
   var shared: List[Int] = []
   for g in s.conf.groups {
-    if has(h.groups, g) && g is 23 | 24 | 29 {
+    if has(h.groups, g) && g is 23 | 24 | 29 | 0x11ec {
       shared.push(g)
     }
   }
@@ -735,12 +741,26 @@ fn respond(var s: Server, h: Hello) {
       peer = h.share_keys[i]
     }
   }
+  // the X25519MLKEM768 hybrid (Go's hybridKeyExchange): its X25519 key
+  // is the group's private key
+  let ecdh_group = if s.group == mlkem.GROUP_X25519_MLKEM768 { tls13.GROUP_X25519 } else { s.group }
   var priv = s.conf.priv
   if priv.is_empty() {
-    priv = tls13.keygen(s.group)
+    priv = tls13.keygen(ecdh_group)
   }
-  let share = tls13.public_key(s.group, priv)
-  let shared = match tls13.shared_secret(s.group, priv, peer) {
+  var share = b""
+  var exchanged: Bytes? = None
+  if s.group == mlkem.GROUP_X25519_MLKEM768 {
+    let m = if s.conf.mlkem_m.len() == 32 { s.conf.mlkem_m } else { rand.next_bytes(32) }
+    if let Some((sec, sh)) = mlkem.hybrid_server(peer, priv, m) {
+      share = sh
+      exchanged = Some(sec)
+    }
+  } else {
+    share = tls13.public_key(s.group, priv)
+    exchanged = tls13.shared_secret(s.group, priv, peer)
+  }
+  let shared = match exchanged {
     Some(x) => x
     None => {
       fail(s, ALERT_ILLEGAL_PARAMETER, "tls: invalid client key share")
@@ -1213,7 +1233,8 @@ fn quote(x: Str) -> Str {
 /// the data the server sends once the handshake is done; c the hooks:
 /// random, ECDHE private key, PSS salt, and optionally the session
 /// tickets' (a ticket key's 32 byte seed, the time in Unix seconds as
-/// text, a ticket's IV, its 4 ticket_age_add bytes). Every list is parts, each a 3
+/// text, a ticket's IV, its 4 ticket_age_add bytes), then optionally
+/// the ML-KEM message of an X25519MLKEM768 exchange. Every list is parts, each a 3
 /// byte big endian length then the bytes. d is "suites groups alpn rfc
 /// chunk certs": hex suites and decimal groups, comma separated ("-" for
 /// the defaults), the ALPN protocols ("-" for none), rfc 1 for the RFC
@@ -1241,7 +1262,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
 
 fn replay(flights: List[Bytes], sv: List[Bytes], hooks: List[Bytes], args: List[Str]) -> Str {
   let ncerts = Int.parse(args[5]) ?? 1
-  if sv.len() != ncerts + 4 || !(hooks.len() is 3 | 7) {
+  if sv.len() != ncerts + 4 || !(hooks.len() is 3 | 7 | 8) {
     return "args\n"
   }
   var cf = conf(sv[0..ncerts], sv[ncerts])
@@ -1262,7 +1283,10 @@ fn replay(flights: List[Bytes], sv: List[Bytes], hooks: List[Bytes], args: List[
   cf.random = hooks[0]
   cf.priv = hooks[1]
   cf.salt = hooks[2]
-  if hooks.len() == 7 && !hooks[3].is_empty() {
+  if hooks.len() == 8 {
+    cf.mlkem_m = hooks[7]
+  }
+  if hooks.len() >= 7 && !hooks[3].is_empty() {
     cf.now = Int.parse(hooks[4].to_str() ?? "") ?? 0
     cf.ticket_keys = [tlsticket.key(hooks[3], cf.now)]
     cf.ticket_iv = hooks[5]

@@ -86,6 +86,18 @@ go client, ticket of another key:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
   f1 4 170303001342afecae469c53b38fe76d7afbc63e527d5536 - false local error: tls: bad record MAC
   bye -
+go client, x25519mlkem768:
+  f0 2 16030304ba020004b60303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(1653 bytes) - false 
+  f1 3 170303001e824bc587194b6b8bff9ef0d546bf1322ce0700c149dae5a9ec7306514f7c 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 4588 - 807 xo.test false false
+  f2 3 - - true 
+  bye 1703030013e2aeb43a388421d253133c0ddfca92d7f4efad
+go client, x25519mlkem768, a byte at a time:
+  f0 2 16030304ba020004b60303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(1653 bytes) - false 
+  f1 3 170303001e824bc587194b6b8bff9ef0d546bf1322ce0700c149dae5a9ec7306514f7c 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 4588 - 807 xo.test false false
+  f2 3 - - true 
+  bye 1703030013e2aeb43a388421d253133c0ddfca92d7f4efad
 rsa:
   client -
   server -

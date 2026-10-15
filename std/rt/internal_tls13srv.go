@@ -10,6 +10,8 @@ import (
 	"crypto/elliptic"
 	"crypto/hkdf"
 	"crypto/hmac"
+	"crypto/mlkem"
+	"crypto/mlkem/mlkemtest"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -72,10 +74,10 @@ func t13sDash(s string) string {
 
 func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 	ncerts, _ := strconv.Atoi(args[5])
-	if len(sv) != ncerts+4 || (len(hooks) != 3 && len(hooks) != 7) {
+	if len(sv) != ncerts+4 || (len(hooks) != 3 && len(hooks) != 7 && len(hooks) != 8) {
 		return "args\n"
 	}
-	cf := t13sConf{certs: sv[:ncerts], key: sv[ncerts], suites: []int{0x1301, 0x1302, 0x1303}, groups: []int{t13X25519, t13P256, t13P384}}
+	cf := t13sConf{certs: sv[:ncerts], key: sv[ncerts], suites: []int{0x1301, 0x1302, 0x1303}, groups: []int{0x11ec, t13X25519, t13P256, t13P384}}
 	if args[0] != "-" {
 		cf.suites = t13sInts(args[0], 16)
 	}
@@ -91,7 +93,10 @@ func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 	}
 	cf.ticket = sv[ncerts+2]
 	cf.random, cf.priv, cf.salt = hooks[0], hooks[1], hooks[2]
-	if len(hooks) == 7 && len(hooks[3]) > 0 {
+	if len(hooks) == 8 {
+		cf.mlkemM = hooks[7]
+	}
+	if len(hooks) >= 7 && len(hooks[3]) > 0 {
 		cf.now, _ = strconv.ParseInt(string(hooks[4]), 10, 64)
 		cf.ticketKeys = []t13sTicketKey{t13sKeyFrom(hooks[3], cf.now)}
 		cf.ticketIV, cf.ageAdd = hooks[5], hooks[6]
@@ -130,6 +135,7 @@ type t13sConf struct {
 	alpn               []string
 	suites, groups     []int
 	random, priv, salt []byte
+	mlkemM             []byte
 	rfc, hasEE         bool
 	ee, ticket         []byte
 	// session tickets (tlsticket.xo)
@@ -553,7 +559,7 @@ func (s *t13Server) clientHello(msg []byte) {
 	}
 	var shared []int
 	for _, g := range s.conf.groups {
-		if t13Contains(h.groups, g) && (g == 23 || g == 24 || g == 29) {
+		if t13Contains(h.groups, g) && (g == 23 || g == 24 || g == 29 || g == 0x11ec) {
 			shared = append(shared, g)
 		}
 	}
@@ -620,13 +626,28 @@ func (s *t13Server) respond(h t13sHello) {
 			peer = h.shareKeys[i]
 		}
 	}
+	ecdhGroup := s.group
+	if s.group == 0x11ec {
+		ecdhGroup = t13X25519
+	}
 	priv := s.conf.priv
 	if len(priv) == 0 {
-		k, _ := t13Curve(s.group).GenerateKey(rand.Reader)
+		k, _ := t13Curve(ecdhGroup).GenerateKey(rand.Reader)
 		priv = k.Bytes()
 	}
-	share := t13PublicKey(s.group, priv)
-	shared, ok := t13Shared(s.group, priv, peer)
+	var share, shared []byte
+	ok := false
+	if s.group == 0x11ec {
+		m := s.conf.mlkemM
+		if len(m) != 32 {
+			m = make([]byte, 32)
+			rand.Read(m)
+		}
+		shared, share, ok = t13sHybridServer(peer, priv, m)
+	} else {
+		share = t13PublicKey(s.group, priv)
+		shared, ok = t13Shared(s.group, priv, peer)
+	}
 	if !ok {
 		s.fail(47, "tls: invalid client key share")
 		return
@@ -1242,4 +1263,27 @@ func t13sTicketOpen(t []byte, keys []t13sTicketKey) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// t13sHybridServer is crypto/tls's hybridKeyExchange.serverSharedSecret
+// for X25519MLKEM768 with the X25519 key priv and the ML-KEM message m:
+// the secret (ML-KEM's, then X25519's) and the share (the ciphertext,
+// then the X25519 public key).
+func t13sHybridServer(peer, priv, m []byte) ([]byte, []byte, bool) {
+	if len(peer) != mlkem.EncapsulationKeySize768+32 {
+		return nil, nil, false
+	}
+	xs, ok := t13Shared(t13X25519, priv, peer[mlkem.EncapsulationKeySize768:])
+	if !ok {
+		return nil, nil, false
+	}
+	ek, err := mlkem.NewEncapsulationKey768(peer[:mlkem.EncapsulationKeySize768])
+	if err != nil {
+		return nil, nil, false
+	}
+	k, ct, err := mlkemtest.Encapsulate768(ek, m)
+	if err != nil {
+		return nil, nil, false
+	}
+	return append(k, xs...), append(ct, t13PublicKey(t13X25519, priv)...), true
 }

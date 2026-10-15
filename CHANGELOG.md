@@ -74,6 +74,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   constraints and inhibitAnyPolicy: 20,000 chains over two seeds, no
   difference (about 5 percent refused for their policies).
 
+- Native runtime (zero-C audit item B31, post-quantum, decision 0202):
+  ML-KEM-768 (FIPS 203) in Xo (std/native/llrt/mlkem.xo, as Go's, with
+  the implicit rejection in constant time) over SHA-3 and SHAKE
+  (std/native/llrt/sha3.xo). The Xo TLS server negotiates
+  X25519MLKEM768, Go's default group, first as Go's server does.
+  internal.crypto_op gains the sha3 and mlkem areas (Go's crypto/sha3
+  and crypto/mlkem as the reference). Golden crypto_mlkem matches
+  FIPS 202's digests, C2SP CCTV's accumulated ML-KEM test and crypto/mlkem;
+  TestMLKEMAccumulated runs CCTV's 10,000 iterations; tls13_server
+  replays Go 1.26's default client negotiating the hybrid; the interop
+  matrix has Go's clients taking it against the Xo servers.
 - Native runtime (zero-C audit item B31, part 11, decision 0202): name
   constraints as Go 1.26 checks them (its constraints.go: per
   certificate, sorted and pruned sets of IP, DNS, URI and e-mail

@@ -70,6 +70,10 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoCPU(what, a, b, c)
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
+	case "sha3":
+		r, ok = cryptoSHA3(what, a, b)
+	case "mlkem":
+		r, ok = cryptoMLKEM(what, a, b, c)
 	}
 	if !ok {
 		panic("internal.crypto_op: unknown op " + op)

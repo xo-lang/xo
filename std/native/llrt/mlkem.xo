@@ -1,0 +1,530 @@
+// ML-KEM-768 (FIPS 203) and TLS's X25519MLKEM768 hybrid for the native
+// backends' TLS (the zero-C audit's B31, decision 0202), as Go's
+// crypto/internal/fips140/mlkem (mlkem768.go, field.go) and
+// crypto/tls key_schedule.go's hybridKeyExchange: key generation from a
+// 64 byte seed (d || z), encapsulation, decapsulation with the implicit
+// rejection (the shared key of a ciphertext that does not re-encrypt is
+// J(z || c), chosen in constant time). Field arithmetic is Go's: q =
+// 3329, Barrett reduction, no branch or index on a secret; the
+// rejection sampling of the matrix A reads only the public seed.
+use native/llrt/asn1
+use native/llrt/ct
+use native/llrt/rand
+use native/llrt/sha3
+use native/llrt/x25519
+use native/rt
+
+const N: Int = 256
+const Q: Int = 3329
+const K: Int = 3
+
+/// The sizes: an encapsulation key, a ciphertext, a seed.
+pub const EK_SIZE: Int = 1184
+pub const CT_SIZE: Int = 1088
+pub const SEED_SIZE: Int = 64
+
+/// TLS's X25519MLKEM768 group (draft-ietf-tls-ecdhe-mlkem).
+pub const GROUP_X25519_MLKEM768: Int = 0x11ec
+
+// ---------------------------------------------------------------------------
+// The field and the ring
+
+/// a - q when a >= q, for a < 2q.
+fn reduce_once(a: Int) -> Int {
+  let x = a - Q
+  x + (rt.int_wrap(4, x, 63) * Q)
+}
+
+fn fadd(a: Int, b: Int) -> Int { reduce_once(a + b) }
+
+fn fsub(a: Int, b: Int) -> Int { reduce_once(a - b + Q) }
+
+/// Barrett reduction of a < 2^25 (Go's fieldReduce).
+fn freduce(a: Int) -> Int {
+  let quotient = (a * 5039) >> 24
+  reduce_once(a - quotient * Q)
+}
+
+fn fmul(a: Int, b: Int) -> Int { freduce(a * b) }
+
+/// Go's compress: round(2^d x / q) mod 2^d.
+fn compress(x: Int, d: Int) -> Int {
+  let dividend = rt.int_wrap(3, x, d)
+  var quotient = (dividend * 5039) >> 24
+  let remainder = dividend - quotient * Q
+  quotient += rt.int_wrap(4, Q / 2 - remainder, 63)
+  quotient += rt.int_wrap(4, Q + Q / 2 - remainder, 63)
+  quotient & (rt.int_wrap(3, 1, d) - 1)
+}
+
+/// Go's decompress: round(q y / 2^d).
+fn decompress(y: Int, d: Int) -> Int {
+  let dividend = y * Q
+  (dividend >> d) + ((dividend >> (d - 1)) & 1)
+}
+
+fn zeros() -> List[Int] {
+  var p: List[Int] = []
+  for _ in 0..N {
+    p.push(0)
+  }
+  p
+}
+
+fn padd(a: List[Int], b: List[Int]) -> List[Int] {
+  var s = zeros()
+  for i in 0..N {
+    s[i] = fadd(a[i], b[i])
+  }
+  s
+}
+
+fn psub(a: List[Int], b: List[Int]) -> List[Int] {
+  var s = zeros()
+  for i in 0..N {
+    s[i] = fsub(a[i], b[i])
+  }
+  s
+}
+
+const ZETAS: List[Int] = [1, 1729, 2580, 3289, 2642, 630, 1897, 848, 1062, 1919, 193, 797, 2786, 3260, 569, 1746, 296, 2447, 1339, 1476, 3046, 56, 2240, 1333, 1426, 2094, 535, 2882, 2393, 2879, 1974, 821, 289, 331, 3253, 1756, 1197, 2304, 2277, 2055, 650, 1977, 2513, 632, 2865, 33, 1320, 1915, 2319, 1435, 807, 452, 1438, 2868, 1534, 2402, 2647, 2617, 1481, 648, 2474, 3110, 1227, 910, 17, 2761, 583, 2649, 1637, 723, 2288, 1100, 1409, 2662, 3281, 233, 756, 2156, 3015, 3050, 1703, 1651, 2789, 1789, 1847, 952, 1461, 2687, 939, 2308, 2437, 2388, 733, 2337, 268, 641, 1584, 2298, 2037, 3220, 375, 2549, 2090, 1645, 1063, 319, 2773, 757, 2099, 561, 2466, 2594, 2804, 1092, 403, 1026, 1143, 2150, 2775, 886, 1722, 1212, 1874, 1029, 2110, 2935, 885, 2154]
+
+fn zeta(i: Int) -> Int { ZETAS[i] }
+
+const GAMMAS: List[Int] = [17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692, 723, 2606, 2288, 1041, 1100, 2229, 1409, 1920, 2662, 667, 3281, 48, 233, 3096, 756, 2573, 2156, 1173, 3015, 314, 3050, 279, 1703, 1626, 1651, 1678, 2789, 540, 1789, 1540, 1847, 1482, 952, 2377, 1461, 1868, 2687, 642, 939, 2390, 2308, 1021, 2437, 892, 2388, 941, 733, 2596, 2337, 992, 268, 3061, 641, 2688, 1584, 1745, 2298, 1031, 2037, 1292, 3220, 109, 375, 2954, 2549, 780, 2090, 1239, 1645, 1684, 1063, 2266, 319, 3010, 2773, 556, 757, 2572, 2099, 1230, 561, 2768, 2466, 863, 2594, 735, 2804, 525, 1092, 2237, 403, 2926, 1026, 2303, 1143, 2186, 2150, 1179, 2775, 554, 886, 2443, 1722, 1607, 1212, 2117, 1874, 1455, 1029, 2300, 2110, 1219, 2935, 394, 885, 2444, 2154, 1175]
+
+fn gamma(i: Int) -> Int { GAMMAS[i] }
+
+/// The NTT (FIPS 203 Algorithm 9), in place.
+fn ntt(f0: List[Int]) -> List[Int] {
+  var f = f0
+  var k = 1
+  var len = 128
+  while len >= 2 {
+    var start = 0
+    while start < N {
+      let z = zeta(k)
+      k += 1
+      for j in start..start + len {
+        let t = fmul(z, f[j + len])
+        f[j + len] = fsub(f[j], t)
+        f[j] = fadd(f[j], t)
+      }
+      start += 2 * len
+    }
+    len = len / 2
+  }
+  f
+}
+
+/// The inverse NTT (FIPS 203 Algorithm 10).
+fn inverse_ntt(f0: List[Int]) -> List[Int] {
+  var f = f0
+  var k = 127
+  var len = 2
+  while len <= 128 {
+    var start = 0
+    while start < N {
+      let z = zeta(k)
+      k -= 1
+      for j in start..start + len {
+        let t = f[j]
+        f[j] = fadd(t, f[j + len])
+        f[j + len] = freduce(z * (f[j + len] - t + Q))
+      }
+      start += 2 * len
+    }
+    len = len * 2
+  }
+  for i in 0..N {
+    f[i] = fmul(f[i], 3303)
+  }
+  f
+}
+
+/// The product in the NTT domain (FIPS 203 Algorithm 11).
+fn ntt_mul(f: List[Int], g: List[Int]) -> List[Int] {
+  var h = zeros()
+  var i = 0
+  while i < N {
+    let a0 = f[i]
+    let a1 = f[i + 1]
+    let b0 = g[i]
+    let b1 = g[i + 1]
+    h[i] = freduce(a0 * b0 + fmul(a1, b1) * gamma(i / 2))
+    h[i + 1] = freduce(a0 * b1 + a1 * b0)
+    i += 2
+  }
+  h
+}
+
+// ---------------------------------------------------------------------------
+// Sampling
+
+/// The NTT coefficients of A[i][j] (FIPS 203 Algorithm 7): SHAKE128 of
+/// rho || ii || jj, 12 bit candidates below q.
+fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
+  var s = sha3.new_shake128()
+  sha3.write(s, asn1.cat([rho, byte(ii), byte(jj)]))
+  var a: List[Int] = []
+  while a.len() < N {
+    let b = sha3.read(s, 24)
+    var off = 0
+    while off < 24 && a.len() < N {
+      let d1 = Int(b[off]) | ((Int(b[off + 1]) & 15) << 8)
+      let d2 = (Int(b[off + 1]) >> 4) | (Int(b[off + 2]) << 4)
+      if d1 < Q {
+        a.push(d1)
+      }
+      if d2 < Q && a.len() < N {
+        a.push(d2)
+      }
+      off += 3
+    }
+  }
+  a
+}
+
+/// A polynomial from the centered binomial distribution with eta 2
+/// (FIPS 203 Algorithm 8): SHAKE256 of s || b, 128 bytes.
+fn sample_cbd(s: Bytes, b: Int) -> List[Int] {
+  let bs = sha3.shake256(asn1.cat([s, byte(b)]), 128)
+  var f = zeros()
+  for i in 0..N / 2 {
+    let x = Int(bs[i])
+    f[2 * i] = fsub((x & 1) + ((x >> 1) & 1), ((x >> 2) & 1) + ((x >> 3) & 1))
+    f[2 * i + 1] = fsub(((x >> 4) & 1) + ((x >> 5) & 1), ((x >> 6) & 1) + ((x >> 7) & 1))
+  }
+  f
+}
+
+// ---------------------------------------------------------------------------
+// Encodings
+
+/// ByteEncode12.
+fn encode12(f: List[Int]) -> Bytes {
+  var out = rt.rs_with_cap(384)
+  var i = 0
+  while i < N {
+    let x = f[i] | (f[i + 1] << 12)
+    out = rt.rs_push_word(out, x, 3)
+    i += 2
+  }
+  out.bytes()
+}
+
+/// ByteDecode12 with Go's check that every coefficient is below q.
+fn decode12(b: Bytes) -> List[Int]? {
+  var f = zeros()
+  var bad = 0
+  for i in 0..N / 2 {
+    let d = Int(b[3 * i]) | (Int(b[3 * i + 1]) << 8) | (Int(b[3 * i + 2]) << 16)
+    f[2 * i] = d & 4095
+    f[2 * i + 1] = d >> 12
+    bad = bad | ((Q - 1 - f[2 * i]) | (Q - 1 - f[2 * i + 1]))
+  }
+  // a negative difference sets the sign bit (the key is public)
+  if bad < 0 {
+    return None
+  }
+  Some(f)
+}
+
+/// Compress_d then ByteEncode_d (d bits per coefficient, little endian).
+fn encode_d(f: List[Int], d: Int) -> Bytes {
+  var out = rt.rs_with_cap(32 * d)
+  var acc = 0
+  var bits = 0
+  for i in 0..N {
+    acc = acc | rt.int_wrap(3, compress(f[i], d), bits)
+    bits += d
+    while bits >= 8 {
+      out = rt.rs_push_byte(out, acc & 255)
+      acc = acc >> 8
+      bits -= 8
+    }
+  }
+  out.bytes()
+}
+
+/// ByteDecode_d then Decompress_d.
+fn decode_d(b: Bytes, d: Int) -> List[Int] {
+  var f = zeros()
+  var acc = 0
+  var bits = 0
+  var p = 0
+  for i in 0..N {
+    while bits < d {
+      acc = acc | rt.int_wrap(3, Int(b[p]), bits)
+      p += 1
+      bits += 8
+    }
+    f[i] = decompress(acc & (rt.int_wrap(3, 1, d) - 1), d)
+    acc = acc >> d
+    bits -= d
+  }
+  f
+}
+
+fn byte(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
+
+// ---------------------------------------------------------------------------
+// K-PKE and ML-KEM
+
+/// A key expanded from its seed: the matrix A (A[i*k+j]), the secret s
+/// and t (NTT domain), rho, H(ek), z, and the encapsulation key's bytes.
+struct Key {
+  a: List[List[Int]]
+  s: List[List[Int]]
+  t: List[List[Int]]
+  rho: Bytes
+  h: Bytes
+  z: Bytes
+  ek: Bytes
+}
+
+fn matrix(rho: Bytes) -> List[List[Int]] {
+  var a: List[List[Int]] = []
+  for i in 0..K {
+    for j in 0..K {
+      a.push(sample_ntt(rho, j, i))
+    }
+  }
+  a
+}
+
+/// ML-KEM.KeyGen_internal (FIPS 203 Algorithms 13 and 16) from d || z.
+fn expand(seed: Bytes) -> Key {
+  let d = seed[0..32]
+  let z = seed[32..64]
+  let g = sha3.sha3_512(asn1.cat([d, byte(K)]))
+  let rho = g[0..32]
+  let sigma = g[32..64]
+  let a = matrix(rho)
+  var s: List[List[Int]] = []
+  var e: List[List[Int]] = []
+  for i in 0..K {
+    s.push(ntt(sample_cbd(sigma, i)))
+  }
+  for i in 0..K {
+    e.push(ntt(sample_cbd(sigma, K + i)))
+  }
+  var t: List[List[Int]] = []
+  for i in 0..K {
+    var ti = e[i]
+    for j in 0..K {
+      ti = padd(ti, ntt_mul(a[i * K + j], s[j]))
+    }
+    t.push(ti)
+  }
+  var parts: List[Bytes] = []
+  for ti in t {
+    parts.push(encode12(ti))
+  }
+  parts.push(rho)
+  let ek = asn1.cat(parts)
+  Key{a: a, s: s, t: t, rho: rho, h: sha3.sha3_256(ek), z: z, ek: ek}
+}
+
+/// The encapsulation key of a seed (1184 bytes).
+pub fn public_key(seed: Bytes) -> Bytes { expand(seed).ek }
+
+/// A new seed from the system's generator.
+pub fn generate() -> Bytes { rand.next_bytes(SEED_SIZE) }
+
+/// K-PKE.Encrypt (FIPS 203 Algorithm 14).
+fn pke_encrypt(a: List[List[Int]], t: List[List[Int]], m: Bytes, rnd: Bytes) -> Bytes {
+  var r: List[List[Int]] = []
+  for i in 0..K {
+    r.push(ntt(sample_cbd(rnd, i)))
+  }
+  var e1: List[List[Int]] = []
+  for i in 0..K {
+    e1.push(sample_cbd(rnd, K + i))
+  }
+  let e2 = sample_cbd(rnd, 2 * K)
+  var parts: List[Bytes] = []
+  for i in 0..K {
+    var uh = zeros()
+    for j in 0..K {
+      uh = padd(uh, ntt_mul(a[j * K + i], r[j]))
+    }
+    parts.push(encode_d(padd(e1[i], inverse_ntt(uh)), 10))
+  }
+  let mu = decode_d(m, 1)
+  var vh = zeros()
+  for i in 0..K {
+    vh = padd(vh, ntt_mul(t[i], r[i]))
+  }
+  parts.push(encode_d(padd(padd(inverse_ntt(vh), e2), mu), 4))
+  asn1.cat(parts)
+}
+
+/// K-PKE.Decrypt (FIPS 203 Algorithm 15).
+fn pke_decrypt(s: List[List[Int]], c: Bytes) -> Bytes {
+  var mask = zeros()
+  for i in 0..K {
+    let u = decode_d(c[320 * i..320 * (i + 1)], 10)
+    mask = padd(mask, ntt_mul(s[i], ntt(u)))
+  }
+  let v = decode_d(c[960..CT_SIZE], 4)
+  encode_d(psub(v, inverse_ntt(mask)), 1)
+}
+
+/// ML-KEM.Encaps_internal with the 32 byte message m (FIPS 203
+/// Algorithm 17): the shared key (32 bytes) and the ciphertext; none
+/// when ek is not a valid encapsulation key (Go's
+/// NewEncapsulationKey768: the length, every coefficient below q).
+pub fn encapsulate(ek: Bytes, m: Bytes) -> (Bytes, Bytes)? {
+  if ek.len() != EK_SIZE || m.len() != 32 {
+    return None
+  }
+  var t: List[List[Int]] = []
+  for i in 0..K {
+    t.push(decode12(ek[384 * i..384 * (i + 1)])?)
+  }
+  let a = matrix(ek[1152..EK_SIZE])
+  let g = sha3.sha3_512(asn1.cat([m, sha3.sha3_256(ek)]))
+  Some((g[0..32], pke_encrypt(a, t, m, g[32..64])))
+}
+
+/// ML-KEM.Decaps_internal (FIPS 203 Algorithm 18) of a ciphertext by the
+/// key of seed: the shared key, J(z || c) when c does not re-encrypt to
+/// itself (chosen in constant time); none for a ciphertext of another
+/// length.
+pub fn decapsulate(seed: Bytes, c: Bytes) -> Bytes? {
+  if seed.len() != SEED_SIZE || c.len() != CT_SIZE {
+    return None
+  }
+  let key = expand(seed)
+  let m = pke_decrypt(key.s, c)
+  let g = sha3.sha3_512(asn1.cat([m, key.h]))
+  let kprime = g[0..32]
+  let kbar = sha3.shake256(asn1.cat([key.z, c]), 32)
+  let c1 = pke_encrypt(key.a, key.t, m, g[32..64])
+  var diff = 0
+  for i in 0..CT_SIZE {
+    diff = diff | (Int(c[i]) ^ Int(c1[i]))
+  }
+  let same = ct.mask_eq(diff, 0)
+  var out = rt.rs_with_cap(32)
+  for i in 0..32 {
+    out = rt.rs_push_byte(out, ct.pick(same, Int(kprime[i]), Int(kbar[i])))
+  }
+  Some(out.bytes())
+}
+
+// ---------------------------------------------------------------------------
+// X25519MLKEM768 (Go's key_schedule.go hybridKeyExchange)
+
+/// A hybrid private key: the ML-KEM seed (64 bytes), then the X25519
+/// private key (32).
+pub fn hybrid_keygen() -> Bytes { asn1.cat([generate(), rand.next_bytes(32)]) }
+
+/// The X25519 private key of a hybrid private key (for the plain X25519
+/// share a client sends next to the hybrid one, as Go's).
+pub fn hybrid_x25519_priv(priv: Bytes) -> Bytes { priv[64..96] }
+
+/// A client's hybrid key share: the encapsulation key, then the X25519
+/// public key (1216 bytes).
+pub fn hybrid_share(priv: Bytes) -> Bytes { asn1.cat([public_key(priv[0..64]), x25519.base(priv[64..96])]) }
+
+/// The client's shared secret from the server's share (the ciphertext,
+/// then its X25519 public key): ML-KEM's key, then the X25519 secret;
+/// none on a share of another length, a ciphertext that does not
+/// decapsulate, or an all zero X25519 secret.
+pub fn hybrid_client_shared(priv: Bytes, share: Bytes) -> Bytes? {
+  if share.len() != CT_SIZE + 32 {
+    return None
+  }
+  let x = x25519.scalar_mult(priv[64..96], share[CT_SIZE..CT_SIZE + 32])
+  if all_zero(x) {
+    return None
+  }
+  let k = decapsulate(priv[0..64], share[0..CT_SIZE])?
+  Some(asn1.cat([k, x]))
+}
+
+/// The server's side for a client's hybrid share, with its X25519
+/// private key and the 32 byte ML-KEM message: the shared secret and its
+/// share (the ciphertext, then its X25519 public key); none on a share of
+/// another length, an invalid encapsulation key, or a low order X25519
+/// point.
+pub fn hybrid_server(share: Bytes, x_priv: Bytes, m: Bytes) -> (Bytes, Bytes)? {
+  if share.len() != EK_SIZE + 32 {
+    return None
+  }
+  let x = x25519.scalar_mult(x_priv, share[EK_SIZE..EK_SIZE + 32])
+  if all_zero(x) {
+    return None
+  }
+  let (k, c) = encapsulate(share[0..EK_SIZE], m)?
+  Some((asn1.cat([k, x]), asn1.cat([c, x25519.base(x_priv)])))
+}
+
+fn all_zero(b: Bytes) -> Bool {
+  var acc = 0
+  for v in b {
+    acc = acc | Int(v)
+  }
+  acc == 0
+}
+
+// ---------------------------------------------------------------------------
+// The tests' op
+
+/// internal.crypto_op's mlkem ops (std/internal.xo): `public` the
+/// encapsulation key of the seed a; `encaps` the shared key and the
+/// ciphertext of the encapsulation key a and message b (empty for an
+/// invalid key); `decaps` the shared key of the seed a and ciphertext b
+/// (empty for a wrong length); `hybrid_share` of the private key a;
+/// `hybrid_server` the secret and share for the client's share a, X25519
+/// key b, message c; `hybrid_client` the secret of the private key a and
+/// server share b; `accumulated` C2SP CCTV's accumulated test of a
+/// (decimal) iterations (Go's crypto/mlkem TestAccumulated): the
+/// SHAKE128 digest of every key, ciphertext and shared key. None for
+/// another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  match what {
+    "public" => Some(public_key(a))
+    "encaps" => match encapsulate(a, b) {
+      Some((k, ct)) => Some(asn1.cat([k, ct]))
+      None => Some(b"")
+    }
+    "decaps" => Some(decapsulate(a, b) ?? b"")
+    "hybrid_share" => Some(hybrid_share(a))
+    "hybrid_server" => match hybrid_server(a, b, c) {
+      Some((k, s)) => Some(asn1.cat([k, s]))
+      None => Some(b"")
+    }
+    "hybrid_client" => Some(hybrid_client_shared(a, b) ?? b"")
+    "accumulated" => Some(accumulated(Int.parse(a.to_str() ?? "") ?? 0))
+    _ => None
+  }
+}
+
+/// C2SP CCTV's accumulated ML-KEM-768 test: n times, a seed from a
+/// SHAKE128 stream of the empty input, its encapsulation key, an
+/// encapsulation of the next 32 bytes and its decapsulation (which must
+/// agree), and the decapsulation of 1088 more bytes as a ciphertext
+/// (the implicit rejection); every output into a SHAKE128 digest of 32
+/// bytes.
+fn accumulated(n: Int) -> Bytes {
+  var s = sha3.new_shake128()
+  var o = sha3.new_shake128()
+  for _ in 0..n {
+    let seed = sha3.read(s, SEED_SIZE)
+    let ek = public_key(seed)
+    sha3.write(o, ek)
+    let msg = sha3.read(s, 32)
+    let (k, c) = encapsulate(ek, msg) ?? (b"", b"")
+    sha3.write(o, c)
+    sha3.write(o, k)
+    if decapsulate(seed, c) != Some(k) {
+      return b"decapsulation differs"
+    }
+    let c1 = sha3.read(s, CT_SIZE)
+    sha3.write(o, decapsulate(seed, c1) ?? b"")
+  }
+  sha3.read(o, 32)
+}

@@ -301,10 +301,15 @@ func TestTLSInteropMatrix(t *testing.T) {
 		outs[i] = runMatrix(t, res.Binaries[xotool.Host()], certs, roots)
 	}
 	t.Logf("go backend:\n%s", outs[0])
-	// Go's crypto/tls (the Go backend) agrees X25519MLKEM768 where both
-	// ends are Go's; the Xo TLS has no ML-KEM (decision 0202), so X25519
-	// is the group a Xo end takes there
-	want := strings.Split(strings.ReplaceAll(outs[0], "X25519MLKEM768", "X25519"), "\n")
+	// X25519MLKEM768, Go's default: the Xo server takes it (mlkem.xo);
+	// the Xo client offers it once tls13.xo does (Xo Lang 2's, in
+	// progress), X25519 until then
+	want := strings.Split(outs[0], "\n")
+	for j, w := range want {
+		if strings.HasPrefix(w, "xo client -> ") {
+			want[j] = strings.ReplaceAll(w, "X25519MLKEM768", "X25519")
+		}
+	}
 	for i, be := range backends[1:] {
 		got := strings.Split(outs[i+1], "\n")
 		if len(got) != len(want) {

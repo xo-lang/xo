@@ -6,10 +6,12 @@ use native/llrt/cpu
 use native/llrt/fsops
 use native/llrt/hkdf
 use native/llrt/hmac
+use native/llrt/mlkem
 use native/llrt/nistec
 use native/llrt/rsa
 use native/llrt/sha1
 use native/llrt/sha256
+use native/llrt/sha3
 use native/llrt/sysio
 use native/llrt/x509
 use native/llrt/x25519
@@ -68,6 +70,8 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "cpu" => cpu.op(what, a, b, c, d)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
+    "sha3" => sha3.op(what, a, b, c, d)
+    "mlkem" => mlkem.op(what, a, b, c, d)
     _ => None
   }
   r ?? fault("internal.crypto_op: unknown op ${op}")
