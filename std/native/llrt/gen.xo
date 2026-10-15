@@ -8,6 +8,7 @@
 // for a generated value's scalars (internal/ssa build_gen.go,
 // selfhost/ssa testmode.xo). Decision 0198 deleted the C path
 // (`XO_LLRT_C=gen`).
+use native/llrt/raw
 use native/llrt/testworld
 use native/rt
 
@@ -105,7 +106,7 @@ pub fn str(g: Int) -> Str {
   let n = intn(g, 9)
   var out = ""
   for _ in 0..n {
-    out = rt.rs_push_rune(out, alpha(intn(g, 18)))
+    out = raw.push_rune(out, alpha(intn(g, 18)))
   }
   out
 }

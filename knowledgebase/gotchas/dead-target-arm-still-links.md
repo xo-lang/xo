@@ -1,6 +1,7 @@
 # A C function only a dead `target` arm calls must still link
 
-Status: Anticipated (2026-10-14, work item B16 part 2)
+Status: Observed (2026-10-14, work item B16 part 2; fixed in the SSA
+builders 2026-10-15)
 
 Symptom (expected): deleting a C runtime function on one OS because the
 Xo code there no longer calls it (its call sits in a `match target` arm,
@@ -23,3 +24,12 @@ keep one line stubs that fault if ever run (std/llrt/xo_fs.c's FS_DEAD
 block, on every native target since darwin/amd64 left layer 0, and
 xo_bytes.c's xo_fs_read). To delete the stubs too, fold `match target` in the
 SSA builders and make the layer choice a constant the builders see.
+
+Fixed for the wasm layer 0 calls (2026-10-15): the SSA builders lower
+a call of rt.fs_* (but fs_root, fs_mode, fs_new, fs_canceled) to a fault
+on the native targets, and rt.stdin_* off Windows, as they do a platform
+call of another OS (selfhost/ssa call.xo wasm_only_rt). The C stubs
+(xo_fs.c FS_DEAD, xo_sys.c, xo_stdin.c's non-Windows half) stay only
+while the seed's code still names them
+(runtime-c-the-seed-still-calls.md); delete them when the seed has the
+change.

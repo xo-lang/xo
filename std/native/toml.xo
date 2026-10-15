@@ -6,7 +6,7 @@
 use std/toml
 use std/json as js
 use native/llrt/scan
-use native/rt
+use native/llrt/raw
 
 enum TomlVal {
   Text(s: Str)
@@ -56,14 +56,14 @@ fn (p: TomlParser) peek() -> Int {
   if p.i >= p.s.len() {
     return 0
   }
-  rt.str_byte(p.s, p.i)
+  raw.str_byte(p.s, p.i)
 }
 
 fn (p: TomlParser) at(j: Int) -> Int {
   if j >= p.s.len() {
     return 0
   }
-  rt.str_byte(p.s, j)
+  raw.str_byte(p.s, j)
 }
 
 fn (p: TomlParser) rest_has(prefix: Str) -> Bool { scan.has_at(p.s, p.i, prefix) }
@@ -175,7 +175,7 @@ fn (var p: TomlParser) key() -> List[Str] ! toml.TomlErr {
       while !p.eof() && bare_key_byte(p.peek()) {
         p.i += 1
       }
-      parts.push(rt.str_slice(p.s, st, p.i))
+      parts.push(raw.str_slice(p.s, st, p.i))
     } else {
       if p.eof() || c == 10 || c == 13 {
         return Err(p.err("expected a key"))
@@ -259,15 +259,15 @@ fn (var p: TomlParser) escape() -> Str ! toml.TomlErr {
     var v = 0
     var ok = true
     for j in p.i..p.i + n {
-      let h = hex_value(rt.str_byte(p.s, j))
+      let h = hex_value(raw.str_byte(p.s, j))
       if h < 0 {
         ok = false
       } else {
         v = v * 16 + h
       }
     }
-    let digits = rt.str_slice(p.s, p.i, p.i + n)
-    let letter = rt.str_slice(p.s, p.i - 1, p.i)
+    let digits = raw.str_slice(p.s, p.i, p.i + n)
+    let letter = raw.str_slice(p.s, p.i - 1, p.i)
     if !ok {
       return Err(p.err("bad unicode escape \\${letter}${digits}"))
     }
@@ -292,7 +292,7 @@ fn (var p: TomlParser) literal_string() -> Str ! toml.TomlErr {
     }
     let c = p.peek()
     if c == 39 {
-      let s = rt.str_slice(p.s, st, p.i)
+      let s = raw.str_slice(p.s, st, p.i)
       p.i += 1
       return Ok(s)
     }
@@ -325,10 +325,10 @@ fn (var p: TomlParser) multiline(lit: Bool) -> Str ! toml.TomlErr {
     }
     if p.rest_has(q) {
       var n = 3
-      while n < 5 && p.i + n < p.s.len() && rt.str_byte(p.s, p.i + n) == qc {
+      while n < 5 && p.i + n < p.s.len() && raw.str_byte(p.s, p.i + n) == qc {
         n += 1
       }
-      b.write_str(rt.str_slice(p.s, p.i, p.i + n - 3))
+      b.write_str(raw.str_slice(p.s, p.i, p.i + n - 3))
       p.i += n
       break
     }
@@ -344,10 +344,10 @@ fn (var p: TomlParser) multiline(lit: Bool) -> Str ! toml.TomlErr {
     } else if !lit && c == 92 {
       // a line ending backslash trims the whitespace that follows
       var j = p.i + 1
-      while j < p.s.len() && (rt.str_byte(p.s, j) == 32 || rt.str_byte(p.s, j) == 9) {
+      while j < p.s.len() && (raw.str_byte(p.s, j) == 32 || raw.str_byte(p.s, j) == 9) {
         j += 1
       }
-      if j < p.s.len() && (rt.str_byte(p.s, j) == 10 || rt.str_byte(p.s, j) == 13) {
+      if j < p.s.len() && (raw.str_byte(p.s, j) == 10 || raw.str_byte(p.s, j) == 13) {
         p.i = j
         while !p.eof() && (p.peek() == 32 || p.peek() == 9 || p.peek() == 10 || p.peek() == 13) {
           if p.peek() == 10 {
@@ -368,14 +368,14 @@ fn (var p: TomlParser) multiline(lit: Bool) -> Str ! toml.TomlErr {
   Ok(b.freeze().to_str() ?? "")
 }
 
-fn word_byte_at(s: Str, i: Int) -> Bool { i < s.len() && bare_key_byte(rt.str_byte(s, i)) }
+fn word_byte_at(s: Str, i: Int) -> Bool { i < s.len() && bare_key_byte(raw.str_byte(s, i)) }
 
 fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
   p.ws()
   if p.eof() {
     return Err(p.err("expected a value"))
   }
-  let rest = rt.str_slice(p.s, p.i, p.s.len())
+  let rest = raw.str_slice(p.s, p.i, p.s.len())
   let c = p.peek()
   if rest.starts_with("\"\"\"") {
     return Ok(TomlVal.Text(s: p.multiline(false)?))
@@ -409,7 +409,7 @@ fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
 fn count_dashes(s: Str) -> Int {
   var n = 0
   for i in 0..s.len() {
-    if rt.str_byte(s, i) == 45 {
+    if raw.str_byte(s, i) == 45 {
       n += 1
     }
   }
@@ -421,7 +421,7 @@ fn (var p: TomlParser) scalar() -> TomlVal ! toml.TomlErr {
   while !p.eof() {
     let c = p.peek()
     // a date and time may hold one space between date and time
-    if c == 32 && p.i - st == 10 && p.i + 1 < p.s.len() && is_dec(p.at(p.i + 1)) && count_dashes(rt.str_slice(p.s, st, p.i)) == 2 {
+    if c == 32 && p.i - st == 10 && p.i + 1 < p.s.len() && is_dec(p.at(p.i + 1)) && count_dashes(raw.str_slice(p.s, st, p.i)) == 2 {
       p.i += 1
       continue
     }
@@ -430,7 +430,7 @@ fn (var p: TomlParser) scalar() -> TomlVal ! toml.TomlErr {
     }
     p.i += 1
   }
-  let tok = rt.str_slice(p.s, st, p.i)
+  let tok = raw.str_slice(p.s, st, p.i)
   if tok == "" {
     return Err(p.err("expected a value, found ${p.rune_text()}"))
   }
@@ -455,10 +455,10 @@ fn (var p: TomlParser) scalar() -> TomlVal ! toml.TomlErr {
 
 fn trim_signs(s: Str) -> Str {
   var i = 0
-  while i < s.len() && (rt.str_byte(s, i) == 43 || rt.str_byte(s, i) == 45) {
+  while i < s.len() && (raw.str_byte(s, i) == 43 || raw.str_byte(s, i) == 45) {
     i += 1
   }
-  rt.str_slice(s, i, s.len())
+  raw.str_slice(s, i, s.len())
 }
 
 fn digit_of(c: Int, base: Int) -> Bool {
@@ -480,8 +480,8 @@ fn underscores(s: Str, base: Int) -> Str? {
     return Some(s)
   }
   for i in 0..s.len() {
-    if rt.str_byte(s, i) == 95 {
-      if i == 0 || i == s.len() - 1 || !digit_of(rt.str_byte(s, i - 1), base) || !digit_of(rt.str_byte(s, i + 1), base) {
+    if raw.str_byte(s, i) == 95 {
+      if i == 0 || i == s.len() - 1 || !digit_of(raw.str_byte(s, i - 1), base) || !digit_of(raw.str_byte(s, i + 1), base) {
         return None
       }
     }
@@ -496,19 +496,19 @@ fn int_token(tok: Str) -> Str? {
   var neg = false
   if tok.starts_with("0x") {
     base = 16
-    digits = rt.str_slice(tok, 2, tok.len())
+    digits = raw.str_slice(tok, 2, tok.len())
   } else if tok.starts_with("0o") {
     base = 8
-    digits = rt.str_slice(tok, 2, tok.len())
+    digits = raw.str_slice(tok, 2, tok.len())
   } else if tok.starts_with("0b") {
     base = 2
-    digits = rt.str_slice(tok, 2, tok.len())
+    digits = raw.str_slice(tok, 2, tok.len())
   } else {
     if tok.starts_with("+") || tok.starts_with("-") {
       neg = tok.starts_with("-")
-      digits = rt.str_slice(tok, 1, tok.len())
+      digits = raw.str_slice(tok, 1, tok.len())
     }
-    if digits.len() > 1 && rt.str_byte(digits, 0) == 48 {
+    if digits.len() > 1 && raw.str_byte(digits, 0) == 48 {
       return None
     }
   }
@@ -518,7 +518,7 @@ fn int_token(tok: Str) -> Str? {
   }
   var v = 0
   for i in 0..d.len() {
-    let c = rt.str_byte(d, i)
+    let c = raw.str_byte(d, i)
     if !digit_of(c, base) {
       return None
     }
@@ -544,38 +544,38 @@ fn float_token(tok: Str) -> Str? {
   let d = underscores(tok, 10)?
   var s = d
   if s.starts_with("+") || s.starts_with("-") {
-    s = rt.str_slice(s, 1, s.len())
+    s = raw.str_slice(s, 1, s.len())
   }
   var int_end = 0
-  while int_end < s.len() && is_dec(rt.str_byte(s, int_end)) {
+  while int_end < s.len() && is_dec(raw.str_byte(s, int_end)) {
     int_end += 1
   }
-  if int_end == 0 || int_end > 1 && rt.str_byte(s, 0) == 48 || int_end == s.len() {
+  if int_end == 0 || int_end > 1 && raw.str_byte(s, 0) == 48 || int_end == s.len() {
     return None
   }
-  var rest = rt.str_slice(s, int_end, s.len())
-  if rt.str_byte(rest, 0) == 46 {
+  var rest = raw.str_slice(s, int_end, s.len())
+  if raw.str_byte(rest, 0) == 46 {
     var j = 1
-    while j < rest.len() && is_dec(rt.str_byte(rest, j)) {
+    while j < rest.len() && is_dec(raw.str_byte(rest, j)) {
       j += 1
     }
     if j == 1 {
       return None
     }
-    rest = rt.str_slice(rest, j, rest.len())
+    rest = raw.str_slice(rest, j, rest.len())
   }
   if rest != "" {
-    let c = rt.str_byte(rest, 0)
+    let c = raw.str_byte(rest, 0)
     if c != 101 && c != 69 {
       return None
     }
-    let after = rt.str_slice(rest, 1, rest.len())
+    let after = raw.str_slice(rest, 1, rest.len())
     let e = trim_signs(after)
     if after.len() - e.len() > 1 || e == "" {
       return None
     }
     for i in 0..e.len() {
-      if !is_dec(rt.str_byte(e, i)) {
+      if !is_dec(raw.str_byte(e, i)) {
         return None
       }
     }
@@ -592,7 +592,7 @@ fn is_date(s: Str) -> Bool {
     return false
   }
   for i in 0..10 {
-    let c = rt.str_byte(s, i)
+    let c = raw.str_byte(s, i)
     if i == 4 || i == 7 {
       if c != 45 {
         return false
@@ -609,7 +609,7 @@ fn is_time(s: Str) -> Bool {
     return false
   }
   for i in 0..8 {
-    let c = rt.str_byte(s, i)
+    let c = raw.str_byte(s, i)
     if i == 2 || i == 5 {
       if c != 58 {
         return false
@@ -618,21 +618,21 @@ fn is_time(s: Str) -> Bool {
       return false
     }
   }
-  var rest = rt.str_slice(s, 8, s.len())
+  var rest = raw.str_slice(s, 8, s.len())
   if rest.starts_with(".") {
     var j = 1
-    while j < rest.len() && is_dec(rt.str_byte(rest, j)) {
+    while j < rest.len() && is_dec(raw.str_byte(rest, j)) {
       j += 1
     }
     if j == 1 {
       return false
     }
-    rest = rt.str_slice(rest, j, rest.len())
+    rest = raw.str_slice(rest, j, rest.len())
   }
   if rest == "" || rest == "Z" || rest == "z" {
     return true
   }
-  rest.len() == 6 && (rest.starts_with("+") || rest.starts_with("-")) && is_dec(rt.str_byte(rest, 1)) && is_dec(rt.str_byte(rest, 2)) && rt.str_byte(rest, 3) == 58 && is_dec(rt.str_byte(rest, 4)) && is_dec(rt.str_byte(rest, 5))
+  rest.len() == 6 && (rest.starts_with("+") || rest.starts_with("-")) && is_dec(raw.str_byte(rest, 1)) && is_dec(raw.str_byte(rest, 2)) && raw.str_byte(rest, 3) == 58 && is_dec(raw.str_byte(rest, 4)) && is_dec(raw.str_byte(rest, 5))
 }
 
 /// The RFC 3339 text of a date or time token, or None.
@@ -640,19 +640,19 @@ fn date_time(tok: Str) -> Str? {
   if is_date(tok) {
     return Some(tok)
   }
-  if tok.len() > 11 && is_date(rt.str_slice(tok, 0, 10)) {
-    let sep = rt.str_byte(tok, 10)
-    let t0 = rt.str_slice(tok, 11, tok.len())
+  if tok.len() > 11 && is_date(raw.str_slice(tok, 0, 10)) {
+    let sep = raw.str_byte(tok, 10)
+    let t0 = raw.str_slice(tok, 11, tok.len())
     if (sep == 84 || sep == 116 || sep == 32) && is_time(t0) {
       var t = t0
       if t.ends_with("z") {
         t = t.trim_suffix("z") + "Z"
       }
-      return Some(rt.str_slice(tok, 0, 10) + "T" + t)
+      return Some(raw.str_slice(tok, 0, 10) + "T" + t)
     }
   }
   if is_time(tok) {
-    let tail = rt.str_slice(tok, 8, tok.len())
+    let tail = raw.str_slice(tok, 8, tok.len())
     if !(tail.contains("Z") || tail.contains("z") || tail.contains("+") || tail.contains("-")) {
       return Some(tok)
     }
@@ -861,7 +861,7 @@ fn json_string(s: Str) -> Str {
   out.write_byte(34)
   let hex = "0123456789abcdef"
   for i in 0..s.len() {
-    let c = rt.str_byte(s, i)
+    let c = raw.str_byte(s, i)
     if c == 34 || c == 92 {
       out.write_byte(92)
       out.write_byte(UInt8(c))
@@ -873,8 +873,8 @@ fn json_string(s: Str) -> Str {
       out.write_str("\\t")
     } else if c < 32 || c == 127 {
       out.write_str("\\u00")
-      out.write_byte(UInt8(rt.str_byte(hex, c / 16)))
-      out.write_byte(UInt8(rt.str_byte(hex, c % 16)))
+      out.write_byte(UInt8(raw.str_byte(hex, c / 16)))
+      out.write_byte(UInt8(raw.str_byte(hex, c % 16)))
     } else {
       out.write_byte(UInt8(c))
     }

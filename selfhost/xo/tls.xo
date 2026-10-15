@@ -72,11 +72,13 @@ fn tls_file_defines_v() -> Str {
   "map[${parts.join(" ")}]"
 }
 
-/// The symbols only a program using std/http calls (tlsSymbols), made at
-/// run time: as literals they would be in xo1's own assembly, and its
-/// link would need the TLS library.
+/// The symbols only a program on the C TLS paths calls (tlsSymbols:
+/// XO_LLRT_C=tlsio's and tlssrv's calls of xo_tls.c), made at run time:
+/// as literals they would be in xo1's own assembly, and its link would
+/// need the TLS library. The default path's TLS is Xo (decision 0202),
+/// so a default https program compiles and links no Mbed TLS.
 fn needs_tls(code: Str) -> Bool {
-  for sym in [["xo", "cl", "do"], ["xo", "srv", "new"], ["xo", "tls", ""]] {
+  for sym in [["xo", "tls", ""], ["xo", "cl", "tls", ""]] {
     if code.contains(sym.join("_")) {
       return true
     }

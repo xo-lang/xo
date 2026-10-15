@@ -1,7 +1,9 @@
 // A call that passes a struct of 600 words by value puts about 4.7 KiB
 // of stack arguments below the frame, so the $OUT slot of the runtime
-// calls returning a Str (str_repeat; str_replace until it moved to Xo,
-// decision 0193) is past the 4095 byte immediate of
+// calls returning a Str through a length pointer (obj.xo's
+// rs_push_byte export, a BytesBuilder's write_byte; rs_push_rune until
+// it moved to Xo on 2026-10-15, str_repeat and str_slice_at until they
+// moved to Xo in 2026-10, str_replace until decision 0193) is past the 4095 byte immediate of
 // `add`; the arm64 backend materializes its address with a shifted add
 // (gotchas/arm64-add-immediate-range.md). Found by the self hosted SSA
 // builder (decision 0150), whose Builder is that large. Since decision
@@ -623,7 +625,11 @@ fn show(b: Big, s: Str) -> Str {
   // reference (decision 0151), calls of function values pass its words
   let f = total
   let n = f(b, 1)
-  "${n}".repeat(2) + s
+  var bb = BytesBuilder.new()
+  bb.write_str("${n}${n}")
+  bb.write_byte(UInt8(33))
+  let t = bb.freeze().to_str() ?? ""
+  t[0..t.len() - 1] + s
 }
 
 fn main(os: Os) {

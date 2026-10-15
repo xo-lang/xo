@@ -302,8 +302,9 @@ func TestRuntimeTasks(t *testing.T) {
 func TestRuntimeEventLoop(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	src := filepath.Join(rtDir, "testdata", "evloop.c")
-	// the scheduler core in Xo (decision 0212)
-	bin := tsanBuild(t, nil, cOnly(t, src))
+	// the scheduler core in Xo (decision 0212); listeners and connections
+	// in Xo (netconn.xo, B22), built only into a program that listens
+	bin := tsanBuild(t, nil, cOnlyNet(t, src))
 	for _, threads := range []string{"1", "3"} {
 		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
 		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
@@ -316,10 +317,24 @@ func TestRuntimeEventLoop(t *testing.T) {
 		return
 	}
 	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
+	if err := xotool.CompileC([]string{"-O2"}, cOnlyNet(t, src), opt); err != nil {
 		t.Fatal(err)
 	}
 	runTSan(t, opt, ".")
+}
+
+// netExportsMain listens, so the LLVM IR of the program carries the C ABI
+// exports of std/native/llrt/cabi_net.xo (listeners and connections,
+// netconn.xo) that xo_rt.c's xo_net_listen and xo_conn_read forward to.
+const netExportsMain = `fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  os.stdio.println(l.addr())
+}
+`
+
+// cOnlyNet is cOnly for evloop.c: with the network's exports.
+func cOnlyNet(t *testing.T, src string) []string {
+	return cOnlyWith(t, src, "cexports-net", netExportsMain)
 }
 
 // TestRuntimeRawPoll registers descriptors with the poller from another
@@ -420,7 +435,8 @@ func TestGoldenTasks(t *testing.T) {
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
+				// the golden's env.txt too (http_conn_fault's probe)
+				cmd.Env = append(append(os.Environ(), progEnv(dir)...), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				err := cmd.Run()
@@ -496,5 +512,33 @@ func TestDeadlock(t *testing.T) {
 		if stdout.String() != "start\n" || !strings.HasPrefix(stderr.String(), "fault: XO-F001: deadlock: every task is blocked\n") {
 			t.Errorf("%s: stdout %q stderr %q", bk, stdout.String(), stderr.String())
 		}
+	}
+}
+
+// TestSysCTSan: rt.sym_present of a weak reference (decision 0232,
+// std/native/sys_c.xo) is true when ThreadSanitizer's runtime is linked
+// (testdata/sysc_tsan prints 010101; the sys_c golden, without it,
+// 0101 and a 00 the goldens do not show).
+func TestSysCTSan(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	ir, err := xotool.LLVMIR(filepath.Join("testdata", "sysc_tsan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := tsanBuild(t, append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...), []string{ll, filepath.Join(rtDir, "xo_rt.c")})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), tsanOptions())
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "010101" {
+		t.Fatalf("got %q (%v), want 010101", out, err)
 	}
 }

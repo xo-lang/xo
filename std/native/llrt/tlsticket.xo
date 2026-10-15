@@ -1,0 +1,232 @@
+// Session tickets of the native backends' TLS servers (the zero-C
+// audit's B31, decision 0202), as Go's crypto/tls ticket.go and
+// common.go: a session's state (SessionState.Bytes and
+// ParseSessionState, for the sessions a server makes: no peer
+// certificates), sealed under a ticket key with AES-128-CTR and
+// HMAC-SHA256 (encryptTicket, decryptTicket; the MAC compared in
+// constant time), and the keys (ticketKeyFromBytes; tlssrv.xo rotates
+// them as Go's Config.ticketKeys does). tls13srv.xo's PSK resumption
+// and tls12srv.xo's RFC 5077 tickets use it.
+use native/llrt/aesgcm
+use native/llrt/asn1
+use native/llrt/ct
+use native/llrt/hmac
+use native/llrt/sha256
+use native/rt
+
+/// How long a ticket resumes a session: Go's maxSessionTicketLifetime (7
+/// days, in seconds), also the lifetime NewSessionTicket advertises.
+pub const LIFETIME: Int = 604800
+
+/// How often a server makes a new ticket key, and how long a key opens
+/// tickets (Go's ticketKeyRotation and ticketKeyLifetime, in seconds).
+pub const ROTATION: Int = 86400
+pub const KEY_LIFETIME: Int = 604800
+
+/// A ticket key: Go's ticketKey (AES and HMAC keys of 16 bytes each, the
+/// time it was made in Unix seconds).
+pub struct Key {
+  pub aes: Bytes
+  pub hmac: Bytes
+  pub created: Int
+}
+
+/// Go's ticketKeyFromBytes: the keys of a 32 byte seed, SHA-512's bytes
+/// 16 to 32 and 32 to 48 (its first 16 were the wire's key name once and
+/// are never a secret).
+pub fn key(seed: Bytes, created: Int) -> Key {
+  let h = sha256.sum(sha256.HASH_SHA512, seed)
+  Key{aes: h[16..32], hmac: h[32..48], created: created}
+}
+
+/// Go's Config.ticketKeys for automatic keys at time now: keys[0] seals
+/// new tickets; a new key from seed (32 random bytes) goes first when
+/// there is none or keys[0] is a day old, and keys a week old drop out.
+pub fn rotate(keys: List[Key], now: Int, seed: Bytes) -> List[Key] {
+  if !keys.is_empty() && now - keys[0].created < ROTATION {
+    return keys
+  }
+  var out: List[Key] = [key(seed, now)]
+  for k in keys {
+    if now - k.created < KEY_LIFETIME {
+      out.push(k)
+    }
+  }
+  out
+}
+
+/// A session's state as a server keeps it in a ticket (Go's
+/// SessionState): the TLS version, suite, creation time (Unix seconds),
+/// secret (TLS 1.2's master secret, TLS 1.3's PSK), whether the extended
+/// master secret was used, and the curve (TLS 1.2).
+pub struct State {
+  pub version: Int
+  pub suite: Int
+  pub created: Int
+  pub secret: Bytes
+  pub ems: Bool
+  pub curve: Int
+}
+
+/// Go's SessionState.Bytes for a server's session: no extra data, no
+/// early data, no peer certificates or chains; the curve below TLS 1.3.
+pub fn state(version: Int, suite: Int, created: Int, secret: Bytes, ems: Bool, curve: Int) -> Bytes {
+  var parts: List[Bytes] = [u16(version), b"\x01", u16(suite), u64(created), u8(secret.len()), secret, b"\x00\x00\x00", if ems { b"\x01" } else { b"\x00" }, b"\x00", b"\x00\x00\x00", b"\x00\x00\x00"]
+  if version < 0x0304 {
+    parts.push(u16(curve))
+  }
+  asn1.cat(parts)
+}
+
+/// Go's ParseSessionState, for a server: none when it does not decode,
+/// or when it carries peer certificates (no session of these servers
+/// does; Go's server would not resume it without client authentication).
+pub fn parse(b: Bytes) -> State? {
+  let n = b.len()
+  if n < 2 + 1 + 2 + 8 + 1 {
+    return None
+  }
+  let version = u16_at(b, 0)
+  let typ = Int(b[2])
+  let suite = u16_at(b, 3)
+  let created = u64_at(b, 5)
+  var p = 13
+  let sl = Int(b[p])
+  if sl == 0 || n < p + 1 + sl + 3 {
+    return None
+  }
+  let secret = b[p + 1..p + 1 + sl]
+  p += 1 + sl
+  // extra: a list of 24 bit length prefixed items
+  let xl = u24_at(b, p)
+  if n < p + 3 + xl {
+    return None
+  }
+  var q = p + 3
+  while q < p + 3 + xl {
+    if p + 3 + xl < q + 3 || p + 3 + xl < q + 3 + u24_at(b, q) {
+      return None
+    }
+    q += 3 + u24_at(b, q)
+  }
+  p += 3 + xl
+  if n < p + 2 + 3 {
+    return None
+  }
+  let ems = Int(b[p])
+  let early = Int(b[p + 1])
+  p += 2
+  if !(typ is 1 | 2) || !(ems is 0 | 1) || !(early is 0 | 1) {
+    return None
+  }
+  // the peer's certificates (TLS 1.3 entries), then the verified chains
+  if u24_at(b, p) != 0 || n < p + 6 || u24_at(b, p + 3) != 0 {
+    return None
+  }
+  p += 6
+  if early == 1 {
+    if n < p + 1 + Int(b[p]) {
+      return None
+    }
+    p += 1 + Int(b[p])
+  }
+  var curve = 0
+  if version >= 0x0304 {
+    if typ == 2 {
+      if n < p + 12 {
+        return None
+      }
+      p += 12
+    }
+  } else {
+    if n < p + 2 {
+      return None
+    }
+    curve = u16_at(b, p)
+    p += 2
+  }
+  Some(State{version: version, suite: suite, created: created, secret: secret, ems: ems == 1, curve: curve})
+}
+
+/// Go's encryptTicket with key k and the 16 byte IV: the IV, the state
+/// under AES-128-CTR, and HMAC-SHA256 of both.
+pub fn seal(k: Key, st: Bytes, iv: Bytes) -> Bytes {
+  let body = asn1.cat([iv, ctr(k.aes, iv, st)])
+  asn1.cat([body, hmac.mac(sha256.HASH_SHA256, k.hmac, body)])
+}
+
+/// Go's decryptTicket: the state of a ticket sealed by one of keys, or
+/// none (too short, or no key's MAC matches).
+pub fn open(ticket: Bytes, keys: List[Key]) -> Bytes? {
+  let n = ticket.len()
+  if n < 16 + 32 {
+    return None
+  }
+  let body = ticket[0..n - 32]
+  let mac = ticket[n - 32..n]
+  for k in keys {
+    if ct.bytes_equal(hmac.mac(sha256.HASH_SHA256, k.hmac, body), mac) {
+      return Some(ctr(k.aes, ticket[0..16], ticket[16..n - 32]))
+    }
+  }
+  None
+}
+
+/// AES-128-CTR of data with key and the initial counter block iv (a 128
+/// bit big endian counter, as Go's cipher.NewCTR).
+fn ctr(key: Bytes, iv: Bytes, data: Bytes) -> Bytes {
+  let c = aesgcm.new(key)
+  var ctrb = iv
+  var out = rt.rs_with_cap(data.len())
+  var off = 0
+  while off < data.len() {
+    let ks = c.encrypt_block(ctrb)
+    var i = 0
+    while i < 16 && off + i < data.len() {
+      out = rt.rs_push_byte(out, Int(data[off + i]) ^ Int(ks[i]))
+      i += 1
+    }
+    off += 16
+    ctrb = incr(ctrb)
+  }
+  out.bytes()
+}
+
+/// The 16 byte block plus one, big endian, wrapping.
+fn incr(b: Bytes) -> Bytes {
+  var v: List[Int] = []
+  for x in b {
+    v.push(Int(x))
+  }
+  var i = 15
+  var carry = 1
+  while i >= 0 && carry == 1 {
+    let s = v[i] + 1
+    v[i] = s & 255
+    carry = s >> 8
+    i -= 1
+  }
+  var out = rt.rs_with_cap(16)
+  for x in v {
+    out = rt.rs_push_byte(out, x)
+  }
+  out.bytes()
+}
+
+fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
+
+fn u16(x: Int) -> Bytes { asn1.cat([u8(x >> 8), u8(x)]) }
+
+fn u64(x: Int) -> Bytes { asn1.cat([u8(x >> 56), u8(x >> 48), u8(x >> 40), u8(x >> 32), u8(x >> 24), u8(x >> 16), u8(x >> 8), u8(x)]) }
+
+fn u16_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 256 + Int(b[p + 1]) }
+
+fn u24_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 65536 + Int(b[p + 1]) * 256 + Int(b[p + 2]) }
+
+fn u64_at(b: Bytes, p: Int) -> Int {
+  var v = 0
+  for i in 0..8 {
+    v = rt.int_wrap(3, v, 8) | Int(b[p + i])
+  }
+  v
+}

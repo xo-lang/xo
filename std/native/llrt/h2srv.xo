@@ -1,0 +1,1908 @@
+// The native HTTP/2 server (RFC 9113, decision 0121) in Xo: the zero-C
+// audit's B28 part 2 (2026-10-14), xo_h2.c's server until then. HTTP/2
+// is spoken over TLS when ALPN agrees on "h2"; cleartext stays HTTP/1.1.
+// What a peer observes copies net/http's bundled HTTP/2 (Go 1.26,
+// h2_bundle.go): its SETTINGS (MAX_FRAME_SIZE 1 MiB, 250 concurrent
+// streams, MAX_HEADER_LIST_SIZE 1048896, a 4096 byte HPACK table, 1 MiB
+// stream and connection windows), the request checks and their stream
+// and connection errors, 431 for a header list over the limit and 400
+// for connection specific fields, responses as
+// responseWriterState.writeChunk sends them, RST_STREAM NO_ERROR after a
+// response whose request body is still open, GOAWAY NO_ERROR when serve
+// stops (streams in flight finish), and the rapid reset limit of
+// scheduleHandler (at most 250 handlers run, 1000 more wait, beyond that
+// GOAWAY ENHANCE_YOUR_CALM).
+//
+// A connection's frames are read and written by one fiber, the
+// connection's task (std/native/http.xo serve_conn, H2Conn.next): it
+// decodes requests (HPACK, hpack.xo) and hands each complete one (its
+// body read, as std/rt reads it before the handler) to http.xo, which
+// runs it as a task of its own on a stream connection
+// (hconn.stream). A stream task queues its response on the stream
+// (respond, emit, finish, under the connection's lock word) and wakes
+// the connection's fiber, which encodes the head and sends it and the
+// body within the peer's flow control windows. The frame writers and
+// checks are h2w.xo's; the connection's TLS reads and socket writes and
+// the stream connections the handlers get are hconn.xo's (h2_read,
+// send_at, stream), the TLS handshake hserve.xo's hc_h2 (Mbed TLS stays
+// C, xo_tls.c).
+//
+// The state the stream tasks share is in two malloc'd records, the
+// connection's (C_*) and a stream's (S_*), under the connection's lock
+// word (C_MU); the fiber's own state (HPACK, the fields of the header
+// block being received, the parse of its :path) is the H2Conn. A stream
+// record is referenced by the connection's table while it is open, by
+// the queue of requests waiting for a handler, by the list of streams
+// with output to send, and by its stream connection once dispatched; it
+// is freed when no reference is left (S_REFS, under the lock). A stream
+// connection holds its connection's C record, so the connection record
+// (freed with it, hserve.xo hc_free) outlives the streams.
+use native/llrt/ctx
+use native/llrt/h2w
+use native/llrt/hpack
+use native/llrt/http1
+use native/llrt/http1w
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/sysio
+use native/llrt/hconn
+use native/rt
+use native/rthttp
+
+const PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+// frame types and flags
+const T_DATA = 0
+const T_HEADERS = 1
+const T_PRIORITY = 2
+const T_RST = 3
+const T_SETTINGS = 4
+const T_PUSH = 5
+const T_PING = 6
+const T_GOAWAY = 7
+const T_WINUP = 8
+const T_CONT = 9
+const F_END_STREAM = 1
+const F_ACK = 1
+const F_END_HEADERS = 4
+const F_PRIORITY = 0x20
+
+// error codes
+const E_NO = 0
+const E_PROTOCOL = 1
+const E_INTERNAL = 2
+const E_FLOW = 3
+const E_STREAM_CLOSED = 5
+const E_FRAME_SIZE = 6
+const E_REFUSED = 7
+const E_COMPRESSION = 9
+const E_CALM = 11
+const E_INADEQUATE = 12
+
+// settings
+const S_HEADER_TABLE = 1
+const S_MAX_STREAMS = 3
+const S_INITIAL_WINDOW = 4
+const S_MAX_FRAME = 5
+const S_MAX_HLIST = 6
+
+/// The server's limits: net/http's defaults (http2configFromServer).
+const MAX_STREAMS = 250
+const MAX_FRAME = 1048576
+/// DefaultMaxHeaderBytes plus 10 times 32
+const MAX_HLIST = 1048896
+/// per stream and per connection
+const WINDOW = 1048576
+const TABLE = 4096
+/// handlerChunkWriteSize: the buffer of a streamed body
+const CHUNK = 4096
+/// a stream task waits while more than this of its body is unsent
+const BACKLOG = 262144
+
+// a stream's request: still arriving, ended
+const ST_OPEN = 0
+const ST_HCR = 1
+
+/// The connection record's words: the lock word; the client preface's
+/// bytes seen and whether its SETTINGS came; the header block being
+/// received (its stream, priority dependency, whether it is open, its
+/// HEADERS frame's flags, whether it had a priority); the bytes of a
+/// field the last fragment cut (a block: address, length, capacity);
+/// the stream table (a vector of stream records), the largest client
+/// stream id seen, the open streams, the running handlers; the queue of
+/// complete requests waiting for a handler (a vector, its length, the
+/// first waiting, its capacity); the peer's frame size, initial stream
+/// window and connection window, our SETTINGS not acknowledged, our
+/// connection window (available, unsent); the output (a block) and the
+/// one being written (swapped out of the lock); the list of streams
+/// with output (first, last); the fiber's park while it waits, and a
+/// wake that came while it did not; the shutdown flags (a GOAWAY was
+/// queued, a connection error, the server stops, close right after the
+/// GOAWAY, unusable); the deadline (preface, first frame, or the linger
+/// after an error; monotonic ns, 0: none); the stream of the frame being
+/// processed; the stream a 100 Continue goes to; field_keep's four words
+/// (remain, invalid, truncated, regular); whether no representation of
+/// the block was decoded yet; a fragment Xo decodes next, and its frame's
+/// flags and stream; the input (a block and its read offset); the
+/// largest request body; three scratch words; 128 bytes for request
+/// check's 400 text.
+const C_MU = 0
+const C_NPREFACE = 8
+const C_GOT_SETTINGS = 16
+const C_HB_SID = 24
+const C_HB_DEP = 32
+const C_HB_ON = 40
+const C_HB_FLAGS = 48
+const C_HB_PRIO = 56
+const C_HB = 64
+const C_TAB = 88
+const C_MAX_ID = 112
+const C_NOPEN = 120
+const C_NHANDLERS = 128
+const C_DQ = 136
+const C_DQN = 144
+const C_DQOFF = 152
+const C_DQCAP = 160
+const C_PEER_FRAME = 168
+const C_PEER_WIN = 176
+const C_WIN = 184
+const C_UNACKED = 192
+const C_IN = 200
+const C_WB = 216
+const C_OUT = 240
+const C_RFIRST = 264
+const C_RLAST = 272
+const C_WAITER = 280
+const C_WOKEN = 288
+const C_GOAWAY = 296
+const C_FAILED = 304
+const C_STOP = 312
+const C_REJECT = 320
+const C_DEAD = 328
+const C_DEADLINE = 336
+const C_CUR_SID = 344
+const C_WANT100 = 352
+const C_HF = 360
+const C_HFIRST = 392
+const C_DEC_PENDING = 400
+const C_PEND_FLAGS = 408
+const C_PEND_SID = 416
+const C_BUF = 424
+const C_BUF_OFF = 448
+const C_MAXBODY = 456
+const C_FR = 464
+const C_MSG = 488
+const C_SIZE = 616
+
+/// A stream record's words: its connection's record, its id, the
+/// references, whether it is in the table, the request's state (ST_*);
+/// the request (the fiber's, until dispatched): its parts packed (a
+/// block: req_pack), its body (a block), its Content-Length (-1: none),
+/// the body bytes received, whether trailers came, whether the body
+/// passed the largest (the rest is dropped), whether it was handed to a
+/// handler (or answered here), its kind (h2w.K_*), whether it asked for
+/// 100-continue, its window (available, unsent), whether it is HEAD; the
+/// response (under the lock): its head in the encoder job's form (a
+/// block: h2w.head) and whether it is ready and sent, whether it has no
+/// body (HEAD or a status without one), the body (a block) and how much
+/// of it was sent, whether it ended and the end was sent, the peer's
+/// window for the stream, a RST_STREAM to send (its code plus one) and
+/// whether it was sent, whether output is dropped (closed or reset),
+/// whether it is in the output list and its link there, the stream task
+/// waiting for its backlog to drain (a park), whether the handler was
+/// dispatched and ended, whether the reset follows the output queued
+/// before it (a handler's fault), and a word h2w.head stores to.
+const S_C = 0
+const S_ID = 8
+const S_REFS = 16
+const S_IN_TABLE = 24
+const S_STATE = 32
+const S_REQ = 40
+const S_BODY = 64
+const S_DECLEN = 88
+const S_GOT = 96
+const S_TRAILERS = 104
+const S_OVER = 112
+const S_COMPLETED = 120
+const S_KIND = 128
+const S_EXPECT100 = 136
+const S_IN = 144
+const S_HEAD = 160
+const S_RH = 168
+const S_RH_READY = 192
+const S_RH_SENT = 200
+const S_NOBODY = 208
+const S_OUT = 216
+const S_OFF = 240
+const S_END = 248
+const S_END_SENT = 256
+const S_WIN = 264
+const S_RST = 272
+const S_RST_SENT = 280
+const S_DEAD = 288
+const S_QUEUED = 296
+const S_RNEXT = 304
+const S_WAITER = 312
+const S_DISPATCHED = 320
+const S_ENDED = 328
+const S_RST_LATE = 336
+const S_RES = 344
+const S_SIZE = 352
+
+// slot atomics' orders (rt.xo)
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn ld(p: Int, k: Int) -> Int { rt.mem_load(p, k, 8) }
+
+fn sto(p: Int, k: Int, v: Int) { rt.mem_store(p, k, v, 8) }
+
+fn on(p: Int, k: Int) -> Bool { rt.mem_load(p, k, 8) != 0 }
+
+fn flag(p: Int, k: Int, v: Bool) { rt.mem_store(p, k, if v { 1 } else { 0 }, 8) }
+
+fn inc(p: Int, k: Int, d: Int) { rt.mem_store(p, k, rt.mem_load(p, k, 8) + d, 8) }
+
+/// Takes and releases the lock word at l (xo_rt.c lk and unlk).
+fn lk(l: Int) {
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlk(l: Int) {
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+fn now() -> Int { sysio.mono_ns() }
+
+fn get32(p: Int) -> Int { rt.mem_load(p, 0, 1) << 24 | rt.mem_load(p, 1, 1) << 16 | rt.mem_load(p, 2, 1) << 8 | rt.mem_load(p, 3, 1) }
+
+fn get24(p: Int) -> Int { rt.mem_load(p, 0, 1) << 16 | rt.mem_load(p, 1, 1) << 8 | rt.mem_load(p, 2, 1) }
+
+// ---------------------------------------------------------------------------
+// Blocks: three words at x+k (a block used from its malloc'd address,
+// its length, its capacity), grown with raw.c_resize
+// (gotchas/heap-large-resize-overwrites-word-0.md).
+
+fn room(x: Int, k: Int, n: Int) {
+  let len = ld(x, k + 8)
+  let cap = ld(x, k + 16)
+  if len + n <= cap {
+    return
+  }
+  var c = if cap == 0 { 256 } else { 2 * cap }
+  while c < len + n {
+    c = 2 * c
+  }
+  sto(x, k, raw.c_resize(ld(x, k), c))
+  sto(x, k + 16, c)
+}
+
+/// The address after the block's bytes.
+fn tail(x: Int, k: Int) -> Int { ld(x, k) + ld(x, k + 8) }
+
+fn grew(x: Int, k: Int, n: Int) { inc(x, k + 8, n) }
+
+/// Appends the n bytes at p to the block at x+k.
+fn put(x: Int, k: Int, p: Int, n: Int) {
+  if n <= 0 {
+    return
+  }
+  room(x, k, n)
+  rt.mem_copy(tail(x, k), p, n)
+  grew(x, k, n)
+}
+
+fn bfree(x: Int, k: Int) {
+  let p = ld(x, k)
+  if p != 0 {
+    rt.heap_release(p)
+  }
+  sto(x, k, 0)
+  sto(x, k + 8, 0)
+  sto(x, k + 16, 0)
+}
+
+/// The block's bytes as a Str.
+fn bstr(x: Int, k: Int) -> Str { raw.str_at(ld(x, k), ld(x, k + 8)) }
+
+// ---------------------------------------------------------------------------
+// Frames into the connection's output (h2w.xo writes them)
+
+fn fh(c: Int, len: Int, ty: Int, flags: Int, sid: Int) {
+  room(c, C_WB, 9)
+  grew(c, C_WB, h2w.frame_head(tail(c, C_WB), len, ty, flags, sid))
+}
+
+fn put_rst(c: Int, sid: Int, code: Int) {
+  room(c, C_WB, 13)
+  grew(c, C_WB, h2w.rst(tail(c, C_WB), sid, code))
+}
+
+fn put_winup(c: Int, sid: Int, n: Int) {
+  room(c, C_WB, 13)
+  grew(c, C_WB, h2w.winup(tail(c, C_WB), sid, n))
+}
+
+fn put_goaway(c: Int, last: Int, code: Int, debug: Str) {
+  room(c, C_WB, 17 + debug.len())
+  grew(c, C_WB, h2w.goaway(tail(c, C_WB), last, code, raw.data(debug), debug.len()))
+}
+
+fn put_setting(c: Int, id: Int, v: Int) {
+  room(c, C_WB, 6)
+  grew(c, C_WB, h2w.setting(tail(c, C_WB), id, v))
+}
+
+/// The header block of bn bytes at bp as a HEADERS frame and
+/// CONTINUATION frames of at most the peer's frame size.
+fn put_block(c: Int, sid: Int, bp: Int, bn: Int, end_stream: Bool) {
+  let max = ld(c, C_PEER_FRAME)
+  room(c, C_WB, h2w.block_room(bn, max))
+  grew(c, C_WB, h2w.block(tail(c, C_WB), sid, bp, bn, end_stream, max))
+}
+
+/// A window of received bytes at x+k (http2inflow: available, unsent):
+/// updates are batched until 4 KiB are owed or the peer's window would
+/// run out. The update to send, 0 for none.
+fn inflow_add(x: Int, k: Int, n: Int) -> Int {
+  let u = ld(x, k + 8) + n
+  if u < 4096 && u < ld(x, k) {
+    sto(x, k + 8, u)
+    return 0
+  }
+  inc(x, k, u)
+  sto(x, k + 8, 0)
+  u
+}
+
+/// Takes n bytes of the connection's window for a frame that is
+/// dropped, and gives them back: false when the window was short.
+fn conn_window(c: Int, n: Int) -> Bool {
+  if ld(c, C_IN) < n {
+    return false
+  }
+  inc(c, C_IN, -n)
+  let u = inflow_add(c, C_IN, n)
+  if u > 0 {
+    put_winup(c, 0, u)
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// Streams (the lock held)
+
+fn wake(c: Int) {
+  let w = ld(c, C_WAITER)
+  if w != 0 {
+    poll.park_signal(w)
+    sto(c, C_WAITER, 0)
+  } else {
+    sto(c, C_WOKEN, 1)
+  }
+}
+
+fn stream_free(st: Int) {
+  bfree(st, S_REQ)
+  bfree(st, S_BODY)
+  bfree(st, S_RH)
+  bfree(st, S_OUT)
+  rt.heap_release(st - 8)
+}
+
+fn unref(st: Int) {
+  inc(st, S_REFS, -1)
+  if ld(st, S_REFS) == 0 {
+    stream_free(st)
+  }
+}
+
+fn tab_at(c: Int, i: Int) -> Int { ld(ld(c, C_TAB), 8 * i) }
+
+/// The stream table's length (C_TAB is a block of stream records).
+fn ntab(c: Int) -> Int { ld(c, C_TAB + 8) / 8 }
+
+fn find(c: Int, id: Int) -> Int {
+  for i in 0..ntab(c) {
+    let st = tab_at(c, i)
+    if ld(st, S_ID) == id {
+      return st
+    }
+  }
+  0
+}
+
+/// Queues st's output for the connection's fiber.
+fn ready(c: Int, st: Int) {
+  if !on(st, S_QUEUED) {
+    sto(st, S_QUEUED, 1)
+    inc(st, S_REFS, 1)
+    sto(st, S_RNEXT, 0)
+    let last = ld(c, C_RLAST)
+    if last != 0 {
+      sto(last, S_RNEXT, st)
+    } else {
+      sto(c, C_RFIRST, st)
+    }
+    sto(c, C_RLAST, st)
+  }
+  wake(c)
+}
+
+fn signal_stream(st: Int) {
+  let w = ld(st, S_WAITER)
+  if w != 0 {
+    poll.park_signal(w)
+    sto(st, S_WAITER, 0)
+  }
+}
+
+/// Takes st out of the table (closed): nothing more is sent on it.
+fn close_stream(c: Int, st: Int) {
+  sto(st, S_DEAD, 1)
+  signal_stream(st)
+  if on(st, S_IN_TABLE) {
+    sto(st, S_IN_TABLE, 0)
+    let n = ntab(c)
+    var i = 0
+    while i < n {
+      if tab_at(c, i) == st {
+        sto(ld(c, C_TAB), 8 * i, tab_at(c, n - 1))
+        sto(c, C_TAB + 8, 8 * (n - 1))
+        break
+      }
+      i += 1
+    }
+    inc(c, C_NOPEN, -1)
+    unref(st)
+  }
+}
+
+/// Ends the connection with a GOAWAY of code (a connection error);
+/// nothing more is read or answered.
+fn conn_err(c: Int, code: Int) {
+  if on(c, C_FAILED) {
+    return
+  }
+  // a frame that parsed counts in the GOAWAY's last stream id
+  // (processFrameFromReader)
+  if ld(c, C_CUR_SID) > ld(c, C_MAX_ID) {
+    sto(c, C_MAX_ID, ld(c, C_CUR_SID))
+  }
+  sto(c, C_FAILED, 1)
+  sto(c, C_GOAWAY, 1)
+  put_goaway(c, ld(c, C_MAX_ID), code, "")
+  // net/http closes a second after the GOAWAY (goAwayTimeout)
+  sto(c, C_DEADLINE, now() + 1000000000)
+}
+
+/// Resets stream sid with code (a stream error).
+fn stream_err(c: Int, sid: Int, code: Int) {
+  let st = find(c, sid)
+  if st == 0 {
+    put_rst(c, sid, code)
+    return
+  }
+  if !on(st, S_RST) {
+    sto(st, S_RST, code + 1)
+    sto(st, S_DEAD, 1)
+    signal_stream(st)
+    ready(c, st)
+  }
+}
+
+/// Puts a response head (rh: a block of rhn bytes and capacity rhcap in
+/// the encoder job's form, taken over; 0: none), the n body bytes at p,
+/// and the end of the body on st, for the connection's fiber.
+fn queue_locked(c: Int, st: Int, rh: Int, rhn: Int, rhcap: Int, nobody: Bool, p: Int, n: Int, end: Bool) {
+  if on(st, S_DEAD) || on(st, S_END) {
+    if rh != 0 {
+      rt.heap_release(rh)
+    }
+    return
+  }
+  var e = end
+  if rh != 0 {
+    bfree(st, S_RH)
+    sto(st, S_RH, rh)
+    sto(st, S_RH + 8, rhn)
+    sto(st, S_RH + 16, rhcap)
+    sto(st, S_RH_READY, 1)
+    flag(st, S_NOBODY, nobody)
+    if nobody {
+      e = true
+    }
+  }
+  if n > 0 && !on(st, S_NOBODY) {
+    put(st, S_OUT, p, n)
+  }
+  if e {
+    sto(st, S_END, 1)
+  }
+  ready(c, st)
+}
+
+/// The hn fields of names and values as http1w.xo's 32 byte fields (the
+/// names and values must outlive it); free it with fields_free.
+fn fields_of(names: List[Str], values: List[Str]) -> Int {
+  let n = names.len()
+  let a = rt.heap_large(32 * n + 32)
+  for i in 0..n {
+    rt.mem_store(a, 32 * i, raw.data(names[i]), 8)
+    rt.mem_store(a, 32 * i + 8, names[i].len(), 8)
+    rt.mem_store(a, 32 * i + 16, raw.data(values[i]), 8)
+    rt.mem_store(a, 32 * i + 24, values[i].len(), 8)
+  }
+  a
+}
+
+fn fields_free(a: Int) { rt.heap_release(a - 8) }
+
+/// Answers st from the connection itself (431, 400, OPTIONS *): a whole
+/// response with the fields of names and values, as a handler of
+/// net/http would write it.
+fn respond_internal(c: Int, st: Int, status: Int, names: List[Str], values: List[Str], body: Str) {
+  let a = fields_of(names, values)
+  let r = h2w.head_room(a, names.len())
+  let d = raw.c_resize(0, r)
+  let head = on(st, S_HEAD)
+  let w = h2w.head(d, a, names.len(), status, head, raw.data(body), body.len(), true, st + S_RES)
+  fields_free(a)
+  queue_locked(c, st, d, w, r, head || !http1w.body_allowed(status), raw.data(body), body.len(), true)
+}
+
+/// Queues st for a handler: at most MAX_STREAMS run, and four times as
+/// many wait (scheduleHandler); more is a rapid reset attack,
+/// ENHANCE_YOUR_CALM.
+fn dispatch(c: Int, st: Int) {
+  let waiting = ld(c, C_DQN) - ld(c, C_DQOFF)
+  var free_slots = MAX_STREAMS - ld(c, C_NHANDLERS)
+  if free_slots < 0 {
+    free_slots = 0
+  }
+  if waiting - free_slots > 4 * MAX_STREAMS {
+    conn_err(c, E_CALM)
+    return
+  }
+  if ld(c, C_DQN) == ld(c, C_DQCAP) {
+    let off = ld(c, C_DQOFF)
+    if off > 0 {
+      let q = ld(c, C_DQ)
+      rt.mem_move(q, q + 8 * off, 8 * (ld(c, C_DQN) - off))
+      inc(c, C_DQN, -off)
+      sto(c, C_DQOFF, 0)
+    }
+    if ld(c, C_DQN) == ld(c, C_DQCAP) {
+      let cap = if ld(c, C_DQCAP) == 0 { 16 } else { 2 * ld(c, C_DQCAP) }
+      sto(c, C_DQ, raw.c_resize(ld(c, C_DQ), 8 * cap))
+      sto(c, C_DQCAP, cap)
+    }
+  }
+  inc(st, S_REFS, 1)
+  sto(ld(c, C_DQ), 8 * ld(c, C_DQN), st)
+  inc(c, C_DQN, 1)
+}
+
+/// Hands a request whose body arrived (or passed the largest) to a
+/// handler, or answers it here.
+fn complete(c: Int, st: Int) {
+  if on(st, S_COMPLETED) {
+    return
+  }
+  sto(st, S_COMPLETED, 1)
+  let kind = ld(st, S_KIND)
+  if kind == h2w.K_OPTIONS {
+    // globalOptionsHandler
+    respond_internal(c, st, 200, ["Content-Length"], ["0"], "")
+    return
+  }
+  if kind != h2w.K_APP {
+    return // answered when its header came
+  }
+  dispatch(c, st)
+}
+
+fn enqueue_pending(c: Int) {
+  for i in 0..ntab(c) {
+    let st = tab_at(c, i)
+    if on(st, S_RH_SENT) && !on(st, S_END_SENT) && !on(st, S_DEAD) {
+      ready(c, st)
+    }
+  }
+}
+
+/// Pops the next request whose stream is alive (the queue's reference
+/// becomes its stream connection's), or 0.
+fn take_locked(c: Int) -> Int {
+  while ld(c, C_DQOFF) < ld(c, C_DQN) && ld(c, C_NHANDLERS) < MAX_STREAMS {
+    let st = ld(ld(c, C_DQ), 8 * ld(c, C_DQOFF))
+    inc(c, C_DQOFF, 1)
+    if ld(c, C_DQOFF) == ld(c, C_DQN) {
+      sto(c, C_DQOFF, 0)
+      sto(c, C_DQN, 0)
+    }
+    if on(st, S_DEAD) {
+      unref(st)
+      continue
+    }
+    sto(st, S_DISPATCHED, 1)
+    inc(c, C_NHANDLERS, 1)
+    return st
+  }
+  0
+}
+
+/// Marks the connection dead: every stream is dropped and the tasks
+/// waiting on one return.
+fn shutdown(c: Int) {
+  sto(c, C_DEAD, 1)
+  while ntab(c) > 0 {
+    close_stream(c, tab_at(c, ntab(c) - 1))
+  }
+  var i = ld(c, C_DQOFF)
+  while i < ld(c, C_DQN) {
+    let st = ld(ld(c, C_DQ), 8 * i)
+    sto(st, S_DEAD, 1)
+    unref(st)
+    i += 1
+  }
+  sto(c, C_DQOFF, 0)
+  sto(c, C_DQN, 0)
+  while ld(c, C_RFIRST) != 0 {
+    let st = ld(c, C_RFIRST)
+    sto(c, C_RFIRST, ld(st, S_RNEXT))
+    sto(st, S_QUEUED, 0)
+    unref(st)
+  }
+  sto(c, C_RLAST, 0)
+}
+
+fn after_end(c: Int, st: Int) {
+  if ld(st, S_STATE) == ST_OPEN {
+    // the request is still open: RST_STREAM NO_ERROR (section 8.1)
+    if !on(st, S_RST) {
+      sto(st, S_RST, E_NO + 1)
+      ready(c, st)
+    }
+  } else {
+    close_stream(c, st)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The connection's records (cabi_http.xo's exports call these)
+
+/// A new connection record (hserve.hc_h2, after the handshake chose h2):
+/// the server's preface queued. why (not ""): the cipher suite is too
+/// weak for HTTP/2 (rejectConn), a GOAWAY INADEQUATE_SECURITY then
+/// close, or with linger (Windows, which resets a connection closed with
+/// unread input, gotchas/windows-shutdown-resets-unread-input.md) drop
+/// the input for a second as after a connection error.
+pub fn conn_new(why: Str, linger: Bool) -> Int {
+  let c = rt.heap_large(C_SIZE)
+  rt.mem_set(c, 0, C_SIZE)
+  sto(c, C_PEER_FRAME, 16384)
+  sto(c, C_PEER_WIN, 65535)
+  sto(c, C_WIN, 65535)
+  sto(c, C_IN, WINDOW)
+  sto(c, C_MAXBODY, http1.max_body())
+  // the server's preface: SETTINGS, then the connection window to 1 MiB
+  fh(c, 30, T_SETTINGS, 0, 0)
+  put_setting(c, S_MAX_FRAME, MAX_FRAME)
+  put_setting(c, S_MAX_STREAMS, MAX_STREAMS)
+  put_setting(c, S_MAX_HLIST, MAX_HLIST)
+  put_setting(c, S_HEADER_TABLE, TABLE)
+  put_setting(c, S_INITIAL_WINDOW, WINDOW)
+  sto(c, C_UNACKED, 1)
+  put_winup(c, 0, WINDOW - 65535)
+  // the client preface within 10 s (prefaceTimeout)
+  sto(c, C_DEADLINE, now() + 10000000000)
+  if !why.is_empty() {
+    put_goaway(c, 0, E_INADEQUATE, why)
+    sto(c, C_FAILED, 1)
+    sto(c, C_GOAWAY, 1)
+    if linger {
+      sto(c, C_DEADLINE, now() + 1000000000)
+    } else {
+      sto(c, C_REJECT, 1)
+    }
+  }
+  c
+}
+
+/// Frees connection record c (its connection is freed; no stream
+/// connection holds it).
+pub fn conn_free(c: Int) {
+  shutdown(c)
+  bfree(c, C_TAB)
+  bfree(c, C_HB)
+  bfree(c, C_WB)
+  bfree(c, C_OUT)
+  bfree(c, C_BUF)
+  let q = ld(c, C_DQ)
+  if q != 0 {
+    rt.heap_release(q)
+  }
+  rt.heap_release(c - 8)
+}
+
+/// Asks the connection to end (the server stops): GOAWAY, then close
+/// once its streams are done.
+pub fn conn_stop(c: Int) {
+  lk(c)
+  sto(c, C_STOP, 1)
+  wake(c)
+  unlk(c)
+}
+
+/// The handler of stream st is done: a response it did not finish (a
+/// fault in a streamed body) resets the stream with INTERNAL_ERROR, as
+/// net/http's handlerPanicRST.
+fn handler_done(c: Int, st: Int) {
+  if on(st, S_DISPATCHED) && !on(st, S_ENDED) {
+    sto(st, S_ENDED, 1)
+    inc(c, C_NHANDLERS, -1)
+    if !on(st, S_END) && !on(st, S_DEAD) && !on(st, S_RST) {
+      sto(st, S_RST, E_INTERNAL + 1)
+      sto(st, S_RST_LATE, 1)
+      ready(c, st)
+    }
+    wake(c)
+  }
+}
+
+/// Drops a stream connection's reference to stream st (the stream
+/// connection is freed).
+pub fn stream_release(st: Int) {
+  let c = ld(st, S_C)
+  lk(c)
+  handler_done(c, st)
+  unref(st)
+  unlk(c)
+}
+
+/// The stream's handler ended (std/native/http.xo serve_stream).
+pub fn end(h: rthttp.HConn) {
+  let st = hconn.h2s(h)
+  if st == 0 {
+    return
+  }
+  let c = ld(st, S_C)
+  lk(c)
+  handler_done(c, st)
+  unlk(c)
+}
+
+// ---------------------------------------------------------------------------
+// Responses (responseWriterState.writeChunk with std/rt's serve): a
+// stream connection's response header is http1.xo's (header_set)
+
+/// The head of status from h's response header as writeChunk sends it
+/// with the pn bytes at p, the first bytes of the body (all of it when
+/// done), queued on st with them; the header is emptied. A handler that
+/// asked for Connection: close stops the connection.
+fn head_queue(h: rthttp.HConn, st: Int, status: Int, p: Int, pn: Int, done: Bool, end: Bool) {
+  let c = ld(st, S_C)
+  let ha = http1.hdr_addr(h)
+  let hn = http1.hdr_len(h)
+  let r = h2w.head_room(ha, hn)
+  let d = raw.c_resize(0, r)
+  let head = on(st, S_HEAD)
+  let w = h2w.head(d, ha, hn, status, head, p, pn, done, st + S_RES)
+  let close = on(st, S_RES)
+  http1.hdr_reset(h)
+  lk(c)
+  queue_locked(c, st, d, w, r, head || !http1w.body_allowed(status), p, pn, end)
+  if close && !on(c, C_GOAWAY) {
+    sto(c, C_STOP, 1)
+    wake(c)
+  }
+  unlk(c)
+}
+
+/// The whole response of stream connection h (hserve.xo sink_end on a
+/// stream): the n bytes at p.
+pub fn respond_at(h: rthttp.HConn, status: Int, p: Int, n: Int) {
+  let st = hconn.h2s(h)
+  if n > 2048 && http1w.body_allowed(status) && !http1.hdr_has(h, "Content-Length") {
+    // std/rt: Content-Length on a body over net/http's 2048 bytes
+    http1.hdr_put(h, "Content-Length", "${n}")
+  }
+  // a body over the 4 KiB buffer is written before the handler ends
+  head_queue(h, st, status, p, n, n <= CHUNK, true)
+}
+
+/// The response of stream connection h: always false (no other request
+/// comes on a stream).
+pub fn respond(h: rthttp.HConn, status: Int, body: Bytes) -> Bool {
+  respond_at(h, status, raw.bytes_addr(body), body.len())
+  let _keep = body.len()
+  false
+}
+
+/// Waits while more than BACKLOG bytes of st's body are unsent: false
+/// when the stream is gone (reset, the connection failed).
+fn wait_backlog(st: Int) -> Bool {
+  let c = ld(st, S_C)
+  var x = 0
+  lk(c)
+  while !on(st, S_DEAD) && ld(st, S_OUT + 8) - ld(st, S_OFF) > BACKLOG {
+    if x == 0 {
+      x = ctx.cur()
+    }
+    if poll.canceled() {
+      break
+    }
+    let park = poll.park_of(x)
+    pool.park_reset(park)
+    sto(st, S_WAITER, park)
+    unlk(c)
+    poll.park_wait(x)
+    lk(c)
+    if ld(st, S_WAITER) == park {
+      sto(st, S_WAITER, 0)
+    }
+  }
+  let ok = !on(st, S_DEAD)
+  unlk(c)
+  ok
+}
+
+/// Sends the n bytes at p for a streamed body of stream connection h
+/// (the handler is not done; started: the head went out): the head with
+/// the first bytes, then data. 1 when the head went out, plus 2 when the
+/// stream is alive.
+pub fn emit(h: rthttp.HConn, status: Int, started: Bool, p: Int, n: Int) -> Int {
+  let st = hconn.h2s(h)
+  let c = ld(st, S_C)
+  if !started {
+    head_queue(h, st, status, p, n, false, false)
+  } else {
+    lk(c)
+    queue_locked(c, st, 0, 0, 0, false, p, n, false)
+    unlk(c)
+  }
+  if wait_backlog(st) { 3 } else { 1 }
+}
+
+/// Ends a streamed body whose head went out with the n bytes at p:
+/// whether the stream was alive.
+pub fn finish(h: rthttp.HConn, p: Int, n: Int) -> Bool {
+  let st = hconn.h2s(h)
+  let c = ld(st, S_C)
+  lk(c)
+  let ok = !on(st, S_DEAD)
+  queue_locked(c, st, 0, 0, 0, false, p, n, true)
+  unlk(c)
+  ok
+}
+
+// ---------------------------------------------------------------------------
+// The connection's fiber
+
+/// A request ready for a handler: its stream connection (rthttp.HConn,
+/// answered with respond or a sink) and its parts as std/rt's serve
+/// makes the Request.
+pub struct H2Req {
+  pub conn: rthttp.HConn
+  pub method: Str
+  /// the URL's path (unescaped)
+  pub path: Str
+  pub scheme: Str
+  /// the host of the URL (CONNECT's authority), "" for none
+  pub urlhost: Str
+  /// the Host as received
+  pub host: Str
+  /// canonical names and values, one after the other
+  pub headers: List[Str]
+  /// sorted keys and first values, one after the other
+  pub query: List[Str]
+  pub body: Bytes
+}
+
+/// The fiber's state of an HTTP/2 server connection: its record, HPACK,
+/// the fields of the header block being received, and the parse of its
+/// :path (http1.h2_target of the first fragment that had one).
+pub struct H2Conn {
+  h: rthttp.HConn
+  c: Int
+  dec: hpack.Dec
+  enc: hpack.Enc
+  /// the peer's table size settings the encoder applies next (4 bytes
+  /// little endian each)
+  sizes: Str
+  names: List[Str]
+  values: List[Str]
+  tgt: List[Str]
+  /// the 400 text of the last request checked
+  msg: Str
+}
+
+/// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
+/// record).
+pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
+  H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
+}
+
+fn word(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
+
+fn packs(s: Str, v: Str) -> Str { rt.rs_append(word(s, v.len()), v) }
+
+fn u32_at(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24) }
+
+/// The request's parts packed into one string (a stream record's
+/// S_REQ): the method, the URL's path, scheme and host, the Host, the
+/// header's pairs and the query's, each string after its length and
+/// each list after its count (4 bytes little endian).
+fn req_pack(method: Str, path: Str, scheme: Str, urlhost: Str, host: Str, hdr: List[Str], query: List[Str]) -> Str {
+  var s = packs(packs(packs(packs(packs("", method), path), scheme), urlhost), host)
+  s = word(s, hdr.len())
+  for v in hdr {
+    s = packs(s, v)
+  }
+  s = word(s, query.len())
+  for v in query {
+    s = packs(s, v)
+  }
+  s
+}
+
+/// The request of a stream record st taken from the queue, on its new
+/// stream connection.
+fn (h: H2Conn) request_of(st: Int) -> H2Req {
+  let s = bstr(st, S_REQ)
+  let b = s.bytes()
+  var i = 0
+  var parts: List[Str] = []
+  for _k in 0..5 {
+    let n = u32_at(b, i)
+    parts.push(raw.str_slice(s, i + 4, i + 4 + n))
+    i += 4 + n
+  }
+  var lists: List[List[Str]] = []
+  for _l in 0..2 {
+    let cnt = u32_at(b, i)
+    i += 4
+    var xs: List[Str] = []
+    for _e in 0..cnt {
+      let n = u32_at(b, i)
+      xs.push(raw.str_slice(s, i + 4, i + 4 + n))
+      i += 4 + n
+    }
+    lists.push(xs)
+  }
+  let body = bstr(st, S_BODY).bytes()
+  bfree(st, S_REQ)
+  bfree(st, S_BODY)
+  http1.fault_probe(parts[1], "frame")
+  H2Req{conn: hconn.stream(h.h, st), method: parts[0], path: parts[1], scheme: parts[2], urlhost: parts[3], host: parts[4], headers: lists[0], query: lists[1], body: body}
+}
+
+/// Runs the connection until a request is ready for a handler (then its
+/// H2Req) or the connection is done: it sends what the streams queued,
+/// reads and answers frames, and closes after a GOAWAY once the streams
+/// in flight are done.
+pub fn (var h: H2Conn) next() -> H2Req? {
+  let c = h.c
+  let x = ctx.cur()
+  while true {
+    lk(c)
+    if !on(c, C_DEAD) && !on(c, C_FAILED) {
+      let st = take_locked(c)
+      if st != 0 {
+        unlk(c)
+        return Some(h.request_of(st))
+      }
+    }
+    if on(c, C_STOP) && !on(c, C_GOAWAY) {
+      sto(c, C_GOAWAY, 1)
+      put_goaway(c, ld(c, C_MAX_ID), E_NO, "")
+    }
+    h.schedule()
+    let pending = ld(c, C_RFIRST) != 0
+    // a graceful end: every stream done and sent
+    var finished = on(c, C_DEAD) || on(c, C_REJECT) || (on(c, C_GOAWAY) && !on(c, C_FAILED) && ld(c, C_NOPEN) == 0 && ld(c, C_DQOFF) == ld(c, C_DQN) && !pending)
+    // swap the output out, to write it without the lock
+    for k in 0..3 {
+      let w = ld(c, C_WB + 8 * k)
+      sto(c, C_WB + 8 * k, ld(c, C_OUT + 8 * k))
+      sto(c, C_OUT + 8 * k, w)
+    }
+    sto(c, C_WB + 8, 0)
+    unlk(c)
+    if ld(c, C_OUT + 8) > 0 {
+      let ok = hconn.send_at(h.h, ld(c, C_OUT), ld(c, C_OUT + 8))
+      sto(c, C_OUT + 8, 0)
+      if ld(c, C_OUT + 16) > 262144 {
+        bfree(c, C_OUT)
+      }
+      if !ok {
+        finished = true
+      }
+    }
+    if finished {
+      break
+    }
+    let r = h.read()
+    if r > 0 {
+      if !h.feed() {
+        break
+      }
+      continue
+    }
+    if r != -2 {
+      break // the end of the stream (the client left) or an error
+    }
+    if pending {
+      continue // more to send first
+    }
+    if !h.wait(x) {
+      break
+    }
+  }
+  lk(c)
+  shutdown(c)
+  unlk(c)
+  None
+}
+
+/// Reads what the socket has (TLS records): the bytes read, 0 at the end
+/// of the stream, -1 on an error, -2 when nothing is there.
+fn (h: H2Conn) read() -> Int {
+  let c = h.c
+  if ld(c, C_BUF_OFF) > 0 && ld(c, C_BUF_OFF) == ld(c, C_BUF + 8) {
+    sto(c, C_BUF_OFF, 0)
+    sto(c, C_BUF + 8, 0)
+  }
+  if ld(c, C_BUF + 16) - ld(c, C_BUF + 8) < 16384 {
+    let off = ld(c, C_BUF_OFF)
+    if off > 0 {
+      rt.mem_move(ld(c, C_BUF), ld(c, C_BUF) + off, ld(c, C_BUF + 8) - off)
+      inc(c, C_BUF + 8, -off)
+      sto(c, C_BUF_OFF, 0)
+    }
+    if ld(c, C_BUF + 16) - ld(c, C_BUF + 8) < 16384 {
+      let cap = if ld(c, C_BUF + 16) == 0 { 32768 } else { 2 * ld(c, C_BUF + 16) }
+      sto(c, C_BUF, raw.c_resize(ld(c, C_BUF), cap))
+      sto(c, C_BUF + 16, cap)
+    }
+  }
+  let r = hconn.h2_read(h.h, tail(c, C_BUF), ld(c, C_BUF + 16) - ld(c, C_BUF + 8))
+  if r > 0 {
+    grew(c, C_BUF, r)
+  }
+  r
+}
+
+/// Parks the fiber (context x) until the socket has input, a stream task
+/// woke it, its deadline passed, or the task was canceled: false when it
+/// must end (closed, canceled, the deadline).
+fn (h: H2Conn) wait(x: Int) -> Bool {
+  let c = h.c
+  let park = poll.park_of(x)
+  pool.park_reset(park)
+  lk(c)
+  if on(c, C_WOKEN) {
+    sto(c, C_WOKEN, 0)
+    unlk(c)
+    return true
+  }
+  sto(c, C_WAITER, park)
+  let when = ld(c, C_DEADLINE)
+  unlk(c)
+  var ok = poll.pd_wait_or_signal(hconn.pd(h.h), x, when)
+  lk(c)
+  if ld(c, C_WAITER) == park {
+    sto(c, C_WAITER, 0)
+  }
+  sto(c, C_WOKEN, 0)
+  unlk(c)
+  if poll.canceled() {
+    ok = false
+  }
+  ok
+}
+
+/// Processes the input read so far: false when the connection must
+/// close. A header block fragment is decoded without the lock.
+fn (var h: H2Conn) feed() -> Bool {
+  let c = h.c
+  while true {
+    lk(c)
+    let r = h.input()
+    unlk(c)
+    if r != 2 {
+      return r == 1
+    }
+    h.fragment()
+  }
+  false
+}
+
+/// Processes the input as far as it makes frames (the lock held): 0
+/// when the connection must close at once (a client preface that is
+/// wrong, as net/http's readPreface), 2 when a header block fragment
+/// waits in C_HB for HPACK (fragment), else 1.
+fn (var h: H2Conn) input() -> Int {
+  let c = h.c
+  let b = ld(c, C_BUF)
+  let n = ld(c, C_BUF + 8)
+  var off = ld(c, C_BUF_OFF)
+  let pre = PREFACE.bytes()
+  while ld(c, C_NPREFACE) < 24 && off < n {
+    if rt.mem_load(b, off, 1) != Int(pre[ld(c, C_NPREFACE)]) {
+      sto(c, C_BUF_OFF, off)
+      return 0
+    }
+    inc(c, C_NPREFACE, 1)
+    off += 1
+    if ld(c, C_NPREFACE) == 24 {
+      // the first SETTINGS must follow within 2 s (firstSettingsTimeout)
+      sto(c, C_DEADLINE, now() + 2000000000)
+    }
+  }
+  var res = 1
+  while ld(c, C_NPREFACE) == 24 && n - off >= 9 {
+    let fp = b + off
+    let len = get24(fp)
+    if on(c, C_FAILED) {
+      // lingering after a GOAWAY of an error: input is dropped
+      off = n
+      break
+    }
+    if len > MAX_FRAME {
+      conn_err(c, E_FRAME_SIZE)
+      off = n
+      break
+    }
+    if n - off < 9 + len {
+      break
+    }
+    h.frame(fp, fp + 9)
+    sto(c, C_CUR_SID, 0)
+    off += 9 + len
+    if on(c, C_DEC_PENDING) {
+      res = 2
+      break
+    }
+  }
+  if res == 1 && on(c, C_FAILED) {
+    off = n
+  }
+  sto(c, C_BUF_OFF, off)
+  res
+}
+
+/// Handles one frame (header hp, payload p): the frame order and the
+/// frame checks of Framer.ReadFrame, then serverConn.processFrame.
+fn (var h: H2Conn) frame(hp: Int, p: Int) {
+  let c = h.c
+  let len = get24(hp)
+  let ty = rt.mem_load(hp, 3, 1)
+  let flags = rt.mem_load(hp, 4, 1)
+  let sid = get32(hp + 5) & 0x7fffffff
+  sto(c, C_CUR_SID, 0)
+  // checkFrameOrder and the Framer's parsers (connection errors of the
+  // frame's shape): h2w.frame_check
+  rt.mem_set(c + C_FR, 0, 24)
+  let chk = h2w.frame_check(hp, p, on(c, C_HB_ON), ld(c, C_HB_SID), c + C_FR)
+  if chk == h2w.FC_IGNORE {
+    return // unknown frame types are ignored
+  }
+  if chk == h2w.FC_CONN {
+    conn_err(c, ld(c, C_FR))
+    return
+  }
+  if chk == h2w.FC_STREAM {
+    stream_err(c, sid, ld(c, C_FR))
+    return
+  }
+  let data = p + ld(c, C_FR)
+  let dn = ld(c, C_FR + 8)
+  let dep = ld(c, C_FR + 16)
+  // the frame parsed: processFrame's errors count its stream
+  sto(c, C_CUR_SID, sid)
+  // the first frame must be SETTINGS (a header block is decoded first)
+  if !on(c, C_GOT_SETTINGS) && ty != T_HEADERS && ty != T_CONT {
+    if ty != T_SETTINGS {
+      conn_err(c, E_PROTOCOL)
+      return
+    }
+    sto(c, C_GOT_SETTINGS, 1)
+    sto(c, C_DEADLINE, 0)
+  }
+  if ty == T_HEADERS || ty == T_CONT {
+    if ty == T_HEADERS {
+      sto(c, C_HB + 8, 0)
+      sto(c, C_HB_SID, sid)
+      sto(c, C_HB_FLAGS, flags)
+      flag(c, C_HB_PRIO, (flags & F_PRIORITY) != 0)
+      sto(c, C_HB_DEP, dep)
+      h.names = []
+      h.values = []
+      sto(c, C_HF, MAX_HLIST)
+      sto(c, C_HF + 8, 0)
+      sto(c, C_HF + 16, 0)
+      sto(c, C_HF + 24, 0)
+      sto(c, C_HFIRST, 1)
+      h.tgt = []
+    }
+    // a fragment far over what the header list may still hold, or one
+    // after an invalid field: the connection ends (CVE-2024-27316,
+    // readMetaFrame)
+    if dn > 2 * ld(c, C_HF) || on(c, C_HF + 8) {
+      conn_err(c, E_PROTOCOL)
+      return
+    }
+    // HPACK decodes the fields the fragment completes (after the bytes
+    // of a field the last one cut; fragment)
+    put(c, C_HB, data, dn)
+    sto(c, C_DEC_PENDING, 1)
+    sto(c, C_PEND_FLAGS, flags)
+    sto(c, C_PEND_SID, sid)
+    return
+  }
+  h.frame_rest(ty, flags, sid, len, p, data, dn)
+}
+
+/// Decodes the header block fragment waiting in C_HB (the lock not
+/// held), then goes on with its fields: those readMetaFrame keeps, the
+/// parse of the block's first :path, the end of the block (a request or
+/// trailers), and a 100 Continue it asks for.
+fn (var h: H2Conn) fragment() {
+  let c = h.c
+  let f = h.dec.decode_part(bstr(c, C_HB), on(c, C_HFIRST), MAX_HLIST)
+  let t = http1.h2_target(f.data, f.lens)
+  lk(c)
+  sto(c, C_DEC_PENDING, 0)
+  flag(c, C_HFIRST, f.first)
+  if t.len() >= 6 && h.tgt.is_empty() {
+    h.tgt = t
+  }
+  let d = raw.data(f.data)
+  let dn = f.data.len()
+  var off = 0
+  for l in f.lens {
+    let nn = l & 0xffffffff
+    let vn = l >> 32
+    if off + nn + vn > dn {
+      break
+    }
+    if h2w.field_keep(d + off, nn, d + off + nn, vn, c + C_HF) {
+      h.names.push(raw.str_slice(f.data, off, off + nn))
+      h.values.push(raw.str_slice(f.data, off + nn, off + nn + vn))
+    }
+    off += nn + vn
+  }
+  sto(c, C_CUR_SID, ld(c, C_PEND_SID))
+  h.block_end(f.ok != 0, f.used, ld(c, C_PEND_FLAGS))
+  sto(c, C_CUR_SID, 0)
+  let w = ld(c, C_WANT100)
+  if w != 0 {
+    // a 100 Continue goes out after the request's HEADERS
+    sto(c, C_WANT100, 0)
+    let head = rt.rs_append(word(word(word("", 1), 7), 3), ":status100")
+    let blk = h.encode(head)
+    put_block(c, w, raw.data(blk), blk.len(), false)
+  }
+  unlk(c)
+}
+
+/// The header block of one head in the encoder job's form, with the
+/// peer's table size settings that came since the last one.
+fn (var h: H2Conn) encode(head: Str) -> Str {
+  let job = rt.rs_append(word(rt.rs_append(word("", h.sizes.len() / 4), h.sizes), 1), head)
+  h.sizes = ""
+  let out = h.enc.encode_job(job)
+  raw.str_slice(out, 4, out.len())
+}
+
+/// Goes on with a header block fragment whose fields were decoded up to
+/// used (ok false: a decoding error): the rest waits in C_HB, and a
+/// complete block is a request or trailers.
+fn (var h: H2Conn) block_end(ok: Bool, used: Int, flags: Int) {
+  let c = h.c
+  if !ok {
+    conn_err(c, E_COMPRESSION)
+    return
+  }
+  let hn = ld(c, C_HB + 8)
+  if hn > used {
+    rt.mem_move(ld(c, C_HB), ld(c, C_HB) + used, hn - used)
+  }
+  sto(c, C_HB + 8, hn - used)
+  if ld(c, C_HB + 8) > 2 * (MAX_HLIST + 8) {
+    conn_err(c, E_COMPRESSION)
+    return
+  }
+  if (flags & F_END_HEADERS) == 0 {
+    sto(c, C_HB_ON, 1)
+    return
+  }
+  sto(c, C_HB_ON, 0)
+  if ld(c, C_HB + 8) > 0 {
+    // truncated headers
+    conn_err(c, E_COMPRESSION)
+    return
+  }
+  if !on(c, C_GOT_SETTINGS) {
+    conn_err(c, E_PROTOCOL)
+    return
+  }
+  h.on_headers(ld(c, C_HB_SID), ld(c, C_HB_FLAGS), on(c, C_HB_PRIO), ld(c, C_HB_DEP))
+  if ld(c, C_HB + 16) > 65536 {
+    bfree(c, C_HB)
+  }
+}
+
+fn index_of(names: List[Str], k: Str) -> Int {
+  var i = 0
+  while i < names.len() {
+    if names[i] == k {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// The value of pseudo field name, "" for none.
+fn pseudo(names: List[Str], values: List[Str], name: Str) -> Str {
+  let i = index_of(names, name)
+  if i < 0 { "" } else { values[i] }
+}
+
+/// Handles the fields of a complete header block of stream sid (taking
+/// them over).
+fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
+  let c = h.c
+  let names = h.names
+  let values = h.values
+  h.names = []
+  h.values = []
+  let invalid = on(c, C_HF + 8)
+  let truncated = on(c, C_HF + 16)
+  rt.mem_set(c + C_HF, 0, 32)
+  if on(c, C_GOAWAY) && (on(c, C_FAILED) || sid > ld(c, C_MAX_ID)) {
+    return
+  }
+  // MetaHeadersFrame.checkPseudos
+  var ok = !invalid
+  if ok {
+    let a = fields_of(names, values)
+    ok = h2w.pseudos_ok(a, names.len(), c + C_FR)
+    fields_free(a)
+  }
+  if !ok {
+    stream_err(c, sid, E_PROTOCOL)
+    return
+  }
+  if sid % 2 != 1 {
+    conn_err(c, E_PROTOCOL)
+    return
+  }
+  let end_stream = (flags & F_END_STREAM) != 0
+  var st = find(c, sid)
+  if st != 0 {
+    // trailers (processTrailerHeaders)
+    let has_pseudo = names.len() > 0 && names[0].starts_with(":")
+    if on(st, S_RST) {
+      return
+    }
+    if ld(st, S_STATE) == ST_HCR {
+      stream_err(c, sid, E_STREAM_CLOSED)
+      return
+    }
+    if on(st, S_TRAILERS) {
+      conn_err(c, E_PROTOCOL)
+      return
+    }
+    sto(st, S_TRAILERS, 1)
+    if !end_stream || has_pseudo {
+      stream_err(c, sid, E_PROTOCOL)
+      return
+    }
+    sto(st, S_STATE, ST_HCR)
+    complete(c, st)
+    return
+  }
+  if sid <= ld(c, C_MAX_ID) {
+    conn_err(c, E_PROTOCOL)
+    return
+  }
+  sto(c, C_MAX_ID, sid)
+  if ld(c, C_NOPEN) + 1 > MAX_STREAMS {
+    stream_err(c, sid, if on(c, C_UNACKED) { E_REFUSED } else { E_PROTOCOL })
+    return
+  }
+  st = rt.heap_large(S_SIZE)
+  rt.mem_set(st, 0, S_SIZE)
+  sto(st, S_C, c)
+  sto(st, S_ID, sid)
+  sto(st, S_REFS, 1)
+  sto(st, S_IN_TABLE, 1)
+  sto(st, S_STATE, if end_stream { ST_HCR } else { ST_OPEN })
+  sto(st, S_WIN, ld(c, C_PEER_WIN))
+  sto(st, S_IN, WINDOW)
+  sto(st, S_DECLEN, -1)
+  room(c, C_TAB, 8)
+  sto(tail(c, C_TAB), 0, st)
+  grew(c, C_TAB, 8)
+  inc(c, C_NOPEN, 1)
+  if prio && dep == sid {
+    stream_err(c, sid, E_PROTOCOL)
+    return
+  }
+  if !h.request(st, names, values, truncated, end_stream) {
+    stream_err(c, sid, E_PROTOCOL)
+    return
+  }
+  let kind = ld(st, S_KIND)
+  if kind == h2w.K_431 {
+    respond_internal(c, st, 431, [], [], "<h1>HTTP Error 431</h1><p>Request Header Field(s) Too Large</p>")
+  } else if kind == h2w.K_400 {
+    // http.Error
+    respond_internal(c, st, 400, ["Content-Type", "X-Content-Type-Options"], ["text/plain; charset=utf-8", "nosniff"], h.msg + "\n")
+  } else if !end_stream && on(st, S_EXPECT100) && kind == h2w.K_APP {
+    // encoded before the next frame (fragment)
+    sto(c, C_WANT100, sid)
+  }
+  if end_stream {
+    complete(c, st)
+  }
+}
+
+/// Makes st's request from the fields names and values
+/// (processHeaders, newWriterAndRequest): false when it is malformed (a
+/// stream error).
+fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncated: Bool, end_stream: Bool) -> Bool {
+  let c = h.c
+  // malformed requests, 431, 400, OPTIONS * (h2w.request_check)
+  let a = fields_of(names, values)
+  rt.mem_store(c + C_MSG, 0, 0, 1)
+  let kind = h2w.request_check(a, names.len(), truncated, c + C_MSG)
+  fields_free(a)
+  if kind < 0 {
+    return false
+  }
+  let method = pseudo(names, values, ":method")
+  let path = pseudo(names, values, ":path")
+  let auth = pseudo(names, values, ":authority")
+  // the header: canonical keys, values joined (", ", "; " for Cookie)
+  var hk: List[Str] = []
+  var hv: List[Str] = []
+  for i in 0..names.len() {
+    let k = names[i]
+    if k.starts_with(":") {
+      continue
+    }
+    let ck = http1.canonical_key(k)
+    let x = index_of(hk, ck)
+    if x >= 0 {
+      let sep = if ck == "Cookie" { "; " } else { ", " }
+      hv[x] = hv[x] + sep + values[i]
+    } else {
+      hk.push(ck)
+      hv.push(values[i])
+    }
+  }
+  var host = auth
+  let hi = index_of(hk, "Host")
+  if host.is_empty() && hi >= 0 {
+    host = hv[hi]
+  }
+  // NewServerRequest: Expect: 100-continue is taken out, Trailer too
+  let ei = index_of(hk, "Expect")
+  let drop_expect = ei >= 0 && http1.has_token(hv[ei], "100-continue")
+  if drop_expect {
+    sto(st, S_EXPECT100, 1)
+  }
+  var hdr: List[Str] = []
+  var clen = ""
+  var has_clen = false
+  for i in 0..hk.len() {
+    if (drop_expect && hk[i] == "Expect") || hk[i] == "Trailer" {
+      continue
+    }
+    if hk[i] == "Content-Length" {
+      has_clen = true
+      clen = hv[i]
+    }
+    hdr.push(hk[i])
+    hdr.push(hv[i])
+  }
+  var req = ""
+  if method == "CONNECT" {
+    req = req_pack(method, "", "", auth, host, hdr, [])
+  } else {
+    // the URL and its query, parsed by http1.h2_target (fragment)
+    let t = h.tgt
+    if t.len() < 6 || t[1] != "1" || t[0] != path {
+      return false
+    }
+    var query: List[Str] = []
+    var i = 6
+    while i < t.len() {
+      query.push(t[i])
+      i += 1
+    }
+    req = req_pack(method, t[4], t[2], t[3], host, hdr, query)
+  }
+  put(st, S_REQ, raw.data(req), req.len())
+  flag(st, S_HEAD, method == "HEAD")
+  sto(st, S_DECLEN, -1)
+  if !end_stream && has_clen {
+    // the first value (a joined value does not parse: 0)
+    let v = h2w.parse_uint63(raw.data(clen), clen.len())
+    sto(st, S_DECLEN, if v >= 0 { v } else { 0 })
+  }
+  sto(st, S_KIND, kind)
+  if kind == h2w.K_400 {
+    h.msg = raw.str_at(c + C_MSG, raw.cstr_len(c + C_MSG))
+  }
+  true
+}
+
+/// Handles a DATA frame of flen bytes carrying the dn bytes at p.
+fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
+  let c = h.c
+  let st = find(c, sid)
+  if st == 0 && sid > ld(c, C_MAX_ID) {
+    conn_err(c, E_PROTOCOL)
+    return
+  }
+  if st == 0 || ld(st, S_STATE) != ST_OPEN || on(st, S_TRAILERS) || on(st, S_RST) {
+    if !conn_window(c, flen) {
+      stream_err(c, sid, E_FLOW)
+      return
+    }
+    if st != 0 && on(st, S_RST) {
+      return
+    }
+    stream_err(c, sid, E_STREAM_CLOSED)
+    return
+  }
+  if ld(st, S_DECLEN) != -1 && ld(st, S_GOT) + dn > ld(st, S_DECLEN) {
+    if !conn_window(c, flen) {
+      stream_err(c, sid, E_FLOW)
+      return
+    }
+    stream_err(c, sid, E_PROTOCOL)
+    return
+  }
+  if flen > 0 {
+    if ld(c, C_IN) < flen || ld(st, S_IN) < flen {
+      stream_err(c, sid, E_FLOW)
+      return
+    }
+    inc(c, C_IN, -flen)
+    inc(st, S_IN, -flen)
+    inc(st, S_GOT, dn)
+    if !on(st, S_OVER) && ld(st, S_KIND) == h2w.K_APP {
+      let max = ld(c, C_MAXBODY)
+      var k = dn
+      if ld(st, S_BODY + 8) + k > max {
+        k = max - ld(st, S_BODY + 8)
+        sto(st, S_OVER, 1)
+      }
+      put(st, S_BODY, p, k)
+    }
+    // the body is read at once: its window comes back now (the
+    // stream's while it is wanted)
+    var u = inflow_add(c, C_IN, flen)
+    if u > 0 {
+      put_winup(c, 0, u)
+    }
+    if (flags & F_END_STREAM) == 0 && !on(st, S_OVER) {
+      u = inflow_add(st, S_IN, flen)
+      if u > 0 {
+        put_winup(c, sid, u)
+      }
+    }
+    if on(st, S_OVER) {
+      complete(c, st)
+    }
+  }
+  if (flags & F_END_STREAM) != 0 {
+    sto(st, S_STATE, ST_HCR)
+    complete(c, st)
+    if on(st, S_END_SENT) && !on(st, S_RST) {
+      // the response went out first (431, 400): the stream closes
+      close_stream(c, st)
+    }
+  }
+}
+
+/// Applies the peer's SETTINGS frame of n bytes at p.
+fn (var h: H2Conn) on_settings(flags: Int, p: Int, n: Int) {
+  let c = h.c
+  if (flags & F_ACK) != 0 {
+    if n > 0 {
+      conn_err(c, E_FRAME_SIZE)
+      return
+    }
+    inc(c, C_UNACKED, -1)
+    if ld(c, C_UNACKED) < 0 {
+      conn_err(c, E_PROTOCOL)
+    }
+    return
+  }
+  // the checks that need no state (h2w.settings_check): the first
+  // failing setting fails when the loop reaches it
+  let chk = h2w.settings_check(p, n)
+  var bad = chk >> 4
+  let k = n / 6
+  if (chk & 15) == 0 {
+    bad = -1
+  } else if bad == 0 {
+    // the payload's shape, a duplicate, or the first setting
+    conn_err(c, chk & 15)
+    return
+  }
+  for i in 0..k {
+    let id = rt.mem_load(p, 6 * i, 1) << 8 | rt.mem_load(p, 6 * i + 1, 1)
+    let v = get32(p + 6 * i + 2)
+    if i == bad {
+      conn_err(c, chk & 15)
+      return
+    }
+    if id == S_HEADER_TABLE {
+      // applied by the encoder before its next block
+      h.sizes = word(h.sizes, v)
+    } else if id == S_INITIAL_WINDOW {
+      let growth = v - ld(c, C_PEER_WIN)
+      sto(c, C_PEER_WIN, v)
+      for s in 0..ntab(c) {
+        let st = tab_at(c, s)
+        inc(st, S_WIN, growth)
+        if ld(st, S_WIN) > 0x7fffffff {
+          conn_err(c, E_FLOW)
+          return
+        }
+      }
+    } else if id == S_MAX_FRAME {
+      sto(c, C_PEER_FRAME, v)
+    }
+  }
+  fh(c, 0, T_SETTINGS, F_ACK, 0)
+  enqueue_pending(c)
+}
+
+/// Handles a frame other than HEADERS and CONTINUATION that parsed (the
+/// dn bytes at data its payload without padding).
+fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, data: Int, dn: Int) {
+  let c = h.c
+  // after a GOAWAY: frames of new streams (or all, after an error) are
+  // dropped, the connection's window kept
+  if on(c, C_GOAWAY) && (on(c, C_FAILED) || sid > ld(c, C_MAX_ID)) {
+    if ty == T_DATA && !on(c, C_FAILED) && !conn_window(c, len) {
+      stream_err(c, sid, E_FLOW)
+    }
+    return
+  }
+  if ty == T_PUSH {
+    // a client cannot push
+    conn_err(c, E_PROTOCOL)
+  } else if ty == T_DATA {
+    h.on_data(sid, flags, len, data, dn)
+  } else if ty == T_SETTINGS {
+    h.on_settings(flags, p, len)
+  } else if ty == T_PING {
+    if (flags & F_ACK) == 0 {
+      fh(c, 8, T_PING, F_ACK, 0)
+      put(c, C_WB, p, 8)
+    }
+  } else if ty == T_WINUP {
+    let n = get32(p) & 0x7fffffff
+    if sid == 0 {
+      inc(c, C_WIN, n)
+      if ld(c, C_WIN) > 0x7fffffff {
+        conn_err(c, E_FLOW)
+        return
+      }
+      enqueue_pending(c)
+      return
+    }
+    let st = find(c, sid)
+    if st == 0 {
+      if sid > ld(c, C_MAX_ID) {
+        conn_err(c, E_PROTOCOL)
+      }
+      return
+    }
+    inc(st, S_WIN, n)
+    if ld(st, S_WIN) > 0x7fffffff {
+      stream_err(c, sid, E_FLOW)
+      return
+    }
+    if on(st, S_RH_SENT) && !on(st, S_END_SENT) && !on(st, S_DEAD) {
+      ready(c, st)
+    }
+  } else if ty == T_RST {
+    let st = find(c, sid)
+    if st == 0 {
+      if sid > ld(c, C_MAX_ID) {
+        conn_err(c, E_PROTOCOL)
+      }
+      return
+    }
+    // the handler, if one runs, finishes unseen
+    sto(st, S_DEAD, 1)
+    close_stream(c, st)
+  } else if ty == T_PRIORITY {
+    if (get32(p) & 0x7fffffff) == sid {
+      stream_err(c, sid, E_PROTOCOL)
+    }
+  } else if ty == T_GOAWAY {
+    // the peer leaves: no new streams, the open ones finish
+    if !on(c, C_GOAWAY) {
+      sto(c, C_GOAWAY, 1)
+      put_goaway(c, ld(c, C_MAX_ID), E_NO, "")
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sending (the fiber, the lock held)
+
+/// Whether st's reset waits for the output a handler queued before its
+/// fault.
+fn late(st: Int) -> Bool {
+  on(st, S_RST) && on(st, S_RST_LATE) && !on(st, S_DEAD) && ((on(st, S_RH_READY) && !on(st, S_RH_SENT)) || ld(st, S_OFF) < ld(st, S_OUT + 8))
+}
+
+/// Moves queued output into the connection's output: reset streams,
+/// headers (encoded here, in the order they go out), and data within
+/// the peer's windows, at most 64 KiB per stream before the next
+/// stream's turn.
+fn (var h: H2Conn) schedule() {
+  let c = h.c
+  var list = ld(c, C_RFIRST)
+  sto(c, C_RFIRST, 0)
+  sto(c, C_RLAST, 0)
+  if on(c, C_FAILED) {
+    // after a GOAWAY of an error nothing more is sent on a stream
+    while list != 0 {
+      let st = list
+      list = ld(st, S_RNEXT)
+      sto(st, S_RNEXT, 0)
+      sto(st, S_QUEUED, 0)
+      unref(st)
+    }
+    return
+  }
+  var again = 0
+  var again_last = 0
+  let fmax = if ld(c, C_PEER_FRAME) < 16384 { ld(c, C_PEER_FRAME) } else { 16384 }
+  while list != 0 {
+    let st = list
+    list = ld(st, S_RNEXT)
+    sto(st, S_RNEXT, 0)
+    sto(st, S_QUEUED, 0)
+    let lt = late(st)
+    if on(st, S_RST) && !on(st, S_RST_SENT) && !lt {
+      sto(st, S_RST_SENT, 1)
+      if on(st, S_IN_TABLE) || !on(st, S_RST_LATE) {
+        // (a stream the client reset needs no reset of ours)
+        put_rst(c, ld(st, S_ID), ld(st, S_RST) - 1)
+      }
+      close_stream(c, st)
+      unref(st)
+      continue
+    }
+    if on(st, S_DEAD) || on(st, S_END_SENT) {
+      unref(st)
+      continue
+    }
+    if on(st, S_RH_READY) && !on(st, S_RH_SENT) {
+      let blk = h.encode(bstr(st, S_RH))
+      let es = on(st, S_END) && ld(st, S_OFF) == ld(st, S_OUT + 8)
+      put_block(c, ld(st, S_ID), raw.data(blk), blk.len(), es)
+      sto(st, S_RH_SENT, 1)
+      if es {
+        sto(st, S_END_SENT, 1)
+        after_end(c, st)
+        unref(st)
+        continue
+      }
+    }
+    if !on(st, S_RH_SENT) {
+      unref(st)
+      continue
+    }
+    var budget = 65536
+    var more = false
+    while true {
+      let pend = ld(st, S_OUT + 8) - ld(st, S_OFF)
+      if pend == 0 {
+        if on(st, S_END) {
+          fh(c, 0, T_DATA, F_END_STREAM, ld(st, S_ID))
+          sto(st, S_END_SENT, 1)
+        }
+        break
+      }
+      var k = pend
+      if k > fmax {
+        k = fmax
+      }
+      if k > ld(st, S_WIN) {
+        k = ld(st, S_WIN)
+      }
+      if k > ld(c, C_WIN) {
+        k = ld(c, C_WIN)
+      }
+      if k > budget {
+        k = budget
+      }
+      if k <= 0 {
+        more = budget <= 0
+        break // the peer's windows are closed, or the turn is over
+      }
+      let es = on(st, S_END) && k == pend
+      fh(c, k, T_DATA, if es { F_END_STREAM } else { 0 }, ld(st, S_ID))
+      put(c, C_WB, ld(st, S_OUT) + ld(st, S_OFF), k)
+      inc(st, S_OFF, k)
+      inc(st, S_WIN, -k)
+      inc(c, C_WIN, -k)
+      budget -= k
+      if es {
+        sto(st, S_END_SENT, 1)
+        break
+      }
+    }
+    if ld(st, S_OFF) == ld(st, S_OUT + 8) {
+      sto(st, S_OFF, 0)
+      sto(st, S_OUT + 8, 0)
+      if ld(st, S_OUT + 16) > 65536 {
+        bfree(st, S_OUT)
+      }
+    } else if ld(st, S_OFF) > 1048576 {
+      let off = ld(st, S_OFF)
+      rt.mem_move(ld(st, S_OUT), ld(st, S_OUT) + off, ld(st, S_OUT + 8) - off)
+      inc(st, S_OUT + 8, -off)
+      sto(st, S_OFF, 0)
+    }
+    if ld(st, S_OUT + 8) - ld(st, S_OFF) <= BACKLOG {
+      signal_stream(st)
+    }
+    if lt && on(st, S_RH_SENT) && ld(st, S_OFF) == ld(st, S_OUT + 8) {
+      sto(st, S_RST_SENT, 1)
+      put_rst(c, ld(st, S_ID), ld(st, S_RST) - 1)
+      close_stream(c, st)
+      unref(st)
+      continue
+    }
+    if on(st, S_END_SENT) {
+      after_end(c, st)
+      unref(st)
+      continue
+    }
+    if more {
+      // its turn is over: after the others (keeps the reference)
+      sto(st, S_QUEUED, 1)
+      if again_last != 0 {
+        sto(again_last, S_RNEXT, st)
+      } else {
+        again = st
+      }
+      again_last = st
+      continue
+    }
+    unref(st)
+  }
+  if again != 0 {
+    // streams queued meanwhile (resets) go first
+    let last = ld(c, C_RLAST)
+    if last != 0 {
+      sto(last, S_RNEXT, again)
+    } else {
+      sto(c, C_RFIRST, again)
+    }
+    sto(c, C_RLAST, again_last)
+  }
+}

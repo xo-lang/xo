@@ -1,0 +1,96 @@
+exit 0
+--- stdout
+A ecdsa p256, x25519, aes128-gcm:
+  hs <server flight>
+  result ok c02b 29 -
+  got 70696e67  EOF
+  app 1703030021000000000000000110a2271226239457616d7ef3712b4d3e0ac5902c526f59bec6
+  bye 150303001a0000000000000002cf08b4902957eef4da303ca0873e2861dfa0
+B ecdsa p384, p256, aes256-gcm:
+  hs <server flight>
+  result ok c02c 23 -
+  got 70696e67  EOF
+  app 17030300210000000000000001cb8b08d952812beb4835397e74e1620775353a5b3bcb65aaf1
+  bye 150303001a000000000000000236eee5fb9dbb49782ff703059fd053e0b955
+C rsa-pss signed here, p384, chacha20:
+  hs <server flight>
+  result ok cca8 24 -
+  got 70696e67  EOF
+  app 1703030019677d8d2c458dce9ec94a6a9d26a58673e79cae25793906f6b6
+  bye 15030300124519714676fd2ac453b1902fbbf2fa7d2361
+D rsa-pss signed here, x25519, alpn:
+  hs <server flight>
+  result ok c02f 29 http/1.1
+  got 70696e67  EOF
+  app 17030300210000000000000001a7dfb14c151512a9f8312dce5bafc5b6eecbb52bbc1d57a2a6
+  bye 150303001a0000000000000002451f8849b9bc252b20826cfa883e0aea4602
+E rsa-pss signed here, x25519, aes256-gcm:
+  hs <server flight>
+  result ok c030 29 -
+  got 70696e67  EOF
+  app 170303002100000000000000018d31dbe31e528822ae0649bdf784f14ded90b3d6944477faf8
+  bye 150303001a0000000000000002ccd54932034ef30807ec25de4cd931b7f0a0
+F ecdsa p256, x25519, chacha20:
+  hs <server flight>
+  result ok cca9 29 -
+  got 70696e67  EOF
+  app 17030300195aaafe31df428789149bd148934bc850f8844ace6d754927cc
+  bye 150303001223406efc869fd1b4c691aae265a0f7d2b9b6
+H one hello for 1.3 and 1.2:
+  hs <server flight>
+  result ok c02b 29 -
+  got 70696e67  EOF
+  app 17030300210000000000000001a15f3f91db3d3c266c33be042fd6a48de766ddaa9b11c2ca05
+  bye 150303001a0000000000000002f372aef3298ddaa522422bc53c8d90b12709
+A byte at a time:
+  hs <server flight>
+  result ok c02b 29 -
+  got 70696e67  EOF
+  app 1703030021000000000000000110a2271226239457616d7ef3712b4d3e0ac5902c526f59bec6
+  bye 150303001a0000000000000002cf08b4902957eef4da303ca0873e2861dfa0
+A through resume (tls13srv.xo's hand-off):
+  hs <server flight>
+  result ok c02b 29 -
+  got 70696e67  EOF
+  app 1703030021000000000000000110a2271226239457616d7ef3712b4d3e0ac5902c526f59bec6
+  bye 150303001a0000000000000002cf08b4902957eef4da303ca0873e2861dfa0
+ecdsa p256 signed here (masked):
+  hs <server flight, signature verified, 488 bytes>
+  result EOF
+ecdsa p384 signed here (masked):
+  hs <server flight, signature verified, 517 bytes>
+  result EOF
+rsa pkcs1 v1.5 signed here:
+  hs 160303003f0200003b03032222222222...030300040e000000 (992 bytes)
+  result EOF
+no signature algorithm in common:
+  hs 160303003f0200003b03032222222222...3615030300020228 (685 bytes)
+  result tls: peer doesn't support any of the certificate's signature algorithms
+no suite in common:
+  hs 15030300020228
+  result tls: no cipher suite supported by both client and server; client offered: [c02b]
+no curve in common:
+  hs 15030300020228
+  result tls: no cipher suite supported by both client and server; client offered: [c02b]
+alpn not matching:
+  hs 15030300020278
+  result tls: client requested unsupported application protocols (["h2" "http/1.1"])
+corrupt client key exchange:
+  hs 160303003f0200003b03032222222222...001503030002022f (610 bytes)
+  result tls: invalid ClientKeyExchange message
+corrupt client finished:
+  hs 160303003f0200003b03032222222222...0015030300020214 (610 bytes)
+  result local error: tls: bad record MAC
+corrupt client data:
+  hs <server flight>
+  result ok c02b 29 -
+  got  150303001a000000000000000162d973771c2e5aa0b0cb4908d4f6f1712639 local error: tls: bad record MAC
+  app 
+  bye 150303001a0000000000000002cf08b4902957eef4da303ca0873e2861dfa0
+client alert:
+  hs 
+  result remote error: tls: handshake failure
+not tls:
+  hs 
+  result tls: first record does not look like a TLS handshake
+--- stderr

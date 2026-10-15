@@ -8,7 +8,11 @@
 // (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote; decision
 // 0198 deleted that C path, `XO_LLRT_C=procspec`); process creation stays
 // C.
-use native/rt
+use native/llrt/cabi_proc
+use native/llrt/fsops
+use native/llrt/process
+use native/llrt/windows as winlayer
+use native/llrt/raw
 
 /// Whether the target is Windows.
 fn windows() -> Bool {
@@ -18,7 +22,7 @@ fn windows() -> Bool {
   }
 }
 
-/// The spec of a command for rt.proc_exec and rt.proc_spawn, appended to
+/// The spec of a command for proc.xo's exec and spawn, appended to
 /// out: name, dir, flags, the arguments, the environment, the variables
 /// added (none: Xo merged them), and the Windows command line. Flag 8
 /// tells xo_proc.c that the environment is final (flag 1: there is one,
@@ -31,7 +35,7 @@ pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], e
   // os/exec sets no PWD on Windows; the program's environment as it is
   // needs none
   if env_set || !extra.is_empty() || (!win && !dir.is_empty()) {
-    var all: List[Str] = if env_set { env } else { rt.proc_environ() }
+    var all: List[Str] = if env_set { env } else { process.environ() }
     if !env_set && extra.is_empty() {
       // Cmd.environ: PWD is the directory when the environment is the
       // program's
@@ -59,9 +63,9 @@ pub fn spec(name: Str, dir: Str, flags0: Int, args: List[Str], env: List[Str], e
   }
   out.push("0")
   if win {
-    var cl = quote(name)
+    var cl = winlayer.cmd_quote(name)
     for a in args {
-      cl = cl + " " + quote(a)
+      cl = cl + " " + winlayer.cmd_quote(a)
     }
     out.push(cl)
   } else {
@@ -156,10 +160,10 @@ fn critical(env: List[Str]) -> List[Str] {
       return env
     }
   }
-  for kv in rt.proc_environ() {
+  for kv in process.environ() {
     if key_len(kv) == 10 && key_eq(kv.bytes(), "SYSTEMROOT".bytes(), 10, true) {
       var out = env
-      out.push("SYSTEMROOT=" + rt.str_slice(kv, 11, kv.len()))
+      out.push("SYSTEMROOT=" + raw.str_slice(kv, 11, kv.len()))
       return out
     }
   }
@@ -169,7 +173,7 @@ fn critical(env: List[Str]) -> List[Str] {
 /// filepath.Abs of dir: joined to the working directory when relative,
 /// and cleaned (empty and . segments dropped, .. resolved lexically).
 fn abs(dir: Str) -> Str {
-  let full = if dir.starts_with("/") { dir } else { rt.proc_getcwd() + "/" + dir }
+  let full = if dir.starts_with("/") { dir } else { fsops.raw_getcwd() + "/" + dir }
   var segs: List[Str] = []
   for s in full.split("/") {
     if s.is_empty() || s == "." {
@@ -187,61 +191,4 @@ fn abs(dir: Str) -> Str {
     return "/"
   }
   "/" + segs.join("/")
-}
-
-/// s quoted as Go's syscall.EscapeArg (the rules CommandLineToArgvW and
-/// the C runtime parse a command line by), and also when s holds a line
-/// end or another space character.
-fn quote(s: Str) -> Str {
-  let b = s.bytes()
-  var n = 0
-  while n < b.len() && b[n] != 0 {
-    n += 1
-  }
-  if n == 0 {
-    return "\"\""
-  }
-  var bs = false
-  var sp = false
-  var i = 0
-  while i < n {
-    let c = Int(b[i])
-    bs = bs || c == 34 || c == 92
-    sp = sp || c == 32 || (c >= 9 && c <= 13)
-    i += 1
-  }
-  let t = if n == b.len() { s } else { rt.str_slice(s, 0, n) }
-  if !bs && !sp {
-    return t
-  }
-  if !bs {
-    return "\"" + t + "\""
-  }
-  var out = if sp { "\"" } else { "" }
-  var slashes = 0
-  i = 0
-  while i < n {
-    let c = Int(b[i])
-    if c == 92 {
-      slashes += 1
-    } else if c == 34 {
-      while slashes > 0 {
-        out = rt.rs_push_byte(out, 92)
-        slashes -= 1
-      }
-      out = rt.rs_push_byte(out, 92)
-    } else {
-      slashes = 0
-    }
-    out = rt.rs_push_byte(out, c)
-    i += 1
-  }
-  if sp {
-    while slashes > 0 {
-      out = rt.rs_push_byte(out, 92)
-      slashes -= 1
-    }
-    out = rt.rs_push_byte(out, 34)
-  }
-  out
 }

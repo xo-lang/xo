@@ -9,12 +9,11 @@
 // HTTP/2 sends. Decision 0198 deleted the server's C path
 // (`XO_LLRT_C=hpack`), B11 the client's C copy.
 //
-// C never calls compiled Xo (decision 0180), so the C stops where a
-// header block is to be encoded or decoded and Xo goes on with it:
-// http1.xo drives both sides (the server's H2Conn.next through
-// rthttp.h2_next, the client's h2_exchange through rthttp.cl_h2_next).
+// The HTTP/2 server (h2srv.xo, B28 part 2) and client (http1.xo
+// h2_exchange, hclient.xo) are Xo and call this module directly.
 use native/llrt/hpack_tables
 use native/rt
+use native/llrt/raw
 
 /// A dynamic table (RFC 7541 2.3.2): entry i is nv[i], its name then its
 /// value, the name nl[i] bytes long; the entries are those from first on,
@@ -372,7 +371,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       let (g2, d2, j2) = get_str(b, n, j, data, maxstr)
       data = d2
       if g2 < 0 {
-        return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+        return Fields{ok: 1, used: start, data: raw.str_slice(data, 0, mark), lens: lens, first: first}
       }
       if g2 == 0 {
         return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
@@ -391,7 +390,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
     let (g3, d3, j3) = get_str(b, n, j, data, maxstr)
     data = d3
     if g3 < 0 {
-      return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+      return Fields{ok: 1, used: start, data: raw.str_slice(data, 0, mark), lens: lens, first: first}
     }
     if g3 == 0 {
       return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
@@ -399,7 +398,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
     let vlen = data.len() - mark - nlen
     lens.push(nlen | (vlen << 32))
     if indexing {
-      d.t.add(rt.str_slice(data, mark, mark + nlen + vlen), nlen)
+      d.t.add(raw.str_slice(data, mark, mark + nlen + vlen), nlen)
     }
     first = false
     used = j3
@@ -542,7 +541,7 @@ fn (var e: Enc) encode(out0: Str, job: Str, at: Int, nn: Int, vn: Int) -> Str {
   }
   out = put_str(out, b, vlo, vlo + vn)
   if indexing {
-    e.t.add(rt.str_slice(job, at, vlo + vn), nn)
+    e.t.add(raw.str_slice(job, at, vlo + vn), nn)
   }
   out
 }
@@ -572,8 +571,8 @@ pub fn (var e: Enc) set_sizes(s: Str) {
   }
 }
 
-/// Encodes the response heads of a job of the server's
-/// rthttp.h2_enc_job: the peer's table size settings since the last job
+/// Encodes the response heads of a job of the server (h2srv.xo
+/// encode): the peer's table size settings since the last job
 /// (a count, then each), then for each head its number of fields and
 /// each field's name and value lengths and the name and the value, the
 /// numbers 4 bytes little endian. The blocks, each after its length.

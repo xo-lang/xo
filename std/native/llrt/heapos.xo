@@ -123,7 +123,7 @@ fn unmap(m: Int, size: Int) {
 }
 
 /// "fault: out of memory" and the end of the process (status 70).
-fn oom() {
+pub fn oom() {
   let m = "fault: out of memory"
   stdio.err(raw.data(m), m.len(), true)
   process.os_exit(70)

@@ -117,9 +117,9 @@ fn (var p: Parser) pop() -> Int {
   }
 }
 
-fn byte_at(s: Str, i: Int) -> Int { rt.str_byte(s, i) }
+fn byte_at(s: Str, i: Int) -> Int { raw.str_byte(s, i) }
 
-fn sl(s: Str, a: Int, b: Int) -> Str { rt.str_slice(s, a, b) }
+fn sl(s: Str, a: Int, b: Int) -> Str { raw.str_slice(s, a, b) }
 
 /// nextRune: the rune at i and the index after it, or ErrInvalidUTF8
 /// naming the rest of s.
@@ -127,7 +127,7 @@ fn next_rune(s: Str, i: Int) -> (Int, Int) ! PErr {
   if i >= s.len() {
     return (0xfffd, i)
   }
-  let d = rt.bytes_decode(s.bytes(), i)
+  let d = raw.bytes_decode(s.bytes(), i)
   let r = d >> 3
   let k = d & 7
   if r == 0xfffd && k == 1 {
@@ -140,7 +140,7 @@ fn next_rune(s: Str, i: Int) -> (Int, Int) ! PErr {
 fn check_utf8(s: Str, a: Int, b: Int) -> () ! PErr {
   var i = a
   while i < b {
-    let d = rt.bytes_decode(s.bytes(), i)
+    let d = raw.bytes_decode(s.bytes(), i)
     if (d >> 3) == 0xfffd && (d & 7) == 1 {
       return Err(perr("invalid UTF-8", sl(s, i, b)))
     }
@@ -166,7 +166,6 @@ fn unhex(c: Int) -> Int {
 // ---------------------------------------------------------------------------
 // Case folding (unicode.SimpleFold): ToLower when it changes the rune,
 // else ToUpper, except for the runes of longer orbits listed here.
-
 
 fn simple_fold(r: Int) -> Int {
   if r < 0 || r > MAX_RUNE {
@@ -1681,7 +1680,7 @@ fn step_at(s: Str, pos: Int) -> Int {
   if c < 0x80 {
     return c * 8 + 1
   }
-  rt.bytes_decode(s.bytes(), pos)
+  raw.bytes_decode(s.bytes(), pos)
 }
 
 /// The rune before pos for empty width conditions: only ASCII runes
@@ -2008,7 +2007,7 @@ fn extract(t: Str, i0: Int) -> (Bool, Str, Int, Int) {
   }
   let start = i
   while i < n {
-    let d = rt.bytes_decode(t.bytes(), i)
+    let d = raw.bytes_decode(t.bytes(), i)
     let c = d >> 3
     let ru = Rune.try(c) ?? Rune(0xfffd)
     if !ru.is_letter() && !ru.is_digit() && c != '_' {

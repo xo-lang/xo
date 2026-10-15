@@ -1,0 +1,37 @@
+// The test world's two switches (decisions 0083 and 0120): whether the
+// program runs in it and the effects `xo test --real` makes real. Below
+// sysio.xo and stop.xo, which testworld.xo itself uses, so the layers
+// test them without the import cycle; testworld.xo sets them at start.
+use native/rt
+
+/// rt.static_word: whether the test world runs, the effects made real
+/// (testworld.xo REAL_* bits).
+const W_ON = 32
+const W_REAL = 33
+
+/// The bit of testworld.xo REAL_CLOCK.
+const REAL_CLOCK = 8
+
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// Whether the program runs in the test world.
+pub fn on() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+
+/// Whether the effect real (REAL_*) is a fake here: the test world
+/// without `xo test --real` for it.
+pub fn fake(real: Int) -> Bool { on() && rt.mem_load(rt.static_word(W_REAL), 0, 8) & real == 0 }
+
+/// Whether the clock is the virtual one (the test world without `clock`
+/// or `net`; xo_rt.c tw.virt).
+pub fn virt() -> Bool { fake(REAL_CLOCK) }
+
+/// The effects made real (REAL_* bits).
+pub fn real() -> Int { rt.mem_load(rt.static_word(W_REAL), 0, 8) }
+
+/// Turns the test world on with the effects bits made real (one thread,
+/// at start).
+pub fn set(bits: Int) {
+  rt.mem_store(rt.static_word(W_REAL), 0, bits, 8)
+  rt.slot_store(rt.static_word(W_ON), 0, 1, RELEASE)
+}

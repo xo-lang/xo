@@ -1,0 +1,333 @@
+// Instructions of the CPU that Xo cannot name, as functions with a
+// portable body (decision 0231): the native emitters (arm64 and LLVM)
+// lower a call of each to its instruction (selfhost/ssa cpu_call); a wasm
+// module, and an xo older than the decision (a seed building xo), run the
+// body. Each is constant time either way: no branch on data, no table, no
+// comparison in the body (loops and indexes are over public counts).
+//
+// carry and borrow are in every arm64 and x86-64 CPU. The carry-less
+// multiply and the AES rounds are not (an ARMv8 CPU without the crypto
+// extension, an x86-64 one without PCLMULQDQ or AES-NI): a caller uses
+// them only when hw() has the bit, and keeps a software path for the
+// rest; a call of one lowered for a CPU without it faults on an illegal
+// instruction.
+use native/llrt/linux
+use native/rt
+
+/// hw()'s bits: the AES rounds (aes_round, aes_last), the carry-less
+/// multiply (clmul_lo, clmul_hi).
+pub const HW_AES: Int = 1
+pub const HW_CLMUL: Int = 2
+/// The bit hw() keeps in its word once it has looked.
+const HW_KNOWN = 4
+/// rt.static_word: hw()'s word (0 until the first call).
+const W_HW = 30
+/// The auxiliary vector's AT_HWCAP and its AES and PMULL bits (Linux
+/// arm64).
+const AT_HWCAP = 16
+const HWCAP_AES = 8
+const HWCAP_PMULL = 16
+
+/// 1 when the emitter lowers this module's calls to instructions, else 0
+/// (the body: a wasm module, or code an xo older than decision 0231
+/// compiled, where the instructions are not there to use).
+fn lowered() -> Int { 0 }
+
+/// The ECX word of x86-64's CPUID leaf 1 (bit 1 PCLMULQDQ, bit 25
+/// AES-NI); 0 off x86-64 and in the body.
+fn cpuid1_ecx() -> Int { 0 }
+
+/// The instructions of this CPU that the callers can use: HW_AES and
+/// HW_CLMUL, looked up once a process (macOS on arm64: always; Linux on
+/// arm64: AT_HWCAP; x86-64: CPUID; otherwise none; UNTESTED on Linux,
+/// on Windows, and on x86-64).
+pub fn hw() -> Int {
+  let p = rt.static_word(W_HW)
+  let k = rt.slot_load[Int](p, 0, 0)
+  if k != 0 {
+    return k & (HW_AES | HW_CLMUL)
+  }
+  let f = if lowered() != 0 { detect() } else { 0 }
+  rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
+  f
+}
+
+fn detect() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => match target.os {
+      TargetOs.Darwin => HW_AES | HW_CLMUL
+      TargetOs.Linux => {
+        let h = linux.auxval(AT_HWCAP)
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 })
+      }
+      _ => 0
+    }
+    TargetArch.Amd64 => {
+      let c = cpuid1_ecx()
+      (if (rt.int_wrap(4, c, 25) & 1) != 0 { HW_AES } else { 0 }) | (if (rt.int_wrap(4, c, 1) & 1) != 0 { HW_CLMUL } else { 0 })
+    }
+    _ => 0
+  }
+}
+
+/// The carry out of x + y as UInt64s, 0 or 1 (bits.Add64's): the carry
+/// flag of adds on arm64, llvm.uadd.with.overflow on LLVM.
+pub fn carry(x: Int, y: Int) -> Int { carry_soft(x, y) }
+
+/// carry's body (cpu_prims checks it on every backend).
+pub fn carry_soft(x: Int, y: Int) -> Int {
+  let s = rt.int_wrap(0, x, y)
+  rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63)
+}
+
+/// The borrow out of x - y as UInt64s, 0 or 1 (bits.Sub64's): the
+/// carry flag of subs, inverted, on arm64; llvm.usub.with.overflow on
+/// LLVM.
+pub fn borrow(x: Int, y: Int) -> Int { borrow_soft(x, y) }
+
+/// borrow's body.
+pub fn borrow_soft(x: Int, y: Int) -> Int {
+  let d = rt.int_wrap(1, x, y)
+  rt.int_wrap(4, (~x & y) | (~(x ^ y) & d), 63)
+}
+
+// ---------------------------------------------------------------------------
+// Carry-less multiply (PMULL on arm64, PCLMULQDQ on x86-64)
+
+/// The low 64 bits of the carry-less product of x and y (BearSSL's
+/// bmul: four strided integer products, each keeping one bit in four).
+pub fn clmul_lo(x: Int, y: Int) -> Int { clmul_lo_soft(x, y) }
+
+/// clmul_lo's body.
+pub fn clmul_lo_soft(x: Int, y: Int) -> Int {
+  let x0 = x & 0x1111111111111111
+  let x1 = x & 0x2222222222222222
+  let x2 = x & 0x4444444444444444
+  let x3 = x & ~0x7777777777777777
+  let y0 = y & 0x1111111111111111
+  let y1 = y & 0x2222222222222222
+  let y2 = y & 0x4444444444444444
+  let y3 = y & ~0x7777777777777777
+  let z0 = rt.int_wrap(2, x0, y0) ^ rt.int_wrap(2, x1, y3) ^ rt.int_wrap(2, x2, y2) ^ rt.int_wrap(2, x3, y1)
+  let z1 = rt.int_wrap(2, x0, y1) ^ rt.int_wrap(2, x1, y0) ^ rt.int_wrap(2, x2, y3) ^ rt.int_wrap(2, x3, y2)
+  let z2 = rt.int_wrap(2, x0, y2) ^ rt.int_wrap(2, x1, y1) ^ rt.int_wrap(2, x2, y0) ^ rt.int_wrap(2, x3, y3)
+  let z3 = rt.int_wrap(2, x0, y3) ^ rt.int_wrap(2, x1, y2) ^ rt.int_wrap(2, x2, y1) ^ rt.int_wrap(2, x3, y0)
+  (z0 & 0x1111111111111111) | (z1 & 0x2222222222222222) | (z2 & 0x4444444444444444) | (z3 & ~0x7777777777777777)
+}
+
+/// The high 64 bits of the carry-less product of x and y (bit 127 is
+/// always 0): the low half of the product of the bit reversals, reversed
+/// and shifted.
+pub fn clmul_hi(x: Int, y: Int) -> Int { clmul_hi_soft(x, y) }
+
+/// clmul_hi's body.
+pub fn clmul_hi_soft(x: Int, y: Int) -> Int { rt.int_wrap(4, rev64(clmul_lo_soft(rev64(x), rev64(y))), 1) }
+
+/// The bits of x reversed.
+fn rev64(x0: Int) -> Int {
+  var x = x0
+  x = rt.int_wrap(3, x & 0x5555555555555555, 1) | (rt.int_wrap(4, x, 1) & 0x5555555555555555)
+  x = rt.int_wrap(3, x & 0x3333333333333333, 2) | (rt.int_wrap(4, x, 2) & 0x3333333333333333)
+  x = rt.int_wrap(3, x & 0x0F0F0F0F0F0F0F0F, 4) | (rt.int_wrap(4, x, 4) & 0x0F0F0F0F0F0F0F0F)
+  rt.int_wrap(7, x, 0)
+}
+
+// ---------------------------------------------------------------------------
+// AES rounds (AESE and AESMC on arm64, AESENC on x86-64)
+
+/// One AES encryption round as arm64's AESE then AESMC: the 16 bytes at
+/// st (the state, in FIPS 197's byte order) become
+/// MixColumns(ShiftRows(SubBytes(st xor the 16 bytes at rk))).
+pub fn aes_round(st: Int, rk: Int) { aes_round_soft(st, rk) }
+
+/// aes_round's body.
+pub fn aes_round_soft(st: Int, rk: Int) {
+  let (a, b) = sub_shift(rt.mem_load(st, 0, 8) ^ rt.mem_load(rk, 0, 8), rt.mem_load(st, 8, 8) ^ rt.mem_load(rk, 8, 8))
+  rt.mem_store(st, 0, mix(a), 8)
+  rt.mem_store(st, 8, mix(b), 8)
+}
+
+/// The last AES encryption round: the 16 bytes at st become
+/// ShiftRows(SubBytes(st xor the 16 bytes at rk)) xor the 16 bytes at
+/// rk2.
+pub fn aes_last(st: Int, rk: Int, rk2: Int) { aes_last_soft(st, rk, rk2) }
+
+/// aes_last's body.
+pub fn aes_last_soft(st: Int, rk: Int, rk2: Int) {
+  let (a, b) = sub_shift(rt.mem_load(st, 0, 8) ^ rt.mem_load(rk, 0, 8), rt.mem_load(st, 8, 8) ^ rt.mem_load(rk, 8, 8))
+  rt.mem_store(st, 0, a ^ rt.mem_load(rk2, 0, 8), 8)
+  rt.mem_store(st, 8, b ^ rt.mem_load(rk2, 8, 8), 8)
+}
+
+/// The encryption of the 16 byte block at st in place with the nr + 1
+/// round keys at rk (FIPS 197's byte order, 16 bytes each): AES-128 (nr
+/// 10), AES-192 (12), AES-256 (14). The native emitters unroll the
+/// rounds with the state in a register (arm64: one load of each round
+/// key; AESENC and AESENCLAST on x86-64).
+pub fn aes_enc10(st: Int, rk: Int) { aes_enc_soft(st, rk, 10) }
+
+pub fn aes_enc12(st: Int, rk: Int) { aes_enc_soft(st, rk, 12) }
+
+pub fn aes_enc14(st: Int, rk: Int) { aes_enc_soft(st, rk, 14) }
+
+/// aes_enc10's, aes_enc12's, and aes_enc14's body.
+pub fn aes_enc_soft(st: Int, rk: Int, nr: Int) {
+  for r in 0..nr - 1 {
+    aes_round_soft(st, rt.int_wrap(0, rk, rt.int_wrap(3, r, 4)))
+  }
+  let last = rt.int_wrap(0, rk, rt.int_wrap(3, nr - 1, 4))
+  aes_last_soft(st, last, rt.int_wrap(0, last, 16))
+}
+
+const B01 = 0x0101010101010101
+const B7F = 0x7F7F7F7F7F7F7F7F
+
+/// Each byte of x times 2 in AES's field (eight at once).
+fn xt(x: Int) -> Int { rt.int_wrap(3, x & B7F, 1) ^ rt.int_wrap(2, rt.int_wrap(4, x, 7) & B01, 0x1B) }
+
+/// Each byte of a times the same byte of b in AES's field.
+fn gmul(a0: Int, b: Int) -> Int {
+  var a = a0
+  var r = 0
+  for i in 0..8 {
+    r = r ^ (a & rt.int_wrap(2, rt.int_wrap(4, b, i) & B01, 0xFF))
+    a = xt(a)
+  }
+  r
+}
+
+/// Each byte of x rotated left by k (1 to 7) bits.
+fn rotb(x: Int, k: Int) -> Int {
+  let lo = rt.int_wrap(2, B01, rt.int_wrap(3, 1, k) - 1)
+  (rt.int_wrap(3, x, k) & ~lo) | (rt.int_wrap(4, x, 8 - k) & lo)
+}
+
+/// The S-box on each byte of x: the inverse x^254, then the affine map.
+fn sub8(x: Int) -> Int {
+  let x2 = gmul(x, x)
+  let x3 = gmul(x2, x)
+  let x6 = gmul(x3, x3)
+  let x12 = gmul(x6, x6)
+  let x15 = gmul(x12, x3)
+  var t = x15
+  for _ in 0..4 {
+    t = gmul(t, t)
+  }
+  let inv = gmul(gmul(t, x12), x2)
+  inv ^ rotb(inv, 1) ^ rotb(inv, 2) ^ rotb(inv, 3) ^ rotb(inv, 4) ^ 0x6363636363636363
+}
+
+/// SubBytes then ShiftRows of the state in two words (bytes 0 to 7 and
+/// 8 to 15, byte r + 4c the row r and column c).
+fn sub_shift(a0: Int, b0: Int) -> (Int, Int) {
+  let a = sub8(a0)
+  let b = sub8(b0)
+  var lo = 0
+  var hi = 0
+  for i in 0..16 {
+    let r = i & 3
+    let j = r + 4 * ((i / 4 + r) & 3)
+    let w = if j < 8 { a } else { b }
+    let v = rt.int_wrap(3, rt.int_wrap(4, w, 8 * (j & 7)) & 0xFF, 8 * (i & 7))
+    if i < 8 {
+      lo = lo | v
+    } else {
+      hi = hi | v
+    }
+  }
+  (lo, hi)
+}
+
+/// MixColumns of the two columns in x (one per 32 bit half, row r in
+/// byte r).
+fn mix(x: Int) -> Int {
+  let r1 = rotc(x)
+  let r2 = rotc(r1)
+  let r3 = rotc(r2)
+  xt(x ^ r1) ^ r1 ^ r2 ^ r3
+}
+
+/// Each 32 bit half of x rotated down by a byte (byte r gets byte r + 1).
+fn rotc(x: Int) -> Int { (rt.int_wrap(4, x, 8) & 0x00FFFFFF00FFFFFF) | (rt.int_wrap(3, x, 24) & ~0x00FFFFFF00FFFFFF) }
+
+// ---------------------------------------------------------------------------
+// Checks
+
+/// The address of the first word of xs.
+fn addr(xs: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(xs), rt.layout(2)) }
+
+/// A use of xs after its last raw access.
+fn keep(xs: List[Int]) {
+  if xs.len() < 0 {
+    return
+  }
+}
+
+/// The 16 bytes of the words lo and hi, little endian.
+fn words16(lo: Int, hi: Int) -> Bytes { rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), lo, 8), hi, 8).bytes() }
+
+/// The 16 bytes of b in a new list of two words.
+fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
+
+/// internal.crypto_op's "cpu." ops (std/internal.xo): carry (the 8
+/// byte little endian words a and b; the carry and the borrow, a byte
+/// each), clmul (the product's low then high word), aes_round (the 16
+/// byte state a, round key b), aes_last (state a, round keys b and c);
+/// with `_soft` after the name, the body, on every backend (without it,
+/// the instructions on arm64 and LLVM, on a CPU that has them). None if
+/// unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  let soft = what.ends_with("_soft")
+  match what.trim_suffix("_soft") {
+    "carry" => {
+      let x = rt.bytes_word(a, 0)
+      let y = rt.bytes_word(b, 0)
+      let k = if soft { carry_soft(x, y) } else { carry(x, y) }
+      let w = if soft { borrow_soft(x, y) } else { borrow(x, y) }
+      Some(rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(2), k), w).bytes())
+    }
+    "clmul" => {
+      let x = rt.bytes_word(a, 0)
+      let y = rt.bytes_word(b, 0)
+      Some(if soft { words16(clmul_lo_soft(x, y), clmul_hi_soft(x, y)) } else { words16(clmul_lo(x, y), clmul_hi(x, y)) })
+    }
+    "aes_enc" => {
+      // a 16 byte key (AES-128's ten rounds) expanded by the caller: b
+      // is the 176 bytes of round keys
+      let st = block(a)
+      var k: List[Int] = []
+      for i in 0..22 {
+        k.push(rt.bytes_word(b, 8 * i))
+      }
+      if soft {
+        aes_enc_soft(addr(st), addr(k), 10)
+      } else {
+        aes_enc10(addr(st), addr(k))
+      }
+      let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
+      keep(st)
+      keep(k)
+      Some(r)
+    }
+    "aes_round" | "aes_last" => {
+      let st = block(a)
+      let k = block(b)
+      let k2 = block(if what.starts_with("aes_last") { c } else { b })
+      if what == "aes_round" {
+        aes_round(addr(st), addr(k))
+      } else if what == "aes_round_soft" {
+        aes_round_soft(addr(st), addr(k))
+      } else if what == "aes_last" {
+        aes_last(addr(st), addr(k), addr(k2))
+      } else {
+        aes_last_soft(addr(st), addr(k), addr(k2))
+      }
+      let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
+      keep(st)
+      keep(k)
+      keep(k2)
+      Some(r)
+    }
+    _ => None
+  }
+}

@@ -1,0 +1,342 @@
+// The HTTP server's connection records and their socket and TLS input
+// and output, in Xo (the zero-C audit's B28 part 3; xo_http.c's xo_srv
+// and xo_hconn until 2026-10-14). A server (rthttp.Srv) and a
+// connection (rthttp.HConn) are handles whose records are laid out
+// below; hserve.xo makes them and keeps the server's list, scope, and
+// stop, and cabi_http.xo's srv_free and hc_free free them. This module
+// is what the connection's readers and writers need (http1.xo's HTTP/1.1
+// connection, h2srv.xo's HTTP/2 one) and imports neither, so both can
+// use it.
+//
+// The server's TLS connections are tlssrv.xo's (its C path tlssrv_c.xo:
+// xo_tls.c on Mbed TLS). The Windows arms are UNTESTED on
+// windows: written on macOS and checked by the cross build only.
+use native/llrt/ctx
+use native/llrt/dns
+use native/llrt/obj
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/tlssrv
+use native/llrt/twflags
+use native/llrt/twrun
+use native/rt
+use native/rthttp
+
+/// A server's record (byte offsets): the header (count, free function);
+/// its TLS configuration (xo_tls.c's tls_srv, 0 for plain HTTP: the C's
+/// xo_srv_tls reads and sets it at 16, asserted there); the lock word of
+/// the rest; the live connections (a list through HC_PREV and HC_NEXT)
+/// and their count; whether it stops; the wait list of srv_wait (tasks.xo
+/// WL_*, two words); the scope of the connection tasks (a reference);
+/// whether srv_close ran.
+pub const SR_TLS = 16
+pub const SR_MU = 24
+pub const SR_CONNS = 32
+pub const SR_N = 40
+pub const SR_STOPPING = 48
+pub const SR_IDLE = 56
+pub const SR_SCOPE = 72
+pub const SR_CLOSED = 80
+pub const SR_SIZE = 88
+
+/// A connection's record (byte offsets): the header; its server (a
+/// reference; 0 for a stream's connection); the net.Conn (a reference);
+/// the links in the server's list and whether it is in it; whether it
+/// waits for the first byte of a request (a stop closes it then);
+/// http1.xo's X1 record (freed with it); the TLS connection (xo_tls.c,
+/// 0: plain); HTTP/2: the connection's h2srv.xo record, or for a stream's
+/// connection its stream record and the connection it belongs to (a
+/// reference); the peer's address (its length, then the text).
+pub const HC_SRV = 16
+pub const HC_CONN = 24
+pub const HC_PREV = 32
+pub const HC_NEXT = 40
+pub const HC_REG = 48
+pub const HC_IDLE = 56
+pub const HC_X1 = 64
+pub const HC_TLS = 72
+pub const HC_H2 = 80
+pub const HC_H2S = 88
+pub const HC_OWNER = 96
+pub const HC_IPN = 104
+pub const HC_IP = 112
+pub const HC_SIZE = 160
+
+/// The longest address text kept (INET6_ADDRSTRLEN less its zero byte).
+const IP_MAX = 45
+
+/// The xo_conn record's poll descriptor (xo_rt.c, asserted), and the
+/// descriptor's fd (poll.xo D_FD, a C int).
+const CN_PD = 16
+const D_FD = 8
+
+/// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
+const NOSIGNAL = 16384
+
+/// shutdown(2)'s SHUT_WR (SD_SEND on Windows).
+const SHUT_WR = 1
+
+pub fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+pub fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The record of h.
+pub fn rec(h: rthttp.HConn) -> Int { rt.obj_addr(h) }
+
+/// The connection handle of record hc (counted once more; the record's
+/// count is unchanged once the value is dead).
+pub fn handle(hc: Int) -> rthttp.HConn { rt.obj_at[rthttp.HConn](hc) }
+
+/// The handle of the new record hc, taking over its reference.
+pub fn take(hc: Int) -> rthttp.HConn {
+  let h = rt.obj_at[rthttp.HConn](hc)
+  tasks.h_release(hc)
+  h
+}
+
+/// The poll descriptor of record hc's net.Conn.
+pub fn conn_pd(hc: Int) -> Int { ld(ld(hc, HC_CONN), CN_PD) }
+
+/// The fd of poll descriptor pd.
+fn pd_fd(pd: Int) -> Int {
+  let fd = rt.mem_load(pd, D_FD, 4)
+  if fd >= 2147483648 { fd - 4294967296 } else { fd }
+}
+
+/// Whether the negative errno -e of a read or write says it would block
+/// (EAGAIN or EWOULDBLOCK: 11 on Linux, 35 on macOS, the Windows CRT's
+/// 140 that sock.xo maps WSAEWOULDBLOCK to).
+fn would_block(e: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => e == -35
+    TargetOs.Windows => e == -140 || e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
+  }
+}
+
+/// The timers' deadline d from now (xo_rt.c deadline: the virtual clock
+/// in a test binary, else the monotonic one; at most the largest Int).
+pub fn deadline(d: Int) -> Int {
+  if twflags.on() {
+    return twrun.deadline(d)
+  }
+  let now = sysio.mono_ns()
+  if d > 0 && now > 9223372036854775807 - d { 9223372036854775807 } else { now + d }
+}
+
+pub fn lock(s: Int) { pool.lock(s + SR_MU) }
+
+pub fn unlock(s: Int) { pool.unlock(s + SR_MU) }
+
+/// The text of the peer address of socket fd (inet_ntop's), or "".
+pub fn peer_ip(fd: Int) -> Str {
+  let buf = raw.bytes_buf(128)
+  let sa = raw.bytes_addr(buf)
+  let lp = obj.scratch()
+  rt.mem_store(lp, 0, 128, 4)
+  if sock.peername(fd, sa, lp) < 0 {
+    return ""
+  }
+  let n = rt.mem_load(lp, 0, 4)
+  // macOS's sockaddr starts with its length, then a byte of family
+  let fam = match target.os {
+    TargetOs.Darwin => rt.mem_load(sa, 1, 1)
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => rt.mem_load(sa, 0, 2)
+  }
+  if fam == sock.AF_INET && n >= 8 {
+    return dns.ntop(raw.str_at(sa + 4, 4).bytes())
+  }
+  if fam == sock.af_inet6() && n >= 24 {
+    return dns.ntop(raw.str_at(sa + 8, 16).bytes())
+  }
+  ""
+}
+
+/// Sets record hc's peer address to ip.
+pub fn set_ip(hc: Int, ip: Str) {
+  let n = if ip.len() > IP_MAX { IP_MAX } else { ip.len() }
+  rt.mem_copy(hc + HC_IP, raw.data(ip), n)
+  st(hc, HC_IPN, n)
+}
+
+/// Takes record hc out of its server's list (srv_wait's waiters wake
+/// when the last goes).
+pub fn unregister(hc: Int) {
+  let s = ld(hc, HC_SRV)
+  if s == 0 {
+    return
+  }
+  lock(s)
+  if ld(hc, HC_REG) != 0 {
+    st(hc, HC_REG, 0)
+    let prev = ld(hc, HC_PREV)
+    let next = ld(hc, HC_NEXT)
+    if prev != 0 {
+      st(prev, HC_NEXT, next)
+    } else {
+      st(s, SR_CONNS, next)
+    }
+    if next != 0 {
+      st(next, HC_PREV, prev)
+    }
+    let n = ld(s, SR_N) - 1
+    st(s, SR_N, n)
+    if n == 0 {
+      tasks.wl_wake(s + SR_IDLE)
+    }
+  }
+  unlock(s)
+}
+
+/// Marks record hc as waiting for a request's first byte (idle) or not.
+pub fn set_idle(hc: Int, idle: Bool) {
+  let s = ld(hc, HC_SRV)
+  if s == 0 {
+    return
+  }
+  lock(s)
+  st(hc, HC_IDLE, if idle { 1 } else { 0 })
+  unlock(s)
+}
+
+/// Reads at most cap bytes to the address p (http1.xo fill): the count,
+/// 0 at the end of the stream, -1 when the connection was closed or the
+/// task canceled, or (idle: nothing of a request came yet, so a stop
+/// closes it) the server is stopping.
+pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
+  let hc = rec(h)
+  let s = ld(hc, HC_SRV)
+  if s != 0 {
+    lock(s)
+    if idle && ld(s, SR_STOPPING) != 0 {
+      unlock(s)
+      return -1
+    }
+    st(hc, HC_IDLE, if idle { 1 } else { 0 })
+    unlock(s)
+  }
+  var r = -1
+  let tls = ld(hc, HC_TLS)
+  if poll.canceled() {
+    r = -1
+  } else if tls != 0 {
+    // the handshake first, then decrypted bytes (xo_tls.c)
+    r = tlssrv.hc_read(tls, p, cap)
+  } else {
+    let pd = conn_pd(hc)
+    if poll.pd_begin(pd) {
+      let fd = pd_fd(pd)
+      while true {
+        r = sock.read(fd, p, cap)
+        if r >= 0 {
+          break
+        }
+        if r == -sock.EINTR {
+          continue
+        }
+        if would_block(r) && poll.pd_wait(pd, false, 0) == poll.READY {
+          continue
+        }
+        r = -1
+        break
+      }
+      poll.pd_end(pd)
+    }
+  }
+  set_idle(hc, false)
+  if r < 0 { -1 } else { r }
+}
+
+/// Sends the n bytes at p: false when the connection broke.
+pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
+  let hc = rec(h)
+  let tls = ld(hc, HC_TLS)
+  if tls != 0 {
+    return tlssrv.write(tls, p, n) == 0
+  }
+  let pd = conn_pd(hc)
+  if !poll.pd_begin(pd) {
+    return false
+  }
+  let fd = pd_fd(pd)
+  var off = 0
+  var ok = true
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if would_block(w) && poll.pd_wait(pd, true, 0) == poll.READY {
+      continue
+    }
+    ok = false
+    break
+  }
+  poll.pd_end(pd)
+  ok
+}
+
+/// Whether h's server is stopping (no other request on the connection).
+pub fn stopping(h: rthttp.HConn) -> Bool {
+  let s = ld(rec(h), HC_SRV)
+  if s == 0 {
+    return false
+  }
+  lock(s)
+  let r = ld(s, SR_STOPPING) != 0
+  unlock(s)
+  r
+}
+
+/// Shuts down the sending side (after a 431 answer).
+pub fn shut_wr(h: rthttp.HConn) {
+  let hc = rec(h)
+  if ld(hc, HC_CONN) != 0 {
+    let _r = sock.shutdown(pd_fd(conn_pd(hc)), SHUT_WR)
+  }
+}
+
+/// http1.xo's X1 record of the connection (0: none yet), and setting it.
+pub fn x1(h: rthttp.HConn) -> Int { ld(rec(h), HC_X1) }
+
+pub fn set_x1(h: rthttp.HConn, x: Int) { st(rec(h), HC_X1, x) }
+
+/// The peer's address (Request.remote_addr's host).
+pub fn remote_ip(h: rthttp.HConn) -> Str {
+  let hc = rec(h)
+  raw.str_at(hc + HC_IP, ld(hc, HC_IPN))
+}
+
+/// Reads what the TLS connection has into the cap bytes at p, without
+/// waiting (h2srv.xo's fiber waits itself): the count, 0 at the end of
+/// the stream, -1 on an error, -2 when nothing is there.
+pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int { tlssrv.nb_read(ld(rec(h), HC_TLS), p, cap) }
+
+/// The connection's poll descriptor.
+pub fn pd(h: rthttp.HConn) -> Int { conn_pd(rec(h)) }
+
+/// A stream's connection for its handler (h2srv.xo next): answered as a
+/// connection is (http1.header_set, h2srv.respond, a sink); it takes
+/// over a reference to the stream record st (dropped when it is freed)
+/// and holds h.
+pub fn stream(h: rthttp.HConn, sr: Int) -> rthttp.HConn {
+  let hc = rec(h)
+  let t = tasks.new_handle(HC_SIZE, ctx.SV_HC_FREE)
+  rc.inc(hc)
+  st(t, HC_OWNER, hc)
+  st(t, HC_H2S, sr)
+  rt.mem_copy(t + HC_IPN, hc + HC_IPN, 8 + IP_MAX)
+  take(t)
+}
+
+/// The stream record of a stream's connection (0: not a stream).
+pub fn h2s(h: rthttp.HConn) -> Int { ld(rec(h), HC_H2S) }

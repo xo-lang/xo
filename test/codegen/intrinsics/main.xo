@@ -1,0 +1,53 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the CPU
+// instructions of std/native/llrt/cpu.xo (decision 0231) reach the hot
+// loops of the field arithmetic. On arm64 each carry is cmn (or cmp) and
+// cset, with no branch; on LLVM llvm.uadd.with.overflow and
+// llvm.usub.with.overflow. AES-GCM's rounds and GHASH's products are
+// AESE/AESMC and PMULL (inline asm on LLVM).
+use std/internal
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  let k = "0123456789abcdef0123456789abcde${n}".bytes()
+  let p = internal.crypto_op("p256.public", k, b"", b"", b"")
+  let g = internal.crypto_op("aes.seal", k[0..16], k[0..12], k, b"")
+  let c = internal.crypto_op("sysc.present", b"", b"", b"", b"")
+  let cc = internal.crypto_op("chacha.seal", k, k[0..12], k, b"")
+  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()}")
+}
+
+// P-256's Montgomery product: each add and its carry are one adds and
+// a cset (the arm64 emitter's add_with_flag), with no overflow check
+// (the carries are summed with wrapping adds).
+// func nistec.mul4
+// arm64: "adds x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cs" -"b\.vs"
+// llvm: "llvm.uadd.with.overflow.i64"
+
+// The final subtraction's borrows.
+// func nistec.sub4
+// arm64: "subs x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cc"
+// llvm: "llvm.usub.with.overflow.i64"
+
+// The CPU's AES rounds.
+// func aesgcm.hw4
+// arm64: "aese v30.16b, v31.16b\n\taesmc v30.16b, v30.16b" "aese v30.16b, v31.16b\n\tldr q31"
+// llvm: "aese \$0.16b, \$2.16b\\0Aaesmc"
+
+// GHASH's carry-less products.
+// func aesgcm.Gcm.mul_hw
+// arm64: "pmull v30.1q, v30.1d, v31.1d" "umov x[0-9]+, v30.d\[1\]"
+// llvm: "pmull \$0.1q"
+
+// std/native/sys_c.xo (decision 0232): a strong C call, and weak
+// references read through the GOT (arm64) or compared with null (LLVM).
+// func internal.sysc_op
+// arm64: "bl _getpid" "\.weak_reference ___tsan_acquire" "adrp x[0-9]+, ___tsan_acquire@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, ___tsan_acquire@GOTPAGEOFF\]"
+// llvm: "call i32 @getpid\(\)" "icmp ne ptr @__tsan_acquire, null"
+
+// ChaCha20's adds modulo 2^32 are 32 bit adds (add_w32), not an add and
+// an and; Poly1305's limb products have no overflow checks.
+// func chacha.xor_stream
+// arm64: "add w[0-9]+, w[0-9]+, w[0-9]+"
+// func chacha.absorb
+// arm64: -"smulh" -"b\.vs"
+// llvm: -"with.overflow"

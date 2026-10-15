@@ -1,0 +1,369 @@
+// Channels (core 7.3; the zero-C audit's B19, decision 0229's rules):
+// `Chan.new`, send, recv, try_send, try_recv, close, len. The record is
+// the C's xo_chan (asserted, `chan.xo CH_*`), a handle whose free
+// function (the C's chan_free) releases the buffered values. A waiter's
+// queue entry (xo_cent) is its context's own (ctx.xo C_CENT, and its
+// fired word C_FIRED); a select's arms keep theirs in the select (the
+// C's xo_select_wait, which shares the queues and hand). The entries are
+// claimed with a compare and swap on fired, so a waker and a
+// cancellation never both take one.
+//
+// Generated code calls the exports (cabi.xo chan_*) directly; the C
+// entry points forward for older xo's code.
+use native/llrt/budget
+use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/obj
+use native/llrt/pool
+use native/llrt/tasks
+use native/rt
+
+/// xo_cent (64 bytes): the waiter's park, the address of its fired word
+/// (claimed by the first waker, atomic), a send's value or what a
+/// receive got (0: closed), shut (a C int: the channel closed while a
+/// send waited), a select arm's index and the address of the select's
+/// chosen word, and the queue links.
+pub const E_PARK = 0
+pub const E_FIRED = 8
+pub const E_ITEM = 16
+pub const E_SHUT = 24
+pub const E_IDX = 32
+pub const E_CHOSEN = 40
+const E_PREV = 48
+const E_NEXT = 56
+
+/// xo_chan (104 bytes): the header, the lock, the capacity, the ring's
+/// head and length, the ring (malloc'd: the C's chan_free frees it),
+/// closed and ext (C ints: closed from outside the program's tasks, so
+/// waiting for it does not count as blocked), the values' drop function,
+/// the receivers' and the senders' queues (head, tail).
+pub const CH_MU = 16
+const CH_CAP = 24
+const CH_HEAD = 32
+const CH_LEN = 40
+const CH_BUF = 48
+pub const CH_CLOSED = 56
+pub const CH_EXT = 60
+pub const CH_DROP = 64
+pub const CH_RECVQ = 72
+pub const CH_SENDQ = 88
+const CH_SIZE = 104
+const Q_HEAD = 0
+const Q_TAIL = 8
+
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
+
+fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
+
+/// Adds entry e at the tail of queue q.
+pub fn cq_push(q: Int, e: Int) {
+  st(e, E_NEXT, 0)
+  let t = ld(q, Q_TAIL)
+  st(e, E_PREV, t)
+  if t != 0 {
+    st(t, E_NEXT, e)
+  } else {
+    st(q, Q_HEAD, e)
+  }
+  st(q, Q_TAIL, e)
+}
+
+/// Takes entry e off queue q (nothing when it is not queued).
+pub fn cq_del(q: Int, e: Int) {
+  let p = ld(e, E_PREV)
+  let n = ld(e, E_NEXT)
+  if p != 0 {
+    st(p, E_NEXT, n)
+  } else if ld(q, Q_HEAD) == e {
+    st(q, Q_HEAD, n)
+  } else {
+    return
+  }
+  if n != 0 {
+    st(n, E_PREV, p)
+  } else {
+    st(q, Q_TAIL, p)
+  }
+  st(e, E_PREV, 0)
+  st(e, E_NEXT, 0)
+}
+
+/// Claims the fired word at f: whether this caller was first.
+pub fn claim(f: Int) -> Bool { rt.slot_cas[Int](f, 0, 0, 1, ACQ_REL) }
+
+/// Pops the first waiter of q nobody has claimed, claiming it, or 0.
+fn cq_take(q: Int) -> Int {
+  while ld(q, Q_HEAD) != 0 {
+    let e = ld(q, Q_HEAD)
+    cq_del(q, e)
+    if claim(ld(e, E_FIRED)) {
+      return e
+    }
+  }
+  0
+}
+
+/// Wakes the waiter of e, which a waker claimed and gave its value (the
+/// channel's lock held); a select's arm stores its index first.
+pub fn hand(e: Int) {
+  let chosen = ld(e, E_CHOSEN)
+  if chosen != 0 {
+    rt.slot_store[Int](chosen, 0, ld(e, E_IDX), RELEASE)
+  }
+  tasks.park_signal(ld(e, E_PARK))
+}
+
+/// Releases the value l (a list of one) with c's drop function, unless
+/// it is 0 or the empty list.
+fn release(c: Int, l: Int) {
+  if l != 0 && l != tasks.empty_list() {
+    let _r = rt.call_c2(ld(c, CH_DROP), l, 0)
+  }
+}
+
+/// `Chan.new(cap)` (xo_chan_new): drop releases a value; a negative
+/// capacity faults at the ln bytes at lp.
+pub fn new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int {
+  if cap < 0 {
+    fault.raise_str_at("negative channel capacity ${cap}", lp, ln)
+  }
+  let c = tasks.new_handle(CH_SIZE, ctx.SV_CHAN_FREE)
+  st(c, CH_CAP, cap)
+  st(c, CH_DROP, drop)
+  if cap > 0 {
+    // malloc'd at its own address: the C's chan_free frees it
+    st(c, CH_BUF, rt.heap_large(8 * cap) - 8)
+  }
+  c
+}
+
+/// The ring's slot i past its head.
+fn slot(c: Int, i: Int) -> Int { ld(c, CH_BUF) + 8 * ((ld(c, CH_HEAD) + i) % ld(c, CH_CAP)) }
+
+/// Sends l without blocking (the lock held, c open): whether it did.
+pub fn try_send_locked(c: Int, l: Int) -> Bool {
+  let r = cq_take(c + CH_RECVQ)
+  if r != 0 {
+    st(r, E_ITEM, l)
+    hand(r)
+    return true
+  }
+  let n = ld(c, CH_LEN)
+  if n < ld(c, CH_CAP) {
+    st(slot(c, n), 0, l)
+    st(c, CH_LEN, n + 1)
+    return true
+  }
+  false
+}
+
+/// Receives without blocking (the lock held): whether it did, and the
+/// value (0: closed and drained).
+pub fn try_recv_locked(c: Int) -> (Bool, Int) {
+  if ld(c, CH_LEN) > 0 {
+    let out = ld(slot(c, 0), 0)
+    st(c, CH_HEAD, (ld(c, CH_HEAD) + 1) % ld(c, CH_CAP))
+    st(c, CH_LEN, ld(c, CH_LEN) - 1)
+    let s = cq_take(c + CH_SENDQ)
+    if s != 0 {
+      let n = ld(c, CH_LEN)
+      st(slot(c, n), 0, ld(s, E_ITEM))
+      st(c, CH_LEN, n + 1)
+      hand(s)
+    }
+    return (true, out)
+  }
+  let s = cq_take(c + CH_SENDQ)
+  if s != 0 {
+    let out = ld(s, E_ITEM)
+    hand(s)
+    return (true, out)
+  }
+  if ld4(c, CH_CLOSED) != 0 {
+    return (true, 0)
+  }
+  (false, 0)
+}
+
+/// The context x's own queue entry, reset for a wait on a channel with
+/// the value l (a send's; 0 for a receive).
+fn entry(x: Int, l: Int) -> Int {
+  let e = x + ctx.C_CENT
+  st(x, ctx.C_FIRED, 0)
+  st(e, E_PARK, x + ctx.C_PARK)
+  st(e, E_FIRED, x + ctx.C_FIRED)
+  st(e, E_ITEM, l)
+  st4(e, E_SHUT, 0)
+  st(e, E_IDX, 0)
+  st(e, E_CHOSEN, 0)
+  e
+}
+
+/// `ch.send(x)` (xo_chan_send) with x in a list of one (consumed): blocks
+/// while the channel is full, a cancellation point that unwinds; sending
+/// on a closed channel faults at the ln bytes at lp.
+pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
+  let x = ctx.cur()
+  if tasks.canceled(x) {
+    release(c, l)
+    return
+  }
+  pool.lock(c + CH_MU)
+  if ld4(c, CH_CLOSED) != 0 {
+    pool.unlock(c + CH_MU)
+    // the fault unwinds the sender (decision 0085)
+    release(c, l)
+    fault.raise_str_at("send on a closed channel", lp, ln)
+  }
+  if try_send_locked(c, l) {
+    pool.unlock(c + CH_MU)
+    return
+  }
+  let e = entry(x, l)
+  let fired = x + ctx.C_FIRED
+  pool.park_reset(x + ctx.C_PARK)
+  cq_push(c + CH_SENDQ, e)
+  pool.unlock(c + CH_MU)
+  while true {
+    tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
+    if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
+      break
+    }
+    if budget.canceled(x) {
+      pool.lock(c + CH_MU)
+      if claim(fired) {
+        cq_del(c + CH_SENDQ, e)
+        pool.unlock(c + CH_MU)
+        release(c, l)
+        st4(x, ctx.C_UNWINDING, 1)
+        return
+      }
+      pool.unlock(c + CH_MU)
+      // taken meanwhile: sent
+      break
+    }
+  }
+  // the waker's writes
+  pool.lock(c + CH_MU)
+  let shut = ld4(e, E_SHUT)
+  pool.unlock(c + CH_MU)
+  if shut != 0 {
+    release(c, l)
+    fault.raise_str_at("send on a closed channel", lp, ln)
+  }
+}
+
+/// `ch.recv()` (xo_chan_recv): the value in a list of one, or the empty
+/// list when the channel is closed and drained (and while unwinding); a
+/// cancellation point that unwinds.
+pub fn recv(c: Int) -> Int {
+  let x = ctx.cur()
+  if tasks.canceled(x) {
+    return tasks.empty_list()
+  }
+  pool.lock(c + CH_MU)
+  let (ok, got) = try_recv_locked(c)
+  if ok {
+    pool.unlock(c + CH_MU)
+    return if got != 0 { got } else { tasks.empty_list() }
+  }
+  let e = entry(x, 0)
+  let fired = x + ctx.C_FIRED
+  pool.park_reset(x + ctx.C_PARK)
+  cq_push(c + CH_RECVQ, e)
+  pool.unlock(c + CH_MU)
+  while true {
+    tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
+    if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
+      break
+    }
+    if budget.canceled(x) {
+      pool.lock(c + CH_MU)
+      if claim(fired) {
+        cq_del(c + CH_RECVQ, e)
+        pool.unlock(c + CH_MU)
+        st4(x, ctx.C_UNWINDING, 1)
+        return tasks.empty_list()
+      }
+      pool.unlock(c + CH_MU)
+      // a value came meanwhile: it wins
+      break
+    }
+  }
+  pool.lock(c + CH_MU)
+  let out = ld(e, E_ITEM)
+  pool.unlock(c + CH_MU)
+  if out != 0 { out } else { tasks.empty_list() }
+}
+
+/// `ch.try_send(x)` (xo_chan_try_send): false (and x released) when the
+/// channel is full or closed.
+pub fn try_send(c: Int, l: Int) -> Int {
+  pool.lock(c + CH_MU)
+  let ok = ld4(c, CH_CLOSED) == 0 && try_send_locked(c, l)
+  pool.unlock(c + CH_MU)
+  if !ok {
+    release(c, l)
+    return 0
+  }
+  1
+}
+
+/// `ch.try_recv()` (xo_chan_try_recv): never blocks.
+pub fn try_recv(c: Int) -> Int {
+  pool.lock(c + CH_MU)
+  let (ok, got) = try_recv_locked(c)
+  pool.unlock(c + CH_MU)
+  if ok && got != 0 { got } else { tasks.empty_list() }
+}
+
+/// `ch.close()` (xo_chan_close): waiting receivers get None, waiting
+/// senders fault. Closing twice has no effect.
+pub fn close(c: Int) {
+  pool.lock(c + CH_MU)
+  if ld4(c, CH_CLOSED) == 0 {
+    st4(c, CH_CLOSED, 1)
+    var e = cq_take(c + CH_RECVQ)
+    while e != 0 {
+      st(e, E_ITEM, 0)
+      hand(e)
+      e = cq_take(c + CH_RECVQ)
+    }
+    e = cq_take(c + CH_SENDQ)
+    while e != 0 {
+      st4(e, E_SHUT, 1)
+      hand(e)
+      e = cq_take(c + CH_SENDQ)
+    }
+  }
+  pool.unlock(c + CH_MU)
+}
+
+/// `ch.len()` (xo_chan_len).
+pub fn len(c: Int) -> Int {
+  pool.lock(c + CH_MU)
+  let n = ld(c, CH_LEN)
+  pool.unlock(c + CH_MU)
+  n
+}
+
+/// A channel's free function (chan_free): the values still buffered,
+/// the ring.
+pub fn free(c: Int) {
+  for i in 0..ld(c, CH_LEN) {
+    tasks.list_release(ld(slot(c, i), 0), ld(c, CH_DROP))
+  }
+  let b = ld(c, CH_BUF)
+  if b != 0 {
+    rt.heap_release(b)
+  }
+  obj.free_obj(c)
+}

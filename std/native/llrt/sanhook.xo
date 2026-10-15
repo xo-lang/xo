@@ -1,0 +1,174 @@
+// The sanitizers' view of the scheduler (decision 0232: xo_rt.c's
+// xo_sched_hook, tsan_worker, the ThreadSanitizer edges, and the Linux C
+// library's threads and fiber stacks, the zero-C audit's "GLUE: needs ADR
+// 0232"). A leaf over std/native/sys_c.xo: pool.xo, sched.xo (through
+// cabi.xo's sched_hook export), tasks.xo and poll.xo call it. A sanitizer
+// build is known at run time (rt.sym_present of its weak symbols, one GOT
+// load): xo emits the program before clang decides on -fsanitize. Nothing
+// here allocates or faults; the Xo code is not instrumented, so the
+// fiber switch calls are made from no instrumented frame
+// (gotchas/tsan-fiber-switch-in-callee.md). UNTESTED on Linux and
+// Windows.
+use native/rt
+use native/sys_c
+
+/// xo_worker's fields (xo_rt.c, asserted there as sched.xo W_*): the
+/// hooks word, the scheduler's ThreadSanitizer fiber, AddressSanitizer's
+/// scheduler stack (its bottom and size) and fake stack.
+const W_HOOKS = 2216
+const W_TSAN = 2224
+const W_ASAN_BOTTOM = 2336
+const W_ASAN_SIZE = 2344
+const W_ASAN_FAKE = 2352
+/// xo_fiber's: the mapping and its size, its ThreadSanitizer fiber,
+/// AddressSanitizer's fake stack while it is switched out.
+const F_MEM = 8
+const F_SIZE = 16
+const F_TSAN = 56
+const F_ASAN_FAKE = 72
+/// The worker's pool record, the pool's fiber cache record, and its
+/// stack's bytes (pool.xo W_POOL, P_FIBERS, FS_STACK).
+const W_POOL = 2360
+const P_FIBERS = 104
+const FS_STACK = 24
+/// The statistic of a park (xo_rt.c st's fiber_park, rt.sched_rt op 0).
+const RT_STAT = 0
+const ST_FIBER_PARK = 6
+
+/// Whether ThreadSanitizer's runtime is linked.
+pub fn tsan() -> Bool { rt.sym_present("__tsan_switch_to_fiber") }
+
+/// Whether AddressSanitizer's fiber API is linked (and not
+/// ThreadSanitizer's, which the C never paired with it).
+pub fn asan() -> Bool { !tsan() && rt.sym_present("__sanitizer_start_switch_fiber") }
+
+/// Worker w starts (after the C's op 7, which sets its hooks word for the
+/// statistics): its ThreadSanitizer fiber, and hooks on in a sanitizer
+/// build, so fiber switches call hook.
+pub fn worker_start(w: Int) {
+  if tsan() {
+    rt.mem_store(w, W_TSAN, sys_c.weak___tsan_get_current_fiber(), 8)
+    rt.mem_store(w, W_HOOKS, 1, 8)
+  } else if asan() {
+    rt.mem_store(w, W_HOOKS, 1, 8)
+  }
+}
+
+/// Fiber f got a new stack: its ThreadSanitizer fiber.
+pub fn fiber_new(f: Int) {
+  if tsan() {
+    rt.mem_store(f, F_TSAN, sys_c.weak___tsan_create_fiber(0), 8)
+  }
+}
+
+/// Fiber f's stack goes: its ThreadSanitizer fiber too.
+pub fn fiber_free(f: Int) {
+  if tsan() {
+    sys_c.weak___tsan_destroy_fiber(rt.mem_load(f, F_TSAN, 8))
+  }
+}
+
+/// ThreadSanitizer's release of a and acquire of a (the queues and parks
+/// in Xo are not instrumented).
+pub fn release(a: Int) {
+  if tsan() {
+    sys_c.weak___tsan_release(a)
+  }
+}
+
+pub fn acquire(a: Int) {
+  if tsan() {
+    sys_c.weak___tsan_acquire(a)
+  }
+}
+
+/// The hooks around a fiber switch (sched.xo HOOK_*, called when the
+/// fiber's hooks word is set): 0 a fiber starts (on its stack), 1 it
+/// ends, 2 it parks, 3 it was resumed after parking, 4 a worker switches
+/// to it, 5 the worker is back. w is the worker, f the fiber.
+pub fn hook(kind: Int, w: Int, f: Int) {
+  let t = tsan()
+  let a = !t && rt.sym_present("__sanitizer_start_switch_fiber")
+  match kind {
+    0 => {
+      if a {
+        sys_c.weak___sanitizer_finish_switch_fiber(0, rt.int_wrap(0, w, W_ASAN_BOTTOM), rt.int_wrap(0, w, W_ASAN_SIZE))
+      }
+    }
+    1 => {
+      if t {
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
+      }
+      if a {
+        sys_c.weak___sanitizer_start_switch_fiber(0, rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
+      }
+    }
+    2 => {
+      let _s = rt.sched_rt(RT_STAT, ST_FIBER_PARK, 0)
+      if t {
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
+      }
+      if a {
+        sys_c.weak___sanitizer_start_switch_fiber(rt.int_wrap(0, f, F_ASAN_FAKE), rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
+      }
+    }
+    3 => {
+      if a {
+        sys_c.weak___sanitizer_finish_switch_fiber(rt.mem_load(f, F_ASAN_FAKE, 8), rt.int_wrap(0, w, W_ASAN_BOTTOM), rt.int_wrap(0, w, W_ASAN_SIZE))
+      }
+    }
+    4 => {
+      if t {
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(f, F_TSAN, 8), 0)
+      }
+      if a {
+        let stack = rt.mem_load(rt.mem_load(rt.mem_load(w, W_POOL, 8), P_FIBERS, 8), FS_STACK, 8)
+        let bottom = rt.int_wrap(0, rt.mem_load(f, F_MEM, 8), rt.int_wrap(1, rt.mem_load(f, F_SIZE, 8), stack))
+        sys_c.weak___sanitizer_start_switch_fiber(rt.int_wrap(0, w, W_ASAN_FAKE), bottom, stack)
+      }
+    }
+    5 => {
+      if a {
+        sys_c.weak___sanitizer_finish_switch_fiber(rt.mem_load(w, W_ASAN_FAKE, 8), 0, 0)
+      }
+    }
+    _ => {}
+  }
+}
+
+/// A detached thread running the C function f with arg on a stack of
+/// size bytes, through the C library (Linux; glibc's and musl's
+/// PTHREAD_CREATE_DETACHED is 1): whether it started.
+pub fn thread_start(f: Int, arg: Int, size: Int) -> Bool {
+  // pthread_attr_t (at most 64 bytes) and the pthread_t after it
+  let a = rt.heap_large(80)
+  var ok = Int(sys_c.pthread_attr_init(a)) == 0
+  if ok {
+    let _s = sys_c.pthread_attr_setstacksize(a, size)
+    let _d = sys_c.pthread_attr_setdetachstate(a, 1)
+    ok = Int(sys_c.pthread_create(rt.int_wrap(0, a, 64), a, f, arg)) == 0
+    let _x = sys_c.pthread_attr_destroy(a)
+  }
+  rt.heap_release(rt.int_wrap(1, a, 8))
+  ok
+}
+
+/// A fiber stack of size bytes with a guard page of page bytes at its
+/// bottom, from the C library's mmap (Linux under ThreadSanitizer):
+/// its address, or 0 with errno in the scratch word of the thread's
+/// table (pool.xo map_stack's contract).
+pub fn stack_map(size: Int, page: Int) -> Int {
+  // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
+  let m = sys_c.mmap(0, size, 3, 16418, -1, 0)
+  if m == -1 {
+    rt.tlocal_set(4, rt.mem_load(sys_c.weak___errno_location(), 0, 4))
+    return 0
+  }
+  let _p = sys_c.mprotect(m, page, 0)
+  m
+}
+
+/// Unmaps a stack stack_map mapped.
+pub fn stack_unmap(m: Int, size: Int) {
+  let _u = sys_c.munmap(m, size)
+}

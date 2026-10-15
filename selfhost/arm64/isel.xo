@@ -560,9 +560,12 @@ fn (var g: G) isel() {
         }
       }
     }
-    for v in g.f.blocks[b].instrs {
+    g.cur_sb = b
+    for (ix, v) in g.f.blocks[b].instrs.indexed() {
+      g.cur_ix = ix
       g.instr(v)
     }
+    g.cur_sb = -1
   }
 }
 
@@ -826,6 +829,10 @@ fn (var g: G) instr1(v: Int) {
     Mul => g.mul(v)
     Div | Rem => g.div_rem(v)
     And | Or | Xor => {
+      if g.has_val[v] {
+        // given with its 32 bit add (add_w32)
+        return
+      }
       let ins = match x.op {
         And => "and"
         Or => "orr"

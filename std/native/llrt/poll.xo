@@ -1,0 +1,1270 @@
+// The event loop's poller in Xo (the zero-C audit's work item B22,
+// decision 0069's design): the timer heap, the readiness of the
+// descriptors, and the poller thread's loop over kqueue (macOS) and epoll
+// (Linux; Windows' loop stays C until stage 4). A timer is the C
+// runtime's record (xo_rt.c struct xo_timer, its offsets asserted there):
+// its deadline in monotonic ns and its place in the heap (-1 when not in
+// it); the heap is an array of timer addresses ordered by deadline (a
+// binary heap), from the C runtime's malloc (rt.heap_large). The C holds
+// the event loop's mutex (ev.mu) around every call here. Nothing here
+// allocates Xo values or faults.
+use native/llrt/ctx
+use native/llrt/heapos
+use native/llrt/linux
+use native/llrt/obj
+use native/llrt/pool
+use native/llrt/sanhook
+use native/llrt/sock
+use native/llrt/stop
+use native/llrt/sysio
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// A timer's words (xo_rt.c struct xo_timer).
+const T_WHEN = 0
+const T_IDX = 8
+
+/// rt.static_word: the heap's array (the address after its prefix), its
+/// length, and its capacity.
+const W_HEAP = 40
+const W_N = 41
+const W_CAP = 42
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+fn at(i: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_HEAP), 0, 8), rt.int_wrap(3, i, 3), 8) }
+
+fn set(i: Int, t: Int) {
+  rt.mem_store(rt.mem_load(rt.static_word(W_HEAP), 0, 8), rt.int_wrap(3, i, 3), t, 8)
+  rt.mem_store(t, T_IDX, i, 8)
+}
+
+fn dl(t: Int) -> Int { rt.mem_load(t, T_WHEN, 8) }
+
+fn up(i0: Int) {
+  var i = i0
+  let t = at(i)
+  while i > 0 {
+    let p = rt.int_wrap(4, subw(i, 1), 1)
+    if dl(at(p)) <= dl(t) {
+      break
+    }
+    set(i, at(p))
+    i = p
+  }
+  set(i, t)
+}
+
+fn down(i0: Int) {
+  var i = i0
+  let t = at(i)
+  let n = rt.mem_load(rt.static_word(W_N), 0, 8)
+  while true {
+    var c = addw(rt.int_wrap(3, i, 1), 1)
+    if c >= n {
+      break
+    }
+    if addw(c, 1) < n && dl(at(addw(c, 1))) < dl(at(c)) {
+      c = addw(c, 1)
+    }
+    if dl(t) <= dl(at(c)) {
+      break
+    }
+    set(i, at(c))
+    i = c
+  }
+  set(i, t)
+}
+
+/// Adds timer t (its deadline set): 1 when it is the first to fire now
+/// (the poller must wake to wait less), else 0.
+pub fn timer_push(t: Int) -> Int {
+  let wn = rt.static_word(W_N)
+  let wc = rt.static_word(W_CAP)
+  let n = rt.mem_load(wn, 0, 8)
+  let cap = rt.mem_load(wc, 0, 8)
+  if n == cap {
+    let ncap = if cap == 0 { 64 } else { addw(cap, cap) }
+    let old = rt.mem_load(rt.static_word(W_HEAP), 0, 8)
+    let nh = if old == 0 { rt.heap_large(rt.int_wrap(3, ncap, 3)) } else { rt.heap_large_resize(subw(old, 8), rt.int_wrap(3, ncap, 3)) }
+    rt.mem_store(rt.static_word(W_HEAP), 0, nh, 8)
+    rt.mem_store(wc, 0, ncap, 8)
+  }
+  rt.mem_store(wn, 0, addw(n, 1), 8)
+  set(n, t)
+  up(n)
+  if rt.mem_load(t, T_IDX, 8) == 0 { 1 } else { 0 }
+}
+
+/// Takes timer t (in the heap) out of it; its place becomes -1.
+pub fn timer_remove(t: Int) {
+  let wn = rt.static_word(W_N)
+  let i = rt.mem_load(t, T_IDX, 8)
+  let n = subw(rt.mem_load(wn, 0, 8), 1)
+  rt.mem_store(wn, 0, n, 8)
+  let last = at(n)
+  rt.mem_store(t, T_IDX, -1, 8)
+  if last != t {
+    set(i, last)
+    down(i)
+    up(rt.mem_load(last, T_IDX, 8))
+  }
+}
+
+/// The timer that fires first, or 0 when none is armed.
+pub fn timer_first() -> Int {
+  if rt.mem_load(rt.static_word(W_N), 0, 8) == 0 {
+    return 0
+  }
+  at(0)
+}
+
+// ---------------------------------------------------------------------------
+// Descriptors (xo_rt.c xo_pd, its offsets asserted there): a lock word,
+// the socket (-1 once closed), whether close was called, the operations
+// running, readiness that came while nobody waited (read, write), the
+// parks waiting (read, write), and the link of the dead list.
+
+const D_MU = 0
+const D_RREADY = 20
+const D_WREADY = 24
+const D_RWAIT = 32
+const D_WWAIT = 40
+const D_NEXT = 48
+
+/// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
+const T_PARK = 16
+const T_FN = 24
+const T_FIRED = 40
+
+/// rt.static_word: the C's park_signal (called through rt.call_c2, which
+/// keeps its ThreadSanitizer annotation), set by poll_main.
+const W_SIGNAL = 43
+
+/// rt.sched_rt's statistics (xo_rt.c st: poll_return, poll_event,
+/// poll_wake).
+const ST_POLL_RETURN = 15
+const ST_POLL_EVENT = 16
+const ST_POLL_WAKE = 17
+
+// slot atomics' orders (rt.xo)
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+fn stat(k: Int) {
+  let _r = rt.sched_rt(0, k, 0)
+}
+
+/// Takes and releases the lock word at l (xo_rt.c lk and unlk).
+fn lk(l: Int) {
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+}
+
+fn unlk(l: Int) {
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+fn signal(p: Int) {
+  let _r = rt.call_c2(rt.mem_load(rt.static_word(W_SIGNAL), 0, 8), p, 0)
+}
+
+/// Hands readiness mode (1 read, 2 write, 3 both) to the descriptor pd's
+/// waiters, or keeps it for the next wait (xo_rt.c pd_ready).
+pub fn pd_ready(pd: Int, mode: Int) {
+  stat(ST_POLL_EVENT)
+  lk(addw(pd, D_MU))
+  if (mode & 1) != 0 {
+    let w = rt.mem_load(pd, D_RWAIT, 8)
+    if w != 0 {
+      stat(ST_POLL_WAKE)
+      signal(w)
+      rt.mem_store(pd, D_RWAIT, 0, 8)
+    } else {
+      rt.mem_store(pd, D_RREADY, 1, 4)
+    }
+  }
+  if (mode & 2) != 0 {
+    let w = rt.mem_load(pd, D_WWAIT, 8)
+    if w != 0 {
+      stat(ST_POLL_WAKE)
+      signal(w)
+      rt.mem_store(pd, D_WWAIT, 0, 8)
+    } else {
+      rt.mem_store(pd, D_WREADY, 1, 4)
+    }
+  }
+  unlk(addw(pd, D_MU))
+}
+
+// ---------------------------------------------------------------------------
+// Waiting on a descriptor (xo_rt.c pd_new, pd_begin, pd_end, pd_close,
+// pd_free, pd_wait_until on Linux and macOS; Windows keeps the C's until
+// B22 stage 4). A descriptor's record is xo_rt.c struct xo_pd (D_ above,
+// fd at 8, closed at 12, ops at 16, all under its lock word). The C's
+// services record (set at start, poll_svc) holds the addresses of C
+// functions called through rt.call_c2 and two of the event loop's words.
+
+/// rt.static_word: the C's services record.
+const W_SVC = 44
+
+/// The services record's words: on Windows open (fd, write: a new
+/// registered record, or 0), close (fd), and shutdown (fd); canceled (c:
+/// whether the context is canceled and not shielded), wait (c:
+/// park_wait_n(c, 1, 0)), signal (a park), the address of ev.mu, of
+/// ev.dead, and the offset of a context's park (words 40 and 48 unused).
+const S_OPEN = 0
+const S_CLOSE = 8
+const S_SHUT = 16
+const S_CANCELED = 24
+const S_WAIT = 32
+const S_SIGNAL = 56
+const S_MU = 64
+const S_DEAD = 72
+const S_PARK = 80
+/// Windows (0 elsewhere): the address of the event loop's AFD device
+/// handle (ev.afd: 0 when the poller fell back to WSAPoll), and the C's
+/// ev_poke (the WSAPoll loop polls the directions waited in).
+const S_AFD = 88
+const S_POKE = 96
+/// The C's ev record (EV_ below), the export where the poller thread
+/// starts (xo_x_poll_thread), the C's stop_signal (the poller runs the
+/// shutdown's steps), and on Windows the C's start of the event loop
+/// (ev_init_win: the completion port, the AFD device, or the WSAPoll
+/// fallback, and the thread).
+const S_EV = 104
+const S_THREAD = 112
+const S_STOP = 120
+const S_START_WIN = 128
+
+/// The ev record's words (xo_rt.c ev, asserted there): the start's state
+/// (0 not started, 1 starting, 2 running), the lock word, the self
+/// pipe's read and write ends and the kqueue or epoll descriptor (C
+/// ints), the list of descriptors to free, and the count of signals not
+/// handled yet.
+const EV_ONCE = 0
+const EV_MU = 8
+const EV_PIPE_R = 16
+const EV_PIPE_W = 20
+const EV_POLL = 24
+const EV_DEAD = 32
+const EV_SIGS = 40
+
+/// A descriptor record's size off Windows (xo_rt.c xo_pd without its
+/// AFD words).
+const D_SIZE = 56
+
+const D_FD = 8
+const D_CLOSED = 12
+const D_OPS = 16
+
+/// A timer record's size (xo_rt.c struct xo_timer, 48 bytes).
+const T_SIZE = 64
+
+/// Whether timer t fired (a C int the poller stores after a release
+/// fence).
+fn fired(t: Int) -> Bool {
+  let f = rt.mem_load(t, T_FIRED, 4)
+  rt.fence(ACQUIRE)
+  f != 0
+}
+
+/// pd_wait's results (xo_rt.c PD_READY and the rest).
+pub const READY = 0
+pub const CANCELED = 1
+pub const CLOSED = 2
+pub const TIMEOUT = 3
+
+/// Sets the C's services record (at start, before any descriptor), and
+/// the C's park_signal from it (the poller's loop sets it too).
+pub fn poll_svc(rec: Int) {
+  rt.mem_store(rt.static_word(W_SVC), 0, rec, 8)
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, rt.mem_load(rec, S_SIGNAL, 8), 8)
+}
+
+/// The AFD device handle on Windows (0: none, the WSAPoll loop; always 0
+/// elsewhere).
+fn afd() -> Int {
+  let a = svc_word(S_AFD)
+  if a == 0 { 0 } else { rt.mem_load(a, 0, 8) }
+}
+
+fn svc(k: Int, a: Int) -> Int {
+  let rec = rt.mem_load(rt.static_word(W_SVC), 0, 8)
+  rt.call_c2(rt.mem_load(rec, k, 8), a, 0)
+}
+
+fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
+
+/// Registers descriptor fd with the poller (for reading, and writing when
+/// write): its record, or minus the errno when the poller refuses it (a
+/// regular file). Starts the event loop if it is not running.
+pub fn pd_open(fd: Int, write: Bool) -> Int {
+  if windows() {
+    return svc(S_OPEN, fd + (if write { 4294967296 } else { 0 }))
+  }
+  ev_start()
+  let pd = rt.heap_large(D_SIZE)
+  rt.mem_set(pd, 0, D_SIZE)
+  rt.mem_store(pd, D_FD, fd, 4)
+  let r = register(fd, pd, write)
+  if r < 0 {
+    rt.heap_release(subw(pd, 8))
+    return r
+  }
+  pd
+}
+
+/// Registers fd with the poller for pd, edge triggered, for reading
+/// (and writing when write): 0, or minus the errno.
+fn register(fd: Int, pd: Int, write: Bool) -> Int {
+  let e = ev()
+  let poll = s32(rt.mem_load(e, EV_POLL, 4))
+  match target.os {
+    TargetOs.Darwin => {
+      // two struct kevent (32 bytes): ident, filter (EVFILT_READ -1,
+      // EVFILT_WRITE -2), flags (EV_ADD 1 | EV_CLEAR 0x20), fflags, data,
+      // udata
+      let k = obj.scratch()
+      rt.mem_set(k, 0, 64)
+      rt.mem_store(k, 0, fd, 8)
+      rt.mem_store(k, 8, 65535, 2)
+      rt.mem_store(k, 10, 33, 2)
+      rt.mem_store(k, 24, pd, 8)
+      rt.mem_store(k, 32, fd, 8)
+      rt.mem_store(k, 40, 65534, 2)
+      rt.mem_store(k, 42, 33, 2)
+      rt.mem_store(k, 56, pd, 8)
+      let r = Int(sys_darwin.kevent(poll, k, if write { 2 } else { 1 }, 0, 0, 0))
+      if r < 0 { 0 - rt.mem_load(sys_darwin.__error(), 0, 4) } else { 0 }
+    }
+    TargetOs.Linux => {
+      // EPOLLIN 1 | EPOLLRDHUP 0x2000 | EPOLLET 1 << 31, EPOLLOUT 4; the
+      // registration publishes pd through the kernel, which the C
+      // library's epoll interceptors tell ThreadSanitizer and these raw
+      // calls do not (gotchas/tsan-raw-epoll-no-edge.md)
+      epoll_add(poll, fd, 2147483648 | 8192 | 1 | (if write { 4 } else { 0 }), pd)
+    }
+    TargetOs.Windows | TargetOs.Wasi => -38
+  }
+}
+
+/// epoll_ctl(EPOLL_CTL_ADD) of fd for events, its data pd: 0, or minus
+/// the errno.
+fn epoll_add(poll: Int, fd: Int, events: Int, pd: Int) -> Int {
+  let e = obj.scratch()
+  rt.mem_set(e, 0, 16)
+  rt.mem_store(e, 0, events, 4)
+  let off = match target.arch {
+    TargetArch.Amd64 => 4
+    TargetArch.Arm64 | TargetArch.Wasm32 => 8
+  }
+  rt.mem_store(e, off, pd, 8)
+  sanhook.release(ev())
+  sock.epoll_ctl(poll, 1, fd, e)
+}
+
+
+/// Closes the socket fd (xo_rt.c nx_close).
+fn fd_close(fd: Int) {
+  if windows() {
+    let _w = svc(S_CLOSE, fd)
+    return
+  }
+  let _c = sock.close(fd)
+}
+
+/// Shuts the socket fd down for both directions, unregistered first on
+/// Linux: epoll keys a registration by the open file, not the
+/// descriptor, so a close alone leaves it while a child process holds
+/// the file, and its next event would name the record after the poller
+/// freed it (2026-10-12, gotchas/linux-epoll-inherited-socket.md).
+/// Windows drops the unread input first (the C's).
+fn fd_shut(fd: Int) {
+  match target.os {
+    TargetOs.Darwin => {
+      let _s = sock.shutdown(fd, 2)
+    }
+    TargetOs.Linux => {
+      let _d = sock.epoll_ctl(s32(rt.mem_load(ev(), EV_POLL, 4)), 2, fd, 0)
+      let _s = sock.shutdown(fd, 2)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {
+      let _w = svc(S_SHUT, fd)
+    }
+  }
+}
+
+/// pd_open, with 0 for a refusal.
+pub fn pd_new(fd: Int, write: Bool) -> Int {
+  let pd = pd_open(fd, write)
+  if pd < 0 { 0 } else { pd }
+}
+
+/// rt.sched_rt: the test world's record (xo_rt.c tw), its virtual clock
+/// (an atomic word) and whether the clock is virtual (a C int).
+const RT_TW = 30
+const TW_VNOW = 8
+const TW_VIRT = 40
+
+/// The timers' clock now (xo_rt.c tnow): the test world's virtual one
+/// while it runs, else the monotonic one.
+pub fn now() -> Int {
+  let tw = rt.sched_rt(RT_TW, 0, 0)
+  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+    // TW_VNOW is a byte offset; a slot's index counts words
+    return rt.slot_load(tw + TW_VNOW, 0, ACQUIRE)
+  }
+  sysio.mono_ns()
+}
+
+/// The timers' time d ns from now, saturating (xo_rt.c deadline).
+pub fn deadline(d: Int) -> Int {
+  let n = now()
+  if d > 0 && n > 9223372036854775807 - d {
+    return 9223372036854775807
+  }
+  addw(n, d)
+}
+
+/// Starts an operation on pd: false when it is closed.
+pub fn pd_begin(pd: Int) -> Bool {
+  lk(addw(pd, D_MU))
+  let ok = rt.mem_load(pd, D_CLOSED, 4) == 0
+  if ok {
+    rt.mem_store(pd, D_OPS, rt.mem_load(pd, D_OPS, 4) + 1, 4)
+  }
+  unlk(addw(pd, D_MU))
+  ok
+}
+
+/// The descriptor's fd now, unless taken to close it (-1).
+fn take_fd(pd: Int) -> Int {
+  let fd = rt.mem_load(pd, D_FD, 4)
+  let f = if fd >= 2147483648 { fd - 4294967296 } else { fd }
+  if f >= 0 {
+    rt.mem_store(pd, D_FD, 4294967295, 4)
+  }
+  f
+}
+
+/// Ends an operation on pd: the last one after a close closes the fd.
+pub fn pd_end(pd: Int) {
+  lk(addw(pd, D_MU))
+  let ops = rt.mem_load(pd, D_OPS, 4) - 1
+  rt.mem_store(pd, D_OPS, ops, 4)
+  var fd = -1
+  if ops == 0 && rt.mem_load(pd, D_CLOSED, 4) != 0 {
+    fd = take_fd(pd)
+  }
+  unlk(addw(pd, D_MU))
+  if fd >= 0 {
+    fd_close(fd)
+  }
+}
+
+fn wake(pd: Int, k: Int) {
+  let w = rt.mem_load(pd, k, 8)
+  if w != 0 {
+    signal(w)
+    rt.mem_store(pd, k, 0, 8)
+  }
+}
+
+/// Closes pd: its waiters return CLOSED, and the fd closes once no
+/// operation runs.
+pub fn pd_close(pd: Int) {
+  lk(addw(pd, D_MU))
+  if rt.mem_load(pd, D_CLOSED, 4) == 0 {
+    rt.mem_store(pd, D_CLOSED, 1, 4)
+    let fd = rt.mem_load(pd, D_FD, 4)
+    if fd < 2147483648 {
+      fd_shut(fd)
+    }
+    wake(pd, D_RWAIT)
+    wake(pd, D_WWAIT)
+  }
+  var fd = -1
+  if rt.mem_load(pd, D_OPS, 4) == 0 {
+    fd = take_fd(pd)
+  }
+  unlk(addw(pd, D_MU))
+  if fd >= 0 {
+    fd_close(fd)
+  }
+}
+
+/// Closes pd and hands its record to the poller thread to free.
+pub fn pd_free(pd: Int) {
+  if pd == 0 {
+    return
+  }
+  pd_close(pd)
+  let mu = svc_word(S_MU)
+  let dead = svc_word(S_DEAD)
+  lk(mu)
+  rt.mem_store(pd, D_NEXT, rt.mem_load(dead, 0, 8), 8)
+  rt.mem_store(dead, 0, pd, 8)
+  unlk(mu)
+}
+
+/// Waits in the current task until pd is ready for reading (or writing),
+/// the task is canceled, pd is closed, or (when deadline is not 0) the
+/// monotonic time deadline (ns, rt.clock_now's clock) passes: READY,
+/// CANCELED, CLOSED, or TIMEOUT.
+pub fn pd_wait(pd: Int, write: Bool, deadline: Int) -> Int { pd_wait_ctx(pd, write, ctx.cur(), deadline) }
+
+/// pd_wait for context c (xo_rt.c pd_wait_until).
+pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
+  let slot = if write { D_WWAIT } else { D_RWAIT }
+  let ready = if write { D_WREADY } else { D_RREADY }
+  let park = addw(c, svc_word(S_PARK))
+  var t = 0
+  var res = READY
+  while true {
+    if svc(S_CANCELED, c) != 0 {
+      res = CANCELED
+      break
+    }
+    lk(addw(pd, D_MU))
+    if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+      unlk(addw(pd, D_MU))
+      res = CLOSED
+      break
+    }
+    if rt.mem_load(pd, ready, 4) != 0 {
+      rt.mem_store(pd, ready, 0, 4)
+      unlk(addw(pd, D_MU))
+      res = READY
+      break
+    }
+    pool.park_reset(park)
+    rt.mem_store(pd, slot, park, 8)
+    let win = windows()
+    if win && afd() != 0 {
+      // the poller watches what someone waits for
+      pd_arm(pd)
+    }
+    unlk(addw(pd, D_MU))
+    if win && afd() == 0 && svc_word(S_POKE) != 0 {
+      let _p = rt.call_c2(svc_word(S_POKE), 0, 0)
+    }
+    if deadline != 0 && t == 0 {
+      t = rt.heap_large(T_SIZE)
+      rt.mem_set(t, 0, T_SIZE)
+      rt.mem_store(t, T_WHEN, deadline, 8)
+      rt.mem_store(t, T_IDX, -1, 8)
+      rt.mem_store(t, T_PARK, park, 8)
+      timer_add(t)
+    }
+    if !(t != 0 && fired(t)) {
+      let _r = svc(S_WAIT, c)
+    }
+    lk(addw(pd, D_MU))
+    let mine = rt.mem_load(pd, slot, 8) == park
+    if mine {
+      rt.mem_store(pd, slot, 0, 8)
+    }
+    let closed = rt.mem_load(pd, D_CLOSED, 4) != 0
+    unlk(addw(pd, D_MU))
+    if closed {
+      res = CLOSED
+      break
+    }
+    if !mine {
+      // the poller handed it readiness
+      res = READY
+      break
+    }
+    if t != 0 && fired(t) {
+      res = TIMEOUT
+      break
+    }
+  }
+  if t != 0 {
+    timer_del(t)
+    rt.heap_release(t - 8)
+  }
+  res
+}
+
+/// Whether the current task is canceled (and not shielded).
+pub fn canceled() -> Bool { svc(S_CANCELED, ctx.cur()) != 0 }
+
+/// A timer that signals the park p at deadline (ns, the timers' clock:
+/// the virtual one in the test world, else rt.clock_now's monotonic
+/// one), added to the heap; end it with timer_end.
+pub fn timer_park(deadline: Int, p: Int) -> Int {
+  let t = rt.heap_large(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  rt.mem_store(t, T_WHEN, deadline, 8)
+  rt.mem_store(t, T_IDX, -1, 8)
+  rt.mem_store(t, T_PARK, p, 8)
+  timer_add(t)
+  t
+}
+
+/// The function word of the test world's FakeProc.signal_after timer
+/// (twrun.xo signal_arm), which no C function has: firing it runs the
+/// stop state's signal, then frees the timer.
+pub const FN_SIGNAL = 1
+
+/// The function words of the other timers whose firing is Xo's (the
+/// timer's arg word the record): a select's `after` arm (xo_rt.c
+/// xo_select: fired at 32, chosen at 40, the waiter's park at 64; the
+/// first to claim fired wins, and chosen -2 tells the wait it timed
+/// out), and task.with_timeout's deadline (xo_rt.c xo_scope: the body's
+/// node at 16, timed_out, a C int, at 416).
+pub const FN_SELECT = 2
+pub const FN_SCOPE = 3
+const T_ARG = 32
+const SEL_FIRED = 32
+const SEL_CHOSEN = 40
+const SEL_PARK = 64
+const SC_BODY = 16
+const SC_TIMED_OUT = 416
+
+/// Fires timer t, already off the heap, with the event loop's lock word
+/// mu held (the poller's loops, and twrun.xo's move of the virtual
+/// clock): signals its park or calls its C function. The signal timer's
+/// signal runs with mu released (stop.xo takes its own lock, then may
+/// add a timer).
+pub fn fire(t: Int, mu: Int) {
+  rt.fence(RELEASE)
+  rt.mem_store(t, T_FIRED, 1, 4)
+  let p = rt.mem_load(t, T_PARK, 8)
+  if p != 0 {
+    signal(p)
+    return
+  }
+  let f = rt.mem_load(t, T_FN, 8)
+  if f == FN_SIGNAL {
+    unlk(mu)
+    stop.signal()
+    lk(mu)
+    rt.heap_release(subw(t, 8))
+    return
+  }
+  if f == FN_SELECT {
+    let s = rt.mem_load(t, T_ARG, 8)
+    if rt.slot_cas(addw(s, SEL_FIRED), 0, 0, 1, ACQ_REL) {
+      rt.slot_store(addw(s, SEL_CHOSEN), 0, -2, RELEASE)
+      signal(rt.mem_load(s, SEL_PARK, 8))
+    }
+    return
+  }
+  if f == FN_SCOPE {
+    let s = rt.mem_load(t, T_ARG, 8)
+    rt.fence(RELEASE)
+    rt.mem_store(s, SC_TIMED_OUT, 1, 4)
+    pool.node_cancel(ctx.pool(), addw(s, SC_BODY))
+    return
+  }
+  let _c = rt.call_c2(f, t, 0)
+}
+
+/// A timer of function word f (FN_SELECT, FN_SCOPE) for the record arg,
+/// due d ns from now, added to the heap; end it with timer_end.
+pub fn timer_fn(d: Int, f: Int, arg: Int) -> Int {
+  let t = rt.heap_large(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  rt.mem_store(t, T_WHEN, deadline(d), 8)
+  rt.mem_store(t, T_IDX, -1, 8)
+  rt.mem_store(t, T_FN, f, 8)
+  rt.mem_store(t, T_ARG, arg, 8)
+  timer_add(t)
+  t
+}
+
+/// Sleeps d ns in context c unless it is or becomes canceled (xo_rt.c
+/// clock_wait, which records the test world's sleep first): whether
+/// cancellation ended (or prevented) the sleep, without starting an
+/// unwind.
+pub fn clock_wait(c: Int, d: Int) -> Bool {
+  if svc(S_CANCELED, c) != 0 {
+    return true
+  }
+  if d <= 0 {
+    return false
+  }
+  let park = park_of(c)
+  pool.park_reset(park)
+  let t = timer_park(deadline(d), park)
+  while !fired(t) && svc(S_CANCELED, c) == 0 {
+    let _w = svc(S_WAIT, c)
+  }
+  let f = fired(t)
+  timer_end(t)
+  !f && svc(S_CANCELED, c) != 0
+}
+
+/// Adds timer t (its deadline, and its park or function, set; its place
+/// -1) to the heap, starting the poller outside the virtual clock
+/// (xo_rt.c timer_add).
+pub fn timer_add(t: Int) {
+  // the test world has no poller: its timers fire when the virtual clock
+  // moves (twrun.xo kick)
+  let v = virt()
+  if !v {
+    ev_start()
+  }
+  let mu = ev_mu()
+  lk(mu)
+  let first = timer_push(t)
+  unlk(mu)
+  if first != 0 && !v {
+    poke()
+  }
+}
+
+/// Takes timer t out of the heap (xo_rt.c timer_del): its function does
+/// not run after this returns.
+pub fn timer_del(t: Int) {
+  let mu = ev_mu()
+  lk(mu)
+  if rt.mem_load(t, T_IDX, 8) >= 0 {
+    timer_remove(t)
+  }
+  unlk(mu)
+}
+
+/// Whether the timers' clock is the test world's virtual one (xo_rt.c
+/// tw.virt).
+fn virt() -> Bool { rt.mem_load(rt.sched_rt(RT_TW, 0, 0), TW_VIRT, 4) != 0 }
+
+/// Wakes the poller (a new first timer; xo_rt.c ev_poke): a byte in the
+/// self pipe (a full pipe wakes it anyway), the C's on Windows.
+pub fn poke() {
+  if windows() {
+    let _p = rt.call_c2(svc_word(S_POKE), 0, 0)
+    return
+  }
+  let b = obj.scratch()
+  rt.mem_store(b, 0, 119, 1)
+  let w = s32(rt.mem_load(ev(), EV_PIPE_W, 4))
+  let _w = match target.os {
+    TargetOs.Darwin => sys_darwin.write(w, b, 1)
+    TargetOs.Linux => linux.write_at(w, b, 1)
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+/// The C's ev record.
+fn ev() -> Int { svc_word(S_EV) }
+
+/// Starts the event loop once (xo_rt.c ev_start): the self pipe, the
+/// kqueue or epoll descriptor, and the poller thread; a caller that
+/// finds the start under way waits for it.
+pub fn ev_start() {
+  let once = addw(ev(), EV_ONCE)
+  if rt.slot_load(once, 0, ACQUIRE) == 2 {
+    return
+  }
+  if rt.slot_cas(once, 0, 0, 1, ACQ_REL) {
+    if windows() {
+      let _w = svc(S_START_WIN, 0)
+    } else {
+      ev_init()
+    }
+    rt.slot_store(once, 0, 2, RELEASE)
+    return
+  }
+  while rt.slot_load(once, 0, ACQUIRE) != 2 {
+    rt.spin_hint()
+  }
+}
+
+/// The start on Linux and macOS (xo_rt.c ev_init): out of memory when the
+/// system refuses one of the parts, as the C's was.
+fn ev_init() {
+  let e = ev()
+  let p = obj.scratch()
+  // close-on-exec from birth on Linux (pipe2): with FD_CLOEXEC set just
+  // after, a process spawned by another thread in between inherited it
+  // and held it open for its life (2026-10-12, gotcha
+  // linux-epoll-inherited-socket); macOS has no pipe2
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  let pr = if darwin { Int(sys_darwin.pipe(p)) } else { linux.pipe2(p, linux.O_CLOEXEC) }
+  if pr < 0 {
+    heapos.oom()
+  }
+  let r = s32(rt.mem_load(p, 0, 4))
+  let w = s32(rt.mem_load(p, 4, 4))
+  // sock.nonblock sets FD_CLOEXEC too (macOS's pipe)
+  let _a = sock.nonblock(r)
+  let _b = sock.nonblock(w)
+  rt.mem_store(e, EV_PIPE_R, r, 4)
+  rt.mem_store(e, EV_PIPE_W, w, 4)
+  if darwin {
+    let kq = Int(sys_darwin.kqueue())
+    if kq < 0 {
+      heapos.oom()
+    }
+    // F_SETFD 2, FD_CLOEXEC 1
+    let _c = sock.fcntl(kq, 2, 1)
+    rt.mem_store(e, EV_POLL, kq, 4)
+    // the pipe's read end: EVFILT_READ, EV_ADD, no data (the self pipe)
+    let k = obj.scratch()
+    rt.mem_set(k, 0, 32)
+    rt.mem_store(k, 0, r, 8)
+    rt.mem_store(k, 8, 65535, 2)
+    rt.mem_store(k, 10, 1, 2)
+    if Int(sys_darwin.kevent(kq, k, 1, 0, 0, 0)) < 0 {
+      heapos.oom()
+    }
+  } else {
+    // EPOLL_CLOEXEC
+    let ep = sock.epoll_create(524288)
+    if ep < 0 {
+      heapos.oom()
+    }
+    rt.mem_store(e, EV_POLL, ep, 4)
+    // EPOLLIN, data 0 (the self pipe)
+    if epoll_add(ep, r, 1, 0) < 0 {
+      heapos.oom()
+    }
+  }
+  if !pool.thread_start(svc_word(S_THREAD), 0) {
+    heapos.oom()
+  }
+}
+
+/// The poller thread's start (the export xo_x_poll_thread, which
+/// pool.thread_start runs): the loop over kqueue or epoll.
+pub fn poll_thread() {
+  let e = ev()
+  poll_main(s32(rt.mem_load(e, EV_POLL, 4)), s32(rt.mem_load(e, EV_PIPE_R, 4)), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS), svc_word(S_SIGNAL), svc_word(S_STOP))
+}
+
+/// The event loop's lock word (xo_rt.c ev.mu), and taking and releasing
+/// it.
+pub fn ev_mu() -> Int { svc_word(S_MU) }
+
+pub fn ev_lock() { lk(ev_mu()) }
+
+pub fn ev_unlock() { unlk(ev_mu()) }
+
+/// Whether timer t (of timer_park) fired.
+pub fn timer_fired(t: Int) -> Bool { fired(t) }
+
+/// Takes timer t (of timer_park) out of the heap and frees it.
+pub fn timer_end(t: Int) {
+  timer_del(t)
+  rt.heap_release(t - 8)
+}
+
+/// The park of context c.
+pub fn park_of(c: Int) -> Int { addw(c, svc_word(S_PARK)) }
+
+/// Waits in the current task until the monotonic time deadline (ns,
+/// rt.clock_now's clock) passes or the task is canceled: TIMEOUT or
+/// CANCELED (xo_rt.c clock_wait, for std/native/llrt/proc.xo's wait for
+/// a child's exit).
+pub fn sleep_until(deadline: Int) -> Int {
+  let c = ctx.cur()
+  let park = park_of(c)
+  pool.park_reset(park)
+  let t = timer_park(deadline, park)
+  var res = TIMEOUT
+  while true {
+    if svc(S_CANCELED, c) != 0 {
+      res = CANCELED
+      break
+    }
+    if fired(t) {
+      break
+    }
+    let _w = svc(S_WAIT, c)
+  }
+  timer_end(t)
+  res
+}
+
+/// Signals the park p (xo_rt.c park_signal): its context's wait returns.
+pub fn park_signal(p: Int) { signal(p) }
+
+/// Waits in context c until its park is signaled (park_wait_n(c, 1, 0));
+/// the caller reset the park and handed it out first.
+pub fn park_wait(c: Int) {
+  let _w = svc(S_WAIT, c)
+}
+
+/// One wait of the HTTP/2 server connection's fiber (context c, its park
+/// reset and handed to the stream tasks first; xo_h2.c's h2_wait until
+/// B28 part 2): until pd has input, the park is signaled (a stream task
+/// queued output), or the monotonic time deadline (0: none) passes.
+/// False when the connection must end: pd closed, the deadline passed.
+pub fn pd_wait_or_signal(pd: Int, c: Int, deadline: Int) -> Bool {
+  let park = park_of(c)
+  var ok = true
+  lk(addw(pd, D_MU))
+  if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+    ok = false
+  } else if rt.mem_load(pd, D_RREADY, 4) != 0 {
+    rt.mem_store(pd, D_RREADY, 0, 4)
+  } else {
+    rt.mem_store(pd, D_RWAIT, park, 8)
+    let win = windows()
+    if win && afd() != 0 {
+      // the poller watches what someone waits for (pd_wait_until)
+      pd_arm(pd)
+    }
+    unlk(addw(pd, D_MU))
+    if win && afd() == 0 && svc_word(S_POKE) != 0 {
+      let _p = rt.call_c2(svc_word(S_POKE), 0, 0)
+    }
+    var t = 0
+    var due = false
+    if deadline != 0 {
+      if sysio.mono_ns() >= deadline {
+        due = true
+      } else {
+        t = timer_park(deadline, park)
+      }
+    }
+    if !due {
+      let _w = svc(S_WAIT, c)
+    }
+    if t != 0 {
+      due = fired(t)
+      timer_end(t)
+    }
+    if deadline != 0 && (due || sysio.mono_ns() >= deadline) {
+      ok = false
+    }
+    lk(addw(pd, D_MU))
+    if rt.mem_load(pd, D_RWAIT, 8) == park {
+      rt.mem_store(pd, D_RWAIT, 0, 8)
+    }
+    if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+      ok = false
+    }
+  }
+  unlk(addw(pd, D_MU))
+  ok
+}
+
+// ---------------------------------------------------------------------------
+// The poller thread (xo_rt.c poller_main)
+
+/// The events one wait collects.
+const NEVENTS = 64
+
+/// The poller thread's loop, which never returns: poll is the kqueue or
+/// epoll descriptor, pipe_r the self pipe's read end, mu the event loop's
+/// lock word (ev.mu), dead the address of the list of descriptors to
+/// free (each from rt.heap_large: pd_open), sigs the address of the
+/// count of signals not handled yet, and signal_fn and stop_fn the C's
+/// park_signal and stop_signal (called through rt.call_c2).
+pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int) {
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+  // the events (struct kevent of 32 bytes, struct epoll_event of 16 or
+  // 12), a struct timespec, and the pipe's drain buffer
+  let evs = rt.heap_large(addw(rt.int_wrap(2, NEVENTS, 32), 16 + 64))
+  let ts = addw(evs, rt.int_wrap(2, NEVENTS, 32))
+  let drain = addw(ts, 16)
+  while true {
+    lk(mu)
+    var pd = rt.mem_load(dead, 0, 8)
+    while pd != 0 {
+      let next = rt.mem_load(pd, D_NEXT, 8)
+      rt.heap_release(subw(pd, 8))
+      pd = next
+    }
+    rt.mem_store(dead, 0, 0, 8)
+    let now = sysio.mono_ns()
+    var t = timer_first()
+    while t != 0 && dl(t) <= now {
+      timer_remove(t)
+      fire(t, mu)
+      t = timer_first()
+    }
+    let first = timer_first()
+    let wait = if first == 0 { -1 } else { subw(dl(first), now) }
+    unlk(mu)
+    let n = wait_events(poll, evs, ts, wait)
+    stat(ST_POLL_RETURN)
+    var i = 0
+    while i < n {
+      let (p, mode) = event(evs, i)
+      if p != 0 {
+        pd_ready(p, mode)
+      } else {
+        // the self pipe: drain it, then the signals that wrote to it
+        while read_fd(pipe_r, drain, 64) > 0 {}
+        var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
+        while k > 0 {
+          let _s = rt.call_c2(stop_fn, 0, 0)
+          k = subw(k, 1)
+        }
+      }
+      i = addw(i, 1)
+    }
+  }
+}
+
+const ACQ_REL = 3
+
+/// Waits for at most NEVENTS events into evs, at most wait ns (-1: no
+/// limit): the count (0 on an error or a timeout).
+fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => {
+      var tp = 0
+      if wait >= 0 {
+        rt.mem_store(ts, 0, wait / 1000000000, 8)
+        rt.mem_store(ts, 8, wait % 1000000000, 8)
+        tp = ts
+      }
+      let r = Int(sys_darwin.kevent(poll, 0, 0, evs, NEVENTS, tp))
+      if r < 0 { 0 } else { r }
+    }
+    TargetOs.Linux => {
+      var ms = -1
+      if wait >= 0 {
+        ms = if wait > 1099511627776 { 1073741824 } else { addw(wait, 999999) / 1000000 }
+      }
+      let r = sock.epoll_wait(poll, evs, NEVENTS, ms)
+      // the acquire of epoll_add's release: the kernel orders a
+      // registration before its events, which ThreadSanitizer sees only
+      // through the C library's interceptors (gotchas/tsan-raw-epoll-no-edge.md)
+      sanhook.acquire(ev())
+      if r < 0 { 0 } else { r }
+    }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+/// Event i of evs: its descriptor (0: the self pipe) and its readiness (1
+/// read, 2 write, 3 both).
+fn event(evs: Int, i: Int) -> (Int, Int) {
+  match target.os {
+    TargetOs.Darwin => {
+      // struct kevent: filter (int16) at 8, flags (uint16) at 10, udata
+      // at 24; EVFILT_READ -1, EVFILT_WRITE -2, EV_ERROR 0x4000
+      let e = addw(evs, rt.int_wrap(3, i, 5))
+      let f = rt.mem_load(e, 8, 2)
+      var mode = if f == 65535 { 1 } else if f == 65534 { 2 } else { 0 }
+      if (rt.mem_load(e, 10, 2) & 16384) != 0 {
+        mode = 3
+      }
+      (rt.mem_load(e, 24, 8), mode)
+    }
+    TargetOs.Linux => {
+      // struct epoll_event: events (uint32) at 0, data at 8 (arm64) or 4
+      // (x86_64, packed); EPOLLIN 1, EPOLLOUT 4, EPOLLERR 8, EPOLLHUP 16,
+      // EPOLLRDHUP 0x2000
+      let size = match target.arch {
+        TargetArch.Amd64 => 12
+        TargetArch.Arm64 | TargetArch.Wasm32 => 16
+      }
+      let e = addw(evs, rt.int_wrap(2, i, size))
+      let f = rt.mem_load(e, 0, 4)
+      let data = rt.mem_load(e, subw(size, 8), 8)
+      let r = if (f & (1 | 8192 | 16 | 8)) != 0 { 1 } else { 0 }
+      let w = if (f & (4 | 16 | 8)) != 0 { 2 } else { 0 }
+      (data, r | w)
+    }
+    TargetOs.Windows | TargetOs.Wasi => (0, 0)
+  }
+}
+
+/// read(2) of at most n bytes into the address a.
+fn read_fd(fd: Int, a: Int, n: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => sys_darwin.read(fd, a, n)
+    TargetOs.Linux => sock.read(fd, a, n)
+    TargetOs.Windows | TargetOs.Wasi => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Windows (B22 stage 4; xo_rt.c's XO_WINPOLL code, UNTESTED on windows):
+// a waiter arms a one shot AFD poll of its socket (IOCTL_AFD_POLL on
+// \Device\Afd, the driver under Winsock's select and WSAPoll, as wepoll
+// and mio use it) for the directions waited in, and the poll's
+// completion, read from the I/O completion port by poll_main_win, hands
+// the readiness over. The C keeps opening the device and the port
+// (ev_init), registering a descriptor (pd_new: its base socket), and the
+// WSAPoll loop used when the device cannot be opened.
+
+/// xo_pd's Windows words (asserted in xo_rt.c): the poll's
+/// IO_STATUS_BLOCK (its status a 32 bit NTSTATUS), the poll's buffer
+/// (AFD_POLL_INFO: the timeout, the count, exclusive, then one handle,
+/// its events, and its status), the socket's base handle, the events of
+/// the poll in flight (0 none), whether to poll again once it ends, and
+/// whether its completion frees the record (pd_free ran).
+const D_IOSB = 56
+const D_INFO = 72
+const D_BASE = 104
+const D_ARMED = 112
+const D_REARM = 116
+const D_DYING = 120
+
+/// The AFD events of reading and writing (xo_rt.c XO_AFD_READ, WRITE:
+/// receive, expedited, disconnect, abort, local close, accept, connect
+/// failure; send, abort, local close, connect failure).
+const AFD_READ = 443
+const AFD_WRITE = 308
+const IOCTL_AFD_POLL = 73764
+const STATUS_PENDING = 259
+const INFINITE = 4294967295
+
+fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+  }
+}
+
+fn s32(v: Int) -> Int {
+  let w = v & 4294967295
+  if w >= 2147483648 { subw(w, 4294967296) } else { w }
+}
+
+/// Starts (the record's lock held) an AFD poll of pd's socket for the
+/// directions someone waits in, unless one runs; a running poll that
+/// lacks a direction now waited in is cancelled, and its completion
+/// starts the wider one (xo_rt.c pd_arm).
+pub fn pd_arm(pd: Int) {
+  let dev = afd()
+  if dev == 0 || rt.mem_load(pd, D_CLOSED, 4) != 0 || s32(rt.mem_load(pd, D_FD, 4)) < 0 || rt.mem_load(pd, D_DYING, 4) != 0 {
+    return
+  }
+  let want = (if rt.mem_load(pd, D_RWAIT, 8) != 0 { AFD_READ } else { 0 }) | (if rt.mem_load(pd, D_WWAIT, 8) != 0 { AFD_WRITE } else { 0 })
+  if want == 0 {
+    return
+  }
+  let armed = rt.mem_load(pd, D_ARMED, 4)
+  if armed != 0 {
+    if (want & (armed ^ 4294967295)) != 0 && rt.mem_load(pd, D_REARM, 4) == 0 {
+      rt.mem_store(pd, D_REARM, 1, 4)
+      let _c = sys_windows.CancelIoEx(dev, addw(pd, D_IOSB))
+    }
+    return
+  }
+  // AFD_POLL_INFO: no timeout (INT64_MAX), one handle, not exclusive
+  let info = addw(pd, D_INFO)
+  rt.mem_store(info, 0, 9223372036854775807, 8)
+  rt.mem_store(info, 8, 1, 4)
+  rt.mem_store(info, 12, 0, 4)
+  rt.mem_store(info, 16, rt.mem_load(pd, D_BASE, 8), 8)
+  rt.mem_store(info, 24, want, 4)
+  rt.mem_store(info, 28, 0, 4)
+  rt.mem_store(pd, D_IOSB, STATUS_PENDING, 4)
+  // the completion's OVERLAPPED pointer is the APC context: pd
+  let st = s32(Int(sys_windows.NtDeviceIoControlFile(dev, 0, 0, pd, addw(pd, D_IOSB), IOCTL_AFD_POLL, info, 32, info, 32)))
+  if st == 0 || st == STATUS_PENDING {
+    // the completion comes through the port either way
+    rt.mem_store(pd, D_ARMED, want, 4)
+    return
+  }
+  // the poll was refused (a closed socket): the operations run and meet
+  // the error
+  wake(pd, D_RWAIT)
+  wake(pd, D_WWAIT)
+}
+
+/// The completion of pd's poll (on the poller thread): the readiness to
+/// its waiters, then a new poll while someone waits; a record pd_free
+/// gave up is freed now that no poll runs (xo_rt.c afd_done).
+fn afd_done(pd: Int, free_fn: Int) {
+  lk(addw(pd, D_MU))
+  rt.mem_store(pd, D_ARMED, 0, 4)
+  rt.mem_store(pd, D_REARM, 0, 4)
+  var mode = 0
+  if s32(rt.mem_load(pd, D_IOSB, 4)) >= 0 && rt.mem_load(pd, addw(D_INFO, 8), 4) >= 1 {
+    let e = rt.mem_load(pd, addw(D_INFO, 24), 4)
+    mode = (if (e & AFD_READ) != 0 { 1 } else { 0 }) | (if (e & AFD_WRITE) != 0 { 2 } else { 0 })
+  }
+  let dying = rt.mem_load(pd, D_DYING, 4) != 0
+  unlk(addw(pd, D_MU))
+  if dying {
+    let _f = rt.call_c2(free_fn, pd, 0)
+    return
+  }
+  if mode != 0 {
+    pd_ready(pd, mode)
+  }
+  lk(addw(pd, D_MU))
+  pd_arm(pd)
+  unlk(addw(pd, D_MU))
+}
+
+/// The poller thread's loop on Windows with the AFD device (never
+/// returns; xo_rt.c poller_main's XO_WINPOLL loop): frees the dead
+/// records (one with a poll in flight once its cancelled poll completes),
+/// fires the timers that are due, waits on the completion port iocp, and
+/// handles the completions and the signals (ev.sigs, which the console
+/// handler counts and ev_poke wakes the port for).
+pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
+  rt.mem_store(rt.static_word(W_SIGNAL), 0, signal_fn, 8)
+  let dev = afd()
+  // 64 OVERLAPPED_ENTRY records of 32 bytes, then the count removed
+  let es = rt.heap_large(64 * 32 + 16)
+  let got = addw(es, 64 * 32)
+  while true {
+    lk(mu)
+    var pd = rt.mem_load(dead, 0, 8)
+    while pd != 0 {
+      let next = rt.mem_load(pd, D_NEXT, 8)
+      lk(addw(pd, D_MU))
+      let armed = rt.mem_load(pd, D_ARMED, 4) != 0
+      if armed {
+        // a poll in flight still names it: freed by its completion
+        rt.mem_store(pd, D_DYING, 1, 4)
+        let _c = sys_windows.CancelIoEx(dev, addw(pd, D_IOSB))
+      }
+      unlk(addw(pd, D_MU))
+      if !armed {
+        let _f = rt.call_c2(free_fn, pd, 0)
+      }
+      pd = next
+    }
+    rt.mem_store(dead, 0, 0, 8)
+    let now = sysio.mono_ns()
+    var t = timer_first()
+    while t != 0 && dl(t) <= now {
+      timer_remove(t)
+      fire(t, mu)
+      t = timer_first()
+    }
+    let first = timer_first()
+    let wait = if first == 0 { -1 } else { subw(dl(first), now) }
+    unlk(mu)
+    var ms = if wait < 0 { INFINITE } else { addw(wait, 999999) / 1000000 }
+    if wait > 1099511627776 {
+      ms = 1073741824
+    }
+    rt.mem_store(got, 0, 0, 8)
+    var n = 0
+    if Int(sys_windows.GetQueuedCompletionStatusEx(iocp, es, 64, got, ms, 0)) != 0 {
+      n = rt.mem_load(got, 0, 4)
+    }
+    stat(ST_POLL_RETURN)
+    var i = 0
+    while i < n {
+      // OVERLAPPED_ENTRY: the key, then lpOverlapped (the record)
+      let ov = rt.mem_load(es, addw(rt.int_wrap(2, i, 32), 8), 8)
+      if ov != 0 {
+        afd_done(ov, free_fn)
+      }
+      i = addw(i, 1)
+    }
+    var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
+    while k > 0 {
+      let _s = rt.call_c2(stop_fn, 0, 0)
+      k = subw(k, 1)
+    }
+  }
+}

@@ -175,26 +175,21 @@ fn (var g: Gen) unsupported(why: Str) {
 
 /// The declarations of the RC runtime of std/llrt/xo_rt.c, the attribute
 /// groups, and the metadata every module starts with (ssaRuntimeDecls).
+/// The entries generated code no longer calls (the obj.xo exports and
+/// the placeholders' addresses replaced them, generated-code entries E1
+/// to E3) are not declared, so their C forwarders can go after the next
+/// seed.
 fn runtime_decls() -> Str {
   let lines = [
     "%xo.str = type { ptr, i64 }",
     "%xo.rlist = type { i64, i64, i64 }",
     "",
-    "declare ptr @xo_rc_alloc(i64) #2",
-    "declare void @xo_rc_free(ptr) #2",
-    "declare void @xo_rc_defer(ptr, ptr) #2",
-    "declare ptr @xo_rs_concat(ptr, i64, ptr, i64) #2",
     "declare ptr @xo_rs_concat_int(ptr, i64, i64, ptr) #2",
     "declare ptr @xo_rs_concat_float(ptr, i64, double, ptr) #2",
     "declare ptr @xo_rs_of_int(i64, ptr) #2",
     "declare ptr @xo_rs_of_float(double, ptr) #2",
-    "declare ptr @xo_rl_new(i64, i64) #2",
-    "declare ptr @xo_rl_new_n(i64, i64) #2",
-    "declare ptr @xo_rl_empty() #2",
     "declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3",
-    "declare void @xo_rl_share(ptr, i64, ptr) #2",
     "declare ptr @xo_rl_grow(ptr, i64) #3",
-    "declare void @xo_rl_free(ptr, i64, ptr) #2",
     "declare void @xo_print(ptr, i64) #2",
     "declare void @xo_println(ptr, i64) #2",
     "declare void @xo_eprint(ptr, i64) #2",
@@ -211,7 +206,6 @@ fn runtime_decls() -> Str {
     "declare void @xo_fault_float_int(double, ptr) #0",
     "declare i32 @xo_str_eq(ptr, i64, ptr, i64) #2",
     "declare i64 @xo_str_cmp(ptr, i64, ptr, i64) #2",
-    "declare void @xo_h_free(ptr) #2",
     "declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)",
     "declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)",
     "declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)",
@@ -237,6 +231,8 @@ fn runtime_decls() -> Str {
     "attributes #4 = { nounwind alwaysinline }",
     "attributes #5 = { \"xo-raises\" }",
     "attributes #6 = { alwaysinline }",
+    "attributes #7 = { uwtable \"no-builtins\" }",
+    "attributes #8 = { nounwind noinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -754,10 +750,17 @@ fn (var h: H) w(s: Str) {
 /// the Xo function; a Str result is returned as its string object, its
 /// length stored through the pointer after the parameters.
 fn (var g: Gen) exports() {
+  // the C library's functions (bare names, cabi_libc.xo, decision 0230)
+  // are kept through LTO: code generation may call one (calloc, memcpy)
+  // after the optimizer dropped an unreferenced definition
+  var used: List[Str] = []
   for fi in 0..g.m.funcs.len() {
     let f = g.m.funcs[fi]
     if f.export.is_empty() {
       continue
+    }
+    if !f.export.starts_with("xo_x_") {
+      used.push("ptr @${f.export}")
     }
     var ps: List[Str] = []
     var as_: List[Str] = []
@@ -776,6 +779,9 @@ fn (var g: Gen) exports() {
       Unit => g.funcs.push("define void @${f.export}(${ps.join(", ")}) #1 {\n  ${call}\n  ret void\n}\n")
       _ => g.funcs.push("define ${rl} @${f.export}(${ps.join(", ")}) #1 {\n  %r = ${call}\n  ret ${rl} %r\n}\n")
     }
+  }
+  if !used.is_empty() {
+    g.funcs.push("@llvm.used = appending global [${used.len()} x ptr] [${used.join(", ")}], section \"llvm.metadata\"\n")
   }
 }
 
@@ -808,12 +814,17 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       } else if kind == "drop" {
         rc_dec(b, obj)
         if k == ssa.Kind.Str {
-          b.w("free:\n  call void @xo_rc_free(ptr ${obj})\n  br label %done\n")
+          let po = b.tmp()
+          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rc_free(i64 ${po}) #8\n  br label %done\n")
         } else {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
           let ef = g.elem_fn("drop", et)
-          b.w("free:\n  call void @xo_rl_free(ptr ${obj}, i64 ${sz}, ptr ${ef})\n  br label %done\n")
+          // obj.xo's export, inlined at the call as the C entry inlined it
+          // (XO_INLINE_CALL; the C entry stays for code of earlier
+          // compilers)
+          let po = b.tmp()
+          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_free_n(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n  br label %done\n")
         }
       } else {
         rc_mark(b, obj)
@@ -821,7 +832,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
           let ef = g.elem_fn("share", et)
-          b.w("  call void @xo_rl_share(ptr ${obj}, i64 ${sz}, ptr ${ef})\n")
+          let po = b.tmp()
+          b.w("  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_share(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n")
         }
         b.w("  br label %done\n")
       }
@@ -834,7 +846,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         rc_inc(b, "%x")
       } else if kind == "drop" {
         rc_dec(b, "%x")
-        b.w("free:\n  call void @xo_h_free(ptr %x)\n  br label %done\n")
+        let px = b.tmp()
+        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_h_free(i64 ${px}) #8\n  br label %done\n")
       } else {
         b.w("  br label %done\n")
       }
@@ -847,13 +860,15 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         rc_dec(b, "%x")
         // deferred: a long chain of boxes is freed with a worklist
         let df = g.box_drop_fn(t)
-        b.w("free:\n  call void @xo_rc_defer(ptr %x, ptr ${df})\n  br label %done\n")
+        let px = b.tmp()
+        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${px}, i64 ptrtoint (ptr ${df} to i64)) #6\n  br label %done\n")
       } else {
         rc_mark(b, "%x")
         if g.heap(g.m.types[t].elems[0]) {
           // the contents through the worklist too
           let sf = g.box_share_fn(t)
-          b.w("  call void @xo_rc_defer(ptr %x, ptr ${sf})\n")
+          let px = b.tmp()
+          b.w("  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${px}, i64 ptrtoint (ptr ${sf} to i64)) #6\n")
         }
         b.w("  br label %done\n")
       }
@@ -873,12 +888,14 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         let dfn = b.tmp()
         // the drop function frees the environment; deferred so long
         // chains do not recurse on the C stack
-        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load ptr, ptr ${dp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${dfn})\n  br label %done\n")
+        let pe = b.tmp()
+        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load i64, ptr ${dp}\n  ${pe} = ptrtoint ptr ${env} to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${pe}, i64 ${dfn}) #6\n  br label %done\n")
       } else {
         rc_mark(b, env)
         let sp = b.tmp()
         let sfn = b.tmp()
-        b.w("  ${sp} = getelementptr i8, ptr ${env}, i64 16\n  ${sfn} = load ptr, ptr ${sp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${sfn})\n  br label %done\n")
+        let pe = b.tmp()
+        b.w("  ${sp} = getelementptr i8, ptr ${env}, i64 16\n  ${sfn} = load i64, ptr ${sp}\n  ${pe} = ptrtoint ptr ${env} to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${pe}, i64 ${sfn}) #6\n  br label %done\n")
       }
       b.w("done:\n  ret void\n")
     }
@@ -1104,7 +1121,7 @@ fn (var g: Gen) box_drop_fn(t: Int) -> Str {
     let df = g.rc_fn("drop", et)
     b.push("  call void ${df}(${g.ll(et)} %v)\n")
   }
-  b.push("  call void @xo_rc_free(ptr %p)\n  ret void\n}\n\n")
+  b.push("  %pi = ptrtoint ptr %p to i64\n  call void @xo_x_obj_rc_free(i64 %pi) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
   name
 }
@@ -1139,7 +1156,7 @@ fn (var g: Gen) env_drop_fn(fi: Int) -> Str {
     let df = g.rc_fn("drop", c)
     b.push("  call void ${df}(${g.ll(c)} %c${i})\n")
   }
-  b.push("  call void @xo_rc_free(ptr %e)\n  ret void\n}\n\n")
+  b.push("  %ei = ptrtoint ptr %e to i64\n  call void @xo_x_obj_rc_free(i64 %ei) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
   name
 }

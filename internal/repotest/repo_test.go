@@ -162,7 +162,8 @@ func TestExplanationsNoEmDash(t *testing.T) {
 }
 
 // TestSpecListsEveryFaultCode keeps the fault code table of core 10.6
-// equal to the `XO-Fnnn` codes the runtimes (std/rt, std/llrt) raise.
+// equal to the `XO-Fnnn` codes the runtimes (std/rt, std/llrt,
+// std/native) raise.
 func TestSpecListsEveryFaultCode(t *testing.T) {
 	sec := specSection(t, "### 10.6 Diagnostic codes")
 	listed := map[string]bool{}
@@ -171,7 +172,9 @@ func TestSpecListsEveryFaultCode(t *testing.T) {
 	}
 	used := map[string]bool{}
 	fault := regexp.MustCompile(`XO-F\d{3}`)
-	for _, dir := range []string{filepath.Join(root, "std", "rt"), filepath.Join(root, "std", "llrt")} {
+	// the runtimes: the Go backend's, the C runtime, and the native
+	// runtime in Xo (std/native, whose llrt/ holds the ports of the C)
+	for _, dir := range []string{filepath.Join(root, "std", "rt"), filepath.Join(root, "std", "llrt"), filepath.Join(root, "std", "native")} {
 		err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -182,7 +185,7 @@ func TestSpecListsEveryFaultCode(t *testing.T) {
 				}
 				return nil
 			}
-			if strings.HasSuffix(p, "_test.go") || !(strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".c") || strings.HasSuffix(p, ".h")) {
+			if strings.HasSuffix(p, "_test.go") || strings.HasSuffix(p, "_test.xo") || !(strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".c") || strings.HasSuffix(p, ".h") || strings.HasSuffix(p, ".xo")) {
 				return nil
 			}
 			data, err := os.ReadFile(p)

@@ -26,7 +26,7 @@ import (
 
 // TestH2Diff runs the same HTTPS program over HTTP/2 (decision 0121)
 // built with the Go backend (net/http's HTTP/2) and the native backends
-// (std/llrt/xo_h2.c) and requires the same observations:
+// (std/native/llrt/h2srv.xo) and requires the same observations:
 //
 //   - as a client (the program's output): a Go HTTP/2 server echoing
 //     what it received (the protocol, User-Agent, Accept-Encoding,

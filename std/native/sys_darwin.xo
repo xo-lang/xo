@@ -25,6 +25,16 @@ fn close(fd: Int) -> Int32
 fn stat64(path: Bytes, buf: Int) -> Int32
 fn lstat64(path: Bytes, buf: Int) -> Int32
 fn fstat64(fd: Int, buf: Int) -> Int32
+/// poll(2) of the n struct pollfd at fds, waiting timeout ms
+/// (std/native/llrt/stdin.xo).
+fn poll(fds: Int, n: Int, timeout: Int) -> Int32
+/// isatty(3), ioctl(2) (TIOCGWINSZ into the struct winsize at the
+/// address va_arg), tcgetattr(3) and tcsetattr(3) of the struct termios at
+/// the address t: standard input's terminal (std/native/llrt/stdin.xo).
+fn isatty(fd: Int) -> Int32
+fn ioctl(fd: Int, req: Int, va_arg: Int) -> Int32
+fn tcgetattr(fd: Int, t: Int) -> Int32
+fn tcsetattr(fd: Int, act: Int, t: Int) -> Int32
 /// clock_gettime(3) into the struct timespec at the address ts.
 fn clock_gettime(clock: Int, ts: Int) -> Int32
 /// getentropy(2): n (at most 256) random bytes to the address buf.
@@ -33,6 +43,9 @@ fn getentropy(buf: Int, n: Int) -> Int32
 fn exit(code: Int)
 /// The address of the calling thread's errno (a C int).
 fn __error() -> Int
+/// sysctlbyname(3): the value of the zero terminated name into the
+/// buffer at oldp (its length at oldlenp, a size_t); 0, or -1 with errno.
+fn sysctlbyname(name: Bytes, oldp: Int, oldlenp: Int, newp: Int, newlen: Int) -> Int32
 /// clock_gettime_nsec_np(3): the clock's time in nanoseconds (a uint64_t),
 /// 0 with errno set on failure.
 fn clock_gettime_nsec_np(clock: Int) -> Int
@@ -55,6 +68,29 @@ fn readlink(path: Bytes, buf: Int, n: Int) -> Int
 fn utimensat(fd: Int, path: Bytes, ts: Int, flags: Int) -> Int32
 /// getcwd(3) into n bytes at the address buf: buf, or 0.
 fn getcwd(buf: Int, n: Int) -> Int
+/// kill(2): 0, or -1 with errno set (std/native/llrt/proc.xo).
+fn kill(pid: Int, sig: Int) -> Int32
+/// access(2): 0, or -1 with errno set.
+fn access(path: Int, mode: Int) -> Int32
+/// pipe(2) into the two C ints at the address fds.
+fn pipe(fds: Int) -> Int32
+/// waitpid(2) with the status as a C int at the address st.
+fn waitpid(pid: Int, st: Int, options: Int) -> Int32
+// posix_spawn(2) and its file actions and attributes (std/native/llrt/
+// proc.xo): posix_spawn_file_actions_t and posix_spawnattr_t are one
+// pointer each, a sigset_t 4 bytes; each returns 0 or an errno.
+fn posix_spawn(pid: Int, path: Int, fa: Int, at: Int, argv: Int, envp: Int) -> Int32
+fn posix_spawn_file_actions_init(fa: Int) -> Int32
+fn posix_spawn_file_actions_destroy(fa: Int) -> Int32
+fn posix_spawn_file_actions_addopen(fa: Int, fd: Int, path: Int, oflag: Int, mode: Int) -> Int32
+fn posix_spawn_file_actions_adddup2(fa: Int, fd: Int, newfd: Int) -> Int32
+fn posix_spawn_file_actions_addinherit_np(fa: Int, fd: Int) -> Int32
+fn posix_spawn_file_actions_addchdir_np(fa: Int, path: Int) -> Int32
+fn posix_spawnattr_init(at: Int) -> Int32
+fn posix_spawnattr_destroy(at: Int) -> Int32
+fn posix_spawnattr_setflags(at: Int, flags: Int) -> Int32
+fn posix_spawnattr_setsigmask(at: Int, set: Int) -> Int32
+fn posix_spawnattr_setsigdefault(at: Int, set: Int) -> Int32
 fn flock(fd: Int, op: Int) -> Int32
 /// __getdirentries64 (what readdir(3) calls): the next entries of the
 /// directory fd as struct dirent (64 bit inodes) records into n bytes at
@@ -69,6 +105,12 @@ fn __getdirentries64(fd: Int, buf: Int, n: Int, base: Int) -> Int
 /// mmap(2): the address, or MAP_FAILED (-1) with errno set.
 fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int
 fn mprotect(addr: Int, len: Int, prot: Int) -> Int32
+/// kqueue(2): a new kernel event queue, or -1.
+fn kqueue() -> Int32
+/// kevent(2): apply nchanges changes and collect at most nevents events
+/// (struct kevent, 32 bytes) into events, waiting at most the struct
+/// timespec at timeout (0: no limit): the events, or -1.
+fn kevent(kq: Int, changes: Int, nchanges: Int, events: Int, nevents: Int, timeout: Int) -> Int32
 fn munmap(addr: Int, len: Int) -> Int32
 /// __ulock_wait (libSystem's futex, what libc++'s std::atomic::wait
 /// calls): sleeps while the 32 bit word at addr holds value.
@@ -92,3 +134,57 @@ fn _dyld_get_image_header(i: Int) -> Int
 /// dladdr(3): fills the Dl_info at info (dli_fbase, the header of the
 /// image holding addr, at 8); 0 when no image holds it.
 fn dladdr(addr: Int, info: Int) -> Int32
+
+// The network (the zero-C audit's B23, std/native/llrt/sock.xo's darwin
+// arms): addresses are Ints (struct sockaddr and the C's buffers); a
+// result of -1 sets errno.
+
+fn socket(domain: Int, ty: Int, proto: Int) -> Int32
+fn bind(fd: Int, sa: Int, n: Int) -> Int32
+fn listen(fd: Int, backlog: Int) -> Int32
+fn accept(fd: Int, sa: Int, lenp: Int) -> Int32
+fn connect(fd: Int, sa: Int, n: Int) -> Int32
+fn getsockname(fd: Int, sa: Int, lenp: Int) -> Int32
+fn getpeername(fd: Int, sa: Int, lenp: Int) -> Int32
+fn send(fd: Int, buf: Int, n: Int, flags: Int) -> Int
+fn recv(fd: Int, buf: Int, n: Int, flags: Int) -> Int
+fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int32
+fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int32
+fn shutdown(fd: Int, how: Int) -> Int32
+/// fcntl(2) with an int argument (variadic: on the stack on Apple arm64).
+fn fcntl(fd: Int, cmd: Int, va_arg: Int) -> Int32
+/// getaddrinfo(3) of the zero terminated host (0: none) and service with
+/// the struct addrinfo hints: 0 with the list at the word at res, or an
+/// EAI code.
+fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
+fn freeaddrinfo(ai: Int)
+/// gai_strerror(3): a zero terminated text.
+fn gai_strerror(code: Int) -> Int
+/// sigaction(2) with the struct sigaction at the address act (the
+/// handler, the mask's 4 bytes, the flags' 4) and old (or 0): 0, or -1
+/// with errno set (std/native/llrt/entry.xo).
+fn sigaction(sig: Int, act: Int, old: Int) -> Int32
+
+
+/// dlsym(3): the address of a symbol (RTLD_DEFAULT, -2: any image
+/// loaded), 0 when none has it (std/native/llrt/tlscert.xo: CoreFoundation's
+/// kCFTypeArrayCallBacks, a data symbol).
+fn dlsym(handle: Int, name: Bytes) -> Int
+
+// The Security and CoreFoundation frameworks (std/native/llrt/tlscert.xo
+// apple_trust: Go's systemVerify). Not in libSystem: the build links the
+// two frameworks when the generated code calls one of these
+// (selfhost/xo/tls.xo needs_frameworks), so declaring them here costs
+// nothing to a program that does not.
+fn CFArrayCreateMutable(alloc: Int, capacity: Int, callbacks: Int) -> Int
+fn CFArrayAppendValue(array: Int, value: Int)
+fn CFDataCreate(alloc: Int, bytes: Int, length: Int) -> Int
+fn CFRelease(cf: Int)
+fn CFStringCreateWithCString(alloc: Int, cstr: Bytes, encoding: Int) -> Int
+fn CFStringGetCString(s: Int, buf: Int, size: Int, encoding: Int) -> Int
+fn CFErrorGetCode(err: Int) -> Int
+fn CFErrorCopyDescription(err: Int) -> Int
+fn SecCertificateCreateWithData(alloc: Int, data: Int) -> Int
+fn SecPolicyCreateSSL(server: Int, hostname: Int) -> Int
+fn SecTrustCreateWithCertificates(certificates: Int, policies: Int, trust: Int) -> Int32
+fn SecTrustEvaluateWithError(trust: Int, error: Int) -> Int

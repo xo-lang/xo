@@ -77,6 +77,80 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   first
 }
 
+/// The weak references of the program's assembly or LLVM IR (decision
+/// 0232: `.weak_reference _sym`, `declare extern_weak ... @sym(`) as
+/// macOS ld's `-U` flags, which leave a symbol no image defines 0 (ld
+/// rejects even a weak reference to one otherwise). An object's
+/// references are read from its source beside it (.s or .ll), when there
+/// is one.
+/// The Security and CoreFoundation frameworks on macOS when a generated
+/// source calls the framework (std/native/sys_darwin.xo's declarations,
+/// tlscert.xo apple_trust: the Xo TLS client's system roots, decision
+/// 0202), whether or not the program links Mbed TLS (needs_tls).
+fn framework_args(os: Os, srcs: List[Str]) -> List[Str] {
+  // made at run time, as needs_tls's names: a literal would be in xo1's
+  // own assembly
+  let mark = ["SecTrust", "EvaluateWithError"].join("")
+  for s in srcs {
+    var paths = [s]
+    if s.ends_with(".o") {
+      let base = s.trim_suffix(".o")
+      paths = ["${base}.s", "${base}.ll"]
+    }
+    for p in paths {
+      if !(p.ends_with(".s") || p.ends_with(".ll")) {
+        continue
+      }
+      match os.fs.read_text(p) {
+        Ok(t) => if t.contains(mark) {
+          return ["-framework", "Security", "-framework", "CoreFoundation"]
+        }
+        Err(_) => {}
+      }
+    }
+  }
+  []
+}
+
+fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
+  var seen: Set[Str] = #{}
+  var out: List[Str] = []
+  for s in srcs {
+    var paths = [s]
+    if s.ends_with(".o") {
+      let base = s.trim_suffix(".o")
+      paths = ["${base}.s", "${base}.ll"]
+    }
+    for p in paths {
+      if !(p.ends_with(".s") || p.ends_with(".ll")) {
+        continue
+      }
+      let text = match os.fs.read_text(p) {
+        Ok(t) => t
+        Err(_) => continue
+      }
+      if !text.contains(".weak_reference") && !text.contains("extern_weak") {
+        continue
+      }
+      for line in text.lines() {
+        let l = line.trim()
+        var sym = ""
+        if l.starts_with(".weak_reference ") {
+          sym = l.trim_prefix(".weak_reference ").trim()
+        } else if l.starts_with("declare extern_weak ") && l.contains("@") {
+          let at = l.split("@")[1]
+          sym = "_" + at.split("(")[0]
+        }
+        if !sym.is_empty() && !seen.contains(sym) {
+          seen.add(sym)
+          out = out + ["-Wl,-U,${sym}"]
+        }
+      }
+    }
+  }
+  out
+}
+
 /// One link with the SDK root ("" the compiler's default): its output,
 /// whether it succeeded, and whether the local compile of the runtime
 /// failed. rti is the index of the runtime in srcs (-1 for none), shipped
@@ -120,6 +194,9 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
     }
   }
   args = args + srcs + tls_link + libs + sys_link_args(link_os(ctx), flags)
+  if link_os(ctx) == "darwin" {
+    args = args + weak_undefined_args(os, srcs0) + framework_args(os, srcs0)
+  }
   match os.proc.run(cc, args) {
     Ok(r) => {
       let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
@@ -280,7 +357,7 @@ fn io_flags(code: Str) -> List[Str] {
   // (bench/results/fast-builds-2026-10-13.md)
   let syms = code_syms(code)
   var out: List[Str] = []
-  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns", "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock", "xo_fs_raw_"] {
+  for sym in ["xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock", "xo_fs_raw_"] {
     // handles, copies, modes, links, locks (decision 0172)
     // the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
     if has_sym(syms, sym) {
@@ -288,7 +365,7 @@ fn io_flags(code: Str) -> List[Str] {
       break
     }
   }
-  for sym in ["xo_stdin_", "xo_tw_set_tty", "xo_isatty", "xo_term_width"] {
+  for sym in ["xo_stdin_"] {
     if has_sym(syms, sym) {
       out.push("-DXO_STDIN")
       break

@@ -102,8 +102,9 @@ static int64_t xo_mid_max = XO_MID_MAX;
 
 typedef void (*xo_drop_fn)(void *);
 
-// A free deferred by a real-time section (decision 0133, "Real-time
-// sections" below): what reached a count of zero and how to free it.
+// A free deferred by a real-time section (decision 0133,
+// std/native/llrt/rtsec.xo; the queue is obj.xo's rt_defer and rt_drain):
+// what reached a count of zero and how to free it.
 #define XO_RTQ 256
 typedef struct {
 	int kind; // RT_STR, RT_LIST, RT_DEFER, RT_HANDLE
@@ -147,8 +148,7 @@ typedef struct xo_heap {
 	void *defer_q;
 	int64_t defer_n, defer_cap;
 	int64_t defer_busy;
-	// xo_rl_free's element size and drop, from obj.xo rl_free_n_slow to
-	// rl_free_rt (a real-time section; rt.call_c2 passes two words)
+	// unused (they carried a real-time section's list free to the C)
 	int64_t pend_esize, pend_drop;
 	// the thread's scratch for the structures of system calls (timespec,
 	// statx, sigaction; obj.xo scratch, work item B02)
@@ -166,6 +166,7 @@ _Static_assert(offsetof(xo_heap, free_lists) == 80 && offsetof(xo_heap, nfree) =
 _Static_assert(offsetof(xo_heap, defer_q) == 1832 && offsetof(xo_heap, defer_n) == 1840 && offsetof(xo_heap, defer_cap) == 1848 && offsetof(xo_heap, defer_busy) == 1856, "obj.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, pend_esize) == 1864 && offsetof(xo_heap, pend_drop) == 1872 && offsetof(xo_heap, scratch) == 1880, "obj.xo's heap record offsets");
 _Static_assert(offsetof(xo_heap, next) == 2136, "heapos.xo's heap record offsets");
+_Static_assert(offsetof(xo_heap, rt_n) == 2144 && offsetof(xo_heap, rt_q) == 2152 && sizeof(xo_rtdef) == 32 && offsetof(xo_rtdef, obj) == 8 && offsetof(xo_rtdef, esize) == 16 && offsetof(xo_rtdef, fn) == 24, "obj.xo's RT_N, RT_Q");
 
 // The central lists: per class, a stack of magazines (free lists of
 // about central_batch(c) blocks) linked by their first block's second
@@ -211,7 +212,7 @@ static inline xo_heap *heap(void) {
 // thread that ran so far calls it before it starts another thread
 // (thread creation orders it before everything the new thread does).
 void xo_x_stdio_threads(void);
-void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t rl_free_rt, int64_t rc_defer_rt, int64_t libc, int64_t hsize);
+void xo_x_obj_heap_init(int64_t h, int64_t slow, int64_t libc, int64_t hsize);
 void xo_x_heap_live(int64_t lp, int64_t tp);
 int64_t xo_x_heap_nfree(int64_t c);
 
@@ -232,15 +233,7 @@ static int64_t hw_slow_c(int64_t a, int64_t b) {
 	return (int64_t)(intptr_t)heap_slow();
 }
 
-// rl_free_rt and rc_defer_rt are obj.xo's way back to the C in a
-// real-time section (its queue, rt_defer): rl_free_n_slow and
-// rc_defer_n call them through rt.call_c2.
-static int64_t rl_free_rt(int64_t l, int64_t h);
-static int64_t rc_defer_rt(int64_t obj, int64_t drop);
-
-static void obj_heap_init(xo_heap *h) {
-	xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, (int64_t)(intptr_t)&rl_free_rt, (int64_t)(intptr_t)&rc_defer_rt, heap_libc, (int64_t)sizeof(xo_heap));
-}
+static void obj_heap_init(xo_heap *h) { xo_x_obj_heap_init((int64_t)(intptr_t)h, (int64_t)(intptr_t)&hw_slow_c, heap_libc, (int64_t)sizeof(xo_heap)); }
 
 // The heap words of obj.xo (its *_n entries, which arm64 generated code
 // calls without a C level) are set before anything allocates: first in
@@ -250,8 +243,15 @@ static void obj_heap_init(xo_heap *h) {
 // (gotchas/runtime-c-no-constructors.md).
 #ifdef XO_RT_NO_MAIN
 static void fault_init(void);
+void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+#ifndef _WIN32
+extern char **environ;
+#endif
 __attribute__((constructor)) static void obj_heap_words(void) {
 	obj_heap_init(&main_heap);
+	// the environment for the runtime's settings (poolsetup.xo reads
+	// XO_THREADS)
+	xo_x_proc_start(0, 0, (int64_t)(intptr_t)environ);
 	fault_init();
 }
 #endif
@@ -276,7 +276,7 @@ void xo_rt_live(int64_t *live, int64_t *total) {
 }
 
 // The runtime's records from malloc (std/native rt.heap_large): the C
-// frees some of them with free (xo_testing.c, task_free), so these stay
+// frees some of them with free (tasks.xo task_free), so these stay
 // the C library's until the runtime has an allocator of its own for them.
 //
 // xo_heap_large returns a block of n bytes from malloc (the prefix is
@@ -427,8 +427,6 @@ void *xo_rc_alloc(int64_t n) { return xo_alloc(n); }
 // then takes alloc_mt's, free_mt's, and xo_resize's paths).
 int64_t xo_x_obj_rl_new(int64_t hw, int64_t cap, int64_t esize);
 void xo_x_obj_rl_share(int64_t l, int64_t esize, int64_t share);
-void xo_x_obj_rl_free(int64_t hw, int64_t l, int64_t esize, int64_t drop);
-void xo_x_obj_rc_defer(int64_t h, int64_t obj, int64_t drop);
 
 __attribute__((noinline)) static int64_t hw_slow(void) { return (int64_t)(intptr_t)heap_slow() | 1; }
 
@@ -440,18 +438,17 @@ static inline __attribute__((always_inline)) int64_t hw(void) {
 	return (int64_t)(intptr_t)h;
 }
 
-#define XO_HW_HEAP(w) ((xo_heap *)(intptr_t)((w) & ~(int64_t)1))
-
-// rt_defer queues a free in the calling thread's real-time section; it
-// returns 0 when no section runs or the queue is full (the caller frees
-// at once).
-static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn);
+// rt_defer queues a free in the calling thread's real-time section
+// (obj.xo rt_defer); it returns 0 when the queue is full (the caller
+// frees at once).
+int64_t xo_x_obj_rt_defer(int64_t h, int64_t kind, int64_t obj, int64_t esize, int64_t fn);
+static inline int rt_defer(xo_heap *h, int kind, void *obj) { return (int)xo_x_obj_rt_defer((int64_t)(intptr_t)h, kind, (int64_t)(intptr_t)obj, 0, 0); }
 
 enum { RT_STR = 1, RT_LIST, RT_DEFER, RT_HANDLE };
 
 void xo_rc_free(void *p) {
 	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p, 0, NULL)) {
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_STR, p)) {
 		return;
 	}
 	xo_free(p);
@@ -470,16 +467,6 @@ void xo_rc_free(void *p) {
 void xo_x_obj_rc_defer_n(int64_t obj, int64_t drop);
 
 void xo_rc_defer(void *obj, xo_drop_fn drop) { XO_INLINE_CALL xo_x_obj_rc_defer_n((int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop); }
-
-// rc_defer_c is xo_rc_defer in a real-time section (obj.xo rc_defer_n
-// through rc_defer_rt): the section's queue, else the worklist.
-static void rc_defer_c(void *obj, xo_drop_fn drop) {
-	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && !h->defer_busy && rt_defer(h, RT_DEFER, obj, 0, (void *)drop)) {
-		return;
-	}
-	XO_INLINE_CALL xo_x_obj_rc_defer((int64_t)(intptr_t)h, (int64_t)(intptr_t)obj, (int64_t)(intptr_t)drop);
-}
 
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058)
@@ -546,18 +533,19 @@ int xo_rc_claim(int64_t *p) { return rc_claim(p); }
 int xo_rc_mark(int64_t *p) { return rc_mark(p); }
 
 // ---------------------------------------------------------------------------
-// The test world (decision 0083, xo_testing.c): a test binary run with
-// XO_TEST set runs one test against fakes. tw.on switches the clock,
-// timers, standard streams, environment, network listeners, and random
-// numbers of this file to the test world; the rest of it is in
-// xo_testing.c (included at the end).
+// The test world (decision 0083): a test binary run with XO_TEST set runs
+// one test against fakes. tw.on switches the clock, timers, network
+// listeners, and file system of this file to the test world; the test
+// world itself is Xo (std/native/llrt/testworld.xo and twrun.xo, which
+// sets this record at start and moves the virtual clock), reached through
+// cabi_tw.xo's exports (xo_x_tw_*).
 
 static struct {
 	int on;
 	int64_t vnow;    // the virtual clock: wall time, ns (atomic)
 	// every context is blocked: advance the clock (atomic): 0, or 1 +
 	// the vepoch the deadlock check that found every context blocked
-	// read first; tw_kick moves the clock only while vepoch is still
+	// read first; twrun.xo kick moves the clock only while vepoch is still
 	// that one (gotchas/virtual-clock-double-kick.md)
 	int64_t vpending;
 	int64_t vepoch; // moves of the clock begun and ended, 2 per move (atomic, ev.mu)
@@ -580,6 +568,20 @@ static struct {
 // tw_is_fake reports whether the effect real (TW_REAL_*) is a fake here.
 static inline int tw_is_fake(int real) { return tw.on && !(tw.real & real); }
 
+// twrun.xo reads and writes tw through its address (rt.sched_rt 30) at
+// these offsets (its TW_*), and a listener's in memory record (an ML
+// record) through mem.
+_Static_assert(offsetof(__typeof__(tw), on) == 0 && offsetof(__typeof__(tw), vnow) == 8 && offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), in_main) == 32 && offsetof(__typeof__(tw), real) == 36 && offsetof(__typeof__(tw), virt) == 40,
+               "twrun.xo TW_*");
+
+// The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
+// the weak definitions keep other programs linking (they never reach
+// them: the C calls them only in the test world).
+#define TW_WEAK __attribute__((weak))
+TW_WEAK void xo_x_tw_start(void) {}
+TW_WEAK void xo_x_tw_end(void) {}
+TW_WEAK void xo_x_tw_kick(void) {}
+TW_WEAK void xo_x_tw_sleep(int64_t d) { (void)d; }
 
 // ---------------------------------------------------------------------------
 // Output: standard output's buffer is Xo (std/native/llrt/stdio.xo, the
@@ -602,10 +604,6 @@ void xo_x_flush_try(void);
 
 void xo_flush(void) { xo_x_flush(); }
 
-// flush_pending writes buffered output before the caller waits (decision
-// 0069; nothing when the buffer is empty).
-static void flush_pending(void) { xo_x_flush(); }
-
 // ---------------------------------------------------------------------------
 // C ABI exports (decisions 0204, 0207): functions of
 // std/native/llrt/cabi.xo that every native program carries, called here
@@ -614,17 +612,7 @@ static void flush_pending(void) { xo_x_flush(); }
 
 int64_t xo_x_fmt_int(int64_t buf, int64_t v);
 int64_t xo_x_fmt_float(int64_t buf, double f);
-int64_t xo_x_utf8_decode(int64_t p, int64_t n);
 int64_t xo_x_utf8_encode(int64_t p, int64_t r);
-int64_t xo_x_is_space(int64_t r);
-int64_t xo_x_parse_int(int64_t p, int64_t n, int64_t out);
-int64_t xo_x_fmt_duration(int64_t buf, int64_t d);
-int64_t xo_x_fmt_time(int64_t buf, int64_t t);
-int64_t xo_x_b64_val(int64_t c);
-int64_t xo_x_days_from_civil(int64_t y, int64_t m, int64_t d);
-int64_t xo_x_split_hostport(int64_t a, int64_t host, int64_t hn, int64_t port, int64_t pn);
-int64_t xo_x_port_out_of_range(int64_t p);
-int64_t xo_x_net_admits_addr(int64_t lp, int64_t ln, int64_t a, int64_t n);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
@@ -706,12 +694,15 @@ XO_NORETURN void xo_fault_float_int(double f, const char *loc) {
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
 // XO_RT_NO_MAIN's constructor).
-void xo_x_ctx_init(int64_t root, int64_t pl);
-static int64_t ctx_root(int64_t a, int64_t b);
+void xo_x_ctx_init(int64_t pl);
 static int64_t svc_addr(void);
+static void pd_svc_init(void);
+static void stop_svc_init(void);
 static void fault_init(void) {
 	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	xo_x_ctx_init(XO_ADDR(ctx_root), svc_addr());
+	xo_x_ctx_init(svc_addr());
+	pd_svc_init();
+	stop_svc_init();
 }
 
 // ---------------------------------------------------------------------------
@@ -866,34 +857,6 @@ __attribute__((noinline)) xo_rlist *xo_rl_grow(xo_rlist *l, int64_t esize) { ret
 // elements first (obj.xo rl_free_n); a real-time section defers it.
 void xo_rl_free(xo_rlist *l, int64_t esize, xo_elem_fn drop) { XO_INLINE_CALL xo_x_obj_rl_free_n(XO_A(l), esize, XO_A(drop)); }
 
-// rl_free_c is xo_rl_free in a real-time section (obj.xo rl_free_n
-// through rl_free_rt): the section's queue, else freed at once.
-static void rl_free_c(xo_rlist *l, int64_t esize, xo_elem_fn drop) {
-	int64_t w = hw();
-	xo_heap *h = XO_HW_HEAP(w);
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_LIST, l, esize, (void *)drop)) {
-		return;
-	}
-	if (!drop) {
-		// no elements to release: the free alone (obj.xo's loop would
-		// save its registers on this path too)
-		xo_free(l);
-		return;
-	}
-	xo_x_obj_rl_free(w, XO_A(l), esize, XO_A(drop));
-}
-
-static int64_t rl_free_rt(int64_t l, int64_t h) {
-	xo_heap *hp = (xo_heap *)(intptr_t)h;
-	rl_free_c((xo_rlist *)(intptr_t)l, hp->pend_esize, (xo_elem_fn)(intptr_t)hp->pend_drop);
-	return 0;
-}
-
-static int64_t rc_defer_rt(int64_t obj, int64_t drop) {
-	rc_defer_c((void *)(intptr_t)obj, (xo_drop_fn)(intptr_t)drop);
-	return 0;
-}
-
 // ---------------------------------------------------------------------------
 // Tasks (decision 0068): structured concurrency on threads
 //
@@ -952,7 +915,7 @@ typedef struct {
 // xo_h_free frees a handle whose count reached zero.
 void xo_h_free(void *p) {
 	xo_heap *h = heap();
-	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p, 0, NULL)) {
+	if (__builtin_expect(h->rt_depth != 0, 0) && rt_defer(h, RT_HANDLE, p)) {
 		return;
 	}
 	((xo_hdr *)p)->free(p);
@@ -974,18 +937,16 @@ static void h_release(void *p) {
 
 // The placeholders a canceled operation returns while it unwinds (never
 // written: their counts are immortal).
-static xo_hdr zero_handle = {XO_RC_IMMORTAL, NULL};
-static xo_rlist empty_list = {XO_RC_IMMORTAL, 0, 0};
+// Generated code takes their addresses directly (rt.rl_empty, rt.h_zero;
+// the generated-code entries' batch E3).
+xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
+xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
+#define zero_handle xo_zero_handle
+#define empty_list xo_empty_list
 
 void *xo_h_zero(void) { return &zero_handle; }
 
 xo_rlist *xo_rl_empty(void) { return &empty_list; }
-
-static void list_release(xo_rlist *l, xo_ldrop drop) {
-	if (l && l != &empty_list) {
-		drop(l);
-	}
-}
 
 static char *cstr_of(const char *p, int64_t n) {
 	char *s = malloc((size_t)n + 1);
@@ -1003,8 +964,9 @@ XO_NORETURN static void fault_at(const char *msg, const char *loc, int64_t n) { 
 // Parks, nodes, contexts
 
 // Runtime statistics (decision 0077): XO_RTSTATS=1 prints counts of the
-// scheduler's events to stderr at exit (and xo_rt_stats prints them on
-// demand). Each count is one relaxed atomic add, done only when enabled.
+// scheduler's events to stderr at exit (std/native/llrt/entry.xo
+// rt_stats prints them from st, in its order of names). Each count is one
+// relaxed atomic add, done only when enabled.
 static int rtstats = -1; // -1 not read yet
 static struct {
 	int64_t spawn, steal, inject, wake, idle_sleep, spin_round, fiber_park, fiber_new, thread_wait, thread_wake, lock_slow, spin_yield;
@@ -1020,14 +982,9 @@ static struct {
 	// (gotchas/linux-tsan-fiber-stacks.md)
 	int64_t fiber_live, fiber_peak;
 } st;
-static const char *const st_names[] = {"spawn", "steal", "inject", "wake", "idle_sleep", "spin_round", "fiber_park", "fiber_new", "thread_wait", "thread_wake", "lock_slow", "spin_yield",
-                                       "net_read", "net_write", "net_again", "poll_return", "poll_event", "poll_wake",
-                                       "rt_section", "rt_defer", "rt_overflow", "fiber_live", "fiber_peak"};
 
-static void stats_init(void) {
-	const char *e = getenv("XO_RTSTATS");
-	__atomic_store_n(&rtstats, e && *e && *e != '0', __ATOMIC_RELAXED);
-}
+// rtsec.xo and obj.xo count the real-time sections' events by index
+_Static_assert(offsetof(__typeof__(st), rt_section) == 18 * 8 && offsetof(__typeof__(st), rt_overflow) == 20 * 8, "rtsec.xo and obj.xo ST_RT_*");
 
 #define STAT(f)                                                                     \
 	do {                                                                            \
@@ -1036,103 +993,21 @@ static void stats_init(void) {
 		}                                                                           \
 	} while (0)
 
-void xo_rt_stats(void) {
-	if (__atomic_load_n(&rtstats, __ATOMIC_RELAXED) <= 0) {
-		return;
-	}
-	int64_t *v = (int64_t *)&st;
-	fputs("xo rtstats:", stderr);
-	for (size_t i = 0; i < sizeof st_names / sizeof st_names[0]; i++) {
-		fprintf(stderr, " %s=%lld", st_names[i], (long long)__atomic_load_n(&v[i], __ATOMIC_RELAXED));
-	}
-	fputc('\n', stderr);
-}
-
 // ---------------------------------------------------------------------------
-// Real-time sections (core 6.5, decision 0133)
-//
-// A call from code that is not real-time to a function declared `uses
-// realtime` is bracketed by xo_realtime_enter and xo_realtime_exit. While
-// the thread's depth is above zero, an object whose count reaches zero is
-// queued instead of freed (with what it holds: a list's elements, a
-// closure's captures), so the section does work bounded by its own code;
-// the outermost exit frees the queue. A full queue frees at once and
-// counts rt_overflow. An allocation inside a section is counted, and the
-// outermost exit faults with XO-F007 when there was one. A fault leaves
-// every section of the thread (a real-time function cannot catch it).
+// Real-time sections (core 6.5, decision 0133): std/native/llrt/rtsec.xo,
+// through cabi.xo's exports; these entries are generated code's.
 
-static int rt_defer(xo_heap *h, int kind, void *obj, int64_t esize, void *fn) {
-	if (h->rt_n == XO_RTQ) {
-		STAT(rt_overflow);
-		return 0;
-	}
-	xo_rtdef *e = &h->rt_q[h->rt_n++];
-	e->kind = kind;
-	e->obj = obj;
-	e->esize = esize;
-	e->fn = fn;
-	STAT(rt_defer);
-	return 1;
-}
+void xo_x_rt_enter(void);
+void xo_x_rt_exit(int64_t np, int64_t n, int64_t lp, int64_t ln);
+void xo_x_rt_fault_leave(void);
 
-// rt_drain frees what the section deferred; the depth is zero, so what
-// those frees release is freed at once.
-static void rt_drain(xo_heap *h) {
-	for (int64_t i = 0; i < h->rt_n; i++) {
-		xo_rtdef e = h->rt_q[i];
-		switch (e.kind) {
-		case RT_STR:
-			xo_free(e.obj);
-			break;
-		case RT_LIST:
-			xo_rl_free(e.obj, e.esize, (xo_elem_fn)e.fn);
-			break;
-		case RT_DEFER:
-			xo_rc_defer(e.obj, (xo_drop_fn)e.fn);
-			break;
-		case RT_HANDLE:
-			((xo_hdr *)e.obj)->free(e.obj);
-			break;
-		}
-	}
-	h->rt_n = 0;
-}
+void xo_realtime_enter(void) { xo_x_rt_enter(); }
 
-void xo_realtime_enter(void) {
-	xo_heap *h = heap();
-	if (h->rt_depth++ == 0) {
-		h->rt_allocs = 0;
-		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) < 0, 0)) {
-			stats_init();
-		}
-		STAT(rt_section);
-	}
-}
-
-void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) {
-	xo_heap *h = heap();
-	if (--h->rt_depth > 0) {
-		return;
-	}
-	rt_drain(h);
-	if (h->rt_allocs != 0) {
-		char m[256];
-		snprintf(m, sizeof m, "XO-F007: real-time function `%.*s` allocated %lld time%s", (int)(n < 128 ? n : 128), name, (long long)h->rt_allocs, h->rt_allocs == 1 ? "" : "s");
-		h->rt_allocs = 0;
-		fault_at(m, loc, ln);
-	}
-}
+void xo_realtime_exit(const char *name, int64_t n, const char *loc, int64_t ln) { xo_x_rt_exit(XO_ADDR(name), n, XO_ADDR(loc), ln); }
 
 // rt_fault_leave ends the thread's real-time sections when a fault
 // unwinds out of them.
-static void rt_fault_leave(void) {
-	xo_heap *h = heap();
-	if (h->rt_depth != 0) {
-		h->rt_depth = 0;
-		h->rt_allocs = 0;
-		rt_drain(h);
-	}
-}
+static void rt_fault_leave(void) { xo_x_rt_fault_leave(); }
 
 // Futexes (decision 0077): wait while a 32 bit word holds a value, and
 // wake the threads waiting on a word. Darwin has no public futex; its
@@ -1178,7 +1053,8 @@ static inline void unlk(xo_lock *l) {
 	}
 }
 
-// Deadlock detection (core 11.4, fault XO-F001), decision 0077: the
+// Deadlock detection (core 11.4, fault XO-F001), decision 0077 (pool.xo
+// dl_check, its counts in the pool record's P_DLK): the
 // program is deadlocked when nothing runs and nothing can wake anything:
 // every worker thread is idle and no queue holds an item, every root
 // context (a thread that runs Xo code outside tasks: the program's main)
@@ -1190,31 +1066,6 @@ static inline void unlk(xo_lock *l) {
 // signaled a root before it went idle is seen with the root awake. (The
 // counts used to be updated by every spawn and every task end, an atomic
 // that all workers contended for.)
-static struct {
-	int64_t roots;     // root contexts made (never fewer: decision 0068)
-	int64_t blocked;   // roots asleep in a counted wait
-	int64_t uncounted; // contexts in a wait a timer, the network, or a signal can end
-} dlk;
-
-XO_NORETURN static void deadlock(void);
-
-// mu_init initializes a pthread mutex of the runtime (the event loop's,
-// the network's, the HTTP server's). On Darwin the default policy hands
-// a contended mutex over in FIFO order through the kernel, which cost a
-// spawn heavy program four times its user time in system time; first
-// fit lets a running thread take it again
-// (gotchas/darwin-mutex-fairshare.md).
-static void mu_init(pthread_mutex_t *m) {
-#ifdef __APPLE__
-	pthread_mutexattr_t a;
-	pthread_mutexattr_init(&a);
-	pthread_mutexattr_setpolicy_np(&a, PTHREAD_MUTEX_POLICY_FIRSTFIT_NP);
-	pthread_mutex_init(m, &a);
-	pthread_mutexattr_destroy(&a);
-#else
-	pthread_mutex_init(m, NULL);
-#endif
-}
 
 // A park is where one context waits. signaled is also the futex word of
 // a thread (a root context) that sleeps on it; a fiber that waits parks
@@ -1223,7 +1074,7 @@ typedef struct {
 	xo_lock mu;
 	int64_t signaled; // written under mu, read atomically (the futex word: its low half)
 	int sleeping;     // a thread sleeps on signaled
-	int counted;      // a root asleep here counts in dlk.blocked
+	int counted;      // a root asleep here counts in the blocked roots (pool.xo DLK_BLOCKED)
 	// the fiber parked here (decision 0069): a signal makes it runnable
 	struct xo_fiber *fiber;
 } xo_park;
@@ -1249,10 +1100,6 @@ void __tsan_release(void *addr);
 #define TSAN_ACQUIRE(a) ((void)(a))
 #define TSAN_RELEASE(a) ((void)(a))
 #endif
-
-static void park_init(xo_park *p) { memset(p, 0, sizeof *p); }
-
-static void park_destroy(xo_park *p) { (void)p; }
 
 // The parks and the cancellation tree in Xo (decision 0212 stage 2):
 // std/native/llrt/pool.xo through cabi.xo, wrapped below the pool's
@@ -1295,6 +1142,18 @@ typedef struct xo_went {
 	int granted; // a Mutex reader the lock was handed to (atomic, mutex_grant_readers)
 } xo_went;
 
+// A channel's queue entry: a waiter's park in a channel's queue
+// (chan.xo E_*).
+typedef struct xo_cent {
+	xo_park *park;
+	int64_t *fired; // claimed by the first waker (atomic)
+	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
+	int shut;       // the channel closed while a send waited
+	// a select's arm: the waker stores idx in *chosen
+	int64_t idx, *chosen;
+	struct xo_cent *prev, *next;
+} xo_cent;
+
 // xo_ctx is a running context: the main program, or a task.
 typedef struct xo_ctx {
 	xo_node *node; // innermost: a scope body, or the task's node
@@ -1323,8 +1182,13 @@ typedef struct xo_ctx {
 	// here, not in fault_raise's frame: a cleanup that resumes the unwind
 	// (_Unwind_Resume) reads it after the raising frames are gone, and
 	// ThreadSanitizer gives every function such a cleanup (its
-	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md)
-	struct _Unwind_Exception fault_exc;
+	// __tsan_func_exit on unwind; gotchas/tsan-resumes-fault-unwind.md).
+	// The unwinder declares it 16 byte aligned, which a context from the
+	// Xo heap is not (tasks.xo run_claimed: a block is 8 mod 16, after
+	// its header), so this 8 aligned area holds it at its first 16
+	// byte aligned address (ctx_exc; a context never moves).
+	// gotchas/xo-heap-records-8-aligned.md
+	unsigned char fault_exc[sizeof(struct _Unwind_Exception) + 8];
 	// resource budgets (decision 0175): the budget the context works
 	// under (a reference) or NULL, the polls left before its next charge
 	// and the quantum they started from, and the stretch being charged:
@@ -1337,6 +1201,10 @@ typedef struct xo_ctx {
 	// the context's entry in the wait list it waits on (wl_wait_as,
 	// tasks.xo wl_wait: one at a time, decision 0212 stage 3)
 	xo_went went;
+	// the context's entry in the channel queue it waits on and the word
+	// its waker claims (chan.xo; one at a time)
+	xo_cent cent;
+	int64_t fired;
 } xo_ctx;
 
 // Thread locals are read and written only through these functions, which
@@ -1355,33 +1223,17 @@ extern __thread int64_t xo_tlocal[16];
 enum { XO_TLS_CUR = 0, XO_TLS_FIB = 1, XO_TLS_W = 2 };
 
 __attribute__((noinline)) static xo_ctx *cur_get(void) { return (xo_ctx *)(intptr_t)xo_tlocal[XO_TLS_CUR]; }
-__attribute__((noinline)) static void cur_set(xo_ctx *c) { xo_tlocal[XO_TLS_CUR] = XO_ADDR(c); }
-__attribute__((noinline)) static struct xo_fiber *fib_get(void) { return (struct xo_fiber *)(intptr_t)xo_tlocal[XO_TLS_FIB]; }
 
-static pthread_once_t rt_once = PTHREAD_ONCE_INIT;
-
-// rt_init gives the runtime's global mutexes their policy (mu_init)
-// before the first context uses them.
-static void rt_init(void);
-
-// ctx returns the current context, making a root for a thread that runs
-// Xo code outside any task (the program's main thread).
+// ctx returns the current context; a thread that runs Xo code outside
+// any task (the program's main thread) gets a root context from ctx.xo
+// root.
+int64_t xo_x_ctx_root(void);
 static xo_ctx *ctx(void) {
 	xo_ctx *c = cur_get();
 	if (__builtin_expect(c != NULL, 1)) {
 		return c;
 	}
-	pthread_once(&rt_once, rt_init);
-	c = calloc(1, sizeof(xo_ctx));
-	xo_node *root = calloc(1, sizeof(xo_node));
-	if (!c || !root) {
-		xo_oom();
-	}
-	c->node = root;
-	park_init(&c->park);
-	cur_set(c);
-	__atomic_fetch_add(&dlk.roots, 1, __ATOMIC_SEQ_CST);
-	return c;
+	return (xo_ctx *)(intptr_t)xo_x_ctx_root();
 }
 
 // The context record's layout, which ctx.xo's C_* name (decision 0229).
@@ -1389,19 +1241,21 @@ _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, unwinding) == 8 &
                    offsetof(xo_ctx, park) == 16 && offsetof(xo_ctx, held) == 48 && offsetof(xo_ctx, nheld) == 56 &&
                    offsetof(xo_ctx, capheld) == 60 && offsetof(xo_ctx, net_status) == 64 && offsetof(xo_ctx, net_msg) == 72 &&
                    offsetof(xo_ctx, faulting) == 80 && offsetof(xo_ctx, fault_msg) == 88 && offsetof(xo_ctx, fault_loc) == 96 &&
-                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 128,
+                   offsetof(xo_ctx, fault_detail) == 104 && offsetof(xo_ctx, boundary) == 112 && offsetof(xo_ctx, fault_exc) == 120,
                "ctx.xo C_*");
 _Static_assert(offsetof(xo_ctx, bud) == 160 && offsetof(xo_ctx, bud_left) == 168 && offsetof(xo_ctx, bud_q) == 176 &&
                    offsetof(xo_ctx, bud_run) == 184 && offsetof(xo_ctx, bud_amark) == 192 && offsetof(xo_ctx, bud_heap) == 200 &&
-                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && sizeof(xo_ctx) == 256 &&
+                   offsetof(xo_ctx, bud_paused) == 208 && offsetof(xo_ctx, went) == 216 && offsetof(xo_ctx, cent) == 248 && offsetof(xo_ctx, fired) == 312 && sizeof(xo_ctx) == 320 &&
                    sizeof(xo_went) == 32 && offsetof(xo_went, writer) == 24,
                "ctx.xo C_BUD_*");
 
-// ctx_root is ctx for ctx.xo cur (its address in rt.static_word 15).
-static int64_t ctx_root(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	return XO_ADDR(ctx());
+// tasks.xo allocates contexts from the Xo heap, 8 aligned
+// (gotchas/xo-heap-records-8-aligned.md).
+_Static_assert(_Alignof(xo_ctx) <= 8, "xo_ctx from the Xo heap");
+
+// ctx_exc is the fault's exception object in c's fault_exc area.
+static inline struct _Unwind_Exception *ctx_exc(xo_ctx *c) {
+	return (struct _Unwind_Exception *)(((uintptr_t)c->fault_exc + 15) & ~(uintptr_t)15);
 }
 
 // xo_unwinding is ctx.xo unwinding, which generated code calls directly
@@ -1488,9 +1342,9 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	// on every raise (unwind.xo win_raise)
 	CONTEXT cx;
 	RtlCaptureContext(&cx);
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
+	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
 #else
-	xo_x_unwind_fault(XO_ADDR(&c->fault_exc), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
+	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
 #endif
 	fault_exit(c);
 }
@@ -1525,7 +1379,7 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-	struct _Unwind_Exception *exc = &c->fault_exc;
+	struct _Unwind_Exception *exc = ctx_exc(c);
 	memset(exc, 0, sizeof *exc);
 	exc->exception_class = XO_EXC_CLASS;
 	exc->exception_cleanup = fault_cleanup;
@@ -1741,15 +1595,13 @@ static int64_t tnow(void) { return tw.virt ? __atomic_load_n(&tw.vnow, __ATOMIC_
 // budget (xo_budget_open) every context working in it charges: the
 // generated code of a program that calls with_budget polls (xo_tick) at
 // the start of every loop iteration and at the entry of every function
-// of the program's own modules. Every BUD_QUANTUM polls a context
+// of the program's own modules. Every 1024 polls (budget.xo QUANTUM) a context
 // charges its steps, its running time (monotonic time outside waits:
 // park_wait_n and a task run inline stop the stretch), and the bytes it
 // allocated (its thread's heap counts them, xo_heap.abytes) to its
 // budget and the budgets enclosing it; a passed ceiling cancels the
 // budget's scope, and the poll unwinds the context like a cancellation
 // point. A task started under a budget works under it (xo_task_spawn).
-
-#define BUD_QUANTUM 1024
 
 // The budget record; std/native/llrt/budget.xo reads and writes it
 // (decision 0229), the C only takes and drops references.
@@ -1773,18 +1625,6 @@ void xo_x_budget_tick(void);
 void xo_x_budget_open(int64_t s, int64_t cpu, int64_t alloc, int64_t steps, int64_t lp, int64_t ln);
 int64_t xo_x_budget_end(int64_t s);
 void xo_x_budget_retain(int64_t b);
-void xo_x_budget_release(int64_t b);
-void xo_x_budget_mark(int64_t c);
-void xo_x_budget_charge(int64_t c, int64_t check);
-void xo_x_budget_pause(int64_t c);
-void xo_x_budget_resume(int64_t c);
-
-static void bud_retain(xo_budget *b) { xo_x_budget_retain(XO_ADDR(b)); }
-static void bud_release(xo_budget *b) { xo_x_budget_release(XO_ADDR(b)); }
-static void bud_mark(xo_ctx *c) { xo_x_budget_mark(XO_ADDR(c)); }
-static void bud_charge(xo_ctx *c, int check) { xo_x_budget_charge(XO_ADDR(c), check); }
-static void bud_pause(xo_ctx *c) { xo_x_budget_pause(XO_ADDR(c)); }
-static void bud_resume(xo_ctx *c) { xo_x_budget_resume(XO_ADDR(c)); }
 
 // xo_tick is the budget poll of generated code (budget.xo tick, which
 // arm64 code calls directly).
@@ -1814,38 +1654,6 @@ static int canceled(xo_ctx *c) {
 		return 1;
 	}
 	return 0;
-}
-
-// held_check and held_del (the Mutexes a context holds, XO-F004) stay C
-// with the C Mutex code that calls them on every Mutex.with: a call into
-// Xo from there cost about 67 instructions per with on arm64 (B17,
-// bench/perf/ctx mutex 1.146); they move with the Mutexes (B19).
-static void held_check(xo_ctx *c, void *m, const char *what, const char *loc, int64_t n) {
-	for (int i = 0; i < c->nheld; i++) {
-		if (c->held[i].m == m) {
-			char *prev = cstr_of(c->held[i].loc, c->held[i].n);
-			char *msg = malloc(strlen(prev) + 128);
-			sprintf(msg, "XO-F004: Mutex.%s called re-entrantly in one task; the mutex is already held from %s", what, prev);
-			fault_at(msg, loc, n);
-		}
-	}
-	if (c->nheld == c->capheld) {
-		c->capheld = c->capheld ? c->capheld * 2 : 4;
-		c->held = realloc(c->held, (size_t)c->capheld * sizeof(xo_held));
-		if (!c->held) {
-			xo_oom();
-		}
-	}
-	c->held[c->nheld++] = (xo_held){m, loc, n};
-}
-
-static void held_del(xo_ctx *c, void *m) {
-	for (int i = 0; i < c->nheld; i++) {
-		if (c->held[i].m == m) {
-			c->held[i] = c->held[--c->nheld];
-			return;
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1885,7 +1693,6 @@ typedef struct {
 // x to the inject queue, are std/native/llrt/sched.xo and pool.xo
 // (decision 0212).
 
-#define XO_MAXW 4096
 #define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 #define STORE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
 #define XO_FCACHE 8
@@ -1921,71 +1728,21 @@ typedef struct xo_worker {
 	void *batch[XO_RUNQ / 2 + 1];
 } xo_worker;
 
-// The pool's record: words first, in the layout std/native/llrt/pool.xo
-// reads (decision 0212 stage 2, asserted below), the once last (its size
-// is the OS's).
-static struct {
-	xo_lock mu; // the idle list, starting workers
-	int64_t ncpu;
-	int64_t spin_rounds;
-	int64_t nw;       // records used (atomic)
-	int64_t alive;    // worker threads (atomic)
-	int64_t nidle;    // idle worker threads (atomic)
-	int64_t spinning; // spinning worker threads (atomic)
-	xo_worker *idle;  // the idle list (mu)
-	// the inject queue: items from threads without a record
-	xo_lock imu;
-	void **ibuf;
-	int64_t ihead, ilen, icap; // ilen read atomically to skip it
-	void *fibers;              // the fiber cache's record (pool.xo)
-	int64_t worker_main;       // where a worker thread starts (pool.xo)
-	void *dlk;                 // the deadlock counts (pool.xo's parks)
-	xo_worker *ws[XO_MAXW]; // records (worker and root), never freed
-	pthread_once_t once;
-} pool = {.once = PTHREAD_ONCE_INIT, .dlk = &dlk}; // a root waits before the pool starts
+// The pool's record is pool.xo's (new_record, made at start by ctx.xo
+// init, with its deadlock counts): the C reaches it through the services
+// record (pool_rec).
+static void *pool_rec(void);
 
-__attribute__((noinline)) static xo_worker *w_get(void) { return (xo_worker *)(intptr_t)xo_tlocal[XO_TLS_W]; }
-__attribute__((noinline)) static void w_set(xo_worker *w) { xo_tlocal[XO_TLS_W] = XO_ADDR(w); }
-
-static void rt_init(void) {}
-
-// fibers_setup reads the fiber stacks' settings (below).
-static void fibers_setup(void);
-
-static void pool_init(void) {
-	xo_rt_threads_begin();
-	stats_init();
-	long n = sysconf(_SC_NPROCESSORS_ONLN);
-	const char *e = getenv("XO_THREADS");
-	if (e && atoi(e) > 0) {
-		n = atoi(e);
-	}
-	if (n < 1) {
-		n = 1;
-	}
-	if (n > 256) {
-		n = 256;
-	}
-	pool.spin_rounds = 16;
-	e = getenv("XO_SPIN_ROUNDS"); // tuning (decision 0077)
-	if (e && atoi(e) >= 0) {
-		pool.spin_rounds = atoi(e);
-	}
-	fibers_setup();
-	__atomic_store_n(&pool.ncpu, (int64_t)n, __ATOMIC_RELEASE);
-}
+// The pool's setup (pool_init until B20) and the root threads' worker
+// records are poolsetup.xo's ready and root_worker (tasks.xo
+// park_wait_n calls it).
 
 // The worker pool in Xo (decision 0212 stage 2): std/native/llrt/pool.xo
 // through the C ABI exports of cabi.xo, over the records above (their
 // layout is asserted below). The C keeps the records, their setup, the
 // root threads' records, and the deadlock check; the Xo code calls back
 // for the services in xo_sched_rt.
-void xo_x_register_worker(int64_t p, int64_t w);
-int64_t xo_x_any_work(int64_t p);
 int64_t xo_x_worker_main(int64_t w);
-
-static void register_worker(xo_worker *w) { xo_x_register_worker(XO_ADDR(&pool), XO_ADDR(w)); }
-static int any_work(void) { return (int)xo_x_any_work(XO_ADDR(&pool)); }
 
 void xo_x_park_reset(int64_t p);
 int64_t xo_x_scope_add(int64_t pl, int64_t s, int64_t t, int64_t w);
@@ -1998,179 +1755,113 @@ void xo_x_node_cancel(int64_t pl, int64_t n);
 static void park_reset(xo_park *p) { xo_x_park_reset(XO_ADDR(p)); }
 static void park_signal(xo_park *p) {
 	TSAN_RELEASE(p);
-	xo_x_park_signal(XO_ADDR(&pool), XO_ADDR(p));
+	xo_x_park_signal(XO_ADDR(pool_rec()), XO_ADDR(p));
 }
 static void node_link(xo_node *n, xo_node *parent) { xo_x_node_link(XO_ADDR(n), XO_ADDR(parent)); }
 static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
-static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(&pool), XO_ADDR(n)); }
+static void node_cancel(xo_node *n) { xo_x_node_cancel(XO_ADDR(pool_rec()), XO_ADDR(n)); }
 
-static void task_free(void *p);
-static void scope_free(void *p);
+// the handles' free functions: cabi.xo's exports (tasks.xo, mutex.xo,
+// chan.xo, selects.xo; B18)
+void xo_x_task_free(int64_t p);
+void xo_x_scope_free(int64_t p);
+void xo_x_mutex_free(int64_t p);
+void xo_x_chan_free(int64_t p);
+void xo_x_select_free(int64_t p);
+void xo_x_atomic_free(int64_t p);
+void xo_x_fs_file_free(int64_t p);
+void xo_x_fs_lock_free(int64_t p);
+void xo_x_any_free(int64_t p);
+// std/http's handles (cabi_http.xo; weak in xo_http.c for the programs
+// without it, which never make one)
+void xo_x_srv_free(int64_t p);
+void xo_x_hc_free(int64_t p);
+void xo_x_sink_free(int64_t p);
+void xo_x_cresp_free(int64_t p);
+#define XO_FREE_FN(f) ((void (*)(void *))(void *)(f))
+// netconn.xo's (cabi_net.xo): weak, as the other network exports (see
+// XO_NX_REF below)
+#if defined(__APPLE__) || defined(_WIN32)
+#define XO_NC_REF
+#else
+#define XO_NC_REF __attribute__((weak))
+#endif
+XO_NC_REF void xo_x_nc_listener_free(int64_t l);
+XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 
-// The services record of ctx.xo (SV_*): the pool record (budget.xo and
-// tasks.xo reach pool.xo through it), the free functions of a task and a
+// The services record of ctx.xo (SV_*): the pool record (pool.xo's,
+// which ctx.xo init makes; budget.xo and tasks.xo reach pool.xo through
+// it), the free functions of a task and a
 // scope (tasks.xo makes them), whether ThreadSanitizer is on, and the
 // statistics' switch.
+#ifdef _WIN32
+int64_t xo_x_stdin_pump_main(int64_t rec);
+#endif
 static struct {
 	void *pool;
 	void (*task_free)(void *);
 	void (*scope_free)(void *);
 	int64_t tsan;
 	int *stats;
-} svc = {&pool, task_free, scope_free,
+	xo_lock once; // poolsetup.xo ready's lock
+	void (*mutex_free)(void *);
+	void (*chan_free)(void *);
+	void (*select_free)(void *);
+	void (*atomic_free)(void *);
+	void *fibers;
+	int64_t fiber_main, worker_main;
+	int64_t h2_pool[3]; // hclient.xo's idle HTTP/2 connections
+	void (*fs_file_free)(void *), (*fs_lock_free)(void *); // fsops.xo's handles
+	int64_t consts; // consts.xo's table
+	void (*any_free)(void *);
+	void (*srv_free)(void *);
+	void (*hc_free)(void *);
+	void (*sink_free)(void *);
+	void (*cresp_free)(void *);
+	int64_t streams[3]; // hserve.xo's table of streamed responses
+	void (*listener_free)(void *); // netconn.xo's handles' free functions (ctx.xo SV_LISTENER_FREE)
+	void (*conn_free)(void *);
+	int64_t dns[2]; // the resolver's state (dns.xo lookup)
+	int64_t stdin_pump; // stdin.xo's pump thread on Windows (cabi.xo stdin_pump_main)
+} svc = {NULL, XO_FREE_FN(xo_x_task_free), XO_FREE_FN(xo_x_scope_free),
 #ifdef XO_TSAN_ANN
 	1,
 #else
 	0,
 #endif
-	&rtstats};
+	&rtstats, {0}, XO_FREE_FN(xo_x_mutex_free), XO_FREE_FN(xo_x_chan_free), XO_FREE_FN(xo_x_select_free), XO_FREE_FN(xo_x_atomic_free), NULL, 0, 0, {0}, XO_FREE_FN(xo_x_fs_file_free), XO_FREE_FN(xo_x_fs_lock_free), 0,
+         XO_FREE_FN(xo_x_any_free), XO_FREE_FN(xo_x_srv_free), XO_FREE_FN(xo_x_hc_free), XO_FREE_FN(xo_x_sink_free), XO_FREE_FN(xo_x_cresp_free), {0},
+	XO_FREE_FN(xo_x_nc_listener_free), XO_FREE_FN(xo_x_nc_conn_free), {0}, 0};
 
 _Static_assert(offsetof(__typeof__(svc), task_free) == 8 && offsetof(__typeof__(svc), scope_free) == 16 && offsetof(__typeof__(svc), tsan) == 24 &&
-                   offsetof(__typeof__(svc), stats) == 32,
+                   offsetof(__typeof__(svc), stats) == 32 && offsetof(__typeof__(svc), once) == 40 && offsetof(__typeof__(svc), mutex_free) == 48 && offsetof(__typeof__(svc), chan_free) == 56 && offsetof(__typeof__(svc), select_free) == 64 && offsetof(__typeof__(svc), atomic_free) == 72 && offsetof(__typeof__(svc), fibers) == 80 && offsetof(__typeof__(svc), worker_main) == 96 && offsetof(__typeof__(svc), h2_pool) == 104 && offsetof(__typeof__(svc), fs_file_free) == 128 && offsetof(__typeof__(svc), fs_lock_free) == 136 && offsetof(__typeof__(svc), consts) == 144 &&
+                   offsetof(__typeof__(svc), any_free) == 152 && offsetof(__typeof__(svc), cresp_free) == 184 && offsetof(__typeof__(svc), streams) == 192 &&
+                   offsetof(__typeof__(svc), listener_free) == 216 && offsetof(__typeof__(svc), conn_free) == 224 && offsetof(__typeof__(svc), dns) == 232 && offsetof(__typeof__(svc), stdin_pump) == 248,
                "ctx.xo SV_*");
 
-static int64_t svc_addr(void) { return XO_ADDR(&svc); }
+static void *pool_rec(void) { return svc.pool; }
 
-XO_NORETURN static void deadlock(void) {
-	xo_flush();
-	static const char m[] = "fault: XO-F001: deadlock: every task is blocked\n";
-	write_all(2, m, sizeof m - 1);
-	exit(70);
-}
+// The deadlock check is pool.xo dl_check; the test world's clock move
+// (twrun.xo kick) checks again after it.
+void xo_x_dl_check(int64_t p);
+XO_NORETURN void xo_x_deadlock(void);
 
-// dl_check_locked faults when the program is deadlocked (pool.mu held;
-// see dlk).
-static void dl_check_locked(void) {
-	// read before the counts: a move of the clock in progress or ended
-	// since then makes this check's verdict stale (tw_kick_once)
-	int64_t epoch = __atomic_load_n(&tw.vepoch, __ATOMIC_SEQ_CST);
-	int64_t roots = __atomic_load_n(&dlk.roots, __ATOMIC_SEQ_CST);
-	if (roots > 0 && __atomic_load_n(&dlk.blocked, __ATOMIC_SEQ_CST) == roots && LOAD(pool.nidle) == LOAD(pool.alive) &&
-	    __atomic_load_n(&dlk.uncounted, __ATOMIC_SEQ_CST) == 0 && !any_work()) {
-		if (tw.virt) {
-			// the test world's clock jumps to the next timer
-			// (tw_kick, after pool.mu is released), or it deadlocked
-			__atomic_store_n(&tw.vpending, epoch + 1, __ATOMIC_SEQ_CST);
-			return;
-		}
-		deadlock();
-	}
-}
-
-static void tw_kick(void);
-
-static void tsan_worker(xo_worker *w);
 static void sched_hooks(xo_worker *w);
 
-// root_worker returns the record of the calling root thread, made on
-// first use: its spawns go to its deque, and while it waits it runs work
-// (decision 0077).
-static xo_worker *root_worker(void) {
-	xo_worker *w = w_get();
-	if (w) {
-		return w;
-	}
-	pthread_once(&pool.once, pool_init);
-	w = calloc(1, sizeof(xo_worker));
-	if (!w) {
-		xo_oom();
-	}
-	w->live = 1;
-	w->root = 1;
-	tsan_worker(w);
-	sched_hooks(w);
-	lk(&pool.mu);
-	register_worker(w);
-	unlk(&pool.mu);
-	w_set(w);
-	return w;
-}
-
 // park_wait_n blocks the current context until its park is signaled or,
-// when cancelable, its node is canceled. A task on a fiber parks: its
-// worker runs other work meanwhile (decision 0069). A root thread runs
-// queued work while it waits, and sleeps only when it finds none
-// (decision 0077). counted tells that the wait counts as blocked for
-// deadlock detection; a wait that a timer, the network, or a signal can
-// end does not.
-void xo_x_park_wait(int64_t pl, int64_t c, int64_t cancelable, int64_t counted, int64_t f, int64_t rw);
-
-// wait_where finds the fiber the current context runs on, or the record
-// of its root thread when that helps while it waits (a root helps once
-// the pool exists: a program that only sleeps stays single threaded).
-static void wait_where(int64_t *f, int64_t *rw) {
-	*f = XO_ADDR(fib_get());
-	*rw = *f || !__atomic_load_n(&pool.ncpu, __ATOMIC_ACQUIRE) ? 0 : XO_ADDR(root_worker());
-}
-
-static void park_wait_n(xo_ctx *c, int cancelable, int counted) {
-	flush_pending();
-	bud_pause(c); // waiting is not running time (decision 0175)
-	int64_t f, rw;
-	wait_where(&f, &rw);
-	// in the test world nothing outside the program ends a wait
-	xo_x_park_wait(XO_ADDR(&pool), XO_ADDR(c), cancelable, counted || tw.virt, f, rw);
-	TSAN_ACQUIRE(&c->park);
-	bud_resume(c);
-}
-
-static void park_wait(xo_ctx *c, int cancelable) { park_wait_n(c, cancelable, 1); }
+// when cancelable, its node is canceled (tasks.xo park_wait_n): a task on
+// a fiber parks, a root thread runs queued work while it waits. counted
+// tells that the wait counts as blocked for deadlock detection; a wait
+// that a timer, the network, or a signal can end does not.
+void xo_x_park_wait_n(int64_t c, int64_t cancelable, int64_t counted);
+static void park_wait_n(xo_ctx *c, int cancelable, int counted) { xo_x_park_wait_n(XO_ADDR(c), cancelable, counted); }
 
 // A wait list: the parks of the contexts waiting on an object, signaled
-// all at once when its state changes (they check again). The entry
+// all at once when its state changes (tasks.xo wl_*). The entry
 // (xo_went, above) is the waiting context's own (xo_ctx.went).
-
 typedef struct {
 	xo_went *first, *last;
 } xo_wl;
-
-// wl_add adds e at the end of l (the oldest waiter is first).
-static void wl_add(xo_wl *l, xo_went *e) {
-	e->next = NULL;
-	e->prev = l->last;
-	if (l->last) {
-		l->last->next = e;
-	} else {
-		l->first = e;
-	}
-	l->last = e;
-}
-
-static void wl_del(xo_wl *l, xo_went *e) {
-	if (e->prev) {
-		e->prev->next = e->next;
-	} else {
-		l->first = e->next;
-	}
-	if (e->next) {
-		e->next->prev = e->prev;
-	} else {
-		l->last = e->prev;
-	}
-}
-
-static void wl_wake(xo_wl *l) {
-	for (xo_went *e = l->first; e; e = e->next) {
-		park_signal(e->park);
-	}
-}
-
-// wl_wait_as waits on list l of an object whose lock mu is held; mu is
-// held again on return. It reports 0 when the context was canceled.
-// writer marks a Mutex waiter that wants the lock exclusively.
-static int wl_wait_as(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable, int writer) {
-	xo_went *e = &c->went;
-	*e = (xo_went){.park = &c->park, .writer = writer};
-	park_reset(&c->park);
-	wl_add(l, e);
-	unlk(mu);
-	park_wait(c, cancelable);
-	lk(mu);
-	wl_del(l, e);
-	return !(cancelable && ctx_canceled(c));
-}
-
-static int wl_wait(xo_ctx *c, xo_lock *mu, xo_wl *l, int cancelable) { return wl_wait_as(c, mu, l, cancelable, 0); }
 
 // ---------------------------------------------------------------------------
 // Scopes and tasks
@@ -2207,8 +1898,6 @@ typedef struct xo_scope {
 	struct xo_budget *bud;
 } xo_scope;
 
-static void timer_del(struct xo_timer *t);
-
 typedef void (*xo_run_fn)(xo_rlist *, struct xo_task *);
 
 typedef struct xo_task {
@@ -2239,24 +1928,6 @@ typedef struct xo_task {
 
 enum { T_QUEUED, T_RUNNING, T_DONE };
 
-static void scope_free(void *p) {
-	xo_scope *s = p;
-	bud_release(s->bud);
-	if (s->fail) {
-		h_release(s->fail);
-	}
-	if (s->fault) {
-		h_release(s->fault);
-	}
-	free(s->tasks);
-	for (int i = 0; i < s->nold; i++) {
-		free(s->old[i]);
-	}
-	free(s->old);
-	xo_free(s);
-}
-
-
 // xo_scope_group is `s.group()` (tasks.xo scope_group).
 int64_t xo_x_scope_group(int64_t s);
 xo_scope *xo_scope_group(xo_scope *s) { return (xo_scope *)(intptr_t)xo_x_scope_group(XO_ADDR(s)); }
@@ -2279,112 +1950,22 @@ void xo_scope_cancel(xo_scope *s) { xo_x_scope_cancel(XO_ADDR(s)); }
 _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
                "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
 
-static void task_free(void *p) {
-	xo_task *t = p;
-	bud_release(t->bud);
-	if (t->result) {
-		list_release(t->result, t->drop);
-	}
-	if (t->fault_msg) {
-		// large blocks of fault.xo (the address after the prefix)
-		free(t->fault_msg);
-		free(t->fault_loc);
-		free(t->fault_detail);
-	}
-	xo_free(t);
-}
-
-// scope_units_done records that one of s's tasks ended or one of its
-// queue entries was taken (units 2), or both (4); the last one wakes the
-// joiner if it waits. It is
-// the caller's last touch of s (decision 0077: the counts were under the
-// scope's mutex, which every worker took twice per task).
 // The task states in Xo (decision 0212, std/native/llrt/sched.xo).
-int64_t xo_x_scope_units_done(int64_t s, int64_t units);
-int64_t xo_x_task_claim(int64_t t);
-int64_t xo_x_task_dequeued(int64_t t, int64_t s);
 
-static void scope_units_done(xo_scope *s, int64_t units) {
-	if (xo_x_scope_units_done(XO_ADDR(s), units)) {
-		// the joiner waits for this signal, so s is still there
-		park_signal(s->joiner);
-	}
-}
-
-static int claim_task(xo_task *t) { return (int)xo_x_task_claim(XO_ADDR(t)); }
+void xo_x_run_claimed(int64_t t, int64_t units);
 
 // run_claimed runs t, which the caller claimed, on this stack (a fiber,
-// or a thread that helps).
-static void run_claimed(xo_task *t, int64_t units) {
-	xo_ctx c = {.node = &t->node};
-	park_init(&c.park);
-	// the entry function catches a fault in the task; the unwinding never
-	// goes past this frame (decision 0085)
-	c.boundary = (uintptr_t)__builtin_frame_address(0);
-	xo_ctx *saved = cur_get();
-	// a task started under a budget works under it (decision 0175); the
-	// context it runs inline on does not run meanwhile
-	bud_pause(saved);
-	c.bud = t->bud;
-	t->bud = NULL;
-	if (c.bud) {
-		c.bud_q = c.bud_left = BUD_QUANTUM;
-		bud_mark(&c);
-	}
-	cur_set(&c);
-	xo_rlist *fl = t->fl;
-	t->fl = NULL;
-	h_retain(t); // the entry function's own reference
+// or a thread that helps): tasks.xo run_claimed (B18), which calls
+// run_entry for the entry function itself.
+static void run_claimed(xo_task *t, int64_t units) { xo_x_run_claimed(XO_ADDR(t), units); }
+
+// run_entry calls t's entry function on the current context (tasks.xo
+// run_claimed made it): the entry function catches a fault in the task,
+// and the unwinding never goes past this frame (decision 0085).
+__attribute__((noinline)) static void run_entry(xo_task *t, xo_rlist *fl) {
+	cur_get()->boundary = (uintptr_t)__builtin_frame_address(0);
 	t->run(fl, t);
-	if (c.bud) {
-		bud_charge(&c, 0);
-		bud_release(c.bud);
-	}
-	cur_set(saved);
-	bud_resume(saved);
-	park_destroy(&c.park);
-	free(c.held);
-	free(c.net_msg);
-	fault_clear(&c);
-	xo_scope *s = t->scope;
-	lk(&t->mu);
-	__atomic_store_n(&t->state, T_DONE, __ATOMIC_RELEASE);
-	wl_wake(&t->waiters);
-	unlk(&t->mu);
-	// the last touch of t: a spawn may prune it after (scope_prune)
-	__atomic_fetch_add(&t->gone, (int)(units / 2), __ATOMIC_RELEASE);
-	// the last touch of s: the scope's join may free it after
-	scope_units_done(s, units);
 }
-
-// run_task runs t on this thread if nobody has started it.
-static void run_task(xo_task *t) {
-	if (claim_task(t)) {
-		run_claimed(t, 2); // its queue entry is still queued
-	}
-}
-
-// dequeued records that a worker took t's queue entry (and ran it, or
-// found it run by a helper). The scope's join waits for this too, so no
-// queue holds a task the scope frees.
-static void dequeued(xo_task *t) {
-	xo_scope *s = t->scope;
-	if (xo_x_task_dequeued(XO_ADDR(t), XO_ADDR(s))) {
-		park_signal(s->joiner);
-	}
-}
-
-// scope_prune takes the tasks that are over and that only s's list
-// holds out of the list (s->mu held) and returns them, linked by snext,
-// for scope_drop_pruned. A scope that lives long and starts many tasks
-// whose handles are dropped (a server's connections, decision 0118) kept
-// every one, with its result, until it closed: about 1 KB per connection.
-// A task is over when its run ended and its queue entry was taken
-// (gone == 2: nothing touches it after either); with a count of one
-// (shared: -1) nobody else has it, and nobody can get it again. The
-// close never prunes (its helpers walk the list without the lock), and a
-// spawn prunes only when the list doubled since the last time.
-
 
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
@@ -2438,17 +2019,6 @@ typedef struct xo_fiber {
 #define XO_TSAN 1
 #endif
 
-#ifdef XO_TSAN
-void *__tsan_get_current_fiber(void);
-void *__tsan_create_fiber(unsigned flags);
-void __tsan_destroy_fiber(void *fiber);
-void __tsan_switch_to_fiber(void *fiber, unsigned flags);
-static void tsan_worker(xo_worker *w) { w->tsan = __tsan_get_current_fiber(); }
-#define TSAN_SWITCH(x) __tsan_switch_to_fiber((x), 0)
-#else
-static void tsan_worker(xo_worker *w) { (void)w; }
-#define TSAN_SWITCH(x) ((void)(x))
-#endif
 
 // AddressSanitizer must know which stack runs (its fiber API): a fault
 // unwinds with __asan_handle_no_return, which unpoisons the current stack
@@ -2462,15 +2032,6 @@ static void tsan_worker(xo_worker *w) { (void)w; }
 #define XO_ASAN 1
 #endif
 
-#ifdef XO_ASAN
-void __sanitizer_start_switch_fiber(void **fake_stack_save, const void *bottom, size_t size);
-void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_old, size_t *size_old);
-#define ASAN_START(save, bottom, size) __sanitizer_start_switch_fiber((save), (bottom), (size))
-#define ASAN_FINISH(save, bottom, size) __sanitizer_finish_switch_fiber((save), (bottom), (size))
-#else
-#define ASAN_START(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
-#define ASAN_FINISH(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
-#endif
 
 #if defined(__has_attribute)
 #if __has_attribute(disable_sanitizer_instrumentation)
@@ -2481,22 +2042,11 @@ void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_
 #define XO_NO_SANITIZE
 #endif
 
-// sched_hooks tells whether the fibers w runs call xo_sched_hook around
-// their switches (decision 0212): in sanitizer builds, and with the
-// statistics on (XO_RTSTATS).
-static void sched_hooks(xo_worker *w) {
-#if defined(XO_TSAN) || defined(XO_ASAN)
-	w->hooks = 1;
-#else
-	w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0;
-#endif
-}
-
-#ifdef MAP_NORESERVE
-#define XO_MAP_NORESERVE MAP_NORESERVE
-#else
-#define XO_MAP_NORESERVE 0
-#endif
+// sched_hooks tells whether the fibers w runs call the hooks around
+// their switches (decision 0212): with the statistics on (XO_RTSTATS);
+// std/native/llrt/sanhook.xo worker_start sets the word in a sanitizer
+// build (decision 0232).
+static void sched_hooks(xo_worker *w) { w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0; }
 
 #define XO_FIBER_CACHE 64
 
@@ -2514,43 +2064,18 @@ static struct {
 	int64_t main;  // where a fiber starts (pool.xo: xo_x_fiber_main)
 } fibers;
 
-static void fibers_init(void) {
-	// 64 MiB reserved, like the worker threads before fibers (deep
-	// recursion in a task behaves the same); XO_TASK_STACK_MB overrides
-	size_t mb = 64;
-#if defined(XO_TSAN) && defined(__linux__)
-	// ThreadSanitizer on Linux confines the program's mmaps to its
-	// application ranges (the rest is shadow, reserved PROT_NONE): 31.8
-	// GiB on arm64 with 48 bit addresses (508 stacks of 64 MiB, clang 15,
-	// 2026-10-13), which ThreadSanitizer's own mappings share. 64 MiB
-	// stacks ran out after about 880 fibers (2026-10-12); 8 MiB ones
-	// after 2988 to 3150 (23.3 to 24.6 GiB), and conc_stress run four
-	// times at once (TestGoldenThreads) had up to 5378 fibers under load
-	// and can park 8000 (2026-10-13, gotcha linux-tsan-fiber-stacks).
-	// 2 MiB stacks hold its bound of 8352 fibers on 32 CPUs in 16.3 GiB.
-	mb = 2;
-#endif
-	const char *e = getenv("XO_TASK_STACK_MB");
-	if (e && atoi(e) > 0) {
-		mb = (size_t)atoi(e);
-	}
-	fibers.stack = (int64_t)(mb << 20);
-}
-
-// The fiber code in Xo (decision 0212): std/native/llrt/sched.xo through
-// the C ABI exports of cabi.xo. xo_x_fiber_main is where a new fiber
-// starts (xo_fiber_entry, the emitted start, calls it with the fiber).
+// The fiber stacks' settings are poolsetup.xo's fibers_setup (B20),
+// through the services record (the fiber cache's record and the entry
+// points, set here at start).
 void xo_x_fiber_main(int64_t f);
-
-// fibers_setup reads the stacks' settings when the pool starts (before
-// the first fiber), and gives the Xo pool the
-// records and the addresses where fibers and worker threads start.
-static void fibers_setup(void) {
-	fibers_init();
-	fibers.page = (int64_t)sysconf(_SC_PAGESIZE);
-	fibers.main = XO_ADDR(xo_x_fiber_main);
-	pool.fibers = &fibers;
-	pool.worker_main = XO_ADDR(xo_x_worker_main);
+static int64_t svc_addr(void) {
+	svc.fibers = &fibers;
+	svc.fiber_main = XO_ADDR(xo_x_fiber_main);
+	svc.worker_main = XO_ADDR(xo_x_worker_main);
+#ifdef _WIN32
+	svc.stdin_pump = XO_ADDR(xo_x_stdin_pump_main);
+#endif
+	return XO_ADDR(&svc);
 }
 
 // fiber_counted counts a fiber stack mapped (d 1) or unmapped (-1), and
@@ -2578,44 +2103,49 @@ XO_NORETURN static void fiber_map_failed(int en) {
 	xo_oom();
 }
 
-// The hooks the Xo fiber code calls around its switches when the
-// worker's hooks word is set (sched_hooks): the sanitizers' fiber calls
-// and the statistics. kind (sched.xo HOOK_*): 0 a fiber starts (on its
-// stack), 1 it ends, 2 it parks, 3 it was resumed after parking, 4 a
-// worker switches to it, 5 the worker is back. Not instrumented by the
-// sanitizers: its __tsan_switch_to_fiber changes ThreadSanitizer's
-// shadow stack, so an instrumented function's exit here would pop the
-// other fiber's entry (gotchas/tsan-fiber-switch-in-callee.md); the
-// callers' entries and exits pair up.
-XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) {
-	xo_worker *w = (xo_worker *)(intptr_t)wa;
-	xo_fiber *f = (xo_fiber *)(intptr_t)fa;
-	(void)w, (void)f;
-	switch (kind) {
-	case 0:
-		ASAN_FINISH(NULL, &w->asan_bottom, &w->asan_size);
-		break;
-	case 1:
-		TSAN_SWITCH(w->tsan);
-		ASAN_START(NULL, w->asan_bottom, w->asan_size); // for good
-		break;
-	case 2:
-		STAT(fiber_park);
-		TSAN_SWITCH(w->tsan);
-		ASAN_START(&f->asan_fake, w->asan_bottom, w->asan_size);
-		break;
-	case 3:
-		ASAN_FINISH(f->asan_fake, &w->asan_bottom, &w->asan_size);
-		break;
-	case 4:
-		TSAN_SWITCH(f->tsan);
-		ASAN_START(&w->asan_fake, f->mem + (f->size - fibers.stack), fibers.stack);
-		break;
-	case 5:
-		ASAN_FINISH(w->asan_fake, NULL, NULL);
-		break;
-	}
+// The hooks around a fiber switch are std/native/llrt/sanhook.xo's hook
+// (decision 0232), the export xo_x_sched_hook that generated code calls
+// for rt.sched_hook. Seed shim: xo_sched_hook forwards for code from an
+// xo older than decision 0232; delete it with the first seed that has
+// the decision. Not instrumented: a sanitizer's fiber switch in an
+// instrumented callee pops the other fiber's entry
+// (gotchas/tsan-fiber-switch-in-callee.md).
+void xo_x_sched_hook(int64_t kind, int64_t wa, int64_t fa);
+XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) { xo_x_sched_hook(kind, wa, fa); }
+
+// Seed shims (decision 0232): an xo older than the decision compiles a
+// call of std/native/sys_c.xo's f, and rt.sym_present, as the C function
+// xo_<f>. These define them for its build of xo (the scheduler's
+// sanhook.xo is in every program), which is never a sanitizer build: the
+// weak sanitizer calls are never reached there. Delete them with the
+// first seed that has the decision.
+int64_t xo_sym_present(const char *p, int64_t n) { (void)p, (void)n; return 0; }
+int64_t xo_weak___tsan_get_current_fiber(void) { return 0; }
+int64_t xo_weak___tsan_create_fiber(int64_t f) { (void)f; return 0; }
+void xo_weak___tsan_destroy_fiber(int64_t f) { (void)f; }
+void xo_weak___tsan_switch_to_fiber(int64_t f, int64_t fl) { (void)f, (void)fl; }
+void xo_weak___tsan_acquire(int64_t a) { (void)a; }
+void xo_weak___tsan_release(int64_t a) { (void)a; }
+void xo_weak___sanitizer_start_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
+void xo_weak___sanitizer_finish_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
+int64_t xo_pthread_attr_init(int64_t a) { return pthread_attr_init((pthread_attr_t *)(intptr_t)a); }
+int64_t xo_pthread_attr_setstacksize(int64_t a, int64_t n) { return pthread_attr_setstacksize((pthread_attr_t *)(intptr_t)a, (size_t)n); }
+int64_t xo_pthread_attr_setdetachstate(int64_t a, int64_t s) { return pthread_attr_setdetachstate((pthread_attr_t *)(intptr_t)a, (int)s); }
+int64_t xo_pthread_attr_destroy(int64_t a) { return pthread_attr_destroy((pthread_attr_t *)(intptr_t)a); }
+int64_t xo_pthread_create(int64_t t, int64_t a, int64_t f, int64_t arg) {
+	return pthread_create((pthread_t *)(intptr_t)t, (pthread_attr_t *)(intptr_t)a, (void *(*)(void *))(intptr_t)f, (void *)(intptr_t)arg);
 }
+#ifndef _WIN32
+int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { return XO_ADDR(mmap((void *)(intptr_t)a, (size_t)n, (int)p, (int)fl, (int)fd, (off_t)o)); }
+int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { return mprotect((void *)(intptr_t)a, (size_t)n, (int)p); }
+int64_t xo_munmap(int64_t a, int64_t n) { return munmap((void *)(intptr_t)a, (size_t)n); }
+int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
+#else
+int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { (void)a, (void)n, (void)p, (void)fl, (void)fd, (void)o; return -1; }
+int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { (void)a, (void)n, (void)p; return -1; }
+int64_t xo_munmap(int64_t a, int64_t n) { (void)a, (void)n; return -1; }
+int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
+#endif
 
 // xo_sched_run_task runs the task of the fiber that just started (Xo's
 // fiber_main): it came from a queue, so its entry and its run end here.
@@ -2627,6 +2157,7 @@ void xo_sched_run_task(int64_t fa) {
 
 // xo_sched_rt is the C runtime's services for std/native/llrt/pool.xo
 // (rt.sched_rt, decision 0212 stage 2): op is pool.xo's RT_*.
+
 int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	switch (op) {
 	case 0: // a statistic: st's counter a
@@ -2634,96 +2165,43 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 			__atomic_fetch_add(&((int64_t *)&st)[a], 1, __ATOMIC_RELAXED);
 		}
 		return 0;
-	case 1: // a worker went idle (pool.mu held)
-		dl_check_locked();
+	case 2: // the virtual clock's move (twrun.xo kick)
+		if (tw.virt) {
+			xo_x_tw_kick();
+		}
 		return 0;
-	case 2:
-		tw_kick();
-		return 0;
-	case 4: { // fiber a got a new stack
-		xo_fiber *f = (xo_fiber *)(intptr_t)a;
-		(void)f;
+	case 4: // fiber a got a new stack (its ThreadSanitizer fiber: sanhook.xo)
 		fiber_counted(1);
-#ifdef XO_TSAN
-		f->tsan = __tsan_create_fiber(0);
-#endif
 		return 0;
-	}
-	case 5: { // fiber a's stack is unmapped
-		xo_fiber *f = (xo_fiber *)(intptr_t)a;
-		(void)f;
-#ifdef XO_TSAN
-		__tsan_destroy_fiber(f->tsan);
-#endif
+	case 5: // fiber a's stack is unmapped
 		fiber_counted(-1);
 		return 0;
-	}
 	case 6:
 		fiber_map_failed((int)a);
-	case 7: { // worker thread a starts
-		xo_worker *w = (xo_worker *)(intptr_t)a;
-		tsan_worker(w);
-		sched_hooks(w);
+	case 7: // worker thread a starts (the sanitizers' part: sanhook.xo)
+		sched_hooks((xo_worker *)(intptr_t)a);
 		return 0;
-	}
-	case 8: { // a thread running the C function a with b (the C library's)
-		pthread_attr_t attr;
-		pthread_attr_init(&attr);
-		pthread_attr_setstacksize(&attr, (size_t)64 << 20);
-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-		pthread_t th;
-		int ok = pthread_create(&th, &attr, (void *(*)(void *))(intptr_t)a, (void *)(intptr_t)b) == 0;
-		pthread_attr_destroy(&attr);
-		return ok;
-	}
 	case 9:
 		xo_oom();
-	case 10: // a worker took the queue entry of task a, which a helper ran
-		dequeued((xo_task *)(intptr_t)a);
-		return 0;
-#ifndef _WIN32
-	case 11: { // a fiber stack of a bytes, a guard page of b, from the C library's mmap
-		void *m = mmap(NULL, (size_t)a, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
-		if (m == MAP_FAILED) {
-			fiber_map_failed(errno);
-		}
-		mprotect(m, (size_t)b, PROT_NONE);
-		return XO_ADDR(m);
-	}
-	case 12:
-		munmap((void *)(intptr_t)a, (size_t)b);
-		return 0;
-#endif
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
 		return 0;
-	case 17: // context a waits on its park (cancelable: b; tasks.xo wl_wait)
-		park_wait((xo_ctx *)(intptr_t)a, (int)b);
+	case 30: // the test world's record (pool.xo TW_*)
+		return XO_ADDR(&tw);
+	case 31: // the program is deadlocked (pool.xo dl_check)
+		xo_x_deadlock();
+	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
+		run_entry((xo_task *)(intptr_t)a, (xo_rlist *)(intptr_t)b);
 		return 0;
 	case 18: // the list a canceled operation returns
 		return XO_ADDR(&empty_list);
 	case 19: // drop a reference to handle a (h_release)
 		h_release((void *)(intptr_t)a);
 		return 0;
-	case 20: // the pool's setup, once (tasks.xo's first spawn)
-		pthread_once(&pool.once, pool_init);
+	case 20: // the runtime switches to several threads (pool.xo's setup)
+		xo_rt_threads_begin();
 		return 0;
-	case 21: // the calling root thread's worker record, made on first use
-		return XO_ADDR(root_worker());
-	case 22:
-		TSAN_RELEASE((void *)(intptr_t)a);
-		return 0;
-	case 23:
-		TSAN_ACQUIRE((void *)(intptr_t)a);
-		return 0;
-	case 24: { // scope a closes: its deadline's timer goes
-		xo_scope *s = (xo_scope *)(intptr_t)a;
-		timer_del(s->deadline);
-		free(s->deadline);
-		s->deadline = NULL;
-		return 0;
-	}
 	case 25: // free handle a, whose last reference went (tasks.xo h_release)
 		xo_h_free((void *)(intptr_t)a);
 		return 0;
@@ -2752,19 +2230,12 @@ _Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, mu) == 104 
                    offsetof(xo_scope, closed) == 400 && offsetof(xo_scope, nlist) == 432 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448,
                "pool.xo S_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
-_Static_assert(offsetof(__typeof__(dlk), blocked) == 8 && offsetof(__typeof__(dlk), uncounted) == 16 && offsetof(__typeof__(pool), dlk) == 120, "pool.xo DLK_*");
+_Static_assert(offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), virt) == 40, "pool.xo TW_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
                    offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
                    offsetof(xo_worker, fcache) == 2264 && offsetof(xo_worker, nfcache) == 2328 && offsetof(xo_worker, pool) == 2360 &&
                    offsetof(xo_worker, batch) == 2368 && sizeof(xo_worker) == 3400,
                "pool.xo W_*");
-_Static_assert(offsetof(__typeof__(pool), mu) == 0 && offsetof(__typeof__(pool), ncpu) == 8 && offsetof(__typeof__(pool), spin_rounds) == 16 &&
-                   offsetof(__typeof__(pool), nw) == 24 && offsetof(__typeof__(pool), alive) == 32 && offsetof(__typeof__(pool), nidle) == 40 &&
-                   offsetof(__typeof__(pool), spinning) == 48 && offsetof(__typeof__(pool), idle) == 56 && offsetof(__typeof__(pool), imu) == 64 &&
-                   offsetof(__typeof__(pool), ibuf) == 72 && offsetof(__typeof__(pool), ihead) == 80 && offsetof(__typeof__(pool), ilen) == 88 &&
-                   offsetof(__typeof__(pool), icap) == 96 && offsetof(__typeof__(pool), fibers) == 104 && offsetof(__typeof__(pool), worker_main) == 112 &&
-                   offsetof(__typeof__(pool), ws) == 128 && XO_MAXW == 4096,
-               "pool.xo P_*");
 _Static_assert(offsetof(__typeof__(fibers), mu) == 0 && offsetof(__typeof__(fibers), list) == 8 && offsetof(__typeof__(fibers), n) == 16 &&
                    offsetof(__typeof__(fibers), stack) == 24 && offsetof(__typeof__(fibers), page) == 32 && offsetof(__typeof__(fibers), main) == 40,
                "pool.xo FS_*");
@@ -2792,9 +2263,9 @@ _Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && 
                    sizeof(xo_task) == 216 && offsetof(xo_hdr, free) == 8,
                "tasks.xo T_*, H_FREE");
 _Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list) == 384 && offsetof(xo_scope, closed) == 400 &&
-                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
-                   sizeof(xo_scope) == 464 && offsetof(__typeof__(pool), ncpu) == 8,
-               "tasks.xo S_*, P_NCPU");
+                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, timed_out) == 416 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
+                   sizeof(xo_scope) == 464,
+               "tasks.xo S_*; poll.xo SC_*");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
 // (B18), which generated code calls through its exports; these forward
@@ -2832,67 +2303,15 @@ _Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 11
                "tasks.xo T_*");
 _Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 && offsetof(xo_scope, fault) == 424, "tasks.xo S_*");
 
-
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)
 
-typedef struct xo_cent {
-	xo_park *park;
-	int64_t *fired; // claimed by the first waker (atomic)
-	xo_rlist *item; // a send's value, or what a receive got (NULL: closed)
-	int shut;       // the channel closed while a send waited
-	// a select's arm: the waker stores idx in *chosen
-	int64_t idx, *chosen;
-	struct xo_cent *prev, *next;
-} xo_cent;
+// The queue entry (xo_cent) is above, with xo_ctx: a waiting context's
+// is its own (xo_ctx.cent), a select's arms' the select's.
 
 typedef struct {
 	xo_cent *head, *tail;
 } xo_cq;
-
-static void cq_push(xo_cq *q, xo_cent *e) {
-	e->next = NULL;
-	e->prev = q->tail;
-	if (q->tail) {
-		q->tail->next = e;
-	} else {
-		q->head = e;
-	}
-	q->tail = e;
-}
-
-static void cq_del(xo_cq *q, xo_cent *e) {
-	if (e->prev) {
-		e->prev->next = e->next;
-	} else if (q->head == e) {
-		q->head = e->next;
-	} else {
-		return; // not queued
-	}
-	if (e->next) {
-		e->next->prev = e->prev;
-	} else {
-		q->tail = e->prev;
-	}
-	e->prev = e->next = NULL;
-}
-
-static int claim(int64_t *fired) {
-	int64_t z = 0;
-	return __atomic_compare_exchange_n(fired, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-}
-
-// cq_take pops the first waiter nobody has claimed, claiming it.
-static xo_cent *cq_take(xo_cq *q) {
-	while (q->head) {
-		xo_cent *e = q->head;
-		cq_del(q, e);
-		if (claim(e->fired)) {
-			return e;
-		}
-	}
-	return NULL;
-}
 
 typedef struct {
 	xo_hdr h;
@@ -2907,229 +2326,38 @@ typedef struct {
 	xo_cq recvq, sendq;
 } xo_chan;
 
-static void chan_free(void *p) {
-	xo_chan *c = p;
-	for (int64_t i = 0; i < c->len; i++) {
-		list_release(c->buf[(c->head + i) % c->cap], c->drop);
-	}
-	free(c->buf);
-	xo_free(c);
-}
+// The channel operations are chan.xo's (B19), which generated code calls
+// through its exports; these forward for older xo's code. chan_free stays
+// C (the free function the handle names).
+int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
+void xo_x_chan_send(int64_t c, int64_t l, int64_t lp, int64_t ln);
+int64_t xo_x_chan_recv(int64_t c);
+int64_t xo_x_chan_try_send(int64_t c, int64_t l);
+int64_t xo_x_chan_try_recv(int64_t c);
+void xo_x_chan_close(int64_t c);
+int64_t xo_x_chan_len(int64_t c);
 
-xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) {
-	if (cap < 0) {
-		char m[96];
-		snprintf(m, sizeof m, "negative channel capacity %lld", (long long)cap);
-		fault_at(m, loc, n);
-	}
-	xo_chan *c = xo_alloc(sizeof(xo_chan));
-	memset(c, 0, sizeof *c);
-	h_init(c, chan_free);
-	c->cap = cap;
-	c->drop = (xo_ldrop)drop;
-	if (cap > 0) {
-		c->buf = malloc((size_t)cap * sizeof(xo_rlist *));
-		if (!c->buf) {
-			xo_oom();
-		}
-	}
-	return c;
-}
+xo_chan *xo_chan_new(int64_t cap, int64_t drop, const char *loc, int64_t n) { return (xo_chan *)(intptr_t)xo_x_chan_new(cap, drop, XO_ADDR(loc), n); }
 
-// hand wakes the waiter of e, which a waker claimed and gave its value
-// (c->mu held).
-static void hand(xo_cent *e) {
-	if (e->chosen) {
-		__atomic_store_n(e->chosen, e->idx, __ATOMIC_RELEASE);
-	}
-	park_signal(e->park);
-}
+void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) { xo_x_chan_send(XO_ADDR(c), XO_ADDR(l), XO_ADDR(loc), n); }
 
-// try_send_locked sends l without blocking (c->mu held, c open).
-static int try_send_locked(xo_chan *c, xo_rlist *l) {
-	xo_cent *r = cq_take(&c->recvq);
-	if (r) {
-		r->item = l;
-		hand(r);
-		return 1;
-	}
-	if (c->len < c->cap) {
-		c->buf[(c->head + c->len) % c->cap] = l;
-		c->len++;
-		return 1;
-	}
-	return 0;
-}
+xo_rlist *xo_chan_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_recv(XO_ADDR(c)); }
 
-// try_recv_locked receives without blocking (c->mu held): 1 with *out
-// set (NULL: closed and drained), or 0 when it would block.
-static int try_recv_locked(xo_chan *c, xo_rlist **out) {
-	if (c->len > 0) {
-		*out = c->buf[c->head];
-		c->head = (c->head + 1) % c->cap;
-		c->len--;
-		xo_cent *s = cq_take(&c->sendq);
-		if (s) {
-			c->buf[(c->head + c->len) % c->cap] = s->item;
-			c->len++;
-			hand(s);
-		}
-		return 1;
-	}
-	xo_cent *s = cq_take(&c->sendq);
-	if (s) {
-		*out = s->item;
-		hand(s);
-		return 1;
-	}
-	if (c->closed) {
-		*out = NULL;
-		return 1;
-	}
-	return 0;
-}
+int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) { return xo_x_chan_try_send(XO_ADDR(c), XO_ADDR(l)); }
 
-// xo_chan_send is `ch.send(x)` with x in a list of one (consumed): blocks
-// while the channel is full, a cancellation point that unwinds; sending
-// on a closed channel faults.
-void xo_chan_send(xo_chan *c, xo_rlist *l, const char *loc, int64_t n) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		list_release(l, c->drop);
-		return;
-	}
-	lk(&c->mu);
-	if (c->closed) {
-		unlk(&c->mu);
-		list_release(l, c->drop); // the fault unwinds the sender (decision 0085)
-		fault_at("send on a closed channel", loc, n);
-	}
-	if (try_send_locked(c, l)) {
-		unlk(&c->mu);
-		return;
-	}
-	int64_t fired = 0;
-	xo_cent e = {.park = &x->park, .fired = &fired, .item = l};
-	park_reset(&x->park);
-	cq_push(&c->sendq, &e);
-	unlk(&c->mu);
-	for (;;) {
-		park_wait_n(x, 1, !c->ext);
-		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
-			break;
-		}
-		if (ctx_canceled(x)) {
-			lk(&c->mu);
-			if (claim(&fired)) {
-				cq_del(&c->sendq, &e);
-				unlk(&c->mu);
-				list_release(l, c->drop);
-				x->unwinding = 1;
-				return;
-			}
-			unlk(&c->mu);
-			break; // taken meanwhile: sent
-		}
-	}
-	lk(&c->mu); // the waker's writes
-	int shut = e.shut;
-	unlk(&c->mu);
-	if (shut) {
-		list_release(l, c->drop);
-		fault_at("send on a closed channel", loc, n);
-	}
-}
+xo_rlist *xo_chan_try_recv(xo_chan *c) { return (xo_rlist *)(intptr_t)xo_x_chan_try_recv(XO_ADDR(c)); }
 
-// xo_chan_recv is `ch.recv()`: the value in a list of one, or the empty
-// list when the channel is closed and drained (and while unwinding); a
-// cancellation point that unwinds.
-xo_rlist *xo_chan_recv(xo_chan *c) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		return &empty_list;
-	}
-	xo_rlist *out;
-	lk(&c->mu);
-	if (try_recv_locked(c, &out)) {
-		unlk(&c->mu);
-		return out ? out : &empty_list;
-	}
-	int64_t fired = 0;
-	xo_cent e = {.park = &x->park, .fired = &fired};
-	park_reset(&x->park);
-	cq_push(&c->recvq, &e);
-	unlk(&c->mu);
-	for (;;) {
-		park_wait_n(x, 1, !c->ext);
-		if (__atomic_load_n(&fired, __ATOMIC_ACQUIRE)) {
-			break;
-		}
-		if (ctx_canceled(x)) {
-			lk(&c->mu);
-			if (claim(&fired)) {
-				cq_del(&c->recvq, &e);
-				unlk(&c->mu);
-				x->unwinding = 1;
-				return &empty_list;
-			}
-			unlk(&c->mu);
-			break; // a value came meanwhile: it wins
-		}
-	}
-	lk(&c->mu);
-	out = e.item;
-	unlk(&c->mu);
-	return out ? out : &empty_list;
-}
+void xo_chan_close(xo_chan *c) { xo_x_chan_close(XO_ADDR(c)); }
 
-// xo_chan_try_send is `ch.try_send(x)`: false (and x released) when the
-// channel is full or closed.
-int64_t xo_chan_try_send(xo_chan *c, xo_rlist *l) {
-	lk(&c->mu);
-	int ok = !c->closed && try_send_locked(c, l);
-	unlk(&c->mu);
-	if (!ok) {
-		list_release(l, c->drop);
-	}
-	return ok;
-}
+int64_t xo_chan_len(xo_chan *c) { return xo_x_chan_len(XO_ADDR(c)); }
 
-// xo_chan_try_recv is `ch.try_recv()`: never blocks.
-xo_rlist *xo_chan_try_recv(xo_chan *c) {
-	xo_rlist *out = NULL;
-	lk(&c->mu);
-	if (!try_recv_locked(c, &out)) {
-		out = NULL;
-	}
-	unlk(&c->mu);
-	return out ? out : &empty_list;
-}
-
-// xo_chan_close is `ch.close()`: waiting receivers get None, waiting
-// senders fault. Closing twice has no effect.
-void xo_chan_close(xo_chan *c) {
-	lk(&c->mu);
-	if (!c->closed) {
-		c->closed = 1;
-		xo_cent *e;
-		while ((e = cq_take(&c->recvq))) {
-			e->item = NULL;
-			hand(e);
-		}
-		while ((e = cq_take(&c->sendq))) {
-			e->shut = 1;
-			hand(e);
-		}
-	}
-	unlk(&c->mu);
-}
-
-int64_t xo_chan_len(xo_chan *c) {
-	lk(&c->mu);
-	int64_t n = c->len;
-	unlk(&c->mu);
-	return n;
-}
+_Static_assert(offsetof(xo_cent, fired) == 8 && offsetof(xo_cent, item) == 16 && offsetof(xo_cent, shut) == 24 && offsetof(xo_cent, idx) == 32 &&
+                   offsetof(xo_cent, chosen) == 40 && offsetof(xo_cent, prev) == 48 && offsetof(xo_cent, next) == 56 && sizeof(xo_cent) == 64,
+               "chan.xo E_*");
+_Static_assert(offsetof(xo_chan, mu) == 16 && offsetof(xo_chan, cap) == 24 && offsetof(xo_chan, head) == 32 && offsetof(xo_chan, len) == 40 &&
+                   offsetof(xo_chan, buf) == 48 && offsetof(xo_chan, closed) == 56 && offsetof(xo_chan, ext) == 60 && offsetof(xo_chan, drop) == 64 &&
+                   offsetof(xo_chan, recvq) == 72 && offsetof(xo_chan, sendq) == 88 && sizeof(xo_chan) == 104,
+               "chan.xo CH_*");
 
 // select (core 7.3): arms are added in source order, then
 // xo_select_wait performs the first arm that can proceed, or waits for
@@ -3157,179 +2385,31 @@ typedef struct {
 	xo_park *park;
 } xo_select;
 
-struct xo_timer;
-static void select_timer(xo_select *s, struct xo_timer **tp);
-static void select_untimer(struct xo_timer *t);
+// The select's operations are selects.xo's (B19), which generated code
+// calls through its exports; these forward for older xo's code.
+// select_free stays C (the free function the handle names); the `after`
+// arm's timer is poll.xo's (FN_SELECT).
+int64_t xo_x_select_new(void);
+void xo_x_select_recv(int64_t s, int64_t c);
+void xo_x_select_send(int64_t s, int64_t c, int64_t l);
+int64_t xo_x_select_wait(int64_t s, int64_t lp, int64_t ln);
+int64_t xo_x_select_take(int64_t s, int64_t i);
 
-static void select_free(void *p) {
-	xo_select *s = p;
-	for (int i = 0; i < s->n; i++) {
-		list_release(s->arms[i].item, s->arms[i].ch->drop);
-		h_release(s->arms[i].ch);
-	}
-	free(s->arms);
-	xo_free(s);
-}
+xo_select *xo_select_new(void) { return (xo_select *)(intptr_t)xo_x_select_new(); }
 
-xo_select *xo_select_new(void) {
-	xo_select *s = xo_alloc(sizeof(xo_select));
-	memset(s, 0, sizeof *s);
-	h_init(s, select_free);
-	return s;
-}
+void xo_select_recv(xo_select *s, xo_chan *c) { xo_x_select_recv(XO_ADDR(s), XO_ADDR(c)); }
 
-static void select_arm(xo_select *s, xo_chan *c, int send, xo_rlist *l) {
-	if (s->n == s->cap) {
-		s->cap = s->cap ? s->cap * 2 : 4;
-		s->arms = realloc(s->arms, (size_t)s->cap * sizeof(xo_sarm));
-		if (!s->arms) {
-			xo_oom();
-		}
-	}
-	h_retain(c);
-	s->arms[s->n++] = (xo_sarm){.ch = c, .send = send, .item = l};
-}
+void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { xo_x_select_send(XO_ADDR(s), XO_ADDR(c), XO_ADDR(l)); }
 
-// xo_select_recv adds an arm `v = ch.recv()`.
-void xo_select_recv(xo_select *s, xo_chan *c) { select_arm(s, c, 0, NULL); }
+int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) { return xo_x_select_wait(XO_ADDR(s), XO_ADDR(loc), n); }
 
-// xo_select_send adds an arm `ch.send(x)`, x in a list of one (consumed).
-void xo_select_send(xo_select *s, xo_chan *c, xo_rlist *l) { select_arm(s, c, 1, l); }
+xo_rlist *xo_select_take(xo_select *s, int64_t i) { return (xo_rlist *)(intptr_t)xo_x_select_take(XO_ADDR(s), i); }
 
-static int chan_addr_cmp(const void *a, const void *b) {
-	uintptr_t x = (uintptr_t)*(xo_chan *const *)a, y = (uintptr_t)*(xo_chan *const *)b;
-	return x < y ? -1 : x > y;
-}
-
-// xo_select_wait returns the index of the arm that proceeded (-1 while
-// unwinding); a send arm on a closed channel faults.
-int64_t xo_select_wait(xo_select *s, const char *loc, int64_t n) {
-	xo_ctx *x = ctx();
-	if (canceled(x)) {
-		return -1;
-	}
-	xo_chan **cs = malloc((size_t)(s->n ? s->n : 1) * sizeof(xo_chan *));
-	if (!cs) {
-		xo_oom();
-	}
-	int nc = 0;
-	for (int i = 0; i < s->n; i++) {
-		cs[nc++] = s->arms[i].ch;
-	}
-	qsort(cs, (size_t)nc, sizeof(xo_chan *), chan_addr_cmp);
-	int u = 0;
-	for (int i = 0; i < nc; i++) {
-		if (u == 0 || cs[u - 1] != cs[i]) {
-			cs[u++] = cs[i];
-		}
-	}
-	nc = u;
-	s->fired = 0;
-	s->chosen = -1;
-	park_reset(&x->park);
-	for (int i = 0; i < nc; i++) {
-		lk(&cs[i]->mu);
-	}
-	int done = -1, shut = 0;
-	for (int i = 0; i < s->n && done < 0; i++) {
-		xo_sarm *a = &s->arms[i];
-		xo_chan *c = a->ch;
-		if (a->send) {
-			if (c->closed) {
-				shut = 1;
-				done = i;
-			} else if (try_send_locked(c, a->item)) {
-				a->item = NULL;
-				done = i;
-			}
-		} else {
-			xo_rlist *out;
-			if (try_recv_locked(c, &out)) {
-				a->item = out;
-				done = i;
-			}
-		}
-	}
-	if (done < 0 && s->has_after && s->after <= 0) {
-		done = -2;
-	}
-	int queued = done < 0;
-	int counted = !s->has_after;
-	if (queued) {
-		for (int i = 0; i < s->n; i++) {
-			counted = counted && !s->arms[i].ch->ext;
-			xo_sarm *a = &s->arms[i];
-			a->e = (xo_cent){.park = &x->park, .fired = &s->fired, .item = a->item, .idx = i, .chosen = &s->chosen};
-			cq_push(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
-		}
-	}
-	for (int i = nc - 1; i >= 0; i--) {
-		unlk(&cs[i]->mu);
-	}
-	int unwound = 0;
-	if (queued) {
-		struct xo_timer *tm = NULL;
-		if (s->has_after) {
-			s->park = &x->park;
-			select_timer(s, &tm);
-		}
-		for (;;) {
-			park_wait_n(x, 1, counted);
-			if (__atomic_load_n(&s->fired, __ATOMIC_ACQUIRE)) {
-				break;
-			}
-			if (ctx_canceled(x)) {
-				if (claim(&s->fired)) {
-					unwound = 1;
-				}
-				break;
-			}
-		}
-		if (tm) {
-			select_untimer(tm);
-		}
-		// take the arms off every queue; the waker's writes are visible
-		// under the channel locks
-		for (int i = 0; i < nc; i++) {
-			lk(&cs[i]->mu);
-		}
-		for (int i = 0; i < s->n; i++) {
-			xo_sarm *a = &s->arms[i];
-			cq_del(a->send ? &a->ch->sendq : &a->ch->recvq, &a->e);
-		}
-		if (!unwound && (done = (int)__atomic_load_n(&s->chosen, __ATOMIC_ACQUIRE)) >= 0) {
-			xo_sarm *a = &s->arms[done];
-			if (a->send) {
-				shut = a->e.shut;
-				if (!shut) {
-					a->item = NULL; // the receiver has it
-				}
-			} else {
-				a->item = a->e.item;
-			}
-		}
-		for (int i = nc - 1; i >= 0; i--) {
-			unlk(&cs[i]->mu);
-		}
-	}
-	free(cs);
-	if (unwound) {
-		x->unwinding = 1;
-		return -1;
-	}
-	if (shut) {
-		fault_at("send on a closed channel", loc, n);
-	}
-	return done;
-}
-
-// xo_select_take returns what receive arm i got: the value in a list of
-// one, or the empty list when its channel was closed and drained.
-xo_rlist *xo_select_take(xo_select *s, int64_t i) {
-	xo_rlist *l = s->arms[i].item;
-	s->arms[i].item = NULL;
-	return l ? l : &empty_list;
-}
+_Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && offsetof(xo_sarm, e) == 24 && sizeof(xo_sarm) == 88 &&
+                   offsetof(xo_select, arms) == 16 && offsetof(xo_select, n) == 24 && offsetof(xo_select, cap) == 28 &&
+                   offsetof(xo_select, fired) == 32 && offsetof(xo_select, chosen) == 40 && offsetof(xo_select, has_after) == 48 &&
+                   offsetof(xo_select, after) == 56 && offsetof(xo_select, park) == 64 && sizeof(xo_select) == 72,
+               "selects.xo A_*, SE_*; poll.xo SEL_*");
 
 // ---------------------------------------------------------------------------
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
@@ -3345,188 +2425,31 @@ typedef struct {
 	xo_wl waiters;
 } xo_mutex;
 
-// mutex_wake wakes the waiters that can take m now (m->mu held). Phase
-// fair, as Go's RWMutex: after a writer's release the readers waiting
-// then get the lock together (handed over: mutex_grant_readers), and the
-// next writer waits for them; after the last reader's release (or when
-// no reader waits) the oldest waiting writer is woken. Waking every
-// waiter at each release made 32 contending request tasks park about 12
-// times per request and convoy on m->mu
-// (bench/results/perf-throughput-2026-10-08.md, "Native backends");
-// waking readers that then checked again parked them again whenever a
-// writer had queued meanwhile, 3.6 parks per access with 64 tasks
-// (bench/results/native-runtime-2026-10-10.md, decision 0118). A woken
-// writer checks again and waits again when another writer took m first
-// (barging); whoever holds m wakes the next one when it releases, so no
-// wake up is lost.
-// mutex_signal wakes a waiter of a Mutex into the waking thread's ring,
-// not its next: the waker still holds the thread for the rest of its
-// request, and a fiber in next waits for that (thieves leave next alone
-// for XO_NEXT_GRACE_NS) while the lock sits free; in the ring a spinning
-// worker takes it at once. Measured on bench/perf/http: p99 900 to 800
-// us (bench/results/perf-throughput-2026-10-08.md, "Native backends").
-static void mutex_signal(xo_park *p) {
-	xo_worker *w = w_get();
-	if (w) {
-		w->nonext = 1;
-	}
-	park_signal(p);
-	if (w) {
-		w->nonext = 0;
-	}
-}
+// The Mutex's operations are mutex.xo's (B19), which generated code calls
+// through its exports; these forward for older xo's code. mutex_free
+// stays C (the free function the handle names, through the services
+// record).
+int64_t xo_x_mutex_new(int64_t l, int64_t drop);
+int64_t xo_x_mutex_lock(int64_t m, int64_t lp, int64_t ln);
+void xo_x_mutex_unlock(int64_t m, int64_t l);
+int64_t xo_x_mutex_rlock(int64_t m, int64_t lp, int64_t ln);
+void xo_x_mutex_runlock(int64_t m, int64_t l);
 
-// mutex_grant_readers hands m to every waiting reader (m->mu held, no
-// writer holds m): each is counted in m->readers, taken off the list, and
-// marked granted before it is woken, so it runs without taking m->mu or
-// checking again. Its list entry lives on its stack: nothing here
-// touches it after the wake up.
-static void mutex_grant_readers(xo_mutex *m) {
-	xo_went *e = m->waiters.first;
-	while (e) {
-		xo_went *next = e->next;
-		if (!e->writer) {
-			xo_park *p = e->park;
-			wl_del(&m->waiters, e);
-			m->readers++;
-			m->rwait--;
-			__atomic_store_n(&e->granted, 1, __ATOMIC_RELEASE);
-			mutex_signal(p);
-		}
-		e = next;
-	}
-}
+xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) { return (xo_mutex *)(intptr_t)xo_x_mutex_new(XO_ADDR(l), drop); }
 
-// after_writer: a writer just released m (readers go first).
-static void mutex_wake(xo_mutex *m, int after_writer) {
-	if (m->writer || !m->waiters.first) {
-		return;
-	}
-	if (m->rwait > 0 && (after_writer || m->wwait == 0)) {
-		mutex_grant_readers(m);
-		return;
-	}
-	if (m->wwait > 0 && m->readers == 0) {
-		for (xo_went *e = m->waiters.first; e; e = e->next) {
-			if (e->writer) {
-				mutex_signal(e->park);
-				return;
-			}
-		}
-	}
-}
+xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_lock(XO_ADDR(m), XO_ADDR(loc), n); }
 
-static void mutex_free(void *p) {
-	xo_mutex *m = p;
-	list_release(m->slot, m->drop);
-	xo_free(m);
-}
+void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_unlock(XO_ADDR(m), XO_ADDR(l)); }
 
-xo_mutex *xo_mutex_new(xo_rlist *l, int64_t drop) {
-	xo_mutex *m = xo_alloc(sizeof(xo_mutex));
-	memset(m, 0, sizeof *m);
-	h_init(m, mutex_free);
-	m->slot = l;
-	m->drop = (xo_ldrop)drop;
-	return m;
-}
+xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) { return (xo_rlist *)(intptr_t)xo_x_mutex_rlock(XO_ADDR(m), XO_ADDR(loc), n); }
 
-// xo_mutex_lock takes m exclusively for `with` (waiting is a
-// cancellation point that unwinds) and moves its value out to the
-// caller, who gives it back with xo_mutex_unlock.
-xo_rlist *xo_mutex_lock(xo_mutex *m, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	held_check(c, m, "with", loc, n);
-	lk(&m->mu);
-	if (m->writer || m->readers > 0) {
-		m->wwait++;
-		while (m->writer || m->readers > 0) {
-			if (!wl_wait_as(c, &m->mu, &m->waiters, 1, 1)) {
-				m->wwait--;
-				mutex_wake(m, 0); // readers held back by this writer, or the next writer
-				unlk(&m->mu);
-				held_del(c, m);
-				c->unwinding = 1;
-				return &empty_list;
-			}
-		}
-		m->wwait--;
-	}
-	m->writer = 1;
-	xo_rlist *l = m->slot;
-	m->slot = NULL;
-	unlk(&m->mu);
-	return l;
-}
+void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) { xo_x_mutex_runlock(XO_ADDR(m), XO_ADDR(l)); }
 
-void xo_mutex_unlock(xo_mutex *m, xo_rlist *l) {
-	lk(&m->mu);
-	m->slot = l;
-	m->writer = 0;
-	mutex_wake(m, 1);
-	unlk(&m->mu);
-	held_del(ctx(), m);
-}
-
-// xo_mutex_rlock takes m shared for `with_read` and returns a reference
-// to its value.
-xo_rlist *xo_mutex_rlock(xo_mutex *m, const char *loc, int64_t n) {
-	xo_ctx *c = ctx();
-	held_check(c, m, "with_read", loc, n);
-	lk(&m->mu);
-	if (m->writer || m->wwait > 0) {
-		// wait until a writer's release hands m over (mutex_grant_readers);
-		// a cancellation unwinds unless m was handed over first
-		xo_went e = {.park = &c->park};
-		park_reset(&c->park);
-		wl_add(&m->waiters, &e);
-		m->rwait++;
-		unlk(&m->mu);
-		for (;;) {
-			park_wait(c, 1);
-			if (__atomic_load_n(&e.granted, __ATOMIC_ACQUIRE)) {
-				// the last writer set m->slot under m->mu before the
-				// grant, and none can change it while this share is held
-				xo_rlist *l = m->slot;
-				rc_inc(&l->rc);
-				return l;
-			}
-			lk(&m->mu);
-			if (e.granted) {
-				break;
-			}
-			if (ctx_canceled(c)) {
-				wl_del(&m->waiters, &e);
-				m->rwait--;
-				unlk(&m->mu);
-				held_del(c, m);
-				c->unwinding = 1;
-				return &empty_list;
-			}
-			park_reset(&c->park);
-			unlk(&m->mu);
-		}
-	} else {
-		m->readers++;
-	}
-	xo_rlist *l = m->slot;
-	rc_inc(&l->rc);
-	unlk(&m->mu);
-	return l;
-}
-
-// xo_mutex_runlock gives back a reader's reference and its share of m.
-void xo_mutex_runlock(xo_mutex *m, xo_rlist *l) {
-	if (rc_dec(&l->rc)) {
-		list_release(l, m->drop); // not reached: the mutex holds it
-	}
-	lk(&m->mu);
-	if (--m->readers == 0) {
-		mutex_wake(m, 0);
-	}
-	unlk(&m->mu);
-	held_del(ctx(), m);
-}
+_Static_assert(offsetof(xo_mutex, mu) == 16 && offsetof(xo_mutex, writer) == 24 && offsetof(xo_mutex, readers) == 32 &&
+                   offsetof(xo_mutex, wwait) == 40 && offsetof(xo_mutex, rwait) == 48 && offsetof(xo_mutex, slot) == 56 &&
+                   offsetof(xo_mutex, drop) == 64 && offsetof(xo_mutex, waiters) == 72 && sizeof(xo_mutex) == 88 &&
+                   offsetof(xo_went, granted) == 28,
+               "mutex.xo M_*");
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)
@@ -3547,14 +2470,12 @@ typedef struct {
 
 _Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
 
-static void atomic_free(void *p) { xo_free(p); }
+// xo_atomic_new is tasks.xo atomic_new (B19), which generated code calls
+// through its export; this forwards for older xo's code.
+int64_t xo_x_atomic_new(int64_t v);
+xo_atomic *xo_atomic_new(int64_t v) { return (xo_atomic *)(intptr_t)xo_x_atomic_new(v); }
 
-xo_atomic *xo_atomic_new(int64_t v) {
-	xo_atomic *a = xo_alloc(sizeof(xo_atomic));
-	h_init(a, atomic_free);
-	a->v = v;
-	return a;
-}
+_Static_assert(sizeof(xo_atomic) == 136, "tasks.xo atomic_new");
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals
@@ -3644,9 +2565,18 @@ struct xo_timer {
 	void *arg;
 	int fired; // atomic
 };
+_Static_assert(offsetof(struct xo_timer, when) == 0 && offsetof(struct xo_timer, idx) == 8, "poll.xo's timer offsets");
+
+// The timer heap is std/native/llrt/poll.xo's (zero-C audit B22 stage 1),
+// ev.mu held around each call.
+int64_t xo_x_poll_timer_push(int64_t t);
+void xo_x_poll_timer_remove(int64_t t);
+int64_t xo_x_poll_timer_first(void);
+#define th_first() ((xo_timer *)(intptr_t)xo_x_poll_timer_first())
+#define th_remove(t) xo_x_poll_timer_remove((int64_t)(intptr_t)(t))
 
 typedef struct xo_pd {
-	pthread_mutex_t mu;
+	xo_lock mu; // a lock word (std/native/llrt/poll.xo takes it too)
 	int fd;
 	int closed; // close was called
 	int ops;    // operations running (the socket closes when none runs)
@@ -3666,15 +2596,16 @@ typedef struct xo_pd {
 #endif
 } xo_pd;
 
+// ev is the event loop's state, which poll.xo starts (ev_start) and
+// reads through the services record (pd_svc, poll.xo EV_*); the signal
+// handler writes its pipe and counts its signals (on_signal).
 static struct {
-	pthread_once_t once;
-	pthread_mutex_t mu; // the timer heap and ev.dead
-	xo_timer **heap;
-	int64_t n, cap;
-	int pfd[2]; // the self pipe
-	int poll;   // the kqueue or epoll descriptor
+	int64_t once; // 0 not started, 1 starting, 2 running (atomic, poll.xo ev_start)
+	xo_lock mu;   // the timer heap and ev.dead (a lock word: poll.xo takes it too)
+	int pfd[2];   // the self pipe
+	int poll;     // the kqueue or epoll descriptor
 	xo_pd *dead;
-	int sigs; // signals not handled yet (atomic)
+	int64_t sigs; // signals not handled yet (atomic; a word: poll.xo swaps it)
 #ifdef XO_WINPOLL
 	HANDLE iocp, afd; // the completion port and the AFD device (NULL: WSAPoll)
 	int wr, ww;     // the self pipe: a connected loopback socket pair
@@ -3684,58 +2615,78 @@ static struct {
 	xo_pd **pwho;
 	int cpoll;
 #endif
-} ev ={.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER};
+} ev;
+_Static_assert(offsetof(__typeof__(ev), once) == 0 && offsetof(__typeof__(ev), mu) == 8 && offsetof(__typeof__(ev), pfd) == 16 &&
+                   offsetof(__typeof__(ev), poll) == 24 && offsetof(__typeof__(ev), dead) == 32 && offsetof(__typeof__(ev), sigs) == 40,
+               "poll.xo EV_*");
+#ifndef XO_WINPOLL
+_Static_assert(sizeof(xo_pd) == 56, "poll.xo D_SIZE");
+#endif
+_Static_assert(offsetof(xo_pd, mu) == 0 && offsetof(xo_pd, fd) == 8 && offsetof(xo_pd, closed) == 12 && offsetof(xo_pd, ops) == 16 &&
+                   offsetof(xo_pd, rready) == 20 && offsetof(xo_pd, wready) == 24 && offsetof(xo_pd, rwait) == 32 &&
+                   offsetof(xo_pd, wwait) == 40 && offsetof(xo_pd, next) == 48,
+               "poll.xo's descriptor offsets");
+_Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, arg) == 32 &&
+                   offsetof(struct xo_timer, fired) == 40,
+               "poll.xo's timer offsets");
 
-__attribute__((noinline, unused)) static int64_t x_ret(int64_t r) {
-	if (r < 0) {
-		int e = errno;
-		if (e == EAGAIN || e == EWOULDBLOCK) {
-			STAT(net_again);
-		}
-		return -(int64_t)e;
-	}
-	return r;
-}
-
-// The network's system calls and name resolution from Xo on Linux
-// (decision 0206 stage 3): the exports of std/native/llrt/cabi_net.xo
-// (over sock.xo and dns.xo), which a program carries when it dials or
-// listens or uses std/http. They are weak references, so a program
-// without them, or whose net_raw says 0 (XO_LLRT_C=net), calls the C
-// library as before; a program linked with no C library (XO_NOLIBC) has
-// no C path, and they are strong references there. What a program
-// without sockets reaches too (the poller's epoll, its pipe made
-// nonblocking, a descriptor's shutdown and close) goes through the
-// exports (cabi_poll.xo), which every program has. Each nx_
-// function keeps the C library's convention (-1 and errno).
-#if defined(__linux__)
+// The network's system calls (decision 0206 stage 3, the zero-C audit's
+// B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
+// accept, reads and writes) from Xo. What the C still calls is below:
+// the poller's (its epoll, its pipe made nonblocking, a descriptor's
+// shutdown and close) through cabi_poll.xo's exports, which every
+// program has; xo_http.c's and xo_tls.c's reads and writes, and the
+// server's peer address, through cabi_net.xo's, which a program carries
+// when it dials, listens, or uses std/http. Those are weak references
+// on ELF, so a program without them links (a program linked with no C
+// library has them as strong references, as before); Mach-O takes no
+// undefined weak reference (and PE/COFF's are weak externals with a
+// default), so weak definitions stand in there until cabi_net.xo's
+// replace them. The netconn.xo operations and the handles' free
+// functions are weak everywhere (XO_NC_REF, above the services record).
 #ifdef XO_NOLIBC
 #define XO_NX_REF
-#define NX_LIBC(call) (void)0
+#elif defined(__APPLE__) || defined(_WIN32)
+#define XO_NX_REF
 #else
 #define XO_NX_REF __attribute__((weak))
-#define NX_LIBC(call)                                                                                                         \
-	if (!nx_on()) {                                                                                                           \
-		return call;                                                                                                          \
-	}
 #endif
-XO_NX_REF int64_t xo_x_net_raw(void);
-XO_NX_REF int64_t xo_x_net_socket(int64_t family, int64_t ty, int64_t proto);
-XO_NX_REF int64_t xo_x_net_bind(int64_t fd, int64_t sa, int64_t n);
-XO_NX_REF int64_t xo_x_net_listen(int64_t fd, int64_t backlog);
-XO_NX_REF int64_t xo_x_net_accept(int64_t fd, int64_t flags);
-XO_NX_REF int64_t xo_x_net_connect(int64_t fd, int64_t sa, int64_t n);
-XO_NX_REF int64_t xo_x_net_sock_err(int64_t fd);
-XO_NX_REF int64_t xo_x_net_setsockopt(int64_t fd, int64_t level, int64_t opt, int64_t v);
-XO_NX_REF int64_t xo_x_net_sockname(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_read(int64_t fd, int64_t p, int64_t n);
 XO_NX_REF int64_t xo_x_net_send(int64_t fd, int64_t p, int64_t n);
-XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t pn, int64_t family, int64_t passive, int64_t state,
-	int64_t out, int64_t cap);
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
-XO_NX_REF int64_t xo_x_net_pton6(int64_t p, int64_t dst);
-XO_NX_REF int64_t xo_x_net_gai_text(int64_t code, int64_t buf, int64_t bn);
+XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
+XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
+XO_NC_REF int64_t xo_x_nc_dial_timeout(int64_t p, int64_t n, int64_t d);
+XO_NC_REF int64_t xo_x_nc_listener_addr(int64_t l, int64_t np);
+XO_NC_REF int64_t xo_x_nc_listener_accept(int64_t l);
+XO_NC_REF void xo_x_nc_listener_close(int64_t l);
+XO_NC_REF void xo_x_nc_listener_free(int64_t l);
+XO_NC_REF int64_t xo_x_nc_conn_read(int64_t cn, int64_t max, int64_t np);
+XO_NC_REF void xo_x_nc_conn_write(int64_t cn, int64_t p, int64_t n);
+XO_NC_REF void xo_x_nc_conn_close(int64_t cn);
+XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
+#if (defined(__APPLE__) || defined(_WIN32)) && !defined(XO_NOLIBC)
+#define XO_NX_STUB(name, ...)                                                                                                 \
+	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
+#define XO_NX_VSTUB(name, ...)                                                                                                \
+	__attribute__((weak)) void name(__VA_ARGS__) {}
+XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_read, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_send, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
+XO_NX_STUB(xo_x_nc_dial_timeout, int64_t a, int64_t b, int64_t c)
+XO_NX_STUB(xo_x_nc_listener_addr, int64_t a, int64_t b)
+XO_NX_STUB(xo_x_nc_listener_accept, int64_t a)
+XO_NX_VSTUB(xo_x_nc_listener_close, int64_t a)
+XO_NX_VSTUB(xo_x_nc_listener_free, int64_t a)
+XO_NX_STUB(xo_x_nc_conn_read, int64_t a, int64_t b, int64_t c)
+XO_NX_VSTUB(xo_x_nc_conn_write, int64_t a, int64_t b, int64_t c)
+XO_NX_VSTUB(xo_x_nc_conn_close, int64_t a)
+XO_NX_VSTUB(xo_x_nc_conn_free, int64_t a)
+#endif
 int64_t xo_x_fd_close(int64_t fd);
 int64_t xo_x_fd_nonblock(int64_t fd);
 int64_t xo_x_fd_shutdown(int64_t fd, int64_t how);
@@ -3743,21 +2694,7 @@ int64_t xo_x_poll_create(void);
 int64_t xo_x_poll_ctl(int64_t ep, int64_t op, int64_t fd, int64_t ev);
 int64_t xo_x_poll_wait(int64_t ep, int64_t evs, int64_t n, int64_t ms);
 
-// nx_on reports whether the network goes through Xo (computed once).
-static int nx_on(void) {
-#ifdef XO_NOLIBC
-	return 1;
-#else
-	static int on = -1;
-	int v = __atomic_load_n(&on, __ATOMIC_RELAXED);
-	if (v < 0) {
-		v = xo_x_net_raw && xo_x_net_raw() == 1;
-		__atomic_store_n(&on, v, __ATOMIC_RELAXED);
-	}
-	return v;
-#endif
-}
-
+#ifdef XO_WINPOLL
 // nx_ret is a system call's result in the C library's convention.
 static int nx_ret(int64_t r) {
 	if (r < 0) {
@@ -3767,346 +2704,64 @@ static int nx_ret(int64_t r) {
 	return (int)r;
 }
 
-static int nx_socket(int family, int ty, int proto) {
-	NX_LIBC(socket(family, ty, proto));
-	return nx_ret(xo_x_net_socket(family, ty, proto));
-}
-
-static int nx_bind(int fd, const struct sockaddr *sa, socklen_t n) {
-	NX_LIBC(bind(fd, sa, n));
-	return nx_ret(xo_x_net_bind(fd, XO_ADDR(sa), n));
-}
-
-static int nx_listen(int fd, int backlog) {
-	NX_LIBC(listen(fd, backlog));
-	return nx_ret(xo_x_net_listen(fd, backlog));
-}
-
-// nx_setsockopt_int sets the int option opt to v.
-static int nx_setsockopt_int(int fd, int level, int opt, int v) {
-	NX_LIBC(setsockopt(fd, level, opt, &v, sizeof v));
-	return nx_ret(xo_x_net_setsockopt(fd, level, opt, v));
-}
-
-static int nx_getsockname(int fd, struct sockaddr *sa, socklen_t *n) {
-	NX_LIBC(getsockname(fd, sa, n));
-	return nx_ret(xo_x_net_sockname(fd, XO_ADDR(sa), XO_ADDR(n)));
-}
-
-static int nx_getpeername(int fd, struct sockaddr *sa, socklen_t *n) {
-	NX_LIBC(getpeername(fd, sa, n));
-	return nx_ret(xo_x_net_peername(fd, XO_ADDR(sa), XO_ADDR(n)));
-}
-
-static int nx_shutdown(int fd, int how) {
-	NX_LIBC(shutdown(fd, how));
-	return nx_ret(xo_x_fd_shutdown(fd, how));
-}
+static int nx_shutdown(int fd, int how) { return nx_ret(xo_x_fd_shutdown(fd, how)); }
 
 // nx_close closes a socket (or the poller's pipe ends).
 static int nx_close(int fd) {
-	NX_LIBC(close(fd));
+	if (!xo_w_is_sock(fd)) {
+		// a C runtime descriptor (xo_win.c's tag)
+		return close(fd);
+	}
 	return nx_ret(xo_x_fd_close(fd));
 }
-
-static int nx_epoll_create(void) {
-	NX_LIBC(epoll_create1(EPOLL_CLOEXEC));
-	return nx_ret(xo_x_poll_create());
-}
-
-// nx_poll_sync stands for the epoll instance in ThreadSanitizer builds.
-// A registration publishes its xo_pd (calloc'd and initialized on the
-// registering thread) through the kernel, and the poller reads it from
-// the event epoll_wait returns: the kernel orders the two, and the C
-// library's epoll_ctl and epoll_wait interceptors tell ThreadSanitizer so
-// (a release of the epoll descriptor, an acquire when events return).
-// The Xo system calls (cabi_poll.xo, decision 0206 stage 3) bypass those
-// interceptors, so without the same pair here it reported pd_new's calloc
-// against the poller's lock of the descriptor as a race (Linux,
-// 2026-10-13, gotcha tsan-raw-epoll-no-edge).
-static char nx_poll_sync;
-
-static int nx_epoll_ctl(int ep, int op, int fd, struct epoll_event *e) {
-	NX_LIBC(epoll_ctl(ep, op, fd, e));
-	TSAN_RELEASE(&nx_poll_sync);
-	return nx_ret(xo_x_poll_ctl(ep, op, fd, XO_ADDR(e)));
-}
-
-static int nx_epoll_wait(int ep, struct epoll_event *evs, int n, int ms) {
-	NX_LIBC(epoll_wait(ep, evs, n, ms));
-	int r = nx_ret(xo_x_poll_wait(ep, XO_ADDR(evs), n, ms));
-	if (r > 0) {
-		TSAN_ACQUIRE(&nx_poll_sync);
-	}
-	return r;
-}
-
-// nx_getaddrinfo is getaddrinfo(host, port, hints) for the runtime's
-// hints (a numeric port, AI_PASSIVE or not, AF_UNSPEC or one family):
-// dns.xo's lookup, at most 32 addresses in one block that
-// nx_freeaddrinfo frees. nx_dns is the resolver's state: resolv.conf's
-// rotate counter and the order of nsswitch.conf with its file's key.
-static int nx_getaddrinfo(const char *host, const char *port, const struct addrinfo *hints, struct addrinfo **res) {
-	NX_LIBC(getaddrinfo(host, port, hints, res));
-	enum { NX_MAX = 32, NX_SA = 32 };
-	static int64_t nx_dns[2];
-	unsigned char buf[NX_MAX * NX_SA];
-	int64_t n = xo_x_net_resolve(XO_ADDR(host ? host : ""), host ? (int64_t)strlen(host) : 0, XO_ADDR(port), (int64_t)strlen(port),
-		hints->ai_family, (hints->ai_flags & AI_PASSIVE) ? 1 : 0, XO_ADDR(nx_dns), XO_ADDR(buf), NX_MAX);
-	if (n <= 0) {
-		return n < 0 ? (int)n : EAI_NONAME;
-	}
-	struct addrinfo *a = calloc((size_t)n, sizeof(struct addrinfo) + NX_SA);
-	if (!a) {
-		xo_oom();
-	}
-	unsigned char *sas = (unsigned char *)(a + n);
-	memcpy(sas, buf, (size_t)n * NX_SA);
-	for (int64_t i = 0; i < n; i++) {
-		struct sockaddr *sa = (struct sockaddr *)(sas + NX_SA * i);
-		a[i].ai_family = sa->sa_family;
-		a[i].ai_socktype = hints->ai_socktype;
-		a[i].ai_protocol = hints->ai_socktype == SOCK_STREAM ? IPPROTO_TCP : 0;
-		a[i].ai_addrlen = sa->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-		a[i].ai_addr = sa;
-		a[i].ai_next = i + 1 < n ? &a[i + 1] : NULL;
-	}
-	*res = a;
-	return 0;
-}
-
-static void nx_freeaddrinfo(struct addrinfo *a) {
-#ifndef XO_NOLIBC
-	if (!nx_on()) {
-		freeaddrinfo(a);
-		return;
-	}
-#endif
-	free(a);
-}
-
-// nx_gai_strerror is gai_strerror(g): glibc's texts.
-static const char *nx_gai_strerror(int g) {
-	NX_LIBC(gai_strerror(g));
-	static __thread char buf[64];
-	xo_x_net_gai_text(g, XO_ADDR(buf), sizeof buf);
-	return buf;
-}
-
-// nx_ntop is inet_ntop(family, src, dst, n).
-static const char *nx_ntop(int family, const void *src, char *dst, socklen_t n) {
-	NX_LIBC(inet_ntop(family, src, dst, n));
-	return xo_x_net_ntop(family, XO_ADDR(src), XO_ADDR(dst), n) < 0 ? NULL : dst;
-}
-
-// nx_pton6 is inet_pton(AF_INET6, src, dst).
-static int nx_pton6(const char *src, void *dst) {
-	NX_LIBC(inet_pton(AF_INET6, src, dst));
-	return (int)xo_x_net_pton6(XO_ADDR(src), XO_ADDR(dst));
-}
-#else
-#define nx_socket socket
-#define nx_bind bind
-#define nx_listen listen
-#define nx_getsockname getsockname
-#define nx_getpeername getpeername
-#define nx_shutdown shutdown
-#define nx_getaddrinfo getaddrinfo
-#define nx_freeaddrinfo freeaddrinfo
-#define nx_gai_strerror gai_strerror
-#define nx_ntop inet_ntop
-#define nx_pton6(src, dst) inet_pton(AF_INET6, src, dst)
-#define nx_close close
-#define nx_setsockopt_int(fd, level, opt, v)                                                                                  \
-	({                                                                                                                        \
-		int nx_v_ = (v);                                                                                                      \
-		setsockopt((fd), (level), (opt), &nx_v_, sizeof nx_v_);                                                               \
-	})
 #endif
 
-#ifdef _WIN32
-// Winsock reports errors in WSAGetLastError, not errno
-__attribute__((noinline)) static int64_t x_wsa(int64_t r) { return r < 0 ? -(int64_t)xo_wsa_errno() : r; }
-
+// x_read and x_write are a socket's read and write for xo_http.c and
+// xo_tls.c: the count, or minus the errno (the C runtime's on Windows).
 __attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
 	STAT(net_read);
-	return x_wsa(recv((SOCKET)fd, b, (int)n, 0));
-}
-
-__attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
-	STAT(net_write);
-	return x_wsa(send((SOCKET)fd, b, (int)n, 0));
-}
-#else
-// x_nx counts a would block result of the Xo path as x_ret does.
-__attribute__((unused)) static int64_t x_nx(int64_t r) {
+	int64_t r = xo_x_net_read(fd, XO_ADDR(b), (int64_t)n);
 	if (r == -EAGAIN || r == -EWOULDBLOCK) {
 		STAT(net_again);
 	}
 	return r;
 }
 
-__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
-	STAT(net_read);
-#if defined(XO_NOLIBC)
-	return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
-#else
-#if defined(__linux__)
-	if (nx_on()) {
-		return x_nx(xo_x_net_read(fd, XO_ADDR(b), (int64_t)n));
-	}
-#endif
-	return x_ret(read(fd, b, n));
-#endif
-}
-
 __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
 	STAT(net_write);
-#if defined(XO_NOLIBC)
-	return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
-#else
-#if defined(__linux__)
-	if (nx_on()) {
-		return x_nx(xo_x_net_send(fd, XO_ADDR(b), (int64_t)n));
+	int64_t r = xo_x_net_send(fd, XO_ADDR(b), (int64_t)n);
+	if (r == -EAGAIN || r == -EWOULDBLOCK) {
+		STAT(net_again);
 	}
-#endif
-#ifdef MSG_NOSIGNAL
-	return x_ret(send(fd, b, n, MSG_NOSIGNAL));
-#else
-	return x_ret(write(fd, b, n));
-#endif
-#endif
-}
-#endif
-
-// Descriptors are close-on-exec from birth on Linux (SOCK_CLOEXEC,
-// accept4, pipe2): with FD_CLOEXEC set just after, a process spawned by
-// another thread in between inherited the socket or pipe and held it open
-// for its life (2026-10-12, gotcha linux-epoll-inherited-socket). macOS has
-// neither accept4 nor pipe2, and kqueue drops a closed descriptor's events
-// anyway.
-#if defined(__linux__)
-#if !defined(_GNU_SOURCE)
-int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags);
-int pipe2(int fds[2], int flags);
-#endif
-#define XO_SOCK_CLOEXEC SOCK_CLOEXEC
-#else
-#define XO_SOCK_CLOEXEC 0
-#endif
-
-// xo_pipe is pipe(2) with both ends close-on-exec.
-static int xo_pipe(int p[2]) {
-#if defined(__linux__)
-	return pipe2(p, O_CLOEXEC);
-#else
-	if (pipe(p) < 0) {
-		return -1;
-	}
-	fcntl(p[0], F_SETFD, FD_CLOEXEC);
-	fcntl(p[1], F_SETFD, FD_CLOEXEC);
-	return 0;
-#endif
+	return r;
 }
 
-#if defined(XO_NOLIBC)
-__attribute__((noinline)) static int64_t x_accept(int fd) { return xo_x_net_accept(fd, SOCK_CLOEXEC); }
-#elif defined(__linux__)
-__attribute__((noinline)) static int64_t x_accept(int fd) {
-	if (nx_on()) {
-		return xo_x_net_accept(fd, SOCK_CLOEXEC);
-	}
-	return x_ret(accept4(fd, NULL, NULL, SOCK_CLOEXEC));
-}
-#elif defined(_WIN32)
-__attribute__((noinline)) static int64_t x_accept(int fd) {
-	SOCKET s = accept((SOCKET)fd, NULL, NULL);
-	return s == INVALID_SOCKET ? -(int64_t)xo_wsa_errno() : (int64_t)(int)s;
-}
-#else
-__attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept(fd, NULL, NULL)); }
-#endif
-
-#ifdef _WIN32
-// a nonblocking connect in progress is WSAEWOULDBLOCK
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-	int64_t r = x_wsa(connect((SOCKET)fd, a, n));
-	return r == -EWOULDBLOCK ? -EINPROGRESS : r;
-}
-#elif defined(XO_NOLIBC)
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-	return xo_x_net_connect(fd, XO_ADDR(a), n);
-}
-#else
-__attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
-#if defined(__linux__)
-	if (nx_on()) {
-		return xo_x_net_connect(fd, XO_ADDR(a), n);
-	}
-#endif
-	return x_ret(connect(fd, a, n));
-}
-#endif
-
-__attribute__((noinline)) static int64_t x_sockerr(int fd) {
-#if defined(XO_NOLIBC)
-	return xo_x_net_sock_err(fd);
-#else
-#if defined(__linux__)
-	if (nx_on()) {
-		return xo_x_net_sock_err(fd);
-	}
-#endif
-	int e = 0;
-	socklen_t n = sizeof e;
-	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &n) < 0) {
-		return -(int64_t)errno;
-	}
-#ifdef _WIN32
-	return e ? -(int64_t)xo_wsa_map(e) : 0; // a Winsock error code
-#else
-	return -(int64_t)e;
-#endif
-#endif
-}
-
+#ifdef XO_WINPOLL
 // x_errno is errno now (for calls that report errors in it).
 __attribute__((noinline)) static int x_errno(void) { return errno; }
-
-static void set_nonblock(int fd) {
-#if defined(__linux__)
-	if (nx_on()) {
-		xo_x_fd_nonblock(fd);
-		return;
-	}
 #endif
-	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
-}
 
-// ev_poke wakes the poller (a new first timer).
-static void ev_poke(void) {
+static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }
+
+// ev_poke wakes the poller (a new first timer): poll.xo poke on Linux and
+// macOS (the C tests call this).
 #ifdef XO_WINPOLL
+static void ev_poke(void) {
 	if (ev.afd) {
 		PostQueuedCompletionStatus(ev.iocp, 0, 1, NULL);
 	} else {
 		send((SOCKET)ev.ww, "w", 1, 0);
 	}
-	return;
-#endif
-	char b = 'w';
-	ssize_t r = write(ev.pfd[1], &b, 1);
-	(void)r; // a full pipe wakes it anyway
 }
 
 static void *poller_main(void *arg);
 
-#ifdef XO_WINPOLL
 // afd_open opens the AFD device for polls, its completions on iocp; NULL
 // when it cannot (the poller uses WSAPoll then).
 static HANDLE afd_open(HANDLE iocp) {
-	const char *e = getenv("XO_WINPOLL");
-	if (e && strcmp(e, "wsapoll") == 0) {
+	char e[16];
+	DWORD en = GetEnvironmentVariableA("XO_WINPOLL", e, sizeof e);
+	if (en > 0 && en < sizeof e && strcmp(e, "wsapoll") == 0) {
 		return NULL;
 	}
 	xo_wsa_init();
@@ -4127,10 +2782,14 @@ static HANDLE afd_open(HANDLE iocp) {
 	SetFileCompletionNotificationModes(h, FILE_SKIP_SET_EVENT_ON_HANDLE);
 	return h;
 }
-#endif
 
-static void ev_init(void) {
-#ifdef XO_WINPOLL
+// ev_init_win starts the event loop on Windows (poll.xo ev_start calls
+// it once, through the services record): the completion port and the AFD
+// device, or the WSAPoll fallback's socket pair, and the poller thread.
+// Linux and macOS start in poll.xo (ev_init).
+static int64_t ev_init_win(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
 	ev.iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
 	ev.afd = ev.iocp ? afd_open(ev.iocp) : NULL;
 	if (!ev.afd) {
@@ -4141,36 +2800,6 @@ static void ev_init(void) {
 		ev.wr = sv[0];
 		ev.ww = sv[1];
 	}
-#else
-	if (xo_pipe(ev.pfd) < 0) {
-		xo_oom();
-	}
-	set_nonblock(ev.pfd[0]);
-	set_nonblock(ev.pfd[1]);
-#endif
-#ifdef XO_WINPOLL
-#elif defined(XO_KQUEUE)
-	ev.poll = kqueue();
-	if (ev.poll < 0) {
-		xo_oom();
-	}
-	fcntl(ev.poll, F_SETFD, FD_CLOEXEC);
-	struct kevent k;
-	EV_SET(&k, ev.pfd[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	if (kevent(ev.poll, &k, 1, NULL, 0, NULL) < 0) {
-		xo_oom();
-	}
-#else
-	ev.poll = nx_epoll_create();
-	if (ev.poll < 0) {
-		xo_oom();
-	}
-	struct epoll_event e = {.events = EPOLLIN};
-	e.data.ptr = NULL;
-	if (nx_epoll_ctl(ev.poll, EPOLL_CTL_ADD, ev.pfd[0], &e) < 0) {
-		xo_oom();
-	}
-#endif
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -4179,94 +2808,22 @@ static void ev_init(void) {
 		xo_oom();
 	}
 	pthread_attr_destroy(&attr);
+	return 0;
 }
+#else
+void xo_x_poll_poke(void);
+static void ev_poke(void) { xo_x_poll_poke(); }
+#endif
 
-// ev_start starts the poller thread once.
-static void ev_start(void) { pthread_once(&ev.once, ev_init); }
+// ev_start starts the event loop once (poll.xo ev_start).
+void xo_x_poll_ev_start(void);
+static void ev_start(void) { xo_x_poll_ev_start(); }
 
-// Timer heap (ev.mu held)
-
-static void th_set(int64_t i, xo_timer *t) {
-	ev.heap[i] = t;
-	t->idx = i;
-}
-
-static void th_up(int64_t i) {
-	xo_timer *t = ev.heap[i];
-	while (i > 0) {
-		int64_t p = (i - 1) / 2;
-		if (ev.heap[p]->when <= t->when) {
-			break;
-		}
-		th_set(i, ev.heap[p]);
-		i = p;
-	}
-	th_set(i, t);
-}
-
-static void th_down(int64_t i) {
-	xo_timer *t = ev.heap[i];
-	for (;;) {
-		int64_t c = 2 * i + 1;
-		if (c >= ev.n) {
-			break;
-		}
-		if (c + 1 < ev.n && ev.heap[c + 1]->when < ev.heap[c]->when) {
-			c++;
-		}
-		if (t->when <= ev.heap[c]->when) {
-			break;
-		}
-		th_set(i, ev.heap[c]);
-		i = c;
-	}
-	th_set(i, t);
-}
-
-static void th_remove(xo_timer *t) {
-	int64_t i = t->idx;
-	xo_timer *last = ev.heap[--ev.n];
-	t->idx = -1;
-	if (last != t) {
-		th_set(i, last);
-		th_down(i);
-		th_up(last->idx);
-	}
-}
-
-// timer_add arms t (when, and park or fn, set).
-static void timer_add(xo_timer *t) {
-	if (!tw.virt) {
-		// the test world has no poller: its timers fire when the
-		// virtual clock moves (tw_kick)
-		ev_start();
-	}
-	pthread_mutex_lock(&ev.mu);
-	if (ev.n == ev.cap) {
-		ev.cap = ev.cap ? ev.cap * 2 : 64;
-		ev.heap = realloc(ev.heap, (size_t)ev.cap * sizeof(xo_timer *));
-		if (!ev.heap) {
-			xo_oom();
-		}
-	}
-	ev.heap[ev.n] = t;
-	t->idx = ev.n++;
-	th_up(t->idx);
-	int first = t->idx == 0;
-	pthread_mutex_unlock(&ev.mu);
-	if (first && !tw.virt) {
-		ev_poke();
-	}
-}
-
-// timer_del disarms t; after it returns t's function does not run.
-static void timer_del(xo_timer *t) {
-	pthread_mutex_lock(&ev.mu);
-	if (t->idx >= 0) {
-		th_remove(t);
-	}
-	pthread_mutex_unlock(&ev.mu);
-}
+// The timers are poll.xo's: timer_add arms one (when, and park or
+// function, set), timer_del disarms it (its function does not run after
+// it returns).
+void xo_x_poll_timer_add(int64_t t);
+void xo_x_poll_timer_del(int64_t t);
 
 // deadline is the monotonic time d from now (saturating).
 static int64_t deadline(int64_t d) {
@@ -4279,41 +2836,23 @@ static int64_t deadline(int64_t d) {
 
 // Socket descriptors
 
-static void pd_ready(xo_pd *pd, int mode) {
-	STAT(poll_event);
-	pthread_mutex_lock(&pd->mu);
-	if (mode & 1) {
-		if (pd->rwait) {
-			STAT(poll_wake);
-			park_signal(pd->rwait);
-			pd->rwait = NULL;
-		} else {
-			pd->rready = 1;
-		}
-	}
-	if (mode & 2) {
-		if (pd->wwait) {
-			STAT(poll_wake);
-			park_signal(pd->wwait);
-			pd->wwait = NULL;
-		} else {
-			pd->wready = 1;
-		}
-	}
-	pthread_mutex_unlock(&pd->mu);
-}
+// pd_ready hands readiness mode (1 read, 2 write) to pd's waiters, or
+// keeps it for the next wait: std/native/llrt/poll.xo's (B22).
+void xo_x_poll_pd_ready(int64_t pd, int64_t mode);
+static void pd_ready(xo_pd *pd, int mode) { xo_x_poll_pd_ready(XO_ADDR(pd), mode); }
 
 // pd_new registers socket fd (nonblocking) with the poller; write tells
 // to watch write readiness too. NULL when the poller refuses it (errno).
+// poll.xo's (pd_open) on Linux and macOS.
+int64_t xo_x_poll_pd_open(int64_t fd, int64_t write);
 static xo_pd *pd_new(int fd, int write) {
+#if defined(XO_WINPOLL)
 	ev_start();
 	xo_pd *pd = calloc(1, sizeof(xo_pd));
 	if (!pd) {
 		xo_oom();
 	}
-	mu_init(&pd->mu);
 	pd->fd = fd;
-#if defined(XO_WINPOLL)
 	(void)write;
 	if (ev.afd) {
 		// polls go to the socket's base handle (below any layered
@@ -4328,7 +2867,7 @@ static xo_pd *pd_new(int fd, int write) {
 	}
 	// WSAPoll is level triggered: the poller polls a descriptor only in
 	// the directions someone waits in (pd_wait_until pokes it)
-	pthread_mutex_lock(&ev.mu);
+	lk(&ev.mu);
 	if (ev.nreg == ev.creg) {
 		ev.creg = ev.creg ? ev.creg * 2 : 64;
 		ev.regs = realloc(ev.regs, (size_t)ev.creg * sizeof(xo_pd *));
@@ -4337,254 +2876,45 @@ static xo_pd *pd_new(int fd, int write) {
 		}
 	}
 	ev.regs[ev.nreg++] = pd;
-	pthread_mutex_unlock(&ev.mu);
-	int r = 0;
-#elif defined(XO_KQUEUE)
-	struct kevent k[2];
-	EV_SET(&k[0], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, pd);
-	EV_SET(&k[1], fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, pd);
-	int r = kevent(ev.poll, k, write ? 2 : 1, NULL, 0, NULL);
+	unlk(&ev.mu);
+	return pd;
 #else
-	struct epoll_event e = {.events = EPOLLIN | EPOLLRDHUP | EPOLLET | (write ? EPOLLOUT : 0)};
-	e.data.ptr = pd;
-	int r = nx_epoll_ctl(ev.poll, EPOLL_CTL_ADD, fd, &e);
-#endif
+	int64_t r = xo_x_poll_pd_open(fd, write);
 	if (r < 0) {
-		pthread_mutex_destroy(&pd->mu);
-		free(pd);
+		errno = (int)-r;
 		return NULL;
 	}
-	return pd;
-}
-
-// pd_begin starts an operation: 0 when the descriptor is closed.
-static int pd_begin(xo_pd *pd) {
-	pthread_mutex_lock(&pd->mu);
-	int ok = !pd->closed;
-	if (ok) {
-		pd->ops++;
-	}
-	pthread_mutex_unlock(&pd->mu);
-	return ok;
-}
-
-static void pd_end(xo_pd *pd) {
-	int fd = -1;
-	pthread_mutex_lock(&pd->mu);
-	if (--pd->ops == 0 && pd->closed && pd->fd >= 0) {
-		fd = pd->fd;
-		pd->fd = -1;
-	}
-	pthread_mutex_unlock(&pd->mu);
-	if (fd >= 0) {
-		nx_close(fd);
-	}
-}
-
-// pd_close closes the descriptor: waiting operations return, and the
-// socket closes once no operation runs.
-static void pd_close(xo_pd *pd) {
-	int fd = -1;
-	pthread_mutex_lock(&pd->mu);
-	if (!pd->closed) {
-		pd->closed = 1;
-		if (pd->fd >= 0) {
-#if !defined(XO_KQUEUE) && !defined(XO_WINPOLL)
-			// unregister now: epoll keys a registration by the open file,
-			// not the descriptor, so close alone leaves it while a child
-			// process still holds the file, and its next event would name
-			// this xo_pd after the poller freed it (2026-10-12, gotcha
-			// linux-epoll-inherited-socket)
-			nx_epoll_ctl(ev.poll, EPOLL_CTL_DEL, pd->fd, NULL);
+	return (xo_pd *)(intptr_t)r;
 #endif
+}
+
+// A descriptor's operations, close, and waits are
+// std/native/llrt/poll.xo's (B22 stage 5: pd_begin, pd_end, pd_close,
+// pd_free, pd_wait_ctx, which other Xo code calls too; on Windows since
+// stage 4, with the AFD poll's arm, pd_arm); the C keeps pd_new (the
+// registration). poll.xo calls the services record pd_svc for the C's
+// parts.
+int64_t xo_x_poll_pd_begin(int64_t pd);
+void xo_x_poll_pd_end(int64_t pd);
+void xo_x_poll_pd_close(int64_t pd);
+void xo_x_poll_pd_free(int64_t pd);
+int64_t xo_x_poll_pd_wait(int64_t pd, int64_t write, int64_t c, int64_t when);
+#define pd_begin(pd) ((int)xo_x_poll_pd_begin(XO_ADDR(pd)))
+#define pd_end(pd) xo_x_poll_pd_end(XO_ADDR(pd))
+#define pd_close(pd) xo_x_poll_pd_close(XO_ADDR(pd))
+#define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
+#define pd_wait_until(pd, write, c, when) ((int)xo_x_poll_pd_wait(XO_ADDR(pd), (write), XO_ADDR(c), (when)))
 #ifdef XO_WINPOLL
-			// Windows resets a connection shut down for receiving while
-			// input is unread, and the reset discards what the peer has
-			// not read of ours yet (a 400 just written): drop the input
-			// first (the socket is nonblocking)
-			char drop[4096];
-			while (recv((SOCKET)pd->fd, drop, sizeof drop, 0) > 0) {
-			}
+void xo_x_poll_pd_arm(int64_t pd);
+#define pd_arm(pd) xo_x_poll_pd_arm(XO_ADDR(pd))
+_Static_assert(offsetof(xo_pd, iosb) == 56 && offsetof(xo_pd, info) == 72 && offsetof(xo_pd, base) == 104 && offsetof(xo_pd, armed) == 112 &&
+                   offsetof(xo_pd, rearm) == 116 && offsetof(xo_pd, dying) == 120 && sizeof(xo_afd_poll) == 32 &&
+                   offsetof(xo_afd_poll, h) == 16 && offsetof(IO_STATUS_BLOCK, Status) == 0 && sizeof(OVERLAPPED_ENTRY) == 32 &&
+                   offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8,
+               "poll.xo's Windows D_* and OVERLAPPED_ENTRY");
 #endif
-			nx_shutdown(pd->fd, SHUT_RDWR);
-		}
-		if (pd->rwait) {
-			park_signal(pd->rwait);
-			pd->rwait = NULL;
-		}
-		if (pd->wwait) {
-			park_signal(pd->wwait);
-			pd->wwait = NULL;
-		}
-	}
-	if (pd->ops == 0 && pd->fd >= 0) {
-		fd = pd->fd;
-		pd->fd = -1;
-	}
-	pthread_mutex_unlock(&pd->mu);
-	if (fd >= 0) {
-		nx_close(fd);
-	}
-}
-
-#ifdef XO_WINPOLL
-// pd_arm (pd->mu held, AFD polling) starts a poll of pd's socket for the
-// directions someone waits in, unless one runs; a running poll that lacks
-// a direction now waited in is cancelled, and its completion starts the
-// wider one.
-static void pd_arm(xo_pd *pd) {
-	if (pd->closed || pd->fd < 0 || pd->dying) {
-		return;
-	}
-	ULONG want = (pd->rwait ? XO_AFD_READ : 0) | (pd->wwait ? XO_AFD_WRITE : 0);
-	if (!want) {
-		return;
-	}
-	if (pd->armed) {
-		if ((want & ~pd->armed) && !pd->rearm) {
-			pd->rearm = 1;
-			CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
-		}
-		return;
-	}
-	pd->info.timeout.QuadPart = INT64_MAX;
-	pd->info.n = 1;
-	pd->info.exclusive = FALSE;
-	pd->info.h[0].handle = (HANDLE)pd->base;
-	pd->info.h[0].events = want;
-	pd->info.h[0].status = 0;
-	pd->iosb.Status = STATUS_PENDING;
-	NTSTATUS st = NtDeviceIoControlFile(ev.afd, NULL, NULL, pd, &pd->iosb, XO_IOCTL_AFD_POLL, &pd->info, sizeof pd->info, &pd->info,
-		sizeof pd->info);
-	if (st == 0 || st == STATUS_PENDING) {
-		pd->armed = want; // the completion comes through the port either way
-		return;
-	}
-	// the poll was refused (a closed socket): let the operations run and
-	// meet the error
-	if (pd->rwait) {
-		park_signal(pd->rwait);
-		pd->rwait = NULL;
-	}
-	if (pd->wwait) {
-		park_signal(pd->wwait);
-		pd->wwait = NULL;
-	}
-}
-
-// afd_done handles the completion of pd's poll (on the poller thread):
-// the readiness to its waiters, then a new poll while someone waits; a
-// descriptor pd_free gave up is freed now that no poll runs.
-static void afd_done(xo_pd *pd) {
-	pthread_mutex_lock(&pd->mu);
-	pd->armed = 0;
-	pd->rearm = 0;
-	int mode = 0;
-	if (NT_SUCCESS(pd->iosb.Status) && pd->info.n >= 1) {
-		ULONG e = pd->info.h[0].events;
-		mode = ((e & XO_AFD_READ) ? 1 : 0) | ((e & XO_AFD_WRITE) ? 2 : 0);
-	}
-	int dying = pd->dying;
-	pthread_mutex_unlock(&pd->mu);
-	if (dying) {
-		pthread_mutex_destroy(&pd->mu);
-		free(pd);
-		return;
-	}
-	if (mode) {
-		pd_ready(pd, mode);
-	}
-	pthread_mutex_lock(&pd->mu);
-	pd_arm(pd);
-	pthread_mutex_unlock(&pd->mu);
-}
-#endif
-
-// pd_free closes the descriptor and hands it to the poller to free.
-static void pd_free(xo_pd *pd) {
-	if (!pd) {
-		return;
-	}
-	pd_close(pd);
-	pthread_mutex_lock(&ev.mu);
-	pd->next = ev.dead;
-	ev.dead = pd;
-	pthread_mutex_unlock(&ev.mu);
-}
 
 enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
-
-// pd_wait_until waits until the socket is ready for reading (or
-// writing), the context is canceled, the descriptor is closed, or (when
-// is not 0) the monotonic time when passes.
-static int pd_wait_until(xo_pd *pd, int write, xo_ctx *c, int64_t when) {
-	xo_park **slot = write ? &pd->wwait : &pd->rwait;
-	int *ready = write ? &pd->wready : &pd->rready;
-	xo_timer t = {.when = when, .idx = -1, .park = &c->park};
-	int timed = 0;
-	int res;
-	for (;;) {
-		if (ctx_canceled(c)) {
-			res = PD_CANCELED;
-			break;
-		}
-		pthread_mutex_lock(&pd->mu);
-		if (pd->closed) {
-			pthread_mutex_unlock(&pd->mu);
-			res = PD_CLOSED;
-			break;
-		}
-		if (*ready) {
-			*ready = 0;
-			pthread_mutex_unlock(&pd->mu);
-			res = PD_READY;
-			break;
-		}
-		park_reset(&c->park);
-		*slot = &c->park;
-#ifdef XO_WINPOLL
-		if (ev.afd) {
-			pd_arm(pd);
-		}
-#endif
-		pthread_mutex_unlock(&pd->mu);
-#ifdef XO_WINPOLL
-		if (!ev.afd) {
-			ev_poke(); // the poller polls the directions waited in
-		}
-#endif
-		if (when && !timed) {
-			timed = 1;
-			timer_add(&t);
-		}
-		if (!(when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE))) {
-			park_wait_n(c, 1, 0);
-		}
-		pthread_mutex_lock(&pd->mu);
-		int mine = *slot == &c->park;
-		if (mine) {
-			*slot = NULL;
-		}
-		int closed = pd->closed;
-		pthread_mutex_unlock(&pd->mu);
-		if (closed) {
-			res = PD_CLOSED;
-			break;
-		}
-		if (!mine) {
-			res = PD_READY; // the poller handed it readiness
-			break;
-		}
-		if (when && __atomic_load_n(&t.fired, __ATOMIC_ACQUIRE)) {
-			res = PD_TIMEOUT;
-			break;
-		}
-	}
-	if (timed) {
-		timer_del(&t);
-	}
-	return res;
-}
 
 // pd_wait is pd_wait_until without a deadline.
 static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, write, c, 0); }
@@ -4593,63 +2923,137 @@ static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, w
 
 static void stop_signal(void);
 
-#if defined(XO_WINPOLL)
+// pd_svc is poll.xo's services record (its S_ words): the C functions it
+// calls through rt.call_c2, the event loop's lock word and dead list and
+// record, the offset of a context's park, and where the poller thread
+// starts; on Windows the descriptor's registration, close, and shutdown
+// and the event loop's start stay C's.
+static int64_t poll_signal_cb(int64_t p, int64_t b);
+static int64_t poll_stop_cb(int64_t a, int64_t b);
+#ifdef XO_WINPOLL
+static int64_t pdsvc_open(int64_t a, int64_t b) {
+	(void)b;
+	xo_pd *pd = pd_new((int)(a & 0xffffffff), (int)(a >> 32));
+	return pd ? XO_ADDR(pd) : -(int64_t)x_errno();
+}
+static int64_t pdsvc_close(int64_t fd, int64_t b) {
+	(void)b;
+	nx_close((int)fd);
+	return 0;
+}
+static int64_t pdsvc_shut(int64_t fd, int64_t b) {
+	(void)b;
+	// Windows resets a connection shut down for receiving while input is
+	// unread, and the reset discards what the peer has not read of ours
+	// yet (a 400 just written): drop the input first (the socket is
+	// nonblocking)
+	char drop[4096];
+	while (recv((SOCKET)fd, drop, sizeof drop, 0) > 0) {
+	}
+	nx_shutdown((int)fd, SHUT_RDWR);
+	return 0;
+}
+static int64_t pdsvc_poke(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	ev_poke();
+	return 0;
+}
+#endif
+static int64_t pdsvc_canceled(int64_t c, int64_t b) {
+	(void)b;
+	return ctx_canceled((xo_ctx *)(intptr_t)c);
+}
+static int64_t pdsvc_wait(int64_t c, int64_t b) {
+	(void)b;
+	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
+	return 0;
+}
+// pdsvc_tadd and pdsvc_tdel are poll.xo's timer_add and timer_del for
+// stop.xo (stop_svc).
+static int64_t pdsvc_tadd(int64_t t, int64_t b) {
+	(void)b;
+	xo_x_poll_timer_add(t);
+	return 0;
+}
+static int64_t pdsvc_tdel(int64_t t, int64_t b) {
+	(void)b;
+	xo_x_poll_timer_del(t);
+	return 0;
+}
+int64_t xo_x_poll_thread(int64_t a);
+static int64_t pd_svc[17];
+void xo_x_poll_svc(int64_t rec);
+static void pd_svc_init(void) {
+#ifdef XO_WINPOLL
+	pd_svc[0] = XO_ADDR(&pdsvc_open);
+	pd_svc[1] = XO_ADDR(&pdsvc_close);
+	pd_svc[2] = XO_ADDR(&pdsvc_shut);
+	pd_svc[11] = XO_ADDR(&ev.afd);
+	pd_svc[12] = XO_ADDR(&pdsvc_poke);
+	pd_svc[16] = XO_ADDR(&ev_init_win);
+#endif
+	pd_svc[3] = XO_ADDR(&pdsvc_canceled);
+	pd_svc[4] = XO_ADDR(&pdsvc_wait);
+	pd_svc[7] = XO_ADDR(&poll_signal_cb);
+	pd_svc[8] = XO_ADDR(&ev.mu);
+	pd_svc[9] = XO_ADDR(&ev.dead);
+	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
+	pd_svc[13] = XO_ADDR(&ev);
+	pd_svc[14] = XO_ADDR(&xo_x_poll_thread);
+	pd_svc[15] = XO_ADDR(&poll_stop_cb);
+	xo_x_poll_svc(XO_ADDR(pd_svc));
+}
+_Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
+
+// The poller thread's loop is std/native/llrt/poll.xo's (poll_thread,
+// poll_main on Linux and macOS, B22; poll_main_win over Windows' AFD
+// polls, stage 4): it frees the dead descriptors, fires the timers that
+// are due, waits for readiness, hands it to the descriptors, and runs the
+// signals' shutdown steps. The C keeps Windows' start and its WSAPoll
+// fallback loop below; poll.xo calls back into these.
+static int64_t poll_signal_cb(int64_t p, int64_t b) {
+	(void)b;
+	park_signal((xo_park *)(intptr_t)p);
+	return 0;
+}
+static int64_t poll_stop_cb(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	stop_signal();
+	return 0;
+}
+
+#ifdef XO_WINPOLL
 typedef struct {
 	xo_pd *pd;
 	int mode;
 } xo_event;
-#elif defined(XO_KQUEUE)
-typedef struct kevent xo_event;
-#else
-typedef struct epoll_event xo_event;
-#endif
 
-// ev_dispatch hands the readiness of socket event e to its descriptor's
-// waiters: 0 when e is the self pipe's.
-static int ev_dispatch(xo_event *e) {
-#if defined(XO_WINPOLL)
-	xo_pd *pd = e->pd;
-	int mode = e->mode;
-#elif defined(XO_KQUEUE)
-	xo_pd *pd = e->udata;
-	int mode = e->filter == EVFILT_READ ? 1 : e->filter == EVFILT_WRITE ? 2 : 0;
-	if (e->flags & EV_ERROR) {
-		mode = 3;
-	}
-#else
-	xo_pd *pd = e->data.ptr;
-	uint32_t f = e->events;
-	int mode = ((f & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) ? 1 : 0) | ((f & (EPOLLOUT | EPOLLHUP | EPOLLERR)) ? 2 : 0);
-#endif
-	if (!pd) {
-		return 0;
-	}
-	pd_ready(pd, mode);
-	return 1;
+void xo_x_poll_main_win(int64_t iocp, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
+static int64_t poll_free_cb(int64_t pd, int64_t b) {
+	(void)b;
+	free((void *)(intptr_t)pd);
+	return 0;
 }
 
 static void *poller_main(void *arg) {
 	(void)arg;
+	if (ev.afd) {
+		// AFD polls through the completion port: poll.xo's loop (B22
+		// stage 4)
+		xo_x_poll_main_win((int64_t)(intptr_t)ev.iocp, XO_ADDR(&ev.mu), XO_ADDR(&ev.dead), XO_ADDR(&ev.sigs), XO_ADDR(&poll_signal_cb),
+		                   XO_ADDR(&poll_stop_cb), XO_ADDR(&poll_free_cb));
+		return NULL;
+	}
+	// WSAPoll (no AFD device, or XO_WINPOLL=wsapoll)
 	xo_event evs[64];
 	for (;;) {
-		pthread_mutex_lock(&ev.mu);
+		lk(&ev.mu);
 		while (ev.dead) {
 			xo_pd *pd = ev.dead;
 			ev.dead = pd->next;
 #ifdef XO_WINPOLL
-			if (ev.afd) {
-				// a poll in flight still names it: freed by its completion
-				pthread_mutex_lock(&pd->mu);
-				int armed = pd->armed != 0;
-				if (armed) {
-					pd->dying = 1;
-					CancelIoEx(ev.afd, (LPOVERLAPPED)&pd->iosb);
-				}
-				pthread_mutex_unlock(&pd->mu);
-				if (armed) {
-					continue;
-				}
-			}
 			for (int i = 0; i < ev.nreg; i++) {
 				if (ev.regs[i] == pd) {
 					ev.regs[i] = ev.regs[--ev.nreg];
@@ -4657,12 +3061,10 @@ static void *poller_main(void *arg) {
 				}
 			}
 #endif
-			pthread_mutex_destroy(&pd->mu);
 			free(pd);
 		}
 		int64_t now = mono_ns();
-		while (ev.n > 0 && ev.heap[0]->when <= now) {
-			xo_timer *t = ev.heap[0];
+		for (xo_timer *t = th_first(); t && t->when <= now; t = th_first()) {
 			th_remove(t);
 			__atomic_store_n(&t->fired, 1, __ATOMIC_RELEASE);
 			if (t->park) {
@@ -4671,33 +3073,16 @@ static void *poller_main(void *arg) {
 				t->fn(t);
 			}
 		}
-		int64_t wait = ev.n > 0 ? ev.heap[0]->when - now : -1;
-		pthread_mutex_unlock(&ev.mu);
+		xo_timer *first = th_first();
+		int64_t wait = first ? first->when - now : -1;
+		unlk(&ev.mu);
 #if defined(XO_WINPOLL)
 		DWORD ms = wait < 0 ? INFINITE : (DWORD)((wait + 999999) / 1000000);
 		if (wait > (int64_t)1 << 40) {
 			ms = 1 << 30;
 		}
-		if (ev.afd) {
-			OVERLAPPED_ENTRY es[64];
-			ULONG got = 0;
-			if (!GetQueuedCompletionStatusEx(ev.iocp, es, 64, &got, ms, FALSE)) {
-				got = 0;
-			}
-			STAT(poll_return);
-			for (ULONG i = 0; i < got; i++) {
-				if (es[i].lpOverlapped) {
-					afd_done((xo_pd *)es[i].lpOverlapped);
-				}
-			}
-			for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
-				stop_signal();
-			}
-			(void)evs;
-			continue;
-		}
 		// the descriptors someone waits on, in the directions waited for
-		pthread_mutex_lock(&ev.mu);
+		lk(&ev.mu);
 		if (ev.cpoll < ev.nreg + 1) {
 			ev.cpoll = (ev.nreg + 1) * 2;
 			ev.pfds = realloc(ev.pfds, (size_t)ev.cpoll * sizeof(WSAPOLLFD));
@@ -4713,7 +3098,7 @@ static void *poller_main(void *arg) {
 		ev.pwho[nf++] = NULL;
 		for (int i = 0; i < ev.nreg; i++) {
 			xo_pd *pd = ev.regs[i];
-			pthread_mutex_lock(&pd->mu);
+			lk(&pd->mu);
 			short want = 0;
 			if (!pd->closed && pd->fd >= 0) {
 				want = (short)((pd->rwait ? POLLRDNORM : 0) | (pd->wwait ? POLLWRNORM : 0));
@@ -4724,9 +3109,9 @@ static void *poller_main(void *arg) {
 				ev.pfds[nf].revents = 0;
 				ev.pwho[nf++] = pd;
 			}
-			pthread_mutex_unlock(&pd->mu);
+			unlk(&pd->mu);
 		}
-		pthread_mutex_unlock(&ev.mu);
+		unlk(&ev.mu);
 		int got = WSAPoll(ev.pfds, (ULONG)nf, (INT)(ms == INFINITE ? -1 : (int)ms));
 		STAT(poll_return);
 		(void)evs;
@@ -4746,39 +3131,15 @@ static void *poller_main(void *arg) {
 		for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
 			stop_signal();
 		}
-		int n = 0;
-#elif defined(XO_KQUEUE)
-		struct timespec ts = {.tv_sec = wait / 1000000000, .tv_nsec = wait % 1000000000};
-		int n = kevent(ev.poll, NULL, 0, evs, 64, wait < 0 ? NULL : &ts);
-		STAT(poll_return);
-#else
-		int ms = wait < 0 ? -1 : (int)((wait + 999999) / 1000000);
-		if (wait > (int64_t)1 << 40) {
-			ms = 1 << 30;
-		}
-		int n = nx_epoll_wait(ev.poll, evs, 64, ms);
-		STAT(poll_return);
 #endif
-		for (int i = 0; i < n; i++) {
-			if (ev_dispatch(&evs[i])) {
-				continue;
-			}
-			char b[64];
-			while (read(ev.pfd[0], b, sizeof b) > 0) {
-			}
-			for (int k = __atomic_exchange_n(&ev.sigs, 0, __ATOMIC_ACQ_REL); k > 0; k--) {
-				stop_signal();
-			}
-		}
 	}
 	return NULL;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
 // ns (the Go backend's representation)
-
-static void tw_sleep_record(int64_t d);
 
 // xo_clock_now is the test world's virtual clock while it runs, else the
 // wall clock read in Xo (sysio.xo real_ns through cabi.xo; work item
@@ -4794,26 +3155,14 @@ int64_t xo_clock_now(void) {
 
 // clock_wait sleeps d unless the task is or becomes canceled; it returns
 // 1 when cancellation ended (or prevented) the sleep, without starting
-// an unwind.
+// an unwind (poll.xo clock_wait). The test world records the sleep first
+// (FakeClock.sleeps() lists every sleep asked for).
+int64_t xo_x_poll_clock_wait(int64_t c, int64_t d);
 static int clock_wait(xo_ctx *c, int64_t d) {
-	if (ctx_canceled(c)) {
-		return 1;
+	if (tw.on && !ctx_canceled(c)) {
+		xo_x_tw_sleep(d);
 	}
-	if (tw.on) {
-		// FakeClock.sleeps() lists every sleep asked for
-		tw_sleep_record(d);
-	}
-	if (d <= 0) {
-		return 0;
-	}
-	xo_timer t = {.when = deadline(d), .idx = -1, .park = &c->park};
-	park_reset(&c->park);
-	timer_add(&t);
-	while (!__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE) && !ctx_canceled(c)) {
-		park_wait_n(c, 1, 0);
-	}
-	timer_del(&t);
-	return !__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE) && ctx_canceled(c);
+	return (int)xo_x_poll_clock_wait(XO_ADDR(c), d);
 }
 
 // xo_clock_sleep is `clock.sleep(d)`: a cancellation point that unwinds
@@ -4841,47 +3190,19 @@ void xo_select_after(xo_select *s, int64_t d) {
 	s->has_after = 1;
 }
 
-static void select_timeout(xo_timer *t) {
-	xo_select *s = t->arg;
-	if (claim(&s->fired)) {
-		__atomic_store_n(&s->chosen, -2, __ATOMIC_RELEASE);
-		park_signal(s->park);
-	}
-}
-
 // task.with_timeout (std.md 7): the scope s runs the closure as its body;
-// at the deadline its body is canceled and xo_scope_timed_out tells it.
+// at the deadline its body is canceled and xo_scope_timed_out tells it
+// (tasks.xo scope_deadline, scope_timed_out; the timer is poll.xo's
+// FN_SCOPE).
+void xo_x_scope_deadline(int64_t s, int64_t d);
+int64_t xo_x_scope_timed_out(int64_t s);
 
-static void scope_deadline_fire(xo_timer *t) {
-	xo_scope *s = t->arg;
-	__atomic_store_n(&s->timed_out, 1, __ATOMIC_RELEASE);
-	node_cancel(&s->body);
-}
-
-void xo_scope_deadline(xo_scope *s, int64_t d) {
-	xo_timer *t = calloc(1, sizeof(xo_timer));
-	if (!t) {
-		xo_oom();
-	}
-	t->when = deadline(d);
-	t->idx = -1;
-	t->fn = scope_deadline_fire;
-	t->arg = s;
-	s->deadline = t;
-	timer_add(t);
-}
+void xo_scope_deadline(xo_scope *s, int64_t d) { xo_x_scope_deadline(XO_ADDR(s), d); }
 
 // xo_scope_timed_out reports, after scope s closed while its body
 // unwound, whether the unwinding came from its deadline (and not from a
 // cancellation of the code around it): the unwinding then stops.
-int64_t xo_scope_timed_out(xo_scope *s) {
-	xo_ctx *c = ctx();
-	if (!__atomic_load_n(&s->timed_out, __ATOMIC_ACQUIRE) || ctx_canceled(c)) {
-		return 0;
-	}
-	c->unwinding = 0;
-	return 1;
-}
+int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)); }
 
 // xo_budget_open and xo_budget_end are budget.xo open and end (which
 // arm64 code calls directly).
@@ -4892,36 +3213,31 @@ void xo_budget_open(xo_scope *s, int64_t cpu, int64_t alloc, int64_t steps, cons
 int64_t xo_budget_end(xo_scope *s) { return xo_x_budget_end(XO_ADDR(s)); }
 
 // ---------------------------------------------------------------------------
-// Network (std.md 3.2): TCP listeners and connections. Each operation
-// records its outcome in the context (net_status, net_msg), which the
-// generated code reads to build the NetErr: 1 InvalidAddr, 2 Refused,
-// 3 Timeout, 4 Io(msg), 5 Canceled (the Go backend's tags).
+// Network (std.md 3.2): TCP listeners and connections are
+// std/native/llrt/netconn.xo's (the zero-C audit's B22 and B23
+// remnants), through cabi_net.xo's exports; the generated code calls the
+// names below. Each operation records its outcome in the context
+// (net_status, net_msg), which the generated code reads to build the
+// NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg), 5 Canceled,
+// 6 Denied (the Go backend's tags). A handle is the zero handle, and a
+// list the empty one, when netconn.xo returns 0.
 
 typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 	char *addr;
-	void *mem; // the test world's in memory listener (xo_testing.c), or NULL
+	void *mem; // the test world's in memory listener (twrun.xo), or NULL
 	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
 } xo_listener;
+_Static_assert(offsetof(xo_listener, pd) == 16 && offsetof(xo_listener, addr) == 24 && offsetof(xo_listener, mem) == 32 &&
+                   offsetof(xo_listener, unlink_path) == 40 && sizeof(xo_listener) == 48,
+               "netconn.xo L_*");
 
 typedef struct {
 	xo_hdr h;
 	xo_pd *pd;
 } xo_conn;
-
-static void net_ok(xo_ctx *c) { c->net_status = 0; }
-
-static void net_fail(xo_ctx *c, int st, const char *fmt, ...) {
-	char buf[512];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof buf, fmt, ap);
-	va_end(ap);
-	free(c->net_msg);
-	c->net_msg = strdup(buf);
-	c->net_status = st;
-}
+_Static_assert(offsetof(xo_conn, pd) == 16 && sizeof(xo_conn) == 24, "netconn.xo C_*");
 
 int64_t xo_net_status(void) { return ctx()->net_status; }
 
@@ -4943,707 +3259,132 @@ xo_rlist *xo_net_msg(void) {
 	return str_list(m, (int64_t)strlen(m));
 }
 
-static void conn_free(void *p) {
-	xo_conn *cn = p;
-	pd_free(cn->pd);
-	xo_free(cn);
-}
-
-static void tw_listener_free(xo_listener *l);
-static xo_listener *tw_listen(xo_ctx *c, const char *addr);
-static void tw_listener_close(xo_listener *l);
-static xo_conn *tw_listener_accept(xo_ctx *c, xo_listener *l);
-
-static void listener_free(void *p) {
-	xo_listener *l = p;
-	if (l->mem) {
-		tw_listener_free(l);
-	} else {
-		pd_free(l->pd);
+// nc_handle maps an export's 0 (an error) to the zero handle; nc_list
+// puts the Str an export hands over (counted for the list, its length
+// stored at n) in a list of one, and 0 (an error, or the end of the
+// stream) is the empty list.
+// Functions, not macros: a macro evaluated the export call twice (two
+// listens, two accepts).
+static inline void *nc_handle(int64_t r) { return r ? (void *)(intptr_t)r : xo_h_zero(); }
+static xo_rlist *nc_list(int64_t r, int64_t n) {
+	if (!r) {
+		return &empty_list;
 	}
-	free(l->addr);
-	xo_free(l);
-}
-
-// The address policy of Net.only (decisions 0156, 0175, 0190; std/rt
-// attenuate.go onlyNet) is Xo (std/native/llrt/netpolicy.xo, through
-// cabi.xo, decision 0207): splitting "host:port", "[v6]:port", or
-// ":port"; a numeric port above 65535 (Darwin's getaddrinfo rejects one,
-// glibc's truncates it: gotchas/glibc-getaddrinfo-port-truncation.md);
-// whether the lists admit a host and port, or a dial or listen address.
-
-static int split_hostport(const char *a, char *host, size_t hn, char *port, size_t pn) {
-	return (int)xo_x_split_hostport(XO_ADDR(a), XO_ADDR(host), (int64_t)hn, XO_ADDR(port), (int64_t)pn);
-}
-
-static int port_out_of_range(const char *port) { return (int)xo_x_port_out_of_range(XO_ADDR(port)); }
-
-static int net_admits_addr(const char *lp, int64_t ln, const char *a, int64_t n) {
-	return (int)xo_x_net_admits_addr(XO_ADDR(lp), ln, XO_ADDR(a), n);
-}
-
-// net_denied records NetErr.Denied(addr) (tag 6) for the n bytes at a.
-static void net_denied(xo_ctx *c, const char *a, int64_t n) {
-	free(c->net_msg);
-	c->net_msg = cstr_of(a, n);
-	c->net_status = 6;
-}
-
-// fmt_addr formats a socket address as "ip:port" or "[ip]:port"; an
-// unspecified address becomes the loopback address (std.md 3.2).
-static char *fmt_addr(const struct sockaddr *sa) {
-	char ip[INET6_ADDRSTRLEN];
-	char *out = malloc(INET6_ADDRSTRLEN + 16);
-	if (!out) {
-		xo_oom();
-	}
-	if (sa->sa_family == AF_INET) {
-		const struct sockaddr_in *a = (const struct sockaddr_in *)sa;
-		if (a->sin_addr.s_addr == htonl(INADDR_ANY)) {
-			strcpy(ip, "127.0.0.1");
-		} else {
-			nx_ntop(AF_INET, &a->sin_addr, ip, sizeof ip);
-		}
-		sprintf(out, "%s:%d", ip, ntohs(a->sin_port));
-	} else {
-		const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)sa;
-		if (IN6_IS_ADDR_UNSPECIFIED(&a->sin6_addr)) {
-			strcpy(ip, "::1");
-		} else {
-			nx_ntop(AF_INET6, &a->sin6_addr, ip, sizeof ip);
-		}
-		sprintf(out, "[%s]:%d", ip, ntohs(a->sin6_port));
-	}
-	return out;
-}
-
-static const char *err_text(int e) {
-	switch (e) {
-	case ECONNREFUSED:
-		return "connection refused";
-	case ECONNRESET:
-		return "connection reset by peer";
-	case EPIPE:
-		return "broken pipe";
-	case EADDRINUSE:
-		return "address already in use";
-	case EADDRNOTAVAIL:
-		return "can't assign requested address";
-	case EACCES:
-		return "permission denied";
-	case ETIMEDOUT:
-		return "operation timed out";
-	case ENOENT:
-		return "no such file or directory";
-	case EINVAL:
-		return "invalid argument";
-	case ENOTDIR:
-		return "not a directory";
-	case EPROTOTYPE:
-		return "protocol wrong type for socket";
-	}
-	return strerror(e);
-}
-
-static const char closed_text[] = "use of closed network connection";
-
-static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd);
-
-// unix_addr fills a sockaddr_un with the path of a `unix:PATH` address:
-// -1 when it does not fit (Go's "invalid argument").
-static int unix_addr(const char *addr, struct sockaddr_un *sa) {
-	const char *path = addr + 5;
-	memset(sa, 0, sizeof *sa);
-	sa->sun_family = AF_UNIX;
-	if (strlen(path) >= sizeof sa->sun_path) {
-		return -1;
-	}
-	strcpy(sa->sun_path, path);
-	return 0;
-}
-
-// unix_listen is `net.listen("unix:PATH")` (decision 0190): Go's
-// net.Listen("unix", PATH), its messages, and the address as given.
-static xo_listener *unix_listen(xo_ctx *c, char *addr) {
-	const char *path = addr + 5;
-	struct sockaddr_un sa;
-	if (unix_addr(addr, &sa) < 0) {
-		net_fail(c, 4, "listen unix %s: bind: invalid argument", path);
-		free(addr);
-		return xo_h_zero();
-	}
-	int fd = nx_socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		net_fail(c, 4, "listen unix %s: socket: %s", path, err_text(x_errno()));
-		free(addr);
-		return xo_h_zero();
-	}
-	if (nx_bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
-		int e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "listen unix %s: bind: %s", path, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	if (nx_listen(fd, SOMAXCONN) != 0) {
-		int e = x_errno();
-		nx_close(fd);
-		unlink(path);
-		net_fail(c, 4, "listen unix %s: listen: %s", path, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 0);
-	if (!pd) {
-		int e = x_errno();
-		nx_close(fd);
-		unlink(path);
-		net_fail(c, 4, "listen unix: %s", err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	xo_listener *l = xo_alloc(sizeof(xo_listener));
-	h_init(l, listener_free);
-	l->pd = pd;
-	l->mem = NULL;
-	l->addr = addr;
-	l->unlink_path = 1;
-	net_ok(c);
+	xo_rstr *s = (xo_rstr *)(intptr_t)r;
+	xo_rlist *l = xo_rl_new(1, 16);
+	l->len = 1;
+	((xo_rstr **)rl_data(l))[0] = s;
+	((int64_t *)rl_data(l))[1] = n;
 	return l;
 }
 
-// unix_dial is `net.dial("unix:PATH")` (decision 0190): a socket file
-// with no listener is Refused, as in Go.
-static xo_conn *unix_dial(xo_ctx *c, const char *addr, int64_t when) {
-	const char *path = addr + 5;
-	struct sockaddr_un sa;
-	if (unix_addr(addr, &sa) < 0) {
-		net_fail(c, 4, "dial unix %s: connect: invalid argument", path);
-		return xo_h_zero();
-	}
-	int fd = nx_socket(AF_UNIX, SOCK_STREAM | XO_SOCK_CLOEXEC, 0);
-	if (fd < 0) {
-		net_fail(c, 4, "dial unix %s: socket: %s", path, err_text(x_errno()));
-		return xo_h_zero();
-	}
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 1);
-	if (!pd) {
-		int e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "dial unix %s: %s", path, err_text(e));
-		return xo_h_zero();
-	}
-	pd_begin(pd);
-	int64_t e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
-	while (e == -EINTR) {
-		e = x_connect(fd, (struct sockaddr *)&sa, sizeof sa);
-	}
-	if (e == -EINPROGRESS || e == -EAGAIN) {
-		int w = pd_wait_until(pd, 1, c, when);
-		e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
-	}
-	pd_end(pd);
-	if (e == 0) {
-		return conn_new(c, fd, pd);
-	}
-	pd_free(pd);
-#ifdef _WIN32
-	// Windows refuses a connect to a missing socket file; POSIX (and the
-	// Fs view of it) says it does not exist
-	if (e == -ECONNREFUSED && xo_w_attrs(path) == INVALID_FILE_ATTRIBUTES) {
-		e = -ENOENT;
-	}
-#endif
-	if (e == 1) {
-		net_fail(c, 5, "");
-	} else if (e == 2) {
-		net_fail(c, 4, "dial unix %s: i/o timeout", path);
-	} else if (e == -ECONNREFUSED) {
-		net_fail(c, 2, "");
-	} else {
-		net_fail(c, 4, "dial unix %s: connect: %s", path, err_text((int)-e));
-	}
-	return xo_h_zero();
-}
-
-// xo_net_listen is `net.listen(addr)` (std.md 3.2) on a Net of the
-// attenuation lists lp (decision 0175): an address they do not admit is
-// NetErr.Denied before anything else.
 xo_listener *xo_net_listen(const char *lp, int64_t ln, const char *p, int64_t n) {
-	xo_ctx *c = ctx();
-	if (!net_admits_addr(lp, ln, p, n)) {
-		net_denied(c, p, n);
-		return xo_h_zero();
-	}
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	char *addr = cstr_of(p, n);
-	if (tw_is_fake(TW_REAL_NET)) {
-		// FakeNet.listen: an in memory listener (std/rt's memListener)
-		xo_listener *ml = tw_listen(c, addr);
-		free(addr);
-		return ml;
-	}
-	if (strncmp(addr, "unix:", 5) == 0) {
-		return unix_listen(c, addr);
-	}
-	char host[256], port[32];
-	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
-		net_fail(c, 4, "listen tcp %s: address %s: missing port in address", addr, addr);
-		free(addr);
-		return xo_h_zero();
-	}
-	if (port_out_of_range(port)) {
-		net_fail(c, 4, "listen tcp %s: address %s: invalid port", addr, port);
-		free(addr);
-		return xo_h_zero();
-	}
-	struct addrinfo hints = {.ai_socktype = SOCK_STREAM, .ai_flags = AI_PASSIVE | AI_NUMERICSERV};
-	hints.ai_family = host[0] ? AF_UNSPEC : AF_INET6;
-	struct addrinfo *res = NULL;
-	int g = nx_getaddrinfo(host[0] ? host : NULL, port, &hints, &res);
-	if (g != 0) {
-		net_fail(c, 4, "listen tcp %s: %s", addr, nx_gai_strerror(g));
-		free(addr);
-		return xo_h_zero();
-	}
-	int fd = -1, e = 0;
-	for (struct addrinfo *a = res; a; a = a->ai_next) {
-		fd = nx_socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
-		if (fd < 0) {
-			e = x_errno();
-			continue;
-		}
-		nx_setsockopt_int(fd, SOL_SOCKET, SO_REUSEADDR, 1);
-		if (a->ai_family == AF_INET6 && !host[0]) {
-			nx_setsockopt_int(fd, IPPROTO_IPV6, IPV6_V6ONLY, 0);
-		}
-		if (nx_bind(fd, a->ai_addr, a->ai_addrlen) == 0 && nx_listen(fd, SOMAXCONN) == 0) {
-			break;
-		}
-		e = x_errno();
-		nx_close(fd);
-		fd = -1;
-	}
-	nx_freeaddrinfo(res);
-	if (fd < 0) {
-		net_fail(c, 4, "listen tcp %s: bind: %s", addr, err_text(e));
-		free(addr);
-		return xo_h_zero();
-	}
-	free(addr);
-	set_nonblock(fd);
-	xo_pd *pd = pd_new(fd, 0);
-	if (!pd) {
-		e = x_errno();
-		nx_close(fd);
-		net_fail(c, 4, "listen tcp: %s", err_text(e));
-		return xo_h_zero();
-	}
-	struct sockaddr_storage ss;
-	socklen_t sl = sizeof ss;
-	nx_getsockname(fd, (struct sockaddr *)&ss, &sl);
-	xo_listener *l = xo_alloc(sizeof(xo_listener));
-	h_init(l, listener_free);
-	l->pd = pd;
-	l->mem = NULL;
-	l->addr = fmt_addr((struct sockaddr *)&ss);
-	l->unlink_path = 0;
-	net_ok(c);
-	return l;
+	return nc_handle(xo_x_nc_listen(XO_ADDR(lp), ln, XO_ADDR(p), n));
 }
-
-// xo_listener_addr is `l.addr()`, in a list of one.
-xo_rlist *xo_listener_addr(xo_listener *l) { return str_list(l->addr, (int64_t)strlen(l->addr)); }
-
-void xo_listener_close(xo_listener *l) {
-	if (l->mem) {
-		tw_listener_close(l);
-		return;
-	}
-	pd_close(l->pd);
-	if (l->unlink_path) {
-		// as Go's UnixListener.Close: the socket file goes, once
-		l->unlink_path = 0;
-		unlink(l->addr + 5);
-	}
-}
-
-// conn_new makes a connection handle of a connected socket.
-static xo_conn *conn_new(xo_ctx *c, int fd, xo_pd *pd) {
-	nx_setsockopt_int(fd, IPPROTO_TCP, TCP_NODELAY, 1);
-#ifdef SO_NOSIGPIPE
-	nx_setsockopt_int(fd, SOL_SOCKET, SO_NOSIGPIPE, 1);
-#endif
-	if (!pd) {
-		pd = pd_new(fd, 1);
-		if (!pd) {
-			int e = x_errno();
-			nx_close(fd);
-			net_fail(c, 4, "%s", err_text(e));
-			return xo_h_zero();
-		}
-	}
-	xo_conn *cn = xo_alloc(sizeof(xo_conn));
-	h_init(cn, conn_free);
-	cn->pd = pd;
-	net_ok(c);
-	return cn;
-}
-
-// xo_listener_accept is `l.accept()`: waits for a connection (canceled:
-// NetErr.Canceled).
-xo_conn *xo_listener_accept(xo_listener *l) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	if (l->mem) {
-		return tw_listener_accept(c, l);
-	}
-	xo_pd *pd = l->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
-		return xo_h_zero();
-	}
-	for (;;) {
-		int64_t fd = x_accept(pd->fd);
-		if (fd >= 0) {
-			pd_end(pd);
-			set_nonblock((int)fd);
-			return conn_new(c, (int)fd, NULL);
-		}
-		if (fd == -EINTR || fd == -ECONNABORTED) {
-			continue;
-		}
-		if (fd == -EAGAIN || fd == -EWOULDBLOCK) {
-			int w = pd_wait(pd, 0, c);
-			if (w == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			if (w == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, closed_text);
-			}
-			return xo_h_zero();
-		}
-		pd_end(pd);
-		net_fail(c, 4, "accept %s %s: %s", strncmp(l->addr, "unix:", 5) == 0 ? "unix" : "tcp", strncmp(l->addr, "unix:", 5) == 0 ? l->addr + 5 : l->addr, err_text((int)-fd));
-		return xo_h_zero();
-	}
-}
-
-// xo_net_dial is `net.dial(addr)` (std.md 3.2): connection refused is
-// NetErr.Refused; it gives up after 30 s like the Go backend's
-// net.DialTimeout (NetErr.Io "i/o timeout").
-xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d);
 
 xo_conn *xo_net_dial(const char *lp, int64_t ln, const char *p, int64_t n) {
-	if (!net_admits_addr(lp, ln, p, n)) {
-		// Net.only (decision 0175): denied before anything else
-		net_denied(ctx(), p, n);
-		return xo_h_zero();
-	}
-	return xo_net_dial_timeout(p, n, (int64_t)30 * 1000000000);
+	return nc_handle(xo_x_nc_dial(XO_ADDR(lp), ln, XO_ADDR(p), n));
 }
 
 // xo_net_dial_timeout is xo_net_dial giving up after d ns (d <= 0: no
-// limit).
-xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) {
-	int64_t when = d > 0 ? deadline(d) : 0;
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return xo_h_zero();
-	}
-	if (tw_is_fake(TW_REAL_NET)) {
-		// FakeNet.dial: raw connections are not faked (Refused)
-		net_fail(c, 2, "");
-		return xo_h_zero();
-	}
-	char *addr = cstr_of(p, n);
-	if (strncmp(addr, "unix:", 5) == 0) {
-		xo_conn *u = unix_dial(c, addr, when);
-		free(addr);
-		return u;
-	}
-	char host[256], port[32];
-	if (split_hostport(addr, host, sizeof host, port, sizeof port) < 0) {
-		net_fail(c, 4, "dial tcp %s: address %s: missing port in address", addr, addr);
-		free(addr);
-		return xo_h_zero();
-	}
-	if (port_out_of_range(port)) {
-		net_fail(c, 4, "dial tcp %s: address %s: invalid port", addr, port);
-		free(addr);
-		return xo_h_zero();
-	}
-	struct addrinfo hints = {.ai_family = AF_UNSPEC, .ai_socktype = SOCK_STREAM, .ai_flags = AI_NUMERICSERV};
-	struct addrinfo *res = NULL;
-	int g = nx_getaddrinfo(host[0] ? host : "localhost", port, &hints, &res);
-	if (g != 0) {
-		net_fail(c, 4, "dial tcp %s: %s", addr, nx_gai_strerror(g));
-		free(addr);
-		return xo_h_zero();
-	}
-	int64_t e = 0;
-	xo_conn *out = NULL;
-	for (struct addrinfo *a = res; a && !out; a = a->ai_next) {
-		int fd = nx_socket(a->ai_family, a->ai_socktype | XO_SOCK_CLOEXEC, a->ai_protocol);
-		if (fd < 0) {
-			e = -x_errno();
-			continue;
-		}
-		set_nonblock(fd);
-		xo_pd *pd = pd_new(fd, 1);
-		if (!pd) {
-			e = -x_errno();
-			nx_close(fd);
-			continue;
-		}
-		pd_begin(pd);
-		e = x_connect(fd, a->ai_addr, a->ai_addrlen);
-		while (e == -EINTR) {
-			e = x_connect(fd, a->ai_addr, a->ai_addrlen);
-		}
-		if (e == -EINPROGRESS) {
-			int w = pd_wait_until(pd, 1, c, when);
-			e = w == PD_READY ? x_sockerr(fd) : w == PD_CANCELED ? 1 : w == PD_TIMEOUT ? 2 : -ECONNABORTED;
-		}
-		pd_end(pd);
-		if (e == 0) {
-			out = conn_new(c, fd, pd);
-			break;
-		}
-		pd_free(pd);
-		if (e == 1 || e == 2) {
-			break; // canceled, or the time is up
-		}
-	}
-	nx_freeaddrinfo(res);
-	if (out) {
-		free(addr);
-		return out;
-	}
-	if (e == 1) {
-		net_fail(c, 5, "");
-	} else if (e == 2) {
-		net_fail(c, 4, "dial tcp %s: i/o timeout", addr);
-	} else if (e == -ECONNREFUSED) {
-		net_fail(c, 2, "");
-	} else {
-		net_fail(c, 4, "dial tcp %s: connect: %s", addr, err_text((int)-e));
-	}
-	free(addr);
-	return xo_h_zero();
+// limit), with no attenuation lists (xo_http.c's client).
+xo_conn *xo_net_dial_timeout(const char *p, int64_t n, int64_t d) { return nc_handle(xo_x_nc_dial_timeout(XO_ADDR(p), n, d)); }
+
+xo_rlist *xo_listener_addr(xo_listener *l) {
+	int64_t n = 0;
+	int64_t r = xo_x_nc_listener_addr(XO_ADDR(l), XO_ADDR(&n));
+	return nc_list(r, n);
 }
 
-// xo_conn_read is `c.read(max)`: at most max bytes (at most 1 MiB) in a
-// list of one, or the empty list at the end of the stream (None).
+xo_conn *xo_listener_accept(xo_listener *l) { return nc_handle(xo_x_nc_listener_accept(XO_ADDR(l))); }
+
+void xo_listener_close(xo_listener *l) { xo_x_nc_listener_close(XO_ADDR(l)); }
+
 xo_rlist *xo_conn_read(xo_conn *cn, int64_t max) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return &empty_list;
-	}
-	if (max <= 0) {
-		net_ok(c);
-		return str_list("", 0);
-	}
-	if (max > (1 << 20)) {
-		max = 1 << 20;
-	}
-	xo_pd *pd = cn->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "read tcp: %s", closed_text);
-		return &empty_list;
-	}
-	xo_rstr *s = rs_new(max);
-	for (;;) {
-		int64_t r = x_read(pd->fd, s->data, (size_t)max);
-		if (r > 0) {
-			pd_end(pd);
-			xo_rlist *l = xo_rl_new(1, 16);
-			l->len = 1;
-			((xo_rstr **)rl_data(l))[0] = s;
-			((int64_t *)rl_data(l))[1] = r;
-			net_ok(c);
-			return l;
-		}
-		if (r == 0) {
-			pd_end(pd);
-			xo_free(s);
-			net_ok(c);
-			return &empty_list;
-		}
-		if (r == -EINTR) {
-			continue;
-		}
-		if (r == -EAGAIN || r == -EWOULDBLOCK) {
-			int w = pd_wait(pd, 0, c);
-			if (w == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			xo_free(s);
-			if (w == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "read tcp: %s", closed_text);
-			}
-			return &empty_list;
-		}
-		pd_end(pd);
-		xo_free(s);
-		net_fail(c, 4, "read tcp: %s", err_text((int)-r));
-		return &empty_list;
-	}
+	int64_t n = 0;
+	int64_t r = xo_x_nc_conn_read(XO_ADDR(cn), max, XO_ADDR(&n));
+	return nc_list(r, n);
 }
 
-// xo_conn_write is `c.write(data)`: writes every byte.
-void xo_conn_write(xo_conn *cn, const char *p, int64_t n) {
-	xo_ctx *c = ctx();
-	if (ctx_canceled(c)) {
-		net_fail(c, 5, "");
-		return;
-	}
-	xo_pd *pd = cn->pd;
-	if (!pd_begin(pd)) {
-		net_fail(c, 4, "write tcp: %s", closed_text);
-		return;
-	}
-	int64_t off = 0;
-	while (off < n) {
-		int64_t w = x_write(pd->fd, p + off, (size_t)(n - off));
-		if (w >= 0) {
-			off += w;
-			continue;
-		}
-		if (w == -EINTR) {
-			continue;
-		}
-		if (w == -EAGAIN || w == -EWOULDBLOCK) {
-			int r = pd_wait(pd, 1, c);
-			if (r == PD_READY) {
-				continue;
-			}
-			pd_end(pd);
-			if (r == PD_CANCELED) {
-				net_fail(c, 5, "");
-			} else {
-				net_fail(c, 4, "write tcp: %s", closed_text);
-			}
-			return;
-		}
-		pd_end(pd);
-		net_fail(c, 4, "write tcp: %s", err_text((int)-w));
-		return;
-	}
-	pd_end(pd);
-	net_ok(c);
-}
+void xo_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_write(XO_ADDR(cn), XO_ADDR(p), n); }
 
-void xo_conn_close(xo_conn *cn) { pd_close(cn->pd); }
+void xo_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 
 // The process environment, which C main hands to process.xo
 // (xo_x_proc_start below).
 #ifdef _WIN32
-#undef environ // the C runtime's (stdlib.h)
-#define environ (xo_w_environ()) // UTF-8 (xo_win.c)
+#undef environ // the C runtime's (stdlib.h): process.xo reads Windows' own
+#define environ ((char **)0)
 #else
 extern char **environ;
 #endif
 
 // ---------------------------------------------------------------------------
-// Signals and two phase shutdown (core 7.5, decision 0042)
+// Signals and two phase shutdown (core 7.5, decision 0042): the state
+// (the signals counted, the stop request, the grace timer, task.stopping's
+// channel, main's root context) is std/native/llrt/stop.xo's (the zero-C
+// audit's B26, part 1). The C keeps the handlers, which count a signal
+// and wake the poller (whose thread calls stop_signal), and stop_svc, the
+// services record stop.xo calls through rt.call_c2 (its S_ words).
 
-#define XO_DEFAULT_GRACE ((int64_t)30 * 1000000000)
-
-static struct {
-	pthread_mutex_t mu;
-	int signals;
-	int requested; // atomic
-	int canceled;  // atomic
-	int exited;    // a third signal in the test world: run_main gives 130
-	int64_t stop_at, grace;
-	// the test world: set_grace before testing.run_main sets the grace of
-	// the next run (std/rt's FakeProc.set_grace)
-	int has_next_grace;
-	int64_t next_grace;
-	xo_timer grace_t;
-	xo_chan *stopping; // task.stopping(), made on first use
-	xo_node *root;     // main's root context
-} stop = {.mu = PTHREAD_MUTEX_INITIALIZER, .grace = XO_DEFAULT_GRACE, .grace_t = {.idx = -1}};
-
-// stop_cancel enters phase 2: main's root context is canceled.
-static void stop_cancel(void) {
-	int z = 0;
-	if (stop.root && __atomic_compare_exchange_n(&stop.canceled, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-		node_cancel(stop.root);
-	}
-}
-
-static void grace_fire(xo_timer *t) {
-	(void)t;
-	stop_cancel();
-}
-
-// arm_grace (stop.mu held) arms the grace timer for the time left.
-static void arm_grace(void) {
-	timer_del(&stop.grace_t);
-	if (__atomic_load_n(&stop.canceled, __ATOMIC_ACQUIRE)) {
-		return;
-	}
-	int64_t left = stop.grace - (tnow() - stop.stop_at);
-	if (left <= 0) {
-		stop_cancel();
-		return;
-	}
-	stop.grace_t.when = deadline(left);
-	stop.grace_t.fn = grace_fire;
-	stop.grace_t.park = NULL;
-	timer_add(&stop.grace_t);
-}
+void xo_x_stop_init(int64_t svc);
+void xo_x_stop_signal(void);
+void xo_x_stop_cancel(void);
+int64_t xo_x_stop_requested(void);
+int64_t xo_x_stop_canceled(void);
+int64_t xo_x_stop_stopping(int64_t drop);
+void xo_x_stop_set_grace(int64_t d);
+int64_t xo_x_stop_root(void);
+void xo_x_stop_set_root(int64_t n);
+void xo_x_stop_end(void);
+void xo_x_stop_reset(int64_t n);
+int64_t xo_x_stop_unroot(int64_t n);
 
 // stop_signal handles SIGINT or SIGTERM (on the poller thread).
-static void stop_signal(void) {
-	pthread_mutex_lock(&stop.mu);
-	stop.signals++;
-	switch (stop.signals) {
-	case 1:
-		stop.stop_at = tnow();
-		__atomic_store_n(&stop.requested, 1, __ATOMIC_RELEASE);
-		if (stop.stopping) {
-			xo_chan_close(stop.stopping);
-		}
-		arm_grace();
-		break;
-	case 2:
-		stop_cancel();
-		break;
-	default:
-		if (tw_is_fake(TW_REAL_PROC)) {
-			// a test's run_main returns 130 once main has unwound
-			// (std/rt's stopState.exited), FakeProc.exit_code is Some(130)
-			stop.exited = 1;
-			stop_cancel();
-			break;
-		}
-		pthread_mutex_unlock(&stop.mu);
-		stop_cancel();
-		xo_flush();
-		_exit(130);
-	}
-	pthread_mutex_unlock(&stop.mu);
-}
+static void stop_signal(void) { xo_x_stop_signal(); }
 
+static int64_t stopsvc_cancel(int64_t n, int64_t b) {
+	(void)b;
+	node_cancel((xo_node *)(intptr_t)n);
+	return 0;
+}
+static int64_t stopsvc_chan(int64_t drop, int64_t b) {
+	(void)b;
+	static const char loc[] = "task.stopping";
+	xo_chan *ch = xo_chan_new(0, drop, loc, (int64_t)sizeof loc - 1);
+	ch->ext = 1;
+	return XO_ADDR(ch);
+}
+static int64_t stopsvc_close(int64_t ch, int64_t b) {
+	(void)b;
+	xo_chan_close((xo_chan *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_retain(int64_t ch, int64_t b) {
+	(void)b;
+	h_retain((void *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_release(int64_t ch, int64_t b) {
+	(void)b;
+	h_release((void *)(intptr_t)ch);
+	return 0;
+}
+static int64_t stopsvc_exit(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	xo_flush();
+	_exit(130);
+}
+static int64_t stopsvc_now(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	return tnow();
+}
+static void stop_grace_fire(xo_timer *t) {
+	(void)t;
+	xo_x_stop_cancel();
+}
 #ifndef _WIN32
 static void on_signal(int sig) {
 	(void)sig;
@@ -5690,103 +3431,66 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 	TerminateProcess(GetCurrentProcess(), 2);
 	return EXCEPTION_CONTINUE_SEARCH;
 }
-
-__attribute__((unused)) static void xo_signals_init(void) {
-	ev_start();
-	SetConsoleCtrlHandler(on_console, TRUE);
-	AddVectoredExceptionHandler(1, on_overflow);
-	ULONG g = XO_W_GUARANTEE;
-	SetThreadStackGuarantee(&g);
-}
-#else
-// xo_signals_init installs the handlers (main, before the program runs).
-__attribute__((unused)) static void xo_signals_init(void) {
-	ev_start();
-	struct sigaction sa;
-	memset(&sa, 0, sizeof sa);
-	sa.sa_handler = on_signal;
-	sa.sa_flags = SA_RESTART;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGTERM, &sa, NULL);
-	signal(SIGPIPE, SIG_IGN);
-}
 #endif
 
-int64_t xo_stop_requested(void) { return __atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE); }
+// The entry's services (std/native/llrt/entry.xo E_ words): functions
+// that take no arguments are called through rt.call_c2 as they are (the
+// two arguments it passes are ignored on every target's C convention).
+void xo_x_consts_free(void);
+#ifdef XO_TIME
+void xo_x_tz_free(void);
+#endif
+static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
+	(void)b;
+	xo_mid_max = m;
+	main_heap.mid_max = m;
+	return 0;
+}
+
+static int64_t stop_svc[20];
+static void stop_svc_init(void) {
+	stop_svc[0] = XO_ADDR(&pdsvc_tadd);
+	stop_svc[1] = XO_ADDR(&pdsvc_tdel);
+	stop_svc[2] = XO_ADDR(&stopsvc_cancel);
+	stop_svc[3] = XO_ADDR(&stopsvc_chan);
+	stop_svc[4] = XO_ADDR(&stopsvc_close);
+	stop_svc[5] = XO_ADDR(&stopsvc_retain);
+	stop_svc[6] = XO_ADDR(&stopsvc_release);
+	stop_svc[7] = XO_ADDR(&stopsvc_exit);
+	stop_svc[8] = XO_ADDR(&stopsvc_now);
+	stop_svc[9] = XO_ADDR(&stop_grace_fire);
+	stop_svc[10] = XO_ADDR(&tw.in_main);
+	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
+	stop_svc[12] = XO_ADDR(&ev_start);
+#ifdef _WIN32
+	stop_svc[13] = XO_ADDR(&on_console);
+	stop_svc[14] = XO_ADDR(&on_overflow);
+#else
+	stop_svc[13] = XO_ADDR(&on_signal);
+#endif
+	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
+	stop_svc[16] = XO_ADDR(&xo_x_consts_free);
+#ifdef XO_TIME
+	stop_svc[17] = XO_ADDR(&xo_x_tz_free);
+#endif
+	stop_svc[18] = XO_ADDR(&st);
+	stop_svc[19] = XO_ADDR(&rtstats);
+	xo_x_stop_init(XO_ADDR(stop_svc));
+}
+
+int64_t xo_stop_requested(void) { return xo_x_stop_requested(); }
 
 // xo_task_stopping is `task.stopping()`: a channel closed when a stop is
 // requested (drop releases values someone sends on it).
-xo_chan *xo_task_stopping(int64_t drop) {
-	pthread_mutex_lock(&stop.mu);
-	if (!stop.stopping) {
-		static const char loc[] = "task.stopping";
-		stop.stopping = xo_chan_new(0, drop, loc, (int64_t)sizeof loc - 1);
-		stop.stopping->ext = 1;
-		if (__atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE)) {
-			xo_chan_close(stop.stopping);
-		}
-	}
-	xo_chan *ch = stop.stopping;
-	h_retain(ch);
-	pthread_mutex_unlock(&stop.mu);
-	return ch;
-}
+xo_chan *xo_task_stopping(int64_t drop) { return (xo_chan *)(intptr_t)xo_x_stop_stopping(drop); }
 
 // xo_set_grace is `proc.set_grace(d)`: after a stop request the deadline
 // moves to the stop time plus d.
-void xo_set_grace(int64_t d) {
-	pthread_mutex_lock(&stop.mu);
-	if (tw_is_fake(TW_REAL_PROC) && !__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
-		// before testing.run_main: the grace period of the next run
-		stop.has_next_grace = 1;
-		stop.next_grace = d < 0 ? 0 : d;
-		pthread_mutex_unlock(&stop.mu);
-		return;
-	}
-	stop.grace = d < 0 ? 0 : d;
-	if (__atomic_load_n(&stop.requested, __ATOMIC_ACQUIRE)) {
-		arm_grace();
-	}
-	pthread_mutex_unlock(&stop.mu);
-}
-
-// select's `after` timer (a timer on the heap of the waiting call)
-static void select_timer(xo_select *s, struct xo_timer **tp) {
-	xo_timer *t = calloc(1, sizeof(xo_timer));
-	if (!t) {
-		xo_oom();
-	}
-	t->when = deadline(s->after);
-	t->idx = -1;
-	t->fn = select_timeout;
-	t->arg = s;
-	timer_add(t);
-	*tp = t;
-}
-
-static void select_untimer(struct xo_timer *t) {
-	timer_del(t);
-	free(t);
-}
+void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 
 // ---------------------------------------------------------------------------
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata
 // include this file and bring their own main)
-
-// the program's arguments, for env.args (std.md 3.5)
-static int xo_argc;
-static char **xo_argv;
-
-// constants of collection types (xo_bytes.c)
-void xo_consts_free(void);
-
-// xo_x_tz_free (std/native/llrt/cabi_time.xo) releases the zones
-// std/native/llrt/tzhost.xo kept, in programs that use std/time
-// (XO_TIME): the leak check sees them freed.
-#ifdef XO_TIME
-void xo_x_tz_free(void);
-#endif
 
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
@@ -5794,8 +3498,7 @@ extern void xo_entry(void);
 static void *run_main(void *arg) {
 	(void)arg;
 	// main's root context: the second shutdown signal cancels it
-	xo_node *none = NULL;
-	__atomic_compare_exchange_n(&stop.root, &none, ctx()->node, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+	xo_x_stop_set_root(XO_ADDR(ctx()->node));
 	// a fault that unwinds main reaches this frame: reported, status 70
 	// (decision 0085)
 	ctx()->boundary = (uintptr_t)__builtin_frame_address(0);
@@ -5803,69 +3506,29 @@ static void *run_main(void *arg) {
 	return NULL;
 }
 
-static void tw_init(void);
-static void tw_cleanup(void);
-static void xo_streams_free(void);
+// std/http's streamed responses and idle HTTP/2 client connections
+// (cabi_http.xo; weak in xo_http.c)
+void xo_x_streams_free(void);
 
-#ifdef _WIN32
-// win_init sets up the process on Windows: standard streams in binary
-// mode (no \n to \r\n), UTF-8 console output, and the arguments as UTF-8
-// (from the UTF-16 command line; main's argv is in the ANSI code page).
-static void win_init(int *argc, char ***argv) {
-	_setmode(0, _O_BINARY);
-	_setmode(1, _O_BINARY);
-	_setmode(2, _O_BINARY);
-	SetConsoleOutputCP(CP_UTF8);
-	int n = 0;
-	LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
-	if (!w) {
-		return;
-	}
-	char **v = calloc((size_t)n + 1, sizeof(char *));
-	if (!v) {
-		xo_oom();
-	}
-	for (int i = 0; i < n; i++) {
-		int k = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
-		v[i] = malloc((size_t)(k > 0 ? k : 1));
-		if (!v[i]) {
-			xo_oom();
-		}
-		v[i][0] = 0;
-		if (k > 0) {
-			WideCharToMultiByte(CP_UTF8, 0, w[i], -1, v[i], k, NULL, NULL);
-		}
-	}
-	LocalFree(w);
-	*argc = n;
-	*argv = v;
-}
-#endif
-
-void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+// the program's start and end (std/native/llrt/entry.xo)
+void xo_x_entry_start(int64_t argc, int64_t argv, int64_t envp);
+void xo_x_entry_finish(void);
+void xo_x_rt_stats(void);
 
 int main(int argc, char **argv) {
 	obj_heap_init(&main_heap);
 	fault_init();
 #ifdef _WIN32
-	win_init(&argc, &argv);
+	// standard streams in binary mode (no \n to \r\n)
+	_setmode(0, _O_BINARY);
+	_setmode(1, _O_BINARY);
+	_setmode(2, _O_BINARY);
 #endif
-	xo_argc = argc;
-	xo_argv = argv;
-	// env.args, env.program, env.get, and env.vars read them in Xo
-	// (std/native/llrt/process.xo; `environ` is xo_w_environ() on Windows)
-	xo_x_proc_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
-	const char *mid = getenv("XO_HEAP_MID_MAX");
-	if (mid && atoll(mid) >= 1024 && atoll(mid) < XO_MID_MAX) {
-		xo_mid_max = atoll(mid);
-		main_heap.mid_max = xo_mid_max;
-	}
-	if (getenv("XO_TEST")) {
-		// a test binary runs one test in the test world (xo_testing.c)
-		tw_init();
-	} else {
-		xo_signals_init();
-	}
+	// the arguments and the environment (env.args, env.program, env.get,
+	// and env.vars read them in Xo; on Windows process.xo takes the
+	// environment from Windows in UTF-8), XO_HEAP_MID_MAX, then the test
+	// world (XO_TEST) or the signal handlers
+	xo_x_entry_start(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ);
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 #ifdef XO_RT_TEST_THREADS
@@ -5893,41 +3556,15 @@ int main(int argc, char **argv) {
 	}
 #endif
 	xo_flush();
-	pthread_mutex_lock(&stop.mu);
-	if (stop.stopping) {
-		h_release(stop.stopping);
-		stop.stopping = NULL;
-	}
-	pthread_mutex_unlock(&stop.mu);
-	xo_rt_stats();
-	xo_streams_free();
+	xo_x_stop_end();
+	xo_x_rt_stats();
+	xo_x_streams_free();
 	if (tw.on) {
-		tw_cleanup();
+		// the values the test world keeps (twrun.xo end)
+		xo_x_tw_end();
 	}
-	if (getenv("XO_LEAKCHECK")) {
-		xo_consts_free();
-#ifdef XO_TIME
-		xo_x_tz_free();
-#endif
-		int64_t live, total;
-		xo_rt_live(&live, &total);
-		fprintf(stderr, "xo leakcheck: %lld live of %lld allocations\n", (long long)live, (long long)total);
-	}
-	if (getenv("XO_HEAPSTATS")) {
-		// where the heap's memory went: the blocks on each class's free
-		// list at exit (every block ever carved, when nothing is live)
-		// and the chunks carved (diagnostics, bench/results/xo1-speed)
-		int64_t sum = 0;
-		for (int64_t c = 1; c <= XO_NCLASS; c++) {
-			int64_t n = xo_x_heap_nfree(c);
-			int64_t size = c <= 64 ? c << 4 : (int64_t)2048 << (c - 65);
-			if (n > 0) {
-				fprintf(stderr, "xo heapstats: class %lld size %lld free blocks %lld bytes %lld\n", (long long)c, (long long)size, (long long)n, (long long)(n * (size + 8)));
-			}
-			sum += n * (size + 8);
-		}
-		fprintf(stderr, "xo heapstats: chunks %lld (%lld MB), on free lists %lld MB\n", (long long)xo_chunks_now(), (long long)(xo_chunks_now() * (XO_CHUNK >> 20)), (long long)(sum >> 20));
-	}
+	// XO_LEAKCHECK's and XO_HEAPSTATS' reports
+	xo_x_entry_finish();
 	return 0;
 }
 #endif

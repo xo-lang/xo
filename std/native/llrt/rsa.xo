@@ -1,0 +1,413 @@
+// RSA (RFC 8017) for TLS (the zero-C audit's B31, decision 0202: Go's
+// crypto/rsa design in Xo, replacing Mbed TLS's rsa): PKCS #1 v1.5 and
+// PSS signatures, verified with a certificate's public key and made with
+// a server's private key, which comes as PKCS #1 or PKCS #8 DER. The
+// private operation is CRT over bigmod.xo's constant time arithmetic
+// (secret exponents through fixed windows) and checked by the public
+// operation before a signature leaves (Go's fault check). Keys below
+// 1024 bits are refused, as Go's since 1.24. The hash ids are
+// sha256.xo's HASH_ constants (0 SHA-256, 1 SHA-384, 2 SHA-512).
+use native/llrt/asn1
+use native/llrt/bigmod
+use native/llrt/rand
+use native/llrt/sha256
+use native/rt
+
+/// A public key: the modulus's bytes (big endian, no leading zero) and the
+/// exponent.
+pub struct PublicKey {
+  pub n: Bytes
+  pub e: Int
+}
+
+/// A private key with its CRT values (big endian bytes).
+pub struct PrivateKey {
+  pub n: Bytes
+  pub e: Int
+  pub d: Bytes
+  pub p: Bytes
+  pub q: Bytes
+  pub dp: Bytes
+  pub dq: Bytes
+  pub qinv: Bytes
+}
+
+fn hsum(hash: Int, data: Bytes) -> Bytes { sha256.sum(hash, data) }
+
+/// The bytes of the hash.
+pub fn hash_len(hash: Int) -> Int {
+  if hash == 1 {
+    return 48
+  }
+  if hash == 2 {
+    return 64
+  }
+  32
+}
+
+/// The DER of DigestInfo up to the digest (RFC 8017 9.2 note 1).
+fn digest_prefix(hash: Int) -> Bytes {
+  let hex = if hash == 1 { "3041300d060960864801650304020205000430" } else if hash == 2 { "3051300d060960864801650304020305000440" } else { "3031300d060960864801650304020105000420" }
+  Bytes.from_hex(hex) ?? b""
+}
+
+// ---------------------------------------------------------------------------
+// Keys
+
+/// The public key of the RSAPublicKey DER der (SEQUENCE of n and e), as a
+/// certificate carries it; none when it is malformed or Go would refuse it
+/// (n below 1024 bits or even, e not in [2, 2^31) or even).
+pub fn public_key(der: Bytes) -> PublicKey? {
+  let t = asn1.whole(der, asn1.SEQUENCE)
+  let xs = asn1.children(der, t)
+  if t.tag < 0 || asn1.any_bad(xs) || xs.len() != 2 {
+    return None
+  }
+  let n = asn1.uint_bytes(der, xs[0]) ?? b""
+  let e = asn1.small_int(der, xs[1]) ?? 0
+  check_public(n, e)
+}
+
+fn check_public(n: Bytes, e: Int) -> PublicKey? {
+  if n.len() < 128 || (Int(n[n.len() - 1]) & 1) == 0 || e < 2 || e >= 2147483648 || (e & 1) == 0 {
+    return None
+  }
+  Some(PublicKey{n: n, e: e})
+}
+
+/// The bytes of a signature with the modulus n.
+pub fn size(n: Bytes) -> Int { n.len() }
+
+/// The private key of the PKCS #1 RSAPrivateKey or PKCS #8
+/// PrivateKeyInfo DER der (two primes only, as Go's).
+pub fn private_key(der: Bytes) -> PrivateKey? {
+  let t = asn1.whole(der, asn1.SEQUENCE)
+  let xs = asn1.children(der, t)
+  if t.tag < 0 || asn1.any_bad(xs) || xs.len() < 3 {
+    return None
+  }
+  // PKCS #8: version 0, AlgorithmIdentifier rsaEncryption, OCTET STRING
+  if xs[1].tag == asn1.SEQUENCE && xs[2].tag == asn1.OCTET_STRING {
+    let alg = asn1.children(der, xs[1])
+    if asn1.any_bad(alg) || alg.len() == 0 || asn1.oid(der, alg[0]) != "1.2.840.113549.1.1.1" {
+      return None
+    }
+    return private_key(asn1.contents(der, xs[2]))
+  }
+  if xs.len() != 9 || asn1.small_int(der, xs[0]) != Some(0) {
+    return None
+  }
+  var v: List[Bytes] = []
+  for i in 1..9 {
+    if i == 2 {
+      v.push(b"")
+    } else {
+      match asn1.uint_bytes(der, xs[i]) {
+        Some(b) => v.push(b)
+        None => return None
+      }
+    }
+  }
+  let e = asn1.small_int(der, xs[2]) ?? 0
+  if check_public(v[0], e) == None {
+    return None
+  }
+  let k = PrivateKey{n: v[0], e: e, d: v[2], p: v[3], q: v[4], dp: v[5], dq: v[6], qinv: v[7]}
+  // n = p q, both odd (the CRT's moduli)
+  if (Int(k.p[k.p.len() - 1]) & 1) == 0 || (Int(k.q[k.q.len() - 1]) & 1) == 0 {
+    return None
+  }
+  let pl = limbs_of(k.p)
+  let ql = limbs_of(k.q)
+  let nl = limbs_of(k.n)
+  if !bigmod.equal(bigmod.mul_plain(pl, ql), nl) {
+    return None
+  }
+  // qinv q = 1 mod p (dp and dq are checked by every signature's fault
+  // check: Montgomery arithmetic needs an odd modulus, and p - 1 is even)
+  let pm = bigmod.modulus(pl)
+  var one = bigmod.zero(pl.len())
+  one[0] = 1
+  let qi = bigmod.from_bytes(k.qinv, pl.len()) ?? []
+  if qi.len() == 0 || !bigmod.below(pm, qi) || !bigmod.equal(bigmod.from_mont(pm, bigmod.mul(pm, bigmod.reduce(pm, ql), bigmod.reduce(pm, qi))), one) {
+    return None
+  }
+  Some(k)
+}
+
+/// The limbs of the big endian b (its own count).
+fn limbs_of(b: Bytes) -> List[Int] { bigmod.from_bytes(b, (b.len() + 7) / 8) ?? [] }
+
+// ---------------------------------------------------------------------------
+// The RSA operations
+
+/// s^e mod n as size(n) bytes; none when s is not below n.
+fn public_op(k: PublicKey, s: Bytes) -> Bytes? {
+  if s.len() != k.n.len() {
+    return None
+  }
+  let nl = limbs_of(k.n)
+  let md = bigmod.modulus(nl)
+  let x = bigmod.from_bytes(s, nl.len()) ?? []
+  if !bigmod.below(md, x) {
+    return None
+  }
+  let m = bigmod.from_mont(md, bigmod.exp_public(md, bigmod.reduce(md, x), k.e))
+  Some(bigmod.to_bytes(m, k.n.len()))
+}
+
+/// c^d mod n by the CRT (c below n, size(n) bytes): m1 = c^dp mod p, m2 =
+/// c^dq mod q, h = qinv (m1 - m2) mod p, m = m2 + h q; then m^e = c is
+/// checked (none when not).
+fn private_op(k: PrivateKey, c: Bytes) -> Bytes? {
+  let pl = limbs_of(k.p)
+  let ql = limbs_of(k.q)
+  let pm = bigmod.modulus(pl)
+  let qm = bigmod.modulus(ql)
+  let cl = limbs_of(c)
+  let dp = bigmod.from_bytes(k.dp, pl.len()) ?? []
+  let dq = bigmod.from_bytes(k.dq, ql.len()) ?? []
+  if dp.len() == 0 || dq.len() == 0 {
+    return None
+  }
+  let m1 = bigmod.exp(pm, bigmod.reduce(pm, cl), dp)
+  let m2 = bigmod.from_mont(qm, bigmod.exp(qm, bigmod.reduce(qm, cl), dq))
+  let diff = bigmod.sub(pm, m1, bigmod.reduce(pm, m2))
+  let h = bigmod.from_mont(pm, bigmod.mul(pm, diff, bigmod.reduce(pm, limbs_of(k.qinv))))
+  let nn = (k.n.len() + 7) / 8
+  let hq = bigmod.mul_plain(h, ql)
+  var m = bigmod.zero(nn)
+  for i in 0..nn {
+    m[i] = if i < hq.len() { hq[i] } else { 0 }
+  }
+  let out = bigmod.to_bytes(bigmod.add_plain(m, m2), k.n.len())
+  match public_op(PublicKey{n: k.n, e: k.e}, out) {
+    Some(back) => if back == pad(c, k.n.len()) { Some(out) } else { None }
+    None => None
+  }
+}
+
+/// b left padded with zeros to n bytes.
+fn pad(b: Bytes, n: Int) -> Bytes {
+  var s = rt.rs_with_cap(n)
+  for _ in 0..n - b.len() {
+    s = rt.rs_push_byte(s, 0)
+  }
+  rt.rs_append_bytes(s, b, 0, b.len(), 0).bytes()
+}
+
+// ---------------------------------------------------------------------------
+// PKCS #1 v1.5 (RFC 8017 8.2, 9.2)
+
+/// EMSA-PKCS1-v1_5 of the hashed message: 0x00 0x01 0xff.. 0x00
+/// DigestInfo, k bytes; empty when k is too small.
+fn pkcs1_encode(hash: Int, hashed: Bytes, k: Int) -> Bytes {
+  let prefix = digest_prefix(hash)
+  let tlen = prefix.len() + hashed.len()
+  if k < tlen + 11 {
+    return b""
+  }
+  var s = rt.rs_with_cap(k)
+  s = rt.rs_push_byte(s, 0)
+  s = rt.rs_push_byte(s, 1)
+  for _ in 0..k - tlen - 3 {
+    s = rt.rs_push_byte(s, 255)
+  }
+  s = rt.rs_push_byte(s, 0)
+  s = rt.rs_append_bytes(s, prefix, 0, prefix.len(), 0)
+  rt.rs_append_bytes(s, hashed, 0, hashed.len(), 0).bytes()
+}
+
+/// Whether sig is a PKCS #1 v1.5 signature of the hashed message by k.
+pub fn verify_pkcs1(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes) -> Bool {
+  if hashed.len() != hash_len(hash) {
+    return false
+  }
+  let em = pkcs1_encode(hash, hashed, k.n.len())
+  match public_op(k, sig) {
+    Some(m) => em.len() > 0 && m == em
+    None => false
+  }
+}
+
+/// The PKCS #1 v1.5 signature of the hashed message by k; empty on a
+/// failure.
+pub fn sign_pkcs1(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
+  let em = pkcs1_encode(hash, hashed, k.n.len())
+  if em.len() == 0 || hashed.len() != hash_len(hash) {
+    return b""
+  }
+  private_op(k, em) ?? b""
+}
+
+// ---------------------------------------------------------------------------
+// PSS (RFC 8017 8.1, 9.1)
+
+/// MGF1 of the seed with the hash, n bytes.
+fn mgf1(hash: Int, seed: Bytes, n: Int) -> Bytes {
+  var out = rt.rs_with_cap(n + 64)
+  var counter = 0
+  while out.len() < n {
+    var s = rt.rs_append_bytes(rt.rs_with_cap(seed.len() + 4), seed, 0, seed.len(), 0)
+    s = rt.rs_push_word(s, rt.int_wrap(7, rt.int_wrap(3, counter, 32), 0), 4)
+    let h = hsum(hash, s.bytes())
+    out = rt.rs_append_bytes(out, h, 0, h.len(), 0)
+    counter += 1
+  }
+  out.bytes()[0..n]
+}
+
+/// x xor y (y at least as long).
+fn xor(x: Bytes, y: Bytes) -> Bytes {
+  var s = rt.rs_with_cap(x.len())
+  for i in 0..x.len() {
+    s = rt.rs_push_byte(s, Int(x[i]) ^ Int(y[i]))
+  }
+  s.bytes()
+}
+
+/// H = Hash(0x00 x 8 || mHash || salt).
+fn pss_h(hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
+  var s = rt.rs_with_cap(8 + hashed.len() + salt.len())
+  for _ in 0..8 {
+    s = rt.rs_push_byte(s, 0)
+  }
+  s = rt.rs_append_bytes(s, hashed, 0, hashed.len(), 0)
+  hsum(hash, rt.rs_append_bytes(s, salt, 0, salt.len(), 0).bytes())
+}
+
+/// Whether sig is a PSS signature (MGF1 with the same hash) of the hashed
+/// message by k, with a salt of salt_len bytes (-1: any length, Go's
+/// PSSSaltLengthAuto).
+pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: Int) -> Bool {
+  let hl = hash_len(hash)
+  if hashed.len() != hl {
+    return false
+  }
+  let m = public_op(k, sig) ?? b""
+  if m.len() == 0 {
+    return false
+  }
+  // emBits = modBits - 1; EM is the last emLen bytes of m
+  let mod_bits = bigmod.bit_len(limbs_of(k.n))
+  let em_bits = mod_bits - 1
+  let em_len = (em_bits + 7) / 8
+  if em_len < m.len() && m[0] != 0 {
+    return false
+  }
+  let em = m[m.len() - em_len..m.len()]
+  if em_len < hl + 2 || Int(em[em_len - 1]) != 0xbc {
+    return false
+  }
+  let masked = em[0..em_len - hl - 1]
+  let h = em[em_len - hl - 1..em_len - 1]
+  let top = 8 * em_len - em_bits
+  // the top bits of EM's first byte above emBits, which must be 0
+  let top_mask = rt.int_wrap(3, 255, 8 - top) & 255
+  if (Int(masked[0]) & top_mask) != 0 {
+    return false
+  }
+  let db = xor(masked, mgf1(hash, h, masked.len()))
+  // PS zeros (the top bits cleared), then 0x01, then the salt
+  var i = 0
+  while i < db.len() {
+    let x = if i == 0 { Int(db[0]) & (255 ^ top_mask) } else { Int(db[i]) }
+    if x == 1 {
+      break
+    }
+    if x != 0 {
+      return false
+    }
+    i += 1
+  }
+  if i == db.len() {
+    return false
+  }
+  let salt = db[i + 1..db.len()]
+  if salt_len >= 0 && salt.len() != salt_len {
+    return false
+  }
+  pss_h(hash, hashed, salt) == h
+}
+
+/// The PSS signature of the hashed message by k with a random salt of
+/// the hash's length (TLS 1.3's rule, RFC 8446 4.2.3); empty on a
+/// failure.
+pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes { sign_pss_salt(k, hash, hashed, rand.next_bytes(hash_len(hash))) }
+
+/// sign_pss with the given salt (the hash's length; the tests' fixed
+/// salts, as RFC 8448's CertificateVerify).
+pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
+  let hl = hash_len(hash)
+  if hashed.len() != hl || salt.len() != hl {
+    return b""
+  }
+  let mod_bits = bigmod.bit_len(limbs_of(k.n))
+  let em_bits = mod_bits - 1
+  let em_len = (em_bits + 7) / 8
+  if em_len < 2 * hl + 2 {
+    return b""
+  }
+  let h = pss_h(hash, hashed, salt)
+  var db = rt.rs_with_cap(em_len - hl - 1)
+  for _ in 0..em_len - 2 * hl - 2 {
+    db = rt.rs_push_byte(db, 0)
+  }
+  db = rt.rs_push_byte(db, 1)
+  db = rt.rs_append_bytes(db, salt, 0, salt.len(), 0)
+  let masked = xor(db.bytes(), mgf1(hash, h, em_len - hl - 1))
+  let top = 8 * em_len - em_bits
+  let first = Int(masked[0]) & (255 ^ (rt.int_wrap(3, 255, 8 - top) & 255))
+  var em = rt.rs_with_cap(em_len)
+  em = rt.rs_push_byte(em, first)
+  em = rt.rs_append_bytes(em, masked, 1, masked.len(), 0)
+  em = rt.rs_append_bytes(em, h, 0, h.len(), 0)
+  em = rt.rs_push_byte(em, 0xbc)
+  private_op(k, pad(em.bytes(), k.n.len())) ?? b""
+}
+
+/// internal.crypto_op's rsa ops (std/internal.xo): `verify_pkcs1` and
+/// `verify_pss` [1] when d is a signature of the hash c (hash id a[0]) by
+/// the RSAPublicKey DER b, else [0] (PSS: the salt the hash's length);
+/// `sign_pkcs1` and `sign_pss` the signature of the hash c (hash id a[0])
+/// by the PKCS #1 or #8 private key b; `public` the RSAPublicKey DER of
+/// the private key a, or empty; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what == "public" {
+    return match private_key(a) {
+      Some(k) => Some(asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc_uint(k.n), asn1.enc_uint(int_bytes(k.e))])))
+      None => Some(b"")
+    }
+  }
+  let hash = if a.len() > 0 { Int(a[0]) } else { 0 }
+  if what == "verify_pkcs1" || what == "verify_pss" {
+    let ok = match public_key(b) {
+      Some(k) => if what == "verify_pss" { verify_pss(k, hash, c, d, hash_len(hash)) } else { verify_pkcs1(k, hash, c, d) }
+      None => false
+    }
+    return Some(rt.rs_push_byte(rt.rs_with_cap(1), if ok { 1 } else { 0 }).bytes())
+  }
+  if what == "sign_pkcs1" || what == "sign_pss" {
+    return match private_key(b) {
+      Some(k) => Some(if what == "sign_pss" { sign_pss(k, hash, c) } else { sign_pkcs1(k, hash, c) })
+      None => Some(b"")
+    }
+  }
+  None
+}
+
+/// The big endian bytes of e > 0.
+fn int_bytes(e: Int) -> Bytes {
+  var s = rt.rs_with_cap(8)
+  var started = false
+  var i = 7
+  while i >= 0 {
+    let x = rt.int_wrap(4, e, 8 * i) & 255
+    if x != 0 || started || i == 0 {
+      s = rt.rs_push_byte(s, x)
+      started = true
+    }
+    i -= 1
+  }
+  s.bytes()
+}

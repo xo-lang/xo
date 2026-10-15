@@ -1,0 +1,340 @@
+// The system call functions of the C library of an XO_NOLIBC build
+// (open, read, stat, mmap, getrandom, gmtime_r, sysconf, ...; the zero-C
+// audit's B04 stage (d), decision 0230): std/native/llrt/cabi_libc.xo
+// exports them under the C names. A failing call returns -1 (or the C
+// function's own failure value) with errno set; errno is the 32 bit word
+// at thread local word 10 (rt.tlocal_addr, sched.xo's table), which the C
+// runtime and xo_nolibc.c reach through __errno_location. None may fault
+// or allocate Xo values; a C `int` argument is in the low 32 bits of its
+// word (libcstr.s32).
+//
+// Written on macOS: checked by the linux/arm64 XO_NOLIBC build's code
+// generation only, UNTESTED on linux.
+use native/llrt/libcmem
+use native/llrt/libcstr
+use native/llrt/linux
+use native/llrt/raw
+use native/rt
+
+/// errno's byte offset in the thread local table (word 10).
+const ERRNO_AT = 80
+
+const AT_FDCWD = -100
+const AT_REMOVEDIR = 512
+const AT_SYMLINK_NOFOLLOW = 256
+const AT_EMPTY_PATH = 4096
+const O_CREAT = 64
+const EINTR = 4
+const EINVAL = 22
+
+fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+
+fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+
+/// The system call number of the target's architecture: arm64 (the
+/// asm-generic table) or x86_64.
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+fn sys(n: Int, a: Int, b: Int, c: Int, d: Int) -> Int { rt.sys6(n, a, b, c, d, 0, 0) }
+
+/// __errno_location: the address of the calling thread's errno.
+pub fn errno_addr() -> Int { addw(rt.tlocal_addr(), ERRNO_AT) }
+
+fn set_errno(e: Int) { rt.mem_store(errno_addr(), 0, e, 4) }
+
+/// r of a system call in the C library's convention: r, or -1 with errno
+/// set when r is a negative errno.
+pub fn ret(r: Int) -> Int {
+  if r < 0 && r > -4096 {
+    set_errno(subw(0, r))
+    return -1
+  }
+  r
+}
+
+fn int(v: Int) -> Int { libcstr.s32(v) }
+
+// ---------------------------------------------------------------------------
+// Process exit
+
+/// _exit and exit: exit_group(code); never returns.
+pub fn exit(code: Int) {
+  while true {
+    let _r = linux.exit_group(int(code))
+  }
+}
+
+/// abort: SIGABRT to the process, then exit 134.
+pub fn abort() {
+  let _k = sys(nr(129, 62), sys(nr(172, 39), 0, 0, 0, 0), 6, 0, 0)
+  exit(134)
+}
+
+// ---------------------------------------------------------------------------
+// Files
+
+/// open(path, flags, mode): the mode is read only with O_CREAT (the
+/// variadic argument arrives in the next register, decision 0230).
+pub fn open(path: Int, flags: Int, mode: Int) -> Int { openat(AT_FDCWD, path, flags, mode) }
+
+pub fn openat(dirfd: Int, path: Int, flags: Int, mode: Int) -> Int {
+  let f = int(flags)
+  let m = if f & O_CREAT != 0 { int(mode) } else { 0 }
+  ret(sys(nr(56, 257), int(dirfd), path, f, m))
+}
+
+pub fn read(fd: Int, p: Int, n: Int) -> Int { ret(sys(nr(63, 0), int(fd), p, n, 0)) }
+
+pub fn write(fd: Int, p: Int, n: Int) -> Int { ret(sys(nr(64, 1), int(fd), p, n, 0)) }
+
+pub fn pread(fd: Int, p: Int, n: Int, off: Int) -> Int { ret(sys(nr(67, 17), int(fd), p, n, off)) }
+
+pub fn close(fd: Int) -> Int { ret(sys(nr(57, 3), int(fd), 0, 0, 0)) }
+
+pub fn lseek(fd: Int, off: Int, whence: Int) -> Int { ret(sys(nr(62, 8), int(fd), off, int(whence), 0)) }
+
+pub fn pipe2(fds: Int, flags: Int) -> Int { ret(sys(nr(59, 293), fds, int(flags), 0, 0)) }
+
+pub fn dup2(a: Int, b: Int) -> Int { ret(sys(nr(24, 292), int(a), int(b), 0, 0)) }
+
+/// fcntl(fd, cmd, arg) with an integer argument.
+pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { ret(sys(nr(25, 72), int(fd), int(cmd), arg, 0)) }
+
+/// ioctl(fd, req, arg).
+pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int { ret(sys(nr(29, 16), int(fd), req, arg, 0)) }
+
+/// isatty: whether TCGETS succeeds on fd.
+pub fn isatty(fd: Int) -> Int {
+  let t = libcmem.malloc(64)
+  if t == 0 {
+    return 0
+  }
+  // TCGETS 0x5401
+  let r = sys(nr(29, 16), int(fd), 21505, t, 0)
+  libcmem.free(t)
+  if r == 0 { 1 } else { 0 }
+}
+
+pub fn unlink(p: Int) -> Int { ret(sys(nr(35, 263), AT_FDCWD, p, 0, 0)) }
+
+pub fn rmdir(p: Int) -> Int { ret(sys(nr(35, 263), AT_FDCWD, p, AT_REMOVEDIR, 0)) }
+
+pub fn mkdir(p: Int, m: Int) -> Int { ret(sys(nr(34, 258), AT_FDCWD, p, int(m), 0)) }
+
+/// rename through renameat2 (no flags).
+pub fn rename(a: Int, b: Int) -> Int { ret(rt.sys6(nr(276, 316), AT_FDCWD, a, AT_FDCWD, b, 0, 0)) }
+
+pub fn chmod(p: Int, m: Int) -> Int { ret(sys(nr(53, 268), AT_FDCWD, p, int(m), 0)) }
+
+pub fn symlink(t: Int, p: Int) -> Int { ret(sys(nr(36, 266), t, AT_FDCWD, p, 0)) }
+
+pub fn readlink(p: Int, buf: Int, n: Int) -> Int { ret(sys(nr(78, 267), AT_FDCWD, p, buf, n)) }
+
+pub fn ftruncate(fd: Int, n: Int) -> Int { ret(sys(nr(46, 77), int(fd), n, 0, 0)) }
+
+pub fn fsync(fd: Int) -> Int { ret(sys(nr(82, 74), int(fd), 0, 0, 0)) }
+
+pub fn flock(fd: Int, op: Int) -> Int { ret(sys(nr(32, 73), int(fd), int(op), 0, 0)) }
+
+/// getcwd: buf, or 0 with errno set.
+pub fn getcwd(buf: Int, n: Int) -> Int {
+  if ret(sys(nr(17, 79), buf, n, 0, 0)) < 0 {
+    return 0
+  }
+  buf
+}
+
+pub fn stat(p: Int, st: Int) -> Int { ret(sys(nr(79, 262), AT_FDCWD, p, st, 0)) }
+
+pub fn lstat(p: Int, st: Int) -> Int { ret(sys(nr(79, 262), AT_FDCWD, p, st, AT_SYMLINK_NOFOLLOW)) }
+
+/// fstat through newfstatat with an empty path.
+pub fn fstat(fd: Int, st: Int) -> Int {
+  let empty = b"\x00"
+  ret(sys(nr(79, 262), int(fd), raw.bytes_addr(empty), st, AT_EMPTY_PATH))
+}
+
+pub fn utimensat(dirfd: Int, p: Int, t: Int, flags: Int) -> Int { ret(sys(nr(88, 280), int(dirfd), p, t, int(flags))) }
+
+// ---------------------------------------------------------------------------
+// Memory mappings
+
+/// mmap: the address, or MAP_FAILED (-1) with errno set.
+pub fn mmap(a: Int, n: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int {
+  ret(rt.sys6(nr(222, 9), a, n, int(prot), int(flags), int(fd), off))
+}
+
+pub fn munmap(a: Int, n: Int) -> Int { ret(sys(nr(215, 11), a, n, 0, 0)) }
+
+pub fn mprotect(a: Int, n: Int, prot: Int) -> Int { ret(sys(nr(226, 10), a, n, int(prot), 0)) }
+
+pub fn madvise(a: Int, n: Int, adv: Int) -> Int { ret(sys(nr(233, 28), a, n, int(adv), 0)) }
+
+// ---------------------------------------------------------------------------
+// Time
+
+pub fn clock_gettime(id: Int, ts: Int) -> Int { ret(linux.clock_gettime(int(id), ts)) }
+
+/// time(t): the Unix seconds now, also stored at t when not 0.
+pub fn time(t: Int) -> Int {
+  let ts = libcmem.malloc(16)
+  if ts == 0 {
+    return -1
+  }
+  let _r = linux.clock_gettime(linux.CLOCK_REALTIME, ts)
+  let s = rt.mem_load(ts, 0, 8)
+  libcmem.free(ts)
+  if t != 0 {
+    rt.mem_store(t, 0, s, 8)
+  }
+  s
+}
+
+pub fn nanosleep(req: Int, rem: Int) -> Int { ret(sys(nr(101, 35), req, rem, 0, 0)) }
+
+/// A floor division and its remainder's sign fixed (C's / truncates).
+fn fdiv(a: Int, b: Int) -> Int {
+  let q = a / b
+  if (a % b != 0) && ((a < 0) != (b < 0)) { q - 1 } else { q }
+}
+
+/// gmtime_r: the civil date of the Unix seconds at t into the struct tm
+/// at tm (C ints: sec, min, hour, mday, mon, year, wday, yday, isdst at
+/// 0 to 32; Howard Hinnant's algorithm, as xo_nolibc.c's); tm.
+pub fn gmtime_r(t: Int, tm: Int) -> Int {
+  let s = rt.mem_load(t, 0, 8)
+  var days = s / 86400
+  var rem = s % 86400
+  if rem < 0 {
+    rem += 86400
+    days -= 1
+  }
+  rt.mem_store(tm, 8, rem / 3600, 4)
+  rt.mem_store(tm, 4, rem % 3600 / 60, 4)
+  rt.mem_store(tm, 0, rem % 60, 4)
+  rt.mem_store(tm, 24, ((days + 4) % 7 + 7) % 7, 4)
+  let z = days + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  var y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  if m <= 2 {
+    y += 1
+  }
+  rt.mem_store(tm, 20, y - 1900, 4)
+  rt.mem_store(tm, 16, m - 1, 4)
+  rt.mem_store(tm, 12, d, 4)
+  let before = match m {
+    1 => 0
+    2 => 31
+    3 => 59
+    4 => 90
+    5 => 120
+    6 => 151
+    7 => 181
+    8 => 212
+    9 => 243
+    10 => 273
+    11 => 304
+    _ => 334
+  }
+  let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+  rt.mem_store(tm, 28, before + d - 1 + (if leap && m > 2 { 1 } else { 0 }), 4)
+  rt.mem_store(tm, 32, 0, 4)
+  tm
+}
+
+// ---------------------------------------------------------------------------
+// Randomness, the process, the system
+
+pub fn getrandom(p: Int, n: Int, flags: Int) -> Int { ret(sys(nr(278, 318), p, n, flags & 4294967295, 0)) }
+
+/// getentropy: n random bytes at p (retrying an interrupted call); 0,
+/// or -1 with errno set.
+pub fn getentropy(p: Int, n: Int) -> Int {
+  var off = 0
+  while off < n {
+    let r = sys(nr(278, 318), addw(p, off), n - off, 0, 0)
+    if r == -EINTR {
+      continue
+    }
+    if r < 0 {
+      return ret(r)
+    }
+    off += r
+  }
+  0
+}
+
+pub fn getpid() -> Int { sys(nr(172, 39), 0, 0, 0, 0) }
+
+pub fn kill(pid: Int, sig: Int) -> Int { ret(sys(nr(129, 62), int(pid), int(sig), 0, 0)) }
+
+pub fn sched_yield() -> Int { ret(sys(nr(124, 24), 0, 0, 0, 0)) }
+
+/// sysconf: the page size (_SC_PAGESIZE 30), the processors the process
+/// may run on (_SC_NPROCESSORS_CONF 83, _SC_NPROCESSORS_ONLN 84), else
+/// -1 with EINVAL.
+pub fn sysconf(name0: Int) -> Int {
+  let name = int(name0)
+  if name == 30 {
+    let p = libcmem.auxval(linux.AT_PAGESZ)
+    return if p > 0 { p } else { 4096 }
+  }
+  if name == 83 || name == 84 {
+    let set = libcmem.calloc(16, 8)
+    if set == 0 {
+      return 1
+    }
+    let r = sys(nr(123, 204), 0, 128, set, 0)
+    var n = 0
+    var i = 0
+    while r > 0 && i < r / 8 {
+      var w = rt.mem_load(set, 8 * i, 8)
+      while w != 0 {
+        w = w & subw(w, 1)
+        n += 1
+      }
+      i += 1
+    }
+    libcmem.free(set)
+    return if n > 0 { n } else { 1 }
+  }
+  set_errno(EINVAL)
+  -1
+}
+
+/// syscall(n, a, b, c, d, e, f): the variadic arguments are in the next
+/// registers (decision 0230).
+pub fn syscall(n: Int, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int { ret(rt.sys6(n, a, b, c, d, e, f)) }
+
+// ---------------------------------------------------------------------------
+// Signal sets (64 bit words of 64 signals each)
+
+/// sigemptyset: the 128 byte sigset_t at s cleared; 0.
+pub fn sigemptyset(s: Int) -> Int {
+  let _m = libcstr.memset(s, 0, 128)
+  0
+}
+
+/// sigaddset(s, sig); 0.
+pub fn sigaddset(s: Int, sig0: Int) -> Int {
+  let k = int(sig0) - 1
+  if k < 0 || k >= 1024 {
+    set_errno(EINVAL)
+    return -1
+  }
+  let at = 8 * (k / 64)
+  rt.mem_store(s, at, rt.mem_load(s, at, 8) | rt.int_wrap(3, 1, k % 64), 8)
+  0
+}

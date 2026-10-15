@@ -6,8 +6,8 @@
 // streams, the fake environment and arguments, FakeProc.exit_code, the
 // log records of testing.logs, FakeNet's handlers, failures, and the
 // requests seen, the MemFs state, and the cleanup at the end. Part 2
-// (the virtual clock, the in memory listeners, testing.run_main) stays
-// C (xo_testing.c), as do the reads of the C's `tw` switches.
+// (the virtual clock, the in memory listeners, testing.run_main, the
+// start and the end) is twrun.xo; the C reads its `tw` switches.
 //
 // The state is process wide: words of rt.static_word (the table in
 // rt.xo) and a record from rt.heap_large (the C's malloc) whose
@@ -22,19 +22,23 @@
 // llrt_test_* and llrt_gen_* (selfhost/ssa testmode.xo), std/native's
 // testing.xo, log.xo, and http.xo directly, and the C runtime through
 // cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/darwin
 use native/llrt/ints
+use native/llrt/linux
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sysio
+use native/llrt/twflags
+use native/llrt/windows
 use native/rt
-use native/rttest
+use native/sys_darwin
+use native/sys_windows
 
 /// The words of rt.static_word (rt.xo's table): whether the program runs
 /// in the test world, the effects `xo test --real` makes real (REAL_*),
 /// the lock, Rand's PCG state (high, low), the MemFs lock and state (an
 /// rt.Any's object, or 0), and the state record.
-const W_ON = 32
-const W_REAL = 33
 const W_LOCK = 34
 const W_RNG = 35
 const W_MEMFS_LOCK = 37
@@ -71,7 +75,10 @@ const S_EXIT = 296
 const S_IN = 304
 const S_IN_OFF = 312
 const S_DROPPED = 320
-const S_SIZE = 344
+/// twrun.xo's words (part 2 of the test world): its state record, and
+/// its lock.
+const S_RUN = 344
+const S_SIZE = 360
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -191,6 +198,10 @@ fn vec_str(v: Int) -> Str {
 
 /// The state record, made on first use (tw_setenv at the start of a test
 /// binary, before any thread).
+/// The address of twrun.xo's two words in the state record (its state
+/// record's address, its lock word).
+pub fn run_words() -> Int { st() + S_RUN }
+
 fn st() -> Int {
   let w = rt.static_word(W_STATE)
   let a = rt.slot_load(w, 0, ACQUIRE)
@@ -261,11 +272,11 @@ fn drop_kept(a: Int) {
 // The switches (`xo test --real`, decision 0120)
 
 /// Whether the program runs in the test world.
-pub fn on() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+pub fn on() -> Bool { twflags.on() }
 
 /// Whether the effect real (REAL_*) is a fake here: the test world
 /// without `xo test --real` for it.
-pub fn fake(real: Int) -> Bool { on() && rt.mem_load(rt.static_word(W_REAL), 0, 8) & real == 0 }
+pub fn fake(real: Int) -> Bool { twflags.fake(real) }
 
 /// The value of variable k (V_*) when the test binary started, if set.
 pub fn env_var(k: Int) -> Str? {
@@ -317,8 +328,7 @@ pub fn init() -> Int {
   let g = rt.static_word(W_RNG)
   rt.mem_store(g, 0, seed, 8)
   rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
-  rt.mem_store(rt.static_word(W_REAL), 0, bits, 8)
-  rt.slot_store(rt.static_word(W_ON), 0, 1, RELEASE)
+  twflags.set(bits)
   bits
 }
 
@@ -337,7 +347,7 @@ pub fn fs_real() -> Int {
   if !on() {
     return -1
   }
-  match rt.mem_load(rt.static_word(W_REAL), 0, 8) & (REAL_FS_READ | REAL_FS_WRITE) {
+  match twflags.real() & (REAL_FS_READ | REAL_FS_WRITE) {
     3 => 0
     1 => 2
     2 => 4
@@ -349,8 +359,8 @@ pub fn fs_real() -> Int {
 /// returned): XO-TEST-FAIL and the message on the real standard output
 /// for the harness, status 1.
 pub fn fail(msg: Str) {
-  rttest.test_write("XO-TEST-FAIL\n${msg}\n")
-  rttest.test_quit(1)
+  write_real("XO-TEST-FAIL\n${msg}\n")
+  quit(1)
 }
 
 /// The first number of s as strtoll and strtoull read it (wrapping), 0
@@ -436,7 +446,7 @@ fn pcg(a: Int) -> Int {
 }
 
 /// Whether Rand is the seeded generator (a test binary).
-pub fn seeded() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+pub fn seeded() -> Bool { twflags.on() }
 
 /// The next word of Rand's seeded generator.
 pub fn rand_u64() -> Int {
@@ -881,8 +891,8 @@ pub fn proc_run(cmd: Str) -> List[Str] {
 }
 
 /// std/rt's fakeProc output, runTerm, and pipeline of the commands of
-/// the specs (procspec.xo spec; mode as rt.proc_exec's): the outcome as
-/// rt.proc_exec gives it.
+/// the specs (procspec.xo spec; mode as proc.xo exec's): the outcome as
+/// proc.xo exec gives it.
 pub fn proc_exec(specs: List[Str], mode: Int) -> List[Str] {
   var out = ""
   var errs = ""
@@ -947,7 +957,7 @@ pub fn log(level: Int, msg: Str, module: Str, keys: List[Str], vals: List[Str], 
   lock()
   vec_push(st() + S_RECS, r)
   if line.len() > 0 {
-    rttest.test_write("XO-TEST-LOG ${line}\n")
+    write_real("XO-TEST-LOG ${line}\n")
   }
   unlock()
 }
@@ -1232,4 +1242,41 @@ pub fn cleanup() -> Int {
   }
   rt.mem_store(d, 0, k, 8)
   d
+}
+
+// ---------------------------------------------------------------------------
+// The harness's channel (the zero-C audit's B15; they were xo_testing.c's
+// xo_test_write and xo_test_quit)
+
+/// Writes s on the real standard output, which the harness reads (the
+/// program's own output is captured): a failure, a log record, a
+/// property test's report.
+pub fn write_real(s: Str) {
+  let l = sysio.layer()
+  let a = raw.data(s)
+  let n = s.len()
+  var off = 0
+  while off < n {
+    let r = if l == 3 { windows.std_write_at(1, a + off, n - off) } else if l == 2 { darwin.write_at(1, a + off, n - off) } else { linux.write_at(1, a + off, n - off) }
+    if r == -linux.EINTR && l == 1 {
+      continue
+    }
+    if r <= 0 {
+      break
+    }
+    off += r
+  }
+}
+
+/// Ends the test binary with status code at once (no flush: the
+/// program's output is captured).
+pub fn quit(code: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.exit_group(code)
+    }
+    TargetOs.Darwin => sys_darwin.exit(code)
+    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Wasi => {}
+  }
 }

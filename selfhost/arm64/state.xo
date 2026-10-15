@@ -201,6 +201,10 @@ struct G {
   cold: List[Int] = []
   nblock: Int = 0
   cur: Int = -1
+  /// the SSA block being selected and the index of the value in its
+  /// instructions (the add and carry fusion looks a few values ahead)
+  cur_sb: Int = -1
+  cur_ix: Int = -1
   /// the registers of each SSA value
   vals: List[List[Int]] = []
   has_val: List[Bool] = []

@@ -6,6 +6,968 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend: the module head no longer declares the C entries
+  generated code stopped calling in the entries batches E1 to E3
+  (xo_rc_alloc, rc_free, rc_defer, rs_concat, rl_new, rl_new_n,
+  rl_empty, rl_share, rl_free, h_free), so their C forwarders can go
+  once a seed built from this exists.
+- Native backends (generated-code entries E3): the empty list and the
+  unwinding placeholders are the addresses of xo_rt.c's xo_empty_list
+  and xo_zero_handle in generated code, not calls (xo_rl_empty and
+  xo_h_zero stay for code of earlier compilers); alloc small 0.98 on
+  arm64, nothing slower.
+- Native runtime (zero-C audit item B31, part 20, decision 0202): the
+  Xo HTTPS server takes Go 1.26's groups (SecP256r1MLKEM768,
+  SecP384r1MLKEM1024 and P-521 next to X25519MLKEM768, X25519, P-256
+  and P-384), chosen as Go's server chooses: post-quantum first, then
+  a group with a key share. ECDSA P-521 certificates work on TLS 1.3
+  (0x0603) and 1.2, and P-224 on TLS 1.2. The interop matrix checks
+  them against Go's clients.
+
+- Windows standard input (zero-C B32 part 2): the pump that joins a pipe
+  or the console to a loopback socket is Xo (stdin.xo); xo_stdin.c is
+  deleted and xo_win.c is at 395 lines. UNTESTED on windows (the 15
+  http, net, fs, proc, and stdin goldens cross link for both
+  architectures).
+- Windows runtime (zero-C B32 part 1): xo_win.c 914 to 484 lines, the
+  shims nothing reached deleted; the UTF-8 environment built in Xo
+  (process.xo win_env). Windows cross builds now link on the Mac
+  (toolchain.md). UNTESTED on windows.
+- Native backends (generated-code entries E2): both backends allocate
+  and free strings, boxes, and closure environments, and free handles,
+  through obj.xo's exports (xo_x_obj_rc_alloc, rc_free, h_free) instead
+  of the C entries, which stay for code of earlier compilers. arm64 at or
+  under the step before; LLVM string heavy text 1.02
+  (bench/results/generated-entries-2026-10-15.md).
+- Fix: `xo test --no-gc` hung on tests that sleep under the virtual
+  clock since B22 remnants batch 2 (0e1771fd): poll.xo read the virtual
+  clock at a word index where its constant was a byte offset
+  (gotchas/slot-atomics-index-words.md).
+- arm64 builds say so when the inlined module does not verify (they go
+  on without inlining, slower) instead of falling back silently, and
+  fail with XO_INLINE_STRICT=1, which the Go tests set.
+- Native runtime performance: a task's run reuses its thread's spare
+  context (thread local word 13) instead of a heap block per run
+  (tasks.xo run_claimed): ctx spawn 0.98 and 0.96, conc spawn 0.97 and
+  0.99 of the step before (arm64, llvm). A new repository test checks
+  that no two runtime modules use one thread local word
+  (TestThreadLocalWordOwners; the first try collided with sysio.xo's
+  word 12).
+- AES-GCM: GHASH with the CPU's multiply as a loop over H's words (no
+  Gcm passed per block). AES-128-GCM on LLVM 14.1M instructions a MiB
+  (Mbed 14.0M; TLS 1.3 13.4M against 13.9M), on arm64 17.7M.
+- AES-GCM: the keystream xor written in place into the output, and the
+  body read in place for its tag (no copy). AES-128-GCM on LLVM 17.9M to
+  15.6M instructions a MiB (Mbed 14.0M), on arm64 26.3M to 21.0M.
+- ChaCha20-Poly1305: wrapping arithmetic in the quarter rounds and
+  Poly1305's products (no overflow branches), and on arm64 a 32 bit add
+  for an add masked to 32 bits. Bulk on LLVM 2652M to 2086M
+  instructions for 64 MiB, on arm64 3702M to 2518M.
+- Wasm backend: rt.heap_large, rt.heap_release and rt.heap_large_resize
+  in native-only arms (sysio.set_err behind layer() == 0) compile to a
+  fault when run, as sys6 and fs_set_err do. TestSelfhostWasmFsWrite
+  passes again; it had failed since a4ed9cd0
+  (gotchas/wasm-rejects-calls-in-dead-native-arms.md).
+
+- AES-GCM: whole block AES intrinsics (cpu.aes_enc10/12/14, the state
+  in a register) and one pmull for both halves of a GHASH product on
+  arm64. Bulk AES-128-GCM on LLVM 27.3M to 17.9M instructions a MiB
+  (Mbed 14.0M), on arm64 37.8M to 26.3M. UNTESTED on linux, x86-64,
+  and windows.
+- Compiler (selfhost/ssa): `==` and `!=` on two enum variants known at
+  build time, such as `target.os == TargetOs.Darwin`, fold to a
+  constant on every backend. The arm64 backend used to call the enum's
+  equality at run time. test/codegen/enums covers it. sysio.clock_now
+  uses `==` again (sysio clock on arm64: 0.93 of main).
+
+- Native runtime performance (the zero-C perf sweep's scheduler paths):
+  a context's wait makes no C call outside ThreadSanitizer builds
+  (tasks.xo park_wait_n reads the test world's flags from static words),
+  ctx.cur inlines again (root behind an out of line function), and the
+  output flush before a wait inlines its empty check. ctx budget and
+  defer are back to main's instruction counts, sysio chan from 1.17 to
+  1.09 of main on arm64 (bench/results/zero-c-perf-sweep-2026-10-15.md).
+- arm64 backend: an add or subtract and its carry or borrow
+  (std/native/llrt/cpu.xo) become one adds or subs and a cset; the SSA
+  builder folds + and - of two Int constants that do not overflow;
+  nistec.xo's mul4 and mul6 lose their terms of 0. arm64 TLS handshakes
+  12 to 22% fewer instructions (P-256 group 4930M to 3989M for 200).
+- Mbed TLS path (XO_LLRT_C=tlssrv, and main's C): http.tls_cert accepts
+  an RSA certificate with its PKCS#8 key. TF-PSA-Crypto 1.1.1's PKCS#8
+  parse left the RSA public half unset, so mbedtls_pk_check_pair failed;
+  xo_tls.c now sets it after the parse. X25519 and X448 PKCS#8 keys are
+  an unknown key type, as Go's (gotchas/mbedtls-pkcs8-rsa-check-pair.md).
+
+- Native runtime (decision 0232, the port): the sanitizer fiber hooks,
+  ThreadSanitizer's edges, pthread_create on the Linux C library, and
+  fiber stacks mapped through libc under ThreadSanitizer moved from
+  xo_rt.c to std/native/llrt/sanhook.xo. A sanitizer build is detected
+  at run time (rt.sym_present). The C keeps xo_sched_hook as a
+  forwarder and xo_<name> shims for the 0.11.0 seed. UNTESTED on linux
+  and windows.
+- Native runtime performance (the zero-c perf sweep,
+  bench/results/zero-c-perf-sweep-2026-10-15.md):
+  - std/native/llrt/mutex.xo: held_add has a fast path that calls
+    nothing when no Mutex is held yet and there is room for one. The
+    XO-F004 message moved into held_fault, and the growth into
+    held_grow. held_del searches from the last entry and skips the move
+    when only one entry is held. ctx mutex on arm64 went from 1.20x
+    main to 1.04x; on LLVM it is 0.86x main.
+  - std/native/llrt/sysio.xo: clock_now takes a macOS fast path, written
+    with `match` because the arm64 backend does not fold `==` on the
+    target enums (gotchas/arm64-target-enum-eq-not-folded.md). sysio
+    clock went from 1.08x main to 0.99x on arm64 and 0.96x on LLVM.
+
+- Native backends (zero-C audit, generated-code entries E1): LLVM code
+  calls obj.xo's list and string entries through their exports instead of
+  the C forwarders (xo_rl_free, rl_share, rc_defer, rl_new_n,
+  rs_concat), and both backends call heapos.xo's platform calls and
+  anyval.xo's Any directly; the C forwarders stay for code of earlier
+  compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
+  alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
+- std/http (native): a fault in the server's own connection code ends
+  that connection only, as net/http recovers per connection: each
+  connection's task is isolated (std/native/http.xo
+  serve_conn_isolated), logged `ERROR http: panic serving fault=<msg>`,
+  the connection closed, the server serving on, nothing live at exit.
+  Before, such a fault stopped the server for every client (shown with
+  the new test probe). A test hook, XO_HTTP_FAULT_PROBE=1, faults on
+  /xo-fault-probe/conn (http1.xo's reader), /frame (h2srv.xo's frame
+  handling) and /stream (an HTTP/2 stream's request; the stream is
+  reset), on the native and Go backends (std/rt faultProbe: logged the
+  same, then http.ErrAbortHandler). Golden http_conn_fault (HTTP/1.1 and
+  HTTP/2, every backend, the leak check). main is affected too: with
+  main's own bin/xo and std (4be43460), a fault in an `r.wrap`
+  middleware leaves the native server answering nobody (checked
+  2026-10-15); main has neither fix.
+- Tests (zero-C audit B28 follow up): the HTTP parser coverage the C
+  drivers had is back, in Xo. TestHTTPParseDiff and FuzzHTTPDiff send
+  their corpus and random requests (3,081 inputs) to http1DiffProgram
+  built with LLVM and arm64 and compare with net/http in process;
+  TestHTTPFuzz mutation fuzzes the HTTP/1.1 server, HTTP/2 frames and
+  HPACK over TLS, the client's response reading, and std/json decoding,
+  each program run with XO_LEAKCHECK=1 (XO_FUZZ_SECONDS, FUZZ_SEED,
+  XO_FUZZ_REPLAY). std/llrt/testdata/http_diff.c, http_fuzz.c and
+  http_ref.c deleted.
+- std/http: a fault in a middleware (`r.wrap`) is isolated as a
+  handler's (500, logged, the server keeps serving) on every backend. It
+  was not: the Go backend dropped the connection (net/http's recover),
+  and the native server stopped answering anyone
+  (gotchas/native-server-unisolated-fault-wedges.md). Found by
+  TestHTTPFuzz; golden http_fault has the case.
+- Native runtime (zero-C audit item B31, part 19, decision 0202): the
+  Xo TLS client offers Go 1.26's groups in its order: X25519MLKEM768,
+  SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521
+  (key shares for the first and its ECDH part, as Go's).
+  - nistec.xo: P-521 (ECDH, ECDSA sign and verify, constant time, nine
+    limbs; Go's masking of the top byte of random scalars, hashToNat's
+    shift) and P-224 (ECDSA sign and verify, for certificates). The
+    workspace's elements widened to 72 bytes; R mod m and m - 2 made
+    general. P-521's base point multiplication is the windowed pt_mul,
+    as P-384's: a compiled in fixed base table cost every TLS build 27 s
+    and 2.5 MB (gotchas/large-const-list-costs-every-build.md).
+  - x509.xo: KEY_P521 and KEY_P224 (KEY_EC_OTHER gone); P-521 and P-224
+    ECDSA signatures checked (the "P-521 signatures refused" gap closed).
+  - The clients: P-521 ECDHE on TLS 1.3 and 1.2, ECDSA P-521 SHA-512
+    (0x0603) on TLS 1.3, P-224 and P-521 leaves accepted as Go's.
+  - mlkem.xo: ML-KEM-1024 (k 4, du 11, dv 5; ML-KEM-768 unchanged byte
+    for byte) and the hybrids by group (SecP256r1MLKEM768 and
+    SecP384r1MLKEM1024 put the ECDH part first).
+  - Checks: a scratch diff of 40 random cases per curve against Go
+    (public keys, ECDH, signatures both ways, hashes of 20 to 70 bytes);
+    golden tls_nistec (P-521, P-224), crypto_mlkem (ML-KEM-1024's
+    accumulated 100, crypto/mlkem's digest: Go's tests carry no CCTV value
+    for 1024; the SecP hybrids) equal to the Go backend; tls13_go replays
+    Go 1.26 server traces of P-521 with a P-521 certificate,
+    SecP256r1MLKEM768 and SecP384r1MLKEM1024, whole and a byte at a time,
+    and TestTLS13ReplayDiff fuzzes them; TestTLSInteropMatrix adds Go
+    servers on P-521 (certificate and group) and each hybrid for the Xo
+    client. The Xo server's P-521 and hybrids are next (xo-2b).
+- Native runtime (zero-C audit item B31, part 18, decision 0202): a
+  default https program links no Mbed TLS and no fiat-crypto (nm: 0
+  mbedtls, fiat or psa symbols on arm64 and LLVM, http_tls). tlscert.xo
+  apple_trust calls the Security and CoreFoundation frameworks directly
+  (sys_darwin.xo declarations) instead of xo_tls.c's table, which needed
+  Mbed's tls_init; the build links the two frameworks when the generated
+  code calls SecTrustEvaluateWithError (selfhost/xo link.xo
+  framework_args, ld.xo, internal/xotool FrameworkFlags). The system's
+  roots are an Xo record (tlsio.roots_system, static word 31) instead of
+  the C's sys_roots. needs_tls (selfhost/xo tls.xo, internal/xotool
+  tls.go) compiles -DXO_TLS and links libxotls.a only for the C paths'
+  symbols (xo_tls_, xo_cl_tls_: XO_LLRT_C=tlsio or tlssrv). XO_TLS_MLKEM=0
+  (spec/std.md section 4, mirroring Go's GODEBUG=tlsmlkem=0, on the
+  native and Go backends) makes the client offer no X25519MLKEM768, X25519
+  the only key share (a 291 byte ClientHello instead of 1,513), for
+  like with like handshake measurements against Mbed; golden
+  tls_mlkem_off (tls13.xo client_groups through the tls13.groups op; the
+  Go backend's op states the same groups). spec/std.md also documents
+  XO_HTTP_MAX_BODY, which it lacked.
+- Native runtime (zero-C audit item B31, part 17, decision 0202): the
+  Xo TLS 1.3 client offers X25519MLKEM768 (0x11ec) first, as Go 1.26's
+  client: groups [X25519MLKEM768, X25519, P-256, P-384], the hybrid key
+  share and an X25519 share from the hybrid's own X25519 key, either
+  taken from the ServerHello, a HelloRetryRequest for a group already
+  shared refused as Go's; the hybrid itself is xo-2b's mlkem.xo
+  (ML-KEM-768 and sha3.xo). Go 1.26's server negotiates X25519MLKEM768
+  with it (by hand: curve=X25519MLKEM768), as do google.com,
+  cloudflare.com, github.com and pq.cloudflareresearch.com. The Go
+  reference port does the hybrid with crypto/mlkem; tls13_go replays a
+  Go server's X25519MLKEM768 trace (whole and a byte at a time), and
+  TestTLS13ReplayDiff fuzzes it too (0 differences).
+
+- Native runtime (decision 0232, items 1 and 2): std/native/sys_c.xo
+  calls C library and sanitizer functions on every native OS, with weak
+  references and rt.sym_present for symbols a build may not link (arm64:
+  .weak_reference/.weak and GOT loads, which selfhost/macho now
+  assembles and links; LLVM: extern_weak). On macOS the driver passes
+  -Wl,-U for each weak reference. New golden sys_c and test
+  TestSysCTSan. UNTESTED on linux and windows.
+- Fix (B31 parts 15 and 16): the Xo TLS client left one allocation live
+  at exit (http_tls and http_tls_keys on LLVM; xo-2b bisected it to
+  165eb6a3): tzrules.load_host kept the host's zone in tzhost's table,
+  which only std/time programs free at exit. The offset now comes from
+  tzrules.host_offset, which parses without keeping (a zone std/time
+  kept is used as it is), and the system roots part 16 parses once
+  (static word 31) are freed at exit too (tlsio.roots_free from
+  cabi_http.xo's streams_free). TestGolden and TestGoldenRun pass for
+  http_tls and http_tls_keys on both TLS paths.
+
+- Native runtime (zero-C audit item B31, part 16, decision 0202): the
+  Xo client's system roots off macOS are Xo's: tlscert.xo collects the
+  DERs (Linux: $SSL_CERT_FILE or the distribution's bundle, then
+  $SSL_CERT_DIR or the default directories, as crypto/x509's
+  root_unix.go; Windows: the ROOT store), and tlsio.xo parses them once
+  per process with x509.xo into static word 31 (published with a
+  compare and swap). The Xo path no longer reads Mbed TLS's chain
+  (xo_tls_c_roots_crt removed); macOS keeps the Security framework. The
+  Mbed path still loads its roots through tlscert.xo's Mbed loaders.
+  UNTESTED on linux and windows (cross built for linux/arm64; Windows
+  needs XO_WINSYSROOT).
+
+- Native runtime (zero-C audit item B31, part 15; decision 0193 step
+  5's zones): tz.xo splits so that the host's zones link without
+  std/time's zone table: tzrules.xo (the rules: TZif parsing, lookup,
+  load_host from the host's database), tztable.xo (the program's zone
+  data through rttime.tz_table, moved out of tzhost.xo), and tz.xo
+  (load over both, as before; std/time names tzrules.Rules). The Xo TLS
+  client's expiry text takes Go's time.Local offset from tzrules.xo
+  (TZ, the machine's zone, /etc/localtime), so part 14's C accessor
+  (xo_tls_c_local_off) is gone again; the TLS 1.2 hand-off passes it too
+  (xo-fa's tls12 zone_off). The time goldens (clock_timers, realtime_*,
+  sys_files_clock, tz_table) pass.
+
+- TLS 1.2 server (tls12srv.xo): every handshake message is decoded as
+  Go's unmarshalHandshakeMessage does for its type before the state
+  check (decode_error, not unexpected_message, for a message of the
+  wrong type that does not decode), and the ClientHello's
+  status_request, extended_master_secret, SCT, early_data, and
+  pre_shared_key extensions are as strict as Go's. TestTLSServerReplayDiff
+  (tls12, seeds 22 to 24, 16000 cases each): 0 byte differences (was
+  11). UNTESTED on linux and windows.
+- Native runtime (zero-C audit item B31, part 14, decision 0202): the
+  Xo client's certificate expiry text shows the current time in the
+  local zone as Go's (time.Local: "current time
+  2026-10-15T04:43:17-04:00 is after 2001-01-01T00:00:00Z"; checked with
+  TZ unset, UTC and Asia/Kolkata), through x509verify.full_text_zone and
+  tls13.Conf.zone_off. The offset comes from xo_tls.c's localtime
+  (xo_tls_c_local_off): tz.xo would bring std/time's embedded zone table
+  into every https program, so the end pass needs tz.xo's host lookup
+  apart from the table before this C goes (done in part 15).
+
+- Native runtime (zero-C audit item B31, part 13, decision 0202): the
+  Xo client's custom roots (Client.with_roots) are parsed once, in Xo,
+  as Go's AppendCertsFromPEM (x509.xo, so exactly the certificates Go
+  takes), into a record the HTTP/2 pool counts; Mbed TLS no longer parses
+  them on the Xo path and a connection no longer re-parses them.
+  std/native/http.xo asks tlsio.xo (or tlsio_c.xo, XO_LLRT_C=tlsio) for
+  roots. The system's roots stay the C's record: macOS verifies through
+  the Security framework; on Linux and Windows the Xo client still reads
+  them from Mbed's chain (the next step).
+
+- TLS 1.2 server session tickets (tls12srv.xo with tlsticket.xo, RFC
+  5077): golden tls12_tickets, crypto/tls's client resuming against the
+  Xo server byte for byte (a ticket issued, resumed, resumed a byte at a
+  time, and the cases Go declines). UNTESTED on linux and windows.
+- TLS performance (decision 0231 parts 2 and 3): AES-GCM uses the CPU's
+  AES rounds (AESE/AESMC, AESENC) and carry-less multiply (PMULL,
+  PCLMULQDQ) when it has them (std/native/llrt/cpu.xo hw(): macOS arm64,
+  Linux AT_HWCAP, x86-64 CPUID), the bitsliced code otherwise. Bulk
+  AES-128-GCM on LLVM 138.6M to 27.1M instructions a MiB (arm64 205.0M
+  to 38.0M). New golden cpu_prims. UNTESTED on linux, x86-64, and
+  windows.
+- Native runtime (zero-C audit, scheduler block S2): the worker pool's
+  record and its deadlock counts are made by std/native/llrt/ctx.xo at
+  start instead of being C statics (xo_rt.c 3,665 to 3,638 lines).
+  Decision 0232 (Proposed, parked for the owner) describes the compiler
+  feature the sanitizer fiber hooks and the Linux C library services
+  would need to leave the C.
+- Native runtime (zero-C audit item B31, part 12, decision 0202): Go's
+  certificate policy validation in x509verify.xo (policiesValid: RFC
+  5280 6.1 as updated by RFC 9618, the policy graph with Go's default
+  options), with x509.xo keeping the policies, policy mappings, policy
+  constraints and inhibitAnyPolicy, and Verify's order (policies, then
+  key usages, then name constraints) and its "x509: no valid chains
+  built: N candidate chains with invalid policies" text. This closes part
+  11's gap. TestX509VerifyDiff adds random policies, mappings, policy
+  constraints and inhibitAnyPolicy: 20,000 chains over two seeds, no
+  difference (about 5 percent refused for their policies).
+
+- Native runtime (zero-C audit item B31, post-quantum, decision 0202):
+  ML-KEM-768 (FIPS 203) in Xo (std/native/llrt/mlkem.xo, as Go's, with
+  the implicit rejection in constant time) over SHA-3 and SHAKE
+  (std/native/llrt/sha3.xo). The Xo TLS server negotiates
+  X25519MLKEM768, Go's default group, first as Go's server does.
+  internal.crypto_op gains the sha3 and mlkem areas (Go's crypto/sha3
+  and crypto/mlkem as the reference). Golden crypto_mlkem matches
+  FIPS 202's digests, C2SP CCTV's accumulated ML-KEM test and crypto/mlkem;
+  TestMLKEMAccumulated runs CCTV's 10,000 iterations; tls13_server
+  replays Go 1.26's default client negotiating the hybrid; the interop
+  matrix has Go's clients taking it against the Xo servers.
+- Native runtime (zero-C audit item B31, part 11, decision 0202): name
+  constraints as Go 1.26 checks them (its constraints.go: per
+  certificate, sorted and pruned sets of IP, DNS, URI and e-mail
+  subtrees searched as Go's, wildcard names against excluded parents,
+  full mailboxes, URIs by host), replacing part 9's refusal of every
+  IP, e-mail and URI constraint; Go's texts ("x509: a root or
+  intermediate certificate is not authorized to sign for this name: IP
+  address \"10.0.0.1\" is excluded by constraint \"10.0.0.0/8\"", the
+  code 5 text gained Go's "to sign" and detail). x509verify.xo's
+  full_text gives a verification's whole Go text (tls13.xo uses it).
+  TestX509VerifyDiff (internal/llvm, not -short) verifies random chains
+  made by Go (constraints on the root and an intermediate, every kind of
+  name on the leaf and the intermediate) with x509verify.xo and Go's
+  Verify: 20,000 chains over two seeds, no difference. Known gap, next:
+  Go's certificate policy validation (policiesValid) is not done, so a
+  chain Go refuses for its policies verifies here (closed by part 12).
+
+- Native runtime (zero-C audit, scheduler block S1): a context's wait
+  on its park is Xo (std/native/llrt/tasks.xo park_wait_n: the output
+  flush, the budget's pause, the root thread's helping record, the test
+  world's counted wait), and a helper's dequeue signals the scope's
+  joiner from pool.xo; rt.sched_rt ops 10 and 17, the dead C wait lists
+  and helpers, and eight cabi.xo exports only the C called are deleted.
+  xo_rt.c 3,809 to 3,665 lines.
+- TLS performance (decision 0231 part 1): the carries of the P-256,
+  P-384, and RSA field products are CPU flags (std/native/llrt/cpu.xo,
+  cmn/cmp and cset on arm64, llvm.uadd.with.overflow on LLVM, a
+  constant time Xo body elsewhere and for older xo builds). LLVM
+  handshakes: X25519 with a P-256 chain 14.7M to 10.9M instructions,
+  P-256 18.6M to 13.4M, P-384 33.6M to 23.7M, RSA-2048 12.3M to 9.4M.
+  UNTESTED on linux and windows.
+- Native runtime (zero-C audit item B22, remnants batch 2): on Linux and
+  macOS the event loop starts in Xo (std/native/llrt/poll.xo ev_start:
+  the self pipe, kqueue or epoll, the poller thread), and registers
+  descriptors (pd_open), shuts and closes them, wakes the poller, and
+  adds and removes timers there; clock.sleep's wait, select's `after`
+  timer and task.with_timeout's deadline are Xo too (poll.xo clock_wait,
+  timer_fn with FN_SELECT and FN_SCOPE; tasks.xo scope_deadline,
+  scope_timed_out). The Linux ThreadSanitizer edge through epoll gets its
+  acquire back. xo_rt.c 4,030 to 3,836 lines. Linux untested (written on
+  macOS); Windows' start and WSAPoll loop stay C until the Windows pass.
+- Native runtime (zero-C audit, xo_rt.c's main thread context): the root
+  context of a thread running Xo code outside any task is ctx.xo root
+  (the C's ctx forwards; rt_once, rt_init, cur_set, park_init deleted).
+  The rest of "Fault unwinding" and the process environment is labelled
+  GLUE for the end pass (generated code and seed entry points, Windows
+  and libgcc x86_64 paths) in the audit row.
+- Native runtime (zero-C audit item B31, part 10, decision 0202): the
+  net/url parser of std/http (url_parse, unescape, ports, IPv4 and IPv6
+  literals, go_quote) moves from http1.xo into std/native/llrt/neturl.xo,
+  unchanged (the http_* and net_* goldens and TestHTTP1ClientDiff and
+  TestHTTP1ParseDiff pass), so x509.xo parses a certificate's URI names
+  as Go's url.Parse does, with Go 1.26's parseHost texts
+  (neturl.go_host_error). TestX509ParseDiff gains twelve URI classes
+  (61 in all, no difference). The TLS 1.2 hand-off passes the Security
+  framework's table to tls12.xo (xo-fa's apple_svc), so on macOS with the
+  system's roots both versions verify as Go.
+
+- Native TLS performance, step 4: Go's point doubling formula and
+  inversion by addition chain (P-256's field) or a fixed window (the
+  other exponents): handshakes about 8% fewer instructions on LLVM
+  (X25519 with a P-256 chain 15.9M to 14.7M, Mbed 5.3M).
+- TLS server checks (zero-C audit item B31, decision 0202):
+  TestTLSServerReplayDiff fuzzes tls13srv.xo and tls12srv.xo with mutated
+  client records against the Go references on LLVM and arm64 (64,000
+  cases over four seeds). TestTLSInteropMatrix crosses the Xo and Go
+  clients and servers over TLS 1.2 and 1.3, suites, groups, certificate
+  keys, ALPN, and resumption against crypto/tls on both ends. Fixes: the
+  servers' alerts before version negotiation use record version 0x0301
+  as Go's, and session ticket keys use Go's SHA-512 slices (tickets
+  interoperate with crypto/tls's, checked by std/rt's TestTicketsAsGo).
+- Native TLS 1.2 server: session tickets (RFC 5077, as Go's
+  handshake_server.go: the extension, NewSessionTicket after a full
+  handshake, the abbreviated handshake with Go's resumption checks;
+  tls12srv.Conf ticket_keys, now, Server.resumed; tlsticket.xo seals),
+  dormant until tlssrv.xo passes keys. Fuzz fixes: "unexpected EOF" only
+  when the stream did not close; no handshake message read while waiting
+  for ChangeCipherSpec (server and client).
+- Native TLS 1.2 client: tls12.Conf.apple_svc, the chain verified by the
+  Security framework on macOS with system roots (tlscert.apple_trust, as
+  tls13.xo and Go's systemVerify; bad_certificate for every failure);
+  x509verify.error_text for the other verification errors (Go's
+  unknown-authority hint).
+- Native TLS 1.2 (xo-2b's server differential fuzz, 137 differences to
+  0): alerts before the version is agreed use record version 0x0301 as
+  crypto/tls (server and client); a ClientHello's server name is
+  acknowledged whatever its bytes; the tls12 ops read the peer's bytes as
+  one stream and report "unexpected EOF" inside a record; the server op
+  takes the three groups' ECDHE keys and uses a hooked signature only
+  when it signs the exchange, and its mask covers the ServerKeyExchange
+  record (ECDSA signatures vary in length).
+- Native runtime (zero-C audit item B31, part 9, decision 0202): X.509
+  parsing and chain errors as strict as Go's, with Go's texts.
+  std/native/llrt/x509.xo's parser is now a port of Go 1.26's
+  crypto/x509 parser.go, over the new cbyte.xo (golang.org/x/crypto's
+  cryptobyte reading in Xo: minimal lengths and integers, OID arcs,
+  booleans, bit strings, Go's time.Parse rules for UTCTime and
+  GeneralizedTime). It covers RDN string types, keys (RSA's NULL
+  parameters, P-224 to P-521 points on their curves through bigmod.xo,
+  Ed25519, DSA), and every extension Go reads (SAN, name constraints
+  with IP, e-mail and URI subtrees, CRL distribution points, policies,
+  policy mappings and constraints, AIA, inhibit any policy). x509verify.xo
+  picks candidates in Go's order (matching key identifiers first), uses
+  Go's alreadyInChain, gives an unknown authority Go's hint ("possibly
+  because of ... while trying to verify candidate authority certificate
+  ..."), and reports the signature check limit. IP, e-mail and URI name
+  constraints refuse a chain whose lower certificates carry such names
+  (Go checks them; this is stricter until x509verify.xo does). On macOS
+  with the system's roots the Xo client asks the Security framework
+  (tlscert.xo apple_trust), as Go does. The first record not looking like
+  TLS gets Go's text. TestX509ParseDiff (internal/llvm, not -short)
+  diffs x509.xo against Go's ParseCertificate on mutated certificates and
+  49 named classes: 150,000 cases, no difference. TestTLS13ReplayDiff now
+  fails on any difference in a refused certificate's text: 0 in 20,000.
+  Known gaps: a SAN URI is checked as IA5 only (Go also parses it with
+  net/url, whose port is in http1.xo; closed by part 10); P-224 and P-521
+  signatures are not verified (refused).
+
+- Native TLS 1.2 client: offers the four ECDHE CBC-SHA suites after the
+  AEADs, as Go's client does by default (tls12.default_suites, which
+  tlsio.xo's combined ClientHello uses too); golden tls12_client adds a
+  CBC trace.
+- bench/results/tls-perf-2026-10-15.md: a proposal for three compiler
+  intrinsics the remaining TLS gap needs (add and subtract with carry,
+  AES rounds, carry-less multiply), with measurements.
+- Native TLS performance, step 3: P-384's field arithmetic unrolled, and
+  RSA's modulus setup by Go's rr chain (12 squarings in place of 4,096
+  doublings): P-384 handshakes 56.3M to 36.9M instructions on LLVM (Mbed
+  22.9M), RSA-2048 18.5M to 13.1M (Mbed 4.9M).
+- Native TLS 1.2 server: the four ECDHE CBC-SHA suites Go's server
+  enables by default (c009, c013, c00a, c014), after the AEADs: SHA-1
+  and HMAC-SHA1 (std/native/llrt/sha1.xo), AES decryption and CBC
+  (aesgcm.xo, BearSSL's bitsliced inverse cipher), and Go's constant
+  time CBC record check (extractPadding, the MAC over a constant amount
+  of data, one bad_record_mac for every failure). Goldens cbc_prims
+  (FIPS 197, SP 800-38A, RFC 2202 against Go) and tls12_cbc (crypto/tls's
+  client, records made with the session's keys: padding 255, bad
+  padding, bad MAC, short, not whole blocks), byte identical on Go, LLVM
+  and arm64. Server side only.
+- Native TLS performance, step 2: P-256's field arithmetic unrolled over
+  local limbs and a fixed base table for [k]G (nistec_g256.xo, made by
+  scripts/nistecg256): an X25519 handshake with a P-256 chain 47.3M to
+  15.9M instructions on LLVM (Mbed 5.3M), the P-256 group 62.2M to 20.2M
+  (Mbed 12.9M) (bench/results/tls-perf-2026-10-15.md).
+- Native runtime (zero-C audit item B31, session resumption, decision
+  0202): the Xo TLS server issues session tickets and resumes TLS 1.3
+  sessions as Go's crypto/tls does. std/native/llrt/tlsticket.xo holds
+  Go's ticket encoding, AES-CTR plus HMAC-SHA256 sealing, and automatic
+  key rotation. tls13srv.xo sends a NewSessionTicket after its Finished
+  and accepts psk_dhe_ke with a constant time binder check (no 0-RTT).
+  Golden tls13_server replays a recorded Go 1.26 client that resumes,
+  plus a bad binder, an expired ticket, and a ticket of another key.
+  TestTLSDiff's TLS 1.3 resumption probe now equals Go. TLS 1.2 tickets
+  come with tls12srv.xo; Xo's client does not resume.
+- Native TLS performance, step 1: ChaCha20 on 16 local words with 32
+  bit rotates, Poly1305 absorbing the AEAD's pieces in place (no copy of
+  the ciphertext): ChaCha20-Poly1305 bulk reads 107M to 41M instructions
+  a MiB on LLVM, 173M to 57M on arm64 (bench/results/tls-perf-2026-10-15.md).
+- bench/perf/tls: TLS handshakes per group and server key, and bulk
+  reads per AEAD, of std/http's client with the Xo TLS against Mbed TLS
+  (`XO_LLRT_C=tlsio`), against crypto/tls servers. Baseline in
+  bench/results/tls-perf-2026-10-15.md: the Xo handshakes take 3.8 to
+  8.9 times Mbed's instructions on LLVM (P-256 field arithmetic about 90%
+  of them), bulk AES-GCM about 10 times and ChaCha20-Poly1305 7.8 times.
+- Native runtime (zero-C audit item B31, server wiring, decision 0202):
+  the HTTP server's TLS is Xo by default. std/native/llrt/tlssrv.xo
+  runs tls13srv.xo over the accepted connection's socket with xo_tls.c's
+  waits, cancellation, HTTP detection and close_notify. It hands TLS 1.2
+  ClientHellos to tls12srv.xo (tls13srv.xo's new HANDOFF state) and picks
+  the certificate by server name. http.tls_cert is tls.X509KeyPair in Xo:
+  RSA PKCS #1/#8, ECDSA SEC 1/PKCS #8, Ed25519 PKCS #8, with Go's errors
+  (golden http_tls_keys equals Go). XO_LLRT_C=tlssrv keeps Mbed TLS
+  (tlssrv_c.xo). http_tls passes on both paths. TestH2Diff and
+  TestTLSDiff match Go except for the TLS 1.2 CBC suites and session
+  resumption (no tickets yet), plus the client-side differences already
+  known. UNTESTED on linux and windows.
+- Native runtime (B31, TLS 1.2 part 2): the TLS 1.2 server in Xo
+  (std/native/llrt/tls12srv.xo, as Go's handshake_server.go): the
+  server's suite order (ChaCha20-Poly1305 first when the client prefers
+  it), the client's curve and signature scheme order, ECDHE over X25519,
+  P-256 and P-384 signed with ECDSA, Ed25519, RSA-PSS or PKCS #1 v1.5,
+  the extended master secret, ALPN with Go's h2 fallback, the downgrade
+  sentinel when it also speaks TLS 1.3; tls12srv.resume takes over from
+  tls13srv.xo's HANDOFF. The golden tls12_server replays crypto/tls's
+  client against crypto/tls's own server as the Go reference: RSA-PSS
+  and PKCS #1 v1.5 signatures byte for byte, ECDSA through the trace's
+  signature and checked when made here, 21 cases on Go, LLVM and arm64.
+- Native runtime (zero-C audit item B31, part 8, decision 0202): the Xo
+  client negotiates TLS 1.2 and 1.3 as Go's does: one ClientHello
+  offering both (Go 1.26's suites, extensions and signature schemes in
+  its order), RFC 8446's downgrade sentinel checked, and on a ServerHello
+  choosing 1.2 tls13.xo stops (HANDOFF) and tlsio.xo goes on in xo-fa's
+  tls12.xo (resume) from that ServerHello; no second try. ALPN offers h2
+  and http/1.1 as the C path does. This closes part 7's TLS 1.2 gap: by
+  hand on 2026-10-15, badssl.com's TLS 1.2 hosts (tls-v1-2, rsa2048,
+  rsa4096, ecc256, ecc384) answer 200 and its expired, wrong host,
+  self-signed and untrusted root hosts fail with Go's texts.
+  TestTLS13ReplayDiff (internal/llvm, not -short; decision 0202's
+  differential fuzzing) feeds the TLS 1.3 client mutated server records
+  (bytes flipped, cut, inserted; records dropped, repeated, swapped;
+  handshake messages changed under a valid record protection; fed in
+  pieces) and diffs the Xo client on LLVM and arm64 against the Go
+  reference port: 60,000 cases over three seeds, no difference in what
+  the client does; about 19 percent differ only in a refused
+  certificate's text (x509.xo parses some certificates Go's parser
+  refuses, such as a malformed OID or an invalid PrintableString, and
+  Go adds a hint to an unknown authority), the next item to tighten.
+
+- Native runtime (B31, TLS 1.2 version negotiation): tls12.resume takes
+  over from tls13.xo when a TLS 1.2 ServerHello answers one ClientHello
+  offering TLS 1.3 and 1.2 (as Go's client: no second, 1.2 only hello),
+  with RFC 8446's downgrade sentinels refused and the offered signature
+  schemes read from that hello. The golden tls12_client adds crypto/tls's
+  combined hello against a TLS 1.2 server and both sentinels (24 cases).
+- Native runtime (zero-C audit item B31, TLS 1.2 part 1, decision 0202):
+  the TLS 1.2 client in Xo (std/native/llrt/tls12.xo, as Go's
+  handshake_client.go, key_agreement.go, prf.go and cipher_suites.go):
+  ECDHE over X25519, P-256 and P-384, ECDSA, RSA PKCS #1 v1.5, RSA-PSS
+  and Ed25519 signatures, the AES-GCM and ChaCha20-Poly1305 suites, the
+  extended master secret, ALPN and SNI, an empty certificate when asked
+  for one; Go's error texts and alerts. internal.crypto_op's "tls12"
+  area; the golden tls12_client replays traces of crypto/tls's server,
+  with crypto/tls's own client as the Go reference (std/rt
+  internal_tls12.go), over 21 cases on Go, LLVM and arm64. Not on the
+  TLS path yet (Xo Lang 2 integrates).
+- Native runtime (zero-C audit item B31, part 7, decision 0202): the
+  HTTP client's TLS is Xo's. std/native/llrt/tlsio.xo runs tls13.xo's
+  client over the connection's socket with xo_tls.c's waits (poll
+  descriptor, deadline, cancellation, the 10 s handshake timeout) and
+  its texts of a failed handshake; hclient.xo calls it. XO_LLRT_C=tlsio
+  selects its C path, tlsio_c.xo, which forwards to xo_tls.c on Mbed TLS
+  (decision 0193). The roots stay the C's records: a new
+  xo_tls_c_roots_crt hands the Xo client their mbedtls_x509_crt chain,
+  whose DERs x509.xo parses. http_tls passes on both paths, arm64 and
+  LLVM. Fetched by hand on 2026-10-15 with the Xo path: google.com,
+  github.com, proxy.golang.org (which the Mbed path refuses with a host
+  name error), cloudflare.com, letsencrypt.org and apple.com.
+  Known gaps before merge: the Xo client refuses servers that only
+  speak TLS 1.2 (all of badssl.com, for one) until xo-fa's tls12 client
+  lands (closed by part 8), and XO_LLRT_C=tlsio restores Mbed;
+  macOS's system roots are checked by x509verify.xo, not the Security framework as Go does; a
+  certificate's expiry text gives the time in UTC, not the local zone.
+  The server's TLS stays Mbed's until xo-2b's tls13srv.xo lands.
+
+- Native runtime (zero-C audit item B31, TLS 1.3 server, decision 0202):
+  the TLS 1.3 server in Xo, sans I/O (std/native/llrt/tls13srv.xo, as
+  Go's handshake_server_tls13.go: ClientHello checks, Go's choice of
+  suite and group, HelloRetryRequest, ALPN, EncryptedExtensions,
+  Certificate, CertificateVerify signed with RSA-PSS, ECDSA P-256 or
+  P-384, or Ed25519, Finished, KeyUpdate, Go's error texts and alerts)
+  over tls13.xo's key schedule and tlsrec.xo's records. internal.crypto_op
+  gains the tls13srv area (std/rt/internal_tls13srv.go, the server in Go
+  and a pair over Go's crypto/tls); the golden tls13_server replays RFC
+  8448 section 3 from the server's side (ServerHello, encrypted flight,
+  ticket, data and alert records equal the RFC's, whole and a byte at a
+  time), ten failures and choices, three recorded Go 1.26 client
+  handshakes, and ten client and server pairs. Not on the TLS path yet
+  (Mbed TLS stays selectable).
+- Native runtime (zero-C audit item B31, part 6, decision 0202): the
+  TLS 1.3 client checked against Go's crypto/tls server. The golden
+  tls13_go replays traces recorded from a Go server (HelloRetryRequest
+  from X25519 to P-256 with ChaCha20-Poly1305 and ALPN; a
+  CertificateRequest answered by an empty Certificate with AES-256-GCM,
+  SHA-384 and a P-384 ECDSA server, then a KeyUpdate asking for the
+  client's; an Ed25519 server over a P-256 share; fed whole and a byte
+  at a time; an expired certificate and no root). The client's records
+  equal the trace's, which the Go server accepted. The Go reference is
+  now a full port of tls13.xo (std/rt/internal_tls13.go), and the client
+  takes fixed random, session id and key hooks. rsa.xo gains
+  sign_pss_salt (a fixed salt) for the TLS 1.3 server's RFC 8448 replay.
+
+- Native runtime (zero-C audit, the xo_rt.c memory block): real-time
+  sections (core 6.5, decision 0133) are Xo: obj.xo queues and drains
+  the deferred frees, std/native/llrt/rtsec.xo enters and leaves the
+  sections and faults with XO-F007; xo_rt.c 144 lines deleted, 24
+  added. hclient.xo dials through netconn.xo's dial_timeout.
+  TestSpecListsEveryFaultCode reads std/native's .xo files too.
+  UNTESTED on linux and windows.
+- Native runtime fix: a task's context, allocated from the Xo heap
+  (8 aligned) since B18 part 3, embedded the unwinder's 16 aligned
+  exception object, which UndefinedBehaviorSanitizer reported as a
+  misaligned xo_ctx in every program with tasks (TestGoldenASan). The
+  exception now sits at the first 16 byte aligned address of an 8
+  aligned area in the context (xo_rt.c ctx_exc); no offset moved.
+- Native runtime (zero-C audit item B31, part 5, decision 0202): the
+  TLS 1.3 client's key exchange over X25519 (x25519.xo), now its default
+  share before P-256 and P-384, a low order share refused as
+  crypto/ecdh does; tls13.xo exposes its message encoders, the key
+  schedule (handshake_secrets, app_secrets), Finished, the signature
+  scheme mapping and key shares for the TLS 1.3 server. The golden
+  tls13_rfc8448 also replays RFC 8448's trace from the client's X25519
+  private key and a low order server share.
+
+- Native runtime (zero-C audit items B22 and B23, remnants batch 1): the
+  network is Xo (std/native/llrt/netconn.xo): Net.listen and Net.dial
+  (TCP and "unix:PATH"), Listener.accept, addr and close, Conn.read,
+  write and close, and the NetErr outcomes, over sock.xo, dns.xo and
+  poll.xo. xo_rt.c keeps one line forwarders under the names the
+  generated code calls. The C library's network path (XO_LLRT_C=net,
+  net.xo, net_c.xo) and the test world's listener exports (tw_listen, tw_ml_*) are
+  deleted; xo_rt.c 4,959 to 4,108 lines. Linux and Windows code
+  untested (written on macOS); the Winsock shim stays C until the
+  Windows pass.
+- Native runtime (zero-C audit item B31, part 4, decision 0202): the
+  TLS 1.3 client in Xo, sans I/O (std/native/llrt/tls13.xo, as Go's
+  handshake_client_tls13.go: ClientHello with compatibility mode,
+  ServerHello and HelloRetryRequest checks, the RFC 8446 key schedule
+  over hkdf.xo, EncryptedExtensions with ALPN, the server's Certificate
+  checked by x509verify.xo, CertificateVerify by x509.check, Finished,
+  an empty client Certificate when asked, NewSessionTicket dropped,
+  KeyUpdate, Go's error texts and alerts; ECDHE over P-256 and P-384)
+  and its record layer (std/native/llrt/tlsrec.xo: AES-128-GCM,
+  AES-256-GCM, ChaCha20-Poly1305 records, the nonce, inner content type,
+  key updates). internal.crypto_op gains the tls13 area; the golden
+  tls13_rfc8448 replays RFC 8448's 1-RTT trace (the client's Finished,
+  data and alert records equal the RFC's, fed whole and a byte at a
+  time) and six failures against a Go replay. X25519 (x25519.xo) is next;
+  not on the TLS path yet (Mbed TLS stays, decision 0193).
+
+- Native runtime (zero-C audit item B15, part 3): the rest of the test
+  world is Xo and std/llrt/xo_testing.c is deleted (252 lines): the
+  start (twrun.xo start; SIGPIPE in entry.xo), the virtual clock's move
+  when every context waits (twrun.xo kick), FakeProc.signal_after's
+  timer (poll.xo fire, FN_SIGNAL, on the poller thread or the clock's
+  move), and the end's releases for the leak check (twrun.xo end).
+  cabi_tw.xo drops five exports no C called. UNTESTED on linux and
+  windows.
+- Native runtime (zero-C audit, small files, 2026-10-15): a Time's Unix
+  nanoseconds are std arithmetic (xo_time_of and xo_time_ns deleted);
+  the Fs cancellation check is the native prelude's llrt_fs_canceled;
+  on the native targets the SSA builders lower the wasm layer 0 calls
+  (rt.fs_*) and rt.stdin_* off Windows to a fault, so xo_fs.c, xo_sys.c,
+  and xo_stdin.c's stubs are kept only for the seed; BytesBuilder.write_rune
+  is raw.xo push_rune; the LLVM backend calls obj.xo's string builder
+  exports and both native backends cabi.xo's const_once, as arm64 did.
+  xo_std.c's unused helpers and seven unused cabi.xo exports deleted;
+  the C kept for the seed is labeled for the end pass. UNTESTED on linux
+  and windows.
+- Native runtime (zero-C audit item B28, part 3): the HTTP server's
+  registration and connections, streamed bodies (sinks and the streams
+  table), request values (the peer's address), and the client's dial,
+  TLS start, and close are Xo (std/native/llrt/hconn.xo, hserve.xo,
+  hclient.xo); Any values and fault_at are anyval.xo and cabi.xo's, with
+  C forwarders kept for generated code. xo_http.c 1,079 to 115 lines
+  (the Mbed TLS wrappers, weak free functions, and forwarders).
+  UNTESTED on linux and windows.
+- Native runtime (zero-C audit item B31, part 3, decision 0202): X.509
+  chain verification in Xo (std/native/llrt/x509verify.xo, as Go 1.26's
+  Certificate.Verify: chains through the intermediates to a root, roots
+  first, each link a signature from a CA allowed to sign certificates,
+  validity times, path lengths, unhandled critical extensions, extended
+  key usages nested through the chain, DNS name constraints per chain
+  after building as Go 1.26 does, the host name through tlsname.xo).
+  internal.crypto_op gains the chain area; the golden tls_verify diffs 41
+  cases against Go's x509.Verify (outcome and chain). Not on the TLS path
+  yet.
+
+- Native runtime (zero-C audit item B31, TLS primitives 4, decision
+  0202): X25519 in Xo (std/native/llrt/x25519.xo), RFC 7748, as Go's
+  crypto/ecdh X25519, constant time: the Montgomery ladder over all 255
+  bits with masked swaps on ed25519.xo's field arithmetic (now shared:
+  its field functions are pub, field_workspace gives x25519.xo its own
+  slots). A low order point gives all zeros, which the TLS layer must
+  reject as Go's ECDH does. crypto_op's "x25519" area; the golden
+  crypto_prims checks RFC 7748's 5.2 vectors and 1,000 iterations, 6.1's
+  key exchange, low order and non canonical points, and random scalars
+  against Go. Not on the TLS path yet.
+
+- Native runtime (zero-C audit item B31, TLS primitives 3, decision
+  0202): ChaCha20, Poly1305, and the ChaCha20-Poly1305 AEAD in Xo
+  (std/native/llrt/chacha.xo), RFC 8439 (12 byte nonce, 16 byte tag),
+  constant time: 32 bit additions, rotations, and xors, and
+  poly1305-donna's 26 bit limbs with a masked final reduction; open
+  checks the tag with ct.bytes_equal before decrypting. crypto_op's
+  "chacha" area (Go's standard library has none, so internal_crypto.go
+  writes RFC 8439 out, Poly1305 with math/big); the golden crypto_prims
+  checks RFC 8439's 2.3.2, 2.4.2, 2.5.2, 2.6.2, 2.8.2 and appendix A.3's
+  Poly1305 edge cases, tag failures, and every length to 200 against Go.
+  Not on the TLS path yet.
+
+- Native runtime (zero-C audit item B31, TLS primitives 2, decision
+  0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
+  as Go's crypto/aes and cipher.NewGCM (12 byte nonce, 16 byte tag),
+  constant time: BearSSL's bitsliced aes_ct64 (no table indexed by a
+  secret) and ghash_ctmul64 GHASH; open checks the tag with
+  ct.bytes_equal before decrypting. crypto_op's "aes" area; the golden
+  crypto_prims checks FIPS 197 appendix C, the GCM test cases 1 to 4,
+  15, 16, tag failures, and every length to 80 against Go. Not on the
+  TLS path yet.
+
+- Native runtime (zero-C audit item B31, part 2, decision 0202): P-256
+  and P-384 (std/native/llrt/nistec.xo: ECDH and ECDSA signing and
+  verification, Montgomery field arithmetic and the complete addition
+  formulas of Renes, Costello, and Batina, a masked 4 bit window, as Go's
+  nistec), DER (asn1.xo, as cryptobyte), X.509 certificate parsing and
+  signature checks (x509.xo, as Go's crypto/x509 parser: names as raw
+  DER, validity, keys, SANs, basic and DNS name constraints, key and
+  extended key usages, unhandled critical extensions), constant time
+  integers modulo any odd modulus (bigmod.xo, as Go's bigmod), and RSA
+  (rsa.xo: PKCS #1 v1.5 and PSS verification and signing, PKCS #1 and
+  PKCS #8 private keys, CRT with a fault check). internal.crypto_op gains
+  the areas p256, p384, rsa, and x509; the goldens tls_nistec, tls_x509
+  (under -short), and tls_rsa diff them against Go's crypto/ecdh,
+  crypto/ecdsa, crypto/rsa, and crypto/x509 (PKCS #1 v1.5 signatures byte
+  for byte). Not on the TLS path yet.
+
+- Native runtime (zero-C audit item B31, TLS primitives 1, decision
+  0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
+  incremental with clone, SHA-384 and SHA-512 on B08's SHA-512
+  compression), HMAC (hmac.xo) and HKDF with TLS 1.3's
+  HKDF-Expand-Label (hkdf.xo), as Go's crypto/sha256, crypto/sha512,
+  crypto/hmac, and crypto/hkdf. std/internal's crypto_op runs them: one
+  dispatcher, an arm per area calling that file's op (std/rt's
+  internal_crypto.go is the Go backend's, over Go's crypto packages); the
+  golden crypto_prims checks FIPS 180-4, RFC 4231, RFC 5869, and RFC
+  8448 vectors and runs under -short. Not on the TLS path yet.
+
+- Native runtime (zero-C audit, next small files batch): file and lock
+  handles are records of fsops.xo with Xo free functions (the services
+  record's words 128 and 136); collection constants are consts.xo's
+  (its table at word 144; xo_const_once and xo_consts_free forward to
+  it); Str and Bytes slicing (`s[lo..hi]`) calls the prelude's
+  llrt_str_slice_at and llrt_bytes_slice_at. xo_fs.c 133 to 62 lines,
+  xo_bytes.c 232 to 200. TestFarOutSlot now checks the rs_push_rune
+  call, the last runtime call that returns a Str through a length
+  pointer in that program. UNTESTED on linux and windows.
+
+- Native runtime (zero-C audit item B30): the TLS runtime's certificate
+  work that needs no TLS state is Xo (std/native/llrt/tlscert.xo):
+  http.tls_cert's PEM scan and tls.X509KeyPair's error texts,
+  Client.with_roots' certificates, the system's roots (the Security
+  framework on macOS, the ROOT store on Windows, crypto/x509's files and
+  directories on Linux), the expiry texts in RFC 3339, and macOS's chain
+  verification. Mbed TLS calls stay in xo_tls.c behind a services
+  record. Linux and Windows code untested (written on macOS).
+- Native runtime (zero-C audit, small files batch): standard input's
+  waits, registration, raw read, isatty, terminal width, and echo are
+  Xo (stdin.xo; Windows keeps its pump in C); the test world's switches
+  moved to twflags.xo so sysio.xo and stop.xo read them without the C;
+  the outcome of a file operation (status, path, message) lives in
+  thread local words 11 and 12 (sysio.xo); getauxval reads
+  /proc/self/auxv (linux.xo); the string helpers behind str_byte,
+  str_slice, str_join, str_repeat, and bytes_decode are raw.xo's.
+  xo_stdin.c 226 to 66 lines, xo_sys.c 64 to 24, xo_bytes.c 272 to 232,
+  xo_std.c 226 to 191. UNTESTED on linux and windows.
+
+- Native runtime (zero-C audit item B28, part 2): the HTTP/2 server is
+  Xo (std/native/llrt/h2srv.xo): the connection's fiber (the preface,
+  the frames and their checks, header blocks through hpack.xo, flow
+  control, the stream table, the handler queue and its rapid reset
+  limit, GOAWAY and the deadlines), the responses of the stream tasks
+  (whole, streamed, the backlog wait, the reset after a handler's fault)
+  and the sending (HPACK encoding in send order, DATA within the
+  windows). The connection's and the streams' shared state are malloc'd
+  records under a lock word; the fiber waits with poll.xo's new
+  pd_wait_or_signal. The C keeps the TLS handshake and non-blocking
+  reads, the socket's writes, and the stream connections (xo_h2_stream).
+  std/llrt/xo_h2.c is deleted (2,068 lines), xo_http.c 1,284 to 1,079;
+  a stream's response header is http1.xo's (hdr_*), so the C header
+  list, request record, and their accessors went too. Windows' linger
+  after a weak cipher GOAWAY is untested on windows.
+- Native runtime (zero-C audit item B26, part 2): the program's start
+  and end around C main are Xo (std/native/llrt/entry.xo): the
+  arguments (UTF-8 from the UTF-16 command line on Windows),
+  XO_HEAP_MID_MAX, the choice of the test world or the signal handlers
+  and their installation (sigaction on Linux and macOS,
+  SetConsoleCtrlHandler, the vectored stack overflow handler and the
+  stack guarantee on Windows), XO_LEAKCHECK's and XO_HEAPSTATS' reports,
+  and XO_RTSTATS' line. C keeps the handlers themselves, the program
+  thread and its fault boundary, and the standard streams' binary mode on
+  Windows. Linux and Windows code untested (written on macOS).
+- Native runtime (zero-C audit item B28, part 1): the HTTP/1.1 server
+  connection is Xo (std/native/llrt/http1.xo Reader, respond, emit,
+  stream_end: the input buffer, the request's body, Go's error answers,
+  Expect: 100-continue, the response and a stream's chunks over
+  http1w.xo); the C keeps the socket and TLS reads and writes, the
+  server's registration, and HTTP/2. The C drivers of TestHTTPParseDiff
+  and TestHTTPFuzz are skipped until they become Xo programs (end pass).
+  xo_http.c 1,909 to 1,265 lines (with B29's client).
+- Native runtime (zero-C audit item B22, stage 4): on Windows the event
+  loop's descriptor operations and waits are Xo too (poll.xo), and so are
+  the AFD polls (pd_arm, their completions) and the poller thread's loop
+  over the I/O completion port (poll_main_win); the C keeps opening the
+  device, registering a socket, and the WSAPoll fallback. Written on
+  macOS and untested on Windows.
+- Native runtime (zero-C audit item B25, stage 5): on Windows, Proc.run,
+  Cmd.output, run, and spawn, pipelines, and children are Xo too
+  (std/native/llrt/proc.xo over windows.xo: CreateProcessW with an
+  explicit handle list, exec.LookPath with PATHEXT, the program's pipe
+  ends in PIPE_NOWAIT mode polled in short steps instead of the C's
+  socket pumps). xo_proc.c's Windows code is deleted (1,431 to 24
+  lines). Written on macOS and untested on Windows.
+- Native runtime (zero-C audit item B15, part 2): the test world's
+  FakeClock (sleeps, advance, set), FakeNet's in memory listeners,
+  testing.run_main, FakeProc.signal_after, and os.proc.exit's unwind in a
+  test are Xo (std/native/llrt/twrun.xo); xo_testing.c keeps the clock's
+  move when every context waits, the signal timer's callback, and
+  forwarders (617 to 252 lines).
+- Native runtime (zero-C audit item B04, stage (e), decision 0230): in a
+  program built with no C library (XO_NOLIBC=1, Linux) the start (the
+  environment, the auxiliary vector, the main thread's TLS block and
+  stack), getenv, getauxval, vsnprintf and vfprintf, FILE, and
+  directories are Xo (std/native/llrt/libcio.xo), and the thread and
+  lock work moved from cabi_nolibc.xo to libcthr.xo, which fixes a
+  duplicate `xo_x_mutex_lock` (cabi.xo's Mutex[T]) that broke every
+  XO_NOLIBC arm64 link; xo_nolibc.c 658 to 128 lines. The malloc state
+  and strerror's table share static word 63 (words 30 and 31 freed).
+  Written on macOS and untested on Linux.
+- Native runtime (zero-C audit item B04, decision 0230): a program built
+  with no C library (XO_NOLIBC=1, Linux) takes its C library from Xo,
+  exported under the C names (std/native/llrt/cabi_libc.xo): malloc and
+  friends (libcmem.xo), the string and memory functions, strerror, the
+  strto* family and qsort (libcstr.xo), and the system calls, errno,
+  exit, signals, locks, and threads (libcsys.xo); xo_nolibc.c keeps the
+  entry, FILE and printf, and directories (1,415 to 658 lines).
+  Written on macOS and untested on Linux.
+- Native runtime (zero-C audit item B25, stage 4b): Cmd.spawn's
+  children (write, close_stdin, read, read_err, read_line, wait, kill,
+  and FakeProc's children) are Xo on macOS and Linux
+  (std/native/llrt/proc.xo; standard input data is written by the
+  child's own waits instead of a thread; Linux UNTESTED). Off Windows,
+  xo_proc.c is a 40 line shim (the child record's allocation and free
+  function, and faulting stubs the prelude's Windows branch names); the
+  rest of it compiles on Windows only (UNTESTED there: the Mac cannot
+  build Windows).
+- Native runtime (zero-C audit item B23, stage 2a): on Windows the
+  network's socket calls go through Xo too (sock.xo's Windows arms over
+  ws2_32, Winsock errors mapped to the C runtime's errno; names through
+  ws2_32's getaddrinfo in cabi_net.xo, whose errors now read as glibc's
+  texts, "Name or service not known"). Written on macOS and untested on
+  Windows.
+- Native runtime (zero-C audit item B25, stage 4a): Proc.run,
+  Cmd.output and run, and pipelines run from Xo on macOS and Linux
+  (std/native/llrt/proc.xo run and exec: the pipes, the reads on the
+  event loop's poller, standard input written in the same loop instead
+  of a thread, the exit polled with waitpid in cancelable steps; Linux
+  UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
+  children until stage 4b.
+- Native runtime (zero-C audit item B29, HTTP/2 client): the client's
+  HTTP/2 connections, the pool of idle ones, and the exchange's records
+  are Xo (hclient.xo); xo_h2.c keeps only the server.
+- Native runtime (zero-C audit item B29, HTTP/1.1): the client's
+  connection reads and writes, the request it writes (net/http's
+  Request.write with Transport's additions), the reading side of the
+  response, and the client's errors are Xo (std/native/llrt/hclient.xo;
+  the errors are no longer cut at 511 bytes). UNTESTED on linux and
+  windows (the would block errno per OS). Fixed: growing a block the C
+  frees lost its first word (raw.c_resize; select arms, a scope's old
+  task lists, a context's held locks).
+- Native runtime (zero-C audit item B20, part 3): the deadlock check
+  (XO-F001) is Xo (pool.xo dl_check, cabi.xo deadlock); in the test
+  world with a virtual clock it still records the verdict for the C's
+  clock move (tw_kick).
+- Native runtime (zero-C audit item B18): running a claimed task is Xo
+  (tasks.xo run_claimed: the task's context, from the heap, its budget,
+  the end of its run and its scope's counts); only the call of the entry
+  function stays C (xo_rt.c run_entry, sched_rt op 29), whose frame is
+  the unwinding's boundary.
+- Native runtime (zero-C audit item B18): the free functions of tasks,
+  scopes, mutexes, channels, selects and Atomics are Xo (tasks.xo,
+  mutex.xo, chan.xo, selects.xo), and runtime objects allocate through
+  obj.xo's alloc_obj, which refills from the central lists when several
+  threads run.
+- Native runtime (zero-C audit item B20, part 2): the fiber stacks'
+  settings (XO_TASK_STACK_MB, the page size per OS) are Xo
+  (poolsetup.xo fibers_setup).
+- Native runtime (zero-C audit item B26, part 1): two phase shutdown's
+  state machine (core 7.5: the signals counted, the stop request, the
+  grace timer, task.stopping's channel, proc.set_grace, main's root
+  context, testing.run_main's fresh state) is Xo
+  (std/native/llrt/stop.xo); the C keeps the signal and console
+  handlers, the entry, and a services record of the C calls it needs.
+- Native runtime (zero-C audit item B19, part 3): `select` (its arms,
+  the wait over every channel's lock in address order, take) is Xo
+  (std/native/llrt/selects.xo), which generated code calls directly.
+- Native runtime (zero-C audit item B19, part 2): channels (new, send,
+  recv, try_send, try_recv, close, len) are Xo
+  (std/native/llrt/chan.xo), which generated code calls directly; a
+  waiting context's queue entry is part of the context.
+- Native runtime (zero-C audit items B25 stages 2 and 3, B15 part 1):
+  commands start from Xo (std/native/llrt/proc.xo: the PATH lookup,
+  posix_spawn on macOS, fork and execve on Linux), one Proc.run path for
+  every OS, and a test binary's report channel in testworld.xo;
+  xo_proc.c and xo_testing.c lose about 400 lines.
+- Native runtime (zero-C audit item B19, part 1): Mutex[T] (lock,
+  unlock, with_read's shares, the reader handoff, XO-F004's held list)
+  is Xo (std/native/llrt/mutex.xo), which generated code calls directly.
+- Native runtime (zero-C audit item B29, part 1): the HTTP/2 client's
+  exchange is Xo (std/native/llrt/http1.xo h2_exchange, H2X): the
+  request's HEADERS and DATA within the server's windows, the server's
+  frames (SETTINGS, PING, WINDOW_UPDATE, GOAWAY, RST_STREAM, HEADERS and
+  CONTINUATION, DATA), the response's status and header, and Go's error
+  texts; the connection's windows, settings, and next stream are part of
+  its H2State. The C keeps the socket and TLS reads and writes, the pool,
+  and the retry (xo_cl_h2_read, write, end). http_fuzz.c no longer runs
+  the client's frame code (it is Xo's).
+- Native runtime (zero-C audit item B24): standard input's reading
+  (read_line, read_all, lines, read_bytes, the buffer kept across a
+  canceled read, the readers' turn) is Xo (std/native/llrt/stdin.xo); the
+  C keeps the poller registration, the raw read, and the waits.
+- Native runtime (zero-C audit item B28, part 6): a server request's
+  url.host (net.SplitHostPort of the Host) and url.port (of an absolute
+  target) are Xo (std/native/llrt/http1.xo host_name, host_port); the C
+  hands over the raw Host and URL host (xo_hc_host, xo_hc_urlhost), and
+  its splitting moved to the test copies in std/llrt/testdata/http_ref.c.
+- Native runtime (zero-C audit item B28, part 5): HTTP/2 the SETTINGS
+  checks that need no state (the payload's shape, duplicates,
+  ENABLE_PUSH, INITIAL_WINDOW, MAX_FRAME_SIZE) are Xo (h2w.xo
+  settings_check); a failing setting still fails when the C reaches it,
+  after the ones before it apply.
+- Native runtime (zero-C audit item B28, part 4): HTTP/2 the server's
+  request checks (malformed pseudo fields, 431 for a cut header list,
+  the 400 texts of connection specific fields and TE, OPTIONS *) are Xo
+  (h2w.xo request_check).
+- Native runtime (zero-C audit item B28, part 3): HTTP/2 the checks of
+  each received header field (readMetaFrame: values, names, pseudo
+  fields after regular ones, the header list's size) and checkPseudos
+  are Xo (h2w.xo field_keep, pseudos_ok).
+- Native runtime (zero-C audit item B28, part 2): HTTP/2 the server's
+  frame checks before it acts on a frame (checkFrameOrder and the
+  Framer's parsers: lengths, stream ids, padding, priority) are Xo
+  (std/native/llrt/h2w.xo frame_check).
+- Native runtime (zero-C audit item B28, part 1): the HTTP/2 frames the
+  server and the client write (frame headers, RST_STREAM, WINDOW_UPDATE,
+  GOAWAY, SETTINGS, HEADERS and CONTINUATION) and the server's response
+  heads (writeChunk's :status, sorted and checked fields, content-type,
+  content-length, date) are Xo (std/native/llrt/h2w.xo); a head goes to
+  the HPACK encoder as bytes instead of a C header list. xo_h2.c loses
+  152 lines and gains 78 (40 of them the weak definitions). A handler
+  setting one name twice keeps the values' order (qsort did not).
+- Native runtime (zero-C audit item B23, stage 1): on macOS the network's
+  socket calls go through Xo (std/native/llrt/sock.xo's darwin arms over
+  libSystem; names through libSystem's getaddrinfo in cabi_net.xo), as on
+  Linux.
+- Native runtime (zero-C audit item B22): the event loop's timer heap and
+  the poller thread's loop (kqueue on macOS, epoll on Linux) are Xo
+  (std/native/llrt/poll.xo); Windows' loop stays C for now. The event
+  loop's mutex and a descriptor's are lock words and the pending signals
+  a word; the epoll arms were written on macOS and are untested on Linux.
+  A descriptor's waits (with a deadline), close, and free are poll.xo's
+  too (pd_wait, pd_close, pd_free), callable from Xo.
+- Native runtime (zero-C audit item B25, stage 1): Proc.kill,
+  FakeProc.killed, and the environment and working directory a command
+  starts from are Xo (std/native/llrt/proc.xo); xo_proc.c loses 106
+  lines.
 - Native runtime (zero-C audit item B21, part 2): a thread's heap record
   and the list of every record are std/native/llrt/heapos.xo's (a
   mapping, a lock word) instead of calloc and a pthread mutex; the

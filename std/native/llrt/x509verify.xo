@@ -1,0 +1,1319 @@
+// X.509 chain verification (RFC 5280 6, as Go's crypto/x509 Verify: the
+// zero-C audit's B31, decision 0202, replacing Mbed TLS's
+// x509_crt_verify): chains from the leaf through the intermediates to a
+// root, each link a signature check (the parent a CA, KeyUsage allowing
+// certificate signing when present), every certificate valid at the
+// time, intermediates CAs within their path lengths, DNS name
+// constraints over the leaf's names, extended key usages nested through
+// the chain, and the leaf's host name. Every input is public.
+use native/llrt/raw
+use native/llrt/tlscert
+use native/llrt/tlsname
+use native/llrt/x509
+use native/rt
+
+// the outcomes (Go's errors: UnknownAuthorityError, CertificateInvalidError's
+// reasons, HostnameError, UnhandledCriticalExtension)
+pub const OK: Int = 0
+pub const UNKNOWN_AUTHORITY: Int = 1
+pub const EXPIRED: Int = 2
+pub const NOT_AUTHORIZED_TO_SIGN: Int = 3
+pub const TOO_MANY_INTERMEDIATES: Int = 4
+pub const NAME_CONSTRAINTS: Int = 5
+pub const INCOMPATIBLE_USAGE: Int = 6
+pub const HOSTNAME: Int = 7
+pub const UNHANDLED_CRITICAL: Int = 8
+pub const CHECK_LIMIT: Int = 9
+pub const NO_VALID_CHAINS: Int = 10
+
+// Go's limit on signature checks in one verification
+const MAX_CHECKS: Int = 100
+
+// the kinds of certificate in a chain (Go's certType)
+const LEAF: Int = 0
+const INTERMEDIATE: Int = 1
+const ROOT: Int = 2
+
+/// The outcome of a verification: the code, a chain (leaf first) when OK,
+/// for EXPIRED the certificate that is not valid, for UNKNOWN_AUTHORITY
+/// Go's hint (" (possibly because of ...)" or ""), for NAME_CONSTRAINTS
+/// the constraint error's text.
+pub struct Outcome {
+  pub code: Int
+  pub chain: List[x509.Cert]
+  pub bad: x509.Cert
+  pub hint: Str
+}
+
+/// Go's text of a verification's error (x509.Verify's err.Error()):
+/// "" when it is OK; the time now (Unix seconds, shown in UTC) and host
+/// name are the verification's.
+pub fn full_text(r: Outcome, leaf: x509.Cert, host: Str, now: Int) -> Str { full_text_zone(r, leaf, host, now, 0) }
+
+/// full_text with the time now shown in the zone off seconds east of UTC
+/// (Go's time.Now() is in time.Local).
+pub fn full_text_zone(r: Outcome, leaf: x509.Cert, host: Str, now: Int, off: Int) -> Str {
+  if r.code == OK {
+    return ""
+  }
+  if r.code == EXPIRED {
+    let b = r.bad
+    let rel = if now < b.not_before { "before" } else { "after" }
+    let limit = if now < b.not_before { b.not_before } else { b.not_after }
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, off)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
+  }
+  if r.code == HOSTNAME {
+    return tlsname.hostname_msg(names(leaf), leaf.has_san, leaf.cn, host)
+  }
+  error_text(r)
+}
+
+/// Go's text of an outcome's error for the certificate checks that
+/// x509verify.xo makes (the host name's and the expiry's are the
+/// caller's: they need the host and the zone).
+pub fn error_text(r: Outcome) -> Str {
+  match r.code {
+    1 => "x509: certificate signed by unknown authority${r.hint}"
+    3 => "x509: certificate is not authorized to sign other certificates"
+    4 => "x509: too many intermediates for path length constraint"
+    5 => "x509: a root or intermediate certificate is not authorized to sign for this name: ${r.hint}"
+    6 => "x509: certificate specifies an incompatible key usage"
+    8 => "x509: unhandled critical extension"
+    9 => "x509: signature check attempts limit reached while verifying certificate chain"
+    10 => if r.hint == "" { "x509: no valid chains built" } else { "x509: no valid chains built: ${r.hint}" }
+    _ => "x509: verification failed"
+  }
+}
+
+/// The search's state: chains found, signature checks made.
+struct Search {
+  chains: List[List[x509.Cert]]
+  checks: Int
+}
+
+/// A level's error (Go's err of buildChains): the code (-1 none), the
+/// certificate it is about, the unknown authority's hint.
+struct LevelErr {
+  code: Int
+  bad: x509.Cert
+  hint: Str
+}
+
+/// Go's Verify (Go 1.26) of leaf with the intermediates and roots at the
+/// time now (Unix seconds): host the name to check ("" none), usage the
+/// extended key usage OID wanted (x509.EKU_SERVER, ...; EKU_ANY accepts
+/// any).
+pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
+  if leaf.unhandled > 0 {
+    return Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}
+  }
+  if now < leaf.not_before || now > leaf.not_after {
+    return Outcome{code: EXPIRED, chain: [], bad: leaf, hint: ""}
+  }
+  if host != "" && !host_ok(leaf, host) {
+    return Outcome{code: HOSTNAME, chain: [], bad: leaf, hint: ""}
+  }
+  var s = Search{chains: [], checks: 0}
+  var in_roots = false
+  for r in roots {
+    if r.raw == leaf.raw {
+      in_roots = true
+    }
+  }
+  if in_roots {
+    s.chains.push([leaf])
+  } else {
+    let err = build(s, [leaf], dedup(inters), dedup(roots), now)
+    if err.code != OK {
+      return Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}
+    }
+  }
+  // Go drops the chains with incompatible usages, then the ones breaking
+  // a name constraint; a constraint error (the first) wins over the usage
+  // one
+  var names_err = ""
+  var bad_policies = 0
+  var bad_usage = 0
+  for ch in s.chains {
+    if !policies_ok(ch) {
+      bad_policies += 1
+      continue
+    }
+    if !usage_ok(ch, usage) {
+      bad_usage += 1
+      continue
+    }
+    let e = chain_constraints(ch)
+    if e != "" {
+      if names_err == "" {
+        names_err = e
+      }
+    } else {
+      return Outcome{code: OK, chain: ch, bad: leaf, hint: ""}
+    }
+  }
+  if names_err != "" {
+    return Outcome{code: NAME_CONSTRAINTS, chain: [], bad: leaf, hint: names_err}
+  }
+  if bad_usage > 0 && bad_policies == 0 {
+    return Outcome{code: INCOMPATIBLE_USAGE, chain: [], bad: leaf, hint: ""}
+  }
+  // Go's NoValidChains, with its counts
+  var details: List[Str] = []
+  if bad_usage > 0 {
+    details.push("${bad_usage} candidate chains with incompatible key usage")
+  }
+  if bad_policies > 0 {
+    details.push("${bad_policies} candidate chains with invalid policies")
+  }
+  Outcome{code: NO_VALID_CHAINS, chain: [], bad: leaf, hint: details.join(", ")}
+}
+
+/// A pool's certificates once each (CertPool.AddCert skips one it has).
+fn dedup(xs: List[x509.Cert]) -> List[x509.Cert] {
+  var out: List[x509.Cert] = []
+  for x in xs {
+    var have = false
+    for y in out {
+      if y.raw == x.raw {
+        have = true
+      }
+    }
+    if !have {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// CertPool.findPotentialParents: the pool's certificates whose subject
+/// is c's issuer, the key identifiers matching first (both empty
+/// included), then those where one is missing, then the rest.
+fn parents(c: x509.Cert, pool: List[x509.Cert]) -> List[x509.Cert] {
+  var a: List[x509.Cert] = []
+  var b: List[x509.Cert] = []
+  var d: List[x509.Cert] = []
+  for p in pool {
+    if p.subject != c.issuer {
+      continue
+    }
+    if p.ski == c.aki {
+      a.push(p)
+    } else if (p.ski.is_empty() && !c.aki.is_empty()) || (!p.ski.is_empty() && c.aki.is_empty()) {
+      b.push(p)
+    } else {
+      d.push(p)
+    }
+  }
+  for x in b {
+    a.push(x)
+  }
+  for x in d {
+    a.push(x)
+  }
+  a
+}
+
+/// Go's alreadyInChain: a certificate of the chain with the candidate's
+/// subject, key and subject alternative names.
+fn in_chain(c: x509.Cert, chain: List[x509.Cert]) -> Bool {
+  for x in chain {
+    if x.subject == c.subject && x.spki == c.spki && x.has_san == c.has_san && (!c.has_san || x.san_raw == c.san_raw) {
+      return true
+    }
+  }
+  false
+}
+
+/// The name Go's hint gives a certificate: its common name, else its
+/// first organization, else "serial:" and the serial number.
+fn hint_name(c: x509.Cert) -> Str {
+  if c.cn != "" {
+    return c.cn
+  }
+  if c.org != "" {
+    return c.org
+  }
+  "serial:${decimal(c.serial)}"
+}
+
+/// The decimal text of a big endian magnitude.
+fn decimal(b: Bytes) -> Str {
+  var ds: List[Int] = []
+  for x in b {
+    var carry = Int(x)
+    for i in 0..ds.len() {
+      let v = ds[i] * 256 + carry
+      ds[i] = v % 10
+      carry = v / 10
+    }
+    while carry > 0 {
+      ds.push(carry % 10)
+      carry = carry / 10
+    }
+  }
+  if ds.is_empty() {
+    return "0"
+  }
+  var s = ""
+  var i = ds.len() - 1
+  while i >= 0 {
+    s = "${s}${ds[i]}"
+    i -= 1
+  }
+  s
+}
+
+/// x509.Certificate.VerifyHostname for the leaf.
+pub fn host_ok(c: x509.Cert, host: Str) -> Bool { tlsname.host_ok(names(c), host) }
+
+/// The leaf's names as tlsname.xo takes them (IPs as 16 bytes, IPv4
+/// mapped).
+pub fn names(c: x509.Cert) -> tlsname.Names {
+  var ips: List[List[Int]] = []
+  for ip in c.ips {
+    var a: List[Int] = []
+    if ip.len() == 4 {
+      for _ in 0..10 {
+        a.push(0)
+      }
+      a.push(255)
+      a.push(255)
+    }
+    for x in ip {
+      a.push(Int(x))
+    }
+    ips.push(a)
+  }
+  tlsname.Names{dns: c.dns, ips: ips}
+}
+
+/// Go's buildChains: every chain from chain's last certificate up through
+/// the candidates, roots first, into s.chains. The error is Go's: none
+/// when a chain was found, else the last one a candidate gave (its
+/// isValid's, its own search's, the check limit), else an unknown
+/// authority with the hint of the first candidate whose signature check
+/// failed.
+fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> LevelErr {
+  let cur = chain[chain.len() - 1]
+  let before = s.chains.len()
+  var err = LevelErr{code: -1, bad: cur, hint: ""}
+  var hint = ""
+  for kind in [ROOT, INTERMEDIATE] {
+    for c in parents(cur, if kind == ROOT { roots } else { inters }) {
+      if !c.has_key || in_chain(c, chain) {
+        continue
+      }
+      s.checks += 1
+      if s.checks > MAX_CHECKS {
+        err = LevelErr{code: CHECK_LIMIT, bad: cur, hint: ""}
+        continue
+      }
+      let why = x509.check_from(cur, c)
+      if why != "" {
+        if hint == "" {
+          hint = " (possibly because of ${why.quote()} while trying to verify candidate authority certificate ${hint_name(c).quote()})"
+        }
+        continue
+      }
+      let code = valid(c, kind, chain, now)
+      if code != OK {
+        err = LevelErr{code: code, bad: c, hint: ""}
+        continue
+      }
+      var next = chain
+      next.push(c)
+      if kind == ROOT {
+        s.chains.push(next)
+      } else {
+        err = build(s, next, inters, roots, now)
+      }
+    }
+  }
+  if s.chains.len() > before {
+    return LevelErr{code: OK, bad: cur, hint: ""}
+  }
+  if err.code < 0 {
+    return LevelErr{code: UNKNOWN_AUTHORITY, bad: cur, hint: hint}
+  }
+  err
+}
+
+/// Go's isValid for an intermediate or root c above chain.
+fn valid(c: x509.Cert, kind: Int, chain: List[x509.Cert], now: Int) -> Int {
+  if c.unhandled > 0 {
+    return UNHANDLED_CRITICAL
+  }
+  if now < c.not_before || now > c.not_after {
+    return EXPIRED
+  }
+  if kind == INTERMEDIATE && (!c.has_bc || !c.is_ca) {
+    return NOT_AUTHORIZED_TO_SIGN
+  }
+  if c.has_bc && c.max_path >= 0 && chain.len() - 1 > c.max_path {
+    return TOO_MANY_INTERMEDIATES
+  }
+  OK
+}
+
+/// Go's checkChainForKeyUsage for one wanted usage: every certificate
+/// that lists extended key usages lists it, or any (Netscape's and
+/// Microsoft's server gated crypto count as server authentication).
+fn usage_ok(chain: List[x509.Cert], usage: Str) -> Bool {
+  if usage == x509.EKU_ANY || usage == "" {
+    return true
+  }
+  for c in chain {
+    if !c.ext_usage.is_empty() {
+      var ok = false
+      for u in c.ext_usage {
+        if u == usage || u == x509.EKU_ANY {
+          ok = true
+        }
+        if usage == x509.EKU_SERVER && (u == "2.16.840.1.113730.4.1" || u == "1.3.6.1.4.1.311.10.3.3") {
+          ok = true
+        }
+      }
+      if !ok {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// internal.crypto_op's chain ops (std/internal.xo): `verify` with a
+/// the leaf's DER, b the intermediates' and c the roots' (each a 2 byte
+/// big endian length then the DER), d "time host usage" (host "-" for
+/// none): the outcome code as decimal text, then the common names of the
+/// chain found; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what != "verify" && what != "text" {
+    return None
+  }
+  let p = x509.parse(a)
+  if p.err != "" {
+    return Some(b"parse")
+  }
+  let args = (d.to_str() ?? "").split(" ")
+  if args.len() != 3 {
+    return Some(b"args")
+  }
+  let now = Int.parse(args[0]) ?? 0
+  let host = if args[1] == "-" { "" } else { args[1] }
+  let r = verify(p.cert, certs(b), certs(c), host, now, args[2])
+  if what == "text" {
+    // Go's err.Error(), "ok" and the chain's common names when it verifies
+    if r.code != OK {
+      return Some(full_text(r, p.cert, host, now).bytes())
+    }
+  }
+  if r.code == CHECK_LIMIT {
+    return Some("error ${error_text(r)}".bytes())
+  }
+  var s = "${r.code}"
+  for x in r.chain {
+    s = "${s} ${x.cn}"
+  }
+  Some(s.bytes())
+}
+
+/// The certificates of a list of 2 byte lengths and DERs.
+fn certs(b: Bytes) -> List[x509.Cert] {
+  var out: List[x509.Cert] = []
+  var i = 0
+  while i + 2 <= b.len() {
+    let n = Int(b[i]) * 256 + Int(b[i + 1])
+    let p = x509.parse(b[i + 2..i + 2 + n])
+    if p.err == "" {
+      out.push(p.cert)
+    }
+    i += 2 + n
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Name constraints (Go 1.26's constraints.go): each certificate with the
+// extension gives sorted, pruned sets of IP, DNS, URI and e-mail subtrees,
+// searched as Go's (so its texts name the same constraint)
+
+/// Go's dnsCompareTable: ASCII folded to lower case, '.' as 0.
+fn dns_byte(c: Int) -> Int {
+  if c == 46 {
+    return 0
+  }
+  if c >= 65 && c <= 90 { c + 32 } else { c }
+}
+
+/// Go's dnsCompare: from the end, case folded.
+fn dns_cmp(a0: Str, b0: Str) -> Int {
+  let a = a0.bytes()
+  let b = b0.bytes()
+  var i = a.len() - 1
+  var j = b.len() - 1
+  while i >= 0 && j >= 0 {
+    let x = dns_byte(Int(a[i]))
+    let y = dns_byte(Int(b[j]))
+    if x != y {
+      return if x < y { -1 } else { 1 }
+    }
+    i -= 1
+    j -= 1
+  }
+  if i < j { -1 } else if j < i { 1 } else { 0 }
+}
+
+/// Go's dnsHasSuffix: whether the name b is under the constraint a.
+fn dns_suffix(a0: Str, b0: Str) -> Bool {
+  let a = a0.bytes()
+  let b = b0.bytes()
+  if a.len() > b.len() {
+    return false
+  }
+  let off = b.len() - a.len()
+  var i = a.len() - 1
+  while i >= 0 {
+    var x = Int(a[i])
+    var y = Int(b[i + off])
+    if x != y {
+      if y < x {
+        let t = x
+        x = y
+        y = t
+      }
+      if !(x >= 65 && x <= 90 && y == x + 32) {
+        return false
+      }
+    }
+    i -= 1
+  }
+  if a.len() > 0 && a[0] != 46 && b.len() > a.len() && b[b.len() - a.len() - 1] != 46 {
+    return false
+  }
+  true
+}
+
+/// A sorted (insertion sort: the sets are small) and pruned DNS set.
+fn dns_sorted(l: List[Str]) -> List[Str] {
+  var xs: List[Str] = []
+  for x in l {
+    xs.push(x)
+    var k = xs.len() - 1
+    while k > 0 && dns_cmp(xs[k - 1], xs[k]) > 0 {
+      let t = xs[k]
+      xs[k] = xs[k - 1]
+      xs[k - 1] = t
+      k -= 1
+    }
+  }
+  if xs.len() < 2 {
+    return xs
+  }
+  var out = [xs[0]]
+  for r in 1..xs.len() {
+    if !dns_suffix(out[out.len() - 1], xs[r]) {
+      out.push(xs[r])
+    }
+  }
+  out
+}
+
+/// Go's dnsConstraints (None for no constraints).
+struct DnsSet {
+  all: Bool
+  permitted: Bool
+  set: List[Str]
+  parent_keys: List[Str]
+  parent_vals: List[Str]
+}
+
+fn dns_set(l: List[Str], permitted: Bool) -> DnsSet? {
+  if l.is_empty() {
+    return None
+  }
+  for n in l {
+    if n.is_empty() {
+      return Some(DnsSet{all: true, permitted: permitted, set: [], parent_keys: [], parent_vals: []})
+    }
+  }
+  let set = dns_sorted(l)
+  var keys: List[Str] = []
+  var vals: List[Str] = []
+  if !permitted {
+    for name in set {
+      let t = trim_label(name)
+      if t == "" {
+        continue
+      }
+      // a map: the last name for a key wins
+      var at = -1
+      for (k, key) in keys.indexed() {
+        if key == t {
+          at = k
+        }
+      }
+      if at >= 0 {
+        vals[at] = name
+      } else {
+        keys.push(t)
+        vals.push(name)
+      }
+    }
+  }
+  Some(DnsSet{all: false, permitted: permitted, set: set, parent_keys: keys, parent_vals: vals})
+}
+
+/// Go's trimFirstLabel (the dot kept).
+fn trim_label(n: Str) -> Str {
+  match n.find(".") {
+    Some(i) => n.bytes()[i..n.len()].to_str() ?? ""
+    None => ""
+  }
+}
+
+/// Go's nameConstraintsSet.search over a sorted set: the matching
+/// constraint, if any (a binary search, then the one before).
+fn dns_search(set: List[Str], s: Str) -> Str? {
+  if set.is_empty() {
+    return None
+  }
+  var lo = 0
+  var hi = set.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if dns_cmp(set[mid], s) < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo < set.len() && dns_cmp(set[lo], s) == 0 {
+    return Some(set[lo])
+  }
+  let c = if lo == 0 { set[0] } else { set[lo - 1] }
+  if dns_suffix(c, s) { Some(c) } else { None }
+}
+
+fn dns_query(d: DnsSet, s: Str) -> Str? {
+  if d.all {
+    return Some("")
+  }
+  if let Some(c) = dns_search(d.set, s) {
+    return Some(c)
+  }
+  if !d.permitted && s.starts_with("*") {
+    let t = trim_label(s)
+    for (k, key) in d.parent_keys.indexed() {
+      if key == t {
+        return Some(d.parent_vals[k])
+      }
+    }
+  }
+  None
+}
+
+// IP networks: the address and mask of a constraint
+
+fn bytes_cmp(a: Bytes, b: Bytes) -> Int {
+  let n = if a.len() < b.len() { a.len() } else { b.len() }
+  for i in 0..n {
+    if a[i] != b[i] {
+      return if Int(a[i]) < Int(b[i]) { -1 } else { 1 }
+    }
+  }
+  if a.len() < b.len() { -1 } else if a.len() > b.len() { 1 } else { 0 }
+}
+
+/// net.IP's To4.
+fn to4(ip: Bytes) -> Bytes? {
+  if ip.len() == 4 {
+    return Some(ip)
+  }
+  if ip.len() != 16 {
+    return None
+  }
+  for i in 0..10 {
+    if ip[i] != 0 {
+      return None
+    }
+  }
+  if ip[10] != 255 || ip[11] != 255 { None } else { Some(ip[12..16]) }
+}
+
+fn net_ip(n: Bytes) -> Bytes { n[0..n.len() / 2] }
+
+fn net_mask(n: Bytes) -> Bytes { n[n.len() / 2..n.len()] }
+
+/// net.IPNet's networkNumberAndMask: none when they do not fit.
+fn nn_mask(n: Bytes) -> List[Bytes]? {
+  let ip = match to4(net_ip(n)) {
+    Some(x) => x
+    None => net_ip(n)
+  }
+  if ip.len() != 4 && ip.len() != 16 {
+    return None
+  }
+  var m = net_mask(n)
+  if m.len() == 4 && ip.len() != 4 {
+    return None
+  }
+  if m.len() == 16 && ip.len() == 4 {
+    m = m[12..16]
+  }
+  Some([ip, m])
+}
+
+/// net.IPNet's Contains.
+fn net_contains(n: Bytes, ip0: Bytes) -> Bool {
+  let parts = match nn_mask(n) {
+    Some(x) => x
+    None => return false
+  }
+  let ip = match to4(ip0) {
+    Some(x) => x
+    None => ip0
+  }
+  let nn = parts[0]
+  let m = parts[1]
+  if ip.len() != nn.len() {
+    return false
+  }
+  for i in 0..ip.len() {
+    if (Int(nn[i]) & Int(m[i])) != (Int(ip[i]) & Int(m[i])) {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's ipNetworkSubset: b within a.
+fn net_subset(a: Bytes, b: Bytes) -> Bool {
+  if !net_contains(a, net_ip(b)) {
+    return false
+  }
+  let ip = net_ip(b)
+  let m = net_mask(b)
+  var bc = rt.rs_with_cap(ip.len())
+  for i in 0..ip.len() {
+    bc = rt.rs_push_byte(bc, (Int(ip[i]) | (255 ^ Int(m[i]))) & 255)
+  }
+  net_contains(a, bc.bytes())
+}
+
+fn net_cmp(a: Bytes, b: Bytes) -> Int {
+  let c = bytes_cmp(net_ip(a), net_ip(b))
+  if c != 0 { c } else { bytes_cmp(net_mask(a), net_mask(b)) }
+}
+
+fn ip_sorted(l: List[Bytes]) -> List[Bytes] {
+  var xs: List[Bytes] = []
+  for x in l {
+    xs.push(x)
+    var k = xs.len() - 1
+    while k > 0 && net_cmp(xs[k - 1], xs[k]) > 0 {
+      let t = xs[k]
+      xs[k] = xs[k - 1]
+      xs[k - 1] = t
+      k -= 1
+    }
+  }
+  if xs.len() < 2 {
+    return xs
+  }
+  var out = [xs[0]]
+  for r in 1..xs.len() {
+    if !net_subset(out[out.len() - 1], xs[r]) {
+      out.push(xs[r])
+    }
+  }
+  out
+}
+
+/// Go's ipConstraints: the IPv4 and IPv6 sets (by the constraint's
+/// address length), None for none.
+struct IpSet {
+  v4: List[Bytes]
+  v6: List[Bytes]
+}
+
+fn ip_set(l: List[Bytes]) -> IpSet? {
+  if l.is_empty() {
+    return None
+  }
+  var a: List[Bytes] = []
+  var b: List[Bytes] = []
+  for n in l {
+    if n.len() == 8 { a.push(n) } else { b.push(n) }
+  }
+  Some(IpSet{v4: ip_sorted(a), v6: ip_sorted(b)})
+}
+
+fn ip_query(c: IpSet, ip: Bytes) -> Bytes? {
+  let set = if ip.len() == 4 { c.v4 } else { c.v6 }
+  if set.is_empty() {
+    return None
+  }
+  var lo = 0
+  var hi = set.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if bytes_cmp(net_ip(set[mid]), ip) < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo < set.len() && bytes_cmp(net_ip(set[lo]), ip) == 0 {
+    return Some(set[lo])
+  }
+  let n = if lo == 0 { set[0] } else { set[lo - 1] }
+  if net_contains(n, ip) { Some(n) } else { None }
+}
+
+/// net.IP's String.
+fn ip_text(ip: Bytes) -> Str {
+  var xs: List[Int] = []
+  if ip.len() == 4 {
+    for _ in 0..10 {
+      xs.push(0)
+    }
+    xs.push(255)
+    xs.push(255)
+  } else if ip.len() != 16 {
+    return "?${ip.to_hex()}"
+  }
+  for x in ip {
+    xs.push(Int(x))
+  }
+  tlsname.ip_string(xs)
+}
+
+/// net.IPNet's String: the address, then the prefix length or the mask
+/// in hex.
+fn net_text(n: Bytes) -> Str {
+  let parts = match nn_mask(n) {
+    Some(x) => x
+    None => return "<nil>"
+  }
+  let m = parts[1]
+  var ones = 0
+  var ok = true
+  var zero = false
+  for x in m {
+    for k in 0..8 {
+      let bit = (Int(x) >> (7 - k)) & 1
+      if bit == 1 {
+        if zero {
+          ok = false
+        }
+        ones += 1
+      } else {
+        zero = true
+      }
+    }
+  }
+  "${ip_text(parts[0])}/${if ok { "${ones}" } else { m.to_hex() }}"
+}
+
+/// Go's emailConstraints: full mailboxes ([local, lower case domain]) and
+/// the domains' DNS set.
+struct EmailSet {
+  exact: List[List[Str]]
+  dns: DnsSet?
+}
+
+fn email_set(l: List[Str], permitted: Bool) -> EmailSet? {
+  if l.is_empty() {
+    return None
+  }
+  var exact: List[List[Str]] = []
+  var doms: List[Str] = []
+  for c in l {
+    if !c.contains("@") {
+      doms.push(c)
+      continue
+    }
+    match x509.mailbox(c.bytes()) {
+      Some(mb) => exact.push([mb[0], mb[1].to_lower()])
+      None => ()
+    }
+  }
+  Some(EmailSet{exact: exact, dns: if doms.is_empty() { None } else { dns_set(doms, permitted) }})
+}
+
+fn email_query(e: EmailSet, local: Str, domain: Str) -> Str? {
+  for x in e.exact {
+    if x[0] == local && x[1] == domain {
+      return Some("${local}@${domain}")
+    }
+  }
+  match e.dns {
+    Some(d) => dns_query(d, domain)
+    None => None
+  }
+}
+
+/// One certificate's constraints (Go's chainConstraints).
+struct Cons {
+  index: Int
+  ip_p: IpSet?
+  ip_x: IpSet?
+  dns_p: DnsSet?
+  dns_x: DnsSet?
+  uri_p: DnsSet?
+  uri_x: DnsSet?
+  em_p: EmailSet?
+  em_x: EmailSet?
+}
+
+fn cons_of(c: x509.Cert, i: Int) -> Cons {
+  Cons{index: i, ip_p: ip_set(c.permitted_ips), ip_x: ip_set(c.excluded_ips), dns_p: dns_set(c.permitted_dns, true), dns_x: dns_set(c.excluded_dns, false), uri_p: dns_set(c.permitted_uris, true), uri_x: dns_set(c.excluded_uris, false), em_p: email_set(c.permitted_emails, true), em_x: email_set(c.excluded_emails, false)}
+}
+
+fn not_permitted(kind: Str, p: Str) -> Str { "${kind} ${p.quote()} is not permitted by any constraint" }
+
+fn excluded(kind: Str, p: Str, c: Str) -> Str { "${kind} ${p.quote()} is excluded by constraint ${c.quote()}" }
+
+/// chainConstraints.check of one certificate's names: "" or the error.
+fn cons_check(n: Cons, c: x509.Cert, uris: List[List[Str]], emails: List[List[Str]]) -> Str {
+  for ip in c.ips {
+    if let Some(s) = n.ip_p {
+      if ip_query(s, ip) is None {
+        return not_permitted("IP address", ip_text(ip))
+      }
+    }
+    if let Some(s) = n.ip_x {
+      if let Some(m) = ip_query(s, ip) {
+        return excluded("IP address", ip_text(ip), net_text(m))
+      }
+    }
+  }
+  for d in c.dns {
+    if !x509.domain_valid(d.bytes(), false) {
+      return "x509: cannot parse dnsName ${d.quote()}"
+    }
+    if let Some(s) = n.dns_p {
+      if dns_query(s, d) is None {
+        return not_permitted("DNS name", d)
+      }
+    }
+    if let Some(s) = n.dns_x {
+      if let Some(m) = dns_query(s, d) {
+        return excluded("DNS name", d, m)
+      }
+    }
+  }
+  for u in uris {
+    if !x509.domain_valid(u[1].bytes(), false) {
+      return "x509: internal error: URI SAN ${u[0].quote()} failed to parse"
+    }
+    if let Some(s) = n.uri_p {
+      if dns_query(s, u[1]) is None {
+        return not_permitted("URI", u[0])
+      }
+    }
+    if let Some(s) = n.uri_x {
+      if let Some(m) = dns_query(s, u[1]) {
+        return excluded("URI", u[0], m)
+      }
+    }
+  }
+  for e in emails {
+    let text = "${e[0]}@${e[1]}"
+    if !x509.domain_valid(e[1].bytes(), false) {
+      return "x509: cannot parse rfc822Name ${text.quote()}"
+    }
+    if let Some(s) = n.em_p {
+      if email_query(s, e[0], e[1]) is None {
+        return not_permitted("email address", text)
+      }
+    }
+    if let Some(s) = n.em_x {
+      if let Some(m) = email_query(s, e[0], e[1]) {
+        return excluded("email address", text, m)
+      }
+    }
+  }
+  ""
+}
+
+/// Go's checkChainConstraints: "" or the error (the detail of
+/// CANotAuthorizedForThisName).
+fn chain_constraints(chain: List[x509.Cert]) -> Str {
+  var cons: List[Cons] = []
+  for (i, c) in chain.indexed() {
+    if c.has_nc {
+      cons.push(cons_of(c, i))
+    }
+  }
+  if cons.is_empty() {
+    return ""
+  }
+  var cur = 0
+  for (i, c) in chain.indexed() {
+    if !c.has_san {
+      continue
+    }
+    if i >= cons[cur].index {
+      while cons[cur].index <= i {
+        if cur + 1 >= cons.len() {
+          return ""
+        }
+        cur += 1
+      }
+    }
+    // the URIs' hosts (lower case, no port) and the mailboxes
+    var uris: List[List[Str]] = []
+    for (k, u) in c.uris.indexed() {
+      var host = c.uri_hosts[k].to_lower()
+      if host.is_empty() {
+        return "URI with empty host (${u.quote()}) cannot be matched against constraints"
+      }
+      if host.contains(":") && !host.ends_with("]") {
+        let hb = host.bytes()
+        var j = hb.len() - 1
+        while j >= 0 && hb[j] != 58 {
+          j -= 1
+        }
+        host = raw.str_slice(host, 0, j)
+      }
+      let bracketed = host.starts_with("[") && host.ends_with("]")
+      if bracketed || tlsname.parse_ip(host) is Some(_) {
+        return "URI with IP (${u.quote()}) cannot be matched against constraints"
+      }
+      uris.push([u, host])
+    }
+    var emails: List[List[Str]] = []
+    for e in c.emails {
+      match x509.mailbox(e.bytes()) {
+        Some(mb) => emails.push([mb[0], mb[1].to_lower()])
+        None => return "cannot parse rfc822Name ${e.quote()}"
+      }
+    }
+    for k in cur..cons.len() {
+      let err = cons_check(cons[k], c, uris, emails)
+      if err != "" {
+        return err
+      }
+    }
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Certificate policies (Go's policiesValid: RFC 5280 6.1 as updated by
+// RFC 9618, with Go's default options: no initial policies, nothing
+// inhibited or required by the caller)
+
+/// anyPolicy's OID contents (2.5.29.32.0).
+fn any_policy() -> Bytes { b"\x55\x1d\x20\x00" }
+
+/// A node of the policy graph: its valid policy, expected policies,
+/// parents and children (node ids), whether it is still in the graph.
+struct PNode {
+  valid: Bytes
+  expected: List[Bytes]
+  parents: List[Int]
+  children: List[Int]
+}
+
+/// The graph: the nodes, the strata (node ids per depth), the parent
+/// index of the current depth (expected policy, then node ids).
+struct PGraph {
+  nodes: List[PNode]
+  strata: List[List[Int]]
+  depth: Int
+  index_keys: List[Bytes]
+  index_vals: List[List[Int]]
+}
+
+fn pg_new() -> PGraph {
+  PGraph{nodes: [PNode{valid: any_policy(), expected: [any_policy()], parents: [], children: []}], strata: [[0]], depth: 0, index_keys: [], index_vals: []}
+}
+
+fn ids_without(xs: List[Int], x: Int) -> List[Int] {
+  var out: List[Int] = []
+  for y in xs {
+    if y != x {
+      out.push(y)
+    }
+  }
+  out
+}
+
+fn has_id(xs: List[Int], x: Int) -> Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
+}
+
+/// A new node with its parents (newPolicyGraphNode); its id.
+fn pg_node(var g: PGraph, valid: Bytes, parents: List[Int]) -> Int {
+  let id = g.nodes.len()
+  g.nodes.push(PNode{valid: valid, expected: [valid], parents: [], children: []})
+  for p in parents {
+    if !has_id(g.nodes[p].children, id) {
+      g.nodes[p].children.push(id)
+    }
+    if !has_id(g.nodes[id].parents, p) {
+      g.nodes[id].parents.push(p)
+    }
+  }
+  id
+}
+
+fn pg_insert(var g: PGraph, id: Int) {
+  g.strata[g.depth].push(id)
+}
+
+/// The node of stratum d with the valid policy, -1 for none.
+fn pg_find(g: PGraph, d: Int, valid: Bytes) -> Int {
+  for id in g.strata[d] {
+    if g.nodes[id].valid == valid {
+      return id
+    }
+  }
+  -1
+}
+
+fn pg_parents_with_expected(g: PGraph, e: Bytes) -> List[Int] {
+  if g.depth == 0 {
+    return []
+  }
+  for (k, key) in g.index_keys.indexed() {
+    if key == e {
+      return g.index_vals[k]
+    }
+  }
+  []
+}
+
+fn pg_delete_leaf(var g: PGraph, valid: Bytes) {
+  let id = pg_find(g, g.depth, valid)
+  if id < 0 {
+    return
+  }
+  for p in g.nodes[id].parents {
+    g.nodes[p].children = ids_without(g.nodes[p].children, id)
+  }
+  for ch in g.nodes[id].children {
+    g.nodes[ch].parents = ids_without(g.nodes[ch].parents, id)
+  }
+  g.strata[g.depth] = ids_without(g.strata[g.depth], id)
+}
+
+fn pg_valid_nodes(g: PGraph) -> List[Int] {
+  var out: List[Int] = []
+  var i = g.depth
+  while i >= 0 {
+    for id in g.strata[i] {
+      let n = g.nodes[id]
+      if n.valid == any_policy() {
+        continue
+      }
+      if n.parents.len() == 1 && g.nodes[n.parents[0]].valid == any_policy() {
+        out.push(id)
+      }
+    }
+    i -= 1
+  }
+  out
+}
+
+fn pg_prune(var g: PGraph) {
+  var i = g.depth - 1
+  while i > 0 {
+    for id in g.strata[i] {
+      if g.nodes[id].children.is_empty() {
+        for p in g.nodes[id].parents {
+          g.nodes[p].children = ids_without(g.nodes[p].children, id)
+        }
+        g.strata[i] = ids_without(g.strata[i], id)
+      }
+    }
+    i -= 1
+  }
+}
+
+fn pg_incr(var g: PGraph) {
+  var keys: List[Bytes] = []
+  var vals: List[List[Int]] = []
+  for id in g.strata[g.depth] {
+    for e in g.nodes[id].expected {
+      var at = -1
+      for (k, key) in keys.indexed() {
+        if key == e {
+          at = k
+        }
+      }
+      if at >= 0 {
+        vals[at].push(id)
+      } else {
+        keys.push(e)
+        vals.push([id])
+      }
+    }
+  }
+  g.index_keys = keys
+  g.index_vals = vals
+  g.depth += 1
+  g.strata.push([])
+}
+
+/// Go's policiesValid with its default options.
+fn policies_ok(chain: List[x509.Cert]) -> Bool {
+  if chain.len() == 1 {
+    return true
+  }
+  let n = chain.len() - 1
+  var g = pg_new()
+  var have_graph = true
+  var inhibit_any = n + 1
+  var explicit = n + 1
+  var mapping = n + 1
+  var i = n - 1
+  while i >= 0 {
+    let cert = chain[i]
+    let self_signed = cert.issuer == cert.subject
+    if cert.policies.is_empty() {
+      have_graph = false
+    }
+    if explicit == 0 && !have_graph {
+      return false
+    }
+    if have_graph {
+      pg_incr(g)
+      var has_any = false
+      for pol in cert.policies {
+        if pol == any_policy() {
+          has_any = true
+          continue
+        }
+        var parents = pg_parents_with_expected(g, pol)
+        if parents.is_empty() {
+          let a = if g.depth == 0 { -1 } else { pg_find(g, g.depth - 1, any_policy()) }
+          if a >= 0 {
+            parents = [a]
+          }
+        }
+        if !parents.is_empty() {
+          let id = pg_node(g, pol, parents)
+          pg_insert(g, id)
+        }
+      }
+      if has_any && (inhibit_any > 0 || (n - i < n && self_signed)) {
+        // the expected policies of the parents that no leaf has
+        var miss_keys: List[Bytes] = []
+        var miss_vals: List[List[Int]] = []
+        for p in g.strata[g.depth - 1] {
+          for e in g.nodes[p].expected {
+            if pg_find(g, g.depth, e) >= 0 {
+              continue
+            }
+            var at = -1
+            for (k, key) in miss_keys.indexed() {
+              if key == e {
+                at = k
+              }
+            }
+            if at >= 0 {
+              miss_vals[at].push(p)
+            } else {
+              miss_keys.push(e)
+              miss_vals.push([p])
+            }
+          }
+        }
+        for (k, key) in miss_keys.indexed() {
+          let id = pg_node(g, key, miss_vals[k])
+          pg_insert(g, id)
+        }
+      }
+      pg_prune(g)
+      if i != 0 && !cert.policy_maps.is_empty() {
+        var map_keys: List[Bytes] = []
+        var map_vals: List[List[Bytes]] = []
+        var m = 0
+        while m + 1 < cert.policy_maps.len() {
+          let iss = cert.policy_maps[m]
+          let sub = cert.policy_maps[m + 1]
+          if mapping > 0 {
+            if iss == any_policy() || sub == any_policy() {
+              return false
+            }
+            var at = -1
+            for (k, key) in map_keys.indexed() {
+              if key == iss {
+                at = k
+              }
+            }
+            if at >= 0 {
+              map_vals[at].push(sub)
+            } else {
+              map_keys.push(iss)
+              map_vals.push([sub])
+            }
+          } else {
+            pg_delete_leaf(g, iss)
+            pg_prune(g)
+          }
+          m += 2
+        }
+        for (k, iss) in map_keys.indexed() {
+          let matching = pg_find(g, g.depth, iss)
+          if matching >= 0 {
+            g.nodes[matching].expected = map_vals[k]
+          } else {
+            let a = pg_find(g, g.depth, any_policy())
+            if a >= 0 {
+              let id = pg_node(g, iss, [a])
+              g.nodes[id].expected = map_vals[k]
+              pg_insert(g, id)
+            }
+          }
+        }
+      }
+    }
+    if i != 0 {
+      if !self_signed {
+        if explicit > 0 {
+          explicit -= 1
+        }
+        if mapping > 0 {
+          mapping -= 1
+        }
+        if inhibit_any > 0 {
+          inhibit_any -= 1
+        }
+      }
+      if cert.has_req_explicit && cert.req_explicit >= 0 && cert.req_explicit < explicit {
+        explicit = cert.req_explicit
+      }
+      if cert.has_inhibit_mapping && cert.inhibit_mapping >= 0 && cert.inhibit_mapping < mapping {
+        mapping = cert.inhibit_mapping
+      }
+      if cert.has_inhibit_any && cert.inhibit_any >= 0 && cert.inhibit_any < inhibit_any {
+        inhibit_any = cert.inhibit_any
+      }
+    }
+    i -= 1
+  }
+  if explicit > 0 {
+    explicit -= 1
+  }
+  if chain[0].has_req_explicit && chain[0].req_explicit == 0 {
+    explicit = 0
+  }
+  var valid_n = 0
+  if have_graph {
+    valid_n = pg_valid_nodes(g).len()
+    if pg_find(g, g.depth, any_policy()) >= 0 {
+      valid_n += 1
+    }
+  }
+  !(explicit == 0 && valid_n == 0)
+}

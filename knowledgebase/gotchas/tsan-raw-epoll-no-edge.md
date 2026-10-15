@@ -33,6 +33,15 @@ code in other builds). TestRuntimeRawPoll (std/llrt/testdata/rawpoll.c)
 registers pipes from the main thread with the network forced through
 Xo and fails on Linux without the pair.
 
+Update (2026-10-15, the zero-C audit's B22 remnants): when the poller's
+loop moved to std/native/llrt/poll.xo, the acquire half went missing
+(only the C registration's release stayed) and rawpoll.c went stale
+(nx_on, pthread_mutex_lock on what is now a lock word). Both sides are
+poll.xo's now, on the ev record as the sync object: epoll_add releases
+it before EPOLL_CTL_ADD and wait_events acquires it after epoll_wait
+(rt.sched_rt 22 and 23); rawpoll.c is updated, UNTESTED on linux. A move
+of a C loop into Xo must carry its TSan annotations over too.
+
 Avoid: any C runtime hand off that a raw system call replaces (a pipe
 write the poller reads, a futex, an eventfd) loses the interceptor's
 edge the same way; add the pair where the C library call used to be

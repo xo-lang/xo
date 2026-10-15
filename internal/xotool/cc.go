@@ -25,7 +25,7 @@ import (
 // (decision 0102), so programs without them do not grow.
 func IOFlags(code []byte) []string {
 	var out []string
-	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info", "xo_time_of", "xo_time_ns",
+	for _, sym := range []string{"xo_fs_stat", "xo_fs_names", "xo_fs_write", "xo_fs_rename", "xo_fs_remove", "xo_fs_chtimes", "xo_fs_case_sensitive", "xo_fs_canceled", "xo_fs_info",
 		// handles, copies, modes, links, locks (decision 0172)
 		"xo_fs_open", "xo_fs_file_", "xo_fs_copy", "xo_fs_perm", "xo_fs_chmod", "xo_fs_symlink", "xo_fs_read_link", "xo_fs_lock", "xo_fs_unlock",
 		// the system calls under std/native/llrt/fspath.xo (decision 0193 step 6)
@@ -35,7 +35,7 @@ func IOFlags(code []byte) []string {
 			break
 		}
 	}
-	for _, sym := range []string{"xo_stdin_", "xo_tw_set_tty", "xo_isatty", "xo_term_width"} {
+	for _, sym := range []string{"xo_stdin_"} {
 		if callsSym(code, sym) {
 			out = append(out, "-DXO_STDIN")
 			break
@@ -157,6 +157,10 @@ func compileC(flags, srcs []string, bin string) error {
 		} else {
 			args = append(args, "-lm", "-lpthread")
 		}
+		if runtime.GOOS == "darwin" {
+			args = append(args, WeakUndefinedFlags(srcs)...)
+			args = append(args, FrameworkFlags(srcs)...)
+		}
 		cmd := exec.Command(clang, args...)
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
@@ -193,4 +197,56 @@ func compileC(flags, srcs []string, bin string) error {
 		return errors.New("clang: no SDK to try")
 	}
 	return &ClangError{Output: first}
+}
+
+// FrameworkFlags is selfhost/xo link.xo framework_args: the Security and
+// CoreFoundation frameworks when a generated source calls the framework
+// (std/native/sys_darwin.xo, tlscert.xo apple_trust), whether or not the
+// program links Mbed TLS.
+func FrameworkFlags(srcs []string) []string {
+	mark := []byte("SecTrust" + "EvaluateWithError")
+	for _, src := range srcs {
+		if !strings.HasSuffix(src, ".ll") && !strings.HasSuffix(src, ".s") {
+			continue
+		}
+		if b, err := os.ReadFile(src); err == nil && bytes.Contains(b, mark) {
+			return []string{"-framework", "Security", "-framework", "CoreFoundation"}
+		}
+	}
+	return nil
+}
+
+// WeakUndefinedFlags is selfhost/xo link.xo weak_undefined_args: the
+// weak references of the LLVM IR or assembly sources (decision 0232:
+// `declare extern_weak ... @sym(`, `.weak_reference _sym`) as macOS ld's
+// -U flags, which leave a symbol no image defines 0.
+func WeakUndefinedFlags(srcs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, src := range srcs {
+		if !strings.HasSuffix(src, ".ll") && !strings.HasSuffix(src, ".s") {
+			continue
+		}
+		b, err := os.ReadFile(src)
+		if err != nil || (!bytes.Contains(b, []byte("extern_weak")) && !bytes.Contains(b, []byte(".weak_reference"))) {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			l := strings.TrimSpace(line)
+			sym := ""
+			if rest, ok := strings.CutPrefix(l, ".weak_reference "); ok {
+				sym = strings.TrimSpace(rest)
+			} else if strings.HasPrefix(l, "declare extern_weak ") {
+				if _, at, ok := strings.Cut(l, "@"); ok {
+					name, _, _ := strings.Cut(at, "(")
+					sym = "_" + name
+				}
+			}
+			if sym != "" && !seen[sym] {
+				seen[sym] = true
+				out = append(out, "-Wl,-U,"+sym)
+			}
+		}
+	}
+	return out
 }

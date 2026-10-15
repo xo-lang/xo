@@ -9,7 +9,8 @@ main that sleeps on the virtual clock never finished; a stack sample
 showed main parked in `clock_wait` and no worker running.
 
 Cause: the test world moves its virtual clock only when a deadlock check
-finds every context blocked (`tw_kick` in std/llrt/xo_testing.c). The
+finds every context blocked (`kick` in std/native/llrt/twrun.xo; it was
+xo_testing.c's `tw_kick` until 2026-10-15). The
 signal is a callback timer: firing it requests the stop but signals no
 park, so no context woke, nobody waited again, and no deadlock check ran
 to move the clock to main's sleep deadline.

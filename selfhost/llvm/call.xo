@@ -46,12 +46,15 @@ fn (var g: Gen) call(v: Int) {
       if args.len() == 1 {
         // with room for a number of elements
         let a0 = g.op(args[0])
-        g.set(v, "call ptr @xo_rl_new_n(i64 ${a0}, i64 ${g.size(et)})")
+        // obj.xo's export, with no C level (xo_rl_new_n stays for code
+        // of earlier compilers)
+        let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.size(et)}) #6")
+        g.set(v, "inttoptr i64 ${r} to ptr")
         return
       }
       // the shared empty list, immortal: the first push allocates
       // (xo_rl_grow), as on arm64
-      g.set(v, "call ptr @xo_rl_empty()")
+      g.alias(v, g.empty_list())
     }
     "list.len" => {
       let a0 = g.op(args[0])
@@ -234,7 +237,12 @@ fn (var g: Gen) call(v: Int) {
       let (ao, _, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (bo, _, bn) = g.str_parts(a1)
-      let obj = g.def("call ptr @xo_rs_concat(ptr ${ao}, i64 ${an}, ptr ${bo}, i64 ${bn})")
+      // obj.xo's export, with no C level (xo_rs_concat stays for code of
+      // earlier compilers)
+      let pa = g.def("ptrtoint ptr ${ao} to i64")
+      let pb = g.def("ptrtoint ptr ${bo} to i64")
+      let r = g.def("call i64 @xo_x_obj_rs_concat(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
+      let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("add i64 ${an}, ${bn}")
       g.mk_str(v, obj, n)
     }
@@ -478,6 +486,13 @@ fn runtime_raises(name: Str) -> Bool {
   ssa.faulting_rt(name) || name == "rt.fault_continue"
 }
 
+/// The address of the runtime's immortal empty list (xo_rt.c
+/// xo_empty_list), declared once.
+fn (var g: Gen) empty_list() -> Str {
+  g.llvm_decl("@xo_empty_list", "@xo_empty_list = external global [3 x i64]")
+  "@xo_empty_list"
+}
+
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
 /// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
@@ -540,6 +555,85 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let b = g.def("zext i64 ${g.op(x.args[1])} to i128")
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
+    }
+    // decision 0231: the carry out of a + b and the borrow out of a - b
+    // (std/native/llrt/cpu.xo), which arm64 selects as adds/adcs chains
+    "rt.u64_carry" | "rt.u64_borrow" => {
+      let f = if aux_str(x.aux) == "rt.u64_carry" { "uadd" } else { "usub" }
+      g.llvm_decl("@llvm.${f}.with.overflow.i64", "declare {i64, i1} @llvm.${f}.with.overflow.i64(i64, i64)")
+      let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
+    }
+    // decision 0231: the carry-less product's halves and the AES rounds
+    // (cpu.xo, run only when cpu.hw() has them) as inline asm, so no
+    // target feature is needed on the function; a pure asm, so the two
+    // halves of one product share the instruction
+    "rt.clmul_lo" | "rt.clmul_hi" => {
+      let a = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[0])}, i32 0")
+      let b = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[1])}, i32 0")
+      let asm = if g.arch() == "amd64" { "asm \"pclmulqdq $$0, $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Apmull $0.1q, $1.1d, $2.1d\", \"=w,w,w\"" }
+      let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
+      g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
+    }
+    "rt.aes_round" | "rt.aes_last" => {
+      let last = aux_str(x.aux) == "rt.aes_last"
+      let p = g.raw_ptr(x.args[0])
+      let s = g.def("load <16 x i8>, ptr ${p}, align 1")
+      let k = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[1])}, align 1")
+      var r = ""
+      if g.arch() == "amd64" {
+        // AESENC's key is after the round: the key xored before, a zero
+        // key after (AESENCLAST: the next key)
+        let sk = g.def("xor <16 x i8> ${s}, ${k}")
+        if last {
+          let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+          r = g.def("call <16 x i8> asm \"aesenclast $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> ${k2})")
+        } else {
+          r = g.def("call <16 x i8> asm \"aesenc $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> zeroinitializer)")
+        }
+      } else if last {
+        let e = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+        let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+        r = g.def("xor <16 x i8> ${e}, ${k2}")
+      } else {
+        r = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\\0Aaesmc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+      }
+      g.emit("store <16 x i8> ${r}, ptr ${p}, align 1")
+    }
+    "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
+      // the whole block unrolled, the state an SSA value (the rounds of
+      // rt.aes_round without the loads and stores between them)
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      let p = g.raw_ptr(x.args[0])
+      let kp = g.raw_ptr(x.args[1])
+      var ks: List[Str] = []
+      for r in 0..nr + 1 {
+        let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
+        ks.push(g.def("load <16 x i8>, ptr ${q}, align 1"))
+      }
+      var s = g.def("load <16 x i8>, ptr ${p}, align 1")
+      if g.arch() == "amd64" {
+        s = g.def("xor <16 x i8> ${s}, ${ks[0]}")
+        for r in 1..nr {
+          s = g.def("call <16 x i8> asm \"aesenc $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${ks[r]})")
+        }
+        s = g.def("call <16 x i8> asm \"aesenclast $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${ks[nr]})")
+      } else {
+        for r in 0..nr - 1 {
+          s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\\0Aaesmc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[r]})")
+        }
+        s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[nr - 1]})")
+        s = g.def("xor <16 x i8> ${s}, ${ks[nr]}")
+      }
+      g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
+    }
+    "rt.cpuid1_ecx" => {
+      if g.arch() == "amd64" {
+        let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 1, i32 0)")
+        g.set(v, "zext i32 ${g.def("extractvalue { i32, i32, i32, i32 } ${r}, 2")} to i64")
+      } else {
+        g.set(v, "add i64 0, 0")
+      }
     }
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
@@ -620,6 +714,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       g.sched_tlocal()
       return false
+    }
+    // the runtime's immortal placeholders: their addresses, no call
+    // (xo_rt.c xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero
+    // stay for code of earlier compilers)
+    "rt.rl_empty" => g.alias(v, g.empty_list())
+    "rt.h_zero" => {
+      g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
+      g.alias(v, "@xo_zero_handle")
     }
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
@@ -985,13 +1087,26 @@ fn (var g: Gen) rt_call(v: Int) {
     }
     g.rt_decls.push("declare ${ret} ${sym}(${params.join(", ")}) ${attr}\n")
   }
+  // the exports that never raise or unwind (heapos.xo's platform calls,
+  // anyval.xo) are nounwind and not inlined at the call, as their C
+  // forwarders were (declared nounwind, defined in the C object): inlined
+  // into the heap's fast paths, the slow paths cost LLVM alloc tasks and
+  // strings 1.10 and 1.03 times the instructions (2026-10-15)
+  let nounw = if !export.is_empty() && (name.starts_with("rt.heap_") || name is "rt.any_new" | "rt.any_get") { " #8" } else { "" }
   if !export.is_empty() && ret == "ptr" {
     let r = g.tmp()
-    g.raise(r, "i64 ${sym}(${args.join(", ")})")
+    g.raise(r, "i64 ${sym}(${args.join(", ")})${nounw}")
+    if g.kind(x.ty) == ssa.Kind.Str {
+      // obj.xo's builders: the string object, its length in the slot
+      let o = g.def("inttoptr i64 ${r} to ptr")
+      let n = g.def("load i64, ptr ${slot}")
+      g.mk_str(v, o, n)
+      return
+    }
     g.set(v, "inttoptr i64 ${r} to ptr")
     return
   }
-  let c = "${ret} ${sym}(${args.join(", ")})"
+  let c = "${ret} ${sym}(${args.join(", ")})${nounw}"
   match g.kind(x.ty) {
     Unit => g.raise("", c)
     Bool => {
@@ -1037,7 +1152,15 @@ fn (var g: Gen) platform_call(v: Int) {
   let x = g.f.values[v]
   let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
   let rk = g.kind(x.ty)
-  if os != g.os() {
+  if os == "cp" {
+    // rt.sym_present (decision 0232): the weak symbol's address against
+    // null (a function declaration, so a symbol with a C call
+    // declaration too must be declared extern_weak the same way)
+    g.llvm_decl("@${sym}", "declare extern_weak void @${sym}()")
+    g.set(v, "icmp ne ptr @${sym}, null")
+    return
+  }
+  if os != g.os() && os != "c" && os != "cw" {
     g.llvm_decl("@llvm.trap", "declare void @llvm.trap() cold noreturn nounwind")
     g.emit("call void @llvm.trap()")
     match rk {
@@ -1098,7 +1221,7 @@ fn (var g: Gen) platform_call(v: Int) {
     decl_params = fixed.join(", ")
     fty = "(${decl_params}) "
   }
-  let dll = if os == "windows" { "dllimport " } else { "" }
+  let dll = if os == "windows" { "dllimport " } else if os == "cw" { "extern_weak " } else { "" }
   g.llvm_decl("@${sym}", "declare ${dll}${ret} @${sym}(${decl_params}) nounwind")
   let c = "call ${ret} ${fty}@${sym}(${args.join(", ")})"
   match rk {
@@ -1124,11 +1247,21 @@ fn xo_export(name: Str) -> Str {
   if name is "rt.shield_begin" | "rt.shield_end" | "rt.shield_abort" | "rt.unwinding" {
     return "xo_x_ctx_${name.trim_prefix("rt.")}"
   }
-  if name is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" {
+  if name is "rt.sched_hook" | "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" | "rt.mutex_new" | "rt.mutex_lock" | "rt.mutex_unlock" | "rt.mutex_rlock" | "rt.mutex_runlock" | "rt.chan_new" | "rt.chan_send" | "rt.chan_recv" | "rt.chan_try_send" | "rt.chan_try_recv" | "rt.chan_close" | "rt.chan_len" | "rt.select_new" | "rt.select_recv" | "rt.select_send" | "rt.select_wait" | "rt.select_take" | "rt.atomic_new" | "rt.const_once" {
     return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     return "xo_x_budget_${name.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+    // heapos.xo's platform calls (B21) and anyval.xo through their
+    // exports (the C forwarders stay for code of earlier compilers)
+    return "xo_x_${name.trim_prefix("rt.")}"
+  }
+  if name is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
+    // obj.xo's string builders, as on arm64 (xo_bytes.c's and xo_std.c's
+    // forwarders stay for code of earlier compilers)
+    return "xo_x_obj_${name.trim_prefix("rt.")}"
   }
   ""
 }

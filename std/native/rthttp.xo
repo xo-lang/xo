@@ -1,168 +1,58 @@
 // HTTP intrinsics of the native backends (decision 0074), like
 // native/rt.xo: imported only by the implementation modules as
-// `use native/rthttp`. std/llrt/xo_http.c implements them.
-use std/task
+// `use native/rthttp`. What is left of the C is TLS (std/llrt/xo_tls.c on
+// Mbed TLS, through std/llrt/xo_http.c's calls) and the dial; the
+// server, its connections, sinks, and the client's records are Xo's
+// (std/native/llrt/hconn.xo, hserve.xo, hclient.xo; the zero-C audit's
+// B28 part 3).
 use native/rt
 
-/// A server's connections and the scope of their tasks (xo_srv).
+/// A server's connections and the scope of their tasks (hconn.xo SR_*).
 struct Srv {}
-/// One server connection (xo_hconn).
+/// One server connection (hconn.xo HC_*).
 struct HConn {}
-/// A client response or error (xo_cresp).
+/// A client response or error (hclient.xo R_*).
 struct CResp {}
-
-fn srv_new() -> Srv
-fn srv_group(s: Srv) -> task.Group
-fn srv_stop(s: Srv)
-fn srv_wait(s: Srv)
-fn srv_close(s: Srv)
-
-fn hc_new(s: Srv, c: Conn) -> HConn
-/// The next request is read (its body too): 1, or 0 to close the
-/// connection; with the parsing in Xo also 3, a request head to
-/// parse at hc_input (the result to hc_head), and 4, a chunked body to
-/// decode there (the result to hc_chunked) (std/native/llrt/http1.xo,
-/// decision 0193 step 6).
-fn hc_read(h: HConn) -> Int
-/// The unread input (mode 2), up to the end of its first head (mode 0),
-/// or at most 4 KiB of it (mode 1); its length; whether no more will
-/// come.
-fn hc_input(h: HConn, mode: Int) -> Str
-fn hc_avail(h: HConn) -> Int
-fn hc_eof(h: HConn) -> Bool
-/// The parse of a head (http1.Parse): its result and length; for the C,
-/// the method, the version and flags (http1.Reader.read), the
-/// Content-Length, and a status error's code and text.
-fn hc_head(h: HConn, res: Int, used: Int, method: Str, flags: Int, clen: Int, status: Int, reason: Str)
-/// The decoding of a chunked body (http1.Chunked).
-fn hc_chunked(h: HConn, res: Int, used: Int, body: Str)
-fn hc_method(h: HConn) -> Str
-fn hc_path(h: HConn) -> Str
-fn hc_scheme(h: HConn) -> Str
-fn hc_host(h: HConn) -> Str
-/// The port of an absolute request target, or -1.
-fn hc_port(h: HConn) -> Int
-fn hc_nheaders(h: HConn) -> Int
-fn hc_hname(h: HConn, i: Int) -> Str
-fn hc_hval(h: HConn, i: Int) -> Str
-fn hc_nquery(h: HConn) -> Int
-fn hc_qkey(h: HConn, i: Int) -> Str
-fn hc_qval(h: HConn, i: Int) -> Str
-fn hc_body(h: HConn) -> Bytes
-fn hc_remote_ip(h: HConn) -> Str
-/// Sets a field of the response header.
-fn hc_header(h: HConn, name: Str, value: Str)
-/// Writes the response; false: close the connection.
-fn hc_respond(h: HConn, status: Int, body: Bytes) -> Bool
-fn hc_close(h: HConn)
-
-/// HTTP/2 (decision 0121, std/llrt/xo_h2.c): finishes the TLS handshake
-/// of a server connection; true when ALPN chose h2, so its requests come
-/// from h2_next instead of hc_read.
-fn hc_h2(h: HConn) -> Bool
-/// Runs the HTTP/2 connection until a request is ready for a handler
-/// (1) or the connection is done (0); with HPACK in Xo also 2,
-/// a header block fragment to decode, and 3, response heads to encode
-/// (std/native/llrt/hpack.xo, decision 0193 step 6).
-fn h2_next(h: HConn) -> Int
-/// The fragment to decode (after 2) and whether its block's first
-/// representation is still to come.
-fn h2_block(h: HConn) -> Str
-fn h2_block_first(h: HConn) -> Bool
-/// Goes on with the decoded fields (hpack.Fields) and the parse of their
-/// first :path (http1.h2_target); true when a 100 Continue is to be
-/// encoded now (h2_enc_job, h2_encoded).
-fn h2_fields(h: HConn, ok: Int, used: Int, data: Str, lens: List[Int], first: Bool, target: List[Str]) -> Bool
-/// The table size settings and heads to encode (after 3, or h2_fields
-/// true), and the blocks encoded for them.
-fn h2_enc_job(h: HConn) -> Str
-fn h2_encoded(h: HConn, blocks: Str)
-/// The request h2_next found: a stream, answered as a connection is
-/// (hc_header, hc_respond, sink_conn).
-fn h2_take(h: HConn) -> HConn
-/// The stream's handler is done; a response it did not finish resets
-/// the stream.
-fn h2_end(h: HConn)
-
-/// Client (std/native/llrt/http1.xo client_do drives it, redirects
-/// included): the deadline of a timeout in ns (> 0).
-fn cl_deadline(timeout: Int) -> Int
-/// One request: method to addr (host:port; https: TLS with the server
-/// name tls_host, verified against roots), the request target (the
-/// escaped path and query), the Host, a header of canonical names and
-/// values, the body, the deadline (0: none), and the start of its
-/// errors (the method and the quoted URL); pool: an idle HTTP/2
-/// connection to the same address may take it. Over HTTP/2 (ALPN h2)
-/// cl_h2 is true and Xo makes the exchange (cl_h2_take to cl_h2_end),
-/// whose response is then in the CResp (cr_status, ...); over HTTP/1.1
-/// cl_reading is true and Xo reads it (cl_input, cl_fill, cl_take), then
-/// calls cl_end. A failure sets cr_err.
-fn cl_start(method: Str, https: Bool, addr: Str, tls_host: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, when: Int, roots: Roots, prefix: Str, pool: Bool) -> CResp
-/// An HTTP/2 exchange waits for its header block (audit item B11,
-/// std/native/llrt/http1.xo h2_exchange).
-fn cl_h2(r: CResp) -> Bool
-/// The connection's HPACK state, moved out (a list of one; empty for a
-/// new connection), and the server's SETTINGS_HEADER_TABLE_SIZE values
-/// its encoder has not applied (4 bytes little endian each).
-fn cl_h2_take(r: CResp) -> List[rt.Any]
-fn cl_h2_sizes(r: CResp) -> Str
-/// Sends the request's header block and body, or fails the request with
-/// why when it is not "".
-fn cl_h2_send(r: CResp, blk: Str, why: Str)
-/// Runs the exchange until a response header block is to be decoded
-/// (true: cl_h2_block is the block, cl_h2_fields takes its fields as
-/// hpack.Fields') or the exchange is over (false).
-fn cl_h2_next(r: CResp) -> Bool
-fn cl_h2_block(r: CResp) -> Str
-fn cl_h2_fields(r: CResp, ok: Bool, data: Str, lens: List[Int])
-/// Ends the exchange: the connection keeps the HPACK state st and goes
-/// back to the pool (or closes), and a failure sets cr_err, unless
-/// cl_retry: the server did not take the request on a pooled
-/// connection, which goes on a new one (cl_start without pool).
-fn cl_h2_end(r: CResp, st: rt.Any)
-fn cl_retry(r: CResp) -> Bool
-fn cl_reading(r: CResp) -> Bool
-/// The unread response up to the end of its first head (mode 0), or all
-/// of it (mode 2).
-fn cl_input(r: CResp, mode: Int) -> Str
-fn cl_avail(r: CResp) -> Int
-fn cl_eof(r: CResp) -> Bool
-/// Reads more: 0 (CC_OK), 1 none came (CC_EOF), else the failure
-/// (2 timeout, 3 canceled, 4 an error).
-fn cl_fill(r: CResp) -> Int
-/// Takes n bytes of the input, or skips them.
-fn cl_take(r: CResp, n: Int) -> Bytes
-fn cl_skip(r: CResp, n: Int)
-/// Ends the exchange with result s (cl_fill's) and the failure's text:
-/// the connection closes and a failure sets cr_err.
-fn cl_end(r: CResp, s: Int, why: Str)
-/// 0 a response, else the ClientErr tag (1 InvalidUrl, 2 Connect,
-/// 3 Timeout, 4 Protocol, 5 Canceled).
-fn cr_err(r: CResp) -> Int
-fn cr_msg(r: CResp) -> Str
-/// An HTTP/2 response.
-fn cr_status(r: CResp) -> Int
-fn cr_nheaders(r: CResp) -> Int
-fn cr_hname(r: CResp, i: Int) -> Str
-fn cr_hval(r: CResp, i: Int) -> Str
-fn cr_body(r: CResp) -> Bytes
-
 /// Streamed bodies (http.stream, decision 0083): a sink takes a stream's
-/// writes, into a buffer or to a connection as net/http sends them.
+/// writes, into a buffer or to a connection as net/http sends them
+/// (hserve.xo SK_*).
 struct Sink {}
-fn sink_buf() -> Sink
-fn sink_conn(h: HConn, status: Int) -> Sink
-/// false: the connection failed.
-fn sink_write(s: Sink, data: Bytes) -> Bool
-fn sink_flush(s: Sink) -> Bool
-/// Ends the stream on its connection: whether it stays open.
-fn sink_end(s: Sink) -> Bool
-/// The body a buffer sink collected.
-fn sink_take(s: Sink) -> Bytes
-/// Keeps a stream's function (an Any): its number (a Response's stream).
-fn stream_put(f: rt.Any) -> Int
-/// The function of stream id, or none; take removes it.
-fn stream_get(id: Int, take: Bool) -> List[rt.Any]
+
+/// A TLS connection's (xo_tls.c) read into the n bytes at p: the count,
+/// 0 at the end, or -CC_*; its write of n bytes at p: CC_*; the server's
+/// alert after a failure, "" for none (hclient.xo's connection).
+fn cl_tls_read(t: Int, p: Int, n: Int) -> Int
+fn cl_tls_write(t: Int, p: Int, n: Int) -> Int
+fn cl_tls_alert(t: Int) -> Str
+/// Frees a TLS connection (0: none); sets its deadline.
+fn cl_tls_free(t: Int)
+fn cl_tls_set_when(t: Int, when: Int)
+
+/// The server's TLS (xo_tls.c, hconn.xo and hserve.xo): a connection of
+/// server configuration s on poll descriptor pd; its read into the n
+/// bytes at p (the handshake first: the count, 0 at the end, < 0 on an
+/// error); its handshake (1: done); whether ALPN chose h2; why its cipher
+/// suite is too weak for HTTP/2 (1, the text zero terminated in the n
+/// bytes at p; 0: fine); a read without waiting (the count, 0 at the
+/// end, -1 on an error, -2 when nothing is there); its close_notify; and
+/// freeing a server configuration.
+fn tls_c_server(s: Int, pd: Int) -> Int
+fn tls_c_hc_read(t: Int, p: Int, n: Int) -> Int
+fn tls_c_handshake(t: Int) -> Int
+fn tls_c_alpn_h2(t: Int) -> Int
+fn tls_c_bad_cipher(t: Int, p: Int, n: Int) -> Int
+fn tls_c_nb_read(t: Int, p: Int, n: Int) -> Int
+fn tls_c_close_notify(t: Int)
+fn tls_c_srv_free(s: Int)
+/// The client's handshake on poll descriptor pd with the server name at
+/// host (a C string) and roots (a Roots record), by the deadline when (0:
+/// none): CC_*; the connection made goes to the word at out, a failure's
+/// text (zero terminated) to the mn bytes at msg, its kind (2: a Connect
+/// error, 4: Protocol) to the C int at kind.
+fn tls_c_client(pd: Int, host: Int, roots: Int, when: Int, out: Int, msg: Int, mn: Int, kind: Int) -> Int
+/// The Security framework's table when roots are the system's on macOS
+/// (Go verifies with the framework there), else 0.
+fn tls_c_apple_svc(roots: Int) -> Int
 
 /// TLS (decision 0105, std/llrt/xo_tls.c): a certificate chain with its
 /// private key (xo_tcert) and the roots a client trusts (xo_troots).

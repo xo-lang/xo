@@ -1,0 +1,56 @@
+// Values of any type (rt.Any: request values, std.md 4.3) in Xo (the
+// zero-C audit's B28 part 3; xo_http.c's xo_any until 2026-10-14). An
+// Any is a handle whose record holds the value as a shared list of one
+// with its drop function, and its type's tag (a malloc'd copy). Generated
+// code reaches any_new and any_get through the C's xo_any_new and
+// xo_any_get, which forward to cabi.xo's exports (older xo's code calls
+// those names).
+use native/llrt/ctx
+use native/llrt/obj
+use native/llrt/rc
+use native/llrt/tasks
+use native/rt
+
+/// The record (byte offsets): the header (count, free function), the
+/// list of one, its drop function, the tag (malloc'd) and its length.
+const A_L = 16
+const A_DROP = 24
+const A_TAG = 32
+const A_TN = 40
+const A_SIZE = 48
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// A new Any holding list l (consumed) with its drop function, of the
+/// type whose tag is the tn bytes at tag.
+pub fn new(l: Int, drop: Int, tag: Int, tn: Int) -> Int {
+  let a = tasks.new_handle(A_SIZE, ctx.SV_ANY_FREE)
+  st(a, A_L, l)
+  st(a, A_DROP, drop)
+  let t = rt.heap_large(tn + 1) - 8
+  rt.mem_copy(t, tag, tn)
+  rt.mem_store(t, tn, 0, 1)
+  st(a, A_TAG, t)
+  st(a, A_TN, tn)
+  a
+}
+
+/// The list of one holding a's value (a reference) when its type's tag
+/// is the tn bytes at tag, else the empty list.
+pub fn get(a: Int, tag: Int, tn: Int) -> Int {
+  if ld(a, A_TN) != tn || (tn > 0 && rt.mem_cmp(ld(a, A_TAG), tag, tn) != 0) {
+    return tasks.empty_list()
+  }
+  let l = ld(a, A_L)
+  rc.inc(l)
+  l
+}
+
+/// Frees a (its free function: the last reference went).
+pub fn free(a: Int) {
+  tasks.list_release(ld(a, A_L), ld(a, A_DROP))
+  rt.heap_release(ld(a, A_TAG))
+  obj.free_obj(a)
+}

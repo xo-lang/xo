@@ -1,0 +1,188 @@
+// The TLS 1.3 record layer of the native backends' TLS (RFC 8446 5, as
+// Go's crypto/tls conn.go halfConn: the zero-C audit's B31, decision
+// 0202, replacing Mbed TLS's ssl_msg.c): records written and read as
+// bytes (no I/O here), protected with a traffic secret's key and IV
+// (RFC 8446 7.3), the nonce the IV xor the record's sequence number,
+// the inner content type and padding (5.2, 5.4), and the key update of
+// a traffic secret (7.2). The cipher suites' parameters live here too.
+use native/llrt/aesgcm
+use native/llrt/chacha
+use native/llrt/hkdf
+use native/llrt/sha256
+use native/rt
+
+// the TLS 1.3 cipher suites (RFC 8446 B.4)
+pub const SUITE_AES_128_GCM_SHA256: Int = 0x1301
+pub const SUITE_AES_256_GCM_SHA384: Int = 0x1302
+pub const SUITE_CHACHA20_POLY1305_SHA256: Int = 0x1303
+
+// the record content types
+pub const CT_CCS: Int = 20
+pub const CT_ALERT: Int = 21
+pub const CT_HANDSHAKE: Int = 22
+pub const CT_APP: Int = 23
+
+/// The largest plaintext of a record (2^14, RFC 8446 5.1).
+pub const MAX_PLAIN: Int = 16384
+
+/// The largest ciphertext of a record (2^14 + 256, RFC 8446 5.2).
+pub const MAX_CIPHER: Int = 16640
+
+/// Whether the suite is one this file can protect records with.
+pub fn suite_ok(s: Int) -> Bool { s == SUITE_AES_128_GCM_SHA256 || s == SUITE_AES_256_GCM_SHA384 || s == SUITE_CHACHA20_POLY1305_SHA256 }
+
+/// The suite's hash (sha256.xo's id).
+pub fn suite_hash(s: Int) -> Int { if s == SUITE_AES_256_GCM_SHA384 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 } }
+
+/// The suite's AEAD key length.
+pub fn suite_key_len(s: Int) -> Int { if s == SUITE_AES_128_GCM_SHA256 { 16 } else { 32 } }
+
+/// Go's name of the suite (tls.CipherSuiteName).
+pub fn suite_name(s: Int) -> Str {
+  match s {
+    0x1301 => "TLS_AES_128_GCM_SHA256"
+    0x1302 => "TLS_AES_256_GCM_SHA384"
+    0x1303 => "TLS_CHACHA20_POLY1305_SHA256"
+    _ => "0x${hex4(s)}"
+  }
+}
+
+fn hex4(x: Int) -> Str {
+  let d = "0123456789ABCDEF".bytes()
+  var s = rt.rs_with_cap(4)
+  var i = 12
+  while i >= 0 {
+    s = rt.rs_push_byte(s, Int(d[(x >> i) & 15]))
+    i -= 4
+  }
+  s
+}
+
+/// One direction's protection: off before the handshake keys; else the
+/// suite, the traffic secret, its AEAD (AES-GCM's expanded key, or
+/// ChaCha20-Poly1305's key) and IV, and the next sequence number.
+pub struct Keys {
+  pub on: Bool
+  pub suite: Int
+  pub secret: Bytes
+  gcm: aesgcm.Gcm?
+  key: Bytes
+  iv: Bytes
+  seq: Int
+}
+
+/// No protection (records in the clear).
+pub fn plain() -> Keys { Keys{on: false, suite: 0, secret: b"", gcm: None, key: b"", iv: b"", seq: 0} }
+
+/// The protection of the traffic secret for the suite (RFC 8446 7.3: the
+/// key and IV expanded from it).
+pub fn keys(suite: Int, secret: Bytes) -> Keys {
+  let h = suite_hash(suite)
+  let key = hkdf.expand_label(h, secret, "key", b"", suite_key_len(suite))
+  let iv = hkdf.expand_label(h, secret, "iv", b"", 12)
+  let gcm = if suite == SUITE_CHACHA20_POLY1305_SHA256 { None } else { Some(aesgcm.new_gcm(key)) }
+  Keys{on: true, suite: suite, secret: secret, gcm: gcm, key: key, iv: iv, seq: 0}
+}
+
+/// The keys of the next traffic secret (RFC 8446 7.2, "traffic upd").
+pub fn update(k: Keys) -> Keys {
+  let h = suite_hash(k.suite)
+  keys(k.suite, hkdf.expand_label(h, k.secret, "traffic upd", b"", sha256.size(h)))
+}
+
+/// The record nonce: the IV xor the sequence number (big endian, at the
+/// end).
+fn nonce(k: Keys) -> Bytes {
+  var s = rt.rs_with_cap(12)
+  for i in 0..12 {
+    var b = Int(k.iv[i])
+    if i >= 4 {
+      b = b ^ ((k.seq >> ((11 - i) * 8)) & 255)
+    }
+    s = rt.rs_push_byte(s, b)
+  }
+  s.bytes()
+}
+
+/// A record header: the type, legacy version (0x0301 for a first
+/// ClientHello, else 0x0303), and the length.
+pub fn header(ct: Int, version: Int, n: Int) -> Bytes {
+  var s = rt.rs_with_cap(5)
+  s = rt.rs_push_byte(s, ct)
+  s = rt.rs_push_byte(s, version >> 8)
+  s = rt.rs_push_byte(s, version & 255)
+  s = rt.rs_push_byte(s, n >> 8)
+  s = rt.rs_push_byte(s, n & 255)
+  s.bytes()
+}
+
+/// The records carrying data of content type ct, in pieces of at most
+/// MAX_PLAIN, protected when k is on (the inner type after the data, no
+/// padding; the outer type application data). An empty data is one
+/// empty record.
+pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
+  var out = rt.rs_with_cap(data.len() + 32)
+  var off = 0
+  while true {
+    let end = if data.len() - off > MAX_PLAIN { off + MAX_PLAIN } else { data.len() }
+    let part = data[off..end]
+    if !k.on {
+      out = rt.rs_append_bytes(out, header(ct, version, part.len()), 0, 5, 0)
+      out = rt.rs_append_bytes(out, part, 0, part.len(), 0)
+    } else {
+      var inner = rt.rs_with_cap(part.len() + 1)
+      inner = rt.rs_append_bytes(inner, part, 0, part.len(), 0)
+      inner = rt.rs_push_byte(inner, ct)
+      let hdr = header(CT_APP, 0x0303, part.len() + 17)
+      let sealed = match k.gcm {
+        Some(g) => g.seal(nonce(k), inner.bytes(), hdr)
+        None => chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
+      }
+      k.seq += 1
+      out = rt.rs_append_bytes(out, hdr, 0, 5, 0)
+      out = rt.rs_append_bytes(out, sealed, 0, sealed.len(), 0)
+    }
+    off = end
+    if off >= data.len() {
+      break
+    }
+  }
+  out.bytes()
+}
+
+/// A record's content after protection is removed: its type and data;
+/// type -1 when it does not open (bad_record_mac), -2 when the inner
+/// plaintext is too long (record_overflow), -3 when it is all padding
+/// (unexpected_message).
+pub struct Inner {
+  pub ct: Int
+  pub data: Bytes
+}
+
+/// Removes k's protection from the record with header hdr and body
+/// (RFC 8446 5.2: the inner type is the last non-zero byte).
+pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
+  if !k.on {
+    return Inner{ct: Int(hdr[0]), data: body}
+  }
+  let opened = match k.gcm {
+    Some(g) => g.open(nonce(k), body, hdr)
+    None => chacha.open(k.key, nonce(k), body, hdr)
+  }
+  let pt = match opened {
+    Some(p) => p
+    None => return Inner{ct: -1, data: b""}
+  }
+  k.seq += 1
+  if pt.len() > MAX_PLAIN + 1 {
+    return Inner{ct: -2, data: b""}
+  }
+  var i = pt.len() - 1
+  while i >= 0 && pt[i] == 0 {
+    i -= 1
+  }
+  if i < 0 {
+    return Inner{ct: -3, data: b""}
+  }
+  Inner{ct: Int(pt[i]), data: pt[0..i]}
+}

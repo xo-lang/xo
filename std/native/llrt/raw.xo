@@ -92,3 +92,161 @@ pub fn zero_ints(n: Int) -> List[Int] {
   }
   xs
 }
+
+/// The malloc'd block at b (0: none) that is used from its malloc'd
+/// address (rt.heap_large(n) - 8, a block the C frees) grown to n bytes,
+/// at its new malloc'd address: rt.heap_large_resize, with the first word
+/// restored, which the resize overwrites with the large block prefix
+/// (gotchas/heap-large-resize-overwrites-word-0.md).
+pub fn c_resize(b: Int, n: Int) -> Int {
+  if b == 0 {
+    return rt.heap_large(n) - 8
+  }
+  let w = rt.mem_load(b, 0, 8)
+  let a = rt.heap_large_resize(b, n) - 8
+  rt.mem_store(a, 0, w, 8)
+  a
+}
+
+// ---------------------------------------------------------------------------
+// Strings (was std/llrt/xo_std.c and xo_bytes.c: the C behind rt.str_byte,
+// str_slice, str_join, str_of_byte, bytes_decode)
+
+/// utf8.DecodeRune of b from i (i < b.len()): the rune times 8 plus its
+/// size; an invalid byte is U+FFFD of size 1.
+pub fn decode(b: Bytes, i: Int) -> Int {
+  let n = b.len()
+  let c = Int(b[i])
+  if c < 0x80 {
+    return (c << 3) | 1
+  }
+  var k = 0
+  var lo = 0x80
+  var hi = 0xBF
+  var r = 0
+  if c >= 0xC2 && c <= 0xDF {
+    k = 1
+    r = c & 0x1F
+  } else if c >= 0xE0 && c <= 0xEF {
+    k = 2
+    r = c & 0x0F
+    if c == 0xE0 {
+      lo = 0xA0
+    } else if c == 0xED {
+      hi = 0x9F
+    }
+  } else if c >= 0xF0 && c <= 0xF4 {
+    k = 3
+    r = c & 0x07
+    if c == 0xF0 {
+      lo = 0x90
+    } else if c == 0xF4 {
+      hi = 0x8F
+    }
+  } else {
+    return (0xFFFD << 3) | 1
+  }
+  if i + k >= n {
+    return (0xFFFD << 3) | 1
+  }
+  let c1 = Int(b[i + 1])
+  if c1 < lo || c1 > hi {
+    return (0xFFFD << 3) | 1
+  }
+  r = (r << 6) | (c1 & 0x3F)
+  var j = 2
+  while j <= k {
+    let cj = Int(b[i + j])
+    if cj < 0x80 || cj > 0xBF {
+      return (0xFFFD << 3) | 1
+    }
+    r = (r << 6) | (cj & 0x3F)
+    j += 1
+  }
+  (r << 3) | (k + 1)
+}
+
+/// utf8.DecodeRune of the bytes of b from i: the rune times 8 plus its
+/// size (U+FFFD and 0 at the end).
+pub fn bytes_decode(b: Bytes, i: Int) -> Int {
+  if i >= b.len() {
+    return 0xFFFD << 3
+  }
+  decode(b, i)
+}
+
+/// The byte i of s, or -1 out of range.
+pub fn str_byte(s: Str, i: Int) -> Int {
+  if i < 0 || i >= s.len() {
+    return -1
+  }
+  rt.mem_load(data(s), i, 1)
+}
+
+/// The bytes lo..hi of s, the range clamped to s.
+pub fn str_slice(s: Str, lo0: Int, hi0: Int) -> Str {
+  let n = s.len()
+  let lo = if lo0 < 0 { 0 } else { lo0 }
+  var hi = if hi0 > n { n } else { hi0 }
+  if hi < lo {
+    hi = lo
+  }
+  str_at(data(s) + lo, hi - lo)
+}
+
+/// The elements of xs with sep between them.
+pub fn str_join(xs: List[Str], sep: Str) -> Str {
+  var total = 0
+  for (i, x) in xs.indexed() {
+    total += x.len() + (if i > 0 { sep.len() } else { 0 })
+  }
+  let s = rt.rs_set_len(rt.rs_with_cap(total), total)
+  let d = data(s)
+  var o = 0
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      rt.mem_copy(d + o, data(sep), sep.len())
+      o += sep.len()
+    }
+    rt.mem_copy(d + o, data(x), x.len())
+    o += x.len()
+  }
+  s
+}
+
+/// n copies of s (strings.Repeat).
+pub fn str_repeat(s: Str, k: Int) -> Str {
+  let n = s.len()
+  if k <= 0 || n == 0 {
+    return ""
+  }
+  if n > 9223372036854775807 / k {
+    fault("strings: Repeat output length overflow")
+  }
+  let out = rt.rs_set_len(rt.rs_with_cap(n * k), n * k)
+  let d = data(out)
+  for i in 0..k {
+    rt.mem_copy(d + i * n, data(s), n)
+  }
+  out
+}
+
+/// s + the UTF-8 of r, U+FFFD when r is not a scalar value
+/// (BytesBuilder.write_rune, utf8.AppendRune; xo_bytes.c's
+/// xo_rs_push_rune before).
+pub fn push_rune(s: Str, r0: Int) -> Str {
+  var r = r0
+  if r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
+    r = 0xFFFD
+  }
+  if r < 0x80 {
+    return rt.rs_push_byte(s, r)
+  }
+  if r < 0x800 {
+    return rt.rs_push_word(s, (0xC0 | (r >> 6)) | ((0x80 | (r & 0x3F)) << 8), 2)
+  }
+  if r < 0x10000 {
+    return rt.rs_push_word(s, (0xE0 | (r >> 12)) | ((0x80 | ((r >> 6) & 0x3F)) << 8) | ((0x80 | (r & 0x3F)) << 16), 3)
+  }
+  rt.rs_push_word(s, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
+}

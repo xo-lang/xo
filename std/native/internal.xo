@@ -1,6 +1,26 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
+use native/llrt/aesgcm
+use native/llrt/chacha
+use native/llrt/cpu
 use native/llrt/fsops
+use native/llrt/hkdf
+use native/llrt/hmac
+use native/llrt/mlkem
+use native/llrt/nistec
+use native/llrt/rsa
+use native/llrt/sha1
+use native/llrt/sha256
+use native/llrt/sha3
+use native/llrt/sysio
+use native/llrt/x509
+use native/llrt/x25519
+use native/llrt/tls12
+use native/llrt/tls12srv
+use native/llrt/tls13
+use native/llrt/tls13srv
+use native/llrt/x509verify
+use native/sys_c
 use native/rt
 
 struct SharedLock {
@@ -19,14 +39,59 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
     return SharedLock{h: h}
   }
   // the status as native/prelude's fs_err maps it
-  match rt.fs_status() {
+  match sysio.status() {
     1 => Err(FsErr.NotFound(path: p))
     4 => Err(FsErr.NotDir(path: p))
     5 => Err(FsErr.IsDir(path: p))
     6 => Err(FsErr.Denied(path: p))
-    7 => Err(FsErr.Io(path: p, msg: rt.fs_msg()[1]))
+    7 => Err(FsErr.Io(path: p, msg: sysio.msg()[1]))
     _ => Err(FsErr.Canceled)
   }
 }
 
 fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
+
+/// The check of std/native/sys_c.xo (decision 0232): "present", three
+/// bytes: whether getpid returned a positive process ID (a strong C call),
+/// whether getpid is linked, whether ThreadSanitizer is (rt.sym_present
+/// of weak references; 0 in a build without it).
+fn sysc_op(what: Str) -> Bytes? {
+  if what != "present" {
+    return None
+  }
+  var s = rt.rs_with_cap(3)
+  s = rt.rs_push_byte(s, if Int(sys_c.getpid()) > 0 { 1 } else { 0 })
+  s = rt.rs_push_byte(s, if rt.sym_present("getpid") { 1 } else { 0 })
+  s = rt.rs_push_byte(s, if rt.sym_present("__tsan_acquire") { 1 } else { 0 })
+  Some(s.bytes())
+}
+
+fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
+  let area = op.split(".")[0]
+  let what = op.trim_prefix("${area}.")
+  let r = match area {
+    "hash" => sha256.op(what, a, b, c, d)
+    "hmac" => hmac.op(what, a, b, c, d)
+    "hkdf" => hkdf.op(what, a, b, c, d)
+    "p256" => nistec.op(nistec.P256, what, a, b, c, d)
+    "p384" => nistec.op(nistec.P384, what, a, b, c, d)
+    "p521" => nistec.op(nistec.P521, what, a, b, c, d)
+    "p224" => nistec.op(nistec.P224, what, a, b, c, d)
+    "rsa" => rsa.op(what, a, b, c, d)
+    "x509" => x509.op(what, a, b, c, d)
+    "aes" => aesgcm.op(what, a, b, c, d)
+    "chacha" => chacha.op(what, a, b, c, d)
+    "chain" => x509verify.op(what, a, b, c, d)
+    "x25519" => x25519.op(what, a, b, c, d)
+    "tls13" => tls13.op(what, a, b, c, d)
+    "sha1" => sha1.op(what, a, b, c, d)
+    "cpu" => cpu.op(what, a, b, c, d)
+    "sysc" => sysc_op(what)
+    "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
+    "tls13srv" => tls13srv.op(what, a, b, c, d)
+    "sha3" => sha3.op(what, a, b, c, d)
+    "mlkem" => mlkem.op(what, a, b, c, d)
+    _ => None
+  }
+  r ?? fault("internal.crypto_op: unknown op ${op}")
+}

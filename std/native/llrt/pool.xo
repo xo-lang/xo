@@ -17,6 +17,7 @@
 // malloc), and no fault, so it runs on a worker's own stack with no
 // current context and never unwinds into its C callers.
 use native/llrt/linux
+use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/sysio
 use native/rt
@@ -29,8 +30,8 @@ const ACQUIRE = 1
 const RELEASE = 2
 const SEQ_CST = 4
 
-/// The pool record (xo_rt.c `pool`; word indexes for the slot atomics
-/// and byte offsets for loads): its lock (pool.mu: the idle list,
+/// The pool record (made by ctx.xo init; word indexes for the slot atomics and
+/// byte offsets for loads): its lock (pool.mu: the idle list,
 /// starting workers), the CPUs, the spin rounds, the records used, the
 /// worker threads alive, idle, and spinning, the idle list, the inject
 /// queue's lock, buffer, head, length, and capacity, the fiber cache's
@@ -120,18 +121,15 @@ const TLS_SCRATCH_AT = 32
 
 /// The services of the C runtime (rt.sched_rt, xo_rt.c xo_sched_rt).
 const RT_STAT = 0
-const RT_DL_CHECK = 1
 const RT_TW_KICK = 2
 const RT_FIBER_MAPPED = 4
 const RT_FIBER_UNMAPPED = 5
 const RT_MAP_FAILED = 6
 const RT_WORKER_START = 7
-const RT_THREAD = 8
 const RT_OOM = 9
-const RT_DEQUEUED = 10
-const RT_MAP = 11
-const RT_UNMAP = 12
 const RT_RUN_CLAIMED = 16
+const RT_TW = 30
+const RT_DEADLOCK = 31
 
 /// The statistics' counters (xo_rt.c st, in its order).
 const ST_STEAL = 1
@@ -269,7 +267,7 @@ pub fn register_worker(p: Int, w: Int) {
 
 /// Starts a thread running the C function at f with arg (detached, a 64
 /// MiB stack reserved): whether it started.
-fn thread_start(f: Int, arg: Int) -> Bool {
+pub fn thread_start(f: Int, arg: Int) -> Bool {
   match layer() {
     2 => {
       // pthread_attr_t (64 bytes) and the pthread_t
@@ -295,7 +293,7 @@ fn thread_start(f: Int, arg: Int) -> Bool {
       let _c = sys_windows.CloseHandle(h)
       true
     }
-    _ => rt.sched_rt(RT_THREAD, f, arg) != 0
+    _ => sanhook.thread_start(f, arg, THREAD_STACK)
   }
 }
 
@@ -638,7 +636,7 @@ fn go_idle(p: Int, w: Int) -> Int {
   rt.mem_store(w, W_IDLE_NEXT, rt.mem_load(p, P_IDLE, 8), 8)
   rt.mem_store(p, P_IDLE, w, 8)
   rt.slot_add(p, P_NIDLE, 1, SEQ_CST)
-  let _d = rt.sched_rt(RT_DL_CHECK, 0, 0)
+  dl_check(p)
   unlock(p)
   let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
   // a push before the count went up was not seen by its wakep: look
@@ -687,8 +685,10 @@ pub fn worker_main(w: Int) -> Int {
     rt.mem_store(g, 0, 65536, 4)
     let _g = sys_windows.SetThreadStackGuarantee(g)
   }
-  // the sanitizers' record of the thread, the hooks word
+  // the hooks word for the statistics (the C), then the sanitizers'
+  // record of the thread (decision 0232)
   let _s = rt.sched_rt(RT_WORKER_START, w, 0)
+  sanhook.worker_start(w)
   // wakep started it as a spinning worker
   var spinning = 1
   while true {
@@ -730,8 +730,15 @@ pub fn run_item(p: Int, w: Int, it: Int) {
     return
   }
   if sched.task_claim(it) == 0 {
-    // run by a thread that helped: its queue entry is over
-    let _d = rt.sched_rt(RT_DEQUEUED, it, 0)
+    // run by a thread that helped: its queue entry is over, and the
+    // scope's join waits for that too (no queue holds a task the scope
+    // frees)
+    let s = rt.mem_load(it, T_SCOPE, 8)
+    if sched.task_dequeued(it, s) != 0 {
+      let j = rt.mem_load(s, S_JOINER, 8)
+      sanhook.release(j)
+      park_signal(p, j)
+    }
     return
   }
   // claimed: the entry is counted taken when the task ends (one atomic
@@ -754,15 +761,15 @@ fn run_fiber(p: Int, w: Int, f: Int) {
 
 /// The mapping of a fiber stack of size bytes with a guard page of page
 /// bytes at its bottom: its address, or 0 (out of address space, the
-/// error in the scratch word of the thread's table). On Linux with hooks
-/// (a sanitizer build, or the statistics) the C library maps it:
+/// error in the scratch word of the thread's table). On Linux under
+/// ThreadSanitizer the C library maps it (sanhook.xo stack_map):
 /// ThreadSanitizer keeps a program's mappings in its application ranges
 /// through its mmap interceptor, which a system call bypasses.
 fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
   match layer() {
     1 => {
-      if hooks != 0 {
-        return rt.sched_rt(RT_MAP, size, page)
+      if hooks != 0 && sanhook.tsan() {
+        return sanhook.stack_map(size, page)
       }
       // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
       let m = linux.mmap(0, size, 3, 16418, -1, 0)
@@ -816,8 +823,8 @@ fn layer_arch() -> Int {
 fn unmap_stack(m: Int, size: Int, hooks: Int) {
   match layer() {
     1 => {
-      if hooks != 0 {
-        let _u = rt.sched_rt(RT_UNMAP, m, size)
+      if hooks != 0 && sanhook.tsan() {
+        sanhook.stack_unmap(m, size)
       } else {
         let _r = linux.munmap(m, size)
       }
@@ -870,6 +877,9 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
     rt.mem_store(f, F_SIZE, size, 8)
     // counted, and its ThreadSanitizer fiber
     let _c = rt.sched_rt(RT_FIBER_MAPPED, f, 0)
+    if rt.mem_load(w, W_HOOKS, 8) != 0 {
+      sanhook.fiber_new(f)
+    }
   }
   rt.mem_store(f, F_TASK, t, 8)
   rt.mem_store(f, F_CUR, 0, 8)
@@ -903,6 +913,9 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
     return
   }
   unlock(fs)
+  if rt.mem_load(f, F_HOOKS, 8) != 0 {
+    sanhook.fiber_free(f)
+  }
   let _u = rt.sched_rt(RT_FIBER_UNMAPPED, f, 0)
   unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
   rt.heap_release(rt.int_wrap(1, f, 8))
@@ -922,11 +935,49 @@ const PK_SLEEPING = 16
 const PK_COUNTED = 20
 const PK_FIBER = 24
 
-/// The deadlock counts (xo_rt.c dlk, words): roots made, roots asleep in
+/// The deadlock counts (the pool record's P_DLK, words): roots made, roots asleep in
 /// a counted wait, contexts in a wait a timer, the network, or a signal
 /// can end.
+const DLK_ROOTS = 0
 const DLK_BLOCKED = 1
 const DLK_UNCOUNTED = 2
+
+/// The test world's record (xo_rt.c tw, byte offsets): the verdict for
+/// the next move of the virtual clock, the moves' epoch, whether the
+/// clock is virtual (an int).
+const TW_VPENDING = 16
+const TW_VEPOCH = 24
+const TW_VIRT = 40
+
+/// Faults when the program is deadlocked, the lock of pool p held
+/// (xo_rt.c dlk, decision 0077): every root context sleeps in a counted
+/// wait, every worker is idle, no context waits for a timer, the network
+/// or a signal, and no queue holds an item. In the test world with a
+/// virtual clock it records the verdict instead, and the clock jumps to
+/// the next timer (xo_testing.c tw_kick, after the lock is released).
+pub fn dl_check(p: Int) {
+  let tw = rt.sched_rt(RT_TW, 0, 0)
+  // read before the counts: a move of the clock in progress or ended
+  // since then makes this check's verdict stale (tw_kick_once)
+  let epoch = rt.slot_load[Int](tw + TW_VEPOCH, 0, SEQ_CST)
+  let dlk = rt.mem_load(p, P_DLK, 8)
+  let roots = rt.slot_load(dlk, DLK_ROOTS, SEQ_CST)
+  if roots <= 0 || rt.slot_load(dlk, DLK_BLOCKED, SEQ_CST) != roots {
+    return
+  }
+  if rt.slot_load(p, P_NIDLE, SEQ_CST) != rt.slot_load(p, P_ALIVE, SEQ_CST) {
+    return
+  }
+  if rt.slot_load(dlk, DLK_UNCOUNTED, SEQ_CST) != 0 || any_work(p) != 0 {
+    return
+  }
+  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+    rt.slot_store[Int](tw + TW_VPENDING, 0, epoch + 1, SEQ_CST)
+    return
+  }
+  // flushes standard output, says so and exits with 70 (cabi.xo deadlock)
+  let _d = rt.sched_rt(RT_DEADLOCK, 0, 0)
+}
 
 /// xo_node (byte offsets; canceled is word 4): parent, child, prev,
 /// next, canceled, the waiter's park, its lock.
@@ -1146,7 +1197,7 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
         lock_slow(pl)
       }
       rt.slot_add(dlk, DLK_BLOCKED, 1, SEQ_CST)
-      let _d = rt.sched_rt(RT_DL_CHECK, 0, 0)
+      dl_check(pl)
       unlock(pl)
       let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
     }

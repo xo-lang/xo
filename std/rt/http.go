@@ -294,7 +294,8 @@ func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
 	if len(r.mws.s) == 0 {
 		return r.dispatch(tk, req)
 	}
-	return chain(r.mws.s, r.dispatch)(tk, req)
+	// a fault in the middleware is isolated as a handler's (std.md 4.2)
+	return isolateHandler(tk, func(tk *Task) Http_Response { return chain(r.mws.s, r.dispatch)(tk, req) })
 }
 
 // dispatch finds the route and runs it isolated.

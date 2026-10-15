@@ -563,7 +563,7 @@ fn (var g: G) call_op(v: Int) {
       // the shared empty list, immortal: the first push allocates
       // (xo_rl_grow), so a `[]` that stays empty costs no allocation
       // (bench/results/xo1-speed-2026-10-13.md)
-      g.set(v, g.rt("xo_rl_empty", [], [false]))
+      g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
     }
     "list.len" => g.set(v, [g.list_len(g.word(x.args[0]))])
     "list.index" => {
@@ -831,6 +831,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if op == 0 && g.fused_add(v) {
         return true
       }
+      if (op == 0 || op == 1) && g.add_with_flag(v, op) {
+        return true
+      }
+      if (op == 0 || op == 1) && g.add_w32(v, op) {
+        return true
+      }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op <= 1 && imm12(k) {
@@ -845,6 +851,62 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, g.word(x.args[2])])])
     }
     "rt.u64_mul_hi" => g.set(v, [g.def1(false, "umulh $d0, $u0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+    // decision 0231: the carry out of a + b and the borrow out of a - b
+    // (std/native/llrt/cpu.xo), the flag of one instruction
+    "rt.u64_carry" => {
+      // set already when its add was selected (add_with_flag)
+      if !g.has_val[v] {
+        g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
+      }
+    }
+    "rt.u64_borrow" => {
+      if !g.has_val[v] {
+        g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
+      }
+    }
+    // the carry-less product's halves and the AES rounds (cpu.xo, run
+    // only when cpu.hw() has them), in the scratch registers v30 and v31
+    "rt.clmul_lo" | "rt.clmul_hi" => {
+      if g.has_val[v] {
+        // its other half's pmull gave it
+        return true
+      }
+      let lo = aux_str(x.aux) == "rt.clmul_lo"
+      let other = g.clmul_pair(v, if lo { "rt.clmul_hi" } else { "rt.clmul_lo" })
+      if other >= 0 {
+        // one pmull for both halves of the product
+        let d = g.new_vreg(false)
+        let e = g.new_vreg(false)
+        let _i = g.plain("fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\nfmov $d0, d30\numov $d1, v30.d[1]", [d, e], [g.word(x.args[0]), g.word(x.args[1])])
+        g.set(if lo { v } else { other }, [d])
+        g.set(if lo { other } else { v }, [e])
+        return true
+      }
+      let out = if lo { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
+      g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
+    }
+    "rt.aes_round" => {
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.set(v, [])
+    }
+    "rt.aes_last" => {
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.set(v, [])
+    }
+    "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" => {
+      // the whole block unrolled, the state in v30, each round key
+      // loaded once into v31
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      var t = "ldr q30, [$u0]"
+      for r in 0..nr - 1 {
+        t = t + "\nldr q31, [$u1, #${16 * r}]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b"
+      }
+      t = t + "\nldr q31, [$u1, #${16 * (nr - 1)}]\naese v30.16b, v31.16b\nldr q31, [$u1, #${16 * nr}]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
+      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.set(v, [])
+    }
+    // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
+    "rt.cpuid1_ecx" => g.set(v, [g.def1(false, "mov $d0, #0", [])])
     // decision 0222: the value barrier is the operand itself (this
     // emitter neither folds through a call's result nor turns masks
     // into branches; test/codegen/consttime checks it)
@@ -936,6 +998,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.sched_ref = true
       g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
     }
+    // the runtime's immortal placeholders (an unwinding operation's
+    // result, the empty list): their addresses, no call (xo_rt.c
+    // xo_empty_list, xo_zero_handle; xo_rl_empty and xo_h_zero stay for
+    // code of earlier compilers)
+    "rt.rl_empty" => g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
+    "rt.h_zero" => g.set(v, [g.sym_addr(g.sym("xo_zero_handle"))])
     "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
     "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
@@ -1149,6 +1217,94 @@ fn (var g: G) fused_add(v: Int) -> Bool {
   false
 }
 
+/// The add (op 0) or subtract (op 1) v = a op b with its carry or borrow
+/// (decision 0231): when one of the next few values of the block is
+/// rt.u64_carry(a, b) (rt.u64_borrow(a, b) for a subtract) not selected
+/// yet, one adds or subs gives both, its flag read by cset; whether it
+/// did.
+fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
+  if g.cur_sb < 0 {
+    return false
+  }
+  let a = g.f.values[v].args[1]
+  let b = g.f.values[v].args[2]
+  let want = if op == 0 { "rt.u64_carry" } else { "rt.u64_borrow" }
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 6 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 {
+      let same = (y.args[0] == a && y.args[1] == b) || (op == 0 && y.args[0] == b && y.args[1] == a)
+      if same {
+        let d = g.new_vreg(false)
+        let c = g.new_vreg(false)
+        let text = if op == 0 { "adds $d0, $u0, $u1\ncset $d1, cs" } else { "subs $d0, $u0, $u1\ncset $d1, cc" }
+        let _i = g.plain(text, [d, c], [g.word(a), g.word(b)])
+        g.set(v, [d])
+        g.set(u, [c])
+        return true
+      }
+    }
+    k += 1
+  }
+  false
+}
+
+/// The add (op 0) or subtract (op 1) v used only by an `and` with
+/// 0xFFFFFFFF among the next few values of the block (ChaCha20's adds
+/// modulo 2^32): one 32 bit add or sub, which zero extends, gives both;
+/// whether it did.
+fn (var g: G) add_w32(v: Int, op: Int) -> Bool {
+  if g.cur_sb < 0 || g.nuses[v] != 1 {
+    return false
+  }
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 4 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.And && !g.has_val[u] && y.args.len() == 2 {
+      for j in 0..2 {
+        if y.args[j] == v {
+          let (n, nc) = g.const_int(y.args[1 - j])
+          if nc && n == 0xFFFFFFFF {
+            let a = g.word(g.f.values[v].args[1])
+            let b = g.word(g.f.values[v].args[2])
+            let d = g.def1(false, if op == 0 { "add $wd0, $wu0, $wu1" } else { "sub $wd0, $wu0, $wu1" }, [a, b])
+            g.set(v, [d])
+            g.set(u, [d])
+            return true
+          }
+        }
+      }
+    }
+    k += 1
+  }
+  false
+}
+
+/// A value among the next few of the block that is the call want of the
+/// same two operands as v and not selected yet (the other half of a
+/// carry-less product), else -1.
+fn (var g: G) clmul_pair(v: Int, want: Str) -> Int {
+  if g.cur_sb < 0 {
+    return -1
+  }
+  let a = g.f.values[v].args
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 6 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 2 && y.args[0] == a[0] && y.args[1] == a[1] {
+      return u
+    }
+    k += 1
+  }
+  -1
+}
+
 /// The memory order of argument k of value v (decision 0200): its
 /// constant 0 relaxed, 1 acquire, 2 release, 3 acq_rel, 4 seq_cst; a
 /// value that is not one of them is seq_cst.
@@ -1323,13 +1479,18 @@ fn (var g: G) rt_call(v: Int) {
     // entries stay for LLVM and older xo's code)
     name = "xo_x_ctx_${name0.trim_prefix("rt.")}"
   }
-  if name0 is "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" {
+  if name0 is "rt.sched_hook" | "rt.task_done" | "rt.task_unwound" | "rt.task_await" | "rt.task_result" | "rt.scope_fail_task" | "rt.scope_fail_site" | "rt.scope_group" | "rt.fault_rethrow" | "rt.scope_cancel" | "rt.prog_group_set" | "rt.prog_group_clear" | "rt.prog_group" | "rt.task_spawn" | "rt.scope_open" | "rt.scope_close" | "rt.mutex_new" | "rt.mutex_lock" | "rt.mutex_unlock" | "rt.mutex_rlock" | "rt.mutex_runlock" | "rt.chan_new" | "rt.chan_send" | "rt.chan_recv" | "rt.chan_try_send" | "rt.chan_try_recv" | "rt.chan_close" | "rt.chan_len" | "rt.select_new" | "rt.select_recv" | "rt.select_send" | "rt.select_wait" | "rt.select_take" | "rt.atomic_new" | "rt.const_once" {
     // tasks.xo through its exports (B18), likewise
     name = "xo_x_${name0.trim_prefix("rt.")}"
   }
   if name0 is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     // budget.xo through its exports, likewise
     name = "xo_x_budget_${name0.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  if name0 is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+    // heapos.xo's platform calls (B21) and anyval.xo through their
+    // exports, likewise
+    name = "xo_x_${name0.trim_prefix("rt.")}"
   }
   match g.kind(x.ty) {
     Unit => {
@@ -1368,6 +1529,30 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
   (parts[0], sv[0], n)
 }
 
+/// The directive that makes sym a weak reference (decision 0232): the
+/// linker leaves it 0 when nothing defines it (macOS's ld needs `-U` for
+/// that, which the driver adds for each weak reference).
+fn (var g: G) weak_ref(sym: Str) {
+  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
+  g.store("${d} ${g.sym(sym)}", [])
+}
+
+/// rt.sym_present (decision 0232): sym's address through the GOT,
+/// compared with 0 (UNTESTED on Linux; false on Windows, where the
+/// arm64 emitter makes no weak references yet).
+fn (var g: G) sym_present(v: Int, sym: Str) {
+  if g.os == "windows" {
+    g.set(v, [g.def1(false, "mov $d0, #0", [])])
+    return
+  }
+  g.weak_ref(sym)
+  let s = g.sym(sym)
+  let load = if g.os == "darwin" { "adrp $d0, ${s}@GOTPAGE\nldr $d0, [$d0, ${s}@GOTPAGEOFF]" } else { "adrp $d0, :got:${s}\nldr $d0, [$d0, :got_lo12:${s}]" }
+  // the compare its own instruction: a branch on the result folds it
+  let addr = g.def1(false, load, [])
+  g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, ne", [addr])])
+}
+
 /// Lowers a call of a platform library function (decision 0213,
 /// std/native/sys_<os>.xo): a call of the bare C symbol with the C ABI,
 /// an Int or Int32 argument one word, a Float a double, Bytes its data
@@ -1379,10 +1564,17 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 fn (var g: G) platform_call(v: Int) {
   let x = g.f.values[v]
   let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
-  if os != g.os {
+  if os == "cp" {
+    g.sym_present(v, sym)
+    return
+  }
+  if os != g.os && os != "c" && os != "cw" {
     g.store("brk #1", [])
     g.set(v, g.zeros(x.ty))
     return
+  }
+  if os == "cw" {
+    g.weak_ref(sym)
   }
   var args: List[Src] = []
   var us: List[Int] = []

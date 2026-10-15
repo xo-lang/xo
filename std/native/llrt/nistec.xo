@@ -1,0 +1,2116 @@
+// The NIST curves P-256, P-384 and P-521, and P-224 for signatures
+// (FIPS 186-5, SEC 1) for TLS (the zero-C
+// audit's B31, decision 0202: Go's crypto/internal/fips140/nistec and
+// ecdsa designs in Xo, replacing Mbed TLS's ecp and ecdsa): ECDH (the
+// key shares of TLS 1.3 and ECDHE of TLS 1.2) and ECDSA signing and
+// verification over a hash the caller computed.
+//
+// Field elements are L 64 bit limbs, the lowest first (L = 4 for P-256
+// and P-224, 6 for P-384, 9 for P-521), in the Montgomery domain (x R mod m, R = 2^(64L)), with
+// one generic Montgomery product (CIOS) for both the field (mod p) and
+// the scalars (mod n). Points are projective (X:Y:Z) with the complete
+// addition formulas for a = -3 of Renes, Costello and Batina (eprint
+// 2015/1060, algorithm 4), which double too and take the identity
+// (0:1:0) like any other point; scalar multiplication is a fixed 4 bit
+// window over a table of [0]P to [15]P, every entry read under a mask
+// (ct.xo), so it is constant time in the scalar. Inversion is Fermat's,
+// x^(m-2), a fixed sequence for the public exponent. The rules of ct.xo
+// hold for every secret (a private scalar, an ECDSA nonce, a shared
+// point): wrapping arithmetic, rt.u64_mul_hi, masks, no branch or index
+// on a secret. Decoding a peer's point and verifying a signature work on
+// public values and branch on them.
+//
+// Everything of one operation lives in one List[Int], the workspace,
+// reached through raw memory as ed25519.xo's: `c` is the address of its
+// first word, an element takes 9 words (ES, 72 bytes) whatever L is, a
+// point three elements (X, Y, Z at +0, +ES, +2 ES; PS bytes).
+use native/llrt/cpu
+use native/llrt/ct
+use native/llrt/nistec_g256
+use native/llrt/raw
+use native/llrt/rand
+use native/rt
+
+/// The curves (the `curve` argument of the functions below).
+pub const P256: Int = 0
+pub const P384: Int = 1
+pub const P521: Int = 2
+/// P-224: ECDSA verification of certificates (Go's crypto/ecdsa); no TLS
+/// key exchange uses it.
+pub const P224: Int = 3
+
+// The workspace, in bytes: L, the curve's byte size (SZW), then a modulus
+// block for p and one for n (MINV: -m^-1 mod 2^64; MLIMBS: m; MRR: R^2
+// mod m; MONE: R mod m; ME2: m - 2, the exponent of an inversion).
+const SZW: Int = 8
+const ES: Int = 72
+const PS: Int = 216
+const MP: Int = 16
+const MN: Int = 312
+const MINV: Int = 0
+const MLIMBS: Int = 8
+const MRR: Int = 80
+const MONE: Int = 152
+const ME2: Int = 224
+// b (Montgomery), the 1 of the integers (to leave the Montgomery domain)
+const CB: Int = 608
+const ONE1: Int = 680
+// the product's L + 2 words, then a difference's L words
+const TMPW: Int = 752
+const DIFF: Int = 840
+// pt_add's t0 to t4, X3, Y3, Z3
+const T0: Int = 912
+// pow's accumulator
+const PW: Int = 1488
+// points: the base point, three of the operations, the multiplication's
+// accumulator and selection
+const PG: Int = 1560
+const PA: Int = 1776
+const PB: Int = 1992
+const PC: Int = 2208
+const ACC: Int = 2424
+const SEL: Int = 2640
+// the multiplication's table of [0]P to [15]P
+const TABLE: Int = 2856
+// the elements of ECDH and ECDSA
+const S0: Int = 6312
+// pow's table of f^1 to f^15 (the inversion chain's temporaries too)
+const POWT: Int = 6888
+// the workspace in words
+const WSIZE: Int = 996
+
+fn at(c: Int, off: Int) -> Int { rt.int_wrap(0, c, off) }
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The element S0 + k.
+fn sk(c: Int, k: Int) -> Int { at(c, S0 + ES * k) }
+
+fn limbs(c: Int) -> Int { ld(c, 0) }
+
+/// The bytes of an element or scalar of the curve.
+pub fn size(curve: Int) -> Int {
+  if curve == P384 {
+    return 48
+  }
+  if curve == P521 {
+    return 66
+  }
+  if curve == P224 {
+    return 28
+  }
+  32
+}
+
+/// The byte size of the workspace's curve.
+fn csize(c: Int) -> Int { ld(c, SZW) }
+
+// ---------------------------------------------------------------------------
+// Words
+
+/// Stores x + y + cin at h + off; the carry out.
+fn adc(h: Int, off: Int, x: Int, y: Int, cin: Int) -> Int {
+  let s1 = rt.int_wrap(0, x, y)
+  let s = rt.int_wrap(0, s1, cin)
+  st(h, off, s)
+  cpu.carry(x, y) | cpu.carry(s1, cin)
+}
+
+/// Stores x - y - bin at h + off; the borrow out.
+fn sbb(h: Int, off: Int, x: Int, y: Int, bin: Int) -> Int {
+  let d1 = rt.int_wrap(1, x, y)
+  let d = rt.int_wrap(1, d1, bin)
+  st(h, off, d)
+  cpu.borrow(x, y) | cpu.borrow(d1, bin)
+}
+
+/// Adds a * b + cin to the word at t + off; the high word of the sum.
+fn mac(t: Int, off: Int, a: Int, b: Int, cin: Int) -> Int {
+  let lo = rt.int_wrap(2, a, b)
+  let hi = rt.u64_mul_hi(a, b)
+  let x = ld(t, off)
+  let s1 = rt.int_wrap(0, lo, x)
+  let s2 = rt.int_wrap(0, s1, cin)
+  st(t, off, s2)
+  rt.int_wrap(0, hi, cpu.carry(lo, x) + cpu.carry(s1, cin))
+}
+
+// ---------------------------------------------------------------------------
+// Elements modulo m (md the address of m's block; h may be f or g)
+
+/// h = t - m when t + top 2^(64L) >= m, else t (top is 0 or 1, and t <
+/// 2m).
+fn final_sub(c: Int, h: Int, t: Int, md: Int, top: Int) {
+  let n = limbs(c)
+  let d = at(c, DIFF)
+  var b = 0
+  var i = 0
+  while i < n {
+    b = sbb(d, 8 * i, ld(t, 8 * i), ld(md, MLIMBS + 8 * i), b)
+    i += 1
+  }
+  let keep = ct.mask_bit(b & (top ^ 1))
+  i = 0
+  while i < n {
+    st(h, 8 * i, ct.pick(keep, ld(t, 8 * i), ld(d, 8 * i)))
+    i += 1
+  }
+}
+
+/// h = f g / R mod m (the Montgomery product, CIOS; f, g < m).
+fn mul(c: Int, h: Int, f: Int, g: Int, md: Int) {
+  let n = limbs(c)
+  if n == 4 {
+    mul4(h, f, g, md)
+    return
+  }
+  if n == 6 {
+    mul6(h, f, g, md)
+    return
+  }
+  let t = at(c, TMPW)
+  let inv = ld(md, MINV)
+  rt.mem_set(t, 0, 8 * (n + 2))
+  var i = 0
+  while i < n {
+    let gi = ld(g, 8 * i)
+    var cy = 0
+    var j = 0
+    while j < n {
+      cy = mac(t, 8 * j, ld(f, 8 * j), gi, cy)
+      j += 1
+    }
+    let x = ld(t, 8 * n)
+    let s = rt.int_wrap(0, x, cy)
+    st(t, 8 * n, s)
+    st(t, 8 * (n + 1), cpu.carry(x, cy))
+    // t + q m is divisible by 2^64; shift it down a word
+    let q = rt.int_wrap(2, ld(t, 0), inv)
+    cy = mac(t, 0, q, ld(md, MLIMBS), 0)
+    j = 1
+    while j < n {
+      cy = mac(t, 8 * j, q, ld(md, MLIMBS + 8 * j), cy)
+      st(t, 8 * (j - 1), ld(t, 8 * j))
+      j += 1
+    }
+    let x2 = ld(t, 8 * n)
+    let s2 = rt.int_wrap(0, x2, cy)
+    st(t, 8 * (n - 1), s2)
+    st(t, 8 * n, rt.int_wrap(0, ld(t, 8 * (n + 1)), cpu.carry(x2, cy)))
+    i += 1
+  }
+  final_sub(c, h, t, md, ld(t, 8 * n))
+}
+
+/// mul for 4 limbs (P-256's field and scalars): CIOS unrolled over
+/// local words, the same result.
+fn mul4(h: Int, f: Int, g: Int, md: Int) {
+  let inv = ld(md, MINV)
+  let f0 = ld(f, 0)
+  let g0 = ld(g, 0)
+  let m0 = ld(md, MLIMBS + 0)
+  let f1 = ld(f, 8)
+  let g1 = ld(g, 8)
+  let m1 = ld(md, MLIMBS + 8)
+  let f2 = ld(f, 16)
+  let g2 = ld(g, 16)
+  let m2 = ld(md, MLIMBS + 16)
+  let f3 = ld(f, 24)
+  let g3 = ld(g, 24)
+  let m3 = ld(md, MLIMBS + 24)
+  let lo1 = rt.int_wrap(2, f0, g0)
+  let hi2 = rt.u64_mul_hi(f0, g0)
+  let lo8 = rt.int_wrap(2, f1, g0)
+  let hi9 = rt.u64_mul_hi(f1, g0)
+  let s12 = rt.int_wrap(0, lo8, hi2)
+  let k13 = cpu.carry(lo8, hi2)
+  let c14 = rt.int_wrap(0, hi9, k13)
+  let lo15 = rt.int_wrap(2, f2, g0)
+  let hi16 = rt.u64_mul_hi(f2, g0)
+  let s19 = rt.int_wrap(0, lo15, c14)
+  let k20 = cpu.carry(lo15, c14)
+  let c21 = rt.int_wrap(0, hi16, k20)
+  let lo22 = rt.int_wrap(2, f3, g0)
+  let hi23 = rt.u64_mul_hi(f3, g0)
+  let s26 = rt.int_wrap(0, lo22, c21)
+  let k27 = cpu.carry(lo22, c21)
+  let c28 = rt.int_wrap(0, hi23, k27)
+  let q31 = rt.int_wrap(2, lo1, inv)
+  let lo32 = rt.int_wrap(2, q31, m0)
+  let hi33 = rt.u64_mul_hi(q31, m0)
+  let k35 = cpu.carry(lo32, lo1)
+  let c38 = rt.int_wrap(0, hi33, k35)
+  let lo39 = rt.int_wrap(2, q31, m1)
+  let hi40 = rt.u64_mul_hi(q31, m1)
+  let s41 = rt.int_wrap(0, lo39, s12)
+  let k42 = cpu.carry(lo39, s12)
+  let s43 = rt.int_wrap(0, s41, c38)
+  let k44 = cpu.carry(s41, c38)
+  let c45 = rt.int_wrap(0, hi40, rt.int_wrap(0, k42, k44))
+  let lo46 = rt.int_wrap(2, q31, m2)
+  let hi47 = rt.u64_mul_hi(q31, m2)
+  let s48 = rt.int_wrap(0, lo46, s19)
+  let k49 = cpu.carry(lo46, s19)
+  let s50 = rt.int_wrap(0, s48, c45)
+  let k51 = cpu.carry(s48, c45)
+  let c52 = rt.int_wrap(0, hi47, rt.int_wrap(0, k49, k51))
+  let lo53 = rt.int_wrap(2, q31, m3)
+  let hi54 = rt.u64_mul_hi(q31, m3)
+  let s55 = rt.int_wrap(0, lo53, s26)
+  let k56 = cpu.carry(lo53, s26)
+  let s57 = rt.int_wrap(0, s55, c52)
+  let k58 = cpu.carry(s55, c52)
+  let c59 = rt.int_wrap(0, hi54, rt.int_wrap(0, k56, k58))
+  let s60 = rt.int_wrap(0, c28, c59)
+  let k61 = cpu.carry(c28, c59)
+  let lo63 = rt.int_wrap(2, f0, g1)
+  let hi64 = rt.u64_mul_hi(f0, g1)
+  let s65 = rt.int_wrap(0, lo63, s43)
+  let k66 = cpu.carry(lo63, s43)
+  let c69 = rt.int_wrap(0, hi64, k66)
+  let lo70 = rt.int_wrap(2, f1, g1)
+  let hi71 = rt.u64_mul_hi(f1, g1)
+  let s72 = rt.int_wrap(0, lo70, s50)
+  let k73 = cpu.carry(lo70, s50)
+  let s74 = rt.int_wrap(0, s72, c69)
+  let k75 = cpu.carry(s72, c69)
+  let c76 = rt.int_wrap(0, hi71, rt.int_wrap(0, k73, k75))
+  let lo77 = rt.int_wrap(2, f2, g1)
+  let hi78 = rt.u64_mul_hi(f2, g1)
+  let s79 = rt.int_wrap(0, lo77, s57)
+  let k80 = cpu.carry(lo77, s57)
+  let s81 = rt.int_wrap(0, s79, c76)
+  let k82 = cpu.carry(s79, c76)
+  let c83 = rt.int_wrap(0, hi78, rt.int_wrap(0, k80, k82))
+  let lo84 = rt.int_wrap(2, f3, g1)
+  let hi85 = rt.u64_mul_hi(f3, g1)
+  let s86 = rt.int_wrap(0, lo84, s60)
+  let k87 = cpu.carry(lo84, s60)
+  let s88 = rt.int_wrap(0, s86, c83)
+  let k89 = cpu.carry(s86, c83)
+  let c90 = rt.int_wrap(0, hi85, rt.int_wrap(0, k87, k89))
+  let s91 = rt.int_wrap(0, k61, c90)
+  let k92 = cpu.carry(k61, c90)
+  let q93 = rt.int_wrap(2, s65, inv)
+  let lo94 = rt.int_wrap(2, q93, m0)
+  let hi95 = rt.u64_mul_hi(q93, m0)
+  let k97 = cpu.carry(lo94, s65)
+  let c100 = rt.int_wrap(0, hi95, k97)
+  let lo101 = rt.int_wrap(2, q93, m1)
+  let hi102 = rt.u64_mul_hi(q93, m1)
+  let s103 = rt.int_wrap(0, lo101, s74)
+  let k104 = cpu.carry(lo101, s74)
+  let s105 = rt.int_wrap(0, s103, c100)
+  let k106 = cpu.carry(s103, c100)
+  let c107 = rt.int_wrap(0, hi102, rt.int_wrap(0, k104, k106))
+  let lo108 = rt.int_wrap(2, q93, m2)
+  let hi109 = rt.u64_mul_hi(q93, m2)
+  let s110 = rt.int_wrap(0, lo108, s81)
+  let k111 = cpu.carry(lo108, s81)
+  let s112 = rt.int_wrap(0, s110, c107)
+  let k113 = cpu.carry(s110, c107)
+  let c114 = rt.int_wrap(0, hi109, rt.int_wrap(0, k111, k113))
+  let lo115 = rt.int_wrap(2, q93, m3)
+  let hi116 = rt.u64_mul_hi(q93, m3)
+  let s117 = rt.int_wrap(0, lo115, s88)
+  let k118 = cpu.carry(lo115, s88)
+  let s119 = rt.int_wrap(0, s117, c114)
+  let k120 = cpu.carry(s117, c114)
+  let c121 = rt.int_wrap(0, hi116, rt.int_wrap(0, k118, k120))
+  let s122 = rt.int_wrap(0, s91, c121)
+  let k123 = cpu.carry(s91, c121)
+  let t124 = rt.int_wrap(0, k92, k123)
+  let lo125 = rt.int_wrap(2, f0, g2)
+  let hi126 = rt.u64_mul_hi(f0, g2)
+  let s127 = rt.int_wrap(0, lo125, s105)
+  let k128 = cpu.carry(lo125, s105)
+  let c131 = rt.int_wrap(0, hi126, k128)
+  let lo132 = rt.int_wrap(2, f1, g2)
+  let hi133 = rt.u64_mul_hi(f1, g2)
+  let s134 = rt.int_wrap(0, lo132, s112)
+  let k135 = cpu.carry(lo132, s112)
+  let s136 = rt.int_wrap(0, s134, c131)
+  let k137 = cpu.carry(s134, c131)
+  let c138 = rt.int_wrap(0, hi133, rt.int_wrap(0, k135, k137))
+  let lo139 = rt.int_wrap(2, f2, g2)
+  let hi140 = rt.u64_mul_hi(f2, g2)
+  let s141 = rt.int_wrap(0, lo139, s119)
+  let k142 = cpu.carry(lo139, s119)
+  let s143 = rt.int_wrap(0, s141, c138)
+  let k144 = cpu.carry(s141, c138)
+  let c145 = rt.int_wrap(0, hi140, rt.int_wrap(0, k142, k144))
+  let lo146 = rt.int_wrap(2, f3, g2)
+  let hi147 = rt.u64_mul_hi(f3, g2)
+  let s148 = rt.int_wrap(0, lo146, s122)
+  let k149 = cpu.carry(lo146, s122)
+  let s150 = rt.int_wrap(0, s148, c145)
+  let k151 = cpu.carry(s148, c145)
+  let c152 = rt.int_wrap(0, hi147, rt.int_wrap(0, k149, k151))
+  let s153 = rt.int_wrap(0, t124, c152)
+  let k154 = cpu.carry(t124, c152)
+  let q155 = rt.int_wrap(2, s127, inv)
+  let lo156 = rt.int_wrap(2, q155, m0)
+  let hi157 = rt.u64_mul_hi(q155, m0)
+  let k159 = cpu.carry(lo156, s127)
+  let c162 = rt.int_wrap(0, hi157, k159)
+  let lo163 = rt.int_wrap(2, q155, m1)
+  let hi164 = rt.u64_mul_hi(q155, m1)
+  let s165 = rt.int_wrap(0, lo163, s136)
+  let k166 = cpu.carry(lo163, s136)
+  let s167 = rt.int_wrap(0, s165, c162)
+  let k168 = cpu.carry(s165, c162)
+  let c169 = rt.int_wrap(0, hi164, rt.int_wrap(0, k166, k168))
+  let lo170 = rt.int_wrap(2, q155, m2)
+  let hi171 = rt.u64_mul_hi(q155, m2)
+  let s172 = rt.int_wrap(0, lo170, s143)
+  let k173 = cpu.carry(lo170, s143)
+  let s174 = rt.int_wrap(0, s172, c169)
+  let k175 = cpu.carry(s172, c169)
+  let c176 = rt.int_wrap(0, hi171, rt.int_wrap(0, k173, k175))
+  let lo177 = rt.int_wrap(2, q155, m3)
+  let hi178 = rt.u64_mul_hi(q155, m3)
+  let s179 = rt.int_wrap(0, lo177, s150)
+  let k180 = cpu.carry(lo177, s150)
+  let s181 = rt.int_wrap(0, s179, c176)
+  let k182 = cpu.carry(s179, c176)
+  let c183 = rt.int_wrap(0, hi178, rt.int_wrap(0, k180, k182))
+  let s184 = rt.int_wrap(0, s153, c183)
+  let k185 = cpu.carry(s153, c183)
+  let t186 = rt.int_wrap(0, k154, k185)
+  let lo187 = rt.int_wrap(2, f0, g3)
+  let hi188 = rt.u64_mul_hi(f0, g3)
+  let s189 = rt.int_wrap(0, lo187, s167)
+  let k190 = cpu.carry(lo187, s167)
+  let c193 = rt.int_wrap(0, hi188, k190)
+  let lo194 = rt.int_wrap(2, f1, g3)
+  let hi195 = rt.u64_mul_hi(f1, g3)
+  let s196 = rt.int_wrap(0, lo194, s174)
+  let k197 = cpu.carry(lo194, s174)
+  let s198 = rt.int_wrap(0, s196, c193)
+  let k199 = cpu.carry(s196, c193)
+  let c200 = rt.int_wrap(0, hi195, rt.int_wrap(0, k197, k199))
+  let lo201 = rt.int_wrap(2, f2, g3)
+  let hi202 = rt.u64_mul_hi(f2, g3)
+  let s203 = rt.int_wrap(0, lo201, s181)
+  let k204 = cpu.carry(lo201, s181)
+  let s205 = rt.int_wrap(0, s203, c200)
+  let k206 = cpu.carry(s203, c200)
+  let c207 = rt.int_wrap(0, hi202, rt.int_wrap(0, k204, k206))
+  let lo208 = rt.int_wrap(2, f3, g3)
+  let hi209 = rt.u64_mul_hi(f3, g3)
+  let s210 = rt.int_wrap(0, lo208, s184)
+  let k211 = cpu.carry(lo208, s184)
+  let s212 = rt.int_wrap(0, s210, c207)
+  let k213 = cpu.carry(s210, c207)
+  let c214 = rt.int_wrap(0, hi209, rt.int_wrap(0, k211, k213))
+  let s215 = rt.int_wrap(0, t186, c214)
+  let k216 = cpu.carry(t186, c214)
+  let q217 = rt.int_wrap(2, s189, inv)
+  let lo218 = rt.int_wrap(2, q217, m0)
+  let hi219 = rt.u64_mul_hi(q217, m0)
+  let k221 = cpu.carry(lo218, s189)
+  let c224 = rt.int_wrap(0, hi219, k221)
+  let lo225 = rt.int_wrap(2, q217, m1)
+  let hi226 = rt.u64_mul_hi(q217, m1)
+  let s227 = rt.int_wrap(0, lo225, s198)
+  let k228 = cpu.carry(lo225, s198)
+  let s229 = rt.int_wrap(0, s227, c224)
+  let k230 = cpu.carry(s227, c224)
+  let c231 = rt.int_wrap(0, hi226, rt.int_wrap(0, k228, k230))
+  let lo232 = rt.int_wrap(2, q217, m2)
+  let hi233 = rt.u64_mul_hi(q217, m2)
+  let s234 = rt.int_wrap(0, lo232, s205)
+  let k235 = cpu.carry(lo232, s205)
+  let s236 = rt.int_wrap(0, s234, c231)
+  let k237 = cpu.carry(s234, c231)
+  let c238 = rt.int_wrap(0, hi233, rt.int_wrap(0, k235, k237))
+  let lo239 = rt.int_wrap(2, q217, m3)
+  let hi240 = rt.u64_mul_hi(q217, m3)
+  let s241 = rt.int_wrap(0, lo239, s212)
+  let k242 = cpu.carry(lo239, s212)
+  let s243 = rt.int_wrap(0, s241, c238)
+  let k244 = cpu.carry(s241, c238)
+  let c245 = rt.int_wrap(0, hi240, rt.int_wrap(0, k242, k244))
+  let s246 = rt.int_wrap(0, s215, c245)
+  let k247 = cpu.carry(s215, c245)
+  let t248 = rt.int_wrap(0, k216, k247)
+  sub_m4(h, s229, s236, s243, s246, t248, m0, m1, m2, m3)
+}
+
+/// h = t - m when t + top 2^256 >= m, else t (4 limbs, top 0 or 1):
+/// final_sub on words.
+fn sub_m4(h: Int, t0: Int, t1: Int, t2: Int, t3: Int, top: Int, m0: Int, m1: Int, m2: Int, m3: Int) {
+  let d0 = rt.int_wrap(1, t0, m0)
+  let b0 = cpu.borrow(t0, m0)
+  let e1 = rt.int_wrap(1, t1, m1)
+  let d1 = rt.int_wrap(1, e1, b0)
+  let b1 = cpu.borrow(t1, m1) | cpu.borrow(e1, b0)
+  let e2 = rt.int_wrap(1, t2, m2)
+  let d2 = rt.int_wrap(1, e2, b1)
+  let b2 = cpu.borrow(t2, m2) | cpu.borrow(e2, b1)
+  let e3 = rt.int_wrap(1, t3, m3)
+  let d3 = rt.int_wrap(1, e3, b2)
+  let b3 = cpu.borrow(t3, m3) | cpu.borrow(e3, b2)
+  let keep = ct.mask_bit(b3 & (top ^ 1))
+  st(h, 0, ct.pick(keep, t0, d0))
+  st(h, 8, ct.pick(keep, t1, d1))
+  st(h, 16, ct.pick(keep, t2, d2))
+  st(h, 24, ct.pick(keep, t3, d3))
+}
+
+/// add for 4 limbs.
+fn add4(h: Int, f: Int, g: Int, md: Int) {
+  let f0 = ld(f, 0)
+  let f1 = ld(f, 8)
+  let f2 = ld(f, 16)
+  let f3 = ld(f, 24)
+  let g0 = ld(g, 0)
+  let g1 = ld(g, 8)
+  let g2 = ld(g, 16)
+  let g3 = ld(g, 24)
+  let s0 = rt.int_wrap(0, f0, g0)
+  let c0 = cpu.carry(f0, g0)
+  let u1 = rt.int_wrap(0, f1, g1)
+  let s1 = rt.int_wrap(0, u1, c0)
+  let c1 = cpu.carry(f1, g1) | cpu.carry(u1, c0)
+  let u2 = rt.int_wrap(0, f2, g2)
+  let s2 = rt.int_wrap(0, u2, c1)
+  let c2 = cpu.carry(f2, g2) | cpu.carry(u2, c1)
+  let u3 = rt.int_wrap(0, f3, g3)
+  let s3 = rt.int_wrap(0, u3, c2)
+  let c3 = cpu.carry(f3, g3) | cpu.carry(u3, c2)
+  sub_m4(h, s0, s1, s2, s3, c3, ld(md, MLIMBS), ld(md, MLIMBS + 8), ld(md, MLIMBS + 16), ld(md, MLIMBS + 24))
+}
+
+/// sub for 4 limbs: f - g, plus m when it borrowed (under a mask).
+fn sub4(h: Int, f: Int, g: Int, md: Int) {
+  let f0 = ld(f, 0)
+  let f1 = ld(f, 8)
+  let f2 = ld(f, 16)
+  let f3 = ld(f, 24)
+  let g0 = ld(g, 0)
+  let g1 = ld(g, 8)
+  let g2 = ld(g, 16)
+  let g3 = ld(g, 24)
+  let d0 = rt.int_wrap(1, f0, g0)
+  let b0 = cpu.borrow(f0, g0)
+  let e1 = rt.int_wrap(1, f1, g1)
+  let d1 = rt.int_wrap(1, e1, b0)
+  let b1 = cpu.borrow(f1, g1) | cpu.borrow(e1, b0)
+  let e2 = rt.int_wrap(1, f2, g2)
+  let d2 = rt.int_wrap(1, e2, b1)
+  let b2 = cpu.borrow(f2, g2) | cpu.borrow(e2, b1)
+  let e3 = rt.int_wrap(1, f3, g3)
+  let d3 = rt.int_wrap(1, e3, b2)
+  let b3 = cpu.borrow(f3, g3) | cpu.borrow(e3, b2)
+  let mask = ct.mask_bit(b3)
+  let m0 = ld(md, MLIMBS) & mask
+  let m1 = ld(md, MLIMBS + 8) & mask
+  let m2 = ld(md, MLIMBS + 16) & mask
+  let m3 = ld(md, MLIMBS + 24) & mask
+  let s0 = rt.int_wrap(0, d0, m0)
+  let c0 = cpu.carry(d0, m0)
+  let u1 = rt.int_wrap(0, d1, m1)
+  let s1 = rt.int_wrap(0, u1, c0)
+  let c1 = cpu.carry(d1, m1) | cpu.carry(u1, c0)
+  let u2 = rt.int_wrap(0, d2, m2)
+  let s2 = rt.int_wrap(0, u2, c1)
+  let c2 = cpu.carry(d2, m2) | cpu.carry(u2, c1)
+  let s3 = rt.int_wrap(0, rt.int_wrap(0, d3, m3), c2)
+  st(h, 0, s0)
+  st(h, 8, s1)
+  st(h, 16, s2)
+  st(h, 24, s3)
+}
+
+/// mul for 6 limbs (P-384's field and scalars): CIOS unrolled over
+/// local words, the same result.
+fn mul6(h: Int, f: Int, g: Int, md: Int) {
+  let inv = ld(md, MINV)
+  let f0 = ld(f, 0)
+  let g0 = ld(g, 0)
+  let m0 = ld(md, MLIMBS + 0)
+  let f1 = ld(f, 8)
+  let g1 = ld(g, 8)
+  let m1 = ld(md, MLIMBS + 8)
+  let f2 = ld(f, 16)
+  let g2 = ld(g, 16)
+  let m2 = ld(md, MLIMBS + 16)
+  let f3 = ld(f, 24)
+  let g3 = ld(g, 24)
+  let m3 = ld(md, MLIMBS + 24)
+  let f4 = ld(f, 32)
+  let g4 = ld(g, 32)
+  let m4 = ld(md, MLIMBS + 32)
+  let f5 = ld(f, 40)
+  let g5 = ld(g, 40)
+  let m5 = ld(md, MLIMBS + 40)
+  let lo1 = rt.int_wrap(2, f0, g0)
+  let hi2 = rt.u64_mul_hi(f0, g0)
+  let lo8 = rt.int_wrap(2, f1, g0)
+  let hi9 = rt.u64_mul_hi(f1, g0)
+  let s12 = rt.int_wrap(0, lo8, hi2)
+  let k13 = cpu.carry(lo8, hi2)
+  let c14 = rt.int_wrap(0, hi9, k13)
+  let lo15 = rt.int_wrap(2, f2, g0)
+  let hi16 = rt.u64_mul_hi(f2, g0)
+  let s19 = rt.int_wrap(0, lo15, c14)
+  let k20 = cpu.carry(lo15, c14)
+  let c21 = rt.int_wrap(0, hi16, k20)
+  let lo22 = rt.int_wrap(2, f3, g0)
+  let hi23 = rt.u64_mul_hi(f3, g0)
+  let s26 = rt.int_wrap(0, lo22, c21)
+  let k27 = cpu.carry(lo22, c21)
+  let c28 = rt.int_wrap(0, hi23, k27)
+  let lo29 = rt.int_wrap(2, f4, g0)
+  let hi30 = rt.u64_mul_hi(f4, g0)
+  let s33 = rt.int_wrap(0, lo29, c28)
+  let k34 = cpu.carry(lo29, c28)
+  let c35 = rt.int_wrap(0, hi30, k34)
+  let lo36 = rt.int_wrap(2, f5, g0)
+  let hi37 = rt.u64_mul_hi(f5, g0)
+  let s40 = rt.int_wrap(0, lo36, c35)
+  let k41 = cpu.carry(lo36, c35)
+  let c42 = rt.int_wrap(0, hi37, k41)
+  let q45 = rt.int_wrap(2, lo1, inv)
+  let lo46 = rt.int_wrap(2, q45, m0)
+  let hi47 = rt.u64_mul_hi(q45, m0)
+  let k49 = cpu.carry(lo46, lo1)
+  let c52 = rt.int_wrap(0, hi47, k49)
+  let lo53 = rt.int_wrap(2, q45, m1)
+  let hi54 = rt.u64_mul_hi(q45, m1)
+  let s55 = rt.int_wrap(0, lo53, s12)
+  let k56 = cpu.carry(lo53, s12)
+  let s57 = rt.int_wrap(0, s55, c52)
+  let k58 = cpu.carry(s55, c52)
+  let c59 = rt.int_wrap(0, hi54, rt.int_wrap(0, k56, k58))
+  let lo60 = rt.int_wrap(2, q45, m2)
+  let hi61 = rt.u64_mul_hi(q45, m2)
+  let s62 = rt.int_wrap(0, lo60, s19)
+  let k63 = cpu.carry(lo60, s19)
+  let s64 = rt.int_wrap(0, s62, c59)
+  let k65 = cpu.carry(s62, c59)
+  let c66 = rt.int_wrap(0, hi61, rt.int_wrap(0, k63, k65))
+  let lo67 = rt.int_wrap(2, q45, m3)
+  let hi68 = rt.u64_mul_hi(q45, m3)
+  let s69 = rt.int_wrap(0, lo67, s26)
+  let k70 = cpu.carry(lo67, s26)
+  let s71 = rt.int_wrap(0, s69, c66)
+  let k72 = cpu.carry(s69, c66)
+  let c73 = rt.int_wrap(0, hi68, rt.int_wrap(0, k70, k72))
+  let lo74 = rt.int_wrap(2, q45, m4)
+  let hi75 = rt.u64_mul_hi(q45, m4)
+  let s76 = rt.int_wrap(0, lo74, s33)
+  let k77 = cpu.carry(lo74, s33)
+  let s78 = rt.int_wrap(0, s76, c73)
+  let k79 = cpu.carry(s76, c73)
+  let c80 = rt.int_wrap(0, hi75, rt.int_wrap(0, k77, k79))
+  let lo81 = rt.int_wrap(2, q45, m5)
+  let hi82 = rt.u64_mul_hi(q45, m5)
+  let s83 = rt.int_wrap(0, lo81, s40)
+  let k84 = cpu.carry(lo81, s40)
+  let s85 = rt.int_wrap(0, s83, c80)
+  let k86 = cpu.carry(s83, c80)
+  let c87 = rt.int_wrap(0, hi82, rt.int_wrap(0, k84, k86))
+  let s88 = rt.int_wrap(0, c42, c87)
+  let k89 = cpu.carry(c42, c87)
+  let lo91 = rt.int_wrap(2, f0, g1)
+  let hi92 = rt.u64_mul_hi(f0, g1)
+  let s93 = rt.int_wrap(0, lo91, s57)
+  let k94 = cpu.carry(lo91, s57)
+  let c97 = rt.int_wrap(0, hi92, k94)
+  let lo98 = rt.int_wrap(2, f1, g1)
+  let hi99 = rt.u64_mul_hi(f1, g1)
+  let s100 = rt.int_wrap(0, lo98, s64)
+  let k101 = cpu.carry(lo98, s64)
+  let s102 = rt.int_wrap(0, s100, c97)
+  let k103 = cpu.carry(s100, c97)
+  let c104 = rt.int_wrap(0, hi99, rt.int_wrap(0, k101, k103))
+  let lo105 = rt.int_wrap(2, f2, g1)
+  let hi106 = rt.u64_mul_hi(f2, g1)
+  let s107 = rt.int_wrap(0, lo105, s71)
+  let k108 = cpu.carry(lo105, s71)
+  let s109 = rt.int_wrap(0, s107, c104)
+  let k110 = cpu.carry(s107, c104)
+  let c111 = rt.int_wrap(0, hi106, rt.int_wrap(0, k108, k110))
+  let lo112 = rt.int_wrap(2, f3, g1)
+  let hi113 = rt.u64_mul_hi(f3, g1)
+  let s114 = rt.int_wrap(0, lo112, s78)
+  let k115 = cpu.carry(lo112, s78)
+  let s116 = rt.int_wrap(0, s114, c111)
+  let k117 = cpu.carry(s114, c111)
+  let c118 = rt.int_wrap(0, hi113, rt.int_wrap(0, k115, k117))
+  let lo119 = rt.int_wrap(2, f4, g1)
+  let hi120 = rt.u64_mul_hi(f4, g1)
+  let s121 = rt.int_wrap(0, lo119, s85)
+  let k122 = cpu.carry(lo119, s85)
+  let s123 = rt.int_wrap(0, s121, c118)
+  let k124 = cpu.carry(s121, c118)
+  let c125 = rt.int_wrap(0, hi120, rt.int_wrap(0, k122, k124))
+  let lo126 = rt.int_wrap(2, f5, g1)
+  let hi127 = rt.u64_mul_hi(f5, g1)
+  let s128 = rt.int_wrap(0, lo126, s88)
+  let k129 = cpu.carry(lo126, s88)
+  let s130 = rt.int_wrap(0, s128, c125)
+  let k131 = cpu.carry(s128, c125)
+  let c132 = rt.int_wrap(0, hi127, rt.int_wrap(0, k129, k131))
+  let s133 = rt.int_wrap(0, k89, c132)
+  let k134 = cpu.carry(k89, c132)
+  let q135 = rt.int_wrap(2, s93, inv)
+  let lo136 = rt.int_wrap(2, q135, m0)
+  let hi137 = rt.u64_mul_hi(q135, m0)
+  let k139 = cpu.carry(lo136, s93)
+  let c142 = rt.int_wrap(0, hi137, k139)
+  let lo143 = rt.int_wrap(2, q135, m1)
+  let hi144 = rt.u64_mul_hi(q135, m1)
+  let s145 = rt.int_wrap(0, lo143, s102)
+  let k146 = cpu.carry(lo143, s102)
+  let s147 = rt.int_wrap(0, s145, c142)
+  let k148 = cpu.carry(s145, c142)
+  let c149 = rt.int_wrap(0, hi144, rt.int_wrap(0, k146, k148))
+  let lo150 = rt.int_wrap(2, q135, m2)
+  let hi151 = rt.u64_mul_hi(q135, m2)
+  let s152 = rt.int_wrap(0, lo150, s109)
+  let k153 = cpu.carry(lo150, s109)
+  let s154 = rt.int_wrap(0, s152, c149)
+  let k155 = cpu.carry(s152, c149)
+  let c156 = rt.int_wrap(0, hi151, rt.int_wrap(0, k153, k155))
+  let lo157 = rt.int_wrap(2, q135, m3)
+  let hi158 = rt.u64_mul_hi(q135, m3)
+  let s159 = rt.int_wrap(0, lo157, s116)
+  let k160 = cpu.carry(lo157, s116)
+  let s161 = rt.int_wrap(0, s159, c156)
+  let k162 = cpu.carry(s159, c156)
+  let c163 = rt.int_wrap(0, hi158, rt.int_wrap(0, k160, k162))
+  let lo164 = rt.int_wrap(2, q135, m4)
+  let hi165 = rt.u64_mul_hi(q135, m4)
+  let s166 = rt.int_wrap(0, lo164, s123)
+  let k167 = cpu.carry(lo164, s123)
+  let s168 = rt.int_wrap(0, s166, c163)
+  let k169 = cpu.carry(s166, c163)
+  let c170 = rt.int_wrap(0, hi165, rt.int_wrap(0, k167, k169))
+  let lo171 = rt.int_wrap(2, q135, m5)
+  let hi172 = rt.u64_mul_hi(q135, m5)
+  let s173 = rt.int_wrap(0, lo171, s130)
+  let k174 = cpu.carry(lo171, s130)
+  let s175 = rt.int_wrap(0, s173, c170)
+  let k176 = cpu.carry(s173, c170)
+  let c177 = rt.int_wrap(0, hi172, rt.int_wrap(0, k174, k176))
+  let s178 = rt.int_wrap(0, s133, c177)
+  let k179 = cpu.carry(s133, c177)
+  let t180 = rt.int_wrap(0, k134, k179)
+  let lo181 = rt.int_wrap(2, f0, g2)
+  let hi182 = rt.u64_mul_hi(f0, g2)
+  let s183 = rt.int_wrap(0, lo181, s147)
+  let k184 = cpu.carry(lo181, s147)
+  let c187 = rt.int_wrap(0, hi182, k184)
+  let lo188 = rt.int_wrap(2, f1, g2)
+  let hi189 = rt.u64_mul_hi(f1, g2)
+  let s190 = rt.int_wrap(0, lo188, s154)
+  let k191 = cpu.carry(lo188, s154)
+  let s192 = rt.int_wrap(0, s190, c187)
+  let k193 = cpu.carry(s190, c187)
+  let c194 = rt.int_wrap(0, hi189, rt.int_wrap(0, k191, k193))
+  let lo195 = rt.int_wrap(2, f2, g2)
+  let hi196 = rt.u64_mul_hi(f2, g2)
+  let s197 = rt.int_wrap(0, lo195, s161)
+  let k198 = cpu.carry(lo195, s161)
+  let s199 = rt.int_wrap(0, s197, c194)
+  let k200 = cpu.carry(s197, c194)
+  let c201 = rt.int_wrap(0, hi196, rt.int_wrap(0, k198, k200))
+  let lo202 = rt.int_wrap(2, f3, g2)
+  let hi203 = rt.u64_mul_hi(f3, g2)
+  let s204 = rt.int_wrap(0, lo202, s168)
+  let k205 = cpu.carry(lo202, s168)
+  let s206 = rt.int_wrap(0, s204, c201)
+  let k207 = cpu.carry(s204, c201)
+  let c208 = rt.int_wrap(0, hi203, rt.int_wrap(0, k205, k207))
+  let lo209 = rt.int_wrap(2, f4, g2)
+  let hi210 = rt.u64_mul_hi(f4, g2)
+  let s211 = rt.int_wrap(0, lo209, s175)
+  let k212 = cpu.carry(lo209, s175)
+  let s213 = rt.int_wrap(0, s211, c208)
+  let k214 = cpu.carry(s211, c208)
+  let c215 = rt.int_wrap(0, hi210, rt.int_wrap(0, k212, k214))
+  let lo216 = rt.int_wrap(2, f5, g2)
+  let hi217 = rt.u64_mul_hi(f5, g2)
+  let s218 = rt.int_wrap(0, lo216, s178)
+  let k219 = cpu.carry(lo216, s178)
+  let s220 = rt.int_wrap(0, s218, c215)
+  let k221 = cpu.carry(s218, c215)
+  let c222 = rt.int_wrap(0, hi217, rt.int_wrap(0, k219, k221))
+  let s223 = rt.int_wrap(0, t180, c222)
+  let k224 = cpu.carry(t180, c222)
+  let q225 = rt.int_wrap(2, s183, inv)
+  let lo226 = rt.int_wrap(2, q225, m0)
+  let hi227 = rt.u64_mul_hi(q225, m0)
+  let k229 = cpu.carry(lo226, s183)
+  let c232 = rt.int_wrap(0, hi227, k229)
+  let lo233 = rt.int_wrap(2, q225, m1)
+  let hi234 = rt.u64_mul_hi(q225, m1)
+  let s235 = rt.int_wrap(0, lo233, s192)
+  let k236 = cpu.carry(lo233, s192)
+  let s237 = rt.int_wrap(0, s235, c232)
+  let k238 = cpu.carry(s235, c232)
+  let c239 = rt.int_wrap(0, hi234, rt.int_wrap(0, k236, k238))
+  let lo240 = rt.int_wrap(2, q225, m2)
+  let hi241 = rt.u64_mul_hi(q225, m2)
+  let s242 = rt.int_wrap(0, lo240, s199)
+  let k243 = cpu.carry(lo240, s199)
+  let s244 = rt.int_wrap(0, s242, c239)
+  let k245 = cpu.carry(s242, c239)
+  let c246 = rt.int_wrap(0, hi241, rt.int_wrap(0, k243, k245))
+  let lo247 = rt.int_wrap(2, q225, m3)
+  let hi248 = rt.u64_mul_hi(q225, m3)
+  let s249 = rt.int_wrap(0, lo247, s206)
+  let k250 = cpu.carry(lo247, s206)
+  let s251 = rt.int_wrap(0, s249, c246)
+  let k252 = cpu.carry(s249, c246)
+  let c253 = rt.int_wrap(0, hi248, rt.int_wrap(0, k250, k252))
+  let lo254 = rt.int_wrap(2, q225, m4)
+  let hi255 = rt.u64_mul_hi(q225, m4)
+  let s256 = rt.int_wrap(0, lo254, s213)
+  let k257 = cpu.carry(lo254, s213)
+  let s258 = rt.int_wrap(0, s256, c253)
+  let k259 = cpu.carry(s256, c253)
+  let c260 = rt.int_wrap(0, hi255, rt.int_wrap(0, k257, k259))
+  let lo261 = rt.int_wrap(2, q225, m5)
+  let hi262 = rt.u64_mul_hi(q225, m5)
+  let s263 = rt.int_wrap(0, lo261, s220)
+  let k264 = cpu.carry(lo261, s220)
+  let s265 = rt.int_wrap(0, s263, c260)
+  let k266 = cpu.carry(s263, c260)
+  let c267 = rt.int_wrap(0, hi262, rt.int_wrap(0, k264, k266))
+  let s268 = rt.int_wrap(0, s223, c267)
+  let k269 = cpu.carry(s223, c267)
+  let t270 = rt.int_wrap(0, k224, k269)
+  let lo271 = rt.int_wrap(2, f0, g3)
+  let hi272 = rt.u64_mul_hi(f0, g3)
+  let s273 = rt.int_wrap(0, lo271, s237)
+  let k274 = cpu.carry(lo271, s237)
+  let c277 = rt.int_wrap(0, hi272, k274)
+  let lo278 = rt.int_wrap(2, f1, g3)
+  let hi279 = rt.u64_mul_hi(f1, g3)
+  let s280 = rt.int_wrap(0, lo278, s244)
+  let k281 = cpu.carry(lo278, s244)
+  let s282 = rt.int_wrap(0, s280, c277)
+  let k283 = cpu.carry(s280, c277)
+  let c284 = rt.int_wrap(0, hi279, rt.int_wrap(0, k281, k283))
+  let lo285 = rt.int_wrap(2, f2, g3)
+  let hi286 = rt.u64_mul_hi(f2, g3)
+  let s287 = rt.int_wrap(0, lo285, s251)
+  let k288 = cpu.carry(lo285, s251)
+  let s289 = rt.int_wrap(0, s287, c284)
+  let k290 = cpu.carry(s287, c284)
+  let c291 = rt.int_wrap(0, hi286, rt.int_wrap(0, k288, k290))
+  let lo292 = rt.int_wrap(2, f3, g3)
+  let hi293 = rt.u64_mul_hi(f3, g3)
+  let s294 = rt.int_wrap(0, lo292, s258)
+  let k295 = cpu.carry(lo292, s258)
+  let s296 = rt.int_wrap(0, s294, c291)
+  let k297 = cpu.carry(s294, c291)
+  let c298 = rt.int_wrap(0, hi293, rt.int_wrap(0, k295, k297))
+  let lo299 = rt.int_wrap(2, f4, g3)
+  let hi300 = rt.u64_mul_hi(f4, g3)
+  let s301 = rt.int_wrap(0, lo299, s265)
+  let k302 = cpu.carry(lo299, s265)
+  let s303 = rt.int_wrap(0, s301, c298)
+  let k304 = cpu.carry(s301, c298)
+  let c305 = rt.int_wrap(0, hi300, rt.int_wrap(0, k302, k304))
+  let lo306 = rt.int_wrap(2, f5, g3)
+  let hi307 = rt.u64_mul_hi(f5, g3)
+  let s308 = rt.int_wrap(0, lo306, s268)
+  let k309 = cpu.carry(lo306, s268)
+  let s310 = rt.int_wrap(0, s308, c305)
+  let k311 = cpu.carry(s308, c305)
+  let c312 = rt.int_wrap(0, hi307, rt.int_wrap(0, k309, k311))
+  let s313 = rt.int_wrap(0, t270, c312)
+  let k314 = cpu.carry(t270, c312)
+  let q315 = rt.int_wrap(2, s273, inv)
+  let lo316 = rt.int_wrap(2, q315, m0)
+  let hi317 = rt.u64_mul_hi(q315, m0)
+  let k319 = cpu.carry(lo316, s273)
+  let c322 = rt.int_wrap(0, hi317, k319)
+  let lo323 = rt.int_wrap(2, q315, m1)
+  let hi324 = rt.u64_mul_hi(q315, m1)
+  let s325 = rt.int_wrap(0, lo323, s282)
+  let k326 = cpu.carry(lo323, s282)
+  let s327 = rt.int_wrap(0, s325, c322)
+  let k328 = cpu.carry(s325, c322)
+  let c329 = rt.int_wrap(0, hi324, rt.int_wrap(0, k326, k328))
+  let lo330 = rt.int_wrap(2, q315, m2)
+  let hi331 = rt.u64_mul_hi(q315, m2)
+  let s332 = rt.int_wrap(0, lo330, s289)
+  let k333 = cpu.carry(lo330, s289)
+  let s334 = rt.int_wrap(0, s332, c329)
+  let k335 = cpu.carry(s332, c329)
+  let c336 = rt.int_wrap(0, hi331, rt.int_wrap(0, k333, k335))
+  let lo337 = rt.int_wrap(2, q315, m3)
+  let hi338 = rt.u64_mul_hi(q315, m3)
+  let s339 = rt.int_wrap(0, lo337, s296)
+  let k340 = cpu.carry(lo337, s296)
+  let s341 = rt.int_wrap(0, s339, c336)
+  let k342 = cpu.carry(s339, c336)
+  let c343 = rt.int_wrap(0, hi338, rt.int_wrap(0, k340, k342))
+  let lo344 = rt.int_wrap(2, q315, m4)
+  let hi345 = rt.u64_mul_hi(q315, m4)
+  let s346 = rt.int_wrap(0, lo344, s303)
+  let k347 = cpu.carry(lo344, s303)
+  let s348 = rt.int_wrap(0, s346, c343)
+  let k349 = cpu.carry(s346, c343)
+  let c350 = rt.int_wrap(0, hi345, rt.int_wrap(0, k347, k349))
+  let lo351 = rt.int_wrap(2, q315, m5)
+  let hi352 = rt.u64_mul_hi(q315, m5)
+  let s353 = rt.int_wrap(0, lo351, s310)
+  let k354 = cpu.carry(lo351, s310)
+  let s355 = rt.int_wrap(0, s353, c350)
+  let k356 = cpu.carry(s353, c350)
+  let c357 = rt.int_wrap(0, hi352, rt.int_wrap(0, k354, k356))
+  let s358 = rt.int_wrap(0, s313, c357)
+  let k359 = cpu.carry(s313, c357)
+  let t360 = rt.int_wrap(0, k314, k359)
+  let lo361 = rt.int_wrap(2, f0, g4)
+  let hi362 = rt.u64_mul_hi(f0, g4)
+  let s363 = rt.int_wrap(0, lo361, s327)
+  let k364 = cpu.carry(lo361, s327)
+  let c367 = rt.int_wrap(0, hi362, k364)
+  let lo368 = rt.int_wrap(2, f1, g4)
+  let hi369 = rt.u64_mul_hi(f1, g4)
+  let s370 = rt.int_wrap(0, lo368, s334)
+  let k371 = cpu.carry(lo368, s334)
+  let s372 = rt.int_wrap(0, s370, c367)
+  let k373 = cpu.carry(s370, c367)
+  let c374 = rt.int_wrap(0, hi369, rt.int_wrap(0, k371, k373))
+  let lo375 = rt.int_wrap(2, f2, g4)
+  let hi376 = rt.u64_mul_hi(f2, g4)
+  let s377 = rt.int_wrap(0, lo375, s341)
+  let k378 = cpu.carry(lo375, s341)
+  let s379 = rt.int_wrap(0, s377, c374)
+  let k380 = cpu.carry(s377, c374)
+  let c381 = rt.int_wrap(0, hi376, rt.int_wrap(0, k378, k380))
+  let lo382 = rt.int_wrap(2, f3, g4)
+  let hi383 = rt.u64_mul_hi(f3, g4)
+  let s384 = rt.int_wrap(0, lo382, s348)
+  let k385 = cpu.carry(lo382, s348)
+  let s386 = rt.int_wrap(0, s384, c381)
+  let k387 = cpu.carry(s384, c381)
+  let c388 = rt.int_wrap(0, hi383, rt.int_wrap(0, k385, k387))
+  let lo389 = rt.int_wrap(2, f4, g4)
+  let hi390 = rt.u64_mul_hi(f4, g4)
+  let s391 = rt.int_wrap(0, lo389, s355)
+  let k392 = cpu.carry(lo389, s355)
+  let s393 = rt.int_wrap(0, s391, c388)
+  let k394 = cpu.carry(s391, c388)
+  let c395 = rt.int_wrap(0, hi390, rt.int_wrap(0, k392, k394))
+  let lo396 = rt.int_wrap(2, f5, g4)
+  let hi397 = rt.u64_mul_hi(f5, g4)
+  let s398 = rt.int_wrap(0, lo396, s358)
+  let k399 = cpu.carry(lo396, s358)
+  let s400 = rt.int_wrap(0, s398, c395)
+  let k401 = cpu.carry(s398, c395)
+  let c402 = rt.int_wrap(0, hi397, rt.int_wrap(0, k399, k401))
+  let s403 = rt.int_wrap(0, t360, c402)
+  let k404 = cpu.carry(t360, c402)
+  let q405 = rt.int_wrap(2, s363, inv)
+  let lo406 = rt.int_wrap(2, q405, m0)
+  let hi407 = rt.u64_mul_hi(q405, m0)
+  let k409 = cpu.carry(lo406, s363)
+  let c412 = rt.int_wrap(0, hi407, k409)
+  let lo413 = rt.int_wrap(2, q405, m1)
+  let hi414 = rt.u64_mul_hi(q405, m1)
+  let s415 = rt.int_wrap(0, lo413, s372)
+  let k416 = cpu.carry(lo413, s372)
+  let s417 = rt.int_wrap(0, s415, c412)
+  let k418 = cpu.carry(s415, c412)
+  let c419 = rt.int_wrap(0, hi414, rt.int_wrap(0, k416, k418))
+  let lo420 = rt.int_wrap(2, q405, m2)
+  let hi421 = rt.u64_mul_hi(q405, m2)
+  let s422 = rt.int_wrap(0, lo420, s379)
+  let k423 = cpu.carry(lo420, s379)
+  let s424 = rt.int_wrap(0, s422, c419)
+  let k425 = cpu.carry(s422, c419)
+  let c426 = rt.int_wrap(0, hi421, rt.int_wrap(0, k423, k425))
+  let lo427 = rt.int_wrap(2, q405, m3)
+  let hi428 = rt.u64_mul_hi(q405, m3)
+  let s429 = rt.int_wrap(0, lo427, s386)
+  let k430 = cpu.carry(lo427, s386)
+  let s431 = rt.int_wrap(0, s429, c426)
+  let k432 = cpu.carry(s429, c426)
+  let c433 = rt.int_wrap(0, hi428, rt.int_wrap(0, k430, k432))
+  let lo434 = rt.int_wrap(2, q405, m4)
+  let hi435 = rt.u64_mul_hi(q405, m4)
+  let s436 = rt.int_wrap(0, lo434, s393)
+  let k437 = cpu.carry(lo434, s393)
+  let s438 = rt.int_wrap(0, s436, c433)
+  let k439 = cpu.carry(s436, c433)
+  let c440 = rt.int_wrap(0, hi435, rt.int_wrap(0, k437, k439))
+  let lo441 = rt.int_wrap(2, q405, m5)
+  let hi442 = rt.u64_mul_hi(q405, m5)
+  let s443 = rt.int_wrap(0, lo441, s400)
+  let k444 = cpu.carry(lo441, s400)
+  let s445 = rt.int_wrap(0, s443, c440)
+  let k446 = cpu.carry(s443, c440)
+  let c447 = rt.int_wrap(0, hi442, rt.int_wrap(0, k444, k446))
+  let s448 = rt.int_wrap(0, s403, c447)
+  let k449 = cpu.carry(s403, c447)
+  let t450 = rt.int_wrap(0, k404, k449)
+  let lo451 = rt.int_wrap(2, f0, g5)
+  let hi452 = rt.u64_mul_hi(f0, g5)
+  let s453 = rt.int_wrap(0, lo451, s417)
+  let k454 = cpu.carry(lo451, s417)
+  let c457 = rt.int_wrap(0, hi452, k454)
+  let lo458 = rt.int_wrap(2, f1, g5)
+  let hi459 = rt.u64_mul_hi(f1, g5)
+  let s460 = rt.int_wrap(0, lo458, s424)
+  let k461 = cpu.carry(lo458, s424)
+  let s462 = rt.int_wrap(0, s460, c457)
+  let k463 = cpu.carry(s460, c457)
+  let c464 = rt.int_wrap(0, hi459, rt.int_wrap(0, k461, k463))
+  let lo465 = rt.int_wrap(2, f2, g5)
+  let hi466 = rt.u64_mul_hi(f2, g5)
+  let s467 = rt.int_wrap(0, lo465, s431)
+  let k468 = cpu.carry(lo465, s431)
+  let s469 = rt.int_wrap(0, s467, c464)
+  let k470 = cpu.carry(s467, c464)
+  let c471 = rt.int_wrap(0, hi466, rt.int_wrap(0, k468, k470))
+  let lo472 = rt.int_wrap(2, f3, g5)
+  let hi473 = rt.u64_mul_hi(f3, g5)
+  let s474 = rt.int_wrap(0, lo472, s438)
+  let k475 = cpu.carry(lo472, s438)
+  let s476 = rt.int_wrap(0, s474, c471)
+  let k477 = cpu.carry(s474, c471)
+  let c478 = rt.int_wrap(0, hi473, rt.int_wrap(0, k475, k477))
+  let lo479 = rt.int_wrap(2, f4, g5)
+  let hi480 = rt.u64_mul_hi(f4, g5)
+  let s481 = rt.int_wrap(0, lo479, s445)
+  let k482 = cpu.carry(lo479, s445)
+  let s483 = rt.int_wrap(0, s481, c478)
+  let k484 = cpu.carry(s481, c478)
+  let c485 = rt.int_wrap(0, hi480, rt.int_wrap(0, k482, k484))
+  let lo486 = rt.int_wrap(2, f5, g5)
+  let hi487 = rt.u64_mul_hi(f5, g5)
+  let s488 = rt.int_wrap(0, lo486, s448)
+  let k489 = cpu.carry(lo486, s448)
+  let s490 = rt.int_wrap(0, s488, c485)
+  let k491 = cpu.carry(s488, c485)
+  let c492 = rt.int_wrap(0, hi487, rt.int_wrap(0, k489, k491))
+  let s493 = rt.int_wrap(0, t450, c492)
+  let k494 = cpu.carry(t450, c492)
+  let q495 = rt.int_wrap(2, s453, inv)
+  let lo496 = rt.int_wrap(2, q495, m0)
+  let hi497 = rt.u64_mul_hi(q495, m0)
+  let k499 = cpu.carry(lo496, s453)
+  let c502 = rt.int_wrap(0, hi497, k499)
+  let lo503 = rt.int_wrap(2, q495, m1)
+  let hi504 = rt.u64_mul_hi(q495, m1)
+  let s505 = rt.int_wrap(0, lo503, s462)
+  let k506 = cpu.carry(lo503, s462)
+  let s507 = rt.int_wrap(0, s505, c502)
+  let k508 = cpu.carry(s505, c502)
+  let c509 = rt.int_wrap(0, hi504, rt.int_wrap(0, k506, k508))
+  let lo510 = rt.int_wrap(2, q495, m2)
+  let hi511 = rt.u64_mul_hi(q495, m2)
+  let s512 = rt.int_wrap(0, lo510, s469)
+  let k513 = cpu.carry(lo510, s469)
+  let s514 = rt.int_wrap(0, s512, c509)
+  let k515 = cpu.carry(s512, c509)
+  let c516 = rt.int_wrap(0, hi511, rt.int_wrap(0, k513, k515))
+  let lo517 = rt.int_wrap(2, q495, m3)
+  let hi518 = rt.u64_mul_hi(q495, m3)
+  let s519 = rt.int_wrap(0, lo517, s476)
+  let k520 = cpu.carry(lo517, s476)
+  let s521 = rt.int_wrap(0, s519, c516)
+  let k522 = cpu.carry(s519, c516)
+  let c523 = rt.int_wrap(0, hi518, rt.int_wrap(0, k520, k522))
+  let lo524 = rt.int_wrap(2, q495, m4)
+  let hi525 = rt.u64_mul_hi(q495, m4)
+  let s526 = rt.int_wrap(0, lo524, s483)
+  let k527 = cpu.carry(lo524, s483)
+  let s528 = rt.int_wrap(0, s526, c523)
+  let k529 = cpu.carry(s526, c523)
+  let c530 = rt.int_wrap(0, hi525, rt.int_wrap(0, k527, k529))
+  let lo531 = rt.int_wrap(2, q495, m5)
+  let hi532 = rt.u64_mul_hi(q495, m5)
+  let s533 = rt.int_wrap(0, lo531, s490)
+  let k534 = cpu.carry(lo531, s490)
+  let s535 = rt.int_wrap(0, s533, c530)
+  let k536 = cpu.carry(s533, c530)
+  let c537 = rt.int_wrap(0, hi532, rt.int_wrap(0, k534, k536))
+  let s538 = rt.int_wrap(0, s493, c537)
+  let k539 = cpu.carry(s493, c537)
+  let t540 = rt.int_wrap(0, k494, k539)
+  sub_m6(h, s507, s514, s521, s528, s535, s538, t540, m0, m1, m2, m3, m4, m5)
+}
+
+/// h = t - m when t + top 2^384 >= m, else t (6 limbs, top 0 or 1).
+fn sub_m6(h: Int, t0: Int, t1: Int, t2: Int, t3: Int, t4: Int, t5: Int, top: Int, m0: Int, m1: Int, m2: Int, m3: Int, m4: Int, m5: Int) {
+  let d0 = rt.int_wrap(1, t0, m0)
+  let b0 = cpu.borrow(t0, m0)
+  let e1 = rt.int_wrap(1, t1, m1)
+  let d1 = rt.int_wrap(1, e1, b0)
+  let b1 = cpu.borrow(t1, m1) | cpu.borrow(e1, b0)
+  let e2 = rt.int_wrap(1, t2, m2)
+  let d2 = rt.int_wrap(1, e2, b1)
+  let b2 = cpu.borrow(t2, m2) | cpu.borrow(e2, b1)
+  let e3 = rt.int_wrap(1, t3, m3)
+  let d3 = rt.int_wrap(1, e3, b2)
+  let b3 = cpu.borrow(t3, m3) | cpu.borrow(e3, b2)
+  let e4 = rt.int_wrap(1, t4, m4)
+  let d4 = rt.int_wrap(1, e4, b3)
+  let b4 = cpu.borrow(t4, m4) | cpu.borrow(e4, b3)
+  let e5 = rt.int_wrap(1, t5, m5)
+  let d5 = rt.int_wrap(1, e5, b4)
+  let b5 = cpu.borrow(t5, m5) | cpu.borrow(e5, b4)
+  let keep = ct.mask_bit(b5 & (top ^ 1))
+  st(h, 0, ct.pick(keep, t0, d0))
+  st(h, 8, ct.pick(keep, t1, d1))
+  st(h, 16, ct.pick(keep, t2, d2))
+  st(h, 24, ct.pick(keep, t3, d3))
+  st(h, 32, ct.pick(keep, t4, d4))
+  st(h, 40, ct.pick(keep, t5, d5))
+}
+
+/// add for 6 limbs.
+fn add6(h: Int, f: Int, g: Int, md: Int) {
+  let f0 = ld(f, 0)
+  let g0 = ld(g, 0)
+  let f1 = ld(f, 8)
+  let g1 = ld(g, 8)
+  let f2 = ld(f, 16)
+  let g2 = ld(g, 16)
+  let f3 = ld(f, 24)
+  let g3 = ld(g, 24)
+  let f4 = ld(f, 32)
+  let g4 = ld(g, 32)
+  let f5 = ld(f, 40)
+  let g5 = ld(g, 40)
+  let s0 = rt.int_wrap(0, f0, g0)
+  let c0 = cpu.carry(f0, g0)
+  let u1 = rt.int_wrap(0, f1, g1)
+  let s1 = rt.int_wrap(0, u1, c0)
+  let c1 = cpu.carry(f1, g1) | cpu.carry(u1, c0)
+  let u2 = rt.int_wrap(0, f2, g2)
+  let s2 = rt.int_wrap(0, u2, c1)
+  let c2 = cpu.carry(f2, g2) | cpu.carry(u2, c1)
+  let u3 = rt.int_wrap(0, f3, g3)
+  let s3 = rt.int_wrap(0, u3, c2)
+  let c3 = cpu.carry(f3, g3) | cpu.carry(u3, c2)
+  let u4 = rt.int_wrap(0, f4, g4)
+  let s4 = rt.int_wrap(0, u4, c3)
+  let c4 = cpu.carry(f4, g4) | cpu.carry(u4, c3)
+  let u5 = rt.int_wrap(0, f5, g5)
+  let s5 = rt.int_wrap(0, u5, c4)
+  let c5 = cpu.carry(f5, g5) | cpu.carry(u5, c4)
+  sub_m6(h, s0, s1, s2, s3, s4, s5, c5, ld(md, MLIMBS + 0), ld(md, MLIMBS + 8), ld(md, MLIMBS + 16), ld(md, MLIMBS + 24), ld(md, MLIMBS + 32), ld(md, MLIMBS + 40))
+}
+
+/// sub for 6 limbs: f - g, plus m when it borrowed (under a mask).
+fn sub6(h: Int, f: Int, g: Int, md: Int) {
+  let f0 = ld(f, 0)
+  let g0 = ld(g, 0)
+  let f1 = ld(f, 8)
+  let g1 = ld(g, 8)
+  let f2 = ld(f, 16)
+  let g2 = ld(g, 16)
+  let f3 = ld(f, 24)
+  let g3 = ld(g, 24)
+  let f4 = ld(f, 32)
+  let g4 = ld(g, 32)
+  let f5 = ld(f, 40)
+  let g5 = ld(g, 40)
+  let d0 = rt.int_wrap(1, f0, g0)
+  let b0 = cpu.borrow(f0, g0)
+  let e1 = rt.int_wrap(1, f1, g1)
+  let d1 = rt.int_wrap(1, e1, b0)
+  let b1 = cpu.borrow(f1, g1) | cpu.borrow(e1, b0)
+  let e2 = rt.int_wrap(1, f2, g2)
+  let d2 = rt.int_wrap(1, e2, b1)
+  let b2 = cpu.borrow(f2, g2) | cpu.borrow(e2, b1)
+  let e3 = rt.int_wrap(1, f3, g3)
+  let d3 = rt.int_wrap(1, e3, b2)
+  let b3 = cpu.borrow(f3, g3) | cpu.borrow(e3, b2)
+  let e4 = rt.int_wrap(1, f4, g4)
+  let d4 = rt.int_wrap(1, e4, b3)
+  let b4 = cpu.borrow(f4, g4) | cpu.borrow(e4, b3)
+  let e5 = rt.int_wrap(1, f5, g5)
+  let d5 = rt.int_wrap(1, e5, b4)
+  let b5 = cpu.borrow(f5, g5) | cpu.borrow(e5, b4)
+  let mask = ct.mask_bit(b5)
+  let m0 = ld(md, MLIMBS + 0) & mask
+  let m1 = ld(md, MLIMBS + 8) & mask
+  let m2 = ld(md, MLIMBS + 16) & mask
+  let m3 = ld(md, MLIMBS + 24) & mask
+  let m4 = ld(md, MLIMBS + 32) & mask
+  let m5 = ld(md, MLIMBS + 40) & mask
+  let s0 = rt.int_wrap(0, d0, m0)
+  let c0 = cpu.carry(d0, m0)
+  let u1 = rt.int_wrap(0, d1, m1)
+  let s1 = rt.int_wrap(0, u1, c0)
+  let c1 = cpu.carry(d1, m1) | cpu.carry(u1, c0)
+  let u2 = rt.int_wrap(0, d2, m2)
+  let s2 = rt.int_wrap(0, u2, c1)
+  let c2 = cpu.carry(d2, m2) | cpu.carry(u2, c1)
+  let u3 = rt.int_wrap(0, d3, m3)
+  let s3 = rt.int_wrap(0, u3, c2)
+  let c3 = cpu.carry(d3, m3) | cpu.carry(u3, c2)
+  let u4 = rt.int_wrap(0, d4, m4)
+  let s4 = rt.int_wrap(0, u4, c3)
+  let c4 = cpu.carry(d4, m4) | cpu.carry(u4, c3)
+  let s5 = rt.int_wrap(0, rt.int_wrap(0, d5, m5), c4)
+  st(h, 0, s0)
+  st(h, 8, s1)
+  st(h, 16, s2)
+  st(h, 24, s3)
+  st(h, 32, s4)
+  st(h, 40, s5)
+}
+
+/// h = f + g mod m.
+fn add(c: Int, h: Int, f: Int, g: Int, md: Int) {
+  let n = limbs(c)
+  if n == 4 {
+    add4(h, f, g, md)
+    return
+  }
+  if n == 6 {
+    add6(h, f, g, md)
+    return
+  }
+  let t = at(c, TMPW)
+  var cy = 0
+  var i = 0
+  while i < n {
+    cy = adc(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), cy)
+    i += 1
+  }
+  final_sub(c, h, t, md, cy)
+}
+
+/// h = f - g mod m.
+fn sub(c: Int, h: Int, f: Int, g: Int, md: Int) {
+  let n = limbs(c)
+  if n == 4 {
+    sub4(h, f, g, md)
+    return
+  }
+  if n == 6 {
+    sub6(h, f, g, md)
+    return
+  }
+  let t = at(c, TMPW)
+  var b = 0
+  var i = 0
+  while i < n {
+    b = sbb(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), b)
+    i += 1
+  }
+  let mask = ct.mask_bit(b)
+  var cy = 0
+  i = 0
+  while i < n {
+    cy = adc(h, 8 * i, ld(t, 8 * i), ld(md, MLIMBS + 8 * i) & mask, cy)
+    i += 1
+  }
+}
+
+/// h = f^e (Montgomery), e the address of L words, a public exponent:
+/// a fixed window of 4 bits from the top over a table of f^1 to f^15,
+/// the same steps for every f (the window's digits are the public
+/// exponent's).
+fn pow(c: Int, h: Int, f: Int, e: Int, md: Int) {
+  let n = limbs(c)
+  let tab = at(c, POWT)
+  copy(c, tab, f)
+  var i = 1
+  while i < 15 {
+    mul(c, at(tab, ES * i), at(tab, ES * (i - 1)), f, md)
+    i += 1
+  }
+  let acc = at(c, PW)
+  copy(c, acc, at(md, MONE))
+  var started = false
+  var w = 16 * n - 1
+  while w >= 0 {
+    if started {
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
+      mul(c, acc, acc, acc, md)
+    }
+    let d = rt.int_wrap(4, ld(e, 8 * (w / 16)), 4 * (w % 16)) & 15
+    if d != 0 {
+      if started {
+        mul(c, acc, acc, at(tab, ES * (d - 1)), md)
+      } else {
+        copy(c, acc, at(tab, ES * (d - 1)))
+        started = true
+      }
+    }
+    w -= 1
+  }
+  copy(c, h, acc)
+}
+
+/// k squarings of z in place.
+fn sqn(c: Int, z: Int, k: Int, md: Int) {
+  var i = 0
+  while i < k {
+    mul(c, z, z, z, md)
+    i += 1
+  }
+}
+
+/// h = 1/f in P-256's field: f^(p-2) by Go's addition chain (p256Invert,
+/// from mmcloughlin/addchain: 255 squarings and 12 multiplications).
+fn inv_p256(c: Int, h: Int, f: Int) {
+  let mp = at(c, MP)
+  let t = at(c, POWT)
+  let x11 = t
+  let x111 = at(t, ES)
+  let x111111 = at(t, 2 * ES)
+  let x15 = at(t, 3 * ES)
+  let x16 = at(t, 4 * ES)
+  let x47 = at(t, 5 * ES)
+  let z = at(t, 6 * ES)
+  let u = at(t, 7 * ES)
+  // _11 = f^3, _111 = f^7
+  mul(c, x11, f, f, mp)
+  mul(c, x11, x11, f, mp)
+  mul(c, x111, x11, x11, mp)
+  mul(c, x111, x111, f, mp)
+  // _111111 = _111 << 3 + _111
+  copy(c, u, x111)
+  sqn(c, u, 3, mp)
+  mul(c, x111111, x111, u, mp)
+  // x12 = _111111 << 6 + _111111; x15 = x12 << 3 + _111
+  copy(c, u, x111111)
+  sqn(c, u, 6, mp)
+  mul(c, u, u, x111111, mp)
+  sqn(c, u, 3, mp)
+  mul(c, x15, u, x111, mp)
+  // x16 = 2 x15 + 1; x32 = x16 << 16 + x16
+  mul(c, x16, x15, x15, mp)
+  mul(c, x16, x16, f, mp)
+  copy(c, u, x16)
+  sqn(c, u, 16, mp)
+  mul(c, u, u, x16, mp)
+  // i53 = x32 << 15; x47 = x15 + i53
+  sqn(c, u, 15, mp)
+  mul(c, x47, x15, u, mp)
+  // ((i53 << 17 + 1) << 143 + x47) << 47, then (x47 + that) << 2 + 1
+  copy(c, z, u)
+  sqn(c, z, 17, mp)
+  mul(c, z, z, f, mp)
+  sqn(c, z, 143, mp)
+  mul(c, z, z, x47, mp)
+  sqn(c, z, 47, mp)
+  mul(c, z, z, x47, mp)
+  sqn(c, z, 2, mp)
+  mul(c, h, z, f, mp)
+}
+
+/// h = 1/f (Montgomery; 0 for 0).
+fn inv(c: Int, h: Int, f: Int, md: Int) {
+  if csize(c) == 32 && md == at(c, MP) {
+    inv_p256(c, h, f)
+    return
+  }
+  pow(c, h, f, at(md, ME2), md)
+}
+
+fn copy(c: Int, h: Int, f: Int) { rt.mem_copy(h, f, 8 * limbs(c)) }
+
+fn set_zero(c: Int, h: Int) { rt.mem_set(h, 0, 8 * limbs(c)) }
+
+/// Whether f is 0 (a mask).
+fn is_zero(c: Int, f: Int) -> Int {
+  let n = limbs(c)
+  var x = 0
+  var i = 0
+  while i < n {
+    x = x | ld(f, 8 * i)
+    i += 1
+  }
+  ~ct.mask_nonzero(x)
+}
+
+/// Whether f < m (a mask).
+fn below(c: Int, f: Int, md: Int) -> Int {
+  let n = limbs(c)
+  let d = at(c, DIFF)
+  var b = 0
+  var i = 0
+  while i < n {
+    b = sbb(d, 8 * i, ld(f, 8 * i), ld(md, MLIMBS + 8 * i), b)
+    i += 1
+  }
+  ct.mask_bit(b)
+}
+
+/// Whether f and g are equal (public values).
+fn same(c: Int, f: Int, g: Int) -> Bool { raw.mem_eq(f, g, 8 * limbs(c)) }
+
+fn to_mont(c: Int, h: Int, f: Int, md: Int) { mul(c, h, f, at(md, MRR), md) }
+
+fn from_mont(c: Int, h: Int, f: Int, md: Int) { mul(c, h, f, at(c, ONE1), md) }
+
+// ---------------------------------------------------------------------------
+// Bytes
+
+/// h = the big endian integer of the csize(c) bytes of b from off (the
+/// top limb short of 8 bytes on P-521 and P-224).
+fn load(c: Int, h: Int, b: Bytes, off: Int) {
+  let n = limbs(c)
+  let sz = csize(c)
+  var i = 0
+  while i < n {
+    let lo = off + sz - 8 * (i + 1)
+    if lo >= off {
+      st(h, 8 * i, rt.int_wrap(7, rt.bytes_word(b, lo), 0))
+    } else {
+      var v = 0
+      var j = off
+      while j < lo + 8 {
+        v = rt.int_wrap(3, v, 8) | Int(b[j])
+        j += 1
+      }
+      st(h, 8 * i, v)
+    }
+    i += 1
+  }
+}
+
+/// s with the csize(c) big endian bytes of f.
+fn put(c: Int, s: Str, f: Int) -> Str {
+  var out = s
+  let n = limbs(c)
+  var top = csize(c) - 8 * (n - 1)
+  var i = n - 1
+  while i >= 0 {
+    if top < 8 {
+      let v = ld(f, 8 * i)
+      var j = top - 1
+      while j >= 0 {
+        out = rt.rs_push_byte(out, rt.int_wrap(4, v, 8 * j) & 255)
+        j -= 1
+      }
+      top = 8
+    } else {
+      out = rt.rs_push_word(out, rt.int_wrap(7, ld(f, 8 * i), 0), 8)
+    }
+    i -= 1
+  }
+  out
+}
+
+fn hexval(ch: Int) -> Int {
+  if ch >= 97 {
+    return ch - 87
+  }
+  ch - 48
+}
+
+/// h = the integer of the hex digits of s (16 L of them).
+fn set_hex(c: Int, h: Int, s: Str) {
+  let n = limbs(c)
+  var i = 0
+  while i < n {
+    var v = 0
+    var k = 0
+    while k < 16 {
+      v = rt.int_wrap(3, v, 4) | hexval(raw.str_byte(s, 16 * (n - 1 - i) + k))
+      k += 1
+    }
+    st(h, 8 * i, v)
+    i += 1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The curve
+
+/// Fills m's block from its hex digits: -m^-1 mod 2^64 (Newton's
+/// iteration doubles the correct low bits of 1/m0 each step), R mod m
+/// (2^(64L) - m when m is above 2^(64L - 1), else 1 doubled 64 L times:
+/// P-521 and P-224), R^2 mod m by 64 L doublings, and m - 2.
+fn modulus(c: Int, md: Int, hex: Str) {
+  let n = limbs(c)
+  let m = at(md, MLIMBS)
+  set_hex(c, m, hex)
+  let m0 = ld(m, 0)
+  var y = 1
+  for _ in 0..6 {
+    y = rt.int_wrap(2, y, rt.int_wrap(1, 2, rt.int_wrap(2, m0, y)))
+  }
+  st(md, MINV, rt.int_wrap(1, 0, y))
+  let one = at(md, MONE)
+  var b = 0
+  var i = 0
+  if ld(m, 8 * (n - 1)) < 0 {
+    while i < n {
+      b = sbb(one, 8 * i, 0, ld(m, 8 * i), b)
+      i += 1
+    }
+  } else {
+    set_zero(c, one)
+    st(one, 0, 1)
+    for _ in 0..64 * n {
+      add(c, one, one, one, md)
+    }
+  }
+  let rr = at(md, MRR)
+  copy(c, rr, one)
+  for _ in 0..64 * n {
+    add(c, rr, rr, rr, md)
+  }
+  let e2 = at(md, ME2)
+  b = 2
+  i = 0
+  while i < n {
+    b = sbb(e2, 8 * i, ld(m, 8 * i), b, 0)
+    i += 1
+  }
+}
+
+/// A new workspace for the curve: its moduli, b, and the base point.
+fn workspace(curve: Int) -> List[Int] {
+  let w = raw.zero_ints(WSIZE)
+  let c = rt.int_wrap(0, rt.obj_addr(w), rt.layout(2))
+  let mp = at(c, MP)
+  st(c, SZW, size(curve))
+  if curve == P521 {
+    st(c, 0, 9)
+    modulus(c, mp, "00000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    modulus(c, at(c, MN), "00000000000001fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409")
+    set_hex(c, at(c, CB), "0000000000000051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00")
+    set_hex(c, at(c, PG), "00000000000000c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66")
+    set_hex(c, at(c, PG + ES), "000000000000011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650")
+  } else if curve == P224 {
+    st(c, 0, 4)
+    modulus(c, mp, "00000000ffffffffffffffffffffffffffffffff000000000000000000000001")
+    modulus(c, at(c, MN), "00000000ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d")
+    set_hex(c, at(c, CB), "00000000b4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4")
+    set_hex(c, at(c, PG), "00000000b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21")
+    set_hex(c, at(c, PG + ES), "00000000bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34")
+  } else if curve == P384 {
+    st(c, 0, 6)
+    modulus(c, mp, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff")
+    modulus(c, at(c, MN), "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973")
+    set_hex(c, at(c, CB), "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef")
+    set_hex(c, at(c, PG), "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7")
+    set_hex(c, at(c, PG + ES), "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
+  } else {
+    st(c, 0, 4)
+    modulus(c, mp, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff")
+    modulus(c, at(c, MN), "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")
+    set_hex(c, at(c, CB), "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b")
+    set_hex(c, at(c, PG), "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296")
+    set_hex(c, at(c, PG + ES), "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
+  }
+  st(c, ONE1, 1)
+  to_mont(c, at(c, CB), at(c, CB), mp)
+  to_mont(c, at(c, PG), at(c, PG), mp)
+  to_mont(c, at(c, PG + ES), at(c, PG + ES), mp)
+  copy(c, at(c, PG + 2 * ES), at(mp, MONE))
+  w
+}
+
+fn base(w: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(w), rt.layout(2)) }
+
+/// A use of the workspace after its last raw access (ed25519.xo's keep).
+fn keep(w: List[Int]) {
+  if w.len() < 0 {
+    return
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Points (r may be p or q)
+
+/// r = p + q (complete: any two points, the identity, p = q).
+fn pt_add(c: Int, r: Int, p: Int, q: Int) {
+  let mp = at(c, MP)
+  let b = at(c, CB)
+  let t0 = at(c, T0)
+  let t1 = at(c, T0 + ES)
+  let t2 = at(c, T0 + 2 * ES)
+  let t3 = at(c, T0 + 3 * ES)
+  let t4 = at(c, T0 + 4 * ES)
+  let x3 = at(c, T0 + 5 * ES)
+  let y3 = at(c, T0 + 6 * ES)
+  let z3 = at(c, T0 + 7 * ES)
+  let x1 = p
+  let y1 = at(p, ES)
+  let z1 = at(p, 2 * ES)
+  let x2 = q
+  let y2 = at(q, ES)
+  let z2 = at(q, 2 * ES)
+  mul(c, t0, x1, x2, mp)
+  mul(c, t1, y1, y2, mp)
+  mul(c, t2, z1, z2, mp)
+  add(c, t3, x1, y1, mp)
+  add(c, t4, x2, y2, mp)
+  mul(c, t3, t3, t4, mp)
+  add(c, t4, t0, t1, mp)
+  sub(c, t3, t3, t4, mp)
+  add(c, t4, y1, z1, mp)
+  add(c, x3, y2, z2, mp)
+  mul(c, t4, t4, x3, mp)
+  add(c, x3, t1, t2, mp)
+  sub(c, t4, t4, x3, mp)
+  add(c, x3, x1, z1, mp)
+  add(c, y3, x2, z2, mp)
+  mul(c, x3, x3, y3, mp)
+  add(c, y3, t0, t2, mp)
+  sub(c, y3, x3, y3, mp)
+  mul(c, z3, b, t2, mp)
+  sub(c, x3, y3, z3, mp)
+  add(c, z3, x3, x3, mp)
+  add(c, x3, x3, z3, mp)
+  sub(c, z3, t1, x3, mp)
+  add(c, x3, t1, x3, mp)
+  mul(c, y3, b, y3, mp)
+  add(c, t1, t2, t2, mp)
+  add(c, t2, t1, t2, mp)
+  sub(c, y3, y3, t2, mp)
+  sub(c, y3, y3, t0, mp)
+  add(c, t1, y3, y3, mp)
+  add(c, y3, t1, y3, mp)
+  add(c, t1, t0, t0, mp)
+  add(c, t0, t1, t0, mp)
+  sub(c, t0, t0, t2, mp)
+  mul(c, t1, t4, y3, mp)
+  mul(c, t2, t0, y3, mp)
+  mul(c, y3, x3, z3, mp)
+  add(c, y3, y3, t2, mp)
+  mul(c, x3, t3, x3, mp)
+  sub(c, x3, x3, t1, mp)
+  mul(c, z3, t4, z3, mp)
+  mul(c, t1, t3, t0, mp)
+  add(c, z3, z3, t1, mp)
+  copy(c, r, x3)
+  copy(c, at(r, ES), y3)
+  copy(c, at(r, 2 * ES), z3)
+}
+
+/// r = 2p (Go's nistec Double: Renes, Costello and Batina's algorithm 6
+/// for a = -3, complete; r may be p).
+fn pt_double(c: Int, r: Int, p: Int) {
+  let mp = at(c, MP)
+  let b = at(c, CB)
+  let t0 = at(c, T0)
+  let t1 = at(c, T0 + ES)
+  let t2 = at(c, T0 + 2 * ES)
+  let t3 = at(c, T0 + 3 * ES)
+  let x3 = at(c, T0 + 5 * ES)
+  let y3 = at(c, T0 + 6 * ES)
+  let z3 = at(c, T0 + 7 * ES)
+  let x = p
+  let y = at(p, ES)
+  let z = at(p, 2 * ES)
+  mul(c, t0, x, x, mp)
+  mul(c, t1, y, y, mp)
+  mul(c, t2, z, z, mp)
+  mul(c, t3, x, y, mp)
+  add(c, t3, t3, t3, mp)
+  mul(c, z3, x, z, mp)
+  add(c, z3, z3, z3, mp)
+  mul(c, y3, b, t2, mp)
+  sub(c, y3, y3, z3, mp)
+  add(c, x3, y3, y3, mp)
+  add(c, y3, x3, y3, mp)
+  sub(c, x3, t1, y3, mp)
+  add(c, y3, t1, y3, mp)
+  mul(c, y3, x3, y3, mp)
+  mul(c, x3, x3, t3, mp)
+  add(c, t3, t2, t2, mp)
+  add(c, t2, t2, t3, mp)
+  mul(c, z3, b, z3, mp)
+  sub(c, z3, z3, t2, mp)
+  sub(c, z3, z3, t0, mp)
+  add(c, t3, z3, z3, mp)
+  add(c, z3, z3, t3, mp)
+  add(c, t3, t0, t0, mp)
+  add(c, t0, t3, t0, mp)
+  sub(c, t0, t0, t2, mp)
+  mul(c, t0, t0, z3, mp)
+  add(c, y3, y3, t0, mp)
+  mul(c, t0, y, z, mp)
+  add(c, t0, t0, t0, mp)
+  mul(c, z3, t0, z3, mp)
+  sub(c, x3, x3, z3, mp)
+  mul(c, z3, t0, t1, mp)
+  add(c, z3, z3, z3, mp)
+  add(c, z3, z3, z3, mp)
+  copy(c, r, x3)
+  copy(c, at(r, ES), y3)
+  copy(c, at(r, 2 * ES), z3)
+}
+
+fn pt_identity(c: Int, r: Int) {
+  set_zero(c, r)
+  copy(c, at(r, ES), at(at(c, MP), MONE))
+  set_zero(c, at(r, 2 * ES))
+}
+
+/// r = [k]p, k the address of a scalar's L words (normal, below n): a
+/// fixed window of 4 bits from the top, each step 4 doublings and the
+/// addition of a table entry chosen under a mask from all 16.
+fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
+  let n = limbs(c)
+  let tab = at(c, TABLE)
+  pt_identity(c, tab)
+  var i = 1
+  while i < 16 {
+    pt_add(c, at(tab, PS * i), at(tab, PS * (i - 1)), p)
+    i += 1
+  }
+  let acc = at(c, ACC)
+  let sel = at(c, SEL)
+  pt_identity(c, acc)
+  var w = 16 * n - 1
+  while w >= 0 {
+    if w != 16 * n - 1 {
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+    }
+    let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
+    rt.mem_set(sel, 0, PS)
+    i = 0
+    while i < 16 {
+      let m = ct.mask_eq(i, digit)
+      let e = at(tab, PS * i)
+      var j = 0
+      while j < PS / 8 {
+        st(sel, 8 * j, ld(sel, 8 * j) | (ld(e, 8 * j) & m))
+        j += 1
+      }
+      i += 1
+    }
+    pt_add(c, acc, acc, sel)
+    w -= 1
+  }
+  copy_pt(r, acc)
+}
+
+fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, PS) }
+
+/// r = [k]G, the curve's base point: P-256's from the fixed base table
+/// (pt_mul_g), the others' by pt_mul (P-521's table would be 35,370
+/// words: compiled in, it costs every TLS build about 27 s and 2.5 MB).
+fn pt_mul_base(c: Int, r: Int, k: Int) {
+  if csize(c) == 32 {
+    pt_mul_g(c, r, k)
+  } else {
+    pt_mul(c, r, at(c, PG), k)
+  }
+}
+
+/// r = [k]G on P-256 from nistec_g256.xo's table of j 16^w G: for each 4
+/// bit window w of k, the entry of its digit chosen under a mask from
+/// all 15 (the identity for 0) and added with the complete formula, 64
+/// additions and no doublings; constant time in k as pt_mul.
+fn pt_mul_g(c: Int, r: Int, k: Int) {
+  let tb = rt.int_wrap(0, rt.obj_addr(nistec_g256.G256), rt.layout(2))
+  let one = at(at(c, MP), MONE)
+  let acc = at(c, ACC)
+  let sel = at(c, SEL)
+  pt_identity(c, acc)
+  var w = 0
+  while w < 64 {
+    let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
+    var x0 = 0
+    var x1 = 0
+    var x2 = 0
+    var x3 = 0
+    var y0 = 0
+    var y1 = 0
+    var y2 = 0
+    var y3 = 0
+    var j = 1
+    while j < 16 {
+      let m = ct.mask_eq(j, digit)
+      let e = at(tb, 64 * (15 * w + j - 1))
+      x0 = x0 | (ld(e, 0) & m)
+      x1 = x1 | (ld(e, 8) & m)
+      x2 = x2 | (ld(e, 16) & m)
+      x3 = x3 | (ld(e, 24) & m)
+      y0 = y0 | (ld(e, 32) & m)
+      y1 = y1 | (ld(e, 40) & m)
+      y2 = y2 | (ld(e, 48) & m)
+      y3 = y3 | (ld(e, 56) & m)
+      j += 1
+    }
+    // digit 0: the identity (0 : 1 : 0); else (x : y : 1)
+    let z = ct.mask_eq(0, digit)
+    st(sel, 0, x0)
+    st(sel, 8, x1)
+    st(sel, 16, x2)
+    st(sel, 24, x3)
+    st(sel, ES, y0 | (ld(one, 0) & z))
+    st(sel, ES + 8, y1 | (ld(one, 8) & z))
+    st(sel, ES + 16, y2 | (ld(one, 16) & z))
+    st(sel, ES + 24, y3 | (ld(one, 24) & z))
+    st(sel, 2 * ES, ld(one, 0) & ~z)
+    st(sel, 2 * ES + 8, ld(one, 8) & ~z)
+    st(sel, 2 * ES + 16, ld(one, 16) & ~z)
+    st(sel, 2 * ES + 24, ld(one, 24) & ~z)
+    pt_add(c, acc, acc, sel)
+    w += 1
+  }
+  copy_pt(r, acc)
+}
+
+/// x and y (normal) of p; whether p is not the identity (a mask).
+fn pt_affine(c: Int, x: Int, y: Int, p: Int) -> Int {
+  let mp = at(c, MP)
+  let z = sk(c, 7)
+  inv(c, z, at(p, 2 * ES), mp)
+  mul(c, x, p, z, mp)
+  mul(c, y, at(p, ES), z, mp)
+  from_mont(c, x, x, mp)
+  from_mont(c, y, y, mp)
+  ~is_zero(c, at(p, 2 * ES))
+}
+
+/// p = the point of the uncompressed encoding (0x04, x, y) of b (public);
+/// whether it is one on the curve.
+fn pt_decode(c: Int, p: Int, b: Bytes, curve: Int) -> Bool {
+  let sz = size(curve)
+  if b.len() != 1 + 2 * sz || b[0] != 4 {
+    return false
+  }
+  let mp = at(c, MP)
+  load(c, p, b, 1)
+  load(c, at(p, ES), b, 1 + sz)
+  if below(c, p, mp) == 0 || below(c, at(p, ES), mp) == 0 {
+    return false
+  }
+  to_mont(c, p, p, mp)
+  to_mont(c, at(p, ES), at(p, ES), mp)
+  copy(c, at(p, 2 * ES), at(mp, MONE))
+  // y^2 = x^3 - 3x + b
+  let l = sk(c, 6)
+  let r = sk(c, 7)
+  let t = at(c, PW)
+  mul(c, l, at(p, ES), at(p, ES), mp)
+  mul(c, r, p, p, mp)
+  mul(c, r, r, p, mp)
+  add(c, t, p, p, mp)
+  add(c, t, t, p, mp)
+  sub(c, r, r, t, mp)
+  add(c, r, r, at(c, CB), mp)
+  same(c, l, r)
+}
+
+/// Whether the scalar of b (size(curve) bytes, big endian) is in [1, n)
+/// (it is loaded at k).
+fn scalar(c: Int, k: Int, b: Bytes, curve: Int) -> Bool {
+  if b.len() != size(curve) {
+    return false
+  }
+  load(c, k, b, 0)
+  (below(c, k, at(c, MN)) & ~is_zero(c, k)) != 0
+}
+
+/// The uncompressed encoding of the point (x, y) (normal).
+fn encode(c: Int, x: Int, y: Int) -> Bytes {
+  var s = rt.rs_with_cap(1 + 2 * csize(c))
+  s = rt.rs_push_byte(s, 4)
+  s = put(c, s, x)
+  put(c, s, y).bytes()
+}
+
+// ---------------------------------------------------------------------------
+// ECDH
+
+/// size(curve) random bytes, P-521's top byte masked to its one bit of
+/// the order's 521 (Go's randomPoint and ECDSA nonces: excess bits off,
+/// so a candidate is below n half the time, not once in 128).
+fn random_scalar(curve: Int) -> Bytes {
+  let b = rand.next_bytes(size(curve))
+  if curve != P521 {
+    return b
+  }
+  var s = rt.rs_with_cap(b.len())
+  s = rt.rs_push_byte(s, Int(b[0]) & 1)
+  rt.rs_append_bytes(s, b, 1, b.len(), 0).bytes()
+}
+
+/// A new private key: a scalar in [1, n) by rejection sampling from the
+/// system's generator (Go's randomPoint), size(curve) bytes.
+pub fn generate(curve: Int) -> Bytes {
+  let w = workspace(curve)
+  let c = base(w)
+  while true {
+    let b = random_scalar(curve)
+    if scalar(c, sk(c, 0), b, curve) {
+      keep(w)
+      return b
+    }
+  }
+  b""
+}
+
+/// The public key (uncompressed point) of the private key priv; empty
+/// when priv is not a scalar in [1, n).
+pub fn public_key(curve: Int, priv: Bytes) -> Bytes {
+  let w = workspace(curve)
+  let c = base(w)
+  if !scalar(c, sk(c, 0), priv, curve) {
+    keep(w)
+    return b""
+  }
+  pt_mul_base(c, at(c, PA), sk(c, 0))
+  pt_affine(c, sk(c, 1), sk(c, 2), at(c, PA))
+  let out = encode(c, sk(c, 1), sk(c, 2))
+  keep(w)
+  out
+}
+
+/// The shared secret (the x coordinate, size(curve) bytes) of the private
+/// key priv and the peer's uncompressed point; none when either is
+/// invalid or the product is the identity (crypto/ecdh's ECDH).
+pub fn ecdh(curve: Int, priv: Bytes, peer: Bytes) -> Bytes? {
+  let w = workspace(curve)
+  let c = base(w)
+  if !scalar(c, sk(c, 0), priv, curve) || !pt_decode(c, at(c, PA), peer, curve) {
+    keep(w)
+    return None
+  }
+  pt_mul(c, at(c, PB), at(c, PA), sk(c, 0))
+  let ok = pt_affine(c, sk(c, 1), sk(c, 2), at(c, PB))
+  var s = rt.rs_with_cap(csize(c))
+  s = put(c, s, sk(c, 1))
+  keep(w)
+  if ok == 0 {
+    return None
+  }
+  Some(s.bytes())
+}
+
+// ---------------------------------------------------------------------------
+// ECDSA
+
+/// e = the hash as an integer modulo n (SEC 1 4.1.3 step 5, Go's
+/// hashToNat: its leftmost size(curve) bytes, shifted right by the bits
+/// they have past n's length: 7 for a hash of 66 bytes or more on P-521).
+fn hash_int(c: Int, e: Int, hash: Bytes, curve: Int) {
+  let sz = size(curve)
+  var s = rt.rs_with_cap(sz)
+  var i = 0
+  while i < sz - hash.len() {
+    s = rt.rs_push_byte(s, 0)
+    i += 1
+  }
+  let k = if hash.len() > sz { sz } else { hash.len() }
+  s = rt.rs_append_bytes(s, hash, 0, k, 0)
+  load(c, e, s.bytes(), 0)
+  if curve == P521 && k == sz {
+    // e >>= 7 (public: the hash)
+    let n = limbs(c)
+    var j = 0
+    while j < n {
+      let hi = if j + 1 < n { rt.int_wrap(3, ld(e, 8 * (j + 1)), 57) } else { 0 }
+      st(e, 8 * j, rt.int_wrap(4, ld(e, 8 * j), 7) | hi)
+      j += 1
+    }
+  }
+  // e < 2^(8 sz) and below 2n
+  let mn = at(c, MN)
+  let z = sk(c, 7)
+  set_zero(c, z)
+  add(c, e, e, z, mn)
+}
+
+/// The DER signature (r, s) of hash by the private key priv (a scalar in
+/// [1, n); empty otherwise), with a fresh nonce from the system's
+/// generator for each attempt.
+pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes {
+  let w = workspace(curve)
+  let c = base(w)
+  let d = sk(c, 0)
+  if !scalar(c, d, priv, curve) {
+    keep(w)
+    return b""
+  }
+  let mn = at(c, MN)
+  let e = sk(c, 1)
+  let k = sk(c, 2)
+  let r = sk(c, 3)
+  let s = sk(c, 4)
+  let t = sk(c, 5)
+  hash_int(c, e, hash, curve)
+  while true {
+    if scalar(c, k, random_scalar(curve), curve) {
+      // r = x([k]G) mod n
+      pt_mul_base(c, at(c, PA), k)
+      pt_affine(c, r, t, at(c, PA))
+      set_zero(c, t)
+      add(c, r, r, t, mn)
+      if is_zero(c, r) == 0 {
+        // s = (e + r d) / k mod n
+        to_mont(c, t, d, mn)
+        mul(c, s, r, t, mn)
+        add(c, s, s, e, mn)
+        to_mont(c, t, k, mn)
+        inv(c, t, t, mn)
+        mul(c, s, s, t, mn)
+        if is_zero(c, s) == 0 {
+          var rb = rt.rs_with_cap(csize(c))
+          rb = put(c, rb, r)
+          var sb = rt.rs_with_cap(csize(c))
+          sb = put(c, sb, s)
+          keep(w)
+          return der_sig(rb.bytes(), sb.bytes())
+        }
+      }
+    }
+  }
+  b""
+}
+
+/// Whether sig (DER) is a signature of hash by the public key pub (an
+/// uncompressed point). Every input is public.
+pub fn verify(curve: Int, pub_key: Bytes, hash: Bytes, sig: Bytes) -> Bool {
+  let rs = parse_sig(sig, size(curve))
+  if rs.len() != 2 {
+    return false
+  }
+  let w = workspace(curve)
+  let c = base(w)
+  let mn = at(c, MN)
+  let r = sk(c, 0)
+  let s = sk(c, 1)
+  let e = sk(c, 2)
+  let u1 = sk(c, 3)
+  let u2 = sk(c, 4)
+  let x = sk(c, 5)
+  if !pt_decode(c, at(c, PA), pub_key, curve) || !scalar(c, r, rs[0], curve) || !scalar(c, s, rs[1], curve) {
+    keep(w)
+    return false
+  }
+  hash_int(c, e, hash, curve)
+  // w = 1/s; u1 = e w, u2 = r w (normal: one factor is Montgomery)
+  to_mont(c, s, s, mn)
+  inv(c, s, s, mn)
+  mul(c, u1, e, s, mn)
+  mul(c, u2, r, s, mn)
+  pt_mul_base(c, at(c, PB), u1)
+  pt_mul(c, at(c, PC), at(c, PA), u2)
+  pt_add(c, at(c, PB), at(c, PB), at(c, PC))
+  if pt_affine(c, x, u1, at(c, PB)) == 0 {
+    keep(w)
+    return false
+  }
+  set_zero(c, u1)
+  add(c, x, x, u1, mn)
+  let ok = same(c, x, r)
+  keep(w)
+  ok
+}
+
+/// The two integers of a DER ECDSA-Sig-Value (SEQUENCE of r and s), each
+/// left padded to n bytes; empty when sig is not one or an integer is
+/// longer than n bytes.
+fn parse_sig(sig: Bytes, n: Int) -> List[Bytes] {
+  if sig.len() < 2 || sig[0] != 0x30 || Int(sig[1]) >= 128 || Int(sig[1]) != sig.len() - 2 {
+    if sig.len() < 3 || sig[0] != 0x30 || sig[1] != 0x81 || Int(sig[2]) < 128 || Int(sig[2]) != sig.len() - 3 {
+      return []
+    }
+  }
+  var pos = if sig[1] == 0x81 { 3 } else { 2 }
+  var out: List[Bytes] = []
+  while pos < sig.len() && out.len() < 3 {
+    if pos + 2 > sig.len() || sig[pos] != 2 {
+      return []
+    }
+    let len = Int(sig[pos + 1])
+    let lo = pos + 2
+    if len == 0 || len >= 128 || lo + len > sig.len() {
+      return []
+    }
+    // minimal and positive
+    if Int(sig[lo]) >= 128 || (len > 1 && sig[lo] == 0 && Int(sig[lo + 1]) < 128) {
+      return []
+    }
+    var a = lo
+    while a < lo + len - 1 && sig[a] == 0 {
+      a += 1
+    }
+    if lo + len - a > n {
+      return []
+    }
+    var s = rt.rs_with_cap(n)
+    var i = 0
+    while i < n - (lo + len - a) {
+      s = rt.rs_push_byte(s, 0)
+      i += 1
+    }
+    out.push(rt.rs_append_bytes(s, sig, a, lo + len, 0).bytes())
+    pos = lo + len
+  }
+  if out.len() != 2 {
+    return []
+  }
+  out
+}
+
+/// The DER ECDSA-Sig-Value of r and s (big endian, n bytes each).
+fn der_sig(r: Bytes, s: Bytes) -> Bytes {
+  let ri = der_uint(r)
+  let si = der_uint(s)
+  let n = ri.len() + si.len()
+  var out = rt.rs_with_cap(n + 3)
+  out = rt.rs_push_byte(out, 0x30)
+  if n >= 128 {
+    out = rt.rs_push_byte(out, 0x81)
+  }
+  out = rt.rs_push_byte(out, n)
+  out = rt.rs_append_bytes(out, ri, 0, ri.len(), 0)
+  rt.rs_append_bytes(out, si, 0, si.len(), 0).bytes()
+}
+
+/// The DER INTEGER of the unsigned big endian b (below 128 bytes).
+fn der_uint(b: Bytes) -> Bytes {
+  var a = 0
+  while a < b.len() - 1 && b[a] == 0 {
+    a += 1
+  }
+  let pad = if Int(b[a]) >= 128 { 1 } else { 0 }
+  var out = rt.rs_with_cap(2 + pad + b.len() - a)
+  out = rt.rs_push_byte(out, 2)
+  out = rt.rs_push_byte(out, pad + b.len() - a)
+  if pad == 1 {
+    out = rt.rs_push_byte(out, 0)
+  }
+  rt.rs_append_bytes(out, b, a, b.len(), 0).bytes()
+}
+
+/// internal.crypto_op's ops of the curve (std/internal.xo; P-224 has
+/// public, sign and verify only, as Go's crypto/ecdh has no P-224): `public` the
+/// public point of the private key a, `ecdh` the shared secret of the
+/// private key a and the point b (empty when either is invalid),
+/// `generate` a private key, `sign` the DER signature of the hash b by the
+/// private key a, `verify` [1] when c is a signature of the hash b by the
+/// point a, else [0]; none for another what.
+pub fn op(curve: Int, what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if curve == P224 && what != "public" && what != "sign" && what != "verify" {
+    return None
+  }
+  match what {
+    "public" => Some(public_key(curve, a))
+    "ecdh" => Some(ecdh(curve, a, b) ?? b"")
+    "generate" => Some(generate(curve))
+    "sign" => Some(sign(curve, a, b))
+    "verify" => Some(flag(verify(curve, a, b, c)))
+    _ => None
+  }
+}
+
+/// [1] or [0].
+pub fn flag(x: Bool) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), if x { 1 } else { 0 }).bytes() }

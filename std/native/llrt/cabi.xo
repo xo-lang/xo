@@ -13,23 +13,32 @@
 // Nothing here may fault: a fault would unwind through the C caller.
 // Helpers live in other runtime modules (raw.xo for memory).
 use native/llrt/alloc
+use native/llrt/anyval
 use native/llrt/budget
+use native/llrt/chan
+use native/llrt/consts
 use native/llrt/ctx
+use native/llrt/entry
 use native/llrt/fault
+use native/llrt/fsops
 use native/llrt/heapos
-use native/llrt/netpolicy
+use native/llrt/mutex
 use native/llrt/num
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/rtsec
+use native/llrt/sanhook
 use native/llrt/sched
+use native/llrt/selects
 use native/llrt/tasks
+use native/llrt/stdin
 use native/llrt/stdio
+use native/llrt/stop
 use native/llrt/sysio
-use native/llrt/text
-use native/llrt/unicode
 use native/llrt/unwind
 use native/rt
 
@@ -114,61 +123,18 @@ fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
 /// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
 fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
 
-// ---------------------------------------------------------------------------
-// UTF-8 (xo_std.c n_utf8_decode, n_utf8_encode, n_is_space)
+/// Standard input's pump thread on Windows (stdin.xo pump_main): its
+/// address is the services record's (ctx.xo SV_STDIN_PUMP), a
+/// CreateThread entry taking the pump's record.
+fn stdin_pump_main(rec: Int) -> Int { stdin.pump_main(rec) }
 
-/// utf8.DecodeRune of the n bytes at p (n > 0): the rune times 8 plus its
-/// size; an invalid or short sequence is U+FFFD of size 1.
-fn utf8_decode(p: Int, n: Int) -> Int {
-  let c = raw.byte_at(p, 0)
-  if c < 0x80 {
-    return (c << 3) | 1
-  }
-  var k = 0
-  var lo = 0x80
-  var hi = 0xBF
-  var r = 0
-  if c >= 0xC2 && c <= 0xDF {
-    k = 1
-    r = c & 0x1F
-  } else if c >= 0xE0 && c <= 0xEF {
-    k = 2
-    r = c & 0x0F
-    if c == 0xE0 {
-      lo = 0xA0
-    } else if c == 0xED {
-      hi = 0x9F
-    }
-  } else if c >= 0xF0 && c <= 0xF4 {
-    k = 3
-    r = c & 0x07
-    if c == 0xF0 {
-      lo = 0x90
-    } else if c == 0xF4 {
-      hi = 0x8F
-    }
-  } else {
-    return (0xFFFD << 3) | 1
-  }
-  if n < k + 1 {
-    return (0xFFFD << 3) | 1
-  }
-  let c1 = raw.byte_at(p, 1)
-  if c1 < lo || c1 > hi {
-    return (0xFFFD << 3) | 1
-  }
-  r = (r << 6) | (c1 & 0x3F)
-  var j = 2
-  while j <= k {
-    let cj = raw.byte_at(p, j)
-    if cj < 0x80 || cj > 0xBF {
-      return (0xFFFD << 3) | 1
-    }
-    r = (r << 6) | (cj & 0x3F)
-    j += 1
-  }
-  (r << 3) | (k + 1)
-}
+/// The hooks around a fiber switch (sanhook.xo hook, decision 0232):
+/// rt.sched_hook of sched.xo calls this export (xo_rt.c's xo_sched_hook
+/// forwards for code from an older xo).
+fn sched_hook(kind: Int, w: Int, f: Int) { sanhook.hook(kind, w, f) }
+
+// ---------------------------------------------------------------------------
+// UTF-8 (xo_bytes.c n_rune_utf8, the seed compatibility xo_rs_push_rune)
 
 /// Writes the UTF-8 of the scalar value r at p; its size.
 fn utf8_encode(p: Int, r: Int) -> Int {
@@ -187,137 +153,6 @@ fn utf8_encode(p: Int, r: Int) -> Int {
   }
   rt.mem_store(p, 0, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
   4
-}
-
-/// 1 when r is white space (unicode.IsSpace), else 0.
-fn is_space(r: Int) -> Int {
-  if unicode.is_space(r) {
-    return 1
-  }
-  0
-}
-
-// ---------------------------------------------------------------------------
-// Number and time text of the C callers (xo_std.c n_parse_int,
-// n_fmt_duration, n_fmt_time, b64_val, n_days_from_civil)
-
-/// strconv.ParseInt of the n bytes at p, base 10: 1 with the value
-/// stored at out, or 0 (out unchanged).
-fn parse_int(p: Int, n: Int, out: Int) -> Int {
-  if n == 0 {
-    return 0
-  }
-  var i = 0
-  var neg = false
-  let c0 = raw.byte_at(p, 0)
-  if c0 == 43 || c0 == 45 {
-    neg = c0 == 45
-    i = 1
-    if n == 1 {
-      return 0
-    }
-  }
-  var v = 0
-  while i < n {
-    let c = raw.byte_at(p, i) - 48
-    if c < 0 || c > 9 {
-      return 0
-    }
-    if v >= 922337203685477580 {
-      if v > 922337203685477580 || c > 8 || (c == 8 && !neg) {
-        return 0
-      }
-      if c == 8 {
-        // -9223372036854775808, if nothing follows
-        if i + 1 != n {
-          return 0
-        }
-        rt.mem_store(out, 0, -9223372036854775807 - 1, 8)
-        return 1
-      }
-    }
-    v = v * 10 + c
-    i += 1
-  }
-  if neg {
-    v = 0 - v
-  }
-  rt.mem_store(out, 0, v, 8)
-  1
-}
-
-/// Writes the text of a Duration of d nanoseconds (time.Duration.String)
-/// and a zero byte at buf (at least 32 bytes); its length.
-fn fmt_duration(buf: Int, d: Int) -> Int { raw.put_cstr(buf, text.append_duration("", d)) }
-
-/// Writes a Time of t nanoseconds since the Unix epoch as RFC 3339 in UTC
-/// (time.RFC3339Nano) and a zero byte at buf (at least 48 bytes); its
-/// length.
-fn fmt_time(buf: Int, t: Int) -> Int { raw.put_cstr(buf, text.append_time("", t)) }
-
-/// The value of a base64 digit (the standard alphabet), or -1.
-fn b64_val(c: Int) -> Int {
-  if c >= 65 && c <= 90 {
-    return c - 65
-  }
-  if c >= 97 && c <= 122 {
-    return c - 71
-  }
-  if c >= 48 && c <= 57 {
-    return c + 4
-  }
-  if c == 43 {
-    return 62
-  }
-  if c == 47 {
-    return 63
-  }
-  -1
-}
-
-// ---------------------------------------------------------------------------
-// The address policy of Net.only (xo_rt.c's, now netpolicy.xo): the
-// lists, hosts, ports, and addresses are bytes at an address and a length,
-// or zero terminated where the C keeps them so.
-
-/// 1 when the lists admit the dial or listen address of the n bytes at a
-/// (onlyNet.admitsAddr), else 0.
-fn net_admits_addr(lp: Int, ln: Int, a: Int, n: Int) -> Int {
-  if netpolicy.admits_addr(raw.str_at(lp, ln), raw.str_at(a, n)) {
-    return 1
-  }
-  0
-}
-
-/// Splits the zero terminated address at a into its host (brackets
-/// removed) and port, written zero terminated into the buffers of hn and
-/// pn bytes: 0, or -1 without a colon or when one does not fit.
-fn split_hostport(a: Int, host: Int, hn: Int, port: Int, pn: Int) -> Int {
-  let (ok, h, p) = netpolicy.split_hostport(raw.str_at(a, raw.cstr_len(a)))
-  if !ok || h.len() >= hn || p.len() >= pn {
-    return -1
-  }
-  let _h = raw.put_cstr(host, h)
-  let _p = raw.put_cstr(port, p)
-  0
-}
-
-/// 1 when the zero terminated port at p is a number above 65535, else 0.
-fn port_out_of_range(p: Int) -> Int {
-  if netpolicy.port_out_of_range(raw.str_at(p, raw.cstr_len(p))) {
-    return 1
-  }
-  0
-}
-
-/// The days since 1970-01-01 of a date (H. Hinnant's days_from_civil).
-fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
-  let y = if m <= 2 { year - 1 } else { year }
-  let era = (if y >= 0 { y } else { y - 399 }) / 400
-  let yoe = y - era * 400
-  let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-  era * 146097 + doe - 719468
 }
 
 // ---------------------------------------------------------------------------
@@ -411,8 +246,17 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
-fn obj_heap_init(h: Int, slow: Int, rl_free_rt: Int, rc_defer_rt: Int, libc: Int, hsize: Int) {
-  obj.heap_init(h, slow, rl_free_rt, rc_defer_rt)
+/// A string, box, or closure environment object's block and its free at
+/// zero, and a handle's free at zero, for generated code (xo_rc_alloc,
+/// xo_rc_free, xo_h_free stay for code of earlier compilers).
+fn obj_rc_alloc(n: Int) -> Int { obj.alloc_obj(n) }
+
+fn obj_rc_free(p: Int) { obj.rc_free_n(p) }
+
+fn obj_h_free(p: Int) { obj.h_free_n(p) }
+
+fn obj_heap_init(h: Int, slow: Int, libc: Int, hsize: Int) {
+  obj.heap_init(h, slow)
   heapos.set_libc(libc)
   if h != 0 {
     heapos.records_init(h, hsize)
@@ -430,9 +274,18 @@ fn heap_nfree(c: Int) -> Int { heapos.nfree(c) }
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
 
-fn obj_rl_free(hw: Int, l: Int, esize: Int, drop: Int) { obj.rl_free(hw, l, esize, drop) }
+/// Queues a free in heap record h's real-time section (xo_rc_free's
+/// string, xo_h_free's handle): 1, or 0 when the queue is full.
+fn obj_rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Int { if obj.rt_defer(h, kind, o, esize, f) { 1 } else { 0 } }
 
-fn obj_rc_defer(h: Int, o: Int, drop: Int) { obj.rc_defer(h, o, drop) }
+/// Real-time sections (rtsec.xo): xo_realtime_enter, xo_realtime_exit
+/// (the function's name and the call's location, as bytes), and a
+/// fault's leaving of the thread's sections.
+fn rt_enter() { rtsec.enter() }
+
+fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
+
+fn rt_fault_leave() { rtsec.fault_leave() }
 
 // Strings (zero-C audit B13): xo_rt.c xo_rs_concat and xo_rs_append,
 // xo_bytes.c's builders, in obj.xo, called by arm64 generated code
@@ -477,6 +330,107 @@ fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
 }
 
 // ---------------------------------------------------------------------------
+// The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
+// timer record (xo_rt.c struct xo_timer); the C holds ev.mu.
+
+fn poll_timer_push(t: Int) -> Int { poll.timer_push(t) }
+
+fn poll_timer_remove(t: Int) { poll.timer_remove(t) }
+
+fn poll_timer_first() -> Int { poll.timer_first() }
+
+fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
+
+/// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
+/// pd_begin and the rest on Linux and macOS), and the C's services record.
+fn poll_svc(rec: Int) { poll.poll_svc(rec) }
+
+fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
+
+fn poll_pd_end(pd: Int) { poll.pd_end(pd) }
+
+fn poll_pd_close(pd: Int) { poll.pd_close(pd) }
+
+fn poll_pd_free(pd: Int) { poll.pd_free(pd) }
+
+fn poll_pd_wait(pd: Int, write: Int, c: Int, deadline: Int) -> Int { poll.pd_wait_ctx(pd, write != 0, c, deadline) }
+
+/// Windows (B22 stage 4): an AFD poll of a descriptor's waited directions
+/// (the record's lock held; xo_h2.c arms its own waits), and the poller
+/// thread's loop over the completion port (never returns).
+fn poll_pd_arm(pd: Int) { poll.pd_arm(pd) }
+
+fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
+  poll.poll_main_win(iocp, mu, dead, sigs, signal_fn, stop_fn, free_fn)
+}
+
+/// Where the poller thread starts on Linux and macOS (pool.thread_start
+/// of its address, from the services record; never returns).
+fn poll_thread(a: Int) -> Int {
+  poll.poll_thread()
+  a
+}
+
+/// The event loop's start, a descriptor's registration (the record, or
+/// minus the errno), and timers (xo_rt.c's ev_start, pd_new, timer_add,
+/// timer_del forward here).
+fn poll_ev_start() { poll.ev_start() }
+
+fn poll_poke() { poll.poke() }
+
+fn poll_pd_open(fd: Int, write: Int) -> Int { poll.pd_open(fd, write != 0) }
+
+fn poll_timer_add(t: Int) { poll.timer_add(t) }
+
+fn poll_timer_del(t: Int) { poll.timer_del(t) }
+
+/// clock.sleep's wait in context c (xo_rt.c clock_wait): 1 when
+/// cancellation ended or prevented it.
+fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else { 0 } }
+
+/// task.with_timeout (tasks.xo): the scope's deadline, and whether it
+/// ended the body.
+fn scope_deadline(s: Int, d: Int) { tasks.scope_deadline(s, d) }
+
+fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 } }
+
+/// Two phase shutdown (stop.xo, B26 part 1): its start, a signal, the
+/// grace timer's end, task.stop_requested, task.stopping,
+/// proc.set_grace, main's root, and testing.run_main's start and end.
+fn stop_init(svc: Int) { stop.init(svc) }
+
+fn stop_signal() { stop.signal() }
+
+fn stop_cancel() { stop.cancel() }
+
+fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
+
+fn stop_canceled() -> Int { if stop.canceled() { 1 } else { 0 } }
+
+fn stop_stopping(drop: Int) -> Int { stop.stopping(drop) }
+
+fn stop_set_grace(d: Int) { stop.set_grace(d) }
+
+fn stop_root() -> Int { stop.root() }
+
+fn stop_set_root(n: Int) { stop.set_root(n) }
+
+fn stop_end() { stop.end() }
+
+fn stop_reset(n: Int) { stop.reset(n) }
+
+fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
+
+/// The program's start and end around C main (entry.xo, B26 part 2):
+/// the arguments, XO_HEAP_MID_MAX, the test world or the handlers; the
+/// leak check's and heap statistics' report; XO_RTSTATS' line.
+fn entry_start(argc: Int, argv: Int, envp: Int) { entry.start(argc, argv, envp) }
+
+fn entry_finish() { entry.finish() }
+
+fn rt_stats() { entry.rt_stats() }
+
+// ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task
 // states, in sched.xo, and the worker pool, the locks' slow paths, and
 // the fiber stacks, in pool.xo (stage 2; their C path, XO_LLRT_C=sched,
@@ -487,19 +441,11 @@ fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
 
 fn fiber_main(f: Int) { sched.fiber_main(f) }
 
-fn task_claim(t: Int) -> Int { sched.task_claim(t) }
-
 fn scope_units_done(s: Int, units: Int) -> Int { sched.scope_units_done(s, units) }
-
-fn task_dequeued(t: Int, s: Int) -> Int { sched.task_dequeued(t, s) }
 
 fn lock_slow(l: Int) { pool.lock_slow(l) }
 
 fn futex_wake(a: Int) { pool.futex_wake(a) }
-
-fn any_work(p: Int) -> Int { pool.any_work(p) }
-
-fn register_worker(p: Int, w: Int) { pool.register_worker(p, w) }
 
 fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 
@@ -507,7 +453,9 @@ fn park_reset(p: Int) { pool.park_reset(p) }
 
 fn park_signal(pl: Int, p: Int) { pool.park_signal(pl, p) }
 
-fn park_wait(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, rw: Int) { pool.park_wait(pl, c, cancelable, counted, f, rw) }
+/// Context c waits on its park (tasks.xo park_wait_n; xo_rt.c's
+/// park_wait_n forwards here).
+fn park_wait_n(c: Int, cancelable: Int, counted: Int) { tasks.park_wait_n(c, cancelable != 0, counted != 0) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 
@@ -570,7 +518,11 @@ fn ctx_unwinding() -> Int { ctx.unwinding() }
 
 /// The addresses of xo_rt.c ctx_root and its services record, at start
 /// (ctx.xo init).
-fn ctx_init(root: Int, svc: Int) { ctx.init(root, svc) }
+fn ctx_init(svc: Int) { ctx.init(svc) }
+
+/// The current context of a thread with none yet (xo_rt.c ctx's slow
+/// path): ctx.xo root.
+fn ctx_root() -> Int { ctx.root() }
 
 // Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
 // open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and
@@ -590,9 +542,6 @@ fn budget_mark(c: Int) { budget.mark(c) }
 
 fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
 
-fn budget_pause(c: Int) { budget.pause(c) }
-
-fn budget_resume(c: Int) { budget.resume(c) }
 
 // ---------------------------------------------------------------------------
 // Tasks and scopes (std/native/llrt/tasks.xo, the zero-C audit's B18):
@@ -628,3 +577,110 @@ fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site
 fn scope_open() -> Int { tasks.scope_open() }
 
 fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
+
+
+// Mutex[T] (std/native/llrt/mutex.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. m a Mutex, l its value list.
+
+fn mutex_new(l: Int, drop: Int) -> Int { mutex.new(l, drop) }
+
+fn mutex_lock(m: Int, lp: Int, ln: Int) -> Int { mutex.lock(m, lp, ln) }
+
+fn mutex_unlock(m: Int, l: Int) { mutex.unlock(m, l) }
+
+fn mutex_rlock(m: Int, lp: Int, ln: Int) -> Int { mutex.rlock(m, lp, ln) }
+
+fn mutex_runlock(m: Int, l: Int) { mutex.runlock(m, l) }
+
+// Channels (std/native/llrt/chan.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. c a channel, l a value list.
+
+fn chan_new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int { chan.new(cap, drop, lp, ln) }
+
+fn chan_send(c: Int, l: Int, lp: Int, ln: Int) { chan.send(c, l, lp, ln) }
+
+fn chan_recv(c: Int) -> Int { chan.recv(c) }
+
+fn chan_try_send(c: Int, l: Int) -> Int { chan.try_send(c, l) }
+
+fn chan_try_recv(c: Int) -> Int { chan.try_recv(c) }
+
+fn chan_close(c: Int) { chan.close(c) }
+
+fn chan_len(c: Int) -> Int { chan.len(c) }
+
+// select (std/native/llrt/selects.xo, B19): generated code calls these
+// directly; xo_rt.c's entry points forward. s a select, c a channel.
+
+fn select_new() -> Int { selects.new() }
+
+fn select_recv(s: Int, c: Int) { selects.recv(s, c) }
+
+fn select_send(s: Int, c: Int, l: Int) { selects.send(s, c, l) }
+
+fn select_wait(s: Int, lp: Int, ln: Int) -> Int { selects.wait(s, lp, ln) }
+
+fn select_take(s: Int, i: Int) -> Int { selects.take(s, i) }
+
+/// `Atomic.new(v)` (tasks.xo atomic_new): generated code calls it
+/// directly; xo_rt.c's xo_atomic_new forwards.
+fn atomic_new(v: Int) -> Int { tasks.atomic_new(v) }
+
+// The handles' free functions (B18): xo_rt.c puts these exports'
+// addresses in the services record (ctx.xo SV_*_FREE), and the objects'
+// headers name them; xo_h_free calls them.
+
+fn task_free(t: Int) { tasks.task_free(t) }
+
+fn scope_free(s: Int) { tasks.scope_free(s) }
+
+fn atomic_free(a: Int) { tasks.atomic_free(a) }
+
+// ---------------------------------------------------------------------------
+// Values of any type (rt.Any, anyval.xo; the C's xo_any_new and
+// xo_any_get forward here) and a std function's fault at its caller
+
+fn any_new(l: Int, drop: Int, tag: Int, tn: Int) -> Int { anyval.new(l, drop, tag, tn) }
+
+fn any_get(a: Int, tag: Int, tn: Int) -> Int { anyval.get(a, tag, tn) }
+
+fn any_free(a: Int) { anyval.free(a) }
+
+/// Faults with the n bytes of msg at p at the ln bytes of location at lp
+/// (xo_fault_at).
+fn fault_at(p: Int, n: Int, lp: Int, ln: Int) { fault.raise_str_at(raw.str_at(p, n), lp, ln) }
+
+/// A claimed task's run (xo_rt.c run_claimed, B18).
+fn run_claimed(t: Int, units: Int) { tasks.run_claimed(t, units) }
+
+fn mutex_free(m: Int) { mutex.free(m) }
+
+fn chan_free(c: Int) { chan.free(c) }
+
+fn select_free(s: Int) { selects.free(s) }
+
+/// The deadlock check, pool p's lock held (twrun.xo kick).
+fn dl_check(p: Int) { pool.dl_check(p) }
+
+/// The deadlock fault (XO-F001, decision 0077): standard output flushed,
+/// the message on standard error, status 70.
+fn deadlock() {
+  stdio.flush()
+  // straight to the descriptor, as the C did (not the test world's fake)
+  let m = "fault: XO-F001: deadlock: every task is blocked\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}
+
+// ---------------------------------------------------------------------------
+// fsops.xo's handles and consts.xo's constants (the zero-C audit's small
+// files batch: the services record's SV_FS_FILE_FREE and SV_FS_LOCK_FREE;
+// xo_bytes.c's xo_const_once and xo_consts_free forward here)
+
+fn fs_file_free(p: Int) { fsops.file_free(p) }
+
+fn fs_lock_free(p: Int) { fsops.lock_free(p) }
+
+fn const_once(f: Int, drop: Int, id: Int) -> Int { consts.once(f, drop, id) }
+
+fn consts_free() { consts.free_all() }

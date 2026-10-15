@@ -1,0 +1,789 @@
+// The HTTP server's TLS in Xo (the zero-C audit's B31, decision 0202):
+// http.tls_cert's certificate and key (tls.X509KeyPair, with Go's error
+// texts), the server's certificates, and its connections: tls13srv.xo's
+// server over the accepted connection's socket, with the waits of
+// xo_tls.c's bio_send and bio_recv (the poll descriptor, the deadline,
+// cancellation), its handshake and HTTP detection, its reads (waiting,
+// and without waiting for h2srv.xo's fiber), writes and close_notify.
+// hserve.xo, hconn.xo and http.xo call this file; its C path,
+// tlssrv_c.xo (XO_LLRT_C=tlssrv, decision 0193), forwards the same
+// calls to xo_tls.c on Mbed TLS. A ClientHello without TLS 1.3 goes to
+// xo-fa's tls12srv.xo (tls13srv.xo's HANDOFF). Not here yet: session
+// tickets (Go's server sends them; Mbed's path does) and client
+// certificates (never asked for, as Go's default). Windows and Linux
+// are UNTESTED.
+use native/llrt/ed25519
+use native/llrt/nistec
+use native/llrt/poll
+use native/llrt/rand
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/rsa
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/tls12srv
+use native/llrt/tls13srv
+use native/llrt/tlsticket
+use native/llrt/tlsname
+use native/llrt/twflags
+use native/llrt/twrun
+use native/llrt/x509
+use native/llrt/x509verify
+use native/llrt/asn1
+use native/rt
+use native/rthttp
+
+// the results of reads and writes (hclient.xo CC_*)
+const CC_OK: Int = 0
+const CC_TIMEOUT: Int = 2
+const CC_CANCELED: Int = 3
+const CC_ERR: Int = 4
+
+/// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
+const NOSIGNAL = 16384
+
+// ---------------------------------------------------------------------------
+// Certificates (http.tls_cert)
+
+/// A certificate chain (DER, the leaf first) and the leaf's private key
+/// in tls13srv.xo's form (RSA: its DER; ECDSA: the scalar; Ed25519: the
+/// seed).
+pub struct Cert {
+  pub certs: List[Bytes]
+  pub key: Bytes
+}
+
+/// tls.X509KeyPair of the PEM inputs: the certificate, and "" or Go's
+/// error text.
+pub fn cert(cert_pem: Bytes, key_pem: Bytes) -> (Cert, Str) {
+  let none = Cert{certs: [], key: b""}
+  var certs: List[Bytes] = []
+  var skipped: List[Str] = []
+  for (ty, der) in pem_blocks(cert_pem) {
+    if ty == "CERTIFICATE" {
+      certs.push(der)
+    } else if skipped.len() < 64 {
+      skipped.push(ty)
+    }
+  }
+  if certs.is_empty() {
+    if skipped.is_empty() {
+      return (none, "tls: failed to find any PEM data in certificate input")
+    }
+    if skipped.len() == 1 && skipped[0].ends_with("PRIVATE KEY") {
+      return (none, "tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched")
+    }
+    return (none, "tls: failed to find \"CERTIFICATE\" PEM block in certificate input after skipping PEM blocks of the following types: [${skipped.join(" ")}]")
+  }
+  skipped = []
+  var key_der: Bytes? = None
+  for (ty, der) in pem_blocks(key_pem) {
+    if key_der == None {
+      if ty == "PRIVATE KEY" || ty.ends_with(" PRIVATE KEY") {
+        key_der = Some(der)
+      } else if skipped.len() < 64 {
+        skipped.push(ty)
+      }
+    }
+  }
+  let kd = match key_der {
+    Some(k) => k
+    None => {
+      if skipped.is_empty() {
+        return (none, "tls: failed to find any PEM data in key input")
+      }
+      if skipped.len() == 1 && skipped[0] == "CERTIFICATE" {
+        return (none, "tls: found a certificate rather than a key in the PEM for the private key")
+      }
+      return (none, "tls: failed to find PEM block with type ending in \"PRIVATE KEY\" in key input after skipping PEM blocks of the following types: [${skipped.join(" ")}]")
+    }
+  }
+  let leaf = x509.parse(certs[0])
+  if leaf.err != "" {
+    return (none, "x509: malformed certificate")
+  }
+  let (kind, key, kerr) = private_key(kd)
+  if kerr != "" {
+    return (none, kerr)
+  }
+  let pk = leaf.cert.key_alg
+  if pk == x509.KEY_RSA {
+    if kind != x509.KEY_RSA {
+      return (none, "tls: private key type does not match public key type")
+    }
+    let p = rsa.public_key(leaf.cert.key)
+    let k = rsa.private_key(key)
+    let same = match (p, k) {
+      (Some(a), Some(b)) => a.n == b.n && a.e == b.e
+      _ => false
+    }
+    if !same {
+      return (none, "tls: private key does not match public key")
+    }
+  } else if x509.is_ec(pk) {
+    if !x509.is_ec(kind) {
+      return (none, "tls: private key type does not match public key type")
+    }
+    if kind != pk || nistec.public_key(x509.ec_curve(pk), key) != leaf.cert.key {
+      return (none, "tls: private key does not match public key")
+    }
+  } else if pk == x509.KEY_ED25519 {
+    if kind != x509.KEY_ED25519 {
+      return (none, "tls: private key type does not match public key type")
+    }
+    if ed25519.public_key(key) != leaf.cert.key {
+      return (none, "tls: private key does not match public key")
+    }
+  } else {
+    return (none, "tls: unknown public key algorithm")
+  }
+  (Cert{certs: certs, key: key}, "")
+}
+
+/// The PEM blocks of b (tlsname.pem_next): their types and bytes.
+fn pem_blocks(b: Bytes) -> List[(Str, Bytes)] {
+  var out: List[(Str, Bytes)] = []
+  let buf = raw.bytes_buf(b.len() + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(raw.bytes_addr(b), b.len(), pos, raw.bytes_addr(buf))
+    pos = np
+    if k < 0 {
+      break
+    }
+    out.push((ty, raw.str_at(raw.bytes_addr(buf), k).bytes()))
+  }
+  if b.len() < 0 {
+    out.push(("", buf))
+  }
+  out
+}
+
+/// Go's parsePrivateKey: PKCS #1 RSA, then PKCS #8 (RSA, ECDSA on
+/// P-224, P-256, P-384 and P-521, Ed25519), then SEC 1 EC; the key's x509 KEY_* type and its form for
+/// tls13srv.xo, or Go's error text.
+fn private_key(der: Bytes) -> (Int, Bytes, Str) {
+  let t = asn1.whole(der, asn1.SEQUENCE)
+  let xs = asn1.children(der, t)
+  if t.tag < 0 || asn1.any_bad(xs) || xs.len() < 2 {
+    return (0, b"", "tls: failed to parse private key")
+  }
+  // PKCS #1: nine fields
+  if xs.len() == 9 {
+    if let Some(_) = rsa.private_key(der) {
+      return (x509.KEY_RSA, der, "")
+    }
+  }
+  // PKCS #8: version 0, AlgorithmIdentifier, OCTET STRING
+  if xs.len() >= 3 && xs[0].tag == asn1.INTEGER && xs[1].tag == asn1.SEQUENCE && xs[2].tag == asn1.OCTET_STRING {
+    let alg = asn1.children(der, xs[1])
+    if !asn1.any_bad(alg) && alg.len() >= 1 && alg[0].tag == asn1.OID {
+      let inner = asn1.contents(der, xs[2])
+      let oid = asn1.oid(der, alg[0])
+      if oid == "1.2.840.113549.1.1.1" {
+        if let Some(_) = rsa.private_key(inner) {
+          return (x509.KEY_RSA, inner, "")
+        }
+        return (0, b"", "tls: failed to parse private key")
+      }
+      if oid == "1.2.840.10045.2.1" {
+        let curve = if alg.len() >= 2 && alg[1].tag == asn1.OID { asn1.oid(der, alg[1]) } else { "" }
+        return ec_key(inner, curve)
+      }
+      if oid == "1.3.101.112" {
+        let o = asn1.whole(inner, asn1.OCTET_STRING)
+        if o.tag < 0 || o.hi - o.lo != 32 {
+          return (0, b"", "tls: failed to parse private key")
+        }
+        return (x509.KEY_ED25519, asn1.contents(inner, o), "")
+      }
+      return (0, b"", "tls: found unknown private key type in PKCS#8 wrapping")
+    }
+  }
+  // SEC 1: version 1, the scalar, [0] the curve
+  ec_key(der, "")
+}
+
+/// A SEC 1 ECPrivateKey: the curve from its [0] parameters, else the
+/// PKCS #8 AlgorithmIdentifier's (curve0); the scalar padded to the
+/// curve's size.
+fn ec_key(der: Bytes, curve0: Str) -> (Int, Bytes, Str) {
+  let bad = (0, b"", "tls: failed to parse private key")
+  let t = asn1.whole(der, asn1.SEQUENCE)
+  let xs = asn1.children(der, t)
+  if t.tag < 0 || asn1.any_bad(xs) || xs.len() < 2 || asn1.small_int(der, xs[0]) != Some(1) || xs[1].tag != asn1.OCTET_STRING {
+    return bad
+  }
+  var curve = curve0
+  for x in xs {
+    if x.tag == 0xa0 {
+      let p = asn1.children(der, x)
+      if !asn1.any_bad(p) && p.len() == 1 && p[0].tag == asn1.OID {
+        curve = asn1.oid(der, p[0])
+      }
+    }
+  }
+  // Go's ParseECPrivateKey: P-224, P-256, P-384, P-521
+  let (kind, size, c) = match curve {
+    "1.2.840.10045.3.1.7" => (x509.KEY_P256, 32, nistec.P256)
+    "1.3.132.0.34" => (x509.KEY_P384, 48, nistec.P384)
+    "1.3.132.0.35" => (x509.KEY_P521, 66, nistec.P521)
+    "1.3.132.0.33" => (x509.KEY_P224, 28, nistec.P224)
+    _ => (0, 0, 0)
+  }
+  if kind == 0 {
+    return bad
+  }
+  var k = asn1.contents(der, xs[1])
+  if k.len() > size {
+    return bad
+  }
+  while k.len() < size {
+    k = asn1.cat([b"\x00", k])
+  }
+  if nistec.public_key(c, k).is_empty() {
+    return bad
+  }
+  (kind, k, "")
+}
+
+// ---------------------------------------------------------------------------
+// The server's certificates
+
+/// A server's TLS: its certificates and its session ticket keys (Go's
+/// automatic keys, rotated when a connection starts).
+struct SrvTls {
+  certs: List[Cert]
+  keys: List[tlsticket.Key]
+}
+
+/// The server configuration's record: a block whose word holds the
+/// record of an Any with the SrvTls (hconn.SR_TLS holds the block).
+fn srv_of(h: Int) -> SrvTls {
+  if rt.mem_load(h, 0, 8) == 0 {
+    return SrvTls{certs: [], keys: []}
+  }
+  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
+  rt.any_get[SrvTls](a) ?? SrvTls{certs: [], keys: []}
+}
+
+/// Adds c to the server of record a (its SR_TLS word at sr_tls); the
+/// first turns TLS on.
+pub fn srv_add(s: rthttp.Srv, a: Int, sr_tls: Int, c: Cert) {
+  var h = rt.mem_load(a, sr_tls, 8)
+  if h == 0 {
+    h = rt.heap_large(8)
+    rt.mem_store(h, 0, 0, 8)
+    rt.mem_store(a, sr_tls, h, 8)
+  }
+  var st = srv_of(h)
+  st.certs.push(c)
+  put(h, rt.any_of(st))
+}
+
+/// Frees a server configuration (0: none).
+pub fn srv_free(h: Int) { free(h) }
+
+// ---------------------------------------------------------------------------
+// Connections
+
+/// A connection: the server, its poll descriptor and deadline (monotonic
+/// ns, 0 none), why the last socket operation failed (CC_*, 0 none), the
+/// first bytes received (net/http's HTTP detection), whether the input
+/// ended, the handshake's outcome (1 done, -1 failed, 0 not yet), and
+/// the bytes read but not yet given to the server: after the handshake
+/// it gets one record per read, as Mbed TLS's reads do (h2srv.xo's
+/// scheduling between frames, and its rapid reset limit, depend on it).
+struct Conn {
+  s: tls13srv.Server
+  s12: tls12srv.Server?
+  pd: Int
+  when: Int
+  status: Int
+  first: Bytes
+  eof: Bool
+  done: Int
+  pend: Bytes
+}
+
+fn load(h: Int) -> Conn? {
+  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
+  rt.any_get[Conn](a)
+}
+
+fn save(h: Int, c: Conn) { put(h, rt.any_of(c)) }
+
+/// Replaces the Any in block h.
+fn put(h: Int, a: rt.Any) {
+  let old = rt.mem_load(h, 0, 8)
+  rt.mem_store(h, 0, keep(a), 8)
+  if old != 0 {
+    tasks.h_release(old)
+  }
+}
+
+/// The record of Any a with a reference more (tlsio.xo's keep).
+fn keep(a: rt.Any) -> Int {
+  let s = rt.obj_addr(a)
+  rc.inc(s)
+  s
+}
+
+/// A connection of server configuration h on poll descriptor pd (the
+/// caller holds the server's lock: the ticket keys rotate here).
+pub fn conn(h: Int, pd: Int) -> Int {
+  var st = srv_of(h)
+  let cs = st.certs
+  if cs.is_empty() {
+    return 0
+  }
+  let now = sysio.real_ns() / 1000000000
+  let keys = tlsticket.rotate(st.keys, now, rand.next_bytes(32))
+  if keys.len() != st.keys.len() || keys[0].created != st.keys[0].created {
+    st.keys = keys
+    put(h, rt.any_of(st))
+  }
+  var cf = tls13srv.conf(cs[0].certs, cs[0].key)
+  cf.ticket_keys = keys
+  cf.now = now
+  cf.alpn = ["h2", "http/1.1"]
+  for c in cs[1..cs.len()] {
+    cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
+  }
+  let t = rt.heap_large(8)
+  rt.mem_store(t, 0, 0, 8)
+  cf.handoff = true
+  save(t, Conn{s: tls13srv.server(cf), s12: None, pd: pd, when: 0, status: 0, first: b"", eof: false, done: 0, pend: b""})
+  t
+}
+
+/// Runs the server's handshake: whether it succeeded. A client that
+/// sent plain HTTP gets net/http's answer (xo_tls.c's
+/// tls_server_handshake).
+pub fn handshake(t: Int) -> Bool {
+  var c = match load(t) {
+    Some(x) => x
+    None => return false
+  }
+  if c.done != 0 {
+    return c.done == 1
+  }
+  while !done(c) && !failed(c) {
+    if !flush(c) || !fill(c, false) {
+      break
+    }
+  }
+  let ok = done(c) && flush(c)
+  if ok {
+    c.done = 1
+  } else {
+    c.done = -1
+    let _sent = flush(c)
+    if c.first.len() == 5 {
+      for m in ["GET /", "HEAD ", "POST ", "PUT /", "OPTIO"] {
+        if c.first == m.bytes() {
+          let msg = "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n".bytes()
+          if poll.pd_begin(c.pd) {
+            let _w = sock.send(rt.mem_load(c.pd, 8, 4), raw.bytes_addr(msg), msg.len(), NOSIGNAL)
+            poll.pd_end(c.pd)
+          }
+        }
+      }
+    }
+  }
+  save(t, c)
+  ok
+}
+
+/// Reads from a server connection, after the handshake: the bytes read
+/// into the n at p, 0 at the end, -1 when it failed or closed.
+pub fn hc_read(t: Int, p: Int, n: Int) -> Int {
+  if !handshake(t) {
+    return -1
+  }
+  read(t, p, n, false)
+}
+
+/// Reads without waiting (h2srv.xo's fiber waits itself): the bytes
+/// read, 0 at the end, -1 when it failed, -2 when no record is complete.
+pub fn nb_read(t: Int, p: Int, n: Int) -> Int { read(t, p, n, true) }
+
+fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
+  var c = match load(t) {
+    Some(x) => x
+    None => return -1
+  }
+  var out = 0
+  while true {
+    let app = recv_some(c, n)
+    if app.len() > 0 {
+      rt.mem_copy(p, raw.bytes_addr(app), app.len())
+      out = app.len()
+      break
+    }
+    if closed(c) {
+      break
+    }
+    if failed(c) {
+      out = -1
+      break
+    }
+    if step(c) {
+      continue
+    }
+    if c.eof {
+      break
+    }
+    // a KeyUpdate's answer, an alert
+    if !flush(c) {
+      out = -1
+      break
+    }
+    if !fill(c, nb) {
+      if c.eof {
+        break
+      }
+      out = if c.status == -2 { -2 } else { -1 }
+      break
+    }
+  }
+  let _sent = flush(c)
+  if c.status == -2 {
+    c.status = 0
+  }
+  save(t, c)
+  out
+}
+
+/// Writes the n bytes at p: CC_OK or why it failed.
+pub fn write(t: Int, p: Int, n: Int) -> Int {
+  var c = match load(t) {
+    Some(x) => x
+    None => return CC_ERR
+  }
+  if !done(c) {
+    return CC_ERR
+  }
+  send(c, raw.str_at(p, n).bytes())
+  let ok = flush(c)
+  save(t, c)
+  if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
+}
+
+/// Ends a connection whose handshake completed with close_notify
+/// (tls.Conn.Close), waiting at most 5 s to send it.
+pub fn close_notify(t: Int) {
+  if let Some(x) = load(t) {
+    var c = x
+    if c.done == 1 {
+      c.when = deadline(5000000000)
+      close(c)
+      let _sent = flush(c)
+      save(t, c)
+    }
+  }
+}
+
+/// Whether ALPN chose HTTP/2.
+pub fn alpn_h2(t: Int) -> Bool {
+  match load(t) {
+    Some(c) => alpn(c) == "h2"
+    None => false
+  }
+}
+
+/// Why the connection's cipher suite is one HTTP/2 prohibits (RFC 9113
+/// Appendix A: TLS 1.2 without an ECDHE AEAD suite; Go's isBadCipher),
+/// net/http's GOAWAY text; "" for none (every TLS 1.3 suite).
+pub fn bad_cipher(t: Int) -> Str {
+  match load(t) {
+    Some(c) => match c.s12 {
+      Some(x) => if x.suite is 0xc02b | 0xc02f | 0xc02c | 0xc030 | 0xcca9 | 0xcca8 { "" } else { "Prohibited TLS 1.2 Cipher Suite: ${hex(x.suite)}" }
+      None => ""
+    }
+    None => ""
+  }
+}
+
+/// Lower case hex without leading zeros (Go's %x).
+fn hex(x: Int) -> Str {
+  let d = "0123456789abcdef".bytes()
+  var s = ""
+  var v = x
+  while v > 0 {
+    s = "${d[v & 15..(v & 15) + 1].to_str() ?? ""}${s}"
+    v = v >> 4
+  }
+  if s == "" { "0" } else { s }
+}
+
+/// Frees a connection (0: none).
+pub fn free(h: Int) {
+  if h == 0 {
+    return
+  }
+  let s = rt.mem_load(h, 0, 8)
+  if s != 0 {
+    tasks.h_release(s)
+  }
+  rt.heap_release(h - 8)
+}
+
+// The TLS 1.3 server, or the TLS 1.2 one after a HANDOFF.
+
+fn done(c: Conn) -> Bool {
+  match c.s12 {
+    Some(x) => x.state == tls12srv.DONE
+    None => c.s.state == tls13srv.DONE
+  }
+}
+
+fn failed(c: Conn) -> Bool {
+  match c.s12 {
+    Some(x) => x.state == tls12srv.FAILED
+    None => c.s.state == tls13srv.FAILED
+  }
+}
+
+fn closed(c: Conn) -> Bool {
+  match c.s12 {
+    Some(x) => x.closed
+    None => c.s.closed
+  }
+}
+
+fn take(var c: Conn) -> Bytes {
+  match c.s12 {
+    Some(x) => {
+      var y = x
+      let b = tls12srv.take(y)
+      c.s12 = Some(y)
+      b
+    }
+    None => tls13srv.take(c.s)
+  }
+}
+
+fn recv_some(var c: Conn, n: Int) -> Bytes {
+  match c.s12 {
+    Some(x) => {
+      var y = x
+      let b = tls12srv.recv_some(y, n)
+      c.s12 = Some(y)
+      b
+    }
+    None => tls13srv.recv_some(c.s, n)
+  }
+}
+
+fn send(var c: Conn, data: Bytes) {
+  match c.s12 {
+    Some(x) => {
+      var y = x
+      tls12srv.send(y, data)
+      c.s12 = Some(y)
+    }
+    None => tls13srv.send(c.s, data)
+  }
+}
+
+fn close(var c: Conn) {
+  match c.s12 {
+    Some(x) => {
+      var y = x
+      tls12srv.close(y)
+      c.s12 = Some(y)
+    }
+    None => tls13srv.close(c.s)
+  }
+}
+
+fn feed(var c: Conn, data: Bytes) {
+  match c.s12 {
+    Some(x) => {
+      var y = x
+      tls12srv.feed(y, data)
+      c.s12 = Some(y)
+    }
+    None => {
+      tls13srv.feed(c.s, data)
+      if c.s.state == tls13srv.HANDOFF {
+        // a TLS 1.2 client: xo-fa's server, with the certificate Go's
+        // getCertificate picks for its server name
+        let h = tls12srv.parse_hello(c.s.hello)
+        var certs = c.s.conf.certs
+        var key = c.s.conf.key
+        if h.sni != "" {
+          for a in c.s.conf.alts {
+            if !a.certs.is_empty() && certs == c.s.conf.certs {
+              let p = x509.parse(a.certs[0])
+              let first = x509.parse(c.s.conf.certs[0])
+              let first_ok = first.err == "" && tlsname.host_ok(x509verify.names(first.cert), h.sni)
+              if !first_ok && p.err == "" && tlsname.host_ok(x509verify.names(p.cert), h.sni) {
+                certs = a.certs
+                key = a.key
+              }
+            }
+          }
+        }
+        var cf = tls12srv.conf(certs, key)
+        cf.alpn = c.s.conf.alpn
+        cf.max13 = true
+        // RFC 5077 tickets under the server's keys (tlsticket.xo)
+        cf.ticket_keys = c.s.conf.ticket_keys
+        cf.now = c.s.conf.now
+        c.s12 = Some(tls12srv.resume(cf, c.s.hello, c.s.rest))
+      }
+    }
+  }
+}
+
+fn alpn(c: Conn) -> Str {
+  match c.s12 {
+    Some(x) => x.alpn
+    None => c.s.alpn
+  }
+}
+
+/// Sends what the server has to send: whether it all went.
+fn flush(var c: Conn) -> Bool {
+  let b = take(c)
+  let n = b.len()
+  if n == 0 {
+    return true
+  }
+  if !poll.pd_begin(c.pd) {
+    c.status = CC_ERR
+    return false
+  }
+  let fd = rt.mem_load(c.pd, 8, 4)
+  let p = raw.bytes_addr(b)
+  var off = 0
+  var ok = true
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if !would_block(w) {
+      c.status = CC_ERR
+      ok = false
+      break
+    }
+    let r = poll.pd_wait(c.pd, true, c.when)
+    if r != poll.READY {
+      c.status = wait_res(r)
+      ok = false
+      break
+    }
+  }
+  poll.pd_end(c.pd)
+  ok
+}
+
+/// Reads what the client sent into the server: false when the input
+/// ended, a wait failed, or (nb) nothing is there (status -2).
+fn fill(var c: Conn, nb: Bool) -> Bool {
+  if poll.canceled() {
+    c.status = CC_CANCELED
+    return false
+  }
+  if !poll.pd_begin(c.pd) {
+    c.status = CC_ERR
+    return false
+  }
+  let fd = rt.mem_load(c.pd, 8, 4)
+  let buf = raw.bytes_buf(16384)
+  var ok = false
+  while true {
+    let r = sock.read(fd, raw.bytes_addr(buf), 16384)
+    if r > 0 {
+      let got = raw.bytes_len(buf, r)
+      if c.first.len() < 5 {
+        let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
+        c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
+      }
+      c.pend = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(c.pend.len() + r), c.pend, 0, c.pend.len(), 0), got, 0, r, 0).bytes()
+      if !done(c) {
+        // the handshake takes everything
+        feed(c, c.pend)
+        c.pend = b""
+      }
+      ok = true
+      break
+    }
+    if r == 0 {
+      c.eof = true
+      break
+    }
+    if r == -sock.EINTR {
+      continue
+    }
+    if !would_block(r) {
+      c.status = CC_ERR
+      break
+    }
+    if nb {
+      c.status = -2
+      break
+    }
+    let w = poll.pd_wait(c.pd, false, c.when)
+    if w != poll.READY {
+      c.status = wait_res(w)
+      break
+    }
+  }
+  poll.pd_end(c.pd)
+  ok
+}
+
+/// Gives the server the first complete record of pend: whether there was
+/// one (or a header too long to wait for).
+fn step(var c: Conn) -> Bool {
+  if c.pend.len() < 5 {
+    return false
+  }
+  let n = Int(c.pend[3]) * 256 + Int(c.pend[4])
+  var k = 5 + n
+  if n > 16640 {
+    k = c.pend.len()
+  } else if c.pend.len() < k {
+    return false
+  }
+  let rec = c.pend[0..k]
+  c.pend = c.pend[k..c.pend.len()]
+  feed(c, rec)
+  true
+}
+
+/// The timers' deadline d from now (hconn.xo's deadline).
+fn deadline(d: Int) -> Int {
+  if twflags.on() {
+    return twrun.deadline(d)
+  }
+  let now = sysio.mono_ns()
+  if d > 0 && now > 9223372036854775807 - d { 9223372036854775807 } else { now + d }
+}
+
+fn would_block(e: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => e == -35
+    TargetOs.Windows => e == -140 || e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
+  }
+}
+
+fn wait_res(w: Int) -> Int {
+  if w == poll.TIMEOUT {
+    return CC_TIMEOUT
+  }
+  if w == poll.CANCELED {
+    return CC_CANCELED
+  }
+  CC_ERR
+}

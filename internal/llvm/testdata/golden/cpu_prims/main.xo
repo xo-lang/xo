@@ -1,0 +1,49 @@
+// The CPU instructions of std/native/llrt/cpu.xo (decision 0231) against
+// a plain reference (std/rt cryptoCPU): the instructions on arm64 and
+// LLVM (on a CPU that has them) and the constant time bodies (the
+// `_soft` lines) on every backend.
+use std/crypto
+use std/internal
+
+fn main(os: Os) {
+  var seed = crypto.sha256(b"cpu_prims")
+  let ones = Bytes.from_hex("ffffffffffffffffffffffffffffffff") ?? b""
+  let zeros = Bytes.from_hex("00000000000000000000000000000000") ?? b""
+  var inputs = [zeros, ones]
+  for _ in 0..6 {
+    seed = crypto.sha256(seed)
+    inputs.push(seed[0..16])
+    inputs.push(seed[16..32])
+  }
+  // AES-GCM over every tail length of the record path (Gcm.ctr's last
+  // word, ghash_hw's last block), against Go's crypto/cipher on the Go
+  // backend
+  var msg = b""
+  for _ in 0..7 {
+    msg = msg + inputs[2] + inputs[3]
+  }
+  let key = inputs[4]
+  let nonce = inputs[5][0..12]
+  for n in [0, 1, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 47, 63, 64, 65, 100] {
+    let sealed = internal.crypto_op("aes.seal", key, nonce, msg[0..n], msg[0..(n % 21)])
+    let opened = internal.crypto_op("aes.open", key, nonce, sealed, msg[0..(n % 21)])
+    os.stdio.println("gcm ${n} ${sealed.to_hex()} ${opened.to_hex()}")
+  }
+  for (i, a) in inputs.indexed() {
+    let b = inputs[(i + 3) % inputs.len()]
+    let c = inputs[(i + 5) % inputs.len()]
+    for sfx in ["", "_soft"] {
+      let k = internal.crypto_op("cpu.carry${sfx}", a, b, b"", b"")
+      let m = internal.crypto_op("cpu.clmul${sfx}", a, b, b"", b"")
+      let r = internal.crypto_op("cpu.aes_round${sfx}", a, b, b"", b"")
+      let l = internal.crypto_op("cpu.aes_last${sfx}", a, b, c, b"")
+      // eleven round keys from the inputs after a
+      var ks = b""
+      for j in 1..12 {
+        ks = ks + inputs[(i + j) % inputs.len()]
+      }
+      let e = internal.crypto_op("cpu.aes_enc${sfx}", a, ks, b"", b"")
+      os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()} enc ${e.to_hex()}")
+    }
+  }
+}

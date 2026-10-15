@@ -1,0 +1,44 @@
+exit 0
+--- stdout
+chain: 0 leaf inter root
+wildcard: 0 leaf inter root
+wildcard parent: 7
+wildcard two labels: 7
+ipv4: 0 leaf inter root
+ipv6: 0 leaf inter root
+other ip: 7
+other host: 7
+case: 0 leaf inter root
+trailing dot: 0 leaf inter root
+leaf expired: 2
+leaf not yet: 2
+no intermediate: 1
+no root: 1
+fake root: 1
+fake and real root: 0 leaf inter root
+other root: 1
+client: 0 leaf inter root
+any: 0 leaf inter root
+direct: 0 direct root
+direct client: 6
+excess intermediates: 0 direct root
+not permitted: 5
+excluded: 5
+wildcard over excluded: 5
+permitted exact: 0 bare inter root
+path length: 4
+missing link: 1
+intermediate expired: 2
+nested usage: 6
+nested usage client: 6
+nested usage any: 0 leaf server inter client root
+parent not a ca: 1
+parent without cert sign: 1
+unhandled critical: 8
+rsa leaf in roots: 0 rsa self
+rsa self signed: 1
+rsa root: 0 rsa leaf rsa root
+many candidates: 0 leaf inter root
+intermediate as leaf: 0 inter root
+root as leaf: 0 root
+--- stderr

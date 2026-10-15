@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+K1 full handshake, a ticket issued:
+  hs <a full server flight, signature verified>
+  result ok c02b 29 - resumed=false
+  got 70696e67  EOF
+  app 17030300210000000000000001ac15ee975b90ec94acfeb93d998c9421eb3325ae4ceee37db6
+  bye 150303001a000000000000000220fc1e041d555348f9fd2dbeb61c8b65d04e
+K2 resumed:
+  hs <K2 server flight>
+  result ok c02b 29 - resumed=true
+  got 70696e67  EOF
+  app 17030300210000000000000001ac15ee975b90ec94acfeb93d998c9421eb3325ae4ceee37db6
+  bye 150303001a000000000000000220fc1e041d555348f9fd2dbeb61c8b65d04e
+K2 resumed, a byte at a time:
+  hs <K2 server flight>
+  result ok c02b 29 - resumed=true
+  got 70696e67  EOF
+  app 17030300210000000000000001ac15ee975b90ec94acfeb93d998c9421eb3325ae4ceee37db6
+  bye 150303001a000000000000000220fc1e041d555348f9fd2dbeb61c8b65d04e
+K2 with tickets off:
+  hs <a full server flight, signature verified>
+  result local error: tls: unexpected message
+K2 past the ticket's lifetime:
+  hs <a full server flight, signature verified>
+  result local error: tls: unexpected message
+K2 with a corrupted ticket:
+  hs <a full server flight, signature verified>
+  result local error: tls: unexpected message
+K2 with the session's suite disabled:
+  hs 15030300020228
+  result tls: no cipher suite supported by both client and server; client offered: [c02b]
+--- stderr

@@ -1,0 +1,405 @@
+// DER (ITU-T X.690) for TLS (the zero-C audit's B31, decision 0202:
+// Go's x/crypto/cryptobyte and encoding/asn1 designs in Xo, replacing
+// Mbed TLS's asn1parse and asn1write): reading the elements of a
+// certificate, a key, or a signature, and writing the few a TLS stack
+// makes. Every input is public, and the reader branches on it.
+//
+// An element is a Tlv: its tag, its contents b[lo..hi], and the
+// position of the element after it. Reading checks DER's rules: one
+// tag byte (X.509 needs no high tag numbers), the shortest length form,
+// and no length past the end; a failure is the Tlv of tag -1.
+use native/llrt/raw
+use native/rt
+
+/// An element of b: tag (the identifier byte, -1 when the bytes are not
+/// an element), contents lo..hi, the next element at next.
+pub struct Tlv {
+  pub tag: Int
+  pub lo: Int
+  pub hi: Int
+  pub next: Int
+}
+
+// the universal tags
+pub const BOOLEAN: Int = 0x01
+pub const INTEGER: Int = 0x02
+pub const BIT_STRING: Int = 0x03
+pub const OCTET_STRING: Int = 0x04
+pub const NULL: Int = 0x05
+pub const OID: Int = 0x06
+pub const UTF8_STRING: Int = 0x0c
+pub const PRINTABLE_STRING: Int = 0x13
+pub const T61_STRING: Int = 0x14
+pub const IA5_STRING: Int = 0x16
+pub const UTC_TIME: Int = 0x17
+pub const GENERALIZED_TIME: Int = 0x18
+pub const BMP_STRING: Int = 0x1e
+pub const SEQUENCE: Int = 0x30
+pub const SET: Int = 0x31
+
+fn bad() -> Tlv { Tlv{tag: -1, lo: 0, hi: 0, next: 0} }
+
+/// The element of b at pos, which must end by end.
+pub fn read(b: Bytes, pos: Int, end: Int) -> Tlv {
+  if pos < 0 || pos + 2 > end || end > b.len() {
+    return bad()
+  }
+  let tag = Int(b[pos])
+  if (tag & 0x1f) == 0x1f {
+    return bad()
+  }
+  let l0 = Int(b[pos + 1])
+  var len = l0
+  var lo = pos + 2
+  if l0 >= 128 {
+    let k = l0 - 128
+    // 0x80 (indefinite) is BER, and 4 length bytes are plenty
+    if k == 0 || k > 4 || lo + k > end || b[lo] == 0 {
+      return bad()
+    }
+    len = 0
+    for i in 0..k {
+      len = len * 256 + Int(b[lo + i])
+    }
+    lo += k
+    if len < 128 {
+      return bad()
+    }
+  }
+  if len > end - lo {
+    return bad()
+  }
+  Tlv{tag: tag, lo: lo, hi: lo + len, next: lo + len}
+}
+
+/// The element of b at pos with the tag; tag -1 when it has another.
+pub fn expect(b: Bytes, pos: Int, end: Int, tag: Int) -> Tlv {
+  let t = read(b, pos, end)
+  if t.tag != tag {
+    return bad()
+  }
+  t
+}
+
+/// The element that is all of b.
+pub fn whole(b: Bytes, tag: Int) -> Tlv {
+  let t = expect(b, 0, b.len(), tag)
+  if t.tag >= 0 && t.next != b.len() {
+    return bad()
+  }
+  t
+}
+
+/// The elements inside the constructed t; none and ok false when they do
+/// not fill it.
+pub fn children(b: Bytes, t: Tlv) -> List[Tlv] {
+  var out: List[Tlv] = []
+  var pos = t.lo
+  while pos < t.hi {
+    let e = read(b, pos, t.hi)
+    if e.tag < 0 {
+      return [bad()]
+    }
+    out.push(e)
+    pos = e.next
+  }
+  out
+}
+
+/// Whether some element of xs is bad (children's failure).
+pub fn any_bad(xs: List[Tlv]) -> Bool {
+  for x in xs {
+    if x.tag < 0 {
+      return true
+    }
+  }
+  false
+}
+
+/// The bytes of t's contents.
+pub fn contents(b: Bytes, t: Tlv) -> Bytes { b[t.lo..t.hi] }
+
+/// The bytes of all of t (its tag and length too), which starts at pos.
+pub fn raw(b: Bytes, pos: Int, t: Tlv) -> Bytes { b[pos..t.next] }
+
+/// Whether the INTEGER t is minimal (no needless leading 0x00 or 0xff).
+fn minimal_int(b: Bytes, t: Tlv) -> Bool {
+  if t.hi == t.lo {
+    return false
+  }
+  if t.hi - t.lo > 1 {
+    let a = Int(b[t.lo])
+    let c = Int(b[t.lo + 1])
+    if (a == 0 && c < 128) || (a == 255 && c >= 128) {
+      return false
+    }
+  }
+  true
+}
+
+/// The magnitude of the non negative INTEGER t (big endian, without the
+/// sign's 0x00; one 0x00 for zero); none for a negative or non minimal
+/// one.
+pub fn uint_bytes(b: Bytes, t: Tlv) -> Bytes? {
+  if t.tag != INTEGER || !minimal_int(b, t) || Int(b[t.lo]) >= 128 {
+    return None
+  }
+  if t.hi - t.lo > 1 && b[t.lo] == 0 {
+    return Some(b[t.lo + 1..t.hi])
+  }
+  Some(b[t.lo..t.hi])
+}
+
+/// The value of the INTEGER t when it fits 63 bits (signed).
+pub fn small_int(b: Bytes, t: Tlv) -> Int? {
+  if t.tag != INTEGER || !minimal_int(b, t) || t.hi - t.lo > 8 {
+    return None
+  }
+  var v = if Int(b[t.lo]) >= 128 { -1 } else { 0 }
+  for i in t.lo..t.hi {
+    v = rt.int_wrap(3, v, 8) | Int(b[i])
+  }
+  Some(v)
+}
+
+/// The BOOLEAN t (DER: 0x00 or 0xff).
+pub fn boolean(b: Bytes, t: Tlv) -> Bool? {
+  if t.tag != BOOLEAN || t.hi - t.lo != 1 {
+    return None
+  }
+  let v = Int(b[t.lo])
+  if v == 0 {
+    return Some(false)
+  }
+  if v == 255 {
+    return Some(true)
+  }
+  None
+}
+
+/// The bytes of the BIT STRING t with no unused bits (keys and
+/// signatures).
+pub fn bits(b: Bytes, t: Tlv) -> Bytes? {
+  if t.tag != BIT_STRING || t.hi == t.lo || b[t.lo] != 0 {
+    return None
+  }
+  Some(b[t.lo + 1..t.hi])
+}
+
+/// The first two bytes of the BIT STRING t as flags, bit 0 the first
+/// (KeyUsage's numbering), and whether it is one.
+pub fn bit_flags(b: Bytes, t: Tlv) -> Int? {
+  if t.tag != BIT_STRING || t.hi == t.lo || Int(b[t.lo]) > 7 {
+    return None
+  }
+  let unused = Int(b[t.lo])
+  if t.hi - t.lo == 1 && unused != 0 {
+    return None
+  }
+  var v = 0
+  var i = 0
+  while i < 2 && t.lo + 1 + i < t.hi {
+    let x = Int(b[t.lo + 1 + i])
+    // bit 7 of the first byte is flag 0
+    var k = 0
+    while k < 8 {
+      if (x & rt.int_wrap(3, 1, 7 - k)) != 0 {
+        v = v | rt.int_wrap(3, 1, 8 * i + k)
+      }
+      k += 1
+    }
+    i += 1
+  }
+  Some(v)
+}
+
+/// The dotted text of the OBJECT IDENTIFIER t ("1.2.840.10045.2.1"); ""
+/// when it is not one.
+pub fn oid(b: Bytes, t: Tlv) -> Str {
+  if t.tag != OID || t.hi == t.lo || Int(b[t.hi - 1]) >= 128 {
+    return ""
+  }
+  var out = ""
+  var v = 0
+  var first = true
+  for i in t.lo..t.hi {
+    let x = Int(b[i])
+    if v == 0 && x == 0x80 {
+      return ""
+    }
+    if v > 0xffffffffffff {
+      return ""
+    }
+    v = v * 128 + (x & 127)
+    if x < 128 {
+      if first {
+        let a = if v < 40 { 0 } else if v < 80 { 1 } else { 2 }
+        out = "${a}.${v - 40 * a}"
+        first = false
+      } else {
+        out = "${out}.${v}"
+      }
+      v = 0
+    }
+  }
+  out
+}
+
+/// The text of a directory string (UTF8String, PrintableString,
+/// IA5String, T61String as Latin-1, BMPString as UTF-16); none for
+/// another tag or a malformed one.
+pub fn text(b: Bytes, t: Tlv) -> Str? {
+  if t.tag == UTF8_STRING || t.tag == PRINTABLE_STRING || t.tag == IA5_STRING {
+    return contents(b, t).to_str()
+  }
+  if t.tag == T61_STRING {
+    var s = ""
+    for i in t.lo..t.hi {
+      s = raw.push_rune(s, Int(b[i]))
+    }
+    return Some(s)
+  }
+  if t.tag == BMP_STRING {
+    if (t.hi - t.lo) % 2 != 0 {
+      return None
+    }
+    var s = ""
+    var i = t.lo
+    while i < t.hi {
+      let u = Int(b[i]) * 256 + Int(b[i + 1])
+      if u >= 0xd800 && u < 0xe000 {
+        return None
+      }
+      s = raw.push_rune(s, u)
+      i += 2
+    }
+    return Some(s)
+  }
+  None
+}
+
+fn digits(b: Bytes, i: Int, n: Int) -> Int {
+  var v = 0
+  for k in 0..n {
+    let x = Int(b[i + k])
+    if x < 48 || x > 57 {
+      return -1
+    }
+    v = v * 10 + x - 48
+  }
+  v
+}
+
+/// The days from 1970-01-01 to the date (the proleptic Gregorian
+/// calendar; Howard Hinnant's days_from_civil).
+pub fn days(y0: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { y0 - 1 } else { y0 }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+fn month_days(y: Int, m: Int) -> Int {
+  if m == 2 {
+    if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+      return 29
+    }
+    return 28
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    return 30
+  }
+  31
+}
+
+/// The Unix time in seconds of the UTCTime (YYMMDDHHMMSSZ, 1950 to 2049)
+/// or GeneralizedTime (YYYYMMDDHHMMSSZ) t, as RFC 5280 4.1.2.5 allows
+/// them.
+pub fn time(b: Bytes, t: Tlv) -> Int? {
+  let n = t.hi - t.lo
+  var y = 0
+  var i = t.lo
+  if t.tag == UTC_TIME && n == 13 {
+    y = digits(b, i, 2)
+    if y < 0 {
+      return None
+    }
+    y = if y < 50 { 2000 + y } else { 1900 + y }
+    i += 2
+  } else if t.tag == GENERALIZED_TIME && n == 15 {
+    y = digits(b, i, 4)
+    if y < 0 {
+      return None
+    }
+    i += 4
+  } else {
+    return None
+  }
+  let mo = digits(b, i, 2)
+  let d = digits(b, i + 2, 2)
+  let h = digits(b, i + 4, 2)
+  let mi = digits(b, i + 6, 2)
+  let s = digits(b, i + 8, 2)
+  if b[i + 10] != 0x5a || mo < 1 || mo > 12 || d < 1 || d > month_days(y, mo) || h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59 {
+    return None
+  }
+  Some(((days(y, mo, d) * 24 + h) * 60 + mi) * 60 + s)
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+
+/// The element of the tag around the contents.
+pub fn enc(tag: Int, body: Bytes) -> Bytes {
+  let n = body.len()
+  var s = rt.rs_with_cap(n + 6)
+  s = rt.rs_push_byte(s, tag)
+  if n < 128 {
+    s = rt.rs_push_byte(s, n)
+  } else if n < 256 {
+    s = rt.rs_push_byte(s, 0x81)
+    s = rt.rs_push_byte(s, n)
+  } else if n < 65536 {
+    s = rt.rs_push_byte(s, 0x82)
+    s = rt.rs_push_byte(s, n / 256)
+    s = rt.rs_push_byte(s, n % 256)
+  } else {
+    s = rt.rs_push_byte(s, 0x83)
+    s = rt.rs_push_byte(s, n / 65536)
+    s = rt.rs_push_byte(s, (n / 256) % 256)
+    s = rt.rs_push_byte(s, n % 256)
+  }
+  rt.rs_append_bytes(s, body, 0, n, 0).bytes()
+}
+
+/// The INTEGER of the unsigned big endian magnitude m.
+pub fn enc_uint(m: Bytes) -> Bytes {
+  var a = 0
+  while a < m.len() - 1 && m[a] == 0 {
+    a += 1
+  }
+  var s = rt.rs_with_cap(m.len() - a + 1)
+  if m.len() == 0 || Int(m[a]) >= 128 {
+    s = rt.rs_push_byte(s, 0)
+  }
+  if m.len() > 0 {
+    s = rt.rs_append_bytes(s, m, a, m.len(), 0)
+  }
+  enc(INTEGER, s.bytes())
+}
+
+/// The concatenation of the parts.
+pub fn cat(parts: List[Bytes]) -> Bytes {
+  var n = 0
+  for p in parts {
+    n += p.len()
+  }
+  var s = rt.rs_with_cap(n)
+  for p in parts {
+    s = rt.rs_append_bytes(s, p, 0, p.len(), 0)
+  }
+  s.bytes()
+}

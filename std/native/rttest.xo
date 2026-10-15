@@ -1,18 +1,12 @@
-// Intrinsics of the test world of native test binaries (decision 0083),
-// implemented in std/llrt/xo_testing.c; imported by std/native/testing.xo,
-// http.xo, and llrt/report.xo and testworld.xo as `use native/rttest`.
-// What the C kept of part 1 (the records, the generators, the fakes) is
-// std/native/llrt/testworld.xo since the zero-C audit's B14.
+// Runtime calls of the test world of native test binaries (decision
+// 0083) that the SSA builders make without the native prelude; no native
+// runtime has them (the test world is std/native/llrt/testworld.xo and
+// twrun.xo, the zero-C audit's B14, B15 and B29).
 use native/rt
 
 // The report of a property test's case (std/native/llrt/report.xo,
 // decision 0193 step 5).
 
-/// Writes s on the real standard output (the harness reads it; the
-/// program's own output is captured).
-fn test_write(s: Str)
-/// Ends the test binary with the status code at once.
-fn test_quit(code: Int)
 /// report.xo's prop_report as the runtime call the SSA builder makes
 /// without the native prelude (decision 0198 deleted the C, so no native
 /// runtime has it).
@@ -32,17 +26,3 @@ fn gen_rune(g: Int) -> Int
 fn gen_str(g: Int) -> Str
 fn gen_duration(g: Int) -> Int
 fn gen_time(g: Int) -> Int
-
-/// l is an in memory listener (FakeNet.listen).
-fn test_mem_listener(l: Listener) -> Bool
-/// Serves l with the router r (an Any of http.Router).
-fn test_mem_serve(l: Listener, r: rt.Any)
-fn test_mem_unserve(l: Listener)
-/// Waits until no request runs on l.
-fn test_mem_drain(l: Listener)
-/// Starts a request to host:port: the router serving it, or none.
-fn test_mem_begin(hostport: Str) -> List[rt.Any]
-fn test_mem_end(hostport: Str)
-
-/// The test world's virtual now.
-fn test_now() -> Time

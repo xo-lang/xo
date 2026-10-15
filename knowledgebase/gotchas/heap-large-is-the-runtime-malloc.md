@@ -10,8 +10,8 @@ Cause: rt.heap_large, rt.heap_large_resize, and rt.heap_release began as
 alloc.xo's blocks above the size classes, but the runtime in Xo took
 them up as its malloc: testworld.xo's records, pool.xo's worker and
 fiber records, fault.xo's strings, stdio.xo's buffer, obj.xo's drop
-worklist. The C frees some of those with free (xo_testing.c's
-`free(kept - 1)`, task_free's fault strings), which a mapping is not;
+worklist. The C freed some of those with free (xo_testing.c's
+`free(kept - 1)` until 2026-10-15, task_free's fault strings), which a mapping is not;
 and every 32 byte record became a 64 KiB mapping.
 
 Fix: alloc.xo's big blocks have their own platform calls

@@ -1,0 +1,79 @@
+// A fault in the server's own connection code (not a handler's, which
+// http_fault covers) ends that connection only, as Go's net/http
+// recovers per connection: logged as "http: panic serving", the server
+// serving on, nothing live at exit. The fault comes from the servers'
+// test probe (XO_HTTP_FAULT_PROBE=1, env.txt): /xo-fault-probe/conn in
+// the HTTP/1.1 reader, /xo-fault-probe/frame in the HTTP/2 frame
+// handling (the connection ends), /xo-fault-probe/stream in an HTTP/2
+// stream's request (the stream is reset, no log line, as net/http).
+// Before the fix the native server stopped answering anyone
+// (gotchas/native-server-unisolated-fault-wedges.md). A fresh client
+// after each HTTP/2 probe, and the HTTP/1.1 probe on a raw connection:
+// what a client retries on a dropped connection (Go's Transport sends the
+// GET again) is not under test.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /ok", fn(_req) { http.text(200, "ok") })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.text() ?? "?"}")
+    Err(_) => os.stdio.println("${label}: failed")
+  }
+}
+
+/// Sends a request on a connection of its own and reads until the server
+/// closes it: the bytes answered.
+fn raw(os: Os, addr: Str, req: Str) -> Int {
+  let c = os.net.dial(addr).or_fault("dial")
+  c.write(req.bytes()).or_fault("write")
+  var n = 0
+  while true {
+    match c.read(4096) {
+      Ok(Some(b)) => n += b.len()
+      _ => break
+    }
+  }
+  c.close()
+  n
+}
+
+fn main(os: Os) {
+  let cert = http.tls_cert(good_cert(), good_key()).or_fault("cert")
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let plain = http.server(l1, routes())
+  let tls = http.server(l2, routes()).with_tls([cert])
+  let h1 = "http://${l1.addr()}"
+  let h2 = "https://${l2.addr()}"
+  scope s {
+    for srv in [plain, tls] {
+      s.spawn_background(fn() {
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve failed: ${e}")
+        }
+      })
+    }
+    show(os, "http/1.1 ok", http.client(os.net, timeout: 5s).get(h1 + "/ok"))
+    // Connection: close, so that without the probe (a 404) it ends too
+    let n = raw(os, l1.addr(), "GET /xo-fault-probe/conn HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    os.stdio.println("http/1.1 connection fault: closed, ${n} bytes answered")
+    show(os, "http/1.1 ok after", http.client(os.net, timeout: 5s).get(h1 + "/ok"))
+    let c = fn() -> http.Client { http.client(os.net, timeout: 5s).with_roots(ca_pem()).or_fault("roots") }
+    show(os, "http/2 ok", c().get(h2 + "/ok"))
+    show(os, "http/2 stream fault", c().get(h2 + "/xo-fault-probe/stream"))
+    show(os, "http/2 ok after stream", c().get(h2 + "/ok"))
+    show(os, "http/2 frame fault", c().get(h2 + "/xo-fault-probe/frame"))
+    show(os, "http/2 ok after frame", c().get(h2 + "/ok"))
+  }
+  os.stdio.println("servers stopped")
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

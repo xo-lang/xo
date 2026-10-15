@@ -1,0 +1,260 @@
+// The native TLS primitives (work item B31, decision 0202) on the
+// published test vectors: SHA-256, SHA-384, and SHA-512 (FIPS 180-4 examples),
+// HMAC (RFC 4231 cases 1, 2, 6), HKDF (RFC 5869 cases 1 and 3), and
+// TLS 1.3's HKDF-Expand-Label (RFC 8448's early and derived secrets),
+// AES (FIPS 197 appendix C) and AES-GCM (the GCM specification's test
+// cases 1 to 4, 15, 16; every length to 80 against Go). TestGolden diffs
+// the native output against the Go backend's, which is Go's crypto
+// (std/rt internal_crypto.go).
+use std/internal
+
+const HEX: Str = "0123456789abcdef"
+
+fn hex(b: Bytes) -> Str {
+  var out = StrBuilder.new()
+  for i in 0..b.len() {
+    let v = Int(b[i])
+    out.write(HEX[(v >> 4)..(v >> 4) + 1])
+    out.write(HEX[(v & 15)..(v & 15) + 1])
+  }
+  out.freeze()
+}
+
+fn nib(c: Int) -> Int { if c <= 57 { c - 48 } else { c - 87 } }
+
+fn unhex(s: Str) -> Bytes {
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var i = 0
+  while i + 1 < b.len() {
+    out.write_byte(UInt8(nib(Int(b[i])) * 16 + nib(Int(b[i + 1]))))
+    i += 2
+  }
+  out.freeze()
+}
+
+fn rep(x: Int, n: Int) -> Bytes {
+  var out = BytesBuilder.new()
+  for _ in 0..n {
+    out.write_byte(UInt8(x))
+  }
+  out.freeze()
+}
+
+fn check(os: Os, name: Str, got: Bytes, want: Str) {
+  let h = hex(got)
+  let verdict = if h == want { "ok" } else { "MISMATCH want ${want}" }
+  os.stdio.println("${name} ${verdict}")
+}
+
+fn op(o: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes { internal.crypto_op(o, a, b, c, d) }
+
+fn main(os: Os) {
+  let e = b""
+  let abc = b"abc"
+  let m448 = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+  let m896 = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+  check(os, "sha256 empty", op("hash.sha256", e, e, e, e), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+  check(os, "sha256 abc", op("hash.sha256", abc, e, e, e), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+  check(os, "sha256 448", op("hash.sha256", m448, e, e, e), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+  check(os, "sha384 empty", op("hash.sha384", e, e, e, e), "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b")
+  check(os, "sha384 abc", op("hash.sha384", abc, e, e, e), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7")
+  check(os, "sha384 896", op("hash.sha384", m896, e, e, e), "09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712fcc7c71a557e2db966c3e9fa91746039")
+  check(os, "sha512 empty", op("hash.sha512", e, e, e, e), "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e")
+  check(os, "sha512 abc", op("hash.sha512", abc, e, e, e), "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f")
+  check(os, "sha512 896", op("hash.sha512", m896, e, e, e), "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909")
+  // every split point of a 200 byte message, every hash: the incremental
+  // state against the one shot
+  let long = rep(97, 200)
+  for hn in ["256", "384", "512"] {
+    var bad = 0
+    for k in [0, 1, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129, 199, 200] {
+      let s = op("hash.split${hn}", long[0..k], long[k..200], e, e)
+      let one = op("hash.sha${hn}", long, e, e, e)
+      let part = op("hash.sha${hn}", long[0..k], e, e, e)
+      let n = one.len()
+      if hex(s[0..n]) != hex(part) || hex(s[n..2 * n]) != hex(one) || hex(s[2 * n..3 * n]) != hex(part) {
+        bad += 1
+      }
+    }
+    os.stdio.println("split${hn} bad ${bad}")
+  }
+  check(os, "hmac256 rfc4231 1", op("hmac.sha256", rep(11, 20), b"Hi There", e, e), "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+  check(os, "hmac384 rfc4231 1", op("hmac.sha384", rep(11, 20), b"Hi There", e, e), "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6")
+  check(os, "hmac256 rfc4231 2", op("hmac.sha256", b"Jefe", b"what do ya want for nothing?", e, e), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+  check(os, "hmac384 rfc4231 2", op("hmac.sha384", b"Jefe", b"what do ya want for nothing?", e, e), "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649")
+  check(os, "hmac512 rfc4231 1", op("hmac.sha512", rep(11, 20), b"Hi There", e, e), "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854")
+  check(os, "hmac512 rfc4231 2", op("hmac.sha512", b"Jefe", b"what do ya want for nothing?", e, e), "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")
+  let big = b"Test Using Larger Than Block-Size Key - Hash Key First"
+  check(os, "hmac256 rfc4231 6", op("hmac.sha256", rep(170, 131), big, e, e), "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+  check(os, "hmac384 rfc4231 6", op("hmac.sha384", rep(170, 131), big, e, e), "4ece084485813e9088d2c63a041bc5b44f9ef1012a2b588f3cd11f05033ac4c60c2ef6ab4030fe8296248df163f44952")
+  let ikm = rep(11, 22)
+  let salt = unhex("000102030405060708090a0b0c")
+  let info = unhex("f0f1f2f3f4f5f6f7f8f9")
+  let prk1 = op("hkdf.extract256", salt, ikm, e, e)
+  check(os, "hkdf rfc5869 1 prk", prk1, "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
+  check(os, "hkdf rfc5869 1 okm", op("hkdf.expand256", prk1, info, b"42", e), "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+  let prk3 = op("hkdf.extract256", e, ikm, e, e)
+  check(os, "hkdf rfc5869 3 prk", prk3, "19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04")
+  check(os, "hkdf rfc5869 3 okm", op("hkdf.expand256", prk3, e, b"42", e), "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8")
+  // SHA-384's HKDF, against Go only (no RFC 5869 case)
+  let prk384 = op("hkdf.extract384", salt, ikm, e, e)
+  os.stdio.println("hkdf384 prk ${hex(prk384)}")
+  os.stdio.println("hkdf384 okm ${hex(op("hkdf.expand384", prk384, info, b"100", e))}")
+  // RFC 8448: the early secret (no PSK) and its "derived" secret
+  let early = op("hkdf.extract256", e, rep(0, 32), e, e)
+  check(os, "tls13 early", early, "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a")
+  let empty_hash = op("hash.sha256", e, e, e, e)
+  check(os, "tls13 derived", op("hkdf.label256", early, b"derived", empty_hash, b"32"), "6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba")
+  os.stdio.println("label384 ${hex(op("hkdf.label384", prk384, b"key", e, b"32"))}")
+  aes_checks(os)
+  chacha_checks(os)
+  x25519_checks(os)
+}
+
+fn aes_checks(os: Os) {
+  let e = b""
+  let pt = unhex("00112233445566778899aabbccddeeff")
+  check(os, "aes128 fips197", op("aes.block", unhex("000102030405060708090a0b0c0d0e0f"), pt, e, e), "69c4e0d86a7b0430d8cdb78070b4c55a")
+  check(os, "aes192 fips197", op("aes.block", unhex("000102030405060708090a0b0c0d0e0f1011121314151617"), pt, e, e), "dda97ca4864cdfe06eaf70a0ec0d7191")
+  check(os, "aes256 fips197", op("aes.block", unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"), pt, e, e), "8ea2b7ca516745bfeafc49904b496089")
+  let z16 = rep(0, 16)
+  let z12 = rep(0, 12)
+  check(os, "gcm 1", op("aes.seal", z16, z12, e, e), "58e2fccefa7e3061367f1d57a4e7455a")
+  check(os, "gcm 2", op("aes.seal", z16, z12, z16, e), "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf")
+  let k = unhex("feffe9928665731c6d6a8f9467308308")
+  let n = unhex("cafebabefacedbaddecaf888")
+  let p = unhex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255")
+  let a = unhex("feedfacedeadbeeffeedfacedeadbeefabaddad2")
+  check(os, "gcm 3", op("aes.seal", k, n, p, e), "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f59854d5c2af327cd64a62cf35abd2ba6fab4")
+  let s4 = op("aes.seal", k, n, p[0..60], a)
+  check(os, "gcm 4", s4, "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47")
+  let k2 = unhex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
+  check(os, "gcm 15 tag", op("aes.seal", k2, n, p, e)[64..80], "b094dac5d93471bdec1a502270e3cc6c")
+  check(os, "gcm 16 tag", op("aes.seal", k2, n, p[0..60], a)[60..76], "76fc6ece0f4e1768cddf8853bb2d551b")
+  check(os, "gcm 4 open", op("aes.open", k, n, s4, a), "01${hex(p[0..60])}")
+  var bad = BytesBuilder.new()
+  bad.write(s4[0..75])
+  bad.write_byte(UInt8(Int(s4[75]) ^ 1))
+  check(os, "gcm 4 open bad tag", op("aes.open", k, n, bad.freeze(), a), "00")
+  check(os, "gcm 4 open bad aad", op("aes.open", k, n, s4, a[0..19]), "00")
+  check(os, "gcm open short", op("aes.open", k, n, rep(0, 15), e), "00")
+  // every length to 80 under each key size, the seals hashed (Go and
+  // native must agree) and each opened again
+  var all = BytesBuilder.new()
+  var opened = 0
+  var seed = op("hash.sha512", b"aes sweep", e, e, e)
+  for len in 0..81 {
+    seed = op("hash.sha512", seed, e, e, e)
+    let key = seed[0..16 + 8 * (len % 3)]
+    let nonce = seed[32..44]
+    let msg = (op("hash.sha512", seed, b"1", e, e) + op("hash.sha512", seed, b"2", e, e))[0..len]
+    let aad = seed[44..44 + len % 20]
+    let sealed = op("aes.seal", key, nonce, msg, aad)
+    all.write(sealed)
+    if hex(op("aes.open", key, nonce, sealed, aad)) == "01${hex(msg)}" {
+      opened += 1
+    }
+  }
+  os.stdio.println("gcm sweep ${hex(op("hash.sha256", all.freeze(), e, e, e))} opened ${opened}")
+}
+
+fn chacha_checks(os: Os) {
+  let e = b""
+  var k = BytesBuilder.new()
+  var k80 = BytesBuilder.new()
+  for i in 0..32 {
+    k.write_byte(UInt8(i))
+    k80.write_byte(UInt8(128 + i))
+  }
+  let key = k.freeze()
+  let key80 = k80.freeze()
+  check(os, "chacha20 block 2.3.2", op("chacha.block", key, unhex("000000090000004a00000000"), b"1", e), "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e")
+  let sun = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+  check(os, "chacha20 xor 2.4.2", op("chacha.xor", key, unhex("000000000000004a00000000"), b"1", sun), "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d")
+  check(os, "poly1305 2.5.2", op("chacha.poly1305", unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b"), b"Cryptographic Forum Research Group", e, e), "a8061dc1305136c6c22b8baf0c0127a9")
+  check(os, "poly1305 key 2.6.2", op("chacha.block", key80, unhex("000000000001020304050607"), b"0", e)[0..32], "8ad5a08b905f81cc815040274ab29471a833b637e3fd0da508dbb8e2fdd1a646")
+  // RFC 8439 appendix A.3's edge cases (h near p, carries), tags only
+  let r2 = unhex("02000000000000000000000000000000")
+  let r1 = unhex("01000000000000000000000000000000")
+  let s0 = rep(0, 16)
+  let rx = unhex("01000000000000000400000000000000")
+  check(os, "poly1305 a.3 5", op("chacha.poly1305", r2 + s0, rep(255, 16), e, e), "03000000000000000000000000000000")
+  check(os, "poly1305 a.3 6", op("chacha.poly1305", r2 + rep(255, 16), unhex("02000000000000000000000000000000"), e, e), "03000000000000000000000000000000")
+  check(os, "poly1305 a.3 7", op("chacha.poly1305", r1 + s0, unhex("fffffffffffffffffffffffffffffffff0ffffffffffffffffffffffffffffff11000000000000000000000000000000"), e, e), "05000000000000000000000000000000")
+  check(os, "poly1305 a.3 8", op("chacha.poly1305", r1 + s0, unhex("fffffffffffffffffffffffffffffffffbfefefefefefefefefefefefefefefe01010101010101010101010101010101"), e, e), "00000000000000000000000000000000")
+  check(os, "poly1305 a.3 9", op("chacha.poly1305", r2 + s0, unhex("fdffffffffffffffffffffffffffffff"), e, e), "faffffffffffffffffffffffffffffff")
+  check(os, "poly1305 a.3 10", op("chacha.poly1305", rx + s0, unhex("e33594d7505e43b900000000000000003394d7505e4379cd01000000000000000000000000000000000000000000000001000000000000000000000000000000"), e, e), "14000000000000005500000000000000")
+  check(os, "poly1305 a.3 11", op("chacha.poly1305", rx + s0, unhex("e33594d7505e43b900000000000000003394d7505e4379cd010000000000000000000000000000000000000000000000"), e, e), "13000000000000000000000000000000")
+  let n8 = unhex("070000004041424344454647")
+  let aad = unhex("50515253c0c1c2c3c4c5c6c7")
+  let sealed = op("chacha.seal", key80, n8, sun, aad)
+  check(os, "chacha20poly1305 2.8.2", sealed, "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691")
+  check(os, "chacha20poly1305 open", op("chacha.open", key80, n8, sealed, aad), "01${hex(sun)}")
+  var bad = BytesBuilder.new()
+  bad.write(sealed[0..sealed.len() - 1])
+  bad.write_byte(UInt8(Int(sealed[sealed.len() - 1]) ^ 128))
+  check(os, "chacha20poly1305 open bad tag", op("chacha.open", key80, n8, bad.freeze(), aad), "00")
+  check(os, "chacha20poly1305 open bad aad", op("chacha.open", key80, n8, sealed, aad[0..11]), "00")
+  check(os, "chacha20poly1305 open short", op("chacha.open", key80, n8, rep(0, 15), e), "00")
+  // every length to 200 (three blocks and more), Poly1305 with all ones
+  // messages too (the most carries), hashed; each seal opened again
+  var all = BytesBuilder.new()
+  var opened = 0
+  var seed = op("hash.sha512", b"chacha sweep", e, e, e)
+  for len in 0..201 {
+    seed = op("hash.sha512", seed, e, e, e)
+    let msg = (op("hash.sha512", seed, b"1", e, e) + op("hash.sha512", seed, b"2", e, e) + op("hash.sha512", seed, b"3", e, e) + op("hash.sha512", seed, b"4", e, e))[0..len]
+    let ad = seed[44..44 + len % 20]
+    let s = op("chacha.seal", seed[0..32], seed[32..44], msg, ad)
+    all.write(s)
+    all.write(op("chacha.poly1305", seed[0..32], rep(255, len), e, e))
+    all.write(op("chacha.poly1305", seed[32..64], msg, e, e))
+    if hex(op("chacha.open", seed[0..32], seed[32..44], s, ad)) == "01${hex(msg)}" {
+      opened += 1
+    }
+  }
+  os.stdio.println("chacha sweep ${hex(op("hash.sha256", all.freeze(), e, e, e))} opened ${opened}")
+}
+
+fn x25519_checks(os: Os) {
+  let e = b""
+  check(os, "x25519 7748 5.2 1", op("x25519.mult", unhex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"), unhex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"), e, e), "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
+  os.stdio.println("x25519 7748 5.2 2 ${hex(op("x25519.mult", unhex("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"), unhex("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"), e, e))}")
+  // RFC 7748 5.2's iteration: k, u = X25519(k, u), k
+  var k = unhex("0900000000000000000000000000000000000000000000000000000000000000")
+  var u = k
+  for i in 0..1000 {
+    let r = op("x25519.mult", k, u, e, e)
+    u = k
+    k = r
+    if i == 0 {
+      check(os, "x25519 7748 iter 1", k, "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079")
+    }
+  }
+  check(os, "x25519 7748 iter 1000", k, "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51")
+  // RFC 7748 6.1
+  let ak = unhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+  let bk = unhex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
+  let ap = op("x25519.base", ak, e, e, e)
+  let bp = op("x25519.base", bk, e, e, e)
+  check(os, "x25519 7748 6.1 alice", ap, "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+  check(os, "x25519 7748 6.1 bob", bp, "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
+  let s1 = op("x25519.mult", ak, bp, e, e)
+  os.stdio.println("x25519 7748 6.1 shared ${hex(s1)} agree ${hex(op("x25519.mult", bk, ap, e, e)) == hex(s1)}")
+  // edge points (Wycheproof's kinds): zero, one, low order, p, p + 1,
+  // the top bit set, all ones
+  let edges = ["0000000000000000000000000000000000000000000000000000000000000000", "0100000000000000000000000000000000000000000000000000000000000000", "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800", "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1ccc", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+  for p in edges {
+    os.stdio.println("x25519 edge ${p[0..8]} ${hex(op("x25519.mult", ak, unhex(p), e, e))}")
+  }
+  // random scalars and points, hashed
+  var all = BytesBuilder.new()
+  var seed = op("hash.sha512", b"x25519 sweep", e, e, e)
+  for _ in 0..64 {
+    seed = op("hash.sha512", seed, e, e, e)
+    all.write(op("x25519.mult", seed[0..32], seed[32..64], e, e))
+    all.write(op("x25519.base", seed[32..64], e, e, e))
+  }
+  os.stdio.println("x25519 sweep ${hex(op("hash.sha256", all.freeze(), e, e, e))}")
+}

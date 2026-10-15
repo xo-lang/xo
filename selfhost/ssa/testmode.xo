@@ -326,7 +326,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Stdio.set_tty" => {
       // the fake streams are terminals of this width (decision 0162)
       b.expr(ci.recv[0])
-      b.rt("tw_set_tty", -1, [b.tc_arg(es, 0, b.int_t())])
+      b.llrt_or_rt("tw_set_tty", -1, [b.tc_arg(es, 0, b.int_t())])
       return Some(b.unit())
     }
     "Stdio.output" => return Some(b.tw_rt("test_output", st, [b.cint(1)]))
@@ -336,14 +336,14 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       if !b.conc {
         return Some(b.undef(nt))
       }
-      b.rt("test_advance", -1, [b.tc_arg(es, 0, it)])
+      b.tw_rt("test_advance", -1, [b.tc_arg(es, 0, it)])
       return Some(b.unit())
     }
     "Clock.set" => {
-      b.rt("test_clock_set", -1, [b.tc_arg(es, 0, it)])
+      b.tw_rt("test_clock_set", -1, [b.tc_arg(es, 0, it)])
       return Some(b.unit())
     }
-    "Clock.sleeps" => return Some(b.rt("test_sleeps", b.m.list(it), []))
+    "Clock.sleeps" => return Some(b.tw_rt("test_sleeps", b.m.list(it), []))
     "Env.set" => {
       let k = b.tc_arg(es, 0, st)
       let v = b.tc_arg(es, 1, st)
@@ -356,7 +356,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     }
     "Env.program" => return Some(b.const_str("test"))
     "Proc.signal_after" => {
-      b.rt("test_signal_after", -1, [b.tc_arg(es, 0, it)])
+      b.tw_rt("test_signal_after", -1, [b.tc_arg(es, 0, it)])
       return Some(b.unit())
     }
     "Proc.exit_code" => {
@@ -364,8 +364,13 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       return Some(b.pop_one(l, nt))
     }
     "Proc.killed" => {
-      // the signals FakeProc.kill recorded (decision 0190)
-      return Some(b.rt("proc_killed", b.m.list(st), []))
+      // the signals FakeProc.kill recorded (decision 0190): the native
+      // prelude's llrt_proc_killed (std/native/llrt/proc.xo, work item
+      // B25), else the C runtime's
+      if b.prelude_impl("llrt_proc_killed") < 0 {
+        return Some(b.rt("proc_killed", b.m.list(st), []))
+      }
+      return Some(b.llrt("proc_killed", b.m.list(st), []))
     }
     "Proc.on_run" => {
       // the outputs a later run of the command gives
@@ -541,7 +546,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
     b.unsupported("this `main` for testing.run_main")
     return b.undef(it)
   }
-  b.rt("test_main_begin", -1, [args])
+  b.tw_rt("test_main_begin", -1, [args])
   let ret = b.m.types[ft].ret
   let r = b.add(Op.CallValue, ret, Aux.None, [main_v, os_v])
   var code = b.cint(0)
@@ -564,7 +569,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
     b.s.cur = join
     code = res
   }
-  let out = b.rt("test_main_end", it, [code])
+  let out = b.tw_rt("test_main_end", it, [code])
   b.check("")
   out
 }

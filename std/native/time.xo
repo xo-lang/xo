@@ -9,6 +9,7 @@ use std/time
 use native/llrt/cabi_time
 use native/llrt/testworld
 use native/llrt/tz
+use native/llrt/tzrules
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ struct Zone {
   label: Str
   fixed: Bool
   secs: Int
-  rules: tz.Rules
+  rules: tzrules.Rules
 }
 
 fn (z: Zone) display() -> Str { z.label }
@@ -65,7 +66,7 @@ fn fixed(name: Str, offset: Duration, at: rt.Loc) -> Zone {
 
 /// The zone named name from the program's zone data, else from the
 /// host's database.
-fn load_either(name: Str) -> tz.Rules? {
+fn load_either(name: Str) -> tzrules.Rules? {
   match tz.load(name, false) {
     Some(r) => Some(r)
     None => tz.load(name, true)

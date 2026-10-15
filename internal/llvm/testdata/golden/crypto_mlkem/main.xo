@@ -1,0 +1,98 @@
+// SHA-3, ML-KEM-768 and ML-KEM-1024 of the native backends' TLS
+// (std/native/llrt/sha3.xo and mlkem.xo, the zero-C audit's B31) through
+// internal.crypto_op, against Go's crypto/sha3 and crypto/mlkem (std/rt
+// internal_mlkem.go): FIPS 202's empty and "abc" digests and outputs of
+// every length to 300 for random inputs; C2SP CCTV's accumulated
+// ML-KEM-768 test (100 iterations, with CCTV's expected digest);
+// encapsulation keys with a coefficient of q or more (refused), a
+// ciphertext of another length, a corrupted ciphertext (implicit
+// rejection); and the X25519MLKEM768 hybrid of TLS: the client's share,
+// the server's secret and share, the client's secret (equal), and a
+// share of a wrong length or a low order X25519 point. ML-KEM-1024: the
+// accumulated test (100 iterations; its digest is crypto/mlkem's, Go's
+// tests carry no CCTV value for 1024), a key, encapsulation and
+// decapsulation, a corrupted ciphertext; SecP256r1MLKEM768 and
+// SecP384r1MLKEM1024 (the ECDH part first): shares, secrets, a point off
+// the curve.
+use std/internal
+
+fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+fn op(what: Str, a: Bytes, b: Bytes, c: Bytes) -> Bytes { internal.crypto_op(what, a, b, c, b"") }
+
+/// n bytes of a SHAKE128 stream of label (a deterministic input).
+fn stream(label: Str, n: Int) -> Bytes { op("sha3.shake128", label.bytes(), "${n}".bytes(), b"") }
+
+fn short(b: Bytes) -> Str {
+  let h = b.to_hex()
+  if h.len() <= 64 { h } else { "${h.bytes()[0..32].to_str() ?? ""}..${h.bytes()[h.len() - 32..h.len()].to_str() ?? ""} (${b.len()})" }
+}
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("sha3-256(\"\") ${op("sha3.sha3_256", b"", b"", b"").to_hex()}")
+  os.stdio.println("sha3-512(abc) ${op("sha3.sha3_512", "abc".bytes(), b"", b"").to_hex()}")
+  os.stdio.println("shake128(\"\", 32) ${op("sha3.shake128", b"", "32".bytes(), b"").to_hex()}")
+  os.stdio.println("shake256(\"\", 64) ${op("sha3.shake256", b"", "64".bytes(), b"").to_hex()}")
+  // every length to 300 (rates 72, 136, 168 and their borders)
+  var acc = b""
+  for n in 0..301 {
+    let x = stream("in${n}", n)
+    acc = op("sha3.sha3_256", "${acc.to_hex()}${op("sha3.sha3_256", x, b"", b"").to_hex()}${op("sha3.sha3_512", x, b"", b"").to_hex()}${op("sha3.shake128", x, "${n}".bytes(), b"").to_hex()}${op("sha3.shake256", x, "${n + 7}".bytes(), b"").to_hex()}".bytes(), b"", b"")
+  }
+  os.stdio.println("lengths 0 to 300: ${acc.to_hex()}")
+  let got = op("mlkem.accumulated", "100".bytes(), b"", b"").to_hex()
+  os.stdio.println("accumulated 100: ${got} ${if got == "1114b1b6699ed191734fa339376afa7e285c9e6acf6ff0177d346696ce564415" { "(CCTV's)" } else { "(NOT CCTV's)" }}")
+  let seed = stream("seed", 64)
+  let ek = op("mlkem.public", seed, b"", b"")
+  os.stdio.println("ek ${short(ek)}")
+  let kc = op("mlkem.encaps", ek, stream("m", 32), b"")
+  let k = kc[0..32]
+  let c = kc[32..kc.len()]
+  os.stdio.println("encaps ${k.to_hex()} ${short(c)}")
+  os.stdio.println("decaps ${op("mlkem.decaps", seed, c, b"").to_hex()}")
+  // a coefficient of q (3329 = 0xd01) in the first pair: refused
+  let bad_ek = "${"010d00"}${ek.to_hex().bytes()[6..ek.len() * 2].to_str() ?? ""}"
+  os.stdio.println("encaps with an unreduced key: ${short(op("mlkem.encaps", hex(bad_ek), stream("m", 32), b""))}")
+  os.stdio.println("decaps of 1087 bytes: ${short(op("mlkem.decaps", seed, c[0..1087], b""))}")
+  let flipped = "${c.to_hex().bytes()[0..100].to_str() ?? ""}ff${c.to_hex().bytes()[102..c.len() * 2].to_str() ?? ""}"
+  os.stdio.println("decaps of a corrupted ciphertext (implicit rejection): ${op("mlkem.decaps", seed, hex(flipped), b"").to_hex()}")
+  // the hybrid: client private key (ML-KEM seed, X25519 key)
+  let cpriv = stream("client", 96)
+  let share = op("mlkem.hybrid_share", cpriv, b"", b"")
+  os.stdio.println("client share ${short(share)}")
+  let srv = op("mlkem.hybrid_server", share, stream("server x25519", 32), stream("server m", 32))
+  os.stdio.println("server secret ${srv[0..64].to_hex()}")
+  os.stdio.println("server share ${short(srv[64..srv.len()])}")
+  let cs = op("mlkem.hybrid_client", cpriv, srv[64..srv.len()], b"")
+  os.stdio.println("client secret ${cs.to_hex()} equal ${cs == srv[0..64]}")
+  os.stdio.println("server, short share: ${short(op("mlkem.hybrid_server", share[0..1215], stream("server x25519", 32), stream("server m", 32)))}")
+  let zero = "${share.to_hex().bytes()[0..2368].to_str() ?? ""}${"00".repeat(32)}"
+  os.stdio.println("server, low order x25519: ${short(op("mlkem.hybrid_server", hex(zero), stream("server x25519", 32), stream("server m", 32)))}")
+  os.stdio.println("client, short share: ${short(op("mlkem.hybrid_client", cpriv, srv[64..srv.len() - 1], b""))}")
+  let got1024 = op("mlkem.accumulated_1024", "100".bytes(), b"", b"").to_hex()
+  os.stdio.println("accumulated 1024, 100: ${got1024}")
+  let ek4 = op("mlkem.public_1024", seed, b"", b"")
+  os.stdio.println("ek 1024 ${short(ek4)}")
+  let kc4 = op("mlkem.encaps_1024", ek4, stream("m", 32), b"")
+  let c4 = kc4[32..kc4.len()]
+  os.stdio.println("encaps 1024 ${kc4[0..32].to_hex()} ${short(c4)}")
+  os.stdio.println("decaps 1024 ${op("mlkem.decaps_1024", seed, c4, b"").to_hex()}")
+  let flipped4 = "${c4.to_hex().bytes()[0..100].to_str() ?? ""}ff${c4.to_hex().bytes()[102..c4.len() * 2].to_str() ?? ""}"
+  os.stdio.println("decaps 1024, corrupted: ${op("mlkem.decaps_1024", seed, hex(flipped4), b"").to_hex()}")
+  os.stdio.println("decaps 1024 of 1088 bytes: ${short(op("mlkem.decaps_1024", seed, c, b""))}")
+  for (name, esz) in [("p256", 32), ("p384", 48)] {
+    let pv = stream("${name} client", 64 + esz)
+    let sh = op("mlkem.${name}_hybrid_share", pv, b"", b"")
+    os.stdio.println("${name} client share ${short(sh)}")
+    let sv = op("mlkem.${name}_hybrid_server", sh, stream("${name} server ecdh", esz), stream("server m", 32))
+    let n = esz + 32
+    os.stdio.println("${name} server secret ${sv[0..n].to_hex()}")
+    os.stdio.println("${name} server share ${short(sv[n..sv.len()])}")
+    let cs2 = op("mlkem.${name}_hybrid_client", pv, sv[n..sv.len()], b"")
+    os.stdio.println("${name} client secret equal ${cs2 == sv[0..n]}")
+    // the point's last byte changed: off the curve
+    let off = "${sh.to_hex().bytes()[0..2 * (2 * esz + 1) - 2].to_str() ?? ""}${if sh[2 * esz] == 0 { "01" } else { "00" }}${sh.to_hex().bytes()[2 * (2 * esz + 1)..sh.len() * 2].to_str() ?? ""}"
+    os.stdio.println("${name} server, point off the curve: ${short(op("mlkem.${name}_hybrid_server", hex(off), stream("${name} server ecdh", esz), stream("server m", 32)))}")
+    os.stdio.println("${name} client, short share: ${short(op("mlkem.${name}_hybrid_client", pv, sv[n..sv.len() - 1], b""))}")
+  }
+}

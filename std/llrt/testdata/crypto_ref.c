@@ -43,7 +43,23 @@ static int64_t ref_equal(const char *a, int64_t an, const char *b, int64_t bn) {
 
 static const char b64_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static inline int b64_val(unsigned c) { return (int)xo_x_b64_val(c); }
+// b64_val is the value of a base64 digit (the standard alphabet), or -1
+// (cabi.xo's export of it was deleted with its last runtime caller).
+static inline int b64_val(unsigned c) {
+	if (c >= 'A' && c <= 'Z') {
+		return (int)(c - 'A');
+	}
+	if (c >= 'a' && c <= 'z') {
+		return (int)(c - 'a' + 26);
+	}
+	if (c >= '0' && c <= '9') {
+		return (int)(c - '0' + 52);
+	}
+	return c == '+' ? 62 : c == '/' ? 63 : -1;
+}
+
+// nbuf_byte appends c (it was xo_std.c's, which only this C used).
+static void nbuf_byte(nbuf *b, char c) { nbuf_put(b, &c, 1); }
 
 // nbuf_take turns the buffer into a string object and frees it (it was
 // xo_std.c's, which only this C used).

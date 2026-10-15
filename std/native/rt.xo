@@ -17,13 +17,8 @@
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
-/// The byte at i (0 to 255), or -1 out of range.
-fn str_byte(s: Str, i: Int) -> Int
 fn str_rune_count(s: Str) -> Int
 fn str_repeat(s: Str, n: Int) -> Str
-fn str_join(xs: List[Str], sep: Str) -> Str
-/// The string of one byte (0 to 255).
-fn str_of_byte(b: Int) -> Str
 /// Whether s parses as an Int (strconv.ParseInt(s, 10, 64)).
 fn int_parse_ok(s: Str) -> Bool
 fn int_parse(s: Str) -> Int
@@ -44,15 +39,14 @@ fn rs_push_word(s: Str, w: Int, n: Int) -> Str
 /// s + four such words, their lengths (0 to 8) in the nibbles of lens,
 /// w0's the lowest (decision 0193).
 fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
-/// s + the character r, U+FFFD when r is not a scalar value (the SSA's).
-fn rs_append_rune(s: Str, r: Int) -> Str
 /// s + the Debug text of the Rune r, and s + the decimal text of v as a
 /// UInt64: std/native/llrt/show.xo's, as runtime calls only the wasm
 /// runtime has (decision 0198 deleted the C).
 fn rs_append_rune_quote(s: Str, r: Int) -> Str
 fn rs_append_u64(s: Str, v: Int) -> Str
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
-/// (BytesBuilder.write_rune).
+/// (BytesBuilder.write_rune in a wasm module; the native targets call
+/// raw.xo push_rune).
 fn rs_push_rune(s: Str, r: Int) -> Str
 /// An empty string with room for n bytes (BytesBuilder.with_capacity).
 fn rs_with_cap(n: Int) -> Str
@@ -109,8 +103,6 @@ fn eprintln(s: Str)
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
-/// utf8.DecodeRune of b from i: the rune times 8 plus its size.
-fn bytes_decode(b: Bytes, i: Int) -> Int
 /// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
 /// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
 /// backends lower a constant op inline (decision 0193 step 3). Decision
@@ -128,6 +120,10 @@ fn u64_mul_hi(a: Int, b: Int) -> Int
 /// mask is 0 or all ones and turn a masked select into a branch; a
 /// call of an identity function on wasm.
 fn ct_barrier(x: Int) -> Int
+/// Whether the C symbol name (a string literal), weakly referenced by a
+/// `weak_` declaration of std/native/sys_c.xo, was linked (decision
+/// 0232): its address compared with 0; false in a wasm module.
+fn sym_present(name: Str) -> Bool
 /// The IEEE 754 bits of f (lowered inline).
 fn float_bits(f: Float) -> Int
 /// The Float of the IEEE 754 bits b (lowered inline).
@@ -228,10 +224,19 @@ fn prefetch(a: Int)
 ///   7-9 std/native/llrt/process.xo: argc, argv, the environment
 ///   10-13 std/native/llrt/obj.xo: the single threaded heap record, three C functions' addresses
 ///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
-///   15-17 std/native/llrt/ctx.xo: the addresses of ctx_root and the services record (the pool record, free functions, flags), the program's task group (os.tasks; decision 0229)
+///   15-17 std/native/llrt/ctx.xo: unused (was xo_rt.c ctx_root's address until ctx.xo root, 2026-10-15), the address of the services record (the pool record, free functions, flags), the program's task group (os.tasks; decision 0229)
 ///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)
 ///   22-29 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library, the list of heap records, its lock, a record's size
-///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
+///   30 std/native/llrt/cpu.xo: the CPU's crypto instructions, once looked up (decision 0231)
+///   31 std/native/llrt/tlsio.xo: the system's roots record (an rt.Any; the certificates parsed off macOS)
+///   32-33 std/native/llrt/twflags.xo: whether the test world runs, the effects made real
+///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
+///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the C's park_signal, the C's descriptor services record
+///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
+///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
+///   60-61 std/native/llrt/stop.xo: two phase shutdown's state record, the C's services record
+///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
+///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (XO_NOLIBC builds)
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
@@ -256,9 +261,6 @@ fn call_c2(f: Int, a: Int, b: Int) -> Int
 /// performance counter's frequency; decisions 0206 and 0213, work item
 /// B01).
 fn sys_words() -> Int
-/// getauxval(k): the value of the auxiliary vector's entry k, or 0
-/// (always 0 off Linux; std/llrt/xo_sys.c).
-fn auxval(k: Int) -> Int
 /// clone(2) of a thread (flags, the child's stack pointer sp, the
 /// address of its 32 bit thread id for CLONE_PARENT_SETTID and
 /// CLONE_CHILD_CLEARTID, its thread pointer for CLONE_SETTLS) through a
@@ -278,19 +280,6 @@ fn unwind_save(regs: Int)
 /// and jumps to the address in word 96 with the stack pointer of word
 /// 31: never returns (decision 0221; arm64 only, a trap on x86_64).
 fn unwind_resume(regs: Int)
-/// Whether a test binary's world fakes the capability bits real (1
-/// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
-/// the C runtime, which serves the fake.
-fn tw_fake(real: Int) -> Bool
-/// os.proc.exit in a test binary (the test world's tw_exit): the code is
-/// recorded; inside testing.run_main it returns with the context
-/// unwinding, else the test ends (std/native/llrt/process.xo).
-fn tw_exit(code: Int)
-/// The address of the calling thread's 16 bytes of scratch for Clock.now's
-/// timespec, or 0 while the test world's virtual clock runs (one call on
-/// the clock's path; decision 0206 stage 2; on every OS since work item
-/// B01).
-fn sys_clock_buf() -> Int
 /// Clock.now of the C runtime (the SSA builders' lowering before
 /// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.
 fn clock_now() -> Int
@@ -428,11 +417,11 @@ fn fs_root(f: Fs) -> Str
 fn fs_mode(f: Fs) -> Int
 /// The Fs value with root and mode.
 fn fs_new(root: Str, mode: Int) -> Fs
-// fs_read through fs_unlock below (not fs_status, fs_msg, fs_canceled,
-// fs_raw_file, fs_raw_lock): the calls of sysio.xo's and fsops.xo's
-// layer 0 arms, which only a wasm module takes (its runtime serves or
-// faults them); on the native targets they are faulting stubs (work item
-// B16).
+// fs_read through fs_unlock below (not fs_canceled), and fs_set_err:
+// the calls of sysio.xo's and fsops.xo's layer 0 arms, which only a wasm
+// module takes (its runtime serves or faults them); on the native targets
+// the SSA builders lower them to a fault (selfhost/ssa call.xo
+// wasm_only_rt; the C's faulting stubs stay for the seed's code).
 
 /// The contents of the file in a list of one, or empty with the status set.
 fn fs_read(path: Str) -> List[Bytes]
@@ -467,7 +456,8 @@ fn fs_raw_getcwd() -> Str
 /// Records err (0: success) for the Xo path x: the operation's status.
 fn fs_raw_fail(err: Int, x: Str) -> Int
 fn fs_case_sensitive() -> Bool
-/// Whether an Fs operation reports Canceled (not in deferred code).
+/// Whether an Fs operation reports Canceled (not in deferred code): the
+/// native prelude's llrt_fs_canceled on the native targets.
 fn fs_canceled() -> Bool
 /// File handles, copies, modes, links, and locks (decisions 0163, 0172):
 /// a handle of the C runtime; the status as for the other operations.
@@ -498,37 +488,14 @@ fn fs_lock(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_shared(p: Str, wait: Bool, x: Str) -> FsLock
 fn fs_lock_held(l: FsLock) -> Bool
 fn fs_unlock(l: FsLock)
-/// The handles of std/native/llrt/fsops.xo (work item B16): the C
-/// runtime's records of a descriptor fd (fsops.xo reads and writes their
-/// words through obj_addr), which close fd when freed. A file handle
-/// owns a 64 KiB read buffer when buffered; a lock handle holds fd's
-/// flock when held (fd -1: none).
-fn fs_raw_file(fd: Int, buffered: Bool) -> FsFile
-fn fs_raw_lock(fd: Int, held: Bool) -> FsLock
 /// `clock.sleep_or_cancel(d)` for the runtime's polls: 1 when the task
 /// was canceled before or during the sleep, else 0 (the fs lock's wait).
 fn clock_sleep_or_cancel(d: Int) -> Int
 /// Writes what standard output holds buffered.
 fn flush()
-/// A Time of Unix nanoseconds, and back (both lowered as Int).
-fn time_of(ns: Int) -> Time
-fn time_ns(t: Time) -> Int
 
 // ---------------------------------------------------------------------------
-// Processes (decision 0107)
-
-/// Runs cmd with args: the status ("0" ran, "1" not found, "2" an error,
-/// "3" canceled), the exit code in decimal or the error's message, and
-/// when it ran standard output and error.
-fn proc_run(cmd: Str, args: List[Str]) -> List[Str]
-/// Proc.kill (decision 0190): sends signal number sig of the list HUP,
-/// INT, QUIT, KILL, TERM, USR1, USR2, CONT, STOP to pid; the empty list,
-/// or the error's message. A test's FakeProc records it instead.
-fn proc_kill(pid: Int, sig: Int) -> List[Str]
-/// FakeProc.killed: the signals proc_kill recorded, as "NAME PID".
-fn proc_killed() -> List[Str]
-
-// Commands, children, and pipelines (decisions 0161 and 0172). A command
+// Processes (decision 0107): commands, children, and pipelines (decisions 0161 and 0172). A command
 // is a spec (std/native/prelude.xo cmd_spec): name, dir, flags (1 env set,
 // 2 inherit, 4 merge_stderr), the count of args and the args, the count
 // of env entries and the entries, the count of set_env entries and the
@@ -536,29 +503,12 @@ fn proc_killed() -> List[Str]
 // done (then the values), "e" the end of a stream, "1" not found (the
 // command), "2" an error (the message), "3" canceled.
 
-/// A started command (Child): a handle of the C runtime.
+/// A started command (Child): a record of std/native/llrt/proc.xo's (its
+/// words CH_*) behind the C runtime's object header.
 struct ProcChild {}
-/// Runs the specs (mode 0 output, 1 on the terminal, 2 a pipeline of all
-/// of them) with input as the first one's standard input when has_input:
-/// "0", the status, standard output, standard error.
-fn proc_exec(specs: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str]
-/// The program's environment as exec passes it on, and the working
-/// directory (std/native/llrt/procspec.xo, decision 0193 step 6).
-fn proc_environ() -> List[Str]
-fn proc_getcwd() -> Str
-/// Starts the command; proc_child_start tells how that went.
-fn proc_spawn(spec: List[Str], input: Bytes, has_input: Bool) -> ProcChild
-fn proc_child_start(c: ProcChild) -> List[Str]
-fn proc_child_pid(c: ProcChild) -> Int
-fn proc_child_write(c: ProcChild, data: Bytes) -> List[Str]
-fn proc_child_close_stdin(c: ProcChild)
-/// At most max bytes of the output (or the error stream): "0" and the
-/// bytes, or "e" at the end.
-fn proc_child_read(c: ProcChild, err: Bool, max: Int) -> List[Str]
-fn proc_child_read_line(c: ProcChild) -> List[Str]
-/// "0" and the exit status.
-fn proc_child_wait(c: ProcChild) -> List[Str]
-fn proc_child_kill(c: ProcChild)
+/// A new child record of std/native/llrt/proc.xo's (CH_SIZE bytes,
+/// zeroed, its free function the C's, which calls proc.xo child_free).
+fn proc_child_new() -> ProcChild
 
 // ---------------------------------------------------------------------------
 // The environment (decision 0172)
@@ -581,18 +531,3 @@ fn env_vars() -> List[Str]
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 
-/// A line (all false) or the rest of standard input; stdin_status tells
-/// 0 the text, 1 the end of input, 2 an error (stdin_msg), 3 canceled.
-fn stdin_read(all: Bool) -> Str
-fn stdin_status() -> Int
-/// At most max bytes of standard input (decision 0162); stdin_status
-/// tells as for stdin_read.
-fn stdin_read_bytes(max: Int) -> Bytes
-/// Whether descriptor fd is a terminal (never in a test binary).
-fn isatty(fd: Int) -> Bool
-/// The columns of the terminal on standard output, error, or input, or 0.
-fn term_width() -> Int
-/// Turns standard input's echo off (false; true when it was a terminal)
-/// or restores it (true).
-fn stdin_echo(on: Bool) -> Bool
-fn stdin_msg() -> Str

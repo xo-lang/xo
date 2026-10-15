@@ -1,0 +1,562 @@
+// The HTTP server's registration, streamed bodies, and the table of
+// streamed responses, in Xo (the zero-C audit's B28 part 3; xo_http.c
+// until 2026-10-14).
+//
+// A server (rthttp.Srv, hconn.xo SR_*) keeps its live connections and a
+// scope of its own for their tasks, linked under main's root: canceling
+// the serving task does not cancel requests in flight (std/rt's
+// reqRoot); ending main (the grace period, a second signal) does. A
+// connection (rthttp.HConn, hconn.xo HC_*) owns http1.xo's X1 record or,
+// over HTTP/2, h2srv.xo's connection record; a stream's connection
+// (hconn.stream) holds a stream record and its own X1 record (the
+// response header).
+//
+// A sink takes the writes of a stream's body (http.stream, decision
+// 0083): into a buffer (a response dispatched in process, collected), or
+// to a connection as net/http's response writer sends them: through a
+// 2048 byte buffer (std/rt writes strings, and bufio.Writer.WriteString
+// fills and flushes the buffer in turn; HTTP/2's is 4 KiB,
+// handlerChunkWriteSize), the head going out with the first data that
+// leaves the buffer (or the first flush) while the handler is not done,
+// so chunked on HTTP/1.1; a stream that never leaves the buffer is an
+// ordinary response when it ends.
+//
+// The Windows arms are UNTESTED on windows: written on macOS and checked
+// by the cross build only.
+use std/task
+use native/llrt/ctx
+use native/llrt/h2srv
+use native/llrt/hclient
+use native/llrt/hconn
+use native/llrt/http1
+use native/llrt/obj
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/stop
+use native/llrt/tasks
+use native/llrt/tlssrv
+use native/rt
+use native/rthttp
+
+/// A sink's record (byte offsets): the header; whether it sends to a
+/// connection; its buffer (malloc'd), count, and capacity; the
+/// connection (a reference) and the response's status; whether the head
+/// went out and whether the connection failed; HTTP/1.1's state
+/// (http1.xo's SK_* bits).
+const SK_CONN = 16
+const SK_BUF = 24
+const SK_N = 32
+const SK_CAP = 40
+const SK_HC = 48
+const SK_STATUS = 56
+const SK_STARTED = 64
+const SK_FAILED = 72
+const SK_STATE = 80
+const SK_SIZE = 88
+
+/// The table of streamed responses (in the services record, ctx.xo
+/// SV_STREAMS): a lock word, the array of functions (malloc'd; an Any's
+/// object each, counted, or 0 once taken), the count.
+const ST_MU = 0
+const ST_FS = 8
+const ST_N = 16
+
+/// 30 s in ns (net/http's Shutdown in std/rt).
+const WAIT_NS = 30000000000
+
+/// The wait list entry of a context (tasks.xo E_*): the park, the links,
+/// the writer flag.
+const E_PARK = 0
+const E_WRITER = 24
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn srec(s: rthttp.Srv) -> Int { rt.obj_addr(s) }
+
+// ---------------------------------------------------------------------------
+// The server
+
+/// A new server, with the scope of its connections open.
+pub fn srv_new() -> rthttp.Srv {
+  let s = tasks.new_handle(hconn.SR_SIZE, ctx.SV_SRV_FREE)
+  let root = stop.root()
+  st(s, hconn.SR_SCOPE, tasks.scope_detached(if root != 0 { root } else { ld(ctx.cur(), ctx.C_NODE) }))
+  let h = rt.obj_at[rthttp.Srv](s)
+  tasks.h_release(s)
+  h
+}
+
+/// The scope of the connection tasks as a task.Group.
+pub fn srv_group(s: rthttp.Srv) -> task.Group {
+  let g = tasks.scope_group(ld(srec(s), hconn.SR_SCOPE))
+  let h = rt.obj_at[task.Group](g)
+  tasks.h_release(g)
+  h
+}
+
+/// Stops the server: connections close after their current request, and
+/// idle ones now.
+pub fn srv_stop(s: rthttp.Srv) { stop_at(srec(s)) }
+
+fn stop_at(a: Int) {
+  hconn.lock(a)
+  st(a, hconn.SR_STOPPING, 1)
+  var hc = ld(a, hconn.SR_CONNS)
+  while hc != 0 {
+    let h2 = ld(hc, hconn.HC_H2)
+    if h2 != 0 {
+      // GOAWAY, then the streams in flight finish
+      h2srv.conn_stop(h2)
+    } else if ld(hc, hconn.HC_IDLE) != 0 {
+      poll.pd_close(hconn.conn_pd(hc))
+    }
+    hc = ld(hc, hconn.HC_NEXT)
+  }
+  hconn.unlock(a)
+}
+
+/// Waits for the connections to end: after a stop request (core 7.5)
+/// until they do or the serving task is canceled (the grace period
+/// ended); else (serve's task was canceled) at most 30 s, as net/http's
+/// Shutdown in std/rt.
+pub fn srv_wait(s: rthttp.Srv) {
+  let a = srec(s)
+  let c = ctx.cur()
+  let stopping = stop.requested()
+  let until = if stopping { 0 } else { hconn.deadline(WAIT_NS) }
+  let park = c + ctx.C_PARK
+  let e = c + ctx.C_WENT
+  var t = 0
+  hconn.lock(a)
+  while ld(a, hconn.SR_N) > 0 {
+    if stopping && poll.canceled() {
+      break
+    }
+    if t != 0 && poll.timer_fired(t) {
+      break
+    }
+    st(e, E_PARK, park)
+    st(e, E_WRITER, 0)
+    pool.park_reset(park)
+    tasks.wl_add(a + hconn.SR_IDLE, e)
+    hconn.unlock(a)
+    if until != 0 && t == 0 {
+      t = poll.timer_park(until, park)
+    }
+    tasks.park_wait_n(c, stopping, false)
+    hconn.lock(a)
+    tasks.wl_del(a + hconn.SR_IDLE, e)
+  }
+  hconn.unlock(a)
+  if t != 0 {
+    poll.timer_end(t)
+  }
+}
+
+/// Cancels the connections left and waits for their tasks.
+pub fn srv_close(s: rthttp.Srv) {
+  let a = srec(s)
+  if ld(a, hconn.SR_CLOSED) != 0 {
+    return
+  }
+  st(a, hconn.SR_CLOSED, 1)
+  stop_at(a)
+  hconn.lock(a)
+  var hc = ld(a, hconn.SR_CONNS)
+  while hc != 0 {
+    poll.pd_close(hconn.conn_pd(hc))
+    hc = ld(hc, hconn.HC_NEXT)
+  }
+  hconn.unlock(a)
+  let c = ctx.cur()
+  let saved = ld(c, ctx.C_NODE)
+  let u = rt.mem_load(c, ctx.C_UNWINDING, 4)
+  rt.mem_store(c, ctx.C_UNWINDING, 0, 4)
+  let sc = ld(a, hconn.SR_SCOPE)
+  let _r = tasks.scope_close(sc, 1)
+  tasks.h_release(sc)
+  st(c, ctx.C_NODE, saved)
+  rt.mem_store(c, ctx.C_UNWINDING, u, 4)
+}
+
+/// Adds certificate c to server s (http.Server.with_tls); the first
+/// turns TLS on.
+pub fn srv_tls(s: rthttp.Srv, c: tlssrv.Cert) { tlssrv.srv_add(s, srec(s), hconn.SR_TLS, c) }
+
+/// Frees server record a (its last reference went; cabi_http.xo
+/// srv_free).
+pub fn srv_free(a: Int) {
+  let sc = ld(a, hconn.SR_SCOPE)
+  if sc != 0 && ld(a, hconn.SR_CLOSED) == 0 {
+    // never closed (serve did not get to its end): its tasks hold the
+    // server, so none is left
+    tasks.h_release(sc)
+  }
+  let tls = ld(a, hconn.SR_TLS)
+  if tls != 0 {
+    tlssrv.srv_free(tls)
+  }
+  obj.free_obj(a)
+}
+
+// ---------------------------------------------------------------------------
+// Connections
+
+/// Registers connection c (accepted by the listener) with server s.
+pub fn hc_new(s: rthttp.Srv, c: Conn) -> rthttp.HConn {
+  let a = srec(s)
+  let cn = rt.obj_addr(c)
+  let hc = tasks.new_handle(hconn.HC_SIZE, ctx.SV_HC_FREE)
+  rc.inc(a)
+  rc.inc(cn)
+  st(hc, hconn.HC_SRV, a)
+  st(hc, hconn.HC_CONN, cn)
+  let pd = hconn.conn_pd(hc)
+  hconn.set_ip(hc, hconn.peer_ip(rt.mem_load(pd, 8, 4)))
+  hconn.lock(a)
+  let first = ld(a, hconn.SR_CONNS)
+  st(hc, hconn.HC_NEXT, first)
+  if first != 0 {
+    st(first, hconn.HC_PREV, hc)
+  }
+  st(a, hconn.SR_CONNS, hc)
+  st(a, hconn.SR_N, ld(a, hconn.SR_N) + 1)
+  st(hc, hconn.HC_REG, 1)
+  let tls = ld(a, hconn.SR_TLS)
+  if tls != 0 {
+    st(hc, hconn.HC_TLS, tlssrv.conn(tls, pd))
+  }
+  if ld(a, hconn.SR_STOPPING) != 0 {
+    poll.pd_close(pd)
+  }
+  hconn.unlock(a)
+  hconn.take(hc)
+}
+
+/// Finishes the TLS handshake of a server connection; when ALPN chose
+/// HTTP/2, the connection's record (h2srv.conn_new, freed with the
+/// connection; its requests come from h2srv's H2Conn), else 0: HTTP/1.1
+/// (or the handshake failed, which http1.xo's reads find).
+pub fn hc_h2(h: rthttp.HConn) -> Int {
+  let hc = hconn.rec(h)
+  let tls = ld(hc, hconn.HC_TLS)
+  if tls == 0 || ld(hc, hconn.HC_CONN) == 0 {
+    return 0
+  }
+  let s = ld(hc, hconn.HC_SRV)
+  if s != 0 {
+    hconn.lock(s)
+    if ld(s, hconn.SR_STOPPING) != 0 {
+      hconn.unlock(s)
+      return 0
+    }
+    st(hc, hconn.HC_IDLE, 1)
+    hconn.unlock(s)
+  }
+  let ok = !poll.canceled() && tlssrv.handshake(tls)
+  hconn.set_idle(hc, false)
+  if !ok || !tlssrv.alpn_h2(tls) {
+    return 0
+  }
+  // rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
+  let why = tlssrv.bad_cipher(tls)
+  // Windows resets a connection closed with unread input (the client's
+  // preface, gotchas/windows-shutdown-resets-unread-input.md), and the
+  // reset can overtake the GOAWAY: linger as after a connection error,
+  // dropping input, until the client closes or a second passes
+  let linger = match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+  let c = h2srv.conn_new(why, linger)
+  if s != 0 {
+    hconn.lock(s)
+    st(hc, hconn.HC_H2, c)
+    if ld(s, hconn.SR_STOPPING) != 0 {
+      h2srv.conn_stop(c)
+    }
+    hconn.unlock(s)
+  } else {
+    st(hc, hconn.HC_H2, c)
+  }
+  c
+}
+
+/// Closes the connection and ends its registration.
+pub fn hc_close(h: rthttp.HConn) {
+  let hc = hconn.rec(h)
+  let tls = ld(hc, hconn.HC_TLS)
+  if tls != 0 {
+    tlssrv.close_notify(tls)
+  }
+  poll.pd_close(hconn.conn_pd(hc))
+  hconn.unregister(hc)
+}
+
+/// Frees connection record hc (its last reference went; cabi_http.xo
+/// hc_free).
+pub fn hc_free(hc: Int) {
+  let x1 = ld(hc, hconn.HC_X1)
+  let owner = ld(hc, hconn.HC_OWNER)
+  if owner != 0 {
+    // an HTTP/2 stream's connection
+    let sr = ld(hc, hconn.HC_H2S)
+    if sr != 0 {
+      h2srv.stream_release(sr)
+    }
+    if x1 != 0 {
+      http1.x1_free(x1)
+    }
+    obj.free_obj(hc)
+    tasks.h_release(owner)
+    return
+  }
+  hconn.unregister(hc)
+  let h2 = ld(hc, hconn.HC_H2)
+  if h2 != 0 {
+    h2srv.conn_free(h2)
+  }
+  let cn = ld(hc, hconn.HC_CONN)
+  poll.pd_close(hconn.conn_pd(hc))
+  tasks.h_release(cn)
+  tasks.h_release(ld(hc, hconn.HC_SRV))
+  if x1 != 0 {
+    http1.x1_free(x1)
+  }
+  let tls = ld(hc, hconn.HC_TLS)
+  if tls != 0 {
+    tlssrv.free(tls)
+  }
+  obj.free_obj(hc)
+}
+
+// ---------------------------------------------------------------------------
+// Streamed bodies (http.stream, decision 0083)
+
+fn sink_new() -> Int { tasks.new_handle(SK_SIZE, ctx.SV_SINK_FREE) }
+
+fn sink_take_handle(k: Int) -> rthttp.Sink {
+  let h = rt.obj_at[rthttp.Sink](k)
+  tasks.h_release(k)
+  h
+}
+
+/// A sink into a buffer.
+pub fn sink_buf() -> rthttp.Sink { sink_take_handle(sink_new()) }
+
+/// A sink that sends the response of status on h (its header set with
+/// http1.header_set).
+pub fn sink_conn(h: rthttp.HConn, status: Int) -> rthttp.Sink {
+  let k = sink_new()
+  let hc = hconn.rec(h)
+  rc.inc(hc)
+  st(k, SK_CONN, 1)
+  st(k, SK_HC, hc)
+  st(k, SK_STATUS, status)
+  sink_take_handle(k)
+}
+
+/// Appends the n bytes at p to sink k's buffer.
+fn put(k: Int, p: Int, n: Int) {
+  let have = ld(k, SK_N)
+  var cap = ld(k, SK_CAP)
+  if have + n > cap {
+    if cap == 0 {
+      cap = 64
+    }
+    while have + n > cap {
+      cap = cap * 2
+    }
+    st(k, SK_BUF, raw.c_resize(ld(k, SK_BUF), cap))
+    st(k, SK_CAP, cap)
+  }
+  if n > 0 {
+    rt.mem_copy(ld(k, SK_BUF) + have, p, n)
+  }
+  st(k, SK_N, have + n)
+}
+
+/// Writes the n bytes at p as net/http's chunkWriter does: the head with
+/// the first data, then a chunk per write (HTTP/1.1: http1.xo emit;
+/// HTTP/2: h2srv.xo emit).
+fn emit(k: Int, p: Int, n: Int) {
+  if ld(k, SK_FAILED) != 0 {
+    return
+  }
+  let hc = ld(k, SK_HC)
+  let h = hconn.handle(hc)
+  if ld(hc, hconn.HC_H2S) != 0 {
+    let r = h2srv.emit(h, ld(k, SK_STATUS), ld(k, SK_STARTED) != 0, p, n)
+    st(k, SK_STARTED, r & 1)
+    st(k, SK_FAILED, if (r & 2) == 0 { 1 } else { 0 })
+    return
+  }
+  let state = http1.emit(h, ld(k, SK_STATUS), ld(k, SK_STATE), p, n)
+  st(k, SK_STATE, state)
+  st(k, SK_STARTED, state & 1)
+  st(k, SK_FAILED, if (state & 16) != 0 { 1 } else { 0 })
+}
+
+/// BodyWriter.write: false when the connection failed.
+pub fn sink_write(s: rthttp.Sink, data: Bytes) -> Bool {
+  let k = rt.obj_addr(s)
+  var p = raw.bytes_addr(data)
+  var n = data.len()
+  if ld(k, SK_CONN) == 0 {
+    put(k, p, n)
+    return data.len() >= 0
+  }
+  // bufio.Writer.WriteString (std/rt writes strings): no write goes
+  // around the buffer, since chunkWriter has no WriteString
+  let size = if ld(ld(k, SK_HC), hconn.HC_H2S) != 0 { 4096 } else { 2048 }
+  while n > size - ld(k, SK_N) {
+    let m = size - ld(k, SK_N)
+    put(k, p, m)
+    p += m
+    n -= m
+    emit(k, ld(k, SK_BUF), ld(k, SK_N))
+    st(k, SK_N, 0)
+  }
+  if n > 0 {
+    put(k, p, n)
+  }
+  // data stays alive up to here (its bytes were read through p)
+  ld(k, SK_FAILED) == 0 && data.len() >= 0
+}
+
+/// BodyWriter.flush: what is buffered goes out (the head at the latest).
+pub fn sink_flush(s: rthttp.Sink) -> Bool {
+  let k = rt.obj_addr(s)
+  if ld(k, SK_CONN) == 0 {
+    return true
+  }
+  if ld(k, SK_N) > 0 {
+    emit(k, ld(k, SK_BUF), ld(k, SK_N))
+    st(k, SK_N, 0)
+  } else if ld(k, SK_STARTED) == 0 {
+    emit(k, 0, 0)
+  }
+  ld(k, SK_FAILED) == 0
+}
+
+/// Ends the stream on its connection: whether it stays open for another
+/// request.
+pub fn sink_end(s: rthttp.Sink) -> Bool {
+  let k = rt.obj_addr(s)
+  let hc = ld(k, SK_HC)
+  let h = hconn.handle(hc)
+  let h2 = ld(hc, hconn.HC_H2S) != 0
+  let p = ld(k, SK_BUF)
+  let n = ld(k, SK_N)
+  if ld(k, SK_STARTED) == 0 {
+    if h2 {
+      h2srv.respond_at(h, ld(k, SK_STATUS), p, n)
+      return false
+    }
+    return http1.respond(h, ld(k, SK_STATUS), raw.str_at(p, n).bytes())
+  }
+  st(k, SK_N, 0)
+  if h2 {
+    // the rest with the end of the stream (h2srv.xo finish)
+    let _ok = h2srv.finish(h, p, n)
+    return false
+  }
+  // HTTP/1.1 (http1.xo stream_end): the rest, the last chunk
+  http1.stream_end(h, ld(k, SK_STATUS), ld(k, SK_STATE), p, n)
+}
+
+/// The body a buffer sink collected.
+pub fn sink_take(s: rthttp.Sink) -> Bytes {
+  let k = rt.obj_addr(s)
+  raw.str_at(ld(k, SK_BUF), ld(k, SK_N)).bytes()
+}
+
+/// Frees sink record k (cabi_http.xo sink_free).
+pub fn sink_free(k: Int) {
+  let b = ld(k, SK_BUF)
+  if b != 0 {
+    rt.heap_release(b)
+  }
+  let hc = ld(k, SK_HC)
+  if hc != 0 {
+    tasks.h_release(hc)
+  }
+  obj.free_obj(k)
+}
+
+// ---------------------------------------------------------------------------
+// The functions of streamed responses: a Response carries the number of
+// its function here (0: no stream). Sending a response takes its
+// function; a response dispatched in process keeps it, since a copy may
+// be collected again (as on the Go backend); streams_free empties the
+// table at exit (leak check).
+
+fn table() -> Int { ctx.svc() + ctx.SV_STREAMS }
+
+/// Keeps f (an Any of the stream's function): its number.
+pub fn stream_put(f: rt.Any) -> Int {
+  let a = rt.obj_addr(f)
+  rc.inc(a)
+  let t = table()
+  pool.lock(t + ST_MU)
+  let n = ld(t, ST_N)
+  if n == 0 || (n >= 4 && (n & (n - 1)) == 0) {
+    st(t, ST_FS, raw.c_resize(ld(t, ST_FS), 8 * (if n == 0 { 4 } else { 2 * n })))
+  }
+  st(ld(t, ST_FS), 8 * n, a)
+  st(t, ST_N, n + 1)
+  pool.unlock(t + ST_MU)
+  n + 1
+}
+
+/// The function of stream id in a list of one (empty when it was taken);
+/// take removes it from the table.
+pub fn stream_get(id: Int, take: Bool) -> List[rt.Any] {
+  let t = table()
+  pool.lock(t + ST_MU)
+  var f = 0
+  if id >= 1 && id <= ld(t, ST_N) {
+    let fs = ld(t, ST_FS)
+    f = ld(fs, 8 * (id - 1))
+    if f != 0 {
+      if take {
+        st(fs, 8 * (id - 1), 0)
+      } else {
+        rc.inc(f)
+      }
+    }
+  }
+  pool.unlock(t + ST_MU)
+  if f == 0 {
+    return []
+  }
+  let a = rt.obj_at[rt.Any](f)
+  tasks.h_release(f)
+  [a]
+}
+
+/// Empties the table at exit, and closes the client's idle HTTP/2
+/// connections (hclient.xo; the leak check).
+pub fn streams_free() {
+  let t = table()
+  pool.lock(t + ST_MU)
+  let fs = ld(t, ST_FS)
+  let n = ld(t, ST_N)
+  st(t, ST_FS, 0)
+  st(t, ST_N, 0)
+  pool.unlock(t + ST_MU)
+  for i in 0..n {
+    let f = ld(fs, 8 * i)
+    if f != 0 {
+      tasks.h_release(f)
+    }
+  }
+  if fs != 0 {
+    rt.heap_release(fs)
+  }
+  hclient.pool_free()
+}

@@ -12,8 +12,9 @@ allocation live at exit, also with share probes and under
 ThreadSanitizer with 1, 2, and per CPU workers in TestGoldenTasks, and
 under AddressSanitizer and UBSan in TestGoldenASan); `json_diff_test.go`
 (TestJSONParseDiff); `http_diff_test.go` (TestHTTPParseDiff, FuzzHTTPDiff
-for `go test -fuzz`, TestHTTPFuzz running `std/llrt/testdata/http_fuzz.c`
-under AddressSanitizer and UBSan); `unicode_test.go`.
+for `go test -fuzz`, TestHTTPFuzz; since 2026-10-15 they drive Xo
+programs built with the native backends, the C drivers being gone with
+the C parsers); `unicode_test.go`.
 
 ## Context
 The native backends (decisions 0046, 0049, 0068 to 0072) had tasks,

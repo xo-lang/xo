@@ -7,11 +7,12 @@
 // native backends (decision 0198).
 //
 // The searches are scan.xo (decision 0201: find, split, lines,
-// rune_count); the copies stay C (rt.str_slice, rt.rs_append_bytes,
-// Str.repeat, List[Str].join).
+// rune_count); the copies are raw.xo's and obj.xo's (raw.str_slice,
+// rt.rs_append_bytes, Str.repeat, List[Str].join).
 use native/llrt/scan
 use native/llrt/unicode
 use native/rt
+use native/llrt/raw
 
 /// The size of the UTF-8 sequence of b at i (an invalid byte is 1).
 fn seq_size(b: Bytes, i: Int) -> Int {
@@ -40,7 +41,7 @@ pub fn replace(s: Str, old: Str, new: Str) -> Str {
   var i = scan.find(s, old, 0)
   if i < 0 {
     // nothing to replace: a copy, as strings.ReplaceAll makes
-    return rt.str_slice(s, 0, n)
+    return raw.str_slice(s, 0, n)
   }
   var o = rt.rs_with_cap(n)
   var start = 0
@@ -126,5 +127,5 @@ pub fn trim(s: Str, mode: Int) -> Str {
   if lo == 0 && hi == n {
     return s
   }
-  rt.str_slice(s, lo, hi)
+  raw.str_slice(s, lo, hi)
 }

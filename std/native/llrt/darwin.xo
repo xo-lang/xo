@@ -440,11 +440,21 @@ pub fn strerror(e: Int) -> Str {
 
 /// The message of errno e as the C runtime records a file error: the
 /// strerror text with its first letter lowered.
+/// kill(2) of signal sig to pid: 0, or the negative errno.
+pub fn kill(pid: Int, sig: Int) -> Int { ret(Int(sys_darwin.kill(pid, sig))) }
+
+/// pipe(2) into the two 4 byte words at a: 0, or the negative errno.
+pub fn pipe_at(a: Int) -> Int { ret(Int(sys_darwin.pipe(a))) }
+
+/// waitpid(2) of pid with its status in the 4 byte word at st, blocking
+/// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
+pub fn waitpid_at(pid: Int, st: Int, options: Int) -> Int { ret(Int(sys_darwin.waitpid(pid, st, options))) }
+
 pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()
   if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
-    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
   }
   s
 }

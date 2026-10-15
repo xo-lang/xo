@@ -1,0 +1,141 @@
+// X25519 (RFC 7748) for TLS's key exchange (work item B31, decision
+// 0202), as Go's crypto/ecdh X25519: the scalar is clamped, the u
+// coordinate's top bit ignored and a value of p or more taken modulo p.
+// Constant time (decision 0222, ct.xo): RFC 7748's Montgomery ladder
+// over every one of the 255 bits with masked swaps (ct.pick), on
+// ed25519.xo's field arithmetic (five 51 bit limbs modulo 2^255 - 19, no
+// branch or index on a secret), and the inversion as a fixed power. A
+// low order point gives all zeros; Go's ECDH reports that as an error,
+// and the TLS layer must reject it.
+use native/llrt/ct
+use native/llrt/ed25519
+use native/rt
+
+// byte offsets of the ladder's elements past ed25519.SPARE
+const X1: Int = 0
+const X2: Int = 40
+const Z2: Int = 80
+const X3: Int = 120
+const Z3: Int = 160
+const TA: Int = 200
+const TB: Int = 240
+const AA: Int = 280
+const BB: Int = 320
+const E: Int = 360
+const TC: Int = 400
+const TD: Int = 440
+const A24: Int = 480
+// the elements' words
+const EXTRA: Int = 65
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// Swaps elements f and g when mask is all ones, keeps them when 0.
+fn cswap(f: Int, g: Int, mask: Int) {
+  for i in 0..5 {
+    let a = ld(f, 8 * i)
+    let b = ld(g, 8 * i)
+    st(f, 8 * i, ct.pick(mask, b, a))
+    st(g, 8 * i, ct.pick(mask, a, b))
+  }
+}
+
+/// The u coordinate of [scalar]point: scalar and point are 32 bytes each
+/// (RFC 7748 5, X25519).
+pub fn scalar_mult(scalar: Bytes, point: Bytes) -> Bytes {
+  let w = ed25519.field_workspace(EXTRA)
+  let m = ed25519.base(w)
+  let e = rt.int_wrap(0, m, ed25519.SPARE)
+  let x1 = rt.int_wrap(0, e, X1)
+  let x2 = rt.int_wrap(0, e, X2)
+  let z2 = rt.int_wrap(0, e, Z2)
+  let x3 = rt.int_wrap(0, e, X3)
+  let z3 = rt.int_wrap(0, e, Z3)
+  let a = rt.int_wrap(0, e, TA)
+  let b = rt.int_wrap(0, e, TB)
+  let aa = rt.int_wrap(0, e, AA)
+  let bb = rt.int_wrap(0, e, BB)
+  let ee = rt.int_wrap(0, e, E)
+  let c = rt.int_wrap(0, e, TC)
+  let d = rt.int_wrap(0, e, TD)
+  let a24 = rt.int_wrap(0, e, A24)
+  // clamped: the low three bits cleared, bit 255 cleared, bit 254 set
+  let top = rt.int_wrap(3, 1, 63)
+  let k = [rt.bytes_word(scalar, 0) & ~7, rt.bytes_word(scalar, 8), rt.bytes_word(scalar, 16), (rt.bytes_word(scalar, 24) & ~top) | rt.int_wrap(3, 1, 62)]
+  ed25519.fe_from_words(x1, [rt.bytes_word(point, 0), rt.bytes_word(point, 8), rt.bytes_word(point, 16), rt.bytes_word(point, 24)])
+  ed25519.fe_set(x2, 1)
+  ed25519.fe_set(z2, 0)
+  rt.mem_copy(x3, x1, 40)
+  ed25519.fe_set(z3, 1)
+  ed25519.fe_set(a24, 121665)
+  var swap = 0
+  var t = 254
+  while t >= 0 {
+    let bit = rt.int_wrap(4, k[t / 64], t % 64) & 1
+    let mask = ct.mask_bit(swap ^ bit)
+    cswap(x2, x3, mask)
+    cswap(z2, z3, mask)
+    swap = bit
+    ed25519.fe_add(a, x2, z2)
+    ed25519.fe_sq(aa, a)
+    ed25519.fe_sub(b, x2, z2)
+    ed25519.fe_sq(bb, b)
+    ed25519.fe_sub(ee, aa, bb)
+    ed25519.fe_add(c, x3, z3)
+    ed25519.fe_sub(d, x3, z3)
+    ed25519.fe_mul(d, d, a) // DA
+    ed25519.fe_mul(c, c, b) // CB
+    ed25519.fe_add(x3, d, c)
+    ed25519.fe_sq(x3, x3)
+    ed25519.fe_sub(z3, d, c)
+    ed25519.fe_sq(z3, z3)
+    ed25519.fe_mul(z3, z3, x1)
+    ed25519.fe_mul(x2, aa, bb)
+    ed25519.fe_mul(z2, a24, ee)
+    ed25519.fe_add(z2, z2, aa)
+    ed25519.fe_mul(z2, z2, ee)
+    t -= 1
+  }
+  let mask = ct.mask_bit(swap)
+  cswap(x2, x3, mask)
+  cswap(z2, z3, mask)
+  ed25519.fe_inv(m, z2, z2)
+  ed25519.fe_mul(x2, x2, z2)
+  ed25519.fe_bytes(m, x2)
+  let o = ed25519.bw(m)
+  keep(w)
+  var s = rt.rs_with_cap(32)
+  for x in o {
+    s = rt.rs_push_word(s, x, 8)
+  }
+  s.bytes()
+}
+
+/// The public key of scalar: [scalar]9 (RFC 7748 6.1).
+pub fn base(scalar: Bytes) -> Bytes {
+  var nine = rt.rs_push_byte(rt.rs_with_cap(32), 9)
+  for _ in 0..31 {
+    nine = rt.rs_push_byte(nine, 0)
+  }
+  scalar_mult(scalar, nine.bytes())
+}
+
+/// The workspace is alive up to here (ed25519.xo's keep).
+fn keep(w: List[Int]) {
+  if w.len() < 0 {
+    return
+  }
+}
+
+/// internal.crypto_op's "x25519." ops (std/internal.xo): mult (scalar
+/// a, point b; all zeros for a low order point) and base (scalar a).
+/// None if unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  match what {
+    "mult" => scalar_mult(a, b)
+    "base" => base(a)
+    _ => None
+  }
+}

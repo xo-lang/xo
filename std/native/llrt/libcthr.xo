@@ -1,0 +1,263 @@
+// The clock, lock, signal, thread, and TLS functions of the C library of
+// a program linked with no C library (XO_NOLIBC=1, decision 0206 stage 2;
+// the zero-C audit's B04, decision 0230): std/native/llrt/cabi_libc.xo
+// exports them under the C names (pthread_mutex_lock, sigaction, ...),
+// and cabi_nolibc.xo's start lays the main thread's TLS block out with
+// tls_size and tls_init. Every function takes and returns Int words
+// (addresses are Ints); none may fault or allocate: tls_size and tls_init
+// run before the main thread has its thread pointer.
+use native/llrt/libcmem
+use native/llrt/linux
+use native/llrt/obj
+use native/rt
+
+const FUTEX_WAIT_PRIVATE: Int = 128
+const FUTEX_WAKE_PRIVATE: Int = 129
+const EBUSY: Int = 16
+
+// ---------------------------------------------------------------------------
+// The clock
+
+/// clock_gettime(id, ts): 0, or the negative errno (the vDSO's function
+/// when the process has one, else the system call).
+pub fn clock_gettime(id: Int, ts: Int) -> Int { linux.clock_gettime(id, ts) }
+
+// ---------------------------------------------------------------------------
+// Locks over futex: a mutex is the first word of a pthread_mutex_t (0
+// free, 1 held, 2 held with waiters: Drepper's mutex), the futex its low
+// 32 bits; a once is the 32 bit pthread_once_t (0, 1 running, 2 done).
+
+/// pthread_mutex_lock(m): 0.
+pub fn mutex_lock(m: Int) -> Int {
+  if rt.slot_cas[Int](m, 0, 0, 1, 1) {
+    return 0
+  }
+  var c = rt.slot_load[Int](m, 0, 0)
+  if c != 2 {
+    c = rt.slot_swap[Int](m, 0, 2, 1)
+  }
+  while c != 0 {
+    linux.futex(m, FUTEX_WAIT_PRIVATE, 2, 0)
+    c = rt.slot_swap[Int](m, 0, 2, 1)
+  }
+  0
+}
+
+/// pthread_mutex_unlock(m): 0.
+pub fn mutex_unlock(m: Int) -> Int {
+  if rt.slot_swap[Int](m, 0, 0, 2) == 2 {
+    linux.futex(m, FUTEX_WAKE_PRIVATE, 1, 0)
+  }
+  0
+}
+
+/// pthread_mutex_trylock(m): 0, or EBUSY.
+pub fn mutex_trylock(m: Int) -> Int {
+  if rt.slot_cas[Int](m, 0, 0, 1, 1) { 0 } else { EBUSY }
+}
+
+/// pthread_once(w, f): runs the C function f once per once word w; a
+/// caller that finds it running waits for it. The word is 32 bits (no
+/// 64 bit atomic fits it): its 0 to 1 step is made under the process's
+/// once lock (word 1 of rt.sys_words), its 1 to 2 step by the runner
+/// alone, after a release fence; readers load it and fence.
+pub fn once_run(w: Int, f: Int) -> Int {
+  if rt.mem_load(w, 0, 4) == 2 {
+    rt.fence(1)
+    return 0
+  }
+  let l = rt.sys_words() + 8
+  mutex_lock(l)
+  if rt.mem_load(w, 0, 4) == 0 {
+    rt.mem_store(w, 0, 1, 4)
+    mutex_unlock(l)
+    rt.call_c2(f, 0, 0)
+    rt.fence(2)
+    rt.mem_store(w, 0, 2, 4)
+    linux.futex(w, FUTEX_WAKE_PRIVATE, 2147483647, 0)
+    return 0
+  }
+  mutex_unlock(l)
+  while rt.mem_load(w, 0, 4) == 1 {
+    linux.futex(w, FUTEX_WAIT_PRIVATE, 1, 0)
+  }
+  rt.fence(1)
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Signals: the C library's struct sigaction (handler at 0, the mask's
+// first word at 8, flags as an int at 136; 152 bytes on arm64 and
+// x86_64) to the kernel's (handler, flags, restorer, mask), with the
+// emitters' rt_sigreturn trampoline (rt.sys_restorer).
+
+/// sigaction(sig, act, old): 0, or the negative errno.
+pub fn sigaction(sig: Int, act: Int, old: Int) -> Int {
+  let ka = obj.scratch()
+  var pa = 0
+  if act != 0 {
+    // SA_RESTORER 0x04000000
+    rt.mem_store(ka, 0, rt.mem_load(act, 0, 8), 8)
+    rt.mem_store(ka, 8, rt.mem_load(act, 136, 4) | 67108864, 8)
+    rt.mem_store(ka, 16, rt.sys_restorer(), 8)
+    rt.mem_store(ka, 24, rt.mem_load(act, 8, 8), 8)
+    pa = ka
+  }
+  let r = linux.rt_sigaction(sig, pa, ka + 32)
+  if r == 0 && old != 0 {
+    rt.mem_set(old, 0, 152)
+    rt.mem_store(old, 0, rt.mem_load(ka, 32, 8), 8)
+    rt.mem_store(old, 136, rt.mem_load(ka, 40, 8), 4)
+    rt.mem_store(old, 8, rt.mem_load(ka, 56, 8), 8)
+  }
+  r
+}
+
+/// signal(sig, h): the previous handler (SA_RESTART), or the negative
+/// errno.
+pub fn signal(sig: Int, h: Int) -> Int {
+  let ka = obj.scratch()
+  // SA_RESTART 0x10000000, SA_RESTORER
+  rt.mem_store(ka, 0, h, 8)
+  rt.mem_store(ka, 8, 268435456 | 67108864, 8)
+  rt.mem_store(ka, 16, rt.sys_restorer(), 8)
+  rt.mem_store(ka, 24, 0, 8)
+  let r = linux.rt_sigaction(sig, ka, ka + 32)
+  if r < 0 {
+    return r
+  }
+  rt.mem_load(ka, 32, 8)
+}
+
+/// sigprocmask(how, set, old) of the calling thread: 0, or the negative
+/// errno.
+pub fn sigprocmask(how: Int, set: Int, old: Int) -> Int { linux.rt_sigprocmask(how, set, old) }
+
+// ---------------------------------------------------------------------------
+// Thread local storage: the static TLS block of a thread laid out from
+// the program's PT_TLS segment (found through AT_PHDR, the statically
+// linked program's own headers): variant I on arm64 (the thread pointer
+// at a 16 byte control block, the block after it), variant II on x86_64
+// (the block before the thread pointer, which points at itself).
+
+/// The program header of the PT_TLS segment, or 0.
+fn tls_ph() -> Int {
+  let ph = libcmem.auxval(linux.AT_PHDR)
+  let n = libcmem.auxval(linux.AT_PHNUM)
+  if ph == 0 {
+    return 0
+  }
+  for i in 0..n {
+    // Elf64_Phdr, 56 bytes; PT_TLS 7
+    if rt.mem_load(ph + 56 * i, 0, 4) == 7 {
+      return ph + 56 * i
+    }
+  }
+  0
+}
+
+/// The TLS segment's alignment, at least 16 (p_align at 48).
+fn tls_align(ph: Int) -> Int {
+  if ph != 0 && rt.mem_load(ph, 48, 8) > 16 {
+    return rt.mem_load(ph, 48, 8)
+  }
+  16
+}
+
+/// The TLS block's bytes, p_memsz (at 40) rounded up to the alignment.
+fn tls_block(ph: Int) -> Int {
+  let a = tls_align(ph)
+  let m = if ph != 0 { rt.mem_load(ph, 40, 8) } else { 0 }
+  (m + a - 1) & (0 - a)
+}
+
+/// The bytes tls_init needs (in page aligned, zeroed memory).
+pub fn tls_size() -> Int {
+  let ph = tls_ph()
+  tls_block(ph) + 2 * tls_align(ph) + 64
+}
+
+/// Lays a TLS block out in the zeroed memory at area (tls_size bytes):
+/// the thread pointer.
+pub fn tls_init(area: Int) -> Int {
+  let ph = tls_ph()
+  let a = tls_align(ph)
+  var tp = area
+  var data = area + ((16 + a - 1) & (0 - a))
+  match target.arch {
+    TargetArch.Amd64 | TargetArch.Wasm32 => {
+      tp = area + tls_block(ph)
+      data = area
+      rt.mem_store(tp, 0, tp, 8)
+    }
+    TargetArch.Arm64 => {}
+  }
+  if ph != 0 {
+    // the initial image: p_filesz (at 32) bytes from p_vaddr (at 16),
+    // an absolute address in a static executable
+    let n = rt.mem_load(ph, 32, 8)
+    if n > 0 {
+      rt.mem_copy(data, rt.mem_load(ph, 16, 8), n)
+    }
+  }
+  tp
+}
+
+// ---------------------------------------------------------------------------
+// Threads: clone with the flags of a POSIX thread; one mapping holds a
+// guard page, the stack, the thread's record (its 32 bit id at 0, which
+// the kernel sets at the clone and clears and wakes at the thread's exit,
+// CLONE_CHILD_CLEARTID; the mapping's address at 8 and length at 16),
+// and its TLS block. A thread handle is the record's address. A detached
+// thread's mapping is not reused (the runtime detaches its poller and
+// workers, which live until the program ends).
+
+/// pthread_create of the C function f with arg on a stack of at least
+/// stack bytes: the thread's handle, or the negative errno.
+pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
+  var page = libcmem.auxval(linux.AT_PAGESZ)
+  if page <= 0 {
+    page = 4096
+  }
+  var st = if stack < 65536 { 65536 } else { stack }
+  st = (st + page - 1) & (0 - page)
+  let tls = (tls_size() + 128 + page - 1) & (0 - page)
+  let len = page + st + tls
+  // PROT_READ | PROT_WRITE; MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
+  let m = linux.mmap(0, len, 3, 2 | 32 | 16384, -1, 0)
+  if m < 0 && m > -4096 {
+    return -linux.EAGAIN
+  }
+  linux.mprotect(m, page, 0)
+  let rec = m + page + st
+  rt.mem_store(rec, 8, m, 8)
+  rt.mem_store(rec, 16, len, 8)
+  let tp = tls_init((rec + 64 + 63) & (0 - 64))
+  // the child's first words: the function and its argument
+  let sp = rec - 16
+  rt.mem_store(sp, 0, f, 8)
+  rt.mem_store(sp, 8, arg, 8)
+  // CLONE_VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, SETTLS, PARENT_SETTID,
+  // CHILD_CLEARTID
+  let flags = 256 | 512 | 1024 | 2048 | 65536 | 262144 | 524288 | 1048576 | 2097152
+  let r = rt.sys_clone(flags, sp, rec, tp)
+  if r < 0 {
+    linux.munmap(m, len)
+    return r
+  }
+  rec
+}
+
+/// pthread_join(t): waits for the thread to exit, then unmaps its stack
+/// and record; 0.
+pub fn thread_join(t: Int) -> Int {
+  var tid = rt.mem_load(t, 0, 4)
+  while tid != 0 {
+    // FUTEX_WAIT, shared: CLONE_CHILD_CLEARTID wakes it so
+    linux.futex(t, 0, tid, 0)
+    tid = rt.mem_load(t, 0, 4)
+  }
+  rt.fence(1)
+  linux.munmap(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8))
+  0
+}

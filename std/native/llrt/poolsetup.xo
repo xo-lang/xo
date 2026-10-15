@@ -1,0 +1,264 @@
+// The worker pool's setup and the root threads' worker records (the
+// zero-C audit's B20; xo_rt.c pool_init and root_worker until then):
+// the settings of the environment (as the C's getenv read them, never
+// the test world's FakeEnv), the processors online per OS, and a root
+// thread's record, which it makes on first use. Not in pool.xo: these
+// read the environment through process.xo, which stdio.xo's imports
+// reach, and stdio.xo imports pool.xo.
+use native/llrt/ctx
+use native/llrt/linux
+use native/llrt/obj
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/sanhook
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// The pool record's lock, worker count (0 until the setup ran), and
+/// spin rounds (pool.xo P_*); a worker record's size, live and root
+/// flags (pool.xo W_*); the thread local of the worker record (sched.xo
+/// TLS_W).
+const P_MU = 0
+const P_NCPU = 8
+const P_SPIN_ROUNDS = 16
+const P_FIBERS = 104
+const P_WORKER_MAIN = 112
+/// The fiber cache's stack size, page size, and fiber entry (pool.xo
+/// FS_*).
+const FS_STACK = 24
+const FS_PAGE = 32
+const FS_MAIN = 40
+const W_SIZE = 3400
+const W_LIVE = 2200
+const W_ROOT = 2204
+const TLS_W = 2
+
+/// The C's services (pool.xo RT_*).
+const RT_WORKER_START = 7
+const RT_THREADS_BEGIN = 20
+
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// Sets the pool p up once, before its first use (pool_init): the
+/// runtime switches to several threads, the statistics' switch is read
+/// (XO_RTSTATS), and the worker count (one per CPU, or XO_THREADS, 1 to
+/// 256), the spin rounds (16, or XO_SPIN_ROUNDS), and the fiber stacks'
+/// settings are set; P_NCPU, stored last, tells that it ran. The
+/// services record's lock orders the threads that get here at once.
+pub fn ready(p: Int) {
+  if rt.slot_load[Int](p + P_NCPU, 0, ACQUIRE) != 0 {
+    return
+  }
+  let l = ctx.svc() + ctx.SV_ONCE
+  pool.lock(l)
+  if rt.slot_load[Int](p + P_NCPU, 0, ACQUIRE) == 0 {
+    setup(p)
+  }
+  pool.unlock(l)
+}
+
+fn setup(p: Int) {
+  let _t = rt.sched_rt(RT_THREADS_BEGIN, 0, 0)
+  let st = process.env_real("XO_RTSTATS")
+  var on = 0
+  if !st.is_empty() && !st[0].is_empty() && bt(st[0], 0) != 48 {
+    on = 1
+  }
+  rt.mem_store(rt.mem_load(ctx.svc(), ctx.SV_STATS, 8), 0, on, 4)
+  var n = cpu_count()
+  let th = env_int("XO_THREADS")
+  if th > 0 {
+    n = th
+  }
+  if n < 1 {
+    n = 1
+  }
+  if n > 256 {
+    n = 256
+  }
+  var spin = 16
+  // tuning (decision 0077): set and not negative
+  let sr = process.env_real("XO_SPIN_ROUNDS")
+  if !sr.is_empty() && atoi(sr[0]) >= 0 {
+    spin = atoi(sr[0])
+  }
+  rt.mem_store(p, P_SPIN_ROUNDS, spin, 8)
+  fibers_setup(p)
+  rt.slot_store[Int](p + P_NCPU, 0, n, RELEASE)
+}
+
+/// The byte at i of s.
+fn bt(s: Str, i: Int) -> Int { raw.byte_at(raw.data(s), i) }
+
+/// The fiber stacks' settings (fibers_setup): 64 MiB reserved per stack,
+/// like the worker threads before fibers (deep recursion in a task
+/// behaves the same), or XO_TASK_STACK_MB; 2 MiB under ThreadSanitizer
+/// on Linux, which confines the program's mappings
+/// (gotchas/linux-tsan-fiber-stacks.md); the page size (the guard page);
+/// where a fiber and a worker thread start.
+fn fibers_setup(p: Int) {
+  let svc = ctx.svc()
+  let fs = rt.mem_load(svc, ctx.SV_FIBERS, 8)
+  var mb = 64
+  let linux = match target.os {
+    TargetOs.Linux => true
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  if linux && rt.mem_load(svc, ctx.SV_TSAN, 8) != 0 {
+    mb = 2
+  }
+  let e = env_int("XO_TASK_STACK_MB")
+  if e > 0 {
+    mb = e
+  }
+  rt.mem_store(fs, FS_STACK, mb * 1048576, 8)
+  rt.mem_store(fs, FS_PAGE, page_size(), 8)
+  rt.mem_store(fs, FS_MAIN, rt.mem_load(svc, ctx.SV_FIBER_MAIN, 8), 8)
+  rt.mem_store(p, P_FIBERS, fs, 8)
+  rt.mem_store(p, P_WORKER_MAIN, rt.mem_load(svc, ctx.SV_WORKER_MAIN, 8), 8)
+}
+
+/// The system's page size: Linux's auxiliary vector, macOS's
+/// hw.pagesize, Windows's SYSTEM_INFO.dwPageSize.
+fn page_size() -> Int {
+  let b = obj.scratch()
+  match target.os {
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
+    TargetOs.Darwin => {
+      rt.mem_store(b, 0, 0, 8)
+      rt.mem_store(b, 8, 8, 8)
+      let name = b"hw.pagesize\x00"
+      if Int(sys_darwin.sysctlbyname(name, b, b + 8, 0, 0)) != 0 {
+        return 16384
+      }
+      rt.mem_load(b, 0, 8)
+    }
+    TargetOs.Windows => {
+      // SYSTEM_INFO: dwPageSize after the 4 bytes of the architecture
+      sys_windows.GetSystemInfo(b)
+      rt.mem_load(b, 4, 4)
+    }
+    TargetOs.Wasi => 65536
+  }
+}
+
+/// The integer at the start of s as C's atoi reads it (leading blanks, a
+/// sign, digits; 0 when there are none).
+fn atoi(s: Str) -> Int {
+  var i = 0
+  while i < s.len() && (bt(s, i) == 32 || (bt(s, i) >= 9 && bt(s, i) <= 13)) {
+    i += 1
+  }
+  var neg = false
+  if i < s.len() && (bt(s, i) == 45 || bt(s, i) == 43) {
+    neg = bt(s, i) == 45
+    i += 1
+  }
+  var v = 0
+  while i < s.len() && bt(s, i) >= 48 && bt(s, i) <= 57 && v < 100000000 {
+    v = v * 10 + bt(s, i) - 48
+    i += 1
+  }
+  if neg { -v } else { v }
+}
+
+/// atoi of the environment variable name, 0 when it is not set.
+fn env_int(name: Str) -> Int {
+  let v = process.env_real(name)
+  if v.is_empty() {
+    return 0
+  }
+  atoi(v[0])
+}
+
+/// The processors online (sysconf(_SC_NPROCESSORS_ONLN)): Linux's
+/// /sys/devices/system/cpu/online, macOS's hw.activecpu, Windows's
+/// active processors of every group; 1 when it cannot be read.
+fn cpu_count() -> Int {
+  let b = obj.scratch()
+  match target.os {
+    TargetOs.Linux => {
+      let fd = linux.open("/sys/devices/system/cpu/online", 0, 0)
+      if fd < 0 {
+        return 1
+      }
+      let n = linux.read_at(fd, b, 200)
+      let _c = linux.close(fd)
+      if n <= 0 {
+        return 1
+      }
+      online_count(raw.str_at(b, n))
+    }
+    TargetOs.Darwin => {
+      // the int's 4 bytes at b, their length (a size_t) at b + 8
+      rt.mem_store(b, 8, 4, 8)
+      let name = b"hw.activecpu\x00"
+      if Int(sys_darwin.sysctlbyname(name, b, b + 8, 0, 0)) != 0 {
+        return 1
+      }
+      rt.mem_load(b, 0, 4)
+    }
+    TargetOs.Windows => Int(sys_windows.GetActiveProcessorCount(65535))
+    TargetOs.Wasi => 1
+  }
+}
+
+/// The CPUs a list like "0-3,8,10-11" names (the kernel's cpu list
+/// format).
+fn online_count(s: Str) -> Int {
+  var total = 0
+  var i = 0
+  while i < s.len() {
+    var a = 0
+    var digits = false
+    while i < s.len() && bt(s, i) >= 48 && bt(s, i) <= 57 {
+      a = a * 10 + bt(s, i) - 48
+      digits = true
+      i += 1
+    }
+    if !digits {
+      i += 1
+      continue
+    }
+    var hi = a
+    if i < s.len() && bt(s, i) == 45 {
+      i += 1
+      hi = 0
+      while i < s.len() && bt(s, i) >= 48 && bt(s, i) <= 57 {
+        hi = hi * 10 + bt(s, i) - 48
+        i += 1
+      }
+    }
+    if hi >= a {
+      total += hi - a + 1
+    }
+  }
+  if total < 1 { 1 } else { total }
+}
+
+/// The calling root thread's worker record, made on first use
+/// (root_worker): its spawns go to its deque, and while it waits it runs
+/// work (decision 0077). Records are never freed.
+pub fn root_worker(p: Int) -> Int {
+  let w0 = rt.tlocal_get(TLS_W)
+  if w0 != 0 {
+    return w0
+  }
+  ready(p)
+  let w = rt.heap_large(W_SIZE)
+  rt.mem_set(w, 0, W_SIZE)
+  rt.mem_store(w, W_LIVE, 1, 4)
+  rt.mem_store(w, W_ROOT, 1, 4)
+  // the statistics' hooks (xo_rt.c sched_hooks), then the sanitizers'
+  // (decision 0232)
+  let _s = rt.sched_rt(RT_WORKER_START, w, 0)
+  sanhook.worker_start(w)
+  pool.lock(p + P_MU)
+  pool.register_worker(p, w)
+  pool.unlock(p + P_MU)
+  rt.tlocal_set(TLS_W, w)
+  w
+}

@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+rsa pkcs1: ok
+rsa pkcs8: ok
+p-256 sec1: ok
+p-256 pkcs8: ok
+p-384 sec1: ok
+p-384 pkcs8: ok
+ed25519 pkcs8: ok
+other rsa key: tls: private key does not match public key
+rsa cert, ec key: tls: private key type does not match public key type
+p-256 cert, p-384 key: tls: private key does not match public key
+p-256 cert, ed25519 key: tls: private key type does not match public key type
+ed25519 cert, rsa key: tls: private key type does not match public key type
+ed25519 cert, other key type: tls: private key type does not match public key type
+x25519 key: tls: found unknown private key type in PKCS#8 wrapping
+bad key: tls: failed to parse private key
+get rsa pkcs1: 200 hello over tls
+get rsa pkcs8: 200 hello over tls
+get p-256 sec1: 200 hello over tls
+get p-256 pkcs8: 200 hello over tls
+get p-384 sec1: 200 hello over tls
+get p-384 pkcs8: 200 hello over tls
+done
+--- stderr

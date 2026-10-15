@@ -27,6 +27,10 @@ fn GetStdHandle(n: Int) -> Int
 fn GetLastError() -> UInt32
 /// ExitProcess: ends the process with exit code code.
 fn ExitProcess(code: Int)
+/// OpenProcess: a process handle, or 0 (std/native/llrt/proc.xo).
+fn OpenProcess(access: Int, inherit: Int, pid: Int) -> Int
+/// TerminateProcess: nonzero on success.
+fn TerminateProcess(h: Int, code: Int) -> Int32
 /// GetFileInformationByHandle into the BY_HANDLE_FILE_INFORMATION (52
 /// bytes) at the address info.
 fn GetFileInformationByHandle(h: Int, info: Int) -> Int32
@@ -34,6 +38,12 @@ fn GetFileInformationByHandle(h: Int, info: Int) -> Int32
 /// does not exist.
 fn GetFileAttributesW(name: Bytes) -> UInt32
 fn GetFileType(h: Int) -> UInt32
+/// GetConsoleScreenBufferInfo into the CONSOLE_SCREEN_BUFFER_INFO at the
+/// address bi (22 bytes); GetConsoleMode into the DWORD at the address m;
+/// SetConsoleMode: standard input's console (std/native/llrt/stdin.xo).
+fn GetConsoleScreenBufferInfo(h: Int, bi: Int) -> Int32
+fn GetConsoleMode(h: Int, m: Int) -> Int32
+fn SetConsoleMode(h: Int, m: Int) -> Int32
 /// GetSystemTimePreciseAsFileTime into the FILETIME at the address ft.
 fn GetSystemTimePreciseAsFileTime(ft: Int)
 /// QueryPerformanceCounter into the LARGE_INTEGER at the address c:
@@ -104,3 +114,128 @@ fn RtlLookupFunctionEntry(pc: Int, base: Int, history: Int) -> Int
 fn RtlVirtualUnwind(kind: Int, base: Int, pc: Int, f: Int, cx: Int, data: Int, establisher: Int, ptrs: Int) -> Int
 /// RtlRestoreContext: resumes the CONTEXT at cx (does not return).
 fn RtlRestoreContext(cx: Int, rec: Int)
+
+/// GetActiveProcessorCount: the active processors of a group, or of
+/// every group (ALL_PROCESSOR_GROUPS, 0xffff).
+fn GetActiveProcessorCount(group: Int) -> UInt32
+
+/// GetSystemInfo: the SYSTEM_INFO (48 bytes) at info.
+fn GetSystemInfo(info: Int)
+
+// Winsock (ws2_32.dll, the zero-C audit's B23 stage 2): the socket calls
+// of std/native/llrt/sock.xo's Windows arms and the name lookup of
+// cabi_net.xo. A socket is its SOCKET handle as an Int; a call that fails
+// returns SOCKET_ERROR (-1) or INVALID_SOCKET (-1 as a word), its error
+// in WSAGetLastError.
+
+/// WSAStartup with the version (2.2: 0x202) into the WSADATA at data
+/// (408 bytes on 64 bit Windows): 0, or the error.
+fn WSAStartup(version: Int, data: Int) -> Int32
+fn WSAGetLastError() -> Int32
+/// WSASocketW: the socket, or INVALID_SOCKET (-1).
+fn WSASocketW(af: Int, ty: Int, proto: Int, info: Int, group: Int, flags: Int) -> Int
+fn bind(s: Int, sa: Int, n: Int) -> Int32
+fn listen(s: Int, backlog: Int) -> Int32
+/// accept: the new socket, or INVALID_SOCKET (-1).
+fn accept(s: Int, sa: Int, lenp: Int) -> Int
+fn connect(s: Int, sa: Int, n: Int) -> Int32
+fn getsockname(s: Int, sa: Int, lenp: Int) -> Int32
+fn getpeername(s: Int, sa: Int, lenp: Int) -> Int32
+fn send(s: Int, p: Int, n: Int, flags: Int) -> Int32
+fn recv(s: Int, p: Int, n: Int, flags: Int) -> Int32
+fn setsockopt(s: Int, level: Int, opt: Int, v: Int, n: Int) -> Int32
+fn getsockopt(s: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int32
+fn shutdown(s: Int, how: Int) -> Int32
+fn closesocket(s: Int) -> Int32
+/// ioctlsocket with the u_long at the address arg (FIONBIO: nonzero
+/// makes the socket nonblocking).
+fn ioctlsocket(s: Int, cmd: Int, arg: Int) -> Int32
+/// getaddrinfo (ANSI names): 0, or a Winsock error (WSAHOST_NOT_FOUND
+/// and the rest); the result list is freeaddrinfo's.
+fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
+fn freeaddrinfo(ai: Int)
+
+// Processes (std/native/llrt/windows.xo's process section, the zero-C
+// audit's B25; was xo_proc.c's Windows code).
+
+/// CreatePipe: the read and write handles at the addresses r and w (the
+/// SECURITY_ATTRIBUTES at sa, 0 for not inherited), size the buffer.
+fn CreatePipe(r: Int, w: Int, sa: Int, size: Int) -> Int32
+/// SetNamedPipeHandleState with the DWORD mode at the address mode
+/// (PIPE_NOWAIT 1: reads and writes return at once).
+fn SetNamedPipeHandleState(h: Int, mode: Int, count: Int, timeout: Int) -> Int32
+/// DuplicateHandle into the handle at the address target.
+fn DuplicateHandle(sproc: Int, h: Int, tproc: Int, target: Int, access: Int, inherit: Int, options: Int) -> Int32
+/// CreateProcessW: nonzero on success, the PROCESS_INFORMATION (24
+/// bytes) at pi.
+fn CreateProcessW(app: Int, cmdline: Int, pattrs: Int, tattrs: Int, inherit: Int, flags: Int, env: Int, dir: Int, si: Int, pi: Int) -> Int32
+/// InitializeProcThreadAttributeList: the size needed at the address
+/// size (list 0 asks for it).
+fn InitializeProcThreadAttributeList(list: Int, count: Int, flags: Int, size: Int) -> Int32
+fn UpdateProcThreadAttribute(list: Int, flags: Int, attr: Int, value: Int, size: Int, prev: Int, ret: Int) -> Int32
+fn DeleteProcThreadAttributeList(list: Int)
+/// WaitForSingleObject: 0 (WAIT_OBJECT_0) when h is signaled within ms
+/// (INFINITE 0xFFFFFFFF).
+fn WaitForSingleObject(h: Int, ms: Int) -> UInt32
+/// GetExitCodeProcess into the DWORD at the address code.
+fn GetExitCodeProcess(h: Int, code: Int) -> Int32
+fn GetProcessId(h: Int) -> UInt32
+/// FormatMessageW into the n UTF-16 units at buf: the units written.
+fn FormatMessageW(flags: Int, source: Int, id: Int, lang: Int, buf: Int, n: Int, args: Int) -> UInt32
+/// GetFullPathNameW of the UTF-16 name into the n units at buf: the
+/// units written without the NUL, or the size needed.
+fn GetFullPathNameW(name: Bytes, n: Int, buf: Int, part: Int) -> UInt32
+
+// The event loop's poller on Windows (std/native/llrt/poll.xo's Windows
+// section, the zero-C audit's B22 stage 4): AFD polls completed through
+// an I/O completion port.
+
+/// GetQueuedCompletionStatusEx: up to count OVERLAPPED_ENTRY records (32
+/// bytes) at entries, how many at the ULONG at removed; nonzero on
+/// success.
+fn GetQueuedCompletionStatusEx(port: Int, entries: Int, count: Int, removed: Int, ms: Int, alertable: Int) -> Int32
+/// CancelIoEx of the operation whose IO_STATUS_BLOCK (OVERLAPPED) is at ov.
+fn CancelIoEx(h: Int, ov: Int) -> Int32
+/// NtDeviceIoControlFile (ntdll.dll): an NTSTATUS (0, STATUS_PENDING
+/// 0x103, or an error).
+fn NtDeviceIoControlFile(h: Int, event: Int, apc: Int, ctx: Int, iosb: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int) -> Int32
+
+// The entry (the zero-C audit's B26 part 2, std/native/llrt/entry.xo):
+// the console's handler, the stack overflow handler, and the arguments
+// as UTF-8.
+
+/// SetConsoleCtrlHandler: adds (add 1) the HandlerRoutine at the
+/// address h; nonzero on success.
+fn SetConsoleCtrlHandler(h: Int, add: Int) -> Int32
+/// AddVectoredExceptionHandler: the handler at the address h, first
+/// (first 1) or last; a handle, or 0.
+fn AddVectoredExceptionHandler(first: Int, h: Int) -> Int
+/// SetConsoleOutputCP: the console's output code page (CP_UTF8 65001).
+fn SetConsoleOutputCP(cp: Int) -> Int32
+/// GetCommandLineW: the address of the process's UTF-16 command line.
+fn GetCommandLineW() -> Int
+/// CommandLineToArgvW (shell32.dll): the arguments of the command line
+/// at the address cmd as an array of UTF-16 strings in one LocalAlloc
+/// block, their count stored as a C int at the address n; 0 on failure.
+fn CommandLineToArgvW(cmd: Int, n: Int) -> Int
+/// LocalFree: 0 on success.
+fn LocalFree(h: Int) -> Int
+/// GetEnvironmentStringsW: the process's environment block, UTF-16
+/// NAME=VALUE strings each ending in a 0 unit, an empty one last
+/// (process.xo win_env).
+fn GetEnvironmentStringsW() -> Int
+/// FreeEnvironmentStringsW: nonzero on success.
+fn FreeEnvironmentStringsW(block: Int) -> Int32
+/// WideCharToMultiByte: the bytes written (or needed, when outn is 0)
+/// for the UTF-16 at w (n -1: zero terminated, the zero counted), or 0.
+fn WideCharToMultiByte(cp: Int, flags: Int, w: Int, n: Int, out: Int, outn: Int, def: Int, used: Int) -> Int32
+
+// The TLS client's roots (the zero-C audit's B30,
+// std/native/llrt/tlscert.xo): crypt32.dll's ROOT store.
+
+/// CertOpenSystemStoreW: the store named by the UTF-16 name, or 0.
+fn CertOpenSystemStoreW(prov: Int, name: Bytes) -> Int
+/// CertEnumCertificatesInStore: the CERT_CONTEXT after prev (0 for the
+/// first), or 0 at the end (it frees prev).
+fn CertEnumCertificatesInStore(store: Int, prev: Int) -> Int
+fn CertCloseStore(store: Int, flags: Int) -> Int32

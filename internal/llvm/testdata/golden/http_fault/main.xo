@@ -1,7 +1,9 @@
 // A fault in an HTTP handler (std.md 4.2, decision 0085) is isolated:
 // the handler's deferred code runs, the client gets 500 with
 // {"error":"internal error"}, the fault is logged, and the server keeps
-// serving the next requests, on the Go, LLVM, and arm64 backends.
+// serving the next requests, on the Go, LLVM, and arm64 backends. A
+// fault in a middleware is isolated the same way (it once stopped the
+// native server: every later connection went unanswered).
 use std/http
 
 fn routes(stdio: Stdio) -> http.Router uses stdio {
@@ -18,6 +20,13 @@ fn routes(stdio: Stdio) -> http.Router uses stdio {
       fault("handler gave up after ${words.len()} words")
     }
     http.text(200, "never")
+  })
+  r.wrap(fn(req, next) {
+    if req.path == "/mw/fault" {
+      let xs = [1, 2]
+      return http.text(200, "middleware ${xs[req.path.len()]}")
+    }
+    next(req)
   })
   r
 }
@@ -48,6 +57,8 @@ fn main(os: Os) {
         show(os, "ok 2", c.get(base + "/ok/2"))
         show(os, "fault", c.get(base + "/fault"))
         show(os, "ok 3", c.get(base + "/ok/3"))
+        show(os, "middleware fault", c.get(base + "/mw/fault"))
+        show(os, "ok 4", c.get(base + "/ok/4"))
       }
       os.stdio.println("server stopped")
     }

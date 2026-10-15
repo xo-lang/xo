@@ -8,7 +8,10 @@ boom 9: 500 {"error":"internal error"}
 ok 2: 200 ok 2
 fault: 500 {"error":"internal error"}
 ok 3: 200 ok 3
+middleware fault: 500 {"error":"internal error"}
+ok 4: 200 ok 4
 server stopped
 --- stderr
-<time> ERROR handler fault fault=index 9 out of range for List of length 3 at main.xo:13:28
-<time> ERROR handler fault fault=handler gave up after 4 words at main.xo:18:7
+<time> ERROR handler fault fault=index 9 out of range for List of length 3 at main.xo:15:28
+<time> ERROR handler fault fault=handler gave up after 4 words at main.xo:20:7
+<time> ERROR handler fault fault=index 9 out of range for List of length 2 at main.xo:27:43

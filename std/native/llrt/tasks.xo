@@ -11,16 +11,19 @@
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
-use native/llrt/alloc
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
+use native/llrt/poolsetup
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/stdio
+use native/llrt/twflags
 use native/rt
 
 /// xo_task (216 bytes): the header (count, free function), the
@@ -66,9 +69,11 @@ const S_LIST = 384
 const S_FAIL = 392
 const S_CLOSED = 400
 const S_DEADLINE = 408
+const S_TIMED_OUT = 416
 const S_FAULT = 424
 const S_PRUNE_AT = 440
 const S_CLOSING = 448
+const S_BUD = 456
 const S_SIZE = 464
 
 /// An object's header (xo_hdr): its count and its free function.
@@ -80,6 +85,9 @@ const H_FREE = 8
 /// (sched.xo TLS_FIB, TLS_W).
 const P_NCPU = 8
 const TLS_FIB = 1
+/// The thread local word of the thread's spare context (run_claimed;
+/// sched.xo's table of the words).
+const TLS_CTX_SPARE = 13
 const TLS_W = 2
 
 /// The spawn statistic (pool.xo ST_*).
@@ -101,14 +109,11 @@ const E_WRITER = 24
 
 /// The C's services (pool.xo RT_*).
 const RT_RUN_CLAIMED = 16
-const RT_PARK_WAIT = 17
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
-const RT_POOL_INIT = 20
-const RT_ROOT_WORKER = 21
+/// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
-const RT_DEADLINE_DEL = 24
 const RT_H_FREE = 25
 const RT_STAT = 0
 const ACQ_REL = 3
@@ -126,11 +131,43 @@ fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
 
 /// The list the C returns while a canceled operation unwinds (immortal).
-fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+pub fn empty_list() -> Int { rt.sched_rt(RT_EMPTY_LIST, 0, 0) }
+
+/// Blocks the context c until its park is signaled or, when cancelable,
+/// its node is canceled (the C's park_wait: it flushes the pending
+/// output, helps on a root thread, tells ThreadSanitizer).
+pub fn park_wait(c: Int, cancelable: Bool) { park_wait_n(c, cancelable, true) }
+
+/// park_wait; counted tells that the wait counts as blocked for the
+/// deadlock check (a wait that something outside the program's tasks can
+/// end does not).
+pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
+  stdio.flush()
+  // waiting is not running time (decision 0175)
+  budget.pause(c)
+  // a fiber parks; a root thread helps while it waits once the pool
+  // exists (a program that only sleeps stays single threaded)
+  let pl = ctx.pool()
+  let f = rt.tlocal_get(TLS_FIB)
+  var rw = 0
+  if f == 0 && rt.slot_load(pl + P_NCPU, 0, ACQUIRE) != 0 {
+    rw = poolsetup.root_worker(pl)
+  }
+  // in the test world nothing outside the program ends a wait (the
+  // flags' static words: no C call on the wait's path)
+  let counts = counted || twflags.virt()
+  pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counts { 1 } else { 0 }, f, rw)
+  sanhook.acquire(c + ctx.C_PARK)
+  budget.resume(c)
+}
+
+/// A new object of n bytes, zeroed, with one reference and the C free
+/// function in services record word k (ctx.xo SV_*_FREE).
+pub fn new_handle(n: Int, k: Int) -> Int { new_object(n, k) }
 
 /// A cancellation point of the context c (xo_rt.c canceled): whether it
 /// reports cancellation, c then unwinding.
-fn canceled(c: Int) -> Bool {
+pub fn canceled(c: Int) -> Bool {
   if budget.canceled(c) {
     st4(c, ctx.C_UNWINDING, 1)
     return true
@@ -139,7 +176,7 @@ fn canceled(c: Int) -> Bool {
 }
 
 /// Adds entry e at the end of wait list l (the oldest waiter is first).
-fn wl_add(l: Int, e: Int) {
+pub fn wl_add(l: Int, e: Int) {
   st(e, E_NEXT, 0)
   let last = ld(l, WL_LAST)
   st(e, E_PREV, last)
@@ -151,7 +188,7 @@ fn wl_add(l: Int, e: Int) {
   st(l, WL_LAST, e)
 }
 
-fn wl_del(l: Int, e: Int) {
+pub fn wl_del(l: Int, e: Int) {
   let p = ld(e, E_PREV)
   let n = ld(e, E_NEXT)
   if p != 0 {
@@ -169,15 +206,19 @@ fn wl_del(l: Int, e: Int) {
 /// Waits on wait list l of an object whose lock mu is held, mu held
 /// again on return (xo_rt.c wl_wait): false when the context c was
 /// canceled (and cancelable).
-fn wl_wait(c: Int, mu: Int, l: Int, cancelable: Bool) -> Bool {
+fn wl_wait(c: Int, mu: Int, l: Int, cancelable: Bool) -> Bool { wl_wait_as(c, mu, l, cancelable, 0) }
+
+/// wl_wait with the entry's writer flag (a Mutex waiter that wants the
+/// lock exclusively: 1).
+pub fn wl_wait_as(c: Int, mu: Int, l: Int, cancelable: Bool, writer: Int) -> Bool {
   let e = c + ctx.C_WENT
   st(e, E_PARK, c + ctx.C_PARK)
-  st4(e, E_WRITER, 0)
+  st4(e, E_WRITER, writer)
   st4(e, E_WRITER + 4, 0)
   pool.park_reset(c + ctx.C_PARK)
   wl_add(l, e)
   pool.unlock(mu)
-  let _r = rt.sched_rt(RT_PARK_WAIT, c, if cancelable { 1 } else { 0 })
+  park_wait(c, cancelable)
   pool.lock(mu)
   wl_del(l, e)
   !(cancelable && budget.canceled(c))
@@ -318,7 +359,7 @@ pub fn scope_cancel(s: Int) {
   let old = ld(s, S_TASKS)
   let n = ld4(s, S_NOLD)
   let a0 = ld(s, S_OLD)
-  let a = if a0 == 0 { rt.heap_large(8 * (n + 1)) - 8 } else { rt.heap_large_resize(a0, 8 * (n + 1)) - 8 }
+  let a = raw.c_resize(a0, 8 * (n + 1))
   st(a, 8 * n, old)
   st(s, S_OLD, a)
   st4(s, S_NOLD, n + 1)
@@ -359,9 +400,7 @@ pub fn prog_group() -> Int {
 /// count, the spin rounds, the fiber stacks' settings, the statistics).
 fn pool_ready() -> Int {
   let pl = ctx.pool()
-  if rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) == 0 {
-    let _r = rt.sched_rt(RT_POOL_INIT, 0, 0)
-  }
+  poolsetup.ready(pl)
   pl
 }
 
@@ -369,7 +408,7 @@ fn pool_ready() -> Int {
 /// the C free function in services record word k (ctx.xo SV_TASK_FREE,
 /// SV_SCOPE_FREE).
 fn new_object(n: Int, k: Int) -> Int {
-  let o = alloc.alloc(obj.heap(), n)
+  let o = obj.alloc_obj(n)
   rt.mem_set(o, 0, n)
   st(o, H_RC, -1)
   st(o, H_FREE, ld(ctx.svc(), k))
@@ -379,17 +418,28 @@ fn new_object(n: Int, k: Int) -> Int {
 /// Drops a reference to the object at p (xo_rt.c h_release): the last
 /// one frees it through the C (xo_h_free: its free function, deferred in
 /// a real-time section).
-fn h_release(p: Int) {
+pub fn h_release(p: Int) {
   if rc.dec(p) != 0 {
     let _r = rt.sched_rt(RT_H_FREE, p, 0)
   }
+}
+
+/// Signals the park p (the C's park_signal: ThreadSanitizer's release,
+/// then pool.xo park_signal).
+pub fn park_signal(p: Int) {
+  tsan(RT_TSAN_RELEASE, p)
+  pool.park_signal(ctx.pool(), p)
 }
 
 /// Tells ThreadSanitizer (when the C runtime is built with it) that a
 /// releases (op RT_TSAN_RELEASE) or acquires (RT_TSAN_ACQUIRE).
 fn tsan(op: Int, a: Int) {
   if ld(ctx.svc(), ctx.SV_TSAN) != 0 {
-    let _r = rt.sched_rt(op, a, 0)
+    if op == RT_TSAN_RELEASE {
+      sanhook.release(a)
+    } else {
+      sanhook.acquire(a)
+    }
   }
 }
 
@@ -412,7 +462,7 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
   if w == 0 {
-    w = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+    w = poolsetup.root_worker(pl)
   }
   let t = new_object(T_SIZE, ctx.SV_TASK_FREE)
   // references: the handle returned, and the scope's list (which keeps
@@ -434,7 +484,7 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   let r = pool.scope_add(pl, s, t, w)
   if r == -1 {
     budget.release(bud)
-    alloc.free(obj.heap(), t)
+    obj.free_obj(t)
     if fl != empty_list() {
       let _d = rt.call_c2(fdrop, fl, 0)
     }
@@ -471,6 +521,42 @@ pub fn scope_open() -> Int {
   s
 }
 
+/// A scope of its own for an HTTP server's connection tasks (hserve.xo
+/// srv_new; xo_http.c's xo_srv_new until the zero-C audit's B28 part 3):
+/// as scope_open's, but its body's node hangs below link (main's root, so
+/// canceling the serving task leaves the requests in flight alone) and
+/// the context's node stays.
+pub fn scope_detached(link: Int) -> Int {
+  let c = ctx.cur()
+  let s = new_object(S_SIZE, ctx.SV_SCOPE_FREE)
+  st(s, S_PRUNE_AT, 64)
+  st(s, S_PARENT_NODE, ld(c, ctx.C_NODE))
+  pool.node_link(s + S_BODY, link)
+  let tn = rt.heap_large(56) - 8
+  rt.mem_set(tn, 0, 56)
+  st(s, S_TASKS, tn)
+  pool.node_link(tn, s + S_BODY)
+  s
+}
+
+/// task.with_timeout's deadline (xo_rt.c xo_scope_deadline): scope s's
+/// body is canceled d ns from now, and scope_timed_out tells it.
+pub fn scope_deadline(s: Int, d: Int) {
+  st(s, S_DEADLINE, poll.timer_fn(d, poll.FN_SCOPE, s))
+}
+
+/// After scope s closed while its body unwound: whether the unwinding
+/// came from its deadline (and not from a cancellation of the code
+/// around it), when the unwinding then stops (xo_rt.c xo_scope_timed_out).
+pub fn scope_timed_out(s: Int) -> Bool {
+  let c = ctx.cur()
+  if rt.slot_load[Int](s + S_TIMED_OUT, 0, ACQUIRE) & 4294967295 == 0 || budget.canceled(c) {
+    return false
+  }
+  rt.mem_store(c, ctx.C_UNWINDING, 0, 4)
+  true
+}
+
 /// Ends scope s (xo_scope_close, core 7.1 exit rules). mode 0: the body
 /// completed (background tasks are canceled); 1: it exits early (return,
 /// break, an error: every task is canceled); 2: it unwinds (canceled).
@@ -482,7 +568,8 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   let c = ctx.cur()
   let pl = ctx.pool()
   if ld(s, S_DEADLINE) != 0 {
-    let _r = rt.sched_rt(RT_DEADLINE_DEL, s, 0)
+    poll.timer_end(ld(s, S_DEADLINE))
+    st(s, S_DEADLINE, 0)
   }
   pool.lock(s + S_MU)
   // no pruning from here: the helpers below walk the list unlocked
@@ -508,7 +595,7 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   let f = rt.tlocal_get(TLS_FIB)
   var rw = 0
   if f == 0 && rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) != 0 {
-    rw = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+    rw = poolsetup.root_worker(pl)
   }
   pool.scope_join(pl, s, c, f, rw)
   tsan(RT_TSAN_ACQUIRE, c + ctx.C_PARK)
@@ -551,4 +638,147 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
     st4(c, ctx.C_UNWINDING, 0)
   }
   1
+}
+
+/// `Atomic.new(v)` (xo_atomic_new, B19): the value at byte 128 (slot 13
+/// of the slot atomics, decision 0200), on a cache line apart from the
+/// count; a handle whose free function is the C's atomic_free.
+pub fn atomic_new(v: Int) -> Int {
+  let a = new_object(136, ctx.SV_ATOMIC_FREE)
+  st(a, 128, v)
+  a
+}
+
+// ---------------------------------------------------------------------------
+// The handles' free functions (B18): the free function an object's header
+// names (xo_h_free calls it with its last reference gone; the C takes
+// these exports' addresses for the services record's SV_*_FREE words).
+
+/// Releases the list l (a list of one) with its drop function, unless it
+/// is 0 or the empty list.
+pub fn list_release(l: Int, drop: Int) {
+  if l != 0 && l != empty_list() {
+    let _r = rt.call_c2(drop, l, 0)
+  }
+}
+
+/// Frees the block at the malloc'd address b, unless it is 0.
+fn mfree(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+/// A task's (task_free): its budget, its result, the fault that ended it.
+pub fn task_free(t: Int) {
+  budget.release(ld(t, T_BUD))
+  list_release(ld(t, T_RESULT), ld(t, T_DROP))
+  mfree(ld(t, T_FAULT_MSG))
+  mfree(ld(t, T_FAULT_LOC))
+  mfree(ld(t, T_FAULT_DETAIL))
+  obj.free_obj(t)
+}
+
+/// A scope's (scope_free): its budget, its failed and faulted tasks, the
+/// node of its tasks and the ones s.cancel() replaced.
+pub fn scope_free(s: Int) {
+  budget.release(ld(s, S_BUD))
+  if ld(s, S_FAIL) != 0 {
+    h_release(ld(s, S_FAIL))
+  }
+  if ld(s, S_FAULT) != 0 {
+    h_release(ld(s, S_FAULT))
+  }
+  mfree(ld(s, S_TASKS))
+  let old = ld(s, S_OLD)
+  for i in 0..ld4(s, S_NOLD) {
+    mfree(ld(old, 8 * i))
+  }
+  mfree(old)
+  obj.free_obj(s)
+}
+
+/// An Atomic's (atomic_free).
+pub fn atomic_free(a: Int) { obj.free_obj(a) }
+
+// ---------------------------------------------------------------------------
+// Running a task (run_claimed, B18): a context of its own, from the heap
+// (Xo has no stack slots), for the task's run; the entry call itself
+// stays the C's (RT_RUN_ENTRY: the unwinding's boundary is that frame).
+
+const RT_RUN_ENTRY = 29
+const T_GONE = 176
+const S_JOINER = 248
+const RELEASE = 2
+
+/// Wakes every context waiting in the list l (its mutex held).
+pub fn wl_wake(l: Int) {
+  var e = ld(l, 0)
+  while e != 0 {
+    park_signal(ld(e, E_PARK))
+    e = ld(e, E_NEXT)
+  }
+}
+
+/// Runs task t, which the caller claimed, on this stack (a fiber, or a
+/// thread that helps); units (sched.xo scope_units_done) are over after.
+pub fn run_claimed(t: Int, units: Int) {
+  // the context: the thread's spare (an earlier run's), else a new one
+  // from the runtime's malloc (the C's was on its stack; a heap block
+  // and its free per run cost spawn heavy programs, the zero-C perf
+  // sweep of 2026-10-15)
+  var c = rt.tlocal_get(TLS_CTX_SPARE)
+  if c != 0 {
+    rt.tlocal_set(TLS_CTX_SPARE, 0)
+  } else {
+    c = rt.heap_large(ctx.C_SIZE)
+  }
+  rt.mem_set(c, 0, ctx.C_SIZE)
+  st(c, ctx.C_NODE, t + T_NODE)
+  let saved = rt.tlocal_get(0)
+  // a task started under a budget works under it (decision 0175); the
+  // context it runs inline on does not run meanwhile
+  budget.pause(saved)
+  let b = ld(t, T_BUD)
+  st(c, ctx.C_BUD, b)
+  st(t, T_BUD, 0)
+  if b != 0 {
+    st(c, ctx.C_BUD_Q, budget.QUANTUM)
+    st(c, ctx.C_BUD_LEFT, budget.QUANTUM)
+    budget.mark(c)
+  }
+  rt.tlocal_set(0, c)
+  let fl = ld(t, T_FL)
+  st(t, T_FL, 0)
+  rc.inc(t) // the entry function's own reference
+  let _r = rt.sched_rt(RT_RUN_ENTRY, t, fl)
+  if b != 0 {
+    budget.charge(c, false)
+    budget.release(b)
+  }
+  rt.tlocal_set(0, saved)
+  budget.resume(saved)
+  mfree(ld(c, ctx.C_HELD))
+  mfree(ld(c, ctx.C_NET_MSG))
+  fault.clear(c)
+  // the spare of the thread that ends the run (a fiber may have moved);
+  // a spare is never freed (one per thread, like a root context), so the
+  // leak check does not see it
+  if rt.tlocal_get(TLS_CTX_SPARE) == 0 {
+    rt.tlocal_set(TLS_CTX_SPARE, c)
+  } else {
+    rt.heap_release(c - 8)
+  }
+  let s = ld(t, T_SCOPE)
+  pool.lock(t + T_MU)
+  rt.slot_store[Int](t + T_STATE, 0, T_DONE, RELEASE)
+  wl_wake(t + T_WAITERS)
+  pool.unlock(t + T_MU)
+  // the last touch of t: a spawn may prune it after (scope_prune)
+  rt.slot_add[Int](t + T_GONE, 0, units / 2, RELEASE)
+  // the last touch of s: the scope's join may free it after
+  if sched.scope_units_done(s, units) != 0 {
+    // the joiner waits for this signal, so s is still there
+    park_signal(ld(s, S_JOINER))
+  }
 }

@@ -1,7 +1,7 @@
 // std/testing on the native backends (decision 0083). The fakes of a test
-// are the capabilities themselves, run in the C runtime's test world
-// (std/llrt/xo_testing.c); internal/ssa lowers their control methods
-// (build_testmode.go) and testing.run_main. What needs Xo values is here:
+// are the capabilities themselves, run in the runtime's test world
+// (std/native/llrt/testworld.xo and twrun.xo); internal/ssa lowers their
+// control methods (build_testmode.go) and testing.run_main. What needs Xo values is here:
 // the captured log records, FakeNet's handlers, failures, and requests,
 // and MemFs.
 use std/http
@@ -12,7 +12,7 @@ use std/testing
 use native/llrt/glob
 use native/llrt/testworld
 use native/rt
-use native/rttest
+use native/llrt/raw
 
 /// The records logged so far in this test, oldest first (std.md 8.6).
 fn logs() -> List[log.Record] {
@@ -43,20 +43,20 @@ fn split_fake(pattern: Str) -> (Str, Str, Str) {
   var method = ""
   var p = pattern
   if let Some(i) = pattern.find(" ") {
-    let head = rt.str_slice(pattern, 0, i)
+    let head = raw.str_slice(pattern, 0, i)
     if i > 0 && !head.contains("/") {
       method = head.to_upper()
-      p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+      p = raw.str_slice(pattern, i + 1, pattern.len()).trim()
     }
   }
   var prefix = ""
   var rest = p
   if let Some(i) = p.find("://") {
-    let after = rt.str_slice(p, i + 3, p.len())
+    let after = raw.str_slice(p, i + 3, p.len())
     match after.find("/") {
       Some(j) => {
-        prefix = rt.str_slice(p, 0, i + 3 + j)
-        rest = rt.str_slice(p, i + 3 + j, p.len())
+        prefix = raw.str_slice(p, 0, i + 3 + j)
+        rest = raw.str_slice(p, i + 3 + j, p.len())
       }
       None => {
         prefix = p
@@ -130,7 +130,7 @@ fn memfs_load() -> MemState {
     }
   }
   var nodes: Map[Str, MemNode] = {}
-  nodes.put("", MemNode{dir: true, data: b"", modified: rt.time_of(0), name: ""})
+  nodes.put("", MemNode{dir: true, data: b"", modified: Time.UNIX_EPOCH, name: ""})
   MemState{nodes: nodes, case_sensitive: true, fails: [], temp_seq: 0}
 }
 
@@ -237,7 +237,7 @@ fn memfs_failed(var st: MemState, op: Int, paths: List[Str]) -> FsErr? {
 fn memfs_get(st: MemState, full: Str) -> MemNode? { st.nodes.get(memfs_key(st, full)) }
 
 fn memfs_put(var st: MemState, full: Str, n: MemNode) {
-  st.nodes.put(memfs_key(st, full), n with { name: full })
+  st.nodes.put(memfs_key(st, full), n with {name: full})
 }
 
 fn memfs_dir_node(now: Time) -> MemNode { MemNode{dir: true, data: b"", modified: now, name: ""} }
@@ -256,7 +256,7 @@ fn memfs_mkdirs(var st: MemState, full: Str, self_too: Bool) -> Str? {
   for i in 1..end + 1 {
     let p = segs[0..i].join("/")
     match memfs_get(st, p) {
-      None => memfs_put(st, p, memfs_dir_node(rttest.test_now()))
+      None => memfs_put(st, p, memfs_dir_node(Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now())))
       Some(n) => {
         if !n.dir {
           return Some(p)
@@ -432,7 +432,7 @@ fn memfs_write_in(var st: MemState, f: Fs, full: Str, p: Str, data: Bytes) -> ()
       return Err(memfs_err(5, p))
     }
   }
-  memfs_put(st, full, MemNode{dir: false, data: data, modified: rttest.test_now(), name: ""})
+  memfs_put(st, full, MemNode{dir: false, data: data, modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: ""})
 }
 
 fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
@@ -466,7 +466,7 @@ fn memfs_create_temp_in(var st: MemState, f: Fs, full: Str, dir: Str, prefix: St
       }
     }
   }
-  memfs_put(st, file, MemNode{dir: false, data: b"", modified: rttest.test_now(), name: ""})
+  memfs_put(st, file, MemNode{dir: false, data: b"", modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: ""})
   memfs_rel(f, file)
 }
 
@@ -610,7 +610,7 @@ fn memfs_set_modified_in(var st: MemState, full: Str, p: Str, t: Time) -> () ! F
     None => return Err(memfs_err(1, p))
     Some(n) => n
   }
-  st.nodes.put(memfs_key(st, full), n with { modified: t })
+  st.nodes.put(memfs_key(st, full), n with {modified: t})
 }
 
 fn memfs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {

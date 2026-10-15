@@ -11,15 +11,19 @@
 // native targets they are faulting link stubs in std/llrt/xo_fs.c,
 // gotchas/dead-target-arm-still-links.md).
 //
-// A handle is the C runtime's record (rt.fs_raw_file, rt.fs_raw_lock), so
-// a handle dropped without close still closes its descriptor (and
-// releases its lock); this module reads and writes the record's words
-// through rt.obj_addr. The status and message of the last operation stay
-// the C runtime's thread locals (rt.fs_set_err, rt.fs_status, rt.fs_msg).
+// A handle is a record of this module's behind the runtime's object
+// header (raw_file, raw_lock: tasks.xo new_handle, its free function
+// file_free or lock_free through ctx.xo's services record), so a handle
+// dropped without close still closes its descriptor (and releases its
+// lock); its words are read and written through rt.obj_addr. The status and message of the last operation stay
+// sysio.xo's thread locals (set_err, status, msg).
+use native/llrt/ctx
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/raw
+use native/llrt/obj
 use native/llrt/sysio
+use native/llrt/tasks
 use native/llrt/windows
 use native/rt
 
@@ -28,7 +32,7 @@ const FS_BUF = 65536
 /// The most bytes one `read` returns.
 const READ_MAX = 1048576
 
-// The words of a file handle's record (xo_fs.c xo_fsfile): the
+// The words of a file handle's record (after the 16 byte header): the
 // descriptor (-1 once closed), the read buffer's address, and the
 // buffered bytes buf[r:w].
 const F_FD = 16
@@ -36,10 +40,63 @@ const F_BUF = 24
 const F_R = 32
 const F_W = 40
 
-// The words of a lock handle's record (xo_fs.c xo_fslock): the
-// descriptor and whether it holds the lock.
+const F_SIZE = 48
+
+// The words of a lock handle's record: the descriptor and whether it
+// holds the lock.
 const L_FD = 16
 const L_HELD = 24
+const L_SIZE = 32
+
+/// The handle of the descriptor fd this module opened (-1: none), with
+/// the 64 KiB read buffer when buffered: freeing it closes fd (was
+/// xo_fs.c xo_fs_raw_file).
+fn raw_file(fd: Int, buffered: Bool) -> rt.FsFile {
+  let f = tasks.new_handle(F_SIZE, ctx.SV_FS_FILE_FREE)
+  rt.mem_store(f, F_FD, fd, 8)
+  if buffered {
+    rt.mem_store(f, F_BUF, rt.heap_large(FS_BUF), 8)
+  }
+  let h = rt.obj_at[rt.FsFile](f)
+  // obj_at counted it once more: the value holds the one reference
+  tasks.h_release(f)
+  h
+}
+
+/// The lock handle of the descriptor fd (-1: none), held or not: freeing
+/// it closes fd, which releases the lock (was xo_fs.c xo_fs_raw_lock).
+fn raw_lock(fd: Int, held: Bool) -> rt.FsLock {
+  let k = tasks.new_handle(L_SIZE, ctx.SV_FS_LOCK_FREE)
+  rt.mem_store(k, L_FD, fd, 8)
+  rt.mem_store(k, L_HELD, if held { 1 } else { 0 }, 8)
+  let h = rt.obj_at[rt.FsLock](k)
+  tasks.h_release(k)
+  h
+}
+
+/// The free function of a file handle's record at p (cabi.xo's export,
+/// in the services record): closes its descriptor, frees its buffer.
+pub fn file_free(p: Int) {
+  let fd = rt.mem_load(p, F_FD, 8)
+  if fd >= 0 {
+    let _c = close(sysio.layer(), fd)
+  }
+  let b = rt.mem_load(p, F_BUF, 8)
+  if b != 0 {
+    rt.heap_release(b - 8)
+  }
+  obj.free_obj(p)
+}
+
+/// The free function of a lock handle's record at p: closing the
+/// descriptor releases the lock.
+pub fn lock_free(p: Int) {
+  let fd = rt.mem_load(p, L_FD, 8)
+  if fd >= 0 {
+    let _c = close(sysio.layer(), fd)
+  }
+  obj.free_obj(p)
+}
 
 // errno values the same on Linux and macOS
 const EINTR = 4
@@ -58,13 +115,13 @@ fn layer() -> Int { sysio.layer() }
 /// Records errno e of layer l for the Xo path x: the status.
 fn fail(l: Int, e: Int, x: Str) -> Int {
   let st = sysio.fs_status(l, e)
-  rt.fs_set_err(st, x, sysio.err_msg(l, e))
+  sysio.set_err(st, x, sysio.err_msg(l, e))
   st
 }
 
 /// Records success: 0.
 fn ok() -> Int {
-  rt.fs_set_err(0, "", "")
+  sysio.set_err(0, "", "")
   0
 }
 
@@ -419,12 +476,12 @@ pub fn open_file(p: Str, mode: Int, x: Str) -> rt.FsFile {
     let fd = open(l, p, mode, 438)
     if fd >= 0 {
       ok()
-      return rt.fs_raw_file(fd, mode == 0)
+      return raw_file(fd, mode == 0)
     }
     e = -fd
   }
   fail(l, e, x)
-  rt.fs_raw_file(-1, false)
+  raw_file(-1, false)
 }
 
 pub fn file_closed(f: rt.FsFile) -> Bool {
@@ -562,8 +619,8 @@ pub fn file_read_line(f: rt.FsFile, x: Str) -> List[Str] {
     rt.mem_store(a, F_R, w, 8)
   }
   let n = line.len()
-  if n > 0 && rt.str_byte(line, n - 1) == 13 {
-    line = rt.str_slice(line, 0, n - 1)
+  if n > 0 && raw.str_byte(line, n - 1) == 13 {
+    line = raw.str_slice(line, 0, n - 1)
   }
   ok()
   [line]
@@ -756,7 +813,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
   let fd = open(l, p, 3, 438)
   if fd < 0 {
     fail(l, -fd, x)
-    return rt.fs_raw_lock(-1, false)
+    return raw_lock(-1, false)
   }
   let op = if shared { linux.LOCK_SH } else { linux.LOCK_EX }
   let busy = if l == 3 { windows.EWOULDBLOCK } else if l == 2 { darwin.EAGAIN } else { linux.EAGAIN }
@@ -764,7 +821,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
     let r = flock(l, fd, op | linux.LOCK_NB)
     if r >= 0 {
       ok()
-      return rt.fs_raw_lock(fd, true)
+      return raw_lock(fd, true)
     }
     if r == -EINTR {
       continue
@@ -772,22 +829,22 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
     if r != -busy {
       close(l, fd)
       fail(l, -r, x)
-      return rt.fs_raw_lock(-1, false)
+      return raw_lock(-1, false)
     }
     if !wait {
       close(l, fd)
       ok()
-      return rt.fs_raw_lock(-1, false)
+      return raw_lock(-1, false)
     }
     // what the program printed shows before it waits
     rt.flush()
     if rt.clock_sleep_or_cancel(10000000) != 0 || rt.fs_canceled() {
       close(l, fd)
-      rt.fs_set_err(8, "", "")
-      return rt.fs_raw_lock(-1, false)
+      sysio.set_err(8, "", "")
+      return raw_lock(-1, false)
     }
   }
-  rt.fs_raw_lock(-1, false)
+  raw_lock(-1, false)
 }
 
 pub fn lock_held(h: rt.FsLock) -> Bool {

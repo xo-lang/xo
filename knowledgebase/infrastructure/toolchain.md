@@ -126,9 +126,11 @@ The bootstrap chain, as release.sh runs it:
     darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
                                            -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
                                               XO_WIN_CLANG, an upstream clang with lld-link beside it,
-                                              and XO_WINSYSROOT from xwin; not tried on the Mac yet,
-                                              whose 24 GB is below the 29.5 GB the Linux run used;
-                                              XO_RELEASE_WIN_JOBS defaults to 4. Last verified: 2026-10-13)
+                                              and XO_WINSYSROOT from xwin; the toolchain is set up on the
+                                              Mac since 2026-10-15 (below, "Windows cross builds on the Mac"),
+                                              but xo1 itself not built there: its 24 GB is below the 29.5 GB
+                                              the Linux run used; XO_RELEASE_WIN_JOBS defaults to 4.
+                                              Last verified: 2026-10-15)
 
 After a release exists, the previous release's xo is the seed
 (`XO_SEED`, or `scripts/bootstrap-xo.sh SEED`, below). xo1 needs its
@@ -273,7 +275,8 @@ python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; xo dev goldens --flags='--as=macho' runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant (and TLS library); else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
-xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), std/llrt/xo_nolibc.c defining the C library functions the runtime calls, linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
+xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo under the C names, decision 0230; std/llrt/xo_nolibc.c keeps _start and the variadic printf shells), linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
+xo1 build --backend=arm64 with XO_INLINE_STRICT=1   # a build whose inlined arm64 module does not verify fails (selfhost/xo main.xo inline_or_say); without it the build says so on standard error, naming the function and the first error, and goes on without inlining. internal/xotool sets it for every Go test; XO_INLINE_BREAK=1 breaks the inlined module on purpose (internal/arm64 TestInlineFallbackLoud). Last verified: 2026-10-15
 xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO_RTPACK=DIR xo dev goldens --flags=--ld=macho --build-path=/nonexistent builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
 python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
@@ -807,6 +810,16 @@ Last verified: 2026-10-07
   `XO_SELF_DRIVER=0`. Results in
   `bench/results/runtime-port-portable-2026-10-13.md`. Last verified:
   2026-10-13.
+- `bench/perf/tls/measure.sh <xo> <out dir> <backend...>` (2026-10-15,
+  decision 0202): TLS handshakes per group and server key (X25519,
+  P-256, P-384; ECDSA P-256, RSA-2048, Ed25519; TLS 1.2) and bulk reads
+  (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) of std/http's client
+  against crypto/tls servers (serve/, its own PID, stopped at the end),
+  built with the Xo TLS and with Mbed TLS (`XO_LLRT_C=tlsio`); prints
+  `<workload> <backend> <xo|mbed> <min instructions> <best wall ms>`
+  (N handshakes, default 200; SIZE bytes, default 64 MiB; PORT and the
+  next 9). Through the heavy lock. Results in
+  `bench/results/tls-perf-2026-10-15.md`. Last verified: 2026-10-15.
 - `XO_LLRT_C=rc` (deleted 2026-10-13 by decision 0198's second round:
   since 2026-10-14 the name fails the build; kept for the results files): the C runtime's
   own reference counts (rc_inc, rc_dec, rc_claim, xo_rc_mark compiled
@@ -1333,7 +1346,8 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_bytes.c,
-                        xo_http.c (decisions 0074, 0081), xo_h2.c (HTTP/2, decision 0121),
+                        xo_http.c (decisions 0074, 0081; TLS wrappers only: the server, its connections,
+                        sinks, and the client are std/native/llrt/hconn.xo, hserve.xo, h2srv.xo, hclient.xo),
                         xo_tls.c (TLS on Mbed TLS, decision 0105);
                         testdata/*.c, C tests and differential drivers (not embedded)
 third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
@@ -1912,10 +1926,11 @@ first, AST based prototype, since deleted) and
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no `http.stream`). HTTPS (std.md 4.6) is
   std/llrt/xo_tls.c on Mbed TLS since 2026-10-09 (decisions 0105, 0106;
-  see "TLS library"), with HTTP/2 over it in std/llrt/xo_h2.c since
-  2026-10-10 (decision 0121): serve_conn asks `hc_h2` after the
-  handshake, then runs each stream's request as a task of a scope of the
-  connection's task (`h2_next`, `h2_take`, `h2_end`).
+  see "TLS library"), with HTTP/2 over it since 2026-10-10 (decision
+  0121; std/native/llrt/h2srv.xo since 2026-10-14, xo_h2.c before):
+  serve_conn asks `hc_h2` after the handshake, then runs each stream's
+  request as a task of a scope of the connection's task (`h2srv`
+  `H2Conn.next`, `end`).
 - std/time natively (2026-10-09, decision 0094 "Native implementation"):
   std/native/time.xo (civil time, layouts, format, parse) over
   std/llrt/xo_time.c (Go's TZif reader and zone lookup, intrinsics in
@@ -2319,11 +2334,12 @@ Last verified: 2026-10-10.
   227 us on the Go backend, `bench/results/native-runtime-2026-10-10.md`
   sections 1 and 6). `CONFIGS="xo-base-llvm ..." XO_BASE=<old xo>` builds
   the LLVM server with another compiler for before and after runs.
-- HTTP/2 (decision 0121, `std/llrt/xo_h2.c`): ALPN offers `h2` then
+- HTTP/2 (decision 0121, `std/native/llrt/h2srv.xo` since 2026-10-14,
+  `std/llrt/xo_h2.c` before): ALPN offers `h2` then
   `http/1.1` on the server and the client (`tls_alpn`); the server's
   connection fiber reads TLS without waiting (`tls_nb_read`: the bio's
   `nb` flag turns EAGAIN into `MBEDTLS_ERR_SSL_WANT_READ`) and parks on
-  the socket and its streams at once (`h2_wait`); TLS 1.2 with a CBC
+  the socket and its streams at once (`poll.pd_wait_or_signal`); TLS 1.2 with a CBC
   suite gets GOAWAY INADEQUATE_SECURITY (`tls_h2_bad_cipher`). Load:
   `SCHEME=https H2=1 CONFIGS="xo xo-llvm xo-arm64" bench/perf/http/run.sh`
   (loadgen `-h2`: the workers' requests are streams of one connection;
@@ -3292,6 +3308,35 @@ XO_LLVM_LTO=none is slower here (1,571 s cross: each -O2 module takes
 built by Xo for Windows". Last verified: 2026-10-13 (i-EXAMPLE07,
 i-EXAMPLE03).
 
+
+### Windows cross builds on the Mac
+
+Set up 2026-10-15 (xo-fa; the owner accepted Microsoft's SDK license
+for this Mac, for xwin). Homebrew could not install llvm, lld, or xwin
+(it does not know macOS 27: "unknown or unsupported macOS version"), so
+everything is in the user cache, `~/Library/Caches/xo/winxc` (9.3 GB:
+the LLVM release 7.6 GB unpacked, the sysroot 1.1 GB, a minimal Rust
+toolchain and xwin the rest), no sudo, no shell profile change:
+
+    X=~/Library/Caches/xo/winxc
+    gh release download llvmorg-23.1.3 -R llvm/llvm-project -p 'LLVM-23.1.3-macOS-ARM64.tar.zst' -D $X
+    zstd --long=30 -dc $X/LLVM-23.1.3-macOS-ARM64.tar.zst > $X/llvm.tar && tar -xf $X/llvm.tar -C $X
+    # (zstd without --long=30 refuses the 1 GiB window)
+    curl -sSfL -o $X/rustup-init https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
+    CARGO_HOME=$X/cargo RUSTUP_HOME=$X/rustup $X/rustup-init -y --no-modify-path --profile minimal
+    CARGO_HOME=$X/cargo RUSTUP_HOME=$X/rustup $X/cargo/bin/cargo install xwin --version 0.10.0 --locked --root $X/xwin
+    $X/xwin/bin/xwin --accept-license --arch x86_64,aarch64 --cache-dir $X/xwin-cache splat \
+      --use-winsysroot-style --preserve-ms-arch-notation --output $X/winsysroot   # 58 s
+    rm -rf $X/xwin-cache   # 1.2 GB of downloads
+
+(xwin publishes no macOS binary, hence the build; the case insensitive
+volume makes it splat without symlinks.) A cross build:
+
+    XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_AR=$X/LLVM-23.1.3-macOS-ARM64/bin/llvm-ar \
+    XO_WINSYSROOT=$X/winsysroot xo build --backend=llvm --target=windows/amd64 -o prog.exe .
+
+(windows/arm64 the same). It links a PE32+ executable; nothing runs it
+on the Mac. Last verified: 2026-10-15 (clang 23.1.3, xwin 0.10.0).
 
 ### xo1 on x86-64 hosts
 

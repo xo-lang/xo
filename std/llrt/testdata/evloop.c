@@ -193,7 +193,9 @@ static void test_timers(void) {
 	release(s);
 	CHECK(done == SLEEPERS);
 	CHECK(mono_ns() - start >= 20 * MS);
-	CHECK(LOAD(pool.alive) <= pool.ncpu + 1);
+	// the pool record's alive and ncpu words (pool.xo P_ALIVE, P_NCPU)
+	int64_t *pw = pool_rec();
+	CHECK(LOAD(pw[4]) <= pw[1] + 1);
 	// a canceled sleeper wakes and unwinds
 	start = mono_ns();
 	s = xo_scope_open();

@@ -194,7 +194,7 @@ pub fn vdso_clock() -> Int {
     TargetArch.Arm64 => "__kernel_clock_gettime"
     TargetArch.Amd64 | TargetArch.Wasm32 => "__vdso_clock_gettime"
   }
-  var g = elf_dynsym(rt.auxval(AT_SYSINFO_EHDR), name)
+  var g = elf_dynsym(auxval(AT_SYSINFO_EHDR), name)
   if g == 0 {
     g = -1
   }
@@ -532,7 +532,7 @@ pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()
   if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
-    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
   }
   s
 }
@@ -639,6 +639,49 @@ pub fn readlink(path: Str) -> (Str, Int) {
 
 /// getcwd(2): the working directory, "." when the system has none to
 /// give (as the C runtime's).
+// The calls of a process start (std/native/llrt/proc.xo, work item B25):
+// the child between fork and execve makes only these, over addresses
+// prepared before the fork, so it neither allocates nor locks. UNTESTED
+// on Linux (the zero-C push, 2026-10-14).
+
+/// clone(2) as fork (SIGCHLD only): the child's pid in the parent, 0 in
+/// the child, or the negative errno.
+pub fn fork() -> Int { rt.sys6(nr(220, 56), 17, 0, 0, 0, 0, 0) }
+
+/// pipe2(2) into the two 4 byte words at a: 0, or the negative errno.
+pub fn pipe2(a: Int, flags: Int) -> Int { rt.sys6(nr(59, 293), a, flags, 0, 0, 0, 0) }
+
+/// dup3(2): newfd, or the negative errno.
+pub fn dup3(fd: Int, newfd: Int, flags: Int) -> Int { rt.sys6(nr(24, 292), fd, newfd, flags, 0, 0, 0) }
+
+/// fcntl(2) F_SETFD of fd: 0, or the negative errno.
+pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nr(25, 72), fd, 2, flags, 0, 0, 0) }
+
+/// chdir(2) of the zero terminated path at a: 0, or the negative errno.
+pub fn chdir_at(a: Int) -> Int { rt.sys6(nr(49, 80), a, 0, 0, 0, 0, 0) }
+
+/// openat(2) of the zero terminated path at a: the descriptor, or the
+/// negative errno.
+pub fn open_at(a: Int, flags: Int) -> Int { rt.sys6(nr(56, 257), AT_FDCWD, a, flags, 0, 0, 0) }
+
+/// faccessat(2) of the zero terminated path at a: 0, or the negative
+/// errno.
+pub fn access_at(a: Int, mode: Int) -> Int { rt.sys6(nr(48, 269), AT_FDCWD, a, mode, 0, 0, 0) }
+
+/// wait4(2) of pid, blocking (options 0) or WNOHANG (1), the status
+/// word not kept: the pid, 0, or the negative errno.
+pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, 0, options, 0, 0, 0) }
+
+/// wait4(2) of pid with its status in the 4 byte word at st, blocking
+/// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
+pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, 0, 0, 0) }
+
+/// execve(2): returns only on failure, the negative errno.
+pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), file, argv, envp, 0, 0, 0) }
+
+/// kill(2) of signal sig to pid: 0, or the negative errno.
+pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0, 0) }
+
 pub fn getcwd() -> Str {
   let buf = raw.bytes_buf(4096)
   let a = raw.bytes_addr(buf)
@@ -709,4 +752,49 @@ fn zpath(path: Str) -> Bytes {
   s.write(path.bytes())
   s.write_byte(UInt8(0))
   s.freeze()
+}
+
+/// getauxval(k): the value of entry k of the auxiliary vector, or 0 (off
+/// Linux too), read from /proc/self/auxv (no C library call: the C
+/// library's getauxval is not reachable from Xo, and with XO_NOLIBC
+/// there is none). Was xo_sys.c xo_auxval. UNTESTED on linux.
+pub fn auxval(k: Int) -> Int {
+  if target.os != TargetOs.Linux {
+    return 0
+  }
+  let path = b"/proc/self/auxv\0"
+  // openat(AT_FDCWD, path, O_RDONLY | O_CLOEXEC)
+  let fd = rt.sys6(nr(56, 257), -100, raw.bytes_addr(path), 524288, 0, 0, 0)
+  keep(path, 0)
+  if fd < 0 {
+    return 0
+  }
+  // the entries, 16 bytes each, read 256 bytes at a time into the
+  // thread's scratch
+  let b = obj.scratch()
+  var v = 0
+  var done = false
+  while !done {
+    let r = rt.sys6(nr(63, 0), fd, b, 256, 0, 0, 0)
+    if r == -4 {
+      continue
+    }
+    if r < 16 {
+      break
+    }
+    var i = 0
+    while i + 16 <= r {
+      let t = rt.mem_load(b, i, 8)
+      if t == 0 || t == k {
+        if t == k {
+          v = rt.mem_load(b, i + 8, 8)
+        }
+        done = true
+        break
+      }
+      i += 16
+    }
+  }
+  let _c = rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0)
+  v
 }

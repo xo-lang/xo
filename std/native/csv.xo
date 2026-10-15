@@ -3,6 +3,7 @@
 use std/csv
 use native/llrt/scan
 use native/rt
+use native/llrt/raw
 
 fn csverr_display(e: csv.CsvErr) -> Str { "csv: line ${e.line}, column ${e.column}: ${e.msg}" }
 
@@ -26,7 +27,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
   var col0 = 0
   let n = text.len()
   while i < n {
-    let c0 = rt.str_byte(text, i)
+    let c0 = raw.str_byte(text, i)
     // an empty line is skipped
     if c0 == 10 {
       i += 1
@@ -34,7 +35,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
       col0 = i
       continue
     }
-    if c0 == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10 {
+    if c0 == 13 && i + 1 < n && raw.str_byte(text, i + 1) == 10 {
       i += 2
       line += 1
       col0 = i
@@ -44,15 +45,15 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
     let start = line
     while {
       var field = BytesBuilder.new()
-      if i < n && rt.str_byte(text, i) == 34 {
+      if i < n && raw.str_byte(text, i) == 34 {
         let ql = line
         let qc = i - col0 + 1
         i += 1
         var closed = false
         while i < n {
-          let c = rt.str_byte(text, i)
+          let c = raw.str_byte(text, i)
           if c == 34 {
-            if i + 1 < n && rt.str_byte(text, i + 1) == 34 {
+            if i + 1 < n && raw.str_byte(text, i + 1) == 34 {
               field.write_byte(34)
               i += 2
               continue
@@ -61,7 +62,7 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
             closed = true
             break
           }
-          if c == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10 {
+          if c == 13 && i + 1 < n && raw.str_byte(text, i + 1) == 10 {
             field.write_byte(10)
             i += 2
             line += 1
@@ -79,8 +80,8 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
           return Err(err_at(ql, qc, "quoted field not closed"))
         }
         if i < n && !scan.has_at(text, i, ss) {
-          let c = rt.str_byte(text, i)
-          let crlf = c == 13 && i + 1 < n && rt.str_byte(text, i + 1) == 10
+          let c = raw.str_byte(text, i)
+          let crlf = c == 13 && i + 1 < n && raw.str_byte(text, i + 1) == 10
           let final_cr = c == 13 && i + 1 == n
           if c != 10 && !crlf && !final_cr {
             return Err(err_at(line, i - col0 + 1, "unexpected character after a quoted field"))
@@ -88,8 +89,8 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
         }
       } else {
         while i < n {
-          let c = rt.str_byte(text, i)
-          if c == 10 || c == 13 && (i + 1 == n || rt.str_byte(text, i + 1) == 10) || scan.has_at(text, i, ss) {
+          let c = raw.str_byte(text, i)
+          if c == 10 || c == 13 && (i + 1 == n || raw.str_byte(text, i + 1) == 10) || scan.has_at(text, i, ss) {
             break
           }
           if c == 34 {
@@ -105,10 +106,10 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
         continue
       }
       // the end of the record: \n, \r\n, a final \r, or the end
-      if i < n && rt.str_byte(text, i) == 13 {
+      if i < n && raw.str_byte(text, i) == 13 {
         i += 1
       }
-      if i < n && rt.str_byte(text, i) == 10 {
+      if i < n && raw.str_byte(text, i) == 10 {
         i += 1
       }
       line += 1

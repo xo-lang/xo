@@ -5,15 +5,21 @@ use std/http
 use std/json as js
 use std/log
 use std/task
+use native/llrt/hconn
+use native/llrt/hserve
 use native/rt
+use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/tlssrv
+use native/llrt/tlsio
 use native/llrt/cabi_http
 use native/llrt/cabi_tls
 use native/llrt/cabi_net
 use native/llrt/netpolicy
 use native/llrt/testworld
+use native/llrt/twrun
 use native/rthttp
-use native/rttest
+use native/llrt/raw
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -77,7 +83,7 @@ struct Client {
 
 /// http.TlsCert (std.md 4.6).
 struct TlsCert {
-  c: rthttp.TCert
+  c: tlssrv.Cert
 }
 
 /// http.Response with the number of its streamed body's function (0:
@@ -119,8 +125,8 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
   match pattern.find(" ") {
     Some(i) => {
       if i > 0 {
-        method = rt.str_slice(pattern, 0, i).to_upper()
-        p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+        method = raw.str_slice(pattern, 0, i).to_upper()
+        p = raw.str_slice(pattern, i + 1, pattern.len()).trim()
       }
     }
     None => ()
@@ -128,7 +134,7 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
   var segs: List[Seg] = []
   for s in split_path(p) {
     if s.starts_with("{") && s.ends_with("}") {
-      let inner = rt.str_slice(s, 1, s.len() - 1)
+      let inner = raw.str_slice(s, 1, s.len() - 1)
       if inner.ends_with("...") {
         segs.push(Seg{lit: "", param: inner.trim_suffix("..."), is_int: false, rest: true})
       } else if inner.ends_with(":Int") {
@@ -202,7 +208,22 @@ fn call_raw(r: Router, req: Request) -> http.Response {
     return dispatch(r, req)
   }
   let h = chain(r.mws, fn(q: Request) -> http.Response { dispatch(r, q) })
-  h(req)
+  // a fault in the middleware is isolated as a handler's (std.md 4.2):
+  // it used to reach the connection's task, which stopped the server
+  isolated(fn() -> http.Response { h(req) })
+}
+
+/// f's response, or 500 when it faults (logged; std/rt's
+/// isolateHandler, decision 0085).
+fn isolated(f: fn() -> http.Response) -> http.Response {
+  match task.isolate(fn() -> http.Response ! () { f() }) {
+    Ok(resp) => resp
+    Err(task.Isolated.Faulted(info)) => {
+      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
+      json_error(500, "internal error")
+    }
+    Err(_) => json_error(500, "internal error")
+  }
 }
 
 fn literals(rt: Route) -> Int {
@@ -311,14 +332,7 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   let q = req with {params: bind_params(route, parts, uparts)}
   // a fault in the handler is isolated: 500 (std/rt's isolateHandler,
   // decision 0085)
-  match task.isolate(fn() -> http.Response ! () { h(q) }) {
-    Ok(resp) => resp
-    Err(task.Isolated.Faulted(info)) => {
-      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
-      json_error(500, "internal error")
-    }
-    Err(_) => json_error(500, "internal error")
-  }
+  isolated(fn() -> http.Response { h(q) })
 }
 
 /// A handler's or middleware's error as a response (std.md 4.2).
@@ -476,7 +490,7 @@ fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.deco
 /// The body is produced by f while the response is sent; dispatched in
 /// process it is collected (std.md 4.3, decision 0083).
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> http.Response uses fx {
-  let r = Response{status: status, headers: {}, body: "".bytes(), stream: rthttp.stream_put(rt.any_of(f))}
+  let r = Response{status: status, headers: {}, body: "".bytes(), stream: hserve.stream_put(rt.any_of(f))}
   rt.cast[Response, http.Response](r)
 }
 
@@ -488,12 +502,12 @@ fn collect(r0: http.Response) -> http.Response {
     return r0
   }
   var body = "".bytes()
-  let fs = rthttp.stream_get(r.stream, false)
+  let fs = hserve.stream_get(r.stream, false)
   if !fs.is_empty() {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
-      let s = rthttp.sink_buf()
+      let s = hserve.sink_buf()
       f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as std/rt's collect")
-      body = rthttp.sink_take(s)
+      body = hserve.sink_take(s)
     }
   }
   rt.cast[Response, http.Response](r with {body: body, stream: 0})
@@ -503,7 +517,7 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if !rthttp.sink_write(w.s, data) {
+  if !hserve.sink_write(w.s, data) {
     return Err(IoErr.Io(msg: "write: connection closed"))
   }
 }
@@ -512,7 +526,7 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if !rthttp.sink_flush(w.s) {
+  if !hserve.sink_flush(w.s) {
     return Err(IoErr.Io(msg: "flush: connection closed"))
   }
 }
@@ -527,8 +541,7 @@ fn (s: Server) addr() -> Str { s.l.addr() }
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server { Server{l: s.l, r: s.r, tls: certs, tls_on: true} }
 
 fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
-  let c = rthttp.tls_cert(cert_pem, key_pem)
-  let e = rthttp.tls_cert_err(c)
+  let (c, e) = tlssrv.cert(cert_pem, key_pem)
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
@@ -536,19 +549,19 @@ fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
 }
 
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
-  if rttest.test_mem_listener(s.l) {
+  if twrun.mem_listener(s.l) {
     serve_mem(s.l, s.r)
     return Ok(())
   }
   if s.tls_on && s.tls.is_empty() {
     return Err(http.HttpErr.Io(msg: "http: with_tls needs a certificate"))
   }
-  let srv = rthttp.srv_new()
-  defer rthttp.srv_close(srv)
+  let srv = hserve.srv_new()
+  defer hserve.srv_close(srv)
   for c in s.tls {
-    rthttp.srv_tls(srv, c.c)
+    hserve.srv_tls(srv, c.c)
   }
-  let conns = rthttp.srv_group(srv)
+  let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
   var failed = ""
@@ -557,14 +570,14 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       // a stop request (core 7.5): stop accepting, close idle
       // connections
       let _ = task.stopping().recv()
-      rthttp.srv_stop(srv)
+      hserve.srv_stop(srv)
       l.close()
     })
     while {
       match l.accept() {
         Ok(c) => {
-          let hc = rthttp.hc_new(srv, c)
-          conns.spawn_background(fn() { serve_conn(hc, r) })
+          let hc = hserve.hc_new(srv, c)
+          conns.spawn_background(fn() { serve_conn_isolated(hc, r) })
         }
         Err(NetErr.Io(msg)) => {
           if !task.stop_requested() && !task.is_canceled() {
@@ -576,8 +589,8 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       }
     }
   }
-  rthttp.srv_stop(srv)
-  rthttp.srv_wait(srv)
+  hserve.srv_stop(srv)
+  hserve.srv_wait(srv)
   if !failed.is_empty() {
     return Err(http.HttpErr.Io(msg: failed))
   }
@@ -588,26 +601,44 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
 /// requested (then the requests in flight finish) or the task is
 /// canceled.
 fn serve_mem(l: Listener, r: Router) {
-  rttest.test_mem_serve(l, rt.any_of(r))
-  defer rttest.test_mem_unserve(l)
+  twrun.mem_serve(l, rt.any_of(r))
+  defer twrun.mem_unserve(l)
   if task.stopping().recv() is None {
-    rttest.test_mem_unserve(l)
-    rttest.test_mem_drain(l)
+    twrun.mem_unserve(l)
+    twrun.mem_drain(l)
+  }
+}
+
+/// serve_conn with a fault in the connection's own code (not a
+/// handler's, which is isolated in dispatch) ending that connection only,
+/// as net/http recovers per connection ("http: panic serving"): logged,
+/// the connection closed (serve_conn's defer), the server serving on. It
+/// once stopped the server (gotchas/native-server-unisolated-fault-wedges.md).
+fn serve_conn_isolated(hc: rthttp.HConn, r: Router) {
+  match task.isolate(fn() -> () ! () { serve_conn(hc, r) }) {
+    // the message alone: the location is the runtime's, not the program's
+    Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
+    _ => ()
   }
 }
 
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router) {
-  defer rthttp.hc_close(hc)
-  if rthttp.hc_h2(hc) {
-    // HTTP/2 (decision 0121): each request is a task of its own, as
-    // net/http runs a handler per stream; the scope ends when the
-    // connection does
-    var hp = http1.h2_conn(hc)
+  defer hserve.hc_close(hc)
+  let h2 = hserve.hc_h2(hc)
+  if h2 != 0 {
+    // HTTP/2 (decision 0121, std/native/llrt/h2srv.xo): each request is
+    // a task of its own, as net/http runs a handler per stream; the
+    // scope ends when the connection does
+    var hp = h2srv.conn(hc, h2)
     scope s {
-      while hp.next() {
-        let st = rthttp.h2_take(hc)
-        s.spawn(fn() { serve_stream(st, r) })
+      while true {
+        match hp.next() {
+          Some(q) => {
+            s.spawn(fn() { serve_stream(q, r) })
+          }
+          None => break
+        }
       }
     }
     return
@@ -616,7 +647,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
   while true {
     match rd.read() {
       Some(q) => {
-        if !respond(hc, head_request(hc, q), r) {
+        if !respond(hc, true, head_request(rd, q), r) {
           break
         }
       }
@@ -626,35 +657,41 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
 }
 
 /// Serves one HTTP/2 stream. A fault in a streamed body resets the
-/// stream (h2_end), as net/http resets it after a handler's panic; the
-/// connection's other streams go on.
-fn serve_stream(st: rthttp.HConn, r: Router) {
-  defer rthttp.h2_end(st)
-  task.isolate(fn() -> Bool ! () { respond(st, conn_request(st), r) }).ignore_err("a fault resets the stream (h2_end)")
+/// stream (h2srv.end), as net/http resets it after a handler's panic;
+/// the connection's other streams go on.
+fn serve_stream(q: h2srv.H2Req, r: Router) {
+  let st = q.conn
+  defer h2srv.end(st)
+  task.isolate(fn() -> Bool ! () { respond(st, false, stream_request(q), r) }).ignore_err("a fault resets the stream (h2srv.end)")
 }
 
-/// Answers req, read on hc: whether the connection stays open.
-fn respond(hc: rthttp.HConn, req: Request, r: Router) -> Bool {
+/// Answers req, read on hc (h1: an HTTP/1.1 connection, whose response
+/// is std/native/llrt/http1.xo's; else an HTTP/2 stream): whether the
+/// connection stays open.
+fn respond(hc: rthttp.HConn, h1: Bool, req: Request, r: Router) -> Bool {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
   for (k, v) in resp.headers {
-    rthttp.hc_header(hc, k, v)
+    http1.header_set(hc, k, v)
   }
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
-    let s = rthttp.sink_conn(hc, resp.status)
-    let fs = rthttp.stream_get(resp.stream, true)
+    let s = hserve.sink_conn(hc, resp.status)
+    let fs = hserve.stream_get(resp.stream, true)
     if !fs.is_empty() {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
         f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
       }
     }
-    return rthttp.sink_end(s)
+    return hserve.sink_end(s)
   }
-  rthttp.hc_respond(hc, resp.status, resp.body)
+  if h1 {
+    return http1.respond(hc, resp.status, resp.body)
+  }
+  h2srv.respond(hc, resp.status, resp.body)
 }
 
-/// The request of an HTTP/1.1 head read on hc (std/rt's serve).
-fn head_request(hc: rthttp.HConn, q: http1.Req) -> Request {
+/// The request of an HTTP/1.1 head read by rd (std/rt's serve).
+fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
   var headers: Map[Str, Str] = {}
   var i = 0
   while i + 1 < q.headers.len() {
@@ -676,41 +713,45 @@ fn head_request(hc: rthttp.HConn, q: http1.Req) -> Request {
     port = Some(q.port)
   }
   let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn())}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
-fn conn_request(hc: rthttp.HConn) -> Request {
+fn stream_request(q: h2srv.H2Req) -> Request {
+  http1.fault_probe(q.path, "stream")
   var headers: Map[Str, Str] = {}
-  for i in 0..rthttp.hc_nheaders(hc) {
-    headers.put(rthttp.hc_hname(hc, i), rthttp.hc_hval(hc, i))
+  var i = 0
+  while i + 1 < q.headers.len() {
+    headers.put(q.headers[i], q.headers[i + 1])
+    i += 2
   }
   var query: Map[Str, Str] = {}
-  for i in 0..rthttp.hc_nquery(hc) {
-    query.put(rthttp.hc_qkey(hc, i), rthttp.hc_qval(hc, i))
+  i = 0
+  while i + 1 < q.query.len() {
+    query.put(q.query[i], q.query[i + 1])
+    i += 2
   }
-  let path = rthttp.hc_path(hc)
-  var upath = path
+  var upath = q.path
   if upath.is_empty() {
     upath = "/"
   }
   var port: Int? = None
-  let p = rthttp.hc_port(hc)
+  let p = http1.host_port(q.urlhost)
   if p >= 0 {
     port = Some(p)
   }
-  let url = http.Url{scheme: rthttp.hc_scheme(hc), host: rthttp.hc_host(hc), port: port, path: upath, query: query}
-  Request{method: rthttp.hc_method(hc), path: path, url: url, headers: headers, body: rthttp.hc_body(hc), remote_ip: rthttp.hc_remote_ip(hc)}
+  let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn)}
 }
 
 // ---------------------------------------------------------------------------
 // Client (std.md 4.5)
 
-fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: rthttp.tls_roots_system(), lists: rt.net_lists(net)} }
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: tlsio.roots_system(), lists: rt.net_lists(net)} }
 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
-  let r = rthttp.tls_roots(pem)
-  let e = rthttp.tls_roots_err(r)
+  let r = tlsio.roots_pem(pem)
+  let e = tlsio.roots_err(r)
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
@@ -834,11 +875,11 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
   if let Some(p) = req.url.port {
     hp = hp + ":${p}"
   }
-  let found = rttest.test_mem_begin(hp)
+  let found = twrun.mem_begin(hp)
   if found.is_empty() {
     return Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
   }
-  defer rttest.test_mem_end(hp)
+  defer twrun.mem_end(hp)
   match rt.any_get[Router](found[0]) {
     Some(r) => r.call(req)
     None => Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))

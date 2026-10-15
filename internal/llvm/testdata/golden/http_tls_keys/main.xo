@@ -1,0 +1,85 @@
+// http.tls_cert's key loading (tls.X509KeyPair) on the native backends
+// (std/native/llrt/tlssrv.xo, the zero-C audit's B31) against Go's: RSA
+// keys as PKCS #1 and PKCS #8, P-256 and P-384 keys as SEC 1 and PKCS #8,
+// an Ed25519 key as PKCS #8, then the errors (another key of the same
+// type, a key of another type, an X25519 key, a key that does not
+// parse); then an HTTPS request to a server with each good RSA and ECDSA
+// pair, the client trusting that certificate. Test keys only, generated once by a
+// scratch Go program.
+use std/http
+
+const RSA_CERT: Str = "-----BEGIN CERTIFICATE-----\nMIICszCCAZugAwIBAgIBCTANBgkqhkiG9w0BAQsFADAOMQwwCgYDVQQDEwNyc2Ew\nHhcNMjAwMTAxMDAwMDAwWhcNNDAwMTAxMDAwMDAwWjAOMQwwCgYDVQQDEwNyc2Ew\nggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC3CnSZlA3W0pYhoBBze3JO\nZzmAH0fF6wXGYjI5AioOwxyNnlTtVNNYnHCys/7q+KAnuFh3ffzjk9BdGZD40cZK\nvTxer1sZSb9sbe/rEqldEWKm59X42g9pH7UXEgvMelfal3NtQbCrRO2vMtanWui5\nx0tZYIWWR2rqpRpymtIRdkaIMvCt3DdvUkSE4SWkKZXNYE6iM2abhM6wdQYZBxrA\n54E6ILztpBhT+1uCdwCmFARdRxAAGgJqIg4cdLUrOcGwYxhSot5lmDWR0WdjHt55\nUsvUGekAw1yRxKfUD384hu0I/dC/O6NSusF/TdpJgbPdn1+V1R2nMAJNaBpumC09\nAgMBAAGjHDAaMBgGA1UdEQQRMA+CB3hvLnRlc3SHBH8AAAEwDQYJKoZIhvcNAQEL\nBQADggEBAALoNG3gCbq1TnnLT4zn7Sv/uYBcbTlH/ZDWNuHSxhUk5LFErvFyHI2E\nn2Njmr3qeHzYSdjO783QJYt4OL7DIljYrKdz6H2xrOQvqSUPyTsmCRuDf4CkIVo2\n4cf8AiSwgy82nlpt8rQZkxOZc8i1OHZgZbJtEUcE2F07CRWbouAdQJ5tSulgESKi\nJCkoA0oUPCb1TeeW3Dpt0GMcnhYqmv6WYM6Hpma40j6ccGUoYV5tTkkrXrpgPlpT\ng/yKfI3jmEIOqzPftM0Q8BlsfqD0sfu5oV9TWrI5Y6cEGLxt49wQgOVt4z5P6SOX\n/V7dEuLIW2zy2055xlrQKBu7WW4KzwM=\n-----END CERTIFICATE-----\n"
+const EC_CERT: Str = "-----BEGIN CERTIFICATE-----\nMIIBKDCBz6ADAgECAgEJMAoGCCqGSM49BAMCMA8xDTALBgNVBAMTBHAyNTYwHhcN\nMjAwMTAxMDAwMDAwWhcNNDAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQDEwRwMjU2MFkw\nEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEcYT6GgTpC2LlKoO5TyjtQ8Oat+kV3AFl\n8BItw6qWZDmUpGPfRPNRFxvqGUc0qlF5tHzdacDzoojKML4PdL9NNKMcMBowGAYD\nVR0RBBEwD4IHeG8udGVzdIcEfwAAATAKBggqhkjOPQQDAgNIADBFAiAzY1Mn1NWx\nYeJC39h410C3LU40FaJipqLmVwDBPrWsXQIhAODfEfQ44V/BMdINh25wCr6Vv19R\nN2rd/eNedmgZG9+W\n-----END CERTIFICATE-----\n"
+const EC384_CERT: Str = "-----BEGIN CERTIFICATE-----\nMIIBZDCB7KADAgECAgEJMAoGCCqGSM49BAMDMA8xDTALBgNVBAMTBHAzODQwHhcN\nMjAwMTAxMDAwMDAwWhcNNDAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQDEwRwMzg0MHYw\nEAYHKoZIzj0CAQYFK4EEACIDYgAEGSQlBIpqhDzuzxnLz+WZHJZgfpgLIfEdirpz\n7f+T6+dFz0xk/ayoiw8pq108PdNRUwjGgitfNfrY/xmJgPZ1HOmOCTtf+dFYU5Vm\nRMA+FnrA9ePHmlKyn1qY2qaQxn/moxwwGjAYBgNVHREEETAPggd4by50ZXN0hwR/\nAAABMAoGCCqGSM49BAMDA2cAMGQCMGIaQk4i2IY3ON9Is1g8XAUKnuEsVYYyL1EZ\neX98/wKcFLSK99M/tx+F424hDqDFfQIwJC0MlFJW3SPKxy4X439DrNaDviCvkqq4\n7Csow0tbf8tYoXRDsQfpVKJub8H0X6MX\n-----END CERTIFICATE-----\n"
+const ED_CERT: Str = "-----BEGIN CERTIFICATE-----\nMIHuMIGhoAMCAQICAQkwBQYDK2VwMBIxEDAOBgNVBAMTB2VkMjU1MTkwHhcNMjAw\nMTAxMDAwMDAwWhcNNDAwMTAxMDAwMDAwWjASMRAwDgYDVQQDEwdlZDI1NTE5MCow\nBQYDK2VwAyEAT8AOBUnIthzy4+gJQcDBAiz7Lgz6D/4332PLmnF1nF+jHDAaMBgG\nA1UdEQQRMA+CB3hvLnRlc3SHBH8AAAEwBQYDK2VwA0EATpfOjYsbdcqjd3u0oyOV\nwTxmrgGGTr6w1pql7BK63SDbdsxNUWwnP/ytWMLPvee6bHu66q3J9HYkUunNB1xq\nAw==\n-----END CERTIFICATE-----\n"
+const RSA_PKCS1: Str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEAtwp0mZQN1tKWIaAQc3tyTmc5gB9HxesFxmIyOQIqDsMcjZ5U\n7VTTWJxwsrP+6vigJ7hYd33845PQXRmQ+NHGSr08Xq9bGUm/bG3v6xKpXRFipufV\n+NoPaR+1FxILzHpX2pdzbUGwq0TtrzLWp1roucdLWWCFlkdq6qUacprSEXZGiDLw\nrdw3b1JEhOElpCmVzWBOojNmm4TOsHUGGQcawOeBOiC87aQYU/tbgncAphQEXUcQ\nABoCaiIOHHS1KznBsGMYUqLeZZg1kdFnYx7eeVLL1BnpAMNckcSn1A9/OIbtCP3Q\nvzujUrrBf03aSYGz3Z9fldUdpzACTWgabpgtPQIDAQABAoIBAAlxNeIdR9h63QlH\nhUm7xsICI653DqAIV3AsLRyRPsOrr3ujvQxQKaXizhJ95ArRgAuEgDXLz0GbJK7E\nzJx1T9YXrHdS8u9bRU9t3WhCOm/lX3IuN/TCJPTekJwrz2WBMyqA0RDECH3RTLSS\nug2AjExXGk02RDXkIcEQesyKLYd+fMeI1F6K5D/CrENjPBEeYecLUx2zfR5BXoeu\noy0IWyFoujgjRy+0FToRAHyzF/lcSzaXsLL4lO6MA7/u/44mpkQQlP7APgZv0cz2\nbJlK+96KNzLHP65bFKwxXlS7f1VBeAiKz2R5hyanV1pl4bO3GYC12gk+gRvIa4J2\nsvWFYgkCgYEA7Xp3RokBU0bb4l+0ARZ9OfjWT+o/CSM0kVBKejcYAUr17cIuC1F7\nT+5AdupUK3BWo1bc3LwnktE+sDae1dr0KliCgOzVdjOz6GOWmc9zc28c7/IDvU3b\n/Byf0e2vCd+iTFtPoJpNYNKnrBgQV039W/OglerbIbuJ7w5IBmhkywUCgYEAxVEU\njTVmUBIN7ANUEVmPlRnnJBEhEv87yro0+BPe65corHLHtyh45yEqJQnAiA1DuYQL\n3YjydlOpn+TocbZeW92diMbhSEOfaeCKO009uKdsawmjCYVf4zXRSuJR1sOyOyvP\nBNQCCGg48cuhiLE1w7Nyro1FakiiXI4be+FfntkCgYBtBrSL5Yp+OSHqJBX4CeMk\nImIB/oFCKK+Rp1MKGREkRs3xghyxhY8fezqNXbeW2dRs2Qw9KwTgGsC1Fd6GQCeo\n6UnA9vppcgM+xbn2k49lh7W5U1r0JjLA5ENblcuutMVGWQWNrkmoEg54q/OUoXGY\nLZmkOlawffEtl1jp2DOuIQKBgGyGsfUQ39s+cuXS1tRMHEr32kfeHADk3TAdxrCD\nzWJq23YuE2bMHeOSPCnu+TRbh1psJFKO1jz6uxs0vhx9H90LQXBPYu1qNC350E3Z\nqA7+FwWwYToFX74KhbjYTgb/z/H3oH+ZVBznphpn08rpHRcshfE3xmw00whxKPCz\n/vHRAoGAdp7mt3wRAtlQagv+WhEz+J9wsM4xi1bIR/77PlXRy8zR217Mm7qyTRoW\ndDnYmNjNJfRL13qzb0R2NHM3ehrG71djHSV9OfZk5nkSwzFp3rERerq2klZ9IdYK\nv4qZnQvK3SgQIXh7vEee7mAC8R65dST+1QFaEyFbVQ0+DUrBq9A=\n-----END RSA PRIVATE KEY-----\n"
+const RSA_PKCS8: Str = "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC3CnSZlA3W0pYh\noBBze3JOZzmAH0fF6wXGYjI5AioOwxyNnlTtVNNYnHCys/7q+KAnuFh3ffzjk9Bd\nGZD40cZKvTxer1sZSb9sbe/rEqldEWKm59X42g9pH7UXEgvMelfal3NtQbCrRO2v\nMtanWui5x0tZYIWWR2rqpRpymtIRdkaIMvCt3DdvUkSE4SWkKZXNYE6iM2abhM6w\ndQYZBxrA54E6ILztpBhT+1uCdwCmFARdRxAAGgJqIg4cdLUrOcGwYxhSot5lmDWR\n0WdjHt55UsvUGekAw1yRxKfUD384hu0I/dC/O6NSusF/TdpJgbPdn1+V1R2nMAJN\naBpumC09AgMBAAECggEACXE14h1H2HrdCUeFSbvGwgIjrncOoAhXcCwtHJE+w6uv\ne6O9DFAppeLOEn3kCtGAC4SANcvPQZskrsTMnHVP1hesd1Ly71tFT23daEI6b+Vf\nci439MIk9N6QnCvPZYEzKoDREMQIfdFMtJK6DYCMTFcaTTZENeQhwRB6zIoth358\nx4jUXorkP8KsQ2M8ER5h5wtTHbN9HkFeh66jLQhbIWi6OCNHL7QVOhEAfLMX+VxL\nNpewsviU7owDv+7/jiamRBCU/sA+Bm/RzPZsmUr73oo3Msc/rlsUrDFeVLt/VUF4\nCIrPZHmHJqdXWmXhs7cZgLXaCT6BG8hrgnay9YViCQKBgQDtendGiQFTRtviX7QB\nFn05+NZP6j8JIzSRUEp6NxgBSvXtwi4LUXtP7kB26lQrcFajVtzcvCeS0T6wNp7V\n2vQqWIKA7NV2M7PoY5aZz3Nzbxzv8gO9Tdv8HJ/R7a8J36JMW0+gmk1g0qesGBBX\nTf1b86CV6tshu4nvDkgGaGTLBQKBgQDFURSNNWZQEg3sA1QRWY+VGeckESES/zvK\nujT4E97rlyiscse3KHjnISolCcCIDUO5hAvdiPJ2U6mf5Ohxtl5b3Z2IxuFIQ59p\n4Io7TT24p2xrCaMJhV/jNdFK4lHWw7I7K88E1AIIaDjxy6GIsTXDs3KujUVqSKJc\njht74V+e2QKBgG0GtIvlin45IeokFfgJ4yQiYgH+gUIor5GnUwoZESRGzfGCHLGF\njx97Oo1dt5bZ1GzZDD0rBOAawLUV3oZAJ6jpScD2+mlyAz7FufaTj2WHtblTWvQm\nMsDkQ1uVy660xUZZBY2uSagSDnir85ShcZgtmaQ6VrB98S2XWOnYM64hAoGAbIax\n9RDf2z5y5dLW1EwcSvfaR94cAOTdMB3GsIPNYmrbdi4TZswd45I8Ke75NFuHWmwk\nUo7WPPq7GzS+HH0f3QtBcE9i7Wo0LfnQTdmoDv4XBbBhOgVfvgqFuNhOBv/P8feg\nf5lUHOemGmfTyukdFyyF8TfGbDTTCHEo8LP+8dECgYB2nua3fBEC2VBqC/5aETP4\nn3CwzjGLVshH/vs+VdHLzNHbXsyburJNGhZ0OdiY2M0l9EvXerNvRHY0czd6Gsbv\nV2MdJX059mTmeRLDMWnesRF6uraSVn0h1gq/ipmdC8rdKBAheHu8R57uYALxHrl1\nJP7VAVoTIVtVDT4NSsGr0A==\n-----END PRIVATE KEY-----\n"
+const RSA2_PKCS1: Str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAsHQfB9g5xmtFzesnn+RlarJaYErPFytm5IheEo+GzskKaLVL\n16Qcka51YXP+RimJ00yBRFmBMRkWMZV4HvUhxXjbrmjfdGoRaamp5cODuisJHc+c\nRnAr36xPGi/JI1IeZRnE2yGHp7QpHBMzT9PnAciV2J8DTbn3Zep54GFxPCgFJlV4\nTobDHRKMJ9EnCVdQjSHiS0pE3MHIk5dINjFaRPehC6vH4SyvvAYMYxCol8uI/pha\nM2587z51CUOptkNiKV7IC8trq3WTQIqZ0zqkhagAF/vIqA/JGsvTgUEtSbvrCGFj\nManFfIFUqGCAG6xHwober12L5F/R1k8QfOi58wIDAQABAoIBAADdrJJrrA4+YjBd\n5OPUl7aYKZSZR5r/clxthVWM+8LDd3gcL6a0iPeUDTQw1kDFx77B/GkT9Ov1CZ1Y\nHye62QFpk89LsFgloOIizfSxMeA81tPkPBhCZXBHD3iJmA0J7vWyKdgXARbOps4a\n9yCNjH3xBsZV3W5ztztd3CYHy38vA3LEJIGNHn+OXCPshVKZdeJ78bqH1gBIkMpo\ndlfFLEdjeFxsnK3uplZhBNqYA98S13rizMku8vXAdj90XcXA6DhugnoCeiftfTgQ\nR+ODSib620krmlRBOeUDlJ9dXZsCnjrGEQ7lE/MEb2RCcG68+yVEm7RPPc4z7uQB\nCf+BHNUCgYEAyJeYWBN9PWjUYn3Oh4BjGbRu2Ol4Ast1/ZYUxx99SUfkCW/BpAxh\nISSPUaHQzWAEknvqZtDmA+heKmTV7sRTReouWIUz7cXm4Czxlabkr844lHhpDuxn\nqUGyo63GaSq2FkNLmE6SzQLyv+OxmMVGTHbduYf4jLsEBHtH/BIBrd0CgYEA4TGf\nrbf/Ld9tgCg5Qw9W+WDF+JkMEy+UQffH3YxdcOaifsvUCPQQMhnbBB4WOiK8IVAW\nh/vAYz4VOa7zdAGgWtxNj/gaCQzMoD2FJ4m5DucCxuuAjQFlDb8/mGj1arcOZWrF\nAB3XMbXhCe8MuNoSOsbWZ/M2NPrHrFPgHmCOEg8CgYA/7UAZ4awqI/x7nwhw2pO6\nn2wsKMucaGcj9+6LPxfYgNbFwx39QAy8WUBrjZxTt2P9owwi1DRZznYkIJqlS2AW\niflXMKxJ/KYFj402WkfLV3dkqbMhlGm84TkjPMBcx8Xb9npjAbd7KpNeYBw7SbOL\nrt4ewJyPjRJMs1VPmhV66QKBgHa5qu3zq92Lhjei/U2VsM0ZcEZ4qh0TYJ7G++Ca\nOEllzxX6cHen9UH0z7uEAUP1PCp0Buz6lZu9B4O58TCgCuLccygMLe3HibqRtLn7\nqk1pDdXCI6wzqAtvYSABdiIlELn3aJV/Jg1XTqXmGlb64dGLM07qsxGLheoc7nQV\ng9GRAoGBAMSvmz2pJPOxNiNfbYzaD44nRYCC3miWTIFYeyLy3reMFCCrEo9Afzbe\nj7aY1Vju45pY575O7cuNYwDbw6EZh9nbywdlbB45jdjhGmSVymNOrY79qXxYdMI0\ntukXH1P0Jo1RJBbZEWC18Gdu4aH7gWGdateYvBngQ2d4vUJbCbUa\n-----END RSA PRIVATE KEY-----\n"
+const EC_SEC1: Str = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIK2lGqZ/WnpAr2giywrMTLMAvGQA6UlchrWMjXQ2EuYxoAoGCCqGSM49\nAwEHoUQDQgAEcYT6GgTpC2LlKoO5TyjtQ8Oat+kV3AFl8BItw6qWZDmUpGPfRPNR\nFxvqGUc0qlF5tHzdacDzoojKML4PdL9NNA==\n-----END EC PRIVATE KEY-----\n"
+const EC_PKCS8: Str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgraUapn9aekCvaCLL\nCsxMswC8ZADpSVyGtYyNdDYS5jGhRANCAARxhPoaBOkLYuUqg7lPKO1Dw5q36RXc\nAWXwEi3DqpZkOZSkY99E81EXG+oZRzSqUXm0fN1pwPOiiMowvg90v000\n-----END PRIVATE KEY-----\n"
+const EC384_SEC1: Str = "-----BEGIN EC PRIVATE KEY-----\nMIGkAgEBBDChlpA0HI4qAMyFnybJGzwj2SvK8WEduVULqiD3qBloIpEqkGCq2cSp\nPLHdkWLfsa6gBwYFK4EEACKhZANiAAQZJCUEimqEPO7PGcvP5ZkclmB+mAsh8R2K\nunPt/5Pr50XPTGT9rKiLDymrXTw901FTCMaCK181+tj/GYmA9nUc6Y4JO1/50VhT\nlWZEwD4WesD148eaUrKfWpjappDGf+Y=\n-----END EC PRIVATE KEY-----\n"
+const EC384_PKCS8: Str = "-----BEGIN PRIVATE KEY-----\nMIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDChlpA0HI4qAMyFnybJ\nGzwj2SvK8WEduVULqiD3qBloIpEqkGCq2cSpPLHdkWLfsa6hZANiAAQZJCUEimqE\nPO7PGcvP5ZkclmB+mAsh8R2KunPt/5Pr50XPTGT9rKiLDymrXTw901FTCMaCK181\n+tj/GYmA9nUc6Y4JO1/50VhTlWZEwD4WesD148eaUrKfWpjappDGf+Y=\n-----END PRIVATE KEY-----\n"
+const ED_PKCS8: Str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIIE120sUfAPPz+zbqDz2I0DwiZPfQO93t8JBuao0LPlD\n-----END PRIVATE KEY-----\n"
+const X25519_PKCS8: Str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEIKB/J/cPamoH+vnAmuBxpW1gcQsgzgofsDOWEvXIoK49\n-----END PRIVATE KEY-----\n"
+const BAD_KEY: Str = "-----BEGIN PRIVATE KEY-----\nMAMCAQA=\n-----END PRIVATE KEY-----\n"
+
+fn pair(os: Os, label: Str, c: Str, k: Str) -> http.TlsCert? {
+  match http.tls_cert(c.bytes(), k.bytes()) {
+    Ok(tc) => {
+      os.stdio.println("${label}: ok")
+      Some(tc)
+    }
+    Err(e) => {
+      os.stdio.println("${label}: ${e.msg}")
+      None
+    }
+  }
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello over tls") })
+  r
+}
+
+fn main(os: Os) {
+  let rsa1 = pair(os, "rsa pkcs1", RSA_CERT, RSA_PKCS1)
+  let rsa8 = pair(os, "rsa pkcs8", RSA_CERT, RSA_PKCS8)
+  let ec1 = pair(os, "p-256 sec1", EC_CERT, EC_SEC1)
+  let ec8 = pair(os, "p-256 pkcs8", EC_CERT, EC_PKCS8)
+  let e31 = pair(os, "p-384 sec1", EC384_CERT, EC384_SEC1)
+  let e38 = pair(os, "p-384 pkcs8", EC384_CERT, EC384_PKCS8)
+  let ed = pair(os, "ed25519 pkcs8", ED_CERT, ED_PKCS8)
+  let _ = pair(os, "other rsa key", RSA_CERT, RSA2_PKCS1)
+  let _ = pair(os, "rsa cert, ec key", RSA_CERT, EC_SEC1)
+  let _ = pair(os, "p-256 cert, p-384 key", EC_CERT, EC384_SEC1)
+  let _ = pair(os, "p-256 cert, ed25519 key", EC_CERT, ED_PKCS8)
+  let _ = pair(os, "ed25519 cert, rsa key", ED_CERT, RSA_PKCS8)
+  let _ = pair(os, "ed25519 cert, other key type", ED_CERT, EC_PKCS8)
+  let _ = pair(os, "x25519 key", EC_CERT, X25519_PKCS8)
+  let _ = pair(os, "bad key", EC_CERT, BAD_KEY)
+  let goods = [("rsa pkcs1", RSA_CERT, rsa1), ("rsa pkcs8", RSA_CERT, rsa8), ("p-256 sec1", EC_CERT, ec1), ("p-256 pkcs8", EC_CERT, ec8), ("p-384 sec1", EC384_CERT, e31), ("p-384 pkcs8", EC384_CERT, e38)]
+  // (not Ed25519: the client's roots are still Mbed TLS's, which has no
+  // Ed25519; golden tls13_server serves an Ed25519 certificate)
+  if !ed.is_some() {
+    os.stdio.println("ed25519: none?")
+  }
+  for (label, c, tc) in goods {
+    let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+    let srv = http.server(l, routes()).with_tls([tc.or_fault(label)])
+    let cl = http.client(os.net, timeout: 5s).with_roots(c.bytes()).or_fault("roots")
+    scope s {
+      s.spawn_background(fn() {
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve failed: ${e}")
+        }
+      })
+      match cl.get("https://${l.addr()}/hello") {
+        Ok(resp) => os.stdio.println("get ${label}: ${resp.status} ${resp.body.to_str() ?? "?"}")
+        Err(e) => os.stdio.println("get ${label}: ${e}")
+      }
+    }
+  }
+  os.stdio.println("done")
+}

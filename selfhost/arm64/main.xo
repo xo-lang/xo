@@ -174,8 +174,37 @@ pub fn inline_step(var m: ssa.Module) -> Bool {
 }
 
 /// inline_step with the verification on up to jobs tasks.
-pub fn inline_step_jobs(var m: ssa.Module, jobs: Int) -> Bool {
-  !inline_module(m) || m.verify_all_jobs(jobs).is_empty()
+pub fn inline_step_jobs(var m: ssa.Module, jobs: Int) -> Bool { inline_check(m, jobs, false).is_empty() }
+
+/// Inlines into m and returns the inlined module's verification errors
+/// (none when nothing was inlined or it verifies): with any, the driver
+/// generates the module without inlining, which it must say
+/// (gotchas/arm64-inline-verify-fallback.md: the fallback was silent).
+/// break_inline (the driver's XO_INLINE_BREAK=1, for the test of that)
+/// adds an argument to the first branch's edge, so the inlined module
+/// does not verify.
+pub fn inline_check(var m: ssa.Module, jobs: Int, break_inline: Bool) -> List[Str] {
+  if !inline_module(m) && !break_inline {
+    return []
+  }
+  if break_inline {
+    var done = false
+    for fi in 0..m.funcs.len() {
+      for b in m.funcs[fi].blocks {
+        for v in b.instrs {
+          let succs = m.funcs[fi].values[v].succs
+          if !done && !succs.is_empty() {
+            m.funcs[fi].edges[succs[0]].args.push(v)
+            done = true
+          }
+        }
+      }
+      if done {
+        break
+      }
+    }
+  }
+  m.verify_all_jobs(jobs)
 }
 
 pub fn generate_plain(m: ssa.Module, os: Str) -> Program {

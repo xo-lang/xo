@@ -13,7 +13,7 @@
 // for the end of a program whose main returned an error (after its
 // message); the C runtime's xo_exit, which compilers before B03 call,
 // forwards to cabi.xo's `exit`. In a test binary the test world records
-// the code instead (FakeProc.exit_code, the C runtime's tw_exit), and in
+// the code instead (FakeProc.exit_code, twrun.xo exit), and in
 // testing.run_main the call returns with the context unwinding (decision
 // 0108).
 use native/llrt/linux
@@ -26,13 +26,9 @@ use native/sys_windows
 
 /// Ends the process with status code, standard output flushed: exit_group
 /// on Linux (no C library's exit: nothing registers atexit handlers),
-/// libSystem's exit on macOS, ExitProcess on Windows. In a test binary
-/// the test world's tw_exit, which returns inside testing.run_main.
+/// libSystem's exit on macOS, ExitProcess on Windows. A test binary's
+/// os.proc.exit goes to twrun.xo exit instead (the prelude's llrt_exit).
 pub fn exit(code: Int) {
-  if testworld.on() {
-    rt.tw_exit(code)
-    return
-  }
   stdio.flush()
   if !env_get("XO_LEAKCHECK").is_empty() {
     // the leak report runs only when main returns (the C runtime's end
@@ -74,11 +70,110 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   let w = rt.static_word(WORDS)
   rt.mem_store(w, ARGC, argc, 8)
   rt.mem_store(w, ARGV, argv, 8)
-  rt.mem_store(w, ENVP, envp, 8)
+  let e = match target.os {
+    // the C runtime's environ is in the ANSI code page (a value outside
+    // it comes out as '?'): the environment from Windows in UTF-8
+    TargetOs.Windows => win_env()
+    _ => envp
+  }
+  rt.mem_store(w, ENVP, e, 8)
+}
+
+/// The environment as an environ array in UTF-8 (was xo_win.c
+/// xo_w_environ): GetEnvironmentStringsW's NAME=VALUE strings converted,
+/// the per drive directories (`=C:=C:\...`) left out, in malloc'd strings
+/// and an array ending in 0, kept for the program's life (Xo programs do
+/// not set variables). UNTESTED on windows.
+fn win_env() -> Int {
+  let blk = sys_windows.GetEnvironmentStringsW()
+  var n = 0
+  var p = blk
+  while p != 0 && rt.mem_load(p, 0, 2) != 0 {
+    n += 1
+    p = next_wstr(p)
+  }
+  let arr = rt.heap_large(8 * (n + 1))
+  var k = 0
+  p = blk
+  while p != 0 && rt.mem_load(p, 0, 2) != 0 {
+    if rt.mem_load(p, 0, 2) != 61 {
+      // CP_UTF8, the terminating 0 converted too
+      let u = Int(sys_windows.WideCharToMultiByte(65001, 0, p, -1, 0, 0, 0, 0))
+      if u > 0 {
+        let s = rt.heap_large(u)
+        let _c = sys_windows.WideCharToMultiByte(65001, 0, p, -1, s, u, 0, 0)
+        rt.mem_store(arr, 8 * k, s, 8)
+        k += 1
+      }
+    }
+    p = next_wstr(p)
+  }
+  rt.mem_store(arr, 8 * k, 0, 8)
+  if blk != 0 {
+    let _f = sys_windows.FreeEnvironmentStringsW(blk)
+  }
+  arr
+}
+
+/// The address after the 0 unit that ends the UTF-16 string at p.
+fn next_wstr(p0: Int) -> Int {
+  var p = p0
+  while rt.mem_load(p, 0, 2) != 0 {
+    p += 2
+  }
+  p + 2
 }
 
 /// The zero terminated string at address a.
 fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
+
+/// The program's environment as exec passes it on, NAME=VALUE in the
+/// order of environ (std/native/llrt/procspec.xo builds a child's from
+/// it; not the test world's fake: xo_proc.c's xo_proc_environ read the
+/// real one).
+pub fn environ() -> List[Str] {
+  let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
+  var out: List[Str] = []
+  if envp == 0 {
+    return out
+  }
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    out.push(cstr(e))
+    k += 1
+  }
+  out
+}
+
+/// The address of the program's environment array (environ).
+pub fn environ_addr() -> Int { rt.mem_load(rt.static_word(WORDS), ENVP, 8) }
+
+/// getenv(name) of the real environment (not a test's fake): the value in
+/// a list of one, or the empty list.
+pub fn real_env_get(name: Str) -> List[Str] {
+  let envp = environ_addr()
+  if envp == 0 {
+    return []
+  }
+  let p = raw.data(name)
+  let n = name.len()
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    if entry_is(e, p, n, fold_case()) {
+      return [cstr(rt.int_wrap(0, e, rt.int_wrap(0, n, 1)))]
+    }
+    k = rt.int_wrap(0, k, 1)
+  }
+  []
+}
 
 /// argv[i] (0 <= i < argc).
 fn arg(i: Int) -> Str { cstr(rt.mem_load(rt.mem_load(rt.static_word(WORDS), ARGV, 8), 8 * i, 8)) }
@@ -153,9 +248,28 @@ pub fn env_get(name: Str) -> List[Str] {
   if testworld.fake(TW_ENV) {
     return testworld.env_get_raw(raw.data(name), name.len())
   }
+  env_real(name)
+}
+
+/// The process's own environment variable name, as env_get, never the
+/// test world's FakeEnv (the runtime's settings: XO_THREADS, XO_RTSTATS,
+/// as the C's getenv read them).
+pub fn env_real(name: Str) -> List[Str] {
+  let v = env_real_at(name)
+  if v == 0 {
+    return []
+  }
+  [cstr(v)]
+}
+
+/// The address of the zero terminated value of the process's own
+/// environment variable name, or 0 when it is not set: env_real with no
+/// allocation (the C entry's leak check reads XO_LEAKCHECK after the
+/// count would see a new block).
+pub fn env_real_at(name: Str) -> Int {
   let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
   if envp == 0 {
-    return []
+    return 0
   }
   let fold = fold_case()
   let p = raw.data(name)
@@ -167,12 +281,11 @@ pub fn env_get(name: Str) -> List[Str] {
       break
     }
     if entry_is(e, p, n, fold) {
-      let v = rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
-      return [cstr(v)]
+      return rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
     }
     k = rt.int_wrap(0, k, 1)
   }
-  []
+  0
 }
 
 /// env.vars(): the NAME=VALUE entries of the environment, sorted as

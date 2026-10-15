@@ -1,0 +1,1722 @@
+// X.509 certificates (RFC 5280) for TLS (the zero-C audit's B31, decision
+// 0202: Go's crypto/x509 parser in Xo, replacing Mbed TLS's x509_crt):
+// the fields chain building and verification use (names as their raw
+// DER, which Go compares byte for byte too, validity, the public key,
+// the extensions of RFC 5280 4.2.1 that Go acts on) and the signature
+// checks of a certificate by its issuer's key. Every input is public.
+use native/llrt/asn1
+use native/llrt/bigmod
+use native/llrt/cbyte
+use native/llrt/ed25519
+use native/llrt/neturl
+use native/llrt/nistec
+use native/llrt/rsa
+use native/llrt/raw
+use native/llrt/sha256
+use native/llrt/tlsname
+use native/rt
+
+// signature algorithms (Cert.sig_alg)
+pub const SIG_UNKNOWN: Int = 0
+pub const SIG_RSA_SHA256: Int = 1
+pub const SIG_RSA_SHA384: Int = 2
+pub const SIG_RSA_SHA512: Int = 3
+pub const SIG_ECDSA_SHA256: Int = 4
+pub const SIG_ECDSA_SHA384: Int = 5
+pub const SIG_ECDSA_SHA512: Int = 6
+pub const SIG_ED25519: Int = 7
+pub const SIG_PSS_SHA256: Int = 8
+pub const SIG_PSS_SHA384: Int = 9
+pub const SIG_PSS_SHA512: Int = 10
+// SHA-1 and MD5 signatures, which Go refuses to verify
+pub const SIG_INSECURE: Int = 11
+
+// public key algorithms (Cert.key_alg)
+pub const KEY_UNKNOWN: Int = 0
+pub const KEY_RSA: Int = 1
+pub const KEY_P256: Int = 2
+pub const KEY_P384: Int = 3
+pub const KEY_ED25519: Int = 4
+pub const KEY_P521: Int = 5
+pub const KEY_P224: Int = 6
+
+// KeyUsage's flags (bit i of the BIT STRING is 1 << i, as Go's)
+pub const KU_DIGITAL_SIGNATURE: Int = 1
+pub const KU_KEY_ENCIPHERMENT: Int = 4
+pub const KU_CERT_SIGN: Int = 32
+
+pub const EKU_ANY: Str = "2.5.29.37.0"
+pub const EKU_SERVER: Str = "1.3.6.1.5.5.7.3.1"
+pub const EKU_CLIENT: Str = "1.3.6.1.5.5.7.3.2"
+
+/// A parsed certificate.
+pub struct Cert {
+  /// The whole certificate (DER) and its signed part.
+  pub raw: Bytes
+  pub tbs: Bytes
+  /// 1 to 3.
+  pub version: Int
+  /// The serial number's magnitude (big endian).
+  pub serial: Bytes
+  pub sig_alg: Int
+  pub signature: Bytes
+  /// The issuer's and subject's Names as their DER, and the subject's
+  /// last common name.
+  pub issuer: Bytes
+  pub subject: Bytes
+  pub cn: Str
+  /// Unix seconds.
+  pub not_before: Int
+  pub not_after: Int
+  pub key_alg: Int
+  /// RSA: the RSAPublicKey (SEQUENCE of n and e); EC: the uncompressed
+  /// point; Ed25519: the 32 bytes.
+  pub key: Bytes
+  /// The SubjectPublicKeyInfo's DER.
+  pub spki: Bytes
+  /// The subject alternative names: DNS names and IP addresses (4 or 16
+  /// bytes), and whether the extension is there.
+  pub dns: List[Str]
+  pub ips: List[Bytes]
+  pub has_san: Bool
+  /// Basic constraints: present, cA, pathLenConstraint (-1 none).
+  pub has_bc: Bool
+  pub is_ca: Bool
+  pub max_path: Int
+  /// KeyUsage's flags, -1 without the extension.
+  pub key_usage: Int
+  /// The ExtendedKeyUsage OIDs (dotted), none without the extension.
+  pub ext_usage: List[Str]
+  pub has_eku: Bool
+  pub ski: Bytes
+  pub aki: Bytes
+  /// The DNS name constraints (RFC 5280 4.2.1.10): permitted and
+  /// excluded subtrees.
+  pub permitted_dns: List[Str]
+  pub excluded_dns: List[Str]
+  /// The critical extensions this parser does not act on, which make
+  /// verification fail (Go's UnhandledCriticalExtensions).
+  pub unhandled: Int
+  /// The e-mail addresses and URIs of the subject alternative names, and
+  /// the IP, e-mail and URI name constraints: counted, not kept
+  /// (x509verify.xo checks DNS constraints only).
+  pub san_other: Int
+  pub other_constraints: Int
+  /// For chain building as Go's: the signature algorithm's OID, the
+  /// subject alternative names extension's value (alreadyInChain),
+  /// whether the key parsed (a PublicKey Go has), the subject's first
+  /// organization (an unknown authority's hint).
+  pub sig_oid: Str
+  pub san_raw: Bytes
+  pub has_key: Bool
+  pub org: Str
+  /// For Go's checkChainConstraints: whether the name constraints
+  /// extension is there, its IP subtrees (address then mask, 8 or 32
+  /// bytes), e-mail and URI subtrees; the subject alternative names'
+  /// e-mail addresses and URIs, with each URI's host (url.URL.Host).
+  pub has_nc: Bool
+  pub permitted_ips: List[Bytes]
+  pub excluded_ips: List[Bytes]
+  pub permitted_emails: List[Str]
+  pub excluded_emails: List[Str]
+  pub permitted_uris: List[Str]
+  pub excluded_uris: List[Str]
+  pub emails: List[Str]
+  pub uris: List[Str]
+  pub uri_hosts: List[Str]
+  /// For Go's policiesValid: the certificate policies (OID contents),
+  /// the policy mappings (issuer and subject OID contents in turn), and
+  /// the policy constraints and inhibitAnyPolicy (present, then value).
+  pub policies: List[Bytes]
+  pub policy_maps: List[Bytes]
+  pub has_req_explicit: Bool
+  pub req_explicit: Int
+  pub has_inhibit_mapping: Bool
+  pub inhibit_mapping: Int
+  pub has_inhibit_any: Bool
+  pub inhibit_any: Int
+}
+
+fn empty() -> Cert {
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0}
+}
+
+/// The result of parse: the certificate, or the error text (Go's).
+pub struct Parsed {
+  pub cert: Cert
+  pub err: Str
+}
+
+fn fail(msg: Str) -> Parsed { Parsed{cert: empty(), err: msg} }
+
+/// The certificate of the DER der: Go's x509.ParseCertificate
+/// (crypto/x509/parser.go, Go 1.26), step for step, with its error texts.
+/// Everything it reads is public.
+pub fn parse(der: Bytes) -> Parsed {
+  var input = cbyte.of(der)
+  let whole = match cbyte.read_element(input, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed certificate")
+  }
+  var w = whole
+  var body = match cbyte.read(w, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed certificate")
+  }
+  var c = empty()
+  c.raw = cbyte.bytes(whole)
+  let tbs_el = match cbyte.read_element(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed tbs certificate")
+  }
+  c.tbs = cbyte.bytes(tbs_el)
+  var te = tbs_el
+  var tbs = match cbyte.read(te, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed tbs certificate")
+  }
+  // the version ([0] EXPLICIT, default v1; Go keeps it one-indexed)
+  let vo = match cbyte.read_optional(tbs, 0xa0) {
+    Some(o) => o
+    None => return fail("x509: malformed version")
+  }
+  var version = 0
+  if vo.present {
+    var vb = vo.body
+    match cbyte.read_int64(vb) {
+      Some(v) => version = v
+      None => return fail("x509: malformed version")
+    }
+    if !cbyte.empty(vb) {
+      return fail("x509: malformed version")
+    }
+  }
+  if version < 0 {
+    return fail("x509: malformed version")
+  }
+  version = rt.int_wrap(0, version, 1)
+  if version > 3 {
+    return fail("x509: invalid version")
+  }
+  c.version = version
+  let serial = match cbyte.read_int_raw(tbs) {
+    Some(x) => cbyte.bytes(x)
+    None => return fail("x509: malformed serial number")
+  }
+  if Int(serial[0]) >= 128 {
+    return fail("x509: negative serial number")
+  }
+  c.serial = magnitude(serial)
+  let sig_ai = match cbyte.read(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed signature algorithm identifier")
+  }
+  let outer_ai = match cbyte.read(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed algorithm identifier")
+  }
+  if cbyte.bytes(outer_ai) != cbyte.bytes(sig_ai) {
+    return fail("x509: inner and outer signature algorithm identifiers don't match")
+  }
+  let ai = parse_ai(sig_ai)
+  if ai.err != "" {
+    return fail(ai.err)
+  }
+  c.sig_alg = sig_alg_of(ai.oid, ai.params)
+  c.sig_oid = ai.oid
+  let issuer = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed issuer")
+  }
+  c.issuer = cbyte.bytes(issuer)
+  let iname = parse_name(issuer)
+  if iname.err != "" {
+    return fail(iname.err)
+  }
+  var validity = match cbyte.read(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed validity")
+  }
+  let nb = parse_time(validity)
+  if nb.err != "" {
+    return fail(nb.err)
+  }
+  let na = parse_time(validity)
+  if na.err != "" {
+    return fail(na.err)
+  }
+  c.not_before = nb.t
+  c.not_after = na.t
+  // Go's text for the subject is the issuer's too
+  let subject = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed issuer")
+  }
+  c.subject = cbyte.bytes(subject)
+  let sname = parse_name(subject)
+  if sname.err != "" {
+    return fail(sname.err)
+  }
+  c.cn = sname.cn
+  c.org = sname.org
+  let spki_el = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed spki")
+  }
+  c.spki = cbyte.bytes(spki_el)
+  var se = spki_el
+  var spki = match cbyte.read(se, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed spki")
+  }
+  let pk_ai_s = match cbyte.read(spki, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return fail("x509: malformed public key algorithm identifier")
+  }
+  let pk_ai = parse_ai(pk_ai_s)
+  if pk_ai.err != "" {
+    return fail(pk_ai.err)
+  }
+  let spk = match cbyte.read_bits(spki) {
+    Some(x) => x
+    None => return fail("x509: malformed subjectPublicKey")
+  }
+  let kerr = public_key(pk_ai.oid, pk_ai.params, cbyte.right_align(spk), c)
+  if kerr != "" {
+    return fail(kerr)
+  }
+  c.has_key = pk_ai.oid == "1.2.840.113549.1.1.1" || pk_ai.oid == "1.2.840.10045.2.1" || pk_ai.oid == "1.3.101.112" || pk_ai.oid == "1.2.840.10040.4.1"
+  if c.version > 1 {
+    if !cbyte.skip_optional(tbs, 0x81) {
+      return fail("x509: malformed issuerUniqueID")
+    }
+    if !cbyte.skip_optional(tbs, 0x82) {
+      return fail("x509: malformed subjectUniqueID")
+    }
+    if c.version == 3 {
+      let eo = match cbyte.read_optional(tbs, 0xa3) {
+        Some(o) => o
+        None => return fail("x509: malformed extensions")
+      }
+      if eo.present {
+        var eb = eo.body
+        var exts = match cbyte.read(eb, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return fail("x509: malformed extensions")
+        }
+        var list: List[Ext] = []
+        var seen: List[Str] = []
+        while !cbyte.empty(exts) {
+          let one = match cbyte.read(exts, cbyte.SEQUENCE) {
+            Some(x) => x
+            None => return fail("x509: malformed extension")
+          }
+          let e = parse_extension(one)
+          if e.err != "" {
+            return fail(e.err)
+          }
+          for s in seen {
+            if s == e.oid {
+              return fail("x509: certificate contains duplicate extension with OID ${e.oid.quote()}")
+            }
+          }
+          seen.push(e.oid)
+          list.push(e)
+        }
+        let err = process_extensions(list, c)
+        if err != "" {
+          return fail(err)
+        }
+      }
+    }
+  }
+  match cbyte.read_bits(body) {
+    Some(x) => c.signature = cbyte.right_align(x)
+    None => return fail("x509: malformed signature")
+  }
+  if cbyte.len(whole) != der.len() {
+    return fail("x509: trailing data")
+  }
+  Parsed{cert: c, err: ""}
+}
+
+/// A big.Int's Bytes of a positive INTEGER's contents (no leading
+/// zeros; empty for 0).
+fn magnitude(b: Bytes) -> Bytes {
+  var i = 0
+  while i < b.len() && b[i] == 0 {
+    i += 1
+  }
+  b[i..b.len()]
+}
+
+/// An AlgorithmIdentifier (Go's parseAI): the OID and the parameters'
+/// whole element (empty when absent), or the error.
+struct Ai {
+  oid: Str
+  params: Bytes
+  err: Str
+}
+
+fn parse_ai(s0: cbyte.Win) -> Ai {
+  var s = s0
+  let oid = match cbyte.read_oid(s) {
+    Some(o) => o
+    None => return Ai{oid: "", params: b"", err: "x509: malformed OID"}
+  }
+  if cbyte.empty(s) {
+    return Ai{oid: oid, params: b"", err: ""}
+  }
+  let e = cbyte.read_any(s)
+  if !e.ok {
+    return Ai{oid: oid, params: b"", err: "x509: malformed parameters"}
+  }
+  Ai{oid: oid, params: cbyte.bytes(e.whole), err: ""}
+}
+
+/// Go's getSignatureAlgorithmFromAI in x509.xo's numbering.
+fn sig_alg_of(o: Str, params: Bytes) -> Int {
+  if o == "1.3.101.112" {
+    return if params.is_empty() { SIG_ED25519 } else { SIG_UNKNOWN }
+  }
+  if o == "1.2.840.113549.1.1.10" {
+    let t = asn1.whole(params, asn1.SEQUENCE)
+    if t.tag < 0 {
+      return SIG_UNKNOWN
+    }
+    return pss_algorithm(params, t)
+  }
+  match o {
+    "1.2.840.113549.1.1.11" => SIG_RSA_SHA256
+    "1.2.840.113549.1.1.12" => SIG_RSA_SHA384
+    "1.2.840.113549.1.1.13" => SIG_RSA_SHA512
+    "1.2.840.10045.4.3.2" => SIG_ECDSA_SHA256
+    "1.2.840.10045.4.3.3" => SIG_ECDSA_SHA384
+    "1.2.840.10045.4.3.4" => SIG_ECDSA_SHA512
+    // MD5, SHA-1 with RSA (both OIDs), ECDSA and DSA with SHA-1
+    "1.2.840.113549.1.1.4" => SIG_INSECURE
+    "1.2.840.113549.1.1.5" => SIG_INSECURE
+    "1.3.14.3.2.29" => SIG_INSECURE
+    "1.2.840.10045.4.1" => SIG_INSECURE
+    "1.2.840.10040.4.3" => SIG_INSECURE
+    _ => SIG_UNKNOWN
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Names and times
+
+/// A Name's outcome: the subject's last common name, or the error.
+struct NameRes {
+  cn: Str
+  org: Str
+  err: Str
+}
+
+/// Go's parseName of the Name element el, keeping the last common name
+/// (pkix.Name's FillFromRDNSequence).
+fn parse_name(el: cbyte.Win) -> NameRes {
+  var raw = el
+  var seq = match cbyte.read(raw, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence"}
+  }
+  var cn = ""
+  var org = ""
+  var has_org = false
+  while !cbyte.empty(seq) {
+    var set = match cbyte.read(seq, cbyte.SET) {
+      Some(x) => x
+      None => return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence"}
+    }
+    while !cbyte.empty(set) {
+      var atav = match cbyte.read(set, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence: invalid attribute"}
+      }
+      let typ = match cbyte.read_oid(atav) {
+        Some(o) => o
+        None => return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence: invalid attribute type"}
+      }
+      let v = cbyte.read_any(atav)
+      if !v.ok {
+        return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence: invalid attribute value"}
+      }
+      let s = asn1_string(v.tag, cbyte.bytes(v.body))
+      if s.err != "" {
+        return NameRes{cn: "", org: "", err: "x509: invalid RDNSequence: invalid attribute value: ${s.err}"}
+      }
+      if typ == "2.5.4.3" {
+        cn = s.text
+      }
+      if typ == "2.5.4.10" && !has_org {
+        org = s.text
+        has_org = true
+      }
+    }
+  }
+  NameRes{cn: cn, org: org, err: ""}
+}
+
+struct Text {
+  text: Str
+  err: Str
+}
+
+/// Go's isPrintable.
+fn printable(x: Int) -> Bool {
+  (x >= 97 && x <= 122) || (x >= 65 && x <= 90) || (x >= 48 && x <= 57) || (x >= 39 && x <= 41) || (x >= 43 && x <= 47) || x == 32 || x == 58 || x == 61 || x == 63 || x == 42 || x == 38
+}
+
+/// Go's parseASN1String: T61String (as Latin-1), PrintableString,
+/// UTF8String, BMPString, IA5String, NumericString.
+fn asn1_string(tag: Int, v: Bytes) -> Text {
+  if tag == cbyte.T61_STRING {
+    var s = ""
+    for x in v {
+      s = raw.push_rune(s, Int(x))
+    }
+    return Text{text: s, err: ""}
+  }
+  if tag == cbyte.PRINTABLE_STRING {
+    for x in v {
+      if !printable(Int(x)) {
+        return Text{text: "", err: "invalid PrintableString"}
+      }
+    }
+    return Text{text: v.to_str() ?? "", err: ""}
+  }
+  if tag == cbyte.UTF8_STRING {
+    return match v.to_str() {
+      Some(s) => Text{text: s, err: ""}
+      None => Text{text: "", err: "invalid UTF-8 string"}
+    }
+  }
+  if tag == cbyte.BMP_STRING {
+    if v.len() % 2 != 0 {
+      return Text{text: "", err: "invalid BMPString"}
+    }
+    var n = v.len()
+    if n >= 2 && v[n - 1] == 0 && v[n - 2] == 0 {
+      n -= 2
+    }
+    var s = ""
+    var i = 0
+    while i < n {
+      let p = Int(v[i]) * 256 + Int(v[i + 1])
+      if p == 0xfffe || p == 0xffff || (p >= 0xfdd0 && p <= 0xfdef) || (p >= 0xd800 && p <= 0xdfff) {
+        return Text{text: "", err: "invalid BMPString"}
+      }
+      s = raw.push_rune(s, p)
+      i += 2
+    }
+    return Text{text: s, err: ""}
+  }
+  if tag == cbyte.IA5_STRING {
+    if !ascii(v) {
+      return Text{text: "", err: "invalid IA5String"}
+    }
+    return Text{text: v.to_str() ?? "", err: ""}
+  }
+  if tag == cbyte.NUMERIC_STRING {
+    for x in v {
+      if !((Int(x) >= 48 && Int(x) <= 57) || Int(x) == 32) {
+        return Text{text: "", err: "invalid NumericString"}
+      }
+    }
+    return Text{text: v.to_str() ?? "", err: ""}
+  }
+  Text{text: "", err: "unsupported string type: ${tag}"}
+}
+
+fn ascii(d: Bytes) -> Bool {
+  for x in d {
+    if Int(x) >= 128 {
+      return false
+    }
+  }
+  true
+}
+
+/// Go's isIA5String error text for s ("" when it is one).
+fn ia5_err(d: Bytes) -> Str { if ascii(d) { "" } else { "x509: ${d.quote()} cannot be encoded as an IA5String" } }
+
+struct TimeRes {
+  t: Int
+  err: Str
+}
+
+/// Go's parseTime: a UTCTime or GeneralizedTime read from s.
+fn parse_time(var s: cbyte.Win) -> TimeRes {
+  if cbyte.peek(s, cbyte.UTC_TIME) {
+    return match cbyte.read_utc(s) {
+      Some(t) => TimeRes{t: t, err: ""}
+      None => TimeRes{t: 0, err: "x509: malformed UTCTime"}
+    }
+  }
+  if cbyte.peek(s, cbyte.GENERALIZED_TIME) {
+    return match cbyte.read_generalized(s) {
+      Some(t) => TimeRes{t: t, err: ""}
+      None => TimeRes{t: 0, err: "x509: malformed GeneralizedTime"}
+    }
+  }
+  TimeRes{t: 0, err: "x509: unsupported time format"}
+}
+
+// ---------------------------------------------------------------------------
+// Public keys
+
+/// The NIST curves' field primes and b coefficients (big endian).
+fn curve_p(bits: Int) -> Str {
+  match bits {
+    224 => "ffffffffffffffffffffffffffffffff000000000000000000000001"
+    256 => "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff"
+    384 => "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff"
+    _ => "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  }
+}
+
+fn curve_b(bits: Int) -> Str {
+  match bits {
+    224 => "b4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4"
+    256 => "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b"
+    384 => "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef"
+    _ => "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00"
+  }
+}
+
+/// Go's ecdsa.ParseUncompressedPublicKey of data on the curve of bits:
+/// the error text, "" for a point on the curve (crypto/internal/fips140's
+/// nistec texts; P-256's are its assembly's, as on arm64 and amd64).
+fn ec_point_err(bits: Int, data: Bytes) -> Str {
+  if data.len() < 1 || data[0] != 4 {
+    return "ecdsa: invalid uncompressed public key"
+  }
+  let name = "P${bits}"
+  let size = (bits + 7) / 8
+  if data.len() != 1 + 2 * size {
+    return "invalid ${name} point encoding"
+  }
+  let elem_err = if bits == 256 { "invalid P256 element encoding" } else { "invalid ${name}Element encoding" }
+  let n = (size + 7) / 8
+  let p = bigmod.from_bytes(Bytes.from_hex(curve_p(bits)) ?? b"", n) ?? []
+  let md = bigmod.modulus(p)
+  let x = bigmod.from_bytes(data[1..1 + size], n) ?? []
+  let y = bigmod.from_bytes(data[1 + size..data.len()], n) ?? []
+  if !bigmod.below(md, x) || !bigmod.below(md, y) {
+    return elem_err
+  }
+  // y^2 = x^3 - 3x + b (Montgomery forms)
+  let mx = bigmod.reduce(md, x)
+  let my = bigmod.reduce(md, y)
+  let mb = bigmod.reduce(md, bigmod.from_bytes(Bytes.from_hex(curve_b(bits)) ?? b"", n) ?? [])
+  var three = bigmod.zero(n)
+  three[0] = 3
+  let m3 = bigmod.reduce(md, three)
+  let x3 = bigmod.mul(md, bigmod.mul(md, mx, mx), mx)
+  let zero = bigmod.zero(n)
+  // rhs = x^3 - 3x + b, as x^3 - 3x - (-b)
+  let rhs = bigmod.sub(md, bigmod.sub(md, x3, bigmod.mul(md, m3, mx)), bigmod.sub(md, zero, mb))
+  if !bigmod.equal(bigmod.mul(md, my, my), rhs) {
+    return "${name} point not on curve"
+  }
+  ""
+}
+
+/// A big.Int's Sign of an INTEGER's contents (minimal): -1, 0, or 1.
+fn sign(b: Bytes) -> Int {
+  if Int(b[0]) >= 128 {
+    return -1
+  }
+  if b.len() == 1 && b[0] == 0 { 0 } else { 1 }
+}
+
+/// Go's parsePublicKey for the key algorithms it knows (RSA, ECDSA,
+/// Ed25519, DSA; others are left unparsed): fills c's key, the error
+/// text.
+fn public_key(o: Str, params: Bytes, data: Bytes, var c: Cert) -> Str {
+  if o == "1.2.840.113549.1.1.1" {
+    if params != b"\x05\x00" {
+      return "x509: RSA key missing NULL parameters"
+    }
+    var d = cbyte.of(data)
+    var k = match cbyte.read(d, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return "x509: invalid RSA public key"
+    }
+    let n = match cbyte.read_int_raw(k) {
+      Some(x) => cbyte.bytes(x)
+      None => return "x509: invalid RSA modulus"
+    }
+    let e_el = k
+    let e = match cbyte.read_int64(k) {
+      Some(x) => x
+      None => return "x509: invalid RSA public exponent"
+    }
+    if sign(n) <= 0 {
+      return "x509: RSA modulus is not a positive number"
+    }
+    if e <= 0 {
+      return "x509: RSA public exponent is not a positive number"
+    }
+    // the key as MarshalPKCS1PublicKey writes it
+    var ee = e_el
+    let e_bytes = match cbyte.read_int_raw(ee) {
+      Some(x) => cbyte.bytes(x)
+      None => b""
+    }
+    c.key_alg = KEY_RSA
+    c.key = asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc(asn1.INTEGER, n), asn1.enc(asn1.INTEGER, e_bytes)]))
+    return ""
+  }
+  if o == "1.2.840.10045.2.1" {
+    var pd = cbyte.of(params)
+    let curve = match cbyte.read_oid(pd) {
+      Some(x) => x
+      None => return "x509: invalid ECDSA parameters"
+    }
+    let bits = match curve {
+      "1.3.132.0.33" => 224
+      "1.2.840.10045.3.1.7" => 256
+      "1.3.132.0.34" => 384
+      "1.3.132.0.35" => 521
+      _ => 0
+    }
+    if bits == 0 {
+      return "x509: unsupported elliptic curve"
+    }
+    let err = ec_point_err(bits, data)
+    if err != "" {
+      return err
+    }
+    c.key_alg = if bits == 256 { KEY_P256 } else if bits == 384 { KEY_P384 } else if bits == 521 { KEY_P521 } else { KEY_P224 }
+    c.key = data
+    return ""
+  }
+  if o == "1.3.101.112" {
+    if !params.is_empty() {
+      return "x509: Ed25519 key encoded with illegal parameters"
+    }
+    if data.len() != 32 {
+      return "x509: wrong Ed25519 public key size"
+    }
+    c.key_alg = KEY_ED25519
+    c.key = data
+    return ""
+  }
+  if o == "1.2.840.10040.4.1" {
+    var d = cbyte.of(data)
+    let y = match cbyte.read_int_raw(d) {
+      Some(x) => cbyte.bytes(x)
+      None => return "x509: invalid DSA public key"
+    }
+    var pd = cbyte.of(params)
+    var ps = match cbyte.read(pd, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return "x509: invalid DSA parameters"
+    }
+    var signs = [sign(y)]
+    for _ in 0..3 {
+      match cbyte.read_int_raw(ps) {
+        Some(x) => signs.push(sign(cbyte.bytes(x)))
+        None => return "x509: invalid DSA parameters"
+      }
+    }
+    for s in signs {
+      if s <= 0 {
+        return "x509: zero or negative DSA parameter"
+      }
+    }
+    return ""
+  }
+  ""
+}
+
+// ---------------------------------------------------------------------------
+// Extensions
+
+/// An extension (pkix.Extension): its OID, criticality, value.
+struct Ext {
+  oid: Str
+  critical: Bool
+  value: Bytes
+  err: Str
+}
+
+/// Go's parseExtension.
+fn parse_extension(s0: cbyte.Win) -> Ext {
+  var s = s0
+  let oid = match cbyte.read_oid(s) {
+    Some(o) => o
+    None => return Ext{oid: "", critical: false, value: b"", err: "x509: malformed extension OID field"}
+  }
+  var critical = false
+  if cbyte.peek(s, cbyte.BOOLEAN) {
+    match cbyte.read_bool(s) {
+      Some(v) => critical = v
+      None => return Ext{oid: oid, critical: false, value: b"", err: "x509: malformed extension critical field"}
+    }
+  }
+  match cbyte.read(s, cbyte.OCTET_STRING) {
+    Some(v) => Ext{oid: oid, critical: critical, value: cbyte.bytes(v), err: ""}
+    None => Ext{oid: oid, critical: critical, value: b"", err: "x509: malformed extension value field"}
+  }
+}
+
+/// Go's extKeyUsageOIDs: the extended key usages it knows, which it lists
+/// before the others.
+fn known_eku(o: Str) -> Bool {
+  if o == "2.5.29.37.0" || o == "1.3.6.1.4.1.311.10.3.3" || o == "2.16.840.1.113730.4.1" || o == "1.3.6.1.4.1.311.2.1.22" || o == "1.3.6.1.4.1.311.61.1.1" {
+    return true
+  }
+  let pre = "1.3.6.1.5.5.7.3."
+  if !o.starts_with(pre) {
+    return false
+  }
+  let n = Int.parse(raw.str_slice(o, pre.len(), o.len())) ?? 0
+  n >= 1 && n <= 9
+}
+
+/// Go's processExtensions: each extension read into c, the error text.
+fn process_extensions(list: List[Ext], var c: Cert) -> Str {
+  var unknown_eku: List[Str] = []
+  for e in list {
+    var unhandled = false
+    let v = cbyte.of(e.value)
+    if e.oid.starts_with("2.5.29.") && raw.str_slice(e.oid, 7, e.oid.len()).find(".") == None {
+      let n = Int.parse(raw.str_slice(e.oid, 7, e.oid.len())) ?? -1
+      if n == 15 {
+        var s = v
+        let bits = match cbyte.read_bits(s) {
+          Some(x) => x
+          None => return "x509: invalid key usage"
+        }
+        var u = 0
+        for i in 0..9 {
+          if i < bits.bit_len && (Int(bits.data[i / 8]) >> (7 - i % 8)) & 1 == 1 {
+            u = u | (1 << i)
+          }
+        }
+        c.key_usage = u
+      } else if n == 19 {
+        var s = v
+        var bc = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return "x509: invalid basic constraints"
+        }
+        var ca = false
+        if cbyte.peek(bc, cbyte.BOOLEAN) {
+          match cbyte.read_bool(bc) {
+            Some(x) => ca = x
+            None => return "x509: invalid basic constraints"
+          }
+        }
+        var mpl = -1
+        if cbyte.peek(bc, cbyte.INTEGER) {
+          match cbyte.read_uint63(bc) {
+            Some(x) => mpl = x
+            None => return "x509: invalid basic constraints"
+          }
+        }
+        c.has_bc = true
+        c.is_ca = ca
+        c.max_path = mpl
+      } else if n == 17 {
+        c.san_raw = e.value
+        let err = san(v, c)
+        if err != "" {
+          return err
+        }
+        c.has_san = true
+        if c.dns.is_empty() && c.ips.is_empty() && c.san_other == 0 {
+          unhandled = true
+        }
+      } else if n == 30 {
+        c.has_nc = true
+        let r = name_constraints(e.value, c)
+        if r.err != "" {
+          return r.err
+        }
+        unhandled = r.unhandled
+      } else if n == 31 {
+        let err = crl_points(v)
+        if err != "" {
+          return err
+        }
+      } else if n == 35 {
+        if e.critical {
+          return "x509: authority key identifier incorrectly marked critical"
+        }
+        var s = v
+        var akid = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return "x509: invalid authority key identifier"
+        }
+        if cbyte.peek(akid, 0x80) {
+          match cbyte.read(akid, 0x80) {
+            Some(x) => c.aki = cbyte.bytes(x)
+            None => return "x509: invalid authority key identifier"
+          }
+        }
+      } else if n == 36 {
+        var s = v
+        var pc = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return "x509: invalid policy constraints extension"
+        }
+        if cbyte.peek(pc, 0x80) {
+          match cbyte.read_int64_tag(pc, 0x80) {
+            Some(x) => {
+              c.has_req_explicit = true
+              c.req_explicit = x
+            }
+            None => return "x509: invalid policy constraints extension"
+          }
+        }
+        if cbyte.peek(pc, 0x81) {
+          match cbyte.read_int64_tag(pc, 0x81) {
+            Some(x) => {
+              c.has_inhibit_mapping = true
+              c.inhibit_mapping = x
+            }
+            None => return "x509: invalid policy constraints extension"
+          }
+        }
+      } else if n == 37 {
+        var s = v
+        var ekus = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return "x509: invalid extended key usages"
+        }
+        c.has_eku = true
+        while !cbyte.empty(ekus) {
+          match cbyte.read_oid(ekus) {
+            Some(o) => if known_eku(o) { c.ext_usage.push(o) } else { unknown_eku.push(o) }
+            None => return "x509: invalid extended key usages"
+          }
+        }
+      } else if n == 14 {
+        if e.critical {
+          return "x509: subject key identifier incorrectly marked critical"
+        }
+        var s = v
+        match cbyte.read(s, cbyte.OCTET_STRING) {
+          Some(x) => c.ski = cbyte.bytes(x)
+          None => return "x509: invalid subject key identifier"
+        }
+      } else if n == 32 {
+        let err = policies(v, c)
+        if err != "" {
+          return err
+        }
+      } else if n == 33 {
+        var s = v
+        var pm = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return "x509: invalid policy mappings extension"
+        }
+        while !cbyte.empty(pm) {
+          var one = match cbyte.read(pm, cbyte.SEQUENCE) {
+            Some(x) => x
+            None => return "x509: invalid policy mappings extension"
+          }
+          let iss = cbyte.read(one, cbyte.OBJECT_IDENTIFIER)
+          let sub = cbyte.read(one, cbyte.OBJECT_IDENTIFIER)
+          match (iss, sub) {
+            (Some(a), Some(b)) => {
+              c.policy_maps.push(cbyte.bytes(a))
+              c.policy_maps.push(cbyte.bytes(b))
+            }
+            _ => return "x509: invalid policy mappings extension"
+          }
+        }
+      } else if n == 54 {
+        var s = v
+        match cbyte.read_int64(s) {
+          Some(x) => {
+            c.has_inhibit_any = true
+            c.inhibit_any = x
+          }
+          None => return "x509: invalid inhibit any policy extension"
+        }
+      } else {
+        unhandled = true
+      }
+    } else if e.oid == "1.3.6.1.5.5.7.1.1" {
+      if e.critical {
+        return "x509: authority info access incorrectly marked critical"
+      }
+      let err = info_access(v)
+      if err != "" {
+        return err
+      }
+    } else {
+      unhandled = true
+    }
+    if e.critical && unhandled {
+      c.unhandled += 1
+    }
+  }
+  for o in unknown_eku {
+    c.ext_usage.push(o)
+  }
+  ""
+}
+
+/// The subject alternative names (Go's parseSANExtension): DNS names and
+/// IP addresses into c, e-mail addresses and URIs counted (san_other).
+fn san(v0: cbyte.Win, var c: Cert) -> Str {
+  var v = v0
+  var names = match cbyte.read(v, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return "x509: invalid subject alternative names"
+  }
+  while !cbyte.empty(names) {
+    let e = cbyte.read_any(names)
+    if !e.ok {
+      return "x509: invalid subject alternative name"
+    }
+    let d = cbyte.bytes(e.body)
+    let tag = e.tag ^ 0x80
+    if tag == 1 {
+      if !ascii(d) {
+        return "x509: SAN rfc822Name is malformed"
+      }
+      c.emails.push(d.to_str() ?? "")
+      c.san_other += 1
+    } else if tag == 2 {
+      if !ascii(d) {
+        return "x509: SAN dNSName is malformed"
+      }
+      c.dns.push(d.to_str() ?? "")
+    } else if tag == 6 {
+      if !ascii(d) {
+        return "x509: SAN uniformResourceIdentifier is malformed"
+      }
+      let u = uri_parse(d)
+      if u[0] != "" {
+        return u[0]
+      }
+      c.uris.push(d.to_str() ?? "")
+      c.uri_hosts.push(u[1])
+      c.san_other += 1
+    } else if tag == 7 {
+      if d.len() != 4 && d.len() != 16 {
+        return "x509: cannot parse IP address of length ${d.len()}"
+      }
+      c.ips.push(d)
+    }
+  }
+  ""
+}
+
+/// Go's url.Parse of a SAN URI (the fragment cut, then checked as
+/// escaped text) and its host's domainNameValid: [the error text ("" for
+/// none), the URL's Host].
+fn uri_parse(d: Bytes) -> List[Str] { [uri_err(d), uri_host(d)] }
+
+/// The Host of a URI that parses.
+fn uri_host(d: Bytes) -> Str {
+  let s = d.to_str() ?? ""
+  let u = match s.find("#") {
+    Some(i) => raw.str_slice(s, 0, i)
+    None => s
+  }
+  neturl.url_parse(u, false).host
+}
+
+fn uri_err(d: Bytes) -> Str {
+  let s = d.to_str() ?? ""
+  let q = s.quote()
+  var u = s
+  var frag = ""
+  match s.find("#") {
+    Some(i) => {
+      u = raw.str_slice(s, 0, i)
+      frag = raw.str_slice(s, i + 1, s.len())
+    }
+    None => ()
+  }
+  let r = neturl.url_parse(u, false)
+  if !r.ok {
+    var why = r.err
+    if why.starts_with("invalid host ") {
+      // Go's parseHost says why (neturl.xo's text is xo_http.c's)
+      match u.find("//") {
+        Some(k) => {
+          var auth = raw.str_slice(u, k + 2, u.len())
+          match auth.find("/") {
+            Some(j) => auth = raw.str_slice(auth, 0, j)
+            None => ()
+          }
+          let ab = auth.bytes()
+          var at = ab.len() - 1
+          while at >= 0 && ab[at] != 64 {
+            at -= 1
+          }
+          let g = neturl.go_host_error(raw.str_slice(auth, at + 1, auth.len()))
+          if g != "" {
+            why = g
+          }
+        }
+        None => ()
+      }
+    }
+    return "x509: cannot parse URI ${q}: parse ${u.quote()}: ${why}"
+  }
+  if frag != "" {
+    let fb = frag.bytes()
+    let (ok, _) = neturl.unescape(fb, frag, 0, fb.len(), neturl.U_PATH)
+    if !ok {
+      return "x509: cannot parse URI ${q}: parse ${q}: ${neturl.escape_error(fb, frag, 0, fb.len())}"
+    }
+  }
+  if r.host.len() > 0 && !domain_ok(r.host.bytes(), false) {
+    return "x509: cannot parse URI ${q}: invalid domain"
+  }
+  ""
+}
+
+/// Go's domainNameValid (as of Go 1.26: a trailing period, characters
+/// outside 33 to 126, and empty labels refused).
+pub fn domain_valid(d: Bytes, constraint: Bool) -> Bool { domain_ok(d, constraint) }
+
+fn domain_ok(d: Bytes, constraint: Bool) -> Bool {
+  if d.len() == 0 {
+    return true
+  }
+  if d[d.len() - 1] == 46 {
+    return false
+  }
+  let s = if constraint && d[0] == 46 { d[1..d.len()] } else { d }
+  var last = -1
+  for i in 0..s.len() + 1 {
+    if i < s.len() && (Int(s[i]) < 33 || Int(s[i]) > 126) {
+      return false
+    }
+    if i == s.len() || s[i] == 46 {
+      if i - (last + 1) == 0 {
+        return false
+      }
+      last = i
+    }
+  }
+  true
+}
+
+/// Go's domainToReverseLabels' check: no empty label, no character
+/// outside 33 to 126.
+fn labels_ok(d: Bytes) -> Bool {
+  if d.len() == 0 {
+    return true
+  }
+  var start = 0
+  for i in 0..d.len() + 1 {
+    if i == d.len() || d[i] == 46 {
+      if i == start {
+        return false
+      }
+      start = i + 1
+    } else if Int(d[i]) < 33 || Int(d[i]) > 126 {
+      return false
+    }
+  }
+  true
+}
+
+fn atext(c: Int) -> Bool {
+  (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 47 || c == 61 || c == 63 || c == 94 || c == 95 || c == 96 || c == 123 || c == 124 || c == 125 || c == 126 || c == 46
+}
+
+/// Go's parseRFC2821Mailbox: the local part (unquoted) and the domain,
+/// none when d is not a mailbox.
+pub fn mailbox(d: Bytes) -> List[Str]? {
+  if d.len() == 0 {
+    return None
+  }
+  var i = 0
+  var local: List[Int] = []
+  if d[0] == 34 {
+    i = 1
+    var closed = false
+    while !closed {
+      if i >= d.len() {
+        return None
+      }
+      let c = Int(d[i])
+      i += 1
+      if c == 34 {
+        closed = true
+      } else if c == 92 {
+        if i >= d.len() {
+          return None
+        }
+        let q = Int(d[i])
+        if q == 11 || q == 12 || (q >= 1 && q <= 9) || (q >= 14 && q <= 127) {
+          local.push(q)
+          i += 1
+        } else {
+          return None
+        }
+      } else if c == 11 || c == 12 || c == 32 || c == 33 || c == 127 || (c >= 1 && c <= 8) || (c >= 14 && c <= 31) || (c >= 35 && c <= 91) || (c >= 93 && c <= 126) {
+        local.push(c)
+      } else {
+        return None
+      }
+    }
+  } else {
+    var more = true
+    while more && i < d.len() {
+      var c = Int(d[i])
+      if c == 92 {
+        i += 1
+        if i >= d.len() {
+          return None
+        }
+        local.push(Int(d[i]))
+        i += 1
+      } else if atext(c) {
+        local.push(c)
+        i += 1
+      } else {
+        more = false
+      }
+      c = 0
+    }
+    if local.is_empty() || local[0] == 46 || local[local.len() - 1] == 46 {
+      return None
+    }
+    for k in 1..local.len() {
+      if local[k] == 46 && local[k - 1] == 46 {
+        return None
+      }
+    }
+  }
+  if i >= d.len() || d[i] != 64 {
+    return None
+  }
+  let dom = d[i + 1..d.len()]
+  if !labels_ok(dom) {
+    return None
+  }
+  var ls = rt.rs_with_cap(local.len())
+  for x in local {
+    ls = rt.rs_push_byte(ls, x)
+  }
+  Some([ls.bytes().to_str() ?? "", dom.to_str() ?? ""])
+}
+
+/// Go's isValidIPMask.
+fn mask_ok(m: Bytes) -> Bool {
+  var zero = false
+  for x in m {
+    let b = Int(x)
+    if zero {
+      if b != 0 {
+        return false
+      }
+    } else if b == 0 || b == 0x80 || b == 0xc0 || b == 0xe0 || b == 0xf0 || b == 0xf8 || b == 0xfc || b == 0xfe {
+      zero = true
+    } else if b != 0xff {
+      return false
+    }
+  }
+  true
+}
+
+struct Nc {
+  unhandled: Bool
+  err: Str
+}
+
+fn nc_err(m: Str) -> Nc { Nc{unhandled: false, err: m} }
+
+/// Go's parseNameConstraintsExtension: the DNS subtrees into c, the
+/// other kinds checked (and kept: ip, email, uri) for x509verify.xo.
+fn name_constraints(value: Bytes, var c: Cert) -> Nc {
+  var outer = cbyte.of(value)
+  var top = match cbyte.read(outer, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return nc_err("x509: invalid NameConstraints extension")
+  }
+  if !cbyte.empty(outer) {
+    return nc_err("x509: invalid NameConstraints extension")
+  }
+  let po = match cbyte.read_optional(top, 0xa0) {
+    Some(x) => x
+    None => return nc_err("x509: invalid NameConstraints extension")
+  }
+  let xo = match cbyte.read_optional(top, 0xa1) {
+    Some(x) => x
+    None => return nc_err("x509: invalid NameConstraints extension")
+  }
+  if !cbyte.empty(top) {
+    return nc_err("x509: invalid NameConstraints extension")
+  }
+  if (!po.present && !xo.present) || (cbyte.len(po.body) == 0 && cbyte.len(xo.body) == 0) {
+    return nc_err("x509: empty name constraints extension")
+  }
+  var unhandled = false
+  for k in 0..2 {
+    var trees = if k == 0 { po.body } else { xo.body }
+    while !cbyte.empty(trees) {
+      var seq = match cbyte.read(trees, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return nc_err("x509: invalid NameConstraints extension")
+      }
+      let base = cbyte.read_any(seq)
+      if !base.ok {
+        return nc_err("x509: invalid NameConstraints extension")
+      }
+      let d = cbyte.bytes(base.body)
+      if base.tag == 0x82 {
+        let ie = ia5_err(d)
+        if ie != "" {
+          return nc_err("x509: invalid constraint value: ${ie}")
+        }
+        if !domain_ok(d, true) {
+          return nc_err("x509: failed to parse dnsName constraint ${d.quote()}")
+        }
+        let name = d.to_str() ?? ""
+        if k == 0 { c.permitted_dns.push(name) } else { c.excluded_dns.push(name) }
+      } else if base.tag == 0x87 {
+        if d.len() != 8 && d.len() != 32 {
+          return nc_err("x509: IP constraint contained value of length ${d.len()}")
+        }
+        if !mask_ok(d[d.len() / 2..d.len()]) {
+          return nc_err("x509: IP constraint contained invalid mask ${d[d.len() / 2..d.len()].to_hex()}")
+        }
+        if k == 0 { c.permitted_ips.push(d) } else { c.excluded_ips.push(d) }
+        c.other_constraints += 1
+      } else if base.tag == 0x81 {
+        let ie = ia5_err(d)
+        if ie != "" {
+          return nc_err("x509: invalid constraint value: ${ie}")
+        }
+        let ok = if (d.to_str() ?? "").contains("@") { mailbox(d) is Some(_) } else { domain_ok(d, true) }
+        if !ok {
+          return nc_err("x509: failed to parse rfc822Name constraint ${d.quote()}")
+        }
+        if k == 0 { c.permitted_emails.push(d.to_str() ?? "") } else { c.excluded_emails.push(d.to_str() ?? "") }
+        c.other_constraints += 1
+      } else if base.tag == 0x86 {
+        let ie = ia5_err(d)
+        if ie != "" {
+          return nc_err("x509: invalid constraint value: ${ie}")
+        }
+        if is_ip_text(d.to_str() ?? "") {
+          return nc_err("x509: failed to parse URI constraint ${d.quote()}: cannot be IP address")
+        }
+        if !domain_ok(d, true) {
+          return nc_err("x509: failed to parse URI constraint ${d.quote()}")
+        }
+        if k == 0 { c.permitted_uris.push(d.to_str() ?? "") } else { c.excluded_uris.push(d.to_str() ?? "") }
+        c.other_constraints += 1
+      } else {
+        unhandled = true
+      }
+    }
+  }
+  Nc{unhandled: unhandled, err: ""}
+}
+
+/// net.ParseIP's success on s (dotted IPv4 or IPv6 text).
+fn is_ip_text(s: Str) -> Bool {
+  match tlsname.parse_ip(s) {
+    Some(_) => true
+    None => false
+  }
+}
+
+/// Go's reading of the CRL distribution points.
+fn crl_points(v0: cbyte.Win) -> Str {
+  var v = v0
+  var dps = match cbyte.read(v, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return "x509: invalid CRL distribution points"
+  }
+  while !cbyte.empty(dps) {
+    var dp = match cbyte.read(dps, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return "x509: invalid CRL distribution point"
+    }
+    let name = match cbyte.read_optional(dp, 0xa0) {
+      Some(x) => x
+      None => return "x509: invalid CRL distribution point"
+    }
+    if !name.present {
+      continue
+    }
+    var nd = name.body
+    var full = match cbyte.read(nd, 0xa0) {
+      Some(x) => x
+      None => return "x509: invalid CRL distribution point"
+    }
+    while !cbyte.empty(full) && cbyte.peek(full, 0x86) {
+      if cbyte.read(full, 0x86) is None {
+        return "x509: invalid CRL distribution point"
+      }
+    }
+  }
+  ""
+}
+
+/// Go's parseCertificatePoliciesExtension: the policies into c.
+fn policies(v0: cbyte.Win, var c: Cert) -> Str {
+  var v = v0
+  var ps = match cbyte.read(v, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return "x509: invalid certificate policies"
+  }
+  var seen: List[Bytes] = []
+  while !cbyte.empty(ps) {
+    var cp = match cbyte.read(ps, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return "x509: invalid certificate policies"
+    }
+    let ob = match cbyte.read(cp, cbyte.OBJECT_IDENTIFIER) {
+      Some(x) => cbyte.bytes(x)
+      None => return "x509: invalid certificate policies"
+    }
+    for s in seen {
+      if s == ob {
+        return "x509: invalid certificate policies"
+      }
+    }
+    seen.push(ob)
+    c.policies.push(ob)
+    // newOIDFromDER: not empty, the last byte ends an arc, no arc starts
+    // with 0x80
+    if ob.len() == 0 || Int(ob[ob.len() - 1]) >= 128 {
+      return "x509: invalid certificate policies"
+    }
+    var start = 0
+    for i in 0..ob.len() {
+      if i == start && ob[i] == 0x80 {
+        return "x509: invalid certificate policies"
+      }
+      if Int(ob[i]) < 128 {
+        start = i + 1
+      }
+    }
+  }
+  ""
+}
+
+/// Go's reading of the authority information access.
+fn info_access(v0: cbyte.Win) -> Str {
+  var v = v0
+  var aia = match cbyte.read(v, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return "x509: invalid authority info access"
+  }
+  while !cbyte.empty(aia) {
+    var one = match cbyte.read(aia, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return "x509: invalid authority info access"
+    }
+    if cbyte.read_oid(one) is None {
+      return "x509: invalid authority info access"
+    }
+    if !cbyte.peek(one, 0x86) {
+      continue
+    }
+    if cbyte.read(one, 0x86) is None {
+      return "x509: invalid authority info access"
+    }
+  }
+  ""
+}
+
+/// The hash of the hash algorithm OID: 256, 384, 512, or 0.
+fn hash_bits(o: Str) -> Int {
+  if o == "2.16.840.1.101.3.4.2.1" {
+    return 256
+  }
+  if o == "2.16.840.1.101.3.4.2.2" {
+    return 384
+  }
+  if o == "2.16.840.1.101.3.4.2.3" {
+    return 512
+  }
+  0
+}
+
+/// RSASSA-PSS-params (RFC 4055 3.1) as Go accepts them: the hash
+/// SHA-256, SHA-384, or SHA-512, MGF1 with the same hash, the salt the
+/// hash's length, and the trailer field 1.
+fn pss_algorithm(b: Bytes, t: asn1.Tlv) -> Int {
+  let ps = asn1.children(b, t)
+  if t.tag != asn1.SEQUENCE || asn1.any_bad(ps) {
+    return SIG_UNKNOWN
+  }
+  var hash = 0
+  var mgf = 0
+  var salt = 20
+  for p in ps {
+    let inner = asn1.read(b, p.lo, p.hi)
+    if inner.tag < 0 || inner.next != p.hi {
+      return SIG_UNKNOWN
+    }
+    if p.tag == 0xa0 {
+      let a = asn1.children(b, inner)
+      if asn1.any_bad(a) || a.len() == 0 {
+        return SIG_UNKNOWN
+      }
+      hash = hash_bits(asn1.oid(b, a[0]))
+    } else if p.tag == 0xa1 {
+      let a = asn1.children(b, inner)
+      if asn1.any_bad(a) || a.len() != 2 || asn1.oid(b, a[0]) != "1.2.840.113549.1.1.8" {
+        return SIG_UNKNOWN
+      }
+      let h = asn1.children(b, a[1])
+      if asn1.any_bad(h) || h.len() == 0 {
+        return SIG_UNKNOWN
+      }
+      mgf = hash_bits(asn1.oid(b, h[0]))
+    } else if p.tag == 0xa2 {
+      match asn1.small_int(b, inner) {
+        Some(n) => salt = n
+        None => return SIG_UNKNOWN
+      }
+    } else if p.tag == 0xa3 {
+      if asn1.small_int(b, inner) != Some(1) {
+        return SIG_UNKNOWN
+      }
+    } else {
+      return SIG_UNKNOWN
+    }
+  }
+  if hash == 0 || mgf != hash || salt != hash / 8 {
+    return SIG_UNKNOWN
+  }
+  if hash == 256 {
+    return SIG_PSS_SHA256
+  }
+  if hash == 384 {
+    return SIG_PSS_SHA384
+  }
+  SIG_PSS_SHA512
+}
+
+// ---------------------------------------------------------------------------
+// Signatures
+
+/// The sha256.xo hash id of the signature algorithm.
+fn sig_hash_id(alg: Int) -> Int {
+  if alg == SIG_ECDSA_SHA384 || alg == SIG_RSA_SHA384 || alg == SIG_PSS_SHA384 {
+    return sha256.HASH_SHA384
+  }
+  if alg == SIG_ECDSA_SHA512 || alg == SIG_RSA_SHA512 || alg == SIG_PSS_SHA512 {
+    return sha256.HASH_SHA512
+  }
+  sha256.HASH_SHA256
+}
+
+/// Whether the key is an ECDSA one (P-256, P-384, P-521 or P-224).
+pub fn is_ec(key_alg: Int) -> Bool { key_alg == KEY_P256 || key_alg == KEY_P384 || key_alg == KEY_P521 || key_alg == KEY_P224 }
+
+/// nistec.xo's curve of an ECDSA key.
+pub fn ec_curve(key_alg: Int) -> Int {
+  if key_alg == KEY_P384 {
+    return nistec.P384
+  }
+  if key_alg == KEY_P521 {
+    return nistec.P521
+  }
+  if key_alg == KEY_P224 {
+    return nistec.P224
+  }
+  nistec.P256
+}
+
+/// Whether sig is a signature of data by the public key (key_alg, key)
+/// with the algorithm alg (Go's checkSignature: the key's type must fit
+/// the algorithm; SHA-1 and MD5 are refused).
+pub fn check(alg: Int, key_alg: Int, key: Bytes, data: Bytes, sig: Bytes) -> Bool {
+  if alg == SIG_ED25519 {
+    return key_alg == KEY_ED25519 && ed25519.verify(key, data, sig)
+  }
+  if alg == SIG_ECDSA_SHA256 || alg == SIG_ECDSA_SHA384 || alg == SIG_ECDSA_SHA512 {
+    if !is_ec(key_alg) {
+      return false
+    }
+    return nistec.verify(ec_curve(key_alg), key, sha256.sum(sig_hash_id(alg), data), sig)
+  }
+  if (alg >= SIG_RSA_SHA256 && alg <= SIG_RSA_SHA512) || (alg >= SIG_PSS_SHA256 && alg <= SIG_PSS_SHA512) {
+    if key_alg != KEY_RSA {
+      return false
+    }
+    let h = sig_hash_id(alg)
+    return match rsa.public_key(key) {
+      Some(k) => if alg >= SIG_PSS_SHA256 { rsa.verify_pss(k, h, sha256.sum(h, data), sig, sha256.size(h)) } else { rsa.verify_pkcs1(k, h, sha256.sum(h, data), sig) }
+      None => false
+    }
+  }
+  false
+}
+
+/// Go's CheckSignatureFrom: the parent may sign certificates and c
+/// carries its signature; "" when so, else Go's error text.
+pub fn check_from(c: Cert, parent: Cert) -> Str {
+  if (parent.version == 3 && !parent.has_bc) || (parent.has_bc && !parent.is_ca) {
+    return "x509: invalid signature: parent certificate cannot sign this kind of certificate"
+  }
+  if parent.key_usage > 0 && (parent.key_usage & KU_CERT_SIGN) == 0 {
+    return "x509: invalid signature: parent certificate cannot sign this kind of certificate"
+  }
+  if !parent.has_key {
+    return "x509: cannot verify signature: algorithm unimplemented"
+  }
+  check_err(c.sig_oid, c.sig_alg, parent, c.tbs, c.signature)
+}
+
+/// Go's checkSignature (SHA-1 not allowed) of the algorithm (oid and
+/// x509.xo's number) by parent's key: "" or Go's error text.
+fn check_err(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes) -> Str {
+  let unsupported = "x509: cannot verify signature: algorithm unimplemented"
+  // the algorithm's key type (RSA, DSA, ECDSA, Ed25519) and the insecure
+  // ones' names
+  let insecure = match oid {
+    "1.2.840.113549.1.1.4" => "MD5-RSA"
+    "1.2.840.113549.1.1.5" => "SHA1-RSA"
+    "1.3.14.3.2.29" => "SHA1-RSA"
+    "1.2.840.10040.4.3" => "DSA-SHA1"
+    "1.2.840.10045.4.1" => "ECDSA-SHA1"
+    _ => ""
+  }
+  if insecure != "" {
+    return "x509: cannot verify signature: insecure algorithm ${insecure}"
+  }
+  let want = if alg >= SIG_RSA_SHA256 && alg <= SIG_RSA_SHA512 || alg >= SIG_PSS_SHA256 && alg <= SIG_PSS_SHA512 {
+    "RSA"
+  } else if alg >= SIG_ECDSA_SHA256 && alg <= SIG_ECDSA_SHA512 {
+    "ECDSA"
+  } else if alg == SIG_ED25519 {
+    "Ed25519"
+  } else if oid == "2.16.840.1.101.3.4.3.2" {
+    "DSA"
+  } else {
+    return unsupported
+  }
+  let have = if parent.key_alg == KEY_RSA {
+    "*rsa.PublicKey"
+  } else if is_ec(parent.key_alg) {
+    "*ecdsa.PublicKey"
+  } else if parent.key_alg == KEY_ED25519 {
+    "ed25519.PublicKey"
+  } else {
+    // a DSA key: Go's switch has no case for it
+    return unsupported
+  }
+  let have_alg = if have == "*rsa.PublicKey" { "RSA" } else if have == "*ecdsa.PublicKey" { "ECDSA" } else { "Ed25519" }
+  if want != have_alg {
+    return "x509: signature algorithm specifies an ${want} public key, but have public key of type ${have}"
+  }
+  if want == "RSA" {
+    let e = rsa_key_err(parent.key)
+    if e != "" {
+      return e
+    }
+    return if check(alg, parent.key_alg, parent.key, data, sig) { "" } else { "crypto/rsa: verification error" }
+  }
+  if want == "ECDSA" {
+    return if check(alg, parent.key_alg, parent.key, data, sig) { "" } else { "x509: ECDSA verification failure" }
+  }
+  if check(alg, parent.key_alg, parent.key, data, sig) { "" } else { "x509: Ed25519 verification failure" }
+}
+
+/// crypto/rsa's checks of a public key before it verifies (the size,
+/// then FIPS's checkPublicKey): "" or the error text.
+fn rsa_key_err(key: Bytes) -> Str {
+  var k = cbyte.of(key)
+  var seq = match cbyte.read(k, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return "crypto/rsa: verification error"
+  }
+  let n = match cbyte.read_int_raw(seq) {
+    Some(x) => magnitude(cbyte.bytes(x))
+    None => return "crypto/rsa: verification error"
+  }
+  let e = cbyte.read_int64(seq) ?? 0
+  var bits = 0
+  if n.len() > 0 {
+    var top = Int(n[0])
+    var b = 0
+    while top > 0 {
+      b += 1
+      top = top >> 1
+    }
+    bits = (n.len() - 1) * 8 + b
+  }
+  if bits < 1024 {
+    return "crypto/rsa: ${bits}-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)"
+  }
+  if Int(n[n.len() - 1]) & 1 == 0 {
+    return "crypto/rsa: public modulus is even"
+  }
+  if e < 2 {
+    return "crypto/rsa: public exponent too small or negative"
+  }
+  if e & 1 == 0 {
+    return "crypto/rsa: public exponent is even"
+  }
+  if e > 2147483647 {
+    return "crypto/rsa: public exponent too large"
+  }
+  ""
+}
+
+/// Whether the certificate c is signed by the key of parent.
+pub fn signed_by(c: Cert, parent: Cert) -> Bool { check(c.sig_alg, parent.key_alg, parent.key, c.tbs, c.signature) }
+
+/// A description of c, one field a line (the test vectors' format; see
+/// std/rt internal_crypto.go).
+pub fn describe(c: Cert) -> Str {
+  var s = "version ${c.version}\nserial ${c.serial.to_hex()}\nsig_alg ${c.sig_alg}\nsignature ${c.signature.to_hex()}\n"
+  s = "${s}issuer ${c.issuer.to_hex()}\nsubject ${c.subject.to_hex()}\ncn ${c.cn}\n"
+  s = "${s}not_before ${c.not_before}\nnot_after ${c.not_after}\nkey_alg ${c.key_alg}\nkey ${c.key.to_hex()}\nspki ${c.spki.to_hex()}\n"
+  var ips: List[Str] = []
+  for ip in c.ips {
+    ips.push(ip.to_hex())
+  }
+  s = "${s}dns ${join(c.dns)}\nips ${join(ips)}\n"
+  s = "${s}ca ${c.is_ca} bc ${c.has_bc} max_path ${c.max_path}\nkey_usage ${if c.key_usage < 0 { 0 } else { c.key_usage }}\n"
+  s = "${s}ext_usage ${join(c.ext_usage)}\nski ${c.ski.to_hex()}\naki ${c.aki.to_hex()}\n"
+  s = "${s}permitted ${join(c.permitted_dns)}\nexcluded ${join(c.excluded_dns)}\nunhandled ${c.unhandled}\n"
+  "${s}tbs ${c.tbs.len()}\n"
+}
+
+fn join(xs: List[Str]) -> Str {
+  var s = ""
+  for (i, x) in xs.indexed() {
+    s = if i == 0 { x } else { "${s},${x}" }
+  }
+  s
+}
+
+/// internal.crypto_op's x509 ops (std/internal.xo): `parse` the fields of
+/// the certificate a, one a line (describe), or `error`; `check` the same
+/// with the error's text ("error " and Go's text); `signed_by` [1]
+/// when the certificate a carries a signature by the key of the
+/// certificate b, else [0]; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what == "check" {
+    // the error's text, or the description (the parsers' differential)
+    let p = parse(a)
+    return Some(if p.err != "" { "error ${p.err}".bytes() } else { describe(p.cert).bytes() })
+  }
+  if what == "parse" {
+    let p = parse(a)
+    if p.err != "" {
+      return Some(b"error")
+    }
+    return Some(describe(p.cert).bytes())
+  }
+  if what == "signed_by" {
+    let x = parse(a)
+    let parent = parse(b)
+    return Some(nistec.flag(x.err == "" && parent.err == "" && signed_by(x.cert, parent.cert)))
+  }
+  None
+}

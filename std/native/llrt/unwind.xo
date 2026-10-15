@@ -343,8 +343,8 @@ fn scratch() -> Int {
 /// segment, through AT_PHDR; the load bias from PT_PHDR when there is
 /// one), or 0.
 fn eh_frame_hdr() -> Int {
-  let ph = rt.auxval(linux.AT_PHDR)
-  let n = rt.auxval(linux.AT_PHNUM)
+  let ph = linux.auxval(linux.AT_PHDR)
+  let n = linux.auxval(linux.AT_PHNUM)
   if ph == 0 {
     return 0
   }
@@ -376,8 +376,8 @@ fn eh_frame_hdr() -> Int {
 /// so a dlopen racing a fault could be missed (the walk then ends and the
 /// fault is reported). 0 with no dynamic linker (a static program).
 fn object_hdr(pc: Int) -> Int {
-  let ph = rt.auxval(linux.AT_PHDR)
-  let n = rt.auxval(linux.AT_PHNUM)
+  let ph = linux.auxval(linux.AT_PHDR)
+  let n = linux.auxval(linux.AT_PHNUM)
   if ph == 0 {
     return 0
   }

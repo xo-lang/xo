@@ -1,0 +1,509 @@
+// The HTTP client's TLS connections in Xo (the zero-C audit's B31,
+// decision 0202): the client of tls13.xo over the connection's socket,
+// one ClientHello offering TLS 1.3 and 1.2 as Go's does, the handshake
+// going on in tls12.xo when the server chooses 1.2 (no second try), with the waits of xo_tls.c's bio_send and bio_recv (the poll
+// descriptor, the deadline, cancellation) and its texts of a failed
+// handshake. hclient.xo calls this file; its C path, tlsio_c.xo
+// (XO_LLRT_C=tlsio, decision 0193), forwards the same calls to xo_tls.c
+// on Mbed TLS. On macOS with the system's roots the Security framework
+// verifies, as Go's (tlscert.apple_trust). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
+// Windows and Linux are UNTESTED.
+use native/llrt/hconn
+use native/llrt/poll
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/tls12
+use native/llrt/tls13
+use native/llrt/tlscert
+use native/llrt/tlsname
+use native/llrt/tzrules
+use native/llrt/x509
+use native/rt
+use native/rthttp
+
+// the results of reads and writes (hclient.xo CC_*)
+const CC_OK: Int = 0
+const CC_TIMEOUT: Int = 2
+const CC_CANCELED: Int = 3
+const CC_ERR: Int = 4
+
+/// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
+const NOSIGNAL = 16384
+
+/// http.DefaultTransport's TLSHandshakeTimeout (10 s).
+const HANDSHAKE_NS = 10000000000
+
+/// The orders of the slot atomics (C11's): acquire, acq_rel.
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+/// A connection: the client (TLS 1.3's; TLS 1.2's in cl12 once the
+/// server chose it), its poll descriptor and deadline (monotonic ns, 0
+/// none), why the last socket operation failed (CC_*, 0 none), the first
+/// bytes received (for the texts of a server that is not TLS), whether
+/// the server's input ended, and data received that a read did not take.
+struct Conn {
+  cl: tls13.Client
+  cl12: List[tls12.Client]
+  pd: Int
+  when: Int
+  status: Int
+  first: Bytes
+  eof: Bool
+  pending: Bytes
+}
+
+// The client of either version.
+
+fn v12(c: Conn) -> Bool { !c.cl12.is_empty() }
+
+fn done(c: Conn) -> Bool { if v12(c) { c.cl12[0].state == tls12.DONE } else { c.cl.state == tls13.DONE } }
+
+fn broken(c: Conn) -> Bool { if v12(c) { c.cl12[0].state == tls12.FAILED } else { c.cl.state == tls13.FAILED } }
+
+fn err(c: Conn) -> Str { if v12(c) { c.cl12[0].err } else { c.cl.err } }
+
+fn closed(c: Conn) -> Bool { if v12(c) { c.cl12[0].closed } else { c.cl.closed } }
+
+fn alpn(c: Conn) -> Str { if v12(c) { c.cl12[0].alpn } else { c.cl.alpn } }
+
+fn take_out(var c: Conn) -> Bytes {
+  if v12(c) {
+    return tls12.take(c.cl12[0])
+  }
+  tls13.take(c.cl)
+}
+
+fn take_app(var c: Conn) -> Bytes {
+  if v12(c) {
+    return tls12.recv(c.cl12[0])
+  }
+  tls13.recv(c.cl)
+}
+
+fn put(var c: Conn, data: Bytes) {
+  if v12(c) {
+    tls12.send(c.cl12[0], data)
+  } else {
+    tls13.send(c.cl, data)
+  }
+}
+
+/// Feeds the server's bytes; when the server chose TLS 1.2, the
+/// handshake goes on in tls12.xo from its ServerHello.
+fn take_in(var c: Conn, data: Bytes) {
+  if v12(c) {
+    tls12.feed(c.cl12[0], data)
+    return
+  }
+  tls13.feed(c.cl, data)
+  if c.cl.state == tls13.HANDOFF {
+    let hs = tls13.hello_state(c.cl)
+    var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
+    cf.apple_svc = c.cl.conf.apple_svc
+    cf.zone_off = c.cl.conf.zone_off
+    cf.alpn = c.cl.conf.alpn
+    // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
+    cf.suites = c.cl.conf.legacy_suites
+    cf.groups = c.cl.conf.groups
+    var c12 = tls12.resume(cf, hs[0], hs[1], hs[2], c.cl.handoff)
+    tls12.feed(c12, tls13.unread(c.cl))
+    c.cl12 = [c12]
+  }
+}
+
+/// A connection's handle: a block whose word holds the record of an Any
+/// with the Conn (the value is replaced after each call).
+fn load(h: Int) -> Conn? {
+  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
+  rt.any_get[Conn](a)
+}
+
+fn save(h: Int, c: Conn) {
+  let old = rt.mem_load(h, 0, 8)
+  rt.mem_store(h, 0, keep(rt.any_of(c)), 8)
+  if old != 0 {
+    tasks.h_release(old)
+  }
+}
+
+/// The record of Any a with a reference more. a is a parameter: the
+/// caller holds it through the call, where a local's last use (obj_addr)
+/// would release it before rc.inc.
+fn keep(a: rt.Any) -> Int {
+  let s = rt.obj_addr(a)
+  rc.inc(s)
+  s
+}
+
+// ---------------------------------------------------------------------------
+// Roots
+
+/// The roots of Client.with_roots, parsed once (x509.xo, Go's
+/// AppendCertsFromPEM: the CERTIFICATE blocks that parse), and the error
+/// of a PEM with none. A Roots value holding them is the record of an
+/// rt.Any (a handle, which the pool of HTTP/2 connections counts); the
+/// system's roots stay the C's record (xo_tls.c sys_roots).
+struct RootsData {
+  certs: List[x509.Cert]
+  err: Str
+  system: Bool
+}
+
+fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
+
+/// Client.with_roots(pem)'s roots.
+pub fn roots_pem(pem: Bytes) -> rthttp.Roots {
+  var certs: List[x509.Cert] = []
+  let n = pem.len()
+  let der = raw.bytes_buf(n + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(raw.bytes_addr(pem), n, pos, raw.bytes_addr(der))
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" {
+      let p = x509.parse(raw.str_at(raw.bytes_addr(der), k).bytes())
+      if p.err == "" {
+        certs.push(p.cert)
+      }
+    }
+  }
+  let err = if certs.is_empty() { "tls: no certificates found in PEM input" } else { "" }
+  as_roots(rt.any_of(RootsData{certs: certs, err: err, system: false}))
+}
+
+fn roots_data(r: Int) -> RootsData? { rt.any_get[RootsData](rt.obj_at[rt.Any](r)) }
+
+/// The error of with_roots's PEM, "" when it had certificates.
+pub fn roots_err(r: rthttp.Roots) -> Str {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => d.err
+    None => ""
+  }
+}
+
+/// The client's default roots, the system's: one record per process
+/// (static word 31, so clients share pooled connections as with one
+/// record), made at the first client. On macOS the Security framework
+/// verifies and it holds no certificates; elsewhere it holds the
+/// system's, parsed then (tlscert.system_ders, x509.xo).
+pub fn roots_system() -> rthttp.Roots {
+  let w = rt.static_word(31)
+  var s = rt.slot_load(w, 0, ACQUIRE)
+  if s == 0 {
+    var certs: List[x509.Cert] = []
+    for der in tlscert.system_ders() {
+      let p = x509.parse(der)
+      if p.err == "" {
+        certs.push(p.cert)
+      }
+    }
+    let mine = keep(rt.any_of(RootsData{certs: certs, err: "", system: true}))
+    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
+      s = mine
+    } else {
+      tasks.h_release(mine)
+      s = rt.slot_load(w, 0, ACQUIRE)
+    }
+  }
+  rt.obj_at[rthttp.Roots](s)
+}
+
+/// The outcome of a handshake: CC_*, the connection (0 on a failure),
+/// the ClientErr tag of a failure (2 Connect for a server's alert, else
+/// 4 Protocol) and its text.
+pub struct Start {
+  pub status: Int
+  pub conn: Int
+  pub kind: Int
+  pub msg: Str
+}
+
+fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, conn: 0, kind: kind, msg: msg} }
+
+/// The client's handshake on poll descriptor pd for host (the URL's
+/// host, IPv6 in brackets) with roots (a rthttp.Roots record) by the
+/// deadline dl (0 none; and the 10 s TLSHandshakeTimeout), as
+/// xo_tls.c's tls_client_start.
+pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
+  let data = match roots_data(roots) {
+    Some(d) => d
+    None => RootsData{certs: [], err: "", system: false}
+  }
+  let system = data.system
+  // the framework decides on macOS with the system's roots
+  let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
+  let certs = data.certs
+  if system && apple == 0 && certs.is_empty() {
+    return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
+  }
+  var name = host
+  if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
+    name = raw.str_slice(name, 1, name.len() - 1)
+  }
+  var cf = tls13.conf(name, certs, sysio.real_ns() / 1000000000)
+  cf.apple_svc = apple
+  // Go's texts show the time in time.Local
+  cf.zone_off = local_offset(cf.now)
+  // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
+  cf.alpn = ["h2", "http/1.1"]
+  cf.legacy_suites = tls12.default_suites()
+  // XO_TLS_MLKEM=0: no X25519MLKEM768 (Go's GODEBUG=tlsmlkem=0)
+  cf.groups = tls13.client_groups()
+  let hs = hconn.deadline(HANDSHAKE_NS)
+  let limit = if dl != 0 && dl < hs { dl } else { hs }
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
+  while !done(c) && !broken(c) {
+    if !flush(c) || !fill(c) {
+      break
+    }
+  }
+  if done(c) {
+    c.when = dl
+    let h = rt.heap_large(8)
+    rt.mem_store(h, 0, 0, 8)
+    save(h, c)
+    return Start{status: CC_OK, conn: h, kind: 4, msg: ""}
+  }
+  // the alert of a failure goes out when it can
+  let _sent = flush(c)
+  if c.status == CC_TIMEOUT || c.status == CC_CANCELED {
+    return failed(c.status, 4, "")
+  }
+  if c.first.len() >= 5 && c.first[0..5] == b"HTTP/" {
+    return failed(CC_ERR, 4, "http: server gave HTTP response to HTTPS client")
+  }
+  let e = err(c)
+  if e.starts_with("remote error: ") {
+    return failed(CC_ERR, 2, e)
+  }
+  if !e.is_empty() {
+    return failed(CC_ERR, 4, e)
+  }
+  if c.first.len() >= 1 && c.first[0] != 21 && c.first[0] != 22 {
+    return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake")
+  }
+  failed(CC_ERR, 4, "EOF")
+}
+
+/// Go's time.Local offset from UTC at now: TZ ("" or UTC: UTC; else that
+/// zone from the host's database), else the machine's zone, else UTC.
+/// tzrules.xo, not tz.xo: the program's zone table is std/time's.
+fn local_offset(now: Int) -> Int {
+  let tzv = process.env_get("TZ")
+  if !tzv.is_empty() {
+    let name = tzv[0].trim_prefix(":")
+    if name == "" || name == "UTC" {
+      return 0
+    }
+    return tzrules.host_offset(name, now) ?? 0
+  }
+  let name = tzrules.local_name()
+  let first = if name != "Local" { tzrules.host_offset(name, now) } else { None }
+  match first {
+    Some(x) => x
+    None => tzrules.host_offset("Local", now) ?? 0
+  }
+}
+
+/// Frees the system's roots record (at exit, before the leak check:
+/// cabi_http.xo's streams_free).
+pub fn roots_free() {
+  let s = rt.slot_swap(rt.static_word(31), 0, 0, ACQ_REL)
+  if s != 0 {
+    tasks.h_release(s)
+  }
+}
+
+/// Sends what the client has to send: whether it all went.
+fn flush(var c: Conn) -> Bool {
+  let b = take_out(c)
+  let n = b.len()
+  if n == 0 {
+    return true
+  }
+  let fd = rt.mem_load(c.pd, 8, 4)
+  let p = raw.bytes_addr(b)
+  var off = 0
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if !would_block(w) {
+      c.status = CC_ERR
+      return false
+    }
+    let r = poll.pd_wait(c.pd, true, c.when)
+    if r != poll.READY {
+      c.status = wait_res(r)
+      return false
+    }
+  }
+  true
+}
+
+/// Reads what the server sent into the client: false when the input
+/// ended or a wait failed.
+fn fill(var c: Conn) -> Bool {
+  let fd = rt.mem_load(c.pd, 8, 4)
+  let buf = raw.bytes_buf(16384)
+  while true {
+    if poll.canceled() {
+      c.status = CC_CANCELED
+      return false
+    }
+    let r = sock.read(fd, raw.bytes_addr(buf), 16384)
+    if r > 0 {
+      let got = raw.bytes_len(buf, r)
+      if c.first.len() < 5 {
+        let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
+        c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
+      }
+      take_in(c, got)
+      return true
+    }
+    if r == 0 {
+      c.eof = true
+      return false
+    }
+    if r == -sock.EINTR {
+      continue
+    }
+    if !would_block(r) {
+      c.status = CC_ERR
+      return false
+    }
+    let w = poll.pd_wait(c.pd, false, c.when)
+    if w != poll.READY {
+      c.status = wait_res(w)
+      return false
+    }
+  }
+  false
+}
+
+/// Reads decrypted bytes into the n bytes at p: the count, 0 at the end
+/// of the stream (close_notify or the socket's end), or -CC_* (xo_tls.c
+/// tls_read).
+pub fn read(h: Int, p: Int, n: Int) -> Int {
+  var c = match load(h) {
+    Some(x) => x
+    None => return -CC_ERR
+  }
+  var out = 0
+  while true {
+    // what does not fit stays for the next read
+    if c.pending.is_empty() {
+      c.pending = take_app(c)
+    }
+    if c.pending.len() > 0 {
+      let k = if c.pending.len() < n { c.pending.len() } else { n }
+      rt.mem_copy(p, raw.bytes_addr(c.pending), k)
+      c.pending = c.pending[k..c.pending.len()]
+      out = k
+      break
+    }
+    if closed(c) || c.eof {
+      break
+    }
+    if broken(c) {
+      c.status = CC_ERR
+      out = -CC_ERR
+      break
+    }
+    // a KeyUpdate's answer, an alert
+    if !flush(c) || !fill(c) {
+      if !c.eof {
+        out = -(if c.status == 0 { CC_ERR } else { c.status })
+        break
+      }
+    }
+  }
+  let _sent = flush(c)
+  save(h, c)
+  out
+}
+
+/// Writes the n bytes at p: CC_OK or why it failed.
+pub fn write(h: Int, p: Int, n: Int) -> Int {
+  var c = match load(h) {
+    Some(x) => x
+    None => return CC_ERR
+  }
+  if !done(c) {
+    return CC_ERR
+  }
+  put(c, raw.str_at(p, n).bytes())
+  let ok = flush(c)
+  save(h, c)
+  if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
+}
+
+/// The text of a fatal alert the server sent after the handshake, "" for
+/// none.
+pub fn alert(h: Int) -> Str {
+  match load(h) {
+    Some(c) => if err(c).starts_with("remote error: ") { err(c) } else { "" }
+    None => ""
+  }
+}
+
+/// Sets the deadline of the connection's socket waits.
+pub fn set_when(h: Int, dl: Int) {
+  if let Some(x) = load(h) {
+    var c = x
+    c.when = dl
+    c.status = 0
+    save(h, c)
+  }
+}
+
+/// Whether ALPN chose HTTP/2.
+pub fn alpn_h2(h: Int) -> Bool {
+  match load(h) {
+    Some(c) => alpn(c) == "h2"
+    None => false
+  }
+}
+
+/// Frees a connection (0: none).
+pub fn free(h: Int) {
+  if h == 0 {
+    return
+  }
+  let s = rt.mem_load(h, 0, 8)
+  if s != 0 {
+    tasks.h_release(s)
+  }
+  rt.heap_release(h - 8)
+}
+
+fn would_block(e: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => e == -35
+    TargetOs.Windows => e == -140 || e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
+  }
+}
+
+fn wait_res(w: Int) -> Int {
+  if w == poll.TIMEOUT {
+    return CC_TIMEOUT
+  }
+  if w == poll.CANCELED {
+    return CC_CANCELED
+  }
+  CC_ERR
+}

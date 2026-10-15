@@ -1,0 +1,1578 @@
+// The processes of the native runtime, written in Xo (work item B25 of
+// bench/results/zero-c-audit-refresh-2026-10-13.md; they were
+// std/llrt/xo_proc.c): Proc.kill and the signals a test's FakeProc.kill
+// records; Proc.run, Cmd.output, run, and spawn, pipelines, and children
+// on macOS and Linux (stage 4) and Windows (stage 5: CreateProcessW and
+// PIPE_NOWAIT pipes through windows.xo, polled in steps; UNTESTED on
+// windows).
+use native/llrt/darwin
+use native/llrt/linux
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/sock
+use native/llrt/stdio
+use native/llrt/sysio
+use native/llrt/testworld
+use native/llrt/windows
+use native/rt
+use native/sys_darwin
+
+// FakeProc.kill's record in the program's static words (rt.xo's table):
+// its lock, then a vector (the address of its entries from
+// rt.heap_large, its length, its capacity) of blocks ("NAME PID": the
+// length, then the bytes).
+const W_LOCK = 48
+const W_VEC = 49
+const W_LEN = 50
+const W_CAP = 51
+
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// The signals of Proc.kill by index (std/native/prelude.xo proc_kill).
+const NAMES: List[Str] = ["HUP", "INT", "QUIT", "KILL", "TERM", "USR1", "USR2", "CONT", "STOP"]
+
+/// The signal number of index i on the target (Linux and macOS differ
+/// for USR1, USR2, CONT, and STOP).
+fn signo(i: Int) -> Int {
+  let linux_nums = [1, 2, 3, 9, 15, 10, 12, 18, 19]
+  let darwin_nums = [1, 2, 3, 9, 15, 30, 31, 19, 17]
+  match target.os {
+    TargetOs.Darwin => darwin_nums[i]
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => linux_nums[i]
+  }
+}
+
+/// Proc.kill: sends signal index sig to pid (proc_kill checked both): the
+/// empty list, or the error's message (Go's errno text) in a list of
+/// one. A test's FakeProc records "NAME PID" instead.
+pub fn kill(pid: Int, sig: Int) -> List[Str] {
+  if sig < 0 || sig >= NAMES.len() || pid <= 0 {
+    return ["invalid signal or process id"]
+  }
+  if testworld.fake(testworld.REAL_PROC) {
+    record("${NAMES[sig]} ${pid}")
+    return []
+  }
+  let l = sysio.layer()
+  if l == 3 {
+    // no signals: KILL terminates the process (std/rt's sendSignal)
+    if sig != 3 {
+      return ["signal ${NAMES[sig]} is not supported on this system"]
+    }
+    let m = windows.terminate(pid)
+    return if m.is_empty() { [] } else { [m] }
+  }
+  let r = if l == 2 { darwin.kill(pid, signo(sig)) } else { linux.kill(pid, signo(sig)) }
+  if r == 0 {
+    return []
+  }
+  [sysio.err_msg(l, -r)]
+}
+
+fn lock() {
+  let w = rt.static_word(W_LOCK)
+  if !rt.slot_cas(w, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(w)
+  }
+}
+
+fn unlock() {
+  let w = rt.static_word(W_LOCK)
+  if rt.slot_swap(w, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(w)
+  }
+}
+
+/// Appends s to FakeProc.kill's record.
+fn record(s: Str) {
+  lock()
+  let n = rt.mem_load(rt.static_word(W_LEN), 0, 8)
+  if n == rt.mem_load(rt.static_word(W_CAP), 0, 8) {
+    let c = if n == 0 { 8 } else { 2 * n }
+    let old = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+    let v = if old == 0 { rt.heap_large(8 * c) } else { rt.heap_large_resize(old - 8, 8 * c) }
+    rt.mem_store(rt.static_word(W_VEC), 0, v, 8)
+    rt.mem_store(rt.static_word(W_CAP), 0, c, 8)
+  }
+  let b = rt.heap_large(s.len() + 8)
+  rt.mem_store(b, 0, s.len(), 8)
+  rt.mem_copy(b + 8, raw.data(s), s.len())
+  rt.mem_store(rt.mem_load(rt.static_word(W_VEC), 0, 8), 8 * n, b, 8)
+  rt.mem_store(rt.static_word(W_LEN), 0, n + 1, 8)
+  unlock()
+}
+
+/// FakeProc.killed: the recorded signals, oldest first.
+pub fn killed() -> List[Str] {
+  lock()
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  var out: List[Str] = []
+  for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
+    let b = rt.mem_load(v, 8 * i, 8)
+    out.push(raw.str_at(b + 8, rt.mem_load(b, 0, 8)))
+  }
+  unlock()
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Starting a command (xo_proc.c's pr_start on macOS and Linux; Windows'
+// is launch_windows below, over windows.xo's CreateProcessW)
+
+/// The standard stream descriptors of start: the null device, the
+/// program's own, and (standard error) a copy of standard output.
+const FD_NULL = -1
+const FD_INHERIT = -2
+const FD_DUP_OUT = -3
+
+/// The zero terminated string at address a.
+fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
+
+/// A malloc'd zero terminated copy of s for the C runtime to free (the
+/// block rt.heap_large returns starts 8 bytes after malloc's address).
+fn c_owned(s: Str) -> Int {
+  let a = rt.heap_large(s.len() + 1) - 8
+  rt.mem_copy(a, raw.data(s), s.len())
+  rt.mem_store(a, s.len(), 0, 1)
+  a
+}
+
+/// s with its first letter in lower case (Go's errno texts).
+fn lower_first(s: Str) -> Str {
+  let b = s.bytes()
+  if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
+  }
+  s
+}
+
+/// stat of path (following links) on layer l: the mode and 0, or the
+/// errno.
+fn mode_of(l: Int, path: Str) -> (Int, Int) {
+  if l == 2 {
+    let (st, e) = darwin.stat(path, true)
+    return (st.mode, e)
+  }
+  let (st, e) = linux.stat(path, true)
+  (st.mode, e)
+}
+
+/// Whether path is executable by this process (access X_OK).
+fn executable(l: Int, path: Str) -> Bool {
+  let z = path + "\u{0}"
+  let r = if l == 2 { Int(sys_darwin.access(raw.data(z), 1)) } else { linux.access_at(raw.data(z), 1) }
+  r == 0
+}
+
+/// exec.LookPath of a name without a slash: the first executable regular
+/// file of that name in PATH, or "".
+fn look_path(l: Int, cmd: Str) -> Str {
+  let path = process.real_env_get("PATH")
+  if path.is_empty() {
+    return ""
+  }
+  for d0 in path[0].split(":") {
+    let d = if d0.is_empty() { "." } else { d0 }
+    let full = d + "/" + cmd
+    let (mode, e) = mode_of(l, full)
+    if e == 0 && (mode & 61440) == 32768 && (mode & 73) != 0 && executable(l, full) {
+      return full
+    }
+  }
+  ""
+}
+
+/// Starts the command named by the C string name (argv and envp the C's
+/// NULL ended arrays, envp 0 for the program's environment; dir 0 for
+/// the program's) with standard streams inf, outf, errf (descriptors or
+/// FD_*): '0' started, '1' not found, '2' failed; the pid and the
+/// message (a malloc'd C string, or 0) in the two words at res. A port of
+/// xo_proc.c's pr_start for macOS (posix_spawn) and Linux (fork and
+/// execve, UNTESTED on Linux).
+pub fn start(name: Int, dir: Int, argv: Int, envp0: Int, inf: Int, outf: Int, errf: Int, res: Int) -> Int {
+  let l = sysio.layer()
+  let nm = cstr(name)
+  rt.mem_store(res, 0, 0, 8)
+  rt.mem_store(res, 8, 0, 8)
+  var file = nm
+  if !nm.contains("/") {
+    file = look_path(l, nm)
+    if file.is_empty() {
+      rt.mem_store(res, 8, c_owned(nm), 8)
+      return 49
+    }
+  }
+  if dir != 0 {
+    // os.StartProcess checks the directory first
+    let d = cstr(dir)
+    let (_m, e) = mode_of(l, d)
+    if e != 0 {
+      let enoent = if l == 2 { 2 } else { linux.ENOENT }
+      if e == enoent {
+        rt.mem_store(res, 8, c_owned(nm), 8)
+        return 49
+      }
+      rt.mem_store(res, 8, c_owned("chdir ${d}: " + lower_first(sysio.err_msg(l, e))), 8)
+      return 50
+    }
+  }
+  if outf == FD_INHERIT || errf == FD_INHERIT || errf == FD_DUP_OUT {
+    // the program's output so far comes first
+    stdio.flush()
+  }
+  let envp = if envp0 == 0 { process.environ_addr() } else { envp0 }
+  let zfile = file + "\u{0}"
+  let (pid, e) = if l == 2 { spawn_darwin(raw.data(zfile), dir, argv, envp, inf, outf, errf) } else { spawn_linux(raw.data(zfile), dir, argv, envp, inf, outf, errf) }
+  let _k = zfile.len()
+  if e == 2 {
+    rt.mem_store(res, 8, c_owned(nm), 8)
+    return 49
+  }
+  if e != 0 {
+    rt.mem_store(res, 8, c_owned("fork/exec ${file}: " + lower_first(sysio.err_msg(l, e))), 8)
+    return 50
+  }
+  rt.mem_store(res, 0, pid, 8)
+  48
+}
+
+/// posix_spawn of the zero terminated path at file: the pid and 0, or 0
+/// and the errno.
+fn spawn_darwin(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int) -> (Int, Int) {
+  // fa and at (a pointer each), the pid (4 bytes), the two sigsets
+  let buf = raw.bytes_buf(64)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 64)
+  let fa = b
+  let at = b + 8
+  let pidw = b + 16
+  let none = b + 24
+  let def = b + 32
+  let devnull = "/dev/null\u{0}"
+  let _i = sys_darwin.posix_spawn_file_actions_init(fa)
+  let fds = [inf, outf, errf]
+  for k in 0..3 {
+    let fd = fds[k]
+    if fd == FD_NULL {
+      let _a = sys_darwin.posix_spawn_file_actions_addopen(fa, k, raw.data(devnull), if k == 0 { 0 } else { 1 }, 0)
+    } else if fd == FD_INHERIT {
+      let _a = sys_darwin.posix_spawn_file_actions_addinherit_np(fa, k)
+    } else if fd == FD_DUP_OUT {
+      let _a = sys_darwin.posix_spawn_file_actions_adddup2(fa, 1, 2)
+    } else {
+      let _a = sys_darwin.posix_spawn_file_actions_adddup2(fa, fd, k)
+    }
+  }
+  if dir != 0 {
+    let _a = sys_darwin.posix_spawn_file_actions_addchdir_np(fa, dir)
+  }
+  let _j = sys_darwin.posix_spawnattr_init(at)
+  // SIGPIPE 13, SIGINT 2, SIGTERM 15 back to their defaults; no mask
+  rt.mem_store(def, 0, (1 << 12) | (1 << 1) | (1 << 14), 4)
+  // POSIX_SPAWN_SETSIGDEF 4, SETSIGMASK 8, CLOEXEC_DEFAULT 0x4000
+  let _f = sys_darwin.posix_spawnattr_setflags(at, 4 | 8 | 16384)
+  let _s = sys_darwin.posix_spawnattr_setsigmask(at, none)
+  let _d = sys_darwin.posix_spawnattr_setsigdefault(at, def)
+  let e = Int(sys_darwin.posix_spawn(pidw, file, fa, at, argv, envp))
+  let _x = sys_darwin.posix_spawn_file_actions_destroy(fa)
+  let _y = sys_darwin.posix_spawnattr_destroy(at)
+  let pid = rt.mem_load(pidw, 0, 4)
+  let _k = buf.len() + devnull.len()
+  if e != 0 { (0, e) } else { (pid, 0) }
+}
+
+/// fork and execve of the zero terminated path at file, as Go's
+/// forkAndExecInChild: the child makes only system calls over addresses
+/// prepared here, and reports a failed exec's errno through a close on
+/// exec pipe. The pid and 0, or 0 and the errno. UNTESTED on Linux.
+fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int) -> (Int, Int) {
+  // the error pipe (two 4 byte words), the zeroed sigaction and sigset
+  // (32 bytes at 8), the errno word (at 48), "/dev/null" (at 56)
+  let buf = raw.bytes_buf(80)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 80)
+  let dn = "/dev/null"
+  rt.mem_copy(b + 56, raw.data(dn), dn.len())
+  if linux.pipe2(b, linux.O_CLOEXEC) < 0 {
+    return (0, 24)
+  }
+  let rd = rt.mem_load(b, 0, 4)
+  let wr = rt.mem_load(b, 4, 4)
+  let pid = linux.fork()
+  if pid == 0 {
+    child(file, dir, argv, envp, inf, outf, errf, b, wr)
+  }
+  let _c = linux.close(wr)
+  if pid < 0 {
+    let _r = linux.close(rd)
+    return (0, -pid)
+  }
+  // 4 bytes of errno when the exec failed; none (the pipe closed by the
+  // exec) when it succeeded
+  var got = linux.read_at(rd, b + 48, 4)
+  while got == -linux.EINTR {
+    got = linux.read_at(rd, b + 48, 4)
+  }
+  let _r = linux.close(rd)
+  let _k = buf.len()
+  if got == 4 {
+    let e = rt.mem_load(b, 48, 4)
+    // reap the child that failed to exec
+    let _w = wait_any(pid)
+    return (0, e)
+  }
+  (pid, 0)
+}
+
+/// The child of spawn_linux: system calls only, then execve; on failure
+/// writes the errno to wr and exits 127. Never returns.
+fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, b: Int, wr: Int) {
+  // default signal handlers for SIGPIPE, SIGINT, SIGTERM; an empty mask
+  let _p = linux.rt_sigaction(13, b + 8, 0)
+  let _i = linux.rt_sigaction(2, b + 8, 0)
+  let _t = linux.rt_sigaction(15, b + 8, 0)
+  let _m = linux.rt_sigprocmask(2, b + 40, 0)
+  var e = child_fd(inf, 0, b)
+  if e == 0 {
+    e = child_fd(outf, 1, b)
+  }
+  if e == 0 {
+    e = child_fd(errf, 2, b)
+  }
+  if e == 0 && dir != 0 {
+    let r = linux.chdir_at(dir)
+    if r < 0 {
+      e = -r
+    }
+  }
+  if e == 0 {
+    e = -linux.execve(file, argv, envp)
+  }
+  rt.mem_store(b, 48, e, 4)
+  let _w = linux.write_at(wr, b + 48, 4)
+  let _x = linux.exit_group(127)
+}
+
+/// Standard stream k of the child from fd (or FD_*): 0, or the errno.
+fn child_fd(fd: Int, k: Int, b: Int) -> Int {
+  if fd == FD_INHERIT {
+    return 0
+  }
+  var src = fd
+  if fd == FD_NULL {
+    src = linux.open_at(b + 56, if k == 0 { linux.O_RDONLY } else { linux.O_WRONLY })
+    if src < 0 {
+      return -src
+    }
+  } else if fd == FD_DUP_OUT {
+    src = 1
+  }
+  if src == k {
+    // dup3 refuses one descriptor twice: clear its close on exec flag
+    let r = linux.set_fd_flags(k, 0)
+    return if r < 0 { -r } else { 0 }
+  }
+  let r = linux.dup3(src, k, 0)
+  return if r < 0 { -r } else { 0 }
+}
+
+/// waitpid(pid) of a child that failed to exec (wait4, blocking).
+fn wait_any(pid: Int) -> Int { linux.wait4(pid, 0) }
+
+// ---------------------------------------------------------------------------
+// Proc.run, Cmd.output and run, and pipelines (xo_proc.c's xo_proc_run
+// and xo_proc_exec, stage 4 of B25) on macOS and Linux: the commands
+// start through start, their output and error streams are read through
+// pipes that wait on the event loop's poller, the standard input data is
+// written to its pipe in the same loop (nonblocking; the C wrote it from
+// a thread of its own), and the exit is polled with waitpid in steps
+// that a cancellation ends (killing the command). UNTESTED on Linux. On
+// Windows (UNTESTED on windows) the commands start through
+// launch_windows, the program's pipe ends are PIPE_NOWAIT handles polled
+// in steps (no poller records), and the exit is the process handle's.
+
+/// A command of a spec (std/native/llrt/procspec.xo's words, xo_proc.c's
+/// pr_parse): its name, its directory ("" the program's), its flags (1 an
+/// environment set, 2 inherit, 4 merge_stderr), its arguments (the name
+/// first), and its environment.
+struct Spec {
+  name: Str
+  dir: Str
+  flags: Int
+  argv: List[Str]
+  env: List[Str]
+  /// the Windows command line (procspec.xo quoted it)
+  cmdline: Str = ""
+}
+
+/// Word i of l, "" past its end.
+fn word(l: List[Str], i: Int) -> Str { if i < l.len() { l[i] } else { "" } }
+
+/// The count in word i of l (decimal digits; anything else ends it, as
+/// strtoll; a negative count is 0).
+fn count(l: List[Str], i: Int) -> Int {
+  var v = 0
+  for c in word(l, i).bytes() {
+    if c < 48 || c > 57 {
+      break
+    }
+    v = v * 10 + Int(c) - 48
+  }
+  v
+}
+
+/// The commands of spec: name, directory, flags, the arguments' count
+/// and the arguments, the environment's count and the variables, the
+/// count of variables added (procspec.xo merged them) and those, and the
+/// Windows command line.
+fn parse(spec: List[Str]) -> List[Spec] {
+  var out: List[Spec] = []
+  var i = 0
+  while i < spec.len() {
+    let name = word(spec, i)
+    let dir = word(spec, i + 1)
+    let flags = count(spec, i + 2)
+    let na = count(spec, i + 3)
+    i += 4
+    var argv = [name]
+    for k in 0..na {
+      argv.push(word(spec, i + k))
+    }
+    i += na
+    let ne = count(spec, i)
+    i += 1
+    var env: List[Str] = []
+    for k in 0..ne {
+      env.push(word(spec, i + k))
+    }
+    i += ne
+    i += count(spec, i) + 1
+    let cl = word(spec, i)
+    i += 1
+    out.push(Spec{name: name, dir: dir, flags: flags, argv: argv, env: env, cmdline: cl})
+  }
+  out
+}
+
+/// A malloc'd block (release it with rt.heap_release) holding the NULL
+/// ended array of C strings of ss, then their zero terminated bytes.
+fn c_strs(ss: List[Str]) -> Int {
+  let head = 8 * (ss.len() + 1)
+  var size = head
+  for s in ss {
+    size += s.len() + 1
+  }
+  let m = rt.heap_large(size) - 8
+  var p = m + head
+  for k in 0..ss.len() {
+    let s = ss[k]
+    rt.mem_store(m, 8 * k, p, 8)
+    rt.mem_copy(p, raw.data(s), s.len())
+    rt.mem_store(p, s.len(), 0, 1)
+    p += s.len() + 1
+  }
+  rt.mem_store(m, 8 * ss.len(), 0, 8)
+  m
+}
+
+/// Starts command c with standard streams inf, outf, errf (descriptors
+/// or FD_*): the status ("0" started, "1" not found, "2" failed), the
+/// pid, and the failure's message.
+fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
+  if sysio.layer() == 3 {
+    return launch_windows(c, inf, outf, errf)
+  }
+  let nd = c_strs([c.name, c.dir])
+  let argv = c_strs(c.argv)
+  let envp = if (c.flags & 1) != 0 { c_strs(c.env) } else { 0 }
+  let res = rt.heap_large(16)
+  let dir = if c.dir.is_empty() { 0 } else { rt.mem_load(nd, 8, 8) }
+  let st = start(rt.mem_load(nd, 0, 8), dir, argv, envp, inf, outf, errf, res)
+  let pid = rt.mem_load(res, 0, 8)
+  let m = rt.mem_load(res, 8, 8)
+  var msg = ""
+  if m != 0 {
+    msg = cstr(m)
+    rt.heap_release(m)
+  }
+  rt.heap_release(res - 8)
+  rt.heap_release(nd)
+  rt.heap_release(argv)
+  if envp != 0 {
+    rt.heap_release(envp)
+  }
+  (raw.byte_str(st), pid, msg)
+}
+
+/// launch on Windows (xo_proc.c pr_start and pr_w_spawn): exec.LookPath
+/// with PATHEXT, the directory checked first, then CreateProcessW; the
+/// process handle is the pid. UNTESTED on windows.
+fn launch_windows(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
+  let path = process.real_env_get("PATH")
+  let pe = process.real_env_get("PATHEXT")
+  let file = windows.look_path(c.name, if path.is_empty() { "" } else { path[0] }, if pe.is_empty() { "" } else { pe[0] })
+  if file.is_empty() {
+    return ("1", 0, c.name)
+  }
+  if !c.dir.is_empty() {
+    // os.StartProcess checks the directory first
+    let (_st, e) = windows.stat(c.dir, true)
+    if e != 0 {
+      if e == windows.ENOENT {
+        return ("1", 0, c.name)
+      }
+      return ("2", 0, "chdir ${c.dir}: " + lower_first(sysio.err_msg(3, e)))
+    }
+  }
+  if outf == FD_INHERIT || errf == FD_INHERIT || errf == FD_DUP_OUT {
+    // the program's output so far comes first
+    stdio.flush()
+  }
+  var cl = c.cmdline
+  if cl.is_empty() {
+    // Proc.run has no spec: its arguments quoted as procspec.xo quotes
+    var parts: List[Str] = []
+    for a in c.argv {
+      parts.push(windows.cmd_quote(a))
+    }
+    cl = parts.join(" ")
+  }
+  let (h, e) = windows.spawn(file, cl, c.dir, c.env, (c.flags & 1) != 0, [inf, outf, errf])
+  if e == 0 {
+    return ("0", h, "")
+  }
+  if windows.not_found(e) {
+    return ("1", 0, c.name)
+  }
+  ("2", 0, "fork/exec ${file}: " + windows.win_text(e))
+}
+
+/// EAGAIN on layer l.
+fn eagain(l: Int) -> Int {
+  if l == 3 {
+    return windows.EAGAIN
+  }
+  if l == 2 { 35 } else { 11 }
+}
+
+const EINTR = 4
+
+/// Closes descriptor (or on Windows handle) fd unless it is negative.
+fn close_fd(l: Int, fd: Int) {
+  if fd >= 0 {
+    let _r = if l == 3 { windows.close(fd) } else if l == 2 { darwin.close(fd) } else { linux.close(fd) }
+  }
+}
+
+fn read_fd(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.pipe_read(fd, a, n)
+  }
+  if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
+}
+
+fn write_fd(l: Int, fd: Int, a: Int, n: Int) -> Int {
+  if l == 3 {
+    return windows.pipe_write(fd, a, n)
+  }
+  if l == 2 { darwin.write_at(fd, a, n) } else { linux.write_at(fd, a, n) }
+}
+
+fn kill9(l: Int, pid: Int) {
+  if l == 3 {
+    windows.kill_proc(pid)
+    return
+  }
+  let _r = if l == 2 { darwin.kill(pid, 9) } else { linux.kill(pid, 9) }
+}
+
+/// A pipe whose ends close on exec, its end nb (0 or 1; -1 neither)
+/// nonblocking: the read end, the write end, and 0, or the errno.
+fn pipe(l: Int, nb: Int) -> (Int, Int, Int) {
+  if l == 3 {
+    // PIPE_NOWAIT handles no child inherits (CreateProcessW names its
+    // three)
+    return windows.pipe(nb)
+  }
+  let a = rt.heap_large(8)
+  let r = if l == 2 { darwin.pipe_at(a) } else { linux.pipe2(a, linux.O_CLOEXEC) }
+  let fds = [rt.mem_load(a, 0, 4), rt.mem_load(a, 4, 4)]
+  rt.heap_release(a - 8)
+  if r < 0 {
+    return (-1, -1, -r)
+  }
+  if l == 2 {
+    // F_SETFD FD_CLOEXEC
+    let _a = sock.fcntl(fds[0], 2, 1)
+    let _b = sock.fcntl(fds[1], 2, 1)
+  }
+  if nb >= 0 {
+    // F_GETFL, F_SETFL with O_NONBLOCK
+    let fl = sock.fcntl(fds[nb], 3, 0)
+    let _c = sock.fcntl(fds[nb], 4, fl | (if l == 2 { 4 } else { 2048 }))
+  }
+  (fds[0], fds[1], 0)
+}
+
+/// Reads the descriptors fds (nonblocking read ends) until each ends,
+/// writing data to feed (a nonblocking write end, closed when written;
+/// -1 none) meanwhile: what each gave, and whether the task was canceled
+/// first (xo_proc.c pr_collect and pr_feed). Every descriptor is closed.
+fn collect(l: Int, fds: List[Int], feed: Int, data: Bytes) -> (List[Str], Bool) {
+  let n = fds.len()
+  var pds: List[Int] = []
+  var open: List[Bool] = []
+  for fd in fds {
+    // Windows' pipes are not the poller's: 0, polled in steps
+    pds.push(if l == 3 { 0 } else { poll.pd_new(fd, false) })
+    open.push(true)
+  }
+  // the bytes read, in pieces, and the stream of each piece
+  var pieces: List[Str] = []
+  var owner: List[Int] = []
+  var left = n
+  var fin = feed
+  var off = 0
+  let b = rt.heap_large(65536)
+  var canceled = false
+  while left > 0 || fin >= 0 {
+    if poll.canceled() {
+      canceled = true
+      break
+    }
+    var got = false
+    if fin >= 0 {
+      if off < data.len() {
+        let w = write_fd(l, fin, raw.bytes_addr(data) + off, data.len() - off)
+        if w > 0 {
+          off += w
+          got = true
+        } else if w != -EINTR && w != -eagain(l) {
+          // the command does not read it (EPIPE): os/exec stops too
+          off = data.len()
+        }
+      }
+      if off >= data.len() {
+        close_fd(l, fin)
+        fin = -1
+        got = true
+      }
+    }
+    for i in 0..n {
+      if open[i] {
+        while true {
+          let r = read_fd(l, fds[i], b, 65536)
+          if r > 0 {
+            pieces.push(raw.str_at(b, r))
+            owner.push(i)
+            got = true
+            continue
+          }
+          if r == -EINTR {
+            continue
+          }
+          if r != -eagain(l) {
+            // the end of the output (or an error)
+            open[i] = false
+            left -= 1
+            got = true
+          }
+          break
+        }
+      }
+    }
+    if got || (left == 0 && fin < 0) {
+      continue
+    }
+    stdio.flush()
+    // wait on one, in short steps while another is open too (or input
+    // is left to write)
+    var w = 0
+    while w < n && !open[w] {
+      w += 1
+    }
+    let step = if fin >= 0 { 1000000 } else if left > 1 { 10000000 } else { 0 }
+    if w < n && pds[w] != 0 {
+      let dl = if step == 0 { 0 } else { sysio.mono_ns() + step }
+      if poll.pd_wait(pds[w], false, dl) == poll.CANCELED {
+        canceled = true
+        break
+      }
+    } else if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+      canceled = true
+      break
+    }
+  }
+  rt.heap_release(b - 8)
+  close_fd(l, fin)
+  for i in 0..n {
+    if pds[i] != 0 {
+      poll.pd_free(pds[i])
+    } else {
+      close_fd(l, fds[i])
+    }
+  }
+  var outs: List[Str] = []
+  for i in 0..n {
+    var parts: List[Str] = []
+    for k in 0..pieces.len() {
+      if owner[k] == i {
+        parts.push(pieces[k])
+      }
+    }
+    outs.push(parts.join(""))
+  }
+  (outs, canceled)
+}
+
+/// The exit status of wait status ws: its exit code, or 128 plus the
+/// signal that ended it (xo_proc.c pr_code).
+fn exit_code(ws: Int) -> Int {
+  let sig = ws & 127
+  if sig == 0 {
+    return (ws >> 8) & 255
+  }
+  if sig != 127 {
+    return 128 + sig
+  }
+  -1
+}
+
+/// Waits for pid, killing it when the task is canceled (or was, killed
+/// already): its exit status, and whether the task was canceled
+/// (xo_proc.c pr_wait).
+fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
+  if l == 3 {
+    return wait_windows(pid, canceled0)
+  }
+  var canceled = canceled0
+  let st = rt.heap_large(8)
+  rt.mem_store(st, 0, 0, 8)
+  var step = 1000000
+  var code = 0
+  while true {
+    // once canceled (the command killed), a blocking wait
+    let opt = if canceled { 0 } else { 1 }
+    let r = if l == 2 { darwin.waitpid_at(pid, st, opt) } else { linux.wait4_at(pid, st, opt) }
+    if r == pid {
+      code = exit_code(rt.mem_load(st, 0, 4))
+      break
+    }
+    if r == -EINTR {
+      continue
+    }
+    if r < 0 {
+      break
+    }
+    if poll.canceled() {
+      canceled = true
+      kill9(l, pid)
+      continue
+    }
+    stdio.flush()
+    if poll.sleep_until(sysio.mono_ns() + step) == poll.CANCELED {
+      canceled = true
+      kill9(l, pid)
+    }
+    if step < 50000000 {
+      step *= 2
+    }
+  }
+  rt.heap_release(st - 8)
+  (code, canceled)
+}
+
+/// wait_exit on Windows (xo_proc.c pr_wait): the process handle reaped
+/// (and closed) with its exit code.
+fn wait_windows(h: Int, canceled0: Bool) -> (Int, Bool) {
+  var canceled = canceled0
+  var step = 1000000
+  while true {
+    let (done, code) = windows.reap(h, canceled)
+    if done {
+      return (code, canceled)
+    }
+    if canceled {
+      // a blocking wait that failed: the handle is not a process
+      return (-1, canceled)
+    }
+    if poll.canceled() {
+      canceled = true
+      windows.kill_proc(h)
+      continue
+    }
+    stdio.flush()
+    if poll.sleep_until(sysio.mono_ns() + step) == poll.CANCELED {
+      canceled = true
+      windows.kill_proc(h)
+    }
+    if step < 50000000 {
+      step *= 2
+    }
+  }
+  (-1, canceled)
+}
+
+/// Proc.run (xo_proc.c xo_proc_run): cmd with args, its standard input
+/// the null device, its output and error collected: "0", the status,
+/// standard output, standard error; or the failure ("1" not found, with
+/// no name: the prelude adds it; "2" and the message; "3" canceled).
+pub fn run(cmd: Str, args: List[Str]) -> List[Str] {
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  let l = sysio.layer()
+  var argv = [cmd]
+  for a in args {
+    argv.push(a)
+  }
+  let c = Spec{name: cmd, dir: "", flags: 0, argv: argv, env: []}
+  let (o0, o1, eo) = pipe(l, 0)
+  if eo != 0 {
+    return ["2", sysio.err_msg(l, eo)]
+  }
+  let (e0, e1, ee) = pipe(l, 0)
+  if ee != 0 {
+    close_fd(l, o0)
+    close_fd(l, o1)
+    return ["2", sysio.err_msg(l, ee)]
+  }
+  let (st, pid, msg) = launch(c, FD_NULL, o1, e1)
+  close_fd(l, o1)
+  close_fd(l, e1)
+  if st != "0" {
+    close_fd(l, o0)
+    close_fd(l, e0)
+    return [st, if st == "1" { "" } else { msg }]
+  }
+  let (outs, c1) = collect(l, [o0, e0], -1, b"")
+  if c1 {
+    kill9(l, pid)
+  }
+  let (code, c2) = wait_exit(l, pid, c1)
+  if c2 {
+    return ["3", ""]
+  }
+  ["0", "${code}", outs[0], outs[1]]
+}
+
+/// Cmd.output (mode 0: one command, its output collected), Cmd.run (1:
+/// one command on the terminal), and Proc.pipeline (2: whose last output
+/// and every error stream are collected) of the commands of spec, input
+/// the first one's standard input when has_input (xo_proc.c
+/// xo_proc_exec): "0", the status (pipefail: the rightmost failure),
+/// standard output, standard error; or the failure.
+pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  let cs = parse(spec)
+  if cs.is_empty() {
+    return ["0", "0", "", ""]
+  }
+  let l = sysio.layer()
+  let n = if mode == 2 { cs.len() } else { 1 }
+  var pids: List[Int] = []
+  // the read ends to collect, and whose each is (-1 the last output, i
+  // the error stream of command i)
+  var rd: List[Int] = []
+  var rd_of: List[Int] = []
+  var feed = -1
+  var prev = FD_NULL
+  if has_input {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      prev = r
+      feed = w
+    }
+  } else if mode == 1 || (mode == 0 && (cs[0].flags & 2) != 0) {
+    prev = FD_INHERIT
+  }
+  var st = "0"
+  var msg = ""
+  for i in 0..n {
+    let merge = (cs[i].flags & 4) != 0
+    var o0 = -1
+    var o1 = -1
+    var e0 = -1
+    var e1 = -1
+    var ofd = FD_INHERIT
+    var efd = if merge { FD_DUP_OUT } else { FD_INHERIT }
+    if mode != 1 {
+      let (r, w, e) = pipe(l, if i == n - 1 { 0 } else { -1 })
+      if e != 0 {
+        st = "2"
+        msg = sysio.err_msg(l, e)
+        close_fd(l, prev)
+        prev = FD_NULL
+        break
+      }
+      o0 = r
+      o1 = w
+      ofd = w
+      efd = w
+      if !merge {
+        let (r2, w2, e2) = pipe(l, 0)
+        if e2 == 0 {
+          e0 = r2
+          e1 = w2
+          efd = w2
+        }
+      }
+    }
+    let (s, pid, m) = launch(cs[i], prev, ofd, efd)
+    st = s
+    msg = m
+    close_fd(l, prev)
+    prev = FD_NULL
+    close_fd(l, o1)
+    close_fd(l, e1)
+    if st != "0" {
+      close_fd(l, o0)
+      close_fd(l, e0)
+      break
+    }
+    pids.push(pid)
+    if e0 >= 0 {
+      rd.push(e0)
+      rd_of.push(i)
+    }
+    if o0 >= 0 {
+      if i == n - 1 {
+        rd.push(o0)
+        rd_of.push(-1)
+      } else {
+        prev = o0
+      }
+    }
+  }
+  close_fd(l, prev)
+  var fin = -1
+  if feed >= 0 {
+    if pids.is_empty() {
+      close_fd(l, feed)
+    } else {
+      fin = feed
+    }
+  }
+  if st != "0" {
+    // a command did not start: the ones before it are killed
+    for p in pids {
+      kill9(l, p)
+    }
+  }
+  var canceled = false
+  var outs: List[Str] = []
+  if !rd.is_empty() || fin >= 0 {
+    let (o, c) = collect(l, rd, fin, input)
+    outs = o
+    canceled = c
+  }
+  var code = 0
+  for p in pids {
+    if canceled {
+      kill9(l, p)
+    }
+    let (c, cc) = wait_exit(l, p, canceled)
+    canceled = cc
+    if c != 0 {
+      code = c
+    }
+  }
+  if st != "0" {
+    return [st, msg]
+  }
+  if canceled {
+    return ["3", ""]
+  }
+  var out = ""
+  var errs: List[Str] = []
+  for i in 0..n {
+    for k in 0..rd.len() {
+      if rd_of[k] == i {
+        errs.push(outs[k])
+      }
+    }
+  }
+  for k in 0..rd.len() {
+    if rd_of[k] == -1 {
+      out = outs[k]
+    }
+  }
+  ["0", "${code}", out, errs.join("")]
+}
+
+// ---------------------------------------------------------------------------
+// Children (Cmd.spawn; xo_proc.c's xo_child, stage 4b of B25) on macOS
+// and Linux. A child is a record of the C runtime's object header (its
+// count and free function: xo_proc.c's child_free_x, which calls
+// child_free here) and the words below. Standard input data is written
+// to its pipe by every wait of the child's operations (the C wrote it
+// from a thread of its own). UNTESTED on Linux; on Windows (UNTESTED on
+// windows) the pid word holds the process handle and the pipes have no
+// poller records.
+
+/// The record's words: the pid, the start's status ('0' started, '1' not
+/// found, '2' an error, '3' canceled) and its message (a malloc'd block
+/// and its length), its input pipe's write end (-1 when not a pipe) and
+/// whether close_stdin closed it, its output's and error's read ends (-1
+/// when not pipes) and their poller records, the output read ahead by
+/// read_line (a malloc'd block, its length and capacity, and where the
+/// unread bytes start), whether the output ended, whether it was reaped,
+/// its status, whether it is FakeProc's (then the registered output and
+/// error, malloc'd blocks and lengths, and how much of each was read),
+/// and the standard input data still to write (its write end, -1 when
+/// none; a malloc'd copy, its length, and how much was written).
+const CH_PID = 16
+const CH_ST = 24
+const CH_MSG = 32
+const CH_MSGN = 40
+const CH_IN = 48
+const CH_IN_CLOSED = 56
+const CH_FD = 64
+const CH_PD = 80
+const CH_AHEAD = 96
+const CH_AHEAD_N = 104
+const CH_AHEAD_CAP = 112
+const CH_AHEAD_AT = 120
+const CH_EOF = 128
+const CH_REAPED = 136
+const CH_CODE = 144
+const CH_FAKE = 152
+const CH_FBUF = 160
+const CH_FBUF_N = 176
+const CH_FAT = 192
+const CH_FEED = 208
+const CH_FEED_P = 216
+const CH_FEED_N = 224
+const CH_FEED_AT = 232
+/// The record's size (xo_proc.c CHILD_X_SIZE).
+pub const CH_SIZE = 240
+
+fn ld(ch: Int, k: Int) -> Int { rt.mem_load(ch, k, 8) }
+
+fn st(ch: Int, k: Int, v: Int) { rt.mem_store(ch, k, v, 8) }
+
+/// A malloc'd copy of the n bytes at p (0 when n is 0).
+fn block(p: Int, n: Int) -> Int {
+  if n == 0 {
+    return 0
+  }
+  let b = rt.heap_large(n) - 8
+  rt.mem_copy(b, p, n)
+  b
+}
+
+fn free_block(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+/// The outcome of a failed start or operation: status s and message m.
+fn set_fail(ch: Int, s: Int, m: Str) {
+  st(ch, CH_ST, s)
+  st(ch, CH_MSG, block(raw.data(m), m.len()))
+  st(ch, CH_MSGN, m.len())
+}
+
+/// Cmd.spawn (xo_proc.c xo_proc_spawn): starts the command of spec, its
+/// input the data when has_input, else the program's with inherit, else
+/// a pipe; its output and error stream pipes, or the program's with
+/// inherit. proc_child_start tells how the start went.
+pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
+  let h = rt.proc_child_new()
+  let ch = rt.obj_addr(h)
+  st(ch, CH_ST, 48)
+  st(ch, CH_IN, -1)
+  st(ch, CH_FD, -1)
+  st(ch, CH_FD + 8, -1)
+  st(ch, CH_FEED, -1)
+  if poll.canceled() {
+    st(ch, CH_ST, 51)
+    return h
+  }
+  let cs = parse(spec)
+  if cs.is_empty() {
+    set_fail(ch, 50, "no command")
+    return h
+  }
+  let c = cs[0]
+  let inherit = (c.flags & 2) != 0
+  let merge = (c.flags & 4) != 0
+  if testworld.fake(testworld.REAL_PROC) {
+    // FakeProc.on_run's entry: the command, the status, the output, and
+    // the error, each text a block of its length and then the bytes
+    let f = testworld.proc_find_raw(raw.data(c.name), c.name.len())
+    if f == 0 {
+      set_fail(ch, 49, c.name)
+      return h
+    }
+    st(ch, CH_FAKE, 1)
+    st(ch, CH_CODE, ld(f, 8))
+    let o = ld(f, 16)
+    let e = ld(f, 24)
+    if merge {
+      let n = ld(o, 0) + ld(e, 0)
+      let b = if n == 0 { 0 } else { rt.heap_large(n) - 8 }
+      rt.mem_copy(b, o + 8, ld(o, 0))
+      rt.mem_copy(b + ld(o, 0), e + 8, ld(e, 0))
+      st(ch, CH_FBUF, b)
+      st(ch, CH_FBUF_N, n)
+    } else {
+      st(ch, CH_FBUF, block(o + 8, ld(o, 0)))
+      st(ch, CH_FBUF_N, ld(o, 0))
+      st(ch, CH_FBUF + 8, block(e + 8, ld(e, 0)))
+      st(ch, CH_FBUF_N + 8, ld(e, 0))
+    }
+    return h
+  }
+  let l = sysio.layer()
+  var fi0 = -1
+  var fi1 = -1
+  var pi0 = -1
+  var pi1 = -1
+  var o0 = -1
+  var o1 = -1
+  var e0 = -1
+  var e1 = -1
+  var ifd = FD_NULL
+  var ofd = FD_INHERIT
+  var efd = if merge { FD_DUP_OUT } else { FD_INHERIT }
+  if has_input {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      fi0 = r
+      fi1 = w
+      ifd = r
+    }
+  } else if inherit {
+    ifd = FD_INHERIT
+  } else {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      pi0 = r
+      pi1 = w
+      ifd = r
+    }
+  }
+  if !inherit {
+    let (r, w, e) = pipe(l, 0)
+    if e == 0 {
+      o0 = r
+      o1 = w
+      ofd = w
+      efd = w
+    }
+    if !merge {
+      let (r2, w2, e2) = pipe(l, 0)
+      if e2 == 0 {
+        e0 = r2
+        e1 = w2
+        efd = w2
+      }
+    }
+  }
+  let (s, pid, msg) = launch(c, ifd, ofd, efd)
+  close_fd(l, fi0)
+  close_fd(l, pi0)
+  close_fd(l, o1)
+  close_fd(l, e1)
+  if s != "0" {
+    close_fd(l, fi1)
+    close_fd(l, pi1)
+    close_fd(l, o0)
+    close_fd(l, e0)
+    set_fail(ch, if s == "1" { 49 } else { 50 }, msg)
+    return h
+  }
+  st(ch, CH_PID, pid)
+  if fi1 >= 0 {
+    st(ch, CH_FEED, fi1)
+    st(ch, CH_FEED_P, block(raw.bytes_addr(input), input.len()))
+    st(ch, CH_FEED_N, input.len())
+    feed(l, ch)
+  }
+  // writes to its input poll (a pipe's write end is not registered with
+  // the poller)
+  st(ch, CH_IN, pi1)
+  st(ch, CH_FD, o0)
+  st(ch, CH_FD + 8, e0)
+  for i in 0..2 {
+    let fd = ld(ch, CH_FD + 8 * i)
+    if fd >= 0 && l != 3 {
+      st(ch, CH_PD + 8 * i, poll.pd_new(fd, false))
+    }
+  }
+  h
+}
+
+/// Writes what the pipe takes now of the child's standard input data;
+/// closes it once written (or once the child stops reading it): whether
+/// some is left.
+fn feed(l: Int, ch: Int) -> Bool {
+  let fd = ld(ch, CH_FEED)
+  if fd < 0 {
+    return false
+  }
+  let n = ld(ch, CH_FEED_N)
+  var at = ld(ch, CH_FEED_AT)
+  while at < n {
+    let w = write_fd(l, fd, ld(ch, CH_FEED_P) + at, n - at)
+    if w > 0 {
+      at += w
+      continue
+    }
+    if w == -EINTR {
+      continue
+    }
+    if w == -eagain(l) {
+      st(ch, CH_FEED_AT, at)
+      return true
+    }
+    // EPIPE: the child does not read it (os/exec stops too)
+    break
+  }
+  close_fd(l, fd)
+  st(ch, CH_FEED, -1)
+  free_block(ld(ch, CH_FEED_P))
+  st(ch, CH_FEED_P, 0)
+  false
+}
+
+/// The free function's work (xo_proc.c child_free): the descriptors, the
+/// blocks, and a pid not waited for (reaped now if it exited).
+pub fn child_free(ch: Int) {
+  let l = sysio.layer()
+  close_fd(l, ld(ch, CH_FEED))
+  free_block(ld(ch, CH_FEED_P))
+  close_fd(l, ld(ch, CH_IN))
+  for i in 0..2 {
+    let pd = ld(ch, CH_PD + 8 * i)
+    if pd != 0 {
+      poll.pd_free(pd)
+    } else {
+      close_fd(l, ld(ch, CH_FD + 8 * i))
+    }
+    free_block(ld(ch, CH_FBUF + 8 * i))
+  }
+  if l == 3 && ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    // a process handle not reaped: forgotten (xo_proc.c pr_release)
+    close_fd(l, ld(ch, CH_PID))
+  } else if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    let sb = rt.heap_large(8)
+    let _w = if l == 2 { darwin.waitpid_at(ld(ch, CH_PID), sb, 1) } else { linux.wait4_at(ld(ch, CH_PID), sb, 1) }
+    rt.heap_release(sb - 8)
+  }
+  free_block(ld(ch, CH_AHEAD))
+  free_block(ld(ch, CH_MSG))
+}
+
+/// The bytes of the malloc'd block at b from at, n of them.
+fn bytes_of(b: Int, at: Int, n: Int) -> Str { if n <= 0 { "" } else { raw.str_at(b + at, n) } }
+
+/// `Child`'s start (xo_proc.c xo_proc_child_start): "0", or the failure.
+pub fn child_start(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  let s = ld(ch, CH_ST)
+  if s == 48 {
+    return ["0", ""]
+  }
+  [raw.byte_str(s), bytes_of(ld(ch, CH_MSG), 0, ld(ch, CH_MSGN))]
+}
+
+/// c.pid(): 0 for FakeProc's child.
+pub fn child_pid(h: rt.ProcChild) -> Int {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) != 0 {
+    return 0
+  }
+  if sysio.layer() == 3 && ld(ch, CH_ST) == 48 {
+    // the pid of the process handle
+    return windows.pid_of(ld(ch, CH_PID))
+  }
+  ld(ch, CH_PID)
+}
+
+/// "2" and "<what>: <errno text>" (xo_proc.c pr_io).
+fn io_fail(l: Int, what: Str, e: Int) -> List[Str] { ["2", "${what}: " + lower_first(sysio.err_msg(l, e))] }
+
+/// Waits a step of a child's operation that has nothing to do now:
+/// writes standard input data meanwhile; CANCELED, or READY (or CLOSED
+/// for the poller record pd, 0 none).
+fn step_wait(l: Int, ch: Int, pd: Int) -> Int {
+  stdio.flush()
+  let feeding = feed(l, ch)
+  if pd != 0 {
+    let dl = if feeding { sysio.mono_ns() + 1000000 } else { 0 }
+    let w = poll.pd_wait(pd, false, dl)
+    return if w == poll.TIMEOUT { poll.READY } else { w }
+  }
+  if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED { poll.CANCELED } else { poll.READY }
+}
+
+/// c.write(data) (xo_proc.c xo_proc_child_write): to its input's pipe.
+pub fn child_write(h: rt.ProcChild, data: Bytes) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  if ld(ch, CH_FAKE) != 0 {
+    return ["0", ""]
+  }
+  if ld(ch, CH_IN_CLOSED) != 0 {
+    return ["2", "write |1: file already closed"]
+  }
+  if ld(ch, CH_IN) < 0 {
+    return ["2", "the child's input is not a pipe (stdin data or inherit was set)"]
+  }
+  let l = sysio.layer()
+  var off = 0
+  let n = data.len()
+  while off < n {
+    let w = write_fd(l, ld(ch, CH_IN), raw.bytes_addr(data) + off, n - off)
+    if w > 0 {
+      off += w
+      continue
+    }
+    if w == -EINTR {
+      continue
+    }
+    if w == -eagain(l) {
+      if step_wait(l, ch, 0) == poll.CANCELED {
+        return ["3", ""]
+      }
+      continue
+    }
+    return io_fail(l, "write |1", if w < 0 { -w } else { 5 })
+  }
+  ["0", ""]
+}
+
+/// c.close_stdin().
+pub fn child_close_stdin(h: rt.ProcChild) { close_in(rt.obj_addr(h)) }
+
+fn close_in(ch: Int) {
+  if ld(ch, CH_IN) < 0 || ld(ch, CH_IN_CLOSED) != 0 {
+    return
+  }
+  st(ch, CH_IN_CLOSED, 1)
+  close_fd(sysio.layer(), ld(ch, CH_IN))
+  st(ch, CH_IN, -1)
+}
+
+/// Reads at most n bytes of stream i into the address b, waiting on the
+/// poller: the count, 0 at the end, -1 canceled, or -2 - errno
+/// (xo_proc.c ch_read).
+fn ch_read(l: Int, ch: Int, i: Int, b: Int, n: Int) -> Int {
+  while true {
+    let r = read_fd(l, ld(ch, CH_FD + 8 * i), b, n)
+    if r >= 0 {
+      return r
+    }
+    if r == -EINTR {
+      continue
+    }
+    if r != -eagain(l) {
+      return -2 + r
+    }
+    let w = step_wait(l, ch, ld(ch, CH_PD + 8 * i))
+    if w == poll.CANCELED {
+      return -1
+    }
+    if w == poll.CLOSED {
+      return 0
+    }
+  }
+  0
+}
+
+/// c.read(max) (err false) or c.read_err(max) (xo_proc.c
+/// xo_proc_child_read): "0" and at most max bytes (at most 1 MiB), "e"
+/// at the end.
+pub fn child_read(h: rt.ProcChild, err: Bool, max: Int) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  let i = if err { 1 } else { 0 }
+  if ld(ch, CH_FAKE) != 0 {
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    let at = ld(ch, CH_FAT + 8 * i)
+    let left = ld(ch, CH_FBUF_N + 8 * i) - at
+    if left <= 0 {
+      return ["e", ""]
+    }
+    if max <= 0 {
+      return ["0", ""]
+    }
+    let k = if left < max { left } else { max }
+    let out = bytes_of(ld(ch, CH_FBUF + 8 * i), at, k)
+    st(ch, CH_FAT + 8 * i, at + k)
+    return ["0", out]
+  }
+  let ahead = ld(ch, CH_AHEAD_N) - ld(ch, CH_AHEAD_AT)
+  if !err && ahead > 0 {
+    // bytes read ahead by read_line come first
+    var k = if ahead < max { ahead } else { max }
+    if k < 0 {
+      k = 0
+    }
+    let out = bytes_of(ld(ch, CH_AHEAD), ld(ch, CH_AHEAD_AT), k)
+    st(ch, CH_AHEAD_AT, ld(ch, CH_AHEAD_AT) + k)
+    return ["0", out]
+  }
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  if ld(ch, CH_FD + 8 * i) < 0 {
+    return ["2", if err { "the child's error stream is not a pipe (inherit or merge_stderr was set)" } else { "the child's output is not a pipe (inherit or merge_stderr was set)" }]
+  }
+  if max <= 0 {
+    return ["0", ""]
+  }
+  let n = if max < 1048576 { max } else { 1048576 }
+  let b = rt.heap_large(n)
+  let l = sysio.layer()
+  let r = ch_read(l, ch, i, b, n)
+  var out: List[Str] = []
+  if r > 0 {
+    out = ["0", raw.str_at(b, r)]
+  } else if r == 0 {
+    out = ["e", ""]
+  } else if r == -1 {
+    out = ["3", ""]
+  } else {
+    out = io_fail(l, "read |0", -2 - r)
+  }
+  rt.heap_release(b - 8)
+  out
+}
+
+/// A line of n bytes at p, without the \r at its end.
+fn line_of(p: Int, n0: Int) -> List[Str] {
+  var n = n0
+  if n > 0 && rt.mem_load(p, n - 1, 1) == 13 {
+    n -= 1
+  }
+  ["0", if n > 0 { raw.str_at(p, n) } else { "" }]
+}
+
+/// The offset of the first \n in the n bytes at p, or -1.
+fn find_nl(p: Int, n: Int) -> Int {
+  for k in 0..n {
+    if rt.mem_load(p, k, 1) == 10 {
+      return k
+    }
+  }
+  -1
+}
+
+/// c.read_line() (xo_proc.c xo_proc_child_read_line): "0" and a line of
+/// its output without \n or \r\n, "e" at the end.
+pub fn child_read_line(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) != 0 {
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    let b = ld(ch, CH_FBUF)
+    let n = ld(ch, CH_FBUF_N)
+    let at = ld(ch, CH_FAT)
+    if at >= n {
+      return ["e", ""]
+    }
+    let nl = find_nl(b + at, n - at)
+    let k = if nl >= 0 { nl } else { n - at }
+    st(ch, CH_FAT, at + k + (if nl >= 0 { 1 } else { 0 }))
+    return line_of(b + at, k)
+  }
+  if ld(ch, CH_FD) < 0 {
+    return ["2", "the child's output is not a pipe (inherit was set)"]
+  }
+  let l = sysio.layer()
+  while true {
+    let at = ld(ch, CH_AHEAD_AT)
+    let left = ld(ch, CH_AHEAD_N) - at
+    let s = ld(ch, CH_AHEAD) + at
+    let nl = if left > 0 { find_nl(s, left) } else { -1 }
+    let eof = ld(ch, CH_EOF) != 0
+    if nl >= 0 || (eof && left > 0) {
+      let k = if nl >= 0 { nl } else { left }
+      let out = line_of(s, k)
+      st(ch, CH_AHEAD_AT, at + k + (if nl >= 0 { 1 } else { 0 }))
+      if ld(ch, CH_AHEAD_AT) == ld(ch, CH_AHEAD_N) {
+        st(ch, CH_AHEAD_N, 0)
+        st(ch, CH_AHEAD_AT, 0)
+      }
+      return out
+    }
+    if eof {
+      return ["e", ""]
+    }
+    if poll.canceled() {
+      return ["3", ""]
+    }
+    if at > 0 {
+      rt.mem_move(ld(ch, CH_AHEAD), s, left)
+      st(ch, CH_AHEAD_N, left)
+      st(ch, CH_AHEAD_AT, 0)
+    }
+    // room for 4096 more bytes
+    let need = ld(ch, CH_AHEAD_N) + 4096
+    if need > ld(ch, CH_AHEAD_CAP) {
+      var c = if ld(ch, CH_AHEAD_CAP) == 0 { 8192 } else { 2 * ld(ch, CH_AHEAD_CAP) }
+      while c < need {
+        c *= 2
+      }
+      // used from its malloc'd address: raw.c_resize keeps word 0
+      // (gotchas/heap-large-resize-overwrites-word-0.md)
+      st(ch, CH_AHEAD, raw.c_resize(ld(ch, CH_AHEAD), c))
+      st(ch, CH_AHEAD_CAP, c)
+    }
+    let r = ch_read(l, ch, 0, ld(ch, CH_AHEAD) + ld(ch, CH_AHEAD_N), 4096)
+    if r == -1 {
+      return ["3", ""]
+    }
+    if r < -1 {
+      return io_fail(l, "read |0", -2 - r)
+    }
+    if r == 0 {
+      st(ch, CH_EOF, 1)
+    }
+    st(ch, CH_AHEAD_N, ld(ch, CH_AHEAD_N) + r)
+  }
+  ["e", ""]
+}
+
+/// c.wait() (xo_proc.c xo_proc_child_wait): closes its input, writes the
+/// rest of its standard input data, waits, and gives "0" and its status.
+pub fn child_wait(h: rt.ProcChild) -> List[Str] {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_REAPED) == 0 {
+    close_in(ch)
+    let l = sysio.layer()
+    while feed(l, ch) {
+      if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+        break
+      }
+    }
+    let (code, canceled) = wait_exit(l, ld(ch, CH_PID), false)
+    st(ch, CH_REAPED, 1)
+    st(ch, CH_CODE, code)
+    if canceled {
+      return ["3", ""]
+    }
+  }
+  ["0", "${ld(ch, CH_CODE)}"]
+}
+
+/// c.kill().
+pub fn child_kill(h: rt.ProcChild) {
+  let ch = rt.obj_addr(h)
+  if ld(ch, CH_FAKE) == 0 && ld(ch, CH_ST) == 48 && ld(ch, CH_REAPED) == 0 {
+    kill9(sysio.layer(), ld(ch, CH_PID))
+  }
+}

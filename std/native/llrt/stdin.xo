@@ -1,0 +1,649 @@
+// Standard input (std.md 3.6, decisions 0088, 0102, 0162) in Xo (the
+// zero-C audit's work item B24): read_line, read_all, lines, and
+// read_bytes over a buffer of what was read and not delivered yet. A read
+// waits on the event loop's poller (the C runtime's xo_stdin_wait: a
+// cancellation point, in steps of 50 ms to see a stop request), so input
+// read before a reader gave up stays buffered for the next read. Readers
+// take turns (a word swapped). A test binary's fake input is
+// testworld.xo's. The platform's part is here too: the descriptor's
+// registration with the poller, a raw read, the waits, and the terminal
+// calls; on Windows only the registration and the read stay C
+// (xo_stdin.c: a pump thread into a loopback socket, xo_win.c).
+use native/llrt/obj
+use native/llrt/ctx
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/sock
+use native/llrt/stdio
+use native/llrt/stop
+use native/llrt/sysio
+use native/llrt/testworld
+use native/llrt/twflags
+use native/llrt/twrun
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// rt.static_word: the turn (a word), the state record (rec), the
+/// poller's registration (0: read directly), the buffer (heap_large),
+/// its length and capacity, the end of input seen, and the read error
+/// (errno) that follows the buffer.
+const W_BUSY = 52
+const W_REC = 53
+const W_PD = 54
+const W_BUF = 55
+const W_LEN = 56
+const W_CAP = 57
+const W_EOF = 58
+const W_ERR = 59
+
+/// The state record's words: whether the descriptor was opened (under
+/// the turn), the fake terminals' width of a test binary (set_tty), whether
+/// echo is off, and the terminal settings echo restores (a struct termios:
+/// 36 bytes on Linux, 72 on macOS; a console mode on Windows).
+const R_OPEN = 0
+const R_TTY = 8
+const R_ECHO_OFF = 16
+const R_TIO = 24
+const R_SIZE = 104
+
+/// sysread's result when nothing is available yet (wait).
+const WAIT = -1000000
+
+/// The capability bit of stdio in the test world (testworld.fake).
+const TW_REAL_STDIO = 32
+
+// slot atomics' orders (rt.xo)
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+// a word's address is rt.static_word of a constant (the backends' rule)
+fn w(a: Int) -> Int { rt.mem_load(a, 0, 8) }
+
+fn ws(a: Int, v: Int) { rt.mem_store(a, 0, v, 8) }
+
+/// Appends the n bytes at p to the buffer.
+fn put(p: Int, n: Int) {
+  let len = w(rt.static_word(W_LEN))
+  var cap = w(rt.static_word(W_CAP))
+  if len + n > cap {
+    var c = if cap == 0 { 4096 } else { cap * 2 }
+    while c < len + n {
+      c = c * 2
+    }
+    let old = w(rt.static_word(W_BUF))
+    let nb = if old == 0 { rt.heap_large(c) } else { rt.heap_large_resize(old - 8, c) }
+    ws(rt.static_word(W_BUF), nb)
+    ws(rt.static_word(W_CAP), c)
+    cap = c
+  }
+  rt.mem_copy(w(rt.static_word(W_BUF)) + len, p, n)
+  ws(rt.static_word(W_LEN), len + n)
+}
+
+/// The first n buffered bytes as a string; n + skip bytes leave the
+/// buffer.
+fn take(n: Int, skip: Int) -> Str {
+  let b = w(rt.static_word(W_BUF))
+  let s = if n == 0 { "" } else { raw.str_at(b, n) }
+  let len = w(rt.static_word(W_LEN))
+  rt.mem_move(b, b + n + skip, len - n - skip)
+  ws(rt.static_word(W_LEN), len - n - skip)
+  s
+}
+
+/// Reads what is available into the buffer, waiting on the poller when
+/// nothing is: true when the reader was canceled or a stop was requested.
+fn fill() -> Bool {
+  let r = rec()
+  if rt.mem_load(r, R_OPEN, 8) == 0 {
+    rt.mem_store(r, R_OPEN, 1, 8)
+    ws(rt.static_word(W_PD), open())
+  }
+  let t = rt.heap_large(65536)
+  var stopped = false
+  while true {
+    if stopped_now() {
+      stopped = true
+      break
+    }
+    let n = sysread(t, 65536, w(rt.static_word(W_PD)))
+    if n == WAIT {
+      if wait(w(rt.static_word(W_PD))) {
+        stopped = true
+        break
+      }
+      continue
+    }
+    if n < 0 {
+      ws(rt.static_word(W_ERR), 0 - n)
+      break
+    }
+    if n == 0 {
+      ws(rt.static_word(W_EOF), 1)
+      break
+    }
+    put(t, n)
+    break
+  }
+  rt.heap_release(t - 8)
+  stopped
+}
+
+/// Takes the readers' turn: false when the reader was canceled or a stop
+/// was requested while it waited.
+fn turn() -> Bool {
+  while rt.slot_swap(rt.static_word(W_BUSY), 0, 1, ACQUIRE) != 0 {
+    if turn_wait() {
+      return false
+    }
+  }
+  true
+}
+
+fn give() {
+  let _r = rt.slot_swap(rt.static_word(W_BUSY), 0, 0, RELEASE)
+}
+
+/// The offset of the first newline in the buffer, or -1.
+fn newline() -> Int {
+  let b = w(rt.static_word(W_BUF))
+  let n = w(rt.static_word(W_LEN))
+  var i = 0
+  while i < n {
+    if rt.mem_load(b, i, 1) == 10 {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// A line (without its newline and a `\r` before it) or, when all, the
+/// rest of the input, and the status: 0 the text, 1 the end of input (no
+/// line), 2 a read error (msg), 3 canceled or stopped.
+pub fn read(all: Bool) -> (Str, Int, Str) {
+  if stopped_now() {
+    return ("", 3, "")
+  }
+  if twflags.fake(TW_REAL_STDIO) {
+    let (s, st) = testworld.stdin_read(if all { 1 } else { 0 }, 0)
+    return (s, st, "")
+  }
+  if !turn() {
+    return ("", 3, "")
+  }
+  var out = ("", 3, "")
+  while true {
+    if !all {
+      let nl = newline()
+      if nl >= 0 {
+        let k = if nl > 0 && rt.mem_load(w(rt.static_word(W_BUF)), nl - 1, 1) == 13 { nl - 1 } else { nl }
+        out = (take(k, nl - k + 1), 0, "")
+        break
+      }
+    }
+    if w(rt.static_word(W_EOF)) != 0 || w(rt.static_word(W_ERR)) != 0 {
+      let n = w(rt.static_word(W_LEN))
+      if n == 0 && w(rt.static_word(W_ERR)) != 0 {
+        let e = w(rt.static_word(W_ERR))
+        ws(rt.static_word(W_ERR), 0)
+        out = ("", 2, sysio.err_msg(sysio.layer(), e))
+        break
+      }
+      let k = if !all && n > 0 && rt.mem_load(w(rt.static_word(W_BUF)), n - 1, 1) == 13 { n - 1 } else { n }
+      out = (take(k, n - k), if all || n > 0 { 0 } else { 1 }, "")
+      break
+    }
+    if fill() {
+      break
+    }
+  }
+  give()
+  out
+}
+
+/// At most max bytes (decision 0162), and the status as for read.
+pub fn read_bytes(max: Int) -> (Bytes, Int, Str) {
+  if stopped_now() {
+    return (b"", 3, "")
+  }
+  if twflags.fake(TW_REAL_STDIO) {
+    let (s, st) = testworld.stdin_read(2, max)
+    return (s.bytes(), st, "")
+  }
+  if !turn() {
+    return (b"", 3, "")
+  }
+  var out = (b"", 3, "")
+  while true {
+    let n = w(rt.static_word(W_LEN))
+    if n > 0 {
+      let k = if n < max { n } else { max }
+      out = (take(k, 0).bytes(), 0, "")
+      break
+    }
+    if w(rt.static_word(W_ERR)) != 0 {
+      let e = w(rt.static_word(W_ERR))
+      ws(rt.static_word(W_ERR), 0)
+      out = (b"", 2, sysio.err_msg(sysio.layer(), e))
+      break
+    }
+    if w(rt.static_word(W_EOF)) != 0 {
+      out = (b"", 1, "")
+      break
+    }
+    if fill() {
+      break
+    }
+  }
+  give()
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The platform's part (was xo_stdin.c; Linux UNTESTED, Windows UNTESTED)
+
+/// The state record (R_*), made at first use; never freed.
+fn rec() -> Int {
+  let a = rt.slot_load[Int](rt.static_word(W_REC), 0, ACQUIRE)
+  if a != 0 {
+    return a
+  }
+  let n = rt.heap_large(R_SIZE)
+  rt.mem_set(n, 0, R_SIZE)
+  if rt.slot_cas[Int](rt.static_word(W_REC), 0, 0, n, ACQ_REL) {
+    return n
+  }
+  rt.heap_release(n - 8)
+  rt.slot_load[Int](rt.static_word(W_REC), 0, ACQUIRE)
+}
+
+/// Whether the reader was canceled or a stop was requested.
+fn stopped_now() -> Bool { poll.canceled() || stop.requested() }
+
+/// Registers standard input with the poller: its pd, or 0 when the poller
+/// cannot watch it (a regular file, /dev/null on Linux: reads go to
+/// read(2) directly and do not block for long).
+fn open() -> Int {
+  let (mode, e) = match target.os {
+    TargetOs.Darwin => darwin_fstat_mode()
+    TargetOs.Linux => linux_fstat_mode()
+    TargetOs.Windows | TargetOs.Wasi => (0, 1)
+  }
+  if target.os == TargetOs.Windows {
+    // the poller waits on sockets only: a pipe or the console is pumped
+    // into a loopback socket by a thread of its own (decision 0197)
+    return win_open()
+  }
+  if e == 0 && (mode & 61440) != 32768 {
+    return poll.pd_new(0, false)
+  }
+  0
+}
+
+fn darwin_fstat_mode() -> (Int, Int) {
+  let buf = obj_scratch()
+  if Int(sys_darwin.fstat64(0, buf)) != 0 {
+    return (0, 1)
+  }
+  ((rt.mem_load(buf, 0, 8) >> 32) & 65535, 0)
+}
+
+fn linux_fstat_mode() -> (Int, Int) {
+  // statx(0, "", AT_EMPTY_PATH, STATX_TYPE | STATX_MODE): stx_mode at 28
+  let buf = obj_scratch()
+  let empty = b"\0"
+  let r = rt.sys6(lnr(291, 332), 0, raw.bytes_addr(empty), 4096, 3, buf, 0)
+  if empty.len() < 0 || r != 0 {
+    return (0, 1)
+  }
+  (rt.mem_load(buf, 28, 2), 0)
+}
+
+/// The calling thread's 256 byte system call scratch.
+fn obj_scratch() -> Int { obj.scratch() }
+
+fn lnr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Windows (was xo_stdin.c and xo_win.c's pump, the zero-C audit's B32
+// part 2; UNTESTED on windows): the poller waits on sockets only, so a
+// pipe or the console is read by a thread of its own and copied into a
+// loopback socket pair, whose program end the reads use and the poller
+// waits on.
+
+/// The poller record's descriptor (poll.xo D_FD, a C int: the socket).
+const PD_FD = 8
+/// GetFileType's FILE_TYPE_CHAR (the console) and FILE_TYPE_PIPE.
+const FT_CHAR = 2
+const FT_PIPE = 3
+/// The pump's buffer.
+const PUMP_BUF = 65536
+
+/// Registers standard input: its pd when it is a pipe or the console
+/// (pumped), else 0 (a file, read directly).
+fn win_open() -> Int {
+  let h = sys_windows.GetStdHandle(-10)
+  let ft = Int(sys_windows.GetFileType(h))
+  if ft != FT_PIPE && ft != FT_CHAR {
+    return 0
+  }
+  let (prog, thr) = loopback_pair()
+  if prog < 0 {
+    return 0
+  }
+  // the thread's end blocks (ioctlsocket FIONBIO with a u_long 0)
+  let z = obj_scratch()
+  rt.mem_store(z, 0, 0, 4)
+  let _b = sys_windows.ioctlsocket(thr, 2147772030, z)
+  let rec = rt.heap_large(16)
+  rt.mem_store(rec, 0, h, 8)
+  rt.mem_store(rec, 8, thr, 8)
+  if !pool.thread_start(rt.mem_load(ctx.svc(), ctx.SV_STDIN_PUMP, 8), rec) {
+    let _c = sock.close(prog)
+    let _d = sock.close(thr)
+    rt.heap_release(rt.int_wrap(1, rec, 8))
+    return 0
+  }
+  poll.pd_new(prog, false)
+}
+
+/// Two connected loopback TCP sockets, both nonblocking (was xo_win.c
+/// xo_w_socketpair): (the accepted one, the connecting one), or (-1, -1).
+fn loopback_pair() -> (Int, Int) {
+  // AF_INET 2, SOCK_STREAM 1, IPPROTO_TCP 6
+  let l = sock.socket(2, 1, 6)
+  if l < 0 {
+    return (-1, -1)
+  }
+  // a sockaddr_in for 127.0.0.1, port 0 (the system picks): family 2,
+  // the port, the address in network order
+  let sa = obj_scratch()
+  rt.mem_set(sa, 0, 16)
+  rt.mem_store(sa, 0, 2, 2)
+  rt.mem_store(sa, 4, 16777343, 4)
+  let lenp = rt.int_wrap(0, sa, 16)
+  rt.mem_store(lenp, 0, 16, 4)
+  var c = -1
+  var s = -1
+  if sock.bind(l, sa, 16) == 0 && sock.listen(l, 1) == 0 && sock.sockname(l, sa, lenp) == 0 {
+    c = sock.socket(2, 1, 6)
+    if c >= 0 && sock.connect(c, sa, 16) == 0 {
+      s = sock.accept(l, 0)
+    }
+  }
+  let _l = sock.close(l)
+  if s < 0 {
+    if c >= 0 {
+      let _c = sock.close(c)
+    }
+    return (-1, -1)
+  }
+  let _n = sock.nonblock(s)
+  let _m = sock.nonblock(c)
+  (s, c)
+}
+
+/// The pump's thread (cabi.xo's stdin_pump_main, its address in the
+/// services record, ctx.xo SV_STDIN_PUMP): copies what standard input
+/// reads to the socket until the end of input (every writer closed the
+/// pipe, or the console's Ctrl-Z) or the program closed its end, then
+/// closes its socket. rec: the handle and the socket.
+pub fn pump_main(rec: Int) -> Int {
+  let h = rt.mem_load(rec, 0, 8)
+  let s = rt.mem_load(rec, 8, 8)
+  rt.heap_release(rt.int_wrap(1, rec, 8))
+  let buf = rt.heap_large(PUMP_BUF + 8)
+  let done = rt.int_wrap(0, buf, PUMP_BUF)
+  var go = true
+  while go {
+    rt.mem_store(done, 0, 0, 4)
+    if Int(sys_windows.ReadFile(h, buf, PUMP_BUF, done, 0)) == 0 {
+      break
+    }
+    let n = rt.mem_load(done, 0, 4)
+    if n == 0 && Int(sys_windows.GetFileType(h)) == FT_CHAR {
+      break
+    }
+    var at = 0
+    while at < n {
+      let w = sock.send(s, rt.int_wrap(0, buf, at), rt.int_wrap(1, n, at), 0)
+      if w <= 0 {
+        go = false
+        break
+      }
+      at = rt.int_wrap(0, at, w)
+    }
+  }
+  let _c = sock.close(s)
+  rt.heap_release(rt.int_wrap(1, buf, 8))
+  0
+}
+
+/// sysread on Windows: the pumped socket's recv (WAIT when it has
+/// nothing yet), or a direct ReadFile of a file (0 at its end).
+fn win_sysread(p: Int, n: Int, pd: Int) -> Int {
+  if pd != 0 {
+    let k = sock.recv(rt.mem_load(pd, PD_FD, 4), p, n, 0)
+    // the Windows C runtime's EWOULDBLOCK (sock.xo wsa_errno)
+    if k == -140 {
+      return WAIT
+    }
+    return k
+  }
+  let done = obj_scratch()
+  rt.mem_store(done, 0, 0, 4)
+  if Int(sys_windows.ReadFile(sys_windows.GetStdHandle(-10), p, n, done, 0)) == 0 {
+    // ERROR_BROKEN_PIPE (109) and ERROR_HANDLE_EOF (38): the end
+    let e = Int(sys_windows.GetLastError())
+    if e == 109 || e == 38 {
+      return 0
+    }
+    return -5
+  }
+  rt.mem_load(done, 0, 4)
+}
+
+/// Reads at most n bytes into p: their count, 0 at the end of input, WAIT
+/// when the poller's descriptor (pd, not 0) has nothing yet, else minus
+/// errno. EINTR and EAGAIN on a direct read are retried.
+fn sysread(p: Int, n: Int, pd: Int) -> Int {
+  if target.os == TargetOs.Windows {
+    return win_sysread(p, n, pd)
+  }
+  let darwin = target.os == TargetOs.Darwin
+  let eagain = if darwin { 35 } else { 11 }
+  while true {
+    if pd != 0 && !readable() {
+      return WAIT
+    }
+    let r = if darwin { sys_darwin_read(p, n) } else { rt.sys6(lnr(63, 0), 0, p, n, 0, 0, 0) }
+    if r == -4 || r == 0 - eagain {
+      continue
+    }
+    return r
+  }
+  0
+}
+
+fn sys_darwin_read(p: Int, n: Int) -> Int {
+  let r = sys_darwin.read(0, p, n)
+  if r < 0 { 0 - darwin_errno() } else { r }
+}
+
+fn darwin_errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
+
+/// Whether standard input has something to read now: poll(2) with no
+/// wait (ppoll on Linux).
+fn readable() -> Bool {
+  let q = obj_scratch()
+  // struct pollfd {fd 0, events POLLIN}
+  rt.mem_store(q, 0, 0, 4)
+  rt.mem_store(q, 4, 1, 4)
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.poll(q, 1, 0)) != 0
+    TargetOs.Linux => {
+      rt.mem_store(q, 16, 0, 8)
+      rt.mem_store(q, 24, 0, 8)
+      rt.sys6(lnr(73, 271), q, 1, q + 16, 0, 0, 0) != 0
+    }
+    TargetOs.Windows | TargetOs.Wasi => true
+  }
+}
+
+/// The timers' deadline d from now (the virtual clock in a test binary).
+fn deadline(d: Int) -> Int {
+  if twflags.on() {
+    return twrun.deadline(d)
+  }
+  sysio.mono_ns() + d
+}
+
+/// Waits up to 50 ms on the poller for input on pd: true when the reader
+/// was canceled.
+fn wait(pd: Int) -> Bool {
+  stdio.flush()
+  poll.pd_wait(pd, false, deadline(50000000)) == poll.CANCELED
+}
+
+/// Waits a millisecond for another reader's turn: true when the reader was
+/// canceled or a stop was requested (xo_rt.c clock_wait).
+fn turn_wait() -> Bool {
+  if poll.canceled() {
+    return true
+  }
+  if twflags.on() {
+    // FakeClock.sleeps() lists every sleep asked for
+    twrun.sleep_record(1000000)
+  }
+  poll.sleep_until(deadline(1000000)) == poll.CANCELED || stop.requested()
+}
+
+// ---------------------------------------------------------------------------
+// Terminals (decision 0162). A test binary's streams are terminals only
+// after FakeStdio.set_tty, of the width it gave.
+
+/// `stdio.set_tty(width)` of a test binary.
+pub fn set_tty(width: Int) { rt.slot_store[Int](rec(), R_TTY / 8, if width > 0 { width } else { 0 }, RELAXED) }
+
+fn tty_width() -> Int { rt.slot_load[Int](rec(), R_TTY / 8, RELAXED) }
+
+/// Whether descriptor fd is a terminal.
+pub fn isatty(fd: Int) -> Bool {
+  if twflags.fake(TW_REAL_STDIO) {
+    return tty_width() > 0
+  }
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.isatty(fd)) == 1
+    // TCGETS
+    TargetOs.Linux => rt.sys6(lnr(29, 16), fd, 21505, obj_scratch(), 0, 0, 0) == 0
+    // the C runtime's _isatty: a character device
+    TargetOs.Windows => Int(sys_windows.GetFileType(sys_windows.GetStdHandle(-10 - fd))) == 2
+    TargetOs.Wasi => false
+  }
+}
+
+/// The columns of the terminal on standard output, error, or input (the
+/// first that is one), or 0.
+pub fn term_width() -> Int {
+  if twflags.fake(TW_REAL_STDIO) {
+    return tty_width()
+  }
+  for fd in [1, 2, 0] {
+    let c = columns(fd)
+    if c > 0 {
+      return c
+    }
+  }
+  0
+}
+
+/// The columns of the terminal fd, or 0.
+fn columns(fd: Int) -> Int {
+  let b = obj_scratch()
+  match target.os {
+    // TIOCGWINSZ: struct winsize {ws_row, ws_col, ...} (16 bit fields)
+    TargetOs.Darwin => if Int(sys_darwin.ioctl(fd, 1074295912, b)) == 0 { rt.mem_load(b, 2, 2) } else { 0 }
+    TargetOs.Linux => if rt.sys6(lnr(29, 16), fd, 21523, b, 0, 0, 0) == 0 { rt.mem_load(b, 2, 2) } else { 0 }
+    TargetOs.Windows => {
+      // CONSOLE_SCREEN_BUFFER_INFO: srWindow's Left at 10, Right at 14
+      if Int(sys_windows.GetConsoleScreenBufferInfo(sys_windows.GetStdHandle(-10 - fd), b)) == 0 {
+        return 0
+      }
+      let w = i16(rt.mem_load(b, 14, 2)) - i16(rt.mem_load(b, 10, 2)) + 1
+      if w > 0 { w } else { 0 }
+    }
+    TargetOs.Wasi => 0
+  }
+}
+
+/// The 16 bit value v sign extended.
+fn i16(v: Int) -> Int { if v >= 32768 { v - 65536 } else { v } }
+
+/// Turns standard input's echo off (on false), remembering the settings,
+/// or restores them (on true). Turning it off returns true when standard
+/// input is a terminal whose echo it turned off.
+pub fn echo(on: Bool) -> Bool {
+  if twflags.fake(TW_REAL_STDIO) {
+    return false
+  }
+  let r = rec()
+  if on {
+    if rt.mem_load(r, R_ECHO_OFF, 8) != 0 {
+      let _s = set_tio(r + R_TIO)
+      rt.mem_store(r, R_ECHO_OFF, 0, 8)
+    }
+    return false
+  }
+  if !get_tio(r + R_TIO) {
+    return false
+  }
+  let t = obj_scratch()
+  rt.mem_copy(t, r + R_TIO, R_SIZE - R_TIO)
+  // ECHO (8) in c_lflag (Linux: a 32 bit field at 12; macOS: 64 bits at
+  // 24); ENABLE_ECHO_INPUT (4) in the Windows console mode
+  match target.os {
+    TargetOs.Darwin => rt.mem_store(t, 24, rt.mem_load(t, 24, 8) & -9, 8)
+    TargetOs.Linux => rt.mem_store(t, 12, rt.mem_load(t, 12, 4) & -9, 4)
+    TargetOs.Windows => rt.mem_store(t, 0, rt.mem_load(t, 0, 4) & -5, 4)
+    TargetOs.Wasi => {}
+  }
+  if !set_tio(t) {
+    return false
+  }
+  rt.mem_store(r, R_ECHO_OFF, 1, 8)
+  true
+}
+
+/// Reads standard input's terminal settings to a: whether it is a terminal.
+fn get_tio(a: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.tcgetattr(0, a)) == 0
+    // TCGETS
+    TargetOs.Linux => rt.sys6(lnr(29, 16), 0, 21505, a, 0, 0, 0) == 0
+    TargetOs.Windows => Int(sys_windows.GetConsoleMode(sys_windows.GetStdHandle(-10), a)) != 0
+    TargetOs.Wasi => false
+  }
+}
+
+/// Sets standard input's terminal settings from a (TCSANOW): whether it
+/// took them.
+fn set_tio(a: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.tcsetattr(0, 0, a)) == 0
+    // TCSETS
+    TargetOs.Linux => rt.sys6(lnr(29, 16), 0, 21506, a, 0, 0, 0) == 0
+    TargetOs.Windows => Int(sys_windows.SetConsoleMode(sys_windows.GetStdHandle(-10), rt.mem_load(a, 0, 4))) != 0
+    TargetOs.Wasi => false
+  }
+}

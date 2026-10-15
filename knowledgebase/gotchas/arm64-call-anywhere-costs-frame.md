@@ -48,3 +48,12 @@ Update (2026-10-14, decision 0226): B13's list objects meet the bar
 once arm64 generated code calls obj.xo directly (no C level) and its
 common cases make no call; a new caller of a large function can undo
 an inlining elsewhere (gotchas/arm64-inline-few-sites-new-callers.md).
+
+Seen again (2026-10-15, the zero-c perf sweep): `mutex.held_add`
+(std/native/llrt/mutex.xo) built XO-F004's fault message inline in its
+scan loop. A call inside a loop is not covered by shrink wrapping, so
+every Mutex.with saved nine registers. Moving the message into
+`held_fault`, and adding a call-free fast path (no Mutex held yet,
+room for one) that calls `held_add_slow` otherwise, took ctx's `mutex`
+workload on arm64 from 1.121G to 1.000G instructions. `held_del`'s
+single-entry fast path took it to 0.972G (main: 0.934G).

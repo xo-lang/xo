@@ -1,0 +1,760 @@
+// The TLS runtime's certificate work that needs no TLS library state,
+// in Xo (the zero-C audit's work item B30, xo_tls.c's PEM and root
+// handling): http.tls_cert's scan of the PEM inputs with
+// tls.X509KeyPair's error texts, the certificates of Client.with_roots,
+// the system's roots (Linux: crypto/x509's bundle files and
+// directories; macOS: the Security framework's anchors and trust
+// settings; Windows: the ROOT store through crypt32), the expiry texts
+// with time.RFC3339, and macOS's chain verification through the
+// Security framework (crypto/x509's systemVerify).
+//
+// The Mbed TLS calls stay C (xo_tls.c), behind a services record whose
+// address each call takes (svc: the V_ words): the parse of a DER
+// certificate into a chain, of a private key, the key types, the key
+// pair check, and the host name text of a chain's leaf. Mbed TLS's
+// structures are read at the offsets below, which xo_tls.c asserts.
+use native/llrt/fsops
+use native/llrt/linux
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/sysio
+use native/llrt/tlsname
+use native/rt
+use native/sys_darwin
+use native/sys_windows
+
+/// The services record's words: mbedtls_x509_crt_parse_der of args (the
+/// chain, the DER's address and length): 0 or an error; the key's parse
+/// (c, args: the DER's address and length): 0, 1 for an unknown key
+/// algorithm, 2 for another error; the key types of c (1 the
+/// certificate's public key is RSA, 2 EC; 4 the private key is RSA, 8
+/// EC); mbedtls_pk_check_pair of c (0 when they match); hostname_msg of
+/// args (the leaf, the host's C string, the message buffer and its
+/// size): 0 when the host matches; and the address of
+/// kCFTypeArrayCallBacks (macOS; 0 elsewhere).
+const V_CRT_DER = 0
+const V_KEY = 8
+const V_KINDS = 16
+const V_PAIR = 24
+const V_HOSTMSG = 32
+const V_CF_CALLBACKS = 40
+const V_CALL4 = 48
+
+/// macOS: the CoreFoundation and Security framework functions, at
+/// these words of the services record from 56 on (only a program that
+/// uses TLS links the frameworks, and every program that imports
+/// std/http carries this module's exports, so they are not
+/// sys_darwin.xo declarations). sec calls one through the record's
+/// call4, which passes four words (the C convention ignores the rest);
+/// a Boolean, C bool, or OSStatus result is in its low bits.
+const F_CFRELEASE = 56
+const F_CFARRAYCREATEMUTABLE = 64
+const F_CFARRAYAPPENDVALUE = 72
+const F_CFARRAYGETCOUNT = 80
+const F_CFARRAYGETVALUEATINDEX = 88
+const F_CFDATACREATE = 96
+const F_CFDATAGETBYTEPTR = 104
+const F_CFDATAGETLENGTH = 112
+const F_CFSTRINGCREATEWITHCSTRING = 120
+const F_CFSTRINGGETCSTRING = 128
+const F_CFERRORGETCODE = 136
+const F_CFERRORCOPYDESCRIPTION = 144
+const F_SECCERTIFICATECOPYDATA = 152
+const F_SECCERTIFICATECREATEWITHDATA = 160
+const F_SECPOLICYCREATESSL = 168
+const F_SECTRUSTCREATEWITHCERTIFICATES = 176
+const F_SECTRUSTEVALUATEWITHERROR = 184
+const F_SECTRUSTCOPYANCHORCERTIFICATES = 192
+const F_SECTRUSTSETTINGSCOPYCERTIFICATES = 200
+const F_SECTRUSTSETTINGSCOPYTRUSTSETTINGS = 208
+
+/// mbedtls_x509_crt: the DER's length and address (raw.len, raw.p), the
+/// next certificate of the chain, the validity period's two
+/// mbedtls_x509_time (six C ints: year, month, day, hour, minute,
+/// second).
+const CRT_RAW_LEN = 16
+const CRT_RAW_P = 24
+const CRT_NEXT = 1288
+pub const CRT_VALID_FROM = 288
+pub const CRT_VALID_TO = 312
+
+fn call(svc: Int, k: Int, a: Int, b: Int) -> Int { rt.call_c2(rt.mem_load(svc, k, 8), a, b) }
+
+/// The framework function at word f of svc with up to four arguments.
+fn sec(svc: Int, f: Int, a: Int, b: Int, c: Int, d: Int) -> Int {
+  let v = rt.heap_large(40)
+  rt.mem_store(v, 0, rt.mem_load(svc, f, 8), 8)
+  rt.mem_store(v, 8, a, 8)
+  rt.mem_store(v, 16, b, 8)
+  rt.mem_store(v, 24, c, 8)
+  rt.mem_store(v, 32, d, 8)
+  let r = call(svc, V_CALL4, v, 0)
+  release(v)
+  r
+}
+
+/// The C int (an OSStatus) in the low 32 bits of r, sign extended.
+fn s32(r: Int) -> Int {
+  let v = r & 4294967295
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+/// A block of n bytes (at least 1) from malloc, for C to read; freed
+/// with release.
+fn block(n: Int) -> Int { rt.heap_large(if n > 0 { n } else { 1 }) }
+
+fn release(b: Int) { rt.heap_release(b - 8) }
+
+/// mbedtls_x509_crt_parse_der of the n bytes at der into the chain crt:
+/// whether it parsed.
+fn parse_der(svc: Int, crt: Int, der: Int, n: Int) -> Bool {
+  let a = rt.heap_large(24)
+  rt.mem_store(a, 0, crt, 8)
+  rt.mem_store(a, 8, der, 8)
+  rt.mem_store(a, 16, n, 8)
+  let r = call(svc, V_CRT_DER, a, 0)
+  release(a)
+  r == 0
+}
+
+/// A C string from malloc holding s (C frees it with free: the block's
+/// malloc address, its prefix overwritten).
+pub fn c_string(s: Str) -> Int {
+  let n = s.len()
+  let m = rt.heap_large(n + 1) - 8
+  let p = raw.data(s)
+  for i in 0..n {
+    rt.mem_store(m, i, rt.mem_load(p, i, 1), 1)
+  }
+  rt.mem_store(m, n, 0, 1)
+  m
+}
+
+/// Writes s zero terminated into the buffer of bn bytes at buf (cut to
+/// fit): its length.
+pub fn put_msg(buf: Int, bn: Int, s: Str) -> Int {
+  let n = if s.len() < bn { s.len() } else { bn - 1 }
+  let p = raw.data(s)
+  for i in 0..n {
+    rt.mem_store(buf, i, rt.mem_load(p, i, 1), 1)
+  }
+  rt.mem_store(buf, n, 0, 1)
+  n
+}
+
+/// Go's %v of a []string: [a b c].
+fn types_list(ts: List[Str]) -> Str { "[${ts.join(" ")}]" }
+
+// ---------------------------------------------------------------------------
+// Certificates (http.tls_cert)
+
+/// tls.X509KeyPair's checks of the PEM inputs (the cn bytes at cp, the
+/// kn at kp) for the certificate c, whose chain is at crt: every
+/// CERTIFICATE block is parsed into the chain (only the leaf must
+/// parse), the key is the first block whose type ends in PRIVATE KEY.
+/// "" for a certificate, else Go's error text.
+pub fn cert_check(svc: Int, c: Int, crt: Int, cp: Int, cn: Int, kp: Int, kn: Int) -> Str {
+  var skipped: List[Str] = []
+  var ncert = 0
+  var bad_leaf = false
+  let der = block(cn + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(cp, cn, pos, der)
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" {
+      // the chain is sent as it is; only the leaf must parse
+      // (X509KeyPair parses only Certificate[0])
+      if !parse_der(svc, crt, der, k) && ncert == 0 {
+        bad_leaf = true
+      }
+      ncert += 1
+    } else if skipped.len() < 64 {
+      skipped.push(ty)
+    }
+  }
+  release(der)
+  if ncert == 0 {
+    if skipped.is_empty() {
+      return "tls: failed to find any PEM data in certificate input"
+    }
+    if skipped.len() == 1 && skipped[0].ends_with("PRIVATE KEY") {
+      return "tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched"
+    }
+    return "tls: failed to find \"CERTIFICATE\" PEM block in certificate input after skipping PEM blocks of the following types: ${types_list(skipped)}"
+  }
+  // the key: the first block whose type ends in PRIVATE KEY
+  skipped = []
+  let key = block(kn + 1)
+  pos = 0
+  var keyn = -1
+  while true {
+    let (np, ty, k) = tlsname.pem_next(kp, kn, pos, key)
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "PRIVATE KEY" || ty.ends_with(" PRIVATE KEY") {
+      keyn = k
+      break
+    }
+    if skipped.len() < 64 {
+      skipped.push(ty)
+    }
+  }
+  if keyn < 0 {
+    zero_release(key, kn + 1)
+    if skipped.is_empty() {
+      return "tls: failed to find any PEM data in key input"
+    }
+    if skipped.len() == 1 && skipped[0] == "CERTIFICATE" {
+      return "tls: found a certificate rather than a key in the PEM for the private key"
+    }
+    return "tls: failed to find PEM block with type ending in \"PRIVATE KEY\" in key input after skipping PEM blocks of the following types: ${types_list(skipped)}"
+  }
+  if bad_leaf {
+    zero_release(key, kn + 1)
+    return "x509: malformed certificate"
+  }
+  let a = rt.heap_large(16)
+  rt.mem_store(a, 0, key, 8)
+  rt.mem_store(a, 8, keyn, 8)
+  let r = call(svc, V_KEY, c, a)
+  release(a)
+  zero_release(key, kn + 1)
+  if r == 1 {
+    return "tls: found unknown private key type in PKCS#8 wrapping"
+  }
+  if r != 0 {
+    return "tls: failed to parse private key"
+  }
+  let kinds = call(svc, V_KINDS, c, 0)
+  let pub_rsa = kinds & 1 != 0
+  let pub_ec = kinds & 2 != 0
+  let key_rsa = kinds & 4 != 0
+  let key_ec = kinds & 8 != 0
+  if !pub_rsa && !pub_ec {
+    return "tls: unknown public key algorithm"
+  }
+  if (pub_rsa && !key_rsa) || (pub_ec && !key_ec) {
+    return "tls: private key type does not match public key type"
+  }
+  if call(svc, V_PAIR, c, 0) != 0 {
+    return "tls: private key does not match public key"
+  }
+  ""
+}
+
+/// Clears the n bytes of the key's block b, then frees it (Mbed TLS's
+/// mbedtls_platform_zeroize of the C).
+fn zero_release(b: Int, n: Int) {
+  for i in 0..n {
+    rt.mem_store(b, i, 0, 1)
+  }
+  rt.fence(2)
+  release(b)
+}
+
+// ---------------------------------------------------------------------------
+// Roots (Client.with_roots and the system's)
+
+/// Adds the CERTIFICATE blocks of the n bytes of PEM at p that parse to
+/// the chain crt (CertPool.AppendCertsFromPEM): how many.
+pub fn roots_pem(svc: Int, crt: Int, p: Int, n: Int) -> Int {
+  let der = block(n + 1)
+  var pos = 0
+  var added = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(p, n, pos, der)
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" && parse_der(svc, crt, der, k) {
+      added += 1
+    }
+  }
+  release(der)
+  added
+}
+
+fn roots_bytes(svc: Int, crt: Int, b: Bytes) -> Int { roots_pem(svc, crt, raw.bytes_addr(b), b.len()) }
+
+/// The system's roots added to the chain crt (once, at the first https
+/// request): how many. macOS: the Security framework's anchors, and the
+/// admin's and user's certificates trusted as roots without conditions
+/// (Go asks the framework to verify each chain, decision 0105),
+/// /etc/ssl/cert.pem when the framework gives none. Windows (decision
+/// 0197): the certificates of the system's ROOT store (Go asks
+/// CertGetCertificateChain instead: a later stage). Linux: crypto/x509's
+/// root_unix.go.
+pub fn roots_system(svc: Int, crt: Int) -> Int {
+  match target.os {
+    TargetOs.Darwin => roots_darwin(svc, crt)
+    TargetOs.Windows => roots_windows(svc, crt)
+    TargetOs.Linux => roots_unix(svc, crt)
+    TargetOs.Wasi => 0
+  }
+}
+
+/// The DER of the SecCertificateRef c added to crt: whether it parsed.
+fn add_sec_cert(svc: Int, crt: Int, c: Int) -> Bool {
+  let d = sec(svc, F_SECCERTIFICATECOPYDATA, c, 0, 0, 0)
+  if d == 0 {
+    return false
+  }
+  let ok = parse_der(svc, crt, sec(svc, F_CFDATAGETBYTEPTR, d, 0, 0, 0), sec(svc, F_CFDATAGETLENGTH, d, 0, 0, 0))
+  let _r1 = sec(svc, F_CFRELEASE, d, 0, 0, 0)
+  ok
+}
+
+fn roots_darwin(svc: Int, crt: Int) -> Int {
+  var n = 0
+  let out = rt.heap_large(8)
+  rt.mem_store(out, 0, 0, 8)
+  if s32(sec(svc, F_SECTRUSTCOPYANCHORCERTIFICATES, out, 0, 0, 0)) == 0 && rt.mem_load(out, 0, 8) != 0 {
+    let anchors = rt.mem_load(out, 0, 8)
+    for i in 0..sec(svc, F_CFARRAYGETCOUNT, anchors, 0, 0, 0) {
+      if add_sec_cert(svc, crt, sec(svc, F_CFARRAYGETVALUEATINDEX, anchors, i, 0, 0)) {
+        n += 1
+      }
+    }
+    let _r2 = sec(svc, F_CFRELEASE, anchors, 0, 0, 0)
+  }
+  // kSecTrustSettingsDomainAdmin 1, kSecTrustSettingsDomainUser 0
+  for dom in [1, 0] {
+    rt.mem_store(out, 0, 0, 8)
+    if s32(sec(svc, F_SECTRUSTSETTINGSCOPYCERTIFICATES, dom, out, 0, 0)) != 0 || rt.mem_load(out, 0, 8) == 0 {
+      continue
+    }
+    let certs = rt.mem_load(out, 0, 8)
+    for i in 0..sec(svc, F_CFARRAYGETCOUNT, certs, 0, 0, 0) {
+      let c = sec(svc, F_CFARRAYGETVALUEATINDEX, certs, i, 0, 0)
+      rt.mem_store(out, 0, 0, 8)
+      if s32(sec(svc, F_SECTRUSTSETTINGSCOPYTRUSTSETTINGS, c, dom, out, 0)) == 0 && rt.mem_load(out, 0, 8) != 0 {
+        let settings = rt.mem_load(out, 0, 8)
+        // an empty array: trusted as a root for everything
+        if sec(svc, F_CFARRAYGETCOUNT, settings, 0, 0, 0) == 0 && add_sec_cert(svc, crt, c) {
+          n += 1
+        }
+        let _r3 = sec(svc, F_CFRELEASE, settings, 0, 0, 0)
+      }
+    }
+    let _r4 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+  }
+  release(out)
+  if n == 0 {
+    let (b, e) = sysio.read_whole("/etc/ssl/cert.pem")
+    if e == 0 {
+      n += roots_bytes(svc, crt, b)
+    }
+  }
+  n
+}
+
+/// UNTESTED on windows.
+fn roots_windows(svc: Int, crt: Int) -> Int {
+  var n = 0
+  for der in windows_ders() {
+    if parse_der(svc, crt, raw.bytes_addr(der), der.len()) {
+      n += 1
+    }
+  }
+  n
+}
+
+/// The certificates (DER) of the system's ROOT store.
+fn windows_ders() -> List[Bytes] {
+  var out: List[Bytes] = []
+  // L"ROOT"
+  var w = BytesBuilder.with_capacity(10)
+  for ch in [82, 79, 79, 84, 0] {
+    w.write_byte(UInt8(ch))
+    w.write_byte(UInt8(0))
+  }
+  let st = sys_windows.CertOpenSystemStoreW(0, w.freeze())
+  if st == 0 {
+    return out
+  }
+  var c = 0
+  while true {
+    c = sys_windows.CertEnumCertificatesInStore(st, c)
+    if c == 0 {
+      break
+    }
+    // CERT_CONTEXT: the encoding type, pbCertEncoded, cbCertEncoded
+    out.push(raw.str_at(rt.mem_load(c, 8, 8), rt.mem_load(c, 16, 4)).bytes())
+  }
+  let _c = sys_windows.CertCloseStore(st, 0)
+  out
+}
+
+/// The system's root certificates (DER) for the Xo client off macOS
+/// (where the Security framework verifies): Linux's files as
+/// crypto/x509's root_unix.go reads them, Windows's ROOT store (Go asks
+/// CertGetCertificateChain there: a later stage). UNTESTED on linux and
+/// windows.
+pub fn system_ders() -> List[Bytes] {
+  match target.os {
+    TargetOs.Linux => {
+      var out: List[Bytes] = []
+      for b in unix_pems() {
+        for d in pem_certs(b) {
+          out.push(d)
+        }
+      }
+      out
+    }
+    TargetOs.Windows => windows_ders()
+    TargetOs.Darwin | TargetOs.Wasi => []
+  }
+}
+
+/// The DER of each CERTIFICATE block of a PEM text.
+pub fn pem_certs(pem: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  let n = pem.len()
+  let der = block(n + 1)
+  var pos = 0
+  while true {
+    let (np, ty, k) = tlsname.pem_next(raw.bytes_addr(pem), n, pos, der)
+    pos = np
+    if k < 0 {
+      break
+    }
+    if ty == "CERTIFICATE" {
+      out.push(raw.str_at(der, k).bytes())
+    }
+  }
+  release(der)
+  out
+}
+
+/// The bundle files of crypto/x509's root_linux.go, in its order.
+fn cert_files() -> List[Str] {
+  ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"]
+}
+
+/// UNTESTED on linux: SSL_CERT_FILE or the first bundle file that
+/// reads, then every regular file of SSL_CERT_DIR's directories (or
+/// /etc/ssl/certs and /etc/pki/tls/certs), a link to a file of the same
+/// directory read once, as that file (readUniqueDirectoryEntries).
+fn roots_unix(svc: Int, crt: Int) -> Int {
+  var n = 0
+  for b in unix_pems() {
+    n += roots_bytes(svc, crt, b)
+  }
+  n
+}
+
+/// The files crypto/x509's root_unix.go reads: the first of
+/// $SSL_CERT_FILE or the distribution's bundles that reads, then each
+/// regular file of $SSL_CERT_DIR or the default directories (symbolic
+/// links to a name in the same directory skipped).
+fn unix_pems() -> List[Bytes] {
+  var out: List[Bytes] = []
+  let fenv = process.env_real("SSL_CERT_FILE")
+  let files = if !fenv.is_empty() && !fenv[0].is_empty() { [fenv[0]] } else { cert_files() }
+  for f in files {
+    let (b, e) = sysio.read_whole(f)
+    if e == 0 {
+      out.push(b)
+      break
+    }
+  }
+  let denv = process.env_real("SSL_CERT_DIR")
+  let dirs = if !denv.is_empty() && !denv[0].is_empty() { denv[0] } else { "/etc/ssl/certs:/etc/pki/tls/certs" }
+  for d in dirs.split(":") {
+    if d.is_empty() {
+      continue
+    }
+    let (names, de) = fsops.raw_names(d)
+    if de != 0 {
+      continue
+    }
+    for name in names {
+      if name.starts_with(".") {
+        continue
+      }
+      let path = "${d}/${name}"
+      let (target, le) = linux.readlink(path)
+      if le == 0 && !target.contains("/") {
+        continue
+      }
+      if fsops.raw_kind(path, true) != 0 {
+        continue
+      }
+      let (b, e) = sysio.read_whole(path)
+      if e == 0 {
+        out.push(b)
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The client's verification texts
+
+/// The days from 1970-01-01 to the civil date y-m-d (proleptic
+/// Gregorian).
+fn days_from_civil(y0: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { y0 - 1 } else { y0 }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// Two decimal digits of v.
+fn two(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
+
+/// Go's time.Format(time.RFC3339) of the Unix time t in the zone off
+/// seconds east of UTC (Z for UTC).
+pub fn rfc3339(t: Int, off: Int) -> Str {
+  let s = t + off
+  var days = s / 86400
+  var secs = s % 86400
+  if secs < 0 {
+    secs += 86400
+    days -= 1
+  }
+  // civil_from_days
+  let z = days + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  let y = yoe + era * 400 + (if m <= 2 { 1 } else { 0 })
+  var ys = "${y}"
+  while ys.len() < 4 {
+    ys = "0${ys}"
+  }
+  let base = "${ys}-${two(m)}-${two(d)}T${two(secs / 3600)}:${two(secs / 60 % 60)}:${two(secs % 60)}"
+  if off == 0 {
+    return "${base}Z"
+  }
+  let sign = if off < 0 { "-" } else { "+" }
+  let a = if off < 0 { 0 - off } else { off }
+  "${base}${sign}${two(a / 3600)}:${two(a / 60 % 60)}"
+}
+
+/// The Unix time of the mbedtls_x509_time at tp (UTC).
+pub fn x509_time(tp: Int) -> Int {
+  days_from_civil(tm(tp, 0), tm(tp, 1), tm(tp, 2)) * 86400 + tm(tp, 3) * 3600 + tm(tp, 4) * 60 + tm(tp, 5)
+}
+
+/// The C int i of the mbedtls_x509_time at tp.
+fn tm(tp: Int, i: Int) -> Int {
+  let v = rt.mem_load(tp, 4 * i, 4)
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+/// Go's text of a leaf outside its validity period: now (Unix seconds)
+/// in the local zone off seconds east of UTC, the limit (the
+/// mbedtls_x509_time at tp) in UTC; before it when future.
+pub fn expiry_msg(now: Int, off: Int, tp: Int, future: Bool) -> Str {
+  let rel = if future { "before" } else { "after" }
+  "x509: certificate has expired or is not yet valid: current time ${rfc3339(now, off)} is ${rel} ${rfc3339(x509_time(tp), 0)}"
+}
+
+// ---------------------------------------------------------------------------
+// macOS: the chain's verification by the Security framework
+
+/// kCFStringEncodingUTF8, and the Security framework's errors
+/// errSecCertificateExpired, errSecHostNameMismatch, errSecNotTrusted.
+const CF_UTF8 = 134217984
+const ERR_EXPIRED = -67818
+const ERR_HOST = -67602
+const ERR_NOT_TRUSTED = -67843
+
+/// hostname_msg of the C (the leaf crt, the host's C string at hp, the
+/// buffer of mn bytes at msg): whether the host does not match.
+fn host_bad(svc: Int, crt: Int, hp: Int, msg: Int, mn: Int) -> Bool {
+  let a = rt.heap_large(32)
+  rt.mem_store(a, 0, crt, 8)
+  rt.mem_store(a, 8, hp, 8)
+  rt.mem_store(a, 16, msg, 8)
+  rt.mem_store(a, 24, mn, 8)
+  let r = call(svc, V_HOSTMSG, a, 0)
+  release(a)
+  r != 0
+}
+
+/// crypto/x509's systemVerify (root_darwin.go): the Security framework
+/// evaluates the presented chain crt for an SSL server with the host
+/// name (the C string at hp, hn bytes), then Go checks the host name
+/// itself. 0 when the chain is trusted, else 1 and Go's text zero
+/// terminated in the buffer of mn bytes at msg.
+/// apple_verify's outcome for the Xo client (tls13.xo): x509verify.xo's
+/// codes (0 trusted, 1 unknown authority, 2 expired, 7 the host name, 10
+/// another error) and Go's text for 2 and 10.
+pub struct AppleRes {
+  pub code: Int
+  pub msg: Str
+}
+
+/// Go's systemVerify on macOS for the chain of DERs (leaf first) and the
+/// host ("" none), as apple_verify: the framework evaluates the chain for
+/// an SSL server, then Go checks the host name itself (the caller, with
+/// the leaf: code 7). The framework is called directly (sys_darwin.xo;
+/// the build links it when a program calls it), so the default TLS path
+/// needs neither xo_tls.c's table nor Mbed TLS; svc is unused (kept for
+/// the callers' signatures, nonzero meaning the framework decides).
+pub fn apple_trust(_svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
+  match target.os {
+    TargetOs.Darwin => apple_trust_darwin(ders, host)
+    _ => AppleRes{code: 10, msg: "x509: no Security framework off macOS"}
+  }
+}
+
+fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
+  let callbacks = sys_darwin.dlsym(-2, "kCFTypeArrayCallBacks\x00".bytes())
+  let certs = sys_darwin.CFArrayCreateMutable(0, 0, callbacks)
+  for (i, der) in ders.indexed() {
+    let d = sys_darwin.CFDataCreate(0, raw.bytes_addr(der), der.len())
+    let sc = if d != 0 { sys_darwin.SecCertificateCreateWithData(0, d) } else { 0 }
+    if d != 0 {
+      sys_darwin.CFRelease(d)
+    }
+    if sc == 0 {
+      sys_darwin.CFRelease(certs)
+      return AppleRes{code: 10, msg: if i == 0 { "invalid leaf certificate" } else { "x509: malformed certificate" }}
+    }
+    sys_darwin.CFArrayAppendValue(certs, sc)
+    sys_darwin.CFRelease(sc)
+  }
+  let name = if host.len() > 0 { sys_darwin.CFStringCreateWithCString(0, "${host}\x00".bytes(), CF_UTF8) } else { 0 }
+  let pol = sys_darwin.SecPolicyCreateSSL(1, name)
+  if name != 0 {
+    sys_darwin.CFRelease(name)
+  }
+  let out = block(8)
+  rt.mem_store(out, 0, 0, 8)
+  let st = Int(sys_darwin.SecTrustCreateWithCertificates(certs, pol, out))
+  sys_darwin.CFRelease(certs)
+  if pol != 0 {
+    sys_darwin.CFRelease(pol)
+  }
+  let trust = rt.mem_load(out, 0, 8)
+  if st != 0 || trust == 0 {
+    release(out)
+    return AppleRes{code: 10, msg: "SecTrustCreateWithCertificates error: ${st}"}
+  }
+  rt.mem_store(out, 0, 0, 8)
+  var res = AppleRes{code: 0, msg: ""}
+  // a C bool: only the low byte is the result
+  if sys_darwin.SecTrustEvaluateWithError(trust, out) & 255 == 0 {
+    let err = rt.mem_load(out, 0, 8)
+    let code = if err != 0 { sys_darwin.CFErrorGetCode(err) } else { 0 }
+    var desc = ""
+    if err != 0 {
+      let ds = sys_darwin.CFErrorCopyDescription(err)
+      if ds != 0 {
+        let buf = block(600)
+        if sys_darwin.CFStringGetCString(ds, buf, 600, CF_UTF8) & 255 != 0 {
+          desc = raw.str_at(buf, raw.cstr_len(buf))
+        }
+        release(buf)
+        sys_darwin.CFRelease(ds)
+      }
+      sys_darwin.CFRelease(err)
+    }
+    res = if code == ERR_EXPIRED {
+      AppleRes{code: 2, msg: "x509: certificate has expired or is not yet valid: ${desc}"}
+    } else if code == ERR_HOST {
+      AppleRes{code: 7, msg: ""}
+    } else if code == ERR_NOT_TRUSTED {
+      AppleRes{code: 1, msg: ""}
+    } else {
+      AppleRes{code: 10, msg: "x509: ${desc}"}
+    }
+  }
+  release(out)
+  sys_darwin.CFRelease(trust)
+  res
+}
+
+pub fn apple_verify(svc: Int, crt: Int, hp: Int, hn: Int, msg: Int, mn: Int) -> Int {
+  let certs = sec(svc, F_CFARRAYCREATEMUTABLE, 0, 0, rt.mem_load(svc, V_CF_CALLBACKS, 8), 0)
+  var c = crt
+  while c != 0 && rt.mem_load(c, CRT_RAW_P, 8) != 0 {
+    let d = sec(svc, F_CFDATACREATE, 0, rt.mem_load(c, CRT_RAW_P, 8), rt.mem_load(c, CRT_RAW_LEN, 8), 0)
+    let sc = if d != 0 { sec(svc, F_SECCERTIFICATECREATEWITHDATA, 0, d, 0, 0) } else { 0 }
+    if d != 0 {
+      let _r5 = sec(svc, F_CFRELEASE, d, 0, 0, 0)
+    }
+    if sc == 0 {
+      let _r6 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+      let _m = put_msg(msg, mn, if c == crt { "invalid leaf certificate" } else { "x509: malformed certificate" })
+      return 1
+    }
+    let _r7 = sec(svc, F_CFARRAYAPPENDVALUE, certs, sc, 0, 0)
+    let _r8 = sec(svc, F_CFRELEASE, sc, 0, 0, 0)
+    c = rt.mem_load(c, CRT_NEXT, 8)
+  }
+  let name = if hn > 0 { sec(svc, F_CFSTRINGCREATEWITHCSTRING, 0, hp, CF_UTF8, 0) } else { 0 }
+  let pol = sec(svc, F_SECPOLICYCREATESSL, 1, name, 0, 0)
+  if name != 0 {
+    let _r9 = sec(svc, F_CFRELEASE, name, 0, 0, 0)
+  }
+  let out = rt.heap_large(8)
+  rt.mem_store(out, 0, 0, 8)
+  let st = s32(sec(svc, F_SECTRUSTCREATEWITHCERTIFICATES, certs, pol, out, 0))
+  let _r10 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+  if pol != 0 {
+    let _r11 = sec(svc, F_CFRELEASE, pol, 0, 0, 0)
+  }
+  let trust = rt.mem_load(out, 0, 8)
+  if st != 0 || trust == 0 {
+    release(out)
+    let _m = put_msg(msg, mn, "SecTrustCreateWithCertificates error: ${st}")
+    return 1
+  }
+  rt.mem_store(out, 0, 0, 8)
+  var bad = 0
+  // a C bool: only the low byte is the result
+  if sec(svc, F_SECTRUSTEVALUATEWITHERROR, trust, out, 0, 0) & 255 == 0 {
+    bad = 1
+    let err = rt.mem_load(out, 0, 8)
+    let code = if err != 0 { sec(svc, F_CFERRORGETCODE, err, 0, 0, 0) } else { 0 }
+    var desc = ""
+    if err != 0 {
+      let ds = sec(svc, F_CFERRORCOPYDESCRIPTION, err, 0, 0, 0)
+      if ds != 0 {
+        let buf = rt.heap_large(600)
+        if sec(svc, F_CFSTRINGGETCSTRING, ds, buf, 600, CF_UTF8) & 255 != 0 {
+          desc = raw.str_at(buf, raw.cstr_len(buf))
+        }
+        release(buf)
+        let _r12 = sec(svc, F_CFRELEASE, ds, 0, 0, 0)
+      }
+      let _r13 = sec(svc, F_CFRELEASE, err, 0, 0, 0)
+    }
+    if code == ERR_EXPIRED {
+      let _m = put_msg(msg, mn, "x509: certificate has expired or is not yet valid: ${desc}")
+    } else if code == ERR_HOST {
+      if !host_bad(svc, crt, hp, msg, mn) {
+        let _m = put_msg(msg, mn, "x509: certificate is valid for ${raw.str_at(hp, hn)}")
+      }
+    } else if code == ERR_NOT_TRUSTED {
+      let _m = put_msg(msg, mn, "x509: certificate signed by unknown authority")
+    } else {
+      let _m = put_msg(msg, mn, "x509: ${desc}")
+    }
+  }
+  release(out)
+  let _r14 = sec(svc, F_CFRELEASE, trust, 0, 0, 0)
+  if bad == 0 && hn > 0 && host_bad(svc, crt, hp, msg, mn) {
+    bad = 1
+  }
+  bad
+}

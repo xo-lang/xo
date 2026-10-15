@@ -1,0 +1,74 @@
+// Constants of collection types (decision 0081): each is built once, by
+// its entry function on first use, and kept immortal in its slot until
+// exit, when consts_free gives it to its drop function (which releases a
+// list) so the leak check sees it freed. Two threads may both build it;
+// the loser releases its copy. The table (the lists, then their drop
+// functions: 2 * MAX words, heap_large) hangs off ctx.xo's services
+// record (SV_CONSTS). Was xo_bytes.c xo_const_once and xo_consts_free;
+// the C entries forward to cabi.xo's exports (the generated code of
+// older xo's and the services record of entry.xo call them).
+use native/llrt/ctx
+use native/rt
+
+/// The most constants a program has (the C's N_MAX_CONSTS).
+const MAX = 4096
+
+/// A list's count that never changes (xo_rt.c XO_RC_IMMORTAL).
+const IMMORTAL = -9223372036854775807 - 1
+
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+/// The table, made at first use.
+fn table() -> Int {
+  let w = ctx.svc()
+  let k = ctx.SV_CONSTS / 8
+  let a = rt.slot_load[Int](w, k, ACQUIRE)
+  if a != 0 {
+    return a
+  }
+  let n = rt.heap_large(16 * MAX)
+  rt.mem_set(n, 0, 16 * MAX)
+  if rt.slot_cas[Int](w, k, 0, n, ACQ_REL) {
+    return n
+  }
+  rt.heap_release(n - 8)
+  rt.slot_load[Int](w, k, ACQUIRE)
+}
+
+/// The constant id: built by calling the entry function at address f
+/// the first time (the list object's address), its drop function at
+/// address drop kept for consts_free.
+pub fn once(f: Int, drop: Int, id: Int) -> Int {
+  let t = table()
+  let l0 = rt.slot_load[Int](t, id, ACQUIRE)
+  if l0 != 0 {
+    return l0
+  }
+  let l = rt.call_c2(f, 0, 0)
+  rt.mem_store(l, 0, IMMORTAL, 8)
+  if rt.slot_cas[Int](t, id, 0, l, ACQ_REL) {
+    rt.mem_store(t, 8 * (MAX + id), drop, 8)
+    return l
+  }
+  rt.mem_store(l, 0, 1, 8)
+  let _d = rt.call_c2(drop, l, 0)
+  rt.slot_load[Int](t, id, ACQUIRE)
+}
+
+/// Releases the constants built during the run (at exit).
+pub fn free_all() {
+  let t = rt.slot_load[Int](ctx.svc(), ctx.SV_CONSTS / 8, ACQUIRE)
+  if t == 0 {
+    return
+  }
+  for i in 0..MAX {
+    let l = rt.mem_load(t, 8 * i, 8)
+    let d = rt.mem_load(t, 8 * (MAX + i), 8)
+    if l != 0 && d != 0 {
+      rt.mem_store(t, 8 * i, 0, 8)
+      rt.mem_store(l, 0, 1, 8)
+      let _d = rt.call_c2(d, l, 0)
+    }
+  }
+}

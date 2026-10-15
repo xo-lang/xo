@@ -11,4 +11,4 @@ std/rt's Advance lets the woken tasks run before returning.
 
 Fix: after its timer, advance waits on a timer due now, which fires only
 at the next move of the clock, when every context waits again
-(`std/llrt/xo_testing.c`).
+(`std/native/llrt/twrun.xo` advance; it was `std/llrt/xo_testing.c`).

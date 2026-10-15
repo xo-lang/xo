@@ -1,0 +1,1711 @@
+// TLS 1.2 for the native backends' TLS (RFC 5246, as Go's crypto/tls
+// handshake_client.go, key_agreement.go, prf.go, and cipher_suites.go:
+// decision 0202, replacing Mbed TLS's TLS 1.2): the PRF, the master
+// secret (with the extended master secret, RFC 7627), the key block,
+// records protected with AES-GCM (an explicit nonce) or
+// ChaCha20-Poly1305 (RFC 7905), and the client's handshake as a state
+// machine over bytes (no I/O here: the caller feeds what the server
+// sent and takes what to send). The server is tls12srv.xo. Go's
+// defaults only: ECDHE over X25519, P-256, and P-384, signed with ECDSA,
+// RSA PKCS #1 v1.5, RSA-PSS, or Ed25519; the AEAD suites; no CBC, no RSA
+// key exchange, no renegotiation, no resumption (no session tickets, a
+// session id the server never resumes). Error texts and alerts are
+// crypto/tls's.
+use native/llrt/aesgcm
+use native/llrt/asn1
+use native/llrt/chacha
+use native/llrt/ct
+use native/llrt/hmac
+use native/llrt/rand
+use native/llrt/sha1
+use native/llrt/sha256
+use native/llrt/tls13
+use native/llrt/tlscert
+use native/llrt/tlsname
+use native/llrt/x509
+use native/llrt/x509verify
+use native/rt
+
+// the cipher suites (RFC 5289, RFC 7905), in Go's order of preference
+// with AES hardware
+pub const ECDHE_ECDSA_AES128_GCM: Int = 0xc02b
+pub const ECDHE_RSA_AES128_GCM: Int = 0xc02f
+pub const ECDHE_ECDSA_AES256_GCM: Int = 0xc02c
+pub const ECDHE_RSA_AES256_GCM: Int = 0xc030
+pub const ECDHE_ECDSA_CHACHA20: Int = 0xcca9
+pub const ECDHE_RSA_CHACHA20: Int = 0xcca8
+
+// the ECDHE CBC-SHA suites Go's server enables by default (RFC 4492; HMAC
+// SHA-1, MAC then encrypt), after the AEADs in its order; Go's client
+// offers them too
+pub const ECDHE_ECDSA_AES128_CBC_SHA: Int = 0xc009
+pub const ECDHE_RSA_AES128_CBC_SHA: Int = 0xc013
+pub const ECDHE_ECDSA_AES256_CBC_SHA: Int = 0xc00a
+pub const ECDHE_RSA_AES256_CBC_SHA: Int = 0xc014
+
+// the record content types
+pub const CT_CCS: Int = 20
+pub const CT_ALERT: Int = 21
+pub const CT_HANDSHAKE: Int = 22
+pub const CT_APP: Int = 23
+
+/// The largest plaintext of a record (2^14), and of a TLS 1.2 record's
+/// ciphertext (2^14 + 2048, Go's maxCiphertext).
+pub const MAX_PLAIN: Int = 16384
+pub const MAX_CIPHER: Int = 18432
+
+// the handshake message types
+pub const HS_HELLO_REQUEST: Int = 0
+pub const HS_CLIENT_HELLO: Int = 1
+pub const HS_SERVER_HELLO: Int = 2
+pub const HS_NEW_SESSION_TICKET: Int = 4
+pub const HS_CERTIFICATE: Int = 11
+pub const HS_SERVER_KEY_EXCHANGE: Int = 12
+pub const HS_CERTIFICATE_REQUEST: Int = 13
+pub const HS_SERVER_HELLO_DONE: Int = 14
+pub const HS_CERTIFICATE_VERIFY: Int = 15
+pub const HS_CLIENT_KEY_EXCHANGE: Int = 16
+pub const HS_FINISHED: Int = 20
+pub const HS_CERTIFICATE_STATUS: Int = 22
+
+// the extensions
+pub const EXT_SERVER_NAME: Int = 0
+pub const EXT_STATUS_REQUEST: Int = 5
+pub const EXT_SUPPORTED_GROUPS: Int = 10
+pub const EXT_POINT_FORMATS: Int = 11
+pub const EXT_SIGNATURE_ALGORITHMS: Int = 13
+pub const EXT_ALPN: Int = 16
+pub const EXT_SCT: Int = 18
+pub const EXT_EMS: Int = 23
+pub const EXT_SESSION_TICKET: Int = 35
+pub const EXT_SUPPORTED_VERSIONS: Int = 43
+pub const EXT_SIGNATURE_ALGORITHMS_CERT: Int = 50
+pub const EXT_RENEGOTIATION_INFO: Int = 65281
+
+// the alerts
+pub const ALERT_CLOSE_NOTIFY: Int = 0
+pub const ALERT_UNEXPECTED_MESSAGE: Int = 10
+pub const ALERT_BAD_RECORD_MAC: Int = 20
+pub const ALERT_RECORD_OVERFLOW: Int = 22
+pub const ALERT_HANDSHAKE_FAILURE: Int = 40
+pub const ALERT_BAD_CERTIFICATE: Int = 42
+pub const ALERT_UNSUPPORTED_CERTIFICATE: Int = 43
+pub const ALERT_ILLEGAL_PARAMETER: Int = 47
+pub const ALERT_DECODE_ERROR: Int = 50
+pub const ALERT_PROTOCOL_VERSION: Int = 70
+pub const ALERT_INTERNAL_ERROR: Int = 80
+pub const ALERT_NO_RENEGOTIATION: Int = 100
+pub const ALERT_UNSUPPORTED_EXTENSION: Int = 110
+pub const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
+
+// Go's limits on a handshake message (maxHandshake, and
+// maxHandshakeCertificateMsg for a Certificate)
+pub const MAX_HANDSHAKE: Int = 65536
+pub const MAX_CERTIFICATE_MSG: Int = 262144
+
+/// The suites this file runs, in Go's order of preference: the AEADs,
+/// then the CBC-SHA ones (Go's defaults for TLS 1.2 with ECDHE).
+pub fn default_suites() -> List[Int] { [ECDHE_ECDSA_AES128_GCM, ECDHE_RSA_AES128_GCM, ECDHE_ECDSA_AES256_GCM, ECDHE_RSA_AES256_GCM, ECDHE_ECDSA_CHACHA20, ECDHE_RSA_CHACHA20, ECDHE_ECDSA_AES128_CBC_SHA, ECDHE_RSA_AES128_CBC_SHA, ECDHE_ECDSA_AES256_CBC_SHA, ECDHE_RSA_AES256_CBC_SHA] }
+
+/// Whether s is one of them.
+pub fn suite_ok(s: Int) -> Bool { has(default_suites(), s) }
+
+/// The suite's PRF and transcript hash (sha256.xo's id).
+pub fn suite_hash(s: Int) -> Int { if s == ECDHE_ECDSA_AES256_GCM || s == ECDHE_RSA_AES256_GCM { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 } }
+
+/// Whether the suite is ChaCha20-Poly1305's.
+pub fn suite_chacha(s: Int) -> Bool { s == ECDHE_ECDSA_CHACHA20 || s == ECDHE_RSA_CHACHA20 }
+
+/// Whether the suite is a CBC-SHA one.
+pub fn suite_cbc(s: Int) -> Bool { s == ECDHE_ECDSA_AES128_CBC_SHA || s == ECDHE_RSA_AES128_CBC_SHA || s == ECDHE_ECDSA_AES256_CBC_SHA || s == ECDHE_RSA_AES256_CBC_SHA }
+
+/// The suite's key length, fixed IV length (AES-GCM's 4 byte salt,
+/// ChaCha20-Poly1305's 12 byte nonce mask, a CBC suite's 16 bytes, which
+/// TLS 1.2's explicit IVs leave unused), and MAC key length (SHA-1's 20
+/// for CBC).
+pub fn suite_key_len(s: Int) -> Int { if s == ECDHE_ECDSA_AES128_GCM || s == ECDHE_RSA_AES128_GCM || s == ECDHE_ECDSA_AES128_CBC_SHA || s == ECDHE_RSA_AES128_CBC_SHA { 16 } else { 32 } }
+
+pub fn suite_iv_len(s: Int) -> Int { if suite_chacha(s) { 12 } else if suite_cbc(s) { 16 } else { 4 } }
+
+pub fn suite_mac_len(s: Int) -> Int { if suite_cbc(s) { 20 } else { 0 } }
+
+/// Whether the suite's ServerKeyExchange is signed with RSA (else ECDSA
+/// or Ed25519).
+pub fn suite_rsa(s: Int) -> Bool { s == ECDHE_RSA_AES128_GCM || s == ECDHE_RSA_AES256_GCM || s == ECDHE_RSA_CHACHA20 || s == ECDHE_RSA_AES128_CBC_SHA || s == ECDHE_RSA_AES256_CBC_SHA }
+
+/// The signature schemes offered for TLS 1.2 (Go's
+/// supportedSignatureAlgorithms less P-521's), and in
+/// signature_algorithms_cert those plus SHA-1's.
+pub fn schemes() -> List[Int] { [0x0804, 0x0403, 0x0807, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601, 0x0503, 0x0603] }
+
+pub fn schemes_cert() -> List[Int] { [0x0804, 0x0403, 0x0807, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601, 0x0503, 0x0603, 0x0201, 0x0203] }
+
+/// The x509 algorithm of a TLS 1.2 signature scheme (Go's
+/// typeAndHashFromSignatureScheme: in TLS 1.2 an ECDSA scheme names the
+/// hash, not the curve); SIG_UNKNOWN for one this file does not run.
+pub fn sig_alg(scheme: Int) -> Int {
+  match scheme {
+    0x0403 => x509.SIG_ECDSA_SHA256
+    0x0503 => x509.SIG_ECDSA_SHA384
+    0x0603 => x509.SIG_ECDSA_SHA512
+    0x0401 => x509.SIG_RSA_SHA256
+    0x0501 => x509.SIG_RSA_SHA384
+    0x0601 => x509.SIG_RSA_SHA512
+    0x0804 => x509.SIG_PSS_SHA256
+    0x0805 => x509.SIG_PSS_SHA384
+    0x0806 => x509.SIG_PSS_SHA512
+    0x0807 => x509.SIG_ED25519
+    _ => x509.SIG_UNKNOWN
+  }
+}
+
+/// The hash of an x509 signature algorithm (sha256.xo's id).
+pub fn alg_hash(alg: Int) -> Int {
+  if alg == x509.SIG_ECDSA_SHA384 || alg == x509.SIG_RSA_SHA384 || alg == x509.SIG_PSS_SHA384 {
+    sha256.HASH_SHA384
+  } else if alg == x509.SIG_ECDSA_SHA512 || alg == x509.SIG_RSA_SHA512 || alg == x509.SIG_PSS_SHA512 {
+    sha256.HASH_SHA512
+  } else {
+    sha256.HASH_SHA256
+  }
+}
+
+/// Whether the algorithm signs with RSA (PKCS #1 v1.5 or PSS).
+pub fn alg_rsa(alg: Int) -> Bool { (alg >= x509.SIG_RSA_SHA256 && alg <= x509.SIG_RSA_SHA512) || (alg >= x509.SIG_PSS_SHA256 && alg <= x509.SIG_PSS_SHA512) }
+
+/// Go's text of a public key's type (%T).
+pub fn key_type(key_alg: Int) -> Str {
+  if key_alg == x509.KEY_RSA {
+    "*rsa.PublicKey"
+  } else if key_alg == x509.KEY_ED25519 {
+    "ed25519.PublicKey"
+  } else {
+    "*ecdsa.PublicKey"
+  }
+}
+
+/// Go's verifyHandshakeSignature: "" when sig is the key's signature of
+/// signed with alg, else its error's text.
+pub fn check_sig(alg: Int, key_alg: Int, key: Bytes, signed: Bytes, sig: Bytes) -> Str {
+  if alg == x509.SIG_ED25519 {
+    if key_alg != x509.KEY_ED25519 {
+      return "expected an Ed25519 public key, got ${key_type(key_alg)}"
+    }
+    return if x509.check(alg, key_alg, key, signed, sig) { "" } else { "Ed25519 verification failure" }
+  }
+  if alg_rsa(alg) {
+    if key_alg != x509.KEY_RSA {
+      return "expected an RSA public key, got ${key_type(key_alg)}"
+    }
+    return if x509.check(alg, key_alg, key, signed, sig) { "" } else { "crypto/rsa: verification error" }
+  }
+  if !x509.is_ec(key_alg) {
+    return "expected an ECDSA public key, got ${key_type(key_alg)}"
+  }
+  if x509.check(alg, key_alg, key, signed, sig) { "" } else { "ECDSA verification failure" }
+}
+
+// ---------------------------------------------------------------------------
+// The PRF and the key schedule (RFC 5246 5, 8.1, 6.3; RFC 7627)
+
+/// P_hash(secret, seed) of n bytes.
+pub fn p_hash(hash: Int, secret: Bytes, seed: Bytes, n: Int) -> Bytes {
+  let m = hmac.new(hash, secret)
+  var a = seed
+  var parts: List[Bytes] = []
+  var got = 0
+  while got < n {
+    a = m.sum(a)
+    let b = m.sum(cat2(a, seed))
+    parts.push(b)
+    got += b.len()
+  }
+  asn1.cat(parts)[0..n]
+}
+
+/// PRF(secret, label, seed) of n bytes.
+pub fn prf(hash: Int, secret: Bytes, label: Str, seed: Bytes, n: Int) -> Bytes { p_hash(hash, secret, cat2(label.bytes(), seed), n) }
+
+/// The master secret of the premaster secret: over the session hash (the
+/// transcript through ClientKeyExchange) when the extended master secret
+/// was negotiated, else over the randoms.
+pub fn master_secret(hash: Int, pms: Bytes, ems: Bool, tr: Bytes, cr: Bytes, sr: Bytes) -> Bytes {
+  if ems {
+    prf(hash, pms, "extended master secret", sha256.sum(hash, tr), 48)
+  } else {
+    prf(hash, pms, "master secret", cat2(cr, sr), 48)
+  }
+}
+
+/// The key block's keys and IVs: the client's key, the server's, the
+/// client's IV, the server's, then the MAC keys, the client's and the
+/// server's (empty for the AEAD suites). The block's order is the
+/// client's MAC key, the server's, the keys, the IVs.
+pub fn key_block(suite: Int, master: Bytes, cr: Bytes, sr: Bytes) -> List[Bytes] {
+  let kl = suite_key_len(suite)
+  let il = suite_iv_len(suite)
+  let ml = suite_mac_len(suite)
+  let b = prf(suite_hash(suite), master, "key expansion", cat2(sr, cr), 2 * ml + 2 * kl + 2 * il)
+  let k = 2 * ml
+  [b[k..k + kl], b[k + kl..k + 2 * kl], b[k + 2 * kl..k + 2 * kl + il], b[k + 2 * kl + il..k + 2 * kl + 2 * il], b[0..ml], b[ml..2 * ml]]
+}
+
+/// The protection of one direction from a key block (key_block's list):
+/// the client's (to) or the server's; a CBC suite's explicit IVs come
+/// from iv when it is 16 bytes (the tests' hook), else fresh.
+pub fn direction(suite: Int, kb: List[Bytes], client: Bool, iv: Bytes) -> Keys {
+  let i = if client { 0 } else { 1 }
+  if suite_cbc(suite) {
+    return Keys{on: true, suite: suite, gcm: None, key: kb[i], iv: iv, seq: 0, mac: kb[4 + i], cbc: Some(aesgcm.new(kb[i]))}
+  }
+  keys(suite, kb[i], kb[2 + i])
+}
+
+/// The Finished verify data of a side ("client finished" or "server
+/// finished") over the transcript so far.
+pub fn verify_data(suite: Int, master: Bytes, label: Str, tr: Bytes) -> Bytes {
+  let h = suite_hash(suite)
+  prf(h, master, label, sha256.sum(h, tr), 12)
+}
+
+// ---------------------------------------------------------------------------
+// Records (RFC 5246 6.2.3.3, RFC 5288 3, RFC 7905 2)
+
+/// One direction's protection: off until ChangeCipherSpec; else the
+/// suite, the AEAD (AES-GCM's expanded key, or ChaCha20-Poly1305's key),
+/// the fixed IV, and the next sequence number.
+pub struct Keys {
+  pub on: Bool
+  pub suite: Int
+  gcm: aesgcm.Gcm?
+  key: Bytes
+  iv: Bytes
+  seq: Int
+  mac: Bytes
+  cbc: aesgcm.Cipher?
+}
+
+/// No protection.
+pub fn plain() -> Keys { Keys{on: false, suite: 0, gcm: None, key: b"", iv: b"", seq: 0, mac: b"", cbc: None} }
+
+/// The protection of a key and fixed IV for the suite.
+pub fn keys(suite: Int, key: Bytes, iv: Bytes) -> Keys {
+  let gcm = if suite_chacha(suite) { None } else { Some(aesgcm.new_gcm(key)) }
+  Keys{on: true, suite: suite, gcm: gcm, key: key, iv: iv, seq: 0, mac: b"", cbc: None}
+}
+
+/// The sequence number as 8 bytes (big endian).
+pub fn u64(x: Int) -> Bytes { asn1.cat([u16(x >> 48), u16(x >> 32), u16(x >> 16), u16(x)]) }
+
+/// ChaCha20-Poly1305's nonce: the IV xor the sequence number at its end.
+fn xor_nonce(iv: Bytes, seq: Int) -> Bytes {
+  var s = rt.rs_with_cap(12)
+  for i in 0..12 {
+    var b = Int(iv[i])
+    if i >= 4 {
+      b = b ^ ((seq >> ((11 - i) * 8)) & 255)
+    }
+    s = rt.rs_push_byte(s, b)
+  }
+  s.bytes()
+}
+
+/// A record header: the type, the version, the length.
+pub fn header(ct: Int, version: Int, n: Int) -> Bytes { asn1.cat([u8(ct), u16(version), u16(n)]) }
+
+/// The records carrying data of content type ct, in pieces of at most
+/// MAX_PLAIN, protected when k is on (the additional data the sequence
+/// number, the type, the version, and the plaintext's length; AES-GCM's
+/// explicit nonce the sequence number, as Go). version is the record's
+/// (0x0301 for a first ClientHello, else 0x0303). An empty data is one
+/// empty record.
+pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
+  var out: List[Bytes] = []
+  var off = 0
+  while true {
+    let end = if data.len() - off > MAX_PLAIN { off + MAX_PLAIN } else { data.len() }
+    let part = data[off..end]
+    if !k.on {
+      out.push(header(ct, version, part.len()))
+      out.push(part)
+    } else if k.mac.len() > 0 {
+      let body = seal_cbc(k, ct, part, version)
+      k.seq += 1
+      out.push(header(ct, version, body.len()))
+      out.push(body)
+    } else {
+      let sq = u64(k.seq)
+      let aad = asn1.cat([sq, u8(ct), u16(version), u16(part.len())])
+      let body = match k.gcm {
+        Some(g) => cat2(sq, g.seal(cat2(k.iv, sq), part, aad))
+        None => chacha.seal(k.key, xor_nonce(k.iv, k.seq), part, aad)
+      }
+      k.seq += 1
+      out.push(header(ct, version, body.len()))
+      out.push(body)
+    }
+    off = end
+    if off >= data.len() {
+      break
+    }
+  }
+  asn1.cat(out)
+}
+
+/// A record's content after protection is removed: its type and data;
+/// type -1 when it does not open (bad_record_mac), -2 when the plaintext
+/// is too long (record_overflow).
+pub struct Inner {
+  pub ct: Int
+  pub data: Bytes
+}
+
+/// Removes k's protection from the record with header hdr and body.
+pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
+  if !k.on {
+    return Inner{ct: Int(hdr[0]), data: body}
+  }
+  if k.mac.len() > 0 {
+    let r = open_cbc(k, hdr, body)
+    if r.ct >= 0 {
+      k.seq += 1
+    }
+    return r
+  }
+  let sq = u64(k.seq)
+  let opened = match k.gcm {
+    Some(g) => {
+      if body.len() < 8 + 16 {
+        None
+      } else {
+        let aad = asn1.cat([sq, hdr[0..3], u16(body.len() - 24)])
+        g.open(cat2(k.iv, body[0..8]), body[8..body.len()], aad)
+      }
+    }
+    None => {
+      if body.len() < 16 {
+        None
+      } else {
+        let aad = asn1.cat([sq, hdr[0..3], u16(body.len() - 16)])
+        chacha.open(k.key, xor_nonce(k.iv, k.seq), body, aad)
+      }
+    }
+  }
+  let pt = match opened {
+    Some(p) => p
+    None => return Inner{ct: -1, data: b""}
+  }
+  k.seq += 1
+  if pt.len() > MAX_PLAIN {
+    return Inner{ct: -2, data: b""}
+  }
+  Inner{ct: Int(hdr[0]), data: pt}
+}
+
+// ---------------------------------------------------------------------------
+// CBC records (RFC 5246 6.2.3.2, as Go's conn.go cbcMode and tls10MAC)
+
+/// HMAC-SHA1 over the sequence number, the header (with the plaintext's
+/// length), and data; then extra is hashed too and dropped (Go's
+/// tls10MAC: the work then depends on the record's length, not on the
+/// padding).
+fn mac_cbc(k: Keys, hdr3: Bytes, n: Int, data: Bytes, extra: Bytes) -> Bytes {
+  var m = sha1.hmac(k.mac)
+  m.inner.write(asn1.cat([u64(k.seq), hdr3, u16(n)]))
+  m.inner.write(data)
+  let res = m.sum()
+  m.inner.write(extra)
+  // keeps the extra hashing (its result is not used)
+  let _w = ct.barrier(m.inner.written())
+  res
+}
+
+/// A record's body: the explicit IV, then data, its MAC, and the padding
+/// (each byte the padding's length less one) encrypted.
+fn seal_cbc(k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
+  let mac = mac_cbc(k, asn1.cat([u8(ct), u16(version)]), data.len(), data, b"")
+  let n = data.len() + 20
+  let pad = 16 - n % 16
+  let iv = if k.iv.len() == 16 { k.iv } else { rand.next_bytes(16) }
+  let plain = asn1.cat([data, mac, fill(pad - 1, pad)])
+  let cipher = match k.cbc {
+    Some(c) => c.cbc_encrypt(iv, plain)
+    None => b""
+  }
+  cat2(iv, cipher)
+}
+
+/// The mask 255 when the Int x is not negative, else 0.
+fn nonneg8(x: Int) -> Int { rt.int_wrap(1, rt.int_wrap(4, x, 63), 1) & 255 }
+
+/// Go's extractPadding: how many bytes to remove (the padding and its
+/// length byte; one when the padding is bad, so the bytes go to the MAC)
+/// and whether the padding is good (255) or not (0), in constant time
+/// for the last 256 bytes.
+pub fn extract_padding(p: Bytes) -> (Int, Int) {
+  if p.len() < 1 {
+    return (0, 0)
+  }
+  let pl = Int(p[p.len() - 1])
+  var good = nonneg8(p.len() - 1 - pl)
+  let check = if p.len() < 256 { p.len() } else { 256 }
+  for i in 0..check {
+    let mask = nonneg8(pl - i)
+    let b = Int(p[p.len() - 1 - i])
+    good = good & ~((mask & pl) ^ (mask & b)) & 255
+  }
+  good = good & (rt.int_wrap(3, good, 4) & 255)
+  good = good & (rt.int_wrap(3, good, 2) & 255)
+  good = good & (rt.int_wrap(3, good, 1) & 255)
+  good = rt.int_wrap(1, 0, rt.int_wrap(4, good, 7) & 1) & 255
+  ((pl & good) + 1, good)
+}
+
+/// Removes a CBC record's protection as Go's halfConn.decrypt: a length
+/// that is not whole blocks or too short is bad_record_mac; otherwise
+/// decrypted, the padding read in constant time, and the MAC computed
+/// over a constant amount of data; bad padding and a bad MAC are the
+/// same failure.
+fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
+  // an explicit IV, then at least the MAC and a padding byte, whole blocks
+  if body.len() % 16 != 0 || body.len() < 16 + 32 {
+    return Inner{ct: -1, data: b""}
+  }
+  let dec = match k.cbc {
+    Some(c) => c.cbc_decrypt(body[0..16], body[16..body.len()])
+    None => b""
+  }
+  let (remove, good) = extract_padding(dec)
+  var n = dec.len() - 20 - remove
+  n = ct.pick(ct.mask_bit(rt.int_wrap(4, n, 63)), 0, n)
+  let remote = dec[n..n + 20]
+  let local = mac_cbc(k, hdr[0..3], n, dec[0..n], dec[n + 20..dec.len()])
+  let ok = (if ct.bytes_equal(local, remote) { 1 } else { 0 }) & good
+  if ok != 1 {
+    return Inner{ct: -1, data: b""}
+  }
+  if n > MAX_PLAIN {
+    return Inner{ct: -2, data: b""}
+  }
+  Inner{ct: Int(hdr[0]), data: dec[0..n]}
+}
+
+// ---------------------------------------------------------------------------
+// Handshake messages: Go's unmarshal checks, and its type names
+
+/// Go's type of a handshake message (unexpectedMessageError's %T).
+pub fn msg_type_name(t: Int) -> Str {
+  match t {
+    0 => "*tls.helloRequestMsg"
+    1 => "*tls.clientHelloMsg"
+    2 => "*tls.serverHelloMsg"
+    4 => "*tls.newSessionTicketMsg"
+    11 => "*tls.certificateMsg"
+    12 => "*tls.serverKeyExchangeMsg"
+    13 => "*tls.certificateRequestMsg"
+    14 => "*tls.serverHelloDoneMsg"
+    15 => "*tls.certificateVerifyMsg"
+    16 => "*tls.clientKeyExchangeMsg"
+    20 => "*tls.finishedMsg"
+    22 => "*tls.certificateStatusMsg"
+    _ => "<nil>"
+  }
+}
+
+/// Whether Go knows the handshake type t in TLS 1.2 (else the message is
+/// an unexpected_message before any check).
+pub fn known_type(t: Int) -> Bool { t == 0 || t == 1 || t == 2 || t == 4 || t == 5 || t == 8 || (t >= 11 && t <= 16) || t == 20 || t == 22 || t == 24 }
+
+/// Go's unexpectedMessageError.
+pub fn unexpected(wanted: Int, got: Int) -> Str { "tls: received unexpected handshake message of type ${msg_type_name(got)} when waiting for ${msg_type_name(wanted)}" }
+
+/// The certificates of a TLS 1.2 Certificate message (a 3 byte length,
+/// then each a 3 byte length and its DER); none when it does not parse.
+pub fn parse_certificates(m: Bytes) -> List[Bytes]? {
+  if m.len() < 7 || u24_at(m, 4) + 7 != m.len() {
+    return None
+  }
+  var out: List[Bytes] = []
+  var p = 7
+  while p < m.len() {
+    if m.len() < p + 3 || m.len() < p + 3 + u24_at(m, p) {
+      return None
+    }
+    let n = u24_at(m, p)
+    out.push(m[p + 3..p + 3 + n])
+    p += 3 + n
+  }
+  Some(out)
+}
+
+/// A Certificate message of the DER certificates.
+pub fn certificate_msg(certs: List[Bytes]) -> Bytes {
+  var parts: List[Bytes] = []
+  for c in certs {
+    parts.push(asn1.cat([u24(c.len()), c]))
+  }
+  let list = asn1.cat(parts)
+  message(HS_CERTIFICATE, asn1.cat([u24(list.len()), list]))
+}
+
+/// Whether the message of a type a server sends in TLS 1.2 parses as Go's
+/// unmarshal requires (ServerHello and Certificate are checked where they
+/// are read).
+fn decodes(t: Int, m: Bytes) -> Bool {
+  if t == HS_HELLO_REQUEST || t == HS_SERVER_HELLO_DONE {
+    return m.len() == 4
+  }
+  if t == HS_SERVER_KEY_EXCHANGE {
+    return m.len() >= 4
+  }
+  if t == HS_FINISHED {
+    return true
+  }
+  if t == HS_CERTIFICATE_STATUS {
+    return m.len() >= 8 && m[4] == 1 && u24_at(m, 5) == m.len() - 8 && m.len() > 8
+  }
+  if t == HS_NEW_SESSION_TICKET {
+    return m.len() >= 10 && u16_at(m, 8) == m.len() - 10
+  }
+  if t == HS_CERTIFICATE_REQUEST {
+    return parse_cert_request(m)
+  }
+  if t == HS_CERTIFICATE {
+    return match parse_certificates(m) {
+      Some(_) => true
+      None => false
+    }
+  }
+  true
+}
+
+/// Go's certificateRequestMsg.unmarshal for TLS 1.2: the certificate
+/// types, the signature algorithms (an even, non-empty length), the
+/// authorities (each a 2 byte length, non-empty).
+fn parse_cert_request(m: Bytes) -> Bool {
+  if m.len() < 5 {
+    return false
+  }
+  let nt = Int(m[4])
+  var p = 5 + nt
+  if m.len() < p + 2 {
+    return false
+  }
+  let na = u16_at(m, p)
+  if na & 1 != 0 || na == 0 || m.len() < p + 2 + na {
+    return false
+  }
+  p += 2 + na
+  if m.len() < p + 2 {
+    return false
+  }
+  let nc = u16_at(m, p)
+  p += 2
+  if m.len() != p + nc {
+    return false
+  }
+  while p < m.len() {
+    if m.len() < p + 2 {
+      return false
+    }
+    let n = u16_at(m, p)
+    if n == 0 || m.len() < p + 2 + n {
+      return false
+    }
+    p += 2 + n
+  }
+  true
+}
+
+// ---------------------------------------------------------------------------
+// The client
+
+// the client's handshake states (Go's doFullHandshake's order)
+pub const WAIT_SH: Int = 0
+pub const WAIT_CERT: Int = 1
+pub const WAIT_SKE: Int = 2
+pub const WAIT_SKE_STATUS: Int = 3
+pub const WAIT_SHD: Int = 4
+pub const WAIT_SHD_REQ: Int = 5
+pub const WAIT_CCS: Int = 6
+pub const WAIT_FIN: Int = 7
+pub const DONE: Int = 8
+pub const FAILED: Int = 9
+
+/// A connection's settings: the server's name (a host name or an IP
+/// address; "" checks no name), the trusted roots, the time (Unix
+/// seconds), the ALPN protocols offered, the suites and groups in order
+/// of preference, and insecure to skip the certificate's checks (Go's
+/// InsecureSkipVerify), and apple_svc (macOS with system roots: the
+/// tls_svc record whose Security framework verifies the chain, as Go's
+/// systemVerify, tlscert.apple_trust; 0 for the roots given). The tests'
+/// hooks: random (the 32 bytes of the
+/// ClientHello's random and session id), priv (the ECDHE private key for
+/// the group the server picks), and iv (16 bytes: every CBC record's
+/// explicit IV) instead of fresh ones.
+pub struct Conf {
+  pub host: Str
+  pub roots: List[x509.Cert]
+  pub now: Int
+  pub alpn: List[Str]
+  pub suites: List[Int]
+  pub groups: List[Int]
+  pub insecure: Bool
+  pub apple_svc: Int
+  pub random: Bytes
+  pub priv: Bytes
+  pub iv: Bytes
+  /// The local zone's offset from UTC in seconds: Go prints the current
+  /// time of an expired certificate's error in time.Local (tlsio sets
+  /// it; tls13.Conf's zone_off).
+  pub zone_off: Int = 0
+}
+
+/// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
+pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf { Conf{host: host, roots: roots, now: now, alpn: [], suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384, tls13.GROUP_P521], insecure: false, apple_svc: 0, random: b"", priv: b"", iv: b""} }
+
+/// A client connection: the state, the error (Go's text) once FAILED,
+/// whether the server closed (close_notify), the suite, group, and ALPN
+/// protocol negotiated, the server's certificates; and the bytes in and
+/// out, the handshake transcript and keys.
+pub struct Client {
+  pub conf: Conf
+  pub state: Int
+  pub err: Str
+  pub closed: Bool
+  pub suite: Int
+  pub group: Int
+  pub alpn: Str
+  pub peer: List[x509.Cert]
+  max13: Bool
+  offered: List[Int]
+  have_vers: Bool
+  rin: Bytes
+  hs: Bytes
+  app: Bytes
+  out: Bytes
+  tr: Bytes
+  random: Bytes
+  sid: Bytes
+  server_random: Bytes
+  ems: Bool
+  ocsp: Bool
+  ticket: Bool
+  certs: List[Bytes]
+  cert_req: Bool
+  pms: Bytes
+  ckx: Bytes
+  master: Bytes
+  next_rk: Keys
+  rk: Keys
+  wk: Keys
+}
+
+/// A new client for conf: its ClientHello is ready in take().
+pub fn client(cf: Conf) -> Client {
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: false, offered: schemes(), have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
+  for p in cf.alpn {
+    if p.is_empty() || p.len() > 255 {
+      c.state = FAILED
+      c.err = "tls: invalid NextProtos value"
+      return c
+    }
+  }
+  if cf.random.len() == 32 {
+    c.random = cf.random
+    c.sid = cf.random
+  } else {
+    c.random = rand.next_bytes(32)
+    c.sid = rand.next_bytes(32)
+  }
+  let ch = hello(c)
+  c.tr = ch
+  c.out = seal(c.wk, CT_HANDSHAKE, ch, 0x0301)
+  c
+}
+
+/// A client taking over after a TLS 1.2 ServerHello answered one
+/// ClientHello offering TLS 1.3 and 1.2 (Go's clientHandshake branching
+/// on the ServerHello; tls13.xo sends the hello and stops at its HANDOFF
+/// state, tlsio.xo calls this, then feed with the unread record bytes):
+/// as if this client had sent the ClientHello message ch with the random
+/// and session id (the transcript ch, nothing left to send) and then
+/// read a handshake record whose plaintext is hs, the ServerHello and
+/// what follows it. cf's suites and groups are the ones offered (TLS
+/// 1.3's suites are refused if picked), the signature schemes ch's. The
+/// downgrade sentinel is checked here too; the client never sends a
+/// second hello.
+pub fn resume(cf: Conf, random: Bytes, sid: Bytes, ch: Bytes, hs: Bytes) -> Client {
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: true, offered: hello_schemes(ch), have_vers: false, rin: b"", hs: hs, app: b"", out: b"", tr: ch, random: random, sid: sid, server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
+  drain(c)
+  c
+}
+
+/// The signature schemes a ClientHello message offers (its
+/// signature_algorithms extension).
+pub fn hello_schemes(ch: Bytes) -> List[Int] {
+  var out: List[Int] = []
+  if ch.len() < 39 {
+    return out
+  }
+  var p = 39 + Int(ch[38])
+  if ch.len() < p + 2 {
+    return out
+  }
+  p += 2 + u16_at(ch, p)
+  if ch.len() < p + 1 {
+    return out
+  }
+  p += 1 + Int(ch[p])
+  if ch.len() < p + 2 {
+    return out
+  }
+  p += 2
+  while p + 4 <= ch.len() {
+    let t = u16_at(ch, p)
+    let n = u16_at(ch, p + 2)
+    if p + 4 + n > ch.len() {
+      return out
+    }
+    if t == EXT_SIGNATURE_ALGORITHMS && n >= 2 {
+      var q = p + 6
+      while q + 2 <= p + 4 + n {
+        out.push(u16_at(ch, q))
+        q += 2
+      }
+    }
+    p += 4 + n
+  }
+  out
+}
+
+/// The bytes of a record received only in part.
+pub fn pending(c: Client) -> Int { c.rin.len() }
+
+/// The bytes to send to the server, taken.
+pub fn take(var c: Client) -> Bytes {
+  let o = c.out
+  c.out = b""
+  o
+}
+
+/// The application data received, taken.
+pub fn recv(var c: Client) -> Bytes {
+  let a = c.app
+  c.app = b""
+  a
+}
+
+/// Whether the handshake is complete and the connection usable.
+pub fn ready(c: Client) -> Bool { c.state == DONE && !c.closed }
+
+/// Sends application data (after the handshake).
+pub fn send(var c: Client, data: Bytes) {
+  if c.state == DONE && data.len() > 0 {
+    c.out = cat2(c.out, seal(c.wk, CT_APP, data, 0x0303))
+  }
+}
+
+/// Sends close_notify (Go's CloseWrite: a warning alert; crypto/tls
+/// writes it even after a fatal alert).
+pub fn close(var c: Client) { c.out = cat2(c.out, seal(c.wk, CT_ALERT, b"\x01\x00", 0x0303)) }
+
+/// Takes bytes the server sent: every complete record is processed.
+pub fn feed(var c: Client, data: Bytes) {
+  c.rin = cat2(c.rin, data)
+  while c.state != FAILED && !c.closed && c.rin.len() >= 5 {
+    let ct = Int(c.rin[0])
+    let vers = u16_at(c.rin, 1)
+    let n = u16_at(c.rin, 3)
+    if c.have_vers && vers != 0x0303 {
+      fail(c, ALERT_PROTOCOL_VERSION, "tls: received record with version ${hex(vers)} when expecting version 303")
+      return
+    }
+    if !c.have_vers && ((ct != CT_ALERT && ct != CT_HANDSHAKE) || vers >= 0x1000) {
+      c.state = FAILED
+      c.err = "tls: first record does not look like a TLS handshake"
+      return
+    }
+    if n > MAX_CIPHER {
+      fail(c, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
+      return
+    }
+    if c.rin.len() < 5 + n {
+      return
+    }
+    let hdr = c.rin[0..5]
+    let body = c.rin[5..5 + n]
+    c.rin = c.rin[5 + n..c.rin.len()]
+    record(c, hdr, body)
+  }
+}
+
+/// A local error: Go's sendAlert's error.
+fn local(var c: Client, alert: Int) { fail(c, alert, "local error: tls: ${tlsname.alert_text(alert)}") }
+
+/// One record.
+fn record(var c: Client, hdr: Bytes, body: Bytes) {
+  let inner = open(c.rk, hdr, body)
+  if inner.ct == -1 {
+    local(c, ALERT_BAD_RECORD_MAC)
+    return
+  }
+  if inner.ct == -2 {
+    local(c, ALERT_RECORD_OVERFLOW)
+    return
+  }
+  let ct = inner.ct
+  let data = inner.data
+  if !c.rk.on && ct == CT_APP {
+    local(c, ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if ct == CT_ALERT {
+    if data.len() != 2 {
+      local(c, ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    let a = Int(data[1])
+    if a == ALERT_CLOSE_NOTIFY {
+      if c.state == DONE {
+        c.closed = true
+      } else {
+        c.state = FAILED
+        c.err = "EOF"
+      }
+      return
+    }
+    if data[0] == 1 {
+      // a warning: ignored
+      return
+    }
+    if data[0] == 2 {
+      c.state = FAILED
+      c.err = "remote error: tls: ${tlsname.alert_text(a)}"
+      return
+    }
+    local(c, ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if ct == CT_CCS {
+    if data.len() != 1 || data[0] != 1 {
+      local(c, ALERT_DECODE_ERROR)
+      return
+    }
+    if c.hs.len() > 0 || c.state != WAIT_CCS {
+      local(c, ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    c.rk = c.next_rk
+    c.state = WAIT_FIN
+    return
+  }
+  if ct == CT_APP {
+    if c.state != DONE {
+      local(c, ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    c.app = cat2(c.app, data)
+    return
+  }
+  if ct == CT_HANDSHAKE {
+    if data.is_empty() || c.state == WAIT_CCS {
+      local(c, ALERT_UNEXPECTED_MESSAGE)
+      return
+    }
+    c.hs = cat2(c.hs, data)
+    drain(c)
+    return
+  }
+  local(c, ALERT_UNEXPECTED_MESSAGE)
+}
+
+/// The complete handshake messages buffered.
+fn drain(var c: Client) {
+  // waiting for ChangeCipherSpec, crypto/tls reads no handshake message
+  // (what is buffered makes the ChangeCipherSpec unexpected)
+  while c.state != FAILED && c.state != WAIT_CCS && c.hs.len() >= 4 {
+    let t = Int(c.hs[0])
+    let n = u24_at(c.hs, 1)
+    let most = if c.have_vers && t == HS_CERTIFICATE { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
+    if n > most {
+      fail(c, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
+      return
+    }
+    if c.hs.len() < 4 + n {
+      return
+    }
+    let msg = c.hs[0..4 + n]
+    c.hs = c.hs[4 + n..c.hs.len()]
+    handshake(c, t, msg)
+  }
+}
+
+/// One handshake message of type t: Go's readHandshake's checks, then
+/// the state's.
+fn handshake(var c: Client, t: Int, msg: Bytes) {
+  if !known_type(t) {
+    local(c, ALERT_UNEXPECTED_MESSAGE)
+    return
+  }
+  if t != HS_SERVER_HELLO && !decodes(t, msg) {
+    local(c, ALERT_DECODE_ERROR)
+    return
+  }
+  if c.state == DONE {
+    // renegotiation is refused (Go's RenegotiateNever)
+    if t != HS_HELLO_REQUEST {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_HELLO_REQUEST, t))
+      return
+    }
+    fail(c, ALERT_NO_RENEGOTIATION, "local error: tls: no renegotiation")
+    return
+  }
+  if c.state == WAIT_SH {
+    if t != HS_SERVER_HELLO {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_SERVER_HELLO, t))
+      return
+    }
+    server_hello(c, msg)
+    return
+  }
+  if c.state == WAIT_CERT {
+    if t != HS_CERTIFICATE || u24_at(msg, 4) == 0 {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_CERTIFICATE, t))
+      return
+    }
+    c.certs = match parse_certificates(msg) {
+      Some(l) => l
+      None => []
+    }
+    c.tr = cat2(c.tr, msg)
+    c.state = WAIT_SKE
+    return
+  }
+  if c.state == WAIT_SKE && t == HS_CERTIFICATE_STATUS {
+    if !c.ocsp {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected CertificateStatus message")
+      return
+    }
+    c.tr = cat2(c.tr, msg)
+    c.state = WAIT_SKE_STATUS
+    return
+  }
+  if c.state == WAIT_SKE || c.state == WAIT_SKE_STATUS {
+    // the certificate is checked once the message after it is read
+    c.tr = cat2(c.tr, msg)
+    if !verify_certificates(c) {
+      return
+    }
+    if t == HS_SERVER_KEY_EXCHANGE {
+      server_key_exchange(c, msg)
+      if c.state != FAILED {
+        c.state = WAIT_SHD
+      }
+      return
+    }
+    after_key_exchange(c, t, msg, true)
+    return
+  }
+  if c.state == WAIT_SHD || c.state == WAIT_SHD_REQ {
+    c.tr = cat2(c.tr, msg)
+    after_key_exchange(c, t, msg, c.state == WAIT_SHD)
+    return
+  }
+  if c.state == WAIT_FIN {
+    if t != HS_FINISHED {
+      fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_FINISHED, t))
+      return
+    }
+    finished(c, msg)
+    return
+  }
+  local(c, ALERT_UNEXPECTED_MESSAGE)
+}
+
+/// After the ServerKeyExchange (or the certificate when there is none):
+/// a CertificateRequest (once) or ServerHelloDone; the message is in the
+/// transcript.
+fn after_key_exchange(var c: Client, t: Int, msg: Bytes, req_ok: Bool) {
+  if t == HS_CERTIFICATE_REQUEST && req_ok {
+    c.cert_req = true
+    c.state = WAIT_SHD_REQ
+    return
+  }
+  if t != HS_SERVER_HELLO_DONE {
+    fail(c, ALERT_UNEXPECTED_MESSAGE, unexpected(HS_SERVER_HELLO_DONE, t))
+    return
+  }
+  client_flight(c)
+}
+
+// ---------------------------------------------------------------------------
+// ClientHello and ServerHello
+
+/// The client's ClientHello (Go's makeClientHello for TLS 1.2 only, no
+/// session tickets).
+fn hello(c: Client) -> Bytes {
+  let cf = c.conf
+  var suites: List[Bytes] = []
+  for s in cf.suites {
+    suites.push(u16(s))
+  }
+  var exts: List[Bytes] = []
+  let host = trim_dot(cf.host)
+  if host != "" && !is_ip(host) {
+    exts.push(ext(EXT_SERVER_NAME, vec16(asn1.cat([u8(0), vec16(host.bytes())]))))
+  }
+  exts.push(ext(EXT_POINT_FORMATS, vec8(u8(0))))
+  exts.push(ext(EXT_RENEGOTIATION_INFO, vec8(b"")))
+  exts.push(ext(EXT_EMS, b""))
+  exts.push(ext(EXT_SCT, b""))
+  exts.push(ext(EXT_STATUS_REQUEST, b"\x01\x00\x00\x00\x00"))
+  var groups: List[Bytes] = []
+  for g in cf.groups {
+    groups.push(u16(g))
+  }
+  exts.push(ext(EXT_SUPPORTED_GROUPS, vec16(asn1.cat(groups))))
+  exts.push(ext(EXT_SIGNATURE_ALGORITHMS, vec16(u16s(schemes()))))
+  exts.push(ext(EXT_SIGNATURE_ALGORITHMS_CERT, vec16(u16s(schemes_cert()))))
+  if !cf.alpn.is_empty() {
+    var protos: List[Bytes] = []
+    for p in cf.alpn {
+      protos.push(vec8(p.bytes()))
+    }
+    exts.push(ext(EXT_ALPN, vec16(asn1.cat(protos))))
+  }
+  exts.push(ext(EXT_SUPPORTED_VERSIONS, vec8(u16(0x0303))))
+  let body = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00", vec16(asn1.cat(exts))])
+  message(HS_CLIENT_HELLO, body)
+}
+
+/// The fields of a ServerHello this client reads (Go's serverHelloMsg).
+pub struct Hello {
+  pub ok: Bool
+  pub vers: Int
+  pub random: Bytes
+  pub sid: Bytes
+  pub suite: Int
+  pub comp: Int
+  pub version: Int
+  pub ocsp: Bool
+  pub ticket: Bool
+  pub reneg: Bool
+  pub reneg_data: Bytes
+  pub ems: Bool
+  pub alpn: Str
+  pub points: Bytes
+}
+
+/// Go's serverHelloMsg.unmarshal.
+pub fn parse_hello(m: Bytes) -> Hello {
+  var h = Hello{ok: false, vers: 0, random: b"", sid: b"", suite: 0, comp: 0, version: 0, ocsp: false, ticket: false, reneg: false, reneg_data: b"", ems: false, alpn: "", points: b""}
+  var p = 4
+  if m.len() < p + 35 {
+    return h
+  }
+  h.vers = u16_at(m, p)
+  h.random = m[p + 2..p + 34]
+  p += 34
+  let sn = Int(m[p])
+  if m.len() < p + 1 + sn + 3 {
+    return h
+  }
+  h.sid = m[p + 1..p + 1 + sn]
+  p += 1 + sn
+  h.suite = u16_at(m, p)
+  h.comp = Int(m[p + 2])
+  p += 3
+  if p == m.len() {
+    h.ok = true
+    return h
+  }
+  if m.len() < p + 2 || p + 2 + u16_at(m, p) != m.len() {
+    return h
+  }
+  p += 2
+  var seen: List[Int] = []
+  while p < m.len() {
+    if m.len() < p + 4 {
+      return h
+    }
+    let t = u16_at(m, p)
+    let n = u16_at(m, p + 2)
+    if m.len() < p + 4 + n || has(seen, t) {
+      return h
+    }
+    seen.push(t)
+    let d = m[p + 4..p + 4 + n]
+    p += 4 + n
+    if t == EXT_STATUS_REQUEST {
+      h.ocsp = true
+    } else if t == EXT_SESSION_TICKET {
+      h.ticket = true
+    } else if t == EXT_EMS {
+      h.ems = true
+    } else if t == EXT_RENEGOTIATION_INFO {
+      if n < 1 || Int(d[0]) != n - 1 {
+        return h
+      }
+      h.reneg = true
+      h.reneg_data = d[1..n]
+    } else if t == EXT_ALPN {
+      if n < 2 || u16_at(d, 0) != n - 2 || n == 2 {
+        return h
+      }
+      let pl = Int(d[2])
+      if pl == 0 || 3 + pl != n {
+        return h
+      }
+      h.alpn = d[3..n].to_str() ?? ""
+    } else if t == EXT_SCT {
+      if n < 2 || u16_at(d, 0) != n - 2 || n == 2 {
+        return h
+      }
+      var q = 2
+      while q < n {
+        if n < q + 2 || u16_at(d, q) == 0 || n < q + 2 + u16_at(d, q) {
+          return h
+        }
+        q += 2 + u16_at(d, q)
+      }
+    } else if t == EXT_SUPPORTED_VERSIONS {
+      if n != 2 {
+        return h
+      }
+      h.version = u16_at(d, 0)
+    } else if t == EXT_POINT_FORMATS {
+      if n < 2 || Int(d[0]) != n - 1 {
+        return h
+      }
+      h.points = d[1..n]
+    } else if t == EXT_SERVER_NAME {
+      if n != 0 {
+        return h
+      }
+    } else if t == 44 {
+      // cookie
+      if n < 3 || u16_at(d, 0) != n - 2 {
+        return h
+      }
+    } else if t == 51 {
+      // key_share: a group, or a group and a share
+      if n != 2 && (n < 4 || u16_at(d, 2) != n - 4) {
+        return h
+      }
+    } else if t == 41 {
+      // pre_shared_key
+      if n != 2 {
+        return h
+      }
+    }
+  }
+  h.ok = true
+  h
+}
+
+fn server_hello(var c: Client, msg: Bytes) {
+  let h = parse_hello(msg)
+  if !h.ok {
+    local(c, ALERT_DECODE_ERROR)
+    return
+  }
+  let peer_vers = if h.version != 0 { h.version } else { h.vers }
+  if peer_vers != 0x0303 {
+    fail(c, ALERT_PROTOCOL_VERSION, "tls: server selected unsupported protocol version ${hex(peer_vers)}")
+    return
+  }
+  c.have_vers = true
+  // RFC 8446 4.1.3: a server able to do TLS 1.3 that answers a client
+  // offering it with TLS 1.2 marks its random
+  let tail = h.random[24..32]
+  if c.max13 && (tail == b"DOWNGRD\x01" || tail == b"DOWNGRD\x00") {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
+    return
+  }
+  if h.sid == c.sid {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server echoed TLS 1.3 compatibility session ID in TLS 1.2")
+    return
+  }
+  if !has(c.conf.suites, h.suite) || !suite_ok(h.suite) {
+    fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server chose an unconfigured cipher suite")
+    return
+  }
+  c.suite = h.suite
+  if h.comp != 0 {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported compression format")
+    return
+  }
+  var uncompressed = false
+  var other = false
+  for f in h.points {
+    if f == 0 {
+      uncompressed = true
+    } else {
+      other = true
+    }
+  }
+  if !uncompressed && other {
+    c.state = FAILED
+    c.err = "tls: server offered only incompatible point formats"
+    return
+  }
+  if h.reneg && h.reneg_data.len() != 0 {
+    fail(c, ALERT_HANDSHAKE_FAILURE, "tls: initial handshake had non-empty renegotiation extension")
+    return
+  }
+  if h.alpn != "" {
+    if c.conf.alpn.is_empty() {
+      fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server advertised unrequested ALPN extension")
+      return
+    }
+    var offered = false
+    for a in c.conf.alpn {
+      if a == h.alpn {
+        offered = true
+      }
+    }
+    if !offered {
+      fail(c, ALERT_UNSUPPORTED_EXTENSION, "tls: server selected unadvertised ALPN protocol")
+      return
+    }
+  }
+  c.alpn = h.alpn
+  c.server_random = h.random
+  c.ems = h.ems
+  c.ocsp = h.ocsp
+  c.ticket = h.ticket
+  c.tr = cat2(c.tr, msg)
+  c.state = WAIT_CERT
+}
+
+// ---------------------------------------------------------------------------
+// The server's certificate and key exchange
+
+/// Go's verifyServerCertificate: parsed, then checked against the roots
+/// for the host (TLS 1.2 sends bad_certificate for every failure).
+fn verify_certificates(var c: Client) -> Bool {
+  var certs: List[x509.Cert] = []
+  for der in c.certs {
+    let parsed = x509.parse(der)
+    if parsed.err != "" {
+      fail(c, ALERT_DECODE_ERROR, "tls: failed to parse certificate from server: ${parsed.err}")
+      return false
+    }
+    certs.push(parsed.cert)
+  }
+  let leaf = certs[0]
+  if !c.conf.insecure && c.conf.apple_svc != 0 {
+    // Go's systemVerify on macOS (tls13.xo's path; TLS 1.2 sends
+    // bad_certificate for every failure)
+    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, c.certs, c.conf.host) }
+    let code = if r.code == 0 && c.conf.host != "" && !x509verify.host_ok(leaf, c.conf.host) { 7 } else { r.code }
+    if code != 0 {
+      let msg = if code == 1 {
+        "x509: certificate signed by unknown authority"
+      } else if code == 7 {
+        tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, c.conf.host)
+      } else {
+        r.msg
+      }
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${msg}")
+      return false
+    }
+  } else if !c.conf.insecure {
+    let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
+    if r.code != x509verify.OK {
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf.host, c.conf.now, c.conf.zone_off)}")
+      return false
+    }
+  }
+  if leaf.key_alg != x509.KEY_RSA && !x509.is_ec(leaf.key_alg) && leaf.key_alg != x509.KEY_ED25519 {
+    fail(c, ALERT_UNSUPPORTED_CERTIFICATE, "tls: server's certificate contains an unsupported type of public key: <nil>")
+    return false
+  }
+  c.peer = certs
+  true
+}
+
+/// The text of x509.Verify's error (x509verify.error_text, with the
+/// expiry's times and the host name's text written here).
+pub fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, host: Str, now: Int, off: Int) -> Str {
+  if r.code == x509verify.EXPIRED {
+    let b = r.bad
+    let rel = if now < b.not_before { "before" } else { "after" }
+    let limit = if now < b.not_before { b.not_before } else { b.not_after }
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(now, off)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
+  }
+  if r.code == x509verify.HOSTNAME {
+    return tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, host)
+  }
+  x509verify.error_text(r)
+}
+
+/// The ECDHE group's private key: the test hook's, else a fresh one.
+fn group_key(c: Client, group: Int) -> Bytes { if c.conf.priv.len() > 0 { c.conf.priv } else { tls13.keygen(group) } }
+
+/// Go's ecdheKeyAgreement.processServerKeyExchange: the server's named
+/// curve and share, the premaster secret and the client's share, then
+/// the signature over the randoms and the parameters.
+fn server_key_exchange(var c: Client, msg: Bytes) {
+  let bad = "tls: invalid ServerKeyExchange message"
+  let k = msg[4..msg.len()]
+  if k.len() < 4 {
+    fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  if k[0] != 3 {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported curve")
+    return
+  }
+  let group = u16_at(k, 1)
+  let pl = Int(k[3])
+  if pl + 4 > k.len() {
+    fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  let params = k[0..4 + pl]
+  let share = k[4..4 + pl]
+  var sig = k[4 + pl..k.len()]
+  if sig.len() < 2 {
+    fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  let scheme = u16_at(sig, 0)
+  sig = sig[2..sig.len()]
+  if sig.len() < 2 || u16_at(sig, 0) + 2 != sig.len() {
+    fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  sig = sig[2..sig.len()]
+  if !has(c.conf.groups, group) {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unoffered curve")
+    return
+  }
+  if group != tls13.GROUP_X25519 && group != tls13.GROUP_P256 && group != tls13.GROUP_P384 && group != tls13.GROUP_P521 {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server selected unsupported curve")
+    return
+  }
+  let priv = group_key(c, group)
+  let pms = match tls13.shared_secret(group, priv, share) {
+    Some(s) => s
+    None => {
+      fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+      return
+    }
+  }
+  c.group = group
+  c.pms = pms
+  c.ckx = message(HS_CLIENT_KEY_EXCHANGE, vec8(tls13.public_key(group, priv)))
+  if !has(c.offered, scheme) {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: certificate used with invalid signature algorithm")
+    return
+  }
+  let alg = sig_alg(scheme)
+  if alg_rsa(alg) != suite_rsa(c.suite) {
+    fail(c, ALERT_ILLEGAL_PARAMETER, bad)
+    return
+  }
+  let leaf = c.peer[0]
+  let why = check_sig(alg, leaf.key_alg, leaf.key, asn1.cat([c.random, c.server_random, params]), sig)
+  if why != "" {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: invalid signature by the server certificate: ${why}")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The client's flight and Finished
+
+/// After ServerHelloDone: an empty Certificate when one was asked for,
+/// ClientKeyExchange, the master secret and keys, ChangeCipherSpec, and
+/// Finished (each handshake message its own record, as Go).
+fn client_flight(var c: Client) {
+  if c.cert_req {
+    let cm = message(HS_CERTIFICATE, u24(0))
+    c.tr = cat2(c.tr, cm)
+    c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, cm, 0x0303))
+  }
+  if c.ckx.is_empty() {
+    fail(c, ALERT_INTERNAL_ERROR, "tls: missing ServerKeyExchange message")
+    return
+  }
+  c.tr = cat2(c.tr, c.ckx)
+  c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, c.ckx, 0x0303))
+  let hash = suite_hash(c.suite)
+  c.master = master_secret(hash, c.pms, c.ems, c.tr, c.random, c.server_random)
+  c.pms = b""
+  let kb = key_block(c.suite, c.master, c.random, c.server_random)
+  c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
+  c.wk = direction(c.suite, kb, true, c.conf.iv)
+  c.next_rk = direction(c.suite, kb, false, b"")
+  let fin = message(HS_FINISHED, verify_data(c.suite, c.master, "client finished", c.tr))
+  c.tr = cat2(c.tr, fin)
+  c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, fin, 0x0303))
+  c.state = WAIT_CCS
+  if c.ticket {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server sent unrequested session ticket")
+  }
+}
+
+fn finished(var c: Client, msg: Bytes) {
+  let want = verify_data(c.suite, c.master, "server finished", c.tr)
+  let got = msg[4..msg.len()]
+  if got.len() != want.len() || !ct.bytes_equal(got, want) {
+    fail(c, ALERT_HANDSHAKE_FAILURE, "tls: server's Finished message was incorrect")
+    return
+  }
+  c.tr = b""
+  c.state = DONE
+}
+
+/// Fails the connection with a fatal alert and Go's error text (the
+/// first failure stays).
+fn fail(var c: Client, alert: Int, msg: Str) {
+  if c.state != FAILED {
+    c.err = msg
+    c.state = FAILED
+    let level = if alert == ALERT_NO_RENEGOTIATION { 1 } else { 2 }
+    // before the version is agreed crypto/tls's records say TLS 1.0
+    let vers = if c.have_vers { 0x0303 } else { 0x0301 }
+    c.out = cat2(c.out, seal(c.wk, CT_ALERT, asn1.cat([u8(level), u8(alert)]), vers))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+
+pub fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
+
+pub fn u8(x: Int) -> Bytes { tls13.u8(x) }
+
+pub fn u16(x: Int) -> Bytes { tls13.u16(x) }
+
+pub fn u24(x: Int) -> Bytes { tls13.u24(x) }
+
+pub fn vec8(b: Bytes) -> Bytes { tls13.vec8(b) }
+
+pub fn vec16(b: Bytes) -> Bytes { tls13.vec16(b) }
+
+pub fn ext(t: Int, d: Bytes) -> Bytes { tls13.ext(t, d) }
+
+pub fn message(t: Int, body: Bytes) -> Bytes { tls13.message(t, body) }
+
+pub fn u16_at(b: Bytes, p: Int) -> Int { tls13.u16_at(b, p) }
+
+pub fn u24_at(b: Bytes, p: Int) -> Int { tls13.u24_at(b, p) }
+
+/// The values as 2 byte big endian numbers.
+pub fn u16s(xs: List[Int]) -> Bytes {
+  var parts: List[Bytes] = []
+  for x in xs {
+    parts.push(u16(x))
+  }
+  asn1.cat(parts)
+}
+
+pub fn has(xs: List[Int], x: Int) -> Bool {
+  for v in xs {
+    if v == x {
+      return true
+    }
+  }
+  false
+}
+
+pub fn is_ip(h: Str) -> Bool {
+  match tlsname.parse_ip(h) {
+    Some(_) => true
+    None => false
+  }
+}
+
+pub fn trim_dot(h: Str) -> Str { if h.ends_with(".") { h.bytes()[0..h.len() - 1].to_str() ?? h } else { h } }
+
+/// Lower case hex without leading zeros (Go's %x).
+pub fn hex(x: Int) -> Str {
+  let d = "0123456789abcdef".bytes()
+  if x == 0 {
+    return "0"
+  }
+  var s = ""
+  var v = x
+  while v > 0 {
+    s = "${d[v & 15..(v & 15) + 1].to_str() ?? ""}${s}"
+    v = v >> 4
+  }
+  s
+}
+
+/// n bytes of x.
+pub fn fill(x: Int, n: Int) -> Bytes {
+  var s = rt.rs_with_cap(n)
+  for _ in 0..n {
+    s = rt.rs_push_byte(s, x)
+  }
+  s.bytes()
+}
+
+/// Four lower case hex digits.
+pub fn hex4(x: Int) -> Str {
+  let h = hex(x)
+  var s = h
+  while s.len() < 4 {
+    s = "0${s}"
+  }
+  s
+}
+
+// ---------------------------------------------------------------------------
+// The tests' op
+
+/// The parts of b: each a 3 byte big endian length, then the bytes.
+pub fn unpack(b: Bytes) -> List[Bytes] {
+  var parts: List[Bytes] = []
+  var i = 0
+  while i + 3 <= b.len() {
+    let n = u24_at(b, i)
+    parts.push(b[i + 3..i + 3 + n])
+    i += 3 + n
+  }
+  parts
+}
+
+/// A comma separated list of numbers (hex when base is 16).
+pub fn nums(s: Str, base: Int) -> List[Int] {
+  var out: List[Int] = []
+  if s == "-" || s == "" {
+    return out
+  }
+  for w in s.split(",") {
+    if base == 16 {
+      let b = Bytes.from_hex(w) ?? b""
+      out.push(if b.len() == 2 { u16_at(b, 0) } else { 0 })
+    } else {
+      out.push(Int.parse(w) ?? 0)
+    }
+  }
+  out
+}
+
+/// internal.crypto_op's tls12 ops (std/internal.xo). `client` runs a
+/// client against a recorded server (crypto/tls's, std/rt
+/// internal_crypto.go drives crypto/tls's client the same way): a is the
+/// ECDHE private key for the group the server picks (the trace's; Go's
+/// client makes the same from its fixed random source), b's parts the
+/// server's handshake records, its records after the handshake, the
+/// client's application data, and the root's DER (none for no root); d
+/// is "time host suites groups alpn chunk" (suites in hex and groups in
+/// decimal, comma separated; alpn "-" for none; chunk the size of the
+/// pieces the server's bytes are fed in, 0 whole). The ClientHello's
+/// random and session id are 32 bytes of 0x11. The result is a line per
+/// step: what the client sent in the handshake, its outcome, what it sent
+/// with the data, what it received and sent while reading, and its
+/// close_notify. `server` is tls12srv.xo's.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what != "client" && what != "combined" {
+    return None
+  }
+  var parts = unpack(b)
+  let args = (d.to_str() ?? "").split(" ")
+  // combined: the first part is the ClientHello message offering TLS 1.3
+  // and 1.2 (crypto/tls's, which tls13.xo would send)
+  var ch = b""
+  if what == "combined" && parts.len() == 5 {
+    ch = parts[0]
+    parts = parts[1..5]
+  }
+  if parts.len() != 4 || args.len() != 6 || (what == "combined" && ch.is_empty()) {
+    return Some(b"args")
+  }
+  var roots: List[x509.Cert] = []
+  if !parts[3].is_empty() {
+    let p = x509.parse(parts[3])
+    if p.err != "" {
+      return Some(b"parse")
+    }
+    roots.push(p.cert)
+  }
+  var cf = conf(if args[1] == "-" { "" } else { args[1] }, roots, Int.parse(args[0]) ?? 0)
+  cf.insecure = args[1] == "-"
+  cf.suites = nums(args[2], 16)
+  cf.groups = nums(args[3], 10)
+  cf.alpn = if args[4] == "-" { [] } else { args[4].split(",") }
+  cf.random = fill(0x11, 32)
+  cf.iv = fill(0x11, 16)
+  cf.priv = a
+  let chunk = Int.parse(args[5]) ?? 0
+  // the server's bytes are one stream, as crypto/tls's connection reads
+  // them: the handshake takes records until it ends, the rest waits
+  let all = cat2(parts[0], parts[1])
+  var cl = client(cf)
+  var pos = 0
+  if !ch.is_empty() {
+    let n = if all.len() >= 5 && all[0] == 22 && all.len() >= 5 + u16_at(all, 3) { u16_at(all, 3) } else { 0 }
+    cl = handed(cf, ch, all[0..if n > 0 { 5 + n } else { 0 }])
+    pos = if n > 0 { 5 + n } else { 0 }
+  }
+  pos = handshake_in(cl, all, pos, chunk)
+  var s = "hs ${take(cl).to_hex()}\n"
+  if cl.state != DONE {
+    let e = if cl.state == FAILED { cl.err } else if pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
+    return Some("${s}result ${e}\n".bytes())
+  }
+  s = "${s}result ok ${hex4(cl.suite)} ${cl.group} ${if cl.alpn == "" { "-" } else { cl.alpn }}\n"
+  send(cl, parts[2])
+  s = "${s}app ${take(cl).to_hex()}\n"
+  feed_in(cl, all[pos..all.len()], chunk)
+  let end = if cl.state == FAILED { cl.err } else if !cl.closed && pending(cl) > 0 { "unexpected EOF" } else { "EOF" }
+  s = "${s}got ${recv(cl).to_hex()} ${take(cl).to_hex()} ${end}\n"
+  close(cl)
+  s = "${s}bye ${take(cl).to_hex()}\n"
+  Some(s.bytes())
+}
+
+/// The combined hello's path as tlsio.xo takes it: the ClientHello's
+/// record sent, the server's first record read (tls13.xo sees the TLS
+/// 1.2 ServerHello in it and hands over), resume with its plaintext,
+/// then feed with the rest.
+fn handed(cf: Conf, ch: Bytes, server: Bytes) -> Client {
+  var pk = plain()
+  let hello_rec = seal(pk, CT_HANDSHAKE, ch, 0x0301)
+  let random = ch[6..38]
+  let sid = ch[39..39 + Int(ch[38])]
+  var n = 0
+  if server.len() >= 5 && server[0] == 22 && server.len() >= 5 + u16_at(server, 3) {
+    n = u16_at(server, 3)
+  }
+  var c = resume(cf, random, sid, ch, if n > 0 { server[5..5 + n] } else { b"" })
+  feed(c, server[if n > 0 { 5 + n } else { 0 }..server.len()])
+  c.out = cat2(hello_rec, c.out)
+  c
+}
+
+/// Feeds data from pos a record at a time (each in pieces of chunk
+/// bytes, 0 whole) until the handshake ends or the data does: where the
+/// handshake stopped reading.
+fn handshake_in(var c: Client, data: Bytes, pos0: Int, chunk: Int) -> Int {
+  var pos = pos0
+  while pos < data.len() && c.state != DONE && c.state != FAILED {
+    var end = data.len()
+    if data.len() - pos >= 5 && pos + 5 + u16_at(data, pos + 3) < data.len() {
+      end = pos + 5 + u16_at(data, pos + 3)
+    }
+    feed_in(c, data[pos..end], chunk)
+    pos = end
+  }
+  pos
+}
+
+/// Feeds data in pieces of chunk bytes (0 at once).
+fn feed_in(var c: Client, data: Bytes, chunk: Int) {
+  if chunk <= 0 {
+    feed(c, data)
+    return
+  }
+  var i = 0
+  while i < data.len() {
+    let j = if i + chunk < data.len() { i + chunk } else { data.len() }
+    feed(c, data[i..j])
+    i = j
+  }
+}

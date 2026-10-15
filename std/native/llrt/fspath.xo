@@ -9,7 +9,7 @@
 // raw_* (Xo on Linux and darwin/arm64, the C runtime's elsewhere).
 use native/llrt/fsops
 use native/llrt/rand
-use native/rt
+use native/llrt/raw
 
 // The errno values the walks test: the same on darwin, Linux, and the
 // MSVC C runtime of Windows.
@@ -48,7 +48,7 @@ fn mkdir_walk(path: Str) -> Int {
     j -= 1
   }
   if j > 1 {
-    let r = mkdir_walk(rt.str_slice(path, 0, j - 1))
+    let r = mkdir_walk(raw.str_slice(path, 0, j - 1))
     if r != 0 {
       return r
     }

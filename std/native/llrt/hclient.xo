@@ -1,0 +1,1016 @@
+// The HTTP/1.1 client's connection in Xo (the zero-C audit's B29): the
+// reads and writes of a client connection (xo_http.c's cc_fill and
+// cc_send, which the C's HTTP/2 client calls through cabi_http.xo), the
+// request (net/http's Request.write with Transport's additions), the
+// reading side of the response (cl_input, cl_fill, cl_take), and the
+// exchange's error (cl_finish); since the zero-C audit's B28 part 3
+// (2026-10-14) also the exchange's start (cl_start: the pool, the dial,
+// the TLS handshake) and the response's record (R_*, a handle made here,
+// freed by cresp_free) with its ccon (C_*). The C keeps the dial's
+// sockets (netconn.xo dial_timeout); TLS is tlsio.xo (its C path
+// tlsio_c.xo: xo_tls.c on Mbed TLS).
+use native/llrt/ctx
+use native/llrt/h2w
+use native/llrt/hconn
+use native/llrt/http1w
+use native/llrt/netconn
+use native/llrt/obj
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/sock
+use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/tlsio
+use native/rt
+use native/rthttp
+
+/// The response's record (xo_http.c's xo_cresp until B28 part 3; byte
+/// offsets): the header (count, free function), the error's tag (an int)
+/// and text (a malloc'd C string), the HTTP/2 response's status, header (an hlist:
+/// its pairs and count) and body (an nbuf: bytes and count), whether Xo
+/// reads an HTTP/1.1 response (an int), the connection (a ccon), and the
+/// start of the errors (a C string).
+const R_ERR = 16
+const R_MSG = 24
+const R_STATUS = 32
+const R_HDR = 40
+const R_HDR_N = 48
+const R_BODY = 64
+const R_BODY_N = 72
+const R_READING = 100
+const R_C = 104
+const R_PREFIX = 184
+
+/// ccon (byte offsets): the poll descriptor, the socket (an int; -1 in
+/// http_fuzz.c's tests, whose response is all in the buffer), the
+/// deadline (monotonic ns, 0: none), the buffer (malloc'd), its count,
+/// capacity and read offset, the end of the stream (an int), and the TLS
+/// connection.
+const C_PD = 0
+const C_FD = 8
+const C_WHEN = 16
+const C_BUF = 24
+const C_N = 32
+const C_CAP = 40
+const C_OFF = 48
+const C_EOF = 56
+const C_TLS = 64
+
+/// The results of the connection's reads and writes (xo_http.c CC_*).
+pub const CC_OK: Int = 0
+pub const CC_EOF: Int = 1
+pub const CC_TIMEOUT: Int = 2
+pub const CC_CANCELED: Int = 3
+pub const CC_ERR: Int = 4
+
+/// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
+const NOSIGNAL = 16384
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The record of r.
+fn rec(r: rthttp.CResp) -> Int { rt.obj_addr(r) }
+
+/// Whether the negative errno -e of a read or write says it would block
+/// (EAGAIN or EWOULDBLOCK: 11 on Linux, 35 on macOS, the Windows CRT's
+/// 140 that sock.xo maps WSAEWOULDBLOCK to).
+fn would_block(e: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => e == -35
+    TargetOs.Windows => e == -140 || e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
+  }
+}
+
+/// The CC_* result of a wait on the poller that did not end READY.
+fn wait_res(w: Int) -> Int {
+  if w == poll.TIMEOUT {
+    return CC_TIMEOUT
+  }
+  if w == poll.CANCELED {
+    return CC_CANCELED
+  }
+  CC_ERR
+}
+
+/// Reads more of connection c's input into its buffer (at least 4 KiB
+/// of room, the read part moved to the front first): CC_OK, CC_EOF, or
+/// the failure.
+pub fn fill(c: Int) -> Int {
+  if (rt.mem_load(c, C_FD, 4) & 4294967295) == 4294967295 {
+    rt.mem_store(c, C_EOF, 1, 4)
+    return CC_EOF
+  }
+  var n = ld(c, C_N)
+  var cap = ld(c, C_CAP)
+  if cap - n < 4096 {
+    let off = ld(c, C_OFF)
+    if off > 0 {
+      rt.mem_move(ld(c, C_BUF), ld(c, C_BUF) + off, n - off)
+      n = n - off
+      st(c, C_N, n)
+      st(c, C_OFF, 0)
+    }
+    if cap - n < 4096 {
+      cap = if cap == 0 { 8192 } else { cap * 2 }
+      // malloc'd: the C frees it (cl_close, h2cc_free)
+      st(c, C_BUF, raw.c_resize(ld(c, C_BUF), cap))
+      st(c, C_CAP, cap)
+    }
+  }
+  let p = ld(c, C_BUF) + n
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    if poll.canceled() {
+      return CC_CANCELED
+    }
+    let r = tlsio.read(tls, p, cap - n)
+    if r > 0 {
+      st(c, C_N, n + r)
+      return CC_OK
+    }
+    if r == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return CC_EOF
+    }
+    return -r
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  while true {
+    if poll.canceled() {
+      return CC_CANCELED
+    }
+    let r = sock.read(fd, p, cap - n)
+    if r > 0 {
+      st(c, C_N, n + r)
+      return CC_OK
+    }
+    if r == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return CC_EOF
+    }
+    if r == -sock.EINTR {
+      continue
+    }
+    if !would_block(r) {
+      return CC_ERR
+    }
+    let w = poll.pd_wait(ld(c, C_PD), false, ld(c, C_WHEN))
+    if w != poll.READY {
+      return wait_res(w)
+    }
+  }
+  CC_ERR
+}
+
+/// Writes the n bytes at p on connection c: CC_OK or the failure.
+pub fn send(c: Int, p: Int, n: Int) -> Int {
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    return tlsio.write(tls, p, n)
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  var off = 0
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if !would_block(w) {
+      return CC_ERR
+    }
+    let r = poll.pd_wait(ld(c, C_PD), true, ld(c, C_WHEN))
+    if r != poll.READY {
+      return wait_res(r)
+    }
+  }
+  CC_OK
+}
+
+// ---------------------------------------------------------------------------
+// The exchange's error
+
+/// A malloc'd copy of s ending in a zero byte (the C frees it).
+fn cstr_dup(s: Str) -> Int {
+  let n = s.len()
+  let b = rt.heap_large(n + 1) - 8
+  raw.put_cstr(b, s)
+  b
+}
+
+fn cstr(a: Int) -> Str { if a == 0 { "" } else { raw.str_at(a, raw.cstr_len(a)) } }
+
+/// Sets r's error: the ClientErr tag (2 Connect, 3 Timeout, 4 Protocol,
+/// 5 Canceled) and its text.
+fn fail(r: Int, tag: Int, msg: Str) {
+  let old = ld(r, R_MSG)
+  if old != 0 {
+    rt.heap_release(old)
+  }
+  st(r, R_MSG, cstr_dup(msg))
+  rt.mem_store(r, R_ERR, tag, 4)
+}
+
+/// Sets r's error for an exchange that ended with s (why: the failure's
+/// text; alert: a TLS alert of the server, "" for none; xo_http.c's
+/// cl_finish).
+fn finish(r: Int, s: Int, why: Str, alert: Str) {
+  if s == CC_OK {
+    return
+  }
+  if s == CC_TIMEOUT {
+    fail(r, 3, "")
+  } else if s == CC_CANCELED {
+    fail(r, 5, "")
+  } else if !alert.is_empty() {
+    fail(r, 2, alert)
+  } else if why.starts_with("\u{1}") {
+    // a failure reading an HTTP/2 body: net/http's body Read error,
+    // without the request
+    fail(r, 4, raw.str_slice(why, 1, why.len()))
+  } else {
+    fail(r, 4, cstr(ld(r, R_PREFIX)) + ": " + (if why.is_empty() { "EOF" } else { why }))
+  }
+}
+
+/// The TLS alert of r's connection after a failure, "" for none.
+fn alert(r: Int) -> Str {
+  let t = ld(r + R_C, C_TLS)
+  if t == 0 { "" } else { tlsio.alert(t) }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/1.1
+
+/// Whether cl_start connected r for an HTTP/1.1 exchange: Xo
+/// sends the request (request) and reads the response, then ends it
+/// (end).
+pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0 }
+
+/// Sends the request on r's connection (net/http's Request.write with
+/// Transport's additions): the request line, Host, User-Agent (Go's
+/// unless the header sets one; an empty one sends none), Content-Length
+/// (a body, or POST, PUT, PATCH), the header's fields sorted (but those
+/// five), Accept-Encoding gzip unless the header asks for an encoding or
+/// a Range or the method is HEAD, then the body. A failure ends the
+/// exchange: the connection closes and r has the error.
+pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes) {
+  let a = rec(r)
+  let hn = if names.len() < values.len() { names.len() } else { values.len() }
+  var head = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n"
+  var ua = -1
+  var ae = false
+  var room = 0
+  // the fields as the C's hpairs (key, length, value, length) for
+  // http1w.fields; names and values keep their bytes alive
+  let ha = rt.heap_large(32 * hn + 8) - 8
+  var i = 0
+  while i < hn {
+    let k = names[i]
+    let v = values[i]
+    st(ha, 32 * i, raw.data(k))
+    st(ha, 32 * i + 8, k.len())
+    st(ha, 32 * i + 16, raw.data(v))
+    st(ha, 32 * i + 24, v.len())
+    room += k.len() + v.len() + 4
+    if k == "User-Agent" && ua < 0 {
+      ua = i
+    }
+    if k == "Accept-Encoding" || k == "Range" {
+      ae = true
+    }
+    i += 1
+  }
+  if ua < 0 {
+    head = head + "User-Agent: Go-http-client/1.1\r\n"
+  } else if !values[ua].is_empty() {
+    head = head + "User-Agent: " + values[ua] + "\r\n"
+  }
+  let bn = body.len()
+  if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
+    head = head + "Content-Length: ${bn}\r\n"
+  }
+  let tail = if !ae && method != "HEAD" { "Accept-Encoding: gzip\r\n\r\n" } else { "\r\n" }
+  let d = rt.heap_large(head.len() + room + tail.len() + bn + 8) - 8
+  var at = http1w.put(d, 0, head)
+  at = http1w.fields(d, at, ha, hn, http1w.X_HOST | http1w.X_USER_AGENT | http1w.X_CONTENT_LENGTH | http1w.X_TRANSFER_ENCODING | http1w.X_TRAILER)
+  at = http1w.put(d, at, tail)
+  if bn > 0 {
+    rt.mem_copy(d + at, raw.bytes_addr(body), bn)
+  }
+  let s = send(a + R_C, d, at + bn)
+  rt.heap_release(d)
+  rt.heap_release(ha)
+  if s == CC_OK {
+    return
+  }
+  // an alert of the server after the handshake (a TLS 1.3 server that
+  // wanted a client certificate): Go's net.OpError, a Connect error
+  let al = if s != CC_TIMEOUT && s != CC_CANCELED { alert(a) } else { "" }
+  cl_close(r)
+  finish(a, s, "", al)
+}
+
+/// The length of the input up to the end of its first head (the first
+/// empty line), or all of it (xo_http.c head_len).
+fn head_len(p: Int, n: Int) -> Int {
+  var i = 0
+  while i < n {
+    if rt.mem_load(p, i, 1) == 10 {
+      let e = i + 1
+      if e < n && rt.mem_load(p, e, 1) == 10 {
+        return e + 1
+      }
+      if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
+        return e + 2
+      }
+    }
+    i += 1
+  }
+  n
+}
+
+/// The unread input up to the end of its first head (mode 0), or all of
+/// it (mode 2).
+pub fn input(r: rthttp.CResp, mode: Int) -> Str {
+  let c = rec(r) + R_C
+  let b = ld(c, C_BUF)
+  if b == 0 {
+    return ""
+  }
+  let p = b + ld(c, C_OFF)
+  let n = ld(c, C_N) - ld(c, C_OFF)
+  raw.str_at(p, if mode == 0 { head_len(p, n) } else { n })
+}
+
+pub fn avail(r: rthttp.CResp) -> Int {
+  let c = rec(r) + R_C
+  ld(c, C_N) - ld(c, C_OFF)
+}
+
+pub fn eof(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r) + R_C, C_EOF, 4) != 0 }
+
+/// Reads more of the response: CC_OK, CC_EOF (none came), or the failure.
+pub fn more(r: rthttp.CResp) -> Int {
+  let c = rec(r) + R_C
+  if rt.mem_load(c, C_EOF, 4) != 0 { CC_EOF } else { fill(c) }
+}
+
+/// Takes n bytes of the input (n <= avail).
+pub fn take(r: rthttp.CResp, n: Int) -> Bytes {
+  let c = rec(r) + R_C
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), ld(c, C_BUF) + ld(c, C_OFF), n)
+  }
+  st(c, C_OFF, ld(c, C_OFF) + n)
+  b
+}
+
+pub fn skip(r: rthttp.CResp, n: Int) {
+  let c = rec(r) + R_C
+  st(c, C_OFF, ld(c, C_OFF) + n)
+}
+
+/// Ends the exchange Xo read with s (CC_*; why: the failure's text): the
+/// connection closes and a failure becomes r's error.
+pub fn end(r: rthttp.CResp, s: Int, why: Str) {
+  let a = rec(r)
+  let al = if s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && why.is_empty() { alert(a) } else { "" }
+  cl_close(r)
+  finish(a, s, why, al)
+}
+
+// ---------------------------------------------------------------------------
+// The result
+
+/// 0 a response, else the ClientErr tag (2 Connect, 3 Timeout, 4
+/// Protocol, 5 Canceled).
+pub fn err(r: rthttp.CResp) -> Int { rt.mem_load(rec(r), R_ERR, 4) }
+
+pub fn msg(r: rthttp.CResp) -> Str { cstr(ld(rec(r), R_MSG)) }
+
+/// An HTTP/2 response: its status, header (names and values in turns),
+/// and body.
+pub fn status(r: rthttp.CResp) -> Int { ld(rec(r), R_STATUS) }
+
+pub fn headers(r: rthttp.CResp) -> List[Str] {
+  let a = rec(r)
+  let ha = ld(a, R_HDR)
+  var out: List[Str] = []
+  for i in 0..ld(a, R_HDR_N) {
+    out.push(raw.str_at(http1w.key_p(ha, i), http1w.key_n(ha, i)))
+    out.push(raw.str_at(http1w.val_p(ha, i), http1w.val_n(ha, i)))
+  }
+  out
+}
+
+pub fn body(r: rthttp.CResp) -> Bytes {
+  let a = rec(r)
+  let n = ld(a, R_BODY_N)
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), ld(a, R_BODY), n)
+  }
+  b
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/2: requests on https connections whose ALPN chose h2
+//
+// As net/http's Transport, a connection stays open after a request and
+// serves the next request to the same address (and server name, with the
+// same roots): stream ids go up on it (1, 3, 5, ...) as Go's do. The
+// native client sends one request at a time on a connection; requests
+// at once open more connections, and up to 100 idle ones are kept for 90
+// s (IdleConnTimeout). A request that fails on a reused connection
+// before any answer to it (the server closed it, a GOAWAY that excludes
+// it, REFUSED_STREAM) is sent again on a new one, as Transport retries
+// it. The exchange itself is http1.xo h2_exchange; the C makes the
+// connection (the dial, the TLS handshake) and hands it to conn_new.
+
+/// A connection (xo_h2.c's h2cc until B29, 2026-10-14; an obj.xo
+/// object): the pool's next, the roots (a handle, counted), the key (the
+/// address and the server name: a malloc'd C string), the net.Conn (a
+/// handle), its ccon, Xo's state (http1.xo H2State, an Any handle; 0
+/// before the first request), whether it is broken, got a GOAWAY, or
+/// ran out of stream ids (ints), when it went idle, and the bytes to send
+/// before the first request (the preface and SETTINGS: malloc'd, count).
+const P_NEXT = 0
+const P_ROOTS = 8
+const P_KEY = 16
+const P_CN = 24
+const P_C = 32
+const P_HP = 104
+const P_BROKEN = 112
+const P_GOAWAY = 116
+const P_SPENT = 120
+const P_IDLE = 128
+const P_OUT = 136
+const P_OUT_N = 144
+const P_SIZE = 152
+
+/// An exchange on a connection (r's h2, an obj.xo object): the
+/// connection, whether it came from the pool (a failure before an answer
+/// is retried), the request's body (malloc'd, count), and why
+/// cl_h2_read gave no frame (CC_*, CC_TOO_LARGE).
+const X_PC = 0
+const X_POOLED = 8
+const X_BODY = 16
+const X_BN = 24
+const X_RRES = 32
+const X_SIZE = 40
+
+/// xo_cresp's exchange and its retry (an int); the header's capacity
+/// and the body's (nbuf).
+const R_H2 = 88
+const R_RETRY = 96
+const R_HDR_CAP = 56
+const R_BODY_CAP = 80
+
+/// The idle connections (in the services record, ctx.xo SV_H2_*): a
+/// lock word, the first, the count.
+const PL_MU = 0
+const PL_FIRST = 8
+const PL_N = 16
+
+/// A frame longer than 16 KiB (FRAME_SIZE_ERROR; http1.xo CC_TOO_LARGE).
+const CC_TOO_LARGE = 104
+
+/// http1.xo's flags of cl_h2_end.
+const XF_BROKEN = 1
+const XF_REFUSED = 2
+const XF_SEEN = 4
+const XF_HEADERS = 8
+const XF_UNSENT = 16
+const XF_GOAWAY = 32
+const XF_SPENT = 64
+
+/// 90 s in ns (IdleConnTimeout).
+const IDLE_NS = 90000000000
+
+fn ld4(p: Int, off: Int) -> Int { rt.mem_load(p, off, 4) }
+
+fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
+
+fn h2pool() -> Int { ctx.svc() + ctx.SV_H2_POOL }
+
+fn free_c(b: Int) {
+  if b != 0 {
+    rt.heap_release(b)
+  }
+}
+
+/// Closes connection pc (TLS, the poll descriptor, the socket) and frees
+/// it (xo_h2.c h2cc_free).
+fn conn_free(pc: Int) {
+  if pc == 0 {
+    return
+  }
+  let c = pc + P_C
+  tlsio.free(ld(c, C_TLS))
+  poll.pd_close(ld(c, C_PD))
+  tasks.h_release(ld(pc, P_CN))
+  tasks.h_release(ld(pc, P_ROOTS))
+  free_c(ld(c, C_BUF))
+  let hp = ld(pc, P_HP)
+  if hp != 0 {
+    tasks.h_release(hp)
+  }
+  free_c(ld(pc, P_OUT))
+  free_c(ld(pc, P_KEY))
+  obj.free_obj(pc)
+}
+
+/// A connection taking over net.Conn cn and its ccon at c (TLS up, ALPN
+/// h2), for key (the kn bytes at kp) and roots (xo_h2.c h2cc_new): its
+/// first bytes are net/http's preface and SETTINGS.
+pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int) -> Int {
+  let pc = obj.alloc_obj(P_SIZE)
+  rt.mem_set(pc, 0, P_SIZE)
+  st(pc, P_CN, cn)
+  rt.mem_copy(pc + P_C, c, 72)
+  rc.inc(roots)
+  st(pc, P_ROOTS, roots)
+  let key = rt.heap_large(kn + 1) - 8
+  rt.mem_copy(key, kp, kn)
+  rt.mem_store(key, kn, 0, 1)
+  st(pc, P_KEY, key)
+  let o = rt.heap_large(64) - 8
+  var at = http1w.put(o, 0, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+  at += h2w.frame_head(o + at, 18, 4, 0, 0)
+  at += h2w.setting(o + at, 2, 0)
+  at += h2w.setting(o + at, 4, 4194304)
+  at += h2w.setting(o + at, 6, 10485760)
+  at += h2w.winup(o + at, 0, 1073741824 - 65535)
+  st(pc, P_OUT, o)
+  st(pc, P_OUT_N, at)
+  pc
+}
+
+/// Whether connection pc is for roots and the kn bytes of key at kp.
+fn conn_for(pc: Int, roots: Int, kp: Int, kn: Int) -> Bool {
+  let k = ld(pc, P_KEY)
+  ld(pc, P_ROOTS) == roots && raw.cstr_len(k) == kn && raw.mem_eq(k, kp, kn)
+}
+
+/// An idle connection for roots and key, or 0; the ones idle too long
+/// close (xo_h2.c h2_pool_take).
+pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
+  let now = sysio.mono_ns()
+  let pl = h2pool()
+  var found = 0
+  var stale = 0
+  pool.lock(pl + PL_MU)
+  var prev = 0
+  var pc = ld(pl, PL_FIRST)
+  while pc != 0 {
+    let next = ld(pc, P_NEXT)
+    let old = now - ld(pc, P_IDLE) > IDLE_NS
+    if old || (found == 0 && conn_for(pc, roots, kp, kn)) {
+      if prev == 0 {
+        st(pl, PL_FIRST, next)
+      } else {
+        st(prev, P_NEXT, next)
+      }
+      st(pl, PL_N, ld(pl, PL_N) - 1)
+      if old {
+        st(pc, P_NEXT, stale)
+        stale = pc
+      } else {
+        st(pc, P_NEXT, 0)
+        found = pc
+      }
+    } else {
+      prev = pc
+    }
+    pc = next
+  }
+  pool.unlock(pl + PL_MU)
+  while stale != 0 {
+    let n = ld(stale, P_NEXT)
+    conn_free(stale)
+    stale = n
+  }
+  found
+}
+
+/// Keeps pc for the next request, or closes it (xo_h2.c h2_pool_put):
+/// at most 100 stay, the oldest goes (MaxIdleConns).
+fn pool_put(pc: Int) {
+  if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
+    conn_free(pc)
+    return
+  }
+  st(pc, P_IDLE, sysio.mono_ns())
+  let pl = h2pool()
+  var drop = 0
+  pool.lock(pl + PL_MU)
+  st(pc, P_NEXT, ld(pl, PL_FIRST))
+  st(pl, PL_FIRST, pc)
+  let n = ld(pl, PL_N) + 1
+  st(pl, PL_N, n)
+  if n > 100 {
+    var prev = pl + PL_FIRST - P_NEXT
+    var q = ld(pl, PL_FIRST)
+    while ld(q, P_NEXT) != 0 {
+      prev = q
+      q = ld(q, P_NEXT)
+    }
+    st(prev, P_NEXT, 0)
+    st(pl, PL_N, n - 1)
+    drop = q
+  }
+  pool.unlock(pl + PL_MU)
+  conn_free(drop)
+}
+
+/// Closes the idle connections at exit (the leak check; xo_h2.c
+/// h2_pool_free).
+pub fn pool_free() {
+  let pl = h2pool()
+  pool.lock(pl + PL_MU)
+  var pc = ld(pl, PL_FIRST)
+  st(pl, PL_FIRST, 0)
+  st(pl, PL_N, 0)
+  pool.unlock(pl + PL_MU)
+  while pc != 0 {
+    let n = ld(pc, P_NEXT)
+    conn_free(pc)
+    pc = n
+  }
+}
+
+/// Sets r up for the exchange of a request on pc (pooled: it came from
+/// the pool): the body (the bn bytes at body), the deadline.
+pub fn exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: Int) {
+  let x = obj.alloc_obj(X_SIZE)
+  rt.mem_set(x, 0, X_SIZE)
+  let b = rt.heap_large(if bn > 0 { bn } else { 1 }) - 8
+  if bn > 0 {
+    rt.mem_copy(b, body, bn)
+  }
+  st(x, X_PC, pc)
+  st(x, X_POOLED, pooled)
+  st(x, X_BODY, b)
+  st(x, X_BN, bn)
+  st(r, R_H2, x)
+  st(pc + P_C, C_WHEN, when)
+  tlsio.set_when(ld(pc + P_C, C_TLS), when)
+}
+
+/// Frees exchange x (0: none); one Xo did not end drops its connection.
+pub fn exchange_free(x: Int) {
+  if x == 0 {
+    return
+  }
+  conn_free(ld(x, X_PC))
+  free_c(ld(x, X_BODY))
+  obj.free_obj(x)
+}
+
+/// Whether cl_start set up an HTTP/2 exchange on r (http1.xo
+/// h2_exchange makes it).
+pub fn h2(r: rthttp.CResp) -> Bool { ld(rec(r), R_H2) != 0 }
+
+/// Whether the exchange is to be sent again on a new connection.
+pub fn retry(r: rthttp.CResp) -> Bool { ld4(rec(r), R_RETRY) != 0 }
+
+/// The connection's state (http1.H2State), moved out: a list of one,
+/// empty before its first request.
+pub fn h2_take(r: rthttp.CResp) -> List[rt.Any] {
+  let pc = ld(ld(rec(r), R_H2), X_PC)
+  let hp = ld(pc, P_HP)
+  if hp == 0 {
+    return []
+  }
+  st(pc, P_HP, 0)
+  // obj_at counts once more: the connection's reference goes
+  let a = rt.obj_at[rt.Any](hp)
+  tasks.h_release(hp)
+  [a]
+}
+
+/// The request's body (the response's is empty so far).
+pub fn h2_body(r: rthttp.CResp) -> Str {
+  let a = rec(r)
+  st(a, R_BODY_N, 0)
+  let x = ld(a, R_H2)
+  raw.str_at(ld(x, X_BODY), ld(x, X_BN))
+}
+
+/// Sends what the connection queued (a new one's preface and SETTINGS),
+/// then b: CC_*.
+pub fn h2_write(r: rthttp.CResp, b: Str) -> Int {
+  let pc = ld(ld(rec(r), R_H2), X_PC)
+  let c = pc + P_C
+  let on = ld(pc, P_OUT_N)
+  if on == 0 {
+    return send(c, raw.data(b), b.len())
+  }
+  let o = raw.c_resize(ld(pc, P_OUT), on + b.len())
+  rt.mem_copy(o + on, raw.data(b), b.len())
+  st(pc, P_OUT, o)
+  st(pc, P_OUT_N, 0)
+  send(c, o, on + b.len())
+}
+
+/// The server's next frame (its 9 byte header and payload), or "" with
+/// the reason in h2_rres (xo_h2.c h2cc_frame).
+pub fn h2_read(r: rthttp.CResp) -> Str {
+  let x = ld(rec(r), R_H2)
+  let c = ld(x, X_PC) + P_C
+  while true {
+    let have = ld(c, C_N) - ld(c, C_OFF)
+    if have >= 9 {
+      let p = ld(c, C_BUF) + ld(c, C_OFF)
+      let len = (rt.mem_load(p, 0, 1) << 16) | (rt.mem_load(p, 1, 1) << 8) | rt.mem_load(p, 2, 1)
+      if len > 16384 {
+        st(x, X_RRES, CC_TOO_LARGE)
+        return ""
+      }
+      if have >= 9 + len {
+        st(c, C_OFF, ld(c, C_OFF) + 9 + len)
+        return raw.str_at(p, 9 + len)
+      }
+    }
+    if ld4(c, C_EOF) != 0 {
+      st(x, X_RRES, CC_EOF)
+      return ""
+    }
+    let f = fill(c)
+    if f != CC_OK && f != CC_EOF {
+      st(x, X_RRES, f)
+      return ""
+    }
+  }
+  ""
+}
+
+pub fn h2_rres(r: rthttp.CResp) -> Int { ld(ld(rec(r), R_H2), X_RRES) }
+
+/// A runtime object holding the n bytes of s and a zero byte (hs_dup).
+fn hs_dup(s: Str) -> Int {
+  let n = s.len()
+  let p = obj.alloc_obj(n + 1)
+  rt.mem_copy(p, raw.data(s), n)
+  rt.mem_store(p, n, 0, 1)
+  p
+}
+
+/// Sets the response's status and header (canonical names, each once):
+/// the C's hlist of runtime objects, which cresp_free frees.
+pub fn h2_response(r: rthttp.CResp, status: Int, names: List[Str], values: List[Str]) {
+  let a = rec(r)
+  st(a, R_STATUS, status)
+  let old = ld(a, R_HDR)
+  if old != 0 {
+    for i in 0..ld(a, R_HDR_N) {
+      obj.free_obj(http1w.key_p(old, i))
+      obj.free_obj(http1w.val_p(old, i))
+    }
+    obj.free_obj(old)
+  }
+  let n = if names.len() < values.len() { names.len() } else { values.len() }
+  var cap = 8
+  while cap < n {
+    cap = cap * 2
+  }
+  let ha = obj.alloc_obj(32 * cap)
+  for i in 0..n {
+    st(ha, 32 * i, hs_dup(names[i]))
+    st(ha, 32 * i + 8, names[i].len())
+    st(ha, 32 * i + 16, hs_dup(values[i]))
+    st(ha, 32 * i + 24, values[i].len())
+  }
+  st(a, R_HDR, ha)
+  st(a, R_HDR_N, n)
+  st(a, R_HDR_CAP, cap)
+}
+
+/// Adds b to the response's body (an nbuf the C frees).
+pub fn h2_data(r: rthttp.CResp, b: Str) {
+  let a = rec(r)
+  let n = ld(a, R_BODY_N)
+  let bn = b.len()
+  if bn == 0 {
+    return
+  }
+  var cap = ld(a, R_BODY_CAP)
+  if n + bn > cap {
+    var c = if cap < 64 { 64 } else { cap * 2 }
+    while c < n + bn {
+      c = c * 2
+    }
+    st(a, R_BODY, raw.c_resize(ld(a, R_BODY), c))
+    st(a, R_BODY_CAP, c)
+  }
+  rt.mem_copy(ld(a, R_BODY) + n, raw.data(b), bn)
+  st(a, R_BODY_N, n + bn)
+}
+
+/// Ends the exchange: res (CC_*) and why are how it ended, flags (XF_*)
+/// the stream's and the connection's state. The connection keeps Xo's
+/// state st and goes back to the pool (or closes), and r gets the
+/// failure. A request the server did not take on a pooled connection (it
+/// closed it, a GOAWAY that excludes it, REFUSED_STREAM) sets retry
+/// instead: Xo sends it again on a new connection, as Transport retries
+/// it.
+pub fn h2_end(r: rthttp.CResp, sv: rt.Any, res: Int, why: Str, flags: Int) {
+  let a = rec(r)
+  let x = ld(a, R_H2)
+  let pc = ld(x, X_PC)
+  let s = rt.obj_addr(sv)
+  rc.inc(s)
+  let hp = ld(pc, P_HP)
+  if hp != 0 {
+    tasks.h_release(hp)
+  }
+  st(pc, P_HP, s)
+  var broken = (flags & XF_BROKEN) != 0
+  st4(pc, P_GOAWAY, if (flags & XF_GOAWAY) != 0 { 1 } else { 0 })
+  st4(pc, P_SPENT, if (flags & XF_SPENT) != 0 { 1 } else { 0 })
+  if res != CC_OK && res != CC_ERR {
+    // a timeout or cancellation left the stream open
+    broken = true
+  }
+  let retry = (flags & XF_REFUSED) != 0 || (res == CC_ERR && (flags & XF_SEEN) == 0 && broken && (flags & XF_HEADERS) == 0)
+  if res == CC_OK && (flags & XF_UNSENT) != 0 {
+    // the response came before the whole body: the stream is reset
+    broken = true
+  }
+  st4(pc, P_BROKEN, if broken { 1 } else { 0 })
+  st(x, X_PC, 0)
+  if ld(x, X_POOLED) != 0 && retry {
+    conn_free(pc)
+    st(a, R_STATUS, 0)
+    h2_response(r, 0, [], [])
+    st(a, R_BODY_N, 0)
+    st4(a, R_RETRY, 1)
+  } else {
+    let tls = ld(pc + P_C, C_TLS)
+    let al = if ld(x, X_POOLED) == 0 && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && why.is_empty() && tls != 0 { tlsio.alert(tls) } else { "" }
+    pool_put(pc)
+    finish(a, res, why, al)
+  }
+  st(a, R_H2, 0)
+  exchange_free(x)
+}
+
+// ---------------------------------------------------------------------------
+// The exchange's start and its record (xo_http.c's xo_cl_start, cl_close
+// and cresp_free until the zero-C audit's B28 part 3, 2026-10-14)
+
+/// The record's net.Conn (a reference, while Xo reads an HTTP/1.1
+/// response) and its size.
+const R_CN = 176
+const R_SIZE = 192
+
+/// The deadline of a client's timeout (ns, > 0): the timers' clock.
+pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
+
+/// One request (http1.xo client_do's hop): method to addr (host:port;
+/// https: TLS with the server name tls_host, verified against roots), the
+/// request target, the Host, the header, the body, the deadline (0:
+/// none), and the start of its errors (the method and the quoted URL).
+/// An https server whose ALPN chose h2 gets the request over HTTP/2 on a
+/// connection kept for the next request with the same addr and tls_host
+/// (pool: an idle one may take it), as net/http's Transport keeps it: r
+/// is set up for the exchange (h2), which http1.xo h2_exchange makes.
+/// Otherwise r is connected for HTTP/1.1 (reading): request sends it,
+/// Xo reads the response, and end closes. A failure sets r's error. The
+/// method, target, Host and header are the writers' (request,
+/// h2_exchange).
+pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool) -> rthttp.CResp {
+  let r = tasks.new_handle(R_SIZE, ctx.SV_CRESP_FREE)
+  st(r, R_PREFIX, cstr_dup(prefix))
+  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool)
+  let h = rt.obj_at[rthttp.CResp](r)
+  tasks.h_release(r)
+  h
+}
+
+fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool) {
+  // an idle HTTP/2 connection to the same address, server name, and
+  // roots
+  let key = if https { addr + "|" + tls_host } else { "" }
+  if https && pool {
+    let pc = pool_take(roots, raw.data(key), key.len())
+    if pc != 0 {
+      exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
+      return
+    }
+  }
+  let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
+  if dl != 0 && d <= 0 {
+    fail(r, 3, "")
+    return
+  }
+  // the connection's handle (its reference is the record's), or 0
+  let cna = netconn.dial_timeout(addr, d)
+  let x = ctx.cur()
+  let ns = ld(x, ctx.C_NET_STATUS)
+  if ns != 0 {
+    let nm = cstr(ld(x, ctx.C_NET_MSG))
+    if ns == 5 {
+      fail(r, 5, "")
+    } else if ns == 2 {
+      fail(r, 2, "dial tcp ${addr}: connect: connection refused")
+    } else if nm.contains("i/o timeout") {
+      fail(r, 3, "")
+    } else {
+      fail(r, 2, nm)
+    }
+    return
+  }
+  // the record (or the HTTP/2 connection) keeps the net.Conn
+  let pd = ld(cna, 16)
+  let c = r + R_C
+  st(c, C_PD, pd)
+  rt.mem_store(c, C_FD, rt.mem_load(pd, 8, 4), 4)
+  st(c, C_WHEN, dl)
+  if https {
+    // the TLS handshake (tlsio.xo; its C path xo_tls.c): its failures are
+    // Protocol errors with crypto/tls's texts, or Timeout and Canceled
+    let started = tlsio.client(pd, tls_host, roots, dl)
+    let ts = started.status
+    let tmsg = started.msg
+    let kind = started.kind
+    let t = started.conn
+    if ts != CC_OK {
+      poll.pd_close(pd)
+      tasks.h_release(cna)
+      rt.mem_set(c, 0, 72)
+      if ts == CC_TIMEOUT {
+        fail(r, 3, "")
+      } else if ts == CC_CANCELED {
+        fail(r, 5, "")
+      } else if kind == 2 {
+        fail(r, 2, tmsg)
+      } else {
+        fail(r, 4, prefix + ": " + tmsg)
+      }
+      return
+    }
+    st(c, C_TLS, t)
+    if tlsio.alpn_h2(t) {
+      // the connection takes over the net.Conn and the ccon
+      let pc = conn_new(cna, c, roots, raw.data(key), key.len())
+      rt.mem_set(c, 0, 72)
+      exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
+      return
+    }
+  }
+  // Xo sends the request and reads the response (request)
+  st(r, R_CN, cna)
+  st4(r, R_READING, 1)
+}
+
+/// Closes r's connection (TLS, the poll descriptor, the socket), if it
+/// has one: an HTTP/1.1 exchange ends.
+pub fn cl_close(r: rthttp.CResp) { close_at(rec(r)) }
+
+fn close_at(a: Int) {
+  let cn = ld(a, R_CN)
+  if cn == 0 {
+    return
+  }
+  let c = a + R_C
+  let t = ld(c, C_TLS)
+  if t != 0 {
+    tlsio.free(t)
+  }
+  poll.pd_close(ld(c, C_PD))
+  tasks.h_release(cn)
+  free_c(ld(c, C_BUF))
+  rt.mem_set(c, 0, 72)
+  st(a, R_CN, 0)
+  st4(a, R_READING, 0)
+}
+
+/// Frees response record a (its last reference went; cabi_http.xo
+/// cresp_free).
+pub fn cresp_free(a: Int) {
+  exchange_free(ld(a, R_H2))
+  close_at(a)
+  free_c(ld(a, R_MSG))
+  free_c(ld(a, R_PREFIX))
+  let ha = ld(a, R_HDR)
+  if ha != 0 {
+    for i in 0..ld(a, R_HDR_N) {
+      obj.free_obj(http1w.key_p(ha, i))
+      obj.free_obj(http1w.val_p(ha, i))
+    }
+    obj.free_obj(ha)
+  }
+  free_c(ld(a, R_BODY))
+  obj.free_obj(a)
+}
