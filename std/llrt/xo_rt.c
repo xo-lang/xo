@@ -1056,15 +1056,9 @@ XO_NORETURN static void fault_raise(xo_ctx *c) {
 	rt_fault_leave();
 	c->faulting = 1;
 	c->unwinding = 1;
-#ifdef _WIN32
-	// the walk starts here, so the unwinder's own frames are not unwound
-	// on every raise (unwind.xo win_raise)
-	CONTEXT cx;
-	RtlCaptureContext(&cx);
-	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), XO_ADDR(&cx));
-#else
+	// on Windows unwind.xo win_raise captures its own CONTEXT
+	// (RtlCaptureContext from sys_windows.xo) and walks from there
 	xo_x_unwind_fault(XO_ADDR(ctx_exc(c)), (int64_t)c->boundary, XO_ADDR(xo_x_personality), XO_ADDR(xo_personality), 0);
-#endif
 	fault_exit(c);
 }
 

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows faults (zero-C inventory rank 14, the Windows part): the C
+  fault_raise no longer captures a CONTEXT; unwind.xo win_raise captures
+  its own (RtlCaptureContext through sys_windows.xo) and walks from
+  there, three frames more per raise. UNTESTED on windows.
 - Native runtime (decision 0233 step 2, stop and signals): stop.xo arms
   and disarms the grace timer, makes and closes task.stopping's channel
   and names the timer's function through rt.fn_addr of cabi.xo's

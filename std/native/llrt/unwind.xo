@@ -914,9 +914,10 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
   let o_sp = if arm { WA_SP } else { WX_SP }
   let cx = s + W_CX
   let here = s + W_HERE
-  // the walk starts at the C fault_raise, whose context it captured:
-  // the unwinder's own frames (the export, raise, win_raise) are not
-  // unwound on every raise (wcx 0: from here)
+  // the walk starts here (wcx 0; xo_rt.c's fault_raise captured its own
+  // CONTEXT and passed it until 2026-10-15): the unwinder's frames (this,
+  // raise, the export, the C fault_raise) are unwound first, three
+  // RtlVirtualUnwind steps more per raise
   if wcx != 0 {
     rt.mem_copy(cx, wcx, size)
   } else {
