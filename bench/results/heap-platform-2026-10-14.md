@@ -159,6 +159,10 @@ it).
   nothing had pushed onto it since 91985038 (2026-10-08), when workers
   became long lived.
 - heapos.xo's static words are 22 to 29 (rt.xo's table).
+- C: xo_rt.c 47 lines deleted, 13 added (34 fewer); with part 1's 15
+  more, B21 so far leaves std/llrt 19 lines shorter. The rest of the
+  audit row (xo_alloc, xo_free, xo_resize, and the forwarders) goes when
+  generated code calls alloc.xo's exports directly.
 
 Mac (A main 185c253a, part 1; B the branch; min of 5, two rounds, every
 checksum equal):
