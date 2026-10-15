@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend: the module head no longer declares the C entries
+  generated code stopped calling in the entries batches E1 to E3
+  (xo_rc_alloc, rc_free, rc_defer, rs_concat, rl_new, rl_new_n,
+  rl_empty, rl_share, rl_free, h_free), so their C forwarders can go
+  once a seed built from this exists.
 - Native backends (generated-code entries E3): the empty list and the
   unwinding placeholders are the addresses of xo_rt.c's xo_empty_list
   and xo_zero_handle in generated code, not calls (xo_rl_empty and
