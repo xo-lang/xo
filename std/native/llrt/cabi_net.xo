@@ -3,8 +3,9 @@
 // runtime as xo_x_<name>. A program carries them when it dials or
 // listens (the SSA builders' uses_net) or uses std/http
 // (std/native/http.xo imports this module). The network's operations
-// are netconn.xo's (std/llrt/xo_rt.c forwards xo_net_listen and the rest
-// here); net_read and net_send were the C's reads and writes (xo_http.c,
+// are netconn.xo's, which generated code calls here directly
+// (selfhost/ssa/exports.xo; std/llrt/xo_rt.c forwards xo_net_listen and
+// the rest here for code of compilers up to 0.12.0); net_read and net_send were the C's reads and writes (xo_http.c,
 // the TLS library's), which no C makes now. The C declares these weak (weak
 // definitions on macOS and Windows), so a program without them links.
 // Nothing here may fault.
@@ -23,8 +24,6 @@ fn nc_listen(lp: Int, ln: Int, p: Int, n: Int) -> Int { netconn.listen(raw.str_a
 
 fn nc_dial(lp: Int, ln: Int, p: Int, n: Int) -> Int { netconn.dial(raw.str_at(lp, ln), raw.str_at(p, n)) }
 
-fn nc_dial_timeout(p: Int, n: Int, d: Int) -> Int { netconn.dial_timeout(raw.str_at(p, n), d) }
-
 fn nc_listener_addr(l: Int, np: Int) -> Int { netconn.listener_addr(l, np) }
 
 fn nc_listener_accept(l: Int) -> Int { netconn.listener_accept(l) }
@@ -40,6 +39,18 @@ fn nc_conn_write(cn: Int, p: Int, n: Int) { netconn.conn_write(cn, p, n) }
 fn nc_conn_close(cn: Int) { netconn.conn_close(cn) }
 
 fn nc_conn_free(cn: Int) { netconn.conn_free(cn) }
+
+// The same for generated code, which calls them directly (selfhost/ssa
+// exports.xo; the emitters turn a handle's 0 into the zero handle and a
+// list's 0 into the empty list): a List[Str] of one, no length slot.
+
+fn nc_listener_addr_list(l: Int) -> Int { netconn.listener_addr(l, 0) }
+
+fn nc_conn_read_list(cn: Int, max: Int) -> Int { netconn.conn_read(cn, max, 0) }
+
+fn nc_status() -> Int { netconn.status() }
+
+fn nc_msg() -> Int { netconn.msg_list() }
 
 // ---------------------------------------------------------------------------
 // System calls: the kernel's result, a negative errno on failure.

@@ -19,6 +19,20 @@ pub fn rt_export(name: Str) -> Str {
     "rt.listener_close" => "xo_x_nc_listener_close"
     "rt.conn_write" => "xo_x_nc_conn_write"
     "rt.conn_close" => "xo_x_nc_conn_close"
+    "rt.net_listen" => "xo_x_nc_listen"
+    "rt.net_dial" => "xo_x_nc_dial"
+    "rt.listener_accept" => "xo_x_nc_listener_accept"
+    "rt.listener_addr" => "xo_x_nc_listener_addr_list"
+    "rt.conn_read" => "xo_x_nc_conn_read_list"
+    "rt.net_status" => "xo_x_nc_status"
+    "rt.net_msg" => "xo_x_nc_msg"
     _ => ""
   }
+}
+
+/// Whether the export of rt_export(name) returns 0 for none, which the
+/// emitters turn into the immortal zero handle (a handle result) or
+/// empty list (a List result) that xo_rt.c's forwarder returned.
+pub fn rt_export_none(name: Str) -> Bool {
+  name is "rt.net_listen" | "rt.net_dial" | "rt.listener_accept" | "rt.listener_addr" | "rt.conn_read"
 }

@@ -1109,6 +1109,20 @@ fn (var g: Gen) rt_call(v: Int) {
       g.mk_str(v, o, n)
       return
     }
+    if ssa.rt_export_none(name) {
+      // 0 for none: the zero handle or the empty list (ssa/exports.xo)
+      let p = g.def("inttoptr i64 ${r} to ptr")
+      let z = g.def("icmp eq i64 ${r}, 0")
+      var none = ""
+      if g.kind(x.ty) == ssa.Kind.List {
+        none = g.empty_list()
+      } else {
+        g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
+        none = "@xo_zero_handle"
+      }
+      g.set(v, "select i1 ${z}, ptr ${none}, ptr ${p}")
+      return
+    }
     g.set(v, "inttoptr i64 ${r} to ptr")
     return
   }

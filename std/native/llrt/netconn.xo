@@ -223,15 +223,43 @@ fn fail(c: Int, status: Int, msg: Str) {
   st(c, ctx.C_NET_STATUS, status)
 }
 
-/// s for the C caller, which puts it in a list of one (xo_rt.c's
-/// nc_list): its object, counted once more (testworld.hand_str), with
-/// its length stored at np. A list literal handed out by obj_addr was
-/// freed early (its Str garbage after the next spawn).
+/// s in a List[Str] of one for generated code when np is 0 (cabi_net.xo
+/// nc_*_list; its object counted once more for the list); else for
+/// the C caller, which puts it in a list of one (xo_rt.c's nc_list,
+/// for code of earlier compilers): its object, counted once more
+/// (testworld.hand_str), with its length stored at np. A list literal
+/// handed out by obj_addr was freed early (its Str garbage after the
+/// next spawn).
 fn list_of(s: Str, np: Int) -> Int {
-  st(np, 0, s.len())
   let a = rt.obj_addr(s)
   rc.inc(a)
+  if np == 0 {
+    return str_list(a, s.len())
+  }
+  st(np, 0, s.len())
   a
+}
+
+/// A new List[Str] of one: the string object a (its reference moves to
+/// the list) of n bytes (xo_rt.c str_list's layout: obj.xo's list
+/// header, then the element's object and length).
+fn str_list(a: Int, n: Int) -> Int {
+  let l = obj.rl_new_n(1, 16)
+  st(l, 8, 1)
+  st(l, 24, a)
+  st(l, 32, n)
+  l
+}
+
+/// The outcome of the calling context's last network operation (0, or
+/// the NetErr tag above), for generated code.
+pub fn status() -> Int { ld(ctx.cur(), ctx.C_NET_STATUS) }
+
+/// The message of the calling context's last Io or InvalidAddr error,
+/// in a List[Str] of one, for generated code.
+pub fn msg_list() -> Int {
+  let m = ld(ctx.cur(), ctx.C_NET_MSG)
+  list_of(if m != 0 { str_of(m) } else { raw.str_at(0, 0) }, 0)
 }
 
 /// A new handle of n bytes, zeroed, with one reference and the free

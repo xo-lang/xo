@@ -2336,7 +2336,6 @@ XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
 XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
 XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
-XO_NC_REF int64_t xo_x_nc_dial_timeout(int64_t p, int64_t n, int64_t d);
 XO_NC_REF int64_t xo_x_nc_listener_addr(int64_t l, int64_t np);
 XO_NC_REF int64_t xo_x_nc_listener_accept(int64_t l);
 XO_NC_REF void xo_x_nc_listener_close(int64_t l);
@@ -2354,7 +2353,6 @@ XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
 XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
-XO_NX_STUB(xo_x_nc_dial_timeout, int64_t a, int64_t b, int64_t c)
 XO_NX_STUB(xo_x_nc_listener_addr, int64_t a, int64_t b)
 XO_NX_STUB(xo_x_nc_listener_accept, int64_t a)
 XO_NX_VSTUB(xo_x_nc_listener_close, int64_t a)
@@ -2864,8 +2862,9 @@ int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)
 // ---------------------------------------------------------------------------
 // Network (std.md 3.2): TCP listeners and connections are
 // std/native/llrt/netconn.xo's (the zero-C audit's B22 and B23
-// remnants), through cabi_net.xo's exports; the generated code calls the
-// names below. Each operation records its outcome in the context
+// remnants), through cabi_net.xo's exports, which generated code calls
+// directly (selfhost/ssa/exports.xo); code of compilers up to 0.12.0
+// calls the names below. Each operation records its outcome in the context
 // (net_status, net_msg), which the generated code reads to build the
 // NetErr: 1 InvalidAddr, 2 Refused, 3 Timeout, 4 Io(msg), 5 Canceled,
 // 6 Denied (the Go backend's tags). A handle is the zero handle, and a

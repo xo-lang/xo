@@ -21,6 +21,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   listener's close call their Xo exports (ssa/exports.xo, shared by
   arm64 and LLVM) instead of xo_rt.c's forwarders, which stay for code
   of earlier compilers and can go after the next seed.
+- Native backends (generated-code entries N2): Net.listen and dial,
+  Listener.accept and addr, Conn.read, and the NetErr's status and
+  message call cabi_net.xo's exports (addr, read and the message build
+  their List[Str] in netconn.xo; the emitters turn a 0 handle or list
+  into the zero handle or empty list) instead of xo_rt.c's forwarders.
+  The dead xo_net_dial_timeout and its export (xo_http.c's client, gone
+  with the C TLS) are deleted.
 - Native runtime (zero-C audit item B06): the last fault entries of
   generated code are Xo exports (cabi.xo fault_raise, fault_continue,
   fault_take, fault_msg, fault_loc, fault_detail over fault.xo); the C

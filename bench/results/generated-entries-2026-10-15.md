@@ -193,3 +193,26 @@ C deletable after the next seed (std/llrt/xo_rt.c): xo_scope_deadline,
 xo_scope_timed_out (and their xo_x_ prototypes), xo_stop_requested,
 xo_task_stopping, xo_realtime_enter, xo_realtime_exit,
 xo_listener_close, xo_conn_write, xo_conn_close.
+
+## Batch N2 (the rest of the network)
+
+rt.net_listen, net_dial and listener_accept call xo_x_nc_listen,
+nc_dial and nc_listener_accept; rt.listener_addr, conn_read, net_status
+and net_msg call new exports (cabi_net.xo nc_listener_addr_list,
+nc_conn_read_list, nc_status, nc_msg) that build the List[Str] of one
+in netconn.xo (list_of with no length slot, str_list). A 0 result of
+the five that return one is the zero handle or the empty list, chosen
+inline (LLVM select, arm64 cmp and csel; ssa/exports.xo
+rt_export_none). A probe of every NetErr message path (bad dial and
+listen addresses, read, write and accept after close) prints the same
+on main and the branch on both backends; the generated code of the
+probe calls none of the C net entries (20 calls on main). Tests: hello
+on both backends, -short, and the network goldens on LLVM and arm64.
+
+C deletable after the next seed (std/llrt/xo_rt.c): xo_net_status,
+xo_net_msg, str_list, nc_handle, nc_list, xo_net_listen, xo_net_dial,
+xo_listener_addr, xo_listener_accept, xo_conn_read; then the
+xo_listener and xo_conn typedefs and asserts if nothing else uses them,
+and cabi_net.xo's nc_listener_addr and nc_conn_read (and netconn.xo
+list_of's length slot). Deleted now: xo_net_dial_timeout and
+cabi_net.xo nc_dial_timeout (no caller since the C TLS went).

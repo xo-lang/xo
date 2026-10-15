@@ -1503,7 +1503,16 @@ fn (var g: G) rt_call(v: Int) {
       let _r = g.rt(name, args, [])
       g.set(v, [])
     }
-    Int | Bool | List | Handle => g.set(v, g.rt(name, args, [false]))
+    Int | Bool | List | Handle => {
+      let r = g.rt(name, args, [false])
+      if ssa.rt_export_none(name0) {
+        // 0 for none: the zero handle or the empty list (ssa/exports.xo)
+        let none = g.sym_addr(g.sym(if g.vkind(v) == ssa.Kind.List { "xo_empty_list" } else { "xo_zero_handle" }))
+        g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u0, eq", [r[0], none])])
+      } else {
+        g.set(v, r)
+      }
+    }
     Float => g.set(v, g.rt(name, args, [true]))
     Str => {
       // the string object; its length in the frame's out slot
