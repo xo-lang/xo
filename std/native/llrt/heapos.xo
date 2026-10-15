@@ -72,19 +72,16 @@ pub fn libc_maps() -> Int { rt.slot_load(rt.static_word(W_LIBC_MAPS), 0, RELAXED
 /// its address. Out of memory ends the process. A sanitizer build maps
 /// through the C library (sanhook.xo heap_map): ThreadSanitizer and
 /// AddressSanitizer see a mapping through their mmap interceptors, which
-/// a system call bypasses.
+/// a system call bypasses. Only the Linux and macOS arms test for it: a
+/// Windows build must not reference the C library's mmap, which it lacks
+/// (its link fails), and target.os folds there.
 fn map(size: Int) -> Int {
-  if sanhook.sanitized() {
-    let m = sanhook.heap_map(size)
-    if m == 0 {
-      oom()
-    }
-    let _n = rt.slot_add(rt.static_word(W_LIBC_MAPS), 0, 1, RELAXED)
-    return m
-  }
   var m = 0
   match target.os {
     TargetOs.Linux => {
+      if sanhook.sanitized() {
+        return libc_map(size)
+      }
       // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
       m = linux.mmap(0, size, 3, 34, -1, 0)
       if m < 0 && m > -4096 {
@@ -92,6 +89,9 @@ fn map(size: Int) -> Int {
       }
     }
     TargetOs.Darwin => {
+      if sanhook.sanitized() {
+        return libc_map(size)
+      }
       // MAP_PRIVATE | MAP_ANON
       m = sys_darwin.mmap(0, size, 3, 4098, -1, 0)
       if m == -1 {
@@ -110,17 +110,32 @@ fn map(size: Int) -> Int {
   m
 }
 
+/// map through the C library (a sanitizer build on Linux or macOS),
+/// counted.
+fn libc_map(size: Int) -> Int {
+  let m = sanhook.heap_map(size)
+  if m == 0 {
+    oom()
+  }
+  let _n = rt.slot_add(rt.static_word(W_LIBC_MAPS), 0, 1, RELAXED)
+  m
+}
+
 /// Gives back the mapping of size bytes at m.
 fn unmap(m: Int, size: Int) {
-  if sanhook.sanitized() {
-    sanhook.heap_unmap(m, size)
-    return
-  }
   match target.os {
     TargetOs.Linux => {
+      if sanhook.sanitized() {
+        sanhook.heap_unmap(m, size)
+        return
+      }
       let _r = linux.munmap(m, size)
     }
     TargetOs.Darwin => {
+      if sanhook.sanitized() {
+        sanhook.heap_unmap(m, size)
+        return
+      }
       let _r = sys_darwin.munmap(m, size)
     }
     TargetOs.Windows => {
