@@ -4,6 +4,7 @@
 // std/native/http.xo imports this module and only programs that use
 // std/http carry them.
 use native/llrt/raw
+use native/llrt/tlscert
 use native/llrt/tlsname
 use native/rt
 
@@ -68,3 +69,35 @@ fn tls_hostname_msg(args: Int, buf: Int, bn: Int) -> Int {
   rt.mem_store(buf, n, 0, 1)
   1
 }
+
+// ---------------------------------------------------------------------------
+// Certificates and roots (tlscert.xo, the zero-C audit's B30): svc is
+// xo_tls.c's services record of Mbed TLS calls.
+
+/// tls.X509KeyPair's checks for the certificate c (its chain at crt) of
+/// the PEM inputs: 0, or the error as a C string from malloc.
+fn tls_cert_check(svc: Int, c: Int, crt: Int, cp: Int, cn: Int, kp: Int, kn: Int) -> Int {
+  let e = tlscert.cert_check(svc, c, crt, cp, cn, kp, kn)
+  if e.is_empty() {
+    return 0
+  }
+  tlscert.c_string(e)
+}
+
+/// The CERTIFICATE blocks of the n bytes of PEM at p added to the chain
+/// crt: how many.
+fn tls_roots_pem(svc: Int, crt: Int, p: Int, n: Int) -> Int { tlscert.roots_pem(svc, crt, p, n) }
+
+/// The system's roots added to the chain crt: how many.
+fn tls_roots_system(svc: Int, crt: Int) -> Int { tlscert.roots_system(svc, crt) }
+
+/// Go's text of a leaf outside its validity period (now in the zone off
+/// seconds east of UTC, the limit the mbedtls_x509_time at tp; future:
+/// before it) zero terminated in the buffer of bn bytes at buf: its
+/// length.
+fn tls_expiry_msg(now: Int, off: Int, tp: Int, future: Int, buf: Int, bn: Int) -> Int { tlscert.put_msg(buf, bn, tlscert.expiry_msg(now, off, tp, future != 0)) }
+
+/// macOS: the Security framework's verification of the chain crt for
+/// the host (the C string at hp, hn bytes): 0, or 1 and Go's text in the
+/// buffer of mn bytes at msg.
+fn tls_apple_verify(svc: Int, crt: Int, hp: Int, hn: Int, msg: Int, mn: Int) -> Int { tlscert.apple_verify(svc, crt, hp, hn, msg, mn) }

@@ -59,7 +59,10 @@ static int tls_ready;
 // third_party/mbedtls/xo/xo_tls_accel.c (decision 0117)
 void xo_tls_threading_init(void);
 
+static void tls_svc_init(void);
+
 static void tls_init_once(void) {
+	tls_svc_init();
 	xo_tls_threading_init();
 	tls_ready = psa_crypto_init() == PSA_SUCCESS;
 	// mbedtls_ssl_config_defaults fills a global list of cipher suites the
@@ -120,58 +123,28 @@ static void tls_conf_common(mbedtls_ssl_config *conf) {
 }
 
 // ---------------------------------------------------------------------------
-// PEM (encoding/pem's Decode, as tls.X509KeyPair and
-// CertPool.AppendCertsFromPEM use it)
-
-typedef struct {
-	char type[80];
-	unsigned char *der; // malloc'd
-	size_t n;
-} pem_block;
-
-int64_t xo_x_pem_next(int64_t p, int64_t n, int64_t st, int64_t ty, int64_t der);
-
-// pem_next decodes the next PEM block of [*p, end) (tlsname.xo's
-// pem_next, decision 0207): 1 and the block (its der to free), 0 when
-// there is none. A block that does not decode is skipped, as pem.Decode
-// does.
-static int pem_next(const char **p, const char *end, pem_block *b) {
-	int64_t n = (int64_t)(end - *p);
-	unsigned char *der = malloc((size_t)n + 1);
-	if (!der) {
-		xo_oom();
-	}
-	int64_t st = 0;
-	int64_t k = xo_x_pem_next(XO_ADDR(*p), n, XO_ADDR(&st), XO_ADDR(b->type), XO_ADDR(der));
-	*p += st;
-	if (k < 0) {
-		free(der);
-		return 0;
-	}
-	b->der = der;
-	b->n = (size_t)k;
-	return 1;
-}
-
-static int ends_with(const char *s, const char *suf) {
-	size_t n = strlen(s), k = strlen(suf);
-	return n >= k && strcmp(s + n - k, suf) == 0;
-}
-
-// types_list appends Go's %v of a []string: [a b c].
-static void types_list(nbuf *o, char **ts, int n) {
-	nbuf_byte(o, '[');
-	for (int i = 0; i < n; i++) {
-		if (i > 0) {
-			nbuf_byte(o, ' ');
-		}
-		nbuf_str(o, ts[i]);
-	}
-	nbuf_byte(o, ']');
-}
-
-// ---------------------------------------------------------------------------
 // Certificates (http.tls_cert)
+//
+// The PEM scan, tls.X509KeyPair's checks and their error texts, the
+// roots of Client.with_roots and of the system, the expiry texts, and
+// macOS's chain verification are std/native/llrt/tlscert.xo's (the
+// zero-C audit's B30); it calls Mbed TLS through tls_svc (its V_
+// words), and reads mbedtls_x509_crt at the offsets asserted here.
+
+_Static_assert(offsetof(mbedtls_x509_crt, raw.len) == 16, "tlscert.xo CRT_RAW_LEN");
+_Static_assert(offsetof(mbedtls_x509_crt, raw.p) == 24, "tlscert.xo CRT_RAW_P");
+_Static_assert(offsetof(mbedtls_x509_crt, next) == 1288, "tlscert.xo CRT_NEXT");
+_Static_assert(offsetof(mbedtls_x509_crt, valid_from) == 288, "tlscert.xo CRT_VALID_FROM");
+_Static_assert(offsetof(mbedtls_x509_crt, valid_to) == 312, "tlscert.xo CRT_VALID_TO");
+_Static_assert(sizeof(mbedtls_x509_time) == 24 && offsetof(mbedtls_x509_time, sec) == 20, "tlscert.xo x509_time");
+
+int64_t xo_x_tls_cert_check(int64_t svc, int64_t c, int64_t crt, int64_t cp, int64_t cn, int64_t kp, int64_t kn);
+int64_t xo_x_tls_roots_pem(int64_t svc, int64_t crt, int64_t p, int64_t n);
+int64_t xo_x_tls_roots_system(int64_t svc, int64_t crt);
+int64_t xo_x_tls_expiry_msg(int64_t now, int64_t off, int64_t tp, int64_t future, int64_t buf, int64_t bn);
+int64_t xo_x_tls_apple_verify(int64_t svc, int64_t crt, int64_t hp, int64_t hn, int64_t msg, int64_t mn);
+
+static int64_t tls_svc[7 + 20];
 
 typedef struct {
 	xo_hdr h;
@@ -188,9 +161,34 @@ static void tcert_free(void *p) {
 	free(c);
 }
 
-static xo_tcert *tcert_fail(xo_tcert *c, const char *msg) {
-	c->err = strdup(msg);
-	return c;
+// tls_svc's words: the chain's parse of a DER (args: chain, DER, length)
+static int64_t tlssvc_crt_der(int64_t a, int64_t b) {
+	(void)b;
+	int64_t *v = (int64_t *)(intptr_t)a;
+	return mbedtls_x509_crt_parse_der((mbedtls_x509_crt *)(intptr_t)v[0], (const unsigned char *)(intptr_t)v[1], (size_t)v[2]);
+}
+
+// the key's parse into c (args: DER, length): 0, 1 for an unknown key
+// algorithm, 2 for another error
+static int64_t tlssvc_key(int64_t c, int64_t a) {
+	int64_t *v = (int64_t *)(intptr_t)a;
+	int r = mbedtls_pk_parse_key(&((xo_tcert *)(intptr_t)c)->pk, (const unsigned char *)(intptr_t)v[0], (size_t)v[1], NULL, 0);
+	return r == 0 ? 0 : r == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ? 1 : 2;
+}
+
+// the key types of c: 1 the leaf's public key is RSA, 2 EC; 4 the
+// private key is RSA, 8 EC
+static int64_t tlssvc_kinds(int64_t cp, int64_t b) {
+	(void)b;
+	xo_tcert *c = (xo_tcert *)(intptr_t)cp;
+	psa_key_type_t pt = mbedtls_pk_get_key_type(&c->crt.pk), kt = mbedtls_pk_get_key_type(&c->pk);
+	return (PSA_KEY_TYPE_IS_RSA(pt) ? 1 : 0) | (PSA_KEY_TYPE_IS_ECC(pt) ? 2 : 0) | (PSA_KEY_TYPE_IS_RSA(kt) ? 4 : 0) | (PSA_KEY_TYPE_IS_ECC(kt) ? 8 : 0);
+}
+
+static int64_t tlssvc_pair(int64_t cp, int64_t b) {
+	(void)b;
+	xo_tcert *c = (xo_tcert *)(intptr_t)cp;
+	return mbedtls_pk_check_pair(&c->crt.pk, &c->pk) != 0;
 }
 
 // xo_tls_cert is `http.tls_cert(cert_pem, key_pem)`: tls.X509KeyPair.
@@ -203,116 +201,10 @@ xo_tcert *xo_tls_cert(const char *cp, int64_t cn, const char *kp, int64_t kn) {
 	mbedtls_x509_crt_init(&c->crt);
 	mbedtls_pk_init(&c->pk);
 	if (!tls_init()) {
-		return tcert_fail(c, "tls: the TLS library failed to start");
-	}
-	const char *p = cp, *end = cp + cn;
-	pem_block b;
-	char *skipped[64];
-	int nskip = 0, ncert = 0;
-	unsigned char *leaf = NULL;
-	size_t leafn = 0;
-	int bad_leaf = 0;
-	while (pem_next(&p, end, &b)) {
-		if (strcmp(b.type, "CERTIFICATE") == 0) {
-			if (ncert == 0) {
-				leaf = b.der;
-				leafn = b.n;
-			}
-			// the chain is sent as it is; only the leaf must parse
-			// (X509KeyPair parses only Certificate[0])
-			if (mbedtls_x509_crt_parse_der(&c->crt, b.der, b.n) != 0 && ncert == 0) {
-				bad_leaf = 1;
-			}
-			ncert++;
-			if (b.der != leaf) {
-				free(b.der);
-			}
-		} else {
-			if (nskip < 64) {
-				skipped[nskip++] = strdup(b.type);
-			}
-			free(b.der);
-		}
-	}
-	free(leaf);
-	nbuf o = {0};
-	if (ncert == 0) {
-		if (nskip == 0) {
-			nbuf_str(&o, "tls: failed to find any PEM data in certificate input");
-		} else if (nskip == 1 && ends_with(skipped[0], "PRIVATE KEY")) {
-			nbuf_str(&o, "tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched");
-		} else {
-			nbuf_str(&o, "tls: failed to find \"CERTIFICATE\" PEM block in certificate input after skipping PEM blocks of the following types: ");
-			types_list(&o, skipped, nskip);
-		}
-	}
-	for (int i = 0; i < nskip; i++) {
-		free(skipped[i]);
-	}
-	if (o.n > 0) {
-		nbuf_byte(&o, 0);
-		tcert_fail(c, o.p);
-		free(o.p);
+		c->err = strdup("tls: the TLS library failed to start");
 		return c;
 	}
-	// the key: the first block whose type ends in PRIVATE KEY
-	p = kp;
-	end = kp + kn;
-	nskip = 0;
-	unsigned char *key = NULL;
-	size_t keyn = 0;
-	while (pem_next(&p, end, &b)) {
-		if (strcmp(b.type, "PRIVATE KEY") == 0 || ends_with(b.type, " PRIVATE KEY")) {
-			key = b.der;
-			keyn = b.n;
-			break;
-		}
-		if (nskip < 64) {
-			skipped[nskip++] = strdup(b.type);
-		}
-		free(b.der);
-	}
-	if (!key) {
-		if (nskip == 0) {
-			nbuf_str(&o, "tls: failed to find any PEM data in key input");
-		} else if (nskip == 1 && strcmp(skipped[0], "CERTIFICATE") == 0) {
-			nbuf_str(&o, "tls: found a certificate rather than a key in the PEM for the private key");
-		} else {
-			nbuf_str(&o, "tls: failed to find PEM block with type ending in \"PRIVATE KEY\" in key input after skipping PEM blocks of the following types: ");
-			types_list(&o, skipped, nskip);
-		}
-	}
-	for (int i = 0; i < nskip; i++) {
-		free(skipped[i]);
-	}
-	if (!key) {
-		nbuf_byte(&o, 0);
-		tcert_fail(c, o.p);
-		free(o.p);
-		return c;
-	}
-	if (bad_leaf) {
-		free(key);
-		return tcert_fail(c, "x509: malformed certificate");
-	}
-	int r = mbedtls_pk_parse_key(&c->pk, key, keyn, NULL, 0);
-	mbedtls_platform_zeroize(key, keyn);
-	free(key);
-	if (r != 0) {
-		return tcert_fail(c, r == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ? "tls: found unknown private key type in PKCS#8 wrapping" : "tls: failed to parse private key");
-	}
-	psa_key_type_t pt = mbedtls_pk_get_key_type(&c->crt.pk), kt = mbedtls_pk_get_key_type(&c->pk);
-	int pub_rsa = PSA_KEY_TYPE_IS_RSA(pt), key_rsa = PSA_KEY_TYPE_IS_RSA(kt);
-	int pub_ec = PSA_KEY_TYPE_IS_ECC(pt), key_ec = PSA_KEY_TYPE_IS_ECC(kt);
-	if (!pub_rsa && !pub_ec) {
-		return tcert_fail(c, "tls: unknown public key algorithm");
-	}
-	if ((pub_rsa && !key_rsa) || (pub_ec && !key_ec)) {
-		return tcert_fail(c, "tls: private key type does not match public key type");
-	}
-	if (mbedtls_pk_check_pair(&c->crt.pk, &c->pk) != 0) {
-		return tcert_fail(c, "tls: private key does not match public key");
-	}
+	c->err = (char *)(intptr_t)xo_x_tls_cert_check(XO_ADDR(tls_svc), XO_ADDR(c), XO_ADDR(&c->crt), XO_ADDR(cp), cn, XO_ADDR(kp), kn);
 	return c;
 }
 
@@ -358,17 +250,8 @@ static void roots_conf(xo_troots *r) {
 }
 
 // roots_add_pem adds the CERTIFICATE blocks of a PEM text that parse
-// (CertPool.AppendCertsFromPEM).
-static void roots_add_pem(xo_troots *r, const char *p, size_t n) {
-	const char *end = p + n;
-	pem_block b;
-	while (pem_next(&p, end, &b)) {
-		if (strcmp(b.type, "CERTIFICATE") == 0 && mbedtls_x509_crt_parse_der(&r->crt, b.der, b.n) == 0) {
-			r->n++;
-		}
-		free(b.der);
-	}
-}
+// (CertPool.AppendCertsFromPEM, tlscert.xo).
+static void roots_add_pem(xo_troots *r, const char *p, size_t n) { r->n += (int)xo_x_tls_roots_pem(XO_ADDR(tls_svc), XO_ADDR(&r->crt), XO_ADDR(p), (int64_t)n); }
 
 // xo_tls_roots is `Client.with_roots(pem)`: the certificates of pem
 // replace the system's roots.
@@ -396,160 +279,16 @@ xo_rstr *xo_tls_roots_err(xo_troots *r, int64_t *len) { return nstr(r->err ? r->
 static xo_troots sys_roots = {.h = {XO_RC_IMMORTAL, NULL}};
 static pthread_once_t sys_once = PTHREAD_ONCE_INIT;
 
-static int read_file(const char *path, nbuf *out) {
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		return 0;
-	}
-	char buf[65536];
-	size_t k;
-	while ((k = fread(buf, 1, sizeof buf, f)) > 0) {
-		nbuf_put(out, buf, (int64_t)k);
-	}
-	fclose(f);
-	return 1;
-}
-
-#ifdef __APPLE__
-static void roots_add_cf(xo_troots *r, CFArrayRef certs) {
-	for (CFIndex i = 0; i < CFArrayGetCount(certs); i++) {
-		SecCertificateRef c = (SecCertificateRef)CFArrayGetValueAtIndex(certs, i);
-		CFDataRef d = SecCertificateCopyData(c);
-		if (d) {
-			if (mbedtls_x509_crt_parse_der(&r->crt, CFDataGetBytePtr(d), (size_t)CFDataGetLength(d)) == 0) {
-				r->n++;
-			}
-			CFRelease(d);
-		}
-	}
-}
-#endif
-
-// sys_roots_load reads the system's roots once. macOS: the Security
-// framework's anchors, and the admin's and user's certificates trusted as
-// roots without conditions (Go asks the framework to verify each chain;
-// see the decision); /etc/ssl/cert.pem when the framework gives none.
-// Elsewhere: crypto/x509's root_unix.go (Linux lists).
+// sys_roots_load reads the system's roots once (tlscert.xo
+// roots_system: the Security framework's on macOS, the ROOT store on
+// Windows, crypto/x509's files and directories on Linux).
 static void sys_roots_load(void) {
 	xo_troots *r = &sys_roots;
 	mbedtls_x509_crt_init(&r->crt);
 	if (!tls_init()) {
 		return;
 	}
-#ifdef __APPLE__
-	CFArrayRef anchors = NULL;
-	if (SecTrustCopyAnchorCertificates(&anchors) == errSecSuccess && anchors) {
-		roots_add_cf(r, anchors);
-		CFRelease(anchors);
-	}
-	SecTrustSettingsDomain doms[] = {kSecTrustSettingsDomainAdmin, kSecTrustSettingsDomainUser};
-	for (int d = 0; d < 2; d++) {
-		CFArrayRef certs = NULL;
-		if (SecTrustSettingsCopyCertificates(doms[d], &certs) != errSecSuccess || !certs) {
-			continue;
-		}
-		for (CFIndex i = 0; i < CFArrayGetCount(certs); i++) {
-			SecCertificateRef c = (SecCertificateRef)CFArrayGetValueAtIndex(certs, i);
-			CFArrayRef settings = NULL;
-			if (SecTrustSettingsCopyTrustSettings(c, doms[d], &settings) == errSecSuccess && settings) {
-				// an empty array: trusted as a root for everything
-				if (CFArrayGetCount(settings) == 0) {
-					CFDataRef der = SecCertificateCopyData(c);
-					if (der) {
-						if (mbedtls_x509_crt_parse_der(&r->crt, CFDataGetBytePtr(der), (size_t)CFDataGetLength(der)) == 0) {
-							r->n++;
-						}
-						CFRelease(der);
-					}
-				}
-				CFRelease(settings);
-			}
-		}
-		CFRelease(certs);
-	}
-	if (r->n == 0) {
-		nbuf b = {0};
-		if (read_file("/etc/ssl/cert.pem", &b)) {
-			roots_add_pem(r, b.p ? b.p : "", (size_t)b.n);
-		}
-		free(b.p);
-	}
-#elif defined(_WIN32)
-	// Windows (decision 0197): the certificates of the system's ROOT
-	// store (Go asks CertGetCertificateChain to verify instead, with
-	// the store's policies: a later stage)
-	HCERTSTORE st = CertOpenSystemStoreW(0, L"ROOT");
-	if (st) {
-		PCCERT_CONTEXT c = NULL;
-		while ((c = CertEnumCertificatesInStore(st, c)) != NULL) {
-			if (mbedtls_x509_crt_parse_der(&r->crt, c->pbCertEncoded, c->cbCertEncoded) == 0) {
-				r->n++;
-			}
-		}
-		CertCloseStore(st, 0);
-	}
-#else
-	static const char *files[] = {
-		"/etc/ssl/certs/ca-certificates.crt",                // Debian, Ubuntu, Gentoo
-		"/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora, RHEL 6
-		"/etc/ssl/ca-bundle.pem",                            // OpenSUSE
-		"/etc/pki/tls/cacert.pem",                           // OpenELEC
-		"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS, RHEL 7
-		"/etc/ssl/cert.pem",                                 // Alpine
-	};
-	const char *env = getenv("SSL_CERT_FILE");
-	int nf = env && *env ? 1 : (int)(sizeof files / sizeof files[0]);
-	for (int i = 0; i < nf; i++) {
-		nbuf b = {0};
-		int ok = read_file(env && *env ? env : files[i], &b);
-		if (ok) {
-			roots_add_pem(r, b.p ? b.p : "", (size_t)b.n);
-		}
-		free(b.p);
-		if (ok) {
-			break;
-		}
-	}
-	static const char *dirs[] = {"/etc/ssl/certs", "/etc/pki/tls/certs"};
-	const char *denv = getenv("SSL_CERT_DIR");
-	char *dlist = strdup(denv && *denv ? denv : "/etc/ssl/certs:/etc/pki/tls/certs");
-	(void)dirs;
-	for (char *save = NULL, *d = strtok_r(dlist, ":", &save); d; d = strtok_r(NULL, ":", &save)) {
-		DIR *dir = opendir(d);
-		if (!dir) {
-			continue;
-		}
-		struct dirent *e;
-		while ((e = readdir(dir)) != NULL) {
-			if (e->d_name[0] == '.') {
-				continue;
-			}
-			char path[4096];
-			snprintf(path, sizeof path, "%s/%s", d, e->d_name);
-			// readUniqueDirectoryEntries: a link to a file of the same
-			// directory is read once, as that file
-			char target[4096];
-			ssize_t tl = readlink(path, target, sizeof target - 1);
-			if (tl > 0) {
-				target[tl] = 0;
-				if (!strchr(target, '/')) {
-					continue;
-				}
-			}
-			struct stat st;
-			if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
-				continue;
-			}
-			nbuf b = {0};
-			if (read_file(path, &b)) {
-				roots_add_pem(r, b.p ? b.p : "", (size_t)b.n);
-			}
-			free(b.p);
-		}
-		closedir(dir);
-	}
-	free(dlist);
-#endif
+	r->n = (int)xo_x_tls_roots_system(XO_ADDR(tls_svc), XO_ADDR(&r->crt));
 	roots_conf(r);
 }
 
@@ -1036,42 +775,16 @@ static int64_t tls_hc_read(tls_conn *t, char *p, int64_t n) {
 // ---------------------------------------------------------------------------
 // The client
 
-// rfc3339 formats t as Go's time.Format(time.RFC3339) (local: the
-// local zone, else UTC).
-static void rfc3339(time_t t, int local, char *out, size_t on) {
+// local_off is the local zone's offset from UTC at t, in seconds.
+static long local_off(time_t t) {
 	struct tm tm;
-	if (local) {
-		localtime_r(&t, &tm);
-	} else {
-		gmtime_r(&t, &tm);
-	}
-	size_t k = strftime(out, on, "%Y-%m-%dT%H:%M:%S", &tm);
+	localtime_r(&t, &tm);
 #ifdef _WIN32
 	// no tm_gmtoff: the local time read back as UTC, minus t
-	long off = local ? (long)(_mkgmtime(&tm) - t) : 0;
+	return (long)(_mkgmtime(&tm) - t);
 #else
-	long off = local ? tm.tm_gmtoff : 0;
+	return tm.tm_gmtoff;
 #endif
-	if (off == 0) {
-		snprintf(out + k, on - k, "Z");
-	} else {
-		char sign = off < 0 ? '-' : '+';
-		if (off < 0) {
-			off = -off;
-		}
-		snprintf(out + k, on - k, "%c%02ld:%02ld", sign, off / 3600, (off / 60) % 60);
-	}
-}
-
-static time_t x509_time(const mbedtls_x509_time *t) {
-	struct tm tm = {0};
-	tm.tm_year = t->year - 1900;
-	tm.tm_mon = t->mon - 1;
-	tm.tm_mday = t->day;
-	tm.tm_hour = t->hour;
-	tm.tm_min = t->min;
-	tm.tm_sec = t->sec;
-	return timegm(&tm);
 }
 
 // hostname_msg checks host against the leaf crt as
@@ -1098,76 +811,55 @@ static int hostname_msg(const mbedtls_x509_crt *crt, const char *host, char *msg
 	return bad;
 }
 
-#ifdef __APPLE__
-// apple_verify is crypto/x509's systemVerify (root_darwin.go), the
-// verification of a chain against the system's roots on macOS: the
-// Security framework evaluates the presented chain for an SSL server
-// with the host name, then Go checks the host name itself. 0 when the
-// chain is trusted, else 1 and Go's text in msg.
-static int apple_verify(const mbedtls_x509_crt *crt, const char *host, char *msg, size_t mn) {
-	CFMutableArrayRef certs = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
-	for (const mbedtls_x509_crt *c = crt; c && c->raw.p; c = c->next) {
-		CFDataRef d = CFDataCreate(NULL, c->raw.p, (CFIndex)c->raw.len);
-		SecCertificateRef sc = d ? SecCertificateCreateWithData(NULL, d) : NULL;
-		if (d) {
-			CFRelease(d);
-		}
-		if (!sc) {
-			CFRelease(certs);
-			snprintf(msg, mn, c == crt ? "invalid leaf certificate" : "x509: malformed certificate");
-			return 1;
-		}
-		CFArrayAppendValue(certs, sc);
-		CFRelease(sc);
-	}
-	CFStringRef name = host[0] ? CFStringCreateWithCString(NULL, host, kCFStringEncodingUTF8) : NULL;
-	SecPolicyRef pol = SecPolicyCreateSSL(true, name);
-	if (name) {
-		CFRelease(name);
-	}
-	SecTrustRef trust = NULL;
-	OSStatus st = SecTrustCreateWithCertificates(certs, pol, &trust);
-	CFRelease(certs);
-	if (pol) {
-		CFRelease(pol);
-	}
-	if (st != errSecSuccess || !trust) {
-		snprintf(msg, mn, "SecTrustCreateWithCertificates error: %d", (int)st);
-		return 1;
-	}
-	CFErrorRef err = NULL;
-	int bad = 0;
-	if (!SecTrustEvaluateWithError(trust, &err)) {
-		bad = 1;
-		CFIndex code = err ? CFErrorGetCode(err) : 0;
-		char desc[600] = "";
-		if (err) {
-			CFStringRef ds = CFErrorCopyDescription(err);
-			if (ds) {
-				CFStringGetCString(ds, desc, sizeof desc, kCFStringEncodingUTF8);
-				CFRelease(ds);
-			}
-			CFRelease(err);
-		}
-		if (code == errSecCertificateExpired) {
-			snprintf(msg, mn, "x509: certificate has expired or is not yet valid: %s", desc);
-		} else if (code == errSecHostNameMismatch) {
-			if (!hostname_msg(crt, host, msg, mn)) {
-				snprintf(msg, mn, "x509: certificate is valid for %s", host);
-			}
-		} else if (code == errSecNotTrusted) {
-			snprintf(msg, mn, "x509: certificate signed by unknown authority");
-		} else {
-			snprintf(msg, mn, "x509: %s", desc);
-		}
-	}
-	CFRelease(trust);
-	if (!bad && host[0] && hostname_msg(crt, host, msg, mn)) {
-		bad = 1;
-	}
-	return bad;
+// tls_svc's host name word (args: the leaf, the host's C string, the
+// message buffer, its size): 0 when the host matches
+static int64_t tlssvc_hostmsg(int64_t a, int64_t b) {
+	(void)b;
+	int64_t *v = (int64_t *)(intptr_t)a;
+	return hostname_msg((const mbedtls_x509_crt *)(intptr_t)v[0], (const char *)(intptr_t)v[1], (char *)(intptr_t)v[2], (size_t)v[3]);
 }
+
+// tls_svc's call4 (macOS): the function at v[0] with the four words
+// v[1] to v[4] (one with fewer parameters ignores the rest)
+static int64_t tlssvc_call4(int64_t a, int64_t b) {
+	(void)b;
+	int64_t *v = (int64_t *)(intptr_t)a;
+	int64_t (*f)(int64_t, int64_t, int64_t, int64_t) = (int64_t (*)(int64_t, int64_t, int64_t, int64_t))(intptr_t)v[0];
+	return f(v[1], v[2], v[3], v[4]);
+}
+
+static void tls_svc_init(void) {
+	tls_svc[0] = XO_ADDR(&tlssvc_crt_der);
+	tls_svc[1] = XO_ADDR(&tlssvc_key);
+	tls_svc[2] = XO_ADDR(&tlssvc_kinds);
+	tls_svc[3] = XO_ADDR(&tlssvc_pair);
+	tls_svc[4] = XO_ADDR(&tlssvc_hostmsg);
+	tls_svc[6] = XO_ADDR(&tlssvc_call4);
+#ifdef __APPLE__
+	tls_svc[5] = XO_ADDR(&kCFTypeArrayCallBacks);
+	// tlscert.xo's F_ words, in its order
+	tls_svc[7] = XO_ADDR(&CFRelease);
+	tls_svc[8] = XO_ADDR(&CFArrayCreateMutable);
+	tls_svc[9] = XO_ADDR(&CFArrayAppendValue);
+	tls_svc[10] = XO_ADDR(&CFArrayGetCount);
+	tls_svc[11] = XO_ADDR(&CFArrayGetValueAtIndex);
+	tls_svc[12] = XO_ADDR(&CFDataCreate);
+	tls_svc[13] = XO_ADDR(&CFDataGetBytePtr);
+	tls_svc[14] = XO_ADDR(&CFDataGetLength);
+	tls_svc[15] = XO_ADDR(&CFStringCreateWithCString);
+	tls_svc[16] = XO_ADDR(&CFStringGetCString);
+	tls_svc[17] = XO_ADDR(&CFErrorGetCode);
+	tls_svc[18] = XO_ADDR(&CFErrorCopyDescription);
+	tls_svc[19] = XO_ADDR(&SecCertificateCopyData);
+	tls_svc[20] = XO_ADDR(&SecCertificateCreateWithData);
+	tls_svc[21] = XO_ADDR(&SecPolicyCreateSSL);
+	tls_svc[22] = XO_ADDR(&SecTrustCreateWithCertificates);
+	tls_svc[23] = XO_ADDR(&SecTrustEvaluateWithError);
+	tls_svc[24] = XO_ADDR(&SecTrustCopyAnchorCertificates);
+	tls_svc[25] = XO_ADDR(&SecTrustSettingsCopyCertificates);
+	tls_svc[26] = XO_ADDR(&SecTrustSettingsCopyTrustSettings);
 #endif
+}
 
 // cli_verify is the client's verification callback: at the leaf (depth
 // 0, called last) it decides in the order of x509.Certificate.Verify
@@ -1184,7 +876,8 @@ static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags
 			*flags = 0;
 			return 0;
 		}
-		if (apple_verify(crt, t->host ? t->host : "", msg, sizeof msg)) {
+		const char *h = t->host ? t->host : "";
+		if (xo_x_tls_apple_verify(XO_ADDR(tls_svc), XO_ADDR(crt), XO_ADDR(h), (int64_t)strlen(h), XO_ADDR(msg), (int64_t)sizeof msg)) {
 			free(t->vmsg);
 			t->vmsg = strdup(msg);
 			*flags = MBEDTLS_X509_BADCERT_OTHER;
@@ -1200,15 +893,9 @@ static int cli_verify(void *p, mbedtls_x509_crt *crt, int depth, uint32_t *flags
 	}
 	uint32_t f = *flags & ~(uint32_t)MBEDTLS_X509_BADCERT_CN_MISMATCH;
 	if (f & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE)) {
-		char now[40], lim[40];
-		rfc3339(time(NULL), 1, now, sizeof now);
-		if (f & MBEDTLS_X509_BADCERT_FUTURE) {
-			rfc3339(x509_time(&crt->valid_from), 0, lim, sizeof lim);
-			snprintf(msg, sizeof msg, "x509: certificate has expired or is not yet valid: current time %s is before %s", now, lim);
-		} else {
-			rfc3339(x509_time(&crt->valid_to), 0, lim, sizeof lim);
-			snprintf(msg, sizeof msg, "x509: certificate has expired or is not yet valid: current time %s is after %s", now, lim);
-		}
+		time_t now = time(NULL);
+		int future = (f & MBEDTLS_X509_BADCERT_FUTURE) != 0;
+		xo_x_tls_expiry_msg((int64_t)now, (int64_t)local_off(now), XO_ADDR(future ? &crt->valid_from : &crt->valid_to), future, XO_ADDR(msg), (int64_t)sizeof msg);
 	}
 	if (!msg[0] && t->host) {
 		hostname_msg(crt, t->host, msg, sizeof msg);

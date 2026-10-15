@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B30): the TLS runtime's certificate
+  work that needs no TLS state is Xo (std/native/llrt/tlscert.xo):
+  http.tls_cert's PEM scan and tls.X509KeyPair's error texts,
+  Client.with_roots' certificates, the system's roots (the Security
+  framework on macOS, the ROOT store on Windows, crypto/x509's files and
+  directories on Linux), the expiry texts in RFC 3339, and macOS's chain
+  verification. Mbed TLS calls stay in xo_tls.c behind a services
+  record. Linux and Windows code untested (written on macOS).
 - Native runtime (zero-C audit, small files batch): standard input's
   waits, registration, raw read, isatty, terminal width, and echo are
   Xo (stdin.xo; Windows keeps its pump in C); the test world's switches

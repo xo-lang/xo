@@ -223,3 +223,13 @@ fn LocalFree(h: Int) -> Int
 /// WideCharToMultiByte: the bytes written (or needed, when outn is 0)
 /// for the UTF-16 at w (n -1: zero terminated, the zero counted), or 0.
 fn WideCharToMultiByte(cp: Int, flags: Int, w: Int, n: Int, out: Int, outn: Int, def: Int, used: Int) -> Int32
+
+// The TLS client's roots (the zero-C audit's B30,
+// std/native/llrt/tlscert.xo): crypt32.dll's ROOT store.
+
+/// CertOpenSystemStoreW: the store named by the UTF-16 name, or 0.
+fn CertOpenSystemStoreW(prov: Int, name: Bytes) -> Int
+/// CertEnumCertificatesInStore: the CERT_CONTEXT after prev (0 for the
+/// first), or 0 at the end (it frees prev).
+fn CertEnumCertificatesInStore(store: Int, prev: Int) -> Int
+fn CertCloseStore(store: Int, flags: Int) -> Int32

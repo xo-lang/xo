@@ -1,6 +1,6 @@
 # rt.heap_large's address is not the malloc'd address
 
-Status: Anticipated (2026-10-14, B06: found reading xo_rt.c before the
+Status: Observed (2026-10-14, B26 part 2; first written as Anticipated in B06, found reading xo_rt.c before the
 fault record moved to Xo; not hit at run time)
 
 Symptom (expected): a crash or heap corruption in `free` when C frees a
