@@ -236,17 +236,6 @@ void xo_test_advance(int64_t d) {
 // xo_test_clock_set is FakeClock.set(t).
 void xo_test_clock_set(int64_t t) { __atomic_store_n(&tw.vnow, t, __ATOMIC_RELEASE); }
 
-// The report of a property test's case (std/native/llrt/report.xo) and
-// a failure (testworld.xo fail) write on the real standard output and
-// end the binary here, until the standard streams and exit are Xo.
-
-// xo_test_write writes the n bytes at p on the real standard output: a
-// report for the harness.
-void xo_test_write(const char *p, int64_t n) { write_all(1, p, (size_t)n); }
-
-// xo_test_quit ends the test binary with status code at once.
-XO_NORETURN void xo_test_quit(int64_t code) { _exit((int)code); }
-
 // In memory listeners (std/rt's memListener)
 
 static tw_ml *tw_ml_of(xo_listener *l) { return (tw_ml *)l->mem; }

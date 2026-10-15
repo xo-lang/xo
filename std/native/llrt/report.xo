@@ -8,13 +8,12 @@
 // case whose choices are not shortlex smaller than the best so far
 // (XO_PROP_BEST), which std/rt skips. The generator and XO_PROP_BEST are
 // testworld.xo's; the C runtime keeps the write on the real standard
-// output and the exit (rttest.test_write, test_quit).
+// output and the exit (testworld.write_real, quit).
 // Decision 0198 deleted the C path (`XO_LLRT_C=report`).
 use native/llrt/scan
 use native/llrt/show
 use native/llrt/testworld
 use native/rt
-use native/rttest
 
 const MIN_INT: Int = -9223372036854775807 - 1
 
@@ -46,11 +45,11 @@ pub fn prop_report(g: Int, input: Str) {
     o = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_append(o, "XO-PROP-INPUT "), b, start, end, 0), 10)
     start = end + 1
   }
-  rttest.test_write(o)
+  testworld.write_real(o)
   let best = testworld.prop_best()
   if best.len() > 0 && !shorter(rec, testworld.choices(best[0])) {
-    rttest.test_write("XO-PROP-NOT-SMALLER\n")
-    rttest.test_quit(3)
+    testworld.write_real("XO-PROP-NOT-SMALLER\n")
+    testworld.quit(3)
   }
 }
 

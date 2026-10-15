@@ -8,11 +8,6 @@ use native/rt
 // The report of a property test's case (std/native/llrt/report.xo,
 // decision 0193 step 5).
 
-/// Writes s on the real standard output (the harness reads it; the
-/// program's own output is captured).
-fn test_write(s: Str)
-/// Ends the test binary with the status code at once.
-fn test_quit(code: Int)
 /// report.xo's prop_report as the runtime call the SSA builder makes
 /// without the native prelude (decision 0198 deleted the C, so no native
 /// runtime has it).

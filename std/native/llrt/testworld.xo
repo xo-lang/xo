@@ -22,12 +22,17 @@
 // llrt_test_* and llrt_gen_* (selfhost/ssa testmode.xo), std/native's
 // testing.xo, log.xo, and http.xo directly, and the C runtime through
 // cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/darwin
 use native/llrt/ints
+use native/llrt/linux
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sysio
+use native/llrt/windows
 use native/rt
-use native/rttest
+use native/sys_darwin
+use native/sys_windows
 
 /// The words of rt.static_word (rt.xo's table): whether the program runs
 /// in the test world, the effects `xo test --real` makes real (REAL_*),
@@ -349,8 +354,8 @@ pub fn fs_real() -> Int {
 /// returned): XO-TEST-FAIL and the message on the real standard output
 /// for the harness, status 1.
 pub fn fail(msg: Str) {
-  rttest.test_write("XO-TEST-FAIL\n${msg}\n")
-  rttest.test_quit(1)
+  write_real("XO-TEST-FAIL\n${msg}\n")
+  quit(1)
 }
 
 /// The first number of s as strtoll and strtoull read it (wrapping), 0
@@ -947,7 +952,7 @@ pub fn log(level: Int, msg: Str, module: Str, keys: List[Str], vals: List[Str], 
   lock()
   vec_push(st() + S_RECS, r)
   if line.len() > 0 {
-    rttest.test_write("XO-TEST-LOG ${line}\n")
+    write_real("XO-TEST-LOG ${line}\n")
   }
   unlock()
 }
@@ -1232,4 +1237,41 @@ pub fn cleanup() -> Int {
   }
   rt.mem_store(d, 0, k, 8)
   d
+}
+
+// ---------------------------------------------------------------------------
+// The harness's channel (the zero-C audit's B15; they were xo_testing.c's
+// xo_test_write and xo_test_quit)
+
+/// Writes s on the real standard output, which the harness reads (the
+/// program's own output is captured): a failure, a log record, a
+/// property test's report.
+pub fn write_real(s: Str) {
+  let l = sysio.layer()
+  let a = raw.data(s)
+  let n = s.len()
+  var off = 0
+  while off < n {
+    let r = if l == 3 { windows.std_write_at(1, a + off, n - off) } else if l == 2 { darwin.write_at(1, a + off, n - off) } else { linux.write_at(1, a + off, n - off) }
+    if r == -linux.EINTR && l == 1 {
+      continue
+    }
+    if r <= 0 {
+      break
+    }
+    off += r
+  }
+}
+
+/// Ends the test binary with status code at once (no flush: the
+/// program's output is captured).
+pub fn quit(code: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.exit_group(code)
+    }
+    TargetOs.Darwin => sys_darwin.exit(code)
+    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Wasi => {}
+  }
 }
