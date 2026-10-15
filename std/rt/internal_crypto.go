@@ -12,6 +12,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
@@ -63,6 +64,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoTLS13(what, a, b, c, d)
 	case "tls12":
 		r, ok = cryptoTLS12(what, a, b, c, d)
+	case "sha1":
+		r, ok = cryptoSHA1(what, a, b)
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
 	}
@@ -408,9 +411,22 @@ func cryptoAES(what string, a, b, c, d Bytes) (Bytes, bool) {
 	if err != nil {
 		panic(err)
 	}
-	if what == "block" {
+	switch what {
+	case "block":
 		out := make([]byte, 16)
 		blk.Encrypt(out, []byte(b))
+		return Bytes(out), true
+	case "decrypt":
+		out := make([]byte, 16)
+		blk.Decrypt(out, []byte(b))
+		return Bytes(out), true
+	case "cbc_encrypt":
+		out := make([]byte, len(c))
+		cipher.NewCBCEncrypter(blk, []byte(b)).CryptBlocks(out, []byte(c))
+		return Bytes(out), true
+	case "cbc_decrypt":
+		out := make([]byte, len(c))
+		cipher.NewCBCDecrypter(blk, []byte(b)).CryptBlocks(out, []byte(c))
 		return Bytes(out), true
 	}
 	g, err := cipher.NewGCM(blk)
@@ -576,6 +592,26 @@ func cryptoX25519(what string, a, b Bytes) (Bytes, bool) {
 			return Bytes(make([]byte, 32)), true
 		}
 		return Bytes(s), true
+	}
+	return "", false
+}
+
+// cryptoSHA1 is sha1.xo's op: crypto/sha1 and crypto/hmac.
+func cryptoSHA1(what string, a, b Bytes) (Bytes, bool) {
+	switch what {
+	case "sum":
+		h := sha1.Sum([]byte(a))
+		return Bytes(h[:]), true
+	case "hmac":
+		m := hmac.New(sha1.New, []byte(a))
+		m.Write([]byte(b))
+		return Bytes(m.Sum(nil)), true
+	case "split":
+		h := sha1.New()
+		h.Write([]byte(a))
+		s1 := h.Sum(nil)
+		h.Write([]byte(b))
+		return Bytes(append(s1, h.Sum(nil)...)), true
 	}
 	return "", false
 }

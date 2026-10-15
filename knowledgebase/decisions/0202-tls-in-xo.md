@@ -149,6 +149,16 @@ std (decision 0074) unless the owner decides to expose a user marker.
   process wide mutable state for a table built at run time; its entries
   are chosen under masks, so the multiplication stays constant time.
 
+- 2026-10-15 (TLS 1.2 CBC, lead): the TLS 1.2 server also speaks the
+  four ECDHE CBC-SHA suites Go's server enables by default (c009, c013,
+  c00a, c014), last in Go's order: HMAC-SHA1 (sha1.xo), MAC then
+  encrypt, explicit IVs, AES decryption added to aesgcm.xo (BearSSL's
+  bitsliced inverse cipher). Receiving follows Go's halfConn.decrypt:
+  extractPadding in constant time over the last 256 bytes, the MAC over
+  a constant amount of data (tls10MAC hashes the rest after its sum),
+  one bad_record_mac for a bad length, bad padding, or a bad MAC. Server
+  side only; the client offering them as Go's does is a follow-up.
+
 ## Alternatives
 
 - (b) Keep Mbed TLS as the one C exception: rejected by the owner; it

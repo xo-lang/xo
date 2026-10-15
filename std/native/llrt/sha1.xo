@@ -1,0 +1,200 @@
+// SHA-1 (FIPS 180-4) and HMAC-SHA1 (RFC 2104) for the TLS 1.2 CBC
+// suites' record MAC (decision 0202; tls12.xo), as Go's crypto/sha1 and
+// crypto/hmac: incremental (write, a sum that does not consume the
+// hasher, so more can be written after it, as Go's tls10MAC does) and one
+// shot. Nothing branches on the data, only on lengths. SHA-1 is used only
+// as HMAC's hash here, where its collisions do not matter.
+use native/rt
+
+const M32 = 0xFFFFFFFF
+
+/// The digest's and the block's size in bytes.
+pub const SIZE: Int = 20
+pub const BLOCK: Int = 64
+
+/// An incremental hash: the five state words, the bytes of a partial
+/// block held, and the bytes written.
+pub struct Hasher {
+  st: List[Int]
+  held: Bytes
+  total: Int
+}
+
+/// A new hash.
+pub fn new() -> Hasher { Hasher{st: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0], held: b"", total: 0} }
+
+fn rotl(x: Int, n: Int) -> Int { rt.int_wrap(6, x, 32 - n) }
+
+/// The big endian 32 bit word of b at i.
+fn be32(b: Bytes, i: Int) -> Int { rt.int_wrap(4, rt.int_wrap(7, rt.bytes_word(b, i), 0), 32) }
+
+/// One 64 byte block of b from i into st.
+fn compress(var st: List[Int], b: Bytes, i: Int) {
+  var w: List[Int] = []
+  for t in 0..16 {
+    w.push(if i + 4 * t + 8 <= b.len() { be32(b, i + 4 * t) } else { be32_slow(b, i + 4 * t) })
+  }
+  for t in 16..80 {
+    w.push(rotl(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1))
+  }
+  // (masked: a plain copy of an element that is then changed reads as a
+  // lost write, XO0520)
+  var a = st[0] & M32
+  var bb = st[1] & M32
+  var c = st[2] & M32
+  var d = st[3] & M32
+  var e = st[4] & M32
+  for t in 0..80 {
+    var f = 0
+    var k = 0
+    if t < 20 {
+      f = (bb & c) | (~bb & d)
+      k = 0x5A827999
+    } else if t < 40 {
+      f = bb ^ c ^ d
+      k = 0x6ED9EBA1
+    } else if t < 60 {
+      f = (bb & c) | (bb & d) | (c & d)
+      k = 0x8F1BBCDC
+    } else {
+      f = bb ^ c ^ d
+      k = 0xCA62C1D6
+    }
+    let tmp = (rotl(a, 5) + (f & M32) + e + k + w[t]) & M32
+    e = d
+    d = c
+    c = rotl(bb, 30)
+    bb = a
+    a = tmp
+  }
+  st[0] = (st[0] + a) & M32
+  st[1] = (st[1] + bb) & M32
+  st[2] = (st[2] + c) & M32
+  st[3] = (st[3] + d) & M32
+  st[4] = (st[4] + e) & M32
+}
+
+/// be32 near the end of b (bytes_word reads 8 bytes).
+fn be32_slow(b: Bytes, i: Int) -> Int { rt.int_wrap(3, Int(b[i]), 24) | rt.int_wrap(3, Int(b[i + 1]), 16) | rt.int_wrap(3, Int(b[i + 2]), 8) | Int(b[i + 3]) }
+
+/// The bytes lo..hi of b after a.
+fn cat(a: Bytes, b: Bytes, lo: Int, hi: Int) -> Bytes { rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(a.len() + hi - lo), a, 0, a.len(), 0), b, lo, hi, 0).bytes() }
+
+/// Hashes data after what was written.
+pub fn (var h: Hasher) write(data: Bytes) {
+  let n = data.len()
+  h.total = h.total + n
+  var st = h.st
+  var i = 0
+  if h.held.len() > 0 {
+    let m = if BLOCK - h.held.len() < n { BLOCK - h.held.len() } else { n }
+    let held = cat(h.held, data, 0, m)
+    i = m
+    if held.len() < BLOCK {
+      h.held = held
+      return
+    }
+    compress(st, held, 0)
+    h.held = b""
+  }
+  while n - i >= BLOCK {
+    compress(st, data, i)
+    i += BLOCK
+  }
+  if i < n {
+    h.held = cat(b"", data, i, n)
+  }
+  h.st = st
+}
+
+/// The digest of what was written; h is unchanged and can be written to
+/// further.
+pub fn (h: Hasher) sum() -> Bytes {
+  var st = h.st
+  let r = h.held.len()
+  var t = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_with_cap(2 * BLOCK), h.held, 0, r, 0), 0x80)
+  var k = if r + 9 <= BLOCK { BLOCK - 8 - r - 1 } else { 2 * BLOCK - 8 - r - 1 }
+  while k > 0 {
+    t = rt.rs_push_word(t, 0, if k < 8 { k } else { 8 })
+    k -= 8
+  }
+  t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, h.total, 3), 0), 8)
+  let tb = t.bytes()
+  var i = 0
+  while i < tb.len() {
+    compress(st, tb, i)
+    i += BLOCK
+  }
+  var out = rt.rs_with_cap(SIZE)
+  for w in st {
+    out = rt.rs_push_word(out, rt.int_wrap(7, rt.int_wrap(3, w, 32), 0), 4)
+  }
+  out.bytes()
+}
+
+/// The bytes written so far.
+pub fn (h: Hasher) written() -> Int { h.total }
+
+/// The digest of data.
+pub fn sum(data: Bytes) -> Bytes {
+  var h = new()
+  h.write(data)
+  h.sum()
+}
+
+/// The key padded to the block and xored with x.
+fn pad(key0: Bytes, x: Int) -> Bytes {
+  let key = if key0.len() > BLOCK { sum(key0) } else { key0 }
+  var t = rt.rs_with_cap(BLOCK)
+  for i in 0..BLOCK {
+    let k = if i < key.len() { Int(key[i]) } else { 0 }
+    t = rt.rs_push_byte(t, k ^ x)
+  }
+  t.bytes()
+}
+
+/// HMAC-SHA1 keyed with key: the inner hasher after the inner padded
+/// key (write the message to it), and the outer padded key.
+pub struct Mac {
+  pub inner: Hasher
+  opad: Bytes
+}
+
+pub fn hmac(key: Bytes) -> Mac {
+  var h = new()
+  h.write(pad(key, 0x36))
+  Mac{inner: h, opad: pad(key, 0x5c)}
+}
+
+/// The MAC of what was written to m.inner.
+pub fn (m: Mac) sum() -> Bytes {
+  var o = new()
+  o.write(m.opad)
+  o.write(m.inner.sum())
+  o.sum()
+}
+
+/// HMAC-SHA1(key, msg).
+pub fn mac(key: Bytes, msg: Bytes) -> Bytes {
+  var m = hmac(key)
+  m.inner.write(msg)
+  m.sum()
+}
+
+/// internal.crypto_op's "sha1." ops (std/internal.xo): sum (of a), hmac
+/// (key a, message b), split (a then b written separately: the sum after
+/// a, then after b). None if unknown.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  match what {
+    "sum" => sum(a)
+    "hmac" => mac(a, b)
+    "split" => {
+      var h = new()
+      h.write(a)
+      let s1 = h.sum()
+      h.write(b)
+      rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(40), s1, 0, 20, 0), h.sum(), 0, 20, 0).bytes()
+    }
+    _ => None
+  }
+}

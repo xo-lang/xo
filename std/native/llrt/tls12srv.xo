@@ -47,7 +47,8 @@ const SCSV_RENEGOTIATION: Int = 0x00ff
 /// random with RFC 8446's downgrade sentinel). The tests' hooks: random
 /// (the ServerHello's random), priv (the ECDHE private key), salt (RSA-PSS
 /// salts are its first bytes), sig (the ServerKeyExchange's signature, sent
-/// instead of one made here).
+/// instead of one made here), iv (16 bytes: every CBC record's explicit
+/// IV, as crypto/tls reading a source of one repeated byte).
 pub struct Conf {
   pub certs: List[Bytes]
   pub key_alg: Int
@@ -60,12 +61,13 @@ pub struct Conf {
   pub priv: Bytes
   pub salt: Bytes
   pub sig: Bytes
+  pub iv: Bytes
 }
 
 /// Go's defaults for a certificate chain and its leaf's key.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
   let key_alg = if certs.is_empty() { x509.KEY_UNKNOWN } else { x509.parse(certs[0]).cert.key_alg }
-  Conf{certs: certs, key_alg: key_alg, key: key, suites: tls12.default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b""}
+  Conf{certs: certs, key_alg: key_alg, key: key, suites: default_suites(), groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], alpn: [], max13: false, random: b"", priv: b"", salt: b"", sig: b"", iv: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -585,14 +587,23 @@ fn aes_preferred(suites: List[Int]) -> Bool {
 }
 
 /// The server's order of preference: Go's, ChaCha20-Poly1305 first when
-/// the client does not prefer AES-GCM.
+/// the client does not prefer AES-GCM; the CBC-SHA suites last either way.
 fn preference(aes: Bool) -> List[Int] {
-  if aes {
+  let cbc = [tls12.ECDHE_ECDSA_AES128_CBC_SHA, tls12.ECDHE_RSA_AES128_CBC_SHA, tls12.ECDHE_ECDSA_AES256_CBC_SHA, tls12.ECDHE_RSA_AES256_CBC_SHA]
+  var out = if aes {
     tls12.default_suites()
   } else {
     [tls12.ECDHE_ECDSA_CHACHA20, tls12.ECDHE_RSA_CHACHA20, tls12.ECDHE_ECDSA_AES128_GCM, tls12.ECDHE_RSA_AES128_GCM, tls12.ECDHE_ECDSA_AES256_GCM, tls12.ECDHE_RSA_AES256_GCM]
   }
+  for c in cbc {
+    out.push(c)
+  }
+  out
 }
+
+/// The suites the server enables by default (Go's defaultCipherSuites
+/// for TLS 1.2 with ECDHE: the AEADs, then the CBC-SHA ones).
+pub fn default_suites() -> List[Int] { preference(true) }
 
 /// Go's negotiateALPN: the server's first protocol the client offers;
 /// none when either has none or the server offers h2 and the client
@@ -869,8 +880,8 @@ fn client_key_exchange(var s: Server, msg: Bytes) {
   s.master = tls12.master_secret(tls12.suite_hash(s.suite), pms, s.ems, s.tr, s.cr, s.sr)
   s.priv = b""
   let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
-  s.next_rk = tls12.keys(s.suite, kb[0], kb[2])
-  s.next_wk = tls12.keys(s.suite, kb[1], kb[3])
+  s.next_rk = tls12.direction(s.suite, kb, true, b"")
+  s.next_wk = tls12.direction(s.suite, kb, false, s.conf.iv)
   s.state = WAIT_CCS
 }
 
@@ -971,6 +982,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.alpn = if args[2] == "-" { [] } else { args[2].split(",") }
   cf.random = tls12.fill(0x22, 32)
   cf.salt = tls12.fill(0x22, 64)
+  cf.iv = tls12.fill(0x22, 16)
   cf.priv = a
   cf.sig = parts[4]
   let chunk = Int.parse(args[4]) ?? 0

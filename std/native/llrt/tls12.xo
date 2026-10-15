@@ -17,6 +17,7 @@ use native/llrt/chacha
 use native/llrt/ct
 use native/llrt/hmac
 use native/llrt/rand
+use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/tls13
 use native/llrt/tlscert
@@ -33,6 +34,14 @@ pub const ECDHE_ECDSA_AES256_GCM: Int = 0xc02c
 pub const ECDHE_RSA_AES256_GCM: Int = 0xc030
 pub const ECDHE_ECDSA_CHACHA20: Int = 0xcca9
 pub const ECDHE_RSA_CHACHA20: Int = 0xcca8
+
+// the ECDHE CBC-SHA suites Go's server enables by default (RFC 4492; HMAC
+// SHA-1, MAC then encrypt), after the AEADs in its order; tls12srv.xo
+// only
+pub const ECDHE_ECDSA_AES128_CBC_SHA: Int = 0xc009
+pub const ECDHE_RSA_AES128_CBC_SHA: Int = 0xc013
+pub const ECDHE_ECDSA_AES256_CBC_SHA: Int = 0xc00a
+pub const ECDHE_RSA_AES256_CBC_SHA: Int = 0xc014
 
 // the record content types
 pub const CT_CCS: Int = 20
@@ -106,15 +115,22 @@ pub fn suite_hash(s: Int) -> Int { if s == ECDHE_ECDSA_AES256_GCM || s == ECDHE_
 /// Whether the suite is ChaCha20-Poly1305's.
 pub fn suite_chacha(s: Int) -> Bool { s == ECDHE_ECDSA_CHACHA20 || s == ECDHE_RSA_CHACHA20 }
 
-/// The suite's key length and fixed IV length (AES-GCM's 4 byte salt,
-/// ChaCha20-Poly1305's 12 byte nonce mask).
-pub fn suite_key_len(s: Int) -> Int { if s == ECDHE_ECDSA_AES128_GCM || s == ECDHE_RSA_AES128_GCM { 16 } else { 32 } }
+/// Whether the suite is a CBC-SHA one.
+pub fn suite_cbc(s: Int) -> Bool { s == ECDHE_ECDSA_AES128_CBC_SHA || s == ECDHE_RSA_AES128_CBC_SHA || s == ECDHE_ECDSA_AES256_CBC_SHA || s == ECDHE_RSA_AES256_CBC_SHA }
 
-pub fn suite_iv_len(s: Int) -> Int { if suite_chacha(s) { 12 } else { 4 } }
+/// The suite's key length, fixed IV length (AES-GCM's 4 byte salt,
+/// ChaCha20-Poly1305's 12 byte nonce mask, a CBC suite's 16 bytes, which
+/// TLS 1.2's explicit IVs leave unused), and MAC key length (SHA-1's 20
+/// for CBC).
+pub fn suite_key_len(s: Int) -> Int { if s == ECDHE_ECDSA_AES128_GCM || s == ECDHE_RSA_AES128_GCM || s == ECDHE_ECDSA_AES128_CBC_SHA || s == ECDHE_RSA_AES128_CBC_SHA { 16 } else { 32 } }
+
+pub fn suite_iv_len(s: Int) -> Int { if suite_chacha(s) { 12 } else if suite_cbc(s) { 16 } else { 4 } }
+
+pub fn suite_mac_len(s: Int) -> Int { if suite_cbc(s) { 20 } else { 0 } }
 
 /// Whether the suite's ServerKeyExchange is signed with RSA (else ECDSA
 /// or Ed25519).
-pub fn suite_rsa(s: Int) -> Bool { s == ECDHE_RSA_AES128_GCM || s == ECDHE_RSA_AES256_GCM || s == ECDHE_RSA_CHACHA20 }
+pub fn suite_rsa(s: Int) -> Bool { s == ECDHE_RSA_AES128_GCM || s == ECDHE_RSA_AES256_GCM || s == ECDHE_RSA_CHACHA20 || s == ECDHE_RSA_AES128_CBC_SHA || s == ECDHE_RSA_AES256_CBC_SHA }
 
 /// The signature schemes offered for TLS 1.2 (Go's
 /// supportedSignatureAlgorithms less P-521's), and in
@@ -221,12 +237,27 @@ pub fn master_secret(hash: Int, pms: Bytes, ems: Bool, tr: Bytes, cr: Bytes, sr:
 }
 
 /// The key block's keys and IVs: the client's key, the server's, the
-/// client's IV, the server's (the AEAD suites have no MAC keys).
+/// client's IV, the server's, then the MAC keys, the client's and the
+/// server's (empty for the AEAD suites). The block's order is the
+/// client's MAC key, the server's, the keys, the IVs.
 pub fn key_block(suite: Int, master: Bytes, cr: Bytes, sr: Bytes) -> List[Bytes] {
   let kl = suite_key_len(suite)
   let il = suite_iv_len(suite)
-  let b = prf(suite_hash(suite), master, "key expansion", cat2(sr, cr), 2 * kl + 2 * il)
-  [b[0..kl], b[kl..2 * kl], b[2 * kl..2 * kl + il], b[2 * kl + il..2 * kl + 2 * il]]
+  let ml = suite_mac_len(suite)
+  let b = prf(suite_hash(suite), master, "key expansion", cat2(sr, cr), 2 * ml + 2 * kl + 2 * il)
+  let k = 2 * ml
+  [b[k..k + kl], b[k + kl..k + 2 * kl], b[k + 2 * kl..k + 2 * kl + il], b[k + 2 * kl + il..k + 2 * kl + 2 * il], b[0..ml], b[ml..2 * ml]]
+}
+
+/// The protection of one direction from a key block (key_block's list):
+/// the client's (to) or the server's; a CBC suite's explicit IVs come
+/// from iv when it is 16 bytes (the tests' hook), else fresh.
+pub fn direction(suite: Int, kb: List[Bytes], client: Bool, iv: Bytes) -> Keys {
+  let i = if client { 0 } else { 1 }
+  if suite_cbc(suite) {
+    return Keys{on: true, suite: suite, gcm: None, key: kb[i], iv: iv, seq: 0, mac: kb[4 + i], cbc: Some(aesgcm.new(kb[i]))}
+  }
+  keys(suite, kb[i], kb[2 + i])
 }
 
 /// The Finished verify data of a side ("client finished" or "server
@@ -249,15 +280,17 @@ pub struct Keys {
   key: Bytes
   iv: Bytes
   seq: Int
+  mac: Bytes
+  cbc: aesgcm.Cipher?
 }
 
 /// No protection.
-pub fn plain() -> Keys { Keys{on: false, suite: 0, gcm: None, key: b"", iv: b"", seq: 0} }
+pub fn plain() -> Keys { Keys{on: false, suite: 0, gcm: None, key: b"", iv: b"", seq: 0, mac: b"", cbc: None} }
 
 /// The protection of a key and fixed IV for the suite.
 pub fn keys(suite: Int, key: Bytes, iv: Bytes) -> Keys {
   let gcm = if suite_chacha(suite) { None } else { Some(aesgcm.new_gcm(key)) }
-  Keys{on: true, suite: suite, gcm: gcm, key: key, iv: iv, seq: 0}
+  Keys{on: true, suite: suite, gcm: gcm, key: key, iv: iv, seq: 0, mac: b"", cbc: None}
 }
 
 /// The sequence number as 8 bytes (big endian).
@@ -294,6 +327,11 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
     if !k.on {
       out.push(header(ct, version, part.len()))
       out.push(part)
+    } else if k.mac.len() > 0 {
+      let body = seal_cbc(k, ct, part, version)
+      k.seq += 1
+      out.push(header(ct, version, body.len()))
+      out.push(body)
     } else {
       let sq = u64(k.seq)
       let aad = asn1.cat([sq, u8(ct), u16(version), u16(part.len())])
@@ -326,6 +364,13 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   if !k.on {
     return Inner{ct: Int(hdr[0]), data: body}
   }
+  if k.mac.len() > 0 {
+    let r = open_cbc(k, hdr, body)
+    if r.ct >= 0 {
+      k.seq += 1
+    }
+    return r
+  }
   let sq = u64(k.seq)
   let opened = match k.gcm {
     Some(g) => {
@@ -354,6 +399,94 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
     return Inner{ct: -2, data: b""}
   }
   Inner{ct: Int(hdr[0]), data: pt}
+}
+
+// ---------------------------------------------------------------------------
+// CBC records (RFC 5246 6.2.3.2, as Go's conn.go cbcMode and tls10MAC)
+
+/// HMAC-SHA1 over the sequence number, the header (with the plaintext's
+/// length), and data; then extra is hashed too and dropped (Go's
+/// tls10MAC: the work then depends on the record's length, not on the
+/// padding).
+fn mac_cbc(k: Keys, hdr3: Bytes, n: Int, data: Bytes, extra: Bytes) -> Bytes {
+  var m = sha1.hmac(k.mac)
+  m.inner.write(asn1.cat([u64(k.seq), hdr3, u16(n)]))
+  m.inner.write(data)
+  let res = m.sum()
+  m.inner.write(extra)
+  // keeps the extra hashing (its result is not used)
+  let _w = ct.barrier(m.inner.written())
+  res
+}
+
+/// A record's body: the explicit IV, then data, its MAC, and the padding
+/// (each byte the padding's length less one) encrypted.
+fn seal_cbc(k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
+  let mac = mac_cbc(k, asn1.cat([u8(ct), u16(version)]), data.len(), data, b"")
+  let n = data.len() + 20
+  let pad = 16 - n % 16
+  let iv = if k.iv.len() == 16 { k.iv } else { rand.next_bytes(16) }
+  let plain = asn1.cat([data, mac, fill(pad - 1, pad)])
+  let cipher = match k.cbc {
+    Some(c) => c.cbc_encrypt(iv, plain)
+    None => b""
+  }
+  cat2(iv, cipher)
+}
+
+/// The mask 255 when the Int x is not negative, else 0.
+fn nonneg8(x: Int) -> Int { rt.int_wrap(1, rt.int_wrap(4, x, 63), 1) & 255 }
+
+/// Go's extractPadding: how many bytes to remove (the padding and its
+/// length byte; one when the padding is bad, so the bytes go to the MAC)
+/// and whether the padding is good (255) or not (0), in constant time
+/// for the last 256 bytes.
+pub fn extract_padding(p: Bytes) -> (Int, Int) {
+  if p.len() < 1 {
+    return (0, 0)
+  }
+  let pl = Int(p[p.len() - 1])
+  var good = nonneg8(p.len() - 1 - pl)
+  let check = if p.len() < 256 { p.len() } else { 256 }
+  for i in 0..check {
+    let mask = nonneg8(pl - i)
+    let b = Int(p[p.len() - 1 - i])
+    good = good & ~((mask & pl) ^ (mask & b)) & 255
+  }
+  good = good & (rt.int_wrap(3, good, 4) & 255)
+  good = good & (rt.int_wrap(3, good, 2) & 255)
+  good = good & (rt.int_wrap(3, good, 1) & 255)
+  good = rt.int_wrap(1, 0, rt.int_wrap(4, good, 7) & 1) & 255
+  ((pl & good) + 1, good)
+}
+
+/// Removes a CBC record's protection as Go's halfConn.decrypt: a length
+/// that is not whole blocks or too short is bad_record_mac; otherwise
+/// decrypted, the padding read in constant time, and the MAC computed
+/// over a constant amount of data; bad padding and a bad MAC are the
+/// same failure.
+fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
+  // an explicit IV, then at least the MAC and a padding byte, whole blocks
+  if body.len() % 16 != 0 || body.len() < 16 + 32 {
+    return Inner{ct: -1, data: b""}
+  }
+  let dec = match k.cbc {
+    Some(c) => c.cbc_decrypt(body[0..16], body[16..body.len()])
+    None => b""
+  }
+  let (remove, good) = extract_padding(dec)
+  var n = dec.len() - 20 - remove
+  n = ct.pick(ct.mask_bit(rt.int_wrap(4, n, 63)), 0, n)
+  let remote = dec[n..n + 20]
+  let local = mac_cbc(k, hdr[0..3], n, dec[0..n], dec[n + 20..dec.len()])
+  let ok = (if ct.bytes_equal(local, remote) { 1 } else { 0 }) & good
+  if ok != 1 {
+    return Inner{ct: -1, data: b""}
+  }
+  if n > MAX_PLAIN {
+    return Inner{ct: -2, data: b""}
+  }
+  Inner{ct: Int(hdr[0]), data: dec[0..n]}
 }
 
 // ---------------------------------------------------------------------------
@@ -1278,8 +1411,8 @@ fn client_flight(var c: Client) {
   c.pms = b""
   let kb = key_block(c.suite, c.master, c.random, c.server_random)
   c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
-  c.wk = keys(c.suite, kb[0], kb[2])
-  c.next_rk = keys(c.suite, kb[1], kb[3])
+  c.wk = direction(c.suite, kb, true, b"")
+  c.next_rk = direction(c.suite, kb, false, b"")
   let fin = message(HS_FINISHED, verify_data(c.suite, c.master, "client finished", c.tr))
   c.tr = cat2(c.tr, fin)
   c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, fin, 0x0303))

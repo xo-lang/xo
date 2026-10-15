@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native TLS 1.2 server: the four ECDHE CBC-SHA suites Go's server
+  enables by default (c009, c013, c00a, c014), after the AEADs: SHA-1
+  and HMAC-SHA1 (std/native/llrt/sha1.xo), AES decryption and CBC
+  (aesgcm.xo, BearSSL's bitsliced inverse cipher), and Go's constant
+  time CBC record check (extractPadding, the MAC over a constant amount
+  of data, one bad_record_mac for every failure). Goldens cbc_prims
+  (FIPS 197, SP 800-38A, RFC 2202 against Go) and tls12_cbc (crypto/tls's
+  client, records made with the session's keys: padding 255, bad
+  padding, bad MAC, short, not whole blocks), byte identical on Go, LLVM
+  and arm64. Server side only.
 - Native TLS performance, step 2: P-256's field arithmetic unrolled over
   local limbs and a fixed base table for [k]G (nistec_g256.xo, made by
   scripts/nistecg256): an X25519 handshake with a P-256 chain 47.3M to

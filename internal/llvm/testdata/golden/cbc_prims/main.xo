@@ -1,0 +1,86 @@
+// The primitives of the TLS 1.2 CBC suites (decision 0202) against Go's
+// crypto through internal.crypto_op: AES decryption (bitsliced, BearSSL's
+// aes_ct64 inverse cipher) on FIPS 197 C.1 to C.3 and every key size
+// over pseudo random blocks, CBC encryption and decryption on SP 800-38A
+// F.2 and pseudo random data, SHA-1 on FIPS 180's examples and every
+// length to 130 (one call and in two pieces), HMAC-SHA1 on RFC 2202's
+// cases.
+use std/internal
+
+fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+/// n pseudo random bytes from seed (a xorshift; not secret).
+fn bytes_of(seed: Int, n: Int) -> Bytes {
+  var x = seed * 2654435761 + 1
+  var out = BytesBuilder.new()
+  for _ in 0..n {
+    x = x ^ (x * 8192 % 4294967296)
+    x = x ^ (x / 131072)
+    x = x ^ (x * 32 % 4294967296)
+    x = x % 4294967296
+    out.write_byte(UInt8(x % 256))
+  }
+  out.freeze()
+}
+
+fn op(o: Str, a: Bytes, b: Bytes, c: Bytes) -> Str { internal.crypto_op(o, a, b, c, b"").to_hex() }
+
+fn main(os: Os) uses stdio {
+  // FIPS 197 C.1 to C.3: the plaintext 00112233...ff
+  let pt = "00112233445566778899aabbccddeeff"
+  for (key, ct) in [("000102030405060708090a0b0c0d0e0f", "69c4e0d86a7b0430d8cdb78070b4c55a"), ("000102030405060708090a0b0c0d0e0f1011121314151617", "dda97ca4864cdfe06eaf70a0ec0d7191"), ("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "8ea2b7ca516745bfeafc49904b496089")] {
+    let d = op("aes.decrypt", hex(key), hex(ct), b"")
+    os.stdio.println("fips197 ${key.len() * 4} decrypt ${d} ${d == pt}")
+  }
+  var bad = 0
+  for i in 0..60 {
+    let kl = [16, 24, 32][i % 3]
+    let key = bytes_of(i, kl)
+    let blk = bytes_of(1000 + i, 16)
+    let e = internal.crypto_op("aes.block", key, blk, b"", b"")
+    let d = internal.crypto_op("aes.decrypt", key, e, b"", b"")
+    if d != blk {
+      bad += 1
+    }
+    os.stdio.println("random ${kl} ${internal.crypto_op("aes.decrypt", key, blk, b"", b"").to_hex()}")
+  }
+  os.stdio.println("round trips failed: ${bad}")
+  // SP 800-38A F.2.1 and F.2.5 (CBC-AES128 and CBC-AES256)
+  let p4 = hex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710")
+  let iv = hex("000102030405060708090a0b0c0d0e0f")
+  let k128 = hex("2b7e151628aed2a6abf7158809cf4f3c")
+  let k256 = hex("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4")
+  for key in [k128, k256] {
+    let c = internal.crypto_op("aes.cbc_encrypt", key, iv, p4, b"")
+    os.stdio.println("sp800-38a ${key.len() * 8} ${c.to_hex()}")
+    os.stdio.println("  back ${internal.crypto_op("aes.cbc_decrypt", key, iv, c, b"") == p4}")
+  }
+  for i in 0..12 {
+    let key = bytes_of(50 + i, if i % 2 == 0 { 16 } else { 32 })
+    let data = bytes_of(70 + i, 16 * (i + 1))
+    let c = internal.crypto_op("aes.cbc_encrypt", key, iv, data, b"")
+    let p = internal.crypto_op("aes.cbc_decrypt", key, iv, c, b"")
+    os.stdio.println("cbc ${i + 1} blocks ${internal.crypto_op("sha1.sum", c, b"", b"", b"").to_hex()} ${p == data}")
+  }
+  // SHA-1: FIPS 180-2's "abc", the 448 bit message, then lengths 0 to 130
+  os.stdio.println("sha1 abc ${op("sha1.sum", "abc".bytes(), b"", b"")}")
+  os.stdio.println("sha1 448 ${op("sha1.sum", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes(), b"", b"")}")
+  var all = BytesBuilder.new()
+  for n in 0..131 {
+    let m = bytes_of(n, n)
+    let h = internal.crypto_op("sha1.sum", m, b"", b"", b"")
+    for y in h {
+      all.write_byte(y)
+    }
+    let s = internal.crypto_op("sha1.split", m[0..n / 3], m[n / 3..n], b"", b"")
+    for y in s {
+      all.write_byte(y)
+    }
+  }
+  os.stdio.println("sha1 lengths ${op("sha1.sum", all.freeze(), b"", b"")}")
+  // RFC 2202 HMAC-SHA1 test cases 1 to 7
+  let cases = [("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "Hi There".bytes()), ("4a656665", "what do ya want for nothing?".bytes()), ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")), ("0102030405060708090a0b0c0d0e0f10111213141516171819", hex("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")), ("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "Test With Truncation".bytes()), ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Test Using Larger Than Block-Size Key - Hash Key First".bytes())]
+  for (k, m) in cases {
+    os.stdio.println("hmac-sha1 ${op("sha1.hmac", hex(k), m, b"")}")
+  }
+}

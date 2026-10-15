@@ -371,6 +371,158 @@ pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
 }
 
 // ---------------------------------------------------------------------------
+// Decryption (BearSSL aes_ct64_dec.c), for the TLS 1.2 CBC suites
+
+/// The inverse S-box on the bit planes: the S-box between the inverse of
+/// its affine map, B(S(B(x))) (the 0x63 constants cancel; BearSSL's
+/// br_aes_ct64_bitslice_invSbox).
+fn inv_sbox(var q: List[Int]) {
+  inv_affine(q)
+  sbox(q)
+  inv_affine(q)
+}
+
+fn inv_affine(var q: List[Int]) {
+  let q0 = ~q[0]
+  let q1 = ~q[1]
+  let q2 = q[2]
+  let q3 = q[3]
+  let q4 = q[4]
+  let q5 = ~q[5]
+  let q6 = ~q[6]
+  let q7 = q[7]
+  q[7] = q1 ^ q4 ^ q6
+  q[6] = q0 ^ q3 ^ q5
+  q[5] = q7 ^ q2 ^ q4
+  q[4] = q6 ^ q1 ^ q3
+  q[3] = q5 ^ q0 ^ q2
+  q[2] = q4 ^ q7 ^ q1
+  q[1] = q3 ^ q6 ^ q0
+  q[0] = q2 ^ q5 ^ q7
+}
+
+fn inv_shift_rows(var q: List[Int]) {
+  for i in 0..8 {
+    let x = q[i]
+    q[i] = (x & 0xFFFF) | shl(x & 0x000000000FFF0000, 4) | shr(x & 0x00000000F0000000, 12) | shl(x & 0x000000FF00000000, 8) | shr(x & 0x0000FF0000000000, 8) | shl(x & 0x000F000000000000, 12) | shr(x & ~0x000FFFFFFFFFFFFF, 4)
+  }
+}
+
+/// x with its 32 bit halves swapped.
+fn rotr32(x: Int) -> Int { rt.int_wrap(5, x, 32) }
+
+fn inv_mix_columns(var q: List[Int]) {
+  let q0 = q[0]
+  let q1 = q[1]
+  let q2 = q[2]
+  let q3 = q[3]
+  let q4 = q[4]
+  let q5 = q[5]
+  let q6 = q[6]
+  let q7 = q[7]
+  let r0 = rt.int_wrap(5, q0, 16)
+  let r1 = rt.int_wrap(5, q1, 16)
+  let r2 = rt.int_wrap(5, q2, 16)
+  let r3 = rt.int_wrap(5, q3, 16)
+  let r4 = rt.int_wrap(5, q4, 16)
+  let r5 = rt.int_wrap(5, q5, 16)
+  let r6 = rt.int_wrap(5, q6, 16)
+  let r7 = rt.int_wrap(5, q7, 16)
+  q[0] = q5 ^ q6 ^ q7 ^ r0 ^ r5 ^ r7 ^ rotr32(q0 ^ q5 ^ q6 ^ r0 ^ r5)
+  q[1] = q0 ^ q5 ^ r0 ^ r1 ^ r5 ^ r6 ^ r7 ^ rotr32(q1 ^ q5 ^ q7 ^ r1 ^ r5 ^ r6)
+  q[2] = q0 ^ q1 ^ q6 ^ r1 ^ r2 ^ r6 ^ r7 ^ rotr32(q0 ^ q2 ^ q6 ^ r2 ^ r6 ^ r7)
+  q[3] = q0 ^ q1 ^ q2 ^ q5 ^ q6 ^ r0 ^ r2 ^ r3 ^ r5 ^ rotr32(q0 ^ q1 ^ q3 ^ q5 ^ q6 ^ q7 ^ r0 ^ r3 ^ r5 ^ r7)
+  q[4] = q1 ^ q2 ^ q3 ^ q5 ^ r1 ^ r3 ^ r4 ^ r5 ^ r6 ^ r7 ^ rotr32(q1 ^ q2 ^ q4 ^ q5 ^ q7 ^ r1 ^ r4 ^ r5 ^ r6)
+  q[5] = q2 ^ q3 ^ q4 ^ q6 ^ r2 ^ r4 ^ r5 ^ r6 ^ r7 ^ rotr32(q2 ^ q3 ^ q5 ^ q6 ^ r2 ^ r5 ^ r6 ^ r7)
+  q[6] = q3 ^ q4 ^ q5 ^ q7 ^ r3 ^ r5 ^ r6 ^ r7 ^ rotr32(q3 ^ q4 ^ q6 ^ q7 ^ r3 ^ r6 ^ r7)
+  q[7] = q4 ^ q5 ^ q6 ^ r4 ^ r6 ^ r7 ^ rotr32(q4 ^ q5 ^ q7 ^ r4 ^ r7)
+}
+
+/// Decrypts the four blocks of io in place (encrypt4's layout).
+fn decrypt4(c: Cipher, var io: List[Int]) {
+  var q = [0, 0, 0, 0, 0, 0, 0, 0]
+  for b in 0..4 {
+    let lo = io[2 * b]
+    let hi = io[2 * b + 1]
+    q[b] = spread(lo & 0xFFFFFFFF) | shl(spread(hi & 0xFFFFFFFF), 8)
+    q[b + 4] = spread(shr(lo, 32)) | shl(spread(shr(hi, 32)), 8)
+  }
+  ortho(q)
+  add_round_key(q, c.sk, 8 * c.nr)
+  var u = c.nr - 1
+  while u > 0 {
+    inv_shift_rows(q)
+    inv_sbox(q)
+    add_round_key(q, c.sk, 8 * u)
+    inv_mix_columns(q)
+    u -= 1
+  }
+  inv_shift_rows(q)
+  inv_sbox(q)
+  add_round_key(q, c.sk, 0)
+  ortho(q)
+  for b in 0..4 {
+    let w0 = gather(q[b] & 0x00FF00FF00FF00FF)
+    let w1 = gather(q[b + 4] & 0x00FF00FF00FF00FF)
+    let w2 = gather(shr(q[b], 8) & 0x00FF00FF00FF00FF)
+    let w3 = gather(shr(q[b + 4], 8) & 0x00FF00FF00FF00FF)
+    io[2 * b] = w0 | shl(w1, 32)
+    io[2 * b + 1] = w2 | shl(w3, 32)
+  }
+}
+
+/// The decryption of the 16 byte block b (crypto/aes's Decrypt).
+pub fn (c: Cipher) decrypt_block(b: Bytes) -> Bytes {
+  var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
+  decrypt4(c, io)
+  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
+}
+
+/// CBC encryption of data (a multiple of 16 bytes) under iv (16 bytes):
+/// one block a pass, each chained to the last.
+pub fn (c: Cipher) cbc_encrypt(iv: Bytes, data: Bytes) -> Bytes {
+  var out = rt.rs_with_cap(data.len())
+  var p0 = rt.bytes_word(iv, 0)
+  var p1 = rt.bytes_word(iv, 8)
+  var i = 0
+  while i < data.len() {
+    var io = [rt.bytes_word(data, i) ^ p0, rt.bytes_word(data, i + 8) ^ p1, 0, 0, 0, 0, 0, 0]
+    encrypt4(c, io)
+    p0 = io[0]
+    p1 = io[1]
+    out = rt.rs_push_word(rt.rs_push_word(out, p0, 8), p1, 8)
+    i += 16
+  }
+  out.bytes()
+}
+
+/// CBC decryption of data (a multiple of 16 bytes) under iv (16 bytes):
+/// four blocks a pass.
+pub fn (c: Cipher) cbc_decrypt(iv: Bytes, data: Bytes) -> Bytes {
+  var out = rt.rs_with_cap(data.len())
+  var p0 = rt.bytes_word(iv, 0)
+  var p1 = rt.bytes_word(iv, 8)
+  let n = data.len() / 16
+  var b = 0
+  while b < n {
+    let k = if n - b < 4 { n - b } else { 4 }
+    var io = [0, 0, 0, 0, 0, 0, 0, 0]
+    for j in 0..k {
+      io[2 * j] = rt.bytes_word(data, 16 * (b + j))
+      io[2 * j + 1] = rt.bytes_word(data, 16 * (b + j) + 8)
+    }
+    decrypt4(c, io)
+    for j in 0..k {
+      out = rt.rs_push_word(rt.rs_push_word(out, io[2 * j] ^ p0, 8), io[2 * j + 1] ^ p1, 8)
+      p0 = rt.bytes_word(data, 16 * (b + j))
+      p1 = rt.bytes_word(data, 16 * (b + j) + 8)
+    }
+    b += k
+  }
+  out.bytes()
+}
+
+// ---------------------------------------------------------------------------
 // GHASH (BearSSL ghash_ctmul64.c)
 
 /// The carryless product of x and y, its low 64 bits: four strided
@@ -553,11 +705,15 @@ pub fn open(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { new
 /// internal.crypto_op's "aes." ops (std/internal.xo): block (key a, the
 /// 16 byte block b), seal (key a, nonce b, plaintext c, additional data
 /// d), open (key a, nonce b, ciphertext and tag c, additional data d; a
-/// 1 byte then the plaintext, or a 0 byte when the tag does not match).
-/// None if unknown.
+/// 1 byte then the plaintext, or a 0 byte when the tag does not match),
+/// decrypt (key a, the 16 byte block b), cbc_encrypt and cbc_decrypt
+/// (key a, IV b, data c, a multiple of 16 bytes). None if unknown.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   match what {
     "block" => new(a).encrypt_block(b)
+    "decrypt" => new(a).decrypt_block(b)
+    "cbc_encrypt" => new(a).cbc_encrypt(b, c)
+    "cbc_decrypt" => new(a).cbc_decrypt(b, c)
     "seal" => seal(a, b, c, d)
     "open" => {
       match open(a, b, c, d) {
