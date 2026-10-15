@@ -234,6 +234,7 @@ fn prefetch(a: Int)
 ///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
+///   52-59 std/native/llrt/stdin.xo: the readers' turn, whether the descriptor was opened, its poller registration, the buffer (address, length, capacity), the end of input, the read error
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
@@ -573,13 +574,17 @@ fn env_vars() -> List[Str]
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 
-/// A line (all false) or the rest of standard input; stdin_status tells
-/// 0 the text, 1 the end of input, 2 an error (stdin_msg), 3 canceled.
-fn stdin_read(all: Bool) -> Str
-fn stdin_status() -> Int
-/// At most max bytes of standard input (decision 0162); stdin_status
-/// tells as for stdin_read.
-fn stdin_read_bytes(max: Int) -> Bytes
+/// Standard input's platform part (xo_stdin.c) under stdin.xo: whether
+/// the reader was canceled or a stop was requested; the poller's
+/// registration of the descriptor (0: read directly); a raw read into p
+/// (the count, 0 at the end, -1000000 to wait, else minus errno); a wait
+/// of up to 50 ms on the poller (true: canceled); a wait of a millisecond
+/// for the readers' turn (true: canceled or stopped).
+fn stdin_stopped() -> Bool
+fn stdin_open() -> Int
+fn stdin_sysread(p: Int, n: Int, pd: Int) -> Int
+fn stdin_wait(pd: Int) -> Bool
+fn stdin_turn_wait() -> Bool
 /// Whether descriptor fd is a terminal (never in a test binary).
 fn isatty(fd: Int) -> Bool
 /// The columns of the terminal on standard output, error, or input, or 0.
@@ -587,4 +592,3 @@ fn term_width() -> Int
 /// Turns standard input's echo off (false; true when it was a terminal)
 /// or restores it (true).
 fn stdin_echo(on: Bool) -> Bool
-fn stdin_msg() -> Str

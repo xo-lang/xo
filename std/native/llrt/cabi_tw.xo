@@ -30,16 +30,6 @@ fn tw_exit_value() -> Int { testworld.exit_value() }
 /// block of their count and addresses, for the C to release and free.
 fn tw_cleanup() -> Int { testworld.cleanup() }
 
-/// A read of FakeStdio's standard input (testworld.stdin_read's mode and
-/// max): the string object, counted once for the C caller; its length
-/// and xo_stdin_status's status at out (two words).
-fn tw_stdin_read(mode: Int, max: Int, out: Int) -> Int {
-  let (s, st) = testworld.stdin_read(mode, max)
-  rt.mem_store(out, 0, s.len(), 8)
-  rt.mem_store(out, 8, st, 8)
-  testworld.hand_str(s)
-}
-
 /// FakeProc.on_run's entry for the command of the n bytes at p, or 0
 /// (kept until the test ends).
 fn tw_proc_find(p: Int, n: Int) -> Int { testworld.proc_find_raw(p, n) }

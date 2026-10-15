@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B24): standard input's reading
+  (read_line, read_all, lines, read_bytes, the buffer kept across a
+  canceled read, the readers' turn) is Xo (std/native/llrt/stdin.xo); the
+  C keeps the poller registration, the raw read, and the waits.
 - Native runtime (zero-C audit item B28, part 6): a server request's
   url.host (net.SplitHostPort of the Host) and url.port (of an absolute
   target) are Xo (std/native/llrt/http1.xo host_name, host_port); the C

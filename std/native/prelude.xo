@@ -23,6 +23,7 @@ use native/llrt/raw
 use native/llrt/report
 use native/llrt/scan
 use native/llrt/show
+use native/llrt/stdin as stdinrt
 use native/llrt/stdio as stdiort
 use native/llrt/strings
 use native/llrt/sysio
@@ -1509,9 +1510,9 @@ fn stdio_write(_s: Stdio, data: Bytes) -> () ! IoErr {
   stdiort.out(raw.bytes_addr(data), data.len(), false)
 }
 
-fn stdin_err(st: Int) -> IoErr {
+fn stdin_err(st: Int, msg: Str) -> IoErr {
   if st == 2 {
-    return IoErr.Io(msg: rt.stdin_msg())
+    return IoErr.Io(msg: msg)
   }
   IoErr.Canceled
 }
@@ -1936,24 +1937,22 @@ fn child_wait(c: Child) -> Int ! ProcErr uses proc {
 fn child_kill(c: Child) { rt.proc_child_kill(c.h) }
 
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
-  let line = rt.stdin_read(false)
-  let st = rt.stdin_status()
+  let (line, st, msg) = stdinrt.read(false)
   if st == 0 {
     return Some(line)
   }
   if st == 1 {
     return None
   }
-  Err(stdin_err(st))
+  Err(stdin_err(st, msg))
 }
 
 fn stdio_read_all(_s: Stdio) -> Str ! IoErr {
-  let text = rt.stdin_read(true)
-  let st = rt.stdin_status()
+  let (text, st, msg) = stdinrt.read(true)
   if st == 0 {
     return text
   }
-  Err(stdin_err(st))
+  Err(stdin_err(st, msg))
 }
 
 fn stdio_lines(s: Stdio) -> List[Str] ! IoErr {
@@ -2042,15 +2041,14 @@ fn stdio_read_bytes(_s: Stdio, max: Int) -> Bytes? ! IoErr {
   if max <= 0 {
     return Some(b"")
   }
-  let data = rt.stdin_read_bytes(max.min(1048576))
-  let st = rt.stdin_status()
+  let (data, st, msg) = stdinrt.read_bytes(max.min(1048576))
   if st == 0 {
     return Some(data)
   }
   if st == 1 {
     return None
   }
-  Err(stdin_err(st))
+  Err(stdin_err(st, msg))
 }
 
 fn stdio_read_all_bytes(s: Stdio) -> Bytes ! IoErr {
