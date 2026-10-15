@@ -256,3 +256,8 @@ data. If they do, and rank 8 and the movable glue land too, what is left after
 That is about 350 lines in all, down from 1,258. Without the four emitter
 changes before the cut, their 68 lines and the forwarders stay one release
 longer (until 0.15.0).
+
+Done 2026-10-15 (xo-fa): the four emitter items (rt.flush and rt.set_grace
+mapped, LLVM rl_copy and rl_grow through obj.xo, the placeholders defined
+by every program; their C is now seed-only, weak placeholders included),
+the dead lines deleted and the test-only lines moved to testdata/xrec.h.

@@ -141,6 +141,14 @@ fn (g: G) end_data(var out: List[Str]) {
       out.push("\t.quad 0\n")
     }
   }
+  // the immortal placeholders (rt.rl_empty, rt.h_zero, a 0 export
+  // result): the empty list {XO_RC_IMMORTAL, 0, 0} and the zero handle
+  // {XO_RC_IMMORTAL, no free function}, defined by every program (xo_rt.c
+  // keeps weak ones for code of compilers before 0.14.0)
+  let el = g.sym("xo_empty_list")
+  let zh = g.sym("xo_zero_handle")
+  out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
+    "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
   if g.os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }

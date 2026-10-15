@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native emitters, before the 0.14.0 seed (zero-C inventory's emitter
+  items): rt.flush and rt.set_grace call cabi.xo's flush and
+  stop_set_grace; the LLVM emitter calls obj.xo's rl_copy_n and rl_grow_n
+  exports for `reuse` and a full list's growth (no C level, as arm64);
+  every program defines the immortal placeholders xo_empty_list and
+  xo_zero_handle (arm64 end_data, LLVM globals). xo_rt.c keeps weak
+  placeholders and the xo_flush, xo_set_grace, xo_rl_copy and xo_rl_grow
+  forwarders for seed 0.13.0's code (delete after 0.14.0), and loses the
+  dead Windows xo_personality handler, the unused sanitizer macros and
+  XO_ATOMIC_V; the C tests' helpers (rc_*, xo_chunks_now, ev_poke, the
+  listener and connection views) moved to testdata/xrec.h.
 - Native runtime (decision 0233): a test binary's main starts the test
   world itself (the native prelude's llrt_tw_start, which
   selfhost/ssa testmode.xo calls first), and twrun.xo start puts

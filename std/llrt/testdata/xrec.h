@@ -51,4 +51,36 @@ int64_t xo_x_ctx_cur(void);
 #define C_BOUNDARY_OFF 112
 static inline void t_ctx_boundary(uintptr_t frame) { *(uintptr_t *)((char *)(intptr_t)xo_x_ctx_cur() + C_BOUNDARY_OFF) = frame; }
 
+// The reference counts (rc.xo through cabi.xo), as generated code takes
+// and drops them, and the chunks the heap mapped so far (heapos.xo:
+// tasks.c and alloc_threads.c check that blocks freed on another thread
+// come back instead, decision 0118). Were xo_rt.c's until 2026-10-15.
+void xo_x_rc_inc(int64_t p);
+int64_t xo_x_rc_dec(int64_t p);
+static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+static inline void rc_inc(int64_t *p) { xo_x_rc_inc((int64_t)(intptr_t)p); }
+static inline int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
+int64_t xo_x_heap_chunks(void);
+#define xo_chunks_now() xo_x_heap_chunks()
+
+// Wakes the poller (poll.xo poke).
+void xo_x_poll_poke(void);
+static inline void ev_poke(void) { xo_x_poll_poke(); }
+
+// An Atomic's value: byte 128 of tasks.xo's record (atomic_new).
+#define XO_ATOMIC_V 128
+
+// netconn.xo's listener and connection handles (L_*, C_*): evloop.c's view.
+typedef struct {
+	xo_hdr h;
+	void *pd; // poll.xo's descriptor record
+	char *addr;
+	void *mem; // the test world's in memory listener (twrun.xo), or NULL
+	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
+} xo_listener;
+typedef struct {
+	xo_hdr h;
+	void *pd;
+} xo_conn;
+
 #endif

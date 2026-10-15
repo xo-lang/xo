@@ -179,7 +179,10 @@ fn (var g: Gen) call(v: Int) {
       let room = g.new_label("room")
       g.emit("br i1 ${full}, label %${grow}, label %${room}, !prof !0")
       g.start(grow)
-      let l2 = g.def("call ptr @xo_rl_grow(ptr ${l}, i64 ${g.size(et)})")
+      // obj.xo's export, with no C level (was xo_rt.c xo_rl_grow)
+      let li = g.def("ptrtoint ptr ${l} to i64")
+      let gi = g.def("call i64 @xo_x_obj_rl_grow_n(i64 ${li}, i64 ${g.size(et)}) #8")
+      let l2 = g.def("inttoptr i64 ${gi} to ptr")
       g.emit("br label %${room}")
       g.start(room)
       let lm = g.def("phi ptr [ ${l}, %${from} ], [ ${l2}, %${grow} ]")
@@ -497,11 +500,27 @@ fn runtime_raises(name: Str) -> Bool {
   ssa.faulting_rt(name) || name == "rt.fault_continue"
 }
 
-/// The address of the runtime's immortal empty list (xo_rt.c
-/// xo_empty_list), declared once.
+/// The address of the immortal empty list, which the program defines
+/// once (a count of XO_RC_IMMORTAL, no elements; xo_rt.c keeps a weak
+/// one for code of compilers before 0.14.0, which do not define it).
 fn (var g: Gen) empty_list() -> Str {
-  g.llvm_decl("@xo_empty_list", "@xo_empty_list = external global [3 x i64]")
+  g.placeholder("@xo_empty_list", "[3 x i64] [i64 -9223372036854775808, i64 0, i64 0]")
   "@xo_empty_list"
+}
+
+/// The address of the immortal zero handle ({XO_RC_IMMORTAL, no free
+/// function}), defined once as the empty list.
+fn (var g: Gen) zero_handle() -> Str {
+  g.placeholder("@xo_zero_handle", "[2 x i64] [i64 -9223372036854775808, i64 0]")
+  "@xo_zero_handle"
+}
+
+/// Defines the placeholder sym (its type and value) once per module:
+/// linkonce_odr, as a split build (selfhost/xo split.xo) copies a global
+/// into every module that uses it, and the linker keeps one of them (and
+/// of xo_rt.c's weak one, for code of earlier compilers).
+fn (var g: Gen) placeholder(sym: Str, init: Str) {
+  g.llvm_decl(sym, "${sym} = linkonce_odr hidden global ${init}, align 8")
 }
 
 /// Lowers the runtime intrinsics that are an instruction or two
@@ -733,13 +752,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.sched_tlocal()
       return false
     }
-    // the runtime's immortal placeholders: their addresses, no call
-    // (xo_rt.c xo_empty_list, xo_zero_handle)
+    // the immortal placeholders: their addresses, no call (the program
+    // defines them)
     "rt.rl_empty" => g.alias(v, g.empty_list())
-    "rt.h_zero" => {
-      g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
-      g.alias(v, "@xo_zero_handle")
-    }
+    "rt.h_zero" => g.alias(v, g.zero_handle())
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
     "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")
@@ -1128,8 +1144,7 @@ fn (var g: Gen) rt_call(v: Int) {
       if g.kind(x.ty) == ssa.Kind.List {
         none = g.empty_list()
       } else {
-        g.llvm_decl("@xo_zero_handle", "@xo_zero_handle = external global [2 x i64]")
-        none = "@xo_zero_handle"
+        none = g.zero_handle()
       }
       g.set(v, "select i1 ${z}, ptr ${none}, ptr ${p}")
       return

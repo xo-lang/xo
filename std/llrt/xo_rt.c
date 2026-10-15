@@ -125,29 +125,16 @@ int64_t xo_heap_large(int64_t n) { return xo_x_heap_large(n); }
 int64_t xo_heap_large_resize(int64_t b, int64_t n) { return xo_x_heap_large_resize(b, n); }
 void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
 
-// the chunks mapped so far (heapos.xo), which tasks.c and
-// alloc_threads.c check
-int64_t xo_x_heap_chunks(void);
-
-#define xo_chunks_now() xo_x_heap_chunks()
-
 // ---------------------------------------------------------------------------
 // Reference counts (decisions 0046 and 0058) are rc.xo's: a count c > 0 is
 // thread local, -n is shared by n, XO_RC_IMMORTAL marks a literal (never
-// written). rc_inc and rc_dec are the C tests'.
+// written; the C tests' helpers are in std/llrt/testdata/xrec.h).
 
 #define XO_RC_IMMORTAL INT64_MIN
 
-static inline int64_t rc_load(int64_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
-
-void xo_x_rc_inc(int64_t p);
-int64_t xo_x_rc_dec(int64_t p);
-
-static inline __attribute__((always_inline)) void rc_inc(int64_t *p) { xo_x_rc_inc((int64_t)(intptr_t)p); }
-static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (int)xo_x_rc_dec((int64_t)(intptr_t)p); }
-
 // ---------------------------------------------------------------------------
-// Output is stdio.xo's; xo_flush is the C name std's rt.flush lowers to.
+// Output is stdio.xo's; xo_flush is the C name std's rt.flush lowered
+// to before the emitters called cabi.xo's flush (seed-only: 0.13.0).
 
 void xo_x_flush(void);
 void xo_x_flush_try(void);
@@ -165,7 +152,8 @@ static void fault_init(void);
 
 // ---------------------------------------------------------------------------
 // Strings and lists: the layouts the C tests use; a list's slow paths
-// (obj.xo's) for LLVM generated code, which LTO folds into the caller.
+// (obj.xo's) for LLVM code of compilers before the emitter called
+// obj.xo's rl_copy_n and rl_grow_n itself (seed-only: 0.13.0).
 
 typedef struct {
 	int64_t rc, cap;
@@ -206,9 +194,11 @@ typedef struct {
 } xo_hdr;
 
 // the immortal placeholders a canceled operation returns; generated code
-// takes their addresses (rt.rl_empty, rt.h_zero)
-xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
-xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
+// takes their addresses (rt.rl_empty, rt.h_zero), and every program
+// defines them since 0.14.0's compiler: these weak ones are for code of
+// earlier compilers (seed-only: 0.13.0)
+__attribute__((weak)) xo_hdr xo_zero_handle = {XO_RC_IMMORTAL, NULL};
+__attribute__((weak)) xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
 #define zero_handle xo_zero_handle
 #define empty_list xo_empty_list
 
@@ -233,39 +223,22 @@ void __tsan_acquire(void *addr);
 // ---------------------------------------------------------------------------
 // Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_msg
 // and fault_raise_cur record the fault and unwind with unwind.xo up to
-// the context's boundary, with two personality routines: xo_x_personality,
-// which the emitters name, and on Windows the language handler below.
+// the context's boundary, through frames whose personality routine is
+// xo_x_personality, which the emitters name on every target (Windows'
+// language handler xo_personality too since 1dc21cf8, before 0.13.0).
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
-#if defined(_WIN32)
-EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
-#define XO_PERS_OLD XO_ADDR(xo_personality)
-#else
-#define XO_PERS_OLD XO_ADDR(xo_x_personality)
-#endif
 
-// fault_init starts fault.xo and ctx.xo (cabi.xo rt_start) with the
-// second personality routine, then the services records of poll.xo and
-// stop.xo.
+// fault_init starts fault.xo and ctx.xo (cabi.xo rt_start; its second
+// personality routine is the first), then the services records of
+// poll.xo and stop.xo.
 void xo_x_rt_start(int64_t pers_old);
 static void pd_svc_init(void);
 static void stop_svc_init(void);
 static void fault_init(void) {
-	xo_x_rt_start(XO_PERS_OLD);
+	xo_x_rt_start(XO_ADDR(xo_x_personality));
 	pd_svc_init();
 	stop_svc_init();
 }
-
-#if defined(_WIN32)
-// Windows' exception dispatcher calls it for frames of generated code;
-// faults never go through the dispatcher, so it passes every exception on
-EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp) {
-	(void)rec;
-	(void)frame;
-	(void)cx;
-	(void)disp;
-	return ExceptionContinueSearch;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // The scheduler's C services (rt.sched_rt, pool.xo RT_*): a claimed
@@ -293,21 +266,14 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	return 0;
 }
 
-// an Atomic's value: byte 128 of tasks.xo's record (decision 0200; the
-// C tests read it)
-#define XO_ATOMIC_V 128
-
 // ---------------------------------------------------------------------------
 // The event loop is poll.xo's (B22): pd_svc_init has it make its record;
-// ev_poke and ev_start are the C tests' and the entry's.
+// ev_start is the entry's (the C tests' ev_poke is in testdata/xrec.h).
 
 #if defined(_WIN32)
 // the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
 #pragma comment(lib, "ntdll")
 #endif
-
-void xo_x_poll_poke(void);
-static void ev_poke(void) { xo_x_poll_poke(); }
 
 void xo_x_poll_ev_start(void);
 static void ev_start(void) { xo_x_poll_ev_start(); }
@@ -323,25 +289,8 @@ static void pd_svc_init(void) {
 }
 
 // ---------------------------------------------------------------------------
-// The network is netconn.xo's (cabi_net.xo); these records are the
-// evloop.c test's view of its handles.
-
-typedef struct {
-	xo_hdr h;
-	void *pd; // poll.xo's descriptor record
-	char *addr;
-	void *mem; // the test world's in memory listener (twrun.xo), or NULL
-	int unlink_path; // a Unix domain socket whose file close removes (decision 0190)
-} xo_listener;
-_Static_assert(offsetof(xo_listener, pd) == 16 && offsetof(xo_listener, addr) == 24 && offsetof(xo_listener, mem) == 32 &&
-                   offsetof(xo_listener, unlink_path) == 40 && sizeof(xo_listener) == 48,
-               "netconn.xo L_*");
-
-typedef struct {
-	xo_hdr h;
-	void *pd;
-} xo_conn;
-_Static_assert(offsetof(xo_conn, pd) == 16 && sizeof(xo_conn) == 24, "netconn.xo C_*");
+// The network is netconn.xo's (cabi_net.xo); the C tests' view of its
+// handles is in testdata/xrec.h.
 
 // the environment, which main hands to process.xo (on Windows process.xo
 // reads Windows' own)
@@ -420,7 +369,9 @@ static void stop_svc_init(void) {
 }
 
 // xo_set_grace is `proc.set_grace(d)` (the SSA builders' rt.set_grace):
-// after a stop request the deadline moves to the stop time plus d.
+// after a stop request the deadline moves to the stop time plus d. The
+// emitters call cabi.xo's stop_set_grace since 0.14.0's compiler
+// (seed-only: 0.13.0).
 void xo_x_stop_set_grace(int64_t d);
 void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 

@@ -184,8 +184,6 @@ fn runtime_decls() -> Str {
     "%xo.str = type { ptr, i64 }",
     "%xo.rlist = type { i64, i64, i64 }",
     "",
-    "declare ptr @xo_rl_copy(ptr, i64, ptr, ptr) #3",
-    "declare ptr @xo_rl_grow(ptr, i64) #3",
     "declare void @xo_print(ptr, i64) #2",
     "declare void @xo_println(ptr, i64) #2",
     "declare void @xo_eprint(ptr, i64) #2",
