@@ -20,6 +20,7 @@ use native/llrt/pool
 use native/llrt/poolsetup
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/stdio
 use native/rt
@@ -109,6 +110,7 @@ const RT_TW = 30
 const TW_VIRT = 40
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
+/// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
 const RT_H_FREE = 25
@@ -153,7 +155,7 @@ pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
   // in the test world nothing outside the program ends a wait
   let virt = rt.mem_load(rt.sched_rt(RT_TW, 0, 0), TW_VIRT, 4) != 0
   pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counted || virt { 1 } else { 0 }, f, rw)
-  let _a = rt.sched_rt(RT_TSAN_ACQUIRE, c + ctx.C_PARK, 0)
+  sanhook.acquire(c + ctx.C_PARK)
   budget.resume(c)
 }
 
@@ -431,7 +433,11 @@ pub fn park_signal(p: Int) {
 /// releases (op RT_TSAN_RELEASE) or acquires (RT_TSAN_ACQUIRE).
 fn tsan(op: Int, a: Int) {
   if ld(ctx.svc(), ctx.SV_TSAN) != 0 {
-    let _r = rt.sched_rt(op, a, 0)
+    if op == RT_TSAN_RELEASE {
+      sanhook.release(a)
+    } else {
+      sanhook.acquire(a)
+    }
   }
 }
 

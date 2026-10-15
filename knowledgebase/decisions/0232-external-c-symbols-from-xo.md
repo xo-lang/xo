@@ -52,10 +52,14 @@ sanitizer build.
    (STB_WEAK) output, and on PE/COFF a weak external with a null default.
    rt.sym_present(f) (an intrinsic folding to the address compared with
    0) tells whether a weak symbol was linked.
-3. A constant target.sanitizer (none, thread, address), set by the
-   driver for a sanitizer build (the C's XO_TSAN and XO_ASAN switches), so
-   `match target.sanitizer` folds the sanitizer calls away in every other
-   build, as `match target.os` folds OS arms.
+3. A sanitizer build is known at run time: rt.sym_present of the
+   sanitizer's weak symbols (amended 2026-10-15 in place of a constant
+   target.sanitizer: the 0.11.0 seed's SSA builder builds `target` only as
+   a struct of exactly two fields, so a third field would stop it building
+   the runtime, and xo emits the program before clang decides on
+   -fsanitize). The gate on every fiber switch stays the worker's hooks
+   word, set once at worker start, so a build without a sanitizer never
+   checks a symbol on a switch.
 
 ## Implementation (2026-10-15)
 
@@ -89,6 +93,19 @@ sanitizer build.
   load and compare), which is true exactly in a sanitizer build
   (internal/llvm TestSysCTSan). A constant can come with a seed that
   knows a three field Target, if a measurement ever wants the fold.
+- The port (2026-10-15, after Xo Lang 3 agreed for pool.xo and sched.xo):
+  std/native/llrt/sanhook.xo, a leaf over sys_c.xo, has the switch
+  hooks (cabi.xo's sched_hook export, which rt.sched_hook now calls on
+  both native backends), the workers' and fibers' ThreadSanitizer
+  fibers, the release and acquire edges (pool.xo, tasks.xo, poll.xo),
+  the Linux C library's pthread_create, and the fiber stacks' libc mmap
+  under ThreadSanitizer. In a normal macOS build the sanitizer symbols
+  are weak undefined imports looked up at load (nm -m: "weak external
+  ... dynamically looked up"), bound to 0.
+- The arm64 emitter keeps the arms of a `match` on target.os that
+  another OS takes (gotchas/dead-target-arm-still-links.md), so a sys_c
+  function that is not in every C library (glibc's __errno_location) is
+  declared weak.
 - Seeds: a sys_c call compiled by an xo older than this decision is an
   rt call of `xo_<name>`, which nothing defines. The 0.11.0 seed builds
   xo from these sources because nothing xo's own build reaches calls

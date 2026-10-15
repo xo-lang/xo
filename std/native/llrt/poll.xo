@@ -13,6 +13,7 @@ use native/llrt/heapos
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/sanhook
 use native/llrt/sock
 use native/llrt/stop
 use native/llrt/sysio
@@ -366,14 +367,10 @@ fn epoll_add(poll: Int, fd: Int, events: Int, pd: Int) -> Int {
     TargetArch.Arm64 | TargetArch.Wasm32 => 8
   }
   rt.mem_store(e, off, pd, 8)
-  let _t = rt.sched_rt(RT_TSAN_RELEASE, ev(), 0)
+  sanhook.release(ev())
   sock.epoll_ctl(poll, 1, fd, e)
 }
 
-/// rt.sched_rt's ThreadSanitizer release of an address (xo_rt.c
-/// TSAN_RELEASE; nothing outside ThreadSanitizer builds).
-const RT_TSAN_RELEASE = 22
-const RT_TSAN_ACQUIRE = 23
 
 /// Closes the socket fd (xo_rt.c nx_close).
 fn fd_close(fd: Int) {
@@ -1040,7 +1037,7 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
       // the acquire of epoll_add's release: the kernel orders a
       // registration before its events, which ThreadSanitizer sees only
       // through the C library's interceptors (gotchas/tsan-raw-epoll-no-edge.md)
-      let _t = rt.sched_rt(RT_TSAN_ACQUIRE, ev(), 0)
+      sanhook.acquire(ev())
       if r < 0 { 0 } else { r }
     }
     TargetOs.Windows | TargetOs.Wasi => 0

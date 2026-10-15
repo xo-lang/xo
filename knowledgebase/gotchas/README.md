@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [git-stash-shared-across-worktrees.md](git-stash-shared-across-worktrees.md): Observed 2026-10-15: `git stash pop` in a worktree can apply another agent's stash; use `git pull --rebase --autostash`.
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
 - [go-line-directives.md](go-line-directives.md): `//line` directive rules; lines after a directive count up, so the generator repeats it per Go line; relative paths kept verbatim; line but no column at run time.

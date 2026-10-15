@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0232, the port): the sanitizer fiber hooks,
+  ThreadSanitizer's edges, pthread_create on the Linux C library, and
+  fiber stacks mapped through libc under ThreadSanitizer moved from
+  xo_rt.c to std/native/llrt/sanhook.xo. A sanitizer build is detected
+  at run time (rt.sym_present). The C keeps xo_sched_hook as a
+  forwarder and xo_<name> shims for the 0.11.0 seed. UNTESTED on linux
+  and windows.
 - Native runtime performance (the zero-c perf sweep,
   bench/results/zero-c-perf-sweep-2026-10-15.md):
   - std/native/llrt/mutex.xo: held_add has a fast path that calls

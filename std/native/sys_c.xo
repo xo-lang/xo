@@ -27,3 +27,24 @@ fn weak___sanitizer_finish_switch_fiber(fake_stack_save: Int, bottom_old: Int, s
 /// getpid(2), for the check of this module itself (internal.crypto_op's
 /// "sysc." op, the sys_c golden): a strong reference every C library has.
 fn getpid() -> Int32
+
+/// The runtime's threads on Linux (std/native/llrt/sanhook.xo
+/// thread_start): glibc's pthread_create sets up the thread's state
+/// (thread locals, errno, cancellation) that a raw clone would not; an
+/// XO_NOLIBC build resolves these to cabi_libc.xo's exports.
+fn pthread_attr_init(attr: Int) -> Int32
+fn pthread_attr_setstacksize(attr: Int, size: Int) -> Int32
+fn pthread_attr_setdetachstate(attr: Int, state: Int) -> Int32
+fn pthread_attr_destroy(attr: Int) -> Int32
+fn pthread_create(thread: Int, attr: Int, f: Int, arg: Int) -> Int32
+
+/// Fiber stacks under ThreadSanitizer on Linux (sanhook.xo stack_map):
+/// its mmap interceptor keeps the mapping in its application ranges,
+/// which a system call bypasses.
+fn mmap(addr: Int, size: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int
+fn mprotect(addr: Int, size: Int, prot: Int) -> Int32
+fn munmap(addr: Int, size: Int) -> Int32
+/// errno's address (glibc's and musl's name; weak: the arm64 emitter
+/// keeps the Linux arm in a macOS build, whose C library calls it
+/// __error).
+fn weak___errno_location() -> Int

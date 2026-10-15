@@ -1838,7 +1838,6 @@ static void *pool_rec(void) { return svc.pool; }
 void xo_x_dl_check(int64_t p);
 XO_NORETURN void xo_x_deadlock(void);
 
-static void tsan_worker(xo_worker *w);
 static void sched_hooks(xo_worker *w);
 
 // park_wait_n blocks the current context until its park is signaled or,
@@ -2012,17 +2011,6 @@ typedef struct xo_fiber {
 #define XO_TSAN 1
 #endif
 
-#ifdef XO_TSAN
-void *__tsan_get_current_fiber(void);
-void *__tsan_create_fiber(unsigned flags);
-void __tsan_destroy_fiber(void *fiber);
-void __tsan_switch_to_fiber(void *fiber, unsigned flags);
-static void tsan_worker(xo_worker *w) { w->tsan = __tsan_get_current_fiber(); }
-#define TSAN_SWITCH(x) __tsan_switch_to_fiber((x), 0)
-#else
-static void tsan_worker(xo_worker *w) { (void)w; }
-#define TSAN_SWITCH(x) ((void)(x))
-#endif
 
 // AddressSanitizer must know which stack runs (its fiber API): a fault
 // unwinds with __asan_handle_no_return, which unpoisons the current stack
@@ -2036,15 +2024,6 @@ static void tsan_worker(xo_worker *w) { (void)w; }
 #define XO_ASAN 1
 #endif
 
-#ifdef XO_ASAN
-void __sanitizer_start_switch_fiber(void **fake_stack_save, const void *bottom, size_t size);
-void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_old, size_t *size_old);
-#define ASAN_START(save, bottom, size) __sanitizer_start_switch_fiber((save), (bottom), (size))
-#define ASAN_FINISH(save, bottom, size) __sanitizer_finish_switch_fiber((save), (bottom), (size))
-#else
-#define ASAN_START(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
-#define ASAN_FINISH(save, bottom, size) ((void)(save), (void)(bottom), (void)(size))
-#endif
 
 #if defined(__has_attribute)
 #if __has_attribute(disable_sanitizer_instrumentation)
@@ -2055,22 +2034,11 @@ void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_
 #define XO_NO_SANITIZE
 #endif
 
-// sched_hooks tells whether the fibers w runs call xo_sched_hook around
-// their switches (decision 0212): in sanitizer builds, and with the
-// statistics on (XO_RTSTATS).
-static void sched_hooks(xo_worker *w) {
-#if defined(XO_TSAN) || defined(XO_ASAN)
-	w->hooks = 1;
-#else
-	w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0;
-#endif
-}
-
-#ifdef MAP_NORESERVE
-#define XO_MAP_NORESERVE MAP_NORESERVE
-#else
-#define XO_MAP_NORESERVE 0
-#endif
+// sched_hooks tells whether the fibers w runs call the hooks around
+// their switches (decision 0212): with the statistics on (XO_RTSTATS);
+// std/native/llrt/sanhook.xo worker_start sets the word in a sanitizer
+// build (decision 0232).
+static void sched_hooks(xo_worker *w) { w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0; }
 
 #define XO_FIBER_CACHE 64
 
@@ -2124,44 +2092,49 @@ XO_NORETURN static void fiber_map_failed(int en) {
 	xo_oom();
 }
 
-// The hooks the Xo fiber code calls around its switches when the
-// worker's hooks word is set (sched_hooks): the sanitizers' fiber calls
-// and the statistics. kind (sched.xo HOOK_*): 0 a fiber starts (on its
-// stack), 1 it ends, 2 it parks, 3 it was resumed after parking, 4 a
-// worker switches to it, 5 the worker is back. Not instrumented by the
-// sanitizers: its __tsan_switch_to_fiber changes ThreadSanitizer's
-// shadow stack, so an instrumented function's exit here would pop the
-// other fiber's entry (gotchas/tsan-fiber-switch-in-callee.md); the
-// callers' entries and exits pair up.
-XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) {
-	xo_worker *w = (xo_worker *)(intptr_t)wa;
-	xo_fiber *f = (xo_fiber *)(intptr_t)fa;
-	(void)w, (void)f;
-	switch (kind) {
-	case 0:
-		ASAN_FINISH(NULL, &w->asan_bottom, &w->asan_size);
-		break;
-	case 1:
-		TSAN_SWITCH(w->tsan);
-		ASAN_START(NULL, w->asan_bottom, w->asan_size); // for good
-		break;
-	case 2:
-		STAT(fiber_park);
-		TSAN_SWITCH(w->tsan);
-		ASAN_START(&f->asan_fake, w->asan_bottom, w->asan_size);
-		break;
-	case 3:
-		ASAN_FINISH(f->asan_fake, &w->asan_bottom, &w->asan_size);
-		break;
-	case 4:
-		TSAN_SWITCH(f->tsan);
-		ASAN_START(&w->asan_fake, f->mem + (f->size - fibers.stack), fibers.stack);
-		break;
-	case 5:
-		ASAN_FINISH(w->asan_fake, NULL, NULL);
-		break;
-	}
+// The hooks around a fiber switch are std/native/llrt/sanhook.xo's hook
+// (decision 0232), the export xo_x_sched_hook that generated code calls
+// for rt.sched_hook. Seed shim: xo_sched_hook forwards for code from an
+// xo older than decision 0232; delete it with the first seed that has
+// the decision. Not instrumented: a sanitizer's fiber switch in an
+// instrumented callee pops the other fiber's entry
+// (gotchas/tsan-fiber-switch-in-callee.md).
+void xo_x_sched_hook(int64_t kind, int64_t wa, int64_t fa);
+XO_NO_SANITIZE void xo_sched_hook(int64_t kind, int64_t wa, int64_t fa) { xo_x_sched_hook(kind, wa, fa); }
+
+// Seed shims (decision 0232): an xo older than the decision compiles a
+// call of std/native/sys_c.xo's f, and rt.sym_present, as the C function
+// xo_<f>. These define them for its build of xo (the scheduler's
+// sanhook.xo is in every program), which is never a sanitizer build: the
+// weak sanitizer calls are never reached there. Delete them with the
+// first seed that has the decision.
+int64_t xo_sym_present(const char *p, int64_t n) { (void)p, (void)n; return 0; }
+int64_t xo_weak___tsan_get_current_fiber(void) { return 0; }
+int64_t xo_weak___tsan_create_fiber(int64_t f) { (void)f; return 0; }
+void xo_weak___tsan_destroy_fiber(int64_t f) { (void)f; }
+void xo_weak___tsan_switch_to_fiber(int64_t f, int64_t fl) { (void)f, (void)fl; }
+void xo_weak___tsan_acquire(int64_t a) { (void)a; }
+void xo_weak___tsan_release(int64_t a) { (void)a; }
+void xo_weak___sanitizer_start_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
+void xo_weak___sanitizer_finish_switch_fiber(int64_t s, int64_t b, int64_t n) { (void)s, (void)b, (void)n; }
+int64_t xo_pthread_attr_init(int64_t a) { return pthread_attr_init((pthread_attr_t *)(intptr_t)a); }
+int64_t xo_pthread_attr_setstacksize(int64_t a, int64_t n) { return pthread_attr_setstacksize((pthread_attr_t *)(intptr_t)a, (size_t)n); }
+int64_t xo_pthread_attr_setdetachstate(int64_t a, int64_t s) { return pthread_attr_setdetachstate((pthread_attr_t *)(intptr_t)a, (int)s); }
+int64_t xo_pthread_attr_destroy(int64_t a) { return pthread_attr_destroy((pthread_attr_t *)(intptr_t)a); }
+int64_t xo_pthread_create(int64_t t, int64_t a, int64_t f, int64_t arg) {
+	return pthread_create((pthread_t *)(intptr_t)t, (pthread_attr_t *)(intptr_t)a, (void *(*)(void *))(intptr_t)f, (void *)(intptr_t)arg);
 }
+#ifndef _WIN32
+int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { return XO_ADDR(mmap((void *)(intptr_t)a, (size_t)n, (int)p, (int)fl, (int)fd, (off_t)o)); }
+int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { return mprotect((void *)(intptr_t)a, (size_t)n, (int)p); }
+int64_t xo_munmap(int64_t a, int64_t n) { return munmap((void *)(intptr_t)a, (size_t)n); }
+int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
+#else
+int64_t xo_mmap(int64_t a, int64_t n, int64_t p, int64_t fl, int64_t fd, int64_t o) { (void)a, (void)n, (void)p, (void)fl, (void)fd, (void)o; return -1; }
+int64_t xo_mprotect(int64_t a, int64_t n, int64_t p) { (void)a, (void)n, (void)p; return -1; }
+int64_t xo_munmap(int64_t a, int64_t n) { (void)a, (void)n; return -1; }
+int64_t xo_weak___errno_location(void) { return XO_ADDR(&errno); }
+#endif
 
 // xo_sched_run_task runs the task of the fiber that just started (Xo's
 // fiber_main): it came from a queue, so its entry and its run end here.
@@ -2186,57 +2159,19 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 			xo_x_tw_kick();
 		}
 		return 0;
-	case 4: { // fiber a got a new stack
-		xo_fiber *f = (xo_fiber *)(intptr_t)a;
-		(void)f;
+	case 4: // fiber a got a new stack (its ThreadSanitizer fiber: sanhook.xo)
 		fiber_counted(1);
-#ifdef XO_TSAN
-		f->tsan = __tsan_create_fiber(0);
-#endif
 		return 0;
-	}
-	case 5: { // fiber a's stack is unmapped
-		xo_fiber *f = (xo_fiber *)(intptr_t)a;
-		(void)f;
-#ifdef XO_TSAN
-		__tsan_destroy_fiber(f->tsan);
-#endif
+	case 5: // fiber a's stack is unmapped
 		fiber_counted(-1);
 		return 0;
-	}
 	case 6:
 		fiber_map_failed((int)a);
-	case 7: { // worker thread a starts
-		xo_worker *w = (xo_worker *)(intptr_t)a;
-		tsan_worker(w);
-		sched_hooks(w);
+	case 7: // worker thread a starts (the sanitizers' part: sanhook.xo)
+		sched_hooks((xo_worker *)(intptr_t)a);
 		return 0;
-	}
-	case 8: { // a thread running the C function a with b (the C library's)
-		pthread_attr_t attr;
-		pthread_attr_init(&attr);
-		pthread_attr_setstacksize(&attr, (size_t)64 << 20);
-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-		pthread_t th;
-		int ok = pthread_create(&th, &attr, (void *(*)(void *))(intptr_t)a, (void *)(intptr_t)b) == 0;
-		pthread_attr_destroy(&attr);
-		return ok;
-	}
 	case 9:
 		xo_oom();
-#ifndef _WIN32
-	case 11: { // a fiber stack of a bytes, a guard page of b, from the C library's mmap
-		void *m = mmap(NULL, (size_t)a, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | XO_MAP_NORESERVE, -1, 0);
-		if (m == MAP_FAILED) {
-			fiber_map_failed(errno);
-		}
-		mprotect(m, (size_t)b, PROT_NONE);
-		return XO_ADDR(m);
-	}
-	case 12:
-		munmap((void *)(intptr_t)a, (size_t)b);
-		return 0;
-#endif
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
@@ -2255,12 +2190,6 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 		return 0;
 	case 20: // the runtime switches to several threads (pool.xo's setup)
 		xo_rt_threads_begin();
-		return 0;
-	case 22:
-		TSAN_RELEASE((void *)(intptr_t)a);
-		return 0;
-	case 23:
-		TSAN_ACQUIRE((void *)(intptr_t)a);
 		return 0;
 	case 25: // free handle a, whose last reference went (tasks.xo h_release)
 		xo_h_free((void *)(intptr_t)a);

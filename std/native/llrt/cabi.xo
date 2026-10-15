@@ -31,6 +31,7 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/rtsec
+use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/selects
 use native/llrt/tasks
@@ -120,6 +121,11 @@ fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
 
 /// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
 fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
+
+/// The hooks around a fiber switch (sanhook.xo hook, decision 0232):
+/// rt.sched_hook of sched.xo calls this export (xo_rt.c's xo_sched_hook
+/// forwards for code from an older xo).
+fn sched_hook(kind: Int, w: Int, f: Int) { sanhook.hook(kind, w, f) }
 
 // ---------------------------------------------------------------------------
 // UTF-8 (xo_bytes.c n_rune_utf8, the seed compatibility xo_rs_push_rune)
