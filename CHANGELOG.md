@@ -16,6 +16,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/tls-perf-2026-10-15.md: the Xo handshakes take 3.8 to
   8.9 times Mbed's instructions on LLVM (P-256 field arithmetic about 90%
   of them), bulk AES-GCM about 10 times and ChaCha20-Poly1305 7.8 times.
+- Native runtime (zero-C audit item B31, server wiring, decision 0202):
+  the HTTP server's TLS is Xo by default. std/native/llrt/tlssrv.xo
+  runs tls13srv.xo over the accepted connection's socket with xo_tls.c's
+  waits, cancellation, HTTP detection and close_notify. It hands TLS 1.2
+  ClientHellos to tls12srv.xo (tls13srv.xo's new HANDOFF state) and picks
+  the certificate by server name. http.tls_cert is tls.X509KeyPair in Xo:
+  RSA PKCS #1/#8, ECDSA SEC 1/PKCS #8, Ed25519 PKCS #8, with Go's errors
+  (golden http_tls_keys equals Go). XO_LLRT_C=tlssrv keeps Mbed TLS
+  (tlssrv_c.xo). http_tls passes on both paths. TestH2Diff and
+  TestTLSDiff match Go except for the TLS 1.2 CBC suites and session
+  resumption (no tickets yet), plus the client-side differences already
+  known. UNTESTED on linux and windows.
 - Native runtime (B31, TLS 1.2 part 2): the TLS 1.2 server in Xo
   (std/native/llrt/tls12srv.xo, as Go's handshake_server.go): the
   server's suite order (ChaCha20-Poly1305 first when the client prefers

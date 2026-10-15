@@ -36,6 +36,7 @@ use native/llrt/raw
 use native/llrt/rc
 use native/llrt/stop
 use native/llrt/tasks
+use native/llrt/tlssrv
 use native/rt
 use native/rthttp
 
@@ -182,6 +183,10 @@ pub fn srv_close(s: rthttp.Srv) {
   rt.mem_store(c, ctx.C_UNWINDING, u, 4)
 }
 
+/// Adds certificate c to server s (http.Server.with_tls); the first
+/// turns TLS on.
+pub fn srv_tls(s: rthttp.Srv, c: tlssrv.Cert) { tlssrv.srv_add(s, srec(s), hconn.SR_TLS, c) }
+
 /// Frees server record a (its last reference went; cabi_http.xo
 /// srv_free).
 pub fn srv_free(a: Int) {
@@ -193,7 +198,7 @@ pub fn srv_free(a: Int) {
   }
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
-    rthttp.tls_c_srv_free(tls)
+    tlssrv.srv_free(tls)
   }
   obj.free_obj(a)
 }
@@ -223,7 +228,7 @@ pub fn hc_new(s: rthttp.Srv, c: Conn) -> rthttp.HConn {
   st(hc, hconn.HC_REG, 1)
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
-    st(hc, hconn.HC_TLS, rthttp.tls_c_server(tls, pd))
+    st(hc, hconn.HC_TLS, tlssrv.conn(tls, pd))
   }
   if ld(a, hconn.SR_STOPPING) != 0 {
     poll.pd_close(pd)
@@ -252,15 +257,13 @@ pub fn hc_h2(h: rthttp.HConn) -> Int {
     st(hc, hconn.HC_IDLE, 1)
     hconn.unlock(s)
   }
-  let ok = !poll.canceled() && rthttp.tls_c_handshake(tls) != 0
+  let ok = !poll.canceled() && tlssrv.handshake(tls)
   hconn.set_idle(hc, false)
-  if !ok || rthttp.tls_c_alpn_h2(tls) == 0 {
+  if !ok || !tlssrv.alpn_h2(tls) {
     return 0
   }
   // rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
-  let wb = raw.bytes_buf(80)
-  let wa = raw.bytes_addr(wb)
-  let why = if rthttp.tls_c_bad_cipher(tls, wa, 80) != 0 { raw.str_at(wa, raw.cstr_len(wa)) } else { "" }
+  let why = tlssrv.bad_cipher(tls)
   // Windows resets a connection closed with unread input (the client's
   // preface, gotchas/windows-shutdown-resets-unread-input.md), and the
   // reset can overtake the GOAWAY: linger as after a connection error,
@@ -288,7 +291,7 @@ pub fn hc_close(h: rthttp.HConn) {
   let hc = hconn.rec(h)
   let tls = ld(hc, hconn.HC_TLS)
   if tls != 0 {
-    rthttp.tls_c_close_notify(tls)
+    tlssrv.close_notify(tls)
   }
   poll.pd_close(hconn.conn_pd(hc))
   hconn.unregister(hc)
@@ -326,7 +329,7 @@ pub fn hc_free(hc: Int) {
   }
   let tls = ld(hc, hconn.HC_TLS)
   if tls != 0 {
-    rthttp.cl_tls_free(tls)
+    tlssrv.free(tls)
   }
   obj.free_obj(hc)
 }

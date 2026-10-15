@@ -8,8 +8,8 @@
 // connection, h2srv.xo's HTTP/2 one) and imports neither, so both can
 // use it.
 //
-// The TLS connections are xo_tls.c's (Mbed TLS), reached through the C's
-// rthttp.tls_c_* and cl_tls_* calls. The Windows arms are UNTESTED on
+// The server's TLS connections are tlssrv.xo's (its C path tlssrv_c.xo:
+// xo_tls.c on Mbed TLS). The Windows arms are UNTESTED on
 // windows: written on macOS and checked by the cross build only.
 use native/llrt/ctx
 use native/llrt/dns
@@ -21,6 +21,7 @@ use native/llrt/rc
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/tlssrv
 use native/llrt/twflags
 use native/llrt/twrun
 use native/rt
@@ -225,7 +226,7 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
     r = -1
   } else if tls != 0 {
     // the handshake first, then decrypted bytes (xo_tls.c)
-    r = rthttp.tls_c_hc_read(tls, p, cap)
+    r = tlssrv.hc_read(tls, p, cap)
   } else {
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {
@@ -256,7 +257,7 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   let hc = rec(h)
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
-    return rthttp.cl_tls_write(tls, p, n) == 0
+    return tlssrv.write(tls, p, n) == 0
   }
   let pd = conn_pd(hc)
   if !poll.pd_begin(pd) {
@@ -318,7 +319,7 @@ pub fn remote_ip(h: rthttp.HConn) -> Str {
 /// Reads what the TLS connection has into the cap bytes at p, without
 /// waiting (h2srv.xo's fiber waits itself): the count, 0 at the end of
 /// the stream, -1 on an error, -2 when nothing is there.
-pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int { rthttp.tls_c_nb_read(ld(rec(h), HC_TLS), p, cap) }
+pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int { tlssrv.nb_read(ld(rec(h), HC_TLS), p, cap) }
 
 /// The connection's poll descriptor.
 pub fn pd(h: rthttp.HConn) -> Int { conn_pd(rec(h)) }

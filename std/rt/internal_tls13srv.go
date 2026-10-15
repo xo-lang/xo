@@ -25,7 +25,8 @@ import (
 // This file is std/native/llrt/tls13srv.xo written out in Go with Go's
 // crypto (over internal_tls13.go's records and key schedule): the
 // reference the tls13srv crypto_op's goldens diff the Xo server against
-// (work item B31). It follows the Xo file function for function; `pair`
+// (work item B31). It follows the Xo file function for function (less
+// Conf.alts and HANDOFF, which only tlssrv.xo's connections use); `pair`
 // runs Go's crypto/tls client against its server instead.
 
 // cryptoTLS13Srv is tls13srv.xo's op: `replay` and `pair` (see its doc).
@@ -124,17 +125,17 @@ type t13sConf struct {
 }
 
 type t13Server struct {
-	conf                  t13sConf
-	state                 int
-	err                   string
-	closed, hrr, ccsSent  bool
-	suite, group, scheme  int
-	alpn, sni             string
-	rin, hs, app, out, tr []byte
-	random                []byte
-	ch1                   t13sHello
-	cHS, clientFin, cAP   []byte
-	rk, wk                *t13Keys
+	conf                       t13sConf
+	state                      int
+	err                        string
+	closed, hrr, ccsSent, seen bool
+	suite, group, scheme       int
+	alpn, sni                  string
+	rin, hs, app, out, tr      []byte
+	random                     []byte
+	ch1                        t13sHello
+	cHS, clientFin, cAP        []byte
+	rk, wk                     *t13Keys
 }
 
 func (s *t13Server) keys() {
@@ -173,6 +174,11 @@ func (s *t13Server) feed(data []byte) {
 	s.rin = append(s.rin, data...)
 	for s.state != t13sFailed && !s.closed && len(s.rin) >= 5 {
 		n := t13U16At(s.rin, 3)
+		if !s.seen && (s.rin[0] != 21 && s.rin[0] != 22 || s.rin[1] >= 16) {
+			s.err, s.state = "tls: first record does not look like a TLS handshake", t13sFailed
+			return
+		}
+		s.seen = true
 		if n > 16640 {
 			s.fail(22, fmt.Sprintf("tls: oversized record received with length %d", n))
 			return

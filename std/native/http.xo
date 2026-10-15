@@ -10,6 +10,7 @@ use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/tlssrv
 use native/llrt/cabi_http
 use native/llrt/cabi_tls
 use native/llrt/cabi_net
@@ -81,7 +82,7 @@ struct Client {
 
 /// http.TlsCert (std.md 4.6).
 struct TlsCert {
-  c: rthttp.TCert
+  c: tlssrv.Cert
 }
 
 /// http.Response with the number of its streamed body's function (0:
@@ -531,8 +532,7 @@ fn (s: Server) addr() -> Str { s.l.addr() }
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server { Server{l: s.l, r: s.r, tls: certs, tls_on: true} }
 
 fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
-  let c = rthttp.tls_cert(cert_pem, key_pem)
-  let e = rthttp.tls_cert_err(c)
+  let (c, e) = tlssrv.cert(cert_pem, key_pem)
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
@@ -550,7 +550,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   let srv = hserve.srv_new()
   defer hserve.srv_close(srv)
   for c in s.tls {
-    rthttp.srv_tls(srv, c.c)
+    hserve.srv_tls(srv, c.c)
   }
   let conns = hserve.srv_group(srv)
   let l = s.l

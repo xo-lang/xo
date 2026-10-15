@@ -126,6 +126,21 @@ std (decision 0074) unless the owner decides to expose a user marker.
   server the trace's ECDSA signature and checks one the server makes
   separately; RSA signatures (PSS salts from the same source) match
   byte for byte.
+- 2026-10-15 (B31 server wiring, tlssrv.xo): the HTTP server's TLS is
+  Xo by default: tlssrv.xo runs tls13srv.xo over the accepted socket
+  (xo_tls.c's waits, cancellation, HTTP detection, close_notify), hands
+  a ClientHello without TLS 1.3 to xo-fa's tls12srv.resume
+  (tls13srv.xo's HANDOFF state), and picks the certificate by the
+  client's server name as Go's getCertificate does. http.tls_cert is
+  tls.X509KeyPair in Xo: PKCS #1 and PKCS #8 RSA, SEC 1 and PKCS #8
+  ECDSA P-256 and P-384, PKCS #8 Ed25519, with Go's error texts.
+  XO_LLRT_C=tlssrv keeps Mbed TLS (tlssrv_c.xo). After the handshake,
+  reads give one record each
+  (gotchas/tls-server-read-one-record.md). Known gaps: no session
+  tickets (Go and Mbed resume; the Xo path does a full handshake each
+  time), no client certificates (Go's default asks for none), no TLS 1.2
+  CBC suites (the scope of tls12srv.xo), and the client's roots are still
+  Mbed's (no Ed25519 roots).
 
 ## Alternatives
 

@@ -21,6 +21,7 @@ use native/llrt/tls13
 use native/llrt/tlsname
 use native/llrt/tlsrec
 use native/llrt/x509
+use native/llrt/x509verify
 use native/rt
 
 // the handshake states
@@ -29,6 +30,10 @@ pub const WAIT_CH2: Int = 1
 pub const WAIT_FIN: Int = 2
 pub const DONE: Int = 3
 pub const FAILED: Int = 4
+/// A first ClientHello without TLS 1.3 but with TLS 1.2, when
+/// Conf.handoff: nothing was sent; the TLS 1.2 server (tls12srv.xo)
+/// takes over with Server.hello and Server.rest.
+pub const HANDOFF: Int = 5
 
 // the handshake message types
 const HS_CLIENT_HELLO: Int = 1
@@ -84,10 +89,16 @@ const MAX_HANDSHAKE: Int = 65536
 /// RFC 8448 traces' encoding (key_share before supported_versions in the
 /// ServerHello, no compatibility ChangeCipherSpec), ee the
 /// EncryptedExtensions' extensions as given, ticket a NewSessionTicket
-/// message sent after the client's Finished.
+/// message sent after the client's Finished. alts are more certificate
+/// chains with their keys, picked by the client's server name (Go's
+/// getCertificate: the first whose leaf is valid for the name, else the
+/// first); handoff stops at HANDOFF for a TLS 1.2 client instead of
+/// failing.
 pub struct Conf {
   pub certs: List[Bytes]
   pub key: Bytes
+  pub alts: List[Alt]
+  pub handoff: Bool
   pub alpn: List[Str]
   pub suites: List[Int]
   pub groups: List[Int]
@@ -99,11 +110,17 @@ pub struct Conf {
   pub ticket: Bytes
 }
 
+/// Another certificate chain (DER, the leaf first) and its key.
+pub struct Alt {
+  pub certs: List[Bytes]
+  pub key: Bytes
+}
+
 /// The settings Go's server has by default for a certificate chain and
 /// key: every TLS 1.3 suite, X25519 then P-256 and P-384 (Go's order less
 /// its post-quantum hybrid and P-521), no ALPN.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
-  Conf{certs: certs, key: key, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", rfc: false, ee: None, ticket: b""}
+  Conf{certs: certs, key: key, alts: [], handoff: false, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", rfc: false, ee: None, ticket: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -122,6 +139,10 @@ pub struct Server {
   pub scheme: Int
   pub sni: Str
   pub hrr: Bool
+  /// HANDOFF's ClientHello message and the record bytes after it
+  pub hello: Bytes
+  pub rest: Bytes
+  seen: Bool
   rin: Bytes
   hs: Bytes
   app: Bytes
@@ -139,7 +160,7 @@ pub struct Server {
 
 /// A new server for conf, waiting for a ClientHello.
 pub fn server(cf: Conf) -> Server {
-  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", rk: tlsrec.plain(), wk: tlsrec.plain()}
+  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, hello: b"", rest: b"", seen: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", rk: tlsrec.plain(), wk: tlsrec.plain()}
 }
 
 /// The bytes to send to the client, taken.
@@ -153,6 +174,17 @@ pub fn take(var s: Server) -> Bytes {
 pub fn recv(var s: Server) -> Bytes {
   let a = s.app
   s.app = b""
+  a
+}
+
+/// At most n bytes of the application data received, taken; the rest
+/// stays.
+pub fn recv_some(var s: Server, n: Int) -> Bytes {
+  if s.app.len() <= n {
+    return recv(s)
+  }
+  let a = s.app[0..n]
+  s.app = s.app[n..s.app.len()]
   a
 }
 
@@ -176,8 +208,15 @@ pub fn close(var s: Server) {
 /// Takes bytes the client sent: every complete record is processed.
 pub fn feed(var s: Server, data: Bytes) {
   s.rin = tls13.cat2(s.rin, data)
-  while s.state != FAILED && !s.closed && s.rin.len() >= 5 {
+  while s.state != FAILED && s.state != HANDOFF && !s.closed && s.rin.len() >= 5 {
     let n = Int(s.rin[3]) * 256 + Int(s.rin[4])
+    if !s.seen && (!(s.rin[0] is 21 | 22) || Int(s.rin[1]) >= 16) {
+      // Go's check of the first record (a RecordHeaderError: no alert)
+      s.err = "tls: first record does not look like a TLS handshake"
+      s.state = FAILED
+      return
+    }
+    s.seen = true
     if n > tlsrec.MAX_CIPHER {
       fail(s, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
       return
@@ -240,7 +279,7 @@ fn record(var s: Server, hdr: Bytes, body: Bytes) {
       return
     }
     s.hs = tls13.cat2(s.hs, inner.data)
-    while s.state != FAILED && s.hs.len() >= 4 {
+    while s.state != FAILED && s.state != HANDOFF && s.hs.len() >= 4 {
       let t = Int(s.hs[0])
       let n = tls13.u24_at(s.hs, 1)
       if n > MAX_HANDSHAKE {
@@ -522,6 +561,14 @@ fn client_hello(var s: Server, msg: Bytes) {
     return
   }
   let versions = if h.versions.is_empty() { versions_from_max(h.vers) } else { h.versions }
+  if !has(versions, 0x0304) && has(versions, 0x0303) && s.conf.handoff {
+    s.hello = msg
+    s.rest = tls13.cat2(s.hs, s.rin)
+    s.hs = b""
+    s.rin = b""
+    s.state = HANDOFF
+    return
+  }
   if !has(versions, 0x0304) {
     fail(s, ALERT_PROTOCOL_VERSION, "tls: client offered only unsupported versions: ${hex_list(versions)}")
     return
@@ -671,6 +718,7 @@ fn respond(var s: Server, h: Hello) {
     fail(s, ALERT_INTERNAL_ERROR, "tls: no certificates configured")
     return
   }
+  pick(s)
   let leaf = x509.parse(s.conf.certs[0])
   if leaf.err != "" {
     fail(s, ALERT_INTERNAL_ERROR, "tls: failed to parse certificate: ${leaf.err}")
@@ -748,6 +796,28 @@ fn respond(var s: Server, h: Hello) {
   s.wk = tlsrec.keys(s.suite, ap[1])
   s.client_fin = tls13.verify_data(hash, s.c_hs, s.tr)
   s.state = WAIT_FIN
+}
+
+/// Go's getCertificate among Conf.certs and Conf.alts: the first chain
+/// whose leaf is valid for the client's server name becomes Conf.certs.
+fn pick(var s: Server) {
+  if s.conf.alts.is_empty() || s.sni == "" {
+    return
+  }
+  var all: List[Alt] = [Alt{certs: s.conf.certs, key: s.conf.key}]
+  for a in s.conf.alts {
+    all.push(a)
+  }
+  for a in all {
+    if !a.certs.is_empty() {
+      let p = x509.parse(a.certs[0])
+      if p.err == "" && tlsname.host_ok(x509verify.names(p.cert), s.sni) {
+        s.conf.certs = a.certs
+        s.conf.key = a.key
+        return
+      }
+    }
+  }
 }
 
 /// The compatibility mode's ChangeCipherSpec (RFC 8446 D.4), once, after
