@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (xo_rt.c inventory rank 1 and its dead code): the C
+  record types of a scope, a Mutex and an Atomic, which no C read, are
+  opaque declarations, and their layout asserts are gone (tasks.xo,
+  mutex.xo and atomic_new's constants are the layouts); deadline(),
+  pd_wait, and the declarations and weak stubs of xo_x_net_peername and
+  xo_x_net_ntop, which nothing called, are deleted with cabi_net.xo's
+  net_peername, net_ntop, net_read and net_send. xo_rt.c 2902 to 2816
+  lines. The C test tasks.c reads those records at Xo's offsets.
 - Native runtime: xo_bytes.c is deleted. Its xo_fault_bytes_index had
   no caller: the arm64 emitter's Bytes index check goes through
   isel.xo fault_entry to cabi.xo's fault_raise_bytes_index export, and

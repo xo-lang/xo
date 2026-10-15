@@ -1689,37 +1689,9 @@ typedef struct {
 // ---------------------------------------------------------------------------
 // Scopes and tasks
 
-typedef struct xo_scope {
-	xo_hdr h;
-	xo_node body;
-	xo_node *tasks;       // the node of the scope's tasks (replaced by s.cancel())
-	xo_node **old;        // earlier task nodes, freed with the scope
-	int nold;
-	xo_node *parent_node; // the opening context's node before the scope
-	xo_lock mu;           // list, fail, closed, tasks
-	// atomic: two for each task not finished and each queue entry of its
-	// tasks not taken yet, plus 1 while the joiner waits for zero. Every
-	// worker writes it: padded off the lines the spawning thread uses.
-	char pad0[128];
-	int64_t pending;
-	xo_park *joiner; // the joiner's park (set before it sets bit 0)
-	char pad1[128];
-	struct xo_task *list; // every task, each holding a reference, until the scope closes
-	struct xo_task *fail; // the first task that failed (a reference)
-	int closed;
-	// task.with_timeout (decision 0069): the timer that cancels the body,
-	// and that it fired (atomic)
-	struct xo_timer *deadline;
-	int timed_out;
-	struct xo_task *fault; // the first task that faulted (a reference, decision 0085)
-	// list's length, and the length at which a spawn prunes it next
-	// (scope_prune); closing: the join started, the list stays as it is
-	int64_t nlist, prune_at;
-	int closing;
-	// task.with_budget (decision 0175): the budget of the body, a
-	// reference until xo_budget_end
-	struct xo_budget *bud;
-} xo_scope;
+// A scope is tasks.xo's record (its S_* offsets, budget.xo's and
+// poll.xo's copies): the C never reads one.
+typedef struct xo_scope xo_scope;
 
 typedef void (*xo_run_fn)(xo_rlist *, struct xo_task *);
 
@@ -1754,8 +1726,7 @@ enum { T_QUEUED, T_RUNNING, T_DONE };
 // `s.group()`, the program's task group (os.tasks), and s.cancel() are
 // tasks.xo's (B18), which generated code calls through its exports.
 
-_Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, old) == 80 && offsetof(xo_scope, nold) == 88 && sizeof(xo_node) == 56,
-               "tasks.xo S_TASKS, S_OLD, S_NOLD, the node's size");
+_Static_assert(sizeof(xo_node) == 56, "tasks.xo: the node's size");
 
 // The task states in Xo (decision 0212, std/native/llrt/sched.xo).
 
@@ -1971,8 +1942,6 @@ _Static_assert(offsetof(xo_runq, head) == 0 && offsetof(xo_runq, tail) == 128 &&
 _Static_assert(offsetof(xo_worker, q) == 0 && offsetof(xo_worker, sched_sp) == 2208 && offsetof(xo_worker, hooks) == 2216, "sched.xo W_*");
 _Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48 && offsetof(xo_fiber, hooks) == 80, "sched.xo F_*");
 _Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
-_Static_assert(offsetof(xo_scope, pending) == 240, "sched.xo S_PENDING");
-_Static_assert(offsetof(xo_scope, body) == 16 && offsetof(xo_scope, bud) == 456, "budget.xo S_BODY, S_BUD");
 _Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
 // and std/native/llrt/pool.xo (decision 0212 stage 2)
 _Static_assert(sizeof(xo_lock) == 8, "pool.xo's locks are words");
@@ -1981,9 +1950,6 @@ _Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 &
                    offsetof(xo_node, canceled) == 32 && offsetof(xo_node, waiter) == 40 && offsetof(xo_node, mu) == 48,
                "pool.xo N_*");
 _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
-_Static_assert(offsetof(xo_scope, tasks) == 72 && offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, joiner) == 248 && offsetof(xo_scope, list) == 384 &&
-                   offsetof(xo_scope, closed) == 400 && offsetof(xo_scope, nlist) == 432 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448,
-               "pool.xo S_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
 _Static_assert(offsetof(__typeof__(tw), vpending) == 16 && offsetof(__typeof__(tw), vepoch) == 24 && offsetof(__typeof__(tw), virt) == 40, "pool.xo TW_*");
 _Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
@@ -2005,10 +1971,6 @@ _Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && 
                    offsetof(xo_task, background) == 124 && offsetof(xo_task, snext) == 168 && offsetof(xo_task, bud) == 208 &&
                    sizeof(xo_task) == 216 && offsetof(xo_hdr, free) == 8,
                "tasks.xo T_*, H_FREE");
-_Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list) == 384 && offsetof(xo_scope, closed) == 400 &&
-                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, timed_out) == 416 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
-                   sizeof(xo_scope) == 464,
-               "tasks.xo S_*; poll.xo SC_*");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
 // (B18), which generated code calls through its exports.
@@ -2018,7 +1980,6 @@ _Static_assert(offsetof(xo_task, scope) == 72 && offsetof(xo_task, result) == 11
                    offsetof(xo_task, waiters) == 152 && offsetof(xo_task, fault_msg) == 184 && offsetof(xo_task, fault_loc) == 192 &&
                    offsetof(xo_task, fault_detail) == 200,
                "tasks.xo T_*");
-_Static_assert(offsetof(xo_scope, mu) == 104 && offsetof(xo_scope, fail) == 392 && offsetof(xo_scope, fault) == 424, "tasks.xo S_*");
 
 // ---------------------------------------------------------------------------
 // Channels (core 7.3)
@@ -2097,25 +2058,14 @@ _Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && 
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
 // writers preferred, holding its value in a shared list of one.
 
-typedef struct {
-	xo_hdr h;
-	xo_lock mu;
-	int writer;
-	int64_t readers, wwait, rwait; // rwait: readers in waiters
-	xo_rlist *slot;
-	xo_ldrop drop;
-	xo_wl waiters;
-} xo_mutex;
+// A Mutex is mutex.xo's record (its M_* offsets): the C never reads one.
+typedef struct xo_mutex xo_mutex;
 
 // The Mutex's operations are mutex.xo's (B19), which generated code calls
 // through its exports. mutex_free stays C (the free function the handle names, through the services
 // record).
 
-_Static_assert(offsetof(xo_mutex, mu) == 16 && offsetof(xo_mutex, writer) == 24 && offsetof(xo_mutex, readers) == 32 &&
-                   offsetof(xo_mutex, wwait) == 40 && offsetof(xo_mutex, rwait) == 48 && offsetof(xo_mutex, slot) == 56 &&
-                   offsetof(xo_mutex, drop) == 64 && offsetof(xo_mutex, waiters) == 72 && sizeof(xo_mutex) == 88 &&
-                   offsetof(xo_went, granted) == 28,
-               "mutex.xo M_*");
+_Static_assert(offsetof(xo_went, granted) == 28, "mutex.xo W_GRANTED");
 
 // ---------------------------------------------------------------------------
 // Atomic[T] for Int and Bool (a Bool is 0 or 1)
@@ -2126,17 +2076,10 @@ _Static_assert(offsetof(xo_mutex, mu) == 16 && offsetof(xo_mutex, writer) == 24 
 // three word header), and add and max are std/native/llrt/atomic.xo.
 // The C keeps the allocation (decision 0198 deleted the C path).
 
-typedef struct {
-	xo_hdr h;
-	// the value on a cache line apart from the count, which every closure
-	// that captures the Atomic retains and releases (decision 0077)
-	char pad[128 - sizeof(xo_hdr)];
-	int64_t v;
-} xo_atomic;
-
-_Static_assert(__builtin_offsetof(xo_atomic, v) == 24 + 8 * 13, "Atomic's value is slot 13 (decision 0200)");
-
-_Static_assert(sizeof(xo_atomic) == 136, "tasks.xo atomic_new");
+// An Atomic is tasks.xo's record (atomic_new: 136 bytes, the value at
+// byte 128, XO_ATOMIC_V): the C never reads one.
+typedef struct xo_atomic xo_atomic;
+#define XO_ATOMIC_V 128
 
 // ---------------------------------------------------------------------------
 // The event loop (decision 0069): timers, sockets, and signals
@@ -2292,26 +2235,13 @@ _Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer
 
 // The network's system calls (decision 0206 stage 3, the zero-C audit's
 // B23): std/native/llrt/netconn.xo makes the network's (listen, dial,
-// accept, reads and writes) from Xo. What the C still calls is below:
-// the poller's (its epoll, its pipe made nonblocking, a descriptor's
-// shutdown and close) through cabi_poll.xo's exports, which every
-// program has; the server's peer address, through cabi_net.xo's, which
-// a program carries when it dials, listens, or uses std/http. Those are weak references
-// on ELF, so a program without them links (a program linked with no C
-// library has them as strong references, as before); Mach-O takes no
+// accept, reads and writes) from Xo. The netconn.xo operations and the
+// handles' free functions, which a program carries when it dials,
+// listens, or uses std/http (cabi_net.xo), are weak references
+// everywhere (XO_NC_REF, above the services record); Mach-O takes no
 // undefined weak reference (and PE/COFF's are weak externals with a
 // default), so weak definitions stand in there until cabi_net.xo's
-// replace them. The netconn.xo operations and the handles' free
-// functions are weak everywhere (XO_NC_REF, above the services record).
-#ifdef XO_NOLIBC
-#define XO_NX_REF
-#elif defined(__APPLE__) || defined(_WIN32)
-#define XO_NX_REF
-#else
-#define XO_NX_REF __attribute__((weak))
-#endif
-XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
-XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
+// replace them.
 XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
 XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
 XO_NC_REF int64_t xo_x_nc_listener_addr(int64_t l, int64_t np);
@@ -2327,8 +2257,6 @@ XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
 #define XO_NX_VSTUB(name, ...)                                                                                                \
 	__attribute__((weak)) void name(__VA_ARGS__) {}
-XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_listener_addr, int64_t a, int64_t b)
@@ -2360,15 +2288,6 @@ static void ev_start(void) { xo_x_poll_ev_start(); }
 void xo_x_poll_timer_add(int64_t t);
 void xo_x_poll_timer_del(int64_t t);
 
-// deadline is the monotonic time d from now (saturating).
-static int64_t deadline(int64_t d) {
-	int64_t now = tnow(), w;
-	if (__builtin_add_overflow(now, d, &w)) {
-		w = INT64_MAX;
-	}
-	return w;
-}
-
 // Socket descriptors
 
 // pd_ready hands readiness mode (1 read, 2 write) to pd's waiters, or
@@ -2386,12 +2305,10 @@ int64_t xo_x_poll_pd_begin(int64_t pd);
 void xo_x_poll_pd_end(int64_t pd);
 void xo_x_poll_pd_close(int64_t pd);
 void xo_x_poll_pd_free(int64_t pd);
-int64_t xo_x_poll_pd_wait(int64_t pd, int64_t write, int64_t c, int64_t when);
 #define pd_begin(pd) ((int)xo_x_poll_pd_begin(XO_ADDR(pd)))
 #define pd_end(pd) xo_x_poll_pd_end(XO_ADDR(pd))
 #define pd_close(pd) xo_x_poll_pd_close(XO_ADDR(pd))
 #define pd_free(pd) xo_x_poll_pd_free(XO_ADDR(pd))
-#define pd_wait_until(pd, write, c, when) ((int)xo_x_poll_pd_wait(XO_ADDR(pd), (write), XO_ADDR(c), (when)))
 #ifdef XO_WINPOLL
 void xo_x_poll_pd_arm(int64_t pd);
 #define pd_arm(pd) xo_x_poll_pd_arm(XO_ADDR(pd))
@@ -2403,9 +2320,6 @@ _Static_assert(offsetof(xo_pd, iosb) == 56 && offsetof(xo_pd, info) == 72 && off
 #endif
 
 enum { PD_READY, PD_CANCELED, PD_CLOSED, PD_TIMEOUT };
-
-// pd_wait is pd_wait_until without a deadline.
-static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, write, c, 0); }
 
 // The poller thread
 

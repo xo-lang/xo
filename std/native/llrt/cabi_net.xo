@@ -5,15 +5,11 @@
 // (std/native/http.xo imports this module). The network's operations
 // are netconn.xo's, which generated code calls here directly
 // (selfhost/ssa/exports.xo; std/llrt/xo_rt.c forwards xo_net_listen and
-// the rest here for code of compilers up to 0.12.0); net_read and net_send were the C's reads and writes (xo_http.c,
-// the TLS library's), which no C makes now. The C declares these weak (weak
+// the rest here for code of compilers up to 0.12.0). The C declares these weak (weak
 // definitions on macOS and Windows), so a program without them links.
 // Nothing here may fault.
-use native/llrt/dns
 use native/llrt/netconn
 use native/llrt/raw
-use native/llrt/sock
-use native/rt
 
 // ---------------------------------------------------------------------------
 // The network's operations (netconn.xo): a handle's address, 0 for none
@@ -51,32 +47,3 @@ fn nc_conn_read_list(cn: Int, max: Int) -> Int { netconn.conn_read(cn, max, 0) }
 fn nc_status() -> Int { netconn.status() }
 
 fn nc_msg() -> Int { netconn.msg_list() }
-
-// ---------------------------------------------------------------------------
-// System calls: the kernel's result, a negative errno on failure.
-
-/// getpeername into the buffer at sa of the size in the 32 bit word at
-/// lenp.
-fn net_peername(fd: Int, sa: Int, lenp: Int) -> Int { sock.peername(fd, sa, lenp) }
-
-/// read(2) of at most n bytes into p.
-fn net_read(fd: Int, p: Int, n: Int) -> Int { sock.read(fd, p, n) }
-
-/// send(2) of n bytes at p with MSG_NOSIGNAL (a peer gone is EPIPE, not
-/// SIGPIPE).
-fn net_send(fd: Int, p: Int, n: Int) -> Int { sock.send(fd, p, n, 16384) }
-
-/// inet_ntop of the address at src (4 bytes for family AF_INET, 16 for
-/// AF_INET6), written zero terminated into the buffer of bn bytes at buf
-/// (cut to fit); its length, -1 for another family.
-fn net_ntop(family: Int, src: Int, buf: Int, bn: Int) -> Int {
-  let n = if family == sock.AF_INET { 4 } else if family == sock.af_inet6() { 16 } else { 0 }
-  if n == 0 || bn < 1 {
-    return -1
-  }
-  let s = dns.ntop(raw.str_at(src, n).bytes())
-  let k = if s.len() < bn { s.len() } else { bn - 1 }
-  rt.mem_copy(buf, raw.data(s), k)
-  rt.mem_store(buf, k, 0, 1)
-  k
-}

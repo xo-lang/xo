@@ -14,17 +14,28 @@
 
 // Atomic's operations on the runtime's object, as the generated code
 // does them inline and std/native/llrt/atomic.xo (decision 0200; decision
-// 0198 deleted the C runtime's copies this test used to drive)
-static int64_t t_atomic_get(xo_atomic *a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
-static int64_t t_atomic_swap(xo_atomic *a, int64_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+// 0198 deleted the C runtime's copies this test used to drive); the
+// value is the word at XO_ATOMIC_V (tasks.xo's record)
+#define AV(a) ((int64_t *)((char *)(a) + XO_ATOMIC_V))
+// a Mutex's lock word and waiting writers and readers (mutex.xo M_MU,
+// M_WWAIT, M_RWAIT), a scope's lock word and task list length (tasks.xo
+// S_MU, S_NLIST): Xo's records, opaque to the C runtime
+#define MW(m, off) ((int64_t *)((char *)(m) + (off)))
+#define M_MU 16
+#define M_WWAIT 40
+#define M_RWAIT 48
+#define S_MU 104
+#define S_NLIST 432
+static int64_t t_atomic_get(xo_atomic *a) { return __atomic_load_n(AV(a), __ATOMIC_SEQ_CST); }
+static int64_t t_atomic_swap(xo_atomic *a, int64_t v) { return __atomic_exchange_n(AV(a), v, __ATOMIC_SEQ_CST); }
 static int64_t t_atomic_cas(xo_atomic *a, int64_t old, int64_t v) {
-	return __atomic_compare_exchange_n(&a->v, &old, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return __atomic_compare_exchange_n(AV(a), &old, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
-static int64_t t_atomic_add(xo_atomic *a, int64_t n) { return __atomic_add_fetch(&a->v, n, __ATOMIC_SEQ_CST); }
+static int64_t t_atomic_add(xo_atomic *a, int64_t n) { return __atomic_add_fetch(AV(a), n, __ATOMIC_SEQ_CST); }
 static int64_t t_atomic_max(xo_atomic *a, int64_t n) {
-	int64_t old = __atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
+	int64_t old = __atomic_load_n(AV(a), __ATOMIC_SEQ_CST);
 	while (old < n) {
-		if (__atomic_compare_exchange_n(&a->v, &old, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+		if (__atomic_compare_exchange_n(AV(a), &old, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
 			return n;
 		}
 	}
@@ -411,15 +422,15 @@ static void test_handoff(void) {
 		rs[i] = spawn(s, J_READ, 1, m, 2);
 	}
 	for (int queued = 0; !queued;) {
-		lk(&m->mu);
-		queued = m->rwait == R;
-		unlk(&m->mu);
+		lk((xo_lock *)MW(m, M_MU));
+		queued = *MW(m, M_RWAIT) == R;
+		unlk((xo_lock *)MW(m, M_MU));
 	}
 	xo_task *w = spawn(s, J_LOCK, 1, m, 2);
 	for (int queued = 0; !queued;) {
-		lk(&m->mu);
-		queued = m->wwait == 1;
-		unlk(&m->mu);
+		lk((xo_lock *)MW(m, M_MU));
+		queued = *MW(m, M_WWAIT) == 1;
+		unlk((xo_lock *)MW(m, M_MU));
 	}
 	*(int64_t *)rl_data(held) = 1;
 	t_mutex_unlock(m, held);
@@ -458,11 +469,11 @@ static void test_prune(void) {
 			drop_int_list(t_task_await(ts[i], LOC));
 			release(ts[i]);
 		}
-		lk(&s->mu);
-		if (s->nlist > maxlist) {
-			maxlist = s->nlist;
+		lk((xo_lock *)MW(s, S_MU));
+		if (*MW(s, S_NLIST) > maxlist) {
+			maxlist = *MW(s, S_NLIST);
 		}
-		unlk(&s->mu);
+		unlk((xo_lock *)MW(s, S_MU));
 	}
 	// without pruning the list holds every task started (total). The bound
 	// is three quarters, not tighter: under load more finished tasks still
