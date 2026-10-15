@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 6, decision 0202): the
+  TLS 1.3 client checked against Go's crypto/tls server. The golden
+  tls13_go replays traces recorded from a Go server (HelloRetryRequest
+  from X25519 to P-256 with ChaCha20-Poly1305 and ALPN; a
+  CertificateRequest answered by an empty Certificate with AES-256-GCM,
+  SHA-384 and a P-384 ECDSA server, then a KeyUpdate asking for the
+  client's; an Ed25519 server over a P-256 share; fed whole and a byte
+  at a time; an expired certificate and no root). The client's records
+  equal the trace's, which the Go server accepted. The Go reference is
+  now a full port of tls13.xo (std/rt/internal_tls13.go), and the client
+  takes fixed random, session id and key hooks. rsa.xo gains
+  sign_pss_salt (a fixed salt) for the TLS 1.3 server's RFC 8448 replay.
+
 - Native runtime (zero-C audit, the xo_rt.c memory block): real-time
   sections (core 6.5, decision 0133) are Xo: obj.xo queues and drains
   the deferred frees, std/native/llrt/rtsec.xo enters and leaves the

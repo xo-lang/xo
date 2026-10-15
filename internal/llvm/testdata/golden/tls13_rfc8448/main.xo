@@ -79,7 +79,7 @@ fn replay(os: Os, title: Str, flight: Str, shared: Str, root: Str, now: Int, hos
 
 fn replay_with(os: Os, title: Str, hello: Str, flight: Str, key: Str, kind: Str, root: Str, now: Int, host: Str, suite: Str, chunk: Int) uses stdio {
   let parts = pack([hex("${hello}${flight}"), hex("${TICKET}${SERVER_DATA_RECORD}${SERVER_ALERT}"), hex(CLIENT_DATA), hex(root)])
-  let r = internal.crypto_op("tls13.replay", hex(HELLO), parts, hex(key), "${now} ${host} ${suite} ${chunk} ${kind}".bytes())
+  let r = internal.crypto_op("tls13.replay", hex(HELLO), parts, hex(key), "${now} ${host} ${suite} ${chunk} ${kind} 29 -".bytes())
   os.stdio.println("${title}:")
   for line in (r.to_str() ?? "").split("\n") {
     if line != "" {
@@ -101,7 +101,7 @@ fn main(os: Os) uses stdio {
   replay(os, "corrupt record", splice(SERVER_FLIGHT, 40, 42, "00"), SHARED, CERT, NOW, "-", "1301", 0)
   replay(os, "wrong secret", SERVER_FLIGHT, splice(SHARED, 0, 2, "00"), CERT, NOW, "-", "1301", 0)
   replay(os, "suite not offered", SERVER_FLIGHT, SHARED, CERT, NOW, "-", "1302", 0)
-  replay_with(os, "x25519", SERVER_HELLO, SERVER_FLIGHT, CLIENT_KEY, "x25519", CERT, NOW, "-", "1301", 0)
+  replay_with(os, "x25519", SERVER_HELLO, SERVER_FLIGHT, CLIENT_KEY, "key", CERT, NOW, "-", "1301", 0)
   let at = SERVER_HELLO.find(SERVER_SHARE) ?? 0
-  replay_with(os, "x25519 low order share", splice(SERVER_HELLO, at, at + 64, ZERO_SHARE), SERVER_FLIGHT, CLIENT_KEY, "x25519", CERT, NOW, "-", "1301", 0)
+  replay_with(os, "x25519 low order share", splice(SERVER_HELLO, at, at + 64, ZERO_SHARE), SERVER_FLIGHT, CLIENT_KEY, "key", CERT, NOW, "-", "1301", 0)
 }

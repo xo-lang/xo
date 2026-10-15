@@ -3,12 +3,14 @@ exit 0
 rfc 8448:
   ch <ClientHello>
   flight 6 <client Finished> 
+  params TLS_AES_128_GCM_SHA256 -
   app <client data>
   got <server data> closed true  
   bye <client close_notify>
 byte at a time:
   ch <ClientHello>
   flight 6 <client Finished> 
+  params TLS_AES_128_GCM_SHA256 -
   app <client data>
   got <server data> closed true  
   bye <client close_notify>
@@ -33,6 +35,7 @@ suite not offered:
 x25519:
   ch <ClientHello>
   flight 6 <client Finished> 
+  params TLS_AES_128_GCM_SHA256 -
   app <client data>
   got <server data> closed true  
   bye <client close_notify>

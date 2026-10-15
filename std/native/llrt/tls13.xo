@@ -93,8 +93,10 @@ pub fn schemes() -> List[Int] { [0x0403, 0x0807, 0x0503, 0x0804, 0x0805, 0x0806,
 /// of preference (the first group gets a key share), and insecure to
 /// skip the certificate's checks (Go's InsecureSkipVerify). The tests'
 /// hooks: hello a whole ClientHello message to send instead of the
-/// client's own (its key share the first group's, of the private key
-/// priv), shared the ECDHE secret to use instead of the exchange's.
+/// client's own (its key share the first group's); random and sid the
+/// random and legacy session id of the client's own ClientHello; priv
+/// the private key of the key shares for X25519 and P-256 (32 bytes);
+/// shared the ECDHE secret to use instead of the exchange's.
 pub struct Conf {
   pub host: Str
   pub roots: List[x509.Cert]
@@ -104,6 +106,8 @@ pub struct Conf {
   pub groups: List[Int]
   pub insecure: Bool
   pub hello: Bytes
+  pub random: Bytes
+  pub sid: Bytes
   pub priv: Bytes
   pub shared: Bytes
 }
@@ -112,7 +116,7 @@ pub struct Conf {
 /// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES), X25519
 /// then P-256 and P-384 (Go's order less its post-quantum hybrid).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
-  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, hello: b"", priv: b"", shared: b""}
+  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
 }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
@@ -153,13 +157,14 @@ pub fn client(cf: Conf) -> Client {
   var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, alpn: "", peer: [], rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", share_group: 0, priv: b"", cookie: b"", hrr: false, ccs_sent: false, cert_req: false, req_ctx: b"", hs_secret: b"", c_hs: b"", s_hs: b"", rk: tlsrec.plain(), wk: tlsrec.plain()}
   var ch = cf.hello
   if ch.is_empty() {
-    c.random = rand.next_bytes(32)
-    c.sid = rand.next_bytes(32)
+    let fixed = !cf.random.is_empty()
+    c.random = if fixed { cf.random } else { rand.next_bytes(32) }
+    c.sid = if fixed { cf.sid } else { rand.next_bytes(32) }
     if cf.groups.is_empty() {
       return fail(c, ALERT_INTERNAL_ERROR, "tls: no supported elliptic curves for ECDHE")
     }
     c.share_group = cf.groups[0]
-    c.priv = keygen(c.share_group)
+    c.priv = key_for(cf, c.share_group)
     ch = hello(c)
   } else if ch.len() > 38 {
     let n = Int(ch[38])
@@ -534,7 +539,7 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
       return
     }
     c.share_group = h.group
-    c.priv = keygen(h.group)
+    c.priv = key_for(c.conf, h.group)
   }
   c.hrr = true
   c.cookie = h.cookie
@@ -844,6 +849,10 @@ fn fail(var c: Client, alert: Int, msg: Str) -> Client {
 /// The nistec curve of a group.
 fn curve(g: Int) -> Int { if g == GROUP_P384 { nistec.P384 } else { nistec.P256 } }
 
+/// The private key for the group: the test hook's when it fits, else a
+/// new one.
+fn key_for(cf: Conf, group: Int) -> Bytes { if cf.priv.len() == 32 && group != GROUP_P384 { cf.priv } else { keygen(group) } }
+
 /// A new private key for the group (X25519: 32 random bytes, RFC 7748).
 pub fn keygen(group: Int) -> Bytes { if group == GROUP_X25519 { rand.next_bytes(32) } else { nistec.generate(curve(group)) } }
 
@@ -933,16 +942,20 @@ fn hex(x: Int) -> Str {
 // The tests' op
 
 /// internal.crypto_op's tls13 ops (std/internal.xo): `replay` drives a
-/// client with the fixed ClientHello a and ECDHE secret c (RFC 8448's
-/// traces) through b's parts, each a 3 byte big endian length then the
-/// bytes: the server's handshake records, its records after the
-/// handshake, the client's application data, the root's DER (none for no
-/// root); d is "time host suite chunk key" (host "-" for none, the
-/// suite offered in hex, chunk the size of the pieces the server's bytes
-/// are fed in, 0 whole; key "shared" when c is the ECDHE secret,
-/// "x25519" when it is the client's X25519 private key). The result is a line per step: what the client
-/// sent (hex), then its state and error, the data received and whether
-/// the server closed.
+/// client through a recorded server's bytes: b's parts, each a 3 byte
+/// big endian length then the bytes, are the server's handshake records,
+/// its records after the handshake, the client's application data, and
+/// the root's DER (none for no root); d is "time host suites chunk kind
+/// groups alpn": host "-" for none, the suites offered (hex, comma
+/// separated), chunk the size of the pieces the server's bytes are fed
+/// in (0 whole), groups (decimal, comma separated), the ALPN protocols
+/// ("-" none, comma separated), and kind how a and c fix the client's
+/// randomness: "shared" a is the ClientHello and c the ECDHE secret
+/// (RFC 8448's trace), "key" a is the ClientHello and c the private key,
+/// "build" a is the random and session id and c the private key (the
+/// client builds its ClientHellos). The result is a line per step: what
+/// the client sent (hex), its state and error, the suite and protocol
+/// negotiated, the data received and whether the server closed.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   if what != "replay" {
     return None
@@ -955,7 +968,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
     i += 3 + n
   }
   let args = (d.to_str() ?? "").split(" ")
-  if parts.len() != 4 || args.len() != 5 {
+  if parts.len() != 4 || args.len() != 7 {
     return Some(b"args")
   }
   var roots: List[x509.Cert] = []
@@ -967,14 +980,30 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
     roots.push(p.cert)
   }
   var cf = conf(if args[1] == "-" { "" } else { args[1] }, roots, Int.parse(args[0]) ?? 0)
-  let sb = Bytes.from_hex(args[2]) ?? b"\x00\x00"
-  cf.suites = [if sb.len() == 2 { u16_at(sb, 0) } else { 0 }]
-  cf.hello = a
-  if args[4] == "x25519" {
-    cf.groups = [GROUP_X25519]
+  var suites: List[Int] = []
+  for x in args[2].split(",") {
+    let sb = Bytes.from_hex(x) ?? b""
+    suites.push(if sb.len() == 2 { u16_at(sb, 0) } else { 0 })
+  }
+  cf.suites = suites
+  var groups: List[Int] = []
+  for x in args[5].split(",") {
+    groups.push(Int.parse(x) ?? 0)
+  }
+  cf.groups = groups
+  if args[6] != "-" {
+    cf.alpn = args[6].split(",")
+  }
+  if args[4] == "shared" {
+    cf.hello = a
+    cf.shared = c
+  } else if args[4] == "key" {
+    cf.hello = a
     cf.priv = c
   } else {
-    cf.shared = c
+    cf.random = a[0..32]
+    cf.sid = a[32..a.len()]
+    cf.priv = c
   }
   let chunk = Int.parse(args[3]) ?? 0
   var cl = client(cf)
@@ -982,6 +1011,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   feed_in(cl, parts[0], chunk)
   s = "${s}flight ${cl.state} ${take(cl).to_hex()} ${cl.err}\n"
   if cl.state == DONE {
+    s = "${s}params ${tlsrec.suite_name(cl.suite)} ${if cl.alpn == "" { "-" } else { cl.alpn }}\n"
     send(cl, parts[2])
     s = "${s}app ${take(cl).to_hex()}\n"
     feed_in(cl, parts[1], chunk)

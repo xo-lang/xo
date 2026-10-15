@@ -333,9 +333,13 @@ pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: 
 /// The PSS signature of the hashed message by k with a random salt of
 /// the hash's length (TLS 1.3's rule, RFC 8446 4.2.3); empty on a
 /// failure.
-pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
+pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes { sign_pss_salt(k, hash, hashed, rand.next_bytes(hash_len(hash))) }
+
+/// sign_pss with the given salt (the hash's length; the tests' fixed
+/// salts, as RFC 8448's CertificateVerify).
+pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
   let hl = hash_len(hash)
-  if hashed.len() != hl {
+  if hashed.len() != hl || salt.len() != hl {
     return b""
   }
   let mod_bits = bigmod.bit_len(limbs_of(k.n))
@@ -344,7 +348,6 @@ pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
   if em_len < 2 * hl + 2 {
     return b""
   }
-  let salt = rand.next_bytes(hl)
   let h = pss_h(hash, hashed, salt)
   var db = rt.rs_with_cap(em_len - hl - 1)
   for _ in 0..em_len - 2 * hl - 2 {

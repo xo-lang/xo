@@ -1,0 +1,44 @@
+exit 0
+--- stdout
+hello retry, chacha20-poly1305, alpn:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_CHACHA20_POLY1305_SHA256 http/1.1
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+hello retry, a byte at a time:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_CHACHA20_POLY1305_SHA256 http/1.1
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+certificate request, aes-256-gcm, p-384, key update:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace (after the key update)" closed false <client KeyUpdate> 
+  bye <client close_notify>
+key update, a byte at a time:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_256_GCM_SHA384 -
+  app <client data>
+  got "hello, GET / trace (after the key update)" closed false <client KeyUpdate> 
+  bye <client close_notify>
+ed25519 over p-256:
+  ch <ClientHello>
+  flight 6 <client flight> 
+  params TLS_AES_128_GCM_SHA256 -
+  app <client data>
+  got "hello, GET / trace" closed false  
+  bye <client close_notify>
+expired:
+  ch <ClientHello>
+  flight 7 140303000101170303001375b1c502a2853990cba1b297b81e7c94b14dd4 tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2028-05-27T20:26:40Z is after 2027-05-28T20:26:40Z
+no root:
+  ch <ClientHello>
+  flight 7 140303000101170303001375acc5178ea1f4c3d15f344e7091978415f5b3 tls: failed to verify certificate: x509: certificate signed by unknown authority
+--- stderr
