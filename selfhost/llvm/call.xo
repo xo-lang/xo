@@ -1263,5 +1263,7 @@ fn xo_export(name: Str) -> Str {
     // forwarders stay for code of earlier compilers)
     return "xo_x_obj_${name.trim_prefix("rt.")}"
   }
-  ""
+  // the net, clock and scope checks, shutdown and real-time sections
+  // (ssa/exports.xo, shared with arm64)
+  ssa.rt_export(name)
 }

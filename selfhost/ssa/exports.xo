@@ -1,0 +1,24 @@
+/// The C ABI exports (decision 0207: cabi*.xo's top level functions,
+/// `xo_x_<name>`) that the native emitters call for these runtime calls
+/// instead of xo_rt.c's forwarders (kept for code of earlier compilers),
+/// or "" for a call that is not one of them. Both emitters call the
+/// export with the forwarder's arguments: an Int, Bool or handle one
+/// word, a Str its bytes' address and length.
+pub fn rt_export(name: Str) -> Str {
+  match name {
+    // tasks.xo's deadline of task.with_timeout (cabi.xo)
+    "rt.scope_deadline" => "xo_x_scope_deadline"
+    "rt.scope_timed_out" => "xo_x_scope_timed_out"
+    // stop.xo's two phase shutdown (cabi.xo)
+    "rt.stop_requested" => "xo_x_stop_requested"
+    "rt.task_stopping" => "xo_x_stop_stopping"
+    // rtsec.xo's real-time sections (cabi.xo)
+    "rt.realtime_enter" => "xo_x_rt_enter"
+    "rt.realtime_exit" => "xo_x_rt_exit"
+    // netconn.xo's listeners and connections (cabi_net.xo)
+    "rt.listener_close" => "xo_x_nc_listener_close"
+    "rt.conn_write" => "xo_x_nc_conn_write"
+    "rt.conn_close" => "xo_x_nc_conn_close"
+    _ => ""
+  }
+}

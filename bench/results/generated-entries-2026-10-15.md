@@ -177,3 +177,19 @@ to `adrp; add`). A is zero-c at 83992919, B adds E3:
 conc mutex's 0.904 and 0.786 are within its run to run spread (80M to
 200M instructions on arm64, above).
 
+
+## Batch N1 (net, scope, shutdown and real-time forwarders)
+
+Both emitters call the existing exports for nine entries through one
+mapping, selfhost/ssa/exports.xo rt_export: rt.scope_deadline,
+scope_timed_out, stop_requested, task_stopping (xo_x_stop_stopping),
+realtime_enter and realtime_exit (xo_x_rt_enter, rt_exit),
+listener_close, conn_write and conn_close (xo_x_nc_*). Owner rule of
+2026-10-15: per batch only hello on both backends and -short (plus the
+14 goldens that use these calls, on LLVM and arm64); the A/B, the full
+goldens and the fixed point run once before the next seed.
+
+C deletable after the next seed (std/llrt/xo_rt.c): xo_scope_deadline,
+xo_scope_timed_out (and their xo_x_ prototypes), xo_stop_requested,
+xo_task_stopping, xo_realtime_enter, xo_realtime_exit,
+xo_listener_close, xo_conn_write, xo_conn_close.

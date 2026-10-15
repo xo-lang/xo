@@ -1492,6 +1492,12 @@ fn (var g: G) rt_call(v: Int) {
     // exports, likewise
     name = "xo_x_${name0.trim_prefix("rt.")}"
   }
+  let own = ssa.rt_export(name0)
+  if !own.is_empty() {
+    // the net, clock and scope checks, shutdown and real-time sections
+    // (ssa/exports.xo, shared with LLVM)
+    name = own
+  }
   match g.kind(x.ty) {
     Unit => {
       let _r = g.rt(name, args, [])
