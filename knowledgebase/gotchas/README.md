@@ -556,3 +556,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [large-const-list-costs-every-build.md](large-const-list-costs-every-build.md): Observed: a 35,370 Int const List (a P-521 base table) added 27 s to every TLS build and 2.5 MB to the binary; constant Lists compile to code.
 - [native-server-unisolated-fault-wedges.md](native-server-unisolated-fault-wedges.md): Observed: a fault in a middleware stopped the native HTTP server for everyone; middleware now isolated, a fault in the connection code itself still would.
 - [slot-atomics-index-words.md](slot-atomics-index-words.md): Observed: rt.slot_load(tw, TW_VNOW) with a byte offset read word 8; test world sleeps hung in xo test --no-gc (poll.xo now, since B22 batch 2).
+- [xo-test-sigterm-grace.md](xo-test-sigterm-grace.md): Observed: a hung `xo test` keeps running 30 s after SIGTERM (core 7.5's grace); send the signal twice, never kill -9.
