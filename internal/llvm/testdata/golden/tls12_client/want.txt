@@ -1,0 +1,96 @@
+exit 0
+--- stdout
+A ecdsa p256, x25519, aes128-gcm:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c00000000000000014b290322c70c11a10b5be132142d20ef85a785a3
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002cd01b127e283a311b3afbde6a030d69ae482
+B ecdsa p384, p256, aes256-gcm:
+  hs <client flight>
+  result ok c02c 23 -
+  app 170303001c0000000000000001b0619daf3321dcf9d489281d1e3f594f9b63ead5
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002f324a135f00138a3abf0c806e5359cf5994e
+C rsa-pss, p384, chacha20:
+  hs <client flight>
+  result ok cca8 24 -
+  app 1703030014bd838a80f7225799b03d666fcf72091c18501bc5
+  got 706f6e673a70696e67  EOF
+  bye 15030300129e2941b97ebc12f14dd9f0ad181e5385ab35
+D rsa-pss, x25519, aes128-gcm, alpn:
+  hs <client flight>
+  result ok c02f 29 http/1.1
+  app 170303001c0000000000000001f86bfb55034194b14dacbfdd66b9ec26bcf31dc0
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002b42e621c7b30eba00def5097e7f6ec23889d
+E rsa-pss, x25519, aes256-gcm:
+  hs <client flight>
+  result ok c030 29 -
+  app 170303001c000000000000000167e8d839b1ab47a1271d751e6d3220c3f648c997
+  got 706f6e673a70696e67  EOF
+  bye 150303001a00000000000000020c6ffccb94a449288aeda13f3916c1a59ee5
+F ecdsa p256, x25519, chacha20:
+  hs <client flight>
+  result ok cca9 29 -
+  app 1703030014d3c0f1c97f12cbca9ef456ccd155ec9ce9b006e0
+  got 706f6e673a70696e67  EOF
+  bye 1503030012bbb9881ca86c37b74aa50724c5cfa9746660
+A byte at a time:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c00000000000000014b290322c70c11a10b5be132142d20ef85a785a3
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002cd01b127e283a311b3afbde6a030d69ae482
+expired:
+  hs 16030100c7010000c303031111111111...031503030002022a (211 bytes)
+  result tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2040-01-01T00:00:00Z is after 2036-01-01T00:00:00Z
+other host:
+  hs 16030100c5010000c103031111111111...031503030002022a (209 bytes)
+  result tls: failed to verify certificate: x509: certificate is valid for example.test, not other.test
+no root:
+  hs 16030100c7010000c303031111111111...031503030002022a (211 bytes)
+  result tls: failed to verify certificate: x509: certificate signed by unknown authority
+corrupt finished:
+  hs 16030100c7010000c303031111111111...c382d6ce9bc32e4c (328 bytes)
+  result local error: tls: bad record MAC
+corrupt signature:
+  hs 16030100c7010000c303031111111111...031503030002022f (211 bytes)
+  result tls: invalid signature by the server certificate: ECDSA verification failure
+suite not offered:
+  hs 16030100c7010000c303031111111111...0315030300020228 (211 bytes)
+  result tls: server chose an unconfigured cipher suite
+curve not offered:
+  hs 16030100c7010000c303031111111111...031503030002022f (211 bytes)
+  result tls: server selected unoffered curve
+alpn not offered:
+  hs 16030100c7010000c303031111111111...031503030002026e (211 bytes)
+  result tls: server advertised unrequested ALPN extension
+alpn not matching:
+  hs 16030100d0010000cc03031111111111...031503030002026e (220 bytes)
+  result tls: server selected unadvertised ALPN protocol
+corrupt data record:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c00000000000000014b290322c70c11a10b5be132142d20ef85a785a3
+  got  150303001a0000000000000002ce154b0ee282f4f7400de190bdbe2f3f842e local error: tls: bad record MAC
+  bye 150303001a000000000000000325a9189d484c92eb7f8423134651d669a949
+G certificate requested:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c00000000000000013dcf5c1c7b806f558962b8bb39990071581ba3a8
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002f9ceac0c3dcbedc49ba55062a1ee37a4a242
+server alert:
+  hs 16030100c7010000c303031111111111...03002b0003020303 (204 bytes)
+  result remote error: tls: handshake failure
+warning first:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c00000000000000014b290322c70c11a10b5be132142d20ef85a785a3
+  got 706f6e673a70696e67  EOF
+  bye 150303001a0000000000000002cd01b127e283a311b3afbde6a030d69ae482
+not tls:
+  hs 16030100c7010000c303031111111111...03002b0003020303 (204 bytes)
+  result tls: first record does not look like a TLS handshake
+--- stderr

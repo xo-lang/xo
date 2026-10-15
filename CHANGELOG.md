@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, TLS 1.2 part 1, decision 0202):
+  the TLS 1.2 client in Xo (std/native/llrt/tls12.xo, as Go's
+  handshake_client.go, key_agreement.go, prf.go and cipher_suites.go):
+  ECDHE over X25519, P-256 and P-384, ECDSA, RSA PKCS #1 v1.5, RSA-PSS
+  and Ed25519 signatures, the AES-GCM and ChaCha20-Poly1305 suites, the
+  extended master secret, ALPN and SNI, an empty certificate when asked
+  for one; Go's error texts and alerts. internal.crypto_op's "tls12"
+  area; the golden tls12_client replays traces of crypto/tls's server,
+  with crypto/tls's own client as the Go reference (std/rt
+  internal_tls12.go), over 21 cases on Go, LLVM and arm64. Not on the
+  TLS path yet (Xo Lang 2 integrates).
 - Native runtime (zero-C audit item B31, part 7, decision 0202): the
   HTTP client's TLS is Xo's. std/native/llrt/tlsio.xo runs tls13.xo's
   client over the connection's socket with xo_tls.c's waits (poll

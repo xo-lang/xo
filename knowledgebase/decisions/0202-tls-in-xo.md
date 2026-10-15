@@ -76,6 +76,16 @@ std (decision 0074) unless the owner decides to expose a user marker.
   client is in. The connection's state lives in an rt.Any kept by
   address (replaced after each call, values being values), its roots in
   the C's records until the root loading moves to Xo.
+- 2026-10-15 (TLS 1.2 client, tls12.xo): TLS 1.2 is in scope as Go's
+  defaults (ECDHE over X25519, P-256 and P-384; ECDSA, RSA PKCS #1 v1.5,
+  RSA-PSS and Ed25519 signatures; the AES-GCM and ChaCha20-Poly1305
+  suites; the extended master secret; ALPN and SNI; no CBC, RSA key
+  exchange, renegotiation, or resumption). Its record layer is its own
+  (an explicit GCM nonce, the TLS 1.2 additional data), not tlsrec.xo.
+  The golden's reference is crypto/tls itself, run over the recorded
+  bytes with a repeatable random source
+  (gotchas/go126-tls-ignores-config-rand.md), so the Xo client must
+  produce Go's bytes and error texts exactly. The server is tls12srv.xo.
 
 ## Alternatives
 
