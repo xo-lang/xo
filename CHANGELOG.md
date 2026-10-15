@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: xo_rt.c keeps only what is C by design (244 lines,
+  with xo_nolibc.c 372 lines of runtime C): the C tests' types,
+  placeholders, ev_start and XO_NORETURN moved to
+  std/llrt/testdata/xrec.h, and Windows' _setmode calls on the
+  standard streams are deleted (Xo writes and reads them with
+  WriteFile and ReadFile on their handles, and opens files with
+  _O_BINARY, so the C runtime's text mode never applies; UNTESTED on
+  windows). The zero-C audit lists the end state and why each piece
+  stays.
 - Native runtime (after seed 0.14.0): the C only the 0.13.0 seed's code
   called is deleted: xo_heap_large, xo_heap_large_resize and
   xo_heap_release (libcmem.xo's exports), xo_sched_run_task (cabi.xo

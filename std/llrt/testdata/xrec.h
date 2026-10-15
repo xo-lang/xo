@@ -7,6 +7,42 @@
 #ifndef XO_XREC_H
 #define XO_XREC_H
 
+#define XO_NORETURN __attribute__((noreturn, noinline, cold))
+
+// Counted objects (rc.xo, obj.xo): a count c > 0 is thread local, -n is
+// shared by n, XO_RC_IMMORTAL marks a literal (never written). A string
+// is {count, cap, bytes}, a list {count, len, cap} and its elements, a
+// handle {count, free, ...}.
+#define XO_RC_IMMORTAL INT64_MIN
+
+typedef struct {
+	int64_t rc, cap;
+	char data[];
+} xo_rstr;
+
+typedef struct {
+	int64_t rc, len, cap;
+} xo_rlist;
+
+typedef void (*xo_elem_fn)(void *);
+typedef void (*xo_free_fn)(void *);
+
+typedef struct {
+	int64_t rc;
+	xo_free_fn free;
+} xo_hdr;
+
+// the immortal placeholders a canceled operation returns, which every
+// program defines (arm64 end_data, LLVM linkonce_odr globals)
+extern xo_hdr xo_zero_handle;
+extern xo_rlist xo_empty_list;
+#define zero_handle xo_zero_handle
+#define empty_list xo_empty_list
+
+// starts the event loop once (poll.xo ev_start)
+void xo_x_poll_ev_start(void);
+static inline void ev_start(void) { xo_x_poll_ev_start(); }
+
 typedef struct xo_task xo_task;
 typedef struct xo_scope xo_scope;
 typedef struct xo_chan xo_chan;

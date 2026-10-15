@@ -1,12 +1,12 @@
 // xo_rt.c: the C left of the native runtime (the runtime is Xo:
-// std/native/llrt, decisions 0206 and 0233). What stays needs C: main
-// (the C library's start calls it), the fault raise's frame and the
-// personality addresses, Windows' stack overflow handler and binary
-// streams, the services record's C words, ThreadSanitizer's annotation,
-// the immortal placeholders generated code takes the address of, and
-// forwarders that older compilers' code still names. It is compiled with
-// the generated code (clang, -flto on LLVM); its interface is scalars
-// and pointers only.
+// std/native/llrt, decisions 0206 and 0233). What stays is C by design:
+// main (the C library's start calls it, with xo_entry from the generated
+// code) and the C tests' constructor in its place, the personality
+// routine's address for the fault raise, Windows' stack overflow handler
+// (it runs on what is left of the overflowed stack), and the Windows
+// headers with the asserts of the constants sock.xo hard codes. It is
+// compiled with the generated code (clang, -flto on LLVM); its
+// interface is scalars and pointers only.
 
 #ifdef _WIN32
 // Windows (decision 0197): the Win32 and Winsock headers, with the MSVC
@@ -87,8 +87,6 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
                "sock.xo and cabi_net.xo Windows constants");
 #endif
 
-#define XO_NORETURN __attribute__((noreturn, noinline, cold))
-
 // ---------------------------------------------------------------------------
 // Memory: the heap is Xo (alloc.xo, obj.xo, heapos.xo through cabi.xo's
 // exports); heap_start makes the main thread's record before anything
@@ -116,13 +114,6 @@ __attribute__((constructor)) static void obj_heap_words(void) {
 #endif
 
 // ---------------------------------------------------------------------------
-// Reference counts (decisions 0046 and 0058) are rc.xo's: a count c > 0 is
-// thread local, -n is shared by n, XO_RC_IMMORTAL marks a literal (never
-// written; the C tests' helpers are in std/llrt/testdata/xrec.h).
-
-#define XO_RC_IMMORTAL INT64_MIN
-
-// ---------------------------------------------------------------------------
 // Output is stdio.xo's; the stack overflow handler flushes it.
 void xo_x_flush_try(void);
 
@@ -134,40 +125,6 @@ void xo_x_flush_try(void);
 // cabi.xo fault_raise_msg; fault_init (below the personality routines)
 // has fault.xo, ctx.xo, poll.xo and stop.xo start.
 static void fault_init(void);
-
-// ---------------------------------------------------------------------------
-// Strings and lists: the layouts the C tests use.
-
-typedef struct {
-	int64_t rc, cap;
-	char data[];
-} xo_rstr;
-
-typedef struct {
-	int64_t rc, len, cap;
-} xo_rlist;
-
-typedef void (*xo_elem_fn)(void *);
-
-// ---------------------------------------------------------------------------
-// Tasks (decisions 0068, 0069, 0077, 0212): scopes, tasks, channels,
-// select, Mutex, Atomic, the worker pool, fibers and the scheduler are
-// Xo (tasks.xo, chan.xo, selects.xo, mutex.xo, pool.xo, sched.xo), their
-// records laid out there only. A handle is {count, free, ...}.
-
-typedef void (*xo_free_fn)(void *);
-
-typedef struct {
-	int64_t rc;
-	xo_free_fn free;
-} xo_hdr;
-
-// the immortal placeholders a canceled operation returns, which every
-// program defines (arm64 end_data, LLVM linkonce_odr globals)
-extern xo_hdr xo_zero_handle;
-extern xo_rlist xo_empty_list;
-#define zero_handle xo_zero_handle
-#define empty_list xo_empty_list
 
 // ---------------------------------------------------------------------------
 // Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_msg
@@ -191,22 +148,12 @@ static void fault_init(void) {
 }
 
 // ---------------------------------------------------------------------------
-// The scheduler's C services (rt.sched_rt, xo_sched_rt) are gone (decision
-// 0233 step 2): the empty list is a `[]` in tasks.xo, a claimed task runs
-// through tasks.xo's run_claimed, the virtual clock's kick through
-// twflags.xo.
-
-// ---------------------------------------------------------------------------
-// The event loop is poll.xo's (B22): fault_init has it make its record;
-// ev_start is the C tests' (their ev_poke is in testdata/xrec.h).
+// The event loop is poll.xo's (B22): fault_init has it make its record.
 
 #if defined(_WIN32)
 // the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
 #pragma comment(lib, "ntdll")
 #endif
-
-void xo_x_poll_ev_start(void);
-static void ev_start(void) { xo_x_poll_ev_start(); }
 
 #ifdef _WIN32
 // poll.xo reads the completions GetQueuedCompletionStatusEx returns
@@ -286,12 +233,6 @@ int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry,
 int main(int argc, char **argv) {
 	xo_x_heap_start();
 	fault_init();
-#ifdef _WIN32
-	// standard streams in binary mode (no \n to \r\n)
-	_setmode(0, _O_BINARY);
-	_setmode(1, _O_BINARY);
-	_setmode(2, _O_BINARY);
-#endif
 	return (int)xo_x_entry_main(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ, XO_ADDR(xo_entry), XO_MAIN_THREADS);
 }
 #endif

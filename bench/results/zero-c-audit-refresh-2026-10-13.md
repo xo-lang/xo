@@ -35,6 +35,36 @@ script rule), and each group in one bin:
 | third_party/fiat-crypto/src (p256_64.c 2,011, p256_scalar_64.c 2,215) | 4,226 | 4,226 |
 | **All C native builds compile** | 231,584 | **227,658** |
 
+### End state (2026-10-15, after seed 0.14.0)
+
+The runtime C is **372 lines**: std/llrt/xo_rt.c 244 and xo_nolibc.c
+128 (third_party/ is gone with Mbed TLS and fiat-crypto, decision 0202;
+every other std/llrt file was deleted or ported). It is C by design:
+
+- **main**, which the C library's start calls (with xo_entry from the
+  generated code): xo_x_heap_start, fault_init, and one call of
+  entry.xo main; and for the C tests (XO_RT_NO_MAIN) a constructor in
+  its place, because xo's own ELF linker takes no .init_array
+  (gotchas/runtime-c-no-constructors.md).
+- **fault_init**, which hands cabi.xo rt_start the personality routine's
+  address and fills stop.xo's services record.
+- **Windows' on_overflow**, a vectored handler that runs on what is
+  left of the overflowed stack (SetThreadStackGuarantee) and only
+  writes and exits (decision 0197 stage 5); stop_svc's word 14 hands
+  its address to entry.xo. Windows' xo_personality language handler
+  goes with the system's exception dispatch.
+- **The Windows headers and #pragma libs**, and the _Static_asserts of
+  the Winsock, errno and OVERLAPPED_ENTRY constants and layouts sock.xo,
+  cabi_net.xo and poll.xo hard code (the only check of them; trimming
+  the header list waits for a Windows compile).
+- **xo_nolibc.c** (XO_NOLIBC builds): _start and the stack switch to
+  main's stack (inline asm, arm64's tpidr_el0), the C data symbols
+  environ, stdin, stdout and stderr, and the variadic printf family
+  (va_start), which hand their va_list to Xo.
+
+Outside std/llrt, also C by design: the generated `use c` adapters
+(decision 0205) and the C tests of std/llrt/testdata.
+
 ### By bin (std/llrt, 26,743 lines)
 
 | Bin | Lines | Of which |
@@ -657,6 +687,9 @@ frees the 533 (a) lines.)
   last C caller.
 
 ## (c) STAYS BY DESIGN: 5 lines
+
+(2026-10-15: `xo_cffi_str` is cabi.xo's cffi_str export now and
+xo_std.c is gone; the end state is under Totals.)
 
 xo_std.c 23-27, `xo_cffi_str`: copies the Str results of `use c`
 adapters; only the generated adapters call it
