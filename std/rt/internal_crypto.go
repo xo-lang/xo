@@ -16,10 +16,12 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Internal_crypto_op is `internal.crypto_op(op, a, b, c, d)`: Go's crypto
@@ -47,6 +49,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoX509(what, a, b)
 	case "aes":
 		r, ok = cryptoAES(what, a, b, c, d)
+	case "chain":
+		r, ok = cryptoChain(what, a, b, c, d)
 	}
 	if !ok {
 		panic("internal.crypto_op: unknown op " + op)
@@ -194,6 +198,79 @@ func cryptoX509(what string, a, b Bytes) (Bytes, bool) {
 		return cryptoFlag(err == nil && err2 == nil && p.CheckSignature(c.SignatureAlgorithm, c.RawTBSCertificate, c.Signature) == nil), true
 	}
 	return "", false
+}
+
+// cryptoChain is std/native/llrt/x509verify.xo's op: x509.Verify with
+// the outcome as x509verify.xo's code and the chain's common names.
+func cryptoChain(what string, a, b, c, d Bytes) (Bytes, bool) {
+	if what != "verify" {
+		return "", false
+	}
+	leaf, err := x509.ParseCertificate([]byte(a))
+	if err != nil {
+		return "parse", true
+	}
+	args := strings.Split(string(d), " ")
+	if len(args) != 3 {
+		return "args", true
+	}
+	now, _ := strconv.ParseInt(args[0], 10, 64)
+	opts := x509.VerifyOptions{
+		Roots:         chainPool(c),
+		Intermediates: chainPool(b),
+		CurrentTime:   time.Unix(now, 0),
+	}
+	if args[1] != "-" {
+		opts.DNSName = args[1]
+	}
+	switch args[2] {
+	case "2.5.29.37.0":
+		opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageAny}
+	case "1.3.6.1.5.5.7.3.1":
+		opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	case "1.3.6.1.5.5.7.3.2":
+		opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	chains, err := leaf.Verify(opts)
+	code := 0
+	var ua x509.UnknownAuthorityError
+	var ci x509.CertificateInvalidError
+	var he x509.HostnameError
+	var uc x509.UnhandledCriticalExtension
+	switch {
+	case err == nil:
+	case errors.As(err, &ua):
+		code = 1
+	case errors.As(err, &ci):
+		code = map[x509.InvalidReason]int{x509.Expired: 2, x509.NotAuthorizedToSign: 3, x509.TooManyIntermediates: 4,
+			x509.CANotAuthorizedForThisName: 5, x509.IncompatibleUsage: 6}[ci.Reason]
+	case errors.As(err, &he):
+		code = 7
+	case errors.As(err, &uc):
+		code = 8
+	default:
+		return Bytes("error " + err.Error()), true
+	}
+	out := strconv.Itoa(code)
+	if err == nil {
+		for _, x := range chains[0] {
+			out += " " + x.Subject.CommonName
+		}
+	}
+	return Bytes(out), true
+}
+
+// chainPool is the pool of a list of 2 byte big endian lengths and DERs.
+func chainPool(b Bytes) *x509.CertPool {
+	p := x509.NewCertPool()
+	for len(b) >= 2 {
+		n := int(b[0])<<8 | int(b[1])
+		if c, err := x509.ParseCertificate([]byte(b[2 : 2+n])); err == nil {
+			p.AddCert(c)
+		}
+		b = b[2+n:]
+	}
+	return p
 }
 
 // describeCert is std/native/llrt/x509.xo's describe of c: its fields one

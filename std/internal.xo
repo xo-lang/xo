@@ -27,5 +27,6 @@ fn (l: SharedLock) unlock()
 /// in std/native/internal.xo calling that file's op, whose doc lists its
 /// whats. Areas: "hash" (std/native/llrt/sha256.xo), "hmac" (hmac.xo),
 /// "hkdf" (hkdf.xo), "aes" (aesgcm.xo), "p256" and "p384" (nistec.xo),
-/// "rsa" (rsa.xo), "x509" (x509.xo). An unknown op faults.
+/// "rsa" (rsa.xo), "x509" (x509.xo), "chain" (x509verify.xo). An
+/// unknown op faults.
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes

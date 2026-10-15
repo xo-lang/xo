@@ -9,6 +9,7 @@ use native/llrt/rsa
 use native/llrt/sha256
 use native/llrt/sysio
 use native/llrt/x509
+use native/llrt/x509verify
 use native/rt
 
 struct SharedLock {
@@ -51,6 +52,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "rsa" => rsa.op(what, a, b, c, d)
     "x509" => x509.op(what, a, b, c, d)
     "aes" => aesgcm.op(what, a, b, c, d)
+    "chain" => x509verify.op(what, a, b, c, d)
     _ => None
   }
   r ?? fault("internal.crypto_op: unknown op ${op}")

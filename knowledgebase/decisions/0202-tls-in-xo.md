@@ -49,6 +49,16 @@ std (decision 0074) unless the owner decides to expose a user marker.
   exponent bits of an inversion (m - 2), a public RSA exponent,
   rejection sampling of a nonce (only the accepted one is used), an
   ECDSA signature's r or s being zero, and the RSA fault check.
+- 2026-10-14 (B31 part 3, x509verify.xo): chain verification follows
+  the Go release the reference runs (1.26), whose Verify checks DNS name
+  constraints per chain after building the chains (older releases checked
+  them while building), so the outcome codes differ from older Go when a
+  chain both breaks a constraint and lacks a usage. When several chains
+  verify, Go reports the first one its pools list (candidates with a
+  matching key identifier first), x509verify.xo the first in the order
+  given (roots, then intermediates); the tls_verify golden has one valid
+  chain per case. Everything chain verification reads is public, so it
+  has no constant time requirement.
 
 ## Alternatives
 

@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 3, decision 0202): X.509
+  chain verification in Xo (std/native/llrt/x509verify.xo, as Go 1.26's
+  Certificate.Verify: chains through the intermediates to a root, roots
+  first, each link a signature from a CA allowed to sign certificates,
+  validity times, path lengths, unhandled critical extensions, extended
+  key usages nested through the chain, DNS name constraints per chain
+  after building as Go 1.26 does, the host name through tlsname.xo).
+  internal.crypto_op gains the chain area; the golden tls_verify diffs 41
+  cases against Go's x509.Verify (outcome and chain). Not on the TLS path
+  yet.
+
 - Native runtime (zero-C audit item B31, part 2 of the TLS primitives,
   decision 0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
   as Go's crypto/aes and cipher.NewGCM (12 byte nonce, 16 byte tag),

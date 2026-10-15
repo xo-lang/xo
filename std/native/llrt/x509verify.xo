@@ -1,0 +1,337 @@
+// X.509 chain verification (RFC 5280 6, as Go's crypto/x509 Verify: the
+// zero-C audit's B31, decision 0202, replacing Mbed TLS's
+// x509_crt_verify): chains from the leaf through the intermediates to a
+// root, each link a signature check (the parent a CA, KeyUsage allowing
+// certificate signing when present), every certificate valid at the
+// time, intermediates CAs within their path lengths, DNS name
+// constraints over the leaf's names, extended key usages nested through
+// the chain, and the leaf's host name. Every input is public.
+use native/llrt/tlsname
+use native/llrt/x509
+
+// the outcomes (Go's errors: UnknownAuthorityError, CertificateInvalidError's
+// reasons, HostnameError, UnhandledCriticalExtension)
+pub const OK: Int = 0
+pub const UNKNOWN_AUTHORITY: Int = 1
+pub const EXPIRED: Int = 2
+pub const NOT_AUTHORIZED_TO_SIGN: Int = 3
+pub const TOO_MANY_INTERMEDIATES: Int = 4
+pub const NAME_CONSTRAINTS: Int = 5
+pub const INCOMPATIBLE_USAGE: Int = 6
+pub const HOSTNAME: Int = 7
+pub const UNHANDLED_CRITICAL: Int = 8
+
+// Go's limit on signature checks in one verification
+const MAX_CHECKS: Int = 100
+
+// the kinds of certificate in a chain (Go's certType)
+const LEAF: Int = 0
+const INTERMEDIATE: Int = 1
+const ROOT: Int = 2
+
+/// The outcome of a verification: the code, a chain (leaf first) when OK,
+/// and for EXPIRED the certificate that is not valid.
+pub struct Outcome {
+  pub code: Int
+  pub chain: List[x509.Cert]
+  pub bad: x509.Cert
+}
+
+/// The search's state: chains found, the certificate of the last error,
+/// signature checks made.
+struct Search {
+  chains: List[List[x509.Cert]]
+  bad: x509.Cert
+  checks: Int
+}
+
+/// Go's Verify (Go 1.26) of leaf with the intermediates and roots at the
+/// time now (Unix seconds): host the name to check ("" none), usage the
+/// extended key usage OID wanted (x509.EKU_SERVER, ...; EKU_ANY accepts
+/// any).
+pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
+  if leaf.unhandled > 0 {
+    return Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf}
+  }
+  if now < leaf.not_before || now > leaf.not_after {
+    return Outcome{code: EXPIRED, chain: [], bad: leaf}
+  }
+  if host != "" && !host_ok(leaf, host) {
+    return Outcome{code: HOSTNAME, chain: [], bad: leaf}
+  }
+  var s = Search{chains: [], bad: leaf, checks: 0}
+  var in_roots = false
+  for r in roots {
+    if r.raw == leaf.raw {
+      in_roots = true
+    }
+  }
+  if in_roots {
+    s.chains.push([leaf])
+  } else {
+    let err = build(s, [leaf], inters, roots, now)
+    if err != OK {
+      return Outcome{code: err, chain: [], bad: s.bad}
+    }
+  }
+  // Go drops the chains with incompatible usages, then the ones breaking
+  // a name constraint; a constraint error wins over the usage one
+  var names_bad = false
+  for ch in s.chains {
+    if !usage_ok(ch, usage) {
+      continue
+    }
+    if !constraints_ok(ch) {
+      names_bad = true
+    } else {
+      return Outcome{code: OK, chain: ch, bad: leaf}
+    }
+  }
+  let code = if names_bad { NAME_CONSTRAINTS } else { INCOMPATIBLE_USAGE }
+  Outcome{code: code, chain: [], bad: leaf}
+}
+
+/// x509.Certificate.VerifyHostname for the leaf.
+pub fn host_ok(c: x509.Cert, host: Str) -> Bool { tlsname.host_ok(names(c), host) }
+
+/// The leaf's names as tlsname.xo takes them (IPs as 16 bytes, IPv4
+/// mapped).
+pub fn names(c: x509.Cert) -> tlsname.Names {
+  var ips: List[List[Int]] = []
+  for ip in c.ips {
+    var a: List[Int] = []
+    if ip.len() == 4 {
+      for _ in 0..10 {
+        a.push(0)
+      }
+      a.push(255)
+      a.push(255)
+    }
+    for x in ip {
+      a.push(Int(x))
+    }
+    ips.push(a)
+  }
+  tlsname.Names{dns: c.dns, ips: ips}
+}
+
+/// Go's buildChains: every chain from chain's last certificate up through
+/// the candidates, roots first, into s.chains. The error is Go's: OK when
+/// a chain was found, else the last one a candidate gave (its isValid's
+/// or its own search's), else UNKNOWN_AUTHORITY.
+fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> Int {
+  let before = s.chains.len()
+  var err = -1
+  for r in roots {
+    let e = consider(s, chain, r, ROOT, inters, roots, now)
+    if e >= 0 {
+      err = e
+    }
+  }
+  for i in inters {
+    let e = consider(s, chain, i, INTERMEDIATE, inters, roots, now)
+    if e >= 0 {
+      err = e
+    }
+  }
+  if s.chains.len() > before {
+    return OK
+  }
+  if err < 0 { UNKNOWN_AUTHORITY } else { err }
+}
+
+/// Go's considerCandidate: -1 when it leaves the error alone.
+fn consider(var s: Search, chain: List[x509.Cert], c: x509.Cert, kind: Int, inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> Int {
+  let cur = chain[chain.len() - 1]
+  if c.subject != cur.issuer {
+    return -1
+  }
+  // a certificate already in the chain (a loop; Go's alreadyInChain)
+  for x in chain {
+    if x.raw == c.raw || (x.subject == c.subject && x.key == c.key) {
+      return -1
+    }
+  }
+  s.checks += 1
+  if s.checks > MAX_CHECKS {
+    return UNKNOWN_AUTHORITY
+  }
+  if !signed_by(cur, c) {
+    return -1
+  }
+  let code = valid(c, kind, chain, now)
+  if code != OK {
+    s.bad = c
+    return code
+  }
+  var next = chain
+  next.push(c)
+  if kind == ROOT {
+    s.chains.push(next)
+    return -1
+  }
+  build(s, next, inters, roots, now)
+}
+
+/// Go's CheckSignatureFrom: the parent may sign certificates (a CA when
+/// it is a version 3 certificate, KeyUsage with certificate signing when
+/// it has one), and c carries its signature.
+fn signed_by(c: x509.Cert, parent: x509.Cert) -> Bool {
+  if (parent.version == 3 && !parent.has_bc) || (parent.has_bc && !parent.is_ca) {
+    return false
+  }
+  if parent.key_usage >= 0 && parent.key_usage != 0 && (parent.key_usage & x509.KU_CERT_SIGN) == 0 {
+    return false
+  }
+  x509.signed_by(c, parent)
+}
+
+/// Go's isValid for an intermediate or root c above chain.
+fn valid(c: x509.Cert, kind: Int, chain: List[x509.Cert], now: Int) -> Int {
+  if c.unhandled > 0 {
+    return UNHANDLED_CRITICAL
+  }
+  if now < c.not_before || now > c.not_after {
+    return EXPIRED
+  }
+  if kind == INTERMEDIATE && (!c.has_bc || !c.is_ca) {
+    return NOT_AUTHORIZED_TO_SIGN
+  }
+  if c.has_bc && c.max_path >= 0 && chain.len() - 1 > c.max_path {
+    return TOO_MANY_INTERMEDIATES
+  }
+  OK
+}
+
+/// Go's checkChainConstraints for DNS names: the names of every
+/// certificate with a SAN extension within the constraints of every
+/// certificate above it.
+fn constraints_ok(chain: List[x509.Cert]) -> Bool {
+  for i in 0..chain.len() {
+    if chain[i].has_san {
+      for j in i + 1..chain.len() {
+        let c = chain[j]
+        if !c.permitted_dns.is_empty() || !c.excluded_dns.is_empty() {
+          for name in chain[i].dns {
+            if !name_permitted(name, c) {
+              return false
+            }
+          }
+        }
+      }
+    }
+  }
+  true
+}
+
+/// Whether the DNS name is outside c's excluded subtrees (a wildcard name
+/// also when its parent is one's) and, when c has permitted ones, inside
+/// one of them.
+fn name_permitted(name: Str, c: x509.Cert) -> Bool {
+  for e in c.excluded_dns {
+    if e.is_empty() || has_suffix(e, name) {
+      return false
+    }
+    if name.starts_with("*") && trim_first_label(e) != "" && trim_first_label(e) == trim_first_label(name) {
+      return false
+    }
+  }
+  if c.permitted_dns.is_empty() {
+    return true
+  }
+  for p in c.permitted_dns {
+    if p.is_empty() || has_suffix(p, name) {
+      return true
+    }
+  }
+  false
+}
+
+/// The name after its first label ("" without a dot).
+fn trim_first_label(n: Str) -> Str {
+  match n.find(".") {
+    Some(i) => n.bytes()[i + 1..n.len()].to_str() ?? ""
+    None => ""
+  }
+}
+
+/// Go's dnsHasSuffix: whether name ends with the constraint, ASCII case
+/// folded, at a label boundary (or the constraint starts with a dot).
+fn has_suffix(constraint: Str, name: Str) -> Bool {
+  let a = constraint.to_lower()
+  let b = name.to_lower()
+  if a.len() > b.len() || !b.ends_with(a) {
+    return false
+  }
+  if !a.starts_with(".") && b.len() > a.len() && b.bytes()[b.len() - a.len() - 1] != 46 {
+    return false
+  }
+  true
+}
+
+/// Go's checkChainForKeyUsage for one wanted usage: every certificate
+/// that lists extended key usages lists it, or any (Netscape's and
+/// Microsoft's server gated crypto count as server authentication).
+fn usage_ok(chain: List[x509.Cert], usage: Str) -> Bool {
+  if usage == x509.EKU_ANY || usage == "" {
+    return true
+  }
+  for c in chain {
+    if !c.ext_usage.is_empty() {
+      var ok = false
+      for u in c.ext_usage {
+        if u == usage || u == x509.EKU_ANY {
+          ok = true
+        }
+        if usage == x509.EKU_SERVER && (u == "2.16.840.1.113730.4.1" || u == "1.3.6.1.4.1.311.10.3.3") {
+          ok = true
+        }
+      }
+      if !ok {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// internal.crypto_op's chain ops (std/internal.xo): `verify` with a
+/// the leaf's DER, b the intermediates' and c the roots' (each a 2 byte
+/// big endian length then the DER), d "time host usage" (host "-" for
+/// none): the outcome code as decimal text, then the common names of the
+/// chain found; none for another what.
+pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what != "verify" {
+    return None
+  }
+  let p = x509.parse(a)
+  if p.err != "" {
+    return Some(b"parse")
+  }
+  let args = (d.to_str() ?? "").split(" ")
+  if args.len() != 3 {
+    return Some(b"args")
+  }
+  let now = Int.parse(args[0]) ?? 0
+  let r = verify(p.cert, certs(b), certs(c), if args[1] == "-" { "" } else { args[1] }, now, args[2])
+  var s = "${r.code}"
+  for x in r.chain {
+    s = "${s} ${x.cn}"
+  }
+  Some(s.bytes())
+}
+
+/// The certificates of a list of 2 byte lengths and DERs.
+fn certs(b: Bytes) -> List[x509.Cert] {
+  var out: List[x509.Cert] = []
+  var i = 0
+  while i + 2 <= b.len() {
+    let n = Int(b[i]) * 256 + Int(b[i + 1])
+    let p = x509.parse(b[i + 2..i + 2 + n])
+    if p.err == "" {
+      out.push(p.cert)
+    }
+    i += 2 + n
+  }
+  out
+}
