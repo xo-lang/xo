@@ -1,9 +1,9 @@
 # 0232: External C symbols from Xo on every native OS
 
-Status: Proposed (2026-10-15). Not started: the lead parked it for the
-owner (a language level choice of an external symbol ABI); until then
-the C it would delete stays, labelled "GLUE: needs ADR 0232" in the
-zero-C audit (bench/results/zero-c-audit-refresh-2026-10-13.md).
+Status: Accepted (owner, 2026-10-15). Implementation by xo-fa on the
+zero-c branch; until it lands the C it deletes stays, labelled "GLUE:
+needs ADR 0232" in the zero-C audit
+(bench/results/zero-c-audit-refresh-2026-10-13.md).
 
 ## Context
 
@@ -35,7 +35,7 @@ compiles the calls under #ifdef XO_TSAN or XO_ASAN; a plain reference
 from Xo would fail every other link. Xo has no compile time switch for a
 sanitizer build.
 
-## Decision (proposed)
+## Decision
 
 1. A declaration module std/native/sys_c.xo, imported only by runtime
    modules (decision 0074), whose bodiless functions are C ABI calls of
