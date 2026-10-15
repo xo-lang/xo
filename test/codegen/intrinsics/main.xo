@@ -12,7 +12,8 @@ fn main(os: Os) {
   let p = internal.crypto_op("p256.public", k, b"", b"", b"")
   let g = internal.crypto_op("aes.seal", k[0..16], k[0..12], k, b"")
   let c = internal.crypto_op("sysc.present", b"", b"", b"", b"")
-  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()}")
+  let cc = internal.crypto_op("chacha.seal", k, k[0..12], k, b"")
+  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()}")
 }
 
 // P-256's Montgomery product: each add and its carry are one adds and
@@ -42,3 +43,11 @@ fn main(os: Os) {
 // func internal.sysc_op
 // arm64: "bl _getpid" "\.weak_reference ___tsan_acquire" "adrp x[0-9]+, ___tsan_acquire@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, ___tsan_acquire@GOTPAGEOFF\]"
 // llvm: "call i32 @getpid\(\)" "icmp ne ptr @__tsan_acquire, null"
+
+// ChaCha20's adds modulo 2^32 are 32 bit adds (add_w32), not an add and
+// an and; Poly1305's limb products have no overflow checks.
+// func chacha.xor_stream
+// arm64: "add w[0-9]+, w[0-9]+, w[0-9]+"
+// func chacha.absorb
+// arm64: -"smulh" -"b\.vs"
+// llvm: -"with.overflow"

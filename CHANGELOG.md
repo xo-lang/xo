@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- ChaCha20-Poly1305: wrapping arithmetic in the quarter rounds and
+  Poly1305's products (no overflow branches), and on arm64 a 32 bit add
+  for an add masked to 32 bits. Bulk on LLVM 2652M to 2086M
+  instructions for 64 MiB, on arm64 3702M to 2518M.
 - Wasm backend: rt.heap_large, rt.heap_release and rt.heap_large_resize
   in native-only arms (sysio.set_err behind layer() == 0) compile to a
   fault when run, as sys6 and fs_set_err do. TestSelfhostWasmFsWrite

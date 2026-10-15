@@ -834,6 +834,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if (op == 0 || op == 1) && g.add_with_flag(v, op) {
         return true
       }
+      if (op == 0 || op == 1) && g.add_w32(v, op) {
+        return true
+      }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op <= 1 && imm12(k) {
@@ -1235,6 +1238,39 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
         g.set(v, [d])
         g.set(u, [c])
         return true
+      }
+    }
+    k += 1
+  }
+  false
+}
+
+/// The add (op 0) or subtract (op 1) v used only by an `and` with
+/// 0xFFFFFFFF among the next few values of the block (ChaCha20's adds
+/// modulo 2^32): one 32 bit add or sub, which zero extends, gives both;
+/// whether it did.
+fn (var g: G) add_w32(v: Int, op: Int) -> Bool {
+  if g.cur_sb < 0 || g.nuses[v] != 1 {
+    return false
+  }
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 4 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.And && !g.has_val[u] && y.args.len() == 2 {
+      for j in 0..2 {
+        if y.args[j] == v {
+          let (n, nc) = g.const_int(y.args[1 - j])
+          if nc && n == 0xFFFFFFFF {
+            let a = g.word(g.f.values[v].args[1])
+            let b = g.word(g.f.values[v].args[2])
+            let d = g.def1(false, if op == 0 { "add $wd0, $wu0, $wu1" } else { "sub $wd0, $wu0, $wu1" }, [a, b])
+            g.set(v, [d])
+            g.set(u, [d])
+            return true
+          }
+        }
       }
     }
     k += 1

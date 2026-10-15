@@ -15,6 +15,9 @@ fn shl(x: Int, s: Int) -> Int { rt.int_wrap(3, x, s) }
 
 fn shr(x: Int, s: Int) -> Int { rt.int_wrap(4, x, s) }
 
+/// x + y modulo 2^32 (x and y below 2^32).
+fn add(x: Int, y: Int) -> Int { rt.int_wrap(0, x, y) & M32 }
+
 /// The 4 bytes of b at i, little endian.
 fn le32(b: Bytes, i: Int) -> Int { Int(b[i]) | shl(Int(b[i + 1]), 8) | shl(Int(b[i + 2]), 16) | shl(Int(b[i + 3]), 24) }
 
@@ -78,80 +81,80 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes) -> Str {
     var x14 = n1
     var x15 = n2
     for _ in 0..10 {
-      x0 = (x0 + x4) & M32
+      x0 = add(x0, x4)
       x12 = rt.int_wrap(6, x12 ^ x0, 16)
-      x8 = (x8 + x12) & M32
+      x8 = add(x8, x12)
       x4 = rt.int_wrap(6, x4 ^ x8, 20)
-      x0 = (x0 + x4) & M32
+      x0 = add(x0, x4)
       x12 = rt.int_wrap(6, x12 ^ x0, 24)
-      x8 = (x8 + x12) & M32
+      x8 = add(x8, x12)
       x4 = rt.int_wrap(6, x4 ^ x8, 25)
-      x1 = (x1 + x5) & M32
+      x1 = add(x1, x5)
       x13 = rt.int_wrap(6, x13 ^ x1, 16)
-      x9 = (x9 + x13) & M32
+      x9 = add(x9, x13)
       x5 = rt.int_wrap(6, x5 ^ x9, 20)
-      x1 = (x1 + x5) & M32
+      x1 = add(x1, x5)
       x13 = rt.int_wrap(6, x13 ^ x1, 24)
-      x9 = (x9 + x13) & M32
+      x9 = add(x9, x13)
       x5 = rt.int_wrap(6, x5 ^ x9, 25)
-      x2 = (x2 + x6) & M32
+      x2 = add(x2, x6)
       x14 = rt.int_wrap(6, x14 ^ x2, 16)
-      x10 = (x10 + x14) & M32
+      x10 = add(x10, x14)
       x6 = rt.int_wrap(6, x6 ^ x10, 20)
-      x2 = (x2 + x6) & M32
+      x2 = add(x2, x6)
       x14 = rt.int_wrap(6, x14 ^ x2, 24)
-      x10 = (x10 + x14) & M32
+      x10 = add(x10, x14)
       x6 = rt.int_wrap(6, x6 ^ x10, 25)
-      x3 = (x3 + x7) & M32
+      x3 = add(x3, x7)
       x15 = rt.int_wrap(6, x15 ^ x3, 16)
-      x11 = (x11 + x15) & M32
+      x11 = add(x11, x15)
       x7 = rt.int_wrap(6, x7 ^ x11, 20)
-      x3 = (x3 + x7) & M32
+      x3 = add(x3, x7)
       x15 = rt.int_wrap(6, x15 ^ x3, 24)
-      x11 = (x11 + x15) & M32
+      x11 = add(x11, x15)
       x7 = rt.int_wrap(6, x7 ^ x11, 25)
-      x0 = (x0 + x5) & M32
+      x0 = add(x0, x5)
       x15 = rt.int_wrap(6, x15 ^ x0, 16)
-      x10 = (x10 + x15) & M32
+      x10 = add(x10, x15)
       x5 = rt.int_wrap(6, x5 ^ x10, 20)
-      x0 = (x0 + x5) & M32
+      x0 = add(x0, x5)
       x15 = rt.int_wrap(6, x15 ^ x0, 24)
-      x10 = (x10 + x15) & M32
+      x10 = add(x10, x15)
       x5 = rt.int_wrap(6, x5 ^ x10, 25)
-      x1 = (x1 + x6) & M32
+      x1 = add(x1, x6)
       x12 = rt.int_wrap(6, x12 ^ x1, 16)
-      x11 = (x11 + x12) & M32
+      x11 = add(x11, x12)
       x6 = rt.int_wrap(6, x6 ^ x11, 20)
-      x1 = (x1 + x6) & M32
+      x1 = add(x1, x6)
       x12 = rt.int_wrap(6, x12 ^ x1, 24)
-      x11 = (x11 + x12) & M32
+      x11 = add(x11, x12)
       x6 = rt.int_wrap(6, x6 ^ x11, 25)
-      x2 = (x2 + x7) & M32
+      x2 = add(x2, x7)
       x13 = rt.int_wrap(6, x13 ^ x2, 16)
-      x8 = (x8 + x13) & M32
+      x8 = add(x8, x13)
       x7 = rt.int_wrap(6, x7 ^ x8, 20)
-      x2 = (x2 + x7) & M32
+      x2 = add(x2, x7)
       x13 = rt.int_wrap(6, x13 ^ x2, 24)
-      x8 = (x8 + x13) & M32
+      x8 = add(x8, x13)
       x7 = rt.int_wrap(6, x7 ^ x8, 25)
-      x3 = (x3 + x4) & M32
+      x3 = add(x3, x4)
       x14 = rt.int_wrap(6, x14 ^ x3, 16)
-      x9 = (x9 + x14) & M32
+      x9 = add(x9, x14)
       x4 = rt.int_wrap(6, x4 ^ x9, 20)
-      x3 = (x3 + x4) & M32
+      x3 = add(x3, x4)
       x14 = rt.int_wrap(6, x14 ^ x3, 24)
-      x9 = (x9 + x14) & M32
+      x9 = add(x9, x14)
       x4 = rt.int_wrap(6, x4 ^ x9, 25)
     }
-    s = push_xor(s, src, i + 0, ((x0 + c0) & M32) | rt.int_wrap(3, (x1 + c1) & M32, 32))
-    s = push_xor(s, src, i + 8, ((x2 + c2) & M32) | rt.int_wrap(3, (x3 + c3) & M32, 32))
-    s = push_xor(s, src, i + 16, ((x4 + k0) & M32) | rt.int_wrap(3, (x5 + k1) & M32, 32))
-    s = push_xor(s, src, i + 24, ((x6 + k2) & M32) | rt.int_wrap(3, (x7 + k3) & M32, 32))
-    s = push_xor(s, src, i + 32, ((x8 + k4) & M32) | rt.int_wrap(3, (x9 + k5) & M32, 32))
-    s = push_xor(s, src, i + 40, ((x10 + k6) & M32) | rt.int_wrap(3, (x11 + k7) & M32, 32))
-    s = push_xor(s, src, i + 48, ((x12 + ctr) & M32) | rt.int_wrap(3, (x13 + n0) & M32, 32))
-    s = push_xor(s, src, i + 56, ((x14 + n1) & M32) | rt.int_wrap(3, (x15 + n2) & M32, 32))
-    ctr = (ctr + 1) & M32
+    s = push_xor(s, src, i + 0, (add(x0, c0)) | rt.int_wrap(3, add(x1, c1), 32))
+    s = push_xor(s, src, i + 8, (add(x2, c2)) | rt.int_wrap(3, add(x3, c3), 32))
+    s = push_xor(s, src, i + 16, (add(x4, k0)) | rt.int_wrap(3, add(x5, k1), 32))
+    s = push_xor(s, src, i + 24, (add(x6, k2)) | rt.int_wrap(3, add(x7, k3), 32))
+    s = push_xor(s, src, i + 32, (add(x8, k4)) | rt.int_wrap(3, add(x9, k5), 32))
+    s = push_xor(s, src, i + 40, (add(x10, k6)) | rt.int_wrap(3, add(x11, k7), 32))
+    s = push_xor(s, src, i + 48, (add(x12, ctr)) | rt.int_wrap(3, add(x13, n0), 32))
+    s = push_xor(s, src, i + 56, (add(x14, n1)) | rt.int_wrap(3, add(x15, n2), 32))
+    ctr = add(ctr, 1)
     i += 64
   }
   s
@@ -197,6 +200,12 @@ struct Poly {
   s4: Int
 }
 
+/// a0 b0 + a1 b1 + a2 b2 + a3 b3 + a4 b4, wrapping (Poly1305's limb
+/// products, which do not overflow).
+fn dot5(a0: Int, b0: Int, a1: Int, b1: Int, a2: Int, b2: Int, a3: Int, b3: Int, a4: Int, b4: Int) -> Int {
+  rt.int_wrap(0, rt.int_wrap(0, rt.int_wrap(0, rt.int_wrap(0, rt.int_wrap(2, a0, b0), rt.int_wrap(2, a1, b1)), rt.int_wrap(2, a2, b2)), rt.int_wrap(2, a3, b3)), rt.int_wrap(2, a4, b4))
+}
+
 /// The state of the one time key (32 bytes: r, then s).
 fn poly_new(key: Bytes) -> Poly {
   let r0 = le32(key, 0) & 0x3ffffff
@@ -226,32 +235,29 @@ fn absorb(p: Poly, m: Bytes, off: Int, end: Int, hibit: Int) -> Poly {
   let s3 = p.s3
   let s4 = p.s4
   var o = off
+  // wrapping arithmetic, no overflow checks: a limb is under 2^27, a
+  // product under 2^58 (r and 5r under 2^29), a sum of five under 2^61
   while o < end {
     let w0 = rt.bytes_word(m, o)
-    let w1 = rt.bytes_word(m, o + 8)
-    h0 += w0 & M26
-    h1 += shr(w0, 26) & M26
-    h2 += (shr(w0, 52) | shl(w1, 12)) & M26
-    h3 += shr(w1, 14) & M26
-    h4 += shr(w1, 40) | hibit
-    let d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
-    var d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
-    var d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
-    var d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4
-    var d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
-    h0 = d0 & M26
-    d1 += shr(d0, 26)
+    let w1 = rt.bytes_word(m, rt.int_wrap(0, o, 8))
+    h0 = rt.int_wrap(0, h0, w0 & M26)
+    h1 = rt.int_wrap(0, h1, shr(w0, 26) & M26)
+    h2 = rt.int_wrap(0, h2, (shr(w0, 52) | shl(w1, 12)) & M26)
+    h3 = rt.int_wrap(0, h3, shr(w1, 14) & M26)
+    h4 = rt.int_wrap(0, h4, shr(w1, 40) | hibit)
+    let d0 = dot5(h0, r0, h1, s4, h2, s3, h3, s2, h4, s1)
+    let d1 = rt.int_wrap(0, dot5(h0, r1, h1, r0, h2, s4, h3, s3, h4, s2), shr(d0, 26))
+    let d2 = rt.int_wrap(0, dot5(h0, r2, h1, r1, h2, r0, h3, s4, h4, s3), shr(d1, 26))
+    let d3 = rt.int_wrap(0, dot5(h0, r3, h1, r2, h2, r1, h3, r0, h4, s4), shr(d2, 26))
+    let d4 = rt.int_wrap(0, dot5(h0, r4, h1, r3, h2, r2, h3, r1, h4, r0), shr(d3, 26))
     h1 = d1 & M26
-    d2 += shr(d1, 26)
     h2 = d2 & M26
-    d3 += shr(d2, 26)
     h3 = d3 & M26
-    d4 += shr(d3, 26)
     h4 = d4 & M26
-    h0 += shr(d4, 26) * 5
-    h1 += shr(h0, 26)
+    h0 = rt.int_wrap(0, d0 & M26, rt.int_wrap(2, shr(d4, 26), 5))
+    h1 = rt.int_wrap(0, h1, shr(h0, 26))
     h0 = h0 & M26
-    o += 16
+    o = rt.int_wrap(0, o, 16)
   }
   Poly{h0: h0, h1: h1, h2: h2, h3: h3, h4: h4, r0: r0, r1: r1, r2: r2, r3: r3, r4: r4, s1: s1, s2: s2, s3: s3, s4: s4}
 }
