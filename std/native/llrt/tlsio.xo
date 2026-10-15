@@ -53,7 +53,6 @@ struct Conn {
   first: Bytes
   eof: Bool
   pending: Bytes
-  crt: Int
 }
 
 // The client of either version.
@@ -102,10 +101,8 @@ fn take_in(var c: Conn, data: Bytes) {
   tls13.feed(c.cl, data)
   if c.cl.state == tls13.HANDOFF {
     let hs = tls13.hello_state(c.cl)
-    // tls12.xo verifies with x509verify.xo: the roots, parsed now when
-    // the framework was to decide
-    let roots = if c.cl.conf.apple_svc != 0 { chain(c.crt) } else { c.cl.conf.roots }
-    var cf = tls12.conf(c.cl.conf.host, roots, c.cl.conf.now)
+    var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
+    cf.apple_svc = c.cl.conf.apple_svc
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -175,7 +172,7 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   cf.legacy_suites = tls12.default_suites()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
-  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b"", crt: crt}
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
   while !done(c) && !broken(c) {
     if !flush(c) || !fill(c) {
       break

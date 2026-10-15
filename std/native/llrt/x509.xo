@@ -8,6 +8,7 @@ use native/llrt/asn1
 use native/llrt/bigmod
 use native/llrt/cbyte
 use native/llrt/ed25519
+use native/llrt/neturl
 use native/llrt/nistec
 use native/llrt/rsa
 use native/llrt/raw
@@ -942,7 +943,10 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
       if !ascii(d) {
         return "x509: SAN uniformResourceIdentifier is malformed"
       }
-      // net/url's parse of the URI is not here yet (http1.xo has it)
+      let ue = uri_err(d)
+      if ue != "" {
+        return ue
+      }
       c.san_other += 1
     } else if tag == 7 {
       if d.len() != 4 && d.len() != 16 {
@@ -950,6 +954,60 @@ fn san(v0: cbyte.Win, var c: Cert) -> Str {
       }
       c.ips.push(d)
     }
+  }
+  ""
+}
+
+/// Go's url.Parse of a SAN URI (the fragment cut, then checked as
+/// escaped text) and its host's domainNameValid: "" or Go's error text.
+fn uri_err(d: Bytes) -> Str {
+  let s = d.to_str() ?? ""
+  let q = s.quote()
+  var u = s
+  var frag = ""
+  match s.find("#") {
+    Some(i) => {
+      u = raw.str_slice(s, 0, i)
+      frag = raw.str_slice(s, i + 1, s.len())
+    }
+    None => ()
+  }
+  let r = neturl.url_parse(u, false)
+  if !r.ok {
+    var why = r.err
+    if why.starts_with("invalid host ") {
+      // Go's parseHost says why (neturl.xo's text is xo_http.c's)
+      match u.find("//") {
+        Some(k) => {
+          var auth = raw.str_slice(u, k + 2, u.len())
+          match auth.find("/") {
+            Some(j) => auth = raw.str_slice(auth, 0, j)
+            None => ()
+          }
+          let ab = auth.bytes()
+          var at = ab.len() - 1
+          while at >= 0 && ab[at] != 64 {
+            at -= 1
+          }
+          let g = neturl.go_host_error(raw.str_slice(auth, at + 1, auth.len()))
+          if g != "" {
+            why = g
+          }
+        }
+        None => ()
+      }
+    }
+    return "x509: cannot parse URI ${q}: parse ${u.quote()}: ${why}"
+  }
+  if frag != "" {
+    let fb = frag.bytes()
+    let (ok, _) = neturl.unescape(fb, frag, 0, fb.len(), neturl.U_PATH)
+    if !ok {
+      return "x509: cannot parse URI ${q}: parse ${q}: ${neturl.escape_error(fb, frag, 0, fb.len())}"
+    }
+  }
+  if r.host.len() > 0 && !domain_ok(r.host.bytes(), false) {
+    return "x509: cannot parse URI ${q}: invalid domain"
   }
   ""
 }

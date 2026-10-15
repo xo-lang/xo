@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 10, decision 0202): the
+  net/url parser of std/http (url_parse, unescape, ports, IPv4 and IPv6
+  literals, go_quote) moves from http1.xo into std/native/llrt/neturl.xo,
+  unchanged (the http_* and net_* goldens and TestHTTP1ClientDiff and
+  TestHTTP1ParseDiff pass), so x509.xo parses a certificate's URI names
+  as Go's url.Parse does, with Go 1.26's parseHost texts
+  (neturl.go_host_error). TestX509ParseDiff gains twelve URI classes
+  (61 in all, no difference). The TLS 1.2 hand-off passes the Security
+  framework's table to tls12.xo (xo-fa's apple_svc), so on macOS with the
+  system's roots both versions verify as Go.
+
 - Native TLS performance, step 4: Go's point doubling formula and
   inversion by addition chain (P-256's field) or a fixed window (the
   other exponents): handshakes about 8% fewer instructions on LLVM
@@ -54,8 +65,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   49 named classes: 150,000 cases, no difference. TestTLS13ReplayDiff now
   fails on any difference in a refused certificate's text: 0 in 20,000.
   Known gaps: a SAN URI is checked as IA5 only (Go also parses it with
-  net/url, whose port is in http1.xo); P-224 and P-521 signatures are not
-  verified (refused).
+  net/url, whose port is in http1.xo; closed by part 10); P-224 and P-521
+  signatures are not verified (refused).
 
 - Native TLS 1.2 client: offers the four ECDHE CBC-SHA suites after the
   AEADs, as Go's client does by default (tls12.default_suites, which

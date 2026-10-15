@@ -350,6 +350,18 @@ func x509Classes(seeds [][]byte) map[string][]byte {
 		{"san ip of 5 bytes", 0x87, []byte{1, 2, 3, 4, 5}},
 		{"san email non-ascii", 0x81, []byte{0x61, 0xe9}},
 		{"san uri non-ascii", 0x86, []byte{0x61, 0xe9}},
+		{"san uri", 0x86, []byte("https://example.com/a?b#c")},
+		{"san uri bad escape", 0x86, []byte("https://example.com/%zz")},
+		{"san uri bad fragment", 0x86, []byte("https://example.com/#%zz")},
+		{"san uri space in host", 0x86, []byte("https://exa mple.com/")},
+		{"san uri bad port", 0x86, []byte("https://example.com:8x/")},
+		{"san uri no scheme", 0x86, []byte("://example.com")},
+		{"san uri empty label", 0x86, []byte("https://a..example.com/")},
+		{"san uri trailing dot", 0x86, []byte("https://example.com./")},
+		{"san uri ipv6", 0x86, []byte("https://[::1]:443/")},
+		{"san uri bad ipv6", 0x86, []byte("https://[::1/")},
+		{"san uri control", 0x86, []byte("https://example.com/\x01")},
+		{"san uri colon in path", 0x86, []byte("a:b:c")},
 	} {
 		edit(c.name, func(t []*derNode) bool {
 			v, done := derExtension(t, san)

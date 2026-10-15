@@ -26,6 +26,7 @@ use native/llrt/hpack
 use native/llrt/http1_tables
 use native/llrt/http1w
 use native/llrt/netpolicy
+use native/llrt/neturl
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/scan
@@ -112,443 +113,21 @@ fn is_sp(c: Int) -> Bool { c == 32 || c == 9 }
 // ---------------------------------------------------------------------------
 // Request targets (net/url) and queries
 
-// h_unescape's modes
-const U_PATH: Int = 0
-const U_QUERY: Int = 1
-const U_HOST: Int = 2
-
-/// The end of the bytes of b from lo that unescape keeps as they are.
-fn plain_end(b: Bytes, lo: Int, hi: Int, mode: Int) -> Int {
-  var i = lo
-  while i < hi {
-    let c = Int(b[i])
-    if c == 37 || (c == 43 && mode == U_QUERY) || (mode == U_HOST && c < 128 && (cls(c) & HOSTB) == 0) {
-      return i
-    }
-    i += 1
-  }
-  hi
-}
-
-/// url.unescape of b[lo..hi] for a path, a query component, or a host:
-/// (false, _) on an invalid escape.
-fn unescape(b: Bytes, s: Str, lo: Int, hi: Int, mode: Int) -> (Bool, Str) {
-  // the common case: nothing to change
-  var i = plain_end(b, lo, hi, mode)
-  if i == hi {
-    return (true, rawb.str_slice(s, lo, hi))
-  }
-  // runs of 8 bytes or more go over at once, other bytes seven at a time
-  // in a word (a C call each)
-  var out = rt.rs_append_bytes(rt.rs_with_cap(hi - lo), b, lo, i, 0)
-  var w = 0
-  var wk = 0
-  while i < hi {
-    let c = Int(b[i])
-    var x = c
-    if c == 37 {
-      if i + 2 >= hi || (cls(Int(b[i + 1])) & HEX) == 0 || (cls(Int(b[i + 2])) & HEX) == 0 {
-        return (false, "")
-      }
-      let h = unhex(Int(b[i + 1]))
-      // %25 is the one escape of an ASCII byte a host may have
-      let pct = b[i + 1] == 50 && b[i + 2] == 53
-      if mode == U_HOST && h < 8 && !pct {
-        return (false, "")
-      }
-      x = (h << 4) | unhex(Int(b[i + 2]))
-      i += 3
-    } else if c == 43 && mode == U_QUERY {
-      x = 32
-      i += 1
-    } else if mode == U_HOST && c < 128 && (cls(c) & HOSTB) == 0 {
-      return (false, "")
-    } else {
-      let j = plain_end(b, i, hi, mode)
-      if j - i >= 8 {
-        if wk > 0 {
-          out = rt.rs_push_word(out, w, wk)
-          w = 0
-          wk = 0
-        }
-        out = rt.rs_append_bytes(out, b, i, j, 0)
-        i = j
-        continue
-      }
-      i += 1
-    }
-    w = w | ((x & 255) << ((8 * wk) & 63))
-    wk += 1
-    if wk == 7 {
-      out = rt.rs_push_word(out, w, 7)
-      w = 0
-      wk = 0
-    }
-  }
-  if wk > 0 {
-    out = rt.rs_push_word(out, w, wk)
-  }
-  (true, out)
-}
-
-/// Whether b[lo..hi] is empty or `:` and digits.
-fn valid_port(b: Bytes, lo: Int, hi: Int) -> Bool {
-  if lo >= hi {
-    return true
-  }
-  if b[lo] != 58 {
-    return false
-  }
-  var i = lo + 1
-  while i < hi {
-    if b[i] < 48 || b[i] > 57 {
-      return false
-    }
-    i += 1
-  }
-  true
-}
-
-/// inet_pton(AF_INET, ...) of b[lo..hi] (BIND's inet_pton4: four
-/// decimal octets without leading zeros).
-fn ipv4_ok(b: Bytes, lo: Int, hi: Int) -> Bool {
-  var saw = false
-  var octets = 0
-  var cur = 0
-  var i = lo
-  while i < hi {
-    let c = Int(b[i])
-    if c >= 48 && c <= 57 {
-      let v = cur * 10 + (c - 48)
-      if saw && cur == 0 {
-        return false
-      }
-      if v > 255 {
-        return false
-      }
-      cur = v
-      if !saw {
-        octets += 1
-        if octets > 4 {
-          return false
-        }
-        saw = true
-      }
-    } else if c == 46 && saw {
-      if octets == 4 {
-        return false
-      }
-      cur = 0
-      saw = false
-    } else {
-      return false
-    }
-    i += 1
-  }
-  octets >= 4
-}
-
-/// inet_pton(AF_INET6, ...) of b[lo..hi] (BIND's inet_pton6, which
-/// xo_http.c called): hex groups of at most 4 digits, one `::`, a dotted
-/// IPv4 address at the end.
-fn ipv6_ok(b: Bytes, lo0: Int, hi: Int) -> Bool {
-  var lo = lo0
-  if lo < hi && b[lo] == 58 {
-    lo += 1
-    if lo >= hi || b[lo] != 58 {
-      return false
-    }
-  }
-  var tp = 0
-  var colon = -1
-  var cur = lo
-  var digits = 0
-  var i = lo
-  while i < hi {
-    let c = lower(Int(b[i]))
-    i += 1
-    if (c >= 48 && c <= 57) || (c >= 97 && c <= 102) {
-      digits += 1
-      if digits > 4 {
-        return false
-      }
-      continue
-    }
-    if c == 58 {
-      cur = i
-      if digits == 0 {
-        if colon >= 0 {
-          return false
-        }
-        colon = tp
-        continue
-      } else if i >= hi {
-        return false
-      }
-      if tp + 2 > 16 {
-        return false
-      }
-      tp += 2
-      digits = 0
-      continue
-    }
-    if c == 46 && tp + 4 <= 16 && ipv4_ok(b, cur, hi) {
-      tp += 4
-      digits = 0
-      i = hi
-      break
-    }
-    return false
-  }
-  if digits > 0 {
-    if tp + 2 > 16 {
-      return false
-    }
-    tp += 2
-  }
-  if colon >= 0 {
-    if tp == 16 {
-      return false
-    }
-    tp = 16
-  }
-  tp == 16
-}
-
-/// url.parseHost of b[lo..hi]: the host unescaped, or (false, _).
-fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str) {
-  var ob = -1
-  var i = hi - 1
-  while i >= lo {
-    if b[i] == 91 {
-      ob = i
-      break
-    }
-    i -= 1
-  }
-  if ob > lo {
-    return (false, "")
-  }
-  if ob == lo {
-    var cb = -1
-    var j = hi - 1
-    while j >= lo {
-      if b[j] == 93 {
-        cb = j
-        break
-      }
-      j -= 1
-    }
-    if cb < 0 || !valid_port(b, cb + 1, hi) {
-      return (false, "")
-    }
-    let (ok, inner) = unescape(b, s, lo + 1, cb, U_HOST)
-    if !ok {
-      return (false, "")
-    }
-    let ib = inner.bytes()
-    // the zone goes; inet_pton reads to the first NUL byte
-    var zn = 0
-    while zn < ib.len() && ib[zn] != 37 && ib[zn] != 0 {
-      zn += 1
-    }
-    if !ipv6_ok(ib, 0, zn) {
-      return (false, "")
-    }
-    return unescape(b, s, lo, hi, U_HOST)
-  }
-  let colon = find(s, 58, lo, hi)
-  if colon >= 0 {
-    if rfind(b, 58, hi) != colon {
-      // strict colons (Go 1.26): only one colon outside brackets
-      return (false, "")
-    }
-    if !valid_port(b, colon, hi) {
-      return (false, "")
-    }
-  }
-  unescape(b, s, lo, hi, U_HOST)
-}
-
-/// The error text of a bad escape in b[lo..hi] (url.EscapeError).
-fn escape_error(b: Bytes, s: Str, lo: Int, hi: Int) -> Str {
-  var i = lo
-  while i < hi {
-    if b[i] == 37 {
-      let left = hi - i
-      if left < 3 || (cls(Int(b[i + 1])) & HEX) == 0 || (cls(Int(b[i + 2])) & HEX) == 0 {
-        let k = if left < 3 { left } else { 3 }
-        return "invalid URL escape " + go_quote(rawb.str_slice(s, i, i + k))
-      }
-      i += 3
-      continue
-    }
-    i += 1
-  }
-  "invalid URL"
-}
-
-/// A parsed URL (xo_http.c's hurl).
-pub struct Url {
-  ok: Bool
-  /// Go's reason when it failed (without `parse "url": `).
-  err: Str
-  scheme: Str
-  host: Str
-  path: Str
-  rawquery: Str
-}
-
-fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: ""} }
-
-/// net/url's parse of s: ParseRequestURI when via_request, else Parse
-/// (the fragment already cut).
-fn url_parse(s: Str, via_request: Bool) -> Url {
-  let b = s.bytes()
-  let sn = b.len()
-  var i = 0
-  while i < sn {
-    let c = Int(b[i])
-    if c < 32 || c == 127 {
-      return url_fail("net/url: invalid control character in URL")
-    }
-    i += 1
-  }
-  if sn == 0 && via_request {
-    return url_fail("empty url")
-  }
-  if sn == 1 && b[0] == 42 {
-    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: ""}
-  }
-  // getScheme
-  var rest = 0
-  var scheme = ""
-  i = 0
-  while i < sn {
-    let c = Int(b[i])
-    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
-      i += 1
-      continue
-    }
-    if (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46 {
-      if i == 0 {
-        break
-      }
-      i += 1
-      continue
-    }
-    if c == 58 {
-      if i == 0 {
-        return url_fail("missing protocol scheme")
-      }
-      scheme = rt.rs_append_bytes("", b, 0, i, 1)
-      rest = i + 1
-    }
-    break
-  }
-  // the query: a single trailing ? is ForceQuery with no RawQuery
-  var rn = sn
-  var q = -1
-  var qcount = 0
-  i = rest
-  while i < sn {
-    if b[i] == 63 {
-      if q < 0 {
-        q = i
-      }
-      qcount += 1
-    }
-    i += 1
-  }
-  var rawquery = ""
-  if rn > rest && b[rn - 1] == 63 && qcount == 1 {
-    rn -= 1
-  } else if q >= 0 {
-    rawquery = rawb.str_slice(s, q + 1, rn)
-    rn = q
-  }
-  if !(rn > rest && b[rest] == 47) {
-    if !scheme.is_empty() {
-      // opaque: no host, no path
-      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery}
-    }
-    if via_request {
-      return url_fail("invalid URI for request")
-    }
-    let sl = find(s, 47, rest, rn)
-    let segn = if sl < 0 { rn } else { sl }
-    if find(s, 58, rest, segn) >= 0 {
-      return url_fail("first path segment in URL cannot contain colon")
-    }
-  }
-  var host = ""
-  var p = rest
-  let authority = rn - rest >= 2 && b[rest] == 47 && b[rest + 1] == 47 && (!scheme.is_empty() || (!via_request && !(rn - rest >= 3 && b[rest + 2] == 47)))
-  if authority {
-    let a = rest + 2
-    let slash = find(s, 47, a, rn)
-    let ae = if slash < 0 { rn } else { slash }
-    p = ae
-    var at = -1
-    var k = ae - 1
-    while k >= a {
-      if b[k] == 64 {
-        at = k
-        break
-      }
-      k -= 1
-    }
-    let hlo = if at >= 0 { at + 1 } else { a }
-    let (hok, h) = parse_host(b, s, hlo, ae)
-    if !hok {
-      let shown = if ae - hlo > 120 { hlo + 120 } else { ae }
-      return url_fail("invalid host " + go_quote_c(rawb.str_slice(s, hlo, shown)))
-    }
-    host = h
-    if at >= 0 {
-      var u = a
-      while u < at {
-        if (cls(Int(b[u])) & USERINFO) == 0 {
-          return url_fail("net/url: invalid userinfo")
-        }
-        u += 1
-      }
-      u = a
-      while u < at {
-        if b[u] == 37 {
-          let left = at - u
-          if left < 3 || (cls(Int(b[u + 1])) & HEX) == 0 || (cls(Int(b[u + 2])) & HEX) == 0 {
-            let kk = if left < 3 { left } else { 3 }
-            return url_fail("invalid URL escape " + go_quote_c(rawb.str_slice(s, u, u + kk)))
-          }
-          u += 2
-        }
-        u += 1
-      }
-    }
-  }
-  let (pok, path) = unescape(b, s, p, rn, U_PATH)
-  if !pok {
-    return url_fail(escape_error(b, s, p, rn))
-  }
-  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery}
-}
-
 /// The `"%s"` of a C format: the text in quotes as it is (xo_http.c's
 /// snprintf; the bytes are printable here: control bytes failed first).
 fn go_quote_c(s: Str) -> Str { "\"" + s + "\"" }
 
 /// url.ParseRequestURI of a request target; a CONNECT target that is not
 /// a path is an authority.
-fn parse_target(raw: Str, connect: Bool) -> Url {
+fn parse_target(raw: Str, connect: Bool) -> neturl.Url {
   if connect && !raw.starts_with("/") {
-    let u = url_parse("http://" + raw, true)
+    let u = neturl.url_parse("http://" + raw, true)
     if u.ok {
-      return Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery}
+      return neturl.Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery}
     }
     return u
   }
-  url_parse(raw, true)
+  neturl.url_parse(raw, true)
 }
 
 /// std/rt's urlOf over url.ParseQuery: each key once with its first
@@ -583,13 +162,13 @@ pub fn query_parts(q: Str) -> List[Str] {
     }
     let eq = find(q, 61, lo, j)
     let ke = if eq < 0 { j } else { eq }
-    let (kok, k) = unescape(b, q, lo, ke, U_QUERY)
+    let (kok, k) = neturl.unescape(b, q, lo, ke, neturl.U_QUERY)
     if !kok {
       continue
     }
     var v = ""
     if eq >= 0 {
-      let (vok, vv) = unescape(b, q, eq + 1, j, U_QUERY)
+      let (vok, vv) = neturl.unescape(b, q, eq + 1, j, neturl.U_QUERY)
       if !vok {
         continue
       }
@@ -637,7 +216,7 @@ fn split_hostport(host: Str) -> (Str, Str) {
   var hn = n
   var port = ""
   let i = rfind(b, 58, n)
-  if i >= 0 && valid_port(b, i, n) {
+  if i >= 0 && neturl.valid_port(b, i, n) {
     port = rawb.str_slice(host, i + 1, n)
     hn = i
   }
@@ -689,7 +268,7 @@ pub fn host_port(h: Str) -> Int {
   while i >= 0 && b[i] != 58 {
     i -= 1
   }
-  if i < 0 || i + 1 == b.len() || !valid_port(b, i, b.len()) {
+  if i < 0 || i + 1 == b.len() || !neturl.valid_port(b, i, b.len()) {
     return -1
   }
   var v = 0
@@ -715,7 +294,7 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
       t = rawb.str_slice(s, 0, h)
     }
   }
-  let u = url_parse(t, request)
+  let u = neturl.url_parse(t, request)
   if !u.ok {
     return []
   }
@@ -730,7 +309,7 @@ pub fn url_error(s: Str) -> Str {
   if h >= 0 {
     t = rawb.str_slice(s, 0, h)
   }
-  let u = url_parse(t, false)
+  let u = neturl.url_parse(t, false)
   if u.ok {
     return ""
   }
@@ -743,7 +322,7 @@ pub fn path_unescape(s: Str) -> Str {
     return s
   }
   let b = s.bytes()
-  let (ok, out) = unescape(b, s, 0, b.len(), U_PATH)
+  let (ok, out) = neturl.unescape(b, s, 0, b.len(), neturl.U_PATH)
   if ok { out } else { "" }
 }
 
@@ -774,68 +353,8 @@ pub fn query_escape(s: Str) -> Str {
   out
 }
 
-/// strconv.Quote (printable: ASCII graphic and every rune from U+00A1
-/// but U+00AD, U+2028, U+2029; xo_http.c's approximation of IsPrint).
-pub fn go_quote(s: Str) -> Str {
-  let b = s.bytes()
-  let n = b.len()
-  let hex = b"0123456789abcdef"
-  var out = rt.rs_push_byte(rt.rs_with_cap(n + 2), 34)
-  var i = 0
-  while i < n {
-    let c = Int(b[i])
-    if c >= 32 && c < 127 && c != 34 && c != 92 {
-      // a run of plain ASCII
-      var j = i + 1
-      while j < n {
-        let d = Int(b[j])
-        if d < 32 || d >= 127 || d == 34 || d == 92 {
-          break
-        }
-        j += 1
-      }
-      out = rt.rs_append_bytes(out, b, i, j, 0)
-      i = j
-      continue
-    }
-    let x = rawb.bytes_decode(b, i)
-    let r = x >> 3
-    let size = x & 7
-    if r == 0xFFFD && size == 1 {
-      out = rt.rs_push_word(out, 92 | (120 << 8) | (Int(hex[c >> 4]) << 16) | (Int(hex[c & 15]) << 24), 4)
-    } else if r == 34 || r == 92 {
-      out = rt.rs_push_word(out, 92 | (r << 8), 2)
-    } else if r >= 0xA1 && r != 0xAD && r != 0x2028 && r != 0x2029 {
-      out = rt.rs_append_bytes(out, b, i, i + size, 0)
-    } else if r == 7 {
-      out = rt.rs_push_word(out, 92 | (97 << 8), 2)
-    } else if r == 8 {
-      out = rt.rs_push_word(out, 92 | (98 << 8), 2)
-    } else if r == 12 {
-      out = rt.rs_push_word(out, 92 | (102 << 8), 2)
-    } else if r == 10 {
-      out = rt.rs_push_word(out, 92 | (110 << 8), 2)
-    } else if r == 13 {
-      out = rt.rs_push_word(out, 92 | (114 << 8), 2)
-    } else if r == 9 {
-      out = rt.rs_push_word(out, 92 | (116 << 8), 2)
-    } else if r == 11 {
-      out = rt.rs_push_word(out, 92 | (118 << 8), 2)
-    } else if r < 32 || r == 127 {
-      out = rt.rs_push_word(out, 92 | (120 << 8) | (Int(hex[r >> 4]) << 16) | (Int(hex[r & 15]) << 24), 4)
-    } else {
-      let k = if r < 0x10000 { 4 } else { 8 }
-      out = rt.rs_push_word(out, 92 | ((if k == 4 { 117 } else { 85 }) << 8), 2)
-      var sh = 4 * (k - 1)
-      while sh >= 0 {
-        out = rt.rs_push_byte(out, Int(hex[(r >> sh) & 15]))
-        sh -= 4
-      }
-    }
-    i += size
-  }
-  rt.rs_push_byte(out, 34)
-}
+/// strconv.Quote (neturl.xo's go_quote).
+pub fn go_quote(s: Str) -> Str { neturl.go_quote(s) }
 
 /// textproto.CanonicalMIMEHeaderKey: unchanged when a byte is not a token
 /// byte.
@@ -909,7 +428,7 @@ pub struct Head {
   headers: List[Str]
   /// req.Host.
   host: Str
-  url: Url
+  url: neturl.Url
   /// The URL's query: [key, first value, ...], keys sorted.
   query: List[Str]
   /// ContentLength (-1 chunked).
@@ -925,7 +444,7 @@ pub struct Head {
 }
 
 fn no_head() -> Head {
-  Head{method: "", target: "", major: 0, minor: 0, headers: [], host: "", url: url_fail(""), query: [], clen: 0, chunked: false, close: false, wants10ka: false, wantsclose: false, expect100: false, expect_other: false, h2up: false}
+  Head{method: "", target: "", major: 0, minor: 0, headers: [], host: "", url: neturl.url_fail(""), query: [], clen: 0, chunked: false, close: false, wants10ka: false, wantsclose: false, expect100: false, expect_other: false, h2up: false}
 }
 
 /// The result of a head's parse: res (NEED, OK, ...), the head's length
@@ -1232,7 +751,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
 
 /// The checks and merging of a head whose fields were read (the rest of
 /// hp_head): Go's Header, readTransfer, shouldClose, conn.readRequest.
-fn head_of(method: Str, target: Str, major: Int, minor: Int, url: Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool) -> Parse {
+fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool) -> Parse {
   let nraw = keys.len()
   // counts per key, for Host and Content-Length checks
   var hosts = 0
@@ -2204,7 +1723,7 @@ fn req_of(h: Head) -> Req {
   var port = -1
   let ub = h.url.host.bytes()
   let uc = rfind(ub, 58, ub.len())
-  if uc >= 0 && uc + 1 < ub.len() && valid_port(ub, uc, ub.len()) {
+  if uc >= 0 && uc + 1 < ub.len() && neturl.valid_port(ub, uc, ub.len()) {
     var v = 0
     var x = uc + 1
     var fits = true
@@ -2244,7 +1763,7 @@ pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
     }
     if nn == 5 && b[off] == 58 && b[off + 1] == 112 && b[off + 2] == 97 && b[off + 3] == 116 && b[off + 4] == 104 {
       let v = rawb.str_slice(data, off + 5, off + 5 + vn)
-      let u = url_parse(v, true)
+      let u = neturl.url_parse(v, true)
       if !u.ok {
         return [v, "", "", "", "", ""]
       }
@@ -3292,7 +2811,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     if hash >= 0 {
       cut = rawb.str_slice(raw, 0, hash)
     }
-    let u = url_parse(cut, false)
+    let u = neturl.url_parse(cut, false)
     if !u.ok {
       return cfail(if redirects == 0 { 1 } else { 4 }, "parse " + go_quote(raw) + ": " + u.err)
     }
