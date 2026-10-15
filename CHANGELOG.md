@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime performance: a task's run reuses its thread's spare
+  context (thread local word 13) instead of a heap block per run
+  (tasks.xo run_claimed): ctx spawn 0.98 and 0.96, conc spawn 0.97 and
+  0.99 of the step before (arm64, llvm). A new repository test checks
+  that no two runtime modules use one thread local word
+  (TestThreadLocalWordOwners; the first try collided with sysio.xo's
+  word 12).
 - AES-GCM: GHASH with the CPU's multiply as a loop over H's words (no
   Gcm passed per block). AES-128-GCM on LLVM 14.1M instructions a MiB
   (Mbed 14.0M; TLS 1.3 13.4M against 13.9M), on arm64 17.7M.

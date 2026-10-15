@@ -533,3 +533,29 @@ XO_LLRT_C=tlsio,tlssrv (Mbed TLS under the Xo HTTP/2 code).
   h2big is at main on llvm; arm64's 1.16x is the arm64 backend's
   AES-GCM code (17.7M instructions a MiB against llvm's 14.1M).
 
+### Spawning: a spare context per thread
+
+tasks.xo run_claimed allocated, zeroed, and freed a 320 byte context from
+the Xo heap for every task run (the C's was on its stack). It now keeps
+one spare per thread (thread local word 13, from rt.heap_large like a
+root context, so the leak check does not count it). Against zero-c
+before this step (median of 9 interleaved runs, measured with the spare
+in word 12, which only changes where the pointer lives):
+
+| Workload | Backend | After/before |
+|---|---|---|
+| ctx spawn | arm64 | 0.979 |
+| ctx spawn | llvm | 0.956 |
+| concspawn  | arm64 | 0.965 |
+| concspawn  | llvm | 0.987 |
+
+With the earlier ratios against main, ctx spawn is about 1.05 (arm64)
+and 1.03 (llvm) of main, conc spawn about 1.08 and 1.07: still over the
+bar on arm64. The rest is spread over run_claimed's other work, the
+run_entry service call (rt.sched_rt 29, a C frame by design), and the
+closures' environment release.
+
+The first try used word 12, sysio.xo's file operation message: xo itself
+then exited 137 on every build (gotchas/thread-local-word-collision.md;
+internal/repotest TestThreadLocalWordOwners now checks the words).
+

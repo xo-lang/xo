@@ -85,6 +85,9 @@ const H_FREE = 8
 /// (sched.xo TLS_FIB, TLS_W).
 const P_NCPU = 8
 const TLS_FIB = 1
+/// The thread local word of the thread's spare context (run_claimed;
+/// sched.xo's table of the words).
+const TLS_CTX_SPARE = 13
 const TLS_W = 2
 
 /// The spawn statistic (pool.xo ST_*).
@@ -720,7 +723,16 @@ pub fn wl_wake(l: Int) {
 /// Runs task t, which the caller claimed, on this stack (a fiber, or a
 /// thread that helps); units (sched.xo scope_units_done) are over after.
 pub fn run_claimed(t: Int, units: Int) {
-  let c = obj.alloc_obj(ctx.C_SIZE)
+  // the context: the thread's spare (an earlier run's), else a new one
+  // from the runtime's malloc (the C's was on its stack; a heap block
+  // and its free per run cost spawn heavy programs, the zero-C perf
+  // sweep of 2026-10-15)
+  var c = rt.tlocal_get(TLS_CTX_SPARE)
+  if c != 0 {
+    rt.tlocal_set(TLS_CTX_SPARE, 0)
+  } else {
+    c = rt.heap_large(ctx.C_SIZE)
+  }
   rt.mem_set(c, 0, ctx.C_SIZE)
   st(c, ctx.C_NODE, t + T_NODE)
   let saved = rt.tlocal_get(0)
@@ -749,7 +761,14 @@ pub fn run_claimed(t: Int, units: Int) {
   mfree(ld(c, ctx.C_HELD))
   mfree(ld(c, ctx.C_NET_MSG))
   fault.clear(c)
-  obj.free_obj(c)
+  // the spare of the thread that ends the run (a fiber may have moved);
+  // a spare is never freed (one per thread, like a root context), so the
+  // leak check does not see it
+  if rt.tlocal_get(TLS_CTX_SPARE) == 0 {
+    rt.tlocal_set(TLS_CTX_SPARE, c)
+  } else {
+    rt.heap_release(c - 8)
+  }
   let s = ld(t, T_SCOPE)
   pool.lock(t + T_MU)
   rt.slot_store[Int](t + T_STATE, 0, T_DONE, RELEASE)
