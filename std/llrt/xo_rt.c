@@ -3080,14 +3080,16 @@ __attribute__((noinline, unused)) static int64_t x_ret(int64_t r) {
 // exports (cabi_poll.xo), which every program has. Each nx_
 // function keeps the C library's convention (-1 and errno). macOS takes
 // the same path (sock.xo's darwin arms over libSystem, getaddrinfo in
-// cabi_net.xo; the zero-C audit's B23).
-#if defined(__linux__) || defined(__APPLE__)
+// cabi_net.xo; the zero-C audit's B23), and Windows (its arms over
+// ws2_32, B23 stage 2: UNTESTED on windows).
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 #ifdef XO_NOLIBC
 #define XO_NX_REF
 #define NX_LIBC(call) (void)0
-#elif defined(__APPLE__)
-// Mach-O takes no undefined weak reference: weak definitions below stand
-// in (net_raw 0: the C library) until cabi_net.xo's exports replace them
+#elif defined(__APPLE__) || defined(_WIN32)
+// Mach-O takes no undefined weak reference (and PE/COFF's are weak
+// externals with a default): weak definitions below stand in (net_raw
+// 0: the C library) until cabi_net.xo's exports replace them
 #define XO_NX_REF
 #define NX_LIBC(call)                                                                                                         \
 	if (!nx_on()) {                                                                                                           \
@@ -3117,7 +3119,7 @@ XO_NX_REF int64_t xo_x_net_resolve(int64_t hp, int64_t hn, int64_t pp, int64_t p
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
 XO_NX_REF int64_t xo_x_net_pton6(int64_t p, int64_t dst);
 XO_NX_REF int64_t xo_x_net_gai_text(int64_t code, int64_t buf, int64_t bn);
-#if defined(__APPLE__) && !defined(XO_NOLIBC)
+#if (defined(__APPLE__) || defined(_WIN32)) && !defined(XO_NOLIBC)
 #define XO_NX_STUB(name, ...)                                                                                                 \
 	__attribute__((weak)) int64_t name(__VA_ARGS__) { return -ENOSYS; }
 __attribute__((weak)) int64_t xo_x_net_raw(void) { return 0; }
@@ -3152,7 +3154,7 @@ static int nx_on(void) {
 	static int on = -1;
 	int v = __atomic_load_n(&on, __ATOMIC_RELAXED);
 	if (v < 0) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 		v = xo_x_net_raw() == 1;
 #else
 		v = xo_x_net_raw && xo_x_net_raw() == 1;
@@ -3211,6 +3213,12 @@ static int nx_shutdown(int fd, int how) {
 // nx_close closes a socket (or the poller's pipe ends).
 static int nx_close(int fd) {
 	NX_LIBC(close(fd));
+#ifdef _WIN32
+	if (!xo_w_is_sock(fd)) {
+		// a C runtime descriptor (xo_win.c's tag)
+		return close(fd);
+	}
+#endif
 	return nx_ret(xo_x_fd_close(fd));
 }
 
@@ -3337,11 +3345,17 @@ __attribute__((noinline)) static int64_t x_wsa(int64_t r) { return r < 0 ? -(int
 
 __attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
 	STAT(net_read);
+	if (nx_on()) {
+		return xo_x_net_read(fd, XO_ADDR(b), (int64_t)n);
+	}
 	return x_wsa(recv((SOCKET)fd, b, (int)n, 0));
 }
 
 __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
 	STAT(net_write);
+	if (nx_on()) {
+		return xo_x_net_send(fd, XO_ADDR(b), (int64_t)n);
+	}
 	return x_wsa(send((SOCKET)fd, b, (int)n, 0));
 }
 #else
@@ -3434,6 +3448,9 @@ __attribute__((noinline)) static int64_t x_accept(int fd) {
 }
 #elif defined(_WIN32)
 __attribute__((noinline)) static int64_t x_accept(int fd) {
+	if (nx_on()) {
+		return xo_x_net_accept(fd, 0);
+	}
 	SOCKET s = accept((SOCKET)fd, NULL, NULL);
 	return s == INVALID_SOCKET ? -(int64_t)xo_wsa_errno() : (int64_t)(int)s;
 }
@@ -3444,6 +3461,9 @@ __attribute__((noinline)) static int64_t x_accept(int fd) { return x_ret(accept(
 #ifdef _WIN32
 // a nonblocking connect in progress is WSAEWOULDBLOCK
 __attribute__((noinline)) static int64_t x_connect(int fd, const struct sockaddr *a, socklen_t n) {
+	if (nx_on()) {
+		return xo_x_net_connect(fd, XO_ADDR(a), n);
+	}
 	int64_t r = x_wsa(connect((SOCKET)fd, a, n));
 	return r == -EWOULDBLOCK ? -EINPROGRESS : r;
 }
@@ -3466,7 +3486,7 @@ __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 #if defined(XO_NOLIBC)
 	return xo_x_net_sock_err(fd);
 #else
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 	if (nx_on()) {
 		return xo_x_net_sock_err(fd);
 	}
@@ -3488,7 +3508,7 @@ __attribute__((noinline)) static int64_t x_sockerr(int fd) {
 __attribute__((noinline)) static int x_errno(void) { return errno; }
 
 static void set_nonblock(int fd) {
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 	if (nx_on()) {
 		xo_x_fd_nonblock(fd);
 		return;

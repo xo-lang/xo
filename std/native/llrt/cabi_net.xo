@@ -14,6 +14,7 @@ use native/llrt/raw
 use native/llrt/sock
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// 1 when the network's system calls and name resolution are these
 /// (net.raw: Linux, and not `XO_LLRT_C=net`), else 0.
@@ -72,10 +73,10 @@ fn net_send(fd: Int, p: Int, n: Int) -> Int { sock.send(fd, p, n, 16384) }
 /// with no allocation.
 fn net_resolve(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, state: Int, out: Int, cap: Int) -> Int {
   match target.os {
-    TargetOs.Darwin => {
-      return resolve_darwin(hp, hn, pp, pn, family, passive, out, cap)
+    TargetOs.Darwin | TargetOs.Windows => {
+      return resolve_libc(hp, hn, pp, pn, family, passive, out, cap)
     }
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Linux | TargetOs.Wasi => {}
   }
   var pv = 0
   for i in 0..pn {
@@ -168,7 +169,7 @@ fn net_gai_text(code: Int, buf: Int, bn: Int) -> Int {
   let s = match target.os {
     // libSystem's own texts on macOS (as its getaddrinfo's codes)
     TargetOs.Darwin => {
-      // resolve_darwin returns minus libSystem's (positive) code
+      // resolve_libc returns minus libSystem's (positive) code
       let t = sys_darwin.gai_strerror(if code < 0 { 0 - code } else { code })
       raw.str_at(t, raw.cstr_len(t))
     }
@@ -180,11 +181,15 @@ fn net_gai_text(code: Int, buf: Int, bn: Int) -> Int {
   k
 }
 
-/// net_resolve on macOS: libSystem's getaddrinfo (decision 0195 allows it:
-/// mDNSResponder, .local names, the system's DNS configuration), each
-/// result's struct sockaddr copied into an entry of 32 bytes; an error is
-/// minus libSystem's (positive) EAI code, which net_gai_text takes back.
-fn resolve_darwin(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, out: Int, cap: Int) -> Int {
+/// net_resolve on macOS and Windows: the system's getaddrinfo (decision
+/// 0195 allows it: mDNSResponder, .local names, the system's DNS
+/// configuration; ws2_32's on Windows, UNTESTED on windows), each
+/// result's struct sockaddr copied into an entry of 32 bytes (struct
+/// addrinfo has the same offsets on both). An error on macOS is minus
+/// libSystem's (positive) EAI code, which net_gai_text takes back; on
+/// Windows dns.xo's EAI code for the Winsock error (dns.wsa_eai), so the
+/// texts are glibc's.
+fn resolve_libc(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int, out: Int, cap: Int) -> Int {
   // the host and the port zero terminated, the hints (struct addrinfo,
   // 48 bytes: flags, family, socktype at 0, 4, 8), and the result's word
   let hb = raw.bytes_buf(hn + 1)
@@ -198,15 +203,18 @@ fn resolve_darwin(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int,
   rt.mem_copy(pa, pp, pn)
   rt.mem_store(pa, pn, 0, 1)
   rt.mem_set(ia, 0, 56)
-  // AI_NUMERICSERV 0x1000, AI_PASSIVE 1; SOCK_STREAM 1
-  rt.mem_store(ia, 0, 4096 | (if passive == 1 { 1 } else { 0 }), 4)
+  // AI_NUMERICSERV 0x1000 on macOS, 8 on Windows; AI_PASSIVE 1;
+  // SOCK_STREAM 1
+  let numeric = if sock.windows() { 8 } else { 4096 }
+  rt.mem_store(ia, 0, numeric | (if passive == 1 { 1 } else { 0 }), 4)
   rt.mem_store(ia, 4, family, 4)
   rt.mem_store(ia, 8, 1, 4)
   let resp = ia + 48
-  let g = Int(sys_darwin.getaddrinfo(if hn == 0 { 0 } else { ha }, pa, ia, resp))
+  let host = if hn == 0 { 0 } else { ha }
+  let g = if sock.windows() { Int(sys_windows.getaddrinfo(host, pa, ia, resp)) } else { Int(sys_darwin.getaddrinfo(host, pa, ia, resp)) }
   if g != 0 {
     let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
-    return 0 - g
+    return if sock.windows() { dns.wsa_eai(g) } else { 0 - g }
   }
   let first = rt.mem_load(resp, 0, 8)
   var a = first
@@ -222,11 +230,15 @@ fn resolve_darwin(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Int,
     n += 1
     a = rt.mem_load(a, 40, 8)
   }
-  sys_darwin.freeaddrinfo(first)
+  if sock.windows() {
+    sys_windows.freeaddrinfo(first)
+  } else {
+    sys_darwin.freeaddrinfo(first)
+  }
   let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
   if n == 0 {
-    // libSystem's EAI_NONAME
-    return -8
+    // EAI_NONAME: libSystem's, dns.xo's on Windows
+    return if sock.windows() { dns.EAI_NONAME } else { -8 }
   }
   n
 }

@@ -26,6 +26,14 @@ pub fn raw() -> Bool {
         TargetArch.Arm64 | TargetArch.Amd64 => true
       }
     }
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows => {
+      // ws2_32's socket calls (sock.xo's Windows arms, B23 stage 2;
+      // UNTESTED on windows)
+      match target.arch {
+        TargetArch.Wasm32 => false
+        TargetArch.Arm64 | TargetArch.Amd64 => true
+      }
+    }
+    TargetOs.Wasi => false
   }
 }

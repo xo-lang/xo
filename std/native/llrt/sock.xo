@@ -9,13 +9,17 @@
 // raw.bytes_addr of a Bytes kept alive past the call. A call returns
 // what the kernel returns: a result >= 0, or a negative errno.
 //
-// Linux and macOS reach this module (net.raw); a darwin call returns
-// minus darwin's errno, so the C runtime's tests of its errno constants
-// hold.
+// Linux, macOS, and Windows reach this module (net.raw); a darwin call
+// returns minus darwin's errno, and a Windows one minus the C runtime's
+// errno for its Winsock error (wsa_errno, as xo_win.c's xo_wsa_map), so
+// the C runtime's tests of its errno constants hold. The Windows arms
+// (B23 stage 2) are UNTESTED on windows: written on macOS and checked by
+// the windows/amd64 cross build only.
 use native/llrt/obj
 use native/llrt/raw
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 // Address families and socket types (the same on arm64 and x86_64).
 pub const AF_UNIX: Int = 1
@@ -57,6 +61,62 @@ fn dret(r: Int) -> Int {
   r
 }
 
+/// Whether the target is Windows (its calls go through ws2_32).
+pub fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+  }
+}
+
+/// rt.static_word: whether WSAStartup ran (sock.xo's).
+const W_WSA = 62
+
+/// Starts Winsock once (WSAStartup is counted, so a second call from a
+/// racing thread is harmless).
+fn wsa_init() {
+  if rt.slot_load(rt.static_word(W_WSA), 0, 1) == 0 {
+    // WSADATA: 408 bytes on 64 bit Windows
+    let d = raw.bytes_buf(512)
+    let _r = keep(d, Int(sys_windows.WSAStartup(514, raw.bytes_addr(d))))
+    rt.slot_store(rt.static_word(W_WSA), 0, 1, 2)
+  }
+}
+
+/// The C runtime's errno (the Windows CRT's numbers, asserted in
+/// xo_win.c) for Winsock error code e (xo_win.c xo_wsa_map).
+fn wsa_errno(e: Int) -> Int {
+  match e {
+    10035 => 140 // WSAEWOULDBLOCK: EWOULDBLOCK
+    10036 | 10037 => 112 // WSAEINPROGRESS, WSAEALREADY: EINPROGRESS
+    10061 => 107 // WSAECONNREFUSED: ECONNREFUSED
+    10054 => 108 // WSAECONNRESET: ECONNRESET
+    10053 => 106 // WSAECONNABORTED: ECONNABORTED
+    10058 => 32 // WSAESHUTDOWN: EPIPE
+    10060 => 138 // WSAETIMEDOUT: ETIMEDOUT
+    10048 => 100 // WSAEADDRINUSE: EADDRINUSE
+    10049 => 101 // WSAEADDRNOTAVAIL: EADDRNOTAVAIL
+    10013 => 13 // WSAEACCES: EACCES
+    10022 => 22 // WSAEINVAL: EINVAL
+    10004 => 4 // WSAEINTR: EINTR
+    10038 => 128 // WSAENOTSOCK: ENOTSOCK
+    10051 => 118 // WSAENETUNREACH: ENETUNREACH
+    10065 => 110 // WSAEHOSTUNREACH: EHOSTUNREACH
+    10057 => 126 // WSAENOTCONN: ENOTCONN
+    10047 => 102 // WSAEAFNOSUPPORT: EAFNOSUPPORT
+    _ => 5 // EIO
+  }
+}
+
+/// r of a Winsock call: r, or minus the errno of WSAGetLastError when r
+/// is SOCKET_ERROR or INVALID_SOCKET (-1).
+fn wret(r: Int) -> Int {
+  if r == -1 {
+    return 0 - wsa_errno(Int(sys_windows.WSAGetLastError()))
+  }
+  r
+}
+
 /// The system call number of the target's architecture: arm64 (the
 /// asm-generic table) or x86_64.
 fn nr(arm64: Int, amd64: Int) -> Int {
@@ -69,6 +129,12 @@ fn nr(arm64: Int, amd64: Int) -> Int {
 
 /// socket(2).
 pub fn socket(family: Int, ty: Int, proto: Int) -> Int {
+  if windows() {
+    wsa_init()
+    // Linux's SOCK_NONBLOCK and SOCK_CLOEXEC are not Winsock's: not
+    // inherited (WSA_FLAG_NO_HANDLE_INHERIT 0x80), overlapped (0x01)
+    return wret(sys_windows.WSASocketW(family, ty & 255, proto, 0, 0, 129))
+  }
   if darwin() {
     return dret(Int(sys_darwin.socket(family, ty, proto)))
   }
@@ -77,6 +143,9 @@ pub fn socket(family: Int, ty: Int, proto: Int) -> Int {
 
 /// bind(2) of the n bytes of sockaddr at sa.
 pub fn bind(fd: Int, sa: Int, n: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.bind(fd, sa, n)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.bind(fd, sa, n)))
   }
@@ -85,6 +154,9 @@ pub fn bind(fd: Int, sa: Int, n: Int) -> Int {
 
 /// listen(2).
 pub fn listen(fd: Int, backlog: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.listen(fd, backlog)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.listen(fd, backlog)))
   }
@@ -93,6 +165,9 @@ pub fn listen(fd: Int, backlog: Int) -> Int {
 
 /// accept4(2) with no peer address wanted.
 pub fn accept(fd: Int, flags: Int) -> Int {
+  if windows() {
+    return wret(sys_windows.accept(fd, 0, 0))
+  }
   if darwin() {
     return dret(Int(sys_darwin.accept(fd, 0, 0)))
   }
@@ -101,6 +176,11 @@ pub fn accept(fd: Int, flags: Int) -> Int {
 
 /// connect(2) to the n bytes of sockaddr at sa.
 pub fn connect(fd: Int, sa: Int, n: Int) -> Int {
+  if windows() {
+    // a nonblocking connect in progress is WSAEWOULDBLOCK
+    let r = wret(Int(sys_windows.connect(fd, sa, n)))
+    return if r == -140 { -112 } else { r }
+  }
   if darwin() {
     return dret(Int(sys_darwin.connect(fd, sa, n)))
   }
@@ -110,6 +190,9 @@ pub fn connect(fd: Int, sa: Int, n: Int) -> Int {
 /// getsockname(2) into the buffer at sa, whose size is the 32 bit word
 /// at lenp (updated to the address's length).
 pub fn sockname(fd: Int, sa: Int, lenp: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.getsockname(fd, sa, lenp)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.getsockname(fd, sa, lenp)))
   }
@@ -118,6 +201,9 @@ pub fn sockname(fd: Int, sa: Int, lenp: Int) -> Int {
 
 /// getpeername(2), as sockname.
 pub fn peername(fd: Int, sa: Int, lenp: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.getpeername(fd, sa, lenp)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.getpeername(fd, sa, lenp)))
   }
@@ -126,6 +212,9 @@ pub fn peername(fd: Int, sa: Int, lenp: Int) -> Int {
 
 /// sendto(2) of n bytes at p with flags, to the connected peer.
 pub fn send(fd: Int, p: Int, n: Int, flags: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.send(fd, p, n, 0)))
+  }
   if darwin() {
     return dret(sys_darwin.send(fd, p, n, 0))
   }
@@ -134,6 +223,9 @@ pub fn send(fd: Int, p: Int, n: Int, flags: Int) -> Int {
 
 /// recvfrom(2) of at most n bytes into p, from the connected peer.
 pub fn recv(fd: Int, p: Int, n: Int, flags: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.recv(fd, p, n, flags)))
+  }
   if darwin() {
     return dret(sys_darwin.recv(fd, p, n, flags))
   }
@@ -142,6 +234,9 @@ pub fn recv(fd: Int, p: Int, n: Int, flags: Int) -> Int {
 
 /// read(2) of at most n bytes into p.
 pub fn read(fd: Int, p: Int, n: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.recv(fd, p, n, 0)))
+  }
   if darwin() {
     return dret(sys_darwin.read(fd, p, n))
   }
@@ -150,6 +245,9 @@ pub fn read(fd: Int, p: Int, n: Int) -> Int {
 
 /// setsockopt(2) of the n bytes at v.
 pub fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.setsockopt(fd, level, opt, v, n)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.setsockopt(fd, level, opt, v, n)))
   }
@@ -159,6 +257,9 @@ pub fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int {
 /// getsockopt(2) into the buffer at v, whose size is the 32 bit word at
 /// lenp.
 pub fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.getsockopt(fd, level, opt, v, lenp)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.getsockopt(fd, level, opt, v, lenp)))
   }
@@ -167,6 +268,9 @@ pub fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int {
 
 /// shutdown(2).
 pub fn shutdown(fd: Int, how: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.shutdown(fd, how)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.shutdown(fd, how)))
   }
@@ -175,6 +279,9 @@ pub fn shutdown(fd: Int, how: Int) -> Int {
 
 /// close(2).
 pub fn close(fd: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.closesocket(fd)))
+  }
   if darwin() {
     return dret(Int(sys_darwin.close(fd)))
   }
@@ -183,6 +290,9 @@ pub fn close(fd: Int) -> Int {
 
 /// fcntl(2) with an integer argument.
 pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int {
+  if windows() {
+    return -22
+  }
   if darwin() {
     return dret(Int(sys_darwin.fcntl(fd, cmd, arg)))
   }
@@ -208,6 +318,13 @@ pub fn ppoll(fds: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(73, 271), fds, n, ts
 /// Sets O_NONBLOCK on fd and FD_CLOEXEC (the C runtime's set_nonblock):
 /// 0, or the negative errno.
 pub fn nonblock(fd: Int) -> Int {
+  if windows() {
+    // ioctlsocket FIONBIO (0x8004667E) with a u_long 1; sockets are
+    // created not inherited
+    let a = obj.scratch()
+    rt.mem_store(a, 0, 1, 4)
+    return wret(Int(sys_windows.ioctlsocket(fd, 2147772030, a)))
+  }
   // F_GETFL 3, F_SETFL 4, F_SETFD 2 (both OSes); O_NONBLOCK 2048 on
   // Linux, 4 on macOS; FD_CLOEXEC 1
   let fl = fcntl(fd, 3, 0)
@@ -228,12 +345,18 @@ pub fn sock_err(fd: Int) -> Int {
   let a = obj.scratch()
   rt.mem_store(a, 0, 0, 4)
   rt.mem_store(a, 8, 4, 4)
-  // SOL_SOCKET 1, SO_ERROR 4 on Linux; 0xffff, 0x1007 on macOS
-  let r = if darwin() { getsockopt(fd, 65535, 4103, a, a + 8) } else { getsockopt(fd, 1, 4, a, a + 8) }
+  // SOL_SOCKET 1, SO_ERROR 4 on Linux; 0xffff, 0x1007 on macOS and
+  // Windows
+  let r = if darwin() || windows() { getsockopt(fd, 65535, 4103, a, a + 8) } else { getsockopt(fd, 1, 4, a, a + 8) }
   if r < 0 {
     return r
   }
-  0 - rt.mem_load(a, 0, 4)
+  let e = rt.mem_load(a, 0, 4)
+  if windows() && e != 0 {
+    // a Winsock error code
+    return 0 - wsa_errno(e)
+  }
+  0 - e
 }
 
 /// setsockopt(2) of a C int value v: 0, or the negative errno.

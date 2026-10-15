@@ -115,3 +115,36 @@ fn GetActiveProcessorCount(group: Int) -> UInt32
 
 /// GetSystemInfo: the SYSTEM_INFO (48 bytes) at info.
 fn GetSystemInfo(info: Int)
+
+// Winsock (ws2_32.dll, the zero-C audit's B23 stage 2): the socket calls
+// of std/native/llrt/sock.xo's Windows arms and the name lookup of
+// cabi_net.xo. A socket is its SOCKET handle as an Int; a call that fails
+// returns SOCKET_ERROR (-1) or INVALID_SOCKET (-1 as a word), its error
+// in WSAGetLastError.
+
+/// WSAStartup with the version (2.2: 0x202) into the WSADATA at data
+/// (408 bytes on 64 bit Windows): 0, or the error.
+fn WSAStartup(version: Int, data: Int) -> Int32
+fn WSAGetLastError() -> Int32
+/// WSASocketW: the socket, or INVALID_SOCKET (-1).
+fn WSASocketW(af: Int, ty: Int, proto: Int, info: Int, group: Int, flags: Int) -> Int
+fn bind(s: Int, sa: Int, n: Int) -> Int32
+fn listen(s: Int, backlog: Int) -> Int32
+/// accept: the new socket, or INVALID_SOCKET (-1).
+fn accept(s: Int, sa: Int, lenp: Int) -> Int
+fn connect(s: Int, sa: Int, n: Int) -> Int32
+fn getsockname(s: Int, sa: Int, lenp: Int) -> Int32
+fn getpeername(s: Int, sa: Int, lenp: Int) -> Int32
+fn send(s: Int, p: Int, n: Int, flags: Int) -> Int32
+fn recv(s: Int, p: Int, n: Int, flags: Int) -> Int32
+fn setsockopt(s: Int, level: Int, opt: Int, v: Int, n: Int) -> Int32
+fn getsockopt(s: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int32
+fn shutdown(s: Int, how: Int) -> Int32
+fn closesocket(s: Int) -> Int32
+/// ioctlsocket with the u_long at the address arg (FIONBIO: nonzero
+/// makes the socket nonblocking).
+fn ioctlsocket(s: Int, cmd: Int, arg: Int) -> Int32
+/// getaddrinfo (ANSI names): 0, or a Winsock error (WSAHOST_NOT_FOUND
+/// and the rest); the result list is freeaddrinfo's.
+fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
+fn freeaddrinfo(ai: Int)

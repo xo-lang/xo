@@ -236,6 +236,7 @@ fn prefetch(a: Int)
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, whether the descriptor was opened, its poller registration, the buffer (address, length, capacity), the end of input, the read error
 ///   60-61 std/native/llrt/stop.xo: two phase shutdown's state record, the C's services record
+///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

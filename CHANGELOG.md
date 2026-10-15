@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B23, stage 2a): on Windows the
+  network's socket calls go through Xo too (sock.xo's Windows arms over
+  ws2_32, Winsock errors mapped to the C runtime's errno; names through
+  ws2_32's getaddrinfo in cabi_net.xo, whose errors now read as glibc's
+  texts, "Name or service not known"). Written on macOS and untested on
+  Windows.
 - Native runtime (zero-C audit item B25, stage 4a): Proc.run,
   Cmd.output and run, and pipelines run from Xo on macOS and Linux
   (std/native/llrt/proc.xo run and exec: the pipes, the reads on the
