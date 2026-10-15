@@ -65,14 +65,14 @@ fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
   if scan.starts_with(s, p) {
-    return rt.str_slice(s, p.len(), s.len())
+    return raw.str_slice(s, p.len(), s.len())
   }
   s
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
   if scan.ends_with(s, p) {
-    return rt.str_slice(s, 0, s.len() - p.len())
+    return raw.str_slice(s, 0, s.len() - p.len())
   }
   s
 }
@@ -87,9 +87,9 @@ fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 
 fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
 
-fn str_repeat(s: Str, n: Int) -> Str { rt.str_repeat(s, n) }
+fn str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
 
-fn list_join(xs: List[Str], sep: Str) -> Str { rt.str_join(xs, sep) }
+fn list_join(xs: List[Str], sep: Str) -> Str { raw.str_join(xs, sep) }
 
 fn str_quote(s: Str) -> Str { unicode.quote(s.bytes()) }
 
@@ -153,7 +153,7 @@ fn str_runes(s: Str) -> List[Rune] {
   var out: List[Rune] = []
   var i = 0
   while i < b.len() {
-    let p = rt.bytes_decode(b, i)
+    let p = raw.bytes_decode(b, i)
     out.push(Rune(p >> 3))
     i += p & 7
   }
@@ -164,7 +164,7 @@ fn bytes_decode_rune(b: Bytes, i: Int, at: rt.Loc) -> (Rune, Int) {
   if i < 0 || i > b.len() {
     rt.fault_at("index ${i} out of range for decode_rune on Bytes of length ${b.len()}", at)
   }
-  let p = rt.bytes_decode(b, i)
+  let p = raw.bytes_decode(b, i)
   (Rune(p >> 3), p & 7)
 }
 
@@ -556,7 +556,7 @@ fn fs_err(st: Int, p: Str) -> FsErr {
     4 => FsErr.NotDir(path: p)
     5 => FsErr.IsDir(path: p)
     6 => FsErr.Denied(path: p)
-    7 => FsErr.Io(path: p, msg: rt.fs_msg()[1])
+    7 => FsErr.Io(path: p, msg: sysio.msg()[1])
     _ => FsErr.Canceled
   }
 }
@@ -874,7 +874,7 @@ fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
   let op = fs_check(f, p, false)?
   let l = sysio.fs_read(op)
   if l.len() == 0 {
-    return Err(fs_err(rt.fs_status(), p))
+    return Err(fs_err(sysio.status(), p))
   }
   l[0]
 }
@@ -887,7 +887,7 @@ fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
 fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
   let op = fs_check(f, dir, false)?
   let names = fsops.names(op, dir)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, dir))
   }
@@ -904,7 +904,7 @@ fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
 
 fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! FsErr {
   let names = fsops.names(osdir, xodir)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, xodir))
   }
@@ -945,7 +945,7 @@ fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
   let op = fs_check(f, dir, true)?
   let name = fspath.create_temp(op, prefix, dir)
   if name == "" {
-    return Err(fs_err(rt.fs_status(), dir))
+    return Err(fs_err(sysio.status(), dir))
   }
   // os.CreateTemp joins without cleaning
   var full = op + "/" + name
@@ -1013,7 +1013,7 @@ struct FileLock {
 fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
   let op = fs_check(f, p, mode != 0)?
   let h = fsops.open_file(op, mode, p)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -1049,7 +1049,7 @@ fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
     return Some(b"")
   }
   let l = fsops.file_read(f.h, max, f.path)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
@@ -1059,7 +1059,7 @@ fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
 fn file_read_line(f: File) -> Str? ! FsErr {
   file_state(f, false)?
   let l = fsops.file_read_line(f.h, f.path)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
@@ -1100,7 +1100,7 @@ fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
   let dst = fs_check(f, to, true)?
   let st = fsops.copy(src, dst, from, to)
   if st != 0 {
-    return Err(fs_err(st, rt.fs_msg()[0]))
+    return Err(fs_err(st, sysio.msg()[0]))
   }
 }
 
@@ -1108,7 +1108,7 @@ fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
   let op = fs_check(f, p, false)?
   let m = fsops.perm(op, p)
   if m < 0 {
-    return Err(fs_err(rt.fs_status(), p))
+    return Err(fs_err(sysio.status(), p))
   }
   m
 }
@@ -1124,23 +1124,23 @@ fn fs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
 /// Go's path.Dir of a cleaned path.
 fn fs_dir(p: Str) -> Str {
   var i = p.len() - 1
-  while i >= 0 && rt.str_byte(p, i) != 47 {
+  while i >= 0 && raw.str_byte(p, i) != 47 {
     i -= 1
   }
-  fs_clean(rt.str_slice(p, 0, i + 1))
+  fs_clean(raw.str_slice(p, 0, i + 1))
 }
 
 /// strings.Trim(s, "/").
 fn trim_slashes(s: Str) -> Str {
   var a = 0
   var b = s.len()
-  while a < b && rt.str_byte(s, a) == 47 {
+  while a < b && raw.str_byte(s, a) == 47 {
     a += 1
   }
-  while b > a && rt.str_byte(s, b - 1) == 47 {
+  while b > a && raw.str_byte(s, b - 1) == 47 {
     b -= 1
   }
-  rt.str_slice(s, a, b)
+  raw.str_slice(s, a, b)
 }
 
 /// Whether a link at link (in a sub capability) to target points outside
@@ -1148,7 +1148,7 @@ fn trim_slashes(s: Str) -> Str {
 /// (std/rt linkEscapes).
 fn link_escapes(link: Str, target: Str) -> Bool {
   let t = target.replace("\\", "/")
-  if t.starts_with("/") || (t.len() >= 2 && rt.str_byte(t, 1) == 58) {
+  if t.starts_with("/") || (t.len() >= 2 && raw.str_byte(t, 1) == 58) {
     return true
   }
   let dir = fs_dir(fs_clean("/" + link.replace("\\", "/")))
@@ -1180,7 +1180,7 @@ fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
 fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
   let op = fs_check(f, p, false)?
   let l = fsops.read_link(op, p)
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -1193,7 +1193,7 @@ fn fs_lock_wait(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
   if fsops.lock_held(h) {
     return Some(FileLock{h: h})
   }
-  let st = rt.fs_status()
+  let st = sysio.status()
   if st != 0 {
     return Err(fs_err(st, p))
   }
@@ -1219,14 +1219,14 @@ fn glob_scan(p: Str) -> (Bool, Str, Str) {
   let n = p.len()
   var i = 0
   var star = false
-  while i < n && rt.str_byte(p, i) == 42 {
+  while i < n && raw.str_byte(p, i) == 42 {
     i += 1
     star = true
   }
   let start = i
   var inrange = false
   while i < n {
-    let c = rt.str_byte(p, i)
+    let c = raw.str_byte(p, i)
     if c == 92 {
       if i + 1 < n {
         i += 1
@@ -1240,7 +1240,7 @@ fn glob_scan(p: Str) -> (Bool, Str, Str) {
     }
     i += 1
   }
-  (star, rt.str_slice(p, start, i), rt.str_slice(p, i, n))
+  (star, raw.str_slice(p, start, i), raw.str_slice(p, i, n))
 }
 
 /// Go's path.Match getEsc at chunk[c:]: the rune and the index after it,
@@ -1248,16 +1248,16 @@ fn glob_scan(p: Str) -> (Bool, Str, Str) {
 fn glob_esc(chunk: Str, c0: Int) -> (Int, Int) {
   let n = chunk.len()
   var c = c0
-  if c >= n || rt.str_byte(chunk, c) == 45 || rt.str_byte(chunk, c) == 93 {
+  if c >= n || raw.str_byte(chunk, c) == 45 || raw.str_byte(chunk, c) == 93 {
     return (0, -1)
   }
-  if rt.str_byte(chunk, c) == 92 {
+  if raw.str_byte(chunk, c) == 92 {
     c += 1
     if c >= n {
       return (0, -1)
     }
   }
-  let d = rt.bytes_decode(chunk.bytes(), c)
+  let d = raw.bytes_decode(chunk.bytes(), c)
   let r = d >> 3
   let k = d & 7
   if r == 0xfffd && k == 1 {
@@ -1282,24 +1282,24 @@ fn glob_chunk(chunk: Str, s: Str, si0: Int) -> Int {
     if !failed && si >= sn {
       failed = true
     }
-    let ch = rt.str_byte(chunk, c)
+    let ch = raw.str_byte(chunk, c)
     if ch == 91 {
       var r = 0
       if !failed {
-        let d = rt.bytes_decode(s.bytes(), si)
+        let d = raw.bytes_decode(s.bytes(), si)
         r = d >> 3
         si += d & 7
       }
       c += 1
       var negated = false
-      if c < cn && rt.str_byte(chunk, c) == 94 {
+      if c < cn && raw.str_byte(chunk, c) == 94 {
         negated = true
         c += 1
       }
       var matched = false
       var nrange = 0
       while true {
-        if c < cn && rt.str_byte(chunk, c) == 93 && nrange > 0 {
+        if c < cn && raw.str_byte(chunk, c) == 93 && nrange > 0 {
           c += 1
           break
         }
@@ -1309,7 +1309,7 @@ fn glob_chunk(chunk: Str, s: Str, si0: Int) -> Int {
         }
         c = c1
         var hi = lo
-        if rt.str_byte(chunk, c) == 45 {
+        if raw.str_byte(chunk, c) == 45 {
           let (h2, c2) = glob_esc(chunk, c + 1)
           if c2 < 0 {
             return -2
@@ -1327,10 +1327,10 @@ fn glob_chunk(chunk: Str, s: Str, si0: Int) -> Int {
       }
     } else if ch == 63 {
       if !failed {
-        if rt.str_byte(s, si) == 47 {
+        if raw.str_byte(s, si) == 47 {
           failed = true
         }
-        si += rt.bytes_decode(s.bytes(), si) & 7
+        si += raw.bytes_decode(s.bytes(), si) & 7
       }
       c += 1
     } else {
@@ -1341,7 +1341,7 @@ fn glob_chunk(chunk: Str, s: Str, si0: Int) -> Int {
         }
       }
       if !failed {
-        if rt.str_byte(chunk, c) != rt.str_byte(s, si) {
+        if raw.str_byte(chunk, c) != raw.str_byte(s, si) {
           failed = true
         }
         si += 1
@@ -1365,7 +1365,7 @@ fn glob_match(pattern: Str, name: Str) -> Int {
     p = rest
     if star && chunk == "" {
       // a trailing * matches the rest of the name unless it has a /
-      if scan.find(rt.str_slice(name, ni, nl), "/", 0) < 0 {
+      if scan.find(raw.str_slice(name, ni, nl), "/", 0) < 0 {
         return 1
       }
       return 0
@@ -1382,7 +1382,7 @@ fn glob_match(pattern: Str, name: Str) -> Int {
     if star {
       // a match after skipping i + 1 bytes, never a /
       var i = ni
-      while !found && i < nl && rt.str_byte(name, i) != 47 {
+      while !found && i < nl && raw.str_byte(name, i) != 47 {
         let t2 = glob_chunk(chunk, name, i + 1)
         if t2 >= 0 {
           if p.len() > 0 || t2 == nl {
@@ -1562,7 +1562,7 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if st == "3" {
     return Err(ProcErr.Canceled)
   }
-  ProcOutput { code: text.parse_int(detail) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes() }
+  ProcOutput{code: text.parse_int(detail) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
 }
 
 // ---------------------------------------------------------------------------
@@ -2014,14 +2014,14 @@ fn env_cache_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, true) }
 
 // Terminals (std.md 3.6, decision 0162): std/rt's term.go.
 
-fn stdio_stdin_is_tty(_s: Stdio) -> Bool { rt.isatty(0) }
+fn stdio_stdin_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(0) }
 
-fn stdio_stdout_is_tty(_s: Stdio) -> Bool { rt.isatty(1) }
+fn stdio_stdout_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(1) }
 
-fn stdio_stderr_is_tty(_s: Stdio) -> Bool { rt.isatty(2) }
+fn stdio_stderr_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(2) }
 
 fn stdio_width(_s: Stdio) -> Int? {
-  let w = rt.term_width()
+  let w = stdinrt.term_width()
   if w > 0 {
     return Some(w)
   }
@@ -2032,10 +2032,10 @@ fn stdio_width(_s: Stdio) -> Int? {
 /// echo off; the newline the user typed was not echoed, so one is written.
 fn stdio_read_secret(s: Stdio, prompt: Str) -> Str? ! IoErr {
   s.eprint(prompt)
-  let off = rt.stdin_echo(false)
+  let off = stdinrt.echo(false)
   defer {
     if off {
-      rt.stdin_echo(true)
+      stdinrt.echo(true)
       s.eprint("\n")
     }
   }
@@ -2303,7 +2303,26 @@ fn llrt_eprintln(s: Str) { stdiort.eprint(s, true) }
 
 /// os.proc.exit, and the end of a program whose main returned an error
 /// (std/native/llrt/process.xo).
-fn llrt_exit(code: Int) { process.exit(code) }
+fn llrt_exit(code: Int) {
+  if testworld.on() {
+    // a test binary (twrun.xo exit): inside testing.run_main main
+    // unwinds back to it; else the test ends here and passes
+    if !twrun.exit(code) {
+      process.os_exit(0)
+    }
+    return
+  }
+  process.exit(code)
+}
+
+/// The clamped slice and the repeat of the SSA builders' show and
+/// assertion texts (selfhost/ssa show.xo; was xo_std.c's).
+fn llrt_str_slice(s: Str, lo: Int, hi: Int) -> Str { raw.str_slice(s, lo, hi) }
+
+fn llrt_str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
+
+/// `stdio.set_tty(width)` of a test binary (selfhost/ssa testmode.xo).
+fn llrt_tw_set_tty(width: Int) { stdinrt.set_tty(width) }
 
 // The program's arguments and environment, for Env.args, Env.program,
 // and the runtime calls rt.env_get and rt.env_vars (std/native/llrt/process.xo).

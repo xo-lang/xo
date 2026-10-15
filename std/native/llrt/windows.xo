@@ -529,7 +529,7 @@ pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()
   if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
-    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
   }
   s
 }
@@ -949,7 +949,7 @@ pub fn cmd_quote(s: Str) -> Str {
     sp = sp || c == 32 || (c >= 9 && c <= 13)
     i += 1
   }
-  let t = if n == b.len() { s } else { rt.str_slice(s, 0, n) }
+  let t = if n == b.len() { s } else { raw.str_slice(s, 0, n) }
   if !bs && !sp {
     return t
   }
@@ -1160,7 +1160,7 @@ pub fn look_path(cmd: Str, path: Str, pathext: Str) -> Str {
   for d0 in path.split(";") {
     var d = d0
     if d.len() >= 2 && d.starts_with("\"") && d.ends_with("\"") {
-      d = rt.str_slice(d, 1, d.len() - 1)
+      d = raw.str_slice(d, 1, d.len() - 1)
     }
     if !d.is_empty() {
       let f = find_exe(d + "\\" + cmd, pathext)

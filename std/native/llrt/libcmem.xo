@@ -263,3 +263,29 @@ pub fn realloc(p: Int, n: Int) -> Int {
   free(p)
   q
 }
+
+/// getauxval(k): the value of k in the auxiliary vector _start found
+/// (libcio.xo start), or 0. No thread local is touched: the main
+/// thread's TLS setup reads AT_PHDR before its thread pointer is set.
+pub fn auxval(k: Int) -> Int {
+  let w = word(S_AUXV)
+  if w == 0 {
+    return 0
+  }
+  var a = rt.mem_load(w, 0, 8)
+  if a == 0 {
+    return 0
+  }
+  while true {
+    let t = rt.mem_load(a, 0, 8)
+    if t == 0 {
+      // AT_NULL
+      return 0
+    }
+    if t == k {
+      return rt.mem_load(a, 8, 8)
+    }
+    a = addw(a, 16)
+  }
+  0
+}

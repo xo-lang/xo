@@ -288,7 +288,7 @@ pub fn sched_yield() -> Int { ret(sys(nr(124, 24), 0, 0, 0, 0)) }
 pub fn sysconf(name0: Int) -> Int {
   let name = int(name0)
   if name == 30 {
-    let p = rt.auxval(linux.AT_PAGESZ)
+    let p = libcmem.auxval(linux.AT_PAGESZ)
     return if p > 0 { p } else { 4096 }
   }
   if name == 83 || name == 84 {

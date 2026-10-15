@@ -38,6 +38,12 @@ fn GetFileInformationByHandle(h: Int, info: Int) -> Int32
 /// does not exist.
 fn GetFileAttributesW(name: Bytes) -> UInt32
 fn GetFileType(h: Int) -> UInt32
+/// GetConsoleScreenBufferInfo into the CONSOLE_SCREEN_BUFFER_INFO at the
+/// address bi (22 bytes); GetConsoleMode into the DWORD at the address m;
+/// SetConsoleMode: standard input's console (std/native/llrt/stdin.xo).
+fn GetConsoleScreenBufferInfo(h: Int, bi: Int) -> Int32
+fn GetConsoleMode(h: Int, m: Int) -> Int32
+fn SetConsoleMode(h: Int, m: Int) -> Int32
 /// GetSystemTimePreciseAsFileTime into the FILETIME at the address ft.
 fn GetSystemTimePreciseAsFileTime(ft: Int)
 /// QueryPerformanceCounter into the LARGE_INTEGER at the address c:

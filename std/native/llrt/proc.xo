@@ -144,7 +144,7 @@ fn c_owned(s: Str) -> Int {
 fn lower_first(s: Str) -> Str {
   let b = s.bytes()
   if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
-    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
   }
   s
 }
@@ -504,7 +504,7 @@ fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
   if envp != 0 {
     rt.heap_release(envp)
   }
-  (rt.str_of_byte(st), pid, msg)
+  (raw.byte_str(st), pid, msg)
 }
 
 /// launch on Windows (xo_proc.c pr_start and pr_w_spawn): exec.LookPath
@@ -1281,7 +1281,7 @@ pub fn child_start(h: rt.ProcChild) -> List[Str] {
   if s == 48 {
     return ["0", ""]
   }
-  [rt.str_of_byte(s), bytes_of(ld(ch, CH_MSG), 0, ld(ch, CH_MSGN))]
+  [raw.byte_str(s), bytes_of(ld(ch, CH_MSG), 0, ld(ch, CH_MSGN))]
 }
 
 /// c.pid(): 0 for FakeProc's child.

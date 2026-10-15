@@ -13,6 +13,7 @@
 // 0198 deleted the selectable C path (`XO_LLRT_C=scan`); the C functions
 // stay for the C runtime's own callers.
 use native/rt
+use native/llrt/raw
 
 // Words of eight equal bytes.
 const ONES: Int = 72340172838076673
@@ -157,7 +158,7 @@ pub fn find(s: Str, sub: Str, from: Int) -> Int {
 }
 
 /// Whether the bytes of s from i (clamped to 0 and s.len()) start with
-/// p: rt.str_starts_with(rt.str_slice(s, i, s.len()), p) without the
+/// p: rt.str_starts_with(raw.str_slice(s, i, s.len()), p) without the
 /// copy.
 pub fn has_at(s: Str, i: Int, p: Str) -> Bool {
   let n = s.len()
@@ -364,8 +365,8 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
   var start = 0
   if m == 0 {
     while start < n {
-      let k = if b[start] < 0x80 { 1 } else { rt.bytes_decode(b, start) & 7 }
-      out.push(rt.str_slice(s, start, start + k))
+      let k = if b[start] < 0x80 { 1 } else { raw.bytes_decode(b, start) & 7 }
+      out.push(raw.str_slice(s, start, start + k))
       start += k
     }
     return out
@@ -379,7 +380,7 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       var k = rt.bytes_eq16(b, i, c) & NIBS
       while k != 0 {
         let end = i + (rt.ctz(k) >> 2)
-        out.push(rt.str_slice(s, start, end))
+        out.push(raw.str_slice(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
       }
@@ -389,7 +390,7 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       var k = tail16(b, i, n, c)
       while k != 0 {
         let end = i + (rt.ctz(k) >> 2)
-        out.push(rt.str_slice(s, start, end))
+        out.push(raw.str_slice(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
       }
@@ -400,11 +401,11 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       if i < 0 {
         break
       }
-      out.push(rt.str_slice(s, start, i))
+      out.push(raw.str_slice(s, start, i))
       start = i + m
     }
   }
-  out.push(rt.str_slice(s, start, n))
+  out.push(raw.str_slice(s, start, n))
   out
 }
 
@@ -421,7 +422,7 @@ pub fn lines(s: Str) -> List[Str] {
     var k = rt.bytes_eq16(b, i, 10) & NIBS
     while k != 0 {
       let end = i + (rt.ctz(k) >> 2)
-      out.push(rt.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
+      out.push(raw.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)
     }
@@ -431,13 +432,13 @@ pub fn lines(s: Str) -> List[Str] {
     var k = tail16(b, i, n, 10)
     while k != 0 {
       let end = i + (rt.ctz(k) >> 2)
-      out.push(rt.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
+      out.push(raw.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)
     }
   }
   if start < n {
-    out.push(rt.str_slice(s, start, if b[n - 1] == 13 { n - 1 } else { n }))
+    out.push(raw.str_slice(s, start, if b[n - 1] == 13 { n - 1 } else { n }))
   }
   out
 }

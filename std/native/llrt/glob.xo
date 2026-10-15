@@ -2,7 +2,7 @@
 // written in Xo (decisions 0193 and 0195; it was std/llrt/xo_testing.c
 // xo_test_glob): a bad pattern matches nothing. std/native/testing.xo
 // calls matches. Decision 0198 deleted the C path (`XO_LLRT_C=glob`).
-use native/rt
+use native/llrt/raw
 
 /// The rune at i of b times 8 plus its size (utf8.DecodeRune; i <
 /// b.len()): ASCII here, the rest by the runtime's decoder.
@@ -11,7 +11,7 @@ fn rune_at(b: Bytes, i: Int) -> Int {
   if c < 0x80 {
     return (c << 3) | 1
   }
-  rt.bytes_decode(b, i)
+  raw.bytes_decode(b, i)
 }
 
 /// getEsc of the class text at i of p (hi its end): the rune times 256

@@ -326,7 +326,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Stdio.set_tty" => {
       // the fake streams are terminals of this width (decision 0162)
       b.expr(ci.recv[0])
-      b.rt("tw_set_tty", -1, [b.tc_arg(es, 0, b.int_t())])
+      b.llrt_or_rt("tw_set_tty", -1, [b.tc_arg(es, 0, b.int_t())])
       return Some(b.unit())
     }
     "Stdio.output" => return Some(b.tw_rt("test_output", st, [b.cint(1)]))

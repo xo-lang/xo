@@ -128,28 +128,7 @@ pub fn start(sp: Int) -> Int {
 pub fn std_file(i: Int) -> Int { addw(libcmem.word(libcmem.S_STD), mulw(i, FILE_SIZE)) }
 
 /// getauxval(k): the auxiliary vector's value of k, or 0.
-pub fn getauxval(k: Int) -> Int {
-  let w = libcmem.word(libcmem.S_AUXV)
-  if w == 0 {
-    return 0
-  }
-  var a = rt.mem_load(w, 0, 8)
-  if a == 0 {
-    return 0
-  }
-  while true {
-    let t = rt.mem_load(a, 0, 8)
-    if t == 0 {
-      // AT_NULL
-      return 0
-    }
-    if t == k {
-      return rt.mem_load(a, 8, 8)
-    }
-    a = addw(a, 16)
-  }
-  0
-}
+pub fn getauxval(k: Int) -> Int { libcmem.auxval(k) }
 
 /// getenv(name): the value of the variable name in the environment, or 0.
 pub fn getenv(name: Int) -> Int {

@@ -454,7 +454,7 @@ pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()
   if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
-    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+    return raw.byte_str(Int(b[0]) + 32) + raw.str_slice(s, 1, s.len())
   }
   s
 }

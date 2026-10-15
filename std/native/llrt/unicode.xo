@@ -10,6 +10,7 @@
 // `use native/llrt/<name>`) is compiled with the program like the
 // implementation modules; only those and other runtime modules may
 // import it. The tables are generated (unicode_tables.xo).
+use native/llrt/raw
 use native/llrt/scan
 use native/llrt/unicode_tables
 use native/rt
@@ -153,58 +154,8 @@ pub fn is_space(r: Int) -> Bool {
 }
 
 /// utf8.DecodeRune of b from i (i < b.len()): the rune times 8 plus its
-/// size; an invalid byte is U+FFFD of size 1.
-pub fn decode(b: Bytes, i: Int) -> Int {
-  let n = b.len()
-  let c = Int(b[i])
-  if c < 0x80 {
-    return (c << 3) | 1
-  }
-  var k = 0
-  var lo = 0x80
-  var hi = 0xBF
-  var r = 0
-  if c >= 0xC2 && c <= 0xDF {
-    k = 1
-    r = c & 0x1F
-  } else if c >= 0xE0 && c <= 0xEF {
-    k = 2
-    r = c & 0x0F
-    if c == 0xE0 {
-      lo = 0xA0
-    } else if c == 0xED {
-      hi = 0x9F
-    }
-  } else if c >= 0xF0 && c <= 0xF4 {
-    k = 3
-    r = c & 0x07
-    if c == 0xF0 {
-      lo = 0x90
-    } else if c == 0xF4 {
-      hi = 0x8F
-    }
-  } else {
-    return (0xFFFD << 3) | 1
-  }
-  if i + k >= n {
-    return (0xFFFD << 3) | 1
-  }
-  let c1 = Int(b[i + 1])
-  if c1 < lo || c1 > hi {
-    return (0xFFFD << 3) | 1
-  }
-  r = (r << 6) | (c1 & 0x3F)
-  var j = 2
-  while j <= k {
-    let cj = Int(b[i + j])
-    if cj < 0x80 || cj > 0xBF {
-      return (0xFFFD << 3) | 1
-    }
-    r = (r << 6) | (cj & 0x3F)
-    j += 1
-  }
-  (r << 3) | (k + 1)
-}
+/// size; an invalid byte is U+FFFD of size 1 (raw.xo's).
+pub fn decode(b: Bytes, i: Int) -> Int { raw.decode(b, i) }
 
 // The text operations build their result in a Str, appended in place
 // through the runtime's rs_* intrinsics (the result is unique): the bytes

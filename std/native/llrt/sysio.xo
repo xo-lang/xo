@@ -4,7 +4,7 @@
 // (std/llrt/xo_bytes.c xo_fs_read, xo_fs.c xo_fs_write and xo_fs_stat)
 // and the same messages. This module is the portable policy (Go's
 // os.ReadFile and os.WriteFile loops, the FsErr status and message
-// recorded through rt.fs_set_err); the layer below it is per OS: raw
+// recorded through set_err); the layer below it is per OS: raw
 // system calls on Linux (linux.xo), libSystem on macOS (darwin.xo),
 // kernel32 on Windows (windows.xo). In a wasm module, on darwin/amd64,
 // and where a test binary's world fakes the capability, they call the C
@@ -16,6 +16,7 @@ use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/raw
+use native/llrt/twflags
 use native/llrt/windows
 use native/rt
 use native/sys_darwin
@@ -60,17 +61,17 @@ pub fn fs_read(op: Str) -> List[Bytes] {
   if l == 0 {
     return rt.fs_read(op)
   }
-  if rt.tw_fake(1) {
+  if twflags.fake(1) {
     // a test's MemFs starts empty (std.md 8.3): ENOENT on every layer
-    rt.fs_set_err(fs_status(l, 2), op, err_msg(l, 2))
+    set_err(fs_status(l, 2), op, err_msg(l, 2))
     return []
   }
   let (b, e) = read_file(l, op)
   if e != 0 {
-    rt.fs_set_err(fs_status(l, e), op, err_msg(l, e))
+    set_err(fs_status(l, e), op, err_msg(l, e))
     return []
   }
-  rt.fs_set_err(0, "", "")
+  set_err(0, "", "")
   [b]
 }
 
@@ -84,10 +85,10 @@ pub fn fs_write(op: Str, data: Bytes, x: Str) -> Int {
   let e = write_file(l, op, data)
   if e != 0 {
     let st = fs_status(l, e)
-    rt.fs_set_err(st, x, err_msg(l, e))
+    set_err(st, x, err_msg(l, e))
     return st
   }
-  rt.fs_set_err(0, "", "")
+  set_err(0, "", "")
   0
 }
 
@@ -105,10 +106,10 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
   let (i, e) = stat(l, op, follow)
   if e != 0 {
     let st = fs_status(l, e)
-    rt.fs_set_err(st, x, err_msg(l, e))
+    set_err(st, x, err_msg(l, e))
     return Info{st: st}
   }
-  rt.fs_set_err(0, "", "")
+  set_err(0, "", "")
   i
 }
 
@@ -147,11 +148,10 @@ const TLS_CLOCK_AT = 40
 /// clock_gettime_nsec_np, on Windows GetSystemTimePreciseAsFileTime
 /// (bench/results/clocks-2026-10-14.md). This is the clock's hot path,
 /// written for the arm64 emitter, which neither folds `target` nor
-/// inlines across modules: rt.sys_clock_buf answers 0 while the virtual
-/// clock runs and in a WASI module (the wasm emitter lowers it to 0), and
-/// the Linux and macOS calls are inline.
+/// inlines across modules: clock_buf answers 0 while the virtual clock
+/// runs and in a WASI module, and the Linux and macOS calls are inline.
 pub fn clock_now() -> Int {
-  let a = rt.sys_clock_buf()
+  let a = clock_buf()
   if a == 0 {
     return rt.clock_now()
   }
@@ -414,4 +414,79 @@ fn write_file(l: Int, op: Str, data: Bytes) -> Int {
     return -c
   }
   0
+}
+
+/// The address of the calling thread's scratch for Clock.now's timespec
+/// (the vDSO writes it), 1 on macOS (clock_gettime_nsec_np takes none),
+/// or 0 while the test world's virtual clock runs and in a wasm module
+/// (the runtime's clock: rt.clock_now). Was xo_sys.c xo_sys_clock_buf.
+fn clock_buf() -> Int {
+  let l = layer()
+  if l == 0 || twflags.virt() {
+    return 0
+  }
+  if l == 2 { 1 } else { obj.scratch() }
+}
+
+// ---------------------------------------------------------------------------
+// The outcome of the last file operation of this thread (fs.read blocks
+// the thread, and its status is read before the task can move): FsErr's
+// tag plus one (0 for success), and the error's path and message. Thread
+// local words 11 (the status) and 12 (a heap_large block of the path's
+// length and bytes, then the message's; reused while it fits) of
+// rt.tlocal_get (sched.xo's table). A wasm module's runtime keeps its own
+// (rt.fs_set_err, rt.fs_status, rt.fs_msg: faulting stubs in the native
+// C runtime). Was xo_sys.c xo_fs_set_err and xo_bytes.c's thread locals.
+
+const TL_FS_STATUS = 11
+const TL_FS_MSG = 12
+
+/// Records the outcome st (0 success, else FsErr's tag plus one) with the
+/// error's path p and message m.
+pub fn set_err(st: Int, p: Str, m: Str) {
+  if layer() == 0 {
+    rt.fs_set_err(st, p, m)
+    return
+  }
+  rt.tlocal_set(TL_FS_STATUS, st)
+  if st == 0 {
+    return
+  }
+  let need = 16 + p.len() + m.len()
+  var b = rt.tlocal_get(TL_FS_MSG)
+  if b == 0 || rt.mem_load(b, 0, 8) < need {
+    if b != 0 {
+      rt.heap_release(b - 8)
+    }
+    let c = if need < 240 { 240 } else { need }
+    b = rt.heap_large(c + 8)
+    rt.mem_store(b, 0, c, 8)
+    rt.tlocal_set(TL_FS_MSG, b)
+  }
+  rt.mem_store(b, 8, p.len(), 8)
+  rt.mem_copy(b + 16, raw.data(p), p.len())
+  rt.mem_store(b, 16 + p.len(), m.len(), 8)
+  rt.mem_copy(b + 24 + p.len(), raw.data(m), m.len())
+}
+
+/// The status of the last operation: 0, or FsErr's tag plus one.
+pub fn status() -> Int {
+  if layer() == 0 {
+    return rt.fs_status()
+  }
+  rt.tlocal_get(TL_FS_STATUS)
+}
+
+/// The path and the message of the last error.
+pub fn msg() -> List[Str] {
+  if layer() == 0 {
+    return rt.fs_msg()
+  }
+  let b = rt.tlocal_get(TL_FS_MSG)
+  if b == 0 {
+    return ["", ""]
+  }
+  let pn = rt.mem_load(b, 8, 8)
+  let mn = rt.mem_load(b, 16 + pn, 8)
+  [raw.str_at(b + 16, pn), raw.str_at(b + 24 + pn, mn)]
 }

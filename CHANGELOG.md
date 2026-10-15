@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, small files batch): standard input's
+  waits, registration, raw read, isatty, terminal width, and echo are
+  Xo (stdin.xo; Windows keeps its pump in C); the test world's switches
+  moved to twflags.xo so sysio.xo and stop.xo read them without the C;
+  the outcome of a file operation (status, path, message) lives in
+  thread local words 11 and 12 (sysio.xo); getauxval reads
+  /proc/self/auxv (linux.xo); the string helpers behind str_byte,
+  str_slice, str_join, str_repeat, and bytes_decode are raw.xo's.
+  xo_stdin.c 226 to 66 lines, xo_sys.c 64 to 24, xo_bytes.c 272 to 232,
+  xo_std.c 226 to 191. UNTESTED on linux and windows.
+
 - Native runtime (zero-C audit item B26, part 2): the program's start
   and end around C main are Xo (std/native/llrt/entry.xo): the
   arguments (UTF-8 from the UTF-16 command line on Windows),

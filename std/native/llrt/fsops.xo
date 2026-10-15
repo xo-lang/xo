@@ -15,7 +15,7 @@
 // a handle dropped without close still closes its descriptor (and
 // releases its lock); this module reads and writes the record's words
 // through rt.obj_addr. The status and message of the last operation stay
-// the C runtime's thread locals (rt.fs_set_err, rt.fs_status, rt.fs_msg).
+// sysio.xo's thread locals (set_err, status, msg).
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/raw
@@ -58,13 +58,13 @@ fn layer() -> Int { sysio.layer() }
 /// Records errno e of layer l for the Xo path x: the status.
 fn fail(l: Int, e: Int, x: Str) -> Int {
   let st = sysio.fs_status(l, e)
-  rt.fs_set_err(st, x, sysio.err_msg(l, e))
+  sysio.set_err(st, x, sysio.err_msg(l, e))
   st
 }
 
 /// Records success: 0.
 fn ok() -> Int {
-  rt.fs_set_err(0, "", "")
+  sysio.set_err(0, "", "")
   0
 }
 
@@ -562,8 +562,8 @@ pub fn file_read_line(f: rt.FsFile, x: Str) -> List[Str] {
     rt.mem_store(a, F_R, w, 8)
   }
   let n = line.len()
-  if n > 0 && rt.str_byte(line, n - 1) == 13 {
-    line = rt.str_slice(line, 0, n - 1)
+  if n > 0 && raw.str_byte(line, n - 1) == 13 {
+    line = raw.str_slice(line, 0, n - 1)
   }
   ok()
   [line]
@@ -783,7 +783,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
     rt.flush()
     if rt.clock_sleep_or_cancel(10000000) != 0 || rt.fs_canceled() {
       close(l, fd)
-      rt.fs_set_err(8, "", "")
+      sysio.set_err(8, "", "")
       return rt.fs_raw_lock(-1, false)
     }
   }

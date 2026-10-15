@@ -30,6 +30,7 @@ use native/llrt/raw
 use native/llrt/scan
 use native/rt
 use native/rthttp
+use native/llrt/raw as rawb
 
 /// net/http's DefaultMaxHeaderBytes plus the 4096 bytes of slack its
 /// server reads; a longer head is 431.
@@ -133,7 +134,7 @@ fn unescape(b: Bytes, s: Str, lo: Int, hi: Int, mode: Int) -> (Bool, Str) {
   // the common case: nothing to change
   var i = plain_end(b, lo, hi, mode)
   if i == hi {
-    return (true, rt.str_slice(s, lo, hi))
+    return (true, rawb.str_slice(s, lo, hi))
   }
   // runs of 8 bytes or more go over at once, other bytes seven at a time
   // in a word (a C call each)
@@ -375,7 +376,7 @@ fn escape_error(b: Bytes, s: Str, lo: Int, hi: Int) -> Str {
       let left = hi - i
       if left < 3 || (cls(Int(b[i + 1])) & HEX) == 0 || (cls(Int(b[i + 2])) & HEX) == 0 {
         let k = if left < 3 { left } else { 3 }
-        return "invalid URL escape " + go_quote(rt.str_slice(s, i, i + k))
+        return "invalid URL escape " + go_quote(rawb.str_slice(s, i, i + k))
       }
       i += 3
       continue
@@ -461,7 +462,7 @@ fn url_parse(s: Str, via_request: Bool) -> Url {
   if rn > rest && b[rn - 1] == 63 && qcount == 1 {
     rn -= 1
   } else if q >= 0 {
-    rawquery = rt.str_slice(s, q + 1, rn)
+    rawquery = rawb.str_slice(s, q + 1, rn)
     rn = q
   }
   if !(rn > rest && b[rest] == 47) {
@@ -499,7 +500,7 @@ fn url_parse(s: Str, via_request: Bool) -> Url {
     let (hok, h) = parse_host(b, s, hlo, ae)
     if !hok {
       let shown = if ae - hlo > 120 { hlo + 120 } else { ae }
-      return url_fail("invalid host " + go_quote_c(rt.str_slice(s, hlo, shown)))
+      return url_fail("invalid host " + go_quote_c(rawb.str_slice(s, hlo, shown)))
     }
     host = h
     if at >= 0 {
@@ -516,7 +517,7 @@ fn url_parse(s: Str, via_request: Bool) -> Url {
           let left = at - u
           if left < 3 || (cls(Int(b[u + 1])) & HEX) == 0 || (cls(Int(b[u + 2])) & HEX) == 0 {
             let kk = if left < 3 { left } else { 3 }
-            return url_fail("invalid URL escape " + go_quote_c(rt.str_slice(s, u, u + kk)))
+            return url_fail("invalid URL escape " + go_quote_c(rawb.str_slice(s, u, u + kk)))
           }
           u += 2
         }
@@ -635,13 +636,13 @@ fn split_hostport(host: Str) -> (Str, Str) {
   var port = ""
   let i = rfind(b, 58, n)
   if i >= 0 && valid_port(b, i, n) {
-    port = rt.str_slice(host, i + 1, n)
+    port = rawb.str_slice(host, i + 1, n)
     hn = i
   }
   if hn >= 2 && b[0] == 91 && b[hn - 1] == 93 {
-    return (rt.str_slice(host, 1, hn - 1), port)
+    return (rawb.str_slice(host, 1, hn - 1), port)
   }
-  (rt.str_slice(host, 0, hn), port)
+  (rawb.str_slice(host, 0, hn), port)
 }
 
 /// Request.url.host of a server's request: the Host without its port
@@ -675,7 +676,7 @@ pub fn host_name(s: Str) -> Str {
   if scan.find_byte(b, j, n, 91) >= 0 || scan.find_byte(b, k, n, 93) >= 0 {
     return s
   }
-  rt.str_slice(s, lo, hi)
+  rawb.str_slice(s, lo, hi)
 }
 
 /// The port of an absolute request target's host (url.host), or -1: none,
@@ -709,7 +710,7 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
   if !request {
     let h = scan.find(s, "#", 0)
     if h >= 0 {
-      t = rt.str_slice(s, 0, h)
+      t = rawb.str_slice(s, 0, h)
     }
   }
   let u = url_parse(t, request)
@@ -725,7 +726,7 @@ pub fn url_error(s: Str) -> Str {
   var t = s
   let h = scan.find(s, "#", 0)
   if h >= 0 {
-    t = rt.str_slice(s, 0, h)
+    t = rawb.str_slice(s, 0, h)
   }
   let u = url_parse(t, false)
   if u.ok {
@@ -795,7 +796,7 @@ pub fn go_quote(s: Str) -> Str {
       i = j
       continue
     }
-    let x = rt.bytes_decode(b, i)
+    let x = rawb.bytes_decode(b, i)
     let r = x >> 3
     let size = x & 7
     if r == 0xFFFD && size == 1 {
@@ -1049,7 +1050,7 @@ fn trim_ws(s: Str) -> Str {
   while z > a && (b[z - 1] == 32 || b[z - 1] == 9 || b[z - 1] == 13 || b[z - 1] == 10) {
     z -= 1
   }
-  if a == 0 && z == b.len() { s } else { rt.str_slice(s, a, z) }
+  if a == 0 && z == b.len() { s } else { rawb.str_slice(s, a, z) }
 }
 
 /// The start and end of b[a..z] without spaces and tabs at either end.
@@ -1113,8 +1114,8 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
   } else {
     return fail(BAD) // malformed HTTP version
   }
-  let method = rt.str_slice(s, 0, sp1)
-  let target = rt.str_slice(s, sp1 + 1, sp2)
+  let method = rawb.str_slice(s, 0, sp1)
+  let target = rawb.str_slice(s, sp1 + 1, sp2)
   let connect = method == "CONNECT"
   let url = parse_target(target, connect)
   if !url.ok {
@@ -1155,7 +1156,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     }
     // trim (spaces and tabs) and join continuation lines
     let (a, z) = trim_sp(b, i, e)
-    var cont = rt.str_slice(s, a, z)
+    var cont = rawb.str_slice(s, a, z)
     i = nx
     while true {
       if i >= n {
@@ -1218,8 +1219,8 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if keys.len() == MAX_FIELDS {
       return fail(TOO_LARGE)
     }
-    keys.push(canonical_key(rt.str_slice(cont, 0, colon)))
-    vals.push(rt.str_slice(cont, v0, cn))
+    keys.push(canonical_key(rawb.str_slice(cont, 0, colon)))
+    vals.push(rawb.str_slice(cont, v0, cn))
   }
   if i > MAX_HEAD {
     return fail(TOO_LARGE)
@@ -1537,7 +1538,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       // the trailer is a MIME header up to its first empty line (a bare
       // LF ends it too)
       // (up to the empty line found: the rest does not change the parse)
-      let t = parse_head("GET / HTTP/1.0\r\n" + rt.str_slice(s, i, end), eof)
+      let t = parse_head("GET / HTTP/1.0\r\n" + rawb.str_slice(s, i, end), eof)
       if t.res == NEED {
         return Chunked{res: HB_NEED, used: 0, body: out}
       }
@@ -2121,7 +2122,7 @@ fn hex(n: Int) -> Str {
   var out: List[Str] = []
   var v = n
   while v > 0 {
-    out.push(rt.str_of_byte(Int(digits[v % 16])))
+    out.push(rawb.byte_str(Int(digits[v % 16])))
     v = v / 16
   }
   var s = ""
@@ -2181,7 +2182,7 @@ fn req_of(h: Head) -> Req {
       ok = false
     }
     if ok {
-      host = rt.str_slice(h.host, lo, hi)
+      host = rawb.str_slice(h.host, lo, hi)
     }
   }
   // the port of the URL's host
@@ -2227,7 +2228,7 @@ pub fn h2_target(data: Str, lens: List[Int]) -> List[Str] {
       break
     }
     if nn == 5 && b[off] == 58 && b[off + 1] == 112 && b[off + 2] == 97 && b[off + 3] == 116 && b[off + 4] == 104 {
-      let v = rt.str_slice(data, off + 5, off + 5 + vn)
+      let v = rawb.str_slice(data, off + 5, off + 5 + vn)
       let u = url_parse(v, true)
       if !u.ok {
         return [v, "", "", "", "", ""]
@@ -2388,7 +2389,7 @@ fn ascii_lower(s: Str) -> Str {
   if i == b.len() {
     return s
   }
-  var out = rt.str_slice(s, 0, i)
+  var out = rawb.str_slice(s, 0, i)
   while i < b.len() {
     out = rt.rs_push_word(out, lower(Int(b[i])), 1)
     i += 1
@@ -2428,14 +2429,14 @@ fn (var st: H2State) block(method: Str, target: Str, host: Str, names: List[Str]
         if semi < 0 {
           break
         }
-        blk = st.enc.field(blk, "cookie", rt.str_slice(v, s, semi))
+        blk = st.enc.field(blk, "cookie", rawb.str_slice(v, s, semi))
         s = semi + 1
         while s < n && b[s] == 32 {
           s += 1
         }
       }
       if s < n {
-        blk = st.enc.field(blk, "cookie", rt.str_slice(v, s, n))
+        blk = st.enc.field(blk, "cookie", rawb.str_slice(v, s, n))
       }
     } else {
       blk = st.enc.field(blk, ascii_lower(k), v)
@@ -2618,7 +2619,7 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
     }
   } else if ty == H2T_PING {
     if (flags & H2F_ACK) == 0 && len == 8 {
-      x.out = push_frame(x.out, 8, H2T_PING, H2F_ACK, 0) + rt.str_slice(f, 9, 17)
+      x.out = push_frame(x.out, 8, H2T_PING, H2F_ACK, 0) + rawb.str_slice(f, 9, 17)
     }
   } else if ty == H2T_WINUP {
     if len == 4 {
@@ -2639,7 +2640,7 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
       while e < 9 + len && b[e] != 0 {
         e += 1
       }
-      x.goaway_debug = rt.str_slice(f, 17, e)
+      x.goaway_debug = rawb.str_slice(f, 17, e)
       if x.goaway_last < x.id && !x.seen {
         // the server will not answer this stream: another connection will
         x.refused = true
@@ -2681,7 +2682,7 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
       x.hb_flags = flags
       x.hb_sid = sid
     }
-    x.hb = x.hb + rt.str_slice(f, d, d + dn)
+    x.hb = x.hb + rawb.str_slice(f, d, d + dn)
     if x.hb.len() > H2_MAX_RESP {
       x.broken = true
       return (false, "http2: response header list larger than advertised limit")
@@ -2719,7 +2720,7 @@ fn (var x: H2X) frame(r: rthttp.CResp, f: Str) -> (Bool, Str) {
       return (false, "protocol error: received DATA before a HEADERS frame")
     }
     if x.method != "HEAD" && dn > 0 {
-      hclient.h2_data(r, rt.str_slice(f, d, d + dn))
+      hclient.h2_data(r, rawb.str_slice(f, d, d + dn))
     }
     if len > 0 && (flags & H2F_END_STREAM) == 0 {
       let (a, un, u) = inflow_add(x.sin_avail - len, x.sin_unsent, len)
@@ -2766,8 +2767,8 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
     if off + nn + vn > f.data.len() {
       break
     }
-    names.push(rt.str_slice(f.data, off, off + nn))
-    values.push(rt.str_slice(f.data, off + nn, off + nn + vn))
+    names.push(rawb.str_slice(f.data, off, off + nn))
+    values.push(rawb.str_slice(f.data, off + nn, off + nn + vn))
     off += nn + vn
   }
   var si = -1
@@ -2869,7 +2870,7 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
       if first && x.body.is_empty() {
         fl = fl | H2F_END_STREAM
       }
-      x.out = push_frame(x.out, k, if first { H2T_HEADERS } else { H2T_CONT }, fl, x.id) + rt.str_slice(blk, off, off + k)
+      x.out = push_frame(x.out, k, if first { H2T_HEADERS } else { H2T_CONT }, fl, x.id) + rawb.str_slice(blk, off, off + k)
       off += k
       first = false
     }
@@ -2892,7 +2893,7 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
       if k <= 0 {
         break
       }
-      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 { H2F_END_STREAM } else { 0 }, x.id) + rt.str_slice(x.body, x.off, x.off + k)
+      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 { H2F_END_STREAM } else { 0 }, x.id) + rawb.str_slice(x.body, x.off, x.off + k)
       x.off += k
       x.swin -= k
       x.st.win -= k
@@ -3060,7 +3061,7 @@ pub fn parse_response(s: Str) -> RespHead {
     while k < ll && k < 80 && b[k] != 0 {
       k += 1
     }
-    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP response " + rt.str_slice(s, 0, k))
+    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP response " + rawb.str_slice(s, 0, k))
   }
   var cs = sp + 1
   var code = 0
@@ -3090,9 +3091,9 @@ pub fn parse_response(s: Str) -> RespHead {
     }
     let colon = find(s, 58, i, le)
     if colon >= 0 {
-      let k = canonical_key(rt.str_slice(s, i, colon))
+      let k = canonical_key(rawb.str_slice(s, i, colon))
       let (a, z) = trim_sp(b, colon + 1, le)
-      let v = rt.str_slice(s, a, z)
+      let v = rawb.str_slice(s, a, z)
       if k == "Transfer-Encoding" {
         chunked = z - a == 7 && equal_fold(v, "chunked")
       } else {
@@ -3325,7 +3326,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var cut = raw
     let hash = scan.find(raw, "#", 0)
     if hash >= 0 {
-      cut = rt.str_slice(raw, 0, hash)
+      cut = rawb.str_slice(raw, 0, hash)
     }
     let u = url_parse(cut, false)
     if !u.ok {
@@ -3457,7 +3458,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     } else {
       // relative to the current path's directory
       let slash = rfind(u.path.bytes(), 47, u.path.len())
-      let dir = if slash >= 0 { escape_path(rt.str_slice(u.path, 0, slash + 1)) } else { "/" }
+      let dir = if slash >= 0 { escape_path(rawb.str_slice(u.path, 0, slash + 1)) } else { "/" }
       raw = u.scheme + "://" + u.host + dir + loc
     }
     if status == 301 || status == 302 || status == 303 {

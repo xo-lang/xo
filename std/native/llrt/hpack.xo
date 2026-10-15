@@ -15,6 +15,7 @@
 // rthttp.h2_next, the client's h2_exchange through rthttp.cl_h2_next).
 use native/llrt/hpack_tables
 use native/rt
+use native/llrt/raw
 
 /// A dynamic table (RFC 7541 2.3.2): entry i is nv[i], its name then its
 /// value, the name nl[i] bytes long; the entries are those from first on,
@@ -372,7 +373,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
       let (g2, d2, j2) = get_str(b, n, j, data, maxstr)
       data = d2
       if g2 < 0 {
-        return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+        return Fields{ok: 1, used: start, data: raw.str_slice(data, 0, mark), lens: lens, first: first}
       }
       if g2 == 0 {
         return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
@@ -391,7 +392,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
     let (g3, d3, j3) = get_str(b, n, j, data, maxstr)
     data = d3
     if g3 < 0 {
-      return Fields{ok: 1, used: start, data: rt.str_slice(data, 0, mark), lens: lens, first: first}
+      return Fields{ok: 1, used: start, data: raw.str_slice(data, 0, mark), lens: lens, first: first}
     }
     if g3 == 0 {
       return Fields{ok: 0, used: used, data: data, lens: lens, first: first}
@@ -399,7 +400,7 @@ pub fn (var d: Dec) decode_part(blk: Str, first0: Bool, maxstr: Int) -> Fields {
     let vlen = data.len() - mark - nlen
     lens.push(nlen | (vlen << 32))
     if indexing {
-      d.t.add(rt.str_slice(data, mark, mark + nlen + vlen), nlen)
+      d.t.add(raw.str_slice(data, mark, mark + nlen + vlen), nlen)
     }
     first = false
     used = j3
@@ -542,7 +543,7 @@ fn (var e: Enc) encode(out0: Str, job: Str, at: Int, nn: Int, vn: Int) -> Str {
   }
   out = put_str(out, b, vlo, vlo + vn)
   if indexing {
-    e.t.add(rt.str_slice(job, at, vlo + vn), nn)
+    e.t.add(raw.str_slice(job, at, vlo + vn), nn)
   }
   out
 }

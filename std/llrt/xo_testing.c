@@ -89,16 +89,6 @@ __attribute__((unused)) static void tw_init(void) {
 #endif
 }
 
-// tw_exit is os.proc.exit in a test (std.md 8.4): twrun.xo exit records
-// the code and, inside testing.run_main, unwinds main back to it;
-// outside it the test ends and passes, as on the Go backend.
-__attribute__((unused)) static void tw_exit(int64_t code) {
-	if (xo_x_tw_exit(code)) {
-		return;
-	}
-	_exit(0);
-}
-
 // The virtual clock
 
 // tw_kick runs after a deadlock check found every context blocked: the

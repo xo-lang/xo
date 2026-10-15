@@ -25,6 +25,16 @@ fn close(fd: Int) -> Int32
 fn stat64(path: Bytes, buf: Int) -> Int32
 fn lstat64(path: Bytes, buf: Int) -> Int32
 fn fstat64(fd: Int, buf: Int) -> Int32
+/// poll(2) of the n struct pollfd at fds, waiting timeout ms
+/// (std/native/llrt/stdin.xo).
+fn poll(fds: Int, n: Int, timeout: Int) -> Int32
+/// isatty(3), ioctl(2) (TIOCGWINSZ into the struct winsize at the
+/// address va_arg), tcgetattr(3) and tcsetattr(3) of the struct termios at
+/// the address t: standard input's terminal (std/native/llrt/stdin.xo).
+fn isatty(fd: Int) -> Int32
+fn ioctl(fd: Int, req: Int, va_arg: Int) -> Int32
+fn tcgetattr(fd: Int, t: Int) -> Int32
+fn tcsetattr(fd: Int, act: Int, t: Int) -> Int32
 /// clock_gettime(3) into the struct timespec at the address ts.
 fn clock_gettime(clock: Int, ts: Int) -> Int32
 /// getentropy(2): n (at most 256) random bytes to the address buf.

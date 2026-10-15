@@ -13,6 +13,7 @@
 // word. The C functions it needs (timers, the channel, cancellation, the
 // clock, exit) are in the C's services record (S_ words).
 use native/llrt/pool
+use native/llrt/twflags
 use native/rt
 
 /// rt.static_word: the state record, the C's services record.
@@ -180,7 +181,7 @@ pub fn signal() {
     arm_grace()
   } else if n == 2 {
     cancel()
-  } else if rt.tw_fake(REAL_PROC) {
+  } else if twflags.fake(REAL_PROC) {
     // a test's run_main returns 130 once main has unwound
     // (FakeProc.exit_code is Some(130))
     put(R_EXITED, 1)
@@ -223,7 +224,7 @@ fn in_main() -> Bool {
 pub fn set_grace(d0: Int) {
   let d = if d0 < 0 { 0 } else { d0 }
   lk()
-  if rt.tw_fake(REAL_PROC) && !in_main() {
+  if twflags.fake(REAL_PROC) && !in_main() {
     put(R_HAS_NEXT, 1)
     put(R_NEXT_GRACE, d)
     unlk()

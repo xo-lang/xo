@@ -235,7 +235,7 @@ fn finish(r: Int, s: Int, why: Str, alert: Str) {
   } else if why.starts_with("\u{1}") {
     // a failure reading an HTTP/2 body: net/http's body Read error,
     // without the request
-    fail(r, 4, rt.str_slice(why, 1, why.len()))
+    fail(r, 4, raw.str_slice(why, 1, why.len()))
   } else {
     fail(r, 4, cstr(ld(r, R_PREFIX)) + ": " + (if why.is_empty() { "EOF" } else { why }))
   }

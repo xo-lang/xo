@@ -29,7 +29,6 @@ use native/llrt/testworld
 use native/rt
 use native/rttest
 
-
 /// The state record (byte offsets): the C's tw record, FakeClock.sleeps'
 /// vector and signal_after's (before run_main) vector (the address of
 /// the words, the length, the capacity), the in memory listeners (a
@@ -137,8 +136,9 @@ fn set_in_main(on: Bool) {
 }
 
 /// The timers' deadline d from now (xo_rt.c deadline: the virtual clock
-/// in the test world, else the monotonic one; at most the largest Int).
-fn deadline(d: Int) -> Int {
+/// in the test world, else the monotonic one; at most the largest Int;
+/// std/native/llrt/stdin.xo's waits in a test binary).
+pub fn deadline(d: Int) -> Int {
   let now = if virt() { rt.slot_load[Int](tw(), 1, ACQUIRE) } else { sysio.mono_ns() }
   let w = rt.int_wrap(0, now, d)
   if d > 0 && w < now { 9223372036854775807 } else { w }
@@ -378,9 +378,9 @@ pub fn listen(addr: Str, l: Int) -> Int {
     let i = last_colon(addr)
     if i >= 0 {
       if i > 0 {
-        host = rt.str_slice(addr, 0, i)
+        host = raw.str_slice(addr, 0, i)
       }
-      port = rt.str_slice(addr, i + 1, addr.len())
+      port = raw.str_slice(addr, i + 1, addr.len())
     }
     if port.is_empty() || port == "0" {
       let p = ld(state(), R_PORT) + 1

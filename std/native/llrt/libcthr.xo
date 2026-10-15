@@ -6,6 +6,7 @@
 // tls_size and tls_init. Every function takes and returns Int words
 // (addresses are Ints); none may fault or allocate: tls_size and tls_init
 // run before the main thread has its thread pointer.
+use native/llrt/libcmem
 use native/llrt/linux
 use native/llrt/obj
 use native/rt
@@ -141,8 +142,8 @@ pub fn sigprocmask(how: Int, set: Int, old: Int) -> Int { linux.rt_sigprocmask(h
 
 /// The program header of the PT_TLS segment, or 0.
 fn tls_ph() -> Int {
-  let ph = rt.auxval(linux.AT_PHDR)
-  let n = rt.auxval(linux.AT_PHNUM)
+  let ph = libcmem.auxval(linux.AT_PHDR)
+  let n = libcmem.auxval(linux.AT_PHNUM)
   if ph == 0 {
     return 0
   }
@@ -214,7 +215,7 @@ pub fn tls_init(area: Int) -> Int {
 /// pthread_create of the C function f with arg on a stack of at least
 /// stack bytes: the thread's handle, or the negative errno.
 pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
-  var page = rt.auxval(linux.AT_PAGESZ)
+  var page = libcmem.auxval(linux.AT_PAGESZ)
   if page <= 0 {
     page = 4096
   }

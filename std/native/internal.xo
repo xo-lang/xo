@@ -1,6 +1,7 @@
 // std/internal on the native backends (decisions 0074 and 0214). std/rt's
 // internal.go is the reference: only the root Fs takes the lock.
 use native/llrt/fsops
+use native/llrt/sysio
 use native/rt
 
 struct SharedLock {
@@ -19,12 +20,12 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
     return SharedLock{h: h}
   }
   // the status as native/prelude's fs_err maps it
-  match rt.fs_status() {
+  match sysio.status() {
     1 => Err(FsErr.NotFound(path: p))
     4 => Err(FsErr.NotDir(path: p))
     5 => Err(FsErr.IsDir(path: p))
     6 => Err(FsErr.Denied(path: p))
-    7 => Err(FsErr.Io(path: p, msg: rt.fs_msg()[1]))
+    7 => Err(FsErr.Io(path: p, msg: sysio.msg()[1]))
     _ => Err(FsErr.Canceled)
   }
 }

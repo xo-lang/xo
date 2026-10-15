@@ -303,7 +303,7 @@ pub fn local_name() -> Str {
   }
   if e == 0 {
     match t.find("zoneinfo/") {
-      Some(k) => return rt.str_slice(t, k + 9, t.len())
+      Some(k) => return raw.str_slice(t, k + 9, t.len())
       None => {}
     }
   }
@@ -316,8 +316,7 @@ pub fn local_name() -> Str {
 /// The abbreviations of the Windows time zones by key name (Go 1.26's
 /// time/zoneinfo_abbrs_windows.go, from CLDR windowsZones.xml): `key|std|dst`
 /// lines, as Go's time.Local names its zones on Windows.
-const WIN_ABBRS: Str =
-  "Egypt Standard Time|EET|EEST\n" +
+const WIN_ABBRS: Str = "Egypt Standard Time|EET|EEST\n" +
   "Morocco Standard Time|+00|+01\n" +
   "South Africa Standard Time|SAST|SAST\n" +
   "South Sudan Standard Time|CAT|CAT\n" +

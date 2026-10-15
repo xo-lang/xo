@@ -14,6 +14,7 @@ use std/sql
 use std/task
 use native/rt
 use native/rtsql
+use native/llrt/raw
 
 // ---------------------------------------------------------------------------
 // Handles
@@ -409,7 +410,7 @@ fn syntax(msg: Str) -> sql.SqlErr { sql.SqlErr.Syntax(msg: msg) }
 
 /// The rune at byte i of b and its size.
 fn rune_at(b: Bytes, i: Int) -> (Rune, Int) {
-  let p = rt.bytes_decode(b, i)
+  let p = raw.bytes_decode(b, i)
   (Rune(p >> 3), p & 7)
 }
 
@@ -511,7 +512,7 @@ fn lex(q: Str) -> List[Tok] ! sql.SqlErr {
       i = j
     } else {
       if i + 1 < n {
-        let two = rt.str_slice(q, i, i + 2)
+        let two = raw.str_slice(q, i, i + 2)
         if two == "<=" || two == ">=" || two == "<>" || two == "!=" {
           out.push(Tok{k: T_SYM, s: two})
           i += 2

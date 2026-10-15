@@ -93,18 +93,6 @@ xo_rstr *xo_str_slice(const char *p, int64_t n, int64_t lo, int64_t hi, int64_t 
 	return nstr(p + lo, hi - lo, len);
 }
 
-int64_t xo_str_byte(const char *p, int64_t n, int64_t i) {
-	if (i < 0 || i >= n) {
-		return -1;
-	}
-	return (unsigned char)p[i];
-}
-
-xo_rstr *xo_str_of_byte(int64_t b, int64_t *len) {
-	char c = (char)b;
-	return nstr(&c, 1, len);
-}
-
 // str_list_new is an empty List[Str] with room for cap elements.
 static xo_rlist *n_str_list_new(int64_t cap) { return xo_rl_new(cap < 4 ? 4 : cap, 16); }
 
@@ -137,27 +125,6 @@ xo_rstr *xo_str_repeat(const char *p, int64_t n, int64_t k, int64_t *len) {
 	return s;
 }
 
-xo_rstr *xo_str_join(xo_rlist *l, const char *sep, int64_t sn, int64_t *len) {
-	int64_t total = 0;
-	for (int64_t i = 0; i < l->len; i++) {
-		total += ((int64_t *)rl_data(l))[2 * i + 1] + (i > 0 ? sn : 0);
-	}
-	xo_rstr *s = rs_new(total);
-	int64_t o = 0;
-	for (int64_t i = 0; i < l->len; i++) {
-		if (i > 0) {
-			memcpy(s->data + o, sep, (size_t)sn);
-			o += sn;
-		}
-		xo_rstr *e = ((xo_rstr **)rl_data(l))[2 * i];
-		int64_t en = ((int64_t *)rl_data(l))[2 * i + 1];
-		memcpy(s->data + o, e->data, (size_t)en);
-		o += en;
-	}
-	*len = total;
-	return s;
-}
-
 // xo_rs_append is s + t (consumes s; appended in place when unique):
 // obj.xo's (zero-C audit B13), as the builders of xo_bytes.c.
 int64_t xo_x_obj_rs_append(int64_t a, int64_t an, int64_t b, int64_t bn, int64_t lenp);
@@ -178,8 +145,6 @@ static inline int n_parse_int(const char *p, int64_t n, int64_t *out) { return (
 
 
 
-// The test world's os.proc.exit (xo_testing.c; xo_tw_exit, xo_sys.c).
-static void tw_exit(int64_t code);
 
 // ---------------------------------------------------------------------------
 // Conversions for std/json: durations, RFC 3339 times
@@ -192,7 +157,7 @@ static inline int64_t n_days_from_civil(int64_t y, int64_t m, int64_t d) { retur
 // Sized integers, Rune, Bytes, builders, files (decisions 0079, 0081)
 #include "xo_bytes.c"
 
-// the buffers of the Linux system call layer in Xo (decision 0206)
+// the faulting stubs of the Xo layers' wasm arms (decision 0206)
 #include "xo_sys.c"
 
 // HTTP/1.1 (std.md 4)

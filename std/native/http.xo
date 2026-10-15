@@ -14,6 +14,7 @@ use native/llrt/netpolicy
 use native/llrt/testworld
 use native/llrt/twrun
 use native/rthttp
+use native/llrt/raw
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -119,8 +120,8 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
   match pattern.find(" ") {
     Some(i) => {
       if i > 0 {
-        method = rt.str_slice(pattern, 0, i).to_upper()
-        p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+        method = raw.str_slice(pattern, 0, i).to_upper()
+        p = raw.str_slice(pattern, i + 1, pattern.len()).trim()
       }
     }
     None => ()
@@ -128,7 +129,7 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
   var segs: List[Seg] = []
   for s in split_path(p) {
     if s.starts_with("{") && s.ends_with("}") {
-      let inner = rt.str_slice(s, 1, s.len() - 1)
+      let inner = raw.str_slice(s, 1, s.len() - 1)
       if inner.ends_with("...") {
         segs.push(Seg{lit: "", param: inner.trim_suffix("..."), is_int: false, rest: true})
       } else if inner.ends_with(":Int") {

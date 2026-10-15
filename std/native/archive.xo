@@ -2154,7 +2154,7 @@ fn detect_utf8(s: Str) -> (Bool, Bool) {
   var require = false
   var i = 0
   while i < b.len() {
-    let d = rt.bytes_decode(b, i)
+    let d = raw.bytes_decode(b, i)
     let r = d >> 3
     let size = d & 7
     i += size

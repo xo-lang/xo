@@ -13,7 +13,7 @@
 // for the end of a program whose main returned an error (after its
 // message); the C runtime's xo_exit, which compilers before B03 call,
 // forwards to cabi.xo's `exit`. In a test binary the test world records
-// the code instead (FakeProc.exit_code, the C runtime's tw_exit), and in
+// the code instead (FakeProc.exit_code, twrun.xo exit), and in
 // testing.run_main the call returns with the context unwinding (decision
 // 0108).
 use native/llrt/linux
@@ -26,13 +26,9 @@ use native/sys_windows
 
 /// Ends the process with status code, standard output flushed: exit_group
 /// on Linux (no C library's exit: nothing registers atexit handlers),
-/// libSystem's exit on macOS, ExitProcess on Windows. In a test binary
-/// the test world's tw_exit, which returns inside testing.run_main.
+/// libSystem's exit on macOS, ExitProcess on Windows. A test binary's
+/// os.proc.exit goes to twrun.xo exit instead (the prelude's llrt_exit).
 pub fn exit(code: Int) {
-  if testworld.on() {
-    rt.tw_exit(code)
-    return
-  }
   stdio.flush()
   if !env_get("XO_LEAKCHECK").is_empty() {
     // the leak report runs only when main returns (the C runtime's end

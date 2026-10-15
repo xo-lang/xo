@@ -12,7 +12,7 @@ use native/llrt/cabi_proc
 use native/llrt/fsops
 use native/llrt/process
 use native/llrt/windows as winlayer
-use native/rt
+use native/llrt/raw
 
 /// Whether the target is Windows.
 fn windows() -> Bool {
@@ -163,7 +163,7 @@ fn critical(env: List[Str]) -> List[Str] {
   for kv in process.environ() {
     if key_len(kv) == 10 && key_eq(kv.bytes(), "SYSTEMROOT".bytes(), 10, true) {
       var out = env
-      out.push("SYSTEMROOT=" + rt.str_slice(kv, 11, kv.len()))
+      out.push("SYSTEMROOT=" + raw.str_slice(kv, 11, kv.len()))
       return out
     }
   }
@@ -192,4 +192,3 @@ fn abs(dir: Str) -> Str {
   }
   "/" + segs.join("/")
 }
-

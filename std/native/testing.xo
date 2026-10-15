@@ -13,6 +13,7 @@ use native/llrt/glob
 use native/llrt/testworld
 use native/rt
 use native/rttest
+use native/llrt/raw
 
 /// The records logged so far in this test, oldest first (std.md 8.6).
 fn logs() -> List[log.Record] {
@@ -43,20 +44,20 @@ fn split_fake(pattern: Str) -> (Str, Str, Str) {
   var method = ""
   var p = pattern
   if let Some(i) = pattern.find(" ") {
-    let head = rt.str_slice(pattern, 0, i)
+    let head = raw.str_slice(pattern, 0, i)
     if i > 0 && !head.contains("/") {
       method = head.to_upper()
-      p = rt.str_slice(pattern, i + 1, pattern.len()).trim()
+      p = raw.str_slice(pattern, i + 1, pattern.len()).trim()
     }
   }
   var prefix = ""
   var rest = p
   if let Some(i) = p.find("://") {
-    let after = rt.str_slice(p, i + 3, p.len())
+    let after = raw.str_slice(p, i + 3, p.len())
     match after.find("/") {
       Some(j) => {
-        prefix = rt.str_slice(p, 0, i + 3 + j)
-        rest = rt.str_slice(p, i + 3 + j, p.len())
+        prefix = raw.str_slice(p, 0, i + 3 + j)
+        rest = raw.str_slice(p, i + 3 + j, p.len())
       }
       None => {
         prefix = p
@@ -237,7 +238,7 @@ fn memfs_failed(var st: MemState, op: Int, paths: List[Str]) -> FsErr? {
 fn memfs_get(st: MemState, full: Str) -> MemNode? { st.nodes.get(memfs_key(st, full)) }
 
 fn memfs_put(var st: MemState, full: Str, n: MemNode) {
-  st.nodes.put(memfs_key(st, full), n with { name: full })
+  st.nodes.put(memfs_key(st, full), n with {name: full})
 }
 
 fn memfs_dir_node(now: Time) -> MemNode { MemNode{dir: true, data: b"", modified: now, name: ""} }
@@ -610,7 +611,7 @@ fn memfs_set_modified_in(var st: MemState, full: Str, p: Str, t: Time) -> () ! F
     None => return Err(memfs_err(1, p))
     Some(n) => n
   }
-  st.nodes.put(memfs_key(st, full), n with { modified: t })
+  st.nodes.put(memfs_key(st, full), n with {modified: t})
 }
 
 fn memfs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {

@@ -29,6 +29,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sysio
+use native/llrt/twflags
 use native/llrt/windows
 use native/rt
 use native/sys_darwin
@@ -38,8 +39,6 @@ use native/sys_windows
 /// in the test world, the effects `xo test --real` makes real (REAL_*),
 /// the lock, Rand's PCG state (high, low), the MemFs lock and state (an
 /// rt.Any's object, or 0), and the state record.
-const W_ON = 32
-const W_REAL = 33
 const W_LOCK = 34
 const W_RNG = 35
 const W_MEMFS_LOCK = 37
@@ -273,11 +272,11 @@ fn drop_kept(a: Int) {
 // The switches (`xo test --real`, decision 0120)
 
 /// Whether the program runs in the test world.
-pub fn on() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+pub fn on() -> Bool { twflags.on() }
 
 /// Whether the effect real (REAL_*) is a fake here: the test world
 /// without `xo test --real` for it.
-pub fn fake(real: Int) -> Bool { on() && rt.mem_load(rt.static_word(W_REAL), 0, 8) & real == 0 }
+pub fn fake(real: Int) -> Bool { twflags.fake(real) }
 
 /// The value of variable k (V_*) when the test binary started, if set.
 pub fn env_var(k: Int) -> Str? {
@@ -329,8 +328,7 @@ pub fn init() -> Int {
   let g = rt.static_word(W_RNG)
   rt.mem_store(g, 0, seed, 8)
   rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
-  rt.mem_store(rt.static_word(W_REAL), 0, bits, 8)
-  rt.slot_store(rt.static_word(W_ON), 0, 1, RELEASE)
+  twflags.set(bits)
   bits
 }
 
@@ -349,7 +347,7 @@ pub fn fs_real() -> Int {
   if !on() {
     return -1
   }
-  match rt.mem_load(rt.static_word(W_REAL), 0, 8) & (REAL_FS_READ | REAL_FS_WRITE) {
+  match twflags.real() & (REAL_FS_READ | REAL_FS_WRITE) {
     3 => 0
     1 => 2
     2 => 4
@@ -448,7 +446,7 @@ fn pcg(a: Int) -> Int {
 }
 
 /// Whether Rand is the seeded generator (a test binary).
-pub fn seeded() -> Bool { rt.slot_load(rt.static_word(W_ON), 0, ACQUIRE) != 0 }
+pub fn seeded() -> Bool { twflags.on() }
 
 /// The next word of Rand's seeded generator.
 pub fn rand_u64() -> Int {

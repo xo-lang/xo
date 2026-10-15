@@ -3,6 +3,7 @@
 // faults, byte for byte (the golden programs cli_* run on every backend).
 use std/cli
 use native/rt
+use native/llrt/raw
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std handles
@@ -138,7 +139,7 @@ fn flag_name_ok(s: Str) -> Bool {
     return false
   }
   for i in 0..s.len() {
-    let c = rt.str_byte(s, i)
+    let c = raw.str_byte(s, i)
     if !(is_lower_or_digit(c) || i > 0 && c == 45) {
       return false
     }
@@ -150,7 +151,7 @@ fn short_name_ok(s: Str) -> Bool {
   if s.len() != 1 {
     return false
   }
-  let c = rt.str_byte(s, 0)
+  let c = raw.str_byte(s, 0)
   is_lower_or_digit(c) || c >= 65 && c <= 90
 }
 
@@ -159,7 +160,7 @@ fn cmd_name_ok(s: Str) -> Bool {
     return false
   }
   for i in 0..s.len() {
-    let c = rt.str_byte(s, i)
+    let c = raw.str_byte(s, i)
     if !(is_lower_or_digit(c) || c >= 65 && c <= 90 || c == 46 || c == 95 || c == 45) {
       return false
     }
@@ -402,7 +403,7 @@ fn distance(a: Str, b: Str) -> Int {
     var cur = [i]
     for j in 1..=b.len() {
       var cost = 1
-      if rt.str_byte(a, i - 1) == rt.str_byte(b, j - 1) {
+      if raw.str_byte(a, i - 1) == raw.str_byte(b, j - 1) {
         cost = 0
       }
       cur.push((prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost))
@@ -516,14 +517,14 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
     } else if a == "--" {
       dashes = true
     } else if a.starts_with("--") {
-      let body = rt.str_slice(a, 2, a.len())
+      let body = raw.str_slice(a, 2, a.len())
       var name = body
       var val = ""
       var has = false
       match body.find("=") {
         Some(k) => {
-          name = rt.str_slice(body, 0, k)
-          val = rt.str_slice(body, k + 1, body.len())
+          name = raw.str_slice(body, 0, k)
+          val = raw.str_slice(body, k + 1, body.len())
           has = true
         }
         None => ()
@@ -567,10 +568,10 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
         }
       }
     } else if a.starts_with("-") && a.len() > 1 {
-      let cl = rt.str_slice(a, 1, a.len())
+      let cl = raw.str_slice(a, 1, a.len())
       var j = 0
       while j < cl.len() {
-        let c = rt.str_slice(cl, j, j + 1)
+        let c = raw.str_slice(cl, j, j + 1)
         if c == "h" {
           return Err(cli.CliErr.Help(text: help_text(path)))
         }
@@ -587,7 +588,7 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
               j += 1
               continue
             }
-            var val = rt.str_slice(cl, j + 1, cl.len()).trim_prefix("=")
+            var val = raw.str_slice(cl, j + 1, cl.len()).trim_prefix("=")
             if j + 1 >= cl.len() {
               if i + 1 >= args.len() {
                 return Err(cli.CliErr.Usage(msg: "flag --${f.name} needs a value", usage: usage_text(path)))
@@ -903,7 +904,7 @@ fn fishq(s: Str) -> Str { "'" + s.replace(r"\", r"\\").replace("'", r"\'") + "'"
 fn ident(name: Str) -> Str {
   var b = BytesBuilder.new()
   for i in 0..name.len() {
-    let c = rt.str_byte(name, i)
+    let c = raw.str_byte(name, i)
     if is_lower_or_digit(c) || c >= 65 && c <= 90 || c == 95 {
       b.write_byte(UInt8(c))
     } else {
@@ -915,7 +916,7 @@ fn ident(name: Str) -> Str {
 
 fn desc(s: Str) -> Str {
   match s.find("\n") {
-    Some(i) => rt.str_slice(s, 0, i)
+    Some(i) => raw.str_slice(s, 0, i)
     None => s
   }
 }

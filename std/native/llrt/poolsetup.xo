@@ -125,7 +125,7 @@ fn fibers_setup(p: Int) {
 fn page_size() -> Int {
   let b = obj.scratch()
   match target.os {
-    TargetOs.Linux => rt.auxval(linux.AT_PAGESZ)
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
     TargetOs.Darwin => {
       rt.mem_store(b, 0, 0, 8)
       rt.mem_store(b, 8, 8, 8)

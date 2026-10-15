@@ -25,14 +25,6 @@ double xo_i64_to_f32(int64_t v) { return (double)(float)v; }
 // scalar value) to p and returns its size (utf8.AppendRune).
 static int n_rune_utf8(char *p, int64_t r) { return n_utf8_encode(p, n_rune_valid(r) ? (int32_t)r : 0xFFFD); }
 
-// xo_rs_append_rune is s + the character r (its Display).
-xo_rstr *xo_rs_append_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
-	char t[4];
-	int n = n_rune_utf8(t, r);
-	*len = an + n;
-	return rs_append(a, an, t, n);
-}
-
 // The builders are obj.xo's (zero-C audit B13), which arm64 generated
 // code calls directly; LLVM generated code and the seed call these.
 int64_t xo_x_obj_rs_push_byte(int64_t a, int64_t an, int64_t x, int64_t lenp);
@@ -60,7 +52,12 @@ xo_rstr *xo_rs_push_words(xo_rstr *a, int64_t an, int64_t w0, int64_t w1, int64_
 }
 
 // xo_rs_push_rune is a BytesBuilder's write_rune: s + the UTF-8 of r.
-xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) { return xo_rs_append_rune(a, an, r, len); }
+xo_rstr *xo_rs_push_rune(xo_rstr *a, int64_t an, int64_t r, int64_t *len) {
+	char t[4];
+	int n = n_rune_utf8(t, r);
+	*len = an + n;
+	return rs_append(a, an, t, n);
+}
 
 // xo_rs_append_bytes is s + the bytes lo..hi of b, their ASCII letters
 // lowered (mode 1) or raised (mode 2) (std/native/llrt/unicode.xo,
@@ -100,17 +97,6 @@ xo_rstr *xo_str_slice_at(const char *p, int64_t n, int64_t lo, int64_t hi, const
 		fault_at(m, loc, ln);
 	}
 	return nstr(p + lo, hi - lo, len);
-}
-
-// xo_bytes_decode is utf8.DecodeRune of the bytes from i: the rune times 8
-// plus its size (U+FFFD and 0 at the end).
-int64_t xo_bytes_decode(const char *p, int64_t n, int64_t i) {
-	if (i >= n) {
-		return (int64_t)0xFFFD << 3;
-	}
-	int size;
-	int32_t r = n_utf8_decode((const unsigned char *)p + i, n - i, &size);
-	return ((int64_t)r << 3) | size;
 }
 
 // The C versions of the runtime intrinsics (decisions 0193 and 0195):
@@ -194,32 +180,6 @@ int64_t xo_int_fits(int64_t op, int64_t a, int64_t b) {
 	return b != 0 && !(b == -1 && a == INT64_MIN);
 }
 #endif
-
-// The outcome of the last file operation of this thread (fs.read blocks
-// the thread, and its status is read before the task can move): std/rt's
-// FsErr tag (0 for success), and the error's path and message.
-static __thread int64_t n_fs_status;
-static __thread char *n_fs_path, *n_fs_err;
-
-// xo_fs_read is a stub: os.fs.read is Xo on every native target
-// (std/native/llrt/sysio.xo, work item B16), whose layer 0 arm (a wasm
-// module's) still names it (gotchas/dead-target-arm-still-links.md).
-xo_rlist *xo_fs_read(const char *p, int64_t n) {
-	(void)p;
-	(void)n;
-	static const char m[] = "the C fs.read on a native target";
-	xo_fault_raise(m, sizeof m - 1, "", 0);
-}
-
-int64_t xo_fs_status(void) { return n_fs_status; }
-
-// xo_fs_msg is the path and the message of the last error.
-xo_rlist *xo_fs_msg(void) {
-	const char *p = n_fs_path ? n_fs_path : "", *m = n_fs_err ? n_fs_err : "";
-	xo_rlist *l = n_str_list_new(2);
-	l = n_str_list_add(l, p, (int64_t)strlen(p));
-	return n_str_list_add(l, m, (int64_t)strlen(m));
-}
 
 // xo_fault_bytes_index is `b[i]` out of range on Bytes (std/rt BytesAt).
 // (A forwarder to cabi.xo's export for older xo's code, decision 0228.)

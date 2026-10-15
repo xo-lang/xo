@@ -17,13 +17,8 @@
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
 fn str_slice(s: Str, lo: Int, hi: Int) -> Str
-/// The byte at i (0 to 255), or -1 out of range.
-fn str_byte(s: Str, i: Int) -> Int
 fn str_rune_count(s: Str) -> Int
 fn str_repeat(s: Str, n: Int) -> Str
-fn str_join(xs: List[Str], sep: Str) -> Str
-/// The string of one byte (0 to 255).
-fn str_of_byte(b: Int) -> Str
 /// Whether s parses as an Int (strconv.ParseInt(s, 10, 64)).
 fn int_parse_ok(s: Str) -> Bool
 fn int_parse(s: Str) -> Int
@@ -44,8 +39,6 @@ fn rs_push_word(s: Str, w: Int, n: Int) -> Str
 /// s + four such words, their lengths (0 to 8) in the nibbles of lens,
 /// w0's the lowest (decision 0193).
 fn rs_push_words(s: Str, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Str
-/// s + the character r, U+FFFD when r is not a scalar value (the SSA's).
-fn rs_append_rune(s: Str, r: Int) -> Str
 /// s + the Debug text of the Rune r, and s + the decimal text of v as a
 /// UInt64: std/native/llrt/show.xo's, as runtime calls only the wasm
 /// runtime has (decision 0198 deleted the C).
@@ -109,8 +102,6 @@ fn eprintln(s: Str)
 fn duration_parse_ok(s: Str) -> Bool
 /// The duration of the text in nanoseconds (0 when it is not one).
 fn duration_parse(s: Str) -> Int
-/// utf8.DecodeRune of b from i: the rune times 8 plus its size.
-fn bytes_decode(b: Bytes, i: Int) -> Int
 /// a op b wrapping like Go's int64 (op 0 +, 1 -, 2 *), or a shifted by
 /// b mod 64 (op 3 left, 4 right logical, as a UInt64): the native
 /// backends lower a constant op inline (decision 0193 step 3). Decision
@@ -231,10 +222,11 @@ fn prefetch(a: Int)
 ///   15-17 std/native/llrt/ctx.xo: the addresses of ctx_root and the services record (the pool record, free functions, flags), the program's task group (os.tasks; decision 0229)
 ///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)
 ///   22-29 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library, the list of heap records, its lock, a record's size
-///   32-39 std/native/llrt/testworld.xo: whether it runs, the effects made real, its lock, Rand's PCG state, the MemFs lock and state, the state record
+///   32-33 std/native/llrt/twflags.xo: whether the test world runs, the effects made real
+///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the C's park_signal, the C's descriptor services record
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
-///   52-59 std/native/llrt/stdin.xo: the readers' turn, whether the descriptor was opened, its poller registration, the buffer (address, length, capacity), the end of input, the read error
+///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
 ///   60-61 std/native/llrt/stop.xo: two phase shutdown's state record, the C's services record
 ///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
 ///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (XO_NOLIBC builds)
@@ -262,9 +254,6 @@ fn call_c2(f: Int, a: Int, b: Int) -> Int
 /// performance counter's frequency; decisions 0206 and 0213, work item
 /// B01).
 fn sys_words() -> Int
-/// getauxval(k): the value of the auxiliary vector's entry k, or 0
-/// (always 0 off Linux; std/llrt/xo_sys.c).
-fn auxval(k: Int) -> Int
 /// clone(2) of a thread (flags, the child's stack pointer sp, the
 /// address of its 32 bit thread id for CLONE_PARENT_SETTID and
 /// CLONE_CHILD_CLEARTID, its thread pointer for CLONE_SETTLS) through a
@@ -284,19 +273,6 @@ fn unwind_save(regs: Int)
 /// and jumps to the address in word 96 with the stack pointer of word
 /// 31: never returns (decision 0221; arm64 only, a trap on x86_64).
 fn unwind_resume(regs: Int)
-/// Whether a test binary's world fakes the capability bits real (1
-/// fs.read, 2 fs.write, 8 clock, 32 stdio): the layer's callers then call
-/// the C runtime, which serves the fake.
-fn tw_fake(real: Int) -> Bool
-/// os.proc.exit in a test binary (the test world's tw_exit): the code is
-/// recorded; inside testing.run_main it returns with the context
-/// unwinding, else the test ends (std/native/llrt/process.xo).
-fn tw_exit(code: Int)
-/// The address of the calling thread's 16 bytes of scratch for Clock.now's
-/// timespec, or 0 while the test world's virtual clock runs (one call on
-/// the clock's path; decision 0206 stage 2; on every OS since work item
-/// B01).
-fn sys_clock_buf() -> Int
 /// Clock.now of the C runtime (the SSA builders' lowering before
 /// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.
 fn clock_now() -> Int
@@ -557,21 +533,9 @@ fn env_vars() -> List[Str]
 // ---------------------------------------------------------------------------
 // Standard streams (decision 0102)
 
-/// Standard input's platform part (xo_stdin.c) under stdin.xo: whether
-/// the reader was canceled or a stop was requested; the poller's
-/// registration of the descriptor (0: read directly); a raw read into p
-/// (the count, 0 at the end, -1000000 to wait, else minus errno); a wait
-/// of up to 50 ms on the poller (true: canceled); a wait of a millisecond
-/// for the readers' turn (true: canceled or stopped).
-fn stdin_stopped() -> Bool
+/// Standard input's Windows part (xo_stdin.c) under stdin.xo: the
+/// poller's registration of the pumped descriptor (0: read directly) and
+/// a raw read into p (the count, 0 at the end, -1000000 to wait, else
+/// minus errno); faulting stubs elsewhere.
 fn stdin_open() -> Int
 fn stdin_sysread(p: Int, n: Int, pd: Int) -> Int
-fn stdin_wait(pd: Int) -> Bool
-fn stdin_turn_wait() -> Bool
-/// Whether descriptor fd is a terminal (never in a test binary).
-fn isatty(fd: Int) -> Bool
-/// The columns of the terminal on standard output, error, or input, or 0.
-fn term_width() -> Int
-/// Turns standard input's echo off (false; true when it was a terminal)
-/// or restores it (true).
-fn stdin_echo(on: Bool) -> Bool
