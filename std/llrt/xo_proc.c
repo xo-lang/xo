@@ -175,18 +175,6 @@ static xo_rlist *pr_fail(char st, const char *msg) {
 	return n_str_list_add(l, msg, (int64_t)strlen(msg));
 }
 
-// pr_errmsg is the outcome of an error starting cmd, os/exec's message.
-static xo_rlist *pr_errmsg(const char *cmd, int err) {
-	char m[512];
-	snprintf(m, sizeof m, "fork/exec %s: %s", cmd, strerror(err));
-	// Go's errno texts start in lower case
-	size_t k = strlen("fork/exec ") + strlen(cmd) + 2;
-	if (k < sizeof m && m[k] >= 'A' && m[k] <= 'Z') {
-		m[k] = (char)(m[k] + 32);
-	}
-	return pr_fail('2', m);
-}
-
 #ifdef _WIN32
 // pr_has_slash reports whether a command names a path rather than a name
 // looked up in PATH (exec.LookPath on Windows: any of \ / :)
@@ -281,43 +269,6 @@ static char *pr_look_path(const char *cmd) {
 		p = end + 1;
 	}
 }
-#else
-static int pr_has_slash(const char *cmd) { return strchr(cmd, '/') != NULL; }
-
-// pr_look_path is exec.LookPath of a name without a slash: the first
-// executable regular file of that name in PATH (malloc'd), or NULL.
-static char *pr_look_path(const char *cmd) {
-	const char *path = getenv("PATH");
-	if (!path) {
-		return NULL;
-	}
-	size_t cl = strlen(cmd);
-	for (const char *p = path;;) {
-		const char *end = strchr(p, ':');
-		size_t dl = end ? (size_t)(end - p) : strlen(p);
-		const char *dir = p;
-		if (dl == 0) {
-			dir = ".";
-			dl = 1;
-		}
-		char *full = malloc(dl + cl + 2);
-		if (!full) {
-			xo_oom();
-		}
-		memcpy(full, dir, dl);
-		full[dl] = '/';
-		memcpy(full + dl + 1, cmd, cl + 1);
-		struct stat sb;
-		if (stat(full, &sb) == 0 && S_ISREG(sb.st_mode) && (sb.st_mode & 0111) && access(full, X_OK) == 0) {
-			return full;
-		}
-		free(full);
-		if (!end) {
-			return NULL;
-		}
-		p = end + 1;
-	}
-}
 #endif
 
 // pr_drain reads what fd has now into b; 1 at the end of the output.
@@ -339,184 +290,6 @@ static int pr_drain(int fd, nbuf *b) {
 	}
 }
 
-#ifndef _WIN32
-static int pr_pipe(int p[2]) {
-	if (xo_pipe(p) < 0) {
-		return -1;
-	}
-	for (int i = 0; i < 2; i++) {
-		fcntl(p[i], F_SETFD, FD_CLOEXEC);
-	}
-	fcntl(p[0], F_SETFL, fcntl(p[0], F_GETFL) | O_NONBLOCK);
-	return 0;
-}
-
-// xo_proc_run runs cmd with args and returns its standard output and
-// error (a list of two), or an empty list with the status set.
-xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
-	xo_ctx *cx = ctx();
-	if (ctx_canceled(cx)) {
-		return pr_fail('3', "");
-	}
-	char *cmd = cstr_of(c, cn);
-	char *file = cmd;
-	if (!strchr(cmd, '/')) {
-		file = pr_look_path(cmd);
-		if (!file) {
-			free(cmd);
-			return pr_fail('1', "");
-		}
-	}
-	int64_t na = args->len;
-	char **argv = calloc((size_t)na + 2, sizeof(char *));
-	if (!argv) {
-		xo_oom();
-	}
-	argv[0] = cmd;
-	for (int64_t i = 0; i < na; i++) {
-		xo_rstr *s = ((xo_rstr **)rl_data(args))[2 * i];
-		int64_t n = ((int64_t *)rl_data(args))[2 * i + 1];
-		argv[i + 1] = cstr_of(s->data, n);
-	}
-	int po[2] = {-1, -1}, pe[2] = {-1, -1};
-	int err = 0;
-	pid_t pid = -1;
-	if (pr_pipe(po) < 0 || pr_pipe(pe) < 0) {
-		err = errno;
-	} else {
-		posix_spawn_file_actions_t fa;
-		posix_spawnattr_t at;
-		posix_spawn_file_actions_init(&fa);
-		posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-		posix_spawn_file_actions_adddup2(&fa, po[1], 1);
-		posix_spawn_file_actions_adddup2(&fa, pe[1], 2);
-		posix_spawnattr_init(&at);
-		sigset_t none, def;
-		sigemptyset(&none);
-		sigemptyset(&def);
-		sigaddset(&def, SIGPIPE);
-		sigaddset(&def, SIGINT);
-		sigaddset(&def, SIGTERM);
-		short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
-		flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-#endif
-		posix_spawnattr_setflags(&at, flags);
-		posix_spawnattr_setsigmask(&at, &none);
-		posix_spawnattr_setsigdefault(&at, &def);
-		err = posix_spawn(&pid, file, &fa, &at, argv, environ);
-		posix_spawn_file_actions_destroy(&fa);
-		posix_spawnattr_destroy(&at);
-	}
-	for (int64_t i = 0; i <= na; i++) {
-		if (argv[i] != cmd) {
-			free(argv[i]);
-		}
-	}
-	free(argv);
-	if (po[1] >= 0) {
-		close(po[1]);
-	}
-	if (pe[1] >= 0) {
-		close(pe[1]);
-	}
-	if (err) {
-		if (po[0] >= 0) {
-			close(po[0]);
-		}
-		if (pe[0] >= 0) {
-			close(pe[0]);
-		}
-		xo_rlist *l = pr_errmsg(file, err);
-		if (file != cmd) {
-			free(file);
-		}
-		free(cmd);
-		return l;
-	}
-	if (file != cmd) {
-		free(file);
-	}
-	free(cmd);
-	nbuf out = {0}, errb = {0};
-	xo_pd *pdo = pd_new(po[0], 0), *pde = pd_new(pe[0], 0);
-	int fds[2] = {po[0], pe[0]};
-	xo_pd *pds[2] = {pdo, pde};
-	nbuf *bufs[2] = {&out, &errb};
-	int open[2] = {1, 1};
-	int canceled = 0;
-	while (open[0] || open[1]) {
-		if (ctx_canceled(cx)) {
-			canceled = 1;
-			break;
-		}
-		int got = 0;
-		for (int i = 0; i < 2; i++) {
-			if (open[i]) {
-				int64_t before = bufs[i]->n;
-				if (pr_drain(fds[i], bufs[i])) {
-					open[i] = 0;
-				}
-				got |= bufs[i]->n != before || !open[i];
-			}
-		}
-		if (got || !(open[0] || open[1])) {
-			continue;
-		}
-		flush_pending();
-		// wait on one pipe, in short steps while the other is open too
-		int i = open[0] ? 0 : 1;
-		if (pds[i]) {
-			pd_wait_until(pds[i], 0, cx, open[1 - i] ? deadline(10000000) : 0);
-		} else if (clock_wait(cx, 1000000)) {
-			canceled = 1;
-			break;
-		}
-	}
-	if (canceled) {
-		kill(pid, SIGKILL);
-	}
-	for (int i = 0; i < 2; i++) {
-		if (pds[i]) {
-			pd_free(pds[i]);
-		} else {
-			close(fds[i]);
-		}
-	}
-	int ws = 0;
-	for (int64_t step = 1000000;;) {
-		pid_t r = waitpid(pid, &ws, WNOHANG);
-		if (r == pid || (r < 0 && errno != EINTR)) {
-			break;
-		}
-		if (r == 0) {
-			if (!canceled && ctx_canceled(cx)) {
-				canceled = 1;
-				kill(pid, SIGKILL);
-			}
-			struct timespec ts = {0, (long)step};
-			if (canceled) {
-				nanosleep(&ts, NULL);
-			} else {
-				clock_wait(cx, step);
-			}
-			if (step < 50000000) {
-				step *= 2;
-			}
-		}
-	}
-	if (canceled) {
-		free(out.p);
-		free(errb.p);
-		return pr_fail('3', "");
-	}
-	int64_t code = WIFEXITED(ws) ? WEXITSTATUS(ws) : -1;
-	xo_rlist *l = pr_outputs(code, out.p ? out.p : "", out.n, errb.p ? errb.p : "", errb.n);
-	free(out.p);
-	free(errb.p);
-	return l;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172),
@@ -1072,9 +845,12 @@ static char *pr_w_cmdline(char **argv) {
 	return b.p;
 }
 
-// xo_proc_run on Windows: the command with its standard input NUL and
-// its output and error collected, through pr_start (as xo_proc_exec's
-// Cmd.output).
+#endif
+
+// xo_proc_run runs cmd with args, standard input NUL and its output and
+// error collected, through pr_start (as xo_proc_exec's Cmd.output): its
+// standard output and error (a list of two), or an empty list with the
+// status set.
 xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	xo_ctx *cx = ctx();
 	if (ctx_canceled(cx)) {
@@ -1093,7 +869,9 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	for (int64_t i = 0; i < na; i++) {
 		pc.argv[i + 1] = pr_lstr(args, i);
 	}
+#ifdef _WIN32
 	pc.cmdline = pr_w_cmdline(pc.argv);
+#endif
 	int o[2] = {-1, -1}, e[2] = {-1, -1};
 	char st = '2';
 	char *msg = NULL;
@@ -1133,7 +911,6 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	free(errb.p);
 	return l;
 }
-#endif
 
 // pr_specs parses every command of specs (*n of them, malloc'd).
 static pr_cmd *pr_specs(xo_rlist *specs, int *n) {
