@@ -153,16 +153,9 @@ const TLS_CLOCK_AT = 40
 pub fn clock_now() -> Int {
   // macOS first: no layer call, scratch or chosen clock to load
   // (bench/results/zero-c-perf-sweep-2026-10-15.md)
-  // match, not ==: the arm64 backend calls the enums' equality at run
-  // time (gotchas/arm64-target-enum-eq-not-folded.md)
-  let mac = match target.arch {
-    TargetArch.Wasm32 => false
-    TargetArch.Arm64 | TargetArch.Amd64 => match target.os {
-      TargetOs.Darwin => true
-      TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
-    }
-  }
-  if mac {
+  // (a constant: the SSA folds `==` on the target's variants,
+  // gotchas/arm64-target-enum-eq-not-folded.md)
+  if target.os == TargetOs.Darwin && target.arch != TargetArch.Wasm32 {
     if twflags.virt() {
       return rt.clock_now()
     }

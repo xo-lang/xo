@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Compiler (selfhost/ssa): `==` and `!=` on two enum variants known at
+  build time, such as `target.os == TargetOs.Darwin`, fold to a
+  constant on every backend. The arm64 backend used to call the enum's
+  equality at run time. test/codegen/enums covers it. sysio.clock_now
+  uses `==` again (sysio clock on arm64: 0.93 of main).
+
 - Native runtime performance (the zero-C perf sweep's scheduler paths):
   a context's wait makes no C call outside ThreadSanitizer builds
   (tasks.xo park_wait_n reads the test world's flags from static words),

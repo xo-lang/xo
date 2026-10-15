@@ -1,0 +1,41 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): `==` and `!=` on
+// variants known at build time are constants
+// (gotchas/arm64-target-enum-eq-not-folded.md).
+
+enum Color {
+  Red
+  Green
+  Blue(n: Int)
+}
+
+// The target's fields are variants known at build time: no call to the
+// enum's equality, no compare.
+fn is_mac() -> Bool {
+  // arm64: -"\tbl\t" -"\tbl "
+  // llvm: -"call " -"icmp"
+  target.os == TargetOs.Darwin
+}
+
+fn not_wasm() -> Bool {
+  // arm64: -"\tbl\t" -"\tbl "
+  // llvm: -"call " -"icmp"
+  target.arch != TargetArch.Wasm32
+}
+
+// Two literal variants of a user enum.
+fn same() -> Bool {
+  // arm64: -"\tbl\t" -"\tbl "
+  // llvm: -"call " -"icmp"
+  Color.Red == Color.Green
+}
+
+// A variable stays a run-time compare.
+fn is_red(c: Color) -> Bool {
+  c == Color.Red
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  let c = if n > 5 { Color.Blue(n: n) } else { Color.Red }
+  os.stdio.println("${is_mac() || !is_mac()} ${not_wasm()} ${same()} ${is_red(c)}")
+}

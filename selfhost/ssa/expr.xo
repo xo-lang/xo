@@ -1031,6 +1031,28 @@ fn (var b: Builder) binary(e: Expr) -> Int {
   b.arith(op, l, r, span)
 }
 
+/// The variant index of v when it is a variant without a payload, made
+/// directly or read from a field of a struct made of such values (the
+/// predeclared `target`'s fields), else -1.
+fn (b: Builder) known_variant(v: Int) -> Int {
+  let x = b.s.f.values[v]
+  if x.op == Op.Variant && x.args.is_empty() {
+    if let I(n) = x.aux {
+      return n
+    }
+    return -1
+  }
+  if x.op == Op.Field && x.args.len() == 1 {
+    let s = b.s.f.values[x.args[0]]
+    if let I(n) = x.aux {
+      if s.op == Op.Struct && n >= 0 && n < s.args.len() {
+        return b.known_variant(s.args[n])
+      }
+    }
+  }
+  -1
+}
+
 /// The shift amount of a shift of a value of type t (shiftCount).
 fn (var b: Builder) shift_count(e: Expr, t: Int) -> Int {
   let r = b.expr(e)
@@ -1104,6 +1126,17 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
   let bt = b.bool_t()
   let o = cmp_op(op) ?? Op.Eq
   let lt = b.vty(l)
+  if (o == Op.Eq || o == Op.Ne) && b.tkind(lt) == Kind.Enum {
+    // two variants known at build time, such as `target.os ==
+    // TargetOs.Darwin`: a constant, so no backend compares them at run
+    // time (the arm64 emitters called the enum's equality,
+    // gotchas/arm64-target-enum-eq-not-folded.md)
+    let lk = b.known_variant(l)
+    let rk = b.known_variant(r)
+    if lk >= 0 && rk >= 0 {
+      return b.cbool((lk == rk) == (o == Op.Eq))
+    }
+  }
   match b.tkind(lt) {
     Int | Float | Bool => return b.compare(o, l, r)
     Str => {
