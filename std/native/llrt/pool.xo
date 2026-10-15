@@ -270,7 +270,7 @@ pub fn register_worker(p: Int, w: Int) {
 
 /// Starts a thread running the C function at f with arg (detached, a 64
 /// MiB stack reserved): whether it started.
-fn thread_start(f: Int, arg: Int) -> Bool {
+pub fn thread_start(f: Int, arg: Int) -> Bool {
   match layer() {
     2 => {
       // pthread_attr_t (64 bytes) and the pthread_t

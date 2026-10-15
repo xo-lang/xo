@@ -5,8 +5,7 @@
 // locks of all its channels (taken in address order), so no waker sees
 // a half registered select. The record is the C's xo_select (asserted,
 // `selects.xo SE_*`), a handle whose free function (the C's select_free)
-// releases the arms; the `after` arm's timer stays the C's (the poller,
-// rt.sched_rt RT_SELECT_TIMER and RT_SELECT_UNTIMER).
+// releases the arms; the `after` arm's timer is poll.xo's (FN_SELECT).
 //
 // Generated code calls the exports (cabi.xo select_*) directly; the C
 // entry points forward for older xo's code.
@@ -15,6 +14,7 @@ use native/llrt/chan
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
@@ -42,10 +42,6 @@ const SE_HAS_AFTER = 48
 const SE_AFTER = 56
 const SE_PARK = 64
 const SE_SIZE = 72
-
-/// The C's services (pool.xo RT_*): the `after` arm's timer.
-const RT_SELECT_TIMER = 27
-const RT_SELECT_UNTIMER = 28
 
 const ACQUIRE = 1
 
@@ -181,7 +177,7 @@ pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
     var tm = 0
     if ld4(s, SE_HAS_AFTER) != 0 {
       st(s, SE_PARK, x + ctx.C_PARK)
-      tm = rt.sched_rt(RT_SELECT_TIMER, s, 0)
+      tm = poll.timer_fn(ld(s, SE_AFTER), poll.FN_SELECT, s)
     }
     while true {
       tasks.park_wait_n(x, true, counted)
@@ -196,7 +192,7 @@ pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
       }
     }
     if tm != 0 {
-      let _u = rt.sched_rt(RT_SELECT_UNTIMER, tm, 0)
+      poll.timer_end(tm)
     }
     // take the arms off every queue; the waker's writes are visible
     // under the channel locks

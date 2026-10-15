@@ -105,6 +105,8 @@ fn __getdirentries64(fd: Int, buf: Int, n: Int, base: Int) -> Int
 /// mmap(2): the address, or MAP_FAILED (-1) with errno set.
 fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int
 fn mprotect(addr: Int, len: Int, prot: Int) -> Int32
+/// kqueue(2): a new kernel event queue, or -1.
+fn kqueue() -> Int32
 /// kevent(2): apply nchanges changes and collect at most nevents events
 /// (struct kevent, 32 bytes) into events, waiting at most the struct
 /// timespec at timeout (0: no limit): the events, or -1.

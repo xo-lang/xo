@@ -15,6 +15,7 @@ use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/poolsetup
 use native/llrt/raw
@@ -66,6 +67,7 @@ const S_LIST = 384
 const S_FAIL = 392
 const S_CLOSED = 400
 const S_DEADLINE = 408
+const S_TIMED_OUT = 416
 const S_FAULT = 424
 const S_PRUNE_AT = 440
 const S_CLOSING = 448
@@ -107,7 +109,6 @@ const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
-const RT_DEADLINE_DEL = 24
 const RT_H_FREE = 25
 const RT_STAT = 0
 const ACQ_REL = 3
@@ -514,6 +515,24 @@ pub fn scope_detached(link: Int) -> Int {
   s
 }
 
+/// task.with_timeout's deadline (xo_rt.c xo_scope_deadline): scope s's
+/// body is canceled d ns from now, and scope_timed_out tells it.
+pub fn scope_deadline(s: Int, d: Int) {
+  st(s, S_DEADLINE, poll.timer_fn(d, poll.FN_SCOPE, s))
+}
+
+/// After scope s closed while its body unwound: whether the unwinding
+/// came from its deadline (and not from a cancellation of the code
+/// around it), when the unwinding then stops (xo_rt.c xo_scope_timed_out).
+pub fn scope_timed_out(s: Int) -> Bool {
+  let c = ctx.cur()
+  if rt.slot_load[Int](s + S_TIMED_OUT, 0, ACQUIRE) & 4294967295 == 0 || budget.canceled(c) {
+    return false
+  }
+  rt.mem_store(c, ctx.C_UNWINDING, 0, 4)
+  true
+}
+
 /// Ends scope s (xo_scope_close, core 7.1 exit rules). mode 0: the body
 /// completed (background tasks are canceled); 1: it exits early (return,
 /// break, an error: every task is canceled); 2: it unwinds (canceled).
@@ -525,7 +544,8 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   let c = ctx.cur()
   let pl = ctx.pool()
   if ld(s, S_DEADLINE) != 0 {
-    let _r = rt.sched_rt(RT_DEADLINE_DEL, s, 0)
+    poll.timer_end(ld(s, S_DEADLINE))
+    st(s, S_DEADLINE, 0)
   }
   pool.lock(s + S_MU)
   // no pruning from here: the helpers below walk the list unlocked

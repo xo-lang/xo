@@ -1,25 +1,20 @@
 // rawpoll.c: the poller's epoll as Xo system calls (decision 0206 stage
 // 3) under ThreadSanitizer, run by internal/llvm's TestRuntimeRawPoll on
-// Linux. It includes the runtime, says the network goes through Xo (the
-// net_raw export a program that dials carries), and registers descriptors
-// from this thread while the poller thread waits: each registration's
-// xo_pd is calloc'd here and locked by the poller when its event comes.
-// The kernel orders the two; ThreadSanitizer sees that only through the
-// release and acquire nx_epoll_ctl and nx_epoll_wait add around the
-// system calls (gotchas/tsan-raw-epoll-no-edge.md). Without them every
-// round is a "data race" report (pd_new's calloc against
-// pthread_mutex_lock in pd_ready), as net_echo, http_wire, and net_only
-// reported in TestGoldenTasks on Linux (2026-10-13).
+// Linux. It includes the runtime and registers descriptors from this
+// thread while the poller thread waits: each registration's xo_pd is
+// allocated here (poll.xo pd_open) and locked by the poller when its
+// event comes. The kernel orders the two; ThreadSanitizer sees that only
+// through the release and acquire poll.xo adds around the system calls
+// (epoll_add, wait_events; gotchas/tsan-raw-epoll-no-edge.md). Without
+// them every round is a "data race" report (the registration's writes
+// against the lock in pd_ready), as net_echo, http_wire, and net_only
+// reported in TestGoldenTasks on Linux (2026-10-13). UNTESTED on linux
+// since the event loop's start moved to poll.xo (2026-10-15).
 //
 // Exit status 0 means the test passed; it prints "rawpoll: ok".
 
 #define XO_RT_NO_MAIN
 #include "../xo_rt.c"
-
-#if defined(__linux__) && !defined(XO_NOLIBC)
-// the export a program that dials or listens carries (cabi_net.xo)
-int64_t xo_x_net_raw(void) { return 1; }
-#endif
 
 int main(void) {
 #if defined(__linux__)
@@ -27,10 +22,6 @@ int main(void) {
 	// the poller is in epoll_wait before the first registration
 	usleep(20000);
 	int bad = 0;
-	if (!nx_on()) {
-		fputs("rawpoll: the network does not go through Xo\n", stderr);
-		return 1;
-	}
 	for (int i = 0; i < 20; i++) {
 		int p[2];
 		if (pipe(p) != 0) {
@@ -50,14 +41,14 @@ int main(void) {
 			bad++;
 		}
 		usleep(5000);
-		pthread_mutex_lock(&pd->mu);
+		lk(&pd->mu);
 		int ready = pd->rready;
-		pthread_mutex_unlock(&pd->mu);
+		unlk(&pd->mu);
 		if (!ready) {
 			usleep(50000);
-			pthread_mutex_lock(&pd->mu);
+			lk(&pd->mu);
 			ready = pd->rready;
-			pthread_mutex_unlock(&pd->mu);
+			unlk(&pd->mu);
 		}
 		bad += !ready;
 		pd_free(pd);

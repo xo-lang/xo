@@ -2025,8 +2025,6 @@ typedef struct xo_scope {
 	struct xo_budget *bud;
 } xo_scope;
 
-static void timer_del(struct xo_timer *t);
-
 typedef void (*xo_run_fn)(xo_rlist *, struct xo_task *);
 
 typedef struct xo_task {
@@ -2332,8 +2330,6 @@ void xo_sched_run_task(int64_t fa) {
 
 // xo_sched_rt is the C runtime's services for std/native/llrt/pool.xo
 // (rt.sched_rt, decision 0212 stage 2): op is pool.xo's RT_*.
-static int64_t select_timer_op(int64_t s);
-static void select_untimer_op(int64_t t);
 
 int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	switch (op) {
@@ -2423,24 +2419,12 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	case 20: // the runtime switches to several threads (pool.xo's setup)
 		xo_rt_threads_begin();
 		return 0;
-	case 27: // select a's `after` arm: its timer (selects.xo wait)
-		return select_timer_op(a);
-	case 28: // timer a of a select's `after` arm goes
-		select_untimer_op(a);
-		return 0;
 	case 22:
 		TSAN_RELEASE((void *)(intptr_t)a);
 		return 0;
 	case 23:
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		return 0;
-	case 24: { // scope a closes: its deadline's timer goes
-		xo_scope *s = (xo_scope *)(intptr_t)a;
-		timer_del(s->deadline);
-		free(s->deadline);
-		s->deadline = NULL;
-		return 0;
-	}
 	case 25: // free handle a, whose last reference went (tasks.xo h_release)
 		xo_h_free((void *)(intptr_t)a);
 		return 0;
@@ -2510,9 +2494,9 @@ _Static_assert(offsetof(xo_task, run) == 88 && offsetof(xo_task, drop) == 96 && 
                    sizeof(xo_task) == 216 && offsetof(xo_hdr, free) == 8,
                "tasks.xo T_*, H_FREE");
 _Static_assert(offsetof(xo_scope, parent_node) == 96 && offsetof(xo_scope, list) == 384 && offsetof(xo_scope, closed) == 400 &&
-                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
+                   offsetof(xo_scope, deadline) == 408 && offsetof(xo_scope, timed_out) == 416 && offsetof(xo_scope, prune_at) == 440 && offsetof(xo_scope, closing) == 448 &&
                    sizeof(xo_scope) == 464 && offsetof(__typeof__(pool), ncpu) == 8,
-               "tasks.xo S_*, P_NCPU");
+               "tasks.xo S_*, P_NCPU; poll.xo SC_*");
 
 // The task's end, await, and the scope's failed task are tasks.xo's
 // (B18), which generated code calls through its exports; these forward
@@ -2632,14 +2616,10 @@ typedef struct {
 	xo_park *park;
 } xo_select;
 
-struct xo_timer;
-static void select_timer(xo_select *s, struct xo_timer **tp);
-static void select_untimer(struct xo_timer *t);
-
 // The select's operations are selects.xo's (B19), which generated code
 // calls through its exports; these forward for older xo's code.
-// select_free stays C (the free function the handle names), and the
-// `after` arm's timer (select_timer, select_untimer: rt.sched_rt 27, 28).
+// select_free stays C (the free function the handle names); the `after`
+// arm's timer is poll.xo's (FN_SELECT).
 int64_t xo_x_select_new(void);
 void xo_x_select_recv(int64_t s, int64_t c);
 void xo_x_select_send(int64_t s, int64_t c, int64_t l);
@@ -2660,7 +2640,7 @@ _Static_assert(offsetof(xo_sarm, send) == 8 && offsetof(xo_sarm, item) == 16 && 
                    offsetof(xo_select, arms) == 16 && offsetof(xo_select, n) == 24 && offsetof(xo_select, cap) == 28 &&
                    offsetof(xo_select, fired) == 32 && offsetof(xo_select, chosen) == 40 && offsetof(xo_select, has_after) == 48 &&
                    offsetof(xo_select, after) == 56 && offsetof(xo_select, park) == 64 && sizeof(xo_select) == 72,
-               "selects.xo A_*, SE_*");
+               "selects.xo A_*, SE_*; poll.xo SEL_*");
 
 // ---------------------------------------------------------------------------
 // Mutex[T] (core 5.4, std.md 2.7): a readers and writer lock with
@@ -2847,11 +2827,14 @@ typedef struct xo_pd {
 #endif
 } xo_pd;
 
+// ev is the event loop's state, which poll.xo starts (ev_start) and
+// reads through the services record (pd_svc, poll.xo EV_*); the signal
+// handler writes its pipe and counts its signals (on_signal).
 static struct {
-	pthread_once_t once;
-	xo_lock mu; // the timer heap and ev.dead (a lock word: poll.xo takes it too)
-	int pfd[2]; // the self pipe
-	int poll;   // the kqueue or epoll descriptor
+	int64_t once; // 0 not started, 1 starting, 2 running (atomic, poll.xo ev_start)
+	xo_lock mu;   // the timer heap and ev.dead (a lock word: poll.xo takes it too)
+	int pfd[2];   // the self pipe
+	int poll;     // the kqueue or epoll descriptor
 	xo_pd *dead;
 	int64_t sigs; // signals not handled yet (atomic; a word: poll.xo swaps it)
 #ifdef XO_WINPOLL
@@ -2863,12 +2846,19 @@ static struct {
 	xo_pd **pwho;
 	int cpoll;
 #endif
-} ev ={.once = PTHREAD_ONCE_INIT};
+} ev;
+_Static_assert(offsetof(__typeof__(ev), once) == 0 && offsetof(__typeof__(ev), mu) == 8 && offsetof(__typeof__(ev), pfd) == 16 &&
+                   offsetof(__typeof__(ev), poll) == 24 && offsetof(__typeof__(ev), dead) == 32 && offsetof(__typeof__(ev), sigs) == 40,
+               "poll.xo EV_*");
+#ifndef XO_WINPOLL
+_Static_assert(sizeof(xo_pd) == 56, "poll.xo D_SIZE");
+#endif
 _Static_assert(offsetof(xo_pd, mu) == 0 && offsetof(xo_pd, fd) == 8 && offsetof(xo_pd, closed) == 12 && offsetof(xo_pd, ops) == 16 &&
                    offsetof(xo_pd, rready) == 20 && offsetof(xo_pd, wready) == 24 && offsetof(xo_pd, rwait) == 32 &&
                    offsetof(xo_pd, wwait) == 40 && offsetof(xo_pd, next) == 48,
                "poll.xo's descriptor offsets");
-_Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, fired) == 40,
+_Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer, fn) == 24 && offsetof(struct xo_timer, arg) == 32 &&
+                   offsetof(struct xo_timer, fired) == 40,
                "poll.xo's timer offsets");
 
 // The network's system calls (decision 0206 stage 3, the zero-C audit's
@@ -2935,6 +2925,7 @@ int64_t xo_x_poll_create(void);
 int64_t xo_x_poll_ctl(int64_t ep, int64_t op, int64_t fd, int64_t ev);
 int64_t xo_x_poll_wait(int64_t ep, int64_t evs, int64_t n, int64_t ms);
 
+#ifdef XO_WINPOLL
 // nx_ret is a system call's result in the C library's convention.
 static int nx_ret(int64_t r) {
 	if (r < 0) {
@@ -2944,46 +2935,17 @@ static int nx_ret(int64_t r) {
 	return (int)r;
 }
 
-static int nx_getpeername(int fd, struct sockaddr *sa, socklen_t *n) { return nx_ret(xo_x_net_peername(fd, XO_ADDR(sa), XO_ADDR(n))); }
-
 static int nx_shutdown(int fd, int how) { return nx_ret(xo_x_fd_shutdown(fd, how)); }
 
 // nx_close closes a socket (or the poller's pipe ends).
 static int nx_close(int fd) {
-#ifdef _WIN32
 	if (!xo_w_is_sock(fd)) {
 		// a C runtime descriptor (xo_win.c's tag)
 		return close(fd);
 	}
-#endif
 	return nx_ret(xo_x_fd_close(fd));
 }
-
-#if defined(__linux__)
-static int nx_epoll_create(void) { return nx_ret(xo_x_poll_create()); }
-
-// nx_poll_sync stands for the epoll instance in ThreadSanitizer builds.
-// A registration publishes its xo_pd (calloc'd and initialized on the
-// registering thread) through the kernel, and the poller reads it from
-// the event epoll_wait returns: the kernel orders the two, and the C
-// library's epoll_ctl and epoll_wait interceptors tell ThreadSanitizer so
-// (a release of the epoll descriptor, an acquire when events return).
-// The Xo system calls (cabi_poll.xo, decision 0206 stage 3) bypass those
-// interceptors, so without the same pair here it reported pd_new's calloc
-// against the poller's lock of the descriptor as a race (Linux,
-// 2026-10-13, gotcha tsan-raw-epoll-no-edge).
-static char nx_poll_sync;
-
-static int nx_epoll_ctl(int ep, int op, int fd, struct epoll_event *e) {
-	TSAN_RELEASE(&nx_poll_sync);
-	return nx_ret(xo_x_poll_ctl(ep, op, fd, XO_ADDR(e)));
-}
 #endif
-
-// nx_ntop is inet_ntop(family, src, dst, n).
-static const char *nx_ntop(int family, const void *src, char *dst, socklen_t n) {
-	return xo_x_net_ntop(family, XO_ADDR(src), XO_ADDR(dst), n) < 0 ? NULL : dst;
-}
 
 // x_read and x_write are a socket's read and write for xo_http.c and
 // xo_tls.c: the count, or minus the errno (the C runtime's on Windows).
@@ -3005,52 +2967,26 @@ __attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n
 	return r;
 }
 
-// The poller's pipe is close-on-exec from birth on Linux (pipe2): with
-// FD_CLOEXEC set just after, a process spawned by another thread in
-// between inherited it and held it open for its life (2026-10-12, gotcha
-// linux-epoll-inherited-socket; netconn.xo's sockets take SOCK_CLOEXEC).
-// macOS has no pipe2.
-#if defined(__linux__) && !defined(_GNU_SOURCE)
-int pipe2(int fds[2], int flags);
-#endif
-
-// xo_pipe is pipe(2) with both ends close-on-exec.
-static int xo_pipe(int p[2]) {
-#if defined(__linux__)
-	return pipe2(p, O_CLOEXEC);
-#else
-	if (pipe(p) < 0) {
-		return -1;
-	}
-	fcntl(p[0], F_SETFD, FD_CLOEXEC);
-	fcntl(p[1], F_SETFD, FD_CLOEXEC);
-	return 0;
-#endif
-}
-
+#ifdef XO_WINPOLL
 // x_errno is errno now (for calls that report errors in it).
 __attribute__((noinline)) static int x_errno(void) { return errno; }
+#endif
 
 static void set_nonblock(int fd) { xo_x_fd_nonblock(fd); }
 
-// ev_poke wakes the poller (a new first timer).
-static void ev_poke(void) {
+// ev_poke wakes the poller (a new first timer): poll.xo poke on Linux and
+// macOS (the C tests call this).
 #ifdef XO_WINPOLL
+static void ev_poke(void) {
 	if (ev.afd) {
 		PostQueuedCompletionStatus(ev.iocp, 0, 1, NULL);
 	} else {
 		send((SOCKET)ev.ww, "w", 1, 0);
 	}
-	return;
-#endif
-	char b = 'w';
-	ssize_t r = write(ev.pfd[1], &b, 1);
-	(void)r; // a full pipe wakes it anyway
 }
 
 static void *poller_main(void *arg);
 
-#ifdef XO_WINPOLL
 // afd_open opens the AFD device for polls, its completions on iocp; NULL
 // when it cannot (the poller uses WSAPoll then).
 static HANDLE afd_open(HANDLE iocp) {
@@ -3076,10 +3012,14 @@ static HANDLE afd_open(HANDLE iocp) {
 	SetFileCompletionNotificationModes(h, FILE_SKIP_SET_EVENT_ON_HANDLE);
 	return h;
 }
-#endif
 
-static void ev_init(void) {
-#ifdef XO_WINPOLL
+// ev_init_win starts the event loop on Windows (poll.xo ev_start calls
+// it once, through the services record): the completion port and the AFD
+// device, or the WSAPoll fallback's socket pair, and the poller thread.
+// Linux and macOS start in poll.xo (ev_init).
+static int64_t ev_init_win(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
 	ev.iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
 	ev.afd = ev.iocp ? afd_open(ev.iocp) : NULL;
 	if (!ev.afd) {
@@ -3090,36 +3030,6 @@ static void ev_init(void) {
 		ev.wr = sv[0];
 		ev.ww = sv[1];
 	}
-#else
-	if (xo_pipe(ev.pfd) < 0) {
-		xo_oom();
-	}
-	set_nonblock(ev.pfd[0]);
-	set_nonblock(ev.pfd[1]);
-#endif
-#ifdef XO_WINPOLL
-#elif defined(XO_KQUEUE)
-	ev.poll = kqueue();
-	if (ev.poll < 0) {
-		xo_oom();
-	}
-	fcntl(ev.poll, F_SETFD, FD_CLOEXEC);
-	struct kevent k;
-	EV_SET(&k, ev.pfd[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
-	if (kevent(ev.poll, &k, 1, NULL, 0, NULL) < 0) {
-		xo_oom();
-	}
-#else
-	ev.poll = nx_epoll_create();
-	if (ev.poll < 0) {
-		xo_oom();
-	}
-	struct epoll_event e = {.events = EPOLLIN};
-	e.data.ptr = NULL;
-	if (nx_epoll_ctl(ev.poll, EPOLL_CTL_ADD, ev.pfd[0], &e) < 0) {
-		xo_oom();
-	}
-#endif
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -3128,34 +3038,22 @@ static void ev_init(void) {
 		xo_oom();
 	}
 	pthread_attr_destroy(&attr);
+	return 0;
 }
+#else
+void xo_x_poll_poke(void);
+static void ev_poke(void) { xo_x_poll_poke(); }
+#endif
 
-// ev_start starts the poller thread once.
-static void ev_start(void) { pthread_once(&ev.once, ev_init); }
+// ev_start starts the event loop once (poll.xo ev_start).
+void xo_x_poll_ev_start(void);
+static void ev_start(void) { xo_x_poll_ev_start(); }
 
-// timer_add arms t (when, and park or fn, set).
-static void timer_add(xo_timer *t) {
-	if (!tw.virt) {
-		// the test world has no poller: its timers fire when the
-		// virtual clock moves (twrun.xo kick)
-		ev_start();
-	}
-	lk(&ev.mu);
-	int first = (int)xo_x_poll_timer_push((int64_t)(intptr_t)t);
-	unlk(&ev.mu);
-	if (first && !tw.virt) {
-		ev_poke();
-	}
-}
-
-// timer_del disarms t; after it returns t's function does not run.
-static void timer_del(xo_timer *t) {
-	lk(&ev.mu);
-	if (t->idx >= 0) {
-		th_remove(t);
-	}
-	unlk(&ev.mu);
-}
+// The timers are poll.xo's: timer_add arms one (when, and park or
+// function, set), timer_del disarms it (its function does not run after
+// it returns).
+void xo_x_poll_timer_add(int64_t t);
+void xo_x_poll_timer_del(int64_t t);
 
 // deadline is the monotonic time d from now (saturating).
 static int64_t deadline(int64_t d) {
@@ -3175,14 +3073,16 @@ static void pd_ready(xo_pd *pd, int mode) { xo_x_poll_pd_ready(XO_ADDR(pd), mode
 
 // pd_new registers socket fd (nonblocking) with the poller; write tells
 // to watch write readiness too. NULL when the poller refuses it (errno).
+// poll.xo's (pd_open) on Linux and macOS.
+int64_t xo_x_poll_pd_open(int64_t fd, int64_t write);
 static xo_pd *pd_new(int fd, int write) {
+#if defined(XO_WINPOLL)
 	ev_start();
 	xo_pd *pd = calloc(1, sizeof(xo_pd));
 	if (!pd) {
 		xo_oom();
 	}
 	pd->fd = fd;
-#if defined(XO_WINPOLL)
 	(void)write;
 	if (ev.afd) {
 		// polls go to the socket's base handle (below any layered
@@ -3207,22 +3107,15 @@ static xo_pd *pd_new(int fd, int write) {
 	}
 	ev.regs[ev.nreg++] = pd;
 	unlk(&ev.mu);
-	int r = 0;
-#elif defined(XO_KQUEUE)
-	struct kevent k[2];
-	EV_SET(&k[0], fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, pd);
-	EV_SET(&k[1], fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, pd);
-	int r = kevent(ev.poll, k, write ? 2 : 1, NULL, 0, NULL);
+	return pd;
 #else
-	struct epoll_event e = {.events = EPOLLIN | EPOLLRDHUP | EPOLLET | (write ? EPOLLOUT : 0)};
-	e.data.ptr = pd;
-	int r = nx_epoll_ctl(ev.poll, EPOLL_CTL_ADD, fd, &e);
-#endif
+	int64_t r = xo_x_poll_pd_open(fd, write);
 	if (r < 0) {
-		free(pd);
+		errno = (int)-r;
 		return NULL;
 	}
-	return pd;
+	return (xo_pd *)(intptr_t)r;
+#endif
 }
 
 // A descriptor's operations, close, and waits are
@@ -3261,9 +3154,13 @@ static int pd_wait(xo_pd *pd, int write, xo_ctx *c) { return pd_wait_until(pd, w
 static void stop_signal(void);
 
 // pd_svc is poll.xo's services record (its S_ words): the C functions it
-// calls through rt.call_c2 for a descriptor, the event loop's lock word
-// and dead list, and the offset of a context's park.
+// calls through rt.call_c2, the event loop's lock word and dead list and
+// record, the offset of a context's park, and where the poller thread
+// starts; on Windows the descriptor's registration, close, and shutdown
+// and the event loop's start stay C's.
 static int64_t poll_signal_cb(int64_t p, int64_t b);
+static int64_t poll_stop_cb(int64_t a, int64_t b);
+#ifdef XO_WINPOLL
 static int64_t pdsvc_open(int64_t a, int64_t b) {
 	(void)b;
 	xo_pd *pd = pd_new((int)(a & 0xffffffff), (int)(a >> 32));
@@ -3276,14 +3173,6 @@ static int64_t pdsvc_close(int64_t fd, int64_t b) {
 }
 static int64_t pdsvc_shut(int64_t fd, int64_t b) {
 	(void)b;
-#if !defined(XO_KQUEUE) && !defined(XO_WINPOLL)
-	// unregister now: epoll keys a registration by the open file, not the
-	// descriptor, so close alone leaves it while a child process still
-	// holds the file, and its next event would name this xo_pd after the
-	// poller freed it (2026-10-12, gotcha linux-epoll-inherited-socket)
-	nx_epoll_ctl(ev.poll, EPOLL_CTL_DEL, (int)fd, NULL);
-#endif
-#ifdef XO_WINPOLL
 	// Windows resets a connection shut down for receiving while input is
 	// unread, and the reset discards what the peer has not read of ours
 	// yet (a 400 just written): drop the input first (the socket is
@@ -3291,10 +3180,16 @@ static int64_t pdsvc_shut(int64_t fd, int64_t b) {
 	char drop[4096];
 	while (recv((SOCKET)fd, drop, sizeof drop, 0) > 0) {
 	}
-#endif
 	nx_shutdown((int)fd, SHUT_RDWR);
 	return 0;
 }
+static int64_t pdsvc_poke(int64_t a, int64_t b) {
+	(void)a;
+	(void)b;
+	ev_poke();
+	return 0;
+}
+#endif
 static int64_t pdsvc_canceled(int64_t c, int64_t b) {
 	(void)b;
 	return ctx_canceled((xo_ctx *)(intptr_t)c);
@@ -3304,63 +3199,49 @@ static int64_t pdsvc_wait(int64_t c, int64_t b) {
 	park_wait_n((xo_ctx *)(intptr_t)c, 1, 0);
 	return 0;
 }
+// pdsvc_tadd and pdsvc_tdel are poll.xo's timer_add and timer_del for
+// stop.xo (stop_svc).
 static int64_t pdsvc_tadd(int64_t t, int64_t b) {
 	(void)b;
-	timer_add((xo_timer *)(intptr_t)t);
+	xo_x_poll_timer_add(t);
 	return 0;
 }
 static int64_t pdsvc_tdel(int64_t t, int64_t b) {
 	(void)b;
-	timer_del((xo_timer *)(intptr_t)t);
+	xo_x_poll_timer_del(t);
 	return 0;
 }
-#ifdef XO_WINPOLL
-static int64_t pdsvc_poke(int64_t a, int64_t b) {
-	(void)a;
-	(void)b;
-	ev_poke();
-	return 0;
-}
-#endif
-static int64_t pd_svc[13];
+int64_t xo_x_poll_thread(int64_t a);
+static int64_t pd_svc[17];
 void xo_x_poll_svc(int64_t rec);
 static void pd_svc_init(void) {
+#ifdef XO_WINPOLL
 	pd_svc[0] = XO_ADDR(&pdsvc_open);
 	pd_svc[1] = XO_ADDR(&pdsvc_close);
 	pd_svc[2] = XO_ADDR(&pdsvc_shut);
+	pd_svc[11] = XO_ADDR(&ev.afd);
+	pd_svc[12] = XO_ADDR(&pdsvc_poke);
+	pd_svc[16] = XO_ADDR(&ev_init_win);
+#endif
 	pd_svc[3] = XO_ADDR(&pdsvc_canceled);
 	pd_svc[4] = XO_ADDR(&pdsvc_wait);
-	pd_svc[5] = XO_ADDR(&pdsvc_tadd);
-	pd_svc[6] = XO_ADDR(&pdsvc_tdel);
 	pd_svc[7] = XO_ADDR(&poll_signal_cb);
 	pd_svc[8] = XO_ADDR(&ev.mu);
 	pd_svc[9] = XO_ADDR(&ev.dead);
 	pd_svc[10] = (int64_t)offsetof(xo_ctx, park);
-#ifdef XO_WINPOLL
-	pd_svc[11] = XO_ADDR(&ev.afd);
-	pd_svc[12] = XO_ADDR(&pdsvc_poke);
-#endif
+	pd_svc[13] = XO_ADDR(&ev);
+	pd_svc[14] = XO_ADDR(&xo_x_poll_thread);
+	pd_svc[15] = XO_ADDR(&poll_stop_cb);
 	xo_x_poll_svc(XO_ADDR(pd_svc));
 }
 _Static_assert(sizeof(xo_timer) <= 64, "poll.xo's T_SIZE");
 
-#if defined(XO_WINPOLL)
-typedef struct {
-	xo_pd *pd;
-	int mode;
-} xo_event;
-#endif
-
-// The poller thread's loop is std/native/llrt/poll.xo's on Linux and
-// macOS (poll_main, B22): it frees the dead descriptors, fires the timers
-// that are due, waits in kqueue or epoll, hands readiness to the
-// descriptors, and drains the self pipe and its signals. The C keeps
-// creating the poll descriptor, the self pipe, and the thread (ev_init),
-// and Windows' loop below (B22 stage 4); poll.xo calls back into these.
-void xo_x_poll_main(int64_t poll, int64_t pipe_r, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
-#ifdef XO_WINPOLL
-void xo_x_poll_main_win(int64_t iocp, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
-#endif
+// The poller thread's loop is std/native/llrt/poll.xo's (poll_thread,
+// poll_main on Linux and macOS, B22; poll_main_win over Windows' AFD
+// polls, stage 4): it frees the dead descriptors, fires the timers that
+// are due, waits for readiness, hands it to the descriptors, and runs the
+// signals' shutdown steps. The C keeps Windows' start and its WSAPoll
+// fallback loop below; poll.xo calls back into these.
 static int64_t poll_signal_cb(int64_t p, int64_t b) {
 	(void)b;
 	park_signal((xo_park *)(intptr_t)p);
@@ -3372,6 +3253,14 @@ static int64_t poll_stop_cb(int64_t a, int64_t b) {
 	stop_signal();
 	return 0;
 }
+
+#ifdef XO_WINPOLL
+typedef struct {
+	xo_pd *pd;
+	int mode;
+} xo_event;
+
+void xo_x_poll_main_win(int64_t iocp, int64_t mu, int64_t dead, int64_t sigs, int64_t signal_fn, int64_t stop_fn, int64_t free_fn);
 static int64_t poll_free_cb(int64_t pd, int64_t b) {
 	(void)b;
 	free((void *)(intptr_t)pd);
@@ -3380,11 +3269,6 @@ static int64_t poll_free_cb(int64_t pd, int64_t b) {
 
 static void *poller_main(void *arg) {
 	(void)arg;
-#ifndef XO_WINPOLL
-	xo_x_poll_main(ev.poll, ev.pfd[0], XO_ADDR(&ev.mu), XO_ADDR(&ev.dead), XO_ADDR(&ev.sigs), XO_ADDR(&poll_signal_cb), XO_ADDR(&poll_stop_cb),
-	               XO_ADDR(&poll_free_cb));
-	return NULL;
-#else
 	if (ev.afd) {
 		// AFD polls through the completion port: poll.xo's loop (B22
 		// stage 4)
@@ -3480,8 +3364,8 @@ static void *poller_main(void *arg) {
 #endif
 	}
 	return NULL;
-#endif
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Clock (std.md 3.3): Time is wall clock ns since the Unix epoch, Duration
@@ -3501,26 +3385,14 @@ int64_t xo_clock_now(void) {
 
 // clock_wait sleeps d unless the task is or becomes canceled; it returns
 // 1 when cancellation ended (or prevented) the sleep, without starting
-// an unwind.
+// an unwind (poll.xo clock_wait). The test world records the sleep first
+// (FakeClock.sleeps() lists every sleep asked for).
+int64_t xo_x_poll_clock_wait(int64_t c, int64_t d);
 static int clock_wait(xo_ctx *c, int64_t d) {
-	if (ctx_canceled(c)) {
-		return 1;
-	}
-	if (tw.on) {
-		// FakeClock.sleeps() lists every sleep asked for
+	if (tw.on && !ctx_canceled(c)) {
 		xo_x_tw_sleep(d);
 	}
-	if (d <= 0) {
-		return 0;
-	}
-	xo_timer t = {.when = deadline(d), .idx = -1, .park = &c->park};
-	park_reset(&c->park);
-	timer_add(&t);
-	while (!__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE) && !ctx_canceled(c)) {
-		park_wait_n(c, 1, 0);
-	}
-	timer_del(&t);
-	return !__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE) && ctx_canceled(c);
+	return (int)xo_x_poll_clock_wait(XO_ADDR(c), d);
 }
 
 // xo_clock_sleep is `clock.sleep(d)`: a cancellation point that unwinds
@@ -3548,48 +3420,19 @@ void xo_select_after(xo_select *s, int64_t d) {
 	s->has_after = 1;
 }
 
-static void select_timeout(xo_timer *t) {
-	xo_select *s = t->arg;
-	int64_t z = 0;
-	if (__atomic_compare_exchange_n(&s->fired, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-		__atomic_store_n(&s->chosen, -2, __ATOMIC_RELEASE);
-		park_signal(s->park);
-	}
-}
-
 // task.with_timeout (std.md 7): the scope s runs the closure as its body;
-// at the deadline its body is canceled and xo_scope_timed_out tells it.
+// at the deadline its body is canceled and xo_scope_timed_out tells it
+// (tasks.xo scope_deadline, scope_timed_out; the timer is poll.xo's
+// FN_SCOPE).
+void xo_x_scope_deadline(int64_t s, int64_t d);
+int64_t xo_x_scope_timed_out(int64_t s);
 
-static void scope_deadline_fire(xo_timer *t) {
-	xo_scope *s = t->arg;
-	__atomic_store_n(&s->timed_out, 1, __ATOMIC_RELEASE);
-	node_cancel(&s->body);
-}
-
-void xo_scope_deadline(xo_scope *s, int64_t d) {
-	xo_timer *t = calloc(1, sizeof(xo_timer));
-	if (!t) {
-		xo_oom();
-	}
-	t->when = deadline(d);
-	t->idx = -1;
-	t->fn = scope_deadline_fire;
-	t->arg = s;
-	s->deadline = t;
-	timer_add(t);
-}
+void xo_scope_deadline(xo_scope *s, int64_t d) { xo_x_scope_deadline(XO_ADDR(s), d); }
 
 // xo_scope_timed_out reports, after scope s closed while its body
 // unwound, whether the unwinding came from its deadline (and not from a
 // cancellation of the code around it): the unwinding then stops.
-int64_t xo_scope_timed_out(xo_scope *s) {
-	xo_ctx *c = ctx();
-	if (!__atomic_load_n(&s->timed_out, __ATOMIC_ACQUIRE) || ctx_canceled(c)) {
-		return 0;
-	}
-	c->unwinding = 0;
-	return 1;
-}
+int64_t xo_scope_timed_out(xo_scope *s) { return xo_x_scope_timed_out(XO_ADDR(s)); }
 
 // xo_budget_open and xo_budget_end are budget.xo open and end (which
 // arm64 code calls directly).
@@ -3874,34 +3717,6 @@ xo_chan *xo_task_stopping(int64_t drop) { return (xo_chan *)(intptr_t)xo_x_stop_
 // xo_set_grace is `proc.set_grace(d)`: after a stop request the deadline
 // moves to the stop time plus d.
 void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
-
-// select's `after` timer (a timer on the heap of the waiting call)
-static void select_timer(xo_select *s, struct xo_timer **tp) {
-	xo_timer *t = calloc(1, sizeof(xo_timer));
-	if (!t) {
-		xo_oom();
-	}
-	t->when = deadline(s->after);
-	t->idx = -1;
-	t->fn = select_timeout;
-	t->arg = s;
-	timer_add(t);
-	*tp = t;
-}
-
-static void select_untimer(struct xo_timer *t) {
-	timer_del(t);
-	free(t);
-}
-
-// selects.xo's ops for the `after` arm's timer (rt.sched_rt 27, 28).
-static int64_t select_timer_op(int64_t s) {
-	struct xo_timer *tm = NULL;
-	select_timer((xo_select *)(intptr_t)s, &tm);
-	return XO_ADDR(tm);
-}
-
-static void select_untimer_op(int64_t t) { select_untimer((struct xo_timer *)(intptr_t)t); }
 
 // ---------------------------------------------------------------------------
 // Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata

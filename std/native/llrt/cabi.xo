@@ -344,11 +344,35 @@ fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_
   poll.poll_main_win(iocp, mu, dead, sigs, signal_fn, stop_fn, free_fn)
 }
 
-/// The poller thread's loop (never returns; xo_rt.c poller_main on Linux
-/// and macOS).
-fn poll_main(pfd: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int, signal_fn: Int, stop_fn: Int, free_fn: Int) {
-  poll.poll_main(pfd, pipe_r, mu, dead, sigs, signal_fn, stop_fn, free_fn)
+/// Where the poller thread starts on Linux and macOS (pool.thread_start
+/// of its address, from the services record; never returns).
+fn poll_thread(a: Int) -> Int {
+  poll.poll_thread()
+  a
 }
+
+/// The event loop's start, a descriptor's registration (the record, or
+/// minus the errno), and timers (xo_rt.c's ev_start, pd_new, timer_add,
+/// timer_del forward here).
+fn poll_ev_start() { poll.ev_start() }
+
+fn poll_poke() { poll.poke() }
+
+fn poll_pd_open(fd: Int, write: Int) -> Int { poll.pd_open(fd, write != 0) }
+
+fn poll_timer_add(t: Int) { poll.timer_add(t) }
+
+fn poll_timer_del(t: Int) { poll.timer_del(t) }
+
+/// clock.sleep's wait in context c (xo_rt.c clock_wait): 1 when
+/// cancellation ended or prevented it.
+fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else { 0 } }
+
+/// task.with_timeout (tasks.xo): the scope's deadline, and whether it
+/// ended the body.
+fn scope_deadline(s: Int, d: Int) { tasks.scope_deadline(s, d) }
+
+fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 } }
 
 /// Two phase shutdown (stop.xo, B26 part 1): its start, a signal, the
 /// grace timer's end, task.stop_requested, task.stopping,

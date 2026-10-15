@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B22, remnants batch 2): on Linux and
+  macOS the event loop starts in Xo (std/native/llrt/poll.xo ev_start:
+  the self pipe, kqueue or epoll, the poller thread), and registers
+  descriptors (pd_open), shuts and closes them, wakes the poller, and
+  adds and removes timers there; clock.sleep's wait, select's `after`
+  timer and task.with_timeout's deadline are Xo too (poll.xo clock_wait,
+  timer_fn with FN_SELECT and FN_SCOPE; tasks.xo scope_deadline,
+  scope_timed_out). The Linux ThreadSanitizer edge through epoll gets its
+  acquire back. xo_rt.c 4,030 to 3,836 lines. Linux untested (written on
+  macOS); Windows' start and WSAPoll loop stay C until the Windows pass.
 - Native runtime (zero-C audit, xo_rt.c's main thread context): the root
   context of a thread running Xo code outside any task is ctx.xo root
   (the C's ctx forwards; rt_once, rt_init, cur_set, park_init deleted).
