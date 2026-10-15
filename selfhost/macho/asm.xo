@@ -504,6 +504,11 @@ fn (var a: Asm) directive(l: Bytes) {
   if a.elf && a.elf_directive(d, rest) {
     return
   }
+  if d == ".arch_extension" {
+    // the arm64 emitter's `.arch_extension crypto` on Linux (decision
+    // 0231): this assembler takes every instruction it encodes
+    return
+  }
   if d == ".section" {
     let parts = split_operands(rest)
     if parts.len() < 2 {

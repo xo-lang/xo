@@ -66,6 +66,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = cryptoTLS12(what, a, b, c, d)
 	case "sha1":
 		r, ok = cryptoSHA1(what, a, b)
+	case "cpu":
+		r, ok = cryptoCPU(what, a, b, c)
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
 	}
@@ -630,4 +632,96 @@ func cryptoSHA1(what string, a, b Bytes) (Bytes, bool) {
 		return Bytes(append(s1, h.Sum(nil)...)), true
 	}
 	return "", false
+}
+
+// cryptoCPU is the reference of std/native/llrt/cpu.xo's ops (decision
+// 0231): a carry-less product and AES rounds in arm64's form (AESE then
+// AESMC), written plainly.
+func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
+	what = strings.TrimSuffix(what, "_soft")
+	switch what {
+	case "carry":
+		x := binary.LittleEndian.Uint64([]byte(a))
+		y := binary.LittleEndian.Uint64([]byte(b))
+		_, k := bits.Add64(x, y, 0)
+		_, w := bits.Sub64(x, y, 0)
+		return Bytes([]byte{byte(k), byte(w)}), true
+	case "clmul":
+		x := binary.LittleEndian.Uint64([]byte(a))
+		y := binary.LittleEndian.Uint64([]byte(b))
+		var lo, hi uint64
+		for i := 0; i < 64; i++ {
+			if y>>i&1 != 0 {
+				lo ^= x << i
+				if i > 0 {
+					hi ^= x >> (64 - i)
+				}
+			}
+		}
+		out := make([]byte, 16)
+		binary.LittleEndian.PutUint64(out, lo)
+		binary.LittleEndian.PutUint64(out[8:], hi)
+		return Bytes(out), true
+	case "aes_round", "aes_last":
+		var s [16]byte
+		for i := range s {
+			s[i] = a[i] ^ b[i]
+			s[i] = aesSbox(s[i])
+		}
+		var t [16]byte
+		for i := range t {
+			r, col := i%4, i/4
+			t[i] = s[r+4*((col+r)%4)]
+		}
+		if what == "aes_last" {
+			for i := range t {
+				t[i] ^= c[i]
+			}
+			return Bytes(t[:]), true
+		}
+		var m [16]byte
+		for col := 0; col < 4; col++ {
+			for r := 0; r < 4; r++ {
+				a0, a1, a2, a3 := t[4*col+r], t[4*col+(r+1)%4], t[4*col+(r+2)%4], t[4*col+(r+3)%4]
+				m[4*col+r] = gfMul(a0, 2) ^ gfMul(a1, 3) ^ a2 ^ a3
+			}
+		}
+		return Bytes(m[:]), true
+	}
+	return "", false
+}
+
+func gfMul(a, b byte) byte {
+	var r byte
+	for b != 0 {
+		if b&1 != 0 {
+			r ^= a
+		}
+		hi := a & 0x80
+		a <<= 1
+		if hi != 0 {
+			a ^= 0x1b
+		}
+		b >>= 1
+	}
+	return r
+}
+
+// aesSbox is FIPS 197's S-box: the inverse in GF(2^8), then the affine
+// map.
+func aesSbox(x byte) byte {
+	var inv byte
+	if x != 0 {
+		for y := 1; y < 256; y++ {
+			if gfMul(x, byte(y)) == 1 {
+				inv = byte(y)
+				break
+			}
+		}
+	}
+	r := inv
+	for k := 1; k <= 4; k++ {
+		r ^= inv<<k | inv>>(8-k)
+	}
+	return r ^ 0x63
 }

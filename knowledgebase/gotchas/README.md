@@ -8,6 +8,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-line-directives.md](go-line-directives.md): `//line` directive rules; lines after a directive count up, so the generator repeats it per Go line; relative paths kept verbatim; line but no column at run time.
 - [defer-differs-from-go.md](defer-differs-from-go.md): Xo `defer` is block scoped; blocks with defer run as closures.
 - [extension-availability-checks.md](extension-availability-checks.md): Linguist misses non source extensions.
+- [lowered-intrinsic-bodies-untested.md](lowered-intrinsic-bodies-untested.md): Observed 2026-10-15: an intrinsic's Xo body is dead on arm64 and LLVM and the crypto goldens do not build on wasm; test it through a `_soft` name (cpu_prims).
 - [value-semantics-lost-update.md](value-semantics-lost-update.md): forgetting to write back a mutated copy loses the update silently.
 - [spec-examples-drift.md](spec-examples-drift.md): spec examples that break spec rules get copied by agents.
 - [predeclared-names-collide.md](predeclared-names-collide.md): `err`, `result`, `test` are taken by the language; so are the type names `Str`, `Time`, `Err`, `Result` for a module's structs (XO0603).

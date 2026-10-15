@@ -549,6 +549,50 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
       g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
     }
+    // decision 0231: the carry-less product's halves and the AES rounds
+    // (cpu.xo, run only when cpu.hw() has them) as inline asm, so no
+    // target feature is needed on the function; a pure asm, so the two
+    // halves of one product share the instruction
+    "rt.clmul_lo" | "rt.clmul_hi" => {
+      let a = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[0])}, i32 0")
+      let b = g.def("insertelement <2 x i64> undef, i64 ${g.op(x.args[1])}, i32 0")
+      let asm = if g.arch() == "amd64" { "asm \"pclmulqdq $$0, $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Apmull $0.1q, $1.1d, $2.1d\", \"=w,w,w\"" }
+      let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
+      g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
+    }
+    "rt.aes_round" | "rt.aes_last" => {
+      let last = aux_str(x.aux) == "rt.aes_last"
+      let p = g.raw_ptr(x.args[0])
+      let s = g.def("load <16 x i8>, ptr ${p}, align 1")
+      let k = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[1])}, align 1")
+      var r = ""
+      if g.arch() == "amd64" {
+        // AESENC's key is after the round: the key xored before, a zero
+        // key after (AESENCLAST: the next key)
+        let sk = g.def("xor <16 x i8> ${s}, ${k}")
+        if last {
+          let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+          r = g.def("call <16 x i8> asm \"aesenclast $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> ${k2})")
+        } else {
+          r = g.def("call <16 x i8> asm \"aesenc $2, $0\", \"=x,0,x\"(<16 x i8> ${sk}, <16 x i8> zeroinitializer)")
+        }
+      } else if last {
+        let e = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+        let k2 = g.def("load <16 x i8>, ptr ${g.raw_ptr(x.args[2])}, align 1")
+        r = g.def("xor <16 x i8> ${e}, ${k2}")
+      } else {
+        r = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\\0Aaesmc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+      }
+      g.emit("store <16 x i8> ${r}, ptr ${p}, align 1")
+    }
+    "rt.cpuid1_ecx" => {
+      if g.arch() == "amd64" {
+        let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 1, i32 0)")
+        g.set(v, "zext i32 ${g.def("extractvalue { i32, i32, i32, i32 } ${r}, 2")} to i64")
+      } else {
+        g.set(v, "add i64 0, 0")
+      }
+    }
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
     "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")

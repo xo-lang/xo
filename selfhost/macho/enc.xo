@@ -202,7 +202,13 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       let zr = if ops[0].len() > 0 && ops[0][0] == 'w' { "wzr" } else { "xzr" }
       a.addsub(if m == "neg" { "sub" } else { "subs" }, [ops[0], zr.bytes()] + ops[1..])
     }
-    "and" | "orr" | "eor" | "ands" | "bic" | "orn" | "eon" | "bics" => a.logical(m, ops)
+    "and" | "orr" | "eor" | "ands" | "bic" | "orn" | "eon" | "bics" => {
+      if m == "eor" && n == 3 && ops[0].len() > 0 && ops[0][0] == 'v' {
+        a.simd(m, ops)
+      } else {
+        a.logical(m, ops)
+      }
+    }
     "tst" => {
       if n < 2 {
         return a.bad(m, ops)
@@ -398,7 +404,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       a.word((if m == "rbit" { 0x5ac00000 } else { 0x5ac01000 }) | (sd * 0x80000000) | (x * 32) | d)
     }
-    "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" => a.simd(m, ops)
+    "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" => a.simd(m, ops)
     "fadd" | "fsub" | "fmul" | "fdiv" => {
       let base = match m {
         "fadd" => 0x1e602800
@@ -1176,14 +1182,55 @@ fn vreg(b: Bytes) -> (Int, Str) {
 /// The SIMD instructions of the scan intrinsics (decision 0201), in the
 /// forms the arm64 emitters write: cnt and addv on 8 bytes, dup of a w
 /// register and movi to 16 bytes, cmeq and cmlt #0 on 16 bytes, shrn of
-/// 8 halfwords to 8 bytes.
+/// 8 halfwords to 8 bytes; the crypto intrinsics of decision 0231:
+/// pmull and pmull2 of d lanes, umov of a d lane, aese, aesd, aesmc,
+/// aesimc, and eor on 16 bytes.
 fn (var a: Asm) simd(m: Str, ops: List[Bytes]) {
   let n = ops.len()
   if n < 2 {
     return a.bad(m, ops)
   }
+  if m == "umov" {
+    // umov xD, vN.d[0] or vN.d[1]
+    let (x, kx) = reg(ops[0])
+    let (s, sa) = vreg(ops[1])
+    if n != 2 || kx != RX || s < 0 || (sa != "d[0]" && sa != "d[1]") {
+      return a.bad(m, ops)
+    }
+    return a.word((if sa == "d[1]" { 0x4e183c00 } else { 0x4e083c00 }) | (s * 32) | x)
+  }
   let (d, ad) = vreg(ops[0])
   match m {
+    "pmull" | "pmull2" => {
+      let (x, ax) = vreg(ops[1])
+      let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }
+      let lane = if m == "pmull" { "1d" } else { "2d" }
+      if d < 0 || x < 0 || y < 0 || ad != "1q" || ax != lane || ay != lane {
+        return a.bad(m, ops)
+      }
+      a.word((if m == "pmull" { 0x0ee0e000 } else { 0x4ee0e000 }) | (y * 0x10000) | (x * 32) | d)
+    }
+    "aese" | "aesd" | "aesmc" | "aesimc" => {
+      let (x, ax) = vreg(ops[1])
+      if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" {
+        return a.bad(m, ops)
+      }
+      let base = match m {
+        "aese" => 0x4e284800
+        "aesd" => 0x4e285800
+        "aesmc" => 0x4e286800
+        _ => 0x4e287800
+      }
+      a.word(base | (x * 32) | d)
+    }
+    "eor" => {
+      let (x, ax) = vreg(ops[1])
+      let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }
+      if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" {
+        return a.bad(m, ops)
+      }
+      a.word(0x6e201c00 | (y * 0x10000) | (x * 32) | d)
+    }
     "addv" => {
       // addv bD, vN.8b
       let (x, ax) = vreg(ops[1])

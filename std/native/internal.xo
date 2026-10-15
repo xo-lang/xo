@@ -2,6 +2,7 @@
 // internal.go is the reference: only the root Fs takes the lock.
 use native/llrt/aesgcm
 use native/llrt/chacha
+use native/llrt/cpu
 use native/llrt/fsops
 use native/llrt/hkdf
 use native/llrt/hmac
@@ -64,6 +65,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "x25519" => x25519.op(what, a, b, c, d)
     "tls13" => tls13.op(what, a, b, c, d)
     "sha1" => sha1.op(what, a, b, c, d)
+    "cpu" => cpu.op(what, a, b, c, d)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
     _ => None

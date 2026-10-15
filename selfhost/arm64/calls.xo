@@ -849,6 +849,22 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // (std/native/llrt/cpu.xo), the flag of one instruction
     "rt.u64_carry" => g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
     "rt.u64_borrow" => g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
+    // the carry-less product's halves and the AES rounds (cpu.xo, run
+    // only when cpu.hw() has them), in the scratch registers v30 and v31
+    "rt.clmul_lo" | "rt.clmul_hi" => {
+      let out = if aux_str(x.aux) == "rt.clmul_lo" { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
+      g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
+    }
+    "rt.aes_round" => {
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.set(v, [])
+    }
+    "rt.aes_last" => {
+      g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.set(v, [])
+    }
+    // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
+    "rt.cpuid1_ecx" => g.set(v, [g.def1(false, "mov $d0, #0", [])])
     // decision 0222: the value barrier is the operand itself (this
     // emitter neither folds through a call's result nor turns masks
     // into branches; test/codegen/consttime checks it)

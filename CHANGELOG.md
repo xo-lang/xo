@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- TLS performance (decision 0231 parts 2 and 3): AES-GCM uses the CPU's
+  AES rounds (AESE/AESMC, AESENC) and carry-less multiply (PMULL,
+  PCLMULQDQ) when it has them (std/native/llrt/cpu.xo hw(): macOS arm64,
+  Linux AT_HWCAP, x86-64 CPUID), the bitsliced code otherwise. Bulk
+  AES-128-GCM on LLVM 138.6M to 27.1M instructions a MiB (arm64 205.0M
+  to 38.0M). New golden cpu_prims. UNTESTED on linux, x86-64, and
+  windows.
 - Native runtime (zero-C audit, scheduler block S2): the worker pool's
   record and its deadlock counts are made by std/native/llrt/ctx.xo at
   start instead of being C statics (xo_rt.c 3,665 to 3,638 lines).

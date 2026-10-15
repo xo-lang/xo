@@ -220,9 +220,10 @@ fn prefetch(a: Int)
 ///   7-9 std/native/llrt/process.xo: argc, argv, the environment
 ///   10-13 std/native/llrt/obj.xo: the single threaded heap record, three C functions' addresses
 ///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
-///   15-17 std/native/llrt/ctx.xo: the addresses of ctx_root and the services record (the pool record, free functions, flags), the program's task group (os.tasks; decision 0229)
+///   15-17 std/native/llrt/ctx.xo: unused (was xo_rt.c ctx_root's address until ctx.xo root, 2026-10-15), the address of the services record (the pool record, free functions, flags), the program's task group (os.tasks; decision 0229)
 ///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)
 ///   22-29 std/native/llrt/heapos.xo: the central lists' lock, the chunks mapped, the big block cache's lock and table, whether to map through the C library, the list of heap records, its lock, a record's size
+///   30 std/native/llrt/cpu.xo: the CPU's crypto instructions, once looked up (decision 0231)
 ///   32-33 std/native/llrt/twflags.xo: whether the test world runs, the effects made real
 ///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the C's park_signal, the C's descriptor services record

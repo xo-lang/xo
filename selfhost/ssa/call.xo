@@ -156,10 +156,19 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
   let name = match b.obj_name(fo) {
     "carry" => "u64_carry"
     "borrow" => "u64_borrow"
+    "clmul_lo" => "clmul_lo"
+    "clmul_hi" => "clmul_hi"
+    "aes_round" => "aes_round"
+    "aes_last" => "aes_last"
+    "cpuid1_ecx" => "cpuid1_ecx"
+    "lowered" => "lowered"
     _ => ""
   }
   if name.is_empty() {
     return None
+  }
+  if name == "lowered" {
+    return Some(b.cint(1))
   }
   let (_, _, args) = call_parts(x)
   let es = arg_exprs(b.c.objs[fo].params, args)

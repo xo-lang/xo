@@ -7,15 +7,22 @@
 // ghash_ctmul64 (carryless products from integer multiplications with
 // holes; arm64's and x86-64's 64 bit multiplies take a fixed time).
 // Branches and indexes depend on lengths only; open compares the tag
-// with ct.bytes_equal before it decrypts.
+// with ct.bytes_equal before it decrypts. With the CPU's AES rounds and
+// carry-less multiply (decision 0231, cpu.xo; cpu.hw() says whether this
+// CPU has them) encryption and GHASH take them instead.
+use native/llrt/cpu
 use native/llrt/ct
+use native/llrt/raw
 use native/rt
 
-/// An expanded AES key: the rounds and the bitsliced round keys, eight
-/// words per round.
+/// An expanded AES key: the rounds, the bitsliced round keys (eight
+/// words per round), the round keys in FIPS 197's byte order (two words
+/// per round) for the CPU's rounds, and cpu.hw().
 pub struct Cipher {
   nr: Int
   sk: List[Int]
+  rk: List[Int]
+  hw: Int
 }
 
 /// An AES-GCM key: the cipher and GHASH's key H (h1 its first 8 bytes
@@ -23,6 +30,7 @@ pub struct Cipher {
 /// xor).
 pub struct Gcm {
   c: Cipher
+  hw: Int
   h0: Int
   h1: Int
   h2: Int
@@ -271,6 +279,11 @@ pub fn new(key: Bytes) -> Cipher {
       k += 1
     }
   }
+  var rk = raw.zero_ints(2 * (nr + 1))
+  for r in 0..nr + 1 {
+    rk[2 * r] = w[4 * r] | shl(w[4 * r + 1], 32)
+    rk[2 * r + 1] = w[4 * r + 2] | shl(w[4 * r + 3], 32)
+  }
   var sk: List[Int] = []
   var q = [0, 0, 0, 0, 0, 0, 0, 0]
   var i = 0
@@ -288,7 +301,7 @@ pub fn new(key: Bytes) -> Cipher {
     expand(sk, (q[4] & 0x1111111111111111) | (q[5] & 0x2222222222222222) | (q[6] & 0x4444444444444444) | (q[7] & ~0x7777777777777777))
     i += 4
   }
-  Cipher{nr: nr, sk: sk}
+  Cipher{nr: nr, sk: sk, rk: rk, hw: cpu.hw()}
 }
 
 fn add_round_key(var q: List[Int], sk: List[Int], o: Int) {
@@ -334,6 +347,9 @@ fn mix_columns(var q: List[Int]) {
 /// Encrypts the four blocks of io in place, block b's bytes as the
 /// little endian words io[2b] (bytes 0 to 7) and io[2b + 1] (8 to 15).
 fn encrypt4(c: Cipher, var io: List[Int]) {
+  if (c.hw & cpu.HW_AES) != 0 {
+    return hw4(c, io)
+  }
   var q = [0, 0, 0, 0, 0, 0, 0, 0]
   for b in 0..4 {
     let lo = io[2 * b]
@@ -361,6 +377,38 @@ fn encrypt4(c: Cipher, var io: List[Int]) {
     io[2 * b] = w0 | shl(w1, 32)
     io[2 * b + 1] = w2 | shl(w3, 32)
   }
+}
+
+/// The address of the first word of xs (valid while xs is alive and not
+/// resized).
+fn addr(xs: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(xs), rt.layout(2)) }
+
+/// A use of xs after its last raw access.
+fn keep(xs: List[Int]) {
+  if xs.len() < 0 {
+    return
+  }
+}
+
+/// encrypt4 with the CPU's rounds (cpu.aes_round and aes_last, on a
+/// state of two words written in place).
+fn hw4(c: Cipher, var io: List[Int]) {
+  let st = raw.zero_ints(2)
+  let sp = addr(st)
+  let kp = addr(c.rk)
+  let nr = c.nr
+  for b in 0..4 {
+    rt.mem_store(sp, 0, io[2 * b], 8)
+    rt.mem_store(sp, 8, io[2 * b + 1], 8)
+    for r in 0..nr - 1 {
+      cpu.aes_round(sp, kp + 16 * r)
+    }
+    cpu.aes_last(sp, kp + 16 * (nr - 1), kp + 16 * nr)
+    io[2 * b] = rt.mem_load(sp, 0, 8)
+    io[2 * b + 1] = rt.mem_load(sp, 8, 8)
+  }
+  keep(st)
+  keep(c.rk)
 }
 
 /// The encryption of the 16 byte block b (crypto/aes's Encrypt).
@@ -554,8 +602,25 @@ fn rev64(x0: Int) -> Int {
   rt.int_wrap(5, x, 32)
 }
 
+/// (y1, y0) times H with the CPU's carry-less multiply: the three
+/// Karatsuba products whole (the halves BearSSL's code gets from bit
+/// reversed products), then the same reduction.
+fn (g: Gcm) mul_hw(y1: Int, y0: Int) -> (Int, Int) {
+  let y2 = y0 ^ y1
+  let a0 = cpu.clmul_lo(y0, g.h0)
+  let b0 = cpu.clmul_hi(y0, g.h0)
+  let a1 = cpu.clmul_lo(y1, g.h1)
+  let b1 = cpu.clmul_hi(y1, g.h1)
+  let z2l = cpu.clmul_lo(y2, g.h2) ^ a0 ^ a1
+  let z2h = cpu.clmul_hi(y2, g.h2) ^ b0 ^ b1
+  reduce(a0, b0 ^ z2l, a1 ^ z2h, b1)
+}
+
 /// (y1, y0) xor the block (w1, w0), times H.
 fn (g: Gcm) mul(y1a: Int, y0a: Int) -> (Int, Int) {
+  if (g.hw & cpu.HW_CLMUL) != 0 {
+    return g.mul_hw(y1a, y0a)
+  }
   let y0 = y0a
   let y1 = y1a
   let y0r = rev64(y0)
@@ -572,6 +637,12 @@ fn (g: Gcm) mul(y1a: Int, y0a: Int) -> (Int, Int) {
   let v1a = shr(rev64(z0h), 1) ^ z2
   let v2a = z1 ^ shr(rev64(z2h), 1)
   let v3a = shr(rev64(z1h), 1)
+  reduce(v0a, v1a, v2a, v3a)
+}
+
+/// The 256 bit product (v3a, v2a, v1a, v0a, bit reflected) shifted by
+/// one and reduced modulo GHASH's polynomial.
+fn reduce(v0a: Int, v1a: Int, v2a: Int, v3a: Int) -> (Int, Int) {
   let v3 = shl(v3a, 1) | shr(v2a, 63)
   var v2 = shl(v2a, 1) | shr(v1a, 63)
   var v1 = shl(v1a, 1) | shr(v0a, 63)
@@ -620,7 +691,7 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   let h0 = rt.int_wrap(7, io[1], 0)
   let h0r = rev64(h0)
   let h1r = rev64(h1)
-  Gcm{c: c, h0: h0, h1: h1, h2: h0 ^ h1, h0r: h0r, h1r: h1r, h2r: h0r ^ h1r}
+  Gcm{c: c, hw: c.hw, h0: h0, h1: h1, h2: h0 ^ h1, h0r: h0r, h1r: h1r, h2r: h0r ^ h1r}
 }
 
 /// The bytes of src xor the key stream from counter ctr (32 bits, big

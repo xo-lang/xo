@@ -1,0 +1,29 @@
+// The CPU instructions of std/native/llrt/cpu.xo (decision 0231) against
+// a plain reference (std/rt cryptoCPU): the instructions on arm64 and
+// LLVM (on a CPU that has them) and the constant time bodies (the
+// `_soft` lines) on every backend.
+use std/crypto
+use std/internal
+
+fn main(os: Os) {
+  var seed = crypto.sha256(b"cpu_prims")
+  let ones = Bytes.from_hex("ffffffffffffffffffffffffffffffff") ?? b""
+  let zeros = Bytes.from_hex("00000000000000000000000000000000") ?? b""
+  var inputs = [zeros, ones]
+  for _ in 0..6 {
+    seed = crypto.sha256(seed)
+    inputs.push(seed[0..16])
+    inputs.push(seed[16..32])
+  }
+  for (i, a) in inputs.indexed() {
+    let b = inputs[(i + 3) % inputs.len()]
+    let c = inputs[(i + 5) % inputs.len()]
+    for sfx in ["", "_soft"] {
+      let k = internal.crypto_op("cpu.carry${sfx}", a, b, b"", b"")
+      let m = internal.crypto_op("cpu.clmul${sfx}", a, b, b"", b"")
+      let r = internal.crypto_op("cpu.aes_round${sfx}", a, b, b"", b"")
+      let l = internal.crypto_op("cpu.aes_last${sfx}", a, b, c, b"")
+      os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()}")
+    }
+  }
+}
