@@ -48,7 +48,7 @@ func TestGoldenASan(t *testing.T) {
 				t.Fatal(err)
 			}
 			bin := exe(filepath.Join(t.TempDir(), "prog"))
-			flags := append(asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module"), xotool.IOFlags(ir)...)
+			flags := asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module")
 			if err := xotool.CompileC(flags, []string{ll, rt}, bin); err != nil {
 				if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 					t.Skipf("no AddressSanitizer: %v", err)

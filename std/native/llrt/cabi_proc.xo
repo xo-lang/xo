@@ -1,14 +1,9 @@
 // The C ABI exports of processes (decisions 0204, 0207; work item B25):
 // like cabi.xo, every top level function here is called by the C runtime
 // as xo_x_<name>. std/native/llrt/procspec.xo imports this module, so a
-// program that runs commands (and compiles xo_proc.c with -DXO_PROC) has
-// them, and other programs do not grow.
+// program that runs commands has them, and other programs do not grow.
 use native/llrt/obj
 use native/llrt/proc
-
-/// The free function of a child record off Windows (xo_proc.c
-/// child_free_x): std/native/llrt/proc.xo child_free.
-fn proc_child_free(ch: Int) { proc.child_free(ch) }
 
 /// A child record's free function (ctx.xo SV_PROC_CHILD_FREE, the
 /// handles proc.xo spawn makes): its descriptors and process, then the

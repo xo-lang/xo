@@ -58,11 +58,45 @@ static inline int b64_val(unsigned c) {
 	return c == '+' ? 62 : c == '/' ? 63 : -1;
 }
 
-// nbuf_byte appends c (it was xo_std.c's, which only this C used).
+// A growable byte buffer (malloc'd) and a string object of n bytes: they
+// were xo_std.c's, which only this C used at the end.
+typedef struct {
+	char *p;
+	int64_t n, cap;
+} nbuf;
+
+static void nbuf_put(nbuf *b, const char *p, int64_t n) {
+	if (n <= 0) {
+		return; // b->p may still be NULL (UBSan: zero offset to null)
+	}
+	if (b->n + n > b->cap) {
+		int64_t c = b->cap < 64 ? 64 : b->cap * 2;
+		while (c < b->n + n) {
+			c *= 2;
+		}
+		b->p = realloc(b->p, (size_t)c);
+		if (!b->p) {
+			xo_oom();
+		}
+		b->cap = c;
+	}
+	memcpy(b->p + b->n, p, (size_t)n);
+	b->n += n;
+}
+
+static xo_rstr *nstr(const char *p, int64_t n, int64_t *len) {
+	xo_rstr *s = rs_new(n);
+	if (n > 0) {
+		memcpy(s->data, p, (size_t)n);
+	}
+	*len = n;
+	return s;
+}
+
+// nbuf_byte appends c.
 static void nbuf_byte(nbuf *b, char c) { nbuf_put(b, &c, 1); }
 
-// nbuf_take turns the buffer into a string object and frees it (it was
-// xo_std.c's, which only this C used).
+// nbuf_take turns the buffer into a string object and frees it.
 static xo_rstr *nbuf_take(nbuf *b, int64_t *len) {
 	xo_rstr *s = nstr(b->p, b->n, len);
 	free(b->p);

@@ -154,31 +154,8 @@ fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
 fn stdin_pump_main(rec: Int) -> Int { stdin.pump_main(rec) }
 
 /// The hooks around a fiber switch (sanhook.xo hook, decision 0232):
-/// rt.sched_hook of sched.xo calls this export (xo_rt.c's xo_sched_hook
-/// forwards for code from an older xo).
+/// rt.sched_hook of sched.xo calls this export.
 fn sched_hook(kind: Int, w: Int, f: Int) { sanhook.hook(kind, w, f) }
-
-// ---------------------------------------------------------------------------
-// UTF-8 (xo_bytes.c n_rune_utf8, the seed compatibility xo_rs_push_rune)
-
-/// Writes the UTF-8 of the scalar value r at p; its size.
-fn utf8_encode(p: Int, r: Int) -> Int {
-  if r < 0x80 {
-    rt.mem_store(p, 0, r, 1)
-    return 1
-  }
-  if r < 0x800 {
-    rt.mem_store(p, 0, (0xC0 | (r >> 6)) | ((0x80 | (r & 0x3F)) << 8), 2)
-    return 2
-  }
-  if r < 0x10000 {
-    rt.mem_store(p, 0, (0xE0 | (r >> 12)) | ((0x80 | ((r >> 6) & 0x3F)) << 8), 2)
-    rt.mem_store(p, 2, 0x80 | (r & 0x3F), 1)
-    return 3
-  }
-  rt.mem_store(p, 0, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
-  4
-}
 
 // ---------------------------------------------------------------------------
 // The clocks (work item B01): xo_rt.c mono_ns, the real time of
@@ -352,6 +329,14 @@ fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode:
 fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
   rt.mem_store(lenp, 0, 0, 8)
   obj.rs_with_cap(n)
+}
+
+/// The Str results of the C adapters of `use c` (selfhost/cli/bind
+/// gen.xo, decision 0116; was xo_std.c xo_cffi_str): a new string of the
+/// n bytes at p, its length stored at lenp.
+fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
+  rt.mem_store(lenp, 0, n, 8)
+  obj.rs_append(obj.rs_with_cap(n), 0, p, n)
 }
 
 // ---------------------------------------------------------------------------

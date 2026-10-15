@@ -2210,10 +2210,10 @@ Last verified: 2026-10-11. Results:
 `bench/results/prebuilt-runtime-2026-10-11.md`.
 
 - A pack is `<root>/<os>-<arch>/`: `rt*.o`, one object of std/llrt per
-  variant (4 since format 3, 2026-10-15: the subsets of `-DXO_TIME` and
-  `-DXO_PROC`, selfhost/xo rt.xo variant_file; 16 with `-DXO_FS` and
-  `-DXO_STDIN` in format 2; 32 with TLS and a `libxotls.a` before
-  format 2), and
+  variant (2 since format 4, 2026-10-15: with and without `-DXO_TIME`,
+  selfhost/xo rt.xo variant_file; 4 with `-DXO_PROC` in format 3; 16
+  with `-DXO_FS` and `-DXO_STDIN` in format 2; 32 with TLS and a
+  `libxotls.a` before format 2), and
   `rtpack.json` (format, target, key, compiler, flags, SHA-256 per
   file). Packs exist for darwin/arm64 and linux/arm64 (the arm64
   backend's targets). About 16 MB per target.
@@ -2663,7 +2663,8 @@ spec core 4.5.
   the objects (`ccBuild` splits them). No `-I` (it would turn off the
   runtime object cache): adapters include the header by absolute path.
   A build with module C files is not binary cached.
-- Runtime: `xo_cffi_str` (std/llrt/xo_std.c) makes the Str results.
+- Runtime: cabi.xo's `cffi_str` export (`xo_x_cffi_str`; it was
+  std/llrt/xo_std.c's xo_cffi_str until 2026-10-15) makes the Str results.
 - Tests: internal/cbind (tiny.h mapping and skips, zlib.h when present,
   the adapter compiles with -Wall -Werror), internal/check
   `TestUseC`, cmd/xo `TestBindC`, internal/llvm `TestUseC` (archive

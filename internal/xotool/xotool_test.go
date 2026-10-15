@@ -1,10 +1,8 @@
 package xotool
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -66,20 +64,6 @@ func TestInputs(t *testing.T) {
 	}
 }
 
-// TestIOFlagsMatchXo requires IOFlags to name the runtime symbols xo's
-// own table does (selfhost/xo/link.xo io_flags), so the runtime tests
-// compile the runtime as xo does (gotchas/xo1-duplicated-tables-drift.md).
-func TestIOFlagsMatchXo(t *testing.T) {
-	goSyms := bodySymbols(t, "cc.go", "func IOFlags(", "\n}\n")
-	xoSyms := bodySymbols(t, filepath.Join(repoRoot(t), "selfhost", "xo", "link.xo"), "fn io_flags(", "\n}\n")
-	if len(goSyms) == 0 || len(xoSyms) == 0 {
-		t.Fatalf("no symbols found: %d, %d", len(goSyms), len(xoSyms))
-	}
-	if strings.Join(goSyms, " ") != strings.Join(xoSyms, " ") {
-		t.Errorf("IOFlags differs from xo's io_flags:\n Go: %v\n Xo: %v", goSyms, xoSyms)
-	}
-}
-
 // TestChainHops reads scripts/seed-chain.txt: full commit hashes, the std
 // of a hop optional.
 func TestChainHops(t *testing.T) {
@@ -96,31 +80,4 @@ func TestChainHops(t *testing.T) {
 			t.Errorf("hop %+v: want full commit hashes", h)
 		}
 	}
-}
-
-var runtimeSym = regexp.MustCompile(`"(xo_[a-z0-9_]+)"`)
-
-// bodySymbols returns the sorted xo_ symbols quoted in the function of
-// file that starts at start and ends at the first end after it.
-func bodySymbols(t *testing.T, file, start, end string) []string {
-	t.Helper()
-	data, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(data)
-	i := strings.Index(s, start)
-	if i < 0 {
-		t.Fatalf("%s: %q not found", file, start)
-	}
-	s = s[i:]
-	if j := strings.Index(s, end); j >= 0 {
-		s = s[:j]
-	}
-	var out []string
-	for _, m := range runtimeSym.FindAllStringSubmatch(s, -1) {
-		out = append(out, m[1])
-	}
-	sort.Strings(out)
-	return out
 }

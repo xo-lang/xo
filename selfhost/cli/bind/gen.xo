@@ -394,7 +394,7 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
   } else {
     sb.write("#include <${bnd.header}>\n\n")
   }
-  sb.write("void *xo_cffi_str(const char *p, int64_t n, int64_t *len);\n\n")
+  sb.write("int64_t xo_x_cffi_str(int64_t p, int64_t n, int64_t lenp);\n\n")
   sb.write("static char *xo_cffi_cstr(const char *p, int64_t n) {\n\tchar *s = malloc((size_t)n + 1);\n\tif (!s) {\n\t\tabort();\n\t}\n\tif (n > 0) {\n\t\tmemcpy(s, p, (size_t)n);\n\t}\n\ts[n] = 0;\n\treturn s;\n}\n")
   for f in fns {
     let sym = "xo_${bnd.prefix}${f.xo}"
@@ -475,7 +475,7 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
         body.push("if (!c) {")
         body.push("\tc = \"\";")
         body.push("}")
-        body.push("void *r = xo_cffi_str(c, (int64_t)strlen(c), xo_len);")
+        body.push("void *r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)c, (int64_t)strlen(c), (int64_t)(intptr_t)xo_len);")
         for l in post {
           body.push(l)
         }

@@ -664,7 +664,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
   if uses_time {
     flags.push("-DXO_TIME")
   }
-  !shipped_runtime(os, ctx, ctx.std, flags + io_flags(code)).is_empty()
+  !shipped_runtime(os, ctx, ctx.std, flags).is_empty()
 }
 
 /// A program lowered to SSA for one target OS, with the passes run: the
@@ -787,7 +787,6 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
       }
     }
   }
-  lk.flags = lk.flags + io_flags(code)
   // the adapters, link files, and libraries of `use c` (cInputs)
   let ci = c_inputs(os, c, dir)
   if !ci.err.is_empty() {

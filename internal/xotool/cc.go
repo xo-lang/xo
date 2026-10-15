@@ -13,49 +13,9 @@ import (
 )
 
 // The C side of the native backends that the runtime tests drive
-// directly (decision 0215 copied them from the Go build package): the
-// runtime's I/O flags for a program's code, and a clang compile and link
-// that finds a working macOS SDK. xo (selfhost/xo link.xo io_flags and
-// clang.xo) has its own; TestIOFlagsMatchXo keeps the tables the same.
-
-// IOFlags returns the C compiler flags that compile the runtime's
-// Proc.run (xo_proc.c, XO_PROC) into a native program whose code calls
-// it (decision 0102), so programs without it do not grow.
-func IOFlags(code []byte) []string {
-	var out []string
-	if callsSym(code, "xo_proc_") {
-		// Proc.run and FakeProc.on_run (xo_proc.c, decision 0107)
-		out = append(out, "-DXO_PROC")
-	}
-	// Decision 0198 deleted the C paths of show, report, tz, atomic,
-	// fspath, gen, glob, digest, ints (not the intrinsics), rc, and alloc
-	// with their -D flags, and no C defines xo_fs_mkdir_all,
-	// xo_fs_create_temp, or xo_fs_cwd any more; decision 0227 deleted
-	// the C path of text (-DXO_TEXT_C); the C Fs operations (-DXO_FS)
-	// and the C intrinsics (-DXO_INTS_C) went with the 0.12.0 seed, and
-	// -DXO_STDIN with xo_stdin.c (B32 part 2).
-	return out
-}
-
-// callsSym reports whether code (arm64 assembly or LLVM IR) refers to the
-// runtime symbol sym: preceded by what a reference has before it (`bl
-// xo_f`, `bl _xo_f`, `@xo_f`, `:lo12:xo_f`, an operand after a comma or
-// tab), not by the quote of a string literal (`.ascii "xo_f"`, `c"xo_f"`),
-// which is the program's data. The self hosted compiler's own tables of
-// these names (selfhost/xo link.xo io_flags, which does the same) turned
-// on -DXO_UNICODE_C (decision 0180's C path, deleted by decision 0198)
-// for xo1, which no pack variant has
-// (gotchas/runtime-flags-from-string-literals.md).
-func callsSym(code []byte, sym string) bool {
-	for _, p := range symRefPrefixes {
-		if bytes.Contains(code, []byte(p+sym)) {
-			return true
-		}
-	}
-	return false
-}
-
-var symRefPrefixes = []string{" ", "\t", "_", "@", ":", ","}
+// directly (decision 0215 copied them from the Go build package): a
+// clang compile and link that finds a working macOS SDK. xo (selfhost/xo
+// clang.xo) has its own.
 
 var (
 	sysrootMu     sync.Mutex

@@ -18,6 +18,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   through the services record's SV_PROC_CHILD_FREE); rt.proc_child_new
   is gone, so xo_proc.c's xo_proc_child_new and child_free_x have no
   caller left.
+- Native runtime (zero-C small files): xo_proc.c is deleted (its
+  xo_proc_child_new lost its last caller with proc.xo's own child
+  records), and the Str results of `use c` adapters come from cabi.xo's
+  new cffi_str export instead of xo_std.c's xo_cffi_str, so xo_std.c
+  loses its helpers too (crypto_ref.c, the test, keeps its own byte
+  buffer) and cabi.xo's utf8_encode export goes with them. With
+  xo_proc.c went -DXO_PROC, the last flag link.xo io_flags (and xotool
+  IOFlags) detected, so both are deleted, and the runtime pack is format
+  4 with 2 variants (with and without -DXO_TIME).
 - Native backends (generated-code entries): faults (raise, continue,
   take, msg, loc, detail, at) through fault.xo's exports, and a number's
   text (`a + "${n}"`, `"${n}"` for Int and Float) through obj.xo's and

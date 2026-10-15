@@ -431,7 +431,7 @@ func TestGoldenTasks(t *testing.T) {
 			if err := os.WriteFile(ll, ir, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := tsanBuild(t, append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...), []string{ll, rt})
+			bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll, rt})
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
@@ -534,7 +534,7 @@ func TestSysCTSan(t *testing.T) {
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := tsanBuild(t, append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...), []string{ll, filepath.Join(rtDir, "xo_rt.c")})
+	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll, filepath.Join(rtDir, "xo_rt.c")})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), tsanOptions())
 	out, err := cmd.CombinedOutput()

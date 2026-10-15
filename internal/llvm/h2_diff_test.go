@@ -1155,7 +1155,7 @@ func TestH2Sanitizers(t *testing.T) {
 		t.Fatal(err)
 	}
 	srcs := []string{ll, filepath.Join(rtDir, "xo_rt.c")}
-	flags := append([]string{"-Wno-override-module"}, xotool.IOFlags(ir)...)
+	flags := []string{"-Wno-override-module"}
 	for _, san := range []string{"thread", "address"} {
 		t.Run(san, func(t *testing.T) {
 			t.Parallel()

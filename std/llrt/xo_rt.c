@@ -524,7 +524,6 @@ void xo_flush(void) { xo_x_flush(); }
 
 int64_t xo_x_fmt_int(int64_t buf, int64_t v);
 int64_t xo_x_fmt_float(int64_t buf, double f);
-int64_t xo_x_utf8_encode(int64_t p, int64_t r);
 
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
