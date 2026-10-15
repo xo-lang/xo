@@ -117,6 +117,18 @@ func Path() (string, error) {
 
 // Command is Path with the leading flags $XO_CLI carries (its fields
 // after the first), for a command line.
+// init makes every xo the tests run fail a build whose inlined arm64
+// module does not verify (selfhost/xo main.xo inline_or_say), where a
+// normal build says so and goes on without inlining: a broken inliner
+// must fail the tests, not pass them slowly
+// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_STRICT=0 in the
+// environment keeps the normal behavior.
+func init() {
+	if os.Getenv("XO_INLINE_STRICT") == "" {
+		os.Setenv("XO_INLINE_STRICT", "1")
+	}
+}
+
 func Command() ([]string, error) {
 	bin, err := Path()
 	if err != nil {

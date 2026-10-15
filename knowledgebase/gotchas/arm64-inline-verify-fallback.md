@@ -23,3 +23,9 @@ make inline_step_jobs fault with the verifier's first error, and count
 the `bl` of a known hot function before and after. Copy a callee into
 the caller's block only when its values are all scalars (counted values
 must pass through the continuation's parameter).
+
+Since 2026-10-15 the fallback is loud: a build says it on standard
+error (the first verification error names the function), and fails
+with XO_INLINE_STRICT=1, which internal/xotool sets for the Go tests
+(TestInlineFallbackLoud breaks the module on purpose with
+XO_INLINE_BREAK=1).

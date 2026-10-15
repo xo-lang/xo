@@ -487,7 +487,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var cur_tu = tu
   var cur_os = tgoos
   var mi = cur.m
-  var inl = arm64.inline_step_jobs(mi, emit_jobs(os))
+  var inl = inline_or_say(os, mi, emit_jobs(os))
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
@@ -499,7 +499,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cur_tu = l.tu
       cur_os = tgoos
       mi = cur.m
-      inl = arm64.inline_step_jobs(mi, emit_jobs(os))
+      inl = inline_or_say(os, mi, emit_jobs(os))
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
@@ -921,4 +921,25 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
     os.stdio.eprintln("phase ${name} ${os.clock.since(t).millis()} ms")
   }
   os.clock.now()
+}
+
+/// arm64's inlining of mi, and whether the inlined module is to be
+/// generated. When it does not verify the module is generated without
+/// inlining (slower, still correct): said on standard error with the
+/// first error (it names the function), and a failed build with
+/// XO_INLINE_STRICT=1, which the Go tests set (internal/xotool), so a
+/// broken inliner cannot pass the tests as a slow one
+/// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
+/// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
+fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
+  let errs = arm64.inline_check(mi, jobs, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
+  if errs.is_empty() {
+    return true
+  }
+  let msg = "the inlined arm64 module does not verify (${errs.len()} errors; the first: ${errs[0]})"
+  if (os.env.get("XO_INLINE_STRICT") ?? "") == "1" {
+    fail(os, "${msg}; failing the build (XO_INLINE_STRICT=1)")
+  }
+  os.stdio.eprintln("xo: ${msg}, so it is built without inlining")
+  false
 }

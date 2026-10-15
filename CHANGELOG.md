@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 builds say so when the inlined module does not verify (they go
+  on without inlining, slower) instead of falling back silently, and
+  fail with XO_INLINE_STRICT=1, which the Go tests set.
 - Native runtime performance: a task's run reuses its thread's spare
   context (thread local word 13) instead of a heap block per run
   (tasks.xo run_claimed): ctx spawn 0.98 and 0.96, conc spawn 0.97 and
