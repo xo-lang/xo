@@ -1545,8 +1545,11 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if testworld.fake(testworld.REAL_PROC) {
     // FakeProc.on_run's outputs (std/native/llrt/testworld.xo)
     r = if rt.fs_canceled() { ["3", ""] } else { testworld.proc_run(cmd) }
-  } else {
+  } else if sysio.layer() == 3 {
     r = rt.proc_run(cmd, args)
+  } else {
+    // std/native/llrt/proc.xo on macOS and Linux (work item B25)
+    r = proc.run(cmd, args)
   }
   let st = r.get(0) ?? "2"
   let detail = r.get(1) ?? ""
@@ -1813,7 +1816,11 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
 /// no command, or std/rt's fakeProc output, runTerm, and pipeline.
 fn proc_exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
   if !testworld.fake(testworld.REAL_PROC) {
-    return rt.proc_exec(spec, input, has_input, mode)
+    if sysio.layer() == 3 {
+      return rt.proc_exec(spec, input, has_input, mode)
+    }
+    // std/native/llrt/proc.xo on macOS and Linux (work item B25)
+    return proc.exec(spec, input, has_input, mode)
   }
   if rt.fs_canceled() {
     return ["3", ""]

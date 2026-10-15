@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B25, stage 4a): Proc.run,
+  Cmd.output and run, and pipelines run from Xo on macOS and Linux
+  (std/native/llrt/proc.xo run and exec: the pipes, the reads on the
+  event loop's poller, standard input written in the same loop instead
+  of a thread, the exit polled with waitpid in cancelable steps; Linux
+  UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
+  children until stage 4b.
 - Native runtime (zero-C audit item B20, part 2): the fiber stacks'
   settings (XO_TASK_STACK_MB, the page size per OS) are Xo
   (poolsetup.xo fibers_setup).

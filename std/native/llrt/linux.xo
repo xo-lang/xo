@@ -672,6 +672,10 @@ pub fn access_at(a: Int, mode: Int) -> Int { rt.sys6(nr(48, 269), AT_FDCWD, a, m
 /// word not kept: the pid, 0, or the negative errno.
 pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, 0, options, 0, 0, 0) }
 
+/// wait4(2) of pid with its status in the 4 byte word at st, blocking
+/// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
+pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, 0, 0, 0) }
+
 /// execve(2): returns only on failure, the negative errno.
 pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), file, argv, envp, 0, 0, 0) }
 

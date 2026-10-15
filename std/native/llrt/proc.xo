@@ -4,9 +4,11 @@
 // records. Process creation, pipes, and waiting follow in later stages.
 use native/llrt/darwin
 use native/llrt/linux
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
+use native/llrt/sock
 use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/testworld
@@ -376,3 +378,514 @@ fn child_fd(fd: Int, k: Int, b: Int) -> Int {
 
 /// waitpid(pid) of a child that failed to exec (wait4, blocking).
 fn wait_any(pid: Int) -> Int { linux.wait4(pid, 0) }
+
+// ---------------------------------------------------------------------------
+// Proc.run, Cmd.output and run, and pipelines (xo_proc.c's xo_proc_run
+// and xo_proc_exec, stage 4 of B25) on macOS and Linux: the commands
+// start through start, their output and error streams are read through
+// pipes that wait on the event loop's poller, the standard input data is
+// written to its pipe in the same loop (nonblocking; the C wrote it from
+// a thread of its own), and the exit is polled with waitpid in steps
+// that a cancellation ends (killing the command). UNTESTED on Linux.
+
+/// A command of a spec (std/native/llrt/procspec.xo's words, xo_proc.c's
+/// pr_parse): its name, its directory ("" the program's), its flags (1 an
+/// environment set, 2 inherit, 4 merge_stderr), its arguments (the name
+/// first), and its environment.
+struct Spec {
+  name: Str
+  dir: Str
+  flags: Int
+  argv: List[Str]
+  env: List[Str]
+}
+
+/// Word i of l, "" past its end.
+fn word(l: List[Str], i: Int) -> Str { if i < l.len() { l[i] } else { "" } }
+
+/// The count in word i of l (decimal digits; anything else ends it, as
+/// strtoll; a negative count is 0).
+fn count(l: List[Str], i: Int) -> Int {
+  var v = 0
+  for c in word(l, i).bytes() {
+    if c < 48 || c > 57 {
+      break
+    }
+    v = v * 10 + Int(c) - 48
+  }
+  v
+}
+
+/// The commands of spec: name, directory, flags, the arguments' count
+/// and the arguments, the environment's count and the variables, the
+/// count of variables added (procspec.xo merged them) and those, and the
+/// Windows command line.
+fn parse(spec: List[Str]) -> List[Spec] {
+  var out: List[Spec] = []
+  var i = 0
+  while i < spec.len() {
+    let name = word(spec, i)
+    let dir = word(spec, i + 1)
+    let flags = count(spec, i + 2)
+    let na = count(spec, i + 3)
+    i += 4
+    var argv = [name]
+    for k in 0..na {
+      argv.push(word(spec, i + k))
+    }
+    i += na
+    let ne = count(spec, i)
+    i += 1
+    var env: List[Str] = []
+    for k in 0..ne {
+      env.push(word(spec, i + k))
+    }
+    i += ne
+    i += count(spec, i) + 1
+    i += 1
+    out.push(Spec{name: name, dir: dir, flags: flags, argv: argv, env: env})
+  }
+  out
+}
+
+/// A malloc'd block (release it with rt.heap_release) holding the NULL
+/// ended array of C strings of ss, then their zero terminated bytes.
+fn c_strs(ss: List[Str]) -> Int {
+  let head = 8 * (ss.len() + 1)
+  var size = head
+  for s in ss {
+    size += s.len() + 1
+  }
+  let m = rt.heap_large(size) - 8
+  var p = m + head
+  for k in 0..ss.len() {
+    let s = ss[k]
+    rt.mem_store(m, 8 * k, p, 8)
+    rt.mem_copy(p, raw.data(s), s.len())
+    rt.mem_store(p, s.len(), 0, 1)
+    p += s.len() + 1
+  }
+  rt.mem_store(m, 8 * ss.len(), 0, 8)
+  m
+}
+
+/// Starts command c with standard streams inf, outf, errf (descriptors
+/// or FD_*): the status ("0" started, "1" not found, "2" failed), the
+/// pid, and the failure's message.
+fn launch(c: Spec, inf: Int, outf: Int, errf: Int) -> (Str, Int, Str) {
+  let nd = c_strs([c.name, c.dir])
+  let argv = c_strs(c.argv)
+  let envp = if (c.flags & 1) != 0 { c_strs(c.env) } else { 0 }
+  let res = rt.heap_large(16)
+  let dir = if c.dir.is_empty() { 0 } else { rt.mem_load(nd, 8, 8) }
+  let st = start(rt.mem_load(nd, 0, 8), dir, argv, envp, inf, outf, errf, res)
+  let pid = rt.mem_load(res, 0, 8)
+  let m = rt.mem_load(res, 8, 8)
+  var msg = ""
+  if m != 0 {
+    msg = cstr(m)
+    rt.heap_release(m)
+  }
+  rt.heap_release(res - 8)
+  rt.heap_release(nd)
+  rt.heap_release(argv)
+  if envp != 0 {
+    rt.heap_release(envp)
+  }
+  (rt.str_of_byte(st), pid, msg)
+}
+
+/// EAGAIN on layer l.
+fn eagain(l: Int) -> Int { if l == 2 { 35 } else { 11 } }
+
+const EINTR = 4
+
+fn close_fd(l: Int, fd: Int) {
+  if fd >= 0 {
+    let _r = if l == 2 { darwin.close(fd) } else { linux.close(fd) }
+  }
+}
+
+fn read_fd(l: Int, fd: Int, a: Int, n: Int) -> Int { if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) } }
+
+fn write_fd(l: Int, fd: Int, a: Int, n: Int) -> Int { if l == 2 { darwin.write_at(fd, a, n) } else { linux.write_at(fd, a, n) } }
+
+fn kill9(l: Int, pid: Int) {
+  let _r = if l == 2 { darwin.kill(pid, 9) } else { linux.kill(pid, 9) }
+}
+
+/// A pipe whose ends close on exec, its end nb (0 or 1; -1 neither)
+/// nonblocking: the read end, the write end, and 0, or the errno.
+fn pipe(l: Int, nb: Int) -> (Int, Int, Int) {
+  let a = rt.heap_large(8)
+  let r = if l == 2 { darwin.pipe_at(a) } else { linux.pipe2(a, linux.O_CLOEXEC) }
+  let fds = [rt.mem_load(a, 0, 4), rt.mem_load(a, 4, 4)]
+  rt.heap_release(a - 8)
+  if r < 0 {
+    return (-1, -1, -r)
+  }
+  if l == 2 {
+    // F_SETFD FD_CLOEXEC
+    let _a = sock.fcntl(fds[0], 2, 1)
+    let _b = sock.fcntl(fds[1], 2, 1)
+  }
+  if nb >= 0 {
+    // F_GETFL, F_SETFL with O_NONBLOCK
+    let fl = sock.fcntl(fds[nb], 3, 0)
+    let _c = sock.fcntl(fds[nb], 4, fl | (if l == 2 { 4 } else { 2048 }))
+  }
+  (fds[0], fds[1], 0)
+}
+
+/// Reads the descriptors fds (nonblocking read ends) until each ends,
+/// writing data to feed (a nonblocking write end, closed when written;
+/// -1 none) meanwhile: what each gave, and whether the task was canceled
+/// first (xo_proc.c pr_collect and pr_feed). Every descriptor is closed.
+fn collect(l: Int, fds: List[Int], feed: Int, data: Bytes) -> (List[Str], Bool) {
+  let n = fds.len()
+  var pds: List[Int] = []
+  var open: List[Bool] = []
+  for fd in fds {
+    pds.push(poll.pd_new(fd, false))
+    open.push(true)
+  }
+  // the bytes read, in pieces, and the stream of each piece
+  var pieces: List[Str] = []
+  var owner: List[Int] = []
+  var left = n
+  var fin = feed
+  var off = 0
+  let b = rt.heap_large(65536)
+  var canceled = false
+  while left > 0 || fin >= 0 {
+    if poll.canceled() {
+      canceled = true
+      break
+    }
+    var got = false
+    if fin >= 0 {
+      if off < data.len() {
+        let w = write_fd(l, fin, raw.bytes_addr(data) + off, data.len() - off)
+        if w > 0 {
+          off += w
+          got = true
+        } else if w != -EINTR && w != -eagain(l) {
+          // the command does not read it (EPIPE): os/exec stops too
+          off = data.len()
+        }
+      }
+      if off >= data.len() {
+        close_fd(l, fin)
+        fin = -1
+        got = true
+      }
+    }
+    for i in 0..n {
+      if open[i] {
+        while true {
+          let r = read_fd(l, fds[i], b, 65536)
+          if r > 0 {
+            pieces.push(raw.str_at(b, r))
+            owner.push(i)
+            got = true
+            continue
+          }
+          if r == -EINTR {
+            continue
+          }
+          if r != -eagain(l) {
+            // the end of the output (or an error)
+            open[i] = false
+            left -= 1
+            got = true
+          }
+          break
+        }
+      }
+    }
+    if got || (left == 0 && fin < 0) {
+      continue
+    }
+    stdio.flush()
+    // wait on one, in short steps while another is open too (or input
+    // is left to write)
+    var w = 0
+    while w < n && !open[w] {
+      w += 1
+    }
+    let step = if fin >= 0 { 1000000 } else if left > 1 { 10000000 } else { 0 }
+    if w < n && pds[w] != 0 {
+      let dl = if step == 0 { 0 } else { sysio.mono_ns() + step }
+      if poll.pd_wait(pds[w], false, dl) == poll.CANCELED {
+        canceled = true
+        break
+      }
+    } else if poll.sleep_until(sysio.mono_ns() + 1000000) == poll.CANCELED {
+      canceled = true
+      break
+    }
+  }
+  rt.heap_release(b - 8)
+  close_fd(l, fin)
+  for i in 0..n {
+    if pds[i] != 0 {
+      poll.pd_free(pds[i])
+    } else {
+      close_fd(l, fds[i])
+    }
+  }
+  var outs: List[Str] = []
+  for i in 0..n {
+    var parts: List[Str] = []
+    for k in 0..pieces.len() {
+      if owner[k] == i {
+        parts.push(pieces[k])
+      }
+    }
+    outs.push(parts.join(""))
+  }
+  (outs, canceled)
+}
+
+/// The exit status of wait status ws: its exit code, or 128 plus the
+/// signal that ended it (xo_proc.c pr_code).
+fn exit_code(ws: Int) -> Int {
+  let sig = ws & 127
+  if sig == 0 {
+    return (ws >> 8) & 255
+  }
+  if sig != 127 {
+    return 128 + sig
+  }
+  -1
+}
+
+/// Waits for pid, killing it when the task is canceled (or was, killed
+/// already): its exit status, and whether the task was canceled
+/// (xo_proc.c pr_wait).
+fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
+  var canceled = canceled0
+  let st = rt.heap_large(8)
+  rt.mem_store(st, 0, 0, 8)
+  var step = 1000000
+  var code = 0
+  while true {
+    // once canceled (the command killed), a blocking wait
+    let opt = if canceled { 0 } else { 1 }
+    let r = if l == 2 { darwin.waitpid_at(pid, st, opt) } else { linux.wait4_at(pid, st, opt) }
+    if r == pid {
+      code = exit_code(rt.mem_load(st, 0, 4))
+      break
+    }
+    if r == -EINTR {
+      continue
+    }
+    if r < 0 {
+      break
+    }
+    if poll.canceled() {
+      canceled = true
+      kill9(l, pid)
+      continue
+    }
+    stdio.flush()
+    if poll.sleep_until(sysio.mono_ns() + step) == poll.CANCELED {
+      canceled = true
+      kill9(l, pid)
+    }
+    if step < 50000000 {
+      step *= 2
+    }
+  }
+  rt.heap_release(st - 8)
+  (code, canceled)
+}
+
+/// Proc.run (xo_proc.c xo_proc_run): cmd with args, its standard input
+/// the null device, its output and error collected: "0", the status,
+/// standard output, standard error; or the failure ("1" not found, with
+/// no name: the prelude adds it; "2" and the message; "3" canceled).
+pub fn run(cmd: Str, args: List[Str]) -> List[Str] {
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  let l = sysio.layer()
+  var argv = [cmd]
+  for a in args {
+    argv.push(a)
+  }
+  let c = Spec{name: cmd, dir: "", flags: 0, argv: argv, env: []}
+  let (o0, o1, eo) = pipe(l, 0)
+  if eo != 0 {
+    return ["2", sysio.err_msg(l, eo)]
+  }
+  let (e0, e1, ee) = pipe(l, 0)
+  if ee != 0 {
+    close_fd(l, o0)
+    close_fd(l, o1)
+    return ["2", sysio.err_msg(l, ee)]
+  }
+  let (st, pid, msg) = launch(c, FD_NULL, o1, e1)
+  close_fd(l, o1)
+  close_fd(l, e1)
+  if st != "0" {
+    close_fd(l, o0)
+    close_fd(l, e0)
+    return [st, if st == "1" { "" } else { msg }]
+  }
+  let (outs, c1) = collect(l, [o0, e0], -1, b"")
+  if c1 {
+    kill9(l, pid)
+  }
+  let (code, c2) = wait_exit(l, pid, c1)
+  if c2 {
+    return ["3", ""]
+  }
+  ["0", "${code}", outs[0], outs[1]]
+}
+
+/// Cmd.output (mode 0: one command, its output collected), Cmd.run (1:
+/// one command on the terminal), and Proc.pipeline (2: whose last output
+/// and every error stream are collected) of the commands of spec, input
+/// the first one's standard input when has_input (xo_proc.c
+/// xo_proc_exec): "0", the status (pipefail: the rightmost failure),
+/// standard output, standard error; or the failure.
+pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
+  if poll.canceled() {
+    return ["3", ""]
+  }
+  let cs = parse(spec)
+  if cs.is_empty() {
+    return ["0", "0", "", ""]
+  }
+  let l = sysio.layer()
+  let n = if mode == 2 { cs.len() } else { 1 }
+  var pids: List[Int] = []
+  // the read ends to collect, and whose each is (-1 the last output, i
+  // the error stream of command i)
+  var rd: List[Int] = []
+  var rd_of: List[Int] = []
+  var feed = -1
+  var prev = FD_NULL
+  if has_input {
+    let (r, w, e) = pipe(l, 1)
+    if e == 0 {
+      prev = r
+      feed = w
+    }
+  } else if mode == 1 || (mode == 0 && (cs[0].flags & 2) != 0) {
+    prev = FD_INHERIT
+  }
+  var st = "0"
+  var msg = ""
+  for i in 0..n {
+    let merge = (cs[i].flags & 4) != 0
+    var o0 = -1
+    var o1 = -1
+    var e0 = -1
+    var e1 = -1
+    var ofd = FD_INHERIT
+    var efd = if merge { FD_DUP_OUT } else { FD_INHERIT }
+    if mode != 1 {
+      let (r, w, e) = pipe(l, if i == n - 1 { 0 } else { -1 })
+      if e != 0 {
+        st = "2"
+        msg = sysio.err_msg(l, e)
+        close_fd(l, prev)
+        prev = FD_NULL
+        break
+      }
+      o0 = r
+      o1 = w
+      ofd = w
+      efd = w
+      if !merge {
+        let (r2, w2, e2) = pipe(l, 0)
+        if e2 == 0 {
+          e0 = r2
+          e1 = w2
+          efd = w2
+        }
+      }
+    }
+    let (s, pid, m) = launch(cs[i], prev, ofd, efd)
+    st = s
+    msg = m
+    close_fd(l, prev)
+    prev = FD_NULL
+    close_fd(l, o1)
+    close_fd(l, e1)
+    if st != "0" {
+      close_fd(l, o0)
+      close_fd(l, e0)
+      break
+    }
+    pids.push(pid)
+    if e0 >= 0 {
+      rd.push(e0)
+      rd_of.push(i)
+    }
+    if o0 >= 0 {
+      if i == n - 1 {
+        rd.push(o0)
+        rd_of.push(-1)
+      } else {
+        prev = o0
+      }
+    }
+  }
+  close_fd(l, prev)
+  var fin = -1
+  if feed >= 0 {
+    if pids.is_empty() {
+      close_fd(l, feed)
+    } else {
+      fin = feed
+    }
+  }
+  if st != "0" {
+    // a command did not start: the ones before it are killed
+    for p in pids {
+      kill9(l, p)
+    }
+  }
+  var canceled = false
+  var outs: List[Str] = []
+  if !rd.is_empty() || fin >= 0 {
+    let (o, c) = collect(l, rd, fin, input)
+    outs = o
+    canceled = c
+  }
+  var code = 0
+  for p in pids {
+    if canceled {
+      kill9(l, p)
+    }
+    let (c, cc) = wait_exit(l, p, canceled)
+    canceled = cc
+    if c != 0 {
+      code = c
+    }
+  }
+  if st != "0" {
+    return [st, msg]
+  }
+  if canceled {
+    return ["3", ""]
+  }
+  var out = ""
+  var errs: List[Str] = []
+  for i in 0..n {
+    for k in 0..rd.len() {
+      if rd_of[k] == i {
+        errs.push(outs[k])
+      }
+    }
+  }
+  for k in 0..rd.len() {
+    if rd_of[k] == -1 {
+      out = outs[k]
+    }
+  }
+  ["0", "${code}", out, errs.join("")]
+}

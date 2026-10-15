@@ -159,6 +159,7 @@ __attribute__((weak)) int64_t xo_x_tw_proc_find(int64_t p, int64_t n) {
 	return 0;
 }
 
+#ifdef _WIN32
 static xo_rlist *pr_outputs(int64_t code, const char *o, int64_t on, const char *e, int64_t en) {
 	char t[32];
 	int k = snprintf(t, sizeof t, "%lld", (long long)code);
@@ -168,6 +169,7 @@ static xo_rlist *pr_outputs(int64_t code, const char *o, int64_t on, const char 
 	l = n_str_list_add(l, o, on);
 	return n_str_list_add(l, e, en);
 }
+#endif
 
 static xo_rlist *pr_fail(char st, const char *msg) {
 	xo_rlist *l = n_str_list_new(2);
@@ -271,6 +273,7 @@ static char *pr_look_path(const char *cmd) {
 }
 #endif
 
+#ifdef _WIN32
 // pr_drain reads what fd has now into b; 1 at the end of the output.
 static int pr_drain(int fd, nbuf *b) {
 	char t[65536];
@@ -289,7 +292,7 @@ static int pr_drain(int fd, nbuf *b) {
 		return 1;
 	}
 }
-
+#endif
 
 // ---------------------------------------------------------------------------
 // Commands, children, and pipelines (std.md 3.8, decisions 0161 and 0172),
@@ -718,6 +721,7 @@ static void pr_feed(int fd, const char *p, int64_t n) {
 	pthread_attr_destroy(&at);
 }
 
+#ifdef _WIN32
 // pr_collect reads the descriptors fds (nonblocking) into bufs until each
 // ends: 1 when the task was canceled first.
 static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
@@ -776,6 +780,7 @@ static int pr_collect(xo_ctx *cx, int *fds, nbuf **bufs, int n) {
 	free(open);
 	return canceled;
 }
+#endif
 
 #ifdef _WIN32
 // pr_w_quote appends s quoted as procspec.xo's quote (Go's
@@ -847,6 +852,28 @@ static char *pr_w_cmdline(char **argv) {
 
 #endif
 
+// pr_specs parses every command of specs (*n of them, malloc'd).
+static pr_cmd *pr_specs(xo_rlist *specs, int *n) {
+	pr_cmd *cs = NULL;
+	int k = 0;
+	for (int64_t i = 0; i < specs->len;) {
+		cs = tw_grow(cs, k, sizeof(pr_cmd));
+		memset(&cs[k], 0, sizeof(pr_cmd));
+		pr_parse(specs, &i, &cs[k]);
+		k++;
+	}
+	*n = k;
+	return cs;
+}
+
+static void pr_specs_free(pr_cmd *cs, int n) {
+	for (int i = 0; i < n; i++) {
+		pr_cmd_free(&cs[i]);
+	}
+	free(cs);
+}
+
+#ifdef _WIN32
 // xo_proc_run runs cmd with args, standard input NUL and its output and
 // error collected, through pr_start (as xo_proc_exec's Cmd.output): its
 // standard output and error (a list of two), or an empty list with the
@@ -910,27 +937,6 @@ xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
 	free(out.p);
 	free(errb.p);
 	return l;
-}
-
-// pr_specs parses every command of specs (*n of them, malloc'd).
-static pr_cmd *pr_specs(xo_rlist *specs, int *n) {
-	pr_cmd *cs = NULL;
-	int k = 0;
-	for (int64_t i = 0; i < specs->len;) {
-		cs = tw_grow(cs, k, sizeof(pr_cmd));
-		memset(&cs[k], 0, sizeof(pr_cmd));
-		pr_parse(specs, &i, &cs[k]);
-		k++;
-	}
-	*n = k;
-	return cs;
-}
-
-static void pr_specs_free(pr_cmd *cs, int n) {
-	for (int i = 0; i < n; i++) {
-		pr_cmd_free(&cs[i]);
-	}
-	free(cs);
 }
 
 // xo_proc_exec runs the commands of specs: mode 0 one command with its
@@ -1074,6 +1080,23 @@ xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has
 	pr_specs_free(cs, total);
 	return l;
 }
+#else
+// Proc.run, Cmd.output and run, and pipelines are std/native/llrt/proc.xo's
+// on macOS and Linux (work item B25 stage 4); the prelude's Windows branch
+// still names these (gotchas/dead-target-arm-still-links.md). Never run.
+XO_NORETURN static void pr_dead(void) {
+	static const char m[] = "a C process operation off Windows";
+	xo_fault_raise(m, sizeof m - 1, "", 0);
+}
+xo_rlist *xo_proc_run(const char *c, int64_t cn, xo_rlist *args) {
+	(void)c, (void)cn, (void)args;
+	pr_dead();
+}
+xo_rlist *xo_proc_exec(xo_rlist *specs, const char *in, int64_t inn, int64_t has_in, int64_t mode) {
+	(void)specs, (void)in, (void)inn, (void)has_in, (void)mode;
+	pr_dead();
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Children (Cmd.spawn)

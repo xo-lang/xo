@@ -62,6 +62,10 @@ fn getcwd(buf: Int, n: Int) -> Int
 fn kill(pid: Int, sig: Int) -> Int32
 /// access(2): 0, or -1 with errno set.
 fn access(path: Int, mode: Int) -> Int32
+/// pipe(2) into the two C ints at the address fds.
+fn pipe(fds: Int) -> Int32
+/// waitpid(2) with the status as a C int at the address st.
+fn waitpid(pid: Int, st: Int, options: Int) -> Int32
 // posix_spawn(2) and its file actions and attributes (std/native/llrt/
 // proc.xo): posix_spawn_file_actions_t and posix_spawnattr_t are one
 // pointer each, a sigset_t 4 bytes; each returns 0 or an errno.
