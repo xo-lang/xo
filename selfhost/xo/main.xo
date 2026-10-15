@@ -455,9 +455,12 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, ltarget, false)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos)
     lk.flags = cross + lk.flags
+    let lto1 = single_lto(split)
     var mode_flags = ["llvm", split.opt]
     if lls.len() > 1 {
       mode_flags = mode_flags + ["split", split.lto]
+    } else {
+      mode_flags = mode_flags + ["lto", lto1]
     }
     let srcs = lls + lk.srcs
     let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs)
@@ -467,7 +470,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       let msg = if lls.len() > 1 {
         split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags)
       } else {
-        cc_build(os, lctx, cc, [split.opt, "-flto", "-Wno-override-module"] + lk.flags, srcs, bin)
+        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + lk.flags, srcs, bin)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)

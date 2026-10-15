@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM builds of one module pick their LTO by optimization level:
+  none at `-O0`, full otherwise, `XO_LLVM_LTO=full|thin|none` to
+  choose. The LLVM self build of selfhost/xo at O0 takes 129 s instead
+  of 1,871 s; O2 keeps full LTO (thin and none lose run time,
+  bench/results/llvm-single-lto-2026-10-15.md).
 - arm64 emitter: Int operations on constants are folded again after
   inlining (selfhost/arm64 inline.xo fold_consts), so a helper's
   parameter that is a constant at the call (a shift or rotation by

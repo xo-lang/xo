@@ -1802,7 +1802,9 @@ first, AST based prototype, since deleted) and
   most `XO_LLVM_JOBS` clang processes per xo process (default min(cores,
   6); a clang on a twelfth of selfhost/ssa peaks near 2 GB, on a sixth
   near 4 GB), and links. `XO_LLVM_LTO=thin` (default) or `none`. Unset,
-  `0`, or `1`: one module with full LTO, as before. Test processes of
+  `0`, or `1`: one module, whose LTO is `XO_LLVM_LTO` (`full`, `thin`,
+  `none`), else none at `-O0` and full otherwise (last verified:
+  2026-10-15, `bench/results/llvm-single-lto-2026-10-15.md`). Test processes of
   internal/selfhost call `build.EnableTestLLVMSplit` (12 modules, 4
   jobs, no LTO unless the environment says otherwise; `XO_LLVM_SPLIT=0`
   for the release configuration). Timings:

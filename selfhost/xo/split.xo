@@ -14,6 +14,9 @@ struct SplitConfig {
   /// clang's optimization level of the program's IR ($XO_LLVM_OPT: O0,
   /// O1, O2, O3; a release build always O2, decision 0220)
   opt: Str = "-O2"
+  /// The LTO of a single module build ($XO_LLVM_LTO: full, thin, none;
+  /// "" picks by opt, single_lto)
+  single: Str = ""
 }
 
 /// LLVMSplitConfig from the environment.
@@ -31,6 +34,9 @@ fn split_config(os: Os) -> SplitConfig {
   let l = os.env.get("XO_LLVM_LTO") ?? ""
   if l == "none" || l == "thin" {
     c.lto = l
+  }
+  if l is "none" | "thin" | "full" {
+    c.single = l
   }
   let o = os.env.get("XO_LLVM_OPT") ?? ""
   if o is "O0" | "O1" | "O2" | "O3" {
@@ -107,6 +113,26 @@ fn mem_gb(os: Os) -> Int {
     Err(_) => {}
   }
   16
+}
+
+/// The LTO mode of a single module build: $XO_LLVM_LTO, else none at -O0
+/// (the link's whole program optimization and code generation ran on one
+/// core for most of an unoptimized build of selfhost/xo) and full
+/// otherwise.
+fn single_lto(c: SplitConfig) -> Str {
+  if !c.single.is_empty() {
+    return c.single
+  }
+  if c.opt == "-O0" { "none" } else { "full" }
+}
+
+/// clang's flags of a single module build's LTO mode.
+fn single_lto_flags(mode: Str) -> List[Str] {
+  match mode {
+    "full" => ["-flto"]
+    "thin" => ["-flto=thin"]
+    _ => []
+  }
 }
 
 /// ltoFlags of a split build.
