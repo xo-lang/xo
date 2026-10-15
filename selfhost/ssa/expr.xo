@@ -475,7 +475,7 @@ fn (var b: Builder) slice(span: Span, x: Expr, lo0: Expr?, hi0: Expr?, inclusive
       if b.is_prelude_named(xt, ["Bytes"]) {
         name = "bytes_slice_at"
       }
-      return b.rt(name, bt, [base, lo, hi, b.const_str(b.pos(span))])
+      return b.llrt_or_rt(name, bt, [base, lo, hi, b.const_str(b.pos(span))])
     }
     List => {
       let f = b.list_slice(bt)

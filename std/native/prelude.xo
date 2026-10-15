@@ -9,6 +9,7 @@ use native/llrt/cabi_libc
 use native/llrt/cabi_nolibc
 use native/llrt/cabi_poll
 use native/llrt/cabi_tw
+use native/llrt/fault
 use native/llrt/fsops
 use native/llrt/fspath
 use native/llrt/gen
@@ -2313,6 +2314,32 @@ fn llrt_exit(code: Int) {
     return
   }
   process.exit(code)
+}
+
+/// `s[lo..hi]` on a Str (selfhost/ssa expr.xo; was xo_bytes.c's): the
+/// range must be one of s, its ends on UTF-8 boundaries.
+fn llrt_str_slice_at(s: Str, lo: Int, hi: Int, loc: Str) -> Str {
+  slice_check(lo, hi, s.len(), "Str", loc)
+  let p = raw.data(s)
+  let n = s.len()
+  if (lo < n && rt.mem_load(p, lo, 1) & 0xC0 == 0x80) || (hi < n && rt.mem_load(p, hi, 1) & 0xC0 == 0x80) {
+    fault.raise_str_at("slice ${lo}..${hi} of Str splits a UTF-8 sequence", raw.data(loc), loc.len())
+  }
+  raw.str_at(p + lo, hi - lo)
+}
+
+/// `b[lo..hi]` on Bytes.
+fn llrt_bytes_slice_at(b: Bytes, lo: Int, hi: Int, loc: Str) -> Bytes {
+  slice_check(lo, hi, b.len(), "Bytes", loc)
+  raw.str_at(raw.bytes_addr(b) + lo, hi - lo).bytes()
+}
+
+/// Faults unless lo..hi is a range of a value of length n (std/rt's
+/// StrSlice, BytesSlice).
+fn slice_check(lo: Int, hi: Int, n: Int, what: Str, loc: Str) {
+  if lo < 0 || hi > n || lo > hi {
+    fault.raise_str_at("slice ${lo}..${hi} out of range for ${what} of length ${n}", raw.data(loc), loc.len())
+  }
 }
 
 /// The clamped slice and the repeat of the SSA builders' show and

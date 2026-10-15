@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit, next small files batch): file and lock
+  handles are records of fsops.xo with Xo free functions (the services
+  record's words 128 and 136); collection constants are consts.xo's
+  (its table at word 144; xo_const_once and xo_consts_free forward to
+  it); Str and Bytes slicing (`s[lo..hi]`) calls the prelude's
+  llrt_str_slice_at and llrt_bytes_slice_at. xo_fs.c 133 to 62 lines,
+  xo_bytes.c 232 to 200. TestFarOutSlot now checks the rs_push_rune
+  call, the last runtime call that returns a Str through a length
+  pointer in that program. UNTESTED on linux and windows.
+
 - Native runtime (zero-C audit item B30): the TLS runtime's certificate
   work that needs no TLS state is Xo (std/native/llrt/tlscert.xo):
   http.tls_cert's PEM scan and tls.X509KeyPair's error texts,

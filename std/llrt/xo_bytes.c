@@ -189,44 +189,12 @@ XO_NORETURN void xo_fault_bytes_index(int64_t i, int64_t n, const char *loc) {
 	__builtin_unreachable();
 }
 
-// Constants of collection types (decision 0081): each is built once, by
-// the entry function fn on first use, and kept immortal in its slot (id)
-// until exit, when xo_consts_free gives it to drop (an entry function that
-// releases a list) so the leak check sees it freed. Two threads may both
-// build it; the loser releases its copy.
-#define N_MAX_CONSTS 4096
+// Constants of collection types (decision 0081) are consts.xo's (built
+// once, immortal until exit); generated code and entry.xo's services
+// record call these, which forward to cabi.xo's exports.
+int64_t xo_x_const_once(int64_t fn, int64_t drop, int64_t id);
+void xo_x_consts_free(void);
 
-static xo_rlist *n_const_lists[N_MAX_CONSTS];
-static void (*n_const_drops[N_MAX_CONSTS])(xo_rlist *);
+xo_rlist *xo_const_once(int64_t fn, int64_t drop, int64_t id) { return (xo_rlist *)(intptr_t)xo_x_const_once(fn, drop, id); }
 
-xo_rlist *xo_const_once(int64_t fn, int64_t drop, int64_t id) {
-	xo_rlist *l = __atomic_load_n(&n_const_lists[id], __ATOMIC_ACQUIRE);
-	if (l) {
-		return l;
-	}
-	l = ((xo_rlist * (*)(void)) fn)();
-	void (*d)(xo_rlist *) = (void (*)(xo_rlist *))drop;
-	int64_t rc = l->rc;
-	l->rc = XO_RC_IMMORTAL;
-	xo_rlist *none = NULL;
-	if (__atomic_compare_exchange_n(&n_const_lists[id], &none, l, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-		n_const_drops[id] = d;
-		(void)rc;
-		return l;
-	}
-	l->rc = 1;
-	d(l);
-	return none;
-}
-
-// xo_consts_free releases the constants built during the run.
-void xo_consts_free(void) {
-	for (int i = 0; i < N_MAX_CONSTS; i++) {
-		xo_rlist *l = n_const_lists[i];
-		if (l && n_const_drops[i]) {
-			n_const_lists[i] = NULL;
-			l->rc = 1;
-			n_const_drops[i](l);
-		}
-	}
-}
+void xo_consts_free(void) { xo_x_consts_free(); }

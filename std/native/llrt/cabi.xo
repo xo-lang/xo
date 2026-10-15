@@ -15,9 +15,11 @@
 use native/llrt/alloc
 use native/llrt/budget
 use native/llrt/chan
+use native/llrt/consts
 use native/llrt/ctx
 use native/llrt/entry
 use native/llrt/fault
+use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/netpolicy
 use native/llrt/mutex
@@ -795,3 +797,16 @@ fn deadlock() {
   stdio.write_all(2, raw.data(m), m.len())
   process.os_exit(70)
 }
+
+// ---------------------------------------------------------------------------
+// fsops.xo's handles and consts.xo's constants (the zero-C audit's small
+// files batch: the services record's SV_FS_FILE_FREE and SV_FS_LOCK_FREE;
+// xo_bytes.c's xo_const_once and xo_consts_free forward here)
+
+fn fs_file_free(p: Int) { fsops.file_free(p) }
+
+fn fs_lock_free(p: Int) { fsops.lock_free(p) }
+
+fn const_once(f: Int, drop: Int, id: Int) -> Int { consts.once(f, drop, id) }
+
+fn consts_free() { consts.free_all() }
