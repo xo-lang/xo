@@ -3,13 +3,13 @@ exit 0
 rfc 8448:
   f0 2 <ServerHello><server flight> - false 
   f1 3 <ticket><server data> - false 
-  params TLS_AES_128_GCM_SHA256 29 - 804 server false
+  params TLS_AES_128_GCM_SHA256 29 - 804 server false false
   f2 3 - <client data> true 
   bye <server close_notify>
 byte at a time:
   f0 2 <ServerHello><server flight> - false 
   f1 3 <ticket><server data> - false 
-  params TLS_AES_128_GCM_SHA256 29 - 804 server false
+  params TLS_AES_128_GCM_SHA256 29 - 804 server false false
   f2 3 - <client data> true 
   bye <server close_notify>
 corrupt client finished:
@@ -45,7 +45,7 @@ tls 1.2 hello:
 go client, rsa, alpn h2:
   f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(791 bytes) - false 
   f1 3 170303001ee6521b454662ac3866a42aeeb77b09867bf96b4bf758c17bec1532dccf3b 474554202f207472616365 false 
-  params TLS_AES_128_GCM_SHA256 29 h2 804 xo.test false
+  params TLS_AES_128_GCM_SHA256 29 h2 804 xo.test false false
   f2 3 - - true 
   bye 1703030013c59cf71bb75c6c2ac677827e00b7ba7be7d263
 go client, hello retry to p-256:
@@ -53,15 +53,39 @@ go client, hello retry to p-256:
   f1 1 - - false 
   f2 2 160303009b020000970303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(809 bytes) - false 
   f3 3 170303001ec74ed2b7b66c792d7f296a8cd441de331518b862e59da45b110e1ecb9f60 474554202f207472616365 false 
-  params TLS_AES_128_GCM_SHA256 23 - 804 xo.test true
+  params TLS_AES_128_GCM_SHA256 23 - 804 xo.test true false
   f4 3 - - true 
   bye 1703030013b6742c859910631c37a2dc9b5686b6379d9cad
 go client, ed25519, chacha20-poly1305, p-384:
   f0 2 16030300bb020000b70303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(630 bytes) - false 
   f1 3 170303001e5f6f6207f3ed729cd0bca84bd813da6f37dce0f0ae0ae1fddea75ea3c9e9 474554202f207472616365 false 
-  params TLS_CHACHA20_POLY1305_SHA256 24 - 807 xo.test false
+  params TLS_CHACHA20_POLY1305_SHA256 24 - 807 xo.test false false
   f2 3 - - true 
   bye 1703030013005d70bae162fd169cb770ca7b428ab1be0172
+go client, ticket:
+  f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
+  f1 3 170303001e8ea596d065d9613ab5a068bc2275bc9e0ba54c6bcdd676987ab11080cadb 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 29 - 807 xo.test false false
+  f2 3 - - true 
+  bye 170303001357f3e5189b2dbd5f0d1cf996ab31075f7b0dd6
+go client, resumed:
+  f0 2 16030300800200007c0303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(347 bytes) - false 
+  f1 3 170303001eccc8a5d1e5ef12298183e927f1e412c7cb641457eac004e82ab53cc18649 474554202f207472616365 false 
+  params TLS_AES_128_GCM_SHA256 29 - 0 xo.test false true
+  f2 3 - - true 
+  bye 170303001352b775a541b1b57012ea91cdb2525cd540b5e6
+go client, bad binder:
+  f0 4 15030300020233 - false tls: invalid PSK binder
+  f1 4 - - false tls: invalid PSK binder
+  bye -
+go client, ticket expired:
+  f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
+  f1 4 17030300137c1feb6958321881d60f4514613697cafa9826 - false local error: tls: bad record MAC
+  bye -
+go client, ticket of another key:
+  f0 2 160303007a020000760303a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbc...(709 bytes) - false 
+  f1 4 17030300137c1feb6958321881d60f4514613697cafa9826 - false local error: tls: bad record MAC
+  bye -
 rsa:
   client -
   server -

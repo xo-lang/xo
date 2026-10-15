@@ -3,6 +3,8 @@ package rt
 import (
 	"bytes"
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -11,10 +13,13 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"strconv"
@@ -67,7 +72,7 @@ func t13sDash(s string) string {
 
 func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 	ncerts, _ := strconv.Atoi(args[5])
-	if len(sv) != ncerts+4 || len(hooks) != 3 {
+	if len(sv) != ncerts+4 || (len(hooks) != 3 && len(hooks) != 7) {
 		return "args\n"
 	}
 	cf := t13sConf{certs: sv[:ncerts], key: sv[ncerts], suites: []int{0x1301, 0x1302, 0x1303}, groups: []int{t13X25519, t13P256, t13P384}}
@@ -86,6 +91,11 @@ func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 	}
 	cf.ticket = sv[ncerts+2]
 	cf.random, cf.priv, cf.salt = hooks[0], hooks[1], hooks[2]
+	if len(hooks) == 7 && len(hooks[3]) > 0 {
+		cf.now, _ = strconv.ParseInt(string(hooks[4]), 10, 64)
+		cf.ticketKeys = []t13sTicketKey{t13sKeyFrom(hooks[3], cf.now)}
+		cf.ticketIV, cf.ageAdd = hooks[5], hooks[6]
+	}
 	chunk, _ := strconv.Atoi(args[4])
 	s := &t13Server{conf: cf}
 	out := ""
@@ -99,7 +109,7 @@ func t13sReplay(flights, sv, hooks [][]byte, args []string) string {
 		s.app = nil
 		out += fmt.Sprintf("f%d %d %s %s %v %s\n", i, s.state, t13sDash(hex.EncodeToString(s.take())), t13sDash(hex.EncodeToString(app)), s.closed, s.err)
 		if was != t13sDone && s.state == t13sDone {
-			out += fmt.Sprintf("params %s %d %s %x %s %v\n", t13SuiteName(s.suite), s.group, t13sDash(s.alpn), s.scheme, t13sDash(s.sni), s.hrr)
+			out += fmt.Sprintf("params %s %d %s %x %s %v %v\n", t13SuiteName(s.suite), s.group, t13sDash(s.alpn), s.scheme, t13sDash(s.sni), s.hrr, s.resumed)
 		}
 	}
 	s.close()
@@ -122,6 +132,10 @@ type t13sConf struct {
 	random, priv, salt []byte
 	rfc, hasEE         bool
 	ee, ticket         []byte
+	// session tickets (tlsticket.xo)
+	ticketKeys       []t13sTicketKey
+	now              int64
+	ticketIV, ageAdd []byte
 }
 
 type t13Server struct {
@@ -129,6 +143,7 @@ type t13Server struct {
 	state                      int
 	err                        string
 	closed, hrr, ccsSent, seen bool
+	resumed, tickets           bool
 	suite, group, scheme       int
 	alpn, sni                  string
 	rin, hs, app, out, tr      []byte
@@ -291,9 +306,13 @@ type t13sHello struct {
 	name                           string
 	alpn                           []string
 	early, quic                    bool
+	raw, pskModes                  []byte
+	ids, binders                   [][]byte
+	bindersLen                     int
 }
 
 func t13sParseHello(m []byte) (h t13sHello) {
+	h.raw = m
 	p := 4
 	if len(m) < p+35 {
 		return h
@@ -428,7 +447,10 @@ func (h *t13sHello) extension(t int, d []byte, last bool) bool {
 	case 44:
 		return n > 2 && t13U16At(d, 0) == n-2
 	case 45:
-		return n >= 1 && int(d[0]) == n-1
+		if n < 1 || int(d[0]) != n-1 {
+			return false
+		}
+		h.pskModes = d[1:n]
 	case 0xff01:
 		if n < 1 || int(d[0]) != n-1 {
 			return false
@@ -439,7 +461,30 @@ func (h *t13sHello) extension(t int, d []byte, last bool) bool {
 	case 57:
 		h.quic = true
 	case 41:
-		return last
+		if !last || n < 2 || n < 2+t13U16At(d, 0) || t13U16At(d, 0) == 0 {
+			return false
+		}
+		il := t13U16At(d, 0)
+		q := 2
+		for q < 2+il {
+			if 2+il < q+2 || 2+il < q+2+t13U16At(d, q)+4 || t13U16At(d, q) == 0 {
+				return false
+			}
+			h.ids = append(h.ids, d[q+2:q+2+t13U16At(d, q)])
+			q += 2 + t13U16At(d, q) + 4
+		}
+		if n < q+2 || q+2+t13U16At(d, q) != n || t13U16At(d, q) == 0 {
+			return false
+		}
+		h.bindersLen = n - q
+		for q += 2; q < n; {
+			k := int(d[q])
+			if k == 0 || n < q+1+k {
+				return false
+			}
+			h.binders = append(h.binders, d[q+1:q+1+k])
+			q += 1 + k
+		}
 	}
 	return true
 }
@@ -596,6 +641,40 @@ func (s *t13Server) respond(h t13sHello) {
 		return
 	}
 	s.sni = h.name
+	hf, l := t13HashOf(s.suite)
+	var psk []byte
+	chosen := -1
+	modeDHE := bytes.IndexByte(h.pskModes, 1) >= 0
+	if len(s.conf.ticketKeys) > 0 && modeDHE {
+		if len(h.ids) != len(h.binders) {
+			s.fail(47, "tls: invalid or missing PSK binders")
+			return
+		}
+		before := s.tr[:len(s.tr)-len(h.raw)]
+		partial := append(append([]byte(nil), before...), h.raw[:len(h.raw)-h.bindersLen]...)
+		for i, id := range h.ids {
+			if chosen >= 0 || i >= 5 {
+				break
+			}
+			st, ok := s.session(id, hf)
+			if !ok {
+				continue
+			}
+			early, _ := hkdf.Extract(hf, st.secret, nil)
+			binderKey := t13ExpandLabel(hf, early, "res binder", t13Sum(hf, nil), l)
+			if !hmac.Equal(h.binders[i], t13VerifyData(hf, l, binderKey, partial)) {
+				s.fail(51, "tls: invalid PSK binder")
+				return
+			}
+			psk, chosen = st.secret, i
+		}
+	}
+	s.resumed = chosen >= 0
+	s.tickets = len(s.conf.ticketKeys) > 0 && modeDHE
+	if s.resumed {
+		s.finishHello(h, share, shared, psk, chosen)
+		return
+	}
 	if len(h.algs) == 0 {
 		s.fail(109, "local error: tls: missing extension")
 		return
@@ -615,11 +694,18 @@ func (s *t13Server) respond(h t13sHello) {
 		s.fail(40, "tls: peer doesn't support any of the certificate's signature algorithms")
 		return
 	}
+	s.finishHello(h, share, shared, nil, -1)
+}
+
+func (s *t13Server) finishHello(h t13sHello, share, shared, psk []byte, chosen int) {
 	ks := t13Ext(nil, 51, append(t13U16(nil, s.group), t13Vec16(share)...))
 	sv := t13Ext(nil, 43, []byte{3, 4})
 	exts := append(sv, ks...)
 	if s.conf.rfc {
 		exts = append(ks, sv...)
+	}
+	if chosen >= 0 {
+		exts = t13Ext(exts, 41, t13U16(nil, chosen))
 	}
 	body := append(t13U16(nil, 0x0303), s.random...)
 	body = append(append(body, byte(len(h.sid))), h.sid...)
@@ -629,7 +715,10 @@ func (s *t13Server) respond(h t13sHello) {
 	s.out = append(s.out, s.wk.seal(22, sh, 0x0303)...)
 	s.dummyCCS()
 	hf, l := t13HashOf(s.suite)
-	early, _ := hkdf.Extract(hf, make([]byte, l), nil)
+	if psk == nil {
+		psk = make([]byte, l)
+	}
+	early, _ := hkdf.Extract(hf, psk, nil)
 	derived := t13ExpandLabel(hf, early, "derived", t13Sum(hf, nil), l)
 	hsSecret, _ := hkdf.Extract(hf, shared, derived)
 	th := t13Sum(hf, s.tr)
@@ -642,12 +731,38 @@ func (s *t13Server) respond(h t13sHello) {
 		if s.alpn != "" {
 			eeExts = t13Ext(eeExts, 16, t13Vec16(append([]byte{byte(len(s.alpn))}, s.alpn...)))
 		}
-		if s.sni != "" {
+		if s.sni != "" && chosen < 0 {
 			eeExts = t13Ext(eeExts, 0, nil)
 		}
 	}
 	ee := t13Message(8, t13Vec16(eeExts))
 	s.tr = append(s.tr, ee...)
+	flight := append([]byte(nil), ee...)
+	if chosen < 0 {
+		cc := s.certFlight(hf)
+		if s.state == t13sFailed {
+			return
+		}
+		flight = append(flight, cc...)
+	}
+	fin := t13Message(20, t13VerifyData(hf, l, sHS, s.tr))
+	s.tr = append(s.tr, fin...)
+	s.out = append(s.out, s.wk.seal(22, append(flight, fin...), 0x0303)...)
+	derived = t13ExpandLabel(hf, hsSecret, "derived", t13Sum(hf, nil), l)
+	master, _ := hkdf.Extract(hf, make([]byte, l), derived)
+	th = t13Sum(hf, s.tr)
+	s.cAP = t13ExpandLabel(hf, master, "c ap traffic", th, l)
+	s.wk = t13NewKeys(s.suite, t13ExpandLabel(hf, master, "s ap traffic", th, l))
+	s.clientFin = t13VerifyData(hf, l, s.cHS, s.tr)
+	if s.tickets {
+		cf := t13Message(20, s.clientFin)
+		res := t13ExpandLabel(hf, master, "res master", t13Sum(hf, append(append([]byte(nil), s.tr...), cf...)), l)
+		s.out = append(s.out, s.wk.seal(22, s.ticketMsg(t13ExpandLabel(hf, res, "resumption", nil, l)), 0x0303)...)
+	}
+	s.state = t13sWaitFin
+}
+
+func (s *t13Server) certFlight(hf func() hash.Hash) []byte {
 	var entries []byte
 	for _, c := range s.conf.certs {
 		entries = append(entries, byte(len(c)>>16), byte(len(c)>>8), byte(len(c)))
@@ -660,21 +775,49 @@ func (s *t13Server) respond(h t13sHello) {
 	sig := t13sSign(s.scheme, s.conf.key, content, s.conf.salt)
 	if len(sig) == 0 {
 		s.fail(80, "tls: failed to sign handshake: the private key does not match the certificate")
-		return
+		return nil
 	}
 	cv := t13Message(15, append(t13U16(nil, s.scheme), t13Vec16(sig)...))
 	s.tr = append(s.tr, cv...)
-	fin := t13Message(20, t13VerifyData(hf, l, sHS, s.tr))
-	s.tr = append(s.tr, fin...)
-	flight := append(append(append(append([]byte(nil), ee...), cm...), cv...), fin...)
-	s.out = append(s.out, s.wk.seal(22, flight, 0x0303)...)
-	derived = t13ExpandLabel(hf, hsSecret, "derived", t13Sum(hf, nil), l)
-	master, _ := hkdf.Extract(hf, make([]byte, l), derived)
-	th = t13Sum(hf, s.tr)
-	s.cAP = t13ExpandLabel(hf, master, "c ap traffic", th, l)
-	s.wk = t13NewKeys(s.suite, t13ExpandLabel(hf, master, "s ap traffic", th, l))
-	s.clientFin = t13VerifyData(hf, l, s.cHS, s.tr)
-	s.state = t13sWaitFin
+	return append(cm, cv...)
+}
+
+// session is tls13srv.xo's session: Go's checkForResumption checks.
+func (s *t13Server) session(id []byte, hf func() hash.Hash) (t13sState, bool) {
+	plain, ok := t13sTicketOpen(id, s.conf.ticketKeys)
+	if !ok {
+		return t13sState{}, false
+	}
+	st, ok := t13sParseState(plain)
+	if !ok || st.version != 0x0304 || s.conf.now-st.created > 604800 {
+		return t13sState{}, false
+	}
+	if st.suite < 0x1301 || st.suite > 0x1303 {
+		return t13sState{}, false
+	}
+	sh, _ := t13HashOf(st.suite)
+	if sh().Size() != hf().Size() {
+		return t13sState{}, false
+	}
+	return st, true
+}
+
+func (s *t13Server) ticketMsg(psk []byte) []byte {
+	r := s.conf.ageAdd
+	if len(r) != 4 {
+		r = make([]byte, 4)
+		rand.Read(r)
+	}
+	iv := s.conf.ticketIV
+	if len(iv) != 16 {
+		iv = make([]byte, 16)
+		rand.Read(iv)
+	}
+	label := t13sTicketSeal(s.conf.ticketKeys[0], t13sStateBytes(0x0304, s.suite, s.conf.now, psk, false, 0), iv)
+	body := []byte{0, 9, 0x3a, 0x80, r[3], r[2], r[1], r[0], 0}
+	body = append(body, t13Vec16(label)...)
+	body = append(body, 0, 0)
+	return t13Message(4, body)
 }
 
 func (s *t13Server) dummyCCS() {
@@ -968,4 +1111,130 @@ func (c *t13sConn) Close() error {
 		b.mu.Unlock()
 	}
 	return c.Conn.Close()
+}
+
+// The session tickets of tlsticket.xo, written out with Go's crypto: Go's
+// ticketKeyFromBytes, SessionState.Bytes and ParseSessionState for a
+// server's session, encryptTicket and decryptTicket.
+
+type t13sTicketKey struct {
+	aes, hmac []byte
+	created   int64
+}
+
+func t13sKeyFrom(seed []byte, created int64) t13sTicketKey {
+	h := sha512.Sum512(seed)
+	return t13sTicketKey{aes: h[:16], hmac: h[16:32], created: created}
+}
+
+type t13sState struct {
+	version, suite, curve int
+	created               int64
+	secret                []byte
+	ems                   bool
+}
+
+func t13sStateBytes(version, suite int, created int64, secret []byte, ems bool, curve int) []byte {
+	b := t13U16(nil, version)
+	b = append(b, 1)
+	b = t13U16(b, suite)
+	b = binary.BigEndian.AppendUint64(b, uint64(created))
+	b = append(append(b, byte(len(secret))), secret...)
+	b = append(b, 0, 0, 0)
+	if ems {
+		b = append(b, 1)
+	} else {
+		b = append(b, 0)
+	}
+	b = append(b, 0, 0, 0, 0, 0, 0, 0)
+	if version < 0x0304 {
+		b = t13U16(b, curve)
+	}
+	return b
+}
+
+func t13sParseState(b []byte) (st t13sState, ok bool) {
+	n := len(b)
+	if n < 14 {
+		return st, false
+	}
+	st.version, st.suite = t13U16At(b, 0), t13U16At(b, 3)
+	typ := b[2]
+	st.created = int64(binary.BigEndian.Uint64(b[5:13]))
+	p := 13
+	sl := int(b[p])
+	if sl == 0 || n < p+1+sl+3 {
+		return st, false
+	}
+	st.secret = b[p+1 : p+1+sl]
+	p += 1 + sl
+	xl := t13U24At(b, p)
+	if n < p+3+xl {
+		return st, false
+	}
+	for q := p + 3; q < p+3+xl; q += 3 + t13U24At(b, q) {
+		if p+3+xl < q+3 || p+3+xl < q+3+t13U24At(b, q) {
+			return st, false
+		}
+	}
+	p += 3 + xl
+	if n < p+2+3 {
+		return st, false
+	}
+	ems, early := b[p], b[p+1]
+	p += 2
+	if (typ != 1 && typ != 2) || ems > 1 || early > 1 {
+		return st, false
+	}
+	st.ems = ems == 1
+	if t13U24At(b, p) != 0 || n < p+6 || t13U24At(b, p+3) != 0 {
+		return st, false
+	}
+	p += 6
+	if early == 1 {
+		if n < p+1+int(b[p]) {
+			return st, false
+		}
+		p += 1 + int(b[p])
+	}
+	if st.version >= 0x0304 {
+		if typ == 2 && n < p+12 {
+			return st, false
+		}
+	} else {
+		if n < p+2 {
+			return st, false
+		}
+		st.curve = t13U16At(b, p)
+	}
+	return st, true
+}
+
+func t13sTicketSeal(k t13sTicketKey, state, iv []byte) []byte {
+	out := append([]byte(nil), iv...)
+	ct := make([]byte, len(state))
+	blk, _ := aes.NewCipher(k.aes)
+	cipher.NewCTR(blk, iv).XORKeyStream(ct, state)
+	out = append(out, ct...)
+	m := hmac.New(sha256.New, k.hmac)
+	m.Write(out)
+	return m.Sum(out)
+}
+
+func t13sTicketOpen(t []byte, keys []t13sTicketKey) ([]byte, bool) {
+	if len(t) < 16+32 {
+		return nil, false
+	}
+	body, mac := t[:len(t)-32], t[len(t)-32:]
+	for _, k := range keys {
+		m := hmac.New(sha256.New, k.hmac)
+		m.Write(body)
+		if hmac.Equal(m.Sum(nil), mac) {
+			blk, _ := aes.NewCipher(k.aes)
+			pt := make([]byte, len(body)-16)
+			cipher.NewCTR(blk, t[:16]).XORKeyStream(pt, t[16:len(t)-32])
+			return pt, true
+		}
+	}
+	return nil, false
 }

@@ -13,6 +13,7 @@
 use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/ed25519
+use native/llrt/hkdf
 use native/llrt/nistec
 use native/llrt/rand
 use native/llrt/rsa
@@ -20,6 +21,7 @@ use native/llrt/sha256
 use native/llrt/tls13
 use native/llrt/tlsname
 use native/llrt/tlsrec
+use native/llrt/tlsticket
 use native/llrt/x509
 use native/llrt/x509verify
 use native/rt
@@ -99,6 +101,14 @@ pub struct Conf {
   pub key: Bytes
   pub alts: List[Alt]
   pub handoff: Bool
+  /// session tickets (Go's, decision 0202): the ticket keys (keys[0]
+  /// seals; none: no tickets, no resumption), the time in Unix seconds;
+  /// the tests' hooks ticket_iv (the 16 byte IV of a ticket) and age_add
+  /// (the 4 random bytes of its ticket_age_add)
+  pub ticket_keys: List[tlsticket.Key]
+  pub now: Int
+  pub ticket_iv: Bytes
+  pub age_add: Bytes
   pub alpn: List[Str]
   pub suites: List[Int]
   pub groups: List[Int]
@@ -120,7 +130,7 @@ pub struct Alt {
 /// key: every TLS 1.3 suite, X25519 then P-256 and P-384 (Go's order less
 /// its post-quantum hybrid and P-521), no ALPN.
 pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
-  Conf{certs: certs, key: key, alts: [], handoff: false, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", rfc: false, ee: None, ticket: b""}
+  Conf{certs: certs, key: key, alts: [], handoff: false, ticket_keys: [], now: 0, ticket_iv: b"", age_add: b"", alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], groups: [tls13.GROUP_X25519, tls13.GROUP_P256, tls13.GROUP_P384], random: b"", priv: b"", salt: b"", rfc: false, ee: None, ticket: b""}
 }
 
 /// A server connection: the state, the error (Go's text) once FAILED,
@@ -139,6 +149,8 @@ pub struct Server {
   pub scheme: Int
   pub sni: Str
   pub hrr: Bool
+  /// whether the handshake resumed a session (a ticket's PSK)
+  pub resumed: Bool
   /// HANDOFF's ClientHello message and the record bytes after it
   pub hello: Bytes
   pub rest: Bytes
@@ -154,13 +166,14 @@ pub struct Server {
   c_hs: Bytes
   client_fin: Bytes
   c_ap: Bytes
+  tickets: Bool
   rk: tlsrec.Keys
   wk: tlsrec.Keys
 }
 
 /// A new server for conf, waiting for a ClientHello.
 pub fn server(cf: Conf) -> Server {
-  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, hello: b"", rest: b"", seen: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", rk: tlsrec.plain(), wk: tlsrec.plain()}
+  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, resumed: false, hello: b"", rest: b"", seen: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", tickets: false, rk: tlsrec.plain(), wk: tlsrec.plain()}
 }
 
 /// The bytes to send to the client, taken.
@@ -365,15 +378,21 @@ struct Hello {
   reneg: Bytes
   quic: Bool
   kept: Bytes
+  raw: Bytes
+  psk_modes: Bytes
+  ids: List[Bytes]
+  binders: List[Bytes]
+  binders_len: Int
 }
 
 fn no_hello() -> Hello {
-  Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comp: b"", name: "", groups: [], algs: [], alpn: [], versions: [], shares: [], share_keys: [], early: false, reneg: b"", quic: false, kept: b""}
+  Hello{ok: false, vers: 0, random: b"", sid: b"", suites: [], comp: b"", name: "", groups: [], algs: [], alpn: [], versions: [], shares: [], share_keys: [], early: false, reneg: b"", quic: false, kept: b"", raw: b"", psk_modes: b"", ids: [], binders: [], binders_len: 0}
 }
 
 /// Go's clientHelloMsg.unmarshal: ok false when it does not decode.
 fn parse_hello(m: Bytes) -> Hello {
   var h = no_hello()
+  h.raw = m
   var p = 4
   if m.len() < p + 35 {
     return h
@@ -527,7 +546,11 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     return n > 2 && tls13.u16_at(d, 0) == n - 2
   }
   if t == EXT_PSK_MODES {
-    return n >= 1 && Int(d[0]) == n - 1
+    if n < 1 || Int(d[0]) != n - 1 {
+      return false
+    }
+    h.psk_modes = d[1..n]
+    return true
   }
   if t == EXT_RENEGOTIATION_INFO {
     if n < 1 || Int(d[0]) != n - 1 {
@@ -545,9 +568,34 @@ fn extension(var h: Hello, t: Int, d: Bytes, last: Bool) -> Bool {
     return true
   }
   if t == EXT_PRE_SHARED_KEY {
-    // no resumption: the identities are not read, but the extension must
-    // be the last
-    return last
+    // RFC 8446 4.2.11, the last extension: identities (a ticket and its
+    // obfuscated age), then binders
+    if !last || n < 2 || n < 2 + tls13.u16_at(d, 0) || tls13.u16_at(d, 0) == 0 {
+      return false
+    }
+    let il = tls13.u16_at(d, 0)
+    var q = 2
+    while q < 2 + il {
+      if 2 + il < q + 2 || 2 + il < q + 2 + tls13.u16_at(d, q) + 4 || tls13.u16_at(d, q) == 0 {
+        return false
+      }
+      h.ids.push(d[q + 2..q + 2 + tls13.u16_at(d, q)])
+      q += 2 + tls13.u16_at(d, q) + 4
+    }
+    if n < q + 2 || q + 2 + tls13.u16_at(d, q) != n || tls13.u16_at(d, q) == 0 {
+      return false
+    }
+    h.binders_len = n - q
+    q += 2
+    while q < n {
+      let k = Int(d[q])
+      if k == 0 || n < q + 1 + k {
+        return false
+      }
+      h.binders.push(d[q + 1..q + 1 + k])
+      q += 1 + k
+    }
+    return true
   }
   true
 }
@@ -709,6 +757,37 @@ fn respond(var s: Server, h: Hello) {
     return
   }
   s.sni = h.name
+  let hash = tlsrec.suite_hash(s.suite)
+  // checkForResumption
+  var psk = b""
+  var chosen = -1
+  if !s.conf.ticket_keys.is_empty() && has_byte(h.psk_modes, 1) {
+    if h.ids.len() != h.binders.len() {
+      fail(s, ALERT_ILLEGAL_PARAMETER, "tls: invalid or missing PSK binders")
+      return
+    }
+    let before = s.tr[0..s.tr.len() - h.raw.len()]
+    let partial = tls13.cat2(before, h.raw[0..h.raw.len() - h.binders_len])
+    for (i, id) in h.ids.indexed() {
+      if chosen < 0 && i < 5 {
+        if let Some(st) = session(s, id, hash) {
+          let binder_key = hkdf.expand_label(hash, early_secret(hash, st.secret), "res binder", sha256.sum(hash, b""), sha256.size(hash))
+          if !ct.bytes_equal(h.binders[i], tls13.verify_data(hash, binder_key, partial)) {
+            fail(s, ALERT_DECRYPT_ERROR, "tls: invalid PSK binder")
+            return
+          }
+          psk = st.secret
+          chosen = i
+        }
+      }
+    }
+  }
+  s.resumed = chosen >= 0
+  s.tickets = !s.conf.ticket_keys.is_empty() && has_byte(h.psk_modes, 1)
+  if s.resumed {
+    finish_hello(s, h, share, shared, psk, chosen, hash)
+    return
+  }
   // pickCertificate
   if h.algs.is_empty() {
     fail(s, ALERT_MISSING_EXTENSION, "local error: tls: missing extension")
@@ -739,22 +818,37 @@ fn respond(var s: Server, h: Hello) {
     fail(s, ALERT_HANDSHAKE_FAILURE, "tls: peer doesn't support any of the certificate's signature algorithms")
     return
   }
-  // ServerHello (Go's order: supported_versions, key_share)
+  finish_hello(s, h, share, shared, b"", -1, hash)
+}
+
+/// The server's flight after the ClientHello h: ServerHello (with the
+/// PSK chosen, chosen >= 0), the dummy ChangeCipherSpec, then under the
+/// handshake keys EncryptedExtensions, Certificate and CertificateVerify
+/// (not when resuming), Finished; then the session ticket.
+fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes, chosen: Int, hash: Int) {
+  // ServerHello (Go's order: supported_versions, key_share,
+  // pre_shared_key)
   let ks = tls13.ext(EXT_KEY_SHARE, asn1.cat([tls13.u16(s.group), tls13.vec16(share)]))
   let sv = tls13.ext(EXT_SUPPORTED_VERSIONS, tls13.u16(0x0304))
-  let exts = if s.conf.rfc { tls13.cat2(ks, sv) } else { tls13.cat2(sv, ks) }
+  var exts = if s.conf.rfc { tls13.cat2(ks, sv) } else { tls13.cat2(sv, ks) }
+  if chosen >= 0 {
+    exts = tls13.cat2(exts, tls13.ext(EXT_PRE_SHARED_KEY, tls13.u16(chosen)))
+  }
   let sh = tls13.message(HS_SERVER_HELLO, asn1.cat([tls13.u16(0x0303), s.random, tls13.vec8(h.sid), tls13.u16(s.suite), b"\x00", tls13.vec16(exts)]))
   s.tr = tls13.cat2(s.tr, sh)
   s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, sh, 0x0303))
   dummy_ccs(s)
-  let hash = tlsrec.suite_hash(s.suite)
-  let sec = tls13.handshake_secrets(hash, shared, s.tr)
-  let hs_secret = sec[0]
-  s.c_hs = sec[1]
-  let s_hs = sec[2]
+  // RFC 8446 7.1 from the PSK's early secret (zeros without one)
+  let l = sha256.size(hash)
+  let derived = hkdf.expand_label(hash, early_secret(hash, if psk.is_empty() { tls13.zeros(l) } else { psk }), "derived", sha256.sum(hash, b""), l)
+  let hs_secret = hkdf.extract(hash, derived, shared)
+  let th = sha256.sum(hash, s.tr)
+  s.c_hs = hkdf.expand_label(hash, hs_secret, "c hs traffic", th, l)
+  let s_hs = hkdf.expand_label(hash, hs_secret, "s hs traffic", th, l)
   s.wk = tlsrec.keys(s.suite, s_hs)
   s.rk = tlsrec.keys(s.suite, s.c_hs)
-  // EncryptedExtensions (Go's order: ALPN, then the server_name ack)
+  // EncryptedExtensions (Go's order: ALPN, then the server_name ack,
+  // which a resumed session does not send)
   let ee_exts = match s.conf.ee {
     Some(e) => e
     None => {
@@ -762,7 +856,7 @@ fn respond(var s: Server, h: Hello) {
       if s.alpn != "" {
         es.push(tls13.ext(EXT_ALPN, tls13.vec16(tls13.vec8(s.alpn.bytes()))))
       }
-      if s.sni != "" {
+      if s.sni != "" && chosen < 0 {
         es.push(tls13.ext(EXT_SERVER_NAME, b""))
       }
       asn1.cat(es)
@@ -770,6 +864,40 @@ fn respond(var s: Server, h: Hello) {
   }
   let ee = tls13.message(HS_ENCRYPTED_EXTENSIONS, tls13.vec16(ee_exts))
   s.tr = tls13.cat2(s.tr, ee)
+  var flight = ee
+  if chosen < 0 {
+    let cc = cert_flight(s, hash)
+    if s.state == FAILED {
+      return
+    }
+    flight = tls13.cat2(flight, cc)
+  }
+  // Finished, then the application keys for writing
+  let fin = tls13.message(HS_FINISHED, tls13.verify_data(hash, s_hs, s.tr))
+  s.tr = tls13.cat2(s.tr, fin)
+  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, tls13.cat2(flight, fin), 0x0303))
+  let derived2 = hkdf.expand_label(hash, hs_secret, "derived", sha256.sum(hash, b""), l)
+  let master = hkdf.extract(hash, derived2, tls13.zeros(l))
+  let th2 = sha256.sum(hash, s.tr)
+  s.c_ap = hkdf.expand_label(hash, master, "c ap traffic", th2, l)
+  s.wk = tlsrec.keys(s.suite, hkdf.expand_label(hash, master, "s ap traffic", th2, l))
+  s.client_fin = tls13.verify_data(hash, s.c_hs, s.tr)
+  // Go's sendSessionTickets: the resumption secret over the transcript
+  // with the client's Finished it expects, then one ticket
+  if s.tickets {
+    let cf = tls13.message(HS_FINISHED, s.client_fin)
+    let res = hkdf.expand_label(hash, master, "res master", sha256.sum(hash, tls13.cat2(s.tr, cf)), l)
+    let psk2 = hkdf.expand_label(hash, res, "resumption", b"", l)
+    s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, ticket_msg(s, psk2), 0x0303))
+  }
+  s.state = WAIT_FIN
+}
+
+/// Certificate and CertificateVerify, added to the transcript (FAILED
+/// when the key cannot sign).
+fn cert_flight(var s: Server, hash: Int) -> Bytes {
+  let leaf = x509.parse(s.conf.certs[0])
+  let key_alg = leaf.cert.key_alg
   // Certificate: an empty context, each certificate with no extensions
   var entries: List[Bytes] = []
   for c in s.conf.certs {
@@ -783,19 +911,51 @@ fn respond(var s: Server, h: Hello) {
   let sig = sign(s.scheme, key_alg, s.conf.key, content, s.conf.salt)
   if sig.is_empty() {
     fail(s, ALERT_INTERNAL_ERROR, "tls: failed to sign handshake: the private key does not match the certificate")
-    return
+    return b""
   }
   let cv = tls13.message(HS_CERTIFICATE_VERIFY, asn1.cat([tls13.u16(s.scheme), tls13.vec16(sig)]))
   s.tr = tls13.cat2(s.tr, cv)
-  // Finished, then the application keys for writing
-  let fin = tls13.message(HS_FINISHED, tls13.verify_data(hash, s_hs, s.tr))
-  s.tr = tls13.cat2(s.tr, fin)
-  s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, asn1.cat([ee, cm, cv, fin]), 0x0303))
-  let ap = tls13.app_secrets(hash, hs_secret, s.tr)
-  s.c_ap = ap[0]
-  s.wk = tlsrec.keys(s.suite, ap[1])
-  s.client_fin = tls13.verify_data(hash, s.c_hs, s.tr)
-  s.state = WAIT_FIN
+  tls13.cat2(cm, cv)
+}
+
+/// RFC 8446 7.1's early secret of a PSK.
+fn early_secret(hash: Int, psk: Bytes) -> Bytes { hkdf.extract(hash, b"", psk) }
+
+/// The session of a ticket a client offered, when Go's server would
+/// resume it: it opens under a ticket key and parses, it is TLS 1.3's, no
+/// older than the ticket lifetime, and its suite has the hash of this
+/// handshake's.
+fn session(s: Server, id: Bytes, hash: Int) -> tlsticket.State? {
+  let plain = tlsticket.open(id, s.conf.ticket_keys)?
+  let st = tlsticket.parse(plain)?
+  if st.version != 0x0304 || s.conf.now - st.created > tlsticket.LIFETIME {
+    return None
+  }
+  if !tlsrec.suite_ok(st.suite) || tlsrec.suite_hash(st.suite) != hash {
+    return None
+  }
+  Some(st)
+}
+
+/// Go's NewSessionTicket for TLS 1.3: the lifetime, ticket_age_add (4
+/// random bytes read little endian), no nonce, the sealed state of the
+/// session (its PSK), no extensions.
+fn ticket_msg(s: Server, psk: Bytes) -> Bytes {
+  let r = if s.conf.age_add.len() == 4 { s.conf.age_add } else { rand.next_bytes(4) }
+  let iv = if s.conf.ticket_iv.len() == 16 { s.conf.ticket_iv } else { rand.next_bytes(16) }
+  let st = tlsticket.state(0x0304, s.suite, s.conf.now, psk, false, 0)
+  let label = tlsticket.seal(s.conf.ticket_keys[0], st, iv)
+  let body = asn1.cat([tls13.u16(tlsticket.LIFETIME >> 16), tls13.u16(tlsticket.LIFETIME & 65535), r[3..4], r[2..3], r[1..2], r[0..1], b"\x00", tls13.vec16(label), b"\x00\x00"])
+  tls13.message(HS_NEW_SESSION_TICKET, body)
+}
+
+fn has_byte(b: Bytes, x: Int) -> Bool {
+  for v in b {
+    if Int(v) == x {
+      return true
+    }
+  }
+  false
 }
 
 /// Go's getCertificate among Conf.certs and Conf.alts: the first chain
@@ -1048,7 +1208,9 @@ fn quote(x: Str) -> Str {
 /// part per certificate), then the key, the EncryptedExtensions'
 /// extensions ("-" for the server's own), a NewSessionTicket message, and
 /// the data the server sends once the handshake is done; c the hooks:
-/// random, ECDHE private key, PSS salt. Every list is parts, each a 3
+/// random, ECDHE private key, PSS salt, and optionally the session
+/// tickets' (a ticket key's 32 byte seed, the time in Unix seconds as
+/// text, a ticket's IV, its 4 ticket_age_add bytes). Every list is parts, each a 3
 /// byte big endian length then the bytes. d is "suites groups alpn rfc
 /// chunk certs": hex suites and decimal groups, comma separated ("-" for
 /// the defaults), the ALPN protocols ("-" for none), rfc 1 for the RFC
@@ -1076,7 +1238,7 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
 
 fn replay(flights: List[Bytes], sv: List[Bytes], hooks: List[Bytes], args: List[Str]) -> Str {
   let ncerts = Int.parse(args[5]) ?? 1
-  if sv.len() != ncerts + 4 || hooks.len() != 3 {
+  if sv.len() != ncerts + 4 || !(hooks.len() is 3 | 7) {
     return "args\n"
   }
   var cf = conf(sv[0..ncerts], sv[ncerts])
@@ -1097,6 +1259,12 @@ fn replay(flights: List[Bytes], sv: List[Bytes], hooks: List[Bytes], args: List[
   cf.random = hooks[0]
   cf.priv = hooks[1]
   cf.salt = hooks[2]
+  if hooks.len() == 7 && !hooks[3].is_empty() {
+    cf.now = Int.parse(hooks[4].to_str() ?? "") ?? 0
+    cf.ticket_keys = [tlsticket.key(hooks[3], cf.now)]
+    cf.ticket_iv = hooks[5]
+    cf.age_add = hooks[6]
+  }
   let chunk = Int.parse(args[4]) ?? 0
   var s = server(cf)
   var out = ""
@@ -1108,7 +1276,7 @@ fn replay(flights: List[Bytes], sv: List[Bytes], hooks: List[Bytes], args: List[
     }
     out = "${out}f${i} ${s.state} ${dash(take(s).to_hex())} ${dash(recv(s).to_hex())} ${s.closed} ${s.err}\n"
     if was != DONE && s.state == DONE {
-      out = "${out}params ${tlsrec.suite_name(s.suite)} ${s.group} ${dash(s.alpn)} ${hex(s.scheme)} ${dash(s.sni)} ${s.hrr}\n"
+      out = "${out}params ${tlsrec.suite_name(s.suite)} ${s.group} ${dash(s.alpn)} ${hex(s.scheme)} ${dash(s.sni)} ${s.hrr} ${s.resumed}\n"
     }
   }
   close(s)

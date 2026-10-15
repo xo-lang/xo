@@ -141,6 +141,19 @@ std (decision 0074) unless the owner decides to expose a user marker.
   time), no client certificates (Go's default asks for none), no TLS 1.2
   CBC suites (the scope of tls12srv.xo), and the client's roots are still
   Mbed's (no Ed25519 roots).
+- 2026-10-15 (B31 session resumption, tlsticket.xo): the servers issue
+  and accept session tickets as Go's: tlsticket.xo holds Go's
+  SessionState encoding for a server's session, its ticket sealing
+  (AES-128-CTR then HMAC-SHA256, the MAC compared in constant time) and
+  automatic keys (a new key every 24 hours, keys kept 7 days, rotated by
+  tlssrv.xo under the server's lock). tls13srv.xo sends one
+  NewSessionTicket after its Finished when the client offers psk_dhe_ke,
+  and resumes with Go's checkForResumption checks (at most 5
+  identities, TLS 1.3 state, 7 day lifetime, same hash, the binder
+  compared in constant time; no 0-RTT). TLS 1.2 tickets (RFC 5077) are
+  xo-fa's, in tls12srv.xo, on the same file. The client does not resume
+  (Go's client resumes only with a ClientSessionCache, which Xo does not
+  expose).
 
 - 2026-10-15 (performance, xo-fa): P-256's base point multiplications
   read a fixed base table that is a generated constant

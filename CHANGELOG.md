@@ -28,6 +28,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   scripts/nistecg256): an X25519 handshake with a P-256 chain 47.3M to
   15.9M instructions on LLVM (Mbed 5.3M), the P-256 group 62.2M to 20.2M
   (Mbed 12.9M) (bench/results/tls-perf-2026-10-15.md).
+- Native runtime (zero-C audit item B31, session resumption, decision
+  0202): the Xo TLS server issues session tickets and resumes TLS 1.3
+  sessions as Go's crypto/tls does. std/native/llrt/tlsticket.xo holds
+  Go's ticket encoding, AES-CTR plus HMAC-SHA256 sealing, and automatic
+  key rotation. tls13srv.xo sends a NewSessionTicket after its Finished
+  and accepts psk_dhe_ke with a constant time binder check (no 0-RTT).
+  Golden tls13_server replays a recorded Go 1.26 client that resumes,
+  plus a bad binder, an expired ticket, and a ticket of another key.
+  TestTLSDiff's TLS 1.3 resumption probe now equals Go. TLS 1.2 tickets
+  come with tls12srv.xo; Xo's client does not resume.
 - Native TLS performance, step 1: ChaCha20 on 16 local words with 32
   bit rotates, Poly1305 absorbing the AEAD's pieces in place (no copy of
   the ciphertext): ChaCha20-Poly1305 bulk reads 107M to 41M instructions

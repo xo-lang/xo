@@ -15,6 +15,7 @@
 use native/llrt/ed25519
 use native/llrt/nistec
 use native/llrt/poll
+use native/llrt/rand
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/rsa
@@ -23,6 +24,7 @@ use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/tls12srv
 use native/llrt/tls13srv
+use native/llrt/tlsticket
 use native/llrt/tlsname
 use native/llrt/twflags
 use native/llrt/twrun
@@ -242,11 +244,21 @@ fn ec_key(der: Bytes, curve0: Str) -> (Int, Bytes, Str) {
 // ---------------------------------------------------------------------------
 // The server's certificates
 
+/// A server's TLS: its certificates and its session ticket keys (Go's
+/// automatic keys, rotated when a connection starts).
+struct SrvTls {
+  certs: List[Cert]
+  keys: List[tlsticket.Key]
+}
+
 /// The server configuration's record: a block whose word holds the
-/// record of an Any with the List[Cert] (hconn.SR_TLS holds the block).
-fn certs_of(h: Int) -> List[Cert] {
+/// record of an Any with the SrvTls (hconn.SR_TLS holds the block).
+fn srv_of(h: Int) -> SrvTls {
+  if rt.mem_load(h, 0, 8) == 0 {
+    return SrvTls{certs: [], keys: []}
+  }
   let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
-  rt.any_get[List[Cert]](a) ?? []
+  rt.any_get[SrvTls](a) ?? SrvTls{certs: [], keys: []}
 }
 
 /// Adds c to the server of record a (its SR_TLS word at sr_tls); the
@@ -258,9 +270,9 @@ pub fn srv_add(s: rthttp.Srv, a: Int, sr_tls: Int, c: Cert) {
     rt.mem_store(h, 0, 0, 8)
     rt.mem_store(a, sr_tls, h, 8)
   }
-  var cs = if rt.mem_load(h, 0, 8) == 0 { [] } else { certs_of(h) }
-  cs.push(c)
-  put(h, rt.any_of(cs))
+  var st = srv_of(h)
+  st.certs.push(c)
+  put(h, rt.any_of(st))
 }
 
 /// Frees a server configuration (0: none).
@@ -311,13 +323,23 @@ fn keep(a: rt.Any) -> Int {
   s
 }
 
-/// A connection of server configuration h on poll descriptor pd.
+/// A connection of server configuration h on poll descriptor pd (the
+/// caller holds the server's lock: the ticket keys rotate here).
 pub fn conn(h: Int, pd: Int) -> Int {
-  let cs = certs_of(h)
+  var st = srv_of(h)
+  let cs = st.certs
   if cs.is_empty() {
     return 0
   }
+  let now = sysio.real_ns() / 1000000000
+  let keys = tlsticket.rotate(st.keys, now, rand.next_bytes(32))
+  if keys.len() != st.keys.len() || keys[0].created != st.keys[0].created {
+    st.keys = keys
+    put(h, rt.any_of(st))
+  }
   var cf = tls13srv.conf(cs[0].certs, cs[0].key)
+  cf.ticket_keys = keys
+  cf.now = now
   cf.alpn = ["h2", "http/1.1"]
   for c in cs[1..cs.len()] {
     cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
