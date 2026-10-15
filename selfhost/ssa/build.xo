@@ -403,17 +403,24 @@ fn (var b: Builder) declare_exports() {
     if p == "native/llrt/cabi_nolibc" {
       // the C that calls them is compiled only into XO_NOLIBC builds
       if b.nolibc {
-        b.declare_exports_of(mi)
+        b.declare_exports_of(mi, false)
+      }
+    } else if p == "native/llrt/cabi_libc" {
+      // the C library of an XO_NOLIBC build, under the C names (malloc,
+      // memcpy, read): the C runtime and mbedtls call them; a libc build
+      // links the system's
+      if b.nolibc {
+        b.declare_exports_of(mi, true)
       }
     } else if p == "native/llrt/cabi_tw" {
       // the test world's (std/native/llrt/testworld.xo, the zero-C
       // audit's B14): the C calls them only in a test binary, and other
       // programs link its weak definitions
       if b.tests {
-        b.declare_exports_of(mi)
+        b.declare_exports_of(mi, false)
       }
     } else if p == "native/llrt/cabi" || b.importer_built(mi) {
-      b.declare_exports_of(mi)
+      b.declare_exports_of(mi, false)
     }
   }
 }
@@ -443,7 +450,10 @@ fn (var b: Builder) importer_built(mi: Int) -> Bool {
   false
 }
 
-fn (var b: Builder) declare_exports_of(mi: Int) {
+/// declare_exports_of declares module mi's functions as C ABI exports:
+/// xo_x_<name>, or the bare name (bare: the C library of an XO_NOLIBC
+/// build, cabi_libc.xo).
+fn (var b: Builder) declare_exports_of(mi: Int, bare: Bool) {
   var names: List[Str] = []
   for (n, o) in b.c.mods[mi].members {
     if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
@@ -458,7 +468,7 @@ fn (var b: Builder) declare_exports_of(mi: Int) {
     }
     let fi = b.declare(o, [])
     b.m.funcs[fi].entry = true
-    b.m.funcs[fi].export = "xo_x_${n}"
+    b.m.funcs[fi].export = if bare { n } else { "xo_x_${n}" }
     for p in b.m.funcs[fi].blocks[0].params {
       let t = b.m.funcs[fi].values[p].ty
       if !(b.tkind(t) is Kind.Int | Kind.Float) {
