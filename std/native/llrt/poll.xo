@@ -16,6 +16,7 @@ use native/llrt/linux
 use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
+use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sock
 use native/llrt/stop
@@ -155,9 +156,7 @@ const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
 
-fn stat(k: Int) {
-  let _r = rt.sched_rt(0, k, 0)
-}
+fn stat(k: Int) { rtstats.count(k) }
 
 /// Takes and releases the lock word at l (xo_rt.c lk and unlk).
 fn lk(l: Int) {

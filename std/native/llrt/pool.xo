@@ -17,6 +17,7 @@
 // malloc), and no fault, so it runs on a worker's own stack with no
 // current context and never unwinds into its C callers.
 use native/llrt/linux
+use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/sysio
@@ -121,15 +122,7 @@ const TLS_W = 2
 const TLS_SCRATCH_AT = 32
 
 /// The services of the C runtime (rt.sched_rt, xo_rt.c xo_sched_rt).
-const RT_STAT = 0
 const RT_TW_KICK = 2
-const RT_FIBER_MAPPED = 4
-const RT_FIBER_UNMAPPED = 5
-const RT_MAP_FAILED = 6
-const RT_WORKER_START = 7
-const RT_OOM = 9
-const RT_RUN_CLAIMED = 16
-const RT_DEADLOCK = 31
 
 /// The statistics' counters (xo_rt.c st, in its order).
 const ST_STEAL = 1
@@ -166,7 +159,7 @@ fn layer() -> Int {
 }
 
 fn stat(k: Int) {
-  let _r = rt.sched_rt(RT_STAT, k, 0)
+  rtstats.count(k)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,12 +245,17 @@ pub fn unlock(l: Int) {
 // ---------------------------------------------------------------------------
 // Worker threads
 
+/// Sets worker record w's hooks word while the statistics count
+/// (xo_rt.c sched_hooks; the sanitizers' part is sanhook.xo
+/// worker_start).
+pub fn stat_hooks(w: Int) { rt.mem_store(w, W_HOOKS, if rtstats.on() { 1 } else { 0 }, 8) }
+
 /// Adds worker record w to the records thieves look at (the pool's lock
 /// held).
 pub fn register_worker(p: Int, w: Int) {
   let n = rt.mem_load(p, P_NW * 8, 8)
   if n >= MAXW {
-    let _r = rt.sched_rt(RT_OOM, 0, 0)
+    let _r = rt.call_c2(rt.fn_addr("oom"), 0, 0)
   }
   rt.mem_store(w, W_RNG, rt.int_wrap(2, w, -7046029254386353131) | 1, 8)
   rt.mem_store(w, W_POOL, p, 8)
@@ -741,9 +739,9 @@ pub fn worker_main(w: Int) -> Int {
     rt.mem_store(g, 0, 65536, 4)
     let _g = sys_windows.SetThreadStackGuarantee(g)
   }
-  // the hooks word for the statistics (the C), then the sanitizers'
-  // record of the thread (decision 0232)
-  let _s = rt.sched_rt(RT_WORKER_START, w, 0)
+  // the hooks word for the statistics, then the sanitizers' record of
+  // the thread (decision 0232)
+  stat_hooks(w)
   sanhook.worker_start(w)
   // wakep started it as a spinning worker
   var spinning = 1
@@ -923,16 +921,16 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
     let size = rt.int_wrap(0, rt.mem_load(fs, FS_STACK, 8), page)
     let m = map_stack(size, page, rt.mem_load(w, W_HOOKS, 8))
     if m == 0 {
-      // out of address space more often than of memory: the C says how
-      // much the stacks took, and exits
-      let _r = rt.sched_rt(RT_MAP_FAILED, rt.tlocal_get(4), 0)
+      // out of address space more often than of memory: cabi.xo says
+      // how much the stacks took, and exits
+      let _r = rt.call_c2(rt.fn_addr("fiber_map_failed"), rt.tlocal_get(4), 0)
     }
     f = rt.heap_large(F_RECORD)
     rt.mem_set(f, 0, F_RECORD)
     rt.mem_store(f, F_MEM, m, 8)
     rt.mem_store(f, F_SIZE, size, 8)
     // counted, and its ThreadSanitizer fiber
-    let _c = rt.sched_rt(RT_FIBER_MAPPED, f, 0)
+    rtstats.fiber_counted(1)
     if rt.mem_load(w, W_HOOKS, 8) != 0 {
       sanhook.fiber_new(f)
     }
@@ -972,7 +970,7 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
   if rt.mem_load(f, F_HOOKS, 8) != 0 {
     sanhook.fiber_free(f)
   }
-  let _u = rt.sched_rt(RT_FIBER_UNMAPPED, f, 0)
+  rtstats.fiber_counted(-1)
   unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
   rt.heap_release(rt.int_wrap(1, f, 8))
 }
@@ -1030,7 +1028,7 @@ pub fn dl_check(p: Int) {
     return
   }
   // flushes standard output, says so and exits with 70 (cabi.xo deadlock)
-  let _d = rt.sched_rt(RT_DEADLOCK, 0, 0)
+  let _d = rt.call_c2(rt.fn_addr("deadlock"), 0, 0)
 }
 
 /// xo_node (byte offsets; canceled is word 4): parent, child, prev,
@@ -1390,8 +1388,10 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
     unlock(m)
     while t != 0 {
       if rt.slot_load(t, T_STATE, ACQUIRE) == 0 && sched.task_claim(t) != 0 {
-        // claimed: it runs here, its queue entry still queued
-        let _r = rt.sched_rt(RT_RUN_CLAIMED, t, 2)
+        // claimed: it runs here, its queue entry still queued (its
+        // spawn released it)
+        sanhook.acquire(t)
+        let _r = rt.call_c2(rt.fn_addr("run_claimed"), t, 2)
         found = true
       }
       t = rt.mem_load(t, T_SNEXT, 8)

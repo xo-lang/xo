@@ -20,6 +20,7 @@ use native/llrt/pool
 use native/llrt/poolsetup
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/stdio
@@ -112,7 +113,6 @@ const RT_EMPTY_LIST = 18
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22
 const RT_TSAN_ACQUIRE = 23
-const RT_STAT = 0
 const ACQ_REL = 3
 
 const ACQUIRE = 1
@@ -446,11 +446,7 @@ fn tsan(op: Int, a: Int) {
 }
 
 /// Counts the statistic k when the statistics count (XO_RTSTATS).
-fn stat(k: Int) {
-  if rt.mem_load(ld(ctx.svc(), ctx.SV_STATS), 0, 4) > 0 {
-    let _r = rt.sched_rt(RT_STAT, k, 0)
-  }
-}
+fn stat(k: Int) { rtstats.count(k) }
 
 /// Starts a task in scope s (xo_task_spawn, `s.spawn(f)`; flags bit 0:
 /// background, bit 1: its handle is bound and awaited, so its error does

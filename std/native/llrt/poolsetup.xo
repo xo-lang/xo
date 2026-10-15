@@ -11,6 +11,7 @@ use native/llrt/obj
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
+use native/llrt/rtstats
 use native/llrt/sanhook
 use native/rt
 use native/sys_darwin
@@ -36,7 +37,6 @@ const W_ROOT = 2204
 const TLS_W = 2
 
 /// The C's services (pool.xo RT_*).
-const RT_WORKER_START = 7
 const RT_THREADS_BEGIN = 20
 
 const ACQUIRE = 1
@@ -67,7 +67,7 @@ fn setup(p: Int) {
   if !st.is_empty() && !st[0].is_empty() && bt(st[0], 0) != 48 {
     on = 1
   }
-  rt.mem_store(rt.mem_load(ctx.svc(), ctx.SV_STATS, 8), 0, on, 4)
+  rtstats.set(on)
   var n = cpu_count()
   let th = env_int("XO_THREADS")
   if th > 0 {
@@ -252,9 +252,8 @@ pub fn root_worker(p: Int) -> Int {
   rt.mem_set(w, 0, W_SIZE)
   rt.mem_store(w, W_LIVE, 1, 4)
   rt.mem_store(w, W_ROOT, 1, 4)
-  // the statistics' hooks (xo_rt.c sched_hooks), then the sanitizers'
-  // (decision 0232)
-  let _s = rt.sched_rt(RT_WORKER_START, w, 0)
+  // the statistics' hooks, then the sanitizers' (decision 0232)
+  pool.stat_hooks(w)
   sanhook.worker_start(w)
   pool.lock(p + P_MU)
   pool.register_worker(p, w)

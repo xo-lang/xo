@@ -22,6 +22,7 @@ use native/llrt/obj
 use native/llrt/poll
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/rtstats
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/twflags
@@ -67,9 +68,7 @@ fn ld(p: Int, k: Int) -> Int { rt.mem_load(p, k, 8) }
 
 fn st(p: Int, k: Int, v: Int) { rt.mem_store(p, k, v, 8) }
 
-fn stat(k: Int) {
-  let _r = rt.sched_rt(0, k, 0)
-}
+fn stat(k: Int) { rtstats.count(k) }
 
 // ---------------------------------------------------------------------------
 // The target's numbers: 1 Linux, 2 macOS, 3 Windows (sysio.layer); errno

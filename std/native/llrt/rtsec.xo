@@ -11,11 +11,11 @@
 // (alloc.xo), and the outermost exit faults with XO-F007 when there was
 // one. A fault leaves every section of the thread (a real-time function
 // cannot catch it).
-use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/process
 use native/llrt/raw
+use native/llrt/rtstats
 use native/rt
 
 /// The heap record's section depth and the allocations since the
@@ -25,10 +25,9 @@ const RT_ALLOCS = 48
 
 /// rt.sched_rt's statistic op and the counter of sections run (xo_rt.c
 /// st rt_section).
-const RT_STAT = 0
 const ST_RT_SECTION = 18
 
-/// The statistics switch (a C int, ctx.xo SV_STATS: -1 until read, then
+/// The statistics switch (a C int, rtstats.xo rec: -1 until read, then
 /// 0 or 1) read as 4 bytes, zero extended.
 const STATS_UNREAD = 4294967295
 
@@ -40,13 +39,13 @@ pub fn enter() {
   let h = obj.heap()
   let d = rt.mem_load(h, RT_DEPTH, 8)
   if d == 0 {
-    let a = rt.mem_load(ctx.svc(), ctx.SV_STATS, 8)
+    let a = rtstats.rec()
     if rt.mem_load(a, 0, 4) == STATS_UNREAD {
       rt.mem_store(a, 0, if stats_env() { 1 } else { 0 }, 4)
     }
     rt.mem_store(h, RT_ALLOCS, 0, 8)
     if rt.mem_load(a, 0, 4) == 1 {
-      let _s = rt.sched_rt(RT_STAT, ST_RT_SECTION, 0)
+      rtstats.count(ST_RT_SECTION)
     }
   }
   rt.mem_store(h, RT_DEPTH, d + 1, 8)

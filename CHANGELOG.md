@@ -25,6 +25,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tasks.xo run_claimed directly. xo_rt.c's pdsvc_tadd, pdsvc_tdel,
   stopsvc_chan, stopsvc_close, stop_grace_fire and on_signal go;
   stop_svc keeps only the entry's words (88 on).
+- The worker and fiber records, the fiber cache record and the runtime statistics leave the C (decision 0233 step 2, zero-C rank 7): rtstats.xo keeps the statistics (static word 15), ctx.xo makes the fiber cache record, pool.xo sets the statistics hooks itself and reaches oom, deadlock, run_claimed and fiber_map_failed through rt.fn_addr, and rt.sched_run_task calls cabi.xo's fiber_run_task.
 - ctx.xo's services record is Xo (decision 0233 step 2): ctx.xo init makes it, and every handle constructor names its free function with rt.fn_addr, so the C record, its initializer, asserts, free function declarations, pool_rec and the weak HTTP and network free stand-ins are gone.
 - Native runtime (after seed 0.13.0-d770aa15): the C forwarders only
   older compilers' code called are deleted, std/llrt 2325 to 1967

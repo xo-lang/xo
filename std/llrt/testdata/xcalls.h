@@ -89,6 +89,8 @@ static xo_rlist *t_rl_new(int64_t cap, int64_t esize) { return (xo_rlist *)(intp
 
 static void *t_rc_alloc(int64_t n) { return t_alloc(n); }
 
+#define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
+
 // The worker pool's record (ctx.xo's services record, decision 0233).
 int64_t xo_x_ctx_pool(void);
 static void *pool_rec(void) { return (void *)(intptr_t)xo_x_ctx_pool(); }

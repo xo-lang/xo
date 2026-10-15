@@ -37,7 +37,7 @@ Work, by lines per unit:
 | 4 | The test world record tw into twflags.xo's static words | about 45 | S | 45 | DONE a30277e8: 70 lines deleted, 16 added |
 | 5 | The handle code h_init, h_release, h_free (rt.sched_rt ops 19 and 25 already gone, 26326187) | about 60 | S | 60 | DONE: 46 lines in this batch (stop.xo does its own retain and release, no fn_addr needed) |
 | 6 | heap_libc's dead C library mapping arm (finding) | about 20 | S | 20 | a choice: delete it, or restore it before the sanitizer macros |
-| 7 | xo_worker and xo_fiber record types, after sched_hooks, fiber_map_failed, xo_sched_run_task move | about 100 | M | 25 | part of rank 3's scheduler services |
+| 7 | xo_worker and xo_fiber record types, after sched_hooks, fiber_map_failed, xo_sched_run_task move | about 100 | M | 25 | DONE with st, rtstats and fibers (about 180 lines; xo_sched_run_task stays as a forwarder until the next seed) |
 | 8 | The C allocator entries and the main heap record (xo_alloc, xo_free, xo_resize, heap(), main_heap; xo_rt_threads_begin, obj_heap_init) | about 285 | M | 70 | entries DONE (about 125 lines in this batch); left: the heap record type, main_heap, heap() (realtime.c reads it), xo_rt_threads_begin, obj_heap_init |
 | 9 | Entry: main as a short call into entry.xo | about 55 | M | 14 | rank 8 for the heap setup |
 | 10 | heap_large, resize, release onto libcmem.xo's malloc on every build | about 28, and no C library malloc | M | 7 | nothing |

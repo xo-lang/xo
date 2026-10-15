@@ -1,0 +1,70 @@
+// The runtime statistics (decision 0077; xo_rt.c st and rtstats until
+// decision 0233 step 2): XO_RTSTATS=1 prints counts of the scheduler's
+// events to stderr at exit (entry.xo rt_stats, through the addresses the
+// C puts in stop.xo's services record). Each count is one relaxed atomic
+// add, done only when they are on. Below every module that counts (it
+// uses only rt), so obj.xo, sched.xo's callers and the poller count
+// without an import cycle.
+use native/rt
+
+/// rt.static_word: the address of the record (made by init).
+const W_REC = 15
+
+/// The record: the switch (a C int at 0: -1 not read yet, 0 off, 1 on;
+/// poolsetup.xo and rtsec.xo read XO_RTSTATS), then the counts from byte
+/// 8, in entry.xo STAT_NAMES' order (the modules' ST_* are indexes).
+const COUNTS = 8
+const REC_SIZE = 8 + 8 * 23
+const UNREAD = 4294967295
+/// fiber stacks mapped now (always counted) and at most at once
+/// (gotchas/linux-tsan-fiber-stacks.md)
+const ST_FIBER_LIVE = 21
+const ST_FIBER_PEAK = 22
+
+const RELAXED = 0
+
+/// Makes the record at start (ctx.xo init): the switch not read yet.
+pub fn init() {
+  let r = rt.heap_large(REC_SIZE)
+  rt.mem_set(r, 0, REC_SIZE)
+  rt.mem_store(r, 0, UNREAD, 4)
+  rt.mem_store(rt.static_word(W_REC), 0, r, 8)
+}
+
+/// The address of the switch (a C int), 0 before init.
+pub fn rec() -> Int { rt.mem_load(rt.static_word(W_REC), 0, 8) }
+
+/// The address of the counts.
+pub fn counts() -> Int { rec() + COUNTS }
+
+/// Whether the statistics count.
+pub fn on() -> Bool {
+  let r = rec()
+  r != 0 && rt.mem_load(r, 0, 4) == 1
+}
+
+/// Turns them on or off (on: 0 or 1; poolsetup.xo, XO_RTSTATS).
+pub fn set(on: Int) { rt.mem_store(rec(), 0, on, 4) }
+
+/// Counts the statistic k (a module's ST_*) when they are on.
+pub fn count(k: Int) {
+  if on() {
+    let _a = rt.slot_add[Int](counts(), k, 1, RELAXED)
+  }
+}
+
+/// Counts a fiber stack mapped (d 1) or unmapped (-1), always, and the
+/// most at once while the statistics are on.
+pub fn fiber_counted(d: Int) {
+  let c = counts()
+  let live = rt.slot_add[Int](c, ST_FIBER_LIVE, d, RELAXED) + d
+  if d > 0 && on() {
+    var peak = rt.slot_load[Int](c, ST_FIBER_PEAK, RELAXED)
+    while live > peak && !rt.slot_cas[Int](c, ST_FIBER_PEAK, peak, live, RELAXED) {
+      peak = rt.slot_load[Int](c, ST_FIBER_PEAK, RELAXED)
+    }
+  }
+}
+
+/// Fiber stacks mapped now.
+pub fn fibers_live() -> Int { rt.slot_load[Int](counts(), ST_FIBER_LIVE, RELAXED) }

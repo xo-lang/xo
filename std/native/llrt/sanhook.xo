@@ -9,6 +9,7 @@
 // fiber switch calls are made from no instrumented frame
 // (gotchas/tsan-fiber-switch-in-callee.md). UNTESTED on Linux and
 // Windows.
+use native/llrt/rtstats
 use native/rt
 use native/sys_c
 
@@ -32,7 +33,6 @@ const W_POOL = 2360
 const P_FIBERS = 104
 const FS_STACK = 24
 /// The statistic of a park (xo_rt.c st's fiber_park, rt.sched_rt op 0).
-const RT_STAT = 0
 const ST_FIBER_PARK = 6
 
 /// Whether ThreadSanitizer's runtime is linked.
@@ -104,7 +104,7 @@ pub fn hook(kind: Int, w: Int, f: Int) {
       }
     }
     2 => {
-      let _s = rt.sched_rt(RT_STAT, ST_FIBER_PARK, 0)
+      rtstats.count(ST_FIBER_PARK)
       if t {
         sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
       }

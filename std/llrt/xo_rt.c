@@ -455,7 +455,7 @@ void xo_x_fault_init(int64_t raise_msg);
 // fault_init gives fault.xo the address of fault_raise_msg and ctx.xo
 // that of ctx_root (with the heap words: first in main, or in
 // XO_RT_NO_MAIN's constructor).
-void xo_x_ctx_init(int64_t tsan, int64_t stats, int64_t fibers);
+void xo_x_ctx_init(int64_t tsan);
 static void ctx_init(void);
 static void pd_svc_init(void);
 static void stop_svc_init(void);
@@ -567,35 +567,7 @@ xo_rlist xo_empty_list = {XO_RC_IMMORTAL, 0, 0};
 // ---------------------------------------------------------------------------
 // Parks, nodes, contexts
 
-// Runtime statistics (decision 0077): XO_RTSTATS=1 prints counts of the
-// scheduler's events to stderr at exit (std/native/llrt/entry.xo
-// rt_stats prints them from st, in its order of names). Each count is one
-// relaxed atomic add, done only when enabled.
-static int rtstats = -1; // -1 not read yet
-static struct {
-	int64_t spawn, steal, inject, wake, idle_sleep, spin_round, fiber_park, fiber_new, thread_wait, thread_wake, lock_slow, spin_yield;
-	// sockets: read and write system calls, those that would block
-	// (EAGAIN), poller returns, readiness events, and waiters they woke
-	int64_t net_read, net_write, net_again, poll_return, poll_event, poll_wake;
-	// real-time sections (decision 0133): sections run, frees deferred,
-	// frees done at once because the queue was full
-	int64_t rt_section, rt_defer, rt_overflow;
-	// fiber stacks mapped now (always counted) and at most at once (each
-	// fibers.stack plus a guard page of address space): the measure of a
-	// program's address space need under ThreadSanitizer on Linux
-	// (gotchas/linux-tsan-fiber-stacks.md)
-	int64_t fiber_live, fiber_peak;
-} st;
-
-// rtsec.xo and obj.xo count the real-time sections' events by index
-_Static_assert(offsetof(__typeof__(st), rt_section) == 18 * 8 && offsetof(__typeof__(st), rt_overflow) == 20 * 8, "rtsec.xo and obj.xo ST_RT_*");
-
-#define STAT(f)                                                                     \
-	do {                                                                            \
-		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0, 0)) { \
-			__atomic_fetch_add(&st.f, 1, __ATOMIC_RELAXED);                         \
-		}                                                                           \
-	} while (0)
+// Runtime statistics (decision 0077): std/native/llrt/rtstats.xo.
 
 // ---------------------------------------------------------------------------
 // Real-time sections (core 6.5, decision 0133): std/native/llrt/rtsec.xo,
@@ -1012,56 +984,8 @@ _Static_assert(offsetof(xo_budget, refs) == 8 && offsetof(xo_budget, cpu) == 16 
 // spinner. So a burst of spawns wakes workers one at a time and a steady
 // stream of hand overs wakes nobody.
 
-#define XO_RUNQ 256
-
-// The ring's head and tail count every item ever added and taken (64 bit:
-// they never wrap). std/native/llrt/sched.xo works on this layout
-// (decision 0212; the offsets are asserted below).
-typedef struct {
-	int64_t head; // atomic: consumers (the owner and thieves) CAS it
-	char pad[120];
-	int64_t tail;        // atomic: only the owner writes it
-	void *slot[XO_RUNQ]; // atomic accesses: a thief may read a stale one
-} xo_runq;
-
-// The ring's operations, and rq_put, which moves half of a full ring and
-// x to the inject queue, are std/native/llrt/sched.xo and pool.xo
-// (decision 0212).
-
-#define LOAD(x) __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
-#define STORE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
-#define XO_FCACHE 8
-
-typedef struct xo_worker {
-	xo_runq q;
-	void *next;      // atomic: a fiber its thread woke
-	int64_t next_at; // atomic: when it was put there (mono_ns)
-	int live;
-	int root;       // the record of a root thread that helps while it waits
-	void *sched_sp; // the scheduler's stack pointer while a fiber runs
-	// nonzero when the fiber code in Xo (sched.xo, decision 0212) calls
-	// xo_sched_hook around each switch: the sanitizers' fiber calls, and
-	// the statistics (sched_hooks)
-	int64_t hooks;
-	void *tsan; // the scheduler's ThreadSanitizer fiber
-	int64_t wakew; // futex word (its low half): set to 1 to wake the idle worker
-	struct xo_worker *idle_next;
-	uint64_t rng;
-	int64_t nonext; // pool_push puts woken fibers in the ring (mutex_signal)
-	struct xo_fiber *fcache[XO_FCACHE]; // stacks to reuse (owner only)
-	int64_t nfcache;
-	// AddressSanitizer: the scheduler's stack (learned at the first
-	// switch) and its fake stack while a fiber runs (ASAN_START below;
-	// last, so the fields above keep their cache lines)
-	const void *asan_bottom;
-	size_t asan_size;
-	void *asan_fake;
-	// the pool (pool.xo's worker_main finds it here), and the owner's
-	// scratch: a steal's batch, the inject queue's share, a full ring's
-	// half (decision 0212 stage 2)
-	void *pool;
-	void *batch[XO_RUNQ / 2 + 1];
-} xo_worker;
+// The worker records (xo_worker until decision 0233 step 2) and their
+// run queues are std/native/llrt/sched.xo's and pool.xo's (W_*, RQ_*).
 
 // The pool's setup (pool_init until B20) and the root threads' worker
 // records are poolsetup.xo's ready and root_worker (tasks.xo
@@ -1091,9 +1015,7 @@ static void node_unlink(xo_node *n) { xo_x_node_unlink(XO_ADDR(n)); }
 
 // The deadlock check is pool.xo dl_check; the test world's clock move
 // (twrun.xo kick) checks again after it.
-XO_NORETURN void xo_x_deadlock(void);
 
-static void sched_hooks(xo_worker *w);
 
 // park_wait_n blocks the current context until its park is signaled or,
 // when cancelable, its node is canceled (tasks.xo park_wait_n): a task on
@@ -1183,21 +1105,8 @@ __attribute__((noinline)) static void run_entry(xo_task *t, xo_rlist *fl) {
 // to F_PARKED; a waker swaps in F_WOKEN and queues the fiber only if it
 // saw F_PARKED. A scheduler that finds F_WOKEN instead runs it again.
 
-enum { F_RUNNING, F_PARKING, F_PARKED, F_WOKEN };
-
-typedef struct xo_fiber {
-	void *sp;    // the saved stack pointer while switched out
-	char *mem;   // the mapping: a guard page, then the stack
-	size_t size; // of the mapping
-	xo_task *task;
-	xo_ctx *cur;   // the context running on it (a task it helps is nested)
-	int64_t state; // F_* (atomic)
-	int64_t done; // read by sched.xo (decision 0212)
-	void *tsan;
-	struct xo_fiber *next; // the cache
-	void *asan_fake;       // AddressSanitizer: its fake stack while switched out
-	int64_t hooks;         // its worker's hooks (sched.xo, decision 0212)
-} xo_fiber;
+// The fiber records (xo_fiber until decision 0233 step 2) are
+// std/native/llrt/sched.xo's and pool.xo's (F_*).
 
 // xo_fiber_switch saves the callee saved registers on the current stack,
 // stores the stack pointer in *save, and continues on the stack to (saved
@@ -1242,105 +1151,35 @@ typedef struct xo_fiber {
 #define XO_NO_SANITIZE
 #endif
 
-// sched_hooks tells whether the fibers w runs call the hooks around
-// their switches (decision 0212): with the statistics on (XO_RTSTATS);
-// std/native/llrt/sanhook.xo worker_start sets the word in a sanitizer
-// build (decision 0232).
-static void sched_hooks(xo_worker *w) { w->hooks = __atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0; }
 
-#define XO_FIBER_CACHE 64
-
-// the part of a fiber's stack committed up front on Windows
-#define XO_WIN_FIBER_COMMIT ((size_t)64 << 10)
-
-// The fiber cache's record (words, in the layout std/native/llrt/pool.xo
-// reads: decision 0212 stage 2, asserted below).
-static struct {
-	xo_lock mu;
-	xo_fiber *list;
-	int64_t n;
-	int64_t stack; // bytes, without the guard page
-	int64_t page;  // the page size (the guard page)
-	int64_t main;  // where a fiber starts (pool.xo: xo_x_fiber_main)
-} fibers;
-
-// The fiber stacks' settings are poolsetup.xo's fibers_setup (B20),
-// through ctx.xo's services record, which ctx_init gives the fiber
-// cache's record and the statistics' switch at start.
+// ctx_init makes ctx.xo's services record (decision 0233 step 2), with
+// the fiber cache's record and the statistics' (rtstats.xo).
 static void ctx_init(void) {
 #ifdef XO_TSAN_ANN
-	int64_t tsan = 1;
+	xo_x_ctx_init(1);
 #else
-	int64_t tsan = 0;
+	xo_x_ctx_init(0);
 #endif
-	xo_x_ctx_init(tsan, XO_ADDR(&rtstats), XO_ADDR(&fibers));
 }
 
-// fiber_counted counts a fiber stack mapped (d 1) or unmapped (-1), and
-// the most at once with the statistics on.
-static void fiber_counted(int64_t d) {
-	int64_t live = __atomic_add_fetch(&st.fiber_live, d, __ATOMIC_RELAXED);
-	if (d > 0 && __builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0, 0)) {
-		int64_t peak = __atomic_load_n(&st.fiber_peak, __ATOMIC_RELAXED);
-		while (live > peak && !__atomic_compare_exchange_n(&st.fiber_peak, &peak, live, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-		}
-	}
-}
-
-// fiber_map_failed reports that a fiber stack's mapping failed with
-// errno en (0: unknown), and exits: out of address space more often than
-// of memory (stacks are reserved, not committed), so it says how much the
-// stacks took (gotchas/linux-tsan-fiber-stacks.md).
-XO_NORETURN static void fiber_map_failed(int en) {
-#ifndef _WIN32
-	fprintf(stderr, "xo: fiber stack mmap failed (%s) with %lld stacks of %lld MiB mapped\n", strerror(en),
-	        (long long)__atomic_load_n(&st.fiber_live, __ATOMIC_RELAXED), (long long)(fibers.stack >> 20));
-#else
-	(void)en;
-#endif
-	xo_oom();
-}
-
-// xo_sched_run_task runs the task of the fiber that just started (Xo's
-// fiber_main): it came from a queue, so its entry and its run end here.
-void xo_sched_run_task(int64_t fa) {
-	xo_task *t = ((xo_fiber *)(intptr_t)fa)->task;
-	TSAN_ACQUIRE(t); // its spawn released it (the queues are Xo, not instrumented)
-	run_claimed(t, 4);
-}
+// xo_sched_run_task runs the task of fiber f, which just started: the
+// emitters call cabi.xo's fiber_run_task for rt.sched_run_task; this
+// forwarder is for code of earlier compilers (delete after the next seed).
+void xo_x_fiber_run_task(int64_t f);
+void xo_sched_run_task(int64_t f) { xo_x_fiber_run_task(f); }
 
 // xo_sched_rt is the C runtime's services for std/native/llrt/pool.xo
 // (rt.sched_rt, decision 0212 stage 2): op is pool.xo's RT_*.
 
 int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 	switch (op) {
-	case 0: // a statistic: st's counter a
-		if (__builtin_expect(__atomic_load_n(&rtstats, __ATOMIC_RELAXED) > 0, 0)) {
-			__atomic_fetch_add(&((int64_t *)&st)[a], 1, __ATOMIC_RELAXED);
-		}
-		return 0;
 	case 2: // the virtual clock's move (twrun.xo kick; pool.xo asks while it is virtual)
 		xo_x_tw_kick();
 		return 0;
-	case 4: // fiber a got a new stack (its ThreadSanitizer fiber: sanhook.xo)
-		fiber_counted(1);
-		return 0;
-	case 5: // fiber a's stack is unmapped
-		fiber_counted(-1);
-		return 0;
-	case 6:
-		fiber_map_failed((int)a);
-	case 7: // worker thread a starts (the sanitizers' part: sanhook.xo)
-		sched_hooks((xo_worker *)(intptr_t)a);
-		return 0;
-	case 9:
-		xo_oom();
 	case 16: // task a, claimed, runs here (its queue entry still queued)
 		TSAN_ACQUIRE((void *)(intptr_t)a);
 		run_claimed((xo_task *)(intptr_t)a, b);
 		return 0;
-	case 31: // the program is deadlocked (pool.xo dl_check)
-		xo_x_deadlock();
 	case 29: // task a's entry function, with closure b (tasks.xo run_claimed)
 		run_entry((xo_task *)(intptr_t)a, (xo_rlist *)(intptr_t)b);
 		return 0;
@@ -1356,11 +1195,8 @@ int64_t xo_sched_rt(int64_t op, int64_t a, int64_t b) {
 
 // The layout std/native/llrt/sched.xo reads and writes (decision 0212:
 // its constants are these offsets).
-_Static_assert(offsetof(xo_runq, head) == 0 && offsetof(xo_runq, tail) == 128 && offsetof(xo_runq, slot) == 136, "sched.xo RQ_*");
-_Static_assert(offsetof(xo_worker, q) == 0 && offsetof(xo_worker, sched_sp) == 2208 && offsetof(xo_worker, hooks) == 2216, "sched.xo W_*");
-_Static_assert(offsetof(xo_fiber, sp) == 0 && offsetof(xo_fiber, task) == 24 && offsetof(xo_fiber, cur) == 32 && offsetof(xo_fiber, state) == 40 && offsetof(xo_fiber, done) == 48 && offsetof(xo_fiber, hooks) == 80, "sched.xo F_*");
 _Static_assert(offsetof(xo_task, state) == 80 && offsetof(xo_task, gone) == 176, "sched.xo T_*");
-_Static_assert(F_RUNNING == 0 && F_PARKING == 1 && F_PARKED == 2 && F_WOKEN == 3 && T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
+_Static_assert(T_QUEUED == 0 && T_RUNNING == 1, "sched.xo states");
 // and std/native/llrt/pool.xo (decision 0212 stage 2)
 _Static_assert(sizeof(xo_lock) == 8, "pool.xo's locks are words");
 _Static_assert(offsetof(xo_park, signaled) == 8 && offsetof(xo_park, sleeping) == 16 && offsetof(xo_park, counted) == 20 && offsetof(xo_park, fiber) == 24, "pool.xo PK_*");
@@ -1369,17 +1205,6 @@ _Static_assert(offsetof(xo_node, parent) == 0 && offsetof(xo_node, child) == 8 &
                "pool.xo N_*");
 _Static_assert(offsetof(xo_ctx, node) == 0 && offsetof(xo_ctx, shield) == 12 && offsetof(xo_ctx, park) == 16, "pool.xo C_*");
 _Static_assert(offsetof(xo_task, h) == 0 && offsetof(xo_task, node) == 16 && offsetof(xo_task, scope) == 72 && offsetof(xo_task, snext) == 168 && T_DONE == 2, "pool.xo T_*");
-_Static_assert(offsetof(xo_worker, next) == 2184 && offsetof(xo_worker, next_at) == 2192 && offsetof(xo_worker, live) == 2200 && offsetof(xo_worker, wakew) == 2232 &&
-                   offsetof(xo_worker, idle_next) == 2240 && offsetof(xo_worker, rng) == 2248 && offsetof(xo_worker, nonext) == 2256 &&
-                   offsetof(xo_worker, fcache) == 2264 && offsetof(xo_worker, nfcache) == 2328 && offsetof(xo_worker, pool) == 2360 &&
-                   offsetof(xo_worker, batch) == 2368 && sizeof(xo_worker) == 3400,
-               "pool.xo W_*");
-_Static_assert(offsetof(__typeof__(fibers), mu) == 0 && offsetof(__typeof__(fibers), list) == 8 && offsetof(__typeof__(fibers), n) == 16 &&
-                   offsetof(__typeof__(fibers), stack) == 24 && offsetof(__typeof__(fibers), page) == 32 && offsetof(__typeof__(fibers), main) == 40,
-               "pool.xo FS_*");
-_Static_assert(offsetof(xo_fiber, mem) == 8 && offsetof(xo_fiber, size) == 16 && offsetof(xo_fiber, next) == 64 && sizeof(xo_fiber) == 88 &&
-                   XO_FCACHE == 8 && XO_FIBER_CACHE == 64 && XO_WIN_FIBER_COMMIT == 65536,
-               "pool.xo F_*");
 
 // The spawn and the scope's open and close are tasks.xo's (B18 part 2),
 // which generated code calls through its exports.
@@ -1696,6 +1521,8 @@ static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
 	return 0;
 }
 
+int64_t xo_x_rtstats_counts(void);
+int64_t xo_x_rtstats_switch(void);
 static int64_t stop_svc[20];
 static void stop_svc_init(void) {
 	stop_svc[11] = XO_ADDR(&xo_x_tw_start);
@@ -1711,8 +1538,8 @@ static void stop_svc_init(void) {
 #ifdef XO_TIME
 	stop_svc[17] = XO_ADDR(&xo_x_tz_free);
 #endif
-	stop_svc[18] = XO_ADDR(&st);
-	stop_svc[19] = XO_ADDR(&rtstats);
+	stop_svc[18] = xo_x_rtstats_counts();
+	stop_svc[19] = xo_x_rtstats_switch();
 	xo_x_stop_init(XO_ADDR(stop_svc));
 }
 

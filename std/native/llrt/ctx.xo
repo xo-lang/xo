@@ -18,6 +18,7 @@
 //
 // Nothing here allocates on the common path.
 use native/llrt/fault
+use native/llrt/rtstats
 use native/llrt/sysio
 use native/llrt/text
 use native/rt
@@ -71,26 +72,24 @@ pub const C_FIRED = 312
 pub const C_SIZE = 320
 
 /// rt.static_word: the address of the services record (SV_*), made by
-/// init. (Word 15 held the C's ctx_root until the root context moved
-/// here, root.)
+/// init.
 const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
 const PROG = 17
 
 /// The services record (made by init; was xo_rt.c's svc, decision 0233
-/// step 2): the worker pool record (pool.xo's pl), whether
-/// ThreadSanitizer is on (a word), and the address of the statistics'
-/// switch (a C int, > 0 when they count). The handles' free functions
+/// step 2): the worker pool record (pool.xo's pl) and whether
+/// ThreadSanitizer is on (a word); the statistics are rtstats.xo's. The
+/// handles' free functions
 /// are no longer here: each constructor names its export (rt.fn_addr),
 /// so a program without a feature never names that feature's exports.
 pub const SV_POOL = 0
 pub const SV_TSAN = 24
-pub const SV_STATS = 32
 /// The lock word of the pool's setup (poolsetup.xo ready).
 pub const SV_ONCE = 40
-/// The fiber cache's record (pool.xo FS_*), and where a fiber and a
-/// worker thread start (the exports xo_x_fiber_main, xo_x_worker_main):
+/// The fiber cache's record (pool.xo FS_*, made by init; was xo_rt.c
+/// fibers), and where a fiber and a worker thread start (the exports xo_x_fiber_main, xo_x_worker_main):
 /// poolsetup.xo's setup.
 pub const SV_FIBERS = 80
 pub const SV_FIBER_MAIN = 88
@@ -110,16 +109,20 @@ pub const SV_DNS = 232
 /// thread on Windows (stdin.xo win_open).
 pub const SV_STDIN_PUMP = 248
 const SV_SIZE = 264
+/// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
+/// stack size, page size, where a fiber starts).
+const FS_SIZE = 48
 
 /// Makes the services record at start, with whether ThreadSanitizer is
-/// on and the addresses of the C's statistics switch and fiber cache
-/// record (xo_rt.c fault_init).
-pub fn init(tsan: Int, stats: Int, fibers: Int) {
+/// on (xo_rt.c fault_init), and the statistics' record.
+pub fn init(tsan: Int) {
+  rtstats.init()
   let svc = rt.heap_large(SV_SIZE)
   rt.mem_set(svc, 0, SV_SIZE)
   rt.mem_store(svc, SV_TSAN, tsan, 8)
-  rt.mem_store(svc, SV_STATS, stats, 8)
-  rt.mem_store(svc, SV_FIBERS, fibers, 8)
+  let fs = rt.heap_large(FS_SIZE)
+  rt.mem_set(fs, 0, FS_SIZE)
+  rt.mem_store(svc, SV_FIBERS, fs, 8)
   rt.mem_store(svc, SV_FIBER_MAIN, rt.fn_addr("fiber_main"), 8)
   rt.mem_store(svc, SV_WORKER_MAIN, rt.fn_addr("worker_main"), 8)
   rt.mem_store(svc, SV_STDIN_PUMP, rt.fn_addr("stdin_pump_main"), 8)

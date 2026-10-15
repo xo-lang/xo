@@ -31,16 +31,17 @@ use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/rtsec
+use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/selects
-use native/llrt/tasks
-use native/llrt/twflags
-use native/llrt/twrun
 use native/llrt/stdin
 use native/llrt/stdio
 use native/llrt/stop
 use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/twflags
+use native/llrt/twrun
 use native/llrt/unwind
 use native/rt
 
@@ -582,8 +583,39 @@ fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 fn ctx_unwinding() -> Int { ctx.unwinding() }
 
 /// The services record, at start (ctx.xo init): whether ThreadSanitizer
-/// is on, the addresses of xo_rt.c's statistics switch and fiber cache.
-fn ctx_init(tsan: Int, stats: Int, fibers: Int) { ctx.init(tsan, stats, fibers) }
+/// is on.
+fn ctx_init(tsan: Int) { ctx.init(tsan) }
+
+/// The statistics' switch and counts (rtstats.xo), for stop.xo's
+/// services record (entry.xo rt_stats).
+fn rtstats_switch() -> Int { rtstats.rec() }
+
+fn rtstats_counts() -> Int { rtstats.counts() }
+
+/// Runs the task of fiber f, which just started (sched.xo fiber_main;
+/// xo_rt.c xo_sched_run_task): it came from a queue, so its entry and its
+/// run end here; its spawn released it.
+fn fiber_run_task(f: Int) {
+  let t = rt.mem_load(f, 24, 8)
+  sanhook.acquire(t)
+  tasks.run_claimed(t, 4)
+}
+
+/// "fault: out of memory" and the end of the process (pool.xo).
+fn oom() { heapos.oom() }
+
+/// A fiber stack's mapping failed with errno en (0: unknown): out of
+/// address space more often than of memory (stacks are reserved, not
+/// committed), so it says how much the stacks took
+/// (gotchas/linux-tsan-fiber-stacks.md), then out of memory (pool.xo;
+/// xo_rt.c fiber_map_failed).
+fn fiber_map_failed(en: Int) {
+  let fs = rt.mem_load(ctx.svc(), ctx.SV_FIBERS, 8)
+  let mib = rt.mem_load(fs, 24, 8) / 1048576
+  let m = "xo: fiber stack mmap failed (${sysio.err_msg(sysio.layer(), en)}) with ${rtstats.fibers_live()} stacks of ${mib} MiB mapped\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  heapos.oom()
+}
 
 /// The worker pool's record (the C tests' pool_rec, std/llrt/testdata
 /// xcalls.h).

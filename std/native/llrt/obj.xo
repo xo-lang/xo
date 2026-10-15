@@ -25,6 +25,7 @@
 // rc.xo's functions, which that check allows no module.
 use native/llrt/alloc
 use native/llrt/rc
+use native/llrt/rtstats
 use native/rt
 
 /// The immortal count of a literal (never written).
@@ -66,7 +67,6 @@ pub const RT_HANDLE = 4
 
 /// rt.sched_rt's statistic op and the counters of the frees deferred and
 /// of those done at once because the queue was full (xo_rt.c st).
-const RT_STAT = 0
 const ST_RT_DEFER = 19
 const ST_RT_OVERFLOW = 20
 
@@ -390,7 +390,7 @@ pub fn rc_defer_n(obj: Int, drop: Int) {
 pub fn rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Bool {
   let n = rt.mem_load(h, RT_N, 8)
   if n == RTQ {
-    let _s = rt.sched_rt(RT_STAT, ST_RT_OVERFLOW, 0)
+    rtstats.count(ST_RT_OVERFLOW)
     return false
   }
   let e = addw(addw(h, RT_Q), mulw(n, 32))
@@ -399,7 +399,7 @@ pub fn rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Bool {
   rt.mem_store(e, 16, esize, 8)
   rt.mem_store(e, 24, f, 8)
   rt.mem_store(h, RT_N, addw(n, 1), 8)
-  let _s = rt.sched_rt(RT_STAT, ST_RT_DEFER, 0)
+  rtstats.count(ST_RT_DEFER)
   true
 }
 
