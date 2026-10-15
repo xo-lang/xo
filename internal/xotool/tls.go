@@ -31,9 +31,10 @@ import (
 // decision 0215 (gotchas/xotool-compilec-tls.md); xo builds programs with
 // selfhost/xo/tls.xo, the same steps in Xo.
 
-// tlsSymbols are the runtime functions only a program using std/http
-// calls (internal/ssa's lowering of std/native/http.xo).
-var tlsSymbols = []string{"xo_cl_start", "xo_srv_new", "xo_tls_"}
+// tlsSymbols are the runtime functions only a program on the C TLS paths
+// calls (XO_LLRT_C=tlsio's and tlssrv's calls of xo_tls.c); the default
+// path's TLS is Xo (decision 0202) and links no Mbed TLS.
+var tlsSymbols = []string{"xo_tls_", "xo_cl_tls_"}
 
 // needsTLS reports whether generated code (LLVM IR or assembly) calls a
 // std/http runtime function, so its link needs the TLS library.
