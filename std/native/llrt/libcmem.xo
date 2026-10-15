@@ -1,8 +1,14 @@
 // The memory functions of the C library of an XO_NOLIBC build (malloc,
 // free, calloc, realloc; the zero-C audit's B04, decision 0230):
-// std/native/llrt/cabi_libc.xo exports them under the C names. None may
-// fault or allocate Xo values (rt.int_wrap for the arithmetic).
-use native/llrt/linux
+// std/native/llrt/cabi_libc.xo exports them under the C names. Since
+// 2026-10-15 (the zero-C inventory's rank 10) the same allocator holds
+// the runtime's records on every build and OS (rt.heap_large, its
+// resize, and rt.heap_release: heap_large below, cabi.xo's exports),
+// not the C library's malloc; its mappings and lock word are heapos.xo's
+// and pool.xo's, so it runs on Linux, macOS, and Windows. None may fault
+// or allocate Xo values (rt.int_wrap for the arithmetic).
+use native/llrt/heapos
+use native/llrt/pool
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -59,15 +65,9 @@ fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
 
 fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
 
-/// n bytes of zeroed memory mapped from the system, or 0.
-fn map(n: Int) -> Int {
-  // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
-  let r = linux.mmap(0, n, 3, 34, -1, 0)
-  if r < 0 && r > -4096 {
-    return 0
-  }
-  r
-}
+/// n bytes of zeroed memory mapped from the system (heapos.xo map, which
+/// ends the program when the system refuses).
+fn map(n: Int) -> Int { heapos.map(n) }
 
 /// The state's address, mapped on the first use (0 when the mapping
 /// failed): the first of racing threads to store its page keeps it.
@@ -84,7 +84,7 @@ pub fn state() -> Int {
   if rt.slot_cas(w, 0, 0, m, RELEASE) {
     return m
   }
-  let _r = linux.munmap(m, STATE_SIZE)
+  heapos.unmap(m, STATE_SIZE)
   rt.slot_load(w, 0, ACQUIRE)
 }
 
@@ -97,19 +97,15 @@ pub fn word(off: Int) -> Int {
 
 /// Takes the state's lock (its first word).
 fn lock(s: Int) {
-  while !rt.slot_cas(s, 0, 0, 1, ACQUIRE) {
-    // FUTEX_WAIT_PRIVATE while held (2 tells the holder to wake)
-    if rt.slot_swap(s, 0, 2, ACQUIRE) == 0 {
-      return
-    }
-    linux.futex(s, 128, 2, 0)
+  if !rt.slot_cas(s, 0, 0, 1, ACQUIRE) {
+    // 2 tells the holder to wake a waiter (pool.xo's futex on every OS)
+    pool.lock_slow(s)
   }
 }
 
 fn unlock(s: Int) {
   if rt.slot_swap(s, 0, 0, RELEASE) == 2 {
-    // FUTEX_WAKE_PRIVATE
-    linux.futex(s, 129, 1, 0)
+    pool.futex_wake(s)
   }
 }
 
@@ -217,7 +213,7 @@ pub fn free(p: Int) {
       unlock(s)
     }
     if !kept {
-      let _r = linux.munmap(h, subw(0, c))
+      heapos.unmap(h, subw(0, c))
     }
     return
   }
@@ -263,6 +259,186 @@ pub fn realloc(p: Int, n: Int) -> Int {
   free(p)
   q
 }
+
+// ---------------------------------------------------------------------------
+// The runtime's records (rt.heap_large): small blocks go through a cache
+// per thread (thread local word TLS_CACHE), so the tasks' records on
+// many workers do not all take the state's lock (bench/perf/conc pmap
+// took 1.54 times as long through the lock alone, 2026-10-15). A cache
+// keeps up to CACHE_MAX free blocks per class; an empty class takes
+// CACHE_BATCH from the shared lists (or the region) under the lock, a
+// full one gives CACHE_BATCH back. A block freed on another thread joins
+// that thread's cache. The cache record (8 bytes per class) comes from
+// the shared lists at the thread's first record and is never freed (the
+// runtime's threads live as long as the program). The C library's
+// malloc of an XO_NOLIBC build does not use it: it runs before the
+// thread pointer is set.
+
+/// rt.tlocal: the thread's cache record (sched.xo lists the table's
+/// words), or 0.
+const TLS_CACHE = 14
+/// A class's free list head at 16 * class, its count at 16 * class + 8.
+const CACHE_SIZE = 288
+const CACHE_MAX = 64
+const CACHE_BATCH = 32
+
+/// The size class of a small block of n bytes (n + 16 at most 2^MAX_SHIFT).
+fn class_of(n: Int) -> Int {
+  var c = MIN_SHIFT
+  while rt.int_wrap(3, 1, c) < addw(n, 16) {
+    c = addw(c, 1)
+  }
+  c
+}
+
+/// The calling thread's cache record, made at its first use (0 when the
+/// state cannot be mapped).
+fn cache() -> Int {
+  let t = rt.tlocal_get(TLS_CACHE)
+  if t != 0 {
+    return t
+  }
+  let m = malloc(CACHE_SIZE)
+  if m == 0 {
+    return 0
+  }
+  rt.mem_set(m, 0, CACHE_SIZE)
+  rt.tlocal_set(TLS_CACHE, m)
+  m
+}
+
+/// Moves up to CACHE_BATCH blocks of class c into the cache t from the
+/// shared list, carving the rest from the region (lock taken here): how
+/// many it holds now.
+fn refill(t: Int, c: Int) -> Int {
+  let s = state()
+  if s == 0 {
+    return 0
+  }
+  let size = rt.int_wrap(3, 1, c)
+  let slot = addw(t, rt.int_wrap(3, c, 4))
+  var got = 0
+  lock(s)
+  let head = addw(s, rt.int_wrap(3, c, 3))
+  while got < CACHE_BATCH {
+    var b = rt.mem_load(head, 0, 8)
+    if b != 0 {
+      rt.mem_store(head, 0, rt.mem_load(b, 0, 8), 8)
+    } else {
+      var cur = rt.mem_load(s, S_CUR, 8)
+      if cur == 0 || subw(rt.mem_load(s, S_END, 8), cur) < size {
+        if got > 0 {
+          break
+        }
+        cur = map(REGION)
+        rt.mem_store(s, S_END, addw(cur, REGION), 8)
+      }
+      b = cur
+      rt.mem_store(s, S_CUR, addw(cur, size), 8)
+    }
+    rt.mem_store(b, 0, rt.mem_load(slot, 0, 8), 8)
+    rt.mem_store(slot, 0, b, 8)
+    got = addw(got, 1)
+  }
+  unlock(s)
+  rt.mem_store(slot, 8, got, 8)
+  got
+}
+
+/// Gives CACHE_BATCH of the cache t's blocks of class c back to the
+/// shared list (lock taken here).
+fn drain(t: Int, c: Int) {
+  let s = state()
+  let slot = addw(t, rt.int_wrap(3, c, 4))
+  let head = addw(s, rt.int_wrap(3, c, 3))
+  lock(s)
+  var k = 0
+  while k < CACHE_BATCH {
+    let b = rt.mem_load(slot, 0, 8)
+    rt.mem_store(slot, 0, rt.mem_load(b, 0, 8), 8)
+    rt.mem_store(b, 0, rt.mem_load(head, 0, 8), 8)
+    rt.mem_store(head, 0, b, 8)
+    k = addw(k, 1)
+  }
+  unlock(s)
+  rt.mem_store(slot, 8, subw(rt.mem_load(slot, 8, 8), CACHE_BATCH), 8)
+}
+
+/// malloc through the thread's cache: a 16 byte aligned block of at
+/// least n bytes, or 0.
+fn malloc_tc(n: Int) -> Int {
+  if addw(n, 16) > rt.int_wrap(3, 1, MAX_SHIFT) {
+    return malloc(n)
+  }
+  let t = cache()
+  if t == 0 {
+    return malloc(n)
+  }
+  let c = class_of(n)
+  let slot = addw(t, rt.int_wrap(3, c, 4))
+  if rt.mem_load(slot, 0, 8) == 0 && refill(t, c) == 0 {
+    return 0
+  }
+  let b = rt.mem_load(slot, 0, 8)
+  rt.mem_store(slot, 0, rt.mem_load(b, 0, 8), 8)
+  rt.mem_store(slot, 8, subw(rt.mem_load(slot, 8, 8), 1), 8)
+  rt.mem_store(b, 0, c, 8)
+  addw(b, 16)
+}
+
+/// free through the thread's cache.
+fn free_tc(p: Int) {
+  let h = subw(p, 16)
+  let c = rt.mem_load(h, 0, 8)
+  let t = rt.tlocal_get(TLS_CACHE)
+  if c < 0 || t == 0 {
+    free(p)
+    return
+  }
+  let slot = addw(t, rt.int_wrap(3, c, 4))
+  rt.mem_store(h, 0, rt.mem_load(slot, 0, 8), 8)
+  rt.mem_store(slot, 0, h, 8)
+  let k = addw(rt.mem_load(slot, 8, 8), 1)
+  rt.mem_store(slot, 8, k, 8)
+  if k > CACHE_MAX {
+    drain(t, c)
+  }
+}
+
+/// rt.heap_large: a block of n bytes for the runtime's records, its
+/// 8 byte prefix minus n (the address after the prefix); the program
+/// ends when memory is out (was xo_rt.c's xo_heap_large over malloc).
+pub fn heap_large(n: Int) -> Int {
+  let b = malloc_tc(addw(n, 8))
+  if b == 0 {
+    heapos.oom()
+  }
+  rt.mem_store(b, 0, subw(0, n), 8)
+  addw(b, 8)
+}
+
+/// rt.heap_large_resize: the block whose prefix is at b made n bytes
+/// (its first bytes kept), the address after its prefix.
+pub fn heap_large_resize(b: Int, n: Int) -> Int {
+  let c = rt.mem_load(subw(b, 16), 0, 8)
+  let have = if c < 0 { subw(subw(0, c), 16) } else { subw(rt.int_wrap(3, 1, c), 16) }
+  var nb = b
+  if addw(n, 8) > have || c < 0 {
+    nb = malloc_tc(addw(n, 8))
+    if nb != 0 {
+      rt.mem_copy(nb, b, if have < addw(n, 8) { have } else { addw(n, 8) })
+      free_tc(b)
+    }
+  }
+  if nb == 0 {
+    heapos.oom()
+  }
+  rt.mem_store(nb, 0, subw(0, n), 8)
+  addw(nb, 8)
+}
+
+/// rt.heap_release: gives back the block whose prefix is at b.
+pub fn heap_release(b: Int) { free_tc(b) }
 
 /// getauxval(k): the value of k in the auxiliary vector _start found
 /// (libcio.xo start), or 0. No thread local is touched: the main

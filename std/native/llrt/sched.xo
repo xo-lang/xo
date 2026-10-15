@@ -33,7 +33,8 @@ const SEQ_CST = 4
 /// (work item B02); 10 errno of programs with no C library (its low
 /// 32 bits, libcsys.xo, decision 0230); 11 and 12 sysio.xo's outcome of
 /// the last file operation (status, path and message); 13 tasks.xo's
-/// spare context (run_claimed); 14 and 15 unused. internal/repotest
+/// spare context (run_claimed); 14 libcmem.xo's cache of the runtime's
+/// records (heap_large); 15 unused. internal/repotest
 /// TestThreadLocalWordOwners checks who uses each word.
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1

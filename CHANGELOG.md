@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C inventory rank 10): the runtime's records
+  (rt.heap_large, its resize, rt.heap_release) come from libcmem.xo's
+  allocator on every build, through a cache per thread, not from the C
+  library's malloc; libcmem.xo maps through heapos.xo and locks through
+  pool.xo, so it runs on Linux, macOS and Windows. The emitters call
+  cabi.xo's exports; xo_rt.c's xo_heap_large and the rest forward for
+  seed 0.12.0's code. bench/perf/conc on the Mac, 21 interleaved runs
+  (median ms, main against this): spawn 74.1/68.3 LLVM, 70.5/76.9 arm64;
+  pmap 92.7/93.1, 73.6/73.2; fanout 29.2/29.5, 30.4/32.9; pingpong
+  41.5/46.1, 43.7/46.2 (minimums 33.1/36.4, 40.0/39.3): noise but for
+  pingpong's medians, to measure again on a quiet machine. Without the
+  per-thread cache pmap took 1.54 times as long (one lock).
 - Native runtime (decision 0233 step 2, entry; zero-C inventory ranks 9
   and 15): main's program is entry.xo main (the start, main's threads,
   the end: flush, the stop record's end, statistics, the leak check),

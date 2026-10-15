@@ -30,6 +30,7 @@ var tlocalOwners = map[int][]string{
 	11: {"sysio.xo"},
 	12: {"sysio.xo"},
 	13: {"tasks.xo"},
+	14: {"libcmem.xo"},
 }
 
 var (

@@ -75,7 +75,7 @@ pub fn libc_maps() -> Int { rt.slot_load(rt.static_word(W_LIBC_MAPS), 0, RELAXED
 /// a system call bypasses. Only the Linux and macOS arms test for it: a
 /// Windows build must not reference the C library's mmap, which it lacks
 /// (its link fails), and target.os folds there.
-fn map(size: Int) -> Int {
+pub fn map(size: Int) -> Int {
   var m = 0
   match target.os {
     TargetOs.Linux => {
@@ -122,7 +122,7 @@ fn libc_map(size: Int) -> Int {
 }
 
 /// Gives back the mapping of size bytes at m.
-fn unmap(m: Int, size: Int) {
+pub fn unmap(m: Int, size: Int) {
   match target.os {
     TargetOs.Linux => {
       if sanhook.sanitized() {

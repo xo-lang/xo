@@ -322,33 +322,16 @@ void xo_rt_threads_begin(void) {
 	xo_x_stdio_threads();
 }
 
-// The runtime's records from malloc (std/native rt.heap_large): the C
-// frees some of them with free (tasks.xo task_free), so these stay
-// the C library's until the runtime has an allocator of its own for them.
-//
-// xo_heap_large returns a block of n bytes from malloc (the prefix is
-// minus its size).
-__attribute__((noinline)) int64_t xo_heap_large(int64_t n) {
-	int64_t *b = malloc((size_t)n + 8);
-	if (!b) {
-		xo_oom();
-	}
-	b[0] = -n;
-	return (int64_t)(intptr_t)(b + 1);
-}
-
-// xo_heap_large_resize reallocates the malloc'd block at b (its prefix)
-// to n bytes.
-int64_t xo_heap_large_resize(int64_t b, int64_t n) {
-	int64_t *nb = realloc((void *)(intptr_t)b, (size_t)n + 8);
-	if (!nb) {
-		xo_oom();
-	}
-	nb[0] = -n;
-	return (int64_t)(intptr_t)(nb + 1);
-}
-
-void xo_heap_release(int64_t b) { free((void *)(intptr_t)b); }
+// The runtime's records (std/native rt.heap_large) are libcmem.xo's
+// (cabi.xo heap_large; the zero-C inventory's rank 10, 2026-10-15), not
+// the C library's malloc: these forward for code of compilers before
+// the emitters named the exports (seed 0.12.0).
+int64_t xo_x_heap_large(int64_t n);
+int64_t xo_x_heap_large_resize(int64_t b, int64_t n);
+void xo_x_heap_release(int64_t b);
+int64_t xo_heap_large(int64_t n) { return xo_x_heap_large(n); }
+int64_t xo_heap_large_resize(int64_t b, int64_t n) { return xo_x_heap_large_resize(b, n); }
+void xo_heap_release(int64_t b) { xo_x_heap_release(b); }
 
 // The heap's platform calls (zero-C audit B21): std/native/llrt/heapos.xo
 // maps the chunks and alloc.xo's big blocks (above mid_max) from the

@@ -71,14 +71,15 @@ fn atomic_max(a: Atomic[Int], n: Int) -> Int
 // 70 as the C did). h is the calling thread's heap record, p a block's
 // address.
 
-/// A block of n bytes from malloc (its prefix minus n): the address
-/// after the prefix. The runtime's records (testworld.xo, pool.xo,
-/// fault.xo, stdio.xo); the C frees some of them with free.
+/// A block of n bytes for the runtime's records (its prefix minus n):
+/// the address after the prefix (testworld.xo, pool.xo, fault.xo,
+/// stdio.xo, ...). libcmem.xo's allocator (cabi.xo heap_large), not the
+/// C library's malloc, since 2026-10-15; never counted by the leak check.
 fn heap_large(n: Int) -> Int
-/// The malloc'd block at b (the prefix's address) reallocated to n
-/// bytes (its prefix minus n): the address after the prefix.
+/// The block whose prefix is at b reallocated to n bytes (its prefix
+/// minus n): the address after the prefix.
 fn heap_large_resize(b: Int, n: Int) -> Int
-/// free of the malloc'd block at b (the prefix's address).
+/// Gives back the block whose prefix is at b.
 fn heap_release(b: Int)
 /// alloc.xo's big blocks (above mid_max): n bytes mapped from the system
 /// (its prefix minus n), the address after the prefix; resized; given
@@ -237,7 +238,7 @@ fn prefetch(a: Int)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
 ///   60-61 std/native/llrt/stop.xo: two phase shutdown's state record, the C's services record
 ///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
-///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (XO_NOLIBC builds)
+///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (the runtime's records, rt.heap_large, on every build; the C library's malloc on XO_NOLIBC builds)
 fn static_word(k: Int) -> Int
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only

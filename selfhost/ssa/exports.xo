@@ -33,6 +33,10 @@ pub fn rt_export(name: Str) -> Str {
     "rt.clock_sleep_or_cancel" => "xo_x_clock_sleep_or_cancel"
     "rt.select_after" => "xo_x_select_after"
     "rt.is_canceled" => "xo_x_is_canceled"
+    // the runtime's records (cabi.xo over libcmem.xo)
+    "rt.heap_large" => "xo_x_heap_large"
+    "rt.heap_large_resize" => "xo_x_heap_large_resize"
+    "rt.heap_release" => "xo_x_heap_release"
     // a fiber's task (cabi.xo fiber_run_task; sched.xo fiber_main)
     "rt.sched_run_task" => "xo_x_fiber_run_task"
     _ => ""

@@ -22,6 +22,7 @@ use native/llrt/entry
 use native/llrt/fault
 use native/llrt/fsops
 use native/llrt/heapos
+use native/llrt/libcmem
 use native/llrt/mutex
 use native/llrt/num
 use native/llrt/obj
@@ -214,6 +215,17 @@ fn heap_big(n: Int) -> Int { heapos.large(n) }
 fn heap_big_resize(b: Int, n: Int) -> Int { heapos.large_resize(b, n) }
 
 fn heap_big_release(b: Int) { heapos.release(b) }
+
+/// The runtime's records (rt.heap_large, its resize, rt.heap_release;
+/// the zero-C inventory's rank 10, 2026-10-15): libcmem.xo's allocator,
+/// which the native emitters call for those (selfhost/ssa exports.xo);
+/// xo_rt.c's xo_heap_large and the rest forward here for code of
+/// earlier compilers.
+fn heap_large(n: Int) -> Int { libcmem.heap_large(n) }
+
+fn heap_large_resize(b: Int, n: Int) -> Int { libcmem.heap_large_resize(b, n) }
+
+fn heap_release(b: Int) { libcmem.heap_release(b) }
 
 /// Gives heap h a new chunk and allocates n bytes again.
 fn heap_grow(h: Int, n: Int) -> Int {
