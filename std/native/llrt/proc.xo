@@ -5,11 +5,14 @@
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/raw
+use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/testworld
 use native/llrt/windows
 use native/rt
+use native/sys_darwin
 
 // FakeProc.kill's record in the program's static words (rt.xo's table):
 // its lock, then a vector (the address of its entries from
@@ -109,3 +112,267 @@ pub fn killed() -> List[Str] {
   unlock()
   out
 }
+
+// ---------------------------------------------------------------------------
+// Starting a command (xo_proc.c's pr_start on macOS and Linux; Windows
+// keeps the C's CreateProcessW until its stage)
+
+/// The standard stream descriptors of start: the null device, the
+/// program's own, and (standard error) a copy of standard output.
+const FD_NULL = -1
+const FD_INHERIT = -2
+const FD_DUP_OUT = -3
+
+/// The zero terminated string at address a.
+fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
+
+/// A malloc'd zero terminated copy of s for the C runtime to free (the
+/// block rt.heap_large returns starts 8 bytes after malloc's address).
+fn c_owned(s: Str) -> Int {
+  let a = rt.heap_large(s.len() + 1) - 8
+  rt.mem_copy(a, raw.data(s), s.len())
+  rt.mem_store(a, s.len(), 0, 1)
+  a
+}
+
+/// s with its first letter in lower case (Go's errno texts).
+fn lower_first(s: Str) -> Str {
+  let b = s.bytes()
+  if b.len() > 0 && b[0] >= 65 && b[0] <= 90 {
+    return rt.str_of_byte(Int(b[0]) + 32) + rt.str_slice(s, 1, s.len())
+  }
+  s
+}
+
+/// stat of path (following links) on layer l: the mode and 0, or the
+/// errno.
+fn mode_of(l: Int, path: Str) -> (Int, Int) {
+  if l == 2 {
+    let (st, e) = darwin.stat(path, true)
+    return (st.mode, e)
+  }
+  let (st, e) = linux.stat(path, true)
+  (st.mode, e)
+}
+
+/// Whether path is executable by this process (access X_OK).
+fn executable(l: Int, path: Str) -> Bool {
+  let z = path + "\u{0}"
+  let r = if l == 2 { Int(sys_darwin.access(raw.data(z), 1)) } else { linux.access_at(raw.data(z), 1) }
+  r == 0
+}
+
+/// exec.LookPath of a name without a slash: the first executable regular
+/// file of that name in PATH, or "".
+fn look_path(l: Int, cmd: Str) -> Str {
+  let path = process.real_env_get("PATH")
+  if path.is_empty() {
+    return ""
+  }
+  for d0 in path[0].split(":") {
+    let d = if d0.is_empty() { "." } else { d0 }
+    let full = d + "/" + cmd
+    let (mode, e) = mode_of(l, full)
+    if e == 0 && (mode & 61440) == 32768 && (mode & 73) != 0 && executable(l, full) {
+      return full
+    }
+  }
+  ""
+}
+
+/// Starts the command named by the C string name (argv and envp the C's
+/// NULL ended arrays, envp 0 for the program's environment; dir 0 for
+/// the program's) with standard streams inf, outf, errf (descriptors or
+/// FD_*): '0' started, '1' not found, '2' failed; the pid and the
+/// message (a malloc'd C string, or 0) in the two words at res. A port of
+/// xo_proc.c's pr_start for macOS (posix_spawn) and Linux (fork and
+/// execve, UNTESTED on Linux).
+pub fn start(name: Int, dir: Int, argv: Int, envp0: Int, inf: Int, outf: Int, errf: Int, res: Int) -> Int {
+  let l = sysio.layer()
+  let nm = cstr(name)
+  rt.mem_store(res, 0, 0, 8)
+  rt.mem_store(res, 8, 0, 8)
+  var file = nm
+  if !nm.contains("/") {
+    file = look_path(l, nm)
+    if file.is_empty() {
+      rt.mem_store(res, 8, c_owned(nm), 8)
+      return 49
+    }
+  }
+  if dir != 0 {
+    // os.StartProcess checks the directory first
+    let d = cstr(dir)
+    let (_m, e) = mode_of(l, d)
+    if e != 0 {
+      let enoent = if l == 2 { 2 } else { linux.ENOENT }
+      if e == enoent {
+        rt.mem_store(res, 8, c_owned(nm), 8)
+        return 49
+      }
+      rt.mem_store(res, 8, c_owned("chdir ${d}: " + lower_first(sysio.err_msg(l, e))), 8)
+      return 50
+    }
+  }
+  if outf == FD_INHERIT || errf == FD_INHERIT || errf == FD_DUP_OUT {
+    // the program's output so far comes first
+    stdio.flush()
+  }
+  let envp = if envp0 == 0 { process.environ_addr() } else { envp0 }
+  let zfile = file + "\u{0}"
+  let (pid, e) = if l == 2 { spawn_darwin(raw.data(zfile), dir, argv, envp, inf, outf, errf) } else { spawn_linux(raw.data(zfile), dir, argv, envp, inf, outf, errf) }
+  let _k = zfile.len()
+  if e == 2 {
+    rt.mem_store(res, 8, c_owned(nm), 8)
+    return 49
+  }
+  if e != 0 {
+    rt.mem_store(res, 8, c_owned("fork/exec ${file}: " + lower_first(sysio.err_msg(l, e))), 8)
+    return 50
+  }
+  rt.mem_store(res, 0, pid, 8)
+  48
+}
+
+/// posix_spawn of the zero terminated path at file: the pid and 0, or 0
+/// and the errno.
+fn spawn_darwin(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int) -> (Int, Int) {
+  // fa and at (a pointer each), the pid (4 bytes), the two sigsets
+  let buf = raw.bytes_buf(64)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 64)
+  let fa = b
+  let at = b + 8
+  let pidw = b + 16
+  let none = b + 24
+  let def = b + 32
+  let devnull = "/dev/null\u{0}"
+  let _i = sys_darwin.posix_spawn_file_actions_init(fa)
+  let fds = [inf, outf, errf]
+  for k in 0..3 {
+    let fd = fds[k]
+    if fd == FD_NULL {
+      let _a = sys_darwin.posix_spawn_file_actions_addopen(fa, k, raw.data(devnull), if k == 0 { 0 } else { 1 }, 0)
+    } else if fd == FD_INHERIT {
+      let _a = sys_darwin.posix_spawn_file_actions_addinherit_np(fa, k)
+    } else if fd == FD_DUP_OUT {
+      let _a = sys_darwin.posix_spawn_file_actions_adddup2(fa, 1, 2)
+    } else {
+      let _a = sys_darwin.posix_spawn_file_actions_adddup2(fa, fd, k)
+    }
+  }
+  if dir != 0 {
+    let _a = sys_darwin.posix_spawn_file_actions_addchdir_np(fa, dir)
+  }
+  let _j = sys_darwin.posix_spawnattr_init(at)
+  // SIGPIPE 13, SIGINT 2, SIGTERM 15 back to their defaults; no mask
+  rt.mem_store(def, 0, (1 << 12) | (1 << 1) | (1 << 14), 4)
+  // POSIX_SPAWN_SETSIGDEF 4, SETSIGMASK 8, CLOEXEC_DEFAULT 0x4000
+  let _f = sys_darwin.posix_spawnattr_setflags(at, 4 | 8 | 16384)
+  let _s = sys_darwin.posix_spawnattr_setsigmask(at, none)
+  let _d = sys_darwin.posix_spawnattr_setsigdefault(at, def)
+  let e = Int(sys_darwin.posix_spawn(pidw, file, fa, at, argv, envp))
+  let _x = sys_darwin.posix_spawn_file_actions_destroy(fa)
+  let _y = sys_darwin.posix_spawnattr_destroy(at)
+  let pid = rt.mem_load(pidw, 0, 4)
+  let _k = buf.len() + devnull.len()
+  if e != 0 { (0, e) } else { (pid, 0) }
+}
+
+/// fork and execve of the zero terminated path at file, as Go's
+/// forkAndExecInChild: the child makes only system calls over addresses
+/// prepared here, and reports a failed exec's errno through a close on
+/// exec pipe. The pid and 0, or 0 and the errno. UNTESTED on Linux.
+fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int) -> (Int, Int) {
+  // the error pipe (two 4 byte words), the zeroed sigaction and sigset
+  // (32 bytes at 8), the errno word (at 48), "/dev/null" (at 56)
+  let buf = raw.bytes_buf(80)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 80)
+  let dn = "/dev/null"
+  rt.mem_copy(b + 56, raw.data(dn), dn.len())
+  if linux.pipe2(b, linux.O_CLOEXEC) < 0 {
+    return (0, 24)
+  }
+  let rd = rt.mem_load(b, 0, 4)
+  let wr = rt.mem_load(b, 4, 4)
+  let pid = linux.fork()
+  if pid == 0 {
+    child(file, dir, argv, envp, inf, outf, errf, b, wr)
+  }
+  let _c = linux.close(wr)
+  if pid < 0 {
+    let _r = linux.close(rd)
+    return (0, -pid)
+  }
+  // 4 bytes of errno when the exec failed; none (the pipe closed by the
+  // exec) when it succeeded
+  var got = linux.read_at(rd, b + 48, 4)
+  while got == -linux.EINTR {
+    got = linux.read_at(rd, b + 48, 4)
+  }
+  let _r = linux.close(rd)
+  let _k = buf.len()
+  if got == 4 {
+    let e = rt.mem_load(b, 48, 4)
+    // reap the child that failed to exec
+    let _w = wait_any(pid)
+    return (0, e)
+  }
+  (pid, 0)
+}
+
+/// The child of spawn_linux: system calls only, then execve; on failure
+/// writes the errno to wr and exits 127. Never returns.
+fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, b: Int, wr: Int) {
+  // default signal handlers for SIGPIPE, SIGINT, SIGTERM; an empty mask
+  let _p = linux.rt_sigaction(13, b + 8, 0)
+  let _i = linux.rt_sigaction(2, b + 8, 0)
+  let _t = linux.rt_sigaction(15, b + 8, 0)
+  let _m = linux.rt_sigprocmask(2, b + 40, 0)
+  var e = child_fd(inf, 0, b)
+  if e == 0 {
+    e = child_fd(outf, 1, b)
+  }
+  if e == 0 {
+    e = child_fd(errf, 2, b)
+  }
+  if e == 0 && dir != 0 {
+    let r = linux.chdir_at(dir)
+    if r < 0 {
+      e = -r
+    }
+  }
+  if e == 0 {
+    e = -linux.execve(file, argv, envp)
+  }
+  rt.mem_store(b, 48, e, 4)
+  let _w = linux.write_at(wr, b + 48, 4)
+  let _x = linux.exit_group(127)
+}
+
+/// Standard stream k of the child from fd (or FD_*): 0, or the errno.
+fn child_fd(fd: Int, k: Int, b: Int) -> Int {
+  if fd == FD_INHERIT {
+    return 0
+  }
+  var src = fd
+  if fd == FD_NULL {
+    src = linux.open_at(b + 56, if k == 0 { linux.O_RDONLY } else { linux.O_WRONLY })
+    if src < 0 {
+      return -src
+    }
+  } else if fd == FD_DUP_OUT {
+    src = 1
+  }
+  if src == k {
+    // dup3 refuses one descriptor twice: clear its close on exec flag
+    let r = linux.set_fd_flags(k, 0)
+    return if r < 0 { -r } else { 0 }
+  }
+  let r = linux.dup3(src, k, 0)
+  return if r < 0 { -r } else { 0 }
+}
+
+/// waitpid(pid) of a child that failed to exec (wait4, blocking).
+fn wait_any(pid: Int) -> Int { linux.wait4(pid, 0) }

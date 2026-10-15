@@ -639,6 +639,42 @@ pub fn readlink(path: Str) -> (Str, Int) {
 
 /// getcwd(2): the working directory, "." when the system has none to
 /// give (as the C runtime's).
+// The calls of a process start (std/native/llrt/proc.xo, work item B25):
+// the child between fork and execve makes only these, over addresses
+// prepared before the fork, so it neither allocates nor locks. UNTESTED
+// on Linux (the zero-C push, 2026-10-14).
+
+/// clone(2) as fork (SIGCHLD only): the child's pid in the parent, 0 in
+/// the child, or the negative errno.
+pub fn fork() -> Int { rt.sys6(nr(220, 56), 17, 0, 0, 0, 0, 0) }
+
+/// pipe2(2) into the two 4 byte words at a: 0, or the negative errno.
+pub fn pipe2(a: Int, flags: Int) -> Int { rt.sys6(nr(59, 293), a, flags, 0, 0, 0, 0) }
+
+/// dup3(2): newfd, or the negative errno.
+pub fn dup3(fd: Int, newfd: Int, flags: Int) -> Int { rt.sys6(nr(24, 292), fd, newfd, flags, 0, 0, 0) }
+
+/// fcntl(2) F_SETFD of fd: 0, or the negative errno.
+pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nr(25, 72), fd, 2, flags, 0, 0, 0) }
+
+/// chdir(2) of the zero terminated path at a: 0, or the negative errno.
+pub fn chdir_at(a: Int) -> Int { rt.sys6(nr(49, 80), a, 0, 0, 0, 0, 0) }
+
+/// openat(2) of the zero terminated path at a: the descriptor, or the
+/// negative errno.
+pub fn open_at(a: Int, flags: Int) -> Int { rt.sys6(nr(56, 257), AT_FDCWD, a, flags, 0, 0, 0) }
+
+/// faccessat(2) of the zero terminated path at a: 0, or the negative
+/// errno.
+pub fn access_at(a: Int, mode: Int) -> Int { rt.sys6(nr(48, 269), AT_FDCWD, a, mode, 0, 0, 0) }
+
+/// wait4(2) of pid, blocking (options 0) or WNOHANG (1), the status
+/// word not kept: the pid, 0, or the negative errno.
+pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, 0, options, 0, 0, 0) }
+
+/// execve(2): returns only on failure, the negative errno.
+pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), file, argv, envp, 0, 0, 0) }
+
 /// kill(2) of signal sig to pid: 0, or the negative errno.
 pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0, 0) }
 

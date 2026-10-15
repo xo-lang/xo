@@ -102,6 +102,32 @@ pub fn environ() -> List[Str] {
   out
 }
 
+/// The address of the program's environment array (environ).
+pub fn environ_addr() -> Int { rt.mem_load(rt.static_word(WORDS), ENVP, 8) }
+
+/// getenv(name) of the real environment (not a test's fake): the value in
+/// a list of one, or the empty list.
+pub fn real_env_get(name: Str) -> List[Str] {
+  let envp = environ_addr()
+  if envp == 0 {
+    return []
+  }
+  let p = raw.data(name)
+  let n = name.len()
+  var k = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    if entry_is(e, p, n, fold_case()) {
+      return [cstr(rt.int_wrap(0, e, rt.int_wrap(0, n, 1)))]
+    }
+    k = rt.int_wrap(0, k, 1)
+  }
+  []
+}
+
 /// argv[i] (0 <= i < argc).
 fn arg(i: Int) -> Str { cstr(rt.mem_load(rt.mem_load(rt.static_word(WORDS), ARGV, 8), 8 * i, 8)) }
 

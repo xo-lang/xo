@@ -8,6 +8,7 @@
 // (std/llrt/xo_proc.c's pr_parse, pr_dedup, pr_abs, pr_w_quote; decision
 // 0198 deleted that C path, `XO_LLRT_C=procspec`); process creation stays
 // C.
+use native/llrt/cabi_proc
 use native/llrt/fsops
 use native/llrt/process
 use native/rt

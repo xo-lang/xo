@@ -654,31 +654,43 @@ static void pr_close(int *fd) {
 static char pr_w_spawn(pr_cmd *c, const char *file, const int *fds, pid_t *pid, char **msg);
 #endif
 
+// std/native/llrt/cabi_proc.xo's export, built when the program builds
+// procspec.xo (it runs commands); a program that only fakes them (a
+// test's FakeProc) never starts one and links this weak stand in.
+__attribute__((weak)) int64_t xo_x_proc_spawn_start(int64_t name, int64_t dir, int64_t argv, int64_t envp, int64_t in, int64_t out, int64_t err, int64_t res) {
+	(void)name;
+	(void)dir;
+	(void)argv;
+	(void)envp;
+	(void)in;
+	(void)out;
+	(void)err;
+	((int64_t *)(intptr_t)res)[0] = 0;
+	((int64_t *)(intptr_t)res)[1] = 0;
+	return '2';
+}
+
 static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg) {
-	char *file = c->name;
-#ifdef _WIN32
-	file = pr_look_path(c->name); // PATHEXT's extensions apply to paths too
+#ifndef _WIN32
+	// std/native/llrt/proc.xo start (work item B25): posix_spawn on macOS,
+	// fork and execve on Linux
+	int64_t r[2] = {0, 0};
+	char st = (char)xo_x_proc_spawn_start(XO_ADDR(c->name), XO_ADDR(c->dir), XO_ADDR(c->argv), XO_ADDR(c->envp), in, out, err, XO_ADDR(r));
+	*pid = (pid_t)r[0];
+	*msg = (char *)(intptr_t)r[1];
+	return st;
+#else
+	char *file = pr_look_path(c->name); // PATHEXT's extensions apply to paths too
 	if (!file) {
 		*msg = cstr_of(c->name, (int64_t)strlen(c->name));
 		return '1';
 	}
-#else
-	if (!strchr(c->name, '/')) {
-		file = pr_look_path(c->name);
-		if (!file) {
-			*msg = cstr_of(c->name, (int64_t)strlen(c->name));
-			return '1';
-		}
-	}
-#endif
 	if (c->dir) {
 		// os.StartProcess checks the directory first
 		struct stat sb;
 		if (stat(c->dir, &sb) != 0) {
 			int e = errno;
-			if (file != c->name) {
-				free(file);
-			}
+			free(file);
 			if (e == ENOENT) {
 				*msg = cstr_of(c->name, (int64_t)strlen(c->name));
 				return '1';
@@ -696,70 +708,10 @@ static char pr_start(pr_cmd *c, int in, int out, int err, pid_t *pid, char **msg
 	if (out == PR_INHERIT || err == PR_INHERIT || err == PR_DUP_OUT) {
 		xo_flush(); // the program's output so far comes first
 	}
-#ifdef _WIN32
 	int wfds[3] = {in, out, err};
 	char wst = pr_w_spawn(c, file, wfds, pid, msg);
-	if (file != c->name) {
-		free(file);
-	}
+	free(file);
 	return wst;
-#else
-	posix_spawn_file_actions_t fa;
-	posix_spawnattr_t at;
-	posix_spawn_file_actions_init(&fa);
-	int fds[3] = {in, out, err};
-	for (int k = 0; k < 3; k++) {
-		int fd = fds[k];
-		if (fd == PR_NULL) {
-			posix_spawn_file_actions_addopen(&fa, k, "/dev/null", k == 0 ? O_RDONLY : O_WRONLY, 0);
-		} else if (fd == PR_INHERIT) {
-#ifdef __APPLE__
-			posix_spawn_file_actions_addinherit_np(&fa, k);
-#endif
-		} else if (fd == PR_DUP_OUT) {
-			posix_spawn_file_actions_adddup2(&fa, 1, 2);
-		} else {
-			posix_spawn_file_actions_adddup2(&fa, fd, k);
-		}
-	}
-	if (c->dir) {
-		posix_spawn_file_actions_addchdir_np(&fa, c->dir);
-	}
-	posix_spawnattr_init(&at);
-	sigset_t none, def;
-	sigemptyset(&none);
-	sigemptyset(&def);
-	sigaddset(&def, SIGPIPE);
-	sigaddset(&def, SIGINT);
-	sigaddset(&def, SIGTERM);
-	short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
-	flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-#endif
-	posix_spawnattr_setflags(&at, flags);
-	posix_spawnattr_setsigmask(&at, &none);
-	posix_spawnattr_setsigdefault(&at, &def);
-	int e = posix_spawn(pid, file, &fa, &at, c->argv, c->envp ? c->envp : environ);
-	posix_spawn_file_actions_destroy(&fa);
-	posix_spawnattr_destroy(&at);
-	char st = '0';
-	if (e == ENOENT) {
-		*msg = cstr_of(c->name, (int64_t)strlen(c->name));
-		st = '1';
-	} else if (e != 0) {
-		char m[1024];
-		snprintf(m, sizeof m, "fork/exec %s: %s", file, strerror(e));
-		size_t k = strlen("fork/exec ") + strlen(file) + 2;
-		if (k < sizeof m && m[k] >= 'A' && m[k] <= 'Z') {
-			m[k] = (char)(m[k] + 32);
-		}
-		*msg = cstr_of(m, (int64_t)strlen(m));
-		st = '2';
-	}
-	if (file != c->name) {
-		free(file);
-	}
-	return st;
 #endif
 }
 
