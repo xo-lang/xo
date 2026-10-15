@@ -79,7 +79,7 @@ darwin/arm64, linux/arm64, and linux/amd64) unpacks to
 ```
 xo-<version>-<os>-<arch>/bin/xo          the toolchain
 xo-<version>-<os>-<arch>/bin/xo-gobind   the Go binder helper (`use go`)
-xo-<version>-<os>-<arch>/lib/xo/         std, third_party, the prebuilt C runtime
+xo-<version>-<os>-<arch>/lib/xo/         std, the prebuilt C runtime
 ```
 
 Keep the layout: `bin/xo` finds std and the runtime in `../lib/xo`

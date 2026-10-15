@@ -1,6 +1,6 @@
 # Mbed TLS: an RSA key in PKCS#8 fails mbedtls_pk_check_pair
 
-Status: Observed (2026-10-15, reported by Xo Lang 2 from
+Status: Observed (2026-10-15, reported by Xo Lang 2 from Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 http_tls_keys under XO_LLRT_C=tlssrv. Main fails the same way, since
 its http.tls_cert is all C.)
 

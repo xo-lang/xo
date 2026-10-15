@@ -1,6 +1,6 @@
 # The TLS library's objects hold common symbols
 
-Status: Observed (2026-10-12, decision 0182)
+Status: Observed (2026-10-12, decision 0182) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: the self hosted linker (`selfhost/macho`) linked every arm64
 golden but the std/http ones, which failed with `libxotls.a(...

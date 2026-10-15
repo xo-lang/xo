@@ -1,6 +1,6 @@
 # Mbed TLS computes X25519 public keys without HACL*
 
-Status: Observed (2026-10-10, decision 0117)
+Status: Observed (2026-10-10, decision 0117) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: with Everest (HACL* X25519, `MBEDTLS_ECDH_VARIANT_EVEREST_ENABLED`)
 on, a native HTTPS server still spent 41 percent of each TLS 1.3 handshake

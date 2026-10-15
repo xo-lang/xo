@@ -1,6 +1,6 @@
 # Mbed TLS fills its cipher suite list lazily without a lock
 
-Status: Observed (2026-10-09, decision 0105)
+Status: Observed (2026-10-09, decision 0105) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: the `http_tls` golden under ThreadSanitizer with four `main`s at
 once (TestGoldenThreads, `XO_RT_TEST_THREADS=4`) aborted with a data race

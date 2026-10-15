@@ -170,8 +170,8 @@ func Key(root string) (string, error) {
 // through `use` lines, followed through the std files themselves
 // (std/NAME.xo and std/native/NAME.xo for `use std/NAME`;
 // std/native/NAME.xo for `use native/NAME`; std/native/llrt/NAME.xo and
-// NAME_c.xo for `use native/llrt/NAME`). The other std modules, the C
-// runtime (std/llrt), and third_party are read by xo at run time from
+// NAME_c.xo for `use native/llrt/NAME`). The other std modules and the
+// C runtime (std/llrt) are read by xo at run time from
 // the checkout (<bin>/../std), so a change there needs no new xo.
 func Inputs(root string) ([]string, error) {
 	in := map[string]bool{}

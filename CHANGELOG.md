@@ -39,6 +39,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of the C entries, which stay for code of earlier compilers. arm64 at or
   under the step before; LLVM string heavy text 1.02
   (bench/results/generated-entries-2026-10-15.md).
+- Mbed TLS and fiat-crypto removed (owner approval 2026-10-15; decision
+  0202 supersedes 0105 and 0134): third_party/ (Mbed TLS 4.1.1 and
+  fiat-crypto, 9 MB), their vendor scripts, std/llrt/xo_tls.c and
+  xo_http.c's TLS section, std/native/llrt tlsio_c.xo, tlssrv_c.xo,
+  cabi_tls.xo and tlscert.xo's Mbed parts, rthttp.xo's TLS declarations,
+  the build glue (selfhost/xo tls.xo: needs_tls, the library's build and
+  cache; the link's tls flags; rtpack's libxotls.a and TLS variants, pack
+  format 2 with 16 variants; internal/xotool tls.go), the
+  `<user cache>/xo/mbedtls` cache, $XO_TLS_CACHE, `xo rtpack --ar`, and
+  TestTLSLeaks (Mbed's own allocations). `XO_LLRT_C=tlsio` and `tlssrv`
+  now fail as unknown C paths; XO_NOLIBC builds take TLS programs. Needs
+  a seed of 0.12.0 or later: the 0.11.0 seed cannot build xo from these
+  sources (gotchas/seed-0.11-links-frameworks-only-for-mbed.md).
 - Fix: `xo test --no-gc` hung on tests that sleep under the virtual
   clock since B22 remnants batch 2 (0e1771fd): poll.xo read the virtual
   clock at a word index where its constant was a byte offset

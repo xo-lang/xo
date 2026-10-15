@@ -272,3 +272,19 @@ std (decision 0074) unless the owner decides to expose a user marker.
     P-521 on TLS 1.3 and 1.2, and both new hybrids on TLS 1.3 (alone and
     next to X25519MLKEM768) for Go's clients against the Xo server: 0
     cells differ on LLVM and arm64.
+
+- 2026-10-15 (the owner approved the removal; xo-4b): Mbed TLS and
+  fiat-crypto removed, superseding decisions 0105 and 0134:
+  third_party/mbedtls and third_party/fiat-crypto (and their vendor
+  scripts), std/llrt/xo_tls.c and xo_http.c's TLS section, tlsio_c.xo,
+  tlssrv_c.xo, cabi_tls.xo, tlscert.xo's Mbed parts, rthttp.xo's TLS
+  declarations, the build glue (selfhost/xo tls.xo, needs_tls and the
+  tls flags of the link, the TLS cache key, rtpack's libxotls.a and TLS
+  variants: pack format 2; internal/xotool tls.go), the
+  `<user cache>/xo/mbedtls` cache and $XO_TLS_CACHE, TestTLSLeaks.
+  `XO_LLRT_C=tlsio` and `tlssrv` now fail as unknown C paths; XO_NOLIBC
+  builds take TLS programs. The 0.11.0 seed cannot build xo from these
+  sources (it links the Security framework only for a program that
+  calls the Mbed C; gotchas/seed-0.11-links-frameworks-only-for-mbed.md),
+  so the removal lands right after the 0.12.0 seed (branch
+  mbed-removal).

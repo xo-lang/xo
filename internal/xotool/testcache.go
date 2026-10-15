@@ -115,13 +115,6 @@ func ccKey(flags, srcs []string) (string, error) {
 	}
 	h := sha256.New()
 	fmt.Fprintf(h, "cc1\n%s\n%s\n%s/%s\n%s\n%q\n", clang, ccVersion(clang), runtime.GOOS, runtime.GOARCH, os.Getenv("XO_SYSROOT"), flags)
-	if usesTLS(srcs) {
-		th, err := tlsSourceHash()
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(h, "tls %s %v\n", th, tlsFlavor(flags))
-	}
 	var compile []string
 	for _, f := range flags {
 		if !strings.HasPrefix(f, "-l") && !strings.HasPrefix(f, "-Wl,") {

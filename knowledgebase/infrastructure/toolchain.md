@@ -251,7 +251,7 @@ go run ./cmd/xo gendump [--test] [--no-mono] [--no-ranges] [--no-arenas] [--rele
 go run ./cmd/xo run selfhost/gen -- [--std=DIR] [--wd=DIR] [--each] [--test] [--no-mono] [--no-ranges] [--no-arenas] [--release] [--no-error-args] [--prep] <dirs...>   # the self hosted (Xo) Go code generator: checks with selfhost/check, prints the text of each package before internal/gen's last step (with --prep after it but gofmt), then == skipped (last verified: 2026-10-11)
 go run ./cmd/xo build -o xo1 selfhost/xo && ./xo1 build --backend=go [-o OUT] [--go-tree=DIR] <dir>   # the Xo driver with the Go backend: selfhost/gen, format_prep, gofmt of go env GOROOT, runtime copied from std/rt, zone data from go env GOROOT's zoneinfo.zip (or XO_ZONEINFO), go build -trimpath (decision 0167; last verified: 2026-10-11)
 go test ./internal/selfhost -run 'TestSelfhostGen'    # Xo Go code generator vs internal/gen, declaration by declaration (temporaries renumbered) and whole files after gofmt, on every repository run as a program and, with test blocks, as a test binary; every fourth run also with --no-mono --no-ranges --release --no-error-args; the merge tier without the five largest runs, the full tier every run and variant (go, arm64, llvm builds), every 25th with -short (merge tier with mutations about 30 s); TestSelfhostGenMutations: 60 code mutations (merge), 300 (full); XO_SELFHOST_BACKEND, XO_SELFHOST_GEN_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes gen-<backend>.txt); decision 0167 (last verified: 2026-10-11)
-go run ./cmd/xo run selfhost/xo -- build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=darwin/arm64|linux/arm64] [-o OUT] [--asm=PATH] [--run=SUB --seed=N --cases=N --json -v] <dir>   # xo1, the self hosted compiler driver (decisions 0158, 0174): selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) links as internal/build does: the runtime from a prebuilt pack ($XO_RTPACK, else lib/xo/rtpack beside the binary named by $_) or the runtime object cache (<user cache>/xo/rtobj, $XO_RTOBJ_CACHE), the TLS library of std/http (<user cache>/xo/mbedtls, $XO_TLS_CACHE; sources from DIR/../third_party), the zone data of std/time (xo_tzdata.c; $XO_ZONEINFO or go env GOROOT), `use c` adapters from cbind's cache, the macOS SDKs internal/build tries; every key equal to the Go driver's, so both share the caches and link byte identical binaries; --target=linux/arm64 writes the assembly only (as internal/build); `test` builds and runs a native test binary as `xo test --no-gc` (no --real, no contract fuzz listing, no time limit); `keys` prints the pack keys and the TLS directory; `--backend=llvm` (build, test, asm) lowers with selfhost/llvm and compiles the IR (OUT.ll, or --asm) with clang ($XO_CLANG, else clang, or --cc) as buildLLVM does with one module: clang's target attributes, -O2 -flto -Wno-override-module, no XO_LLVM_SPLIT (decision 0178); not the released xo (last verified: 2026-10-12)
+go run ./cmd/xo run selfhost/xo -- build|test|asm|keys [--std=DIR] [--wd=DIR] [--cc=CC] [--tzdata=embedded|system] [--target=darwin/arm64|linux/arm64] [-o OUT] [--asm=PATH] [--run=SUB --seed=N --cases=N --json -v] <dir>   # xo1, the self hosted compiler driver (decisions 0158, 0174): selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) links as internal/build does: the runtime from a prebuilt pack ($XO_RTPACK, else lib/xo/rtpack beside the binary named by $_) or the runtime object cache (<user cache>/xo/rtobj, $XO_RTOBJ_CACHE), the zone data of std/time (xo_tzdata.c; $XO_ZONEINFO or go env GOROOT), `use c` adapters from cbind's cache, the macOS SDKs internal/build tries; every key equal to the Go driver's, so both share the caches and link byte identical binaries; --target=linux/arm64 writes the assembly only (as internal/build); `test` builds and runs a native test binary as `xo test --no-gc` (no --real, no contract fuzz listing, no time limit); `keys` prints the pack keys; `--backend=llvm` (build, test, asm) lowers with selfhost/llvm and compiles the IR (OUT.ll, or --asm) with clang ($XO_CLANG, else clang, or --cc) as buildLLVM does with one module: clang's target attributes, -O2 -flto -Wno-override-module, no XO_LLVM_SPLIT (decision 0178); not the released xo (last verified: 2026-10-12)
 XO_CLI=/abs/xo1 go test ./cmd/xo -run TestX     # cmd/xo's tests against another xo binary (decision 0178 stage 2): the tests' run() execs `$XO_CLI <args>` in the current directory and environment instead of the in process runXo (cmd/xo/cli_test.go; the value is split on spaces, so it may carry flags) (last verified: 2026-10-12)
 xo build --backend=arm64 -o xomod selfhost/cli/modules/xomod && XO_CLI=$PWD/xomod XOMOD_FALLBACK=/abs/xo go test -short ./cmd/xo -run TestModules   # the module commands in Xo (selfhost/cli/modules, decision 0178 stage 4) on their own: xomod runs get, mod, vendor, publish, audit and hands every other command to the Go xo named by $XOMOD_FALLBACK (not XO_GO, which names the go command); xo1 dispatches the same commands to the same package (last verified: 2026-10-12)
 xo1 query|edit <args...>  /  xo build -o semantic selfhost/cli/semantic && ./semantic query|edit|defhash <args...>   # the semantic tools in Xo (decision 0178 stage 3, selfhost/cli/semantic): `xo query` (every kind, hash included) and `xo edit`, with the Go tool's flags, exit codes, and JSON; std from $XO_STD, else lib/xo/std beside the binary named by $_, else the std/ of the repository above the working directory; `semantic defhash DIR=PATH...` prints every definition hash of each module for TestSelfhostDefhash (last verified: 2026-10-12)
@@ -274,16 +274,16 @@ xo1 build|run|test [flags] [dir ...]                 # decision 0178 stage 1: xo
 python3 scripts/macho-compare.py <macho> <file.s...>   # macho asm against cc -c on each file: identical objects, functions, sections, relocation tables (symbols by name), sizes, time; MACHO_KEEP=1 keeps the objects; inputs from `xo asmdump <dir>` (decision 0182; last verified: 2026-10-12)
 ./macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...   # the self hosted Mach-O linker (decision 0182): objects and archives into a PIE MH_EXECUTE with __stubs, __got, chained fixups (DYLD_CHAINED_PTR_64_OFFSET), __unwind_info from the compact unwind entries, thread local descriptors, common symbols, an exports trie of __mh_execute_header, an ad hoc code signature; imports bound to libSystem (ordinal 1), or by flat lookup when --dylib adds a dylib; LC_BUILD_VERSION 11.0/11.0 by default (last verified: 2026-10-12)
 xo1 build --as=macho ...                                 # xo1 assembles with selfhost/macho (writes OUT.o) and cc links the object; xo dev goldens --flags='--as=macho' runs the goldens that way (decision 0182; last verified: 2026-10-12)
-xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant (and TLS library); else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
+xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc, no `use c` source is linked, and the pack ($XO_RTPACK or lib/xo/rtpack beside xo1) has the link's runtime variant; else cc as before. A linux host keeps cc until the ELF linker writes PIE. `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
 xo1 build|run|test --backend=arm64|llvm with XO_NOLIBC=1   # Linux targets (decision 0206, stage 1, opt in): a static executable with no C library: the runtime compiled with -DXO_NOLIBC -ffunction-sections -fdata-sections -fno-stack-protector -U_FORTIFY_SOURCE (-mno-outline-atomics on arm64, also in the LLVM IR's target attributes), the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo under the C names, decision 0230; std/llrt/xo_nolibc.c keeps _start and the variadic printf shells), linked -static -nostdlib -Wl,--gc-sections with cc (not --ld=macho); refused for `use c` programs, programs that load TLS certificates or roots (std/http without them links with the runtime's TLS stubs since 2026-10-13: https fails at run time), and XO_LLRT_C=net; a C library function the program reaches that the shim lacks fails the link naming it (faults unwind through the Xo unwinder of decision 0221 on linux/arm64, which needs -Wl,--eh-frame-hdr and defines xo_personality with --defsym; on linux/amd64 they still end the program without unwinding; no floating point printf). Sockets, the poller's epoll, and name resolution are Xo (std/native/llrt/sock.xo, dns.xo through cabi_net.xo and cabi_poll.xo, decision 0206 stage 3) in every Linux build; XO_LLRT_C=net builds dynamic programs with the C library's sockets and getaddrinfo. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text); any other name, sysio among them since decision 0198, fails the build (selfhost/xo/main.xo llrt_c_names, 2026-10-14). Last verified: 2026-10-14
 xo1 build --backend=arm64 with XO_INLINE_STRICT=1   # a build whose inlined arm64 module does not verify fails (selfhost/xo main.xo inline_or_say); without it the build says so on standard error, naming the function and the first error, and goes on without inlining. internal/xotool sets it for every Go test; XO_INLINE_BREAK=1 breaks the inlined module on purpose (internal/arm64 TestInlineFallbackLoud). Last verified: 2026-10-15
-xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; std/http adds the pack's libxotls.a and the Security and CoreFoundation frameworks); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO_RTPACK=DIR xo dev goldens --flags=--ld=macho --build-path=/nonexistent builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
+xo1 build --ld=macho ...                                 # no cc: selfhost/macho assembles and links with the runtime of a prebuilt pack ($XO_RTPACK or lib/xo/rtpack beside xo1; a program calling the Security framework adds it and CoreFoundation); std/time's zone data is written as an object (ld.xo tz_object; the zip from XO_ZONEINFO, else lib/xo/zoneinfo.zip beside xo1's lib/xo or beside $XO_RTPACK, else go env GOROOT); `use c` sources still need cc; XO_RTPACK=DIR xo dev goldens --flags=--ld=macho --build-path=/nonexistent builds every golden with an empty PATH (decision 0182; last verified: 2026-10-12)
 ./macho asm --elf [-o OUT.o] IN.s                      # the self hosted ELF assembler (decision 0182 stage 3): the emitter's linux/arm64 assembly (`xo asmdump --os=linux`) into an ELF64 relocatable object byte identical to `clang --target=aarch64-linux-gnu -c` (RELA relocations, mapping symbols, the DW.ref.xo_personality COMDAT, .eh_frame); numeric labels (`1:`, `1b`) (last verified: 2026-10-12)
 python3 scripts/elf-compare.py <macho> <file.s...>    # macho asm --elf against $ELF_CC -c (default `clang --target=aarch64-linux-gnu`, Apple clang works) on each file: identical objects, functions, sections, relocation tables (symbols by name); ELF_KEEP=1 keeps the objects, ELF_VERBOSE=1 names differences (decision 0182; last verified: 2026-10-12)
 ./macho elflink -o OUT [--interp=PATH] IN.o|IN.a...   # the self hosted ELF linker (decision 0182 stage 3): objects and archives (GNU or BSD ar) into a dynamically linked ET_EXEC for glibc at 0x400000: _start and the outline atomics (__aarch64_*) synthesized, imports versioned from selfhost/macho/glibc.xo (libm, libpthread, libgcc_s, libc NEEDED), calls through 16 byte stubs and GOT slots bound at load (GLOB_DAT, BIND_NOW), TLS descriptors relaxed to local exec, .eh_frame_hdr, a .symtab of functions and objects (last verified: 2026-10-12)
 xo1 build --target=linux/arm64 --ld=macho ...          # from any host, no cc: the linux/arm64 executable, selfhost/macho assembling and linking with the runtime of the linux/arm64 pack in $XO_RTPACK (std/time's zone data as an ELF object, ld.xo tz_object_elf); `--as=macho` alone writes the ELF object for cc on a linux host (decision 0182 stage 3; last verified: 2026-10-12)
 python3 scripts/elf-glibc-versions.py DIR > selfhost/macho/glibc.xo   # regenerate the ELF linker's import versions from a linux/arm64 libc.so.6, libm.so.6, libpthread.so.0, libgcc_s.so.1 (copied out of debian:bullseye, glibc 2.31; command in the script) (decision 0182; last verified: 2026-10-12)
-xo rtpack --target=linux/arm64 --cc="clang --target=aarch64-linux-gnu --sysroot=DIR" --ar=ARCHIVER   # a linux pack on macOS without zig: DIR from `apt-get download libc6-dev linux-libc-dev` in debian:bullseye extracted with dpkg-deb (bullseye's security mirror 404s for apt-get install); ARCHIVER must write GNU archives (llvm-ar, zig ar): Apple's ar empties libxotls.a (gotchas/apple-ar-drops-elf-members.md) (last verified: 2026-10-12)
+xo rtpack --target=linux/arm64 --cc="clang --target=aarch64-linux-gnu --sysroot=DIR"   # a linux pack on macOS without zig: DIR from `apt-get download libc6-dev linux-libc-dev` in debian:bullseye extracted with dpkg-deb (bullseye's security mirror 404s for apt-get install); no archiver since the TLS library's removal (2026-10-15)
 go test ./internal/selfhost -run 'TestSelfhostArm64'    # Xo arm64 emitter vs internal/arm64, piece by piece (functions with their call site tables, helpers, literals, xo_entry; program wide label counters renamed), on every repository run both SSA builders build completely: every second run without arm64Heavy (the mergeHeavy runs and selfhost/parser) in the merge tier (421 s, 295 s of it the go subtest, in the 1,329 s merge tier of 2026-10-12, which still emitted selfhost/llvm; not remeasured since), every run in the full tier (go, arm64, llvm builds), every 25th with -short; TestSelfhostArm64Mutations: 30 code mutations (merge), 300 (full), none with -short; XO_SELFHOST_BACKEND, XO_SELFHOST_ARM64_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_KEEP=<dir> (writes arm64-<backend>.txt); XO_SELFHOST_DIRS=text,text takes the runs whose directory contains one of the texts instead of the tier's (a targeted run, as TestSelfhostSSA; added 2026-10-12, decision 0184); decision 0158 (last verified: 2026-10-12)
 go run ./cmd/xo build --backend=llvm -o .tools/xossa selfhost/ssa   # native build of the Xo SSA builder (also --backend=arm64; the LLVM build links for about 10 minutes)
 go test ./internal/selfhost -run 'TestSelfhostSSA'      # Xo SSA builder (go, arm64, llvm in the full tier; go otherwise, and every 25th run with -short) vs internal/ssa's build stage, function by function, on every repository run (closures compared by rank in their function, poison types skipped), then every pass stage (the merge tier compares only the build stage of the mergeHeavy runs, tier_test.go: huge_frame and every selfhost/ component but the lexer and the parser; 115 s plus 492 s for its go subtest in the 1,329 s merge tier of 2026-10-12, before selfhost/arm64, selfhost/llvm, and selfhost/xo were build only), and 400 code mutations (TestSelfhostSSAMutations: the first 300 in the merge tier, none under -short; XO_SELFHOST_SSA_FUZZ=N, XO_SELFHOST_SEED, XO_SELFHOST_BACKEND); XO_SELFHOST_BACKEND=go|arm64|llvm also limits TestSelfhostSSA to one backend (about 25 s warm for go, a development loop); XO_SELFHOST_KEEP=<dir> writes ssa-<backend>.txt, the counts and every reason a function was skipped (last verified: 2026-10-11)
@@ -815,8 +815,8 @@ Last verified: 2026-10-07
   P-256, P-384; ECDSA P-256, RSA-2048, Ed25519; TLS 1.2) and bulk reads
   (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) of std/http's client
   against crypto/tls servers (serve/, its own PID, stopped at the end),
-  built with the Xo TLS and with Mbed TLS (`XO_LLRT_C=tlsio`); prints
-  `<workload> <backend> <xo|mbed> <min instructions> <best wall ms>`
+  built with the Xo TLS (Mbed TLS, the other side until 2026-10-15, is
+  removed); prints `<workload> <backend> xo <min instructions> <best wall ms>`
   (N handshakes, default 200; SIZE bytes, default 64 MiB; PORT and the
   next 9). Through the heavy lock. Results in
   `bench/results/tls-perf-2026-10-15.md`. Last verified: 2026-10-15.
@@ -1346,17 +1346,9 @@ std/rt/                 package rt, the runtime linked into every program (Go, e
                         by std/embed.go as std.Runtime and copied into each build)
 std/llrt/               xo_rt.c, the C runtime of the LLVM and arm64 backends (embedded as std.LLRuntime),
                         and the files it includes: xo_std.c, xo_bytes.c,
-                        xo_http.c (decisions 0074, 0081; TLS wrappers only: the server, its connections,
-                        sinks, and the client are std/native/llrt/hconn.xo, hserve.xo, h2srv.xo, hclient.xo),
-                        xo_tls.c (TLS on Mbed TLS, decision 0105);
+                        xo_http.c (decisions 0074, 0081; weak stand-ins and forwarders only: the server,
+                        its connections, sinks, the client and TLS are std/native/llrt's Xo);
                         testdata/*.c, C tests and differential drivers (not embedded)
-third_party/mbedtls/    Mbed TLS 4.1.1 for xo_tls.c (decision 0105, see "TLS library"): src/ (vendored,
-                        unmodified), mbedtls.tgz (its compressed copy, embedded), xo/ (configuration,
-                        interposed functions: xo_tls_accel.c, xo_p256.c)
-third_party/fiat-crypto/  fiat-crypto's P-256 field and scalar C (decision 0134): src/ (vendored, unmodified,
-                        embedded), SHA256SUMS, license files, README.md (commit, how chosen)
-scripts/vendor-mbedtls.sh  downloads, checks, and vendors an Mbed TLS release
-scripts/vendor-fiat-crypto.sh  downloads fiat-crypto's files at the pinned commit and checks their SHA-256
 scripts/release.sh      builds the release archives into dist/ (decision 0157, see "Prebuilt runtime")
 scripts/disttar/        writes a reproducible .tar.gz of a directory (release.sh)
 std/native/             std implemented in Xo for the native backends (decision 0074): <name>.xo
@@ -1925,8 +1917,8 @@ first, AST based prototype, since deleted) and
   compares whole standard error, frame lines included. The
   differences from the Go backend are listed in decision 0074 (a fault
   in a handler exits; no `http.stream`). HTTPS (std.md 4.6) is
-  std/llrt/xo_tls.c on Mbed TLS since 2026-10-09 (decisions 0105, 0106;
-  see "TLS library"), with HTTP/2 over it since 2026-10-10 (decision
+  Xo (decision 0202; Mbed TLS from 2026-10-09 to 2026-10-15, decisions
+  0105, 0106; see "TLS"), with HTTP/2 over it since 2026-10-10 (decision
   0121; std/native/llrt/h2srv.xo since 2026-10-14, xo_h2.c before):
   serve_conn asks `hc_h2` after the handshake, then runs each stream's
   request as a task of a scope of the connection's task (`h2srv`
@@ -2218,8 +2210,9 @@ Last verified: 2026-10-11. Results:
 `bench/results/prebuilt-runtime-2026-10-11.md`.
 
 - A pack is `<root>/<os>-<arch>/`: `rt*.o`, one object of std/llrt per
-  variant (32: the subsets of `-DXO_TIME`, `-DXO_FS`, `-DXO_STDIN`,
-  `-DXO_PROC`, and TLS; `RTVariant.File`), `libxotls.a` (Mbed TLS), and
+  variant (16: the subsets of `-DXO_TIME`, `-DXO_FS`, `-DXO_STDIN`,
+  `-DXO_PROC`; `RTVariant.File`; 32 with TLS and a `libxotls.a` until
+  format 2, 2026-10-15), and
   `rtpack.json` (format, target, key, compiler, flags, SHA-256 per
   file). Packs exist for darwin/arm64 and linux/arm64 (the arm64
   backend's targets). About 16 MB per target.
@@ -2231,16 +2224,14 @@ Last verified: 2026-10-11. Results:
   exactly `-O2` plus a variant's defines (the arm64 backend's), the
   manifest's key equals `build.RTPackKey(Host())` (pack format, target,
   `rtPackFlags`, the variant table, the runtime sources embedded in
-  `std.LLRuntime`, the TLS library's sources and configuration; not the
-  compiler), and the file's SHA-256 matches. Otherwise the runtime is
+  `std.LLRuntime`; not the compiler; format 2 since 2026-10-15: 16
+  variants, no TLS library), and the file's SHA-256 matches. Otherwise the runtime is
   compiled locally into `<user cache>/xo/rtobj` (`XO_RTOBJ_CACHE`, or
   `off`), as before. `XO_RTPACK=off` forces the local compile. The
   binary cache key includes the pack (`rtPackID`).
 - Pack flags (`rtPackFlags`): `-O2 -g0 -fexceptions -funwind-tables`;
   darwin `-mmacosx-version-min=11.0`; Linux `-fPIC -moutline-atomics`;
-  TLS library files add `-w`. Every compile maps its work directory to
-  `/xo` (`-ffile-prefix-map`); `normalizeAr` zeroes the archive's member
-  times, owners, and groups (mode 644).
+  Every compile maps its work directory to `/xo` (`-ffile-prefix-map`).
 - Compilers: darwin/arm64 the host's Apple clang (21.0.0 on
   2026-10-11); linux/arm64 zig cc 0.15.1 `-target
   aarch64-linux-gnu.2.31` with `zig ar`, cross compiled on the Mac (zig
@@ -2263,111 +2254,21 @@ Last verified: 2026-10-11. Results:
   byte identical, and TestRTPackUse: used, off, another key, a bad
   checksum), `cmd/xo/rtpack_test.go`, `scripts/disttar/main_test.go`.
 
-## TLS library (native std/http, decisions 0105, 0106, 0117, 0134)
+## TLS (native std/http, decision 0202)
 
-Last verified: 2026-10-10.
-
-- Library: Mbed TLS 4.1.1 (LTS, maintained until March 2029), with
-  TF-PSA-Crypto, Apache-2.0. Pinned release tarball
-  `https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.1/mbedtls-4.1.1.tar.bz2`,
-  SHA-256 `3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c`
-  (the release's own `mbedtls-4.1.1-sha256sum.txt` agrees).
-  `third_party/mbedtls/src/` holds its `.c` and `.h` files the runtime
-  compiles, unmodified (the tarball ships the generated sources, so no
-  Perl or Python is needed); `xo/xo_tls_config.h` and
-  `xo/xo_crypto_config.h` are the Xo configuration (TLS 1.2 and 1.3,
-  ECDHE, server session tickets, no DTLS, PSK, session cache,
-  renegotiation, debug, or file I/O; threading on; SHA-256 and SHA-512
-  instructions when the CPU has them). `xo/xo_tls_accel.c` is compiled
-  into the archive and replaces library functions without patching them
-  (decision 0117): `mbedtls.FileDefines` gives single library files extra
-  flags, `-D<fn>=xo_builtin_<fn>` renames the original, and the Xo file
-  defines the name (X25519 public keys through HACL*, P-256 inverses by
-  Fermat, a spinning lock for the library's mutexes); `xo/xo_p256.c`
-  replaces ECDSA P-256 signing and verification
-  (`mbedtls_psa_ecdsa_sign_hash`, `mbedtls_psa_ecdsa_verify_hash`,
-  decision 0134) with code on fiat-crypto, byte identical signatures.
-- fiat-crypto (decision 0134): `third_party/fiat-crypto/src/p256_64.c`
-  and `p256_scalar_64.c` from github.com/mit-plv/fiat-crypto at commit
-  `f3ecb2cf1f771de34771e967193ee7f0ee0b0acf` (2026-10-09), unmodified,
-  MIT or Apache-2.0 or BSD-1-Clause; SHA-256 of each file pinned in
-  `scripts/vendor-fiat-crypto.sh` and listed in `SHA256SUMS`
-  (TestVendored). Package `third_party/fiat-crypto` embeds them;
-  `mbedtls.Tree` puts them at `fiat-crypto/src/` of the extracted tree
-  (an include directory; `xo_p256.c` includes them) and the archive's
-  cache key hashes them. Update: set the commit in the script, run it
-  with `UPDATE=1` for the new sums, pin them, run it again, set
-  `fiatcrypto.Commit` and the README, then run
-  `go test ./third_party/fiat-crypto` and the TLS tests below.
-  `mbedtls.tgz` is `src/` compressed (1.3 MB; the xo
-  binary embeds it instead of the 6.5 MB of sources), made by
-  `go generate ./third_party/mbedtls`; TestArchive fails when it does
-  not match `src/`.
-- Update: `scripts/vendor-mbedtls.sh <version> <sha256>`, then set
-  `Version` in `third_party/mbedtls/mbedtls.go`, the pinned values in the
-  script and here, and run `go test ./third_party/mbedtls ./internal/build`
-  and `go test ./internal/llvm -run 'TestTLSDiff|TestGolden.*/http_tls'`.
-- Build (internal/build/tls.go): a native link whose generated code names
-  a std/http runtime function (`xo_cl_start`, `xo_srv_new`, `xo_tls_*`) is
-  compiled with `-DXO_TLS`, the library's include directories and
-  configuration defines, and linked with `libxotls.a` (plus `-framework
-  Security -framework CoreFoundation` on macOS, for the system's roots).
-  The archive is built on first use per C compiler, compiler version,
-  sysroot, host, and sanitizer flags (`-fsanitize=...` of the link) into
-  `<user cache>/xo/mbedtls/4.1.1-<key>/` (`$XO_TLS_CACHE` overrides the
-  root): the tree is extracted, every library `.c` compiled with
-  `-O2 -fexceptions -funwind-tables` in parallel (about 2 to 3 s), and
-  archived with `ar` (`$XO_AR`, else `ar`, else `llvm-ar`). Other
-  programs compile xo_tls.c's stubs and link nothing of it.
-- Native builds are host only (the arm64 backend writes other arm64
-  targets as assembly only), so the library is compiled by the same
-  clang as the runtime on each OS: darwin/arm64, linux/arm64, and
-  linux/amd64 (the containers of "Linux (containers)") build and pass
-  the TLS tests. Nothing in it is architecture specific beyond what
-  Mbed TLS detects itself (AES-NI on x86-64, the ARMv8 crypto extension
-  on arm64).
-- Handshake load: `SCHEME=https NEWCONN=1 [RESUME=1] CONFIGS="xo xo-llvm"
-  bench/perf/http/run.sh` (a full, or with RESUME=1 a resumed, handshake
-  per request); profile the server with `sample <pid> 4` (2026-10-10:
-  15k full handshakes/s native against 17k on the Go backend; after
-  decision 0134, 251 us of server CPU per full handshake native against
-  227 us on the Go backend, `bench/results/native-runtime-2026-10-10.md`
-  sections 1 and 6). `CONFIGS="xo-base-llvm ..." XO_BASE=<old xo>` builds
-  the LLVM server with another compiler for before and after runs.
-- HTTP/2 (decision 0121, `std/native/llrt/h2srv.xo` since 2026-10-14,
-  `std/llrt/xo_h2.c` before): ALPN offers `h2` then
-  `http/1.1` on the server and the client (`tls_alpn`); the server's
-  connection fiber reads TLS without waiting (`tls_nb_read`: the bio's
-  `nb` flag turns EAGAIN into `MBEDTLS_ERR_SSL_WANT_READ`) and parks on
-  the socket and its streams at once (`poll.pd_wait_or_signal`); TLS 1.2 with a CBC
-  suite gets GOAWAY INADEQUATE_SECURITY (`tls_h2_bad_cipher`). Load:
-  `SCHEME=https H2=1 CONFIGS="xo xo-llvm xo-arm64" bench/perf/http/run.sh`
-  (loadgen `-h2`: the workers' requests are streams of one connection;
-  2026-10-10: 87.8k req/s native, 58.2k on the Go backend,
-  `bench/results/http2-2026-10-10.md`). Last verified: 2026-10-10.
-- Sizes (stripped, darwin/arm64, 2026-10-09): a std/http program grows
-  by about 250 KB with the LLVM backend (336 to 582 KB) and 340 KB with
-  the arm64 backend (375 to 711 KB); an HTTPS server and client program is
-  599 KB (LLVM) and 711 KB (arm64), against 7.8 MB on the Go backend.
-- Tests: `go test ./internal/build -run TestTLSLibrary` (builds the
-  archive into a temporary cache and links a C program with it);
-  `go test ./internal/build -run TestTLSAccel` (testdata/tls_accel.c:
-  xo_tls_accel.c against RFC 6979 and RFC 7748 answers and against the
-  renamed library functions on random inputs, and xo_p256.c's P-256
-  signatures byte for byte and verification on 800 keys and messages);
-  `go test ./internal/build -run 'TestP256$|TestTLSAccelSanitizers'`
-  (xo_p256.c against Go's crypto/ecdsa RFC 6979 signatures, and
-  Wycheproof's P-256 P1363 vectors when `XO_WYCHEPROOF_DIR` names a
-  directory of them; tls_accel.c under ASan and UBSan);
-  `XO_P256_BENCH=2000 go test ./internal/build -run TestP256Bench -v`
-  (signing and verification times, 2026-10-10: 23 us and 94 us against
-  the library's 110 us and 377 us);
-  `go test ./internal/llvm -run TestTLSDiff` (about 15 s: an HTTPS program
-  with the Go, LLVM, and arm64 backends against Go peers, certificates made
-  in `t.TempDir()`); `TestTLSLeaks` (Linux only: the `http_tls` golden
-  under AddressSanitizer with LeakSanitizer on, passes on linux/arm64
-  2026-10-09); the `http_tls` golden (committed test only
-  certificates valid to 2120, plus an expired and a not yet valid one).
+TLS on the native backends is Xo: std/native/llrt/tlsio.xo (client),
+tlssrv.xo (server) over tls13.xo, tls12.xo, tls13srv.xo, tls12srv.xo,
+x509.xo, x509verify.xo, nistec.xo, mlkem.xo and the other crypto modules.
+Nothing is compiled or cached for it; on macOS a program whose TLS client
+verifies the system's roots links the Security and CoreFoundation
+frameworks (selfhost/xo link.xo framework_args). Mbed TLS and
+fiat-crypto (decisions 0105, 0134; third_party/mbedtls,
+third_party/fiat-crypto, std/llrt/xo_tls.c, the `<user cache>/xo/mbedtls`
+library cache and `$XO_TLS_CACHE`, `XO_LLRT_C=tlsio` and `tlssrv`, the
+prebuilt packs' libxotls.a) were removed on 2026-10-15. The 0.11.0 seed
+links the frameworks only for a program that calls the Mbed C, so it
+cannot build xo from these sources; seeds from 0.12.0 on can. Last
+verified: 2026-10-15.
 
 ## Linux (containers)
 

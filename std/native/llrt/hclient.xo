@@ -7,8 +7,7 @@
 // (2026-10-14) also the exchange's start (cl_start: the pool, the dial,
 // the TLS handshake) and the response's record (R_*, a handle made here,
 // freed by cresp_free) with its ccon (C_*). The C keeps the dial's
-// sockets (netconn.xo dial_timeout); TLS is tlsio.xo (its C path
-// tlsio_c.xo: xo_tls.c on Mbed TLS).
+// sockets (netconn.xo dial_timeout); TLS is tlsio.xo (decision 0202).
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hconn
@@ -938,7 +937,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   rt.mem_store(c, C_FD, rt.mem_load(pd, 8, 4), 4)
   st(c, C_WHEN, dl)
   if https {
-    // the TLS handshake (tlsio.xo; its C path xo_tls.c): its failures are
+    // the TLS handshake (tlsio.xo): its failures are
     // Protocol errors with crypto/tls's texts, or Timeout and Canceled
     let started = tlsio.client(pd, tls_host, roots, dl)
     let ts = started.status

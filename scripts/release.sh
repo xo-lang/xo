@@ -40,7 +40,6 @@
 #   xo-<version>-<os>-<arch>/bin/xo                      xo1
 #   xo-<version>-<os>-<arch>/bin/xo-gobind               the Go binder helper (`use go`)
 #   xo-<version>-<os>-<arch>/lib/xo/std/                 std (with llrt and rt)
-#   xo-<version>-<os>-<arch>/lib/xo/third_party/         the TLS library's sources
 #   xo-<version>-<os>-<arch>/lib/xo/rtpack/<os>-<arch>/  the prebuilt C runtime (arm64 targets)
 #   xo-<version>-<os>-<arch>/lib/xo/zoneinfo.zip         Go's zone database, for std/time
 #                                                        (decision 0157 next step 1: no Go needed)
@@ -115,13 +114,13 @@ fi
 
 stage_of() { echo "$dist/xo-$version-${1%/*}-${1#*/}"; }
 
-# the layout around bin/xo: lib/xo (the tracked files of std and
-# third_party), bin/xo-gobind, the docs
+# the layout around bin/xo: lib/xo (the tracked files of std),
+# bin/xo-gobind, the docs
 layout() {
 	local target=$1 stage
 	stage=$(stage_of "$target")
 	mkdir -p "$stage/bin" "$stage/lib/xo"
-	git ls-files -z std third_party | rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
+	git ls-files -z std | rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
 	# the zone database std/time embeds (selfhost/xo tz.xo looks here
 	# before `go env GOROOT`)
 	cp "$(go env GOROOT)/lib/time/zoneinfo.zip" "$stage/lib/xo/zoneinfo.zip"
@@ -151,7 +150,7 @@ xo1="$darwin/bin/xo"
 zcache="$dist/.zig-cache"
 ZIG_GLOBAL_CACHE_DIR="$zcache" ZIG_LOCAL_CACHE_DIR="$zcache" \
 	"$xo1" rtpack --target=linux/arm64 \
-	--cc="$zig cc -target aarch64-linux-gnu.$linux_glibc" --ar="$zig ar" \
+	--cc="$zig cc -target aarch64-linux-gnu.$linux_glibc" \
 	-o "$linux_arm64/lib/xo/rtpack" >&2
 
 echo "== linux/arm64: xo1 cross builds xo1 (selfhost/macho's ELF link, no cc)" >&2

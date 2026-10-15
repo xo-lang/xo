@@ -121,8 +121,8 @@ static inline int pthread_mutex_unlock(pthread_mutex_t *m) {
 
 static inline int pthread_mutex_trylock(pthread_mutex_t *m) { return TryAcquireSRWLockExclusive(m) ? 0 : EBUSY; }
 
-// condition variables (the TLS library's threading, which then skips
-// third_party/mbedtls/xo/win/pthread.h: the same subset)
+// condition variables (Mbed TLS's threading took these; xo-fa removes
+// what only it used)
 #define XO_WIN_PTHREAD_H 1
 typedef CONDITION_VARIABLE pthread_cond_t;
 #define PTHREAD_COND_INITIALIZER CONDITION_VARIABLE_INIT

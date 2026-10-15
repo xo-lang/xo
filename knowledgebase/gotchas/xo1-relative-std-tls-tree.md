@@ -1,6 +1,6 @@
 # xo1 with a relative --std could not build the TLS library
 
-Status: Observed, fixed (2026-10-12, decision 0178 stage 7)
+Status: Observed, fixed (2026-10-12, decision 0178 stage 7) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: on a clean Linux machine (no TLS archive in the cache), the
 self hosted `xo` run from the repository root with its default

@@ -5,7 +5,7 @@
 // every function here in every native program (the native prelude
 // imports it), and the emitters give each a global C symbol; the
 // modules cabi_<feature>.xo are markers too, for exports only the C of a
-// feature calls (cabi_tls.xo, cabi_time.xo), imported by that feature's
+// feature calls (cabi_time.xo), imported by that feature's
 // implementation module so only its programs carry them. Parameters
 // are Int (an address is an Int) or Float; the result is an Int, a
 // Float, nothing, or a Str (returned as its string object, its length
@@ -542,7 +542,6 @@ fn budget_mark(c: Int) { budget.mark(c) }
 
 fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
 
-
 // ---------------------------------------------------------------------------
 // Tasks and scopes (std/native/llrt/tasks.xo, the zero-C audit's B18):
 // generated code calls these directly; xo_rt.c's entry points forward.
@@ -577,7 +576,6 @@ fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site
 fn scope_open() -> Int { tasks.scope_open() }
 
 fn scope_close(s: Int, mode: Int) -> Int { tasks.scope_close(s, mode) }
-
 
 // Mutex[T] (std/native/llrt/mutex.xo, B19): generated code calls these
 // directly; xo_rt.c's entry points forward. m a Mutex, l its value list.

@@ -4,7 +4,7 @@ Numbered 0132 until 2026-10-10, when it was renumbered because the
 mascot decision already had 0132; commit messages before then call it
 0132.
 
-Status: Implemented (2026-10-10). Amends 0105 and 0117 (the next step
+Status: Superseded by 0202 (2026-10-15: Mbed TLS and fiat-crypto removed). Was: Implemented (2026-10-10). Amends 0105 and 0117 (the next step
 0117 planned). Owner approval to vendor fiat-crypto: 0117, "Owner
 approval (2026-10-10)", repeated in the session on 2026-10-10. Code:
 `third_party/fiat-crypto/` (vendored, `scripts/vendor-fiat-crypto.sh`),

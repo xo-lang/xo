@@ -1,6 +1,6 @@
 # xotool.CompileC linked no TLS library after the Go compiler went
 
-Status: Observed, fixed (2026-10-13, netfix agent; Mac and linux/arm64).
+Status: Observed, fixed (2026-10-13, netfix agent; Mac and linux/arm64). Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: after decision 0215, internal/llvm's TestGoldenTasks (the
 ThreadSanitizer builds of the goldens that use tasks) failed to link

@@ -24,7 +24,7 @@ for p in internal/arm64/testdata/run/boxes internal/gen/testdata/golden/time_zon
 			[ "$mode" = off ] && pack=off
 			start=$(now)
 			XO_RTPACK=$pack XO_BUILD_DIR="$work/m/build" XO_BIN_CACHE=off \
-				XO_RTOBJ_CACHE="$work/m/rtobj" XO_TLS_CACHE="$work/m/tls" \
+				XO_RTOBJ_CACHE="$work/m/rtobj" \
 				"$xo" build --backend=arm64 -o "$work/m/out/prog" "$repo/$p" >"$work/log" 2>&1
 			rc=$?
 			end=$(now)

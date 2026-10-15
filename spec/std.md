@@ -1179,10 +1179,8 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   on TLS 1.2, as Go); the server takes `X25519MLKEM768`, X25519, P-256
   and P-384, and P-256 and P-384 ECDSA certificate keys. On macOS the
   system's roots are checked by the Security framework through the same
-  calls Go makes. `XO_LLRT_C=tlsio` and
-  `XO_LLRT_C=tlssrv` select the earlier Mbed TLS client and server
-  (decision 0105): the same texts, except that Ed25519 certificate keys
-  are not accepted and the key exchange never uses the hybrids or P-521.
+  calls Go makes. (Mbed TLS, decision 0105, was removed on 2026-10-15;
+  `XO_LLRT_C=tlsio` and `tlssrv` are gone with it.)
 - Environment switches, for compatibility and debugging (read by the
   runtime, every backend unless noted):
   - `XO_TLS_MLKEM=0`: the client offers none of the ML-KEM hybrids, so

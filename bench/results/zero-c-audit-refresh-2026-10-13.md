@@ -687,6 +687,8 @@ instruction count against Mbed's).
 
 **Status 2026-10-15 (part 18): steps 1 to 3 below are done; the default path links no Mbed TLS and no fiat-crypto (nm of http_tls on arm64 and LLVM). The rest of this section is the plan as written before them.**
 
+**Status 2026-10-15 (removal, owner approved): done on branch mbed-removal, to land right after the 0.12.0 seed (the 0.11.0 seed cannot build xo without the Mbed trigger: gotchas/seed-0.11-links-frameworks-only-for-mbed.md). Everything listed under "What the deletion removes" is gone, plus rtpack's TLS variants (pack format 2), `xo rtpack --ar`, xo_rt.c's x_read and x_write, and TestTLSLeaks; xo_win.c's Mbed only pthread and localtime_r parts are xo-fa's follow up.**
+
 **On the default (Xo) path.** Client and server run in Xo (tlsio.xo over
 tls13.xo and tls12.xo; tlssrv.xo over tls13srv.xo and tls12srv.xo).
 Parsing, verification, key exchange (X25519MLKEM768, X25519, P-256,

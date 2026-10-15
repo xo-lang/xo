@@ -2,8 +2,8 @@
 // decision 0206 stage 2), written in Xo (the zero-C audit's B04,
 // decision 0230): every top level function here is exported under its
 // bare C name (malloc, free, ...), not xo_x_<name>, and only in an
-// XO_NOLIBC build (selfhost/ssa declare_exports), where the C runtime,
-// mbedtls, and std/llrt/xo_nolibc.c's remaining C call them as the C
+// XO_NOLIBC build (selfhost/ssa declare_exports), where the C runtime
+// and std/llrt/xo_nolibc.c's remaining C call them as the C
 // library's. The LLVM emitter gives these functions "no-builtins", so
 // the optimizer does not turn their own loops into calls of themselves
 // (memset's loop into memset, calloc's malloc and memset into calloc).

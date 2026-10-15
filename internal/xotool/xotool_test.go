@@ -37,7 +37,7 @@ func repoRoot(t *testing.T) string {
 
 // TestInputs: the key covers selfhost/ and the std modules it reaches
 // (the prelude, std/json through selfhost's `use` lines), not the C
-// runtime or third_party, which xo reads at run time.
+// runtime, which xo reads at run time.
 func TestInputs(t *testing.T) {
 	root := repoRoot(t)
 	in, err := Inputs(root)
@@ -47,7 +47,7 @@ func TestInputs(t *testing.T) {
 	has := map[string]bool{}
 	for _, n := range in {
 		has[n] = true
-		if strings.HasPrefix(n, "std/llrt/") || strings.HasPrefix(n, "third_party/") || strings.HasSuffix(n, ".go") {
+		if strings.HasPrefix(n, "std/llrt/") || strings.HasSuffix(n, ".go") {
 			t.Errorf("%s is an input", n)
 		}
 	}

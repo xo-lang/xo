@@ -33,7 +33,6 @@ trap 'rm -rf "$tmp"' EXIT
 cp -R "$root/std" "$tmp/std"
 cp "$here/litmus.xo.in" "$tmp/std/litmus.xo"
 cp "$here/native_litmus.xo.in" "$tmp/std/native/litmus.xo"
-ln -s "$root/third_party" "$tmp/third_party"
 mkdir "$tmp/prog"
 cp "$here/main.xo.in" "$tmp/prog/main.xo"
 fail=0

@@ -1,13 +1,11 @@
 // The HTTP server's TLS in Xo (the zero-C audit's B31, decision 0202):
 // http.tls_cert's certificate and key (tls.X509KeyPair, with Go's error
 // texts), the server's certificates, and its connections: tls13srv.xo's
-// server over the accepted connection's socket, with the waits of
-// xo_tls.c's bio_send and bio_recv (the poll descriptor, the deadline,
-// cancellation), its handshake and HTTP detection, its reads (waiting,
-// and without waiting for h2srv.xo's fiber), writes and close_notify.
-// hserve.xo, hconn.xo and http.xo call this file; its C path,
-// tlssrv_c.xo (XO_LLRT_C=tlssrv, decision 0193), forwards the same
-// calls to xo_tls.c on Mbed TLS. A ClientHello without TLS 1.3 goes to
+// server over the accepted connection's socket, with the waits of a
+// socket (the poll descriptor, the deadline, cancellation), its
+// handshake and HTTP detection, its reads (waiting, and without waiting
+// for h2srv.xo's fiber), writes and close_notify. hserve.xo, hconn.xo
+// and http.xo call this file. A ClientHello without TLS 1.3 goes to
 // xo-fa's tls12srv.xo (tls13srv.xo's HANDOFF). Not here yet: session
 // tickets (Go's server sends them; Mbed's path does) and client
 // certificates (never asked for, as Go's default). Windows and Linux
@@ -359,8 +357,7 @@ pub fn conn(h: Int, pd: Int) -> Int {
 }
 
 /// Runs the server's handshake: whether it succeeded. A client that
-/// sent plain HTTP gets net/http's answer (xo_tls.c's
-/// tls_server_handshake).
+/// sent plain HTTP gets net/http's answer.
 pub fn handshake(t: Int) -> Bool {
   var c = match load(t) {
     Some(x) => x

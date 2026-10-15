@@ -551,3 +551,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [slot-atomics-index-words.md](slot-atomics-index-words.md): Observed: rt.slot_load(tw, TW_VNOW) with a byte offset read word 8; test world sleeps hung in xo test --no-gc (poll.xo now, since B22 batch 2).
 - [xo-test-sigterm-grace.md](xo-test-sigterm-grace.md): Observed: a hung `xo test` keeps running 30 s after SIGTERM (core 7.5's grace); send the signal twice, never kill -9.
 - [native-server-unisolated-fault-wedges.md](native-server-unisolated-fault-wedges.md): Observed: a fault in a middleware or the connection code stopped the native HTTP server for everyone; both isolated now (main still affected).
+- [seed-0.11-links-frameworks-only-for-mbed.md](seed-0.11-links-frameworks-only-for-mbed.md): Observed: the 0.11.0 seed links the Security framework only with Mbed TLS, so it cannot build xo after the removal; xobuild's fallback hides it.

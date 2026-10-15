@@ -1,6 +1,6 @@
 # 0105: Native TLS on Mbed TLS 4.1 (not BoringSSL)
 
-Status: Accepted (2026-10-09). Amended by 0117 (2026-10-10): session
+Status: Superseded by 0202 (2026-10-15: Mbed TLS and fiat-crypto removed). Was: Accepted (2026-10-09). Amended by 0117 (2026-10-10): session
 tickets on, handshakes about twice as fast. Amended by 0121
 (2026-10-10): ALPN offers `h2` first on the server and the client
 (HTTP/2 in `std/llrt/xo_h2.c`). Amended by 0134 (2026-10-10): ECDSA

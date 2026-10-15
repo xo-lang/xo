@@ -24,8 +24,7 @@
 // body within the peer's flow control windows. The frame writers and
 // checks are h2w.xo's; the connection's TLS reads and socket writes and
 // the stream connections the handlers get are hconn.xo's (h2_read,
-// send_at, stream), the TLS handshake hserve.xo's hc_h2 (Mbed TLS stays
-// C, xo_tls.c).
+// send_at, stream), the TLS handshake hserve.xo's hc_h2 (tlssrv.xo).
 //
 // The state the stream tasks share is in two malloc'd records, the
 // connection's (C_*) and a stream's (S_*), under the connection's lock

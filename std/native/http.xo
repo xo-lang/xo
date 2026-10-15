@@ -13,7 +13,6 @@ use native/llrt/http1
 use native/llrt/tlssrv
 use native/llrt/tlsio
 use native/llrt/cabi_http
-use native/llrt/cabi_tls
 use native/llrt/cabi_net
 use native/llrt/netpolicy
 use native/llrt/testworld

@@ -4,8 +4,8 @@
 // listens (the SSA builders' uses_net) or uses std/http
 // (std/native/http.xo imports this module). The network's operations
 // are netconn.xo's (std/llrt/xo_rt.c forwards xo_net_listen and the rest
-// here); xo_http.c's server and client and xo_tls.c read and write their
-// sockets through net_read and net_send. The C declares these weak (weak
+// here); net_read and net_send were the C's reads and writes (xo_http.c,
+// the TLS library's), which no C makes now. The C declares these weak (weak
 // definitions on macOS and Windows), so a program without them links.
 // Nothing here may fault.
 use native/llrt/dns

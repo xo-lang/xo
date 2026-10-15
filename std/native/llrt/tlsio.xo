@@ -1,13 +1,12 @@
 // The HTTP client's TLS connections in Xo (the zero-C audit's B31,
 // decision 0202): the client of tls13.xo over the connection's socket,
 // one ClientHello offering TLS 1.3 and 1.2 as Go's does, the handshake
-// going on in tls12.xo when the server chooses 1.2 (no second try), with the waits of xo_tls.c's bio_send and bio_recv (the poll
-// descriptor, the deadline, cancellation) and its texts of a failed
-// handshake. hclient.xo calls this file; its C path, tlsio_c.xo
-// (XO_LLRT_C=tlsio, decision 0193), forwards the same calls to xo_tls.c
-// on Mbed TLS. On macOS with the system's roots the Security framework
-// verifies, as Go's (tlscert.apple_trust). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
-// Windows and Linux are UNTESTED.
+// going on in tls12.xo when the server chooses 1.2 (no second try),
+// with the waits of a socket (the poll descriptor, the deadline,
+// cancellation) and crypto/tls's texts of a failed handshake. hclient.xo
+// calls this file. On macOS with the system's roots the Security
+// framework verifies, as Go's (tlscert.apple_trust). Windows and Linux
+// are UNTESTED.
 use native/llrt/hconn
 use native/llrt/poll
 use native/llrt/process
@@ -147,7 +146,7 @@ fn keep(a: rt.Any) -> Int {
 /// AppendCertsFromPEM: the CERTIFICATE blocks that parse), and the error
 /// of a PEM with none. A Roots value holding them is the record of an
 /// rt.Any (a handle, which the pool of HTTP/2 connections counts); the
-/// system's roots stay the C's record (xo_tls.c sys_roots).
+/// system's roots are one such record (roots_system).
 struct RootsData {
   certs: List[x509.Cert]
   err: Str
@@ -230,8 +229,7 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 
 /// The client's handshake on poll descriptor pd for host (the URL's
 /// host, IPv6 in brackets) with roots (a rthttp.Roots record) by the
-/// deadline dl (0 none; and the 10 s TLSHandshakeTimeout), as
-/// xo_tls.c's tls_client_start.
+/// deadline dl (0 none; and the 10 s TLSHandshakeTimeout).
 pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   let data = match roots_data(roots) {
     Some(d) => d
@@ -395,8 +393,7 @@ fn fill(var c: Conn) -> Bool {
 }
 
 /// Reads decrypted bytes into the n bytes at p: the count, 0 at the end
-/// of the stream (close_notify or the socket's end), or -CC_* (xo_tls.c
-/// tls_read).
+/// of the stream (close_notify or the socket's end), or -CC_*.
 pub fn read(h: Int, p: Int, n: Int) -> Int {
   var c = match load(h) {
     Some(x) => x

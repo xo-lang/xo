@@ -1,6 +1,6 @@
 # A runtime symbol named xo_tls_* turns on the TLS library
 
-Status: Observed (2026-10-13, decision 0212)
+Status: Observed (2026-10-13, decision 0212) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: after adding thread local intrinsics named `rt.tls_get` and
 `rt.tls_set` (C symbols `xo_tls_get`, `xo_tls_set`), the C only runtime

@@ -117,15 +117,12 @@ func (e *ClangError) Error() string { return "clang: " + e.Output }
 // ($XO_CLANG, else clang) and flags, with unwind tables (the runtime
 // raises faults through every frame, decision 0085), the -l flags after
 // the sources, and -lm -lpthread (or lld on Windows); on macOS it tries
-// the SDKs of sysrootCandidates until one links. When generated code in
-// srcs calls std/http's runtime it also compiles with the TLS library's
-// flags and links the library (tls.go), built for the sanitizers of flags.
+// the SDKs of sysrootCandidates until one links.
 func compileC(flags, srcs []string, bin string) error {
 	clang, err := Clang()
 	if err != nil {
 		return err
 	}
-	tls := usesTLS(srcs)
 	var other, libs []string
 	for _, f := range flags {
 		if strings.HasPrefix(f, "-l") && len(f) > 2 {
@@ -139,18 +136,7 @@ func compileC(flags, srcs []string, bin string) error {
 		if root != "" {
 			args = append(args, "-isysroot", root)
 		}
-		var tlsLink []string
-		if tls {
-			// std/http's TLS (decision 0105)
-			c, l, err := tlsArgs(clang, other, root)
-			if err != nil {
-				return err.Error(), err
-			}
-			args = append(args, c...)
-			tlsLink = l
-		}
 		args = append(args, srcs...)
-		args = append(args, tlsLink...)
 		args = append(args, libs...)
 		if runtime.GOOS == "windows" {
 			args = append(args, "-fuse-ld=lld", "-Wl,/Brepro")
@@ -201,8 +187,7 @@ func compileC(flags, srcs []string, bin string) error {
 
 // FrameworkFlags is selfhost/xo link.xo framework_args: the Security and
 // CoreFoundation frameworks when a generated source calls the framework
-// (std/native/sys_darwin.xo, tlscert.xo apple_trust), whether or not the
-// program links Mbed TLS.
+// (std/native/sys_darwin.xo, tlscert.xo apple_trust).
 func FrameworkFlags(srcs []string) []string {
 	mark := []byte("SecTrust" + "EvaluateWithError")
 	for _, src := range srcs {

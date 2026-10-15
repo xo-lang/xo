@@ -1,6 +1,6 @@
 # Mbed TLS's SHA instruction check: a macOS compile error and a data race
 
-Status: Observed (2026-10-10, decision 0117)
+Status: Observed (2026-10-10, decision 0117) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom 1: with `MBEDTLS_SHA512_USE_A64_CRYPTO_IF_PRESENT` on, the TLS
 archive failed to build on macOS: `sha512.c` includes `<sys/sysctl.h>`,

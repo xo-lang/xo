@@ -1,10 +1,9 @@
 // HTTP intrinsics of the native backends (decision 0074), like
 // native/rt.xo: imported only by the implementation modules as
-// `use native/rthttp`. What is left of the C is TLS (std/llrt/xo_tls.c on
-// Mbed TLS, through std/llrt/xo_http.c's calls) and the dial; the
-// server, its connections, sinks, and the client's records are Xo's
-// (std/native/llrt/hconn.xo, hserve.xo, hclient.xo; the zero-C audit's
-// B28 part 3).
+// `use native/rthttp`. The server, its connections, sinks, the client's
+// records (std/native/llrt/hconn.xo, hserve.xo, hclient.xo; the zero-C
+// audit's B28 part 3) and TLS (tlsio.xo, tlssrv.xo; decision 0202) are
+// Xo's.
 use native/rt
 
 /// A server's connections and the scope of their tasks (hconn.xo SR_*).
@@ -18,53 +17,6 @@ struct CResp {}
 /// (hserve.xo SK_*).
 struct Sink {}
 
-/// A TLS connection's (xo_tls.c) read into the n bytes at p: the count,
-/// 0 at the end, or -CC_*; its write of n bytes at p: CC_*; the server's
-/// alert after a failure, "" for none (hclient.xo's connection).
-fn cl_tls_read(t: Int, p: Int, n: Int) -> Int
-fn cl_tls_write(t: Int, p: Int, n: Int) -> Int
-fn cl_tls_alert(t: Int) -> Str
-/// Frees a TLS connection (0: none); sets its deadline.
-fn cl_tls_free(t: Int)
-fn cl_tls_set_when(t: Int, when: Int)
-
-/// The server's TLS (xo_tls.c, hconn.xo and hserve.xo): a connection of
-/// server configuration s on poll descriptor pd; its read into the n
-/// bytes at p (the handshake first: the count, 0 at the end, < 0 on an
-/// error); its handshake (1: done); whether ALPN chose h2; why its cipher
-/// suite is too weak for HTTP/2 (1, the text zero terminated in the n
-/// bytes at p; 0: fine); a read without waiting (the count, 0 at the
-/// end, -1 on an error, -2 when nothing is there); its close_notify; and
-/// freeing a server configuration.
-fn tls_c_server(s: Int, pd: Int) -> Int
-fn tls_c_hc_read(t: Int, p: Int, n: Int) -> Int
-fn tls_c_handshake(t: Int) -> Int
-fn tls_c_alpn_h2(t: Int) -> Int
-fn tls_c_bad_cipher(t: Int, p: Int, n: Int) -> Int
-fn tls_c_nb_read(t: Int, p: Int, n: Int) -> Int
-fn tls_c_close_notify(t: Int)
-fn tls_c_srv_free(s: Int)
-/// The client's handshake on poll descriptor pd with the server name at
-/// host (a C string) and roots (a Roots record), by the deadline when (0:
-/// none): CC_*; the connection made goes to the word at out, a failure's
-/// text (zero terminated) to the mn bytes at msg, its kind (2: a Connect
-/// error, 4: Protocol) to the C int at kind.
-fn tls_c_client(pd: Int, host: Int, roots: Int, when: Int, out: Int, msg: Int, mn: Int, kind: Int) -> Int
-/// The Security framework's table when roots are the system's on macOS
-/// (Go verifies with the framework there), else 0.
-fn tls_c_apple_svc(roots: Int) -> Int
-
-/// TLS (decision 0105, std/llrt/xo_tls.c): a certificate chain with its
-/// private key (xo_tcert) and the roots a client trusts (xo_troots).
-struct TCert {}
+/// The roots a client trusts (std/native/llrt/tlsio.xo's record: the
+/// certificates parsed by x509.xo, or the system's).
 struct Roots {}
-/// tls.X509KeyPair; tls_cert_err is its error, "" when it succeeded.
-fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TCert
-fn tls_cert_err(c: TCert) -> Str
-/// The certificates of pem; tls_roots_err is "" when there is one.
-fn tls_roots(pem: Bytes) -> Roots
-fn tls_roots_err(r: Roots) -> Str
-/// The system's roots (loaded at the first https request).
-fn tls_roots_system() -> Roots
-/// Adds a certificate to the server; the first turns TLS on.
-fn srv_tls(s: Srv, c: TCert)

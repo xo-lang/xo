@@ -109,7 +109,7 @@ stage() {
   mkdir -p "$out/s$n" "$out/cache-s$n"
   say "s$n: $bin builds selfhost/xo"
   t0=$(date +%s)
-  if XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" XO_TLS_CACHE="$out/cache-s$n/tls" \
+  if XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
     "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else

@@ -79,7 +79,7 @@ for d in "${dirs[@]}"; do
 done
 (
   mkdir -p "$out/home"; export PATH=$newpath XO_GO=/nonexistent/go HOME="$out/home"
-  export XO_BUILD_DIR="$out/cache-nogo/build" XO_RTOBJ_CACHE="$out/cache-nogo/rtobj" XO_TLS_CACHE="$out/cache-nogo/tls" XO_BIN_CACHE=off
+  export XO_BUILD_DIR="$out/cache-nogo/build" XO_RTOBJ_CACHE="$out/cache-nogo/rtobj" XO_BIN_CACHE=off
   unset GOROOT GOPATH GOFLAGS GOTOOLCHAIN XO_STD XO_RTPACK XO_CLI XDG_CACHE_HOME
   if command -v go >/dev/null 2>&1; then echo "FAIL no-go-on-path ($(command -v go))"; exit 1; fi
   echo "PASS no-go-on-path"

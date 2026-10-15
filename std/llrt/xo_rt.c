@@ -2635,9 +2635,8 @@ _Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer
 // accept, reads and writes) from Xo. What the C still calls is below:
 // the poller's (its epoll, its pipe made nonblocking, a descriptor's
 // shutdown and close) through cabi_poll.xo's exports, which every
-// program has; xo_http.c's and xo_tls.c's reads and writes, and the
-// server's peer address, through cabi_net.xo's, which a program carries
-// when it dials, listens, or uses std/http. Those are weak references
+// program has; the server's peer address, through cabi_net.xo's, which
+// a program carries when it dials, listens, or uses std/http. Those are weak references
 // on ELF, so a program without them links (a program linked with no C
 // library has them as strong references, as before); Mach-O takes no
 // undefined weak reference (and PE/COFF's are weak externals with a
@@ -2652,8 +2651,6 @@ _Static_assert(offsetof(struct xo_timer, park) == 16 && offsetof(struct xo_timer
 #define XO_NX_REF __attribute__((weak))
 #endif
 XO_NX_REF int64_t xo_x_net_peername(int64_t fd, int64_t sa, int64_t lenp);
-XO_NX_REF int64_t xo_x_net_read(int64_t fd, int64_t p, int64_t n);
-XO_NX_REF int64_t xo_x_net_send(int64_t fd, int64_t p, int64_t n);
 XO_NX_REF int64_t xo_x_net_ntop(int64_t family, int64_t src, int64_t buf, int64_t bn);
 XO_NC_REF int64_t xo_x_nc_listen(int64_t lp, int64_t ln, int64_t p, int64_t n);
 XO_NC_REF int64_t xo_x_nc_dial(int64_t lp, int64_t ln, int64_t p, int64_t n);
@@ -2672,8 +2669,6 @@ XO_NC_REF void xo_x_nc_conn_free(int64_t cn);
 #define XO_NX_VSTUB(name, ...)                                                                                                \
 	__attribute__((weak)) void name(__VA_ARGS__) {}
 XO_NX_STUB(xo_x_net_peername, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_read, int64_t a, int64_t b, int64_t c)
-XO_NX_STUB(xo_x_net_send, int64_t a, int64_t b, int64_t c)
 XO_NX_STUB(xo_x_net_ntop, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_listen, int64_t a, int64_t b, int64_t c, int64_t d)
 XO_NX_STUB(xo_x_nc_dial, int64_t a, int64_t b, int64_t c, int64_t d)
@@ -2715,26 +2710,6 @@ static int nx_close(int fd) {
 	return nx_ret(xo_x_fd_close(fd));
 }
 #endif
-
-// x_read and x_write are a socket's read and write for xo_http.c and
-// xo_tls.c: the count, or minus the errno (the C runtime's on Windows).
-__attribute__((noinline)) static int64_t x_read(int fd, void *b, size_t n) {
-	STAT(net_read);
-	int64_t r = xo_x_net_read(fd, XO_ADDR(b), (int64_t)n);
-	if (r == -EAGAIN || r == -EWOULDBLOCK) {
-		STAT(net_again);
-	}
-	return r;
-}
-
-__attribute__((noinline)) static int64_t x_write(int fd, const void *b, size_t n) {
-	STAT(net_write);
-	int64_t r = xo_x_net_send(fd, XO_ADDR(b), (int64_t)n);
-	if (r == -EAGAIN || r == -EWOULDBLOCK) {
-		STAT(net_again);
-	}
-	return r;
-}
 
 #ifdef XO_WINPOLL
 // x_errno is errno now (for calls that report errors in it).

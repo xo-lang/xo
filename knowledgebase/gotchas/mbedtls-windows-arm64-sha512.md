@@ -1,6 +1,6 @@
 # Mbed TLS's SHA-512 detection does not compile on Windows on Arm
 
-Status: Observed (2026-10-12), fixed in third_party/mbedtls/xo/xo_crypto_config.h.
+Status: Observed (2026-10-12), fixed in third_party/mbedtls/xo/xo_crypto_config.h. Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: cross building any std/http golden for windows/arm64 failed in
 the TLS library: `sha512.c: call to undeclared function

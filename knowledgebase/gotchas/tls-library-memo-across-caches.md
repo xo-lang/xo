@@ -1,6 +1,6 @@
 # The TLS archive's in process memo ignored $XO_TLS_CACHE
 
-Status: Observed (2026-10-10)
+Status: Observed (2026-10-10) Obsolete since 2026-10-15: Mbed TLS removed (decision 0202).
 
 Symptom: TestTLSAccel, run after TestTLSLibrary in one `go test`
 process, failed to link: `no such file or directory:

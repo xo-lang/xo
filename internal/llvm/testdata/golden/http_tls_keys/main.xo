@@ -59,8 +59,7 @@ fn main(os: Os) {
   let _ = pair(os, "x25519 key", EC_CERT, X25519_PKCS8)
   let _ = pair(os, "bad key", EC_CERT, BAD_KEY)
   let goods = [("rsa pkcs1", RSA_CERT, rsa1), ("rsa pkcs8", RSA_CERT, rsa8), ("p-256 sec1", EC_CERT, ec1), ("p-256 pkcs8", EC_CERT, ec8), ("p-384 sec1", EC384_CERT, e31), ("p-384 pkcs8", EC384_CERT, e38)]
-  // (not Ed25519: the client's roots are still Mbed TLS's, which has no
-  // Ed25519; golden tls13_server serves an Ed25519 certificate)
+  // (not Ed25519 here: golden tls13_server serves an Ed25519 certificate)
   if !ed.is_some() {
     os.stdio.println("ed25519: none?")
   }
