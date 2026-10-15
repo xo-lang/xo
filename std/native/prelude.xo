@@ -2460,6 +2460,17 @@ fn llrt_gen_time(g: Int) -> Int { gen.time(g) }
 // view of `xo test --real`, and the generators, as selfhost/ssa
 // testmode.xo calls them.
 
+/// Starts the test world when the test binary runs one test (XO_TEST,
+/// as `xo test` runs it): the first thing a test binary's main does
+/// (selfhost/ssa testmode.xo; was the C's weak xo_x_tw_start, which
+/// entry.xo start called through the services record until decision
+/// 0233 step 2).
+fn llrt_tw_start() {
+  if process.env_real_at("XO_TEST") != 0 {
+    twrun.start()
+  }
+}
+
 fn llrt_test_index() -> Int { testworld.test_index() }
 
 fn llrt_test_fail(msg: Str) { testworld.fail(msg) }

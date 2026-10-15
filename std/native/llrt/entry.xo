@@ -9,7 +9,7 @@
 // Xo has no address of its own functions to install.
 //
 // The entry's C functions and data are words of stop.xo's services
-// record (rt.static_word 61), from E_TW_INIT on. Nothing here allocates
+// record (rt.static_word 61), from E_EV_START on. Nothing here allocates
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
 use native/llrt/atexit
@@ -25,15 +25,14 @@ use native/rt
 use native/sys_darwin
 use native/sys_windows
 
-/// The services record's words of the entry: the test world's start (a
-/// test binary's: cabi_tw.xo tw_start, weak in xo_rt.c), ev_start (the poller), the signal handler (C
+/// The services record's words of the entry (word 11, the test world's
+/// start, is unused since a test binary's main starts it): ev_start (the poller), the signal handler (C
 /// on_signal; on Windows on_console), on_overflow (Windows; 0
 /// elsewhere), the setter of the heap's mid_max (main_heap's and the
 /// C's xo_mid_max), xo_x_consts_free (consts.xo), word 17 unused
 /// (std/time's tz_free is atexit.xo's since decision 0233),
 /// the runtime statistics' counters (an array of int64, xo_rt.c's st),
 /// and the address of the C int that enables them.
-const E_TW_INIT = 88
 const E_EV_START = 96
 const E_HANDLER = 104
 const E_OVERFLOW = 112
@@ -145,7 +144,8 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     }
   }
   if process.env_real_at("XO_TEST") != 0 {
-    let _t = call(E_TW_INIT, 0)
+    // a test binary's main starts the test world itself (the native
+    // prelude's llrt_tw_start)
     ignore_sigpipe()
   } else {
     signals()

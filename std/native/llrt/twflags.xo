@@ -14,7 +14,9 @@ const W_REAL = 33
 /// end: on (an int), the virtual now (ns, an atomic word), the verdict
 /// for the next move of the clock and the moves' epoch (atomic words;
 /// pool.xo dl_check, twrun.xo kick), whether testing.run_main runs main,
-/// the effects made real, whether the clock is virtual (ints).
+/// the effects made real, whether the clock is virtual (ints), and the
+/// address of cabi_tw.xo's tw_kick, which pool.xo calls to move the
+/// virtual clock after a deadlock check (twrun.xo start sets it).
 pub const TW_ON = 0
 pub const TW_VNOW = 8
 pub const TW_VPENDING = 16
@@ -22,7 +24,8 @@ pub const TW_VEPOCH = 24
 pub const TW_IN_MAIN = 32
 pub const TW_REAL = 36
 pub const TW_VIRT = 40
-const TW_SIZE = 48
+pub const TW_KICK = 48
+const TW_SIZE = 56
 
 /// The bit of testworld.xo REAL_CLOCK.
 const REAL_CLOCK = 8

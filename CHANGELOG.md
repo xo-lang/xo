@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233): a test binary's main starts the test
+  world itself (the native prelude's llrt_tw_start, which
+  selfhost/ssa testmode.xo calls first), and twrun.xo start puts
+  cabi_tw.xo's tw_kick in the test world's record (twflags.xo TW_KICK)
+  for pool.xo's clock move, so the C's weak xo_x_tw_start, tw_kick and
+  tw_sleep, rt.sched_rt op 2, the services record's word 11, cabi_tw.xo's
+  tw_start and tw_sleep, and the dead weak stubs of the network's free
+  functions are gone. xo_rt.c's comments are cut to what is still C
+  (the runtime they described is Xo), and its includes to what
+  xo_nolibc.c needs (the C tests include their own); 1052 to 610 lines
+  of std/llrt C.
 - Checker: XO0608, a function name two C ABI export modules of the
   native std (std/native/llrt/cabi*.xo, not cabi_libc) both define,
   which would be one symbol xo_x_<name>; reported at check time with

@@ -154,6 +154,8 @@ pub fn start() {
   let real = testworld.init()
   let w = twflags.rec()
   st(state(), R_TW, w)
+  // the virtual clock's move after a deadlock check (pool.xo kick)
+  rt.mem_store(w, twflags.TW_KICK, rt.fn_addr("tw_kick"), 8)
   rt.mem_store(w, TW_REAL, real, 4)
   rt.mem_store(w, TW_VIRT, if (real & TW_REAL_CLOCK) == 0 { 1 } else { 0 }, 4)
   st(w, TW_VNOW, TW_EPOCH)

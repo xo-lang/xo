@@ -13,6 +13,7 @@
 // every test passed.
 
 #define XO_RT_NO_MAIN
+#include <string.h>
 #include "../xo_rt.c"
 #include <pthread.h> // the test's own threads (xo_rt.c no longer includes it)
 #include "xcalls.h"

@@ -81,6 +81,10 @@ fn (var b: Builder) build_tests() {
     file = decls[0].file
   }
   let saved = b.begin(fi, file)
+  if !b.wasm {
+    // the test world starts here (the native prelude's llrt_tw_start)
+    let _tw = b.tw_rt("tw_start", -1, [])
+  }
   let idx = b.tw_rt("test_index", it, [])
   for t in tests {
     let tr = decls[t.i]

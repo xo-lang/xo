@@ -121,8 +121,18 @@ const TLS_CUR = 0
 const TLS_W = 2
 const TLS_SCRATCH_AT = 32
 
-/// The services of the C runtime (rt.sched_rt, xo_rt.c xo_sched_rt).
-const RT_TW_KICK = 2
+/// The test world's clock move after a deadlock check, while the clock
+/// is virtual: cabi_tw.xo's tw_kick, which twrun.xo start puts in the
+/// test world's record (it was rt.sched_rt op 2 to the C's weak call).
+fn kick() {
+  let w = twflags.rec()
+  if w != 0 {
+    let f = rt.mem_load(w, twflags.TW_KICK, 8)
+    if f != 0 {
+      let _r = rt.call_c2(f, 0, 0)
+    }
+  }
+}
 
 /// The statistics' counters (xo_rt.c st, in its order).
 const ST_STEAL = 1
@@ -691,7 +701,7 @@ fn go_idle(p: Int, w: Int) -> Int {
   dl_check(p)
   unlock(p)
   if twflags.vclock() != 0 {
-    let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+    kick()
   }
   // a push before the count went up was not seen by its wakep: look
   if any_work(p) != 0 {
@@ -1252,7 +1262,7 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
       dl_check(pl)
       unlock(pl)
       if twflags.vclock() != 0 {
-        let _k = rt.sched_rt(RT_TW_KICK, 0, 0)
+        kick()
       }
     }
     stat(ST_THREAD_WAIT)
