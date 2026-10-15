@@ -238,6 +238,7 @@ fn runtime_decls() -> Str {
     "attributes #5 = { \"xo-raises\" }",
     "attributes #6 = { alwaysinline }",
     "attributes #7 = { uwtable \"no-builtins\" }",
+    "attributes #8 = { nounwind noinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -824,7 +825,11 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
           let ef = g.elem_fn("drop", et)
-          b.w("free:\n  call void @xo_rl_free(ptr ${obj}, i64 ${sz}, ptr ${ef})\n  br label %done\n")
+          // obj.xo's export, inlined at the call as the C entry inlined it
+          // (XO_INLINE_CALL; the C entry stays for code of earlier
+          // compilers)
+          let po = b.tmp()
+          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_free_n(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n  br label %done\n")
         }
       } else {
         rc_mark(b, obj)
@@ -832,7 +837,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
           let et = g.m.types[t].elems[0]
           let sz = g.size(et)
           let ef = g.elem_fn("share", et)
-          b.w("  call void @xo_rl_share(ptr ${obj}, i64 ${sz}, ptr ${ef})\n")
+          let po = b.tmp()
+          b.w("  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_share(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n")
         }
         b.w("  br label %done\n")
       }
@@ -858,13 +864,15 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         rc_dec(b, "%x")
         // deferred: a long chain of boxes is freed with a worklist
         let df = g.box_drop_fn(t)
-        b.w("free:\n  call void @xo_rc_defer(ptr %x, ptr ${df})\n  br label %done\n")
+        let px = b.tmp()
+        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${px}, i64 ptrtoint (ptr ${df} to i64)) #6\n  br label %done\n")
       } else {
         rc_mark(b, "%x")
         if g.heap(g.m.types[t].elems[0]) {
           // the contents through the worklist too
           let sf = g.box_share_fn(t)
-          b.w("  call void @xo_rc_defer(ptr %x, ptr ${sf})\n")
+          let px = b.tmp()
+          b.w("  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${px}, i64 ptrtoint (ptr ${sf} to i64)) #6\n")
         }
         b.w("  br label %done\n")
       }
@@ -884,12 +892,14 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         let dfn = b.tmp()
         // the drop function frees the environment; deferred so long
         // chains do not recurse on the C stack
-        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load ptr, ptr ${dp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${dfn})\n  br label %done\n")
+        let pe = b.tmp()
+        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load i64, ptr ${dp}\n  ${pe} = ptrtoint ptr ${env} to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${pe}, i64 ${dfn}) #6\n  br label %done\n")
       } else {
         rc_mark(b, env)
         let sp = b.tmp()
         let sfn = b.tmp()
-        b.w("  ${sp} = getelementptr i8, ptr ${env}, i64 16\n  ${sfn} = load ptr, ptr ${sp}\n  call void @xo_rc_defer(ptr ${env}, ptr ${sfn})\n  br label %done\n")
+        let pe = b.tmp()
+        b.w("  ${sp} = getelementptr i8, ptr ${env}, i64 16\n  ${sfn} = load i64, ptr ${sp}\n  ${pe} = ptrtoint ptr ${env} to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${pe}, i64 ${sfn}) #6\n  br label %done\n")
       }
       b.w("done:\n  ret void\n")
     }

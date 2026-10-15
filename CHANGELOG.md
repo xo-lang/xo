@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native backends (zero-C audit, generated-code entries E1): LLVM code
+  calls obj.xo's list and string entries through their exports instead of
+  the C forwarders (xo_rl_free, rl_share, rc_defer, rl_new_n,
+  rs_concat), and both backends call heapos.xo's platform calls and
+  anyval.xo's Any directly; the C forwarders stay for code of earlier
+  compilers. No bench/perf alloc, text, or conc workload past 5%; LLVM
+  alloc strings 0.950 (bench/results/generated-entries-2026-10-15.md).
 - Native runtime (zero-C audit item B31, part 17, decision 0202): the
   Xo TLS 1.3 client offers X25519MLKEM768 (0x11ec) first, as Go 1.26's
   client: groups [X25519MLKEM768, X25519, P-256, P-384], the hybrid key

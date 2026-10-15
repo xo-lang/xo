@@ -1351,6 +1351,11 @@ fn (var g: G) rt_call(v: Int) {
     // budget.xo through its exports, likewise
     name = "xo_x_budget_${name0.trim_prefix("rt.").trim_prefix("budget_")}"
   }
+  if name0 is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+    // heapos.xo's platform calls (B21) and anyval.xo through their
+    // exports, likewise
+    name = "xo_x_${name0.trim_prefix("rt.")}"
+  }
   match g.kind(x.ty) {
     Unit => {
       let _r = g.rt(name, args, [])

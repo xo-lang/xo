@@ -46,7 +46,10 @@ fn (var g: Gen) call(v: Int) {
       if args.len() == 1 {
         // with room for a number of elements
         let a0 = g.op(args[0])
-        g.set(v, "call ptr @xo_rl_new_n(i64 ${a0}, i64 ${g.size(et)})")
+        // obj.xo's export, with no C level (xo_rl_new_n stays for code
+        // of earlier compilers)
+        let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.size(et)}) #6")
+        g.set(v, "inttoptr i64 ${r} to ptr")
         return
       }
       // the shared empty list, immortal: the first push allocates
@@ -234,7 +237,12 @@ fn (var g: Gen) call(v: Int) {
       let (ao, _, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (bo, _, bn) = g.str_parts(a1)
-      let obj = g.def("call ptr @xo_rs_concat(ptr ${ao}, i64 ${an}, ptr ${bo}, i64 ${bn})")
+      // obj.xo's export, with no C level (xo_rs_concat stays for code of
+      // earlier compilers)
+      let pa = g.def("ptrtoint ptr ${ao} to i64")
+      let pb = g.def("ptrtoint ptr ${bo} to i64")
+      let r = g.def("call i64 @xo_x_obj_rs_concat(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
+      let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("add i64 ${an}, ${bn}")
       g.mk_str(v, obj, n)
     }
@@ -1037,9 +1045,15 @@ fn (var g: Gen) rt_call(v: Int) {
     }
     g.rt_decls.push("declare ${ret} ${sym}(${params.join(", ")}) ${attr}\n")
   }
+  // the exports that never raise or unwind (heapos.xo's platform calls,
+  // anyval.xo) are nounwind and not inlined at the call, as their C
+  // forwarders were (declared nounwind, defined in the C object): inlined
+  // into the heap's fast paths, the slow paths cost LLVM alloc tasks and
+  // strings 1.10 and 1.03 times the instructions (2026-10-15)
+  let nounw = if !export.is_empty() && (name.starts_with("rt.heap_") || name is "rt.any_new" | "rt.any_get") { " #8" } else { "" }
   if !export.is_empty() && ret == "ptr" {
     let r = g.tmp()
-    g.raise(r, "i64 ${sym}(${args.join(", ")})")
+    g.raise(r, "i64 ${sym}(${args.join(", ")})${nounw}")
     if g.kind(x.ty) == ssa.Kind.Str {
       // obj.xo's builders: the string object, its length in the slot
       let o = g.def("inttoptr i64 ${r} to ptr")
@@ -1050,7 +1064,7 @@ fn (var g: Gen) rt_call(v: Int) {
     g.set(v, "inttoptr i64 ${r} to ptr")
     return
   }
-  let c = "${ret} ${sym}(${args.join(", ")})"
+  let c = "${ret} ${sym}(${args.join(", ")})${nounw}"
   match g.kind(x.ty) {
     Unit => g.raise("", c)
     Bool => {
@@ -1196,6 +1210,11 @@ fn xo_export(name: Str) -> Str {
   }
   if name is "rt.tick" | "rt.budget_open" | "rt.budget_end" {
     return "xo_x_budget_${name.trim_prefix("rt.").trim_prefix("budget_")}"
+  }
+  if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+    // heapos.xo's platform calls (B21) and anyval.xo through their
+    // exports (the C forwarders stay for code of earlier compilers)
+    return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.rs_append" | "rt.rs_push_byte" | "rt.rs_push_word" | "rt.rs_push_words" | "rt.rs_append_bytes" | "rt.rs_with_cap" {
     // obj.xo's string builders, as on arm64 (xo_bytes.c's and xo_std.c's
