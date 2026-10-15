@@ -22,6 +22,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   which would be one symbol xo_x_<name>; reported at check time with
   the other definition as a note, where the assembler or linker failed
   before (gotchas/duplicate-cabi-export-name.md).
+- The runtime's start glue leaves the C (decision 0233 step 2): cabi.xo rt_start starts fault.xo and ctx.xo (ThreadSanitizer is found by sanhook.xo, the second personality routine is kept in ctx.xo's SV_PERS_OLD), and cabi.xo fault_raise_msg raises, so xo_rt.c's ctx_init and fault_raise_msg are gone and fault_init is three lines.
 - Native runtime (decision 0233): optional features register their own
   end functions when they start (std/native/llrt/atexit.xo): tzhost.xo
   keep registers cabi_time.xo's tz_free, hserve.xo, hclient.xo and

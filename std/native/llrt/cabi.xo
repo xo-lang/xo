@@ -147,8 +147,20 @@ fn fault_loc(lenp: Int) -> Int { fault.loc(ctx.cur(), lenp) }
 /// The line printed under the next fault: the n bytes at p (xo_fault_detail).
 fn fault_detail(p: Int, n: Int) { fault.detail(ctx.cur(), p, n) }
 
-/// The address of xo_rt.c fault_raise_msg, at start (fault.xo init).
-fn fault_init(raise_msg: Int) { fault.init(raise_msg) }
+/// The runtime's start after the heap's (xo_rt.c fault_init): fault.xo
+/// raises through fault_raise_msg, and ctx.xo makes the services record
+/// with the second personality routine pers_old (the C's on Windows).
+fn rt_start(pers_old: Int) {
+  fault.init(rt.fn_addr("fault_raise_msg"))
+  ctx.init(pers_old)
+}
+
+/// Records the fault msg at loc (zero terminated) in the current context
+/// and raises it; with msg 0 raises the fault already recorded (fault.xo
+/// fire, cont): never returns (was xo_rt.c fault_raise_msg).
+fn fault_raise_msg(m: Int, loc: Int) {
+  fault_raise_cur(m, loc, rt.fn_addr("personality"), rt.mem_load(ctx.svc(), ctx.SV_PERS_OLD, 8))
+}
 
 /// Standard input's pump thread on Windows (stdin.xo pump_main): its
 /// address is the services record's (ctx.xo SV_STDIN_PUMP), a
@@ -637,10 +649,6 @@ fn ctx_shield_end(tok: Int, lp: Int, ln: Int) { ctx.shield_end(tok, lp, ln) }
 fn ctx_shield_abort(tok: Int) { ctx.shield_abort(tok) }
 
 fn ctx_unwinding() -> Int { ctx.unwinding() }
-
-/// The services record, at start (ctx.xo init): whether ThreadSanitizer
-/// is on.
-fn ctx_init(tsan: Int) { ctx.init(tsan) }
 
 /// The statistics' switch and counts (rtstats.xo), for stop.xo's
 /// services record (entry.xo rt_stats).

@@ -158,23 +158,10 @@ void xo_flush(void) { xo_x_flush(); }
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
 // ---------------------------------------------------------------------------
-// Faults (core 8): fault.xo writes the message and calls fault_raise_msg
-// (below), whose address fault_init hands it; fault_init also has ctx.xo,
-// poll.xo and stop.xo make their records.
-XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc);
-
-void xo_x_fault_init(int64_t raise_msg);
-
-void xo_x_ctx_init(int64_t tsan);
-static void ctx_init(void);
-static void pd_svc_init(void);
-static void stop_svc_init(void);
-static void fault_init(void) {
-	xo_x_fault_init(XO_ADDR(fault_raise_msg));
-	ctx_init();
-	pd_svc_init();
-	stop_svc_init();
-}
+// Faults (core 8): fault.xo writes the message and raises through
+// cabi.xo fault_raise_msg; fault_init (below the personality routines)
+// has fault.xo, ctx.xo, poll.xo and stop.xo start.
+static void fault_init(void);
 
 // ---------------------------------------------------------------------------
 // Strings and lists: the layouts the C tests use; a list's slow paths
@@ -244,12 +231,10 @@ void __tsan_acquire(void *addr);
 #endif
 
 // ---------------------------------------------------------------------------
-// Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_cur
-// records the fault and unwinds with unwind.xo up to the context's
-// boundary; it gets the personality routines' addresses from here
-// (xo_x_personality, which the emitters name; on Windows also the
-// language handler below).
-void xo_x_fault_raise_cur(int64_t m, int64_t loc, int64_t pers, int64_t pers_old);
+// Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_msg
+// and fault_raise_cur record the fault and unwind with unwind.xo up to
+// the context's boundary, with two personality routines: xo_x_personality,
+// which the emitters name, and on Windows the language handler below.
 int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
 #if defined(_WIN32)
 EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEXT cx, PVOID disp);
@@ -258,12 +243,16 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 #define XO_PERS_OLD XO_ADDR(xo_x_personality)
 #endif
 
-// fault_raise_msg records the fault msg at loc in the current context and
-// raises it; with a null msg it raises the fault already recorded (fault.xo
-// cont, a landing pad handing it on).
-XO_NORETURN static void fault_raise_msg(const char *msg, const char *loc) {
-	xo_x_fault_raise_cur(XO_ADDR(msg), XO_ADDR(loc), XO_ADDR(xo_x_personality), XO_PERS_OLD);
-	__builtin_unreachable();
+// fault_init starts fault.xo and ctx.xo (cabi.xo rt_start) with the
+// second personality routine, then the services records of poll.xo and
+// stop.xo.
+void xo_x_rt_start(int64_t pers_old);
+static void pd_svc_init(void);
+static void stop_svc_init(void);
+static void fault_init(void) {
+	xo_x_rt_start(XO_PERS_OLD);
+	pd_svc_init();
+	stop_svc_init();
 }
 
 #if defined(_WIN32)
@@ -285,16 +274,6 @@ EXCEPTION_DISPOSITION xo_personality(PEXCEPTION_RECORD rec, PVOID frame, PCONTEX
 void xo_x_run_claimed(int64_t t, int64_t units);
 
 static void run_claimed(int64_t t, int64_t units) { xo_x_run_claimed(t, units); }
-
-// ctx_init makes ctx.xo's services record (decision 0233 step 2), with
-// the fiber cache's record and the statistics' (rtstats.xo).
-static void ctx_init(void) {
-#ifdef XO_TSAN_ANN
-	xo_x_ctx_init(1);
-#else
-	xo_x_ctx_init(0);
-#endif
-}
 
 // the C name of cabi.xo fiber_run_task for code of compilers before the
 // emitters named the export (the 0.13.0 seed's)

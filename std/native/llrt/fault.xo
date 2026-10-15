@@ -23,10 +23,10 @@ use native/llrt/stdio
 use native/llrt/unwind
 use native/rt
 
-/// rt.static_word: the address of xo_rt.c fault_raise_msg (a C function
-/// of a zero terminated message and location that records the fault in
-/// the current context and raises it, or with a null message raises the
-/// fault already recorded; never returns), set by init.
+/// rt.static_word: the address of cabi.xo fault_raise_msg (a C ABI
+/// export of a zero terminated message and location that records the
+/// fault in the current context and raises it, or with a null message
+/// raises the fault already recorded; never returns), set by init.
 const RAISE = 14
 
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
