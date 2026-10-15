@@ -311,7 +311,7 @@ MISSING.
 | B25 processes (proc.xo) (stage 1 2026-10-14, the zero-C push: Proc.kill, FakeProc.killed, environ and cwd in proc.xo and process.xo, 106 lines; spawn, pipes, and waits next) | 1,764 | PORT 1,681, GLUE 83 | xo_proc.c 1-147, 222-1200, 1274-1911 |
 | B26 signals, shutdown, entry | 475 | PORT 372, SHIM 103 | xo_rt.c 7455-7826; xo_nolibc.c 120-222 |
 | B27 zone data host side (tz.xo) (**done 2026-10-14**: std/native/llrt/tzhost.xo, xo_time.c deleted, 519 lines; notes) | 512 | PORT 453, GLUE 59 | xo_time.c 1-499, 508-520 |
-| B28 HTTP/1.1 server loop, HTTP/2 server (**in progress**: the frame writers and h2_head, frame checks, received field checks are std/native/llrt/h2w.xo, 2026-10-14, zc-http) | 3,278 | PORT 2,705, GLUE 573 | xo_http.c 1867-2930; xo_h2.c 1-86, 670-1182, 1285-2899 |
+| B28 HTTP/1.1 server loop, HTTP/2 server (**in progress**: the frame writers and h2_head, frame checks, received field checks, request checks are std/native/llrt/h2w.xo, 2026-10-14, zc-http) | 3,278 | PORT 2,705, GLUE 573 | xo_http.c 1867-2930; xo_h2.c 1-86, 670-1182, 1285-2899 |
 | B29 HTTP client loops, HTTP/2 client | 1,288 | PORT 1,274, GLUE 14 | xo_http.c 3138-3278, 3458-3920; xo_h2.c 2900-3583 |
 | B30 TLS boundary pre-work | 573 | PORT 522, GLUE 51 | xo_tls.c 122-559, 1036-1170 |
 | B31 TLS in Xo (decision 0202) | 813 | PORT 613, GLUE 200 | xo_tls.c 1-121, 560-1035, 1171-1386 |

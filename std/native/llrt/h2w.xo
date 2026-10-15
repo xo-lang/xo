@@ -488,3 +488,76 @@ pub fn pseudos_ok(ha: Int, hn: Int, resp: Int) -> Bool {
   rt.mem_store(resp, 0, if res { 1 } else { 0 }, 8)
   !(req && res)
 }
+
+// ---------------------------------------------------------------------------
+// Requests
+
+// request_check's kinds (xo_h2.c H2K_*).
+pub const K_MALFORMED: Int = -1
+pub const K_APP: Int = 0
+pub const K_431: Int = 1
+pub const K_400: Int = 2
+pub const K_OPTIONS: Int = 3
+
+/// The index of the field named name exactly (the received names are
+/// lower case), or -1.
+fn field_at(ha: Int, hn: Int, name: Str) -> Int { http1w.find(ha, hn, name) }
+
+fn has(ha: Int, hn: Int, name: Str) -> Bool { field_at(ha, hn, name) >= 0 }
+
+fn val(ha: Int, i: Int) -> Str { if i < 0 { "" } else { raw.str_at(http1w.val_p(ha, i), http1w.val_n(ha, i)) } }
+
+/// What a request of the hn checked fields at ha is (processHeaders,
+/// newWriterAndRequest, checkValidHTTP2RequestHeaders): K_MALFORMED (a
+/// stream error), K_431 when the header list was cut (truncated), K_400
+/// with its error text written zero terminated at msg (120 bytes), K_OPTIONS
+/// for OPTIONS *, else K_APP.
+pub fn request_check(ha: Int, hn: Int, truncated: Bool, msg: Int) -> Int {
+  if has(ha, hn, ":protocol") {
+    return K_MALFORMED // extended CONNECT is off
+  }
+  let mi = field_at(ha, hn, ":method")
+  let method = val(ha, mi)
+  let path = val(ha, field_at(ha, hn, ":path"))
+  let scheme = val(ha, field_at(ha, hn, ":scheme"))
+  let auth = val(ha, field_at(ha, hn, ":authority"))
+  if mi >= 0 && method == "CONNECT" {
+    if path.len() > 0 || scheme.len() > 0 || auth.len() == 0 {
+      return K_MALFORMED
+    }
+  } else if method.len() == 0 || path.len() == 0 || !(scheme == "https" || scheme == "http") {
+    return K_MALFORMED
+  }
+  if auth.contains("@") && (scheme == "http" || scheme == "https") {
+    return K_MALFORMED
+  }
+  if truncated {
+    return K_431
+  }
+  // connection specific fields, in net/http's order
+  for k in ["Connection", "Keep-Alive", "Proxy-Connection", "Transfer-Encoding", "Upgrade"] {
+    if has(ha, hn, k.to_lower()) {
+      let _n = raw.put_cstr(msg, "request header \"${k}\" is not valid in HTTP/2")
+      return K_400
+    }
+  }
+  var tes = 0
+  var te_ok = true
+  var i = 0
+  while i < hn {
+    if http1w.mem_is(http1w.key_p(ha, i), http1w.key_n(ha, i), "te") {
+      tes += 1
+      let v = val(ha, i)
+      te_ok = te_ok && (v == "trailers" || v.len() == 0)
+    }
+    i += 1
+  }
+  if tes > 0 && (tes > 1 || !te_ok) {
+    let _n = raw.put_cstr(msg, "request header \"TE\" may only be \"trailers\" in HTTP/2")
+    return K_400
+  }
+  if method == "OPTIONS" && path == "*" {
+    return K_OPTIONS
+  }
+  K_APP
+}

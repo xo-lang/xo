@@ -81,3 +81,7 @@ fn h2_field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Int { if h2w.fi
 /// 1 when the pseudo fields of the hn fields at ha are valid
 /// (h2w.pseudos_ok); 1 at resp when :status was one.
 fn h2_pseudos_ok(ha: Int, hn: Int, resp: Int) -> Int { if h2w.pseudos_ok(ha, hn, resp) { 1 } else { 0 } }
+
+/// What a request of the hn checked fields at ha is (h2w.request_check:
+/// one of h2w.K_*, the 400's text at msg).
+fn h2_request_check(ha: Int, hn: Int, truncated: Int, msg: Int) -> Int { h2w.request_check(ha, hn, truncated != 0, msg) }

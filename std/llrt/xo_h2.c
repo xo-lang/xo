@@ -148,6 +148,11 @@ __attribute__((weak)) int64_t xo_x_h2_pseudos_ok(int64_t ha, int64_t hn, int64_t
 	fault_text("HTTP without std/http's exports", "");
 }
 
+__attribute__((weak)) int64_t xo_x_h2_request_check(int64_t ha, int64_t hn, int64_t truncated, int64_t msg) {
+	(void)ha, (void)hn, (void)truncated, (void)msg;
+	fault_text("HTTP without std/http's exports", "");
+}
+
 // frame_check's results
 enum { H2_FC_OK, H2_FC_IGNORE, H2_FC_CONN, H2_FC_STREAM };
 
@@ -579,19 +584,15 @@ static int h2_parse_uint63(const char *s, int64_t n, int64_t *out) {
 // h2_request makes st's request from the fields f (processHeaders,
 // newWriterAndRequest): 0 when it is malformed (a stream error).
 static int h2_request(h2c *c, h2s *st, h2_fields *f, int end_stream) {
-	hstr method = h2_pseudo(&f->f, ":method"), path = h2_pseudo(&f->f, ":path"), scheme = h2_pseudo(&f->f, ":scheme");
-	hstr auth = h2_pseudo(&f->f, ":authority"), proto = h2_pseudo(&f->f, ":protocol");
-	if (proto.p) {
-		return 0; // extended CONNECT is off
-	}
-	int connect = method.p && hs_eq(method, "CONNECT");
-	if (connect) {
-		if (path.n || scheme.n || auth.n == 0) {
-			return 0;
-		}
-	} else if (method.n == 0 || path.n == 0 || !(hs_eq(scheme, "https") || hs_eq(scheme, "http"))) {
+	hstr method = h2_pseudo(&f->f, ":method"), path = h2_pseudo(&f->f, ":path");
+	hstr auth = h2_pseudo(&f->f, ":authority");
+	// malformed requests, 431, 400, OPTIONS * (h2w.xo request_check)
+	char m[120];
+	int kind = (int)xo_x_h2_request_check(XO_ADDR(f->f.a), f->f.n, f->truncated, XO_ADDR(m));
+	if (kind < 0) {
 		return 0;
 	}
+	int connect = hs_eq(method, "CONNECT");
 	hreq *r = &st->req;
 	memset(r, 0, sizeof *r);
 	// the header: canonical keys, values joined
@@ -619,9 +620,6 @@ static int h2_request(h2c *c, h2s *st, h2_fields *f, int end_stream) {
 		hl_del(&r->hdr, "Expect");
 	}
 	hl_del(&r->hdr, "Trailer");
-	if (memchr(auth.p ? auth.p : "", '@', (size_t)auth.n) && (hs_eq(scheme, "http") || hs_eq(scheme, "https"))) {
-		return 0;
-	}
 	r->method = hs_dup(method.p, method.n);
 	r->major = 2;
 	r->host = hs_dup(host.p ? host.p : "", host.n);
@@ -648,34 +646,9 @@ static int h2_request(h2c *c, h2s *st, h2_fields *f, int end_stream) {
 			st->declen = h2_parse_uint63(r->hdr.a[ci].v.p, r->hdr.a[ci].v.n, &v) ? v : 0;
 		}
 	}
-	st->kind = H2K_APP;
-	if (f->truncated) {
-		st->kind = H2K_431;
-	} else {
-		// checkValidHTTP2RequestHeaders
-		static const char *conn[] = {"Connection", "Keep-Alive", "Proxy-Connection", "Transfer-Encoding", "Upgrade"};
-		for (int i = 0; i < 5 && st->kind == H2K_APP; i++) {
-			if (hl_find(&r->hdr, conn[i]) >= 0) {
-				char m[120];
-				snprintf(m, sizeof m, "request header \"%s\" is not valid in HTTP/2", conn[i]);
-				st->msg = strdup(m);
-				st->kind = H2K_400;
-			}
-		}
-		int tes = 0, te_ok = 1;
-		for (int64_t i = 0; i < f->f.n; i++) {
-			if (hs_eq(f->f.a[i].k, "te")) {
-				tes++;
-				te_ok = te_ok && (hs_eq(f->f.a[i].v, "trailers") || f->f.a[i].v.n == 0);
-			}
-		}
-		if (st->kind == H2K_APP && tes > 0 && (tes > 1 || !te_ok)) {
-			st->msg = strdup("request header \"TE\" may only be \"trailers\" in HTTP/2");
-			st->kind = H2K_400;
-		}
-	}
-	if (st->kind == H2K_APP && hs_eq(r->method, "OPTIONS") && hs_eq(r->target, "*")) {
-		st->kind = H2K_OPTIONS;
+	st->kind = kind;
+	if (kind == H2K_400) {
+		st->msg = strdup(m);
 	}
 	return 1;
 }

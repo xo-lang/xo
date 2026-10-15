@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B28, part 4): HTTP/2 the server's
+  request checks (malformed pseudo fields, 431 for a cut header list,
+  the 400 texts of connection specific fields and TE, OPTIONS *) are Xo
+  (h2w.xo request_check).
 - Native runtime (zero-C audit item B28, part 3): HTTP/2 the checks of
   each received header field (readMetaFrame: values, names, pseudo
   fields after regular ones, the header list's size) and checkPseudos
