@@ -1,6 +1,6 @@
 // Intrinsics of the test world of native test binaries (decision 0083),
 // implemented in std/llrt/xo_testing.c; imported by std/native/testing.xo,
-// http.xo, and llrt/report.xo and testworld.xo as `use native/rttest`.
+// and llrt/report.xo, testworld.xo, and twrun.xo as `use native/rttest`.
 // What the C kept of part 1 (the records, the generators, the fakes) is
 // std/native/llrt/testworld.xo since the zero-C audit's B14.
 use native/rt
@@ -28,16 +28,10 @@ fn gen_str(g: Int) -> Str
 fn gen_duration(g: Int) -> Int
 fn gen_time(g: Int) -> Int
 
-/// l is an in memory listener (FakeNet.listen).
-fn test_mem_listener(l: Listener) -> Bool
-/// Serves l with the router r (an Any of http.Router).
-fn test_mem_serve(l: Listener, r: rt.Any)
-fn test_mem_unserve(l: Listener)
-/// Waits until no request runs on l.
-fn test_mem_drain(l: Listener)
-/// Starts a request to host:port: the router serving it, or none.
-fn test_mem_begin(hostport: Str) -> List[rt.Any]
-fn test_mem_end(hostport: Str)
+/// Arms FakeProc.signal_after's signal d from now (xo_testing.c: a
+/// timer whose C callback runs the stop state's signal; inside
+/// testing.run_main, std/native/llrt/twrun.xo).
+fn test_signal_arm(d: Int)
 
 /// The test world's virtual now.
 fn test_now() -> Time

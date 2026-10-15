@@ -1,0 +1,614 @@
+// The test world of native test binaries (decision 0083), part 2, in Xo
+// (the zero-C audit's B15; it was std/llrt/xo_testing.c): FakeClock's
+// sleeps, advance, and set; FakeNet.listen's in memory listeners, which
+// http.server serves by registering its router and the test's http
+// client reaches in process (std/native/http.xo); testing.run_main
+// (main below a node of its own, the stop state reset for it); and
+// FakeProc.signal_after. The virtual clock's move when every context
+// waits (xo_testing.c tw_kick) and the signal timer's callback stay C.
+//
+// The C's `tw` record (xo_rt.c: tw.on, the virtual now, in_main, the
+// effects made real, whether the clock is virtual) is read through its
+// address, which tw_init hands over (init; offsets asserted there). The
+// state of this module is a record from rt.heap_large whose address is
+// the first of testworld.xo's run_words, guarded by the second (a lock
+// word): the 64 static words are all taken.
+//
+// Generated code reaches it through the native prelude's llrt_test_*
+// (selfhost/ssa testmode.xo), http.xo directly, and the C runtime
+// through cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/ctx
+use native/llrt/poll
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/rc
+use native/llrt/stop
+use native/llrt/sysio
+use native/llrt/tasks
+use native/llrt/testworld
+use native/rt
+use native/rttest
+
+
+/// The state record (byte offsets): the C's tw record, FakeClock.sleeps'
+/// vector and signal_after's (before run_main) vector (the address of
+/// the words, the length, the capacity), the in memory listeners (a
+/// list of ML records), the last port given, the node run_main restores
+/// and main's node, and whether os.proc.exit unwinds main (atomic).
+const R_TW = 0
+const R_SLEEPS = 8
+const R_SIGNALS = 32
+const R_MLS = 56
+const R_PORT = 64
+const R_OUTER = 72
+const R_MAIN = 80
+const R_EXITING = 88
+const R_SIZE = 96
+
+/// The C's tw record (xo_rt.c, asserted there): the virtual now (ns, a
+/// word), whether run_main runs main (an int), whether the clock is
+/// virtual (an int).
+const TW_VNOW = 8
+const TW_IN_MAIN = 32
+const TW_VIRT = 40
+
+/// An in memory listener (xo_testing.c tw_ml): its listener (the C's
+/// xo_listener, not counted: the listener frees its record), its address
+/// and its alias (localhost:<port> for 127.0.0.1; blocks: the length,
+/// then the bytes, or 0), the router serving it (an rt.Any's object,
+/// counted, or 0), whether it is closed, whether serve started once,
+/// the requests running, the clients waiting in begin (they hold no
+/// reference), whether the listener is gone (the last waiting client
+/// frees this), its wait list (accept, clients waiting for serve,
+/// drain: two words), and the next record.
+const ML_L = 0
+const ML_ADDR = 8
+const ML_ALIAS = 16
+const ML_ROUTER = 24
+const ML_CLOSED = 32
+const ML_SERVED = 40
+const ML_INFLIGHT = 48
+const ML_NBEGIN = 56
+const ML_FREED = 64
+const ML_WAITERS = 72
+const ML_NEXT = 88
+const ML_SIZE = 96
+
+/// xo_listener's mem (xo_rt.c, asserted there): the ML record.
+const L_MEM = 32
+
+/// A context's node, and its unwinding flag (an int; ctx.xo).
+const C_NODE = 0
+const C_UNWINDING = 8
+
+/// A node's canceled word (byte offset), and the bytes of a node
+/// (xo_rt.c xo_node, at most).
+const N_CANCELED = 32
+const N_SIZE = 64
+
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+fn ld(p: Int, k: Int) -> Int { rt.mem_load(p, k, 8) }
+
+fn st(p: Int, k: Int, v: Int) { rt.mem_store(p, k, v, 8) }
+
+/// The state record, made on first use.
+fn state() -> Int {
+  let w = testworld.run_words()
+  let a = rt.slot_load[Int](w, 0, ACQUIRE)
+  if a != 0 {
+    return a
+  }
+  let n = rt.heap_large(R_SIZE)
+  rt.mem_set(n, 0, R_SIZE)
+  if rt.slot_cas[Int](w, 0, 0, n, ACQ_REL) {
+    return n
+  }
+  rt.heap_release(n - 8)
+  rt.slot_load[Int](w, 0, ACQUIRE)
+}
+
+/// The lock word.
+fn lock_word() -> Int { testworld.run_words() + 8 }
+
+fn lock() { pool.lock(lock_word()) }
+
+fn unlock() { pool.unlock(lock_word()) }
+
+/// Hands over the address of the C's tw record (tw_init, at start, one
+/// thread).
+pub fn init(tw: Int) { st(state(), R_TW, tw) }
+
+fn tw() -> Int { ld(state(), R_TW) }
+
+fn virt() -> Bool { rt.mem_load(tw(), TW_VIRT, 4) != 0 }
+
+fn in_main() -> Bool {
+  let v = rt.mem_load(tw(), TW_IN_MAIN, 4)
+  rt.fence(ACQUIRE)
+  v != 0
+}
+
+fn set_in_main(on: Bool) {
+  rt.fence(RELEASE)
+  rt.mem_store(tw(), TW_IN_MAIN, if on { 1 } else { 0 }, 4)
+}
+
+/// The timers' deadline d from now (xo_rt.c deadline: the virtual clock
+/// in the test world, else the monotonic one; at most the largest Int).
+fn deadline(d: Int) -> Int {
+  let now = if virt() { rt.slot_load[Int](tw(), 1, ACQUIRE) } else { sysio.mono_ns() }
+  let w = rt.int_wrap(0, now, d)
+  if d > 0 && w < now { 9223372036854775807 } else { w }
+}
+
+// ---------------------------------------------------------------------------
+// Vectors of words (the address of the words from rt.heap_large, the
+// length, the capacity)
+
+fn vec_push(v: Int, x: Int) {
+  let n = ld(v, 8)
+  if n == ld(v, 16) {
+    let c = if n == 0 { 8 } else { 2 * n }
+    let old = ld(v, 0)
+    let p = if old == 0 { rt.heap_large(8 * c) } else { rt.heap_large_resize(old - 8, 8 * c) }
+    st(v, 0, p)
+    st(v, 16, c)
+  }
+  st(ld(v, 0), 8 * n, x)
+  st(v, 8, n + 1)
+}
+
+/// The words of v, and v emptied.
+fn vec_take(v: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..ld(v, 8) {
+    out.push(ld(ld(v, 0), 8 * i))
+  }
+  st(v, 8, 0)
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The virtual clock (FakeClock)
+
+/// Records a sleep of d for FakeClock.sleeps (xo_rt.c clock_wait).
+pub fn sleep_record(d: Int) {
+  lock()
+  vec_push(state() + R_SLEEPS, d)
+  unlock()
+}
+
+/// FakeClock.sleeps(): every sleep asked for, in order.
+pub fn sleeps() -> List[Int] {
+  lock()
+  let v = state() + R_SLEEPS
+  var out: List[Int] = []
+  for i in 0..ld(v, 8) {
+    out.push(ld(ld(v, 0), 8 * i))
+  }
+  unlock()
+  out
+}
+
+/// FakeClock.set(t).
+pub fn clock_set(t: Int) { rt.slot_store[Int](tw(), 1, t, RELEASE) }
+
+/// Waits, counted as blocked for the deadlock check (so the virtual
+/// clock moves) and not a cancellation point, until a timer at deadline
+/// d from now fires.
+fn wait_counted(d: Int) {
+  let c = ctx.cur()
+  let park = poll.park_of(c)
+  pool.park_reset(park)
+  let t = poll.timer_park(deadline(d), park)
+  while !poll.timer_fired(t) {
+    tasks.park_wait_n(c, false, true)
+  }
+  poll.timer_end(t)
+}
+
+/// FakeClock.advance(d): the timers due within d fire in order, the
+/// woken contexts running (until every one waits again) after each
+/// instant; then the clock reads now + d. It waits like a sleep that is
+/// not a cancellation point and is not listed by sleeps().
+pub fn advance(d: Int) {
+  wait_counted(if d < 0 { 0 } else { d })
+  // the contexts woken at the last instant (with this one) run until
+  // every one waits again before advance returns, as std/rt's
+  // World.Advance: a timer due now fires at the next move of the clock,
+  // which comes only when every context waits
+  wait_counted(0)
+}
+
+// ---------------------------------------------------------------------------
+// testing.run_main and FakeProc.signal_after (core 7.5)
+
+/// FakeProc.signal_after(d): inside run_main a signal d from now, before
+/// it d from run_main's start.
+pub fn signal_after(d: Int) {
+  if in_main() {
+    rttest.test_signal_arm(d)
+    return
+  }
+  lock()
+  vec_push(state() + R_SIGNALS, d)
+  unlock()
+}
+
+fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
+
+/// Starts testing.run_main: main's root is a new node below the test's,
+/// the stop state is fresh, and the queued signals are armed.
+pub fn main_begin(args: List[Str]) {
+  testworld.set_args(args)
+  let c = ctx.cur()
+  let n = rt.heap_large(N_SIZE)
+  rt.mem_set(n, 0, N_SIZE)
+  pool.node_link(n, ld(c, C_NODE))
+  let s = state()
+  st(s, R_OUTER, ld(c, C_NODE))
+  st(s, R_MAIN, n)
+  st(c, C_NODE, n)
+  stop.reset(n)
+  set_in_main(true)
+  lock()
+  let sigs = vec_take(s + R_SIGNALS)
+  unlock()
+  for d in sigs {
+    rttest.test_signal_arm(d)
+  }
+}
+
+/// Ends testing.run_main with main's status code: the test's node is
+/// current again; when os.proc.exit unwound main, its code is the
+/// status; when main unwound because the stop state canceled its root
+/// (and not because the test is canceled), the unwinding ends here and
+/// the status is 0; after a third signal the status is 130 however main
+/// ended, and FakeProc.exit_code is Some(130) (std/rt's
+/// Testing_run_main).
+pub fn main_end(code: Int) -> Int {
+  let c = ctx.cur()
+  let s = state()
+  set_in_main(false)
+  let n = ld(s, R_MAIN)
+  st(c, C_NODE, ld(s, R_OUTER))
+  let exited = stop.unroot(n)
+  if n != 0 {
+    pool.node_unlink(n)
+    rt.heap_release(n - 8)
+    st(s, R_MAIN, 0)
+  }
+  var r = code
+  let node = ld(c, C_NODE)
+  if rt.slot_swap[Int](s, R_EXITING / 8, 0, ACQ_REL) != 0 && !node_canceled(node) {
+    // os.proc.exit unwound main (exit): its code is the status
+    rt.mem_store(c, C_UNWINDING, 0, 4)
+    r = testworld.exit_value()
+  } else if rt.mem_load(c, C_UNWINDING, 4) != 0 && stop.canceled() && !node_canceled(node) {
+    rt.mem_store(c, C_UNWINDING, 0, 4)
+    r = 0
+  }
+  if exited != 0 {
+    testworld.set_exit(130)
+    r = 130
+  }
+  r
+}
+
+/// os.proc.exit in a test (std.md 8.4): the code is recorded
+/// (FakeProc.exit_code). Inside testing.run_main main unwinds back to it
+/// (decision 0108): its root is canceled and this context unwinds
+/// (generated code checks after the call), and main_end gives the code
+/// as main's status: true. Outside it, false: the test ends and passes
+/// (the C exits), as on the Go backend.
+pub fn exit(code: Int) -> Bool {
+  testworld.set_exit(code)
+  let s = state()
+  if in_main() && ld(s, R_MAIN) != 0 {
+    rt.slot_store[Int](s, R_EXITING / 8, 1, RELEASE)
+    pool.node_cancel(ctx.pool(), ld(s, R_MAIN))
+    rt.mem_store(ctx.cur(), C_UNWINDING, 1, 4)
+    return true
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// In memory listeners (std/rt's memListener)
+
+/// A block of s: its length, then the bytes.
+fn blk(s: Str) -> Int {
+  let b = rt.heap_large(s.len() + 8)
+  st(b, 0, s.len())
+  rt.mem_copy(b + 8, raw.data(s), s.len())
+  b
+}
+
+fn blk_free(b: Int) {
+  if b != 0 {
+    rt.heap_release(b - 8)
+  }
+}
+
+fn blk_str(b: Int) -> Str { raw.str_at(b + 8, ld(b, 0)) }
+
+/// Whether block b (0: none) holds the n bytes at p.
+fn blk_eq(b: Int, p: Int, n: Int) -> Bool { b != 0 && ld(b, 0) == n && raw.mem_eq(b + 8, p, n) }
+
+/// Wakes every waiter of listener ml (xo_rt.c wl_wake).
+fn wake(ml: Int) {
+  var e = ld(ml, ML_WAITERS)
+  while e != 0 {
+    tasks.park_signal(ld(e, 0))
+    e = ld(e, 16)
+  }
+}
+
+/// Waits on ml's wait list, the lock held (and held again): false when
+/// the task was canceled.
+fn wait(ml: Int) -> Bool { tasks.wl_wait_as(ctx.cur(), lock_word(), ml + ML_WAITERS, true, 0) }
+
+/// The offset of the last ':' of s, or -1.
+fn last_colon(s: Str) -> Int {
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 58 {
+    i -= 1
+  }
+  i
+}
+
+/// FakeNet.listen(addr) (the C's listen in the test world): the ML
+/// record of a new in memory listener for the C's listener l (an
+/// xo_listener); ":0" (and port 0) picks the next port from 49152; a
+/// "unix:" address is an in memory Unix domain socket (decision 0190).
+pub fn listen(addr: Str, l: Int) -> Int {
+  let ml = rt.heap_large(ML_SIZE)
+  rt.mem_set(ml, 0, ML_SIZE)
+  st(ml, ML_L, l)
+  lock()
+  if addr.starts_with("unix:") {
+    st(ml, ML_ADDR, blk(addr))
+  } else {
+    var host = "127.0.0.1"
+    var port = addr
+    let i = last_colon(addr)
+    if i >= 0 {
+      if i > 0 {
+        host = rt.str_slice(addr, 0, i)
+      }
+      port = rt.str_slice(addr, i + 1, addr.len())
+    }
+    if port.is_empty() || port == "0" {
+      let p = ld(state(), R_PORT) + 1
+      st(state(), R_PORT, p)
+      port = "${49151 + p}"
+    }
+    st(ml, ML_ADDR, blk("${host}:${port}"))
+    if host == "127.0.0.1" {
+      st(ml, ML_ALIAS, blk("localhost:${port}"))
+    }
+  }
+  st(ml, ML_NEXT, ld(state(), R_MLS))
+  st(state(), R_MLS, ml)
+  unlock()
+  ml
+}
+
+/// The address of ml as a malloc'd C string for the C's listener (its
+/// addr, which listener_free frees).
+pub fn ml_caddr(ml: Int) -> Int {
+  let b = ld(ml, ML_ADDR)
+  let n = ld(b, 0)
+  let a = rt.heap_large(n + 1) - 8
+  rt.mem_copy(a, b + 8, n)
+  rt.mem_store(a, n, 0, 1)
+  a
+}
+
+fn ml_release(ml: Int) {
+  blk_free(ld(ml, ML_ADDR))
+  blk_free(ld(ml, ML_ALIAS))
+  rt.heap_release(ml - 8)
+}
+
+/// The listener of ml is freed (xo_rt.c listener_free): ml leaves the
+/// list and closes; a client still waiting for a serve that never came
+/// wakes and fails, and frees ml when it leaves
+/// (gotchas/mem-listener-backlog-after-serve.md).
+pub fn ml_free(ml: Int) {
+  lock()
+  let s = state()
+  var prev = 0
+  var m = ld(s, R_MLS)
+  while m != 0 {
+    if m == ml {
+      if prev == 0 {
+        st(s, R_MLS, ld(ml, ML_NEXT))
+      } else {
+        st(prev, ML_NEXT, ld(ml, ML_NEXT))
+      }
+      break
+    }
+    prev = m
+    m = ld(m, ML_NEXT)
+  }
+  let r = ld(ml, ML_ROUTER)
+  st(ml, ML_ROUTER, 0)
+  st(ml, ML_CLOSED, 1)
+  st(ml, ML_L, 0)
+  wake(ml)
+  let keep = ld(ml, ML_NBEGIN) > 0
+  st(ml, ML_FREED, if keep { 1 } else { 0 })
+  unlock()
+  if r != 0 {
+    tasks.h_release(r)
+  }
+  if !keep {
+    ml_release(ml)
+  }
+}
+
+/// The listener of ml closes.
+pub fn ml_close(ml: Int) {
+  lock()
+  st(ml, ML_CLOSED, 1)
+  wake(ml)
+  unlock()
+}
+
+/// accept on ml: waits until the listener closes (true) or the task is
+/// canceled (false); requests reach a served router in process, never as
+/// connections.
+pub fn ml_accept(ml: Int) -> Bool {
+  lock()
+  var ok = true
+  while ld(ml, ML_CLOSED) == 0 {
+    if !wait(ml) {
+      ok = false
+      break
+    }
+  }
+  unlock()
+  ok
+}
+
+/// The ML record of listener l, or 0 when it is a real one.
+fn ml_of(l: Listener) -> Int { ld(rt.obj_addr(l), L_MEM) }
+
+/// Whether l is in memory.
+pub fn mem_listener(l: Listener) -> Bool { ml_of(l) != 0 }
+
+/// Serves l with router r (an Any holding the http.Router): clients
+/// waiting for it go on.
+pub fn mem_serve(l: Listener, r: rt.Any) {
+  let ml = ml_of(l)
+  let a = rt.obj_addr(r)
+  rc.inc(a)
+  lock()
+  let old = ld(ml, ML_ROUTER)
+  st(ml, ML_ROUTER, a)
+  st(ml, ML_SERVED, 1)
+  wake(ml)
+  unlock()
+  if old != 0 {
+    tasks.h_release(old)
+  }
+}
+
+/// Stops serving l.
+pub fn mem_unserve(l: Listener) {
+  let ml = ml_of(l)
+  lock()
+  let old = ld(ml, ML_ROUTER)
+  st(ml, ML_ROUTER, 0)
+  wake(ml)
+  unlock()
+  if old != 0 {
+    tasks.h_release(old)
+  }
+}
+
+/// Waits until no request runs on l (after a stop request; canceled: it
+/// returns).
+pub fn mem_drain(l: Listener) {
+  let ml = ml_of(l)
+  lock()
+  while ld(ml, ML_INFLIGHT) > 0 {
+    if !wait(ml) {
+      break
+    }
+  }
+  unlock()
+}
+
+/// The listener at host:port hp (its address or alias), skipping closed
+/// ones that serve nothing unless all; the lock held.
+fn find(hp: Str, all: Bool) -> Int {
+  var m = ld(state(), R_MLS)
+  while m != 0 {
+    if all || ld(m, ML_CLOSED) == 0 || ld(m, ML_ROUTER) != 0 {
+      if blk_eq(ld(m, ML_ADDR), raw.data(hp), hp.len()) || blk_eq(ld(m, ML_ALIAS), raw.data(hp), hp.len()) {
+        return m
+      }
+    }
+    m = ld(m, ML_NEXT)
+  }
+  0
+}
+
+/// Starts a client request to host:port hp: the router serving it (an
+/// Any) in a list of one, or the empty list when nothing serves it. A
+/// listener that exists but was never served keeps the request waiting,
+/// as a real backlog does, until it is served or closed (canceled: the
+/// empty list). Once serve started, a request while it is not served
+/// (stopped, draining, returned) fails at once, as std/rt's memListener:
+/// a waiter there would be woken by nothing
+/// (gotchas/mem-listener-backlog-after-serve.md).
+pub fn mem_begin(hp: Str) -> List[rt.Any] {
+  lock()
+  var ml = find(hp, false)
+  while ml != 0 && ld(ml, ML_ROUTER) == 0 && ld(ml, ML_SERVED) == 0 && ld(ml, ML_CLOSED) == 0 {
+    st(ml, ML_NBEGIN, ld(ml, ML_NBEGIN) + 1)
+    let ok = wait(ml)
+    st(ml, ML_NBEGIN, ld(ml, ML_NBEGIN) - 1)
+    if ld(ml, ML_FREED) != 0 {
+      if ld(ml, ML_NBEGIN) == 0 {
+        ml_release(ml)
+      }
+      ml = 0
+      break
+    }
+    if !ok {
+      ml = 0
+    }
+  }
+  if ml != 0 && ld(ml, ML_ROUTER) != 0 {
+    st(ml, ML_INFLIGHT, ld(ml, ML_INFLIGHT) + 1)
+    let r = ld(ml, ML_ROUTER)
+    // counted once more for the list (rt.obj_at)
+    let out = [rt.obj_at[rt.Any](r)]
+    unlock()
+    return out
+  }
+  unlock()
+  []
+}
+
+/// Ends a request mem_begin started.
+pub fn mem_end(hp: Str) {
+  lock()
+  var ml = find(hp, false)
+  if ml == 0 {
+    ml = find(hp, true)
+  }
+  if ml != 0 && ld(ml, ML_INFLIGHT) > 0 {
+    st(ml, ML_INFLIGHT, ld(ml, ML_INFLIGHT) - 1)
+    if ld(ml, ML_INFLIGHT) == 0 {
+      wake(ml)
+    }
+  }
+  unlock()
+}
+
+/// Releases the routers served when the test ends (for the leak check;
+/// xo_testing.c tw_cleanup, on the C main thread).
+pub fn cleanup() {
+  var routers: List[Int] = []
+  lock()
+  var m = ld(state(), R_MLS)
+  while m != 0 {
+    if ld(m, ML_ROUTER) != 0 {
+      routers.push(ld(m, ML_ROUTER))
+      st(m, ML_ROUTER, 0)
+    }
+    m = ld(m, ML_NEXT)
+  }
+  unlock()
+  for r in routers {
+    tasks.h_release(r)
+  }
+}

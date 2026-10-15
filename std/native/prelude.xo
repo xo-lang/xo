@@ -29,6 +29,7 @@ use native/llrt/stdio as stdiort
 use native/llrt/strings
 use native/llrt/sysio
 use native/llrt/testworld
+use native/llrt/twrun
 use native/llrt/text
 use native/llrt/unicode
 use native/rt
@@ -2436,6 +2437,21 @@ fn llrt_test_set_args(args: List[Str]) { testworld.set_args(args) }
 fn llrt_test_exit_code() -> List[Int] { testworld.exit_code() }
 
 fn llrt_test_fs_real() -> Int { testworld.fs_real() }
+
+// The test world's part 2 (std/native/llrt/twrun.xo, the zero-C audit's
+// B15): FakeClock, testing.run_main, FakeProc.signal_after.
+
+fn llrt_test_advance(d: Int) { twrun.advance(d) }
+
+fn llrt_test_clock_set(t: Int) { twrun.clock_set(t) }
+
+fn llrt_test_sleeps() -> List[Int] { twrun.sleeps() }
+
+fn llrt_test_signal_after(d: Int) { twrun.signal_after(d) }
+
+fn llrt_test_main_begin(args: List[Str]) { twrun.main_begin(args) }
+
+fn llrt_test_main_end(code: Int) -> Int { twrun.main_end(code) }
 
 fn llrt_tw_set_input(text: Str) { testworld.set_input(text) }
 

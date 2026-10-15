@@ -30,33 +30,12 @@
 
 #define TW_EPOCH ((int64_t)1767225600 * 1000000000) // 2026-01-01T00:00:00Z
 
-// an in memory listener
-typedef struct tw_ml {
-	xo_listener *l; // not counted: the listener frees its tw_ml
-	char *alias;    // localhost:<port> for a listener on 127.0.0.1
-	xo_any *router; // served: http.Router as an Any, or NULL
-	int closed;
-	int served; // serve started once (std/rt's memListener.served)
-	int inflight;
-	int draining;
-	int nbegin; // clients waiting in xo_test_mem_begin (they hold no reference)
-	int freed;  // the listener is gone: the last waiting client frees this
-	xo_wl waiters; // accept, clients waiting for serve, drain
-	struct tw_ml *next;
-} tw_ml;
-
-static struct {
-	xo_lock mu;
-	int64_t *sleeps;
-	int nsleeps;
-	int64_t *signals; // signal_after before run_main, from its start
-	int nsignals;
-	tw_ml *mls;
-	int next_port;
-	xo_node *outer; // the node run_main restores
-	xo_node *main_node;
-	int exiting; // os.proc.exit unwinds main to testing.run_main
-} tws;
+// The test world's part 2 is std/native/llrt/twrun.xo (the zero-C audit's
+// B15): it reads tw through its address (twrun_init) at these offsets,
+// and a listener's in memory record (an ML record) through mem.
+_Static_assert(offsetof(__typeof__(tw), vnow) == 8, "twrun.xo TW_VNOW");
+_Static_assert(offsetof(__typeof__(tw), in_main) == 32, "twrun.xo TW_IN_MAIN");
+_Static_assert(offsetof(__typeof__(tw), virt) == 40, "twrun.xo TW_VIRT");
 
 // The exports of std/native/llrt/cabi_tw.xo, which test binaries carry;
 // the weak definitions keep other programs linking (they never reach
@@ -68,8 +47,17 @@ TW_WEAK void xo_x_tw_set_args(int64_t l) { (void)l; }
 TW_WEAK void xo_x_tw_set_exit(int64_t code) { (void)code; }
 TW_WEAK int64_t xo_x_tw_exit_value(void) { return 0; }
 TW_WEAK int64_t xo_x_tw_cleanup(void) { return 0; }
+TW_WEAK void xo_x_twrun_init(int64_t tw) { (void)tw; }
+TW_WEAK void xo_x_tw_sleep(int64_t d) { (void)d; }
+TW_WEAK int64_t xo_x_tw_exit(int64_t code) { return (void)code, 0; }
+TW_WEAK int64_t xo_x_tw_listen(int64_t p, int64_t n, int64_t l) { return (void)p, (void)n, (void)l, 0; }
+TW_WEAK int64_t xo_x_tw_ml_caddr(int64_t ml) { return (void)ml, 0; }
+TW_WEAK void xo_x_tw_ml_free(int64_t ml) { (void)ml; }
+TW_WEAK void xo_x_tw_ml_close(int64_t ml) { (void)ml; }
+TW_WEAK int64_t xo_x_tw_ml_accept(int64_t ml) { return (void)ml, 0; }
+TW_WEAK void xo_x_twrun_cleanup(void) {}
 
-static void *tw_grow(void *p, int n, size_t size) {
+__attribute__((unused)) static void *tw_grow(void *p, int n, size_t size) {
 	// room for element n (doubling at powers of two)
 	if (n == 0 || (n & (n - 1)) == 0) {
 		p = realloc(p, (size_t)(n == 0 ? 4 : 2 * n) * size);
@@ -91,6 +79,7 @@ __attribute__((unused)) static void tw_init(void) {
 	// real; with `clock`, `net`, or `proc` the clock is the real one (a
 	// socket or child process wait is not a virtual wait, and its
 	// deadlines are real time)
+	xo_x_twrun_init(XO_ADDR(&tw));
 	tw.real = (int)xo_x_tw_init();
 	tw.virt = !(tw.real & TW_REAL_CLOCK);
 	tw.vnow = TW_EPOCH;
@@ -100,18 +89,11 @@ __attribute__((unused)) static void tw_init(void) {
 #endif
 }
 
-// tw_exit is os.proc.exit in a test (std.md 8.4): the code is recorded
-// (FakeProc.exit_code). Outside testing.run_main the test ends and
-// passes, as on the Go backend. Inside it, main unwinds back to run_main
-// (decision 0108): its root is canceled and this context unwinds from
-// here (generated code checks after the call), and xo_test_main_end
-// gives the code as main's status.
+// tw_exit is os.proc.exit in a test (std.md 8.4): twrun.xo exit records
+// the code and, inside testing.run_main, unwinds main back to it;
+// outside it the test ends and passes, as on the Go backend.
 __attribute__((unused)) static void tw_exit(int64_t code) {
-	xo_x_tw_set_exit(code);
-	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE) && tws.main_node) {
-		__atomic_store_n(&tws.exiting, 1, __ATOMIC_RELEASE);
-		node_cancel(tws.main_node);
-		ctx()->unwinding = 1;
+	if (xo_x_tw_exit(code)) {
 		return;
 	}
 	_exit(0);
@@ -187,307 +169,48 @@ static int tw_kick_once(void) {
 	return parks == 0;
 }
 
-__attribute__((unused)) static void tw_sleep_record(int64_t d) {
-	lk(&tws.mu);
-	tws.sleeps = tw_grow(tws.sleeps, tws.nsleeps, sizeof(int64_t));
-	tws.sleeps[tws.nsleeps++] = d;
-	unlk(&tws.mu);
-}
-
-// xo_test_sleeps is FakeClock.sleeps(): every sleep asked for, in order.
-xo_rlist *xo_test_sleeps(void) {
-	lk(&tws.mu);
-	xo_rlist *l = xo_rl_new(tws.nsleeps < 4 ? 4 : tws.nsleeps, 8);
-	memcpy(rl_data(l), tws.sleeps, (size_t)tws.nsleeps * 8);
-	l->len = tws.nsleeps;
-	unlk(&tws.mu);
-	return l;
-}
-
-// xo_test_advance is FakeClock.advance(d): the timers due within d fire
-// in order, the woken contexts running (until every one waits again)
-// after each instant; then the clock reads now + d. It waits like a sleep
-// that is not a cancellation point and is not listed by sleeps().
-void xo_test_advance(int64_t d) {
-	xo_ctx *c = ctx();
-	if (d < 0) {
-		d = 0;
-	}
-	xo_timer t = {.when = deadline(d), .idx = -1, .park = &c->park};
-	park_reset(&c->park);
-	timer_add(&t);
-	while (!__atomic_load_n(&t.fired, __ATOMIC_ACQUIRE)) {
-		park_wait_n(c, 0, 1);
-	}
-	timer_del(&t);
-	// the contexts woken at the last instant (with this one) run until
-	// every one waits again before advance returns, as std/rt's
-	// World.Advance: a timer due now fires at the next move of the clock,
-	// which comes only when every context waits
-	xo_timer q = {.when = deadline(0), .idx = -1, .park = &c->park};
-	park_reset(&c->park);
-	timer_add(&q);
-	while (!__atomic_load_n(&q.fired, __ATOMIC_ACQUIRE)) {
-		park_wait_n(c, 0, 1);
-	}
-	timer_del(&q);
-}
-
-// xo_test_clock_set is FakeClock.set(t).
-void xo_test_clock_set(int64_t t) { __atomic_store_n(&tw.vnow, t, __ATOMIC_RELEASE); }
+// tw_sleep_record lists a sleep for FakeClock.sleeps (twrun.xo; sleeps,
+// advance, and set are Xo too).
+__attribute__((unused)) static void tw_sleep_record(int64_t d) { xo_x_tw_sleep(d); }
 
 // In memory listeners (std/rt's memListener)
 
-static tw_ml *tw_ml_of(xo_listener *l) { return (tw_ml *)l->mem; }
+_Static_assert(offsetof(xo_listener, mem) == 32, "twrun.xo L_MEM");
 
-// tw_listen is FakeNet.listen(addr): ":0" (and port 0) picks the next
-// port from 49152.
+// tw_listen is FakeNet.listen(addr): an in memory listener, whose
+// record and address are twrun.xo's.
 __attribute__((unused)) static xo_listener *tw_listen(xo_ctx *c, const char *addr) {
-	if (strncmp(addr, "unix:", 5) == 0) {
-		// an in memory Unix domain socket (decision 0190)
-		tw_ml *ml = calloc(1, sizeof(tw_ml));
-		if (!ml) {
-			xo_oom();
-		}
-		xo_listener *l = xo_alloc(sizeof(xo_listener));
-		h_init(l, listener_free);
-		l->pd = NULL;
-		l->addr = strdup(addr);
-		l->mem = ml;
-		l->unlink_path = 0;
-		lk(&tws.mu);
-		ml->l = l;
-		ml->next = tws.mls;
-		tws.mls = ml;
-		unlk(&tws.mu);
-		net_ok(c);
-		return l;
-	}
-	const char *colon = strrchr(addr, ':');
-	char host[256] = "127.0.0.1";
-	const char *port = colon ? colon + 1 : addr;
-	if (colon && colon > addr) {
-		size_t hn = (size_t)(colon - addr);
-		if (hn >= sizeof host) {
-			hn = sizeof host - 1;
-		}
-		memcpy(host, addr, hn);
-		host[hn] = 0;
-	}
-	char pbuf[32];
-	lk(&tws.mu);
-	if (*port == 0 || strcmp(port, "0") == 0) {
-		tws.next_port++;
-		snprintf(pbuf, sizeof pbuf, "%d", 49151 + tws.next_port);
-		port = pbuf;
-	}
-	char full[300];
-	snprintf(full, sizeof full, "%s:%s", host, port);
-	tw_ml *ml = calloc(1, sizeof(tw_ml));
-	if (!ml) {
-		xo_oom();
-	}
-	if (strcmp(host, "127.0.0.1") == 0) {
-		char al[300];
-		snprintf(al, sizeof al, "localhost:%s", port);
-		ml->alias = strdup(al);
-	}
 	xo_listener *l = xo_alloc(sizeof(xo_listener));
 	h_init(l, listener_free);
 	l->pd = NULL;
-	l->addr = strdup(full);
-	l->mem = ml;
 	l->unlink_path = 0;
-	ml->l = l;
-	ml->next = tws.mls;
-	tws.mls = ml;
-	unlk(&tws.mu);
+	l->mem = (void *)(intptr_t)xo_x_tw_listen(XO_ADDR(addr), (int64_t)strlen(addr), XO_ADDR(l));
+	l->addr = (char *)(intptr_t)xo_x_tw_ml_caddr(XO_ADDR(l->mem));
 	net_ok(c);
 	return l;
 }
 
-__attribute__((unused)) static void tw_listener_free(xo_listener *l) {
-	tw_ml *ml = tw_ml_of(l);
-	lk(&tws.mu);
-	for (tw_ml **pp = &tws.mls; *pp; pp = &(*pp)->next) {
-		if (*pp == ml) {
-			*pp = ml->next;
-			break;
-		}
-	}
-	xo_any *r = ml->router;
-	ml->router = NULL;
-	ml->closed = 1;
-	ml->l = NULL;
-	// a client still waiting for a serve that never came wakes and
-	// fails; it frees ml when it leaves (gotchas/mem-listener-backlog-after-serve.md)
-	wl_wake(&ml->waiters);
-	int keep = ml->nbegin > 0;
-	ml->freed = keep;
-	unlk(&tws.mu);
-	if (r) {
-		h_release(r);
-	}
-	if (!keep) {
-		free(ml->alias);
-		free(ml);
-	}
-}
+__attribute__((unused)) static void tw_listener_free(xo_listener *l) { xo_x_tw_ml_free(XO_ADDR(l->mem)); }
 
-__attribute__((unused)) static void tw_listener_close(xo_listener *l) {
-	tw_ml *ml = tw_ml_of(l);
-	lk(&tws.mu);
-	ml->closed = 1;
-	wl_wake(&ml->waiters);
-	unlk(&tws.mu);
-}
+__attribute__((unused)) static void tw_listener_close(xo_listener *l) { xo_x_tw_ml_close(XO_ADDR(l->mem)); }
 
 // tw_listener_accept waits until the listener closes or the context is
 // canceled: requests reach a served router in process, never as
 // connections.
 __attribute__((unused)) static xo_conn *tw_listener_accept(xo_ctx *c, xo_listener *l) {
-	tw_ml *ml = tw_ml_of(l);
-	lk(&tws.mu);
-	while (!ml->closed) {
-		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
-			unlk(&tws.mu);
-			net_fail(c, 5, "");
-			return xo_h_zero();
-		}
+	if (!xo_x_tw_ml_accept(XO_ADDR(l->mem))) {
+		net_fail(c, 5, "");
+		return xo_h_zero();
 	}
-	unlk(&tws.mu);
 	net_fail(c, 4, "accept tcp %s: %s", l->addr, closed_text);
 	return xo_h_zero();
-}
-
-// xo_test_mem_listener reports whether l is in memory.
-int64_t xo_test_mem_listener(xo_listener *l) { return l->mem != NULL; }
-
-// xo_test_mem_serve serves l with router r (an Any holding the
-// http.Router): clients waiting for it go on.
-void xo_test_mem_serve(xo_listener *l, xo_any *r) {
-	tw_ml *ml = tw_ml_of(l);
-	h_retain(r);
-	lk(&tws.mu);
-	xo_any *old = ml->router;
-	ml->router = r;
-	ml->served = 1;
-	wl_wake(&ml->waiters);
-	unlk(&tws.mu);
-	if (old) {
-		h_release(old);
-	}
-}
-
-// xo_test_mem_unserve stops serving l.
-void xo_test_mem_unserve(xo_listener *l) {
-	tw_ml *ml = tw_ml_of(l);
-	lk(&tws.mu);
-	xo_any *old = ml->router;
-	ml->router = NULL;
-	wl_wake(&ml->waiters);
-	unlk(&tws.mu);
-	if (old) {
-		h_release(old);
-	}
-}
-
-// xo_test_mem_drain waits until no request runs on l (after a stop
-// request; canceled: it returns).
-void xo_test_mem_drain(xo_listener *l) {
-	tw_ml *ml = tw_ml_of(l);
-	xo_ctx *c = ctx();
-	lk(&tws.mu);
-	while (ml->inflight > 0) {
-		if (!wl_wait(c, &tws.mu, &ml->waiters, 1)) {
-			break;
-		}
-	}
-	unlk(&tws.mu);
-}
-
-static tw_ml *tw_ml_find(const char *hp, int64_t n) {
-	for (tw_ml *ml = tws.mls; ml; ml = ml->next) {
-		if (ml->closed && !ml->router) {
-			continue;
-		}
-		if (((int64_t)strlen(ml->l->addr) == n && memcmp(ml->l->addr, hp, (size_t)n) == 0) ||
-		    (ml->alias && (int64_t)strlen(ml->alias) == n && memcmp(ml->alias, hp, (size_t)n) == 0)) {
-			return ml;
-		}
-	}
-	return NULL;
-}
-
-// xo_test_mem_begin starts a client request to host:port hp: the router
-// serving it (an Any, a reference) in a list of one, or the empty list
-// when nothing serves it. A listener that exists but was never served
-// keeps the request waiting, as a real backlog does, until it is served
-// or closed (canceled: the empty list). Once serve started, a request
-// while it is not served (stopped, draining, returned) fails at once, as
-// std/rt's memListener: a waiter there would be woken by nothing
-// (gotchas/mem-listener-backlog-after-serve.md).
-xo_rlist *xo_test_mem_begin(const char *hp, int64_t n) {
-	xo_ctx *c = ctx();
-	lk(&tws.mu);
-	tw_ml *ml = tw_ml_find(hp, n);
-	while (ml && !ml->router && !ml->served && !ml->closed) {
-		ml->nbegin++;
-		int ok = wl_wait(c, &tws.mu, &ml->waiters, 1);
-		ml->nbegin--;
-		if (ml->freed) {
-			if (ml->nbegin == 0) {
-				free(ml->alias);
-				free(ml);
-			}
-			ml = NULL;
-			break;
-		}
-		if (!ok) {
-			ml = NULL;
-		}
-	}
-	if (ml && ml->router) {
-		ml->inflight++;
-		xo_any *r = ml->router;
-		h_retain(r);
-		unlk(&tws.mu);
-		xo_rlist *l = xo_rl_new(4, 8);
-		((xo_any **)rl_data(l))[0] = r;
-		l->len = 1;
-		return l;
-	}
-	unlk(&tws.mu);
-	return xo_rl_new(4, 8);
-}
-
-// xo_test_mem_end ends a request started by xo_test_mem_begin.
-void xo_test_mem_end(const char *hp, int64_t n) {
-	lk(&tws.mu);
-	tw_ml *ml = tw_ml_find(hp, n);
-	if (!ml) {
-		for (tw_ml *m = tws.mls; m; m = m->next) {
-			if (((int64_t)strlen(m->l->addr) == n && memcmp(m->l->addr, hp, (size_t)n) == 0) ||
-			    (m->alias && (int64_t)strlen(m->alias) == n && memcmp(m->alias, hp, (size_t)n) == 0)) {
-				ml = m;
-				break;
-			}
-		}
-	}
-	if (ml && ml->inflight > 0) {
-		ml->inflight--;
-		if (ml->inflight == 0) {
-			wl_wake(&ml->waiters);
-		}
-	}
-	unlk(&tws.mu);
 }
 
 // xo_test_now is the virtual clock's now (MemFs modified times).
 int64_t xo_test_now(void) { return xo_clock_now(); }
 
 // tw_cleanup releases the values the test world keeps (testworld.xo's,
-// and the routers served) when the test ends, for the leak check.
+// and twrun.xo's routers served) when the test ends, for the leak check.
 __attribute__((unused)) static void tw_cleanup(void) {
 	// testworld.xo hands over its values (a malloc'd block: the count,
 	// then the objects); they are released here, on the C main thread
@@ -498,19 +221,7 @@ __attribute__((unused)) static void tw_cleanup(void) {
 		}
 		free(kept - 1);
 	}
-	lk(&tws.mu);
-	xo_any *routers[64];
-	int nrouters = 0;
-	for (tw_ml *ml = tws.mls; ml && nrouters < 64; ml = ml->next) {
-		if (ml->router) {
-			routers[nrouters++] = ml->router;
-			ml->router = NULL;
-		}
-	}
-	unlk(&tws.mu);
-	for (int i = 0; i < nrouters; i++) {
-		h_release(routers[i]);
-	}
+	xo_x_twrun_cleanup();
 }
 
 // testing.run_main and FakeProc.signal_after (core 7.5)
@@ -535,83 +246,7 @@ static void tw_signal_arm(int64_t d) {
 	timer_add(t);
 }
 
-// xo_test_signal_after is FakeProc.signal_after(d): inside run_main a
-// signal d from now, before it d from run_main's start.
-void xo_test_signal_after(int64_t d) {
-	if (__atomic_load_n(&tw.in_main, __ATOMIC_ACQUIRE)) {
-		tw_signal_arm(d);
-		return;
-	}
-	lk(&tws.mu);
-	tws.signals = tw_grow(tws.signals, tws.nsignals, sizeof(int64_t));
-	tws.signals[tws.nsignals++] = d;
-	unlk(&tws.mu);
-}
 
-// xo_test_main_begin starts testing.run_main: main's root is a new node
-// below the test's, the stop state is fresh, and the queued signals are
-// armed.
-void xo_test_main_begin(xo_rlist *args) {
-	xo_x_tw_set_args((int64_t)(intptr_t)args);
-	xo_ctx *c = ctx();
-	xo_node *n = calloc(1, sizeof(xo_node));
-	if (!n) {
-		xo_oom();
-	}
-	node_link(n, c->node);
-	tws.outer = c->node;
-	tws.main_node = n;
-	c->node = n;
-	xo_x_stop_reset(XO_ADDR(n));
-	__atomic_store_n(&tw.in_main, 1, __ATOMIC_RELEASE);
-	lk(&tws.mu);
-	int64_t *sigs = tws.signals;
-	int ns = tws.nsignals;
-	tws.signals = NULL;
-	tws.nsignals = 0;
-	unlk(&tws.mu);
-	for (int i = 0; i < ns; i++) {
-		tw_signal_arm(sigs[i]);
-	}
-	free(sigs);
-}
-
-// tw_main_status ends testing.run_main with main's status: the test's
-// node is current again; when main unwound because the stop state
-// canceled its root (and not because the test is canceled), the
-// unwinding ends here and the status is 0.
-static int64_t tw_main_status(int64_t code, int *exited) {
-	xo_ctx *c = ctx();
-	__atomic_store_n(&tw.in_main, 0, __ATOMIC_RELEASE);
-	xo_node *n = tws.main_node;
-	c->node = tws.outer;
-	*exited = (int)xo_x_stop_unroot(XO_ADDR(n));
-	if (n) {
-		node_unlink(n);
-		free(n);
-		tws.main_node = NULL;
-	}
-	if (__atomic_exchange_n(&tws.exiting, 0, __ATOMIC_ACQ_REL) && !node_canceled(c->node)) {
-		// os.proc.exit unwound main (tw_exit): its code is the status
-		c->unwinding = 0;
-		return xo_x_tw_exit_value();
-	}
-	if (c->unwinding && xo_x_stop_canceled() && !node_canceled(c->node)) {
-		c->unwinding = 0;
-		return 0;
-	}
-	return code;
-}
-
-// xo_test_main_end is tw_main_status, except that after a third signal
-// the status is 130 however main ended, and FakeProc.exit_code is
-// Some(130) (std/rt's Testing_run_main).
-int64_t xo_test_main_end(int64_t code) {
-	int exited = 0;
-	int64_t r = tw_main_status(code, &exited);
-	if (exited) {
-		xo_x_tw_set_exit(130);
-		r = 130;
-	}
-	return r;
-}
+// xo_test_signal_arm arms FakeProc.signal_after's signal d from now
+// (twrun.xo signal_after and main_begin; testing.run_main is Xo too).
+void xo_test_signal_arm(int64_t d) { tw_signal_arm(d); }

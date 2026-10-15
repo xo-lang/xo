@@ -6,7 +6,9 @@
 // programs without them (std/llrt/xo_testing.c). The state is
 // testworld.xo's. A list result is its list object's address, counted
 // once for the C caller.
+use native/llrt/raw
 use native/llrt/testworld
+use native/llrt/twrun
 use native/rt
 
 /// Records the start's variable k (testworld.V_*): the n bytes at p, or
@@ -33,3 +35,20 @@ fn tw_cleanup() -> Int { testworld.cleanup() }
 /// FakeProc.on_run's entry for the command of the n bytes at p, or 0
 /// (kept until the test ends).
 fn tw_proc_find(p: Int, n: Int) -> Int { testworld.proc_find_raw(p, n) }
+
+// Part 2 (std/native/llrt/twrun.xo, the zero-C audit's B15)
+
+/// tw_init hands over the C's tw record.
+fn twrun_init(tw: Int) { twrun.init(tw) }
+/// A sleep for FakeClock.sleeps (xo_rt.c clock_wait).
+fn tw_sleep(d: Int) { twrun.sleep_record(d) }
+/// os.proc.exit in a test: 1 when main unwinds to testing.run_main.
+fn tw_exit(code: Int) -> Int { if twrun.exit(code) { 1 } else { 0 } }
+/// FakeNet.listen of the n bytes at p for the C's listener l: its ML
+/// record.
+fn tw_listen(p: Int, n: Int, l: Int) -> Int { twrun.listen(raw.str_at(p, n), l) }
+fn tw_ml_caddr(ml: Int) -> Int { twrun.ml_caddr(ml) }
+fn tw_ml_free(ml: Int) { twrun.ml_free(ml) }
+fn tw_ml_close(ml: Int) { twrun.ml_close(ml) }
+fn tw_ml_accept(ml: Int) -> Int { if twrun.ml_accept(ml) { 1 } else { 0 } }
+fn twrun_cleanup() { twrun.cleanup() }

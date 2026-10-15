@@ -419,20 +419,40 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
 /// Whether the current task is canceled (and not shielded).
 pub fn canceled() -> Bool { svc(S_CANCELED, ctx.cur()) != 0 }
 
+/// A timer that signals the park p at deadline (ns, the timers' clock:
+/// the virtual one in the test world, else rt.clock_now's monotonic
+/// one), added to the heap; end it with timer_end.
+pub fn timer_park(deadline: Int, p: Int) -> Int {
+  let t = rt.heap_large(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  rt.mem_store(t, T_WHEN, deadline, 8)
+  rt.mem_store(t, T_IDX, -1, 8)
+  rt.mem_store(t, T_PARK, p, 8)
+  let _a = svc(S_TADD, t)
+  t
+}
+
+/// Whether timer t (of timer_park) fired.
+pub fn timer_fired(t: Int) -> Bool { fired(t) }
+
+/// Takes timer t (of timer_park) out of the heap and frees it.
+pub fn timer_end(t: Int) {
+  let _d = svc(S_TDEL, t)
+  rt.heap_release(t - 8)
+}
+
+/// The park of context c.
+pub fn park_of(c: Int) -> Int { addw(c, svc_word(S_PARK)) }
+
 /// Waits in the current task until the monotonic time deadline (ns,
 /// rt.clock_now's clock) passes or the task is canceled: TIMEOUT or
 /// CANCELED (xo_rt.c clock_wait, for std/native/llrt/proc.xo's wait for
 /// a child's exit).
 pub fn sleep_until(deadline: Int) -> Int {
   let c = ctx.cur()
-  let park = addw(c, svc_word(S_PARK))
-  let t = rt.heap_large(T_SIZE)
-  rt.mem_set(t, 0, T_SIZE)
-  rt.mem_store(t, T_WHEN, deadline, 8)
-  rt.mem_store(t, T_IDX, -1, 8)
-  rt.mem_store(t, T_PARK, park, 8)
+  let park = park_of(c)
   pool.park_reset(park)
-  let _a = svc(S_TADD, t)
+  let t = timer_park(deadline, park)
   var res = TIMEOUT
   while true {
     if svc(S_CANCELED, c) != 0 {
@@ -444,8 +464,7 @@ pub fn sleep_until(deadline: Int) -> Int {
     }
     let _w = svc(S_WAIT, c)
   }
-  let _d = svc(S_TDEL, t)
-  rt.heap_release(t - 8)
+  timer_end(t)
   res
 }
 

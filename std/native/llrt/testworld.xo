@@ -76,7 +76,10 @@ const S_EXIT = 296
 const S_IN = 304
 const S_IN_OFF = 312
 const S_DROPPED = 320
-const S_SIZE = 344
+/// twrun.xo's words (part 2 of the test world): its state record, and
+/// its lock.
+const S_RUN = 344
+const S_SIZE = 360
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -196,6 +199,10 @@ fn vec_str(v: Int) -> Str {
 
 /// The state record, made on first use (tw_setenv at the start of a test
 /// binary, before any thread).
+/// The address of twrun.xo's two words in the state record (its state
+/// record's address, its lock word).
+pub fn run_words() -> Int { st() + S_RUN }
+
 fn st() -> Int {
   let w = rt.static_word(W_STATE)
   let a = rt.slot_load(w, 0, ACQUIRE)

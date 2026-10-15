@@ -12,8 +12,8 @@ use native/llrt/cabi_tls
 use native/llrt/cabi_net
 use native/llrt/netpolicy
 use native/llrt/testworld
+use native/llrt/twrun
 use native/rthttp
-use native/rttest
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -536,7 +536,7 @@ fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
 }
 
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
-  if rttest.test_mem_listener(s.l) {
+  if twrun.mem_listener(s.l) {
     serve_mem(s.l, s.r)
     return Ok(())
   }
@@ -588,11 +588,11 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
 /// requested (then the requests in flight finish) or the task is
 /// canceled.
 fn serve_mem(l: Listener, r: Router) {
-  rttest.test_mem_serve(l, rt.any_of(r))
-  defer rttest.test_mem_unserve(l)
+  twrun.mem_serve(l, rt.any_of(r))
+  defer twrun.mem_unserve(l)
   if task.stopping().recv() is None {
-    rttest.test_mem_unserve(l)
-    rttest.test_mem_drain(l)
+    twrun.mem_unserve(l)
+    twrun.mem_drain(l)
   }
 }
 
@@ -834,11 +834,11 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
   if let Some(p) = req.url.port {
     hp = hp + ":${p}"
   }
-  let found = rttest.test_mem_begin(hp)
+  let found = twrun.mem_begin(hp)
   if found.is_empty() {
     return Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
   }
-  defer rttest.test_mem_end(hp)
+  defer twrun.mem_end(hp)
   match rt.any_get[Router](found[0]) {
     Some(r) => r.call(req)
     None => Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B15, part 2): the test world's
+  FakeClock (sleeps, advance, set), FakeNet's in memory listeners,
+  testing.run_main, FakeProc.signal_after, and os.proc.exit's unwind in a
+  test are Xo (std/native/llrt/twrun.xo); xo_testing.c keeps the clock's
+  move when every context waits, the signal timer's callback, and
+  forwarders (617 to 252 lines).
 - Native runtime (zero-C audit item B04, decision 0230): a program built
   with no C library (XO_NOLIBC=1, Linux) takes its C library from Xo,
   exported under the C names (std/native/llrt/cabi_libc.xo): malloc and
