@@ -40,6 +40,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   into the zero handle or empty list) instead of xo_rt.c's forwarders.
   The dead xo_net_dial_timeout and its export (xo_http.c's client, gone
   with the C TLS) are deleted.
+- Native backends (generated-code entries N3): rt.clock_now (the test
+  world's virtual clock), clock.sleep and sleep_or_cancel, a select's
+  `after` arm and task.is_canceled call cabi.xo's exports (over poll.xo
+  wall_now, selects.xo after, tasks.xo is_canceled and twrun.xo's
+  sleep record) instead of xo_rt.c's forwarders. With N1 and N2, 184
+  lines of xo_rt.c can go after the next seed.
 - Native runtime (zero-C audit item B06): the last fault entries of
   generated code are Xo exports (cabi.xo fault_raise, fault_continue,
   fault_take, fault_msg, fault_loc, fault_detail over fault.xo); the C

@@ -175,6 +175,10 @@ pub fn canceled(c: Int) -> Bool {
   false
 }
 
+/// `task.is_canceled()` (xo_rt.c xo_is_canceled): whether the current
+/// context's innermost node is canceled, shielded or not.
+pub fn is_canceled() -> Bool { node_canceled(ld(ctx.cur(), ctx.C_NODE)) }
+
 /// Adds entry e at the end of wait list l (the oldest waiter is first).
 pub fn wl_add(l: Int, e: Int) {
   st(e, E_NEXT, 0)

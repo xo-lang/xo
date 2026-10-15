@@ -425,6 +425,17 @@ pub fn now() -> Int {
   sysio.mono_ns()
 }
 
+/// Clock.now's time while the test world's clock is virtual, else the
+/// wall clock (xo_rt.c xo_clock_now, which generated code calls as
+/// rt.clock_now through cabi.xo's clock_now).
+pub fn wall_now() -> Int {
+  let tw = rt.sched_rt(RT_TW, 0, 0)
+  if rt.mem_load(tw, TW_VIRT, 4) != 0 {
+    return rt.slot_load(tw + TW_VNOW, 0, ACQUIRE)
+  }
+  sysio.real_ns()
+}
+
 /// The timers' time d ns from now, saturating (xo_rt.c deadline).
 pub fn deadline(d: Int) -> Int {
   let n = now()

@@ -259,3 +259,13 @@ pub fn free(s: Int) {
   }
   obj.free_obj(s)
 }
+
+/// Adds the `after d` arm to select s (xo_rt.c xo_select_after): when no
+/// other arm proceeds within d, the wait returns -2; the shortest of
+/// several wins.
+pub fn after(s: Int, d: Int) {
+  if ld4(s, SE_HAS_AFTER) == 0 || d < ld(s, SE_AFTER) {
+    st(s, SE_AFTER, d)
+  }
+  st4(s, SE_HAS_AFTER, 1)
+}

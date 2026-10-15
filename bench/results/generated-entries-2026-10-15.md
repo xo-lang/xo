@@ -216,3 +216,35 @@ xo_listener and xo_conn typedefs and asserts if nothing else uses them,
 and cabi_net.xo's nc_listener_addr and nc_conn_read (and netconn.xo
 list_of's length slot). Deleted now: xo_net_dial_timeout and
 cabi_net.xo nc_dial_timeout (no caller since the C TLS went).
+
+## Batch N3 (the clock and cancellation checks)
+
+rt.clock_now, clock_sleep, clock_sleep_or_cancel, select_after and
+is_canceled call new cabi.xo exports of the same names: clock_now is
+poll.xo wall_now (the virtual clock while the test world's is virtual,
+else sysio.xo real_ns; Clock.now itself is sysio.xo's clock_now, which
+reaches it only for the virtual clock, and every rt.clock_now in the Xo
+runtime goes the same way), the sleeps record the test world's sleep
+(twrun.xo sleep_record) and wait in poll.xo clock_wait, clock_sleep
+then marks the context unwinding (tasks.xo canceled), select_after is
+selects.xo after, is_canceled tasks.xo is_canceled. The arm64 assembly
+of the clock_timers golden calls none of the C entries. Tests: hello on
+both backends, -short, 14 goldens on LLVM and arm64 (clock, scopes,
+select, tasks, budgets, real-time), cmd/xo TestNoGCTests.
+
+C deletable after the next seed (std/llrt/xo_rt.c): xo_clock_now,
+clock_wait, xo_clock_sleep, xo_clock_sleep_or_cancel, xo_select_after,
+xo_is_canceled.
+
+## Freed C of N1 to N3 after the next seed
+
+Deleting every function listed under N1, N2 and N3 from xo_rt.c, then
+what loses its last caller (the statics canceled, rl_data and rl_new;
+the declarations or weak stubs of xo_x_scope_deadline, scope_timed_out,
+real_ns, poll_clock_wait, tw_sleep, rt_enter, rt_exit, stop_requested,
+stop_stopping and the eight xo_x_nc_* the forwarders called; the
+xo_listener and xo_conn typedefs and asserts), takes xo_rt.c from 3223
+to 3039 lines (184), and the result compiles (clang -fsyntax-only; no
+other new unused function). In Xo after the same seed: cabi_net.xo
+nc_listener_addr and nc_conn_read, and netconn.xo list_of's length
+slot.

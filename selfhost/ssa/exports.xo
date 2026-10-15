@@ -26,6 +26,13 @@ pub fn rt_export(name: Str) -> Str {
     "rt.conn_read" => "xo_x_nc_conn_read_list"
     "rt.net_status" => "xo_x_nc_status"
     "rt.net_msg" => "xo_x_nc_msg"
+    // the clock and cancellation checks (cabi.xo over poll.xo, tasks.xo,
+    // selects.xo and twrun.xo)
+    "rt.clock_now" => "xo_x_clock_now"
+    "rt.clock_sleep" => "xo_x_clock_sleep"
+    "rt.clock_sleep_or_cancel" => "xo_x_clock_sleep_or_cancel"
+    "rt.select_after" => "xo_x_select_after"
+    "rt.is_canceled" => "xo_x_is_canceled"
     _ => ""
   }
 }

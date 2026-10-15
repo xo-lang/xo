@@ -35,6 +35,8 @@ use native/llrt/sanhook
 use native/llrt/sched
 use native/llrt/selects
 use native/llrt/tasks
+use native/llrt/twflags
+use native/llrt/twrun
 use native/llrt/stdin
 use native/llrt/stdio
 use native/llrt/stop
@@ -410,6 +412,43 @@ fn poll_timer_del(t: Int) { poll.timer_del(t) }
 /// clock.sleep's wait in context c (xo_rt.c clock_wait): 1 when
 /// cancellation ended or prevented it.
 fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else { 0 } }
+
+// The clock and cancellation checks of generated code (selfhost/ssa
+// exports.xo; xo_rt.c's xo_clock_now and the rest stay for code of
+// compilers up to 0.12.0).
+
+/// rt.clock_now: the virtual clock in the test world, else the wall
+/// clock.
+fn clock_now() -> Int { poll.wall_now() }
+
+/// `clock.sleep(d)`: a cancellation point that unwinds, also while it
+/// waits (core 7.2). The test world records the sleep first
+/// (FakeClock.sleeps()).
+fn clock_sleep(d: Int) {
+  let c = ctx.cur()
+  if twflags.on() && !budget.canceled(c) {
+    twrun.sleep_record(d)
+  }
+  if poll.clock_wait(c, d) {
+    let _u = tasks.canceled(c)
+  }
+}
+
+/// `clock.sleep_or_cancel(d)` (decision 0088): 1 when the task was
+/// canceled before or during the sleep.
+fn clock_sleep_or_cancel(d: Int) -> Int {
+  let c = ctx.cur()
+  if twflags.on() && !budget.canceled(c) {
+    twrun.sleep_record(d)
+  }
+  if poll.clock_wait(c, d) { 1 } else { 0 }
+}
+
+/// A select's `after d` arm.
+fn select_after(s: Int, d: Int) { selects.after(s, d) }
+
+/// `task.is_canceled()`.
+fn is_canceled() -> Int { if tasks.is_canceled() { 1 } else { 0 } }
 
 /// task.with_timeout (tasks.xo): the scope's deadline, and whether it
 /// ended the body.
