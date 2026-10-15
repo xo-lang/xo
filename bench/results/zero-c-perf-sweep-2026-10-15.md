@@ -487,3 +487,36 @@ against the C's 80 and 52, and tasks.park_wait_n at 78 with no
 counterpart in main; not profiled again after them); conc pingpong on arm64 moves by 10% between runs of
 the same binaries (threads), so its row is not conclusive.
 
+## Follow up: HTTP/2 against TLS (xo-fa, 2026-10-15)
+
+The lead asked whether the h2 rows are the HTTP/2 code (h2srv.xo,
+hclient.xo) or TLS. Same method as above (5 interleaved repetitions,
+medians), three sides: main at dd33dd13, zero-c at 879abb5c (after the
+TLS work of decisions 0231 and steps 5 to 9 of
+bench/results/tls-perf-2026-10-15.md), and the same zero-c built with
+XO_LLRT_C=tlsio,tlssrv (Mbed TLS under the Xo HTTP/2 code).
+
+| Workload | Backend | main | zero-c | zero-c/main | zero-c + Mbed/main |
+|---|---|---|---|---|---|
+| http h2 (server CPU us/req) | arm64 | 47.5 | 50.3 | 1.059 | 1.038 |
+| http h2 (server CPU us/req) | llvm | 47.1 | 46.7 | 0.992 | 1.000 |
+| http h2 rps | arm64 | 66087 | 62957 | 0.953 | 0.986 |
+| http h2 rps | llvm | 64440 | 64287 | 0.998 | 1.009 |
+| http http1 (control) | arm64 | 30.5 | 32.4 | 1.062 | 1.052 |
+| httpclient h2big (M instr) | arm64 | 5253 | 7699 | 1.466 | 1.021 |
+| httpclient h2big (M instr) | llvm | 5233 | 5946 | 1.136 | 1.015 |
+| httpclient h2len (M instr) | arm64 | 623 | 692 | 1.112 | 1.037 |
+| httpclient h2len (M instr) | llvm | 605 | 622 | 1.028 | 1.011 |
+| httpclient big, HTTP/1.1 (control) | arm64 | 1053 | 1046 | 0.994 | 0.992 |
+
+- The h2 server's 1.45x and 1.39x of the sweep are gone: it is within
+  6% of main on arm64 and at main on llvm, with or without Mbed. That
+  was the TLS (the handshakes and AES-GCM fixed since).
+- With Mbed under it, the Xo HTTP/2 code is within 1.5 to 4% of main on
+  every row, the same as the HTTP/1.1 controls: the h2 code itself is
+  not the regression.
+- h2big is still 1.47x on arm64 and 1.14x on llvm with the Xo TLS: the
+  client decrypting the big body, AES-GCM's record path on arm64 (26M
+  instructions a MiB against llvm's 18M and Mbed's 14M, results file
+  step 8). That is the next step.
+
