@@ -65,22 +65,36 @@ pub const C_SIZE = 256
 
 /// rt.static_word: the address of xo_rt.c ctx_root (two ignored
 /// arguments; the current context, made for a thread that runs Xo code
-/// outside any task), and the address of the C's worker pool record (the
-/// pl of pool.xo), set by init.
+/// outside any task), and the address of the C's services record
+/// (xo_rt.c xo_svc: SV_*), set by init.
 const ROOT = 15
-const POOL = 16
+const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
 const PROG = 17
 
-/// Sets the address of the C's ctx_root and of its pool (at start).
-pub fn init(root: Int, pl: Int) {
+/// The C's services record (xo_svc, asserted): the worker pool record
+/// (pool.xo's pl), the free functions of a task and a scope, whether
+/// ThreadSanitizer is on (a word), and the address of the statistics'
+/// switch (a C int, > 0 when they count).
+pub const SV_POOL = 0
+pub const SV_TASK_FREE = 8
+pub const SV_SCOPE_FREE = 16
+pub const SV_TSAN = 24
+pub const SV_STATS = 32
+
+/// Sets the address of the C's ctx_root and of its services record (at
+/// start).
+pub fn init(root: Int, svc: Int) {
   rt.mem_store(rt.static_word(ROOT), 0, root, 8)
-  rt.mem_store(rt.static_word(POOL), 0, pl, 8)
+  rt.mem_store(rt.static_word(SVC), 0, svc, 8)
 }
 
+/// The C's services record.
+pub fn svc() -> Int { rt.mem_load(rt.static_word(SVC), 0, 8) }
+
 /// The C's worker pool record (pool.xo's pl).
-pub fn pool() -> Int { rt.mem_load(rt.static_word(POOL), 0, 8) }
+pub fn pool() -> Int { rt.mem_load(svc(), SV_POOL, 8) }
 
 /// The address of the word holding the program's task group.
 pub fn prog_group_word() -> Int { rt.static_word(PROG) }

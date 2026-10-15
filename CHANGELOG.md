@@ -14,6 +14,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   text, json, alloc, and nested are 0.973 to 1.030 of main's
   instructions, the self build 1.002 and 1.004
   (bench/results/heap-platform-2026-10-14.md).
+- Native runtime (zero-C audit item B18, part 2): the spawn and a scope's
+  open and close are Xo (std/native/llrt/tasks.xo), which generated code
+  calls directly; xo_rt.c loses 145 lines and gains 70. Single threaded
+  spawn and await on the Mac are 1.006 to 1.026 of main's instructions.
 - Native runtime (zero-C audit item B18, part 1): a task's end, `await`,
   a scope's failed task, `s.cancel()`, and `os.tasks` are Xo
   (std/native/llrt/tasks.xo), which generated code calls directly; a

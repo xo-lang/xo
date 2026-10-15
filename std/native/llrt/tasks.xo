@@ -11,13 +11,16 @@
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
+use native/llrt/alloc
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sched
+use native/llrt/stdio
 use native/rt
 
 /// xo_task (216 bytes): the header (count, free function), the
@@ -32,15 +35,22 @@ use native/rt
 const T_NODE = 16
 const T_SCOPE = 72
 const T_STATE = 80
+const T_RUN = 88
+const T_DROP = 96
+const T_FL = 104
 const T_RESULT = 112
 const T_UNWOUND = 120
+const T_BACKGROUND = 124
 const T_CONSUMED = 128
 const T_SITE = 136
 const T_MU = 144
 const T_WAITERS = 152
+const T_SNEXT = 168
 const T_FAULT_MSG = 184
 const T_FAULT_LOC = 192
 const T_FAULT_DETAIL = 200
+const T_BUD = 208
+const T_SIZE = 216
 const T_DONE = 2
 
 /// xo_scope (464 bytes): the body's node, the lock of the list and the
@@ -50,9 +60,30 @@ const S_BODY = 16
 const S_TASKS = 72
 const S_OLD = 80
 const S_NOLD = 88
+const S_PARENT_NODE = 96
 const S_MU = 104
+const S_LIST = 384
 const S_FAIL = 392
+const S_CLOSED = 400
+const S_DEADLINE = 408
 const S_FAULT = 424
+const S_PRUNE_AT = 440
+const S_CLOSING = 448
+const S_SIZE = 464
+
+/// An object's header (xo_hdr): its count and its free function.
+const H_RC = 0
+const H_FREE = 8
+
+/// The pool record's worker count (pool.xo P_NCPU: 0 until the pool's
+/// setup ran) and the thread locals of the fiber and worker record
+/// (sched.xo TLS_FIB, TLS_W).
+const P_NCPU = 8
+const TLS_FIB = 1
+const TLS_W = 2
+
+/// The spawn statistic (pool.xo ST_*).
+const ST_SPAWN = 0
 
 /// A cancellation node's canceled word (pool.xo N_CANCELED).
 const N_CANCELED = 32
@@ -73,6 +104,13 @@ const RT_RUN_CLAIMED = 16
 const RT_PARK_WAIT = 17
 const RT_EMPTY_LIST = 18
 const RT_H_RELEASE = 19
+const RT_POOL_INIT = 20
+const RT_ROOT_WORKER = 21
+const RT_TSAN_RELEASE = 22
+const RT_TSAN_ACQUIRE = 23
+const RT_DEADLINE_DEL = 24
+const RT_H_FREE = 25
+const RT_STAT = 0
 const ACQ_REL = 3
 
 const ACQUIRE = 1
@@ -299,7 +337,7 @@ pub fn prog_group_set(s: Int) {
   }
   let old = rt.slot_swap[Int](ctx.prog_group_word(), 0, s, ACQ_REL)
   if old != 0 {
-    let _r = rt.sched_rt(RT_H_RELEASE, old, 0)
+    h_release(old)
   }
 }
 
@@ -312,4 +350,205 @@ pub fn prog_group() -> Int {
   }
   rc.inc(s)
   s
+}
+
+// ---------------------------------------------------------------------------
+// The spawn and the scope's open and close (B18 part 2)
+
+/// The pool, set up at the first spawn (the C's pool_init: the worker
+/// count, the spin rounds, the fiber stacks' settings, the statistics).
+fn pool_ready() -> Int {
+  let pl = ctx.pool()
+  if rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) == 0 {
+    let _r = rt.sched_rt(RT_POOL_INIT, 0, 0)
+  }
+  pl
+}
+
+/// A new object of n bytes, zeroed, whose header has one reference and
+/// the C free function in services record word k (ctx.xo SV_TASK_FREE,
+/// SV_SCOPE_FREE).
+fn new_object(n: Int, k: Int) -> Int {
+  let o = alloc.alloc(obj.heap(), n)
+  rt.mem_set(o, 0, n)
+  st(o, H_RC, -1)
+  st(o, H_FREE, ld(ctx.svc(), k))
+  o
+}
+
+/// Drops a reference to the object at p (xo_rt.c h_release): the last
+/// one frees it through the C (xo_h_free: its free function, deferred in
+/// a real-time section).
+fn h_release(p: Int) {
+  if rc.dec(p) != 0 {
+    let _r = rt.sched_rt(RT_H_FREE, p, 0)
+  }
+}
+
+/// Tells ThreadSanitizer (when the C runtime is built with it) that a
+/// releases (op RT_TSAN_RELEASE) or acquires (RT_TSAN_ACQUIRE).
+fn tsan(op: Int, a: Int) {
+  if ld(ctx.svc(), ctx.SV_TSAN) != 0 {
+    let _r = rt.sched_rt(op, a, 0)
+  }
+}
+
+/// Counts the statistic k when the statistics count (XO_RTSTATS).
+fn stat(k: Int) {
+  if rt.mem_load(ld(ctx.svc(), ctx.SV_STATS), 0, 4) > 0 {
+    let _r = rt.sched_rt(RT_STAT, k, 0)
+  }
+}
+
+/// Starts a task in scope s (xo_task_spawn, `s.spawn(f)`; flags bit 0:
+/// background, bit 1: its handle is bound and awaited, so its error does
+/// not fail the scope). fl is the closure in a list of one (consumed);
+/// run is the entry function that calls it, drop the one that releases
+/// its result list, fdrop the one that releases fl (a spawn on a scope
+/// that has ended faults at the ln bytes at lp and gives it back,
+/// decision 0085). site tells the scope which spawn failed.
+pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
+  let pl = pool_ready()
+  stat(ST_SPAWN)
+  var w = rt.tlocal_get(TLS_W)
+  if w == 0 {
+    w = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+  }
+  let t = new_object(T_SIZE, ctx.SV_TASK_FREE)
+  // references: the handle returned, and the scope's list (which keeps
+  // t alive while a queue holds it)
+  st(t, H_RC, -2)
+  st(t, T_RUN, run)
+  st(t, T_DROP, drop)
+  st(t, T_FL, fl)
+  st4(t, T_BACKGROUND, flags & 1)
+  st4(t, T_CONSUMED, (flags / 2) & 1)
+  st(t, T_SITE, site)
+  // the spawning context's budget (decision 0175)
+  let bud = ld(ctx.cur(), ctx.C_BUD)
+  st(t, T_BUD, bud)
+  budget.retain(bud)
+  tsan(RT_TSAN_RELEASE, t)
+  // linked into s, counted, and queued (pool.xo scope_add): the tasks it
+  // pruned from s's list, or -1 when s has ended
+  let r = pool.scope_add(pl, s, t, w)
+  if r == -1 {
+    budget.release(bud)
+    alloc.free(obj.heap(), t)
+    if fl != empty_list() {
+      let _d = rt.call_c2(fdrop, fl, 0)
+    }
+    fault.raise_str_at("a task was started on a scope that has ended", lp, ln)
+  }
+  // the pruned tasks: their nodes unlinked, the list's references
+  // dropped (without s's lock: a result may run drop code)
+  var dead = r
+  while dead != 0 {
+    let next = ld(dead, T_SNEXT)
+    pool.node_unlink(dead + T_NODE)
+    h_release(dead)
+    dead = next
+  }
+  t
+}
+
+/// Opens a scope in the current context (xo_scope_open): its body's
+/// node below the context's, the node of its tasks below the body's, and
+/// the context's node the body's.
+pub fn scope_open() -> Int {
+  let c = ctx.cur()
+  let s = new_object(S_SIZE, ctx.SV_SCOPE_FREE)
+  st(s, S_PRUNE_AT, 64)
+  let parent = ld(c, ctx.C_NODE)
+  st(s, S_PARENT_NODE, parent)
+  pool.node_link(s + S_BODY, parent)
+  // malloc'd at its own address: the C's scope_free frees it
+  let tn = rt.heap_large(56) - 8
+  rt.mem_set(tn, 0, 56)
+  st(s, S_TASKS, tn)
+  pool.node_link(tn, s + S_BODY)
+  st(c, ctx.C_NODE, s + S_BODY)
+  s
+}
+
+/// Ends scope s (xo_scope_close, core 7.1 exit rules). mode 0: the body
+/// completed (background tasks are canceled); 1: it exits early (return,
+/// break, an error: every task is canceled); 2: it unwinds (canceled).
+/// It runs the tasks nobody started, waits for every task, and returns 1
+/// when a child failed and its error must propagate out of the scope (an
+/// unwinding body then stops unwinding), 3 when a task faulted (the
+/// caller raises its fault), else 0.
+pub fn scope_close(s: Int, mode: Int) -> Int {
+  let c = ctx.cur()
+  let pl = ctx.pool()
+  if ld(s, S_DEADLINE) != 0 {
+    let _r = rt.sched_rt(RT_DEADLINE_DEL, s, 0)
+  }
+  pool.lock(s + S_MU)
+  // no pruning from here: the helpers below walk the list unlocked
+  st4(s, S_CLOSING, 1)
+  if mode == 0 {
+    var t = ld(s, S_LIST)
+    while t != 0 {
+      if ld4(t, T_BACKGROUND) != 0 {
+        pool.node_cancel(pl, t + T_NODE)
+      }
+      t = ld(t, T_SNEXT)
+    }
+  } else {
+    pool.node_cancel(pl, ld(s, S_TASKS))
+  }
+  pool.unlock(s + S_MU)
+  // the help, then the wait (not a cancellation point) for every task's
+  // end and every queue entry (pool.xo scope_join); output written so far
+  // goes out first (decision 0069)
+  stdio.flush()
+  // helping and waiting are not the closer's running time
+  budget.pause(c)
+  let f = rt.tlocal_get(TLS_FIB)
+  var rw = 0
+  if f == 0 && rt.slot_load[Int](pl + P_NCPU, 0, ACQUIRE) != 0 {
+    rw = rt.sched_rt(RT_ROOT_WORKER, 0, 0)
+  }
+  pool.scope_join(pl, s, c, f, rw)
+  tsan(RT_TSAN_ACQUIRE, c + ctx.C_PARK)
+  budget.resume(c)
+  pool.lock(s + S_MU)
+  st4(s, S_CLOSED, 1)
+  var list = ld(s, S_LIST)
+  st(s, S_LIST, 0)
+  pool.unlock(s + S_MU)
+  // the tasks' nodes hang below the tasks' node (and the nodes s.cancel()
+  // replaced): unlink those before the tasks go
+  pool.node_unlink(ld(s, S_TASKS))
+  let old = ld(s, S_OLD)
+  for i in 0..ld4(s, S_NOLD) {
+    pool.node_unlink(ld(old, 8 * i))
+  }
+  pool.node_unlink(s + S_BODY)
+  while list != 0 {
+    let next = ld(list, T_SNEXT)
+    h_release(list)
+    list = next
+  }
+  let parent = ld(s, S_PARENT_NODE)
+  st(c, ctx.C_NODE, parent)
+  if ld4(c, ctx.C_FAULTING) != 0 {
+    // the body's own fault goes on (decision 0085)
+    return 0
+  }
+  if ld(s, S_FAULT) != 0 {
+    return 3
+  }
+  if ld(s, S_FAIL) == 0 {
+    return 0
+  }
+  if mode == 2 {
+    if node_canceled(parent) {
+      // canceled from outside: keep unwinding
+      return 0
+    }
+    st4(c, ctx.C_UNWINDING, 0)
+  }
+  1
 }
