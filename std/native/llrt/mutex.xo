@@ -153,7 +153,7 @@ fn held_add(c: Int, m: Int, wp: Int, wn: Int, lp: Int, ln: Int) {
     let nc = if cap == 0 { 4 } else { 2 * cap }
     // malloc'd at the block's own address, as the C's realloc kept it
     // (gotchas/heap-large-prefix-not-malloc-address.md)
-    a = if h == 0 { rt.heap_large(24 * nc) - 8 } else { rt.heap_large_resize(h, 24 * nc) - 8 }
+    a = raw.c_resize(h, 24 * nc)
     st(c, ctx.C_HELD, a)
     st4(c, ctx.C_CAPHELD, nc)
   }

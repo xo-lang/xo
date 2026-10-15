@@ -65,6 +65,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of a thread, the exit polled with waitpid in cancelable steps; Linux
   UNTESTED); the C keeps them for Windows only, and Cmd.spawn's
   children until stage 4b.
+- Native runtime (zero-C audit item B29, HTTP/1.1): the client's
+  connection reads and writes, the request it writes (net/http's
+  Request.write with Transport's additions), the reading side of the
+  response, and the client's errors are Xo (std/native/llrt/hclient.xo;
+  the errors are no longer cut at 511 bytes). UNTESTED on linux and
+  windows (the would block errno per OS). Fixed: growing a block the C
+  frees lost its first word (raw.c_resize; select arms, a scope's old
+  task lists, a context's held locks).
 - Native runtime (zero-C audit item B20, part 3): the deadlock check
   (XO-F001) is Xo (pool.xo dl_check, cabi.xo deadlock); in the test
   world with a virtual clock it still records the verdict for the C's

@@ -6,6 +6,7 @@
 // The response writer itself is http1w.xo (the zero-C audit's B12), the
 // HTTP/2 frame writer h2w.xo (B28).
 use native/llrt/h2w
+use native/llrt/hclient
 use native/llrt/http1w
 use native/llrt/raw
 use native/rt
@@ -90,3 +91,23 @@ fn h2_request_check(ha: Int, hn: Int, truncated: Int, msg: Int) -> Int { h2w.req
 /// failing setting's index times 16 plus its code, else the count times
 /// 16).
 fn h2_settings_check(p: Int, n: Int) -> Int { h2w.settings_check(p, n) }
+
+/// The HTTP client connection's reads and writes (xo_http.c cc_fill and
+/// cc_send, hclient.xo; the C's HTTP/2 client calls them): CC_*.
+fn cc_fill(c: Int) -> Int { hclient.fill(c) }
+
+fn cc_send(c: Int, p: Int, n: Int) -> Int { hclient.send(c, p, n) }
+
+/// The client's error on the xo_cresp at r (hclient.xo fail and finish):
+/// the tag and the n bytes of text at p; an exchange's end with s, the
+/// wn bytes of why at wp, and the an bytes of a TLS alert at ap (an < 0:
+/// none).
+fn cl_fail(r: Int, tag: Int, p: Int, n: Int) -> Int {
+  hclient.fail_at(r, tag, raw.str_at(p, n))
+  0
+}
+
+fn cl_finish(r: Int, s: Int, wp: Int, wn: Int, ap: Int, an: Int) -> Int {
+  hclient.finish_at(r, s, raw.str_at(wp, wn), if an < 0 { "" } else { raw.str_at(ap, an) })
+  0
+}

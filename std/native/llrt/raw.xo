@@ -92,3 +92,18 @@ pub fn zero_ints(n: Int) -> List[Int] {
   }
   xs
 }
+
+/// The malloc'd block at b (0: none) that is used from its malloc'd
+/// address (rt.heap_large(n) - 8, a block the C frees) grown to n bytes,
+/// at its new malloc'd address: rt.heap_large_resize, with the first word
+/// restored, which the resize overwrites with the large block prefix
+/// (gotchas/heap-large-resize-overwrites-word-0.md).
+pub fn c_resize(b: Int, n: Int) -> Int {
+  if b == 0 {
+    return rt.heap_large(n) - 8
+  }
+  let w = rt.mem_load(b, 0, 8)
+  let a = rt.heap_large_resize(b, n) - 8
+  rt.mem_store(a, 0, w, 8)
+  a
+}

@@ -1558,130 +1558,53 @@ static void cresp_free(void *p) {
 	xo_free(r);
 }
 
-static int cc_fill(ccon *c) {
-	if (c->fd < 0) {
-		// tests (http_fuzz.c): the whole response is in buf
-		c->eof = 1;
-		return CC_EOF;
-	}
-	xo_ctx *x = ctx();
-	if (c->cap - c->n < 4096) {
-		if (c->off > 0) {
-			memmove(c->buf, c->buf + c->off, (size_t)(c->n - c->off));
-			c->n -= c->off;
-			c->off = 0;
-		}
-		if (c->cap - c->n < 4096) {
-			c->cap = c->cap ? c->cap * 2 : 8192;
-			c->buf = realloc(c->buf, (size_t)c->cap);
-			if (!c->buf) {
-				xo_oom();
-			}
-		}
-	}
-	if (c->tls) {
-		if (ctx_canceled(x)) {
-			return CC_CANCELED;
-		}
-		int64_t r = tls_read(c->tls, c->buf + c->n, c->cap - c->n);
-		if (r > 0) {
-			c->n += r;
-			return CC_OK;
-		}
-		if (r == 0) {
-			c->eof = 1;
-			return CC_EOF;
-		}
-		return (int)-r;
-	}
-	for (;;) {
-		if (ctx_canceled(x)) {
-			return CC_CANCELED;
-		}
-		int64_t r = x_read(c->fd, c->buf + c->n, (size_t)(c->cap - c->n));
-		if (r > 0) {
-			c->n += r;
-			return CC_OK;
-		}
-		if (r == 0) {
-			c->eof = 1;
-			return CC_EOF;
-		}
-		if (r == -EINTR) {
-			continue;
-		}
-		if (r == -EAGAIN || r == -EWOULDBLOCK) {
-			int w = pd_wait_until(c->pd, 0, x, c->when);
-			if (w == PD_READY) {
-				continue;
-			}
-			return w == PD_TIMEOUT ? CC_TIMEOUT : w == PD_CANCELED ? CC_CANCELED : CC_ERR;
-		}
-		return CC_ERR;
-	}
+// The connection's reads and writes are std/native/llrt/hclient.xo's
+// fill and send (the zero-C audit's B29), through cabi_http.xo; a
+// program without std/http never reaches them, and links the weak
+// definitions, which fault.
+int64_t xo_x_cc_fill(int64_t c);
+int64_t xo_x_cc_send(int64_t c, int64_t p, int64_t n);
+int64_t xo_x_cl_fail(int64_t r, int64_t tag, int64_t p, int64_t n);
+int64_t xo_x_cl_finish(int64_t r, int64_t s, int64_t wp, int64_t wn, int64_t ap, int64_t an);
+
+__attribute__((weak)) int64_t xo_x_cc_fill(int64_t c) {
+	(void)c;
+	fault_text("HTTP without std/http's exports", "");
 }
 
-static int cc_send(ccon *c, const char *p, int64_t n) {
-	if (c->tls) {
-		return tls_write(c->tls, p, n);
-	}
-	xo_ctx *x = ctx();
-	int64_t off = 0;
-	while (off < n) {
-		int64_t w = x_write(c->fd, p + off, (size_t)(n - off));
-		if (w >= 0) {
-			off += w;
-			continue;
-		}
-		if (w == -EINTR) {
-			continue;
-		}
-		if (w == -EAGAIN || w == -EWOULDBLOCK) {
-			int r = pd_wait_until(c->pd, 1, x, c->when);
-			if (r == PD_READY) {
-				continue;
-			}
-			return r == PD_TIMEOUT ? CC_TIMEOUT : r == PD_CANCELED ? CC_CANCELED : CC_ERR;
-		}
-		return CC_ERR;
-	}
-	return CC_OK;
+__attribute__((weak)) int64_t xo_x_cc_send(int64_t c, int64_t p, int64_t n) {
+	(void)c, (void)p, (void)n;
+	fault_text("HTTP without std/http's exports", "");
 }
 
+__attribute__((weak)) int64_t xo_x_cl_fail(int64_t r, int64_t tag, int64_t p, int64_t n) {
+	(void)r, (void)tag, (void)p, (void)n;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+__attribute__((weak)) int64_t xo_x_cl_finish(int64_t r, int64_t s, int64_t wp, int64_t wn, int64_t ap, int64_t an) {
+	(void)r, (void)s, (void)wp, (void)wn, (void)ap, (void)an;
+	fault_text("HTTP without std/http's exports", "");
+}
+
+static int cc_fill(ccon *c) { return (int)xo_x_cc_fill(XO_ADDR(c)); }
+
+static int cc_send(ccon *c, const char *p, int64_t n) { return (int)xo_x_cc_send(XO_ADDR(c), XO_ADDR(p), n); }
+
+// cr_fail sets r's error (hclient.xo fail): the ClientErr tag and text.
 static void cr_fail(xo_cresp *r, int tag, const char *fmt, ...) {
 	char b[512];
 	va_list ap;
 	va_start(ap, fmt);
 	vsnprintf(b, sizeof b, fmt, ap);
 	va_end(ap);
-	free(r->msg);
-	r->msg = strdup(b);
-	r->err = tag;
+	xo_x_cl_fail(XO_ADDR(r), tag, XO_ADDR(b), (int64_t)strlen(b));
 }
 
 // cl_finish sets r's error for an exchange that ended with s (why: the
-// failure's text; alert: a TLS alert of the server).
+// failure's text; alert: a TLS alert of the server; hclient.xo finish).
 static void cl_finish(xo_cresp *r, int s, const char *why, const char *alert) {
-	switch (s) {
-	case CC_OK:
-		break;
-	case CC_TIMEOUT:
-		cr_fail(r, 3, "");
-		break;
-	case CC_CANCELED:
-		cr_fail(r, 5, "");
-		break;
-	default:
-		if (alert) {
-			cr_fail(r, 2, "%s", alert);
-		} else if (why[0] == '\1') {
-			// a failure reading an HTTP/2 body: net/http's body Read
-			// error, without the request
-			cr_fail(r, 4, "%s", why + 1);
-		} else {
-			cr_fail(r, 4, "%s: %s", r->prefix, why[0] ? why : "EOF");
-		}
-	}
+	xo_x_cl_finish(XO_ADDR(r), s, XO_ADDR(why), (int64_t)strlen(why), XO_ADDR(alert), alert ? (int64_t)strlen(alert) : -1);
 }
 
 // xo_cl_deadline is the deadline of a client's timeout (ns, > 0).
@@ -1697,11 +1620,13 @@ int64_t xo_cl_deadline(int64_t timeout) { return deadline(timeout); }
 // net/http's Transport keeps it (pool: an idle one may take it): r is
 // set up for the exchange, which Xo makes (cl_h2 is true; its header
 // blocks are Xo's, http1.xo h2_exchange), and the response is then in r.
-// Otherwise the request goes out over HTTP/1.1 and cl_reading is true:
-// Xo reads the response and calls cl_end. A failure sets r's error.
+// Otherwise r is connected for HTTP/1.1 (reading): hclient.xo sends the
+// request, reads the response, and closes (xo_cl_close). A failure sets
+// r's error.
 xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, int64_t an, const char *tp, int64_t tn, const char *gp,
                       int64_t gn, const char *hp, int64_t hn, xo_rlist *names, xo_rlist *values, const char *body, int64_t bn, int64_t when,
                       xo_troots *roots, const char *pp, int64_t pn, int64_t pool) {
+	(void)gp, (void)gn, (void)hp, (void)hn; // the target and Host: Xo writes the requests
 	xo_cresp *r = xo_alloc(sizeof(xo_cresp));
 	memset(r, 0, sizeof *r);
 	h_init(r, cresp_free);
@@ -1709,8 +1634,6 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 	char *method = cstr_of(m, mn);
 	char *addr = cstr_of(ap, an);
 	char *tls_host = https ? cstr_of(tp, tn) : NULL;
-	hstr target = hs_dup(gp, gn);
-	hstr host = hs_dup(hp, hn);
 	hlist hdr = {0};
 	for (int64_t i = 0; i < names->len && i < values->len; i++) {
 		xo_rstr *k = ((xo_rstr **)rl_data(names))[2 * i];
@@ -1719,10 +1642,7 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		int64_t vn = ((int64_t *)rl_data(values))[2 * i + 1];
 		hl_add(&hdr, hs_dup(k->data, kn), hs_dup(v->data, vn));
 	}
-	char why[400] = "";
-	char *alert = NULL;
 	char *key = NULL;
-	int s = CC_OK;
 	xo_conn *cn = NULL;
 	ccon c = {0};
 	if (https) {
@@ -1787,120 +1707,42 @@ xo_cresp *xo_cl_start(const char *m, int64_t mn, int64_t https, const char *ap, 
 		h2x_start(r, h2cc_new(cn, &c, roots, key), 0, method, body, bn, when, &hdr);
 		goto out;
 	}
-	// the request (net/http Request.write with Transport's additions)
-	nbuf o = {0};
-	nbuf_str(&o, method);
-	nbuf_byte(&o, ' ');
-	nbuf_put(&o, target.p, target.n);
-	nbuf_str(&o, " HTTP/1.1\r\nHost: ");
-	nbuf_put(&o, host.p, host.n);
-	nbuf_str(&o, "\r\n");
-	int64_t ua = hl_find(&hdr, "User-Agent");
-	if (ua < 0) {
-		nbuf_str(&o, "User-Agent: Go-http-client/1.1\r\n");
-	} else if (hdr.a[ua].v.n > 0) {
-		nbuf_str(&o, "User-Agent: ");
-		nbuf_put(&o, hdr.a[ua].v.p, hdr.a[ua].v.n);
-		nbuf_str(&o, "\r\n");
-	}
-	if (bn > 0 || strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0) {
-		char cl[48];
-		snprintf(cl, sizeof cl, "Content-Length: %lld\r\n", (long long)bn);
-		nbuf_str(&o, cl);
-	}
-	hw_fields(&o, &hdr, HW_X_HOST | HW_X_USER_AGENT | HW_X_CONTENT_LENGTH | HW_X_TRANSFER_ENCODING | HW_X_TRAILER);
-	if (hl_find(&hdr, "Accept-Encoding") < 0 && hl_find(&hdr, "Range") < 0 && strcmp(method, "HEAD") != 0) {
-		nbuf_str(&o, "Accept-Encoding: gzip\r\n");
-	}
-	nbuf_str(&o, "\r\n");
-	nbuf_put(&o, body, bn);
+	// Xo sends the request and reads the response (hclient.xo request)
 	r->c = c;
 	r->cn = cn;
-	s = cc_send(&r->c, o.p, o.n);
-	free(o.p);
-	if (s == CC_OK) {
-		r->reading = 1;
-		goto out;
-	}
-	{
-		// an alert of the server after the handshake (a TLS 1.3 server
-		// that wanted a client certificate): Go's net.OpError, a Connect
-		// error
-		const char *ta = s != CC_TIMEOUT && s != CC_CANCELED ? tls_alert(r->c.tls) : NULL;
-		alert = ta ? strdup(ta) : NULL;
-	}
-	cl_close(r);
-finish:
-	cl_finish(r, s, why, alert);
+	r->reading = 1;
+	goto out;
 out:
-	free(alert);
 	free(key);
 	free(method);
 	free(addr);
 	free(tls_host);
-	hs_free(&target);
-	hs_free(&host);
 	hl_free(&hdr);
 	return r;
 }
 
-// xo_cl_reading: the request went out over HTTP/1.1 and Xo reads the
-// response (cl_input, cl_fill, cl_take), then calls cl_end.
-int64_t xo_cl_reading(xo_cresp *r) { return r->reading; }
+// xo_cl_close closes r's connection (hclient.xo ends an HTTP/1.1
+// exchange with it).
+void xo_cl_close(xo_cresp *r) { cl_close(r); }
 
-// xo_cl_input is the unread input up to the end of its first head (the
-// first empty line, mode 0, as xo_hc_input) or all of it (mode 2).
-xo_rstr *xo_cl_input(xo_cresp *r, int64_t mode, int64_t *len) {
-	const char *p = r->c.buf ? r->c.buf + r->c.off : "";
-	int64_t n = r->c.n - r->c.off;
-	return nstr(p, mode == 0 ? head_len(p, n) : n, len);
+// The TLS connection's reads, writes and alert for hclient.xo.
+int64_t xo_cl_tls_read(int64_t t, int64_t p, int64_t n) { return tls_read((tls_conn *)(intptr_t)t, (char *)(intptr_t)p, n); }
+
+int64_t xo_cl_tls_write(int64_t t, int64_t p, int64_t n) { return tls_write((tls_conn *)(intptr_t)t, (const char *)(intptr_t)p, n); }
+
+xo_rstr *xo_cl_tls_alert(int64_t t, int64_t *len) {
+	const char *a = tls_alert((tls_conn *)(intptr_t)t);
+	return nstr(a ? a : "", a ? (int64_t)strlen(a) : 0, len);
 }
 
-int64_t xo_cl_avail(xo_cresp *r) { return r->c.n - r->c.off; }
-
-int64_t xo_cl_eof(xo_cresp *r) { return r->c.eof; }
-
-// xo_cl_fill reads more of the response: CC_OK, CC_EOF (none came),
-// or the failure (CC_TIMEOUT, CC_CANCELED, CC_ERR).
-int64_t xo_cl_fill(xo_cresp *r) { return r->c.eof ? CC_EOF : cc_fill(&r->c); }
-
-// xo_cl_take takes n bytes of the input (n <= cl_avail).
-xo_rstr *xo_cl_take(xo_cresp *r, int64_t n, int64_t *len) {
-	xo_rstr *s = nstr(r->c.buf ? r->c.buf + r->c.off : "", n, len);
-	r->c.off += n;
-	return s;
-}
-
-void xo_cl_skip(xo_cresp *r, int64_t n) { r->c.off += n; }
-
-// xo_cl_end ends the exchange Xo read with s (CC_*; why: the failure's
-// text): the connection closes and a failure becomes r's error.
-void xo_cl_end(xo_cresp *r, int64_t s, const char *wp, int64_t wn) {
-	char why[400];
-	snprintf(why, sizeof why, "%.*s", (int)wn, wp);
-	char *alert = NULL;
-	if (s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && !why[0]) {
-		const char *ta = tls_alert(r->c.tls);
-		alert = ta ? strdup(ta) : NULL;
-	}
-	cl_close(r);
-	cl_finish(r, (int)s, why, alert);
-	free(alert);
-}
-
-int64_t xo_cr_err(xo_cresp *r) { return r->err; }
-
-xo_rstr *xo_cr_msg(xo_cresp *r, int64_t *len) { return nstr(r->msg ? r->msg : "", r->msg ? (int64_t)strlen(r->msg) : 0, len); }
-
-int64_t xo_cr_status(xo_cresp *r) { return r->status; }
-
-int64_t xo_cr_nheaders(xo_cresp *r) { return r->hdr.n; }
-
-xo_rstr *xo_cr_hname(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->hdr.a[i].k, len); }
-
-xo_rstr *xo_cr_hval(xo_cresp *r, int64_t i, int64_t *len) { return hstr_out(r->hdr.a[i].v, len); }
-
-xo_rstr *xo_cr_body(xo_cresp *r, int64_t *len) { return nstr(r->body.p ? r->body.p : "", r->body.n, len); }
+// The records hclient.xo reads (R_*, C_*).
+_Static_assert(offsetof(xo_cresp, err) == 16 && offsetof(xo_cresp, msg) == 24 && offsetof(xo_cresp, status) == 32 && offsetof(xo_cresp, hdr) == 40 &&
+                   offsetof(xo_cresp, body) == 64 && offsetof(xo_cresp, reading) == 100 && offsetof(xo_cresp, c) == 104 && offsetof(xo_cresp, prefix) == 184,
+               "hclient.xo R_*");
+_Static_assert(offsetof(ccon, pd) == 0 && offsetof(ccon, fd) == 8 && offsetof(ccon, when) == 16 && offsetof(ccon, buf) == 24 && offsetof(ccon, n) == 32 &&
+                   offsetof(ccon, cap) == 40 && offsetof(ccon, off) == 48 && offsetof(ccon, eof) == 56 && offsetof(ccon, tls) == 64,
+               "hclient.xo C_*");
+_Static_assert(sizeof(hpair) == 32, "http1w.xo key_p");
 
 // HTTP/2 (decision 0121)
 #include "xo_h2.c"

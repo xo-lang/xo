@@ -22,6 +22,7 @@
 // chunked body (the result to rthttp.hc_chunked). The C keeps the socket,
 // the buffer, the body reading, and the error answers; the parsed head
 // stays here and becomes the Request.
+use native/llrt/hclient
 use native/llrt/hpack
 use native/llrt/http1_tables
 use native/llrt/netpolicy
@@ -2468,11 +2469,10 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
 // The client (xo_http.c's xo_cl_do and cl_read_response until audit item
 // B10, 2026-10-14): the URL and the redirects of net/http's Client, and
 // the reading of an HTTP/1.1 response (ReadResponse, readTransfer). The
-// C keeps the connection, TLS, HTTP/2's frames (its header blocks are
-// h2_exchange's), and the writing of the request (rthttp.cl_start); C never calls compiled Xo (decision 0180), so an
-// HTTP/1.1 exchange returns with the request sent and Xo reads the
-// response through rthttp.cl_input, cl_fill, and cl_take, then ends it
-// with rthttp.cl_end.
+// C keeps the dial, TLS, and HTTP/2's connections (its header blocks
+// are h2_exchange's); an HTTP/1.1 exchange returns from rthttp.cl_start
+// connected, and hclient.xo sends the request, reads the response
+// (hclient.input, more, take), and ends it (hclient.end).
 
 // The results of the C client's reads (xo_http.c's CC_*).
 const CC_OK: Int = 0
@@ -2659,25 +2659,25 @@ fn field_at(h: List[Str], k: Str) -> Int {
 /// stream; HEAD, 1xx, 204, and 304 responses have none.
 fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
   while true {
-    var h = parse_response(rthttp.cl_input(r, 0))
+    var h = parse_response(hclient.input(r, 0))
     while h.res == NEED || h.res == TOO_LARGE {
       if h.res == TOO_LARGE {
         return ex_fail(CC_ERR, "net/http: server response headers exceeded 1048576 bytes; aborted")
       }
-      let avail = rthttp.cl_avail(r)
-      let f = rthttp.cl_fill(r)
+      let avail = hclient.avail(r)
+      let f = hclient.more(r)
       if f == CC_EOF {
         return ex_fail(CC_ERR, if avail == 0 { "EOF" } else { "unexpected EOF" })
       }
       if f != CC_OK {
         return ex_fail(f, "")
       }
-      h = parse_response(rthttp.cl_input(r, 0))
+      h = parse_response(hclient.input(r, 0))
     }
     if h.res != OK {
       return ex_fail(CC_ERR, h.why)
     }
-    rthttp.cl_skip(r, h.used)
+    hclient.skip(r, h.used)
     let code = h.status
     if code >= 100 && code <= 199 && code != 101 {
       // an informational response: the real one follows
@@ -2696,33 +2696,33 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
     }
     if h.chunked {
       while true {
-        let eof = rthttp.cl_eof(r)
-        let c = chunked(rthttp.cl_input(r, 2), eof)
+        let eof = hclient.eof(r)
+        let c = chunked(hclient.input(r, 2), eof)
         if c.res == HB_OK {
-          rthttp.cl_skip(r, c.used)
+          hclient.skip(r, c.used)
           return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: c.body.bytes()}
         }
         if c.res == HB_ERR || eof {
           return ex_fail(CC_ERR, if eof { "unexpected EOF" } else { "malformed chunked encoding" })
         }
-        let f = rthttp.cl_fill(r)
+        let f = hclient.more(r)
         if f != CC_OK && f != CC_EOF {
           return ex_fail(f, "")
         }
       }
     }
     while true {
-      let have = rthttp.cl_avail(r)
+      let have = hclient.avail(r)
       if h.clen >= 0 && have >= h.clen {
-        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: rthttp.cl_take(r, h.clen)}
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, h.clen)}
       }
-      if rthttp.cl_eof(r) {
+      if hclient.eof(r) {
         if h.clen >= 0 {
           return ex_fail(CC_ERR, "unexpected EOF")
         }
-        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: rthttp.cl_take(r, have)}
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, have)}
       }
-      let f = rthttp.cl_fill(r)
+      let f = hclient.more(r)
       if f != CC_OK && f != CC_EOF {
         return ex_fail(f, "")
       }
@@ -2908,24 +2908,24 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
-    if rthttp.cl_reading(r) {
-      let x = read_response(r, method)
-      rthttp.cl_end(r, x.s, x.why)
-      status = x.status
-      headers = x.headers
-      rbody = x.body
-    } else if rthttp.cr_err(r) == 0 {
-      // an HTTP/2 response
-      status = rthttp.cr_status(r)
-      for i in 0..rthttp.cr_nheaders(r) {
-        headers.push(rthttp.cr_hname(r, i))
-        headers.push(rthttp.cr_hval(r, i))
+    if hclient.reading(r) {
+      hclient.request(r, method, target, u.host, hk, hv, body)
+      if hclient.err(r) == 0 {
+        let x = read_response(r, method)
+        hclient.end(r, x.s, x.why)
+        status = x.status
+        headers = x.headers
+        rbody = x.body
       }
-      rbody = rthttp.cr_body(r)
+    } else if hclient.err(r) == 0 {
+      // an HTTP/2 response
+      status = hclient.status(r)
+      headers = hclient.headers(r)
+      rbody = hclient.body(r)
     }
-    let err = rthttp.cr_err(r)
+    let err = hclient.err(r)
     if err != 0 {
-      return cfail(err, rthttp.cr_msg(r))
+      return cfail(err, hclient.msg(r))
     }
     // redirects (Client.Do's redirectBehavior)
     let li = field_at(headers, "Location")

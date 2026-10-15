@@ -338,7 +338,7 @@ pub fn scope_cancel(s: Int) {
   let old = ld(s, S_TASKS)
   let n = ld4(s, S_NOLD)
   let a0 = ld(s, S_OLD)
-  let a = if a0 == 0 { rt.heap_large(8 * (n + 1)) - 8 } else { rt.heap_large_resize(a0, 8 * (n + 1)) - 8 }
+  let a = raw.c_resize(a0, 8 * (n + 1))
   st(a, 8 * n, old)
   st(s, S_OLD, a)
   st4(s, S_NOLD, n + 1)

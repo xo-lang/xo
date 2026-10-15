@@ -16,6 +16,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
 use native/rt
@@ -68,7 +69,7 @@ fn arm(s: Int, c: Int, send: Int, l: Int) {
     let nc = if cap == 0 { 4 } else { 2 * cap }
     let a0 = ld(s, SE_ARMS)
     // malloc'd at its own address: the C's select_free frees it
-    let a = if a0 == 0 { rt.heap_large(A_SIZE * nc) - 8 } else { rt.heap_large_resize(a0, A_SIZE * nc) - 8 }
+    let a = raw.c_resize(a0, A_SIZE * nc)
     st(s, SE_ARMS, a)
     st4(s, SE_CAP, nc)
   }

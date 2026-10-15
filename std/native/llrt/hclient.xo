@@ -1,0 +1,417 @@
+// The HTTP/1.1 client's connection in Xo (the zero-C audit's B29): the
+// reads and writes of a client connection (xo_http.c's cc_fill and
+// cc_send, which the C's HTTP/2 client calls through cabi_http.xo), the
+// request (net/http's Request.write with Transport's additions), the
+// reading side of the response (cl_input, cl_fill, cl_take), and the
+// exchange's error (cl_finish). The C keeps the dial, TLS (the reads and
+// writes of a TLS connection, xo_tls.c, through rthttp.cl_tls_*), the
+// HTTP/2 client, and the records: xo_cresp and its ccon, whose fields
+// this module reads at the byte offsets xo_http.c asserts.
+use native/llrt/http1w
+use native/llrt/poll
+use native/llrt/raw
+use native/llrt/sock
+use native/rt
+use native/rthttp
+
+/// xo_cresp (byte offsets): the error's tag (an int) and text (a C
+/// string the C frees), the HTTP/2 response's status, header (an hlist:
+/// its pairs and count) and body (an nbuf: bytes and count), whether Xo
+/// reads an HTTP/1.1 response (an int), the connection (a ccon), and the
+/// start of the errors (a C string).
+const R_ERR = 16
+const R_MSG = 24
+const R_STATUS = 32
+const R_HDR = 40
+const R_HDR_N = 48
+const R_BODY = 64
+const R_BODY_N = 72
+const R_READING = 100
+const R_C = 104
+const R_PREFIX = 184
+
+/// ccon (byte offsets): the poll descriptor, the socket (an int; -1 in
+/// http_fuzz.c's tests, whose response is all in the buffer), the
+/// deadline (monotonic ns, 0: none), the buffer (malloc'd), its count,
+/// capacity and read offset, the end of the stream (an int), and the TLS
+/// connection.
+const C_PD = 0
+const C_FD = 8
+const C_WHEN = 16
+const C_BUF = 24
+const C_N = 32
+const C_CAP = 40
+const C_OFF = 48
+const C_EOF = 56
+const C_TLS = 64
+
+/// The results of the connection's reads and writes (xo_http.c CC_*).
+pub const CC_OK: Int = 0
+pub const CC_EOF: Int = 1
+pub const CC_TIMEOUT: Int = 2
+pub const CC_CANCELED: Int = 3
+pub const CC_ERR: Int = 4
+
+/// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
+const NOSIGNAL = 16384
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+/// The record of r.
+fn rec(r: rthttp.CResp) -> Int { rt.obj_addr(r) }
+
+/// Whether the negative errno -e of a read or write says it would block
+/// (EAGAIN or EWOULDBLOCK: 11 on Linux, 35 on macOS, the Windows CRT's
+/// 140 that sock.xo maps WSAEWOULDBLOCK to).
+fn would_block(e: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => e == -35
+    TargetOs.Windows => e == -140 || e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
+  }
+}
+
+/// The CC_* result of a wait on the poller that did not end READY.
+fn wait_res(w: Int) -> Int {
+  if w == poll.TIMEOUT {
+    return CC_TIMEOUT
+  }
+  if w == poll.CANCELED {
+    return CC_CANCELED
+  }
+  CC_ERR
+}
+
+/// Reads more of connection c's input into its buffer (at least 4 KiB
+/// of room, the read part moved to the front first): CC_OK, CC_EOF, or
+/// the failure.
+pub fn fill(c: Int) -> Int {
+  if (rt.mem_load(c, C_FD, 4) & 4294967295) == 4294967295 {
+    rt.mem_store(c, C_EOF, 1, 4)
+    return CC_EOF
+  }
+  var n = ld(c, C_N)
+  var cap = ld(c, C_CAP)
+  if cap - n < 4096 {
+    let off = ld(c, C_OFF)
+    if off > 0 {
+      rt.mem_move(ld(c, C_BUF), ld(c, C_BUF) + off, n - off)
+      n = n - off
+      st(c, C_N, n)
+      st(c, C_OFF, 0)
+    }
+    if cap - n < 4096 {
+      cap = if cap == 0 { 8192 } else { cap * 2 }
+      // malloc'd: the C frees it (cl_close, h2cc_free)
+      st(c, C_BUF, raw.c_resize(ld(c, C_BUF), cap))
+      st(c, C_CAP, cap)
+    }
+  }
+  let p = ld(c, C_BUF) + n
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    if poll.canceled() {
+      return CC_CANCELED
+    }
+    let r = rthttp.cl_tls_read(tls, p, cap - n)
+    if r > 0 {
+      st(c, C_N, n + r)
+      return CC_OK
+    }
+    if r == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return CC_EOF
+    }
+    return -r
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  while true {
+    if poll.canceled() {
+      return CC_CANCELED
+    }
+    let r = sock.read(fd, p, cap - n)
+    if r > 0 {
+      st(c, C_N, n + r)
+      return CC_OK
+    }
+    if r == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return CC_EOF
+    }
+    if r == -sock.EINTR {
+      continue
+    }
+    if !would_block(r) {
+      return CC_ERR
+    }
+    let w = poll.pd_wait(ld(c, C_PD), false, ld(c, C_WHEN))
+    if w != poll.READY {
+      return wait_res(w)
+    }
+  }
+  CC_ERR
+}
+
+/// Writes the n bytes at p on connection c: CC_OK or the failure.
+pub fn send(c: Int, p: Int, n: Int) -> Int {
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    return rthttp.cl_tls_write(tls, p, n)
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  var off = 0
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if !would_block(w) {
+      return CC_ERR
+    }
+    let r = poll.pd_wait(ld(c, C_PD), true, ld(c, C_WHEN))
+    if r != poll.READY {
+      return wait_res(r)
+    }
+  }
+  CC_OK
+}
+
+// ---------------------------------------------------------------------------
+// The exchange's error
+
+/// A malloc'd copy of s ending in a zero byte (the C frees it).
+fn cstr_dup(s: Str) -> Int {
+  let n = s.len()
+  let b = rt.heap_large(n + 1) - 8
+  raw.put_cstr(b, s)
+  b
+}
+
+fn cstr(a: Int) -> Str { if a == 0 { "" } else { raw.str_at(a, raw.cstr_len(a)) } }
+
+/// fail for the C (cabi_http.xo cl_fail).
+pub fn fail_at(r: Int, tag: Int, msg: Str) { fail(r, tag, msg) }
+
+/// finish for the C (cabi_http.xo cl_finish).
+pub fn finish_at(r: Int, s: Int, why: Str, alert: Str) { finish(r, s, why, alert) }
+
+/// Sets r's error: the ClientErr tag (2 Connect, 3 Timeout, 4 Protocol,
+/// 5 Canceled) and its text.
+fn fail(r: Int, tag: Int, msg: Str) {
+  let old = ld(r, R_MSG)
+  if old != 0 {
+    rt.heap_release(old)
+  }
+  st(r, R_MSG, cstr_dup(msg))
+  rt.mem_store(r, R_ERR, tag, 4)
+}
+
+/// Sets r's error for an exchange that ended with s (why: the failure's
+/// text; alert: a TLS alert of the server, "" for none; xo_http.c's
+/// cl_finish).
+fn finish(r: Int, s: Int, why: Str, alert: Str) {
+  if s == CC_OK {
+    return
+  }
+  if s == CC_TIMEOUT {
+    fail(r, 3, "")
+  } else if s == CC_CANCELED {
+    fail(r, 5, "")
+  } else if !alert.is_empty() {
+    fail(r, 2, alert)
+  } else if why.starts_with("\u{1}") {
+    // a failure reading an HTTP/2 body: net/http's body Read error,
+    // without the request
+    fail(r, 4, rt.str_slice(why, 1, why.len()))
+  } else {
+    fail(r, 4, cstr(ld(r, R_PREFIX)) + ": " + (if why.is_empty() { "EOF" } else { why }))
+  }
+}
+
+/// The TLS alert of r's connection after a failure, "" for none.
+fn alert(r: Int) -> Str {
+  let t = ld(r + R_C, C_TLS)
+  if t == 0 { "" } else { rthttp.cl_tls_alert(t) }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/1.1
+
+/// Whether rthttp.cl_start connected r for an HTTP/1.1 exchange: Xo
+/// sends the request (request) and reads the response, then ends it
+/// (end).
+pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0 }
+
+/// Sends the request on r's connection (net/http's Request.write with
+/// Transport's additions): the request line, Host, User-Agent (Go's
+/// unless the header sets one; an empty one sends none), Content-Length
+/// (a body, or POST, PUT, PATCH), the header's fields sorted (but those
+/// five), Accept-Encoding gzip unless the header asks for an encoding or
+/// a Range or the method is HEAD, then the body. A failure ends the
+/// exchange: the connection closes and r has the error.
+pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes) {
+  let a = rec(r)
+  let hn = if names.len() < values.len() { names.len() } else { values.len() }
+  var head = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n"
+  var ua = -1
+  var ae = false
+  var room = 0
+  // the fields as the C's hpairs (key, length, value, length) for
+  // http1w.fields; names and values keep their bytes alive
+  let ha = rt.heap_large(32 * hn + 8) - 8
+  var i = 0
+  while i < hn {
+    let k = names[i]
+    let v = values[i]
+    st(ha, 32 * i, raw.data(k))
+    st(ha, 32 * i + 8, k.len())
+    st(ha, 32 * i + 16, raw.data(v))
+    st(ha, 32 * i + 24, v.len())
+    room += k.len() + v.len() + 4
+    if k == "User-Agent" && ua < 0 {
+      ua = i
+    }
+    if k == "Accept-Encoding" || k == "Range" {
+      ae = true
+    }
+    i += 1
+  }
+  if ua < 0 {
+    head = head + "User-Agent: Go-http-client/1.1\r\n"
+  } else if !values[ua].is_empty() {
+    head = head + "User-Agent: " + values[ua] + "\r\n"
+  }
+  let bn = body.len()
+  if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
+    head = head + "Content-Length: ${bn}\r\n"
+  }
+  let tail = if !ae && method != "HEAD" { "Accept-Encoding: gzip\r\n\r\n" } else { "\r\n" }
+  let d = rt.heap_large(head.len() + room + tail.len() + bn + 8) - 8
+  var at = http1w.put(d, 0, head)
+  at = http1w.fields(d, at, ha, hn, http1w.X_HOST | http1w.X_USER_AGENT | http1w.X_CONTENT_LENGTH | http1w.X_TRANSFER_ENCODING | http1w.X_TRAILER)
+  at = http1w.put(d, at, tail)
+  if bn > 0 {
+    rt.mem_copy(d + at, raw.bytes_addr(body), bn)
+  }
+  let s = send(a + R_C, d, at + bn)
+  rt.heap_release(d)
+  rt.heap_release(ha)
+  if s == CC_OK {
+    return
+  }
+  // an alert of the server after the handshake (a TLS 1.3 server that
+  // wanted a client certificate): Go's net.OpError, a Connect error
+  let al = if s != CC_TIMEOUT && s != CC_CANCELED { alert(a) } else { "" }
+  rthttp.cl_close(r)
+  finish(a, s, "", al)
+}
+
+/// The length of the input up to the end of its first head (the first
+/// empty line), or all of it (xo_http.c head_len).
+fn head_len(p: Int, n: Int) -> Int {
+  var i = 0
+  while i < n {
+    if rt.mem_load(p, i, 1) == 10 {
+      let e = i + 1
+      if e < n && rt.mem_load(p, e, 1) == 10 {
+        return e + 1
+      }
+      if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
+        return e + 2
+      }
+    }
+    i += 1
+  }
+  n
+}
+
+/// The unread input up to the end of its first head (mode 0), or all of
+/// it (mode 2).
+pub fn input(r: rthttp.CResp, mode: Int) -> Str {
+  let c = rec(r) + R_C
+  let b = ld(c, C_BUF)
+  if b == 0 {
+    return ""
+  }
+  let p = b + ld(c, C_OFF)
+  let n = ld(c, C_N) - ld(c, C_OFF)
+  raw.str_at(p, if mode == 0 { head_len(p, n) } else { n })
+}
+
+pub fn avail(r: rthttp.CResp) -> Int {
+  let c = rec(r) + R_C
+  ld(c, C_N) - ld(c, C_OFF)
+}
+
+pub fn eof(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r) + R_C, C_EOF, 4) != 0 }
+
+/// Reads more of the response: CC_OK, CC_EOF (none came), or the failure.
+pub fn more(r: rthttp.CResp) -> Int {
+  let c = rec(r) + R_C
+  if rt.mem_load(c, C_EOF, 4) != 0 { CC_EOF } else { fill(c) }
+}
+
+/// Takes n bytes of the input (n <= avail).
+pub fn take(r: rthttp.CResp, n: Int) -> Bytes {
+  let c = rec(r) + R_C
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), ld(c, C_BUF) + ld(c, C_OFF), n)
+  }
+  st(c, C_OFF, ld(c, C_OFF) + n)
+  b
+}
+
+pub fn skip(r: rthttp.CResp, n: Int) {
+  let c = rec(r) + R_C
+  st(c, C_OFF, ld(c, C_OFF) + n)
+}
+
+/// Ends the exchange Xo read with s (CC_*; why: the failure's text): the
+/// connection closes and a failure becomes r's error.
+pub fn end(r: rthttp.CResp, s: Int, why: Str) {
+  let a = rec(r)
+  let al = if s != CC_OK && s != CC_TIMEOUT && s != CC_CANCELED && why.is_empty() { alert(a) } else { "" }
+  rthttp.cl_close(r)
+  finish(a, s, why, al)
+}
+
+// ---------------------------------------------------------------------------
+// The result
+
+/// 0 a response, else the ClientErr tag (2 Connect, 3 Timeout, 4
+/// Protocol, 5 Canceled).
+pub fn err(r: rthttp.CResp) -> Int { rt.mem_load(rec(r), R_ERR, 4) }
+
+pub fn msg(r: rthttp.CResp) -> Str { cstr(ld(rec(r), R_MSG)) }
+
+/// An HTTP/2 response: its status, header (names and values in turns),
+/// and body.
+pub fn status(r: rthttp.CResp) -> Int { ld(rec(r), R_STATUS) }
+
+pub fn headers(r: rthttp.CResp) -> List[Str] {
+  let a = rec(r)
+  let ha = ld(a, R_HDR)
+  var out: List[Str] = []
+  for i in 0..ld(a, R_HDR_N) {
+    out.push(raw.str_at(http1w.key_p(ha, i), http1w.key_n(ha, i)))
+    out.push(raw.str_at(http1w.val_p(ha, i), http1w.val_n(ha, i)))
+  }
+  out
+}
+
+pub fn body(r: rthttp.CResp) -> Bytes {
+  let a = rec(r)
+  let n = ld(a, R_BODY_N)
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), ld(a, R_BODY), n)
+  }
+  b
+}
