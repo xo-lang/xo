@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B21, part 2): a thread's heap record
+  and the list of every record are std/native/llrt/heapos.xo's (a
+  mapping, a lock word) instead of calloc and a pthread mutex; the
+  unused list of exited threads' records is deleted
+  (bench/results/heap-platform-2026-10-14.md).
 - Native runtime (zero-C audit item B21, part 1): the heap's 4 MiB chunks
   and its big blocks (above 256 KiB) are mapped from Xo
   (std/native/llrt/heapos.xo: mmap, VirtualAlloc) instead of the C

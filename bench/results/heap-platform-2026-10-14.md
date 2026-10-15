@@ -142,3 +142,84 @@ TestGolden (every golden, with the leak check), TestRuntime* (with
 tasks.c and alloc_threads.c's chunk checks), TestGoldenTasks,
 TestLeakCheck*, and go test -short (cmd/xo TestAttenuationFakes with
 it).
+
+## Part 2: the heap records of threads (branch b21-part2)
+
+- heapos.xo makes a thread's heap record on its first allocation after
+  the program went threaded (xo_rt.c heap_slow, which keeps its thread
+  local check and calls the export only when it is empty): a zeroed
+  mapping instead of calloc, linked into the list of every record under
+  a lock word, with the size classes' limit and the central lists
+  copied from the first record. The leak check's sums (xo_rt_live) and
+  the heap statistics' per class free blocks are cabi.xo exports over
+  the list. C main passes the main record and the record's size
+  (obj.heap_init); xo_heap's `next` offset is asserted for heapos.xo.
+- heaps_mu (the pthread mutex) is deleted, and so is spare_heaps, the
+  list of exited threads' records that decision 0068 kept for reuse:
+  nothing had pushed onto it since 91985038 (2026-10-08), when workers
+  became long lived.
+- heapos.xo's static words are 22 to 29 (rt.xo's table).
+
+Mac (A main 185c253a, part 1; B the branch; min of 5, two rounds, every
+checksum equal):
+
+| Workload | Backend | A round 1 | B round 1 | B / A | A round 2 | B round 2 | B / A |
+|---|---|---|---|---|---|---|---|
+| text split | arm64 | 97,706,332 | 97,687,597 | 1.003 | 97,370,943 | 97,356,839 | 0.998 |
+| text lines | arm64 | 155,940,840 | 155,968,170 | 1.002 | 155,604,475 | 155,603,874 | 0.999 |
+| text int_fmt | arm64 | 80,100,770 | 80,356,279 | 1.009 | 79,803,295 | 79,813,474 | 0.998 |
+| text quote | arm64 | 131,148,407 | 130,817,744 | 0.999 | 130,525,051 | 130,544,463 | 0.999 |
+| text replace | arm64 | 82,965,325 | 82,966,884 | 1.004 | 82,504,357 | 82,600,893 | 1.000 |
+| text debug | arm64 | 227,352,864 | 227,375,375 | 1.001 | 226,994,284 | 227,021,852 | 1.000 |
+| text float_fmt | arm64 | 147,606,458 | 147,641,852 | 1.002 | 147,298,394 | 147,308,180 | 0.999 |
+| text trim | arm64 | 156,396,623 | 156,368,926 | 1.002 | 156,075,480 | 156,092,009 | 0.999 |
+| text split | llvm | 81,418,999 | 81,462,398 | 0.997 | 81,144,274 | 81,137,156 | 0.999 |
+| text lines | llvm | 133,745,448 | 133,594,946 | 0.997 | 133,258,260 | 133,151,426 | 0.999 |
+| text int_fmt | llvm | 65,431,242 | 65,412,714 | 0.995 | 65,043,331 | 64,996,784 | 0.998 |
+| text quote | llvm | 112,501,232 | 112,465,763 | 0.997 | 112,165,199 | 112,135,388 | 0.999 |
+| text replace | llvm | 66,193,443 | 66,196,208 | 0.995 | 65,815,241 | 65,898,420 | 1.001 |
+| text debug | llvm | 201,505,802 | 201,514,435 | 0.999 | 201,118,437 | 201,123,741 | 1.000 |
+| text float_fmt | llvm | 109,217,610 | 109,499,815 | 1.001 | 108,902,419 | 108,765,588 | 0.998 |
+| text trim | llvm | 146,332,374 | 146,351,036 | 0.998 | 146,039,557 | 145,990,118 | 0.999 |
+| json small | arm64 | 345,174,422 | 345,316,677 | 1.000 | 345,130,368 | 345,122,806 | 1.000 |
+| json ints | arm64 | 234,709,216 | 234,710,506 | 1.000 | 234,640,636 | 234,643,729 | 1.000 |
+| json strings | arm64 | 361,595,820 | 361,574,909 | 1.000 | 361,499,287 | 361,583,704 | 1.000 |
+| json maps | arm64 | 338,394,664 | 338,418,643 | 1.000 | 338,326,688 | 338,341,567 | 1.000 |
+| json parse | arm64 | 288,443,347 | 288,484,004 | 1.000 | 288,337,303 | 288,330,197 | 1.000 |
+| json enc_small | arm64 | 150,897,630 | 150,796,150 | 0.999 | 150,758,846 | 150,791,898 | 1.000 |
+| json enc_strings | arm64 | 191,877,672 | 191,883,148 | 1.000 | 191,807,900 | 191,817,960 | 1.000 |
+| json small | llvm | 304,217,151 | 303,989,224 | 0.999 | 303,866,113 | 303,840,758 | 1.000 |
+| json ints | llvm | 209,240,018 | 209,248,069 | 1.000 | 209,162,498 | 209,164,448 | 1.000 |
+| json strings | llvm | 302,093,247 | 302,047,621 | 1.000 | 301,945,586 | 301,907,276 | 1.000 |
+| json maps | llvm | 303,972,193 | 303,986,180 | 1.000 | 303,852,710 | 303,825,407 | 1.000 |
+| json parse | llvm | 254,178,670 | 254,153,012 | 1.000 | 254,041,024 | 254,063,724 | 1.000 |
+| json enc_small | llvm | 133,855,348 | 133,889,668 | 1.000 | 133,797,421 | 133,734,223 | 0.999 |
+| json enc_strings | llvm | 182,702,986 | 182,832,574 | 1.001 | 182,678,679 | 182,578,890 | 0.999 |
+| alloc small | arm64 | 292,142,168 | 292,127,965 | 1.000 | 292,002,343 | 292,027,669 | 1.000 |
+| alloc strings | arm64 | 303,112,808 | 303,094,624 | 1.000 | 303,086,465 | 303,097,523 | 1.000 |
+| alloc maps | arm64 | 303,627,437 | 303,635,123 | 1.000 | 303,581,650 | 303,524,444 | 1.000 |
+| alloc mixed | arm64 | 472,541,621 | 472,355,584 | 1.000 | 472,721,297 | 472,631,895 | 1.000 |
+| alloc grow | arm64 | 67,038,375 | 67,033,763 | 1.001 | 66,882,677 | 67,012,906 | 1.001 |
+| alloc tasks | arm64 | 886,651,993 | 886,479,996 | 1.000 | 887,454,110 | 885,267,325 | 0.997 |
+| alloc small | llvm | 248,017,020 | 247,970,509 | 1.000 | 247,881,646 | 248,051,280 | 1.001 |
+| alloc strings | llvm | 277,908,715 | 277,874,295 | 1.000 | 277,824,613 | 277,868,355 | 1.000 |
+| alloc maps | llvm | 266,680,139 | 266,693,765 | 1.000 | 266,613,916 | 266,544,835 | 1.000 |
+| alloc mixed | llvm | 462,364,866 | 462,373,586 | 1.000 | 462,659,386 | 462,814,908 | 1.001 |
+| alloc grow | llvm | 64,491,477 | 64,408,321 | 0.998 | 64,408,482 | 64,471,063 | 1.003 |
+| alloc tasks | llvm | 786,026,321 | 787,688,185 | 1.002 | 787,232,455 | 786,315,306 | 0.999 |
+| nested push | arm64 | 17,945,142 | 17,908,640 | 0.998 | 17,883,643 | 17,908,503 | 1.001 |
+| nested strappend | arm64 | 18,773,743 | 18,850,485 | 1.004 | 18,828,670 | 18,810,111 | 0.999 |
+| nested walk | arm64 | 31,647,789 | 31,634,288 | 1.000 | 31,615,639 | 31,713,149 | 1.003 |
+| nested push | llvm | 15,207,684 | 15,242,072 | 1.002 | 15,208,946 | 15,218,320 | 1.001 |
+| nested strappend | llvm | 16,056,798 | 16,062,205 | 1.000 | 16,069,275 | 16,074,088 | 1.000 |
+| nested walk | llvm | 27,899,980 | 27,907,975 | 1.000 | 27,831,123 | 27,691,984 | 0.995 |
+
+Every row is 0.995 to 1.009. The self build (as above) in two runs of
+two: 1.018 and 1.000 (the shared build cache was being pruned during
+the first), then 1.011 and 1.008; A alone moved between 106.33 and
+106.99 billion instructions across its four builds (the build is
+multithreaded), and the outputs were byte identical every time. CI: auto
+38655316376 (with the fixed point) and the Windows suite 38655319335
+pass. internal/llvm TestRuntime* (tasks.c and alloc_threads.c),
+TestGoldenTasks, TestGoldenThreads, TestLeakCheck, TestGolden, and
+internal/arm64 TestGoldenRun pass on the Mac.
