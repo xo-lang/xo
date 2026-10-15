@@ -85,6 +85,14 @@ std (decision 0074) unless the owner decides to expose a user marker.
   (that would let an attacker force the downgrade). The differential
   fuzzing compares behavior (state, bytes sent, error class) and counts
   differences only in a refused certificate's text separately.
+- 2026-10-15 (B31 part 9): x509.xo accepts exactly what Go's
+  crypto/x509 accepts: its parser is a port of parser.go over cbyte.xo
+  (cryptobyte's strict reading), checked by TestX509ParseDiff. Where
+  the Xo stack cannot do what Go does it refuses instead: P-224 and P-521
+  signatures, and IP, e-mail and URI name constraints over certificates
+  with such names. A verification's texts are Go's, including the
+  unknown authority's hint, so the TLS fuzz's text-only differences
+  must stay at zero.
 - 2026-10-15 (TLS 1.2 client, tls12.xo): TLS 1.2 is in scope as Go's
   defaults (ECDHE over X25519, P-256 and P-384; ECDSA, RSA PKCS #1 v1.5,
   RSA-PSS and Ed25519 signatures; the AES-GCM and ChaCha20-Poly1305

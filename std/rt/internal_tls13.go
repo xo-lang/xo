@@ -188,6 +188,10 @@ func (c *t13Client) feedIn(data []byte, chunk int) {
 func (c *t13Client) feed(data []byte) {
 	c.rin = append(c.rin, data...)
 	for c.state != t13Failed && !c.closed && len(c.rin) >= 5 {
+		if c.state == t13WaitSH && !c.hrr && ((c.rin[0] != 21 && c.rin[0] != 22) || c.rin[1] >= 16) {
+			c.err, c.state = "tls: first record does not look like a TLS handshake", t13Failed
+			return
+		}
 		n := int(c.rin[3])<<8 | int(c.rin[4])
 		if n > 16640 {
 			c.fail(22, fmt.Sprintf("tls: oversized record received with length %d", n))

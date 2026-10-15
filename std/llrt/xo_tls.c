@@ -296,6 +296,19 @@ static void sys_roots_load(void) {
 // handle that is never freed), loaded at the first https request.
 xo_troots *xo_tls_roots_system(void) { return &sys_roots; }
 
+// xo_tls_c_apple_svc is the Security framework's table (tls_svc) when
+// roots r are the system's on macOS, where Go asks the framework to verify
+// (tlscert.xo apple_trust, for tlsio.xo); else 0.
+int64_t xo_tls_c_apple_svc(int64_t p) {
+#ifdef __APPLE__
+	if ((xo_troots *)(intptr_t)p == &sys_roots && tls_init()) {
+		return XO_ADDR(tls_svc);
+	}
+#endif
+	(void)p;
+	return 0;
+}
+
 // xo_tls_c_roots_crt is the certificate chain of roots r for the Xo
 // client (tlsio.xo), the system's loaded first: NULL when it has none.
 int64_t xo_tls_c_roots_crt(int64_t p) {
@@ -1073,6 +1086,10 @@ static const char *tls_alert(tls_conn *t) {
 	return NULL;
 }
 int64_t xo_tls_c_roots_crt(int64_t p) {
+	(void)p;
+	return 0;
+}
+int64_t xo_tls_c_apple_svc(int64_t p) {
 	(void)p;
 	return 0;
 }

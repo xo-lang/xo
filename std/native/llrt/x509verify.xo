@@ -20,6 +20,7 @@ pub const NAME_CONSTRAINTS: Int = 5
 pub const INCOMPATIBLE_USAGE: Int = 6
 pub const HOSTNAME: Int = 7
 pub const UNHANDLED_CRITICAL: Int = 8
+pub const CHECK_LIMIT: Int = 9
 
 // Go's limit on signature checks in one verification
 const MAX_CHECKS: Int = 100
@@ -30,19 +31,43 @@ const INTERMEDIATE: Int = 1
 const ROOT: Int = 2
 
 /// The outcome of a verification: the code, a chain (leaf first) when OK,
-/// and for EXPIRED the certificate that is not valid.
+/// for EXPIRED the certificate that is not valid, and for
+/// UNKNOWN_AUTHORITY Go's hint (" (possibly because of ...)" or "").
 pub struct Outcome {
   pub code: Int
   pub chain: List[x509.Cert]
   pub bad: x509.Cert
+  pub hint: Str
 }
 
-/// The search's state: chains found, the certificate of the last error,
-/// signature checks made.
+/// Go's text of an outcome's error for the certificate checks that
+/// x509verify.xo makes (the host name's and the expiry's are the
+/// caller's: they need the host and the zone).
+pub fn error_text(r: Outcome) -> Str {
+  match r.code {
+    1 => "x509: certificate signed by unknown authority${r.hint}"
+    3 => "x509: certificate is not authorized to sign other certificates"
+    4 => "x509: too many intermediates for path length constraint"
+    5 => "x509: a root or intermediate certificate is not authorized for this name"
+    6 => "x509: certificate specifies an incompatible key usage"
+    8 => "x509: unhandled critical extension"
+    9 => "x509: signature check attempts limit reached while verifying certificate chain"
+    _ => "x509: verification failed"
+  }
+}
+
+/// The search's state: chains found, signature checks made.
 struct Search {
   chains: List[List[x509.Cert]]
-  bad: x509.Cert
   checks: Int
+}
+
+/// A level's error (Go's err of buildChains): the code (-1 none), the
+/// certificate it is about, the unknown authority's hint.
+struct LevelErr {
+  code: Int
+  bad: x509.Cert
+  hint: Str
 }
 
 /// Go's Verify (Go 1.26) of leaf with the intermediates and roots at the
@@ -51,15 +76,15 @@ struct Search {
 /// any).
 pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
   if leaf.unhandled > 0 {
-    return Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf}
+    return Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}
   }
   if now < leaf.not_before || now > leaf.not_after {
-    return Outcome{code: EXPIRED, chain: [], bad: leaf}
+    return Outcome{code: EXPIRED, chain: [], bad: leaf, hint: ""}
   }
   if host != "" && !host_ok(leaf, host) {
-    return Outcome{code: HOSTNAME, chain: [], bad: leaf}
+    return Outcome{code: HOSTNAME, chain: [], bad: leaf, hint: ""}
   }
-  var s = Search{chains: [], bad: leaf, checks: 0}
+  var s = Search{chains: [], checks: 0}
   var in_roots = false
   for r in roots {
     if r.raw == leaf.raw {
@@ -69,9 +94,9 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   if in_roots {
     s.chains.push([leaf])
   } else {
-    let err = build(s, [leaf], inters, roots, now)
-    if err != OK {
-      return Outcome{code: err, chain: [], bad: s.bad}
+    let err = build(s, [leaf], dedup(inters), dedup(roots), now)
+    if err.code != OK {
+      return Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}
     }
   }
   // Go drops the chains with incompatible usages, then the ones breaking
@@ -84,11 +109,106 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
     if !constraints_ok(ch) {
       names_bad = true
     } else {
-      return Outcome{code: OK, chain: ch, bad: leaf}
+      return Outcome{code: OK, chain: ch, bad: leaf, hint: ""}
     }
   }
   let code = if names_bad { NAME_CONSTRAINTS } else { INCOMPATIBLE_USAGE }
-  Outcome{code: code, chain: [], bad: leaf}
+  Outcome{code: code, chain: [], bad: leaf, hint: ""}
+}
+
+/// A pool's certificates once each (CertPool.AddCert skips one it has).
+fn dedup(xs: List[x509.Cert]) -> List[x509.Cert] {
+  var out: List[x509.Cert] = []
+  for x in xs {
+    var have = false
+    for y in out {
+      if y.raw == x.raw {
+        have = true
+      }
+    }
+    if !have {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// CertPool.findPotentialParents: the pool's certificates whose subject
+/// is c's issuer, the key identifiers matching first (both empty
+/// included), then those where one is missing, then the rest.
+fn parents(c: x509.Cert, pool: List[x509.Cert]) -> List[x509.Cert] {
+  var a: List[x509.Cert] = []
+  var b: List[x509.Cert] = []
+  var d: List[x509.Cert] = []
+  for p in pool {
+    if p.subject != c.issuer {
+      continue
+    }
+    if p.ski == c.aki {
+      a.push(p)
+    } else if (p.ski.is_empty() && !c.aki.is_empty()) || (!p.ski.is_empty() && c.aki.is_empty()) {
+      b.push(p)
+    } else {
+      d.push(p)
+    }
+  }
+  for x in b {
+    a.push(x)
+  }
+  for x in d {
+    a.push(x)
+  }
+  a
+}
+
+/// Go's alreadyInChain: a certificate of the chain with the candidate's
+/// subject, key and subject alternative names.
+fn in_chain(c: x509.Cert, chain: List[x509.Cert]) -> Bool {
+  for x in chain {
+    if x.subject == c.subject && x.spki == c.spki && x.has_san == c.has_san && (!c.has_san || x.san_raw == c.san_raw) {
+      return true
+    }
+  }
+  false
+}
+
+/// The name Go's hint gives a certificate: its common name, else its
+/// first organization, else "serial:" and the serial number.
+fn hint_name(c: x509.Cert) -> Str {
+  if c.cn != "" {
+    return c.cn
+  }
+  if c.org != "" {
+    return c.org
+  }
+  "serial:${decimal(c.serial)}"
+}
+
+/// The decimal text of a big endian magnitude.
+fn decimal(b: Bytes) -> Str {
+  var ds: List[Int] = []
+  for x in b {
+    var carry = Int(x)
+    for i in 0..ds.len() {
+      let v = ds[i] * 256 + carry
+      ds[i] = v % 10
+      carry = v / 10
+    }
+    while carry > 0 {
+      ds.push(carry % 10)
+      carry = carry / 10
+    }
+  }
+  if ds.is_empty() {
+    return "0"
+  }
+  var s = ""
+  var i = ds.len() - 1
+  while i >= 0 {
+    s = "${s}${ds[i]}"
+    i -= 1
+  }
+  s
 }
 
 /// x509.Certificate.VerifyHostname for the leaf.
@@ -116,74 +236,54 @@ pub fn names(c: x509.Cert) -> tlsname.Names {
 }
 
 /// Go's buildChains: every chain from chain's last certificate up through
-/// the candidates, roots first, into s.chains. The error is Go's: OK when
-/// a chain was found, else the last one a candidate gave (its isValid's
-/// or its own search's), else UNKNOWN_AUTHORITY.
-fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> Int {
+/// the candidates, roots first, into s.chains. The error is Go's: none
+/// when a chain was found, else the last one a candidate gave (its
+/// isValid's, its own search's, the check limit), else an unknown
+/// authority with the hint of the first candidate whose signature check
+/// failed.
+fn build(var s: Search, chain: List[x509.Cert], inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> LevelErr {
+  let cur = chain[chain.len() - 1]
   let before = s.chains.len()
-  var err = -1
-  for r in roots {
-    let e = consider(s, chain, r, ROOT, inters, roots, now)
-    if e >= 0 {
-      err = e
-    }
-  }
-  for i in inters {
-    let e = consider(s, chain, i, INTERMEDIATE, inters, roots, now)
-    if e >= 0 {
-      err = e
+  var err = LevelErr{code: -1, bad: cur, hint: ""}
+  var hint = ""
+  for kind in [ROOT, INTERMEDIATE] {
+    for c in parents(cur, if kind == ROOT { roots } else { inters }) {
+      if !c.has_key || in_chain(c, chain) {
+        continue
+      }
+      s.checks += 1
+      if s.checks > MAX_CHECKS {
+        err = LevelErr{code: CHECK_LIMIT, bad: cur, hint: ""}
+        continue
+      }
+      let why = x509.check_from(cur, c)
+      if why != "" {
+        if hint == "" {
+          hint = " (possibly because of ${why.quote()} while trying to verify candidate authority certificate ${hint_name(c).quote()})"
+        }
+        continue
+      }
+      let code = valid(c, kind, chain, now)
+      if code != OK {
+        err = LevelErr{code: code, bad: c, hint: ""}
+        continue
+      }
+      var next = chain
+      next.push(c)
+      if kind == ROOT {
+        s.chains.push(next)
+      } else {
+        err = build(s, next, inters, roots, now)
+      }
     }
   }
   if s.chains.len() > before {
-    return OK
+    return LevelErr{code: OK, bad: cur, hint: ""}
   }
-  if err < 0 { UNKNOWN_AUTHORITY } else { err }
-}
-
-/// Go's considerCandidate: -1 when it leaves the error alone.
-fn consider(var s: Search, chain: List[x509.Cert], c: x509.Cert, kind: Int, inters: List[x509.Cert], roots: List[x509.Cert], now: Int) -> Int {
-  let cur = chain[chain.len() - 1]
-  if c.subject != cur.issuer {
-    return -1
+  if err.code < 0 {
+    return LevelErr{code: UNKNOWN_AUTHORITY, bad: cur, hint: hint}
   }
-  // a certificate already in the chain (a loop; Go's alreadyInChain)
-  for x in chain {
-    if x.raw == c.raw || (x.subject == c.subject && x.key == c.key) {
-      return -1
-    }
-  }
-  s.checks += 1
-  if s.checks > MAX_CHECKS {
-    return UNKNOWN_AUTHORITY
-  }
-  if !signed_by(cur, c) {
-    return -1
-  }
-  let code = valid(c, kind, chain, now)
-  if code != OK {
-    s.bad = c
-    return code
-  }
-  var next = chain
-  next.push(c)
-  if kind == ROOT {
-    s.chains.push(next)
-    return -1
-  }
-  build(s, next, inters, roots, now)
-}
-
-/// Go's CheckSignatureFrom: the parent may sign certificates (a CA when
-/// it is a version 3 certificate, KeyUsage with certificate signing when
-/// it has one), and c carries its signature.
-fn signed_by(c: x509.Cert, parent: x509.Cert) -> Bool {
-  if (parent.version == 3 && !parent.has_bc) || (parent.has_bc && !parent.is_ca) {
-    return false
-  }
-  if parent.key_usage >= 0 && parent.key_usage != 0 && (parent.key_usage & x509.KU_CERT_SIGN) == 0 {
-    return false
-  }
-  x509.signed_by(c, parent)
+  err
 }
 
 /// Go's isValid for an intermediate or root c above chain.
@@ -205,12 +305,19 @@ fn valid(c: x509.Cert, kind: Int, chain: List[x509.Cert], now: Int) -> Int {
 
 /// Go's checkChainConstraints for DNS names: the names of every
 /// certificate with a SAN extension within the constraints of every
-/// certificate above it.
+/// certificate above it; IP, e-mail and URI constraints refuse a chain
+/// whose lower certificates have such names (stricter than Go when the
+/// names would pass).
 fn constraints_ok(chain: List[x509.Cert]) -> Bool {
   for i in 0..chain.len() {
     if chain[i].has_san {
       for j in i + 1..chain.len() {
         let c = chain[j]
+        // IP, e-mail and URI constraints are not checked here (Go checks
+        // them): over a certificate with such names they refuse the chain
+        if c.other_constraints > 0 && (!chain[i].ips.is_empty() || chain[i].san_other > 0) {
+          return false
+        }
         if !c.permitted_dns.is_empty() || !c.excluded_dns.is_empty() {
           for name in chain[i].dns {
             if !name_permitted(name, c) {
@@ -314,6 +421,9 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   }
   let now = Int.parse(args[0]) ?? 0
   let r = verify(p.cert, certs(b), certs(c), if args[1] == "-" { "" } else { args[1] }, now, args[2])
+  if r.code == CHECK_LIMIT {
+    return Some("error ${error_text(r)}".bytes())
+  }
   var s = "${r.code}"
   for x in r.chain {
     s = "${s} ${x.cn}"

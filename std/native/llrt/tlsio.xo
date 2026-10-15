@@ -5,8 +5,8 @@
 // descriptor, the deadline, cancellation) and its texts of a failed
 // handshake. hclient.xo calls this file; its C path, tlsio_c.xo
 // (XO_LLRT_C=tlsio, decision 0193), forwards the same calls to xo_tls.c
-// on Mbed TLS. Known gap: macOS's system roots are checked by
-// x509verify.xo, not the Security framework (Go asks the framework). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
+// on Mbed TLS. On macOS with the system's roots the Security framework
+// verifies, as Go's (tlscert.apple_trust). The server's TLS stays Mbed's (tls13srv.xo, xo-2b).
 // Windows and Linux are UNTESTED.
 use native/llrt/hconn
 use native/llrt/poll
@@ -53,6 +53,7 @@ struct Conn {
   first: Bytes
   eof: Bool
   pending: Bytes
+  crt: Int
 }
 
 // The client of either version.
@@ -101,7 +102,10 @@ fn take_in(var c: Conn, data: Bytes) {
   tls13.feed(c.cl, data)
   if c.cl.state == tls13.HANDOFF {
     let hs = tls13.hello_state(c.cl)
-    var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
+    // tls12.xo verifies with x509verify.xo: the roots, parsed now when
+    // the framework was to decide
+    let roots = if c.cl.conf.apple_svc != 0 { chain(c.crt) } else { c.cl.conf.roots }
+    var cf = tls12.conf(c.cl.conf.host, roots, c.cl.conf.now)
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -154,6 +158,7 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 /// xo_tls.c's tls_client_start.
 pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   let crt = rthttp.tls_c_roots_crt(roots)
+  let apple = rthttp.tls_c_apple_svc(roots)
   if crt == 0 {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
@@ -161,13 +166,16 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
     name = raw.str_slice(name, 1, name.len() - 1)
   }
-  var cf = tls13.conf(name, chain(crt), sysio.real_ns() / 1000000000)
+  // the framework decides on macOS with the system's roots: no need to
+  // parse them
+  var cf = tls13.conf(name, if apple != 0 { [] } else { chain(crt) }, sysio.real_ns() / 1000000000)
+  cf.apple_svc = apple
   // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
   cf.alpn = ["h2", "http/1.1"]
   cf.legacy_suites = tls12.default_suites()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
-  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b"", crt: crt}
   while !done(c) && !broken(c) {
     if !flush(c) || !fill(c) {
       break

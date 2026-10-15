@@ -1,0 +1,440 @@
+// DER reading as Go's golang.org/x/crypto/cryptobyte (the zero-C audit's
+// B31, decision 0202): what x509.xo's parser reads certificates with, so
+// that it accepts exactly what Go's crypto/x509 does. A Win is a window
+// of bytes that reads advance; every read is all or nothing (a failed
+// read leaves the window as it was) and as strict as cryptobyte's: one
+// byte tags below 31, definite lengths in the fewest bytes (at most four
+// of them), integers in the fewest bytes, OID arcs in the fewest bytes
+// and below 2^31, booleans 0x00 or 0xff, bit strings with their unused
+// bits zero, and the times of Go's time.Parse that format back the same.
+use native/rt
+
+// the universal tags
+pub const BOOLEAN: Int = 1
+pub const INTEGER: Int = 2
+pub const BIT_STRING: Int = 3
+pub const OCTET_STRING: Int = 4
+pub const NULL: Int = 5
+pub const OBJECT_IDENTIFIER: Int = 6
+pub const UTF8_STRING: Int = 12
+pub const SEQUENCE: Int = 0x30
+pub const SET: Int = 0x31
+pub const NUMERIC_STRING: Int = 18
+pub const PRINTABLE_STRING: Int = 19
+pub const T61_STRING: Int = 20
+pub const IA5_STRING: Int = 22
+pub const UTC_TIME: Int = 23
+pub const GENERALIZED_TIME: Int = 24
+pub const BMP_STRING: Int = 30
+
+/// A window b[lo..hi] of DER.
+pub struct Win {
+  pub b: Bytes
+  pub lo: Int
+  pub hi: Int
+}
+
+/// The window over all of b.
+pub fn of(b: Bytes) -> Win { Win{b: b, lo: 0, hi: b.len()} }
+
+pub fn empty(s: Win) -> Bool { s.lo >= s.hi }
+
+pub fn len(s: Win) -> Int { s.hi - s.lo }
+
+/// The bytes of the window.
+pub fn bytes(s: Win) -> Bytes { s.b[s.lo..s.hi] }
+
+/// Whether the next element has the tag (cryptobyte's PeekASN1Tag).
+pub fn peek(s: Win, tag: Int) -> Bool { s.lo < s.hi && Int(s.b[s.lo]) == tag }
+
+/// One element read: its tag, its contents and the whole element (with
+/// the header); ok false when there is none that reads.
+pub struct Elem {
+  pub ok: Bool
+  pub tag: Int
+  pub body: Win
+  pub whole: Win
+}
+
+fn bad(s: Win) -> Elem { Elem{ok: false, tag: -1, body: s, whole: s} }
+
+/// cryptobyte's readASN1: the next element, the window advanced past it.
+pub fn read_any(var s: Win) -> Elem {
+  let n = s.hi - s.lo
+  if n < 2 {
+    return bad(s)
+  }
+  let tag = Int(s.b[s.lo])
+  if tag & 0x1f == 0x1f {
+    return bad(s)
+  }
+  let lb = Int(s.b[s.lo + 1])
+  var len = 0
+  var hl = 2
+  if lb & 0x80 == 0 {
+    len = lb
+  } else {
+    let k = lb & 0x7f
+    if k == 0 || k > 4 || n < 2 + k {
+      return bad(s)
+    }
+    for i in 0..k {
+      len = len * 256 + Int(s.b[s.lo + 2 + i])
+    }
+    // the fewest bytes: not below 128, no leading zero byte
+    if len < 128 || (len >> ((k - 1) * 8)) == 0 {
+      return bad(s)
+    }
+    hl = 2 + k
+  }
+  if hl + len > n {
+    return bad(s)
+  }
+  let start = s.lo
+  s.lo = start + hl + len
+  Elem{ok: true, tag: tag, body: Win{b: s.b, lo: start + hl, hi: start + hl + len}, whole: Win{b: s.b, lo: start, hi: start + hl + len}}
+}
+
+/// The contents of the next element when it has the tag (ReadASN1).
+pub fn read(var s: Win, tag: Int) -> Win? {
+  var t = s
+  let e = read_any(t)
+  if !e.ok || e.tag != tag {
+    return None
+  }
+  s = t
+  Some(e.body)
+}
+
+/// The next element with its header when it has the tag
+/// (ReadASN1Element).
+pub fn read_element(var s: Win, tag: Int) -> Win? {
+  var t = s
+  let e = read_any(t)
+  if !e.ok || e.tag != tag {
+    return None
+  }
+  s = t
+  Some(e.whole)
+}
+
+/// ReadOptionalASN1: none when the element is there and does not read;
+/// else whether it was there and its contents.
+pub struct Opt {
+  pub present: Bool
+  pub body: Win
+}
+
+pub fn read_optional(var s: Win, tag: Int) -> Opt? {
+  if !peek(s, tag) {
+    return Some(Opt{present: false, body: Win{b: s.b, lo: s.lo, hi: s.lo}})
+  }
+  match read(s, tag) {
+    Some(b) => Some(Opt{present: true, body: b})
+    None => None
+  }
+}
+
+/// SkipOptionalASN1.
+pub fn skip_optional(var s: Win, tag: Int) -> Bool {
+  if !peek(s, tag) {
+    return true
+  }
+  read(s, tag) is Some(_)
+}
+
+/// cryptobyte's checkASN1Integer: not empty, in the fewest bytes.
+pub fn int_ok(c: Win) -> Bool {
+  let n = c.hi - c.lo
+  if n == 0 {
+    return false
+  }
+  if n == 1 {
+    return true
+  }
+  let a = Int(c.b[c.lo])
+  let b = Int(c.b[c.lo + 1])
+  !((a == 0 && b & 0x80 == 0) || (a == 0xff && b & 0x80 == 0x80))
+}
+
+/// An INTEGER's contents (two's complement, any size).
+pub fn read_int_raw(var s: Win) -> Win? {
+  var t = s
+  match read(t, INTEGER) {
+    Some(c) => if int_ok(c) {
+      s = t
+      Some(c)
+    } else {
+      None
+    }
+    None => None
+  }
+}
+
+/// An INTEGER with the tag that fits in 64 bits signed
+/// (ReadASN1Int64WithTag).
+pub fn read_int64_tag(var s: Win, tag: Int) -> Int? {
+  var t = s
+  let c = match read(t, tag) {
+    Some(x) => x
+    None => return None
+  }
+  if !int_ok(c) || len(c) > 8 {
+    return None
+  }
+  var v = if Int(c.b[c.lo]) >= 128 { -1 } else { 0 }
+  for i in c.lo..c.hi {
+    v = rt.int_wrap(0, v << 8, Int(c.b[i]))
+  }
+  s = t
+  Some(v)
+}
+
+/// An INTEGER as an Int (int64; ReadASN1Integer into an int).
+pub fn read_int64(var s: Win) -> Int? { read_int64_tag(s, INTEGER) }
+
+/// An INTEGER as a uint that fits in 63 bits (ReadASN1Integer into a
+/// uint, then at most math.MaxInt): none when negative or larger.
+pub fn read_uint63(var s: Win) -> Int? {
+  var t = s
+  let c = match read(t, INTEGER) {
+    Some(x) => x
+    None => return None
+  }
+  let n = len(c)
+  if !int_ok(c) || n > 9 || (n == 9 && Int(c.b[c.lo]) != 0) || Int(c.b[c.lo]) >= 128 {
+    return None
+  }
+  // above math.MaxInt: a ninth byte's value, or the top bit of eight
+  if n == 9 || (n == 8 && Int(c.b[c.lo]) >= 128) {
+    return None
+  }
+  var v = 0
+  for i in c.lo..c.hi {
+    v = v * 256 + Int(c.b[i])
+  }
+  s = t
+  Some(v)
+}
+
+/// A BOOLEAN (0x00 or 0xff only).
+pub fn read_bool(var s: Win) -> Bool? {
+  var t = s
+  let c = match read(t, BOOLEAN) {
+    Some(x) => x
+    None => return None
+  }
+  if len(c) != 1 {
+    return None
+  }
+  let v = Int(c.b[c.lo])
+  if v != 0 && v != 0xff {
+    return None
+  }
+  s = t
+  Some(v == 0xff)
+}
+
+/// A BIT STRING: its bytes and bit length.
+pub struct Bits {
+  pub data: Bytes
+  pub bit_len: Int
+}
+
+pub fn read_bits(var s: Win) -> Bits? {
+  var t = s
+  let c = match read(t, BIT_STRING) {
+    Some(x) => x
+    None => return None
+  }
+  if len(c) == 0 {
+    return None
+  }
+  let pad = Int(c.b[c.lo])
+  let n = len(c) - 1
+  if pad > 7 || (n == 0 && pad != 0) || (n > 0 && (Int(c.b[c.hi - 1]) & ((1 << pad) - 1)) != 0) {
+    return None
+  }
+  s = t
+  Some(Bits{data: c.b[c.lo + 1..c.hi], bit_len: n * 8 - pad})
+}
+
+/// asn1.BitString's RightAlign: the bits shifted right by the unused
+/// ones.
+pub fn right_align(x: Bits) -> Bytes {
+  let shift = 8 - (x.bit_len % 8)
+  if shift == 8 || x.data.len() == 0 {
+    return x.data
+  }
+  var a = rt.rs_with_cap(x.data.len())
+  a = rt.rs_push_byte(a, Int(x.data[0]) >> shift)
+  for i in 1..x.data.len() {
+    a = rt.rs_push_byte(a, ((Int(x.data[i - 1]) << (8 - shift)) | (Int(x.data[i]) >> shift)) & 255)
+  }
+  a.bytes()
+}
+
+/// cryptobyte's readBase128Int over c from i: the value and the next
+/// index, or none (more than four bytes, 2^31 or more, a leading 0x80,
+/// cut).
+fn base128(c: Win, i0: Int) -> (Int, Int)? {
+  var ret = 0
+  var i = i0
+  var k = 0
+  while i < c.hi {
+    if k == 5 || ret >= 16777216 {
+      return None
+    }
+    let b = Int(c.b[i])
+    if k == 0 && b == 0x80 {
+      return None
+    }
+    ret = (ret << 7) | (b & 0x7f)
+    i += 1
+    k += 1
+    if b & 0x80 == 0 {
+      return Some((ret, i))
+    }
+  }
+  None
+}
+
+/// An OBJECT IDENTIFIER's contents as Go's ObjectIdentifier.String (the
+/// arcs dotted); none when they do not read.
+pub fn oid_text(c: Win) -> Str? {
+  if len(c) == 0 {
+    return None
+  }
+  let (v, i1) = base128(c, c.lo)?
+  var s = if v < 80 { "${v / 40}.${v % 40}" } else { "2.${v - 80}" }
+  var i = i1
+  while i < c.hi {
+    let (w, nx) = base128(c, i)?
+    s = "${s}.${w}"
+    i = nx
+  }
+  Some(s)
+}
+
+/// An OBJECT IDENTIFIER (ReadASN1ObjectIdentifier), dotted.
+pub fn read_oid(var s: Win) -> Str? {
+  var t = s
+  let c = match read(t, OBJECT_IDENTIFIER) {
+    Some(x) => x
+    None => return None
+  }
+  let o = oid_text(c)?
+  s = t
+  Some(o)
+}
+
+// ---------------------------------------------------------------------------
+// Times (Go's time.Parse of the layouts, formatted back the same)
+
+fn digits(c: Win, i: Int, n: Int) -> Int? {
+  var v = 0
+  for k in 0..n {
+    let d = Int(c.b[i + k]) - 48
+    if d < 0 || d > 9 {
+      return None
+    }
+    v = v * 10 + d
+  }
+  Some(v)
+}
+
+fn leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in(y: Int, m: Int) -> Int {
+  if m == 2 {
+    return if leap(y) { 29 } else { 28 }
+  }
+  if m == 4 || m == 6 || m == 9 || m == 11 { 30 } else { 31 }
+}
+
+/// Days from 1970-01-01 to y-m-d (civil).
+fn days(y0: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { y0 - 1 } else { y0 }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// The Unix time of the digits from i on: the date (year of yl digits),
+/// hours, minutes, seconds when withsec, then Z or an offset +hhmm; none
+/// when the text is not what the layout formats.
+fn clock(c: Win, yl: Int, withsec: Bool) -> Int? {
+  let base = yl + 8 + (if withsec { 2 } else { 0 })
+  let n = len(c)
+  if n != base + 1 && n != base + 5 {
+    return None
+  }
+  let i = c.lo
+  var y = digits(c, i, yl)?
+  if yl == 2 {
+    y = if y >= 69 { 1900 + y } else { 2000 + y }
+  }
+  let mo = digits(c, i + yl, 2)?
+  let d = digits(c, i + yl + 2, 2)?
+  let h = digits(c, i + yl + 4, 2)?
+  let mi = digits(c, i + yl + 6, 2)?
+  let sec = if withsec { digits(c, i + yl + 8, 2)? } else { 0 }
+  if mo < 1 || mo > 12 || d < 1 || d > days_in(y, mo) || h > 23 || mi > 59 || sec > 59 {
+    return None
+  }
+  var off = 0
+  let z = Int(c.b[i + base])
+  if n == base + 1 {
+    if z != 90 {
+      return None
+    }
+  } else {
+    if z != 43 && z != 45 {
+      return None
+    }
+    let oh = digits(c, i + base + 1, 2)?
+    let om = digits(c, i + base + 3, 2)?
+    // Go formats a zero offset as Z, so +0000 does not format back
+    if oh > 24 || om > 59 || (oh == 0 && om == 0) {
+      return None
+    }
+    off = (oh * 3600 + om * 60) * (if z == 45 { -1 } else { 1 })
+  }
+  Some(days(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec - off)
+}
+
+/// A UTCTime (ReadASN1UTCTime: YYMMDDhhmmssZ or without seconds, a 2050
+/// or later year taken a century earlier).
+pub fn read_utc(var s: Win) -> Int? {
+  var t = s
+  let c = match read(t, UTC_TIME) {
+    Some(x) => x
+    None => return None
+  }
+  var v = match clock(c, 2, true) {
+    Some(x) => x
+    None => clock(c, 2, false)?
+  }
+  // years 2050 to 2068 (the layout's 50 to 68) are 1950 to 1968
+  let yy = digits(c, c.lo, 2) ?? 0
+  if yy >= 50 && yy <= 68 {
+    v -= days(2000 + yy, 1, 1) * 86400 - days(1900 + yy, 1, 1) * 86400
+  }
+  s = t
+  Some(v)
+}
+
+/// A GeneralizedTime (ReadASN1GeneralizedTime: YYYYMMDDhhmmssZ).
+pub fn read_generalized(var s: Win) -> Int? {
+  var t = s
+  let c = match read(t, GENERALIZED_TIME) {
+    Some(x) => x
+    None => return None
+  }
+  let v = clock(c, 4, true)?
+  s = t
+  Some(v)
+}

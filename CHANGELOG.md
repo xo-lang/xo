@@ -6,6 +6,33 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 9, decision 0202): X.509
+  parsing and chain errors as strict as Go's, with Go's texts.
+  std/native/llrt/x509.xo's parser is now a port of Go 1.26's
+  crypto/x509 parser.go, over the new cbyte.xo (golang.org/x/crypto's
+  cryptobyte reading in Xo: minimal lengths and integers, OID arcs,
+  booleans, bit strings, Go's time.Parse rules for UTCTime and
+  GeneralizedTime). It covers RDN string types, keys (RSA's NULL
+  parameters, P-224 to P-521 points on their curves through bigmod.xo,
+  Ed25519, DSA), and every extension Go reads (SAN, name constraints
+  with IP, e-mail and URI subtrees, CRL distribution points, policies,
+  policy mappings and constraints, AIA, inhibit any policy). x509verify.xo
+  picks candidates in Go's order (matching key identifiers first), uses
+  Go's alreadyInChain, gives an unknown authority Go's hint ("possibly
+  because of ... while trying to verify candidate authority certificate
+  ..."), and reports the signature check limit. IP, e-mail and URI name
+  constraints refuse a chain whose lower certificates carry such names
+  (Go checks them; this is stricter until x509verify.xo does). On macOS
+  with the system's roots the Xo client asks the Security framework
+  (tlscert.xo apple_trust), as Go does. The first record not looking like
+  TLS gets Go's text. TestX509ParseDiff (internal/llvm, not -short)
+  diffs x509.xo against Go's ParseCertificate on mutated certificates and
+  49 named classes: 150,000 cases, no difference. TestTLS13ReplayDiff now
+  fails on any difference in a refused certificate's text: 0 in 20,000.
+  Known gaps: a SAN URI is checked as IA5 only (Go also parses it with
+  net/url, whose port is in http1.xo); P-224 and P-521 signatures are not
+  verified (refused).
+
 - Native TLS 1.2 client: offers the four ECDHE CBC-SHA suites after the
   AEADs, as Go's client does by default (tls12.default_suites, which
   tlsio.xo's combined ClientHello uses too); golden tls12_client adds a

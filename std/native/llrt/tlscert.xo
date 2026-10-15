@@ -531,6 +531,87 @@ fn host_bad(svc: Int, crt: Int, hp: Int, msg: Int, mn: Int) -> Bool {
 /// name (the C string at hp, hn bytes), then Go checks the host name
 /// itself. 0 when the chain is trusted, else 1 and Go's text zero
 /// terminated in the buffer of mn bytes at msg.
+/// apple_verify's outcome for the Xo client (tls13.xo): x509verify.xo's
+/// codes (0 trusted, 1 unknown authority, 2 expired, 7 the host name, 10
+/// another error) and Go's text for 2 and 10.
+pub struct AppleRes {
+  pub code: Int
+  pub msg: Str
+}
+
+/// Go's systemVerify on macOS for the chain of DERs (leaf first) and the
+/// host ("" none), as apple_verify: the framework evaluates the chain for
+/// an SSL server, then Go checks the host name itself (the caller, with
+/// the leaf: code 7).
+pub fn apple_trust(svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
+  let certs = sec(svc, F_CFARRAYCREATEMUTABLE, 0, 0, rt.mem_load(svc, V_CF_CALLBACKS, 8), 0)
+  for (i, der) in ders.indexed() {
+    let d = sec(svc, F_CFDATACREATE, 0, raw.bytes_addr(der), der.len(), 0)
+    let sc = if d != 0 { sec(svc, F_SECCERTIFICATECREATEWITHDATA, 0, d, 0, 0) } else { 0 }
+    if d != 0 {
+      let _r1 = sec(svc, F_CFRELEASE, d, 0, 0, 0)
+    }
+    if sc == 0 {
+      let _r2 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+      return AppleRes{code: 10, msg: if i == 0 { "invalid leaf certificate" } else { "x509: malformed certificate" }}
+    }
+    let _r3 = sec(svc, F_CFARRAYAPPENDVALUE, certs, sc, 0, 0)
+    let _r4 = sec(svc, F_CFRELEASE, sc, 0, 0, 0)
+  }
+  let hb = block(host.len() + 1)
+  let _n = raw.put_cstr(hb, host)
+  let name = if host.len() > 0 { sec(svc, F_CFSTRINGCREATEWITHCSTRING, 0, hb, CF_UTF8, 0) } else { 0 }
+  release(hb)
+  let pol = sec(svc, F_SECPOLICYCREATESSL, 1, name, 0, 0)
+  if name != 0 {
+    let _r5 = sec(svc, F_CFRELEASE, name, 0, 0, 0)
+  }
+  let out = block(8)
+  rt.mem_store(out, 0, 0, 8)
+  let st = s32(sec(svc, F_SECTRUSTCREATEWITHCERTIFICATES, certs, pol, out, 0))
+  let _r6 = sec(svc, F_CFRELEASE, certs, 0, 0, 0)
+  if pol != 0 {
+    let _r7 = sec(svc, F_CFRELEASE, pol, 0, 0, 0)
+  }
+  let trust = rt.mem_load(out, 0, 8)
+  if st != 0 || trust == 0 {
+    release(out)
+    return AppleRes{code: 10, msg: "SecTrustCreateWithCertificates error: ${st}"}
+  }
+  rt.mem_store(out, 0, 0, 8)
+  var res = AppleRes{code: 0, msg: ""}
+  // a C bool: only the low byte is the result
+  if sec(svc, F_SECTRUSTEVALUATEWITHERROR, trust, out, 0, 0) & 255 == 0 {
+    let err = rt.mem_load(out, 0, 8)
+    let code = if err != 0 { sec(svc, F_CFERRORGETCODE, err, 0, 0, 0) } else { 0 }
+    var desc = ""
+    if err != 0 {
+      let ds = sec(svc, F_CFERRORCOPYDESCRIPTION, err, 0, 0, 0)
+      if ds != 0 {
+        let buf = block(600)
+        if sec(svc, F_CFSTRINGGETCSTRING, ds, buf, 600, CF_UTF8) & 255 != 0 {
+          desc = raw.str_at(buf, raw.cstr_len(buf))
+        }
+        release(buf)
+        let _r8 = sec(svc, F_CFRELEASE, ds, 0, 0, 0)
+      }
+      let _r9 = sec(svc, F_CFRELEASE, err, 0, 0, 0)
+    }
+    res = if code == ERR_EXPIRED {
+      AppleRes{code: 2, msg: "x509: certificate has expired or is not yet valid: ${desc}"}
+    } else if code == ERR_HOST {
+      AppleRes{code: 7, msg: ""}
+    } else if code == ERR_NOT_TRUSTED {
+      AppleRes{code: 1, msg: ""}
+    } else {
+      AppleRes{code: 10, msg: "x509: ${desc}"}
+    }
+  }
+  release(out)
+  let _r10 = sec(svc, F_CFRELEASE, trust, 0, 0, 0)
+  res
+}
+
 pub fn apple_verify(svc: Int, crt: Int, hp: Int, hn: Int, msg: Int, mn: Int) -> Int {
   let certs = sec(svc, F_CFARRAYCREATEMUTABLE, 0, 0, rt.mem_load(svc, V_CF_CALLBACKS, 8), 0)
   var c = crt

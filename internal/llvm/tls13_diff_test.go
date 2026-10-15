@@ -363,10 +363,8 @@ func TestTLS13ReplayDiff(t *testing.T) {
 		}
 	}
 	// a difference in what the client does (finishes or not, the bytes
-	// it sends while it does, the class of its error) fails the test; a
-	// difference only in an error's text (Go's x509 parser rejects a
-	// certificate x509.xo takes and verification then refuses, Go's hint
-	// on an unknown authority) is counted, and listed with -v
+	// it sends while it does, the class of its error) and one only in a
+	// refused certificate's text are counted apart, both failures
 	bad, texts := 0, 0
 	states := map[string]int{}
 	for i := 0; i < n; i++ {
@@ -380,7 +378,7 @@ func TestTLS13ReplayDiff(t *testing.T) {
 			if tls13DiffClass(string(got)) == tls13DiffClass(string(ref)) {
 				texts++
 				if testing.Verbose() && texts <= 20 {
-					t.Logf("case %d (%s): %s text differs\ngo: %s\n%s: %s", i, cases[i], backends[b], tls13DiffState(string(ref)), backends[b], tls13DiffState(string(got)))
+					t.Logf("case %d (%s): %s text differs\ngo: %s\n%s: %s", i, cases[i], backends[b], tls13DiffErr(string(ref)), backends[b], tls13DiffErr(string(got)))
 				}
 				continue
 			}
@@ -393,6 +391,11 @@ func TestTLS13ReplayDiff(t *testing.T) {
 	t.Logf("%d cases, %d text only differences, outcomes: %v", n, texts, states)
 	if bad > 0 {
 		t.Errorf("%d differences", bad)
+	}
+	// x509.xo parses as Go's parser and verifies with Go's hints since
+	// 2026-10-15: a text difference is a regression too
+	if texts > 0 {
+		t.Errorf("%d text only differences (run with -v to list them)", texts)
 	}
 }
 
@@ -440,4 +443,16 @@ func tls13DiffState(out string) string {
 		}
 	}
 	return "?"
+}
+
+// tls13DiffErr is a replay's error text, "" when it finished.
+func tls13DiffErr(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "flight "); ok {
+			if f := strings.SplitN(rest, " ", 3); len(f) == 3 {
+				return f[2]
+			}
+		}
+	}
+	return ""
 }

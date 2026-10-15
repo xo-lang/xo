@@ -115,6 +115,10 @@ pub struct Conf {
   pub legacy_suites: List[Int]
   pub groups: List[Int]
   pub insecure: Bool
+  /// macOS with the system's roots: the Security framework's table (Go
+  /// verifies with the framework there, tlscert.apple_trust); 0 for
+  /// x509verify.xo with roots.
+  pub apple_svc: Int
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -126,7 +130,7 @@ pub struct Conf {
 /// and ChaCha20-Poly1305 (AES first, as Go on hardware with AES), X25519
 /// then P-256 and P-384 (Go's order less its post-quantum hybrid).
 pub fn conf(host: Str, roots: List[x509.Cert], now: Int) -> Conf {
-  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
+  Conf{host: host, roots: roots, now: now, alpn: [], suites: [tlsrec.SUITE_AES_128_GCM_SHA256, tlsrec.SUITE_AES_256_GCM_SHA384, tlsrec.SUITE_CHACHA20_POLY1305_SHA256], legacy_suites: [], groups: [GROUP_X25519, GROUP_P256, GROUP_P384], insecure: false, apple_svc: 0, hello: b"", random: b"", sid: b"", priv: b"", shared: b""}
 }
 
 /// A client connection: the state, the error (Go's text) once FAILED,
@@ -241,6 +245,13 @@ pub fn close(var c: Client) {
 pub fn feed(var c: Client, data: Bytes) {
   c.rin = cat2(c.rin, data)
   while c.state != FAILED && c.state != HANDOFF && !c.closed && c.rin.len() >= 5 {
+    // Go's readRecordOrCCS before the server's hello: a first record of
+    // another type, or a version from 16.0 on, is not TLS (no alert)
+    if c.state == WAIT_SH && !c.hrr && ((c.rin[0] != 21 && c.rin[0] != 22) || Int(c.rin[1]) >= 16) {
+      c.err = "tls: first record does not look like a TLS handshake"
+      c.state = FAILED
+      return
+    }
     let n = Int(c.rin[3]) * 256 + Int(c.rin[4])
     if n > tlsrec.MAX_CIPHER {
       fail(c, ALERT_RECORD_OVERFLOW, "tls: oversized record received with length ${n}")
@@ -699,6 +710,7 @@ fn certificate(var c: Client, msg: Bytes) {
     return
   }
   var certs: List[x509.Cert] = []
+  var ders: List[Bytes] = []
   var p = 8
   while p < msg.len() {
     if msg.len() < p + 3 || msg.len() < p + 3 + u24_at(msg, p) + 2 {
@@ -720,6 +732,7 @@ fn certificate(var c: Client, msg: Bytes) {
       return
     }
     certs.push(parsed.cert)
+    ders.push(der)
   }
   if certs.is_empty() {
     fail(c, ALERT_DECODE_ERROR, "tls: received empty certificates message")
@@ -730,7 +743,23 @@ fn certificate(var c: Client, msg: Bytes) {
     fail(c, ALERT_UNSUPPORTED_CERTIFICATE, "tls: server's certificate contains an unsupported type of public key")
     return
   }
-  if !c.conf.insecure {
+  if !c.conf.insecure && c.conf.apple_svc != 0 {
+    // Go's systemVerify on macOS
+    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, ders, c.conf.host) }
+    let code = if r.code == 0 && c.conf.host != "" && !x509verify.host_ok(leaf, c.conf.host) { 7 } else { r.code }
+    if code != 0 {
+      let msg = if code == 1 {
+        "x509: certificate signed by unknown authority"
+      } else if code == 7 {
+        tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, c.conf.host)
+      } else {
+        r.msg
+      }
+      let alert = if code == 1 { ALERT_UNKNOWN_CA } else if code == 2 { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
+      fail(c, alert, "tls: failed to verify certificate: ${msg}")
+      return
+    }
+  } else if !c.conf.insecure {
     let inters = certs[1..certs.len()]
     let r = x509verify.verify(leaf, inters, c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
@@ -746,24 +775,16 @@ fn certificate(var c: Client, msg: Bytes) {
 
 /// The text of x509.Verify's error.
 fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str {
-  match r.code {
-    1 => "x509: certificate signed by unknown authority"
-    2 => {
-      let b = r.bad
-      if cf.now < b.not_before {
-        "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(cf.now, 0)} is before ${tlscert.rfc3339(b.not_before, 0)}"
-      } else {
-        "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(cf.now, 0)} is after ${tlscert.rfc3339(b.not_after, 0)}"
-      }
-    }
-    3 => "x509: certificate is not authorized to sign other certificates"
-    4 => "x509: too many intermediates for path length constraint"
-    5 => "x509: a root or intermediate certificate is not authorized for this name"
-    6 => "x509: certificate specifies an incompatible key usage"
-    7 => tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, cf.host)
-    8 => "x509: unhandled critical extension"
-    _ => "x509: verification failed"
+  if r.code == x509verify.EXPIRED {
+    let b = r.bad
+    let rel = if cf.now < b.not_before { "before" } else { "after" }
+    let limit = if cf.now < b.not_before { b.not_before } else { b.not_after }
+    return "x509: certificate has expired or is not yet valid: current time ${tlscert.rfc3339(cf.now, 0)} is ${rel} ${tlscert.rfc3339(limit, 0)}"
   }
+  if r.code == x509verify.HOSTNAME {
+    return tlsname.hostname_msg(x509verify.names(leaf), leaf.has_san, leaf.cn, cf.host)
+  }
+  x509verify.error_text(r)
 }
 
 fn certificate_verify(var c: Client, msg: Bytes) {

@@ -10,7 +10,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [extension-availability-checks.md](extension-availability-checks.md): Linguist misses non source extensions.
 - [value-semantics-lost-update.md](value-semantics-lost-update.md): forgetting to write back a mutated copy loses the update silently.
 - [spec-examples-drift.md](spec-examples-drift.md): spec examples that break spec rules get copied by agents.
-- [predeclared-names-collide.md](predeclared-names-collide.md): `err`, `result`, `test` are taken by the language.
+- [predeclared-names-collide.md](predeclared-names-collide.md): `err`, `result`, `test` are taken by the language; so are the type names `Str`, `Time`, `Err`, `Result` for a module's structs (XO0603).
 - [sticky-cancellation-blocks-cleanup.md](sticky-cancellation-blocks-cleanup.md): cleanup in defer fails after cancellation (spec 0.2).
 - [root-module-absorbs-bench-go.md](root-module-absorbs-bench-go.md): `go test ./...` at the root picks up Go code under bench/; use `./internal/... ./cmd/...`.
 - [type-args-vs-index.md](type-args-vs-index.md): Observed: how the parser tells `f[T](x)` from `xs[i]`, the `m[Red](x)` trap, and `KIND_NAMES[k]` read as type arguments until decision 0143.

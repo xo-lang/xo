@@ -203,6 +203,12 @@ func cryptoEC(curve elliptic.Curve, ec ecdh.Curve, what string, a, b, c Bytes) (
 // cryptoX509 is x509.xo's op.
 func cryptoX509(what string, a, b Bytes) (Bytes, bool) {
 	switch what {
+	case "check":
+		c, err := x509.ParseCertificate([]byte(a))
+		if err != nil {
+			return Bytes("error " + err.Error()), true
+		}
+		return Bytes(describeCert(c)), true
 	case "parse":
 		c, err := x509.ParseCertificate([]byte(a))
 		if err != nil {
@@ -328,7 +334,10 @@ func describeCert(c *x509.Certificate) string {
 		x509.ExtKeyUsageAny: "2.5.29.37.0", x509.ExtKeyUsageServerAuth: "1.3.6.1.5.5.7.3.1",
 		x509.ExtKeyUsageClientAuth: "1.3.6.1.5.5.7.3.2", x509.ExtKeyUsageCodeSigning: "1.3.6.1.5.5.7.3.3",
 		x509.ExtKeyUsageEmailProtection: "1.3.6.1.5.5.7.3.4", x509.ExtKeyUsageTimeStamping: "1.3.6.1.5.5.7.3.8",
-		x509.ExtKeyUsageOCSPSigning: "1.3.6.1.5.5.7.3.9",
+		x509.ExtKeyUsageOCSPSigning: "1.3.6.1.5.5.7.3.9", x509.ExtKeyUsageIPSECEndSystem: "1.3.6.1.5.5.7.3.5",
+		x509.ExtKeyUsageIPSECTunnel: "1.3.6.1.5.5.7.3.6", x509.ExtKeyUsageIPSECUser: "1.3.6.1.5.5.7.3.7",
+		x509.ExtKeyUsageMicrosoftServerGatedCrypto: "1.3.6.1.4.1.311.10.3.3", x509.ExtKeyUsageNetscapeServerGatedCrypto: "2.16.840.1.113730.4.1",
+		x509.ExtKeyUsageMicrosoftCommercialCodeSigning: "1.3.6.1.4.1.311.2.1.22", x509.ExtKeyUsageMicrosoftKernelCodeSigning: "1.3.6.1.4.1.311.61.1.1",
 	}
 	var eku []string
 	for _, u := range c.ExtKeyUsage {
