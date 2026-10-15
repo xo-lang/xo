@@ -1,0 +1,41 @@
+// The C path of tlsio.xo (XO_LLRT_C=tlsio, decision 0193): the HTTP
+// client's TLS connections on Mbed TLS (std/llrt/xo_tls.c), the same
+// calls forwarded through rthttp.
+use native/llrt/raw
+use native/rt
+use native/rthttp
+
+/// The outcome of a handshake (tlsio.xo's Start).
+pub struct Start {
+  pub status: Int
+  pub conn: Int
+  pub kind: Int
+  pub msg: Str
+}
+
+/// xo_tls.c's tls_client_start.
+pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
+  let blk = rt.heap_large(16 + 1200) - 8
+  rt.mem_set(blk, 0, 17)
+  rt.mem_store(blk, 8, 4, 4)
+  let hp = rt.heap_large(host.len() + 1) - 8
+  raw.put_cstr(hp, host)
+  let st = rthttp.tls_c_client(pd, hp, roots, dl, blk, blk + 16, 1200, blk + 8)
+  rt.heap_release(hp)
+  let msg = raw.str_at(blk + 16, raw.cstr_len(blk + 16))
+  let s = Start{status: st, conn: rt.mem_load(blk, 0, 8), kind: rt.mem_load(blk, 8, 4), msg: msg}
+  rt.heap_release(blk)
+  s
+}
+
+pub fn read(h: Int, p: Int, n: Int) -> Int { rthttp.cl_tls_read(h, p, n) }
+
+pub fn write(h: Int, p: Int, n: Int) -> Int { rthttp.cl_tls_write(h, p, n) }
+
+pub fn alert(h: Int) -> Str { rthttp.cl_tls_alert(h) }
+
+pub fn set_when(h: Int, dl: Int) { rthttp.cl_tls_set_when(h, dl) }
+
+pub fn alpn_h2(h: Int) -> Bool { rthttp.tls_c_alpn_h2(h) != 0 }
+
+pub fn free(h: Int) { rthttp.cl_tls_free(h) }

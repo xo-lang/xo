@@ -69,6 +69,13 @@ std (decision 0074) unless the owner decides to expose a user marker.
   ClientHello and ECDHE secret) are Conf fields that the TLS path leaves
   empty. Certificate expiry texts use UTC, where Go's use the local
   zone; the integration passes the zone offset as tlscert.xo does.
+- 2026-10-15 (B31 part 7, tlsio.xo): the HTTP client's TLS is the Xo
+  client by default, with Mbed TLS behind decision 0193's switch
+  (XO_LLRT_C=tlsio, tlsio_c.xo). The lead accepted the TLS 1.2 gap on
+  the zero-c branch: zero-c does not merge into main before the TLS 1.2
+  client is in. The connection's state lives in an rt.Any kept by
+  address (replaced after each call, values being values), its roots in
+  the C's records until the root loading moves to Xo.
 
 ## Alternatives
 

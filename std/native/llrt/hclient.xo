@@ -7,8 +7,8 @@
 // (2026-10-14) also the exchange's start (cl_start: the pool, the dial,
 // the TLS handshake) and the response's record (R_*, a handle made here,
 // freed by cresp_free) with its ccon (C_*). The C keeps the dial's
-// sockets (netconn.xo dial_timeout) and TLS (xo_tls.c on Mbed TLS, through
-// rthttp.cl_tls_* and tls_c_*).
+// sockets (netconn.xo dial_timeout); TLS is tlsio.xo (its C path
+// tlsio_c.xo: xo_tls.c on Mbed TLS).
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hconn
@@ -22,6 +22,7 @@ use native/llrt/rc
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/tlsio
 use native/rt
 use native/rthttp
 
@@ -127,7 +128,7 @@ pub fn fill(c: Int) -> Int {
     if poll.canceled() {
       return CC_CANCELED
     }
-    let r = rthttp.cl_tls_read(tls, p, cap - n)
+    let r = tlsio.read(tls, p, cap - n)
     if r > 0 {
       st(c, C_N, n + r)
       return CC_OK
@@ -170,7 +171,7 @@ pub fn fill(c: Int) -> Int {
 pub fn send(c: Int, p: Int, n: Int) -> Int {
   let tls = ld(c, C_TLS)
   if tls != 0 {
-    return rthttp.cl_tls_write(tls, p, n)
+    return tlsio.write(tls, p, n)
   }
   let fd = rt.mem_load(c, C_FD, 4)
   var off = 0
@@ -243,7 +244,7 @@ fn finish(r: Int, s: Int, why: Str, alert: Str) {
 /// The TLS alert of r's connection after a failure, "" for none.
 fn alert(r: Int) -> Str {
   let t = ld(r + R_C, C_TLS)
-  if t == 0 { "" } else { rthttp.cl_tls_alert(t) }
+  if t == 0 { "" } else { tlsio.alert(t) }
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +516,7 @@ fn conn_free(pc: Int) {
     return
   }
   let c = pc + P_C
-  rthttp.cl_tls_free(ld(c, C_TLS))
+  tlsio.free(ld(c, C_TLS))
   poll.pd_close(ld(c, C_PD))
   tasks.h_release(ld(pc, P_CN))
   tasks.h_release(ld(pc, P_ROOTS))
@@ -663,7 +664,7 @@ pub fn exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: In
   st(x, X_BN, bn)
   st(r, R_H2, x)
   st(pc + P_C, C_WHEN, when)
-  rthttp.cl_tls_set_when(ld(pc + P_C, C_TLS), when)
+  tlsio.set_when(ld(pc + P_C, C_TLS), when)
 }
 
 /// Frees exchange x (0: none); one Xo did not end drops its connection.
@@ -856,7 +857,7 @@ pub fn h2_end(r: rthttp.CResp, sv: rt.Any, res: Int, why: Str, flags: Int) {
     st4(a, R_RETRY, 1)
   } else {
     let tls = ld(pc + P_C, C_TLS)
-    let al = if ld(x, X_POOLED) == 0 && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && why.is_empty() && tls != 0 { rthttp.cl_tls_alert(tls) } else { "" }
+    let al = if ld(x, X_POOLED) == 0 && res != CC_OK && res != CC_TIMEOUT && res != CC_CANCELED && why.is_empty() && tls != 0 { tlsio.alert(tls) } else { "" }
     pool_put(pc)
     finish(a, res, why, al)
   }
@@ -937,19 +938,13 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   rt.mem_store(c, C_FD, rt.mem_load(pd, 8, 4), 4)
   st(c, C_WHEN, dl)
   if https {
-    // the TLS handshake (xo_tls.c): its failures are Protocol errors
-    // with crypto/tls's texts, or Timeout and Canceled; blk holds the
-    // connection made, the kind of failure, and its text
-    let blk = rt.heap_large(16 + 1200) - 8
-    rt.mem_set(blk, 0, 17)
-    rt.mem_store(blk, 8, 4, 4)
-    let host = cstr_dup(tls_host)
-    let ts = rthttp.tls_c_client(pd, host, roots, dl, blk, blk + 16, 1200, blk + 8)
-    rt.heap_release(host)
-    let tmsg = cstr(blk + 16)
-    let kind = rt.mem_load(blk, 8, 4)
-    let t = ld(blk, 0)
-    rt.heap_release(blk)
+    // the TLS handshake (tlsio.xo; its C path xo_tls.c): its failures are
+    // Protocol errors with crypto/tls's texts, or Timeout and Canceled
+    let started = tlsio.client(pd, tls_host, roots, dl)
+    let ts = started.status
+    let tmsg = started.msg
+    let kind = started.kind
+    let t = started.conn
     if ts != CC_OK {
       poll.pd_close(pd)
       tasks.h_release(cna)
@@ -966,7 +961,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
       return
     }
     st(c, C_TLS, t)
-    if rthttp.tls_c_alpn_h2(t) != 0 {
+    if tlsio.alpn_h2(t) {
       // the connection takes over the net.Conn and the ccon
       let pc = conn_new(cna, c, roots, raw.data(key), key.len())
       rt.mem_set(c, 0, 72)
@@ -991,7 +986,7 @@ fn close_at(a: Int) {
   let c = a + R_C
   let t = ld(c, C_TLS)
   if t != 0 {
-    rthttp.cl_tls_free(t)
+    tlsio.free(t)
   }
   poll.pd_close(ld(c, C_PD))
   tasks.h_release(cn)

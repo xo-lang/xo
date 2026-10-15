@@ -38,3 +38,11 @@ last use is not. Better still, keep the handle as an Int from an Xo
 function that returns it owned: hclient.xo now dials with
 `netconn.dial_timeout` (2026-10-15), whose Int result carries the
 reference, so no typed local and no retain are involved.
+
+Observed again 2026-10-15 (B31, tlsio.xo): the TLS connection's state
+kept as `rt.any_of(conn)` in a local, then `rc.inc(rt.obj_addr(a))`. The
+Any was freed at obj_addr, so the next call's `rt.any_get[Conn]` found
+None (or garbage: a probe crashed with SIGBUS). The handshake finished,
+then the request never went out and the server logged "TLS handshake
+error: EOF". Fix as above: `fn keep(a: rt.Any) -> Int` takes the Any as
+a parameter.

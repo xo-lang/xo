@@ -191,6 +191,17 @@ pub fn recv(var c: Client) -> Bytes {
   a
 }
 
+/// At most n bytes of the application data received, taken; the rest
+/// stays.
+pub fn recv_some(var c: Client, n: Int) -> Bytes {
+  if c.app.len() <= n {
+    return recv(c)
+  }
+  let a = c.app[0..n]
+  c.app = c.app[n..c.app.len()]
+  a
+}
+
 /// Whether the handshake is complete and the connection usable.
 pub fn ready(c: Client) -> Bool { c.state == DONE && !c.closed }
 

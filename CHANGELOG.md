@@ -6,6 +6,25 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B31, part 7, decision 0202): the
+  HTTP client's TLS is Xo's. std/native/llrt/tlsio.xo runs tls13.xo's
+  client over the connection's socket with xo_tls.c's waits (poll
+  descriptor, deadline, cancellation, the 10 s handshake timeout) and
+  its texts of a failed handshake; hclient.xo calls it. XO_LLRT_C=tlsio
+  selects its C path, tlsio_c.xo, which forwards to xo_tls.c on Mbed TLS
+  (decision 0193). The roots stay the C's records: a new
+  xo_tls_c_roots_crt hands the Xo client their mbedtls_x509_crt chain,
+  whose DERs x509.xo parses. http_tls passes on both paths, arm64 and
+  LLVM. Fetched by hand on 2026-10-15 with the Xo path: google.com,
+  github.com, proxy.golang.org (which the Mbed path refuses with a host
+  name error), cloudflare.com, letsencrypt.org and apple.com.
+  Known gaps before merge: the Xo client refuses servers that only
+  speak TLS 1.2 (all of badssl.com, for one) until xo-fa's tls12 client
+  lands, and XO_LLRT_C=tlsio restores Mbed; macOS's system roots are
+  checked by x509verify.xo, not the Security framework as Go does; a
+  certificate's expiry text gives the time in UTC, not the local zone.
+  The server's TLS stays Mbed's until xo-2b's tls13srv.xo lands.
+
 - Native runtime (zero-C audit item B31, part 6, decision 0202): the
   TLS 1.3 client checked against Go's crypto/tls server. The golden
   tls13_go replays traces recorded from a Go server (HelloRetryRequest
