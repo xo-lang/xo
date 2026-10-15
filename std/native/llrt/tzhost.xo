@@ -7,6 +7,7 @@
 // same id and is parsed once), and the machine's zone name. On Windows
 // "Local" is the system's setting (GetDynamicTimeZoneInformation) made
 // into TZif data, as Go's time.Local makes it.
+use native/llrt/atexit
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/pool
@@ -186,6 +187,8 @@ pub fn find(name: Str) -> List[Int] {
 /// the name first is returned instead. The empty list when the table is
 /// full. The table holds z shared between threads until exit (free).
 pub fn keep(name: Str, z: List[Int]) -> List[Int] {
+  // the table is freed at exit (entry.xo, decision 0233)
+  atexit.set_tz(rt.fn_addr("tz_free"))
   lock()
   let a = get(name)
   if a != 0 {
@@ -223,7 +226,8 @@ pub fn keep(name: Str, z: List[Int]) -> List[Int] {
 }
 
 /// Releases the kept zones at exit, so the leak check sees them freed
-/// (xo_rt.c calls it through cabi_time.xo's tz_free).
+/// (entry.xo calls it at exit through cabi_time.xo's tz_free, which keep
+/// registers in atexit.xo).
 pub fn free() {
   lock()
   let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)

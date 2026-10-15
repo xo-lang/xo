@@ -12,6 +12,7 @@
 // record (rt.static_word 61), from E_TW_INIT on. Nothing here allocates
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
+use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/heapos
 use native/llrt/linux
@@ -28,7 +29,8 @@ use native/sys_windows
 /// test binary's: cabi_tw.xo tw_start, weak in xo_rt.c), ev_start (the poller), the signal handler (C
 /// on_signal; on Windows on_console), on_overflow (Windows; 0
 /// elsewhere), the setter of the heap's mid_max (main_heap's and the
-/// C's xo_mid_max), xo_x_consts_free (consts.xo), xo_x_tz_free (0 without std/time),
+/// C's xo_mid_max), xo_x_consts_free (consts.xo), word 17 unused
+/// (std/time's tz_free is atexit.xo's since decision 0233),
 /// the runtime statistics' counters (an array of int64, xo_rt.c's st),
 /// and the address of the C int that enables them.
 const E_TW_INIT = 88
@@ -37,7 +39,6 @@ const E_HANDLER = 104
 const E_OVERFLOW = 112
 const E_MID_MAX = 120
 const E_CONSTS_FREE = 128
-const E_TZ_FREE = 136
 const E_STATS = 144
 const E_STATS_ON = 152
 
@@ -72,10 +73,8 @@ fn call(k: Int, a: Int) -> Int { rt.call_c2(stop.svc_word(k), a, 0) }
 /// 1 GiB stacks, pool.xo thread_run; main itself on this thread if no
 /// thread starts), then the end: standard output flushed, the stop
 /// record's end, the statistics, and the leak check's frees and reports.
-/// entry is xo_entry's address (the program's main); streams_free and
-/// tw_end are the C's weak references to cabi_http.xo's and
-/// cabi_tw.xo's exports, which only some programs carry. The status.
-pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int, streams_free: Int, tw_end: Int) -> Int {
+/// entry is xo_entry's address (the program's main). The status.
+pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   start(argc, argv, envp)
   let f = rt.fn_addr("run_main")
   if n > 1 {
@@ -92,9 +91,10 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int, streams_free: I
   stdio.flush()
   stop.end()
   rt_stats()
-  let _s = rt.call_c2(streams_free, 0, 0)
-  // the values the test world keeps (twrun.xo end; nothing outside it)
-  let _t = rt.call_c2(tw_end, 0, 0)
+  // std/http's streamed responses and client state, and the values the
+  // test world keeps, if the program has them (atexit.xo)
+  atexit.run_streams()
+  atexit.run_tw_end()
   // XO_LEAKCHECK's and XO_HEAPSTATS' reports
   finish()
   0
@@ -282,9 +282,8 @@ fn win_start(argc: Int, argv: Int, envp: Int) {
 pub fn finish() {
   if process.env_real_at("XO_LEAKCHECK") != 0 {
     let _c = call(E_CONSTS_FREE, 0)
-    if stop.svc_word(E_TZ_FREE) != 0 {
-      let _z = call(E_TZ_FREE, 0)
-    }
+    // std/time's kept zones, if the program has them (atexit.xo)
+    atexit.run_tz()
     let b = rt.heap_large(256)
     heapos.live(b, b + 8)
     let live = rt.mem_load(b, 0, 8)

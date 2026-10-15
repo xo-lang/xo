@@ -17,6 +17,7 @@
 // Generated code reaches it through the native prelude's llrt_test_*
 // (selfhost/ssa testmode.xo), http.xo directly, and the C runtime
 // through cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/poll
 use native/llrt/pool
@@ -141,6 +142,9 @@ fn unlock() { pool.unlock(lock_word()) }
 /// wait is not a virtual wait, and its deadlines are real time), the
 /// virtual now at 2026-01-01T00:00:00Z, and on.
 pub fn start() {
+  // the test world's values are released at exit (entry.xo, decision
+  // 0233)
+  atexit.set_tw_end(rt.fn_addr("tw_end"))
   let vars = ["XO_TEST_REAL", "XO_TEST_SEED", "XO_TEST", "XO_PROP_REPLAY", "XO_PROP_SEED", "XO_PROP_BEST"]
   for k in 0..vars.len() {
     let a = process.env_real_at(vars[k])

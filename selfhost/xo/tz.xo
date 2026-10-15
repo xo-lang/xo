@@ -1,6 +1,6 @@
 // Zone data per use (internal/build tzdata.go, std.md 13, decisions 0094
 // and 0157): a native program that uses std/time is compiled with
-// -DXO_TIME and xo_tzdata.c beside the runtime (so the runtime's object
+// xo_tzdata.c beside the runtime (so the runtime's object
 // does not depend on the program). xo_tz_mode is 0 with the TZif data of
 // each constant zone name `time.zone` is called with, 1 with the whole
 // zoneinfo.zip when a name is known only at run time, 2 with

@@ -217,6 +217,27 @@ cuts anyway, so no extra seed and no chain hop.
   C and are passed in by address. rt.fn_addr has no weak form, so it
   cannot name them.
 
+## Implementation (step 2, optional features' end functions: 2026-10-15)
+
+rt.fn_addr names only exports the program has, so the exports of
+optional features (cabi_time.xo, cabi_http.xo, cabi_tw.xo) cannot be
+named from code every program builds. Instead each feature registers
+its own end function where it first does something that needs one, in
+code only that feature's programs build. The table is
+std/native/llrt/atexit.xo, three words of ctx.xo's services record
+(SV_AT_TZ, SV_AT_STREAMS, SV_AT_TW_END; every static word is claimed);
+entry.xo calls what is set at exit.
+- tzhost.xo keep registers tz_free (the first kept zone).
+- hserve.xo stream_put, hclient.xo pool_put and tlsio.xo roots_system
+  register streams_free.
+- twrun.xo start registers tw_end.
+
+This deleted the C weak stand-ins and C main's address passing, then
+xo_http.c and xo_std.c, and the XO_TIME runtime variant (pack format 5).
+The test world's start cannot register itself. It is what starts
+everything else, before any test code runs, so its weak C stand-in
+stays until the test binary's own entry starts it.
+
 ## Consequences
 
 - About 535 lines of xo_rt.c and xo_http.c can move. The services

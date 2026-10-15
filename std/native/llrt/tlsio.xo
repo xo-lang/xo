@@ -7,6 +7,7 @@
 // calls this file. On macOS with the system's roots the Security
 // framework verifies, as Go's (tlscert.apple_trust). Windows and Linux
 // are UNTESTED.
+use native/llrt/atexit
 use native/llrt/hconn
 use native/llrt/poll
 use native/llrt/process
@@ -197,6 +198,8 @@ pub fn roots_system() -> rthttp.Roots {
   let w = rt.static_word(31)
   var s = rt.slot_load(w, 0, ACQUIRE)
   if s == 0 {
+    // freed at exit with std/http's state (entry.xo, decision 0233)
+    atexit.set_streams(rt.fn_addr("streams_free"))
     var certs: List[x509.Cert] = []
     for der in tlscert.system_ders() {
       let p = x509.parse(der)

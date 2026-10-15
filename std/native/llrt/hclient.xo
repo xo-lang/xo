@@ -8,6 +8,7 @@
 // the TLS handshake) and the response's record (R_*, a handle made here,
 // freed by cresp_free) with its ccon (C_*). The C keeps the dial's
 // sockets (netconn.xo dial_timeout); TLS is tlsio.xo (decision 0202).
+use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hconn
@@ -610,6 +611,8 @@ fn pool_put(pc: Int) {
     return
   }
   st(pc, P_IDLE, sysio.mono_ns())
+  // the idle connections are closed at exit (entry.xo, decision 0233)
+  atexit.set_streams(rt.fn_addr("streams_free"))
   let pl = h2pool()
   var drop = 0
   pool.lock(pl + PL_MU)

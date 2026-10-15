@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (decision 0233): optional features register their own
+  end functions when they start (std/native/llrt/atexit.xo): tzhost.xo
+  keep registers cabi_time.xo's tz_free, hserve.xo, hclient.xo and
+  tlsio.xo register cabi_http.xo's streams_free, twrun.xo start
+  registers cabi_tw.xo's tw_end, and entry.xo calls what is registered
+  at exit. The C's weak stand-ins of streams_free and tw_end, the
+  services record's tz_free word, C main's address passing, and with
+  them xo_http.c and xo_std.c (only includes and comments left) are
+  deleted; -DXO_TIME selects nothing now, so the runtime pack is format
+  5 with one variant (rt.o) and the driver no longer passes the flag.
+  The test world's start (services word 11) stays a weak C stand-in
+  until the test binary's entry starts it.
 - Native runtime (zero-C inventory rank 13): xo_rt.c keeps no copy of
   the task runtime's record layouts: the context, park, node, lock, wait
   list and queue entries, task, budget, channel and select structs and

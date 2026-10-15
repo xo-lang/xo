@@ -1,0 +1,42 @@
+// The end functions of optional features (decision 0233): a feature only
+// some programs carry (std/time's zones, std/http's streamed responses
+// and client state, the test world) writes the address of its own C ABI
+// export into its word here when it starts (rt.fn_addr, at its first
+// use: only programs that build that code carry the export), and
+// entry.xo calls the words that are set at exit, for the leak check.
+// This replaced the C's weak stand-ins of those exports and the
+// services record's tz_free word (2026-10-15). The words are ctx.xo's
+// services record's (SV_AT_*), which ctx.xo init makes before any Xo
+// runs.
+use native/llrt/ctx
+use native/rt
+
+const RELAXED = 0
+
+fn word(k: Int) -> Int { ctx.svc() + k }
+
+/// Registers cabi_time.xo's tz_free (tzhost.xo keep, the first zone).
+pub fn set_tz(f: Int) { rt.slot_store(word(ctx.SV_AT_TZ), 0, f, RELAXED) }
+
+/// Registers cabi_http.xo's streams_free (a streamed response, an idle
+/// HTTP/2 client connection, or the system's roots).
+pub fn set_streams(f: Int) { rt.slot_store(word(ctx.SV_AT_STREAMS), 0, f, RELAXED) }
+
+/// Registers cabi_tw.xo's tw_end (twrun.xo start).
+pub fn set_tw_end(f: Int) { rt.slot_store(word(ctx.SV_AT_TW_END), 0, f, RELAXED) }
+
+/// Calls tz_free if registered (entry.xo finish).
+pub fn run_tz() { run(word(ctx.SV_AT_TZ)) }
+
+/// Calls streams_free if registered (entry.xo main, at exit).
+pub fn run_streams() { run(word(ctx.SV_AT_STREAMS)) }
+
+/// Calls tw_end if registered (entry.xo main, at exit).
+pub fn run_tw_end() { run(word(ctx.SV_AT_TW_END)) }
+
+fn run(w: Int) {
+  let f = rt.slot_load(w, 0, RELAXED)
+  if f != 0 {
+    let _r = rt.call_c2(f, 0, 0)
+  }
+}

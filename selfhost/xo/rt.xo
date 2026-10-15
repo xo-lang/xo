@@ -191,31 +191,21 @@ fn rtpack_flags(goos: Str) -> List[Str] {
 }
 
 /// The variants of the runtime in a pack (format 3: XO_FS and XO_STDIN
-/// went with xo_fs.c and xo_stdin.c; format 4: XO_PROC with xo_proc.c,
-/// 2026-10-15).
-const VARIANTS = 2
+/// went with xo_fs.c and xo_stdin.c; format 4: XO_PROC with xo_proc.c;
+/// format 5: XO_TIME with the C of std/time's zones, decision 0233,
+/// 2026-10-15): one, with no defines.
+const VARIANTS = 1
 
-/// A variant of the runtime: XO_TIME as the bit 1 of i.
+/// A variant's defines: none since format 5.
 fn variant_defines(i: Int) -> List[Str] {
-  var out: List[Str] = []
-  if i % 2 == 1 {
-    out.push("-DXO_TIME")
-  }
-  out
+  let _i = i
+  []
 }
 
-/// RTVariant.File: rt-time.o with the parts it has.
+/// RTVariant.File: rt.o.
 fn variant_file(i: Int) -> Str {
-  var n = "rt"
-  let parts = ["time"]
-  var bit = 1
-  for p in parts {
-    if i / bit % 2 == 1 {
-      n = "${n}-${p}"
-    }
-    bit *= 2
-  }
-  "${n}.o"
+  let _i = i
+  "rt.o"
 }
 
 /// RTPackKey for the target goos/arm64: the pack format, target, flags,
@@ -229,8 +219,8 @@ fn rtpack_key_for(os: Os, ctx: Ctx, std_dir: Str, goos: Str, goarch: Str) -> Str
   var b = BytesBuilder.new()
   // format 2: no TLS library or TLS variants (Mbed TLS removed,
   // 2026-10-15); format 3: no XO_FS or XO_STDIN variants; format 4: no
-  // XO_PROC variants
-  b.write_str("xo rtpack 4\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\n")
+  // XO_PROC variants; format 5: no XO_TIME variant
+  b.write_str("xo rtpack 5\ntarget ${goos}/${goarch}\nflags ${go_q(rtpack_flags(goos))}\n")
   for i in 0..VARIANTS {
     b.write_str("variant ${variant_file(i)} ${go_q(variant_defines(i))}\n")
   }
@@ -400,8 +390,6 @@ fn shipped_runtime(os: Os, ctx: Ctx, std_dir: Str, flags: List[Str]) -> Str {
   for f in flags {
     if f == "-O2" {
       opt += 1
-    } else if f == "-DXO_TIME" {
-      v = v + if v % 2 == 1 { 0 } else { 1 }
     } else {
       return ""
     }

@@ -512,7 +512,7 @@ fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
 
 /// The program from C main on (entry.xo main, B26 part 2 and decision
 /// 0233): the start, main's threads, the end; the status.
-fn entry_main(argc: Int, argv: Int, envp: Int, f: Int, n: Int, sf: Int, te: Int) -> Int { entry.main(argc, argv, envp, f, n, sf, te) }
+fn entry_main(argc: Int, argv: Int, envp: Int, f: Int, n: Int) -> Int { entry.main(argc, argv, envp, f, n) }
 
 /// The C function main's threads run (entry.xo run_main, the fault
 /// boundary), with xo_entry's address.

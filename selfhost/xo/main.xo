@@ -661,11 +661,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
     }
   }
   // the flags link_inputs gives a program with no `use c`
-  var flags = ["-O2"]
-  if uses_time {
-    flags.push("-DXO_TIME")
-  }
-  !shipped_runtime(os, ctx, ctx.std, flags).is_empty()
+  !shipped_runtime(os, ctx, ctx.std, ["-O2"]).is_empty()
 }
 
 /// A program lowered to SSA for one target OS, with the passes run: the
@@ -767,8 +763,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     Err(e) => fail(os, "${e}")
   }
   var lk = LinkInputs{srcs: ["${dir}/xo_rt.c"]}
-  // std/time: XO_TIME and the program's zone data beside the runtime
-  // (timeFlags)
+  // std/time: the program's zone data beside the runtime (timeFlags)
   if uses_time {
     if !(o.tzdata is "" | "embedded" | "system") {
       fail(os, "unknown --tzdata=${o.tzdata} (want embedded or system)")
@@ -777,7 +772,6 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }
-    lk.flags.push("-DXO_TIME")
     match if no_cc { tz_object(os, dir, sel, tgoos) } else { tz_source(os, dir, sel) } {
       Ok(p) => lk.srcs.push(p)
       Err(e) => fail(os, "${e}")

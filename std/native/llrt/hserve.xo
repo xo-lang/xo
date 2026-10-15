@@ -24,6 +24,7 @@
 // The Windows arms are UNTESTED on windows: written on macOS and checked
 // by the cross build only.
 use std/task
+use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/h2srv
 use native/llrt/hclient
@@ -499,6 +500,8 @@ fn table() -> Int { ctx.svc() + ctx.SV_STREAMS }
 
 /// Keeps f (an Any of the stream's function): its number.
 pub fn stream_put(f: rt.Any) -> Int {
+  // the table is freed at exit (entry.xo, decision 0233)
+  atexit.set_streams(rt.fn_addr("streams_free"))
   let a = rt.obj_addr(f)
   rc.inc(a)
   let t = table()

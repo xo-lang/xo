@@ -402,7 +402,6 @@ static inline __attribute__((always_inline)) int rc_dec(int64_t *p) { return (in
 // the weak definitions keep other programs linking.
 #define TW_WEAK __attribute__((weak))
 TW_WEAK void xo_x_tw_start(void) {}
-TW_WEAK void xo_x_tw_end(void) {}
 TW_WEAK void xo_x_tw_kick(void) {}
 TW_WEAK void xo_x_tw_sleep(int64_t d) { (void)d; }
 
@@ -1014,9 +1013,6 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 // that take no arguments are called through rt.call_c2 as they are (the
 // two arguments it passes are ignored on every target's C convention).
 void xo_x_consts_free(void);
-#ifdef XO_TIME
-void xo_x_tz_free(void);
-#endif
 static int64_t entrysvc_mid_max(int64_t m, int64_t b) {
 	(void)b;
 	xo_mid_max = m;
@@ -1038,9 +1034,7 @@ static void stop_svc_init(void) {
 #endif
 	stop_svc[15] = XO_ADDR(&entrysvc_mid_max);
 	stop_svc[16] = XO_ADDR(&xo_x_consts_free);
-#ifdef XO_TIME
-	stop_svc[17] = XO_ADDR(&xo_x_tz_free);
-#endif
+	// word 17 (std/time's tz_free) is atexit.xo's since decision 0233
 	stop_svc[18] = xo_x_rtstats_counts();
 	stop_svc[19] = xo_x_rtstats_switch();
 	xo_x_stop_init(XO_ADDR(stop_svc));
@@ -1058,15 +1052,9 @@ void xo_set_grace(int64_t d) { xo_x_stop_set_grace(d); }
 #ifndef XO_RT_NO_MAIN
 extern void xo_entry(void);
 
-// std/http's streamed responses and idle HTTP/2 client connections
-// (cabi_http.xo; weak in xo_http.c), and the values the test world keeps
-// (cabi_tw.xo xo_x_tw_end; weak above): entry.xo main calls them at the
-// end
-void xo_x_streams_free(void);
-
 // the program (std/native/llrt/entry.xo main: the start, main's thread,
 // the end, decision 0233)
-int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry, int64_t n, int64_t sf, int64_t te);
+int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry, int64_t n);
 
 #ifdef XO_RT_TEST_THREADS
 #define XO_MAIN_THREADS XO_RT_TEST_THREADS
@@ -1083,13 +1071,9 @@ int main(int argc, char **argv) {
 	_setmode(1, _O_BINARY);
 	_setmode(2, _O_BINARY);
 #endif
-	return (int)xo_x_entry_main(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ, XO_ADDR(xo_entry), XO_MAIN_THREADS,
-	                            XO_ADDR(xo_x_streams_free), XO_ADDR(xo_x_tw_end));
+	return (int)xo_x_entry_main(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ, XO_ADDR(xo_entry), XO_MAIN_THREADS);
 }
 #endif
-
-// The intrinsics of the native std implementation (decision 0074).
-#include "xo_std.c"
 
 // The C library functions of a Linux program linked with no C library
 // (XO_NOLIBC=1 builds, decisions 0203 and 0206).

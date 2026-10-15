@@ -108,7 +108,13 @@ pub const SV_DNS = 232
 /// The address of cabi.xo's stdin_pump_main, standard input's pump
 /// thread on Windows (stdin.xo win_open).
 pub const SV_STDIN_PUMP = 248
-const SV_SIZE = 264
+/// The end functions optional features register (atexit.xo, decision
+/// 0233): cabi_time.xo's tz_free, cabi_http.xo's streams_free,
+/// cabi_tw.xo's tw_end; 0 until registered.
+pub const SV_AT_TZ = 264
+pub const SV_AT_STREAMS = 272
+pub const SV_AT_TW_END = 280
+const SV_SIZE = 288
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
 /// stack size, page size, where a fiber starts).
 const FS_SIZE = 48
