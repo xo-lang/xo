@@ -21,13 +21,20 @@ import (
 // client's data, the root's DER) with d "time host suites groups alpn
 // chunk"; its random source repeats the byte 0x11, so its random,
 // session id, and ECDHE key are the trace's (a, the key the Xo client
-// is given, is not needed here). The lines it returns are tls12.xo op's.
+// is given, is not needed here). "combined" is the client offering TLS
+// 1.3 and 1.2 in one ClientHello (b's first part, the trace's, is the one
+// crypto/tls builds itself here). The lines it returns are tls12.xo op's.
 func cryptoTLS12(what string, a, b, c, d Bytes) (Bytes, bool) {
-	if what != "client" {
+	if what != "client" && what != "combined" {
 		return "", false
 	}
 	parts := tls12Unpack([]byte(b))
 	args := strings.Split(string(d), " ")
+	if what == "combined" && len(parts) == 5 {
+		parts = parts[1:]
+	} else if what == "combined" {
+		return "args", true
+	}
 	if len(parts) != 4 || len(args) != 6 {
 		return "args", true
 	}
@@ -57,6 +64,9 @@ func cryptoTLS12(what string, a, b, c, d Bytes) (Bytes, bool) {
 		MinVersion:             tls.VersionTLS12,
 		MaxVersion:             tls.VersionTLS12,
 		SessionTicketsDisabled: true,
+	}
+	if what == "combined" {
+		cfg.MaxVersion = tls.VersionTLS13
 	}
 	if args[1] != "-" {
 		cfg.ServerName = args[1]

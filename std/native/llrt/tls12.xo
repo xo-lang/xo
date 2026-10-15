@@ -522,6 +522,8 @@ pub struct Client {
   pub group: Int
   pub alpn: Str
   pub peer: List[x509.Cert]
+  max13: Bool
+  offered: List[Int]
   have_vers: Bool
   rin: Bytes
   hs: Bytes
@@ -546,7 +548,7 @@ pub struct Client {
 
 /// A new client for conf: its ClientHello is ready in take().
 pub fn client(cf: Conf) -> Client {
-  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: false, offered: schemes(), have_vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
   for p in cf.alpn {
     if p.is_empty() || p.len() > 255 {
       c.state = FAILED
@@ -565,6 +567,61 @@ pub fn client(cf: Conf) -> Client {
   c.tr = ch
   c.out = seal(c.wk, CT_HANDSHAKE, ch, 0x0301)
   c
+}
+
+/// A client taking over after a TLS 1.2 ServerHello answered one
+/// ClientHello offering TLS 1.3 and 1.2 (Go's clientHandshake branching
+/// on the ServerHello; tls13.xo sends the hello and stops at its HANDOFF
+/// state, tlsio.xo calls this, then feed with the unread record bytes):
+/// as if this client had sent the ClientHello message ch with the random
+/// and session id (the transcript ch, nothing left to send) and then
+/// read a handshake record whose plaintext is hs, the ServerHello and
+/// what follows it. cf's suites and groups are the ones offered (TLS
+/// 1.3's suites are refused if picked), the signature schemes ch's. The
+/// downgrade sentinel is checked here too; the client never sends a
+/// second hello.
+pub fn resume(cf: Conf, random: Bytes, sid: Bytes, ch: Bytes, hs: Bytes) -> Client {
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, group: 0, alpn: "", peer: [], max13: true, offered: hello_schemes(ch), have_vers: false, rin: b"", hs: hs, app: b"", out: b"", tr: ch, random: random, sid: sid, server_random: b"", ems: false, ocsp: false, ticket: false, certs: [], cert_req: false, pms: b"", ckx: b"", master: b"", next_rk: plain(), rk: plain(), wk: plain()}
+  drain(c)
+  c
+}
+
+/// The signature schemes a ClientHello message offers (its
+/// signature_algorithms extension).
+pub fn hello_schemes(ch: Bytes) -> List[Int] {
+  var out: List[Int] = []
+  if ch.len() < 39 {
+    return out
+  }
+  var p = 39 + Int(ch[38])
+  if ch.len() < p + 2 {
+    return out
+  }
+  p += 2 + u16_at(ch, p)
+  if ch.len() < p + 1 {
+    return out
+  }
+  p += 1 + Int(ch[p])
+  if ch.len() < p + 2 {
+    return out
+  }
+  p += 2
+  while p + 4 <= ch.len() {
+    let t = u16_at(ch, p)
+    let n = u16_at(ch, p + 2)
+    if p + 4 + n > ch.len() {
+      return out
+    }
+    if t == EXT_SIGNATURE_ALGORITHMS && n >= 2 {
+      var q = p + 6
+      while q + 2 <= p + 4 + n {
+        out.push(u16_at(ch, q))
+        q += 2
+      }
+    }
+    p += 4 + n
+  }
+  out
 }
 
 /// The bytes to send to the server, taken.
@@ -699,24 +756,29 @@ fn record(var c: Client, hdr: Bytes, body: Bytes) {
       return
     }
     c.hs = cat2(c.hs, data)
-    while c.state != FAILED && c.hs.len() >= 4 {
-      let t = Int(c.hs[0])
-      let n = u24_at(c.hs, 1)
-      let most = if c.have_vers && t == HS_CERTIFICATE { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
-      if n > most {
-        fail(c, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
-        return
-      }
-      if c.hs.len() < 4 + n {
-        return
-      }
-      let msg = c.hs[0..4 + n]
-      c.hs = c.hs[4 + n..c.hs.len()]
-      handshake(c, t, msg)
-    }
+    drain(c)
     return
   }
   local(c, ALERT_UNEXPECTED_MESSAGE)
+}
+
+/// The complete handshake messages buffered.
+fn drain(var c: Client) {
+  while c.state != FAILED && c.hs.len() >= 4 {
+    let t = Int(c.hs[0])
+    let n = u24_at(c.hs, 1)
+    let most = if c.have_vers && t == HS_CERTIFICATE { MAX_CERTIFICATE_MSG } else { MAX_HANDSHAKE }
+    if n > most {
+      fail(c, ALERT_INTERNAL_ERROR, "tls: handshake message of length ${n} bytes exceeds maximum of ${most} bytes")
+      return
+    }
+    if c.hs.len() < 4 + n {
+      return
+    }
+    let msg = c.hs[0..4 + n]
+    c.hs = c.hs[4 + n..c.hs.len()]
+    handshake(c, t, msg)
+  }
 }
 
 /// One handshake message of type t: Go's readHandshake's checks, then
@@ -994,6 +1056,13 @@ fn server_hello(var c: Client, msg: Bytes) {
     return
   }
   c.have_vers = true
+  // RFC 8446 4.1.3: a server able to do TLS 1.3 that answers a client
+  // offering it with TLS 1.2 marks its random
+  let tail = h.random[24..32]
+  if c.max13 && (tail == b"DOWNGRD\x01" || tail == b"DOWNGRD\x00") {
+    fail(c, ALERT_ILLEGAL_PARAMETER, "tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
+    return
+  }
   if h.sid == c.sid {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: server echoed TLS 1.3 compatibility session ID in TLS 1.2")
     return
@@ -1159,7 +1228,7 @@ fn server_key_exchange(var c: Client, msg: Bytes) {
   c.group = group
   c.pms = pms
   c.ckx = message(HS_CLIENT_KEY_EXCHANGE, vec8(tls13.public_key(group, priv)))
-  if !has(schemes(), scheme) {
+  if !has(c.offered, scheme) {
     fail(c, ALERT_ILLEGAL_PARAMETER, "tls: certificate used with invalid signature algorithm")
     return
   }
@@ -1362,12 +1431,19 @@ pub fn nums(s: Str, base: Int) -> List[Int] {
 /// with the data, what it received and sent while reading, and its
 /// close_notify. `server` is tls12srv.xo's.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
-  if what != "client" {
+  if what != "client" && what != "combined" {
     return None
   }
-  let parts = unpack(b)
+  var parts = unpack(b)
   let args = (d.to_str() ?? "").split(" ")
-  if parts.len() != 4 || args.len() != 6 {
+  // combined: the first part is the ClientHello message offering TLS 1.3
+  // and 1.2 (crypto/tls's, which tls13.xo would send)
+  var ch = b""
+  if what == "combined" && parts.len() == 5 {
+    ch = parts[0]
+    parts = parts[1..5]
+  }
+  if parts.len() != 4 || args.len() != 6 || (what == "combined" && ch.is_empty()) {
     return Some(b"args")
   }
   var roots: List[x509.Cert] = []
@@ -1386,8 +1462,10 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   cf.random = fill(0x11, 32)
   cf.priv = a
   let chunk = Int.parse(args[5]) ?? 0
-  var cl = client(cf)
-  feed_in(cl, parts[0], chunk)
+  var cl = if ch.is_empty() { client(cf) } else { handed(cf, ch, parts[0]) }
+  if ch.is_empty() {
+    feed_in(cl, parts[0], chunk)
+  }
   var s = "hs ${take(cl).to_hex()}\n"
   if cl.state != DONE {
     let e = if cl.state == FAILED { cl.err } else { "EOF" }
@@ -1402,6 +1480,25 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   close(cl)
   s = "${s}bye ${take(cl).to_hex()}\n"
   Some(s.bytes())
+}
+
+/// The combined hello's path as tlsio.xo takes it: the ClientHello's
+/// record sent, the server's first record read (tls13.xo sees the TLS
+/// 1.2 ServerHello in it and hands over), resume with its plaintext,
+/// then feed with the rest.
+fn handed(cf: Conf, ch: Bytes, server: Bytes) -> Client {
+  var pk = plain()
+  let hello_rec = seal(pk, CT_HANDSHAKE, ch, 0x0301)
+  let random = ch[6..38]
+  let sid = ch[39..39 + Int(ch[38])]
+  var n = 0
+  if server.len() >= 5 && server[0] == 22 && server.len() >= 5 + u16_at(server, 3) {
+    n = u16_at(server, 3)
+  }
+  var c = resume(cf, random, sid, ch, if n > 0 { server[5..5 + n] } else { b"" })
+  feed(c, server[if n > 0 { 5 + n } else { 0 }..server.len()])
+  c.out = cat2(hello_rec, c.out)
+  c
 }
 
 /// Feeds data in pieces of chunk bytes (0 at once).

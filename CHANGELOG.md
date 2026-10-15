@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (B31, TLS 1.2 version negotiation): tls12.resume takes
+  over from tls13.xo when a TLS 1.2 ServerHello answers one ClientHello
+  offering TLS 1.3 and 1.2 (as Go's client: no second, 1.2 only hello),
+  with RFC 8446's downgrade sentinels refused and the offered signature
+  schemes read from that hello. The golden tls12_client adds crypto/tls's
+  combined hello against a TLS 1.2 server and both sentinels (24 cases).
 - Native runtime (zero-C audit item B31, TLS 1.2 part 1, decision 0202):
   the TLS 1.2 client in Xo (std/native/llrt/tls12.xo, as Go's
   handshake_client.go, key_agreement.go, prf.go and cipher_suites.go):

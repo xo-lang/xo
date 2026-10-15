@@ -93,4 +93,16 @@ warning first:
 not tls:
   hs 16030100c7010000c303031111111111...03002b0003020303 (204 bytes)
   result tls: first record does not look like a TLS handshake
+H one hello for 1.3 and 1.2, the server picks 1.2:
+  hs <client flight>
+  result ok c02b 29 -
+  app 170303001c000000000000000161cf476e1d4b6ac024c31a22afb1e51e5a65083c
+  got 706f6e673a70696e67  EOF
+  bye 150303001a00000000000000025eb969f4eb9fd72367b4b1ce2ddbb2d039a6
+H downgrade sentinel 1.2:
+  hs 16030100fd010000f903031111111111...131503030002022f (265 bytes)
+  result tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox
+H downgrade sentinel 1.1:
+  hs 16030100fd010000f903031111111111...131503030002022f (265 bytes)
+  result tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox
 --- stderr

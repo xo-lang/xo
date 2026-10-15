@@ -86,6 +86,13 @@ std (decision 0074) unless the owner decides to expose a user marker.
   bytes with a repeatable random source
   (gotchas/go126-tls-ignores-config-rand.md), so the Xo client must
   produce Go's bytes and error texts exactly. The server is tls12srv.xo.
+- 2026-10-15 (TLS 1.2 version negotiation, lead): as Go's client, one
+  ClientHello offers TLS 1.3 and 1.2; tls13.xo sends it and, on a TLS
+  1.2 ServerHello, stops in HANDOFF; tlsio.xo calls tls12.resume(conf,
+  random, sid, hello, plaintext from the ServerHello on), then
+  tls12.feed with the unread bytes. A failed handshake is never retried
+  with a 1.2 only hello (that would be a downgrade hole). Both sides
+  check the downgrade sentinels (DOWNGRD 01 and 00).
 
 ## Alternatives
 
