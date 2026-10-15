@@ -58,6 +58,20 @@ one line wrappers already, and the forwarders would not shrink it.
   against main's).
 - errno is not set by the Xo malloc on failure (it returns 0); the C
   runtime's callers end the program on a null result.
+- Stages (b) to (d) landed together on 2026-10-14 (the zero-C push, no
+  CI that day, so written on macOS and UNTESTED on linux: the
+  linux/arm64 XO_NOLIBC build's code generation is their only check):
+  libcstr.xo (mem*, str*, strerror over linux.xo's texts as malloc'd C
+  strings kept in a table at static word 63, the strto* family, qsort)
+  and libcsys.xo (the system call wrappers, exit, gmtime_r, sysconf,
+  syscall, signal sets); the pthread and signal functions call
+  cabi_nolibc.xo's work directly. errno is Xo too: the low 32 bits of
+  thread local word 10 (sched.xo's table), whose address
+  `__errno_location` returns, and xo_nolibc.c's remaining C reaches it
+  through that. None of these modules calls rt.mem_copy, rt.mem_set,
+  rt.mem_move, or rt.mem_cmp, which the emitters may lower to calls of
+  memcpy and the rest. What stays C: _start and the TLS setup,
+  getauxval, getenv, FILE and the printf family, directories, strtod.
 - A future platform without a C library (decision 0195) can reuse the
   mechanism; the bare names are a property of cabi_libc.xo alone.
 

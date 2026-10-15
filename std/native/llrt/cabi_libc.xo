@@ -10,7 +10,12 @@
 //
 // Every function takes and returns Int words (addresses are Ints); none
 // may fault or allocate Xo values (rt.int_wrap for the arithmetic).
+
+use native/llrt/cabi_nolibc
 use native/llrt/libcmem
+use native/llrt/libcstr
+use native/llrt/libcsys
+use native/rt
 
 // ---------------------------------------------------------------------------
 // Memory (libcmem.xo: free lists by power of two class over mapped
@@ -23,3 +28,236 @@ fn free(p: Int) { libcmem.free(p) }
 fn calloc(n: Int, m: Int) -> Int { libcmem.calloc(n, m) }
 
 fn realloc(p: Int, n: Int) -> Int { libcmem.realloc(p, n) }
+
+// ---------------------------------------------------------------------------
+// Strings and memory (libcstr.xo, B04 stage (b)): the C int arguments in
+// the low 32 bits of their words
+
+fn memcpy(d: Int, s: Int, n: Int) -> Int { libcstr.memcpy(d, s, n) }
+
+fn memmove(d: Int, s: Int, n: Int) -> Int { libcstr.memmove(d, s, n) }
+
+fn memset(d: Int, c: Int, n: Int) -> Int { libcstr.memset(d, c, n) }
+
+fn memcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
+
+fn bcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
+
+fn memchr(s: Int, c: Int, n: Int) -> Int { libcstr.memchr(s, c, n) }
+
+fn strlen(s: Int) -> Int { libcstr.strlen(s) }
+
+fn strchr(s: Int, c: Int) -> Int { libcstr.strchr(s, c) }
+
+fn strrchr(s: Int, c: Int) -> Int { libcstr.strrchr(s, c) }
+
+fn strcmp(a: Int, b: Int) -> Int { libcstr.strcmp(a, b) }
+
+fn strncmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncmp(a, b, n) }
+
+fn strncasecmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncasecmp(a, b, n) }
+
+fn strcpy(d: Int, s: Int) -> Int { libcstr.strcpy(d, s) }
+
+fn strstr(h: Int, n: Int) -> Int { libcstr.strstr(h, n) }
+
+fn strpbrk(s: Int, set: Int) -> Int { libcstr.strpbrk(s, set) }
+
+fn strdup(s: Int) -> Int { libcstr.strdup(s) }
+
+fn strndup(s: Int, m: Int) -> Int { libcstr.strndup(s, m) }
+
+fn strerror(e: Int) -> Int { libcstr.strerror(e) }
+
+fn strtoull(s: Int, end: Int, base: Int) -> Int { libcstr.strtoull(s, end, base) }
+
+fn strtoul(s: Int, end: Int, base: Int) -> Int { libcstr.strtoull(s, end, base) }
+
+fn strtoll(s: Int, end: Int, base: Int) -> Int { libcstr.strtoll(s, end, base) }
+
+fn strtol(s: Int, end: Int, base: Int) -> Int { libcstr.strtoll(s, end, base) }
+
+fn atoi(s: Int) -> Int { libcstr.atoi(s) }
+
+fn atol(s: Int) -> Int { libcstr.strtoll(s, 0, 10) }
+
+fn atoll(s: Int) -> Int { libcstr.strtoll(s, 0, 10) }
+
+fn qsort(base: Int, n: Int, w: Int, cmp: Int) { libcstr.qsort(base, n, w, cmp) }
+
+// ---------------------------------------------------------------------------
+// System calls (libcsys.xo, B04 stage (d)): -1 and errno on failure;
+// errno is thread local word 10. open, openat, fcntl, ioctl, and syscall
+// are variadic in C: their integer arguments arrive in the next
+// registers, read here as fixed parameters (decision 0230).
+
+fn __errno_location() -> Int { libcsys.errno_addr() }
+
+fn _exit(code: Int) { libcsys.exit(code) }
+
+fn exit(code: Int) { libcsys.exit(code) }
+
+fn abort() { libcsys.abort() }
+
+fn open(path: Int, flags: Int, mode: Int) -> Int { libcsys.open(path, flags, mode) }
+
+fn openat(dirfd: Int, path: Int, flags: Int, mode: Int) -> Int { libcsys.openat(dirfd, path, flags, mode) }
+
+fn read(fd: Int, p: Int, n: Int) -> Int { libcsys.read(fd, p, n) }
+
+fn write(fd: Int, p: Int, n: Int) -> Int { libcsys.write(fd, p, n) }
+
+fn pread(fd: Int, p: Int, n: Int, off: Int) -> Int { libcsys.pread(fd, p, n, off) }
+
+fn close(fd: Int) -> Int { libcsys.close(fd) }
+
+fn lseek(fd: Int, off: Int, whence: Int) -> Int { libcsys.lseek(fd, off, whence) }
+
+fn pipe2(fds: Int, flags: Int) -> Int { libcsys.pipe2(fds, flags) }
+
+fn pipe(fds: Int) -> Int { libcsys.pipe2(fds, 0) }
+
+fn dup2(a: Int, b: Int) -> Int { libcsys.dup2(a, b) }
+
+fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { libcsys.fcntl(fd, cmd, arg) }
+
+fn ioctl(fd: Int, req: Int, arg: Int) -> Int { libcsys.ioctl(fd, req, arg) }
+
+fn isatty(fd: Int) -> Int { libcsys.isatty(fd) }
+
+fn unlink(p: Int) -> Int { libcsys.unlink(p) }
+
+fn rmdir(p: Int) -> Int { libcsys.rmdir(p) }
+
+fn mkdir(p: Int, m: Int) -> Int { libcsys.mkdir(p, m) }
+
+fn rename(a: Int, b: Int) -> Int { libcsys.rename(a, b) }
+
+fn chmod(p: Int, m: Int) -> Int { libcsys.chmod(p, m) }
+
+fn symlink(t: Int, p: Int) -> Int { libcsys.symlink(t, p) }
+
+fn readlink(p: Int, buf: Int, n: Int) -> Int { libcsys.readlink(p, buf, n) }
+
+fn ftruncate(fd: Int, n: Int) -> Int { libcsys.ftruncate(fd, n) }
+
+fn fsync(fd: Int) -> Int { libcsys.fsync(fd) }
+
+fn flock(fd: Int, op: Int) -> Int { libcsys.flock(fd, op) }
+
+fn getcwd(buf: Int, n: Int) -> Int { libcsys.getcwd(buf, n) }
+
+fn stat(p: Int, st: Int) -> Int { libcsys.stat(p, st) }
+
+fn lstat(p: Int, st: Int) -> Int { libcsys.lstat(p, st) }
+
+fn fstat(fd: Int, st: Int) -> Int { libcsys.fstat(fd, st) }
+
+fn utimensat(dirfd: Int, p: Int, t: Int, flags: Int) -> Int { libcsys.utimensat(dirfd, p, t, flags) }
+
+fn mmap(a: Int, n: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int { libcsys.mmap(a, n, prot, flags, fd, off) }
+
+fn munmap(a: Int, n: Int) -> Int { libcsys.munmap(a, n) }
+
+fn mprotect(a: Int, n: Int, prot: Int) -> Int { libcsys.mprotect(a, n, prot) }
+
+fn madvise(a: Int, n: Int, adv: Int) -> Int { libcsys.madvise(a, n, adv) }
+
+fn clock_gettime(id: Int, ts: Int) -> Int { libcsys.clock_gettime(id, ts) }
+
+fn time(t: Int) -> Int { libcsys.time(t) }
+
+fn nanosleep(req: Int, rem: Int) -> Int { libcsys.nanosleep(req, rem) }
+
+fn gmtime_r(t: Int, tm: Int) -> Int { libcsys.gmtime_r(t, tm) }
+
+fn getrandom(p: Int, n: Int, flags: Int) -> Int { libcsys.getrandom(p, n, flags) }
+
+fn getentropy(p: Int, n: Int) -> Int { libcsys.getentropy(p, n) }
+
+fn getpid() -> Int { libcsys.getpid() }
+
+fn kill(pid: Int, sig: Int) -> Int { libcsys.kill(pid, sig) }
+
+fn sched_yield() -> Int { libcsys.sched_yield() }
+
+fn sysconf(name: Int) -> Int { libcsys.sysconf(name) }
+
+fn syscall(n: Int, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int { libcsys.syscall(n, a, b, c, d, e, f) }
+
+// ---------------------------------------------------------------------------
+// Signals, locks, and threads (cabi_nolibc.xo's work, called here under
+// the C names; glibc's layouts: a mutex is the first word of its
+// pthread_mutex_t, an attribute's first word its stack size)
+
+fn sigemptyset(s: Int) -> Int { libcsys.sigemptyset(s) }
+
+fn sigaddset(s: Int, sig: Int) -> Int { libcsys.sigaddset(s, sig) }
+
+fn sigaction(sig: Int, act: Int, old: Int) -> Int { libcsys.ret(cabi_nolibc.sigaction(libcstr.s32(sig), act, old)) }
+
+/// signal: the previous handler, or SIG_ERR (-1) with errno set.
+fn signal(sig: Int, h: Int) -> Int { libcsys.ret(cabi_nolibc.signal(libcstr.s32(sig), h)) }
+
+fn sigprocmask(how: Int, set: Int, old: Int) -> Int { libcsys.ret(cabi_nolibc.sigprocmask(libcstr.s32(how), set, old)) }
+
+/// pthread_sigmask: 0, or the error number (not errno).
+fn pthread_sigmask(how: Int, set: Int, old: Int) -> Int {
+  let r = cabi_nolibc.sigprocmask(libcstr.s32(how), set, old)
+  if r < 0 { 0 - r } else { 0 }
+}
+
+fn pthread_mutex_init(m: Int, a: Int) -> Int {
+  // glibc's pthread_mutex_t is 40 bytes on x86_64, 48 on arm64
+  let _m = libcstr.memset(m, 0, 40)
+  0
+}
+
+fn pthread_mutex_destroy(m: Int) -> Int { 0 }
+
+fn pthread_mutex_lock(m: Int) -> Int { cabi_nolibc.mutex_lock(m) }
+
+fn pthread_mutex_trylock(m: Int) -> Int { cabi_nolibc.mutex_trylock(m) }
+
+fn pthread_mutex_unlock(m: Int) -> Int { cabi_nolibc.mutex_unlock(m) }
+
+fn pthread_once(o: Int, f: Int) -> Int { cabi_nolibc.once_run(o, f) }
+
+/// pthread_attr_init: the stack size 8 MiB (the attribute's first word).
+fn pthread_attr_init(a: Int) -> Int {
+  let _m = libcstr.memset(a, 0, 56)
+  rt.mem_store(a, 0, 8388608, 8)
+  0
+}
+
+fn pthread_attr_destroy(a: Int) -> Int { 0 }
+
+fn pthread_attr_setstacksize(a: Int, n: Int) -> Int {
+  rt.mem_store(a, 0, n, 8)
+  0
+}
+
+fn pthread_attr_setdetachstate(a: Int, s: Int) -> Int { 0 }
+
+/// pthread_create: 0 with the handle at tp, or the error number.
+fn pthread_create(tp: Int, a: Int, f: Int, arg: Int) -> Int {
+  let stack = if a != 0 { rt.mem_load(a, 0, 8) } else { 8388608 }
+  let r = cabi_nolibc.thread_create(stack, f, arg)
+  if r < 0 {
+    return 0 - r
+  }
+  rt.mem_store(tp, 0, r, 8)
+  0
+}
+
+/// pthread_join: the runtime's threads return nothing it reads (r gets
+/// 0).
+fn pthread_join(th: Int, r: Int) -> Int {
+  let _j = cabi_nolibc.thread_join(th)
+  if r != 0 {
+    rt.mem_store(r, 0, 0, 8)
+  }
+  0
+}
+
+fn pthread_detach(th: Int) -> Int { 0 }

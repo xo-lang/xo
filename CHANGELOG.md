@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime (zero-C audit item B04, decision 0230): a program built
+  with no C library (XO_NOLIBC=1, Linux) takes its C library from Xo,
+  exported under the C names (std/native/llrt/cabi_libc.xo): malloc and
+  friends (libcmem.xo), the string and memory functions, strerror, the
+  strto* family and qsort (libcstr.xo), and the system calls, errno,
+  exit, signals, locks, and threads (libcsys.xo); xo_nolibc.c keeps the
+  entry, FILE and printf, and directories (1,415 to 658 lines).
+  Written on macOS and untested on Linux.
 - Native runtime (zero-C audit item B25, stage 4b): Cmd.spawn's
   children (write, close_stdin, read, read_err, read_line, wait, kill,
   and FakeProc's children) are Xo on macOS and Linux

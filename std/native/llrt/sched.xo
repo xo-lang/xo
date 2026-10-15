@@ -30,7 +30,8 @@ const SEQ_CST = 4
 /// heap record); 4 pool.xo's scratch word, 5 and 6 sysio.xo's
 /// monotonic clock (TLS_CLOCK_AT); 7 unwind.xo's scratch record
 /// (programs with no C library); 8 and 9 logstate.xo's attribution
-/// (work item B02); 10 to 15 unused.
+/// (work item B02); 10 errno of programs with no C library (its low
+/// 32 bits, libcsys.xo, decision 0230); 11 to 15 unused.
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1
 pub const TLS_W: Int = 2
