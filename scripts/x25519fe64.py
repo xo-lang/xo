@@ -55,6 +55,12 @@ def chain(xs, ys, cin="0", keep=True):
     c = cin
     r = []
     for idx, (x, y) in enumerate(zip(xs, ys)):
+        # a literal 0 operand with no carry in adds nothing: no
+        # instruction, and no carry out (the arm64 emitter would hold
+        # the 0 in a register and break the adcs chain at it)
+        if c == "0" and (x == "0" or y == "0"):
+            r.append(y if x == "0" else x)
+            continue
         if not keep and idx == len(xs) - 1:
             s = v("s")
             emit(f"let {s} = cpu.adc({x}, {y}, {c})")
@@ -147,11 +153,13 @@ def gen_mul():
         # the low halves at words i..i+3, the carry on to word i+4
         r, c = chain(t[i:i + 5], lo + ["0"])
         t[i:i + 5] = r
-        t[i + 5] = c if t[i + 5] == "0" else wadd(t[i + 5], c)
+        if c != "0":
+            t[i + 5] = c if t[i + 5] == "0" else wadd(t[i + 5], c)
         # the high halves at words i+1..i+4, the carry on to word i+5
         r, c = chain(t[i + 1:i + 6], hi + ["0"])
         t[i + 1:i + 6] = r
-        t[i + 6] = c if t[i + 6] == "0" else wadd(t[i + 6], c)
+        if c != "0":
+            t[i + 6] = c if t[i + 6] == "0" else wadd(t[i + 6], c)
     store(reduce8(t[:8]))
 
 

@@ -298,6 +298,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
   crypto/rsa for 1024 to 4096 bit keys.
 
+- X25519 on arm64: the generated 64 bit field
+  (scripts/x25519fe64.py) adds no literal zeros: fe64_mul 148 to 138
+  instructions, handshakes 1.5% to 2.4% fewer on arm64
+  (bench/results/tls-arm64-gap-2026-10-16.md).
+
 - P-256 and the NIST curves: nistec's final subtraction as one add with
   carry chain and the scalar multiply's constant time table selection
   over the live words only: P-256 handshakes 9.3% fewer instructions on
