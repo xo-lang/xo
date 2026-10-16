@@ -3,7 +3,8 @@
 // RE2 syntax and guarantees (Go's regexp): matching takes time linear in
 // the input, so a pattern from a user cannot hang the program. Pure.
 
-/// A compiled expression (a handle).
+/// A compiled expression: an immutable compiled value, comparable (not a
+/// handle, decision 0112 addendum).
 struct Regex {}
 
 /// Displays as `invalid regexp "(a": missing closing ): ...`.

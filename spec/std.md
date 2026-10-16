@@ -2369,7 +2369,7 @@ the Unicode classes `\pL` (`\p{Letter}`), `\p{Nd}`, `\p{Any}`, and
 not supported by native builds yet.
 
 ```
-struct Regex {}                          // handle
+struct Regex {}                          // an immutable compiled value (not a handle, core 2.9)
 struct RegexErr { pattern: Str, msg: Str }   // `invalid regexp "(a": missing closing ): ...`
 
 pub fn compile(pattern: Str) -> Regex ! RegexErr

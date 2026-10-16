@@ -89,8 +89,8 @@ backend, and stopped natively at XO1201. They are handles in the sense
 above (std.md calls each "a handle"), so the rule applies unchanged and
 they join the list: prelude `File` and `FileLock` (decision 0163) and
 `Child` (std.md 3.8), and std/internal `SharedLock` (decision 0214).
-`regexp.Regex`, also documented as a handle, stays comparable for now:
-it is an immutable compiled value like `time.Zone`, and making it
-incomparable is a semantic change for its own decision. Test:
+`regexp.Regex` stays comparable (lead, 2026-10-15): it is an immutable
+compiled value like `time.Zone`, and std.md and std/regexp.xo now call
+it that instead of a handle, so core 2.9's list is the one source. Test:
 selfhost/check check_test.xo ("File, FileLock, Child, and values holding
 them are not comparable").
