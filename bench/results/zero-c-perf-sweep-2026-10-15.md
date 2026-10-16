@@ -559,3 +559,391 @@ The first try used word 12, sysio.xo's file operation message: xo itself
 then exited 137 on every build (gotchas/thread-local-word-collision.md;
 internal/repotest TestThreadLocalWordOwners now checks the words).
 
+
+## Resweep: main 40c1d729 against pre-zero-C main dd33dd13 (2026-10-15, late)
+
+After the zero-C push merged, main's tip (40c1d729) against the main
+before it (dd33dd13), both xo built from their own worktrees (the base
+with the cached 0.11.0 seed: today's seeds emit runtime exports, such as
+xo_x_mutex_lock, that its runtime lacks). Same method, scripts, and bar
+as above (sweep.py, analyze.py, prof.py, paths adjusted), bench/perf
+sources of the tip for both sides, 3,040 runs plus a 140 run testworld
+rerun, none failed (but ed25519 on the base, below). Columns: base, tip,
+tip/base.
+
+### The testworld artifact
+
+The tip builds `xo test` binaries at -O0 on LLVM (decision 0236), the base
+at -O2, so testworld on llvm came out 1.7x to 3.1x. Rerun with
+XO_LLVM_OPT=O2 on both sides (below), testworld stdio, env, gen are
+0.81 to 1.00; what is left is rand (llvm 1.08) and memfs (arm64 1.13).
+
+### Slower on the tip beyond the bar, with profiles
+
+Profiles: macOS `sample` (self time, top of stack) on copies of the
+programs with every loop bound times 20 (rand and memfs times 200,
+atomic get times 100), built by each xo.
+
+| Workload | Backend | tip/base | Profile and pointer |
+|---|---|---|---|
+| fault defer | arm64 | 1.224 | Unwinding: `unwind.exec` 26%, `dframe` 21%, `raise` 20% on both sides; the tip spends 9.1% in `unwind.read_fde` (4.7% on the base) and adds `cabi.fault_raise_msg` (1.4%), the raise now going through the start glue's export (std/native/llrt/unwind.xo read_fde, cabi.xo fault_raise_msg). On llvm the same code is faster (0.927), so it is arm64 code generation of unwind.xo. |
+| fault owned | arm64 | 1.206 | The same: `unwind.exec` 29% against 20%, `cabi.fault_raise_msg` 2.6%, `obj_rl_copy_n` (llvm 0.921). |
+| fault isolate | arm64 | 1.088 | The same, plus `unwind.read_fde` 8% (short run, 63 samples). |
+| sysio chan | arm64 | 1.138 (spread 8.3%) | Channel waits: `tasks.park_wait_n` 7.6% and `mach_absolute_time` 5.7% are new on the tip; `__ulock_wake` 28% against 24% (std/native/llrt/tasks.xo park_wait_n, chan.xo recv). |
+| conc pingpong | arm64 | 1.114 (spread 7.5%) | The same path: `tasks.park_wait_n` 8.2%, `pool.find_work` 3.5%, `mach_absolute_time` 9.4% (std/native/llrt/tasks.xo, pool.xo find_work). |
+| conc spawn | arm64 | 1.105 (spread 7.6%) | `tasks.run_claimed` in Xo 7.6% (the base's C run_claimed 3.8%), an unnamed helper `xo_hUlnSJqmiLk` 7.9%, `stack_switch` 21% against 17% (std/native/llrt/tasks.xo run_claimed). |
+| testworld memfs | arm64 | 1.130 (O2 rerun) | `testing.memfs_get` and `memfs_read`, `obj_str_eq`, `scan.split`: the read path looks the node up twice since e0390f4a (memfs_follow before the read; std/native/testing.xo memfs_read_in). |
+| testworld rand | llvm | 1.081 (O2 rerun) | No samples (the test binary's run was too short to attach to); instructions at 20x scale 458M against 524M (std/native/llrt/rand.xo, the test world's seeded rand). |
+| atomic get | llvm | 1.058 | No samples (too short); a per operation cost (the startup only `atomic none` is 0.975), std/native/llrt/atomic.xo get on llvm. |
+| httpclient none | llvm | 1.115 | Startup of the TLS-linked client only (+3M instructions; the other `none` rows are 0.91 to 0.99). |
+| httpclient h2len, h2big | arm64 | 1.060, 1.152 | AES-GCM as in the first sweep (std/native/llrt/aesgcm.xo); h2big was 1.85 then. |
+| tls (every workload) | both | 1.09 to 2.83 | Xo TLS against the base's Mbed (decision 0202), as in the first sweep; pointers there (nistec.xo mul4, aesgcm.xo hw4, chacha.xo xor_stream, ed25519.xo fe_mul). |
+
+TLS against the first sweep (zero-c 8c1d123d): aes128, aes256 and
+aes128tls13 2.6 to 2.8x to 1.28 to 1.36x on arm64 and 1.09x on llvm;
+chacha 4.1x to 2.83x (arm64), 2.9x to 2.37x (llvm); x25519, rsa2048 and
+tls12 2.8 to 3.0x to 2.5 to 2.8x (arm64), 1.9 to 2.0x to 2.0 to 2.3x
+(llvm); p256 1.54x to 1.36x (arm64) but 1.03x to 1.11x (llvm). ed25519
+still fails on the base's Mbed client (5 of 5) and works on the tip.
+
+### Faster on the tip beyond the bar
+
+46 rows of the main sweep (36 slower, 6 of them the testworld artifact): startup (`none`) 0.91 to 0.94 on arm64; nested 0.90 to 0.94
+(arm64); unicode lower_u, upper_u and eqlower 0.88 to 0.94; json 0.71 to
+0.95 (enc_small llvm 0.71); text debug llvm 0.66, replace 0.87, zone_fmt
+0.88; ctx mutex llvm 0.84; conc rwmutex arm64 0.82; alloc strings llvm
+0.89; sysio lines and read_big llvm 0.90; fault defer and owned on llvm
+0.92 and 0.93; testworld gen 0.78 and 0.81.
+
+The http server (task 01 under loadgen): CPU per request 1.04 (h2,
+arm64), 1.00 (h2, llvm), 1.01 and 0.97 (http1), all inside the spread;
+requests per second 61k and 63k (h2), 86k to 92k (http1) on both sides.
+
+### Testworld at -O2 on both sides
+
+| Workload | Backend | base | tip | tip/base | spread base | spread tip | Other |
+|---|---|---|---|---|---|---|---|
+| testworld 0 | arm64 | 16.23M | 14.58M | **0.899** | 6.7% | 0.4% | wall - / - ms |
+| testworld 0 | llvm | 14.18M | 13.80M | 0.974 | 8.5% | 0.9% | wall - / - ms |
+| testworld 1 | arm64 | 116.18M | 115.06M | 0.990 | 0.4% | 0.5% | wall 10.0 / 10.0 ms |
+| testworld 1 | llvm | 96.33M | 96.49M | 1.002 | 0.5% | 0.6% | wall - / - ms |
+| testworld 2 | arm64 | 2914.94M | 2911.09M | 0.999 | 0.1% | 0.0% | wall 130.0 / 130.0 ms |
+| testworld 2 | llvm | 2744.22M | 2744.56M | 1.000 | 0.0% | 0.0% | wall 120.0 / 130.0 ms |
+| testworld 3 | arm64 | 62.20M | 59.93M | 0.964 | 0.3% | 0.1% | wall - / - ms |
+| testworld 3 | llvm | 36.41M | 39.36M | **1.081** | 0.6% | 0.5% | wall - / - ms |
+| testworld 4 | arm64 | 231.11M | 219.62M | 0.950 | 0.8% | 0.3% | wall 20.0 / 20.0 ms |
+| testworld 4 | llvm | 203.48M | 187.07M | **0.919** | 0.6% | 1.0% | wall 10.0 / 20.0 ms |
+| testworld 5 | arm64 | 70.74M | 55.01M | **0.778** | 0.3% | 0.4% | wall - / - ms |
+| testworld 5 | llvm | 55.43M | 44.99M | **0.812** | 0.1% | 0.3% | wall - / - ms |
+| testworld 6 | arm64 | 68.85M | 77.79M | **1.130** | 0.1% | 0.1% | wall - / - ms |
+| testworld 6 | llvm | 53.80M | 54.93M | 1.021 | 0.2% | 0.3% | wall - / - ms |
+
+### Every workload (testworld llvm rows are -O0 on the tip, see above)
+
+| Workload | Backend | base | tip | tip/base | spread base | spread tip | Other |
+|---|---|---|---|---|---|---|---|
+| conc fanout | arm64 | 295.67M | 308.66M | 1.044 | 7.3% | 7.0% | wall 30.0 / 20.0 ms |
+| conc fanout | llvm | 262.33M | 246.67M | 0.940 | 5.4% | 13.9% | wall 30.0 / 20.0 ms |
+| conc mutex | arm64 | 146.66M | 162.86M | 1.110 | 6.9% | 29.6% | wall 10.0 / 10.0 ms |
+| conc mutex | llvm | 110.81M | 116.17M | 1.048 | 36.3% | 10.6% | wall 10.0 / 70.0 ms |
+| conc pingpong | arm64 | 351.85M | 392.04M | **1.114** | 2.7% | 7.5% | wall 20.0 / 30.0 ms |
+| conc pingpong | llvm | 329.53M | 324.10M | 0.984 | 12.7% | 13.3% | wall 20.0 / 30.0 ms |
+| conc pmap | arm64 | 3889.22M | 3889.20M | 1.000 | 0.1% | 0.0% | wall 70.0 / 70.0 ms |
+| conc pmap | llvm | 4201.47M | 4201.20M | 1.000 | 0.3% | 0.7% | wall 80.0 / 80.0 ms |
+| conc rwmutex | arm64 | 916.60M | 752.41M | **0.821** | 4.9% | 6.6% | wall 140.0 / 100.0 ms |
+| conc rwmutex | llvm | 785.16M | 666.10M | 0.848 | 70.1% | 15.8% | wall 130.0 / 90.0 ms |
+| conc spawn | arm64 | 593.63M | 655.89M | **1.105** | 6.7% | 7.6% | wall 60.0 / 70.0 ms |
+| conc spawn | llvm | 531.78M | 510.48M | 0.960 | 12.3% | 12.6% | wall 60.0 / 60.0 ms |
+| http h2 | arm64 | 44.1 | 45.9 | 1.040 | 3.4% | 3.7% | rps 61217 / 61092 |
+| http h2 | llvm | 41.9 | 41.8 | 0.998 | 6.3% | 2.5% | rps 63261 / 63185 |
+| http http1 | arm64 | 28.0 | 28.3 | 1.011 | 20.9% | 15.3% | rps 85682 / 88563 |
+| http http1 | llvm | 26.9 | 26.1 | 0.969 | 10.3% | 10.5% | rps 91654 / 92411 |
+| httpclient big | arm64 | 1028.39M | 1055.79M | 1.027 | 2.3% | 1.3% | wall 350.0 / 340.0 ms |
+| httpclient big | llvm | 1018.14M | 1032.60M | 1.014 | 4.2% | 3.0% | wall 380.0 / 360.0 ms |
+| httpclient chunked | arm64 | 899.47M | 899.49M | 1.000 | 1.2% | 1.4% | wall 280.0 / 280.0 ms |
+| httpclient chunked | llvm | 879.13M | 867.81M | 0.987 | 0.8% | 0.7% | wall 300.0 / 300.0 ms |
+| httpclient h2big | arm64 | 5380.69M | 6199.20M | **1.152** | 6.2% | 3.7% | wall 760.0 / 820.0 ms |
+| httpclient h2big | llvm | 5366.43M | 5333.56M | 0.994 | 3.8% | 1.2% | wall 770.0 / 820.0 ms |
+| httpclient h2len | arm64 | 621.31M | 658.51M | **1.060** | 1.9% | 2.1% | wall 200.0 / 190.0 ms |
+| httpclient h2len | llvm | 602.82M | 600.54M | 0.996 | 1.3% | 0.9% | wall 180.0 / 190.0 ms |
+| httpclient len | arm64 | 860.47M | 857.08M | 0.996 | 2.2% | 2.0% | wall 320.0 / 380.0 ms |
+| httpclient len | llvm | 846.20M | 833.52M | 0.985 | 1.5% | 1.6% | wall 360.0 / 370.0 ms |
+| httpclient none | arm64 | 28.84M | 31.43M | 1.090 | 9.0% | 7.0% | wall 50.0 / 90.0 ms |
+| httpclient none | llvm | 26.26M | 29.28M | **1.115** | 3.9% | 3.5% | wall 70.0 / 80.0 ms |
+| httpclient redirect | arm64 | 1629.40M | 1621.37M | 0.995 | 3.2% | 2.0% | wall 560.0 / 560.0 ms |
+| httpclient redirect | llvm | 1615.63M | 1584.29M | 0.981 | 0.7% | 0.9% | wall 560.0 / 530.0 ms |
+| alloc grow | arm64 | 67.11M | 65.41M | 0.975 | 0.9% | 0.6% | wall - / 10.0 ms |
+| alloc grow | llvm | 64.52M | 64.16M | 0.995 | 0.3% | 0.1% | wall - / - ms |
+| alloc maps | arm64 | 304.12M | 300.62M | 0.988 | 0.3% | 0.6% | wall 10.0 / 10.0 ms |
+| alloc maps | llvm | 266.89M | 265.45M | 0.995 | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| alloc mixed | arm64 | 473.03M | 470.50M | 0.995 | 0.7% | 0.9% | wall 20.0 / 20.0 ms |
+| alloc mixed | llvm | 462.66M | 460.50M | 0.995 | 0.8% | 1.0% | wall 20.0 / 20.0 ms |
+| alloc none | arm64 | 17.62M | 15.94M | 0.905 | 16.8% | 10.6% | wall 90.0 / 40.0 ms |
+| alloc none | llvm | 14.87M | 14.66M | 0.986 | 6.6% | 19.4% | wall 40.0 / 70.0 ms |
+| alloc small | arm64 | 294.54M | 282.71M | 0.960 | 0.2% | 0.9% | wall 40.0 / 40.0 ms |
+| alloc small | llvm | 248.54M | 244.10M | 0.982 | 1.1% | 0.2% | wall 40.0 / 40.0 ms |
+| alloc strings | arm64 | 306.83M | 297.04M | 0.968 | 0.2% | 0.1% | wall 20.0 / 20.0 ms |
+| alloc strings | llvm | 278.09M | 246.79M | **0.887** | 0.5% | 0.9% | wall 20.0 / 10.0 ms |
+| alloc tasks | arm64 | 883.88M | 882.73M | 0.999 | 0.4% | 0.6% | wall 10.0 / 10.0 ms |
+| alloc tasks | llvm | 787.39M | 777.24M | 0.987 | 0.9% | 0.5% | wall 10.0 / 10.0 ms |
+| atomic add | arm64 | 118.15M | 116.57M | 0.987 | 0.2% | 1.6% | wall 10.0 / 10.0 ms |
+| atomic add | llvm | 79.99M | 79.66M | 0.996 | 2.7% | 0.9% | wall 10.0 / 10.0 ms |
+| atomic cas | arm64 | 40.12M | 38.35M | 0.956 | 7.4% | 8.2% | wall 10.0 / 10.0 ms |
+| atomic cas | llvm | 39.89M | 41.63M | 1.044 | 6.9% | 6.4% | wall 10.0 / - ms |
+| atomic contended | arm64 | 107.00M | 108.39M | 1.013 | 11.2% | 7.3% | wall 90.0 / 110.0 ms |
+| atomic contended | llvm | 76.77M | 78.38M | 1.021 | 8.2% | 21.8% | wall 70.0 / 90.0 ms |
+| atomic flag | arm64 | 41.41M | 39.70M | 0.959 | 6.0% | 5.9% | wall 10.0 / 10.0 ms |
+| atomic flag | llvm | 42.57M | 42.28M | 0.993 | 3.1% | 6.1% | wall - / - ms |
+| atomic get | arm64 | 30.10M | 28.35M | **0.942** | 0.2% | 1.0% | wall 10.0 / 10.0 ms |
+| atomic get | llvm | 27.94M | 29.58M | **1.058** | 0.3% | 0.9% | wall - / 20.0 ms |
+| atomic max | arm64 | 52.19M | 50.38M | 0.965 | 0.4% | 4.7% | wall 10.0 / 10.0 ms |
+| atomic max | llvm | 48.00M | 49.65M | 1.035 | 4.8% | 0.4% | wall 10.0 / 10.0 ms |
+| atomic none | arm64 | 17.65M | 16.01M | **0.907** | 5.8% | 4.8% | wall 80.0 / 80.0 ms |
+| atomic none | llvm | 14.83M | 14.46M | 0.975 | 3.2% | 2.8% | wall 50.0 / 35.0 ms |
+| atomic set | arm64 | 26.25M | 24.43M | **0.931** | 1.6% | 2.2% | wall - / 10.0 ms |
+| atomic set | llvm | 23.95M | 23.60M | 0.985 | 7.2% | 9.6% | wall 10.0 / - ms |
+| atomic swap | arm64 | 40.17M | 38.44M | 0.957 | 7.3% | 6.6% | wall 10.0 / 10.0 ms |
+| atomic swap | llvm | 37.96M | 39.78M | 1.048 | 8.4% | 1.9% | wall 10.0 / 10.0 ms |
+| ctx await | arm64 | 96.98M | 94.22M | 0.972 | 28.6% | 24.3% | wall 10.0 / 10.0 ms |
+| ctx await | llvm | 81.80M | 80.44M | 0.983 | 28.7% | 27.5% | wall 15.0 / 10.0 ms |
+| ctx budget | arm64 | 1402.69M | 1400.92M | 0.999 | 0.2% | 0.1% | wall 90.0 / 90.0 ms |
+| ctx budget | llvm | 1320.39M | 1359.84M | 1.030 | 0.2% | 0.3% | wall 60.0 / 60.0 ms |
+| ctx defer | arm64 | 1361.14M | 1359.03M | 0.998 | 0.6% | 0.4% | wall 70.0 / 70.0 ms |
+| ctx defer | llvm | 1184.39M | 1186.10M | 1.001 | 0.4% | 0.5% | wall 60.0 / 60.0 ms |
+| ctx mutex | arm64 | 934.55M | 892.90M | 0.955 | 0.5% | 0.4% | wall 50.0 / 40.0 ms |
+| ctx mutex | llvm | 818.53M | 687.97M | **0.840** | 0.1% | 0.5% | wall 30.0 / 30.0 ms |
+| ctx none | arm64 | 17.82M | 16.32M | 0.916 | 20.0% | 19.4% | wall 40.0 / 20.0 ms |
+| ctx none | llvm | 14.91M | 14.73M | 0.988 | 19.0% | 19.8% | wall 35.0 / 10.0 ms |
+| ctx spawn | arm64 | 87.41M | 87.05M | 0.996 | 7.5% | 16.2% | wall 10.0 / 10.0 ms |
+| ctx spawn | llvm | 75.33M | 74.05M | 0.983 | 23.9% | 14.9% | wall 10.0 / 10.0 ms |
+| digest argon2 | arm64 | 195.20M | 193.71M | 0.992 | 0.8% | 0.4% | wall 10.0 / 10.0 ms |
+| digest argon2 | llvm | 204.27M | 203.14M | 0.994 | 1.9% | 1.0% | wall 10.0 / 10.0 ms |
+| digest hmac | arm64 | 787.22M | 772.93M | 0.982 | 0.3% | 0.1% | wall 40.0 / 40.0 ms |
+| digest hmac | llvm | 654.91M | 630.90M | 0.963 | 0.1% | 0.3% | wall 30.0 / 30.0 ms |
+| digest none | arm64 | 20.63M | 18.93M | 0.918 | 19.9% | 16.0% | wall 70.0 / 180.0 ms |
+| digest none | llvm | 17.15M | 15.80M | 0.921 | 17.0% | 16.0% | wall 40.0 / 60.0 ms |
+| digest pbkdf2 | arm64 | 1331.27M | 1307.88M | 0.982 | 0.0% | 0.1% | wall 50.0 / 50.0 ms |
+| digest pbkdf2 | llvm | 1063.41M | 1060.96M | 0.998 | 0.2% | 0.2% | wall 50.0 / 50.0 ms |
+| digest sha256_big | arm64 | 576.13M | 564.70M | 0.980 | 0.5% | 0.8% | wall 20.0 / 20.0 ms |
+| digest sha256_big | llvm | 472.91M | 471.82M | 0.998 | 0.7% | 0.6% | wall 20.0 / 20.0 ms |
+| digest sha256_small | arm64 | 563.90M | 553.29M | 0.981 | 0.1% | 0.6% | wall 30.0 / 30.0 ms |
+| digest sha256_small | llvm | 480.00M | 466.82M | 0.973 | 0.0% | 0.4% | wall 30.0 / 30.0 ms |
+| fault defer | arm64 | 1591.12M | 1948.06M | **1.224** | 0.2% | 0.1% | wall 60.0 / 70.0 ms |
+| fault defer | llvm | 1314.56M | 1218.82M | **0.927** | 0.1% | 0.0% | wall 60.0 / 60.0 ms |
+| fault isolate | arm64 | 291.31M | 317.02M | **1.088** | 0.7% | 1.0% | wall 10.0 / 10.0 ms |
+| fault isolate | llvm | 308.16M | 296.54M | 0.962 | 0.2% | 0.9% | wall 10.0 / 10.0 ms |
+| fault none | arm64 | 17.65M | 16.08M | 0.911 | 15.3% | 6.1% | wall 80.0 / 80.0 ms |
+| fault none | llvm | 14.70M | 14.42M | 0.981 | 17.6% | 14.9% | wall 35.0 / 60.0 ms |
+| fault owned | arm64 | 931.46M | 1123.12M | **1.206** | 0.1% | 0.1% | wall 40.0 / 40.0 ms |
+| fault owned | llvm | 765.33M | 704.57M | **0.921** | 0.4% | 0.5% | wall 40.0 / 30.0 ms |
+| fsproc cwd | arm64 | 3584.94M | 3591.91M | 1.002 | 0.9% | 0.5% | wall 230.0 / 260.0 ms |
+| fsproc cwd | llvm | 3575.30M | 3573.01M | 0.999 | 0.3% | 0.2% | wall 220.0 / 220.0 ms |
+| fsproc mkdir | arm64 | 1453.22M | 1444.60M | 0.994 | 1.2% | 1.0% | wall 90.0 / 90.0 ms |
+| fsproc mkdir | llvm | 1448.46M | 1443.81M | 0.997 | 1.4% | 1.5% | wall 90.0 / 90.0 ms |
+| fsproc none | arm64 | 20.27M | 18.59M | 0.918 | 11.8% | 9.9% | wall 90.0 / 40.0 ms |
+| fsproc none | llvm | 17.60M | 16.86M | 0.958 | 17.6% | 8.6% | wall 60.0 / 35.0 ms |
+| fsproc proc | arm64 | 264.98M | 259.47M | 0.979 | 3.4% | 3.1% | wall 220.0 / 260.0 ms |
+| fsproc proc | llvm | 258.19M | 252.76M | 0.979 | 1.7% | 2.9% | wall 230.0 / 210.0 ms |
+| fsproc proc_plain | arm64 | 235.48M | 231.98M | 0.985 | 5.9% | 5.9% | wall 200.0 / 210.0 ms |
+| fsproc proc_plain | llvm | 233.79M | 230.11M | 0.984 | 5.3% | 3.6% | wall 230.0 / 210.0 ms |
+| fsproc remove | arm64 | 2255.89M | 2259.61M | 1.002 | 1.2% | 1.2% | wall 160.0 / 160.0 ms |
+| fsproc remove | llvm | 2256.71M | 2247.92M | 0.996 | 1.4% | 1.8% | wall 160.0 / 160.0 ms |
+| fsproc temp | arm64 | 1326.52M | 1324.04M | 0.998 | 0.8% | 0.7% | wall 80.0 / 80.0 ms |
+| fsproc temp | llvm | 1312.36M | 1315.99M | 1.003 | 0.4% | 0.5% | wall 80.0 / 80.0 ms |
+| fsproc tree | arm64 | 1162.39M | 1163.11M | 1.001 | 2.1% | 1.0% | wall 80.0 / 80.0 ms |
+| fsproc tree | llvm | 1161.67M | 1161.66M | 1.000 | 1.6% | 1.9% | wall 80.0 / 70.0 ms |
+| json bytes | arm64 | 425.80M | 412.54M | 0.969 | 0.2% | 0.1% | wall 20.0 / 20.0 ms |
+| json bytes | llvm | 330.02M | 300.54M | **0.911** | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| json enc_floats | arm64 | 145.85M | 144.63M | 0.992 | 0.2% | 0.1% | wall 10.0 / 10.0 ms |
+| json enc_floats | llvm | 116.98M | 103.35M | **0.884** | 0.3% | 0.2% | wall - / 10.0 ms |
+| json enc_small | arm64 | 151.09M | 149.92M | 0.992 | 0.6% | 0.2% | wall 10.0 / 10.0 ms |
+| json enc_small | llvm | 133.89M | 95.18M | **0.711** | 0.4% | 0.2% | wall - / - ms |
+| json enc_strings | arm64 | 192.08M | 190.85M | 0.994 | 0.1% | 0.3% | wall 10.0 / 10.0 ms |
+| json enc_strings | llvm | 182.84M | 157.67M | **0.862** | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| json floats | arm64 | 382.01M | 361.92M | **0.947** | 0.2% | 0.2% | wall 20.0 / 20.0 ms |
+| json floats | llvm | 336.38M | 320.90M | 0.954 | 0.1% | 0.2% | wall 10.0 / 10.0 ms |
+| json ints | arm64 | 235.90M | 215.32M | **0.913** | 0.2% | 0.1% | wall 10.0 / 10.0 ms |
+| json ints | llvm | 209.24M | 190.58M | **0.911** | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| json invalid | arm64 | 218.64M | 214.31M | 0.980 | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| json invalid | llvm | 197.64M | 191.86M | 0.971 | 0.2% | 0.2% | wall 10.0 / 10.0 ms |
+| json maps | arm64 | 340.04M | 337.28M | 0.992 | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| json maps | llvm | 303.97M | 299.42M | 0.985 | 0.2% | 0.1% | wall 10.0 / 10.0 ms |
+| json none | arm64 | 42.10M | 40.82M | 0.969 | 4.2% | 4.3% | wall 90.0 / 70.0 ms |
+| json none | llvm | 35.74M | 33.91M | 0.949 | 7.7% | 2.0% | wall 10.0 / 70.0 ms |
+| json parse | arm64 | 288.87M | 287.40M | 0.995 | 0.3% | 0.1% | wall 10.0 / 10.0 ms |
+| json parse | llvm | 254.28M | 252.46M | 0.993 | 0.1% | 0.2% | wall 10.0 / 10.0 ms |
+| json small | arm64 | 346.29M | 340.39M | 0.983 | 0.2% | 0.2% | wall 10.0 / 10.0 ms |
+| json small | llvm | 304.10M | 298.75M | 0.982 | 0.2% | 0.2% | wall 10.0 / 10.0 ms |
+| json strings | arm64 | 363.43M | 336.35M | **0.925** | 0.1% | 0.2% | wall 20.0 / 10.0 ms |
+| json strings | llvm | 302.06M | 270.62M | **0.896** | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| nested index2 | arm64 | 18.82M | 17.06M | **0.906** | 0.8% | 1.0% | wall - / - ms |
+| nested index2 | llvm | 15.58M | 15.27M | 0.980 | 0.9% | 1.1% | wall - / - ms |
+| nested mapput | arm64 | 24.98M | 23.32M | **0.934** | 0.9% | 0.6% | wall - / - ms |
+| nested mapput | llvm | 20.60M | 20.18M | 0.980 | 1.4% | 1.0% | wall - / - ms |
+| nested method | arm64 | 17.18M | 15.41M | **0.897** | 2.9% | 1.1% | wall - / - ms |
+| nested method | llvm | 14.60M | 14.35M | 0.983 | 2.4% | 9.2% | wall - / - ms |
+| nested push | arm64 | 19.65M | 17.98M | **0.915** | 4.5% | 5.7% | wall 90.0 / 70.0 ms |
+| nested push | llvm | 16.14M | 15.82M | 0.980 | 2.8% | 2.9% | wall 50.0 / 60.0 ms |
+| nested setdeep | arm64 | 20.21M | 18.50M | **0.915** | 0.5% | 7.6% | wall 10.0 / - ms |
+| nested setdeep | llvm | 16.61M | 16.35M | 0.984 | 1.1% | 1.3% | wall - / - ms |
+| nested setnested | arm64 | 17.15M | 15.43M | **0.899** | 0.9% | 1.2% | wall - / - ms |
+| nested setnested | llvm | 14.78M | 14.47M | 0.979 | 10.0% | 0.7% | wall - / - ms |
+| nested shared | arm64 | 23.72M | 22.06M | 0.930 | 1.7% | 7.5% | wall - / - ms |
+| nested shared | llvm | 21.26M | 20.90M | 0.983 | 2.9% | 1.5% | wall - / - ms |
+| nested strappend | arm64 | 18.90M | 17.20M | **0.910** | 2.0% | 3.2% | wall - / - ms |
+| nested strappend | llvm | 16.13M | 15.11M | **0.937** | 5.2% | 2.2% | wall - / - ms |
+| nested walk | arm64 | 31.74M | 29.83M | **0.940** | 1.7% | 1.4% | wall - / - ms |
+| nested walk | llvm | 27.92M | 27.69M | 0.991 | 1.5% | 7.1% | wall - / - ms |
+| net dial | arm64 | 586.98M | 587.15M | 1.000 | 2.6% | 8.0% | wall 130.0 / 100.0 ms |
+| net dial | llvm | 584.99M | 580.21M | 0.992 | 2.3% | 1.5% | wall 110.0 / 110.0 ms |
+| net echo | arm64 | 2835.19M | 2796.04M | 0.986 | 14.5% | 10.1% | wall 730.0 / 680.0 ms |
+| net echo | llvm | 2799.54M | 2764.80M | 0.988 | 7.2% | 7.4% | wall 750.0 / 680.0 ms |
+| net none | arm64 | 18.74M | 17.53M | **0.935** | 5.8% | 5.6% | wall 90.0 / 70.0 ms |
+| net none | llvm | 16.83M | 16.27M | 0.966 | 2.9% | 2.9% | wall 60.0 / 70.0 ms |
+| net resolve | arm64 | 1029.09M | 1023.52M | 0.995 | 1.7% | 2.7% | wall 440.0 / 390.0 ms |
+| net resolve | llvm | 1030.13M | 1017.99M | 0.988 | 3.4% | 2.0% | wall 400.0 / 400.0 ms |
+| stdio big | arm64 | 126.62M | 125.51M | 0.991 | 5.2% | 4.6% | wall 70.0 / 80.0 ms |
+| stdio big | llvm | 125.59M | 125.29M | 0.998 | 2.5% | 3.3% | wall 80.0 / 70.0 ms |
+| stdio err | arm64 | 133.29M | 130.55M | 0.979 | 2.6% | 3.2% | wall 10.0 / 10.0 ms |
+| stdio err | llvm | 128.78M | 128.55M | 0.998 | 2.8% | 3.2% | wall 10.0 / 10.0 ms |
+| stdio ints | arm64 | 198.12M | 192.03M | 0.969 | 0.4% | 0.3% | wall 10.0 / 10.0 ms |
+| stdio ints | llvm | 167.33M | 162.60M | 0.972 | 0.2% | 0.2% | wall 10.0 / 10.0 ms |
+| stdio lines | arm64 | 110.06M | 107.53M | 0.977 | 1.6% | 1.5% | wall 10.0 / - ms |
+| stdio lines | llvm | 40.96M | 41.19M | 1.006 | 2.3% | 1.1% | wall 10.0 / 10.0 ms |
+| stdio mixed | arm64 | 131.89M | 130.90M | 0.992 | 4.1% | 2.1% | wall 10.0 / 10.0 ms |
+| stdio mixed | llvm | 127.58M | 128.16M | 1.005 | 3.3% | 2.5% | wall 10.0 / 10.0 ms |
+| stdio none | arm64 | 17.47M | 16.12M | **0.923** | 4.3% | 5.5% | wall 90.0 / 70.0 ms |
+| stdio none | llvm | 14.67M | 14.44M | 0.984 | 3.0% | 3.0% | wall 60.0 / 60.0 ms |
+| stdio small | arm64 | 116.64M | 114.87M | 0.985 | 0.1% | 0.2% | wall - / - ms |
+| stdio small | llvm | 44.36M | 44.06M | 0.993 | 0.6% | 0.6% | wall - / - ms |
+| sysio chan | arm64 | 346.59M | 394.28M | **1.138** | 8.3% | 6.5% | wall 20.0 / 30.0 ms |
+| sysio chan | llvm | 327.88M | 327.78M | 1.000 | 14.9% | 11.5% | wall 20.0 / 20.0 ms |
+| sysio clock | arm64 | 93.43M | 86.33M | **0.924** | 0.3% | 0.3% | wall - / - ms |
+| sysio clock | llvm | 87.36M | 85.03M | 0.973 | 0.3% | 0.3% | wall - / - ms |
+| sysio copy | arm64 | 4076.80M | 3995.33M | 0.980 | 8.9% | 9.7% | wall 330.0 / 270.0 ms |
+| sysio copy | llvm | 3931.78M | 4004.51M | 1.018 | 7.3% | 5.9% | wall 260.0 / 270.0 ms |
+| sysio dir | arm64 | 9176.35M | 9429.57M | 1.028 | 0.4% | 0.4% | wall 540.0 / 540.0 ms |
+| sysio dir | llvm | 8416.49M | 8243.36M | 0.979 | 0.3% | 0.4% | wall 490.0 / 490.0 ms |
+| sysio handle | arm64 | 3987.81M | 3962.45M | 0.994 | 2.0% | 2.0% | wall 250.0 / 250.0 ms |
+| sysio handle | llvm | 3950.02M | 3909.34M | 0.990 | 0.9% | 1.3% | wall 250.0 / 270.0 ms |
+| sysio lines | arm64 | 3610.58M | 3715.07M | 1.029 | 0.2% | 0.4% | wall 180.0 / 190.0 ms |
+| sysio lines | llvm | 2830.69M | 2542.96M | **0.898** | 0.5% | 0.4% | wall 130.0 / 130.0 ms |
+| sysio lock | arm64 | 5715.79M | 5723.49M | 1.001 | 0.3% | 0.8% | wall 330.0 / 320.0 ms |
+| sysio lock | llvm | 5685.58M | 5672.16M | 0.998 | 0.4% | 0.3% | wall 330.0 / 330.0 ms |
+| sysio mode | arm64 | 3734.70M | 3749.26M | 1.004 | 0.3% | 0.3% | wall 210.0 / 210.0 ms |
+| sysio mode | llvm | 3677.20M | 3661.68M | 0.996 | 1.2% | 1.3% | wall 210.0 / 210.0 ms |
+| sysio none | arm64 | 20.61M | 18.82M | 0.913 | 14.6% | 13.4% | wall 80.0 / 80.0 ms |
+| sysio none | llvm | 17.41M | 17.04M | 0.979 | 8.1% | 7.2% | wall 70.0 / 70.0 ms |
+| sysio read | arm64 | 3787.08M | 3791.97M | 1.001 | 0.2% | 0.1% | wall 240.0 / 240.0 ms |
+| sysio read | llvm | 3752.54M | 3745.43M | 0.998 | 0.3% | 0.6% | wall 230.0 / 230.0 ms |
+| sysio read_big | arm64 | 167.76M | 166.09M | 0.990 | 0.2% | 0.1% | wall 10.0 / 10.0 ms |
+| sysio read_big | llvm | 164.12M | 147.98M | **0.902** | 0.2% | 0.2% | wall 10.0 / 10.0 ms |
+| sysio rename | arm64 | 15255.41M | 15220.06M | 0.998 | 3.3% | 0.6% | wall 820.0 / 810.0 ms |
+| sysio rename | llvm | 15208.68M | 15158.63M | 0.997 | 1.9% | 1.1% | wall 830.0 / 820.0 ms |
+| sysio sleep | arm64 | 788.75M | 788.10M | 0.999 | 2.0% | 1.4% | wall 180.0 / 200.0 ms |
+| sysio sleep | llvm | 787.32M | 780.83M | 0.992 | 1.5% | 1.3% | wall 190.0 / 200.0 ms |
+| sysio stat | arm64 | 1854.32M | 1908.45M | 1.029 | 0.4% | 0.2% | wall 100.0 / 110.0 ms |
+| sysio stat | llvm | 1671.11M | 1632.12M | 0.977 | 0.4% | 0.3% | wall 90.0 / 90.0 ms |
+| sysio tree | arm64 | 9106.07M | 9111.11M | 1.001 | 1.9% | 0.4% | wall 600.0 / 630.0 ms |
+| sysio tree | llvm | 9113.60M | 9097.54M | 0.998 | 0.9% | 1.0% | wall 620.0 / 600.0 ms |
+| sysio write | arm64 | 9852.39M | 9255.39M | 0.939 | 7.9% | 11.6% | wall 700.0 / 690.0 ms |
+| sysio write | llvm | 9711.87M | 9639.12M | 0.993 | 8.4% | 11.5% | wall 690.0 / 660.0 ms |
+| text base64 | arm64 | 168.20M | 164.67M | 0.979 | 0.1% | 0.2% | wall 10.0 / 10.0 ms |
+| text base64 | llvm | 129.74M | 124.85M | 0.962 | 0.2% | 0.2% | wall - / - ms |
+| text debug | arm64 | 227.39M | 225.19M | 0.990 | 0.1% | 0.1% | wall 10.0 / 10.0 ms |
+| text debug | llvm | 201.35M | 132.30M | **0.657** | 0.1% | 0.1% | wall 10.0 / - ms |
+| text dur_fmt | arm64 | 142.77M | 139.22M | 0.975 | 0.7% | 0.2% | wall - / - ms |
+| text dur_fmt | llvm | 111.35M | 112.45M | 1.010 | 0.6% | 0.6% | wall - / - ms |
+| text dur_parse | arm64 | 175.31M | 173.61M | 0.990 | 0.8% | 0.3% | wall 10.0 / 10.0 ms |
+| text dur_parse | llvm | 151.74M | 150.79M | 0.994 | 1.1% | 0.9% | wall - / - ms |
+| text float_fmt | arm64 | 148.31M | 144.70M | 0.976 | 0.1% | 0.1% | wall 10.0 / - ms |
+| text float_fmt | llvm | 109.03M | 104.09M | 0.955 | 0.2% | 0.1% | wall - / - ms |
+| text float_parse | arm64 | 154.04M | 152.28M | 0.989 | 0.2% | 0.1% | wall 10.0 / 10.0 ms |
+| text float_parse | llvm | 138.97M | 131.69M | **0.948** | 0.6% | 0.5% | wall 10.0 / 10.0 ms |
+| text hex | arm64 | 102.47M | 99.26M | 0.969 | 0.3% | 0.3% | wall - / - ms |
+| text hex | llvm | 85.33M | 84.77M | 0.993 | 0.5% | 1.6% | wall 10.0 / - ms |
+| text int_fmt | arm64 | 80.79M | 77.18M | 0.955 | 0.1% | 0.2% | wall - / - ms |
+| text int_fmt | llvm | 65.19M | 63.03M | 0.967 | 0.3% | 0.4% | wall - / - ms |
+| text lines | arm64 | 157.98M | 153.60M | 0.972 | 0.7% | 0.2% | wall 10.0 / 10.0 ms |
+| text lines | llvm | 133.52M | 140.11M | 1.049 | 0.9% | 0.2% | wall 10.0 / 10.0 ms |
+| text none | arm64 | 26.34M | 24.94M | 0.947 | 7.9% | 8.1% | wall 90.0 / 80.0 ms |
+| text none | llvm | 21.91M | 20.80M | 0.950 | 6.9% | 4.3% | wall 70.0 / 70.0 ms |
+| text parse_int | arm64 | 47.01M | 45.16M | 0.961 | 2.3% | 3.1% | wall - / - ms |
+| text parse_int | llvm | 44.35M | 43.53M | 0.982 | 0.8% | 2.1% | wall - / - ms |
+| text quote | arm64 | 131.13M | 128.90M | 0.983 | 1.1% | 0.7% | wall - / - ms |
+| text quote | llvm | 112.32M | 101.20M | **0.901** | 1.3% | 1.2% | wall - / - ms |
+| text replace | arm64 | 83.19M | 80.66M | 0.970 | 0.8% | 0.8% | wall - / - ms |
+| text replace | llvm | 66.06M | 57.45M | **0.870** | 1.8% | 2.1% | wall 10.0 / - ms |
+| text rune_count | arm64 | 42.03M | 40.25M | 0.958 | 2.9% | 0.8% | wall - / - ms |
+| text rune_count | llvm | 38.31M | 37.49M | 0.978 | 1.0% | 0.5% | wall - / - ms |
+| text split | arm64 | 98.73M | 96.26M | 0.975 | 1.0% | 0.6% | wall - / - ms |
+| text split | llvm | 81.41M | 82.17M | 1.009 | 3.3% | 1.7% | wall - / - ms |
+| text time_fmt | arm64 | 178.83M | 175.27M | 0.980 | 0.3% | 0.3% | wall 10.0 / - ms |
+| text time_fmt | llvm | 128.79M | 127.01M | 0.986 | 0.9% | 1.2% | wall - / - ms |
+| text time_parse | arm64 | 153.93M | 144.67M | **0.940** | 0.8% | 1.0% | wall - / - ms |
+| text time_parse | llvm | 99.19M | 94.34M | 0.951 | 1.2% | 1.6% | wall - / - ms |
+| text trim | arm64 | 158.03M | 154.16M | 0.976 | 0.8% | 0.4% | wall 10.0 / 10.0 ms |
+| text trim | llvm | 146.34M | 144.39M | 0.987 | 0.8% | 0.3% | wall - / - ms |
+| text utf8 | arm64 | 118.48M | 116.81M | 0.986 | 0.2% | 0.3% | wall - / - ms |
+| text utf8 | llvm | 110.23M | 106.56M | 0.967 | 1.2% | 0.2% | wall 10.0 / - ms |
+| text zone_civil | arm64 | 260.72M | 254.65M | 0.977 | 0.1% | 0.6% | wall 10.0 / 10.0 ms |
+| text zone_civil | llvm | 225.07M | 205.27M | **0.912** | 0.4% | 0.2% | wall 10.0 / 10.0 ms |
+| text zone_fmt | arm64 | 993.15M | 1024.52M | 1.032 | 0.1% | 0.1% | wall 50.0 / 60.0 ms |
+| text zone_fmt | llvm | 826.19M | 727.03M | **0.880** | 0.1% | 0.0% | wall 50.0 / 30.0 ms |
+| text zone_load | arm64 | 52.60M | 50.81M | 0.966 | 2.5% | 0.4% | wall - / - ms |
+| text zone_load | llvm | 44.82M | 43.88M | 0.979 | 0.4% | 0.7% | wall - / - ms |
+| text zone_offset | arm64 | 100.22M | 98.14M | 0.979 | 0.9% | 0.6% | wall 10.0 / - ms |
+| text zone_offset | llvm | 87.19M | 86.48M | 0.992 | 1.0% | 0.8% | wall - / - ms |
+| unicode classify | arm64 | 266.23M | 260.58M | 0.979 | 0.6% | 0.2% | wall 10.0 / 10.0 ms |
+| unicode classify | llvm | 200.60M | 202.23M | 1.008 | 0.4% | 0.2% | wall 10.0 / 10.0 ms |
+| unicode eqlower | arm64 | 12195.83M | 10744.63M | **0.881** | 0.1% | 0.1% | wall 590.0 / 490.0 ms |
+| unicode eqlower | llvm | 10639.90M | 9745.02M | **0.916** | 0.2% | 0.0% | wall 410.0 / 390.0 ms |
+| unicode lower | arm64 | 931.77M | 926.44M | 0.994 | 0.2% | 0.1% | wall 60.0 / 70.0 ms |
+| unicode lower | llvm | 649.29M | 647.85M | 0.998 | 0.1% | 0.2% | wall 30.0 / 40.0 ms |
+| unicode lower_u | arm64 | 4623.13M | 4114.62M | **0.890** | 0.3% | 0.2% | wall 240.0 / 180.0 ms |
+| unicode lower_u | llvm | 4015.91M | 3718.62M | **0.926** | 0.0% | 0.1% | wall 160.0 / 150.0 ms |
+| unicode quote | arm64 | 146.81M | 141.34M | 0.963 | 0.5% | 0.3% | wall 10.0 / 10.0 ms |
+| unicode quote | llvm | 120.33M | 124.08M | 1.031 | 0.7% | 0.3% | wall 20.0 / 10.0 ms |
+| unicode runecase | arm64 | 232.93M | 227.41M | 0.976 | 0.1% | 0.4% | wall 10.0 / 10.0 ms |
+| unicode runecase | llvm | 222.45M | 220.67M | 0.992 | 0.3% | 0.1% | wall 10.0 / 10.0 ms |
+| unicode upper | arm64 | 1069.19M | 1063.94M | 0.995 | 0.1% | 0.1% | wall 50.0 / 50.0 ms |
+| unicode upper | llvm | 729.70M | 728.36M | 0.998 | 0.1% | 0.0% | wall 30.0 / 30.0 ms |
+| unicode upper_u | arm64 | 4577.52M | 4109.12M | **0.898** | 0.1% | 0.0% | wall 230.0 / 180.0 ms |
+| unicode upper_u | llvm | 3962.91M | 3710.32M | **0.936** | 0.1% | 0.1% | wall 160.0 / 160.0 ms |
+| testworld 0 | arm64 | 16.21M | 14.64M | **0.903** | 2.4% | 2.2% | wall - / - ms |
+| testworld 0 | llvm | 14.15M | 15.04M | **1.063** | 2.4% | 1.2% | wall - / - ms |
+| testworld 1 | arm64 | 116.09M | 115.12M | 0.992 | 0.2% | 0.5% | wall 10.0 / 10.0 ms |
+| testworld 1 | llvm | 96.37M | 208.04M | **2.159** | 0.3% | 0.1% | wall - / 10.0 ms |
+| testworld 2 | arm64 | 2914.78M | 2910.90M | 0.999 | 0.0% | 0.1% | wall 130.0 / 130.0 ms |
+| testworld 2 | llvm | 2744.63M | 5660.13M | **2.062** | 0.0% | 0.0% | wall 120.0 / 330.0 ms |
+| testworld 3 | arm64 | 62.13M | 60.13M | 0.968 | 0.6% | 0.7% | wall - / - ms |
+| testworld 3 | llvm | 36.35M | 111.09M | **3.056** | 4.2% | 0.1% | wall - / - ms |
+| testworld 4 | arm64 | 229.23M | 218.61M | 0.954 | 0.9% | 1.3% | wall 10.0 / 20.0 ms |
+| testworld 4 | llvm | 202.19M | 348.28M | **1.722** | 0.7% | 0.4% | wall 10.0 / 30.0 ms |
+| testworld 5 | arm64 | 70.68M | 55.00M | **0.778** | 0.4% | 0.1% | wall - / - ms |
+| testworld 5 | llvm | 55.39M | 106.90M | **1.930** | 0.4% | 0.2% | wall - / - ms |
+| testworld 6 | arm64 | 68.76M | 77.69M | **1.130** | 0.5% | 0.2% | wall 10.0 / - ms |
+| testworld 6 | llvm | 53.75M | 139.25M | **2.591** | 0.2% | 0.1% | wall - / 10.0 ms |
+| tls aes128 | arm64 | 907.17M | 1231.57M | **1.358** | 3.0% | 1.9% | wall 50.0 / 90.0 ms |
+| tls aes128 | llvm | 907.36M | 990.96M | **1.092** | 2.7% | 2.6% | wall 50.0 / 80.0 ms |
+| tls aes128tls13 | arm64 | 914.08M | 1165.47M | **1.275** | 1.2% | 0.2% | wall 50.0 / 80.0 ms |
+| tls aes128tls13 | llvm | 911.81M | 952.67M | 1.045 | 1.6% | 2.2% | wall 50.0 / 80.0 ms |
+| tls aes256 | arm64 | 969.23M | 1285.42M | **1.326** | 1.7% | 2.1% | wall 50.0 / 90.0 ms |
+| tls aes256 | llvm | 971.67M | 1060.79M | **1.092** | 1.3% | 2.6% | wall 50.0 / 80.0 ms |
+| tls chacha | arm64 | 912.96M | 2583.58M | **2.830** | 1.8% | 0.7% | wall 110.0 / 160.0 ms |
+| tls chacha | llvm | 906.84M | 2146.18M | **2.367** | 2.0% | 0.8% | wall 110.0 / 150.0 ms |
+| tls ed25519 | arm64 | - | - | - | - | - | wall - / 220.0 ms (failed runs: main 5, zero-c 0: error: Connect(msg: "remote error: tls: handshake failure")) |
+| tls ed25519 | llvm | - | - | - | - | - | wall - / 190.0 ms (failed runs: main 5, zero-c 0: error: Connect(msg: "remote error: tls: handshake failure")) |
+| tls p256 | arm64 | 2573.48M | 3503.05M | **1.361** | 0.2% | 0.1% | wall 220.0 / 270.0 ms |
+| tls p256 | llvm | 2569.81M | 2851.13M | **1.109** | 0.2% | 0.2% | wall 230.0 / 250.0 ms |
+| tls p384 | arm64 | 4594.67M | 5804.96M | **1.263** | 0.1% | 0.0% | wall 390.0 / 450.0 ms |
+| tls p384 | llvm | 4588.93M | 4770.32M | 1.040 | 0.3% | 0.2% | wall 420.0 / 430.0 ms |
+| tls rsa2048 | arm64 | 982.84M | 2742.82M | **2.791** | 0.2% | 0.3% | wall 290.0 / 390.0 ms |
+| tls rsa2048 | llvm | 980.31M | 2106.56M | **2.149** | 0.7% | 0.2% | wall 290.0 / 350.0 ms |
+| tls tls12 | arm64 | 1156.66M | 3006.29M | **2.599** | 0.2% | 0.5% | wall 150.0 / 230.0 ms |
+| tls tls12 | llvm | 1152.65M | 2438.21M | **2.115** | 0.1% | 0.1% | wall 140.0 / 210.0 ms |
+| tls x25519 | arm64 | 1060.86M | 2948.81M | **2.780** | 0.5% | 0.3% | wall 150.0 / 260.0 ms |
+| tls x25519 | llvm | 1059.01M | 2401.30M | **2.267** | 0.4% | 0.4% | wall 150.0 / 280.0 ms |
+| tls x25519only | arm64 | 1060.54M | 2621.83M | **2.472** | 0.2% | 0.2% | wall 130.0 / 230.0 ms |
+| tls x25519only | llvm | 1056.69M | 2130.83M | **2.017** | 0.3% | 0.1% | wall 130.0 / 190.0 ms |
+
