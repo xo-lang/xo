@@ -28,7 +28,7 @@ pub fn usage() -> Str {
 
 /// run runs `xo dev <args>` for the commands of this module and returns
 /// the exit status.
-pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
   if args.is_empty() {
     os.stdio.eprintln(usage())
     return 2
@@ -44,7 +44,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
   }
 }
 
-fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
+fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
   var fl = core.new_flags("dev goldens")
   fl.str_flag("backend", "arm64", "arm64, llvm, go, or wasm")
   fl.str_flag("xo", "", "the xo that builds the programs (default this one)")

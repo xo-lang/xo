@@ -40,12 +40,27 @@ queue behind any dialog still pending, so binaries that would otherwise
 run wait too. Re-signing with `codesign -f -s -` or raising the minimum
 OS with vtool does not change AMFI's verdict.
 
+A stall can also stick to one path (observed 2026-10-16, after the
+XProtect fix and with the terminal under Developer Tools): the dev
+goldens' cc linked http_tls_keys at
+`<user cache>/xo/dev/goldens/bin-arm64/internal_llvm_testdata_golden_http_tls_keys`
+waited at `_dyld_start` on every exec (seven in a row, six of them at
+once), while a copy at another path, a copy with the same name in
+another directory, and a hard link to the same inode at another path
+all started in under 0.4 s; some minutes later the path started again.
+Every `xo dev goldens` run removed and linked each binary again at that
+fixed path, in a directory that sessions running at once share, so one
+session could replace a binary another was starting.
+
 ## Fix
 
 On the Mac, a person: dismiss the pending Gatekeeper dialogs, and enable
 the terminal app that runs the builds under System Settings > Privacy &
 Security > Developer Tools, which exempts the programs it starts from
-these assessments. Mitigation in the toolchain: the darwin/arm64 default
+these assessments. `xo dev goldens` puts each run's binaries in a fresh
+`run-<random>` directory under its output directory and removes it at
+the end (selfhost/cli/dev goldens.xo), so no path is linked again while
+another run starts it. Mitigation in the toolchain: the darwin/arm64 default
 link is cc whenever the host has one (selfhost/xo main.xo default_ld;
 fewer of its binaries were rejected than macho's in the repros), and
 `--ld=macho` still selects macho. To see whether a binary that sleeps at

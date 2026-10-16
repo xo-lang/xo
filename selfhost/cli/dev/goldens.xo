@@ -40,8 +40,11 @@ pub struct Config {
   /// Run every nth program only (the -short tier), 1 for all.
   pub sample: Int = 1
   pub only: List[Str] = []
-  /// Where binaries go.
+  /// Where binaries go (each run's in a directory of its own, bins).
   pub out: Str
+  /// This run's binaries: a fresh directory under out, removed when the
+  /// run ends (run_goldens sets it).
+  pub bins: Str = ""
   /// The pass cache, "" for none.
   pub cache: Str = ""
   pub timeout: Duration = 120s
@@ -235,7 +238,7 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
 }
 
 fn bin_path(cfg: Config, p: Prog) -> Str {
-  "${cfg.out}/${p.dir.replace("/", "_")}"
+  "${if cfg.bins.is_empty() { cfg.out } else { cfg.bins }}/${p.dir.replace("/", "_")}"
 }
 
 /// finish runs the built program p and compares its run with its want.
@@ -336,7 +339,16 @@ fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
 
 /// run_goldens runs every program of dirs and returns the outcomes in
 /// path order.
-pub fn run_goldens(os: Os, cfg: Config, dirs: List[Str]) -> List[Outcome] uses (clock, env, fs.read, fs.write, proc) {
+pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses (clock, env, fs.read, fs.write, proc, rand) {
+  // this run's binaries in a directory of their own: sessions running at
+  // once share out, and a binary one removed and linked again while
+  // another launched it stalled at _dyld_start (macOS assesses each
+  // path's first exec; gotchas/amfi-gatekeeper-macho-layout.md)
+  var cfg = cfg0
+  os.fs.create_dir_all(cfg.out).ok()
+  remove_stale_runs(os, cfg.out)
+  cfg.bins = "${cfg.out}/run-${os.rand.bytes(6).to_hex()}"
+  os.fs.create_dir_all(cfg.bins).ok()
   var progs = programs(os.fs, dirs)
   if !cfg.only.is_empty() {
     progs = progs.filter(fn(p: Prog) { cfg.only.any(fn(o: Str) { p.dir.contains(o) }) })
@@ -402,7 +414,18 @@ pub fn run_goldens(os: Os, cfg: Config, dirs: List[Str]) -> List[Outcome] uses (
   if !times_path.is_empty() {
     write_times(os.fs, times_path, times, outs)
   }
+  os.fs.remove_all(cfg.bins).ok()
   outs.sort_by(fn(o: Outcome) { o.dir })
+}
+
+/// Removes the run directories under out a run that ended without its
+/// cleanup (killed, timed out) left, once a day old.
+fn remove_stale_runs(os: Os, out: Str) uses (clock, fs.read, fs.write) {
+  for fi in os.fs.read_dir(out).ok() ?? [] {
+    if fi.is_dir && fi.name.starts_with("run-") && os.clock.since(fi.modified) > 24h {
+      os.fs.remove_all("${out}/${fi.name}").ok()
+    }
+  }
 }
 
 /// worker builds the programs it takes from queue, one after another, in
