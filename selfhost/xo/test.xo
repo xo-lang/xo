@@ -269,13 +269,8 @@ fn hex4(n: Int) -> Str {
 /// runNativeTestEnv: test t of bin with seed s and the extra environment
 /// (NAME=value words), in the test's module directory.
 fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outcome, PropCase) {
-  var words = ["XO_TEST=${t.index}", "XO_TEST_SEED=${s}"] + env
-  var q: List[Str] = []
-  for w in words {
-    q.push(sh_q(w))
-  }
-  let script = "cd ${sh_q(t.dir)} && exec env ${q.join(" ")} ${sh_q(bin)}"
-  let r = match os.proc.run("sh", ["-c", script]) {
+  let words = ["XO_TEST=${t.index}", "XO_TEST_SEED=${s}"] + env
+  let r = match test_cmd(os, bin, t.dir, words).output() {
     Ok(r) => r
     Err(e) => return (Outcome{status: "fail", msg: "${e}"}, PropCase{})
   }
@@ -459,14 +454,9 @@ fn run_batch(os: Os, bin: Str, batch: List[Run]) -> (List[List[Str]], List[Bool]
   }
   let first = batch[0]
   let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"]
-  var q: List[Str] = []
-  for w in words {
-    q.push(sh_q(w))
-  }
-  let script = "cd ${sh_q(first.t.dir)} && exec env ${q.join(" ")} ${sh_q(bin)}"
   var segs: List[List[Str]] = []
   var ended: List[Bool] = []
-  let r = match os.proc.run("sh", ["-c", script]) {
+  let r = match test_cmd(os, bin, first.t.dir, words).output() {
     Ok(r) => r
     Err(_) => return (segs, ended, 1)
   }
@@ -505,6 +495,19 @@ fn prop_case(os: Os, bin: Str, t: TestInfo, seed: Int, c: Int) -> Outcome? {
     }
   }
   Some(Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs})
+}
+
+/// The test binary bin run in dir with the NAME=value words added to the
+/// environment: started directly (the harness used `sh -c 'cd dir &&
+/// exec env words bin'`, three execs per run, until 2026-10-15).
+fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {
+  // PWD as the shell's cd left it
+  var c = os.proc.cmd(bin, []).dir(dir).set_env("PWD", dir)
+  for w in words {
+    let i = w.find("=") ?? w.len()
+    c = c.set_env(w[0..i], if i < w.len() { w[i + 1..w.len()] } else { "" })
+  }
+  c
 }
 
 /// strings.TrimRight(s, "\n")

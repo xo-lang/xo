@@ -67,14 +67,42 @@ arm64 and on LLVM. Output and exit status were compared byte for byte:
 (which now also runs every passing test of its packages in one batched
 process under XO_LEAKCHECK=1 and requires 0 live) pass.
 
+## Item 2: the test binary started directly (2026-10-15)
+
+The harness started every run as `sh -c 'cd DIR && exec env ... BIN'`
+(three execs). It now starts BIN directly with os.proc's cmd builder
+(`dir`, `set_env`, PWD set as `cd` left it). Warm medians of 5 on arm64,
+the xo of c2a32622 (old) against the change (new), each in its own
+built directory; main had faster builds by then (decision 0236), so
+these warm times are lower than the table above:
+
+| dir | mode | old xo (sh -c) s | new xo (direct) s |
+|---|---|---|---|
+| selfhost/lexer | process | 4.121 | 1.960 |
+| selfhost/lexer | batched | 0.954 | 0.941 |
+| examples/notes-service | process | 2.336 | 2.262 |
+| examples/notes-service | batched | 2.199 | 2.167 |
+| cmd/xo/testdata/nogc/same | process | 2.091 | 2.010 |
+| cmd/xo/testdata/nogc/same | batched | 2.008 | 1.973 |
+| cmd/xo/testdata/nogc/prop | process | 7.393 | 2.845 |
+| cmd/xo/testdata/nogc/prop | batched | 5.734 | 2.393 |
+
+About 7 ms per run was the wrapper. Gate: the old and the new xo over
+the same 107 test directories and flags as above, batched and with
+XO_TEST_BATCH=0, on arm64 and LLVM: 428 comparisons, 0 differ.
+
+How nogc/prop's shrink replays end (the next item's question; counted
+with an `sh` wrapper on the old xo): 460 pass (exit 0), 58 fail (an
+improvement, exit 1), 354 are not smaller than the best (exit 3), of
+872 replays. A long lived binary survives only the passing ones unless
+a not smaller case can skip its body without exiting.
+
 ## Next
 
 - Shrinking in batches: a test binary driven over a pipe (one request
   per replay on stdin) would turn nogc/prop's 906 processes into about
   20.
-- The `sh -c ... env` wrapper per run: running the binary directly with
-  the environment and directory set (os.proc's cmd builder) would
-  remove two execs from every remaining one-process run.
+- Done: the `sh -c ... env` wrapper per run (item 2 above).
 
 ## Script
 

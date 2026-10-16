@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test --no-gc` starts each test binary directly (os.proc's cmd
+  with the directory and environment) instead of through `sh -c 'cd
+  ... && exec env ...'`: about 7 ms less per run; nogc/prop's fixture
+  5.7 s to 2.4 s, selfhost/lexer with XO_TEST_BATCH=0 4.1 s to 2.0 s;
+  reports unchanged (428 old against new comparisons)
+  (bench/results/xo-test-batched-2026-10-15.md).
+
 - `xo test` on the native backends keeps a run cache (decision 0236
   item 3, selfhost/xo testcache.xo): with nothing changed (every std
   file, each module directory, xo.mod and xo.lock up the tree, xo

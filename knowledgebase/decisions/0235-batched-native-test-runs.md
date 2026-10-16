@@ -75,6 +75,9 @@ capability, and each case of the property tests among them, in batches:
   global test state must be added to the reset (twrun.xo between, or
   the prelude's llrt_test_next for modules above twrun.xo).
 - A failing run costs one extra process (it runs twice).
+- Every process starts the test binary directly (os.proc's cmd with
+  `dir` and `set_env`, PWD as `cd` set it), no longer through `sh -c
+  'cd DIR && exec env ... BIN'`: about 7 ms less per run (2026-10-15).
 - Not done: recovering in process from a failed `expect` (unwinding to
   the loop instead of exiting). Failures are rare, a fresh process is
   the strongest isolation, and the unwinding would have to cross tasks
