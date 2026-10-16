@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The task runtime's stress test is Xo (decision 0241):
+  std/llrt/testdata/tasks.c (561 lines of C) became
+  internal/llvm/testdata/rt/tasks, run under ThreadSanitizer with 1, 3,
+  and 8 workers; std/internal gains `rt_probe` and `obj_word` for the
+  toolchain's runtime tests.
 - The profiler names lines (decision 0239's tables, read back by
   dwline.xo): pprof's Line.line and Function.filename (`go tool pprof
   -list fib` shows the source), and the text summary's hottest line per

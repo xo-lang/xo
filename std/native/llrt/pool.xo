@@ -1611,3 +1611,12 @@ fn mon_scan(p: Int) -> Bool {
   }
   pending
 }
+
+/// The tasks scope s's list holds, under its lock: std/internal
+/// rt_probe's "listed" (decision 0241, the prune test).
+pub fn scope_listed(s: Int) -> Int {
+  lock(s + S_MU)
+  let n = rt.mem_load(s, S_NLIST, 8)
+  unlock(s + S_MU)
+  n
+}

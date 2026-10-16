@@ -22,7 +22,9 @@ import (
 // 0058) and of the task runtime (decision 0068). Threads come from Xo
 // programs that use tasks (TestGoldenTasks) and from C:
 // std/llrt/testdata/rc_threads.c hands shared values to pthreads,
-// std/llrt/testdata/tasks.c drives the task runtime directly, and
+// testdata/rt/tasks (an Xo program since decision 0241, std/internal's
+// rt_probe for what the language does not show) stresses the task
+// runtime, and
 // -DXO_RT_TEST_THREADS runs whole programs on several threads at once.
 // All run under ThreadSanitizer when clang supports it on the host.
 
@@ -265,36 +267,65 @@ func TestRuntimeAlloc(t *testing.T) {
 	runTSan(t, opt, ".")
 }
 
-// TestRuntimeTasks runs the C stress test of the task runtime (decision
-// 0068): scopes with thousands of tasks, trees of nested scopes, awaits
-// that run tasks not started yet, channels (buffered and not), canceled
-// background tasks blocked in send and receive, child failure, mutexes
-// and atomics. Under ThreadSanitizer with one worker and with three,
-// then optimized with ten times the tasks; every allocation must be
-// freed.
+// TestRuntimeTasks runs the stress test of the task runtime (decision
+// 0068), an Xo program since decision 0241 (testdata/rt/tasks; it was
+// std/llrt/testdata/tasks.c): scopes with thousands of tasks, trees of
+// nested scopes, channels (buffered and not), canceled background tasks
+// blocked in send and receive, child failure, mutexes and atomics, the
+// mutex's phase fair handoff, the pruning of a long lived scope, and
+// magazines. Under ThreadSanitizer with one worker, three, and eight,
+// then optimized with ten times the tasks; every allocation of each test
+// must be freed.
 func TestRuntimeTasks(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	src := filepath.Join(rtDir, "testdata", "tasks.c")
-	// the scheduler core in Xo (std/native/llrt/sched.xo and pool.xo
-	// through the C ABI exports, decision 0212; its C path, XO_LLRT_C=sched,
-	// was deleted on 2026-10-14)
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	for _, threads := range []string{"1", "3"} {
-		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"} {
+	runRuntimeXo(t, filepath.Join("testdata", "rt", "tasks"), "XO_TASKS_N=20000",
+		[]string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"})
+}
+
+// runRuntimeXo runs a runtime stress test written in Xo (decision 0241):
+// the program in dir, its LLVM IR built with ThreadSanitizer and run with
+// one worker, three, and eight and the leak check on, each run printing
+// "<test>: ok" for every name and ending with no allocation live; then,
+// without -short, built optimized by xo and run once with more work
+// (more, an environment entry) on eight workers.
+func runRuntimeXo(t *testing.T, dir, more string, names []string) {
+	t.Helper()
+	t0 := time.Now()
+	ir, err := xotool.LLVMIR(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t1 := time.Now()
+	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	t.Logf("LLVM IR %v, ThreadSanitizer build %v", t1.Sub(t0), time.Since(t1))
+	check := func(out, what string) {
+		t.Helper()
+		for _, name := range names {
 			if !strings.Contains(out, name+": ok") {
-				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
+				t.Errorf("%s: test %s did not pass:\n%s", what, name, out)
 			}
 		}
+		if !strings.Contains(out, "xo leakcheck: 0 live") {
+			t.Errorf("%s: allocations live at exit:\n%s", what, out)
+		}
+	}
+	for _, threads := range []string{"1", "3", "8"} {
+		t2 := time.Now()
+		check(runTSan(t, bin, dir, "XO_THREADS="+threads, "XO_LEAKCHECK=1"), "XO_THREADS="+threads)
+		t.Logf("XO_THREADS=%s: %v", threads, time.Since(t2))
 	}
 	if testing.Short() {
 		return
 	}
-	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2", "-DXO_TASKS_N=20000"}, cOnly(t, src), opt); err != nil {
-		t.Fatal(err)
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
 	}
-	runTSan(t, opt, ".")
+	check(runTSan(t, res.Binaries[xotool.Host()], dir, more, "XO_THREADS=8", "XO_LEAKCHECK=1"), "optimized, "+more)
 }
 
 // TestRuntimeEventLoop runs the C test of fibers and the event loop

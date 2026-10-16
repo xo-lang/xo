@@ -9,6 +9,10 @@ use native/llrt/hkdf
 use native/llrt/hmac
 use native/llrt/linux
 use native/llrt/mlkem
+use native/llrt/mutex
+use native/llrt/obj
+use native/llrt/pool
+use native/llrt/rc
 use native/llrt/nistec
 use native/llrt/rsa
 use native/llrt/sha1
@@ -119,6 +123,98 @@ fn rt_op(what: Str) -> Bytes? {
     return Some(s.bytes())
   }
   None
+}
+
+fn obj_word[T](x: T) -> Int { rt.obj_addr(x) }
+
+fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
+  match op {
+    "live" | "total" => {
+      // heapos.live writes both sums; its own block is one more of each
+      let w = obj.alloc_obj(16)
+      heapos.live(w, w + 8)
+      let r = rt.mem_load(w, if op == "live" { 0 } else { 8 }, 8) - 1
+      obj.free_obj(w)
+      r
+    }
+    "chunks" => heapos.chunks()
+    "thread" => rt.tlocal_addr()
+    "alloc" => obj.alloc_obj(a)
+    "free" => {
+      obj.free_obj(a)
+      0
+    }
+    "resize" => obj.resize_obj(a, b, c)
+    "fill" => {
+      probe_fill(a, b, c)
+      0
+    }
+    "check" => if probe_check(a, b, c, d) { 1 } else { 0 }
+    "rs_cap" => {
+      let o = obj.rs_new_obj(a)
+      let cap = rt.mem_load(o, 8, 8)
+      rt.mem_set(o + 16, 90, cap)
+      obj.free_obj(o)
+      cap
+    }
+    "obj" => {
+      let o = obj.alloc_obj(16)
+      rt.mem_store(o, 0, 1, 8)
+      rt.mem_store(o, 8, a, 8)
+      o
+    }
+    "word" => rt.mem_load(a, 8, 8)
+    "inc" => {
+      rc.inc(a)
+      0
+    }
+    "dec" => rc.dec(a)
+    "claim" => rc.claim(a)
+    "mark" => rc.mark(a)
+    "count" => rt.slot_load(a, 0, 0)
+    "readers" => mutex.queued(a, false)
+    "writers" => mutex.queued(a, true)
+    "listed" => pool.scope_listed(a)
+    _ => fault("internal.rt_probe: unknown op ${op}")
+  }
+}
+
+/// The byte of tag t at i: rt_probe's "fill" and "check" pattern (every
+/// byte up to 4 KiB, then one in every 4 KiB page, and the last).
+fn probe_pat(t: Int, i: Int) -> Int {
+  rt.int_wrap(4, rt.int_wrap(0, rt.int_wrap(2, t, -7046029254386353131), rt.int_wrap(2, i, 31)), 56)
+}
+
+fn probe_fill(p: Int, n: Int, t: Int) {
+  let full = n.min(4096)
+  for i in 0..full {
+    rt.mem_store(p, i, probe_pat(t, i), 1)
+  }
+  var i = 4096
+  while i < n {
+    rt.mem_store(p, i, probe_pat(t, i), 1)
+    i += 4096
+  }
+  if n > 0 {
+    rt.mem_store(p, n - 1, probe_pat(t, n - 1), 1)
+  }
+}
+
+fn probe_check(p: Int, n: Int, m: Int, t: Int) -> Bool {
+  let full = n.min(4096)
+  for i in 0..full {
+    if rt.mem_load(p, i, 1) != probe_pat(t, i) {
+      return false
+    }
+  }
+  var i = 4096
+  while i < n {
+    if rt.mem_load(p, i, 1) != probe_pat(t, i) {
+      return false
+    }
+    i += 4096
+  }
+  !(n > 0 && n == m && rt.mem_load(p, n - 1, 1) != probe_pat(t, n - 1))
 }
 
 /// The frame address of a function rt_op calls.

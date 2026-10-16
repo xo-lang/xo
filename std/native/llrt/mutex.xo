@@ -330,3 +330,13 @@ pub fn free(m: Int) {
   tasks.list_release(ld(m, M_SLOT), ld(m, M_DROP))
   obj.free_obj(m)
 }
+
+/// The tasks waiting on mutex m to write (writers) or read, under its
+/// lock: std/internal rt_probe's "writers" and "readers" (decision 0241,
+/// the handoff test).
+pub fn queued(m: Int, writers: Bool) -> Int {
+  pool.lock(m + M_MU)
+  let n = rt.mem_load(m, if writers { M_WWAIT } else { M_RWAIT }, 8)
+  pool.unlock(m + M_MU)
+  n
+}

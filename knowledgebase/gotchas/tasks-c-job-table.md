@@ -1,6 +1,8 @@
 # std/llrt/testdata/tasks.c: "too many jobs" in the optimized run only
 
-Status: Observed (2026-10-10, adding the decision 0118 tests).
+Status: Obsolete (2026-10-16): tasks.c became the Xo program internal/llvm/testdata/rt/tasks (decision 0241), which has no job table.
+
+Observed 2026-10-10, adding the decision 0118 tests.
 
 Symptom: TestRuntimeTasks passes its ThreadSanitizer runs, then the
 optimized run exits 2 printing `too many jobs`.

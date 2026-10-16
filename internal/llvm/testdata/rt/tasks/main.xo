@@ -1,0 +1,374 @@
+// A stress test of the task runtime (decision 0068), run by
+// internal/llvm's TestRuntimeTasks under ThreadSanitizer with one worker,
+// three, and eight, and optimized with ten times the tasks (decision
+// 0241: std/llrt/testdata/tasks.c in Xo). Scopes with thousands of tasks,
+// trees of nested scopes, channels (buffered and not), canceled
+// background tasks blocked in send and receive, child failure, mutexes
+// and atomics, the phase fair handoff of a mutex, the pruning of a long
+// lived scope's list, and blocks freed on another thread coming back to
+// the allocating one. After each test every allocation it made must be
+// freed (std/internal rt_probe "live"). Prints "<test>: ok" per test;
+// exit status 0 means every test passed.
+//
+// XO_TASKS_N sets the tasks of the fan out tests (default 2000). With
+// XO_THREADS above 1 (or unset, the default workers) magazines' frees
+// run on another worker than the allocations: the allocating task spins
+// until they are done, so another worker must take the freeing task.
+use std/internal
+use std/task
+
+enum Fail {
+  Bad(v: Int)
+}
+
+/// The failed checks.
+struct Run {
+  failures: Atomic[Int]
+  out: Stdio
+}
+
+fn (r: Run) check(ok: Bool, what: Str) {
+  if !ok {
+    r.out.eprintln("check failed: ${what}")
+    let _n = r.failures.add(1)
+  }
+}
+
+fn live() -> Int { internal.rt_probe("live", 0, 0, 0, 0) }
+
+fn square(n: Int) -> Int { n * n }
+
+// tree spawns a binary tree of tasks, each level in a scope of its own,
+// and returns the number of leaves (each level awaits its children)
+fn tree(depth: Int) -> Int {
+  if depth == 0 {
+    return 1
+  }
+  scope s {
+    let a = s.spawn(fn() { tree(depth - 1) })
+    let b = s.spawn(fn() { tree(depth - 1) })
+    a.await + b.await
+  }
+}
+
+fn test_fanout(r: Run, n: Int) {
+  let sum = scope s {
+    var ts: List[Task[Int, Never]] = []
+    for i in 0..n {
+      ts.push(s.spawn(fn() { square(i) }))
+    }
+    var sum = 0
+    for t in ts {
+      sum += t.await
+    }
+    sum
+  }
+  var want = 0
+  for i in 0..n {
+    want += i * i
+  }
+  r.check(sum == want, "fanout sum ${sum} want ${want}")
+  // handles discarded: the scope's end waits for them
+  scope s {
+    for i in 0..n {
+      let _t = s.spawn(fn() { square(i) })
+    }
+  }
+}
+
+fn test_tree(r: Run) {
+  let n = tree(10)
+  r.check(n == 1024, "tree(10) = ${n}")
+}
+
+fn test_channel(r: Run, n: Int) {
+  for cap in [0, 4] {
+    let c = Chan[List[Int]].new(cap)
+    let sum = scope s {
+      s.spawn_background(fn() {
+        for i in 1..n + 1 {
+          c.send([i])
+        }
+        c.close()
+      })
+      var sum = 0
+      while let Some(l) = c.recv() {
+        sum += l[0]
+      }
+      sum
+    }
+    r.check(sum == n * (n + 1) / 2, "channel cap ${cap} sum ${sum}")
+  }
+  // try_send and try_recv; buffered values freed with the channel
+  let c = Chan[List[Int]].new(2)
+  r.check(c.try_send([1]), "try_send 1")
+  r.check(c.try_send([2]), "try_send 2")
+  r.check(!c.try_send([3]), "try_send 3 on a full channel")
+  r.check(c.len() == 2, "len ${c.len()}")
+  match c.try_recv() {
+    Some(l) => r.check(l.len() == 1 && l[0] == 1, "try_recv ${l.len()} ${l[0]}")
+    None => r.check(false, "try_recv on a channel of two")
+  }
+  // ping pong on unbuffered channels
+  let ping = Chan[List[Int]].new(0)
+  let pong = Chan[List[Int]].new(0)
+  let v = scope s {
+    let _t = s.spawn(fn() {
+      for _ in 0..200 {
+        let l = ping.recv() ?? [0]
+        pong.send([l[0] + 1])
+      }
+    })
+    var v = 0
+    for _ in 0..200 {
+      ping.send([v])
+      v = (pong.recv() ?? [0])[0] + 1
+    }
+    v
+  }
+  r.check(v == 400, "ping pong ${v}")
+}
+
+fn recv_forever(c: Chan[List[Int]]) {
+  while true {
+    let _l = c.recv()
+  }
+}
+
+fn send_forever(c: Chan[List[Int]]) {
+  while true {
+    c.send([7])
+  }
+}
+
+fn test_cancel(r: Run) {
+  // background tasks blocked in recv and send are canceled at the end
+  let c = Chan[List[Int]].new(0)
+  let full = Chan[List[Int]].new(1)
+  scope s {
+    for _ in 0..8 {
+      s.spawn_background(fn() { recv_forever(c) })
+      s.spawn_background(fn() { send_forever(full) })
+    }
+  }
+  // s.cancel(): the tasks unwind, the body goes on
+  let c2 = Chan[List[Int]].new(0)
+  scope s {
+    for _ in 0..8 {
+      let _t = s.spawn(fn() { recv_forever(c2) })
+    }
+    s.cancel()
+    r.check(!task.is_canceled(), "the body canceled with its tasks")
+  }
+}
+
+// a failed task cancels the body (its receive unwinds), and the scope
+// reports the failure
+fn fail_scope(c: Chan[List[Int]]) -> Int ! Fail {
+  scope s {
+    let _r = s.spawn(fn() { recv_forever(c) })
+    let _f = s.spawn(fn() -> Int ! Fail { Err(Fail.Bad(v: 42)) })
+    let _l = c.recv() // never gets a value
+    0
+  }
+}
+
+fn awaited_failure() -> Int {
+  scope s {
+    let t = s.spawn(fn() -> Int ! Fail { Err(Fail.Bad(v: 7)) })
+    match t.await {
+      Ok(v) => v
+      Err(Fail.Bad(v)) => v
+    }
+  }
+}
+
+fn test_failure(r: Run) {
+  let c = Chan[List[Int]].new(0)
+  match fail_scope(c) {
+    Ok(v) => r.check(false, "the scope of a failed task gave ${v}")
+    Err(Fail.Bad(v)) => r.check(v == 42, "the failure's value ${v}")
+  }
+  r.check(!task.is_canceled(), "canceled after the failure")
+  // an awaited failure does not fail the scope
+  let v = awaited_failure()
+  r.check(v == 7, "awaited failure ${v}")
+}
+
+fn test_mutex(r: Run, n: Int) {
+  let m = Mutex[Int].new(0)
+  let a = Atomic[Int].new(0)
+  let k = n / 8
+  scope s {
+    for _ in 0..8 {
+      let _w = s.spawn(fn() {
+        for _ in 0..k {
+          m.with(fn(var v) { v += 1 })
+        }
+      })
+      let _r = s.spawn(fn() {
+        var last = 0
+        for _ in 0..k {
+          last = m.with_read(fn(v) { v })
+        }
+        last
+      })
+      let _a = s.spawn(fn() {
+        for _ in 0..k {
+          let _x = a.add(1)
+        }
+      })
+    }
+  }
+  let got = m.with_read(fn(v) { v })
+  r.check(got == 8 * k, "mutex ${got}")
+  r.check(a.get() == 8 * k, "atomic ${a.get()}")
+  r.check(a.max(5) == 8 * k, "max")
+  r.check(a.swap(3) == 8 * k, "swap")
+  r.check(a.compare_and_swap(3, 4) && !a.compare_and_swap(3, 5) && a.get() == 4, "compare_and_swap")
+}
+
+// test_handoff checks decision 0118's phase fair handoff: readers queued
+// behind a writer get the lock when it releases, before a writer that
+// queued after them (with writers simply preferred they would read its
+// write)
+fn test_handoff(r: Run, clock: Clock) {
+  let m = Mutex[Int].new(0)
+  let mw = internal.obj_word(m)
+  let reads = scope s {
+    // the lock held while eight readers and then a writer queue
+    let (rs, w) = m.with(fn(var v) {
+      var rs: List[Task[Int, Never]] = []
+      for _ in 0..8 {
+        rs.push(s.spawn(fn() { m.with_read(fn(x) { x }) }))
+      }
+      while internal.rt_probe("readers", mw, 0, 0, 0) != 8 {
+        clock.sleep(1ms)
+      }
+      let w = s.spawn(fn() { m.with(fn(var x) { x += 1 }) })
+      while internal.rt_probe("writers", mw, 0, 0, 0) != 1 {
+        clock.sleep(1ms)
+      }
+      v = 1
+      (rs, w)
+    })
+    var got: List[Int] = []
+    for t in rs {
+      got.push(t.await)
+    }
+    w.await
+    got
+  }
+  for x in reads {
+    r.check(x == 1, "a queued reader read ${x}, not the first write")
+  }
+  let last = m.with_read(fn(v) { v })
+  r.check(last == 2, "after the queued writer ${last}")
+}
+
+// test_prune checks that a long lived scope drops the tasks that are over
+// and unreferenced (decision 0118, scope_prune): its list stays bounded
+// however many tasks it starts
+fn test_prune(r: Run, n: Int) {
+  let total = 16 * n
+  let batch = 64
+  let most = scope s {
+    let sw = internal.obj_word(s)
+    var most = 0
+    var done = 0
+    while done < total {
+      var ts: List[Task[Int, Never]] = []
+      for _ in 0..batch {
+        ts.push(s.spawn(fn() { square(3) }))
+      }
+      for t in ts {
+        let _v = t.await
+      }
+      most = most.max(internal.rt_probe("listed", sw, 0, 0, 0))
+      done += batch
+    }
+    most
+  }
+  // without pruning the list holds every task started, so the last
+  // batch's measure is exactly total. How far a prune shrinks it depends
+  // on timing (a finished task whose queue entry is still pending
+  // survives it: tasks.c's bound of three quarters failed 1 in 13 runs
+  // at a load of 30), so the check is only that the list never held them
+  // all (at rest it stays at one batch, 64)
+  r.check(most < total, "prune: the scope's list held all ${most} of ${total} tasks")
+}
+
+// test_magazines checks that blocks one thread allocates and another
+// frees come back to the allocating thread (decision 0118's magazines)
+// instead of it carving new chunks every round
+fn test_magazines(r: Run, workers: Int) {
+  let rounds = 40
+  let warm = 4
+  let nblocks = 50000
+  var before = 0
+  for round in 0..rounds {
+    if round == warm {
+      before = internal.rt_probe("chunks", 0, 0, 0, 0)
+    }
+    var bs: List[Int] = List.with_capacity(nblocks)
+    for _ in 0..nblocks {
+      bs.push(internal.rt_probe("alloc", 56, 0, 0, 0))
+    }
+    let me = internal.rt_probe("thread", 0, 0, 0, 0)
+    let done = Atomic[Int].new(0)
+    let th = scope s {
+      let t = s.spawn(fn() {
+        for b in bs {
+          let _f = internal.rt_probe("free", b, 0, 0, 0)
+        }
+        let th = internal.rt_probe("thread", 0, 0, 0, 0)
+        done.set(1)
+        th
+      })
+      if workers != 1 {
+        // busy until the frees are done, so another worker takes them
+        // (a task waiting for its child would run it on its own thread)
+        while done.get() == 0 {}
+      }
+      t.await
+    }
+    r.check(workers == 1 || th != me, "magazines: the blocks were freed on their own thread")
+  }
+  // each round allocates 3.2 MB: without magazines about one chunk a
+  // round; a freeing thread keeps less than two magazines (128 KB) in
+  // the heap it leaves behind
+  let grew = internal.rt_probe("chunks", 0, 0, 0, 0) - before
+  r.check(grew <= 6, "magazines: ${grew} chunks carved in ${rounds - warm} rounds")
+}
+
+fn main(os: Os) {
+  let n = Int.parse(os.env.get("XO_TASKS_N") ?? "") ?? 2000
+  let workers = Int.parse(os.env.get("XO_THREADS") ?? "") ?? 0
+  let r = Run{failures: Atomic[Int].new(0), out: os.stdio}
+  // the scheduler's first use, outside every test's count
+  scope s {
+    let _t = s.spawn(fn() { square(1) })
+  }
+  let tests = ["fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"]
+  for name in tests {
+    let before = r.failures.get()
+    let l0 = live()
+    match name {
+      "fanout" => test_fanout(r, n)
+      "tree" => test_tree(r)
+      "channel" => test_channel(r, n)
+      "cancel" => test_cancel(r)
+      "failure" => test_failure(r)
+      "mutex" => test_mutex(r, n)
+      "handoff" => test_handoff(r, os.clock)
+      "prune" => test_prune(r, n)
+      _ => test_magazines(r, workers)
+    }
+    let l1 = live()
+    r.check(l1 == l0, "${name}: ${l1 - l0} allocations still live")
+    os.stdio.println("${name}: ${if r.failures.get() == before { "ok" } else { "FAIL" }}")
+  }
+  if r.failures.get() != 0 {
+    os.proc.exit(1)
+  }
+}

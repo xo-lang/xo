@@ -34,3 +34,15 @@ func Internal_lock_shared(tk *Task, f Fs, p string) Result[Internal_SharedLock, 
 	}
 	return Ok[Internal_SharedLock, FsErr](Internal_SharedLock{r.V.V})
 }
+
+// Internal_rt_probe is `internal.rt_probe`: a probe of the native runtime
+// (decision 0241), which the Go backend does not have.
+func Internal_rt_probe(_ *Task, op string, _, _, _, _ int64) int64 {
+	panic("internal.rt_probe(" + op + "): the native backends only")
+}
+
+// Internal_obj_word is `internal.obj_word`: the native runtime's object
+// address, which the Go backend does not have.
+func Internal_obj_word[T any](_ *Task, _ T) int64 {
+	panic("internal.obj_word: the native backends only")
+}
