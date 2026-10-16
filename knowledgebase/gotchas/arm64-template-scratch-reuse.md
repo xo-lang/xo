@@ -2,8 +2,8 @@
 
 Status: Observed (2026-10-16, decision 0231's addendum, adc chains). A
 latent miscompile: found by reading the emitter, not by a wrong result.
-Fixed in the emitter the same day (the second Fix below); adc_chain can
-be switched back on.
+Fixed in the emitter the same day (the second Fix below); the chains
+are back on (ADC_CHAINS true, up to 8 pairs, 2026-10-16).
 
 Symptom: none yet seen; the risk is a wrong value with no error. An
 instruction template with many operands (selfhost/arm64 calls.xo
@@ -47,3 +47,13 @@ and N callee saved registers per class, so most values spill;
 internal/arm64 TestGoldenRunSpill runs the adc chain, P-256, crypto,
 overflow, fault, concurrency, json, map, and closure goldens at N=2 and
 N=4. Run a new multi-operand template through it.
+
+Second trap (Observed 2026-10-16, chains back on): under the spill test
+a long chain cannot fit at all. At XO_ARM64_REGS=2 there are 7 general
+registers (two caller saved, two callee saved, x15 to x17), and a chain
+of 6 pairs in x25519.fe64_sq is one early instruction needing 19
+distinct registers: the build failed loudly with "no free register"
+(the emitter fix working as designed, not a miscompile). With the full
+set the same chains build and pass. adc_chain now caps a chain at
+(2 N + 2) / 3 pairs under XO_ARM64_REGS = N (none at N = 2, 3 pairs at
+N = 4); any long multi-operand template needs the same care.

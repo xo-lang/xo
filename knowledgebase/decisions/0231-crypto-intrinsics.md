@@ -145,3 +145,12 @@ family, std internal, constant time, plain Xo bodies, no seed bump.
   then adcs chain in nistec.mul4p on arm64 and uadd.with.overflow on
   LLVM; TestLLVMAdcChain disassembles LLVM's mul4p and requires at least
   24 adcs in at most 170 instructions.
+- **Chains back on (2026-10-16).** The arm64 chains were turned off
+  (bfb2c4f6, each pair its own template) while the emitter could reload
+  two spilled operands of one template into one scratch register
+  (gotchas/arm64-template-scratch-reuse.md). With 4bf54541 (every
+  spilled operand of one instruction gets a register of its own, or the
+  build fails naming the function) they are on again, up to 8 pairs an
+  instruction (ADC_CHAIN_PAIRS; the ten operand limit is gone). Under
+  the spill test (XO_ARM64_REGS = N) a chain keeps to (2 N + 2) / 3
+  pairs, so that its 3 p + 1 registers fit: N = 2 makes none.

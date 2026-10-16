@@ -181,6 +181,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
   crypto/rsa for 1024 to 4096 bit keys.
 
+- arm64: the cpu.adc chains are back on (the emitter's distinct
+  registers for spilled operands, 4bf54541), up to 8 pairs an
+  instruction: TLS handshakes 7% to 9% fewer instructions on arm64
+  (bench/results/tls-perf-2026-10-15.md).
 - arm64: each cpu.adc pair is an instruction template of its own again
   (calls.xo ADC_CHAINS off): a chain of up to ten operands could reload
   a fourth spilled operand into x15 over the third, silently; arm64

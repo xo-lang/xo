@@ -1294,12 +1294,16 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
   false
 }
 
-/// Whether adc pairs chain into one instruction (adc_chain): off until
-/// the emitter gives a template's spilled operands distinct registers or
-/// fails loudly (decision 0231's addendum; a chain of up to ten uses
-/// could reload a fourth spilled operand into x15 over the third,
+/// Whether adc pairs chain into one instruction (adc_chain): on since the
+/// emitter gives every spilled operand of one instruction a register of
+/// its own or fails naming the function (46aacc7d,
 /// gotchas/arm64-template-scratch-reuse.md).
-const ADC_CHAINS = false
+const ADC_CHAINS = true
+
+/// The most pairs in one chain instruction: an early template's uses and
+/// defs all need registers of their own (2 per pair and one def each, plus
+/// the cset), so a longer chain goes on in the next instruction.
+const ADC_CHAIN_PAIRS = 8
 
 /// A chain of adds with carry starting at v (rt.u64_adc or
 /// rt.u64_adc_carry), as one instruction so that nothing comes between
@@ -1325,13 +1329,20 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   }
   sums.push(if sum0 { v } else { p0 })
   cars.push(if sum0 { p0 } else { v })
-  // the templates name at most ten uses and defs ($u0 to $u9): five
-  // pairs from adds, four after cmp; a longer chain goes on in the next
+  // at most ADC_CHAIN_PAIRS pairs (one fewer after cmp, which reads the
+  // carry in as a third use); a longer chain goes on in the next
   // instruction, its carry in from this one's cset
   let (cin0, cin0_k) = g.const_int(x.args[2])
-  let most = if cin0_k && cin0 == 0 { 5 } else { 4 }
+  var cap = ADC_CHAIN_PAIRS
+  if g.m.arm64_regs > 0 {
+    // the spill test ($XO_ARM64_REGS = N, N caller and N callee saved
+    // registers and x15 to x17): a chain of p pairs needs 3 p + 1
+    // distinct registers, so it stays within those (N = 2: no chain)
+    cap = imin(cap, (2 * g.m.arm64_regs + 3 - 1) / 3)
+  }
+  let most = if cin0_k && cin0 == 0 { cap } else { cap - 1 }
   var k = g.cur_ix + 1
-  while k < ins.len() && k <= g.cur_ix + 4 * 8 && sums.len() < most {
+  while k < ins.len() && k <= g.cur_ix + 8 * ADC_CHAIN_PAIRS && sums.len() < most {
     let last = cars[cars.len() - 1]
     let u = ins[k]
     let y = g.f.values[u]
