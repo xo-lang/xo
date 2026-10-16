@@ -202,3 +202,13 @@ Not built yet: the Mac's windows cross toolchain is gone and CI is off
 - Instrumenting function entry and exit: exact counts, but it changes
   what is measured (inlining, small functions) and costs when on.
 - A custom profile format: pprof is already read by everything.
+
+## Addendum: release builds and the files written (owner, 2026-10-16, not yet implemented)
+
+Relayed by the lead. Development builds (`xo run`, `xo test`, a plain
+`xo build`) keep the profiler; `xo build --release` leaves it out unless
+`--profile-support` is given. When the profiler writes a file it creates
+a new one (O_EXCL), refuses a symbolic link, and uses mode 0600. The
+same rules apply to the execution trace's recorder (decision 0240:
+`--trace-support`). Decision 0245 (sampling in the binary, symbolizing
+with `xo prof`) is a separate proposal, still waiting on the owner.
