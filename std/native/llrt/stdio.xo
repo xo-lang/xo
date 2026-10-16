@@ -31,6 +31,9 @@ use native/rt
 const WORDS = 3
 const BUF = 0
 const LEN = 8
+/// LEN as a word index (the slot atomics'; a constant, so the store
+/// keeps its immediate offset).
+const LEN_W = 1
 const LOCK = 16
 const MODE = 24
 
@@ -123,7 +126,7 @@ fn flush_locked(w: Int) {
   let n = rt.mem_load(w, LEN, 8)
   if n > 0 {
     write_all(1, rt.mem_load(w, BUF, 8), n)
-    rt.mem_store(w, LEN, 0, 8)
+    rt.slot_store[Int](w, LEN_W, 0, 0)
   }
 }
 
@@ -145,7 +148,7 @@ fn put_locked(w: Int, p: Int, n: Int) {
     len = 0
   }
   rt.mem_copy(add(buf, len), p, n)
-  rt.mem_store(w, LEN, add(len, n), 8)
+  rt.slot_store[Int](w, LEN_W, add(len, n), 0)
 }
 
 /// The rest of out: the first print, a full buffer, a large text, or a
@@ -179,9 +182,9 @@ pub fn out(p: Int, n: Int, nl: Bool) {
       rt.mem_copy(add(buf, len), p, n)
       if nl {
         rt.mem_store(buf, end, 10, 1)
-        rt.mem_store(w, LEN, add(end, 1), 8)
+        rt.slot_store[Int](w, LEN_W, add(end, 1), 0)
       } else {
-        rt.mem_store(w, LEN, end, 8)
+        rt.slot_store[Int](w, LEN_W, end, 0)
       }
       return
     }
@@ -217,7 +220,9 @@ pub fn print(s: Str, nl: Bool) { out(raw.data(s), s.len(), nl) }
 pub fn eprint(s: Str, nl: Bool) { err(raw.data(s), s.len(), nl) }
 
 /// Writes out the buffer: before a wait (decision 0069), at exit, before
-/// a fault's message. Nothing to do (no lock taken) when it is empty.
+/// a fault's message. Nothing to do (no lock taken) when it is empty: a
+/// relaxed load, which is why every store of the length is a relaxed
+/// atomic too (ThreadSanitizer, decision 0241).
 pub fn flush() {
   let w = rt.static_word(WORDS)
   if rt.slot_load[Int](w, 1, 0) == 0 {

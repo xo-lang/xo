@@ -37,7 +37,11 @@ const WL_FIRST = 0
 const E_PARK = 0
 const E_NEXT = 16
 const E_WRITER = 24
+/// E_WRITER as a word index (the slot atomics).
+const E_WRITER_W = 3
 const E_GRANTED = 28
+/// The word at E_WRITER of a granted reader's entry: writer 0, granted 1.
+const GRANTED = 4294967296
 
 /// The thread's worker record's flag that puts the fibers it wakes in
 /// its ring, not its next (pool.xo W_NONEXT), and its thread local
@@ -88,10 +92,11 @@ fn grant_readers(m: Int) {
       tasks.wl_del(l, e)
       st(m, M_READERS, ld(m, M_READERS) + 1)
       st(m, M_RWAIT, ld(m, M_RWAIT) - 1)
-      // granted is a C int beside writer: a release fence, then the
-      // store (C11's fence to store order)
-      rt.fence(RELEASE)
-      rt.mem_store(e, E_GRANTED, 1, 4)
+      // granted is the high half of the entry's word at E_WRITER (a
+      // reader's writer half is 0): one release store of the word, which
+      // the waiter's acquire load pairs with (a fence and a plain store
+      // were a race to ThreadSanitizer, decision 0241's addendum)
+      rt.slot_store(e, E_WRITER_W, GRANTED, RELEASE)
       signal(p)
     }
     e = next
@@ -280,9 +285,7 @@ pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
     pool.unlock(m + M_MU)
     while true {
       tasks.park_wait(c, true)
-      let granted = rt.mem_load(e, E_GRANTED, 4)
-      rt.fence(ACQUIRE)
-      if granted != 0 {
+      if rt.slot_load(e, E_WRITER_W, ACQUIRE) == GRANTED {
         // the last writer set the value under m's lock before the grant,
         // and none can change it while this share is held
         let l = ld(m, M_SLOT)

@@ -80,9 +80,10 @@ LpGL1jtk_f1_b24:
 	mov x9, #10
 	strb w9, [x20, x19]
 LpGL1jtk_f1_b25:
-	add x9, x19, #1
+	add x10, x19, #1
 LpGL1jtk_f1_b26:
-	str x9, [x21, #8]
+	add x9, x21, #8
+	str x10, [x9]
 	b LpGL1jtk_f1_b52
 LpGL1jtk_f1_b33:
 	ldr x1, [x21, #24]

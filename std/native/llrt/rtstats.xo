@@ -27,7 +27,7 @@ const RELAXED = 0
 pub fn init() {
   let r = rt.heap_large(REC_SIZE)
   rt.mem_set(r, 0, REC_SIZE)
-  rt.mem_store(r, 0, UNREAD, 4)
+  rt.slot_store(r, 0, UNREAD, RELAXED)
   rt.mem_store(rt.static_word(W_REC), 0, r, 8)
 }
 
@@ -40,11 +40,16 @@ pub fn counts() -> Int { rec() + COUNTS }
 /// Whether the statistics count.
 pub fn on() -> Bool {
   let r = rec()
-  r != 0 && rt.mem_load(r, 0, 4) == 1
+  r != 0 && rt.slot_load(r, 0, RELAXED) == 1
 }
 
-/// Turns them on or off (on: 0 or 1; poolsetup.xo, XO_RTSTATS).
-pub fn set(on: Int) { rt.mem_store(rec(), 0, on, 4) }
+/// Turns them on or off (on: 0 or 1; poolsetup.xo, XO_RTSTATS). The
+/// switch is a word other threads read: relaxed atomics, not plain
+/// accesses (ThreadSanitizer, decision 0241's addendum).
+pub fn set(on: Int) { rt.slot_store(rec(), 0, on, RELAXED) }
+
+/// The switch: UNREAD, 0, or 1 (rtsec.xo reads it at a section's entry).
+pub fn switch_now() -> Int { rt.slot_load(rec(), 0, RELAXED) }
 
 /// Counts the statistic k (a module's ST_*) when they are on.
 pub fn count(k: Int) {

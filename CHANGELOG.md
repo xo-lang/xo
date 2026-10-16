@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--race` on the LLVM backend (decision 0241's addendum): `xo
+  build|run|test|asm --backend=llvm --race` marks every function, the
+  runtime's too, sanitize_thread and builds with ThreadSanitizer (about
+  25 times the time, 12 times the memory: a checking build); arm64 and
+  wasm refuse it ("use --backend=llvm"). TestGoldenTasks and the
+  runtime tests build with it, and the runtime is clean: plain accesses
+  to words other threads update atomically became relaxed atomics or
+  acquire/release pairs (pool.xo's deferral words, poll.xo's timer
+  flag, stdio.xo's buffer length, obj.xo's count checks, rtstats.xo's
+  switch, mutex.xo's reader grant), checked over the 40 golden
+  programs that use tasks and the three runtime tests.
 - Inlined calls in the profiler and tracebacks (decision 0239): dwline.xo
   reads .debug_info's DW_TAG_inlined_subroutine entries (arm64's and
   LLVM's), so pprof shows inlined callees as their own (inline) lines

@@ -143,6 +143,61 @@ test as the C did, and the run must end with `xo leakcheck: 0 live`.
   obj_rl_new_cap, obj_rs_append_at, poll_pd_open, poll_pd_free,
   poll_poke, ctx_pool, ctx_cur, fd_nonblock) and obj.xo's rl_new_obj. std/llrt/testdata holds win_consts.c alone.
 
+## Addendum: --race on the LLVM backend (2026-10-16, xo-4)
+
+clang's ThreadSanitizer pass instruments only functions marked
+sanitize_thread, which xo's IR never set
+(gotchas/tsan-needs-sanitize-thread-mark.md), so the stress tests
+marked only the test program's own functions and the runtime went
+unchecked. Now:
+
+- `xo build|run|test|asm --backend=llvm --race` marks every generated
+  function sanitize_thread (selfhost/llvm gen.xo `tsan`: the attribute
+  sets with uwtable; the runtime's hand written nounwind helpers, the
+  thread local accessors and the stack switch, stay unmarked), compiles
+  and links with `-fsanitize=thread -mllvm
+  -tsan-instrument-func-entry-exit=0` (the entry and exit hooks give
+  functions cleanup pads the Xo unwinder cannot resume,
+  gotchas/tsan-func-exit-pads.md, so reports show the racing frame and
+  not the stack above it), and builds in its own directory
+  (`llvm-race`). arm64 and wasm refuse it ("use --backend=llvm"); the
+  Go backend keeps Go's `-race`.
+- What it checks: every plain load and store of generated code and of
+  the runtime (std/native) against the happens-before order of the
+  slot atomics, the runtime's locks and the fiber switches
+  (sanhook.xo's annotations). A report fails TestGoldenTasks and the
+  runtime tests (runRuntimeXo), which build with it now.
+- Races fixed to make the runtime clean (all plain accesses to words
+  another thread updates atomically, each made a relaxed slot atomic,
+  the same ldr or str on arm64, or an acquire/release pair where a
+  fence stood):
+  - pool.xo defer_check and scope_add read the monitor's static word
+    and a worker's W_DEFER_AT plainly while mon_main CASes them;
+  - poll.xo fire and fired: the timer's fired flag was a plain 4 byte
+    store after a release fence and a plain load before an acquire
+    fence (TSan does not model fences): now a release store and an
+    acquire load of its word;
+  - stdio.xo: flush's unlocked empty check is a relaxed load, but the
+    length was stored plainly under the lock (tasks.xo scope_close's
+    flush raced flush_out's store);
+  - obj.xo: the immortal checks of a count (reserve_slow, rl_grow,
+    rl_grow_n, push_slow) read the count plainly while another thread
+    drops a shared reference (obj.xo count);
+  - rtstats.xo: the statistics switch (a C int) set by poolsetup while
+    the poller reads it (15 of the 40 task goldens): a relaxed word now,
+    read through rtstats.switch_now (rtsec.xo, entry.xo);
+  - mutex.xo grant_readers: a reader's granted flag was a release fence
+    and a plain 4 byte store, read with a plain load and an acquire
+    fence: now a release store of the entry's writer and granted word
+    and an acquire load (conc_rwlock_handoff).
+  Found by building every golden that uses tasks (40) and the three
+  runtime tests with every function marked, at XO_THREADS=2, 3 and 8.
+- Cost (Mac, internal/llvm/testdata/rt/tasks at XO_THREADS=3, three
+  runs each): an LLVM build 0.10 s, 1.5 G instructions, 10 MB resident;
+  the --race build (-O1) 2.53 s, 13.5 G instructions, 120 MB: about 25
+  times the time, 9 times the instructions, 12 times the memory. A
+  checking build, never a release one.
+
 ## Alternatives
 
 - Keep the C: it is the last C in the runtime's tests and pins exports

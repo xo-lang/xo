@@ -144,6 +144,8 @@ const D_NEXT = 48
 const T_PARK = 16
 const T_FN = 24
 const T_FIRED = 40
+/// T_FIRED as a word index (the slot atomics).
+const T_FIRED_W = 5
 
 /// rt.sched_rt's statistics (xo_rt.c st: poll_return, poll_event,
 /// poll_wake).
@@ -262,11 +264,7 @@ const T_SIZE = 64
 
 /// Whether timer t fired (a C int the poller stores after a release
 /// fence).
-fn fired(t: Int) -> Bool {
-  let f = rt.mem_load(t, T_FIRED, 4)
-  rt.fence(ACQUIRE)
-  f != 0
-}
+fn fired(t: Int) -> Bool { rt.slot_load(t, T_FIRED_W, ACQUIRE) != 0 }
 
 /// pd_wait's results (xo_rt.c PD_READY and the rest).
 pub const READY = 0
@@ -631,8 +629,7 @@ const SC_TIMED_OUT = 416
 /// signal runs with mu released (stop.xo takes its own lock, then may
 /// add a timer).
 pub fn fire(t: Int, mu: Int) {
-  rt.fence(RELEASE)
-  rt.mem_store(t, T_FIRED, 1, 4)
+  rt.slot_store(t, T_FIRED_W, 1, RELEASE)
   let p = rt.mem_load(t, T_PARK, 8)
   if p != 0 {
     signal(p)

@@ -210,53 +210,6 @@ func TestRuntimeTasks(t *testing.T) {
 		[]string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"})
 }
 
-var (
-	xoFnRE     = regexp.MustCompile(`(?m)^\s*(?:pub\s+)?fn\s+(?:\([^)]*:\s*(\w+)\)\s*)?(\w+)`)
-	defineIRRE = regexp.MustCompile(`(?m)^(define [^@]*@"?x\.(\w+)[^\n]*) \{$`)
-)
-
-// markTSan marks sanitize_thread on the definitions of the functions (and
-// methods, by their receiver type) of the Xo program in dir, and their
-// closures: the functions of the main module, named x.NAME in the IR.
-func markTSan(t *testing.T, dir string, ir []byte) []byte {
-	t.Helper()
-	srcs, err := filepath.Glob(filepath.Join(dir, "*.xo"))
-	if err != nil || len(srcs) == 0 {
-		t.Fatalf("no Xo sources in %s: %v", dir, err)
-	}
-	names := map[string]bool{}
-	for _, src := range srcs {
-		b, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range xoFnRE.FindAllSubmatch(b, -1) {
-			if len(m[1]) > 0 {
-				names[string(m[1])] = true
-			}
-			names[string(m[2])] = true
-		}
-	}
-	marked := 0
-	ir = defineIRRE.ReplaceAllFunc(ir, func(line []byte) []byte {
-		m := defineIRRE.FindSubmatch(line)
-		if !names[string(m[2])] {
-			return line
-		}
-		marked++
-		// function attributes go before a personality
-		head := m[1]
-		if i := bytes.Index(head, []byte(" personality ")); i >= 0 {
-			return []byte(string(head[:i]) + " sanitize_thread" + string(head[i:]) + " {")
-		}
-		return append(append([]byte{}, head...), " sanitize_thread {"...)
-	})
-	if marked == 0 {
-		t.Fatalf("no function of %s found in its LLVM IR", dir)
-	}
-	return ir
-}
-
 // runRuntimeXo runs a runtime stress test written in Xo (decision 0241):
 // the program in dir, its LLVM IR built with ThreadSanitizer and run with
 // one worker, three, and eight and the leak check on, each run printing
@@ -266,19 +219,13 @@ func markTSan(t *testing.T, dir string, ir []byte) []byte {
 func runRuntimeXo(t *testing.T, dir, more string, names []string) {
 	t.Helper()
 	t0 := time.Now()
-	ir, err := xotool.LLVMIR(dir)
+	// --race marks every function sanitize_thread, the runtime's too:
+	// clang's ThreadSanitizer pass instruments only marked functions of IR
+	// it is given (gotchas/tsan-needs-sanitize-thread-mark.md)
+	ir, err := xotool.LLVMIRRace(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// clang's ThreadSanitizer pass instruments only functions marked
-	// sanitize_thread (a C frontend sets it), and xo's IR has no such
-	// mark: the test program's own functions get it, with the runtime's
-	// fast paths inlined into them (the count checks and updates of
-	// generated code), as the C drivers' own code was instrumented. The
-	// runtime's functions stay unmarked: instrumented whole, its plain
-	// accesses to words other threads update atomically are reported
-	// (decision 0241)
-	ir = markTSan(t, dir, ir)
 	ll := filepath.Join(t.TempDir(), "prog.ll")
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
@@ -398,7 +345,8 @@ func TestGoldenTasks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ir, err := xotool.LLVMIR(dir)
+			// every function checked, the runtime's too (--race)
+			ir, err := xotool.LLVMIRRace(dir)
 			if err != nil {
 				t.Fatal(err)
 			}

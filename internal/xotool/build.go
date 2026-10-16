@@ -311,15 +311,23 @@ var targetLine = regexp.MustCompile(`^([a-z0-9]+/[a-z0-9]+): (\S.*)$`)
 // llvm.Generate before decision 0215).
 func LLVMIR(dir string) ([]byte, error) { return Asm(dir, BackendLLVM, "") }
 
+// LLVMIRRace is LLVMIR with --race (decision 0241): every function
+// marked sanitize_thread, for a build with clang's -fsanitize=thread.
+func LLVMIRRace(dir string) ([]byte, error) {
+	return asm(dir, BackendLLVM, "", "--race")
+}
+
 // Asm is `xo asm --backend=backend [--target=target] dir`: the assembly
 // (arm64) or the LLVM IR (llvm, one module) xo emits for the program in
 // dir, for the host or target ("" is the host).
-func Asm(dir, backend, target string) ([]byte, error) {
+func Asm(dir, backend, target string) ([]byte, error) { return asm(dir, backend, target) }
+
+func asm(dir, backend, target string, flags ...string) ([]byte, error) {
 	cli, err := Command()
 	if err != nil {
 		return nil, err
 	}
-	args := append(append([]string{}, cli[1:]...), "asm", "--backend="+backend)
+	args := append(append(append([]string{}, cli[1:]...), "asm", "--backend="+backend), flags...)
 	if target != "" {
 		args = append(args, "--target="+target)
 	}

@@ -370,7 +370,7 @@ const STAT_NAMES = "spawn steal inject wake idle_sleep spin_round fiber_park fib
 /// line on standard error (at exit, and on demand).
 pub fn rt_stats() {
   // the C int is -1 (not read yet), 0, or 1
-  if rt.mem_load(rt.call_c2(rt.fn_addr("rtstats_switch"), 0, 0), 0, 4) != 1 {
+  if rt.slot_load(rt.call_c2(rt.fn_addr("rtstats_switch"), 0, 0), 0, 0) != 1 {
     return
   }
   let st = rt.call_c2(rt.fn_addr("rtstats_counts"), 0, 0)

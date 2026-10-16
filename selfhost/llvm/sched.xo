@@ -16,7 +16,8 @@ fn (var g: Gen) frame_attrs() {
     return
   }
   g.emitted["@llvm.frameaddress.p0"] = true
-  g.helpers.push("declare ptr @llvm.frameaddress.p0(i32)\nattributes #9 = { uwtable noinline \"frame-pointer\"=\"all\" }\n\n")
+  let san = if g.tsan { " sanitize_thread" } else { "" }
+  g.helpers.push("declare ptr @llvm.frameaddress.p0(i32)\nattributes #9 = { uwtable${san} noinline \"frame-pointer\"=\"all\" }\n\n")
 }
 
 /// Defines xo_stack_switch and xo_fiber_entry at the first use.

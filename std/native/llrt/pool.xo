@@ -79,6 +79,9 @@ const W_POOL = 2360
 const W_BATCH = 2368
 /// When this worker took a deferred wake (defer_wake), 0 for none.
 const W_DEFER_AT = 3400
+/// W_DEFER_AT as a word index (the slot atomics; a constant: `W_DEFER_AT
+/// / 8` was divided at run time, 2026-10-16).
+const W_DEFER_AT_W = 425
 /// The waker's runtime calls since (defer_check reads the clock every
 /// 16th).
 const W_DEFER_N = 3408
@@ -615,9 +618,9 @@ fn take_local(w: Int) -> Int {
   if t == 0 {
     t = sched.rq_get(w)
   }
-  if t != 0 && rt.mem_load(w, W_DEFER_AT, 8) != 0 {
+  if t != 0 && rt.slot_load(w, W_DEFER_AT_W, RELAXED) != 0 {
     // this worker runs its own work: no wake is owed
-    rt.slot_store(w, W_DEFER_AT / 8, 0, RELAXED)
+    rt.slot_store(w, W_DEFER_AT_W, 0, RELAXED)
   }
   t
 }
@@ -1520,13 +1523,13 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   if m == 0 {
     return false
   }
-  let at = rt.mem_load(w, W_DEFER_AT, 8)
+  let at = rt.slot_load(w, W_DEFER_AT_W, RELAXED)
   if at == 0 {
     rt.mem_store(w, W_DEFER_N, 0, 8)
-    rt.slot_store(w, W_DEFER_AT / 8, sysio.mono_ns(), SEQ_CST)
+    rt.slot_store(w, W_DEFER_AT_W, sysio.mono_ns(), SEQ_CST)
   } else if rt.int_wrap(1, sysio.mono_ns(), at) >= DEFER_CHECK_NS {
     // an older deferral is due: wake now for both
-    rt.slot_store(w, W_DEFER_AT / 8, 0, SEQ_CST)
+    rt.slot_store(w, W_DEFER_AT_W, 0, SEQ_CST)
     return false
   }
   stat(ST_DEFER)
@@ -1612,10 +1615,10 @@ fn mon_scan(p: Int) -> Bool {
   var i = 0
   while i < n {
     let w = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
-    let at = rt.slot_load(w, W_DEFER_AT / 8, SEQ_CST)
+    let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 {
       pending = true
-      if rt.int_wrap(1, now, at) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT / 8, at, 0, SEQ_CST) {
+      if rt.int_wrap(1, now, at) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
         let queued = rt.slot_load(w, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(w, 0, SEQ_CST) != rt.slot_load(w, RQ_TAIL, SEQ_CST)
         if queued {
           stat(ST_MON_WAKE)
@@ -1646,8 +1649,9 @@ pub fn scope_listed(s: Int) -> Int {
 /// runtime. One thread local load when nothing is deferred.
 pub fn defer_check() {
   // no monitor (one worker, nothing deferred yet) or deferral off: one
-  // static load, no thread local read
-  let m = rt.mem_load(rt.static_word(W_MON), 0, 8)
+  // static load (relaxed: the monitor's thread stores it), no thread
+  // local read
+  let m = rt.slot_load[Int](rt.static_word(W_MON), 0, RELAXED)
   if m == 0 || m == 1 {
     return
   }
@@ -1655,7 +1659,7 @@ pub fn defer_check() {
   if w == 0 {
     return
   }
-  let at = rt.mem_load(w, W_DEFER_AT, 8)
+  let at = rt.slot_load(w, W_DEFER_AT_W, RELAXED)
   if at == 0 {
     return
   }
@@ -1667,7 +1671,7 @@ pub fn defer_check() {
   if (n & 15) != 0 || rt.int_wrap(1, sysio.mono_ns(), at) < DEFER_CHECK_NS {
     return
   }
-  if rt.slot_cas(w, W_DEFER_AT / 8, at, 0, SEQ_CST) && queued(w) {
+  if rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
     stat(ST_MON_WAKE)
     wakep(rt.mem_load(w, W_POOL, 8))
   }
@@ -1700,8 +1704,8 @@ pub fn defer_off(p: Int) {
   var i = 0
   while i < n {
     let w = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
-    let at = rt.slot_load(w, W_DEFER_AT / 8, SEQ_CST)
-    if at != 0 && rt.slot_cas(w, W_DEFER_AT / 8, at, 0, SEQ_CST) && queued(w) {
+    let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
+    if at != 0 && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
       wakep(p)
     }
     i = rt.int_wrap(0, i, 1)

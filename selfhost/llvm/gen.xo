@@ -69,6 +69,11 @@ pub struct Gen {
   /// calls are made (decision 0213) and the task switch's sequences
   /// (decision 0212); "" is the compiler's own.
   pub goos: Str = ""
+  /// ThreadSanitizer (`--race`, decision 0241): every generated
+  /// function marked sanitize_thread, which clang's -fsanitize=thread
+  /// pass needs to instrument a function of IR it was given (the C
+  /// frontend sets it; gotchas/tsan-needs-sanitize-thread-mark.md).
+  pub tsan: Bool = false
 
   /// DWARF line tables (decision 0239; debug.xo): the metadata numbers
   /// made (from 1000000, past the fixed ones), the compile unit, the
@@ -254,6 +259,12 @@ const BY_REF_MIN = 256
 
 /// Lowers the module (GenerateSSA): the IR text, or "" with err set.
 pub fn (var g: Gen) generate() -> Str {
+  if g.tsan {
+    // the attribute sets of generated functions (#1, #7, #10, #11; #9
+    // in frame_attrs) all have uwtable; the runtime's hand written
+    // helpers (nounwind) stay unmarked
+    g.decls = g.decls.replace("= { uwtable", "= { uwtable sanitize_thread")
+  }
   let nf = g.m.funcs.len()
   for fi in 0..nf {
     let name = g.m.funcs[fi].name

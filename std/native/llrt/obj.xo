@@ -31,6 +31,11 @@ use native/rt
 /// The immortal count of a literal (never written).
 const IMMORTAL: Int = -9223372036854775807 - 1
 
+/// The count of the object at p, relaxed: another thread may change a
+/// shared count at any time (rc.xo; a plain load is a data race to
+/// ThreadSanitizer, decision 0241); a plain load on arm64 either way.
+fn count(p: Int) -> Int { rt.slot_load(p, 0, 0) }
+
 /// Words of the heap record (xo_rt.c struct xo_heap, checked by its
 /// _Static_assert): the drop worklist (its array, length, capacity, and
 /// whether a drain runs).
@@ -321,7 +326,7 @@ pub fn rl_new_n(n: Int, esize: Int) -> Int {
 pub fn rl_grow_n(l: Int, esize: Int) -> Int {
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h != 0 {
-    if rt.mem_load(l, 0, 8) == IMMORTAL {
+    if count(l) == IMMORTAL {
       let n = try_new(h, 4, esize)
       if n != 0 {
         return n
@@ -592,7 +597,7 @@ pub fn rl_share(l: Int, esize: Int, share: Int) { each(l, esize, share) }
 /// arm64 backend makes `[]` without allocating, and the first push lands
 /// here) becomes a new list.
 pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
-  if rt.mem_load(l, 0, 8) == IMMORTAL {
+  if count(l) == IMMORTAL {
     return rl_new(hw, 4, esize)
   }
   grow(hw, l, esize)
@@ -757,7 +762,7 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
   rt.mem_copy(addw(s, S_HDR), addw(a, S_HDR), an)
   // a literal (common: `"w${i}"` appends to one), or one with other
   // references, or a shared one freed here when the others went
-  if rt.mem_load(a, 0, 8) != IMMORTAL && rc.dec(a) != 0 {
+  if count(a) != IMMORTAL && rc.dec(a) != 0 {
     hfree(hw, a)
   }
   s
@@ -813,7 +818,7 @@ pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: 
 /// The push paths with no room: the empty literal becomes a new string
 /// of fresh bytes, else reserve's slow path.
 fn push_slow(a: Int, an: Int, k: Int, fresh: Int) -> Int {
-  if an == 0 && rt.mem_load(a, 0, 8) == IMMORTAL {
+  if an == 0 && count(a) == IMMORTAL {
     return rs_new_n(fresh)
   }
   reserve_slow(a, an, addw(an, k))

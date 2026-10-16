@@ -67,9 +67,10 @@ xo_f_main:
 	mov x9, #10
 	strb w9, [x20, x19]
 .LpGL1jtk_f1_b21:
-	add x9, x19, #1
+	add x10, x19, #1
 .LpGL1jtk_f1_b22:
-	str x9, [x21, #8]
+	add x9, x21, #8
+	str x10, [x9]
 	b .LpGL1jtk_f1_b48
 .LpGL1jtk_f1_b29:
 	ldr x1, [x21, #24]

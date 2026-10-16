@@ -170,8 +170,11 @@ fn main(os: Os) ! {
   if !(o.linker is "" | "cc" | "macho") {
     fail(os, "--ld=${o.linker}: want cc or macho")
   }
-  if o.race || o.holes {
-    fail(os, "the ${backend} backend does not support --race or --holes")
+  if o.race && backend != "llvm" {
+    fail(os, "the ${backend} backend does not support --race: use --backend=llvm (ThreadSanitizer) or --backend=go (Go's race detector)")
+  }
+  if o.holes {
+    fail(os, "the ${backend} backend does not support --holes")
   }
   if o.cmd == "test" {
     if o.explore > 0 {
@@ -440,6 +443,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     var g = llvm.new_gen(lm)
     g.goarch = tgoarch
     g.goos = tgoos
+    // --race (decision 0241): ThreadSanitizer over every function
+    g.tsan = o.race
     let ir = g.generate()
     t = lap(os, phases, "emit", t)
     if !g.err.is_empty() {
@@ -466,6 +471,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     let parts = split_ir(code, split.modules)
     var dir = "${bdir}/llvm"
+    if o.race {
+      dir = "${dir}-race"
+    }
     if ltarget != host {
       dir = "${dir}-${ltarget.replace("/", "-")}"
     }
@@ -488,6 +496,12 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, ltarget, false)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch)
     lk.flags = cross + lk.flags
+    if o.race {
+      // without the instrumentation of function entry and exit: it gives
+      // a function a cleanup pad that resumes the unwind, which the Xo
+      // fault unwinder cannot resume (gotchas/tsan-func-exit-pads.md)
+      lk.flags = lk.flags + ["-fsanitize=thread", "-mllvm", "-tsan-instrument-func-entry-exit=0"]
+    }
     let lto1 = single_lto(split)
     var mode_flags = ["llvm", split.opt]
     if lls.len() > 1 {

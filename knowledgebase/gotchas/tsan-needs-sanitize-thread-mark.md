@@ -27,3 +27,9 @@ Marking every function, the runtime's too, reports plain accesses to
 words other threads update atomically in the scheduler, stdio, and the
 heap (decision 0241's list), which have to be fixed before the whole
 runtime can be checked.
+
+Update (2026-10-16, decision 0241's addendum): `xo build|run|test|asm
+--backend=llvm --race` marks every generated function, the runtime's
+too, and links with -fsanitize=thread; TestGoldenTasks and the runtime
+tests (runRuntimeXo) use it (markTSan is gone). The plain accesses it
+reported in the runtime are fixed (the addendum lists them).

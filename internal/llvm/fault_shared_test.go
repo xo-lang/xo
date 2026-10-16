@@ -56,12 +56,13 @@ func buildFaultShared(t *testing.T, tmp string) map[string]string {
 		}
 		bins[be] = res.Binaries[xotool.Host()]
 	}
-	ir, err := xotool.LLVMIR(dir)
+	// every function checked, the runtime's too (--race)
+	ir, err := xotool.LLVMIRRace(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ll := filepath.Join(tmp, "prog.ll")
-	if err := os.WriteFile(ll, markTSan(t, dir, ir), 0o644); err != nil {
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// tsanBuild's binary is in this test's temporary directory: kept
