@@ -38,6 +38,10 @@ const ENCODINGS: List[(Str, Int)] = [
   ("sbcs x9, x10, x11", 0xfa0b0149),
   ("adc w0, w1, w2", 0x1a020020),
   ("sbcs w3, w4, w5", 0x7a050083),
+  // the rest of cpu.adc's lowering (Xo Lang 2's list): the carry in and
+  // out
+  ("cmp x9, #1", 0xf100053f),
+  ("cset x3, cs", 0x9a9f37e3),
   ("adr x16, L", 0x10000030),
   ("and x12, x9, #2147483647", 0x9240792c),
   ("and x11, x9, x13", 0x8a0d012b),
