@@ -1037,7 +1037,12 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
     let base = rt.mem_load(s, W_BASE, 8)
     // UNW_FLAG_UHANDLER
     let h = sys_windows.RtlVirtualUnwind(2, base, pc, f, cx, s + W_DATA, s + W_EST, 0)
-    if boundary != 0 && rt.mem_load(cx, o_sp, 8) > boundary {
+    // the frame's own stack pointer (here: before the unwind), as raise
+    // compares; cx is its caller's after RtlVirtualUnwind, which passed
+    // the boundary at the frame of main or a task's body and dropped its
+    // cleanups and catches (2026-10-16, Wine under Box64: fault_unwind,
+    // fault_tasks, task_native and seven more goldens on windows/amd64)
+    if boundary != 0 && rt.mem_load(here, o_sp, 8) > boundary {
       return 0
     }
     let data = rt.mem_load(s, W_DATA, 8)
