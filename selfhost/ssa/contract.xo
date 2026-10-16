@@ -47,6 +47,19 @@ fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
   b.body_of(fo, fi, sub, true)
 }
 
+/// Whether the program declares real-time functions of its own: std's
+/// (the runtime's probes, the load intrinsics marked real-time, decision
+/// 0241) do not make it a real-time program.
+fn (var b: Builder) user_realtime() -> Bool {
+  for f in b.c.realtime_fns {
+    let m = b.obj_mod(f)
+    if m >= 0 && !b.c.mods[m].is_std && !b.c.mods[m].native {
+      return true
+    }
+  }
+  false
+}
+
 /// Builds fo's body into fi, checking its `requires` clauses first when
 /// requires is set (bodyOf).
 fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires: Bool) {
@@ -68,7 +81,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   let om = b.obj_mod(fo)
   b.s.polls = om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native
   b.poll()
-  if !b.c.realtime_fns.is_empty() && om == b.main_mod && fo == (b.c.mods[b.main_mod].members.get(b"main") ?? -1) {
+  if om == b.main_mod && fo == (b.c.mods[b.main_mod].members.get(b"main") ?? -1) && b.user_realtime() {
     // a program with real-time functions: the scheduler's deferred
     // wakes off before anything is spawned (decision 0077's addendum)
     b.rt("realtime_program", -1, [])

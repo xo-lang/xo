@@ -118,6 +118,10 @@ test as the C did, and the run must end with `xo leakcheck: 0 live`.
     a declaration, not a new intrinsic; rt is std internal, so core 6.5's
     rules for programs do not change), and obj.xo rt_heap is heap()
     without its slow path. No store or allocating intrinsic is marked.
+    A program is a real-time program (main starts with
+    rt.realtime_program, deferred wakes off) only for real-time
+    functions of its own: selfhost/ssa contract.xo user_realtime skips
+    std's, which would otherwise have made every program one.
 - C kept on purpose: std/llrt/testdata/win_consts.c (static asserts of
   the Windows SDK's constants and struct layouts the runtime hard codes:
   only a compile against the real headers checks them),
