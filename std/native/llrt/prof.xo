@@ -222,9 +222,15 @@ fn start_heap() {
     obj.heap_init(0, rt.fn_addr("heap_thread"))
     stdio.threads()
   }
-  if !heapprof.start(obj.heap_now(), rt.fn_addr("heap_prof"), rate) {
+  let rec = obj.heap_now()
+  if !heapprof.start(rec, rt.fn_addr("heap_prof"), rate) {
     stdio.eprint("xo profile: no memory or unwind tables for the heap profile", true)
+    return
   }
+  // armed: this thread's heap word carries obj.xo's ARMED bit (other
+  // threads' records copy the hook, and their words the bit, heapos.xo
+  // thread_heap)
+  heapos.set_thread_heap(rec | 2)
 }
 
 /// The decimal digits of the C string at a (0 when none).

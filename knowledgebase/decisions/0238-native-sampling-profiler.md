@@ -130,12 +130,17 @@ selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
   os.proc.exit the values of other tasks still held. A value whose last
   use is before os.proc.exit is dropped before the call too.
 - Cost, bench/perf/alloc on the Mac (instructions,
-  bench/results/prof-heap-2026-10-16.md): off, single threaded paths
-  unchanged (0.996 to 1.009), threaded 1.023 (tasks: the check's two
-  instructions per allocation and free; conc spawn 1.028, the rest
-  within 1%). On at the default rate: a threaded program 1.09 (tasks);
-  a single threaded one 1.39 to 2.0 (mixed, small), the price of the
-  threaded heap (a thread local read per allocation on macOS, the
+  bench/results/prof-heap-2026-10-16.md). Off: a thread's heap word
+  carries the profile's armed bit (obj.xo ARMED: the thread local
+  heapos.xo thread_heap sets), so the threaded allocation and free test
+  a bit of a register they already hold (one tbnz with the arm64 isel
+  of a17622af) and load nothing; against the same build with no hooks at
+  all: small and strings 1.000, mixed 1.006, maps 1.010, tasks 1.009,
+  conc within noise (the first version, a load of the record's H_PROF
+  word, was tasks 1.023). Item 5's "off costs nothing" is this: within
+  about 1%. On at the default rate: a threaded program 1.09 to 1.14
+  (tasks); a single threaded one 1.46 to 2.2 (mixed, grow), the price of
+  the threaded heap (a thread local read per allocation on macOS, the
   magazines) rather than of the samples (taking them: 1% of tasks'
   instructions, 7% of mixed's).
 - Test: internal/llvm TestProfHeap (rate 1: the 2000 strings a task

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The heap profile off costs about 1% at most (decision 0238): the
+  profile's armed bit is bit 1 of a thread's heap word (obj.xo ARMED),
+  which the threaded allocation and free already hold, instead of a load
+  of the heap record's H_PROF word: against no hooks, tasks 1.009 (was
+  1.023), maps 1.010, the rest 1.000 to 1.006
+  (bench/results/prof-heap-2026-10-16.md).
 - arm64 inliner: the runtime's cold slow paths (the list LLVM marks cold,
   now ssa.cold_fn) are never inlined, and a leaf's constants do not count
   toward its size. arm64 sweep, 151 workloads: 13 faster (atomic

@@ -387,7 +387,8 @@ pub fn set_mid_max(m: Int) { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0
 pub fn set_thread_heap(h: Int) { rt.tlocal_set(TLS_HEAP, h) }
 
 /// The calling thread's heap record, made on its first use: the size
-/// classes' limit and the central lists are the other records'.
+/// classes' limit and the central lists are the other records'. Plus 2
+/// (obj.xo ARMED) while the heap profile runs: the thread local's value.
 pub fn thread_heap() -> Int {
   let t = rt.tlocal_get(TLS_HEAP)
   if t != 0 {
@@ -400,12 +401,15 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
-  rt.mem_store(h, H_PROF, rt.mem_load(first, H_PROF, 8), 8)
+  let hook = rt.mem_load(first, H_PROF, 8)
+  rt.mem_store(h, H_PROF, hook, 8)
   rt.mem_store(h, H_NEXT, first, 8)
   rt.mem_store(w, 0, h, 8)
   hlock_give()
-  rt.tlocal_set(TLS_HEAP, h)
-  h
+  // the heap profile armed: the thread's word carries obj.xo's ARMED bit
+  let word = if hook != 0 { h | 2 } else { h }
+  rt.tlocal_set(TLS_HEAP, word)
+  word
 }
 
 /// The blocks allocated and not freed, and the blocks allocated, over

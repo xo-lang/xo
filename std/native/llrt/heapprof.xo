@@ -156,7 +156,8 @@ pub fn stop() -> Int { rt.slot_swap(rt.static_word(W_HPROF), 0, 0, ACQ_REL) }
 pub fn hook(a: Int, b: Int) -> Int {
   let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
   if b >= 0 {
-    let h = rt.tlocal_get(TLS_HEAP)
+    // the thread's record (its thread local carries obj.xo's ARMED bit)
+    let h = rt.tlocal_get(TLS_HEAP) & -4
     if r == 0 {
       // stopped: no more samples from this record
       if h != 0 {
