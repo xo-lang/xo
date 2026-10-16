@@ -56,5 +56,11 @@ user="--user=$(id -u):$(id -g)"
 if [ "${XO_DOCKER_ROOT:-}" = 1 ]; then
   user="--user=0:0"
 fi
-exec docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo:ro" -v "$work:/work" -w /work \
+# XO_DOCKER_RW=1 mounts the checkout read write: the Go tests run golden
+# programs in their directories, and some write files there
+ro=":ro"
+if [ "${XO_DOCKER_RW:-}" = 1 ]; then
+  ro=""
+fi
+exec docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo$ro" -v "$work:/work" -w /work \
   -e HOME=/work/home "$image" sh -c "mkdir -p /work/home && $*"

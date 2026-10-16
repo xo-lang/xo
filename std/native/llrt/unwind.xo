@@ -42,8 +42,19 @@ use native/sys_windows
 /// The thread local word holding the thread's scratch record
 /// (std/native/llrt/sched.xo lists the table's words).
 const UNW_TLS = 7
-/// The record's bytes (one mapping).
-const SCRATCH = 20480
+/// The record's bytes (one mapping): FC_ENTRIES of the frame cache after
+/// the 20480 of the rest.
+const SCRATCH = 20480 + FC_ENTRIES * FC_BYTES
+/// The frame cache (fcache_get): FC_ENTRIES direct mapped entries of
+/// FC_BYTES, keyed by pc: the header words a frame's lookup sets (begin,
+/// end, LSDA, personality, compact encoding, return address register,
+/// args size) and its rule set (the CFA's rule and bits, then the rules
+/// of the registers whose bit is set, in bit order, at most FC_REGS).
+const FC = 20480
+const FC_ENTRIES = 64
+const FC_BYTES = 512
+const FC_RULES = 112
+const FC_REGS = 25
 
 // The record (byte offsets): a header, two register sets, the rule set
 // of the frame being read, the rules after the CIE's instructions (for
@@ -219,7 +230,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
   while true {
     let pc = rt.mem_load(cur, PC, 8)
     rt.mem_store(s, H_ARGS, 0, 8)
-    if pc == 0 || !(if darwin { dframe(s, pc) } else { frame(s, pc) }) {
+    if pc == 0 || !lookup_frame(s, pc, darwin) {
       // the end of the stack (_UA_END_OF_STACK: fault_stop reports)
       return 0
     }
@@ -248,6 +259,83 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
     }
   }
   0
+}
+
+/// Reads the frame of pc into s, from the frame cache when it holds pc
+/// (a fault unwinds through the same frames again and again: reading
+/// the FDE and running its CFA program was most of a raise's time,
+/// 2026-10-15, bench/perf fault defer), else by dframe or frame, whose
+/// result goes into the cache. A cached frame stays valid while its code
+/// is mapped (nothing unloads code a fault is raised through).
+fn lookup_frame(s: Int, pc: Int, darwin: Bool) -> Bool {
+  let e = s + FC + FC_BYTES * (((pc >> 2) ^ (pc >> 10)) & (FC_ENTRIES - 1))
+  if rt.mem_load(e, 0, 8) == pc {
+    rt.mem_store(s, H_BEGIN, rt.mem_load(e, 8, 8), 8)
+    rt.mem_store(s, H_END, rt.mem_load(e, 16, 8), 8)
+    rt.mem_store(s, H_LSDA, rt.mem_load(e, 24, 8), 8)
+    rt.mem_store(s, H_PERS, rt.mem_load(e, 32, 8), 8)
+    rt.mem_store(s, H_ENC, rt.mem_load(e, 40, 8), 8)
+    rt.mem_store(s, H_RAREG, rt.mem_load(e, 48, 8), 8)
+    rt.mem_store(s, H_ARGS, rt.mem_load(e, 56, 8), 8)
+    let st = s + ST_CUR
+    rt.mem_store(st, S_CFA_REG, rt.mem_load(e, 64, 8), 8)
+    rt.mem_store(st, S_CFA_OFF, rt.mem_load(e, 72, 8), 8)
+    rt.mem_store(st, S_RA_SIGNED, rt.mem_load(e, 80, 8), 8)
+    rt.mem_store(st, S_CFA_EXPR, rt.mem_load(e, 88, 8), 8)
+    var q = e + FC_RULES
+    var w = 0
+    while w < 2 {
+      var m = rt.mem_load(e, 96 + 8 * w, 8)
+      rt.mem_store(st, S_MASK0 + 8 * w, m, 8)
+      while m != 0 {
+        let o = 8 * (64 * w + rt.ctz(m))
+        m = m & rt.int_wrap(1, m, 1)
+        rt.mem_store(st, o, rt.mem_load(q, 0, 8), 8)
+        rt.mem_store(st, S_VAL + o, rt.mem_load(q, 8, 8), 8)
+        q = q + 16
+      }
+      w += 1
+    }
+    return true
+  }
+  rt.mem_store(s, H_ENC, 0, 8)
+  if !(if darwin { dframe(s, pc) } else { frame(s, pc) }) {
+    return false
+  }
+  let st = s + ST_CUR
+  let m0 = rt.mem_load(st, S_MASK0, 8)
+  let m1 = rt.mem_load(st, S_MASK1, 8)
+  if rt.popcount(m0) + rt.popcount(m1) > FC_REGS {
+    return true
+  }
+  rt.mem_store(e, 8, rt.mem_load(s, H_BEGIN, 8), 8)
+  rt.mem_store(e, 16, rt.mem_load(s, H_END, 8), 8)
+  rt.mem_store(e, 24, rt.mem_load(s, H_LSDA, 8), 8)
+  rt.mem_store(e, 32, rt.mem_load(s, H_PERS, 8), 8)
+  rt.mem_store(e, 40, rt.mem_load(s, H_ENC, 8), 8)
+  rt.mem_store(e, 48, rt.mem_load(s, H_RAREG, 8), 8)
+  rt.mem_store(e, 56, rt.mem_load(s, H_ARGS, 8), 8)
+  rt.mem_store(e, 64, rt.mem_load(st, S_CFA_REG, 8), 8)
+  rt.mem_store(e, 72, rt.mem_load(st, S_CFA_OFF, 8), 8)
+  rt.mem_store(e, 80, rt.mem_load(st, S_RA_SIGNED, 8), 8)
+  rt.mem_store(e, 88, rt.mem_load(st, S_CFA_EXPR, 8), 8)
+  rt.mem_store(e, 96, m0, 8)
+  rt.mem_store(e, 104, m1, 8)
+  var q = e + FC_RULES
+  var w = 0
+  while w < 2 {
+    var m = if w == 0 { m0 } else { m1 }
+    while m != 0 {
+      let o = 8 * (64 * w + rt.ctz(m))
+      m = m & rt.int_wrap(1, m, 1)
+      rt.mem_store(q, 0, rt.mem_load(st, o, 8), 8)
+      rt.mem_store(q, 8, rt.mem_load(st, S_VAL + o, 8), 8)
+      q = q + 16
+    }
+    w += 1
+  }
+  rt.mem_store(e, 0, pc, 8)
+  true
 }
 
 /// The personality routine of generated code over raise's record ctx:

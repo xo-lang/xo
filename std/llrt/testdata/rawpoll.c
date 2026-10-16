@@ -15,6 +15,7 @@
 
 #include "../xo_rt.c"
 #include "xcalls.h"
+#include <unistd.h> // pipe, write, close, usleep (xo_rt.c no longer brings it)
 
 // pd's read readiness under its lock (poll.xo D_MU at 0, D_RREADY at 20)
 static int pd_rready(xo_pd *pd) {

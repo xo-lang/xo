@@ -3288,6 +3288,21 @@ Results on 2026-10-15 (main plus the stubs, the Go-built xo):
 | linux/amd64 (emulated), llvm backend, 15 goldens (faults, tasks, conc, net, proc, tls, http) | pass |
 | XO_NOLIBC hello and five goldens, linux/arm64 (arm64) and linux/amd64 (llvm), built in the container | pass |
 
+The Go tests in the container (the sanitizers, 2026-10-16): with Go's
+image and the checkout mounted read write, from the checkout:
+
+    XO_DOCKER_RW=1 XO_DOCKER_BASE=golang:1.26-trixie scripts/docker-linux.sh arm64 WORKDIR \
+      'export PATH=/usr/local/go/bin:$PATH GOFLAGS=-buildvcs=false XO_CLI=/work/xomain/bin/xo GOCACHE=/work/home/gocache GOMODCACHE=/work/home/gomod; cd /xo && go test -run "TestSysCTSan|TestGoldenTasks|TestGoldenASan|TestRuntime|TestDeadlock" ./internal/llvm/'
+
+TestSysCTSan, TestDeadlock, TestRuntime* (RawPoll after its unistd.h),
+TestGoldenTasks (ThreadSanitizer) and TestGoldenASan pass on linux/arm64
+but fs_ops_edges: the checkout is a macOS directory shared into the VM,
+which keeps whole seconds, no read only mode, and no locks between
+descriptors (scripts/linux-goldens.sh copies each golden into the
+container's own file system, where it passes). Under load (every
+sanitizer build at once) net_only and http_fault timed out once and pass
+alone. Last verified: 2026-10-16.
+
 Before the run, 27 arm64-backend builds failed to assemble with
 bookworm's clang 14 (gotchas/clang14-arch-extension-crypto.md, fixed),
 and bookworm's clang 14 cannot read the LLVM backend's IR (opaque

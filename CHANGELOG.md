@@ -6,6 +6,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fault speed: std/native/llrt unwind.xo caches each frame's lookup
+  (the FDE or compact entry and its rules after the CFA program) by pc,
+  64 entries per thread, so a fault unwinding through frames it has seen
+  skips read_fde and exec. bench/perf fault (instructions, darwin/arm64):
+  defer arm64 1957M to 993M, llvm 1221M to 575M; owned arm64 1128M to
+  535M, llvm 705M to 618M; isolate arm64 318M to 187M, llvm 297M to 146M;
+  output identical. Against the resweep's pre-zero-C base (arm64 defer
+  1.224, owned 1.206, isolate 1.088) about 0.62, 0.57 and 0.64.
+- Linux in Docker: compiler-rt's sanitizer runtimes in the image; the
+  sanitizer tests (TestSysCTSan, TestGoldenTasks under ThreadSanitizer,
+  TestGoldenASan, TestRuntime*, TestDeadlock) run on linux/arm64 with Go
+  1.26 and clang 19 (XO_DOCKER_BASE=golang:1.26-trixie, XO_DOCKER_RW=1):
+  all pass but fs_ops_edges, whose times, read only mode, and locks a
+  directory shared from macOS does not keep. rawpoll.c includes unistd.h.
 - Unwinder, x86_64: a landing pad's stack pointer gets the frame's
   DW_CFA_GNU_args_size added (std/native/llrt unwind.xo), as libgcc does:
   a fault through a call whose stack arguments x86_64 LLVM pushed
