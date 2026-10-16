@@ -78,15 +78,18 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		// ThreadSanitizer in a Go build
 		r, ok = Bytes([]byte{1, 1, 0}), what == "present"
 	case "rt":
-		// std/native/internal.xo rt_op (decision 0233): a Go build has no
-		// C ABI exports or frame records; it answers what they give,
-		// "12345"'s length and first byte, and the three frame facts
+		// std/native/internal.xo rt_op (decisions 0233 and 0234): a Go build
+		// has no C ABI exports, frame records, or C symbols; it answers
+		// what they give, "12345"'s length and first byte, the three frame
+		// facts, and xo_entry's address not 0 with strlen of seven bytes
 		switch what {
 		case "fn_addr":
 			s := strconv.Itoa(12345)
 			r, ok = Bytes([]byte{byte(len(s)), s[0]}), true
 		case "frame_addr":
 			r, ok = Bytes([]byte{1, 1, 1}), true
+		case "sym_addr":
+			r, ok = Bytes([]byte{1, byte(len("xxxxxxx"))}), true
 		}
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
