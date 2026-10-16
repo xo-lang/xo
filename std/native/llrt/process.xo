@@ -80,8 +80,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   }
   rt.mem_store(w, ENVP, e, 8)
   // the initial stack's layout (argv's NULL ended array, then envp's,
-  // then the auxiliary vector): not an environ the C tests' constructor
-  // passes after a setenv moved it
+  // then the auxiliary vector): not an environ a setenv moved
   if target.os == TargetOs.Linux && argv != 0 && envp == rt.int_wrap(0, argv, rt.int_wrap(3, argc + 1, 3)) {
     linux.auxv_init(envp)
   }

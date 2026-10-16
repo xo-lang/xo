@@ -6,6 +6,3 @@ use native/llrt/sock
 
 /// close(2) of a descriptor the poller watched.
 fn fd_close(fd: Int) -> Int { sock.close(fd) }
-
-/// O_NONBLOCK and FD_CLOEXEC on fd.
-fn fd_nonblock(fd: Int) -> Int { sock.nonblock(fd) }

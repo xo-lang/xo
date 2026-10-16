@@ -69,9 +69,8 @@ const W_GUARANTEE = 65536
 const ACQUIRE = 1
 
 
-/// The runtime's setup before any other Xo runs (cabi_c.xo main, and the
-/// C tests' constructor through cabi.xo rt_init; was xo_rt.c's main and
-/// fault_init): the main thread's heap record, fault.xo and ctx.xo (the
+/// The runtime's setup before any other Xo runs (cabi_c.xo main; was
+/// xo_rt.c's main and fault_init): the main thread's heap record, fault.xo and ctx.xo (the
 /// personality routine's address), the event loop's record before any
 /// descriptor, and stop.xo's state.
 pub fn init() {

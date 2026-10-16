@@ -1,6 +1,6 @@
 # A C test harness of the runtime faults at run time once its feature's C moved to Xo exports
 
-Status: Anticipated (2026-10-14, B12 of the zero-C audit; avoided, not hit)
+Status: Obsolete (2026-10-16): the C test harnesses of the runtime are Xo programs (decision 0241); was Anticipated (2026-10-14, B12 of the zero-C audit; avoided, not hit)
 
 Symptom (expected): a C program under std/llrt/testdata that includes
 xo_rt.c (http_diff.c, http_fuzz.c, crypto_diff.c) links fine but, at

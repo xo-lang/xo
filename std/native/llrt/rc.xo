@@ -1,11 +1,9 @@
 // Reference counts in Xo (decision 0207 stage 2, decisions 0046 and
 // 0058): retain, release, claim, and mark of the count word at the start
 // of every counted object, over the raw memory intrinsics and the slot
-// atomics (decision 0200) at an address. The C runtime calls them
-// through cabi.xo (xo_x_rc_inc and friends: std/llrt/xo_rt.c rc_inc,
-// rc_dec, rc_dec_shared, rc_claim, xo_rc_mark); generated code keeps
-// its own inline copies (the emitters' retain and release). Decision
-// 0198 deleted the C path (`XO_LLRT_C=rc`).
+// atomics (decision 0200) at an address. The runtime calls them;
+// generated code keeps its own inline copies (the emitters' retain and
+// release). Decision 0198 deleted the C path (`XO_LLRT_C=rc`).
 //
 // The count c of the object at address p:
 //

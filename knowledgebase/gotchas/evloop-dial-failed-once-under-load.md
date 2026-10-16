@@ -1,6 +1,6 @@
 # TestRuntimeEventLoop's dial failed once under load
 
-Status: Observed once (2026-10-16, darwin/arm64), not reproduced.
+Status: Obsolete (2026-10-16): evloop.c is the Xo program internal/llvm/testdata/rt/evloop (decision 0241), whose dial faults with its error. Was observed once (2026-10-16, darwin/arm64), not reproduced.
 
 ## Symptom
 

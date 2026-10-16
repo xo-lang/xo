@@ -2,8 +2,7 @@
 // level function of this module is a global symbol xo_x_<name> with the
 // C calling convention, which generated code calls (the emitters' runtime
 // calls, selfhost/ssa exports.xo), the runtime names by address
-// (rt.fn_addr), a `use c` binding calls back (cffi_str), or the
-// runtime's C test drivers call (std/llrt/testdata). The module is the
+// (rt.fn_addr), or a `use c` binding calls back (cffi_str). The module is the
 // marker: the SSA builders build every function here in every native
 // program (the native prelude imports it); the modules cabi_<feature>.xo
 // are markers too, imported by that feature's implementation module so
@@ -35,7 +34,6 @@ use native/llrt/prof
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
-use native/llrt/rc
 use native/llrt/rtsec
 use native/llrt/rtstats
 use native/llrt/sanhook
@@ -97,10 +95,6 @@ fn flush_try() { stdio.flush_try() }
 /// exception handler; the EXCEPTION_POINTERS, EXCEPTION_CONTINUE_SEARCH
 /// unless it ends the program).
 fn on_overflow(e: Int) -> Int { entry.on_overflow(e) }
-
-/// The program's arguments and environment (C main, before the program
-/// runs; process.xo).
-fn proc_start(argc: Int, argv: Int, envp: Int) { process.start(argc, argv, envp) }
 
 // ---------------------------------------------------------------------------
 // The fault entry points of generated code (decision 0228; fault.xo
@@ -185,14 +179,6 @@ fn mono_ns() -> Int { sysio.mono_ns() }
 // XO_LLRT_C=rc, whose C then calls its own copies). p is the address of
 // a counted object; nothing here allocates or counts.
 
-fn rc_inc(p: Int) { rc.inc(p) }
-
-fn rc_dec(p: Int) -> Int { rc.dec(p) }
-
-fn rc_claim(p: Int) -> Int { rc.claim(p) }
-
-fn rc_mark(p: Int) -> Int { rc.mark(p) }
-
 // ---------------------------------------------------------------------------
 // The heap (decision 0207 stage 3): xo_rt.c alloc_in, free_in, alloc_mt's
 // and free_mt's magazines, and xo_resize, in alloc.xo (alloc_c.xo with
@@ -233,9 +219,6 @@ fn heap_lock() { heapos.lock() }
 
 fn heap_unlock() { heapos.unlock() }
 
-/// The chunks mapped so far (the heap statistics and tests).
-fn heap_chunks() -> Int { heapos.chunks() }
-
 // ---------------------------------------------------------------------------
 // Lists (zero-C audit B13): xo_rt.c xo_rl_new, xo_rl_copy, xo_rl_share, xo_rl_grow, xo_rl_free's work, and
 // xo_rc_defer's worklist, in obj.xo. hw is the calling thread's heap
@@ -264,23 +247,6 @@ fn obj_rc_free(p: Int) { obj.rc_free_n(p) }
 
 fn obj_h_free(p: Int) { obj.h_free_n(p) }
 
-/// A runtime block's free and resize, a string and a list with room for
-/// n bytes or cap elements: xo_rt.c's xo_free, xo_resize, rs_new and
-/// rl_new for the C tests (std/llrt/testdata xcalls.h), which play the
-/// runtime's C callers.
-fn obj_free(p: Int) { obj.free_obj(p) }
-
-fn obj_resize(p: Int, old: Int, n: Int) -> Int { obj.resize_obj(p, old, n) }
-
-fn obj_rs_new(n: Int) -> Int { obj.rs_new_obj(n) }
-
-fn obj_rl_new_cap(cap: Int, esize: Int) -> Int { obj.rl_new_obj(cap, esize) }
-
-/// The runtime's setup (entry.xo init, decision 0234) for the C tests'
-/// constructor, which brings its own main (std/llrt/xo_rt.c
-/// XO_RT_NO_MAIN; was heap_start and xo_rt.c fault_init).
-fn rt_init() { entry.init() }
-
 /// The switch to one heap record per thread, before a second thread runs
 /// Xo code (pool.xo's setup; xo_rt_threads_begin): the calling thread
 /// keeps the main record, every other thread makes its own on first use
@@ -295,16 +261,10 @@ fn heap_threads() {
   stdio.threads()
 }
 
-/// The calling thread's heap record (the C tests, std/llrt/testdata
-/// xcalls.h).
-fn heap_now() -> Int { obj.heap_now() }
-
 /// The calling thread's heap record (xo_rt.c heap_slow after its thread
 /// local was empty); the leak check's sums at lp and tp; class c's free
 /// blocks over every record (heap statistics).
 fn heap_thread() -> Int { heapos.thread_heap() }
-
-fn heap_live(lp: Int, tp: Int) { heapos.live(lp, tp) }
 
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
 
@@ -330,9 +290,6 @@ fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
 // directly and by the C entries (for LLVM and the seed). a and b are
 // string (or Bytes) objects, an and bn their lengths; the result is the
 // string object, its length stored at lenp (a Str result's convention).
-
-/// a + the n bytes at p: the C runtime's rs_append.
-fn obj_rs_append_at(a: Int, an: Int, p: Int, n: Int) -> Int { obj.rs_append(a, an, p, n) }
 
 fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.rs_append(a, an, rt.int_wrap(0, b, 16), bn) }
 
@@ -379,8 +336,6 @@ fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
 // The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
 // timer record (poll.xo T_*); the event loop's lock is held.
 
-fn poll_pd_free(pd: Int) { poll.pd_free(pd) }
-
 /// Where the poller thread starts (pool.thread_start of its address, from
 /// the services record; never returns).
 fn poll_thread(a: Int) -> Int {
@@ -392,10 +347,6 @@ fn poll_thread(a: Int) -> Int {
 /// minus the errno), and timers (xo_rt.c's ev_start, pd_new, timer_add,
 /// timer_del forward here).
 fn poll_ev_start() { poll.ev_start() }
-
-fn poll_poke() { poll.poke() }
-
-fn poll_pd_open(fd: Int, write: Int) -> Int { poll.pd_open(fd, write != 0) }
 
 fn poll_timer_add(t: Int) { poll.timer_add(t) }
 
@@ -620,13 +571,6 @@ fn fiber_map_failed(en: Int) {
   stdio.write_all(2, raw.data(m), m.len())
   heapos.oom()
 }
-
-/// The worker pool's record (the C tests' pool_rec, std/llrt/testdata
-/// xcalls.h).
-fn ctx_pool() -> Int { ctx.pool() }
-
-/// The current context (ctx.xo cur; the C tests' t_ctx_boundary).
-fn ctx_cur() -> Int { ctx.cur() }
 
 // Budgets (std/native/llrt/budget.xo): arm64 generated code calls tick,
 // open, and end directly; xo_rt.c's xo_tick and xo_budget_* forward, and

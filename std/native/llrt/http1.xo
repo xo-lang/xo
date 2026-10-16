@@ -10,8 +10,7 @@
 // are the same, so a client observes what net/http answers. Since audit
 // item B10 (2026-10-14) the client is here too (client_do: the URL, the
 // redirects, the reading of a response, parse_response), and so is the
-// parse of an HTTP/2 request's :path (h2_target); xo_http.c's C parser
-// is test data only (std/llrt/testdata/http_ref.c). The client's HTTP/2
+// parse of an HTTP/2 request's :path (h2_target). The client's HTTP/2
 // header blocks pass through here to hpack.xo (h2_exchange, since audit
 // item B11); the HTTP/2 server is h2srv.xo (B28 part 2).
 //

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The last C of the runtime's tests is gone but win_consts.c (decision
+  0241): TestCryptoDiff and crypto_diff.c/crypto_ref.c (which checked
+  the C hashes decision 0198 had already deleted, not std/crypto's Xo,
+  which TestDigestDiff and TestCryptoXoDiff check), xcalls.h and xrec.h,
+  and the 20 C ABI exports only the C drivers called.
 - The event loop, real-time section, and C library fault tests are Xo
   (decision 0241): evloop.c, rawpoll.c, realtime.c, fault_shared.c,
   fault_shared.ll, and fault_resume.c became internal/llvm/testdata/rt

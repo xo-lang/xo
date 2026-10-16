@@ -23,7 +23,7 @@ import (
 // programs that use tasks (TestGoldenTasks) and from the runtime's stress
 // tests, Xo programs since decision 0241 (testdata/rt: tasks, rc_threads,
 // alloc_threads; std/internal's rt_probe for what the language does not
-// show), and from the C tests left in std/llrt/testdata. All run under
+// show). All run under
 // ThreadSanitizer when clang supports it on the host.
 
 var rtDir = filepath.Join("..", "..", "std", "llrt")
@@ -31,46 +31,6 @@ var rtDir = filepath.Join("..", "..", "std", "llrt")
 // tsanBuild compiles srcs with ThreadSanitizer and extra flags, or skips
 // the test when the host's clang cannot. Where ThreadSanitizer compiles
 // but cannot run, it compiles without it.
-var (
-	cMainRE    = regexp.MustCompile(`@main([(,\] ])`)
-	cExportsMu sync.Mutex
-	cExportsLL = map[string]string{}
-)
-
-// cOnlyWith is the sources of a C only test of the runtime (a file of
-// std/llrt/testdata that plays generated code) and the LLVM IR of the
-// program main (in the build directory dir)
-// in place of the empty one: a feature's exports
-// (std/native/llrt/cabi_<feature>.xo) are built only into a program
-// that uses the feature.
-func cOnlyWith(t *testing.T, src, dir, main string) []string {
-	t.Helper()
-	cExportsMu.Lock()
-	defer cExportsMu.Unlock()
-	if ll, ok := cExportsLL[dir]; ok {
-		return []string{src, ll}
-	}
-	d := filepath.Join(testDir, dir)
-	if err := os.MkdirAll(d, 0o755); err != nil {
-		t.Fatalf("the C ABI exports: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(d, "main.xo"), []byte(main), 0o644); err != nil {
-		t.Fatalf("the C ABI exports: %v", err)
-	}
-	ir, err := xotool.LLVMIR(d)
-	if err != nil {
-		t.Fatalf("the C ABI exports: %v", err)
-	}
-	ll := filepath.Join(d, "exports.ll")
-	// the C test brings its own main: the program's (cabi_c.xo main,
-	// decision 0234) is renamed out of its way
-	ir = cMainRE.ReplaceAll(ir, []byte("@xo_ctest_unused_main$1"))
-	if err := os.WriteFile(ll, ir, 0o644); err != nil {
-		t.Fatalf("the C ABI exports: %v", err)
-	}
-	cExportsLL[dir] = ll
-	return []string{src, ll}
-}
 
 func tsanBuild(t *testing.T, flags, srcs []string) string {
 	t.Helper()

@@ -128,8 +128,20 @@ test as the C did, and the run must end with `xo leakcheck: 0 live`.
   internal/llvm/testdata/errno_probe.c, the `use c` test data
   (internal/cbind, internal/selfhost's tiny.c), and
   examples/realtime-control.
-- Later: crypto_diff.c and crypto_ref.c (dropped if the Go diff tests
-  cover them), then the exports and xcalls.h and xrec.h only they used.
+- Batch 3 (2026-10-16): crypto_diff.c and crypto_ref.c, and
+  TestCryptoDiff, are deleted. crypto_ref.c was the C of the hashes
+  decision 0198 deleted from the runtime, so the test compared that dead
+  C with Go and never ran std/crypto's Xo. The Xo is TestDigestDiff's
+  (SHA-256 and HMAC of 600 random inputs, verify_password on x/crypto
+  Argon2id and Go PBKDF2 hashes, mutated) and TestCryptoXoDiff's
+  (crypto.equal, Ed25519). Not carried over: the RFC 9106 Argon2d and
+  Argon2i vectors and secret and associated data, which std/crypto does
+  not offer (Argon2id only, neither). xcalls.h and xrec.h went with the
+  last C driver, and with them the 20 exports only the drivers called
+  (rt_init, proc_start, rc_inc, rc_dec, rc_claim, rc_mark, heap_now,
+  heap_live, heap_chunks, obj_free, obj_resize, obj_rs_new,
+  obj_rl_new_cap, obj_rs_append_at, poll_pd_open, poll_pd_free,
+  poll_poke, ctx_pool, ctx_cur, fd_nonblock) and obj.xo's rl_new_obj. std/llrt/testdata holds win_consts.c alone.
 
 ## Alternatives
 

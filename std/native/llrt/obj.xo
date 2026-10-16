@@ -212,9 +212,6 @@ pub fn resize_obj(p: Int, old: Int, n: Int) -> Int { hresize(heap_word(), p, old
 /// A new string object with room for at least n bytes (xo_rt.c rs_new).
 pub fn rs_new_obj(n: Int) -> Int { rs_new_n(n) }
 
-/// A new empty list with room for cap elements of esize bytes (xo_rt.c
-/// rl_new).
-pub fn rl_new_obj(cap: Int, esize: Int) -> Int { rl_new(heap_word(), cap, esize) }
 
 /// alloc.free on heap h (one thread): the module's one call site of it
 /// (see halloc), small enough that the inliner copies it into its two
@@ -542,7 +539,7 @@ fn heap_word() -> Int {
 /// The single threaded heap record, 0 once other threads run.
 pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 
-/// The calling thread's heap record (the C tests).
+/// The calling thread's heap record (prof.xo's heap profile).
 pub fn heap_now() -> Int { heap_word() & -2 }
 
 /// Sets the heap words (C main, before the program runs, with the main
