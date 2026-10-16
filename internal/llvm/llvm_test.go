@@ -24,6 +24,9 @@ var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the go
 var testDir string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("XO_TEST_EXITING_SERVER") == "1" {
+		exitingServer()
+	}
 	flag.Parse()
 	// identical builds reuse one binary, within and across runs
 	xotool.EnableTestBinCache()

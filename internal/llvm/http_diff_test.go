@@ -366,7 +366,7 @@ type httpBuild struct {
 }
 
 // buildHTTPProgram builds src with the backend once, in testDir.
-func buildHTTPProgram(t *testing.T, name, src, backend string) string {
+func buildHTTPProgram(t testing.TB, name, src, backend string) string {
 	t.Helper()
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
@@ -513,14 +513,6 @@ func clip(s string) string {
 	return s
 }
 
-// fuzzDiff is FuzzHTTPDiff's native server (started once) and net/http
-// server for the same inputs.
-var fuzzDiff struct {
-	once sync.Once
-	addr string
-	srv  *fakeListener
-}
-
 // FuzzHTTPDiff is TestHTTPParseDiff under Go's fuzzer: `go test
 // ./internal/llvm -run '^$' -fuzz FuzzHTTPDiff -fuzztime 60s`. Inputs
 // whose head passes 64 KiB are skipped (net/http waits half a second
@@ -530,26 +522,35 @@ func FuzzHTTPDiff(f *testing.F) {
 	for _, s := range httpCorpus {
 		f.Add([]byte(s))
 	}
+	if testing.Short() {
+		f.Skip("builds an HTTP server with a native backend")
+	}
+	// the servers live for the whole fuzz test, f's: started in the first
+	// input's t, the native one was killed by that input's cleanup (its
+	// lifeline), and every later input dialed a dead address for a minute
+	// (2026-10-16)
+	bin := buildHTTPProgram(f, "parse", http1DiffProgram, httpBackends(false)[0])
+	addr, stop := http1Server(f, bin)
+	f.Cleanup(stop)
+	l := &fakeListener{ch: make(chan net.Conn), closed: make(chan struct{})}
+	srv := &http.Server{Handler: http.HandlerFunc(diffHandler), ErrorLog: log.New(io.Discard, "", 0)}
+	go srv.Serve(l)
+	f.Cleanup(func() {
+		// fakeListener's Close is a no-op: its closed channel ends Accept,
+		// so Serve returns and Close does not wait forever
+		close(l.closed)
+		srv.Close()
+	})
 	f.Fuzz(func(t *testing.T, input []byte) {
-		if testing.Short() {
-			t.Skip("builds an HTTP server with a native backend")
-		}
 		if len(input) > 64<<10 {
 			t.Skip()
 		}
-		bin := buildHTTPProgram(t, "parse", http1DiffProgram, httpBackends(false)[0])
-		fuzzDiff.once.Do(func() {
-			// the server runs until the test binary exits
-			addr, _ := http1Server(t, bin)
-			fuzzDiff.addr = addr
-			l := &fakeListener{ch: make(chan net.Conn), closed: make(chan struct{})}
-			srv := &http.Server{Handler: http.HandlerFunc(diffHandler), ErrorLog: log.New(io.Discard, "", 0)}
-			go srv.Serve(l)
-			fuzzDiff.srv = l
-		})
-		native := nativeSend(fuzzDiff.addr, string(input))
+		native := nativeSend(addr, string(input))
+		if strings.HasPrefix(native, "dial: ") {
+			t.Fatalf("native server: %s", native)
+		}
 		c := &fakeConn{in: bytes.NewReader(input), done: make(chan struct{})}
-		fuzzDiff.srv.ch <- c
+		l.ch <- c
 		select {
 		case <-c.done:
 		case <-time.After(20 * time.Second):
@@ -927,6 +928,7 @@ func startFuzzServer(t *testing.T, bin string) *fuzzServer {
 		t.Fatal(err)
 	}
 	s := &fuzzServer{cmd: cmd, stderr: &bytes.Buffer{}, done: make(chan error, 1)}
+	life := &serverLife{done: make(chan struct{})}
 	cmd.Stderr = s.stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -940,9 +942,13 @@ func startFuzzServer(t *testing.T, bin string) *fuzzServer {
 		t.Fatalf("%s: %q %v\n%s", bin, line, err, s.stderr.String())
 	}
 	s.addr = addr
+	servers.Store(addr, life)
 	go func() {
 		io.Copy(io.Discard, rd)
-		s.done <- cmd.Wait()
+		err := cmd.Wait()
+		life.err = err
+		close(life.done)
+		s.done <- err
 	}()
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {

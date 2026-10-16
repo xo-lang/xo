@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -85,35 +86,94 @@ fn main(os: Os) {
 `
 
 // http1Server runs a built server program: its address and a stop.
-func http1Server(t *testing.T, bin string, env ...string) (string, func()) {
+func http1Server(t testing.TB, bin string, env ...string) (string, func()) {
 	t.Helper()
 	cmd := exec.Command(bin)
-	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	cmd.Env = append(os.Environ(), env...)
+	return startHTTP1Server(t, cmd)
+}
+
+// startHTTP1Server starts cmd, a server that prints "ADDR host:port"
+// first, behind a lifeline, and records its exit for http1Send (which
+// stops dialing an address whose server has exited); the address and a
+// stop that kills it and waits.
+func startHTTP1Server(t testing.TB, cmd *exec.Cmd) (string, func()) {
+	t.Helper()
+	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd.Stderr = io.Discard
+	life := &serverLife{done: make(chan struct{})}
+	cmd.Stderr = &life.stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	line, err := bufio.NewReader(stdout).ReadString('\n')
-	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		t.Fatalf("%s: %v", bin, err)
-	}
+	rd := bufio.NewReader(stdout)
+	line, err := rd.ReadString('\n')
 	addr, ok := strings.CutPrefix(strings.TrimSpace(line), "ADDR ")
-	if !ok {
+	if err != nil || !ok {
 		cmd.Process.Kill()
 		cmd.Wait()
-		t.Fatalf("%s: %q", bin, line)
+		t.Fatalf("%s: %q %v\n%s", cmd.Path, line, err, clip(life.stderr.String()))
 	}
+	servers.Store(addr, life)
+	go func() {
+		io.Copy(io.Discard, rd)
+		life.err = cmd.Wait()
+		close(life.done)
+	}()
 	return addr, func() {
 		cmd.Process.Kill()
-		cmd.Wait()
+		<-life.done
+		servers.CompareAndDelete(addr, life)
 	}
+}
+
+// serverLife is a native server's exit: done closes when its process
+// has exited, with Wait's error and what it wrote to standard error.
+type serverLife struct {
+	done   chan struct{}
+	err    error
+	stderr lockedBuffer
+}
+
+// servers maps the address of each server startHTTP1Server started to
+// its serverLife.
+var servers sync.Map
+
+// serverExited is the exit of the server at addr when it has exited
+// (its status and the end of its standard error), else "".
+func serverExited(addr string) string {
+	v, ok := servers.Load(addr)
+	if !ok {
+		return ""
+	}
+	life := v.(*serverLife)
+	select {
+	case <-life.done:
+		return fmt.Sprintf("server exited (%v)\n%s", life.err, clip(life.stderr.String()))
+	default:
+		return ""
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for a writer goroutine and readers.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // http1Send sends input on a connection of its own, closes the sending
@@ -126,6 +186,11 @@ func http1Send(addr string, input string) string {
 		c, err = net.DialTimeout("tcp", addr, 10*time.Second)
 		if err == nil || try == 300 {
 			break
+		}
+		// a server that has exited never answers: fail now, not after a
+		// minute of retries per input (FuzzHTTPDiff, 2026-10-16)
+		if e := serverExited(addr); e != "" {
+			return "dial: " + e
 		}
 		time.Sleep(200 * time.Millisecond) // ports in TIME_WAIT
 	}
@@ -331,4 +396,38 @@ func TestHTTP1ParseDiff(t *testing.T) {
 		t.Errorf("%d answers of %d inputs differ", bad, len(inputs))
 	}
 	t.Logf("%d inputs, backends %v", len(inputs), backends)
+}
+
+// exitingServer is the test binary as a server that prints the address
+// of a port nothing listens on and exits 3 (XO_TEST_EXITING_SERVER=1,
+// TestMain): TestHTTP1SendServerExited's.
+func exitingServer() {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		os.Exit(2)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	fmt.Println("ADDR " + addr)
+	fmt.Fprintln(os.Stderr, "exiting server: gone")
+	os.Exit(3)
+}
+
+// TestHTTP1SendServerExited: http1Send to a server that has exited
+// fails at once with its exit status and standard error, instead of
+// retrying the dial for a minute (FuzzHTTPDiff sat 20 minutes on a dead
+// server, one minute per seed input, 2026-10-16).
+func TestHTTP1SendServerExited(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "XO_TEST_EXITING_SERVER=1")
+	addr, stop := startHTTP1Server(t, cmd)
+	defer stop()
+	start := time.Now()
+	got := http1Send(addr, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("http1Send took %v on an exited server", d)
+	}
+	if !strings.HasPrefix(got, "dial: server exited") || !strings.Contains(got, "exit status 3") || !strings.Contains(got, "exiting server: gone") {
+		t.Fatalf("http1Send: %q", got)
+	}
 }

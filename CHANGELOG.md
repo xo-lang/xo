@@ -21,6 +21,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   to 14.4M instructions (llvm) and 29.2M to 15.4M (arm64); verification
   results are unchanged (badssl.com's expired, wrong host, self signed
   and untrusted root cases). Needs the 0.17.0 seed (rt.call_c4).
+- Tests: FuzzHTTPDiff no longer sits idle for 20 minutes and more in a
+  full internal/llvm run: its shared native server, started with the
+  first seed input's t, was killed by that input's Lifeline cleanup; the
+  servers now live for the fuzz test (f), http1Send stops dialing a
+  server that has exited and reports its exit, and testtmp.Lifeline's
+  deadline extends to the test's own (gotchas/lifeline-subtest-once.md,
+  TestHTTP1SendServerExited).
 - The back-end cache (`<user cache>/xo/backend`) holds its 8 GiB cap
   under bursts of builds: entries stay protected for 2 minutes instead
   of 2 hours, and a prune runs whenever an eighth of the cap has been

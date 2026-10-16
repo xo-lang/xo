@@ -21,7 +21,9 @@ import (
 // stayed behind with PPID 1 before). cmd.Process is still the program
 // itself, so its signals, exit status, and Kill are unchanged. A
 // t.Cleanup closes the lifeline and kills a child still running, and
-// the child is killed after d in any case. cmd must have no ExtraFiles
+// the child is killed after d in any case, or at the test's own deadline
+// (-timeout, t.Deadline) when that is later: a long run reaches a late
+// test well after d. cmd must have no ExtraFiles
 // (the lifeline is file descriptor 3). The result cuts the lifeline, as
 // the test process's death would.
 func Lifeline(t testing.TB, cmd *exec.Cmd, d time.Duration) (cut func()) {
@@ -52,6 +54,11 @@ func Lifeline(t testing.TB, cmd *exec.Cmd, d time.Duration) (cut func()) {
 				w.Close()
 			}
 		})
+	}
+	if dl, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
+		if end, ok := dl.Deadline(); ok && time.Until(end) > d {
+			d = time.Until(end)
+		}
 	}
 	timer := time.AfterFunc(d, func() {
 		if cmd.Process != nil {
