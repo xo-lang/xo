@@ -446,7 +446,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   // not turn memcpy's own loop into a call of memcpy, or calloc's malloc
   // and memset into a call of calloc
   var attrs = if g.f.name.starts_with("cabi_libc.") || g.f.name.starts_with("libc") { "#7" } else { "#1" }
-  if cold_fn(g.f.name) {
+  if ssa.cold_fn(g.f.name) {
     attrs = "#10"
   } else if g.f.name.starts_with("test.") {
     // a test block's function (selfhost/ssa testmode.xo), called once
@@ -1332,11 +1332,3 @@ fn (var g: Gen) ret(v: Int) {
   g.emit("ret ${rt} ${cur}")
 }
 
-/// The runtime's slow paths (std/native/llrt), kept out of line and cold:
-/// inlined into a user's loop around their fast path (the test world's
-/// lock around Rand's step), they took the registers the loop's
-/// invariants lived in, and LLVM rebuilt them each iteration
-/// (bench/results/zero-c-perf-sweep-2026-10-15.md: testworld rand 1.08).
-fn cold_fn(name: Str) -> Bool {
-  name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow"
-}

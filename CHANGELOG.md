@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 inliner: the runtime's cold slow paths (the list LLVM marks cold,
+  now ssa.cold_fn) are never inlined, and a leaf's constants do not count
+  toward its size. arm64 sweep, 151 workloads: 13 faster (atomic
+  contended 0.915, ctx budget 0.922, ctx mutex 0.973, float_fmt 0.973),
+  1 slower at 1.001. Variants that freed every constant made the
+  digests 5 to 8% slower (bench/results/arm64-inline-cost-2026-10-16.md).
+
 - Constants fold in the SSA builder for `*`, `/` and `%` as for `+`
   and `-` (selfhost/ssa expr.xo): `W_DEFER_AT / 8` was a `mov` and an
   `asr` at run time on arm64 (the LLVM backend folded it). A product

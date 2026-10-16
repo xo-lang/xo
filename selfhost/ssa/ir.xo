@@ -837,3 +837,15 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
 fn float_text(x: Float) -> Str {
   "${x}"
 }
+
+/// The runtime's slow paths (std/native/llrt), kept out of line: cold in
+/// LLVM (selfhost/llvm func.xo) and never inlined by the arm64 inliner.
+/// Inlined into a user's loop around their fast path (the test world's
+/// lock around Rand's step), they took the registers the loop's
+/// invariants lived in, and LLVM rebuilt them each iteration
+/// (bench/results/zero-c-perf-sweep-2026-10-15.md: testworld rand 1.08);
+/// on arm64, push_slow inlined into obj.rs_push_word made the push 31 to
+/// 128 instructions and the digests 5 to 8% slower (2026-10-16).
+pub fn cold_fn(name: Str) -> Bool {
+  name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow"
+}

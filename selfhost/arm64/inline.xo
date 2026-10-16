@@ -45,6 +45,16 @@ struct InlineCost {
   instrs: Int
   blocks: Int
   bad: Bool
+  /// the constants of a leaf (not in instrs), and whether the function
+  /// with its inlined callees calls nothing but inline intrinsics
+  consts: Int = 0
+  leaf: Bool = true
+}
+
+/// The rt intrinsics the arm64 emitter makes instructions, not calls: a
+/// function calling only these (and inlined leaves) is a leaf.
+fn inline_intrinsic(n: Str) -> Bool {
+  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.ct_barrier"
 }
 
 /// Walks function fi and its callees (inline.go inlinableSet's walk):
@@ -52,7 +62,8 @@ struct InlineCost {
 fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
   let f = m.funcs[fi]
   state[f.name] = 1
-  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main"}
+  // the runtime's slow paths stay calls (ssa.cold_fn)
+  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name)}
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
@@ -67,9 +78,22 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
           // its frame is the function's own (decision 0233)
           c.bad = true
         }
+        if ci < 0 && !inline_intrinsic(aux_str(x.aux)) {
+          c.leaf = false
+        }
       }
       if ci < 0 {
-        c.instrs += 1
+        // in a leaf a constant is no instruction of its own (an
+        // immediate, or one mov the emitter shares): counting it kept
+        // arithmetic helpers (sub_p256's limbs) out of
+        // INLINE_MAX_INSTRS. Elsewhere it counts: free constants let
+        // the scheduler's run_item and steal_round into park_wait
+        // (sysio chan 1.019, 2026-10-16)
+        if x.op == ssa.Op.Const {
+          c.consts += 1
+        } else {
+          c.instrs += 1
+        }
         continue
       }
       let cname = m.funcs[ci].name
@@ -85,11 +109,18 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
       }
       if k.bad {
         c.instrs += 1
+        c.leaf = false
       } else {
         c.instrs += k.instrs
+        c.consts += k.consts
         c.blocks += k.blocks + 1
+        c.leaf = c.leaf && k.leaf
       }
     }
+  }
+  if !c.leaf {
+    c.instrs += c.consts
+    c.consts = 0
   }
   if c.instrs > INLINE_MAX_INSTRS || c.blocks > INLINE_MAX_BLOCKS {
     let n = sites.get(f.name) ?? 0
