@@ -32,6 +32,10 @@ struct Opts {
   assembler: Str = ""
   linker: Str = ""
   phases: Bool = false
+  /// The run cache's key of a native `xo test` (testcache.xo), "" for
+  /// none, and when the build started (Unix milliseconds).
+  run_key: Str = ""
+  run_start: Int = 0
   json: Bool = false
   ci: Bool = false
   release: Bool = false

@@ -61,6 +61,39 @@ Findings:
 | selfhost/prune | llvm | 1.66 | 1.12 | 1.53 |
 | | arm64 | 1.87 | 1.32 | 1.49 |
 
+## The run cache (decision 0236 item 3)
+
+A warm run with nothing changed finds the stored binary and test list
+(phase `run_cache`, 28 to 99 ms for the key and the input hashes) and
+only runs the tests. The machine was loaded (load average 22 to 29,
+other sessions' builds), so the lexer row was measured again alone.
+
+| Package | Backend | Warm before (0236 items 1-2) s | Warm with the run cache s |
+|---|---|---|---|
+| examples/notes-service | llvm | 6.35 | 2.59 to 2.76 |
+| | arm64 | 4.02 | 1.51 to 1.62 |
+| selfhost/lexer | llvm | 4.32 | 3.41 to 3.58 (alone) |
+| | arm64 | 4.58 | 3.56 to 3.84 |
+| selfhost/prune | llvm | 1.12 | 0.12 to 0.25 |
+| | arm64 | 1.32 | 0.10 to 0.21 |
+
+What is left of a warm run is running the tests, one process each
+(selfhost/lexer's 20 tests about 3.3 s): decision 0235's batching.
+With decision 0235's batching on main as well, examples/notes-service
+on arm64 runs warm in 0.30 s (`run_cache` 26 ms), cold 18.18 s.
+A miss costs the key (15 to 150 ms; about 1.2 s under the load above).
+Invalidation, checked by hand and by cmd/xo TestNoGCRunCache: an edit,
+a new file, a changed xo.mod, an XO_ variable, and an edit to a std
+file each miss; `-run` and the other run only flags hit.
+
+## Known issue: selfhost/check has no native test binary
+
+`xo test --backend=arm64` (or llvm) of selfhost/check fails before any
+code is generated: `locate.xo:136:11: error XO1201: not available
+without a garbage collector (--no-gc) yet: the method Fs.read_link of a
+test's MemFs (support is planned)`. Its tests run only on the Go
+backend (11.1 s cold, 1.6 s warm) until MemFs gains read_link natively.
+
 With `XO_BIN_CACHE` unset (the default directory), selfhost/prune on
 LLVM took 1.92 s and then 1.10 s.
 

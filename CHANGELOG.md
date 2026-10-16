@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test` on the native backends keeps a run cache (decision 0236
+  item 3, selfhost/xo testcache.xo): with nothing changed (every std
+  file, each module directory, xo.mod and xo.lock up the tree, xo
+  itself, the toolchain, XO_ variables), the stored test binary and test
+  list run without a check or build. examples/notes-service warm: arm64
+  4.0 s to 1.5 s, LLVM 6.4 s to 2.6 s; selfhost/prune 1.1 s to 0.1 s.
 - `xo test --no-gc` runs tests and property cases in batches, many per
   process (decision 0235, XO_TEST_BATCH): the test binary's main loops
   over the test world's next run and resets the test world between

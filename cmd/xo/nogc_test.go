@@ -329,3 +329,49 @@ func TestNoGCNotesServer(t *testing.T) {
 		}
 	}
 }
+
+// TestNoGCRunCache: the run cache of native `xo test` (decision 0236,
+// selfhost/xo testcache.xo) reuses an unchanged program's binary and test
+// list, and an edit, a new file, or a changed xo.mod misses it.
+func TestNoGCRunCache(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds test binaries")
+	}
+	backends := nativeBackends(t)
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			dir := filepath.Join(tmp, be)
+			write := func(name, text string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			write("xo.mod", "module runcache\n")
+			write("main.xo", "fn add(a: Int, b: Int) -> Int { a + b }\n\ntest \"add\" {\n  expect(add(1, 2)) == 3\n}\n")
+			step := func(what string, wantCode int, wantHit bool, want string) {
+				t.Helper()
+				code, out := xoTest(t, "--no-gc", "--backend="+be, "--phase-times", dir)
+				hit := strings.Contains(out, "phase run_cache ")
+				if code != wantCode || hit != wantHit || !strings.Contains(out, want) {
+					t.Fatalf("%s: exit %d (want %d), cache hit %v (want %v), want %q in\n%s", what, code, wantCode, hit, wantHit, want, out)
+				}
+			}
+			step("first run", 0, false, "1 passed")
+			step("unchanged", 0, true, "1 passed")
+			write("main.xo", "fn add(a: Int, b: Int) -> Int { a - b }\n\ntest \"add\" {\n  expect(add(1, 2)) == 3\n}\n")
+			step("edited", 1, false, "FAIL: add")
+			step("edited, unchanged", 1, true, "FAIL: add")
+			write("more.xo", "test \"more\" {\n  expect(2 + 2) == 4\n}\n")
+			step("new file", 1, false, "1 passed, 1 failed")
+			write("xo.mod", "module runcache\n\n")
+			step("xo.mod changed", 1, false, "1 passed, 1 failed")
+		})
+	}
+}

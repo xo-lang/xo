@@ -171,12 +171,26 @@ fn main(os: Os) ! {
   if o.race || o.holes {
     fail(os, "the ${backend} backend does not support --race or --holes")
   }
-  let nb = build_native(os, ctx, o, backend)
   if o.cmd == "test" {
     if o.explore > 0 {
       os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
       os.proc.exit(2)
     }
+    if o.out.is_empty() && (backend is "arm64" | "llvm") {
+      // the run cache (testcache.xo): an unchanged program's binary and
+      // tests without a build
+      let t0 = os.clock.now()
+      o.run_start = t0.unix_millis()
+      o.run_key = run_key(os, ctx, o, args, backend)
+      if let Some(hit) = run_fetch(os, ctx, o.run_key) {
+        lap(os, o.phases, "run_cache", t0)
+        os.proc.exit(run_tests(os, hit.bin, hit.tests, o.topts))
+      }
+      lap(os, o.phases, "run_cache_miss", t0)
+    }
+  }
+  let nb = build_native(os, ctx, o, backend)
+  if o.cmd == "test" {
     os.proc.exit(run_tests(os, nb.bin, nb.tests, o.topts))
   }
   if o.cmd == "run" {
@@ -484,7 +498,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       store_bin(os, ctx, entry, bin)
     }
     lap(os, phases, "cc", t)
-    return finish(os, o, c, root, [(ltarget, bin)], tests)
+    return finish(os, ctx, o, c, root, [(ltarget, bin)], tests)
   }
   // arm64: the assembly of each target; the host's is linked
   let dir = "${bdir}/arm64"
@@ -637,7 +651,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   if o.cmd == "asm" {
     return Native{pc: c.parse_cache}
   }
-  finish(os, o, c, root, bins, tests)
+  finish(os, ctx, o, c, root, bins, tests)
 }
 
 /// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
@@ -728,13 +742,17 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
 /// The end of a native build: the test list of a test binary, or the
 /// result of `build` (`os/arch: path` lines on standard output, or the
 /// JSON result).
-fn finish(os: Os, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool) -> Native {
+fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool) -> Native {
   var host_bin = ""
   for (_, p) in bins {
     host_bin = p
   }
   if tests {
-    return Native{bin: host_bin, tests: test_infos(c, root, o.wd), pc: c.parse_cache}
+    let ts = test_infos(c, root, o.wd)
+    if !o.run_key.is_empty() && c.diags.is_empty() {
+      run_store(os, ctx, o.run_key, c, o.std, o.wd, host_bin, ts, o.run_start)
+    }
+    return Native{bin: host_bin, tests: ts, pc: c.parse_cache}
   }
   if o.cmd == "build" {
     if o.json {

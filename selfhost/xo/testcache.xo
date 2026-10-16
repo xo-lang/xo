@@ -1,0 +1,298 @@
+// The run cache of `xo test` on the native backends (decision 0236
+// addendum): a test binary and its test list, found by a key known
+// before the check (xo's identity, the command line without the flags
+// that only change the run, the XO_ environment, the C toolchain, the
+// SDK, the runtime pack), so a run with no input changed skips the
+// check, the SSA, the passes, and the link. The entry also lists what
+// the build read, each with the SHA-256 of its contents: every file of
+// the std tree, every file of each module directory the program uses
+// (the .xo files, a `use c` module's C, xo.mod), the directory
+// listings (a new file misses), and xo.mod, xo.lock, xo.work, and
+// xo.work.lock from the working directory up. An entry is used only
+// when all of them still match. It lives in the bin cache (XO_BIN_CACHE,
+// run/<key>.m and run/<key>.bin), so `XO_BIN_CACHE=off` turns it off.
+// A build that printed diagnostics (warnings) is not stored, so a hit
+// never hides one, nor is one whose inputs changed while it ran.
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/prune
+use std/crypto
+
+/// A stored run: the binary and its tests.
+struct RunHit {
+  bin: Str
+  tests: List[TestInfo]
+}
+
+/// The flags of `xo test` that only change how the tests run, not the
+/// binary: left out of the key.
+fn run_only_flag(name: Str) -> Bool {
+  name is "run" | "seed" | "cases" | "v" | "json" | "phase-times"
+}
+
+/// The flags among run_only_flag's that take a value.
+fn run_flag_takes_value(name: Str) -> Bool {
+  name is "run" | "seed" | "cases"
+}
+
+/// The key of a test run, "" when the cache is off or xo's identity is
+/// unknown.
+fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
+  if ctx.bin_cache.is_empty() {
+    return ""
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return ""
+  }
+  var k = new_key("testrun v1")
+  k.str(id)
+  k.str(backend)
+  k.str(o.wd)
+  k.str(o.std)
+  // the command line, without the flags that only change the run
+  var kept: List[Str] = []
+  var skip_next = false
+  for a in args {
+    if skip_next {
+      skip_next = false
+      continue
+    }
+    if a.starts_with("-") && a != "-" {
+      let body = a.trim_prefix("-").trim_prefix("-")
+      let name = body.split("=")[0]
+      if run_only_flag(name) {
+        skip_next = run_flag_takes_value(name) && !body.contains("=")
+        continue
+      }
+    }
+    kept.push(a)
+  }
+  k.strs(kept)
+  // the environment that can change a build: every XO_ variable, and
+  // where tools and modules are found
+  var env: List[Str] = []
+  for (n, v) in os.env.vars().entries() {
+    if n.starts_with("XO_") || n is "PATH" | "HOME" | "XDG_CACHE_HOME" | "CC" | "SDKROOT" | "DEVELOPER_DIR" {
+      env.push("${n}=${v}")
+    }
+  }
+  k.strs(env.sort())
+  k.str("${host_os(os)}/${host_arch()}")
+  // the C toolchain the link uses, the SDK, and the prebuilt runtime
+  k.str(tool_id(os, ctx.goos, if o.cc.is_empty() { find_cc(os) } else { o.cc }, ["--version"]))
+  if backend == "llvm" {
+    k.str(tool_id(os, ctx.goos, if o.cc.is_empty() { find_clang(os) } else { o.cc }, ["--version"]))
+  }
+  let memo = sysroot_memo(os, ctx)
+  if !memo.is_empty() {
+    k.str((os.fs.read_text(memo).ok() ?? "").trim())
+  }
+  k.str(rtpack_id(os, ctx))
+  k.sum()
+}
+
+fn run_entry(ctx: Ctx, key: Str) -> Str {
+  "${ctx.bin_cache}/run/${key[0..2]}/${key}"
+}
+
+fn hex_field(s: Str) -> Str {
+  "x${s.bytes().to_hex()}"
+}
+
+fn unhex_field(f: Str) -> Str {
+  match Bytes.from_hex(f.trim_prefix("x")) {
+    Some(b) => b.to_str() ?? ""
+    None => ""
+  }
+}
+
+fn sha_of(os: Os, p: Str) -> Str {
+  match os.fs.read(p) {
+    Ok(b) => crypto.sha256(b).to_hex()
+    Err(_) => "none"
+  }
+}
+
+/// The SHA-256 of the sorted names of dir's entries (a slash after a
+/// directory's), "none" when it cannot be read.
+fn listing_of(os: Os, dir: Str) -> Str {
+  match os.fs.read_dir(dir) {
+    Ok(fis) => {
+      var ns: List[Str] = []
+      for fi in fis {
+        ns.push(if fi.is_dir { "${fi.name}/" } else { fi.name })
+      }
+      crypto.sha256(ns.sort().join("\n").bytes()).to_hex()
+    }
+    Err(_) => "none"
+  }
+}
+
+/// The stored run of key when every input it lists is unchanged.
+fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
+  if key.is_empty() {
+    return None
+  }
+  let entry = run_entry(ctx, key)
+  let text = match os.fs.read_text("${entry}.m") {
+    Ok(t) => t
+    Err(_) => return None
+  }
+  let bin = "${entry}.bin"
+  match os.fs.stat(bin) {
+    Ok(Some(fi)) => {
+      if fi.is_dir {
+        return None
+      }
+    }
+    _ => return None
+  }
+  var tests: List[TestInfo] = []
+  var head = false
+  for l in text.split("\n") {
+    if l.is_empty() {
+      continue
+    }
+    let f = l.split(" ")
+    if f[0] == "xo-testrun-v1" {
+      head = true
+    } else if f[0] == "file" && f.len() == 3 {
+      if sha_of(os, unhex_field(f[2])) != f[1] {
+        return None
+      }
+    } else if f[0] == "dir" && f.len() == 3 {
+      if listing_of(os, unhex_field(f[2])) != f[1] {
+        return None
+      }
+    } else if f[0] == "test" && f.len() == 10 {
+      let eff = unhex_field(f[7])
+      tests.push(TestInfo{index: Int.parse(f[2]) ?? -1, name: unhex_field(f[1]), module: unhex_field(f[3]), dir: unhex_field(f[4]), loc: unhex_field(f[5]), seed: Int.parse(f[6]) ?? 0, effects: if eff.is_empty() { [] } else { eff.split(",") }, prop: f[8] == "1", skip: unhex_field(f[9])})
+    } else {
+      return None
+    }
+  }
+  if !head {
+    return None
+  }
+  prune.mark_used(os.fs, os.clock, "${entry}.m")
+  prune.mark_used(os.fs, os.clock, bin)
+  Some(RunHit{bin: bin, tests: tests})
+}
+
+/// The files and directories a test build of c read (run_fetch's
+/// inputs): the std tree, each non-std module's directory, and the
+/// module files from wd up.
+fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[Str]) {
+  var files: List[Str] = []
+  var dirs: List[Str] = []
+  let sd = std.trim_suffix("/")
+  dirs.push(sd)
+  match os.fs.walk(sd) {
+    Ok(all) => {
+      for fi in all {
+        if fi.is_dir {
+          dirs.push(fi.path)
+        } else {
+          files.push(fi.path)
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  var seen: Map[Str, Bool] = {}
+  for m in c.mods {
+    if m.is_std || m.native || m.dir.is_empty() {
+      continue
+    }
+    let d = abs_path(wd, m.dir)
+    if d.starts_with("${sd}/") || seen.contains(d) {
+      continue
+    }
+    seen[d] = true
+    dirs.push(d)
+    match os.fs.read_dir(d) {
+      Ok(fis) => {
+        for fi in fis {
+          if !fi.is_dir {
+            files.push("${d}/${fi.name}")
+          }
+        }
+      }
+      Err(_) => {}
+    }
+  }
+  var d = wd
+  while true {
+    for n in ["xo.mod", "xo.lock", "xo.work", "xo.work.lock"] {
+      files.push("${d}/${n}")
+    }
+    let up = dir_name(d)
+    if up == d || up.is_empty() {
+      break
+    }
+    d = up
+  }
+  (files, dirs)
+}
+
+/// Stores the run of key: bin, its tests, and the inputs c read, with
+/// their contents now. Not when an input changed after start (the build
+/// may have read the older contents).
+fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bin: Str, tests: List[TestInfo], start: Int) {
+  if key.is_empty() || bin.is_empty() {
+    return
+  }
+  let (files, dirs) = run_inputs(os, c, std, wd)
+  var b = StrBuilder.new()
+  b.write("xo-testrun-v1\n")
+  for p in files {
+    match os.fs.stat(p) {
+      Ok(Some(fi)) => {
+        if fi.modified.unix_millis() >= start {
+          return
+        }
+      }
+      _ => {}
+    }
+    b.write("file ${sha_of(os, p)} ${hex_field(p)}\n")
+  }
+  for d in dirs {
+    b.write("dir ${listing_of(os, d)} ${hex_field(d)}\n")
+  }
+  for t in tests {
+    b.write("test ${hex_field(t.name)} ${t.index} ${hex_field(t.module)} ${hex_field(t.dir)} ${hex_field(t.loc)} ${t.seed} ${hex_field(t.effects.join(","))} ${if t.prop { "1" } else { "0" }} ${hex_field(t.skip)}\n")
+  }
+  let entry = run_entry(ctx, key)
+  match os.fs.create_dir_all(dir_name(entry)) {
+    Ok(_) => {}
+    Err(_) => return
+  }
+  let tag = os.rand.bytes(6).to_hex()
+  // the binary first: a manifest is never seen without it
+  let tb = "${entry}.bin.tmp-${tag}"
+  match os.fs.copy(bin, tb) {
+    Ok(_) => {}
+    Err(_) => {
+      os.fs.remove(tb).ignore_err("a failed store")
+      return
+    }
+  }
+  match os.fs.rename(tb, "${entry}.bin") {
+    Ok(_) => {}
+    Err(_) => {
+      os.fs.remove(tb).ignore_err("another process stored it")
+      return
+    }
+  }
+  let tm = "${entry}.m.tmp-${tag}"
+  match os.fs.write(tm, b.freeze().bytes()) {
+    Ok(_) => {
+      match os.fs.rename(tm, "${entry}.m") {
+        Ok(_) => {}
+        Err(_) => os.fs.remove(tm).ignore_err("another process stored it")
+      }
+    }
+    Err(_) => os.fs.remove(tm).ignore_err("a failed store")
+  }
+}

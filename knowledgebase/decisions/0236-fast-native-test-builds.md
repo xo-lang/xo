@@ -32,6 +32,25 @@ notes-service; -O0 takes 5.4 s.
    and its flags, every file of the build directory, the SDK, the
    runtime pack) and pruned as before (decision 0223, 6 GiB). `off`
    turns it off; other builds keep it off unless set.
+3. Addendum (lead, 2026-10-15): the run cache (selfhost/xo
+   testcache.xo). A native `xo test` without `-o` first computes a key
+   it knows before the check: xo's identity (self_id), the backend,
+   the working directory, the std directory, the command line without
+   the flags that only change the run (`-run`, `-seed`, `-cases`,
+   `-v`, `--json`, `--phase-times`), every `XO_` environment variable
+   and PATH, HOME, XDG_CACHE_HOME, CC, SDKROOT, DEVELOPER_DIR, the host,
+   the C toolchain's (and for LLVM clang's) identity, the SDK the last
+   link used, and the runtime pack. Its entry in the bin cache
+   (`run/<key>.m`, `run/<key>.bin`) lists every input with the SHA-256
+   of its contents: every file and directory listing of the std tree,
+   every file and the listing of each non-std module directory the
+   program uses, and xo.mod, xo.lock, xo.work, xo.work.lock (or their
+   absence) from the working directory up. When all still match, the
+   stored binary runs with the stored test list, and the check, SSA,
+   passes, emission, and link are skipped. A build that printed
+   diagnostics is not stored (a hit never hides a warning), nor one
+   whose inputs changed while it ran. One entry per key: going back to
+   earlier contents builds again.
 
 ## Consequences
 
@@ -44,6 +63,13 @@ notes-service; -O0 takes 5.4 s.
   `XO_LLVM_OPT=O2 xo test` gives the old binary when that matters.
 - Tests no longer exercise LLVM's optimizer by default. The program
   output goldens and the self build cover -O2.
+
+- With the run cache, a run with nothing changed costs the key and the
+  input hashes (25 to 70 ms) plus running the tests.
+- Known limit: an input the build reads outside those (a `use c` file
+  outside the module directory through XO_CBIND_DIR's contents, a
+  module cache directory edited in place) is not hashed; XO_BIN_CACHE=off
+  avoids the cache.
 
 ## Alternatives
 
