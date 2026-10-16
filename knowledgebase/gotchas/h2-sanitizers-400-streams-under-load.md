@@ -11,6 +11,10 @@ Cause: not established. The 400 concurrent Go client streams against the
 sanitized native server lose some under the CPU load of every package
 testing in parallel (timeouts on the Go side are the likely suspect).
 
+Also seen on 2026-10-16 in TestH2Diff (llvm): the full `go test
+./internal/llvm` (1,147 s, under the heavy lock) printed `go 400 streams:
+ok=393` against the Go backend's 400; TestH2Diff alone passed 3 of 3.
+
 Fix: none yet; rerun the test alone before blaming a change. Next
 experiment: run it with `-cpu 1` beside a CPU hog (`yes > /dev/null` on
 every core, started and stopped by PID) and print the Go client's error

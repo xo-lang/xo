@@ -969,3 +969,27 @@ requests per second 61k and 63k (h2), 86k to 92k (http1) on both sides.
   profiler places in obj_rl_grow_n and ctx_unwinding, whose code is
   unchanged from the base (the same instructions, the same calls in
   main); it needs an instruction level profile.
+
+### Follow up: the rest of the channel gap, by callgrind (2026-10-16)
+
+The same micro (a buffered send and recv on one task, 2M iterations)
+built for linux/arm64 by a Linux xo of each side (cross built with the
+Go backend) and counted by valgrind's callgrind in Docker
+(scripts/docker-linux.sh; exact instruction counts per function):
+
+| Build | Instructions (callgrind, linux/arm64) | Mac (instructions retired) |
+|---|---|---|
+| base dd33dd13 (C channels) | 824.2M | 868M |
+| main d1e67985 (chan.xo, wrapping arithmetic, inline cancel check) | 918.1M | 1,031M |
+| plus cq_take's empty queue check inline | 886.1M | |
+| plus send and recv's ring fast path inline (no receiver or sender waiting) | 812.1M (0.985x) | 871M (1.004x) |
+
+By function on main, the channel code was 462M against the base's 362M
+(per 2M iterations): cq_take 52M (called on every send and recv with an
+empty queue), try_send_locked 56M and try_recv_locked 70M as calls
+(the C's were inline). The allocation (obj_rl_grow_n, rl_free_n), the
+thread local lookup (xo_tlocal_get against the C's cur_get and ctx),
+and main's own code were the same on both sides; the two hashed
+helpers main calls (a reference count drop and share) are the base's
+inline Lxo_drop and Lxo_share. Channels are now at the base.
+
