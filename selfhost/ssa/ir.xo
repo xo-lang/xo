@@ -201,6 +201,21 @@ pub struct Value {
   /// 4096 + column (column at most 4095), 0 for none: the debug line
   /// tables (decision 0239). The file is the function's (Func.file).
   pub line: Int = 0
+  /// The inline site (Func.inl_sites) this value was copied in by the
+  /// arm64 inliner, -1 for the function's own code; its line is then the
+  /// callee's, in the site's file (decision 0239, inlined frames).
+  pub inl: Int = -1
+}
+
+/// A call the arm64 inliner copied a callee in at: the callee's name and
+/// source file, the call's packed line (Value.line) in the enclosing
+/// code, and the site that code was itself copied in at (-1: the
+/// function's own).
+pub struct InlSite {
+  pub callee: Str
+  pub file: Str
+  pub call_line: Int
+  pub parent: Int = -1
 }
 
 /// A control flow edge with the arguments for the target's parameters.
@@ -225,6 +240,8 @@ pub struct Func {
   /// The source file of the body, as diagnostics name it ("" for
   /// generated code): the debug line tables' file (decision 0239).
   pub file: Str = ""
+  /// The arm64 inliner's call sites (Value.inl).
+  pub inl_sites: List[InlSite] = []
   pub results: List[Int] = []
   pub blocks: List[Block] = []
   pub values: List[Value] = []

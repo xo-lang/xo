@@ -13,28 +13,38 @@ fn (g: G) debug_sections() -> Str {
     return ""
   }
   let mac = g.os == "darwin"
-  // the functions: file, name, begin, end, rows (label, packed line)
+  // the functions: file, name, begin, end, rows (label, packed line,
+  // inline site), inline sites (callee, file, call line, parent)
   var files: List[Str] = []
   var file_at: Map[Str, Int] = {}
   var recs: List[DbgFunc] = []
   for d in g.dbgs {
     let p = d.split("\t")
-    if p.len() != 5 {
+    if p.len() != 6 {
       continue
     }
     let file = if p[0].is_empty() { "<generated>" } else { p[0] }
-    if !file_at.contains(file) {
-      file_at[file] = files.len()
-      files.push(file)
-    }
-    var rows: List[(Str, Int)] = []
-    for r in p[4].split(";") {
-      let lr = r.split(" ")
-      if lr.len() == 2 {
-        rows.push((lr[0], Int.parse(lr[1]) ?? 0))
+    let fi = file_index(file, files, file_at)
+    var sites: List[DbgSite] = []
+    if !p[5].is_empty() {
+      for s in p[5].split(";") {
+        let q = s.split("|")
+        if q.len() == 4 {
+          let sf = if q[1].is_empty() { file } else { q[1] }
+          sites.push(DbgSite{callee: q[0], file: file_index(sf, files, file_at), call_line: Int.parse(q[2]) ?? 0, parent: Int.parse(q[3]) ?? -1})
+        }
       }
     }
-    recs.push(DbgFunc{file: file_at.get(file) ?? 0, name: p[1], begin: p[2], end: p[3], rows: rows})
+    var rows: List[DbgRow] = []
+    for r in p[4].split(";") {
+      let lr = r.split(" ")
+      if lr.len() == 3 {
+        let site = Int.parse(lr[2]) ?? -1
+        let rf = if site >= 0 && site < sites.len() { sites[site].file } else { fi }
+        rows.push(DbgRow{label: lr[0], line: Int.parse(lr[1]) ?? 0, file: rf, site: if site < sites.len() { site } else { -1 }})
+      }
+    }
+    recs.push(DbgFunc{file: fi, name: p[1], begin: p[2], end: p[3], rows: rows, sites: sites})
   }
   let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   var out = StrBuilder.new()
@@ -74,20 +84,27 @@ fn (g: G) debug_sections() -> Str {
   for fr in recs {
     prog.u8(4) // DW_LNS_set_file
     prog.uleb(fr.file)
+    var file = fr.file
     var line = 1
     // the sequence starts at the function (its prologue takes the first
-    // statement's line), then a row per label
+    // statement's line), then a row per label (an inlined callee's rows
+    // in its own file)
     var rows = fr.rows
     if !rows.is_empty() {
-      rows.insert(0, (fr.begin, rows[0].1))
+      rows.insert(0, DbgRow{label: fr.begin, line: rows[0].line, file: rows[0].file, site: rows[0].site})
     }
-    for (lab, packed) in rows {
-      let ln = packed / 4096
-      let col = packed % 4096
+    for row in rows {
+      let ln = row.line / 4096
+      let col = row.line % 4096
       prog.u8(0)
       prog.uleb(9)
       prog.u8(2) // DW_LNE_set_address
-      prog.quad(lab)
+      prog.quad(row.label)
+      if row.file != file {
+        prog.u8(4) // DW_LNS_set_file
+        prog.uleb(row.file)
+        file = row.file
+      }
       if ln != line {
         prog.u8(3) // DW_LNS_advance_line
         prog.sleb(ln - line)
@@ -121,9 +138,14 @@ fn (g: G) debug_sections() -> Str {
   // 1: compile_unit, children: stmt_list, low_pc, high_pc (the part's
   // functions are one run of its text; at fixed places, bytes 13, 17,
   // and 25, for selfhost/macho dsym.xo), producer, language, name,
-  // comp_dir; 2: subprogram: name, low_pc, high_pc
+  // comp_dir; 2: subprogram, children: name, low_pc, high_pc; 3: an
+  // inlined callee's abstract subprogram: name, inline (1, inlined); 4:
+  // inlined_subroutine: abstract_origin (unit relative), low_pc, high_pc,
+  // call_file, call_line, call_column
   out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
-  out.write("\t.byte 2, 0x2e, 0, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
+  out.write("\t.byte 2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
+  out.write("\t.byte 3, 0x2e, 0, 0x03, 0x08, 0x20, 0x0b, 0, 0\n")
+  out.write("\t.byte 4, 0x1d, 0, 0x31, 0x13, 0x11, 0x01, 0x12, 0x01, 0x58, 0x0f, 0x59, 0x0f, 0x57, 0x0f, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
   var die = Dw{}
@@ -135,11 +157,40 @@ fn (g: G) debug_sections() -> Str {
   die.u16(0x0c) // DW_LANG_C99: no code for Xo
   die.str(files[0])
   die.str(dir)
+  // the runs of inlined code (outermost sites) of each function, and an
+  // abstract subprogram per callee they name (unit relative offset: the
+  // 12 byte unit header, then the entries)
+  var runs: List[List[DbgRun]] = []
+  var origin: Map[Str, Int] = {}
   for fr in recs {
+    let rs = inline_runs(fr)
+    for r in rs {
+      let callee = fr.sites[r.site].callee
+      if !origin.contains(callee) {
+        origin[callee] = 12 + die.n
+        die.uleb(3)
+        die.str(callee)
+        die.u8(1)
+      }
+    }
+    runs.push(rs)
+  }
+  for (k, fr) in recs.indexed() {
     die.uleb(2)
     die.str(fr.name)
     die.quad(fr.begin)
     die.quad(fr.end)
+    for r in runs[k] {
+      let s = fr.sites[r.site]
+      die.uleb(4)
+      die.u32(origin.get(s.callee) ?? 0)
+      die.quad(r.lo)
+      die.quad(r.hi)
+      die.uleb(fr.file)
+      die.uleb(s.call_line / 4096)
+      die.uleb(s.call_line % 4096)
+    }
+    die.u8(0)
   }
   die.u8(0)
   // unit_length covers version (2), unit_type (1), address_size (1),
@@ -158,7 +209,77 @@ struct DbgFunc {
   name: Str
   begin: Str
   end: Str
-  rows: List[(Str, Int)]
+  rows: List[DbgRow]
+  sites: List[DbgSite]
+}
+
+/// A row: its label, packed line, file (the unit's index), and inline
+/// site (-1: the function's own code).
+struct DbgRow {
+  label: Str
+  line: Int
+  file: Int
+  site: Int
+}
+
+/// An inline site: the callee, its file, the call's packed line, and the
+/// enclosing site (-1: the function).
+struct DbgSite {
+  callee: Str
+  file: Int
+  call_line: Int
+  parent: Int
+}
+
+/// A run of one outermost inline site's code: from label lo to label hi.
+struct DbgRun {
+  site: Int
+  lo: Str
+  hi: Str
+}
+
+/// The index of file in files, added once.
+fn file_index(file: Str, var files: List[Str], var at: Map[Str, Int]) -> Int {
+  if let Some(k) = at.get(file) {
+    return k
+  }
+  files.push(file)
+  at[file] = files.len() - 1
+  files.len() - 1
+}
+
+/// The runs of inlined code of fr: consecutive rows whose outermost
+/// inline site is the same (v1: one level of DW_TAG_inlined_subroutine,
+/// the outermost call), each to the next row or the function's end.
+fn inline_runs(fr: DbgFunc) -> List[DbgRun] {
+  var out: List[DbgRun] = []
+  var i = 0
+  let n = fr.rows.len()
+  while i < n {
+    let r = outermost(fr, fr.rows[i].site)
+    if r < 0 {
+      i += 1
+      continue
+    }
+    var j = i + 1
+    while j < n && outermost(fr, fr.rows[j].site) == r {
+      j += 1
+    }
+    out.push(DbgRun{site: r, lo: fr.rows[i].label, hi: if j < n { fr.rows[j].label } else { fr.end }})
+    i = j
+  }
+  out
+}
+
+/// The outermost site holding site s (-1 for none).
+fn outermost(fr: DbgFunc, s: Int) -> Int {
+  var k = s
+  var guard = 0
+  while k >= 0 && k < fr.sites.len() && fr.sites[k].parent >= 0 && guard < 64 {
+    k = fr.sites[k].parent
+    guard += 1
+  }
+  if k >= fr.sites.len() { -1 } else { k }
 }
 
 /// Debug section bytes as assembler directives, with their count.
@@ -175,6 +296,11 @@ fn (var d: Dw) u8(v: Int) {
 fn (var d: Dw) u16(v: Int) {
   d.lines.push("\t.short ${v & 65535}\n")
   d.n += 2
+}
+
+fn (var d: Dw) u32(v: Int) {
+  d.lines.push("\t.long ${v}\n")
+  d.n += 4
 }
 
 fn (var d: Dw) offset(sym: Str) {

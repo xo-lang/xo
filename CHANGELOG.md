@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 inlined frames in the line tables (decision 0239): the inliner
+  keeps the callee's own lines and its call site; .debug_info has a
+  DW_TAG_inlined_subroutine per run of inlined code, so lldb shows the
+  inlined callee as a frame (`scale at main.xo:2:3 [inlined]` over
+  `main at main.xo:9:5`). The function cache key holds the lines when
+  debug information is on (a line-only change reused stale rows).
+
 - The shared count and heap stress tests are Xo (decision 0241):
   rc_threads.c and alloc_threads.c (876 lines of C) became
   internal/llvm/testdata/rt/rc_threads and alloc_threads, run under

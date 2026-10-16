@@ -169,7 +169,9 @@ struct G {
   /// row was made for, and the rows (label and packed line)
   dbgs: List[Str] = []
   cur_line: Int = 0
+  cur_inl: Int = -1
   dl_last: Int = 0
+  dl_last_inl: Int = -1
   dl_rows: List[Str] = []
   /// the rows of the fault stubs (placed after the body), and the
   /// labels made so far (one numbering for both)
@@ -331,7 +333,9 @@ fn (var g: G) fail(msg: Str) {
 /// Starts the state of function fi.
 fn (var g: G) begin_func(fi: Int) {
   g.cur_line = 0
+  g.cur_inl = -1
   g.dl_last = 0
+  g.dl_last_inl = -1
   g.dl_rows = []
   g.dl_stub_rows = []
   g.dl_n = 0

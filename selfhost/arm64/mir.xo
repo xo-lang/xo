@@ -84,6 +84,8 @@ struct Inst {
   /// the packed source line it was selected for (ssa Value.line), 0 for
   /// none: a row of the debug line table (decision 0239)
   line: Int = 0
+  /// its inline site (ssa Value.inl, Func.inl_sites), -1 for none
+  inl: Int = -1
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []

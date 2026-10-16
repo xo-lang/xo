@@ -122,3 +122,27 @@ types and variable locations.
   test` sets it for its tests. The arm64 fault stubs have their own
   rows (the faulting instruction's line).
 
+## arm64 inlined frames (2026-10-16, third step)
+
+- The arm64 inliner records each call it copies a callee in at (ssa
+  Func.inl_sites: callee, its file, the call's line, the enclosing
+  site) and gives copied values the callee's own line and that site
+  (Value.inl), instead of the call's line.
+- debug.xo: rows carry their site's file (DW_LNS_set_file per row);
+  .debug_info has an abstract DW_TAG_subprogram per inlined callee
+  (name, DW_AT_inline) and, under each function's subprogram (now with
+  children), a DW_TAG_inlined_subroutine per run of an outermost site's
+  code (abstract_origin, low_pc and high_pc labels, call_file,
+  call_line, call_column). v1 is one level: nested sites belong to their
+  outermost call's entry. lldb shows `scale at main.xo:2:3 [inlined]`
+  above `main at main.xo:9:5`. Addresses stay `.quad label` and the
+  references unit relative, so selfhost/macho dsym.xo carries them
+  unchanged (Xo Lang 3 writes the tests).
+- The function cache's key (fcache.xo fn_key) now holds every value's
+  line and site, the function's file, and its sites when debug
+  information is on; before this, a change of lines alone reused an
+  entry with the old rows (gotchas/fcache-key-without-lines.md).
+- Not yet: the profiler's and tracebacks' frames in inlined code still
+  name the enclosing function (dwline.xo reads only the line table),
+  with the callee's line.
+

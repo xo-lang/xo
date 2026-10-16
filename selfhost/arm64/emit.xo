@@ -246,13 +246,15 @@ fn (var g: G) emit() {
         break // past a tail call
       }
       g.pos = g.blocks[mb].start + 4 * k
-      if g.m.debug_info && inst.line != 0 && inst.line != g.dl_last {
-        // a row of the line table: a label here (debug.xo)
+      if g.m.debug_info && inst.line != 0 && (inst.line != g.dl_last || inst.inl != g.dl_last_inl) {
+        // a row of the line table: a label here (debug.xo), with the
+        // line's inline site
         let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
         g.dl_n += 1
         b.push("${lab}:\n")
-        g.dl_rows.push("${lab} ${inst.line}")
+        g.dl_rows.push("${lab} ${inst.line} ${inst.inl}")
         g.dl_last = inst.line
+        g.dl_last_inl = inst.inl
       }
       g.emit_inst(b, inst, next)
       g.pos = -1
@@ -271,7 +273,12 @@ fn (var g: G) emit() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
     // the stubs follow the body: their rows after its rows
-    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}")
+    // the inline sites: callee, file, call line, parent
+    var sites: List[Str] = []
+    for s in g.f.inl_sites {
+      sites.push("${s.callee}|${s.file}|${s.call_line}|${s.parent}")
+    }
+    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}")
   }
   b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
@@ -1031,7 +1038,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
       g.dl_n += 1
       sb.push("${lab}:\n")
-      g.dl_stub_rows.push("${lab} ${inst.line}")
+      g.dl_stub_rows.push("${lab} ${inst.line} ${inst.inl}")
     }
     if g.fr.leaf {
       // a frame record for the unwinder (the call overwrites x30)

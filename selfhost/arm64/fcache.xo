@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v2"
+const FN_CACHE_VERSION = "xo fn cache v3"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is
@@ -451,8 +451,21 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
   }
   var names: List[Str] = []
   var seen: Map[Str, Bool] = {}
+  if m.debug_info {
+    // the line table's inputs (decision 0239): a change of lines alone
+    // makes another entry (they were left out until 2026-10-16, so a
+    // moved line kept its old rows)
+    b.write("file ${f.file.len()}:${f.file}\n")
+    for s in f.inl_sites {
+      b.write("inl ${s.callee.len()}:${s.callee} ${s.file.len()}:${s.file} ${s.call_line} ${s.parent}\n")
+    }
+  }
   for (vi, x) in f.values.indexed() {
-    b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, x.ty)} ${ints_text(x.args)} ${aux_text(x.aux)} ${x.block} ${ints_text(x.succs)} ${x.pad} ${x.pos.len()}:${x.pos}\n")
+    b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, x.ty)} ${ints_text(x.args)} ${aux_text(x.aux)} ${x.block} ${ints_text(x.succs)} ${x.pad} ${x.pos.len()}:${x.pos}")
+    if m.debug_info {
+      b.write(" l${x.line} i${x.inl}")
+    }
+    b.write("\n")
     match x.aux {
       S(s) => {
         if !seen.contains(s) {

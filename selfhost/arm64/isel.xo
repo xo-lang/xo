@@ -68,6 +68,7 @@ fn (var g: G) add(inst: Inst) -> Int {
   var x = inst
   if x.line == 0 {
     x.line = g.cur_line
+    x.inl = g.cur_inl
   }
   if x.kind == K_CALL && g.cur_pad >= 0 {
     x.pad = g.cur_pad
@@ -817,6 +818,7 @@ fn (var g: G) compare(v: Int) -> Cmp {
 fn (var g: G) instr(v: Int) {
   if g.f.values[v].line != 0 {
     g.cur_line = g.f.values[v].line
+    g.cur_inl = g.f.values[v].inl
   }
   let pad = g.f.values[v].pad
   if pad >= 0 {

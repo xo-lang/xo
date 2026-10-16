@@ -313,6 +313,18 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   }
   replace_uses(f, call, repl)
 
+  // the call's inline site, and the callee's own sites under it
+  // (decision 0239: the line tables' inlined frames)
+  let site = f.inl_sites.len()
+  f.inl_sites.push(ssa.InlSite{callee: callee.name, file: callee.file, call_line: f.values[call].line, parent: f.values[call].inl})
+  var smap: List[Int] = []
+  for cs in callee.inl_sites {
+    smap.push(f.inl_sites.len())
+    f.inl_sites.push(ssa.InlSite{callee: cs.callee, file: cs.file, call_line: cs.call_line, parent: -1})
+  }
+  for (k, cs) in callee.inl_sites.indexed() {
+    f.inl_sites[smap[k]].parent = if cs.parent >= 0 { smap[cs.parent] } else { site }
+  }
   // copy the callee
   var vm: Map[Int, Int] = {}
   let cparams = callee.blocks[0].params
@@ -360,9 +372,16 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           }
           let nv = f.add(nb, x.op, x.ty, x.aux, args)
           f.values[nv].pos = x.pos
-          // the call's line (decision 0239: arm64 reports the caller's
-          // line for inlined code)
-          f.values[nv].line = f.values[call].line
+          // the callee's own line in its file, at its site (decision
+          // 0239); a value with no line, or of generated code, takes the
+          // call's
+          if x.line != 0 && !callee.file.is_empty() {
+            f.values[nv].line = x.line
+            f.values[nv].inl = if x.inl >= 0 && x.inl < smap.len() { smap[x.inl] } else { site }
+          } else {
+            f.values[nv].line = f.values[call].line
+            f.values[nv].inl = f.values[call].inl
+          }
           // a fault in the copy lands where one in the call would
           // (decision 0085): the callee holds nothing then
           f.values[nv].pad = pad
