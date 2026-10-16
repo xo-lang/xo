@@ -870,6 +870,9 @@ fn (var g: G) instr1(v: Int) {
           return
         }
       }
+      if x.op != ssa.Op.And && g.funnel(v) {
+        return
+      }
       let a = g.word(x.args[0])
       let b = g.word(x.args[1])
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
@@ -1743,4 +1746,64 @@ fn dominators_of(f: ssa.Func, blocks: List[Int]) -> List[Int] {
   }
   idom[blocks[0]] = -1
   idom
+}
+
+/// A funnel shift: v = shl(a, k) | shr(b, 64 - k) (or ^: the two have no
+/// bit in common), both rt.int_wrap with constant amounts, is
+/// `extr d, a, b, #(64 - k)` (2026-10-16: GHASH's reduction and bignum
+/// code wrote lsl, lsr, and orr); the shifts, used only there, are dead.
+fn (var g: G) funnel(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if g.kind(x.ty) != ssa.Kind.Int {
+    return false
+  }
+  for j in [0, 1] {
+    let p = g.through_params(x.args[j])
+    let q = g.through_params(x.args[1 - j])
+    let (po, pok) = g.wrap_op(p)
+    let (qo, qok) = g.wrap_op(q)
+    if !pok || !qok || po != 3 || qo != 4 {
+      continue
+    }
+    let (k, kc) = g.const_int(g.f.values[p].args[2])
+    let (m, mc) = g.const_int(g.f.values[q].args[2])
+    if !kc || !mc || k < 1 || k > 63 || m != 64 - k {
+      continue
+    }
+    let a = g.word(g.f.values[p].args[1])
+    let b = g.word(g.f.values[q].args[1])
+    g.set(v, [g.def1(false, "extr $d0, $u0, $u1, #${m}", [a, b])])
+    return true
+  }
+  false
+}
+
+/// The value v stands for through block parameters: a parameter of a
+/// block with one incoming edge is the value that edge passes (an
+/// inlined call's result reaches its continuation block that way, so a
+/// pattern over the call's operation looks through it).
+fn (g: G) through_params(v0: Int) -> Int {
+  var v = v0
+  for _ in 0..8 {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Param || x.block < 0 {
+      return v
+    }
+    let bl = g.f.blocks[x.block]
+    if bl.preds.len() != 1 {
+      return v
+    }
+    var k = -1
+    for (i, p) in bl.params.indexed() {
+      if p == v {
+        k = i
+      }
+    }
+    let e = g.f.edges[bl.preds[0]]
+    if k < 0 || k >= e.args.len() || e.args[k] < 0 {
+      return v
+    }
+    v = e.args[k]
+  }
+  v
 }

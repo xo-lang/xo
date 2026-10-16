@@ -245,6 +245,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.logical("orn", [ops[0], zr.bytes()] + ops[1..])
     }
     "lsl" | "lsr" | "asr" | "ror" => a.shift(m, ops)
+    "extr" => a.extr(m, ops)
     "rev" => {
       // the bytes reversed (rt.int_wrap op 7, decision 0195)
       if n != 2 {
@@ -894,6 +895,31 @@ fn (var a: Asm) logical(m: Str, ops: List[Bytes]) {
   }
   let nb = if inv { 0x200000 } else { 0 }
   a.word(0x0a000000 | (sf * 0x80000000) | (opc * 0x20000000) | (sk * 0x400000) | nb | (r * 0x10000) | (amt * 0x400) | (s * 32) | d)
+}
+
+/// extr d, n, m, #lsb: the low bits of the pair n:m shifted right by lsb
+/// (ror by an immediate is extr with n and m the same register).
+fn (var a: Asm) extr(m: Str, ops: List[Bytes]) {
+  if ops.len() != 4 {
+    return a.bad(m, ops)
+  }
+  let (d, sfd) = gpr(ops[0], false)
+  let (n, sfn) = gpr(ops[1], false)
+  let (r, sfr) = gpr(ops[2], false)
+  if d < 0 || n < 0 || r < 0 || sfd != sfn || sfd != sfr {
+    return a.bad(m, ops)
+  }
+  let size = if sfd == 1 { 64 } else { 32 }
+  let nbit = if sfd == 1 { 0x400000 } else { 0 }
+  match imm(ops[3]) {
+    Some(v) => {
+      if v < 0 || v >= size {
+        return a.bad(m, ops)
+      }
+      a.word(0x13800000 | (sfd * 0x80000000) | nbit | (r * 0x10000) | (v * 0x400) | (n * 32) | d)
+    }
+    None => a.bad(m, ops)
+  }
 }
 
 /// lsl, lsr, asr, ror: by an immediate (ubfm, sbfm, extr) or a register
