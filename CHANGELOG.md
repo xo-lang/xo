@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The wasm backend runs the TLS servers, signing, and every crypto
+  golden: in a WASI module the native runtime's entropy and environment
+  reads go to the wasm runtime's WASI random_get and environ_get
+  (decision 0231's addendum, owner 2026-10-16). TestSelfhostWasm: 154
+  pass, 26 unsupported, 0 fail of 180 (was 148, 31, 0).
+
 - The heap profile off costs about 1% at most (decision 0238): the
   profile's armed bit is bit 1 of a thread's heap word (obj.xo ARMED),
   which the threaded allocation and free already hold, instead of a load

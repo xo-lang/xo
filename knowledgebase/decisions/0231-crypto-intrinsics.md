@@ -204,3 +204,27 @@ bump.
   crypto/sha256 on every length from 0 to 200 and around 4096, on both
   native backends; the crypto and TLS goldens; selfhost/macho's encoder
   table.
+
+## WASI entropy (owner, 2026-10-16)
+
+The owner approved an entropy source for the native runtime in a WASI
+module: std/native/llrt/rand.xo's `entropy(n)` picks getrandom,
+getentropy or BCryptGenRandom by target and had none for wasm32, so the
+crypto code (which calls rand.xo directly, with no `Rand` capability)
+faulted there, and the six signing TLS goldens (tls12_server,
+tls12_tickets, tls13_server, tls_mlkem_off, tls_nistec, tls_rsa) were
+unsupported on the wasm backend.
+
+It landed as a lowering, not a new declaration in std/native/rt.xo: in a
+WASI module the SSA builder sends a call of rand.xo's `entropy` to the
+wasm runtime's `rand_bytes`, the WASI `random_get` that the `Rand`
+capability's `bytes` already uses (selfhost/ssa call.xo wasi_served). The
+native backends compile rand.xo unchanged. process.xo's `real_env_get`,
+which reads the C environment (none in a WASI module), goes to the wasm
+runtime's `env_get` (WASI environ_get) the same way: with entropy
+working, tls_mlkem_off ran and showed its XO_TLS_MLKEM=0 was not seen. That keeps the language
+surface the same and needs no seed: an rt declaration that rand.xo calls
+would reach the compiler's own native build, which seed 0.18.0 lowers to
+an undefined C symbol (gotchas/seed-older-than-intrinsics.md).
+TestSelfhostWasm no longer counts the entropy fault as unsupported
+(wasm_test.go wasmCCallRE).

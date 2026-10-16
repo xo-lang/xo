@@ -84,6 +84,15 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
+  if b.wasm && fm >= 0 {
+    let w = wasi_served(b.c.mods[fm].path, b.c.objs[fo].name)
+    if !w.is_empty() {
+      // the native runtime's own body reads what a WASI module does not
+      // have; the wasm runtime serves the call
+      let a = b.expr(args[0].value)
+      return b.rt(w, if w == "rand_bytes" { b.str_t() } else { b.nat_of(x) }, [a])
+    }
+  }
   if fm >= 0 && !b.c.mods[fm].go_path.is_empty() {
     b.impossible("`${b.c.mods[fm].name}.${b.c.display_name(fo)}` of the Go package `${b.c.mods[fm].go_path}` (`use go`)")
     return b.undef(b.nat_of(x))
@@ -1410,6 +1419,23 @@ fn (var b: Builder) sym_addr(es: List[Expr?]) -> Int {
     return b.rt("fn_addr", it, [])
   }
   b.add(Op.FuncAddr, it, Aux.S(s: "&${name}"), [])
+}
+
+/// The wasm runtime's call that serves a call of the native runtime's
+/// function name of module path in a WASI module, or "": rand.xo's
+/// entropy (the system's generator, rand_bytes: WASI random_get, as
+/// Rand.bytes; decision 0231's addendum of 2026-10-16) and process.xo's
+/// real_env_get (the C environment, env_get: WASI environ_get, as
+/// Env.get). Their native bodies have no source there
+/// (gotchas/wasm-native-rand-no-entropy.md).
+fn wasi_served(path: Str, name: Bytes) -> Str {
+  if path == "native/llrt/rand" && name == b"entropy" {
+    return "rand_bytes"
+  }
+  if path == "native/llrt/process" && name == b"real_env_get" {
+    return "env_get"
+  }
+  ""
 }
 
 /// Whether rt.<name> is served only by a wasm module's runtime: the calls

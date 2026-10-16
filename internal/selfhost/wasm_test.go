@@ -16,7 +16,7 @@ import (
 // run correctly (stage 2 of decision 0179: 116 of 134; raise it as
 // stages land). 128 of 145 since std/json's text is Xo (decision 0193
 // step 4: native_json, text_table, codex_gaps, json_text).
-const wasmMinPass = 128
+const wasmMinPass = 154
 
 // TestSelfhostWasm is stages 1 and 2 of decision 0179: selfhost/wasm (built
 // with the go backend) lowers every golden program of
@@ -31,11 +31,11 @@ const wasmMinPass = 128
 // wasmCCallRE matches the run time faults of what a WASI module cannot
 // do: a C library platform call (decision 0232, std/native/sys_c.xo), a
 // function address or a call through one (decision 0233: rt.fn_addr,
-// rt.frame_addr, rt.call_c2, rt.call_c4), and, until a WASI entropy
-// source reaches std/native/llrt/rand.xo, the native runtime's entropy
-// (gotchas/wasm-native-rand-no-entropy.md). The test counts them as
-// unsupported and logs each.
-var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|the system random number generator failed")
+// rt.frame_addr, rt.call_c2, rt.call_c4). The test counts them as
+// unsupported and logs each. (The native runtime's entropy was one until
+// the SSA builder sent rand.xo's entropy to the wasm runtime's
+// random_get, gotchas/wasm-native-rand-no-entropy.md.)
+var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`")
 
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {
