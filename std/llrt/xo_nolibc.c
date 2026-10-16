@@ -49,11 +49,12 @@ extern char **environ;
 // run the backends' (selfhost/ssa ir.xo entry_stub_arm64 and
 // entry_stub_amd64, which do the same with no C), then deleted.
 
-extern int main(int, char **);
+// cabi_c.xo's main (decision 0234), which takes envp as well
+extern int main(int, char **, char **);
 static int nl_argc;
 static char **nl_argv;
 
-NL_USED __attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv)); }
+NL_USED __attribute__((noreturn)) static void nl_run(void) { exit(main(nl_argc, nl_argv, environ)); }
 
 // xo_nolibc_start runs from _start with the initial stack: argc, argv,
 // envp, the auxiliary vector (Xo records them, maps the TLS block, and

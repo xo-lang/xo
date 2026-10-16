@@ -307,9 +307,8 @@ pub fn thread_start(f: Int, arg: Int) -> Bool {
 
 /// Runs the C function f with arg on n threads at once, each with a stack
 /// of size bytes reserved, and waits for them all (main's thread, which
-/// xo_rt.c main starts with run_main: 1 GiB, n 1, or N with
-/// XO_RT_TEST_THREADS): whether every one started (those that did are
-/// waited for).
+/// entry.xo main starts with run_main: 1 GiB, n copies): whether every
+/// one started (those that did are waited for).
 pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
   match layer() {
     2 => {

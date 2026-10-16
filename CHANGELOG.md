@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Decision 0234, step 2 (after seed 0.15.0): `main` is Xo
+  (std/native/llrt/cabi_c.xo, exported under its C name): entry.xo init
+  does what xo_rt.c's main and fault_init did (the main heap record,
+  fault.xo and ctx.xo, the event loop's record, stop.xo with the C's
+  services record through sys_c.xo xo_c_stop_svc), then entry.xo main
+  with rt.sym_addr("xo_entry"). xo_rt.c keeps Windows' on_overflow and
+  its services record, the Windows headers and asserts, and the C
+  tests' constructor (cabi.xo rt_init); cabi.xo's heap_start, rt_start,
+  poll_svc, stop_init and entry_main exports and XO_RT_TEST_THREADS are
+  gone. Runtime C 343 to 262 lines.
 - `xo test --no-gc` starts each test binary directly (os.proc's cmd
   with the directory and environment) instead of through `sh -c 'cd
   ... && exec env ...'`: about 7 ms less per run; nogc/prop's fixture

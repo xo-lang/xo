@@ -1,12 +1,11 @@
-// The program's start and end around the C entry's main, in Xo (the
-// zero-C audit's work item B26, part 2; this was xo_rt.c's main,
-// win_init, xo_signals_init, and xo_rt_stats). C main keeps what needs
-// C: the heap and fault setup before any Xo runs, the thread that runs
-// the program (its frame address is the fault boundary), and Windows'
-// stack overflow handler (on_overflow), which runs at the end of an
-// overflowed stack, whose address the services record hands over. The
-// signal and console handlers are poll.xo's (on_signal, on_console),
-// installed through rt.fn_addr (decision 0233).
+// The program's start and end, in Xo (the zero-C audit's work item B26,
+// part 2; this was xo_rt.c's main, fault_init, win_init,
+// xo_signals_init, and xo_rt_stats): main is cabi_c.xo's, the C symbol
+// main (decision 0234), which calls init and then main here. What stays
+// C is Windows' stack overflow handler (on_overflow), which runs at the
+// end of an overflowed stack, whose address the services record hands
+// over. The signal and console handlers are poll.xo's (on_signal,
+// on_console), installed through rt.fn_addr (decision 0233).
 //
 // The entry's one C function, Windows' on_overflow, is a word of
 // stop.xo's services record (rt.static_word 61); the rest are cabi.xo
@@ -15,14 +14,18 @@
 // memory is rt.heap_large's, from malloc.
 use native/llrt/atexit
 use native/llrt/ctx
+use native/llrt/fault
 use native/llrt/heapos
 use native/llrt/linux
+use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/stop
 use native/rt
+use native/sys_c
 use native/sys_darwin
 use native/sys_windows
 
@@ -60,13 +63,27 @@ const W_GUARANTEE = 65536
 const ACQUIRE = 1
 
 
-/// The program from C main on (rank 9 of the zero-C inventory, decision
-/// 0233), after the heap's and the faults' setup, which stay C: the
-/// process's start, main's thread (n copies with XO_RT_TEST_THREADS,
-/// 1 GiB stacks, pool.xo thread_run; main itself on this thread if no
-/// thread starts), then the end: standard output flushed, the stop
-/// record's end, the statistics, and the leak check's frees and reports.
-/// entry is xo_entry's address (the program's main). The status.
+/// The runtime's setup before any other Xo runs (cabi_c.xo main, and the
+/// C tests' constructor through cabi.xo rt_init; was xo_rt.c's main and
+/// fault_init): the main thread's heap record, fault.xo and ctx.xo (the
+/// personality routine's address), the event loop's record before any
+/// descriptor, and stop.xo's state with the C's services record
+/// (xo_rt.c xo_c_stop_svc: Windows' on_overflow).
+pub fn init() {
+  obj.heap_init(heapos.main_record(), rt.fn_addr("heap_thread"))
+  fault.init(rt.fn_addr("fault_raise_msg"))
+  ctx.init(rt.fn_addr("personality"))
+  let _p = poll.poll_svc()
+  stop.init(sys_c.xo_c_stop_svc())
+}
+
+/// The program after init (rank 9 of the zero-C inventory, decisions
+/// 0233 and 0234): the process's start, main's thread (n copies when n
+/// is above 1, 1 GiB stacks, pool.xo thread_run; main itself on this
+/// thread if no thread starts), then the end: standard output flushed,
+/// the stop record's end, the statistics, and the leak check's frees and
+/// reports. entry is xo_entry's address (the program's main). The
+/// status.
 pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   start(argc, argv, envp)
   let f = rt.fn_addr("run_main")

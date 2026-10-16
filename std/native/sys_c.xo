@@ -24,6 +24,11 @@ fn weak___tsan_release(addr: Int)
 fn weak___sanitizer_start_switch_fiber(fake_stack_save: Int, bottom: Int, size: Int)
 fn weak___sanitizer_finish_switch_fiber(fake_stack_save: Int, bottom_old: Int, size_old: Int)
 
+/// The C runtime's services record for stop.xo (std/llrt/xo_rt.c:
+/// Windows' stack overflow handler, which runs on what is left of an
+/// overflowed stack, decision 0234), its address.
+fn xo_c_stop_svc() -> Int
+
 /// getpid(2), for the check of this module itself (internal.crypto_op's
 /// "sysc." op, the sys_c golden): a strong reference every C library has.
 fn getpid() -> Int32

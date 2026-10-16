@@ -147,14 +147,6 @@ fn fault_loc(lenp: Int) -> Int { fault.loc(ctx.cur(), lenp) }
 /// The line printed under the next fault: the n bytes at p (xo_fault_detail).
 fn fault_detail(p: Int, n: Int) { fault.detail(ctx.cur(), p, n) }
 
-/// The runtime's start after the heap's (xo_rt.c fault_init): fault.xo
-/// raises through fault_raise_msg, and ctx.xo makes the services record
-/// with the second personality routine pers_old (the C's on Windows).
-fn rt_start(pers_old: Int) {
-  fault.init(rt.fn_addr("fault_raise_msg"))
-  ctx.init(pers_old)
-}
-
 /// Records the fault msg at loc (zero terminated) in the current context
 /// and raises it; with msg 0 raises the fault already recorded (fault.xo
 /// fire, cont): never returns (was xo_rt.c fault_raise_msg).
@@ -294,9 +286,10 @@ fn obj_rs_new(n: Int) -> Int { obj.rs_new_obj(n) }
 
 fn obj_rl_new_cap(cap: Int, esize: Int) -> Int { obj.rl_new_obj(cap, esize) }
 
-/// The main heap record and the heap words, first in C main (before
-/// anything allocates; was xo_rt.c main_heap and obj_heap_init).
-fn heap_start() { obj.heap_init(heapos.main_record(), rt.fn_addr("heap_thread")) }
+/// The runtime's setup (entry.xo init, decision 0234) for the C tests'
+/// constructor, which brings its own main (std/llrt/xo_rt.c
+/// XO_RT_NO_MAIN; was heap_start and xo_rt.c fault_init).
+fn rt_init() { entry.init() }
 
 /// The switch to one heap record per thread, before a second thread runs
 /// Xo code (pool.xo's setup; xo_rt_threads_begin): the calling thread
@@ -406,9 +399,7 @@ fn poll_timer_first() -> Int { poll.timer_first() }
 fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
 
 /// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
-/// pd_begin and the rest on Linux and macOS), and the C's services record.
-fn poll_svc() -> Int { poll.poll_svc() }
-
+/// pd_begin and the rest on Linux and macOS).
 fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
 
 fn poll_pd_end(pd: Int) { poll.pd_end(pd) }
@@ -494,11 +485,9 @@ fn scope_deadline(s: Int, d: Int) { tasks.scope_deadline(s, d) }
 
 fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 } }
 
-/// Two phase shutdown (stop.xo, B26 part 1): its start, a signal, the
+/// Two phase shutdown (stop.xo, B26 part 1): a signal, the
 /// grace timer's end, task.stop_requested, task.stopping,
 /// proc.set_grace, main's root, and testing.run_main's start and end.
-fn stop_init(svc: Int) { stop.init(svc) }
-
 fn stop_signal() { stop.signal() }
 
 /// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
@@ -540,9 +529,6 @@ fn stop_reset(n: Int) { stop.reset(n) }
 
 fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
 
-/// The program from C main on (entry.xo main, B26 part 2 and decision
-/// 0233): the start, main's threads, the end; the status.
-fn entry_main(argc: Int, argv: Int, envp: Int, f: Int, n: Int) -> Int { entry.main(argc, argv, envp, f, n) }
 
 /// The C function main's threads run (entry.xo run_main, the fault
 /// boundary), with xo_entry's address.

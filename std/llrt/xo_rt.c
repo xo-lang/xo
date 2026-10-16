@@ -1,10 +1,10 @@
 // xo_rt.c: the C left of the native runtime (the runtime is Xo:
-// std/native/llrt, decisions 0206 and 0233). What stays is C by design:
-// main (the C library's start calls it, with xo_entry from the generated
-// code) and the C tests' constructor in its place, the personality
-// routine's address for the fault raise, Windows' stack overflow handler
-// (it runs on what is left of the overflowed stack), and the Windows
-// headers with the asserts of the constants sock.xo hard codes. It is
+// std/native/llrt, decisions 0206, 0233 and 0234; main is cabi_c.xo's).
+// What stays is C by design: Windows' stack overflow handler (it runs on
+// what is left of the overflowed stack) and the services record that
+// hands it to stop.xo, the Windows headers with the asserts of the
+// constants and layouts sock.xo, cabi_net.xo and poll.xo hard code, and
+// the C tests' constructor in place of main's setup. It is
 // compiled with the generated code (clang, -flto on LLVM); its
 // interface is scalars and pointers only.
 
@@ -88,28 +88,22 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
 #endif
 
 // ---------------------------------------------------------------------------
-// Memory: the heap is Xo (alloc.xo, obj.xo, heapos.xo through cabi.xo's
-// exports); heap_start makes the main thread's record before anything
-// allocates.
-
-void xo_x_heap_start(void);
-
 // The C tests of internal/llvm (XO_RT_NO_MAIN) bring their own main: a
-// constructor does main's setup there (xo's own ELF linker takes no
-// .init_array, so main does it otherwise:
+// constructor does main's setup there (cabi_c.xo main's entry.xo init,
+// through cabi.xo rt_init; xo's own ELF linker takes no .init_array,
+// so the program's main does it otherwise:
 // gotchas/runtime-c-no-constructors.md).
 #ifdef XO_RT_NO_MAIN
-static void fault_init(void);
+void xo_x_rt_init(void);
 void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
 #ifndef _WIN32
 extern char **environ;
 #endif
 __attribute__((constructor)) static void obj_heap_words(void) {
-	xo_x_heap_start();
+	xo_x_rt_init();
 	// the environment for the runtime's settings (poolsetup.xo reads
 	// XO_THREADS)
 	xo_x_proc_start(0, 0, (int64_t)(intptr_t)environ);
-	fault_init();
 }
 #endif
 
@@ -120,64 +114,17 @@ void xo_x_flush_try(void);
 // an address as the int64_t the C ABI exports (cabi.xo) take
 #define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
-// ---------------------------------------------------------------------------
-// Faults (core 8): fault.xo writes the message and raises through
-// cabi.xo fault_raise_msg; fault_init (below the personality routines)
-// has fault.xo, ctx.xo, poll.xo and stop.xo start.
-static void fault_init(void);
-
-// ---------------------------------------------------------------------------
-// Fault unwinding (decisions 0085, 0221): cabi.xo's fault_raise_msg
-// and fault_raise_cur record the fault and unwind with unwind.xo up to
-// the context's boundary, through frames whose personality routine is
-// xo_x_personality, which the emitters name on every target (Windows'
-// language handler xo_personality too since 1dc21cf8, before 0.13.0).
-int64_t xo_x_personality(int64_t version, int64_t actions, int64_t cls, int64_t exc, int64_t uc);
-
-// fault_init starts fault.xo and ctx.xo (cabi.xo rt_start; its second
-// personality routine is the first), has poll.xo make the event loop's
-// record, and fills stop.xo's services record.
-void xo_x_rt_start(int64_t pers_old);
-int64_t xo_x_poll_svc(void);
-static void stop_svc_init(void);
-static void fault_init(void) {
-	xo_x_rt_start(XO_ADDR(xo_x_personality));
-	// the event loop's record, before any descriptor
-	(void)xo_x_poll_svc();
-	stop_svc_init();
-}
-
-// ---------------------------------------------------------------------------
-// The event loop is poll.xo's (B22): fault_init has it make its record.
-
-#if defined(_WIN32)
+#ifdef _WIN32
 // the AFD polls' NtDeviceIoControlFile and NtCreateFile (poll.xo)
 #pragma comment(lib, "ntdll")
-#endif
-
-#ifdef _WIN32
 // poll.xo reads the completions GetQueuedCompletionStatusEx returns
 _Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8, "poll.xo's OVERLAPPED_ENTRY");
 #endif
 
 // ---------------------------------------------------------------------------
-// The network is netconn.xo's (cabi_net.xo); the C tests' view of its
-// handles is in testdata/xrec.h.
-
-// the environment, which main hands to process.xo (on Windows process.xo
-// reads Windows' own)
-#ifdef _WIN32
-#undef environ // the C runtime's (stdlib.h): process.xo reads Windows' own
-#define environ ((char **)0)
-#else
-extern char **environ;
-#endif
-
-// ---------------------------------------------------------------------------
 // Two phase shutdown (core 7.5) is stop.xo's; stop_svc holds the one C
-// word entry.xo reads (E_OVERFLOW: Windows' on_overflow, below).
-
-void xo_x_stop_init(int64_t svc);
+// word entry.xo reads (E_OVERFLOW: Windows' on_overflow, below), which
+// entry.xo init hands to stop.xo (sys_c.xo xo_c_stop_svc, decision 0234).
 
 #ifdef _WIN32
 // on_overflow reports a stack overflow (decision 0197, stage 5): not a
@@ -201,41 +148,12 @@ static LONG CALLBACK on_overflow(EXCEPTION_POINTERS *e) {
 #endif
 
 static int64_t stop_svc[20];
-static void stop_svc_init(void) {
-	// the rest are Xo (decision 0233 step 2): word 11 (the test world's
-	// start) since a test binary's main starts it, 17 (std/time's
-	// tz_free) atexit.xo's, and 12, 13, 15, 16, 18 and 19 (the poller's
-	// start, the signal or console handler, mid_max, consts_free, the
-	// statistics) entry.xo's calls through rt.fn_addr and heapos.xo
+int64_t xo_c_stop_svc(void) {
 #ifdef _WIN32
 	stop_svc[14] = XO_ADDR(&on_overflow);
 #endif
-	xo_x_stop_init(XO_ADDR(stop_svc));
+	return XO_ADDR(stop_svc);
 }
-
-// ---------------------------------------------------------------------------
-// Entry (left out with -DXO_RT_NO_MAIN: the C tests of std/llrt/testdata
-// include this file and bring their own main)
-
-#ifndef XO_RT_NO_MAIN
-extern void xo_entry(void);
-
-// the program (std/native/llrt/entry.xo main: the start, main's thread,
-// the end, decision 0233)
-int64_t xo_x_entry_main(int64_t argc, int64_t argv, int64_t envp, int64_t entry, int64_t n);
-
-#ifdef XO_RT_TEST_THREADS
-#define XO_MAIN_THREADS XO_RT_TEST_THREADS
-#else
-#define XO_MAIN_THREADS 1
-#endif
-
-int main(int argc, char **argv) {
-	xo_x_heap_start();
-	fault_init();
-	return (int)xo_x_entry_main(argc, (int64_t)(intptr_t)argv, (int64_t)(intptr_t)environ, XO_ADDR(xo_entry), XO_MAIN_THREADS);
-}
-#endif
 
 // The C library functions of a Linux program linked with no C library
 // (XO_NOLIBC=1 builds, decisions 0203 and 0206).

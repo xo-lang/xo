@@ -1,7 +1,8 @@
 # 0234: Exports with an exact C name, data symbols, and backend entry stubs
 
-Status: Accepted (owner, 2026-10-15). Step 1 implemented 2026-10-15;
-step 2 (main in Xo) waits for the 0.15.0 seed.
+Status: Accepted (owner, 2026-10-15). Step 1 implemented 2026-10-15
+(41362574); step 2 (main in Xo) implemented 2026-10-15 after seed
+0.15.0 (20036b36).
 
 ## Context
 
@@ -98,6 +99,15 @@ Step 2 was checked before step 1 landed: the step 1 xo (from the 0.14.0
 seed) built the step 2 tree, which built itself, and hello, rt_addrs,
 the C runtime tests, and -short passed on the result, except the split
 builds, which found the quoted symbol name fixed in step 1.
+
+## Implementation (step 2, 2026-10-15)
+
+As planned above, built by the 0.15.0 seed: std/native/llrt/cabi_c.xo
+main (imported by the native prelude), entry.xo init, cabi.xo rt_init
+for the C tests' constructor, sys_c.xo xo_c_stop_svc, the C tests'
+rename of `@main` (internal/llvm cOnlyWith), and the C start of
+xo_nolibc.c (XO_NOLIBC_C_START) calling main with environ as its third
+argument. Runtime C: 262 lines (xo_rt.c 162, xo_nolibc.c 100).
 
 ## What stays C
 

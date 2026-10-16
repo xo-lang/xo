@@ -1957,9 +1957,11 @@ first, AST based prototype, since deleted) and
   total at exit); per thread heaps after `xo_rt_threads_begin()` (one
   pointer load while single threaded), `xo_rc_inc`/`xo_rc_dec`/
   `xo_rc_claim`/`xo_rc_mark` (the count semantics generated code inlines),
-  a locked output buffer when threaded; `-DXO_RT_TEST_THREADS=N` runs the
-  program on N threads at once, `-DXO_RT_NO_MAIN` leaves out `main` (the
-  C tests in `std/llrt/testdata/` include the runtime); reference counted strings (`xo_rs_*`, append in place when
+  a locked output buffer when threaded; `-DXO_RT_NO_MAIN` adds the C
+  tests' constructor in place of main's setup (the C tests in
+  `std/llrt/testdata/` include the runtime; main itself is Xo's,
+  std/native/llrt/cabi_c.xo, decision 0234, and `-DXO_RT_TEST_THREADS`
+  went with C main; Last verified: 2026-10-15); reference counted strings (`xo_rs_*`, append in place when
   unique) and lists (`xo_rl_*`); `xo_rc_defer`, a worklist that frees
   closure environments and boxes whose count reached zero without
   recursing on long chains; buffered stdout; fault messages identical to

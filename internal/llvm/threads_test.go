@@ -32,6 +32,7 @@ var rtDir = filepath.Join("..", "..", "std", "llrt")
 // the test when the host's clang cannot. Where ThreadSanitizer compiles
 // but cannot run, it compiles without it.
 var (
+	cMainRE    = regexp.MustCompile(`@main([(,\] ])`)
 	cExportsMu sync.Mutex
 	cExportsLL = map[string]string{}
 )
@@ -67,6 +68,9 @@ func cOnlyWith(t *testing.T, src, dir, main string) []string {
 		t.Fatalf("the C ABI exports: %v", err)
 	}
 	ll := filepath.Join(d, "exports.ll")
+	// the C test brings its own main: the program's (cabi_c.xo main,
+	// decision 0234) is renamed out of its way
+	ir = cMainRE.ReplaceAll(ir, []byte("@xo_ctest_unused_main$1"))
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatalf("the C ABI exports: %v", err)
 	}
