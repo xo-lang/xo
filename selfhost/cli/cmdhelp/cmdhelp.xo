@@ -217,14 +217,17 @@ evaluated. --seed and --record need the Go backend.
 fn test_text() -> Str {
   """
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
-               [--json] [-v] [--backend=go|llvm|arm64] [--no-gc] <dirs...>
+               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
 text; --cases sets the cases per property test and fuzzed function
 (default 100); --explore=N runs each test under N schedules; --real
-gives tests real capabilities for their declared effects. Shrunk
-contract failures are written to the module's regressions_test.xo.
+gives tests real capabilities for their declared effects; --timeout
+is the real time each test (each property case) may take, 60s by
+default, 0 for no limit: a test past it fails and, natively, its
+process is killed. Shrunk contract failures are written to the
+module's regressions_test.xo.
 """
 }
 

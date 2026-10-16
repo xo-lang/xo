@@ -203,6 +203,9 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     if topts.cases > 0 {
       targs = targs + ["-cases", "${topts.cases}"]
     }
+    if topts.timeout != 60s {
+      targs = targs + ["-timeout", "${topts.timeout}"]
+    }
     // shrunk contract fuzz failures become regression tests (core 9.2),
     // through a file in the test binary's environment
     var tmp_root = os.env.get("TMPDIR") ?? ""

@@ -97,7 +97,7 @@ func runTests(args []string, tables [][]TestCase) int {
 	run := fs.String("run", "", "run only tests whose name contains this text")
 	asJSON := fs.Bool("json", false, "print JSON lines")
 	verbose := fs.Bool("v", false, "print passing tests too")
-	timeout := fs.Duration("timeout", 60*time.Second, "real time limit per test")
+	timeout := fs.Duration("timeout", 60*time.Second, "real time limit per test (0: none)")
 	real := fs.Bool("real", false, "give tests that declare `uses` real capabilities")
 	cases := fs.Int("cases", 100, "cases per property test")
 	if err := fs.Parse(args); err != nil {
@@ -326,11 +326,20 @@ func runOneTest(tc TestCase, seed int64, limit time.Duration) testOutcome {
 	case <-w.stuck:
 		f := w.DeadlockFault()
 		out = testOutcome{status: "fail", msg: "fault: " + f.Error(), concurrent: true}
-	case <-osAfter(limit, stop):
+	case <-limitAfter(limit, stop):
 		out = testOutcome{status: "fail", msg: fmt.Sprintf("the test did not finish within %s of real time", limit)}
 	}
 	out.logs = testLogLines(w)
 	return out
+}
+
+// limitAfter is osAfter for a test's time limit: never for 0 or less
+// (`xo test --timeout=0`, no limit).
+func limitAfter(limit time.Duration, stop <-chan struct{}) <-chan struct{} {
+	if limit <= 0 {
+		return nil
+	}
+	return osAfter(limit, stop)
 }
 
 func runInWorld(w *World, tc TestCase, seed int64) (out testOutcome) {

@@ -38,6 +38,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- `xo test --timeout=D`: the real time each test, property case, and
+  shrinking replay may take (default 60s, the Go backend's limit; 0 for
+  none, also on the Go backend). Natively a test past it fails with the
+  Go backend's message and its log records, its process is killed, and
+  the next test runs (decision 0235, spec core 9.2; TestNoGCTimeout).
+  The native harness now reads each test process's streams as they come.
+
 - `xo test --no-gc` shrinks a failing property test's input over a
   pipe: one test binary serves the replays (XO_TEST_SERVE), a case not
   smaller than the best skips its body without ending it, and only an

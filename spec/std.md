@@ -1382,7 +1382,11 @@ unwinds main back to it. `testing.gen` and property tests make the Go
 backend's values for a seed, and a failing property test reports the
 same case and shrunk input (decision 0120). With `xo test --real` a test
 gets real capabilities for the effects it declares (with `clock`, `net`,
-or `proc` its clock is the real one).
+or `proc` its clock is the real one). Many tests share a process, the
+fakes starting over for each, and a test the process does not survive
+runs again alone (decision 0235). `xo test --timeout=D` limits each
+test's real time on every backend (default 60s, 0 for none, core 9.2);
+natively the harness kills the process of a test past it.
 
 ```
 struct TestOs {

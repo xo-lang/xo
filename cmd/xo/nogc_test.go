@@ -399,3 +399,45 @@ func TestNoGCRunCache(t *testing.T) {
 		})
 	}
 }
+
+// TestNoGCTimeout runs testdata/nogc/hang, whose middle test never
+// finishes, with `--timeout=2s`: on every backend the test fails with
+// std/rt's message, the tests around it pass, and the reports are the
+// Go backend's; natively in batches, one process per test, and with
+// --timeout=0 (no limit) on the tests that finish.
+func TestNoGCTimeout(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs test binaries")
+	}
+	backends := nativeBackends(t)
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := filepath.Join("testdata", "nogc", "hang")
+	goCode, goOut := xoTest(t, "-v", "--timeout=2s", dir)
+	for _, want := range []string{"--- PASS: before\n", "--- FAIL: spins (", "    the test did not finish within 2s of real time\n", "      2026-01-01T00:00:00Z INFO about to spin\n", "--- PASS: after\n", "FAIL: 2 passed, 1 failed, 0 skipped\n"} {
+		if goCode != 1 || !strings.Contains(goOut, want) {
+			t.Fatalf("go backend: exit %d, no %q in\n%s", goCode, want, goOut)
+		}
+	}
+	for _, be := range backends {
+		for _, batch := range []string{"1", "0"} {
+			setenv(t, "XO_TEST_BATCH", batch)
+			start := time.Now()
+			code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", "--timeout=2s", dir)
+			if code != goCode || out != goOut {
+				t.Errorf("%s (XO_TEST_BATCH=%s) differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", be, batch, goCode, code, goOut, be, out)
+			}
+			if d := time.Since(start); d > 90*time.Second {
+				t.Errorf("%s (XO_TEST_BATCH=%s): took %v", be, batch, d)
+			}
+		}
+		code, out := xoTest(t, "--no-gc", "--backend="+be, "--timeout=0", "--run=fore", dir)
+		if code != 0 || !strings.Contains(out, "ok: 1 passed, 0 failed, 0 skipped") {
+			t.Errorf("%s --timeout=0: exit %d\n%s", be, code, out)
+		}
+	}
+	code, out := xoTest(t, "--timeout=0", "--run=fore", dir)
+	if code != 0 || !strings.Contains(out, "ok: 1 passed, 0 failed, 0 skipped") {
+		t.Errorf("go --timeout=0: exit %d\n%s", code, out)
+	}
+}

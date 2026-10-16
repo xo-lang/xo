@@ -108,6 +108,10 @@ struct TestOpts {
   json: Bool = false
   verbose: Bool = false
   cases: Int = 0
+  /// --timeout: the real time a test (a property case, a replay) may
+  /// take before the harness kills its process (std/rt's -timeout,
+  /// 60 s); 0 for no limit.
+  timeout: Duration = 60s
 }
 
 /// The outcome of a test: pass, fail, or skip, the message, and the
@@ -133,6 +137,8 @@ struct PropCase {
 /// runNativeTests: runs every test of bin and prints the results; the
 /// exit status.
 fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
+  // the real time limit of each run (--timeout, 0 for none)
+  let limit = o.timeout
   var pass = 0
   var failed = 0
   var skip = 0
@@ -140,7 +146,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   // rest run below, one process each
   var pre: Map[Int, Outcome] = {}
   if (os.env.get("XO_TEST_BATCH") ?? "") != "0" {
-    pre = run_batched(os, bin, tests, o)
+    pre = run_batched(os, bin, limit, tests, o)
   }
   for (k, t) in tests.indexed() {
     if !o.run.is_empty() && !t.name.contains(o.run) {
@@ -162,7 +168,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       // real capabilities for the declared effects (decision 0120); what
       // a test with real stdio printed goes where the Go backend's test
       // binary prints it
-      let (oc, pc) = run_test_env(os, bin, t, s, ["XO_TEST_REAL=${t.effects.join(",")}"])
+      let (oc, pc) = run_test_env(os, bin, limit, t, s, ["XO_TEST_REAL=${t.effects.join(",")}"])
       out = oc
       if t.effects.contains("stdio") {
         for l in pc.out {
@@ -175,9 +181,9 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     } else if let Some(bo) = pre.get(k) {
       out = bo
     } else if t.prop {
-      out = run_property(os, bin, t, s, if o.cases <= 0 { 100 } else { o.cases })
+      out = run_property(os, bin, limit, t, s, if o.cases <= 0 { 100 } else { o.cases })
     } else {
-      let (oc, _) = run_test_env(os, bin, t, s, [])
+      let (oc, _) = run_test_env(os, bin, limit, t, s, [])
       out = oc
     }
     if out.status == "pass" {
@@ -270,13 +276,105 @@ fn hex4(n: Int) -> Str {
 
 /// runNativeTestEnv: test t of bin with seed s and the extra environment
 /// (NAME=value words), in the test's module directory.
-fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outcome, PropCase) {
+fn run_test_env(os: Os, bin: Str, limit: Duration, t: TestInfo, s: Int, env: List[Str]) -> (Outcome, PropCase) {
   let words = ["XO_TEST=${t.index}", "XO_TEST_SEED=${s}"] + env
-  let r = match test_cmd(os, bin, t.dir, words).output() {
-    Ok(r) => r
-    Err(e) => return (Outcome{status: "fail", msg: "${e}"}, PropCase{})
+  let r = run_proc(test_cmd(os, bin, t.dir, words), os.clock, limit)
+  if !r.failed.is_empty() {
+    return (Outcome{status: "fail", msg: r.failed}, PropCase{})
   }
-  parse_run(r.stdout.to_str() ?? "", r.stderr.to_str() ?? "", r.code)
+  let (o, pc) = parse_run(r.out, r.err, r.code)
+  if r.timed_out {
+    return (Outcome{status: "fail", msg: timeout_msg(limit), logs: o.logs}, pc)
+  }
+  (o, pc)
+}
+
+/// A timed out run's message (std/rt's runOneTest).
+fn timeout_msg(limit: Duration) -> Str { "the test did not finish within ${limit} of real time" }
+
+/// What a test binary's process wrote, its status, and whether a run in
+/// it timed out (the harness killed it), or why it did not start.
+struct Ran {
+  out: Str = ""
+  err: Str = ""
+  code: Int = 0
+  timed_out: Bool = false
+  failed: Str = ""
+}
+
+/// Runs c to its end, reading both streams as they come; with a limit
+/// (not 0) a watchdog kills the process when a run in it takes longer:
+/// a run starts with the process and again at each XO-TEST-BEGIN line
+/// of a batch. Only the child this call started is killed.
+fn run_proc(c: Cmd, clock: Clock, limit: Duration) -> Ran uses (proc, clock) {
+  let child = match c.spawn() {
+    Ok(ch) => ch
+    Err(e) => return Ran{failed: "${e}"}
+  }
+  let begins = Atomic[Int].new(0)
+  let done = Atomic[Int].new(0)
+  let killed = Atomic[Int].new(0)
+  let (out, err) = scope s {
+    let to = s.spawn(fn() -> Bytes {
+      var b = BytesBuilder.new()
+      // how much of "XO-TEST-BEGIN\n" a line has matched so far (-1:
+      // inside a line that is not it)
+      let pat = "XO-TEST-BEGIN\n".bytes()
+      var at = 0
+      while true {
+        let chunk = match child.read(65536) {
+          Ok(Some(x)) => x
+          _ => break
+        }
+        for x in chunk {
+          if at >= 0 && x == pat[at] {
+            at += 1
+            if at == pat.len() {
+              let _n = begins.add(1)
+              at = 0
+            }
+          } else {
+            at = if x == 10 { 0 } else { -1 }
+          }
+        }
+        b.write(chunk)
+      }
+      done.set(1)
+      b.freeze()
+    })
+    let te = s.spawn(fn() -> Bytes {
+      var b = BytesBuilder.new()
+      while true {
+        match child.read_err(65536) {
+          Ok(Some(x)) => b.write(x)
+          _ => break
+        }
+      }
+      b.freeze()
+    })
+    if limit > 0s {
+      s.spawn(fn() {
+        var seen = 0
+        var start = clock.now()
+        while done.get() == 0 {
+          let n = begins.get()
+          if n != seen {
+            seen = n
+            start = clock.now()
+          }
+          if clock.since(start) >= limit {
+            killed.set(1)
+            child.kill()
+            break
+          }
+          clock.sleep(20ms)
+        }
+      })
+    }
+    (to.await, te.await)
+  }
+  let code = child.wait().ok() ?? 1
+  Ran{out: out.to_str() ?? "", err: err.to_str() ?? "", code: code, timed_out: killed.get() != 0}
 }
 
 /// The outcome of a run from what its process wrote and its status
@@ -359,7 +457,7 @@ fn test_seed(t: TestInfo, o: TestOpts) -> Int {
 /// A process that ends early (the test binary could not reset the test
 /// world) leaves the rest to the next one. The outcomes, by place in
 /// tests.
-fn run_batched(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Map[Int, Outcome] {
+fn run_batched(os: Os, bin: Str, limit: Duration, tests: List[TestInfo], o: TestOpts) -> Map[Int, Outcome] {
   var runs: List[Run] = []
   for (k, t) in tests.indexed() {
     if (!o.run.is_empty() && !t.name.contains(o.run)) || !t.skip.is_empty() || !t.effects.is_empty() {
@@ -391,23 +489,36 @@ fn run_batched(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Map[Int,
       i = j
       continue
     }
-    let (segs, ended, code) = run_batch(os, bin, batch)
+    let (segs, ended, code, timed_out) = run_batch(os, bin, limit, batch)
     // the runs that ended in the process
     var n = 0
     while n < segs.len() && ended[n] {
       let r = batch[n]
       if r.case < 0 {
-        out[r.k] = Outcome{status: "pass", logs: segs[n]}
+        let (po, _) = parse_run(segs[n], "", 0)
+        out[r.k] = Outcome{status: "pass", logs: po.logs}
       }
       n += 1
     }
-    if n < segs.len() {
+    if n < segs.len() && timed_out {
+      // run n did not finish in time and its process was killed: it
+      // fails as alone (std/rt's runOneTest), without running again
+      let r = batch[n]
+      let (so, spc) = parse_run(segs[n], "", 1)
+      let to = Outcome{status: "fail", msg: timeout_msg(limit), logs: so.logs}
+      if r.case < 0 {
+        out[r.k] = to
+      } else {
+        out[r.k] = prop_failed(os, bin, limit, r.t, r.seed, r.case, to, spc)
+      }
+      n += 1
+    } else if n < segs.len() {
       // run n began and the process ended in it: it runs alone
       let r = batch[n]
       if r.case < 0 {
-        let (oc, _) = run_test_env(os, bin, r.t, r.seed, [])
+        let (oc, _) = run_test_env(os, bin, limit, r.t, r.seed, [])
         out[r.k] = oc
-      } else if let Some(po) = prop_case(os, bin, r.t, r.seed, r.case) {
+      } else if let Some(po) = prop_case(os, bin, limit, r.t, r.seed, r.case) {
         out[r.k] = po
       }
       n += 1
@@ -438,9 +549,10 @@ fn run_batched(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Map[Int,
   out
 }
 
-/// Runs batch in one process (XO_TEST_BATCH): the log lines of each run
-/// that began, whether it ended, and the process's status.
-fn run_batch(os: Os, bin: Str, batch: List[Run]) -> (List[List[Str]], List[Bool], Int) {
+/// Runs batch in one process (XO_TEST_BATCH): the output lines of each
+/// run that began, whether it ended, the process's status, and whether
+/// its last run timed out.
+fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run]) -> (List[Str], List[Bool], Int, Bool) {
   var parts: List[Str] = []
   var i = 0
   while i < batch.len() {
@@ -460,47 +572,58 @@ fn run_batch(os: Os, bin: Str, batch: List[Run]) -> (List[List[Str]], List[Bool]
   }
   let first = batch[0]
   let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"]
-  var segs: List[List[Str]] = []
+  var segs: List[Str] = []
   var ended: List[Bool] = []
-  let r = match test_cmd(os, bin, first.t.dir, words).output() {
-    Ok(r) => r
-    Err(_) => return (segs, ended, 1)
+  let r = run_proc(test_cmd(os, bin, first.t.dir, words), os.clock, limit)
+  if !r.failed.is_empty() {
+    return (segs, ended, 1, false)
   }
-  let stdout = r.stdout.to_str() ?? ""
-  var logs: List[Str] = []
+  var lines: List[Str] = []
   var open = false
-  for l in trim_nl(stdout).split("\n") {
+  for l in trim_nl(r.out).split("\n") {
     if l == "XO-TEST-BEGIN" {
-      logs = []
+      if open {
+        segs[segs.len() - 1] = lines.join("\n")
+      }
+      lines = []
       open = true
-      segs.push([])
+      segs.push("")
       ended.push(false)
     } else if l == "XO-TEST-END" && open {
-      segs[segs.len() - 1] = logs
+      segs[segs.len() - 1] = lines.join("\n")
       ended[ended.len() - 1] = true
       open = false
-    } else if open && l.starts_with("XO-TEST-LOG ") {
-      logs.push(l.trim_prefix("XO-TEST-LOG "))
+    } else if open {
+      lines.push(l)
     }
   }
-  (segs, ended, r.code)
+  if open {
+    segs[segs.len() - 1] = lines.join("\n")
+  }
+  (segs, ended, r.code, r.timed_out)
 }
 
 /// Case c of property test t run alone (run_property's step): the test's
 /// outcome when the case fails (shrunk), None when it passes.
-fn prop_case(os: Os, bin: Str, t: TestInfo, seed: Int, c: Int) -> Outcome? {
+fn prop_case(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int) -> Outcome? {
   let case_seed = seed.wrapping_mul(1000003).wrapping_add(c)
-  let (out, pc) = run_test_env(os, bin, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
+  let (out, pc) = run_test_env(os, bin, limit, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
   if out.status != "fail" {
     return None
   }
+  Some(prop_failed(os, bin, limit, t, seed, c, out, pc))
+}
+
+/// Property test t's outcome when its case c failed with out (pc what
+/// the case reported): shrunk when the choices were reported.
+fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int, out: Outcome, pc: PropCase) -> Outcome {
   if pc.reported {
-    let (s_in, s_out, steps) = shrink(os, bin, t, seed, pc.choices)
+    let (s_in, s_out, steps) = shrink(os, bin, limit, t, seed, pc.choices)
     if steps > 0 {
-      return Some(Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs})
+      return Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs}
     }
   }
-  Some(Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs})
+  Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs}
 }
 
 /// The test binary bin run in dir with the NAME=value words added to the
@@ -527,20 +650,14 @@ fn trim_nl(s: Str) -> Str {
 
 /// runNativeProperty: the cases of property test t, each in a process of
 /// its own, and the first failing input, shrunk.
-fn run_property(os: Os, bin: Str, t: TestInfo, seed: Int, cases: Int) -> Outcome {
+fn run_property(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, cases: Int) -> Outcome {
   for i in 0..cases {
     let case_seed = seed.wrapping_mul(1000003).wrapping_add(i)
-    let (out, pc) = run_test_env(os, bin, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
+    let (out, pc) = run_test_env(os, bin, limit, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
     if out.status != "fail" {
       continue
     }
-    if pc.reported {
-      let (s_in, s_out, steps) = shrink(os, bin, t, seed, pc.choices)
-      if steps > 0 {
-        return Outcome{status: "fail", msg: "property failed on case ${i + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs}
-      }
-    }
-    return Outcome{status: "fail", msg: "property failed on case ${i + 1} with\n${pc.input}${out.msg}", logs: out.logs}
+    return prop_failed(os, bin, limit, t, seed, i, out, pc)
   }
   Outcome{status: "pass"}
 }
@@ -569,7 +686,7 @@ fn join_choices(cs: List[Int]) -> Str {
 /// shrinkNative: deletes runs of choices, then lowers each by binary
 /// search, keeping every edit that still fails with smaller choices,
 /// within 2000 tries; the best input, its outcome, and the steps.
-fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str, Outcome, Int) {
+fn shrink(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, failing: List[Int]) -> (Str, Outcome, Int) {
   var best = failing
   var best_in = ""
   var best_out = Outcome{status: "fail"}
@@ -587,7 +704,7 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
       while i + k <= best.len() && !improved && budget > 0 {
         let cand = best[0..i] + best[i + k..best.len()]
         budget -= 1
-        let (out, pc, s2) = serve_run(os, bin, t, seed, join_choices(cand), join_choices(best), srv)
+        let (out, pc, s2) = serve_run(os, bin, limit, t, seed, join_choices(cand), join_choices(best), srv)
         srv = s2
         if !pc.not_smaller && pc.reported && out.status == "fail" {
           best = pc.choices
@@ -613,7 +730,7 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
           }
           cand[i] = mid
           budget -= 1
-          let (out, pc, s2) = serve_run(os, bin, t, seed, join_choices(cand), join_choices(best), srv)
+          let (out, pc, s2) = serve_run(os, bin, limit, t, seed, join_choices(cand), join_choices(best), srv)
         srv = s2
           if !pc.not_smaller && pc.reported && out.status == "fail" {
             best = pc.choices
@@ -649,10 +766,10 @@ struct Server {
 /// binary does not survive ends the server; unless it was the server's
 /// first run it runs again alone (run_test_env), so a failure's report
 /// is the one process mode's.
-fn serve_run(os: Os, bin: Str, t: TestInfo, seed: Int, replay: Str, best: Str, srv: Server) -> (Outcome, PropCase, Server) {
+fn serve_run(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, replay: Str, best: Str, srv: Server) -> (Outcome, PropCase, Server) {
   let alone = ["XO_PROP_REPLAY=${replay}", "XO_PROP_BEST=${best}"]
   if srv.off {
-    let (o, pc) = run_test_env(os, bin, t, seed, alone)
+    let (o, pc) = run_test_env(os, bin, limit, t, seed, alone)
     return (o, pc, srv)
   }
   var s = srv
@@ -663,7 +780,7 @@ fn serve_run(os: Os, bin: Str, t: TestInfo, seed: Int, replay: Str, best: Str, s
         s.runs = 0
       }
       Err(_) => {
-        let (o, pc) = run_test_env(os, bin, t, seed, alone)
+        let (o, pc) = run_test_env(os, bin, limit, t, seed, alone)
         return (o, pc, s)
       }
     }
@@ -674,27 +791,59 @@ fn serve_run(os: Os, bin: Str, t: TestInfo, seed: Int, replay: Str, best: Str, s
   }
   if c.write("${t.index}/${seed}/r=${replay}/b=${best}\n".bytes()).is_err() {
     serve_end(s)
-    let (o, pc) = run_test_env(os, bin, t, seed, alone)
+    let (o, pc) = run_test_env(os, bin, limit, t, seed, alone)
     return (o, pc, Server{})
   }
-  var lines: List[Str] = []
-  var begun = false
-  var ended = false
-  while true {
-    let l = match c.read_line() {
-      Ok(Some(l)) => l
-      _ => break
+  // the run's lines up to XO-TEST-END; a watchdog kills the binary
+  // when the run takes longer than the limit
+  let done = Atomic[Int].new(0)
+  let killed = Atomic[Int].new(0)
+  let clock = os.clock
+  let (lines, begun, ended) = scope sc {
+    let rd = sc.spawn(fn() -> (List[Str], Bool, Bool) {
+      var ls: List[Str] = []
+      var b = false
+      var e = false
+      while true {
+        let l = match c.read_line() {
+          Ok(Some(l)) => l
+          _ => break
+        }
+        if l == "XO-TEST-BEGIN" {
+          b = true
+        } else if l == "XO-TEST-END" {
+          e = true
+          break
+        } else if b {
+          ls.push(l)
+        }
+      }
+      done.set(1)
+      (ls, b, e)
+    })
+    if limit > 0s {
+      sc.spawn(fn() {
+        let start = clock.now()
+        while done.get() == 0 {
+          if clock.since(start) >= limit {
+            killed.set(1)
+            c.kill()
+            break
+          }
+          clock.sleep(20ms)
+        }
+      })
     }
-    if l == "XO-TEST-BEGIN" {
-      begun = true
-    } else if l == "XO-TEST-END" {
-      ended = true
-      break
-    } else if begun {
-      lines.push(l)
-    }
+    rd.await
   }
   let out = lines.join("\n")
+  if killed.get() != 0 {
+    // the replay did not finish in time: it fails as alone, and the
+    // binary is gone
+    c.wait().ignore_err("the killed server's status is not the replay's")
+    let (o, pc) = parse_run(out, "", 1)
+    return (Outcome{status: "fail", msg: timeout_msg(limit), logs: o.logs}, pc, Server{})
+  }
   if ended {
     s.runs += 1
     let (o, pc) = parse_run(out, "", 0)
@@ -706,20 +855,20 @@ fn serve_run(os: Os, bin: Str, t: TestInfo, seed: Int, replay: Str, best: Str, s
     return (o, pc, s)
   }
   // the binary ended in the run (or before it): its status and errors
-  var err = StrBuilder.new()
+  var err = BytesBuilder.new()
   while true {
     match c.read_err(65536) {
-      Ok(Some(b)) => err.write(b.to_str() ?? "")
+      Ok(Some(b)) => err.write(b)
       _ => break
     }
   }
   let code = c.wait().ok() ?? 1
   let first = s.runs == 0
   if begun && first {
-    let (o, pc) = parse_run(out, err.freeze(), code)
+    let (o, pc) = parse_run(out, err.freeze().to_str() ?? "", code)
     return (o, pc, Server{})
   }
-  let (o, pc) = run_test_env(os, bin, t, seed, alone)
+  let (o, pc) = run_test_env(os, bin, limit, t, seed, alone)
   (o, pc, Server{})
 }
 

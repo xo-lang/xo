@@ -67,6 +67,18 @@ capability, and each case of the property tests among them, in batches:
 - **What stays one process per run.** Tests with `uses` under
   `--real` (their real effects and real standard streams), and
   everything under XO_TEST_BATCH=0.
+- **Time limit** (2026-10-15). Every run has `xo test --timeout=D` of
+  real time (the Go backend's std/rt -timeout: default 60s, now also 0
+  for none, and `xo test` forwards it). The harness reads each process's
+  streams as they come and a watchdog kills the process (the child it
+  started, by its handle) when a run takes longer: from the start of a
+  one process run, from each XO-TEST-BEGIN line of a batch, from each
+  replay a serving binary reads. The run fails with std/rt's message
+  `the test did not finish within D of real time` and the log records it
+  wrote, without running again; the batch goes on in a new process.
+  Native test binaries have no task dump (std/rt's SIGQUIT dump is the
+  Go backend's), and the Go backend prints none on a time out either,
+  so the report is the same on every backend.
 - **Leaks.** XO_LEAKCHECK still reports at exit only; a batch's report
   covers all its runs, so TestNoGCTestLeaks runs every passing test of
   its packages in one batched process too and requires 0 live.

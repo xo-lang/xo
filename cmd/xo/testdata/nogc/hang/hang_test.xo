@@ -1,0 +1,25 @@
+// A test that never finishes between two that pass (TestNoGCTimeout):
+// `xo test --timeout=2s` fails the spinning test with std/rt's message,
+// kills its process on the native backends, and runs the next test.
+use std/log
+
+fn spin(n0: Int) -> Int {
+  var n = n0
+  while n >= 0 {
+    n = (n + 1) % 1000
+  }
+  n
+}
+
+test "before" {
+  expect(1 + 1) == 2
+}
+
+test "spins" {
+  log.info("about to spin")
+  expect(spin(0)) == 0
+}
+
+test "after" {
+  expect(2 + 2) == 4
+}

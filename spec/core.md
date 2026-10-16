@@ -2184,6 +2184,13 @@ test "retries after 503" {
   their seed and input.
 - Real capabilities require `test "name" uses net { ... }` and
   `xo test --real`; `os` then holds real capabilities for the listed effects.
+- Each test, and each case and shrinking step of a property test, may run
+  for `xo test --timeout=D` of real time (default 60s; 0 for no limit).
+  One that does not finish fails with `the test did not finish within D of
+  real time` and its log records, and the next test runs; on the native
+  backends the harness kills the test's process (decision 0235). The
+  virtual clock does not count: only real work (a loop that never yields,
+  a real capability that never answers) reaches the limit.
 
 ---
 
@@ -2196,7 +2203,7 @@ test "retries after 503" {
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out; `--release --error-args=false` drops parameter values from error frames (11.1). Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run` | Build and run for the host |
 | `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
-| `xo test [--seed=N] [--explore=N] [--cases=N] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100); deterministic scheduling. Doc comment examples are [P2] (1.2) |
+| `xo test [--seed=N] [--explore=N] [--cases=N] [--timeout=D] [--real]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100; `--timeout` the real time each test may take, default 60s, 0 for none, 9.2); deterministic scheduling. Doc comment examples are [P2] (1.2) |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
 | `xo mcp` | Model Context Protocol server over stdio: `check` (with an optional `fix`), `query`, `edit`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
 | `xo lsp` | Language Server Protocol server over stdio for editors: diagnostics with quick fixes, hover, definition, references, rename, document symbols, semantic tokens, formatting |
