@@ -168,10 +168,10 @@ def gen_sqr():
 
 
 mul_top = gen_mul()
-out.append(f"  sub_m4(h, {mul_top[0]}, {mul_top[1]}, {mul_top[2]}, {mul_top[3]}, {mul_top[4]}, -1, 4294967295, 0, -4294967295)")
+out.append(f"  sub_p256(h, {mul_top[0]}, {mul_top[1]}, {mul_top[2]}, {mul_top[3]}, {mul_top[4]})")
 mul_text = "\n".join(mark_unused(out))
 sqr_top = gen_sqr()
-out.append(f"  sub_m4(h, {sqr_top[0]}, {sqr_top[1]}, {sqr_top[2]}, {sqr_top[3]}, {sqr_top[4]}, -1, 4294967295, 0, -4294967295)")
+out.append(f"  sub_p256(h, {sqr_top[0]}, {sqr_top[1]}, {sqr_top[2]}, {sqr_top[3]}, {sqr_top[4]})")
 sqr_text = "\n".join(mark_unused(out))
 print("""/// mul4 for P-256's field prime (p's limbs 2^64 - 1, 2^32 - 1, 0,
 /// 2^64 - 2^32 + 1; -1/p mod 2^64 = 1): CIOS over local words, every sum

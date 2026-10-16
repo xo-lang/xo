@@ -351,6 +351,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
   crypto/rsa for 1024 to 4096 bit keys.
 
+- P-256 handshakes: nistec's final subtraction for P-256 with constant
+  limbs, and add4p and sub4p as add with carry chains: 7.7% to 9.0%
+  fewer instructions on arm64, 4.2% to 5.3% on LLVM
+  (bench/results/tls-arm64-gap-2026-10-16.md).
+
 - RSA and P-521 on arm64: bigmod's multiply and add rows at 7
   instructions a word, the squaring's carries as chains, the
   exponentiation's window selection in registers, and P-521's field

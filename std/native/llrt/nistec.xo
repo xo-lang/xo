@@ -647,7 +647,7 @@ fn mul4p(h: Int, f: Int, g: Int) {
   let s145 = cpu.adc(s132, hi138, k144)
   let k146 = cpu.adc_carry(s132, hi138, k144)
   let w147 = rt.int_wrap(0, w134, k146)
-  sub_m4(h, s139, s141, s143, s145, w147, -1, 4294967295, 0, -4294967295)
+  sub_p256(h, s139, s141, s143, s145, w147)
 }
 
 /// mul4p of f with itself: the square's 6 cross products once, doubled,
@@ -790,7 +790,26 @@ fn sqr4p(h: Int, f: Int) {
   let s128 = cpu.adc(s115, hi121, k127)
   let k129 = cpu.adc_carry(s115, hi121, k127)
   let s130 = cpu.adc(s117, 0, k129)
-  sub_m4(h, s122, s124, s126, s128, s130, -1, 4294967295, 0, -4294967295)
+  sub_p256(h, s122, s124, s126, s128, s130)
+}
+
+/// sub_m4 for P-256's p (-1, 2^32 - 1, 0, 2^64 - 2^32 + 1): ~p as
+/// constants (0, -2^32, -1, 2^32 - 2), so the body is small enough for
+/// the arm64 inliner at every call site (mul4p, sqr4p, add4p).
+fn sub_p256(h: Int, t0: Int, t1: Int, t2: Int, t3: Int, top: Int) {
+  let d0 = cpu.adc(t0, 0, 1)
+  let c0 = cpu.adc_carry(t0, 0, 1)
+  let d1 = cpu.adc(t1, -4294967296, c0)
+  let c1 = cpu.adc_carry(t1, -4294967296, c0)
+  let d2 = cpu.adc(t2, -1, c1)
+  let c2 = cpu.adc_carry(t2, -1, c1)
+  let d3 = cpu.adc(t3, 4294967294, c2)
+  let c3 = cpu.adc_carry(t3, 4294967294, c2)
+  let keep = ct.mask_bit((c3 | top) ^ 1)
+  rt.mem_store(h, 0, d0 ^ (keep & (t0 ^ d0)), 8)
+  rt.mem_store(h, 8, d1 ^ (keep & (t1 ^ d1)), 8)
+  rt.mem_store(h, 16, d2 ^ (keep & (t2 ^ d2)), 8)
+  rt.mem_store(h, 24, d3 ^ (keep & (t3 ^ d3)), 8)
 }
 
 /// h = t - m when t + top 2^256 >= m, else t (4 limbs, top 0 or 1):
@@ -889,64 +908,59 @@ fn sub4(h: Int, f: Int, g: Int, md: Int) {
 
 /// add4 for P-256's field (its limbs as constants).
 fn add4p(h: Int, f: Int, g: Int) {
-  let f0 = ld(f, 0)
-  let f1 = ld(f, 8)
-  let f2 = ld(f, 16)
-  let f3 = ld(f, 24)
-  let g0 = ld(g, 0)
-  let g1 = ld(g, 8)
-  let g2 = ld(g, 16)
-  let g3 = ld(g, 24)
-  let s0 = rt.int_wrap(0, f0, g0)
-  let c0 = cpu.carry(f0, g0)
-  let u1 = rt.int_wrap(0, f1, g1)
-  let s1 = rt.int_wrap(0, u1, c0)
-  let c1 = cpu.carry(f1, g1) | cpu.carry(u1, c0)
-  let u2 = rt.int_wrap(0, f2, g2)
-  let s2 = rt.int_wrap(0, u2, c1)
-  let c2 = cpu.carry(f2, g2) | cpu.carry(u2, c1)
-  let u3 = rt.int_wrap(0, f3, g3)
-  let s3 = rt.int_wrap(0, u3, c2)
-  let c3 = cpu.carry(f3, g3) | cpu.carry(u3, c2)
-  sub_m4(h, s0, s1, s2, s3, c3, -1, 4294967295, 0, -4294967295)
+  let f0 = rt.mem_load(f, 0, 8)
+  let f1 = rt.mem_load(f, 8, 8)
+  let f2 = rt.mem_load(f, 16, 8)
+  let f3 = rt.mem_load(f, 24, 8)
+  let g0 = rt.mem_load(g, 0, 8)
+  let g1 = rt.mem_load(g, 8, 8)
+  let g2 = rt.mem_load(g, 16, 8)
+  let g3 = rt.mem_load(g, 24, 8)
+  let s0 = cpu.adc(f0, g0, 0)
+  let c0 = cpu.adc_carry(f0, g0, 0)
+  let s1 = cpu.adc(f1, g1, c0)
+  let c1 = cpu.adc_carry(f1, g1, c0)
+  let s2 = cpu.adc(f2, g2, c1)
+  let c2 = cpu.adc_carry(f2, g2, c1)
+  let s3 = cpu.adc(f3, g3, c2)
+  let c3 = cpu.adc_carry(f3, g3, c2)
+  sub_p256(h, s0, s1, s2, s3, c3)
 }
 
 /// sub4 for P-256's field (its limbs as constants, under the mask).
 fn sub4p(h: Int, f: Int, g: Int) {
-  let f0 = ld(f, 0)
-  let f1 = ld(f, 8)
-  let f2 = ld(f, 16)
-  let f3 = ld(f, 24)
-  let g0 = ld(g, 0)
-  let g1 = ld(g, 8)
-  let g2 = ld(g, 16)
-  let g3 = ld(g, 24)
-  let d0 = rt.int_wrap(1, f0, g0)
-  let b0 = cpu.borrow(f0, g0)
-  let e1 = rt.int_wrap(1, f1, g1)
-  let d1 = rt.int_wrap(1, e1, b0)
-  let b1 = cpu.borrow(f1, g1) | cpu.borrow(e1, b0)
-  let e2 = rt.int_wrap(1, f2, g2)
-  let d2 = rt.int_wrap(1, e2, b1)
-  let b2 = cpu.borrow(f2, g2) | cpu.borrow(e2, b1)
-  let e3 = rt.int_wrap(1, f3, g3)
-  let d3 = rt.int_wrap(1, e3, b2)
-  let b3 = cpu.borrow(f3, g3) | cpu.borrow(e3, b2)
-  let mask = ct.mask_bit(b3)
+  let f0 = rt.mem_load(f, 0, 8)
+  let f1 = rt.mem_load(f, 8, 8)
+  let f2 = rt.mem_load(f, 16, 8)
+  let f3 = rt.mem_load(f, 24, 8)
+  let g0 = rt.mem_load(g, 0, 8)
+  let g1 = rt.mem_load(g, 8, 8)
+  let g2 = rt.mem_load(g, 16, 8)
+  let g3 = rt.mem_load(g, 24, 8)
+  // f - g as f + ~g + 1, one chain (its last carry is 1 when there
+  // was no borrow), then p added under the borrow's mask, one chain
+  let d0 = cpu.adc(f0, ~g0, 1)
+  let k0 = cpu.adc_carry(f0, ~g0, 1)
+  let d1 = cpu.adc(f1, ~g1, k0)
+  let k1 = cpu.adc_carry(f1, ~g1, k0)
+  let d2 = cpu.adc(f2, ~g2, k1)
+  let k2 = cpu.adc_carry(f2, ~g2, k1)
+  let d3 = cpu.adc(f3, ~g3, k2)
+  let k3 = cpu.adc_carry(f3, ~g3, k2)
+  let mask = ct.mask_bit(k3 ^ 1)
   let m1 = 4294967295 & mask
   let m3 = -4294967295 & mask
-  let s0 = rt.int_wrap(0, d0, mask)
-  let c0 = cpu.carry(d0, mask)
-  let u1 = rt.int_wrap(0, d1, m1)
-  let s1 = rt.int_wrap(0, u1, c0)
-  let c1 = cpu.carry(d1, m1) | cpu.carry(u1, c0)
-  let s2 = rt.int_wrap(0, d2, c1)
-  let c2 = cpu.carry(d2, c1)
-  let s3 = rt.int_wrap(0, rt.int_wrap(0, d3, m3), c2)
-  st(h, 0, s0)
-  st(h, 8, s1)
-  st(h, 16, s2)
-  st(h, 24, s3)
+  let s0 = cpu.adc(d0, mask, 0)
+  let c0 = cpu.adc_carry(d0, mask, 0)
+  let s1 = cpu.adc(d1, m1, c0)
+  let c1 = cpu.adc_carry(d1, m1, c0)
+  let s2 = cpu.adc(d2, 0, c1)
+  let c2 = cpu.adc_carry(d2, 0, c1)
+  let s3 = cpu.adc(d3, m3, c2)
+  rt.mem_store(h, 0, s0, 8)
+  rt.mem_store(h, 8, s1, 8)
+  rt.mem_store(h, 16, s2, 8)
+  rt.mem_store(h, 24, s3, 8)
 }
 
 /// mul for 6 limbs (P-384's field and scalars): CIOS unrolled over
