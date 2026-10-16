@@ -454,7 +454,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
     // with no C library, no libgcc: arm64 atomics inline (decision 0206)
-    let attr_flags = if nolibc(os, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
+    let attr_flags = if nolibc(os, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
     let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
     if o.cmd == "asm" {
       os.stdio.print(code)
@@ -655,7 +655,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let srcs = progs + lk.srcs
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip)
+      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nolibc(os, c, tgoos))
       if !why.is_empty() {
         fail(os, why)
       }
@@ -744,9 +744,9 @@ struct Lowered {
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
-  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, tgoos))
-  b.m.nolibc_start = !wasm && nolibc(os, tgoos)
-  b.m.nolibc = !wasm && nolibc(os, tgoos)
+  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, c, tgoos))
+  b.m.nolibc_start = !wasm && nolibc(os, c, tgoos)
+  b.m.nolibc = !wasm && nolibc(os, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -857,13 +857,10 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   if !ci.err.is_empty() {
     fail(os, ci.err)
   }
-  if nolibc(os, tgoos) {
+  if nolibc(os, c, tgoos) {
     // a static program with no C library (decisions 0203, 0206)
     if !ci.srcs.is_empty() || !ci.flags.is_empty() {
       fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")
-    }
-    if no_cc {
-      fail(os, "XO_NOLIBC=1 links with cc (--ld=cc): the ELF linker of decision 0182 has no static mode yet (decision 0206)")
     }
     for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {
       if n.trim() == "net" {
@@ -877,9 +874,10 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     // host's: arm64 flags and atomics assembly for an x86_64 link)
     let arch = tgoarch
     lk.flags = lk.flags + nolibc_flags(arch)
-    if arch == "arm64" {
+    if arch == "arm64" && !no_cc {
       // the arm64 emitter's read modify writes call libgcc's outline
-      // atomics on Linux, which a link with no C library lacks
+      // atomics on Linux, which a link with no C library lacks (the ELF
+      // linker synthesizes them itself)
       match nolibc_atomics(os, dir) {
         Ok(p) => lk.srcs.push(p)
         Err(e) => fail(os, "${e}")

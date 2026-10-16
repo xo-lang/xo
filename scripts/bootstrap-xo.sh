@@ -85,6 +85,9 @@ unset GOROOT GOPATH GOFLAGS GOTOOLCHAIN 2>/dev/null || true
 export XO_GO=/nonexistent/go
 export XO_BIN_CACHE=off
 export XO_RTPACK=${XO_BOOTSTRAP_RTPACK:-off}
+# the toolchain's own Linux builds keep the C library until a Linux fixed
+# point passes with none (decision 0243; user programs default to none)
+export XO_NOLIBC=${XO_NOLIBC:-0}
 backend=${XO_BOOTSTRAP_BACKEND:-}
 if [ -z "$backend" ]; then
   case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac

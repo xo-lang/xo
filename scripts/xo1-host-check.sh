@@ -43,6 +43,9 @@ backend=llvm
 case "$arch" in arm64|aarch64) backend=arm64 ;; esac
 # as internal/xotool builds xo1 on an x86-64 host (hostBackend)
 export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none}
+# selfhost/xo keeps the C library on Linux until a Linux fixed point passes
+# with none (decision 0243)
+export XO_NOLIBC=${XO_NOLIBC:-0}
 
 sampler=""
 start_sampler() {

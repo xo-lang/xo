@@ -119,8 +119,8 @@ fn label_op(b: Bytes) -> (Bytes, Str) {
   if b.len() > 5 && bstr(b[0..5]) == ":got:" {
     return (b[5..], "GOTPAGE")
   }
-  if b.len() > 11 && bstr(b[0..11]) == ":got_lo12:" {
-    return (b[11..], "GOTPAGEOFF")
+  if b.len() > 10 && bstr(b[0..10]) == ":got_lo12:" {
+    return (b[10..], "GOTPAGEOFF")
   }
   // ELF's local exec thread local offsets (decision 0212)
   if b.len() > 12 && bstr(b[0..12]) == ":tprel_hi12:" {
@@ -344,6 +344,15 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
         return a.bad(m, ops)
       }
       a.word(0xd53bd040 | r)
+    }
+    "msr" => {
+      // the thread pointer's setting by a static program's _start with
+      // no C library (decision 0243)
+      let (r, k) = if n == 2 { reg(ops[1]) } else { (-1, 0) }
+      if k != RX || bstr(ops[0]).to_lower() != "tpidr_el0" {
+        return a.bad(m, ops)
+      }
+      a.word(0xd51bd040 | r)
     }
     "adr" | "adrp" => {
       if n != 2 {

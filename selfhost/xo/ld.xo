@@ -8,11 +8,11 @@
 use github.com/xo-lang/xo/selfhost/macho
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
-/// not.
-/// strip leaves the local symbols out (`-s`).
-fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool) -> Str {
+/// not. strip leaves the local symbols out (`-s`); nolibc: a Linux
+/// program with no C library, linked static (decision 0243).
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool, nolibc: Bool) -> Str {
   if tgoos == "linux" {
-    return elf_link(os, ctx, flags, srcs, out)
+    return elf_link(os, ctx, flags, srcs, out, nolibc)
   }
   if ctx.goos != "darwin" {
     return "--ld=macho links darwin/arm64 executables on darwin only"
@@ -89,10 +89,11 @@ fn ld_objects(srcs: List[Str]) -> (List[Str], Str) {
   (objs, "")
 }
 
-/// The ELF link of stage 3:the program's object (and the zone data's)
-/// with the linux/arm64 pack's runtime into out; "" on
-/// success, else why not.
-fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str) -> Str {
+/// The ELF link of stage 3: the program's objects (and the zone data's)
+/// into out, dynamically linked against glibc, or static with no C
+/// library under XO_NOLIBC (decision 0243); "" on success, else why
+/// not.
+fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, static: Bool) -> Str {
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
     return bad
@@ -105,7 +106,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str) -> St
       Err(e) => return "${p}: ${e}"
     }
   }
-  match macho.link_elf(ins, macho.ElfLinkOpts{}) {
+  match macho.link_elf(ins, macho.ElfLinkOpts{static: static}) {
     Ok(b) => {
       let tmp = "${out}.tmp"
       match os.fs.write(tmp, b) {

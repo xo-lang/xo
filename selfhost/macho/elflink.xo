@@ -17,6 +17,14 @@
 //   - .eh_frame concatenated, with an .eh_frame_hdr and PT_GNU_EH_FRAME
 //     so libgcc's unwinder finds the program's frames.
 //
+// Static mode (ElfLinkOpts.static, decision 0243: Linux programs with no
+// C library): the program's own `_start`, no loader, no imports. Weak
+// undefined symbols (the sanitizer hooks) are 0, GOT slots included; any
+// other undefined symbol is an error. No .interp, .dynamic, dynamic
+// symbols, versions, PLT stubs or dynamic relocations, and no PT_INTERP
+// or PT_DYNAMIC; PT_PHDR, PT_TLS and PT_GNU_EH_FRAME stay (the runtime
+// reads them). A plain ET_EXEC, not PIE, as Go's static binaries.
+//
 // Layout: ET_EXEC at 0x400000, three PT_LOAD segments (read only, code,
 // data) whose addresses are congruent to their file offsets modulo 64 KiB
 // (any arm64 page size).
@@ -95,6 +103,8 @@ const O_COUNT = 20
 pub struct ElfLinkOpts {
   pub interp: Str = "/lib/ld-linux-aarch64.so.1"
   pub entry: Str = "_start"
+  /// a static executable with no C library (decision 0243)
+  pub static: Bool = false
 }
 
 /// An input section, by its header index.
@@ -486,7 +496,13 @@ fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
 fn (var l: ELinker) synthesize_start() {
   var src = BytesBuilder.new()
   src.write_str("// _start and the outline atomics of the link (decision 0182)\n\t.text\n")
-  if !l.globals.contains(l.opts.entry.bytes()) {
+  if l.opts.static {
+    // the program's own (selfhost/arm64 gen.xo's, under no C library)
+    if !l.globals.contains(l.opts.entry.bytes()) {
+      l.fail("no ${l.opts.entry}: a static link takes the program's (built with no C library)")
+      return
+    }
+  } else if !l.globals.contains(l.opts.entry.bytes()) {
     // glibc's crt1: x0 the loader's fini, the stack holds argc and argv
     src.write_str("\t.globl _start\n\t.p2align 2\n\t.type _start, %function\n_start:\n")
     src.write_str("\tmov x29, #0\n\tmov x30, #0\n\tmov x5, x0\n\tldr x1, [sp]\n\tadd x2, sp, #8\n\tmov x6, sp\n")
@@ -503,7 +519,7 @@ fn (var l: ELinker) synthesize_start() {
           return
         }
       }
-    } else {
+    } else if !l.opts.static {
       match nonshared(n) {
         Some(body) => src.write_str(body)
         None => {}
@@ -635,6 +651,18 @@ fn lib_rank(lib: Str) -> Int {
 
 /// The imports: every name still undefined, versioned.
 fn (var l: ELinker) collect_imports() {
+  if l.opts.static {
+    // no libraries: weak references are 0, others are missing
+    for (name, weak) in l.undefined() {
+      if !weak {
+        l.fail("${bstr(name)} is not defined (a static link with no C library)")
+        return
+      }
+      l.import_ix.put(name, l.imports.len())
+      l.imports.push(EImport{name: name, lib: "", ver: "", weak: true})
+    }
+    return
+  }
   let vers = glibc_versions()
   var gcc = false
   for (name, weak) in l.undefined() {
@@ -814,6 +842,10 @@ fn (var l: ELinker) scan() {
           l.need_got(d, i)
         } else if d < 0 {
           // an import
+          if l.opts.static && (r.typ == R_AARCH64_CALL26 || r.typ == R_AARCH64_JUMP26) {
+            // a weak undefined callee: a nop or a ret (reloc), no stub
+            continue
+          }
           if r.typ == R_AARCH64_CALL26 || r.typ == R_AARCH64_JUMP26 {
             l.imports[i].func = true
             if l.imports[i].plt < 0 {
@@ -979,10 +1011,17 @@ fn (var l: ELinker) layout() {
   l.osects[O_GOT].align = 8
   l.osects[O_DYNAMIC].size = 16 * (l.needed.len() + 16)
   l.osects[O_DYNAMIC].align = 8
+  if l.opts.static {
+    for i in [O_INTERP, O_HASH, O_DYNSYM, O_DYNSTR, O_VERSYM, O_VERNEED, O_RELADYN, O_PLT, O_DYNAMIC] {
+      l.osects[i].size = 0
+    }
+  }
 
   let has_tls = l.osects[O_TDATA].size > 0 || l.osects[O_TBSS].size > 0
   let has_eh = l.osects[O_EHHDR].size > 0
-  l.phnum = 7 + (if has_tls { 1 } else { 0 }) + (if has_eh { 1 } else { 0 })
+  // PT_PHDR, PT_INTERP, three PT_LOAD, PT_DYNAMIC, PT_GNU_STACK (no
+  // PT_INTERP or PT_DYNAMIC when static)
+  l.phnum = (if l.opts.static { 5 } else { 7 }) + (if has_tls { 1 } else { 0 }) + (if has_eh { 1 } else { 0 })
   // segment 0: headers and read only data; 1: code; 2: data
   var off = 64 + 56 * l.phnum
   var vbase = ELF_BASE
@@ -1086,7 +1125,9 @@ fn (var l: ELinker) relocate() {
   // the GOT: defined symbols' addresses, imports bound by the loader
   for (slot, (imp, d, i)) in l.got.indexed() {
     let at = l.osects[O_GOT].addr + 8 * slot
-    if imp >= 0 {
+    if imp >= 0 && l.opts.static {
+      // a weak undefined symbol: 0 (the GOT's zeros)
+    } else if imp >= 0 {
       l.dynrels.push(EDynRel{addr: at, typ: R_AARCH64_GLOB_DAT, sym: imp + 1, addend: 0})
     } else {
       l.patches.push(Patch{addr: at, size: 8, value: l.sym_addr(d, i)})
@@ -1103,7 +1144,9 @@ fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
   let ins = if r.off + 4 <= s.data.len() { rd32(s.data, r.off) } else { 0 }
   let t = r.typ
   if t == R_AARCH64_ABS64 {
-    if imp {
+    if imp && l.opts.static {
+      l.patches.push(Patch{addr: p, size: 8, value: r.addend})
+    } else if imp {
       l.dynrels.push(EDynRel{addr: p, typ: R_AARCH64_ABS64, sym: i + 1, addend: r.addend})
       l.patches.push(Patch{addr: p, size: 8, value: 0})
     } else {
@@ -1146,6 +1189,18 @@ fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
       return l.fail("${l.objs[o].path}: misaligned :lo12: offset for relocation ${t}")
     }
     l.patches.push(Patch{addr: p, size: 4, value: (ins & ~0x3ffc00) | ((lo >> sh) * 1024)})
+  } else if (t == R_AARCH64_CALL26 || t == R_AARCH64_JUMP26) && imp && l.opts.static {
+    // a call of a weak undefined symbol in a static link: as GNU ld does
+    // on arm64, a call (bl) goes to the next instruction (a nop); a tail
+    // call (b, the caller's frame already gone) becomes a ret, what a
+    // call of an empty function would do (a nop would fall through into
+    // the next function: sanhook.xo tail calls
+    // __sanitizer_finish_switch_fiber). Both are an empty function only
+    // for a callee returning nothing (x0 keeps the first argument): the
+    // sanitizer hooks; a weak callee with a result would need the link
+    // to fail instead. The calls are guarded anyway (sanhook.xo calls
+    // the hooks only when tsan() says they are linked).
+    l.patches.push(Patch{addr: p, size: 4, value: if t == R_AARCH64_CALL26 { NOP } else { 0xd65f03c0 }})
   } else if t == R_AARCH64_CALL26 || t == R_AARCH64_JUMP26 {
     let target = if imp { l.osects[O_PLT].addr + 16 * l.imports[i].plt } else { v }
     let x = target - p
@@ -1685,7 +1740,9 @@ fn (l: ELinker) phdrs(var o: Out) {
   let hdr = 64 + 56 * l.phnum
   // PT_PHDR
   ph(o, PT_PHDR, PF_R, 64, ELF_BASE + 64, 56 * l.phnum, 56 * l.phnum, 8)
-  ph(o, PT_INTERP, PF_R, s[O_INTERP].off, s[O_INTERP].addr, s[O_INTERP].size, s[O_INTERP].size, 1)
+  if !l.opts.static {
+    ph(o, PT_INTERP, PF_R, s[O_INTERP].off, s[O_INTERP].addr, s[O_INTERP].size, s[O_INTERP].size, 1)
+  }
   for (k, (first, last, flags)) in segs.indexed() {
     var off = -1
     var addr = 0
@@ -1721,7 +1778,9 @@ fn (l: ELinker) phdrs(var o: Out) {
     }
     ph(o, PT_LOAD, flags, off, addr, fend - off, vend - addr, ELF_PAGE)
   }
-  ph(o, PT_DYNAMIC, PF_R + PF_W, s[O_DYNAMIC].off, s[O_DYNAMIC].addr, s[O_DYNAMIC].size, s[O_DYNAMIC].size, 8)
+  if !l.opts.static {
+    ph(o, PT_DYNAMIC, PF_R + PF_W, s[O_DYNAMIC].off, s[O_DYNAMIC].addr, s[O_DYNAMIC].size, s[O_DYNAMIC].size, 8)
+  }
   if l.tls_size > 0 || s[O_TDATA].size > 0 || s[O_TBSS].size > 0 {
     ph(o, PT_TLS, PF_R, s[O_TDATA].off, l.tls_start, s[O_TDATA].size, l.tls_size, l.tls_align)
   }

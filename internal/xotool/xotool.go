@@ -585,9 +585,23 @@ func LLVMOpt() string {
 	return "O0"
 }
 
-// hostBackend is the backend that builds xo on this host and the
-// environment it needs.
+// hostBackend is hostBackendNative's backend and environment, with
+// XO_NOLIBC=0 on Linux: since decision 0243 a Linux program without `use
+// c` links no C library by default, but the toolchain's own native Linux
+// builds of selfhost/xo keep the C library until a Linux self rebuild
+// fixed point has passed with none (0243, pending; the seeds' Linux xo is
+// cross built with the Go backend, which no-libc does not touch).
 func hostBackend() (string, []string) {
+	backend, env := hostBackendNative()
+	if runtime.GOOS == "linux" && os.Getenv("XO_NOLIBC") == "" {
+		env = append(env, "XO_NOLIBC=0")
+	}
+	return backend, env
+}
+
+// hostBackendNative is the backend that builds xo on this host and the
+// environment it needs.
+func hostBackendNative() (string, []string) {
 	if runtime.GOOS == "windows" {
 		// the Go backend (selfhost/gen and the go command), as
 		// scripts/windows-batch.sh built xo1 there

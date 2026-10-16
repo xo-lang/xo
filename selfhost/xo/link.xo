@@ -2,6 +2,7 @@
 // assembles the program and links it with the C runtime (std/llrt) and
 // the system libraries,
 // trying the macOS SDKs internal/build tries until one links.
+use github.com/xo-lang/xo/selfhost/check
 use github.com/xo-lang/xo/selfhost/macho
 
 /// What every step needs: the host, the std directory, the repository
@@ -195,9 +196,30 @@ fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   ["-lm", "-lpthread"]
 }
 
-/// Whether a link for tgoos has no C library: XO_NOLIBC=1 on Linux
-/// (decisions 0203, 0206; stage 1 is opt in).
-fn nolibc(os: Os, tgoos: Str) -> Bool { tgoos == "linux" && (os.env.get("XO_NOLIBC") ?? "") == "1" }
+/// Whether a link for tgoos has no C library (decisions 0203, 0206,
+/// 0243): on Linux, the default for a program with no `use c` module, as
+/// Go links static binaries with no libc; XO_NOLIBC=0 links the C
+/// library, and XO_NOLIBC=1 asks for none (an error with `use c`).
+fn nolibc(os: Os, c: check.Checker, tgoos: Str) -> Bool {
+  if tgoos != "linux" {
+    return false
+  }
+  match os.env.get("XO_NOLIBC") ?? "" {
+    "0" => false
+    "1" => true
+    _ => !uses_c(c)
+  }
+}
+
+/// Whether a module of the program binds C (`use c`).
+fn uses_c(c: check.Checker) -> Bool {
+  for m in c.mods {
+    if !m.c_prefix.is_empty() {
+      return true
+    }
+  }
+  false
+}
 
 /// The C compiler flags of the runtime with no C library (decision 0206):
 /// std/llrt/xo_nolibc.c defines the C library functions it calls, each

@@ -1020,11 +1020,18 @@ fn (var a: Asm) emit_data(si: Int) {
           v = k
         } else if y < 0 {
           // a pointer: ARM64_RELOC_UNSIGNED, the addend in the contents
-          if n != 8 {
+          if a.elf && n == 4 && (a.sects[si].eflags & SHF_ALLOC) == 0 {
+            // R_AARCH64_ABS32 in a section not loaded: a debug section's
+            // offset into another (.debug_info's abbreviation table,
+            // decision 0239), which the link relocates as the sections
+            // are concatenated. A loaded 4 byte pointer stays an error
+            // (an absolute address no PIE could relocate).
+            a.elf_reloc(si, off, R_AARCH64_ABS32, x, k)
+            v = 0
+          } else if n != 8 {
             a.fail("a ${n} byte pointer to ${bstr(a.syms[x].name)}")
             return
-          }
-          if a.elf {
+          } else if a.elf {
             // R_AARCH64_ABS64, the addend in the relocation
             a.elf_reloc(si, off, R_AARCH64_ABS64, x, k)
             v = 0

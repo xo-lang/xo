@@ -175,9 +175,21 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
         return true
       }
       let i = a.sym(ops[0])
-      match parse_int(ops[1]) {
+      let v = ops[1]
+      if v.len() > 2 && v[0] == '.' && v[1] == '-' {
+        // `.-SYM`: the code since SYM, defined earlier in this code
+        // section (the no-C-library _start, decision 0243)
+        let j = a.sym(v[2..])
+        if a.cur < 0 || a.syms[j].sect != a.cur || !a.sects[a.cur].code {
+          a.fail("bad .size ${bstr(v)}: not code of this section")
+          return true
+        }
+        a.syms[i].size = a.sects[a.cur].words.len() * 4 - a.syms[j].off
+        return true
+      }
+      match parse_int(v) {
         Some(n) => a.syms[i].size = n
-        None => a.fail("bad .size ${bstr(ops[1])}")
+        None => a.fail("bad .size ${bstr(v)}")
       }
       true
     }

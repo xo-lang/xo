@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Linux without C (decision 0243): a Linux program with no `use c` links
+  no C library by default, on the arm64 and LLVM backends (XO_NOLIBC=0
+  links glibc). selfhost/macho's ELF linker has a static mode (plain
+  ET_EXEC, no loader), so `--ld=macho` links these with no C toolchain;
+  its assembler gains `:got_lo12:` (a prefix length bug), `msr
+  tpidr_el0`, `.size .-SYM` and 4 byte debug pointers. The toolchain's
+  own Linux self build keeps the C library until a Linux fixed point
+  passes with none.
+
 - The heap profile samples in the heap's counting branch instead of
   switching the program to the threaded heap (decision 0238): with the
   profile on, a single threaded allocation bound program pays 1.22x to

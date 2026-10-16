@@ -1,6 +1,6 @@
 # --ld=macho cannot link a linux/arm64 program that uses tasks
 
-Status: Observed (2026-10-16, decision 0241); queued with "Linux without C"
+Status: Observed (2026-10-16, decision 0241); fixed the same day (decision 0243)
 
 ## Symptom
 
@@ -25,3 +25,13 @@ None yet: GOT entries (R_AARCH64_ADR_GOT_PAGE, R_AARCH64_LD64_GOT_LO12_NC)
 in selfhost/macho's ELF path, part of the queued "Linux without C" item.
 Until then link linux/arm64 programs with cc, in the container
 (knowledgebase/infrastructure/toolchain.md "Linux in Docker on the Mac").
+
+## Resolution (2026-10-16, decision 0243)
+
+The cause was narrower than this entry assumed: the ELF writer and
+elflink already had the GOT relocations; selfhost/macho enc.xo label_op
+compared the `:got_lo12:` prefix as 11 bytes (it is 10), so the operand
+never matched. Fixed; with it, `msr tpidr_el0`, `.size SYM, .-START` and
+4 byte debug pointers, task programs link with --ld=macho for
+linux/arm64, dynamic or (no C library) static.
+
