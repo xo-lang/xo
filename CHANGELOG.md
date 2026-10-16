@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache (`<user cache>/xo/backend`) holds its 8 GiB cap
+  under bursts of builds: entries stay protected for 2 minutes instead
+  of 2 hours, and a prune runs whenever an eighth of the cap has been
+  stored since the last one (`prune.Policy.burst`, `prune.note_stored`),
+  not only hourly; it had grown to 19 GiB in 15 minutes
+  (gotchas/backend-cache-burst-past-cap.md, decision 0223 addendum).
 - arm64: the immortal empty list and zero handle come first in a
   program's data (page offset 0): in selfhost/macho's layout the empty
   list sat at page offset 0x880, and code loading it into x11 then x12

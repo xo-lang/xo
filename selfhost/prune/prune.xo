@@ -11,8 +11,11 @@
 //   does the same, hourly). A writer stores an entry under a temporary
 //   name and renames it into place, so its time is the store's.
 // - A cache's last prune is the modification time of DIR/prune-stamp.
+// - The bytes stored since then are DIR/prune-stored (decimal text),
+//   which note_stored adds to, for Policy.burst.
 //
-// run removes, at most once per Policy.every, the entries unused for
+// run removes, at most once per Policy.every (or sooner once Policy.burst
+// bytes were stored since the last prune), the entries unused for
 // longer than Policy.max_age, then the least recently used ones while the
 // cache is over Policy.max_bytes. An entry used within KEEP (two hours)
 // is never removed: mark_used may leave a time up to an hour old while a
@@ -48,6 +51,10 @@ pub struct Policy {
   /// whose entries are in use only briefly says otherwise, such as the
   /// test binaries of $XO_BIN_CACHE, decision 0236).
   pub keep: Duration = 2h
+  /// Over zero: a run within every still prunes once the bytes stored
+  /// since the last prune (note_stored) reach burst, so a burst of
+  /// builds cannot grow the cache past the cap for a whole interval.
+  pub burst: Int = 0
 }
 
 /// What one run did: whether it ran (the stamp allowed it), the paths it
@@ -128,7 +135,7 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   let stamp = "${dir}/prune-stamp"
   match fs.stat(stamp) {
     Ok(Some(fi)) => {
-      if clock.since(fi.modified) < p.every {
+      if clock.since(fi.modified) < p.every && (p.burst <= 0 || stored(fs, dir) < p.burst) {
         return st
       }
     }
@@ -138,6 +145,9 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   match fs.write(stamp, b"") {
     Ok(_) => fs.set_modified(stamp, clock.now()).ignore_err("the stamp only limits prunes")
     Err(_) => {}
+  }
+  if p.burst > 0 {
+    fs.remove("${dir}/prune-stored").ignore_err("none stored since the last prune")
   }
   st.ran = true
   var kept: List[Entry] = []
@@ -165,6 +175,25 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   }
   st.bytes = total
   st
+}
+
+/// Adds n to the bytes stored in the cache in dir since its last prune
+/// (DIR/prune-stored), for Policy.burst. Two processes adding at once
+/// can lose one count: the next store or the interval's prune covers it.
+pub fn note_stored(fs: Fs, dir: Str, n: Int) uses (fs.read, fs.write) {
+  if n <= 0 {
+    return
+  }
+  fs.write("${dir}/prune-stored", "${stored(fs, dir) + n}".bytes()).ignore_err("only the burst prune")
+}
+
+/// The bytes stored in the cache in dir since its last prune (0 when
+/// none are recorded).
+fn stored(fs: Fs, dir: Str) -> Int uses fs.read {
+  match fs.read("${dir}/prune-stored") {
+    Ok(b) => Int.parse((b.to_str() ?? "").trim()) ?? 0
+    Err(_) => 0
+  }
 }
 
 /// The entries of the cache in dir; files left under a temporary name

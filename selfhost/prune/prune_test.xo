@@ -152,3 +152,45 @@ test "a shorter keep lets the cap remove entries younger than KEEP" {
   let fi = os.fs.stat("c/bb/3").or_fault("stat").or_fault("missing")
   expect(os.clock.since(fi.modified)) == 0s
 }
+
+test "a burst of stores prunes before the interval and keeps the cache near its cap" {
+  // the back-end cache (selfhost/xo bcache.xo): keep 2m, burst an eighth
+  // of the cap; a store of 50 bytes every 10 seconds for an hour, each
+  // followed by note_stored and run, as fn_cache_store does
+  let p = Policy{max_age: 168h, max_bytes: 1000, keep: 2m, burst: 125}
+  var most = 0
+  var runs = 0
+  for i in 0..360 {
+    put(os, "c/${i % 7}${i % 5}/${i}", 50)
+    note_stored(os.fs, "c", 50)
+    if run(os.fs, os.clock, "c", p).ran {
+      runs += 1
+    }
+    var total = 0
+    for fi in os.fs.walk("c").or_fault("walk") {
+      if !fi.is_dir && fi.path.trim_prefix("c/").contains("/") {
+        total += fi.size
+      }
+    }
+    most = most.max(total)
+    os.clock.advance(10s)
+  }
+  // without burst one run in the hour and 18,000 bytes at its end
+  expect(runs > 100) == true
+  expect(most <= 1000 + 125) == true
+}
+
+test "note_stored adds up, and a prune starts the count again" {
+  put(os, "c/aa/1", 1)
+  note_stored(os.fs, "c", 100)
+  note_stored(os.fs, "c", 0)
+  note_stored(os.fs, "c", 23)
+  expect(os.fs.read("c/prune-stored").or_fault("read").to_str() ?? "") == "123"
+  expect(run(os.fs, os.clock, "c", Policy{burst: 200}).ran) == true
+  expect(there(os, "c/prune-stored")) == false
+  note_stored(os.fs, "c", 150)
+  expect(run(os.fs, os.clock, "c", Policy{burst: 200}).ran) == false
+  note_stored(os.fs, "c", 50)
+  expect(run(os.fs, os.clock, "c", Policy{burst: 200}).ran) == true
+  expect(there(os, "c/aa/1")) == true
+}

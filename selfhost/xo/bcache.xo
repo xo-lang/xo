@@ -114,10 +114,12 @@ fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
   if dir.is_empty() || stores.is_empty() {
     return
   }
+  var n = 0
   for (k, e) in stores {
     cache_put(os, entry_path(dir, "fn", k), e)
+    n += e.len()
   }
-  prune_backend_cache(os, dir)
+  prune_backend_cache(os, dir, n)
 }
 
 /// insert_rc through the per-function cache (stage C, selfhost/ssa
@@ -149,11 +151,13 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
     }
   }
   let out = b.insert_rc_apply(plan, entries, backend_cache_mode(os) == "verify", jobs)
+  var n = 0
   for (k, e) in out.stores {
     cache_put(os, entry_path(dir, "rc", k), e)
+    n += e.len()
   }
   if !out.stores.is_empty() {
-    prune_backend_cache(os, dir)
+    prune_backend_cache(os, dir, n)
   }
   cache_note(os, phases, "rc", out.reused, plan.keys.len())
   if !out.mismatches.is_empty() {
@@ -173,12 +177,12 @@ fn entry_path(dir: Str, kind: Str, key: Str) -> Str {
   "${dir}/${kind}/${key[0..2]}/${key}"
 }
 
-/// The entry at path, marked used (prune.mark_used); None when the
-/// cache does not hold it.
+/// The entry at path, marked used (prune.mark_used_within BACKEND_TOUCH);
+/// None when the cache does not hold it.
 fn cache_get(os: Os, path: Str) -> Option[Bytes] {
   match os.fs.read(path) {
     Ok(b) => {
-      prune.mark_used(os.fs, os.clock, path)
+      prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
       Some(b)
     }
     Err(_) => None
@@ -204,11 +208,26 @@ fn cache_put(os: Os, path: Str, data: Bytes) {
   }
 }
 
-/// Prunes the cache (prune.run, decision 0223, at most once an hour):
-/// the entries unused for a week ($XO_CACHE_MAX_AGE), then the least
-/// recently used past 8 GiB ($XO_BACKEND_CACHE_MAX bytes, or
-/// $XO_CACHE_MAX_GB).
-fn prune_backend_cache(os: Os, dir: Str) {
-  let p = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: 8 * prune.GB})
-  let _s = prune.run(os.fs, os.clock, dir, cap_env(os, p, "XO_BACKEND_CACHE_MAX"))
+/// A hit refreshes an entry's time once it is a minute old, so the
+/// prune's order tracks use within BACKEND_KEEP.
+const BACKEND_TOUCH: Duration = 1m
+
+/// A cache entry is read whole and never needed again by the build that
+/// stored it, so removing a young one costs only a later hit: two
+/// minutes, not prune.KEEP's two hours, which kept a morning of
+/// parallel builds (17 GiB in 15 minutes, 2026-10-16) out of reach of
+/// the cap.
+const BACKEND_KEEP: Duration = 2m
+
+/// Prunes the cache (prune.run, decision 0223) after stored new bytes:
+/// hourly, or sooner once an eighth of the cap was stored since the
+/// last prune; the entries unused for a week ($XO_CACHE_MAX_AGE), then
+/// the least recently used past 8 GiB ($XO_BACKEND_CACHE_MAX bytes, or
+/// $XO_CACHE_MAX_GB) across fn, obj and rc together.
+fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
+  prune.note_stored(os.fs, dir, stored)
+  let base = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: 8 * prune.GB, keep: BACKEND_KEEP})
+  var p = cap_env(os, base, "XO_BACKEND_CACHE_MAX")
+  p.burst = p.max_bytes / 8
+  let _s = prune.run(os.fs, os.clock, dir, p)
 }

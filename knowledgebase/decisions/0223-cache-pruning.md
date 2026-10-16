@@ -70,6 +70,25 @@ its key used and never removes it.
 - `rtobj/` keeps its size trim (trim_cache_dir, 512 MiB); `dev/`,
   `mbedtls/`, `seeds/`, and `seed/` are not pruned.
 
+## Addendum (2026-10-16): burst prunes and the back-end cache's keep
+
+On 2026-10-16 parallel builds grew `<user cache>/xo/backend` from about
+2 GiB to 19 GiB in 15 minutes against its 8 GiB cap: 556k of its 659k
+entries were under two hours old, so the hourly prune could remove none
+(gotchas/backend-cache-burst-past-cap.md). Two changes (lead request,
+2026-10-16):
+
+- `Policy.burst`: when over zero, a run within `every` still prunes once
+  the bytes stored since the last prune reach it. Writers record their
+  stores with `prune.note_stored(fs, dir, n)` in `DIR/prune-stored`
+  (decimal text, removed by each prune; two writers at once can lose a
+  count, which the next store or the hourly prune covers).
+- The back-end cache (selfhost/xo bcache.xo) uses keep 2 minutes, touch
+  1 minute, and burst an eighth of its cap. Its entries are read whole,
+  so removing a young one costs a later hit, never a build. The cache
+  now stays within its cap plus an eighth, plus what was stored in the
+  last two minutes.
+
 ## Alternatives
 
 - `go clean -cache` when over the cap: simple, but it drops the whole

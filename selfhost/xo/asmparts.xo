@@ -193,15 +193,19 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, jobs: Int)
   if miss.is_empty() {
     return (out, 0)
   }
+  var n = 0
   for (j, r) in macho_objects(msrcs, elf, jobs).indexed() {
     let i = miss[j]
     out[i] = r
     match r {
-      Ok(b) => cache_put(os, entry_path(dir, "obj", keys[i]), b)
+      Ok(b) => {
+        cache_put(os, entry_path(dir, "obj", keys[i]), b)
+        n += b.len()
+      }
       Err(_) => {}
     }
   }
-  prune_backend_cache(os, dir)
+  prune_backend_cache(os, dir, n)
   (out, miss.len())
 }
 
@@ -252,12 +256,16 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
   if !why.is_empty() {
     return (objs, why, miss.len())
   }
+  var n = 0
   for i in miss {
     match os.fs.read(objs[i]) {
-      Ok(b) => cache_put(os, entry_path(dir, "obj", keys[i]), b)
+      Ok(b) => {
+        cache_put(os, entry_path(dir, "obj", keys[i]), b)
+        n += b.len()
+      }
       Err(_) => {}
     }
   }
-  prune_backend_cache(os, dir)
+  prune_backend_cache(os, dir, n)
   (objs, "", miss.len())
 }
