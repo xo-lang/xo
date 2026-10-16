@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Env.only on Windows: the lists admit variable names without ASCII case,
+  as Windows (and Go's os) compares them, in both backends (prelude.xo
+  env_admits, std/rt attenuate.go): `only(["path"]).get("PATH")` and the
+  `Path` Windows sets under `only(["PATH"])` were refused. Spec std.md 3.5;
+  golden internal/llvm/testdata/windows/env_case, passing under Wine with
+  Box64.
 - Windows faults: unwind.xo win_raise compares the frame's own stack
   pointer with the fault boundary (it compared its caller's after
   RtlVirtualUnwind and stopped before main's or a task body's cleanups and

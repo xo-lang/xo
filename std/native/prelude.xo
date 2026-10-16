@@ -1653,6 +1653,16 @@ fn llrt_proc_killed() -> List[Str] { proc.killed() }
 
 fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
 
+/// Whether the lists of an Env admit variable name: on Windows without
+/// ASCII case, as its environment (and Go's os) compares names, so
+/// `only(["PATH"])` admits the `Path` Windows sets and `get("path")`.
+fn env_admits(lists: Str, name: Str) -> Bool {
+  match target.os {
+    TargetOs.Windows => cap_admits(lists.to_lower(), name.to_lower())
+    _ => cap_admits(lists, name)
+  }
+}
+
 fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
 
 /// Net.only (decision 0175): the entries trimmed and lowered (std/rt's
@@ -1674,7 +1684,7 @@ fn net_only(n: Net, hosts: List[Str]) -> Net {
 }
 
 fn env_get(e: Env, name: Str) -> Str? uses env {
-  if !cap_admits(rt.env_lists(e), name) {
+  if !env_admits(rt.env_lists(e), name) {
     return None
   }
   rt.env_get(name).get(0)
@@ -1693,7 +1703,7 @@ fn env_vars(e: Env) -> Map[Str, Str] uses env {
       }
       None => ()
     }
-    if cap_admits(lists, k) {
+    if env_admits(lists, k) {
       m.put(k, v)
     }
   }
@@ -1704,7 +1714,7 @@ fn env_vars(e: Env) -> Map[Str, Str] uses env {
 /// read when the Env admits HOME), or Missing("HOME").
 fn env_home(e: Env) -> Str ! EnvErr uses env {
   if fs_windows() {
-    if !cap_admits(rt.env_lists(e), "HOME") {
+    if !env_admits(rt.env_lists(e), "HOME") {
       return Err(EnvErr.Missing(name: "HOME"))
     }
     match rt.env_get("USERPROFILE").get(0) {

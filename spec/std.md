@@ -692,7 +692,9 @@ native ones read `HOME` for the home directory).
 variables: `get` of another name is `None`, `vars` holds only listed
 names, and `home` is `Err(Missing("HOME"))` unless `HOME` is listed;
 `args` and `program` are unchanged. Attenuating again keeps both lists.
-Native builds have it too (decision 0172).
+On Windows names match without ASCII case, as its environment compares
+them (`only(["PATH"])` admits `Path`). Native builds have it too
+(decision 0172).
 
 ### 3.6 Stdio (`uses stdio`)
 

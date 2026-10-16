@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+get path: true
+only path, get PATH: true
+only path, get Path: true
+only path, vars: 1
+only path, get HOMEPATH: false
+intersection: true false
+--- stderr

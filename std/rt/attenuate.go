@@ -3,6 +3,7 @@ package rt
 import (
 	"fmt"
 	"net"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -193,7 +194,8 @@ func (e *onlyEnv) admits(name string) bool {
 	for _, l := range e.lists {
 		ok := false
 		for _, n := range l {
-			if n == name {
+			// Windows compares variable names without case (os.Getenv)
+			if n == name || (runtime.GOOS == "windows" && strings.EqualFold(n, name)) {
 				ok = true
 				break
 			}

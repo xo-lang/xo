@@ -1,0 +1,12 @@
+// On Windows environment variable names match without case (spec std.md
+// 3.5): the lookup, and Env.only's lists (2026-10-16).
+fn main(os: Os) uses stdio, env {
+  os.stdio.println("get path: ${os.env.get("path").is_some()}")
+  let e = os.env.only(["path"])
+  os.stdio.println("only path, get PATH: ${e.get("PATH").is_some()}")
+  os.stdio.println("only path, get Path: ${e.get("Path").is_some()}")
+  os.stdio.println("only path, vars: ${e.vars().len()}")
+  os.stdio.println("only path, get HOMEPATH: ${e.get("HOMEPATH").is_some()}")
+  let e2 = os.env.only(["PATH", "HOME"]).only(["Path"])
+  os.stdio.println("intersection: ${e2.get("PATH").is_some()} ${e2.get("HOME").is_some()}")
+}
