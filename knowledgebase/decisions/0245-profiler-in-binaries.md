@@ -1,7 +1,81 @@
 # 0245: Where the native profiler lives in a binary
 
-Status: Proposed (stub, 2026-10-16)
+Status: Proposed (2026-10-16, Xo lang 3; for the owner, through the lead)
 
-To be filled in: the profiler (prof, dwline, heapprof) is 158 KiB of every
-native binary, 27 percent of hello
-(bench/results/binary-size-native-2026-10-16.md).
+## Context
+
+Decision 0238 put a sampling profiler in the native runtime, chosen by
+`XO_PROF=cpu|heap` on any binary, and 0239 gave it DWARF line tables
+with inlined frames. entry.xo calls `prof.start()` in every program, so
+every native binary links the whole profiler: 158 KiB of hello's 593
+KiB on darwin/arm64 (27 percent), the same 158 KiB in the network
+programs (bench/results/binary-size-native-2026-10-16.md).
+
+What the 158 KiB is (json_server, darwin/arm64, bytes of code by
+function, 2026-10-16):
+
+- the sampler, which has to be in the process: `prof.start`,
+  `on_signal`, `start_heap`, and heapprof's hooks (sample, hook,
+  next_gap, remember, forget): about 10 KiB;
+- the output side, which runs once at exit: the pprof writer and its
+  gzip (write_profile, pprof, pprof_tail, gzip), the text summaries
+  (heap_text, trace_text, top_text, finish_heap, finish_cpu), reading
+  the binary's own symbols (macho_symbols, elf_symbols, demangle), and
+  all of dwline.xo (74 KiB: the .debug_line and .debug_info reader and
+  the dSYM loader): about 148 KiB.
+
+XO_PROF works on any binary today, including a release build on a
+server, and agents rely on it (one command, text out).
+
+## Options
+
+1. **Status quo.** 158 KiB in every binary. Simplest; profiling needs
+   no rebuild.
+2. **Opt in at build time.** `xo build --profile` (and `xo run
+   --profile=cpu`, `xo test --profile`, which already exist) link the
+   profiler; other builds link a `prof.start` that, when XO_PROF is
+   set, prints `xo: built without the profiler; rebuild with --profile`
+   and runs normally. Saves the whole 158 KiB. Loses profiling a binary
+   that is already deployed, and a profile needs a rebuild that may
+   change what is measured (a different binary).
+3. **Split: sample in the binary, symbolize in `xo`.** The binary keeps
+   the sampler (about 10 KiB) and writes raw samples at exit: the
+   program counters, stacks, heap records, and the binary's LC_UUID or
+   build ID, in a small fixed format (`PROG.xoprof`). `xo prof
+   PROG.xoprof [--binary PROG]` (the toolchain, which already reads
+   Mach-O and ELF objects in selfhost/macho) reads the binary's symbols
+   and DWARF and writes the pprof file and the text summary that
+   XO_PROF writes today. Saves about 148 KiB per binary and keeps
+   XO_PROF on every binary; a profile needs the binary (or its dSYM)
+   and an `xo` to read it, as `go tool pprof` needs the binary for a
+   stripped Go program. `xo run --profile` and `xo test --profile` run
+   `xo prof` themselves, so the one command workflow agents use does
+   not change.
+4. **Option 3 plus 2**: no profiler at all in `--release` builds
+   unless `--profile`. Saves the last 10 KiB; not worth a second mode.
+
+## Recommendation
+
+Option 3: it removes 94 percent of the profiler's bytes and keeps
+decision 0238's property that any binary can be profiled. The work: a
+raw sample writer in prof.xo (replacing finish_cpu, finish_heap and the
+writers), `xo prof` in selfhost/xo built on selfhost/macho's readers
+and a port of dwline.xo's parser (it is Xo already, so it moves rather
+than being rewritten), and the run and test drivers calling it. Tests:
+TestProfCPU, TestProfHeap, and the inlined frame tests run through
+`xo run --profile` and keep their expectations.
+
+With `-s` (darwin and Linux) the binary's local symbols are gone; `xo
+prof` then names only the exported functions unless it is given the
+unstripped binary or the dSYM, which is the same as today's in process
+symbolization of a stripped binary.
+
+## Consequences (option 3)
+
+- hello about 445 KiB instead of 593 (stripped, darwin/arm64), every
+  native binary about 148 KiB smaller.
+- Profiles still come from `XO_PROF` on any binary; reading one takes
+  `xo prof` (or `xo run --profile`, which does it).
+- The heap profile's text at exit (XO_PROF=heap printing a summary to
+  standard error) becomes `xo prof`'s output; programs that relied on
+  the in process text need the extra step.
