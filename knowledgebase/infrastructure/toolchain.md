@@ -3285,7 +3285,17 @@ on the Mac. Last verified: 2026-10-15 (clang 23.1.3, xwin 0.10.0).
 
 Since 2026-10-15 (xo-fa, the owner's request): Docker Desktop on this
 Mac runs Debian containers natively as linux/arm64 and, emulated, as
-linux/amd64 (slow: about 3x for a build). Three scripts:
+linux/amd64 (slow: about 3x for a build).
+
+Docker runs go outside the heavy lock (lead decision, 2026-10-15, after
+long Docker runs held both heavy slots): docker-linux.sh, docker-wine.sh
+and valgrind runs in a container are started directly, with `nice -n 10`
+so they yield to the Mac's own work, not through scripts/lead/agents
+heavy.sh. Agents remove only containers
+they started, by ID (`docker rm ID`), never by name or pattern. Last
+verified: 2026-10-16.
+
+Three scripts:
 
     scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
