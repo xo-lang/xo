@@ -60,10 +60,10 @@ Security > Developer Tools, which exempts the programs it starts from
 these assessments. `xo dev goldens` puts each run's binaries in a fresh
 `run-<random>` directory under its output directory and removes it at
 the end (selfhost/cli/dev goldens.xo), so no path is linked again while
-another run starts it. Mitigation in the toolchain: the darwin/arm64 default
-link is cc whenever the host has one (selfhost/xo main.xo default_ld;
-fewer of its binaries were rejected than macho's in the repros), and
-`--ld=macho` still selects macho. To see whether a binary that sleeps at
+another run starts it. The toolchain's mitigation, cc as the
+darwin/arm64 default link (6faa44cb), was undone the same day once
+both causes were fixed (decision 0182 addendum): macho is the default
+again, `--ld=cc` selects cc. To see whether a binary that sleeps at
 `_dyld_start` is waiting on this, run `log stream --predicate 'process
 == "syspolicyd" OR senderImagePath CONTAINS[c] "AppleMobileFileIntegrity"'`
 while it starts. Which layout property AMFI rejects is not known; bisect

@@ -666,19 +666,17 @@ fn emit_jobs(os: Os) -> Int {
   ncores(os).min(16).min(mem_gb(os) / 3).max(1)
 }
 
-/// The linker of a host link with no --ld (decision 0182 next step 1):
-/// cc when the host has one; selfhost/macho on darwin only without a cc
-/// (and when the assembler is not --as=cc and no `use c` source is
-/// linked). Some of macho's binaries fail the kernel's code signature
-/// check (AMFI) and wait at exec on a Gatekeeper assessment, with a
-/// possible dialog (gotchas/amfi-gatekeeper-macho-layout.md); --ld=macho
-/// still selects it. A linux host keeps cc until the ELF linker writes
-/// PIE (decision 0182 stage 3 next step 1).
+/// The linker of a host link with no --ld (decision 0182 next step 1 and
+/// its 2026-10-16 addendum): selfhost/macho on darwin when the assembler
+/// is not --as=cc and no `use c` source is linked, else cc; --ld=cc
+/// selects cc. (cc was the default again from 643b8261 to this change,
+/// while macho's binaries waited at exec: an XProtect false positive,
+/// gotchas/xprotect-false-positive-empty-list.md, and a path relinked
+/// under a running exec, gotchas/amfi-gatekeeper-macho-layout.md.) A
+/// linux host keeps cc until the ELF linker writes PIE (decision 0182
+/// stage 3 next step 1).
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
   if ctx.goos != "darwin" || tgoos != "darwin" || o.assembler == "cc" {
-    return false
-  }
-  if !find_cc(os).is_empty() {
     return false
   }
   for m in c.mods {

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- darwin/arm64 links with selfhost/macho by default again (cc only with
+  `--ld=cc`, `--as=cc` or `use c` sources): the launch stalls that made
+  cc the default that morning were an XProtect false positive and a
+  shared dev goldens path, both fixed; all 179 goldens pass three macho
+  rounds and none matches XProtect. Goldens build 17% faster than with
+  cc at 0.5% more bytes (decision 0182 addendum).
 - arm64: `a & ~b`, `a | ~b`, and `a ^ ~b` select bic, orn, and eon (the
   complement's mvn is then dead). sha3.keccak 1098 to 998 instructions
   (100 mvn gone; its stack spills unchanged, 216 loads and 75 stores);

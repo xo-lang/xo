@@ -277,6 +277,32 @@ Next steps, ranked by likelihood of working:
 5. LC_FUNCTION_STARTS and local symbols for profilers, and `.tbd`
    reading to report a missing import at link time.
 
+## Addendum (2026-10-16): selfhost/macho is the darwin/arm64 default again
+
+6faa44cb (2026-10-16 05:20) made cc the default link of a darwin host
+that has one, a mitigation while some ad hoc binaries waited at exec
+(gotchas/amfi-gatekeeper-macho-layout.md). The two causes found since
+are not macho's signature or layout: an XProtect rule matched code
+loading the empty list at macho's page offset 0x880 (fixed in
+5e2dd938, gotchas/xprotect-false-positive-empty-list.md), and the dev
+goldens relinked a binary at a shared path while another session
+started it (fixed in f949f3c5). On main at a52d5412 every internal/llvm
+golden linked by macho passed three rounds (one serial, two with 8
+jobs; 179 of 179 each, no run past 20 s), and none of the 179 macho
+and 179 cc goldens nor xo itself linked either way matches the Mac's
+XProtect rules (the live 5318 and the older bundle's). So the default
+on a darwin host is selfhost/macho again whenever the assembler is not
+`--as=cc` and no `use c` source is linked; `--ld=cc` selects cc. The
+arm64 backend's darwin builds need no C toolchain by default.
+
+Measured the same day (builds without the binary or back-end caches,
+one at a time, other sessions running): the 179 goldens built in 234 s
+with macho against 282 s with cc (median 942 ms against 1152 ms), at
+1.0055 times cc's bytes (0.988 to 1.024 per program); xo itself took
+114 to 122 s of CPU with macho against 154 to 159 s with cc, and 56.9
+MB against 56.8 MB. Wall times of the self build varied from 26 to 57
+s with the machine's load either way.
+
 ## Alternatives
 
 - **Port the assembler and linker in Go first** (internal/arm64): the Go
