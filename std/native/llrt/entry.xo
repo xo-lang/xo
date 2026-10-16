@@ -151,6 +151,11 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     TargetOs.Windows => win_start(argc, argv, envp)
     _ => process.start(argc, argv, envp)
   }
+  // no report reads the allocation counts: the heaps stop keeping them
+  // (alloc.xo COUNT; a budget turns them on again)
+  if process.env_real_at("XO_LEAKCHECK") == 0 && process.env_real_at("XO_HEAPSTATS") == 0 && process.env_real_at("XO_RTSTATS") == 0 {
+    heapos.counting_off()
+  }
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
   if mid != 0 {
     let m = atoll(mid)

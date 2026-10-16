@@ -317,6 +317,8 @@ const H_MID_MAX = 56
 const H_CENTRAL = 64
 const H_NFREE = 664
 const H_NEXT = 2136
+/// Whether the record counts (alloc.xo COUNT).
+const H_COUNT = 1864
 
 /// The thread local word of the calling thread's heap record (sched.xo
 /// TLS_HEAP).
@@ -343,10 +345,33 @@ const NCLASS1 = 73
 pub fn main_record() -> Int {
   let h = map(H_SIZE)
   rt.mem_store(h, H_MID_MAX, MID_MAX, 8)
+  rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)
   rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
   h
+}
+
+/// Stops the counting of allocations and frees (alloc.xo COUNT) on the
+/// main record, which the threads' records copy (the program's start,
+/// before a second thread: no report reads the counts).
+pub fn counting_off() { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_COUNT, 0, 8) }
+
+/// Counts on every record from now on (a budget's stretch, which reads
+/// its record's allocated bytes): nothing when record h, the caller's,
+/// already counts; else each record under the list's lock, the first
+/// (which new records copy) among them.
+pub fn counting_on(h: Int) {
+  if rt.mem_load(h, H_COUNT, 8) != 0 {
+    return
+  }
+  hlock_take()
+  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  while r != 0 {
+    rt.mem_store(r, H_COUNT, 1, 8)
+    r = rt.mem_load(r, H_NEXT, 8)
+  }
+  hlock_give()
 }
 
 /// Lowers the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
@@ -370,6 +395,7 @@ pub fn thread_heap() -> Int {
   let first = rt.mem_load(w, 0, 8)
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
+  rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
   rt.mem_store(h, H_NEXT, first, 8)
   rt.mem_store(w, 0, h, 8)
   hlock_give()

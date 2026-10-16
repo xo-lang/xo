@@ -54,6 +54,15 @@ const LAST = 72
 const FREE_LISTS = 80
 const NFREE = 664
 const MAG = 1248
+/// Whether the heap counts its allocations and their bytes (ALLOCS,
+/// ABYTES): from the record's start, off at the program's start unless
+/// XO_LEAKCHECK, XO_HEAPSTATS, or XO_RTSTATS is set (their reports read
+/// them) and on again for every record at a budget's first stretch
+/// (budget.xo reads ABYTES): heapos.xo counting_off, counting_on
+/// (2026-10-16: about 6 instructions an allocation; alloc small 0.979,
+/// text split 0.986). FREES is always counted: guarding it too moved
+/// the inliner's choices and made maps and mixed slower.
+const COUNT = 1864
 
 const SMALL_MAX = 1024
 /// The bytes of blocks in a magazine (at least 8 blocks).
@@ -69,8 +78,10 @@ const RELAXED = 0
 /// which calls this again.
 pub fn alloc(h: Int, n: Int) -> Int {
   if n > rt.mem_load(h, MID_MAX, 8) {
-    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+    if rt.mem_load(h, COUNT, 8) != 0 {
+      rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+      rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+    }
     if rt.mem_load(h, RT_DEPTH, 8) != 0 {
       rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
     }
@@ -114,8 +125,10 @@ pub fn alloc(h: Int, n: Int) -> Int {
     r = rt.int_wrap(0, cur, 8)
   }
   rt.mem_store(h, LAST, size, 8)
-  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
     rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
   }
@@ -156,8 +169,10 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
     r = rt.int_wrap(0, cur, 8)
   }
   rt.mem_store(h, LAST, size, 8)
-  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  }
   r
 }
 
@@ -301,7 +316,9 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   let mid = rt.mem_load(h, MID_MAX, 8)
   if hdr < 0 && n > mid {
     if n > old {
-      rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
+      if rt.mem_load(h, COUNT, 8) != 0 {
+        rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
+      }
     }
     rt.mem_store(h, LAST, n, 8)
     return rt.heap_big_resize(b, n)
@@ -348,8 +365,10 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     rt.mem_store(cur, 0, c, 8)
     q = rt.int_wrap(0, cur, 8)
   }
-  rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-  rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+  }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
     rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
   }

@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Allocation counting is off when nothing reads it: alloc.xo counts
+  allocations and their bytes (ALLOCS, ABYTES) only when XO_LEAKCHECK,
+  XO_HEAPSTATS, or XO_RTSTATS is set (from the first allocation, so their
+  reports are unchanged) or after a budget's first stretch (budget.xo reads
+  the bytes); FREES stays counted. heapos.xo counting_off at the start,
+  counting_on at a budget's mark. bench/perf on both backends: alloc small
+  arm64 0.977, text split llvm 0.983, quote arm64 0.978, and most text and
+  alloc rows 0.98 to 0.995.
+- The unwinder's frame cache is two way set associative (32 sets of 2):
+  direct mapped, two hot frames of fault isolate collided after a layout
+  change and missed on every lookup (1.14x); fault defer llvm 0.908.
 - selfhost/macho's assembler encodes adc, adcs, sbc, and sbcs: since
   cpu.adc's carry chains (dd3b3e2d) and the C runtime's deletion, every
   darwin/arm64 build of a TLS program failed ("unsupported instruction:

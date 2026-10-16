@@ -16,6 +16,7 @@
 // fields are ctx.xo's C_BUD_*.
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/heapos
 use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
@@ -119,6 +120,8 @@ fn exceeded(b0: Int) -> Int {
 /// now, on this thread.
 pub fn mark(c: Int) {
   let h = obj.heap()
+  // the allocated bytes are counted from now on (alloc.xo COUNT)
+  heapos.counting_on(h)
   st(c, ctx.C_BUD_RUN, sysio.mono_ns())
   st(c, ctx.C_BUD_HEAP, h)
   st(c, ctx.C_BUD_AMARK, ld(h, H_ABYTES))
