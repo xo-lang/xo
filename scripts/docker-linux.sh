@@ -1,6 +1,7 @@
 #!/bin/sh
 # docker-linux.sh: run a command in a Linux container (Debian with clang,
-# lld, and make: trixie, clang 19, by default; $XO_DOCKER_BASE picks
+# lld, make, and compiler-rt's sanitizer runtimes where the release has
+# libclang-rt-dev: trixie, clang 19, by default; $XO_DOCKER_BASE picks
 # another image, such as debian:bookworm-slim for clang 14) on this Mac's
 # Docker, natively for linux/arm64 and
 # emulated for linux/amd64 (knowledgebase/infrastructure/toolchain.md
@@ -37,13 +38,15 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 base=${XO_DOCKER_BASE:-debian:trixie-slim}
-image=xo-linux-test:$arch-$(echo "$base" | tr ':/' '--')
+# the -2: the Dockerfile below changed (compiler-rt's sanitizer runtimes)
+image=xo-linux-test:$arch-$(echo "$base" | tr ':/' '--')-2
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker build --platform "linux/$arch" --build-arg BASE="$base" -t "$image" - >&2 <<'DOCKERFILE'
 ARG BASE=debian:trixie-slim
 FROM $BASE
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang lld llvm make file binutils ca-certificates procps \
+  && (apt-get install -y --no-install-recommends libclang-rt-dev || true) \
   && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 fi

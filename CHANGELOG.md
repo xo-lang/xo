@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Unwinder, x86_64: a landing pad's stack pointer gets the frame's
+  DW_CFA_GNU_args_size added (std/native/llrt unwind.xo), as libgcc does:
+  a fault through a call whose stack arguments x86_64 LLVM pushed
+  (std/cli's command) crashed. Docker linux/amd64 (emulated), all 178
+  goldens with the LLVM backend: 175 before, the 3 fault goldens fixed.
+  golden-run.sh ends a hung program after XO_GOLDEN_TIMEOUT (600) s.
 - The checker treats `File`, `FileLock`, `Child`, and std/internal's
   `SharedLock` as handles (decision 0112 addendum): `==`, `!=`, Map keys,
   Set elements, and `derive Eq` on values holding one are XO0404 on every

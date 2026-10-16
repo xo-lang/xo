@@ -26,7 +26,9 @@ stdin=/dev/null
 # checks its directory's name)
 mkdir "$tmp/run"
 cp -R "$dir" "$tmp/run/$name"
-(cd "$tmp/run/$name" && env $envs "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
+# a hung program (a deadlock, a server never stopped) ends after
+# $XO_GOLDEN_TIMEOUT seconds, 600 by default, as exit 124
+(cd "$tmp/run/$name" && env $envs timeout "${XO_GOLDEN_TIMEOUT:-600}" "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
 code=$?
 {
   printf 'exit %s\n--- stdout\n' "$code"

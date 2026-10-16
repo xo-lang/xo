@@ -91,6 +91,13 @@ const H_THI = 184
 /// The cached CIE's personality routine (H_PERS is the frame's: a
 /// compact frame on macOS sets it without reading a CIE).
 const H_CIE_PERS = 192
+/// The frame's DW_CFA_GNU_args_size at its pc: the bytes of arguments
+/// pushed for the call (x86_64 LLVM pushes the stack arguments of a call
+/// of more than six), which a landing pad expects popped (libgcc adds
+/// them to the stack pointer it installs; without that, a cleanup's
+/// return went to an address in data: cli_decl_fault and the http fault
+/// goldens on linux/amd64, 2026-10-15). arm64 code has none.
+const H_ARGS = 200
 /// The register set: word n is DWARF register n (arm64: x0 to x30, sp
 /// 31, v0 to v31 at 64 to 95; x86_64: rax, rdx, rcx, rbx, rsi, rdi, rbp,
 /// rsp 7, r8 to r15, the return address 16, xmm0 to xmm15 at 17 to 32),
@@ -211,6 +218,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
   var first = true
   while true {
     let pc = rt.mem_load(cur, PC, 8)
+    rt.mem_store(s, H_ARGS, 0, 8)
     if pc == 0 || !(if darwin { dframe(s, pc) } else { frame(s, pc) }) {
       // the end of the stack (_UA_END_OF_STACK: fault_stop reports)
       return 0
@@ -267,6 +275,10 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int 
   rt.mem_store(regs, 0, exc, 8)
   rt.mem_store(regs, 8, 0, 8)
   rt.mem_store(regs, PC, lp, 8)
+  let args = rt.mem_load(ctx, H_ARGS, 8)
+  if args != 0 {
+    rt.mem_store(regs, sp_off(), rt.int_wrap(0, rt.mem_load(regs, sp_off(), 8), args), 8)
+  }
   URC_INSTALL_CONTEXT
 }
 
@@ -1088,6 +1100,7 @@ fn frame(s: Int, pc: Int) -> Bool {
   }
   copy_rules(s + ST_CUR, s + ST_INIT)
   rt.mem_store(s, H_DEPTH, 0, 8)
+  rt.mem_store(s, H_ARGS, 0, 8)
   exec(s, rt.mem_load(s, H_FDE, 8), rt.mem_load(s, H_FDE_END, 8), pc, false)
 }
 
@@ -1449,8 +1462,9 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       rt.mem_store(st, S_RA_SIGNED, 1 - rt.mem_load(st, S_RA_SIGNED, 8), 8)
     } else if op == 46 {
       // DW_CFA_GNU_args_size
-      let (_, q) = uleb(p)
+      let (n, q) = uleb(p)
       p = q
+      rt.mem_store(s, H_ARGS, n, 8)
     } else {
       return false
     }
