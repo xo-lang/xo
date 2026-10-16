@@ -168,6 +168,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- bench/perf/tls: server workloads (srv-rsa2048, srv-rsa4096,
+  srv-p256): the Xo server's instructions per handshake against Go's
+  client; RSA 2048 server handshakes 30% to 33% fewer instructions with
+  the bigmod change, 4096 43% to 46%
+  (bench/results/rsa-bigmod-2026-10-16.md).
+
 - RSA: bigmod.xo's Montgomery product as a double width product (or a
   dedicated square) and Montgomery's reduction in single pass rows on
   cpu.adc: signatures 32% to 46% fewer instructions, verifications 44%

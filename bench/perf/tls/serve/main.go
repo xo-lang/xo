@@ -6,6 +6,13 @@
 // Only http/1.1 is offered (ALPN), so the Xo client opens a connection,
 // and makes a full handshake, per request. Records are 16 KiB from the
 // start (DynamicRecordSizingDisabled). Prints "ready" once it listens.
+//
+// For the server workloads (srv-*, the Xo server of ../server measured):
+// -keys DIR writes, signed by the same CA, a leaf for 127.0.0.1 with each
+// key of serverKeys as DIR/<name>.crt (leaf then CA) and DIR/<name>.key
+// (PKCS #8), then the CA to -ca, and exits; -dial ADDR -n N is the client:
+// N connections to ADDR trusting -ca, each a full TLS 1.3 handshake with
+// X25519 only and a GET /hs, then exits.
 package main
 
 import (
@@ -22,6 +29,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -54,6 +62,9 @@ var listeners = []listener{
 	{"p521", "p256", tls.CurveP521, tls.VersionTLS13, nil},
 }
 
+// serverKeys are the server workloads' keys (measure.sh: srv-<name>).
+var serverKeys = []string{"rsa2048", "rsa4096", "p256"}
+
 func must(err error) {
 	if err != nil {
 		panic(err)
@@ -63,7 +74,14 @@ func must(err error) {
 func main() {
 	port := flag.Int("port", 18120, "the first listener's port")
 	caFile := flag.String("ca", "ca.pem", "the file for the CA (PEM)")
+	keysDir := flag.String("keys", "", "write the server workloads' keys to this directory and exit")
+	dial := flag.String("dial", "", "the client: make -n handshakes to this address and exit")
+	n := flag.Int("n", 1, "the client's connections")
 	flag.Parse()
+	if *dial != "" {
+		client(*dial, *caFile, *n)
+		return
+	}
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(err)
 	now := time.Now()
@@ -72,6 +90,29 @@ func main() {
 	must(err)
 	ca, _ := x509.ParseCertificate(caDER)
 	must(os.WriteFile(*caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o644))
+	if *keysDir != "" {
+		for i, name := range serverKeys {
+			var k crypto.Signer
+			switch name {
+			case "rsa2048":
+				k, err = rsa.GenerateKey(rand.Reader, 2048)
+			case "rsa4096":
+				k, err = rsa.GenerateKey(rand.Reader, 4096)
+			case "p256":
+				k, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			}
+			must(err)
+			t := &x509.Certificate{SerialNumber: big.NewInt(int64(i + 100)), Subject: pkix.Name{CommonName: "127.0.0.1"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+			der, err := x509.CreateCertificate(rand.Reader, t, ca, k.Public(), caKey)
+			must(err)
+			chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
+			must(os.WriteFile(*keysDir+"/"+name+".crt", chain, 0o644))
+			p8, err := x509.MarshalPKCS8PrivateKey(k)
+			must(err)
+			must(os.WriteFile(*keysDir+"/"+name+".key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: p8}), 0o600))
+		}
+		return
+	}
 	keys := map[string]crypto.Signer{}
 	k1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(err)
@@ -141,5 +182,29 @@ func serve(ln net.Listener) {
 				n -= k
 			}
 		}()
+	}
+}
+
+// client makes n connections to addr, each a full TLS 1.3 handshake
+// (X25519, no session resumption) and a GET /hs read to the end.
+func client(addr, caFile string, n int) {
+	pemCA, err := os.ReadFile(caFile)
+	must(err)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pemCA) {
+		panic("no CA in " + caFile)
+	}
+	cfg := &tls.Config{RootCAs: roots, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{tls.X25519}, NextProtos: []string{"http/1.1"}, SessionTicketsDisabled: true}
+	for i := 0; i < n; i++ {
+		c, err := tls.Dial("tcp", addr, cfg)
+		must(err)
+		_, err = io.WriteString(c, "GET /hs HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+		must(err)
+		b, err := io.ReadAll(c)
+		must(err)
+		if !strings.Contains(string(b), "0123456789abcdef") {
+			panic(fmt.Sprintf("handshake %d: unexpected response %q", i, b))
+		}
+		c.Close()
 	}
 }

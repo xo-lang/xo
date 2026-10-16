@@ -77,3 +77,27 @@ crypto/rsa verifies, on arm64 and LLVM. The crypto and TLS goldens
 and X.509 diff tests pass on both backends (http_tls on arm64 waited
 at _dyld_start until the owner's macOS fix that morning, then passed);
 the self rebuild fixed point holds.
+
+## Server handshakes (added 2026-10-16)
+
+bench/perf/tls's new server workloads (srv-rsa2048, srv-rsa4096,
+srv-p256; measure.sh's header): the Xo server of bench/perf/tls/server
+with a leaf key of each kind signed by serve/'s CA, `serve -dial` as the
+client (Go's TLS 1.3, X25519 only, no resumption, a GET /hs per
+connection), the instructions those of the server process. Per
+handshake: (the run with N = 50 connections less the run with none) /
+50, the best of 5 each; the std of 7aeabe12's parent (before) against
+7aeabe12 (after), one xo.
+
+| Server key | Backend | Before | After | Change |
+|---|---|---|---|---|
+| RSA 2048 | arm64 | 53.67M | 36.03M | -32.9% |
+| RSA 2048 | llvm | 28.07M | 19.67M | -29.9% |
+| RSA 4096 | arm64 | 364.18M | 197.95M | -45.6% |
+| RSA 4096 | llvm | 187.70M | 106.45M | -43.3% |
+| P-256 (control) | arm64 | 3.69M | 3.70M | 0.0% |
+| P-256 (control) | llvm | 2.55M | 2.55M | +0.2% |
+
+The RSA signature is nearly all of an RSA server's handshake (17.5M of
+19.7M on LLVM at 2048 bits); an ECDSA P-256 server's whole handshake is
+a seventh of the RSA 2048 one's.

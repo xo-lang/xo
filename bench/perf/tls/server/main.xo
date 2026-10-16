@@ -1,0 +1,32 @@
+// The server of bench/perf/tls's server workloads (srv-*): std/http's
+// server over TLS with the certificate chain CERT and the private key KEY
+// (PEM files serve/ -keys writes) on 127.0.0.1:PORT, answering /hs with a
+// 16 byte body. Prints "ready" once it listens and stops when its stdin
+// ends, so measure.sh can count the instructions of exactly the
+// handshakes serve/'s -dial client made in between.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hs", fn(_req) { http.text(200, "0123456789abcdef") })
+  r
+}
+
+fn main(os: Os) ! {
+  let cert = os.fs.read(os.env.get("CERT") ?? "cert.pem")?
+  let key = os.fs.read(os.env.get("KEY") ?? "key.pem")?
+  let tc = http.tls_cert(cert, key).or_fault("tls_cert")
+  let port = os.env.get("PORT") ?? "18140"
+  let l = os.net.listen("127.0.0.1:${port}").or_fault("listen")
+  let srv = http.server(l, routes()).with_tls([tc])
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    os.stdio.println("ready")
+    while let Some(_) = os.stdio.read_line().ok() ?? None {}
+  }
+}
