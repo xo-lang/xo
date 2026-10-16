@@ -904,14 +904,23 @@ fn (var b: Builder) arith(op: lexer.Kind, l: Int, r: Int, sp: Span) -> Int {
     return b.undef(lt)
   }
   let oo = o ?? Op.Add
-  if b.tkind(lt) == Kind.Int && oo is Op.Add | Op.Sub {
+  if b.tkind(lt) == Kind.Int && oo is Op.Add | Op.Sub | Op.Mul | Op.Div | Op.Rem {
     // two constants that do not overflow fold (an offset like
-    // `MLIMBS + 8`); one that overflows stays the checked operation,
-    // which faults at run time
+    // `MLIMBS + 8`, a word index like `W_DEFER_AT / 8`, which the arm64
+    // backend otherwise divides at run time); one that overflows, a
+    // division by zero, and MIN / -1 or MIN % -1 stay the checked
+    // operation, which faults at run time
     let (x, xc) = b.int_const_of(l)
     let (y, yc) = b.int_const_of(r)
     if xc && yc {
-      let z = if oo == Op.Add { x.checked_add(y) } else { x.checked_sub(y) }
+      let z = match oo {
+        Add => x.checked_add(y)
+        Sub => x.checked_sub(y)
+        Mul => x.checked_mul(y)
+        Div => if y == -1 { None } else { x.checked_div(y) }
+        // truncated, as `%` is: x - (x / y) * y
+        _ => if y == 0 || y == -1 { None } else { Some(x % y) }
+      }
       if let Some(n) = z {
         return b.add(Op.Const, lt, Aux.I(n: n), [])
       }

@@ -15,10 +15,16 @@ fn div4(x: Int) -> Int {
   x / 4
 }
 
-// A multiply by 3 is an add of a shifted register.
+// Constants fold: the result alone.
 fn fold() -> Int {
-  // arm64: "add x[0-9]+, x[0-9]+, x[0-9]+, lsl #1" -"\tmul "
+  // arm64: "mov x0, #22" -"\tmul " -"lsl"
   3 * 7 + 1
+}
+
+// A multiply by 3 is an add of a shifted register.
+fn times3(x: Int) -> Int {
+  // arm64: "add x[0-9]+, x[0-9]+, x[0-9]+, lsl #1" -"\tmul "
+  x * 3
 }
 
 // A mask whose ones run past bit 63 is a logical immediate too: one and.
@@ -42,7 +48,31 @@ fn low_bits(x: Int) -> Bool {
   x & 12 != 0
 }
 
+const WORD = 3400
+
+// A quotient and a remainder of constants fold: one add of the result,
+// no shift or divide at run time.
+fn word_index(x: Int) -> Int {
+  // arm64: "adds x[0-9]+, x[0-9]+, #425" -"asr" -"sdiv"
+  x + WORD / 8
+}
+
+fn word_rem(x: Int) -> Int {
+  // arm64: "adds x[0-9]+, x[0-9]+, #5" -"sdiv" -"msub"
+  x + WORD % 7
+}
+
+// A constant division by zero is not folded: it divides (and faults) at
+// run time.
+fn by_zero(x: Int) -> Int {
+  // arm64: "sdiv"
+  if x > 100 {
+    return WORD / 0
+  }
+  x
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)}")
 }

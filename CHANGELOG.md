@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Constants fold in the SSA builder for `*`, `/` and `%` as for `+`
+  and `-` (selfhost/ssa expr.xo): `W_DEFER_AT / 8` was a `mov` and an
+  `asr` at run time on arm64 (the LLVM backend folded it). A product
+  that overflows, a division by zero, and MIN / -1 or MIN % -1 stay the
+  checked operation and fault at run time. test/codegen/arith:
+  word_index, word_rem, by_zero, fold (now the constant), times3.
 - Fix: the native TLS client and server sent records through the raw
   address of a Bytes the compiler had already released (a value is
   released after its last named use, and a raw address is not a use),
