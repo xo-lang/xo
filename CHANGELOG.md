@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: the immortal empty list and zero handle come first in a
+  program's data (page offset 0): in selfhost/macho's layout the empty
+  list sat at page offset 0x880, and code loading it into x11 then x12
+  matched XProtect's MACOS.SOMA.AUENB rule, so macOS blocked 3 of 179
+  goldens as malware; now none match the Mac's rules (both linkers,
+  both backends). TestEmptyListAtPageStart; TestXProtectRules with yara
+  (gotchas/xprotect-false-positive-empty-list.md).
 - Native standard input from a FIFO on macOS sees its end of input: poll(2)
   and kqueue report nothing for a FIFO whose last writer closed, so the
   reader waited forever; stdin.xo now probes a FIFO with a read that does

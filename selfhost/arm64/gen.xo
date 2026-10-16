@@ -128,6 +128,20 @@ fn (g: G) shared_code(var out: List[Str]) {
 
 /// The process words of rt.sys_words and rt.static_word, and the end of an ELF file.
 fn (g: G) end_data(var out: List[Str]) {
+  // the immortal placeholders first, at the data's start (page offset
+  // 0): after the 2,176 bytes of sys_words and static_word, code that
+  // loaded the empty list into x11 then x12 matched an XProtect rule
+  // (MACOS.SOMA.AUENB: `add x11, x11, #0x880; adrp x12; add x12`) in
+  // every selfhost/macho linked program under 5 MB
+  // (gotchas/xprotect-false-positive-empty-list.md).
+  // The immortal placeholders (rt.rl_empty, rt.h_zero, a 0 export
+  // result): the empty list {XO_RC_IMMORTAL, 0, 0} and the zero handle
+  // {XO_RC_IMMORTAL, no free function}, defined by every program (xo_rt.c
+  // keeps weak ones for code of compilers before 0.14.0)
+  let el = g.sym("xo_empty_list")
+  let zh = g.sym("xo_zero_handle")
+  out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
+    "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
     out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")
@@ -144,14 +158,6 @@ fn (g: G) end_data(var out: List[Str]) {
       out.push("\t.quad 0\n")
     }
   }
-  // the immortal placeholders (rt.rl_empty, rt.h_zero, a 0 export
-  // result): the empty list {XO_RC_IMMORTAL, 0, 0} and the zero handle
-  // {XO_RC_IMMORTAL, no free function}, defined by every program (xo_rt.c
-  // keeps weak ones for code of compilers before 0.14.0)
-  let el = g.sym("xo_empty_list")
-  let zh = g.sym("xo_zero_handle")
-  out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
-    "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
   if g.os == "linux" && g.m.nolibc {
     // the C library's data symbols (decision 0234)
     for d in ssa.nolibc_data() {

@@ -31,7 +31,11 @@ syspolicyd then assesses the binary with `allowUI is YES`: an online
 notarization lookup ("ticket not available"), then
 `GatekeeperPolicyScanError -67018 "Code did not match any currently
 allowed policy"`, and the exec waits on the outcome: a dialog for the
-Mac's user. Later assessments log "waiting on another evaluation" and
+Mac's user. The dialog the owner saw was XProtect's "Malware Blocked:
+'http_stream' was not opened because it contains malware", a false
+positive on macho's layout (gotchas/xprotect-false-positive-empty-list.md,
+fixed); with the terminal under Developer Tools (done 2026-10-16) the
+stalls stopped. Later assessments log "waiting on another evaluation" and
 queue behind any dialog still pending, so binaries that would otherwise
 run wait too. Re-signing with `codesign -f -s -` or raising the minimum
 OS with vtool does not change AMFI's verdict.
