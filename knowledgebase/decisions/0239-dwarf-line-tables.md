@@ -150,5 +150,6 @@ types and variable locations.
   a Line per frame (pprof shows `scale main.xo:2 (inline)`), counts
   flat time to the innermost function, and the summary has the inlined
   callee's own row; XO_TRACEBACK prints `  inner (main.xo:2) [inlined]`
-  frames before their caller (TestTracebackInlined).
+  frames before their caller (TestTracebackInlined, on arm64 and LLVM;
+  TestProfHeap's start covers the heap profile).
 

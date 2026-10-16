@@ -2,7 +2,10 @@
 // TestProfHeap): a task holds 2000 strings of about 1000 bytes while main
 // allocates and drops 20000 lists of 100 Ints (about 40 MB), then main
 // exits the process with the strings still held, so they are in use when
-// the profile is written.
+// the profile is written. churn's lists start in start, small enough
+// that both backends' inliners copy it into churn (a list literal would
+// not do on arm64: its pushes have a landing pad), so the heap profile
+// names an inlined callee.
 fn keep(n: Int) -> List[Str] {
   var xs: List[Str] = []
   for i in 0..n {
@@ -11,11 +14,17 @@ fn keep(n: Int) -> List[Str] {
   xs
 }
 
+fn start(i: Int) -> List[Int] {
+  var l: List[Int] = []
+  l.push(i)
+  l
+}
+
 fn churn(n: Int) -> Int {
   var t = 0
   for i in 0..n {
-    var l: List[Int] = []
-    for j in 0..100 {
+    var l = start(i)
+    for j in 1..100 {
       l.push(i + j)
     }
     t += l.len()

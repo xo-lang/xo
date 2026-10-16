@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix: the DWARF reader (tracebacks, profiles) read the debug sections
+  through addresses into a Bytes that was already released, so some
+  builds (seen on macOS with LLVM) got wrong or missing lines and inlined
+  frames; it now holds the Bytes (gotcha raw-address-outlives-bytes).
+  The heap profile names inlined callees too (TestProfHeap's start), and
+  TestTraceback and TestTracebackInlined run on LLVM as well as arm64, so
+  CI's linux/arm64 runner checks LLVM's tracebacks.
+
 - `--race` on the LLVM backend (decision 0241's addendum): `xo
   build|run|test|asm --backend=llvm --race` marks every function, the
   runtime's too, sanitize_thread and builds with ThreadSanitizer (about

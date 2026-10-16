@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -102,7 +103,8 @@ func TestProfCPU(t *testing.T) {
 // TestProfHeap: XO_PROF=heap (decision 0238 item 4) on each native
 // backend. At rate 1 every allocation is a sample: the 2000 strings a task
 // holds at the exit are in use (str_repeat's), the lists main churned are
-// allocated (churn's); at the default rate the estimate of the bytes
+// allocated (churn's), and start's, a callee inlined into churn, are its
+// own row and an (inline) line in pprof; at the default rate the estimate of the bytes
 // allocated is near the program's (about 40 MB); cpu,heap writes both;
 // go tool pprof reads it.
 func TestProfHeap(t *testing.T) {
@@ -152,11 +154,27 @@ func TestProfHeap(t *testing.T) {
 			if inuse < 1900000 || inuse > 2200000 || objs < 2000 || objs > 2100 {
 				t.Fatalf("in use %d bytes in %d objects, want about 2 MB in 2000:\n%s", inuse, objs, txt)
 			}
-			if f := heapTop(string(txt), "inuse_space"); !strings.Contains(f, "str_repeat") {
-				t.Fatalf("top function by inuse_space %q, want raw.str_repeat:\n%s", f, txt)
+			// flat goes to the innermost frame: LLVM inlines
+			// cabi.obj_rs_with_cap into raw.str_repeat
+			if f := heapTop(string(txt), "inuse_space"); !strings.Contains(f, "str_repeat") && !strings.Contains(f, "obj_rs_with_cap") {
+				t.Fatalf("top function by inuse_space %q, want raw.str_repeat or the cabi.obj_rs_with_cap inlined into it:\n%s", f, txt)
+			}
+			if !strings.Contains(heapTable(string(txt), "inuse_space"), "raw.str_repeat") {
+				t.Fatalf("no raw.str_repeat by inuse_space:\n%s", txt)
 			}
 			if !strings.Contains(heapTable(string(txt), "alloc_space"), "churn") {
 				t.Fatalf("no churn by alloc_space:\n%s", txt)
+			}
+			// start is inlined into churn on both backends: its
+			// allocations are named from .debug_info (decision 0239)
+			if !strings.Contains(heapTable(string(txt), "alloc_space"), "  start\n") {
+				t.Fatalf("no start (inlined into churn) by alloc_space:\n%s", txt)
+			}
+			if gobin, err := exec.LookPath("go"); err == nil {
+				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-lines", "-sample_index=alloc_space", filepath.Join(dir, "xo-heap.pprof")).CombinedOutput()
+				if err != nil || !regexp.MustCompile(`start \S*main\.xo:\d+ \(inline\)`).Match(p) {
+					t.Fatalf("go tool pprof -top -lines: no inlined start: %v\n%s", err, p)
+				}
 			}
 			// the default rate (512 KiB): an estimate
 			dir, _ = run("XO_PROF=heap")

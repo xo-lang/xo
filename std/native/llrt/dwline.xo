@@ -37,6 +37,10 @@ pub struct Lines {
 /// The sections a line program reads: .debug_line, and the string
 /// sections v5 file names refer to (address and size; 0 for none).
 struct Sects {
+  /// the file the addresses point into, held while they are read: a
+  /// Bytes is released after its last use, and the readers' own
+  /// allocations reused its memory (gotchas/raw-address-outlives-bytes.md)
+  data: Bytes = b""
   line: Int = 0
   line_n: Int = 0
   lstr: Int = 0
@@ -176,7 +180,7 @@ fn load_elf(lo: Int, hi: Int, var out: Lines) {
     return
   }
   let strs = ld(f + shoff + 64 * shx, 24)
-  var s = Sects{}
+  var s = Sects{data: data}
   for i in 0..shn {
     // Elf64_Shdr: sh_name 0, sh_offset 24, sh_size 32
     let sh = f + shoff + 64 * i
@@ -230,7 +234,7 @@ fn load_dsym(lo: Int, hi: Int, var out: Lines) {
   let ncmds = u32(f + 16)
   var lc = f + 32
   var same = false
-  var s = Sects{}
+  var s = Sects{data: data}
   for _ in 0..ncmds {
     if lc + 8 > f + data.len() {
       return

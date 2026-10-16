@@ -23,7 +23,24 @@ func TestTraceback(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}
-	res, err := xotool.Build([]string{filepath.Join("testdata", "traceback")}, xotool.Options{Backend: xotool.BackendArm64})
+	for _, be := range tracebackBackends(t) {
+		t.Run(be, func(t *testing.T) { testTraceback(t, be) })
+	}
+}
+
+// tracebackBackends: the native backends on this host (arm64, and LLVM
+// when clang is there), so CI's linux/arm64 runner checks LLVM's
+// tracebacks as well as the Mac's.
+func tracebackBackends(t *testing.T) []string {
+	bes := []string{xotool.BackendArm64}
+	if _, err := xotool.Clang(); err == nil {
+		bes = append(bes, xotool.BackendLLVM)
+	}
+	return bes
+}
+
+func testTraceback(t *testing.T, be string) {
+	res, err := xotool.Build([]string{filepath.Join("testdata", "traceback")}, xotool.Options{Backend: be})
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res)
 	}
@@ -58,8 +75,8 @@ func TestTraceback(t *testing.T) {
 	}
 }
 
-// TestTracebackInlined: frames of calls the arm64 inliner copied are in
-// the traceback too, from the DWARF inlined_subroutine entries (decision
+// TestTracebackInlined: frames of inlined calls (the arm64 inliner's
+// copies, LLVM's) are in the traceback too, from the DWARF inlined_subroutine entries (decision
 // 0239), marked [inlined], innermost first, each at its own line.
 func TestTracebackInlined(t *testing.T) {
 	if !native() {
@@ -68,17 +85,21 @@ func TestTracebackInlined(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}
-	res, err := xotool.Build([]string{filepath.Join("testdata", "traceback_inl")}, xotool.Options{Backend: xotool.BackendArm64})
-	if err != nil || res.Failed {
-		t.Fatalf("build: %v %v", err, res)
-	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
-	cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
-	var errb strings.Builder
-	cmd.Stderr = &errb
-	_ = cmd.Run()
-	want := "traceback:\n  inner (main.xo:4) [inlined]\n  outer (main.xo:8) [inlined]\n  main (main.xo:15)\n"
-	if !strings.HasSuffix(errb.String(), want) {
-		t.Fatalf("stderr:\n%s\nwant it to end with:\n%s", errb.String(), want)
+	for _, be := range tracebackBackends(t) {
+		t.Run(be, func(t *testing.T) {
+			res, err := xotool.Build([]string{filepath.Join("testdata", "traceback_inl")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			cmd := exec.Command(res.Binaries[xotool.Host()])
+			cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
+			var errb strings.Builder
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			want := "traceback:\n  inner (main.xo:4) [inlined]\n  outer (main.xo:8) [inlined]\n  main (main.xo:15)\n"
+			if !strings.HasSuffix(errb.String(), want) {
+				t.Fatalf("stderr:\n%s\nwant it to end with:\n%s", errb.String(), want)
+			}
+		})
 	}
 }

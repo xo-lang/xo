@@ -1403,7 +1403,6 @@ fn finish_heap() {
   // the locations: the pcs a kept frame has, their functions, files,
   // and lines
   var locs: List[Int] = []
-  var fr: List[Int] = []
   var cf: List[List[Int]] = []
   var cfile: List[List[Str]] = []
   var cline: List[List[Int]] = []
@@ -1412,7 +1411,6 @@ fn finish_heap() {
       continue
     }
     locs.push(pc)
-    fr.push(fr0[i])
     // the callees inlined at the call, then the function (as the cpu
     // profile's frames)
     let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr0[i]])
@@ -1430,6 +1428,12 @@ fn finish_heap() {
     cf.push(fi)
     cfile.push(ff)
     cline.push(ll)
+  }
+  // xo_entry (LLVM inlines the program's main into it) is main
+  for k in 0..names.len() {
+    if names[k] == "xo_entry" {
+      names[k] = "main"
+    }
   }
   // pprof: Go's four sample types, the period the rate in bytes
   var strs: List[Str] = ["", "alloc_objects", "count", "alloc_space", "bytes", "inuse_objects", "inuse_space", "space"]
@@ -1457,7 +1461,7 @@ fn finish_heap() {
   fint(b, 12, rate)
   let ok = write_file(out, gzip(b.freeze()))
   let txt = text_path(out)
-  let summary = heap_text(stacks, vals, locs, fr, names, lines, rate, heapprof.lost(r), heapprof.unset(r))
+  let summary = heap_text(stacks, vals, locs, cf, names, cfile, cline, rate, heapprof.lost(r), heapprof.unset(r))
   let ok2 = write_file(txt, summary.bytes())
   if ok && ok2 {
     stdio.eprint("xo profile: ${stacks.len()} heap samples in ${out} and ${txt}", true)
@@ -1488,7 +1492,7 @@ fn bytes_text(n: Int) -> Str {
 /// The heap summary: the totals (estimated, as the profile's values),
 /// then the top 30 functions by inuse_space and by alloc_space, flat (the
 /// stack's leaf, the allocating code) and cumulative.
-fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], locs: List[Int], fr: List[Int], names: List[Str], lines: dwline.Lines, rate: Int, lost: Int, unset: Int) -> Str {
+fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]], rate: Int, lost: Int, unset: Int) -> Str {
   var tot = [0, 0, 0, 0]
   for v in vals {
     for i in 0..4 {
@@ -1524,20 +1528,22 @@ fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], locs: List[Int], fr
         continue
       }
       for (j, pc) in s.indexed() {
-        let f = fr[loc_index(locs, pc)]
+        // the location's frames: an inlined callee's first (flat goes to
+        // the innermost)
+        let li = loc_index(locs, pc)
         if j == 0 {
+          let f = cf[li][0]
           flat[f] = flat[f] + x
-          if x > hot_v[f] {
-            let at = dwline.short(lines, pc - 1)
-            if !at.is_empty() {
-              hot[f] = at
-              hot_v[f] = x
-            }
+          if x > hot_v[f] && !cfile[li][0].is_empty() {
+            hot[f] = "${base_name(cfile[li][0])}:${cline[li][0]}"
+            hot_v[f] = x
           }
         }
-        if seen[f] != k {
-          seen[f] = k
-          cum[f] = cum[f] + x
+        for f in cf[li] {
+          if seen[f] != k {
+            seen[f] = k
+            cum[f] = cum[f] + x
+          }
         }
       }
     }
