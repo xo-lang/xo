@@ -262,6 +262,10 @@ fn sys_restorer() -> Int
 /// LLVM indirect call; decision 0206 stage 2: the vDSO's clock_gettime,
 /// a pthread_once routine).
 fn call_c2(f: Int, a: Int, b: Int) -> Int
+/// call_c2 with four Int arguments (a function found at run time with
+/// dlsym, so its library need not be linked: the Security and
+/// CoreFoundation calls of tlscert.xo).
+fn call_c4(f: Int, a: Int, b: Int, c: Int, d: Int) -> Int
 /// The address of 16 words of process state for the system call layer,
 /// zero at start (emitted by each native emitter with the first use:
 /// 0 the clock of the build, the vDSO clock's address on Linux or a

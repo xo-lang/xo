@@ -729,6 +729,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
       g.set(v, "call i64 ${p}(i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])})")
     }
+    "rt.call_c4" => {
+      let p = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
+      g.set(v, "call i64 ${p}(i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])}, i64 ${g.op(x.args[3])}, i64 ${g.op(x.args[4])})")
+    }
     "rt.sys_words" => {
       // 16 words of process state (decision 0206 stage 2): weak, one
       // object for every module of a split build

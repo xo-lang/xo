@@ -976,12 +976,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.restorer_ref = true
       g.set(v, [g.sym_addr(g.tramp("xo_sigreturn"))])
     }
-    "rt.call_c2" => {
+    "rt.call_c2" | "rt.call_c4" => {
       // a C ABI call of an address (decision 0206 stage 2): the
-      // arguments in x0 and x1, the address in x2 (`blr x2`)
+      // arguments in x0 and x1 (to x3 for call_c4), the address in the
+      // next register (`blr x2`, `blr x4`)
       var args: List[Src] = []
       var us: List[Int] = []
-      for k in [1, 2, 0] {
+      let order = if x.args.len() == 5 { [1, 2, 3, 4, 0] } else { [1, 2, 0] }
+      for k in order {
         let r = g.word(x.args[k])
         args.push(rsrc(r))
         us.push(r)
