@@ -180,7 +180,13 @@ fn is_sp(b: Bytes) -> Bool {
 fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
   let n = ops.len()
   match m {
-    "mov" => a.mov(ops)
+    "mov" => {
+      if n == 2 && ops[0].len() > 0 && ops[0][0] == 'v' {
+        a.simd(m, ops)
+      } else {
+        a.mov(ops)
+      }
+    }
     "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" => a.ldst(m, ops)
     "ldp" | "stp" => a.ldstp(m, ops)
     "bl" => {
@@ -195,7 +201,13 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       a.word_fix(0x14000000, FX_B26, ops[0])
     }
-    "add" | "adds" | "sub" | "subs" => a.addsub(m, ops)
+    "add" | "adds" | "sub" | "subs" => {
+      if m == "add" && n == 3 && ops[0].len() > 0 && ops[0][0] == 'v' {
+        a.simd(m, ops)
+      } else {
+        a.addsub(m, ops)
+      }
+    }
     "adc" | "adcs" | "sbc" | "sbcs" => a.adcsbc(m, ops)
     "cmp" | "cmn" => {
       if n < 2 {
@@ -417,7 +429,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       }
       a.word((if m == "rbit" { 0x5ac00000 } else { 0x5ac01000 }) | (sd * 0x80000000) | (x * 32) | d)
     }
-    "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" => a.simd(m, ops)
+    "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" => a.simd(m, ops)
     "fadd" | "fsub" | "fmul" | "fdiv" => {
       let base = match m {
         "fadd" => 0x1e602800
@@ -1221,7 +1233,10 @@ fn vreg(b: Bytes) -> (Int, Str) {
 /// register and movi to 16 bytes, cmeq and cmlt #0 on 16 bytes, shrn of
 /// 8 halfwords to 8 bytes; the crypto intrinsics of decision 0231:
 /// pmull and pmull2 of d lanes, umov of a d lane, aese, aesd, aesmc,
-/// aesimc, and eor on 16 bytes.
+/// aesimc, and eor on 16 bytes; SHA-256's (cpu.sha256_block): sha256h
+/// and sha256h2 (q, q, v.4s), sha256su0, sha256su1, add and uzp1 on
+/// words, ushll and ushll2 by 0 to doublewords, rev32 and mov on 16
+/// bytes.
 fn (var a: Asm) simd(m: Str, ops: List[Bytes]) {
   let n = ops.len()
   if n < 2 {
@@ -1236,8 +1251,55 @@ fn (var a: Asm) simd(m: Str, ops: List[Bytes]) {
     }
     return a.word((if sa == "d[1]" { 0x4e183c00 } else { 0x4e083c00 }) | (s * 32) | x)
   }
+  if m == "sha256h" || m == "sha256h2" {
+    // sha256h qD, qN, vM.4s
+    let (d, kd) = reg(ops[0])
+    let (x, kx) = reg(ops[1])
+    let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }
+    if kd != RQ || kx != RQ || y < 0 || ay != "4s" {
+      return a.bad(m, ops)
+    }
+    return a.word((if m == "sha256h" { 0x5e004000 } else { 0x5e005000 }) | (y * 0x10000) | (x * 32) | d)
+  }
   let (d, ad) = vreg(ops[0])
   match m {
+    "add" | "uzp1" | "sha256su1" => {
+      let (x, ax) = vreg(ops[1])
+      let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }
+      if d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {
+        return a.bad(m, ops)
+      }
+      let base = match m {
+        "add" => 0x4ea08400
+        "uzp1" => 0x4e801800
+        _ => 0x5e006000
+      }
+      a.word(base | (y * 0x10000) | (x * 32) | d)
+    }
+    "sha256su0" => {
+      let (x, ax) = vreg(ops[1])
+      if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" {
+        return a.bad(m, ops)
+      }
+      a.word(0x5e282800 | (x * 32) | d)
+    }
+    "ushll" | "ushll2" => {
+      // ushll vD.2d, vN.2s, #0 (uxtl); ushll2 vD.2d, vN.4s, #0 (uxtl2)
+      let (x, ax) = vreg(ops[1])
+      let want = if m == "ushll" { "2s" } else { "4s" }
+      if n != 3 || d < 0 || x < 0 || ad != "2d" || ax != want || (imm(ops[2]) ?? -1) != 0 {
+        return a.bad(m, ops)
+      }
+      a.word((if m == "ushll" { 0x2f20a400 } else { 0x6f20a400 }) | (x * 32) | d)
+    }
+    "rev32" | "mov" => {
+      let (x, ax) = vreg(ops[1])
+      if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" {
+        return a.bad(m, ops)
+      }
+      // mov vD.16b, vN.16b is orr vD.16b, vN.16b, vN.16b
+      a.word(if m == "rev32" { 0x6e200800 | (x * 32) | d } else { 0x4ea01c00 | (x * 0x10000) | (x * 32) | d })
+    }
     "pmull" | "pmull2" => {
       let (x, ax) = vreg(ops[1])
       let (y, ay) = if n == 3 { vreg(ops[2]) } else { (-1, "") }

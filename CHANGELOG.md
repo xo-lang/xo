@@ -217,6 +217,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
   crypto/rsa for 1024 to 4096 bit keys.
 
+- SHA-256 with the CPU's instructions (decision 0231's SHA-256
+  section, owner 2026-10-16): cpu.sha256_block, SHA256H, SHA256H2,
+  SHA256SU0, and SHA256SU1 on arm64 through both native backends, the
+  portable body elsewhere; TLS and std/crypto's sha256, hmac_sha256,
+  and PBKDF2 take it. Handshakes 3% to 8% fewer instructions (an ECDSA
+  server's 13% to 14%), PBKDF2 4.2 to 4.7 times fewer
+  (bench/results/sha256-hw-2026-10-16.md); TestSHA256HWDiff.
+
 - arm64: the cpu.adc chains are back on (the emitter's distinct
   registers for spilled operands, 4bf54541), up to 8 pairs an
   instruction: TLS handshakes 7% to 9% fewer instructions on arm64

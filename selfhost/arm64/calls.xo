@@ -939,6 +939,37 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
+    "rt.sha256_block" => {
+      // the state as abcd in v16 and efgh in v17 (each packed from four
+      // 8 byte words), the message in v19, v20, v29, v30, W + K in v31,
+      // abcd's copy for SHA256H2 in v18; v16 to v20 may hold the
+      // allocator's values, so they are saved below sp and restored
+      let m = ["v19", "v20", "v29", "v30"]
+      var t = "sub sp, sp, #80\nstr q16, [sp]\nstr q17, [sp, #16]\nstr q18, [sp, #32]\nstr q19, [sp, #48]\nstr q20, [sp, #64]"
+      t = t + "\nldr q16, [$u0]\nldr q17, [$u0, #16]\nuzp1 v16.4s, v16.4s, v17.4s\nldr q17, [$u0, #32]\nldr q18, [$u0, #48]\nuzp1 v17.4s, v17.4s, v18.4s"
+      for i in 0..4 {
+        t = t + "\nldr q${if i < 2 { 19 + i } else { 27 + i }}, [$u1, #${16 * i}]\nrev32 ${m[i]}.16b, ${m[i]}.16b"
+      }
+      for i in 0..16 {
+        let w = m[i % 4]
+        t = t + "\nldr q31, [$u2, #${16 * i}]\nadd v31.4s, v31.4s, ${w}.4s"
+        if i < 12 {
+          t = t + "\nsha256su0 ${w}.4s, ${m[(i + 1) % 4]}.4s"
+        }
+        t = t + "\nmov v18.16b, v16.16b\nsha256h q16, q17, v31.4s\nsha256h2 q17, q18, v31.4s"
+        if i < 12 {
+          t = t + "\nsha256su1 ${w}.4s, ${m[(i + 2) % 4]}.4s, ${m[(i + 3) % 4]}.4s"
+        }
+      }
+      // the sums with the state before, unpacked to 8 byte words
+      t = t + "\nldr q18, [$u0]\nldr q31, [$u0, #16]\nuzp1 v18.4s, v18.4s, v31.4s\nadd v16.4s, v16.4s, v18.4s"
+      t = t + "\nldr q18, [$u0, #32]\nldr q31, [$u0, #48]\nuzp1 v18.4s, v18.4s, v31.4s\nadd v17.4s, v17.4s, v18.4s"
+      t = t + "\nushll v18.2d, v16.2s, #0\nushll2 v31.2d, v16.4s, #0\nstr q18, [$u0]\nstr q31, [$u0, #16]"
+      t = t + "\nushll v18.2d, v17.2s, #0\nushll2 v31.2d, v17.4s, #0\nstr q18, [$u0, #32]\nstr q31, [$u0, #48]"
+      t = t + "\nldr q16, [sp]\nldr q17, [sp, #16]\nldr q18, [sp, #32]\nldr q19, [sp, #48]\nldr q20, [sp, #64]\nadd sp, sp, #80"
+      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.set(v, [])
+    }
     // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
     "rt.cpuid1_ecx" => g.set(v, [g.def1(false, "mov $d0, #0", [])])
     // decision 0222: the value barrier is the operand itself (this

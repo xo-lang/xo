@@ -15,6 +15,7 @@
 // reverse the bytes), which the native backends lower to one instruction.
 use native/llrt/ct
 use native/llrt/digest_tables
+use native/llrt/sha256 as sha2
 use native/llrt/num_tables
 use native/llrt/raw
 use native/rt
@@ -22,7 +23,8 @@ use native/rt
 const M32: Int = 0xFFFFFFFF
 
 // ---------------------------------------------------------------------------
-// SHA-256 (the compression is digest_tables.sha256_block and sha256_words)
+// SHA-256 (the compression is sha256.xo block256 and words256: the CPU's
+// SHA-256 instructions, else digest_tables.sha256_block and sha256_words)
 
 /// SHA-256's initial state (FIPS 180-4 5.3.3).
 fn sha256_init() -> List[Int] { [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19] }
@@ -33,7 +35,7 @@ fn sha256_init() -> List[Int] { [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
 fn finish(var h: List[Int], b: Bytes, lo: Int, hi: Int, total: Int) {
   var i = lo
   while hi - i >= 64 {
-    digest_tables.sha256_block(h, b, i)
+    sha2.block256(h, b, i)
     i += 64
   }
   // the rest, 0x80, zeros, and the length in bits: one or two blocks
@@ -46,9 +48,9 @@ fn finish(var h: List[Int], b: Bytes, lo: Int, hi: Int, total: Int) {
   }
   t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, total, 3), 0), 8)
   let tb = t.bytes()
-  digest_tables.sha256_block(h, tb, 0)
+  sha2.block256(h, tb, 0)
   if tb.len() > 64 {
-    digest_tables.sha256_block(h, tb, 64)
+    sha2.block256(h, tb, 64)
   }
 }
 
@@ -102,9 +104,9 @@ fn hmac_pads(key: Bytes) -> Bytes {
 fn hmac_key(key: Bytes) -> List[Int] {
   let pads = hmac_pads(key)
   var st = sha256_init()
-  digest_tables.sha256_block(st, pads, 0)
+  sha2.block256(st, pads, 0)
   var outer = sha256_init()
-  digest_tables.sha256_block(outer, pads, 64)
+  sha2.block256(outer, pads, 64)
   for x in outer {
     st.push(x)
   }
@@ -119,7 +121,7 @@ fn hash32(st: List[Int], at: Int, d: List[Int], var m: List[Int]) -> List[Int] {
   for j in 0..8 {
     m[j] = d[j]
   }
-  digest_tables.sha256_words(h, m)
+  sha2.words256(h, m)
   h
 }
 
@@ -145,18 +147,18 @@ fn hmac_words(st: List[Int], msg: Bytes, suffix: Int, nsuffix: Int) -> List[Int]
 pub fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes {
   let pads = hmac_pads(key)
   var inner = sha256_init()
-  digest_tables.sha256_block(inner, pads, 0)
+  sha2.block256(inner, pads, 0)
   finish(inner, msg, 0, msg.len(), 64 + msg.len())
   // the outer hash of the inner digest: one block, the digest and the
   // padding of a 96 byte message
   var outer = sha256_init()
-  digest_tables.sha256_block(outer, pads, 64)
+  sha2.block256(outer, pads, 64)
   inner.push(0x80000000)
   for _ in 0..6 {
     inner.push(0)
   }
   inner.push(768)
-  digest_tables.sha256_words(outer, inner)
+  sha2.words256(outer, inner)
   words_bytes(outer)
 }
 

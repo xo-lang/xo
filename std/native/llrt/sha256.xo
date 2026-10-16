@@ -4,6 +4,7 @@
 // compressions are digest_tables.xo's (sha256_block, and sha512_block,
 // which SHA-384 shares with SHA-512's Ed25519 use in digest.xo). Nothing
 // branches on the data, only on lengths.
+use native/llrt/cpu
 use native/llrt/digest_tables
 use native/llrt/raw
 use native/rt
@@ -50,10 +51,54 @@ pub fn sum(hash: Int, data: Bytes) -> Bytes {
   h.sum()
 }
 
+/// SHA-256's round constants (FIPS 180-4 4.2.2) as 4 byte little endian
+/// words, for cpu.sha256_block.
+const K256: Bytes = b"\x98\x2f\x8a\x42\x91\x44\x37\x71\xcf\xfb\xc0\xb5\xa5\xdb\xb5\xe9\x5b\xc2\x56\x39\xf1\x11\xf1\x59\xa4\x82\x3f\x92\xd5\x5e\x1c\xab\x98\xaa\x07\xd8\x01\x5b\x83\x12\xbe\x85\x31\x24\xc3\x7d\x0c\x55\x74\x5d\xbe\x72\xfe\xb1\xde\x80\xa7\x06\xdc\x9b\x74\xf1\x9b\xc1\xc1\x69\x9b\xe4\x86\x47\xbe\xef\xc6\x9d\xc1\x0f\xcc\xa1\x0c\x24\x6f\x2c\xe9\x2d\xaa\x84\x74\x4a\xdc\xa9\xb0\x5c\xda\x88\xf9\x76\x52\x51\x3e\x98\x6d\xc6\x31\xa8\xc8\x27\x03\xb0\xc7\x7f\x59\xbf\xf3\x0b\xe0\xc6\x47\x91\xa7\xd5\x51\x63\xca\x06\x67\x29\x29\x14\x85\x0a\xb7\x27\x38\x21\x1b\x2e\xfc\x6d\x2c\x4d\x13\x0d\x38\x53\x54\x73\x0a\x65\xbb\x0a\x6a\x76\x2e\xc9\xc2\x81\x85\x2c\x72\x92\xa1\xe8\xbf\xa2\x4b\x66\x1a\xa8\x70\x8b\x4b\xc2\xa3\x51\x6c\xc7\x19\xe8\x92\xd1\x24\x06\x99\xd6\x85\x35\x0e\xf4\x70\xa0\x6a\x10\x16\xc1\xa4\x19\x08\x6c\x37\x1e\x4c\x77\x48\x27\xb5\xbc\xb0\x34\xb3\x0c\x1c\x39\x4a\xaa\xd8\x4e\x4f\xca\x9c\x5b\xf3\x6f\x2e\x68\xee\x82\x8f\x74\x6f\x63\xa5\x78\x14\x78\xc8\x84\x08\x02\xc7\x8c\xfa\xff\xbe\x90\xeb\x6c\x50\xa4\xf7\xa3\xf9\xbe\xf2\x78\x71\xc6"
+
+/// SHA-256's compression of the 64 bytes of b at i into st (8 words):
+/// cpu.sha256_block's instructions when the CPU has them (decision 0231,
+/// owner 2026-10-16), else digest_tables.sha256_block.
+pub fn block256(var st: List[Int], b: Bytes, i: Int) {
+  if (cpu.hw() & cpu.HW_SHA256) != 0 {
+    // an index store first: it copies st if another value shares its
+    // words (a Hasher's sum and clone do), which the raw writes below
+    // would otherwise change too
+    st[0] = st[0]
+    cpu.sha256_block(rt.int_wrap(0, rt.obj_addr(st), rt.layout(2)), rt.int_wrap(0, raw.bytes_addr(b), i), raw.bytes_addr(K256))
+    keep(b)
+    keep_ints(st)
+    return
+  }
+  digest_tables.sha256_block(st, b, i)
+}
+
+/// SHA-256's compression of the block of the 16 words m (UInt32s, as
+/// digest_tables.sha256_words takes them) into st: with the CPU's
+/// instructions, the words packed big endian first.
+pub fn words256(var st: List[Int], m: List[Int]) {
+  if (cpu.hw() & cpu.HW_SHA256) != 0 {
+    var b = rt.rs_with_cap(64)
+    for j in 0..8 {
+      // two words a 64 bit big endian store: m[2j] first
+      b = rt.rs_push_word(b, rt.int_wrap(7, rt.int_wrap(3, m[2 * j], 32) | (m[2 * j + 1] & 0xFFFFFFFF), 0), 8)
+    }
+    block256(st, b.bytes(), 0)
+    return
+  }
+  digest_tables.sha256_words(st, m)
+}
+
+/// st is known alive up to here (keep).
+fn keep_ints(st: List[Int]) {
+  if st.len() < 0 {
+    return
+  }
+}
+
 /// One block of b from i into st.
 fn compress(hash: Int, var st: List[Int], b: Bytes, i: Int) {
   if hash == HASH_SHA256 {
-    digest_tables.sha256_block(st, b, i)
+    block256(st, b, i)
     return
   }
   digest_tables.sha512_block(st, rt.int_wrap(0, raw.bytes_addr(b), i))

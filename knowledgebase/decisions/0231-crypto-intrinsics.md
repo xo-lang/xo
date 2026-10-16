@@ -1,7 +1,9 @@
-# 0231: Crypto intrinsics: add with carry, AES rounds, carry-less multiply
+# 0231: Crypto intrinsics: add with carry, AES rounds, carry-less multiply, SHA-256
 
 Status: Accepted (owner, 2026-10-15), implemented 2026-10-15 (part 1,
-carries; parts 2 and 3, carry-less multiply and AES rounds).
+carries; parts 2 and 3, carry-less multiply and AES rounds); the add
+with carry in addendum and the SHA-256 section accepted (owner,
+2026-10-16).
 
 ## Context
 
@@ -114,9 +116,10 @@ and the software GHASH multiply. The owner approved three intrinsics
 
 ## Addendum (2026-10-16): add with carry in
 
-Approved by the lead as part of the owner's "add/sub with carry"
-(2026-10-16; flagged to the owner in the morning summary): the same
-family, std internal, constant time, plain Xo bodies, no seed bump.
+Approved by the owner, 2026-10-16 (first approved by the lead as part
+of the owner's "add/sub with carry", then confirmed by the owner): the
+same family, std internal, constant time, plain Xo bodies, no seed
+bump.
 
 - **What.** `cpu.adc(x, y, cin)`, x + y + cin wrapping (bits.Add64's
   sum), and `cpu.adc_carry(x, y, cin)`, its carry out; cin is 0 or 1.
@@ -154,3 +157,50 @@ family, std internal, constant time, plain Xo bodies, no seed bump.
   instruction (ADC_CHAIN_PAIRS; the ten operand limit is gone). Under
   the spill test (XO_ARM64_REGS = N) a chain keeps to (2 N + 2) / 3
   pairs, so that its 3 p + 1 registers fit: N = 2 makes none.
+
+## SHA-256 (owner, 2026-10-16)
+
+- **What.** `cpu.sha256_block(st, p, k)`: FIPS 180-4's compression of
+  the 64 byte block at p into the 8 state words at st (one UInt32 in
+  each 8 byte word, the layout digest_tables.xo keeps), with the 64
+  round constants at k (4 byte little endian words; sha256.xo's K256
+  constant). The body (`sha256_block_soft`) is FIPS 180-4 6.2.2 on the
+  words in memory: no branch or index on data. cpu_call lowers it to
+  rt.sha256_block; `cpu.hw()` has the new bit HW_SHA256 where the CPU
+  has the instructions: macOS arm64 always, Linux arm64 by AT_HWCAP's
+  SHA2 bit (64), never on x86-64.
+- **arm64 lowering.** One template: abcd and efgh packed into v16 and
+  v17 from the eight words (two uzp1), the block in four registers
+  byte swapped per word (rev32), then sixteen steps of `add` (W + K,
+  each K loaded once), sha256su0, a copy of abcd, sha256h, sha256h2,
+  sha256su1 (no schedule in the last four), the sums with the state
+  before, and the words unpacked (ushll, ushll2) and stored. v29 to v31
+  are the emitter's scratch; v16 to v20 may hold the allocator's
+  values, so the template saves them below sp (sub sp, sp, #80) and
+  restores them. selfhost/macho encodes the new forms (sha256h,
+  sha256h2, sha256su0, sha256su1, add and uzp1 on .4s, ushll and ushll2
+  by 0, rev32 and mov on .16b), checked against clang's encodings.
+- **LLVM lowering.** The state as two `<4 x i32>` SSA values (a trunc
+  and shuffles of the eight words), the message byte swapped by a
+  shufflevector, and each instruction an inline asm with
+  `.arch_extension sha2` (as AES has `crypto`: a Linux target's default
+  CPU may not have it), `${0:q}` naming the q registers sha256h takes.
+  On x86-64 the call is a `ud2`: hw() never says HW_SHA256 there (SHA-NI
+  is a different instruction set; not lowered, the software path runs).
+- **Software fallback.** sha256.xo `block256` and `words256` are the
+  only callers: they take the instructions when hw() has HW_SHA256,
+  else digest_tables.sha256_block and sha256_words (generated, as
+  before). wasm and code an older xo compiled run the body or the
+  tables (lowered() is 0 there), so the seed builds xo with no new seed:
+  the compiler's own SHA-256 (cache keys) compiled by the seed takes
+  the software path, and its output takes the instructions.
+- **Who takes it.** sha256.xo (TLS: transcripts, HKDF, HMAC, the
+  certificate checks) and digest.xo (crypto.sha256, hmac_sha256,
+  PBKDF2's blocks, words256 packing the 16 words big endian first).
+- **Checks.** TestSHA256HWDiff (internal/llvm): the instruction path
+  and the body against a Go reference compression on edge states
+  (words 0, 1, 2^31 - 1, 2^31, 2^32 - 2, 2^32 - 1) and blocks, and 200
+  random ones, then std's SHA-256 one shot and split against
+  crypto/sha256 on every length from 0 to 200 and around 4096, on both
+  native backends; the crypto and TLS goldens; selfhost/macho's encoder
+  table.

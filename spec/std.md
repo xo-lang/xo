@@ -1739,9 +1739,9 @@ Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 Status: draft (2026-10-08, decisions 0056 and 0059). Go standard library
 underneath, plus Argon2id and BLAKE2b vendored from `golang.org/x/crypto`
 into the runtime (no module dependency). Native builds (`--no-gc`,
-decision 0083) compute the same results in C (SHA-256, HMAC, PBKDF2,
-BLAKE2b, Argon2, SHA-512 and Ed25519), with random bytes from the operating system
-(`getentropy` on macOS, `getrandom` on Linux).
+decision 0083) compute the same results in Xo (std/native/llrt: SHA-256,
+HMAC, PBKDF2, BLAKE2b, Argon2, SHA-512 and Ed25519), with random bytes
+from the operating system (`getentropy` on macOS, `getrandom` on Linux).
 
 ```
 pub fn sha256(data: Bytes) -> Bytes                     // 32 bytes
@@ -1759,6 +1759,13 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
 ```
 
 - Hashing, signing, and comparison are pure: no capability, no effect.
+- Native builds compute SHA-256 (`sha256`, `hmac_sha256`, `hash_password`'s
+  PBKDF2, and the TLS stack's SHA-256) with the CPU's SHA-256
+  instructions where it has them (arm64's SHA2 extension: always on
+  macOS, by `AT_HWCAP` on Linux) and in portable Xo elsewhere; the
+  results are the same bytes either way (decision 0231, owner
+  2026-10-16). Not observable from programs: it is an internal
+  intrinsic (std/native/llrt/cpu.xo `sha256_block`), not API.
 - Randomness comes only from the `Rand` capability (section 3.4), as
   everywhere else: cryptographically secure in programs, seeded from the
   test seed in tests, so a test that creates tokens or salts is

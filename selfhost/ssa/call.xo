@@ -165,6 +165,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc10" => "aes_enc10"
     "aes_enc12" => "aes_enc12"
     "aes_enc14" => "aes_enc14"
+    "sha256_block" => "sha256_block"
     "cpuid1_ecx" => "cpuid1_ecx"
     "lowered" => "lowered"
     _ => ""

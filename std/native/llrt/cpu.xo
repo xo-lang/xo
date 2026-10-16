@@ -6,7 +6,7 @@
 // comparison in the body (loops and indexes are over public counts).
 //
 // carry and borrow are in every arm64 and x86-64 CPU. The carry-less
-// multiply and the AES rounds are not (an ARMv8 CPU without the crypto
+// multiply, the AES rounds, and SHA-256's compression are not (an ARMv8 CPU without the crypto
 // extension, an x86-64 one without PCLMULQDQ or AES-NI): a caller uses
 // them only when hw() has the bit, and keeps a software path for the
 // rest; a call of one lowered for a CPU without it faults on an illegal
@@ -15,9 +15,10 @@ use native/llrt/linux
 use native/rt
 
 /// hw()'s bits: the AES rounds (aes_round, aes_last), the carry-less
-/// multiply (clmul_lo, clmul_hi).
+/// multiply (clmul_lo, clmul_hi), SHA-256's compression (sha256_block).
 pub const HW_AES: Int = 1
 pub const HW_CLMUL: Int = 2
+pub const HW_SHA256: Int = 8
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -27,6 +28,7 @@ const W_HW = 30
 const AT_HWCAP = 16
 const HWCAP_AES = 8
 const HWCAP_PMULL = 16
+const HWCAP_SHA2 = 64
 
 /// 1 when the emitter lowers this module's calls to instructions, else 0
 /// (the body: a wasm module, or code an xo older than decision 0231
@@ -37,15 +39,16 @@ fn lowered() -> Int { 0 }
 /// AES-NI); 0 off x86-64 and in the body.
 fn cpuid1_ecx() -> Int { 0 }
 
-/// The instructions of this CPU that the callers can use: HW_AES and
-/// HW_CLMUL, looked up once a process (macOS on arm64: always; Linux on
-/// arm64: AT_HWCAP; x86-64: CPUID; otherwise none; UNTESTED on Linux,
-/// on Windows, and on x86-64).
+/// The instructions of this CPU that the callers can use: HW_AES,
+/// HW_CLMUL, and HW_SHA256, looked up once a process (macOS on arm64:
+/// always; Linux on arm64: AT_HWCAP; x86-64: CPUID, never HW_SHA256,
+/// which no x86-64 lowering has; otherwise none; UNTESTED on Linux, on
+/// Windows, and on x86-64).
 pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -55,10 +58,10 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
-        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 })
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 })
       }
       _ => 0
     }
@@ -270,6 +273,70 @@ fn mix(x: Int) -> Int {
 fn rotc(x: Int) -> Int { (rt.int_wrap(4, x, 8) & 0x00FFFFFF00FFFFFF) | (rt.int_wrap(3, x, 24) & ~0x00FFFFFF00FFFFFF) }
 
 // ---------------------------------------------------------------------------
+// SHA-256's compression (SHA256H, SHA256H2, SHA256SU0, SHA256SU1 on arm64)
+
+/// FIPS 180-4's SHA-256 compression of one block: the 8 state words at st
+/// (a to h, one UInt32 in each 8 byte word, as digest_tables.xo keeps
+/// them) take in the 64 bytes at p, with the 64 round constants at k (4
+/// byte little endian words, 256 bytes). arm64: the state in two vector
+/// registers and the four rounds of each SHA256H and SHA256H2 (owner,
+/// 2026-10-16, decision 0231).
+pub fn sha256_block(st: Int, p: Int, k: Int) { sha256_block_soft(st, p, k) }
+
+/// The big endian 32 bit word at a + o.
+fn be32(a: Int, o: Int) -> Int { rt.int_wrap(4, rt.int_wrap(7, rt.mem_load(a, o, 4), 0), 32) }
+
+/// x + y as UInt32s.
+fn add32(x: Int, y: Int) -> Int { rt.int_wrap(0, x, y) & 0xFFFFFFFF }
+
+/// sha256_block's body: FIPS 180-4 6.2.2 on the words in memory.
+pub fn sha256_block_soft(st: Int, p: Int, k: Int) {
+  var w: List[Int] = []
+  for i in 0..16 {
+    w.push(be32(p, 4 * i))
+  }
+  for i in 16..64 {
+    let x = w[i - 15]
+    let y = w[i - 2]
+    let s0 = rt.int_wrap(6, x, 7) ^ rt.int_wrap(6, x, 18) ^ rt.int_wrap(4, x, 3)
+    let s1 = rt.int_wrap(6, y, 17) ^ rt.int_wrap(6, y, 19) ^ rt.int_wrap(4, y, 10)
+    w.push(add32(add32(w[i - 16], s0), add32(w[i - 7], s1)))
+  }
+  var a = rt.mem_load(st, 0, 8)
+  var b = rt.mem_load(st, 8, 8)
+  var c = rt.mem_load(st, 16, 8)
+  var d = rt.mem_load(st, 24, 8)
+  var e = rt.mem_load(st, 32, 8)
+  var f = rt.mem_load(st, 40, 8)
+  var g = rt.mem_load(st, 48, 8)
+  var h = rt.mem_load(st, 56, 8)
+  for i in 0..64 {
+    let s1 = rt.int_wrap(6, e, 6) ^ rt.int_wrap(6, e, 11) ^ rt.int_wrap(6, e, 25)
+    let ch = g ^ (e & (f ^ g))
+    let t1 = add32(add32(add32(h, s1), add32(ch, rt.mem_load(k, 4 * i, 4))), w[i])
+    let s0 = rt.int_wrap(6, a, 2) ^ rt.int_wrap(6, a, 13) ^ rt.int_wrap(6, a, 22)
+    let maj = (a & b) | (c & (a | b))
+    let t2 = add32(s0, maj)
+    h = g
+    g = f
+    f = e
+    e = add32(d, t1)
+    d = c
+    c = b
+    b = a
+    a = add32(t1, t2)
+  }
+  rt.mem_store(st, 0, add32(rt.mem_load(st, 0, 8), a), 8)
+  rt.mem_store(st, 8, add32(rt.mem_load(st, 8, 8), b), 8)
+  rt.mem_store(st, 16, add32(rt.mem_load(st, 16, 8), c), 8)
+  rt.mem_store(st, 24, add32(rt.mem_load(st, 24, 8), d), 8)
+  rt.mem_store(st, 32, add32(rt.mem_load(st, 32, 8), e), 8)
+  rt.mem_store(st, 40, add32(rt.mem_load(st, 40, 8), f), 8)
+  rt.mem_store(st, 48, add32(rt.mem_load(st, 48, 8), g), 8)
+  rt.mem_store(st, 56, add32(rt.mem_load(st, 56, 8), h), 8)
+}
+
+// ---------------------------------------------------------------------------
 // Checks
 
 /// The address of the first word of xs.
@@ -291,7 +358,10 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// internal.crypto_op's "cpu." ops (std/internal.xo): carry (the 8
 /// byte little endian words a and b; the carry and the borrow, a byte
 /// each), clmul (the product's low then high word), aes_round (the 16
-/// byte state a, round key b), aes_last (state a, round keys b and c);
+/// byte state a, round key b), aes_last (state a, round keys b and c),
+/// sha256_block (the state a as 8 four byte little endian words, the 64
+/// byte block b, the round constants c as sha256_block takes them; the
+/// new state as a was);
 /// with `_soft` after the name, the body, on every backend (without it,
 /// the instructions on arm64 and LLVM, on a CPU that has them). None if
 /// unknown.
@@ -361,6 +431,30 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       keep(k)
       keep(k2)
       Some(r)
+    }
+    "sha256_block" => {
+      var st: List[Int] = []
+      for i in 0..8 {
+        st.push(rt.int_wrap(4, rt.int_wrap(3, rt.bytes_word(a, 4 * (i & 6)), 32 * (1 - (i & 1))), 32))
+      }
+      let blk = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), rt.bytes_word(b, 16), rt.bytes_word(b, 24), rt.bytes_word(b, 32), rt.bytes_word(b, 40), rt.bytes_word(b, 48), rt.bytes_word(b, 56)]
+      var k: List[Int] = []
+      for i in 0..32 {
+        k.push(rt.bytes_word(c, 8 * i))
+      }
+      if soft {
+        sha256_block_soft(addr(st), addr(blk), addr(k))
+      } else {
+        sha256_block(addr(st), addr(blk), addr(k))
+      }
+      var o = rt.rs_with_cap(32)
+      for i in 0..8 {
+        o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 4)
+      }
+      keep(st)
+      keep(blk)
+      keep(k)
+      Some(o.bytes())
     }
     _ => None
   }

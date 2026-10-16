@@ -3,7 +3,8 @@
 // loops of the field arithmetic. On arm64 each carry is cmn (or cmp) and
 // cset, with no branch; on LLVM llvm.uadd.with.overflow and
 // llvm.usub.with.overflow. AES-GCM's rounds and GHASH's products are
-// AESE/AESMC and PMULL (inline asm on LLVM).
+// AESE/AESMC and PMULL (inline asm on LLVM); SHA-256's compression is
+// SHA256H, SHA256H2, SHA256SU0, and SHA256SU1.
 use std/internal
 
 fn main(os: Os) {
@@ -13,7 +14,8 @@ fn main(os: Os) {
   let g = internal.crypto_op("aes.seal", k[0..16], k[0..12], k, b"")
   let c = internal.crypto_op("sysc.present", b"", b"", b"", b"")
   let cc = internal.crypto_op("chacha.seal", k, k[0..12], k, b"")
-  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()}")
+  let h = internal.crypto_op("hash.sha256", k, b"", b"", b"")
+  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()}")
 }
 
 // P-256's Montgomery product: each add and its carry are one adds and
@@ -41,6 +43,13 @@ fn main(os: Os) {
 // func aesgcm.hw4
 // arm64: "aese v30.16b, v31.16b\n\taesmc v30.16b, v30.16b" "aese v30.16b, v31.16b\n\tldr q31"
 // llvm: "aese \$0.16b, \$2.16b\\0Aaesmc"
+
+// SHA-256's compression with the CPU's instructions (decision 0231's
+// SHA-256 section): the state packed into v16 and v17, four rounds a
+// sha256h and sha256h2.
+// func sha256.block256
+// arm64: "sha256su0 v19.4s, v20.4s" "sha256h q16, q17, v31.4s\n\tsha256h2 q17, q18, v31.4s" "uzp1 v16.4s, v16.4s, v17.4s"
+// llvm: "sha256h \$\{0:q\}" "sha256su1 \$0.4s"
 
 // GHASH's carry-less products.
 // func aesgcm.Gcm.mul_hw

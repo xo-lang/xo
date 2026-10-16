@@ -687,6 +687,52 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
     }
+    "rt.sha256_block" => {
+      // arm64: the state as two <4 x i32> SSA values (abcd, efgh) through
+      // the sixteen four round steps of SHA256H and SHA256H2, the
+      // schedule by SHA256SU0 and SHA256SU1; x86-64 has no lowering
+      // (cpu.hw() never has HW_SHA256 there), so a call traps
+      if g.arch() == "amd64" {
+        g.emit("call void asm sideeffect \"ud2\", \"\"()")
+      } else {
+        let sp = g.raw_ptr(x.args[0])
+        let bp = g.raw_ptr(x.args[1])
+        let kp = g.raw_ptr(x.args[2])
+        let w8 = g.def("load <8 x i64>, ptr ${sp}, align 8")
+        let s8 = g.def("trunc <8 x i64> ${w8} to <8 x i32>")
+        let a0 = g.def("shufflevector <8 x i32> ${s8}, <8 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>")
+        let e0 = g.def("shufflevector <8 x i32> ${s8}, <8 x i32> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>")
+        var ms: List[Str] = []
+        for i in 0..4 {
+          let q = g.def("getelementptr i8, ptr ${bp}, i64 ${16 * i}")
+          let b = g.def("load <16 x i8>, ptr ${q}, align 1")
+          let r = g.def("shufflevector <16 x i8> ${b}, <16 x i8> poison, <16 x i32> <i32 3, i32 2, i32 1, i32 0, i32 7, i32 6, i32 5, i32 4, i32 11, i32 10, i32 9, i32 8, i32 15, i32 14, i32 13, i32 12>")
+          ms.push(g.def("bitcast <16 x i8> ${r} to <4 x i32>"))
+        }
+        let ext = ".arch_extension sha2\\0A"
+        var a = a0
+        var e = e0
+        for i in 0..16 {
+          let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * i}")
+          let k = g.def("load <4 x i32>, ptr ${q}, align 1")
+          let wk = g.def("add <4 x i32> ${ms[i % 4]}, ${k}")
+          if i < 12 {
+            ms[i % 4] = g.def("call <4 x i32> asm \"${ext}sha256su0 $0.4s, $2.4s\", \"=w,0,w\"(<4 x i32> ${ms[i % 4]}, <4 x i32> ${ms[(i + 1) % 4]})")
+          }
+          let a1 = g.def("call <4 x i32> asm \"${ext}sha256h \${0:q}, \${2:q}, $3.4s\", \"=w,0,w,w\"(<4 x i32> ${a}, <4 x i32> ${e}, <4 x i32> ${wk})")
+          e = g.def("call <4 x i32> asm \"${ext}sha256h2 \${0:q}, \${2:q}, $3.4s\", \"=w,0,w,w\"(<4 x i32> ${e}, <4 x i32> ${a}, <4 x i32> ${wk})")
+          a = a1
+          if i < 12 {
+            ms[i % 4] = g.def("call <4 x i32> asm \"${ext}sha256su1 $0.4s, $2.4s, $3.4s\", \"=w,0,w,w\"(<4 x i32> ${ms[i % 4]}, <4 x i32> ${ms[(i + 2) % 4]}, <4 x i32> ${ms[(i + 3) % 4]})")
+          }
+        }
+        let a2 = g.def("add <4 x i32> ${a}, ${a0}")
+        let e2 = g.def("add <4 x i32> ${e}, ${e0}")
+        let o8 = g.def("shufflevector <4 x i32> ${a2}, <4 x i32> ${e2}, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>")
+        let z8 = g.def("zext <8 x i32> ${o8} to <8 x i64>")
+        g.emit("store <8 x i64> ${z8}, ptr ${sp}, align 8")
+      }
+    }
     "rt.cpuid1_ecx" => {
       if g.arch() == "amd64" {
         let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 1, i32 0)")
