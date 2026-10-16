@@ -237,7 +237,8 @@ fn prefetch(a: Int)
 ///   32-33 std/native/llrt/twflags.xo: whether the test world runs, the effects made real
 ///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-43 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the event loop's record
-///   44-47 free (decision 0237)
+///   44-45 std/native/llrt/nistec_gtab.xo: P-384's and P-521's fixed base tables, made on first use
+///   46-47 free (decision 0237)
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
 ///   60 std/native/llrt/stop.xo: two phase shutdown's state record

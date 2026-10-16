@@ -1,0 +1,38 @@
+// The fixed base tables of P-384 and P-521 (nistec.xo pt_mul_g_n), made
+// on first use, once per process: the table of each curve lives in a
+// static word (rt.xo's table: 44 P-384's, 45 P-521's), published with a
+// compare and swap so a thread that loses the race frees its own and
+// uses the winner's. They live as long as the process: rt.heap_large
+// memory, which the leak check does not count (entry.xo). Compiled in, the
+// P-521 table cost every TLS build about 27 s and 2.5 MB (Xo Lang 2's
+// 918c4cd5 note, gotchas/large-const-list-costs-every-build.md).
+// Tables are rt.heap_large memory: the address the caller gets is the
+// table's first word.
+use native/rt
+
+const W_P384 = 44
+const W_P521 = 45
+
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+/// The table of the curve whose elements have l limbs (6 or 9), or 0
+/// when it is not made yet.
+pub fn get(l: Int) -> Int {
+  if l == 6 {
+    return rt.slot_load[Int](rt.static_word(W_P384), 0, ACQUIRE)
+  }
+  rt.slot_load[Int](rt.static_word(W_P521), 0, ACQUIRE)
+}
+
+/// Publishes t (rt.heap_large memory) as the table of the curve of l
+/// limbs, unless another thread did first: then t is freed. The table in
+/// use.
+pub fn publish(l: Int, t: Int) -> Int {
+  let w = if l == 6 { rt.static_word(W_P384) } else { rt.static_word(W_P521) }
+  if rt.slot_cas[Int](w, 0, 0, t, ACQ_REL) {
+    return t
+  }
+  rt.heap_release(t - 8)
+  rt.slot_load[Int](w, 0, ACQUIRE)
+}

@@ -1,7 +1,7 @@
 // The client of bench/perf/tls (TLS performance, decision 0202): N
 // requests with std/http's client over TLS to the listener of serve/
 // for workload W, at 127.0.0.1 on PORT plus its offset. A handshake
-// workload (x25519, x25519only, p256, p384, rsa2048, ed25519, tls12) gets /hs, a
+// workload (x25519, x25519only, p256, p384, p521, rsa2048, ed25519, tls12) gets /hs, a
 // connection and full handshake each; a bulk workload (aes128, aes256,
 // chacha over TLS 1.2, aes128tls13) gets /big with SIZE bytes, so the
 // records' decryption is the measured work. The CA is the PEM file CA.
@@ -20,6 +20,7 @@ fn offset(w: Str) -> Int {
     "aes256" => 7
     "chacha" => 8
     "aes128tls13" => 9
+    "p521" => 10
     _ => -1
   }
 }
@@ -36,7 +37,7 @@ fn main(os: Os) ! {
     os.stdio.println("error: unknown workload ${w}")
     return
   }
-  let path = if off >= 6 { "big?n=${size}" } else { "hs" }
+  let path = if off >= 6 && off <= 9 { "big?n=${size}" } else { "hs" }
   let url = "https://127.0.0.1:${port + off}/${path}"
   var total = 0
   for _ in 0..n {

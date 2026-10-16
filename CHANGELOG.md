@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- nistec.xo: P-384's and P-521's [k]G from a fixed base table made once
+  per process on first use (pt_mul_g_n beside P-256's pt_mul_g; the
+  table in static words 44 and 45, nistec_gtab.xo, rt.heap_large memory
+  for the process's life), constant time as pt_mul: key generation
+  and signing 0.34 to 0.45 of the instructions, verification 0.66 to
+  0.69, 100 TLS handshakes 0.81 (P-384) and 0.68 (P-521)
+  (bench/results/nistec-gtab-2026-10-16.md). bench/perf/tls gains a
+  p521 workload. Compiled in, P-521's table had cost every TLS build
+  27 s and 2.5 MB.
 - A constant List[Int] of 64 or more literals is kept as data and read
   at first use (selfhost/ssa show.xo int_list_data, the native prelude's
   llrt_list_of_le64), not built by code element by element: the P-256

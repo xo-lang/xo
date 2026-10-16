@@ -11,7 +11,7 @@
 #
 # usage: bench/perf/tls/measure.sh <xo binary> <out dir> <backend...>
 # WORKLOADS overrides the list; TLSES the TLS sides ("xo"); PORT
-# the first listener's port (default 18120, the next 9 are taken too).
+# the first listener's port (default 18120, the next 10 are taken too).
 set -e
 XO=$1
 OUT=$2
@@ -43,7 +43,7 @@ until grep -q ready "$OUT/serve.txt" 2>/dev/null; do
 	fi
 	sleep 0.02
 done
-for w in ${WORKLOADS:-x25519 x25519only p256 p384 rsa2048 ed25519 tls12 aes128 aes256 chacha aes128tls13}; do
+for w in ${WORKLOADS:-x25519 x25519only p256 p384 p521 rsa2048 ed25519 tls12 aes128 aes256 chacha aes128tls13}; do
 	n=$N
 	# x25519only: the x25519 handshake with no ML-KEM share offered
 	# (XO_TLS_MLKEM=0, std.md), as Mbed TLS offers none; x25519 is the

@@ -27,6 +27,7 @@
 use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/nistec_g256
+use native/llrt/nistec_gtab
 use native/llrt/raw
 use native/llrt/rand
 use native/rt
@@ -2203,12 +2204,16 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
 
 fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, PS) }
 
-/// r = [k]G, the curve's base point: P-256's from the fixed base table
-/// (pt_mul_g), the others' by pt_mul (P-521's table would be 35,370
-/// words: compiled in, it costs every TLS build about 27 s and 2.5 MB).
+/// r = [k]G, the curve's base point: P-256's from the compiled in fixed
+/// base table (pt_mul_g), P-384's and P-521's from a table made on first
+/// use (pt_mul_g_n; P-521's would be 35,370 words: compiled in, it costs
+/// every TLS build about 27 s and 2.5 MB), P-224's by pt_mul.
 fn pt_mul_base(c: Int, r: Int, k: Int) {
+  let n = limbs(c)
   if csize(c) == 32 {
     pt_mul_g(c, r, k)
+  } else if n == 6 || n == 9 {
+    pt_mul_g_n(c, r, k)
   } else {
     pt_mul(c, r, at(c, PG), k)
   }
@@ -2267,6 +2272,125 @@ fn pt_mul_g(c: Int, r: Int, k: Int) {
     w += 1
   }
   copy_pt(r, acc)
+}
+
+/// r = [k]G on P-384 and P-521 from the curve's fixed base table (gtab):
+/// as pt_mul_g, for each 4 bit window w of k (2 csize of them; k is
+/// below n), the entry j 16^w G of its digit j chosen under a mask from
+/// all 15 (the identity for 0) and added with the complete formula, no
+/// doublings; constant time in k as pt_mul.
+fn pt_mul_g_n(c: Int, r: Int, k: Int) {
+  let n = limbs(c)
+  let tb = gtab(c)
+  let es = 16 * n
+  let one = at(at(c, MP), MONE)
+  let acc = at(c, ACC)
+  let sel = at(c, SEL)
+  pt_identity(c, acc)
+  let nw = 2 * csize(c)
+  var w = 0
+  while w < nw {
+    let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
+    rt.mem_set(sel, 0, PS)
+    var j = 1
+    while j < 16 {
+      let m = ct.mask_eq(j, digit)
+      let e = at(tb, es * (15 * w + j - 1))
+      var i = 0
+      while i < n {
+        st(sel, 8 * i, ld(sel, 8 * i) | (ld(e, 8 * i) & m))
+        st(sel, ES + 8 * i, ld(sel, ES + 8 * i) | (ld(e, 8 * (n + i)) & m))
+        i += 1
+      }
+      j += 1
+    }
+    // digit 0: the identity (0 : 1 : 0); else (x : y : 1)
+    let z = ct.mask_eq(0, digit)
+    var q = 0
+    while q < n {
+      st(sel, ES + 8 * q, ld(sel, ES + 8 * q) | (ld(one, 8 * q) & z))
+      st(sel, 2 * ES + 8 * q, ld(one, 8 * q) & ~z)
+      q += 1
+    }
+    pt_add(c, acc, acc, sel)
+    w += 1
+  }
+  copy_pt(r, acc)
+}
+
+/// The fixed base table of c's curve (P-384 or P-521): for each window w
+/// (2 csize of them) and digit j from 1 to 15, entry 15 w + j - 1 is
+/// j 16^w G affine, x then y, n limbs each in the Montgomery domain.
+/// Made once per process on first use (nistec_gtab.xo), from public
+/// values only.
+fn gtab(c: Int) -> Int {
+  let n = limbs(c)
+  let t = nistec_gtab.get(n)
+  if t != 0 {
+    return t
+  }
+  nistec_gtab.publish(n, gtab_make(c))
+}
+
+/// gtab's table, made: the points in projective form by additions (j G_w
+/// = (j - 1) G_w + G_w, G_(w+1) = 15 G_w + G_w), then affine with one
+/// inversion for all (Montgomery's trick: the running products of the
+/// Z, inverted once, unwound). Its scratch is its own (rt.heap_large):
+/// the workspace's points and elements may hold the caller's values
+/// (verify's public key in PA); only pt_add's, mul's and inv's own
+/// scratch is used.
+fn gtab_make(c: Int) -> Int {
+  let n = limbs(c)
+  let es = 16 * n
+  let el = 8 * n
+  let cnt = 30 * csize(c)
+  let mp = at(c, MP)
+  let t = rt.heap_large(es * cnt)
+  let pts = rt.heap_large(PS * (cnt + 1))
+  let pre = rt.heap_large(el * (cnt + 3))
+  // G_w, after the points
+  let gw = at(pts, PS * cnt)
+  copy_pt(gw, at(c, PG))
+  var i = 0
+  while i < cnt {
+    if i % 15 == 0 {
+      copy_pt(at(pts, PS * i), gw)
+    } else {
+      pt_add(c, at(pts, PS * i), at(pts, PS * (i - 1)), gw)
+    }
+    if i % 15 == 14 {
+      pt_add(c, gw, at(pts, PS * i), gw)
+    }
+    i += 1
+  }
+  // pre[i] = Z_0 ... Z_i; then each Z's inverse from the one inversion
+  copy(c, pre, at(pts, 2 * ES))
+  i = 1
+  while i < cnt {
+    mul(c, at(pre, el * i), at(pre, el * (i - 1)), at(at(pts, PS * i), 2 * ES), mp)
+    i += 1
+  }
+  let ia = at(pre, el * cnt)
+  let zi = at(pre, el * (cnt + 1))
+  let tmp = at(pre, el * (cnt + 2))
+  inv(c, ia, at(pre, el * (cnt - 1)), mp)
+  i = cnt - 1
+  while i >= 0 {
+    let p = at(pts, PS * i)
+    if i > 0 {
+      mul(c, zi, ia, at(pre, el * (i - 1)), mp)
+      mul(c, tmp, ia, at(p, 2 * ES), mp)
+      copy(c, ia, tmp)
+    } else {
+      copy(c, zi, ia)
+    }
+    mul(c, at(t, es * i), p, zi, mp)
+    mul(c, at(t, es * i + el), at(p, ES), zi, mp)
+    i -= 1
+  }
+  rt.heap_release(pts - 8)
+  rt.heap_release(pre - 8)
+  t
 }
 
 /// x and y (normal) of p; whether p is not the identity (a mask).

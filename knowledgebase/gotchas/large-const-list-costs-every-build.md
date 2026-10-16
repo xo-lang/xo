@@ -14,6 +14,7 @@ the program.
 
 Fix: keep such tables small (nistec_g256.xo's 7,680 words are the
 largest so far), or compute them at run time once per process (Go's
-P-521 generator table is lazy) when a process wide slot is available
-(rt.static_word: all 64 claimed as of 2026-10-15; the lead's backlog has
-a slot registry). P-521 and P-384 use the windowed pt_mul instead.
+P-521 generator table is lazy) in a process wide slot: since 2026-10-16
+P-384's and P-521's tables are made on first use (nistec.xo gtab,
+static words 44 and 45 via nistec_gtab.xo, decision 0237's freed words;
+bench/results/nistec-gtab-2026-10-16.md).
