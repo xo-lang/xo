@@ -1,0 +1,15 @@
+// The arm64 inliner copies scale (not recursive) into main; the DWARF
+// gives the copy a DW_TAG_inlined_subroutine (decision 0239), so debuggers
+// and the profiler see scale's lines there. TestDebugLineInlined.
+fn scale(x: Int, k: Int) -> Int {
+  let y = x * k
+  y + 1
+}
+
+fn main(os: Os) {
+  var t = 0
+  for i in 0..1000 {
+    t = t + scale(i, 3)
+  }
+  os.stdio.println("${t}")
+}

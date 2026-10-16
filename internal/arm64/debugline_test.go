@@ -178,3 +178,77 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		})
 	}
 }
+
+// TestDebugLineInlined checks the inlined frames of decision 0239 on
+// darwin/arm64: the arm64 inliner copies testdata/inlined's scale into
+// main, and the dSYM describes the copy with a DW_TAG_inlined_subroutine
+// whose abstract origin is scale and whose call line is main's call (12),
+// so an address in the copy looks up as scale at its own lines (5 or 6),
+// and lldb stopped at `b scale` shows scale as an inlined frame above
+// main at line 12.
+func TestDebugLineInlined(t *testing.T) {
+	if runtime.GOOS != "darwin" || !native() {
+		t.Skip("darwin/arm64 only")
+	}
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	for _, tool := range []string{"dwarfdump", "lldb"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("no " + tool)
+		}
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := testtmp.Dir("xo-inlined-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(out)
+	src, err := filepath.Abs(filepath.Join("testdata", "inlined"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(out, "p")
+	cmd := exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "-o", bin, ".")
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, b)
+	}
+	dsym := bin + ".dSYM"
+	info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dwarfdump: %v\n%s", err, info)
+	}
+	m := regexp.MustCompile(`DW_TAG_inlined_subroutine\s+DW_AT_abstract_origin\s+\(0x[0-9a-f]+ "scale"\)\s+DW_AT_low_pc\s+\((0x[0-9a-f]+)\)[\s\S]*?DW_AT_call_line\s+\((\d+)\)`).FindSubmatch(info)
+	if m == nil {
+		t.Fatalf("no inlined subroutine of scale in\n%s", info)
+	}
+	if string(m[2]) != "12" {
+		t.Errorf("scale's inlined copy has call line %s, want 12", m[2])
+	}
+	look, err := exec.Command("dwarfdump", "--lookup="+string(m[1]), dsym).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dwarfdump --lookup: %v\n%s", err, look)
+	}
+	if !strings.Contains(string(look), "DW_TAG_inlined_subroutine") || !regexp.MustCompile(`file '[^']*main\.xo', line [56]\b`).Match(look) {
+		t.Errorf("the inlined copy's address does not look up as scale's lines:\n%s", look)
+	}
+	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
+	}
+	bt, err := exec.Command("lldb", "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("lldb: %v\n%s", err, bt)
+	}
+	if !regexp.MustCompile(`frame #0: .*scale at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main at main\.xo:12:\d+`).Match(bt) {
+		t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
+	}
+}
