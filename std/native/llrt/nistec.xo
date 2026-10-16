@@ -757,24 +757,32 @@ fn sqr4p(h: Int, f: Int) {
 }
 
 /// h = t - m when t + top 2^256 >= m, else t (4 limbs, top 0 or 1):
-/// final_sub on words.
+/// final_sub on words. t - m as t + ~m + 1, one chain of cpu.adc (an
+/// adcs chain on arm64, one instruction; its last carry is 1 when there
+/// was no borrow): fewer values than a borrow per limb, so the arm64
+/// emitter inlines it, and ~m folds where m is a constant.
 fn sub_m4(h: Int, t0: Int, t1: Int, t2: Int, t3: Int, top: Int, m0: Int, m1: Int, m2: Int, m3: Int) {
-  let d0 = rt.int_wrap(1, t0, m0)
-  let b0 = cpu.borrow(t0, m0)
-  let e1 = rt.int_wrap(1, t1, m1)
-  let d1 = rt.int_wrap(1, e1, b0)
-  let b1 = cpu.borrow(t1, m1) | cpu.borrow(e1, b0)
-  let e2 = rt.int_wrap(1, t2, m2)
-  let d2 = rt.int_wrap(1, e2, b1)
-  let b2 = cpu.borrow(t2, m2) | cpu.borrow(e2, b1)
-  let e3 = rt.int_wrap(1, t3, m3)
-  let d3 = rt.int_wrap(1, e3, b2)
-  let b3 = cpu.borrow(t3, m3) | cpu.borrow(e3, b2)
-  let keep = ct.mask_bit(b3 & (top ^ 1))
-  st(h, 0, ct.pick(keep, t0, d0))
-  st(h, 8, ct.pick(keep, t1, d1))
-  st(h, 16, ct.pick(keep, t2, d2))
-  st(h, 24, ct.pick(keep, t3, d3))
+  let n0 = ~m0
+  let n1 = ~m1
+  let n2 = ~m2
+  let n3 = ~m3
+  let d0 = cpu.adc(t0, n0, 1)
+  let c0 = cpu.adc_carry(t0, n0, 1)
+  let d1 = cpu.adc(t1, n1, c0)
+  let c1 = cpu.adc_carry(t1, n1, c0)
+  let d2 = cpu.adc(t2, n2, c1)
+  let c2 = cpu.adc_carry(t2, n2, c1)
+  let d3 = cpu.adc(t3, n3, c2)
+  let c3 = cpu.adc_carry(t3, n3, c2)
+  // keep t when t < m (a borrow: no carry out) and top is 0; the mask
+  // has passed ct.mask_bit's barrier, so the selects use it directly
+  // (ct.pick and st as calls would put sub_m4 over the arm64 inliner's
+  // block budget)
+  let keep = ct.mask_bit((c3 | top) ^ 1)
+  rt.mem_store(h, 0, d0 ^ (keep & (t0 ^ d0)), 8)
+  rt.mem_store(h, 8, d1 ^ (keep & (t1 ^ d1)), 8)
+  rt.mem_store(h, 16, d2 ^ (keep & (t2 ^ d2)), 8)
+  rt.mem_store(h, 24, d3 ^ (keep & (t3 ^ d3)), 8)
 }
 
 /// add for 4 limbs.
@@ -2184,17 +2192,34 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
       pt_double(c, acc, acc)
     }
     let digit = rt.int_wrap(4, ld(k, 8 * (w / 16)), 4 * (w % 16)) & 15
-    rt.mem_set(sel, 0, PS)
-    i = 0
-    while i < 16 {
-      let m = ct.mask_eq(i, digit)
-      let e = at(tab, PS * i)
-      var j = 0
-      while j < PS / 8 {
-        st(sel, 8 * j, ld(sel, 8 * j) | (ld(e, 8 * j) & m))
-        j += 1
+    // the entry of digit under a mask from all 16: each live word (the
+    // curve's limbs of each coordinate) the OR of the 16 entries' words
+    // under their masks, in registers, one store
+    let m0 = ct.mask_eq(0, digit)
+    let m1 = ct.mask_eq(1, digit)
+    let m2 = ct.mask_eq(2, digit)
+    let m3 = ct.mask_eq(3, digit)
+    let m4 = ct.mask_eq(4, digit)
+    let m5 = ct.mask_eq(5, digit)
+    let m6 = ct.mask_eq(6, digit)
+    let m7 = ct.mask_eq(7, digit)
+    let m8 = ct.mask_eq(8, digit)
+    let m9 = ct.mask_eq(9, digit)
+    let m10 = ct.mask_eq(10, digit)
+    let m11 = ct.mask_eq(11, digit)
+    let m12 = ct.mask_eq(12, digit)
+    let m13 = ct.mask_eq(13, digit)
+    let m14 = ct.mask_eq(14, digit)
+    let m15 = ct.mask_eq(15, digit)
+    var q = 0
+    while q < 3 * ES {
+      var l = 0
+      while l < 8 * n {
+        let e = rt.int_wrap(0, tab, rt.int_wrap(0, q, l))
+        st(sel, rt.int_wrap(0, q, l), (ld(e, 0) & m0) | (ld(e, PS * 1) & m1) | (ld(e, PS * 2) & m2) | (ld(e, PS * 3) & m3) | (ld(e, PS * 4) & m4) | (ld(e, PS * 5) & m5) | (ld(e, PS * 6) & m6) | (ld(e, PS * 7) & m7) | (ld(e, PS * 8) & m8) | (ld(e, PS * 9) & m9) | (ld(e, PS * 10) & m10) | (ld(e, PS * 11) & m11) | (ld(e, PS * 12) & m12) | (ld(e, PS * 13) & m13) | (ld(e, PS * 14) & m14) | (ld(e, PS * 15) & m15))
+        l = rt.int_wrap(0, l, 8)
       }
-      i += 1
+      q = rt.int_wrap(0, q, ES)
     }
     pt_add(c, acc, acc, sel)
     w -= 1

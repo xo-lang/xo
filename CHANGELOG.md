@@ -289,6 +289,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
   crypto/rsa for 1024 to 4096 bit keys.
 
+- P-256 and the NIST curves: nistec's final subtraction as one add with
+  carry chain and the scalar multiply's constant time table selection
+  over the live words only: P-256 handshakes 9.3% fewer instructions on
+  arm64 and 6.2% on LLVM (bench/results/tls-arm64-gap-2026-10-16.md,
+  with the arm64 against LLVM table of every TLS workload).
+
 - SHA-256 with the CPU's instructions (decision 0231's SHA-256
   section, owner 2026-10-16): cpu.sha256_block, SHA256H, SHA256H2,
   SHA256SU0, and SHA256SU1 on arm64 through both native backends, the
