@@ -42,6 +42,8 @@ struct S {
   /// The checker file of the code being lowered (expressions are keyed by
   /// file, span, and kind).
   file: Int = -1
+  /// The packed source line of the statement being lowered (Value.line).
+  line: Int = 0
   /// The code is of the program's own modules and polls the budget in a
   /// program that uses one (build_budget.go).
   polls: Bool = false
@@ -1467,6 +1469,9 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   }
   b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
+  if file >= 0 {
+    s.f.file = b.file_name(file)
+  }
   s.sealed[0] = true
   let saved = b.s
   b.s = s
@@ -1919,6 +1924,7 @@ fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
     }
   }
   let v = b.s.f.add(b.s.cur, op, t, aux, args)
+  b.s.f.values[v].line = b.s.line
   if b.s.any_defer && may_raise(op) {
     if b.s.shield == 0 && b.lexical_cleanup() {
       // its landing is placed when the next instruction comes (the caller

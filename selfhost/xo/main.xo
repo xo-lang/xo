@@ -431,7 +431,13 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         fail(os, "the LLVM backend needs clang: install it or set XO_CLANG")
       }
     }
-    var g = llvm.new_gen(b.m)
+    // DWARF line tables (decision 0239), as for arm64 below
+    var lm = b.m
+    lm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
+    lm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+    let lsd = dir_name(ctx.std.trim_suffix("/"))
+    lm.std_root = if lsd.starts_with("/") { lsd } else { "${lm.comp_dir}/${lsd}" }
+    var g = llvm.new_gen(lm)
     g.goarch = tgoarch
     g.goos = tgoos
     let ir = g.generate()
@@ -535,6 +541,12 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // with the per-function cache (decision 0220 addendum stage B)
     var gm = if inl { mi } else { cur.m }
     gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
+    // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
+    // a release build without --debug-info
+    gm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
+    gm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+    let sd = dir_name(ctx.std.trim_suffix("/"))
+    gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
     let (fc, fdir) = fn_cache_load(os, ctx, gm, tgoos, jobs, release)
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)

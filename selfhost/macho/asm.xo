@@ -546,6 +546,9 @@ fn (var a: Asm) directive(l: Bytes) {
       if parts.len() >= 4 {
         if bstr(parts[3]) == "pure_instructions" {
           flags = flags + S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS
+        } else if bstr(parts[3]) == "debug" {
+          // the DWARF sections of decision 0239 (__DWARF)
+          flags = flags + S_ATTR_DEBUG_FLAG
         } else {
           a.fail("section attributes ${bstr(parts[3])}")
           return

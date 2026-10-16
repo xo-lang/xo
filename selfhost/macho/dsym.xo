@@ -1,0 +1,230 @@
+// The dSYM of an executable (decision 0239): the inputs' DWARF sections
+// (__DWARF,__debug_line, __debug_abbrev, __debug_info), which the link
+// leaves out of the executable as ld64 does, joined per section with
+// their addresses relocated, in a Mach-O file of type MH_DSYM with the
+// executable's LC_UUID, which lldb and the profiler find at
+// PROG.dSYM/Contents/Resources/DWARF/PROG.
+//
+// The arm64 emitter's compile units (selfhost/arm64 debug.xo, producer
+// "xo") give their abbreviations' and line program's offsets as 0 within
+// their object; here each is moved by where its object's chunk lands:
+// the abbreviation offset at byte 8 of the unit, and DW_AT_stmt_list,
+// the unit's first attribute, at byte 13. Its low_pc and high_pc (bytes
+// 17 and 25) make .debug_aranges, which lldb maps addresses to units by.
+
+const MH_DSYM = 0xa
+
+/// The dSYM file, or empty bytes when no input has DWARF.
+fn (var l: Linker) dsym() -> Bytes {
+  // only the arm64 emitter's objects (a compile unit with producer
+  // "xo"): another compiler's Mach-O DWARF refers between its sections by
+  // offsets in its own object, with no relocations, which joining would
+  // break (ld64 leaves them in the objects for dsymutil)
+  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges"]
+  // per section: the joined bytes, and per object the chunk's offset
+  var data: List[List[Int]] = []
+  var at: List[Map[Int, Int]] = []
+  var any = false
+  for nm in names {
+    var buf: List[Int] = []
+    var offs: Map[Int, Int] = {}
+    for o in 0..l.objs.len() {
+      if !l.objs[o].live || !l.xo_dwarf(o) {
+        continue
+      }
+      for s in l.objs[o].sects {
+        if s.seg != "__DWARF" || s.name != nm {
+          continue
+        }
+        any = true
+        offs[o] = buf.len()
+        var bs: List[Int] = []
+        for c in s.data {
+          bs.push(Int(c))
+        }
+        // the 64 bit addresses (.quad label): relocated
+        for r in s.relocs {
+          if r.typ != R_UNSIGNED || r.len != 3 || r.pcrel {
+            continue
+          }
+          let content = rd64(s.data, r.addr)
+          let t = l.target(o, r, content)
+          if t.imp >= 0 {
+            continue
+          }
+          for k in 0..8 {
+            bs[r.addr + k] = (t.addr >> (8 * k)) & 255
+          }
+        }
+        buf = buf + bs
+      }
+    }
+    data.push(buf)
+    at.push(offs)
+  }
+  if !any {
+    return zeros(0)
+  }
+  // the xo compile units: their abbreviation and line offsets, and an
+  // address range each
+  var info = data[2]
+  var ar = data[3]
+  for (o, off) in at[2] {
+    // one unit per object, starting at its chunk
+    if off + 36 > info.len() || info[off + 33] != 120 || info[off + 34] != 111 || info[off + 35] != 0 {
+      continue
+    }
+    let ab = at[1].get(o) ?? 0
+    let ln = at[0].get(o) ?? 0
+    put32(info, off + 8, get32(info, off + 8) + ab)
+    put32(info, off + 13, get32(info, off + 13) + ln)
+    let lo = get64(info, off + 17)
+    let hi = get64(info, off + 25)
+    // a set: length, version 2, the unit's offset, address size 8,
+    // segment size 0, padding to 16, (low, length), (0, 0)
+    let at0 = ar.len()
+    for _ in 0..48 {
+      ar.push(0)
+    }
+    put32(ar, at0, 44)
+    ar[at0 + 4] = 2
+    put32(ar, at0 + 6, off)
+    ar[at0 + 10] = 8
+    put64(ar, at0 + 16, lo)
+    put64(ar, at0 + 24, hi - lo)
+  }
+  data[2] = info
+  data[3] = ar
+  // MH_DSYM: header, LC_UUID, the executable's segments and sections
+  // without contents (lldb maps addresses through them, as in a dSYM of
+  // dsymutil), then LC_SEGMENT_64 __DWARF with the DWARF sections
+  let nsect = names.len()
+  var segs: List[OSeg] = []
+  var vend = 0
+  for g in l.segs {
+    if g.name != "__LINKEDIT" {
+      segs.push(g)
+    }
+    if g.vmaddr + g.vmsize > vend {
+      vend = g.vmaddr + g.vmsize
+    }
+  }
+  var cmds = 24 + 72 + 80 * nsect
+  var ncmds = 2
+  for g in segs {
+    cmds += 72 + 80 * g.sects.len()
+    ncmds += 1
+  }
+  var hdr = new_out(4096)
+  hdr.u32(MH_MAGIC_64)
+  hdr.u32(CPU_TYPE_ARM64)
+  hdr.u32(0)
+  hdr.u32(MH_DSYM)
+  hdr.u32(ncmds)
+  hdr.u32(cmds)
+  hdr.u32(0)
+  hdr.u32(0)
+  hdr.u32(LC_UUID)
+  hdr.u32(24)
+  hdr.bytes(l.uuid)
+  for g in segs {
+    hdr.u32(LC_SEGMENT_64)
+    hdr.u32(72 + 80 * g.sects.len())
+    hdr.name(g.name, 16)
+    hdr.u64(g.vmaddr)
+    hdr.u64(g.vmsize)
+    hdr.u64(0)
+    hdr.u64(0)
+    let prot = if g.name == "__PAGEZERO" { 0 } else if g.name == "__TEXT" { 5 } else { 3 }
+    hdr.u32(prot)
+    hdr.u32(prot)
+    hdr.u32(g.sects.len())
+    hdr.u32(0)
+    for si in g.sects {
+      let s = l.osects[si]
+      hdr.name(s.name, 16)
+      hdr.name(s.seg, 16)
+      hdr.u64(s.addr)
+      hdr.u64(s.size)
+      hdr.u32(0)
+      hdr.u32(s.align)
+      hdr.u32(0)
+      hdr.u32(0)
+      hdr.u32(s.flags)
+      hdr.u32(s.reserved1)
+      hdr.u32(s.reserved2)
+      hdr.u32(0)
+    }
+  }
+  let start = 32 + cmds
+  var total = 0
+  for d in data {
+    total += d.len()
+  }
+  hdr.u32(LC_SEGMENT_64)
+  hdr.u32(72 + 80 * nsect)
+  hdr.name("__DWARF", 16)
+  let dwbase = (vend + 0xfff) / 0x1000 * 0x1000
+  hdr.u64(dwbase)
+  hdr.u64((total + 0xfff) / 0x1000 * 0x1000)
+  hdr.u64(start)
+  hdr.u64(total)
+  hdr.u32(7)
+  hdr.u32(3)
+  hdr.u32(nsect)
+  hdr.u32(0)
+  var off = start
+  var addr = dwbase
+  for (i, nm) in names.indexed() {
+    hdr.name(nm, 16)
+    hdr.name("__DWARF", 16)
+    hdr.u64(addr)
+    hdr.u64(data[i].len())
+    hdr.u32(off)
+    hdr.u32(0)
+    hdr.u32(0)
+    hdr.u32(0)
+    hdr.u32(S_ATTR_DEBUG_FLAG)
+    hdr.u32(0)
+    hdr.u32(0)
+    hdr.u32(0)
+    off += data[i].len()
+    addr += data[i].len()
+  }
+  for d in data {
+    for c in d {
+      hdr.u8(c)
+    }
+  }
+  hdr.done()
+}
+
+/// Whether object o's __debug_info is the arm64 emitter's (debug.xo).
+fn (l: Linker) xo_dwarf(o: Int) -> Bool {
+  for s in l.objs[o].sects {
+    if s.seg == "__DWARF" && s.name == "__debug_info" {
+      return s.data.len() > 36 && Int(s.data[33]) == 120 && Int(s.data[34]) == 111 && Int(s.data[35]) == 0
+    }
+  }
+  false
+}
+
+fn get64(b: List[Int], o: Int) -> Int {
+  get32(b, o) | (get32(b, o + 4) << 32)
+}
+
+fn put64(var b: List[Int], o: Int, v: Int) {
+  for k in 0..8 {
+    b[o + k] = (v >> (8 * k)) & 255
+  }
+}
+
+fn get32(b: List[Int], o: Int) -> Int {
+  b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
+}
+
+fn put32(var b: List[Int], o: Int, v: Int) {
+  for k in 0..4 {
+    b[o + k] = (v >> (8 * k)) & 255
+  }
+}

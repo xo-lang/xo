@@ -70,6 +70,17 @@ pub struct Gen {
   /// (decision 0212); "" is the compiler's own.
   pub goos: Str = ""
 
+  /// DWARF line tables (decision 0239; debug.xo): the metadata numbers
+  /// made (from 1000000, past the fixed ones), the compile unit, the
+  /// files, the subprogram of the function being lowered (-1 for none),
+  /// and the line of the value being lowered
+  dbg_n: Int = 1000000
+  dbg_cu: Int = -1
+  dbg_ty: Int = -1
+  dbg_files: Map[Str, Int] = {}
+  dbg_sp: Int = -1
+  cur_line: Int = 0
+
   // The function being lowered (sfn).
   f: ssa.Func = ssa.Func{name: ""}
   fi: Int = -1
@@ -272,6 +283,7 @@ pub fn (var g: Gen) generate() -> Str {
   }
   g.inlinable_set()
   g.summarize()
+  g.debug_unit()
   for fi in 0..nf {
     g.lower_func(fi)
     if !g.err.is_empty() {
@@ -288,7 +300,25 @@ pub fn (var g: Gen) generate() -> Str {
     args.push("${g.ll(g.m.funcs[mi].values[p].ty)} zeroinitializer")
   }
   let rl = g.res_ll(mi)
-  g.funcs.push("define void @xo_entry() #1 {\n  call ${rl} ${fname(g.m.funcs[mi].name)}(${args.join(", ")})\n  ret void\n}\n")
+  // with debug information, xo_entry has a subprogram too: main is
+  // inlined into it, and code inlined into a function without one loses
+  // its lines (decision 0239)
+  g.f = g.m.funcs[mi]
+  g.debug_func()
+  if g.dbg_sp >= 0 {
+    g.cur_line = 0
+    for v in g.f.values {
+      if v.line != 0 {
+        g.cur_line = v.line
+        break
+      }
+    }
+    let loc = g.dbg_loc()
+    g.funcs.push("define void @xo_entry() #1 !dbg !${g.dbg_sp} {\n  call ${rl} ${fname(g.m.funcs[mi].name)}(${args.join(", ")}), !dbg ${loc}\n  ret void, !dbg ${loc}\n}\n")
+    g.dbg_sp = -1
+  } else {
+    g.funcs.push("define void @xo_entry() #1 {\n  call ${rl} ${fname(g.m.funcs[mi].name)}(${args.join(", ")})\n  ret void\n}\n")
+  }
   g.exports()
   if !g.err.is_empty() {
     return ""

@@ -39,6 +39,10 @@ struct Opts {
   json: Bool = false
   ci: Bool = false
   release: Bool = false
+  /// -s: no debug information; --debug-info: debug information in a
+  /// release build too (decision 0239)
+  strip: Bool = false
+  debug_info: Bool = false
   error_args: Bool = true
   hybrid: Bool = false
   no_mono: Bool = false
@@ -75,7 +79,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -435,6 +439,10 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.ci = on
   } else if name == "release" {
     o.release = on
+  } else if name == "s" {
+    o.strip = on
+  } else if name == "debug-info" {
+    o.debug_info = on
   } else if name == "error-args" {
     o.error_args = on
   } else if name == "hybrid" {

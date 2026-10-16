@@ -30,8 +30,8 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   }
   let dylibs = ["/usr/lib/libSystem.B.dylib"]
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs}
-  match macho.link(ins, opts) {
-    Ok(b) => {
+  match macho.link_debug(ins, opts) {
+    Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the
       // signature of a file it ran
       let tmp = "${out}.tmp"
@@ -46,6 +46,19 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       match os.fs.rename(tmp, out) {
         Ok(_) => {}
         Err(e) => return "${out}: ${e}"
+      }
+      if !dsym.is_empty() {
+        // the DWARF line tables (decision 0239), where lldb and the
+        // profiler look: PROG.dSYM/Contents/Resources/DWARF/PROG
+        let dir = "${out}.dSYM/Contents/Resources/DWARF"
+        match os.fs.create_dir_all(dir) {
+          Ok(_) => {}
+          Err(e) => return "${dir}: ${e}"
+        }
+        match os.fs.write("${dir}/${base_name(out)}", dsym) {
+          Ok(_) => {}
+          Err(e) => return "${dir}: ${e}"
+        }
       }
       ""
     }

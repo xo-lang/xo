@@ -1436,6 +1436,17 @@ fn (var l: ELinker) write() -> Bytes {
   let strtab_name = shstr.n
   shstr.bytes(".strtab".bytes())
   shstr.u8(0)
+  // the DWARF sections (elfdebug.xo), after .strtab, not loaded
+  let dbg = l.debug_sections()
+  if !l.err.is_empty() {
+    return "".bytes()
+  }
+  var dbg_names: List[Int] = []
+  for (nm, _) in dbg {
+    dbg_names.push(shstr.n)
+    shstr.bytes(nm.bytes())
+    shstr.u8(0)
+  }
   let shstr_name = shstr.n
   shstr.bytes(".shstrtab".bytes())
   shstr.u8(0)
@@ -1451,9 +1462,15 @@ fn (var l: ELinker) write() -> Bytes {
   // section headers
   let symtab_off = align_up(fend, 8)
   let strtab_off = symtab_off + symtab.len()
-  let shstr_off = strtab_off + strtab.len()
+  var dbg_offs: List[Int] = []
+  var dend = strtab_off + strtab.len()
+  for (_, d) in dbg {
+    dbg_offs.push(dend)
+    dend += d.len()
+  }
+  let shstr_off = dend
   let shoff = align_up(shstr_off + shstrtab.len(), 8)
-  let shnum = shown.len() + 4
+  let shnum = shown.len() + 4 + dbg.len()
 
   // the file: headers, the sections at their offsets
   var o = new_out(shoff + 64 * shnum)
@@ -1503,6 +1520,9 @@ fn (var l: ELinker) write() -> Bytes {
   o.zeros(symtab_off - o.n)
   o.bytes(symtab)
   o.bytes(strtab)
+  for (_, d) in dbg {
+    o.bytes(d)
+  }
   o.bytes(shstrtab)
   o.zeros(shoff - o.n)
   o.zeros(64)
@@ -1542,6 +1562,9 @@ fn (var l: ELinker) write() -> Bytes {
   let strtab_index = shown.len() + 2
   shdr(o, symtab_name, SHT_SYMTAB, symtab_off, symtab.len(), strtab_index, nlocal, 8, 24)
   shdr(o, strtab_name, SHT_STRTAB, strtab_off, strtab.len(), 0, 0, 1, 0)
+  for (k, (_, d)) in dbg.indexed() {
+    shdr(o, dbg_names[k], SHT_PROGBITS, dbg_offs[k], d.len(), 0, 0, 1, 0)
+  }
   shdr(o, shstr_name, SHT_STRTAB, shstr_off, shstrtab.len(), 0, 0, 1, 0)
   o.done()
 }

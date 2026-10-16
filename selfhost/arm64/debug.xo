@@ -1,0 +1,237 @@
+// DWARF line tables (decision 0239): each function emitted with debug
+// information on records its source file, its begin and end labels, and
+// a row label wherever the source line changes (emit.xo); the part's
+// records become .debug_line (a DWARF 5 line program, one sequence per
+// function), .debug_abbrev, and .debug_info (a compile unit with a
+// subprogram per function). Addresses are `.quad label` (absolute
+// relocations only, which every assembler and selfhost/macho handle);
+// every length is counted here, so no label differences are needed.
+
+/// The debug sections of the part, or "" with none.
+fn (g: G) debug_sections() -> Str {
+  if g.dbgs.is_empty() {
+    return ""
+  }
+  let mac = g.os == "darwin"
+  // the functions: file, name, begin, end, rows (label, packed line)
+  var files: List[Str] = []
+  var file_at: Map[Str, Int] = {}
+  var recs: List[DbgFunc] = []
+  for d in g.dbgs {
+    let p = d.split("\t")
+    if p.len() != 5 {
+      continue
+    }
+    let file = if p[0].is_empty() { "<generated>" } else { p[0] }
+    if !file_at.contains(file) {
+      file_at[file] = files.len()
+      files.push(file)
+    }
+    var rows: List[(Str, Int)] = []
+    for r in p[4].split(";") {
+      let lr = r.split(" ")
+      if lr.len() == 2 {
+        rows.push((lr[0], Int.parse(lr[1]) ?? 0))
+      }
+    }
+    recs.push(DbgFunc{file: file_at.get(file) ?? 0, name: p[1], begin: p[2], end: p[3], rows: rows})
+  }
+  let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
+  var out = StrBuilder.new()
+  // .debug_line
+  var hdr = Dw{}
+  hdr.u8(1) // minimum_instruction_length
+  hdr.u8(1) // maximum_operations_per_instruction
+  hdr.u8(1) // default_is_stmt
+  hdr.u8(251) // line_base -5
+  hdr.u8(14) // line_range
+  hdr.u8(13) // opcode_base
+  for n in [0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1] {
+    hdr.u8(n)
+  }
+  // directories: the compile directory, and the one std/'s file names
+  // are relative to
+  let stdd = !g.m.std_root.is_empty()
+  hdr.u8(1) // directory_entry_format_count
+  hdr.uleb(1) // DW_LNCT_path
+  hdr.uleb(8) // DW_FORM_string
+  hdr.uleb(if stdd { 2 } else { 1 })
+  hdr.str(dir)
+  if stdd {
+    hdr.str(g.m.std_root)
+  }
+  hdr.u8(2) // file_name_entry_format_count
+  hdr.uleb(1) // DW_LNCT_path
+  hdr.uleb(8) // DW_FORM_string
+  hdr.uleb(2) // DW_LNCT_directory_index
+  hdr.uleb(15) // DW_FORM_udata
+  hdr.uleb(files.len())
+  for f in files {
+    hdr.str(f)
+    hdr.uleb(if stdd && f.starts_with("std/") { 1 } else { 0 })
+  }
+  var prog = Dw{}
+  for fr in recs {
+    prog.u8(4) // DW_LNS_set_file
+    prog.uleb(fr.file)
+    var line = 1
+    // the sequence starts at the function (its prologue takes the first
+    // statement's line), then a row per label
+    var rows = fr.rows
+    if !rows.is_empty() {
+      rows.insert(0, (fr.begin, rows[0].1))
+    }
+    for (lab, packed) in rows {
+      let ln = packed / 4096
+      let col = packed % 4096
+      prog.u8(0)
+      prog.uleb(9)
+      prog.u8(2) // DW_LNE_set_address
+      prog.quad(lab)
+      if ln != line {
+        prog.u8(3) // DW_LNS_advance_line
+        prog.sleb(ln - line)
+        line = ln
+      }
+      prog.u8(5) // DW_LNS_set_column
+      prog.uleb(col)
+      prog.u8(1) // DW_LNS_copy
+    }
+    prog.u8(0)
+    prog.uleb(9)
+    prog.u8(2)
+    prog.quad(fr.end)
+    prog.u8(0)
+    prog.uleb(1)
+    prog.u8(1) // DW_LNE_end_sequence
+  }
+  // unit_length covers version (2), sizes (2), header_length (4), the
+  // header, and the program
+  let line_len = 2 + 2 + 4 + hdr.n + prog.n
+  out.write(if mac { "\t.section __DWARF,__debug_line,regular,debug\n" } else { "\t.section .debug_line,\"\",@progbits\n" })
+  let line_lab = g.local("xo_dwline_${g.ns}")
+  out.write("${line_lab}:\n")
+  out.write("\t.long ${line_len}\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${hdr.n}\n")
+  out.write(hdr.text())
+  out.write(prog.text())
+  // .debug_abbrev
+  out.write(if mac { "\t.section __DWARF,__debug_abbrev,regular,debug\n" } else { "\t.section .debug_abbrev,\"\",@progbits\n" })
+  let abbrev_lab = g.local("xo_dwabbrev_${g.ns}")
+  out.write("${abbrev_lab}:\n")
+  // 1: compile_unit, children: stmt_list, low_pc, high_pc (the part's
+  // functions are one run of its text; at fixed places, bytes 13, 17,
+  // and 25, for selfhost/macho dsym.xo), producer, language, name,
+  // comp_dir; 2: subprogram: name, low_pc, high_pc
+  out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
+  out.write("\t.byte 2, 0x2e, 0, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
+  out.write("\t.byte 0\n")
+  // .debug_info
+  var die = Dw{}
+  die.uleb(1)
+  die.offset(if mac { "0" } else { line_lab })
+  die.quad(recs[0].begin)
+  die.quad(recs[recs.len() - 1].end)
+  die.str("xo")
+  die.u16(0x0c) // DW_LANG_C99: no code for Xo
+  die.str(files[0])
+  die.str(dir)
+  for fr in recs {
+    die.uleb(2)
+    die.str(fr.name)
+    die.quad(fr.begin)
+    die.quad(fr.end)
+  }
+  die.u8(0)
+  // unit_length covers version (2), unit_type (1), address_size (1),
+  // debug_abbrev_offset (4), and the entries
+  out.write(if mac { "\t.section __DWARF,__debug_info,regular,debug\n" } else { "\t.section .debug_info,\"\",@progbits\n" })
+  out.write("\t.long ${2 + 1 + 1 + 4 + die.n}\n\t.short 5\n\t.byte 1\n\t.byte 8\n")
+  out.write("\t.long ${if mac { "0" } else { abbrev_lab }}\n")
+  out.write(die.text())
+  out.write(g.section("text"))
+  out.freeze()
+}
+
+/// A function's debug record, parsed.
+struct DbgFunc {
+  file: Int
+  name: Str
+  begin: Str
+  end: Str
+  rows: List[(Str, Int)]
+}
+
+/// Debug section bytes as assembler directives, with their count.
+struct Dw {
+  lines: List[Str] = []
+  n: Int = 0
+}
+
+fn (var d: Dw) u8(v: Int) {
+  d.lines.push("\t.byte ${v & 255}\n")
+  d.n += 1
+}
+
+fn (var d: Dw) u16(v: Int) {
+  d.lines.push("\t.short ${v & 65535}\n")
+  d.n += 2
+}
+
+fn (var d: Dw) offset(sym: Str) {
+  d.lines.push("\t.long ${sym}\n")
+  d.n += 4
+}
+
+fn (var d: Dw) quad(sym: Str) {
+  d.lines.push("\t.quad ${sym}\n")
+  d.n += 8
+}
+
+fn (var d: Dw) uleb(v0: Int) {
+  var v = v0
+  var bs: List[Str] = []
+  while true {
+    var b = v & 127
+    v = v >> 7
+    if v != 0 {
+      b = b | 128
+    }
+    bs.push("${b}")
+    if v == 0 {
+      break
+    }
+  }
+  d.lines.push("\t.byte ${bs.join(", ")}\n")
+  d.n += bs.len()
+}
+
+fn (var d: Dw) sleb(v0: Int) {
+  var v = v0
+  var bs: List[Str] = []
+  while true {
+    let b = v & 127
+    v = v >> 7
+    let done = (v == 0 && b & 64 == 0) || (v == -1 && b & 64 != 0)
+    bs.push("${if done { b } else { b | 128 }}")
+    if done {
+      break
+    }
+  }
+  d.lines.push("\t.byte ${bs.join(", ")}\n")
+  d.n += bs.len()
+}
+
+/// A NUL terminated string (DW_FORM_string), as bytes (no escaping).
+fn (var d: Dw) str(s: Str) {
+  var bs: List[Str] = []
+  for c in s.bytes() {
+    bs.push("${Int(c)}")
+  }
+  bs.push("0")
+  d.lines.push("\t.byte ${bs.join(", ")}\n")
+  d.n += bs.len()
+}
+
+fn (d: Dw) text() -> Str {
+  d.lines.join("")
+}

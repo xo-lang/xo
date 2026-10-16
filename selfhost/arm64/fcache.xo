@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v1"
+const FN_CACHE_VERSION = "xo fn cache v2"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is
@@ -37,6 +37,8 @@ pub struct FnCache {
 struct FnRec {
   text: Str = ""
   lsda: Str = ""
+  /// the debug line record (debug.xo), with the text's tokens
+  dbg: Str = ""
   strs: List[Bytes] = []
   locs: List[Str] = []
   /// the helpers it names, in first use: key, op, kind, type name,
@@ -119,6 +121,7 @@ fn (var g: G) canon_function(fi: Int) -> (FnRec, List[(Str, Want)]) {
   g.set_ref_flags(0)
   let t0 = g.text.len()
   let l0 = g.lsdas.len()
+  let d0 = g.dbgs.len()
   g.function(fi)
   var r = FnRec{strs: g.cstrs, locs: g.clocs, flags: g.ref_flags()}
   g.set_ref_flags(saved)
@@ -127,6 +130,9 @@ fn (var g: G) canon_function(fi: Int) -> (FnRec, List[(Str, Want)]) {
   }
   if g.lsdas.len() > l0 {
     r.lsda = g.lsdas.pop() ?? ""
+  }
+  if g.dbgs.len() > d0 {
+    r.dbg = g.dbgs.pop() ?? ""
   }
   (r, g.cwants)
 }
@@ -160,6 +166,9 @@ fn (var g: G) place_text(r: FnRec, wants: List[(Str, Want)]) {
   }
   if !r.lsda.is_empty() {
     g.lsdas.push(subst_tokens(r.lsda, fp, fnum, sl, ll))
+  }
+  if !r.dbg.is_empty() {
+    g.dbgs.push(subst_tokens(r.dbg, fp, fnum, sl, ll))
   }
 }
 
@@ -248,6 +257,7 @@ fn encode_rec(r: FnRec, ws: List[(Str, Int, Str, Str, Str)]) -> Bytes {
   put_field(b, FN_CACHE_VERSION.bytes())
   put_field(b, r.text.bytes())
   put_field(b, r.lsda.bytes())
+  put_field(b, r.dbg.bytes())
   put_field(b, "${r.flags}".bytes())
   put_field(b, "${r.strs.len()}".bytes())
   for s in r.strs {
@@ -327,6 +337,7 @@ fn decode_rec(d: Bytes) -> Option[(FnRec, List[(Str, Int, Str, Str, Str)])] {
   var rec = FnRec{}
   rec.text = r.str()
   rec.lsda = r.str()
+  rec.dbg = r.str()
   rec.flags = r.int()
   let ns = r.int()
   for _ in 0..ns {
@@ -427,7 +438,7 @@ fn aux_text(a: ssa.Aux) -> Str {
 fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
   let f = m.funcs[fi]
   var b = StrBuilder.new()
-  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs}\n")
+  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} debug=${m.debug_info}\n")
   b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
   var lr: List[Int] = []

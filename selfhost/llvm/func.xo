@@ -67,6 +67,10 @@ fn (var g: Gen) tmp() -> Str {
 }
 
 fn (var g: Gen) emit(s: Str) {
+  if g.dbg_sp >= 0 {
+    g.body.push("  ${s}, !dbg ${g.dbg_loc()}\n")
+    return
+  }
   g.body.push("  ${s}\n")
 }
 
@@ -308,6 +312,7 @@ fn (var g: Gen) reverse_postorder() -> List[Int] {
 fn (var g: Gen) lower_func(fi: Int) {
   g.f = g.m.funcs[fi]
   g.fi = fi
+  g.debug_func()
   g.allocas = []
   g.body = []
   g.label = ""
@@ -455,7 +460,9 @@ fn (var g: Gen) lower_func(fi: Int) {
     g.frame_attrs()
     attrs = "#9"
   }
-  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers} {\nentry:\n${g.allocas.join("")}${loads}  br label %b0\n")
+  let sp = if g.dbg_sp >= 0 { " !dbg !${g.dbg_sp}" } else { "" }
+  let br0 = if g.dbg_sp >= 0 { "  br label %b0, !dbg ${g.dbg_loc()}\n" } else { "  br label %b0\n" }
+  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers}${sp} {\nentry:\n${g.allocas.join("")}${loads}${br0}")
   for b in 0..g.f.blocks.len() {
     out.push("${bname(b)}:\n")
     if b != 0 {
@@ -676,6 +683,9 @@ fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
 
 /// Lowers instruction v (instr).
 fn (var g: Gen) instr(v: Int) {
+  if g.f.values[v].line != 0 {
+    g.cur_line = g.f.values[v].line
+  }
   let pad = g.f.values[v].pad
   if pad >= 0 {
     // a fault lands on the cleanup of its check (decision 0085)

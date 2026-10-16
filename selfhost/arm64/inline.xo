@@ -360,6 +360,9 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           }
           let nv = f.add(nb, x.op, x.ty, x.aux, args)
           f.values[nv].pos = x.pos
+          // the call's line (decision 0239: arm64 reports the caller's
+          // line for inlined code)
+          f.values[nv].line = f.values[call].line
           // a fault in the copy lands where one in the call would
           // (decision 0085): the callee holds nothing then
           f.values[nv].pad = pad

@@ -1,0 +1,73 @@
+// DWARF line tables (decision 0239): with the module's debug_info, a
+// compile unit (line tables only), a file per source, a subprogram per
+// function with a source file, and on every instruction of such a
+// function its statement's line (ssa Value.line) as an inline
+// DILocation; clang writes the sections. The compile unit, files, and
+// subprograms are numbered metadata in the module's tail (every part of
+// a split build gets them, split.xo); the locations stay inline, so the
+// shared header does not grow with the code.
+
+/// Makes the compile unit (generate, before the functions).
+fn (var g: Gen) debug_unit() {
+  if !g.m.debug_info {
+    return
+  }
+  let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
+  let f0 = g.dbg_file("main.xo")
+  g.dbg_cu = g.dbg_node("distinct !DICompileUnit(language: DW_LANG_C99, file: !${f0}, producer: \"xo compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, nameTableKind: None)")
+  g.dbg_ty = g.dbg_node("!DISubroutineType(types: !{})")
+  let v = g.dbg_node("!{i32 7, !\"Dwarf Version\", i32 5}")
+  let d = g.dbg_node("!{i32 2, !\"Debug Info Version\", i32 3}")
+  g.meta.push("!llvm.dbg.cu = !{!${g.dbg_cu}}\n!llvm.module.flags = !{!${v}, !${d}}\n")
+  let _dir = dir
+}
+
+/// The metadata number of a new node with text t.
+fn (var g: Gen) dbg_node(t: Str) -> Int {
+  g.dbg_n += 1
+  g.meta.push("!${g.dbg_n} = ${t}\n")
+  g.dbg_n
+}
+
+/// The DIFile of source name (std/ names relative to the std root).
+fn (var g: Gen) dbg_file(name: Str) -> Int {
+  if let Some(k) = g.dbg_files.get(name) {
+    return k
+  }
+  var dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
+  if name.starts_with("std/") && !g.m.std_root.is_empty() {
+    dir = g.m.std_root
+  }
+  let k = g.dbg_node("!DIFile(filename: \"${ir_escape(name)}\", directory: \"${ir_escape(dir)}\")")
+  g.dbg_files[name] = k
+  k
+}
+
+/// Starts the function's subprogram (lower_func): none without debug
+/// information or a source file.
+fn (var g: Gen) debug_func() {
+  g.dbg_sp = -1
+  g.cur_line = 0
+  if g.dbg_cu < 0 || g.f.file.is_empty() {
+    return
+  }
+  var line = 0
+  for v in g.f.values {
+    if v.line != 0 {
+      line = v.line / 4096
+      break
+    }
+  }
+  let file = g.dbg_file(g.f.file)
+  g.dbg_sp = g.dbg_node("distinct !DISubprogram(name: \"${ir_escape(g.f.name)}\", scope: !${file}, file: !${file}, line: ${line}, type: !${g.dbg_ty}, scopeLine: ${line}, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !${g.dbg_cu})")
+}
+
+/// The location of the instruction being emitted, inline.
+fn (g: Gen) dbg_loc() -> Str {
+  "!DILocation(line: ${g.cur_line / 4096}, column: ${g.cur_line % 4096}, scope: !${g.dbg_sp})"
+}
+
+/// s with the characters a metadata string cannot hold escaped.
+fn ir_escape(s: Str) -> Str {
+  s.replace("\\", "\\5C").replace("\"", "\\22")
+}

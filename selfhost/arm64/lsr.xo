@@ -622,6 +622,9 @@ fn pair_mem(text: Str, ext: Str) -> Str {
     let a3 = if lok { l3 } else { s3 }
     if lok || sok {
       var j = i + 1
+      // the debug line rows among the labels passed: kept, before the
+      // pair (decision 0239; nothing in the text refers to them)
+      var rows: List[Str] = []
       while j < n {
         let name = label_def(lines[j])
         if name.is_empty() {
@@ -634,6 +637,9 @@ fn pair_mem(text: Str, ext: Str) -> Str {
         if refs.contains(name) {
           break
         }
+        if is_row_label(name) {
+          rows.push(lines[j])
+        }
         j += 1
       }
       if j < n {
@@ -641,6 +647,9 @@ fn pair_mem(text: Str, ext: Str) -> Str {
         if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) {
           if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
             let op = if st { "stp" } else { "ldp" }
+            for r in rows {
+              out.push(r)
+            }
             out.push("\t${op} ${a1}, ${c1}, [${a2}, #${a3}]")
             i = j + 1
             continue
@@ -652,6 +661,17 @@ fn pair_mem(text: Str, ext: Str) -> Str {
     i += 1
   }
   out.join("\n")
+}
+
+/// Whether label name is a debug line row's (emit.xo: `..._dl<n>`).
+fn is_row_label(name: Str) -> Bool {
+  // the digits at the end, after `_dl`
+  let bs = name.bytes()
+  var k = bs.len()
+  while k > 0 && Int(bs[k - 1]) >= 48 && Int(bs[k - 1]) <= 57 {
+    k -= 1
+  }
+  k < bs.len() && k >= 3 && name[k - 3..k] == "_dl"
 }
 
 /// The name of the label line l defines (`L<letters, digits, _>:`), or

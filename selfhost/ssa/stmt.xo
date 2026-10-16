@@ -14,7 +14,11 @@ fn (var b: Builder) block(bl: parser.Block) -> Int {
   for (i, st) in bl.stmts.indexed() {
     if i == n - 1 {
       if let ExprStmt(x: x, ..) = st {
+        // the block's value: its own line (decision 0239)
+        let saved = b.s.line
+        b.set_line(parser.stmt_span(st))
         last = b.expr(x)
+        b.s.line = saved
         break
       }
     }
@@ -32,6 +36,21 @@ fn (var b: Builder) block(bl: parser.Block) -> Int {
 }
 
 fn (var b: Builder) stmt(st: Stmt) {
+  // the statement's line for the values it makes (decision 0239)
+  let saved = b.s.line
+  b.set_line(parser.stmt_span(st))
+  b.stmt_body(st)
+  b.s.line = saved
+}
+
+/// Makes the start of sp the line of the values made next (Value.line).
+fn (var b: Builder) set_line(sp: parser.Span) {
+  if sp.start.line > 0 {
+    b.s.line = sp.start.line * 4096 + (if sp.start.col > 4095 { 4095 } else { sp.start.col })
+  }
+}
+
+fn (var b: Builder) stmt_body(st: Stmt) {
   match st {
     ExprStmt(x: x, ..) => {
       b.expr(x)

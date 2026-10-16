@@ -148,12 +148,23 @@ struct Linker {
   s_eh: Int = -1
   /// the size of the header and load commands
   cmds_size: Int = 0
+  /// the output's LC_UUID (write), which its dSYM carries too
+  uuid: Bytes = zeros(0)
   err: Str = ""
 }
 
 /// link: the executable of the inputs (objects and archives), or the
 /// first error.
 pub fn link(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
+  match link_debug(inputs, opts) {
+    Ok((exe, _)) => Ok(exe)
+    Err(e) => Err(e)
+  }
+}
+
+/// link_debug: the executable and its dSYM's DWARF file (dsym.xo; empty
+/// when no input has DWARF sections), or the first error.
+pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Bytes), Str] {
   var l = Linker{opts: opts}
   for inp in inputs {
     if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
@@ -190,7 +201,11 @@ pub fn link(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
   if !l.err.is_empty() {
     return Err(l.err)
   }
-  Ok(out)
+  let dsym = l.dsym()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  Ok((out, dsym))
 }
 
 fn (var l: Linker) fail(why: Str) {
@@ -999,6 +1014,7 @@ fn (var l: Linker) write() -> Bytes {
   let rest = body.done()
   // the UUID: a hash of everything but the header
   let uuid = crypto.sha256(rest)[0..16]
+  l.uuid = uuid
 
   var h = new_out(32 + l.cmds_size)
   var flags = MH_NOUNDEFS + MH_DYLDLINK + MH_TWOLEVEL + MH_PIE

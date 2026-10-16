@@ -197,6 +197,10 @@ pub struct Value {
   pub pos: Str = ""
   /// The landing check of a call (Value.Pad), -1 for none.
   pub pad: Int = -1
+  /// The source line of the statement it was lowered from, as line *
+  /// 4096 + column (column at most 4095), 0 for none: the debug line
+  /// tables (decision 0239). The file is the function's (Func.file).
+  pub line: Int = 0
 }
 
 /// A control flow edge with the arguments for the target's parameters.
@@ -218,6 +222,9 @@ pub struct Block {
 /// A function (ssa.Func); its parameters are the entry block's.
 pub struct Func {
   pub name: Str
+  /// The source file of the body, as diagnostics name it ("" for
+  /// generated code): the debug line tables' file (decision 0239).
+  pub file: Str = ""
   pub results: List[Int] = []
   pub blocks: List[Block] = []
   pub values: List[Value] = []
@@ -270,6 +277,14 @@ pub struct Module {
   /// calling convention's own), so most values spill ($XO_ARM64_REGS;
   /// 0, the default: all of them).
   pub arm64_regs: Int = 0
+  /// Emit DWARF line tables (decision 0239): set by the driver; off for
+  /// `xo asm`, `-s`, and release builds without --debug-info.
+  pub debug_info: Bool = false
+  /// The directory the sources' names are relative to (DW_AT_comp_dir).
+  pub comp_dir: Str = ""
+  /// The directory std/'s files are named relative to (std/..): their
+  /// directory in the line tables.
+  pub std_root: Str = ""
   /// A Linux program with no C library (XO_NOLIBC=1): the emitters define
   /// the C library's data symbols (nolibc_data, decision 0234).
   pub nolibc: Bool = false

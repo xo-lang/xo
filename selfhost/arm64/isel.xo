@@ -66,6 +66,9 @@ fn (var g: G) new_block(cold: Bool) -> Int {
 /// there.
 fn (var g: G) add(inst: Inst) -> Int {
   var x = inst
+  if x.line == 0 {
+    x.line = g.cur_line
+  }
   if x.kind == K_CALL && g.cur_pad >= 0 {
     x.pad = g.cur_pad
   }
@@ -812,6 +815,9 @@ fn (var g: G) compare(v: Int) -> Cmp {
 
 /// Lowers SSA value v.
 fn (var g: G) instr(v: Int) {
+  if g.f.values[v].line != 0 {
+    g.cur_line = g.f.values[v].line
+  }
   let pad = g.f.values[v].pad
   if pad >= 0 {
     // its calls and fault stubs unwind to the cleanup of its check

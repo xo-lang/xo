@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v1"
+const RC_CACHE_VERSION = "xo rc cache v2"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -131,7 +131,7 @@ fn tkey(tk: List[Str], t: Int) -> Str {
 
 /// Function f in full for a key: every field, its types by key.
 fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
-  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)}\n")
+  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)}\n")
   b.write_str("results")
   for t in f.results {
     b.write_str(" ${tkey(tk, t)}")
@@ -151,7 +151,7 @@ fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
   for (vi, x) in f.values.indexed() {
     b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, x.ty)} [${ints_line(x.args)}] ")
     key_aux(b, x.aux)
-    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.pos.len()}:${x.pos}\n")
+    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.line} ${x.pos.len()}:${x.pos}\n")
   }
   for (ei, e) in f.edges.indexed() {
     b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
@@ -229,6 +229,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
     return None
   }
   put_s(b, f.export)
+  put_s(b, f.file)
   var lr: List[Int] = []
   for (k, _) in f.land_rest {
     lr.push(k)
@@ -263,7 +264,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
       }
       P(tag, field) => put_s(b, "p${tag} ${field}")
     }
-    put_s(b, "${x.block} ${x.pad}")
+    put_s(b, "${x.block} ${x.pad} ${x.line}")
     put_s(b, ints_line(x.succs))
     put_s(b, x.pos)
   }
@@ -375,6 +376,7 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
   f.unwind_exit = Int.parse(flags[3]) ?? -1
   f.captures = r.types(m)
   f.export = r.str()
+  f.file = r.str()
   for k in r.ints() {
     f.land_rest[k] = true
   }
@@ -434,12 +436,12 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
       return None
     }
     let bp = r.str().split(" ")
-    if bp.len() != 2 {
+    if bp.len() != 3 {
       return None
     }
     let succs = r.ints()
     let pos = r.str()
-    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1})
+    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1, line: Int.parse(bp[2]) ?? 0})
   }
   let ne = r.int()
   for _ in 0..ne {

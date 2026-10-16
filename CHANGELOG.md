@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- DWARF line tables (decision 0239) on the arm64 and LLVM backends, on
+  by default for build, run, and test (`-s` and `xo asm`: none;
+  `--release`: none unless `--debug-info`). darwin: PROG.dSYM next to
+  the executable from the selfhost/macho link (lldb `b main.xo:9`
+  stops there with the source); Linux: .debug_* in the ELF. Sizes in
+  bench/results/dwarf-line-tables-2026-10-16.md (TLS client: dSYM 25%,
+  linux arm64 +25%, LLVM +39%; compile +3%). SSA values carry their
+  statement's line (rc cache v2, arm64 function cache v2).
+
 - arm64: constant 0 addends of adds, adcs, and adc are xzr (no mov of
   0) and no longer stop an adc chain, and const_int and same_arg see
   through an inlined call's argument and result parameters (a literal 0

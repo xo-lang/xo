@@ -246,6 +246,13 @@ fn (var g: G) emit() {
         break // past a tail call
       }
       g.pos = g.blocks[mb].start + 4 * k
+      if g.m.debug_info && inst.line != 0 && inst.line != g.dl_last {
+        // a row of the line table: a label here (debug.xo)
+        let lab = g.local("${g.lbl_prefix()}_dl${g.dl_rows.len()}")
+        b.push("${lab}:\n")
+        g.dl_rows.push("${lab} ${inst.line}")
+        g.dl_last = inst.line
+      }
       g.emit_inst(b, inst, next)
       g.pos = -1
       if k == 0 && head {
@@ -259,6 +266,11 @@ fn (var g: G) emit() {
     b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   }
   b.push(g.stubs.join(""))
+  if g.m.debug_info && !g.dl_rows.is_empty() {
+    let end = g.local("${g.lbl_prefix()}_dend")
+    b.push("${end}:\n")
+    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${g.dl_rows.join(";")}")
+  }
   b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
   var ext = ""

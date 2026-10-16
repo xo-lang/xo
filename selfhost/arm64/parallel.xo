@@ -285,6 +285,7 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
   out.push(g.helpers.join(""))
   g.trampolines(out)
   out.push(g.lsdas.join(""))
+  out.push(g.debug_sections())
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
@@ -353,6 +354,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   out.push(g.section("text"))
   out.push(g.text.join(""))
   out.push(g.lsdas.join(""))
+  out.push(g.debug_sections())
   g.data(out)
   if os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")

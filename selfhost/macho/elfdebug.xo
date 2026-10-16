@@ -1,0 +1,172 @@
+// The DWARF sections of a linux/arm64 executable (decision 0239): the
+// inputs' .debug_line, .debug_abbrev, and .debug_info, which classify
+// leaves unplaced (not loaded), joined per section and kept in the
+// output as sections not loaded. Their relocations: a symbol in one of
+// these sections (the arm64 emitter's compile unit names its line table
+// and abbreviations by labels there) is the offset of its object's
+// chunk in the joined section; any other symbol is its address. Each xo
+// compile unit (selfhost/arm64 debug.xo, producer "xo" at byte 33) also
+// gives a .debug_aranges set, from its low_pc and high_pc (bytes 17 and
+// 25), which debuggers map addresses to units by.
+
+/// The output's debug sections: (name, contents), none when no input
+/// has DWARF.
+fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
+  // every .debug_ section of the inputs (an LLVM object's also have
+  // .debug_str, .debug_str_offsets, .debug_addr, ...), the line,
+  // abbreviation, and info sections first (their indexes below)
+  var names = [".debug_line", ".debug_abbrev", ".debug_info"]
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for s in l.objs[o].sects {
+      if s.name.starts_with(".debug_") && !s.dead && !names.contains(s.name) {
+        names.push(s.name)
+      }
+    }
+  }
+  // per section: per object, the chunk's offset (the first of its
+  // sections of that name)
+  var at: List[Map[Int, Int]] = []
+  var sizes: List[Int] = []
+  for nm in names {
+    var offs: Map[Int, Int] = {}
+    var n = 0
+    for o in 0..l.objs.len() {
+      if !l.objs[o].live {
+        continue
+      }
+      for s in l.objs[o].sects {
+        if s.name == nm && !s.dead {
+          if !offs.contains(o) {
+            offs[o] = n
+          }
+          n += s.data.len()
+        }
+      }
+    }
+    at.push(offs)
+    sizes.push(n)
+  }
+  if sizes[2] == 0 {
+    return []
+  }
+  var out: List[(Str, Bytes)] = []
+  var info: List[Int] = []
+  for (k, nm) in names.indexed() {
+    var buf: List[Int] = []
+    for o in 0..l.objs.len() {
+      if !l.objs[o].live {
+        continue
+      }
+      for s in l.objs[o].sects {
+        if s.name != nm || s.dead {
+          continue
+        }
+        var bs: List[Int] = []
+        for c in s.data {
+          bs.push(Int(c))
+        }
+        for r in s.relocs {
+          let sym = l.objs[o].syms[r.sym]
+          var v = r.addend
+          var debug_sym = false
+          if sym.shndx > 0 && sym.shndx < l.objs[o].sects.len() {
+            let ts = l.objs[o].sects[sym.shndx].name
+            for (j, dn) in names.indexed() {
+              if ts == dn {
+                v += (at[j].get(o) ?? 0) + sym.value
+                debug_sym = true
+              }
+            }
+          }
+          if !debug_sym {
+            let (d, i) = l.def_of(o, r.sym)
+            if d >= 0 {
+              v += l.sym_addr(d, i)
+            }
+          }
+          let width = if r.typ == R_AARCH64_ABS64 { 8 } else if r.typ == R_AARCH64_ABS32 { 4 } else { 0 }
+          if width == 0 || r.off + width > bs.len() {
+            continue
+          }
+          for b in 0..width {
+            bs[r.off + b] = (v >> (8 * b)) & 255
+          }
+        }
+        buf = buf + bs
+      }
+    }
+    if k == 2 {
+      info = buf
+    }
+    out.push((nm, bytes_of(buf)))
+  }
+  // .debug_aranges: a set per xo compile unit
+  var ar: List[Int] = []
+  for (_, off) in at[2] {
+    if off + 36 > info.len() || info[off + 33] != 120 || info[off + 34] != 111 || info[off + 35] != 0 {
+      continue
+    }
+    let lo = le_at(info, off + 17, 8)
+    let hi = le_at(info, off + 25, 8)
+    let a0 = ar.len()
+    for _ in 0..48 {
+      ar.push(0)
+    }
+    le_put(ar, a0, 4, 44)
+    ar[a0 + 4] = 2
+    le_put(ar, a0 + 6, 4, off)
+    ar[a0 + 10] = 8
+    le_put(ar, a0 + 16, 8, lo)
+    le_put(ar, a0 + 24, 8, hi - lo)
+  }
+  if !ar.is_empty() {
+    // after the inputs' own sets, if they have any
+    var merged = false
+    for (k, (nm, d)) in out.indexed() {
+      if nm == ".debug_aranges" {
+        var all: List[Int] = []
+        for c in d {
+          all.push(Int(c))
+        }
+        out[k] = (nm, bytes_of(all + ar))
+        merged = true
+      }
+    }
+    if !merged {
+      out.push((".debug_aranges", bytes_of(ar)))
+    }
+  }
+  // sections the inputs only declared (empty) are left out
+  var kept: List[(Str, Bytes)] = []
+  for (nm, d) in out {
+    if !d.is_empty() {
+      kept.push((nm, d))
+    }
+  }
+  kept
+}
+
+fn bytes_of(b: List[Int]) -> Bytes {
+  var o = new_out(b.len())
+  for c in b {
+    o.u8(c)
+  }
+  o.done()
+}
+
+fn le_at(b: List[Int], o: Int, n: Int) -> Int {
+  var v = 0
+  for k in 0..n {
+    v = v | (b[o + k] << (8 * k))
+  }
+  v
+}
+
+fn le_put(var b: List[Int], o: Int, n: Int, v: Int) {
+  for k in 0..n {
+    b[o + k] = (v >> (8 * k)) & 255
+  }
+}

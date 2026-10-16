@@ -81,6 +81,9 @@ fn regs(vs: List[Int]) -> List[Src] {
 struct Inst {
   kind: Int
   text: Str = ""
+  /// the packed source line it was selected for (ssa Value.line), 0 for
+  /// none: a row of the debug line table (decision 0239)
+  line: Int = 0
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []

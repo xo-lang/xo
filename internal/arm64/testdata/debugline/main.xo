@@ -1,0 +1,12 @@
+fn add(a: Int, b: Int) -> Int {
+  let c = a + b
+  c * 2
+}
+
+fn main(os: Os) {
+  var t = 0
+  for i in 0..10 {
+    t = t + add(i, t)
+  }
+  os.stdio.println("${t}")
+}

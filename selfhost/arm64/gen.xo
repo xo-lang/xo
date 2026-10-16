@@ -64,6 +64,7 @@ fn (var g: G) generate() -> Program {
   out.push(g.helpers.join(""))
   g.trampolines(out)
   out.push(g.lsdas.join(""))
+  out.push(g.debug_sections())
   g.shared_code(out)
   g.data(out)
   g.end_data(out)

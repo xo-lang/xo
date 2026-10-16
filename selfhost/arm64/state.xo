@@ -164,6 +164,13 @@ struct G {
   ldr_texts: List[Str] = []
   str_texts: List[Str] = []
   lsdas: List[Str] = []
+  /// the debug line records of the functions (debug.xo), and while one is
+  /// emitted: the line of the SSA value being lowered, the last line a
+  /// row was made for, and the rows (label and packed line)
+  dbgs: List[Str] = []
+  cur_line: Int = 0
+  dl_last: Int = 0
+  dl_rows: List[Str] = []
   ncs: Int = 0
   personality_ref: Bool = false
   /// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
@@ -319,6 +326,9 @@ fn (var g: G) fail(msg: Str) {
 
 /// Starts the state of function fi.
 fn (var g: G) begin_func(fi: Int) {
+  g.cur_line = 0
+  g.dl_last = 0
+  g.dl_rows = []
   g.tl_v = -1
   g.tl_blk = -1
   g.fi = fi
