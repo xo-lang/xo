@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 darwin: thread locals without the xo_tlocal_get call. The TLV
+  descriptor's thunk is called inline (x0 and lr saved around it; it
+  keeps every other register), and its base is reused in the block
+  until the next call (a task may resume on another thread after any
+  call, so never across one). Mac, instructions retired, XO_THREADS=1,
+  5 reps: conc pingpong 0.866, spawn 0.974. Xo lang 4's (b).
+
 - arm64: thread locals inline on Linux (rt.tlocal_get, tlocal_set,
   tlocal_addr: tpidr_el0 plus xo_tlocal's local exec offset, then the
   slot, instead of a call of xo_tlocal_get), and rt.mem_set of zeros

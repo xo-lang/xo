@@ -242,6 +242,11 @@ struct G {
   loc: List[Loc] = []
   order: List[Int] = []
   ninst: Int = 0
+  /// darwin's thread local base (tl_base): the register holding it, the
+  /// block, and the instruction index it was made at; -1 when none
+  tl_v: Int = -1
+  tl_blk: Int = -1
+  tl_at: Int = 0
   /// The ranges each physical register holds after allocation (regalloc's
   /// occupancy), and the position of the instruction being emitted: the
   /// emitter finds registers free at an instruction for the reloads and
@@ -314,6 +319,8 @@ fn (var g: G) fail(msg: Str) {
 
 /// Starts the state of function fi.
 fn (var g: G) begin_func(fi: Int) {
+  g.tl_v = -1
+  g.tl_blk = -1
   g.fi = fi
   g.f = g.m.funcs[fi]
   let nv = g.f.values.len()

@@ -1056,13 +1056,13 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
-    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" => {
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its
       // moves, and its clobbers cost the scheduler's pingpong 9M
       // instructions (sched.xo still defines xo_tlocal)
       g.sched_ref = true
-      let base = g.def1(false, "mrs $d0, tpidr_el0\nadd $d0, $d0, :tprel_hi12:xo_tlocal\nadd $d0, $d0, :tprel_lo12_nc:xo_tlocal", [])
+      let base = g.tl_base()
       let op = aux_str(x.aux)
       if op == "rt.tlocal_addr" {
         g.set(v, [base])
@@ -1250,6 +1250,44 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     _ => return false
   }
   true
+}
+
+/// The address of this thread's xo_tlocal table, for rt.tlocal_get,
+/// tlocal_set, and tlocal_addr. Linux: the thread pointer plus the local
+/// exec offset. darwin: the TLV descriptor's thunk, called inline (it
+/// keeps every register but x0, x16, x17, and lr, which the template
+/// saves or does not hold values in), and reused in the block until the
+/// next call: a task may resume on another thread after any call (the
+/// scheduler steals work, decision 0077), so a base is never kept across
+/// one.
+fn (var g: G) tl_base() -> Int {
+  if g.os != "darwin" {
+    return g.def1(false, "mrs $d0, tpidr_el0\nadd $d0, $d0, :tprel_hi12:xo_tlocal\nadd $d0, $d0, :tprel_lo12_nc:xo_tlocal", [])
+  }
+  if g.tl_v >= 0 && g.tl_blk == g.cur {
+    let ins = g.blocks[g.cur].insts
+    var ok = g.tl_at <= ins.len()
+    var i = g.tl_at
+    while ok && i < ins.len() {
+      let t = ins[i].text
+      if ins[i].kind != K_PLAIN || t.contains("bl ") || t.contains("blr ") || t.contains("svc") {
+        ok = false
+      }
+      i += 1
+    }
+    if ok {
+      return g.tl_v
+    }
+  }
+  let v = g.new_vreg(false)
+  let i = g.plain("stp x0, x30, [sp, #-16]!\nadrp x0, _xo_tlocal@TLVPPAGE\nldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]\nldr x16, [x0]\nblr x16\nmov x17, x0\nldp x0, x30, [sp], #16\nmov $d0, x17", [v], [])
+  // not moved, merged, or dropped by a later pass (the base is only valid
+  // until the next call)
+  g.blocks[g.cur].insts[i].keep = true
+  g.tl_v = v
+  g.tl_blk = g.cur
+  g.tl_at = g.blocks[g.cur].insts.len()
+  v
 }
 
 /// Whether rt.mem_set x sets a constant length of at most 512 bytes
