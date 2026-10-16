@@ -64,19 +64,16 @@ func TestEmptyListAtPageStart(t *testing.T) {
 }
 
 // TestXProtectRules scans the programs XProtect once flagged, linked by
-// selfhost/macho and by cc, with the Mac's XProtect YARA rules, when
-// yara and the rules are present (yara is not installed by default:
-// brew install yara).
+// selfhost/macho and by cc, with the Mac's XProtect YARA rules: with
+// yara when it is on PATH (brew install yara), else in the Linux
+// container of scripts/docker-linux.sh (its image carries yara) when
+// Docker runs; XO_XPROTECT_DOCKER=off turns the container off.
 func TestXProtectRules(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("the Mac's rules on its arm64 programs")
-	}
-	yara, err := exec.LookPath("yara")
-	if err != nil {
-		t.Skip("no yara")
 	}
 	var rules []string
 	for _, p := range []string{
@@ -90,25 +87,96 @@ func TestXProtectRules(t *testing.T) {
 	if len(rules) == 0 {
 		t.Skip("no XProtect rules")
 	}
+	scan := yaraScanner(t)
+	work := t.TempDir()
+	var bins []string
 	for _, name := range xprotectGoldens {
 		for _, ld := range []string{"macho", "cc"} {
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
-			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: []string{"--ld=" + ld}})
+			out := filepath.Join(work, "bin", name+"-"+ld)
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Out: out, Flags: []string{"--ld=" + ld}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if res.Failed {
 				t.Fatalf("%s --ld=%s: build failed:\n%s", name, ld, res.Output)
 			}
-			for _, r := range rules {
-				out, err := exec.Command(yara, "-w", r, res.Binaries[xotool.Host()]).CombinedOutput()
+			bins = append(bins, out)
+		}
+	}
+	for i, r := range rules {
+		dst := filepath.Join(work, "rules", strconv.Itoa(i)+".yara")
+		data, err := os.ReadFile(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if s := scan(work, dst, bins); s != "" {
+			t.Errorf("a program matches an XProtect rule (%s):\n%s", r, s)
+		}
+	}
+}
+
+// yaraScanner returns a function that runs yara with the rules file on
+// each binary (all under work) and returns its matches, or skips the
+// test when neither yara nor Docker is available.
+func yaraScanner(t *testing.T) func(work, rules string, bins []string) string {
+	t.Helper()
+	if yara, err := exec.LookPath("yara"); err == nil {
+		return func(work, rules string, bins []string) string {
+			var b strings.Builder
+			for _, f := range bins {
+				out, err := exec.Command(yara, "-w", rules, f).CombinedOutput()
 				if err != nil {
-					t.Fatalf("yara %s: %v\n%s", r, err, out)
+					t.Fatalf("yara: %v\n%s", err, out)
 				}
-				if s := strings.TrimSpace(string(out)); s != "" {
-					t.Errorf("%s --ld=%s matches an XProtect rule (%s):\n%s", name, ld, r, s)
-				}
+				b.Write(out)
+			}
+			return strings.TrimSpace(b.String())
+		}
+	}
+	if os.Getenv("XO_XPROTECT_DOCKER") == "off" {
+		t.Skip("no yara, and XO_XPROTECT_DOCKER=off")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("no yara and no docker")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("no yara, and Docker is not running")
+	}
+	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "docker-linux.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(work, rules string, bins []string) string {
+		rel := func(p string) string {
+			r, err := filepath.Rel(work, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return "/work/" + filepath.ToSlash(r)
+		}
+		cmd := ""
+		for _, f := range bins {
+			cmd += "yara -w " + rel(rules) + " " + rel(f) + " || exit 1; "
+		}
+		out, err := exec.Command(script, "arm64", work, cmd).CombinedOutput()
+		if err != nil {
+			t.Fatalf("yara in docker: %v\n%s", err, out)
+		}
+		var keep []string
+		for _, l := range strings.Split(string(out), "\n") {
+			// a match is "RULE PATH" (rule names have several prefixes);
+			// docker build's progress lines (a new image) are not
+			if strings.Contains(l, " /work/bin/") {
+				keep = append(keep, l)
 			}
 		}
+		return strings.Join(keep, "\n")
 	}
 }

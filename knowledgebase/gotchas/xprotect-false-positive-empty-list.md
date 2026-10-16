@@ -38,7 +38,9 @@ The arm64 emitter writes the empty list and the zero handle first in
 the data (selfhost/arm64 gen.xo end_data), at page offset 0.
 internal/arm64 TestEmptyListAtPageStart checks the offset on every Mac;
 TestXProtectRules scans those three goldens, linked by macho and by cc,
-with the Mac's rules when yara is installed (`brew install yara`; or in
-Docker: scripts/docker-linux.sh with `apt-get install yara` as root).
+with the Mac's rules: with yara when it is on PATH (`brew install
+yara`), else in scripts/docker-linux.sh's container (its image carries
+yara since 2026-10-16) when Docker runs; XO_XPROTECT_DOCKER=off skips
+the container.
 Any address at page offset 0x880 loaded into x11 and then x12 can still
 match; scan new layouts with the rules.

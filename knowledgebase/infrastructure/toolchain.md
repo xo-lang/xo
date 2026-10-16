@@ -3268,7 +3268,7 @@ Since 2026-10-15 (xo-fa, the owner's request): Docker Desktop on this
 Mac runs Debian containers natively as linux/arm64 and, emulated, as
 linux/amd64 (slow: about 3x for a build). Three scripts:
 
-    scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
+    scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
     scripts/golden-run.sh BINARY GOLDEN_DIR                # one golden, on a writable copy of its directory
 
