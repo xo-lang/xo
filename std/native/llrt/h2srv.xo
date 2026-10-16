@@ -1288,6 +1288,7 @@ fn (var h: H2Conn) fragment() {
     let head = rt.rs_append(word(word(word("", 1), 7), 3), ":status100")
     let blk = h.encode(head)
     put_block(c, w, raw.data(blk), blk.len(), false)
+    raw.alive_str(blk)
   }
   unlk(c)
 }
@@ -1802,6 +1803,7 @@ fn (var h: H2Conn) schedule() {
       let blk = h.encode(bstr(st, S_RH))
       let es = on(st, S_END) && ld(st, S_OFF) == ld(st, S_OUT + 8)
       put_block(c, ld(st, S_ID), raw.data(blk), blk.len(), es)
+      raw.alive_str(blk)
       sto(st, S_RH_SENT, 1)
       if es {
         sto(st, S_END_SENT, 1)

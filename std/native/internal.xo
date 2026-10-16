@@ -10,6 +10,7 @@ use native/llrt/hkdf
 use native/llrt/hmac
 use native/llrt/linux
 use native/llrt/mlkem
+use native/llrt/raw
 use native/llrt/mutex
 use native/llrt/obj
 use native/llrt/poll
@@ -95,6 +96,32 @@ fn rt_op(what: Str) -> Bytes? {
     s = rt.rs_push_byte(s, n)
     s = rt.rs_push_byte(s, rt.mem_load(buf, 0, 1))
     rt.heap_release(buf - 8)
+    return Some(s.bytes())
+  }
+  if what == "alive" {
+    // a raw address into bytes this function owns (gotchas
+    // raw-address-outlives-bytes.md): the bytes are released after their
+    // last use, so raw.alive after the last read through the address
+    // keeps them; 64 more blocks of their size are made and filled in
+    // between (they would take the bytes' block if it had been freed)
+    let b = raw.bytes_buf(64)
+    let p = raw.bytes_addr(b)
+    rt.mem_set(p, 165, 64)
+    var junk: List[Bytes] = []
+    for _ in 0..64 {
+      let j = raw.bytes_buf(64)
+      rt.mem_set(raw.bytes_addr(j), 90, 64)
+      junk.push(j)
+    }
+    var same = 1
+    for i in 0..64 {
+      if rt.mem_load(p, i, 1) != 165 {
+        same = 0
+      }
+    }
+    raw.alive(b)
+    s = rt.rs_push_byte(s, same)
+    s = rt.rs_push_byte(s, if junk.len() == 64 { 1 } else { 0 })
     return Some(s.bytes())
   }
   if what == "sym_addr" {

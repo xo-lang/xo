@@ -418,8 +418,10 @@ pub fn serve_next() -> Int {
     let v = raw.str_slice(x, 2, x.len())
     if x.starts_with("r=") {
       setenv(V_REPLAY, raw.data(v), v.len())
+      raw.alive_str(v)
     } else if x.starts_with("b=") {
       setenv(V_BEST, raw.data(v), v.len())
+      raw.alive_str(v)
     }
   }
   rt.mem_store(st(), S_SKIP, 0, 8)
@@ -528,6 +530,7 @@ pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
   unlock()
   let ps = if prop { "${case_seed}" } else { "" }
   setenv(V_PROP_SEED, raw.data(ps), if prop { ps.len() } else { -1 })
+  raw.alive_str(ps)
 }
 
 /// The test to run (XO_TEST), -1 when it is not set.

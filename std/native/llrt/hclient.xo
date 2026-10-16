@@ -966,6 +966,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     if tlsio.alpn_h2(t) {
       // the connection takes over the net.Conn and the ccon
       let pc = conn_new(cna, c, roots, raw.data(key), key.len())
+      raw.alive_str(key)
       rt.mem_set(c, 0, 72)
       exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
       return

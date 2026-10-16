@@ -29,3 +29,10 @@ Hold the Bytes for as long as the addresses are used: `Sects.data` keeps
 it, and the parsers take the Sects. Any code that keeps `raw.bytes_addr`
 (or `rt.obj_addr`) results past the object's last named use must keep a
 reference the same way.
+
+The audit of 2026-10-16 (bench/results/raw-address-audit-2026-10-16.md)
+lists every raw address user in std/native and selfhost and fixed 15:
+call `raw.alive(b)` (or `raw.alive_str(s)`) after the last raw access,
+which keeps the value live to that point. Releases go after the last
+use even inside one call's arguments: `f(raw.data(s), s.len())` releases
+an owned `s` before `f` runs.

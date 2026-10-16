@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix: the native TLS client and server sent records through the raw
+  address of a Bytes the compiler had already released (a value is
+  released after its last named use, and a raw address is not a use),
+  so a send that parked in the event loop could write freed memory.
+  An audit of every raw address use in std/native and selfhost
+  (bench/results/raw-address-audit-2026-10-16.md) fixed 15 such sites
+  (TLS flush, HTTP/2 frames and headers, the HTTP client's key, the
+  peer address, process spawn and executable path, the test world's
+  environment) with the new `raw.alive` and `raw.alive_str`, which keep
+  a value until that point; the rt_addrs golden checks it after
+  allocations that would reuse the bytes.
+
 - Fix: the DWARF reader (tracebacks, profiles) read the debug sections
   through addresses into a Bytes that was already released, so some
   builds (seen on macOS with LLVM) got wrong or missing lines and inlined

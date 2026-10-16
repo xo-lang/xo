@@ -6,7 +6,8 @@
 // and strlen of seven bytes through the C library's address (01 07);
 // and on Linux the auxiliary vector read from memory after the start's
 // environment, its AT_PHDR /proc/self/auxv's, AT_PAGESZ set (01 01 01;
-// gotchas/linux-auxv-proc.md).
+// gotchas/linux-auxv-proc.md); and raw.alive keeping bytes whose address
+// is read after 64 allocations of their size (01 01).
 use std/internal
 
 fn main(os: Os) {
@@ -14,4 +15,5 @@ fn main(os: Os) {
   os.stdio.println(internal.crypto_op("rt.frame_addr", b"", b"", b"", b"").to_hex())
   os.stdio.println(internal.crypto_op("rt.sym_addr", b"", b"", b"", b"").to_hex())
   os.stdio.println(internal.crypto_op("rt.auxv", b"", b"", b"", b"").to_hex())
+  os.stdio.println(internal.crypto_op("rt.alive", b"", b"", b"", b"").to_hex())
 }

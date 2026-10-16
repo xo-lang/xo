@@ -250,3 +250,20 @@ pub fn push_rune(s: Str, r0: Int) -> Str {
   }
   rt.rs_push_word(s, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
 }
+
+/// Uses b so that a raw address into it (bytes_addr) stays valid up to
+/// here: a value is released right after its last use, even inside the
+/// arguments of the call that uses its address (gotchas
+/// raw-address-outlives-bytes.md).
+pub fn alive(b: Bytes) {
+  if b.len() < 0 {
+    return
+  }
+}
+
+/// alive for a Str (data).
+pub fn alive_str(s: Str) {
+  if s.len() < 0 {
+    return
+  }
+}

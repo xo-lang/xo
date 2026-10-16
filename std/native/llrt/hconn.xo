@@ -134,7 +134,13 @@ pub fn unlock(s: Int) { pool.unlock(s + SR_MU) }
 /// The text of the peer address of socket fd (inet_ntop's), or "".
 pub fn peer_ip(fd: Int) -> Str {
   let buf = raw.bytes_buf(128)
-  let sa = raw.bytes_addr(buf)
+  let ip = peer_ip_at(fd, raw.bytes_addr(buf))
+  raw.alive(buf)
+  ip
+}
+
+/// peer_ip with the sockaddr buffer at sa (128 bytes).
+fn peer_ip_at(fd: Int, sa: Int) -> Str {
   let lp = obj.scratch()
   rt.mem_store(lp, 0, 128, 4)
   if sock.peername(fd, sa, lp) < 0 {

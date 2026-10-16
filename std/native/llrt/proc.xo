@@ -177,6 +177,7 @@ fn mode_of(l: Int, path: Str) -> (Int, Int) {
 fn executable(l: Int, path: Str) -> Bool {
   let z = path + "\u{0}"
   let r = if l == 2 { Int(sys_darwin.access(raw.data(z), 1)) } else { linux.access_at(raw.data(z), 1) }
+  raw.alive_str(z)
   r == 0
 }
 
@@ -330,9 +331,9 @@ fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, e
     got = linux.read_at(rd, b + 48, 4)
   }
   let _r = linux.close(rd)
-  let _k = buf.len()
+  let e = rt.mem_load(b, 48, 4)
+  raw.alive(buf)
   if got == 4 {
-    let e = rt.mem_load(b, 48, 4)
     // reap the child that failed to exec
     let _w = wait_any(pid)
     return (0, e)

@@ -173,6 +173,7 @@ pub fn roots_pem(pem: Bytes) -> rthttp.Roots {
     }
     if ty == "CERTIFICATE" {
       let p = x509.parse(raw.str_at(raw.bytes_addr(der), k).bytes())
+      raw.alive(der)
       if p.err == "" {
         certs.push(p.cert)
       }
@@ -359,6 +360,15 @@ pub fn roots_free() {
 /// Sends what the client has to send: whether it all went.
 fn flush(var c: Conn) -> Bool {
   let b = take_out(c)
+  let ok = send_all(c, b)
+  // b is the parameter of send_all, borrowed: it stays alive (and its
+  // address valid) through the sends and the waits between them
+  raw.alive(b)
+  ok
+}
+
+/// Sends b, the bytes flush took: whether they all went.
+fn send_all(var c: Conn, b: Bytes) -> Bool {
   let n = b.len()
   if n == 0 {
     return true

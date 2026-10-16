@@ -82,8 +82,11 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		// has no C ABI exports, frame records, C symbols, or auxiliary
 		// vector of its own; it answers what they give, "12345"'s length and
 		// first byte, the three frame facts, xo_entry's address not 0 with
-		// strlen of seven bytes, and the three auxv facts
+		// strlen of seven bytes, the three auxv facts, and raw.alive's two
+		// (Go's collector keeps the bytes)
 		switch what {
+		case "alive":
+			r, ok = Bytes([]byte{1, 1}), true
 		case "fn_addr":
 			s := strconv.Itoa(12345)
 			r, ok = Bytes([]byte{byte(len(s)), s[0]}), true

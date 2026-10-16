@@ -251,6 +251,7 @@ pub fn head(d: Int, ha: Int, hn: Int, status: Int, head_req: Bool, p: Int, pn: I
   if sniff {
     let ct = http1w.sniff(p, pn)
     at = field(d, at, "content-type", raw.data(ct), ct.len())
+    raw.alive_str(ct)
     nf += 1
   }
   if has_clen {

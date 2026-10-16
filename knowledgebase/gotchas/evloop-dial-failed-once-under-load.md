@@ -39,3 +39,8 @@ with errno text, 5 canceled; netconn.xo dial_timeout). Keep the whole
 -short log and note what else ran on the machine. A refused dial to a
 listener that exists would point at the listener's backlog or a stale
 poll descriptor (pd reuse after pd_free); an Io error at the system.
+
+Seen again on 2026-10-16 at 17:00, in a full `go test ./internal/llvm`
+run (with internal/arm64 and cmd/xo in parallel, the heavy slot's other
+holder building); the gate's filter dropped the message. It passed on
+the immediate rerun.
