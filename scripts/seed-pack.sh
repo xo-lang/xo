@@ -125,8 +125,15 @@ mkdir -p "$stage/xo/bin"
 cp "$xo" "$stage/xo/bin/$(basename "$xo")"
 chmod 755 "$stage/xo/bin/$(basename "$xo")"
 if [ -n "$gitroot" ]; then
-  # the tracked files only
-  (cd "$gitroot" && git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$stage/xo"
+  # the tracked files only; with XO_SEED_ALLOW_DIRTY also the new ones
+  # not yet added (the std the checkout's xo was built and runs with:
+  # without them a new module is "not found"), and not the deleted ones
+  others=""
+  [ -n "${XO_SEED_ALLOW_DIRTY:-}" ] && others="--others --exclude-standard"
+  # shellcheck disable=SC2086
+  (cd "$gitroot" && git ls-files -z --cached $others -- std |
+    while IFS= read -r -d '' f; do [ -f "$f" ] && printf '%s\0' "$f"; done |
+    tar -c -f - --null -T -) | tar -xf - -C "$stage/xo"
 else
   cp -R "$std" "$stage/xo/std"
 fi

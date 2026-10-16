@@ -256,6 +256,18 @@ func TestSeedPackHello(t *testing.T) {
 	if !isFile(xo) {
 		t.Skipf("no built xo (%s): go run ./scripts/xobuild, or set XO_CLI", xo)
 	}
+	if os.Getenv("XO_CLI") == "" {
+		// the checkout's bin/xo runs the checkout's std: one built from
+		// other sources may not compile it (a module it does not know,
+		// a literal it does not support), which is not the pack's fault
+		key, err := Key(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(root, "bin", "xo.key")); strings.TrimSpace(string(b)) != key {
+			t.Skipf("bin/xo was built from other sources than the checkout's (bin/xo.key is not %s): go run ./scripts/xobuild", key)
+		}
+	}
 	loc := t.TempDir()
 	out := filepath.Join(loc, "seeds", "pack")
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", "seed-pack.sh"), xo, out)
