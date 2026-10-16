@@ -24,7 +24,7 @@ for be in "$@"; do
 done
 for t in 0 0b 1 1b 2; do
 	for be in "$@"; do
-		bin=$(find "$OUT/build-$be" -type f -name "*.test" | head -1)
+		bin=$(find "$OUT/build-$be" -type f -name "*.test" ! -path "*.dSYM/*" | head -1)
 		idx=${t%b}
 		sum=0
 		bytes=0

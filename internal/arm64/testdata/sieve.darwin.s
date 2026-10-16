@@ -80,16 +80,13 @@ LpGL1jtk_f1_b24:
 	mov x9, #10
 	strb w9, [x20, x19]
 LpGL1jtk_f1_b25:
-	add x10, x19, #1
+	add x9, x19, #1
 LpGL1jtk_f1_b26:
-	add x9, x21, #8
-	str x10, [x9]
+	str x9, [x21, #8]
 	b LpGL1jtk_f1_b52
 LpGL1jtk_f1_b33:
 	ldr x1, [x21, #24]
-	and x9, x1, #1
-	cmp x9, #0
-	b.ne LpGL1jtk_f1_b49
+	tbnz x1, #0, LpGL1jtk_f1_b49
 LpGL1jtk_f1_b36:
 	orr x11, x1, #1
 LpGL1jtk_f1_b39:
@@ -105,8 +102,7 @@ LpGL1jtk_f1_b41:
 	add x9, x9, _xo_static@PAGEOFF
 	add x9, x9, #264
 	ldr x9, [x9, #0]
-	and x9, x9, #32
-	cmp x9, #0
+	tst x9, #32
 	b.ne LpGL1jtk_f1_b47
 LpGL1jtk_f1_b46:
 	mov x9, #2

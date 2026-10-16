@@ -18,6 +18,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a value until that point; the rt_addrs golden checks it after
   allocations that would reuse the bytes.
 
+- arm64: four instruction selections for bit tests and atomics. A
+  negative mask is a logical immediate (`x & -4` one `and`, was a `mov`
+  and an `and`; a negative literal reaches isel as a negation of its
+  constant); `(x & C) == 0` or `!= 0` is `tst x, #C` with no `and`; a
+  one bit C branches with `tbz`/`tbnz` on that bit (was bit 0 only); a
+  relaxed `rt.slot_load` or `slot_store` with a constant index is an
+  `ldr`/`str` at the base plus the offset (was an `add` and the access:
+  stdio's buffer length). arm64 sweep (bench/perf measure.sh suites but
+  the socket ones): 14 faster (json parse 0.965, strings 0.977, ctx
+  none 0.858), none slower beyond noise. test/codegen/arith checks the
+  three folds. Also: bench/perf gen, glob, report and testworld's
+  measure.sh skip the .dSYM's DWARF file when finding the test binary
+  (it was found first since the line tables, decision 0239).
 - Fix: the DWARF reader (tracebacks, profiles) read the debug sections
   through addresses into a Bytes that was already released, so some
   builds (seen on macOS with LLVM) got wrong or missing lines and inlined

@@ -21,7 +21,28 @@ fn fold() -> Int {
   3 * 7 + 1
 }
 
+// A mask whose ones run past bit 63 is a logical immediate too: one and.
+fn clear_low(x: Int) -> Int {
+  // arm64: "and x[0-9]+, x[0-9]+, #-4" -"mov x[0-9]+, #-4"
+  x & -4
+}
+
+// A one bit test branches on the bit: tbz or tbnz, no and and compare.
+fn bit1(x: Int) -> Int {
+  // arm64: "tb(n)?z x[0-9]+, #1," -"and x[0-9]+, x[0-9]+, #2"
+  if x & 2 == 0 {
+    return 7
+  }
+  9
+}
+
+// A test of several bits against zero is a tst, no and.
+fn low_bits(x: Int) -> Bool {
+  // arm64: "tst x[0-9]+, #12" -"and x[0-9]+, x[0-9]+, #12"
+  x & 12 != 0
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)}")
 }

@@ -28,7 +28,7 @@ count() {
 }
 for t in 0 1 2 3 4 5 6; do
 	for be in "$@"; do
-		bin=$(find "$OUT/build-$be" -type f -name "*.test" | head -1)
+		bin=$(find "$OUT/build-$be" -type f -name "*.test" ! -path "*.dSYM/*" | head -1)
 		best=""
 		for k in 1 2 3 4 5; do
 			n=$(count $t "$bin")

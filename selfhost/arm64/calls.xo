@@ -1766,6 +1766,24 @@ fn (var g: G) cell_addr(v: Int) -> Int {
   g.def1(false, "add $d0, $u0, #${LIST_HDR}", [b])
 }
 
+/// The base register and byte offset of the word a slot atomic names
+/// with a constant index (as cell_addr's), when the offset fits an ldr or
+/// str's scaled immediate; else (-1, 0).
+fn (var g: G) cell_base_off(v: Int) -> (Int, Int) {
+  let x = g.f.values[v]
+  let (k, kc) = g.const_int(x.args[1])
+  if !kc || k < 0 {
+    return (-1, 0)
+  }
+  let int_form = g.kind(g.vty(x.args[0])) == ssa.Kind.Int
+  let off = if int_form { 8 * k } else { LIST_HDR + 8 * k }
+  if off > 32760 {
+    return (-1, 0)
+  }
+  let l = g.word(x.args[0])
+  (if int_form { g.real(l) } else { l }, off)
+}
+
 /// Adds an atomic instruction defining one register: kept when its
 /// result is dead and never folded into a branch (keep); early, since a
 /// template may write its result before it reads every operand.
@@ -1818,6 +1836,21 @@ fn (var g: G) atomic(v: Int) {
   if name == "rt.slot_addr" {
     g.set(v, [g.cell_addr(v)])
     return
+  }
+  if (name == "rt.slot_load" || name == "rt.slot_store") && g.ord_arg(v, x.args.len() - 1) == 0 {
+    // relaxed with a constant index: a plain ldr or str at the base plus
+    // the word's offset, no add (2026-10-16: stdio's relaxed length
+    // store was an add and a str)
+    let (base, off) = g.cell_base_off(v)
+    if base >= 0 {
+      if name == "rt.slot_load" {
+        g.atomic_result(v, g.atomic_def("ldr $d0, [$u0, #${off}]", [base]))
+      } else {
+        g.store("str $u0, [$u1, #${off}]", [g.word(x.args[2]), base])
+        g.set(v, [])
+      }
+      return
+    }
   }
   let a = g.cell_addr(v)
   // the order of a read modify write: none, acquire, release, both

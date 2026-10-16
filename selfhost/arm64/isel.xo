@@ -771,6 +771,10 @@ fn (var g: G) compare(v: Int) -> Cmp {
       let (k, _) = g.pow2(g.arg(x, 1))
       return Cmp{text: "tst $u0, #${pow2i(k) - 1}", us: [g.word(g.arg(x, 0))], cond: int_cond(o)}
     }
+    if g.and_test(x) {
+      let (y, n) = g.and_imm(x)
+      return Cmp{text: "tst $u0, #${n}", us: [g.word(y)], cond: int_cond(o)}
+    }
   }
   match g.vkind(a) {
     Int | Bool => {
@@ -841,6 +845,9 @@ fn (var g: G) instr1(v: Int) {
         // given with its 32 bit add (add_w32)
         return
       }
+      if g.and_test(v) {
+        return // lowered by the comparison (tst)
+      }
       let ins = match x.op {
         And => "and"
         Or => "orr"
@@ -848,12 +855,12 @@ fn (var g: G) instr1(v: Int) {
       }
       var p = x.args[0]
       var q = x.args[1]
-      let (_, pc) = g.const_int(p)
+      let (_, pc) = g.logic_const(p)
       if pc {
         p = x.args[1]
         q = x.args[0]
       }
-      let (n, qc) = g.const_int(q)
+      let (n, qc) = g.logic_const(q)
       if qc && ones_run(n) {
         // a logical immediate (decision 0184)
         let w = g.word(p)
@@ -1119,9 +1126,10 @@ fn (var g: G) branch_op(v: Int) {
   if g.lazy[c] {
     let cmp = g.compare(c)
     inst = Inst{kind: K_CONDBR, text: cmp.text, us: cmp.us, cond: cmp.cond}
-    if cmp.text == "tst $u0, #1" && (cmp.cond == "eq" || cmp.cond == "ne") {
-      // test bit 0 and branch
-      inst = Inst{kind: K_CONDBR, us: cmp.us, cond: if cmp.cond == "eq" { "tbz" } else { "tbnz" }}
+    let k = tst_bit(cmp.text)
+    if k >= 0 && (cmp.cond == "eq" || cmp.cond == "ne") {
+      // test one bit and branch
+      inst = Inst{kind: K_CONDBR, us: cmp.us, cond: if cmp.cond == "eq" { "tbz" } else { "tbnz" }, bit: k}
     }
   } else {
     inst = Inst{kind: K_CONDBR, cond: "cbnz", us: [g.word(c)]}
@@ -1306,6 +1314,70 @@ fn (g: G) pow2(v: Int) -> (Int, Bool) {
 
 /// Whether v is `x % 2^k` used only by `== 0` or `!= 0` (lowered as a
 /// bit test of x).
+/// The value of an Int constant or of a negative literal (the SSA
+/// negates the constant: `x & -4`): (n, true), else (0, false).
+fn (g: G) logic_const(v: Int) -> (Int, Bool) {
+  let (n, c) = g.const_int(v)
+  if c {
+    return (n, true)
+  }
+  g.neg_const(v)
+}
+
+/// The bit k of a compare that tests one bit (`tst $u0, #2^k`), else -1.
+fn tst_bit(text: Str) -> Int {
+  let pre = "tst $u0, #"
+  if !text.starts_with(pre) {
+    return -1
+  }
+  let n = Int.parse(text[pre.len()..text.len()]) ?? 0
+  if n <= 0 || (n & (n - 1)) != 0 {
+    return -1
+  }
+  var k = 0
+  while (1 << k) != n {
+    k += 1
+  }
+  k
+}
+
+/// Whether v is `y & C` (an Int, its only use an Eq or Ne against 0, C a
+/// logical immediate): the comparison is then `tst y, #C` and the and is
+/// not made (compare; one bit is a tbz or tbnz in branch_op).
+fn (g: G) and_test(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.And || g.kind(x.ty) != ssa.Kind.Int || g.nuses[v] != 1 || g.has_val[v] {
+    return false
+  }
+  let (_, n) = g.and_imm(v)
+  if n == 0 {
+    return false
+  }
+  let u = g.users[v]
+  if u < 0 || !(g.op(u) is ssa.Op.Eq | ssa.Op.Ne) {
+    return false
+  }
+  var o = g.arg(u, 0)
+  if o == v {
+    o = g.arg(u, 1)
+  }
+  let (z, isc) = g.const_int(o)
+  isc && z == 0
+}
+
+/// The operand and the immediate of `y & C` with C a logical immediate:
+/// (y, C), else (-1, 0).
+fn (g: G) and_imm(v: Int) -> (Int, Int) {
+  let x = g.f.values[v]
+  for i in [1, 0] {
+    let (n, c) = g.logic_const(x.args[i])
+    if c && ones_run(n) {
+      return (x.args[1 - i], n)
+    }
+  }
+  (-1, 0)
+}
+
 fn (g: G) rem_test(v: Int) -> Bool {
   let x = g.f.values[v]
   if x.op != ssa.Op.Rem || g.kind(x.ty) != ssa.Kind.Int || g.nuses[v] != 1 {
@@ -1511,11 +1583,17 @@ fn (var g: G) shift(v: Int) {
   g.set(v, [r])
 }
 
-/// Whether n > 0 is a value every logical instruction takes as an
+/// Whether n is a value every logical instruction takes as an
 /// immediate: one run of ones, or the repetition of an element of 2 to
-/// 32 bits that is one run of ones, rotated (isel.go onesRun).
+/// 32 bits that is one run of ones, rotated (isel.go onesRun); a negative
+/// n too (2026-10-16: `x & -4` was a mov and an and).
 fn ones_run(n: Int) -> Bool {
-  if n <= 0 {
+  if n < 0 {
+    // a run of ones rotated past bit 63 (as -4 is): its complement is a
+    // run too; all ones is no immediate
+    return n != -1 && ones_run(-1 ^ n)
+  }
+  if n == 0 {
     return false
   }
   // the smallest element whose repetition is n
