@@ -24,7 +24,7 @@
 # server with the xo binary in $XO_BASE, for before and after runs, with
 # that binary's default (no arenas before decision 0066), and
 # "xo-base-arenas" the same with --arenas, "xo-base-llvm" with
-# --backend=llvm; "xo-arm64" and "xo-llvm" build
+# --backend=llvm and "xo-base-arm64" with --backend=arm64; "xo-arm64" and "xo-llvm" build
 # the Xo server with the native backends, decision 0074, which have no GC
 # so their GC columns are 0), XO,
 # PERF_OUT (keep binaries and logs there), GOGC passed through to the
@@ -77,6 +77,7 @@ for c in $configs; do
 	xo-arm64) "$xo" build --backend=arm64 -o "$out/srv-xo-arm64" "$here/xo" >/dev/null ;;
 	xo-llvm) "$xo" build --backend=llvm -o "$out/srv-xo-llvm" "$here/xo" >/dev/null ;;
 	xo-base-llvm) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --backend=llvm -o "$out/srv-xo-base-llvm" "$here/xo" >/dev/null ;;
+	xo-base-arm64) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --backend=arm64 -o "$out/srv-xo-base-arm64" "$here/xo" >/dev/null ;;
 	*) echo "unknown config $c" >&2; exit 2 ;;
 	esac
 done
