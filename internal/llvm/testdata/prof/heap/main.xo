@@ -1,0 +1,41 @@
+// The heap profile's test program (internal/llvm prof_test.go
+// TestProfHeap): a task holds 2000 strings of about 1000 bytes while main
+// allocates and drops 20000 lists of 100 Ints (about 40 MB), then main
+// exits the process with the strings still held, so they are in use when
+// the profile is written.
+fn keep(n: Int) -> List[Str] {
+  var xs: List[Str] = []
+  for i in 0..n {
+    xs.push("k".repeat(1000) + "${i}")
+  }
+  xs
+}
+
+fn churn(n: Int) -> Int {
+  var t = 0
+  for i in 0..n {
+    var l: List[Int] = []
+    for j in 0..100 {
+      l.push(i + j)
+    }
+    t += l.len()
+  }
+  t
+}
+
+fn main(os: Os) {
+  let ready = Chan[Int].new()
+  let hold = Chan[Int].new()
+  scope s {
+    s.spawn(fn() {
+      let k = keep(2000)
+      ready.send(k.len())
+      let _x = hold.recv()
+      os.stdio.println(k[1999])
+    })
+    let n = ready.recv() ?? 0
+    let t = churn(20000)
+    os.stdio.println("held ${n} churned ${t}")
+    os.proc.exit(0)
+  }
+}

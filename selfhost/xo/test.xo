@@ -113,8 +113,8 @@ struct TestOpts {
   /// 60 s); 0 for no limit.
   timeout: Duration = 60s
   /// --profile: XO_PROF for the test processes (not a property test's
-  /// cases), each writing xo-cpu-<pid>.pprof in the directory xo test
-  /// ran in (decision 0238).
+  /// cases), each writing xo-cpu-<pid>.pprof (and xo-heap-<pid>.pprof)
+  /// in the directory xo test ran in (decision 0238).
   profile: Str = ""
   /// That directory, absolute (the tests run in their own).
   profile_dir: Str = ""
@@ -725,7 +725,7 @@ fn prof_words(o: TestOpts) -> List[Str] {
   if o.profile.is_empty() {
     return []
   }
-  ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-${o.profile}-%p.pprof"]
+  ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-cpu-%p.pprof", "XO_PROF_HEAP_OUT=${o.profile_dir}/xo-heap-%p.pprof"]
 }
 
 fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {

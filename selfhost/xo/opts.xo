@@ -51,7 +51,7 @@ struct Opts {
   holes: Bool = false
   race: Bool = false
   /// --profile: the sampling profiles run and test take (decision 0238:
-  /// "cpu"; XO_PROF for the program), "" for none.
+  /// "cpu", "heap", or "cpu,heap"; XO_PROF for the program), "" for none.
   profile: Str = ""
   real: Bool = false
   record: Str = ""
@@ -86,7 +86,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (selfhost/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -392,10 +392,9 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
   } else if name == "record" {
     o.record = v
   } else if name == "profile" {
-    // decision 0238: the CPU profile (the heap profile is not in the
-    // runtime yet)
-    if v != "cpu" {
-      usage(os, o.cmd, "invalid value \"${v}\" for flag -profile: want cpu")
+    // decision 0238: the CPU profile, the heap profile, or both
+    if v != "cpu" && v != "heap" && v != "cpu,heap" && v != "heap,cpu" {
+      usage(os, o.cmd, "invalid value \"${v}\" for flag -profile: want cpu, heap, or cpu,heap")
     }
     o.profile = v
     o.topts.profile = v

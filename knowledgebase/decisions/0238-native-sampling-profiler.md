@@ -1,6 +1,6 @@
 # 0238: A sampling profiler in the native runtime
 
-Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile and Windows are not yet.
+Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile too, 2026-10-16 (xo-4); Windows is not yet.
 
 ## Context
 
@@ -89,6 +89,60 @@ selfhost/xo `--profile=cpu` for run and test.
 - Test: internal/llvm TestProfCPU (a recursive fib is the top function by
   flat samples on each native backend, go tool pprof reads the file,
   nothing is written without XO_PROF); linux/arm64 checked in Docker.
+
+## Implementation (heap profile, 2026-10-16)
+
+std/native/llrt/heapprof.xo (the sampler, static word 66), obj.xo
+(halloc, hfree, hresize), heapos.xo (two words more per heap record,
+the hook copied into a thread's new record), prof.xo (start_heap,
+finish_heap, the writer), unwind.xo prof_trace, cabi.xo heap_prof;
+selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
+
+- Not the counting hook item 4 named: alloc.alloc and alloc_fast make
+  no call (decision 0207's rule) and the single threaded fast paths are
+  inlined into generated code, so a check there would cost every
+  program. Starting the profile switches the program to one heap record
+  per thread (as cabi.xo heap_threads does before a second thread), and
+  only the threaded paths check the record's word H_PROF (1872, the
+  hook's address, 0 off): halloc counts down the record's bytes to the
+  next sample (H_PLEFT) inline and calls the hook when it ends; hfree
+  calls it only for a block whose header's size class carries the
+  sample mark (65536, set by the sampler, cleared before the free) or a
+  big block; hresize when a big block moved.
+- A sample: an exponential gap of mean XO_PROF_HEAP_RATE (Go's
+  MemProfileRate, 512 KiB; 1 samples every allocation; xorshift and a
+  5 term atanh logarithm, no allocation), the frames by the fault
+  unwinder's tables in an unwind record of the profiler's own per
+  thread (unwind.prof_trace: a raise may hold the thread's own
+  scratch), the address and size, in a table of 65,536 slots mapped at
+  start, and the address in an open addressed set (four entries per
+  slot, tombstones reused) so the free marks the slot freed. Nothing in
+  the hook allocates or locks.
+- The writer leaves the allocator's frames off each stack (obj, alloc,
+  heapos, cabi, the sampler, and the bare C ABI exports `heap_prof`
+  and `obj_*`), scales each sample by 1 / (1 - e^(-size/rate)) as Go
+  does, and writes alloc_objects, alloc_space, inuse_objects,
+  inuse_space (period: the rate in bytes) to XO_PROF_HEAP_OUT (else
+  XO_PROF_OUT without cpu, else xo-heap.pprof), and a text summary of
+  the top 30 by inuse_space and by alloc_space.
+- inuse is what is still allocated when the profile is written: at
+  main's end Xo has dropped main's values (0 in use but leaks); at
+  os.proc.exit the values of other tasks still held. A value whose last
+  use is before os.proc.exit is dropped before the call too.
+- Cost, bench/perf/alloc on the Mac (instructions,
+  bench/results/prof-heap-2026-10-16.md): off, single threaded paths
+  unchanged (0.996 to 1.009), threaded 1.023 (tasks: the check's two
+  instructions per allocation and free; conc spawn 1.028, the rest
+  within 1%). On at the default rate: a threaded program 1.09 (tasks);
+  a single threaded one 1.39 to 2.0 (mixed, small), the price of the
+  threaded heap (a thread local read per allocation on macOS, the
+  magazines) rather than of the samples (taking them: 1% of tasks'
+  instructions, 7% of mixed's).
+- Test: internal/llvm TestProfHeap (rate 1: the 2000 strings a task
+  holds at os.proc.exit are in use and the top function by inuse_space
+  is str_repeat, the churned lists are churn's; the default rate
+  estimates the 40 MB allocated within 2x; cpu,heap writes both; go
+  tool pprof reads it), arm64 and LLVM.
 
 ## Consequences
 

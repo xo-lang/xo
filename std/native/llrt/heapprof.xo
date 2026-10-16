@@ -1,0 +1,355 @@
+// The heap profile's sampler (decision 0238 item 4): XO_PROF=heap.
+// Allocations are sampled by bytes, as Go's runtime.MemProfileRate: each
+// heap record counts down the bytes to its next sample, an exponential
+// draw of mean XO_PROF_HEAP_RATE (512 KiB by default; 1 samples every
+// allocation), so an allocation of s bytes is sampled with probability
+// 1 - exp(-s / rate) and the writer (prof.xo) scales it back by its
+// inverse. A sample keeps the allocation's frames (unwind.xo prof_trace,
+// in an unwind record of the profiler's own per thread), its address
+// and size in a slot of a table mapped at start, and its address in an
+// open addressed set, so the free of a sampled block marks its slot
+// freed: the profile's inuse values.
+//
+// The allocator calls it through the heap record's word H_PROF (obj.xo
+// halloc, hfree and hresize, threaded paths only: profiling switches the
+// program to one heap record per thread at start, as a second thread
+// would, so the single threaded fast paths stay untouched and never see
+// it): with the profile off that word is 0 and the allocator only loads
+// it. Inside an allocation nothing here allocates or takes a lock: Int
+// words, the slot atomics, and the unwind walk.
+use native/llrt/linux
+use native/llrt/unwind
+use native/rt
+use native/sys_darwin
+
+/// rt.static_word: the heap profile's record (0: off).
+const W_HPROF = 66
+
+// The record (byte offsets): the slot table's address, its slot count,
+// the next free slot (atomic), the samples lost to a full table or
+// a thread past the pool (atomic), the address set's table and mask, the
+// rate, the samples whose address the full set could not keep (atomic),
+// the pool of unwind records, its size and next free record (atomic),
+// the start time.
+const R_SLOTS = 0
+const R_CAP = 8
+const R_NEXT = 16
+const R_LOST = 24
+const R_SET = 32
+const R_MASK = 40
+const R_RATE = 48
+const R_UNSET = 56
+const R_POOL = 64
+const R_POOL_N = 72
+const R_POOL_NEXT = 80
+const R_T0 = 88
+const R_SIZE = 128
+
+/// The deepest stack a sample keeps; a slot: the frame count (0 until the
+/// slot is written), the pcs, the block's address, its size, and whether
+/// it was freed (0 live, 1 freed, 2 not in the address set: never seen
+/// freed, so counted as allocated only).
+pub const DEPTH = 64
+pub const S_ADDR = 8 + 8 * DEPTH
+pub const S_SIZE = S_ADDR + 8
+pub const S_FREED = S_ADDR + 16
+pub const SLOT = S_ADDR + 24
+/// The table's slots: 65,536 samples (32 GiB allocated at the default
+/// rate) in 36 MB of address space, its pages touched only as samples
+/// come.
+const CAP = 65536
+/// The address set's entries (slot + 1, 0 empty, -1 a freed one's, which
+/// an insert reuses): four per slot, so probes stay short.
+const SET_N = 262144
+const PROBES = 64
+/// The threads that can be sampled: an unwind record each, claimed on a
+/// thread's first sample.
+const POOL_N = 128
+/// The bytes of a thread's state: its unwind record, then its random
+/// state.
+const T_RNG = unwind.PROF_RECORD
+const T_SIZE = unwind.PROF_RECORD + 8
+
+/// The mark of a sampled block's size class in its header (classes are
+/// 1 to 72; obj.xo hfree_prof clears it before the block is freed).
+pub const MARK = 65536
+
+/// The heap record's words of the profile (heapos.xo H_PROF, H_PLEFT,
+/// H_PSTATE): the hook's address (cabi.xo heap_prof; 0 off, copied into
+/// a thread's new record), the bytes to the record's next sample, the
+/// record's thread state (0 none yet, 1 none to be had).
+const H_PROF = 1872
+const H_PLEFT = 10344
+const H_PSTATE = 10352
+
+/// The thread local word of the calling thread's heap record (sched.xo
+/// TLS_HEAP).
+const TLS_HEAP = 3
+
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+const ACQ_REL = 3
+
+fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
+
+fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
+
+/// Anonymous memory of n bytes (zeroed), or 0.
+fn map(n: Int) -> Int {
+  let m = match target.os {
+    TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+  if m == 0 || (m < 0 && m > -4096) {
+    return 0
+  }
+  m
+}
+
+/// Maps the table, the address set, and the unwind records, and turns
+/// the profile on for heap record h (the caller's, the only one yet:
+/// prof.xo start, after switching the program to a record per thread)
+/// with hook (cabi.xo heap_prof's address). False when memory or the
+/// unwind tables are missing (nothing is on then).
+pub fn start(h: Int, hook: Int, rate: Int) -> Bool {
+  let r = map(R_SIZE)
+  let slots = map(CAP * SLOT)
+  let set = map(SET_N * 8)
+  let pool = map(POOL_N * T_SIZE)
+  if r == 0 || slots == 0 || set == 0 || pool == 0 {
+    return false
+  }
+  for i in 0..POOL_N {
+    if !unwind.prof_init(pool + i * T_SIZE) {
+      return false
+    }
+  }
+  st(r, R_SLOTS, slots)
+  st(r, R_CAP, CAP)
+  st(r, R_SET, set)
+  st(r, R_MASK, SET_N - 1)
+  st(r, R_RATE, rate)
+  st(r, R_POOL, pool)
+  st(r, R_POOL_N, POOL_N)
+  rt.slot_store(rt.static_word(W_HPROF), 0, r, RELEASE)
+  st(h, H_PLEFT, 0)
+  st(h, H_PROF, hook)
+  true
+}
+
+/// The profile's record (0: off or stopped).
+pub fn record() -> Int { rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE) }
+
+/// Stops the sampling: the record, which the writer reads (a sample in
+/// progress on another thread may still finish its slot; one not yet
+/// started finds the profile off).
+pub fn stop() -> Int { rt.slot_swap(rt.static_word(W_HPROF), 0, 0, ACQ_REL) }
+
+/// The allocator's hook (cabi.xo heap_prof, through H_PROF): with b >= 0,
+/// block a of b bytes ended the calling thread's countdown: a sample,
+/// and the next countdown; with b = -1, block a is being freed: its
+/// slot, if it was sampled, is marked freed (the slot, else -1); with
+/// b <= -2, block a is where the sampled block of slot -2 - b moved (a
+/// big block's resize). Returns the slot or 0.
+pub fn hook(a: Int, b: Int) -> Int {
+  let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
+  if b >= 0 {
+    let h = rt.tlocal_get(TLS_HEAP)
+    if r == 0 {
+      // stopped: no more samples from this record
+      if h != 0 {
+        st(h, H_PLEFT, 9223372036854775807)
+      }
+      return 0
+    }
+    sample(r, h, a, b)
+    return 0
+  }
+  if r == 0 {
+    return -1
+  }
+  if b == -1 {
+    return forget(r, a)
+  }
+  let k = rt.int_wrap(1, -2, b)
+  let p = rt.int_wrap(0, ld(r, R_SLOTS), rt.int_wrap(2, k, SLOT))
+  st(p, S_ADDR, a)
+  if !remember(r, a, k) {
+    st(p, S_FREED, 2)
+  }
+  0
+}
+
+/// Records block a of n bytes on heap record h (its thread's) and draws
+/// h's next countdown. A thread's first call only draws (as Go's first
+/// sample point is drawn, not taken), except at rate 1.
+fn sample(r: Int, h: Int, a: Int, n: Int) {
+  if h == 0 {
+    return
+  }
+  let rate = ld(r, R_RATE)
+  var t = ld(h, H_PSTATE)
+  if t == 1 {
+    st(h, H_PLEFT, 9223372036854775807)
+    return
+  }
+  var first = false
+  if t == 0 {
+    let i = rt.slot_add(r, R_POOL_NEXT / 8, 1, ACQ_REL)
+    if i >= ld(r, R_POOL_N) {
+      // no record left for this thread: it is not sampled
+      let _l = rt.slot_add(r, R_LOST / 8, 1, RELAXED)
+      st(h, H_PSTATE, 1)
+      st(h, H_PLEFT, 9223372036854775807)
+      return
+    }
+    t = rt.int_wrap(0, ld(r, R_POOL), rt.int_wrap(2, i, T_SIZE))
+    // the random state: the record's address and the clock, never 0
+    st(t, T_RNG, (h ^ rt.int_wrap(2, i, 40503)) | 1)
+    st(h, H_PSTATE, t)
+    first = rate > 1
+  }
+  st(h, H_PLEFT, next_gap(t, rate))
+  if first {
+    return
+  }
+  let k = rt.slot_add(r, R_NEXT / 8, 1, ACQ_REL)
+  if k >= ld(r, R_CAP) {
+    let _l = rt.slot_add(r, R_LOST / 8, 1, RELAXED)
+    return
+  }
+  let p = rt.int_wrap(0, ld(r, R_SLOTS), rt.int_wrap(2, k, SLOT))
+  let d = unwind.prof_trace(t, p + 8, DEPTH)
+  st(p, S_ADDR, a)
+  st(p, S_SIZE, n)
+  if !remember(r, a, k) {
+    st(p, S_FREED, 2)
+  } else {
+    // a block of a size class is marked in its header, so only its free
+    // looks it up (obj.xo hfree_prof); a big block's (a negative size)
+    // free always does
+    let c = ld(a, -8)
+    if c > 0 {
+      st(a, -8, c | MARK)
+    }
+  }
+  // the count last: a slot read with 0 is skipped
+  rt.slot_store(p, 0, if d > 0 { d } else { -1 }, RELEASE)
+}
+
+/// The bytes to the next sample: an exponential draw of mean rate (1 at
+/// rate 1), at least 1.
+fn next_gap(t: Int, rate: Int) -> Int {
+  if rate <= 1 {
+    return 1
+  }
+  // xorshift64
+  var x = ld(t, T_RNG)
+  x = x ^ rt.int_wrap(3, x, 13)
+  x = x ^ rt.int_wrap(4, x, 7)
+  x = x ^ rt.int_wrap(3, x, 17)
+  st(t, T_RNG, x)
+  // u in (0, 1]: the top 53 bits plus 1, over 2^53
+  let u = Float(rt.int_wrap(0, rt.int_wrap(4, x, 11), 1)) / 9007199254740992.0
+  let g = -ln(u) * Float(rate)
+  if g < 1.0 {
+    return 1
+  }
+  if g > 4611686018427387904.0 {
+    return 4611686018427387904
+  }
+  Int(g)
+}
+
+/// The natural logarithm of x in (0, 1]: x = m * 2^e with m in [1, 2),
+/// ln m by the atanh series (5 terms: about 1e-7 relative, plenty for a
+/// sampling interval).
+fn ln(x: Float) -> Float {
+  var m = x
+  var e = 0.0
+  while m < 1.0 {
+    m = m * 2.0
+    e = e - 1.0
+  }
+  let t = (m - 1.0) / (m + 1.0)
+  let t2 = t * t
+  let s = t * (1.0 + t2 * (1.0 / 3.0 + t2 * (1.0 / 5.0 + t2 * (1.0 / 7.0 + t2 / 9.0))))
+  2.0 * s + e * 0.6931471805599453
+}
+
+/// The address set's first probe for a.
+fn home(r: Int, a: Int) -> Int {
+  // Fibonacci hashing of the block address (16 byte aligned)
+  rt.int_wrap(4, rt.int_wrap(2, rt.int_wrap(4, a, 4), -7046029254386353131), 40) & ld(r, R_MASK)
+}
+
+/// Adds a (sampled into slot k) to the address set: false when its
+/// probes found no empty entry.
+fn remember(r: Int, a: Int, k: Int) -> Bool {
+  let set = ld(r, R_SET)
+  let mask = ld(r, R_MASK)
+  var i = home(r, a)
+  for _ in 0..PROBES {
+    // an empty entry, or a freed block's tombstone (a block address is
+    // freed and handed out again often: without reuse its tombstones
+    // would fill its probes)
+    let e = rt.slot_load(set, i, RELAXED)
+    if e <= 0 && rt.slot_cas(set, i, e, rt.int_wrap(0, k, 1), ACQ_REL) {
+      return true
+    }
+    i = rt.int_wrap(0, i, 1) & mask
+  }
+  let _u = rt.slot_add(r, R_UNSET / 8, 1, RELAXED)
+  false
+}
+
+/// Block a is being freed: when the set holds it, its entry becomes a
+/// tombstone and its slot freed. The slot, else -1. The block is still
+/// allocated here, so no other thread can be sampling the same address.
+fn forget(r: Int, a: Int) -> Int {
+  let set = ld(r, R_SET)
+  let mask = ld(r, R_MASK)
+  let slots = ld(r, R_SLOTS)
+  var i = home(r, a)
+  for _ in 0..PROBES {
+    let e = rt.slot_load(set, i, ACQUIRE)
+    if e == 0 {
+      return -1
+    }
+    if e > 0 {
+      let k = rt.int_wrap(1, e, 1)
+      let p = rt.int_wrap(0, slots, rt.int_wrap(2, k, SLOT))
+      if ld(p, S_ADDR) == a && ld(p, S_FREED) == 0 && rt.slot_cas(set, i, e, -1, ACQ_REL) {
+        st(p, S_FREED, 1)
+        return k
+      }
+    }
+    i = rt.int_wrap(0, i, 1) & mask
+  }
+  -1
+}
+
+// The writer's view of a stopped profile (prof.xo finish_heap).
+
+/// The table's address.
+pub fn slots(r: Int) -> Int { ld(r, R_SLOTS) }
+
+/// The slots taken (at most the table's).
+pub fn count(r: Int) -> Int {
+  let n = ld(r, R_NEXT)
+  if n > ld(r, R_CAP) { ld(r, R_CAP) } else { n }
+}
+
+/// The samples lost: a full table, threads past the pool.
+pub fn lost(r: Int) -> Int { ld(r, R_LOST) }
+
+/// The samples the full address set could not keep (allocated only).
+pub fn unset(r: Int) -> Int { ld(r, R_UNSET) }
+
+/// The sampling rate in bytes.
+pub fn rate(r: Int) -> Int { ld(r, R_RATE) }
+
+/// The program's text, (start, end).
+pub fn text(r: Int) -> (Int, Int) { unwind.prof_text(ld(r, R_POOL)) }

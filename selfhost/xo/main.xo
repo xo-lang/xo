@@ -204,7 +204,7 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo run: --record needs the Go backend")
       os.proc.exit(2)
     }
-    // --profile: xo-cpu.pprof in the working directory
+    // --profile: xo-cpu.pprof, xo-heap.pprof in the working directory
     let pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}"] }
     os.proc.exit(exec_binary(os, nb.bin, o.prog_args, pe))
   }

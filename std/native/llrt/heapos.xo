@@ -319,6 +319,9 @@ const H_NFREE = 664
 const H_NEXT = 2136
 /// Whether the record counts (alloc.xo COUNT).
 const H_COUNT = 1864
+/// The heap profile's hook (heapprof.xo, obj.xo H_PROF): a thread's new
+/// record copies it.
+const H_PROF = 1872
 
 /// The thread local word of the calling thread's heap record (sched.xo
 /// TLS_HEAP).
@@ -332,10 +335,11 @@ const W_HSIZE = 29
 
 /// A heap record's size (alloc.xo's and obj.xo's fields, then the
 /// real-time section's queue of 256 entries of 32 bytes: xo_rt.c's
-/// xo_heap until decision 0233 step 2), the size classes' limit
+/// xo_heap until decision 0233 step 2; then the heap profile's countdown
+/// and thread state, heapprof.xo H_PLEFT, H_PSTATE), the size classes' limit
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
 /// per size class, 1 to 72).
-const H_SIZE = 2152 + 32 * 256
+const H_SIZE = 2152 + 32 * 256 + 16
 const MID_MAX = 262144
 const NCLASS1 = 73
 
@@ -396,6 +400,7 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
+  rt.mem_store(h, H_PROF, rt.mem_load(first, H_PROF, 8), 8)
   rt.mem_store(h, H_NEXT, first, 8)
   rt.mem_store(w, 0, h, 8)
   hlock_give()

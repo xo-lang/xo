@@ -245,6 +245,7 @@ fn prefetch(a: Int)
 ///   61 std/native/llrt/entry.xo: on_overflow's WriteFile count (was the C's services record, decision 0234)
 ///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
 ///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (the runtime's records, rt.heap_large, on every build; the C library's malloc on XO_NOLIBC builds)
+///   66 std/native/llrt/heapprof.xo: the heap profile's record (decision 0238), 0 when off
 ///   64-65 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), and XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239)
 fn static_word(k: Int) -> Int
 

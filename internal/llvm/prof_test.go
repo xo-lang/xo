@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +97,144 @@ func TestProfCPU(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProfHeap: XO_PROF=heap (decision 0238 item 4) on each native
+// backend. At rate 1 every allocation is a sample: the 2000 strings a task
+// holds at the exit are in use (str_repeat's), the lists main churned are
+// allocated (churn's); at the default rate the estimate of the bytes
+// allocated is near the program's (about 40 MB); cpu,heap writes both;
+// go tool pprof reads it.
+func TestProfHeap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the heap profile needs the unwind tables' walk (darwin, linux)")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "heap")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			bin := res.Binaries[xotool.Host()]
+			run := func(env ...string) (string, string) {
+				dir := t.TempDir()
+				cmd := exec.Command(bin)
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), env...)
+				got, err := runCombined(cmd, 2*time.Minute)
+				if err != nil || !strings.Contains(got, "held 2000 churned 2000000") {
+					t.Fatalf("run %v: %v\n%s", env, err, got)
+				}
+				return dir, got
+			}
+			// rate 1: every allocation
+			dir, got := run("XO_PROF=heap", "XO_PROF_HEAP_RATE=1")
+			if !strings.Contains(got, "heap samples in ") {
+				t.Fatalf("output: %s", got)
+			}
+			txt, err := os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			inuse, objs := heapTotal(string(txt), "in use: ")
+			if inuse < 1900000 || inuse > 2200000 || objs < 2000 || objs > 2100 {
+				t.Fatalf("in use %d bytes in %d objects, want about 2 MB in 2000:\n%s", inuse, objs, txt)
+			}
+			if f := heapTop(string(txt), "inuse_space"); !strings.Contains(f, "str_repeat") {
+				t.Fatalf("top function by inuse_space %q, want raw.str_repeat:\n%s", f, txt)
+			}
+			if !strings.Contains(heapTable(string(txt), "alloc_space"), "churn") {
+				t.Fatalf("no churn by alloc_space:\n%s", txt)
+			}
+			// the default rate (512 KiB): an estimate
+			dir, _ = run("XO_PROF=heap")
+			txt, err = os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a, _ := heapTotal(string(txt), "allocated: "); a < 20000000 || a > 80000000 {
+				t.Fatalf("allocated %d bytes, want about 40 MB:\n%s", a, txt)
+			}
+			if gobin, err := exec.LookPath("go"); err == nil {
+				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-sample_index=alloc_space", filepath.Join(dir, "xo-heap.pprof")).CombinedOutput()
+				if err != nil || !strings.Contains(string(p), "churn") {
+					t.Fatalf("go tool pprof -top: %v\n%s", err, p)
+				}
+			}
+			// cpu,heap: both profiles, each at its own path
+			dir, _ = run("XO_PROF=cpu,heap", "XO_PROF_OUT=c.pprof", "XO_PROF_HEAP_OUT=h.pprof")
+			for _, f := range []string{"c.pprof", "c.txt", "h.pprof", "h.txt"} {
+				if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+					t.Fatalf("cpu,heap: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// heapTotal reads "<label>N.NNMB in K objects" of a heap summary as bytes
+// (to the summary's two decimals) and objects.
+func heapTotal(txt, label string) (int64, int64) {
+	i := strings.Index(txt, label)
+	if i < 0 {
+		return -1, -1
+	}
+	var num float64
+	var unit string
+	var objs int64
+	s := txt[i+len(label):]
+	j := 0
+	for j < len(s) && (s[j] == '.' || (s[j] >= '0' && s[j] <= '9')) {
+		j++
+	}
+	fmt.Sscan(s[:j], &num)
+	k := j
+	for k < len(s) && s[k] != ' ' {
+		k++
+	}
+	unit = s[j:k]
+	fmt.Sscanf(s[k:], " in %d objects", &objs)
+	mult := map[string]float64{"B": 1, "kB": 1024, "MB": 1 << 20, "GB": 1 << 30}[unit]
+	return int64(num * mult), objs
+}
+
+// heapTable is the "top 30 by <kind>" table of a heap summary.
+func heapTable(txt, kind string) string {
+	i := strings.Index(txt, "top 30 by "+kind+"\n")
+	if i < 0 {
+		return ""
+	}
+	s := txt[i:]
+	if j := strings.Index(s[1:], "\ntop 30 by "); j >= 0 {
+		s = s[:j+1]
+	}
+	return s
+}
+
+// heapTop is the function of the first row of the "top 30 by <kind>"
+// table of a heap summary.
+func heapTop(txt, kind string) string {
+	lines := strings.Split(heapTable(txt, kind), "\n")
+	if len(lines) < 3 {
+		return ""
+	}
+	f := strings.Fields(lines[2])
+	if len(f) == 0 {
+		return ""
+	}
+	return f[len(f)-1]
 }
 
 // topFlat is the function of the first row of the summary's "top 30 by

@@ -57,3 +57,14 @@ every Mutex.with saved nine registers. Moving the message into
 room for one) that calls `held_add_slow` otherwise, took ctx's `mutex`
 workload on arm64 from 1.121G to 1.000G instructions. `held_del`'s
 single-entry fast path took it to 0.972G (main: 0.934G).
+
+Seen again (2026-10-16, the heap profile, decision 0238): obj.xo `hfree`
+with `if hk != 0 { hfree_prof(h, p, hk); return }` before its
+`alloc.free_mt` saved five registers on every free, single threaded
+ones too: a unit call followed by `return` is not emitted as a tail
+call, and once the call was the function's last statement the small
+`hfree_prof` was inlined back, leaving its own call (the hook through
+rt.call_c2) mid function. bench/perf/alloc tasks took 1.061 times the
+instructions with the profile off. Fix: the rare call last, and the
+helper kept out of line with a call of itself on a path never taken
+(1.026, the two instructions of the check itself).

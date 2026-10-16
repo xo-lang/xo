@@ -25,6 +25,7 @@ use native/llrt/entry
 use native/llrt/fault
 use native/llrt/fsops
 use native/llrt/heapos
+use native/llrt/heapprof
 use native/llrt/libcmem
 use native/llrt/mutex
 use native/llrt/num
@@ -458,6 +459,10 @@ fn on_prof(sig: Int, info: Int, uc: Int) { prof.on_signal(uc) }
 /// Writes the sampling profile now (process.xo exit: os.proc.exit does
 /// not return to entry.xo main's end).
 fn prof_finish() { prof.finish() }
+
+/// The heap profile's hook (heapprof.xo hook): the allocator calls it
+/// through the heap record's H_PROF word.
+fn heap_prof(a: Int, b: Int) -> Int { heapprof.hook(a, b) }
 
 /// Windows' console handler that entry.xo installs (SetConsoleCtrlHandler:
 /// the event, a DWORD; 1 when handled).
