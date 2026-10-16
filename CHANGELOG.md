@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: thread locals inline on Linux (rt.tlocal_get, tlocal_set,
+  tlocal_addr: tpidr_el0 plus xo_tlocal's local exec offset, then the
+  slot, instead of a call of xo_tlocal_get), and rt.mem_set of zeros
+  with a constant length up to 512 bytes as stores of xzr (stp pairs)
+  instead of a memset call, on every OS. callgrind linux/arm64,
+  XO_THREADS=1: conc pingpong 229.7M to 219.2M instructions (0.954),
+  spawn 413.4M to 388.4M (0.939; the C runtime's was 400.7M). Mac
+  spawn 0.99; darwin's thread locals still call the TLV getter.
+
 - macOS: the TLS client loads the Security framework with dlopen at its
   first certificate verification instead of every https program linking
   Security and CoreFoundation: an https client's launch drops from 28.5M

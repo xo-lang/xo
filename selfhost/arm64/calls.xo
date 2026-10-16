@@ -1056,6 +1056,35 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" => {
+      // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
+      // local exec offset, then the slot; xo_tlocal_get's call, its
+      // moves, and its clobbers cost the scheduler's pingpong 9M
+      // instructions (sched.xo still defines xo_tlocal)
+      g.sched_ref = true
+      let base = g.def1(false, "mrs $d0, tpidr_el0\nadd $d0, $d0, :tprel_hi12:xo_tlocal\nadd $d0, $d0, :tprel_lo12_nc:xo_tlocal", [])
+      let op = aux_str(x.aux)
+      if op == "rt.tlocal_addr" {
+        g.set(v, [base])
+      } else {
+        let (k, kok) = g.const_int(x.args[0])
+        let konst = kok && k >= 0 && k < 4096
+        if op == "rt.tlocal_get" {
+          if konst {
+            g.set(v, [g.def1(false, "ldr $d0, [$u0, #${k * 8}]", [base])])
+          } else {
+            g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1, lsl #3]", [base, g.word(x.args[0])])])
+          }
+        } else {
+          if konst {
+            let _i = g.plain("str $u1, [$u0, #${k * 8}]", [], [base, g.word(x.args[1])])
+          } else {
+            let _i = g.plain("str $u2, [$u0, $u1, lsl #3]", [], [base, g.word(x.args[0]), g.word(x.args[1])])
+          }
+          g.set(v, [])
+        }
+      }
+    }
     "rt.stack_switch" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" => {
       // calls of the functions sched.xo emits (decision 0212)
       g.sched_ref = true
@@ -1164,6 +1193,35 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0]), g.word(x.args[1])])
       g.set(v, [])
     }
+    "rt.mem_set" if g.zero_inline(x) => {
+      // a known small length of zeros: stores of xzr, no call
+      // (2026-10-16: the scheduler's 320 byte context, 14M instructions
+      // of memset in spawn)
+      let (n, _) = g.const_int(x.args[2])
+      var lines: List[Str] = []
+      var off = 0
+      while off + 16 <= n {
+        lines.push("stp xzr, xzr, [$u0, #${off}]")
+        off += 16
+      }
+      if off + 8 <= n {
+        lines.push("str xzr, [$u0, #${off}]")
+        off += 8
+      }
+      if off + 4 <= n {
+        lines.push("str wzr, [$u0, #${off}]")
+        off += 4
+      }
+      if off + 2 <= n {
+        lines.push("strh wzr, [$u0, #${off}]")
+        off += 2
+      }
+      if off < n {
+        lines.push("strb wzr, [$u0, #${off}]")
+      }
+      g.store(lines.join("\n"), [g.real(g.word(x.args[0]))])
+      g.set(v, [])
+    }
     "rt.mem_copy" | "rt.mem_move" | "rt.mem_set" => {
       let fname = match name {
         "rt.mem_copy" => "memcpy"
@@ -1192,6 +1250,14 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     _ => return false
   }
   true
+}
+
+/// Whether rt.mem_set x sets a constant length of at most 512 bytes
+/// (stp's reach) to zero, which mem_set then writes as stores of xzr.
+fn (g: G) zero_inline(x: ssa.Value) -> Bool {
+  let (b, bok) = g.const_int(x.args[1])
+  let (n, nok) = g.const_int(x.args[2])
+  bok && nok && b & 255 == 0 && n > 0 && n <= 512
 }
 
 // Long multiplies (isel.go, decision 0208): the product of two values
