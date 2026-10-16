@@ -681,6 +681,35 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.
   for pc in locs {
     fr.push(func_of(syms, pc - 1, names))
   }
+  // each location's frames, innermost first: the callees inlined there
+  // (dwline inline_chain, .debug_info), then the function holding it;
+  // their functions (indexes of names, inlined callees added) and lines
+  var cf: List[List[Int]] = []
+  var cfile: List[List[Str]] = []
+  var cline: List[List[Int]] = []
+  for (li, pc) in locs.indexed() {
+    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr[li]])
+    var fi: List[Int] = []
+    var ff: List[Str] = []
+    var ll: List[Int] = []
+    for fm in fs {
+      fi.push(name_index(fm.name, names))
+      ff.push(fm.file)
+      ll.push(fm.line)
+    }
+    fi.push(fr[li])
+    ff.push(pf)
+    ll.push(pl)
+    cf.push(fi)
+    cfile.push(ff)
+    cline.push(ll)
+  }
+  // xo_entry (LLVM inlines the program's main into it) is main
+  for i in 0..names.len() {
+    if names[i] == "xo_entry" {
+      names[i] = "main"
+    }
+  }
   var flat: List[Int] = []
   var cum: List[Int] = []
   var seen: List[Int] = []
@@ -705,55 +734,47 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.
     }
     for j in 0..d {
       let li = loc_index(locs, frame_pc(p, j))
-      let f = fr[li]
       lany[li] = lany[li] + 1
       if j == 0 {
-        flat[f] = flat[f] + 1
+        // the innermost frame's function: an inlined callee's when the
+        // pc is in one
+        let f0 = cf[li][0]
+        flat[f0] = flat[f0] + 1
         lleaf[li] = lleaf[li] + 1
       }
-      if seen[f] != k {
-        seen[f] = k
-        cum[f] = cum[f] + 1
+      for f in cf[li] {
+        if seen[f] != k {
+          seen[f] = k
+          cum[f] = cum[f] + 1
+        }
       }
     }
     stacks.push(k)
   }
-  // each location's file and line (the call's, at pc - 1, as pprof
-  // reads every location as a return address), and each function's
-  // hottest line: its most frequent leaf pc, else its most frequent call
-  var lfile: List[Str] = []
-  var lline: List[Int] = []
-  for pc in locs {
-    let (f, l) = dwline.find(lines, pc - 1)
-    lfile.push(f)
-    lline.push(l)
-  }
+  // each function's hottest line: its most frequent leaf frame, else its
+  // most frequent frame anywhere
   var hot: List[Str] = []
   var hot_n: List[Int] = []
   for _ in 0..names.len() {
     hot.push("")
     hot_n.push(0)
   }
-  for (li, pc) in locs.indexed() {
-    if lleaf[li] > 0 && lleaf[li] > hot_n[fr[li]] {
-      let s = dwline.short(lines, pc - 1)
-      if !s.is_empty() {
-        hot[fr[li]] = s
-        hot_n[fr[li]] = lleaf[li]
-      }
+  for li in 0..locs.len() {
+    let f = cf[li][0]
+    if lleaf[li] > 0 && lleaf[li] > hot_n[f] && !cfile[li][0].is_empty() {
+      hot[f] = "${base_name(cfile[li][0])}:${cline[li][0]}"
+      hot_n[f] = lleaf[li]
     }
   }
-  for (li, pc) in locs.indexed() {
-    let f = fr[li]
-    if flat[f] == 0 && lany[li] > hot_n[f] {
-      let s = dwline.short(lines, pc - 1)
-      if !s.is_empty() {
-        hot[f] = s
+  for li in 0..locs.len() {
+    for (q, f) in cf[li].indexed() {
+      if flat[f] == 0 && lany[li] > hot_n[f] && !cfile[li][q].is_empty() {
+        hot[f] = "${base_name(cfile[li][q])}:${cline[li][q]}"
         hot_n[f] = lany[li]
       }
     }
   }
-  let pb = pprof(ring, stacks, locs, fr, names, lfile, lline, period, dur)
+  let pb = pprof(ring, stacks, locs, cf, names, cfile, cline, period, dur)
   let ok = write_file(out, gzip(pb))
   let txt = text_path(out)
   let summary = top_text(flat, cum, names, hot, total, lost, dur, hz, period)
@@ -763,6 +784,18 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.
   } else {
     stdio.eprint("xo profile: could not write ${out}", true)
   }
+}
+
+/// The index of function name in names, added once (an inlined
+/// callee's: the same as its own symbol's when it also has one).
+fn name_index(name: Str, var names: List[Str]) -> Int {
+  for (i, n) in names.indexed() {
+    if n == name {
+      return i
+    }
+  }
+  names.push(name)
+  names.len() - 1
 }
 
 /// The function of pc: the program's symbol holding it, else the name of
@@ -1024,7 +1057,7 @@ fn loc_index(locs: List[Int], pc: Int) -> Int {
 /// The Profile message: every sample its own (pprof sums equal stacks);
 /// a location per distinct pc with one line naming its function; a
 /// function per symbol used.
-fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: List[Str], lfile: List[Str], lline: List[Int], period: Int, dur: Int) -> Bytes {
+fn pprof(ring: Int, stacks: List[Int], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]], period: Int, dur: Int) -> Bytes {
   var strs: List[Str] = ["", "samples", "count", "cpu", "nanoseconds"]
   var b = BytesBuilder.new()
   fbytes(b, 1, value_type(1, 2))
@@ -1044,7 +1077,7 @@ fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: Li
     fbytes(smp, 2, vals.freeze())
     fbytes(b, 2, smp.freeze())
   }
-  pprof_tail(b, strs, locs, fr, names, lfile, lline)
+  pprof_tail(b, strs, locs, cf, names, cfile, cline)
   fint(b, 10, dur)
   fbytes(b, 11, value_type(3, 4))
   fint(b, 12, period)
@@ -1052,10 +1085,11 @@ fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: Li
 }
 
 /// The Profile's locations, functions, and string table (after its
-/// samples): a location per distinct pc, its line naming the function of
-/// its call; a function (id: its index + 1) per name used; strs, with the
-/// names and files added, last.
-fn pprof_tail(var b: BytesBuilder, var strs: List[Str], locs: List[Int], fr: List[Int], names: List[Str], lfile: List[Str], lline: List[Int]) {
+/// samples): a location per distinct pc, a line per frame of its call
+/// (cf, cfile, cline: innermost first, inlined callees before the
+/// function); a function (id: its index + 1) per name used; strs, with
+/// the names and files added, last.
+fn pprof_tail(var b: BytesBuilder, var strs: List[Str], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]]) {
   var used: List[Bool] = []
   var ffile: List[Str] = []
   for _ in 0..names.len() {
@@ -1063,19 +1097,23 @@ fn pprof_tail(var b: BytesBuilder, var strs: List[Str], locs: List[Int], fr: Lis
     ffile.push("")
   }
   for i in 0..locs.len() {
-    used[fr[i]] = true
-    if ffile[fr[i]].is_empty() {
-      ffile[fr[i]] = lfile[i]
-    }
-    var line = BytesBuilder.new()
-    fint(line, 1, fr[i] + 1)
-    if lline[i] > 0 {
-      fint(line, 2, lline[i])
-    }
     var loc = BytesBuilder.new()
     fint(loc, 1, i + 1)
     fint(loc, 3, locs[i])
-    fbytes(loc, 4, line.freeze())
+    // a line per frame, innermost first (pprof: the last is the
+    // function the code is in, the others inlined into it)
+    for (q, f) in cf[i].indexed() {
+      used[f] = true
+      if ffile[f].is_empty() {
+        ffile[f] = cfile[i][q]
+      }
+      var line = BytesBuilder.new()
+      fint(line, 1, f + 1)
+      if cline[i][q] > 0 {
+        fint(line, 2, cline[i][q])
+      }
+      fbytes(loc, 4, line.freeze())
+    }
     fbytes(b, 4, loc.freeze())
   }
   for f in 0..names.len() {
@@ -1205,12 +1243,21 @@ pub fn trace_text(pcs: List[Int]) -> Str {
       continue
     }
     started = true
-    let at = dwline.short(lines, pc - 1)
+    // the callees inlined at the call, innermost first, then the
+    // function itself at the outermost call's line
+    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, name)
+    for fm in fs {
+      if fm.file.is_empty() {
+        b.write("  ${fm.name} [inlined]\n")
+      } else {
+        b.write("  ${fm.name} (${base_name(fm.file)}:${fm.line}) [inlined]\n")
+      }
+    }
     let shown = if name == "xo_entry" { "main" } else { name }
-    if at.is_empty() {
+    if pf.is_empty() {
       b.write("  ${shown}\n")
     } else {
-      b.write("  ${shown} (${at})\n")
+      b.write("  ${shown} (${base_name(pf)}:${pl})\n")
     }
     // the program's main (LLVM inlines it into xo_entry)
     if name == "main" || name == "xo_entry" {
@@ -1357,17 +1404,32 @@ fn finish_heap() {
   // and lines
   var locs: List[Int] = []
   var fr: List[Int] = []
-  var lfile: List[Str] = []
-  var lline: List[Int] = []
+  var cf: List[List[Int]] = []
+  var cfile: List[List[Str]] = []
+  var cline: List[List[Int]] = []
   for (i, pc) in pcs0.indexed() {
     if !used[i] {
       continue
     }
     locs.push(pc)
     fr.push(fr0[i])
-    let (f, l) = dwline.find(lines, pc - 1)
-    lfile.push(f)
-    lline.push(l)
+    // the callees inlined at the call, then the function (as the cpu
+    // profile's frames)
+    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr0[i]])
+    var fi: List[Int] = []
+    var ff: List[Str] = []
+    var ll: List[Int] = []
+    for fm in fs {
+      fi.push(name_index(fm.name, names))
+      ff.push(fm.file)
+      ll.push(fm.line)
+    }
+    fi.push(fr0[i])
+    ff.push(pf)
+    ll.push(pl)
+    cf.push(fi)
+    cfile.push(ff)
+    cline.push(ll)
   }
   // pprof: Go's four sample types, the period the rate in bytes
   var strs: List[Str] = ["", "alloc_objects", "count", "alloc_space", "bytes", "inuse_objects", "inuse_space", "space"]
@@ -1390,7 +1452,7 @@ fn finish_heap() {
     fbytes(smp, 2, vb.freeze())
     fbytes(b, 2, smp.freeze())
   }
-  pprof_tail(b, strs, locs, fr, names, lfile, lline)
+  pprof_tail(b, strs, locs, cf, names, cfile, cline)
   fbytes(b, 11, value_type(7, 4))
   fint(b, 12, rate)
   let ok = write_file(out, gzip(b.freeze()))

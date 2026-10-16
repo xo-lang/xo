@@ -140,12 +140,13 @@ fn (g: G) debug_sections() -> Str {
   // and 25, for selfhost/macho dsym.xo), producer, language, name,
   // comp_dir; 2: subprogram, children: name, low_pc, high_pc; 3: an
   // inlined callee's abstract subprogram: name, inline (1, inlined); 4:
-  // inlined_subroutine: abstract_origin (unit relative), low_pc, high_pc,
-  // call_file, call_line, call_column
+  // inlined_subroutine, children (the calls inlined into it):
+  // abstract_origin (unit relative), low_pc, high_pc, call_file,
+  // call_line, call_column
   out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
   out.write("\t.byte 2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
   out.write("\t.byte 3, 0x2e, 0, 0x03, 0x08, 0x20, 0x0b, 0, 0\n")
-  out.write("\t.byte 4, 0x1d, 0, 0x31, 0x13, 0x11, 0x01, 0x12, 0x01, 0x58, 0x0f, 0x59, 0x0f, 0x57, 0x0f, 0, 0\n")
+  out.write("\t.byte 4, 0x1d, 1, 0x31, 0x13, 0x11, 0x01, 0x12, 0x01, 0x58, 0x0f, 0x59, 0x0f, 0x57, 0x0f, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
   var die = Dw{}
@@ -160,36 +161,30 @@ fn (g: G) debug_sections() -> Str {
   // the runs of inlined code (outermost sites) of each function, and an
   // abstract subprogram per callee they name (unit relative offset: the
   // 12 byte unit header, then the entries)
-  var runs: List[List[DbgRun]] = []
   var origin: Map[Str, Int] = {}
   for fr in recs {
-    let rs = inline_runs(fr)
-    for r in rs {
-      let callee = fr.sites[r.site].callee
-      if !origin.contains(callee) {
-        origin[callee] = 12 + die.n
-        die.uleb(3)
-        die.str(callee)
-        die.u8(1)
+    for row in fr.rows {
+      for s in site_chain(fr, row.site) {
+        let callee = fr.sites[s].callee
+        if !origin.contains(callee) {
+          origin[callee] = 12 + die.n
+          die.uleb(3)
+          die.str(callee)
+          die.u8(1)
+        }
       }
     }
-    runs.push(rs)
   }
-  for (k, fr) in recs.indexed() {
+  for fr in recs {
     die.uleb(2)
     die.str(fr.name)
     die.quad(fr.begin)
     die.quad(fr.end)
-    for r in runs[k] {
-      let s = fr.sites[r.site]
-      die.uleb(4)
-      die.u32(origin.get(s.callee) ?? 0)
-      die.quad(r.lo)
-      die.quad(r.hi)
-      die.uleb(fr.file)
-      die.uleb(s.call_line / 4096)
-      die.uleb(s.call_line % 4096)
+    var chains: List[List[Int]] = []
+    for row in fr.rows {
+      chains.push(site_chain(fr, row.site))
     }
+    inline_level(die, fr, chains, origin, 0, fr.rows.len(), 0)
     die.u8(0)
   }
   die.u8(0)
@@ -231,13 +226,6 @@ struct DbgSite {
   parent: Int
 }
 
-/// A run of one outermost inline site's code: from label lo to label hi.
-struct DbgRun {
-  site: Int
-  lo: Str
-  hi: Str
-}
-
 /// The index of file in files, added once.
 fn file_index(file: Str, var files: List[Str], var at: Map[Str, Int]) -> Int {
   if let Some(k) = at.get(file) {
@@ -248,38 +236,49 @@ fn file_index(file: Str, var files: List[Str], var at: Map[Str, Int]) -> Int {
   files.len() - 1
 }
 
-/// The runs of inlined code of fr: consecutive rows whose outermost
-/// inline site is the same (v1: one level of DW_TAG_inlined_subroutine,
-/// the outermost call), each to the next row or the function's end.
-fn inline_runs(fr: DbgFunc) -> List[DbgRun] {
-  var out: List[DbgRun] = []
-  var i = 0
-  let n = fr.rows.len()
-  while i < n {
-    let r = outermost(fr, fr.rows[i].site)
-    if r < 0 {
+/// The inlined_subroutine entries of rows [i0, i1) of fr at nesting
+/// level `level` (0: called from the function itself): consecutive rows
+/// whose chain has the same site at that level make one, to the next
+/// row (or the function's end), with the deeper levels inside it.
+fn inline_level(var die: Dw, fr: DbgFunc, chains: List[List[Int]], origin: Map[Str, Int], i0: Int, i1: Int, level: Int) {
+  var i = i0
+  while i < i1 {
+    let s = if level < chains[i].len() { chains[i][level] } else { -1 }
+    if s < 0 {
       i += 1
       continue
     }
     var j = i + 1
-    while j < n && outermost(fr, fr.rows[j].site) == r {
+    while j < i1 && level < chains[j].len() && chains[j][level] == s {
       j += 1
     }
-    out.push(DbgRun{site: r, lo: fr.rows[i].label, hi: if j < n { fr.rows[j].label } else { fr.end }})
+    let site = fr.sites[s]
+    die.uleb(4)
+    die.u32(origin.get(site.callee) ?? 0)
+    die.quad(fr.rows[i].label)
+    die.quad(if j < fr.rows.len() { fr.rows[j].label } else { fr.end })
+    // the call is in the enclosing site's file (the function's at level 0)
+    let cfile = if site.parent >= 0 && site.parent < fr.sites.len() { fr.sites[site.parent].file } else { fr.file }
+    die.uleb(cfile)
+    die.uleb(site.call_line / 4096)
+    die.uleb(site.call_line % 4096)
+    inline_level(die, fr, chains, origin, i, j, level + 1)
+    die.u8(0)
     i = j
   }
-  out
 }
 
-/// The outermost site holding site s (-1 for none).
-fn outermost(fr: DbgFunc, s: Int) -> Int {
+/// The sites holding site s, outermost first (empty for none).
+fn site_chain(fr: DbgFunc, s: Int) -> List[Int] {
+  var out: List[Int] = []
   var k = s
   var guard = 0
-  while k >= 0 && k < fr.sites.len() && fr.sites[k].parent >= 0 && guard < 64 {
+  while k >= 0 && k < fr.sites.len() && guard < 64 {
+    out.insert(0, k)
     k = fr.sites[k].parent
     guard += 1
   }
-  if k >= fr.sites.len() { -1 } else { k }
+  out
 }
 
 /// Debug section bytes as assembler directives, with their count.

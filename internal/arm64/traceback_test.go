@@ -57,3 +57,28 @@ func TestTraceback(t *testing.T) {
 		t.Fatalf("an address in the traceback:\n%s", got)
 	}
 }
+
+// TestTracebackInlined: frames of calls the arm64 inliner copied are in
+// the traceback too, from the DWARF inlined_subroutine entries (decision
+// 0239), marked [inlined], innermost first, each at its own line.
+func TestTracebackInlined(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "traceback_inl")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
+	var errb strings.Builder
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	want := "traceback:\n  inner (main.xo:4) [inlined]\n  outer (main.xo:8) [inlined]\n  main (main.xo:15)\n"
+	if !strings.HasSuffix(errb.String(), want) {
+		t.Fatalf("stderr:\n%s\nwant it to end with:\n%s", errb.String(), want)
+	}
+}

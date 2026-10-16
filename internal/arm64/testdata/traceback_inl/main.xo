@@ -1,0 +1,16 @@
+// TestTracebackInlined's program: inner inlined into outer, outer into
+// main (non-recursive, small: the arm64 inliner copies both).
+fn inner(xs: List[Int], i: Int) -> Int {
+  xs[i] * 2
+}
+
+fn outer(xs: List[Int], i: Int) -> Int {
+  let v = inner(xs, i + 1)
+  v + 1
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  os.stdio.println("${outer(xs, 0)}")
+  os.stdio.println("${outer(xs, 5)}")
+}

@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Inlined calls in the profiler and tracebacks (decision 0239): dwline.xo
+  reads .debug_info's DW_TAG_inlined_subroutine entries (arm64's and
+  LLVM's), so pprof shows inlined callees as their own (inline) lines
+  and the summary as their own rows, and XO_TRACEBACK prints them marked
+  `[inlined]`. arm64 writes nested inlined frames (lldb: inner, then
+  outer, both [inlined], then main).
+
 - The last C of the runtime's tests is gone but win_consts.c (decision
   0241): TestCryptoDiff and crypto_diff.c/crypto_ref.c (which checked
   the C hashes decision 0198 had already deleted, not std/crypto's Xo,

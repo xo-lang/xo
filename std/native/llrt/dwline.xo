@@ -19,6 +19,19 @@ pub struct Lines {
   pub files: List[Int] = []
   pub lines: List[Int] = []
   pub names: List[Str] = []
+  /// the inlined calls (.debug_info's DW_TAG_inlined_subroutine): a
+  /// range each (an entry with several ranges has several), its nesting
+  /// depth (1: in the function itself), the callee's name, and the call's
+  /// file (an index of names) and line
+  pub inl_lo: List[Int] = []
+  pub inl_hi: List[Int] = []
+  pub inl_depth: List[Int] = []
+  pub inl_name: List[Str] = []
+  pub inl_file: List[Int] = []
+  pub inl_line: List[Int] = []
+  /// each line program's files (by its offset in .debug_line): names
+  /// indexes by the program's file numbers
+  ufiles: Map[Int, List[Int]] = {}
 }
 
 /// The sections a line program reads: .debug_line, and the string
@@ -30,6 +43,57 @@ struct Sects {
   lstr_n: Int = 0
   str: Int = 0
   str_n: Int = 0
+  /// the inlined calls' sections (.debug_info and what it refers to)
+  info: Int = 0
+  info_n: Int = 0
+  abbrev: Int = 0
+  abbrev_n: Int = 0
+  stroff: Int = 0
+  stroff_n: Int = 0
+  addr: Int = 0
+  addr_n: Int = 0
+  rng: Int = 0
+  rng_n: Int = 0
+}
+
+/// Notes debug section name (without its .debug_ or __debug_ prefix; a
+/// Mach-O name is cut at 16 bytes) at address a, n bytes.
+fn (var s: Sects) set(name: Str, a: Int, n: Int) {
+  match name {
+    "line" => {
+      s.line = a
+      s.line_n = n
+    }
+    "line_str" => {
+      s.lstr = a
+      s.lstr_n = n
+    }
+    "str" => {
+      s.str = a
+      s.str_n = n
+    }
+    "info" => {
+      s.info = a
+      s.info_n = n
+    }
+    "abbrev" => {
+      s.abbrev = a
+      s.abbrev_n = n
+    }
+    "str_offsets" | "str_offs" => {
+      s.stroff = a
+      s.stroff_n = n
+    }
+    "addr" => {
+      s.addr = a
+      s.addr_n = n
+    }
+    "rnglists" => {
+      s.rng = a
+      s.rng_n = n
+    }
+    _ => {}
+  }
 }
 
 fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
@@ -122,19 +186,13 @@ fn load_elf(lo: Int, hi: Int, var out: Lines) {
       continue
     }
     let name = cstr(f + strs + u32(sh), 64)
-    if name == ".debug_line" {
-      s.line = f + off
-      s.line_n = size
-    } else if name == ".debug_line_str" {
-      s.lstr = f + off
-      s.lstr_n = size
-    } else if name == ".debug_str" {
-      s.str = f + off
-      s.str_n = size
+    if name.starts_with(".debug_") {
+      s.set(name[7..name.len()], f + off, size)
     }
   }
   if s.line_n > 0 {
     parse(s, bias, lo, hi, out)
+    parse_info(s, bias, out)
   }
 }
 
@@ -196,15 +254,8 @@ fn load_dsym(lo: Int, hi: Int, var out: Lines) {
         if off + size > data.len() {
           continue
         }
-        if name == "__debug_line" {
-          s.line = f + off
-          s.line_n = size
-        } else if name == "__debug_line_str" {
-          s.lstr = f + off
-          s.lstr_n = size
-        } else if name == "__debug_str" {
-          s.str = f + off
-          s.str_n = size
+        if name.starts_with("__debug_") {
+          s.set(name[8..name.len()], f + off, size)
         }
       }
     }
@@ -212,6 +263,7 @@ fn load_dsym(lo: Int, hi: Int, var out: Lines) {
   }
   if same && s.line_n > 0 {
     parse(s, slide, lo, hi, out)
+    parse_info(s, slide, out)
   }
 }
 
@@ -534,6 +586,7 @@ fn parse(s: Sects, bias: Int, lo: Int, hi: Int, var out: Lines) {
         fmap.push(intern(join(if di < dirs.len() { dirs[di] } else { "" }, name), at, out))
       }
     }
+    out.ufiles[u - s.line] = fmap
     if !ok || line_range == 0 {
       u = next
       continue
@@ -632,4 +685,492 @@ fn intern(name: Str, var at: Map[Str, Int], var out: Lines) -> Int {
   out.names.push(name)
   at[name] = out.names.len() - 1
   out.names.len() - 1
+}
+
+// ---------------------------------------------------------------------------
+// Inlined calls (.debug_info)
+
+/// One attribute of an abbreviation: its name, form, and an implicit
+/// constant (DW_FORM_implicit_const).
+struct AbAttr {
+  at: Int
+  form: Int
+  imp: Int = 0
+}
+
+/// An abbreviation: tag, whether its entries have children, attributes.
+struct Abbrev {
+  tag: Int
+  kids: Bool
+  attrs: List[AbAttr]
+}
+
+/// The abbreviation table at offset off of .debug_abbrev, by code.
+fn abbrevs(s: Sects, off: Int) -> Map[Int, Abbrev] {
+  var out: Map[Int, Abbrev] = {}
+  if off >= s.abbrev_n {
+    return out
+  }
+  var r = Rd{p: s.abbrev + off, end: s.abbrev + s.abbrev_n}
+  while r.p < r.end {
+    let code = r.uleb()
+    if code == 0 {
+      break
+    }
+    let tag = r.uleb()
+    let kids = r.byte() != 0
+    var attrs: List[AbAttr] = []
+    while r.p < r.end {
+      let at = r.uleb()
+      let form = r.uleb()
+      if at == 0 && form == 0 {
+        break
+      }
+      var imp = 0
+      if form == 0x21 {
+        imp = r.sleb()
+      }
+      attrs.push(AbAttr{at: at, form: form, imp: imp})
+    }
+    out[code] = Abbrev{tag: tag, kids: kids, attrs: attrs}
+  }
+  out
+}
+
+/// A unit's bases (DWARF 5: str_offsets_base, addr_base,
+/// rnglists_base), address size, and the low_pc rnglists are based on.
+struct Unit {
+  start: Int
+  ver: Int
+  asize: Int = 8
+  str_base: Int = 8
+  addr_base: Int = 8
+  rng_base: Int = 12
+  low: Int = 0
+}
+
+/// A field's value: a number (or address, offset, index), or a string
+/// (str_ok), or neither (a block, an expression).
+struct FVal {
+  n: Int = 0
+  str: Str = ""
+  str_ok: Bool = false
+  /// the form named an index (strx, addrx, rnglistx) to resolve against
+  /// the unit's bases
+  idx: Bool = false
+}
+
+/// Reads a field of form fm (ok false for a form not known: the unit is
+/// left).
+fn read_form(var r: Rd, fm: Int, s: Sects, u: Unit, imp: Int) -> (FVal, Bool) {
+  match fm {
+    0x01 => {
+      let v = if u.asize == 4 { u32(r.p) } else { ld(r.p, 0) }
+      r.p += u.asize
+      (FVal{n: v}, true)
+    }
+    0x0b | 0x11 => (FVal{n: r.byte()}, true)
+    0x05 | 0x12 => {
+      let v = u16(r.p)
+      r.p += 2
+      (FVal{n: v}, true)
+    }
+    0x06 | 0x13 | 0x17 | 0x10 => {
+      let v = u32(r.p)
+      r.p += 4
+      (FVal{n: v}, true)
+    }
+    0x07 | 0x14 | 0x20 => {
+      let v = ld(r.p, 0)
+      r.p += 8
+      (FVal{n: v}, true)
+    }
+    0x0f | 0x15 => (FVal{n: r.uleb()}, true)
+    0x0d => (FVal{n: r.sleb()}, true)
+    0x08 => (FVal{str: r.cstr(), str_ok: true}, true)
+    0x0e => {
+      let o = u32(r.p)
+      r.p += 4
+      (FVal{str: if o < s.str_n { cstr(s.str + o, s.str_n - o) } else { "" }, str_ok: true}, true)
+    }
+    0x1f => {
+      let o = u32(r.p)
+      r.p += 4
+      (FVal{str: if o < s.lstr_n { cstr(s.lstr + o, s.lstr_n - o) } else { "" }, str_ok: true}, true)
+    }
+    0x1a => (str_x(s, u, r.uleb()), true)
+    0x25 => (str_x(s, u, r.byte()), true)
+    0x26 => {
+      let v = u16(r.p)
+      r.p += 2
+      (str_x(s, u, v), true)
+    }
+    0x27 => {
+      let v = u16(r.p) | (u8(r.p + 2) << 16)
+      r.p += 3
+      (str_x(s, u, v), true)
+    }
+    0x28 => {
+      let v = u32(r.p)
+      r.p += 4
+      (str_x(s, u, v), true)
+    }
+    0x1b | 0x22 | 0x23 => (FVal{n: r.uleb(), idx: true}, true)
+    0x29 => (FVal{n: r.byte(), idx: true}, true)
+    0x2a => {
+      let v = u16(r.p)
+      r.p += 2
+      (FVal{n: v, idx: true}, true)
+    }
+    0x2b => {
+      let v = u16(r.p) | (u8(r.p + 2) << 16)
+      r.p += 3
+      (FVal{n: v, idx: true}, true)
+    }
+    0x2c => {
+      let v = u32(r.p)
+      r.p += 4
+      (FVal{n: v, idx: true}, true)
+    }
+    0x0c => (FVal{n: r.byte()}, true)
+    0x19 => (FVal{n: 1}, true)
+    0x21 => (FVal{n: imp}, true)
+    0x1e => {
+      r.p += 16
+      (FVal{}, true)
+    }
+    0x0a => {
+      let n = r.byte()
+      r.p += n
+      (FVal{}, true)
+    }
+    0x03 => {
+      let n = u16(r.p)
+      r.p += 2 + n
+      (FVal{}, true)
+    }
+    0x04 => {
+      let n = u32(r.p)
+      r.p += 4 + n
+      (FVal{}, true)
+    }
+    0x09 | 0x18 => {
+      let n = r.uleb()
+      r.p += n
+      (FVal{}, true)
+    }
+    _ => (FVal{}, false)
+  }
+}
+
+/// String k of the unit's string offsets.
+fn str_x(s: Sects, u: Unit, k: Int) -> FVal {
+  let o = u.str_base + 4 * k
+  if o + 4 > s.stroff_n {
+    return FVal{str_ok: true}
+  }
+  let so = u32(s.stroff + o)
+  FVal{str: if so < s.str_n { cstr(s.str + so, s.str_n - so) } else { "" }, str_ok: true}
+}
+
+/// Address k of the unit's address table.
+fn addr_x(s: Sects, u: Unit, k: Int) -> Int {
+  let o = u.addr_base + 8 * k
+  if o + 8 > s.addr_n {
+    return 0
+  }
+  ld(s.addr + o, 0)
+}
+
+/// The ranges of a rnglist at offset off of .debug_rnglists.
+fn rnglist(s: Sects, u: Unit, off: Int) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  if off >= s.rng_n {
+    return out
+  }
+  var r = Rd{p: s.rng + off, end: s.rng + s.rng_n}
+  var base = u.low
+  while r.p < r.end {
+    let k = r.byte()
+    match k {
+      0 => break
+      1 => base = addr_x(s, u, r.uleb())
+      2 => {
+        let a = addr_x(s, u, r.uleb())
+        out.push((a, addr_x(s, u, r.uleb())))
+      }
+      3 => {
+        let a = addr_x(s, u, r.uleb())
+        out.push((a, a + r.uleb()))
+      }
+      4 => {
+        let a = r.uleb()
+        out.push((base + a, base + r.uleb()))
+      }
+      5 => {
+        base = ld(r.p, 0)
+        r.p += 8
+      }
+      6 => {
+        let a = ld(r.p, 0)
+        out.push((a, ld(r.p, 8)))
+        r.p += 16
+      }
+      7 => {
+        let a = ld(r.p, 0)
+        r.p += 8
+        out.push((a, a + r.uleb()))
+      }
+      _ => break
+    }
+  }
+  out
+}
+
+/// A DW_TAG_inlined_subroutine read, before its origin's name is known.
+struct InlRec {
+  ranges: List[(Int, Int)]
+  depth: Int
+  origin: Int
+  file: Int
+  line: Int
+}
+
+/// Every unit's inlined calls into out (addresses moved by bias), with
+/// their callees' names (abstract_origin, one level of specification or
+/// origin followed).
+fn parse_info(s: Sects, bias: Int, var out: Lines) {
+  if s.info_n == 0 || s.abbrev_n == 0 {
+    return
+  }
+  // the entries' names and origins by offset in .debug_info
+  var names: Map[Int, Str] = {}
+  var origins: Map[Int, Int] = {}
+  var recs: List[InlRec] = []
+  var p = s.info
+  let end = s.info + s.info_n
+  while p + 11 <= end {
+    let len = u32(p)
+    if len == 0 || len == 0xffffffff {
+      break
+    }
+    let next = p + 4 + len
+    if next > end {
+      break
+    }
+    var u = Unit{start: p - s.info, ver: u16(p + 4)}
+    var r = Rd{p: p + 6, end: next}
+    var aoff = 0
+    if u.ver >= 5 {
+      let _ut = r.byte()
+      u.asize = r.byte()
+      aoff = u32(r.p)
+      r.p += 4
+    } else {
+      aoff = u32(r.p)
+      r.p += 4
+      u.asize = r.byte()
+    }
+    let tab = abbrevs(s, aoff)
+    // the unit's line program's files (DW_AT_stmt_list)
+    var files: List[Int] = []
+    var depth = 0
+    // the inlined depth at each level of the tree (entries' children)
+    var inl_at: List[Int] = [0]
+    var ok = true
+    while ok && r.p < next {
+      let die = r.p - s.info
+      let code = r.uleb()
+      if code == 0 {
+        if depth > 0 {
+          depth -= 1
+          let _x = inl_at.pop()
+        }
+        continue
+      }
+      let ab = match tab.get(code) {
+        Some(a) => a
+        None => {
+          ok = false
+          Abbrev{tag: 0, kids: false, attrs: []}
+        }
+      }
+      if !ok {
+        break
+      }
+      var name = ""
+      var origin = -1
+      var low = 0
+      var low_x = false
+      var high = 0
+      var high_x = false
+      var high_off = false
+      var rng = -1
+      var rng_x = false
+      var cfile = 0
+      var cline = 0
+      for a in ab.attrs {
+        let (v, fok) = read_form(r, a.form, s, u, a.imp)
+        if !fok {
+          ok = false
+          break
+        }
+        match a.at {
+          0x03 => if v.str_ok { name = v.str }
+          0x31 | 0x47 => {
+            // abstract_origin, specification: a unit relative reference
+            // (ref_addr: from the section's start)
+            origin = if a.form == 0x10 { v.n } else { u.start + v.n }
+          }
+          0x11 => {
+            low = v.n
+            low_x = v.idx
+          }
+          0x12 => {
+            high = v.n
+            high_x = v.idx
+            // a constant class high_pc is an offset from low_pc
+            high_off = !(a.form == 0x01 || a.form == 0x1b || (a.form >= 0x29 && a.form <= 0x2c))
+          }
+          0x55 => {
+            rng = v.n
+            rng_x = v.idx
+          }
+          0x58 => cfile = v.n
+          0x59 => cline = v.n
+          0x10 => {
+            // stmt_list: this unit's line program
+            files = out.ufiles.get(v.n) ?? []
+          }
+          0x72 => u.str_base = v.n
+          0x73 => u.addr_base = v.n
+          0x74 => u.rng_base = v.n
+          _ => {}
+        }
+      }
+      if !ok {
+        break
+      }
+      if low_x {
+        low = addr_x(s, u, low)
+      }
+      if high_x {
+        high = addr_x(s, u, high)
+      }
+      if high_off {
+        high = low + high
+      }
+      if ab.tag == 0x11 {
+        u.low = low
+      }
+      if !name.is_empty() {
+        names[die] = name
+      }
+      if origin >= 0 {
+        origins[die] = origin
+      }
+      var here = inl_at[inl_at.len() - 1]
+      if ab.tag == 0x1d {
+        here += 1
+        var ranges: List[(Int, Int)] = []
+        if rng >= 0 {
+          var off = rng
+          if rng_x {
+            let o = u.rng_base + 4 * rng
+            off = if o + 4 <= s.rng_n { u.rng_base + u32(s.rng + o) } else { s.rng_n }
+          }
+          ranges = rnglist(s, u, off)
+        } else if high > low {
+          ranges = [(low, high)]
+        }
+        let fi = if cfile < files.len() { files[cfile] } else { -1 }
+        recs.push(InlRec{ranges: ranges, depth: here, origin: origin, file: fi, line: cline})
+      }
+      if ab.kids {
+        depth += 1
+        inl_at.push(here)
+      }
+    }
+    p = next
+  }
+  for rec in recs {
+    // the callee's name: the origin's, or its own origin's
+    var name = ""
+    var o = rec.origin
+    var guard = 0
+    while o >= 0 && guard < 4 {
+      if let Some(nm) = names.get(o) {
+        name = nm
+        break
+      }
+      o = origins.get(o) ?? -1
+      guard += 1
+    }
+    if name.is_empty() {
+      name = "?"
+    }
+    for (a, b) in rec.ranges {
+      out.inl_lo.push(a + bias)
+      out.inl_hi.push(b + bias)
+      out.inl_depth.push(rec.depth)
+      out.inl_name.push(name)
+      out.inl_file.push(rec.file)
+      out.inl_line.push(rec.line)
+    }
+  }
+}
+
+/// A frame of the code at an address: function, file, and line.
+pub struct Frame {
+  pub name: Str
+  pub file: Str
+  pub line: Int
+}
+
+/// The inlined frames at pc, innermost first (each callee at its line:
+/// the line table's for the innermost, the call's below it), and the
+/// file and line of the function holding them all (the outermost call's,
+/// or pc's own when nothing is inlined there).
+///
+/// fname is the function's symbol: LLVM inlines the program's main into
+/// xo_entry, which the printers show as main, so there the outermost
+/// inlined frame main is the function itself (not listed twice).
+pub fn inline_chain(t: Lines, pc: Int, fname: Str) -> (List[Frame], Str, Int) {
+  // the entries holding pc, by depth
+  var by: List[Int] = []
+  for i in 0..t.inl_lo.len() {
+    if t.inl_lo[i] <= pc && pc < t.inl_hi[i] {
+      by.push(i)
+    }
+  }
+  let (f0, l0) = find(t, pc)
+  if by.is_empty() {
+    return ([], f0, l0)
+  }
+  // deepest first
+  var keys: List[Int] = []
+  for i in by {
+    keys.push(rt.int_wrap(3, t.inl_depth[i], 32) | i)
+  }
+  keys = keys.sort()
+  var order: List[Int] = []
+  var k = keys.len() - 1
+  while k >= 0 {
+    order.push(keys[k] & 4294967295)
+    k -= 1
+  }
+  var frames: List[Frame] = []
+  var file = f0
+  var line = l0
+  for i in order {
+    frames.push(Frame{name: t.inl_name[i], file: file, line: line})
+    file = if t.inl_file[i] >= 0 && t.inl_file[i] < t.names.len() { t.names[t.inl_file[i]] } else { "" }
+    line = t.inl_line[i]
+  }
+  if fname == "xo_entry" && frames.len() > 0 && frames[frames.len() - 1].name == "main" {
+    let m = frames[frames.len() - 1]
+    let _x = frames.pop()
+    return (frames, m.file, m.line)
+  }
+  (frames, file, line)
 }

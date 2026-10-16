@@ -133,8 +133,8 @@ types and variable locations.
   (name, DW_AT_inline) and, under each function's subprogram (now with
   children), a DW_TAG_inlined_subroutine per run of an outermost site's
   code (abstract_origin, low_pc and high_pc labels, call_file,
-  call_line, call_column). v1 is one level: nested sites belong to their
-  outermost call's entry. lldb shows `scale at main.xo:2:3 [inlined]`
+  call_line, call_column), nested as the calls are (an entry's children
+  are the calls inlined into that callee; 2026-10-16, a second step). lldb shows `scale at main.xo:2:3 [inlined]`
   above `main at main.xo:9:5`. Addresses stay `.quad label` and the
   references unit relative, so selfhost/macho dsym.xo carries them
   unchanged (Xo Lang 3 writes the tests).
@@ -142,7 +142,13 @@ types and variable locations.
   line and site, the function's file, and its sites when debug
   information is on; before this, a change of lines alone reused an
   entry with the old rows (gotchas/fcache-key-without-lines.md).
-- Not yet: the profiler's and tracebacks' frames in inlined code still
-  name the enclosing function (dwline.xo reads only the line table),
-  with the callee's line.
+- The readers name inlined callees (same day): dwline.xo also reads
+  .debug_info (abbreviations, the DWARF 5 forms both backends use:
+  strx, addrx, rnglistx and range lists, ref4 and ref_addr) for the
+  DW_TAG_inlined_subroutine ranges, depths, callees, and call lines;
+  inline_chain gives a pc's frames innermost first. The profiler writes
+  a Line per frame (pprof shows `scale main.xo:2 (inline)`), counts
+  flat time to the innermost function, and the summary has the inlined
+  callee's own row; XO_TRACEBACK prints `  inner (main.xo:2) [inlined]`
+  frames before their caller (TestTracebackInlined).
 
