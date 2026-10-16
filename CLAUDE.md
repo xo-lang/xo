@@ -88,6 +88,13 @@ Update the knowledgebase in the same change as the work, not later:
     `-short` plus `go vet` is enough; rerun full tests only for packages
     changed on both sides. Push first, then run any full suite in the
     background and fix forward. Start the next agent without waiting.
+  - rebasing before a push (owner, 2026-10-16): do not rerun tests after
+    a rebase that does not affect the work. Rerun only when the incoming
+    commits change files the change touches or depends on (the same
+    packages, or the self build's files when the change is in the fixed
+    point set), or when resolving a conflict changed code; then rerun
+    only those tests. A conflict only in docs (CHANGELOG, a README) needs
+    no rerun.
   - agents run in parallel in separate worktrees (owner, 2026-10-11, on
     a larger plan); RAM is the limit, so every heavy test run (non
     -short tests of internal/selfhost, internal/gen, internal/llvm,
