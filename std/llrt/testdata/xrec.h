@@ -3,7 +3,7 @@
 // selects.xo, mutex.xo, budget.xo), and xo_rt.c keeps no copy of their
 // layouts (the zero-C inventory's rank 13, 2026-10-15): here they are
 // opaque, with the few words the tests read at the Xo modules' offsets.
-// Include after ../xo_rt.c (xcalls.h includes it).
+// xcalls.h includes it.
 #ifndef XO_XREC_H
 #define XO_XREC_H
 
@@ -16,6 +16,9 @@
 #include <string.h>
 
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
+
+// an address as the int64_t the C ABI exports (cabi.xo) take
+#define XO_ADDR(p) ((int64_t)(intptr_t)(p))
 
 // Counted objects (rc.xo, obj.xo): a count c > 0 is thread local, -n is
 // shared by n, XO_RC_IMMORTAL marks a literal (never written). A string

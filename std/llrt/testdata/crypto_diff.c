@@ -14,7 +14,6 @@
 // Output, one line per operation: the result in hex, or 0 or 1.
 
 #include <string.h>
-#include "../xo_rt.c"
 #include "xcalls.h"
 // the hashes' C that decision 0198 deleted from the runtime, kept as
 // test data until this test goes (decision 0215)

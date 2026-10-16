@@ -4,7 +4,7 @@
 // kept only as test data so crypto_diff.c, and internal/llvm's
 // TestCryptoDiff that runs it in -short, keep passing until decision
 // 0215 deletes that Go test; then this file goes too. No build compiles
-// it into a runtime. Included by crypto_diff.c after ../xo_rt.c.
+// it into a runtime. Included by crypto_diff.c.
 
 // b64_alpha and b64_val were xo_std.c's, which only this C used after
 // the runtime's base64 moved to Xo (num.xo, digest.xo).

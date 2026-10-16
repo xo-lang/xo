@@ -1,6 +1,6 @@
 // --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
-// links the program's object (assembled by selfhost/macho) with the
-// prebuilt runtime of a pack (decision 0157), and the Security and
+// links the program's objects (assembled by selfhost/macho; no C runtime
+// since decision 0234, so no pack's rt.o), and the Security and
 // CoreFoundation frameworks when the program calls them (framework_args),
 // into a signed executable; for
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
@@ -20,12 +20,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   if !bad.is_empty() {
     return bad
   }
-  let obj = shipped_runtime(os, ctx, ctx.std, flags)
-  if obj.is_empty() {
-    return "--ld=macho needs a prebuilt runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, ctx, ctx.std, "arm64")}"
-  }
+  let _f = flags
   var ins: List[macho.LinkInput] = []
-  for p in objs + [obj] {
+  for p in objs {
     match os.fs.read(p) {
       Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
       Err(e) => return "${p}: ${e}"
@@ -62,9 +59,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
 
 /// The objects a --ld=macho link takes from srcs, and why not ("" when
 /// it can). srcs are the program's objects (one, or one per part of a
-/// parallel generation, decision 0220), the runtime's source (xo_rt.c,
-/// which the pack's object replaces), then objects (the zone data) and C
-/// sources, which this linker cannot compile. Taking only srcs[0] as the
+/// parallel generation, decision 0220), then objects (the zone data) and
+/// C sources, which this linker cannot compile (an xo_rt.c is skipped: a
+/// driver before decision 0234 listed it). Taking only srcs[0] as the
 /// program dropped the later parts of a split program and read the
 /// runtime's source as a C source to compile
 /// (gotchas/macho-link-split-objects.md).
@@ -90,14 +87,9 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str) -> St
   if !bad.is_empty() {
     return bad
   }
-  var lctx = ctx
-  lctx.goos = "linux"
-  let obj = shipped_runtime(os, lctx, ctx.std, flags)
-  if obj.is_empty() {
-    return "--ld=macho needs a prebuilt linux/arm64 runtime pack for the flags ${flags.join(" ")} (decision 0157): ${rtpack_status_for(os, lctx, ctx.std, "arm64")}"
-  }
+  let _f = flags
   var ins: List[macho.LinkInput] = []
-  for p in objs + [obj] {
+  for p in objs {
     match os.fs.read(p) {
       Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
       Err(e) => return "${p}: ${e}"

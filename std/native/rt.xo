@@ -236,7 +236,8 @@ fn prefetch(a: Int)
 ///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the C's park_signal, the C's descriptor services record, the event loop's record
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
-///   60-61 std/native/llrt/stop.xo: two phase shutdown's state record, the C's services record
+///   60 std/native/llrt/stop.xo: two phase shutdown's state record
+///   61 std/native/llrt/entry.xo: on_overflow's WriteFile count (was the C's services record, decision 0234)
 ///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
 ///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (the runtime's records, rt.heap_large, on every build; the C library's malloc on XO_NOLIBC builds)
 fn static_word(k: Int) -> Int

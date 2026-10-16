@@ -1,7 +1,7 @@
 // xcalls.h: the calls generated code makes into the task runtime's Xo
 // exports (std/native/llrt tasks.xo, chan.xo, selects.xo, mutex.xo),
 // typed for the C tests that play generated code.
-// Include after ../xo_rt.c.
+// Every C test includes it (main's setup is its constructor).
 
 #include "xrec.h"
 

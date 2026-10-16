@@ -26,9 +26,8 @@ use native/llrt/sysio
 use native/llrt/twflags
 use native/rt
 
-/// rt.static_word: the state record, the C's services record.
+/// rt.static_word: the state record.
 const W_REC = 60
-const W_SVC = 61
 
 /// The state record's words: the lock word, the signals so far, whether
 /// a stop was requested and main's root canceled (words read with
@@ -78,9 +77,6 @@ const ACQ_REL = 3
 
 fn rec() -> Int { rt.mem_load(rt.static_word(W_REC), 0, 8) }
 
-/// Word k of the C's services record (entry.xo reads its own).
-pub fn svc_word(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_SVC), 0, 8), k, 8) }
-
 fn lk() {
   let l = rec()
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
@@ -99,10 +95,8 @@ fn get(k: Int) -> Int { rt.mem_load(rec(), k, 8) }
 
 fn put(k: Int, v: Int) { rt.mem_store(rec(), k, v, 8) }
 
-/// Makes the state record and sets the C's services record (at start,
-/// before any thread but main's).
-pub fn init(svc_rec: Int) {
-  rt.mem_store(rt.static_word(W_SVC), 0, svc_rec, 8)
+/// Makes the state record (at start, before any thread but main's).
+pub fn init() {
   let r = rt.heap_large(R_SIZE)
   rt.mem_set(r, 0, R_SIZE)
   rt.mem_store(r, R_GRACE, DEFAULT_GRACE, 8)

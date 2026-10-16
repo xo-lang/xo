@@ -48,6 +48,13 @@ asserts, and the C tests' constructor. xo_nolibc.c is deleted
 Docker, the rest was already gone; so the runtime C is xo_rt.c alone,
 161 lines.
 
+### Runtime C: 0 (2026-10-16)
+
+Windows' on_overflow is Xo (entry.xo, decision 0234), so std/llrt/xo_rt.c
+holds no code: an empty file for the 0.15.0 seed's driver, deleted after
+the next seed, and the driver compiles no C runtime. The handler passes
+its golden (testdata/windows/stack_overflow) under Wine with Box64.
+
 ### xo_rt.c is the overflow handler (2026-10-15, owner)
 
 xo_rt.c is Windows' on_overflow and its services record (xo_c_stop_svc)

@@ -92,6 +92,11 @@ fn flush() { stdio.flush() }
 
 fn flush_try() { stdio.flush_try() }
 
+/// Windows' stack overflow handler (entry.xo on_overflow, a vectored
+/// exception handler; the EXCEPTION_POINTERS, EXCEPTION_CONTINUE_SEARCH
+/// unless it ends the program).
+fn on_overflow(e: Int) -> Int { entry.on_overflow(e) }
+
 fn stdio_threads() { stdio.threads() }
 
 /// The program's arguments and environment (C main, before the program

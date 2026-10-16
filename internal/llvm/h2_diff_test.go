@@ -1154,7 +1154,7 @@ func TestH2Sanitizers(t *testing.T) {
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	srcs := []string{ll, filepath.Join(rtDir, "xo_rt.c")}
+	srcs := []string{ll}
 	flags := []string{"-Wno-override-module"}
 	for _, san := range []string{"thread", "address"} {
 		t.Run(san, func(t *testing.T) {

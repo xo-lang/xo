@@ -3310,27 +3310,34 @@ pointers need LLVM 15 or later). Last verified: 2026-10-15.
 
 ### Windows programs under Wine in Docker
 
-Since 2026-10-16 (xo-4): `scripts/docker-wine.sh ARCH WORK COMMAND`
+Since 2026-10-16 (xo-4): `scripts/docker-wine.sh MODE WORK COMMAND`
 runs a command with Debian's Wine (10.0, trixie) in a Linux container,
 like scripts/docker-linux.sh (WORK at /work, the checkout read only at
-/xo, `--rm`, WINEPREFIX /work/wine-ARCH). A windows/amd64 program cross
-linked as above runs in the emulated amd64 container:
+/xo, `--rm`, WINEPREFIX /work/wine-MODE). Use MODE box64: Debian's
+amd64 Wine run by Box64 (0.3.4, Debian's) in a native linux/arm64
+container, which runs structured exceptions; MODE amd64 (the emulated
+amd64 container) runs ordinary programs but not exceptions (Rosetta).
+A windows/amd64 program cross linked as above:
 
     printf '#!/bin/sh\nexec wine /work/win/P.exe "$@"\n' > $WORK/w/P; chmod +x $WORK/w/P
-    scripts/docker-wine.sh amd64 $WORK 'sh /xo/scripts/golden-run.sh /work/w/P /xo/internal/llvm/testdata/golden/P'
+    scripts/docker-wine.sh box64 $WORK 'wineboot -u >/dev/null 2>&1; sh /xo/scripts/golden-run.sh /work/w/P /xo/internal/llvm/testdata/golden/P'
 
 (golden-run.sh compares want.txt; use a copy with want_windows.txt in
 its place where a golden has one). Results 2026-10-16: 11 of the 17
 http*, net*, fs*, proc*, stdin* goldens pass (every http_*, net_echo,
 fs_cwd_path, fs_native); fs_paths_os needs the \\localhost\C$ share
 Wine lacks, fs_files and fs_ops_edges symbolic links, proc_cmd and
-net_only's proc lines sh, echo and tr; net_only's env.only(["PATH"])
-finds no PATH (Windows names are case insensitive: to check). Limits:
-Docker Desktop emulates amd64 with Rosetta, which stops Wine's exception
-dispatch ("rosetta error: invalid gdt selector index 5"), so a stack
-overflow (or any structured exception) cannot be tested this way; and
-Debian's arm64 Wine runs no ARM64 PE (a hello hangs), so windows/arm64
-is cross linked only. Last verified: 2026-10-16.
+net_only's proc line sh, echo and tr (no Xo bug among them; net_only's
+env lines pass once the prefix exists: warm a new WINEPREFIX with
+`wineboot -u` before measuring, as Wine's first run sets PATH up while
+the program runs, Xo lang 5 2026-10-16). The Windows only goldens are in
+internal/llvm/testdata/windows (want_windows.txt; stack_overflow: Windows'
+stack overflow handler, Xo since decision 0234: passes under box64).
+The amd64 results above are MODE amd64's. Limits: Rosetta stops Wine's
+exception dispatch ("rosetta error: invalid gdt selector index 5"), so
+use box64 for any structured exception; Debian's arm64 Wine runs no
+ARM64 PE (a hello hangs), so windows/arm64 is cross linked only
+(gotchas/wine-rosetta-no-exceptions.md). Last verified: 2026-10-16.
 
 ### XO_NOLIBC cross links on the Mac
 

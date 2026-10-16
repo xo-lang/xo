@@ -1,11 +1,10 @@
 // The program's start and end, in Xo (the zero-C audit's work item B26,
 // part 2; this was xo_rt.c's main, fault_init, win_init,
-// xo_signals_init, and xo_rt_stats): main is cabi_c.xo's, the C symbol
-// main (decision 0234), which calls init and then main here. What stays
-// C is Windows' stack overflow handler (on_overflow), which runs at the
-// end of an overflowed stack, whose address the services record hands
-// over. The signal and console handlers are poll.xo's (on_signal,
-// on_console), installed through rt.fn_addr (decision 0233).
+// xo_signals_init, xo_rt_stats, and on_overflow): main is cabi_c.xo's,
+// the C symbol main (decision 0234), which calls init and then main
+// here; Windows' stack overflow handler is on_overflow below. The signal
+// and console handlers are poll.xo's (on_signal, on_console), installed
+// through rt.fn_addr (decision 0233).
 //
 // The entry's one C function, Windows' on_overflow, is a word of
 // stop.xo's services record (rt.static_word 61); the rest are cabi.xo
@@ -25,19 +24,21 @@ use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/stop
 use native/rt
-use native/sys_c
 use native/sys_darwin
 use native/sys_windows
 
-/// The services record's word of the entry: on_overflow (Windows' stack
-/// overflow handler, C by design; 0 elsewhere). The others are Xo since
-/// decision 0233 step 2: cabi.xo exports through rt.fn_addr (words 96,
-/// 104, 128, 144 and 152 unused: poll_ev_start, on_signal or
-/// on_console, consts_free, rtstats_counts and rtstats_switch) and
-/// heapos.xo set_mid_max (word 120); word 88, the test world's start,
-/// since a test binary's main starts it, and 136 since std/time's
-/// tz_free became atexit.xo's.
-const E_OVERFLOW = 112
+/// Windows' EXCEPTION_STACK_OVERFLOW (0xC00000FD), the code on_overflow
+/// reports.
+const EXC_STACK_OVERFLOW = 3221225725
+
+/// GetStdHandle's STD_ERROR_HANDLE (-12), and GetCurrentProcess's
+/// pseudo handle (-1).
+const STD_ERROR = -12
+const THIS_PROCESS = -1
+
+/// rt.static_word: on_overflow's WriteFile count (a word no other code
+/// reads; obj.scratch could take the heap's lock on a blown stack).
+const W_OVERFLOW_COUNT = 61
 
 /// xo_rt.c XO_MID_MAX: the largest block the size classes serve.
 const MID_MAX = 262144
@@ -55,8 +56,12 @@ const SIG_IGN = 1
 const SA_RESTART_LINUX = 268435456
 const SA_RESTART_DARWIN = 2
 
-/// Windows: CP_UTF8, and the stack the main thread keeps for its
-/// overflow handler (64 KiB; xo_rt.c run_main sets main's thread's).
+/// Windows: CP_UTF8, and the stack a thread keeps for its overflow
+/// handler (SetThreadStackGuarantee): on_overflow's own frames take 208
+/// bytes (measured on arm64 2026-10-16: 160 with flush_try inlined, then
+/// stdio.write_all's 48), the rest is WriteFile's and the system's
+/// exception dispatch, as for the C handler it replaces; 64 KiB keeps the
+/// C handler's margin.
 const CP_UTF8 = 65001
 const W_GUARANTEE = 65536
 
@@ -67,14 +72,13 @@ const ACQUIRE = 1
 /// C tests' constructor through cabi.xo rt_init; was xo_rt.c's main and
 /// fault_init): the main thread's heap record, fault.xo and ctx.xo (the
 /// personality routine's address), the event loop's record before any
-/// descriptor, and stop.xo's state with the C's services record
-/// (xo_rt.c xo_c_stop_svc: Windows' on_overflow).
+/// descriptor, and stop.xo's state.
 pub fn init() {
   obj.heap_init(heapos.main_record(), rt.fn_addr("heap_thread"))
   fault.init(rt.fn_addr("fault_raise_msg"))
   ctx.init(rt.fn_addr("personality"))
   let _p = poll.poll_svc()
-  stop.init(sys_c.xo_c_stop_svc())
+  stop.init()
 }
 
 /// The program after init (rank 9 of the zero-C inventory, decisions
@@ -223,7 +227,7 @@ fn signals() {
     TargetOs.Windows => {
       // UNTESTED on windows
       let _c = sys_windows.SetConsoleCtrlHandler(h, 1)
-      let _v = sys_windows.AddVectoredExceptionHandler(1, stop.svc_word(E_OVERFLOW))
+      let _v = sys_windows.AddVectoredExceptionHandler(1, rt.fn_addr("on_overflow"))
       let g = rt.heap_large(8)
       rt.mem_store(g, 0, W_GUARANTEE, 4)
       let _g = sys_windows.SetThreadStackGuarantee(g)
@@ -437,3 +441,26 @@ fn release(b: Int) { rt.heap_release(b - 8) }
 
 /// Writes the first n bytes of b to standard error.
 fn emit(b: Int, n: Int) { stdio.write_all(2, b, n) }
+
+/// Windows' stack overflow handler (cabi.xo on_overflow, a vectored
+/// exception handler registered by signals_init; was xo_rt.c's, decision
+/// 0234): a stack overflow is not a fault (decision 0085), so nothing
+/// unwinds; the program ends as the Go backend's does, with "fatal
+/// error: stack overflow" and status 2, where Windows would end it
+/// silently (0xC00000FD). It runs on what is left of the overflowed
+/// stack (W_GUARANTEE, which SetThreadStackGuarantee keeps for every
+/// thread that runs Xo), so it only flushes standard output (unless a
+/// writer holds it), writes, and exits: no allocation and no lock but
+/// flush_try's try. e is the EXCEPTION_POINTERS;
+/// EXCEPTION_CONTINUE_SEARCH (0) for any other exception.
+pub fn on_overflow(e: Int) -> Int {
+  // the ExceptionRecord's ExceptionCode, a DWORD at 0
+  if rt.mem_load(rt.mem_load(e, 0, 8), 0, 4) != EXC_STACK_OVERFLOW {
+    return 0
+  }
+  stdio.flush_try()
+  let m = "fatal error: stack overflow\n"
+  let _w = sys_windows.WriteFile(sys_windows.GetStdHandle(STD_ERROR), raw.data(m), m.len(), rt.static_word(W_OVERFLOW_COUNT), 0)
+  let _t = sys_windows.TerminateProcess(THIS_PROCESS, 2)
+  0
+}

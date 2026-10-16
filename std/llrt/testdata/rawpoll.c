@@ -13,7 +13,6 @@
 //
 // Exit status 0 means the test passed; it prints "rawpoll: ok".
 
-#include "../xo_rt.c"
 #include "xcalls.h"
 #include <unistd.h> // pipe, write, close, usleep (xo_rt.c no longer brings it)
 

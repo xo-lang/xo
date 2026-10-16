@@ -769,30 +769,18 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
 }
 
 /// The sources and flags a native link adds to the program's code
-/// (buildArm64 and buildLLVM after the code): the C runtime written into
-/// dir, the zone data of std/time, the runtime's I/O flags, and the
-/// inputs of `use c`.
+/// (buildArm64 and buildLLVM after the code): the zone data of std/time,
+/// the runtime's I/O flags, and the inputs of `use c` (no C runtime since
+/// decision 0234).
 struct LinkInputs {
   srcs: List[Str] = []
   flags: List[Str] = []
 }
 
 fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
-  // the C runtime (writeRuntime)
-  match os.fs.read_dir("${ctx.std}/llrt") {
-    Ok(fis) => {
-      for fi in fis {
-        if fi.name.ends_with(".c") {
-          match os.fs.read("${ctx.std}/llrt/${fi.name}") {
-            Ok(data) => write_or_fail(os, dir, "${dir}/${fi.name}", data)
-            Err(e) => fail(os, "${e}")
-          }
-        }
-      }
-    }
-    Err(e) => fail(os, "${e}")
-  }
-  var lk = LinkInputs{srcs: ["${dir}/xo_rt.c"]}
+  // no C runtime (decision 0234): std/llrt/xo_rt.c, empty, stays only
+  // for the drivers of earlier seeds
+  var lk = LinkInputs{}
   // std/time: the program's zone data beside the runtime (timeFlags)
   if uses_time {
     if !(o.tzdata is "" | "embedded" | "system") {

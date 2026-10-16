@@ -13,7 +13,6 @@
 // values must be intact. Exit status 0 means every test passed.
 
 #include <string.h>
-#include "../xo_rt.c"
 #include <pthread.h> // the test's own threads (xo_rt.c no longer includes it)
 #include "xcalls.h"
 

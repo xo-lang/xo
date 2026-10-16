@@ -12,7 +12,6 @@
 
 #include <string.h>
 #include <unistd.h>
-#include "../xo_rt.c"
 #include "xcalls.h"
 int64_t xo_x_mono_ns(void);
 

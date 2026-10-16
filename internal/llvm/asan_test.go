@@ -30,7 +30,6 @@ func TestGoldenASan(t *testing.T) {
 		t.Fatalf("no http goldens: %v", err)
 	}
 	dirs = append(dirs, filepath.Join("testdata", "golden", "net_echo"), filepath.Join("testdata", "golden", "net_only"))
-	rt := filepath.Join(rtDir, "xo_rt.c")
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
@@ -49,7 +48,7 @@ func TestGoldenASan(t *testing.T) {
 			}
 			bin := exe(filepath.Join(t.TempDir(), "prog"))
 			flags := asanFlags("-O1", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-Wno-override-module")
-			if err := xotool.CompileC(flags, []string{ll, rt}, bin); err != nil {
+			if err := xotool.CompileC(flags, []string{ll}, bin); err != nil {
 				if strings.Contains(err.Error(), "unsupported option") || strings.Contains(err.Error(), "sanitizer") {
 					t.Skipf("no AddressSanitizer: %v", err)
 				}

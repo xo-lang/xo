@@ -10,7 +10,6 @@
 //
 // Expected: "caught" on stderr and exit status 0.
 
-#include "../xo_rt.c"
 #include "xcalls.h"
 
 static int cmp(const void *a, const void *b) {

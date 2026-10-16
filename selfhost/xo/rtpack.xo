@@ -149,7 +149,14 @@ fn build_rtpack_in(os: Os, ctx: Ctx, work: Str, tos: Str, cc: List[Str], key: St
   // the variants
   var cmds: List[List[Str]] = []
   var labels: List[Str] = []
-  for i in 0..VARIANTS {
+  // no C runtime since decision 0234: a pack of a std without
+  // xo_rt.c holds only its manifest (the drivers that link a pack's rt.o
+  // are those of earlier seeds)
+  let has_rt = match os.fs.exists("${ctx.std}/llrt/xo_rt.c") {
+    Ok(b) => b
+    Err(_) => false
+  }
+  for i in 0..(if has_rt { VARIANTS } else { 0 }) {
     let args = cc + base + variant_defines(i)
     cmds.push(args + ["-c", "-o", "${stage}/${variant_file(i)}", rt])
     labels.push("compiling the runtime (${variant_file(i)})")

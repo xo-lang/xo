@@ -1,0 +1,5 @@
+exit 2
+--- stdout
+before
+--- stderr
+fatal error: stack overflow

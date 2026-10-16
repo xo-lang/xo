@@ -1,0 +1,19 @@
+// Windows' stack overflow handler (std/native/llrt/entry.xo on_overflow,
+// decision 0234; it was C): unbounded recursion on main's thread ends the
+// program with status 2 and "fatal error: stack overflow" on standard
+// error, after flushing what it printed (buffered: "before"). Windows
+// only (Linux and macOS end on SIGSEGV or SIGBUS with no message); runs
+// under Wine with Box64 (scripts/docker-wine.sh box64,
+// knowledgebase/infrastructure/toolchain.md).
+
+fn deep(n: Int) -> Int {
+  if n < 0 {
+    return 0
+  }
+  deep(n + 1) + 1
+}
+
+fn main(os: Os) {
+  os.stdio.println("before")
+  os.stdio.println("${deep(0)}")
+}

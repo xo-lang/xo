@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- No runtime C (decision 0234): Windows' stack overflow handler is Xo
+  (std/native/llrt/entry.xo on_overflow, the cabi.xo export registered
+  with AddVectoredExceptionHandler through rt.fn_addr; it flushes
+  standard output with flush_try's try lock, writes "fatal error: stack
+  overflow" with WriteFile, its count in rt.static_word 61, and ends the
+  program with status 2; no allocation). stop.xo's C services record,
+  sys_c.xo xo_c_stop_svc and E_OVERFLOW are gone. The driver no longer
+  compiles std/llrt/xo_rt.c into a program (link_inputs), xo's own
+  linkers no longer take a pack's rt.o, and xo rtpack compiles xo_rt.c
+  only if it exists; xo_rt.c is empty and stays only for the 0.15.0
+  seed's driver, to be deleted after the next seed. The C tests no
+  longer include it. Tested under Wine: internal/llvm/testdata/windows/
+  stack_overflow passes for windows/amd64 with Debian's amd64 Wine run by
+  Box64 in a native arm64 container (scripts/docker-wine.sh box64, new;
+  Rosetta's amd64 emulation cannot run Wine's exception dispatch,
+  gotchas/wine-rosetta-no-exceptions.md); windows/arm64 is cross linked
+  only.
 - Fault speed: std/native/llrt unwind.xo caches each frame's lookup
   (the FDE or compact entry and its rules after the CFA program) by pc,
   64 entries per thread, so a fault unwinding through frames it has seen

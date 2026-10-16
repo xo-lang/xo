@@ -120,6 +120,22 @@ but windows.h and the #pragma comment(lib) lines went, and the driver
 passes the import libraries the Xo calls need on a Windows link
 (selfhost/xo link.xo sys_link_args).
 
+## No runtime C (2026-10-16, owner)
+
+Windows' on_overflow is Xo (entry.xo on_overflow, a cabi.xo export
+registered through rt.fn_addr; its frames take 208 bytes beside
+WriteFile's and the dispatch's, inside the 64 KiB stack guarantee), and
+stop.xo's services record is gone. The driver compiles no C runtime
+(selfhost/xo link_inputs), --ld=macho and the ELF linker take no pack
+object, and rtpack compiles xo_rt.c only where it exists. xo_rt.c is
+empty: the 0.15.0 seed's driver still compiles it, so it is deleted
+after the next seed. Proved under Wine (2026-10-16):
+internal/llvm/testdata/windows/stack_overflow (exit 2, the flushed
+output, "fatal error: stack overflow") passes for windows/amd64 with
+Debian's amd64 Wine run by Box64 in a native arm64 container
+(scripts/docker-wine.sh box64); Rosetta's emulation cannot run it
+(gotchas/wine-rosetta-no-exceptions.md). windows/arm64 is cross linked.
+
 ## What stays C (at step 2)
 
 xo_rt.c: Windows' on_overflow (a vectored handler that runs on what is
