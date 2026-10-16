@@ -196,6 +196,7 @@ fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
       a.word_fix(0x14000000, FX_B26, ops[0])
     }
     "add" | "adds" | "sub" | "subs" => a.addsub(m, ops)
+    "adc" | "adcs" | "sbc" | "sbcs" => a.adcsbc(m, ops)
     "cmp" | "cmn" => {
       if n < 2 {
         return a.bad(m, ops)
@@ -693,6 +694,30 @@ fn logical_imm(v0: Int, size: Int) -> Int? {
     imms = ((~(e * 2 - 1)) & 0x3f) | (ones - 1)
   }
   Some(nbit * 4096 + immr * 64 + imms)
+}
+
+/// adc, adcs, sbc, sbcs (add and subtract with carry, registers only; the
+/// zero register, not sp, in each place): the arm64 emitter's carry
+/// chains of cpu.adc (decision 0231 addendum; 2026-10-16: macho's
+/// assembler lacked them and every darwin/arm64 build of a TLS program
+/// failed).
+fn (var a: Asm) adcsbc(m: Str, ops: List[Bytes]) {
+  if ops.len() != 3 {
+    return a.bad(m, ops)
+  }
+  let (d, sfd) = gpr(ops[0], false)
+  let (n, sfn) = gpr(ops[1], false)
+  let (r, sfm) = gpr(ops[2], false)
+  if d < 0 || n < 0 || r < 0 || sfd != sfn || sfd != sfm {
+    return a.bad(m, ops)
+  }
+  let base = match m {
+    "adc" => 0x1a000000
+    "adcs" => 0x3a000000
+    "sbc" => 0x5a000000
+    _ => 0x7a000000
+  }
+  a.word(base | (sfd << 31) | (r << 16) | (n << 5) | d)
 }
 
 /// add, adds, sub, subs: immediate (with an optional lsl #12, or a

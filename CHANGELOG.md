@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- selfhost/macho's assembler encodes adc, adcs, sbc, and sbcs: since
+  cpu.adc's carry chains (dd3b3e2d) and the C runtime's deletion, every
+  darwin/arm64 build of a TLS program failed ("unsupported instruction:
+  adcs"). scripts/golden-run.sh runs without coreutils' timeout on macOS.
 - rt.static_word's table grows from 64 to 256 words on every backend
   (decision 0237; no cost per access). std claims only words 0 to 63
   until a seed whose SSA builder accepts more (TestStaticWords); words

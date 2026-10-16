@@ -27,8 +27,14 @@ stdin=/dev/null
 mkdir "$tmp/run"
 cp -R "$dir" "$tmp/run/$name"
 # a hung program (a deadlock, a server never stopped) ends after
-# $XO_GOLDEN_TIMEOUT seconds, 600 by default, as exit 124
-(cd "$tmp/run/$name" && env $envs timeout "${XO_GOLDEN_TIMEOUT:-600}" "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
+# $XO_GOLDEN_TIMEOUT seconds, 600 by default, as exit 124, where coreutils'
+# timeout exists (Linux; macOS has none)
+limit=""
+if command -v timeout >/dev/null 2>&1; then
+  limit="timeout ${XO_GOLDEN_TIMEOUT:-600}"
+fi
+# shellcheck disable=SC2086
+(cd "$tmp/run/$name" && env $envs $limit "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
 code=$?
 {
   printf 'exit %s\n--- stdout\n' "$code"
