@@ -862,7 +862,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // decision 0231's addendum: x + y + cin (cin 0 or 1, moved into the
     // carry flag by cmp #1) and its carry, one adcs when both are used
     "rt.u64_adc" | "rt.u64_adc_carry" => {
-      if !g.has_val[v] && g.adc_chain(v) {
+      if !g.has_val[v] && ADC_CHAINS && g.adc_chain(v) {
         return true
       }
       if !g.has_val[v] {
@@ -870,9 +870,20 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         let other = g.adc_pair(v, if sum { "rt.u64_adc_carry" } else { "rt.u64_adc" })
         let ops = [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]
         if other >= 0 {
+          // one pair, at most three uses and two defs: marked early (the
+          // sum is written before cset) and keep, so that a template the
+          // emitter's three scratch registers cannot serve fails the build
+          // instead of sharing x15 (gotchas/arm64-template-scratch-reuse.md)
           let d = g.new_vreg(false)
           let c = g.new_vreg(false)
-          let _i = g.plain("cmp $u2, #1\nadcs $d0, $u0, $u1\ncset $d1, cs", [d, c], ops)
+          let (cin, cin_k) = g.const_int(x.args[2])
+          let ii = if cin_k && cin == 0 {
+            g.plain("adds $d0, $u0, $u1\ncset $d1, cs", [d, c], [ops[0], ops[1]])
+          } else {
+            g.plain("cmp $u2, #1\nadcs $d0, $u0, $u1\ncset $d1, cs", [d, c], ops)
+          }
+          g.blocks[g.cur].insts[ii].early = true
+          g.blocks[g.cur].insts[ii].keep = true
           g.set(v, [if sum { d } else { c }])
           g.set(other, [if sum { c } else { d }])
         } else if sum {
@@ -1280,6 +1291,13 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
   }
   false
 }
+
+/// Whether adc pairs chain into one instruction (adc_chain): off until
+/// the emitter gives a template's spilled operands distinct registers or
+/// fails loudly (decision 0231's addendum; a chain of up to ten uses
+/// could reload a fourth spilled operand into x15 over the third,
+/// gotchas/arm64-template-scratch-reuse.md).
+const ADC_CHAINS = false
 
 /// A chain of adds with carry starting at v (rt.u64_adc or
 /// rt.u64_adc_carry), as one instruction so that nothing comes between

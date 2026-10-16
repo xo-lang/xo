@@ -24,11 +24,12 @@ fn main(os: Os) {
 // llvm: "llvm.uadd.with.overflow.i64"
 
 // P-256's field product adds with carry in (decision 0231's addendum):
-// a chain of cpu.adc and adc_carry pairs, each carry the next pair's
-// carry in, is adds then adcs with the flag passed along and one cset
-// at its end; on LLVM a chain of llvm.uadd.with.overflow.
+// each pair of cpu.adc and adc_carry of the same operands is one adcs
+// (adds for a carry in of 0) and a cset, a template of its own until the
+// emitter can serve longer ones (gotchas/arm64-template-scratch-reuse.md);
+// on LLVM a chain of llvm.uadd.with.overflow.
 // func nistec.mul4p
-// arm64: "adds x[0-9]+, x[0-9]+, x[0-9]+\n\tadcs x[0-9]+, x[0-9]+, x[0-9]+\n\tadcs x[0-9]+, x[0-9]+, x[0-9]+"
+// arm64: "adcs x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cs"
 // llvm: "llvm.uadd.with.overflow.i64"
 
 // The final subtraction's borrows.

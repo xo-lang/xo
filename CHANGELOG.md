@@ -130,6 +130,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- arm64: each cpu.adc pair is an instruction template of its own again
+  (calls.xo ADC_CHAINS off): a chain of up to ten operands could reload
+  a fourth spilled operand into x15 over the third, silently; arm64
+  handshakes about 10% slower until the emitter serves longer templates
+  (gotchas/arm64-template-scratch-reuse.md, internal/arm64
+  TestNoSharedScratchReload).
+
 - TLS: a P-256 squaring of 10 products (nistec.xo sqr4p) and X25519 on
   four 64 bit limbs modulo 2^256 - 38 on adc chains (x25519.xo,
   scripts/x25519fe64.py): the X25519 handshake 7.5M to 7.1M instructions

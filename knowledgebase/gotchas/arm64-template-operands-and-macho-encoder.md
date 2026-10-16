@@ -14,7 +14,7 @@ products) has fourteen uses. Cause 2: selfhost/macho's encoder only
 knows the instructions someone added to it; adc and adcs were new
 (0a45b2b1 added them, with sbc and sbcs).
 
-Fix: selfhost/arm64 calls.xo adc_chain cuts a chain at five pairs
+Fix: selfhost/arm64 calls.xo adc_chain cut a chain at five pairs (chains are now off: gotchas/arm64-template-scratch-reuse.md)
 (four after a `cmp #1`), the next instruction taking its carry in from
 the previous one's cset. A new instruction an emitter writes goes into
 selfhost/macho enc.xo in the same commit, and the gates build with the
