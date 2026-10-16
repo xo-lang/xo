@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: x15 is an allocatable register (the last caller saved choice;
+  16 instead of 15). The emitter keeps x16 and x17 as its scratch
+  registers; a third spilled operand takes a register free at its
+  instruction, a fault stub's recomputed operand any caller saved
+  register no argument holds, a switch's spilled index x17, and the
+  atomic templates that use w15 declare it (Inst.clobbers). arm64 sweep,
+  150 workloads: 10 faster (argon2 0.985, chacha 0.985, p384 0.990, the
+  other handshakes 0.995 to 0.998), sysio copy 1.031 in the sweep and a
+  tie rerun five times. The forced spill test (XO_ARM64_REGS) passes.
+
 - arm64: `0 - b` of rt.int_wrap is `neg` (ct.mask_bit's mask was
   `mov x9, #0; sub`). Xo Lang 2's finding.
 

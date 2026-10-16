@@ -10,11 +10,14 @@ const FP_BASE = 32
 /// The register of a far frame's slot addresses.
 const FAR_BASE = 28
 
-// Allocatable registers, in order of preference. x15, x16, x17 and d29
-// to d31 are scratch registers of the emitter; x18 is reserved by Apple;
-// x29 and x30 are the frame pointer and the link register.
+// Allocatable registers, in order of preference. x16, x17 and d29 to d31
+// are scratch registers of the emitter (x15 was too until 2026-10-16:
+// it is allocated last now, a template that writes it says so in
+// Inst.clobbers, and a third spilled operand takes a register free at
+// its instruction, emit.xo scratch_reg); x18 is reserved by Apple; x29
+// and x30 are the frame pointer and the link register.
 fn gp_caller() -> List[Int] {
-  [9, 10, 11, 12, 13, 14, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+  [9, 10, 11, 12, 13, 14, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15]
 }
 
 fn gp_callee() -> List[Int] {
@@ -294,6 +297,9 @@ fn (var g: G) regalloc() {
     end.push(0)
   }
   var calls: List[Int] = []
+  // the instructions that write registers besides their definitions:
+  // position and registers
+  var clobs: List[(Int, List[Int])] = []
   // the registers live at the point of the backward walk of a block: from
   // the block's live out set to its live in set, which clears it again
   var live = new_bits(n)
@@ -317,6 +323,9 @@ fn (var g: G) regalloc() {
       let at = 4 * (first + j)
       if inst.kind == K_CALL {
         calls.push(at + 1)
+      }
+      if !inst.clobbers.is_empty() {
+        clobs.push((at, inst.clobbers))
       }
       for d in inst.defs {
         if d == 0 {
@@ -488,6 +497,12 @@ fn (var g: G) regalloc() {
     if g.base != 0 {
       // the base register of the frame's far slots (emit.xo far_slots)
       occ[g.base] = [Rng{s: 0, e: 4 * g.ninst + 3}]
+    }
+    // a template's own registers: no value used, defined, or live there
+    for (at, rs) in clobs {
+      for r in rs {
+        push_rng(occ, r, Rng{s: at, e: at + 2})
+      }
     }
     // a call clobbers every caller saved register (the full sets: the
     // spill test's shorter lists too)

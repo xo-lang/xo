@@ -57,3 +57,11 @@ distinct registers: the build failed loudly with "no free register"
 set the same chains build and pass. adc_chain now caps a chain at
 (2 N + 2) / 3 pairs under XO_ARM64_REGS = N (none at N = 2, 3 pairs at
 N = 4); any long multi-operand template needs the same care.
+
+Update (2026-10-16): x15 is no longer a scratch register (it is
+allocated, last); the emitter's fixed scratch registers are x16 and x17,
+and from the third spilled operand on scratch_reg finds a register free
+at the instruction (which needs G.pos: copies of a block, a latch or a
+return, set it to the block's positions). A template that writes a
+register as a temporary lists it in Inst.clobbers.
+

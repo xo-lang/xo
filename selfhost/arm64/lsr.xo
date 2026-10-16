@@ -1048,10 +1048,15 @@ fn (g: G) dup_latch(t: Int, f: Int, next: Int) -> Int {
 
 /// Emits a copy of latch t (after the branch to its other target).
 fn (var g: G) emit_latch(var b: List[Str], t: Int, next: Int) {
-  for inst in g.blocks[t].insts {
+  let pos = g.pos
+  for (k, inst) in g.blocks[t].insts.indexed() {
     if g.ended {
       break
     }
+    // the copy is allocated as the block (emit_plain's free registers
+    // at its positions)
+    g.pos = g.blocks[t].start + 4 * k
     g.emit_inst(b, inst, next)
   }
+  g.pos = pos
 }

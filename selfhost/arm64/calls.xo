@@ -27,7 +27,7 @@ fn (var g: G) inc(p0: Int) {
   let _t = g.add(Inst{kind: K_CONDBR, cond: "tbz", bit: 62, us: [c], targets: [cont, atomic]})
   g.cur = atomic
   // x16 may hold a reloaded p: x17 and w15 are free scratch
-  let _a = g.add(Inst{kind: K_PLAIN, text: g.atomic_inc("$u0", "x17", "w15"), us: [p]})
+  let _a = g.add(Inst{kind: K_PLAIN, text: g.atomic_inc("$u0", "x17", "w15"), us: [p], clobbers: [15]})
   let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
   g.cur = cont
   g.inherit(before)

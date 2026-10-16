@@ -86,6 +86,9 @@ struct Inst {
   line: Int = 0
   /// its inline site (ssa Value.inl, Func.inl_sites), -1 for none
   inl: Int = -1
+  /// physical registers its text writes besides its definitions (an
+  /// atomic's status register): no value is given one across it
+  clobbers: List[Int] = []
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []

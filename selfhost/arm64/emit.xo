@@ -46,15 +46,13 @@ fn reg_name(r: Int, w: Bool) -> Str {
 
 const SCRATCH0 = 16
 const SCRATCH1 = 17
-const SCRATCH2 = 15
 /// parallel move cycles
 const FSCRATCH = 63
 
 fn gp_scratch(k: Int) -> Int {
   match k {
     0 => 16
-    1 => 17
-    _ => 15
+    _ => 17
   }
 }
 
@@ -729,10 +727,15 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       if g.only_return(r) {
         // the return copied here, past the frame (no branch back to it)
         let cur = g.cur
+        let pos = g.pos
         g.cur = r
-        for x in g.blocks[r].insts {
+        for (k, x) in g.blocks[r].insts.indexed() {
+          // the copy is allocated as the block (emit_plain's free
+          // registers at its positions)
+          g.pos = g.blocks[r].start + 4 * k
           g.emit_inst(b, x, -1)
         }
+        g.pos = pos
         g.cur = cur
         return
       }
@@ -748,7 +751,10 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
     if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur && g.same_frame(t) {
       // a loop header that only tests: test here (one taken branch per
       // iteration instead of two)
+      let pos = g.pos
+      g.pos = g.blocks[t].start
       g.emit_inst(b, ti[0], next)
+      g.pos = pos
       return
     }
     b.push("\tb ${g.label(t)}\n")
@@ -845,7 +851,9 @@ fn (g: G) use_reg(var b: List[Str], v: Int, k: Int) -> Str {
 /// they all took the last scratch register, and a template with four
 /// spilled operands, such as a long adc chain, read a wrong value).
 fn (g: G) scratch_reg(fp: Bool, n: Int, taken: List[Int]) -> Int {
-  if n < 3 {
+  // x16 and x17 (d30, d29, d31: three of them), then a register free at
+  // the instruction
+  if (fp && n < 3) || (!fp && n < 2) {
     return if fp { fp_scratch(n) } else { gp_scratch(n) }
   }
   if g.pos >= 0 && !g.occ_regs.is_empty() {
@@ -1205,7 +1213,9 @@ fn (g: G) move(var b: List[Str], dst: MLoc, src: MSrc) {
 
 /// Recomputes, in a fault stub, an operand of a checked add, sub, or neg
 /// whose register the result took, and points its move at the
-/// recomputed value (x15).
+/// recomputed value: in a caller saved register no argument of the fault
+/// call is in (the call clobbers every caller saved register, so none
+/// holds a value past it; x15 until it was allocated, 2026-10-16).
 fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
   if inst.recover.is_empty() {
     return
@@ -1216,23 +1226,38 @@ fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
   }
   let d = reg_name(dl.reg, false)
   let args = inst.fargs
+  var used: List[Int] = [dl.reg]
+  for a in args {
+    if a.kind == S_REG && a.v != 0 {
+      let (al, _) = g.vloc(a.v)
+      used.push(al.reg)
+    }
+  }
+  var tmp = 15
+  for r in [15, 14, 13, 12, 11, 10, 9] {
+    if !used.contains(r) {
+      tmp = r
+      break
+    }
+  }
+  let t = reg_name(tmp, false)
   for k in [0, 2] {
     if !g.clobbered(args, k, dl.reg) {
       continue
     }
     if inst.recover == "neg" {
-      b.push("\tneg x15, ${d}\n")
+      b.push("\tneg ${t}, ${d}\n")
     } else if inst.recover == "add" {
       let o = g.other_reg(b, args, 2 - k)
-      b.push("\tsub x15, ${d}, ${o}\n")
+      b.push("\tsub ${t}, ${d}, ${o}\n")
     } else if inst.recover == "sub" && k == 0 {
       let o = g.other_reg(b, args, 2)
-      b.push("\tadd x15, ${d}, ${o}\n")
+      b.push("\tadd ${t}, ${d}, ${o}\n")
     } else if inst.recover == "sub" {
       let o = g.other_reg(b, args, 0)
-      b.push("\tsub x15, ${o}, ${d}\n")
+      b.push("\tsub ${t}, ${o}, ${d}\n")
     }
-    ms[k].src = MSrc{kind: M_LOC, l: MLoc{reg: SCRATCH2}}
+    ms[k].src = MSrc{kind: M_LOC, l: MLoc{reg: tmp}}
   }
 }
 

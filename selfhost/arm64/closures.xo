@@ -214,7 +214,7 @@ fn (var g: G) dec_or_defer(p0: Int, drop: DropFn) -> Int {
   let _b3 = g.add(Inst{kind: K_CONDBR, cond: "tbz", bit: 62, us: [c], targets: [cont, atomic]})
   g.cur = atomic
   // x16 may hold a reloaded p: x17 and w15 are free scratch
-  let _b4 = g.add(Inst{kind: K_CONDBR, text: g.atomic_dec("$u0", "x17", "w15"), us: [p], cond: "eq", targets: [free, cont]})
+  let _b4 = g.add(Inst{kind: K_CONDBR, text: g.atomic_dec("$u0", "x17", "w15"), us: [p], cond: "eq", targets: [free, cont], clobbers: [15]})
   g.cur = free
   let d = match drop {
     EnvWord(env) => rsrc(g.def1(false, "ldr $d0, [$u0, #8]", [env]))

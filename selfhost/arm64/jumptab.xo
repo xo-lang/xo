@@ -159,7 +159,8 @@ fn (var g: G) jump_tables() {
 fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
   let lo = Int.parse(inst.text) ?? 0
   let n = inst.targets.len() - 1
-  var idx = g.use_reg(b, inst.us[0], 2)
+  // a spilled index reloads into x17, which the offset takes after it
+  var idx = g.use_reg(b, inst.us[0], 1)
   if lo != 0 {
     b.push("\tsub x17, ${idx}, #${lo}\n")
     idx = "x17"
