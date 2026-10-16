@@ -1,6 +1,6 @@
 # clang cannot link on the Mac: Xcode's ld against the CLT's macOS 27 SDK
 
-Status: Observed (2026-10-16)
+Status: Observed (2026-10-16), fixed on the development Mac the same day: the owner ran `sudo xcode-select -s /Library/Developer/CommandLineTools`, and clang links by default again (no DEVELOPER_DIR needed)
 
 ## Symptom
 
