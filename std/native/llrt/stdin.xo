@@ -553,6 +553,10 @@ pub fn isatty(fd: Int) -> Bool {
   if twflags.fake(TW_REAL_STDIO) {
     return tty_width() > 0
   }
+  if sysio.layer() == 0 {
+    // a WASI module (built with the host's target.os): no terminal
+    return false
+  }
   match target.os {
     TargetOs.Darwin => Int(sys_darwin.isatty(fd)) == 1
     // TCGETS

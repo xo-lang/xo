@@ -393,6 +393,33 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
+      if name == "rt.heap_large" {
+        // the runtime's records (decision 0207): whole pages from
+        // memory.grow (zeroed), outside the allocator, so neither the
+        // budgets nor the leak check count them; the size in a 16 byte
+        // header for heap_large_resize
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.e("call $heap_large")
+        g.e("i64.extend_i32_u")
+        g.def(v)
+        return
+      }
+      if name == "rt.heap_large_resize" {
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.push(x.args[1])
+        g.e("i32.wrap_i64")
+        g.e("call $heap_large_resize")
+        g.e("i64.extend_i32_u")
+        g.def(v)
+        return
+      }
+      if name == "rt.heap_release" {
+        // pages from memory.grow are not given back (one wasm instance
+        // a run)
+        return
+      }
       if name == "rt.sys_clock_buf" {
         // no Linux clock scratch in a WASI module: Clock.now takes the
         // runtime's clock (std/native/llrt/sysio.xo, decision 0206)
@@ -400,7 +427,7 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "call_c4" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "heap_large" | "heap_release" | "heap_large_resize" | "frame_addr" | "fn_addr" {
+      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "call_c4" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "frame_addr" | "fn_addr" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
         // in `target.os` arms the passes may leave in a WASI module,

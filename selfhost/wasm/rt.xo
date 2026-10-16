@@ -188,6 +188,80 @@ fn rt_text(var g: Gen) -> Str {
       i32.const 8
       i32.add)
 
+    ;; rt.heap_large (decision 0207): n zeroed bytes for the runtime's
+    ;; records, from the bump pointer like a new block but with no size
+    ;; class, so the budgets and the leak check do not count them and
+    ;; they are never freed; the size in the 16 byte header before them
+    (func $heap_large (param $n i32) (result i32) (local $p i32) (local $need i32)
+      global.get $hp
+      i32.const 15
+      i32.add
+      i32.const -16
+      i32.and
+      local.tee $p
+      i32.const 16
+      i32.add
+      local.get $n
+      i32.add
+      local.set $need
+      block $ok
+        loop $grow
+          local.get $need
+          memory.size
+          i32.const 16
+          i32.shl
+          i32.le_u
+          br_if $ok
+          memory.size
+          i32.const 1
+          i32.add
+          memory.grow
+          i32.const -1
+          i32.eq
+          if
+            call $oom
+          end
+          br $grow
+        end
+      end
+      local.get $need
+      global.set $hp
+      local.get $p
+      local.get $n
+      i32.store
+      local.get $p
+      i32.const 16
+      i32.add
+      i32.const 0
+      local.get $n
+      memory.fill
+      local.get $p
+      i32.const 16
+      i32.add)
+    ;; rt.heap_large_resize: a new block of n bytes with the old one's
+    ;; first min(old, n) bytes (the old block is not reused)
+    (func $heap_large_resize (param $b i32) (param $n i32) (result i32) (local $q i32) (local $old i32)
+      local.get $n
+      call $heap_large
+      local.set $q
+      local.get $b
+      if
+        local.get $b
+        i32.const 16
+        i32.sub
+        i32.load
+        local.set $old
+        local.get $q
+        local.get $b
+        local.get $old
+        local.get $n
+        local.get $old
+        local.get $n
+        i32.lt_u
+        select
+        memory.copy
+      end
+      local.get $q)
     (func $free (param $p i32) (local $b i32) (local $c i32)
       local.get $p
       i32.const 8

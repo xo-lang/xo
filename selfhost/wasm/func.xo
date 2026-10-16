@@ -858,6 +858,14 @@ fn (var g: Gen) release_run(instrs: List[Int], j: Int) -> Int {
   if cost <= g.nleaves(g.vty(c)) + 2 {
     return 0
   }
+  if g.alloc_leaves(c).len() < g.nleaves(g.vty(c)) {
+    // a call's result whose trailing fields stay in their homes (a var
+    // parameter's write back, home.xo alloc_leaves) has locals for its
+    // leading fields only: pushing all its leaves would read other
+    // values' locals (an invalid module: tls13srv.pump, 2026-10-16), so
+    // its fields are released one by one
+    return 0
+  }
   g.push(c)
   g.e("call ${g.drop_fields_fn(g.vty(c), fields)}")
   k - j

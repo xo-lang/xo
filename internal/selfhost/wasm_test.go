@@ -28,6 +28,15 @@ const wasmMinPass = 128
 // difference fails. Programs that exit 0 run again with XO_LEAKCHECK=1
 // and must free every allocation. Not under -short (it builds the
 // checker and the SSA builder).
+// wasmCCallRE matches the run time faults of what a WASI module cannot
+// do: a C library platform call (decision 0232, std/native/sys_c.xo), a
+// function address or a call through one (decision 0233: rt.fn_addr,
+// rt.frame_addr, rt.call_c2, rt.call_c4), and, until a WASI entropy
+// source reaches std/native/llrt/rand.xo, the native runtime's entropy
+// (gotchas/wasm-native-rand-no-entropy.md). The test counts them as
+// unsupported and logs each.
+var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|the system random number generator failed")
+
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds selfhost/wasm (merge and full tiers)")
@@ -89,6 +98,13 @@ func TestSelfhostWasm(t *testing.T) {
 		}
 		wasm := filepath.Join(out, name+".wasm")
 		got := runWasm(t, node, runner, wasm, dir, false)
+		if m := wasmCCallRE.FindString(got.String()); m != "" && got.String() != string(want) {
+			// a C library call (decision 0232) in a WASI module: std's
+			// guard faults by design, as an unsupported call would
+			unsupported++
+			why = append(why, name+": "+m)
+			continue
+		}
 		if got.String() != string(want) {
 			t.Errorf("%s: the wasm module's run differs from want.txt\n--- got\n%s--- want\n%s", name, got.String(), want)
 			failed++
