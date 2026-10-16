@@ -165,3 +165,23 @@ compressed body undecoded (example.com: 400 gzip bytes on arm64 and
 LLVM, 577 HTML bytes on the Go backend, Go, Rust, and curl); gotcha
 [native-http-client-gzip-body.md](../../knowledgebase/gotchas/native-http-client-gzip-body.md).
 It does not change the sizes above.
+
+## Follow up: folding the target and test mode (decision 0246)
+
+Same day, darwin/arm64, Xo arm64, against seed 0.18.0 (4c35fdec, the
+same commit without the change; both before the gzip decoding of
+038f07c2, which adds about 33 KB to https_get), bytes:
+
+| Program | before | before `-s` | before, stripped | after | after `-s` | after, stripped |
+|---|---:|---:|---:|---:|---:|---:|
+| hello | 701,010 | 701,012 | 646,616 | 631,666 | 586,580 | 580,344 |
+| https_get | 2,586,390 | 2,586,392 | 2,447,136 | 2,253,126 | 2,140,216 | 2,133,232 |
+| json_server | 2,870,472 | 2,870,474 | 2,727,600 | 2,662,616 | 2,536,394 | 2,529,424 |
+| notes-service | 3,337,226 | 3,337,228 | 3,173,424 | 3,096,378 | 2,949,196 | 2,942,224 |
+
+Stripped: minus 10, 13, 7, and 7 percent. Linux and Windows code in a
+darwin hello went from 13,568 to 992 bytes, the test world from 5,836 to
+1,844. `-s` now drops the local symbols (it only dropped the dSYM
+before). Decisions 0244 (TLS only when configured, measured: json_server
+2,727,600 to 1,291,000 bytes stripped) and 0245 (the profiler, about
+148 of its 158 KiB movable to `xo prof`) are proposals for the owner.
