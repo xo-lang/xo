@@ -563,3 +563,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llvm-split-quoted-symbol-name.md](llvm-split-quoted-symbol-name.md): Observed: the split LLVM build matches symbols by text, so a quoted `@"x"` reference gets no declaration of `@x`; write C names unquoted.
 - [clang14-arch-extension-crypto.md](clang14-arch-extension-crypto.md): Observed: LLVM 14 rejects aese/sha256h/pmull under `.arch_extension crypto` alone; the arm64 emitter also names aes and sha2.
 - [docker-vm-oom-self-build.md](docker-vm-oom-self-build.md): Observed: building xo inside Docker Desktop's 8 GB VM is killed; cross build the Linux xo on the Mac with --backend=go --targets=linux/ARCH.
+- [native-prelude-handles-opaque.md](native-prelude-handles-opaque.md): Observed: a native std module cannot build or read File, FileLock, or other prelude handles (XO0605, XO0601); add llrt_ functions in the native prelude and rt intrinsics lowered to them.

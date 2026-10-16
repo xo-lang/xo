@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A native test binary's MemFs has every Fs method: `open`, `create`,
+  `open_append` (File handles: `read`, `read_line`, `write`, `close`),
+  `append`, `copy`, `mode`, `set_mode`, `glob`, `lock`, and `try_lock`
+  (a held lock makes another task wait; FileLock `unlock`), with std/rt's
+  behaviour and error texts (std/native/testing.xo; the native prelude's
+  File and FileLock carry a MemFs number, rt.mem_file and rt.mem_lock;
+  selfhost/ssa routes File and FileLock methods in test binaries). No
+  XO1201 is left for MemFs. cmd/xo testdata/nogc/same has a test per
+  method and testdata/nogc/real real handles under `--real`, each the Go
+  backend's report on arm64 and LLVM.
 - Runtime C (owner, 2026-10-15): xo_rt.c is Windows' stack overflow
   handler and its services record only. The C tests' setup is a
   constructor in std/llrt/testdata/xcalls.h (XO_RT_NO_MAIN is gone); the

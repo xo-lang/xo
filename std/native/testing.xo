@@ -9,7 +9,10 @@ use std/log
 use std/path
 use std/sql
 use std/testing
+use native/llrt/ctx
 use native/llrt/glob
+use native/llrt/pool
+use native/llrt/tasks
 use native/llrt/testworld
 use native/rt
 use native/llrt/raw
@@ -110,6 +113,25 @@ struct MemNode {
   /// A symbolic link's target ("" for a file or directory): absolute
   /// targets relative to the file system's root
   link: Str = ""
+  /// The permission bits set_mode or copy gave, when has_mode
+  mode: Int = 0
+  has_mode: Bool = false
+}
+
+/// An open MemFs file (std/rt memFileH): the node it reads or writes (its
+/// links followed), a read handle's contents at open and offset.
+struct MemFile {
+  full: Str
+  data: Bytes
+  off: Int
+  closed: Bool
+}
+
+/// A held MemFs lock: the lock record (memlock_new) and whether it was
+/// unlocked.
+struct MemLockH {
+  rec: Int
+  done: Bool
 }
 
 struct MemFail {
@@ -123,6 +145,12 @@ struct MemState {
   case_sensitive: Bool
   fails: List[MemFail]
   temp_seq: Int
+  /// Open files and held locks by number (File.mem, FileLock.mem), the
+  /// last number given, and each path's lock record (by memfs_key)
+  files: Map[Int, MemFile] = {}
+  locks: Map[Str, Int] = {}
+  lock_hs: Map[Int, MemLockH] = {}
+  seq: Int = 0
 }
 
 fn memfs_load() -> MemState {
@@ -549,6 +577,380 @@ fn memfs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
         return Some("/" + memfs_trim(n.link).trim_prefix(root).trim_prefix("/"))
       }
       Some(n.link)
+    }
+  }
+}
+
+// Handles, append, copy, modes, globs, and locks (std/rt fsfile_mem.go,
+// decision 0163).
+
+fn memfs_now() -> Time { Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()) }
+
+fn memfs_loop_err(p: Str) -> FsErr { FsErr.Io(path: p, msg: "too many levels of symbolic links") }
+
+// memfs_open_file is std/rt's openFile: a read handle holds the contents
+// at open; a write handle writes through (created, truncated when
+// truncate).
+fn memfs_open_file(f: Fs, p: Str, write: Bool, truncate: Bool) -> File ! FsErr {
+  let given = memfs_begin(f, p, write)?
+  var st = memfs_load()
+  let r = memfs_open_in(st, f, given, p, write, truncate)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, truncate: Bool) -> File ! FsErr {
+  if let Some(e) = memfs_failed(st, if write { 2 } else { 1 }, [given]) {
+    return Err(e)
+  }
+  let full = match memfs_follow(st, given) {
+    Some(t) => t
+    None => return Err(memfs_loop_err(p))
+  }
+  let n = memfs_get(st, full)
+  st.seq += 1
+  let id = st.seq
+  if !write {
+    match n {
+      None => return Err(memfs_err(1, p))
+      Some(node) => {
+        if node.dir {
+          return Err(memfs_err(5, p))
+        }
+        st.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false})
+        return rt.mem_file(id, p, false)
+      }
+    }
+  }
+  if full == "" {
+    return Err(memfs_err(5, p))
+  }
+  if let Some(node) = n {
+    if node.dir {
+      return Err(memfs_err(5, p))
+    }
+  }
+  if let Some(bad) = memfs_mkdirs(st, full, false) {
+    return Err(memfs_err(4, memfs_rel(f, bad)))
+  }
+  match n {
+    None => memfs_put(st, full, MemNode{dir: false, data: b"", modified: memfs_now(), name: ""})
+    Some(node) => {
+      if truncate {
+        memfs_put(st, full, node with {data: b"", modified: memfs_now()})
+      }
+    }
+  }
+  st.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false})
+  rt.mem_file(id, p, true)
+}
+
+fn memfs_open(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, false, false) }
+
+fn memfs_create(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, true) }
+
+fn memfs_open_append(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, false) }
+
+// memfile_state is std/rt File's checks: canceled, closed, or open for
+// the other direction; the open file.
+fn memfile_state(st: MemState, f: File, write: Bool) -> MemFile ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let mf = st.files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true}
+  if mf.closed {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
+  }
+  if rt.mem_file_writes(f) && !write {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file is open for writing"))
+  }
+  if !rt.mem_file_writes(f) && write {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file is open for reading"))
+  }
+  mf
+}
+
+fn memfile_read(f: File, max: Int) -> Bytes? ! FsErr {
+  var st = memfs_load()
+  let r = memfile_read_in(st, f, max)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_read_in(var st: MemState, f: File, max: Int) -> Bytes? ! FsErr {
+  var mf = memfile_state(st, f, false)?
+  if max <= 0 {
+    return Some(b"")
+  }
+  if mf.off >= mf.data.len() {
+    return None
+  }
+  var n = mf.data.len() - mf.off
+  if max < n {
+    n = max
+  }
+  if n > 1048576 {
+    n = 1048576
+  }
+  let b = mf.data[mf.off..mf.off + n]
+  mf.off += n
+  st.files.put(rt.mem_file_id(f), mf)
+  Some(b)
+}
+
+fn memfile_read_line(f: File) -> Str? ! FsErr {
+  var st = memfs_load()
+  let r = memfile_read_line_in(st, f)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_read_line_in(var st: MemState, f: File) -> Str? ! FsErr {
+  var mf = memfile_state(st, f, false)?
+  if mf.off >= mf.data.len() {
+    return None
+  }
+  var end = mf.off
+  while end < mf.data.len() && mf.data[end] != 10 {
+    end += 1
+  }
+  if end < mf.data.len() {
+    end += 1
+  }
+  var line = rt.cast[Bytes, Str](mf.data[mf.off..end])
+  mf.off = end
+  st.files.put(rt.mem_file_id(f), mf)
+  line = line.trim_suffix("\n").trim_suffix("\r")
+  Some(line)
+}
+
+fn memfile_write(f: File, data: Bytes) -> () ! FsErr {
+  var st = memfs_load()
+  let r = memfile_write_in(st, f, data)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
+  let mf = memfile_state(st, f, true)?
+  // removed since it was opened: written again (std/rt memFileH.write)
+  var n = memfs_get(st, mf.full) ?? MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  if n.dir {
+    n = MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  }
+  memfs_put(st, mf.full, n with {data: n.data + data, modified: memfs_now()})
+}
+
+fn memfile_close(f: File) -> () ! FsErr {
+  var st = memfs_load()
+  if let Some(mf) = st.files.get(rt.mem_file_id(f)) {
+    st.files.put(rt.mem_file_id(f), mf with {closed: true})
+  }
+  memfs_store(st)
+}
+
+fn memfs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  let file = memfs_open_append(f, p)?
+  // std/rt's MemFs append: the write's result is not checked
+  match memfile_write(file, data) {
+    _ => ()
+  }
+  memfile_close(file)
+}
+
+fn memfs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  let src = memfs_begin(f, from, false)?
+  var st = memfs_load()
+  let r = memfs_copy_src(st, src, from)
+  memfs_store(st)
+  let n = r?
+  memfs_write(f, to, n.data)?
+  let dst = memfs_resolve(f, to) ?? ""
+  var st2 = memfs_load()
+  if let Some(d) = memfs_get(st2, dst) {
+    memfs_put(st2, dst, d with {mode: n.mode, has_mode: n.has_mode})
+  }
+  memfs_store(st2)
+}
+
+fn memfs_copy_src(var st: MemState, src: Str, from: Str) -> MemNode ! FsErr {
+  if let Some(e) = memfs_failed(st, 1, [src]) {
+    return Err(e)
+  }
+  let full = match memfs_follow(st, src) {
+    Some(t) => t
+    None => return Err(memfs_loop_err(from))
+  }
+  match memfs_get(st, full) {
+    None => Err(memfs_err(1, from))
+    Some(n) => {
+      if n.dir {
+        return Err(memfs_err(5, from))
+      }
+      n
+    }
+  }
+}
+
+// memfs_perm is std/rt memMode: as set, else 0o755 for a directory and
+// 0o644 for a file.
+fn memfs_perm(n: MemNode) -> Int {
+  if n.has_mode {
+    return n.mode
+  }
+  if n.dir { 0o755 } else { 0o644 }
+}
+
+fn memfs_mode(f: Fs, p: Str) -> Int ! FsErr {
+  let given = memfs_begin(f, p, false)?
+  let st = memfs_load()
+  let n = memfs_get(st, memfs_follow(st, given) ?? given)
+  memfs_store(st)
+  match n {
+    None => Err(memfs_err(1, p))
+    Some(node) => memfs_perm(node)
+  }
+}
+
+fn memfs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
+  let given = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_set_mode_in(st, given, p, mode)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_set_mode_in(var st: MemState, given: Str, p: Str, mode: Int) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 2, [given]) {
+    return Err(e)
+  }
+  let full = memfs_follow(st, given) ?? given
+  match memfs_get(st, full) {
+    None => Err(memfs_err(1, p))
+    Some(n) => memfs_put(st, full, n with {mode: mode & 0o777, has_mode: true})
+  }
+}
+
+// A MemFs lock's record (std/rt lock with one permit): the record's lock
+// word, held, and the wait list (first, last; tasks.xo wl_*). Records
+// live for the test binary.
+const ML_HELD = 8
+const ML_WAIT = 16
+
+fn memlock_new() -> Int {
+  let a = rt.heap_large(32)
+  for o in [0, 8, 16, 24] {
+    rt.mem_store(a, o, 0, 8)
+  }
+  a
+}
+
+// memlock_take takes the record a: free only when nothing holds it and no
+// one waits (try), else waiting in line (a cancellation point: false when
+// the task was canceled).
+fn memlock_take(a: Int, wait: Bool) -> Bool {
+  pool.lock(a)
+  if !wait {
+    let free = rt.mem_load(a, ML_HELD, 8) == 0 && rt.mem_load(a, ML_WAIT, 8) == 0
+    if free {
+      rt.mem_store(a, ML_HELD, 1, 8)
+    }
+    pool.unlock(a)
+    return free
+  }
+  let c = ctx.cur()
+  while rt.mem_load(a, ML_HELD, 8) != 0 {
+    if !tasks.wl_wait_as(c, a, a + ML_WAIT, true, 1) {
+      pool.unlock(a)
+      return false
+    }
+  }
+  rt.mem_store(a, ML_HELD, 1, 8)
+  pool.unlock(a)
+  true
+}
+
+fn memlock_give(a: Int) {
+  pool.lock(a)
+  rt.mem_store(a, ML_HELD, 0, 8)
+  let e = rt.mem_load(a, ML_WAIT, 8)
+  if e != 0 {
+    // the oldest waiter (its park is the entry's first word)
+    tasks.park_signal(rt.mem_load(e, 0, 8))
+  }
+  pool.unlock(a)
+}
+
+// memfs_lock_file is std/rt's lockFile: the file is created if missing.
+fn memfs_lock_file(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
+  let full = memfs_begin(f, p, true)?
+  var st = memfs_load()
+  let r = memfs_lock_rec(st, f, full, p)
+  memfs_store(st)
+  let a = r?
+  if !memlock_take(a, wait) {
+    if wait {
+      return Err(FsErr.Canceled)
+    }
+    return None
+  }
+  var st2 = memfs_load()
+  st2.seq += 1
+  let id = st2.seq
+  st2.lock_hs.put(id, MemLockH{rec: a, done: false})
+  memfs_store(st2)
+  Some(rt.mem_lock(id))
+}
+
+fn memfs_lock_rec(var st: MemState, f: Fs, full: Str, p: Str) -> Int ! FsErr {
+  if let Some(e) = memfs_failed(st, 2, [full]) {
+    return Err(e)
+  }
+  match memfs_get(st, full) {
+    None => {
+      if let Some(bad) = memfs_mkdirs(st, full, false) {
+        return Err(memfs_err(4, memfs_rel(f, bad)))
+      }
+      memfs_put(st, full, MemNode{dir: false, data: b"", modified: memfs_now(), name: ""})
+    }
+    Some(n) => {
+      if n.dir {
+        return Err(memfs_err(5, p))
+      }
+    }
+  }
+  let k = memfs_key(st, full)
+  match st.locks.get(k) {
+    Some(a) => a
+    None => {
+      let a = memlock_new()
+      st.locks.put(k, a)
+      a
+    }
+  }
+}
+
+fn memfs_lock(f: Fs, p: Str) -> FileLock ! FsErr {
+  match memfs_lock_file(f, p, true)? {
+    Some(l) => l
+    None => Err(FsErr.Canceled)
+  }
+}
+
+fn memfs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { memfs_lock_file(f, p, false) }
+
+fn memlock_unlock(l: FileLock) {
+  var st = memfs_load()
+  let h = st.lock_hs.get(rt.mem_lock_id(l))
+  if let Some(lh) = h {
+    if !lh.done {
+      st.lock_hs.put(rt.mem_lock_id(l), lh with {done: true})
+    }
+  }
+  memfs_store(st)
+  if let Some(lh) = h {
+    if !lh.done {
+      memlock_give(lh.rec)
     }
   }
 }

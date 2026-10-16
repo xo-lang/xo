@@ -452,6 +452,13 @@ pub fn raw_fail(err: Int, x: Str) -> Int {
 }
 
 // ---------------------------------------------------------------------------
+/// A handle with no descriptor (closed): the h of a test's MemFs File
+/// (std/native/testing.xo).
+pub fn no_file() -> rt.FsFile { raw_file(-1, false) }
+
+/// A lock handle that holds nothing: the h of a test's MemFs FileLock.
+pub fn no_lock() -> rt.FsLock { raw_lock(-1, false) }
+
 // File handles (decision 0163, std/rt fsfile.go): a read handle is
 // buffered like Go's bufio.Reader of 64 KiB (a read larger than the
 // buffer goes to the file when nothing is buffered).

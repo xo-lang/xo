@@ -476,6 +476,16 @@ fn fs_case_sensitive() -> Bool
 /// Whether an Fs operation reports Canceled (not in deferred code): the
 /// native prelude's llrt_fs_canceled on the native targets.
 fn fs_canceled() -> Bool
+/// A test's MemFs handles (std/native/testing.xo): a File or FileLock of
+/// MemFs number id and its parts, which only the native prelude sees (its
+/// llrt_mem_file, llrt_mem_file_id, llrt_mem_file_path,
+/// llrt_mem_file_writes, llrt_mem_lock, llrt_mem_lock_id).
+fn mem_file(id: Int, path: Str, write: Bool) -> File
+fn mem_file_id(f: File) -> Int
+fn mem_file_path(f: File) -> Str
+fn mem_file_writes(f: File) -> Bool
+fn mem_lock(id: Int) -> FileLock
+fn mem_lock_id(l: FileLock) -> Int
 /// File handles, copies, modes, links, and locks (decisions 0163, 0172):
 /// a handle of the C runtime; the status as for the other operations.
 struct FsFile {}

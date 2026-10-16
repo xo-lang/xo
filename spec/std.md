@@ -474,9 +474,8 @@ fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
-test binary's MemFs has `symlink` and `read_link`, with `stat`, `exists`,
-`read`, and `read_text` following a link as on the Go backend, and
-reports the others as XO1201, planned):
+test binary's MemFs has all of them, as on the Go backend, since
+2026-10-15):
 
 ```
 fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream

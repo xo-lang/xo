@@ -1007,10 +1007,15 @@ struct File {
   h: rt.FsFile
   path: Str
   write: Bool
+  /// A test's MemFs file (std/native/testing.xo memfile_*): its number in
+  /// the MemFs state; 0 for a file of the real file system
+  mem: Int = 0
 }
 
 struct FileLock {
   h: rt.FsLock
+  /// A test's MemFs lock (std/native/testing.xo memlock_*); 0 for real
+  mem: Int = 0
 }
 
 fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
@@ -1024,6 +1029,21 @@ fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
 }
 
 fn fs_open(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 0) }
+
+// A test's MemFs handles (rt.mem_file and the others; std/native/
+// testing.xo memfile_* and memlock_*): the parts only this module sees.
+
+fn llrt_mem_file(id: Int, path: Str, write: Bool) -> File { File{h: fsops.no_file(), path: path, write: write, mem: id} }
+
+fn llrt_mem_file_id(f: File) -> Int { f.mem }
+
+fn llrt_mem_file_path(f: File) -> Str { f.path }
+
+fn llrt_mem_file_writes(f: File) -> Bool { f.write }
+
+fn llrt_mem_lock(id: Int) -> FileLock { FileLock{h: fsops.no_lock(), mem: id} }
+
+fn llrt_mem_lock_id(l: FileLock) -> Int { l.mem }
 
 fn fs_create(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 1) }
 

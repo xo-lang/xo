@@ -433,8 +433,10 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
 }
 
 /// A method of Fs or MemFs in a test binary (memFsCall): the function
-/// memfs_<name> of std/native/testing.xo. None outside test binaries and
-/// for anything else.
+/// memfs_<name> of std/native/testing.xo; of File and FileLock, memfile_
+/// and memlock_<name> (a MemFs's handles); Fs.glob, the native prelude's
+/// fs_glob, whose read_dir and exists calls come here in turn. None
+/// outside test binaries and for anything else.
 fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
@@ -443,19 +445,30 @@ fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
     return None
   }
   let rname = b.obj_name(r)
-  if !(b.c.mods[fm].is_prelude && rname == "Fs") && !(b.c.mods[fm].path == "std/testing" && rname == "MemFs") {
+  let prelude = b.c.mods[fm].is_prelude
+  if !(prelude && rname is "Fs" | "File" | "FileLock") && !(b.c.mods[fm].path == "std/testing" && rname == "MemFs") {
     return None
   }
+  if b.obj_name(fo) == "glob" {
+    let pm = b.native_mod("std/prelude")
+    if pm >= 0 {
+      let g = b.member(pm, "fs_glob")
+      if g >= 0 && b.c.objs[g].kind == check.ObjKind.Func && b.c.objs[g].recv < 0 {
+        return Some(b.call_as(x, ci, g))
+      }
+    }
+  }
+  let (prefix, real_prefix) = if prelude && rname == "File" { ("memfile", "file") } else if prelude && rname == "FileLock" { ("memlock", "filelock") } else { ("memfs", "fs") }
   let nm = b.native_mod("std/testing")
   if nm >= 0 {
-    let impl = b.member(nm, "memfs_${b.obj_name(fo)}")
+    let impl = b.member(nm, "${prefix}_${b.obj_name(fo)}")
     if impl >= 0 && b.c.objs[impl].kind == check.ObjKind.Func && b.c.objs[impl].recv < 0 {
       // Fs methods, and the MemFs methods that are Fs methods (a
       // TestOs's fs is a MemFs); MemFs's own control methods stay
       if b.real_tests {
         let pm = b.native_mod("std/prelude")
         if pm >= 0 {
-          let real = b.member(pm, "fs_${b.obj_name(fo)}")
+          let real = b.member(pm, "${real_prefix}_${b.obj_name(fo)}")
           if real >= 0 && b.c.objs[real].kind == check.ObjKind.Func && b.c.objs[real].recv < 0 {
             // `xo test --real` (decision 0120): the real Fs when the
             // test declares fs effects
@@ -465,6 +478,10 @@ fn (var b: Builder) mem_fs_call(x: Expr, ci: check.CallInfo) -> Int? {
       }
       return Some(b.call_as(x, ci, impl))
     }
+  }
+  if prefix != "memfs" {
+    // a handle method with no MemFs version: the native one
+    return None
   }
   b.unsupported("the method `${rname}.${b.obj_name(fo)}` of a test's MemFs")
   Some(b.undef(b.nat_of(x)))

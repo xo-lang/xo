@@ -122,3 +122,153 @@ test "memfs symbolic links" {
   expect(sub.symlink("/x", "m")) == Err(FsErr.Denied(path: "m"))
   expect(sub.symlink("../f.txt", "n")) == Err(FsErr.Denied(path: "n"))
 }
+
+/// The error of a result whose value is a handle (`==` on handles is not
+/// native yet).
+fn err_of[T](r: Result[T, FsErr]) -> FsErr? {
+  match r {
+    Ok(_) => None
+    Err(e) => Some(e)
+  }
+}
+
+test "memfs open, create, and open_append" {
+  os.fs.write("h/a.txt", b"one\ntwo\r\nthree")?
+  let r = os.fs.open("h/a.txt")?
+  expect(r.read_line()?) == Some("one")
+  expect(r.read(2)?) == Some(b"tw")
+  expect(r.read_line()?) == Some("o")
+  expect(r.read(0)?) == Some(b"")
+  expect(r.read(100)?) == Some(b"three")
+  expect(r.read(100)?) == None
+  expect(r.read_line()?) == None
+  expect(r.write(b"x")) == Err(FsErr.Io(path: "h/a.txt", msg: "file is open for reading"))
+  r.close()?
+  r.close()?
+  expect(r.read(1)) == Err(FsErr.Io(path: "h/a.txt", msg: "file already closed"))
+  expect(err_of(os.fs.open("h/none"))) == Some(FsErr.NotFound(path: "h/none"))
+  expect(err_of(os.fs.open("h"))) == Some(FsErr.IsDir(path: "h"))
+  let w = os.fs.create("h/new/b.txt")?
+  w.write(b"ab")?
+  expect(os.fs.read_text("h/new/b.txt")?) == "ab"
+  w.write(b"cd")?
+  expect(w.read(1)) == Err(FsErr.Io(path: "h/new/b.txt", msg: "file is open for writing"))
+  w.close()?
+  expect(os.fs.read_text("h/new/b.txt")?) == "abcd"
+  let t = os.fs.create("h/new/b.txt")?
+  t.close()?
+  expect(os.fs.read_text("h/new/b.txt")?) == ""
+  // a write handle writes again after a remove (std/rt memFileH.write)
+  let gone = os.fs.create("h/gone.txt")?
+  os.fs.remove("h/gone.txt")?
+  gone.write(b"back")?
+  gone.close()?
+  expect(os.fs.read_text("h/gone.txt")?) == "back"
+  let ap = os.fs.open_append("h/a.txt")?
+  ap.write(b"!")?
+  ap.close()?
+  expect(os.fs.read_text("h/a.txt")?) == "one\ntwo\r\nthree!"
+  expect(err_of(os.fs.create("h"))) == Some(FsErr.IsDir(path: "h"))
+  expect(err_of(os.fs.create("h/a.txt/x"))) == Some(FsErr.NotDir(path: "h/a.txt"))
+  // a read handle keeps the contents at open
+  let snap = os.fs.open("h/a.txt")?
+  os.fs.write("h/a.txt", b"changed")?
+  expect(snap.read(100)?) == Some(b"one\ntwo\r\nthree!")
+  os.fs.fail_next(testing.FsOp.Read, "h/*", FsErr.Io(path: "h", msg: "bad sector"))
+  expect(err_of(os.fs.open("h/a.txt"))) == Some(FsErr.Io(path: "h", msg: "bad sector"))
+  os.fs.fail_next(testing.FsOp.Write, "h/*", FsErr.Io(path: "h", msg: "disk full"))
+  expect(err_of(os.fs.create("h/c.txt"))) == Some(FsErr.Io(path: "h", msg: "disk full"))
+  os.fs.symlink("a.txt", "h/l")?
+  let via_link = os.fs.open("h/l")?
+  expect(via_link.read(100)?) == Some(b"changed")
+}
+
+test "memfs append" {
+  os.fs.append("p/log.txt", b"a")?
+  os.fs.append("p/log.txt", b"b")?
+  expect(os.fs.read_text("p/log.txt")?) == "ab"
+  expect(os.fs.append("p", b"x")) == Err(FsErr.IsDir(path: "p"))
+  os.fs.fail_next(testing.FsOp.Write, "p/*", FsErr.Io(path: "p", msg: "disk full"))
+  expect(os.fs.append("p/log.txt", b"c")) == Err(FsErr.Io(path: "p", msg: "disk full"))
+  expect(os.fs.read_only().append("p/log.txt", b"c")) == Err(FsErr.Denied(path: "p/log.txt"))
+}
+
+test "memfs copy" {
+  os.fs.write("c/a.txt", b"data")?
+  os.fs.set_mode("c/a.txt", 0o600)?
+  os.fs.copy("c/a.txt", "c/sub/b.txt")?
+  expect(os.fs.read_text("c/sub/b.txt")?) == "data"
+  expect(os.fs.mode("c/sub/b.txt")?) == 0o600
+  expect(os.fs.copy("c/none", "c/x")) == Err(FsErr.NotFound(path: "c/none"))
+  expect(os.fs.copy("c", "c/x")) == Err(FsErr.IsDir(path: "c"))
+  os.fs.symlink("a.txt", "c/l")?
+  os.fs.copy("c/l", "c/via")?
+  expect(os.fs.read_text("c/via")?) == "data"
+  os.fs.symlink("loop2", "c/loop1")?
+  os.fs.symlink("loop1", "c/loop2")?
+  expect(os.fs.copy("c/loop1", "c/y")) == Err(FsErr.Io(path: "c/loop1", msg: "too many levels of symbolic links"))
+  os.fs.fail_next(testing.FsOp.Read, "c/a.txt", FsErr.Io(path: "c", msg: "bad sector"))
+  expect(os.fs.copy("c/a.txt", "c/z")) == Err(FsErr.Io(path: "c", msg: "bad sector"))
+}
+
+test "memfs mode and set_mode" {
+  os.fs.write("m/f", b"x")?
+  expect(os.fs.mode("m/f")?) == 0o644
+  expect(os.fs.mode("m")?) == 0o755
+  os.fs.set_mode("m/f", 0o4751)?
+  expect(os.fs.mode("m/f")?) == 0o751
+  os.fs.set_mode("m", 0o700)?
+  expect(os.fs.mode("m")?) == 0o700
+  expect(os.fs.mode("m/none")) == Err(FsErr.NotFound(path: "m/none"))
+  expect(os.fs.set_mode("m/none", 0o600)) == Err(FsErr.NotFound(path: "m/none"))
+  os.fs.symlink("f", "m/l")?
+  os.fs.set_mode("m/l", 0o640)?
+  expect(os.fs.mode("m/f")?) == 0o640
+  os.fs.fail_next(testing.FsOp.Write, "m/f", FsErr.Io(path: "m", msg: "disk full"))
+  expect(os.fs.set_mode("m/f", 0o600)) == Err(FsErr.Io(path: "m", msg: "disk full"))
+}
+
+test "memfs glob" {
+  os.fs.write("g/a.txt", b"")?
+  os.fs.write("g/b.md", b"")?
+  os.fs.write("g/.hidden.txt", b"")?
+  os.fs.write("g/sub/c.txt", b"")?
+  os.fs.write("g/sub/deep/d.txt", b"")?
+  expect(os.fs.glob("g/*.txt")?) == ["g/a.txt"]
+  expect(os.fs.glob("g/**/*.txt")?) == ["g/a.txt", "g/sub/c.txt", "g/sub/deep/d.txt"]
+  expect(os.fs.glob("g/.*")?) == ["g/.hidden.txt"]
+  expect(os.fs.glob("g/?.md")?) == ["g/b.md"]
+  expect(os.fs.glob("g/[ab].*")?) == ["g/a.txt", "g/b.md"]
+  expect(os.fs.glob("nope/*")?) == []
+  expect(os.fs.glob("g/sub")?) == ["g/sub"]
+  expect(os.fs.glob("g/[")) == Err(FsErr.Io(path: "g/[", msg: "bad pattern: syntax error in pattern"))
+  expect(os.fs.sub("g").glob("*.md")?) == ["b.md"]
+}
+
+test "memfs lock and try_lock" {
+  let l = os.fs.lock("k/app.lock")?
+  expect(os.fs.exists("k/app.lock")?)
+  expect(os.fs.try_lock("k/app.lock")?.is_some()) == false
+  l.unlock()
+  l.unlock()
+  let l2 = os.fs.try_lock("k/app.lock")? ?? fault("not free")
+  l2.unlock()
+  expect(err_of(os.fs.lock("k"))) == Some(FsErr.IsDir(path: "k"))
+  expect(err_of(os.fs.lock("k/app.lock/x"))) == Some(FsErr.NotDir(path: "k/app.lock"))
+  os.fs.fail_next(testing.FsOp.Write, "k/*", FsErr.Io(path: "k", msg: "disk full"))
+  expect(err_of(os.fs.lock("k/other"))) == Some(FsErr.Io(path: "k", msg: "disk full"))
+  // a held lock makes another task wait until it is unlocked
+  let held = os.fs.lock("k/w")?
+  let ch = Chan[Str].new(2)
+  let h = os.tasks.spawn(fn() {
+    let mine = os.fs.lock("k/w").or_fault("lock")
+    ch.send("waiter")
+    mine.unlock()
+  })
+  os.clock.sleep(1s)
+  ch.send("holder")
+  held.unlock()
+  h.await
+  expect(ch.recv()) == Some("holder")
+  expect(ch.recv()) == Some("waiter")
+}

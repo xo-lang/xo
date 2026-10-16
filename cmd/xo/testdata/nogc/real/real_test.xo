@@ -23,6 +23,15 @@ test "real fs" uses fs, env {
   let p = os.fs.create_temp(dir, "xo-real-")?
   os.fs.write(p, b"scratch")?
   expect(os.fs.read_text(p)?) == "scratch"
+  // handles and locks of the real file system in a test binary
+  let w = os.fs.open_append(p)?
+  w.write(b"!")?
+  w.close()?
+  let r = os.fs.open(p)?
+  expect(r.read_line()?) == Some("scratch!")
+  r.close()?
+  let l = os.fs.try_lock(p)? ?? fault("held")
+  l.unlock()
   os.fs.remove(p)?
   expect(os.fs.exists(p)?) == false
 }

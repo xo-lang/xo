@@ -1299,6 +1299,13 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
       return v
     }
   }
+  if name.starts_with("mem_file") || name.starts_with("mem_lock") {
+    // a test's MemFs handles: the native prelude's llrt_<name>, which
+    // sees the fields of File and FileLock (std/native/testing.xo)
+    if let Some(v) = b.llrt_or_none(name, nt, vs) {
+      return v
+    }
+  }
   if name == "fs_canceled" {
     // the native prelude's llrt_fs_canceled (poll.xo); rt.fs_canceled
     // only in a wasm module (its runtime's)
