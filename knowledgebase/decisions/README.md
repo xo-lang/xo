@@ -235,3 +235,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0241-runtime-tests-in-xo.md](0241-runtime-tests-in-xo.md): Accepted: the C stress tests of std/llrt/testdata as Xo programs (internal/llvm/testdata/rt) run under ThreadSanitizer with 1, 3, and 8 workers; std/internal rt_probe and obj_word for what the language does not show.
 - [0242-playground-on-xo-wasm.md](0242-playground-on-xo-wasm.md): Proposed (stub): the browser playground on Xo's own wasm backend (selfhost/wasm), no Go toolchain in the page, at /play-next/ first.
 - [0243-linux-without-c.md](0243-linux-without-c.md): Proposed (stub): Linux programs without `use c` are static, with no libc, linked by elflink (plain ET_EXEC), as Go does
+- [0244-tls-linked-only-when-configured.md](0244-tls-linked-only-when-configured.md): Proposed (stub): a plain HTTP server links no TLS server and no HTTP/2.
+- [0245-profiler-in-binaries.md](0245-profiler-in-binaries.md): Proposed (stub): options for the profiler's 158 KiB in every native binary.
