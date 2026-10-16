@@ -197,9 +197,12 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
 
 /// sysLinkArgs: the system libraries and linker of a native link on goos.
 /// Windows (decision 0197): lld-link, which reads the LTO bitcode MSVC's
-/// link.exe cannot; the runtime names its import libraries itself
-/// (#pragma comment(lib), std/llrt/xo_rt.c), and the C library is the
-/// MSVC one clang picks; /Brepro makes the link deterministic: lld-link
+/// link.exe cannot, with the import libraries of the DLLs Xo calls
+/// (std/native/sys_windows.xo: kernel32, ws2_32 for Winsock, bcrypt,
+/// synchronization for WaitOnAddress, ntdll for the AFD polls, shell32
+/// for CommandLineToArgvW, crypt32 for the root store; decision 0234,
+/// was xo_rt.c's #pragma comment(lib)), and the C library the MSVC one
+/// clang picks; /Brepro makes the link deterministic: lld-link
 /// writes a hash of the output in the COFF header's time stamp (and the
 /// debug directory) instead of the link time, so a rebuild is byte
 /// identical (gotchas/windows-lld-link-time-stamp.md). A Linux link with
@@ -211,7 +214,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0:
 /// the unwind tables of linux/amd64 and of an older xo name it.
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
-    return ["-fuse-ld=lld", "-Wl,/Brepro"]
+    return ["-fuse-ld=lld", "-Wl,/Brepro", "-lkernel32", "-lws2_32", "-lbcrypt", "-lsynchronization", "-lntdll", "-lshell32", "-lcrypt32"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
     return ["-static", "-nostdlib", "-Wl,--gc-sections", "-Wl,--eh-frame-hdr", "-Wl,--defsym=xo_personality=xo_x_personality"]

@@ -5,6 +5,25 @@
 
 #include "xrec.h"
 
+// The C tests bring their own main: a constructor does the program
+// main's setup here (std/native/llrt cabi_c.xo main's entry.xo init,
+// through cabi.xo rt_init, decision 0234; xo's own ELF linker takes no
+// .init_array, so a program's main does it otherwise:
+// gotchas/runtime-c-no-constructors.md).
+void xo_x_rt_init(void);
+void xo_x_proc_start(int64_t argc, int64_t argv, int64_t envp);
+#ifndef _WIN32
+extern char **environ;
+#else
+#define environ ((char **)0)
+#endif
+__attribute__((constructor)) static void xo_test_rt_init(void) {
+	xo_x_rt_init();
+	// the environment for the runtime's settings (poolsetup.xo reads
+	// XO_THREADS)
+	xo_x_proc_start(0, 0, (int64_t)(intptr_t)environ);
+}
+
 int64_t xo_x_chan_new(int64_t cap, int64_t drop, int64_t lp, int64_t ln);
 void xo_x_chan_close(int64_t c);
 int64_t xo_x_task_spawn(int64_t s, int64_t fl, int64_t run, int64_t drop, int64_t fdrop, int64_t flags, int64_t site, int64_t lp, int64_t ln);

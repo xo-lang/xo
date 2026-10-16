@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Runtime C (owner, 2026-10-15): xo_rt.c is Windows' stack overflow
+  handler and its services record only. The C tests' setup is a
+  constructor in std/llrt/testdata/xcalls.h (XO_RT_NO_MAIN is gone); the
+  Winsock, errno and OVERLAPPED_ENTRY asserts are
+  std/llrt/testdata/win_consts.c, compiled for windows/amd64 and arm64
+  by internal/llvm TestWinConsts with the Windows cross toolchain; the
+  Windows headers but windows.h and the #pragma comment(lib) lines are
+  gone, and the driver passes the import libraries (kernel32, ws2_32,
+  bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
 - `xo test --no-gc` shrinks a failing property test's input over a
   pipe: one test binary serves the replays (XO_TEST_SERVE), a case not
   smaller than the best skips its body without ending it, and only an

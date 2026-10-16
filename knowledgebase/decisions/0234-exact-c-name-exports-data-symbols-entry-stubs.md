@@ -109,7 +109,18 @@ rename of `@main` (internal/llvm cOnlyWith), and the C start of
 xo_nolibc.c (XO_NOLIBC_C_START) calling main with environ as its third
 argument. Runtime C: 262 lines (xo_rt.c 162, xo_nolibc.c 100).
 
-## What stays C
+## After step 2 (owner, 2026-10-15)
+
+xo_rt.c keeps only Windows' on_overflow and xo_c_stop_svc: the C tests'
+constructor moved to std/llrt/testdata/xcalls.h; the Winsock, errno and
+OVERLAPPED_ENTRY asserts to std/llrt/testdata/win_consts.c, which
+internal/llvm TestWinConsts compiles for windows/amd64 and arm64 with
+the Windows cross toolchain (skipped without it); the Windows headers
+but windows.h and the #pragma comment(lib) lines went, and the driver
+passes the import libraries the Xo calls need on a Windows link
+(selfhost/xo link.xo sys_link_args).
+
+## What stays C (at step 2)
 
 xo_rt.c: Windows' on_overflow (a vectored handler that runs on what is
 left of an overflowed stack, decision 0197 stage 5) and the services

@@ -13,7 +13,6 @@
 //
 // Exit status 0 means the test passed; it prints "rawpoll: ok".
 
-#define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 #include "xcalls.h"
 

@@ -7,6 +7,14 @@
 #ifndef XO_XREC_H
 #define XO_XREC_H
 
+// the C library the tests use (xo_rt.c includes only what it needs)
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #define XO_NORETURN __attribute__((noreturn, noinline, cold))
 
 // Counted objects (rc.xo, obj.xo): a count c > 0 is thread local, -n is

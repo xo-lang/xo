@@ -48,6 +48,15 @@ asserts, and the C tests' constructor. xo_nolibc.c is deleted
 Docker, the rest was already gone; so the runtime C is xo_rt.c alone,
 161 lines.
 
+### xo_rt.c is the overflow handler (2026-10-15, owner)
+
+xo_rt.c is Windows' on_overflow and its services record (xo_c_stop_svc)
+only: the C tests' constructor is testdata/xcalls.h's, the Windows
+constant asserts testdata/win_consts.c (internal/llvm TestWinConsts),
+and the import libraries the driver's. With xo_nolibc.c deleted (Xo lang
+5, ca6b0c68), the runtime C is **63 lines**, std/llrt/xo_rt.c alone.
+on_overflow waits for a way to run Windows.
+
 ### End state (2026-10-15, after seed 0.14.0)
 
 The runtime C is **372 lines**: std/llrt/xo_rt.c 244 and xo_nolibc.c

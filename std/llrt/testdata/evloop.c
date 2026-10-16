@@ -10,7 +10,6 @@
 // Every allocation must be freed after each test. Exit status 0 means
 // every test passed.
 
-#define XO_RT_NO_MAIN
 #include <string.h>
 #include <unistd.h>
 #include "../xo_rt.c"

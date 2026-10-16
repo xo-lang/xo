@@ -13,7 +13,6 @@
 // runtime's report of the fault past the boundary ("fault: boom at
 // fault_resume.xo:3:5") and exit status 70.
 
-#define XO_RT_NO_MAIN
 #include "../xo_rt.c"
 #include "xcalls.h"
 
