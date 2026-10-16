@@ -17,9 +17,10 @@ import (
 // backend: the text summary's top function by flat samples is fib, the
 // pprof file is one `go tool pprof` reads, and without XO_PROF the
 // program writes no profile. Where the program has DWARF line tables
-// (decision 0239: Linux, and darwin's arm64 builds, whose dSYM the
-// selfhost/macho link writes), the top row names fib's hottest line in
-// main.xo and `go tool pprof -top -lines` shows main.xo lines.
+// (decision 0239: Linux; on darwin the dSYM selfhost/macho writes, or
+// that dsymutil writes after a cc link such as the LLVM backend's), the
+// top row names fib's hottest line in main.xo and `go tool pprof -top
+// -lines` shows main.xo lines.
 func TestProfCPU(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program per native backend")
@@ -62,7 +63,8 @@ func TestProfCPU(t *testing.T) {
 			if f := topFlat(string(txt)); f != "fib" {
 				t.Fatalf("top function by flat %q, want fib:\n%s", f, txt)
 			}
-			lines := runtime.GOOS == "linux" || be == xotool.BackendArm64
+			_, dsym := exec.LookPath("dsymutil")
+			lines := runtime.GOOS == "linux" || be == xotool.BackendArm64 || dsym == nil
 			if lines && !strings.Contains(topFlatRow(string(txt)), "main.xo:") {
 				t.Fatalf("the top row names no line of main.xo:\n%s", txt)
 			}
