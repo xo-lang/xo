@@ -61,6 +61,10 @@ func TestNoGCTests(t *testing.T) {
 	// one build directory for the parallel subtests (each builds its own
 	// program; t.Setenv is not allowed in parallel tests)
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	// the same report on every backend: no traceback (xo test turns it on;
+	// LLVM's darwin builds have no line tables, and the Go backend prints
+	// none; TestTraceback checks it)
+	setenv(t, "XO_TRACEBACK", "0")
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "selfhost", "check"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_unix_kill")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {

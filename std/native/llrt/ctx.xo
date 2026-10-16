@@ -23,7 +23,7 @@ use native/llrt/sysio
 use native/llrt/text
 use native/rt
 
-/// xo_ctx (320 bytes, 16 aligned; the owner of each field in decision 0229):
+/// xo_ctx (336 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
 pub const C_NODE = 0
 /// unwinding: the context unwinds (cancellation or a fault; a C int).
@@ -69,7 +69,11 @@ pub const C_WENT = 216
 /// channel at a time; a select's arms are the select's).
 pub const C_CENT = 248
 pub const C_FIRED = 312
-pub const C_SIZE = 320
+/// fault_trace: the return addresses of the frames a fault was raised
+/// in (fault.xo trace; a block from rt.heap_large: the count, then the
+/// addresses), with XO_TRACEBACK only, else 0.
+pub const C_FAULT_TRACE = 320
+pub const C_SIZE = 336
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.

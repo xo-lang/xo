@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The profiler names lines (decision 0239's tables, read back by
+  dwline.xo): pprof's Line.line and Function.filename (`go tool pprof
+  -list fib` shows the source), and the text summary's hottest line per
+  function; leaf samples are no longer charged to the previous function
+  when at a function's first instruction. XO_TRACEBACK=1 prints an
+  uncaught fault's frames (`  FUNCTION (FILE:LINE)`) after the one line
+  report, on every native backend (spec core 8); `xo test` turns it on
+  for its tests. TestTraceback, TestProfCPU checks the line.
+
 - macOS: builds linked through cc (the LLVM backend, arm64 `--ld=cc`)
   get PROG.dSYM too: `dsymutil` runs after the link (0.15 s), and an LTO
   link keeps its object for it, so lldb and the profiler see .xo lines

@@ -16,7 +16,10 @@ import (
 // recursive fib that takes nearly all the CPU, built with each native
 // backend: the text summary's top function by flat samples is fib, the
 // pprof file is one `go tool pprof` reads, and without XO_PROF the
-// program writes no profile.
+// program writes no profile. Where the program has DWARF line tables
+// (decision 0239: Linux, and darwin's arm64 builds, whose dSYM the
+// selfhost/macho link writes), the top row names fib's hottest line in
+// main.xo and `go tool pprof -top -lines` shows main.xo lines.
 func TestProfCPU(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program per native backend")
@@ -59,6 +62,10 @@ func TestProfCPU(t *testing.T) {
 			if f := topFlat(string(txt)); f != "fib" {
 				t.Fatalf("top function by flat %q, want fib:\n%s", f, txt)
 			}
+			lines := runtime.GOOS == "linux" || be == xotool.BackendArm64
+			if lines && !strings.Contains(topFlatRow(string(txt)), "main.xo:") {
+				t.Fatalf("the top row names no line of main.xo:\n%s", txt)
+			}
 			if !strings.Contains(string(txt), "samples") {
 				t.Fatalf("summary:\n%s", txt)
 			}
@@ -66,6 +73,12 @@ func TestProfCPU(t *testing.T) {
 				p, err := exec.Command(gobin, "tool", "pprof", "-top", out).CombinedOutput()
 				if err != nil || !strings.Contains(string(p), "fib") {
 					t.Fatalf("go tool pprof -top: %v\n%s", err, p)
+				}
+				if lines {
+					p, err := exec.Command(gobin, "tool", "pprof", "-top", "-lines", out).CombinedOutput()
+					if err != nil || !strings.Contains(string(p), "main.xo:") {
+						t.Fatalf("go tool pprof -top -lines: %v\n%s", err, p)
+					}
 				}
 			}
 			// off: no XO_PROF, no profile written, nothing said
@@ -85,6 +98,17 @@ func TestProfCPU(t *testing.T) {
 
 // topFlat is the function of the first row of the summary's "top 30 by
 // flat" table.
+// topFlatRow is the first row of the summary's "top 30 by flat".
+func topFlatRow(txt string) string {
+	lines := strings.Split(txt, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "top 30 by flat") && i+2 < len(lines) {
+			return lines[i+2]
+		}
+	}
+	return ""
+}
+
 func topFlat(txt string) string {
 	lines := strings.Split(txt, "\n")
 	for i, l := range lines {

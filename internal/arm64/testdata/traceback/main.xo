@@ -1,0 +1,12 @@
+// TestTraceback's program: a fault four frames of down deep (down is
+// recursive, so no backend inlines it away).
+fn down(xs: List[Int], n: Int) -> Int {
+  if n == 0 {
+    return xs[7]
+  }
+  down(xs, n - 1) + 1
+}
+
+fn main(os: Os) {
+  os.stdio.println("deep ${down([1, 2, 3], 3)}")
+}

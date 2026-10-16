@@ -99,6 +99,26 @@ types and variable locations.
   lldb resolving `main.xo:9`.
 - Not done: arm64 DW_TAG_inlined_subroutine (point 3's later part:
   Xo lang 5 writes it in selfhost/arm64, Xo Lang 3 carries it through
-  selfhost/macho dsym.xo and tests it), and fault reports printing
-  file:line.
+  selfhost/macho dsym.xo and tests it).
+- LLVM binaries are larger than the estimate (TLS client +39% on Linux;
+  bench/results/dwarf-line-tables-2026-10-16.md); release builds strip.
+
+## Readers (2026-10-16, second step)
+
+- std/native/llrt/dwline.xo reads the line tables back (v4 and v5,
+  every opcode): Linux's .debug_line of /proc/self/exe, darwin's
+  PROG.dSYM when its LC_UUID is the image's.
+- The profiler (decision 0238, prof.xo) fills pprof's Line.line and
+  Function.filename (`go tool pprof -list`, `-lines`) and the text
+  summary's hottest line per function; a leaf pc is recorded plus 1, as
+  Go's profiles do, since the tools read every location as a return
+  address (a leaf at a function's first instruction was charged to the
+  function before it).
+- Fault reports (lead's choice, 2026-10-16): opt in with XO_TRACEBACK
+  (spec core 8): `traceback:` and `  FUNCTION (FILE:LINE)` per frame
+  down to main, recorded when the fault is raised by a walk of the
+  unwind tables (unwind.xo trace; Linux LLVM code has no frame
+  records); the one line report and the goldens are unchanged. `xo
+  test` sets it for its tests. The arm64 fault stubs have their own
+  rows (the faulting instruction's line).
 

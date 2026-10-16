@@ -2084,6 +2084,14 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   fault into a value. `std/http` isolates every request and returns 500.
 - Every fault message includes the evaluated values:
   `index 7 out of range for List of length 5 at users.xo:41:18`.
+- A fault reaching `main` is reported on standard error as one line,
+  `fault: MESSAGE at FILE:LINE:COL` (and a detail line for a failed
+  contract). With `XO_TRACEBACK` set (not empty or `0`), native builds
+  follow it with `traceback:` and a line per frame, innermost first,
+  `  FUNCTION (FILE:LINE)` down to `main` (the line from the program's
+  DWARF line tables, decision 0239; inlined calls show the caller's
+  line). `xo test` sets it for the tests it runs unless it is already
+  set.
 - The native backends unwind a fault the same way (decision 0085: deferred
   code, scopes, Mutexes, and references are released on the way); they
   print the fault without its frames, write no crash bundle, and

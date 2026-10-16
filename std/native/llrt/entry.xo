@@ -167,6 +167,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   }
   // XO_PROF (decision 0238): nothing when unset
   prof.start()
+  fault.init_traceback(rt.fn_addr("fault_traceback"))
   if process.env_real_at("XO_TEST") != 0 {
     // a test binary's main starts the test world itself (the native
     // prelude's llrt_tw_start)

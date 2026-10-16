@@ -731,6 +731,11 @@ fn prof_words(o: TestOpts) -> List[Str] {
 fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {
   // PWD as the shell's cd left it
   var c = os.proc.cmd(bin, []).dir(dir).set_env("PWD", dir)
+  if os.env.get("XO_TRACEBACK") == None {
+    // a failing test's uncaught fault shows its frames (decision 0239;
+    // XO_TRACEBACK=0 turns it off)
+    c = c.set_env("XO_TRACEBACK", "1")
+  }
   for w in words {
     let i = w.find("=") ?? w.len()
     c = c.set_env(w[0..i], if i < w.len() { w[i + 1..w.len()] } else { "" })

@@ -12,10 +12,14 @@
 // blocks (`go tool pprof`, speedscope, flame graph tools read it), to
 // XO_PROF_OUT (xo-cpu.pprof by default), with a text summary beside it
 // (the top 30 by flat and by cumulative samples, as `go tool pprof -top`
-// prints, in the same path with .txt for .pprof). Functions only: lines
-// wait for decision 0239's line tables. Off (no XO_PROF) it costs one
+// prints, in the same path with .txt for .pprof), with each location's
+// file and line from the program's DWARF line tables when it has them
+// (dwline.xo, decision 0239: Linux's .debug_line, macOS's PROG.dSYM):
+// pprof's Line.line and Function.filename, and the text summary's
+// hottest line of each function. Off (no XO_PROF) it costs one
 // environment lookup at start. Windows (a sampling thread) and the heap
 // profile are not here yet.
+use native/llrt/dwline
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/raw
@@ -271,7 +275,8 @@ pub fn finish() {
   let out0 = process.env_real("XO_PROF_OUT")
   let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-cpu.pprof" } else { out0[0] })
   let syms = symbols(ld(r, R_TLO), ld(r, R_THI))
-  write_profile(r, n, lost, dur, syms, out)
+  let lines = dwline.load(ld(r, R_TLO), ld(r, R_THI))
+  write_profile(r, n, lost, dur, syms, lines, out)
 }
 
 /// path with each %p as the process id (a profile per process of xo
@@ -572,7 +577,7 @@ fn hexv(c: Int) -> Int {
 // The profile
 
 /// Writes the pprof file at out and the text summary beside it.
-fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
+fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.Lines, out: Str) {
   let ring = ld(r, R_RING)
   let hz = ld(r, R_HZ)
   let period = 1000000000 / hz
@@ -587,7 +592,7 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
     }
     total += 1
     for j in 0..d {
-      pcs.push(ld(p, 8 + 8 * j))
+      pcs.push(frame_pc(p, j))
     }
   }
   pcs = pcs.sort()
@@ -599,13 +604,12 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
   }
   // the functions: the program's symbols, then the names of the pcs
   // outside it (a C library function, the dynamic loader); each
-  // location's function as an interrupted pc (fe) and as a return
-  // address, whose call is at pc - 1 (fr)
+  // location read as a return address, whose call is at pc - 1 (fr; a
+  // leaf's interrupted pc is kept plus 1, frame_pc, as Go's profiles
+  // do, so pc - 1 is the instruction itself)
   var names = syms.names
-  var fe: List[Int] = []
   var fr: List[Int] = []
   for pc in locs {
-    fe.push(func_of(syms, pc, names))
     fr.push(func_of(syms, pc - 1, names))
   }
   var flat: List[Int] = []
@@ -617,6 +621,13 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
     seen.push(-1)
   }
   var stacks: List[Int] = []
+  // per location: samples it is the leaf of, and stacks it is in
+  var lleaf: List[Int] = []
+  var lany: List[Int] = []
+  for _ in 0..locs.len() {
+    lleaf.push(0)
+    lany.push(0)
+  }
   for k in 0..n {
     let p = ring + k * SLOT
     let d = ld(p, 0)
@@ -624,10 +635,12 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
       continue
     }
     for j in 0..d {
-      let li = loc_index(locs, ld(p, 8 + 8 * j))
-      let f = if j == 0 { fe[li] } else { fr[li] }
+      let li = loc_index(locs, frame_pc(p, j))
+      let f = fr[li]
+      lany[li] = lany[li] + 1
       if j == 0 {
         flat[f] = flat[f] + 1
+        lleaf[li] = lleaf[li] + 1
       }
       if seen[f] != k {
         seen[f] = k
@@ -636,10 +649,45 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
     }
     stacks.push(k)
   }
-  let pb = pprof(ring, stacks, locs, fr, names, period, dur)
+  // each location's file and line (the call's, at pc - 1, as pprof
+  // reads every location as a return address), and each function's
+  // hottest line: its most frequent leaf pc, else its most frequent call
+  var lfile: List[Str] = []
+  var lline: List[Int] = []
+  for pc in locs {
+    let (f, l) = dwline.find(lines, pc - 1)
+    lfile.push(f)
+    lline.push(l)
+  }
+  var hot: List[Str] = []
+  var hot_n: List[Int] = []
+  for _ in 0..names.len() {
+    hot.push("")
+    hot_n.push(0)
+  }
+  for (li, pc) in locs.indexed() {
+    if lleaf[li] > 0 && lleaf[li] > hot_n[fr[li]] {
+      let s = dwline.short(lines, pc - 1)
+      if !s.is_empty() {
+        hot[fr[li]] = s
+        hot_n[fr[li]] = lleaf[li]
+      }
+    }
+  }
+  for (li, pc) in locs.indexed() {
+    let f = fr[li]
+    if flat[f] == 0 && lany[li] > hot_n[f] {
+      let s = dwline.short(lines, pc - 1)
+      if !s.is_empty() {
+        hot[f] = s
+        hot_n[f] = lany[li]
+      }
+    }
+  }
+  let pb = pprof(ring, stacks, locs, fr, names, lfile, lline, period, dur)
   let ok = write_file(out, gzip(pb))
   let txt = text_path(out)
-  let summary = top_text(flat, cum, names, total, lost, dur, hz, period)
+  let summary = top_text(flat, cum, names, hot, total, lost, dur, hz, period)
   let ok2 = write_file(txt, summary.bytes())
   if ok && ok2 {
     stdio.eprint("xo profile: ${total} samples in ${out} and ${txt}", true)
@@ -794,6 +842,13 @@ fn pct(x: Int, total: Int) -> Str {
   "${h / 100}.${pad2(h % 100)}%"
 }
 
+fn rpad(s: Str, w: Int) -> Str {
+  if s.len() >= w {
+    return s
+  }
+  s + " ".repeat(w - s.len())
+}
+
 fn lpad(s: Str, w: Int) -> Str {
   var t = s
   while t.len() < w {
@@ -803,7 +858,7 @@ fn lpad(s: Str, w: Int) -> Str {
 }
 
 /// The summary: the totals, then the top 30 by flat and by cumulative.
-fn top_text(flat: List[Int], cum: List[Int], names: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
+fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
   var b = StrBuilder.new()
   b.write("xo cpu profile: ${total} samples (${dur_text(total * period)}) in ${dur_text(dur)} of wall time at ${hz} Hz")
   if lost > 0 {
@@ -812,7 +867,7 @@ fn top_text(flat: List[Int], cum: List[Int], names: List[Str], total: Int, lost:
   b.write("\n")
   for by_cum in [false, true] {
     b.write(if by_cum { "\ntop 30 by cumulative\n" } else { "\ntop 30 by flat\n" })
-    b.write("      flat  flat%   sum%        cum   cum%\n")
+    b.write("      flat  flat%   sum%        cum   cum%  line (the hottest)  function\n")
     // the order: count << 24 | function, descending
     var keys: List[Int] = []
     for f in 0..flat.len() {
@@ -829,7 +884,9 @@ fn top_text(flat: List[Int], cum: List[Int], names: List[Str], total: Int, lost:
       let f = keys[i] & 16777215
       sum += flat[f]
       let name = names[f]
-      b.write("${lpad(dur_text(flat[f] * period), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(dur_text(cum[f] * period), 10)} ${lpad(pct(cum[f], total), 6)}  ${name}\n")
+      // the function name stays last (TestProfCPU reads it there)
+      let at = if hot[f].is_empty() { "-" } else { hot[f] }
+      b.write("${lpad(dur_text(flat[f] * period), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(dur_text(cum[f] * period), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${name}\n")
       shown += 1
       i -= 1
     }
@@ -874,6 +931,12 @@ fn value_type(t: Int, u: Int) -> Bytes {
   b.freeze()
 }
 
+/// Frame j of the sample at p as a location: a return address, or for
+/// the leaf (j 0) the interrupted pc plus 1.
+fn frame_pc(p: Int, j: Int) -> Int {
+  ld(p, 8 + 8 * j) + (if j == 0 { 1 } else { 0 })
+}
+
 /// The index of location pc in the sorted locs (its id is that plus 1).
 fn loc_index(locs: List[Int], pc: Int) -> Int {
   var a = 0
@@ -892,7 +955,7 @@ fn loc_index(locs: List[Int], pc: Int) -> Int {
 /// The Profile message: every sample its own (pprof sums equal stacks);
 /// a location per distinct pc with one line naming its function; a
 /// function per symbol used.
-fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: List[Str], period: Int, dur: Int) -> Bytes {
+fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: List[Str], lfile: List[Str], lline: List[Int], period: Int, dur: Int) -> Bytes {
   var strs: List[Str] = ["", "samples", "count", "cpu", "nanoseconds"]
   var b = BytesBuilder.new()
   fbytes(b, 1, value_type(1, 2))
@@ -902,7 +965,7 @@ fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: Li
     let d = ld(p, 0)
     var ids = BytesBuilder.new()
     for j in 0..d {
-      varint(ids, loc_index(locs, ld(p, 8 + 8 * j)) + 1)
+      varint(ids, loc_index(locs, frame_pc(p, j)) + 1)
     }
     var vals = BytesBuilder.new()
     varint(vals, 1)
@@ -916,13 +979,21 @@ fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: Li
   // call (pprof's tools treat every location as a return address); a
   // function (id: its index + 1) per name used
   var used: List[Bool] = []
+  var ffile: List[Str] = []
   for _ in 0..names.len() {
     used.push(false)
+    ffile.push("")
   }
   for i in 0..locs.len() {
     used[fr[i]] = true
+    if ffile[fr[i]].is_empty() {
+      ffile[fr[i]] = lfile[i]
+    }
     var line = BytesBuilder.new()
     fint(line, 1, fr[i] + 1)
+    if lline[i] > 0 {
+      fint(line, 2, lline[i])
+    }
     var loc = BytesBuilder.new()
     fint(loc, 1, i + 1)
     fint(loc, 3, locs[i])
@@ -938,6 +1009,10 @@ fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: Li
     fint(fn_, 1, f + 1)
     fint(fn_, 2, strs.len() - 1)
     fint(fn_, 3, strs.len() - 1)
+    if !ffile[f].is_empty() {
+      strs.push(ffile[f])
+      fint(fn_, 4, strs.len() - 1)
+    }
     fbytes(b, 5, fn_.freeze())
   }
   for s in strs {
@@ -1030,4 +1105,43 @@ fn write_file(path: Str, data: Bytes) -> Bool {
     }
     TargetOs.Windows | TargetOs.Wasi => false
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tracebacks (fault.xo, XO_TRACEBACK)
+
+/// The traceback of a fault from the return addresses of its frames,
+/// innermost first: "traceback:" and a line per frame, `  NAME
+/// (FILE:LINE)` (the line from the DWARF line tables when the program
+/// has them), from the first frame past the runtime's own (fault.,
+/// cabi.fault, unwind.) to the program's main (or xo_entry, which LLVM
+/// inlines main into).
+pub fn trace_text(pcs: List[Int]) -> Str {
+  let syms = symbols(1, 9223372036854775807)
+  let lines = dwline.load(1, 9223372036854775807)
+  var names = syms.names
+  var b = StrBuilder.new()
+  b.write("traceback:\n")
+  var started = false
+  for pc in pcs {
+    // a return address: its call is at pc - 1
+    let f = func_of(syms, pc - 1, names)
+    let name = names[f]
+    if !started && (name.starts_with("fault.") || name.starts_with("fault_") || name.starts_with("cabi.fault") || name.starts_with("unwind.") || name.starts_with("xo_fault")) {
+      continue
+    }
+    started = true
+    let at = dwline.short(lines, pc - 1)
+    let shown = if name == "xo_entry" { "main" } else { name }
+    if at.is_empty() {
+      b.write("  ${shown}\n")
+    } else {
+      b.write("  ${shown} (${at})\n")
+    }
+    // the program's main (LLVM inlines it into xo_entry)
+    if name == "main" || name == "xo_entry" {
+      break
+    }
+  }
+  b.freeze()
 }

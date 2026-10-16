@@ -27,7 +27,7 @@ use native/rt
 /// export of a zero terminated message and location that records the
 /// fault in the current context and raises it, or with a null message
 /// raises the fault already recorded; never returns), set by init.
-const RAISE = 14
+const RAISE = 64
 
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
 /// location, and detail (char pointers, NULL when unset).
@@ -36,6 +36,17 @@ const C_FAULTING = 80
 const C_MSG = 88
 const C_LOC = 96
 const C_DETAIL = 104
+/// ctx.xo C_FAULT_TRACE
+const C_TRACE = 320
+
+/// rt.static_word: XO_TRACEBACK (the fault report's traceback, decision
+/// 0239): 0 not looked up yet, 1 off, else the address of the function
+/// that prints it (cabi.xo fault_traceback, called through a pointer:
+/// called directly, prof.xo's code in exit's reach grew the raise's
+/// frame and every fault in a task overflowed its stack).
+const TB = 65
+/// The frames a traceback keeps.
+const TB_DEPTH = 64
 
 /// A zero terminated copy of the n bytes at p in a block from malloc,
 /// at the block's own address (rt.heap_large returns the address after
@@ -68,6 +79,25 @@ pub fn set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) {
   drop(c, C_LOC)
   rt.mem_store(c, C_MSG, m, 8)
   rt.mem_store(c, C_LOC, l, 8)
+  if traceback_on() {
+    trace(c)
+  }
+}
+
+/// Whether XO_TRACEBACK is set (init_traceback looked it up at start: a fault in
+/// a task runs on the task's small stack, where the environment's lookup
+/// overflowed it).
+fn traceback_on() -> Bool { rt.mem_load(rt.static_word(TB), 0, 8) > 2 }
+
+/// Records in the context c the return addresses of the frames this
+/// fault is raised in (unwind.xo trace: the unwind tables' walk, on
+/// every backend).
+fn trace(c: Int) {
+  drop(c, C_TRACE)
+  let b = rt.heap_large(8 + 8 * TB_DEPTH)
+  let n = unwind.trace(b + 8, TB_DEPTH)
+  rt.mem_store(b, 0, n, 8)
+  rt.mem_store(c, C_TRACE, b, 8)
 }
 
 /// Sets the line printed under the next fault of the context c (the
@@ -84,6 +114,7 @@ pub fn clear(c: Int) {
   drop(c, C_MSG)
   drop(c, C_LOC)
   drop(c, C_DETAIL)
+  drop(c, C_TRACE)
 }
 
 /// Catches the fault unwinding the context c (task.isolate): 1 and the
@@ -142,6 +173,20 @@ pub fn exit(c: Int) {
     o = put(b, o, "\n")
   }
   stdio.write_all(2, b, o)
+  // XO_TRACEBACK: the frames the fault was raised in, by function and
+  // .xo line (cabi.xo fault_traceback, through its address)
+  let f = rt.mem_load(rt.static_word(TB), 0, 8)
+  let t = rt.mem_load(c, C_TRACE, 8)
+  if f > 2 && t != 0 {
+    // taken out of the context first: a fault while printing it ends the
+    // process with that fault's report, not this one's printing again;
+    // and the context no longer unwinds (the process ends after), so the
+    // printer's code does not hand this fault on at its first check
+    rt.mem_store(c, C_TRACE, 0, 8)
+    rt.mem_store(c, C_UNWINDING, 0, 4)
+    rt.mem_store(c, C_FAULTING, 0, 4)
+    let _r = rt.call_c2(f, t, 0)
+  }
   process.os_exit(70)
 }
 
@@ -160,6 +205,26 @@ fn put_at(b: Int, o: Int, p: Int, n: Int) -> Int {
 /// Sets the address of the C's fault_raise_msg (at start, before the
 /// program runs).
 pub fn init(raise_msg: Int) { rt.mem_store(rt.static_word(RAISE), 0, raise_msg, 8) }
+
+/// Looks up XO_TRACEBACK (not empty or 0) once, at start after the
+/// environment is kept (entry.xo, beside prof.start); print is the
+/// address of the function that prints a traceback.
+pub fn init_traceback(print: Int) {
+  let e = process.env_real("XO_TRACEBACK")
+  rt.mem_store(rt.static_word(TB), 0, if e.is_empty() || e[0].is_empty() || e[0] == "0" { 1 } else { print }, 8)
+}
+
+/// The return addresses in the trace block t (trace: the count, then
+/// the addresses; 0 for none).
+pub fn trace_pcs(t: Int) -> List[Int] {
+  var pcs: List[Int] = []
+  if t != 0 {
+    for i in 0..rt.mem_load(t, 0, 8) {
+      pcs.push(rt.mem_load(t, 8 + 8 * i, 8))
+    }
+  }
+  pcs
+}
 
 /// Raises the fault whose zero terminated message is at m, at the zero
 /// terminated location loc: never returns.

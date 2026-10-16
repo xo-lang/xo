@@ -259,6 +259,60 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   0
 }
 
+/// The return addresses of the calling thread's frames, from its caller
+/// out, by the same tables raise walks (decision 0239: a fault's
+/// traceback, fault.xo trace; any backend, no frame pointers needed):
+/// stored at out, at most max; their count. Nothing is run or changed
+/// but the thread's unwind scratch (raise sets it up again).
+pub fn trace(out: Int, max: Int) -> Int {
+  match target.os {
+    TargetOs.Linux | TargetOs.Darwin => {}
+    TargetOs.Windows | TargetOs.Wasi => return 0
+  }
+  match target.arch {
+    TargetArch.Arm64 | TargetArch.Amd64 => {}
+    TargetArch.Wasm32 => return 0
+  }
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  let s = scratch()
+  if s == 0 {
+    return 0
+  }
+  if darwin {
+    if rt.mem_load(s, H_MH, 8) == 0 && !image(s, sys_darwin._dyld_get_image_header(0), s + H_MH) {
+      return 0
+    }
+  } else if rt.mem_load(s, H_HDR, 8) == 0 {
+    let hdr = eh_frame_hdr()
+    if hdr == 0 {
+      return 0
+    }
+    rt.mem_store(s, H_HDR, hdr, 8)
+  }
+  let cur = s + REGS_A
+  rt.mem_set(cur, 0, PC + 8)
+  rt.unwind_save(cur)
+  rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
+  var n = 0
+  while n < max {
+    let pc = rt.mem_load(cur, PC, 8)
+    rt.mem_store(s, H_ARGS, 0, 8)
+    if pc == 0 || !lookup_frame(s, pc, darwin) {
+      break
+    }
+    rt.mem_store(out, 8 * n, pc, 8)
+    n += 1
+    let enc = rt.mem_load(s, H_ENC, 8)
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {
+      break
+    }
+  }
+  n
+}
+
 /// Reads the frame cache's entry e into s (lookup_frame's hit).
 fn fc_restore(s: Int, e: Int) {
   rt.mem_store(s, H_BEGIN, rt.mem_load(e, 8, 8), 8)

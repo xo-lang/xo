@@ -530,6 +530,14 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
 // The fault record (std/native/llrt/fault.xo, the zero-C audit's B06):
 // c is the context (xo_ctx *).
 
+/// XO_TRACEBACK: prints the frames of the trace block t (fault.xo exit
+/// calls it through its address, decision 0239).
+fn fault_traceback(t: Int, _u: Int) -> Int {
+  let s = prof.trace_text(fault.trace_pcs(t))
+  stdio.write_all(2, raw.data(s), s.len())
+  0
+}
+
 /// Raises a fault in the current context (xo_rt.c fault_raise_msg, the
 /// address fault.xo's raisers call): with a message m (zero terminated,
 /// at the zero terminated location loc) it records it first; m 0 hands

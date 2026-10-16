@@ -248,7 +248,8 @@ fn (var g: G) emit() {
       g.pos = g.blocks[mb].start + 4 * k
       if g.m.debug_info && inst.line != 0 && inst.line != g.dl_last {
         // a row of the line table: a label here (debug.xo)
-        let lab = g.local("${g.lbl_prefix()}_dl${g.dl_rows.len()}")
+        let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
+        g.dl_n += 1
         b.push("${lab}:\n")
         g.dl_rows.push("${lab} ${inst.line}")
         g.dl_last = inst.line
@@ -269,7 +270,8 @@ fn (var g: G) emit() {
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
-    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${g.dl_rows.join(";")}")
+    // the stubs follow the body: their rows after its rows
+    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}")
   }
   b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
@@ -1023,6 +1025,14 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     b.push("\tb.${inst.fcond} ${l}\n")
     var sb: List[Str] = []
     sb.push("${l}:\n")
+    if g.m.debug_info && inst.line != 0 {
+      // the stub's row: the faulting instruction's line (a traceback's
+      // innermost frame returns into the stub)
+      let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
+      g.dl_n += 1
+      sb.push("${lab}:\n")
+      g.dl_stub_rows.push("${lab} ${inst.line}")
+    }
     if g.fr.leaf {
       // a frame record for the unwinder (the call overwrites x30)
       sb.push("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")

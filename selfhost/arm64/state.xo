@@ -171,6 +171,10 @@ struct G {
   cur_line: Int = 0
   dl_last: Int = 0
   dl_rows: List[Str] = []
+  /// the rows of the fault stubs (placed after the body), and the
+  /// labels made so far (one numbering for both)
+  dl_stub_rows: List[Str] = []
+  dl_n: Int = 0
   ncs: Int = 0
   personality_ref: Bool = false
   /// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
@@ -329,6 +333,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.cur_line = 0
   g.dl_last = 0
   g.dl_rows = []
+  g.dl_stub_rows = []
+  g.dl_n = 0
   g.tl_v = -1
   g.tl_blk = -1
   g.fi = fi
