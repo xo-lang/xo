@@ -1058,3 +1058,45 @@ is code density (x509.parse: 186 lines, 64 KB on arm64, 97 KB on llvm).
 A smaller binary does not start faster on macOS (the same instructions
 at launch): the launch cost of a TLS client is Security.framework and
 CoreFoundation, about 14M instructions, which the base links too.
+
+### Follow up: spawning and pingpong on arm64 (xo-4, 2026-10-16)
+
+Mac (darwin/arm64), instructions retired, the median of 9 interleaved
+rounds, base dd33dd13 (its cached xobuild) against main at 72d61e52-era,
+bench/perf sources of the tip for both:
+
+| Workload | Backend | XO_THREADS=1 | default threads |
+|---|---|---|---|
+| ctx spawn | arm64 | 0.991 | 0.982 |
+| ctx spawn | llvm | 0.965 | 0.973 |
+| ctx await | arm64 | 0.994 | 0.994 |
+| ctx await | llvm | 0.964 | 0.969 |
+| conc spawn | arm64 | 1.033 | 1.088 |
+| conc spawn | llvm | 0.955 | 0.994 |
+| conc pingpong | arm64 | 1.076 | 1.134 |
+| conc pingpong | llvm | 1.014 | 0.974 |
+
+The gap is arm64 only. callgrind (linux/arm64 in Docker, each side's xo
+cross built for Linux with the Go backend, XO_THREADS=1): pingpong
+209.0M base against 229.7M main, spawn 400.7M against 413.5M. By
+function, main adds:
+
+- xo_tlocal_get, 9.0M in pingpong: about a million calls (from
+  ctx_unwinding, rl_free_n, rl_copy_n, rl_grow_n, chan send and recv,
+  park_signal, park_wait_n, root_worker). The arm64 emitter lowers
+  rt.tlocal_get and tlocal_set as calls (selfhost/arm64 sched.xo: on
+  Linux call, mrs, two adds, ldr, ret; on macOS through the TLV thunk on
+  every access); the base's C read its __thread words inline, and the
+  LLVM backend inlines them (so llvm is at the base).
+- tasks.park_wait_n 14.0M self and chan.cq_take 6.6M (no counterparts:
+  inline in the C).
+- spawn: run_claimed 32.4M against the C's 18.4M, of it __memset_zva64
+  14.2M (the 320 byte context zeroed by rt.mem_set, a memset call on
+  arm64; the C's was inline stores), and tasks.new_object 22.8M.
+
+Fixes handed to Xo lang 5 (the arm64 emitter), in the lead's order:
+inline rt.tlocal_get/set on linux/arm64 (mrs and the tprel adds, about
+4 instructions), inline constant size rt.mem_set as stp xzr pairs, and
+on darwin one TLV getter call per function with the base kept in a
+register. Source changes in tasks.xo would save 2 or 3 of the about 20
+instructions per round trip, so they wait for those.
