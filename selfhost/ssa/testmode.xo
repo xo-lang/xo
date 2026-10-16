@@ -113,6 +113,14 @@ fn (var b: Builder) build_tests() {
       for v in b.prop_inputs(t.params) {
         args.push(v)
       }
+      if looped && b.prelude_impl("llrt_test_skip") >= 0 {
+        // a serving binary's case not smaller than the best skips its
+        // body (testworld.xo skip_case) and goes on to the next run
+        let (skip, run) = b.branch(b.tw_rt("test_skip", bt, []))
+        b.s.cur = skip
+        b.jump(head, [])
+        b.s.cur = run
+      }
     }
     var r = -1
     var done = false

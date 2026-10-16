@@ -49,7 +49,9 @@ pub fn prop_report(g: Int, input: Str) {
   let best = testworld.prop_best()
   if best.len() > 0 && !shorter(rec, testworld.choices(best[0])) {
     testworld.write_real("XO-PROP-NOT-SMALLER\n")
-    testworld.quit(3)
+    if !testworld.skip_case() {
+      testworld.quit(3)
+    }
   }
 }
 

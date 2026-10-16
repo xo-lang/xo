@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test --no-gc` shrinks a failing property test's input over a
+  pipe: one test binary serves the replays (XO_TEST_SERVE), a case not
+  smaller than the best skips its body without ending it, and only an
+  improving replay starts a new one; nogc/prop's fixture 2.4 s to 0.9 s
+  warm, reports unchanged (decision 0235,
+  bench/results/xo-test-batched-2026-10-15.md).
+
 - XO_NOLIBC=1: the backends' process entry ran in Docker (linux/arm64
   native, linux/amd64 emulated: hello and five goldens, cross linked on
   the Mac), so std/llrt/xo_nolibc.c's C entry (_start, xo_nolibc_start,

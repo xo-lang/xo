@@ -97,11 +97,28 @@ improvement, exit 1), 354 are not smaller than the best (exit 3), of
 872 replays. A long lived binary survives only the passing ones unless
 a not smaller case can skip its body without exiting.
 
+## Item 1: shrinking over a pipe (2026-10-15)
+
+Shrinking's replays go to one serving test binary (XO_TEST_SERVE): a
+not smaller case skips its body in process, so only a failing replay
+(an improvement) ends the binary. cmd/xo testdata/nogc/prop, warm runs
+on arm64 (5 each, built directory):
+
+| mode | warm runs s |
+|---|---|
+| XO_TEST_BATCH=0 (one process per run) | 3.244 2.118 2.523 4.716 2.073 |
+| batched, shrinking served | 1.709 0.922 0.924 0.844 0.879 |
+
+Median 2.52 s to 0.92 s (and 2.39 s with batching before this item).
+Gate: batched against XO_TEST_BATCH=0 over the same 107 directories
+and flags, arm64 and LLVM: 214 comparisons, 0 differ. A serving
+binary whose every replay is not smaller (an empty best) runs 3
+replays with 3 skips and `xo leakcheck: 0 live of 102 allocations`;
+TestNoGCTestLeaks checks that now.
+
 ## Next
 
-- Shrinking in batches: a test binary driven over a pipe (one request
-  per replay on stdin) would turn nogc/prop's 906 processes into about
-  20.
+- Done: shrinking over a pipe (item 1 above).
 - Done: the `sh -c ... env` wrapper per run (item 2 above).
 
 ## Script

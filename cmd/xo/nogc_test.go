@@ -203,6 +203,30 @@ func TestNoGCTestLeaks(t *testing.T) {
 			if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
 				t.Errorf("%s batch on %s: leak check: %q", dir, be, errb.String())
 			}
+			if filepath.Base(dir) != "prop" {
+				continue
+			}
+			// a serving binary (XO_TEST_SERVE, shrinking over a pipe):
+			// with an empty best every replay is not smaller, so each
+			// run skips its body after its inputs are made, and those
+			// inputs are freed
+			cmd = command(t, bin)
+			cmd.Dir = tdir
+			cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_SERVE=1", "XO_LEAKCHECK=1")
+			cmd.Stdin = strings.NewReader("0/1/r=1,1/b=\n0/1/r=2,2/b=\n0/1/r=3,3/b=\n")
+			outb.Reset()
+			errb.Reset()
+			cmd.Stdout, cmd.Stderr = &outb, &errb
+			if err := cmd.Run(); err != nil {
+				t.Errorf("%s serve on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
+				continue
+			}
+			if got, skips := strings.Count(outb.String(), "XO-TEST-END\n"), strings.Count(outb.String(), "XO-PROP-NOT-SMALLER\n"); got != 3 || skips != 3 {
+				t.Errorf("%s serve on %s: %d runs ended, %d not smaller, want 3 and 3\n%s", dir, be, got, skips, outb.String())
+			}
+			if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
+				t.Errorf("%s serve on %s: leak check: %q", dir, be, errb.String())
+			}
 		}
 	}
 }

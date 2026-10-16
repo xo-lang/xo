@@ -53,10 +53,20 @@ capability, and each case of the property tests among them, in batches:
   outlives the test) the binary ends the batch after XO-TEST-END and a
   new process takes the rest. A process that fails after its last run
   ended, or runs none, sends its runs to one process each.
+- **Shrinking over a pipe** (2026-10-15). Each replay depends on the
+  last, so shrinking cannot be planned as a batch: the harness starts
+  the test binary with XO_TEST_SERVE=1 and writes one run per line on
+  its standard input (`index/seed/r=c1,c2,.../b=c1,c2,...`, the
+  XO_PROP_REPLAY and XO_PROP_BEST it would set), reading the run's
+  lines up to XO-TEST-END. A case whose choices are not smaller than
+  the best skips its body in process (its inputs are reported before
+  the body runs, so the test binary's main goes back to the loop) and
+  the harness reads it as the status 3 of a process of its own. A
+  failing replay ends the binary: if it was not the binary's first run
+  it runs again alone, and the next replay starts a new binary.
 - **What stays one process per run.** Tests with `uses` under
-  `--real` (their real effects and real standard streams), shrinking
-  (each replay depends on the last), and everything under
-  XO_TEST_BATCH=0.
+  `--real` (their real effects and real standard streams), and
+  everything under XO_TEST_BATCH=0.
 - **Leaks.** XO_LEAKCHECK still reports at exit only; a batch's report
   covers all its runs, so TestNoGCTestLeaks runs every passing test of
   its packages in one batched process too and requires 0 live.
@@ -88,7 +98,7 @@ capability, and each case of the property tests among them, in batches:
 - In process recovery on a clean unwind, falling back to one process
   per test afterwards: more code in the generated test bodies for a
   path that only failing tests take.
-- A long lived test binary driven over a pipe (requests on stdin):
-  would batch shrinking too, but needs an interactive process API in
-  the harness; possible later.
+- A long lived test binary driven over a pipe for every run, not only
+  shrinking: the batch needs no round trip per run, so the pipe is kept
+  for the runs that depend on the previous outcome.
 - Fewer property cases by default: changes what the tests check.

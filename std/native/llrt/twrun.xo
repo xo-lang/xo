@@ -163,6 +163,7 @@ pub fn start() {
   st(w, TW_VNOW, TW_EPOCH)
   rt.mem_store(w, TW_ON, 1, 4)
   testworld.set_batch(process.env_real_at("XO_TEST_BATCH"))
+  testworld.set_serve(process.env_real_at("XO_TEST_SERVE"))
 }
 
 fn tw() -> Int { ld(state(), R_TW) }
@@ -715,6 +716,15 @@ pub fn next() -> Int {
     if !clean {
       return -1
     }
+  }
+  if testworld.serving() {
+    // a run read from standard input (XO_TEST_SERVE): the harness's
+    // shrinking writes one line per replay
+    let i = testworld.serve_next()
+    if i >= 0 {
+      testworld.write_real("XO-TEST-BEGIN\n")
+    }
+    return i
   }
   let r = testworld.plan_next()
   if r.is_empty() {

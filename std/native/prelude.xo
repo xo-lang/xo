@@ -2478,6 +2478,10 @@ fn llrt_test_index() -> Int { testworld.test_index() }
 /// (twrun.xo next: XO_TEST's test, or each run of XO_TEST_BATCH's
 /// batch); between the runs of a batch the state of log.configure,
 /// FakeStdio.set_tty, and FakeProc.kill starts over too.
+/// Whether the run's property case skips its body: a serving binary's
+/// case not smaller than the best (testworld.xo skip_case).
+fn llrt_test_skip() -> Bool { testworld.skipped() }
+
 fn llrt_test_next() -> Int {
   if twrun.ran() {
     logstate.reset()

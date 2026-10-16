@@ -84,7 +84,12 @@ const S_RUN = 344
 /// next run's place in it.
 const S_PLAN = 360
 const S_PLAN_POS = 384
-const S_SIZE = 392
+/// Whether the binary serves runs read from its standard input
+/// (XO_TEST_SERVE, the harness's shrinking), and whether the property
+/// case of the current run skips its body (not smaller than the best).
+const S_SERVE = 392
+const S_SKIP = 400
+const S_SIZE = 408
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -380,8 +385,91 @@ pub fn set_batch(a: Int) {
   unlock()
 }
 
-/// Whether the test binary runs a batch (XO_TEST_BATCH).
-pub fn batched() -> Bool { vec_len(st() + S_PLAN) > 0 }
+/// Whether the test binary runs a batch (XO_TEST_BATCH) or serves runs
+/// (XO_TEST_SERVE).
+pub fn batched() -> Bool { vec_len(st() + S_PLAN) > 0 || serving() }
+
+/// Serves runs read from the real standard input when the C string at a
+/// (XO_TEST_SERVE, 0 when unset) is set and not empty.
+pub fn set_serve(a: Int) {
+  if a != 0 && raw.cstr_len(a) > 0 {
+    rt.mem_store(st(), S_SERVE, 1, 8)
+  }
+}
+
+/// Whether the binary serves runs read from its standard input.
+pub fn serving() -> Bool { rt.mem_load(st(), S_SERVE, 8) != 0 }
+
+/// The next run a serving binary reads: a line `index/seed`, then
+/// optionally `/r=c1,c2,...` (XO_PROP_REPLAY) and `/b=c1,c2,...`
+/// (XO_PROP_BEST), each set even when empty; the run's state is reset as
+/// reset_test does and its variables set. The index, or -1 at the end of
+/// input (or an empty line).
+pub fn serve_next() -> Int {
+  let line = read_real_line()
+  let f = line.split("/")
+  if line.is_empty() || f.len() < 2 {
+    return -1
+  }
+  reset_test(first_number(f[1]), false, 0)
+  setenv(V_REPLAY, 0, -1)
+  setenv(V_BEST, 0, -1)
+  for x in f[2..f.len()] {
+    let v = raw.str_slice(x, 2, x.len())
+    if x.starts_with("r=") {
+      setenv(V_REPLAY, raw.data(v), v.len())
+    } else if x.starts_with("b=") {
+      setenv(V_BEST, raw.data(v), v.len())
+    }
+  }
+  rt.mem_store(st(), S_SKIP, 0, 8)
+  first_number(f[0])
+}
+
+/// A line of the real standard input without its newline ("" at the end
+/// of input), read a byte at a time so nothing past the line is taken.
+/// UNTESTED on windows.
+fn read_real_line() -> Str {
+  let b = rt.heap_large(8)
+  var out = StrBuilder.new()
+  while true {
+    let r = match target.os {
+      TargetOs.Linux => linux.read_at(0, b, 1)
+      TargetOs.Darwin => darwin.read_at(0, b, 1)
+      TargetOs.Windows => windows.read_at(sys_windows.GetStdHandle(-10), b, 1)
+      TargetOs.Wasi => 0
+    }
+    if r == -linux.EINTR && target.os == TargetOs.Linux {
+      continue
+    }
+    if r <= 0 {
+      break
+    }
+    let c = rt.mem_load(b, 0, 1)
+    if c == 10 {
+      break
+    }
+    out.write(raw.str_at(b, 1))
+  }
+  rt.heap_release(b - 8)
+  out.freeze()
+}
+
+/// A serving binary's property case that is not smaller than the best:
+/// the case skips its body (the harness reads XO-PROP-NOT-SMALLER) and
+/// the binary goes on to the next run, where a process of its own exits
+/// with status 3 (report.xo prop_report). Whether it skips.
+pub fn skip_case() -> Bool {
+  if !serving() {
+    return false
+  }
+  rt.mem_store(st(), S_SKIP, 1, 8)
+  true
+}
+
+/// Whether the current run's property case skips its body (the test
+/// binary's main asks after the case's inputs are reported).
+pub fn skipped() -> Bool { rt.mem_load(st(), S_SKIP, 8) != 0 }
 
 /// The next run of the batch: the test's index, its seed, whether it is
 /// a property test's case, and the case's seed; empty after the last.

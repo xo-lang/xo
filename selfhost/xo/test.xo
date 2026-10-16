@@ -9,8 +9,10 @@
 // 0235): one process runs many of them in sequence (XO_TEST_BATCH), the
 // test world reset between them, and a run the process does not survive
 // (a failure, a fault, a deadlock) runs again alone, so its outcome and
-// message are the one process mode's. XO_TEST_BATCH=0 in the
-// environment of `xo test` runs one process per test and case.
+// message are the one process mode's. Shrinking's replays go to one
+// test binary over a pipe (XO_TEST_SERVE, serve_run). XO_TEST_BATCH=0
+// in the environment of `xo test` runs one process per test, case, and
+// replay.
 //
 // Tests with `uses` are skipped unless `--real` gives them real
 // capabilities (XO_TEST_REAL, decision 0120). Not here yet: a test that
@@ -274,8 +276,13 @@ fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outco
     Ok(r) => r
     Err(e) => return (Outcome{status: "fail", msg: "${e}"}, PropCase{})
   }
-  let stdout = r.stdout.to_str() ?? ""
-  let stderr = r.stderr.to_str() ?? ""
+  parse_run(r.stdout.to_str() ?? "", r.stderr.to_str() ?? "", r.code)
+}
+
+/// The outcome of a run from what its process wrote and its status
+/// (run_test_env's; a serving binary's run that ended is status 0, or 3
+/// when it was not smaller).
+fn parse_run(stdout: Str, stderr: Str, code: Int) -> (Outcome, PropCase) {
   var logs: List[Str] = []
   var fail_msg: List[Str] = []
   var pc = PropCase{}
@@ -307,7 +314,6 @@ fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outco
   }
   pc.input = input.freeze()
   pc.err_out = stderr
-  let code = r.code
   if code == 0 {
     return (Outcome{status: "pass", logs: logs}, pc)
   }
@@ -569,6 +575,9 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
   var best_out = Outcome{status: "fail"}
   var steps = 0
   var budget = 2000
+  // the replays go to one test binary over a pipe (serve_run) unless
+  // XO_TEST_BATCH=0
+  var srv = Server{off: (os.env.get("XO_TEST_BATCH") ?? "") == "0"}
   var improved = true
   while improved && budget > 0 {
     improved = false
@@ -578,7 +587,8 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
       while i + k <= best.len() && !improved && budget > 0 {
         let cand = best[0..i] + best[i + k..best.len()]
         budget -= 1
-        let (out, pc) = run_test_env(os, bin, t, seed, ["XO_PROP_REPLAY=${join_choices(cand)}", "XO_PROP_BEST=${join_choices(best)}"])
+        let (out, pc, s2) = serve_run(os, bin, t, seed, join_choices(cand), join_choices(best), srv)
+        srv = s2
         if !pc.not_smaller && pc.reported && out.status == "fail" {
           best = pc.choices
           best_in = pc.input
@@ -603,7 +613,8 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
           }
           cand[i] = mid
           budget -= 1
-          let (out, pc) = run_test_env(os, bin, t, seed, ["XO_PROP_REPLAY=${join_choices(cand)}", "XO_PROP_BEST=${join_choices(best)}"])
+          let (out, pc, s2) = serve_run(os, bin, t, seed, join_choices(cand), join_choices(best), srv)
+        srv = s2
           if !pc.not_smaller && pc.reported && out.status == "fail" {
             best = pc.choices
             best_in = pc.input
@@ -619,5 +630,104 @@ fn shrink(os: Os, bin: Str, t: TestInfo, seed: Int, failing: List[Int]) -> (Str,
       i += 1
     }
   }
+  serve_end(srv)
   (best_in, best_out, steps)
+}
+
+/// A test binary serving runs read from its standard input
+/// (XO_TEST_SERVE, decision 0235): the child, whether it is running, the
+/// runs it ended, and whether serving is off (one process per run).
+struct Server {
+  child: Child? = None
+  runs: Int = 0
+  off: Bool = false
+}
+
+/// A shrinking replay (choices replay, best so far best) of property
+/// test t run by the serving binary of srv, started when none runs: the
+/// outcome as run_test_env gives it, and the server after. A run the
+/// binary does not survive ends the server; unless it was the server's
+/// first run it runs again alone (run_test_env), so a failure's report
+/// is the one process mode's.
+fn serve_run(os: Os, bin: Str, t: TestInfo, seed: Int, replay: Str, best: Str, srv: Server) -> (Outcome, PropCase, Server) {
+  let alone = ["XO_PROP_REPLAY=${replay}", "XO_PROP_BEST=${best}"]
+  if srv.off {
+    let (o, pc) = run_test_env(os, bin, t, seed, alone)
+    return (o, pc, srv)
+  }
+  var s = srv
+  if s.child.is_none() {
+    match test_cmd(os, bin, t.dir, ["XO_TEST=${t.index}", "XO_TEST_SEED=${seed}", "XO_TEST_SERVE=1"]).spawn() {
+      Ok(c) => {
+        s.child = Some(c)
+        s.runs = 0
+      }
+      Err(_) => {
+        let (o, pc) = run_test_env(os, bin, t, seed, alone)
+        return (o, pc, s)
+      }
+    }
+  }
+  let c = match s.child {
+    Some(c) => c
+    None => return (Outcome{status: "fail"}, PropCase{}, s)
+  }
+  if c.write("${t.index}/${seed}/r=${replay}/b=${best}\n".bytes()).is_err() {
+    serve_end(s)
+    let (o, pc) = run_test_env(os, bin, t, seed, alone)
+    return (o, pc, Server{})
+  }
+  var lines: List[Str] = []
+  var begun = false
+  var ended = false
+  while true {
+    let l = match c.read_line() {
+      Ok(Some(l)) => l
+      _ => break
+    }
+    if l == "XO-TEST-BEGIN" {
+      begun = true
+    } else if l == "XO-TEST-END" {
+      ended = true
+      break
+    } else if begun {
+      lines.push(l)
+    }
+  }
+  let out = lines.join("\n")
+  if ended {
+    s.runs += 1
+    let (o, pc) = parse_run(out, "", 0)
+    if pc.not_smaller {
+      // a process of its own exits with status 3 here
+      let (o3, pc3) = parse_run(out, "", 3)
+      return (o3, pc3, s)
+    }
+    return (o, pc, s)
+  }
+  // the binary ended in the run (or before it): its status and errors
+  var err = StrBuilder.new()
+  while true {
+    match c.read_err(65536) {
+      Ok(Some(b)) => err.write(b.to_str() ?? "")
+      _ => break
+    }
+  }
+  let code = c.wait().ok() ?? 1
+  let first = s.runs == 0
+  if begun && first {
+    let (o, pc) = parse_run(out, err.freeze(), code)
+    return (o, pc, Server{})
+  }
+  let (o, pc) = run_test_env(os, bin, t, seed, alone)
+  (o, pc, Server{})
+}
+
+/// Ends the serving binary of srv, if one runs: end of input, then its
+/// exit.
+fn serve_end(srv: Server) {
+  if let Some(c) = srv.child {
+    c.close_stdin()
+    c.wait().ignore_err("the server's status after its last run does not matter")
+  }
 }
