@@ -233,7 +233,15 @@ static void test_echo(void) {
 	xo_scope *s = t_scope_open();
 	release(spawn(s, J_ECHO_ONE, 0, l, 0));
 	xo_conn *c = t_net_dial("", 0, as->data, an);
-	CHECK(t_net_status() == 0);
+	if (t_net_status() != 0) {
+		// the rest would read through the zero handle: report the dial's
+		// error and stop (it once failed under the whole -short suite's load)
+		xo_rlist *m = t_net_msg();
+		const xo_rstr *ms = m->len > 0 ? ((xo_rstr **)rl_data(m))[0] : NULL;
+		int64_t mn = m->len > 0 ? ((int64_t *)rl_data(m))[1] : 0;
+		fprintf(stderr, "%s:%d: dial %.*s: status %lld: %.*s\n", __FILE__, __LINE__, (int)an, as->data, (long long)t_net_status(), (int)mn, ms ? ms->data : "");
+		exit(1);
+	}
 	drop_str_list(al);
 	// more than the socket buffers hold: the writer parks until the echo
 	// and this reader drain them

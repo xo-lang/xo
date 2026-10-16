@@ -187,6 +187,7 @@ void xo_x_nc_conn_write(int64_t cn, int64_t p, int64_t n);
 void xo_x_nc_conn_close(int64_t cn);
 int64_t xo_x_nc_conn_read_list(int64_t cn, int64_t max);
 int64_t xo_x_nc_status(void);
+int64_t xo_x_nc_msg(void);
 
 static void *t_handle_or_zero(int64_t r) { return r ? (void *)(intptr_t)r : (void *)&zero_handle; }
 static xo_rlist *t_list_or_empty(int64_t r) { return r ? (xo_rlist *)(intptr_t)r : &empty_list; }
@@ -205,6 +206,7 @@ static void t_conn_write(xo_conn *cn, const char *p, int64_t n) { xo_x_nc_conn_w
 static void t_conn_close(xo_conn *cn) { xo_x_nc_conn_close(XO_ADDR(cn)); }
 static xo_rlist *t_conn_read(xo_conn *cn, int64_t max) { return t_list_or_empty(xo_x_nc_conn_read_list(XO_ADDR(cn), max)); }
 static int64_t t_net_status(void) { return xo_x_nc_status(); }
+static xo_rlist *t_net_msg(void) { return t_list_or_empty(xo_x_nc_msg()); }
 
 // a list's slow paths (obj.xo rl_copy_n and rl_grow_n, which generated
 // code calls; xo_rt.c's xo_rl_copy and xo_rl_grow went with seed 0.14.0)
