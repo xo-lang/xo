@@ -231,10 +231,9 @@ func TestStaticWords(t *testing.T) {
 	}
 	type span struct{ lo, hi int }
 	ranges := map[string]span{}
-	// the words std may claim: the table has 256 since decision 0237,
-	// but the 0.16.0 seed's SSA builder (which builds xo from this std)
-	// rejects a word past 63; raise to 256 once a seed's builder takes them
-	const seedWords = 64
+	// the words std may claim: the table's 256 (decision 0237; the 0.17.0
+	// seed's SSA builder takes words past 63, the 0.16.0 seed's did not)
+	const seedWords = 256
 	owner := make([]string, seedWords)
 	entry := regexp.MustCompile(`(?m)^///\s+(\d+)(?:-(\d+))?\s+(std/native/\S+\.xo):`)
 	for _, m := range entry.FindAllStringSubmatch(string(rtSrc), -1) {
@@ -244,7 +243,7 @@ func TestStaticWords(t *testing.T) {
 			hi, _ = strconv.Atoi(m[2])
 		}
 		if lo > hi || hi >= seedWords {
-			t.Errorf("rt.xo: static words %d-%d of %s: not a range in 0 to %d (decision 0237: words past 63 wait for a seed whose builder accepts them)", lo, hi, m[3], seedWords-1)
+			t.Errorf("rt.xo: static words %d-%d of %s: not a range in 0 to %d (decision 0237)", lo, hi, m[3], seedWords-1)
 			continue
 		}
 		if _, dup := ranges[m[3]]; dup {
