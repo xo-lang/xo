@@ -807,7 +807,7 @@ Every type automatically implements:
 A type is *comparable* when it implements `Eq`: every field, enum payload,
 tuple element, and element or type argument is comparable. Function values
 and handles are not (decision 0112): `Chan`, `Mutex`, `Atomic`, `Scope`,
-`Task`, `Listener`, `Conn`, `task.Group`, `task.Semaphore`, `task.Once`,
+`Task`, `Listener`, `Conn`, `File`, `FileLock`, `Child`, `task.Group`, `task.Semaphore`, `task.Once`,
 `http.Router`, `http.Server`, `http.Client`, `http.BodyWriter`,
 `http.TlsCert`, `sql.Db`, `sql.Tx`, and the std/testing fakes
 (`FakeNet`, `FakeClock`, `MemFs`, `FakeEnv`, `FakeStdio`, `FakeProc`).

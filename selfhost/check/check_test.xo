@@ -270,3 +270,42 @@ test "C ABI export names that two export modules define are paired, XO0608's che
   expect(xo_x_export_module("native/llrt/cabi_libc")) == false
   expect(xo_x_export_module("native/llrt/poll")) == false
 }
+
+test "File, FileLock, Child, and values holding them are not comparable (XO0404)" {
+  // decision 0112's rule for the handles that came after its list
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", "${PRELUDE}\nstruct File {}\nstruct FileLock {}\nstruct Child {}\n".bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all("h")?
+  os.fs.write("h/main.xo", """
+    struct Job {
+      id: Int
+      lock: FileLock
+    }
+
+    fn files(a: File, b: File) -> Bool {
+      a == b
+    }
+
+    fn jobs(a: Job, b: Job) -> Bool {
+      a != b
+    }
+
+    fn results(a: Result[Child, Str], b: Result[Child, Str]) -> Bool {
+      a == b
+    }
+
+    fn ids(a: Job, b: Job) -> Bool {
+      a.id == b.id
+    }
+    """.bytes())?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["h"]) {
+    fault("check: ${e}")
+  }
+  let ls = lines(c.dump(true, true, false, true, false)).filter(fn(l) { l.contains("\"XO0404\"") })
+  expect(ls.len()) == 3
+  expect(ls.any(fn(l) { l.contains("`File` does not implement `Eq`") })) == true
+  expect(ls.any(fn(l) { l.contains("`Job` does not implement `Eq`, so it cannot be compared with `!=`") })) == true
+  expect(ls.any(fn(l) { l.contains("`Result[Child, Str]` does not implement `Eq`") })) == true
+}

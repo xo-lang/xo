@@ -79,3 +79,18 @@ parameters and typed values (an `rt.Any` list) take no part in `==`
 XO1201 guard stays for any other std type whose native implementation
 holds a function or handle. Test: internal/llvm golden `request_eq`
 (also under `-short`).
+
+## Addendum (2026-10-15)
+
+The handle types added after this decision were missing from the
+checker's list (selfhost/check infer.xo `is_handle`), so `==` on a
+`Result[File, FsErr]` passed the check, compared by identity on the Go
+backend, and stopped natively at XO1201. They are handles in the sense
+above (std.md calls each "a handle"), so the rule applies unchanged and
+they join the list: prelude `File` and `FileLock` (decision 0163) and
+`Child` (std.md 3.8), and std/internal `SharedLock` (decision 0214).
+`regexp.Regex`, also documented as a handle, stays comparable for now:
+it is an immutable compiled value like `time.Zone`, and making it
+incomparable is a semantic change for its own decision. Test:
+selfhost/check check_test.xo ("File, FileLock, Child, and values holding
+them are not comparable").

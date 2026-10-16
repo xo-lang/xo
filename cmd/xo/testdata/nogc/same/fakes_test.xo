@@ -123,8 +123,8 @@ test "memfs symbolic links" {
   expect(sub.symlink("../f.txt", "n")) == Err(FsErr.Denied(path: "n"))
 }
 
-/// The error of a result whose value is a handle (`==` on handles is not
-/// native yet).
+/// The error of a result whose value is a handle: a File or FileLock has
+/// no equality (decision 0112, XO0404), so the error is compared alone.
 fn err_of[T](r: Result[T, FsErr]) -> FsErr? {
   match r {
     Ok(_) => None

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The checker treats `File`, `FileLock`, `Child`, and std/internal's
+  `SharedLock` as handles (decision 0112 addendum): `==`, `!=`, Map keys,
+  Set elements, and `derive Eq` on values holding one are XO0404 on every
+  backend. Before, `Result[File, FsErr] == ...` compared by identity on
+  the Go backend and stopped at XO1201 natively.
 - LLVM backend, linux/arm64: the thread local table is read through
   llvm.threadlocal.address. LLVM had folded its address into callers,
   which kept tpidr_el0 across a park, so a task resumed on another worker
