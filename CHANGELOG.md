@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- darwin/arm64 links with cc by default again when the host has one
+  (`--ld=macho` still selects selfhost/macho), a mitigation: some ad hoc
+  binaries fail the kernel's signature check (AMFI) and wait at exec on
+  a Gatekeeper assessment queued behind pending dialogs; the fix is the
+  Developer Tools setting for the terminal
+  (gotchas/amfi-gatekeeper-macho-layout.md).
 - Allocation counting is off when nothing reads it: alloc.xo counts
   allocations and their bytes (ALLOCS, ABYTES) only when XO_LEAKCHECK,
   XO_HEAPSTATS, or XO_RTSTATS is set (from the first allocation, so their

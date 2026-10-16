@@ -154,7 +154,9 @@ publishes them; releases are on hold (owner).
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
-arm64 (the default linker: macho on darwin, cc on linux), arm64
+arm64 (the default linker: cc whenever the host has one, macho on a
+darwin host without cc, since 2026-10-16, a mitigation for
+gotchas/amfi-gatekeeper-macho-layout.md), arm64
 `--ld=cc`, arm64 `--ld=macho`, and llvm ("UNSUPPORTED" on
 linux/amd64), the time_zones golden on arm64 against its want.txt
 (zone data from the archive's lib/xo/zoneinfo.zip), the missing Go reported by the default backend; with Go a
