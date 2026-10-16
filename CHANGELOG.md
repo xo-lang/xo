@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The test binary cache (XO_BIN_CACHE, `<user cache>/xo/testbin`)
+  prunes itself to 4 GiB (XO_BIN_CACHE_MAX bytes or XO_CACHE_MAX_GB),
+  least recently used first, at most every 2 minutes, keeping only
+  entries used in the last 10 minutes (it had grown to 12 GB because
+  every entry was younger than the two hour keep of decision 0223);
+  selfhost/prune's Policy gains `keep` and mark_used_within.
 - Native test binaries' MemFs has symbolic links: `symlink` and
   `read_link`, and `stat`, `exists`, `read`, and `read_text` follow a
   link as the Go backend's MemFs does (std/native/testing.xo). selfhost/check's

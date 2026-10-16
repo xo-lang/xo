@@ -130,3 +130,25 @@ test "the environment sets the age and the cap" {
 test "a missing cache directory is no prune" {
   expect(run(os.fs, os.clock, "nothing", Policy{}).ran) == false
 }
+
+test "a shorter keep lets the cap remove entries younger than KEEP" {
+  // the test binary cache (decision 0236): keep 10m, touch 1m
+  put(os, "c/aa/1", 40)
+  os.clock.advance(20m)
+  put(os, "c/aa/2", 40)
+  os.clock.advance(20m)
+  put(os, "c/bb/3", 40)
+  os.clock.advance(5m)
+  let p = Policy{max_bytes: 50, every: 2m, keep: 10m}
+  let st = run(os.fs, os.clock, "c", p)
+  expect(st.removed) == ["c/aa/1", "c/aa/2"]
+  expect(there(os, "c/bb/3")) == true
+  // with KEEP's two hours nothing that young goes
+  put(os, "c/aa/4", 40)
+  os.clock.advance(20m)
+  let st2 = run(os.fs, os.clock, "c", Policy{max_bytes: 50, every: 0s})
+  expect(st2.removed) == []
+  mark_used_within(os.fs, os.clock, "c/bb/3", 1m)
+  let fi = os.fs.stat("c/bb/3").or_fault("stat").or_fault("missing")
+  expect(os.clock.since(fi.modified)) == 0s
+}

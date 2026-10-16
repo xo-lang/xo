@@ -3036,7 +3036,7 @@ hours is removed, so a cache can sit above its cap by that much.
 |---|---|---|---|---|
 | `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory | build_dir, at most hourly | `XO_CACHE_MAX_AGE` | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |
 | `$XO_GOCACHE` (`<user cache>/xo/gocache`) | each file below the top level | after a go build, at most hourly | `XO_CACHE_MAX_AGE` | `XO_GOCACHE_MAX` bytes, else `XO_CACHE_MAX_GB` |
-| `$XO_BIN_CACHE` (unset: `<user cache>/xo/testbin` for `xo test`, off for other builds, decision 0236; `off` turns it off; `run/` holds native `xo test`'s run cache, selfhost/xo testcache.xo) | each file below the top level | after a store, at most once a minute | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else 6 GiB |
+| `$XO_BIN_CACHE` (unset: `<user cache>/xo/testbin` for `xo test`, off for other builds, decision 0236; `off` turns it off; `run/` holds native `xo test`'s run cache, selfhost/xo testcache.xo) | each file below the top level | after a store (a binary or a run entry), at most every 2 minutes | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 4 GiB; entries used within 10 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-15) |
 | `<cache base>/checkout/<key>` (xotool) | each key directory | xotool Ensure, at most hourly | `XO_CACHE_MAX_AGE`, past the newest `XO_CHECKOUT_KEEP` (default 4) | none |
 
 - `XO_CACHE_MAX_AGE`: a Go duration (`6h`, `90m`), default `24h`; `0`

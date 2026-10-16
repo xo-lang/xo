@@ -276,7 +276,7 @@ fn fetch_bin(os: Os, ctx: Ctx, key: Str, bin: Str) -> (Bool, Str) {
   match os.fs.stat(entry) {
     Ok(Some(fi)) => {
       if !fi.is_dir {
-        prune.mark_used(os.fs, os.clock, entry)
+        prune.mark_used_within(os.fs, os.clock, entry, BIN_TOUCH)
         os.fs.create_dir_all(dir_name(bin)).ignore_err("the copy reports it")
         let tmp = "${bin}.tmp-xo1-${os.rand.bytes(6).to_hex()}"
         match os.fs.copy(entry, tmp) {
@@ -324,6 +324,23 @@ fn store_bin(os: Os, ctx: Ctx, entry: Str, bin: Str) {
       return
     }
   }
-  let p = prune.from_env(os.env, prune.Policy{max_bytes: 6 * prune.GB, every: 1m})
+  prune_bins(os, ctx)
+}
+
+/// The bin cache's touch: an entry used within it is not marked again.
+const BIN_TOUCH: Duration = 1m
+
+/// Prunes the bin cache (its binaries and testcache.xo's run entries), at
+/// most every two minutes: entries unused past $XO_CACHE_MAX_AGE (24h),
+/// then the least recently used over XO_BIN_CACHE_MAX bytes (else
+/// $XO_CACHE_MAX_GB, else 4 GiB). An entry used within ten minutes stays,
+/// not KEEP's two hours: a test binary is in use only while a build
+/// copies it or a run copies it (decision 0236; 12 GB of test binaries
+/// were all younger than two hours on 2026-10-15).
+fn prune_bins(os: Os, ctx: Ctx) {
+  if ctx.bin_cache.is_empty() {
+    return
+  }
+  let p = prune.from_env(os.env, prune.Policy{max_bytes: 4 * prune.GB, every: 2m, keep: 10m})
   prune.run(os.fs, os.clock, ctx.bin_cache, cap_env(os, p, "XO_BIN_CACHE_MAX"))
 }

@@ -71,6 +71,17 @@ notes-service; -O0 takes 5.4 s.
   module cache directory edited in place) is not hashed; XO_BIN_CACHE=off
   avoids the cache.
 
+- Addendum (lead, 2026-10-15): the bin cache grew to 12 GB in a few
+  hours of parallel sessions, all of it younger than the prune's
+  two hour keep (decision 0223), so the 6 GiB cap removed nothing. Its
+  policy is now its own (selfhost/xo cache.xo prune_bins): at most every
+  2 minutes after a store of a binary or a run entry, a 4 GiB cap
+  (XO_BIN_CACHE_MAX bytes, else XO_CACHE_MAX_GB), least recently used
+  first, entries used within 10 minutes kept (prune.Policy.keep), and
+  marked used at most once a minute (prune.mark_used_within). A run
+  cache hit runs a copy of the binary in $TMPDIR, removed after the run,
+  so a prune never removes a binary while its tests run.
+
 ## Alternatives
 
 - -O1 or -O2 without LTO for tests: 29 s and 33 s of clang on

@@ -175,9 +175,23 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   if !head {
     return None
   }
-  prune.mark_used(os.fs, os.clock, "${entry}.m")
-  prune.mark_used(os.fs, os.clock, bin)
-  Some(RunHit{bin: bin, tests: tests})
+  prune.mark_used_within(os.fs, os.clock, "${entry}.m", BIN_TOUCH)
+  prune.mark_used_within(os.fs, os.clock, bin, BIN_TOUCH)
+  // the run uses a copy outside the cache, so a prune cannot remove the
+  // binary between its test processes, however long they run
+  var tmp = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
+  if tmp.is_empty() {
+    tmp = "/tmp"
+  }
+  let run = "${tmp}/xo-run-${os.rand.bytes(8).to_hex()}"
+  match os.fs.copy(bin, run) {
+    Ok(_) => {}
+    Err(_) => {
+      os.fs.remove(run).ignore_err("a failed copy")
+      return None
+    }
+  }
+  Some(RunHit{bin: run, tests: tests})
 }
 
 /// The files and directories a test build of c read (run_fetch's
@@ -295,4 +309,5 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
     }
     Err(_) => os.fs.remove(tm).ignore_err("a failed store")
   }
+  prune_bins(os, ctx)
 }

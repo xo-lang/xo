@@ -184,7 +184,9 @@ fn main(os: Os) ! {
       o.run_key = run_key(os, ctx, o, args, backend)
       if let Some(hit) = run_fetch(os, ctx, o.run_key) {
         lap(os, o.phases, "run_cache", t0)
-        os.proc.exit(run_tests(os, hit.bin, hit.tests, o.topts))
+        let code = run_tests(os, hit.bin, hit.tests, o.topts)
+        os.fs.remove(hit.bin).ignore_err("a prune removes it later")
+        os.proc.exit(code)
       }
       lap(os, o.phases, "run_cache_miss", t0)
     }

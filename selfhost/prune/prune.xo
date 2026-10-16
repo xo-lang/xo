@@ -44,6 +44,10 @@ pub struct Policy {
   /// each file below the top level is an entry (files at the top, such
   /// as the stamp and lock files, are never entries).
   pub dirs: Bool = false
+  /// An entry used within keep is never removed (KEEP unless a cache
+  /// whose entries are in use only briefly says otherwise, such as the
+  /// test binaries of $XO_BIN_CACHE, decision 0236).
+  pub keep: Duration = 2h
 }
 
 /// What one run did: whether it ran (the stamp allowed it), the paths it
@@ -91,9 +95,15 @@ pub fn from_env(env: Env, base: Policy) -> Policy uses env {
 /// Marks the entry at path used: its modification time is set to now
 /// when it is over TOUCH old (one stat otherwise).
 pub fn mark_used(fs: Fs, clock: Clock, path: Str) uses (fs.read, fs.write, clock) {
+  mark_used_within(fs, clock, path, TOUCH)
+}
+
+/// mark_used with touch in place of TOUCH, for a cache whose keep is
+/// shorter than KEEP (its touch must be shorter than its keep).
+pub fn mark_used_within(fs: Fs, clock: Clock, path: Str, touch: Duration) uses (fs.read, fs.write, clock) {
   match fs.stat(path) {
     Ok(Some(fi)) => {
-      if clock.since(fi.modified) >= TOUCH {
+      if clock.since(fi.modified) >= touch {
         fs.set_modified(path, clock.now()).ignore_err("only the prune order")
       }
     }
@@ -132,9 +142,9 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   st.ran = true
   var kept: List[Entry] = []
   var total = 0
-  for e in entries(fs, clock, dir, p.dirs) {
+  for e in entries(fs, clock, dir, p.dirs, p.keep) {
     let idle = clock.since(e.used)
-    if p.max_age.nanos() > 0 && idle > p.max_age && idle >= KEEP && remove(fs, clock, e.path, p.dirs) {
+    if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep && remove(fs, clock, e.path, p.dirs, p.keep) {
       st.removed.push(e.path)
       continue
     }
@@ -143,11 +153,11 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   }
   if p.max_bytes > 0 && total > p.max_bytes {
     for e in kept.sort_by(fn(x) { x.used.unix_millis() }) {
-      if total <= p.max_bytes || clock.since(e.used) < KEEP {
-        // oldest first: everything left was used within KEEP
+      if total <= p.max_bytes || clock.since(e.used) < p.keep {
+        // oldest first: everything left was used within keep
         break
       }
-      if remove(fs, clock, e.path, p.dirs) {
+      if remove(fs, clock, e.path, p.dirs, p.keep) {
         st.removed.push(e.path)
         total -= e.size
       }
@@ -158,8 +168,8 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
 }
 
 /// The entries of the cache in dir; files left under a temporary name
-/// (".tmp" in the name) for over KEEP are removed on the way.
-fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool) -> List[Entry] uses (fs.read, fs.write, clock) {
+/// (".tmp" in the name) for over keep are removed on the way.
+fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration) -> List[Entry] uses (fs.read, fs.write, clock) {
   var out: List[Entry] = []
   if dirs {
     let top = match fs.read_dir(dir) {
@@ -195,7 +205,7 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool) -> List[Entry] uses (fs.r
       continue
     }
     if fi.name.contains(".tmp") {
-      if clock.since(fi.modified) > KEEP {
+      if clock.since(fi.modified) > keep {
         fs.remove(fi.path).ignore_err("another process may own it")
       }
       continue
@@ -205,13 +215,13 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool) -> List[Entry] uses (fs.r
   out
 }
 
-/// Removes the entry at path unless it was used within KEEP (restated
+/// Removes the entry at path unless it was used within keep (restated
 /// now: a process may have marked it since the walk); true when it is
 /// gone.
-fn remove(fs: Fs, clock: Clock, path: Str, dir: Bool) -> Bool uses (fs.read, fs.write, clock) {
+fn remove(fs: Fs, clock: Clock, path: Str, dir: Bool, keep: Duration) -> Bool uses (fs.read, fs.write, clock) {
   match fs.stat(path) {
     Ok(Some(fi)) => {
-      if clock.since(fi.modified) < KEEP {
+      if clock.since(fi.modified) < keep {
         return false
       }
     }
