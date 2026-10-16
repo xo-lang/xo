@@ -149,6 +149,40 @@ selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
   estimates the 40 MB allocated within 2x; cpu,heap writes both; go
   tool pprof reads it), arm64 and LLVM.
 
+## Planned: Windows (parked 2026-10-16)
+
+Not built yet: the Mac's windows cross toolchain is gone and CI is off
+(the lead parked it, 2026-10-16). The design, as Go's profileloop:
+
+- A sampler thread (CreateThread) ticks every 1/XO_PROF_HZ s on a high
+  resolution waitable timer (CreateWaitableTimerExW with
+  CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, a relative due time each tick;
+  Sleep's 15.6 ms granularity is too coarse for 100 Hz).
+- Each tick: CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD) and
+  Thread32First/Next for the process's threads (not the sampler's);
+  OpenThread once per thread id (SUSPEND_RESUME | GET_CONTEXT |
+  QUERY_INFORMATION), kept in a table with the thread's last CPU time;
+  a thread whose GetThreadTimes kernel plus user time moved since the
+  last tick is sampled (the CPU profile's meaning): SuspendThread,
+  GetThreadContext (CONTEXT_CONTROL | CONTEXT_INTEGER), the frames walked
+  with RtlLookupFunctionEntry and RtlVirtualUnwind (a leaf without
+  unwind data: the return address at Rsp) into the same ring of slots,
+  then ResumeThread. Nothing allocates while a thread is suspended.
+- The text range is the image's (GetModuleHandleW(0), SizeOfImage);
+  windows/amd64 first (the CONTEXT layout is per architecture).
+- Symbols: Windows builds link with lld-link and keep no symbol table,
+  so dev builds add `-Wl,/debug:symtab` (a COFF symbol table in the PE,
+  outside the mapped image), and the writer reads it from the program's
+  file (GetModuleFileNameW, CreateFileW, ReadFile): the COFF header's
+  PointerToSymbolTable and NumberOfSymbols, 18 byte records (a name, or
+  an offset into the string table after them; the value plus the
+  section's VirtualAddress plus the image base), functions by type 0x20
+  or by an external or static symbol in a code section; the same
+  demangling as Mach-O and ELF. No line tables (no DWARF in a PE).
+- Checked natively (the CI windows runner) or under Wine with Box64
+  (scripts/docker-wine.sh box64), which runs SuspendThread and
+  GetThreadContext.
+
 ## Consequences
 
 - One command profiles on the Mac, no Docker and no valgrind; Docker
