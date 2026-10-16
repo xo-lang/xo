@@ -137,6 +137,13 @@ both parts against main, medians of 9 interleaved rounds):
   asserting under 10 ms), where an immediate wake started it in about
   60 us: the price of the hand off, paid only when the waker does not
   park soon.
+- The bound depends on the monitor's 1 ms timed wait, which the OS
+  delays under load: on the Mac at load 18 to 30 its ticks overslept by
+  10 to 40 ms (QOS_CLASS_USER_INTERACTIVE did not change that), so a
+  deferred task can wait that long behind a waker that keeps computing
+  (gotchas/monitor-tick-oversleep.md). TestDeferredWakeBound therefore
+  makes the waker compute 200 ms and asserts under 100 ms: it separates
+  a working monitor from none, not fast from slow.
 - An idle program pays nothing: an idle HTTP server's monitor sleeps
   (90 ticks over a 63 s run with 11 deferrals, none during the idle
   minute; CPU time unchanged); XO_THREADS=1 starts no monitor (the same
