@@ -89,7 +89,6 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   if !memo.is_empty() {
     k.str((os.fs.read_text(memo).ok() ?? "").trim())
   }
-  k.str(rtpack_id(os, ctx))
   k.sum()
 }
 

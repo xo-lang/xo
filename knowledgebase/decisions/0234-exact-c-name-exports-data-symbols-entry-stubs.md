@@ -128,8 +128,8 @@ WriteFile's and the dispatch's, inside the 64 KiB stack guarantee), and
 stop.xo's services record is gone. The driver compiles no C runtime
 (selfhost/xo link_inputs), --ld=macho and the ELF linker take no pack
 object, and rtpack compiles xo_rt.c only where it exists. xo_rt.c is
-empty: the 0.15.0 seed's driver still compiles it, so it is deleted
-after the next seed. Proved under Wine (2026-10-16):
+empty: the 0.15.0 seed's driver still compiles it, so it went after seed
+0.16.0. Proved under Wine (2026-10-16):
 internal/llvm/testdata/windows/stack_overflow (exit 2, the flushed
 output, "fatal error: stack overflow") passes for windows/amd64 with
 Debian's amd64 Wine run by Box64 in a native arm64 container

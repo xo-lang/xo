@@ -25,8 +25,8 @@ fn link_os(ctx: Ctx) -> Str {
 
 /// ccBuild: compiles and links srcs into bin with cc and flags; returns
 /// the compiler's output of the failed link, "" on success. The sources
-/// are the program's assembly, the runtime (xo_rt.c), and other C
-/// sources.
+/// are the program's assembly or IR and other C sources (no C runtime
+/// since decision 0234).
 fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str) -> Str {
   // libraries of `use c` go after the objects (splitLibs)
   var flags: List[Str] = []
@@ -37,13 +37,6 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
     } else {
       flags.push(f)
     }
-  }
-  // the C runtime from a release's prebuilt objects when one matches
-  // the flags and these sources (decision 0157)
-  let rti = runtime_index(srcs, flags)
-  var shipped = ""
-  if rti >= 0 {
-    shipped = shipped_runtime(os, ctx, ctx.std, flags)
   }
   var cands: List[Str] = []
   let memo = sysroot_memo(os, ctx)
@@ -56,16 +49,13 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   cands = cands + sysroot_candidates(os, ctx)
   var first = ""
   for root in cands {
-    let (out, ok, rt_fail) = try_link(os, ctx, cc, flags, libs, srcs, bin, root, rti, shipped)
+    let (out, ok) = try_link(os, ctx, cc, flags, libs, srcs, bin, root)
     if ok {
       if !memo.is_empty() {
         os.fs.create_dir_all(dir_name(memo)).ignore_err("the memo only saves time")
         os.fs.write(memo, "${root}\n".bytes()).ignore_err("the memo only saves time")
       }
       return ""
-    }
-    if rt_fail {
-      return out + "\n" + rtpack_hint(os, ctx)
     }
     // report an SDK independent failure over an SDK mismatch
     if first.is_empty() || (first.contains("tapi error") && !out.contains("tapi error")) {
@@ -157,41 +147,20 @@ fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
 /// whether it succeeded, and whether the local compile of the runtime
 /// failed. rti is the index of the runtime in srcs (-1 for none), shipped
 /// the pack's object ("" when none is used).
-fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs0: List[Str], bin: Str, root: Str, rti: Int, shipped: Str) -> (Str, Bool, Bool) {
-  // the C runtime raises faults through the frames of generated code
-  // and its own (decision 0085): every frame needs unwind tables
+fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: List[Str], bin: Str, root: Str) -> (Str, Bool) {
+  // faults unwind through the frames of generated code (decision 0085):
+  // every frame needs unwind tables (`use c` sources too)
   var args = flags + ["-fexceptions", "-funwind-tables", "-o", bin]
   if !root.is_empty() {
     args = args + ["-isysroot", root]
   }
-  var srcs = srcs0
-  let sobj = shipped
-  if !sobj.is_empty() {
-    srcs[rti] = sobj
-  } else {
-    // the C runtime compiled once per flags and sources (rtobj.go)
-    if rti >= 0 && !rtobj_dir(os, ctx).is_empty() {
-      let r = runtime_object(os, ctx, cc, flags, root, srcs[rti])
-      if r.failed {
-        return (r.out, false, true)
-      }
-      if !r.obj.is_empty() {
-        srcs[rti] = r.obj
-      }
-    }
-  }
   args = args + srcs + libs + sys_link_args(link_os(ctx), flags)
   if link_os(ctx) == "darwin" {
-    args = args + weak_undefined_args(os, srcs0) + framework_args(os, srcs0)
+    args = args + weak_undefined_args(os, srcs) + framework_args(os, srcs)
   }
   match os.proc.run(cc, args) {
-    Ok(r) => {
-      let out = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
-      let ok = r.code == 0
-      // with the object cache off the runtime is compiled in the link
-      (out, ok, !ok && sobj.is_empty() && rti >= 0 && mentions_runtime(out))
-    }
-    Err(e) => ("${cc}: ${e}", false, false)
+    Ok(r) => ((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""), r.code == 0)
+    Err(e) => ("${cc}: ${e}", false)
   }
 }
 
@@ -261,25 +230,6 @@ fn nolibc_atomics(os: Os, dir: Str) -> Str ! FsErr {
   Ok(path)
 }
 
-/// rtPackHint: the hint of a failed local compile of the runtime.
-fn rtpack_hint(os: Os, ctx: Ctx) -> Str {
-  var why = "packs are off (XO_RTPACK=off)"
-  if (os.env.get("XO_RTPACK") ?? "") != "off" {
-    match load_rtpack(os, ctx, ctx.std) {
-      None => why = "no pack root was found"
-      Some(p) => why = p.why
-    }
-  }
-  if why.is_empty() {
-    why = "the link's flags are not those of a prebuilt variant"
-  }
-  var install = "install clang or gcc (Debian or Ubuntu: apt-get install clang)"
-  if ctx.goos == "darwin" {
-    install = "install the Command Line Tools (xcode-select --install)"
-  }
-  "hint: the C runtime (std/llrt) was compiled locally because no prebuilt runtime matched: ${why}; ${install}, or set XO_RTPACK to the lib/xo/rtpack directory of a release of xo built from the same sources (knowledgebase/decisions/0157-prebuilt-runtime-objects.md)"
-}
-
 /// sysrootCandidates: $XO_SYSROOT alone, else (macOS) the default, the
 /// SDK xcrun names, Xcode's, and the Command Line Tools' newest first.
 fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
@@ -339,3 +289,17 @@ fn find_cc(os: Os) -> Str {
   ""
 }
 
+fn min(a: Int, b: Int) -> Int {
+  if a < b { a } else { b }
+}
+
+/// strings.Fields.
+fn words(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  for w in s.replace("\t", " ").replace("\n", " ").split(" ") {
+    if !w.is_empty() {
+      out.push(w)
+    }
+  }
+  out
+}

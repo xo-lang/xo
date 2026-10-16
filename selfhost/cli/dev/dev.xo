@@ -1,7 +1,7 @@
 // `xo dev`: the hidden developer commands (decision 0209), not in `xo
 // help` or spec/core.md. This module holds the ones that need no
 // compiler component (goldens, errorcheck, codegen drive an xo
-// binary); selfhost/xo dispatches `xo dev dump`, `rtpack`, and `record`
+// binary); selfhost/xo dispatches `xo dev dump` and `record`
 // itself and the rest here.
 //
 //   xo dev goldens [flags] DIR...     build, run, and compare golden programs
@@ -23,7 +23,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|dump|rtpack|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|dump|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns

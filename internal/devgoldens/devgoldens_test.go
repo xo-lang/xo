@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -136,82 +135,13 @@ func TestDevGoldensGo(t *testing.T) {
 }
 
 // TestDevGoldensELF is scripts/elf-goldens.py on a linux/arm64 host: the
-// programs linked by selfhost/macho with no C toolchain, run directly.
-// --ld=macho links the prebuilt runtime of a pack (decision 0157), which
-// a checkout does not have (only a release's lib/xo/rtpack), so the test
-// builds the linux/arm64 pack of the checkout's sources first (elfPack)
-// and points XO_RTPACK at it.
+// programs linked by selfhost/macho with no C toolchain (and, since
+// decision 0234, no C runtime), run directly.
 func TestDevGoldensELF(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Skip("runs the linux/arm64 executables on a linux/arm64 host")
 	}
-	t.Setenv("XO_RTPACK", elfPack(t))
 	devGoldens(t, "--backend=arm64", "--flags=--target=linux/arm64 --ld=macho", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
-}
-
-// elfPack is the root of a linux/arm64 runtime pack of the checkout's
-// runtime sources: <user cache>/xo/devgoldens/rtpack/<pack key>, built
-// with `xo dev rtpack` and the host's C compiler when it is not there
-// yet. It skips t when the host has no C compiler or archiver to build
-// one (the message of `xo dev rtpack`), and fails it on any other error.
-func elfPack(t *testing.T) string {
-	t.Helper()
-	xo, err := xotool.Path()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := xotool.Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	xoDev := func(args ...string) ([]byte, error) {
-		cmd := exec.Command(xo, append([]string{"dev", "rtpack"}, args...)...)
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root, "XO_RTPACK=off")
-		return cmd.CombinedOutput()
-	}
-	out, err := xoDev("--key", "--target=linux/arm64")
-	key := strings.TrimSpace(string(out))
-	if err != nil || key == "" || strings.ContainsAny(key, " /\n") {
-		t.Fatalf("xo dev rtpack --key: %v\n%s", err, out)
-	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := filepath.Join(cache, "xo", "devgoldens", "rtpack")
-	pack := filepath.Join(base, key)
-	if _, err := os.Stat(filepath.Join(pack, "linux-arm64", "rtpack.json")); err == nil {
-		return pack
-	}
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	tmp, err := os.MkdirTemp(base, "build-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmp)
-	start := time.Now()
-	if out, err := xoDev("--target=linux/arm64", "-o", tmp); err != nil {
-		s := string(out)
-		if strings.Contains(s, "needs a C compiler") || strings.Contains(s, "needs an archiver") {
-			t.Skipf("no linux/arm64 runtime pack for --ld=macho, and this host cannot build one: %s", strings.TrimSpace(s))
-		}
-		t.Fatalf("xo dev rtpack --target=linux/arm64: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, "linux-arm64", "rtpack.json")); err != nil {
-		t.Fatalf("xo dev rtpack wrote no linux-arm64/rtpack.json: %v", err)
-	}
-	// another process may have built the same key meanwhile; either is
-	// the same pack
-	if err := os.Rename(tmp, pack); err != nil {
-		if _, serr := os.Stat(filepath.Join(pack, "linux-arm64", "rtpack.json")); serr != nil {
-			t.Fatalf("installing the pack: %v", err)
-		}
-	}
-	t.Logf("built the linux/arm64 runtime pack %s in %s", pack, time.Since(start).Round(time.Millisecond))
-	return pack
 }
 
 // devRun runs another `xo dev` harness that prints `FAIL` lines and a

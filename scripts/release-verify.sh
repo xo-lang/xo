@@ -10,7 +10,7 @@
 #   1. unpack ARCHIVE into OUTDIR (a clean layout: bin/xo, lib/xo/...).
 #   2. without Go: every directory holding `go` is dropped from PATH,
 #      GOROOT unset, XO_GO pointing at nothing, empty caches. `xo
-#      version`, `xo rtpack --status`, `xo check`, and a hello program
+#      version`, `xo check`, and a hello program
 #      with `xo run` on each native backend: arm64 with the default
 #      linker (selfhost/macho on darwin with the pack, decision 0182; cc
 #      on linux), arm64 with --ld=cc, arm64 with --ld=macho (no cc), llvm
@@ -85,8 +85,6 @@ done
   echo "PASS no-go-on-path"
   check version "$xo" version
   cat "$out/version.txt"
-  check rtpack-status "$xo" rtpack --status
-  cat "$out/rtpack-status.txt"
   check check "$xo" check "$out/hello"
   check native-arm64-run "$xo" run --backend=arm64 "$out/hello"
   check native-arm64-ld-cc-run "$xo" run --backend=arm64 --ld=cc "$out/hello"

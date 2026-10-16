@@ -84,11 +84,6 @@ fn main(os: Os) ! {
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }
-  if !args.is_empty() && args[0] == "rtpack" {
-    // hidden: the release's prebuilt runtime (rtpack.xo); also `xo dev
-    // rtpack`
-    os.proc.exit(rtpack_cmd(os, args[1..]))
-  }
   if !args.is_empty() && args[0] == "dev" {
     // hidden: the developer commands (dev.xo, decision 0209)
     os.proc.exit(dev_cmd(os, args[1..]))
@@ -672,8 +667,8 @@ fn emit_jobs(os: Os) -> Int {
 
 /// The linker of a host link with no --ld (decision 0182 next step 1):
 /// selfhost/macho on darwin when the assembler is not --as=cc, no `use
-/// c` source is linked, and the runtime pack has the runtime object (and
-/// TLS library) of the link's flags; else cc. A linux host keeps cc
+/// c` source is linked (no runtime object is needed since decision 0234);
+/// else cc. A linux host keeps cc
 /// until the ELF linker writes PIE (decision 0182 stage 3 next step 1).
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
   if ctx.goos != "darwin" || tgoos != "darwin" || o.assembler == "cc" {
@@ -684,8 +679,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
       return false
     }
   }
-  // the flags link_inputs gives a program with no `use c`
-  !shipped_runtime(os, ctx, ctx.std, ["-O2"]).is_empty()
+  true
 }
 
 /// A program lowered to SSA for one target OS, with the passes run: the
@@ -778,8 +772,8 @@ struct LinkInputs {
 }
 
 fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
-  // no C runtime (decision 0234): std/llrt/xo_rt.c, empty, stays only
-  // for the drivers of earlier seeds
+  // no C runtime (decision 0234; std/llrt/xo_rt.c deleted after seed
+  // 0.16.0)
   var lk = LinkInputs{}
   // std/time: the program's zone data beside the runtime (timeFlags)
   if uses_time {
@@ -858,14 +852,12 @@ fn write_or_fail(os: Os, dir: Str, path: Str, data: Bytes) {
   }
 }
 
-/// `xo1 keys`: the cache keys and directories this driver computes, to
-/// compare with the Go driver's (`xo rtpack --key`, the directories under
-/// the user cache): the prebuilt runtime keys of both targets, the pack
-/// status, and the runtime object of a plain program.
+/// `xo1 keys`: the cache keys this driver computes; none since the
+/// prebuilt runtime's went with the C runtime (decision 0234).
 fn keys(os: Os, ctx: Ctx, _cc: Str) -> () ! FsErr {
-  os.stdio.println("rtpack darwin/arm64 ${rtpack_key(os, ctx, ctx.std, "darwin")?}")
-  os.stdio.println("rtpack linux/arm64 ${rtpack_key(os, ctx, ctx.std, "linux")?}")
-  os.stdio.println(rtpack_status(os, ctx, ctx.std))
+  let _o = os
+  let _c = ctx
+  Ok(())
 }
 
 /// The directory fault positions are relative to (internal/build

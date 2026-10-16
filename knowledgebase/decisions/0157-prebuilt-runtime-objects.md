@@ -1,6 +1,6 @@
 # 0157: Prebuilt runtime objects in releases
 
-Status: Accepted (2026-10-11, lead, on the owner's task), implemented:
+Status: Superseded by 0234 (2026-10-16: there is no C runtime to prebuild; the packs, `xo rtpack`, and the runtime object cache are deleted). Was: Accepted (2026-10-11, lead, on the owner's task), implemented:
 `internal/build/rtpack.go` (packs, keys, lookup, `BuildRTPack`,
 `normalizeAr`), `internal/build/llvm.go` (`ccBuild` links a pack's
 object; `ClangError.Runtime` and its hint), `internal/build/tzdata.go`

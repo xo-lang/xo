@@ -260,18 +260,13 @@ fn zoneinfo_zip(os: Os) -> (Bytes, Str) {
 }
 
 /// The zone database of a release (scripts/release.sh copies Go's
-/// zoneinfo.zip to lib/xo/zoneinfo.zip, beside the pack root
-/// lib/xo/rtpack): beside the running binary's lib/xo, else beside a
-/// pack root named by $XO_RTPACK; "" when neither exists.
+/// zoneinfo.zip to lib/xo/zoneinfo.zip): beside the running binary's
+/// lib/xo; "" when it does not exist.
 fn shipped_zoneinfo(os: Os) -> Str {
   var cands: List[Str] = []
   let exe = check.executable(os.env, os.fs)
   if !exe.is_empty() {
     cands.push("${dir_name(dir_name(exe))}/lib/xo/zoneinfo.zip")
-  }
-  let pack = os.env.get("XO_RTPACK") ?? ""
-  if !pack.is_empty() && pack != "off" {
-    cands.push("${dir_name(pack.trim_suffix("/"))}/zoneinfo.zip")
   }
   for c in cands {
     if os.fs.exists(c).ok() ?? false {

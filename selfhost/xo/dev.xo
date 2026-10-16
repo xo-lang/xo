@@ -1,10 +1,9 @@
 // `xo dev` (decision 0209): the hidden developer commands. `dump` runs a
 // compiler component's own command line (its dump_main) in this
-// process, `rtpack` builds the release's prebuilt runtime (rtpack.xo),
-// and the rest (goldens, errorcheck, codegen) are selfhost/cli/dev's.
+// process, and the rest (goldens, errorcheck, codegen) are
+// selfhost/cli/dev's (`rtpack` went with the C runtime, decision 0234).
 //
 //   xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH...
-//   xo dev rtpack [flags]
 //   xo dev goldens|errorcheck|codegen [flags] DIR...
 
 use github.com/xo-lang/xo/selfhost/lexer
@@ -23,7 +22,6 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   }
   match args[0] {
     "dump" => dump_cmd(os, args[1..])
-    "rtpack" => rtpack_cmd(os, args[1..])
     "build-each" => build_each_cmd(os, args[1..])
     _ => {
       let goos = host_os(os)

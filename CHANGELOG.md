@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/llrt/xo_rt.c is deleted (decision 0234): seed 0.16.0's driver
+  compiles no C runtime, so the empty file kept for the 0.15.0 seed goes.
+  std/llrt holds only the C tests (testdata).
+  With it go the prebuilt runtime packs (decision 0157, superseded):
+  `xo rtpack` and `xo dev rtpack`, the runtime object cache, the pack
+  lookups of --ld=macho and the ELF linker, the pack part of the binary
+  cache keys, and release.sh's pack builds (and its zig requirement).
 - Env.only on Windows: the lists admit variable names without ASCII case,
   as Windows (and Go's os) compares them, in both backends (prelude.xo
   env_admits, std/rt attenuate.go): `only(["path"]).get("PATH")` and the
