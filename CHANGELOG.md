@@ -130,6 +130,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- TLS: a P-256 squaring of 10 products (nistec.xo sqr4p) and X25519 on
+  four 64 bit limbs modulo 2^256 - 38 on adc chains (x25519.xo,
+  scripts/x25519fe64.py): the X25519 handshake 7.5M to 7.1M instructions
+  on LLVM (10.8M to 10.5M on arm64), RSA-2048 8.4M to 7.9M, TLS 1.2 9.1M
+  to 8.4M; TestX25519Diff (bench/results/tls-perf-2026-10-15.md steps 13
+  and 14).
+
 - cpu.adc and cpu.adc_carry, add with carry in (decision 0231's
   addendum): adcs chains on arm64 and LLVM; P-256's field product sums
   with them, the X25519 handshake with a P-256 chain 8.8M to 7.5M

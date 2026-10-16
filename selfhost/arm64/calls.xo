@@ -1305,8 +1305,13 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   }
   sums.push(if sum0 { v } else { p0 })
   cars.push(if sum0 { p0 } else { v })
+  // the templates name at most ten uses and defs ($u0 to $u9): five
+  // pairs from adds, four after cmp; a longer chain goes on in the next
+  // instruction, its carry in from this one's cset
+  let (cin0, cin0_k) = g.const_int(x.args[2])
+  let most = if cin0_k && cin0 == 0 { 5 } else { 4 }
   var k = g.cur_ix + 1
-  while k < ins.len() && k <= g.cur_ix + 4 * 8 {
+  while k < ins.len() && k <= g.cur_ix + 4 * 8 && sums.len() < most {
     let last = cars[cars.len() - 1]
     let u = ins[k]
     let y = g.f.values[u]
