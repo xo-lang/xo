@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM backend, linux/arm64: the thread local table is read through
+  llvm.threadlocal.address. LLVM had folded its address into callers,
+  which kept tpidr_el0 across a park, so a task resumed on another worker
+  used the first thread's table and switched to that thread's scheduler
+  stack: 19 of 178 goldens crashed in Docker (scopes, channels, net, http,
+  timers; an old bug, the 0.14.0 seed's builds too). Docker runs now use
+  the host's uid (fs_ops_edges' read-only check fails as root) and
+  golden-run.sh keeps a golden's directory name (fs_cwd_path).
 - A native test binary's MemFs has every Fs method: `open`, `create`,
   `open_append` (File handles: `read`, `read_line`, `write`, `close`),
   `append`, `copy`, `mode`, `set_mode`, `glob`, `lock`, and `try_lock`

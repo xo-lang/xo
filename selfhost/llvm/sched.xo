@@ -61,6 +61,15 @@ fn (var g: Gen) unwind_fns() {
 }
 
 /// Defines the thread local table and its functions at the first use.
+/// The table's address goes through llvm.threadlocal.address: a plain use
+/// of the thread_local global is a constant to LLVM (15 and later), so
+/// interprocedural constant propagation turned xo_tlocal_addr into `ret`
+/// and its callers computed the address themselves, reading tpidr_el0
+/// once into a callee saved register that outlived a park; a fiber that
+/// went on on another worker then used the first thread's table (linux
+/// arm64, where TLS is an mrs and not a call: 19 goldens crashed with a
+/// worker on another thread's scheduler stack, 2026-10-15,
+/// gotchas/llvm-thread-local-constant.md).
 fn (var g: Gen) sched_tlocal() {
   if g.emitted.contains("@xo_tlocal_get") {
     return
@@ -69,7 +78,8 @@ fn (var g: Gen) sched_tlocal() {
   g.emitted["@xo_tlocal_set"] = true
   g.emitted["@xo_tlocal_addr"] = true
   g.helpers.push("@xo_tlocal = hidden thread_local global [16 x i64] zeroinitializer, align 8\n\n" +
-    "define internal ptr @xo_tlocal_at(i64 %k) nounwind {\n  %p = getelementptr [16 x i64], ptr @xo_tlocal, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +
+    "declare nonnull ptr @llvm.threadlocal.address.p0(ptr nonnull)\n\n" +
+    "define internal ptr @xo_tlocal_at(i64 %k) nounwind {\n  %b = call ptr @llvm.threadlocal.address.p0(ptr @xo_tlocal)\n  %p = getelementptr [16 x i64], ptr %b, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +
     "define i64 @xo_tlocal_get(i64 %k) noinline nounwind {\n  call void asm sideeffect \"\", \"~{memory}\"()\n  %p = call ptr @xo_tlocal_at(i64 %k)\n  %v = load i64, ptr %p, align 8\n  ret i64 %v\n}\n\n" +
     "define void @xo_tlocal_set(i64 %k, i64 %v) noinline nounwind {\n  call void asm sideeffect \"\", \"~{memory}\"()\n  %p = call ptr @xo_tlocal_at(i64 %k)\n  store i64 %v, ptr %p, align 8\n  ret void\n}\n\n" +
     "define i64 @xo_tlocal_addr() noinline nounwind {\n  call void asm sideeffect \"\", \"~{memory}\"()\n  %p = call ptr @xo_tlocal_at(i64 0)\n  %a = ptrtoint ptr %p to i64\n  ret i64 %a\n}\n\n")

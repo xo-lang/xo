@@ -3281,8 +3281,8 @@ Results on 2026-10-15 (main plus the stubs, the Go-built xo):
 | Run | Result |
 |---|---|
 | seed 0.14.0 linux/arm64 and linux/amd64: version, hello with the default backend and llvm | pass |
-| linux/arm64, arm64 backend, all 178 goldens | 176 pass; fs_ops_edges and fs_cwd_path fail as root (a read only file is writable for root; the copy's path), not a defect |
-| linux/arm64, llvm backend, all 178 goldens | 157 pass; 21 crash with SIGSEGV (concurrency, net, http, timers: a return to a garbage address on a worker thread); open, routed |
+| linux/arm64, arm64 backend, all 178 goldens | 178 pass (as the host's uid; as root fs_ops_edges' read only check fails) |
+| linux/arm64, llvm backend, all 178 goldens | 178 pass since the thread local fix (gotchas/llvm-thread-local-constant.md); 157 before, 19 crashing |
 | linux/amd64 (emulated), llvm backend, 15 goldens (faults, tasks, conc, net, proc, tls, http) | pass |
 | XO_NOLIBC hello and five goldens, linux/arm64 (arm64) and linux/amd64 (llvm), built in the container | pass |
 

@@ -21,10 +21,12 @@ envs=""
 stdin=/dev/null
 [ -f "$dir/stdin.txt" ] && stdin="$dir/stdin.txt"
 # shellcheck disable=SC2086
-# a writable copy (the checkout may be mounted read only, and some write
-# files where they run)
-cp -R "$dir" "$tmp/run"
-(cd "$tmp/run" && env $envs "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
+# a writable copy under the golden's own name (the checkout may be
+# mounted read only, some write files where they run, and fs_cwd_path
+# checks its directory's name)
+mkdir "$tmp/run"
+cp -R "$dir" "$tmp/run/$name"
+(cd "$tmp/run/$name" && env $envs "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
 code=$?
 {
   printf 'exit %s\n--- stdout\n' "$code"

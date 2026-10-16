@@ -13,7 +13,8 @@
 # /xo. The image xo-linux-test:ARCH-BASE is built once from the Dockerfile
 # below (docker build caches it). The container is started with --rm, so
 # it is removed when the command ends; nothing else is started or
-# stopped. The command runs under sh -c; its exit status is the script's.
+# stopped. The command runs under sh -c as the host's uid and gid
+# (XO_DOCKER_ROOT=1: as root); its exit status is the script's.
 set -eu
 if [ $# -lt 3 ]; then
   echo "usage: scripts/docker-linux.sh arm64|amd64 WORKDIR [--] COMMAND..." >&2
@@ -46,5 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 fi
-exec docker run --rm --platform "linux/$arch" -v "$repo:/xo:ro" -v "$work:/work" -w /work \
+# as the host's user, not root (root writes a read only file, which
+# fs_ops_edges checks is refused); XO_DOCKER_ROOT=1 for root (apt-get)
+user="--user=$(id -u):$(id -g)"
+if [ "${XO_DOCKER_ROOT:-}" = 1 ]; then
+  user="--user=0:0"
+fi
+exec docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo:ro" -v "$work:/work" -w /work \
   -e HOME=/work/home "$image" sh -c "mkdir -p /work/home && $*"
