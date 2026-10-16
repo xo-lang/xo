@@ -1,0 +1,381 @@
+// A stress test of the reference counts shared between threads (decision
+// 0058, rc.xo since decision 0207 stage 2), run by internal/llvm's
+// TestRuntimeThreads under ThreadSanitizer with one worker, three, and
+// eight, and optimized with ten times the iterations (decision 0241:
+// std/llrt/testdata/rc_threads.c in Xo). Tasks take the place of the C's
+// pthreads, the language's own retains and releases and the share walk
+// at a spawn's capture the place of its hand written ones, and
+// std/internal's rt_probe shows the counts where the C read them.
+//
+// Each test hands shared values to NT tasks, which copy, update, append
+// to, and drop them; after each test every allocation it made must be
+// freed and the values must be intact. Prints "<test>: ok" per test;
+// exit status 0 means every test passed. ITER sets the iterations
+// (default 2000).
+use std/internal
+
+const NT = 8
+const NL = 64
+const NB = 10000
+const NM = 64
+
+/// The most negative Int: an immortal count (a literal's).
+const IMMORTAL = -9223372036854775807 - 1
+
+struct Run {
+  failures: Atomic[Int]
+  out: Stdio
+  /// The tasks that must run at once at a test's start: min(NT, the
+  /// workers); 1 when XO_THREADS is not set.
+  together: Int
+}
+
+/// A start barrier: the first r.together tasks to arrive wait for each
+/// other, so they run on that many threads at once (a task waiting on
+/// its scope would otherwise run its children on its own thread).
+fn (r: Run) gate(started: Atomic[Int]) {
+  let _n = started.add(1)
+  while started.get() < r.together {}
+}
+
+fn (r: Run) check(ok: Bool, what: Str) {
+  if !ok {
+    r.out.eprintln("check failed: ${what}")
+    let _n = r.failures.add(1)
+  }
+}
+
+fn live() -> Int { internal.rt_probe("live", 0, 0, 0, 0) }
+
+fn count[T](x: T) -> Int { internal.rt_probe("count", internal.obj_word(x), 0, 0, 0) }
+
+fn item(i: Int) -> Str { "item-${i}" }
+
+fn list_of(n: Int) -> List[Str] {
+  var l: List[Str] = List.with_capacity(n)
+  for i in 0..n {
+    l.push(item(i))
+  }
+  l
+}
+
+fn list_ok(l: List[Str], n: Int) -> Bool {
+  if l.len() != n {
+    return false
+  }
+  for i in 0..n {
+    if l[i] != item(i) {
+      return false
+    }
+  }
+  true
+}
+
+// 1. A shared string: every task holds a reference (its capture) and
+// takes and drops more; the last release frees it.
+fn test_string(r: Run, iter: Int) {
+  let s = "hel${"lo"}"
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        r.check(count(s) < 0, "a captured string is not shared: ${count(s)}")
+        for _ in 0..iter {
+          let a = s
+          let b = a
+          r.check(b == "hello" && a.len() == 5, "the shared string changed")
+        }
+      })
+    }
+  }
+}
+
+// 2. A shared List[Str]: tasks read it, retain and drop elements, and
+// update their own copy (a copy of a list others hold, the shared
+// elements retained), then drop everything.
+fn test_list(r: Run, iter: Int) {
+  let shared = list_of(NL)
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        r.check(count(shared) < 0 && count(shared[0]) < 0, "a captured list or its element is not shared")
+        for _ in 0..iter / 8 {
+          var mine = shared
+          mine[3] = "changed"
+          r.check(internal.obj_word(mine) != internal.obj_word(shared), "an update wrote the shared list")
+          r.check(count(mine) == 1, "the copy is not thread local: ${count(mine)}")
+          r.check(list_ok(shared, NL), "the shared list changed")
+          let e = shared[7]
+          r.check(e.len() == 6, "element 7: ${e}")
+        }
+      })
+    }
+  }
+}
+
+// 3. The claim: every task updates the shared list; all but the last see
+// other holders and copy, while the last one may update the original in
+// place. Each ends with a unique list it drops.
+fn claim_round(r: Run, in_place: Atomic[Int]) {
+  let shared = list_of(NL)
+  let w = internal.obj_word(shared)
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        var mine = shared
+        mine[0] = "item-0"
+        if internal.obj_word(mine) == w {
+          let _n = in_place.add(1)
+        }
+        r.check(list_ok(mine, NL), "a claimed list changed")
+      })
+    }
+  }
+}
+
+fn test_claim(r: Run, iter: Int) {
+  for _ in 0..iter / 20 {
+    let in_place = Atomic[Int].new(0)
+    claim_round(r, in_place)
+    r.check(in_place.get() <= 1, "${in_place.get()} tasks updated the shared list in place")
+  }
+}
+
+// 4. Appending to a shared string: a copy, and the shared one stays.
+fn test_append(r: Run, iter: Int) {
+  let s = "hel${"lo"}"
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        for _ in 0..iter {
+          let bang = "!${""}"
+          let x = s + bang
+          r.check(internal.obj_word(x) != internal.obj_word(s), "an append wrote the shared string")
+          r.check(x == "hello!", "the append gave ${x}")
+        }
+        let q = s + "?"
+        r.check(count(q) == 1 && q == "hello?", "the last append: ${q}")
+      })
+    }
+  }
+}
+
+// 5. Boxes: a chain of counted cells, released and marked shared through
+// the runtime's worklist (a chain this long would overflow the stack if
+// either recursed).
+enum Chain {
+  Nil
+  Cell(v: Int, next: Chain)
+}
+
+fn chain(n: Int) -> Chain {
+  var c = Chain.Nil
+  var i = n - 1
+  while i >= 0 {
+    c = Chain.Cell(v: i, next: c)
+    i -= 1
+  }
+  c
+}
+
+fn sum(c: Chain) -> Int {
+  var t = 0
+  var at = c
+  while let Chain.Cell(v, next) = at {
+    t += v
+    at = next
+  }
+  t
+}
+
+fn nth(c: Chain, k: Int) -> Chain {
+  var at = c
+  for _ in 0..k {
+    if let Chain.Cell(_, next) = at {
+      at = next
+    }
+  }
+  at
+}
+
+fn test_box(r: Run) {
+  let head = chain(NB)
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        r.check(sum(head) == NB * (NB - 1) / 2, "the chain's sum")
+        // hold a reference to the middle of the chain
+        let mid = nth(head, NB / 2)
+        match mid {
+          Chain.Cell(v, _) => r.check(v == NB / 2, "the middle cell holds ${v}")
+          Chain.Nil => r.check(false, "the chain ends early")
+        }
+      })
+    }
+  }
+}
+
+// 6. Cross thread frees: a producer makes strings, which cross to the
+// consumers through a channel and are freed there.
+fn test_queue(r: Run, iter: Int) {
+  let q = Chan[Str].new(64)
+  scope g {
+    let _p = g.spawn(fn() {
+      for i in 0..iter * 4 {
+        q.send("msg-${i}")
+      }
+      q.close()
+    })
+    for _ in 0..3 {
+      let _c = g.spawn(fn() {
+        while let Some(m) = q.recv() {
+          r.check(m.len() >= 5 && m.starts_with("msg-"), "received ${m}")
+        }
+      })
+    }
+  }
+}
+
+// 7. Literals: immortal objects every task retains and releases at once;
+// their counts are never written (ThreadSanitizer reports any write).
+fn test_literal(r: Run, iter: Int) {
+  let lit = "lit!"
+  r.check(count(lit) == IMMORTAL, "a literal's count is ${count(lit)}")
+  let started = Atomic[Int].new(0)
+  scope g {
+    for _ in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        for _ in 0..iter {
+          let a = lit
+          let x = a + "?"
+          r.check(internal.obj_word(x) != internal.obj_word(lit) && count(x) == 1, "an append to a literal")
+        }
+      })
+    }
+  }
+  r.check(count(lit) == IMMORTAL, "a literal's count became ${count(lit)}")
+}
+
+// 8. A model (decision 0207 stage 2): random interleavings of retain,
+// release, claim, and mark of shared objects across tasks, checked
+// against what each task knows of its own references. Each task holds
+// some references to each of NM shared objects; a release while it holds
+// another must not be the last; a claim must fail while it holds two, and
+// when it succeeds the count is thread local 1, so marking it again must
+// report thread local; a mark of a shared count must report shared. At
+// the end every object is released exactly once as the last reference,
+// with its word intact.
+fn rnd(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn model_task(r: Run, objs: List[Int], seed0: Int, iter: Int, last: Atomic[Int]) {
+  var held: List[Int] = []
+  for _ in 0..NM {
+    held.push(1) // given before the task starts
+  }
+  var x = seed0
+  for _ in 0..iter * 8 {
+    x = rnd(x)
+    let o = x % NM
+    x = rnd(x)
+    let p = objs[o]
+    match x % 4 {
+      0 => if held[o] < 8 {
+        let _i = internal.rt_probe("inc", p, 0, 0, 0)
+        held[o] += 1
+      }
+      1 => if held[o] > 1 {
+        r.check(internal.rt_probe("dec", p, 0, 0, 0) == 0, "a release was the last while another was held")
+        held[o] -= 1
+      }
+      2 => {
+        let c = internal.rt_probe("claim", p, 0, 0, 0)
+        if held[o] > 1 {
+          r.check(c == 0, "a claim while holding two")
+        }
+        if c != 0 {
+          // the only reference: thread local again
+          r.check(internal.rt_probe("count", p, 0, 0, 0) == 1, "a claimed count")
+          r.check(internal.rt_probe("mark", p, 0, 0, 0) != 0, "marking a claimed count")
+        }
+      }
+      _ => r.check(internal.rt_probe("mark", p, 0, 0, 0) == 0, "marking a shared count")
+    }
+  }
+  for o in 0..NM {
+    let p = objs[o]
+    r.check(internal.rt_probe("word", p, 0, 0, 0) == 1000 + o, "object ${o}'s word")
+    while held[o] > 0 {
+      held[o] -= 1
+      if internal.rt_probe("dec", p, 0, 0, 0) != 0 {
+        r.check(held[o] == 0, "the last release with references held")
+        let _n = last.add(1)
+        let _f = internal.rt_probe("free", p, 0, 0, 0)
+      }
+    }
+  }
+}
+
+fn test_model(r: Run, iter: Int) {
+  var objs: List[Int] = []
+  for o in 0..NM {
+    let p = internal.rt_probe("obj", 1000 + o, 0, 0, 0)
+    r.check(internal.rt_probe("mark", p, 0, 0, 0) != 0, "marking a new object")
+    r.check(internal.rt_probe("count", p, 0, 0, 0) == -1, "a marked count")
+    for _ in 1..NT {
+      let _i = internal.rt_probe("inc", p, 0, 0, 0) // one per task
+    }
+    r.check(internal.rt_probe("count", p, 0, 0, 0) == -NT, "the counts given to the tasks")
+    objs.push(p)
+  }
+  let last = Atomic[Int].new(0)
+  let started = Atomic[Int].new(0)
+  scope g {
+    for k in 0..NT {
+      let _t = g.spawn(fn() {
+        r.gate(started)
+        model_task(r, objs, k + 1, iter, last)
+      })
+    }
+  }
+  r.check(last.get() == NM, "${last.get()} last releases of ${NM} objects")
+}
+
+fn main(os: Os) {
+  let iter = Int.parse(os.env.get("ITER") ?? "") ?? 2000
+  let workers = Int.parse(os.env.get("XO_THREADS") ?? "") ?? 1
+  let r = Run{failures: Atomic[Int].new(0), out: os.stdio, together: workers.min(NT).max(1)}
+  scope g {
+    let _t = g.spawn(fn() { 1 })
+  }
+  let tests = ["string", "list", "claim", "append", "box", "queue", "literal", "model"]
+  for name in tests {
+    let before = r.failures.get()
+    let l0 = live()
+    match name {
+      "string" => test_string(r, iter)
+      "list" => test_list(r, iter)
+      "claim" => test_claim(r, iter)
+      "append" => test_append(r, iter)
+      "box" => test_box(r)
+      "queue" => test_queue(r, iter)
+      "literal" => test_literal(r, iter)
+      _ => test_model(r, iter)
+    }
+    let l1 = live()
+    r.check(l1 == l0, "${name}: ${l1 - l0} allocations still live")
+    os.stdio.println("${name}: ${if r.failures.get() == before { "ok" } else { "FAIL" }}")
+  }
+  if r.failures.get() != 0 {
+    os.proc.exit(1)
+  }
+}

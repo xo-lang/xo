@@ -636,7 +636,10 @@ fn rs_new_n(n: Int) -> Int {
 /// a itself when its count is 1 and it has the room.
 fn reserve(a: Int, an: Int, k: Int) -> Int {
   let need = addw(an, k)
-  if rt.mem_load(a, 0, 8) == 1 && rt.mem_load(a, 8, 8) >= need {
+  // the count with a relaxed atomic load (no cost on arm64): a shared
+  // string's count changes on other threads, and a plain load of it is a
+  // data race (ThreadSanitizer, decision 0241)
+  if rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need {
     return a
   }
   reserve_slow(a, an, need)
@@ -697,7 +700,7 @@ pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
 /// of 32.
 pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
   var s = a
-  if rt.mem_load(a, 0, 8) != 1 || subw(rt.mem_load(a, 8, 8), an) < 8 {
+  if rt.slot_load(a, 0, 0) != 1 || subw(rt.mem_load(a, 8, 8), an) < 8 {
     s = push_slow(a, an, 8, 32)
   }
   rt.mem_store(addw(s, S_HDR), an, w, 8)
@@ -709,7 +712,7 @@ pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
 /// before, so 32 bytes of room.
 pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Int {
   var s = a
-  if rt.mem_load(a, 0, 8) != 1 || subw(rt.mem_load(a, 8, 8), an) < 32 {
+  if rt.slot_load(a, 0, 0) != 1 || subw(rt.mem_load(a, 8, 8), an) < 32 {
     s = push_slow(a, an, 32, 64)
   }
   var d = addw(addw(s, S_HDR), an)

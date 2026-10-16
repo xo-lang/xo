@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The shared count and heap stress tests are Xo (decision 0241):
+  rc_threads.c and alloc_threads.c (876 lines of C) became
+  internal/llvm/testdata/rt/rc_threads and alloc_threads, run under
+  ThreadSanitizer with the test programs' own code instrumented (xo's
+  IR had never been: clang instruments only functions marked
+  sanitize_thread). It found the in place string append's count check
+  (obj.xo reserve) racing with another thread's release: a relaxed
+  atomic load now.
 - arm64: an adc chain takes constant operands (made before the chain's
   instruction; only 0 was taken before) and a constant carry in of 1 is
   `cmp xzr, xzr` (no mov and no register; nor does it cost the chain a

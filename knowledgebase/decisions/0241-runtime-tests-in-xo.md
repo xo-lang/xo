@@ -56,6 +56,35 @@ test as the C did, and the run must end with `xo leakcheck: 0 live`.
   (2026-10-16).
 - A timing dependent check is not carried over as it was: every session
   runs at a load near 30, where it would flake for everyone.
+- ThreadSanitizer instruments only functions marked sanitize_thread, a
+  mark a C frontend sets and xo's IR never had, so linking xo's IR with
+  -fsanitize=thread instrumented nothing of Xo (TestGoldenTasks still
+  does that). runRuntimeXo marks the test program's own functions
+  (markTSan), with the runtime's fast paths inlined into them: the same
+  scope the C drivers' own instrumented code had. Marking the whole
+  runtime reports plain accesses to words other threads update
+  atomically (obj.xo reserve_slow, tasks.xo scope_close against
+  stdio.xo flush_out, pool.xo find_work against the monitor): a data
+  race by the C11 and LLVM memory models though not on arm64's
+  hardware, left for a later change.
+- The first such race in scope was obj.xo's in place append check
+  (reserve, rs_push_word, rs_push_words), a plain load of a string's
+  count while another thread drops its reference atomically; it loads
+  the count with a relaxed atomic now (slot_load: the same ldr on
+  arm64).
+- rc_threads.c (548 lines) is internal/llvm/testdata/rt/rc_threads:
+  shared strings, lists and a 10,000 cell chain captured by eight tasks
+  that start together (a barrier), copies on write, the claim (at most
+  one task updates in place), appends, a channel queue, literals, and
+  the model of random retains, releases, claims and marks on raw
+  objects (rt_probe). Not kept: the chain cells' own counts after the
+  share walk (rt.obj_addr of an enum is XO1201 on the native backends;
+  the leak check and the cells' values are), and the C's hand written
+  share walkers, which generated code replaces.
+- alloc_threads.c (328 lines) is internal/llvm/testdata/rt/alloc_threads:
+  solo (before the program's first task), threads (eight tasks
+  together, mailboxes crossing threads), waves (frees on other workers,
+  checked, with the chunk bound). Every C check kept.
 - Later batches: rc_threads.c, alloc_threads.c; evloop.c, rawpoll.c,
   fault_resume.c, fault_shared.c, realtime.c, win_consts.c; crypto_diff.c
   and crypto_ref.c (dropped if the Go diff tests cover them).

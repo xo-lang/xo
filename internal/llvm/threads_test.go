@@ -20,13 +20,11 @@ import (
 
 // Thread safety of the runtime and of shared reference counts (decision
 // 0058) and of the task runtime (decision 0068). Threads come from Xo
-// programs that use tasks (TestGoldenTasks) and from C:
-// std/llrt/testdata/rc_threads.c hands shared values to pthreads,
-// testdata/rt/tasks (an Xo program since decision 0241, std/internal's
-// rt_probe for what the language does not show) stresses the task
-// runtime, and
-// -DXO_RT_TEST_THREADS runs whole programs on several threads at once.
-// All run under ThreadSanitizer when clang supports it on the host.
+// programs that use tasks (TestGoldenTasks) and from the runtime's stress
+// tests, Xo programs since decision 0241 (testdata/rt: tasks, rc_threads,
+// alloc_threads; std/internal's rt_probe for what the language does not
+// show), and from the C tests left in std/llrt/testdata. All run under
+// ThreadSanitizer when clang supports it on the host.
 
 var rtDir = filepath.Join("..", "..", "std", "llrt")
 
@@ -214,57 +212,33 @@ func runTSan(t *testing.T, bin, dir string, env ...string) string {
 	return text
 }
 
-// TestRuntimeThreads runs the C stress test of shared counts, the claim
-// of in place updates, cross thread frees, the share walkers, and
-// immortal literals: under ThreadSanitizer, then optimized with more
+// TestRuntimeThreads runs the stress test of shared counts (decision
+// 0058; rc.xo), an Xo program since decision 0241 (testdata/rt/rc_threads;
+// it was std/llrt/testdata/rc_threads.c): shared strings, lists, and a
+// chain of 10,000 cells captured by eight tasks running at once, copies
+// on write, the claim of in place updates, appends, frees crossing
+// threads through a channel, immortal literals, and a model of random
+// retains, releases, claims, and marks. Under ThreadSanitizer with one
+// worker, three, and eight, then optimized with ten times the
 // iterations.
 func TestRuntimeThreads(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	src := filepath.Join(rtDir, "testdata", "rc_threads.c")
-	// the counts in Xo (std/native/llrt/rc.xo through the C ABI exports,
-	// decision 0207 stage 2; decision 0198 deleted the C path)
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	out := runTSan(t, bin, ".")
-	for _, name := range []string{"string", "list", "claim", "append", "box", "queue", "literal", "model"} {
-		if !strings.Contains(out, name+": ok") {
-			t.Errorf("test %s did not pass:\n%s", name, out)
-		}
-	}
-	if testing.Short() {
-		return
-	}
-	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2", "-DITER=20000"}, cOnly(t, src), opt); err != nil {
-		t.Fatal(err)
-	}
-	runTSan(t, opt, ".")
+	runRuntimeXo(t, filepath.Join("testdata", "rt", "rc_threads"), "ITER=20000",
+		[]string{"string", "list", "claim", "append", "box", "queue", "literal", "model"})
 }
 
-// TestRuntimeAlloc runs the C stress test of the native heap (decision
-// 0207 stage 3): random sizes over every class and malloc, resizes,
-// frees on other threads, and waves of blocks freed by one thread, with
-// every block's contents checked, for the heap in Xo
-// (std/native/llrt/alloc.xo through the C ABI exports; decision 0198
-// deleted the C path): under ThreadSanitizer, then optimized with more
+// TestRuntimeAlloc runs the stress test of the native heap (decision 0207
+// stage 3, alloc.xo), an Xo program since decision 0241
+// (testdata/rt/alloc_threads; it was std/llrt/testdata/alloc_threads.c):
+// random sizes over every class and the system's blocks, resizes, frees
+// on other threads through mailboxes, and waves of blocks freed by other
+// threads, every block's contents checked. Under ThreadSanitizer with one
+// worker, three, and eight, then optimized with ten times the
 // iterations.
 func TestRuntimeAlloc(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	src := filepath.Join(rtDir, "testdata", "alloc_threads.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	out := runTSan(t, bin, ".")
-	for _, name := range []string{"solo", "threads", "waves"} {
-		if !strings.Contains(out, name+": ok") {
-			t.Errorf("test %s did not pass:\n%s", name, out)
-		}
-	}
-	if testing.Short() {
-		return
-	}
-	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2", "-DITER=30000"}, cOnly(t, src), opt); err != nil {
-		t.Fatal(err)
-	}
-	runTSan(t, opt, ".")
+	runRuntimeXo(t, filepath.Join("testdata", "rt", "alloc_threads"), "ITER=30000",
+		[]string{"solo", "threads", "waves"})
 }
 
 // TestRuntimeTasks runs the stress test of the task runtime (decision
@@ -282,6 +256,53 @@ func TestRuntimeTasks(t *testing.T) {
 		[]string{"fanout", "tree", "channel", "cancel", "failure", "mutex", "handoff", "prune", "magazines"})
 }
 
+var (
+	xoFnRE     = regexp.MustCompile(`(?m)^\s*(?:pub\s+)?fn\s+(?:\([^)]*:\s*(\w+)\)\s*)?(\w+)`)
+	defineIRRE = regexp.MustCompile(`(?m)^(define [^@]*@"?x\.(\w+)[^\n]*) \{$`)
+)
+
+// markTSan marks sanitize_thread on the definitions of the functions (and
+// methods, by their receiver type) of the Xo program in dir, and their
+// closures: the functions of the main module, named x.NAME in the IR.
+func markTSan(t *testing.T, dir string, ir []byte) []byte {
+	t.Helper()
+	srcs, err := filepath.Glob(filepath.Join(dir, "*.xo"))
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("no Xo sources in %s: %v", dir, err)
+	}
+	names := map[string]bool{}
+	for _, src := range srcs {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range xoFnRE.FindAllSubmatch(b, -1) {
+			if len(m[1]) > 0 {
+				names[string(m[1])] = true
+			}
+			names[string(m[2])] = true
+		}
+	}
+	marked := 0
+	ir = defineIRRE.ReplaceAllFunc(ir, func(line []byte) []byte {
+		m := defineIRRE.FindSubmatch(line)
+		if !names[string(m[2])] {
+			return line
+		}
+		marked++
+		// function attributes go before a personality
+		head := m[1]
+		if i := bytes.Index(head, []byte(" personality ")); i >= 0 {
+			return []byte(string(head[:i]) + " sanitize_thread" + string(head[i:]) + " {")
+		}
+		return append(append([]byte{}, head...), " sanitize_thread {"...)
+	})
+	if marked == 0 {
+		t.Fatalf("no function of %s found in its LLVM IR", dir)
+	}
+	return ir
+}
+
 // runRuntimeXo runs a runtime stress test written in Xo (decision 0241):
 // the program in dir, its LLVM IR built with ThreadSanitizer and run with
 // one worker, three, and eight and the leak check on, each run printing
@@ -295,6 +316,15 @@ func runRuntimeXo(t *testing.T, dir, more string, names []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// clang's ThreadSanitizer pass instruments only functions marked
+	// sanitize_thread (a C frontend sets it), and xo's IR has no such
+	// mark: the test program's own functions get it, with the runtime's
+	// fast paths inlined into them (the count checks and updates of
+	// generated code), as the C drivers' own code was instrumented. The
+	// runtime's functions stay unmarked: instrumented whole, its plain
+	// accesses to words other threads update atomically are reported
+	// (decision 0241)
+	ir = markTSan(t, dir, ir)
 	ll := filepath.Join(t.TempDir(), "prog.ll")
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)

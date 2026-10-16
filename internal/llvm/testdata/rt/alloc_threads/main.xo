@@ -1,0 +1,297 @@
+// A stress test of the native heap (decision 0207 stage 3, alloc.xo), run
+// by internal/llvm's TestRuntimeAlloc under ThreadSanitizer with one
+// worker, three, and eight, and optimized with ten times the iterations
+// (decision 0241: std/llrt/testdata/alloc_threads.c in Xo). Blocks come
+// from std/internal's rt_probe ("alloc", "resize", "free": obj.xo's
+// alloc_obj, resize_obj, free_obj).
+//
+// Every block is filled with a pattern derived from a tag (its task, its
+// slot, a sequence number) and checked before it is resized or freed, so
+// two blocks handed out over each other, a block reused while still in
+// use, or a resize that loses bytes show up as a mismatch.
+//
+//   solo      before the program's first task (one heap): random sizes
+//             over every class, the mid classes and the system's
+//             blocks, random frees and resizes, a string's capacity
+//   threads   NT tasks, the first min(NT, workers) at once: the same,
+//             plus blocks sent to a random task's mailbox, which checks
+//             and frees (or resizes, then frees) them, so frees cross
+//             threads and the magazines and central lists move blocks
+//             back
+//   waves     the main task allocates many blocks, two tasks on other
+//             threads free them, round after round (the decision 0118
+//             pattern), with the chunks carved bounded
+//
+// After each test every allocation it made must be freed. Prints
+// "<test>: ok" per test; exit status 0 means every test passed. ITER sets
+// the iterations (default 3000).
+use std/internal
+
+const NT = 8
+const SLOTS = 64
+const MAILBOX = 4096
+const WAVE = 7000
+
+struct Run {
+  failures: Atomic[Int]
+  out: Stdio
+  together: Int
+  workers: Int
+}
+
+fn (r: Run) check(ok: Bool, what: Str) {
+  if !ok {
+    r.out.eprintln("check failed: ${what}")
+    let _n = r.failures.add(1)
+  }
+}
+
+/// A start barrier: the first r.together tasks wait for each other.
+fn (r: Run) gate(started: Atomic[Int]) {
+  let _n = started.add(1)
+  while started.get() < r.together {}
+}
+
+fn probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int { internal.rt_probe(op, a, b, c, d) }
+
+fn live() -> Int { probe("live", 0, 0, 0, 0) }
+
+/// A block: its address (0 for none), size, and tag.
+struct Blk {
+  p: Int
+  n: Int
+  tag: Int
+}
+
+/// A 31 bit linear congruential step.
+fn rnd(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+/// The random draws of one task.
+struct Rng {
+  x: Int
+}
+
+fn (var g: Rng) next() -> Int {
+  g.x = rnd(g.x)
+  g.x
+}
+
+// a_size draws a size: mostly small classes, some mid classes, a few
+// blocks from the system (above 256 KiB), and sizes 0 to 7
+fn a_size(var g: Rng) -> Int {
+  let r = g.next() % 1000
+  if r < 20 {
+    return g.next() % 8
+  }
+  if r < 850 {
+    return 8 + g.next() % 1017
+  }
+  if r < 990 {
+    return 1025 + g.next() % (255 * 1024)
+  }
+  256 * 1024 + 1 + g.next() % (768 * 1024)
+}
+
+fn put(r: Run, n: Int, tag: Int) -> Blk {
+  let p = probe("alloc", n, 0, 0, 0)
+  r.check(p % 8 == 0, "a block at ${p} is not 8 byte aligned")
+  let _f = probe("fill", p, n, tag, 0)
+  Blk{p: p, n: n, tag: tag}
+}
+
+fn drop_blk(r: Run, b: Blk) {
+  r.check(probe("check", b.p, b.n, b.n, b.tag) == 1, "a block of ${b.n} bytes changed")
+  let _f = probe("free", b.p, 0, 0, 0)
+}
+
+fn grow(r: Run, b: Blk, n: Int, tag: Int) -> Blk {
+  r.check(probe("check", b.p, b.n, b.n, b.tag) == 1, "a block of ${b.n} bytes changed before a resize")
+  let p = probe("resize", b.p, b.n, n, 0)
+  let kept = b.n.min(n)
+  r.check(probe("check", p, kept, b.n, b.tag) == 1, "a resize from ${b.n} to ${n} bytes lost bytes")
+  let _f = probe("fill", p, n, tag, 0)
+  Blk{p: p, n: n, tag: tag}
+}
+
+/// The mailboxes of the threads test: blocks sent to a task, which
+/// checks and frees them.
+struct Boxes {
+  q: List[Mutex[List[Blk]]]
+}
+
+fn send(r: Run, boxes: Boxes, b: Blk, var g: Rng) {
+  let to = g.next() % NT
+  let taken = boxes.q[to].with(fn(var l) {
+    if l.len() < MAILBOX {
+      l.push(b)
+      true
+    } else {
+      false
+    }
+  })
+  if !taken {
+    drop_blk(r, b) // the box is full
+  }
+}
+
+fn drain(r: Run, boxes: Boxes, id: Int, var g: Rng) {
+  let got = boxes.q[id].with(fn(var l) {
+    let all = l
+    l = []
+    all
+  })
+  for b in got {
+    let b2 = if g.next() % 4 == 0 { grow(r, b, a_size(g), b.tag ^ 255) } else { b }
+    drop_blk(r, b2)
+  }
+}
+
+// churn runs iters random operations on the slots of one task (tags made
+// from id); with boxes some blocks go to other tasks' mailboxes, and the
+// task drains its own (box) now and then
+fn churn(r: Run, var g: Rng, id: Int, box: Int, iters: Int, boxes: Boxes?) {
+  var slots: List[Blk] = []
+  for _ in 0..SLOTS {
+    slots.push(Blk{p: 0, n: 0, tag: 0})
+  }
+  for k in 0..iters {
+    let i = g.next() % SLOTS
+    let b = slots[i]
+    let tag = id * 1099511627776 + k * 256 + i
+    let x = g.next() % 100
+    if b.p == 0 {
+      slots[i] = put(r, a_size(g), tag)
+    } else if x < 40 {
+      drop_blk(r, b)
+      slots[i] = Blk{p: 0, n: 0, tag: 0}
+    } else if x < 60 {
+      slots[i] = grow(r, b, a_size(g), tag)
+    } else if x < 75 && boxes.is_some() {
+      if let Some(bx) = boxes {
+        send(r, bx, b, g)
+        slots[i] = Blk{p: 0, n: 0, tag: 0}
+        if g.next() % 8 == 0 {
+          drain(r, bx, box, g)
+        }
+      }
+    } else if x < 85 {
+      // a string's capacity is the usable size of its block
+      let want = g.next() % 2000
+      r.check(probe("rs_cap", want, 0, 0, 0) >= want, "a string of ${want} bytes has less capacity")
+    } else {
+      r.check(probe("check", b.p, b.n, b.n, b.tag) == 1, "a block of ${b.n} bytes changed")
+    }
+  }
+  for b in slots {
+    if b.p != 0 {
+      drop_blk(r, b)
+    }
+  }
+}
+
+fn test_solo(r: Run, iter: Int) {
+  var g = Rng{x: 1234567}
+  churn(r, g, 1, 0, iter * 4, None)
+}
+
+fn test_threads(r: Run, iter: Int) {
+  var q: List[Mutex[List[Blk]]] = []
+  for _ in 0..NT {
+    q.push(Mutex[List[Blk]].new([]))
+  }
+  let boxes = Boxes{q: q}
+  let started = Atomic[Int].new(0)
+  scope s {
+    for id in 0..NT {
+      let _t = s.spawn(fn() {
+        r.gate(started)
+        var g = Rng{x: 977 * (id + 1)}
+        churn(r, g, id + 2, id, iter, Some(boxes))
+        drain(r, boxes, id, g)
+      })
+    }
+  }
+  // what was sent after its task's last drain
+  var g = Rng{x: 77}
+  for id in 0..NT {
+    drain(r, boxes, id, g)
+  }
+}
+
+// Waves: the main task (a heap that lives on) allocates many blocks of
+// one class, two tasks on other threads free them all at once, round
+// after round (the decision 0118 pattern: a server's accept loop and its
+// connection tasks). The freeing threads' full lists go to the central
+// list as magazines and come back to the main heap; without them each
+// round would carve new chunks.
+fn test_waves(r: Run, iter: Int) {
+  let rounds = iter / 100 + 4
+  var before = 0
+  let me = probe("thread", 0, 0, 0, 0)
+  for round in 0..rounds {
+    if round == 2 {
+      before = probe("chunks", 0, 0, 0, 0)
+    }
+    var waves: List[List[Int]] = []
+    for k in 0..2 {
+      var bs: List[Int] = List.with_capacity(WAVE)
+      for _ in 0..WAVE {
+        let p = probe("alloc", 56, 0, 0, 0)
+        let _f = probe("fill", p, 56, k + 1, 0)
+        bs.push(p)
+      }
+      waves.push(bs)
+    }
+    let done = Atomic[Int].new(0)
+    let off = Atomic[Int].new(0)
+    scope s {
+      for k in 0..2 {
+        let bs = waves[k]
+        let _t = s.spawn(fn() {
+          for p in bs {
+            r.check(probe("check", p, 56, 56, k + 1) == 1, "a wave's block changed")
+            let _f = probe("free", p, 0, 0, 0)
+          }
+          if probe("thread", 0, 0, 0, 0) != me {
+            let _o = off.add(1)
+          }
+          let _d = done.add(1)
+        })
+      }
+      if r.workers != 1 {
+        // busy until both waves are freed, so other workers free them
+        while done.get() < 2 {}
+      }
+    }
+    r.check(r.workers == 1 || off.get() == 2, "waves: ${2 - off.get()} freed on the allocating thread")
+  }
+  // each round allocates 896 KB, a chunk every 4.7 rounds without the
+  // central lists; a freeing thread keeps at most two magazines (128
+  // KB) in the heap it leaves behind, a chunk every 16 rounds for the
+  // two (2 in 28 rounds, 19 in 300 measured, alloc_threads.c)
+  let n = rounds - 2
+  let grew = probe("chunks", 0, 0, 0, 0) - before
+  r.check(grew <= n / 10 + 3, "waves: ${grew} chunks carved in ${n} rounds")
+}
+
+fn main(os: Os) {
+  let iter = Int.parse(os.env.get("ITER") ?? "") ?? 3000
+  let workers = Int.parse(os.env.get("XO_THREADS") ?? "") ?? 1
+  let r = Run{failures: Atomic[Int].new(0), out: os.stdio, together: workers.min(NT).max(1), workers: workers}
+  let tests = ["solo", "threads", "waves"]
+  for name in tests {
+    let before = r.failures.get()
+    let l0 = live()
+    match name {
+      "solo" => test_solo(r, iter)
+      "threads" => test_threads(r, iter)
+      _ => test_waves(r, iter)
+    }
+    let l1 = live()
+    r.check(l1 == l0, "${name}: ${l1 - l0} allocations still live")
+    os.stdio.println("${name}: ${if r.failures.get() == before { "ok" } else { "FAIL" }}")
+  }
+  if r.failures.get() != 0 {
+    os.proc.exit(1)
+  }
+}
