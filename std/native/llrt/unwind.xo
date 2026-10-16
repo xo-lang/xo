@@ -1660,3 +1660,240 @@ fn step(s: Int, regs: Int) -> Bool {
   rt.mem_store(regs, PC, ra, 8)
   true
 }
+
+// ---------------------------------------------------------------------------
+// The sampling profiler's stack walk (prof.xo, decision 0238): the
+// frames of a thread a SIGPROF interrupted, from the signal's ucontext,
+// with the fault unwinder's tables and frame cache, in a record of the
+// profiler's own (never the thread's fault record, which a fault in
+// progress may hold). Async signal safe: no allocation, no lock, no
+// call into the C library; a frame whose stack pointer does not move up
+// within PROF_SPAN, or whose pc leaves the program's text, ends the walk
+// instead of reading a wild address.
+
+/// The bytes of a profiler record (the same layout as a thread's fault
+/// record).
+pub const PROF_RECORD = SCRATCH
+
+/// The farthest a caller's stack pointer may be above its callee's.
+const PROF_SPAN = 67108864
+
+/// Makes the profiler record s ready before the timer is armed: the
+/// program's .eh_frame_hdr (Linux) or its image (macOS), so the handler
+/// never looks them up. Whether the program's tables were found.
+pub fn prof_init(s: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => image(s, sys_darwin._dyld_get_image_header(0), s + H_MH)
+    TargetOs.Linux => {
+      let hdr = eh_frame_hdr()
+      rt.mem_store(s, H_HDR, hdr, 8)
+      hdr != 0
+    }
+    TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+/// The program's text, (start, end): macOS __TEXT, Linux the executable
+/// PT_LOAD segments (from the lowest start to the highest end), (0, 0)
+/// when not found. s is a record prof_init made ready.
+pub fn prof_text(s: Int) -> (Int, Int) {
+  match target.os {
+    TargetOs.Darwin => (rt.mem_load(s, H_TLO, 8), rt.mem_load(s, H_THI, 8))
+    TargetOs.Linux => {
+      let ph = linux.auxval(linux.AT_PHDR)
+      let n = linux.auxval(linux.AT_PHNUM)
+      if ph == 0 {
+        return (0, 0)
+      }
+      var bias = 0
+      for i in 0..n {
+        let p = ph + 56 * i
+        if rt.mem_load(p, 0, 4) == 6 {
+          bias = ph - rt.mem_load(p, 16, 8)
+        }
+      }
+      var lo = 0
+      var hi = 0
+      for i in 0..n {
+        // PT_LOAD 1 with PF_X (p_flags at 4, bit 0): p_vaddr 16, p_memsz 40
+        let p = ph + 56 * i
+        if rt.mem_load(p, 0, 4) == 1 && (rt.mem_load(p, 4, 4) & 1) != 0 {
+          let a = rt.mem_load(p, 16, 8) + bias
+          let b = a + rt.mem_load(p, 40, 8)
+          if lo == 0 || a < lo {
+            lo = a
+          }
+          if b > hi {
+            hi = b
+          }
+        }
+      }
+      (lo, hi)
+    }
+    TargetOs.Windows | TargetOs.Wasi => (0, 0)
+  }
+}
+
+/// The pcs of the frames a signal interrupted, the innermost first, into
+/// the words at out (at most max): their count. uc is the signal's
+/// ucontext; s the thread's profiler record; [lo, hi) the program's text.
+/// A pc outside the text (a C library function) is followed by its
+/// caller from the link register (arm64) or the word at the stack
+/// pointer (x86_64) once, as a leaf; then the walk ends.
+pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  let cur = s + REGS_A
+  rt.mem_set(cur, 0, PC + 8)
+  if !prof_regs(uc, cur, darwin) {
+    return 0
+  }
+  let spo = sp_off()
+  var n = 0
+  var first = true
+  while n < max {
+    var pc = rt.mem_load(cur, PC, 8)
+    if pc == 0 {
+      break
+    }
+    rt.mem_store(out, 8 * n, pc, 8)
+    n += 1
+    let sp = rt.mem_load(cur, spo, 8)
+    if pc < lo || pc >= hi {
+      if !first {
+        break
+      }
+      // a leaf outside the program: its return address
+      first = false
+      if x64() {
+        if sp == 0 {
+          break
+        }
+        rt.mem_store(cur, PC, rt.mem_load(sp, 0, 8), 8)
+        rt.mem_store(cur, spo, sp + 8, 8)
+      } else {
+        rt.mem_store(cur, PC, rt.mem_load(cur, 8 * 30, 8) & 281474976710655, 8)
+      }
+      continue
+    }
+    // the interrupted pc is an instruction's own address: lookup_frame
+    // and frame look up pc - 1 (a return address's call)
+    let key = if first { pc + 1 } else { pc }
+    rt.mem_store(s, H_ARGS, 0, 8)
+    if !lookup_frame(s, key, darwin) {
+      break
+    }
+    let enc = rt.mem_load(s, H_ENC, 8)
+    if darwin && enc != 0 {
+      // a compact frame record at x29 must lie on this stack
+      let fp = rt.mem_load(cur, 8 * 29, 8)
+      if !x64() && (enc & 251658240) != 33554432 && (fp < sp || fp - sp > PROF_SPAN) {
+        break
+      }
+      if x64() && (fp < sp || fp - sp > PROF_SPAN) {
+        break
+      }
+      if !cstep(s, cur, enc) {
+        break
+      }
+    } else {
+      let st = s + ST_CUR
+      let cr = rt.mem_load(st, S_CFA_REG, 8)
+      if rt.mem_load(st, S_CFA_EXPR, 8) != 0 || cr < 0 || cr >= NREG {
+        break
+      }
+      let cfa = rt.mem_load(cur, 8 * cr, 8) + rt.mem_load(st, S_CFA_OFF, 8)
+      if cfa < sp || cfa - sp > PROF_SPAN {
+        break
+      }
+      if !step(s, cur) {
+        break
+      }
+    }
+    let nsp = rt.mem_load(cur, spo, 8)
+    if nsp < sp || nsp - sp > PROF_SPAN || (nsp == sp && !first) {
+      break
+    }
+    first = false
+  }
+  n
+}
+
+/// Copies the interrupted registers from ucontext uc into the register
+/// set regs (DWARF numbering, the pc at PC). Whether this target has a
+/// layout here.
+fn prof_regs(uc: Int, regs: Int, darwin: Bool) -> Bool {
+  if !x64() {
+    if darwin {
+      // ucontext: uc_mcontext (a pointer) at 48; arm_thread_state64 at
+      // 16 in it: x0 to x28, fp, lr, sp, pc
+      let ss = rt.mem_load(uc, 48, 8) + 16
+      for r in 0..29 {
+        rt.mem_store(regs, 8 * r, rt.mem_load(ss, 8 * r, 8), 8)
+      }
+      rt.mem_store(regs, 8 * 29, rt.mem_load(ss, 232, 8), 8)
+      rt.mem_store(regs, 8 * 30, rt.mem_load(ss, 240, 8), 8)
+      rt.mem_store(regs, SP, rt.mem_load(ss, 248, 8), 8)
+      rt.mem_store(regs, PC, rt.mem_load(ss, 256, 8) & 281474976710655, 8)
+      return true
+    }
+    // the kernel's ucontext: struct sigcontext at 176: fault_address,
+    // regs[31], sp, pc
+    for r in 0..31 {
+      rt.mem_store(regs, 8 * r, rt.mem_load(uc, 184 + 8 * r, 8), 8)
+    }
+    rt.mem_store(regs, SP, rt.mem_load(uc, 432, 8), 8)
+    rt.mem_store(regs, PC, rt.mem_load(uc, 440, 8), 8)
+    return true
+  }
+  // x86_64, DWARF order: rax rdx rcx rbx rsi rdi rbp rsp r8..r15
+  if darwin {
+    // x86_thread_state64 at 16 in uc_mcontext (at 48): rax rbx rcx rdx
+    // rdi rsi rbp rsp r8..r15 rip
+    let ss = rt.mem_load(uc, 48, 8) + 16
+    for i in 0..16 {
+      rt.mem_store(regs, 8 * x64_darwin_reg(i), rt.mem_load(ss, 8 * i, 8), 8)
+    }
+    rt.mem_store(regs, PC, rt.mem_load(ss, 128, 8), 8)
+    return true
+  }
+  // Linux: gregs at 40: r8..r15, rdi rsi rbp rbx rdx rax rcx rsp rip
+  let g = uc + 40
+  for i in 0..16 {
+    rt.mem_store(regs, 8 * x64_linux_reg(i), rt.mem_load(g, 8 * i, 8), 8)
+  }
+  rt.mem_store(regs, PC, rt.mem_load(g, 128, 8), 8)
+  true
+}
+
+/// The DWARF number of word i of macOS's x86_thread_state64 (rax rbx rcx
+/// rdx rdi rsi rbp rsp r8..r15); no list (the signal handler allocates
+/// nothing).
+fn x64_darwin_reg(i: Int) -> Int {
+  match i {
+    1 => 3
+    2 => 2
+    3 => 1
+    4 => 5
+    5 => 4
+    _ => i
+  }
+}
+
+/// The DWARF number of word i of Linux's gregs (r8..r15 rdi rsi rbp rbx
+/// rdx rax rcx rsp).
+fn x64_linux_reg(i: Int) -> Int {
+  match i {
+    8 => 5
+    9 => 4
+    10 => 6
+    11 => 3
+    12 => 1
+    13 => 0
+    14 => 2
+    15 => 7
+    _ => i + 8
+  }
+}

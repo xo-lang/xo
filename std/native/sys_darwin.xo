@@ -163,6 +163,13 @@ fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
 fn freeaddrinfo(ai: Int)
 /// gai_strerror(3): a zero terminated text.
 fn gai_strerror(code: Int) -> Int
+/// getpid(2) (std/native/llrt/prof.xo).
+fn getpid() -> Int32
+
+/// setitimer(2): which (ITIMER_PROF 2), the struct itimerval at new and
+/// old (or 0): 0, or -1 with errno set (std/native/llrt/prof.xo).
+fn setitimer(which: Int, new: Int, old: Int) -> Int32
+
 /// sigaction(2) with the struct sigaction at the address act (the
 /// handler, the mask's 4 bytes, the flags' 4) and old (or 0): 0, or -1
 /// with errno set (std/native/llrt/entry.xo).

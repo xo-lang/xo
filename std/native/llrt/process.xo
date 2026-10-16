@@ -30,6 +30,8 @@ use native/sys_windows
 /// os.proc.exit goes to twrun.xo exit instead (the prelude's llrt_exit).
 pub fn exit(code: Int) {
   stdio.flush()
+  // the sampling profile (prof.xo, through cabi.xo: it imports this module)
+  let _p = rt.call_c2(rt.fn_addr("prof_finish"), 0, 0)
   if !env_get("XO_LEAKCHECK").is_empty() {
     // the leak report runs only when main returns (the C runtime's end
     // of main): here live frames still hold values, so say it was

@@ -1,6 +1,6 @@
 # 0238: A sampling profiler in the native runtime
 
-Status: Accepted (owner, 2026-10-16). Not implemented yet.
+Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile and Windows are not yet.
 
 ## Context
 
@@ -47,6 +47,48 @@ cache (d8219048), and both backends emit unwind tables.
    stays off (as with dd5adca2's allocation counting).
 6. Every native backend (arm64, LLVM) and target (darwin, linux, windows)
    gets it. The Go backend keeps runtime/pprof.
+
+## Implementation (CPU profile, 2026-10-16)
+
+std/native/llrt/prof.xo, unwind.xo prof_walk, cabi.xo on_prof and
+prof_finish, entry.xo (start and the end of main), process.xo exit;
+selfhost/xo `--profile=cpu` for run and test.
+
+- The timer is setitimer(ITIMER_PROF), process wide on both Linux and
+  macOS (macOS has no per thread CPU timer; Linux's timer_create per
+  thread is a later refinement): the kernel sends SIGPROF to a thread
+  that is using CPU.
+- The handler (SA_SIGINFO, SA_RESTART) seeds the unwinder's register
+  set from the signal's ucontext (arm64 and x86_64, Linux and macOS
+  layouts) and walks with lookup_frame and step in a record of the
+  profiler's own: a pool of 64 records mapped at start, one claimed per
+  thread on its first sample (thread local word 15), each prepared with
+  the program's .eh_frame_hdr or image so the handler never looks them
+  up. A step whose stack pointer does not move up within 64 MiB, or a pc
+  outside the program's text, ends the walk (a pc in a C library
+  function first continues once through the link register or the
+  return address at the stack pointer). One lock free ring of 32,768
+  slots of 64 frames (17 MB, mapped only when profiling) takes the
+  samples, a slot claimed with one atomic add; the full ring's samples
+  and those of threads past the pool are counted as lost.
+- At the end the timer stops, SIGPROF is ignored, and the samples are
+  symbolized from the binary's own symbol table (macOS LC_SYMTAB through
+  __LINKEDIT, in memory; Linux .symtab, else .dynsym, of
+  /proc/self/exe), Xo names demangled (`xo_f_`, the LLVM backend's
+  `x.`, exports' `xo_x_`); a pc outside the program is named by dladdr
+  (macOS) or its shared object (Linux). pprof: a location per distinct
+  pc, its function the call's (pc - 1), every sample its own; gzip with
+  stored deflate blocks (no compressor in the runtime). XO_PROF_OUT's
+  `%p` is the process id (xo test --profile writes one per process).
+- Off: Linux, 242 instructions a process (the XO_PROF lookup, and
+  start and finish finding nothing armed; callgrind of hello). macOS:
+  the runtime's binary is 53 KB (arm64) to 66 KB (LLVM) larger, and
+  loading it costs hello 1.6% to 2.5% of its 14M instructions (21
+  interleaved runs); a long run is within noise (0.05%).
+  bench/results/prof-cpu-2026-10-16.md.
+- Test: internal/llvm TestProfCPU (a recursive fib is the top function by
+  flat samples on each native backend, go tool pprof reads the file,
+  nothing is written without XO_PROF); linux/arm64 checked in Docker.
 
 ## Consequences
 

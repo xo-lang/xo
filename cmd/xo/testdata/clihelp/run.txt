@@ -1,10 +1,13 @@
 usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
-              [--stamp NAME=VALUE]... [dir] [-- args...]
+              [--profile=cpu] [--stamp NAME=VALUE]... [dir] [-- args...]
 
 Build for the host and run the program in dir (default .) with args.
 --seed makes task interleavings reproducible. --record writes every
 effect (clock, rand, env, stdin, fs, net, http client responses, server
 requests, signals) and every scheduling decision into the trace (core
 11.3) for xo replay. --holes allows holes (???), which fault when
-evaluated. --seed and --record need the Go backend.
+evaluated. --seed and --record need the Go backend. --profile=cpu
+samples the program's CPU time (a native backend, the host's by default)
+into xo-cpu.pprof (go tool pprof reads it) and a text summary,
+xo-cpu.txt, in the working directory.

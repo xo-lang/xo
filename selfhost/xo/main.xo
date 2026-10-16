@@ -111,7 +111,14 @@ fn main(os: Os) ! {
   // arm64 hosts, llvm otherwise, as cmd/xo); asm prints the arm64 assembly
   var backend = o.backend
   if backend.is_empty() {
-    backend = if o.cmd == "asm" || (o.no_gc && host_arch() == "arm64") { "arm64" } else if o.no_gc { "llvm" } else { "go" }
+    // --profile (decision 0238) is the native runtime's: the host's
+    // native backend, as --no-gc
+    let native = o.no_gc || !o.profile.is_empty()
+    backend = if o.cmd == "asm" || (native && host_arch() == "arm64") { "arm64" } else if native { "llvm" } else { "go" }
+  }
+  if !o.profile.is_empty() && backend == "go" {
+    os.stdio.eprintln("xo ${what}: --profile needs a native backend (llvm or arm64); a Go backend program profiles with runtime/pprof")
+    os.proc.exit(2)
   }
   if o.hybrid {
     if backend != "go" {
@@ -188,14 +195,18 @@ fn main(os: Os) ! {
   }
   let nb = build_native(os, ctx, o, backend)
   if o.cmd == "test" {
-    os.proc.exit(run_tests(os, nb.bin, nb.tests, o.topts))
+    var to = o.topts
+    to.profile_dir = o.wd
+    os.proc.exit(run_tests(os, nb.bin, nb.tests, to))
   }
   if o.cmd == "run" {
     if !o.record.is_empty() {
       os.stdio.eprintln("xo run: --record needs the Go backend")
       os.proc.exit(2)
     }
-    os.proc.exit(exec_binary(os, nb.bin, o.prog_args, []))
+    // --profile: xo-cpu.pprof in the working directory
+    let pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}"] }
+    os.proc.exit(exec_binary(os, nb.bin, o.prog_args, pe))
   }
 }
 

@@ -32,6 +32,9 @@ implementation the language started with was deleted (decision 0215).
 - `knowledgebase/gotchas/`: traps and surprises, with how to avoid them.
 - `bench/`: benchmark tasks and results that decide the `Proposed` decisions.
   `bench/paper/` holds solutions written blind from the spec; do not edit them.
+- Profiling native programs: `XO_PROF=cpu` / `xo run --profile=cpu`
+  (decision 0238), see toolchain.md Profiling; use it before Docker
+  callgrind for where the time goes. (Owner-requested, 2026-10-16.)
 
 Read `knowledgebase/README.md` and the relevant folder index before starting
 work in an area. Check `decisions/` before proposing a change to something

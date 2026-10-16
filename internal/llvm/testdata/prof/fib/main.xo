@@ -1,0 +1,12 @@
+// TestProfCPU's known hot function: fib is recursive, so no backend
+// inlines it away, and it takes nearly all the CPU.
+fn fib(n: Int) -> Int {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+fn main(os: Os) {
+  os.stdio.println("fib ${fib(40)}")
+}

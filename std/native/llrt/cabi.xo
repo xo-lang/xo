@@ -27,6 +27,7 @@ use native/llrt/mutex
 use native/llrt/num
 use native/llrt/obj
 use native/llrt/poll
+use native/llrt/prof
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -498,6 +499,14 @@ fn stop_signal() { stop.signal() }
 /// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
 /// handler: the signal number, unused).
 fn on_signal(sig: Int) { poll.on_signal() }
+
+/// SIGPROF's handler that prof.xo installs (SA_SIGINFO: the signal, its
+/// siginfo, the interrupted thread's ucontext).
+fn on_prof(sig: Int, info: Int, uc: Int) { prof.on_signal(uc) }
+
+/// Writes the sampling profile now (process.xo exit: os.proc.exit does
+/// not return to entry.xo main's end).
+fn prof_finish() { prof.finish() }
 
 /// Windows' console handler that entry.xo installs (SetConsoleCtrlHandler:
 /// the event, a DWORD; 1 when handled).

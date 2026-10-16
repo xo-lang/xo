@@ -249,6 +249,7 @@ XO_EMIT_JOBS=N xo build --backend=arm64 ...          # decision 0220 stage 1: th
 XO_BACKEND_CACHE=on|verify|off xo build --backend=arm64 ...   # decision 0220 addendum (default on), for a program of 256 or more functions (split into parts), in <user cache>/xo/backend (XO_BACKEND_CACHE_DIR overrides). Stage A: each part's object in obj/ by the SHA-256 of the assembler's identity (cc's --version and file, the flags, the source path; selfhost/macho: the running xo's executable) and the part's text, so an unchanged part is not assembled again. Stage B: each function's canonical assembly in fn/ by the SHA-256 of the xo executable, the target, its SSA after inlining and reference counting, the types it reaches, and the signatures of the functions it names, so an unchanged function is not generated again (not for --release builds). Stage C (every native backend): each function's reference counting in rc/ by the SHA-256 of the xo executable, the target, the function before insert_rc, the types it reaches, and the borrowed flags of itself and the functions it names (not for --release builds; `cache rc HITS/TOTAL reused`). verify computes every function's reference counting and assembly and fails the build (`XO_BACKEND_CACHE=verify: N functions differ from their cache entries`) when a cached text differs; off runs the plain generation; all three give the same binary. --phase-times adds `phase fn_keys`, `cache functions HITS/TOTAL reused`, and `cache objects HITS/TOTAL reused`. Entries are marked used and pruned by selfhost/prune (decision 0223): hourly or once an eighth of the cap was stored since the last prune (DIR/prune-stored), unused for a week (XO_CACHE_MAX_AGE), then least recently used past 8 GiB (XO_BACKEND_CACHE_MAX bytes or XO_CACHE_MAX_GB); xo itself takes 491 MB per version. Self build on the Mac after a one-module edit: 30.60 s and 131.33 s of CPU with the cache off, 11.28 to 12.10 s and 20.42 to 25.30 s of CPU with it (bench/results/fast-builds-2026-10-13.md "Back-end cache stage A", "stage B", "stage C"; last verified: 2026-10-14)
 XO_LEAKCHECK=1 <native program>                       # when main returns, `xo leakcheck: N live of M allocations` on stderr; a program that ends with os.proc.exit (or a main returning an error) prints `xo leakcheck: skipped (os.proc.exit)` instead (gotchas/leakcheck-skipped-at-exit.md; last verified: 2026-10-14)
 XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
+XO_PROF=cpu <native program>                            # the sampling CPU profile (decision 0238): SIGPROF at XO_PROF_HZ (100) a second of CPU time, frames by the fault unwinder's tables; at exit pprof (gzip) at XO_PROF_OUT (xo-cpu.pprof; %p is the pid) and a text top 30 by flat and by cumulative beside it (.txt); `xo run --profile=cpu` and `xo test --profile=cpu` (xo-cpu-<pid>.pprof per test process) set it; darwin and linux, arm64 and llvm (not Windows yet); `go tool pprof -top xo-cpu.pprof` reads it (last verified: 2026-10-16)
 xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>   # xo1, the self hosted compiler driver of decision 0158's switch-over experiment: selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) assembles and links with std/llrt (copied next to OUT as OUT.rt), trying the macOS SDKs internal/build tries ($XO_SYSROOT, the remembered one, none, xcrun's, Xcode's); fault positions relative to the program's line root (the nearest xo.mod); refuses programs that need time zone data (std/time), TLS (std/http), or `use c` sources; not the released xo (last verified: 2026-10-11)
@@ -765,6 +766,46 @@ codec), hooks in `caps.go`, `http.go`, `sched.go`, `main.go`, `stop.go`,
   `TestReplayInterleave`, `TestReplayServer`, `TestReplayDivergence`,
   each also on a -race build) on `internal/gen/testdata/replay/*`;
   `cmd/xo/replay_test.go` `TestRecordReplayCLI`.
+
+## Profiling
+
+Last verified: 2026-10-16
+
+Native programs (arm64 and LLVM backends, darwin and linux) carry a
+sampling CPU profiler (decision 0238). Use it first to find where the
+time goes; Docker callgrind (bench/perf/llvm/rust-docker.sh's method,
+or valgrind in scripts/docker-linux.sh) is for exact instruction counts
+and for diffing two builds function by function, not for a first look.
+
+- `XO_PROF=cpu ./prog`: SIGPROF at `XO_PROF_HZ` per second of CPU time
+  (default 100; 1000 for a short program), frames walked with the fault
+  unwinder's tables. At exit (main's end or os.proc.exit) it writes
+  `XO_PROF_OUT` (default `xo-cpu.pprof` in the working directory; `%p`
+  is the process id) and a text summary beside it (`.txt` for
+  `.pprof`): the totals, then the top 30 functions by flat and by
+  cumulative samples, as `go tool pprof -top` prints. One line on
+  stderr names both files.
+- `xo run --profile=cpu [dir]` sets it for the program (with no
+  `--backend` it picks the host's native backend; `--backend=go` is
+  refused: a Go backend program uses runtime/pprof). `xo test
+  --profile=cpu` writes `xo-cpu-<pid>.pprof` and `.txt` per test
+  process in the directory xo test ran in (not property test cases).
+- Reading: the `.txt` file is plain text; `go tool pprof -top
+  xo-cpu.pprof`, `-peek 'regexp'` (callers and callees of a function),
+  `-traces`, `-web`; several files merge (`go tool pprof -top
+  xo-cpu-*.pprof`); speedscope and flame graph tools read the file too.
+- Names: Xo functions as `pkg.name` (main's as `name`); a C library
+  function by dladdr (macOS, `__ulock_wait`) or its shared object
+  (Linux, `[libc.so.6]`); `?` for a pc nothing holds. Functions only:
+  source lines wait for decision 0239's DWARF line tables.
+- Limits: the ring holds 32,768 samples (5.5 minutes of one busy thread
+  at 100 Hz) and 64 threads; samples past either are reported as lost.
+  Windows and the heap profile (XO_PROF=heap) are not implemented yet.
+  A recursive or large function shows by its own name; a small one the
+  backend inlined shows as its caller.
+- Off it costs one environment lookup (242 instructions a process on
+  Linux); on macOS loading the larger runtime costs a short program
+  about 2% (bench/results/prof-cpu-2026-10-16.md).
 
 ## Benchmark tooling
 

@@ -20,6 +20,7 @@ use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
+use native/llrt/prof
 use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/stop
@@ -109,6 +110,7 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   // test world keeps, if the program has them (atexit.xo)
   atexit.run_streams()
   atexit.run_tw_end()
+  prof.finish()
   // XO_LEAKCHECK's and XO_HEAPSTATS' reports
   finish()
   0
@@ -163,6 +165,8 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
       heapos.set_mid_max(m)
     }
   }
+  // XO_PROF (decision 0238): nothing when unset
+  prof.start()
   if process.env_real_at("XO_TEST") != 0 {
     // a test binary's main starts the test world itself (the native
     // prelude's llrt_tw_start)

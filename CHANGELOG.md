@@ -25,6 +25,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   gone), 31 extr in the TLS client. arm64 sweep, 151 workloads: 4
   faster (httpclient h2big 0.994), testworld 5 1.001 at a 1.001 spread.
 
+- A native CPU profiler (decision 0238): XO_PROF=cpu (XO_PROF_HZ,
+  XO_PROF_OUT), `xo run --profile=cpu`, `xo test --profile=cpu` sample
+  the program's CPU time with SIGPROF, walk the frames with the fault
+  unwinder's tables, and write pprof (`go tool pprof` reads it) and a
+  text top 30 at exit; darwin and linux, arm64 and LLVM
+  (bench/results/prof-cpu-2026-10-16.md, internal/llvm TestProfCPU).
 - darwin/arm64 links with selfhost/macho by default again (cc only with
   `--ld=cc`, `--as=cc` or `use c` sources): the launch stalls that made
   cc the default that morning were an XProtect false positive and a

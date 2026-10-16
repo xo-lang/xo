@@ -112,6 +112,12 @@ struct TestOpts {
   /// take before the harness kills its process (std/rt's -timeout,
   /// 60 s); 0 for no limit.
   timeout: Duration = 60s
+  /// --profile: XO_PROF for the test processes (not a property test's
+  /// cases), each writing xo-cpu-<pid>.pprof in the directory xo test
+  /// ran in (decision 0238).
+  profile: Str = ""
+  /// That directory, absolute (the tests run in their own).
+  profile_dir: Str = ""
 }
 
 /// The outcome of a test: pass, fail, or skip, the message, and the
@@ -168,7 +174,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       // real capabilities for the declared effects (decision 0120); what
       // a test with real stdio printed goes where the Go backend's test
       // binary prints it
-      let (oc, pc) = run_test_env(os, bin, limit, t, s, ["XO_TEST_REAL=${t.effects.join(",")}"])
+      let (oc, pc) = run_test_env(os, bin, limit, t, s, ["XO_TEST_REAL=${t.effects.join(",")}"] + prof_words(o))
       out = oc
       if t.effects.contains("stdio") {
         for l in pc.out {
@@ -183,7 +189,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     } else if t.prop {
       out = run_property(os, bin, limit, t, s, if o.cases <= 0 { 100 } else { o.cases })
     } else {
-      let (oc, _) = run_test_env(os, bin, limit, t, s, [])
+      let (oc, _) = run_test_env(os, bin, limit, t, s, prof_words(o))
       out = oc
     }
     if out.status == "pass" {
@@ -574,7 +580,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
       i = j
       continue
     }
-    let (segs, ended, code, timed_out) = run_batch(os, bin, limit, batch)
+    let (segs, ended, code, timed_out) = run_batch(os, bin, limit, batch, prof_words(o))
     // the runs that ended in the process
     var n = 0
     while n < segs.len() && ended[n] {
@@ -637,7 +643,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
 /// Runs batch in one process (XO_TEST_BATCH): the output lines of each
 /// run that began, whether it ended, the process's status, and whether
 /// its last run timed out.
-fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run]) -> (List[Str], List[Bool], Int, Bool) {
+fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str]) -> (List[Str], List[Bool], Int, Bool) {
   var parts: List[Str] = []
   var i = 0
   while i < batch.len() {
@@ -656,7 +662,7 @@ fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run]) -> (List[Str],
     i = j + 1
   }
   let first = batch[0]
-  let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"]
+  let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"] + pw
   var segs: List[Str] = []
   var ended: List[Bool] = []
   let r = run_proc(test_cmd(os, bin, first.t.dir, words), limit)
@@ -714,6 +720,14 @@ fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int
 /// The test binary bin run in dir with the NAME=value words added to the
 /// environment: started directly (the harness used `sh -c 'cd dir &&
 /// exec env words bin'`, three execs per run, until 2026-10-15).
+/// The environment of --profile (decision 0238): none without it.
+fn prof_words(o: TestOpts) -> List[Str] {
+  if o.profile.is_empty() {
+    return []
+  }
+  ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-${o.profile}-%p.pprof"]
+}
+
 fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {
   // PWD as the shell's cd left it
   var c = os.proc.cmd(bin, []).dir(dir).set_env("PWD", dir)

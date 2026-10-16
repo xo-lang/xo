@@ -1,0 +1,1033 @@
+// The native sampling profiler (decision 0238): XO_PROF=cpu arms
+// ITIMER_PROF (XO_PROF_HZ times a second of CPU time, 100 by default);
+// each SIGPROF records the interrupted thread's frames (unwind.xo
+// prof_walk: the fault unwinder's tables, in a record of the profiler's
+// own per thread) into a ring of fixed slots claimed with one atomic add:
+// no allocation, no lock, no C library call in the handler; a sample the
+// full ring cannot take is counted. At the end of main (entry.xo) or at
+// os.proc.exit (process.xo, through cabi.xo prof_finish) the timer stops
+// and the samples are symbolized from the program's own symbol table
+// (macOS: LC_SYMTAB in __LINKEDIT, in memory; Linux: .symtab of
+// /proc/self/exe) and written as pprof's protobuf, gzip with stored
+// blocks (`go tool pprof`, speedscope, flame graph tools read it), to
+// XO_PROF_OUT (xo-cpu.pprof by default), with a text summary beside it
+// (the top 30 by flat and by cumulative samples, as `go tool pprof -top`
+// prints, in the same path with .txt for .pprof). Functions only: lines
+// wait for decision 0239's line tables. Off (no XO_PROF) it costs one
+// environment lookup at start. Windows (a sampling thread) and the heap
+// profile are not here yet.
+use native/llrt/linux
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/stdio
+use native/llrt/sysio
+use native/llrt/unwind
+use native/rt
+use native/sys_darwin
+
+/// rt.static_word: the profiler's record (0: off).
+const W_PROF = 13
+/// The thread local word of this thread's profiler record (sched.xo's
+/// table: 15).
+const TL_PROF = 15
+
+// The record (byte offsets): the ring's address and slot count, the
+// next slot (atomic), the samples lost to a full ring or to the pool's
+// end (atomic), the pool of per thread unwind records, its size and next
+// free record (atomic), the program's text, the rate, the start time.
+const R_RING = 0
+const R_CAP = 8
+const R_NEXT = 16
+const R_LOST = 24
+const R_POOL = 32
+const R_POOL_N = 40
+const R_POOL_NEXT = 48
+const R_TLO = 56
+const R_THI = 64
+const R_HZ = 72
+const R_T0 = 80
+const R_NOREC = 88
+const R_SIZE = 128
+
+/// The deepest stack a sample keeps, and a slot's bytes: the frame count,
+/// then the pcs.
+const DEPTH = 64
+const SLOT = 520
+/// The ring's slots: 32,768 samples (5.5 minutes of one busy thread at
+/// 100 Hz) in 17 MB, mapped only when profiling.
+const CAP = 32768
+/// The threads that can be sampled (each claims an unwind record of
+/// unwind.PROF_RECORD bytes on its first sample).
+const POOL_N = 64
+
+const SIGPROF = 27
+const ITIMER_PROF = 2
+
+const RELAXED = 0
+const ACQ_REL = 3
+
+fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
+
+fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
+
+fn darwin() -> Bool {
+  match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+/// Anonymous memory of n bytes (zeroed), or 0.
+fn map(n: Int) -> Int {
+  let m = match target.os {
+    TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+  if m == 0 || (m < 0 && m > -4096) {
+    return 0
+  }
+  m
+}
+
+/// Arms the profiler when XO_PROF names cpu (entry.xo start, after the
+/// environment is kept). Nothing else is touched when it does not.
+pub fn start() {
+  let v = process.env_real_at("XO_PROF")
+  if v == 0 || !names_cpu(v) {
+    return
+  }
+  match target.os {
+    TargetOs.Darwin | TargetOs.Linux => {}
+    TargetOs.Windows | TargetOs.Wasi => {
+      stdio.eprint("xo profile: XO_PROF=cpu is not supported on this target yet", true)
+      return
+    }
+  }
+  var hz = 100
+  let h = process.env_real_at("XO_PROF_HZ")
+  if h != 0 {
+    let n = atoi(h)
+    if n >= 1 && n <= 10000 {
+      hz = n
+    }
+  }
+  let r = map(R_SIZE)
+  let ring = map(CAP * SLOT)
+  let pool = map(POOL_N * unwind.PROF_RECORD)
+  if r == 0 || ring == 0 || pool == 0 {
+    stdio.eprint("xo profile: no memory for the profile", true)
+    return
+  }
+  for i in 0..POOL_N {
+    if !unwind.prof_init(pool + i * unwind.PROF_RECORD) {
+      stdio.eprint("xo profile: the program's unwind tables were not found", true)
+      return
+    }
+  }
+  let (lo, hi) = unwind.prof_text(pool)
+  st(r, R_RING, ring)
+  st(r, R_CAP, CAP)
+  st(r, R_POOL, pool)
+  st(r, R_POOL_N, POOL_N)
+  st(r, R_TLO, lo)
+  st(r, R_THI, hi)
+  st(r, R_HZ, hz)
+  st(r, R_T0, sysio.mono_ns())
+  rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
+  handler(rt.fn_addr("on_prof"))
+  timer(1000000 / hz)
+}
+
+/// Whether the C string at v lists cpu (comma separated).
+fn names_cpu(v: Int) -> Bool {
+  var i = 0
+  var at = 0
+  while true {
+    let c = rt.mem_load(v, i, 1)
+    if c == 0 || c == 44 {
+      if i - at == 3 && rt.mem_load(v, at, 1) == 99 && rt.mem_load(v, at + 1, 1) == 112 && rt.mem_load(v, at + 2, 1) == 117 {
+        return true
+      }
+      if c == 0 {
+        return false
+      }
+      at = i + 1
+    }
+    i += 1
+  }
+  false
+}
+
+/// The decimal digits of the C string at a (0 when none).
+fn atoi(a: Int) -> Int {
+  var v = 0
+  var i = 0
+  while true {
+    let c = rt.mem_load(a, i, 1)
+    if c < 48 || c > 57 || i > 9 {
+      break
+    }
+    v = v * 10 + (c - 48)
+    i += 1
+  }
+  v
+}
+
+/// Installs h as SIGPROF's handler (SA_SIGINFO for the ucontext,
+/// SA_RESTART so an interrupted system call goes on), or SIG_IGN (1).
+fn handler(h: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let flags = if h == 1 { 0 } else { 4 | 268435456 }
+      let _r = linux.sigaction(SIGPROF, h, flags)
+    }
+    TargetOs.Darwin => {
+      // struct sigaction: the handler, the mask (4 bytes), the flags
+      let sa = rt.heap_large(16)
+      st(sa, 0, h)
+      rt.mem_store(sa, 8, 0, 4)
+      rt.mem_store(sa, 12, if h == 1 { 0 } else { 64 | 2 }, 4)
+      let _r = sys_darwin.sigaction(SIGPROF, sa, 0)
+      rt.heap_release(sa - 8)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+/// setitimer(ITIMER_PROF) every us microseconds of the process's CPU
+/// time (0: stop).
+fn timer(us: Int) {
+  // struct itimerval: it_interval, it_value (each tv_sec, tv_usec)
+  let t = rt.heap_large(32)
+  st(t, 0, us / 1000000)
+  st(t, 8, us % 1000000)
+  st(t, 16, us / 1000000)
+  st(t, 24, us % 1000000)
+  match target.os {
+    TargetOs.Linux => {
+      let nr = match target.arch {
+        TargetArch.Amd64 => 38
+        TargetArch.Arm64 | TargetArch.Wasm32 => 103
+      }
+      let _r = rt.sys6(nr, ITIMER_PROF, t, 0, 0, 0, 0)
+    }
+    TargetOs.Darwin => {
+      // macOS's struct timeval: tv_sec 8 bytes, tv_usec 4 (then 4 of
+      // padding)
+      rt.mem_store(t, 12, 0, 4)
+      rt.mem_store(t, 28, 0, 4)
+      let _r = sys_darwin.setitimer(ITIMER_PROF, t, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+  rt.heap_release(t - 8)
+}
+
+/// SIGPROF's handler (cabi.xo on_prof): one sample of the interrupted
+/// thread into the next free slot. Async signal safe.
+pub fn on_signal(uc: Int) {
+  let r = rt.slot_load[Int](rt.static_word(W_PROF), 0, 1)
+  if r == 0 || uc == 0 {
+    return
+  }
+  var s = rt.tlocal_get(TL_PROF)
+  if s == 0 {
+    let i = rt.slot_add[Int](r, R_POOL_NEXT / 8, 1, ACQ_REL)
+    if i >= ld(r, R_POOL_N) {
+      let _l = rt.slot_add[Int](r, R_NOREC / 8, 1, RELAXED)
+      return
+    }
+    s = ld(r, R_POOL) + i * unwind.PROF_RECORD
+    rt.tlocal_set(TL_PROF, s)
+  }
+  let k = rt.slot_add[Int](r, R_NEXT / 8, 1, ACQ_REL)
+  if k >= ld(r, R_CAP) {
+    let _l = rt.slot_add[Int](r, R_LOST / 8, 1, RELAXED)
+    return
+  }
+  let p = ld(r, R_RING) + k * SLOT
+  let n = unwind.prof_walk(s, uc, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI))
+  // the count last: a slot read with 0 is skipped
+  rt.slot_store[Int](p, 0, n, 2)
+}
+
+/// Stops the profiler and writes the profile (entry.xo at main's end,
+/// cabi.xo prof_finish from os.proc.exit). Once.
+pub fn finish() {
+  let w = rt.static_word(W_PROF)
+  let r = rt.slot_swap[Int](w, 0, 0, 4)
+  if r == 0 {
+    return
+  }
+  timer(0)
+  handler(1)
+  let dur = sysio.mono_ns() - ld(r, R_T0)
+  var n = ld(r, R_NEXT)
+  if n > ld(r, R_CAP) {
+    n = ld(r, R_CAP)
+  }
+  let lost = ld(r, R_LOST) + ld(r, R_NOREC)
+  let out0 = process.env_real("XO_PROF_OUT")
+  let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-cpu.pprof" } else { out0[0] })
+  let syms = symbols(ld(r, R_TLO), ld(r, R_THI))
+  write_profile(r, n, lost, dur, syms, out)
+}
+
+/// path with each %p as the process id (a profile per process of xo
+/// test --profile).
+fn expand_pid(path: Str) -> Str {
+  if !path.contains("%p") {
+    return path
+  }
+  let pid = match target.os {
+    TargetOs.Darwin => Int(sys_darwin.getpid())
+    TargetOs.Linux => {
+      let nr = match target.arch {
+        TargetArch.Amd64 => 39
+        TargetArch.Arm64 | TargetArch.Wasm32 => 172
+      }
+      rt.sys6(nr, 0, 0, 0, 0, 0, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+  path.replace("%p", "${pid}")
+}
+
+// ---------------------------------------------------------------------------
+// Symbols
+
+/// The program's functions, sorted by address: their starts, ends (the
+/// next start, or the text's end), and names (demangled).
+struct Syms {
+  starts: List[Int]
+  ends: List[Int]
+  names: List[Str]
+}
+
+/// The program's function symbols within [lo, hi).
+fn symbols(lo: Int, hi: Int) -> Syms {
+  var addrs: List[Int] = []
+  var names: List[Str] = []
+  if darwin() {
+    macho_symbols(lo, hi, addrs, names)
+  } else {
+    elf_symbols(lo, hi, addrs, names)
+  }
+  // sort by address: (offset in the text << 24) | index
+  var keys: List[Int] = []
+  for i in 0..addrs.len() {
+    if i < 16777216 {
+      keys.push(rt.int_wrap(3, addrs[i] - lo, 24) | i)
+    }
+  }
+  keys = keys.sort()
+  var starts: List[Int] = []
+  var sn: List[Str] = []
+  var last = -1
+  for k in keys {
+    let i = k & 16777215
+    if addrs[i] == last {
+      continue
+    }
+    last = addrs[i]
+    starts.push(addrs[i])
+    sn.push(demangle(names[i]))
+  }
+  var ends: List[Int] = []
+  for i in 0..starts.len() {
+    ends.push(if i + 1 < starts.len() { starts[i + 1] } else { hi })
+  }
+  Syms{starts: starts, ends: ends, names: sn}
+}
+
+/// The index of the function holding pc, or -1.
+fn sym_of(s: Syms, pc: Int) -> Int {
+  var a = 0
+  var b = s.starts.len()
+  while a < b {
+    let m = (a + b) / 2
+    if s.starts[m] <= pc {
+      a = m + 1
+    } else {
+      b = m
+    }
+  }
+  let i = a - 1
+  if i < 0 || pc >= s.ends[i] {
+    return -1
+  }
+  i
+}
+
+/// The C string at p.
+fn cstr(p: Int) -> Str {
+  var n = 0
+  while rt.mem_load(p, n, 1) != 0 && n < 4096 {
+    n += 1
+  }
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8(rt.mem_load(p, i, 1)))
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// macOS: the N_SECT symbols of the program's image (its LC_SYMTAB, read
+/// through __LINKEDIT, which is mapped) whose address is in the text.
+fn macho_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
+  let mh = sys_darwin._dyld_get_image_header(0)
+  if mh == 0 || rt.mem_load(mh, 0, 4) != 4277009103 {
+    return
+  }
+  let ncmds = rt.mem_load(mh, 16, 4)
+  var lc = mh + 32
+  var slide = 0
+  var le_vm = 0
+  var le_off = 0
+  var symoff = 0
+  var nsyms = 0
+  var stroff = 0
+  for _ in 0..ncmds {
+    let cmd = rt.mem_load(lc, 0, 4)
+    if cmd == 25 {
+      // LC_SEGMENT_64: segname at 8 (16 bytes), vmaddr 24, fileoff 40
+      let a = ld(lc, 8)
+      let b = ld(lc, 16)
+      if a == 92738097012575 && b == 0 {
+        // "__TEXT"
+        slide = mh - ld(lc, 24)
+      } else if a == 4919420967581409119 && b == 21577 {
+        // "__LINKEDIT"
+        le_vm = ld(lc, 24)
+        le_off = ld(lc, 40)
+      }
+    } else if cmd == 2 {
+      // LC_SYMTAB: symoff 8, nsyms 12, stroff 16, strsize 20
+      symoff = rt.mem_load(lc, 8, 4)
+      nsyms = rt.mem_load(lc, 12, 4)
+      stroff = rt.mem_load(lc, 16, 4)
+    }
+    lc += rt.mem_load(lc, 4, 4)
+  }
+  if le_vm == 0 || nsyms == 0 {
+    return
+  }
+  let base = le_vm + slide - le_off
+  let tab = base + symoff
+  let strs = base + stroff
+  for i in 0..nsyms {
+    // nlist_64: n_strx 0 (4), n_type 4, n_sect 5, n_desc 6, n_value 8
+    let e = tab + 16 * i
+    let ty = rt.mem_load(e, 4, 1)
+    if (ty & 224) != 0 || (ty & 14) != 14 {
+      continue
+    }
+    let a = ld(e, 8) + slide
+    if a < lo || a >= hi {
+      continue
+    }
+    var name = cstr(strs + rt.mem_load(e, 0, 4))
+    if name.len() > 0 && name.bytes()[0] == 95 {
+      name = name[1..name.len()]
+    }
+    addrs.push(a)
+    names.push(name)
+  }
+}
+
+/// Linux: the STT_FUNC symbols of .symtab (else .dynsym) of the program's
+/// file (/proc/self/exe), placed by the load bias (AT_PHDR against
+/// PT_PHDR).
+fn elf_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
+  let data = read_file("/proc/self/exe")
+  if data.len() < 64 {
+    return
+  }
+  let f = raw.bytes_addr(data)
+  let ph = linux.auxval(linux.AT_PHDR)
+  let phn = linux.auxval(linux.AT_PHNUM)
+  var bias = 0
+  for i in 0..phn {
+    let p = ph + 56 * i
+    if rt.mem_load(p, 0, 4) == 6 {
+      bias = ph - ld(p, 16)
+    }
+  }
+  // Elf64_Ehdr: e_shoff 40, e_shentsize 58, e_shnum 60
+  let shoff = ld(f, 40)
+  let shn = rt.mem_load(f, 60, 2)
+  if shoff <= 0 || shoff + 64 * shn > data.len() {
+    return
+  }
+  for want in [2, 11] {
+    for i in 0..shn {
+      // Elf64_Shdr: sh_type 4, sh_offset 24, sh_size 32, sh_link 40
+      let sh = f + shoff + 64 * i
+      if rt.mem_load(sh, 4, 4) != want {
+        continue
+      }
+      let off = ld(sh, 24)
+      let size = ld(sh, 32)
+      let link = rt.mem_load(sh, 40, 4)
+      if link >= shn || off + size > data.len() {
+        continue
+      }
+      let strsh = f + shoff + 64 * link
+      let stro = ld(strsh, 24)
+      for j in 0..size / 24 {
+        // Elf64_Sym: st_name 0 (4), st_info 4, st_value 8
+        let e = f + off + 24 * j
+        if (rt.mem_load(e, 4, 1) & 15) != 2 {
+          continue
+        }
+        let a = ld(e, 8) + bias
+        if a < lo || a >= hi {
+          continue
+        }
+        addrs.push(a)
+        names.push(cstr(f + stro + rt.mem_load(e, 0, 4)))
+      }
+    }
+    if addrs.len() > 0 {
+      return
+    }
+  }
+}
+
+/// The bytes of the file at path (empty when it cannot be read).
+fn read_file(path: Str) -> Bytes {
+  let fd = linux.open(path, 524288, 0)
+  if fd < 0 {
+    return b""
+  }
+  let (stat, e) = linux.fstat(fd)
+  if e != 0 || stat.size <= 0 {
+    let _c = linux.close(fd)
+    return b""
+  }
+  var b = BytesBuilder.with_capacity(stat.size)
+  let buf = rt.heap_large(65536)
+  while true {
+    let r = linux.read_at(fd, buf, 65536)
+    if r == -4 {
+      continue
+    }
+    if r <= 0 {
+      break
+    }
+    for i in 0..r {
+      b.write_byte(UInt8(rt.mem_load(buf, i, 1)))
+    }
+  }
+  rt.heap_release(buf - 8)
+  let _c = linux.close(fd)
+  b.freeze()
+}
+
+/// An Xo function's symbol as its name: the arm64 backend's (gen.xo
+/// fname: `xo_f_`, `_` doubled, any other byte not a letter or digit `_`
+/// and two hex digits), the LLVM backend's (`x.` and the name), and a C
+/// ABI export's (`xo_x_` and the name); another symbol as it is.
+fn demangle(s: Str) -> Str {
+  let b = s.bytes()
+  if b.len() > 2 && s[0..2] == "x." {
+    return s[2..s.len()]
+  }
+  if b.len() > 5 && s[0..5] == "xo_x_" {
+    return s[5..s.len()]
+  }
+  if b.len() < 6 || s[0..5] != "xo_f_" {
+    return s
+  }
+  var o = BytesBuilder.with_capacity(b.len())
+  var i = 5
+  while i < b.len() {
+    let c = Int(b[i])
+    if c == 95 && i + 1 < b.len() && Int(b[i + 1]) == 95 {
+      o.write_byte(UInt8(95))
+      i += 2
+    } else if c == 95 && i + 2 < b.len() && hexv(Int(b[i + 1])) >= 0 && hexv(Int(b[i + 2])) >= 0 {
+      o.write_byte(UInt8(16 * hexv(Int(b[i + 1])) + hexv(Int(b[i + 2]))))
+      i += 3
+    } else {
+      o.write_byte(UInt8(c))
+      i += 1
+    }
+  }
+  o.freeze().to_str() ?? s
+}
+
+fn hexv(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  -1
+}
+
+// ---------------------------------------------------------------------------
+// The profile
+
+/// Writes the pprof file at out and the text summary beside it.
+fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, out: Str) {
+  let ring = ld(r, R_RING)
+  let hz = ld(r, R_HZ)
+  let period = 1000000000 / hz
+  // the distinct pcs (locations), by sorting
+  var pcs: List[Int] = []
+  var total = 0
+  for k in 0..n {
+    let p = ring + k * SLOT
+    let d = ld(p, 0)
+    if d <= 0 {
+      continue
+    }
+    total += 1
+    for j in 0..d {
+      pcs.push(ld(p, 8 + 8 * j))
+    }
+  }
+  pcs = pcs.sort()
+  var locs: List[Int] = []
+  for pc in pcs {
+    if locs.len() == 0 || locs[locs.len() - 1] != pc {
+      locs.push(pc)
+    }
+  }
+  // the functions: the program's symbols, then the names of the pcs
+  // outside it (a C library function, the dynamic loader); each
+  // location's function as an interrupted pc (fe) and as a return
+  // address, whose call is at pc - 1 (fr)
+  var names = syms.names
+  var fe: List[Int] = []
+  var fr: List[Int] = []
+  for pc in locs {
+    fe.push(func_of(syms, pc, names))
+    fr.push(func_of(syms, pc - 1, names))
+  }
+  var flat: List[Int] = []
+  var cum: List[Int] = []
+  var seen: List[Int] = []
+  for _ in 0..names.len() {
+    flat.push(0)
+    cum.push(0)
+    seen.push(-1)
+  }
+  var stacks: List[Int] = []
+  for k in 0..n {
+    let p = ring + k * SLOT
+    let d = ld(p, 0)
+    if d <= 0 {
+      continue
+    }
+    for j in 0..d {
+      let li = loc_index(locs, ld(p, 8 + 8 * j))
+      let f = if j == 0 { fe[li] } else { fr[li] }
+      if j == 0 {
+        flat[f] = flat[f] + 1
+      }
+      if seen[f] != k {
+        seen[f] = k
+        cum[f] = cum[f] + 1
+      }
+    }
+    stacks.push(k)
+  }
+  let pb = pprof(ring, stacks, locs, fr, names, period, dur)
+  let ok = write_file(out, gzip(pb))
+  let txt = text_path(out)
+  let summary = top_text(flat, cum, names, total, lost, dur, hz, period)
+  let ok2 = write_file(txt, summary.bytes())
+  if ok && ok2 {
+    stdio.eprint("xo profile: ${total} samples in ${out} and ${txt}", true)
+  } else {
+    stdio.eprint("xo profile: could not write ${out}", true)
+  }
+}
+
+/// The function of pc: the program's symbol holding it, else the name of
+/// what holds it outside the program (added to names once).
+fn func_of(syms: Syms, pc: Int, var names: List[Str]) -> Int {
+  let f = sym_of(syms, pc)
+  if f >= 0 {
+    return f
+  }
+  let name = outside_name(pc)
+  var i = syms.names.len()
+  while i < names.len() {
+    if names[i] == name {
+      return i
+    }
+    i += 1
+  }
+  names.push(name)
+  names.len() - 1
+}
+
+/// The name of a pc outside the program: macOS, dladdr's symbol (else
+/// its image's file name); Linux, the file name of the shared object
+/// holding it ([vdso] for the kernel's); "?" when nothing holds it.
+fn outside_name(pc: Int) -> Str {
+  match target.os {
+    TargetOs.Darwin => {
+      // Dl_info: dli_fname 0, dli_fbase 8, dli_sname 16, dli_saddr 24
+      let info = rt.heap_large(32)
+      rt.mem_set(info, 0, 32)
+      var name = "?"
+      if Int(sys_darwin.dladdr(pc, info)) != 0 {
+        if ld(info, 16) != 0 {
+          name = cstr(ld(info, 16))
+          if name.len() > 0 && name.bytes()[0] == 95 {
+            name = name[1..name.len()]
+          }
+        } else if ld(info, 0) != 0 {
+          name = "[${base_name(cstr(ld(info, 0)))}]"
+        }
+      }
+      rt.heap_release(info - 8)
+      name
+    }
+    TargetOs.Linux => linux_object_name(pc)
+    TargetOs.Windows | TargetOs.Wasi => "?"
+  }
+}
+
+/// The last element of a path.
+fn base_name(p: Str) -> Str {
+  let b = p.bytes()
+  var i = b.len()
+  while i > 0 && Int(b[i - 1]) != 47 {
+    i -= 1
+  }
+  p[i..p.len()]
+}
+
+/// Linux: "[name]" of the shared object whose PT_LOAD holds pc (the
+/// dynamic loader's link_map, through the program's DT_DEBUG), else "?".
+fn linux_object_name(pc: Int) -> Str {
+  let ph = linux.auxval(linux.AT_PHDR)
+  let n = linux.auxval(linux.AT_PHNUM)
+  if ph == 0 {
+    return "?"
+  }
+  var bias = 0
+  var dynv = 0
+  for i in 0..n {
+    let p = ph + 56 * i
+    let t = rt.mem_load(p, 0, 4)
+    if t == 6 {
+      bias = ph - ld(p, 16)
+    } else if t == 2 {
+      dynv = ld(p, 16)
+    }
+  }
+  if dynv == 0 {
+    return "?"
+  }
+  var d = dynv + bias
+  var dbg = 0
+  while ld(d, 0) != 0 {
+    if ld(d, 0) == 21 {
+      dbg = ld(d, 8)
+    }
+    d += 16
+  }
+  if dbg == 0 {
+    return "?"
+  }
+  // struct r_debug: r_version, r_map; struct link_map: l_addr, l_name,
+  // l_ld, l_next
+  var lm = ld(dbg, 8)
+  var left = 4096
+  while lm != 0 && left > 0 {
+    left -= 1
+    let base = ld(lm, 0)
+    if base != 0 && rt.mem_load(base, 0, 4) == 1179403647 {
+      // Elf64_Ehdr: e_phoff 32, e_phnum 56
+      let oph = base + ld(base, 32)
+      let on = rt.mem_load(base, 56, 2)
+      for i in 0..on {
+        let p = oph + 56 * i
+        if rt.mem_load(p, 0, 4) == 1 {
+          let a = base + ld(p, 16)
+          if pc >= a && pc < a + ld(p, 40) {
+            let nm = if ld(lm, 8) != 0 { cstr(ld(lm, 8)) } else { "" }
+            return if nm.is_empty() { "[vdso]" } else { "[${base_name(nm)}]" }
+          }
+        }
+      }
+    }
+    lm = ld(lm, 24)
+  }
+  "?"
+}
+
+/// out with .txt for a .pprof ending (else .txt added).
+fn text_path(out: Str) -> Str {
+  if out.len() > 6 && out[out.len() - 6..out.len()] == ".pprof" {
+    return out[0..out.len() - 6] + ".txt"
+  }
+  out + ".txt"
+}
+
+/// ms of n samples at period ns, as `go tool pprof -top` prints (ms, or s
+/// with two decimals from 10 s).
+fn dur_text(ns: Int) -> Str {
+  let ms = ns / 1000000
+  if ms >= 10000 {
+    return "${ms / 1000}.${pad2((ms % 1000) / 10)}s"
+  }
+  "${ms}ms"
+}
+
+fn pad2(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
+
+/// x of total as a percent with two decimals.
+fn pct(x: Int, total: Int) -> Str {
+  if total <= 0 {
+    return "0.00%"
+  }
+  let h = (x * 10000 + total / 2) / total
+  "${h / 100}.${pad2(h % 100)}%"
+}
+
+fn lpad(s: Str, w: Int) -> Str {
+  var t = s
+  while t.len() < w {
+    t = " " + t
+  }
+  t
+}
+
+/// The summary: the totals, then the top 30 by flat and by cumulative.
+fn top_text(flat: List[Int], cum: List[Int], names: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
+  var b = StrBuilder.new()
+  b.write("xo cpu profile: ${total} samples (${dur_text(total * period)}) in ${dur_text(dur)} of wall time at ${hz} Hz")
+  if lost > 0 {
+    b.write(", ${lost} lost")
+  }
+  b.write("\n")
+  for by_cum in [false, true] {
+    b.write(if by_cum { "\ntop 30 by cumulative\n" } else { "\ntop 30 by flat\n" })
+    b.write("      flat  flat%   sum%        cum   cum%\n")
+    // the order: count << 24 | function, descending
+    var keys: List[Int] = []
+    for f in 0..flat.len() {
+      let v = if by_cum { cum[f] } else { flat[f] }
+      if v > 0 {
+        keys.push(rt.int_wrap(3, v, 24) | f)
+      }
+    }
+    keys = keys.sort()
+    var sum = 0
+    var shown = 0
+    var i = keys.len() - 1
+    while i >= 0 && shown < 30 {
+      let f = keys[i] & 16777215
+      sum += flat[f]
+      let name = names[f]
+      b.write("${lpad(dur_text(flat[f] * period), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(dur_text(cum[f] * period), 10)} ${lpad(pct(cum[f], total), 6)}  ${name}\n")
+      shown += 1
+      i -= 1
+    }
+  }
+  b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// pprof's protobuf (github.com/google/pprof proto/profile.proto)
+
+fn varint(var b: BytesBuilder, v0: Int) {
+  var v = v0
+  while true {
+    let low = v & 127
+    v = rt.int_wrap(4, v, 7)
+    if v == 0 {
+      b.write_byte(UInt8(low))
+      return
+    }
+    b.write_byte(UInt8(low | 128))
+  }
+}
+
+/// A varint field.
+fn fint(var b: BytesBuilder, field: Int, v: Int) {
+  varint(b, field * 8)
+  varint(b, v)
+}
+
+/// A length delimited field.
+fn fbytes(var b: BytesBuilder, field: Int, data: Bytes) {
+  varint(b, field * 8 + 2)
+  varint(b, data.len())
+  b.write(data)
+}
+
+/// A ValueType message of two string indexes.
+fn value_type(t: Int, u: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  fint(b, 1, t)
+  fint(b, 2, u)
+  b.freeze()
+}
+
+/// The index of location pc in the sorted locs (its id is that plus 1).
+fn loc_index(locs: List[Int], pc: Int) -> Int {
+  var a = 0
+  var b = locs.len()
+  while a < b {
+    let m = (a + b) / 2
+    if locs[m] < pc {
+      a = m + 1
+    } else {
+      b = m
+    }
+  }
+  a
+}
+
+/// The Profile message: every sample its own (pprof sums equal stacks);
+/// a location per distinct pc with one line naming its function; a
+/// function per symbol used.
+fn pprof(ring: Int, stacks: List[Int], locs: List[Int], fr: List[Int], names: List[Str], period: Int, dur: Int) -> Bytes {
+  var strs: List[Str] = ["", "samples", "count", "cpu", "nanoseconds"]
+  var b = BytesBuilder.new()
+  fbytes(b, 1, value_type(1, 2))
+  fbytes(b, 1, value_type(3, 4))
+  for k in stacks {
+    let p = ring + k * SLOT
+    let d = ld(p, 0)
+    var ids = BytesBuilder.new()
+    for j in 0..d {
+      varint(ids, loc_index(locs, ld(p, 8 + 8 * j)) + 1)
+    }
+    var vals = BytesBuilder.new()
+    varint(vals, 1)
+    varint(vals, period)
+    var smp = BytesBuilder.new()
+    fbytes(smp, 1, ids.freeze())
+    fbytes(smp, 2, vals.freeze())
+    fbytes(b, 2, smp.freeze())
+  }
+  // a location per distinct pc, its line naming the function of its
+  // call (pprof's tools treat every location as a return address); a
+  // function (id: its index + 1) per name used
+  var used: List[Bool] = []
+  for _ in 0..names.len() {
+    used.push(false)
+  }
+  for i in 0..locs.len() {
+    used[fr[i]] = true
+    var line = BytesBuilder.new()
+    fint(line, 1, fr[i] + 1)
+    var loc = BytesBuilder.new()
+    fint(loc, 1, i + 1)
+    fint(loc, 3, locs[i])
+    fbytes(loc, 4, line.freeze())
+    fbytes(b, 4, loc.freeze())
+  }
+  for f in 0..names.len() {
+    if !used[f] {
+      continue
+    }
+    strs.push(names[f])
+    var fn_ = BytesBuilder.new()
+    fint(fn_, 1, f + 1)
+    fint(fn_, 2, strs.len() - 1)
+    fint(fn_, 3, strs.len() - 1)
+    fbytes(b, 5, fn_.freeze())
+  }
+  for s in strs {
+    fbytes(b, 6, s.bytes())
+  }
+  fint(b, 10, dur)
+  fbytes(b, 11, value_type(3, 4))
+  fint(b, 12, period)
+  b.freeze()
+}
+
+/// data as a gzip member with stored deflate blocks.
+fn gzip(data: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(data.len() + data.len() / 65535 * 5 + 32)
+  for x in [31, 139, 8, 0, 0, 0, 0, 0, 0, 255] {
+    b.write_byte(UInt8(x))
+  }
+  var off = 0
+  while true {
+    let left = data.len() - off
+    let n = if left > 65535 { 65535 } else { left }
+    b.write_byte(UInt8(if n == left { 1 } else { 0 }))
+    b.write_byte(UInt8(n & 255))
+    b.write_byte(UInt8(n / 256))
+    b.write_byte(UInt8((65535 - n) & 255))
+    b.write_byte(UInt8((65535 - n) / 256))
+    b.write(data[off..off + n])
+    off += n
+    if off >= data.len() {
+      break
+    }
+  }
+  let c = crc32(data)
+  for i in 0..4 {
+    b.write_byte(UInt8(rt.int_wrap(4, c, 8 * i) & 255))
+  }
+  for i in 0..4 {
+    b.write_byte(UInt8(rt.int_wrap(4, data.len(), 8 * i) & 255))
+  }
+  b.freeze()
+}
+
+/// CRC-32 (IEEE, reflected) of data, bit at a time (a profile is small).
+fn crc32(data: Bytes) -> Int {
+  var c = 4294967295
+  for x in data {
+    c = c ^ Int(x)
+    for _ in 0..8 {
+      c = if (c & 1) != 0 { rt.int_wrap(4, c, 1) ^ 3988292384 } else { rt.int_wrap(4, c, 1) }
+    }
+  }
+  c ^ 4294967295
+}
+
+/// Writes data to the file at path (created or truncated, mode 0644).
+fn write_file(path: Str, data: Bytes) -> Bool {
+  match target.os {
+    TargetOs.Linux => {
+      // O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
+      let fd = linux.open(path, 1 | 64 | 512 | 524288, 420)
+      if fd < 0 {
+        return false
+      }
+      let w = linux.write_all(fd, data)
+      let _c = linux.close(fd)
+      w == 0
+    }
+    TargetOs.Darwin => {
+      var z = BytesBuilder.with_capacity(path.len() + 1)
+      z.write(path.bytes())
+      z.write_byte(UInt8(0))
+      // O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
+      let fd = Int(sys_darwin.open(z.freeze(), 1 | 512 | 1024 | 16777216, 420))
+      if fd < 0 {
+        return false
+      }
+      var off = 0
+      let a = raw.bytes_addr(data)
+      var ok = true
+      while off < data.len() {
+        let w = sys_darwin.write(fd, a + off, data.len() - off)
+        if w <= 0 {
+          ok = false
+          break
+        }
+        off += w
+      }
+      let _c = sys_darwin.close(fd)
+      ok
+    }
+    TargetOs.Windows | TargetOs.Wasi => false
+  }
+}

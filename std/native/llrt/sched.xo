@@ -34,7 +34,8 @@ const SEQ_CST = 4
 /// 32 bits, libcsys.xo, decision 0230); 11 and 12 sysio.xo's outcome of
 /// the last file operation (status, path and message); 13 tasks.xo's
 /// spare context (run_claimed); 14 libcmem.xo's cache of the runtime's
-/// records (heap_large); 15 unused. internal/repotest
+/// records (heap_large); 15 prof.xo's unwind record of the thread
+/// (the sampling profiler, decision 0238). internal/repotest
 /// TestThreadLocalWordOwners checks who uses each word.
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1
