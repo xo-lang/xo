@@ -2367,6 +2367,19 @@ fn llrt_str_slice_at(s: Str, lo: Int, hi: Int, loc: Str) -> Str {
 }
 
 /// `b[lo..hi]` on Bytes.
+/// A List[Int] of the little endian 8 byte words of b: a constant List
+/// of Int literals kept as data (selfhost/ssa show.xo int_list_data), read
+/// once at the constant's first use.
+fn llrt_list_of_le64(b: Bytes) -> List[Int] {
+  let n = b.len() / 8
+  var out = List[Int].with_capacity(n)
+  let a = raw.bytes_addr(b)
+  for i in 0..n {
+    out.push(rt.mem_load(a, rt.int_wrap(3, i, 3), 8))
+  }
+  out
+}
+
 fn llrt_bytes_slice_at(b: Bytes, lo: Int, hi: Int, loc: Str) -> Bytes {
   slice_check(lo, hi, b.len(), "Bytes", loc)
   raw.str_at(raw.bytes_addr(b) + lo, hi - lo).bytes()

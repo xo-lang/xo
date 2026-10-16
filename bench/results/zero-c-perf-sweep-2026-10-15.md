@@ -1034,3 +1034,27 @@ request (W=none, N=0).
   httpclient is 2.4 MB (the TLS stack in Xo) against the base's 867 KB
   (Mbed); -Wl,-dead_strip changes neither size nor count (the code is
   reachable). The lever is the TLS code's size, not its start.
+
+### Follow up: TLS code size (2026-10-16)
+
+Where an https client's bytes went (nm, per function): the builder of
+the P-256 table `xo.const[nistec_g256.G256]` was 434 KB of code on llvm
+and 524 KB on arm64 for 7,680 Ints (60 KB of data), a constant List
+built element by element (decision 0081). A constant List[Int] of 64 or
+more literals is now one Bytes constant read by the native prelude's
+llrt_list_of_le64 at first use (selfhost/ssa show.xo int_list_data;
+G256, mlkem's ZETAS and GAMMAS):
+
+| Binary | llvm before | llvm after | arm64 before | arm64 after |
+|---|---|---|---|---|
+| bench/perf/httpclient | 2.51 MB | 2.12 MB | 2.85 MB | 2.35 MB |
+| bench/perf/http/xo (TLS server) | 2.95 MB | 2.55 MB | 3.17 MB | 2.67 MB |
+| bench/perf/tls | 2.51 MB | 2.12 MB | 2.85 MB | 2.35 MB |
+
+The TLS phase, 5 interleaved reps on both backends: every workload
+0.998 to 1.002 of before. Not taken: LLVM optsize on the parsing and
+handshake modules (2.12 to 2.45 MB, larger), minsize (-2%). What is left
+is code density (x509.parse: 186 lines, 64 KB on arm64, 97 KB on llvm).
+A smaller binary does not start faster on macOS (the same instructions
+at launch): the launch cost of a TLS client is Security.framework and
+CoreFoundation, about 14M instructions, which the base links too.

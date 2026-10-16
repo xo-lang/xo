@@ -671,7 +671,13 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     let fi = b.m.new_func(name, [], [lt])
     b.m.funcs[fi].entry = true
     let saved = b.begin(fi, f)
-    let v = b.value_as(value, t)
+    let v = match b.int_list_data(value, f, t) {
+      // a long List[Int] of literals as data, read back by the native
+      // prelude's llrt_list_of_le64: nistec's P-256 table was 434 KB of
+      // code (LLVM) built element by element, 60 KB as data
+      Some(data) => b.llrt("list_of_le64", t, [b.add(Op.Const, b.str_t(), Aux.Bs(b: data), [])])
+      None => b.value_as(value, t)
+    }
     let l0 = b.call("list.new", lt, "", [])
     let l = b.call("list.push", lt, "", [l0, v])
     // readers on any thread share it
@@ -685,6 +691,33 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
   let l = b.rt("const_once", lt, [fa, da, b.cint(id)])
   b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+/// The little endian 8 byte words of value when it is a List[Int]
+/// literal of at least 64 constant Ints and the native prelude reads such
+/// data (llrt_list_of_le64); None otherwise.
+fn (var b: Builder) int_list_data(value: Expr, f: Int, t: Int) -> Bytes? {
+  if b.tkind(t) != Kind.List || b.m.types[t].elems[0] != b.int_t() || b.prelude_impl("llrt_list_of_le64") < 0 {
+    return None
+  }
+  let elems = match value {
+    ListLit(elems: es, ..) => es
+    _ => return None
+  }
+  if elems.len() < 64 {
+    return None
+  }
+  var out = BytesBuilder.with_capacity(8 * elems.len())
+  for e in elems {
+    let n = match b.c.const_int(f, e, 0) {
+      Some(x) => x
+      None => return None
+    }
+    for k in 0..8 {
+      out.write_byte(UInt8((n >> (8 * k)) & 255))
+    }
+  }
+  Some(out.freeze())
 }
 
 /// The type operands of the runtime calls on sized integers (sizeArgs).

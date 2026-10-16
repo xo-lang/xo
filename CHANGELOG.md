@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A constant List[Int] of 64 or more literals is kept as data and read
+  at first use (selfhost/ssa show.xo int_list_data, the native prelude's
+  llrt_list_of_le64), not built by code element by element: the P-256
+  table's builder was 434 to 524 KB of code; TLS binaries are 13 to 17%
+  smaller on both backends (httpclient llvm 2.51 to 2.12 MB, arm64 2.85
+  to 2.35 MB) at the same handshake speed.
 - darwin/arm64 links with cc by default again when the host has one
   (`--ld=macho` still selects selfhost/macho), a mitigation: some ad hoc
   binaries fail the kernel's signature check (AMFI) and wait at exec on
