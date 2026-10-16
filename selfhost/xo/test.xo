@@ -278,7 +278,7 @@ fn hex4(n: Int) -> Str {
 /// (NAME=value words), in the test's module directory.
 fn run_test_env(os: Os, bin: Str, limit: Duration, t: TestInfo, s: Int, env: List[Str]) -> (Outcome, PropCase) {
   let words = ["XO_TEST=${t.index}", "XO_TEST_SEED=${s}"] + env
-  let r = run_proc(test_cmd(os, bin, t.dir, words), os.clock, limit)
+  let r = run_proc(test_cmd(os, bin, t.dir, words), limit)
   if !r.failed.is_empty() {
     return (Outcome{status: "fail", msg: r.failed}, PropCase{})
   }
@@ -291,6 +291,28 @@ fn run_test_env(os: Os, bin: Str, limit: Duration, t: TestInfo, s: Int, env: Lis
 
 /// A timed out run's message (std/rt's runOneTest).
 fn timeout_msg(limit: Duration) -> Str { "the test did not finish within ${limit} of real time" }
+
+/// Kills child when limit passes with no event on ev (a run that began
+/// and did not end in time; killed is set then); returns when ev closes.
+/// No polling: a run that ends costs no wait (a 20 ms poll here made each
+/// shrinking replay 20 ms slower, 2026-10-15).
+fn watchdog(ev: Chan[Int], limit: Duration, killed: Atomic[Int], child: Child) uses clock {
+  var open = true
+  while open {
+    select {
+      e = ev.recv() => {
+        if e.is_none() {
+          open = false
+        }
+      }
+      after limit => {
+        killed.set(1)
+        child.kill()
+        open = false
+      }
+    }
+  }
+}
 
 /// What a test binary's process wrote, its status, and whether a run in
 /// it timed out (the harness killed it), or why it did not start.
@@ -306,13 +328,14 @@ struct Ran {
 /// (not 0) a watchdog kills the process when a run in it takes longer:
 /// a run starts with the process and again at each XO-TEST-BEGIN line
 /// of a batch. Only the child this call started is killed.
-fn run_proc(c: Cmd, clock: Clock, limit: Duration) -> Ran uses (proc, clock) {
+fn run_proc(c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
   let child = match c.spawn() {
     Ok(ch) => ch
     Err(e) => return Ran{failed: "${e}"}
   }
-  let begins = Atomic[Int].new(0)
-  let done = Atomic[Int].new(0)
+  // the reader sends an event per XO-TEST-BEGIN and closes ev at the
+  // end of the output; the watchdog's timer restarts at each event
+  let ev = Chan[Int].new(cap: 1024)
   let killed = Atomic[Int].new(0)
   let (out, err) = scope s {
     let to = s.spawn(fn() -> Bytes {
@@ -330,7 +353,7 @@ fn run_proc(c: Cmd, clock: Clock, limit: Duration) -> Ran uses (proc, clock) {
           if at >= 0 && x == pat[at] {
             at += 1
             if at == pat.len() {
-              let _n = begins.add(1)
+              let _sent = ev.try_send(1)
               at = 0
             }
           } else {
@@ -339,7 +362,7 @@ fn run_proc(c: Cmd, clock: Clock, limit: Duration) -> Ran uses (proc, clock) {
         }
         b.write(chunk)
       }
-      done.set(1)
+      ev.close()
       b.freeze()
     })
     let te = s.spawn(fn() -> Bytes {
@@ -353,23 +376,7 @@ fn run_proc(c: Cmd, clock: Clock, limit: Duration) -> Ran uses (proc, clock) {
       b.freeze()
     })
     if limit > 0s {
-      s.spawn(fn() {
-        var seen = 0
-        var start = clock.now()
-        while done.get() == 0 {
-          let n = begins.get()
-          if n != seen {
-            seen = n
-            start = clock.now()
-          }
-          if clock.since(start) >= limit {
-            killed.set(1)
-            child.kill()
-            break
-          }
-          clock.sleep(20ms)
-        }
-      })
+      s.spawn(fn() { watchdog(ev, limit, killed, child) })
     }
     (to.await, te.await)
   }
@@ -574,7 +581,7 @@ fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run]) -> (List[Str],
   let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"]
   var segs: List[Str] = []
   var ended: List[Bool] = []
-  let r = run_proc(test_cmd(os, bin, first.t.dir, words), os.clock, limit)
+  let r = run_proc(test_cmd(os, bin, first.t.dir, words), limit)
   if !r.failed.is_empty() {
     return (segs, ended, 1, false)
   }
@@ -796,9 +803,8 @@ fn serve_run(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, replay: 
   }
   // the run's lines up to XO-TEST-END; a watchdog kills the binary
   // when the run takes longer than the limit
-  let done = Atomic[Int].new(0)
+  let ev = Chan[Int].new(cap: 1)
   let killed = Atomic[Int].new(0)
-  let clock = os.clock
   let (lines, begun, ended) = scope sc {
     let rd = sc.spawn(fn() -> (List[Str], Bool, Bool) {
       var ls: List[Str] = []
@@ -818,21 +824,11 @@ fn serve_run(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, replay: 
           ls.push(l)
         }
       }
-      done.set(1)
+      ev.close()
       (ls, b, e)
     })
     if limit > 0s {
-      sc.spawn(fn() {
-        let start = clock.now()
-        while done.get() == 0 {
-          if clock.since(start) >= limit {
-            killed.set(1)
-            c.kill()
-            break
-          }
-          clock.sleep(20ms)
-        }
-      })
+      sc.spawn(fn() { watchdog(ev, limit, killed, c) })
     }
     rd.await
   }

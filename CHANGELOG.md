@@ -38,6 +38,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- `xo test --no-gc`: the time limit's watchdog no longer polls (a
+  select on the end of the run's output and `after limit`): the 20 ms
+  poll made each test process and shrinking replay up to 20 ms slower,
+  nogc/prop's fixture 0.92 s to 20.6 s warm, now back under 0.5 s;
+  TestNoGCShrinkOverhead guards it (gotchas/polling-watchdog-scope-wait.md).
+
 - `xo test --timeout=D`: the real time each test, property case, and
   shrinking replay may take (default 60s, the Go backend's limit; 0 for
   none, also on the Go backend). Natively a test past it fails with the

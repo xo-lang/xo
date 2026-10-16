@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -439,5 +440,37 @@ func TestNoGCTimeout(t *testing.T) {
 	code, out := xoTest(t, "--timeout=0", "--run=fore", dir)
 	if code != 0 || !strings.Contains(out, "ok: 1 passed, 0 failed, 0 skipped") {
 		t.Errorf("go --timeout=0: exit %d\n%s", code, out)
+	}
+}
+
+// TestNoGCShrinkOverhead guards the harness's cost per test process and
+// per shrinking replay: testdata/nogc/prop's 17 failing property tests
+// make about 900 replays, and a warm `xo test` of it took about 0.5 s on
+// arm64 when this was written (2026-10-15), 20 s while a watchdog polled
+// every 20 ms per replay. A run above 5 s fails: an overhead grown about
+// tenfold, which machine load alone does not explain.
+func TestNoGCShrinkOverhead(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs test binaries")
+	}
+	if !slices.Contains(nativeBackends(t), xotool.BackendArm64) {
+		t.Skip("measured on the arm64 backend")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := filepath.Join("testdata", "nogc", "prop")
+	args := []string{"--no-gc", "--backend=" + xotool.BackendArm64, dir}
+	code, out := xoTest(t, args...) // builds
+	if code != 1 || !strings.Contains(out, "FAIL: 3 passed, 17 failed, 0 skipped") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	best := time.Duration(1 << 62)
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		xoTest(t, args...)
+		best = min(best, time.Since(start))
+	}
+	if best > 5*time.Second {
+		t.Errorf("a warm xo test of %s took %v (best of 3), want under 5s (about 0.5s on arm64, 2026-10-15)", dir, best)
 	}
 }
