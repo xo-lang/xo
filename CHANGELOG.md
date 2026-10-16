@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows faults: unwind.xo win_raise compares the frame's own stack
+  pointer with the fault boundary (it compared its caller's after
+  RtlVirtualUnwind and stopped before main's or a task body's cleanups and
+  catches). First run of the Windows fault path, under Wine with Box64:
+  24 windows/amd64 fault and task goldens pass (10 failed before; two
+  http goldens differ only by Box64's library messages on stdout).
+- arm64 emitter: the element callbacks (dupp, dropp, sharep) of a struct
+  or tuple count its heap leaves in place, reading each from the element
+  (selfhost/arm64 rc.xo elem_helper), instead of loading all its words
+  for the struct's helper, which saved them again (past 8 words with a
+  frame and a stack copy). std's memfs test (a Map of 9 word nodes,
+  shared on every operation): 12.27G to 11.42G instructions on arm64.
 - No runtime C (decision 0234): Windows' stack overflow handler is Xo
   (std/native/llrt/entry.xo on_overflow, the cabi.xo export registered
   with AddVectoredExceptionHandler through rt.fn_addr; it flushes
