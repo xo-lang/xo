@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- XO_NOLIBC=1 (decision 0230's Xo C library): the 68 cabi_libc.xo
+  exports nothing calls in such a build are deleted with the libc*.xo
+  helpers only they used (736 lines; found from the arm64 Linux assembly
+  of every golden, the C runtime's undefined symbols, and the mem*
+  calls code generation makes, then run in Docker on linux/arm64 and
+  linux/amd64). New std/native/llrt/libcmath.xo: trunc, floor, ceil,
+  round and fmod in Xo by the IEEE 754 bits (fmod: musl's exact
+  algorithm), the calls LLVM makes for Float's rounding on x86-64
+  without SSE4.1 and for `%` of Floats on every target, which no XO_NOLIBC
+  build linked before (golden float_libm).
 - std/llrt/xo_rt.c is deleted (decision 0234): seed 0.16.0's driver
   compiles no C runtime, so the empty file kept for the 0.15.0 seed goes.
   std/llrt holds only the C tests (testdata).

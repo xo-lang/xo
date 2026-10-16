@@ -1,0 +1,37 @@
+// Float rounding and `%`, which LLVM lowers to the C library's trunc,
+// floor, ceil, round and fmod where the target has no instruction for
+// them (x86-64 before SSE4.1, and fmod everywhere): an XO_NOLIBC build
+// links std/native/llrt/libcmath.xo's (decision 0234), so this program
+// must link and agree with the Go backend there too. Halves, values just
+// below a half, negative zero results, integers past 2^52, subnormals,
+// and fmod's exact remainders.
+
+fn show(x: Float) -> Str {
+  let b = sign_bit(x)
+  "${x} ${b < 0}"
+}
+
+fn sign_bit(x: Float) -> Int {
+  if x == 0.0 {
+    // the sign of a zero: 1 / x is -inf for -0
+    return if 1.0 / x < 0.0 { -1 } else { 0 }
+  }
+  if x < 0.0 { -1 } else { 0 }
+}
+
+fn main(os: Os) {
+  let big = 4503599627370497.0
+  let tiny = 5e-324
+  let xs = [2.5, -2.5, 0.49999999999999994, -0.49999999999999994, 0.5, -0.5, 1.5, -1.5, 0.1, -0.1, 7.0, -7.0, big, -big, 1e300, tiny, -tiny, 123456.789, -987654.321]
+  for x in xs {
+    os.stdio.println("${x}: trunc ${show(x.trunc())} floor ${show(x.floor())} ceil ${show(x.ceil())} round ${show(x.round())}")
+  }
+  let ints = [2.7, -2.7, 0.9, -0.9, 1e15 + 0.5, -123.999]
+  for x in ints {
+    os.stdio.println("Int(${x}) = ${Int(x)}")
+  }
+  let pairs = [(5.5, 2.0), (-5.5, 2.0), (5.5, -2.0), (1.0, 0.1), (1e300, 3.0), (7.0, 7.0), (-7.0, 7.0), (0.3, 1.0), (tiny * 7.0, tiny * 2.0), (1e-310, 3e-311), (123456789.0, 0.001), (2.0, 1e300)]
+  for (a, b) in pairs {
+    os.stdio.println("${a} % ${b} = ${show(a % b)}")
+  }
+}

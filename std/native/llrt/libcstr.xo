@@ -10,9 +10,6 @@
 //
 // Written on macOS: the module is checked by the linux/arm64 XO_NOLIBC
 // build's code generation only, UNTESTED on linux.
-use native/llrt/libcmem
-use native/llrt/linux
-use native/llrt/raw
 use native/rt
 
 // strerror's table of C strings (134 words from malloc, an entry made
@@ -21,11 +18,6 @@ use native/rt
 
 /// The errno values strerror has texts for (0 to NERR - 1).
 const NERR = 134
-
-// slot atomics' orders (rt.xo)
-const ACQUIRE = 1
-const RELEASE = 2
-const ACQ_REL = 3
 
 fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
 
@@ -131,20 +123,6 @@ pub fn memcmp(a: Int, b: Int, n: Int) -> Int {
   0
 }
 
-/// memchr: the address of the first byte c (low byte) in the n bytes at
-/// s, or 0.
-pub fn memchr(s: Int, c: Int, n: Int) -> Int {
-  let b = c & 255
-  var i = 0
-  while i < n {
-    if byte(s, i) == b {
-      return addw(s, i)
-    }
-    i = addw(i, 1)
-  }
-  0
-}
-
 // ---------------------------------------------------------------------------
 // Strings (zero terminated)
 
@@ -175,33 +153,6 @@ pub fn strchr(s: Int, c: Int) -> Int {
   0
 }
 
-/// strrchr: the address of the last c in s, or 0.
-pub fn strrchr(s: Int, c: Int) -> Int {
-  let b = c & 255
-  var r = 0
-  var i = 0
-  while true {
-    let x = byte(s, i)
-    if x == b {
-      r = addw(s, i)
-    }
-    if x == 0 {
-      return r
-    }
-    i = addw(i, 1)
-  }
-  r
-}
-
-/// strcmp.
-pub fn strcmp(a: Int, b: Int) -> Int {
-  var i = 0
-  while byte(a, i) != 0 && byte(a, i) == byte(b, i) {
-    i = addw(i, 1)
-  }
-  subw(byte(a, i), byte(b, i))
-}
-
 /// strncmp.
 pub fn strncmp(a: Int, b: Int, n: Int) -> Int {
   var i = 0
@@ -216,254 +167,14 @@ pub fn strncmp(a: Int, b: Int, n: Int) -> Int {
   0
 }
 
-fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
-
-/// strncasecmp (ASCII).
-pub fn strncasecmp(a: Int, b: Int, n: Int) -> Int {
-  var i = 0
-  while i < n {
-    let x = lower(byte(a, i))
-    let y = lower(byte(b, i))
-    if x != y || x == 0 {
-      return subw(x, y)
-    }
-    i = addw(i, 1)
-  }
-  0
-}
-
-/// strcpy: s and its terminator to d; d.
-pub fn strcpy(d: Int, s: Int) -> Int {
-  var i = 0
-  while true {
-    let x = byte(s, i)
-    rt.mem_store(d, i, x, 1)
-    if x == 0 {
-      return d
-    }
-    i = addw(i, 1)
-  }
-  d
-}
-
-/// strstr: the address of the first n in h, h when n is empty, or 0.
-pub fn strstr(h: Int, n: Int) -> Int {
-  let k = strlen(n)
-  var i = 0
-  while byte(h, i) != 0 {
-    if strncmp(addw(h, i), n, k) == 0 {
-      return addw(h, i)
-    }
-    i = addw(i, 1)
-  }
-  if k == 0 { addw(h, i) } else { 0 }
-}
-
-/// strpbrk: the address of the first byte of s in set, or 0.
-pub fn strpbrk(s: Int, set: Int) -> Int {
-  var i = 0
-  while true {
-    let x = byte(s, i)
-    if x == 0 {
-      return 0
-    }
-    if strchr(set, x) != 0 {
-      return addw(s, i)
-    }
-    i = addw(i, 1)
-  }
-  0
-}
-
-/// strdup: a malloc'd copy of s, or 0.
-pub fn strdup(s: Int) -> Int {
-  let n = addw(strlen(s), 1)
-  let d = libcmem.malloc(n)
-  if d != 0 {
-    let _d = memcpy(d, s, n)
-  }
-  d
-}
-
-/// strndup: a malloc'd copy of at most m bytes of s, terminated, or 0.
-pub fn strndup(s: Int, m: Int) -> Int {
-  var n = 0
-  while n < m && byte(s, n) != 0 {
-    n = addw(n, 1)
-  }
-  let d = libcmem.malloc(addw(n, 1))
-  if d != 0 {
-    let _d = memcpy(d, s, n)
-    rt.mem_store(d, n, 0, 1)
-  }
-  d
-}
-
 // ---------------------------------------------------------------------------
 // strerror: glibc 2.34's texts (linux.xo strerror), as zero terminated C
 // strings from malloc, made once per errno and kept.
 
-/// A malloc'd C string of the n bytes at p (0 when malloc fails).
-fn cstr(p: Int, n: Int) -> Int {
-  let d = libcmem.malloc(addw(n, 1))
-  if d != 0 {
-    let _d = memcpy(d, p, n)
-    rt.mem_store(d, n, 0, 1)
-  }
-  d
-}
-
-/// "Unknown error <e>" as a malloc'd C string (made on each call: a C
-/// caller gets an errno outside the table rarely, and keeps no text).
-fn unknown(e0: Int) -> Int {
-  let pre = "Unknown error "
-  let d = libcmem.malloc(48)
-  if d == 0 {
-    return 0
-  }
-  let _d = memcpy(d, raw.data(pre), pre.len())
-  var at = pre.len()
-  var e = e0
-  if e < 0 {
-    rt.mem_store(d, at, 45, 1)
-    at += 1
-    e = subw(0, e)
-  }
-  // the digits backward into the end of the buffer, then moved
-  var k = 47
-  rt.mem_store(d, k, 0, 1)
-  while true {
-    k -= 1
-    rt.mem_store(d, k, 48 + e % 10, 1)
-    e = e / 10
-    if e == 0 {
-      break
-    }
-  }
-  let _m = memmove(addw(d, at), addw(d, k), 48 - k)
-  d
-}
-
-/// strerror: the text of errno e (a C int).
-pub fn strerror(e0: Int) -> Int {
-  let e = s32(e0)
-  if e < 0 || e >= NERR {
-    return unknown(e)
-  }
-  let w = libcmem.word(libcmem.S_ERRS)
-  if w == 0 {
-    return unknown(e)
-  }
-  var tab = rt.slot_load(w, 0, ACQUIRE)
-  if tab == 0 {
-    let t = libcmem.calloc(NERR, 8)
-    if t == 0 {
-      return unknown(e)
-    }
-    if rt.slot_cas(w, 0, 0, t, ACQ_REL) {
-      tab = t
-    } else {
-      libcmem.free(t)
-      tab = rt.slot_load(w, 0, ACQUIRE)
-    }
-  }
-  var s = rt.slot_load(tab, e, ACQUIRE)
-  if s == 0 {
-    // a literal of linux.xo's table (e is in range: no interpolation)
-    let t = linux.strerror(e)
-    let c = cstr(raw.data(t), t.len())
-    if c == 0 {
-      return unknown(e)
-    }
-    if rt.slot_cas(tab, e, 0, c, ACQ_REL) {
-      s = c
-    } else {
-      libcmem.free(c)
-      s = rt.slot_load(tab, e, ACQUIRE)
-    }
-  }
-  s
-}
-
 // ---------------------------------------------------------------------------
 // Integers from text
-
-/// strtoull and strtoul: the value of the digits of s in base (0: by
-/// its prefix), wrapping, negated after a '-' as C's; at the address end
-/// (when not 0) the address after the digits (after the sign and prefix
-/// when there are none, as xo_nolibc.c's).
-pub fn strtoull(s: Int, end: Int, base0: Int) -> Int {
-  var i = 0
-  while byte(s, i) == 32 || (byte(s, i) >= 9 && byte(s, i) <= 13) {
-    i += 1
-  }
-  var neg = false
-  if byte(s, i) == 45 || byte(s, i) == 43 {
-    neg = byte(s, i) == 45
-    i += 1
-  }
-  var base = s32(base0)
-  if (base == 0 || base == 16) && byte(s, i) == 48 && (byte(s, i + 1) == 120 || byte(s, i + 1) == 88) {
-    i += 2
-    base = 16
-  } else if base == 0 {
-    base = if byte(s, i) == 48 { 8 } else { 10 }
-  }
-  var v = 0
-  while true {
-    let c = byte(s, i)
-    var d = 99
-    if c >= 48 && c <= 57 {
-      d = c - 48
-    } else if c >= 97 && c <= 122 {
-      d = c - 87
-    } else if c >= 65 && c <= 90 {
-      d = c - 55
-    }
-    if d >= base {
-      break
-    }
-    v = addw(mulw(v, base), d)
-    i += 1
-  }
-  if end != 0 {
-    rt.mem_store(end, 0, addw(s, i), 8)
-  }
-  if neg { subw(0, v) } else { v }
-}
-
-/// strtoll and strtol.
-pub fn strtoll(s: Int, end: Int, base: Int) -> Int { strtoull(s, end, base) }
-
-/// atoi (a C int: the low 32 bits).
-pub fn atoi(s: Int) -> Int { s32(strtoll(s, 0, 10)) }
 
 // ---------------------------------------------------------------------------
 // qsort: a shell sort (the runtime sorts header and channel lists), cmp
 // a C function of two element addresses returning a C int.
 
-pub fn qsort(base: Int, n: Int, w: Int, cmp: Int) {
-  if n < 2 || w <= 0 {
-    return
-  }
-  let t = libcmem.malloc(w)
-  if t == 0 {
-    return
-  }
-  var gap = n / 2
-  while gap > 0 {
-    var i = gap
-    while i < n {
-      let _a = memcpy(t, addw(base, mulw(i, w)), w)
-      var j = i
-      while j >= gap && s32(rt.call_c2(cmp, addw(base, mulw(j - gap, w)), t)) > 0 {
-        let _b = memcpy(addw(base, mulw(j, w)), addw(base, mulw(j - gap, w)), w)
-        j -= gap
-      }
-      let _c = memcpy(addw(base, mulw(j, w)), t, w)
-      i += 1
-    }
-    gap = gap / 2
-  }
-  libcmem.free(t)
-}

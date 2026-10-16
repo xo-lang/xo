@@ -12,6 +12,7 @@
 // may fault or allocate Xo values (rt.int_wrap for the arithmetic).
 
 use native/llrt/libcio
+use native/llrt/libcmath
 use native/llrt/libcmem
 use native/llrt/libcstr
 use native/llrt/libcsys
@@ -22,13 +23,7 @@ use native/rt
 // Memory (libcmem.xo: free lists by power of two class over mapped
 // regions, big blocks mapped and kept for reuse, 16 byte aligned)
 
-fn malloc(n: Int) -> Int { libcmem.malloc(n) }
-
 fn free(p: Int) { libcmem.free(p) }
-
-fn calloc(n: Int, m: Int) -> Int { libcmem.calloc(n, m) }
-
-fn realloc(p: Int, n: Int) -> Int { libcmem.realloc(p, n) }
 
 // ---------------------------------------------------------------------------
 // Strings and memory (libcstr.xo, B04 stage (b)): the C int arguments in
@@ -44,47 +39,7 @@ fn memcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
 
 fn bcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
 
-fn memchr(s: Int, c: Int, n: Int) -> Int { libcstr.memchr(s, c, n) }
-
 fn strlen(s: Int) -> Int { libcstr.strlen(s) }
-
-fn strchr(s: Int, c: Int) -> Int { libcstr.strchr(s, c) }
-
-fn strrchr(s: Int, c: Int) -> Int { libcstr.strrchr(s, c) }
-
-fn strcmp(a: Int, b: Int) -> Int { libcstr.strcmp(a, b) }
-
-fn strncmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncmp(a, b, n) }
-
-fn strncasecmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncasecmp(a, b, n) }
-
-fn strcpy(d: Int, s: Int) -> Int { libcstr.strcpy(d, s) }
-
-fn strstr(h: Int, n: Int) -> Int { libcstr.strstr(h, n) }
-
-fn strpbrk(s: Int, set: Int) -> Int { libcstr.strpbrk(s, set) }
-
-fn strdup(s: Int) -> Int { libcstr.strdup(s) }
-
-fn strndup(s: Int, m: Int) -> Int { libcstr.strndup(s, m) }
-
-fn strerror(e: Int) -> Int { libcstr.strerror(e) }
-
-fn strtoull(s: Int, end: Int, base: Int) -> Int { libcstr.strtoull(s, end, base) }
-
-fn strtoul(s: Int, end: Int, base: Int) -> Int { libcstr.strtoull(s, end, base) }
-
-fn strtoll(s: Int, end: Int, base: Int) -> Int { libcstr.strtoll(s, end, base) }
-
-fn strtol(s: Int, end: Int, base: Int) -> Int { libcstr.strtoll(s, end, base) }
-
-fn atoi(s: Int) -> Int { libcstr.atoi(s) }
-
-fn atol(s: Int) -> Int { libcstr.strtoll(s, 0, 10) }
-
-fn atoll(s: Int) -> Int { libcstr.strtoll(s, 0, 10) }
-
-fn qsort(base: Int, n: Int, w: Int, cmp: Int) { libcstr.qsort(base, n, w, cmp) }
 
 // ---------------------------------------------------------------------------
 // System calls (libcsys.xo, B04 stage (d)): -1 and errno on failure;
@@ -94,31 +49,19 @@ fn qsort(base: Int, n: Int, w: Int, cmp: Int) { libcstr.qsort(base, n, w, cmp) }
 
 fn __errno_location() -> Int { libcsys.errno_addr() }
 
-fn _exit(code: Int) { libcsys.exit(code) }
-
 fn exit(code: Int) { libcsys.exit(code) }
 
 fn abort() { libcsys.abort() }
 
 fn open(path: Int, flags: Int, mode: Int) -> Int { libcsys.open(path, flags, mode) }
 
-fn openat(dirfd: Int, path: Int, flags: Int, mode: Int) -> Int { libcsys.openat(dirfd, path, flags, mode) }
-
 fn read(fd: Int, p: Int, n: Int) -> Int { libcsys.read(fd, p, n) }
 
 fn write(fd: Int, p: Int, n: Int) -> Int { libcsys.write(fd, p, n) }
 
-fn pread(fd: Int, p: Int, n: Int, off: Int) -> Int { libcsys.pread(fd, p, n, off) }
-
 fn close(fd: Int) -> Int { libcsys.close(fd) }
 
-fn lseek(fd: Int, off: Int, whence: Int) -> Int { libcsys.lseek(fd, off, whence) }
-
-fn pipe2(fds: Int, flags: Int) -> Int { libcsys.pipe2(fds, flags) }
-
 fn pipe(fds: Int) -> Int { libcsys.pipe2(fds, 0) }
-
-fn dup2(a: Int, b: Int) -> Int { libcsys.dup2(a, b) }
 
 fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { libcsys.fcntl(fd, cmd, arg) }
 
@@ -140,19 +83,11 @@ fn symlink(t: Int, p: Int) -> Int { libcsys.symlink(t, p) }
 
 fn readlink(p: Int, buf: Int, n: Int) -> Int { libcsys.readlink(p, buf, n) }
 
-fn ftruncate(fd: Int, n: Int) -> Int { libcsys.ftruncate(fd, n) }
-
-fn fsync(fd: Int) -> Int { libcsys.fsync(fd) }
-
 fn flock(fd: Int, op: Int) -> Int { libcsys.flock(fd, op) }
 
 fn getcwd(buf: Int, n: Int) -> Int { libcsys.getcwd(buf, n) }
 
 fn stat(p: Int, st: Int) -> Int { libcsys.stat(p, st) }
-
-fn lstat(p: Int, st: Int) -> Int { libcsys.lstat(p, st) }
-
-fn fstat(fd: Int, st: Int) -> Int { libcsys.fstat(fd, st) }
 
 fn utimensat(dirfd: Int, p: Int, t: Int, flags: Int) -> Int { libcsys.utimensat(dirfd, p, t, flags) }
 
@@ -162,17 +97,7 @@ fn munmap(a: Int, n: Int) -> Int { libcsys.munmap(a, n) }
 
 fn mprotect(a: Int, n: Int, prot: Int) -> Int { libcsys.mprotect(a, n, prot) }
 
-fn madvise(a: Int, n: Int, adv: Int) -> Int { libcsys.madvise(a, n, adv) }
-
-fn clock_gettime(id: Int, ts: Int) -> Int { libcsys.clock_gettime(id, ts) }
-
 fn time(t: Int) -> Int { libcsys.time(t) }
-
-fn nanosleep(req: Int, rem: Int) -> Int { libcsys.nanosleep(req, rem) }
-
-fn gmtime_r(t: Int, tm: Int) -> Int { libcsys.gmtime_r(t, tm) }
-
-fn getrandom(p: Int, n: Int, flags: Int) -> Int { libcsys.getrandom(p, n, flags) }
 
 fn getentropy(p: Int, n: Int) -> Int { libcsys.getentropy(p, n) }
 
@@ -180,49 +105,15 @@ fn getpid() -> Int { libcsys.getpid() }
 
 fn kill(pid: Int, sig: Int) -> Int { libcsys.kill(pid, sig) }
 
-fn sched_yield() -> Int { libcsys.sched_yield() }
-
-fn sysconf(name: Int) -> Int { libcsys.sysconf(name) }
-
-fn syscall(n: Int, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int { libcsys.syscall(n, a, b, c, d, e, f) }
-
 // ---------------------------------------------------------------------------
 // Signals, locks, and threads (libcthr.xo's work, called here under
 // the C names; glibc's layouts: a mutex is the first word of its
 // pthread_mutex_t, an attribute's first word its stack size)
 
-fn sigemptyset(s: Int) -> Int { libcsys.sigemptyset(s) }
-
-fn sigaddset(s: Int, sig: Int) -> Int { libcsys.sigaddset(s, sig) }
-
 fn sigaction(sig: Int, act: Int, old: Int) -> Int { libcsys.ret(libcthr.sigaction(libcstr.s32(sig), act, old)) }
 
 /// signal: the previous handler, or SIG_ERR (-1) with errno set.
 fn signal(sig: Int, h: Int) -> Int { libcsys.ret(libcthr.signal(libcstr.s32(sig), h)) }
-
-fn sigprocmask(how: Int, set: Int, old: Int) -> Int { libcsys.ret(libcthr.sigprocmask(libcstr.s32(how), set, old)) }
-
-/// pthread_sigmask: 0, or the error number (not errno).
-fn pthread_sigmask(how: Int, set: Int, old: Int) -> Int {
-  let r = libcthr.sigprocmask(libcstr.s32(how), set, old)
-  if r < 0 { 0 - r } else { 0 }
-}
-
-fn pthread_mutex_init(m: Int, a: Int) -> Int {
-  // glibc's pthread_mutex_t is 40 bytes on x86_64, 48 on arm64
-  let _m = libcstr.memset(m, 0, 40)
-  0
-}
-
-fn pthread_mutex_destroy(m: Int) -> Int { 0 }
-
-fn pthread_mutex_lock(m: Int) -> Int { libcthr.mutex_lock(m) }
-
-fn pthread_mutex_trylock(m: Int) -> Int { libcthr.mutex_trylock(m) }
-
-fn pthread_mutex_unlock(m: Int) -> Int { libcthr.mutex_unlock(m) }
-
-fn pthread_once(o: Int, f: Int) -> Int { libcthr.once_run(o, f) }
 
 /// pthread_attr_init: the stack size 8 MiB (the attribute's first word).
 fn pthread_attr_init(a: Int) -> Int {
@@ -261,48 +152,28 @@ fn pthread_join(th: Int, r: Int) -> Int {
   0
 }
 
-fn pthread_detach(th: Int) -> Int { 0 }
-
 // ---------------------------------------------------------------------------
 // The environment, streams, and directories (libcio.xo, B04 stage (e));
 // stdin, stdout, and stderr are the emitters' data symbols, pointers to
 // libcio.xo's records (libcio.std_file, decision 0234). No printf: no C
 // of an XO_NOLIBC build calls it (decision 0234).
 
-fn getauxval(k: Int) -> Int { libcio.getauxval(k) }
-
-fn getenv(name: Int) -> Int { libcio.getenv(name) }
-
-fn fwrite(p: Int, size: Int, n: Int, f: Int) -> Int { libcio.fwrite(p, size, n, f) }
-
-fn fputs(s: Int, f: Int) -> Int { libcio.fputs(s, f) }
-
-fn fputc(c: Int, f: Int) -> Int { libcio.fputc(c, f) }
-
-fn putc(c: Int, f: Int) -> Int { libcio.fputc(c, f) }
-
-fn puts(s: Int) -> Int { libcio.puts(s) }
-
-fn putchar(c: Int) -> Int { libcio.fputc(c, libcio.std_file(1)) }
-
-fn fflush(f: Int) -> Int { 0 }
-
-fn fopen(path: Int, mode: Int) -> Int { libcio.fopen(path, mode) }
-
-fn fread(p: Int, size: Int, n: Int, f: Int) -> Int { libcio.fread(p, size, n, f) }
-
-fn ferror(f: Int) -> Int { libcio.ferror(f) }
-
-fn fclose(f: Int) -> Int { libcio.fclose(f) }
-
-fn opendir(p: Int) -> Int { libcio.opendir(p) }
-
-fn readdir(d: Int) -> Int { libcio.readdir(d) }
-
-fn closedir(d: Int) -> Int { libcio.closedir(d) }
-
 /// strtod (floating point text in C) is not available: it ends the
 /// program (its double result is never returned).
+// The rounding functions and fmod (libcmath.xo): LLVM's calls for
+// Float's trunc, floor, ceil, round where x86-64 has no instruction, and
+// for `%` of Floats
+
+fn trunc(x: Float) -> Float { libcmath.trunc(x) }
+
+fn floor(x: Float) -> Float { libcmath.floor(x) }
+
+fn ceil(x: Float) -> Float { libcmath.ceil(x) }
+
+fn round(x: Float) -> Float { libcmath.round(x) }
+
+fn fmod(x: Float, y: Float) -> Float { libcmath.fmod(x, y) }
+
 fn strtod(s: Int, end: Int) -> Int {
   libcio.die("strtod (floating point text in C) is not available")
   0

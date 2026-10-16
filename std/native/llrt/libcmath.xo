@@ -1,0 +1,136 @@
+// The C library's rounding functions and fmod for a program linked with
+// no C library (XO_NOLIBC=1), exported under their C names by
+// std/native/llrt/cabi_libc.xo: LLVM lowers Float's trunc, floor, ceil,
+// and round (llvm.trunc.f64 and the rest, and a Float to Int conversion's
+// truncation) to these calls where the target has no instruction for
+// them (x86-64 before SSE4.1, the baseline Xo builds for), and `%` of
+// Floats (frem) to fmod on every target. Exact, by the IEEE 754 bits
+// (no rounding of their own); none may fault or allocate.
+use native/rt
+
+/// The bits of 1 << n (n from 0 to 63), wrapping.
+fn bit(n: Int) -> Int { rt.int_wrap(3, 1, n) }
+
+/// v << n and v >> n (logical), wrapping.
+fn shl(v: Int, n: Int) -> Int { rt.int_wrap(3, v, n) }
+
+fn shr(v: Int, n: Int) -> Int { rt.int_wrap(4, v, n) }
+
+/// a < b as unsigned words.
+fn ult(a: Int, b: Int) -> Bool {
+  let m = bit(63)
+  (a ^ m) < (b ^ m)
+}
+
+/// The quiet NaN.
+fn nan() -> Float { rt.float_from_bits(9221120237041090560) }
+
+/// x rounded toward zero: the fraction bits below the binary point
+/// cleared (x itself when it has none: big, infinite, or NaN; a signed
+/// zero when it is below 1 in size).
+pub fn trunc(x: Float) -> Float {
+  let b = rt.float_bits(x)
+  let e = (shr(b, 52) & 2047) - 1023
+  if e >= 52 {
+    return x
+  }
+  if e < 0 {
+    return rt.float_from_bits(b & bit(63))
+  }
+  rt.float_from_bits(b & ~(bit(52 - e) - 1))
+}
+
+/// x rounded toward minus infinity.
+pub fn floor(x: Float) -> Float {
+  let t = trunc(x)
+  if x < 0.0 && t != x { t - 1.0 } else { t }
+}
+
+/// x rounded toward plus infinity.
+pub fn ceil(x: Float) -> Float {
+  let t = trunc(x)
+  if x > 0.0 && t != x { t + 1.0 } else { t }
+}
+
+/// x rounded to the nearest integer, halves away from zero (C's round).
+/// x - trunc(x) is exact, so the halfway test is too.
+pub fn round(x: Float) -> Float {
+  let t = trunc(x)
+  let d = x - t
+  if d >= 0.5 {
+    return t + 1.0
+  }
+  if d <= -0.5 {
+    return t - 1.0
+  }
+  t
+}
+
+/// The fraction field of a finite nonzero significand, normalized so its
+/// leading bit is bit 52 (a subnormal's shifted up), and its exponent.
+fn norm(u: Int, e0: Int) -> (Int, Int) {
+  if e0 != 0 {
+    return ((u & (bit(52) - 1)) | bit(52), e0)
+  }
+  var e = e0
+  var i = shl(u, 12)
+  while i >= 0 {
+    e -= 1
+    i = shl(i, 1)
+  }
+  (shl(u, 1 - e), e)
+}
+
+/// x - n*y for the integer n of x / y rounded toward zero, exactly (C's
+/// fmod; musl's algorithm): the sign of x; NaN when y is 0 or x is
+/// infinite or either is NaN; x when |x| < |y|.
+pub fn fmod(x: Float, y: Float) -> Float {
+  let ux0 = rt.float_bits(x)
+  let uy0 = rt.float_bits(y)
+  let ex0 = shr(ux0, 52) & 2047
+  let ey0 = shr(uy0, 52) & 2047
+  let sign = ux0 & bit(63)
+  if shl(uy0, 1) == 0 || y != y || ex0 == 2047 {
+    return nan()
+  }
+  let ax = shl(ux0, 1)
+  let ay = shl(uy0, 1)
+  if !ult(ay, ax) {
+    if ax == ay {
+      return rt.float_from_bits(sign)
+    }
+    return x
+  }
+  let (ux1, ex1) = norm(ux0, ex0)
+  var ux = ux1
+  var ex = ex1
+  let (uy, ey) = norm(uy0, ey0)
+  while ex > ey {
+    let i = ux - uy
+    if i >= 0 {
+      if i == 0 {
+        return rt.float_from_bits(sign)
+      }
+      ux = i
+    }
+    ux = shl(ux, 1)
+    ex -= 1
+  }
+  let i = ux - uy
+  if i >= 0 {
+    if i == 0 {
+      return rt.float_from_bits(sign)
+    }
+    ux = i
+  }
+  while shr(ux, 52) == 0 {
+    ux = shl(ux, 1)
+    ex -= 1
+  }
+  if ex > 0 {
+    ux = (ux - bit(52)) | shl(ex, 52)
+  } else {
+    ux = shr(ux, 1 - ex)
+  }
+  rt.float_from_bits(ux | sign)
+}

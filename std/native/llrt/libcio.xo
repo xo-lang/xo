@@ -23,7 +23,6 @@ const O_CREAT = 64
 const O_TRUNC = 512
 const O_APPEND = 1024
 const O_CLOEXEC = 524288
-const EINTR = 4
 
 /// A FILE: the descriptor (32 bits at 0), the error flag (32 bits at 4),
 /// whether fclose frees it (at 8: fopen's, not the standard streams').
@@ -46,12 +45,6 @@ fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
 fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
 
 fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
-
-/// a < b as unsigned words (sizes).
-fn ult(a: Int, b: Int) -> Bool {
-  let m = rt.int_wrap(3, 1, 63)
-  (a ^ m) < (b ^ m)
-}
 
 fn byte(a: Int, i: Int) -> Int { rt.mem_load(a, i, 1) }
 
@@ -147,57 +140,6 @@ pub fn getenv(name: Int) -> Int {
 // Streams: a FILE is a descriptor (unbuffered: the runtime buffers
 // standard output itself)
 
-fn fd_of(f: Int) -> Int { libcstr.s32(rt.mem_load(f, F_FD, 4)) }
-
-/// Writes the n bytes at p to fd, retrying after a signal: the bytes
-/// written.
-fn write_all(fd: Int, p: Int, n: Int) -> Int {
-  var off = 0
-  while ult(off, n) {
-    let w = sys(nr(64, 1), fd, addw(p, off), subw(n, off))
-    if w == 0 - EINTR {
-      continue
-    }
-    if w <= 0 {
-      break
-    }
-    off = addw(off, w)
-  }
-  off
-}
-
-pub fn fwrite(p: Int, size: Int, n: Int, f: Int) -> Int {
-  let t = mulw(size, n)
-  let w = write_all(fd_of(f), p, t)
-  if ult(w, t) {
-    rt.mem_store(f, F_ERR, 1, 4)
-  }
-  if size > 0 { w / size } else { 0 }
-}
-
-pub fn fputs(s: Int, f: Int) -> Int {
-  let n = libcstr.strlen(s)
-  if fwrite(s, 1, n, f) == n { 0 } else { -1 }
-}
-
-pub fn fputc(c: Int, f: Int) -> Int {
-  let b = libcmem.malloc(16)
-  if b == 0 {
-    return -1
-  }
-  rt.mem_store(b, 0, c, 1)
-  let w = fwrite(b, 1, 1, f)
-  libcmem.free(b)
-  if w == 1 { c & 255 } else { -1 }
-}
-
-pub fn puts(s: Int) -> Int {
-  let _p = fputs(s, std_file(1))
-  fputc(10, std_file(1))
-}
-
-pub fn ferror(f: Int) -> Int { rt.mem_load(f, F_ERR, 4) }
-
 /// fopen(path, mode): r, w, and a, each with an optional +.
 pub fn fopen(path: Int, mode: Int) -> Int {
   var flags = O_RDONLY
@@ -224,61 +166,8 @@ pub fn fopen(path: Int, mode: Int) -> Int {
   f
 }
 
-pub fn fread(p: Int, size: Int, n: Int, f: Int) -> Int {
-  let t = mulw(size, n)
-  var off = 0
-  while ult(off, t) {
-    let r = sys(nr(63, 0), fd_of(f), addw(p, off), subw(t, off))
-    if r == 0 - EINTR {
-      continue
-    }
-    if r < 0 {
-      let _e = libcsys.ret(r)
-      rt.mem_store(f, F_ERR, 1, 4)
-      break
-    }
-    if r == 0 {
-      break
-    }
-    off = addw(off, r)
-  }
-  if size > 0 { off / size } else { 0 }
-}
-
-pub fn fclose(f: Int) -> Int {
-  let r = sys(nr(57, 3), fd_of(f), 0, 0)
-  if rt.mem_load(f, F_HEAP, 8) != 0 {
-    libcmem.free(f)
-  }
-  libcsys.ret(r)
-}
-
 // ---------------------------------------------------------------------------
 // Directories
-
-/// O_DIRECTORY, which differs between arm64 and x86_64.
-fn o_directory() -> Int {
-  match target.arch {
-    TargetArch.Arm64 => 16384
-    TargetArch.Amd64 | TargetArch.Wasm32 => 65536
-  }
-}
-
-pub fn opendir(p: Int) -> Int {
-  let fd = libcsys.ret(rt.sys6(nr(56, 257), AT_FDCWD, p, O_RDONLY | o_directory() | O_CLOEXEC, 0, 0, 0))
-  if fd < 0 {
-    return 0
-  }
-  let d = libcmem.malloc(D_BUF + DIR_BUF)
-  if d == 0 {
-    let _c = sys(nr(57, 3), fd, 0, 0)
-    return 0
-  }
-  rt.mem_store(d, D_FD, fd, 8)
-  rt.mem_store(d, D_POS, 0, 8)
-  rt.mem_store(d, D_LEN, 0, 8)
-  d
-}
 
 /// readdir(d): the next entry, or 0 at the end (errno set on an error).
 pub fn readdir(d: Int) -> Int {
@@ -300,8 +189,3 @@ pub fn readdir(d: Int) -> Int {
   e
 }
 
-pub fn closedir(d: Int) -> Int {
-  let r = libcsys.ret(sys(nr(57, 3), rt.mem_load(d, D_FD, 8), 0, 0))
-  libcmem.free(d)
-  r
-}

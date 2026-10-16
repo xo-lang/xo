@@ -11,10 +11,6 @@ use native/llrt/linux
 use native/llrt/obj
 use native/rt
 
-const FUTEX_WAIT_PRIVATE: Int = 128
-const FUTEX_WAKE_PRIVATE: Int = 129
-const EBUSY: Int = 16
-
 // ---------------------------------------------------------------------------
 // The clock
 
@@ -26,64 +22,6 @@ pub fn clock_gettime(id: Int, ts: Int) -> Int { linux.clock_gettime(id, ts) }
 // Locks over futex: a mutex is the first word of a pthread_mutex_t (0
 // free, 1 held, 2 held with waiters: Drepper's mutex), the futex its low
 // 32 bits; a once is the 32 bit pthread_once_t (0, 1 running, 2 done).
-
-/// pthread_mutex_lock(m): 0.
-pub fn mutex_lock(m: Int) -> Int {
-  if rt.slot_cas[Int](m, 0, 0, 1, 1) {
-    return 0
-  }
-  var c = rt.slot_load[Int](m, 0, 0)
-  if c != 2 {
-    c = rt.slot_swap[Int](m, 0, 2, 1)
-  }
-  while c != 0 {
-    linux.futex(m, FUTEX_WAIT_PRIVATE, 2, 0)
-    c = rt.slot_swap[Int](m, 0, 2, 1)
-  }
-  0
-}
-
-/// pthread_mutex_unlock(m): 0.
-pub fn mutex_unlock(m: Int) -> Int {
-  if rt.slot_swap[Int](m, 0, 0, 2) == 2 {
-    linux.futex(m, FUTEX_WAKE_PRIVATE, 1, 0)
-  }
-  0
-}
-
-/// pthread_mutex_trylock(m): 0, or EBUSY.
-pub fn mutex_trylock(m: Int) -> Int {
-  if rt.slot_cas[Int](m, 0, 0, 1, 1) { 0 } else { EBUSY }
-}
-
-/// pthread_once(w, f): runs the C function f once per once word w; a
-/// caller that finds it running waits for it. The word is 32 bits (no
-/// 64 bit atomic fits it): its 0 to 1 step is made under the process's
-/// once lock (word 1 of rt.sys_words), its 1 to 2 step by the runner
-/// alone, after a release fence; readers load it and fence.
-pub fn once_run(w: Int, f: Int) -> Int {
-  if rt.mem_load(w, 0, 4) == 2 {
-    rt.fence(1)
-    return 0
-  }
-  let l = rt.sys_words() + 8
-  mutex_lock(l)
-  if rt.mem_load(w, 0, 4) == 0 {
-    rt.mem_store(w, 0, 1, 4)
-    mutex_unlock(l)
-    rt.call_c2(f, 0, 0)
-    rt.fence(2)
-    rt.mem_store(w, 0, 2, 4)
-    linux.futex(w, FUTEX_WAKE_PRIVATE, 2147483647, 0)
-    return 0
-  }
-  mutex_unlock(l)
-  while rt.mem_load(w, 0, 4) == 1 {
-    linux.futex(w, FUTEX_WAIT_PRIVATE, 1, 0)
-  }
-  rt.fence(1)
-  0
-}
 
 // ---------------------------------------------------------------------------
 // Signals: the C library's struct sigaction (handler at 0, the mask's

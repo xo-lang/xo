@@ -50,6 +50,11 @@ Docker, the rest was already gone; so the runtime C is xo_rt.c alone,
 
 ### Runtime C: 0 (2026-10-16)
 
+The XO_NOLIBC C library (Xo, cabi_libc.xo) keeps only what such a build
+calls: 45 of 113 exports, plus trunc, floor, ceil, round and fmod
+(libcmath.xo), which LLVM's code calls on linux/amd64 and for Float `%`
+and which no XO_NOLIBC build linked before (2026-10-16).
+
 Windows' on_overflow is Xo (entry.xo, decision 0234), so std/llrt/xo_rt.c
 holds no code: an empty file for the 0.15.0 seed's driver, deleted after
 seed 0.16.0 (std/llrt has only the C tests' testdata), and the driver
