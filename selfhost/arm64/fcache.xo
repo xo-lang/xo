@@ -427,7 +427,7 @@ fn aux_text(a: ssa.Aux) -> Str {
 fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
   let f = m.funcs[fi]
   var b = StrBuilder.new()
-  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch}\n")
+  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs}\n")
   b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
   var lr: List[Int] = []

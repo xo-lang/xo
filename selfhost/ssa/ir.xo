@@ -264,6 +264,12 @@ pub struct Module {
   /// the backend emits (entry_stub_arm64 and entry_stub_amd64: _start,
   /// the thread pointer, main's stack, the call of main).
   pub nolibc_start: Bool = false
+  /// A test of the arm64 emitter's spill paths: the register allocator
+  /// uses only this many caller saved and this many callee saved registers
+  /// of each class (and the
+  /// calling convention's own), so most values spill ($XO_ARM64_REGS;
+  /// 0, the default: all of them).
+  pub arm64_regs: Int = 0
   /// A Linux program with no C library (XO_NOLIBC=1): the emitters define
   /// the C library's data symbols (nolibc_data, decision 0234).
   pub nolibc: Bool = false

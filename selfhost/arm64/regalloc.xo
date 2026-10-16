@@ -467,10 +467,18 @@ fn (var g: G) regalloc() {
   }
   // by priority, highest first; the order is by register before (stable)
   let by_prio = order.sort_by(fn(v) { -prio[v] })
-  let gp_c = gp_caller()
-  let gp_e = gp_callee()
-  let fp_c = fp_caller()
-  let fp_e = fp_callee()
+  var gp_c = gp_caller()
+  var gp_e = gp_callee()
+  var fp_c = fp_caller()
+  var fp_e = fp_callee()
+  let lim = g.m.arm64_regs
+  if lim > 0 {
+    // the spill test ($XO_ARM64_REGS): few registers, most values spill
+    gp_c = gp_c[0..imin(lim, gp_c.len())]
+    fp_c = fp_c[0..imin(lim, fp_c.len())]
+    gp_e = gp_e[0..imin(lim, gp_e.len())]
+    fp_e = fp_e[0..imin(lim, fp_e.len())]
+  }
   var used_callee: List[Bool] = []
   while true {
     var occ: List[List[Rng]] = []
@@ -481,11 +489,13 @@ fn (var g: G) regalloc() {
       // the base register of the frame's far slots (emit.xo far_slots)
       occ[g.base] = [Rng{s: 0, e: 4 * g.ninst + 3}]
     }
+    // a call clobbers every caller saved register (the full sets: the
+    // spill test's shorter lists too)
     for c in calls {
-      for r in gp_c {
+      for r in gp_caller() {
         push_rng(occ, r, Rng{s: c, e: c})
       }
-      for r in fp_c {
+      for r in fp_caller() {
         push_rng(occ, r, Rng{s: c, e: c})
       }
     }
@@ -580,6 +590,7 @@ fn (var g: G) regalloc() {
     // a frame past the reach of an sp relative ldr or str: allocate again
     // with x28 kept free, for the addresses of the far slots
     if g.base != 0 || g.frame_bound(ncallee) <= MAX_FRAME {
+      g.occ_regs = occ
       break
     }
     g.base = FAR_BASE

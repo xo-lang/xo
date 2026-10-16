@@ -1366,8 +1366,14 @@ fn shift_uses(t: Str, k: Int) -> Str {
   while i < n {
     if Int(bs[i]) == 36 && i + 2 < n && Int(bs[i + 1]) == 117 && Int(bs[i + 2]) >= 48 && Int(bs[i + 2]) <= 57 {
       out.write(t[from..i])
-      out.write("$u${Int(bs[i + 2]) - 48 + k}")
-      i += 3
+      var x = 0
+      var j = i + 2
+      while j < n && Int(bs[j]) >= 48 && Int(bs[j]) <= 57 {
+        x = x * 10 + Int(bs[j]) - 48
+        j += 1
+      }
+      out.write("$u${x + k}")
+      i = j
       from = i
       continue
     }

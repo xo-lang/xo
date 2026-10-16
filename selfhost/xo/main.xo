@@ -522,7 +522,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // arm64.generate_module(cur.m, tgoos, false), timed
     let jobs = emit_jobs(os)
     // with the per-function cache (decision 0220 addendum stage B)
-    let gm = if inl { mi } else { cur.m }
+    var gm = if inl { mi } else { cur.m }
+    gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
     let (fc, fdir) = fn_cache_load(os, ctx, gm, tgoos, jobs, release)
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)

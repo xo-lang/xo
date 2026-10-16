@@ -14,6 +14,11 @@ products) has fourteen uses. Cause 2: selfhost/macho's encoder only
 knows the instructions someone added to it; adc and adcs were new
 (0a45b2b1 added them, with sbc and sbcs).
 
+Update (2026-10-16): templates read operand numbers of any length now
+(emit.xo operand_num, opt.xo shift_uses), so Cause 1 is gone; the
+cut below stays until adc_chain is switched back on
+(arm64-template-scratch-reuse.md).
+
 Fix: selfhost/arm64 calls.xo adc_chain cut a chain at five pairs (chains are now off: gotchas/arm64-template-scratch-reuse.md)
 (four after a `cmp #1`), the next instruction taking its carry in from
 the previous one's cset. A new instruction an emitter writes goes into

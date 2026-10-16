@@ -366,3 +366,44 @@ func TestLinuxEmit(t *testing.T) {
 // and share probe options of the Go build package) went with decision
 // 0215; selfhost/arm64 has its own Xo tests (TestSelfhostArm64 compares
 // its assembly with the recording).
+
+// TestGoldenRunSpill builds golden programs whose code has long straight
+// blocks, multi-operand templates (the adc chains of cpu_prims and P-256,
+// add_with_flag's adds and cset), and faults with the register allocator
+// limited to a few registers (XO_ARM64_REGS), so most operands spill:
+// every template must still get a distinct register for each spilled
+// operand (selfhost/arm64 emit.xo scratch_reg; 2026-10-16, before which
+// the fourth spilled use, or a second spilled result, shared a scratch
+// register with no error).
+func TestGoldenRunSpill(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	names := []string{"cpu_prims", "tls_nistec", "crypto_prims", "overflow_add", "neg_overflow", "fault_unwind", "conc_scopes", "json_text", "maps", "closures"}
+	for _, regs := range []string{"2", "4"} {
+		for _, name := range names {
+			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
+			if _, err := os.Stat(dir); err != nil {
+				continue
+			}
+			regs, dir := regs, dir
+			t.Run(regs+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_ARM64_REGS=" + regs, "XO_BACKEND_CACHE=off"}})
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(want) != got.String() {
+					t.Errorf("output differs from want.txt with XO_ARM64_REGS=%s\n--- want\n%s\n--- got\n%s", regs, want, got)
+				}
+			})
+		}
+	}
+}

@@ -242,6 +242,13 @@ struct G {
   loc: List[Loc] = []
   order: List[Int] = []
   ninst: Int = 0
+  /// The ranges each physical register holds after allocation (regalloc's
+  /// occupancy), and the position of the instruction being emitted: the
+  /// emitter finds registers free at an instruction for the reloads and
+  /// results of a template with more spilled operands than scratch
+  /// registers (emit_plain).
+  occ_regs: List[List[Rng]] = []
+  pos: Int = -1
   slots: Int = 0
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0

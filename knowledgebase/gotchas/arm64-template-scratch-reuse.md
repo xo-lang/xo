@@ -2,6 +2,8 @@
 
 Status: Observed (2026-10-16, decision 0231's addendum, adc chains). A
 latent miscompile: found by reading the emitter, not by a wrong result.
+Fixed in the emitter the same day (the second Fix below); adc_chain can
+be switched back on.
 
 Symptom: none yet seen; the risk is a wrong value with no error. An
 instruction template with many operands (selfhost/arm64 calls.xo
@@ -29,3 +31,19 @@ internal/arm64 TestNoSharedScratchReload scans the arm64 assembly of
 test/codegen/intrinsics and bench/perf/tls's client for two reloads into
 x15 with only loads between, and for two spilled definitions stored from
 x16 in a row.
+
+Fix (the emitter, 2026-10-16): emit.xo scratch_reg gives every spilled operand of one instruction
+its own register: the three scratch registers, then a caller saved
+register no value holds at that instruction (regalloc keeps its final
+occupancy in G.occ_regs; the emitter sets G.pos per instruction), then a
+callee saved register the prologue saves when the block runs with the
+frame. If none is left the build fails (`arm64: no free register for a
+spilled operand in FN`) instead of sharing one. Definitions written
+after every use is read reuse the uses' registers; an `early`
+template's definitions avoid them.
+
+Test: `XO_ARM64_REGS=N` (test only) gives the allocator N caller saved
+and N callee saved registers per class, so most values spill;
+internal/arm64 TestGoldenRunSpill runs the adc chain, P-256, crypto,
+overflow, fault, concurrency, json, map, and closure goldens at N=2 and
+N=4. Run a new multi-operand template through it.

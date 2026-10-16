@@ -245,7 +245,9 @@ fn (var g: G) emit() {
       if g.ended {
         break // past a tail call
       }
+      g.pos = g.blocks[mb].start + 4 * k
       g.emit_inst(b, inst, next)
+      g.pos = -1
       if k == 0 && head {
         b.push("${g.label(mb)}_c:\n") // past the check (rotate_jump)
       }
@@ -814,13 +816,67 @@ fn (g: G) use_reg(var b: List[Str], v: Int, k: Int) -> Str {
   reg_name(r, false)
 }
 
+/// The register for the n-th reload or spilled result (of class fp) of
+/// the instruction being emitted: the scratch registers first, then a
+/// caller saved register no value holds at the instruction (not a
+/// callee saved one: a shrink wrapped block runs before they are saved),
+/// not one in taken (2026-10-16: past three,
+/// they all took the last scratch register, and a template with four
+/// spilled operands, such as a long adc chain, read a wrong value).
+fn (g: G) scratch_reg(fp: Bool, n: Int, taken: List[Int]) -> Int {
+  if n < 3 {
+    return if fp { fp_scratch(n) } else { gp_scratch(n) }
+  }
+  if g.pos >= 0 && !g.occ_regs.is_empty() {
+    let span = [Rng{s: g.pos, e: g.pos + 3}]
+    let pool = if fp { fp_caller() } else { gp_caller() }
+    for r in pool {
+      if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() {
+        continue
+      }
+      if !overlaps_sorted(g.occ_regs[r], span) {
+        return r
+      }
+    }
+    // then a callee saved register the prologue saves, in a block that
+    // runs with the frame
+    if !(g.shrink && g.fl[g.cur]) {
+      for r in g.saved {
+        if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() || r == g.base {
+          continue
+        }
+        if !overlaps_sorted(g.occ_regs[r], span) {
+          return r
+        }
+      }
+    }
+  }
+  fault("arm64: no free register for a spilled operand in ${g.f.name}: one instruction with ${taken.len()} registers and more spilled operands than free registers")
+}
+
+/// The operand number of a template's $uN or $dN whose digits start at
+/// i, and the index past them (any number of digits: a template may name
+/// more than ten operands).
+fn operand_num(tb: Bytes, i: Int) -> (Int, Int) {
+  var k = 0
+  var j = i
+  while j < tb.len() && Int(tb[j]) >= 48 && Int(tb[j]) <= 57 {
+    k = k * 10 + Int(tb[j]) - 48
+    j += 1
+  }
+  (k, j)
+}
+
 /// Expands a template.
 fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   let t = inst.text
   let tb = t.bytes()
   let tn = tb.len()
   // reload the spilled uses the template names
-  var use_reg: List[Int] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+  var use_reg: List[Int] = List.with_capacity(imax(inst.us.len(), 10))
+  for _ in 0..imax(inst.us.len(), 10) {
+    use_reg.push(-1)
+  }
   var ngp = 0
   var nfp = 0
   var i = 0
@@ -834,7 +890,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       j += 1
     }
     if j + 1 < tn && tb[j] == 'u' {
-      let k = Int(tb[j + 1]) - 48
+      let (k, _) = operand_num(tb, j + 1)
       if use_reg[k] == -1 {
         let v = inst.us[k]
         if v == 0 {
@@ -846,10 +902,10 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
           } else {
             var r = 0
             if g.fp[v] {
-              r = fp_scratch(nfp)
+              r = g.scratch_reg(true, nfp, use_reg)
               nfp += 1
             } else {
-              r = gp_scratch(ngp)
+              r = g.scratch_reg(false, ngp, use_reg)
               ngp += 1
             }
             b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
@@ -860,6 +916,28 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     }
     i += 1
   }
+  // the spilled definitions: each its own register (scratch_reg). A
+  // template that writes its definitions after reading every use takes
+  // them from the first scratch register on (the uses' are free again);
+  // an early one (a definition written while the uses are read: decision
+  // 0200's cas templates, the adc chains) after the uses', and none of
+  // theirs
+  var taken: List[Int] = []
+  for d in inst.defs {
+    let (l, ok) = g.vloc(d)
+    if ok && l.reg >= 0 {
+      taken.push(l.reg)
+    }
+  }
+  if inst.early {
+    for r in use_reg {
+      if r >= 0 {
+        taken.push(r)
+      }
+    }
+  }
+  var dgp = if inst.early { ngp } else { 0 }
+  var dfp = if inst.early { nfp } else { 0 }
   var def_reg: List[Int] = []
   var stores: List[Str] = []
   for d in inst.defs {
@@ -868,21 +946,15 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       def_reg.push(l.reg)
       continue
     }
-    var r = if g.fp[d] { fp_scratch(0) } else { gp_scratch(0) }
-    if inst.early {
-      // the definition is written while the uses are read: a scratch
-      // register no reloaded use took (decision 0200's cas templates)
-      let n = if g.fp[d] { nfp } else { ngp }
-      if n < 3 && g.fp[d] {
-        r = fp_scratch(nfp)
-        nfp += 1
-      } else if n < 3 {
-        r = gp_scratch(ngp)
-        ngp += 1
-      } else if inst.keep {
-        fault("arm64: no scratch register for the spilled result of `${t}`")
-      }
+    var r = 0
+    if g.fp[d] {
+      r = g.scratch_reg(true, dfp, taken)
+      dfp += 1
+    } else {
+      r = g.scratch_reg(false, dgp, taken)
+      dgp += 1
     }
+    taken.push(r)
     def_reg.push(r)
     if ok {
       stores.push("\tstr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
@@ -921,13 +993,13 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       w = true
       j += 1
     }
-    let k = Int(tb[j + 1]) - 48
+    let (k, end) = operand_num(tb, j + 1)
     if tb[j] == 'u' {
       out.write(reg_name(use_reg[k], w))
     } else {
       out.write(reg_name(def_reg[k], w))
     }
-    i = j + 2
+    i = end
     from = i
   }
   out.write(t[from..tn])

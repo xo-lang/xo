@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: every spilled operand of one instruction gets its own register.
+  Before, a template's fourth spilled use was reloaded into the same
+  scratch register as its third, and two spilled definitions both went
+  to x16 (add_with_flag's adds and cset, long adc chains): a silent
+  wrong value. emit.xo now takes x16, x17, x15, then a register free at
+  that instruction, and fails the build when none is left. Templates
+  name any number of operands ($u10 and up). `XO_ARM64_REGS=N` (test
+  only) limits the allocator so most values spill; TestGoldenRunSpill.
+
 - Tests: internal/testtmp Lifeline: a long-running native child a Go test
   starts (the HTTP parse and fuzz servers, the TLS, TLS matrix, H2 and
   TLS server diff peers, TestGoldenASan's goldens, cmd/xo's notes
