@@ -1,8 +1,8 @@
 // --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
 // links the program's objects (assembled by selfhost/macho; no C runtime
-// since decision 0234, so no pack's rt.o), and the Security and
-// CoreFoundation frameworks when the program calls them (framework_args),
-// into a signed executable; for
+// since decision 0234, so no pack's rt.o) into a signed executable (the
+// Security framework is loaded at run time, std/native/llrt/tlscert.xo);
+// for
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/selfhost/macho
@@ -28,11 +28,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       Err(e) => return "${p}: ${e}"
     }
   }
-  var dylibs = ["/usr/lib/libSystem.B.dylib"]
-  if !framework_args(os, srcs).is_empty() {
-    dylibs.push("/System/Library/Frameworks/Security.framework/Versions/A/Security")
-    dylibs.push("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation")
-  }
+  let dylibs = ["/usr/lib/libSystem.B.dylib"]
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs}
   match macho.link(ins, opts) {
     Ok(b) => {

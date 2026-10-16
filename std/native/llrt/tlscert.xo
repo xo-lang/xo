@@ -228,57 +228,76 @@ pub fn apple_trust(_svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
   }
 }
 
+/// A function of the Security or CoreFoundation framework, found at run
+/// time: the frameworks are loaded at the first verification (dlopen of
+/// Security, which loads CoreFoundation), not linked, so a program that
+/// verifies nothing does not load them at start (about 14M instructions
+/// of its launch, bench/results/zero-c-perf-sweep-2026-10-15.md).
+fn fw(name: Str) -> Int {
+  let _h = sys_darwin.dlopen("/System/Library/Frameworks/Security.framework/Security\x00".bytes(), 9)
+  sys_darwin.dlsym(-2, "${name}\x00".bytes())
+}
+
 fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
+  let cf_release = fw("CFRelease")
   let callbacks = sys_darwin.dlsym(-2, "kCFTypeArrayCallBacks\x00".bytes())
-  let certs = sys_darwin.CFArrayCreateMutable(0, 0, callbacks)
+  if cf_release == 0 || callbacks == 0 {
+    return AppleRes{code: 10, msg: "x509: the Security framework did not load"}
+  }
+  let certs = rt.call_c4(fw("CFArrayCreateMutable"), 0, 0, callbacks, 0)
+  let data_create = fw("CFDataCreate")
+  let cert_create = fw("SecCertificateCreateWithData")
+  let append = fw("CFArrayAppendValue")
   for (i, der) in ders.indexed() {
-    let d = sys_darwin.CFDataCreate(0, raw.bytes_addr(der), der.len())
-    let sc = if d != 0 { sys_darwin.SecCertificateCreateWithData(0, d) } else { 0 }
+    let d = rt.call_c4(data_create, 0, raw.bytes_addr(der), der.len(), 0)
+    let sc = if d != 0 { rt.call_c2(cert_create, 0, d) } else { 0 }
     if d != 0 {
-      sys_darwin.CFRelease(d)
+      let _r = rt.call_c2(cf_release, d, 0)
     }
     if sc == 0 {
-      sys_darwin.CFRelease(certs)
+      let _r = rt.call_c2(cf_release, certs, 0)
       return AppleRes{code: 10, msg: if i == 0 { "invalid leaf certificate" } else { "x509: malformed certificate" }}
     }
-    sys_darwin.CFArrayAppendValue(certs, sc)
-    sys_darwin.CFRelease(sc)
+    let _a = rt.call_c2(append, certs, sc)
+    let _r = rt.call_c2(cf_release, sc, 0)
   }
-  let name = if host.len() > 0 { sys_darwin.CFStringCreateWithCString(0, "${host}\x00".bytes(), CF_UTF8) } else { 0 }
-  let pol = sys_darwin.SecPolicyCreateSSL(1, name)
+  let host_c = "${host}\x00".bytes()
+  let name = if host.len() > 0 { rt.call_c4(fw("CFStringCreateWithCString"), 0, raw.bytes_addr(host_c), CF_UTF8, 0) } else { 0 }
+  let pol = rt.call_c2(fw("SecPolicyCreateSSL"), 1, name)
   if name != 0 {
-    sys_darwin.CFRelease(name)
+    let _r = rt.call_c2(cf_release, name, 0)
   }
   let out = block(8)
   rt.mem_store(out, 0, 0, 8)
-  let st = Int(sys_darwin.SecTrustCreateWithCertificates(certs, pol, out))
-  sys_darwin.CFRelease(certs)
+  // an OSStatus: the low 32 bits
+  let st = rt.call_c4(fw("SecTrustCreateWithCertificates"), certs, pol, out, 0) & 4294967295
+  let _rc = rt.call_c2(cf_release, certs, 0)
   if pol != 0 {
-    sys_darwin.CFRelease(pol)
+    let _r = rt.call_c2(cf_release, pol, 0)
   }
   let trust = rt.mem_load(out, 0, 8)
   if st != 0 || trust == 0 {
     release(out)
-    return AppleRes{code: 10, msg: "SecTrustCreateWithCertificates error: ${st}"}
+    return AppleRes{code: 10, msg: "SecTrustCreateWithCertificates error: ${if st >= 2147483648 { st - 4294967296 } else { st }}"}
   }
   rt.mem_store(out, 0, 0, 8)
   var res = AppleRes{code: 0, msg: ""}
   // a C bool: only the low byte is the result
-  if sys_darwin.SecTrustEvaluateWithError(trust, out) & 255 == 0 {
+  if rt.call_c2(fw("SecTrustEvaluateWithError"), trust, out) & 255 == 0 {
     let err = rt.mem_load(out, 0, 8)
-    let code = if err != 0 { sys_darwin.CFErrorGetCode(err) } else { 0 }
+    let code = if err != 0 { rt.call_c2(fw("CFErrorGetCode"), err, 0) } else { 0 }
     var desc = ""
     if err != 0 {
-      let ds = sys_darwin.CFErrorCopyDescription(err)
+      let ds = rt.call_c2(fw("CFErrorCopyDescription"), err, 0)
       if ds != 0 {
         let buf = block(600)
-        if sys_darwin.CFStringGetCString(ds, buf, 600, CF_UTF8) & 255 != 0 {
+        if rt.call_c4(fw("CFStringGetCString"), ds, buf, 600, CF_UTF8) & 255 != 0 {
           desc = raw.str_at(buf, raw.cstr_len(buf))
         }
         release(buf)
-        sys_darwin.CFRelease(ds)
+        let _r = rt.call_c2(cf_release, ds, 0)
       }
-      sys_darwin.CFRelease(err)
+      let _r = rt.call_c2(cf_release, err, 0)
     }
     res = if code == ERR_EXPIRED {
       AppleRes{code: 2, msg: "x509: certificate has expired or is not yet valid: ${desc}"}
@@ -291,6 +310,6 @@ fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
     }
   }
   release(out)
-  sys_darwin.CFRelease(trust)
+  let _rt = rt.call_c2(cf_release, trust, 0)
   res
 }

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- macOS: the TLS client loads the Security framework with dlopen at its
+  first certificate verification instead of every https program linking
+  Security and CoreFoundation: an https client's launch drops from 28.5M
+  to 14.4M instructions (llvm) and 29.2M to 15.4M (arm64); verification
+  results are unchanged (badssl.com's expired, wrong host, self signed
+  and untrusted root cases). Needs the 0.17.0 seed (rt.call_c4).
 - The back-end cache (`<user cache>/xo/backend`) holds its 8 GiB cap
   under bursts of builds: entries stay protected for 2 minutes instead
   of 2 hours, and a prune runs whenever an eighth of the cap has been

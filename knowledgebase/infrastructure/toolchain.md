@@ -2280,9 +2280,13 @@ Last verified: 2026-10-11. Results:
 TLS on the native backends is Xo: std/native/llrt/tlsio.xo (client),
 tlssrv.xo (server) over tls13.xo, tls12.xo, tls13srv.xo, tls12srv.xo,
 x509.xo, x509verify.xo, nistec.xo, mlkem.xo and the other crypto modules.
-Nothing is compiled or cached for it; on macOS a program whose TLS client
-verifies the system's roots links the Security and CoreFoundation
-frameworks (selfhost/xo link.xo framework_args). Mbed TLS and
+Nothing is compiled or cached for it; on macOS a TLS client loads the
+Security framework (and with it CoreFoundation) with dlopen at its first
+verification of the system's roots and calls it through dlsym and
+rt.call_c2/rt.call_c4 (std/native/llrt/tlscert.xo; since 2026-10-16 no
+program links the frameworks, which cost about 14M instructions of every
+https client's launch). Seeds before 0.17.0 lack rt.call_c4 and cannot
+build xo from these sources. Last verified: 2026-10-16. Mbed TLS and
 fiat-crypto (decisions 0105, 0134; third_party/mbedtls,
 third_party/fiat-crypto, std/llrt/xo_tls.c, the `<user cache>/xo/mbedtls`
 library cache and `$XO_TLS_CACHE`, `XO_LLRT_C=tlsio` and `tlssrv`, the

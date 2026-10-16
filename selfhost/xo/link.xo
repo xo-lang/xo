@@ -75,35 +75,6 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
 /// rejects even a weak reference to one otherwise). An object's
 /// references are read from its source beside it (.s or .ll), when there
 /// is one.
-/// The Security and CoreFoundation frameworks on macOS when a generated
-/// source calls the framework (std/native/sys_darwin.xo's declarations,
-/// tlscert.xo apple_trust: the Xo TLS client's system roots, decision
-/// 0202).
-fn framework_args(os: Os, srcs: List[Str]) -> List[Str] {
-  // made at run time: a literal would be in xo1's own assembly (whose
-  // link would then take the frameworks)
-  let mark = ["SecTrust", "EvaluateWithError"].join("")
-  for s in srcs {
-    var paths = [s]
-    if s.ends_with(".o") {
-      let base = s.trim_suffix(".o")
-      paths = ["${base}.s", "${base}.ll"]
-    }
-    for p in paths {
-      if !(p.ends_with(".s") || p.ends_with(".ll")) {
-        continue
-      }
-      match os.fs.read_text(p) {
-        Ok(t) => if t.contains(mark) {
-          return ["-framework", "Security", "-framework", "CoreFoundation"]
-        }
-        Err(_) => {}
-      }
-    }
-  }
-  []
-}
-
 fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
   var seen: Set[Str] = #{}
   var out: List[Str] = []
@@ -156,7 +127,7 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: 
   }
   args = args + srcs + libs + sys_link_args(link_os(ctx), flags)
   if link_os(ctx) == "darwin" {
-    args = args + weak_undefined_args(os, srcs) + framework_args(os, srcs)
+    args = args + weak_undefined_args(os, srcs)
   }
   match os.proc.run(cc, args) {
     Ok(r) => ((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""), r.code == 0)
