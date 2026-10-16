@@ -134,6 +134,81 @@ Reading (Xo's arm64 build):
 - rwmutex: 6.17x wall and 1.69x CPU against Rust, 8.4x wall and 11.2x
   CPU against Go: the largest gap of either suite. Filed below.
 
+## Concurrency after the scheduler work (2026-10-16, 13:44)
+
+The same run (bench/perf/conc/run.sh, 7 interleaved rounds: every
+workload in every configuration each round, so load hits them alike) on
+main aca01d8a, after the scheduler changes of the day: the FIFO next
+slot (68571558), deferred wakes with a monitor (e53d33a3) bounded by the
+waker's next runtime call, with Mutex wakes direct (1ac5e830). The
+machine was busy (four sessions): load average 17.4 at the start, 15.2
+at the end (11.1 for the table above), so CPU and Mcycles are the
+numbers to read, not wall time. Go's and Rust's own rows moved by up to
+8% between the two runs (go spawn 900 to 838 Mcycles, fanout 386 to
+397), which is the noise to allow.
+
+Median wall ms of 7 runs
+
+| Workload | go | rust | rust-ct | xo-go | xo-llvm | xo-arm64 | xo-arm64-1 | xo-llvm/xo-go | xo-arm64/xo-go | xo-arm64-1/xo-go | xo-go/rust | xo-llvm/rust | xo-arm64/rust | xo-arm64-1/rust |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| spawn | 65.9 | 46.9 | 18.1 | 232.0 | 74.0 | 72.2 | 52.3 | 0.32x | 0.31x | 0.23x | 4.95x | 1.58x | 1.54x | 1.12x |
+| fanout | 36.2 | 39.6 | 10.8 | 108.3 | 32.6 | 33.8 | 26.6 | 0.30x | 0.31x | 0.25x | 2.73x | 0.82x | 0.85x | 0.67x |
+| pingpong | 25.2 | 1138.4 | 15.6 | 63.3 | 26.2 | 27.2 | 31.4 | 0.41x | 0.43x | 0.50x | 0.06x | 0.02x | 0.02x | 0.03x |
+| mutex | 23.6 | 7.2 | 6.8 | 142.1 | 10.8 | 12.3 | 8.9 | 0.08x | 0.09x | 0.06x | 19.82x | 1.51x | 1.71x | 1.25x |
+| rwmutex | 11.7 | 16.9 | 17.0 | 389.0 | 93.6 | 93.4 | 42.8 | 0.24x | 0.24x | 0.11x | 23.00x | 5.53x | 5.52x | 2.53x |
+| pmap | 65.0 | 53.1 | 54.8 | 83.7 | 70.4 | 71.4 | 279.8 | 0.84x | 0.85x | 3.34x | 1.58x | 1.33x | 1.35x | 5.27x |
+
+Median CPU ms (user + sys) of 7 runs
+
+| Workload | go | rust | rust-ct | xo-go | xo-llvm | xo-arm64 | xo-arm64-1 | xo-llvm/xo-go | xo-arm64/xo-go | xo-arm64-1/xo-go | xo-go/rust | xo-llvm/rust | xo-arm64/rust | xo-arm64-1/rust |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| spawn | 230.3 | 137.2 | 16.4 | 632.6 | 285.7 | 280.7 | 90.7 | 0.45x | 0.44x | 0.14x | 4.61x | 2.08x | 2.05x | 0.66x |
+| fanout | 105.9 | 105.7 | 9.1 | 300.0 | 114.3 | 116.6 | 43.2 | 0.38x | 0.39x | 0.14x | 2.84x | 1.08x | 1.10x | 0.41x |
+| pingpong | 34.4 | 1389.9 | 13.8 | 85.6 | 24.3 | 25.5 | 43.8 | 0.28x | 0.30x | 0.51x | 0.06x | 0.02x | 0.02x | 0.03x |
+| mutex | 91.0 | 17.5 | 16.3 | 490.5 | 14.8 | 16.2 | 8.3 | 0.03x | 0.03x | 0.02x | 28.08x | 0.85x | 0.92x | 0.47x |
+| rwmutex | 18.2 | 118.8 | 120.9 | 1633.2 | 156.8 | 156.8 | 49.1 | 0.10x | 0.10x | 0.03x | 13.75x | 1.32x | 1.32x | 0.41x |
+| pmap | 558.5 | 455.4 | 451.6 | 727.2 | 615.4 | 627.2 | 547.1 | 0.85x | 0.86x | 0.75x | 1.60x | 1.35x | 1.38x | 1.20x |
+
+Median Mcycles of 7 runs
+
+| Workload | go | rust | rust-ct | xo-go | xo-llvm | xo-arm64 | xo-arm64-1 | xo-llvm/xo-go | xo-arm64/xo-go | xo-arm64-1/xo-go | xo-go/rust | xo-llvm/rust | xo-arm64/rust | xo-arm64-1/rust |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| spawn | 837.8 | 504.1 | 57.5 | 2387.7 | 1032.3 | 1005.4 | 275.6 | 0.43x | 0.42x | 0.12x | 4.74x | 2.05x | 1.99x | 0.55x |
+| fanout | 396.9 | 387.7 | 29.2 | 1162.8 | 418.2 | 416.2 | 163.6 | 0.36x | 0.36x | 0.14x | 3.00x | 1.08x | 1.07x | 0.42x |
+| pingpong | 125.9 | 5166.8 | 47.1 | 323.9 | 88.2 | 93.2 | 162.4 | 0.27x | 0.29x | 0.50x | 0.06x | 0.02x | 0.02x | 0.03x |
+| mutex | 340.3 | 58.9 | 56.7 | 1837.7 | 48.8 | 54.5 | 26.0 | 0.03x | 0.03x | 0.01x | 31.19x | 0.83x | 0.93x | 0.44x |
+| rwmutex | 62.6 | 412.3 | 423.1 | 6190.5 | 584.2 | 586.4 | 176.7 | 0.09x | 0.09x | 0.03x | 15.02x | 1.42x | 1.42x | 0.43x |
+| pmap | 1964.2 | 1609.9 | 1602.2 | 2561.4 | 2150.4 | 2193.4 | 2117.4 | 0.84x | 0.86x | 0.83x | 1.59x | 1.34x | 1.36x | 1.32x |
+
+xo-arm64 against the table above, Mcycles (CPU):
+
+| Workload | before | after | after/before | xo-arm64/go after | xo-arm64/rust after |
+|---|---|---|---|---|---|
+| spawn | 1084.2 | 1005.4 | 0.93x | 1.20x | 1.99x |
+| fanout | 404.7 | 416.2 | 1.03x | 1.05x | 1.07x |
+| pingpong | 187.6 | 93.2 | 0.50x | 0.74x | 0.02x (rust-ct 1.98x) |
+| mutex | 71.1 | 54.5 | 0.77x | 0.16x | 0.93x |
+| rwmutex | 757.1 | 586.4 | 0.77x | 9.37x | 1.42x |
+| pmap | 2129.7 | 2193.4 | 1.03x | 1.12x | 1.36x |
+
+Reading:
+
+- pingpong halves (0.50x cycles, 0.51x CPU ms): a channel hand off
+  between two tasks now runs the woken task on the waker's worker
+  (deferred wake) instead of waking a second worker per message. Xo's
+  arm64 build now takes 0.74x Go's cycles and 0.74x its CPU; it was
+  1.54x Go's cycles.
+- mutex 0.77x and rwmutex 0.77x cycles: fewer idle worker wakes per
+  hand off. rwmutex stays the largest gap (9.4x Go's cycles, 8.0x its
+  wall time): a known gap, decision 0077's addendum (its cost is the
+  migration of granted readers between workers, not the lock word or
+  the futex calls).
+- spawn 0.93x, fanout and pmap within noise (1.03x).
+- On one worker (xo-arm64-1 against rust-ct, cycles): spawn 4.79x,
+  fanout 5.60x, pingpong 3.45x (were 5.88x, 5.08x, 3.49x): task
+  creation and join still cost Xo several times tokio's current-thread
+  scheduler.
+
 ## rwmutex: contention, not work (filed)
 
 Linux, callgrind (valgrind runs one thread at a time): 101.5M
