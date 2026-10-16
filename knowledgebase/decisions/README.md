@@ -238,3 +238,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0244-tls-linked-only-when-configured.md](0244-tls-linked-only-when-configured.md): Proposed: TLS and HTTP/2 server code reachable only from Server.with_tls (a table of TLS operations it installs); json_server measured 2,664 to 1,261 KiB stripped.
 - [0245-profiler-in-binaries.md](0245-profiler-in-binaries.md): Proposed: the profiler's 158 KiB in every binary; recommended: sample in the binary (about 10 KiB), symbolize with `xo prof`.
 - [0246-fold-target-and-test-mode.md](0246-fold-target-and-test-mode.md): Proposed (stub): only the arm the build's target (and test mode) takes is lowered.
+- [0247-lazy-runtime-bodies.md](0247-lazy-runtime-bodies.md): Proposed (stub): a native build checks the runtime's function bodies as the SSA builder builds them; TestStdChecks checks them all
