@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: `a & ~b`, `a | ~b`, and `a ^ ~b` select bic, orn, and eon (the
+  complement's mvn is then dead). sha3.keccak 1098 to 998 instructions
+  (100 mvn gone; its stack spills unchanged, 216 loads and 75 stores);
+  an ML-KEM-768 loop (21 iterations) 0.976 of the instructions on the
+  Mac. arm64 sweep, 151 workloads: 3 faster (p384 0.997, ed25519 0.996,
+  text replace 0.996), text quote 1.002 with no function of it changed.
+
 - arm64 darwin: thread locals without the xo_tlocal_get call. The TLV
   descriptor's thunk is called inline (x0 and lr saved around it; it
   keeps every other register), and its base is reused in the block

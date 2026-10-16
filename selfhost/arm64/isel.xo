@@ -852,6 +852,24 @@ fn (var g: G) instr1(v: Int) {
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${n}", [w])])
         return
       }
+      // an operand that is a complement: bic, orn, eon take it inverted
+      // (2026-10-16: Keccak's chi was mvn and and, 100 of each a call);
+      // the mvn, with no other use, is then dead
+      for j in [1, 0] {
+        let c = x.args[j]
+        let cx = g.f.values[c]
+        if cx.op == ssa.Op.Not && g.kind(cx.ty) != ssa.Kind.Bool {
+          let inv = match x.op {
+            And => "bic"
+            Or => "orn"
+            _ => "eon"
+          }
+          let a = g.word(x.args[1 - j])
+          let b = g.word(cx.args[0])
+          g.set(v, [g.def1(false, "${inv} $d0, $u0, $u1", [a, b])])
+          return
+        }
+      }
       let a = g.word(x.args[0])
       let b = g.word(x.args[1])
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
