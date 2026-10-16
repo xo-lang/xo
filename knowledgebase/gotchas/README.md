@@ -589,3 +589,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [lldb-needs-aranges-and-segments.md](lldb-needs-aranges-and-segments.md): Observed: lldb did not map addresses to units in a dSYM without .debug_aranges and the executable's segment headers.
 - [dwarf-verify-tail-merged-strings.md](dwarf-verify-tail-merged-strings.md): Observed: llvm-dwarfdump --verify flags tail merged .debug_str entries (producer "xo" inside "main.xo"); harmless.
 - [llvm-inline-into-function-without-subprogram.md](llvm-inline-into-function-without-subprogram.md): Observed: main inlined into xo_entry, which had no DISubprogram, lost its lines.
+- [xcode-ld-vs-clt-sdk27.md](xcode-ld-vs-clt-sdk27.md): Observed 2026-10-16: with Xcode 26.6 selected, clang links with its ld against the CLT macOS 27 SDK and fails ("unknown architecture arm64e.x1", tapi malformed); DEVELOPER_DIR=/Library/Developer/CommandLineTools, or xcode-select -s it.
