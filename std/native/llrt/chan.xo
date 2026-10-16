@@ -146,7 +146,18 @@ pub fn new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int {
 }
 
 /// The ring's slot i past its head.
-fn slot(c: Int, i: Int) -> Int { ld(c, CH_BUF) + 8 * ((ld(c, CH_HEAD) + i) % ld(c, CH_CAP)) }
+/// Wrapping arithmetic, no modulo: head < cap and i <= cap, so one
+/// subtraction wraps (with send and recv's inline cancellation check,
+/// 1.19x to 1.12x the C's instructions on a buffered send and recv,
+/// bench/results/zero-c-perf-sweep-2026-10-15.md).
+fn slot(c: Int, i: Int) -> Int {
+  var k = rt.int_wrap(0, ld(c, CH_HEAD), i)
+  let cap = ld(c, CH_CAP)
+  if k >= cap {
+    k = rt.int_wrap(1, k, cap)
+  }
+  rt.int_wrap(0, ld(c, CH_BUF), rt.int_wrap(3, k, 3))
+}
 
 /// Sends l without blocking (the lock held, c open): whether it did.
 pub fn try_send_locked(c: Int, l: Int) -> Bool {
@@ -170,8 +181,12 @@ pub fn try_send_locked(c: Int, l: Int) -> Bool {
 pub fn try_recv_locked(c: Int) -> (Bool, Int) {
   if ld(c, CH_LEN) > 0 {
     let out = ld(slot(c, 0), 0)
-    st(c, CH_HEAD, (ld(c, CH_HEAD) + 1) % ld(c, CH_CAP))
-    st(c, CH_LEN, ld(c, CH_LEN) - 1)
+    var h = rt.int_wrap(0, ld(c, CH_HEAD), 1)
+    if h >= ld(c, CH_CAP) {
+      h = 0
+    }
+    st(c, CH_HEAD, h)
+    st(c, CH_LEN, rt.int_wrap(1, ld(c, CH_LEN), 1))
     let s = cq_take(c + CH_SENDQ)
     if s != 0 {
       let n = ld(c, CH_LEN)
@@ -212,7 +227,9 @@ fn entry(x: Int, l: Int) -> Int {
 /// on a closed channel faults at the ln bytes at lp.
 pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
   let x = ctx.cur()
-  if tasks.canceled(x) {
+  // tasks.canceled inline: a call per send cost 15 instructions
+  if budget.canceled(x) {
+    st4(x, ctx.C_UNWINDING, 1)
     release(c, l)
     return
   }
@@ -266,7 +283,8 @@ pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
 /// cancellation point that unwinds.
 pub fn recv(c: Int) -> Int {
   let x = ctx.cur()
-  if tasks.canceled(x) {
+  if budget.canceled(x) {
+    st4(x, ctx.C_UNWINDING, 1)
     return tasks.empty_list()
   }
   pool.lock(c + CH_MU)

@@ -947,3 +947,25 @@ requests per second 61k and 63k (h2), 86k to 92k (http1) on both sides.
 | tls x25519only | arm64 | 1060.54M | 2621.83M | **2.472** | 0.2% | 0.2% | wall 130.0 / 230.0 ms |
 | tls x25519only | llvm | 1056.69M | 2130.83M | **2.017** | 0.3% | 0.1% | wall 130.0 / 190.0 ms |
 
+
+### Follow up: the arm64 scheduler rows (2026-10-16)
+
+- 15 interleaved reps under the heavy lock (base dd33dd13, tip 40c1d729):
+  conc spawn is 0.97 (default threads) to 1.04 (XO_THREADS=1): the
+  sweep's 1.105 was spinning noise. pingpong (1.06 to 1.22) and sysio
+  chan (1.05 to 1.20) stay slower; the multi-threaded rows move by 20%
+  between runs of the same binary (the base 274M to 340M), so they
+  cannot resolve a few percent.
+- The cost is in the channel operations, not the parks: a buffered
+  send and recv on one task (2M iterations, no parking) is 867M
+  instructions on the base's C channels and 1,029M on chan.xo (1.19x).
+  chan.xo with wrapping arithmetic in its ring (no overflow or modulo
+  checks) and send and recv's cancellation check inline (budget.canceled,
+  not a call of tasks.canceled) runs it in 969M (1.12x).
+- mach_absolute_time is not new: the base's pool.xo already read
+  sysio.mono_ns on every wake (pool_push's W_NEXT_AT) and in
+  steal_round; only its share of the profile moved.
+- The rest (about 50 instructions per send and recv) the sampling
+  profiler places in obj_rl_grow_n and ctx_unwinding, whose code is
+  unchanged from the base (the same instructions, the same calls in
+  main); it needs an instruction level profile.
