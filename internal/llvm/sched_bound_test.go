@@ -24,7 +24,8 @@ import (
 // the monitor the task waits the whole 200 ms; with it, about 2 ms on an
 // idle machine, but its 1 ms ticks overslept by tens of ms on a Mac at
 // load 25 (2026-10-16), so the bound tells broken from working, not fast
-// from slow.
+// from slow. At XO_THREADS=1 (spawnbusy and handoff) a root's deferral
+// waits for the monitor too, with no 50 us wake: the same bound holds.
 func TestDeferredWakeBound(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs two programs per native backend")
@@ -35,8 +36,9 @@ func TestDeferredWakeBound(t *testing.T) {
 	}
 	worst := regexp.MustCompile(`worst (\d+) us \(busy\)`)
 	for _, be := range backends {
-		for _, prog := range []string{"handoff", "spawnbusy", "mutexbusy"} {
-			t.Run(be+"/"+prog, func(t *testing.T) {
+		for _, run := range []struct{ prog, threads string }{{"handoff", "4"}, {"spawnbusy", "4"}, {"mutexbusy", "4"}, {"handoff", "1"}, {"spawnbusy", "1"}} {
+			prog := run.prog
+			t.Run(be+"/"+prog+"/"+run.threads, func(t *testing.T) {
 				if be == xotool.BackendLLVM {
 					if _, err := xotool.Clang(); err != nil {
 						t.Skip("clang not found")
@@ -47,7 +49,7 @@ func TestDeferredWakeBound(t *testing.T) {
 					t.Fatalf("build: %v %v", err, res)
 				}
 				cmd := exec.Command(res.Binaries[xotool.Host()])
-				cmd.Env = append(os.Environ(), "XO_THREADS=4")
+				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads)
 				out, err := runCombined(cmd, 2*time.Minute)
 				if err != nil {
 					t.Fatalf("run: %v\n%s", err, out)
@@ -109,5 +111,42 @@ func TestDeferWakeOff(t *testing.T) {
 	}
 	if n := run("pingpong", "XO_DEFER_WAKE=0"); n != 0 {
 		t.Errorf("XO_DEFER_WAKE=0: %d wakes deferred", n)
+	}
+}
+
+// TestOneThreadSpawnJoin: at XO_THREADS=1 main's spawns defer (decision
+// 0077's addendum) and its join runs them: testdata/sched/spawnjoin's
+// 5,000 spawns in 50 scopes wake the worker at most a few times
+// (XO_RTSTATS wake), where every spawn woke it before (2026-10-16: 188
+// wakes in 200,000 spawns, each a futex call of about 70 us on macOS).
+func TestOneThreadSpawnJoin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	be := xotool.BackendLLVM
+	if runtime.GOARCH == "arm64" {
+		be = xotool.BackendArm64
+	} else if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "spawnjoin")}, xotool.Options{Backend: be})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_RTSTATS=1")
+	out, err := runCombined(cmd, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	if !regexp.MustCompile(`spawnjoin 247500\b`).MatchString(out) {
+		t.Fatalf("output: %s", out)
+	}
+	m := regexp.MustCompile(`\bwake=(\d+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no wake count: %s", out)
+	}
+	if n, _ := strconv.Atoi(m[1]); n > 5 {
+		t.Fatalf("the worker was woken %d times for 5,000 spawns its spawner joined", n)
 	}
 }

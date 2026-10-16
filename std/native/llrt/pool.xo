@@ -79,6 +79,8 @@ const W_POOL = 2360
 const W_BATCH = 2368
 /// When this worker took a deferred wake (defer_wake), 0 for none.
 const W_DEFER_AT = 3400
+/// A root's record (poolsetup.xo W_ROOT: main's thread, not a worker).
+const W_ROOT = 2204
 /// W_DEFER_AT as a word index (the slot atomics; a constant: `W_DEFER_AT
 /// / 8` was divided at run time, 2026-10-16).
 const W_DEFER_AT_W = 425
@@ -1399,8 +1401,10 @@ pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
   // a new task goes to the spawning thread's ring (w, its record); when
   // it is the ring's only item, the spawner's own join or next park
   // likely runs it: no idle worker is woken unless the monitor finds it
-  // waiting 1 ms later (defer_wake)
-  let alone = rt.slot_load(w, 0, ACQUIRE) == rt.mem_load(w, RQ_TAIL_AT, 8)
+  // waiting 1 ms later (defer_wake). With one worker every spawn defers:
+  // the spawner's join or park runs them (as Go's GOMAXPROCS=1 and
+  // tokio's current thread runtime do), not a woken worker one by one
+  let alone = rt.mem_load(pl, P_NCPU, 8) < 2 || rt.slot_load(w, 0, ACQUIRE) == rt.mem_load(w, RQ_TAIL_AT, 8)
   rq_put(pl, w, t)
   if !(alone && defer_wake(pl, w)) {
     wakep(pl)
@@ -1493,8 +1497,9 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
 // within about 2 ms even when the waker keeps computing (no preemption).
 // It ticks every DEFER_NS while deferrals come, and after MON_IDLE_TICKS
 // ticks without one it sleeps until the next deferral wakes it: an idle
-// program has no ticks. One worker (XO_THREADS=1) defers nothing and
-// starts no monitor.
+// program has no ticks. With one worker (XO_THREADS=1) every spawn
+// defers, and a root's deferral waits for its join, its next park, or the
+// monitor's tick, with no 50 us wake (defer_wake).
 
 /// rt.static_word: the monitor's record (0: not started; 1: deferral
 /// off, defer_off, or the monitor could not start).
@@ -1513,12 +1518,13 @@ const DEFER_US = 1000
 const DEFER_CHECK_NS = 50000
 const MON_IDLE_TICKS = 10
 
-/// Defers the wake for work w just queued: whether it did (false with one
-/// worker, or without a monitor).
+/// Defers the wake for work w just queued: whether it did (false without
+/// a monitor). With one worker (XO_THREADS=1) a root's deferral is not
+/// woken when it is DEFER_CHECK_NS old: the root's join or next park runs
+/// its ring, else the monitor's tick wakes the worker (decision 0077's
+/// addendum: a spawn loop woke the one worker per task, a futex call of
+/// about 70 us each on macOS).
 fn defer_wake(p: Int, w: Int) -> Bool {
-  if rt.mem_load(p, P_NCPU, 8) < 2 {
-    return false
-  }
   let m = monitor(p)
   if m == 0 {
     return false
@@ -1527,7 +1533,7 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   if at == 0 {
     rt.mem_store(w, W_DEFER_N, 0, 8)
     rt.slot_store(w, W_DEFER_AT_W, sysio.mono_ns(), SEQ_CST)
-  } else if rt.int_wrap(1, sysio.mono_ns(), at) >= DEFER_CHECK_NS {
+  } else if !(rt.mem_load(p, P_NCPU, 8) < 2 && rt.mem_load(w, W_ROOT, 4) != 0) && rt.int_wrap(1, sysio.mono_ns(), at) >= DEFER_CHECK_NS {
     // an older deferral is due: wake now for both
     rt.slot_store(w, W_DEFER_AT_W, 0, SEQ_CST)
     return false

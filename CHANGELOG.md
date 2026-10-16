@@ -12,6 +12,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (decision 0231's addendum, owner 2026-10-16). TestSelfhostWasm: 154
   pass, 26 unsupported, 0 fail of 180 (was 148, 31, 0).
 
+- XO_THREADS=1 (decision 0077's addendum): main's spawns no longer wake
+  the one worker per task; main's join or next park runs them, else the
+  monitor's tick (about 1 ms), as Go's GOMAXPROCS=1. bench/perf/conc at
+  one thread: spawn 0.37x CPU, fanout 0.51x, pingpong 0.69x
+  (internal/llvm TestOneThreadSpawnJoin).
 - The heap profile off costs about 1% at most (decision 0238): the
   profile's armed bit is bit 1 of a thread's heap word (obj.xo ARMED),
   which the threaded allocation and free already hold, instead of a load

@@ -188,6 +188,23 @@ sessions' load, about 2x oversubscribed):
 | Mutex, deferred (rejected, not shipped) | 1.3 ms / 2.3 ms | 1.29 ms / 7.1 ms / 7.1 ms |
 | Channel, deferred, monitor only (e53d33a3) | 1.3 ms / 2.2 ms | 1.29 ms / 9.4 ms / 9.4 ms |
 | Channel, deferred, with defer_check | 1.3 ms / 2.2 ms | 1.28 ms / 2.9 ms / 2.9 ms |
+| Spawn from main at XO_THREADS=1 (one worker; spawnbusy, 5 rounds of 200 ms, load about 20) | - | worst 1.4 to 4.6 ms |
+
+XO_THREADS=1 (lead, 2026-10-16, as Go's GOMAXPROCS=1 and tokio's
+current thread runtime, which have no bound at all): every spawn
+defers, and a task main (a root) spawns starts at main's next runtime
+park or join (both run main's ring first), or at the monitor's tick
+(about 1 ms, more under load), not at the 50 us wake a multi-worker
+pool keeps. A spawn loop no longer wakes the one worker per task (a
+futex wake of a sleeping thread, about 70 us on macOS: 54% of spawn's
+CPU samples and 64% of fanout's): bench/perf/conc at XO_THREADS=1,
+spawn 0.37x CPU, fanout 0.51x, pingpong 0.69x; multi-worker rows
+unchanged. bench/perf/http at XO_THREADS=1 (5 interleaved rounds,
+medians): 109,913 rps, p50 281 us, p99 671 us against 110,312, 280 and
+660 before, within noise. Real-time programs defer nothing, as before. Tests:
+internal/llvm TestOneThreadSpawnJoin (5,000 spawns joined wake the
+worker at most 5 times; 50 before), TestDeferredWakeBound at
+XO_THREADS=1 (a computing spawner's task still starts within 100 ms).
 
 A waker that calls the runtime (sends, locks, spawns) bounds its
 deferral at about 50 us plus 16 calls; one that only computes leaves it
