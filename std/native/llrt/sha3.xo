@@ -59,31 +59,38 @@ const RCS: List[Int] = [1, 32898, -9223372036854742902, -9223372034707259392, 32
 /// 2026-10-15). A rotation left by r is rt.int_wrap(5, x, 64 - r) with
 /// the amount written out: an immediate ror on arm64.
 fn keccak(var a: List[Int]) {
-  var a0 = a[0]
-  var a1 = a[1]
-  var a2 = a[2]
-  var a3 = a[3]
-  var a4 = a[4]
-  var a5 = a[5]
-  var a6 = a[6]
-  var a7 = a[7]
-  var a8 = a[8]
-  var a9 = a[9]
-  var a10 = a[10]
-  var a11 = a[11]
-  var a12 = a[12]
-  var a13 = a[13]
-  var a14 = a[14]
-  var a15 = a[15]
-  var a16 = a[16]
-  var a17 = a[17]
-  var a18 = a[18]
-  var a19 = a[19]
-  var a20 = a[20]
-  var a21 = a[21]
-  var a22 = a[22]
-  var a23 = a[23]
-  var a24 = a[24]
+  // the lanes as raw memory at constant offsets (the arm64 backend
+  // checked each index): a write first makes a this call's own
+  if a.len() != 25 {
+    fault("sha3: a state of ${a.len()} lanes")
+  }
+  a[0] = a[0]
+  let la = rt.int_wrap(0, rt.obj_addr(a), rt.layout(2))
+  var a0 = rt.mem_load(la, 0, 8)
+  var a1 = rt.mem_load(la, 8, 8)
+  var a2 = rt.mem_load(la, 16, 8)
+  var a3 = rt.mem_load(la, 24, 8)
+  var a4 = rt.mem_load(la, 32, 8)
+  var a5 = rt.mem_load(la, 40, 8)
+  var a6 = rt.mem_load(la, 48, 8)
+  var a7 = rt.mem_load(la, 56, 8)
+  var a8 = rt.mem_load(la, 64, 8)
+  var a9 = rt.mem_load(la, 72, 8)
+  var a10 = rt.mem_load(la, 80, 8)
+  var a11 = rt.mem_load(la, 88, 8)
+  var a12 = rt.mem_load(la, 96, 8)
+  var a13 = rt.mem_load(la, 104, 8)
+  var a14 = rt.mem_load(la, 112, 8)
+  var a15 = rt.mem_load(la, 120, 8)
+  var a16 = rt.mem_load(la, 128, 8)
+  var a17 = rt.mem_load(la, 136, 8)
+  var a18 = rt.mem_load(la, 144, 8)
+  var a19 = rt.mem_load(la, 152, 8)
+  var a20 = rt.mem_load(la, 160, 8)
+  var a21 = rt.mem_load(la, 168, 8)
+  var a22 = rt.mem_load(la, 176, 8)
+  var a23 = rt.mem_load(la, 184, 8)
+  var a24 = rt.mem_load(la, 192, 8)
   var c0 = 0
   var c1 = 0
   var c2 = 0
@@ -350,31 +357,31 @@ fn keccak(var a: List[Int]) {
     a0 = a0 ^ rcs[round + 3]
     round += 4
   }
-  a[0] = a0
-  a[1] = a1
-  a[2] = a2
-  a[3] = a3
-  a[4] = a4
-  a[5] = a5
-  a[6] = a6
-  a[7] = a7
-  a[8] = a8
-  a[9] = a9
-  a[10] = a10
-  a[11] = a11
-  a[12] = a12
-  a[13] = a13
-  a[14] = a14
-  a[15] = a15
-  a[16] = a16
-  a[17] = a17
-  a[18] = a18
-  a[19] = a19
-  a[20] = a20
-  a[21] = a21
-  a[22] = a22
-  a[23] = a23
-  a[24] = a24
+  rt.mem_store(la, 0, a0, 8)
+  rt.mem_store(la, 8, a1, 8)
+  rt.mem_store(la, 16, a2, 8)
+  rt.mem_store(la, 24, a3, 8)
+  rt.mem_store(la, 32, a4, 8)
+  rt.mem_store(la, 40, a5, 8)
+  rt.mem_store(la, 48, a6, 8)
+  rt.mem_store(la, 56, a7, 8)
+  rt.mem_store(la, 64, a8, 8)
+  rt.mem_store(la, 72, a9, 8)
+  rt.mem_store(la, 80, a10, 8)
+  rt.mem_store(la, 88, a11, 8)
+  rt.mem_store(la, 96, a12, 8)
+  rt.mem_store(la, 104, a13, 8)
+  rt.mem_store(la, 112, a14, 8)
+  rt.mem_store(la, 120, a15, 8)
+  rt.mem_store(la, 128, a16, 8)
+  rt.mem_store(la, 136, a17, 8)
+  rt.mem_store(la, 144, a18, 8)
+  rt.mem_store(la, 152, a19, 8)
+  rt.mem_store(la, 160, a20, 8)
+  rt.mem_store(la, 168, a21, 8)
+  rt.mem_store(la, 176, a22, 8)
+  rt.mem_store(la, 184, a23, 8)
+  rt.mem_store(la, 192, a24, 8)
 }
 
 fn sponge(rate: Int, dsbyte: Int) -> Sponge {

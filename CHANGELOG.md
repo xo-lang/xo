@@ -13,6 +13,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   goldens as malware; now none match the Mac's rules (both linkers,
   both backends). TestEmptyListAtPageStart; TestXProtectRules with yara
   (gotchas/xprotect-false-positive-empty-list.md).
+- ML-KEM: the NTT loops on raw coefficients in byte offsets, SHAKE128
+  read a block at a time in sample_ntt, and Keccak's lanes as raw memory:
+  per CCTV iteration arm64 5.11M to 4.68M instructions, llvm 4.19M to
+  3.70M (bench/results/tls-perf-2026-10-15.md).
 - Native standard input from a FIFO on macOS sees its end of input: poll(2)
   and kqueue report nothing for a FIFO whose last writer closed, so the
   reader waited forever; stdin.xo now probes a FIFO with a read that does

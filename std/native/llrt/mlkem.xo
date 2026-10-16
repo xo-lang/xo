@@ -61,6 +61,33 @@ fn sub(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
 
 fn mul(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
 
+/// A polynomial's coefficients as raw memory, for the NTT's loops, whose
+/// every index is below N by their bounds (the arm64 backend checked each
+/// access; LLVM proved them): the address of the first of f's N words,
+/// after f has been made this function's own (unique: a write first, so
+/// the raw stores change no other list). f must have N elements.
+fn coeffs(var f: List[Int]) -> Int {
+  if f.len() != N {
+    fault("mlkem: a polynomial of ${f.len()} coefficients")
+  }
+  f[0] = f[0]
+  rt.int_wrap(0, rt.obj_addr(f), rt.layout(2))
+}
+
+/// The raw coefficients of f for reading only (f must have N elements).
+fn coeffs_read(f: List[Int]) -> Int {
+  if f.len() != N {
+    fault("mlkem: a polynomial of ${f.len()} coefficients")
+  }
+  rt.int_wrap(0, rt.obj_addr(f), rt.layout(2))
+}
+
+/// The coefficient at byte offset o of the raw coefficients p (the loops
+/// count in bytes: a load of a register offset, no index shift).
+fn ldc(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
+
+fn stc(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
+
 // The field operations are written on rt.int_wrap directly, calling no
 // other Xo function: the arm64 inliner copies a callee's body as it was
 // before its own calls were inlined, so a helper that calls a helper
@@ -155,22 +182,25 @@ fn ntt(f0: List[Int]) -> List[Int] {
   // const_once)
   let zetas = ZETAS
   var f = f0
+  let p = coeffs(f)
   var k = 1
   var len = 128
   while len >= 2 {
     var start = 0
+    let lb = 8 * len
     while start < N {
       let z = zetas[k]
       k += 1
-      var j = start
-      let end = add(start, len)
+      // byte offsets
+      var j = 8 * start
+      let end = add(j, lb)
       while j < end {
-        let jl = add(j, len)
-        let t = fmul(z, f[jl])
-        let fj = f[j]
-        f[jl] = fsub(fj, t)
-        f[j] = fadd(fj, t)
-        j = add(j, 1)
+        let jl = add(j, lb)
+        let t = fmul(z, ldc(p, jl))
+        let fj = ldc(p, j)
+        stc(p, jl, fsub(fj, t))
+        stc(p, j, fadd(fj, t))
+        j = add(j, 8)
       }
       start = add(start, add(len, len))
     }
@@ -183,29 +213,34 @@ fn ntt(f0: List[Int]) -> List[Int] {
 fn inverse_ntt(f0: List[Int]) -> List[Int] {
   let zetas = ZETAS
   var f = f0
+  let p = coeffs(f)
   var k = 127
   var len = 2
   while len <= 128 {
     var start = 0
+    let lb = 8 * len
     while start < N {
       let z = zetas[k]
       k -= 1
-      var j = start
-      let end = add(start, len)
+      // byte offsets
+      var j = 8 * start
+      let end = add(j, lb)
       while j < end {
-        let jl = add(j, len)
-        let t = f[j]
-        let u = f[jl]
-        f[j] = fadd(t, u)
-        f[jl] = freduce(mul(z, add(sub(u, t), Q)))
-        j = add(j, 1)
+        let jl = add(j, lb)
+        let t = ldc(p, j)
+        let u = ldc(p, jl)
+        stc(p, j, fadd(t, u))
+        stc(p, jl, freduce(mul(z, add(sub(u, t), Q))))
+        j = add(j, 8)
       }
       start = add(start, add(len, len))
     }
     len = len * 2
   }
-  for i in 0..N {
-    f[i] = fmul(f[i], 3303)
+  var o = 0
+  while o < 8 * N {
+    stc(p, o, fmul(ldc(p, o), 3303))
+    o = add(o, 8)
   }
   f
 }
@@ -214,16 +249,22 @@ fn inverse_ntt(f0: List[Int]) -> List[Int] {
 /// K-PKE, without a product's own list).
 fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
   let gammas = GAMMAS
-  var i = 0
-  while i < N {
-    let i1 = add(i, 1)
-    let a0 = f[i]
-    let a1 = f[i1]
-    let b0 = g[i]
-    let b1 = g[i1]
-    h[i] = fadd(h[i], freduce(add(mul(a0, b0), mul(fmul(a1, b1), gammas[rt.int_wrap(4, i, 1)]))))
-    h[i1] = fadd(h[i1], freduce(add(mul(a0, b1), mul(a1, b0))))
-    i = add(i, 2)
+  let ph = coeffs(h)
+  let pf = coeffs_read(f)
+  let pg = coeffs_read(g)
+  // byte offsets: a pair of coefficients a step, gammas[o / 16]
+  var o = 0
+  var gi = 0
+  while o < 8 * N {
+    let o1 = add(o, 8)
+    let a0 = ldc(pf, o)
+    let a1 = ldc(pf, o1)
+    let b0 = ldc(pg, o)
+    let b1 = ldc(pg, o1)
+    stc(ph, o, fadd(ldc(ph, o), freduce(add(mul(a0, b0), mul(fmul(a1, b1), gammas[gi])))))
+    stc(ph, o1, fadd(ldc(ph, o1), freduce(add(mul(a0, b1), mul(a1, b0)))))
+    o = add(o, 16)
+    gi = add(gi, 1)
   }
 }
 
@@ -231,15 +272,20 @@ fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
 // Sampling
 
 /// The NTT coefficients of A[i][j] (FIPS 203 Algorithm 7): SHAKE128 of
-/// rho || ii || jj, 12 bit candidates below q.
+/// rho || ii || jj, 12 bit candidates below q. The output is read a block
+/// (SHAKE128's rate, 168 bytes, 56 candidate pairs) at a time: one read
+/// SHAKE128's rate in bytes (FIPS 202): a multiple of 3.
+const SHAKE128_RATE = 168
+
+/// a block rather than seven of 24 bytes, the same stream.
 fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
   var s = sha3.new_shake128()
   sha3.write(s, asn1.cat([rho, byte(ii), byte(jj)]))
   var a: List[Int] = List.with_capacity(N)
   while a.len() < N {
-    let b = sha3.read(s, 24)
+    let b = sha3.read(s, SHAKE128_RATE)
     var off = 0
-    while off < 24 && a.len() < N {
+    while off < SHAKE128_RATE && a.len() < N {
       let d1 = Int(b[off]) | ((Int(b[off + 1]) & 15) << 8)
       let d2 = (Int(b[off + 1]) >> 4) | (Int(b[off + 2]) << 4)
       if d1 < Q {
