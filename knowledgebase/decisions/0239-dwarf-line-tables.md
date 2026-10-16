@@ -85,8 +85,20 @@ types and variable locations.
   an inline DILocation on every instruction of those functions.
 - Flags: on for build, run, and test; off for `xo asm`, with `-s`, and
   for `--release` unless `--debug-info`.
-- Not done: a dSYM for darwin cc links (`dsymutil PROG` by hand; the cc
-  link does not work on the development Mac, 2026-10-16), arm64
-  DW_TAG_inlined_subroutine (point 3's later part), and fault reports
-  printing file:line.
+- darwin cc links (the LLVM backend's, arm64 `--ld=cc`; 2026-10-16):
+  the driver runs `dsymutil PROG -o PROG.dSYM` after the link (link.xo
+  cc_dsym; the Command Line Tools have dsymutil), with ld64's
+  `-object_path_lto` keeping an LTO link's object in the build
+  directory so its DWARF is there to gather. No dsymutil, or a failing
+  one, leaves the program without a dSYM. 0.15 s against the 49 s link
+  of the LLVM http_stream golden. The binary cache keeps a dSYM's DWARF
+  beside its entry (ENTRY.dsym) and writes it back on a hit, for macho's
+  dSYM too, and removes a dSYM left from another link of the same path.
+  internal/arm64 TestDebugLineDarwinCC checks LLVM, --ld=cc and macho,
+  first build and cache hit: dwarfdump's line table and --verify, and
+  lldb resolving `main.xo:9`.
+- Not done: arm64 DW_TAG_inlined_subroutine (point 3's later part:
+  Xo lang 5 writes it in selfhost/arm64, Xo Lang 3 carries it through
+  selfhost/macho dsym.xo and tests it), and fault reports printing
+  file:line.
 

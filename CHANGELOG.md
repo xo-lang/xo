@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- macOS: builds linked through cc (the LLVM backend, arm64 `--ld=cc`)
+  get PROG.dSYM too: `dsymutil` runs after the link (0.15 s), and an LTO
+  link keeps its object for it, so lldb and the profiler see .xo lines
+  on every darwin build. A build from the binary cache gets its dSYM
+  back (decision 0239).
 - With 0.17.0 as the seed floor, what remained only for older compilers'
   code is gone: 42 C ABI exports nothing calls (the C runtime's, not
   the emitters' or the C test drivers'), the second personality

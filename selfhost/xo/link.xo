@@ -27,6 +27,41 @@ fn link_os(ctx: Ctx) -> Str {
 /// the compiler's output of the failed link, "" on success. The sources
 /// are the program's assembly or IR and other C sources (no C runtime
 /// since decision 0234).
+/// PROG.dSYM after a darwin link through cc (decision 0239: the LLVM
+/// backend's link and --ld=cc; selfhost/macho writes its own, ld.xo).
+/// dsymutil, which the Command Line Tools have, gathers the DWARF of the
+/// objects the executable's debug map names (the build directory's .o
+/// files, or with LTO the object lto_object_flags keeps) into the
+/// bundle where lldb and the profiler look. Without dsymutil, or when it
+/// fails, the program has no dSYM and the build goes on. (With Xcode
+/// 26.6 selected against the macOS 27 SDK the cc link itself fails,
+/// gotchas/xcode-ld-vs-clt-sdk27.md; DEVELOPER_DIR picks the tools.)
+fn cc_dsym(os: Os, bin: Str) {
+  let d = "${bin}.dSYM"
+  os.fs.remove_all(d).ignore_err("none from an earlier link")
+  match os.proc.run("dsymutil", [bin, "-o", d]) {
+    Ok(r) => if r.code != 0 {
+      os.fs.remove_all(d).ignore_err("a failed dsymutil")
+    }
+    Err(_) => {}
+  }
+}
+
+/// The link flags that keep the object of an LTO link in the build
+/// directory dir (ld64's -object_path_lto: a file for full LTO, a
+/// directory for thin), so dsymutil finds its DWARF after the link; none
+/// without LTO, whose objects are the build directory's already.
+fn lto_object_flags(os: Os, dir: Str, lto: Str) -> List[Str] {
+  match lto {
+    "full" => ["-Wl,-object_path_lto,${dir}/lto.o"]
+    "thin" => {
+      os.fs.create_dir_all("${dir}/lto").ignore_err("the link reports it")
+      ["-Wl,-object_path_lto,${dir}/lto"]
+    }
+    _ => []
+  }
+}
+
 fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: Str) -> Str {
   // libraries of `use c` go after the objects (splitLibs)
   var flags: List[Str] = []

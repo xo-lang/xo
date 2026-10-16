@@ -264,7 +264,10 @@ fn fetch_bin(os: Os, ctx: Ctx, key: Str, bin: Str) -> (Bool, Str) {
         match os.fs.copy(entry, tmp) {
           Ok(_) => {
             match os.fs.rename(tmp, bin) {
-              Ok(_) => return (true, entry)
+              Ok(_) => {
+                fetch_dsym(os, entry, bin)
+                return (true, entry)
+              }
               Err(_) => os.fs.remove(tmp).ignore_err("a failed fetch")
             }
           }
@@ -306,7 +309,41 @@ fn store_bin(os: Os, ctx: Ctx, entry: Str, bin: Str) {
       return
     }
   }
+  store_dsym(os, entry, bin)
   prune_bins(os, ctx)
+}
+
+/// The DWARF file of bin's dSYM (decision 0239), where a link wrote one.
+fn dsym_dwarf(bin: Str) -> Str {
+  "${bin}.dSYM/Contents/Resources/DWARF/${base_name(bin)}"
+}
+
+/// Keeps bin's dSYM DWARF beside its cache entry (entry.dsym), so a
+/// fetch gives the program its line tables too.
+fn store_dsym(os: Os, entry: Str, bin: Str) {
+  let src = dsym_dwarf(bin)
+  if !(os.fs.exists(src).ok() ?? false) {
+    return
+  }
+  let tmp = "${entry}.dsym.tmp-xo1-${os.rand.bytes(6).to_hex()}"
+  match os.fs.copy(src, tmp) {
+    Ok(_) => os.fs.rename(tmp, "${entry}.dsym").ignore_err("another process stored it")
+    Err(_) => os.fs.remove(tmp).ignore_err("a failed store")
+  }
+}
+
+/// Writes the cached DWARF of entry as bin's dSYM, or removes a dSYM
+/// left from another link of bin (its UUID would not match).
+fn fetch_dsym(os: Os, entry: Str, bin: Str) {
+  os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier link")
+  let src = "${entry}.dsym"
+  if !(os.fs.exists(src).ok() ?? false) {
+    return
+  }
+  prune.mark_used_within(os.fs, os.clock, src, BIN_TOUCH)
+  let dst = dsym_dwarf(bin)
+  os.fs.create_dir_all(dir_name(dst)).ignore_err("the copy reports it")
+  os.fs.copy(src, dst).ignore_err("the program runs without its line tables")
 }
 
 /// The bin cache's touch: an entry used within it is not marked again.

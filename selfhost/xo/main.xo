@@ -500,14 +500,20 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
+      let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
+      let lto = if lls.len() > 1 { split.lto } else { lto1 }
+      let lflags = if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }
       let msg = if lls.len() > 1 {
-        split_build(os, lctx, cc, lls, lk.srcs, bin, split, lk.flags)
+        split_build(os, lctx, cc, lls, lk.srcs, bin, split, lflags)
       } else {
-        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + lk.flags, srcs, bin)
+        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + lflags, srcs, bin)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
+      }
+      if dsym {
+        cc_dsym(os, bin)
       }
       store_bin(os, ctx, entry, bin)
     }
@@ -663,6 +669,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
+      }
+      if gm.debug_info && tgoos == "darwin" {
+        cc_dsym(os, bin)
       }
       store_bin(os, ctx, entry, bin)
     }
