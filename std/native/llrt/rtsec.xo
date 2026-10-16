@@ -1,8 +1,7 @@
 // Real-time sections (core 6.5, decision 0133) in Xo (the zero-C audit's
 // memory block; they were std/llrt/xo_rt.c's). A call from code that is
 // not real-time to a function declared `uses realtime` is bracketed by
-// xo_realtime_enter and xo_realtime_exit (C forwarders of cabi.xo's
-// rt_enter and rt_exit). While the thread's depth is above zero, an
+// calls of cabi.xo's exports xo_x_rt_enter and xo_x_rt_exit. While the thread's depth is above zero, an
 // object whose count reaches zero is queued instead of freed (with what
 // it holds: a list's elements, a closure's captures; obj.xo rt_defer),
 // so the section does work bounded by its own code; the outermost exit

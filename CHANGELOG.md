@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- With 0.17.0 as the seed floor, what remained only for older compilers'
+  code is gone: 42 C ABI exports nothing calls (the C runtime's, not
+  the emitters' or the C test drivers'), the second personality
+  routine (pers_old) and the `xo_personality` link alias (every emitter
+  names `xo_x_personality` since 0.17.0), LLVM's unused `xo_print`
+  declarations, and the stale forwarder comments. Proved by building
+  from the 0.17.0 seed: fixed point, -short, all arm64 and LLVM goldens.
+- `xo dev goldens` prunes its build directories after every run (a day
+  unused, then least recently used past 2 GiB, `XO_DEV_BUILD_MAX`):
+  xo prunes a build directory only where it chose the location, and
+  `bin-arm64/build` had reached 15 GB.
 - DWARF line tables (decision 0239) on the arm64 and LLVM backends, on
   by default for build, run, and test (`-s` and `xo asm`: none;
   `--release`: none unless `--debug-info`). darwin: PROG.dSYM next to

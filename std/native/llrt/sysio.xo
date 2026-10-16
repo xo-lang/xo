@@ -445,8 +445,8 @@ fn clock_buf() -> Int {
 // local words 11 (the status) and 12 (a heap_large block of the path's
 // length and bytes, then the message's; reused while it fits) of
 // rt.tlocal_get (sched.xo's table). A wasm module's runtime keeps its own
-// (rt.fs_set_err, rt.fs_status, rt.fs_msg: faulting stubs in the native
-// C runtime). Was xo_sys.c xo_fs_set_err and xo_bytes.c's thread locals.
+// (rt.fs_set_err, rt.fs_status, rt.fs_msg; on the native targets the SSA
+// builders lower them to a fault).
 
 const TL_FS_STATUS = 11
 const TL_FS_MSG = 12

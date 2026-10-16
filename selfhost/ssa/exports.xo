@@ -1,9 +1,7 @@
 /// The C ABI exports (decision 0207: cabi*.xo's top level functions,
-/// `xo_x_<name>`) that the native emitters call for these runtime calls
-/// instead of xo_rt.c's forwarders (kept for code of earlier compilers),
-/// or "" for a call that is not one of them. Both emitters call the
-/// export with the forwarder's arguments: an Int, Bool or handle one
-/// word, a Str its bytes' address and length.
+/// `xo_x_<name>`) that the native emitters call for these runtime calls,
+/// or "" for a call that is not one of them. Both emitters pass an Int,
+/// Bool or handle as one word, a Str as its bytes' address and length.
 pub fn rt_export(name: Str) -> Str {
   match name {
     // tasks.xo's deadline of task.with_timeout (cabi.xo)
@@ -49,7 +47,7 @@ pub fn rt_export(name: Str) -> Str {
 
 /// Whether the export of rt_export(name) returns 0 for none, which the
 /// emitters turn into the immortal zero handle (a handle result) or
-/// empty list (a List result) that xo_rt.c's forwarder returned.
+/// empty list (a List result).
 pub fn rt_export_none(name: Str) -> Bool {
   name is "rt.net_listen" | "rt.net_dial" | "rt.listener_accept" | "rt.listener_addr" | "rt.conn_read"
 }

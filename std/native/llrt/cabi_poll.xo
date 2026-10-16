@@ -1,26 +1,11 @@
-// The C ABI exports of the poller on Linux (decisions 0204, 0206 stage
-// 3): like cabi.xo, every top level function here is called by the C
-// runtime as xo_x_<name>. std/llrt/xo_rt.c's event loop calls them when
-// the network goes through Xo (cabi_net.xo's net_raw) and always in a
-// program linked with no C library. Every program with timers,
-// processes, or sockets has the poller, so the SSA builders build these
-// in every native program (importer_built), as cabi.xo's; the native
-// prelude imports the module. ev and evs are struct epoll_event in the
-// C's layout. Nothing here may fault.
+// The C ABI exports of the poller (decisions 0204, 0206 stage 3), like
+// cabi.xo's: the native prelude imports the module, so the SSA builders
+// build these in every native program (importer_built). Nothing here may
+// fault.
 use native/llrt/sock
-
-/// epoll_create1(EPOLL_CLOEXEC).
-fn poll_create() -> Int { sock.epoll_create(524288) }
-
-fn poll_ctl(ep: Int, op: Int, fd: Int, ev: Int) -> Int { sock.epoll_ctl(ep, op, fd, ev) }
-
-/// epoll_pwait with no signal mask.
-fn poll_wait(ep: Int, evs: Int, n: Int, ms: Int) -> Int { sock.epoll_wait(ep, evs, n, ms) }
 
 /// close(2) of a descriptor the poller watched.
 fn fd_close(fd: Int) -> Int { sock.close(fd) }
 
 /// O_NONBLOCK and FD_CLOEXEC on fd.
 fn fd_nonblock(fd: Int) -> Int { sock.nonblock(fd) }
-
-fn fd_shutdown(fd: Int, how: Int) -> Int { sock.shutdown(fd, how) }

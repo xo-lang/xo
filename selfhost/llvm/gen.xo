@@ -184,21 +184,14 @@ fn (var g: Gen) unsupported(why: Str) {
 // ---------------------------------------------------------------------------
 // The runtime declarations (ssaRuntimeDecls)
 
-/// The declarations of the RC runtime of std/llrt/xo_rt.c, the attribute
-/// groups, and the metadata every module starts with (ssaRuntimeDecls).
-/// The entries generated code no longer calls (the obj.xo exports and
-/// the placeholders' addresses replaced them, generated-code entries E1
-/// to E3) are not declared, so their C forwarders can go after the next
-/// seed.
+/// The types, the LLVM intrinsics, the attribute groups, and the
+/// metadata every module starts with (ssaRuntimeDecls). The runtime's
+/// functions are Xo exports declared where a call names them.
 fn runtime_decls() -> Str {
   let lines = [
     "%xo.str = type { ptr, i64 }",
     "%xo.rlist = type { i64, i64, i64 }",
     "",
-    "declare void @xo_print(ptr, i64) #2",
-    "declare void @xo_println(ptr, i64) #2",
-    "declare void @xo_eprint(ptr, i64) #2",
-    "declare void @xo_eprintln(ptr, i64) #2",
     "declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)",
     "declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)",
     "declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)",

@@ -149,15 +149,13 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: 
 /// XO_NOLIBC=1 (the runtime compiled with nolibc_flags) is static with no
 /// C library, keeping only the sections the program reaches (decision
 /// 0206), with the .eh_frame_hdr table the Xo unwinder searches (a
-/// static link has none by default) and xo_personality defined as
-/// std/native/llrt/cabi.xo's export xo_x_personality (decision 0221):
-/// the unwind tables of linux/amd64 and of an older xo name it.
+/// static link has none by default).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
     return ["-fuse-ld=lld", "-Wl,/Brepro", "-lkernel32", "-lws2_32", "-lbcrypt", "-lsynchronization", "-lntdll", "-lshell32", "-lcrypt32"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
-    return ["-static", "-nostdlib", "-Wl,--gc-sections", "-Wl,--eh-frame-hdr", "-Wl,--defsym=xo_personality=xo_x_personality"]
+    return ["-static", "-nostdlib", "-Wl,--gc-sections", "-Wl,--eh-frame-hdr"]
   }
   ["-lm", "-lpthread"]
 }

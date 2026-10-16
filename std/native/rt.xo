@@ -83,8 +83,7 @@ fn heap_large_resize(b: Int, n: Int) -> Int
 fn heap_release(b: Int)
 /// alloc.xo's big blocks (above mid_max): n bytes mapped from the system
 /// (its prefix minus n), the address after the prefix; resized; given
-/// back (std/native/llrt/heapos.xo through the C runtime's forwarders,
-/// work item B21).
+/// back (std/native/llrt/heapos.xo through its exports, work item B21).
 fn heap_big(n: Int) -> Int
 fn heap_big_resize(b: Int, n: Int) -> Int
 fn heap_big_release(b: Int)
@@ -211,9 +210,8 @@ fn layout(k: Int) -> Int
 /// for an address that is not mapped (decision 0207 stage 3: the heap's
 /// free list pops).
 fn prefetch(a: Int)
-/// The address of word k (a constant, 0 to 255 since decision 0237; std
-/// uses 0 to 63 until the seed's builder accepts more, which
-/// TestStaticWords enforces) of the program's table of
+/// The address of word k (a constant, 0 to 255 since decision 0237;
+/// TestStaticWords checks std's claims) of the program's table of
 /// process globals, zero at start (decision 0207's design, work item
 /// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
 /// static address on wasm; reached with mem_load/mem_store or the slot
@@ -450,7 +448,7 @@ fn fs_new(root: Str, mode: Int) -> Fs
 // the calls of sysio.xo's and fsops.xo's layer 0 arms, which only a wasm
 // module takes (its runtime serves or faults them); on the native targets
 // the SSA builders lower them to a fault (selfhost/ssa call.xo
-// wasm_only_rt; the C's faulting stubs stay for the seed's code).
+// wasm_only_rt).
 
 /// The contents of the file in a list of one, or empty with the status set.
 fn fs_read(path: Str) -> List[Bytes]

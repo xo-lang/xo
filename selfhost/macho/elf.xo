@@ -1,6 +1,6 @@
 // The ELF side of the assembler (decision 0182, stage 3): the emitter's
 // linux/arm64 assembly (`.section` with flags, `.type`, `.L` labels,
-// `:lo12:`, numeric labels, the DW.ref.xo_personality comdat) into an
+// `:lo12:`, numeric labels, the DW.ref.xo_x_personality comdat) into an
 // ELF64 relocatable object, as `cc -c` (LLVM's ELFObjectWriter) writes
 // it: RELA relocations against symbols or section symbols, mapping
 // symbols ($x, $d), an .eh_frame for every function, one .strtab for

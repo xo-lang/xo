@@ -3,9 +3,9 @@
 // _Unwind_ForcedUnwind, a stop function at the context's boundary, and a
 // personality routine do for a fault, in Xo over raw memory, for
 // programs linked with glibc and on macOS (stage 3) and with no C
-// library (XO_NOLIBC=1, stage 1). The C runtime's
-// fault_raise calls raise (cabi.xo unwind_fault) with the context's
-// exception object, boundary, and the personality's addresses; raise
+// library (XO_NOLIBC=1, stage 1). cabi.xo's fault_raise_cur calls raise
+// with the context's exception object, boundary, and the personality's
+// address; raise
 // walks the frames from its own up through the .eh_frame_hdr tables of
 // the program and of the shared objects it loaded (ld.so's link_map) and
 // the DWARF call frame information of .eh_frame (on macOS the compact
@@ -186,15 +186,13 @@ const EXC_CLASS = 6363304799676486988
 /// Unwinds the calling thread's frames for the fault whose exception
 /// object is at exc, running the first landing pad it finds below the
 /// boundary (a stack address; 0: none) in a frame whose personality
-/// routine is pers (xo_x_personality's address) or pers_old (the C
-/// forwarder xo_personality, which code from an xo before the emitters
-/// named the export refers to): never returns then. 0 when nothing
-/// catches the fault. wcx: on Windows, the CONTEXT the C fault_raise
-/// captured (where the walk starts; 0: this function's own), unused
-/// elsewhere.
-pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int {
+/// routine is pers (xo_x_personality's address, the name every
+/// emitter writes): never returns then. 0 when nothing catches the
+/// fault. wcx: on Windows, a captured CONTEXT where the walk starts (0:
+/// this function's own), unused elsewhere.
+pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   match target.os {
-    TargetOs.Windows => return win_raise(exc, boundary, pers, pers_old, wcx)
+    TargetOs.Windows => return win_raise(exc, boundary, pers, wcx)
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
   }
   match target.arch {
@@ -244,7 +242,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
       // a frame of generated code with a call site table; another
       // personality's frame is passed over
       let fp = rt.mem_load(s, H_PERS, 8)
-      if rt.mem_load(s, H_LSDA, 8) != 0 && fp != 0 && (fp == pers || fp == pers_old) {
+      if rt.mem_load(s, H_LSDA, 8) != 0 && fp != 0 && fp == pers {
         rt.mem_store(s, H_CUR, cur, 8)
         if personality(1, UA_CLEANUP_PHASE | UA_FORCE_UNWIND, EXC_CLASS, exc, s) == URC_INSTALL_CONTEXT {
           rt.unwind_resume(cur)
@@ -978,7 +976,7 @@ fn x64_reg(r: Int) -> Int {
 // Windows (decision 0197): the system's unwinder walks the frames (the
 // .pdata and .xdata every function has; LLVM writes the GCC call site
 // table as the handler data of a function whose handler is
-// xo_personality), as xo_rt.c's fault_raise did in C until B06.
+// xo_x_personality).
 
 /// The Windows CONTEXT records of win_raise in the scratch record (16
 /// byte aligned, where the DWARF walk's rule sets are on other OSes):
@@ -1011,12 +1009,12 @@ const WA_R1 = 16
 /// raise on Windows: from the caller's context (RtlCaptureContext), each
 /// frame's function (RtlLookupFunctionEntry) is unwound
 /// (RtlVirtualUnwind with UNW_FLAG_UHANDLER, which returns its handler
-/// and handler data); a frame of generated code (handler pers or
-/// pers_old) whose call site has a landing pad is resumed there with the
+/// and handler data); a frame of generated code (handler pers) whose
+/// call site has a landing pad is resumed there with the
 /// exception in the first register (RtlRestoreContext, which does not
 /// return). 0 when nothing catches the fault: past the boundary, or a
 /// frame with no unwind data (the end of the stack).
-fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int {
+fn win_raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   let s = scratch()
   if s == 0 {
     return 0
@@ -1062,7 +1060,7 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int
       return 0
     }
     let data = rt.mem_load(s, W_DATA, 8)
-    if h != 0 && data != 0 && (h == pers || h == pers_old) {
+    if h != 0 && data != 0 && h == pers {
       // RUNTIME_FUNCTION's BeginAddress: the function's offset from the
       // image base
       let lp = landing(data, base + rt.mem_load(f, 0, 4), pc - 1)

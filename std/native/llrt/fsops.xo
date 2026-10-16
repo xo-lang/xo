@@ -8,7 +8,7 @@
 // and x86_64 (darwin.xo, libSystem), and Windows (windows.xo, kernel32)
 // make their calls from Xo; a wasm module (layer 0) names the runtime's
 // rt.fs_* functions, which its own runtime serves or faults (on the
-// native targets they are faulting link stubs in std/llrt/xo_fs.c,
+// native targets the SSA builders lower them to a fault,
 // gotchas/dead-target-arm-still-links.md).
 //
 // A handle is a record of this module's behind the runtime's object

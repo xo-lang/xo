@@ -9,14 +9,12 @@
 // bytes in it, its lock (taken once the runtime runs several threads, so
 // one print's text stays together), and the mode. The SSA builders call
 // the native prelude's llrt_print, llrt_println, llrt_eprint, and
-// llrt_eprintln for Stdio.print and friends; the C runtime flushes
-// through cabi.xo's exports (xo_x_flush, xo_x_flush_try) and sets the
-// threaded mode (xo_x_stdio_threads), and its older entry points
-// (xo_print and friends, which compilers before B03 call) forward to
-// them. In a test binary whose world fakes stdio (decision 0083), the
-// text goes to the test world's buffers in the C runtime instead.
+// llrt_eprintln for Stdio.print and friends; generated code flushes
+// through cabi.xo's export xo_x_flush. In a test binary whose world
+// fakes stdio (decision 0083), the text goes to the test world's buffers
+// instead.
 //
-// Nothing here may fault: cabi.xo's exports call it from C. Sums use
+// Nothing here may fault: cabi.xo's exports call it. Sums use
 // rt.int_wrap (no overflow check: sizes are far below the Int range).
 use native/llrt/darwin
 use native/llrt/linux

@@ -9,8 +9,7 @@
 //
 // Here: the shields of deferred code (core 3.5, decision 0022) and the
 // unwinding flag, which generated code reaches through cabi.xo's exports
-// (the arm64 and LLVM emitters call them directly; older xo's code
-// through the C xo_shield_* and xo_unwinding forwarders). The budgets
+// (the arm64 and LLVM emitters call them directly). The budgets
 // are budget.xo's, the Mutexes a context holds (C_HELD, XO-F004)
 // mutex.xo's. Making a root context for a bare thread stays C (ctx_root:
 // the deadlock counter and the park's setup are the scheduler's, B18 to
@@ -115,24 +114,18 @@ pub const SV_STDIN_PUMP = 248
 pub const SV_AT_TZ = 264
 pub const SV_AT_STREAMS = 272
 pub const SV_AT_TW_END = 280
-/// The second personality routine fault_raise_msg hands the unwinder
-/// (cabi.xo): the C language handler xo_personality on Windows, else
-/// xo_x_personality again (xo_rt.c fault_init gives it).
-pub const SV_PERS_OLD = 288
-const SV_SIZE = 296
+const SV_SIZE = 288
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
 /// stack size, page size, where a fiber starts).
 const FS_SIZE = 48
 
-/// Makes the services record at start (xo_rt.c fault_init, through
-/// cabi.xo rt_start), with the second personality routine pers_old and
-/// whether ThreadSanitizer is on, and the statistics' record.
-pub fn init(pers_old: Int) {
+/// Makes the services record at start (entry.xo init), with whether
+/// ThreadSanitizer is on, and the statistics' record.
+pub fn init() {
   rtstats.init()
   let svc = rt.heap_large(SV_SIZE)
   rt.mem_set(svc, 0, SV_SIZE)
   rt.mem_store(svc, SV_TSAN, if sanhook.tsan() { 1 } else { 0 }, 8)
-  rt.mem_store(svc, SV_PERS_OLD, pers_old, 8)
   let fs = rt.heap_large(FS_SIZE)
   rt.mem_set(fs, 0, FS_SIZE)
   rt.mem_store(svc, SV_FIBERS, fs, 8)

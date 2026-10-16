@@ -1,12 +1,15 @@
 // The C ABI exports of the runtime (decisions 0204, 0207): every top
-// level function of this module is called by the C runtime (std/llrt) as
-// xo_x_<name>, with the C calling convention, so the C keeps no copy of
-// what Xo already does. The module is the marker: the SSA builders build
-// every function here in every native program (the native prelude
-// imports it), and the emitters give each a global C symbol; the
-// modules cabi_<feature>.xo are markers too, for exports only the C of a
-// feature calls (cabi_time.xo), imported by that feature's
-// implementation module so only its programs carry them. Parameters
+// level function of this module is a global symbol xo_x_<name> with the
+// C calling convention, which generated code calls (the emitters' runtime
+// calls, selfhost/ssa exports.xo), the runtime names by address
+// (rt.fn_addr), a `use c` binding calls back (cffi_str), or the
+// runtime's C test drivers call (std/llrt/testdata). The module is the
+// marker: the SSA builders build every function here in every native
+// program (the native prelude imports it); the modules cabi_<feature>.xo
+// are markers too, imported by that feature's implementation module so
+// only its programs carry them. An export none of those calls is dead
+// weight in every program: since 0.17.0 none is kept for an older
+// compiler's code. Parameters
 // are Int (an address is an Int) or Float; the result is an Int, a
 // Float, nothing, or a Str (returned as its string object, its length
 // stored through a pointer the C caller passes after the parameters).
@@ -78,10 +81,6 @@ fn fmt_int(buf: Int, v: Int) -> Int {
   n
 }
 
-/// Writes the text of f as the Go backend prints a Float (FloatStr) and
-/// a zero byte at buf (at least 48 bytes); its length.
-fn fmt_float(buf: Int, f: Float) -> Int { raw.put_cstr(buf, num.float_text(f)) }
-
 // ---------------------------------------------------------------------------
 // Standard output (stdio.xo, the zero-C audit's work item B03): the C
 // runtime flushes it with flush before a wait, at exit, and before a
@@ -97,8 +96,6 @@ fn flush_try() { stdio.flush_try() }
 /// exception handler; the EXCEPTION_POINTERS, EXCEPTION_CONTINUE_SEARCH
 /// unless it ends the program).
 fn on_overflow(e: Int) -> Int { entry.on_overflow(e) }
-
-fn stdio_threads() { stdio.threads() }
 
 /// The program's arguments and environment (C main, before the program
 /// runs; process.xo).
@@ -157,7 +154,7 @@ fn fault_detail(p: Int, n: Int) { fault.detail(ctx.cur(), p, n) }
 /// and raises it; with msg 0 raises the fault already recorded (fault.xo
 /// fire, cont): never returns (was xo_rt.c fault_raise_msg).
 fn fault_raise_msg(m: Int, loc: Int) {
-  fault_raise_cur(m, loc, rt.fn_addr("personality"), rt.mem_load(ctx.svc(), ctx.SV_PERS_OLD, 8))
+  fault_raise_cur(m, loc, rt.fn_addr("personality"))
 }
 
 /// Standard input's pump thread on Windows (stdin.xo pump_main): its
@@ -191,8 +188,6 @@ fn rc_inc(p: Int) { rc.inc(p) }
 
 fn rc_dec(p: Int) -> Int { rc.dec(p) }
 
-fn rc_dec_shared(p: Int) -> Int { rc.dec_shared(p) }
-
 fn rc_claim(p: Int) -> Int { rc.claim(p) }
 
 fn rc_mark(p: Int) -> Int { rc.mark(p) }
@@ -204,16 +199,6 @@ fn rc_mark(p: Int) -> Int { rc.mark(p) }
 // thread's heap record (the C finds it), p a block; heap_alloc and
 // heap_free take h last, so xo_alloc and xo_free pass their argument on
 // in place. Nothing here allocates or counts.
-
-fn heap_alloc(n: Int, h: Int) -> Int { alloc.alloc(h, n) }
-
-fn heap_free(p: Int, h: Int) { alloc.free(h, p) }
-
-fn heap_refill(h: Int, n: Int) { alloc.refill(h, n) }
-
-fn heap_free_mt(h: Int, p: Int) { alloc.free_mt(h, p) }
-
-fn heap_resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int { alloc.resize(h, p, old, n, mt) }
 
 // The heap's platform calls (zero-C audit B21, heapos.xo): the C's
 // xo_heap_big, xo_heap_big_resize, xo_heap_big_release, xo_heap_grow,
@@ -256,8 +241,6 @@ fn heap_chunks() -> Int { heapos.chunks() }
 // word (the C finds it: the heap record, plus 1 when other threads run),
 // h a heap record, a and l objects, p bytes, the callbacks C functions
 // of generated code. Nothing here allocates Xo values, counts, or faults.
-
-fn obj_rl_new(hw: Int, cap: Int, esize: Int) -> Int { obj.rl_new(hw, cap, esize) }
 
 // arm64 generated code calls these directly, with no C level: obj.xo
 // finds the heap itself (no hw).
@@ -311,9 +294,6 @@ fn heap_threads() {
   stdio.threads()
 }
 
-/// XO_HEAP_MID_MAX's limit of the size classes (entry.xo, at start).
-fn heap_set_mid_max(m: Int) { heapos.set_mid_max(m) }
-
 /// The calling thread's heap record (the C tests, std/llrt/testdata
 /// xcalls.h).
 fn heap_now() -> Int { obj.heap_now() }
@@ -325,13 +305,7 @@ fn heap_thread() -> Int { heapos.thread_heap() }
 
 fn heap_live(lp: Int, tp: Int) { heapos.live(lp, tp) }
 
-fn heap_nfree(c: Int) -> Int { heapos.nfree(c) }
-
 fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) }
-
-/// Queues a free in heap record h's real-time section (xo_rc_free's
-/// string, xo_h_free's handle): 1, or 0 when the queue is full.
-fn obj_rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Int { if obj.rt_defer(h, kind, o, esize, f) { 1 } else { 0 } }
 
 /// Real-time sections (rtsec.xo): xo_realtime_enter, xo_realtime_exit
 /// (the function's name and the call's location, as bytes), and a
@@ -339,8 +313,6 @@ fn obj_rt_defer(h: Int, kind: Int, o: Int, esize: Int, f: Int) -> Int { if obj.r
 fn rt_enter() { rtsec.enter() }
 
 fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
-
-fn rt_fault_leave() { rtsec.fault_leave() }
 
 // Strings (zero-C audit B13): xo_rt.c xo_rs_concat and xo_rs_append,
 // xo_bytes.c's builders, in obj.xo, called by arm64 generated code
@@ -396,29 +368,7 @@ fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
 // The event loop's timer heap (zero-C audit B22 stage 1, poll.xo): t is a
 // timer record (poll.xo T_*); the event loop's lock is held.
 
-fn poll_timer_push(t: Int) -> Int { poll.timer_push(t) }
-
-fn poll_timer_remove(t: Int) { poll.timer_remove(t) }
-
-fn poll_timer_first() -> Int { poll.timer_first() }
-
-fn poll_pd_ready(pd: Int, mode: Int) { poll.pd_ready(pd, mode) }
-
-/// A descriptor's operations, close, and waits (poll.xo; xo_rt.c's
-/// pd_begin and the rest on Linux and macOS).
-fn poll_pd_begin(pd: Int) -> Int { if poll.pd_begin(pd) { 1 } else { 0 } }
-
-fn poll_pd_end(pd: Int) { poll.pd_end(pd) }
-
-fn poll_pd_close(pd: Int) { poll.pd_close(pd) }
-
 fn poll_pd_free(pd: Int) { poll.pd_free(pd) }
-
-fn poll_pd_wait(pd: Int, write: Int, c: Int, deadline: Int) -> Int { poll.pd_wait_ctx(pd, write != 0, c, deadline) }
-
-/// Windows (B22 stage 4): an AFD poll of a descriptor's waited directions
-/// (the record's lock held; xo_h2.c arms its own waits).
-fn poll_pd_arm(pd: Int) { poll.pd_arm(pd) }
 
 /// Where the poller thread starts (pool.thread_start of its address, from
 /// the services record; never returns).
@@ -443,10 +393,6 @@ fn poll_timer_del(t: Int) { poll.timer_del(t) }
 /// A wait of poll.xo's (through rt.fn_addr): park context c until its
 /// park is signaled or it is canceled, not counted as blocked.
 fn poll_park_wait(c: Int) { tasks.park_wait_n(c, true, false) }
-
-/// clock.sleep's wait in context c (xo_rt.c clock_wait): 1 when
-/// cancellation ended or prevented it.
-fn poll_clock_wait(c: Int, d: Int) -> Int { if poll.clock_wait(c, d) { 1 } else { 0 } }
 
 // The clock and cancellation checks of generated code (selfhost/ssa
 // exports.xo; xo_rt.c's xo_clock_now and the rest stay for code of
@@ -491,11 +437,6 @@ fn scope_deadline(s: Int, d: Int) { tasks.scope_deadline(s, d) }
 
 fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 } }
 
-/// Two phase shutdown (stop.xo, B26 part 1): a signal, the
-/// grace timer's end, task.stop_requested, task.stopping,
-/// proc.set_grace, main's root, and testing.run_main's start and end.
-fn stop_signal() { stop.signal() }
-
 /// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
 /// handler: the signal number, unused).
 fn on_signal(sig: Int) { poll.on_signal() }
@@ -516,8 +457,6 @@ fn stop_cancel() { stop.cancel() }
 
 fn stop_requested() -> Int { if stop.requested() { 1 } else { 0 } }
 
-fn stop_canceled() -> Int { if stop.canceled() { 1 } else { 0 } }
-
 fn stop_stopping(drop: Int) -> Int { stop.stopping(drop) }
 
 /// task.stopping's channel (stop.xo calls it through rt.fn_addr: chan.xo
@@ -532,16 +471,6 @@ fn stop_chan_new(drop: Int) -> Int {
 }
 
 fn stop_set_grace(d: Int) { stop.set_grace(d) }
-
-fn stop_root() -> Int { stop.root() }
-
-fn stop_set_root(n: Int) { stop.set_root(n) }
-
-fn stop_end() { stop.end() }
-
-fn stop_reset(n: Int) { stop.reset(n) }
-
-fn stop_unroot(n: Int) -> Int { stop.unroot(n) }
 
 
 /// The C function main's threads run (entry.xo run_main, the fault
@@ -588,34 +517,18 @@ fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int { pool.scope_add(pl, s, t, 
 fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) { pool.scope_join(pl, s, c, f, rw) }
 
 // ---------------------------------------------------------------------------
-// Fault unwinding (decision 0221): xo_rt.c's fault_raise calls
-// unwind_fault on arm64 Linux and macOS. The unwind tables of generated
-// code name personality's export (xo_x_personality; its C forwarder
-// xo_personality in code from an older xo). With no C library the link
-// defines xo_personality as the export (selfhost/xo link.xo
-// sys_link_args).
-
-/// The forced unwind of a fault (std/native/llrt/unwind.xo
-/// raise): runs the first landing pad below the boundary in a frame whose
-/// personality routine is pers (xo_x_personality's address) or pers_old
-/// (xo_personality's, the name an older xo's emitters write) and never
-/// returns then; 0 when nothing catches the fault. wcx: on Windows, the
-/// caller's CONTEXT, where the walk starts.
-fn unwind_fault(exc: Int, boundary: Int, pers: Int, pers_old: Int, wcx: Int) -> Int { unwind.raise(exc, boundary, pers, pers_old, wcx) }
+// Fault unwinding (decision 0221): fault_raise_cur below walks the frames
+// with unwind.xo raise. The unwind tables of generated code name
+// personality's export, xo_x_personality, on every target.
 
 /// The personality routine of generated code (unwind.xo
-/// export_personality: unwind_fault reads the call site tables itself,
+/// export_personality: unwind.xo raise reads the call site tables itself,
 /// and this tells any other unwinder to go on).
 fn personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int { unwind.export_personality(version, actions, cls, exc, uc) }
 
 // ---------------------------------------------------------------------------
 // The fault record (std/native/llrt/fault.xo, the zero-C audit's B06):
 // c is the context (xo_ctx *).
-
-fn fault_record_set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) { fault.set(c, mp, mn, lp, ln) }
-
-/// Reports the fault of c and ends the process with status 70.
-fn fault_record_exit(c: Int) { fault.exit(c) }
 
 /// Raises a fault in the current context (xo_rt.c fault_raise_msg, the
 /// address fault.xo's raisers call): with a message m (zero terminated,
@@ -624,11 +537,11 @@ fn fault_record_exit(c: Int) { fault.exit(c) }
 /// sections end, it is marked faulting and unwinding, and unwind.xo
 /// walks from here with its exception object (ctx.xo C_FAULT_EXC, at the
 /// area's first 16 byte aligned address) up to its boundary, the frames
-/// of generated code named by pers or pers_old (the personality's
-/// addresses, the C's to give); nothing caught reports it and ends the
+/// of generated code named by pers (the personality's address);
+/// nothing caught reports it and ends the
 /// program (fault.xo exit). Never returns. Was xo_rt.c's fault_raise
 /// and fault_set over the C's xo_ctx (the zero-C inventory's rank 13).
-fn fault_raise_cur(m: Int, loc: Int, pers: Int, pers_old: Int) {
+fn fault_raise_cur(m: Int, loc: Int, pers: Int) {
   let c = ctx.cur()
   if m != 0 {
     fault.set(c, m, raw.cstr_len(m), loc, raw.cstr_len(loc))
@@ -637,7 +550,7 @@ fn fault_raise_cur(m: Int, loc: Int, pers: Int, pers_old: Int) {
   rt.mem_store(c, ctx.C_FAULTING, 1, 4)
   rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
   let exc = rt.int_wrap(0, c, ctx.C_FAULT_EXC + 15) & -16
-  let _r = unwind.raise(exc, rt.mem_load(c, ctx.C_BOUNDARY, 8), pers, pers_old, 0)
+  let _r = unwind.raise(exc, rt.mem_load(c, ctx.C_BOUNDARY, 8), pers, 0)
   fault.exit(c)
 }
 
@@ -689,10 +602,6 @@ fn fiber_map_failed(en: Int) {
 /// xcalls.h).
 fn ctx_pool() -> Int { ctx.pool() }
 
-/// The current context of a thread with none yet (xo_rt.c ctx's slow
-/// path): ctx.xo root.
-fn ctx_root() -> Int { ctx.root() }
-
 /// The current context (ctx.xo cur; the C tests' t_ctx_boundary).
 fn ctx_cur() -> Int { ctx.cur() }
 
@@ -705,14 +614,6 @@ fn budget_tick() { budget.tick() }
 fn budget_open(s: Int, cpu: Int, alloc: Int, steps: Int, lp: Int, ln: Int) { budget.open(s, cpu, alloc, steps, lp, ln) }
 
 fn budget_end(s: Int) -> Int { budget.end(s) }
-
-fn budget_retain(b: Int) { budget.retain(b) }
-
-fn budget_release(b: Int) { budget.release(b) }
-
-fn budget_mark(c: Int) { budget.mark(c) }
-
-fn budget_charge(c: Int, check: Int) { budget.charge(c, check != 0) }
 
 // ---------------------------------------------------------------------------
 // Tasks and scopes (std/native/llrt/tasks.xo, the zero-C audit's B18):

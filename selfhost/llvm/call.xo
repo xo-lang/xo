@@ -501,8 +501,7 @@ fn runtime_raises(name: Str) -> Bool {
 }
 
 /// The address of the immortal empty list, which the program defines
-/// once (a count of XO_RC_IMMORTAL, no elements; xo_rt.c keeps a weak
-/// one for code of compilers before 0.14.0, which do not define it).
+/// once (a count of XO_RC_IMMORTAL, no elements).
 fn (var g: Gen) empty_list() -> Str {
   g.placeholder("@xo_empty_list", "[3 x i64] [i64 -9223372036854775808, i64 0, i64 0]")
   "@xo_empty_list"
@@ -1202,8 +1201,7 @@ fn (var g: Gen) rt_call(v: Int) {
     g.rt_decls.push("declare ${ret} ${sym}(${params.join(", ")}) ${attr}\n")
   }
   // the exports that never raise or unwind (heapos.xo's platform calls,
-  // anyval.xo) are nounwind and not inlined at the call, as their C
-  // forwarders were (declared nounwind, defined in the C object): inlined
+  // anyval.xo) are nounwind and not inlined at the call: inlined
   // into the heap's fast paths, the slow paths cost LLVM alloc tasks and
   // strings 1.10 and 1.03 times the instructions (2026-10-15)
   let nounw = if !export.is_empty() && (name.starts_with("rt.heap_") || name is "rt.any_new" | "rt.any_get") { " #8" } else { "" }
@@ -1382,7 +1380,6 @@ fn xo_export(name: Str) -> Str {
   }
   if name is "rt.fault_raise" | "rt.fault_continue" | "rt.fault_take" | "rt.fault_msg" | "rt.fault_loc" | "rt.fault_detail" | "rt.fault_at" {
     // fault.xo's raise, continue, and record through their exports
-    // (xo-fa; the C xo_fault_* stay for code of earlier compilers)
     return "xo_x_${name.trim_prefix("rt.")}"
   }
   if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
