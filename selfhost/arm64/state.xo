@@ -457,7 +457,12 @@ fn (g: G) vint(v: Int) -> Int {
 }
 
 /// The Int constant v holds (constInt).
-fn (g: G) const_int(v: Int) -> (Int, Bool) {
+fn (g: G) const_int(v0: Int) -> (Int, Bool) {
+  // through an inlined call's argument or result parameter (a block
+  // with one incoming edge): cpu.adc(s, c, 0) inlined passed its 0 that
+  // way, so the zero went into a register and the adc pairing broke
+  // (2026-10-16, bigmod.mac_row)
+  let v = g.through_params(v0)
   if g.f.values[v].op != ssa.Op.Const {
     return (0, false)
   }

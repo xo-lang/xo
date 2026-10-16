@@ -869,6 +869,12 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         let sum = aux_str(x.aux) == "rt.u64_adc"
         let other = g.adc_pair(v, if sum { "rt.u64_adc_carry" } else { "rt.u64_adc" })
         let ops = [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]
+        // a constant 0 addend is xzr (register 31 is the zero register in
+        // adds, adcs, and adc): no mov of 0, and the pair stays one
+        // instruction (2026-10-16, x25519.fe64_mul)
+        var zus: List[Int] = []
+        let a0 = g.adc_op(x.args[0], zus)
+        let a1 = g.adc_op(x.args[1], zus)
         if other >= 0 {
           // one pair, at most three uses and two defs: marked early (the
           // sum is written before cset) and keep, so that a template the
@@ -878,18 +884,34 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           let c = g.new_vreg(false)
           let (cin, cin_k) = g.const_int(x.args[2])
           let ii = if cin_k && cin == 0 {
-            g.plain("adds $d0, $u0, $u1\ncset $d1, cs", [d, c], [ops[0], ops[1]])
+            g.plain("adds $d0, ${a0}, ${a1}\ncset $d1, cs", [d, c], zus)
           } else {
-            g.plain("cmp $u2, #1\nadcs $d0, $u0, $u1\ncset $d1, cs", [d, c], ops)
+            let ci = zus.len()
+            g.plain("cmp $u${ci}, #1\nadcs $d0, ${a0}, ${a1}\ncset $d1, cs", [d, c], zus + [ops[2]])
           }
           g.blocks[g.cur].insts[ii].early = true
           g.blocks[g.cur].insts[ii].keep = true
           g.set(v, [if sum { d } else { c }])
           g.set(other, [if sum { c } else { d }])
-        } else if sum {
-          g.set(v, [g.def1(false, "cmp $u2, #1\nadc $d0, $u0, $u1", ops)])
         } else {
-          g.set(v, [g.def1(false, "cmp $u2, #1\nadcs xzr, $u0, $u1\ncset $d0, cs", ops)])
+          let ci = zus.len()
+          let (cin, cin_k) = g.const_int(x.args[2])
+          if cin_k && cin == 0 {
+            // x + 0 is x, and its carry 0 (no add of xzr: some encodings
+            // read register 31 as sp)
+            let one = if a0 == "xzr" { a1 } else { a0 }
+            if a0 == "xzr" || a1 == "xzr" {
+              g.set(v, [g.def1(false, if sum { "mov $d0, ${one}" } else { "mov $d0, xzr" }, zus)])
+            } else if sum {
+              g.set(v, [g.def1(false, "add $d0, ${a0}, ${a1}", zus)])
+            } else {
+              g.set(v, [g.def1(false, "cmn ${a0}, ${a1}\ncset $d0, cs", zus)])
+            }
+          } else if sum {
+            g.set(v, [g.def1(false, "cmp $u${ci}, #1\nadc $d0, ${a0}, ${a1}", zus + [ops[2]])])
+          } else {
+            g.set(v, [g.def1(false, "cmp $u${ci}, #1\nadcs xzr, ${a0}, ${a1}\ncset $d0, cs", zus + [ops[2]])])
+          }
         }
       }
     }
@@ -1486,7 +1508,8 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
       // the carry in used only by this pair, its operands defined
       // before the chain
       let nu = if c >= 0 { 2 } else { 1 }
-      if g.nuses[last] == nu && g.before_ix(y.args[0], ins) && g.before_ix(y.args[1], ins) {
+      // (a constant 0 operand is xzr: no register, defined anywhere)
+      if g.nuses[last] == nu && (g.is_zero(y.args[0]) || g.before_ix(y.args[0], ins)) && (g.is_zero(y.args[1]) || g.before_ix(y.args[1], ins)) {
         sums.push(u)
         cars.push(c)
         if c < 0 {
@@ -1503,21 +1526,21 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   var us: List[Int] = []
   var text = ""
   let (cin, cin_k) = g.const_int(x0.args[2])
+  let b0 = g.adc_op(x0.args[0], us)
+  let b1 = g.adc_op(x0.args[1], us)
   if cin_k && cin == 0 {
-    text = "adds $d0, $u0, $u1"
-    us = [g.word(x0.args[0]), g.word(x0.args[1])]
+    text = "adds $d0, ${b0}, ${b1}"
   } else {
-    text = "cmp $u2, #1\nadcs $d0, $u0, $u1"
-    us = [g.word(x0.args[0]), g.word(x0.args[1]), g.word(x0.args[2])]
+    text = "cmp $u${us.len()}, #1\nadcs $d0, ${b0}, ${b1}"
+    us.push(g.word(x0.args[2]))
   }
   var defs = [g.new_vreg(false)]
   for i in 1..sums.len() {
     let y = g.f.values[sums[i]]
-    let a = us.len()
-    us.push(g.word(y.args[0]))
-    us.push(g.word(y.args[1]))
+    let c0 = g.adc_op(y.args[0], us)
+    let c1 = g.adc_op(y.args[1], us)
     defs.push(g.new_vreg(false))
-    text = "${text}\nadcs $d${i}, $u${a}, $u${a + 1}"
+    text = "${text}\nadcs $d${i}, ${c0}, ${c1}"
   }
   let lastc = cars[cars.len() - 1]
   var cv = -1
@@ -1541,6 +1564,24 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
     }
   }
   true
+}
+
+/// Whether value a is the Int constant 0.
+fn (g: G) is_zero(a: Int) -> Bool {
+  let (k, kc) = g.const_int(a)
+  kc && k == 0
+}
+
+/// An addend of adds, adcs, adc, or cmn as template text: `xzr` for a
+/// constant 0 (register 31 is the zero register in those encodings),
+/// else `$uK` with its register pushed on us.
+fn (var g: G) adc_op(a: Int, var us: List[Int]) -> Str {
+  let (k, kc) = g.const_int(a)
+  if kc && k == 0 {
+    return "xzr"
+  }
+  us.push(g.word(a))
+  "$u${us.len() - 1}"
 }
 
 /// Whether values a and b are the same operand: one value, or two
