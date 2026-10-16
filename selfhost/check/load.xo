@@ -104,7 +104,7 @@ pub struct Checker {
   inferred: Map[Int, Flat] = {}
   obligations: List[EffOb] = []
   /// Functions declared `uses realtime` (realtime.xo).
-  realtime_fns: List[Int] = []
+  pub realtime_fns: List[Int] = []
   /// Calls of function values, by key (realtime.xo).
   value_calls: Map[Int, Bool] = {}
   /// The target of a plain `m[k] = v` (stmt.xo assign), by key.

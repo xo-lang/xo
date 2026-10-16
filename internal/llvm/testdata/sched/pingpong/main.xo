@@ -1,0 +1,22 @@
+// Two tasks ping pong over channels (TestDeferWakeOff): without real-time
+// functions, its hand offs defer their wakes unless XO_DEFER_WAKE=0.
+fn main(os: Os) {
+  let ping = Chan[Int].new()
+  let pong = Chan[Int].new()
+  let last = scope s {
+    s.spawn(fn() {
+      for v in ping {
+        pong.send(v + 1)
+      }
+      pong.close()
+    })
+    var v = 0
+    for _ in 0..20000 {
+      ping.send(v)
+      v = pong.recv() ?? -1
+    }
+    ping.close()
+    v
+  }
+  os.stdio.println("pp ${last}")
+}

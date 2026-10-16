@@ -31,7 +31,7 @@ const P_WORKER_MAIN = 112
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const W_SIZE = 3408
+const W_SIZE = 3416
 const W_LIVE = 2200
 const W_ROOT = 2204
 const TLS_W = 2
@@ -86,6 +86,12 @@ fn setup(p: Int) {
     spin = atoi(sr[0])
   }
   rt.mem_store(p, P_SPIN_ROUNDS, spin, 8)
+  // XO_DEFER_WAKE=0: every wake at once, none deferred (decision 0077's
+  // addendum)
+  let dw = process.env_real("XO_DEFER_WAKE")
+  if !dw.is_empty() && dw[0] == "0" {
+    pool.defer_off(p)
+  }
   fibers_setup(p)
   rt.slot_store[Int](p + P_NCPU, 0, n, RELEASE)
 }

@@ -144,6 +144,59 @@ both parts against main, medians of 9 interleaved rounds):
   (gotchas/monitor-tick-oversleep.md). TestDeferredWakeBound therefore
   makes the waker compute 200 ms and asserts under 100 ms: it separates
   a working monitor from none, not fast from slow.
+- Second change (the same day): the waker's own next runtime call
+  (a channel operation, a Mutex's, a spawn: pool.xo defer_check, the
+  clock read every 16th call) wakes for a deferral older than 50 us, so
+  the monitor is the last resort only for a waker that computes without
+  calling the runtime; XO_DEFER_WAKE=0 turns deferral off; a program
+  with a `uses realtime` function never defers (the SSA builder emits
+  rt.realtime_program at main's start, cabi.xo rt_program, and every
+  section's entry turns it off too, rt_enter): owner, 2026-10-16, "it
+  can't happen in a realtime app". The guard costs channel and Mutex
+  operations a few percent of instructions (pingpong +6%, mutex at one
+  worker +8%), wall within noise.
+- Rejected (lead, 2026-10-16): deferring a Mutex's grant too. Measured:
+  rwmutex 0.41x wall, 0.23x CPU (39 ms against 95; Go 12.6, Rust 17),
+  but a waiter behind a holder that unlocks and keeps working got the
+  lock 1.3 ms later at the median (7.1 ms p99 loaded) instead of 15 us:
+  a backend's handler that unlocks and goes on would hold the next
+  request's handler that long to win a micro benchmark. Mutex wakes
+  stay direct (mutex.xo signal).
+- Known gap (lead, 2026-10-16): bench/perf/conc rwmutex stays about 7.5x
+  Go's wall time (95 ms against 12.6). Measured causes: 235K of its 256K
+  accesses park (writer preference, decision 0118: with 25% writes over
+  64 tasks a writer nearly always waits, and Go's RWMutex makes readers
+  wait for a pending writer too); the internal Mutex word is only 4% of
+  the profile (pool.lock_slow), so a Go style reader count would not
+  remove the parks; halving the idle workers' wakes (a bounded 4 round
+  spin for a worker wakep woke) changed nothing (1.02x wall). The
+  deferral's 0.40x came from locality: granted readers ran on the
+  granting worker instead of migrating to a freshly woken one with the
+  lock's cache lines, the value, and the fiber's stack. A fix would keep
+  that locality without delaying a grant (for example a short steal
+  grace on granted readers with a spinning worker to cover it), at a
+  CPU cost; not done.
+
+Latency model of a hand off whose waker keeps computing without calling
+the runtime (worst case; mutexbusy and handoff, 20 rounds of 30 ms, 5
+runs; "loaded": 12 CPU hogs on the Mac's 12 cores on top of other
+sessions' load, about 2x oversubscribed):
+
+| Hand off | Idle median / worst | Loaded median / p99 / max |
+|---|---|---|
+| Mutex, direct wake (main before; XO_DEFER_WAKE=0; real-time programs) | 45 us / 52 us | 15 us / 917 us / 917 us |
+| Mutex, deferred (rejected, not shipped) | 1.3 ms / 2.3 ms | 1.29 ms / 7.1 ms / 7.1 ms |
+| Channel, deferred, monitor only (e53d33a3) | 1.3 ms / 2.2 ms | 1.29 ms / 9.4 ms / 9.4 ms |
+| Channel, deferred, with defer_check | 1.3 ms / 2.2 ms | 1.28 ms / 2.9 ms / 2.9 ms |
+
+A waker that calls the runtime (sends, locks, spawns) bounds its
+deferral at about 50 us plus 16 calls; one that only computes leaves it
+to the monitor, whose 1 ms timer oversleeps under load (up to 40 ms at
+load 25 to 30, gotchas/monitor-tick-oversleep.md). A real-time program
+never defers, so its hand offs keep the direct wake's latency.
+bench/perf/http p99 was within noise in every configuration (loaded:
+1,251 against 1,324 us).
+
 - An idle program pays nothing: an idle HTTP server's monitor sleeps
   (90 ticks over a 63 s run with 11 deferrals, none during the idle
   minute; CPU time unchanged); XO_THREADS=1 starts no monitor (the same

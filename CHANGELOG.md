@@ -43,6 +43,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   unused, then least recently used past 2 GiB, `XO_DEV_BUILD_MAX`):
   xo prunes a build directory only where it chose the location, and
   `bin-arm64/build` had reached 15 GB.
+- Scheduler (decision 0077's addendum, owner 2026-10-16): a deferred
+  wake is woken by the waker's own next channel, Mutex, or spawn call
+  after 50 us (the monitor being the last resort); XO_DEFER_WAKE=0 turns
+  deferral off, and a program with a `uses realtime` function never
+  defers (the compiler marks it at main's start). Mutex wakes stay
+  direct (a deferred grant was measured and rejected). The latency model
+  is in the addendum; TestDeferWakeOff, TestDeferredWakeBound (with a
+  Mutex case).
 - DWARF line tables (decision 0239) on the arm64 and LLVM backends, on
   by default for build, run, and test (`-s` and `xo asm`: none;
   `--release`: none unless `--debug-info`). darwin: PROG.dSYM next to

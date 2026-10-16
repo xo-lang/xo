@@ -13,6 +13,7 @@ pub fn rt_export(name: Str) -> Str {
     // rtsec.xo's real-time sections (cabi.xo)
     "rt.realtime_enter" => "xo_x_rt_enter"
     "rt.realtime_exit" => "xo_x_rt_exit"
+    "rt.realtime_program" => "xo_x_rt_program"
     // netconn.xo's listeners and connections (cabi_net.xo)
     "rt.listener_close" => "xo_x_nc_listener_close"
     "rt.conn_write" => "xo_x_nc_conn_write"

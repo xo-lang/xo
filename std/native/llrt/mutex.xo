@@ -60,7 +60,9 @@ fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 /// (mutex_signal): the waker still holds the thread for the rest of its
 /// request, and a fiber in next waits for that while the lock sits free;
 /// in the ring a spinning worker takes it at once (bench/perf/http p99
-/// 900 to 800 us, bench/results/perf-throughput-2026-10-08.md).
+/// 900 to 800 us, bench/results/perf-throughput-2026-10-08.md). The wake
+/// is direct, never deferred (decision 0077's addendum: a deferred grant
+/// held the next waiter 1.3 ms behind a holder that kept computing).
 fn signal(p: Int) {
   let w = rt.tlocal_get(TLS_W)
   if w != 0 {
@@ -219,6 +221,7 @@ fn held_del(c: Int, m: Int) {
 /// caller, who gives it back with unlock. The location is the ln bytes at
 /// lp.
 pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
+  pool.defer_check()
   let c = ctx.cur()
   let w = "with"
   held_add(c, m, raw.data(w), 4, lp, ln)
@@ -247,6 +250,7 @@ pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
 
 /// Gives the value l back and releases m (xo_mutex_unlock).
 pub fn unlock(m: Int, l: Int) {
+  pool.defer_check()
   pool.lock(m + M_MU)
   st(m, M_SLOT, l)
   st4(m, M_WRITER, 0)
@@ -260,6 +264,7 @@ pub fn unlock(m: Int, l: Int) {
 /// release (grant_readers); a cancellation unwinds unless m was handed
 /// over first.
 pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
+  pool.defer_check()
   let c = ctx.cur()
   let w = "with_read"
   held_add(c, m, raw.data(w), 9, lp, ln)
@@ -311,6 +316,7 @@ pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
 /// Gives back a reader's reference l and its share of m
 /// (xo_mutex_runlock).
 pub fn runlock(m: Int, l: Int) {
+  pool.defer_check()
   if rc.dec(l) != 0 {
     // not reached: the Mutex holds the value
     let _d = rt.call_c2(ld(m, M_DROP), l, 0)

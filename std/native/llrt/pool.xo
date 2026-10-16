@@ -79,7 +79,10 @@ const W_POOL = 2360
 const W_BATCH = 2368
 /// When this worker took a deferred wake (defer_wake), 0 for none.
 const W_DEFER_AT = 3400
-const W_SIZE = 3408
+/// The waker's runtime calls since (defer_check reads the clock every
+/// 16th).
+const W_DEFER_N = 3408
+const W_SIZE = 3416
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -580,8 +583,9 @@ fn rq_put(p: Int, w: Int, x: Int) {
 pub fn pool_push(p: Int, t: Int) { push(p, t, false) }
 
 /// pool_push of a fiber a channel handed a value to (chan.xo hand): put
-/// in this worker's next slot, it wakes no idle worker; the monitor does
-/// if this worker has not run it 1 ms later (defer_wake).
+/// in this worker's next slot, it wakes no idle worker; the waker's next
+/// runtime call (defer_check) or the monitor does if it still waits
+/// (defer_wake).
 pub fn pool_push_handoff(p: Int, t: Int) { push(p, t, true) }
 
 fn push(p: Int, t: Int, handoff: Bool) {
@@ -1366,6 +1370,7 @@ const T_GONE = 22
 /// pruned from s's list (linked by snext, for the C to release), 0, or -1
 /// when s has ended (nothing done).
 pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
+  defer_check()
   let m = rt.int_wrap(0, s, S_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
@@ -1488,7 +1493,8 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
 // program has no ticks. One worker (XO_THREADS=1) defers nothing and
 // starts no monitor.
 
-/// rt.static_word: the monitor's record (0: not started).
+/// rt.static_word: the monitor's record (0: not started; 1: deferral
+/// off, defer_off, or the monitor could not start).
 const W_MON = 46
 /// The record: asleep (a word: 1 while it sleeps without a timeout), its
 /// futex word, and started (claimed by the first deferral).
@@ -1498,6 +1504,10 @@ const M_WAKE_AT = 8
 const M_SIZE = 24
 const DEFER_NS = 1000000
 const DEFER_US = 1000
+/// The age at which the waker's own next runtime call wakes for its
+/// deferral (defer_check): the bound that does not depend on the
+/// monitor's timer.
+const DEFER_CHECK_NS = 50000
 const MON_IDLE_TICKS = 10
 
 /// Defers the wake for work w just queued: whether it did (false with one
@@ -1510,8 +1520,14 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   if m == 0 {
     return false
   }
-  if rt.mem_load(w, W_DEFER_AT, 8) == 0 {
+  let at = rt.mem_load(w, W_DEFER_AT, 8)
+  if at == 0 {
+    rt.mem_store(w, W_DEFER_N, 0, 8)
     rt.slot_store(w, W_DEFER_AT / 8, sysio.mono_ns(), SEQ_CST)
+  } else if rt.int_wrap(1, sysio.mono_ns(), at) >= DEFER_CHECK_NS {
+    // an older deferral is due: wake now for both
+    rt.slot_store(w, W_DEFER_AT / 8, 0, SEQ_CST)
+    return false
   }
   stat(ST_DEFER)
   if rt.slot_load(m, M_ASLEEP, SEQ_CST) != 0 && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
@@ -1619,4 +1635,75 @@ pub fn scope_listed(s: Int) -> Int {
   let n = rt.mem_load(s, S_NLIST, 8)
   unlock(s + S_MU)
   n
+}
+
+/// The waker side of a deferral's bound (decision 0077's addendum): at a
+/// runtime call of the task on worker w (a channel operation, a Mutex's,
+/// a spawn), a deferral of w older than DEFER_CHECK_NS whose work is
+/// still queued gets its idle worker woken now, so the monitor's timer
+/// (which oversleeps under load, gotchas/monitor-tick-oversleep.md) is
+/// only the last resort, for a task that computes without calling the
+/// runtime. One thread local load when nothing is deferred.
+pub fn defer_check() {
+  // no monitor (one worker, nothing deferred yet) or deferral off: one
+  // static load, no thread local read
+  let m = rt.mem_load(rt.static_word(W_MON), 0, 8)
+  if m == 0 || m == 1 {
+    return
+  }
+  let w = rt.tlocal_get(TLS_W)
+  if w == 0 {
+    return
+  }
+  let at = rt.mem_load(w, W_DEFER_AT, 8)
+  if at == 0 {
+    return
+  }
+  // the clock every 16th call (a clock read cost a ping pong 12% more
+  // instructions on macOS): the bound is DEFER_CHECK_NS or 16 calls,
+  // whichever is later
+  let n = rt.int_wrap(0, rt.mem_load(w, W_DEFER_N, 8), 1)
+  rt.mem_store(w, W_DEFER_N, n, 8)
+  if (n & 15) != 0 || rt.int_wrap(1, sysio.mono_ns(), at) < DEFER_CHECK_NS {
+    return
+  }
+  if rt.slot_cas(w, W_DEFER_AT / 8, at, 0, SEQ_CST) && queued(w) {
+    stat(ST_MON_WAKE)
+    wakep(rt.mem_load(w, W_POOL, 8))
+  }
+}
+
+/// Whether w has work in its next slot or ring.
+fn queued(w: Int) -> Bool { rt.slot_load(w, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(w, 0, SEQ_CST) != rt.slot_load(w, RQ_TAIL, SEQ_CST) }
+
+/// Turns deferred wakes off for the rest of the run, waking for every
+/// pending one: a program with real-time sections (the compiler's mark
+/// at main's start, cabi.xo rt_program, and every section's entry,
+/// rt_enter), or XO_DEFER_WAKE=0 (poolsetup.xo). p is the pool record
+/// (0 before there is one). A load when off already.
+pub fn defer_off(p: Int) {
+  let wm = rt.static_word(W_MON)
+  let m = rt.slot_load[Int](wm, 0, ACQUIRE)
+  if m == 1 {
+    return
+  }
+  if m == 0 && rt.slot_cas[Int](wm, 0, 0, 1, SEQ_CST) {
+    return
+  }
+  // the monitor runs (it sleeps from now on: nothing defers): deferral
+  // off, then every pending one woken
+  rt.slot_store[Int](wm, 0, 1, SEQ_CST)
+  if p == 0 {
+    return
+  }
+  let n = rt.slot_load(p, P_NW, SEQ_CST)
+  var i = 0
+  while i < n {
+    let w = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
+    let at = rt.slot_load(w, W_DEFER_AT / 8, SEQ_CST)
+    if at != 0 && rt.slot_cas(w, W_DEFER_AT / 8, at, 0, SEQ_CST) && queued(w) {
+      wakep(p)
+    }
+    i = rt.int_wrap(0, i, 1)
+  }
 }

@@ -68,6 +68,11 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   let om = b.obj_mod(fo)
   b.s.polls = om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native
   b.poll()
+  if !b.c.realtime_fns.is_empty() && om == b.main_mod && fo == (b.c.mods[b.main_mod].members.get(b"main") ?? -1) {
+    // a program with real-time functions: the scheduler's deferred
+    // wakes off before anything is spawned (decision 0077's addendum)
+    b.rt("realtime_program", -1, [])
+  }
   if with_requires {
     for cl in fd.clauses {
       if let RequiresClause(cond: cond, els: els, debug: debug, ..) = cl {

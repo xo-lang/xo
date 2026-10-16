@@ -235,6 +235,7 @@ fn entry(x: Int, l: Int) -> Int {
 /// while the channel is full, a cancellation point that unwinds; sending
 /// on a closed channel faults at the ln bytes at lp.
 pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
+  pool.defer_check()
   let x = ctx.cur()
   // tasks.canceled inline: a call per send cost 15 instructions
   if budget.canceled(x) {
@@ -300,6 +301,7 @@ pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
 /// list when the channel is closed and drained (and while unwinding); a
 /// cancellation point that unwinds.
 pub fn recv(c: Int) -> Int {
+  pool.defer_check()
   let x = ctx.cur()
   if budget.canceled(x) {
     st4(x, ctx.C_UNWINDING, 1)
@@ -356,6 +358,7 @@ pub fn recv(c: Int) -> Int {
 /// `ch.try_send(x)` (xo_chan_try_send): false (and x released) when the
 /// channel is full or closed.
 pub fn try_send(c: Int, l: Int) -> Int {
+  pool.defer_check()
   pool.lock(c + CH_MU)
   let ok = ld4(c, CH_CLOSED) == 0 && try_send_locked(c, l)
   pool.unlock(c + CH_MU)
@@ -368,6 +371,7 @@ pub fn try_send(c: Int, l: Int) -> Int {
 
 /// `ch.try_recv()` (xo_chan_try_recv): never blocks.
 pub fn try_recv(c: Int) -> Int {
+  pool.defer_check()
   pool.lock(c + CH_MU)
   let (ok, got) = try_recv_locked(c)
   pool.unlock(c + CH_MU)

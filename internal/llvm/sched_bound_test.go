@@ -65,3 +65,49 @@ func TestDeferredWakeBound(t *testing.T) {
 		}
 	}
 }
+
+// TestDeferWakeOff: deferred wakes (decision 0077's addendum) are off in
+// a program with a `uses realtime` function (the compiler's
+// rt.realtime_program at main's start) and with XO_DEFER_WAKE=0, so a
+// real-time program keeps direct wakes' latency; a plain ping pong
+// defers them. XO_RTSTATS counts defer.
+func TestDeferWakeOff(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs two programs")
+	}
+	be := xotool.BackendLLVM
+	if runtime.GOARCH == "arm64" {
+		be = xotool.BackendArm64
+	} else if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	defers := regexp.MustCompile(`\bdefer=(\d+)`)
+	run := func(prog string, env ...string) int {
+		t.Helper()
+		res, err := xotool.Build([]string{filepath.Join("testdata", "sched", prog)}, xotool.Options{Backend: be})
+		if err != nil || res.Failed {
+			t.Fatalf("build %s: %v %v", prog, err, res)
+		}
+		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd.Env = append(append(os.Environ(), "XO_THREADS=4", "XO_RTSTATS=1"), env...)
+		out, err := runCombined(cmd, 2*time.Minute)
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", prog, err, out)
+		}
+		m := defers.FindStringSubmatch(out)
+		if m == nil {
+			t.Fatalf("%s: no defer count:\n%s", prog, out)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	if n := run("realtime"); n != 0 {
+		t.Errorf("a real-time program deferred %d wakes", n)
+	}
+	if n := run("pingpong"); n == 0 {
+		t.Errorf("a ping pong deferred no wake")
+	}
+	if n := run("pingpong", "XO_DEFER_WAKE=0"); n != 0 {
+		t.Errorf("XO_DEFER_WAKE=0: %d wakes deferred", n)
+	}
+}

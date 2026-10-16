@@ -310,7 +310,17 @@ fn obj_rl_share(l: Int, esize: Int, share: Int) { obj.rl_share(l, esize, share) 
 /// Real-time sections (rtsec.xo): xo_realtime_enter, xo_realtime_exit
 /// (the function's name and the call's location, as bytes), and a
 /// fault's leaving of the thread's sections.
-fn rt_enter() { rtsec.enter() }
+fn rt_enter() {
+  // a real-time section turns deferred wakes off (decision 0077's
+  // addendum), in case the program's start did not (rt_program)
+  pool.defer_off(ctx.pool())
+  rtsec.enter()
+}
+
+/// The start of main of a program with `uses realtime` functions (the
+/// SSA builder emits rt.realtime_program there): deferred wakes off from
+/// the start (decision 0077's addendum).
+fn rt_program() { pool.defer_off(ctx.pool()) }
 
 fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
 
