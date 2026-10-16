@@ -837,6 +837,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if (op == 0 || op == 1) && g.add_w32(v, op) {
         return true
       }
+      if op == 1 {
+        let (z, zc) = g.const_int(x.args[1])
+        if zc && z == 0 {
+          // 0 - b: neg (ct.mask_bit's mask; no mov of 0, 2026-10-16)
+          g.set(v, [g.def1(false, "neg $d0, $u0", [g.word(x.args[2])])])
+          return true
+        }
+      }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
       if kc && op <= 1 && imm12(k) {

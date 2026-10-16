@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: `0 - b` of rt.int_wrap is `neg` (ct.mask_bit's mask was
+  `mov x9, #0; sub`). Xo Lang 2's finding.
+
 - arm64 inlined frames in the line tables (decision 0239): the inliner
   keeps the callee's own lines and its call site; .debug_info has a
   DW_TAG_inlined_subroutine per run of inlined code, so lldb shows the
