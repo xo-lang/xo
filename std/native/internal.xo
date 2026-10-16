@@ -7,6 +7,7 @@ use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/hkdf
 use native/llrt/hmac
+use native/llrt/linux
 use native/llrt/mlkem
 use native/llrt/nistec
 use native/llrt/rsa
@@ -97,6 +98,16 @@ fn rt_op(what: Str) -> Bytes? {
     rt.mem_store(buf, 0, 33909456017848440, 8)
     s = rt.rs_push_byte(s, rt.call_c2(rt.sym_addr("strlen"), buf, 0))
     rt.heap_release(buf - 8)
+    return Some(s.bytes())
+  }
+  if what == "auxv" {
+    // the auxiliary vector read from memory after the start's
+    // environment (linux.xo auxv_init): kept, its AT_PHDR the one
+    // /proc/self/auxv gives, AT_PAGESZ set; 01 01 01 off Linux
+    let onlinux = target.os == TargetOs.Linux
+    s = rt.rs_push_byte(s, if !onlinux || linux.auxv_kept() { 1 } else { 0 })
+    s = rt.rs_push_byte(s, if !onlinux || linux.auxval(3) == linux.auxval_proc(3) { 1 } else { 0 })
+    s = rt.rs_push_byte(s, if !onlinux || linux.auxval(6) > 0 { 1 } else { 0 })
     return Some(s.bytes())
   }
   if what == "frame_addr" {

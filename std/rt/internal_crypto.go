@@ -79,14 +79,17 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		r, ok = Bytes([]byte{1, 1, 0}), what == "present"
 	case "rt":
 		// std/native/internal.xo rt_op (decisions 0233 and 0234): a Go build
-		// has no C ABI exports, frame records, or C symbols; it answers
-		// what they give, "12345"'s length and first byte, the three frame
-		// facts, and xo_entry's address not 0 with strlen of seven bytes
+		// has no C ABI exports, frame records, C symbols, or auxiliary
+		// vector of its own; it answers what they give, "12345"'s length and
+		// first byte, the three frame facts, xo_entry's address not 0 with
+		// strlen of seven bytes, and the three auxv facts
 		switch what {
 		case "fn_addr":
 			s := strconv.Itoa(12345)
 			r, ok = Bytes([]byte{byte(len(s)), s[0]}), true
 		case "frame_addr":
+			r, ok = Bytes([]byte{1, 1, 1}), true
+		case "auxv":
 			r, ok = Bytes([]byte{1, 1, 1}), true
 		case "sym_addr":
 			r, ok = Bytes([]byte{1, byte(len("xxxxxxx"))}), true

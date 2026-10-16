@@ -12,6 +12,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   stored since the last one (`prune.Policy.burst`, `prune.note_stored`),
   not only hourly; it had grown to 19 GiB in 15 minutes
   (gotchas/backend-cache-burst-past-cap.md, decision 0223 addendum).
+- Linux: the auxiliary vector (AT_PHDR for the fault unwinder, AT_HWCAP,
+  AT_PAGESZ) is read from memory after the start's environment instead
+  of /proc/self/auxv (now a fallback): under valgrind the unwinder found
+  no AT_PHDR and a fault escaped task.isolate, and without /proc (a
+  chroot, a sandbox) every fault would have (gotchas/linux-auxv-proc.md,
+  golden rt_addrs). Fault unwinding on arm64 against pre-zero-C main
+  dd33dd13: fault defer, owned and isolate 0.63x, 0.64x and 0.71x wall
+  time on the Mac, 0.43x, 0.41x and 0.37x instructions on Linux
+  (bench/results/zero-c-perf-sweep-2026-10-15.md).
 - arm64: the immortal empty list and zero handle come first in a
   program's data (page offset 0): in selfhost/macho's layout the empty
   list sat at page offset 0x880, and code loading it into x11 then x12

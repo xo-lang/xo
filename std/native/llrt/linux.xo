@@ -754,11 +754,53 @@ fn zpath(path: Str) -> Bytes {
   s.freeze()
 }
 
+/// rt.static_word: the auxiliary vector's address (auxv_init), or 0.
+const W_AUXV = 12
+
+/// Keeps the address of the auxiliary vector, which follows the
+/// environment's NULL ended array on the process's initial stack (envp:
+/// the array the C start or _start gave main). auxval reads it there:
+/// /proc may be missing (a chroot, a sandbox), and under valgrind its
+/// /proc/self/auxv came back from an offset another open had left, so
+/// the unwinder found no AT_PHDR and a fault escaped its isolate
+/// (gotchas/linux-auxv-proc.md).
+pub fn auxv_init(envp: Int) {
+  if target.os != TargetOs.Linux || envp == 0 {
+    return
+  }
+  var p = envp
+  while rt.mem_load(p, 0, 8) != 0 {
+    p = rt.int_wrap(0, p, 8)
+  }
+  rt.mem_store(rt.static_word(W_AUXV), 0, rt.int_wrap(0, p, 8), 8)
+}
+
 /// getauxval(k): the value of entry k of the auxiliary vector, or 0 (off
-/// Linux too), read from /proc/self/auxv (no C library call: the C
-/// library's getauxval is not reachable from Xo, and with XO_NOLIBC
-/// there is none). Was xo_sys.c xo_auxval. UNTESTED on linux.
+/// Linux too): read where auxv_init found it, else from /proc/self/auxv
+/// (no C library call: the C library's getauxval is not reachable from
+/// Xo, and with XO_NOLIBC there is none). Was xo_sys.c xo_auxval.
 pub fn auxval(k: Int) -> Int {
+  if target.os != TargetOs.Linux {
+    return 0
+  }
+  var a = rt.mem_load(rt.static_word(W_AUXV), 0, 8)
+  if a != 0 {
+    while true {
+      let t = rt.mem_load(a, 0, 8)
+      if t == 0 || t == k {
+        return if t == k { rt.mem_load(a, 8, 8) } else { 0 }
+      }
+      a = rt.int_wrap(0, a, 16)
+    }
+  }
+  auxval_proc(k)
+}
+
+/// Whether auxv_init kept the auxiliary vector's address.
+pub fn auxv_kept() -> Bool { rt.mem_load(rt.static_word(W_AUXV), 0, 8) != 0 }
+
+/// auxval's fallback: entry k read from /proc/self/auxv, or 0.
+pub fn auxval_proc(k: Int) -> Int {
   if target.os != TargetOs.Linux {
     return 0
   }

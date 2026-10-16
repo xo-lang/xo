@@ -1100,3 +1100,30 @@ inline rt.tlocal_get/set on linux/arm64 (mrs and the tprel adds, about
 on darwin one TLV getter call per function with the base kept in a
 register. Source changes in tasks.xo would save 2 or 3 of the about 20
 instructions per round trip, so they wait for those.
+
+### Follow up: fault unwinding on arm64 (2026-10-16, xo-4)
+
+The resweep's fault rows (defer 1.224, owned 1.206, isolate 1.088 on
+arm64) are closed by d8219048 (the unwinder's per-thread frame cache by
+pc, which landed after the resweep). bench/perf/fault, main of 2026-10-16
+(xo 0.16.0) against dd33dd13 (xo built by the 0.11.0 seed, its own std),
+arm64 backend:
+
+| Workload | Mac wall, base | Mac wall, main | main/base | Mac instructions main/base | Linux callgrind, base | Linux callgrind, main | main/base |
+|---|---|---|---|---|---|---|---|
+| defer | 65.7 ms | 41.1 ms | 0.626 | 0.589 | 2,108.9M | 911.4M | 0.432 |
+| owned | 42.2 ms | 27.0 ms | 0.639 | 0.576 | 1,203.5M | 496.2M | 0.412 |
+| isolate | 14.8 ms | 10.5 ms | 0.710 | 0.643 | 450.2M | 165.3M | 0.367 |
+
+Mac: medians of 11 interleaved runs (wall), minimum of 3 (instructions
+retired). Linux: valgrind's callgrind in Docker (linux/arm64, Debian
+trixie), each side's program built by its own Linux xo. On llvm the
+Mac's instructions are 0.44x (defer), 0.45x (owned), 0.48x (isolate).
+
+The first Linux callgrind of main ended owned after 150K instructions:
+under valgrind a fault escaped task.isolate (about one run in four, every
+run with --fair-sched=yes), because the unwinder found no AT_PHDR in
+valgrind's /proc/self/auxv. Fixed in the same change (linux.xo reads the
+auxiliary vector after the start's envp; gotchas/linux-auxv-proc.md);
+the Linux main column is with the fix. Nothing for the arm64 emitter
+here.

@@ -226,7 +226,8 @@ fn prefetch(a: Int)
 ///   3-6 std/native/llrt/stdio.xo: standard output's buffer, its length, its lock, the mode
 ///   7-9 std/native/llrt/process.xo: argc, argv, the environment
 ///   10-11 std/native/llrt/obj.xo: the single threaded heap record, heap_slow's address
-///   12-13 free (decision 0237)
+///   12 std/native/llrt/linux.xo: the auxiliary vector's address (after the start's environment array), or 0
+///   13 free (decision 0237)
 ///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
 ///   15 std/native/llrt/rtstats.xo: the runtime statistics' record (its switch and counts; was xo_rt.c st and rtstats until decision 0233 step 2)
 ///   16-17 std/native/llrt/ctx.xo: the address of the services record (the pool record, flags), the program's task group (os.tasks; decision 0229)
