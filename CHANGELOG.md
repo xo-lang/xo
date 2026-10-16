@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native test binaries' MemFs has symbolic links: `symlink` and
+  `read_link`, and `stat`, `exists`, `read`, and `read_text` follow a
+  link as the Go backend's MemFs does (std/native/testing.xo). selfhost/check's
+  tests build and pass on arm64 and LLVM with the Go backend's report
+  (they stopped at XO1201 before); cmd/xo TestNoGCTests compares them,
+  and testdata/nogc/same has a symbolic link test.
 - Decision 0234, step 2 (after seed 0.15.0): `main` is Xo
   (std/native/llrt/cabi_c.xo, exported under its C name): entry.xo init
   does what xo_rt.c's main and fault_init did (the main heap record,

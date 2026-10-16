@@ -107,6 +107,9 @@ struct MemNode {
   data: Bytes
   modified: Time
   name: Str
+  /// A symbolic link's target ("" for a file or directory): absolute
+  /// targets relative to the file system's root
+  link: Str = ""
 }
 
 struct MemFail {
@@ -286,6 +289,50 @@ fn memfs_children(st: MemState, full: Str) -> List[MemNode] {
   out.sort_by(fn(n) { path.base(n.name) })
 }
 
+// memfs_follow resolves the symbolic links at full (relative to the file
+// system's root); None when a chain is longer than 40 links.
+fn memfs_follow(st: MemState, full: Str) -> Str? {
+  var cur = full
+  for _ in 0..40 {
+    match memfs_get(st, cur) {
+      None => return Some(cur)
+      Some(n) => {
+        if n.link.is_empty() {
+          return Some(cur)
+        }
+        if n.link.starts_with("/") {
+          cur = memfs_trim(path.clean(n.link))
+        } else {
+          cur = memfs_trim(path.join(path.dir("/" + cur), n.link))
+        }
+      }
+    }
+  }
+  None
+}
+
+// memfs_link_escapes is std/rt's linkEscapes: a link in a sub view whose
+// target leaves the view.
+fn memfs_link_escapes(link: Str, target: Str) -> Bool {
+  let t = target.replace("\\", "/")
+  if t.starts_with("/") || (t.len() >= 2 && t[1..2] == ":") {
+    return true
+  }
+  let dir = path.dir(path.clean("/" + link.replace("\\", "/")))
+  var depth = 0
+  for seg in "${memfs_trim(dir)}/${t}".split("/") {
+    if seg == ".." {
+      depth -= 1
+    } else if seg != "" && seg != "." {
+      depth += 1
+    }
+    if depth < 0 {
+      return true
+    }
+  }
+  false
+}
+
 fn memfs_info(f: Fs, n: MemNode) -> FileInfo {
   FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: n.data.len(), modified: n.modified}
 }
@@ -330,7 +377,20 @@ fn memfs_stat_in(var st: MemState, f: Fs, full: Str) -> FileInfo? ! FsErr {
   }
   match memfs_get(st, full) {
     None => None
-    Some(n) => Some(memfs_info(f, n))
+    Some(n) => {
+      if n.link.is_empty() {
+        return Some(memfs_info(f, n))
+      }
+      // a symbolic link: the target's information under the link's name
+      let t = match memfs_follow(st, full) {
+        Some(t) => t
+        None => return Ok(None)
+      }
+      match memfs_get(st, t) {
+        None => None
+        Some(tn) => Some(memfs_info(f, tn) with {name: path.base(n.name), path: memfs_rel(f, n.name)})
+      }
+    }
   }
 }
 
@@ -351,7 +411,7 @@ fn memfs_read_in(var st: MemState, full: Str, p: Str) -> Bytes ! FsErr {
   if let Some(e) = memfs_failed(st, 1, [full]) {
     return Err(e)
   }
-  match memfs_get(st, full) {
+  match memfs_get(st, memfs_follow(st, full) ?? full) {
     None => Err(memfs_err(1, p))
     Some(n) => {
       if n.dir {
@@ -441,6 +501,56 @@ fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
   let r = memfs_write_in(st, f, full, p, data)
   memfs_store(st)
   r?
+}
+
+fn memfs_symlink_in(var st: MemState, f: Fs, full: Str, target: Str, link: Str) -> () ! FsErr {
+  if let Some(e) = memfs_failed(st, 2, [full]) {
+    return Err(e)
+  }
+  if (rt.fs_mode(f) & 1) != 0 && memfs_link_escapes(link, target) {
+    return Err(memfs_err(6, link))
+  }
+  if full == "" || memfs_get(st, full).is_some() {
+    return Err(memfs_err(2, link))
+  }
+  if let Some(bad) = memfs_mkdirs(st, full, false) {
+    return Err(memfs_err(4, memfs_rel(f, bad)))
+  }
+  var t = target.replace("\\", "/")
+  let root = rt.fs_root(f)
+  if t.starts_with("/") && root != "" {
+    // an absolute target inside the view names a path of the view
+    t = "/" + memfs_trim(path.join(root, t))
+  }
+  memfs_put(st, full, MemNode{dir: false, data: b"", modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: "", link: t})
+}
+
+fn memfs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
+  let full = memfs_begin(f, link, true)?
+  var st = memfs_load()
+  let r = memfs_symlink_in(st, f, full, target, link)
+  memfs_store(st)
+  r?
+}
+
+fn memfs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
+  let full = memfs_begin(f, p, false)?
+  let st = memfs_load()
+  let n = memfs_get(st, full)
+  memfs_store(st)
+  match n {
+    None => Err(memfs_err(1, p))
+    Some(n) => {
+      if n.link.is_empty() {
+        return None
+      }
+      let root = rt.fs_root(f)
+      if n.link.starts_with("/") && root != "" {
+        return Some("/" + memfs_trim(n.link).trim_prefix(root).trim_prefix("/"))
+      }
+      Some(n.link)
+    }
+  }
 }
 
 // memfs_seq is fmt.Sprintf("%06d", n).

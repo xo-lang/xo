@@ -86,13 +86,19 @@ Invalidation, checked by hand and by cmd/xo TestNoGCRunCache: an edit,
 a new file, a changed xo.mod, an XO_ variable, and an edit to a std
 file each miss; `-run` and the other run only flags hit.
 
-## Known issue: selfhost/check has no native test binary
+## Known issue (fixed 2026-10-15): selfhost/check had no native test binary
 
 `xo test --backend=arm64` (or llvm) of selfhost/check fails before any
 code is generated: `locate.xo:136:11: error XO1201: not available
 without a garbage collector (--no-gc) yet: the method Fs.read_link of a
 test's MemFs (support is planned)`. Its tests run only on the Go
 backend (11.1 s cold, 1.6 s warm) until MemFs gains read_link natively.
+
+Fixed: std/native/testing.xo gives the native MemFs symbolic links
+(memfs_symlink, memfs_read_link, and stat, exists, read, and read_text
+following them as std/rt's MemFs does). `xo test -v selfhost/check`
+prints the same report on Go, arm64, and LLVM (15 passed), and cmd/xo
+TestNoGCTests now compares it.
 
 With `XO_BIN_CACHE` unset (the default directory), selfhost/prune on
 LLVM took 1.92 s and then 1.10 s.

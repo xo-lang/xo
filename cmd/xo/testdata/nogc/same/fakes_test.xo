@@ -99,3 +99,26 @@ test "a failing os.tasks task fails the test" {
   })
   expect(true)
 }
+
+test "memfs symbolic links" {
+  os.fs.write("d/f.txt", b"data")?
+  os.fs.symlink("f.txt", "d/l")?
+  os.fs.symlink("/d", "top")?
+  expect(os.fs.read_link("d/l")?) == Some("f.txt")
+  expect(os.fs.read_link("top")?) == Some("/d")
+  expect(os.fs.read_link("d/f.txt")?) == None
+  expect(os.fs.read_link("nope")) == Err(FsErr.NotFound(path: "nope"))
+  expect(os.fs.read_text("d/l")?) == "data"
+  expect(os.fs.stat("d/l")?.map(fn(f) { "${f.name} ${f.path} ${f.is_dir} ${f.size}" })) == Some("l d/l false 4")
+  expect(os.fs.stat("top")?.map(fn(f) { "${f.name} ${f.path} ${f.is_dir}" })) == Some("top top true")
+  expect(os.fs.symlink("x", "d/l")) == Err(FsErr.Exists(path: "d/l"))
+  os.fs.symlink("gone", "d/dead")?
+  expect(os.fs.exists("d/dead")?) == false
+  os.fs.symlink("b", "a")?
+  os.fs.symlink("a", "b")?
+  expect(os.fs.stat("a")?) == None
+  let sub = os.fs.sub("d")
+  expect(sub.read_link("l")?) == Some("f.txt")
+  expect(sub.symlink("/x", "m")) == Err(FsErr.Denied(path: "m"))
+  expect(sub.symlink("../f.txt", "n")) == Err(FsErr.Denied(path: "n"))
+}
