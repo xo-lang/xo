@@ -85,9 +85,47 @@ test as the C did, and the run must end with `xo leakcheck: 0 live`.
   solo (before the program's first task), threads (eight tasks
   together, mailboxes crossing threads), waves (frees on other workers,
   checked, with the chunk bound). Every C check kept.
-- Later batches: rc_threads.c, alloc_threads.c; evloop.c, rawpoll.c,
-  fault_resume.c, fault_shared.c, realtime.c, win_consts.c; crypto_diff.c
-  and crypto_ref.c (dropped if the Go diff tests cover them).
+- Batch 2 (2026-10-16), each verified on darwin/arm64 and, in Docker,
+  linux/arm64, both backends, one worker, three, and eight:
+  - evloop.c and rawpoll.c are testdata/rt/evloop: timers (2000
+    sleepers; the workers alive stay at most the CPUs plus one, rt_probe
+    "workers" and "cpus"), an 8 MB echo, wakeups, registrations
+    (rawpoll's descriptors registered while the poller waits), and
+    inherited (rt_probe "inherited": linux.xo's pipe2 without
+    close-on-exec, a forked child that sleeps, pd_open and pd_free, a
+    write; Linux only, first run on Linux by this rewrite). Not kept:
+    rawpoll's ThreadSanitizer edge between a registration and the
+    poller, which needs poll.xo instrumented (the queued TSan-clean
+    runtime).
+  - fault_shared.c, fault_shared.ll and fault_resume.c are
+    testdata/rt/fault_shared: rt_probe "qsort_fault" calls the C
+    library's qsort (sys_c.xo) with cabi.xo fault_raise_msg as the
+    comparator, so the fault crosses libc's frames; task.isolate catches
+    it, or (XO_FAULT_UNISOLATED) it is reported past the boundary with
+    exit status 70. Not kept: fault_resume's case of a C frame's cleanup
+    resuming the unwind (x86_64 and Windows, where libgcc or the system
+    unwinds); an Xo program has no C frame with a cleanup.
+  - realtime.c is testdata/rt/realtime, every check kept: the frees
+    deferred inside a section (std/internal rt_queued, real-time), a
+    real-time call inside a section, the queue's overflow at 256, a
+    counted allocation (rt_allocs) and its XO-F007 caught by
+    task.isolate, and sections on several tasks at once. Values are
+    released inside a section by stores into a List nothing else holds:
+    parameters are borrowed, so a passed value is released after the
+    section. For rt_queued and rt_allocs to be real-time, the pure loads
+    rt.mem_load, rt.slot_load, rt.static_word, and rt.tlocal_get are
+    declared `uses realtime` in std/native/rt.xo (the lead's decision:
+    a declaration, not a new intrinsic; rt is std internal, so core 6.5's
+    rules for programs do not change), and obj.xo rt_heap is heap()
+    without its slow path. No store or allocating intrinsic is marked.
+- C kept on purpose: std/llrt/testdata/win_consts.c (static asserts of
+  the Windows SDK's constants and struct layouts the runtime hard codes:
+  only a compile against the real headers checks them),
+  internal/llvm/testdata/errno_probe.c, the `use c` test data
+  (internal/cbind, internal/selfhost's tiny.c), and
+  examples/realtime-control.
+- Later: crypto_diff.c and crypto_ref.c (dropped if the Go diff tests
+  cover them), then the exports and xcalls.h and xrec.h only they used.
 
 ## Alternatives
 

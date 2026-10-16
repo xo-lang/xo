@@ -1,0 +1,193 @@
+// A test of real-time sections (decision 0133), run by internal/llvm's
+// TestRuntimeRealtime under ThreadSanitizer with one worker, three, and
+// eight, and optimized (decision 0241: std/llrt/testdata/realtime.c in
+// Xo). A call from code that is not real-time to a `uses realtime`
+// function is a section; std/internal's rt_queued and rt_allocs, real-time
+// themselves, read the thread's deferred frees and counted allocations
+// inside it.
+//
+// Tests: frees inside a section are deferred to its end, a real-time call
+// inside a section does not end it, a queue of more than 256 frees
+// overflows into frees done at once, an allocation inside a section is
+// counted and faults with XO-F007 at its end, and tasks keep separate
+// sections. After each test every allocation it made must be freed.
+// Prints "<test>: ok" per test; exit status 0 means every test passed.
+use std/internal
+use std/task
+
+const RTQ = 256
+const NT = 4
+
+struct Run {
+  failures: Atomic[Int]
+  out: Stdio
+  together: Int
+}
+
+fn (r: Run) check(ok: Bool, what: Str) {
+  if !ok {
+    r.out.eprintln("check failed: ${what}")
+    let _n = r.failures.add(1)
+  }
+}
+
+fn (r: Run) gate(started: Atomic[Int]) {
+  let _n = started.add(1)
+  while started.get() < r.together {}
+}
+
+fn live() -> Int { internal.rt_probe("live", 0, 0, 0, 0) }
+
+fn element(i: Int) -> Str { "element ${i}" }
+
+fn list_of(n: Int) -> List[Str] {
+  var l: List[Str] = []
+  for i in 0..n {
+    l.push(element(i))
+  }
+  l
+}
+
+// Values are released inside a section by stores over them: a store into
+// a List nothing else holds is in place (core 6.5), and the element it
+// replaces is released there. Parameters are borrowed, so a value passed
+// to a real-time function is released by its caller, after the section.
+
+// the section: a string, a list with its 50 elements, and a closure with
+// its capture are released inside it, so they wait in the queue
+fn drop_three(var ss: List[Str], var ls: List[List[Str]], var fs: List[fn() -> Int], e: Str, el: List[Str], ef: fn() -> Int) -> Int uses realtime {
+  ss[0] = e
+  ls[0] = el
+  fs[0] = ef
+  internal.rt_queued()
+}
+
+fn test_defer(r: Run) {
+  let base = live()
+  let cap = "captured ${"string"}"
+  var ss = ["old ${"value"}"]
+  var ls = [list_of(50)]
+  var fs: List[fn() -> Int] = [fn() { cap.len() }]
+  let e = ""
+  let el: List[Str] = []
+  let ef = fn() { 0 }
+  let q = drop_three(ss, ls, fs, e, el, ef)
+  r.check(q == 3, "${q} frees deferred in the section, want 3")
+  r.check(internal.rt_queued() == 0, "the section's end left ${internal.rt_queued()} frees queued")
+  r.check(ss[0] == "" && ls[0].is_empty() && fs[0]() == 0, "the stores in the section")
+  r.check(live() < base + 54, "nothing was freed: ${live() - base} allocations live")
+}
+
+fn inner(var xs: List[Str], e: Str) -> Int uses realtime {
+  xs[1] = e
+  internal.rt_queued()
+}
+
+fn outer(var xs: List[Str], e: Str) -> Int uses realtime {
+  xs[0] = e
+  // a real-time call inside a section: no section of its own, so its
+  // free stays queued after it returns
+  let _i = inner(xs, e)
+  internal.rt_queued()
+}
+
+fn test_nested(r: Run) {
+  let base = live()
+  var xs = ["a${"1"}", "b${"2"}"]
+  let q = outer(xs, "")
+  r.check(q == 2, "${q} frees queued after the inner call, want 2")
+  r.check(live() == base, "after the section ${live() - base} allocations live")
+}
+
+fn drop_all(var xs: List[Str], e: Str) -> Int uses realtime {
+  for i in 0..RTQ + 44 {
+    xs[i] = e
+  }
+  internal.rt_queued()
+}
+
+fn test_overflow(r: Run) {
+  let base = live()
+  var xs: List[Str] = []
+  for i in 0..RTQ + 44 {
+    xs.push(element(i))
+  }
+  let q = drop_all(xs, "")
+  r.check(q == RTQ, "the queue holds ${q}, want ${RTQ} (the rest freed at once)")
+  r.check(live() == base, "after the section ${live() - base} allocations live")
+}
+
+// a List shared by its caller: the store copies it, an allocation, which
+// the section's end reports with XO-F007 (counted first into seen)
+fn store_shared(var xs: List[Int], seen: Atomic[Int]) -> Int uses realtime {
+  xs[0] = 7
+  seen.set(internal.rt_allocs())
+  xs.len()
+}
+
+fn test_allocs(r: Run) {
+  let xs = [1, 2, 3]
+  let seen = Atomic[Int].new(-1)
+  let res = task.isolate(fn() {
+    var keep = xs
+    store_shared(keep, seen)
+  })
+  r.check(seen.get() == 1, "${seen.get()} allocations counted in the section, want 1")
+  match res {
+    Ok(_) => r.check(false, "a section that allocated did not fault")
+    Err(task.Isolated.Faulted(info)) => r.check(info.msg.starts_with("XO-F007"), "the section's fault: ${info.msg}")
+    Err(task.Isolated.Failed(_)) => r.check(false, "a section that allocated failed")
+  }
+  r.check(internal.rt_queued() == 0, "the fault left frees queued")
+}
+
+fn section(var xs: List[Str], e: Str) -> Int uses realtime {
+  xs[0] = e
+  internal.rt_queued()
+}
+
+// tasks run sections of their own at once: a section on one thread does
+// not defer the frees of another
+fn test_threads(r: Run) {
+  let started = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..NT + 1 {
+      let _t = s.spawn(fn() {
+        r.gate(started)
+        for _ in 0..200 {
+          var xs = list_of(8)
+          let q = section(xs, "")
+          r.check(q == 1, "a task's section queued ${q}, want 1")
+          r.check(internal.rt_queued() == 0, "a task's section left frees queued")
+        }
+      })
+    }
+  }
+}
+
+fn main(os: Os) {
+  let workers = Int.parse(os.env.get("XO_THREADS") ?? "") ?? 1
+  let r = Run{failures: Atomic[Int].new(0), out: os.stdio, together: workers.min(NT + 1).max(1)}
+  scope s {
+    let _t = s.spawn(fn() { 1 })
+  }
+  let only = os.env.get("XO_RT_ONLY") ?? ""
+  let tests = if only.is_empty() { ["defer", "nested", "overflow", "allocs", "threads"] } else { only.split(",") }
+  for name in tests {
+    let before = r.failures.get()
+    let l0 = live()
+    match name {
+      "defer" => test_defer(r)
+      "nested" => test_nested(r)
+      "overflow" => test_overflow(r)
+      "allocs" => test_allocs(r)
+      _ => test_threads(r)
+    }
+    let l1 = live()
+    r.check(l1 == l0, "${name}: ${l1 - l0} allocations still live")
+    os.stdio.println("${name}: ${if r.failures.get() == before { "ok" } else { "FAIL" }}")
+  }
+  if r.failures.get() != 0 {
+    os.proc.exit(1)
+  }
+}

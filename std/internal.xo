@@ -50,9 +50,21 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes
 /// count was thread local), "count" (the count word of object a, as
 /// obj_word gives for a value); "readers" and "writers" (a Mutex's
 /// waiting readers and writers, a its obj_word) and "listed" (the
-/// tasks a scope's list holds, a its obj_word). An unknown op faults, and
+/// tasks a scope's list holds, a its obj_word), "qsort_fault" (the C
+/// library's qsort calls back into the runtime, which faults: "boom in
+/// qsort", through libc's frames), "workers" and "cpus" (the pool's
+/// workers alive and CPUs), "inherited" (evloop.c's test of a pipe a
+/// child holds after its registration was freed: 1 when run, 2 off
+/// Linux). An unknown op faults, and
 /// every op faults on the Go backend.
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int
 
 /// The address of x's object, for rt_probe (0 for a value without one).
 fn obj_word[T](x: T) -> Int
+
+/// The frees the calling thread's real-time sections deferred so far, and
+/// the allocations since its outermost section began (decision 0241:
+/// realtime.c's checks inside a section; real-time, so a section may call
+/// them). Native backends only; the Go backend faults.
+fn rt_queued() -> Int uses realtime
+fn rt_allocs() -> Int uses realtime

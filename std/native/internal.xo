@@ -3,6 +3,7 @@
 use native/llrt/aesgcm
 use native/llrt/chacha
 use native/llrt/cpu
+use native/llrt/ctx
 use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/hkdf
@@ -11,13 +12,16 @@ use native/llrt/linux
 use native/llrt/mlkem
 use native/llrt/mutex
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/rc
 use native/llrt/nistec
 use native/llrt/rsa
+use native/llrt/rtsec
 use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/sha3
+use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/x509
 use native/llrt/x25519
@@ -127,6 +131,10 @@ fn rt_op(what: Str) -> Bytes? {
 
 fn obj_word[T](x: T) -> Int { rt.obj_addr(x) }
 
+fn rt_queued() -> Int uses realtime { obj.rt_queued() }
+
+fn rt_allocs() -> Int uses realtime { rtsec.allocs() }
+
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
   match op {
     "live" | "total" => {
@@ -175,8 +183,83 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
     "readers" => mutex.queued(a, false)
     "writers" => mutex.queued(a, true)
     "listed" => pool.scope_listed(a)
+    "workers" => pool.alive(ctx.pool())
+    "cpus" => pool.cpus(ctx.pool())
+    "inherited" => probe_inherited()
+    "qsort_fault" => {
+      // a fault raised in a callback of the C library (decision 0241:
+      // fault_shared.c): qsort's comparator is cabi.xo's fault_raise_msg,
+      // and each of the four 16 byte elements holds "boom in qsort", so
+      // the two elements qsort compares are the fault's message and
+      // location. The Xo unwinder must find libc's unwind tables to walk
+      // qsort's frames back to the caller; it never returns here
+      let base = obj.alloc_obj(64)
+      let text = "boom in qsort".bytes()
+      for i in 0..4 {
+        rt.mem_set(base + i * 16, 0, 16)
+        for j in 0..text.len() {
+          rt.mem_store(base, i * 16 + j, Int(text[j]), 1)
+        }
+      }
+      sys_c.qsort(base, 4, 16, rt.fn_addr("fault_raise_msg"))
+      obj.free_obj(base)
+      0
+    }
     _ => fault("internal.rt_probe: unknown op ${op}")
   }
+}
+
+/// rt_probe's "inherited" (decision 0241: evloop.c test_inherited,
+/// gotchas/linux-epoll-inherited-socket.md): a pipe whose read end a
+/// child process also holds is registered with the poller and freed,
+/// then made readable: no event may reach the freed descriptor record
+/// (epoll keys a registration by the open file, so without the
+/// EPOLL_CTL_DEL of pd_close it outlives the close). 1 when it ran, 2
+/// off Linux (kqueue drops a closed descriptor's events), 0 when a
+/// system call failed.
+fn probe_inherited() -> Int {
+  if target.os != TargetOs.Linux {
+    return 2
+  }
+  let fds = obj.alloc_obj(16)
+  let ts = obj.alloc_obj(16)
+  let x = obj.alloc_obj(8)
+  rt.mem_store(x, 0, 120, 1)
+  // inherited: the pipe is not close-on-exec
+  if linux.pipe2(fds, 0) != 0 {
+    return 0
+  }
+  let r = rt.mem_load(fds, 0, 4)
+  let w = rt.mem_load(fds, 4, 4)
+  // the child holds both ends for 0.3 s, making only system calls
+  rt.mem_store(ts, 0, 0, 8)
+  rt.mem_store(ts, 8, 300000000, 8)
+  let pid = linux.fork()
+  if pid == 0 {
+    let _s = linux.nanosleep_at(ts)
+    let _e = linux.exit_group(0)
+  }
+  let _n = sock.nonblock(r)
+  let pd = poll.pd_open(r, false)
+  poll.pd_free(pd)
+  // the poller frees it at the top of its next turn
+  poll.poke()
+  rt.mem_store(ts, 8, 50000000, 8)
+  let _a = linux.nanosleep_at(ts)
+  // readable now, through the file the child still holds open
+  let _w = linux.write_at(w, x, 1)
+  let _b = linux.nanosleep_at(ts)
+  poll.poke()
+  rt.mem_store(ts, 8, 20000000, 8)
+  let _c = linux.nanosleep_at(ts)
+  if pid > 0 {
+    let _d = linux.wait4(pid, 0)
+  }
+  let _f = linux.close(w)
+  obj.free_obj(fds)
+  obj.free_obj(ts)
+  obj.free_obj(x)
+  if pid < 0 { 0 } else { 1 }
 }
 
 /// The byte of tag t at i: rt_probe's "fill" and "check" pattern (every

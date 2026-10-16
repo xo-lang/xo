@@ -1707,3 +1707,11 @@ pub fn defer_off(p: Int) {
     i = rt.int_wrap(0, i, 1)
   }
 }
+
+/// The workers alive and the CPUs the pool counts, of pool record p:
+/// std/internal rt_probe's "workers" and "cpus" (decision 0241, the event
+/// loop test: the workers stay near one per CPU however many tasks
+/// sleep).
+pub fn alive(p: Int) -> Int { rt.slot_load(p, P_ALIVE, SEQ_CST) }
+
+pub fn cpus(p: Int) -> Int { rt.mem_load(p, P_NCPU, 8) }

@@ -1,0 +1,224 @@
+// A test of the event loop and fibers (decision 0069), run by
+// internal/llvm's TestRuntimeEventLoop under ThreadSanitizer with one
+// worker, three, and eight, and optimized (decision 0241:
+// std/llrt/testdata/evloop.c and rawpoll.c in Xo): timers with many
+// sleepers on few workers, a socket echo with more data than the socket
+// buffers hold (writes park until the reader drains), close and
+// cancellation waking parked socket operations, a refused dial,
+// select's `after`, descriptors registered while the poller waits, and
+// a pipe a child process inherited (std/internal's rt_probe
+// "inherited", Linux).
+//
+// After each test every allocation it made must be freed. Prints
+// "<test>: ok" per test; exit status 0 means every test passed.
+use std/internal
+
+struct Run {
+  failures: Atomic[Int]
+  out: Stdio
+}
+
+fn (r: Run) check(ok: Bool, what: Str) {
+  if !ok {
+    r.out.eprintln("check failed: ${what}")
+    let _n = r.failures.add(1)
+  }
+}
+
+fn live() -> Int { internal.rt_probe("live", 0, 0, 0, 0) }
+
+fn pattern(i: Int) -> UInt8 { UInt8((i * 7 + i / 512) % 256) }
+
+fn test_timers(r: Run, clock: Clock) {
+  let t0 = clock.now()
+  clock.sleep(10ms)
+  r.check(clock.since(t0) >= 10ms, "a sleep of 10 ms took ${clock.since(t0)}")
+  // many sleepers at once park; the workers stay few
+  let t1 = clock.now()
+  let done = scope s {
+    var ts: List[Task[Int, Never]] = []
+    for i in 0..2000 {
+      let d = Duration.from_millis(1 + i % 20)
+      ts.push(s.spawn(fn() {
+        clock.sleep(d)
+        1
+      }))
+    }
+    var n = 0
+    for t in ts {
+      n += t.await
+    }
+    n
+  }
+  r.check(done == 2000, "${done} sleepers of 2000 woke")
+  r.check(clock.since(t1) >= 20ms, "2000 sleepers of up to 20 ms took ${clock.since(t1)}")
+  let alive = internal.rt_probe("workers", 0, 0, 0, 0)
+  let cpus = internal.rt_probe("cpus", 0, 0, 0, 0)
+  r.check(alive <= cpus + 1, "${alive} workers alive for ${cpus} CPUs")
+  // a canceled sleeper wakes and unwinds
+  let t2 = clock.now()
+  scope s {
+    s.spawn_background(fn() { clock.sleep(1h) })
+    clock.sleep(5ms)
+  }
+  r.check(clock.since(t2) < 10s, "a canceled sleeper took ${clock.since(t2)} to unwind")
+  // select with only `after`
+  var fired = false
+  select {
+    after 5ms => fired = true
+  }
+  r.check(fired, "select's after did not fire")
+}
+
+fn echo(c: Conn) {
+  while true {
+    match c.read(65536) {
+      Ok(Some(b)) => if c.write(b) is Err(_) {
+        return
+      }
+      _ => return
+    }
+  }
+}
+
+fn test_echo(r: Run, net: Net) {
+  let l = net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  r.check(addr.starts_with("127.0.0.1:") && addr.len() > 10, "the listener's address ${addr}")
+  let n = 8 * 1024 * 1024
+  var data = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    data.write_byte(pattern(i))
+  }
+  let payload = data.freeze()
+  scope s {
+    let _e = s.spawn(fn() {
+      match l.accept() {
+        Ok(c) => {
+          echo(c)
+          c.close()
+        }
+        Err(_) => {}
+      }
+    })
+    let c = net.dial(addr).or_fault("dial")
+    // more than the socket buffers hold: the writer parks until the echo
+    // and this reader drain them
+    let w = s.spawn(fn() { c.write(payload) is Ok(_) })
+    var got = 0
+    var bad = 0
+    while got < n {
+      match c.read(1024 * 1024) {
+        Ok(Some(b)) => {
+          for i in 0..b.len() {
+            if b[i] != pattern(got + i) {
+              bad += 1
+            }
+          }
+          got += b.len()
+        }
+        _ => break
+      }
+    }
+    r.check(w.await, "the write failed")
+    r.check(got == n && bad == 0, "echo: ${got} of ${n} bytes, ${bad} wrong")
+    c.close()
+  }
+  l.close()
+}
+
+fn test_wakeups(r: Run, net: Net, clock: Clock) {
+  let l = net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let c = net.dial(addr).or_fault("dial")
+  let peer = l.accept().or_fault("accept")
+  // close wakes a parked read: Io
+  let closed = scope s {
+    let t = s.spawn(fn() { c.read(16) is Err(NetErr.Io(_)) })
+    clock.sleep(5ms)
+    c.close()
+    t.await
+  }
+  r.check(closed, "a read parked when its connection closed did not end with Io")
+  // cancellation wakes a parked accept and read: Canceled (the read is on
+  // a second connection: peer saw c close)
+  let c2 = net.dial(addr).or_fault("dial")
+  let peer2 = l.accept().or_fault("accept")
+  let accepted = Atomic[Int].new(0)
+  let read = Atomic[Int].new(0)
+  scope s {
+    let _a = s.spawn(fn() {
+      if l.accept() is Err(NetErr.Canceled) {
+        accepted.set(1)
+      }
+    })
+    let _r = s.spawn(fn() {
+      if peer2.read(16) is Err(NetErr.Canceled) {
+        read.set(1)
+      }
+    })
+    clock.sleep(5ms)
+    s.cancel()
+  }
+  r.check(accepted.get() == 1, "a parked accept did not end with Canceled")
+  r.check(read.get() == 1, "a parked read did not end with Canceled")
+  peer.close()
+  peer2.close()
+  c2.close()
+  // a closed listener refuses
+  l.close()
+  r.check(net.dial(addr) is Err(NetErr.Refused), "a dial to a closed listener was not refused")
+}
+
+// registrations (rawpoll.c): descriptors registered from this task while
+// the poller waits, each made readable at once: the reader parked on it
+// must get its event
+fn test_registrations(r: Run, net: Net) {
+  let l = net.listen("127.0.0.1:0").or_fault("listen")
+  for i in 0..20 {
+    scope s {
+      let c = net.dial(l.addr()).or_fault("dial")
+      let peer = l.accept().or_fault("accept")
+      let t = s.spawn(fn() { peer.read(16) })
+      c.write("x".bytes()).or_fault("write")
+      match t.await {
+        Ok(Some(b)) => r.check(b.len() == 1, "registration ${i}: read ${b.len()} bytes")
+        _ => r.check(false, "registration ${i}: no event")
+      }
+      c.close()
+      peer.close()
+    }
+  }
+  l.close()
+}
+
+fn test_inherited(r: Run) {
+  let v = internal.rt_probe("inherited", 0, 0, 0, 0)
+  r.check(v != 0, "inherited: a system call failed")
+}
+
+fn main(os: Os) {
+  let r = Run{failures: Atomic[Int].new(0), out: os.stdio}
+  // the scheduler and the poller start outside every test's count
+  scope s {
+    let _t = s.spawn(fn() { 1 })
+  }
+  let tests = ["timers", "echo", "wakeups", "registrations", "inherited"]
+  for name in tests {
+    let before = r.failures.get()
+    let l0 = live()
+    match name {
+      "timers" => test_timers(r, os.clock)
+      "echo" => test_echo(r, os.net)
+      "wakeups" => test_wakeups(r, os.net, os.clock)
+      "registrations" => test_registrations(r, os.net)
+      _ => test_inherited(r)
+    }
+    let l1 = live()
+    r.check(l1 == l0, "${name}: ${l1 - l0} allocations still live")
+    os.stdio.println("${name}: ${if r.failures.get() == before { "ok" } else { "FAIL" }}")
+  }
+  if r.failures.get() != 0 {
+    os.proc.exit(1)
+  }
+}

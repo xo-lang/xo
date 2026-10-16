@@ -648,6 +648,10 @@ pub fn readlink(path: Str) -> (Str, Int) {
 /// the child, or the negative errno.
 pub fn fork() -> Int { rt.sys6(nr(220, 56), 17, 0, 0, 0, 0, 0) }
 
+/// nanosleep(2) for the timespec at ts (a child between fork and execve
+/// may call it: no allocation): 0, or the negative errno.
+pub fn nanosleep_at(ts: Int) -> Int { rt.sys6(nr(101, 35), ts, 0, 0, 0, 0, 0) }
+
 /// pipe2(2) into the two 4 byte words at a: 0, or the negative errno.
 pub fn pipe2(a: Int, flags: Int) -> Int { rt.sys6(nr(59, 293), a, flags, 0, 0, 0, 0) }
 

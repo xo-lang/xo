@@ -153,3 +153,11 @@ checked transitively at compile time, backed by a run time check.
   std/rt, the native runtime, and the spec for no new guarantee.
 - **Deferring frees to an explicit `realtime.flush()`**: one more thing to
   forget; the end of the outermost section is the natural point.
+
+## Note (2026-10-16, decision 0241)
+
+std/native/rt.xo declares the pure loads mem_load, slot_load,
+static_word, and tlocal_get `uses realtime`, so the runtime's own
+real-time functions (std/internal rt_queued and rt_allocs, obj.xo
+rt_heap) may call them. rt is std internal; the rules for programs do
+not change.

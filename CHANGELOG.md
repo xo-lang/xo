@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The event loop, real-time section, and C library fault tests are Xo
+  (decision 0241): evloop.c, rawpoll.c, realtime.c, fault_shared.c,
+  fault_shared.ll, and fault_resume.c became internal/llvm/testdata/rt
+  evloop, realtime, and fault_shared, verified on darwin/arm64 and
+  linux/arm64; std/internal gains rt_queued and rt_allocs (real-time)
+  and rt_probe ops (qsort_fault, workers, cpus, inherited).
 - arm64: x15 is an allocatable register (the last caller saved choice;
   16 instead of 15). The emitter keeps x16 and x17 as its scratch
   registers; a third spilled operand takes a register free at its

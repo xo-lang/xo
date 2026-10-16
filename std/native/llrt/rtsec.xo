@@ -89,3 +89,7 @@ pub fn fault_leave() {
     obj.rt_drain(h)
   }
 }
+
+/// The allocations since the calling thread's outermost real-time section
+/// began: std/internal rt_allocs (decision 0241).
+pub fn allocs() -> Int uses realtime { rt.mem_load(obj.rt_heap(), RT_ALLOCS, 8) }

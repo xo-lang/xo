@@ -46,3 +46,9 @@ func Internal_rt_probe(_ *Task, op string, _, _, _, _ int64) int64 {
 func Internal_obj_word[T any](_ *Task, _ T) int64 {
 	panic("internal.obj_word: the native backends only")
 }
+
+// Internal_rt_queued and Internal_rt_allocs are `internal.rt_queued` and
+// `internal.rt_allocs`: the native runtime's real-time section counters,
+// which the Go backend does not have.
+func Internal_rt_queued(_ *Task) int64 { panic("internal.rt_queued: the native backends only") }
+func Internal_rt_allocs(_ *Task) int64 { panic("internal.rt_allocs: the native backends only") }

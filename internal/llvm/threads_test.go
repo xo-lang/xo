@@ -37,15 +37,9 @@ var (
 	cExportsLL = map[string]string{}
 )
 
-// cOnly is the sources of a C only test of the runtime (a file of
-// std/llrt/testdata that includes xo_rt.c and plays generated code): the
-// C file and the LLVM IR of an empty program, which defines the C ABI
-// exports the runtime calls (std/native/llrt/cabi.xo, decision 0207).
-func cOnly(t *testing.T, src string) []string {
-	return cOnlyWith(t, src, "cexports", "fn main() {}\n")
-}
-
-// cOnlyWith is cOnly with the program main (in the build directory dir)
+// cOnlyWith is the sources of a C only test of the runtime (a file of
+// std/llrt/testdata that plays generated code) and the LLVM IR of the
+// program main (in the build directory dir)
 // in place of the empty one: a feature's exports
 // (std/native/llrt/cabi_<feature>.xo) are built only into a program
 // that uses the feature.
@@ -355,69 +349,26 @@ func runRuntimeXo(t *testing.T, dir, more string, names []string) {
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res)
 	}
-	check(runTSan(t, res.Binaries[xotool.Host()], dir, more, "XO_THREADS=8", "XO_LEAKCHECK=1"), "optimized, "+more)
+	env := []string{"XO_THREADS=8", "XO_LEAKCHECK=1"}
+	if more != "" {
+		env = append(env, more)
+	}
+	check(runTSan(t, res.Binaries[xotool.Host()], dir, env...), "optimized "+more)
 }
 
-// TestRuntimeEventLoop runs the C test of fibers and the event loop
-// (decision 0069): thousands of sleepers on few workers, an echo of more
-// data than the socket buffers hold, close and cancellation waking parked
-// socket operations, a refused dial, and select's `after`. Under
-// ThreadSanitizer with one worker and with three, then optimized; every
-// allocation must be freed.
+// TestRuntimeEventLoop runs the test of fibers and the event loop
+// (decision 0069), an Xo program since decision 0241 (testdata/rt/evloop;
+// it was std/llrt/testdata/evloop.c and rawpoll.c): thousands of sleepers
+// on few workers, an echo of more data than the socket buffers hold, close
+// and cancellation waking parked socket operations, a refused dial,
+// select's `after`, descriptors registered while the poller waits, and a
+// pipe a child process inherited (Linux). Under ThreadSanitizer with one
+// worker, three, and eight, then optimized; every allocation of each test
+// must be freed.
 func TestRuntimeEventLoop(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
-	src := filepath.Join(rtDir, "testdata", "evloop.c")
-	// the scheduler core in Xo (decision 0212); listeners and connections
-	// in Xo (netconn.xo, B22), built only into a program that listens
-	bin := tsanBuild(t, nil, cOnlyNet(t, src))
-	for _, threads := range []string{"1", "3"} {
-		out := runTSan(t, bin, ".", "XO_THREADS="+threads)
-		for _, name := range []string{"timers", "echo", "wakeups", "inherited"} {
-			if !strings.Contains(out, name+": ok") {
-				t.Errorf("XO_THREADS=%s: test %s did not pass:\n%s", threads, name, out)
-			}
-		}
-	}
-	if testing.Short() {
-		return
-	}
-	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2"}, cOnlyNet(t, src), opt); err != nil {
-		t.Fatal(err)
-	}
-	runTSan(t, opt, ".")
-}
-
-// netExportsMain listens, so the LLVM IR of the program carries the C ABI
-// exports of std/native/llrt/cabi_net.xo (listeners and connections,
-// netconn.xo) that xo_rt.c's xo_net_listen and xo_conn_read forward to.
-const netExportsMain = `fn main(os: Os) {
-  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
-  os.stdio.println(l.addr())
-}
-`
-
-// cOnlyNet is cOnly for evloop.c: with the network's exports.
-func cOnlyNet(t *testing.T, src string) []string {
-	return cOnlyWith(t, src, "cexports-net", netExportsMain)
-}
-
-// TestRuntimeRawPoll registers descriptors with the poller from another
-// thread while the poller's epoll calls are Xo system calls (decision
-// 0206 stage 3), under ThreadSanitizer: the release and acquire around
-// them must give it the edge the C library's epoll interceptors give,
-// or it reports pd_new's calloc against the poller's lock of the
-// descriptor (gotchas/tsan-raw-epoll-no-edge.md). Linux only (epoll).
-func TestRuntimeRawPoll(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the poller's epoll is Linux only")
-	}
-	t.Parallel() // builds nothing in the shared build directory
-	src := filepath.Join(rtDir, "testdata", "rawpoll.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	if out := runTSan(t, bin, "."); !strings.Contains(out, "rawpoll: ok") {
-		t.Errorf("rawpoll did not pass:\n%s", out)
-	}
+	runRuntimeXo(t, filepath.Join("testdata", "rt", "evloop"), "",
+		[]string{"timers", "echo", "wakeups", "registrations", "inherited"})
 }
 
 // deepRecursion lists golden programs that recurse hundreds of thousands

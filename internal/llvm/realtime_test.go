@@ -99,26 +99,15 @@ func TestRealtimeNative(t *testing.T) {
 	}
 }
 
-// TestRuntimeRealtime runs the C test of real-time sections (decision
-// 0133): deferred frees, nesting, queue overflow, counted allocations,
-// and sections on several threads, under ThreadSanitizer and then
-// optimized; every allocation must be freed.
+// TestRuntimeRealtime runs the test of real-time sections (decision
+// 0133), an Xo program since decision 0241 (testdata/rt/realtime; it was
+// std/llrt/testdata/realtime.c): deferred frees, a real-time call inside a
+// section, queue overflow, a counted allocation and its XO-F007, and
+// sections on several threads at once, under ThreadSanitizer with one
+// worker, three, and eight and then optimized; every allocation must be
+// freed.
 func TestRuntimeRealtime(t *testing.T) {
 	t.Parallel()
-	src := filepath.Join(rtDir, "testdata", "realtime.c")
-	bin := tsanBuild(t, nil, cOnly(t, src))
-	out := runTSan(t, bin, ".")
-	for _, name := range []string{"defer", "nested", "overflow", "allocs", "threads"} {
-		if !strings.Contains(out, name+": ok") {
-			t.Errorf("test %s did not pass:\n%s", name, out)
-		}
-	}
-	if testing.Short() {
-		return
-	}
-	opt := exe(filepath.Join(t.TempDir(), "opt"))
-	if err := xotool.CompileC([]string{"-O2"}, cOnly(t, src), opt); err != nil {
-		t.Fatal(err)
-	}
-	runTSan(t, opt, ".")
+	runRuntimeXo(t, filepath.Join("testdata", "rt", "realtime"), "",
+		[]string{"defer", "nested", "overflow", "allocs", "threads"})
 }

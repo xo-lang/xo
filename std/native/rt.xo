@@ -186,7 +186,7 @@ fn int_fits(op: Int, a: Int, b: Int) -> Bool
 // is the word at a + 8 * i (below).
 
 /// The w bytes at address a + off, little endian, zero extended.
-fn mem_load(a: Int, off: Int, w: Int) -> Int
+fn mem_load(a: Int, off: Int, w: Int) -> Int uses realtime
 /// Stores the w low bytes of v at address a + off.
 fn mem_store(a: Int, off: Int, v: Int, w: Int)
 /// Copies n bytes from src to dst (the ranges do not overlap).
@@ -247,7 +247,7 @@ fn prefetch(a: Int)
 ///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (the runtime's records, rt.heap_large, on every build; the C library's malloc on XO_NOLIBC builds)
 ///   66 std/native/llrt/heapprof.xo: the heap profile's record (decision 0238), 0 when off
 ///   64-65 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), and XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239)
-fn static_word(k: Int) -> Int
+fn static_word(k: Int) -> Int uses realtime
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
@@ -355,7 +355,7 @@ fn fault_raise(msg: Str, loc: Str) -> Never
 // seq_cst).
 
 /// The value of the cell.
-fn slot_load[T](xs: T, i: Int, ord: Int) -> Int
+fn slot_load[T](xs: T, i: Int, ord: Int) -> Int uses realtime
 fn slot_store[T](xs: T, i: Int, v: Int, ord: Int)
 /// Stores v and returns the old value.
 fn slot_swap[T](xs: T, i: Int, v: Int, ord: Int) -> Int
@@ -413,7 +413,7 @@ fn sym_addr(name: Str) -> Int
 fn frame_addr() -> Int
 /// Word k (0 to 15, a constant) of the calling thread's table of
 /// runtime thread locals; zero in a new thread.
-fn tlocal_get(k: Int) -> Int
+fn tlocal_get(k: Int) -> Int uses realtime
 /// Sets word k of the calling thread's table.
 fn tlocal_set(k: Int, v: Int)
 /// The address of the calling thread's table (word k at 8 * k): valid

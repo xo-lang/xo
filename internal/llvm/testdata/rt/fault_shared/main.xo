@@ -1,0 +1,36 @@
+// A fault raised in a callback of the C library, run by internal/llvm's
+// TestRuntimeFaultShared (decision 0241: std/llrt/testdata/fault_shared.c
+// in Xo): std/internal's rt_probe "qsort_fault" calls libc's qsort, whose
+// comparator faults, so frames of the C library (a shared object:
+// libc.so.6 on Linux, libsystem_c in the dyld shared cache on macOS) sit
+// between the fault and task.isolate's boundary. The Xo unwinder
+// (decision 0221) finds the C library's unwind tables through ld.so's
+// link_map on Linux and through dladdr on macOS; without them the walk
+// would end at qsort's frame and the fault would end the program instead
+// of being isolated. Prints "caught: boom in qsort" and exits 0.
+//
+// With XO_FAULT_UNISOLATED set the fault is not isolated (decision 0241:
+// fault_resume.c's arm64 case, a fault unwinding through a frame that is
+// not generated code): the runtime reports it past the boundary,
+// "fault: boom in qsort", and the program exits 70.
+use std/internal
+use std/task
+
+fn main(os: Os) {
+  if os.env.get("XO_FAULT_UNISOLATED") != None {
+    let _r = internal.rt_probe("qsort_fault", 0, 0, 0, 0)
+    os.stdio.eprintln("unreachable: qsort returned")
+    os.proc.exit(1)
+  }
+  match task.isolate(fn() { internal.rt_probe("qsort_fault", 0, 0, 0, 0) }) {
+    Ok(_) => {
+      os.stdio.eprintln("unreachable: qsort returned")
+      os.proc.exit(1)
+    }
+    Err(task.Isolated.Faulted(info)) => os.stdio.eprintln("caught: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => {
+      os.stdio.eprintln("failed: ${e}")
+      os.proc.exit(1)
+    }
+  }
+}
