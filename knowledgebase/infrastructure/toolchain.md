@@ -3308,6 +3308,30 @@ bookworm's clang 14 (gotchas/clang14-arch-extension-crypto.md, fixed),
 and bookworm's clang 14 cannot read the LLVM backend's IR (opaque
 pointers need LLVM 15 or later). Last verified: 2026-10-15.
 
+### Windows programs under Wine in Docker
+
+Since 2026-10-16 (xo-4): `scripts/docker-wine.sh ARCH WORK COMMAND`
+runs a command with Debian's Wine (10.0, trixie) in a Linux container,
+like scripts/docker-linux.sh (WORK at /work, the checkout read only at
+/xo, `--rm`, WINEPREFIX /work/wine-ARCH). A windows/amd64 program cross
+linked as above runs in the emulated amd64 container:
+
+    printf '#!/bin/sh\nexec wine /work/win/P.exe "$@"\n' > $WORK/w/P; chmod +x $WORK/w/P
+    scripts/docker-wine.sh amd64 $WORK 'sh /xo/scripts/golden-run.sh /work/w/P /xo/internal/llvm/testdata/golden/P'
+
+(golden-run.sh compares want.txt; use a copy with want_windows.txt in
+its place where a golden has one). Results 2026-10-16: 11 of the 17
+http*, net*, fs*, proc*, stdin* goldens pass (every http_*, net_echo,
+fs_cwd_path, fs_native); fs_paths_os needs the \\localhost\C$ share
+Wine lacks, fs_files and fs_ops_edges symbolic links, proc_cmd and
+net_only's proc lines sh, echo and tr; net_only's env.only(["PATH"])
+finds no PATH (Windows names are case insensitive: to check). Limits:
+Docker Desktop emulates amd64 with Rosetta, which stops Wine's exception
+dispatch ("rosetta error: invalid gdt selector index 5"), so a stack
+overflow (or any structured exception) cannot be tested this way; and
+Debian's arm64 Wine runs no ARM64 PE (a hello hangs), so windows/arm64
+is cross linked only. Last verified: 2026-10-16.
+
 ### XO_NOLIBC cross links on the Mac
 
 Since 2026-10-15 (xo-fa, the backend entry stubs) an XO_NOLIBC=1 program
