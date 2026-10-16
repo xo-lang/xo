@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native standard input from a FIFO on macOS sees its end of input: poll(2)
+  and kqueue report nothing for a FIFO whose last writer closed, so the
+  reader waited forever; stdin.xo now probes a FIFO with a read that does
+  not block (gotchas/native-stdin-fifo-eof.md, internal/llvm
+  TestStdinFIFO).
 - arm64: every spilled operand of one instruction gets its own register.
   Before, a template's fourth spilled use was reloaded into the same
   scratch register as its third, and two spilled definitions both went

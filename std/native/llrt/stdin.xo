@@ -46,10 +46,22 @@ const R_OPEN = 0
 const R_TTY = 8
 const R_ECHO_OFF = 16
 const R_TIO = 24
-const R_SIZE = 104
+const R_TIO_SIZE = 80
+/// Whether standard input is a FIFO on macOS (open sets it), where
+/// poll(2) and kqueue report nothing at its end of input (the last
+/// writer closed): sysread probes it with a read that does not block.
+const R_FIFO = 104
+const R_SIZE = 112
 
 /// sysread's result when nothing is available yet (wait).
 const WAIT = -1000000
+
+/// S_IFIFO (st_mode's file type), and macOS's fcntl F_GETFL, F_SETFL and
+/// O_NONBLOCK.
+const S_IFIFO = 4096
+const F_GETFL = 3
+const F_SETFL = 4
+const O_NONBLOCK_DARWIN = 4
 
 /// The capability bit of stdio in the test world (testworld.fake).
 const TW_REAL_STDIO = 32
@@ -280,6 +292,9 @@ fn open() -> Int {
     return win_open()
   }
   if e == 0 && (mode & 61440) != 32768 {
+    if target.os == TargetOs.Darwin && (mode & 61440) == S_IFIFO {
+      rt.mem_store(rec(), R_FIFO, 1, 8)
+    }
     return poll.pd_new(0, false)
   }
   0
@@ -429,6 +444,19 @@ fn sysread(p: Int, n: Int, pd: Int) -> Int {
   let eagain = if darwin { 35 } else { 11 }
   while true {
     if pd != 0 && !readable() {
+      if darwin && rt.mem_load(rec(), R_FIFO, 8) != 0 {
+        // a FIFO at its end of input is never readable to poll(2) or
+        // kqueue on macOS (gotchas/native-stdin-fifo-eof.md): a read
+        // that does not block tells the end (0) from no data yet
+        let r = darwin_read_nowait(p, n)
+        if r == 0 - eagain {
+          return WAIT
+        }
+        if r != -4 {
+          return r
+        }
+        continue
+      }
       return WAIT
     }
     let r = if darwin { sys_darwin_read(p, n) } else { rt.sys6(lnr(63, 0), 0, p, n, 0, 0, 0) }
@@ -446,6 +474,20 @@ fn sys_darwin_read(p: Int, n: Int) -> Int {
 }
 
 fn darwin_errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
+
+/// read(2) of standard input with O_NONBLOCK set for the call (fcntl
+/// F_GETFL and F_SETFL, the flags restored after): its count, 0 at the end
+/// of input, or minus errno (EAGAIN: no data yet, a writer still open).
+fn darwin_read_nowait(p: Int, n: Int) -> Int {
+  let fl = Int(sys_darwin.fcntl(0, F_GETFL, 0))
+  if fl < 0 {
+    return 0 - darwin_errno()
+  }
+  let _s = sys_darwin.fcntl(0, F_SETFL, fl | O_NONBLOCK_DARWIN)
+  let r = sys_darwin_read(p, n)
+  let _t = sys_darwin.fcntl(0, F_SETFL, fl)
+  r
+}
 
 /// Whether standard input has something to read now: poll(2) with no
 /// wait (ppoll on Linux).
@@ -577,7 +619,7 @@ pub fn echo(on: Bool) -> Bool {
     return false
   }
   let t = obj_scratch()
-  rt.mem_copy(t, r + R_TIO, R_SIZE - R_TIO)
+  rt.mem_copy(t, r + R_TIO, R_TIO_SIZE)
   // ECHO (8) in c_lflag (Linux: a 32 bit field at 12; macOS: 64 bits at
   // 24); ENABLE_ECHO_INPUT (4) in the Windows console mode
   match target.os {
