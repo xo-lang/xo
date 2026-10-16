@@ -1,32 +1,32 @@
-# ThreadSanitizer: evloop's poller park CAS against a plain read in run_item
+# ThreadSanitizer: evloop's poller against a record's earlier owner (kqueue)
 
-Status: Observed (2026-10-16), not explained yet
+Status: Observed (2026-10-16), explained and fixed the same day
 
 ## Symptom
 
 TestRuntimeEventLoop built with `--race` (every function marked,
-524edb0c) fails about one run in three under load (four copies at once
-reproduce it on the first round, any of XO_THREADS 1, 3, 8):
-"Atomic write of size 8 ... by thread T1: x.poll.poll_main" (a
-compare and swap of a park's lock word: signal's slot_cas(p, 0, 0, 1)
-for a fired timer) against "Previous read of size 8 ... x.pool.run_item"
-(an `ldr` of word 0 of a record run_item's inlined fiber code reads, at
-the same address).
+524edb0c) failed about one run in three under load: the poller
+(poll_main, through pd_ready: the descriptor's lock, its ready flag)
+against an earlier access by another thread to the same address
+(cancel_locked's read of a task node, fiber_free's read of a fiber
+record). It reproduced within a few rounds of four concurrent copies.
 
-## Cause (suspected)
+## Cause
 
-The address holds a park (in a context record) when the poller signals
-it and a fiber or task record when run_item reads it: Xo's own heap
-reuses the freed block, and ThreadSanitizer sees no happens-before edge
-through a free and a reallocation that it does not intercept (it
-models malloc and free, not std/native's alloc.xo free lists). Not yet
-proven: the read may also be a real plain read of a live park.
+Not a use-after-free (a debug liveness check of contexts, of parks
+before pd_ready signals them, and of descriptors freed with an
+operation in flight never tripped in 40 rounds): the descriptor record
+was a block the runtime's malloc had handed out before (a fiber's, a
+task's), and the only order between its new owner's writes and the
+poller's accesses is the kernel's, a kqueue registration before its
+events. ThreadSanitizer cannot see that edge through a raw kevent, so
+it saw the poller race the block's previous owner. Linux had the
+annotation already (gotchas/tsan-raw-epoll-no-edge.md); macOS's kqueue
+path did not.
 
 ## Fix
 
-Until explained, internal/llvm runRuntimeXo builds evloop without the
-marks (raceUnchecked). Next: annotate the heap's free and reuse for
-ThreadSanitizer (__tsan_release on a free, __tsan_acquire on the
-reallocation of the block, through sanhook.xo as the fiber annotations
-are), then rebuild evloop marked; or log the block's owner at both
-accesses to tell the two causes apart.
+poll.xo register (darwin) releases ev() before its kevent, and
+wait_events (darwin) acquires ev() after its kevent, as the epoll path
+does. 40 rounds of four concurrent runs, clean (it failed in 1 to 3
+before); evloop is built with --race again.

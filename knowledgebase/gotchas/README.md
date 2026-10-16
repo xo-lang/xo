@@ -604,4 +604,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [native-http-client-gzip-body.md](native-http-client-gzip-body.md): Observed: the native HTTP client asks for gzip and returns the compressed body undecoded (the Go backend decodes it).
 - [tsan-fences-not-modeled.md](tsan-fences-not-modeled.md): ThreadSanitizer orders only atomic accesses and locks, so a fence plus a plain store is a race to it; put acquire or release on the access.
 - [native-http-client-gzip-body.md](native-http-client-gzip-body.md): Observed and fixed 2026-10-16: the native HTTP client asked for gzip and returned the compressed body undecoded (the Go backend decoded it).
-- [tsan-evloop-park-reuse.md](tsan-evloop-park-reuse.md): Observed: evloop under --race reports the poller's park CAS against a plain read in run_item at the same address (suspected heap reuse ThreadSanitizer cannot see); built unmarked meanwhile.
+- [tsan-evloop-park-reuse.md](tsan-evloop-park-reuse.md): Observed and fixed: evloop under --race reported the poller against a block's earlier owner; the macOS kqueue registration to event edge lacked the release and acquire Linux's epoll had.

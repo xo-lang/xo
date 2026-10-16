@@ -46,3 +46,9 @@ Avoid: any C runtime hand off that a raw system call replaces (a pipe
 write the poller reads, a futex, an eventfd) loses the interceptor's
 edge the same way; add the pair where the C library call used to be
 (see also tsan-blind-to-xo-synchronization.md).
+
+Seen on macOS (2026-10-16, gotchas/tsan-evloop-park-reuse.md): "never on
+the Mac" held only while the runtime's Xo code was not instrumented.
+With `--race` marking every function, the kqueue path shows the same
+missing edge (libc's kevent has no ThreadSanitizer synchronization), so
+register and wait_events release and acquire ev() on darwin too.

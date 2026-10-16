@@ -325,6 +325,11 @@ fn register(fd: Int, pd: Int, write: Bool) -> Int {
       rt.mem_store(k, 40, 65534, 2)
       rt.mem_store(k, 42, 33, 2)
       rt.mem_store(k, 56, pd, 8)
+      // the release the poller's kevent wait acquires (wait_events): as
+      // epoll's, the kernel orders a registration before its events, an
+      // edge ThreadSanitizer does not see through a raw kevent
+      // (gotchas/tsan-raw-epoll-no-edge.md)
+      sanhook.release(ev())
       let r = Int(sys_darwin.kevent(poll, k, if write { 2 } else { 1 }, 0, 0, 0))
       if r < 0 { 0 - rt.mem_load(sys_darwin.__error(), 0, 4) } else { 0 }
     }
@@ -1096,6 +1101,8 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
         tp = ts
       }
       let r = Int(sys_darwin.kevent(poll, 0, 0, evs, NEVENTS, tp))
+      // the acquire of register's release (as epoll_wait's below)
+      sanhook.acquire(ev())
       if r < 0 { 0 } else { r }
     }
     TargetOs.Linux => {
