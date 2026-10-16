@@ -1,0 +1,10 @@
+# The Rust side of the binary size comparison
+# (bench/results/binary-size-native-2026-10-16.md); Cargo.lock pins every
+# crate. `release` is the default profile's optimized build; the stripped
+# build adds strip = true (bench/size/native/measure.sh).
+[workspace]
+members = ["hello", "https_get", "json_server", "notes"]
+resolver = "2"
+
+[profile.release]
+opt-level = 3

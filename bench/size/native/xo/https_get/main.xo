@@ -1,0 +1,9 @@
+// GET one URL over HTTPS (URL, default https://example.com/) and print the
+// status and the body's length.
+use std/http
+
+fn main(os: Os) ! {
+  let url = os.env.get("URL") ?? "https://example.com/"
+  let r = http.client(os.net).get(url)?
+  os.stdio.println("${r.status} ${r.body.len()}")
+}

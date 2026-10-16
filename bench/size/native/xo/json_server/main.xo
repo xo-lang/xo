@@ -1,0 +1,42 @@
+// A JSON HTTP server: GET /items lists the items, POST /items adds one
+// (JSON body {"name": ..., "qty": ...}), GET /items/{id} gets one.
+use std/http
+
+struct Item {
+  id: Int
+  name: Str
+  qty: Int
+} derive Json
+
+struct NewItem {
+  name: Str
+  qty: Int = 1
+} derive Json
+
+fn main(os: Os) ! {
+  let items = Mutex[List[Item]].new([])
+  var r = http.router()
+  r.handle("GET /items", fn(_req) { http.json(200, items.with_read(fn(l) { l })) })
+  r.handle("GET /items/{id:Int}", fn(req) {
+    let id = req.param_int("id")
+    match items.with_read(fn(l) { l.find(fn(i) { i.id == id }) }) {
+      Some(i) => http.json(200, i)
+      None => http.text(404, "not found")
+    }
+  })
+  r.handle("POST /items", fn(req) {
+    match req.json[NewItem]() {
+      Ok(n) => {
+        let item = items.with(fn(var l) {
+          let it = Item{id: l.len() + 1, name: n.name, qty: n.qty}
+          l.push(it)
+          it
+        })
+        http.json(201, item)
+      }
+      Err(e) => http.text(400, "${e}")
+    }
+  })
+  let l = os.net.listen(os.env.get("ADDR") ?? "127.0.0.1:8080")?
+  http.server(l, r).serve()?
+}
