@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: an adc chain takes constant operands (made before the chain's
+  instruction; only 0 was taken before) and a constant carry in of 1 is
+  `cmp xzr, xzr` (no mov and no register; nor does it cost the chain a
+  pair). arm64 TLS handshakes: p256 0.968, tls12 0.973, x25519 0.973,
+  rsa2048 0.978, ed25519 0.980, p384 0.986 (151 workloads: 7 faster; 4
+  slower rows with no function changed). Xo Lang 2's finding (5).
+
 - The task runtime's stress test is Xo (decision 0241):
   std/llrt/testdata/tasks.c (561 lines of C) became
   internal/llvm/testdata/rt/tasks, run under ThreadSanitizer with 1, 3,
