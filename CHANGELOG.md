@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test --no-gc` runs tests and property cases in batches, many per
+  process (decision 0235, XO_TEST_BATCH): the test binary's main loops
+  over the test world's next run and resets the test world between
+  runs, and a run the process does not survive runs again alone, so
+  reports are unchanged (both modes compared byte for byte over the xo
+  unit tests, cmd/xo nogc fixtures, notes-service, the testing goldens
+  and bench/xo's tests, on arm64 and LLVM). selfhost/lexer's warm `xo
+  test` 4.65 s to 1.24 s (614 processes to 1); plain test packages 4 to
+  7 percent faster (bench/results/xo-test-batched-2026-10-15.md).
+  XO_TEST_BATCH=0 restores one process per test and per case.
+
 - `xo test` (decision 0236): the LLVM backend builds test binaries at
   -O0 with no LTO unless `XO_LLVM_OPT` names a level, and test binaries
   are cached in the user cache's xo/testbin when `XO_BIN_CACHE` is unset

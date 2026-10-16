@@ -500,6 +500,10 @@ fn turn_wait() -> Bool {
 /// `stdio.set_tty(width)` of a test binary.
 pub fn set_tty(width: Int) { rt.slot_store[Int](rec(), R_TTY / 8, if width > 0 { width } else { 0 }, RELAXED) }
 
+/// No fake terminal (a test of a batch starts so: the native prelude's
+/// llrt_test_next).
+pub fn tw_reset() { rt.slot_store[Int](rec(), R_TTY / 8, 0, RELAXED) }
+
 fn tty_width() -> Int { rt.slot_load[Int](rec(), R_TTY / 8, RELAXED) }
 
 /// Whether descriptor fd is a terminal.

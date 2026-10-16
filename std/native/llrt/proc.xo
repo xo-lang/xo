@@ -106,6 +106,18 @@ fn record(s: Str) {
   unlock()
 }
 
+/// No signals recorded (a test of a batch starts so: the native
+/// prelude's llrt_test_next).
+pub fn tw_reset() {
+  lock()
+  let v = rt.mem_load(rt.static_word(W_VEC), 0, 8)
+  for i in 0..rt.mem_load(rt.static_word(W_LEN), 0, 8) {
+    rt.heap_release(rt.mem_load(v, 8 * i, 8) - 8)
+  }
+  rt.mem_store(rt.static_word(W_LEN), 0, 0, 8)
+  unlock()
+}
+
 /// FakeProc.killed: the recorded signals, oldest first.
 pub fn killed() -> List[Str] {
   lock()

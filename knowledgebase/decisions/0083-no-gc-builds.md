@@ -119,7 +119,10 @@ as stable diagnostics before anything is generated.
    build_testmode.go`, `std/llrt/xo_testing.c`, `std/native/testing.xo`,
    `rttest.xo`, `cmd/xo/nativetest.go`; tests `cmd/xo` TestNoGCTests and
    TestNoGCTestLeaks):
-   - **One process per test.** The builder makes a function per test
+   - **One process per test** (amended by decision 0235, 2026-10-15:
+     by default many tests and property cases run per process, the
+     test world reset between them; this is the fallback and
+     XO_TEST_BATCH=0). The builder makes a function per test
      block and a main that runs the one XO_TEST names; the harness runs
      the binary once per test with XO_TEST and XO_TEST_SEED and prints
      the report std/rt's RunTests prints (`-v`, `-json`, `-run`,

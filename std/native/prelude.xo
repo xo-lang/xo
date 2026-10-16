@@ -2473,6 +2473,19 @@ fn llrt_tw_start() {
 
 fn llrt_test_index() -> Int { testworld.test_index() }
 
+/// The next test the test binary's main runs, -1 when none is left
+/// (twrun.xo next: XO_TEST's test, or each run of XO_TEST_BATCH's
+/// batch); between the runs of a batch the state of log.configure,
+/// FakeStdio.set_tty, and FakeProc.kill starts over too.
+fn llrt_test_next() -> Int {
+  if twrun.ran() {
+    logstate.reset()
+    stdinrt.tw_reset()
+    proc.tw_reset()
+  }
+  twrun.next()
+}
+
 fn llrt_test_fail(msg: Str) { testworld.fail(msg) }
 
 fn llrt_test_output(which: Int) -> Str { testworld.output(which) }

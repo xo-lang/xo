@@ -45,7 +45,9 @@ const R_PORT = 64
 const R_OUTER = 72
 const R_MAIN = 80
 const R_EXITING = 88
-const R_SIZE = 96
+/// The runs started (next).
+const R_RAN = 96
+const R_SIZE = 104
 
 /// The test world's record's fields (twflags.xo), the clock's bit of
 /// the effects made real (testworld.xo REAL_CLOCK), and the virtual
@@ -160,6 +162,7 @@ pub fn start() {
   rt.mem_store(w, TW_VIRT, if (real & TW_REAL_CLOCK) == 0 { 1 } else { 0 }, 4)
   st(w, TW_VNOW, TW_EPOCH)
   rt.mem_store(w, TW_ON, 1, 4)
+  testworld.set_batch(process.env_real_at("XO_TEST_BATCH"))
 }
 
 fn tw() -> Int { ld(state(), R_TW) }
@@ -677,6 +680,83 @@ fn cleanup() {
   for r in routers {
     tasks.h_release(r)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Batches (XO_TEST_BATCH): `xo test` runs many tests in one process
+
+/// The index of the next test to run, -1 when none is left (the test
+/// binary's main loops until then; selfhost/ssa testmode.xo). Without a
+/// batch, XO_TEST's test once. In a batch, each run is bracketed by
+/// XO-TEST-BEGIN and XO-TEST-END lines on the real standard output, and
+/// the test world is reset between runs (between); a run the process
+/// does not survive (a failure, a fault, a deadlock) has no
+/// XO-TEST-END, and the harness runs it again alone. When the world
+/// cannot be reset (a listener, a timer, or a cancellation outlives the
+/// test) the batch ends early and the harness starts a new process for
+/// the rest. The callers (the native prelude's llrt_test_next) reset
+/// the modules above this one first.
+pub fn next() -> Int {
+  let s = state()
+  let ran = ld(s, R_RAN)
+  st(s, R_RAN, ran + 1)
+  if !testworld.batched() {
+    if ran > 0 {
+      return -1
+    }
+    // no test (XO_TEST unset or negative) is a test no index names: the
+    // main fails it, as it did before the loop
+    let i = testworld.test_index()
+    return if i < 0 { 9223372036854775807 } else { i }
+  }
+  if ran > 0 {
+    let clean = between()
+    testworld.write_real("XO-TEST-END\n")
+    if !clean {
+      return -1
+    }
+  }
+  let r = testworld.plan_next()
+  if r.is_empty() {
+    return -1
+  }
+  testworld.reset_test(r[1], r[2] != 0, r[3])
+  testworld.write_real("XO-TEST-BEGIN\n")
+  r[0]
+}
+
+/// Whether a run of a batch ended (the native prelude's llrt_test_next
+/// resets the modules above this one then).
+pub fn ran() -> Bool { ld(state(), R_RAN) > 0 && testworld.batched() }
+
+/// Resets the test world after a run of a batch, as a new process
+/// starts it: the values kept released (end), no sleeps, queued signals,
+/// ports given, or run_main state, the stop state fresh (stop.xo
+/// reset_test), and the virtual clock at its start. Whether the world is
+/// clean: no in memory listener, timer, or cancellation outlived the
+/// test.
+fn between() -> Bool {
+  end()
+  let s = state()
+  lock()
+  st(s, R_SLEEPS + 8, 0)
+  st(s, R_SIGNALS + 8, 0)
+  st(s, R_PORT, 0)
+  let mls = ld(s, R_MLS)
+  let main = ld(s, R_MAIN)
+  st(s, R_EXITING, 0)
+  unlock()
+  stop.reset_test()
+  let w = tw()
+  set_in_main(false)
+  rt.slot_store[Int](w + TW_VPENDING, 0, 0, SEQ_CST)
+  rt.slot_store[Int](w, 1, TW_EPOCH, RELEASE)
+  let mu = poll.ev_mu()
+  pool.lock(mu)
+  let timer = poll.timer_first()
+  pool.unlock(mu)
+  let c = ctx.cur()
+  mls == 0 && main == 0 && timer == 0 && !node_canceled(ld(c, C_NODE)) && rt.mem_load(c, C_UNWINDING, 4) == 0
 }
 
 // ---------------------------------------------------------------------------

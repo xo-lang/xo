@@ -40,6 +40,14 @@ pub fn json() -> Bool { rt.slot_load[Int](rt.static_word(WORDS), JSON, ACQUIRE) 
 /// Whether log.configure was called.
 pub fn configured() -> Bool { rt.slot_load[Int](rt.static_word(WORDS), OUT, ACQUIRE) != 0 }
 
+/// No log.configure (a test of a batch starts so: twrun.xo next).
+pub fn reset() {
+  let w = rt.static_word(WORDS)
+  rt.slot_store[Int](w, OUT, 0, RELEASE)
+  rt.slot_store[Int](w, JSON, 0, RELEASE)
+  rt.slot_store[Int](w, LEVEL, 0, RELEASE)
+}
+
 /// log.configure's level (1 to 4) and format.
 pub fn configure(level: Int, json: Bool) {
   let w = rt.static_word(WORDS)

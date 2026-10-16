@@ -85,7 +85,25 @@ fn (var b: Builder) build_tests() {
     // the test world starts here (the native prelude's llrt_tw_start)
     let _tw = b.tw_rt("tw_start", -1, [])
   }
-  let idx = b.tw_rt("test_index", it, [])
+  // the tests run in a loop over the test world's next test (twrun.xo
+  // next): XO_TEST's once, or each run of a batch (XO_TEST_BATCH, `xo
+  // test` running many tests in one process); without the native
+  // prelude's llrt_test_next, XO_TEST's test
+  let looped = !b.wasm && b.prelude_impl("llrt_test_next") >= 0
+  var head = -1
+  var idx = -1
+  if looped {
+    head = b.new_block()
+    b.jump(head, [])
+    b.s.cur = head
+    idx = b.tw_rt("test_next", it, [])
+    let (done, more) = b.branch(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
+    b.s.cur = done
+    b.retv(b.unit())
+    b.s.cur = more
+  } else {
+    idx = b.tw_rt("test_index", it, [])
+  }
   for t in tests {
     let tr = decls[t.i]
     b.s.file = tr.file
@@ -125,13 +143,21 @@ fn (var b: Builder) build_tests() {
         b.dead()
         b.if_then_end(no2, join2)
       }
-      b.retv(b.unit())
+      if looped {
+        b.jump(head, [])
+        b.dead()
+      } else {
+        b.retv(b.unit())
+      }
     }
     b.if_then_end(no, join)
   }
   b.tw_rt("test_fail", -1, [b.const_str("no test with this index")])
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.dead()
+  if looped {
+    b.seal(head)
+  }
   b.finish_fn()
   b.end(saved)
 }

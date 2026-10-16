@@ -269,6 +269,29 @@ pub fn reset(n: Int) {
   }
 }
 
+/// The state a test of a batch starts with (twrun.xo next): no signal,
+/// stop request, or grace period set for the next run_main, the grace
+/// timer disarmed, and task.stopping's channel released; main's root is
+/// kept.
+pub fn reset_test() {
+  lk()
+  put(R_SIGNALS, 0)
+  rt.slot_store(rec(), R_REQUESTED / 8, 0, RELEASE)
+  rt.slot_store(rec(), R_CANCELED / 8, 0, RELEASE)
+  put(R_EXITED, 0)
+  put(R_HAS_NEXT, 0)
+  put(R_NEXT_GRACE, 0)
+  put(R_GRACE, DEFAULT_GRACE)
+  put(R_STOP_AT, 0)
+  let _d = rt.call_c2(rt.fn_addr("poll_timer_del"), get(R_TIMER), 0)
+  let ch = get(R_STOPPING)
+  put(R_STOPPING, 0)
+  unlk()
+  if ch != 0 {
+    h_release(ch)
+  }
+}
+
 /// testing.run_main's end: root n is gone and the grace timer disarmed;
 /// whether a third signal ended main (1 or 0).
 pub fn unroot(n: Int) -> Int {

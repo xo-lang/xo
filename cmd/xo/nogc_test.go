@@ -129,7 +129,8 @@ func testBlocks(t *testing.T, dir string) int {
 }
 
 // TestNoGCTestLeaks runs every passing test of the native test binaries
-// with XO_LEAKCHECK=1: no allocation may be live at exit.
+// with XO_LEAKCHECK=1: no allocation may be live at exit, one process per
+// test and all of them in one batched process.
 func TestNoGCTestLeaks(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -149,27 +150,58 @@ func TestNoGCTestLeaks(t *testing.T) {
 			// from 0 (contract fuzz tests are not in a native binary);
 			// the tests run in the module's directory
 			tdir, _ := filepath.Abs(dir)
-			for index := 0; index < n; index++ {
-				// one process per test: they run in parallel
-				t.Run(fmt.Sprintf("%s/%s/%d", filepath.Base(dir), be, index), func(t *testing.T) {
-					t.Parallel()
-					cmd := command(t, bin)
-					cmd.Dir = tdir
-					cmd.Env = append(cmd.Env, "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
-					var errb bytes.Buffer
-					cmd.Stdout, cmd.Stderr = io.Discard, &errb
-					if cmd.Run() != nil {
-						return // a failing test exits without the check
-					}
-					m := leakLine.FindStringSubmatch(errb.String())
-					if m == nil {
-						t.Errorf("%s test %d on %s: no leak check line:\n%s", dir, index, be, errb.String())
-						return
-					}
-					if m[1] != "0" {
-						t.Errorf("%s test %d on %s: %s allocations live at exit (of %s)", dir, index, be, m[1], m[2])
-					}
-				})
+			passed := make([]bool, n)
+			t.Run(fmt.Sprintf("%s/%s", filepath.Base(dir), be), func(t *testing.T) {
+				for index := 0; index < n; index++ {
+					// one process per test: they run in parallel
+					t.Run(strconv.Itoa(index), func(t *testing.T) {
+						t.Parallel()
+						cmd := command(t, bin)
+						cmd.Dir = tdir
+						cmd.Env = append(cmd.Env, "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
+						var errb bytes.Buffer
+						cmd.Stdout, cmd.Stderr = io.Discard, &errb
+						if cmd.Run() != nil {
+							return // a failing test exits without the check
+						}
+						passed[index] = true
+						m := leakLine.FindStringSubmatch(errb.String())
+						if m == nil {
+							t.Errorf("%s test %d on %s: no leak check line:\n%s", dir, index, be, errb.String())
+							return
+						}
+						if m[1] != "0" {
+							t.Errorf("%s test %d on %s: %s allocations live at exit (of %s)", dir, index, be, m[1], m[2])
+						}
+					})
+				}
+			})
+			// the passing tests in one process (XO_TEST_BATCH, decision
+			// 0235): every run ends, the world reset between them frees
+			// what each kept, and nothing is live at exit
+			var runs []string
+			for index, ok := range passed {
+				if ok {
+					runs = append(runs, strconv.Itoa(index)+"/1")
+				}
+			}
+			if len(runs) == 0 {
+				continue
+			}
+			cmd := command(t, bin)
+			cmd.Dir = tdir
+			cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_BATCH="+strings.Join(runs, ","), "XO_LEAKCHECK=1")
+			var outb, errb bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &outb, &errb
+			if err := cmd.Run(); err != nil {
+				t.Errorf("%s batch on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
+				continue
+			}
+			if got := strings.Count(outb.String(), "XO-TEST-END\n"); got != len(runs) {
+				t.Errorf("%s batch on %s: %d of %d runs ended\n%s", dir, be, got, len(runs), outb.String())
+			}
+			if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
+				t.Errorf("%s batch on %s: leak check: %q", dir, be, errb.String())
 			}
 		}
 	}

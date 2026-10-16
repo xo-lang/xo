@@ -78,7 +78,13 @@ const S_DROPPED = 320
 /// twrun.xo's words (part 2 of the test world): its state record, and
 /// its lock.
 const S_RUN = 344
-const S_SIZE = 360
+/// A batch (XO_TEST_BATCH: `xo test` runs many tests in one process):
+/// the plan, a word vector of four words per run (the test's index, its
+/// seed, whether it is a property test's case, the case's seed), and the
+/// next run's place in it.
+const S_PLAN = 360
+const S_PLAN_POS = 384
+const S_SIZE = 392
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -330,6 +336,110 @@ pub fn init() -> Int {
   rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
   twflags.set(bits)
   bits
+}
+
+/// Reads the batch of XO_TEST_BATCH, the C string at a (0 when unset):
+/// runs separated by commas, each `index/seed` for a test or
+/// `index/seed/first-last` for the cases first to last (from 0) of a
+/// property test, whose seeds are std/rt's seed*1000003 + case (the
+/// harness's, selfhost/xo test.xo).
+pub fn set_batch(a: Int) {
+  if a == 0 {
+    return
+  }
+  var plan: List[Int] = []
+  for r in raw.str_at(a, raw.cstr_len(a)).split(",") {
+    let f = r.split("/")
+    if f.len() < 2 {
+      continue
+    }
+    let idx = first_number(f[0])
+    let seed = first_number(f[1])
+    if f.len() < 3 {
+      plan.push(idx)
+      plan.push(seed)
+      plan.push(0)
+      plan.push(0)
+      continue
+    }
+    let cs = f[2].split("-")
+    let c0 = first_number(cs[0])
+    let c1 = if cs.len() > 1 { first_number(cs[1]) } else { c0 }
+    for c in c0..c1 + 1 {
+      plan.push(idx)
+      plan.push(seed)
+      plan.push(1)
+      plan.push(seed.wrapping_mul(1000003).wrapping_add(c))
+    }
+  }
+  lock()
+  let v = st() + S_PLAN
+  for x in plan {
+    vec_push(v, x)
+  }
+  unlock()
+}
+
+/// Whether the test binary runs a batch (XO_TEST_BATCH).
+pub fn batched() -> Bool { vec_len(st() + S_PLAN) > 0 }
+
+/// The next run of the batch: the test's index, its seed, whether it is
+/// a property test's case, and the case's seed; empty after the last.
+pub fn plan_next() -> List[Int] {
+  let s = st()
+  let k = rt.mem_load(s, S_PLAN_POS, 8)
+  if k + 4 > vec_len(s + S_PLAN) {
+    return []
+  }
+  rt.mem_store(s, S_PLAN_POS, k + 4, 8)
+  [vec_at(s + S_PLAN, k), vec_at(s + S_PLAN, k + 1), vec_at(s + S_PLAN, k + 2), vec_at(s + S_PLAN, k + 3)]
+}
+
+/// The state a test of a batch starts with, as a test binary's start
+/// leaves it: no fake environment, arguments, captured output, log
+/// records, FakeProc outputs or exit code, or standard input; Rand
+/// seeded with seed, and a property test's case seeded with case_seed
+/// (when prop) as XO_TEST_SEED and XO_PROP_SEED would.
+pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
+  lock()
+  let s = st()
+  for off in [S_EKEYS, S_EVALS, S_ARGS] {
+    for i in 0..vec_len(s + off) {
+      blk_free(vec_at(s + off, i))
+    }
+    rt.mem_store(s + off, 8, 0, 8)
+  }
+  rt.mem_store(s + S_OUT, 8, 0, 8)
+  rt.mem_store(s + S_ERR, 8, 0, 8)
+  for i in 0..vec_len(s + S_RECS) {
+    let r = vec_at(s + S_RECS, i)
+    blk_free(rt.mem_load(r, 8, 8))
+    blk_free(rt.mem_load(r, 16, 8))
+    for j in 0..2 * rt.mem_load(r, 24, 8) {
+      blk_free(rt.mem_load(r, 32 + 8 * j, 8))
+    }
+    rt.heap_release(r - 8)
+  }
+  rt.mem_store(s + S_RECS, 8, 0, 8)
+  for i in 0..vec_len(s + S_PROCS) {
+    let e = vec_at(s + S_PROCS, i)
+    blk_free(rt.mem_load(e, 0, 8))
+    blk_free(rt.mem_load(e, 16, 8))
+    blk_free(rt.mem_load(e, 24, 8))
+    rt.heap_release(e - 8)
+  }
+  rt.mem_store(s + S_PROCS, 8, 0, 8)
+  rt.mem_store(s, S_HAS_EXIT, 0, 8)
+  rt.mem_store(s, S_EXIT, 0, 8)
+  blk_free(rt.mem_load(s, S_IN, 8))
+  rt.mem_store(s, S_IN, 0, 8)
+  rt.mem_store(s, S_IN_OFF, 0, 8)
+  let g = rt.static_word(W_RNG)
+  rt.mem_store(g, 0, seed, 8)
+  rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
+  unlock()
+  let ps = if prop { "${case_seed}" } else { "" }
+  setenv(V_PROP_SEED, raw.data(ps), if prop { ps.len() } else { -1 })
 }
 
 /// The test to run (XO_TEST), -1 when it is not set.

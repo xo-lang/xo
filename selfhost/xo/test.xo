@@ -5,6 +5,13 @@
 // cases, each in a process of its own, and a failure is shrunk
 // (XO_PROP_REPLAY, XO_PROP_BEST), as std/rt's runProperty does.
 //
+// By default the tests and property cases run in batches (decision
+// 0235): one process runs many of them in sequence (XO_TEST_BATCH), the
+// test world reset between them, and a run the process does not survive
+// (a failure, a fault, a deadlock) runs again alone, so its outcome and
+// message are the one process mode's. XO_TEST_BATCH=0 in the
+// environment of `xo test` runs one process per test and case.
+//
 // Tests with `uses` are skipped unless `--real` gives them real
 // capabilities (XO_TEST_REAL, decision 0120). Not here yet: a test that
 // does not finish is not stopped (the native Proc has no timeout yet).
@@ -127,7 +134,13 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   var pass = 0
   var failed = 0
   var skip = 0
-  for t in tests {
+  // the outcomes of the tests run in batches, by place in tests; the
+  // rest run below, one process each
+  var pre: Map[Int, Outcome] = {}
+  if (os.env.get("XO_TEST_BATCH") ?? "") != "0" {
+    pre = run_batched(os, bin, tests, o)
+  }
+  for (k, t) in tests.indexed() {
     if !o.run.is_empty() && !t.name.contains(o.run) {
       continue
     }
@@ -157,6 +170,8 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
           os.stdio.eprint(pc.err_out)
         }
       }
+    } else if let Some(bo) = pre.get(k) {
+      out = bo
     } else if t.prop {
       out = run_property(os, bin, t, s, if o.cases <= 0 { 100 } else { o.cases })
     } else {
@@ -312,6 +327,184 @@ fn run_test_env(os: Os, bin: Str, t: TestInfo, s: Int, env: List[Str]) -> (Outco
     msg = "the test exited with status ${code}"
   }
   (Outcome{status: "fail", msg: msg, logs: logs}, pc)
+}
+
+/// A run of a batch: test k of the list (t), its seed, and the property
+/// case (-1 for a test that is not a property test).
+struct Run {
+  k: Int
+  t: TestInfo
+  seed: Int
+  case: Int = -1
+}
+
+/// The seed test t runs with (its own, else --seed's, else 1).
+fn test_seed(t: TestInfo, o: TestOpts) -> Int {
+  if t.seed != 0 {
+    return t.seed
+  }
+  if o.seed != 0 {
+    return o.seed
+  }
+  1
+}
+
+/// Runs the tests that need no real capability, and every case of the
+/// property tests among them, in batches (decision 0235): a process runs
+/// the runs of one directory in order (XO_TEST_BATCH), bracketing each
+/// with XO-TEST-BEGIN and XO-TEST-END. A run that began and did not end
+/// (the process failed, faulted, or exited in it) runs again alone, as
+/// run_tests and run_property run it; the next process starts after it.
+/// A process that ends early (the test binary could not reset the test
+/// world) leaves the rest to the next one. The outcomes, by place in
+/// tests.
+fn run_batched(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Map[Int, Outcome] {
+  var runs: List[Run] = []
+  for (k, t) in tests.indexed() {
+    if (!o.run.is_empty() && !t.name.contains(o.run)) || !t.skip.is_empty() || !t.effects.is_empty() {
+      continue
+    }
+    let s = test_seed(t, o)
+    if t.prop {
+      for c in 0..(if o.cases <= 0 { 100 } else { o.cases }) {
+        runs.push(Run{k: k, t: t, seed: s, case: c})
+      }
+    } else {
+      runs.push(Run{k: k, t: t, seed: s})
+    }
+  }
+  var out: Map[Int, Outcome] = {}
+  var i = 0
+  while i < runs.len() {
+    // the runs of the process: from i on, in one directory, without the
+    // cases of a property test already decided
+    var batch: List[Run] = []
+    var j = i
+    while j < runs.len() && runs[j].t.dir == runs[i].t.dir {
+      if !(runs[j].case >= 0 && out.contains(runs[j].k)) {
+        batch.push(runs[j])
+      }
+      j += 1
+    }
+    if batch.is_empty() {
+      i = j
+      continue
+    }
+    let (segs, ended, code) = run_batch(os, bin, batch)
+    // the runs that ended in the process
+    var n = 0
+    while n < segs.len() && ended[n] {
+      let r = batch[n]
+      if r.case < 0 {
+        out[r.k] = Outcome{status: "pass", logs: segs[n]}
+      }
+      n += 1
+    }
+    if n < segs.len() {
+      // run n began and the process ended in it: it runs alone
+      let r = batch[n]
+      if r.case < 0 {
+        let (oc, _) = run_test_env(os, bin, r.t, r.seed, [])
+        out[r.k] = oc
+      } else if let Some(po) = prop_case(os, bin, r.t, r.seed, r.case) {
+        out[r.k] = po
+      }
+      n += 1
+    } else if code != 0 || n == 0 {
+      // the process failed after its last run ended, or ran none: the
+      // runs of this batch go to one process each
+      for r in batch {
+        if r.case < 0 {
+          let _o = out.remove(r.k)
+        }
+      }
+      return out
+    }
+    // a property test whose cases all ran without failing passes
+    for r in batch[0..n] {
+      if r.case >= 0 && !out.contains(r.k) && r.case == (if o.cases <= 0 { 100 } else { o.cases }) - 1 {
+        out[r.k] = Outcome{status: "pass"}
+      }
+    }
+    // the next process starts at the first run not done
+    let last = batch[n - 1]
+    var next = i
+    while next < runs.len() && !(runs[next].k == last.k && runs[next].case == last.case) {
+      next += 1
+    }
+    i = next + 1
+  }
+  out
+}
+
+/// Runs batch in one process (XO_TEST_BATCH): the log lines of each run
+/// that began, whether it ended, and the process's status.
+fn run_batch(os: Os, bin: Str, batch: List[Run]) -> (List[List[Str]], List[Bool], Int) {
+  var parts: List[Str] = []
+  var i = 0
+  while i < batch.len() {
+    let r = batch[i]
+    if r.case < 0 {
+      parts.push("${r.t.index}/${r.seed}")
+      i += 1
+      continue
+    }
+    // consecutive cases of a property test as one range
+    var j = i
+    while j + 1 < batch.len() && batch[j + 1].k == r.k && batch[j + 1].case == batch[j].case + 1 {
+      j += 1
+    }
+    parts.push("${r.t.index}/${r.seed}/${r.case}-${batch[j].case}")
+    i = j + 1
+  }
+  let first = batch[0]
+  let words = ["XO_TEST=${first.t.index}", "XO_TEST_SEED=${first.seed}", "XO_TEST_BATCH=${parts.join(",")}"]
+  var q: List[Str] = []
+  for w in words {
+    q.push(sh_q(w))
+  }
+  let script = "cd ${sh_q(first.t.dir)} && exec env ${q.join(" ")} ${sh_q(bin)}"
+  var segs: List[List[Str]] = []
+  var ended: List[Bool] = []
+  let r = match os.proc.run("sh", ["-c", script]) {
+    Ok(r) => r
+    Err(_) => return (segs, ended, 1)
+  }
+  let stdout = r.stdout.to_str() ?? ""
+  var logs: List[Str] = []
+  var open = false
+  for l in trim_nl(stdout).split("\n") {
+    if l == "XO-TEST-BEGIN" {
+      logs = []
+      open = true
+      segs.push([])
+      ended.push(false)
+    } else if l == "XO-TEST-END" && open {
+      segs[segs.len() - 1] = logs
+      ended[ended.len() - 1] = true
+      open = false
+    } else if open && l.starts_with("XO-TEST-LOG ") {
+      logs.push(l.trim_prefix("XO-TEST-LOG "))
+    }
+  }
+  (segs, ended, r.code)
+}
+
+/// Case c of property test t run alone (run_property's step): the test's
+/// outcome when the case fails (shrunk), None when it passes.
+fn prop_case(os: Os, bin: Str, t: TestInfo, seed: Int, c: Int) -> Outcome? {
+  let case_seed = seed.wrapping_mul(1000003).wrapping_add(c)
+  let (out, pc) = run_test_env(os, bin, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
+  if out.status != "fail" {
+    return None
+  }
+  if pc.reported {
+    let (s_in, s_out, steps) = shrink(os, bin, t, seed, pc.choices)
+    if steps > 0 {
+      return Some(Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs})
+    }
+  }
+  Some(Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs})
 }
 
 /// strings.TrimRight(s, "\n")
