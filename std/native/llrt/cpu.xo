@@ -91,6 +91,25 @@ pub fn borrow_soft(x: Int, y: Int) -> Int {
   rt.int_wrap(4, (~x & y) | (~(x ^ y) & d), 63)
 }
 
+/// x + y + cin as UInt64s, wrapping (cin 0 or 1; bits.Add64's sum):
+/// with adc_carry of the same operands one adcs on arm64 (the carry in
+/// set by `cmp cin, #1`), a llvm.uadd.with.overflow chain on LLVM
+/// (decision 0231's addendum, 2026-10-16).
+pub fn adc(x: Int, y: Int, cin: Int) -> Int { adc_soft(x, y, cin) }
+
+/// adc's body.
+pub fn adc_soft(x: Int, y: Int, cin: Int) -> Int { rt.int_wrap(0, rt.int_wrap(0, x, y), cin) }
+
+/// The carry out of x + y + cin as UInt64s, 0 or 1 (cin 0 or 1;
+/// bits.Add64's carry): the flag of adc's adcs.
+pub fn adc_carry(x: Int, y: Int, cin: Int) -> Int { adc_carry_soft(x, y, cin) }
+
+/// adc_carry's body: bits.Add64's formula.
+pub fn adc_carry_soft(x: Int, y: Int, cin: Int) -> Int {
+  let s = rt.int_wrap(0, rt.int_wrap(0, x, y), cin)
+  rt.int_wrap(4, (x & y) | ((x | y) & ~s), 63)
+}
+
 // ---------------------------------------------------------------------------
 // Carry-less multiply (PMULL on arm64, PCLMULQDQ on x86-64)
 
@@ -285,6 +304,21 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       let k = if soft { carry_soft(x, y) } else { carry(x, y) }
       let w = if soft { borrow_soft(x, y) } else { borrow(x, y) }
       Some(rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(2), k), w).bytes())
+    }
+    "adc" => {
+      // the sum and the carry of a + b + cin for cin 0 and 1: 18 bytes
+      let x = rt.bytes_word(a, 0)
+      let y = rt.bytes_word(b, 0)
+      var o = rt.rs_with_cap(18)
+      for cin in [0, 1] {
+        let s = if soft { adc_soft(x, y, cin) } else { adc(x, y, cin) }
+        let k = if soft { adc_carry_soft(x, y, cin) } else { adc_carry(x, y, cin) }
+        for i in 0..8 {
+          o = rt.rs_push_byte(o, rt.int_wrap(4, s, 8 * i) & 255)
+        }
+        o = rt.rs_push_byte(o, k)
+      }
+      Some(o.bytes())
     }
     "clmul" => {
       let x = rt.bytes_word(a, 0)

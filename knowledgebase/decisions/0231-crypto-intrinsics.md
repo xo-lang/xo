@@ -111,3 +111,37 @@ and the software GHASH multiply. The owner approved three intrinsics
   took 9.9M (the results file's proposal), and the arm64 emitter
   matches no such pattern. An unsigned compare in Xo is not constant
   time on every compiler.
+
+## Addendum (2026-10-16): add with carry in
+
+Approved by the lead as part of the owner's "add/sub with carry"
+(2026-10-16; flagged to the owner in the morning summary): the same
+family, std internal, constant time, plain Xo bodies, no seed bump.
+
+- **What.** `cpu.adc(x, y, cin)`, x + y + cin wrapping (bits.Add64's
+  sum), and `cpu.adc_carry(x, y, cin)`, its carry out; cin is 0 or 1.
+  The bodies are bits.Add64's formulas (cpu.xo adc_soft,
+  adc_carry_soft). The SSA builder lowers them to rt.u64_adc and
+  rt.u64_adc_carry (cpu_call).
+- **LLVM.** Both values from one chain of two
+  llvm.uadd.with.overflow calls (the carries or'ed), which LLVM merges
+  and turns into adds and adcs.
+- **arm64.** A chain of pairs (a sum and its carry of the same
+  operands, each carry the next pair's carry in and read by nothing
+  else, the operands defined before the chain) is one instruction:
+  adds (or `cmp cin, #1` and adcs when the first carry in is not the
+  constant 0), then adcs, with one cset for the last carry, marked
+  early (a sum is written before later operands are read). A pair
+  outside a chain is cmp #1, adcs, cset; operands that are equal
+  constants count as the same (each literal 0 is a value of its own).
+- **Why.** P-256's field product (nistec.xo mul4p) computed each carry
+  apart from its sum and added the carries afterwards: 232 instructions
+  on LLVM, 38 of them cmn and 24 cset. With adc chains it is 153 with 32
+  adcs (bench/results/tls-perf-2026-10-15.md, step 12).
+- **Checks.** cpu_prims runs adc and adc_carry, instructions and bodies,
+  on six edge words against each other (0, 1, 2^63 - 1, 2^63, 2^64 - 2,
+  2^64 - 1) and on its inputs, for cin 0 and 1, against std/rt's
+  bits.Add64 on every backend; test/codegen/intrinsics requires an adds
+  then adcs chain in nistec.mul4p on arm64 and uadd.with.overflow on
+  LLVM; TestLLVMAdcChain disassembles LLVM's mul4p and requires at least
+  24 adcs in at most 170 instructions.

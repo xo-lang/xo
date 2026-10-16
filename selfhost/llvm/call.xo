@@ -608,6 +608,22 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let r = g.def("call {i64, i1} @llvm.${f}.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
       g.set(v, "zext i1 ${g.def("extractvalue {i64, i1} ${r}, 1")} to i64")
     }
+    // decision 0231's addendum: x + y + cin and its carry as one chain
+    // of llvm.uadd.with.overflow (both values from the same calls, which
+    // LLVM merges and turns into adds/adcs)
+    "rt.u64_adc" | "rt.u64_adc_carry" => {
+      g.llvm_decl("@llvm.uadd.with.overflow.i64", "declare {i64, i1} @llvm.uadd.with.overflow.i64(i64, i64)")
+      let r1 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      let s1 = g.def("extractvalue {i64, i1} ${r1}, 0")
+      let r2 = g.def("call {i64, i1} @llvm.uadd.with.overflow.i64(i64 ${s1}, i64 ${g.op(x.args[2])})")
+      if aux_str(x.aux) == "rt.u64_adc" {
+        g.set(v, "extractvalue {i64, i1} ${r2}, 0")
+      } else {
+        let c1 = g.def("extractvalue {i64, i1} ${r1}, 1")
+        let c2 = g.def("extractvalue {i64, i1} ${r2}, 1")
+        g.set(v, "zext i1 ${g.def("or i1 ${c1}, ${c2}")} to i64")
+      }
+    }
     // decision 0231: the carry-less product's halves and the AES rounds
     // (cpu.xo, run only when cpu.hw() has them) as inline asm, so no
     // target feature is needed on the function; a pure asm, so the two

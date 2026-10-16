@@ -689,6 +689,17 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		_, k := bits.Add64(x, y, 0)
 		_, w := bits.Sub64(x, y, 0)
 		return Bytes([]byte{byte(k), byte(w)}), true
+	case "adc":
+		// the sum and the carry of a + b + cin for cin 0 and 1
+		x := binary.LittleEndian.Uint64([]byte(a))
+		y := binary.LittleEndian.Uint64([]byte(b))
+		out := make([]byte, 0, 18)
+		for cin := uint64(0); cin < 2; cin++ {
+			s, k := bits.Add64(x, y, cin)
+			out = binary.LittleEndian.AppendUint64(out, s)
+			out = append(out, byte(k))
+		}
+		return Bytes(out), true
 	case "clmul":
 		x := binary.LittleEndian.Uint64([]byte(a))
 		y := binary.LittleEndian.Uint64([]byte(b))

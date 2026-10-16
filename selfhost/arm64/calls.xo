@@ -859,6 +859,29 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.def1(false, "cmn $u0, $u1\ncset $d0, cs", [g.word(x.args[0]), g.word(x.args[1])])])
       }
     }
+    // decision 0231's addendum: x + y + cin (cin 0 or 1, moved into the
+    // carry flag by cmp #1) and its carry, one adcs when both are used
+    "rt.u64_adc" | "rt.u64_adc_carry" => {
+      if !g.has_val[v] && g.adc_chain(v) {
+        return true
+      }
+      if !g.has_val[v] {
+        let sum = aux_str(x.aux) == "rt.u64_adc"
+        let other = g.adc_pair(v, if sum { "rt.u64_adc_carry" } else { "rt.u64_adc" })
+        let ops = [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]
+        if other >= 0 {
+          let d = g.new_vreg(false)
+          let c = g.new_vreg(false)
+          let _i = g.plain("cmp $u2, #1\nadcs $d0, $u0, $u1\ncset $d1, cs", [d, c], ops)
+          g.set(v, [if sum { d } else { c }])
+          g.set(other, [if sum { c } else { d }])
+        } else if sum {
+          g.set(v, [g.def1(false, "cmp $u2, #1\nadc $d0, $u0, $u1", ops)])
+        } else {
+          g.set(v, [g.def1(false, "cmp $u2, #1\nadcs xzr, $u0, $u1\ncset $d0, cs", ops)])
+        }
+      }
+    }
     "rt.u64_borrow" => {
       if !g.has_val[v] {
         g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
@@ -1256,6 +1279,158 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
     k += 1
   }
   false
+}
+
+/// A chain of adds with carry starting at v (rt.u64_adc or
+/// rt.u64_adc_carry), as one instruction so that nothing comes between
+/// its flag's writer and reader: each pair (a sum and its carry of the
+/// same operands) after the first takes the previous pair's carry as its
+/// carry in, that carry used by nothing else, and operands defined
+/// before the chain. The first pair is adds (or cmp #1 and adcs for a
+/// carry in that is not the constant 0), the rest adcs, and one cset
+/// reads the last carry. Whether it emitted a chain of two or more pairs.
+fn (var g: G) adc_chain(v: Int) -> Bool {
+  if g.cur_sb < 0 {
+    return false
+  }
+  let ins = g.f.blocks[g.cur_sb].instrs
+  // the pairs: (sum, carry) values
+  var sums: List[Int] = []
+  var cars: List[Int] = []
+  let x = g.f.values[v]
+  let sum0 = aux_str(x.aux) == "rt.u64_adc"
+  let p0 = g.adc_pair(v, if sum0 { "rt.u64_adc_carry" } else { "rt.u64_adc" })
+  if p0 < 0 {
+    return false
+  }
+  sums.push(if sum0 { v } else { p0 })
+  cars.push(if sum0 { p0 } else { v })
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 4 * 8 {
+    let last = cars[cars.len() - 1]
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == "rt.u64_adc" && !g.has_val[u] && y.args.len() == 3 && y.args[2] == last {
+      let c = g.adc_pair_at(u, k, "rt.u64_adc_carry")
+      // the carry in used only by this pair, its operands defined
+      // before the chain
+      let nu = if c >= 0 { 2 } else { 1 }
+      if g.nuses[last] == nu && g.before_ix(y.args[0], ins) && g.before_ix(y.args[1], ins) {
+        sums.push(u)
+        cars.push(c)
+        if c < 0 {
+          break
+        }
+      }
+    }
+    k += 1
+  }
+  if sums.len() < 2 {
+    return false
+  }
+  let x0 = g.f.values[sums[0]]
+  var us: List[Int] = []
+  var text = ""
+  let (cin, cin_k) = g.const_int(x0.args[2])
+  if cin_k && cin == 0 {
+    text = "adds $d0, $u0, $u1"
+    us = [g.word(x0.args[0]), g.word(x0.args[1])]
+  } else {
+    text = "cmp $u2, #1\nadcs $d0, $u0, $u1"
+    us = [g.word(x0.args[0]), g.word(x0.args[1]), g.word(x0.args[2])]
+  }
+  var defs = [g.new_vreg(false)]
+  for i in 1..sums.len() {
+    let y = g.f.values[sums[i]]
+    let a = us.len()
+    us.push(g.word(y.args[0]))
+    us.push(g.word(y.args[1]))
+    defs.push(g.new_vreg(false))
+    text = "${text}\nadcs $d${i}, $u${a}, $u${a + 1}"
+  }
+  let lastc = cars[cars.len() - 1]
+  var cv = -1
+  if lastc >= 0 {
+    cv = g.new_vreg(false)
+    text = "${text}\ncset $d${defs.len()}, cs"
+    defs.push(cv)
+  }
+  // early: a sum is written before the later pairs' operands are read,
+  // so no def may share a register with a use
+  let ii = g.plain(text, defs, us)
+  g.blocks[g.cur].insts[ii].early = true
+  for i in 0..sums.len() {
+    g.set(sums[i], [defs[i]])
+  }
+  // the carries inside the chain have no reader but the next pair: the
+  // flag; they are marked selected
+  for i in 0..cars.len() {
+    if cars[i] >= 0 {
+      g.set(cars[i], [if i == cars.len() - 1 { cv } else { defs[i] }])
+    }
+  }
+  true
+}
+
+/// Whether values a and b are the same operand: one value, or two
+/// constants of one value (each literal 0 carry in is a value of its
+/// own).
+fn (g: G) same_arg(a: Int, b: Int) -> Bool {
+  if a == b {
+    return true
+  }
+  let (x, xk) = g.const_int(a)
+  let (y, yk) = g.const_int(b)
+  xk && yk && x == y
+}
+
+/// Whether value a is defined before the current value: in an earlier
+/// block (or a parameter), or earlier in this block's instrs ins.
+fn (g: G) before_ix(a: Int, ins: List[Int]) -> Bool {
+  for k in 0..ins.len() {
+    if ins[k] == a {
+      return k < g.cur_ix
+    }
+  }
+  true
+}
+
+/// adc_pair for the value u at index k of the block: the call want of
+/// u's three operands among the next few values, else -1.
+fn (var g: G) adc_pair_at(u: Int, k: Int, want: Str) -> Int {
+  let xa = g.f.values[u].args
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var j = k + 1
+  while j < ins.len() && j <= k + 6 {
+    let w = ins[j]
+    let y = g.f.values[w]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[w] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+      return w
+    }
+    j += 1
+  }
+  -1
+}
+
+/// A value among the next few of the block (or the few before it) that
+/// is the call want of the same three operands as v and not selected yet
+/// (adc's carry, or adc_carry's sum), else -1.
+fn (var g: G) adc_pair(v: Int, want: Str) -> Int {
+  if g.cur_sb < 0 {
+    return -1
+  }
+  let xa = g.f.values[v].args
+  let ins = g.f.blocks[g.cur_sb].instrs
+  var k = g.cur_ix + 1
+  while k < ins.len() && k <= g.cur_ix + 6 {
+    let u = ins[k]
+    let y = g.f.values[u]
+    if y.op == ssa.Op.Call && aux_str(y.aux) == want && !g.has_val[u] && y.args.len() == 3 && g.same_arg(y.args[0], xa[0]) && g.same_arg(y.args[1], xa[1]) && g.same_arg(y.args[2], xa[2]) {
+      return u
+    }
+    k += 1
+  }
+  -1
 }
 
 /// The add (op 0) or subtract (op 1) v used only by an `and` with

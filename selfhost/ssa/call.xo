@@ -156,6 +156,8 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
   let name = match b.obj_name(fo) {
     "carry" => "u64_carry"
     "borrow" => "u64_borrow"
+    "adc" => "u64_adc"
+    "adc_carry" => "u64_adc_carry"
     "clmul_lo" => "clmul_lo"
     "clmul_hi" => "clmul_hi"
     "aes_round" => "aes_round"
