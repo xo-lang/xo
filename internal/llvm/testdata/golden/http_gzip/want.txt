@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+page: 200 encoding=- length=- <html>a page that compresses: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</html>
+always: 200 encoding=- length=- <html>a page that compresses: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</html>
+upper case: 200 encoding=- length=- <html>a page that compresses: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</html>
+members: 200 encoding=- length=- first second
+redirect: 200 encoding=- length=- <html>a page that compresses: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</html>
+own accept-encoding: 200 encoding=gzip length=61 gzip bytes
+range: 200 encoding=gzip length=61 gzip bytes
+head: 200 encoding=gzip length=61 
+deflate: 200 encoding=deflate length=3 raw
+corrupt: Protocol(gzip: invalid header)
+truncated: Protocol(unexpected EOF)
+done
+--- stderr

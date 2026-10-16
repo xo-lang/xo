@@ -20,6 +20,7 @@
 // Xo; the C keeps the socket and TLS reads and writes and the server's
 // registration. An HTTP/2 stream's response header is here too (hdr_*,
 // for h2srv.xo).
+use std/archive
 use native/llrt/hclient
 use native/llrt/hpack
 use native/llrt/http1_tables
@@ -2642,6 +2643,29 @@ struct Exchange {
 fn ex_fail(s: Int, why: Str) -> Exchange { Exchange{s: s, why: why, status: 0, headers: [], body: b""} }
 
 /// The index of the name k in a header ([name, value, ...]), or -1.
+fn has_key(keys: List[Str], k: Str) -> Bool {
+  for x in keys {
+    if x == k {
+      return true
+    }
+  }
+  false
+}
+
+/// The fields of h (name, value pairs) less every one named a or b.
+fn without_fields(h: List[Str], a: Str, b: Str) -> List[Str] {
+  var out: List[Str] = []
+  var i = 0
+  while i + 1 < h.len() {
+    if h[i] != a && h[i] != b {
+      out.push(h[i])
+      out.push(h[i + 1])
+    }
+    i += 2
+  }
+  out
+}
+
 fn field_at(h: List[Str], k: Str) -> Int {
   var i = 0
   while i + 1 < h.len() {
@@ -2927,6 +2951,22 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     let err = hclient.err(r)
     if err != 0 {
       return cfail(err, hclient.msg(r))
+    }
+    // a gzip body the request asked for (hclient.request and h2_exchange
+    // add Accept-Encoding: gzip on the same terms) is decoded, without
+    // Content-Encoding and Content-Length, as Transport does; a caller's
+    // own Accept-Encoding or Range gets the body as sent
+    if !rbody.is_empty() && method != "HEAD" && !has_key(hk, "Accept-Encoding") && !has_key(hk, "Range") {
+      let ce = field_at(headers, "Content-Encoding")
+      if ce >= 0 && ascii_lower(headers[ce + 1]) == "gzip" {
+        match archive.gunzip(rbody) {
+          Ok(d) => rbody = d
+          // gzip.Reader's error, as io.ReadAll returns it ("gzip:
+          // invalid header", "unexpected EOF", ...)
+          Err(e) => return cfail(4, e.msg.trim_prefix("gunzip: "))
+        }
+        headers = without_fields(headers, "Content-Encoding", "Content-Length")
+      }
     }
     // redirects (Client.Do's redirectBehavior)
     let li = field_at(headers, "Location")

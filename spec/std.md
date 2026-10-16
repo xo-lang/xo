@@ -1105,6 +1105,15 @@ Any HTTP status is a successful `Response`; only transport failures are
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An
 `https` URL is requested over TLS (4.6).
 
+Compression is net/http's Transport's: a request without its own
+`Accept-Encoding` or `Range` field (and not `HEAD`) is sent with
+`Accept-Encoding: gzip`, and a non-empty response body whose
+`Content-Encoding` is `gzip` (any case) is decoded, with
+`Content-Encoding` and `Content-Length` removed from its headers; a
+body that does not decode is `Protocol` with gzip's text (`gzip: invalid
+header`, `unexpected EOF`). A request that sets `Accept-Encoding` or
+`Range` itself gets the body and headers as the server sent them.
+
 ### 4.6 TLS (HTTPS)
 
 ```

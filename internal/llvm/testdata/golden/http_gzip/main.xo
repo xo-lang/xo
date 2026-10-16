@@ -1,0 +1,93 @@
+// The std/http client and gzip bodies (gotcha native-http-client-gzip-body),
+// against an std/http server on 127.0.0.1:0. Like net/http's Transport, a
+// client that sent Accept-Encoding: gzip itself decodes a gzip body and
+// drops Content-Encoding and Content-Length; a request with its own
+// Accept-Encoding or a Range gets the body as sent; a body that is not
+// gzip fails with Protocol.
+use std/archive
+use std/http
+
+const PAGE = "<html>a page that compresses: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</html>"
+
+fn describe(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg) => "InvalidUrl(${msg})"
+    http.ClientErr.Connect(_) => "Connect"
+    http.ClientErr.Timeout => "Timeout"
+    http.ClientErr.Protocol(msg) => "Protocol(${msg})"
+    http.ClientErr.Canceled => "Canceled"
+  }
+}
+
+fn gz(body: Bytes, encoding: Str) -> http.Response {
+  http.Response{status: 200, headers: {"Content-Encoding": encoding, "Content-Type": "text/html"}, body: body}
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  // gzip when the request asks for it, as a server does
+  r.handle("GET /page", fn(req) {
+    let ae = req.headers.get("Accept-Encoding") ?? ""
+    if ae.contains("gzip") { gz(archive.gzip(PAGE.bytes()), "gzip") } else { http.text(200, PAGE) }
+  })
+  // gzip whatever the request asks
+  // any method, HEAD too
+  r.handle("/always", fn(_req) { gz(archive.gzip(PAGE.bytes()), "gzip") })
+  r.handle("GET /upper", fn(_req) { gz(archive.gzip(PAGE.bytes()), "GZIP") })
+  // two gzip members, one after the other: one body
+  r.handle("GET /members", fn(_req) {
+    var b = BytesBuilder.new()
+    b.write(archive.gzip("first ".bytes()))
+    b.write(archive.gzip("second".bytes()))
+    gz(b.freeze(), "gzip")
+  })
+  r.handle("GET /corrupt", fn(_req) { gz("not gzip at all".bytes(), "gzip") })
+  r.handle("GET /truncated", fn(_req) {
+    let z = archive.gzip(PAGE.bytes())
+    gz(z[0..z.len() - 4], "gzip")
+  })
+  r.handle("GET /deflate", fn(_req) { gz("raw".bytes(), "deflate") })
+  r.handle("GET /redirect", fn(_req) { http.empty(302).with_header("Location", "/always") })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => {
+      let text = if resp.body.len() >= 2 && resp.body[0] == 0x1f && resp.body[1] == 0x8b { "gzip bytes" } else { resp.text() ?? "?" }
+      os.stdio.println("${label}: ${resp.status} encoding=${resp.header("Content-Encoding") ?? "-"} length=${resp.header("Content-Length") ?? "-"} ${text}")
+    }
+    Err(e) => os.stdio.println("${label}: ${describe(e)}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "page", c.get(base + "/page"))
+        show(os, "always", c.get(base + "/always"))
+        show(os, "upper case", c.get(base + "/upper"))
+        show(os, "members", c.get(base + "/members"))
+        show(os, "redirect", c.get(base + "/redirect"))
+        show(os, "own accept-encoding", c.send(http.new_request("GET", base + "/page", {"Accept-Encoding": "gzip"})))
+        show(os, "range", c.send(http.new_request("GET", base + "/always", {"Range": "bytes=0-"})))
+        show(os, "head", c.send(http.new_request("HEAD", base + "/always")))
+        show(os, "deflate", c.get(base + "/deflate"))
+        show(os, "corrupt", c.get(base + "/corrupt"))
+        show(os, "truncated", c.get(base + "/truncated"))
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

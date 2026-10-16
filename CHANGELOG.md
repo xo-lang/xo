@@ -25,6 +25,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   flag, stdio.xo's buffer length, obj.xo's count checks, rtstats.xo's
   switch, mutex.xo's reader grant), checked over the 40 golden
   programs that use tasks and the three runtime tests.
+
+- The native HTTP client decodes gzip bodies (std.md 4.5): it asked for
+  gzip (Accept-Encoding, as Transport does) but returned the compressed
+  bytes; now a gzip body is decoded without Content-Encoding and
+  Content-Length on HTTP/1.1 and HTTP/2, as on the Go backend, and a
+  request with its own Accept-Encoding or Range gets the body as sent
+  (gotcha native-http-client-gzip-body, golden http_gzip).
+
 - Inlined calls in the profiler and tracebacks (decision 0239): dwline.xo
   reads .debug_info's DW_TAG_inlined_subroutine entries (arm64's and
   LLVM's), so pprof shows inlined callees as their own (inline) lines

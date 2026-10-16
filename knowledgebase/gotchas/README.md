@@ -603,3 +603,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wasm-test-outside-merge-gates.md](wasm-test-outside-merge-gates.md): Observed: TestSelfhostWasm was red from 0.15.0 to 0.17.0 because no per-merge gate ran it; run it for changes under std/native/ or selfhost/wasm/, and before every seed.
 - [native-http-client-gzip-body.md](native-http-client-gzip-body.md): Observed: the native HTTP client asks for gzip and returns the compressed body undecoded (the Go backend decodes it).
 - [tsan-fences-not-modeled.md](tsan-fences-not-modeled.md): ThreadSanitizer orders only atomic accesses and locks, so a fence plus a plain store is a race to it; put acquire or release on the access.
+- [native-http-client-gzip-body.md](native-http-client-gzip-body.md): Observed and fixed 2026-10-16: the native HTTP client asked for gzip and returned the compressed body undecoded (the Go backend decoded it).

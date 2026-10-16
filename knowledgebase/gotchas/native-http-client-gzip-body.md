@@ -1,6 +1,8 @@
 # The native HTTP client returns a gzip body undecoded
 
-Status: Observed (2026-10-16), not fixed.
+Status: Observed (2026-10-16), fixed 2026-10-16: http1.xo's client loop
+decodes the body (std.md 4.5); goldens http_gzip (HTTP/1.1) and http_tls's
+"gzip" case (HTTP/2).
 
 ## Symptom
 
@@ -23,8 +25,13 @@ Go backend gets that from net/http, the native client does not.
 
 ## Fix
 
-Either decode a gzip body when the client added the header itself
-(std/native/archive.xo already inflates gzip natively), dropping
-Content-Encoding and Content-Length as Go does, or stop sending the
-header. Add a case to the client differential tests with a server that
-answers gzip only when asked.
+The client loop in std/native/llrt/http1.xo decodes a non-empty gzip
+body with std/archive's gunzip when it added the header itself (no
+Accept-Encoding or Range of the caller's, not HEAD), on HTTP/1.1 and
+HTTP/2 alike, and drops Content-Encoding and Content-Length. One
+difference from Transport is left: an empty body keeps its headers (Go
+drops them for an empty chunked or close delimited gzip body, and keeps
+them for Content-Length 0 and HTTP/2's END_STREAM on the headers). The
+decoder adds about 33 KB to a program that uses the client (https_get
+2,447,144 to 2,480,160 bytes stripped); a server only program is
+unchanged.
