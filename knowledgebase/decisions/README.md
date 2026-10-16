@@ -237,3 +237,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0243-linux-without-c.md](0243-linux-without-c.md): Proposed (stub): Linux programs without `use c` are static, with no libc, linked by elflink (plain ET_EXEC), as Go does
 - [0244-tls-linked-only-when-configured.md](0244-tls-linked-only-when-configured.md): Proposed (stub): a plain HTTP server links no TLS server and no HTTP/2.
 - [0245-profiler-in-binaries.md](0245-profiler-in-binaries.md): Proposed (stub): options for the profiler's 158 KiB in every native binary.
+- [0246-fold-target-and-test-mode.md](0246-fold-target-and-test-mode.md): Proposed (stub): only the arm the build's target (and test mode) takes is lowered.
