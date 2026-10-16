@@ -778,6 +778,21 @@ Last verified: 2026-10-07
   `GOBIN=$PWD/.tools/bin go install <pkg>@latest`. A `.tools/bin/xo` left
   there from before decision 0215 is a stale Go-built xo (0.8.0 on
   2026-10-13); the current one is `bin/xo` (copy it over to refresh).
+- Rust baselines (2026-10-16): bench/perf/llvm/rust (the compute
+  workloads, std only) and bench/perf/conc/rust (tokio 1.47.1 and std
+  threads; Cargo.lock committed), built with `cargo build --release`
+  (thin LTO, one codegen unit). The development Mac has stable Rust
+  1.99.1 installed user-local by rustup (owner, 2026-10-16:
+  `~/.rustup`, `~/.cargo`, `--no-modify-path`, profile minimal; the
+  scripts find `~/.cargo/bin/cargo` when cargo is not on PATH).
+  `bench/perf/llvm/rust.sh` measures Go, Rust, and both native Xo
+  backends (best wall, fewest instructions retired, peak RSS;
+  `CALLGRIND=1` for callgrind counts); `bench/perf/conc/run.sh` has a
+  `rust` configuration; `bench/perf/llvm/rust-docker.sh` gives callgrind
+  counts on linux/arm64 in Docker (Rust built in the pinned
+  `rust:1.99.1-slim-trixie` image, Xo by a Linux xo built here with the
+  Go backend). Results in `bench/results/rust-baseline-2026-10-16.md`.
+  Last verified: 2026-10-16.
 - `bench/size/measure.sh <dirs>` (2026-10-09): binary size, Go build
   cache growth, peak RSS, and wall time of `xo build` per program against
   a fresh cache with the runtime warmed (`MODE=test` for `xo test`,

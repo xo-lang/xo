@@ -19,6 +19,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Mac. arm64 sweep, 151 workloads: 3 faster (p384 0.997, ed25519 0.996,
   text replace 0.996), text quote 1.002 with no function of it changed.
 
+- Benchmarks: Rust baselines for bench/perf/llvm (std only) and
+  bench/perf/conc (tokio and std threads; run.sh's `rust` and `rust-ct`
+  configurations), bench/perf/llvm/rust.sh and rust-docker.sh (Linux
+  instruction counts in Docker); results in
+  bench/results/rust-baseline-2026-10-16.md.
 - arm64 darwin: thread locals without the xo_tlocal_get call. The TLV
   descriptor's thunk is called inline (x0 and lr saved around it; it
   keeps every other register), and its base is reused in the block

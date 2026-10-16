@@ -4,8 +4,11 @@
 # Each Xo workload is its own program under xo/<name>; go/ has the Go
 # versions behind one binary (`concperf <name>`).
 #
-# Configurations: go (plain Go), xo-go (`xo build`), xo-llvm and xo-arm64
-# (native), and xo-arm64-1 (arm64 with XO_THREADS=1). Every binary runs
+# Configurations: go (plain Go), rust (rust/: tokio tasks and std threads,
+# cargo --release; in the default list when cargo is found, as $CARGO,
+# on PATH, or ~/.cargo/bin/cargo), rust-ct (the same binary with tokio's
+# current-thread runtime for spawn, fanout and pingpong), xo-go (`xo build`), xo-llvm and
+# xo-arm64 (native), and xo-arm64-1 (arm64 with XO_THREADS=1). Every binary runs
 # REPS times (default 7), interleaved: each round runs every workload in
 # every configuration once, so load from other processes on the host hits
 # all of them alike. The tables show medians of wall time, CPU time (user
@@ -21,8 +24,26 @@ mkdir -p "$out"
 out=$(cd "$out" && pwd)
 xo=${XO:-$root/.tools/bin/xo}
 workloads=${WORKLOADS:-spawn fanout pingpong mutex rwmutex pmap}
-configs=${CONFIGS:-go xo-go xo-llvm xo-arm64 xo-arm64-1}
+cargo=${CARGO:-}
+if [ -z "$cargo" ]; then
+	if command -v cargo >/dev/null 2>&1; then
+		cargo=cargo
+	elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+		cargo=$HOME/.cargo/bin/cargo
+	fi
+fi
+rust=""
+if [ -n "$cargo" ]; then
+	rust="rust rust-ct"
+fi
+configs=${CONFIGS:-go $rust xo-go xo-llvm xo-arm64 xo-arm64-1}
 (cd "$here/go" && go build -o "$out/concperf-go" .)
+case " $configs " in
+*" rust "* | *" rust-ct "*)
+	(cd "$here/rust" && CARGO_TARGET_DIR="$out/rust-target" "$cargo" build --release -q)
+	cp "$out/rust-target/release/concperf" "$out/concperf-rust"
+	;;
+esac
 for w in $workloads; do
 	"$xo" build -o "$out/xo-go-$w" "$here/xo/$w" >/dev/null
 	"$xo" build --backend=llvm -o "$out/xo-llvm-$w" "$here/xo/$w" >/dev/null
@@ -37,6 +58,11 @@ def cmd(c, w):
     env = dict(os.environ)
     if c == "go":
         return [out + "/concperf-go", w], env
+    if c == "rust":
+        return [out + "/concperf-rust", w], env
+    if c == "rust-ct":
+        env["CONCPERF_RT"] = "current"
+        return [out + "/concperf-rust", w], env
     if c == "xo-arm64-1":
         env["XO_THREADS"] = "1"
         return [out + "/xo-arm64-" + w], env
@@ -71,11 +97,13 @@ for k, title in (("wall", "wall ms"), ("cpu", "CPU ms (user + sys)"), ("cyc", "M
     print("\nMedian %s of %d runs\n" % (title, reps))
     hdr = "| Workload | " + " | ".join(configs)
     ratios = [c for c in configs if c.startswith("xo-") and c != "xo-go" and "xo-go" in configs]
-    hdr += "".join(" | %s/xo-go" % c for c in ratios) + " |"
+    vsrust = [c for c in configs if c.startswith("xo-") and "rust" in configs]
+    hdr += "".join(" | %s/xo-go" % c for c in ratios) + "".join(" | %s/rust" % c for c in vsrust) + " |"
     print(hdr)
-    print("|---" * (1 + len(configs) + len(ratios)) + "|")
+    print("|---" * (1 + len(configs) + len(ratios) + len(vsrust)) + "|")
     for w in workloads:
         row = "| %s | " % w + " | ".join("%.1f" % med(w, c, k) for c in configs)
         row += "".join(" | %.2fx" % (med(w, c, k) / max(med(w, "xo-go", k), 1e-9)) for c in ratios)
+        row += "".join(" | %.2fx" % (med(w, c, k) / max(med(w, "rust", k), 1e-9)) for c in vsrust)
         print(row + " |")
 PY
