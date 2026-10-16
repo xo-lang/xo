@@ -1,0 +1,35 @@
+// The deferred wake's bound for a spawn (decision 0077's addendum): a
+// spawner queues one task and keeps computing without parking (an accept
+// loop's shape); the task must still start soon (the monitor wakes an
+// idle worker for it). Prints the worst delay in microseconds over 20
+// rounds.
+fn busy(c: Clock, t: Time, d: Duration) -> Int {
+  var x = 0
+  while c.since(t) < d {
+    x = x + 1
+  }
+  x
+}
+
+fn main(os: Os) {
+  let c = os.clock
+  let start = c.now()
+  var worst = 0
+  var work = 0
+  for _ in 0..20 {
+    let at = Atomic[Int].new(0)
+    let late = scope s {
+      let t = c.since(start).nanos()
+      s.spawn(fn() {
+        let _a = at.max(c.since(start).nanos())
+      })
+      work += busy(c, c.now(), 30ms)
+      (at.get() - t) / 1000
+    }
+    if late > worst || late < 0 {
+      worst = if late < 0 { 999999 } else { late }
+    }
+    c.sleep(2ms)
+  }
+  os.stdio.println("spawnbusy worst ${worst} us (${if work > 0 { "busy" } else { "idle" }})")
+}

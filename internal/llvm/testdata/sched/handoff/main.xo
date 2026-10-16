@@ -1,0 +1,39 @@
+// The deferred wake's bound (decision 0077's addendum): a task waiting on
+// a channel gets a value from a sender that keeps computing afterwards
+// and never parks; it must still run soon (the monitor wakes an idle
+// worker for it). Prints the worst delay in microseconds over 20 rounds.
+fn busy(c: Clock, t: Time, d: Duration) -> Int {
+  var x = 0
+  while c.since(t) < d {
+    x = x + 1
+  }
+  x
+}
+
+fn main(os: Os) {
+  let c = os.clock
+  let start = c.now()
+  var worst = 0
+  var work = 0
+  for _ in 0..20 {
+    let ch = Chan[Int].new()
+    let at = Atomic[Int].new(0)
+    let sent = scope s {
+      s.spawn(fn() {
+        let _v = ch.recv()
+        let _a = at.max(c.since(start).nanos())
+      })
+      // the receiver parks in recv first
+      c.sleep(5ms)
+      let t = c.since(start).nanos()
+      ch.send(1)
+      work += busy(c, c.now(), 30ms)
+      t
+    }
+    let late = (at.get() - sent) / 1000
+    if late > worst {
+      worst = late
+    }
+  }
+  os.stdio.println("handoff worst ${worst} us (${if work > 0 { "busy" } else { "idle" }})")
+}

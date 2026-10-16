@@ -14,7 +14,7 @@ const W_REC = 15
 /// poolsetup.xo and rtsec.xo read XO_RTSTATS), then the counts from byte
 /// 8, in entry.xo STAT_NAMES' order (the modules' ST_* are indexes).
 const COUNTS = 8
-const REC_SIZE = 8 + 8 * 23
+const REC_SIZE = 8 + 8 * 26
 const UNREAD = 4294967295
 /// fiber stacks mapped now (always counted) and at most at once
 /// (gotchas/linux-tsan-fiber-stacks.md)

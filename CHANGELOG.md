@@ -15,6 +15,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   linux arm64 +25%, LLVM +39%; compile +3%). SSA values carry their
   statement's line (rc cache v2, arm64 function cache v2).
 
+- Scheduler (decision 0077's addendum, owner 2026-10-16): a channel's
+  hand off and a ring's only spawn no longer wake an idle worker; a
+  monitor thread (Go's sysmon, deferred wakes only) wakes one after 1 ms
+  if the work is still queued, and sleeps when nothing is deferred; idle
+  workers no longer spin (XO_SPIN_ROUNDS default 0). pingpong 0.47x CPU,
+  rwmutex 0.80x, mutex 0.86x; HTTP p50 and p99 unchanged
+  (bench/results/park-wake-2026-10-16.md, internal/llvm
+  TestDeferredWakeBound).
 - arm64: constant 0 addends of adds, adcs, and adc are xzr (no mov of
   0) and no longer stop an adc chain, and const_int and same_arg see
   through an inlined call's argument and result parameters (a literal 0

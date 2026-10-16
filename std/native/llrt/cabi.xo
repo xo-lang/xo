@@ -570,6 +570,10 @@ fn futex_wake(a: Int) { pool.futex_wake(a) }
 
 fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 
+/// The deferred wakes' monitor thread (pool.xo mon_main, decision 0077's
+/// addendum).
+fn mon_main(p: Int) -> Int { pool.mon_main(p) }
+
 fn park_reset(p: Int) { pool.park_reset(p) }
 
 

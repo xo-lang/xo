@@ -127,7 +127,7 @@ pub fn hand(e: Int) {
   if chosen != 0 {
     rt.slot_store[Int](chosen, 0, ld(e, E_IDX), RELEASE)
   }
-  tasks.park_signal(ld(e, E_PARK))
+  tasks.park_signal_handoff(ld(e, E_PARK))
 }
 
 /// Releases the value l (a list of one) with c's drop function, unless

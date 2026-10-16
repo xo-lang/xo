@@ -83,6 +83,65 @@ a task paid two thread wake ups per round trip (12x the Go backend).
 - The Linux futex path compiles in principle but was not run (no Linux
   host, as for 0069).
 
+## Addendum: deferred wakes and their monitor (2026-10-16)
+
+Owner, 2026-10-16 ("Sysmon sounds like a good strategy"). The scheduler is in Xo now
+(std/native/llrt/pool.xo).
+
+Context: profiles (decision 0238) showed the park and wake paths paying
+futex system calls where Go and tokio's current-thread runtime do not:
+in bench/perf/conc pingpong every channel hand off woke an idle worker
+(wakep: a futex wake, then that worker's spin and its futex wait), about
+twice the CPU of a ping pong without them. Skipping the wake is safe
+only if something bounds how long the woken work waits when its waker
+keeps computing (no preemption, above); Go bounds it the same way, with
+sysmon.
+
+Decision:
+
+1. A channel's hand off to a parked task (chan.xo hand,
+   tasks.park_signal_handoff) puts the task in the waker's next slot and
+   wakes no idle worker (pool.xo pool_push_handoff); the worker's
+   W_DEFER_AT records when. A spawn whose task is the only item of the
+   spawner's ring defers the same way (scope_add). The owner usually
+   runs the work when its task parks or ends; take_local clears the mark.
+   Mutex wakes are unchanged (they skip the next slot on purpose, for
+   HTTP p99, mutex.xo signal).
+2. A monitor thread (pool.xo mon_main), started on the first deferral,
+   wakes an idle worker (wakep) for any deferral older than 1 ms whose
+   work is still queued. It ticks every 1 ms while deferrals come and,
+   after 10 ticks without one, sleeps on a futex with no timeout until
+   the next deferral wakes it (once per idle period). One worker
+   (XO_THREADS=1) defers nothing and starts no monitor. Its record is
+   static word 46. XO_RTSTATS counts mon_tick, mon_wake, defer.
+3. A worker that finds no work no longer spins before going idle: the
+   default spin rounds are 0 (XO_SPIN_ROUNDS still sets them). 16
+   rounds cost rwmutex 1.27x the CPU (its idle workers stole from each
+   other) and bench/perf/http's p99 was the same at 0, 4, and 16
+   (1,144, 1,142, and 1,148 us, medians of 5 interleaved runs).
+4. The monitor does only this. Go's sysmon also retakes the processor
+   of a task running too long (preemption), wakes the network poller,
+   and forces garbage collection; those are future work here.
+
+Consequences, measured on the Mac (bench/results/park-wake-2026-10-16.md,
+both parts against main, medians of 9 interleaved rounds):
+
+- pingpong 0.79x wall, 0.47x CPU (397M to 272M instructions); rwmutex
+  0.86x wall, 0.80x CPU (784M to 620M); mutex 0.89x and 0.86x, at one
+  worker 0.78x and 0.60x; spawn, fanout, and pmap within noise.
+  bench/perf/http (the CRUD server, arm64, medians of 5): p50 234
+  against 236 us, p99 1,140 against 1,152 us (ranges 1,137 to 1,154 and
+  1,132 to 1,170), 97.4K against 97.5K requests a second: within noise.
+- A task deferred behind a waker or spawner that keeps computing starts
+  within about 1.3 to 2.1 ms (internal/llvm TestDeferredWakeBound, XO_THREADS=4,
+  asserting under 10 ms), where an immediate wake started it in about
+  60 us: the price of the hand off, paid only when the waker does not
+  park soon.
+- An idle program pays nothing: an idle HTTP server's monitor sleeps
+  (90 ticks over a 63 s run with 11 deferrals, none during the idle
+  minute; CPU time unchanged); XO_THREADS=1 starts no monitor (the same
+  4 threads as before).
+
 ## Alternatives
 - **Chase and Lev deques** (built first, commit 9198503): lock free for
   the owner, but a thief takes one item per CAS on the spawner's top, and

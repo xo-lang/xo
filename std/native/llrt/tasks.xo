@@ -436,6 +436,12 @@ pub fn park_signal(p: Int) {
   pool.park_signal(ctx.pool(), p)
 }
 
+/// park_signal of a channel's hand off (pool.xo pool_push_handoff).
+pub fn park_signal_handoff(p: Int) {
+  tsan(RT_TSAN_RELEASE, p)
+  pool.park_signal_handoff(ctx.pool(), p)
+}
+
 /// Tells ThreadSanitizer (when the C runtime is built with it) that a
 /// releases (op RT_TSAN_RELEASE) or acquires (RT_TSAN_ACQUIRE).
 fn tsan(op: Int, a: Int) {

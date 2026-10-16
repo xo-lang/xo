@@ -31,7 +31,7 @@ const P_WORKER_MAIN = 112
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const W_SIZE = 3400
+const W_SIZE = 3408
 const W_LIVE = 2200
 const W_ROOT = 2204
 const TLS_W = 2
@@ -42,7 +42,7 @@ const RELEASE = 2
 /// Sets the pool p up once, before its first use (pool_init): the
 /// runtime switches to several threads, the statistics' switch is read
 /// (XO_RTSTATS), and the worker count (one per CPU, or XO_THREADS, 1 to
-/// 256), the spin rounds (16, or XO_SPIN_ROUNDS), and the fiber stacks'
+/// 256), the spin rounds (0, or XO_SPIN_ROUNDS), and the fiber stacks'
 /// settings are set; P_NCPU, stored last, tells that it ran. The
 /// services record's lock orders the threads that get here at once.
 pub fn ready(p: Int) {
@@ -77,7 +77,9 @@ fn setup(p: Int) {
   if n > 256 {
     n = 256
   }
-  var spin = 16
+  // 0 (decision 0077's addendum, 2026-10-16: 16 rounds cost rwmutex
+  // 1.27x CPU and HTTP p99 was the same at 0, 4, and 16)
+  var spin = 0
   // tuning (decision 0077): set and not negative
   let sr = process.env_real("XO_SPIN_ROUNDS")
   if !sr.is_empty() && atoi(sr[0]) >= 0 {

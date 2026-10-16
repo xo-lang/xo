@@ -364,7 +364,7 @@ fn heapstats() {
 
 /// The names of the runtime statistics' counters, in the order of
 /// xo_rt.c's st, each followed by a blank.
-const STAT_NAMES = "spawn steal inject wake idle_sleep spin_round fiber_park fiber_new thread_wait thread_wake lock_slow spin_yield net_read net_write net_again poll_return poll_event poll_wake rt_section rt_defer rt_overflow fiber_live fiber_peak "
+const STAT_NAMES = "spawn steal inject wake idle_sleep spin_round fiber_park fiber_new thread_wait thread_wake lock_slow spin_yield net_read net_write net_again poll_return poll_event poll_wake rt_section rt_defer rt_overflow fiber_live fiber_peak mon_tick mon_wake defer "
 
 /// XO_RTSTATS=1's counts of the scheduler's events (decision 0077), one
 /// line on standard error (at exit, and on demand).
