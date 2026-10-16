@@ -211,7 +211,9 @@ fn layout(k: Int) -> Int
 /// for an address that is not mapped (decision 0207 stage 3: the heap's
 /// free list pops).
 fn prefetch(a: Int)
-/// The address of word k (a constant, 0 to 63) of the program's table of
+/// The address of word k (a constant, 0 to 255 since decision 0237; std
+/// uses 0 to 63 until the seed's builder accepts more, which
+/// TestStaticWords enforces) of the program's table of
 /// process globals, zero at start (decision 0207's design, work item
 /// B02): an adrp/add of `xo_static` on arm64, a global array on LLVM, a
 /// static address on wasm; reached with mem_load/mem_store or the slot
@@ -223,7 +225,8 @@ fn prefetch(a: Int)
 ///   0-2 std/native/llrt/logstate.xo: the level, format, and output of log.configure
 ///   3-6 std/native/llrt/stdio.xo: standard output's buffer, its length, its lock, the mode
 ///   7-9 std/native/llrt/process.xo: argc, argv, the environment
-///   10-13 std/native/llrt/obj.xo: the single threaded heap record, three C functions' addresses
+///   10-11 std/native/llrt/obj.xo: the single threaded heap record, heap_slow's address
+///   12-13 free (decision 0237)
 ///   14 std/native/llrt/fault.xo: the address of xo_rt.c fault_raise_msg (decision 0228)
 ///   15 std/native/llrt/rtstats.xo: the runtime statistics' record (its switch and counts; was xo_rt.c st and rtstats until decision 0233 step 2)
 ///   16-17 std/native/llrt/ctx.xo: the address of the services record (the pool record, flags), the program's task group (os.tasks; decision 0229)
@@ -233,7 +236,8 @@ fn prefetch(a: Int)
 ///   31 std/native/llrt/tlsio.xo: the system's roots record (an rt.Any; the certificates parsed off macOS)
 ///   32-33 std/native/llrt/twflags.xo: whether the test world runs, the effects made real
 ///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
-///   40-47 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the C's park_signal, the C's descriptor services record, the event loop's record
+///   40-43 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the event loop's record
+///   44-47 free (decision 0237)
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
 ///   60 std/native/llrt/stop.xo: two phase shutdown's state record

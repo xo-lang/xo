@@ -220,7 +220,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
 
 /// rt.static_word: the event loop's record (EV_ below), made by poll_svc
 /// (was xo_rt.c's static ev).
-const W_EV = 45
+const W_EV = 43
 /// Its size: the words below, Windows' last.
 const EV_SIZE = 112
 
@@ -275,8 +275,7 @@ pub const CLOSED = 2
 pub const TIMEOUT = 3
 
 /// Makes the event loop's record at start (before any descriptor),
-/// zeroed and never freed: its address. Static word 44, the C's
-/// services record until decision 0233 step 2, is unused.
+/// zeroed and never freed: its address.
 pub fn poll_svc() -> Int {
   let e = rt.heap_large(EV_SIZE)
   rt.mem_set(e, 0, EV_SIZE)

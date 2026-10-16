@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- rt.static_word's table grows from 64 to 256 words on every backend
+  (decision 0237; no cost per access). std claims only words 0 to 63
+  until a seed whose SSA builder accepts more (TestStaticWords); words
+  12-13 and 44-47, the C runtime's leftovers, are free now (poll.xo's
+  event loop record moves to word 43).
 - XO_NOLIBC=1 (decision 0230's Xo C library): the 68 cabi_libc.xo
   exports nothing calls in such a build are deleted with the libc*.xo
   helpers only they used (736 lines; found from the arm64 Linux assembly

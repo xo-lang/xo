@@ -81,7 +81,7 @@ fn (var g: Gen) call(v: Int) {
     "rt.prefetch" => {} // a hint; wasm has none (decision 0207 stage 3)
     "rt.static_word" => {
       // word k of the process globals, a static table (work item B02)
-      let at = g.static_table("static", 64)
+      let at = g.static_table("static", 256)
       g.push(x.args[0])
       g.e("i64.const 3")
       g.e("i64.shl")

@@ -136,10 +136,11 @@ fn (g: G) end_data(var out: List[Str]) {
     }
   }
   if g.static_ref {
-    // rt.static_word (decision 0207, work item B02): 64 words of process
-    // globals, zero at start
+    // rt.static_word (decision 0207, work item B02): 256 words of
+    // process globals (64 until decision 0237), zero at start (.quad
+    // lines: selfhost/macho's assembler has no .zero)
     out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
-    for _ in 0..64 {
+    for _ in 0..256 {
       out.push("\t.quad 0\n")
     }
   }
