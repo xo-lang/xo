@@ -93,6 +93,12 @@ sanitizer build.
   load and compare), which is true exactly in a sanitizer build
   (internal/llvm TestSysCTSan). A constant can come with a seed that
   knows a three field Target, if a measurement ever wants the fold.
+- Measured 2026-10-16 (seeds are 0.16.0 now, so a three field Target
+  would build): folding the checks away gains nothing on arm64 and at
+  most about 3% of instructions on two llvm workloads, cycles within
+  noise (bench/results/sanitizer-fold-2026-10-16.md). The constant
+  would also need an xo flag kept equal to clang's -fsanitize, a silent
+  failure when they differ, so the run-time check stays.
 - The port (2026-10-15, after Xo Lang 3 agreed for pool.xo and sched.xo):
   std/native/llrt/sanhook.xo, a leaf over sys_c.xo, has the switch
   hooks (cabi.xo's sched_hook export, which rt.sched_hook now calls on
