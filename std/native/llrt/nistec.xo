@@ -24,6 +24,7 @@
 // reached through raw memory as ed25519.xo's: `c` is the address of its
 // first word, an element takes 9 words (ES, 72 bytes) whatever L is, a
 // point three elements (X, Y, Z at +0, +ES, +2 ES; PS bytes).
+use native/llrt/bigmod
 use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/nistec_g256
@@ -160,6 +161,38 @@ fn final_sub(c: Int, h: Int, t: Int, md: Int, top: Int) {
   }
 }
 
+/// h = f g / R mod m for P-521's 9 limbs: the 18 word product, then
+/// Montgomery's reduction, each row one bigmod.mac_row (a multiply and
+/// add pass whose carries are cpu.adc pairs: 7 instructions a word on
+/// arm64). The product and reduction use TMPW and DIFF together (2 n + 2
+/// words); the result is moved down before final_sub writes DIFF.
+fn mul_rows(c: Int, h: Int, f: Int, g: Int, md: Int) {
+  let n = 9
+  let t = at(c, TMPW)
+  rt.mem_set(t, 0, 8 * (2 * n + 2))
+  var i = 0
+  while i < n {
+    let ti = rt.int_wrap(0, t, 8 * i)
+    st(ti, 8 * n, bigmod.mac_row(ti, f, ld(g, 8 * i), n))
+    i += 1
+  }
+  let m = at(md, MLIMBS)
+  let inv = ld(md, MINV)
+  var ext = 0
+  i = 0
+  while i < n {
+    let ti = rt.int_wrap(0, t, 8 * i)
+    let cw = bigmod.mac_row(ti, m, rt.int_wrap(2, ld(ti, 0), inv), n)
+    let x = ld(ti, 8 * n)
+    let y = cpu.adc(x, cw, ext)
+    ext = cpu.adc_carry(x, cw, ext)
+    st(ti, 8 * n, y)
+    i += 1
+  }
+  rt.mem_copy(t, rt.int_wrap(0, t, 8 * n), 8 * n)
+  final_sub(c, h, t, md, ext)
+}
+
 /// h = f g / R mod m (the Montgomery product, CIOS; f, g < m).
 fn mul(c: Int, h: Int, f: Int, g: Int, md: Int) {
   let n = limbs(c)
@@ -177,6 +210,10 @@ fn mul(c: Int, h: Int, f: Int, g: Int, md: Int) {
   }
   if n == 6 {
     mul6(h, f, g, md)
+    return
+  }
+  if n == 9 {
+    mul_rows(c, h, f, g, md)
     return
   }
   let t = at(c, TMPW)
