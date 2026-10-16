@@ -116,6 +116,33 @@ binary whose every replay is not smaller (an empty best) runs 3
 replays with 3 skips and `xo leakcheck: 0 live of 102 allocations`;
 TestNoGCTestLeaks checks that now.
 
+## Parallel chunks (2026-10-15)
+
+The batched runs are cut into chunks of whole tests (one module
+directory each, about runs / jobs runs; a property test's cases stay in
+one chunk) run as parallel processes, XO_TEST_JOBS at once, else one per
+physical core (12 on this Mac). Warm medians of 5 on arm64, with the
+run cache of decision 0236 (which skips the build when nothing
+changed), so these runs are mostly the test processes:
+
+| dir | XO_TEST_JOBS=1 s | default (12) s |
+|---|---|---|
+| selfhost/lexer | 0.110 | 0.111 |
+| selfhost/macho | 0.129 | 0.111 |
+| examples/notes-service | 0.284 | 0.243 |
+| bench/xo/v0.4/08-notes-service (4 modules) | 0.847 | 0.869 |
+| bench/xo (13 modules) | 1.239 | 1.227 |
+
+nogc/prop's fixture, after the watchdog fix (93830380), best runs:
+0.463 s with XO_TEST_JOBS=1, 0.258 s by default. (The same table taken
+before the fix read 20.6 s and 12.2 s: the 20 ms poll per replay,
+gotchas/polling-watchdog-scope-wait.md.) Packages whose tests take
+milliseconds gain nothing; the gain is for test sets whose processes
+take real time (property tests, shrinking, slow tests). Gate:
+XO_TEST_JOBS=1 against the default over the 107 directories and flags
+above plus bench/xo/v0.4/08-notes-service and the bench/xo tree, arm64
+and LLVM: 226 comparisons, 0 differ.
+
 ## Next
 
 - Done: shrinking over a pipe (item 1 above).

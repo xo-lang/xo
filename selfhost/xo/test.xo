@@ -479,6 +479,84 @@ fn run_batched(os: Os, bin: Str, limit: Duration, tests: List[TestInfo], o: Test
       runs.push(Run{k: k, t: t, seed: s})
     }
   }
+  // chunks of whole tests (a property test's cases stay together, so
+  // its first failing case is the one reported), one directory each,
+  // of about runs / jobs runs: they run in parallel processes and the
+  // outcomes print in order afterwards, as one process would give them
+  let jobs = if runs.len() > 1 { test_jobs(os) } else { 1 }
+  let target = (runs.len() + jobs - 1) / jobs
+  var chunks: List[List[Run]] = []
+  var cur: List[Run] = []
+  var i = 0
+  while i < runs.len() {
+    var j = i + 1
+    while j < runs.len() && runs[j].k == runs[i].k {
+      j += 1
+    }
+    if !cur.is_empty() && (cur.len() >= target || cur[0].t.dir != runs[i].t.dir) {
+      chunks.push(cur)
+      cur = []
+    }
+    cur = cur + runs[i..j]
+    i = j
+  }
+  if !cur.is_empty() {
+    chunks.push(cur)
+  }
+  if chunks.len() <= 1 || jobs <= 1 {
+    var all: Map[Int, Outcome] = {}
+    for c in chunks {
+      for (k, v) in run_chunk(os, bin, limit, c, o).entries() {
+        all[k] = v
+      }
+    }
+    return all
+  }
+  let next = Atomic[Int].new(0)
+  let n = chunks.len()
+  let parts = scope sc {
+    var ts = []
+    for _ in 0..jobs.min(n) {
+      ts.push(sc.spawn(fn() -> List[Map[Int, Outcome]] {
+        var mine: List[Map[Int, Outcome]] = []
+        while true {
+          let ci = next.add(1) - 1
+          if ci >= n {
+            break
+          }
+          mine.push(run_chunk(os, bin, limit, chunks[ci], o))
+        }
+        mine
+      }))
+    }
+    var all: List[Map[Int, Outcome]] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: Map[Int, Outcome] = {}
+  for m in parts {
+    for (k, v) in m.entries() {
+      out[k] = v
+    }
+  }
+  out
+}
+
+/// The test processes `xo test` runs at once: $XO_TEST_JOBS, else the
+/// physical cores (the build's ncores). The report does not depend on it.
+fn test_jobs(os: Os) -> Int {
+  let j = Int.parse(os.env.get("XO_TEST_JOBS") ?? "") ?? 0
+  if j > 0 {
+    return j
+  }
+  ncores(os).max(1)
+}
+
+/// The runs of a chunk in batches (run_batched's processes, in order):
+/// the outcomes of the tests they decided.
+fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) -> Map[Int, Outcome] {
   var out: Map[Int, Outcome] = {}
   var i = 0
   while i < runs.len() {

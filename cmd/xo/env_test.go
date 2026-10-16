@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/mod/modtest"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // The tests run in parallel (t.Parallel; a serial run of this package
@@ -133,6 +134,10 @@ func environ(t testing.TB) []string {
 		vars["XO_BUILD_DIR"] = dir
 	}
 	vars["PWD"] = workdir(t)
+	if _, ok := vars["XO_TEST_JOBS"]; !ok && os.Getenv("XO_TEST_JOBS") == "" {
+		// a few test processes at once, not one per core (decision 0235)
+		vars["XO_TEST_JOBS"] = xotool.TestJobs
+	}
 	var out []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")

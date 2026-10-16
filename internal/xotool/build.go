@@ -187,7 +187,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	cmd.Env = append(append(os.Environ(), "PWD="+wd), o.Env...)
+	cmd.Env = TestJobsEnv(append(append(os.Environ(), "PWD="+wd), o.Env...))
 	var b bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &b, &b
 	err = cmd.Run()

@@ -79,6 +79,15 @@ capability, and each case of the property tests among them, in batches:
   Native test binaries have no task dump (std/rt's SIGQUIT dump is the
   Go backend's), and the Go backend prints none on a time out either,
   so the report is the same on every backend.
+- **Parallel chunks** (2026-10-15). The runs are cut into chunks of
+  whole tests (a property test's cases stay in one chunk, so its first
+  failing case is the one reported, as in one process), each in one
+  module directory and of about runs / jobs runs, and the chunks run in
+  parallel processes: XO_TEST_JOBS, else the physical cores. The
+  outcomes are merged before anything prints, so the report is the
+  sequential one; the run cache's key leaves XO_TEST_JOBS out. The Go
+  tests give the xo they run XO_TEST_JOBS=2 (internal/xotool
+  TestJobsEnv) so test processes do not multiply with the other tests'.
 - **Leaks.** XO_LEAKCHECK still reports at exit only; a batch's report
   covers all its runs, so TestNoGCTestLeaks runs every passing test of
   its packages in one batched process too and requires 0 live.

@@ -44,6 +44,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- `xo test --no-gc` runs its batches as parallel processes: chunks of
+  whole tests (a property test's cases together, one module directory
+  each), XO_TEST_JOBS at once, else one per physical core; the report is
+  the sequential one (226 comparisons). nogc/prop's fixture 0.46 s to
+  0.26 s warm on 12 cores. The Go tests give the xo they run
+  XO_TEST_JOBS=2 (internal/xotool TestJobsEnv); the run cache's key
+  leaves XO_TEST_JOBS out (decision 0235).
+
 - `xo test --no-gc`: the time limit's watchdog no longer polls (a
   select on the end of the run's output and `after limit`): the 20 ms
   poll made each test process and shrinking replay up to 20 ms slower,

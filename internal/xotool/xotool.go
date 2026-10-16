@@ -638,7 +638,7 @@ func xoPath(p string) string { return filepath.ToSlash(p) }
 func runIn(dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "PWD="+xoPath(dir)), env...)
+	cmd.Env = TestJobsEnv(append(append(os.Environ(), "PWD="+xoPath(dir)), env...))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -695,4 +695,21 @@ func writeAtomic(p string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// TestJobs is the XO_TEST_JOBS the Go tests give the xo they run: `xo
+// test` runs its test processes at once on every physical core by
+// default (decision 0235), which multiplies with the other tests and
+// heavy runs on the machine (gotchas: limit-parallel-test-load).
+const TestJobs = "2"
+
+// TestJobsEnv is env with XO_TEST_JOBS=TestJobs added unless env
+// already sets it.
+func TestJobsEnv(env []string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "XO_TEST_JOBS=") {
+			return env
+		}
+	}
+	return append(env, "XO_TEST_JOBS="+TestJobs)
 }
