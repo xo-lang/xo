@@ -77,11 +77,10 @@ fn stat(k: Int) { rtstats.count(k) }
 fn os() -> Int { sysio.layer() }
 
 fn pick(l: Int, d: Int, w: Int) -> Int {
-  let k = os()
-  if k == 2 {
+  if os() == 2 {
     return d
   }
-  if k == 3 {
+  if os() == 3 {
     return w
   }
   l
@@ -188,11 +187,10 @@ fn err_text(e: Int) -> Str {
   if e == eprototype() {
     return "protocol wrong type for socket"
   }
-  let k = os()
-  if k == 2 {
+  if os() == 2 {
     return darwin.strerror(e)
   }
-  if k == 3 {
+  if os() == 3 {
     return windows.strerror(e)
   }
   linux.strerror(e)
@@ -283,8 +281,7 @@ fn str_of(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
 
 /// unlink(2) of path.
 fn unlink(path: Str) {
-  let k = os()
-  let _r = if k == 2 { darwin.unlink(path, false) } else if k == 3 { windows.unlink(path, false) } else { linux.unlink(path, false) }
+  let _r = if os() == 2 { darwin.unlink(path, false) } else if os() == 3 { windows.unlink(path, false) } else { linux.unlink(path, false) }
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +479,9 @@ pub fn conn_free(cn: Int) {
 /// A listener's free function (the services record's).
 pub fn listener_free(l: Int) {
   let ml = ld(l, L_MEM)
-  if ml != 0 {
+  // only the test world makes in memory listeners (folded elsewhere,
+  // decision 0246)
+  if twflags.on() && ml != 0 {
     twrun.ml_free(ml)
   } else {
     poll.pd_free(ld(l, L_PD))
@@ -658,7 +657,9 @@ pub fn listener_addr(l: Int, np: Int) -> Int { list_of(str_of(ld(l, L_ADDR)), np
 /// `l.close()`.
 pub fn listener_close(l: Int) {
   let ml = ld(l, L_MEM)
-  if ml != 0 {
+  // only the test world makes in memory listeners (folded elsewhere,
+  // decision 0246)
+  if twflags.on() && ml != 0 {
     twrun.ml_close(ml)
     return
   }
@@ -681,7 +682,9 @@ pub fn listener_accept(l: Int) -> Int {
   }
   let a = str_of(ld(l, L_ADDR))
   let ml = ld(l, L_MEM)
-  if ml != 0 {
+  // only the test world makes in memory listeners (folded elsewhere,
+  // decision 0246)
+  if twflags.on() && ml != 0 {
     // the test world: requests reach a served router in process, never
     // as connections, so accept waits until the listener closes
     if !twrun.ml_accept(ml) {

@@ -404,6 +404,22 @@ fn (var b: Builder) target_value(e: Expr) -> Int {
   if b.tkind(ot) != Kind.Enum || b.tkind(at) != Kind.Enum {
     return -1
   }
+  let (os_name, arch_name) = b.target_names()
+  let oi = b.m.variant_index(ot, os_name)
+  let ai = b.m.variant_index(at, arch_name)
+  if oi < 0 || ai < 0 {
+    return -1
+  }
+  let ov = b.add(Op.Variant, ot, Aux.I(n: oi), [])
+  let av = b.add(Op.Variant, at, Aux.I(n: ai), [])
+  b.add(Op.Struct, t, Aux.None, [ov, av])
+}
+
+/// The variant names of the build's `target` (TargetOs, TargetArch): the
+/// builder's own, or the build's target when given (Options.GOOS,
+/// GOARCH): an unknown OS is Linux, an unknown architecture Amd64, as
+/// build_target.go.
+fn (b: Builder) target_names() -> (Str, Str) {
   var os_name = match target.os {
     Darwin => "Darwin"
     Windows => "Windows"
@@ -415,8 +431,6 @@ fn (var b: Builder) target_value(e: Expr) -> Int {
     Wasm32 => "Wasm32"
     Amd64 => "Amd64"
   }
-  // the build's target when given (Options.GOOS, GOARCH): an unknown OS
-  // is Linux, an unknown architecture Amd64, as build_target.go
   if !b.goos.is_empty() {
     os_name = match b.goos {
       "darwin" => "Darwin"
@@ -432,14 +446,241 @@ fn (var b: Builder) target_value(e: Expr) -> Int {
       _ => "Amd64"
     }
   }
-  let oi = b.m.variant_index(ot, os_name)
-  let ai = b.m.variant_index(at, arch_name)
-  if oi < 0 || ai < 0 {
-    return -1
+  (os_name, arch_name)
+}
+
+// ---------------------------------------------------------------------------
+// Folding the build's target (spec core 12.2: only the arm a `match` on
+// `target` takes is generated; decision 0005). `if` and `match` on tests
+// of target.os and target.arch lower only the arm they take, so the code
+// of other platforms is never built or linked (gotchas
+// dead-target-arm-still-links.md, arm64-match-target-not-folded.md). The
+// checker still checks every arm.
+
+/// "os" or "arch" when e is `target.os` or `target.arch` of the
+/// predeclared `target` (not a variable or constant of that name), else "".
+fn (b: Builder) target_part(e: Expr) -> Str {
+  match e {
+    ParenExpr(x: x, ..) => b.target_part(x)
+    SelectorExpr(x: x, sel: sel, ..) => {
+      if sel.name != b"os" && sel.name != b"arch" {
+        return ""
+      }
+      if let Ident(id: id) = x {
+        if id.name == b"target" && b.c.var_of(b.s.file, id) < 0 && b.c.ref_of(b.s.file, id) < 0 {
+          return check.text(sel.name)
+        }
+      }
+      ""
+    }
+    _ => ""
   }
-  let ov = b.add(Op.Variant, ot, Aux.I(n: oi), [])
-  let av = b.add(Op.Variant, at, Aux.I(n: ai), [])
-  b.add(Op.Struct, t, Aux.None, [ov, av])
+}
+
+/// Whether the variant vr (of TargetOs or TargetArch) is the build's,
+/// for the part ("os" or "arch") it is compared with; None when vr is a
+/// variant of another enum.
+fn (var b: Builder) target_is(part: Str, vr: check.VRef) -> Bool? {
+  let en = check.text(b.c.objs[vr.en].name)
+  let (os_name, arch_name) = b.target_names()
+  if part == "os" && en == "TargetOs" {
+    return Some(b.variant_name(vr) == os_name)
+  }
+  if part == "arch" && en == "TargetArch" {
+    return Some(b.variant_name(vr) == arch_name)
+  }
+  None
+}
+
+/// Whether e is a call of the test world's switches
+/// (native/llrt/testworld and twflags `on` and `fake`) with constant
+/// arguments: outside a test binary they are false (decision 0246).
+fn (var b: Builder) test_world_call(e: Expr) -> Bool {
+  let (fun, args) = match e {
+    CallExpr(fun: fun, args: args, ..) => (fun, args)
+    _ => return false
+  }
+  let sel = match fun {
+    SelectorExpr(sel: sel, ..) => sel
+    _ => return false
+  }
+  if sel.name != b"on" && sel.name != b"fake" {
+    return false
+  }
+  let r = b.c.ref_of(b.s.file, sel)
+  if r < 0 || b.c.objs[r].kind != check.ObjKind.Func {
+    return false
+  }
+  let m = b.obj_mod(r)
+  if m < 0 || (b.c.mods[m].path != "native/llrt/testworld" && b.c.mods[m].path != "native/llrt/twflags") {
+    return false
+  }
+  for a in args {
+    if !b.const_arg(a.value) {
+      return false
+    }
+  }
+  true
+}
+
+/// The value of e when it is a call of the runtime's OS layer number,
+/// a function of the build's target only (native/llrt/sysio.layer and
+/// netconn.os: 0 the wasm runtime, 1 Linux, 2 macOS, 3 Windows; keep in
+/// step with sysio.xo layer), else None.
+fn (var b: Builder) layer_call(e: Expr) -> Int? {
+  let (fun, args) = match e {
+    CallExpr(fun: fun, args: args, ..) => (fun, args)
+    _ => return None
+  }
+  if !args.is_empty() {
+    return None
+  }
+  let id = match fun {
+    Ident(id: id) => id
+    SelectorExpr(sel: sel, ..) => sel
+    _ => return None
+  }
+  let r = b.c.ref_of(b.s.file, id)
+  if r < 0 || b.c.objs[r].kind != check.ObjKind.Func {
+    return None
+  }
+  let m = b.obj_mod(r)
+  let n = b.obj_name(r)
+  let path = if m >= 0 { b.c.mods[m].path } else { "" }
+  if !((path == "native/llrt/sysio" && n == "layer") || (path == "native/llrt/netconn" && n == "os")) {
+    return None
+  }
+  let (os_name, arch_name) = b.target_names()
+  if arch_name == "Wasm32" {
+    return Some(0)
+  }
+  Some(match os_name {
+    "Linux" => 1
+    "Darwin" => 2
+    "Windows" => 3
+    _ => 0
+  })
+}
+
+/// Whether e is a constant with no effects: a literal, a constant's name
+/// (or a module's), or `|` of them.
+fn (var b: Builder) const_arg(e: Expr) -> Bool {
+  match e {
+    IntLit(..) => true
+    ParenExpr(x: x, ..) => b.const_arg(x)
+    BinaryExpr(op: op, x: x, y: y, ..) => op == lexer.Kind.Pipe && b.const_arg(x) && b.const_arg(y)
+    Ident(id: id) => {
+      let r = b.c.ref_of(b.s.file, id)
+      r >= 0 && b.c.objs[r].kind == check.ObjKind.Const
+    }
+    SelectorExpr(sel: sel, ..) => {
+      let r = b.c.ref_of(b.s.file, sel)
+      r >= 0 && b.c.objs[r].kind == check.ObjKind.Const
+    }
+    _ => false
+  }
+}
+
+/// The value of e when the build decides it: `==` and `!=` of target.os
+/// or target.arch with a variant or of the OS layer number (layer_call)
+/// with an integer literal, outside a test binary a call of the
+/// test world's switches (test_world_call), and `!`, `&&`, `||` over
+/// such tests (`&&` and `||` also when their left side decides). None
+/// for anything else.
+fn (var b: Builder) target_test(e: Expr) -> Bool? {
+  if !b.tests && b.test_world_call(e) {
+    return Some(false)
+  }
+  match e {
+    ParenExpr(x: x, ..) => b.target_test(x)
+    UnaryExpr(op: op, x: x, ..) => {
+      if op == lexer.Kind.Bang {
+        if let Some(v) = b.target_test(x) {
+          return Some(!v)
+        }
+      }
+      None
+    }
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      if op == lexer.Kind.AndAnd || op == lexer.Kind.OrOr {
+        let l = b.target_test(x)?
+        if l == (op == lexer.Kind.OrOr) {
+          return Some(l)
+        }
+        return b.target_test(y)
+      }
+      if op != lexer.Kind.Eq && op != lexer.Kind.NotEq {
+        return None
+      }
+      // the OS layer number against a literal
+      var lv = b.layer_call(x)
+      var lit = y
+      if lv == None {
+        lv = b.layer_call(y)
+        lit = x
+      }
+      if let Some(n) = lv {
+        if let IntLit(value: value, ..) = lit {
+          let same = Int.parse(check.text(value)) == Some(n)
+          return Some(if op == lexer.Kind.Eq { same } else { !same })
+        }
+        return None
+      }
+      var part = b.target_part(x)
+      var other = y
+      if part.is_empty() {
+        part = b.target_part(y)
+        other = x
+      }
+      if part.is_empty() {
+        return None
+      }
+      let vr = b.c.ctor_in(b.s.file, other)?
+      let same = b.target_is(part, vr)?
+      Some(if op == lexer.Kind.Eq { same } else { !same })
+    }
+    _ => None
+  }
+}
+
+/// Whether pattern p matches the build's target part: Some for a variant
+/// (or an or-pattern of variants) or `_`, None for any other pattern.
+fn (var b: Builder) target_pattern(part: Str, p: Pattern) -> Bool? {
+  match p {
+    WildcardPat(..) => Some(true)
+    OrPat(alts: alts, ..) => {
+      var any = false
+      for a in alts {
+        if b.target_pattern(part, a)? {
+          any = true
+        }
+      }
+      Some(any)
+    }
+    VariantPat(fields: fields, ..) => {
+      if !fields.is_empty() {
+        return None
+      }
+      let vr = b.c.pat_variant_in(b.s.file, p)?
+      b.target_is(part, vr)
+    }
+    _ => None
+  }
+}
+
+/// The index of the arm a `match` on target.os or target.arch takes;
+/// None when an arm has a guard or a pattern target_pattern cannot judge
+/// before the taken one.
+fn (var b: Builder) target_arm(part: Str, arms: List[parser.MatchArm]) -> Int? {
+  for (i, a) in arms.indexed() {
+    if a.guard != None {
+      return None
+    }
+    if b.target_pattern(part, a.pattern)? {
+      return Some(i)
+    }
+  }
+  None
 }
 
 /// `x[lo..hi]` (and `..=`, and the open forms) on Str, Bytes, and List
@@ -1324,6 +1565,36 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
   }
   var else_b = -1
   if let Some(cond) = x.cond {
+    if let Some(taken) = b.target_test(cond) {
+      // a test of the build's target: only the arm it takes
+      if taken {
+        let tv = b.block(x.then)
+        if b.is_dead() {
+          // the arm returned: what follows the `if` is never reached
+          // (block stops lowering), so the other platforms' code after
+          // an early return is not built either
+          return b.undef(t)
+        }
+        b.arm_to(join, has_val, tv, t, Some(Expr.Block(b: x.then)))
+      } else if let Some(els) = x.els {
+        let ev = b.expr(els)
+        if b.is_dead() {
+          return b.undef(t)
+        }
+        b.arm_to(join, has_val, ev, t, Some(els))
+      } else {
+        b.arm_to(join, has_val, b.unit(), t, Some(e))
+      }
+      b.seal(join)
+      b.s.cur = join
+      if res >= 0 {
+        return res
+      }
+      if b.expr_never(e) {
+        return b.undef(t)
+      }
+      return b.unit()
+    }
     let c = b.value_as(cond, b.bool_t())
     let (yes, no) = b.branch(c)
     else_b = no
@@ -1383,13 +1654,43 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
   }
   let t = b.type_of(e)
   let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
-  let v = b.value(subject)
+  let part = b.target_part(subject)
+  // a match on the build's target: only the arm it takes
+  let taken = if part.is_empty() { None } else { b.target_arm(part, arms) }
+  let v = if taken == None { b.value(subject) } else { -1 }
   let join = b.new_block()
   var res = -1
   if has_val {
     res = b.s.f.add_param(join, t)
   }
-  for a in arms {
+  for (i, a) in arms.indexed() {
+    if let Some(k) = taken {
+      if i != k {
+        continue
+      }
+      var av = -1
+      match a.body {
+        Some(ExprStmt(x: x, ..)) => av = b.expr(x)
+        Some(st) => {
+          b.stmt(st)
+          av = b.unit()
+        }
+        None => av = b.unit()
+      }
+      if b.is_dead() {
+        return b.undef(t)
+      }
+      b.arm_to(join, has_val, av, t, None)
+      b.seal(join)
+      b.s.cur = join
+      if res >= 0 {
+        return res
+      }
+      if b.expr_never(e) {
+        return b.undef(t)
+      }
+      return b.unit()
+    }
     let next = b.new_block()
     b.pattern(v, a.pattern, next)
     if let Some(g) = a.guard {

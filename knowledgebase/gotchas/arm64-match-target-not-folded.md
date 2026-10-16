@@ -25,3 +25,7 @@ a branch on a constant tag in selfhost/arm64's isel (mirrored in
 internal/arm64 while the differential tests compare the two) would turn
 the chain into one jump; then remeasure `WORKLOADS=clock
 bench/perf/sysio/measure.sh`.
+
+Fixed 2026-10-16 (decision 0246): the SSA builders fold a `match` or
+`if` on `target`, so the arm64 emitter sees only the taken arm and no
+compare chain.

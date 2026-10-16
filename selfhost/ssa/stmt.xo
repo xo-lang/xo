@@ -12,6 +12,11 @@ fn (var b: Builder) block(bl: parser.Block) -> Int {
   let fr = b.open_frame()
   let n = bl.stmts.len()
   for (i, st) in bl.stmts.indexed() {
+    if b.is_dead() {
+      // after a return (or a fault, break, continue): Xo has no goto,
+      // so the rest of the block is never reached (decision 0246)
+      break
+    }
     if i == n - 1 {
       if let ExprStmt(x: x, ..) = st {
         // the block's value: its own line (decision 0239)

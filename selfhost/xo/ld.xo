@@ -9,7 +9,8 @@ use github.com/xo-lang/xo/selfhost/macho
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not.
-fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str) -> Str {
+/// strip leaves the local symbols out (`-s`).
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool) -> Str {
   if tgoos == "linux" {
     return elf_link(os, ctx, flags, srcs, out)
   }
@@ -29,7 +30,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     }
   }
   let dylibs = ["/usr/lib/libSystem.B.dylib"]
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs}
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, strip: strip}
   match macho.link_debug(ins, opts) {
     Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the

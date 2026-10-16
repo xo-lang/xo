@@ -510,13 +510,13 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       mode_flags = mode_flags + ["lto", lto1]
     }
     let srcs = lls + lk.srcs
-    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags, srcs)
+    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags + lk.link_only, srcs)
     let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
       let lto = if lls.len() > 1 { split.lto } else { lto1 }
-      let lflags = if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }
+      let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }) + lk.link_only
       let msg = if lls.len() > 1 {
         split_build(os, lctx, cc, lls, lk.srcs, bin, split, lflags)
       } else {
@@ -655,7 +655,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let srcs = progs + lk.srcs
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, tgoos, flags, srcs, bin)
+      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip)
       if !why.is_empty() {
         fail(os, why)
       }
@@ -663,7 +663,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       bins.push((tg, bin))
       continue
     }
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags, srcs) }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags + lk.link_only, srcs) }
     let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -679,7 +679,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
         cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
-      let msg = cc_build(os, ctx, cc, flags, lsrcs, bin)
+      let msg = cc_build(os, ctx, cc, flags + lk.link_only, lsrcs, bin)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail(os, "${cc} failed")
@@ -820,12 +820,19 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
 struct LinkInputs {
   srcs: List[Str] = []
   flags: List[Str] = []
+  /// the link's only (not the assembler's): `-s` leaves the symbol
+  /// table out (ld -s on Linux; ld64 ignores -s, so -x there, which
+  /// keeps the exports and imports dyld needs)
+  link_only: List[Str] = []
 }
 
 fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
   // no C runtime (decision 0234; std/llrt/xo_rt.c deleted after seed
   // 0.16.0)
   var lk = LinkInputs{}
+  if o.strip {
+    lk.link_only = if tgoos == "darwin" { ["-Wl,-x"] } else { ["-s"] }
+  }
   // std/time: the program's zone data beside the runtime (timeFlags)
   if uses_time {
     if !(o.tzdata is "" | "embedded" | "system") {

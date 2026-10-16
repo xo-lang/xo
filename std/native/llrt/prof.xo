@@ -389,7 +389,7 @@ struct Syms {
 fn symbols(lo: Int, hi: Int) -> Syms {
   var addrs: List[Int] = []
   var names: List[Str] = []
-  if darwin() {
+  if target.os == TargetOs.Darwin {
     macho_symbols(lo, hi, addrs, names)
   } else {
     elf_symbols(lo, hi, addrs, names)

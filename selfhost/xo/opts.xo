@@ -39,8 +39,10 @@ struct Opts {
   json: Bool = false
   ci: Bool = false
   release: Bool = false
-  /// -s: no debug information; --debug-info: debug information in a
-  /// release build too (decision 0239)
+  /// -s: no debug information and no local symbols (selfhost/macho's
+  /// LinkOpts.strip, `ld -x` on darwin, `ld -s` on Linux; the Go
+  /// backend's `-s -w`); --debug-info: debug information in a release
+  /// build too (decision 0239)
   strip: Bool = false
   debug_info: Bool = false
   error_args: Bool = true

@@ -237,5 +237,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0243-linux-without-c.md](0243-linux-without-c.md): Proposed (stub): Linux programs without `use c` are static, with no libc, linked by elflink (plain ET_EXEC), as Go does
 - [0244-tls-linked-only-when-configured.md](0244-tls-linked-only-when-configured.md): Proposed: TLS and HTTP/2 server code reachable only from Server.with_tls (a table of TLS operations it installs); json_server measured 2,664 to 1,261 KiB stripped.
 - [0245-profiler-in-binaries.md](0245-profiler-in-binaries.md): Proposed: the profiler's 158 KiB in every binary; recommended: sample in the binary (about 10 KiB), symbolize with `xo prof`.
-- [0246-fold-target-and-test-mode.md](0246-fold-target-and-test-mode.md): Proposed (stub): only the arm the build's target (and test mode) takes is lowered.
+- [0246-fold-target-and-test-mode.md](0246-fold-target-and-test-mode.md): Accepted: if and match on the build's target (and the test world's switches outside test binaries) lower only the arm taken; with -s dropping local symbols, hello 646,616 to 580,344 bytes stripped.
 - [0247-lazy-runtime-bodies.md](0247-lazy-runtime-bodies.md): Proposed (stub): a native build checks the runtime's function bodies as the SSA builder builds them; TestStdChecks checks them all

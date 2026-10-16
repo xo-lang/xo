@@ -548,7 +548,9 @@ fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
 }
 
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
-  if twrun.mem_listener(s.l) {
+  // only the test world makes in memory listeners (folded elsewhere,
+  // decision 0246)
+  if testworld.on() && twrun.mem_listener(s.l) {
     serve_mem(s.l, s.r)
     return Ok(())
   }

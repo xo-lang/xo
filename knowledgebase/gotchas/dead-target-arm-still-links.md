@@ -33,3 +33,10 @@ call of another OS (selfhost/ssa call.xo wasm_only_rt). The C stubs
 while the seed's code still named them
 (runtime-c-the-seed-still-calls.md); they were deleted with seed
 0.12.0-26641183 (2026-10-15).
+
+Fixed in the SSA builders 2026-10-16 (decision 0246): `if` and `match`
+on target.os and target.arch (and on the OS layer number, sysio.layer
+and netconn.os, against a literal) lower only the arm taken, and a block
+stops lowering after a return, so another OS's code after an early
+return is not built either. A choice made at run time (a word set at
+start) still keeps every OS's code; write it as a `target` test.

@@ -48,6 +48,9 @@ pub struct LinkOpts {
   pub sdk: (Int, Int) = (11, 0)
   pub dylibs: List[Str] = ["/usr/lib/libSystem.B.dylib"]
   pub entry: Str = "_main"
+  /// No local symbols in the symbol table (`xo build -s`, as `ld -x`):
+  /// the exports, the imports, and __mh_execute_header stay
+  pub strip: Bool = false
 }
 
 /// An input file: its path (for messages) and contents.
@@ -1196,7 +1199,7 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
         if l.globals.get(s.name) == Some((o, i)) {
           exts.push((s.name, sect.out + 1, a))
         }
-      } else {
+      } else if !l.opts.strip {
         locs.push((s.name, sect.out + 1, a))
       }
     }

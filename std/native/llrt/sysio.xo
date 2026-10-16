@@ -36,10 +36,11 @@ pub struct Info {
 /// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
 /// (macOS, arm64 and x86_64: the stat and directory calls are the 64 bit
 /// inode ones under plain names, gotchas/darwin-amd64-stat-inode64.md),
-/// 3 kernel32 (Windows), 0 the wasm runtime. The SSA passes do not fold a
-/// `match` on `target`, so every arm is lowered; the builders make the
-/// platform calls of another OS faults, and a native backend's optimizer
-/// or a dead branch leaves the other arms unused.
+/// 3 kernel32 (Windows), 0 the wasm runtime. The SSA builders fold a call
+/// of layer() compared with a literal (`layer() == 2`), as they fold
+/// `target` tests (decision 0246; selfhost/ssa expr.xo layer_call keeps
+/// these numbers): the helpers below test `target.os` so another OS's
+/// calls are never built.
 pub fn layer() -> Int {
   match target.arch {
     TargetArch.Wasm32 => 0
@@ -215,11 +216,16 @@ fn clock_read(real: Bool, a: Int) -> Int {
   if f == 0 {
     f = clock_choose()
   }
-  if f == CLOCK_LIBSYSTEM {
+  // the word says which; the target tests keep the other OSes' clocks
+  // out of the build (decision 0246)
+  if target.os == TargetOs.Darwin && f == CLOCK_LIBSYSTEM {
     return sys_darwin.clock_gettime_nsec_np(if real { darwin.CLOCK_REALTIME } else { darwin.CLOCK_MONOTONIC })
   }
-  if f == CLOCK_KERNEL32 {
+  if target.os == TargetOs.Windows && f == CLOCK_KERNEL32 {
     return if real { windows.clock_ns(a) } else { windows.mono_ns(a) }
+  }
+  if target.os == TargetOs.Darwin || target.os == TargetOs.Windows {
+    fault("the clock chosen is not this OS's")
   }
   linux.clock_ns(if real { linux.CLOCK_REALTIME } else { linux.CLOCK_MONOTONIC }, a)
 }
@@ -228,14 +234,10 @@ fn clock_read(real: Bool, a: Int) -> Int {
 /// linux.vdso_clock's lookup stores it) and answers it. A choice racing
 /// another stores the same word.
 fn clock_choose() -> Int {
-  let l = match target.os {
-    TargetOs.Darwin => CLOCK_LIBSYSTEM
-    TargetOs.Windows => CLOCK_KERNEL32
-    TargetOs.Linux | TargetOs.Wasi => 0
-  }
-  if l == 0 {
+  if target.os == TargetOs.Linux || target.os == TargetOs.Wasi {
     return linux.vdso_clock()
   }
+  let l = if target.os == TargetOs.Darwin { CLOCK_LIBSYSTEM } else { CLOCK_KERNEL32 }
   rt.slot_store[Int](rt.sys_words(), 0, l, 0)
   l
 }
@@ -247,10 +249,10 @@ fn clock_choose() -> Int {
 
 /// A descriptor of op opened for reading (O_RDONLY | O_CLOEXEC).
 fn open_read(l: Int, op: Str) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.open_read(op)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.open(op, darwin.O_RDONLY | darwin.O_CLOEXEC, 0)
   }
   linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
@@ -258,20 +260,20 @@ fn open_read(l: Int, op: Str) -> Int {
 
 /// A descriptor of op created or truncated for writing, mode 0644.
 fn open_write(l: Int, op: Str) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.open_write(op)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.open(op, darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC | darwin.O_CLOEXEC, 420)
   }
   linux.open(op, linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC | linux.O_CLOEXEC, 420)
 }
 
 fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.read(fd, buf, off, n)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.read(fd, buf, off, n)
   }
   linux.read(fd, buf, off, n)
@@ -279,20 +281,20 @@ fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
 
 /// 0, or the errno of the first failed write.
 fn write_all(l: Int, fd: Int, b: Bytes) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.write_all(fd, b)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.write_all(fd, b)
   }
   linux.write_all(fd, b)
 }
 
 fn close(l: Int, fd: Int) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.close(fd)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.close(fd)
   }
   linux.close(fd)
@@ -300,10 +302,10 @@ fn close(l: Int, fd: Int) -> Int {
 
 /// The size of the open file fd, or -1 when it is not known.
 fn file_size(l: Int, fd: Int) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.file_size(fd)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     let (s, e) = darwin.fstat(fd)
     return if e == 0 { s.size } else { -1 }
   }
@@ -313,11 +315,11 @@ fn file_size(l: Int, fd: Int) -> Int {
 
 /// The facts of op (and 0), or the errno.
 fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     let (s, e) = windows.stat(op, follow)
     return (Info{st: 0, is_dir: s.is_dir, size: s.size, modified: s.mtime}, e)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     let (s, e) = darwin.stat(op, follow)
     return (Info{st: 0, is_dir: darwin.is_dir(s), size: s.size, modified: s.mtime}, e)
   }
@@ -327,10 +329,10 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
 
 /// The C runtime's message of errno e (strerror, first letter lowered).
 pub fn err_msg(l: Int, e: Int) -> Str {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.err_msg(e)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.err_msg(e)
   }
   linux.err_msg(e)
@@ -338,10 +340,10 @@ pub fn err_msg(l: Int, e: Int) -> Str {
 
 /// The FsErr tag plus one of errno e.
 pub fn fs_status(l: Int, e: Int) -> Int {
-  if l == 3 {
+  if target.os == TargetOs.Windows {
     return windows.fs_status(e)
   }
-  if l == 2 {
+  if target.os == TargetOs.Darwin {
     return darwin.fs_status(e)
   }
   linux.fs_status(e)
