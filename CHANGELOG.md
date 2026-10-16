@@ -58,6 +58,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- LLVM backend: the runtime's slow paths (the pool lock's, the futex
+  wake, the heap's reserve and push, budget, mutex, stdio) are noinline
+  and cold, and a test block's function is noinline, so neither takes
+  the registers of a caller's hot loop: testworld rand against
+  pre-zero-C main 1.081 to 1.028, atomic get 1.058 to 0.996, the rest of
+  bench/perf within noise (bench/results/llvm-rand-atomic-2026-10-16.md).
+
 - `xo test --no-gc` runs its batches as parallel processes: chunks of
   whole tests (a property test's cases together, one module directory
   each), XO_TEST_JOBS at once, else one per physical core; the report is

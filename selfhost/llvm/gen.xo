@@ -213,6 +213,8 @@ fn runtime_decls() -> Str {
     "attributes #6 = { alwaysinline }",
     "attributes #7 = { uwtable \"no-builtins\" }",
     "attributes #8 = { nounwind noinline }",
+    "attributes #10 = { uwtable noinline cold }",
+    "attributes #11 = { uwtable noinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
