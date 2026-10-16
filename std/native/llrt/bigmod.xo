@@ -14,8 +14,9 @@ use native/llrt/raw
 use native/rt
 
 /// An odd modulus m > 1 of n limbs and its constants: the words of w are
-/// -m^-1 mod 2^64, m, R^2 mod m, R mod m, then the product's scratch (n +
-/// 2 words) and a difference's (n words).
+/// -m^-1 mod 2^64, m, R^2 mod m, R mod m, then the product's scratch (2 n
+/// + 2 words: a double width product and its reduction) and a
+/// difference's (n words).
 pub struct Mod {
   pub n: Int
   pub bits: Int
@@ -40,7 +41,7 @@ fn one_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 16 * md.n) }
 
 fn t_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 24 * md.n) }
 
-fn d_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 24 + 32 * md.n) }
+fn d_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 24 + 40 * md.n) }
 
 /// A use of xs after its last raw access (nistec.xo's keep).
 pub fn keep(xs: List[Int]) {
@@ -194,7 +195,7 @@ pub fn add_plain(a: List[Int], b: List[Int]) -> List[Int] {
 /// caller checks).
 pub fn modulus(m: List[Int]) -> Mod {
   let n = m.len()
-  let md = Mod{n: n, bits: bit_len(m), w: zero(3 + 5 * n)}
+  let md = Mod{n: n, bits: bit_len(m), w: zero(3 + 6 * n)}
   let w = wbase(md)
   rt.mem_copy(m_at(md), addr(m), 8 * n)
   let m0 = m[0]
@@ -258,41 +259,157 @@ fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
   }
 }
 
-/// h = f g / R mod m (CIOS; f g < m R).
-fn mul_at(md: Mod, h: Int, f: Int, g: Int) {
-  let n = md.n
-  let t = t_at(md)
-  let m = m_at(md)
-  let inv = ld(wbase(md), 0)
-  rt.mem_set(t, 0, 8 * (n + 2))
+/// dst[j] += src[j] k plus the carry word for j below len, one pass:
+/// each word's low half added with cpu.adc (decision 0231's addendum)
+/// and the next carry word its high half plus the two carries (it
+/// cannot overflow), unrolled by 4 with wrapping offsets; the carry word
+/// out.
+fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
+  var cw = 0
+  var o = 0
+  let end4 = 8 * (len - len % 4)
+  let end = 8 * len
+  while o < end4 {
+    let o1 = rt.int_wrap(0, o, 8)
+    let o2 = rt.int_wrap(0, o, 16)
+    let o3 = rt.int_wrap(0, o, 24)
+    let a0 = ld(src, o)
+    let a1 = ld(src, o1)
+    let a2 = ld(src, o2)
+    let a3 = ld(src, o3)
+    let x0 = ld(dst, o)
+    let x1 = ld(dst, o1)
+    let x2 = ld(dst, o2)
+    let x3 = ld(dst, o3)
+    let l0 = rt.int_wrap(2, a0, k)
+    let h0 = rt.u64_mul_hi(a0, k)
+    let s0 = cpu.adc(x0, l0, 0)
+    let k0 = cpu.adc_carry(x0, l0, 0)
+    st(dst, o, cpu.adc(s0, cw, 0))
+    let c0 = cpu.adc(h0, k0, cpu.adc_carry(s0, cw, 0))
+    let l1 = rt.int_wrap(2, a1, k)
+    let h1 = rt.u64_mul_hi(a1, k)
+    let s1 = cpu.adc(x1, l1, 0)
+    let k1 = cpu.adc_carry(x1, l1, 0)
+    st(dst, o1, cpu.adc(s1, c0, 0))
+    let c1 = cpu.adc(h1, k1, cpu.adc_carry(s1, c0, 0))
+    let l2 = rt.int_wrap(2, a2, k)
+    let h2 = rt.u64_mul_hi(a2, k)
+    let s2 = cpu.adc(x2, l2, 0)
+    let k2 = cpu.adc_carry(x2, l2, 0)
+    st(dst, o2, cpu.adc(s2, c1, 0))
+    let c2 = cpu.adc(h2, k2, cpu.adc_carry(s2, c1, 0))
+    let l3 = rt.int_wrap(2, a3, k)
+    let h3 = rt.u64_mul_hi(a3, k)
+    let s3 = cpu.adc(x3, l3, 0)
+    let k3 = cpu.adc_carry(x3, l3, 0)
+    st(dst, o3, cpu.adc(s3, c2, 0))
+    cw = cpu.adc(h3, k3, cpu.adc_carry(s3, c2, 0))
+    o = rt.int_wrap(0, o, 32)
+  }
+  while o < end {
+    let a = ld(src, o)
+    let x = ld(dst, o)
+    let l = rt.int_wrap(2, a, k)
+    let h = rt.u64_mul_hi(a, k)
+    let s = cpu.adc(x, l, 0)
+    let c = cpu.adc_carry(x, l, 0)
+    st(dst, o, cpu.adc(s, cw, 0))
+    cw = cpu.adc(h, c, cpu.adc_carry(s, cw, 0))
+    o = rt.int_wrap(0, o, 8)
+  }
+  cw
+}
+
+/// The 2 n words at t (and 2 more, zeroed) = f g, schoolbook: per word
+/// i of g a mac_row at word i, its carry word at word i + n (still 0).
+fn prod_at(n: Int, t: Int, f: Int, g: Int) {
+  rt.mem_set(t, 0, 8 * (2 * n + 2))
   var i = 0
   while i < n {
-    let gi = ld(g, 8 * i)
-    var cy = 0
-    var j = 0
-    while j < n {
-      cy = mac(t, 8 * j, ld(f, 8 * j), gi, cy)
-      j += 1
-    }
-    let x = ld(t, 8 * n)
-    let s = rt.int_wrap(0, x, cy)
-    st(t, 8 * n, s)
-    st(t, 8 * (n + 1), cpu.carry(x, cy))
-    let q = rt.int_wrap(2, ld(t, 0), inv)
-    cy = mac(t, 0, q, ld(m, 0), 0)
-    j = 1
-    while j < n {
-      cy = mac(t, 8 * j, q, ld(m, 8 * j), cy)
-      st(t, 8 * (j - 1), ld(t, 8 * j))
-      j += 1
-    }
-    let x2 = ld(t, 8 * n)
-    let s2 = rt.int_wrap(0, x2, cy)
-    st(t, 8 * (n - 1), s2)
-    st(t, 8 * n, rt.int_wrap(0, ld(t, 8 * (n + 1)), cpu.carry(x2, cy)))
+    let ti = rt.int_wrap(0, t, 8 * i)
+    st(ti, 8 * n, mac_row(ti, f, ld(g, 8 * i), n))
     i += 1
   }
-  final_sub(md, h, t, ld(t, 8 * n))
+}
+
+/// The 2 n words at t (and 2 more, zeroed) = f f: the cross products f_i
+/// f_j (i < j) once, a mac_row of f_i and f_(i+1).. at word 2 i + 1 each
+/// (its carry word at word i + n, still 0), doubled with one chain, then
+/// the squares f_i f_i added with one chain (n (n + 1) / 2 products where
+/// prod_at makes n n).
+fn square_at(n: Int, t: Int, f: Int) {
+  rt.mem_set(t, 0, 8 * (2 * n + 2))
+  var i = 0
+  while i < n - 1 {
+    let cw = mac_row(rt.int_wrap(0, t, 8 * (2 * i + 1)), rt.int_wrap(0, f, 8 * (i + 1)), ld(f, 8 * i), n - 1 - i)
+    st(t, 8 * (i + n), cw)
+    i += 1
+  }
+  // doubled: the cross sum is below 2^(128 n - 1), so no carry out
+  var c = 0
+  var k = 0
+  while k < 2 * n {
+    let x = ld(t, 8 * k)
+    st(t, 8 * k, cpu.adc(x, x, c))
+    c = cpu.adc_carry(x, x, c)
+    k += 1
+  }
+  // the squares at words 2 i and 2 i + 1: the square is below 2^(128 n)
+  c = 0
+  i = 0
+  while i < n {
+    let fi = ld(f, 8 * i)
+    let lo = rt.int_wrap(2, fi, fi)
+    let hi = rt.u64_mul_hi(fi, fi)
+    let x0 = ld(t, 16 * i)
+    let x1 = ld(t, 16 * i + 8)
+    let s0 = cpu.adc(x0, lo, c)
+    let c0 = cpu.adc_carry(x0, lo, c)
+    st(t, 16 * i, s0)
+    st(t, 16 * i + 8, cpu.adc(x1, hi, c0))
+    c = cpu.adc_carry(x1, hi, c0)
+    i += 1
+  }
+}
+
+/// h = T / R mod m for the 2 n word T at t below m R (Montgomery's
+/// reduction): per word i, q = T_i (-1/m) mod 2^64 and a mac_row of q m
+/// at word i (which zeroes it), its carry word added at word i + n with
+/// the carry passed from the last word (0 or 1).
+fn redc_at(md: Mod, h: Int, t: Int) {
+  let n = md.n
+  let m = m_at(md)
+  let inv = ld(wbase(md), 0)
+  var ext = 0
+  var i = 0
+  while i < n {
+    let ti = rt.int_wrap(0, t, 8 * i)
+    let cw = mac_row(ti, m, rt.int_wrap(2, ld(ti, 0), inv), n)
+    let x = ld(ti, 8 * n)
+    st(ti, 8 * n, cpu.adc(x, cw, ext))
+    ext = cpu.adc_carry(x, cw, ext)
+    i += 1
+  }
+  final_sub(md, h, rt.int_wrap(0, t, 8 * n), ext)
+}
+
+/// h = f g / R mod m (f g < m R): the product, then the reduction.
+fn mul_at(md: Mod, h: Int, f: Int, g: Int) {
+  if f == g {
+    sqr_at(md, h, f)
+    return
+  }
+  let t = t_at(md)
+  prod_at(md.n, t, f, g)
+  redc_at(md, h, t)
+}
+
+/// h = f f / R mod m (f < m): the square, then the reduction.
+fn sqr_at(md: Mod, h: Int, f: Int) {
+  let t = t_at(md)
+  square_at(md.n, t, f)
+  redc_at(md, h, t)
 }
 
 /// h = f + g mod m.

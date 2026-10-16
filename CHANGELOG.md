@@ -151,6 +151,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
+- RSA: bigmod.xo's Montgomery product as a double width product (or a
+  dedicated square) and Montgomery's reduction in single pass rows on
+  cpu.adc: signatures 32% to 46% fewer instructions, verifications 44%
+  to 53%, on both backends (bench/perf/rsa, new;
+  bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
+  crypto/rsa for 1024 to 4096 bit keys.
+
 - arm64: each cpu.adc pair is an instruction template of its own again
   (calls.xo ADC_CHAINS off): a chain of up to ten operands could reload
   a fourth spilled operand into x15 over the third, silently; arm64
