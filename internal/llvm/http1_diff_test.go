@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -87,6 +88,7 @@ fn main(os: Os) {
 func http1Server(t *testing.T, bin string, env ...string) (string, func()) {
 	t.Helper()
 	cmd := exec.Command(bin)
+	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	cmd.Env = append(os.Environ(), env...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

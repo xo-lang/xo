@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Tests: internal/testtmp Lifeline: a long-running native child a Go test
+  starts (the HTTP parse and fuzz servers, the TLS, TLS matrix, H2 and
+  TLS server diff peers, TestGoldenASan's goldens, cmd/xo's notes
+  server) runs behind internal/testtmp/lifeline, which kills it when the
+  test process is gone however it ended (a pipe only the test holds,
+  watched by a separate process; the program keeps its own pid, signals
+  and exit status), plus a cleanup kill and a deadline
+  (gotchas/test-server-children-orphaned.md).
 - nistec.xo: P-384's and P-521's [k]G from a fixed base table made once
   per process on first use (pt_mul_g_n beside P-256's pt_mul_g; the
   table in static words 44 and 45, nistec_gtab.xo, rt.heap_large memory

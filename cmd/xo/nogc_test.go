@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -298,6 +299,7 @@ func TestNoGCNotesServer(t *testing.T) {
 			t.Fatalf("%s: %v %s", be, err, res.Output)
 		}
 		cmd := command(t, res.Binaries[xotool.Host()])
+		testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 		cmd.Env = append(cmd.Env, "NOTES_TOKEN=t0p", "NOTES_PASSWORD=correct horse", "NOTES_ADDR=127.0.0.1:0")
 		stderr, err := cmd.StderrPipe()
 		if err != nil {

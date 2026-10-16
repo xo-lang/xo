@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -373,7 +374,8 @@ fn main(os: Os) {
 func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string) (string, string) {
 	t.Helper()
 	cmd := exec.Command(bin)
-	stopAttr(cmd) // a stop request reaches it on Windows too
+	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
+	stopAttr(cmd)                            // a stop request reaches it on Windows too
 	cmd.Env = append(os.Environ(), env...)
 	if native {
 		cmd.Env = append(cmd.Env, "XO_LEAKCHECK=1")

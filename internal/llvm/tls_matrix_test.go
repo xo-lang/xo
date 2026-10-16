@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -375,6 +376,7 @@ func matrixKnown(cell string) string {
 func runMatrix(t *testing.T, bin string, certs []matrixCert, roots *x509.CertPool) string {
 	t.Helper()
 	cmd := exec.Command(bin)
+	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stopAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

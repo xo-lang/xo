@@ -17,7 +17,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -367,6 +369,7 @@ func TestTLSServerReplayDiff(t *testing.T) {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
 		cmd := exec.Command(res.Binaries[xotool.Host()])
+		testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 		cmd.Stdin = strings.NewReader(in.String())
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr

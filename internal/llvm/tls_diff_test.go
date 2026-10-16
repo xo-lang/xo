@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -350,7 +351,8 @@ fn main(os: Os) {
 func runTLSDiff(t *testing.T, bin string, p *testPKI, native bool) string {
 	t.Helper()
 	cmd := exec.Command(bin)
-	stopAttr(cmd) // a stop request reaches it on Windows too
+	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
+	stopAttr(cmd)                            // a stop request reaches it on Windows too
 	if native {
 		cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 	}
@@ -498,4 +500,3 @@ func probeTLSServer(t *testing.T, out *strings.Builder, addr string, p *testPKI)
 	c.Close()
 	fmt.Fprintf(out, "plain http: %q\n", raw)
 }
-

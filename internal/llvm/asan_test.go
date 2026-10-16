@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -56,6 +58,7 @@ func TestGoldenASan(t *testing.T) {
 			}
 			for _, threads := range []string{"1", ""} {
 				cmd := exec.Command(bin)
+				testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 				cmd.Dir = dir
 				// the golden's env.txt too (http_conn_fault's probe)
 				cmd.Env = append(append(os.Environ(), progEnv(dir)...), "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1", "XO_THREADS="+threads)
