@@ -152,6 +152,9 @@ struct RootsData {
   certs: List[x509.Cert]
   err: Str
   system: Bool
+  /// The system's: a word holding the parsed certificates (a kept rt.Any
+  /// of a List[x509.Cert], 0 until the first handshake, system_certs)
+  cell: Int = 0
 }
 
 fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
@@ -192,14 +195,35 @@ pub fn roots_err(r: rthttp.Roots) -> Str {
 /// The client's default roots, the system's: one record per process
 /// (static word 31, so clients share pooled connections as with one
 /// record), made at the first client. On macOS the Security framework
-/// verifies and it holds no certificates; elsewhere it holds the
-/// system's, parsed then (tlscert.system_ders, x509.xo).
+/// verifies and it holds no certificates; elsewhere the system's are
+/// parsed at the first handshake that needs them (system_certs), not
+/// here: a client that makes no https request does not pay for them (61M
+/// instructions on linux/arm64, callgrind 2026-10-16).
 pub fn roots_system() -> rthttp.Roots {
   let w = rt.static_word(31)
   var s = rt.slot_load(w, 0, ACQUIRE)
   if s == 0 {
     // freed at exit with std/http's state (entry.xo, decision 0233)
     atexit.set_streams(rt.fn_addr("streams_free"))
+    let cell = rt.heap_large(8)
+    rt.mem_store(cell, 0, 0, 8)
+    let mine = keep(rt.any_of(RootsData{certs: [], err: "", system: true, cell: cell}))
+    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
+      s = mine
+    } else {
+      tasks.h_release(mine)
+      rt.heap_release(cell - 8)
+      s = rt.slot_load(w, 0, ACQUIRE)
+    }
+  }
+  rt.obj_at[rthttp.Roots](s)
+}
+
+/// The system's certificates (tlscert.system_ders, x509.xo), parsed at
+/// the first call and kept in cell.
+fn system_certs(cell: Int) -> List[x509.Cert] {
+  var a = rt.slot_load(cell, 0, ACQUIRE)
+  if a == 0 {
     var certs: List[x509.Cert] = []
     for der in tlscert.system_ders() {
       let p = x509.parse(der)
@@ -207,15 +231,15 @@ pub fn roots_system() -> rthttp.Roots {
         certs.push(p.cert)
       }
     }
-    let mine = keep(rt.any_of(RootsData{certs: certs, err: "", system: true}))
-    if rt.slot_cas(w, 0, 0, mine, ACQ_REL) {
-      s = mine
+    let mine = keep(rt.any_of(certs))
+    if rt.slot_cas(cell, 0, 0, mine, ACQ_REL) {
+      a = mine
     } else {
       tasks.h_release(mine)
-      s = rt.slot_load(w, 0, ACQUIRE)
+      a = rt.slot_load(cell, 0, ACQUIRE)
     }
   }
-  rt.obj_at[rthttp.Roots](s)
+  rt.any_get[List[x509.Cert]](rt.obj_at[rt.Any](a)) ?? []
 }
 
 /// The outcome of a handshake: CC_*, the connection (0 on a failure),
@@ -241,7 +265,7 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   let system = data.system
   // the framework decides on macOS with the system's roots
   let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
-  let certs = data.certs
+  let certs = if system && apple == 0 && data.cell != 0 { system_certs(data.cell) } else { data.certs }
   if system && apple == 0 && certs.is_empty() {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
@@ -319,6 +343,15 @@ fn local_offset(now: Int) -> Int {
 pub fn roots_free() {
   let s = rt.slot_swap(rt.static_word(31), 0, 0, ACQ_REL)
   if s != 0 {
+    if let Some(d) = roots_data(s) {
+      if d.cell != 0 {
+        let a = rt.slot_swap(d.cell, 0, 0, ACQ_REL)
+        if a != 0 {
+          tasks.h_release(a)
+        }
+        rt.heap_release(d.cell - 8)
+      }
+    }
     tasks.h_release(s)
   }
 }

@@ -1011,3 +1011,26 @@ a List of at most one MemHandles, empty unless a test opens one. main
 with it: 337.0M (0.996x the base). On the Mac (memfs at 200 times,
 instructions retired): arm64 10.21G against the base's 10.53G (0.970x),
 llvm 7.35G against 7.93G (0.927x).
+
+### Follow up: httpclient `none` on llvm (2026-10-16)
+
+The row is the program's start and one `http.client(os.net)`, no
+request (W=none, N=0).
+
+- Linux (callgrind, linux/arm64, llvm): main ran 61.0M instructions at
+  start, nearly all of it parsing every system root certificate at the
+  first client (tlsname.pem_next 16.1M, find_at 12.1M, bigmod and x509
+  the rest), with or without an https request later. tlsio.xo now makes
+  the system's roots record at the first client without certificates
+  and parses them at the first handshake that needs them (a cell the
+  record holds; freed at exit with it): 149K instructions at start (the
+  base: 153K).
+- macOS (the flagged row; the Security framework verifies, so no
+  certificates are parsed): the extra is not in Xo's code. On Linux
+  under callgrind a program with only http.client (150 KB) and one that
+  also links the request path without running it (2.78 MB) start in
+  145.5K and 146.8K instructions; on the Mac the same pair differ by
+  about 14M instructions (the launch of a larger image). The tip's
+  httpclient is 2.4 MB (the TLS stack in Xo) against the base's 867 KB
+  (Mbed); -Wl,-dead_strip changes neither size nor count (the code is
+  reachable). The lever is the TLS code's size, not its start.
