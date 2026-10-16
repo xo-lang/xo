@@ -30,3 +30,17 @@ xo_tlocal_at takes the address with
 `call ptr @llvm.threadlocal.address.p0(ptr @xo_tlocal)`, which LLVM
 evaluates on the thread that runs it (selfhost/llvm sched.xo
 sched_tlocal). Any new thread_local in emitted IR must do the same.
+
+## To check when CI is re-enabled: the runner image's clang version
+
+Observed 2026-10-16 in CI run 38954484970 (linux/arm64 runner, later
+cancelled because CI is off): the internal/selfhost, internal/arm64 and
+std job's links failed with 109 `undefined reference to
+'llvm.threadlocal.address.p0'` from /usr/bin/ld, plus missing runtime
+functions in the same objects. The intrinsic is LLVM 16 and later; the
+likely cause is the runner image's clang being older than that, so the
+call is left as a call to an external symbol. Docker's clang 19
+(scripts/docker-linux.sh) links the same programs. When CI comes back,
+check `clang --version` on the runner image (infra/ci-runners) and
+raise it, or make the toolchain check reject a clang without the
+intrinsic.
