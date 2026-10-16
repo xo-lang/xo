@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a funnel shift, `shl(a, k) | shr(b, 64 - k)` of rt.int_wrap
+  (or `^`), selects extr, also when the shifts reach the `|` through an
+  inlined call's continuation parameter; selfhost/macho encodes extr.
+  aesgcm.ghash_hw 400 to 388 instructions (6 extr; 6 lsl and 6 lsr
+  gone), 31 extr in the TLS client. arm64 sweep, 151 workloads: 4
+  faster (httpclient h2big 0.994), testworld 5 1.001 at a 1.001 spread.
+
 - darwin/arm64 links with selfhost/macho by default again (cc only with
   `--ld=cc`, `--as=cc` or `use c` sources): the launch stalls that made
   cc the default that morning were an XProtect false positive and a
