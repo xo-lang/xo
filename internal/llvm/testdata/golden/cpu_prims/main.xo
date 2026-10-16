@@ -25,7 +25,7 @@ fn main(os: Os) {
   }
   let key = inputs[4]
   let nonce = inputs[5][0..12]
-  for n in [0, 1, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 47, 63, 64, 65, 100] {
+  for n in [0, 1, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 47, 63, 64, 65, 100, 127, 128, 129, 191, 192, 200, 224] {
     let sealed = internal.crypto_op("aes.seal", key, nonce, msg[0..n], msg[0..(n % 21)])
     let opened = internal.crypto_op("aes.open", key, nonce, sealed, msg[0..(n % 21)])
     os.stdio.println("gcm ${n} ${sealed.to_hex()} ${opened.to_hex()}")

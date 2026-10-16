@@ -23,6 +23,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   read a block at a time in sample_ntt, and Keccak's lanes as raw memory:
   per CCTV iteration arm64 5.11M to 4.68M instructions, llvm 4.19M to
   3.70M (bench/results/tls-perf-2026-10-15.md).
+- AES-GCM: GHASH folds four blocks into one reduction (H^2 to H^4 kept
+  with the key) and CTR runs 64 byte chunks by address: a 16 KiB record
+  228K to 145K instructions on arm64, 171K to 114K on llvm; bulk TLS
+  AES-128-GCM 18.8M to 13.6M a MiB on arm64 (Mbed 14.0M)
+  (bench/results/tls-perf-2026-10-15.md step 15).
 - Native standard input from a FIFO on macOS sees its end of input: poll(2)
   and kqueue report nothing for a FIFO whose last writer closed, so the
   reader waited forever; stdin.xo now probes a FIFO with a read that does
