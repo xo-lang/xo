@@ -110,11 +110,19 @@ struct MemNode {
   data: Bytes
   modified: Time
   name: Str
-  /// A symbolic link's target ("" for a file or directory): absolute
-  /// targets relative to the file system's root
-  link: Str = ""
   /// The permission bits set_mode or copy gave; -1 for the default
   mode: Int = -1
+  /// A symbolic link, its target in data (absolute targets relative to
+  /// the file system's root). A flag, not a Str field: every operation
+  /// boxes the state, and each reference counted field more in a node
+  /// cost about 9M instructions in 20,000 writes and reads (callgrind,
+  /// 2026-10-16)
+  is_link: Bool = false
+}
+
+/// The target of the link n, "" when n is not a link.
+fn memfs_link_of(n: MemNode) -> Str {
+  if n.is_link { rt.cast[Bytes, Str](n.data) } else { "" }
 }
 
 /// An open MemFs file (std/rt memFileH): the node it reads or writes (its
@@ -147,7 +155,17 @@ struct MemState {
   /// The handles: one field, so an operation's load and store of the
   /// state copies one more word, not four (the memfs workload of
   /// bench/perf/testworld, 2026-10-16)
-  hs: MemHandles = MemHandles{}
+  hs: List[MemHandles] = []
+}
+
+/// st's handles (none yet: empty ones).
+fn memfs_hs(st: MemState) -> MemHandles { st.hs.get(0) ?? MemHandles{} }
+
+/// Records the open file id's state mf.
+fn memfs_set_file(var st: MemState, id: Int, mf: MemFile) {
+  var h = memfs_hs(st)
+  h.files.put(id, mf)
+  st.hs = [h]
 }
 
 /// Open files and held locks by number (File.mem, FileLock.mem), the
@@ -331,13 +349,13 @@ fn memfs_follow(st: MemState, full: Str) -> Str? {
     match memfs_get(st, cur) {
       None => return Some(cur)
       Some(n) => {
-        if n.link.is_empty() {
+        if memfs_link_of(n).is_empty() {
           return Some(cur)
         }
-        if n.link.starts_with("/") {
-          cur = memfs_trim(path.clean(n.link))
+        if memfs_link_of(n).starts_with("/") {
+          cur = memfs_trim(path.clean(memfs_link_of(n)))
         } else {
-          cur = memfs_trim(path.join(path.dir("/" + cur), n.link))
+          cur = memfs_trim(path.join(path.dir("/" + cur), memfs_link_of(n)))
         }
       }
     }
@@ -368,7 +386,7 @@ fn memfs_link_escapes(link: Str, target: Str) -> Bool {
 }
 
 fn memfs_info(f: Fs, n: MemNode) -> FileInfo {
-  FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: n.data.len(), modified: n.modified}
+  FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: if n.is_link { 0 } else { n.data.len() }, modified: n.modified}
 }
 
 fn memfs_op_tag(op: testing.FsOp) -> Int {
@@ -412,7 +430,7 @@ fn memfs_stat_in(var st: MemState, f: Fs, full: Str) -> FileInfo? ! FsErr {
   match memfs_get(st, full) {
     None => None
     Some(n) => {
-      if n.link.is_empty() {
+      if memfs_link_of(n).is_empty() {
         return Some(memfs_info(f, n))
       }
       // a symbolic link: the target's information under the link's name
@@ -448,7 +466,7 @@ fn memfs_read_in(var st: MemState, full: Str, p: Str) -> Bytes ! FsErr {
   // one lookup; a link's target only for a link
   var node = memfs_get(st, full)
   if let Some(n) = node {
-    if !n.link.is_empty() {
+    if !memfs_link_of(n).is_empty() {
       node = memfs_get(st, memfs_follow(st, full) ?? full)
     }
   }
@@ -458,7 +476,7 @@ fn memfs_read_in(var st: MemState, full: Str, p: Str) -> Bytes ! FsErr {
       if n.dir {
         return Err(memfs_err(5, p))
       }
-      n.data
+      if n.is_link { b"" } else { n.data }
     }
   }
 }
@@ -563,7 +581,7 @@ fn memfs_symlink_in(var st: MemState, f: Fs, full: Str, target: Str, link: Str) 
     // an absolute target inside the view names a path of the view
     t = "/" + memfs_trim(path.join(root, t))
   }
-  memfs_put(st, full, MemNode{dir: false, data: b"", modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: "", link: t})
+  memfs_put(st, full, MemNode{dir: false, data: t.bytes(), modified: Time.UNIX_EPOCH + Duration.from_nanos(rt.clock_now()), name: "", is_link: true})
 }
 
 fn memfs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
@@ -582,14 +600,14 @@ fn memfs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
   match n {
     None => Err(memfs_err(1, p))
     Some(n) => {
-      if n.link.is_empty() {
+      if memfs_link_of(n).is_empty() {
         return None
       }
       let root = rt.fs_root(f)
-      if n.link.starts_with("/") && root != "" {
-        return Some("/" + memfs_trim(n.link).trim_prefix(root).trim_prefix("/"))
+      if memfs_link_of(n).starts_with("/") && root != "" {
+        return Some("/" + memfs_trim(memfs_link_of(n)).trim_prefix(root).trim_prefix("/"))
       }
-      Some(n.link)
+      Some(memfs_link_of(n))
     }
   }
 }
@@ -621,8 +639,10 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
     None => return Err(memfs_loop_err(p))
   }
   let n = memfs_get(st, full)
-  st.hs.seq += 1
-  let id = st.hs.seq
+  var h = memfs_hs(st)
+  h.seq += 1
+  let id = h.seq
+  st.hs = [h]
   if !write {
     match n {
       None => return Err(memfs_err(1, p))
@@ -630,7 +650,8 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
         if node.dir {
           return Err(memfs_err(5, p))
         }
-        st.hs.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false})
+        h.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false})
+        st.hs = [h]
         return rt.mem_file(id, p, false)
       }
     }
@@ -654,7 +675,8 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
       }
     }
   }
-  st.hs.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false})
+  h.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false})
+  st.hs = [h]
   rt.mem_file(id, p, true)
 }
 
@@ -670,7 +692,7 @@ fn memfile_state(st: MemState, f: File, write: Bool) -> MemFile ! FsErr {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  let mf = st.hs.files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true}
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true}
   if mf.closed {
     return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
   }
@@ -707,7 +729,7 @@ fn memfile_read_in(var st: MemState, f: File, max: Int) -> Bytes? ! FsErr {
   }
   let b = mf.data[mf.off..mf.off + n]
   mf.off += n
-  st.hs.files.put(rt.mem_file_id(f), mf)
+  memfs_set_file(st, rt.mem_file_id(f), mf)
   Some(b)
 }
 
@@ -732,7 +754,7 @@ fn memfile_read_line_in(var st: MemState, f: File) -> Str? ! FsErr {
   }
   var line = rt.cast[Bytes, Str](mf.data[mf.off..end])
   mf.off = end
-  st.hs.files.put(rt.mem_file_id(f), mf)
+  memfs_set_file(st, rt.mem_file_id(f), mf)
   line = line.trim_suffix("\n").trim_suffix("\r")
   Some(line)
 }
@@ -756,8 +778,8 @@ fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
 
 fn memfile_close(f: File) -> () ! FsErr {
   var st = memfs_load()
-  if let Some(mf) = st.hs.files.get(rt.mem_file_id(f)) {
-    st.hs.files.put(rt.mem_file_id(f), mf with {closed: true})
+  if let Some(mf) = memfs_hs(st).files.get(rt.mem_file_id(f)) {
+    memfs_set_file(st, rt.mem_file_id(f), mf with {closed: true})
   }
   memfs_store(st)
 }
@@ -908,9 +930,11 @@ fn memfs_lock_file(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
     return None
   }
   var st2 = memfs_load()
-  st2.hs.seq += 1
-  let id = st2.hs.seq
-  st2.hs.lock_hs.put(id, MemLockH{rec: a, done: false})
+  var h = memfs_hs(st2)
+  h.seq += 1
+  let id = h.seq
+  h.lock_hs.put(id, MemLockH{rec: a, done: false})
+  st2.hs = [h]
   memfs_store(st2)
   Some(rt.mem_lock(id))
 }
@@ -933,11 +957,13 @@ fn memfs_lock_rec(var st: MemState, f: Fs, full: Str, p: Str) -> Int ! FsErr {
     }
   }
   let k = memfs_key(st, full)
-  match st.hs.locks.get(k) {
+  var h = memfs_hs(st)
+  match h.locks.get(k) {
     Some(a) => a
     None => {
       let a = memlock_new()
-      st.hs.locks.put(k, a)
+      h.locks.put(k, a)
+      st.hs = [h]
       a
     }
   }
@@ -954,10 +980,12 @@ fn memfs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { memfs_lock_file(f, p, fa
 
 fn memlock_unlock(l: FileLock) {
   var st = memfs_load()
-  let h = st.hs.lock_hs.get(rt.mem_lock_id(l))
+  var hs = memfs_hs(st)
+  let h = hs.lock_hs.get(rt.mem_lock_id(l))
   if let Some(lh) = h {
     if !lh.done {
-      st.hs.lock_hs.put(rt.mem_lock_id(l), lh with {done: true})
+      hs.lock_hs.put(rt.mem_lock_id(l), lh with {done: true})
+      st.hs = [hs]
     }
   }
   memfs_store(st)
@@ -1176,7 +1204,7 @@ fn memfs_files(f: Fs) -> Map[Str, Bytes] {
   for (_k, n) in st.nodes {
     if !n.dir {
       names.push(n.name)
-      by_name.put(n.name, n.data)
+      by_name.put(n.name, if n.is_link { b"" } else { n.data })
     }
   }
   memfs_store(st)

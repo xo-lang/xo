@@ -993,3 +993,21 @@ and main's own code were the same on both sides; the two hashed
 helpers main calls (a reference count drop and share) are the base's
 inline Lxo_drop and Lxo_share. Channels are now at the base.
 
+
+### Follow up: memfs at the base (2026-10-16)
+
+callgrind (linux/arm64, the testworld memfs test at 20,000 write and
+read pairs, main after 80fc1a57): base 338.3M, main 376.9M (+11%), main
+with testing.xo from before e0390f4a 331.4M, so the gap was the MemFs
+changes. Bisected on that file: two more MemNode fields (link, mode)
++9.1M, one more Map field on MemState +10.3M, an Int field +1.2M, an
+empty List field +2.3M. Every operation boxes the MemState
+(rt.any_of, any_get), so each reference counted field costs on every
+operation; the size of the struct does not.
+
+Fix (std/native/testing.xo): a link keeps its target in data with an
+is_link flag (no Str field), and the handles (open files, locks) are
+a List of at most one MemHandles, empty unless a test opens one. main
+with it: 337.0M (0.996x the base). On the Mac (memfs at 200 times,
+instructions retired): arm64 10.21G against the base's 10.53G (0.970x),
+llvm 7.35G against 7.93G (0.927x).
