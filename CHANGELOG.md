@@ -6,6 +6,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: constant 0 addends of adds, adcs, and adc are xzr (no mov of
+  0) and no longer stop an adc chain, and const_int and same_arg see
+  through an inlined call's argument and result parameters (a literal 0
+  passed to cpu.adc reached it as a block parameter, so it was hoisted
+  into a register and the pairing broke). x25519.fe64_mul 173 to 148
+  instructions, fe64_sq 113 to 102, nistec.mul4p 172 to 151,
+  bigmod.mac_row 149 to 124. arm64 TLS handshakes: rsa2048 0.946,
+  tls12 0.951, x25519 0.953, p256 0.956, ed25519 0.961, p384 0.978
+  (151 workloads: 8 faster; json enc_small 1.002 and sysio tree 1.007
+  with only poll.afd_done changed, Windows code: noise). Xo Lang 2's
+  TLS findings (1) and (2).
+
 - arm64: a funnel shift, `shl(a, k) | shr(b, 64 - k)` of rt.int_wrap
   (or `^`), selects extr, also when the shifts reach the `|` through an
   inlined call's continuation parameter; selfhost/macho encodes extr.
