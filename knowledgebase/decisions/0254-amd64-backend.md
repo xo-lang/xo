@@ -52,6 +52,60 @@ goldens, progen across backends; CI on x86_64 runners when CI is back.
 The self build's fixed point on x86_64 is the last gate before the
 default changes.
 
+## Stage 2's shape: the arm64 MIR retargeted (lead, 2026-10-17)
+
+The arm64 backend's front half builds MIR whose plain instructions are
+arm64 assembly templates over virtual registers (isel.xo, calls.xo,
+closures.xo, rc.xo, byref.xo, and the MIR passes from dce to
+shrink_split). A corpus of every template the goldens, bench/perf and
+selfhost/xo produce (2026-10-17: 15.2 million instructions) has 319
+shapes once immediates and symbols are normalized, over about 60
+mnemonics. amd64 shares that front half and adds a pass, retarget,
+between shrink_split and regalloc, which rewrites each template as x86:
+
+- a two operand form is a copy into the definition's vreg (a move the
+  allocator coalesces when the source dies) and a read modify write of
+  it; a spilled tied operand reloads and stores through one register;
+- instructions with fixed registers (div and idiv in rax:rdx, shifts by
+  cl) name them in Inst.clobbers, with r11 the emitter's scratch (as x16
+  and x17 on arm64);
+- conditions map by the kind of the flag producer: arm64's carry after a
+  subtraction is the complement of x86's borrow, so hs and lo after cmp
+  are ae and b, while cs after adds is b; a float compare maps to
+  ucomisd with the operands ordered so one jcc tests an ordered
+  relation, and eq and ne of floats test PF too;
+- the shapes a text rewrite cannot carry are written as x86 directly by
+  the front half under the target test: the load and store exclusive
+  loops (lock xadd, lock cmpxchg, xchg), thread locals (%fs), the
+  NEON byte searches (SSE2 pcmpeqb and pmovmskb), popcount, and the
+  crypto intrinsics of stage 3.
+
+x86 also gets its register sets in regalloc (SysV: rax, rcx, rdx, rsi,
+rdi, r8 to r10 caller saved, rbx and r12 to r15 callee saved, rbp the
+frame pointer, r11 scratch; xmm0 to xmm15, xmm15 scratch) and its own
+emission (frames, spills, parallel moves, branches, calls, fault
+stubs, CFI).
+
+Gates (lead's conditions): the arm64 output stays byte identical, so
+TestGoldenAsm and the arm64 fixed point pass on every change to the
+shared front half. Once amd64 runs the goldens, bench/perf measures it
+against LLVM on linux/amd64; where the translation costs (memory
+operands, addressing modes, lea, flags), native x86 selection replaces
+it function by function, and the gap per workload is recorded in
+bench/results.
+
+Layout and the split:
+- stage 2a: the x86 files live in selfhost/arm64 (x86_*.xo), G carries
+  the target ISA, and selfhost/xo's `--backend=amd64` calls the same
+  generate entry;
+- stage 2b, the split, once amd64 runs the 180 goldens on linux/amd64:
+  selfhost/mir (the shared front half: G, the MIR, isel, calls,
+  closures, rc, byref, inline, the MIR passes, regalloc's core),
+  selfhost/arm64 (arm64 emission, its register sets, its text
+  peepholes) and selfhost/amd64 (retarget, x86 emission, its register
+  sets). The split is one mechanical change, checked by arm64 assembly
+  byte identical over the goldens and selfhost/xo, and the fixed point.
+
 ## The interface between the emitter and the encoder (agreed 2026-10-17)
 
 The emitter's output is one text file per module (or per part, as
