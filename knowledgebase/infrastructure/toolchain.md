@@ -1445,6 +1445,11 @@ compiler/arm64/         the arm64 emitter in Xo (decision 0158): state.xo (the e
                         of the port does not emit yet), main.xo (CLI)
 compiler/prune/         age and size pruning of xo's caches (decision 0223): prune.xo (run, mark_used,
                         Policy, from_env), prune_test.xo (MemFs and the fake clock; last verified: 2026-10-14)
+compiler/tzsel/         the zone data a program needs (decisions 0094, 0157): tz_use (the constant names
+                        std/time's zone is called with), tz_select (their TZif data from std/tzdata/
+                        zoneinfo.zip, the whole zip for a name known only at run time, or the host's
+                        database), zip_entry; used by compiler/xo (native and wasm builds) (last verified:
+                        2026-10-17)
 internal/selfhost/testdata/modules/  module fixtures of the checker differential: app/ (a main module with
                         requires, ceilings, deny rules, xo.lock) and cache/ (the module cache XO_MODCACHE points
                         at in TestSelfhostChecker; last verified: 2026-10-10)

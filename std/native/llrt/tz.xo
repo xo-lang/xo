@@ -1,6 +1,7 @@
 // std/time's zones on the native backends (decision 0193 step 5): the
 // rules are tzrules.xo's; this file adds the program's own zone data
 // (tztable.xo, which std/time programs link) to the host's database.
+use native/llrt/sysio
 use native/llrt/tzhost
 use native/llrt/tzrules
 use native/llrt/tztable
@@ -14,6 +15,18 @@ pub fn none() -> tzrules.Rules { tzrules.none() }
 pub fn load(name: Str, host: Bool) -> tzrules.Rules? {
   if host {
     return tzrules.load_host(name)
+  }
+  if sysio.layer() == 0 {
+    // WebAssembly: the program's zone data, no kept table (tzhost.xo's
+    // is shared between threads, its lock and exit hook native)
+    if !tzrules.valid(name) || name == "Local" {
+      return None
+    }
+    let w = tzrules.parse_unkept(name, tztable.data(name, false))
+    if w.is_empty() {
+      return None
+    }
+    return Some(tzrules.of(w))
   }
   // the table holds only names that passed the check below, and "Local"
   // from the host's database

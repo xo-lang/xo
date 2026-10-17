@@ -30,6 +30,7 @@
 // the value (decision 0085's landing pads) or returns to its caller.
 
 use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/tzsel
 
 /// The lowered program: the WAT text and the binary module, or why the
 /// backend does not support the program.
@@ -190,6 +191,17 @@ pub fn generate_opts(m: ssa.Module, all: Bool, lax: Bool) -> Program {
 /// module's size can be attributed to constructs (`compiler/wasm
 /// --annotate`; the bytes are the same).
 pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Program {
+  gen_module(m, all, lax, annotate, [])
+}
+
+/// generate_with, and tz the zone data of the program's constant zone
+/// names (compiler/tzsel tz_select): in the module only when std/time
+/// reads it (rt.tz_table), as a native program's xo_tzdata.
+pub fn generate_tz(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: tzsel.TZSel) -> Program {
+  gen_module(m, all, lax, annotate, [tz])
+}
+
+fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel]) -> Program {
   var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
@@ -199,7 +211,12 @@ pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Pro
     g.by_name[f.name] = i
   }
   g.no_processes()
-  let wat = g.module_text()
+  // the zone data of std/time (compiler/tzsel) in a list of one when the
+  // driver chose it (generate_tz: xo build; compiler/wasm's own runs and
+  // the playground's do not): a parameter down to rt4.xo tz_table_fn, not
+  // a Gen field, which every function copying Gen would carry (a field
+  // grew the playground's compiler module by 86 KB)
+  let wat = g.module_text(tz)
   // the functions' text is in wat now: the assembler gets their memory
   g.funcs = []
   g.helpers = []
@@ -1343,7 +1360,7 @@ fn pending_comment(line: Str) -> Bool {
   line.starts_with("    ;;") && !line.starts_with("     ")
 }
 
-fn (var g: Gen) module_text() -> Str {
+fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   let main = g.m.func_index("main")
   if main < 0 {
     g.fail("no main")
@@ -1365,7 +1382,7 @@ fn (var g: Gen) module_text() -> Str {
     rt = rt + rt3_text(g, main, main_res)
   }
   if g.files {
-    rt = rt + rt4_text(g)
+    rt = rt + rt4_text(g, tz)
   }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)

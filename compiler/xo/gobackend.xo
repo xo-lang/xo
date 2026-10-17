@@ -9,6 +9,7 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/gen
 use github.com/xo-lang/xo/compiler/prune
+use github.com/xo-lang/xo/compiler/tzsel
 use std/crypto
 use std/internal
 
@@ -570,11 +571,11 @@ fn tz_files(os: Os, std: Str, names0: List[Str], dynamic: List[Str], tree: Str, 
 fn zip_entries(z: Bytes) -> Map[Str, Bytes] {
   var out: Map[Str, Bytes] = {}
   var i = 0
-  while i + 30 <= z.len() && le32(z, i) == 67324752 {
-    let method = le16(z, i + 8)
-    let csize = le32(z, i + 18)
-    let nlen = le16(z, i + 26)
-    let xlen = le16(z, i + 28)
+  while i + 30 <= z.len() && tzsel.le32(z, i) == 67324752 {
+    let method = tzsel.le16(z, i + 8)
+    let csize = tzsel.le32(z, i + 18)
+    let nlen = tzsel.le16(z, i + 26)
+    let xlen = tzsel.le16(z, i + 28)
     let name = z[i + 30..i + 30 + nlen].to_str() ?? ""
     let start = i + 30 + nlen + xlen
     if method == 0 && start + csize <= z.len() {

@@ -55,6 +55,7 @@ use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/ssa
 use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/llvm
+use github.com/xo-lang/xo/compiler/tzsel
 use github.com/xo-lang/xo/compiler/cli/core
 use github.com/xo-lang/xo/compiler/cli/modules
 use github.com/xo-lang/xo/compiler/cli/semantic
@@ -508,7 +509,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let b = lo.b
   let tu = lo.tu
   if backend == "wasm" {
-    build_wasm(os, b.m, o.out, o.wd, o.dirs[0])
+    // the zone data std/time reads (as the native link embeds it)
+    build_wasm(os, b.m, o.out, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata))
     return Native{pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
@@ -859,7 +861,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
 /// builder, the zone data std/time needs, and the time after.
 struct Lowered {
   b: ssa.Builder
-  tu: TZUse
+  tu: tzsel.TZUse
   t: Time
 }
 
@@ -900,7 +902,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
     }
   }
   // the zone data std/time needs, noted as the Go builder lowers
-  let tu = if uses_time { tz_use(c, b.m, root) } else { TZUse{} }
+  let tu = if uses_time { tzsel.tz_use(c, b.m, root) } else { tzsel.TZUse{} }
   t = lap(os, o.phases, "tz", t)
   // b.run_passes(), timed
   b.prune_unwind()
@@ -954,7 +956,7 @@ struct LinkInputs {
   link_only: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
   // no C runtime (decision 0234; std/llrt/xo_rt.c deleted after seed
   // 0.16.0)
   var lk = LinkInputs{}
@@ -966,7 +968,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if !(o.tzdata is "" | "embedded" | "system") {
       fail(os, "unknown --tzdata=${o.tzdata} (want embedded or system)")
     }
-    let sel = tz_select(os, ctx.std, tu, o.tzdata)
+    let sel = tzsel.tz_select(os, ctx.std, tu, o.tzdata)
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }

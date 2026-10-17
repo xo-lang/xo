@@ -100,6 +100,32 @@ pub fn load_host(name: Str) -> Rules? {
   Some(Rules{id: w[H_ID], w: w})
 }
 
+/// The first of the TZif data that parses, as the zone named name with
+/// no table (WebAssembly, which has no thread shared table yet: tz.xo):
+/// its id a hash of the name (FNV-1a, never 0), so a name always gets the
+/// same id; parsed again at each lookup. Empty when none parses.
+pub fn parse_unkept(name: Str, datas: List[Bytes]) -> List[Int] {
+  let now = tzhost.now()
+  for data in datas {
+    match parse(data, now) {
+      Some(p) => {
+        var w = p
+        if w.is_empty() {
+          return []
+        }
+        var h = -3750763034362895579
+        for b in name.bytes() {
+          h = (h ^ Int(b)).wrapping_mul(1099511628211)
+        }
+        w[H_ID] = if h == 0 { 1 } else { h }
+        return w
+      }
+      None => {}
+    }
+  }
+  []
+}
+
 /// The first of the TZif data that parses, kept as the zone named name;
 /// empty when none does.
 pub fn parse_kept(name: Str, datas: List[Bytes]) -> List[Int] {

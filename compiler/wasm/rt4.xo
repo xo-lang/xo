@@ -17,9 +17,84 @@
 // into the programs that call these functions. Semantics are std/llrt's
 // (xo_fs.c, xo_bytes.c, xo_crypto.c).
 
+use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/tzsel
+
+/// std/time's zone table (std/native/rttime.xo tz_table) when the
+/// program reads it: in the module's data, as compiler/xo tz.xo writes
+/// xo_tz_tab beside a native program: four words (the mode, the zip's
+/// address and length, the blobs' address), the blobs three words each
+/// (the name as a C string, the TZif data, its length) ended by a zero
+/// name. "" (no function, no data) for a program that does not.
+fn (var g: Gen) tz_table_fn(tz: List[tzsel.TZSel]) -> Str {
+  var used = false
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op == ssa.Op.Call {
+        match x.aux {
+          S(s) => {
+            if s == "rt.tz_table" {
+              used = true
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+  }
+  if !used {
+    return ""
+  }
+  if tz.is_empty() {
+    // compiler/wasm's own runs (and the playground's) do not embed zone
+    // data: no module, rather than one whose zones are all unknown
+    g.fail("std/time's zones need the zone data that `xo build --backend=wasm` embeds")
+    return ""
+  }
+  let t = tz[0]
+  var blobs = BytesBuilder.new()
+  if t.mode == 0 {
+    for (i, n) in t.names.indexed() {
+      var nb = BytesBuilder.new()
+      nb.write_str(n)
+      nb.write_byte(0)
+      blobs.write(le64(g.place(nb.freeze())))
+      blobs.write(le64(g.place(t.data[i])))
+      blobs.write(le64(t.data[i].len()))
+    }
+  }
+  for _ in 0..3 {
+    blobs.write(le64(0))
+  }
+  let bp = g.place(blobs.freeze())
+  let zp = if t.mode == 1 { g.place(t.zip) } else { 0 }
+  let zl = if t.mode == 1 { t.zip.len() } else { 0 }
+  var tab = BytesBuilder.new()
+  tab.write(le64(t.mode))
+  tab.write(le64(zp))
+  tab.write(le64(zl))
+  tab.write(le64(bp))
+  let tp = g.place(tab.freeze())
+  """
+    ;; std/time's zone table (the program's constant zones, or the whole
+    ;; zoneinfo.zip, or the host's database; compiler/tzsel)
+    (func $tz_table (result i64)
+      i64.const ${tp})
+"""
+}
+
+/// n as 8 little endian bytes.
+fn le64(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for k in 0..8 {
+    b.write_byte(UInt8((n >> (8 * k)) & 255))
+  }
+  b.freeze()
+}
+
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "tz_table" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -62,7 +137,7 @@ fn rt4_globals() -> Str {
 }
 
 /// The functions of rt4.xo.
-fn rt4_text(var g: Gen) -> Str {
+fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
   let dot = g.raw(".".bytes())
   let empty = g.empty_list
   let thunk = g.sig([], ["i32"])
@@ -88,6 +163,7 @@ fn rt4_text(var g: Gen) -> Str {
   let ka = g.place(kb.freeze())
   let file_free = g.table_index("$fsfile_free")
   let any_free = g.table_index("$any_free")
+  let tz_fn = g.tz_table_fn(tz)
   let probe_lo = g.litp(".xocaseprobe")
   let probe_up = g.litp(".XOCASEPROBE")
   """
@@ -2241,6 +2317,7 @@ fn rt4_text(var g: Gen) -> Str {
       global.set $casesens
       local.get $r)
 
+${tz_fn}
     ;; ------------------------------------------------------------------
     ;; Any (request values, std/native/llrt/anyval.xo): a handle {rc,
     ;; drop, the list of one holding the value, its drop function's table

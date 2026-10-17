@@ -2004,6 +2004,14 @@ the layout (no guessing between formats); a two digit year is not offered.
 - Native backends carry the same embedded data in C; the Go backend uses
   Go's `time` package with the per use data. Implementation order: Go
   backend, checker rules, native runtime, cross backend diff tests.
+- WebAssembly (`xo build --backend=wasm`, 2026-10-17) embeds the same per
+  use data in the module's data segment, only when the program looks a
+  zone up (a program without zones, and the playground's compiler, carry
+  none); each lookup parses the zone again (no zone table shared between
+  threads yet), with the same zone identity for the same name. A wasm
+  build that does not choose zone data (compiler/wasm's own runs, the
+  playground) refuses a program that looks zones up rather than report
+  every zone unknown.
 
 ### 13.5 Implementation notes (2026-10-09)
 

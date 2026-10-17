@@ -6,6 +6,7 @@
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/compiler/macho
+use github.com/xo-lang/xo/compiler/tzsel
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not. strip leaves the local symbols out (`-s`); nolibc: a Linux
@@ -132,7 +133,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
 /// xo_tz_table returns to std/native/llrt/tzhost.xo), as
 /// assembly for compiler/macho (Mach-O, or ELF for goos linux); the path
 /// of the object.
-fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str, goarch: Str) -> Str ! FsErr {
+fn tz_object(os: Os, dir: Str, sel: tzsel.TZSel, goos: Str, goarch: Str) -> Str ! FsErr {
   if goos == "linux" {
     return tz_object_elf(os, dir, sel, goarch == "amd64")
   }
@@ -183,7 +184,7 @@ fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str, goarch: Str) -> Str ! FsEr
 /// tz_object's ELF assembly: the same symbols without the underscore,
 /// `.L` labels, the names in .rodata and the table of pointers in
 /// .data.rel.ro.
-fn tz_object_elf(os: Os, dir: Str, sel: TZSel, amd64: Bool) -> Str ! FsErr {
+fn tz_object_elf(os: Os, dir: Str, sel: tzsel.TZSel, amd64: Bool) -> Str ! FsErr {
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
   b.write_str("\t.section .rodata\n\t.globl xo_tz_mode\n\t.p2align 3\nxo_tz_mode:\n\t.quad ${sel.mode}\n")

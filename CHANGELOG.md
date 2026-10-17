@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build --backend=wasm` embeds std/time's zone data as native builds
+  do: the TZif data of each constant zone name, only when the program
+  looks zones up (hello world and the playground's compiler do not
+  grow); a wasm program reads the wall clock through WASI.
+
 - WebAssembly builds (WASI) read `Env.program`, `Env.vars` (sorted),
   `Proc.set_grace` and `task.stop_requested` (no signals: never), request
   values (`Any`), and `Fs.case_sensitive` (probed in the working

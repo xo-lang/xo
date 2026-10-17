@@ -11,10 +11,17 @@
 // (gotchas/ssa-debug-helper-unqualified-type-name.md).
 
 use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/tzsel
 use github.com/xo-lang/xo/compiler/wasm
 
-fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) {
-  let p = wasm.generate(m)
+fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZSel) {
+  if !tz.err.is_empty() {
+    fail(os, tz.err)
+  }
+  for n in tz.notes {
+    os.stdio.eprintln(n)
+  }
+  let p = wasm.generate_tz(m, false, false, false, tz)
   if !p.err.is_empty() {
     fail(os, "the wasm backend: ${p.err}")
   }
