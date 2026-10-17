@@ -40,7 +40,7 @@ func TestDebugVarsDump(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(debugVarsProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dir)
+	chdir(t, dir)
 	var out, errb bytes.Buffer
 	if code := runXo(t, []string{"dev", "dump", "ssa", "--debug-vars", "."}, &out, &errb); code != 0 {
 		t.Fatalf("xo dev dump ssa: exit %d\n%s", code, errb.String())
