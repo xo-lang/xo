@@ -2381,15 +2381,47 @@ fn (var g: G) weak_ref(sym: Str) {
 /// exports (an XO_NOLIBC build's C library, cabi_libc.xo:
 /// __errno_location): `.weak` and then `.globl` is an error in LLVM's
 /// assembler ("changed binding to STB_GLOBAL").
+/// One pass over text (2026-10-17: a replace over the whole text per
+/// export was quadratic, 46 minutes for the compiler with DWARF types).
 fn (g: G) drop_own_weak(text: Str) -> Str {
-  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
-  var t = text
+  var own: Map[Str, Bool] = {}
   for f in g.m.funcs {
     if !f.export.is_empty() {
-      t = t.replace("\t${d} ${g.sym(f.export)}\n", "")
+      own[g.sym(f.export)] = true
     }
   }
-  t
+  if own.is_empty() {
+    return text
+  }
+  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
+  let pb = "\t${d} ".bytes()
+  let tb = text.bytes()
+  let n = tb.len()
+  var out = StrBuilder.new()
+  var from = 0
+  var i = 0
+  while i < n {
+    // the line [i, j)
+    var j = i
+    while j < n && tb[j] != '\n' {
+      j += 1
+    }
+    if j - i > pb.len() && tb[i] == '\t' && tb[i + 1] == '.' && tb[i + 2] == 'w' {
+      var k = 0
+      while k < pb.len() && tb[i + k] == pb[k] {
+        k += 1
+      }
+      if k == pb.len() && own.contains(text[i + k..j]) {
+        out.write(text[from..i])
+        from = if j < n { j + 1 } else { j }
+      }
+    }
+    i = j + 1
+  }
+  if from < n {
+    out.write(text[from..n])
+  }
+  out.freeze()
 }
 
 /// rt.sym_addr (decision 0234): the address of the C level symbol name,
