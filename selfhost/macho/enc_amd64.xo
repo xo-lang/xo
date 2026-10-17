@@ -713,6 +713,7 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     }
     "cltd" | "cdq" => return e.byte(0x99)
     "stc" => return e.byte(0xf9)
+    "leave" | "leaveq" => return e.byte(0xc9)
     "clc" => return e.byte(0xf8)
     "cltq" | "cdqe" => {
       e.byte(0x48)
@@ -954,7 +955,7 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     let w = mn.ends_with("q") || (n == 2 && ops[0].kind == XO_REG && ops[0].size == 8)
     return e.sse_w(p, [0x0f, 0x2a], w, ops)
   }
-  if mn is "cvttsd2si" | "cvttss2si" | "cvtsd2si" | "cvtss2si" {
+  if (mn.starts_with("cvttsd2si") || mn.starts_with("cvttss2si") || mn.starts_with("cvtsd2si") || mn.starts_with("cvtss2si")) && mn.len() <= 10 {
     let p = if mn.contains("sd2") { 0xf2 } else { 0xf3 }
     let opc = if mn.starts_with("cvtt") { 0x2c } else { 0x2d }
     if n != 2 || ops[1].kind != XO_REG || ops[1].rclass != RC_GPR {

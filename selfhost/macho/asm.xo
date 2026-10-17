@@ -207,6 +207,9 @@ pub struct Asm {
   /// ELF: the names of `.file` directives, STT_FILE symbols first in the
   /// symbol table as LLVM writes them
   files: List[Bytes] = []
+  /// each file's position in reg_order at its `.file` (amd64: one STT_FILE
+  /// per directive, before the locals registered after it, as LLVM's)
+  file_at: List[Int] = []
   /// numeric local labels (`1:`, `1b`, `1f`): the last definition of
   /// each, and a forward reference not yet defined
   num_back: Map[Bytes, Int] = {}
@@ -685,7 +688,17 @@ fn (var a: Asm) directive(l: Bytes) {
     return
   }
   if d == ".long" && a.sects[a.cur].code && a.amd64 {
-    a.fail(".long in a code section")
+    // a jump table in the code (the amd64 emitter's): a constant, or a
+    // label difference resolved after layout (asm_amd64.xo)
+    let (x, y, k) = a.expr(rest)
+    a.register_expr(x, y)
+    let at = a.code_len(a.cur)
+    a.push_code([k & 0xff, (k >> 8) & 0xff, (k >> 16) & 0xff, (k >> 24) & 0xff])
+    if x >= 0 && y >= 0 {
+      a.xfixes.push(XFx{sect: a.cur, at: at, size: 4, pcrel: false, sym: x, sym2: y, addend: 0, line: a.line})
+    } else if x >= 0 {
+      a.fail(".long in code takes a constant or a label difference")
+    }
     return
   }
   if d == ".long" && a.sects[a.cur].code {

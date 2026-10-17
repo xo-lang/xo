@@ -1045,3 +1045,32 @@ test "an x86-64 static link: EM_X86_64, weak hooks a nop and a ret, GOT and init
   // an x86-64 dynamic link is not there yet
   expect(link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{})) == Err("x86-64: only a static link (no C library) so far")
 }
+
+test "the amd64 emitter's forms: leave, cvttsd2siq, a jump table in .text, one STT_FILE per .file" {
+  // xo-fa's first emitter text (2026-10-17): its jump tables are .long
+  // label differences in the code; each `.file` is its own STT_FILE
+  // symbol before the locals after it, as LLVM's
+  let src = "\t.file \"prog.s\"\n\t.text\n.La:\n\tleave\n\tcvttsd2siq %xmm9, %r10\n\t.p2align 2\n.Ljt:\n\t.long .Lb-.Ljt\n.Lb:\n\tretq\n\t.file \"prog.s\"\nloc:\n\tretq\n"
+  let obj = assemble_elf_amd64(src.bytes()).or_fault("assemble")
+  // leave, cvttsd2siq (f2 4d 0f 2c d1), a 2 byte nop pad to 8, the table entry 4
+  expect(has_bytes(obj, [0xc9, 0xf2, 0x4d, 0x0f, 0x2c, 0xd1, 0x66, 0x90, 0x04, 0x00, 0x00, 0x00, 0xc3])) == true
+}
+
+fn has_bytes(b: Bytes, want: List[Int]) -> Bool {
+  if b.len() < want.len() {
+    return false
+  }
+  for i in 0..b.len() - want.len() + 1 {
+    var ok = true
+    for (k, w) in want.indexed() {
+      if Int(b[i + k]) != w {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return true
+    }
+  }
+  false
+}

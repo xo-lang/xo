@@ -43,3 +43,12 @@ Assemble the same text with clang and with `macho asm --amd64`, then
 compare section by section (sections, symbols, relocations and data); a
 whole file matching a disassembly but not `cmp` is usually a header
 field or padding.
+
+- Every `.file` is its own STT_FILE symbol (Observed, 2026-10-17, the
+  amd64 emitter's first text repeats `.file "prog.s"` per module): LLVM
+  keeps duplicates and puts each before the locals created after its
+  directive (the first before all of them). The assembler deduplicated
+  them and listed them first, so every symbol index after the first
+  local differed. Function sizes still differ from clang on purpose:
+  `func_sizes` gives a function without `.size` its extent (valgrind,
+  perf).

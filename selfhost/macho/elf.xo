@@ -131,8 +131,12 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
       // keeps linked binaries reproducible)
       match unquote(rest) {
         Some(n) => {
-          if !a.files.contains(n) {
+          if a.amd64 {
             a.files.push(n)
+            a.file_at.push(if a.files.len() == 1 { 0 } else { a.reg_order.len() })
+          } else if !a.files.contains(n) {
+            a.files.push(n)
+            a.file_at.push(0)
           }
         }
         None => a.fail(".file takes a quoted name")
@@ -699,10 +703,33 @@ fn (var a: Asm) write_elf() -> Bytes {
     }
   }
   let order = locals + exts
-  // the file symbols come first (after the null symbol)
+  // the file symbols: each before the locals registered after its
+  // `.file` (all first on arm64, where file_at is 0), -1 - k in seq
+  var pos: Map[Int, Int] = {}
+  for (k, i) in a.reg_order.indexed() {
+    if !pos.contains(i) {
+      pos.put(i, k)
+    }
+  }
+  var seq: List[Int] = []
+  var fk = 0
+  for i in locals {
+    while fk < a.files.len() && a.file_at[fk] <= (pos.get(i) ?? 0) {
+      seq.push(-1 - fk)
+      fk += 1
+    }
+    seq.push(i)
+  }
+  while fk < a.files.len() {
+    seq.push(-1 - fk)
+    fk += 1
+  }
+  seq = seq + exts
   let nf = a.files.len()
-  for (k, i) in order.indexed() {
-    a.syms[i].index = nf + k + 1
+  for (k, i) in seq.indexed() {
+    if i >= 0 {
+      a.syms[i].index = k + 1
+    }
   }
   var names: List[Bytes] = []
   for f in a.files {
@@ -753,16 +780,17 @@ fn (var a: Asm) write_elf() -> Bytes {
   o.pad(8)
   hdrs[symtab_idx].off = o.n
   o.zeros(24)
-  for f in a.files {
-    // STB_LOCAL, STT_FILE, SHN_ABS
-    o.u32(stroff.get(f) ?? 0)
-    o.u8(STT_FILE)
-    o.u8(0)
-    o.u16(SHN_ABS_E)
-    o.u64(0)
-    o.u64(0)
-  }
-  for i in order {
+  for i in seq {
+    if i < 0 {
+      // STB_LOCAL, STT_FILE, SHN_ABS
+      o.u32(stroff.get(a.files[-1 - i]) ?? 0)
+      o.u8(STT_FILE)
+      o.u8(0)
+      o.u16(SHN_ABS_E)
+      o.u64(0)
+      o.u64(0)
+      continue
+    }
     let s = a.syms[i]
     o.u32(if s.secsym { 0 } else { stroff.get(s.name) ?? 0 })
     let bind = if s.weak { STB_WEAK } else if s.global || s.sect < 0 { STB_GLOBAL } else { STB_LOCAL }
