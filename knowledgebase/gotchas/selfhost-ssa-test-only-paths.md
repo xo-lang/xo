@@ -1,4 +1,4 @@
-# selfhost/ssa: constructs used only in tests stay unported until test binaries are compared
+# compiler/ssa: constructs used only in tests stay unported until test binaries are compared
 
 Status: Observed (2026-10-11, SSA stage 7)
 

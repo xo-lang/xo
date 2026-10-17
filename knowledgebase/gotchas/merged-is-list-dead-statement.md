@@ -6,7 +6,7 @@ Symptom: TestSelfhostWasm dropped from 132 to 127 passing goldens
 (wasmMinPass 128) once std code reached on wasm called `rt.mem_store`
 (raw.zero_ints in regexp, jsontext, archive): "the wasm backend does
 not support the call `rt.mem_store` (stage 2)", although
-selfhost/wasm/rt2.xo defines `$mem_store` and lists it in
+compiler/wasm/rt2.xo defines `$mem_store` and lists it in
 `rt2_direct`.
 
 Cause: the merge of decision 0207 stage 1 with decision 0201

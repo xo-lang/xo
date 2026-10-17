@@ -12,7 +12,7 @@ lines differ" while the build stage compared equal.
 
 The Go builder's `env_new` intrinsic called `listsType("Proc")` and then
 `listsType("Env")`, so every module that used `Env.only` also declared
-`xo.Proc`; the Xo builder (selfhost/ssa) made only the type it needed.
+`xo.Proc`; the Xo builder (compiler/ssa) made only the type it needed.
 Every named type the builder creates is printed, and the build stage
 only checks that the Xo builder's type lines are a subset of the Go
 builder's, while the pass stages require the same set.

@@ -340,7 +340,7 @@ pub struct Module {
 /// nolibc, decision 0234): one word each, zero at start, defined by the
 /// emitters and set by cabi_nolibc.xo nl_start (environ and the
 /// standard streams' FILE records; xo_lse, 1 when the CPU has ARMv8.1's
-/// LSE atomics, which selfhost/macho elflink's outline atomics test).
+/// LSE atomics, which compiler/macho elflink's outline atomics test).
 pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr", "xo_lse"] }
 
 /// The process entry of a program linked with no C library (Module
@@ -882,7 +882,7 @@ fn float_text(x: Float) -> Str {
 }
 
 /// The runtime's slow paths (std/native/llrt), kept out of line: cold in
-/// LLVM (selfhost/llvm func.xo) and never inlined by the arm64 inliner.
+/// LLVM (compiler/llvm func.xo) and never inlined by the arm64 inliner.
 /// Inlined into a user's loop around their fast path (the test world's
 /// lock around Rand's step), they took the registers the loop's
 /// invariants lived in, and LLVM rebuilt them each iteration

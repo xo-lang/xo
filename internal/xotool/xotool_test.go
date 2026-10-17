@@ -33,7 +33,7 @@ func repoRoot(t *testing.T) string {
 	return r
 }
 
-// TestInputs: the key covers selfhost/ and the std modules it reaches
+// TestInputs: the key covers compiler/ and the std modules it reaches
 // (the prelude, std/json through selfhost's `use` lines), not the C
 // runtime, which xo reads at run time.
 func TestInputs(t *testing.T) {
@@ -49,7 +49,7 @@ func TestInputs(t *testing.T) {
 			t.Errorf("%s is an input", n)
 		}
 	}
-	for _, n := range []string{"selfhost/xo/main.xo", "selfhost/xo.mod", "std/prelude.xo", "std/native/prelude.xo"} {
+	for _, n := range []string{"compiler/xo/main.xo", "compiler/xo.mod", "std/prelude.xo", "std/native/prelude.xo"} {
 		if !has[n] {
 			t.Errorf("%s is not an input", n)
 		}

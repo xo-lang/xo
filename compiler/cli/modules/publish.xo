@@ -1,12 +1,12 @@
 // `xo publish` (cmd/xo publish.go runPublish) and the API changes `xo
 // get` prints for upgraded requirements (upgradeDiffs). The comparison is
-// selfhost/cli/semantic's port of internal/release (decision 0178 stages
+// compiler/cli/semantic's port of internal/release (decision 0178 stages
 // 3 and 4); the steps of a real release (a clean tree, the module's own
 // requirements, a clean check, all without a workspace) are here, since
 // they load the module's dependencies as internal/mod does.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/semantic
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/semantic
 
 /// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
 /// downgraded requirement of the main module in root, with the exports
@@ -64,7 +64,7 @@ fn is_label(e: Str) -> Bool {
   e is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "log" | "go"
 }
 
-/// A JSON value of selfhost/cli/semantic as this package's J.
+/// A JSON value of compiler/cli/semantic as this package's J.
 fn jval(v: semantic.JVal) -> J {
   match v {
     Null => J.Null

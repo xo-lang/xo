@@ -1,11 +1,11 @@
 # Two modules' types of the same name were one type on the native backends
 
-Status: Observed (2026-10-10, building selfhost/check with
+Status: Observed (2026-10-10, building compiler/check with
 `--backend=arm64`); fixed.
 
-Symptom: `xo build --backend=arm64 selfhost/check` (also LLVM) failed
+Symptom: `xo build --backend=arm64 compiler/check` (also LLVM) failed
 with `XO1201 ... this field (support is planned)` on lines of
-selfhost/lexer and selfhost/parser that read `d.span` of a `Diag`; the
+compiler/lexer and compiler/parser that read `d.span` of a `Diag`; the
 Go backend built and ran the same program. A one file repro: module `a`
 declares `pub struct Diag { span: Int }`, the main module declares
 `struct Diag { file: Str, line: Int }`, and every field access of one of

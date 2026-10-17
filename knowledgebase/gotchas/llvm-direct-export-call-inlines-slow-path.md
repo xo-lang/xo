@@ -18,7 +18,7 @@ their register pressure. Found by bisecting the batch into four
 variants (bench/perf/alloc tasks and strings, LLVM, 5 runs each).
 
 Fix: the emitter calls those exports with a call site attribute group
-`{ nounwind noinline }` (selfhost/llvm gen.xo `#8`, call.xo rt_call),
+`{ nounwind noinline }` (compiler/llvm gen.xo `#8`, call.xo rt_call),
 keeping the barrier the C forwarder gave: tasks 0.995 and strings 0.951
 of the C path. Moving a hot path's callee from a C forwarder to a
 direct call needs the same check: decide per call whether it should

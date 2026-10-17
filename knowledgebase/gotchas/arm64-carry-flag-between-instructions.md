@@ -6,7 +6,7 @@ Symptom (expected): a wrong sum with no error in code with cpu.adc
 chains on the arm64 backend (P-256, P-384, X25519, bigmod), only after
 a change to a pass or to the emitter, not to the program.
 
-Cause: since 2026-10-17 (selfhost/arm64 calls.xo ADC_SPLIT) a chain of
+Cause: since 2026-10-17 (compiler/arm64 calls.xo ADC_SPLIT) a chain of
 cpu.adc pairs is one MIR instruction per pair: adds, then adcs reading
 the carry the previous pair left in the flags, with the products the
 chain adds (mul, umulh) and the movs of constants and spills between

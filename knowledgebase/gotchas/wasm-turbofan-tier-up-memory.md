@@ -1,6 +1,6 @@
 # V8's optimizing tier, not the module's compile, costs the time and memory of a large wasm module
 
-Status: Observed (2026-10-12), selfhost/wasm stage 3 (decision 0179).
+Status: Observed (2026-10-12), compiler/wasm stage 3 (decision 0179).
 
 **Symptom.** The wasm build of the self hosted checker (31.6 MB then)
 took 7.0 s and 4.8 GB under Node for seven small goldens, against

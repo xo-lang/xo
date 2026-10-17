@@ -7,7 +7,7 @@ after a change to the emitter or a new way to write the stack; or, in a
 debugger, a write to a spilled variable that the program does not see
 right away.
 
-Cause: since 2026-10-17 selfhost/arm64 lsr.xo reload_reuse, a pass over
+Cause: since 2026-10-17 compiler/arm64 lsr.xo reload_reuse, a pass over
 each function's final text (before pair_mem), drops a reload `ldr
 x16|x17, [sp, #k]` when that register already holds slot k since its
 last reload of k or its store to k. What it holds is forgotten at a
@@ -32,7 +32,7 @@ not be seen until the next call or join point: x16 or x17 can still
 hold the old value.
 
 Fix: a new instruction form that writes x16, x17, or the stack belongs in
-lsr.xo writes_scratch (its unit tests: selfhost/arm64 lsr_test.xo); for a
+lsr.xo writes_scratch (its unit tests: compiler/arm64 lsr_test.xo); for a
 debugger write, document the limit or have the debugger stop only where
 the cache is empty (a call, a block that starts fresh). Checks: progen
 across backends (internal/gen TestArithProperty, TestCompileProperty

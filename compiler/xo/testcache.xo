@@ -14,8 +14,8 @@
 // A build that printed diagnostics (warnings) is not stored, so a hit
 // never hides one, nor is one whose inputs changed while it ran.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/prune
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
 /// A stored run: the binary and its tests.

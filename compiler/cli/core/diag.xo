@@ -1,7 +1,7 @@
 // Diagnostics as cmd/xo prints them: the human form (diag.Human), the
 // JSON form (diag.Diagnostic's MarshalJSON), and the order (diag.Sort).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 pub type Diag = check.Diag
 

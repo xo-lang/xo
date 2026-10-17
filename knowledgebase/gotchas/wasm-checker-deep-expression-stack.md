@@ -4,7 +4,7 @@ Status: Observed (2026-10-16, xo-4b, the /play-next/ playground).
 
 ## Symptom
 
-The compiler built for wasm (selfhost/wasm, decision 0242) stopped in a
+The compiler built for wasm (compiler/wasm, decision 0242) stopped in a
 Chrome worker with `Maximum call stack size exceeded` while checking any
 program in native mode; under Node with a 1 GiB stack it worked, and
 with `XO_WASM_STACK_MB=4` it failed too (16 passed).
@@ -21,7 +21,7 @@ browser worker allows about 0.6 MB (gotchas/wasm-browser-stack-locals.md).
 ## Fix
 
 The checker walks a left-nested chain of operators in a loop
-(selfhost/check expr.xo infer_left, with the recursive walk's types and
+(compiler/check expr.xo infer_left, with the recursive walk's types and
 diagnostics), and the constant is one triple-quoted literal. To find
 such a cycle: run the module under Node with a small
 `XO_WASM_STACK_MB` and `--stack-trace-limit`, and map the `fN` frames

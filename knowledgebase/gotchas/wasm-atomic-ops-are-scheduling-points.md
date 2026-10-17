@@ -13,7 +13,7 @@ Cause: the wasm runtime runs one thread with a cooperative scheduler;
 rt3.xo's `$atomic_get` and friends start with `call $yield_point`. The
 SSA builders are backend independent.
 
-Fix: selfhost/wasm `atomics_to_runtime` rewrites, before emission,
+Fix: compiler/wasm `atomics_to_runtime` rewrites, before emission,
 `rt.slot_*` on a handle (an Atomic) back to `rt.atomic_get`, `set`,
 `swap`, `cas`, and calls of the native prelude's `llrt_atomic_add` and
 `llrt_atomic_max` to `rt.atomic_add` and `rt.atomic_max`: wasm behaves

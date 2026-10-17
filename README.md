@@ -72,7 +72,7 @@ fn main(os: Os) ! {
 
 ## Install
 
-`xo` is written in Xo (the self hosted toolchain, `selfhost/xo`; decision
+`xo` is written in Xo (the self hosted toolchain, `compiler/xo`; decision
 0178 switch point B). A release archive (`scripts/release.sh`, for
 darwin/arm64, linux/arm64, and linux/amd64) unpacks to
 
@@ -99,7 +99,7 @@ XO_SEED=/path/to/xo go run ./scripts/xobuild   # prints the path of bin/xo
 go run ./scripts/xobuild                       # with an earlier build or xo on PATH
 ```
 
-It builds `bin/xo` (git ignored) from the checkout's `selfhost/xo` when
+It builds `bin/xo` (git ignored) from the checkout's `compiler/xo` when
 its sources changed, with the arm64 backend on an arm64 host (Apple
 Silicon, arm64 Linux) and the LLVM backend on an x86-64 host (clang
 needed). The seed order (`$XO_SEED`, the checkout's earlier `bin/xo`,
@@ -156,7 +156,7 @@ first native build and caches it (decision 0157).
 | `internal/llvm`, `std/llrt` | LLVM backend prototype and its C runtime |
 | `internal/gobind` | Go package bindings |
 | `std/*.xo`, `std/rt` | Standard library declarations and the Go runtime |
-| `selfhost/` | Compiler components written in Xo (`selfhost/lexer`), checked against the Go ones by `internal/selfhost` |
+| `compiler/` | Compiler components written in Xo (`compiler/lexer`), checked against the Go ones by `internal/selfhost` |
 | `bench/` | Benchmarks: tasks, Go and Xo solutions, planted bugs, results |
 | `examples/` | Realistic programs; `notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown |
 | `knowledgebase/` | Decisions (ADRs), gotchas, infrastructure notes |

@@ -1,12 +1,12 @@
 #!/bin/sh
-# bootstrap-xo.sh: build the Xo `xo` (selfhost/xo) of this checkout with a
+# bootstrap-xo.sh: build the Xo `xo` (compiler/xo) of this checkout with a
 # given xo binary and no Go toolchain, then check that it rebuilds itself
 # to a fixed point (decision 0178, stage 7 step 3; toolchain.md
 # "Bootstrapping without Go").
 #
 #   scripts/bootstrap-xo.sh SEED [OUTDIR]
 #
-# SEED is a self hosted xo that builds selfhost/xo with the host's native
+# SEED is a self hosted xo that builds compiler/xo with the host's native
 # backend: the previous release's bin/xo, an earlier build of the
 # checkout's bin/xo, or, with no xo at all, the xo1 of the
 # go-compiler-final tag (decision 0215: the last commit with the Go
@@ -21,9 +21,9 @@
 # runtime object cache, and binary cache (so nothing is reused from an
 # earlier build):
 #
-#   s1: SEED builds selfhost/xo
-#   s2: s1 builds selfhost/xo
-#   s3: s2 builds selfhost/xo
+#   s1: SEED builds compiler/xo
+#   s2: s1 builds compiler/xo
+#   s3: s2 builds compiler/xo
 #
 # and the fixed point: s2 and s3 write the same assembly and the same
 # binary (both are built by the new compiler from the same sources; s1 is
@@ -37,13 +37,13 @@
 # OUTDIR/log.txt, the timings OUTDIR/times.txt.
 #
 # XO_SEED_CHAIN="COMMIT[:STDCOMMIT] ..." or "file": before s1, the seed
-# builds each hop's selfhost/xo in turn (decision 0216 item 2: a seed
+# builds each hop's compiler/xo in turn (decision 0216 item 2: a seed
 # older than an intrinsic the sources use builds an intermediate first;
 # "file" takes the hops recorded in scripts/seed-chain.txt).
 #
 # XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
 # lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
-# default linker on darwin is selfhost/macho (decision 0182) and the
+# default linker on darwin is compiler/macho (decision 0182) and the
 # stages need no C compiler at all; set PATH without one to show it.
 set -eu
 [ $# -ge 1 ] || { echo "usage: $0 SEED [OUTDIR]" >&2; exit 2; }
@@ -103,14 +103,14 @@ if command -v go >/dev/null 2>&1; then
 fi
 say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1); XO_RTPACK=$XO_RTPACK"
 
-# stage N: binary $2 builds selfhost/xo into $out/sN/xo (with the
+# stage N: binary $2 builds compiler/xo into $out/sN/xo (with the
 # assembly beside it unless N is 1)
 stage() {
   n=$1 bin=$2
   asm=""
   [ "$n" -gt 1 ] && asm="--asm=$out/s$n/xo.s"
   mkdir -p "$out/s$n" "$out/cache-s$n"
-  say "s$n: $bin builds selfhost/xo"
+  say "s$n: $bin builds compiler/xo"
   t0=$(date +%s)
   # s2 and s3 (built by the new compiler) with XO_INLINE_STRICT=1: a
   # module that fails verification after inlining fails the stage
@@ -120,7 +120,7 @@ stage() {
   strict=0
   [ "$n" -gt 1 ] && strict=1
   if XO_INLINE_STRICT=$strict XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
-    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
+    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm compiler/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else
     say "FAIL: stage s$n (see $log)"
@@ -128,7 +128,7 @@ stage() {
   fi
 }
 # the seed chain (decision 0216 item 2): an older seed first builds the
-# intermediate xo of each hop, a commit's selfhost/xo against that
+# intermediate xo of each hop, a commit's compiler/xo against that
 # commit's std or, with COMMIT:STDCOMMIT, another commit's; the last hop
 # is the seed of s1. XO_SEED_CHAIN="c1 c2:std2 ..." lists the hops, or
 # "file" takes scripts/seed-chain.txt's (internal/xotool reads the same).
@@ -145,10 +145,11 @@ if [ -n "${XO_SEED_CHAIN:-}" ]; then
     mkdir -p "$out/chain$n/tree" "$out/chain$n/std"
     git archive "$c" | tar -x -C "$out/chain$n/tree" || { say "FAIL: git archive $c"; exit 1; }
     git archive "$sc" std | tar -x -C "$out/chain$n/std" || { say "FAIL: git archive $sc std"; exit 1; }
-    say "hop $n: $seed builds $c's selfhost/xo against $sc's std"
+    cdir=compiler; [ -d "$out/chain$n/tree/compiler/xo" ] || cdir=selfhost  # selfhost/ before decision 0249
+    say "hop $n: $seed builds $c's $cdir/xo against $sc's std"
     t0=$(date +%s)
     if (cd "$out/chain$n/tree" && XO_BUILD_DIR="$out/chain$n/build" "$seed" build --backend="$backend" \
-      --std="$out/chain$n/std/std" -o "$out/chain$n/xo" ./selfhost/xo) >> "$log" 2>&1; then
+      --std="$out/chain$n/std/std" -o "$out/chain$n/xo" "./$cdir/xo") >> "$log" 2>&1; then
       echo "hop$n $(( $(date +%s) - t0 )) s" >> "$times"
       seed=$out/chain$n/xo
     else

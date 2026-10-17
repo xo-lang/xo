@@ -3,7 +3,7 @@
 // a handle or a function value, and Map keys and Set elements that are
 // not comparable (XO0404).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// Rejects `derive Eq` or `Hash` on a type of module m that holds a
 /// handle or a function value (comparable.go checkDerivesComparable).

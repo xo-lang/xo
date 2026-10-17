@@ -19,7 +19,7 @@ on timing (a migration while the hooks run).
 
 Fix: `xo_tlocal_get`, `xo_tlocal_set`, and `xo_tlocal_addr` start with
 `call void asm sideeffect "", "~{memory}"()` (internal/llvm sched.go,
-selfhost/llvm sched.xo), so none is inferred readnone or readonly. Any
+compiler/llvm sched.xo), so none is inferred readnone or readonly. Any
 function that yields a thread local's address to code that can switch
 stacks must have a side effect LLVM cannot see through; `noinline`
 alone is not enough. The arm64 emitters' calls are opaque assembly and

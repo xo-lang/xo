@@ -6,7 +6,7 @@
 // the tree the log signed, and that the tree extends the latest one this
 // client verified before.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 use std/crypto
 use std/http
 

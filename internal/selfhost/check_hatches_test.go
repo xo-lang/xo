@@ -79,12 +79,12 @@ func TestSelfhostCheckerHatches(t *testing.T) {
 }
 
 // unboundRE matches the Xo checker's output for a run that lacks the
-// binding of a `use go` package (selfhost/check goimport.xo, go_miss).
+// binding of a `use go` package (compiler/check goimport.xo, go_miss).
 var unboundRE = regexp.MustCompile(`^== unsupported use go without a current binding of (\S+) in `)
 
 // runXoBinding runs the Xo checker bin with args from dir, binding first
 // what it lacks, as xo1's checker does (check_dirs_bound,
-// selfhost/check/bindmiss.xo): every `use go` package a run reports
+// compiler/check/bindmiss.xo): every `use go` package a run reports
 // unbound is bound into that run's module with the helper xo-gobind
 // (decision 0178 stage 6, Go since it reads Go's export data), and the
 // runs are checked again. The Go checker writes the same bindings as a

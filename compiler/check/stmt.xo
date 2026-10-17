@@ -3,7 +3,7 @@
 // constants, contracts, tests, and the task failure rules of scopes and
 // groups (core 7.1), which decide the error types of closures.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// A loop being checked.
 struct LoopFrame {

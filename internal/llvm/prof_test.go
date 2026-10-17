@@ -20,7 +20,7 @@ import (
 // backend: the text summary's top function by flat samples is fib, the
 // pprof file is one `go tool pprof` reads, and without XO_PROF the
 // program writes no profile. Where the program has DWARF line tables
-// (decision 0239: Linux; on darwin the dSYM selfhost/macho writes, or
+// (decision 0239: Linux; on darwin the dSYM compiler/macho writes, or
 // that dsymutil writes after a cc link such as the LLVM backend's), the
 // top row names fib's hottest line in main.xo and `go tool pprof -top
 // -lines` shows main.xo lines.

@@ -17,7 +17,7 @@ build again.
 Fix: when an experiment touches code generation and bin/xo misbehaves,
 build the compiler with a known good xo instead of xobuild:
 `XO_STD=std /path/to/main/bin/xo build --backend=arm64 -o bin/xo
-selfhost/xo`, and point XO_CLI at it. The fixed point
+compiler/xo`, and point XO_CLI at it. The fixed point
 (scripts/bootstrap-xo.sh) then checks the self rebuild. The cache entry
 for that source key stays broken until the sources change or the entry
 is removed (ask before deleting caches).

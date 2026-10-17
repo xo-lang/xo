@@ -19,7 +19,7 @@
 // its own, held from memfs_take to memfs_put.
 //
 // Generated code reaches this module through the native prelude's
-// llrt_test_* and llrt_gen_* (selfhost/ssa testmode.xo), std/native's
+// llrt_test_* and llrt_gen_* (compiler/ssa testmode.xo), std/native's
 // testing.xo, log.xo, and http.xo directly, and the C runtime through
 // cabi_tw.xo's exports (xo_x_tw_*).
 use native/llrt/darwin
@@ -347,7 +347,7 @@ pub fn init() -> Int {
 /// runs separated by commas, each `index/seed` for a test or
 /// `index/seed/first-last` for the cases first to last (from 0) of a
 /// property test, whose seeds are std/rt's seed*1000003 + case (the
-/// harness's, selfhost/xo test.xo).
+/// harness's, compiler/xo test.xo).
 pub fn set_batch(a: Int) {
   if a == 0 {
     return
@@ -624,7 +624,7 @@ pub fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
 
 /// The next value of the PCG whose state (high, low) is at a. Each
 /// constant is bound once so the body stays under the arm64 inliner's
-/// 40 instructions (selfhost/arm64/inline.xo): every draw inlines it.
+/// 40 instructions (compiler/arm64/inline.xo): every draw inlines it.
 fn pcg(a: Int) -> Int {
   let mul_lo = 4865540595714422341
   let inc_lo = 1442695040888963407

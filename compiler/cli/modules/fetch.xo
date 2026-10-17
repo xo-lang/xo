@@ -6,7 +6,7 @@
 // the module path and, with XO_SUMDB, agree with the checksum log; it is
 // then made read only in the module cache.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 use std/archive
 use std/crypto
 use std/http

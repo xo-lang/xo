@@ -1,6 +1,6 @@
 # arm64: a block that if-conversion skips still hands its memo down
 
-Status: Anticipated (2026-10-17, selfhost/arm64 isel.xo range_branch,
+Status: Anticipated (2026-10-17, compiler/arm64 isel.xo range_branch,
 range_and, logic_value, select_branch); avoided by construction
 
 Symptom (would be): `reads virtual register N before it is written`, or

@@ -1,7 +1,7 @@
 # The seed chain (decision 0216 item 2; internal/xotool Chain,
 # scripts/bootstrap-xo.sh XO_SEED_CHAIN=file): the hops an older xo
-# builds, in order, before it builds the checkout's selfhost/xo. One per
-# line: <commit> [std=<commit>]; a hop builds the commit's selfhost/xo
+# builds, in order, before it builds the checkout's compiler/xo. One per
+# line: <commit> [std=<commit>]; a hop builds the commit's compiler/xo
 # against the std of std=<commit> (default: its own). The root is the
 # go-compiler-final tag (4fd10d38), built with Go.
 #

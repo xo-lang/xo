@@ -4,7 +4,7 @@
 // listens (the SSA builders' uses_net) or uses std/http
 // (std/native/http.xo imports this module). The network's operations
 // are netconn.xo's, which generated code calls here directly
-// (selfhost/ssa/exports.xo; std/llrt/xo_rt.c forwards xo_net_listen and
+// (compiler/ssa/exports.xo; std/llrt/xo_rt.c forwards xo_net_listen and
 // the rest here for code of compilers up to 0.12.0). The C declares these weak (weak
 // definitions on macOS and Windows), so a program without them links.
 // Nothing here may fault.
@@ -13,7 +13,7 @@ use native/llrt/raw
 
 // ---------------------------------------------------------------------------
 // The network's operations (netconn.xo) for generated code, which
-// calls them directly (selfhost/ssa exports.xo): a handle's address, 0
+// calls them directly (compiler/ssa exports.xo): a handle's address, 0
 // for none (the emitters turn it into the zero handle), the error in
 // the context.
 
@@ -33,7 +33,7 @@ fn nc_conn_close(cn: Int) { netconn.conn_close(cn) }
 
 fn nc_conn_free(cn: Int) { netconn.conn_free(cn) }
 
-// The same for generated code, which calls them directly (selfhost/ssa
+// The same for generated code, which calls them directly (compiler/ssa
 // exports.xo; the emitters turn a handle's 0 into the zero handle and a
 // list's 0 into the empty list): a List[Str] of one, no length slot.
 

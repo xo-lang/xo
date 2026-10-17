@@ -12,7 +12,7 @@
 // Strings
 
 /// The byte index of the first sub at or after from, or -1: only the
-/// wasm runtime has it (selfhost/wasm/rt.xo); the native backends use
+/// wasm runtime has it (compiler/wasm/rt.xo); the native backends use
 /// std/native/llrt/scan.xo's find (zero-C audit B13 deleted the C).
 fn str_find(s: Str, sub: Str, from: Int) -> Int
 /// The bytes from lo to hi (clamped to the string).
@@ -51,7 +51,7 @@ fn rs_push_rune(s: Str, r: Int) -> Str
 /// An empty string with room for n bytes (BytesBuilder.with_capacity).
 fn rs_with_cap(n: Int) -> Str
 
-// The number and time text of the wasm runtime (selfhost/wasm rt2.xo
+// The number and time text of the wasm runtime (compiler/wasm rt2.xo
 // implements them); native builds use std/native/llrt/text.xo, and the
 // C path of text (XO_LLRT_C=text) went in decision 0227. int_parse and
 // duration_parse above are the others.
@@ -61,7 +61,7 @@ fn time_parse_ok(s: Str) -> Bool
 fn time_parse(s: Str) -> Int
 fn rs_append_quote(s: Str, b: Bytes) -> Str
 // Atomic's add and max as runtime calls: only the wasm runtime has them
-// (selfhost/wasm/rt3.xo); the native backends use
+// (compiler/wasm/rt3.xo); the native backends use
 // std/native/llrt/atomic.xo (decision 0200; decision 0198 deleted the C).
 
 fn atomic_add(a: Atomic[Int], n: Int, at: Loc) -> Int
@@ -451,7 +451,7 @@ fn fs_new(root: Str, mode: Int) -> Fs
 // fs_read through fs_unlock below (not fs_canceled), and fs_set_err:
 // the calls of sysio.xo's and fsops.xo's layer 0 arms, which only a wasm
 // module takes (its runtime serves or faults them); on the native targets
-// the SSA builders lower them to a fault (selfhost/ssa call.xo
+// the SSA builders lower them to a fault (compiler/ssa call.xo
 // wasm_only_rt).
 
 /// The contents of the file in a list of one, or empty with the status set.

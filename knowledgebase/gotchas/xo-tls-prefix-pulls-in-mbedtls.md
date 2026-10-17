@@ -8,7 +8,7 @@ tests (TestRuntimeTasks, TestRuntimeEventLoop) failed to link with
 undefined `xo_x_pem_next`, `xo_x_tls_is_ip`, and other exports of
 std/native/llrt/cabi_tls.xo, although no program used std/http.
 
-Cause: internal/build's `needsTLS` (and selfhost/xo's copy) decides
+Cause: internal/build's `needsTLS` (and compiler/xo's copy) decides
 that a link needs Mbed TLS, and compiles the runtime with `-DXO_TLS`,
 when the generated code names a symbol starting with `xo_tls_` (the
 TLS functions of std/http). The empty program's IR named `xo_tls_get`,

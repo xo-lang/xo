@@ -12,7 +12,7 @@ binary to build the fix.
 
 ## Cause
 
-xobuild builds selfhost/xo with an earlier xo, in this order
+xobuild builds compiler/xo with an earlier xo, in this order
 (internal/xotool xotool.go seed candidates): `$XO_SEED`, the checkout's
 `bin/xo`, the newest build in `<user cache>/xo/checkout/*/xo`, `xo` on
 PATH, the prebuilt seed. A std change compiles into the new xo's own

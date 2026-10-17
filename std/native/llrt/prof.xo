@@ -13,7 +13,7 @@
 // the fault traceback's symbolizer, which every binary keeps. The samples
 // and the named locations go to a raw file (decision 0245: decision
 // 0240's XORAW1 container, kind 2) at XO_PROF_OUT (xo-prof.xoraw by
-// default, %p the process id), and `xo prof FILE` (selfhost/xo prof.xo)
+// default, %p the process id), and `xo prof FILE` (compiler/xo prof.xo)
 // writes from it what the program wrote itself before: pprof's protobuf,
 // gzip with stored blocks (`go tool pprof`, speedscope, flame graph tools
 // read it), and a text summary beside it (the top 30 by flat and by
@@ -125,7 +125,7 @@ fn map(n: Int) -> Int {
 }
 
 /// Whether this build has the profiler: true here, and the SSA builders
-/// fold a call of it to the build's answer (selfhost/ssa expr.xo
+/// fold a call of it to the build's answer (compiler/ssa expr.xo
 /// prof_call): false in `xo build --release` without --profile-support,
 /// so what it guards is neither built nor linked (decision 0238).
 pub fn supported() -> Bool { true }
@@ -535,7 +535,7 @@ fn put_table(var b: BytesBuilder, t: Table) {
   }
 }
 
-/// Section types (keep in step with selfhost/xo prof.xo).
+/// Section types (keep in step with compiler/xo prof.xo).
 const PS_CPU = 16
 const PS_HEAP = 17
 

@@ -1,9 +1,9 @@
-// What the checker resolved, as the SSA builder (selfhost/ssa) reads it:
+// What the checker resolved, as the SSA builder (compiler/ssa) reads it:
 // the queries of internal/check info.go (decision 0150). The Go checker
 // keys its records by node pointers; here a node is its file, span, and
 // kind (key_of), so every query names the file the node is in.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The key of the node of file f with span sp and kind k (key_of in f).
 pub fn (c: Checker) key_in(f: Int, sp: Span, kind: Int) -> Int {

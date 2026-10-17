@@ -4,7 +4,7 @@
 // A name the backend does not have yet makes the program unsupported:
 // the build reports it and writes no module.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]

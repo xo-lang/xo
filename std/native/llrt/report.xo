@@ -2,7 +2,7 @@
 // step 5): what a property test's case tells the harness before its body
 // runs (std/llrt/xo_testing.c's xo_prop_report). A test binary runs one
 // case per process (decision 0120); the harness (cmd/xo nativetest.go,
-// selfhost/xo) reads its standard output: an `XO-PROP-CHOICES c1,c2,...`
+// compiler/xo) reads its standard output: an `XO-PROP-CHOICES c1,c2,...`
 // line with the generator's choices, an `XO-PROP-INPUT name = value` line
 // per input, and while shrinking `XO-PROP-NOT-SMALLER` (exit 3) for a
 // case whose choices are not shortlex smaller than the best so far

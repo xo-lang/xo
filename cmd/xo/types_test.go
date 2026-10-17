@@ -8,7 +8,7 @@ import (
 
 // The JSON shapes the tests read from xo's output. They were the Go
 // command line's own types before decision 0215 deleted it; the self
-// hosted xo prints the same JSON (selfhost/cli).
+// hosted xo prints the same JSON (compiler/cli).
 
 // diagnostic is one diagnostic of `--json` output (spec/core.md 10).
 type diagnostic struct {

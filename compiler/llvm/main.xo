@@ -3,8 +3,8 @@
 //   llvm [--std=DIR] [--wd=DIR] [--each] [--test] [--stage=N] <dirs...>  print the IR
 //   llvm [--std=DIR] [--wd=DIR] [--each] [--test] --bench=N <dirs...>    lower N times, print the time
 //
-// It checks the directories as `xo llvmdump` does (selfhost/check in
-// native mode), builds the SSA module with selfhost/ssa, runs its passes
+// It checks the directories as `xo llvmdump` does (compiler/check in
+// native mode), builds the SSA module with compiler/ssa, runs its passes
 // and InsertRC, and prints the LLVM IR internal/llvm prints for the
 // module (`== ir` and the module), then `== skipped` and one line per
 // function it did not lower (`<name>: <why>`, a construct of a later
@@ -16,8 +16,8 @@
 // <dir>`. --bench=N builds the SSA once and runs the emitter alone N
 // times. Fault positions are relative to DIR of --wd (default $PWD).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0

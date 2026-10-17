@@ -16,5 +16,5 @@ emit them inline).
 
 Fix: seed a bootstrap with a compiler that knows every intrinsic of the
 checkout's std: `XO_SELF_DRIVER=0 xo build --backend=arm64 -o seed
-selfhost/xo` from the same checkout (or the xo1 the checkout's `xo`
+compiler/xo` from the same checkout (or the xo1 the checkout's `xo`
 builds into its cache), not an xo1 left in the cache by an older tree.

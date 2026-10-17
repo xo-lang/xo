@@ -178,7 +178,7 @@ func xoName(s string) string {
 }
 
 // xoKeywords are the keywords of Xo (core 1.4; the keys of KEYWORDS in
-// selfhost/lexer/token.xo, TestKeywordsMatchLexer).
+// compiler/lexer/token.xo, TestKeywordsMatchLexer).
 var xoKeywords = map[string]bool{
 	"as": true, "break": true, "const": true, "continue": true, "defer": true, "else": true, "ensures": true,
 	"enum": true, "fn": true, "for": true, "if": true, "in": true, "interface": true, "invariant": true,

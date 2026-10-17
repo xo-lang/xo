@@ -1,7 +1,7 @@
 # xo1 hangs on a Windows drive path
 
-Status: Observed (2026-10-12), fixed in selfhost/check (path_volume,
-is_rooted) and selfhost/xo (is_abs_path).
+Status: Observed (2026-10-12), fixed in compiler/check (path_volume,
+is_rooted) and compiler/xo (is_abs_path).
 
 Symptom: on Windows, `xo1 build --backend=llvm DIR` printed nothing and
 ran until stopped (no `--phase-times` line: the checker never

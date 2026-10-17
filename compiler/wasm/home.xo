@@ -24,7 +24,7 @@
 // temporary block holding a copy, read back after the call. A fault exit
 // zeroes the homes, as it returned zero leaves before.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The fewest leaves of a `var` parameter passed by reference.
 const HOME_MIN = 16

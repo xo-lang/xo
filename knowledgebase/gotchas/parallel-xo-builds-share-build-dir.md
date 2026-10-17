@@ -10,7 +10,7 @@ preprocessable inputs"), and links missing runtime symbols
 (`undefined reference to xo_fs_canceled`).
 
 Cause: every build without `XO_BUILD_DIR` uses `<user cache>/xo/build`
-(selfhost/xo main.xo build_dir), and the intermediate files there
+(compiler/xo main.xo build_dir), and the intermediate files there
 (prog.s, prog.ll, the objects) are named per build kind, not per
 program, so concurrent builds overwrite each other.
 

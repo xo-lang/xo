@@ -3,11 +3,11 @@
 // grants it: effects against the effect lock, ceilings, escape hatches
 // with their vouches, the consuming module's attenuations and the
 // capabilities it passes into dependencies, unused vouches, and the log
-// calls of dependencies (decision 0173). The check is selfhost/check's,
+// calls of dependencies (decision 0173). The check is compiler/check's,
 // with the escape hatches it records (vouch.xo).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 struct AuditLoc {
   file: Str

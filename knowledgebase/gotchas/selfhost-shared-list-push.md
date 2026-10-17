@@ -1,9 +1,9 @@
 # Xo: pushing to a copy of a list another copy already extended copies the whole list
 
-Status: Observed (2026-10-11, the go build of selfhost/ssa)
+Status: Observed (2026-10-11, the go build of compiler/ssa)
 
 Symptom: a CPU profile of the go build of the self hosted SSA builder
-(`XO_CPUPROFILE`, `--bench=20 selfhost/ssa`) showed 9% of the run in
+(`XO_CPUPROFILE`, `--bench=20 compiler/ssa`) showed 9% of the run in
 `rt.List_copyOut` under `List_push`. Counting the copies (a temporary
 counter in std/rt list.go, not committed) gave 177,674 pushes that
 copied a list whose capacity was not exhausted, 1.7 million elements in

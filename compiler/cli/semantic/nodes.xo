@@ -2,7 +2,7 @@
 // statement, and expression below a node in source order. Types and
 // patterns are not visited; a block is an expression, as in Go.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// A node of the walk.
 pub enum Node {

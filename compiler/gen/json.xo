@@ -1,7 +1,7 @@
 // `derive Json`, `derive SqlRow`, and the value generators of property
 // tests (internal/gen json.go, sqlrow.go).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// Whether t is json.Patch[T] (isPatch).
 fn (g: Gen) is_patch(t: Int) -> Bool {

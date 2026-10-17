@@ -13,11 +13,11 @@ import (
 )
 
 // xprotectGoldens are the programs one XProtect rule matched while the
-// empty list sat at page offset 0x880 of selfhost/macho's __DATA
+// empty list sat at page offset 0x880 of compiler/macho's __DATA
 // (gotchas/xprotect-false-positive-empty-list.md).
 var xprotectGoldens = []string{"http_stream", "net_only", "http_conn_fault"}
 
-// TestEmptyListAtPageStart: in a program selfhost/macho links, the
+// TestEmptyListAtPageStart: in a program compiler/macho links, the
 // immortal empty list is the first data symbol, at page offset 0, so
 // code that loads it into consecutive registers cannot form the byte
 // pattern of XProtect's MACOS.SOMA.AUENB rule (`add x11, x11, #0x880;
@@ -27,7 +27,7 @@ func TestEmptyListAtPageStart(t *testing.T) {
 		t.Skip("builds a program")
 	}
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("selfhost/macho links darwin/arm64 programs")
+		t.Skip("compiler/macho links darwin/arm64 programs")
 	}
 	if _, err := exec.LookPath("nm"); err != nil {
 		t.Skip("no nm")
@@ -64,7 +64,7 @@ func TestEmptyListAtPageStart(t *testing.T) {
 }
 
 // TestXProtectRules scans the programs XProtect once flagged, linked by
-// selfhost/macho and by cc, with the Mac's XProtect YARA rules: with
+// compiler/macho and by cc, with the Mac's XProtect YARA rules: with
 // yara when it is on PATH (brew install yara), else in the Linux
 // container of scripts/docker-linux.sh (its image carries yara) when
 // Docker runs; XO_XPROTECT_DOCKER=off turns the container off.

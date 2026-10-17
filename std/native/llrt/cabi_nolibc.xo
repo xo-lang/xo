@@ -31,7 +31,7 @@ fn nl_start(sp: Int) -> Int {
   match target.arch {
     TargetArch.Arm64 => {
       // the LSE atomics (AT_HWCAP's ATOMICS bit) for the link's outline
-      // atomics (selfhost/macho elflink.xo), unless XO_LSE=0 (their load
+      // atomics (compiler/macho elflink.xo), unless XO_LSE=0 (their load
       // and store exclusive loops, tested so)
       if (libcmem.auxval(16) & 256) != 0 && !libcmem.env_has(env, "XO_LSE=0") {
         rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)

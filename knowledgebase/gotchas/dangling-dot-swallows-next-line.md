@@ -25,7 +25,7 @@ line.
 Fix (for `xo lsp`): completion does not depend on the parser's recovery.
 It inserts a placeholder name (`xo_complete_`) at the cursor before
 checking, so `r.` parses as `r.xo_complete_` and the next line survives
-(selfhost/cli/servers/lsp_complete.xo, as gopls's source fixing does).
+(compiler/cli/servers/lsp_complete.xo, as gopls's source fixing does).
 `xo check` still loses the line; a parser fix would change diagnostics
 and front end recordings (decision 0217), so it is left for its own
 decision. Also: `scope` is a keyword, so it cannot name a method.

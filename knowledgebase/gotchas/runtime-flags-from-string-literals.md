@@ -6,7 +6,7 @@ flip").
 
 ## Symptom
 
-`xo1 build --backend=arm64 --target=linux/arm64 --ld=macho selfhost/xo`
+`xo1 build --backend=arm64 --target=linux/arm64 --ld=macho compiler/xo`
 stopped after 899 s with `--ld=macho needs a prebuilt linux/arm64
 runtime pack for the flags -O2 -DXO_FS -DXO_STDIN -DXO_PROC
 -DXO_UNICODE_C`, with a complete pack in `$XO_RTPACK`. The darwin build
@@ -15,7 +15,7 @@ locally instead of using the pack.
 
 ## Cause
 
-`build.IOFlags` and xo1's copy `io_flags` (selfhost/xo link.xo) chose
+`build.IOFlags` and xo1's copy `io_flags` (compiler/xo link.xo) chose
 the runtime's `-D` flags by `bytes.Contains(code, sym)` over the
 program's assembly or IR. xo1's own source holds those symbol names as
 string literals (the tables of io_flags itself), which land in its
@@ -31,14 +31,14 @@ rule): a symbol counts only when preceded by what a reference has before
 it (space, tab, `_`, `@`, `:`, `,`), not by a string literal's quote.
 TestIOFlagsUnicodeC covers `.ascii "xo_str_lower"` and `c"xo_str_lower"`.
 When a flag is chosen by scanning generated code, test it on a program
-that names the symbol in a string, and on selfhost/xo.
+that names the symbol in a string, and on compiler/xo.
 
 Observed again (2026-10-12, decision 0182 next step 1): the
 `-DXO_TEXT_C` and `-DXO_STRINGS_C` scans (decision 0193) arrived from a
 parallel branch with `bytes.Contains` / `code.contains`, so xo1's
 assembly (its io_flags table) turned both on and xo1's default linker
-fell back to cc for selfhost/xo itself (the bootstrap fixed point linked
+fell back to cc for compiler/xo itself (the bootstrap fixed point linked
 with ld, LC_SOURCE_VERSION present, though the pack was given). Both
 scans now use `callsSym` / `calls_sym`; TestIOFlagsTextC and
 TestIOFlagsStringsC cover the string literal forms. Check: a binary
-linked by selfhost/macho has no LC_SOURCE_VERSION (`otool -l`).
+linked by compiler/macho has no LC_SOURCE_VERSION (`otool -l`).

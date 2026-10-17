@@ -1,8 +1,8 @@
 // The formatter entry points the semantic tools use (format.Decl,
 // format.Source), from stage 2's port of internal/format
-// (selfhost/cli/core/format).
+// (compiler/cli/core/format).
 
-use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/compiler/cli/core/format
 
 /// format.Decl: the canonical text of declaration d of src; with sig a
 /// function is printed without its body.

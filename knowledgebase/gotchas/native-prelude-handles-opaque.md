@@ -29,7 +29,7 @@ its own implementation type.
 
 Give the native prelude small `llrt_<name>` functions that build or
 read the handle, declare `fn <name>(...)` in std/native/rt.xo, and have
-selfhost/ssa call.xo `intrinsic` lower `rt.<name>` to the prelude's
+compiler/ssa call.xo `intrinsic` lower `rt.<name>` to the prelude's
 function with `llrt_or_none` (as `rt.fs_canceled` and `rt.mem_file`
 do). The new rt functions are not used by the compiler's own code, so no
 seed bump is needed.

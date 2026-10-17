@@ -2,8 +2,8 @@
 // function values, std calls, function values of declared functions,
 // constructors, conversions, and `expect`.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// How a generated call can be used (callKind).
 const CK_VALUE = 0

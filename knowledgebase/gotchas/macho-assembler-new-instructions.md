@@ -1,4 +1,4 @@
-# A new instruction in the arm64 emitter needs selfhost/macho's assembler too
+# A new instruction in the arm64 emitter needs compiler/macho's assembler too
 
 Status: Observed (2026-10-16, Xo Lang 3 and xo-fa).
 
@@ -11,7 +11,7 @@ adcs x3, x13, x8`. `--as=cc` builds it.
 ## Cause
 
 dd3b3e2d made the arm64 emitter write adcs and adc (cpu.adc's carry
-chains, decision 0231 addendum); selfhost/macho's assembler (enc.xo), the
+chains, decision 0231 addendum); compiler/macho's assembler (enc.xo), the
 default on darwin when xo links the program itself, had no encodings
 for them. The goldens did not fail while programs still linked C (the
 runtime's xo_rt.c), which took cc's assembler; once the C runtime was

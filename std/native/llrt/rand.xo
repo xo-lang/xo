@@ -6,7 +6,7 @@
 // generator (std/rt's seededRand: testworld.xo's PCG, the zero-C
 // audit's B14). The SSA builders call these as the
 // native prelude's llrt_rand_*; a WASI module keeps the wasm runtime's
-// rand (selfhost/wasm/rt2.xo).
+// rand (compiler/wasm/rt2.xo).
 use native/llrt/darwin
 use native/llrt/ints
 use native/llrt/linux

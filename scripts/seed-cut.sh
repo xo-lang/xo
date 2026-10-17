@@ -13,7 +13,7 @@
 #
 # Steps, each stopping the script on failure:
 #   1. a worktree of origin/main at WORKDIR/tree; VERSION in
-#      selfhost/cli/core/cli.xo and selfhost/cli/servers/servers.xo, one
+#      compiler/cli/core/cli.xo and compiler/cli/servers/servers.xo, one
 #      commit
 #   2. go test -short of internal/xotool and cmd/xo
 #   3. the gate: xo built from the bump (go run ./scripts/xobuild) builds
@@ -67,8 +67,8 @@ git -C "$repo" fetch -q origin --tags
 if git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   die "tag v$version exists"
 fi
-cur=$(git -C "$repo" show origin/main:selfhost/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
-[ -n "$cur" ] || die "no VERSION in origin/main's selfhost/cli/core/cli.xo"
+cur=$(git -C "$repo" show origin/main:compiler/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
+[ -n "$cur" ] || die "no VERSION in origin/main's compiler/cli/core/cli.xo"
 newest=$(printf '%s\n%s\n' "$cur" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
 [ "$version" != "$cur" ] && [ "$newest" = "$version" ] || die "version $version is not above main's $cur"
 
@@ -76,9 +76,9 @@ step "1. worktree of origin/main, version $cur to $version"
 tree=$work/tree
 git -C "$repo" worktree add -q --detach "$tree" origin/main
 cd "$tree"
-sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" selfhost/cli/core/cli.xo
-sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" selfhost/cli/servers/servers.xo
-[ "$(git diff --name-only | sort | tr '\n' ' ')" = "selfhost/cli/core/cli.xo selfhost/cli/servers/servers.xo " ] ||
+sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" compiler/cli/core/cli.xo
+sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" compiler/cli/servers/servers.xo
+[ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo " ] ||
   die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo and servers.xo)"
 git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
 commit=$(git rev-parse HEAD)
@@ -121,7 +121,7 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   plat=${p/\//-}; exe=xo; [ "$plat" = windows-amd64 ] && exe=xo.exe
   d=$work/cross/$plat
   mkdir -p "$d/bin"
-  bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" selfhost/xo > "$log/cross-$plat.log" 2>&1 ||
+  bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
     { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
   (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \

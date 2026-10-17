@@ -20,5 +20,5 @@ removal, so the seed kept linking the frameworks by accident.
 Fix: build the removal with a seed that has framework_args (0.12.0 on,
 or any xo built from zero-c after e978a99f): the removal lands right
 after the 0.12.0 seed. Check a seed by running it directly (its
-`build --backend=arm64 --std=<tree>/std -o OUT <tree>/selfhost/xo`), not
+`build --backend=arm64 --std=<tree>/std -o OUT <tree>/compiler/xo`), not
 through xobuild's fallbacks.

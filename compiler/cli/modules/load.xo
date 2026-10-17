@@ -4,8 +4,8 @@
 // hashes, the effect lock (XO1317), and the escape hatches a consumer
 // must vouch for (XO1316), decision 0156.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// mod.Options.
 struct Options {

@@ -3,12 +3,12 @@
 // binds every `use c` header again (cbind.Bind writes only what changed).
 // This checker reads the caches only (goimport.xo, cimport.xo), so a run
 // records what it met and check_dirs_bound binds it, with the helper
-// xo-gobind for Go and selfhost/cli/bind's C binder, then checks the
+// xo-gobind for Go and compiler/cli/bind's C binder, then checks the
 // directories again from the state before the run. A binding that fails
 // is a diagnostic (XO1101 for Go, XO1104 for C) with the binder's reason,
 // as the Go checker reports it.
 
-use github.com/xo-lang/xo/selfhost/cli/bind
+use github.com/xo-lang/xo/compiler/cli/bind
 
 /// A binding the run needs: a `use go` package without a current binding
 /// (go_path), or a `use c` header (header; met whether its file was in
@@ -106,7 +106,7 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
 
 /// check_dirs_bound, fetching first the module versions the run found
 /// missing from the module cache, as the Go checker's mod.Load fetches
-/// them: fetch (selfhost/cli/modules' mod.Download, which this package
+/// them: fetch (compiler/cli/modules' mod.Download, which this package
 /// cannot import) downloads one version and returns its directory or the
 /// problem, which the next run reports as mod.Load does.
 pub fn (var c: Checker) check_dirs_fetching(os: Os, dirs: List[Str], fetch: fn(Str, Str) -> Str ! Problem uses (fs, proc, net, rand, env)) -> () ! Str uses (fs, proc, net, rand, env) {

@@ -10,7 +10,7 @@ import (
 
 // The module cache layout and version order the tests need (copied from
 // the Go internal/mod when decision 0215 deleted it; the self hosted
-// selfhost/cli/modules and selfhost/check implement them for xo).
+// compiler/cli/modules and compiler/check implement them for xo).
 
 var versionRE = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$`)
 

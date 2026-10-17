@@ -2,12 +2,12 @@
 // for `xo lsp`'s hover, definition, references, rename, and semantic
 // tokens. The Go server walks the syntax tree by reflection and looks at
 // an identifier's parent and grandparent nodes; this walk visits the
-// identifiers in the same order (the fields of selfhost/parser's nodes
+// identifiers in the same order (the fields of compiler/parser's nodes
 // are internal/ast's, in its order) and records for each the part of its
 // parent and grandparent that resolve reads (SiteCtx).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 type Expr = parser.Expr
 type Pattern = parser.Pattern

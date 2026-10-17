@@ -18,4 +18,4 @@ for Go's default cache).
 Update (2026-10-09): a generated program now adds 3 to 9 MB, not 15 to
 34 MB (`go-generic-method-sets-per-package.md`).
 
-Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by selfhost/prune (caches-unpruned-after-go-deletion.md, decision 0223).
+Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by compiler/prune (caches-unpruned-after-go-deletion.md, decision 0223).

@@ -21,7 +21,7 @@ choose it once and keep it in a word, as sysio.xo's clocks do since
 work item B01 (2026-10-14: word 0 of rt.sys_words holds the vDSO
 address on Linux or a negative code naming libSystem or kernel32, set
 by the first read; bench/results/clocks-2026-10-14.md). Or fold constant switches:
-a branch on a constant tag in selfhost/arm64's isel (mirrored in
+a branch on a constant tag in compiler/arm64's isel (mirrored in
 internal/arm64 while the differential tests compare the two) would turn
 the chain into one jump; then remeasure `WORKLOADS=clock
 bench/perf/sysio/measure.sh`.

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// TestSelfhostLLVM runs the Xo LLVM emitter (selfhost/llvm, decision
+// TestSelfhostLLVM runs the Xo LLVM emitter (compiler/llvm, decision
 // 0166), built with each backend, on every directory of the repository
 // that holds .xo files (the runs of TestSelfhostSSA), each checked as a
 // native build checks it and lowered from `main`, and compares the IR

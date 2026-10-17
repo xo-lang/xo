@@ -1,7 +1,7 @@
 // Helpers shared by the passes: names, diagnostics, records, lookups,
 // and scopes (internal/check check.go, call.go, stmt.go).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 type Expr = parser.Expr
 type Stmt = parser.Stmt

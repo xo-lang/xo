@@ -1,8 +1,8 @@
 // The module operations behind the commands (mod cmds.go): xo get, xo
 // mod tidy, xo mod accept-effects, and xo vendor.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// One requirement changed by xo get or xo mod tidy (mod.Change); old ""
 /// when added, new "" when removed.

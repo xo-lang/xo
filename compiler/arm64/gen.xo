@@ -1,5 +1,5 @@
 // The native AArch64 emitter (internal/arm64 arm64.go, decision 0049)
-// in Xo, decision 0158: it lowers the module selfhost/ssa built (after
+// in Xo, decision 0158: it lowers the module compiler/ssa built (after
 // its passes and reference counting) to the assembly text internal/arm64
 // prints. Per function: instruction selection (isel.xo) into MIR
 // (mir.xo), the MIR passes (opt.xo, jumptab.xo, lsr.xo), register
@@ -7,7 +7,7 @@
 // counting, equality, box, and closure helpers are generated per
 // program (rc.xo, eq.xo, boxes.xo, closures.xo).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The count of literals, never written (decision 0058).
 const IMMORTAL = -9223372036854775807 - 1
@@ -149,7 +149,7 @@ fn (g: G) end_data(var out: List[Str]) {
   // 0): after the 2,176 bytes of sys_words and static_word, code that
   // loaded the empty list into x11 then x12 matched an XProtect rule
   // (MACOS.SOMA.AUENB: `add x11, x11, #0x880; adrp x12; add x12`) in
-  // every selfhost/macho linked program under 5 MB
+  // every compiler/macho linked program under 5 MB
   // (gotchas/xprotect-false-positive-empty-list.md).
   // The immortal placeholders (rt.rl_empty, rt.h_zero, a 0 export
   // result): the empty list {XO_RC_IMMORTAL, 0, 0} and the zero handle
@@ -168,7 +168,7 @@ fn (g: G) end_data(var out: List[Str]) {
   if g.static_ref {
     // rt.static_word (decision 0207, work item B02): 256 words of
     // process globals (64 until decision 0237), zero at start (.quad
-    // lines: selfhost/macho's assembler has no .zero)
+    // lines: compiler/macho's assembler has no .zero)
     out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
     for _ in 0..STATIC_WORDS {
       out.push("\t.quad 0\n")

@@ -9,7 +9,7 @@ import (
 )
 
 // TestLLRTCUnknownName requires a build to fail on an XO_LLRT_C name
-// with no std/native/llrt/<name>_c.xo (selfhost/xo/main.xo
+// with no std/native/llrt/<name>_c.xo (compiler/xo/main.xo
 // llrt_c_names): decision 0198 deleted most C paths, and a deleted name
 // that was silently ignored built the Xo path while a test claimed to
 // compare it with the C one

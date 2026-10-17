@@ -14,7 +14,7 @@ import (
 	"github.com/xo-lang/xo/internal/selfhost/mutlex"
 )
 
-// TestSelfhostParserDifferential runs the Xo parser (selfhost/parser),
+// TestSelfhostParserDifferential runs the Xo parser (compiler/parser),
 // built with each backend, on every .xo file of the repository (std
 // declaration files in signature mode), the spec's code blocks, generated
 // programs (internal/progen, decision 0110), and token level mutations of
@@ -395,7 +395,7 @@ func mutateTokens(rng *rand.Rand, src []byte) []byte {
 	return buf.Bytes()
 }
 
-// TestSelfhostParserXoTests runs the Xo tests of selfhost/parser
+// TestSelfhostParserXoTests runs the Xo tests of compiler/parser
 // (`xo test`).
 func TestSelfhostParserXoTests(t *testing.T) {
 	if selfhostTier(t) == tierShort {

@@ -12,7 +12,7 @@ Cause: every top level function of a cabi module is a C ABI export, so
 cabi_tls.xo's exports and everything they call are in every program that
 imports std/http. The xo build links Mbed TLS and the Security and
 CoreFoundation frameworks only when the generated code names the
-client, the server, or an `xo_tls_` symbol (selfhost/xo/tls.xo
+client, the server, or an `xo_tls_` symbol (compiler/xo/tls.xo
 needs_tls); the `xo_x_tls_` exports do not count.
 
 Fix: reach a library that only TLS programs link through addresses the

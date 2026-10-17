@@ -2,7 +2,7 @@
 // parameters are phis), blocks are lowered in reverse postorder and
 // printed in the function's order.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The name in an instruction's aux ("" for another aux).
 fn aux_str(a: ssa.Aux) -> Str {
@@ -458,7 +458,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   if ssa.cold_fn(g.f.name) {
     attrs = "#10"
   } else if g.f.name.starts_with("test.") {
-    // a test block's function (selfhost/ssa testmode.xo), called once
+    // a test block's function (compiler/ssa testmode.xo), called once
     // from the test binary's main: inlined there, every test shared one
     // function's registers and a test's loop depended on the others
     // (testworld rand 1.08 on LLVM)

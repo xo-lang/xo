@@ -21,8 +21,8 @@
 // keywords. Items whose type is the type expected at the cursor (a typed
 // `let` or `var`, an argument, a `return`) sort first.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/lexer
 
 /// The name inserted at the cursor so the text parses (never offered).
 const PLACEHOLDER = "xo_complete_"

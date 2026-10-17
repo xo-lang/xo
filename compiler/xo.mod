@@ -1,2 +1,2 @@
-module github.com/xo-lang/xo/selfhost
+module github.com/xo-lang/xo/compiler
 edition preview

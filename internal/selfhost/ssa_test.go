@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestSelfhostSSA runs the Xo SSA builder (selfhost/ssa), built with each
+// TestSelfhostSSA runs the Xo SSA builder (compiler/ssa), built with each
 // backend, on every directory of the repository that holds .xo files,
 // each checked as a native build checks it (std/native included) and
 // built from `main`, and compares its build stage with the recording
@@ -303,7 +303,7 @@ func runSSA(t *testing.T, bin, root string, dirs []string, flags ...string) map[
 	const batch = 60
 	for _, xb := range runXoBatches(t, bin, root, append([]string{"--each", "--wd=" + workDir(t)}, flags...), dirs, batch) {
 		chunk := xb.paths
-		// at the start of a line: the dump of selfhost/ssa itself holds
+		// at the start of a line: the dump of compiler/ssa itself holds
 		// the text in a constant
 		parts := runHead.Split(xb.out, -1)
 		if len(parts) != len(chunk)+1 {
@@ -630,7 +630,7 @@ func canonClosures(funcs map[string]string, skip map[string]string) map[string]s
 // regular expression `(^|[ (,])(names)([(, \n]|$)` (names longest first)
 // does with ReplaceAllString, without the regular expression: its one
 // alternation of every closure name ran over every function of every
-// stage and took 50 s on the build stage of selfhost/xo alone and most
+// stage and took 50 s on the build stage of compiler/xo alone and most
 // of TestSelfhostSSA in the full tier (2026-10-12). Names may hold the
 // separators (generic instances: `f[A, B].fn1`).
 type renamer struct {

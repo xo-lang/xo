@@ -34,5 +34,5 @@ Never run `go clean -cache` or remove GOCACHE subdirectories while
 sessions build. To free space, remove files idle for over two hours and
 keep the directories: `find "$GOCACHE" -mindepth 2 -type f -mmin +120
 -delete`. Go refreshes an entry's time on use at most hourly, so such a
-file is not in use; this is selfhost/prune's rule for the cache
+file is not in use; this is compiler/prune's rule for the cache
 (decision 0223, KEEP).

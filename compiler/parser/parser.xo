@@ -16,7 +16,7 @@
 // sync_top), so the diagnostics and the recovered tree are the Go
 // parser's for every file.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 pub type Diag = lexer.Diag
 pub type Note = lexer.Note

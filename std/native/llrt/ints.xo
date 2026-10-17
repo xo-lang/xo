@@ -6,7 +6,7 @@
 // division, floor division (`Time.unix`, xo_rt.c xo_floor_div), and the
 // hash of a Str Map key (xo_rt.c xo_str_hash).
 //
-// The SSA builders (internal/ssa build_int.go, selfhost/ssa show.xo)
+// The SSA builders (internal/ssa build_int.go, compiler/ssa show.xo)
 // lower a sized integer operation inline: the word operation, the range
 // check, and on failure a call of op_fault or conv_fault here, which
 // never return. Decision 0198 deleted the C path (`XO_LLRT_C=ints`).

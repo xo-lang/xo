@@ -1,8 +1,8 @@
 // Display and Debug text (internal/ssa build_show.go), error frames
 // (build_frames.go), constants and sized integers (build_int.go).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/lexer
 
 // ---------------------------------------------------------------------------
 // Display and Debug

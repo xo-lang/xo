@@ -1,6 +1,6 @@
 // Expressions (core 3, 15: Expr), with the precedence of core 15.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 fn (var p: Parser) parse_expr_no_lit() -> Expr {
   let saved = p.no_lit

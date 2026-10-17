@@ -12,7 +12,7 @@ call is not the one the .wat text makes obvious.
 
 ## Cause
 
-The WAT runtime's `$clock_sleep_or_cancel` (selfhost/wasm rt3.xo)
+The WAT runtime's `$clock_sleep_or_cancel` (compiler/wasm rt3.xo)
 returned `i32`, while the SSA builder types the call `rt.clock_sleep_or_cancel`
 as an Int (`i64`), as the C runtime's `int64_t xo_clock_sleep_or_cancel`
 returns. Nothing checks the WAT runtime's signatures against the SSA's

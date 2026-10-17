@@ -1,6 +1,6 @@
 # A division by a constant as a multiply high retires more instructions on arm64
 
-Status: Observed (2026-10-12, internal/arm64 and selfhost/arm64, bench/perf/text, decision 0194)
+Status: Observed (2026-10-12, internal/arm64 and compiler/arm64, bench/perf/text, decision 0194)
 
 Symptom: lowering `x / c` and `x % c` to a multiply high and shifts
 (decision 0194) made bench/perf/text's Duration text faster in wall time

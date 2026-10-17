@@ -3,7 +3,7 @@
 // habit's note and machine fix (stage 7), and the type the Go checker
 // continues with, so what follows cascades the same way.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The words of an identifier in any convention, lower case.
 fn words(s: Bytes) -> List[Str] {

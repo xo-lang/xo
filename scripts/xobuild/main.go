@@ -1,5 +1,5 @@
 // Command xobuild makes bin/xo of this checkout the self hosted xo
-// (selfhost/xo) of its current sources and prints its path (decision
+// (compiler/xo) of its current sources and prints its path (decision
 // 0215: the Go compiler is gone, so an existing xo builds the next one):
 //
 //	go run ./scripts/xobuild                 # build bin/xo if its sources changed

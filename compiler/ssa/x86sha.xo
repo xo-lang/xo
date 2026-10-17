@@ -1,6 +1,6 @@
 // SHA-256 on x86-64 with SHA-NI (decision 0254): the instruction
-// sequence both native x86-64 lowerings use (selfhost/arm64 calls.xo,
-// selfhost/llvm call.xo).
+// sequence both native x86-64 lowerings use (compiler/arm64 calls.xo,
+// compiler/llvm call.xo).
 
 /// The x86-64 SHA-NI compression of one SHA-256 block (decision 0254;
 /// the owner's approval, 2026-10-17): the Linux kernel's sha256_ni form,

@@ -8,7 +8,7 @@
 // loop. Block parameters are locals the edges assign (all arguments are
 // pushed before any is stored, a parallel copy).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 fn (var g: Gen) func(fi: Int) {
   let f = g.m.funcs[fi]
@@ -1588,7 +1588,7 @@ fn (var g: Gen) closure(v: Int) {
 /// The smallest Int (math.MinInt64).
 const MIN_INT = -9223372036854775807 - 1
 
-/// The IEEE 754 bits of x (math.Float64bits; selfhost/llvm text.xo):
+/// The IEEE 754 bits of x (math.Float64bits; compiler/llvm text.xo):
 /// halving and doubling are exact, so the exponent and the mantissa are
 /// found by scaling. A NaN has the bits of Go's math.NaN().
 fn float_bits(x: Float) -> Int {

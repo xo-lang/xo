@@ -13,7 +13,7 @@ Linux).
 
 A `__attribute__((constructor))` in std/llrt/xo_rt.c (setting obj.xo's
 heap words before anything allocates) puts an entry in `.init_array`.
-xo's own ELF linker (selfhost/macho/elflink.xo), used when no cc links
+xo's own ELF linker (compiler/macho/elflink.xo), used when no cc links
 the program, runs no constructors and rejects the section.
 
 ## Fix

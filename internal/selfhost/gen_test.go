@@ -27,14 +27,14 @@ var genAlt = []string{"--no-mono", "--no-ranges", "--release", "--no-error-args"
 // genHeavy are the runs whose generation takes the longest: the merge
 // tier leaves them to the full tier.
 var genHeavy = map[string]bool{
-	"selfhost/check":  true,
-	"selfhost/ssa":    true,
-	"selfhost/parser": true,
-	"selfhost/arm64":  true,
-	"selfhost/gen":    true,
+	"compiler/check":  true,
+	"compiler/ssa":    true,
+	"compiler/parser": true,
+	"compiler/arm64":  true,
+	"compiler/gen":    true,
 }
 
-// TestSelfhostGen runs the Xo Go code generator (selfhost/gen, decision
+// TestSelfhostGen runs the Xo Go code generator (compiler/gen, decision
 // 0167), built with each backend, on every directory of the repository
 // holding .xo files, as programs and, for those with test blocks, as test
 // binaries, and compares the generated Go with the recording (the Go
@@ -341,7 +341,7 @@ func (s genStats) report() string {
 // lines that follow `== skipped`.
 func genFiles(text string) (map[string]string, []string) {
 	// the markers start lines; generated Go may hold their text elsewhere
-	// (selfhost/gen's own dump code)
+	// (compiler/gen's own dump code)
 	files := map[string]string{}
 	var skipped []string
 	path, inSkipped := "", false

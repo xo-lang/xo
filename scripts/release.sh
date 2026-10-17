@@ -4,7 +4,7 @@
 #   scripts/release.sh [version]
 #
 # Since switch point B (decision 0178, 2026-10-12) bin/xo is xo1, the self
-# hosted toolchain (selfhost/xo); since decision 0215 (2026-10-13) the Go
+# hosted toolchain (compiler/xo); since decision 0215 (2026-10-13) the Go
 # implementation of the compiler is gone, so the first xo1 is built by an
 # existing xo (the seed), and it builds the other targets' xo1 (no
 # runtime packs since decision 0234: there is no C runtime):
@@ -13,12 +13,12 @@
 #                `go run ./scripts/xobuild` (built by an earlier xo, or
 #                by the xo1 of the go-compiler-final tag:
 #                internal/xotool)
-#   darwin/arm64 the seed: xo build --backend=arm64 selfhost/xo
+#   darwin/arm64 the seed: xo build --backend=arm64 compiler/xo
 #   linux/arm64  the darwin xo1: --backend=arm64 --target=linux/arm64
-#                --ld=macho (decision 0182 stage 3: selfhost/macho's ELF
+#                --ld=macho (decision 0182 stage 3: compiler/macho's ELF
 #                writer and linker)
 #   linux/amd64  the darwin xo1: --backend=go --targets=linux/amd64 (no
-#                native backend for amd64: selfhost/gen and the Go
+#                native backend for amd64: compiler/gen and the Go
 #                toolchain)
 #   windows/amd64 (only with XO_RELEASE_WINDOWS=1, decision 0197) the
 #                darwin xo1: --backend=llvm --targets=windows/amd64, split
@@ -63,8 +63,8 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
-# the version xo1 prints (selfhost/cli/core VERSION)
-version="${1:-v$(sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p' selfhost/cli/core/cli.xo)}"
+# the version xo1 prints (compiler/cli/core VERSION)
+version="${1:-v$(sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p' compiler/cli/core/cli.xo)}"
 
 if [ "$(uname -s)/$(uname -m)" != "Darwin/arm64" ]; then
 	echo "release.sh: run on darwin/arm64 (the darwin xo1 is built by the host)" >&2
@@ -125,17 +125,17 @@ linux_arm64=$(stage_of linux/arm64)
 linux_amd64=$(stage_of linux/amd64)
 
 echo "== darwin/arm64: the seed builds xo1" >&2
-"$host_xo" build --backend=arm64 --std="$repo/std" -o "$darwin/bin/xo" selfhost/xo >&2
+"$host_xo" build --backend=arm64 --std="$repo/std" -o "$darwin/bin/xo" compiler/xo >&2
 xo1="$darwin/bin/xo"
 "$xo1" version >&2
 # no runtime packs since decision 0234: a program has no C runtime
 
-echo "== linux/arm64: xo1 cross builds xo1 (selfhost/macho's ELF link, no cc)" >&2
+echo "== linux/arm64: xo1 cross builds xo1 (compiler/macho's ELF link, no cc)" >&2
 "$xo1" build --backend=arm64 \
-	--target=linux/arm64 --ld=macho -o "$linux_arm64/bin/xo" selfhost/xo >&2
+	--target=linux/arm64 --ld=macho -o "$linux_arm64/bin/xo" compiler/xo >&2
 
 echo "== linux/amd64: xo1 builds xo1 with the Go backend" >&2
-"$xo1" build --backend=go --targets=linux/amd64 -o "$linux_amd64/bin/xo" selfhost/xo >&2
+"$xo1" build --backend=go --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
 
 if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 	echo "== windows/amd64: xo1 cross builds xo1 with the LLVM backend" >&2
@@ -144,7 +144,7 @@ if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 		XO_LLVM_SPLIT="${XO_RELEASE_WIN_SPLIT:-16}" XO_LLVM_LTO="${XO_RELEASE_WIN_LTO:-thin}" \
 		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" XO_LLVM_OPT=O2 \
 		"$xo1" build --backend=llvm --targets=windows/amd64 \
-		-o "$(stage_of windows/amd64)/bin/xo.exe" selfhost/xo >&2
+		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
 fi
 
 for target in $targets; do

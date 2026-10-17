@@ -1,6 +1,6 @@
 # A browser worker's wasm stack holds every declared local, and it is smaller than Node's
 
-Status: Observed (2026-10-12), selfhost/wasm stage 3 (decision 0179).
+Status: Observed (2026-10-12), compiler/wasm stage 3 (decision 0179).
 
 **Symptom.** The wasm build of the self hosted checker checked the
 structs golden in a dedicated Worker of headless Chrome 154, but on the
@@ -28,7 +28,7 @@ recurses with N declared locals (no locals used):
   size.
 
 **Fix.** The backend coalesces locals after lowering
-(`selfhost/wasm/coalesce.xo`): exact liveness over the emitted wasm
+(`compiler/wasm/coalesce.xo`): exact liveness over the emitted wasm
 code, an interference graph, a greedy coloring per type, unused locals
 dropped. The cycle went from 14,837 parameters and locals to 2,224, the
 module's program functions from 423,218 locals to 73,366, and every

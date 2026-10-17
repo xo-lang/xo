@@ -2,7 +2,7 @@
 // and SetIndent("", "  "), so `xo query`, `xo edit`, and `xo doc --json`
 // print the same bytes from either implementation.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// A JSON value. Object members keep their order (Go's struct field
 /// order). Html is a string that json.Marshal escaped on the way (a

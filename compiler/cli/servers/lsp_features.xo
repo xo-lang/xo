@@ -2,12 +2,12 @@
 // server.go and features.go): hover, definition, references,
 // prepareRename, rename, formatting, and semantic tokens, over the
 // identifier resolution of resolve.xo, query's declaration surfaces
-// (selfhost/cli/semantic), and the formatter (selfhost/cli/core/format).
+// (compiler/cli/semantic), and the formatter (compiler/cli/core/format).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/core/format
-use github.com/xo-lang/xo/selfhost/cli/semantic
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/core/format
+use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/parser
 
 /// The identifier at a position of an open document (Server.at): the
 /// checked file (-1 for none), its text, and the site (zero or one).

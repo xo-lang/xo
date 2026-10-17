@@ -2,16 +2,16 @@
 // ($XO_BACKEND_CACHE_DIR): obj/, the objects of the parts of a split arm64
 // assembly by the hash of their assembly and the assembler's identity
 // (stage A), and fn/, the canonical texts of functions by the hash of
-// what their code depends on (stage B, selfhost/arm64 fcache.xo).
+// what their code depends on (stage B, compiler/arm64 fcache.xo).
 // $XO_BACKEND_CACHE: on (the default), verify (every function generated
 // and compared with its entry; a difference fails the build), off. Entries
-// are files named by their key, marked used and pruned by selfhost/prune
+// are files named by their key, marked used and pruned by compiler/prune
 // (decision 0223).
 
-use github.com/xo-lang/xo/selfhost/arm64
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/prune
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/arm64
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/prune
+use github.com/xo-lang/xo/compiler/ssa
 use std/crypto
 
 /// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
@@ -79,7 +79,7 @@ fn self_id(os: Os) -> Str {
 }
 
 /// The per-function cache of an arm64 generation of m for tgoos (stage
-/// B, selfhost/arm64 fcache.xo): every function's key and the entries the
+/// B, compiler/arm64 fcache.xo): every function's key and the entries the
 /// cache holds for them, and the cache directory; none (an empty
 /// FnCache, "") when the cache is off, for a --release build, or for a
 /// module of one part.
@@ -122,7 +122,7 @@ fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
   prune_backend_cache(os, dir, n)
 }
 
-/// insert_rc through the per-function cache (stage C, selfhost/ssa
+/// insert_rc through the per-function cache (stage C, compiler/ssa
 /// rccache.xo) in <user cache>/xo/backend/rc; the plain insert_rc_jobs
 /// when the cache is off, for a --release build, or for a module under
 /// 256 functions. verify computes every function and fails the build

@@ -13,5 +13,5 @@ which always escapes `<`, `>`, and `&`; the encoder's setting applies to
 what it encodes itself, not to the bytes a Marshaler returns.
 
 Fix: the Xo side escapes the three characters in the full section only
-(`json_html`, selfhost/check/dump.xo), as `xo check --json` prints them.
+(`json_html`, compiler/check/dump.xo), as `xo check --json` prints them.
 Compare a JSON output with the encoder path that really produced it.

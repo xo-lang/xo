@@ -45,7 +45,7 @@ pub const CAP = 1048512
 /// address and a length fit), then two values.
 pub const EV = 32
 
-// Kinds (keep in step with selfhost/xo trace.xo).
+// Kinds (keep in step with compiler/xo trace.xo).
 pub const K_SPAWN = 1
 pub const K_START = 2
 pub const K_END = 3
@@ -60,7 +60,7 @@ pub const K_POLL = 11
 /// a wake left on the waker's worker (pool.xo push, defer_wake)
 pub const K_DEFER = 12
 
-// Park reasons (ctx.xo C_WHY; keep in step with selfhost/xo trace.xo).
+// Park reasons (ctx.xo C_WHY; keep in step with compiler/xo trace.xo).
 pub const WHY_OTHER = 0
 pub const WHY_SEND = 1
 pub const WHY_RECV = 2

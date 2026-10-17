@@ -83,6 +83,6 @@ Fix (workaround): test the second operand as a `break` in the body
 Next: build the program above with `XO_SELF_DRIVER=0 xo build
 --backend=arm64` and dump the virtual code before register allocation
 (internal/arm64 opt.go `liveDCE`, `threadConst`, `joinSource`), find the
-pass that drops the definition, fix it in selfhost/arm64 first and mirror
+pass that drops the definition, fix it in compiler/arm64 first and mirror
 it in internal/arm64 (the emitters are byte identical, decision 0158),
 and add the program as a golden (internal/llvm/testdata/golden).

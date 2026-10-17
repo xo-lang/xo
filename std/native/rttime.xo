@@ -1,6 +1,6 @@
 // Intrinsics of std/time on the native backends (decision 0094): the
 // one symbol the build defines beside a program that uses std/time, in
-// the zone data it writes (selfhost/xo tz.xo tz_source, ld.xo
+// the zone data it writes (compiler/xo tz.xo tz_source, ld.xo
 // tz_object). Imported by std/native/llrt/tzhost.xo, which finds the zone
 // data and keeps the zones parsed so far in Xo (work item B27; they were
 // std/llrt/xo_time.c).

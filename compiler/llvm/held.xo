@@ -10,7 +10,7 @@
 // of the held value into its own memory is left out, and a value held at
 // every use is never materialized (a use loads it).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// A tracked memory: the pointer of a `var` parameter passed by
 /// reference that is the home of its LLVM type.

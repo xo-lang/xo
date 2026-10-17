@@ -4,13 +4,13 @@ Status: Observed (2026-10-15).
 
 ## Symptom
 
-A change to selfhost/arm64 inline.xo made programs much slower on
+A change to compiler/arm64 inline.xo made programs much slower on
 arm64 (chacha 2500M to 5199M instructions) with calls where helpers
 had been inlined, and every test still passed.
 
 ## Cause
 
-selfhost/xo main.xo uses the inlined module only when it verifies
+compiler/xo main.xo uses the inlined module only when it verifies
 (arm64 inline_step_jobs: `!inline_module(m) || verify ok`); otherwise
 it quietly emits the module without inlining. The change produced SSA
 the verifier rejects (a counted value held on one edge of a merge and

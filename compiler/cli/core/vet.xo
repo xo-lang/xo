@@ -4,9 +4,9 @@
 // (XO0208), `use go` per module (XO1103), `dbg(...)` left in code
 // (XO0901).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/lexer
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/parser
 
 fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   var fl = new_flags("vet")

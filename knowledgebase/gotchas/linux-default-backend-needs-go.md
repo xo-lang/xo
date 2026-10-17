@@ -13,7 +13,7 @@ xo: go env GOROOT: NotFound(cmd: "go")
 
 ## Cause
 
-The default backend is the Go backend on every host (selfhost/xo
+The default backend is the Go backend on every host (compiler/xo
 gobackend.xo runs `go env GOROOT`), so a plain build needs `go` on PATH
 even where the native backends (`--backend=arm64`, `--backend=llvm`)
 would build the program alone. XO_ZONEINFO does not help: the failure is

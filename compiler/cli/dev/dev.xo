@@ -1,7 +1,7 @@
 // `xo dev`: the hidden developer commands (decision 0209), not in `xo
 // help` or spec/core.md. This module holds the ones that need no
 // compiler component (goldens, errorcheck, codegen drive an xo
-// binary); selfhost/xo dispatches `xo dev dump` and `record`
+// binary); compiler/xo dispatches `xo dev dump` and `record`
 // itself and the rest here.
 //
 //   xo dev goldens [flags] DIR...     build, run, and compare golden programs
@@ -12,9 +12,9 @@
 //   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
 //   xo dev debug --snap FILE -c CMD EXE  xo debug --batch on a recorded thread
 
-use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/compiler/cli/core
 
-/// What the caller (selfhost/xo) knows about the running xo.
+/// What the caller (compiler/xo) knows about the running xo.
 pub struct Host {
   /// This xo's binary.
   pub xo: Str

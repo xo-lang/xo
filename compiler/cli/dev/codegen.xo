@@ -19,7 +19,7 @@
 
 use std/regexp
 use std/task
-use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/compiler/cli/core
 
 /// One pattern on one function.
 pub struct Pattern {

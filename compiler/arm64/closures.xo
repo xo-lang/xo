@@ -7,7 +7,7 @@
 // Box[T] is one integer word, a pointer to an immutable counted cell [0]
 // rc, [8] the words of the T value.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// {rc, drop, share}
 const ENV_HDR = 24

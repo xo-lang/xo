@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Writes selfhost/macho/glibc.xo, the symbol versions the ELF linker
+# Writes compiler/macho/glibc.xo, the symbol versions the ELF linker
 # (decision 0182 stage 3) gives its imports, from a linux/arm64 glibc and
-# libgcc_s: scripts/elf-glibc-versions.py DIR > selfhost/macho/glibc.xo,
+# libgcc_s: scripts/elf-glibc-versions.py DIR > compiler/macho/glibc.xo,
 # where DIR holds libc.so.6, libm.so.6, libpthread.so.0, and
 # libgcc_s.so.1, for example copied out of Debian bullseye (glibc 2.31,
 # the runtime pack's floor, decision 0157):
@@ -12,7 +12,7 @@
 # GLIBC_2.17 ones (the linker's default), GLIBC_PRIVATE, and libm's
 # _FloatN aliases.
 #
-# --amd64 DIR > selfhost/macho/glibc_amd64.xo: the same from linux/amd64
+# --amd64 DIR > compiler/macho/glibc_amd64.xo: the same from linux/amd64
 # (decision 0254 stage 4; /lib/x86_64-linux-gnu, --platform linux/amd64),
 # whose base version is GLIBC_2.2.5.
 import os, re, struct, sys

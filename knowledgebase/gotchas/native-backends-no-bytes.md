@@ -1,6 +1,6 @@
 # The native backends did not build programs that use `Bytes`
 
-Status: Observed (2026-10-08, `xo build --backend=arm64 selfhost/lexer`).
+Status: Observed (2026-10-08, `xo build --backend=arm64 compiler/lexer`).
 Resolved (2026-10-08) by decision 0081.
 
 Symptom (before 0081): `xo build --backend=arm64` (and `--backend=llvm`)
@@ -14,7 +14,7 @@ subset of the language: no `Bytes` indexing or slicing, `UInt8`,
 `UInt64`, `StrBuilder`, ranges outside `for`, or the `Fs`, `Env`, and
 `Proc` methods a CLI needs.
 
-Fix: decision 0081 lowers them; `selfhost/lexer` builds and matches the Go
+Fix: decision 0081 lowers them; `compiler/lexer` builds and matches the Go
 lexer on both native backends. Still outside the subset (2026-10-08):
 the other `Fs` methods (`write`, `read_dir`, `walk`, ...), `Env.vars`,
 `Proc.run`, `Float32`, list patterns, and `xo test`. A construct outside

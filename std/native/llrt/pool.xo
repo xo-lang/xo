@@ -11,7 +11,7 @@
 // The records are xo_rt.c's (the pool, xo_worker, the fiber cache, the
 // lock), asserted there with _Static_assert against the constants
 // below. The code keeps sched.xo's discipline without its check (it
-// calls its own functions, which selfhost/ssa contract.xo's check does
+// calls its own functions, which compiler/ssa contract.xo's check does
 // not allow): Int words only, wrapping arithmetic, nothing allocated
 // from the heap of Xo values (records come from rt.heap_large, the C's
 // malloc), and no fault, so it runs on a worker's own stack with no

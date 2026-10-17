@@ -11,7 +11,7 @@ adds `.globl`/`.private_extern` lines for `_xo_f_main`, and turns
 `Lxo_static` into `_xo_static`.
 
 **Cause.** Decision 0220 splits a program's functions into parts
-(selfhost/arm64/parallel.xo: PART_MIN, PART_CUT, PART_MAX by function count
+(compiler/arm64/parallel.xo: PART_MIN, PART_CUT, PART_MAX by function count
 and name hash). More runtime functions move the part boundaries, so the
 program's own functions land in a different part, whose labels carry the
 part's namespace and whose cross-part symbols are hidden globals

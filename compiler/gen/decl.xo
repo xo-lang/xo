@@ -1,8 +1,8 @@
 // Declarations (internal/gen decl.go): types and their derived methods,
 // functions and methods, constants, and invariants.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 fn (g: Gen) include_file(f: Int) -> Bool {
   if g.c.files[f].is_test {

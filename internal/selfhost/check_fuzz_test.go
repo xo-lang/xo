@@ -196,7 +196,7 @@ type mutationSource struct {
 var stdUseRE = regexp.MustCompile(`(?m)^use\s+(\S+)`)
 
 // mutationSources are the single directory modules the checker accepts
-// (the Xo checker, selfhost/check built with the go backend; the Go
+// (the Xo checker, compiler/check built with the go backend; the Go
 // checker until decision 0215, which accepted the same runs) that import
 // only std modules and have no xo.mod (their copies check the same).
 func mutationSources(t *testing.T, root string) []mutationSource {

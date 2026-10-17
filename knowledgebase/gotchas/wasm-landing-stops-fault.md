@@ -1,6 +1,6 @@
 # A wasm fault flag cannot tell "unwinding" from "a fault is pending"
 
-Status: Observed (2026-10-12), selfhost/wasm stage 2 (decision 0179).
+Status: Observed (2026-10-12), compiler/wasm stage 2 (decision 0179).
 
 **Symptom.** The golden `fault_tasks` printed
 `fault: XO-F004: Mutex.with_read called re-entrantly in one task` after

@@ -1,7 +1,7 @@
 # arm64 backend binaries differed between two builds on Linux
 
 Status: Observed (2026-10-12, EC2 Amazon Linux 2023, gcc 11 as `cc`),
-fixed in internal/arm64/arm64.go and selfhost/arm64/gen.xo.
+fixed in internal/arm64/arm64.go and compiler/arm64/gen.xo.
 
 Symptom: internal/build TestRuntimeObject/arm64 failed on linux/arm64 with
 `binaries differ: 363976, 363976, 363976 bytes`: three builds of one

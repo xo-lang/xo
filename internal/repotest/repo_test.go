@@ -1,6 +1,6 @@
 // Package repotest holds the checks of the repository's own files: the
 // decision index, the spec's code tables against the code table xo
-// reports from (selfhost/cli/core/explain_data.xo), and the golden
+// reports from (compiler/cli/core/explain_data.xo), and the golden
 // scripts. They lived in internal/diag until decision 0215 deleted it
 // with the Go implementation of the compiler; the package has no Go code.
 package repotest
@@ -76,14 +76,14 @@ func TestScriptsReadWantBytes(t *testing.T) {
 	}
 }
 
-// explainRow is one code of selfhost/cli/core/explain_data.xo, the table
+// explainRow is one code of compiler/cli/core/explain_data.xo, the table
 // `xo explain` prints and every diagnostic's severity comes from.
 var explainRow = regexp.MustCompile(`(?m)^    "(XO\d{4})" => Some\(Expl\{title: "((?:[^"\\]|\\.)*)", severity: "(\w+)"`)
 
 // explainCodes is code -> severity of explain_data.xo.
 func explainCodes(t *testing.T) (map[string]string, string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "selfhost", "cli", "core", "explain_data.xo"))
+	data, err := os.ReadFile(filepath.Join(root, "compiler", "cli", "core", "explain_data.xo"))
 	if err != nil {
 		t.Fatal(err)
 	}

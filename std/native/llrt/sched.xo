@@ -11,7 +11,7 @@
 // The layouts are xo_rt.c's (xo_runq, xo_worker, xo_fiber, xo_task,
 // xo_scope), asserted there with _Static_assert against the constants
 // below. The no allocation, no counting rule of rc.xo holds here too
-// (selfhost/ssa contract.xo check_no_alloc): Int words only, wrapping
+// (compiler/ssa contract.xo check_no_alloc): Int words only, wrapping
 // arithmetic (rt.int_wrap; a checked add could fault), and calls only of
 // intrinsics and of the C hooks below, so this code runs on any stack,
 // with or without a current context, and never unwinds.
@@ -180,8 +180,8 @@ pub fn rq_nonempty(q: Int) -> Int {
 
 /// The first frame of fiber f, whose stack is the size bytes at mem (on
 /// Windows the top commit bytes committed): the frame the switch's
-/// restore takes (rt.stack_switch's sequences, selfhost/arm64 and
-/// selfhost/llvm sched.xo), with f and main in the registers
+/// restore takes (rt.stack_switch's sequences, compiler/arm64 and
+/// compiler/llvm sched.xo), with f and main in the registers
 /// fiber_start_addr's code calls main(f) with; the stack pointer to
 /// switch to. Only the slots the start reads are written, and the frame
 /// pointer's, zero, so a walk of the new fiber's frames ends there (the

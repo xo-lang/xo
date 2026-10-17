@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-15, the zero-c perf sweep,
 bench/results/zero-c-perf-sweep-2026-10-15.md); fixed the same day in
-selfhost/ssa (below)
+compiler/ssa (below)
 
 Symptom: a macOS fast path added to `sysio.clock_now`
 (std/native/llrt/sysio.xo) as `if target.os == TargetOs.Darwin &&
@@ -19,10 +19,10 @@ Fix: write target tests as `match target.arch { ... }` and
 `match target.os { ... }`, as `sysio.layer()` does. With the match, the
 same fast path took clock to 92.8M on arm64 (main: 93.3M). Four `==`
 tests remain in std/native/llrt (linux.xo, stdin.xo), on paths that
-are not hot. Folding them in selfhost/arm64 (constant enum operands)
+are not hot. Folding them in compiler/arm64 (constant enum operands)
 would remove the trap.
 
-Fixed (2026-10-15): selfhost/ssa/expr.xo compare_values folds `==` and
+Fixed (2026-10-15): compiler/ssa/expr.xo compare_values folds `==` and
 `!=` on two variants known at build time to a constant, for every
 backend. Those are payload-free variants, made directly or read from a
 field of a struct of them (the predeclared `target`). test/codegen/enums

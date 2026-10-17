@@ -2,8 +2,8 @@
 // assembles the program and links it with the C runtime (std/llrt) and
 // the system libraries,
 // trying the macOS SDKs internal/build tries until one links.
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/macho
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/macho
 
 /// What every step needs: the host, the std directory, the repository
 /// root (std/..), and the user cache directory.
@@ -29,7 +29,7 @@ fn link_os(ctx: Ctx) -> Str {
 /// are the program's assembly or IR and other C sources (no C runtime
 /// since decision 0234).
 /// PROG.dSYM after a darwin link through cc (decision 0239: the LLVM
-/// backend's link and --ld=cc; selfhost/macho writes its own, ld.xo).
+/// backend's link and --ld=cc; compiler/macho writes its own, ld.xo).
 /// dsymutil, which the Command Line Tools have, gathers the DWARF of the
 /// objects the executable's debug map names (the build directory's .o
 /// files, or with LTO the object lto_object_flags keeps) into the

@@ -12,7 +12,7 @@ import (
 )
 
 // TestBuildRunLLVM drives `xo build --backend=llvm` and `xo run
-// --backend=llvm` (selfhost/llvm).
+// --backend=llvm` (compiler/llvm).
 func TestBuildRunLLVM(t *testing.T) {
 	t.Parallel()
 	if _, err := xotool.Clang(); err != nil {

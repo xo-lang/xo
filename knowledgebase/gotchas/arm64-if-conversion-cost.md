@@ -1,6 +1,6 @@
 # arm64: if-conversion that removes mispredicts can still cost cycles
 
-Status: Observed (2026-10-17, selfhost/arm64 isel.xo select_branch and
+Status: Observed (2026-10-17, compiler/arm64 isel.xo select_branch and
 logic_value; bench/results/arm64-float-text-2026-10-17.md)
 
 Symptom: after csel if-conversion, simulated branch mispredicts fell

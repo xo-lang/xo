@@ -1,7 +1,7 @@
 // Package main holds the tests of the xo command line (decision 0215):
 // since the Go implementation of the compiler was deleted, cmd/xo has no
 // Go program, only these tests, which drive the shipped xo (xo1, built
-// from selfhost/xo) as a process: $XO_CLI when it is set (a release's
+// from compiler/xo) as a process: $XO_CLI when it is set (a release's
 // bin/xo, or any built xo), else the checkout's bin/xo, built from the
 // current sources when they changed (internal/xotool).
 package main
@@ -87,15 +87,15 @@ var repoRoot = func() string {
 	return r
 }()
 
-// version is the version xo prints: selfhost/cli/core's VERSION.
+// version is the version xo prints: compiler/cli/core's VERSION.
 var version = func() string {
-	data, err := os.ReadFile(filepath.Join(repoRoot, "selfhost", "cli", "core", "cli.xo"))
+	data, err := os.ReadFile(filepath.Join(repoRoot, "compiler", "cli", "core", "cli.xo"))
 	if err != nil {
 		panic(err)
 	}
 	m := regexp.MustCompile(`(?m)^pub const VERSION = "(.*)"$`).FindSubmatch(data)
 	if m == nil {
-		panic("no VERSION in selfhost/cli/core/cli.xo")
+		panic("no VERSION in compiler/cli/core/cli.xo")
 	}
 	return string(m[1])
 }()

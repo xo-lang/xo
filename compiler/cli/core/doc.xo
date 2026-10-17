@@ -1,9 +1,9 @@
 // `xo doc` (cmd/xo tools.go runDoc, internal/doc): Markdown documentation
 // of a module from its doc comments and signatures, or JSON.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/cli/core/format
 
 /// A declaration of a module's surface (query.Def).
 pub struct Def {

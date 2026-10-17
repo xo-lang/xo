@@ -1,4 +1,4 @@
-// xomod: the module commands of selfhost/cli/modules as a program of
+// xomod: the module commands of compiler/cli/modules as a program of
 // their own, to measure them on their own (decision 0178 stage 4) before
 // xo1 links them: `xomod get|mod|vendor|publish|audit ...` runs the Xo
 // port; any other command is handed to the Go `xo` named by $XOMOD_FALLBACK (with
@@ -6,7 +6,7 @@
 // tests can run with XO_CLI=xomod and exercise only the module commands
 // in Xo.
 
-use github.com/xo-lang/xo/selfhost/cli/modules
+use github.com/xo-lang/xo/compiler/cli/modules
 
 fn main(os: Os) uses (fs, net, proc, env, stdio, rand) {
   let args = os.env.args()

@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-14, decision 0220 addendum stage B).
 
-**Symptom**: selfhost/xo built with the per-function cache on (cold or
+**Symptom**: compiler/xo built with the per-function cache on (cold or
 warm) differed from the build with XO_BACKEND_CACHE=off, though verify
 found every cached text equal to a fresh one. The part assembly showed
 `ldr x11, [sp, #32]`, a block label, `ldr x15, [sp, #40]` where the

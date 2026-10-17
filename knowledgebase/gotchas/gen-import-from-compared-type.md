@@ -6,8 +6,8 @@ Status: Observed (2026-10-12, full suite on main dbb8b05), fixed.
 
 `TestGeneratedGoVetsLarge/.._selfhost_xo`: go build failed with
 `"xoprog/m/x_github_com_xo_lang_xo_selfhost_lexer" imported and not
-used`. selfhost/xo has no `use` of selfhost/lexer; it reaches lexer's
-`Span` and `Pos` through selfhost/parser's aliases
+used`. compiler/xo has no `use` of compiler/lexer; it reaches lexer's
+`Span` and `Pos` through compiler/parser's aliases
 (`td.span.start.line`).
 
 ## Cause
@@ -25,6 +25,6 @@ internal/gen/testdata/golden/transitive_import.
 
 The import block of a module's package lists another module's package
 only when the package text names it (`name.` not preceded by an
-identifier byte: gen.go `namesPkg`, selfhost/gen `names_pkg`). Calls of
+identifier byte: gen.go `namesPkg`, compiler/gen `names_pkg`). Calls of
 `goType` for comparison may keep recording imports; the file step
 drops the ones the text does not use.

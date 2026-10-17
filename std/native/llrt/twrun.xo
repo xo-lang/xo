@@ -15,7 +15,7 @@
 // word): the 64 static words are all taken.
 //
 // Generated code reaches it through the native prelude's llrt_test_*
-// (selfhost/ssa testmode.xo), http.xo directly, and the C runtime
+// (compiler/ssa testmode.xo), http.xo directly, and the C runtime
 // through cabi_tw.xo's exports (xo_x_tw_*).
 use native/llrt/atexit
 use native/llrt/ctx
@@ -691,7 +691,7 @@ fn cleanup() {
 // Batches (XO_TEST_BATCH): `xo test` runs many tests in one process
 
 /// The index of the next test to run, -1 when none is left (the test
-/// binary's main loops until then; selfhost/ssa testmode.xo). Without a
+/// binary's main loops until then; compiler/ssa testmode.xo). Without a
 /// batch, XO_TEST's test once. In a batch, each run is bracketed by
 /// XO-TEST-BEGIN and XO-TEST-END lines on the real standard output, and
 /// the test world is reset between runs (between); a run the process

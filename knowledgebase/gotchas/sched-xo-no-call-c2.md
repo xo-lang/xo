@@ -14,7 +14,7 @@ The message names no function or file.
 
 ## Cause
 
-selfhost/ssa contract.xo check_no_alloc holds every function of
+compiler/ssa contract.xo check_no_alloc holds every function of
 native/llrt/rc, native/llrt/alloc and native/llrt/sched to decision 0207's
 rule: scalar values only, and calls only of the intrinsics in
 rc_callee_ok (raw memory, slot atomics, rt.heap_*, the scheduler's
@@ -24,7 +24,7 @@ not in that list.
 ## Fix
 
 Keep the intrinsic in the restricted module and point it at the export
-in selfhost/ssa exports.xo rt_export (both emitters call the mapped
+in compiler/ssa exports.xo rt_export (both emitters call the mapped
 xo_x_ symbol). Keep the old C symbol as a forwarder until the next seed,
 because the seed's code still calls it. Example:
 `rt.sched_run_task` maps to `xo_x_fiber_run_task`, and xo_rt.c keeps

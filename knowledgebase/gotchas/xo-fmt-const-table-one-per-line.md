@@ -1,6 +1,6 @@
 # `xo fmt` puts every element of a multi line list on its own line
 
-Status: Observed (2026-10-08, generating `selfhost/lexer/isprint.xo`)
+Status: Observed (2026-10-08, generating `compiler/lexer/isprint.xo`)
 
 Symptom: a generated `const` table written as pairs per line
 (`0xa1, 0xac,`) fails `xo fmt --check`; formatting turns its 710 lines into

@@ -22,7 +22,7 @@ fn stack_switch_body() -> List[Str] {
 /// The body of xo_unwind_save (rt.unwind_save, decision 0221): the
 /// callee saved registers, the return address (x30), and sp stored at
 /// x0 by DWARF register number (word n at 8 * n; d8 to d15 are 72 to
-/// 79). The LLVM emitter writes the same lines (selfhost/llvm sched.xo).
+/// 79). The LLVM emitter writes the same lines (compiler/llvm sched.xo).
 pub fn unwind_save_body() -> List[Str] {
   ["stp x19, x20, [x0, #152]", "stp x21, x22, [x0, #168]", "stp x23, x24, [x0, #184]", "stp x25, x26, [x0, #200]", "stp x27, x28, [x0, #216]", "stp x29, x30, [x0, #232]", "mov x9, sp", "str x9, [x0, #248]", "str d8, [x0, #576]", "str d9, [x0, #584]", "str d10, [x0, #592]", "str d11, [x0, #600]", "str d12, [x0, #608]", "str d13, [x0, #616]", "str d14, [x0, #624]", "str d15, [x0, #632]", "ret"]
 }

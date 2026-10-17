@@ -5,7 +5,7 @@
 // (`const_once`, decision 0081), Time as its Unix nanoseconds, and
 // SHA-256. A relative path resolves against the first preopened
 // directory (fd 3, the working directory), an absolute one against the
-// second (fd 4, `/`), as selfhost/wasm/run.mjs preopens them. Assembled
+// second (fd 4, `/`), as compiler/wasm/run.mjs preopens them. Assembled
 // into the programs that call these functions. Semantics are std/llrt's
 // (xo_fs.c, xo_bytes.c, xo_crypto.c).
 
@@ -340,7 +340,7 @@ fn rt4_text(var g: Gen) -> Str {
 
     ;; the target of link p: none (WASI preview1's path_readlink is not
     ;; used; a browser's file system has no links), success, so callers
-    ;; that resolve links (selfhost/check locate.xo) go on with p
+    ;; that resolve links (compiler/check locate.xo) go on with p
     (func $fs_read_link (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i32)
       i64.const 0
       global.set $fsst

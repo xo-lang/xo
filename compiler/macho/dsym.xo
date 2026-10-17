@@ -5,7 +5,7 @@
 // executable's LC_UUID, which lldb and the profiler find at
 // PROG.dSYM/Contents/Resources/DWARF/PROG.
 //
-// The arm64 emitter's compile units (selfhost/arm64 debug.xo, producer
+// The arm64 emitter's compile units (compiler/arm64 debug.xo, producer
 // "xo") give their abbreviations' and line program's offsets as 0 within
 // their object; here each is moved by where its object's chunk lands:
 // the abbreviation offset at byte 8 of the unit, DW_AT_stmt_list, the

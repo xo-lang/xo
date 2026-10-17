@@ -18,7 +18,7 @@ import (
 )
 
 // TestDebugVars checks decision 0252's variables on darwin/arm64:
-// testdata/debugvars built by the arm64 backend, linked by selfhost/macho
+// testdata/debugvars built by the arm64 backend, linked by compiler/macho
 // and by cc (dsymutil), and by the LLVM backend, has a dSYM that verifies
 // and describes sum's parameter k and its locals (and, from the arm64
 // backend, the struct Pair with its fields); lldb stopped at main.xo:12
@@ -158,9 +158,9 @@ func TestDebugInfoSameCode(t *testing.T) {
 	}
 }
 
-// TestDwarfReader checks decision 0253's DWARF reader (selfhost/debug,
+// TestDwarfReader checks decision 0253's DWARF reader (compiler/debug,
 // through `xo dev dwarf`) on testdata/debugvars: from the arm64
-// backend's dSYM (selfhost/macho and dsymutil) it reads sum's variables
+// backend's dSYM (compiler/macho and dsymutil) it reads sum's variables
 // with the address ranges dwarfdump prints for each, and from the LLVM
 // backend's, sum inlined into main with k the constant 10; from each, a
 // breakpoint at main.xo:11 resolves to lldb's address, and the line
@@ -320,11 +320,11 @@ func lastLines(b []byte, n int) string {
 	return strings.Join(ls, "\n")
 }
 
-// TestUnwind checks decision 0253's unwinder (selfhost/debug unwind.xo,
+// TestUnwind checks decision 0253's unwinder (compiler/debug unwind.xo,
 // through `xo dev unwind`) against lldb: testdata/debugvars stopped in sum
 // and testdata/unwind/fiber stopped in work on a task that parked on a
 // channel and resumed on its own fiber stack, each built by the arm64
-// backend (selfhost/macho and cc) and by LLVM. lldb records the stopped
+// backend (compiler/macho and cc) and by LLVM. lldb records the stopped
 // thread (testdata/unwind/snap.py: registers and stack), and the frames
 // xo dev unwind finds in it (inlined calls as frames, each with its
 // function and line, or symbol and offset) are lldb's own, in order.

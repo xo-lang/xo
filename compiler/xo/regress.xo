@@ -5,7 +5,7 @@
 // still checks with it.
 
 use std/json
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// One parameter of the failing call (rt.RegressRecord's params; the
 /// JSON key "var" is read as is_var).

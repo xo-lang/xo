@@ -2,9 +2,9 @@
 
 Status: Observed (2026-10-13)
 
-Symptom: in VS Code, every hover over a file under `selfhost/` pops
+Symptom: in VS Code, every hover over a file under `compiler/` pops
 "Request textDocument/hover failed." The Xo output channel shows
-`selfhost/xo.mod: edition "preview" is not a year (want edition YYYY)`,
+`compiler/xo.mod: edition "preview" is not a year (want edition YYYY)`,
 code -32803.
 
 Cause: the extension started `.tools/bin/xo`, an xo 0.8.0 built on

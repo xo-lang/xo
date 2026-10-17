@@ -3,7 +3,7 @@
 // (std/llrt/xo_bytes.c's xo_rs_append_rune, xo_rs_append_rune_quote,
 // and xo_rs_append_u64, the last an snprintf). The Debug text of
 // collections, structs, enums, and tuples is generated code (internal/ssa
-// build_show.go, selfhost/ssa/show.xo) that calls these for its Rune and
+// build_show.go, compiler/ssa/show.xo) that calls these for its Rune and
 // UInt64 elements, num.xo for its Ints and Floats, and text.xo for its
 // Str and Bytes. The SSA builder calls them through the native prelude's
 // llrt_append_rune and friends. Decision 0198 deleted the C path

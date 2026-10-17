@@ -23,7 +23,7 @@ field (ARM64_RELOC_POINTER_TO_GOT, pc relative, 4 bytes) holds minus
 its own offset in the section minus 2^30; ld ignores it, the
 relocation decides.
 
-Fix: `selfhost/macho` registers symbols in that order (`Asm.register`,
+Fix: `compiler/macho` registers symbols in that order (`Asm.register`,
 `reg_order`), builds the string table the same way, and writes the
 personality field as LLVM does; all 158 golden objects are byte
 identical (`scripts/macho-compare.py`). When an object differs only in

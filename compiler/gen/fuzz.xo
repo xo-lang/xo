@@ -1,7 +1,7 @@
 // Contract fuzzing (internal/gen fuzz.go): `xo test` runs every function
 // with contracts on generated inputs that satisfy its `requires` clauses.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// The TestOs field that provides a capability parameter, "" for none,
 /// "os" for Os (capField).

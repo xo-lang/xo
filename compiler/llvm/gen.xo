@@ -1,5 +1,5 @@
 // The LLVM emitter (internal/llvm fromssa.go, decision 0040) in Xo,
-// decision 0166: it lowers the self hosted SSA module (selfhost/ssa,
+// decision 0166: it lowers the self hosted SSA module (compiler/ssa,
 // after the passes and InsertRC) to the textual LLVM IR internal/llvm
 // prints for the same module, byte for byte. This file holds the module
 // wide state (sgen): types and their layout, globals, and the generated
@@ -11,7 +11,7 @@
 // emitter writes them, so every global, helper, and type definition is
 // numbered and placed as there.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The state of one program lowered (sgen), and of the function being
 /// lowered (sfn).

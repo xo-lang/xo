@@ -28,5 +28,5 @@ Fix: none needed. To verify a Linux LLVM binary's DWARF, link the same
 objects with ld.lld (no -O2, so no tail merging) and verify that, or
 compare the names and locations llvm-dwarfdump prints against such a
 link. Do not treat these errors as a regression. The DWARF reader of
-`xo debug` (selfhost/debug) reads a string at any offset, as gdb and lldb
+`xo debug` (compiler/debug) reads a string at any offset, as gdb and lldb
 do.

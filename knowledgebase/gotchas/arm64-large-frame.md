@@ -1,8 +1,8 @@
 # arm64: a frame over 4000 bytes or a wide value's helper failed to build
 
-Status: Observed (2026-10-10, selfhost/parser on `--backend=arm64`); fixed 2026-10-10 (decision 0146)
+Status: Observed (2026-10-10, compiler/parser on `--backend=arm64`); fixed 2026-10-10 (decision 0146)
 
-Symptom: `xo build --backend=arm64 selfhost/parser` failed first with
+Symptom: `xo build --backend=arm64 compiler/parser` failed first with
 `arm64 backend: frame of Parser.parse_file too large (5120 bytes)`, then,
 once that was allowed, in the assembler with `index must be a multiple of
 8 in range [-512, 504]` on `stp x29, x30, [sp, #688]` in `// dropp
@@ -24,7 +24,7 @@ bytes (`recordAt`). Test programs `internal/arm64/testdata/run/big_frame`
 lists, enum payloads, closures). Any other `[sp, #off]` pair instruction
 added to the backend needs the same reach check.
 
-Observed again (2026-10-10, selfhost/check stage 2): `frame of
+Observed again (2026-10-10, compiler/check stage 2): `frame of
 Checker.habit_call too large (29568 bytes)`, over the 28 KiB limit, on a
 function of about 150 lines (a `match` of 20 habit names, each arm
 calling the checker and building syntax nodes), after a field was added
@@ -36,7 +36,7 @@ time (an interval coloring over the slots in `internal/arm64`, with
 `habit_call` before the split as the test case), which would also shrink
 the 9 to 20 KiB frames of the parsers.
 
-Observed a third time (2026-10-10, selfhost/check stage 5): adding a
+Observed a third time (2026-10-10, compiler/check stage 5): adding a
 `Map[Int, Bool]` field to the `Checker` struct (to keep the read flag of
 locals beside the objects) made `frame of Checker.resolve_named_type too
 large (29072 bytes)`; the same commit without the field built. The flag

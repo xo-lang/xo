@@ -20,7 +20,7 @@
 # terminates it; only the instance this script launched (by its id).
 set -euo pipefail
 
-TYPE=${XO_REMOTE_TYPE:-m7i.4xlarge}  # 16 vCPUs, 64 GiB: xo1 compiling selfhost/xo peaks near 17 GB
+TYPE=${XO_REMOTE_TYPE:-m7i.4xlarge}  # 16 vCPUs, 64 GiB: xo1 compiling compiler/xo peaks near 17 GB
 REGION=${XO_REMOTE_REGION:-us-east-1}
 MAXMIN=${XO_REMOTE_MAX_MIN:-240}
 GOVER=${XO_REMOTE_GO:-1.26.1}

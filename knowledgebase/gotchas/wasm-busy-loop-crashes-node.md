@@ -1,9 +1,9 @@
 # A long wasm run crashes Node's single threaded collector; a spinning task runs forever
 
-Status: Observed (2026-10-12), Node 22.22.1, selfhost/wasm stage 2.
+Status: Observed (2026-10-12), Node 22.22.1, compiler/wasm stage 2.
 
 **Symptom.** The goldens `conc_unwind` and `conc_rwlock_handoff`, run
-under `selfhost/wasm/run.mjs`, printed their first lines and then
+under `compiler/wasm/run.mjs`, printed their first lines and then
 exited with status 133 and a V8 fatal error on stderr:
 `Check failed: concurrent_marking_handle_ implies
 !concurrent_marking_handle_->IsValid()` (in

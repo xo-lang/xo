@@ -1,5 +1,5 @@
 // The arm64 assembler of decision 0182: the subset of assembly the arm64
-// emitter writes (selfhost/arm64, internal/arm64) into a Mach-O
+// emitter writes (compiler/arm64, internal/arm64) into a Mach-O
 // relocatable object, as `cc -c` (clang -cc1as) writes it.
 //
 // One pass over the source fills the sections: __text as 32 bit words

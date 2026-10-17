@@ -1,8 +1,8 @@
 # One set of wasm locals per SSA value explodes on large structs
 
-Status: Observed (2026-10-12), selfhost/wasm stage 2 (decision 0179).
+Status: Observed (2026-10-12), compiler/wasm stage 2 (decision 0179).
 
-**Symptom.** selfhost/wasm built selfhost/check (the self hosted
+**Symptom.** compiler/wasm built compiler/check (the self hosted
 checker) into a module of 1.67 GB (WAT 8.85 GB, 693 s and 14.5 GB of
 memory to build) that no engine loads: 162 functions had more than
 50,000 locals, V8's limit, one of them 3,548,286. The goldens and the
@@ -16,7 +16,7 @@ fields everywhere: every update and every call result is a new value,
 so a long method made thousands of 253 local values, and copied all of
 them for each field update.
 
-**Fix.** `plan_locals` (selfhost/wasm/func.xo) shares locals between
+**Fix.** `plan_locals` (compiler/wasm/func.xo) shares locals between
 values whose live ranges do not overlap (SSA liveness, a linear scan),
 updates a dying struct's field in place, and lets a field read use its
 struct's locals. Two traps on the way: a block parameter is written at

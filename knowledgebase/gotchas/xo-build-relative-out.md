@@ -1,9 +1,9 @@
 # `xo build -o <relative path>` wrote the binary into the build cache
 
-Status: Observed (2026-10-08, building `selfhost/lexer` for timing). Fixed
+Status: Observed (2026-10-08, building `compiler/lexer` for timing). Fixed
 the same day in `cmd/xo/build.go`.
 
-Symptom: `xo build -o .tools/xolex selfhost/lexer` printed
+Symptom: `xo build -o .tools/xolex compiler/lexer` printed
 `darwin/arm64: .tools/xolex` and exited 0, but no file appeared there. It
 was under `~/Library/Caches/xo/build/<hash>/.tools/xolex`.
 

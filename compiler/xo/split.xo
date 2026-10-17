@@ -120,7 +120,7 @@ fn mem_gb(os: Os) -> Int {
 
 /// The LTO mode of a single module build: $XO_LLVM_LTO, else none at -O0
 /// (the link's whole program optimization and code generation ran on one
-/// core for most of an unoptimized build of selfhost/xo) and full
+/// core for most of an unoptimized build of compiler/xo) and full
 /// otherwise.
 fn single_lto(c: SplitConfig) -> Str {
   if !c.single.is_empty() {

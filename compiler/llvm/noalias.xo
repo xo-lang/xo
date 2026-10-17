@@ -7,7 +7,7 @@
 // lists scalar. Xo's value semantics settle it within one call of a
 // function, for the classes of values below.
 //
-// The facts used, both kept by the SSA's reference counting (selfhost/ssa
+// The facts used, both kept by the SSA's reference counting (compiler/ssa
 // rc.xo, decisions 0046 and 0058) and relied on by every in place update
 // already: (1) a list is written in place only through a value that holds
 // the only reference to it: every update (list.set, list.push, list.pop,
@@ -68,7 +68,7 @@
 // follow the functions, numbered from SCOPE_BASE * (fi + 1). A function
 // with fewer than two scopes gets nothing.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The first metadata id of function 0: function fi's nodes are
 /// SCOPE_BASE * (fi + 1) and up (ids may skip).

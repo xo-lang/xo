@@ -44,7 +44,7 @@ Never hold the lock around something that itself runs an Xo build: a
 trim waiting at the gate would deadlock with the nested shared lock.
 
 Fixed for xo1 too (2026-10-13, decision 0214): the self-hosted
-driver's Go backend (`go_build` in `selfhost/xo/gobackend.xo`) holds the
+driver's Go backend (`go_build` in `compiler/xo/gobackend.xo`) holds the
 same lock with the same protocol (`hold_go_cache`: `xo-gate.lock`
 shared, then `xo-cache.lock` shared, the gate released) through
 `std/internal`'s `lock_shared`, a shared flock that only std and the

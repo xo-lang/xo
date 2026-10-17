@@ -3,7 +3,7 @@
 // groups.go containsGroup and groupEscapes. They run after the body of a
 // `scope` is checked, on the recorded identifiers and types.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The nodes the escape checks act on at or below a node, in source order
 /// (walk.go inspect, filtered): calls, closures, and `let`, `var`,

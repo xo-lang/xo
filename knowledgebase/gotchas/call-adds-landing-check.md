@@ -1,7 +1,7 @@
 # Every call adds a landing check while the body is built
 
 Status: Observed (2026-10-13, decision 0207 stage 2, code reading
-while writing selfhost/ssa contract.xo check_no_alloc)
+while writing compiler/ssa contract.xo check_no_alloc)
 
 Symptom: a rule checked on a function's SSA right after its body is
 built ("cannot fault": no unwind block) rejects a function that only

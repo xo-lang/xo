@@ -2,8 +2,8 @@
 // the machine fixes of check diagnostics applied round after round until
 // none apply, then the changed files reformatted.
 
-use github.com/xo-lang/xo/selfhost/lexer
-use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/cli/core/format
 
 /// fix.MaxRounds: a fix that keeps producing new diagnostics with fixes
 /// stops here instead of looping forever.

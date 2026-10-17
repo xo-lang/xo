@@ -1,5 +1,5 @@
 // `xo1 build --backend=wasm` (decision 0179): the SSA module after the
-// passes lowered by selfhost/wasm to a WebAssembly module whose only
+// passes lowered by compiler/wasm to a WebAssembly module whose only
 // imports are WASI preview1's (no C compiler, no linker), written to OUT
 // (default <name>.wasm) with its WAT text beside it (OUT with .wat). A
 // program the backend does not support yet fails with its reason; no
@@ -7,11 +7,11 @@
 //
 // build_wasm cannot fail with an error: an error result would record its
 // arguments for the error trace (decision 0104), whose Debug text of the
-// Module collides with selfhost/lexer's Kind in the Go SSA builder
+// Module collides with compiler/lexer's Kind in the Go SSA builder
 // (gotchas/ssa-debug-helper-unqualified-type-name.md).
 
-use github.com/xo-lang/xo/selfhost/ssa
-use github.com/xo-lang/xo/selfhost/wasm
+use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/wasm
 
 fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str) {
   let p = wasm.generate(m)

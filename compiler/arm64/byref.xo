@@ -8,7 +8,7 @@
 // forward dataflow (compute_held) tells which SSA value the home holds
 // before each instruction. A non `var` one is read only.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 const BY_REF_MIN = 256
 

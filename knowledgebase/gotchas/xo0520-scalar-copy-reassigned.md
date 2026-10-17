@@ -1,6 +1,6 @@
 # XO0520 on a scalar copied out of a list and then reassigned
 
-Status: Observed (2026-10-11, selfhost/ssa verify.xo)
+Status: Observed (2026-10-11, compiler/ssa verify.xo)
 
 Symptom: `var want = rs[0]` followed by `if rs.len() > 1 { want =
 m.tuple(rs) }` and a read of `want` fails with `error XO0520: mutation

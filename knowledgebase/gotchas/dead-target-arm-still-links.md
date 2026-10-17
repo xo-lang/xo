@@ -28,7 +28,7 @@ SSA builders and make the layer choice a constant the builders see.
 Fixed for the wasm layer 0 calls (2026-10-15): the SSA builders lower
 a call of rt.fs_* (but fs_root, fs_mode, fs_new, fs_canceled) to a fault
 on the native targets, and rt.stdin_* off Windows, as they do a platform
-call of another OS (selfhost/ssa call.xo wasm_only_rt). The C stubs
+call of another OS (compiler/ssa call.xo wasm_only_rt). The C stubs
 (xo_fs.c FS_DEAD, xo_sys.c, xo_stdin.c's non-Windows half) stayed only
 while the seed's code still named them
 (runtime-c-the-seed-still-calls.md); they were deleted with seed

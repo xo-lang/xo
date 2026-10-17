@@ -12,7 +12,7 @@ binary is valid. It depends on the binary's layout: bench/perf's
 test_fakes golden with a 7,300 word constant ran and with a 7,600 word
 one did not (`__TEXT` 0x230000 against 0x234000; xo lang 4 saw the same
 for http_tls_keys at 0x384000 against 0x388000). It was first seen with
-selfhost/macho's output, but a binary Apple's ld linked through cc
+compiler/macho's output, but a binary Apple's ld linked through cc
 (internal/llvm's http_tls_keys golden, with LC_FUNCTION_STARTS) waited
 the same way, so it is not the linker's.
 
@@ -59,7 +59,7 @@ the terminal app that runs the builds under System Settings > Privacy &
 Security > Developer Tools, which exempts the programs it starts from
 these assessments. `xo dev goldens` puts each run's binaries in a fresh
 `run-<random>` directory under its output directory and removes it at
-the end (selfhost/cli/dev goldens.xo), so no path is linked again while
+the end (compiler/cli/dev goldens.xo), so no path is linked again while
 another run starts it. The toolchain's mitigation, cc as the
 darwin/arm64 default link (6faa44cb), was undone the same day once
 both causes were fixed (decision 0182 addendum): macho is the default

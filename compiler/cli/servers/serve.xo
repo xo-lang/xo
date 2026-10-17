@@ -18,7 +18,7 @@
 // modules outside the directories (imports through xo.mod) are not
 // stamped: their changes are seen after a change under the directories.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// The environment variable that overrides the socket path.
 const SOCKET_ENV = "XO_SERVE_SOCKET"

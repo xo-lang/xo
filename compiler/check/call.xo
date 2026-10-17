@@ -2,7 +2,7 @@
 // module members, fields, methods, statics, variants, function values,
 // conversions, and the matching of arguments to parameters.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 type Arg = parser.Arg
 

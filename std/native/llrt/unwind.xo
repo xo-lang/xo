@@ -28,7 +28,7 @@
 // darwin/amd64 left libgcc's and libunwind's forced unwind and the C
 // personality; UNTESTED on linux/amd64 and darwin/amd64): the register
 // sets are DWARF's numbering of the target (sp_off, ra_off), the
-// trampolines the emitters' (selfhost/llvm sched.xo unwind_fns), and a
+// trampolines the emitters' (compiler/llvm sched.xo unwind_fns), and a
 // macOS compact encoding is arm64's (cstep_a64) or x86_64's (cstep_x64).
 //
 // Nothing here allocates, faults, or keeps a counted value: the scratch
@@ -1878,7 +1878,7 @@ pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
 
 /// The pcs of a parked fiber's frames, innermost first, into out (at most
 /// max): their count (`xo dump`, decision 0251). saved is the fiber's
-/// saved stack pointer: the switch's frame (selfhost/arm64 sched.xo
+/// saved stack pointer: the switch's frame (compiler/arm64 sched.xo
 /// stack_switch_body: x19 to x28, x29, x30 at saved + 0 to 88, the
 /// caller's stack at saved + 160), so the first pc is the switch's
 /// return address. s is a profiler record (prof_init). arm64 only (0 on

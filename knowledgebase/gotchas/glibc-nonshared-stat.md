@@ -6,7 +6,7 @@ retire-go-2026-10-12.md "Switch point B: the flip").
 
 ## Symptom
 
-The linux/arm64 xo1 linked by selfhost/macho (`--ld=macho`) failed every
+The linux/arm64 xo1 linked by compiler/macho (`--ld=macho`) failed every
 command at load time:
 `bin/xo: symbol lookup error: bin/xo: undefined symbol: stat, version GLIBC_2.17`.
 Decision 0182's 159 goldens had passed in glibc 2.31 and 2.41
@@ -18,7 +18,7 @@ from the runtime pack's objects, which xo1 does (the pack's xo_fs.c).
 Before glibc 2.33, `stat`, `fstat`, `lstat`, `fstatat` (and `mknod`,
 `atexit`, `pthread_atfork`) are not exported by libc.so.6: they live in
 libc_nonshared.a, which cc links statically, as wrappers calling
-`__xstat(0, path, buf)` and its siblings. selfhost/macho reads no
+`__xstat(0, path, buf)` and its siblings. compiler/macho reads no
 libraries, so it imported `stat` with libc's default version
 GLIBC_2.17, which no glibc has (2.33 and later export `stat@GLIBC_2.33`).
 

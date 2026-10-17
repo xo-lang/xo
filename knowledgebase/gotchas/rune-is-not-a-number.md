@@ -1,6 +1,6 @@
 # A rune literal was not a number: `Int('a')` and `Rune(n)` did not compile
 
-Status: Observed (2026-10-08, porting the lexer to Xo, `selfhost/lexer`).
+Status: Observed (2026-10-08, porting the lexer to Xo, `compiler/lexer`).
 Resolved (2026-10-08) by decision 0079.
 
 Symptom (before 0079): byte level code could not compare a byte with a

@@ -12,7 +12,7 @@ an Int).
 Cause: std/rt's `Shl` and `Shr` (arith.go) test `n < 0 ||
 int64(n) >= bits`; for an unsigned n at or above 2^63, `int64(n)` is
 negative, so neither test fires and Go's shift gives 0. The native
-lowering (internal/ssa build_int.go `sizedOp`, selfhost/ssa show.xo
+lowering (internal/ssa build_int.go `sizedOp`, compiler/ssa show.xo
 `sized_op`, as xo_int_op did) tests the amount's word as an Int, and
 the message prints it as one: the shift amount has been converted to the
 shifted value's type (`shiftCount`), so an Int -1 and a UInt64 2^64 - 1

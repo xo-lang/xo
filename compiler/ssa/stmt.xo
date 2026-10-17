@@ -1,9 +1,9 @@
 // Blocks, statements, loops, and assignments (internal/ssa
 // build_stmt.go, build_whilelet.go).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/lexer
 
 /// Lowers a block and returns the value of its last expression statement
 /// (unit when there is none).

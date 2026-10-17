@@ -188,7 +188,7 @@ pub fn cur() -> Int {
 }
 
 /// root, kept out of line: it calls itself on a path never taken, so the
-/// inliner (selfhost/arm64/inline.xo: a function on a call cycle is not
+/// inliner (compiler/arm64/inline.xo: a function on a call cycle is not
 /// inlinable) counts it as one instruction in cur, which then stays small
 /// enough to inline at every budget tick and lock (the zero-C perf sweep
 /// of 2026-10-15: a real call to cur was 17% of ctx budget's samples).

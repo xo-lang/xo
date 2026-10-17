@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// TestSelfhostChecker runs the Xo checker (selfhost/check), built with
+// TestSelfhostChecker runs the Xo checker (compiler/check), built with
 // each backend, on every directory of the repository that holds .xo
 // files, each checked as a run of its own like `xo check <dir>`, and
 // compares the names, types, and sigs sections of its typedump and its
@@ -535,7 +535,7 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 
 func stageDiag(line string) bool { return stageDiagRE.MatchString(line) }
 
-// TestSelfhostCheckerXoTests runs the Xo tests of selfhost/check (`xo
+// TestSelfhostCheckerXoTests runs the Xo tests of compiler/check (`xo
 // test`): path helpers, JSON escaping, and checks of small modules in the
 // test's in memory file system.
 func TestSelfhostCheckerXoTests(t *testing.T) {

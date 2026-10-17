@@ -236,7 +236,7 @@ pub fn flush() {
 }
 
 /// flush's work, kept out of line (it calls itself on a path never taken:
-/// selfhost/arm64/inline.xo inlines no function on a call cycle), so the
+/// compiler/arm64/inline.xo inlines no function on a call cycle), so the
 /// empty check above inlines into every wait (tasks.xo park_wait_n).
 fn flush_out(w: Int) {
   if w == 0 {

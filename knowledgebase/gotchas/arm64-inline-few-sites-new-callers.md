@@ -21,7 +21,7 @@ registers on every call (LLVM json enc_small 1.051, text replace 1.028).
 
 ## Cause
 
-selfhost/arm64/inline.xo copies a function over its size limits
+compiler/arm64/inline.xo copies a function over its size limits
 (INLINE_MAX_INSTRS 40, INLINE_MAX_BLOCKS 12) only when it has at most
 INLINE_FEW_SITES (2) call sites in the whole program and the copies fit
 INLINE_FEW_BUDGET. The count is program wide, so a third caller anywhere

@@ -1113,7 +1113,7 @@ fn (var b: Builder) verify_mutants(n: Int) -> Str {
 
 /// The verifier's errors on the module after reference counting, in
 /// function order (Module.Verify): the structural checks of every
-/// function, then, when they pass, the ownership balance (selfhost/arm64
+/// function, then, when they pass, the ownership balance (compiler/arm64
 /// verifies the module again after inlining, decision 0158).
 /// verify_all on up to jobs tasks, by runs of functions: the same errors
 /// in the same order. Each task checks against its own copy of the

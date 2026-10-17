@@ -1,8 +1,8 @@
 // The no GC check (internal/ssa nogc.go, decision 0083): what the builder
 // recorded as unsupported, as XO1201 diagnostics at the sites. `xo check
-// --no-gc` (selfhost/cli/core) and xo1's native builds report them.
+// --no-gc` (compiler/cli/core) and xo1's native builds report them.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// One construct the builder does not lower (build.go Error): the file
 /// as the checker names it ("" without a position), the span, the

@@ -10,11 +10,11 @@
 //
 // Diagnostics are the checker's JSON (spec 10, stable XOnnnn codes), as
 // `xo check --json` prints them. build writes the program's module to
-// OUT, for the page's runner (WASI preview1, as selfhost/wasm/run.mjs).
+// OUT, for the page's runner (WASI preview1, as compiler/wasm/run.mjs).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/core/format
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/core/format
+use github.com/xo-lang/xo/compiler/ssa
 
 /// Runs one playground command and prints its JSON line.
 fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {

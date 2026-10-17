@@ -1,7 +1,7 @@
 // Reference counting inline, lists, and calls (internal/arm64 isel.go,
 // second half).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 // ---------------------------------------------------------------------------
 // Reference counting
@@ -2165,7 +2165,7 @@ fn (var g: G) atomic_result(v: Int, r: Int) {
 /// on ARMv8.0, loads, stores, and fences inline and the read modify
 /// writes as calls of libgcc's outline atomics (__aarch64_cas8_acq_rel
 /// and friends), as the C runtime's -moutline-atomics objects do
-/// (selfhost/macho elflink.xo writes them when it links without cc).
+/// (compiler/macho elflink.xo writes them when it links without cc).
 fn (var g: G) atomic(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)

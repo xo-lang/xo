@@ -8,10 +8,10 @@ go only "merge" tier still missed its 5 minute target.
 
 Cause: timing the go backend's Xo builder on each of the 646 repository
 runs (`--stages` vs build only) showed 157 s of passes, 112 s of it in
-five runs and 110 s in three: selfhost/ssa (69 s), selfhost/check (22 s),
+five runs and 110 s in three: compiler/ssa (69 s), compiler/check (22 s),
 and internal/arm64/testdata/run/huge_frame (19 s; its build stage alone
 is 4 s). huge_frame is one 5,000 line function, so the cost is not
-proportional to source size: selfhost/parser (7,900 lines) takes 1.4 s.
+proportional to source size: compiler/parser (7,900 lines) takes 1.4 s.
 The Go builder's passes (the parent test's 86 s) are skewed the same way.
 
 Fix: the merge tier compares only the build stage of `buildOnlyMerge`
@@ -19,16 +19,16 @@ Fix: the merge tier compares only the build stage of `buildOnlyMerge`
 fell from 231 s to 54 s. The full tier still compares every stage of
 every run. When a new large program (a self hosted component, a huge
 function fixture) slows the merge tier, time it the same way (build
-selfhost/ssa with `xo build -o`, run it per directory with and without
+compiler/ssa with `xo build -o`, run it per directory with and without
 `--stages`) and add it to the list.
 
 Recurrence (2026-10-12): the fixed lists (buildOnlyMerge in ssa_test.go,
 arm64Heavy in arm64_test.go) missed the components added since,
-selfhost/arm64, selfhost/llvm, and selfhost/xo, so the merge tier ran
-the SSA passes of all three, the arm64 emitter on selfhost/llvm, and the
+compiler/arm64, compiler/llvm, and compiler/xo, so the merge tier ran
+the SSA passes of all three, the arm64 emitter on compiler/llvm, and the
 LLVM emitter on all three: 1,329 s under load instead of about 2.5 min.
 Fix: one rule, `mergeHeavy` in tier_test.go (huge_frame and every
-directory under selfhost/ but lexer and parser), used by the SSA,
+directory under compiler/ but lexer and parser), used by the SSA,
 arm64, and LLVM comparisons, so a new component is heavy without an
 edit. Figures: knowledgebase/infrastructure/toolchain.md, the merge
 tier line.

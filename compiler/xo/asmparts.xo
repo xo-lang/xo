@@ -1,13 +1,13 @@
 // The assembly files of a parallel arm64 generation (arm64
 // generate_parallel, bench/results/fast-builds-2026-10-13.md) assemble
-// apart: by selfhost/macho on parallel tasks, or by parallel `cc -c`
+// apart: by compiler/macho on parallel tasks, or by parallel `cc -c`
 // processes, before one link.
 
-use github.com/xo-lang/xo/selfhost/macho
+use github.com/xo-lang/xo/compiler/macho
 use std/crypto
 
 /// The objects of the assembly files srcs (ELF when elf, else Mach-O) by
-/// selfhost/macho, on up to jobs tasks, in the order of srcs.
+/// compiler/macho, on up to jobs tasks, in the order of srcs.
 fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
   let w = jobs.min(n)

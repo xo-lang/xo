@@ -1,7 +1,7 @@
 # Keeping a `var` struct in memory: three SSA shapes that hide the value's real lifetime
 
-Status: Observed (2026-10-12), selfhost/wasm stage 3 (decision 0179,
-`selfhost/wasm/home.xo`).
+Status: Observed (2026-10-12), compiler/wasm stage 3 (decision 0179,
+`compiler/wasm/home.xo`).
 
 **Symptom.** Passing `var` parameters of 16 leaves or more by reference
 (the home of decision 0179's stage 3) first made the self hosted

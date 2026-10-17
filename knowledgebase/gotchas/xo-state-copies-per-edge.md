@@ -1,6 +1,6 @@
 # Xo: a dataflow state copied per edge costs more than the map it replaces
 
-Status: Observed (2026-10-12, selfhost/ssa verify.xo)
+Status: Observed (2026-10-12, compiler/ssa verify.xo)
 
 Symptom: replacing the verifier's `Map[Str, Int]` of reference counts
 (the ordered Map records an entry per change) with integer leaf numbers

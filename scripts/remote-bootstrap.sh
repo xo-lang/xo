@@ -12,7 +12,7 @@
 # On the instance: phase 1 makes the seed, the stand-in for the previous
 # release's binary: `go run ./scripts/xobuild` (decision 0215: Go builds
 # the Go xo of the go-compiler-final commit, that builds its xo1, and that
-# xo1 builds the checkout's selfhost/xo into bin/xo). Phase 2 deletes the
+# xo1 builds the checkout's compiler/xo into bin/xo). Phase 2 deletes the
 # Go toolchain from the machine (/usr/local/go, the Go caches) and runs
 # scripts/bootstrap-xo.sh with the seed: s1, s2, s3 and the
 # fixed point, with clang and gcc (`cc`, the arm64 backend's assembler and
@@ -82,7 +82,7 @@ bundle=$(mktemp -t xo-bundle).bundle
 git bundle create "$bundle" "$commit" >/dev/null 2>&1 || git bundle create "$bundle" HEAD >/dev/null
 scp -i "$key" -o StrictHostKeyChecking=accept-new -q "$bundle" "ec2-user@$ip:xo.bundle"
 rm -f "$bundle"
-log "phase 1: the seed (go run ./scripts/xobuild --from-source: the go-compiler-final xo1 and the seed chain build selfhost/xo)"
+log "phase 1: the seed (go run ./scripts/xobuild --from-source: the go-compiler-final xo1 and the seed chain build compiler/xo)"
 ssh_ "set -eo pipefail; export PATH=/usr/local/go/bin:\$PATH; git clone -q xo.bundle xo && cd xo && git checkout -q $commit && \
   { uname -a; nproc; free -g; go version; clang --version | head -1; } && \
   mkdir -p \$HOME/seed && t0=\$(date +%s) && cp \$(go run ./scripts/xobuild --from-source) \$HOME/seed/xo && \

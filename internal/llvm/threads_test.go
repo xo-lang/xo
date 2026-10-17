@@ -301,7 +301,7 @@ var fiberPeakRE = regexp.MustCompile(`fiber_peak=(\d+)`)
 // TestGoldenThreads built every golden program with share probes (every
 // heap value marked shared as it is defined, decision 0058) under
 // ThreadSanitizer; the probes are a pass of the Go SSA builder that
-// selfhost/ssa does not have, so it went with decision 0215.
+// compiler/ssa does not have, so it went with decision 0215.
 
 // usesTasks reports whether the golden program in dir uses scopes,
 // channels, mutexes, or atomics.

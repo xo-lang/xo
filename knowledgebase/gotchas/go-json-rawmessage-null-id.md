@@ -21,6 +21,6 @@ what clients see, so the Xo servers copy them:
 
 ## Fix
 
-selfhost/cli/servers json.xo keeps every member's source text (`raws`)
+compiler/cli/servers json.xo keeps every member's source text (`raws`)
 for RawMessage, `get` matches without case for struct fields, `mget`
 exactly for maps; cmd/xo servers_xo_test.go's transcripts cover each case.

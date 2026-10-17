@@ -4,8 +4,8 @@
 // struct, snake_case; nil fields, false flags, empty lists, and empty
 // strings are left out.
 
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/cli/core/format
 
 /// The fields of an object being built.
 struct Obj {

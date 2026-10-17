@@ -3,7 +3,7 @@
 Status: Observed (2026-10-11, decision 0174).
 
 **Symptom.** Code for a program built with a native backend (the self
-hosted driver `selfhost/xo`, built with `--backend=arm64`) checks clean
+hosted driver `compiler/xo`, built with `--backend=arm64`) checks clean
 with `xo check`, then `xo build --backend=arm64` stops at once with
 XO1201 "not available without a garbage collector (`--no-gc`) yet: the
 method `Env.program`". In this repo the build sat in the heavy.sh queue

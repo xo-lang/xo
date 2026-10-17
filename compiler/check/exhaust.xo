@@ -4,7 +4,7 @@
 // (XO0301), refutable `let` and `for` patterns (XO0303), and `_` arms
 // that hide variants of an enum of the module (XO0305, a warning).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The kinds of a pattern form (pattern.go ipKind).
 const IP_WILD = 0

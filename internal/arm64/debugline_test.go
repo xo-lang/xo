@@ -91,7 +91,7 @@ func TestDebugLineDarwin(t *testing.T) {
 }
 
 // TestDebugLineDarwinCC checks the dSYM of the darwin links that do not go
-// through selfhost/macho (decision 0239): the LLVM backend's and arm64
+// through compiler/macho (decision 0239): the LLVM backend's and arm64
 // with --ld=cc, which run dsymutil after the cc link. Each must write
 // PROG.dSYM whose line table names main.xo and verifies, and lldb must
 // resolve a breakpoint at main.xo:9 from it (no run: the line tables

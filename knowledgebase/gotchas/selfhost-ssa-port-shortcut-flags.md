@@ -1,4 +1,4 @@
-# selfhost/ssa: a shortcut flag of the port encodes the stage it was written in
+# compiler/ssa: a shortcut flag of the port encodes the stage it was written in
 
 Status: Observed (2026-10-11, SSA stage 5)
 

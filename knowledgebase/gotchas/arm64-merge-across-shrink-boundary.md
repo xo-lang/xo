@@ -6,7 +6,7 @@ bench/results/arm64-regalloc-2026-10-16.md).
 Symptom: programs with recursion hang or overflow the stack at run time
 (the recursion golden spun in eval), while every build succeeds.
 
-Cause: selfhost/arm64 shrink.xo plans shrink wrapping before register
+Cause: compiler/arm64 shrink.xo plans shrink wrapping before register
 allocation. Its restore blocks (fedge 2) are where emission pops the
 frame before a jump out of the framed region. A pass that merged a
 restore block into its predecessor removed that jump, so the function

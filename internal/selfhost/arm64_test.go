@@ -19,9 +19,9 @@ var arm64Flags = []string{}
 
 // arm64Heavy are the runs whose emission takes the longest (most of the
 // time of the comparison): the merge tier leaves them to the full tier.
-func arm64Heavy(d string) bool { return mergeHeavy(d) || d == "selfhost/parser" }
+func arm64Heavy(d string) bool { return mergeHeavy(d) || d == "compiler/parser" }
 
-// TestSelfhostArm64 runs the Xo arm64 emitter (selfhost/arm64, decision
+// TestSelfhostArm64 runs the Xo arm64 emitter (compiler/arm64, decision
 // 0158), built with each backend, on every directory of the repository
 // holding .xo files that the SSA builder builds completely, and compares
 // the assembly with the recording (the recording's `xo asmdump` until

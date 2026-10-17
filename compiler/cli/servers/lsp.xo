@@ -2,7 +2,7 @@
 // (decision 0178 stage 5). JSON-RPC 2.0 over standard input and output
 // with Content-Length framing (LSP 3.17). The server keeps the text of
 // open documents and checks their modules in process with the self hosted
-// checker (selfhost/check), the open texts as its overlay, after each
+// checker (compiler/check), the open texts as its overlay, after each
 // change (debounced, 150 ms) and before each request that reads the
 // check, and publishes the diagnostics as the Go server does.
 //
@@ -16,8 +16,8 @@
 // from a read only copy under <user cache dir>/xo/lsp-std, as the Go
 // server writes it.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 const TOKEN_TYPES = ["namespace", "type", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"]
 

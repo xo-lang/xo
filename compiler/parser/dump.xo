@@ -3,7 +3,7 @@
 // indented two spaces, `label: Kind span attrs`. See internal/ast/text.go
 // for the format.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 /// Parses src and prints its tree and diagnostics. With sig, function
 /// declarations may omit their body. A file with errors prints the tree

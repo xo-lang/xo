@@ -105,7 +105,7 @@ func Host() string { return runtime.GOOS + "/" + runtime.GOARCH }
 
 // Target is the os/arch name xo prints for target s and Result.Binaries
 // is keyed by (build.ParseTargets of the Go compiler, parse_targets of
-// selfhost/xo): Go's names, so the spec's wasi/wasm32 (core 12.1) is
+// compiler/xo): Go's names, so the spec's wasi/wasm32 (core 12.1) is
 // wasip1/wasm; other names are returned as they are.
 func Target(s string) string {
 	os_, arch, ok := strings.Cut(strings.TrimSpace(s), "/")

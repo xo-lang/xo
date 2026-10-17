@@ -1,5 +1,5 @@
 #!/bin/bash
-# xo1-host-check.sh: build the self hosted xo (xo1, selfhost/xo) on this
+# xo1-host-check.sh: build the self hosted xo (xo1, compiler/xo) on this
 # host as a checkout does (`go run ./scripts/xobuild`, internal/xotool:
 # the arm64 backend on an arm64 host, the LLVM backend split into modules
 # on an x86-64 host; decision 0215),
@@ -16,7 +16,7 @@
 # also the machine's peak memory in use, sampled every 5 s):
 #   1. go run ./scripts/xobuild --from-source with a fresh XO_CHECKOUT_CACHE: the xo1
 #      of the go-compiler-final commit (built with Go) builds the
-#      checkout's selfhost/xo
+#      checkout's compiler/xo
 #   2. that xo1 builds a hello program with the native backend; the
 #      hello program must print its line
 #   3. `xo1 dev goldens --backend=llvm` (decision 0209: the want.txt
@@ -43,7 +43,7 @@ backend=llvm
 case "$arch" in arm64|aarch64) backend=arm64 ;; esac
 # as internal/xotool builds xo1 on an x86-64 host (hostBackend)
 export XO_LLVM_SPLIT=${XO_LLVM_SPLIT:-12} XO_LLVM_LTO=${XO_LLVM_LTO:-none}
-# selfhost/xo keeps the C library on Linux until a Linux fixed point passes
+# compiler/xo keeps the C library on Linux until a Linux fixed point passes
 # with none (decision 0243)
 export XO_NOLIBC=${XO_NOLIBC:-0}
 

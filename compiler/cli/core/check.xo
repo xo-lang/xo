@@ -1,9 +1,9 @@
 // `xo parse` and `xo check` (cmd/xo main.go runParse, runCheckWith).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/cli/modules
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/cli/modules
+use github.com/xo-lang/xo/compiler/ssa
 
 // ---------------------------------------------------------------------------
 // parse

@@ -1866,7 +1866,7 @@ Status: **Accepted** (decision 0094, 2026-10-09; drafted by the spec
 audit, `bench/results/spec-audit-2026-10-09.md`). Implemented on the Go
 backend (2026-10-09): `std/time.xo`, `std/rt/timezone.go`,
 `timecivil.go`, `timefmt.go`; the compile time layout check is
-selfhost/check's (`internal/check/timelayout.go` until decision 0215). The native backends build all of it
+compiler/check's (`internal/check/timelayout.go` until decision 0215). The native backends build all of it
 (2026-10-09: `std/native/time.xo` over `std/llrt/xo_time.c`, the same
 zone data per use, output identical to the Go backend's; decision 0094
 "Native implementation"; decision 0089 makes native a preview at 1.0;

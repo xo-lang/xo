@@ -3,9 +3,9 @@
 // symbols, rewrite them all at once, and are rejected (nothing written)
 // unless the edited program checks clean.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// A source position named in a result.
 pub struct Site {

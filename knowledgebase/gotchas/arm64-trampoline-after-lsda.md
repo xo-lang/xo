@@ -8,7 +8,7 @@ that uses `rt.sys_restorer` would install a signal restorer that is
 not executable (it would sit in `__gcc_except_tab` /
 `.gcc_except_table`), faulting when a handler returns.
 
-Cause: the arm64 emitters (selfhost/arm64 gen.xo, internal/arm64
+Cause: the arm64 emitters (compiler/arm64 gen.xo, internal/arm64
 arm64.go) wrote the rt_sigreturn trampoline after `g.lsdas`, and each
 LSDA switches the assembler to the call site table section without
 switching back.

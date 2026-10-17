@@ -102,7 +102,7 @@ fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
 // The heap calls: every allocation and free of this module goes through
 // halloc and hfree, so alloc.alloc and alloc.free each have one call site
 // here. The arm64 inliner copies a large function only into at most two
-// call sites (selfhost/arm64/inline.xo INLINE_FEW_SITES): with more here,
+// call sites (compiler/arm64/inline.xo INLINE_FEW_SITES): with more here,
 // cabi.heap_alloc and heap_free (xo_alloc and xo_free, every C
 // allocation) lost their inlined copies and took about 1.02 times the
 // instructions on bench/perf/alloc strings. halloc and hfree stay out of

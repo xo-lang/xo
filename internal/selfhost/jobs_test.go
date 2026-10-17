@@ -244,7 +244,7 @@ func planBatches(paths []string, size, jobs int) [][]string {
 
 // batchCost estimates the work of a batch: the bytes of .xo source in
 // its directories and in the repository packages they use, at any
-// depth (selfhost/xo uses most of the other components).
+// depth (compiler/xo uses most of the other components).
 func batchCost(root string, paths []string) int64 {
 	var n int64
 	seen := map[string]bool{}

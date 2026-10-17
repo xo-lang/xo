@@ -7,7 +7,7 @@ a function's rt.frame_addr was not above the frame address of the
 function it called, which had attributes #9 (`noinline
 "frame-pointer"="all"`).
 
-Cause: selfhost/llvm marks every call of a function in its inlinable set
+Cause: compiler/llvm marks every call of a function in its inlinable set
 (ranges.xo inlinable_set, the SSA cost walk) with the call site
 attribute #6 (`alwaysinline`), and LLVM honours a call site's
 alwaysinline over the callee's noinline: the callee was inlined, so

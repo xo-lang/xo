@@ -8,7 +8,7 @@ definitions in user code worked. The server logged nothing: definition
 answered `null`.
 
 Cause: xo has no getcwd; the CLI and servers read the working directory
-from `$PWD` (`os.env.get("PWD")` in selfhost/cli/servers/lsp.xo,
+from `$PWD` (`os.env.get("PWD")` in compiler/cli/servers/lsp.xo,
 core/cli.xo, servers.xo, serve.xo, and others). A process started without
 a shell inherits whatever PWD its parent had. VS Code launched from the
 Dock passes `PWD=/` while starting the server in the workspace folder, so
@@ -19,7 +19,7 @@ null; with PWD equal to the real directory it returns
 
 Fix: the root fix landed with decision 0218: `os.fs.cwd_path()` asks
 the OS (getcwd; `$PWD` only when it names the same directory), and every
-place in selfhost/ that read `$PWD` uses it, with `$PWD` only when getcwd
+place in compiler/ that read `$PWD` uses it, with `$PWD` only when getcwd
 fails. `PWD=/ bin/xo lsp` now answers the definition. The earlier
 workaround stays and is harmless: editors/vscode/extension.js starts
 `xo lsp` with `cwd` and `PWD` set to the same directory (the first

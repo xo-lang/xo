@@ -517,7 +517,7 @@ fn (var l: ELinker) synthesize_start() {
   var src = BytesBuilder.new()
   src.write_str("// _start and the outline atomics of the link (decision 0182)\n\t.text\n")
   if l.opts.static {
-    // the program's own (selfhost/arm64 gen.xo's, under no C library)
+    // the program's own (compiler/arm64 gen.xo's, under no C library)
     if !l.globals.contains(l.opts.entry.bytes()) {
       l.fail("no ${l.opts.entry}: a static link takes the program's (built with no C library)")
       return

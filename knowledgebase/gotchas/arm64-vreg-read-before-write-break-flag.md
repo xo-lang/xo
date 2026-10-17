@@ -50,7 +50,7 @@ its dominator's memo (as any block with several paths does, memory
 facts clobbered) and the facts of p's memo (bounds, `x < y` relations,
 passed bounds checks, low zero bits), which hold on every path that
 runs and create no register uses: `joinFacts` in internal/arm64/opt.go
-and `join_facts` in selfhost/arm64/opt.xo, identical. Cost: the
+and `join_facts` in compiler/arm64/opt.xo, identical. Cost: the
 registers p computed are computed again in b (bench/perf/httpparse: 7
 functions of http1.xo differ, 39 more instructions in all; the h1
 workloads in bench/results/runtime-port-step6-2026-10-13.md).

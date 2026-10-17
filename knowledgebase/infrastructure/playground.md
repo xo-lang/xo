@@ -8,8 +8,8 @@ it was the Go compiler (internal/check, format, gen, build) built for
 wasip1, and the Go compiler is deleted. The site's
 `scripts/build-playground.py` must build xoplay from the
 `go-compiler-final` tag (87873aa5) until a self hosted replacement exists
-(next step: an Xo program over selfhost/check, selfhost/cli/core/format,
-and selfhost/gen with the same three commands, built by `xo build
+(next step: an Xo program over compiler/check, compiler/cli/core/format,
+and compiler/gen with the same three commands, built by `xo build
 --backend=go --targets=wasip1/wasm`). The playground then compiles
 programs with the language of that tag. The table below describes the
 pieces as of that tag.

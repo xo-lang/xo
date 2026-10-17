@@ -1,9 +1,9 @@
 // The semantic queries of `xo query` (core 10.3): a port of
-// internal/query over selfhost/check's records. A Session is a checked
+// internal/query over compiler/check's records. A Session is a checked
 // program; positions, names, and signatures are those of the Go tool.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// A checked program to query.
 pub struct Session {

@@ -14,7 +14,7 @@ import (
 
 // The C side of the native backends that the runtime tests drive
 // directly (decision 0215 copied them from the Go build package): a
-// clang compile and link that finds a working macOS SDK. xo (selfhost/xo
+// clang compile and link that finds a working macOS SDK. xo (compiler/xo
 // clang.xo) has its own.
 
 var (
@@ -121,7 +121,7 @@ func compileC(flags, srcs []string, bin string) error {
 	return &ClangError{Output: first}
 }
 
-// FrameworkFlags is selfhost/xo link.xo framework_args: the Security and
+// FrameworkFlags is compiler/xo link.xo framework_args: the Security and
 // CoreFoundation frameworks when a generated source calls the framework
 // (std/native/sys_darwin.xo, tlscert.xo apple_trust).
 func FrameworkFlags(srcs []string) []string {
@@ -137,7 +137,7 @@ func FrameworkFlags(srcs []string) []string {
 	return nil
 }
 
-// WeakUndefinedFlags is selfhost/xo link.xo weak_undefined_args: the
+// WeakUndefinedFlags is compiler/xo link.xo weak_undefined_args: the
 // weak references of the LLVM IR or assembly sources (decision 0232:
 // `declare extern_weak ... @sym(`, `.weak_reference _sym`) as macOS ld's
 // -U flags, which leave a symbol no image defines 0.

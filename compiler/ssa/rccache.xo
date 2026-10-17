@@ -4,7 +4,7 @@
 // names, so its result is cached under the hash of those (rc_key) and,
 // on a hit, read back (decode_func) instead of computed. Also the type
 // keys (a type's name and the hash of every type it reaches) the arm64
-// emitter's cache (selfhost/arm64 fcache.xo) uses. selfhost/xo reads and
+// emitter's cache (compiler/arm64 fcache.xo) uses. compiler/xo reads and
 // writes the entries (XO_BACKEND_CACHE=on|verify|off, bcache.xo).
 
 use std/crypto

@@ -8,7 +8,7 @@ import (
 )
 
 // The tests of the Go backend: since decision 0215 they build through the
-// xo binary (internal/xotool), whose Go backend is selfhost/gen; this
+// xo binary (internal/xotool), whose Go backend is compiler/gen; this
 // package has no Go code of its own.
 
 // run runs name with args in dir and returns its combined output; a go

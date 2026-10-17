@@ -402,7 +402,7 @@ func TestAncestorBuild(t *testing.T) {
 }
 
 // TestRecordCommitDirty: a build from a tree with uncommitted changes
-// under selfhost/ or std/ records no commit, so ancestorBuild never offers
+// under compiler/ or std/ records no commit, so ancestorBuild never offers
 // it to another checkout (2026-10-16: a dirty build recorded under its
 // HEAD was picked for another checkout, whose xo then called a runtime
 // export its std lacked); a clean tree's build is recorded and found.
@@ -420,7 +420,7 @@ func TestRecordCommitDirty(t *testing.T) {
 	}
 	git("init", "-q", "-b", "main")
 	os.MkdirAll(filepath.Join(root, "std"), 0o755)
-	os.MkdirAll(filepath.Join(root, "selfhost"), 0o755)
+	os.MkdirAll(filepath.Join(root, "compiler"), 0o755)
 	os.WriteFile(filepath.Join(root, "std", "a.xo"), []byte("a"), 0o644)
 	git("add", "-A")
 	git("commit", "-q", "-m", "a")
@@ -438,10 +438,10 @@ func TestRecordCommitDirty(t *testing.T) {
 	if got := ancestorBuild(root, []string{cp}); got != cp {
 		t.Fatalf("a clean build: ancestorBuild = %q, want %q", got, cp)
 	}
-	// a modified std file, then an untracked selfhost file: not recorded
+	// a modified std file, then an untracked compiler file: not recorded
 	for _, change := range []func(){
 		func() { os.WriteFile(filepath.Join(root, "std", "a.xo"), []byte("changed"), 0o644) },
-		func() { os.WriteFile(filepath.Join(root, "selfhost", "new.xo"), []byte("new"), 0o644) },
+		func() { os.WriteFile(filepath.Join(root, "compiler", "new.xo"), []byte("new"), 0o644) },
 	} {
 		change()
 		dd, dp := dir("dirty")
@@ -453,13 +453,13 @@ func TestRecordCommitDirty(t *testing.T) {
 			t.Fatalf("a dirty build: ancestorBuild = %q", got)
 		}
 	}
-	// a change outside selfhost/ and std/ does not count
+	// a change outside compiler/ and std/ does not count
 	git("checkout", "-q", "--", "std")
-	os.Remove(filepath.Join(root, "selfhost", "new.xo"))
+	os.Remove(filepath.Join(root, "compiler", "new.xo"))
 	os.WriteFile(filepath.Join(root, "README.md"), []byte("x"), 0o644)
 	od, op := dir("other")
 	recordCommit(root, od)
 	if got := ancestorBuild(root, []string{op}); got != op {
-		t.Fatalf("a change outside selfhost/ and std/: ancestorBuild = %q, want %q", got, op)
+		t.Fatalf("a change outside compiler/ and std/: ancestorBuild = %q, want %q", got, op)
 	}
 }

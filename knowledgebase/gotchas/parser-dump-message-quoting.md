@@ -6,7 +6,7 @@ Symptom: after the habits port, one of 20000 token mutations differed
 between the parsers only in a diagnostic line: the Go dump had
 `"`if i == 1 {\n ...}++` is Go..."`, the Xo dump `{\x0a ...`.
 
-Cause: parser.Dump prints a message with `strconv.Quote`; selfhost/parser
+Cause: parser.Dump prints a message with `strconv.Quote`; compiler/parser
 used the token dump's quoting (`lexer.quote`, printable ASCII kept, every
 other byte `\xHH`), which agrees for messages of plain ASCII without
 newlines. Before the habits port only the first error was printed and

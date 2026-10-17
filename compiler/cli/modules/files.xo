@@ -2,7 +2,7 @@
 // directories, and the writes of xo.mod (mod.SetRequire) and xo.lock
 // (mod.WriteLock).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// The regular files under dir as slash paths relative to it, sorted,
 /// skipping directories below dir that hold their own xo.mod (nested

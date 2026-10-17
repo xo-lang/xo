@@ -17,7 +17,7 @@ called as `word(W_VEC)`) builds on LLVM but fails on the arm64 backend:
 ## Cause
 
 The SSA builder checks `rt.static_word`'s argument where it is called
-(selfhost/ssa call.xo raw_intrinsic): it must be a constant there.
+(compiler/ssa call.xo raw_intrinsic): it must be a constant there.
 Inside the helper `k` is a parameter. LLVM's build happened to pass
 because the check ran on an inlined copy; the arm64 build checks the
 helper itself.

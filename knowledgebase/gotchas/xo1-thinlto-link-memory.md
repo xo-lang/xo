@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-12, xo1-x86 agent, bench/results/xo1-x86-2026-10-12.md)
 
-Symptom: building xo1 (selfhost/xo) with `--backend=llvm` split into 12
+Symptom: building xo1 (compiler/xo) with `--backend=llvm` split into 12
 modules with ThinLTO (`XO_LLVM_SPLIT=12`, `XO_LLVM_LTO` unset, so
 `thin`) spends most of its time in one linker process: on an EC2
 m7i.4xlarge (linux/amd64, GNU ld with the LLVM gold plugin, clang
@@ -12,7 +12,7 @@ pushed the machine about 8.5 GB into swap and the build took 5,181 s.
 The per module clang compiles are small next to it.
 
 Cause: with `-flto=thin` each module's object is bitcode, so the
-optimization and code generation of all of selfhost/xo (hundreds of MB
+optimization and code generation of all of compiler/xo (hundreds of MB
 of IR) happen inside the link, in parallel, in the linker's address
 space.
 

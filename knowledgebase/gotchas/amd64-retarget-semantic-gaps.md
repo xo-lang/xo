@@ -3,7 +3,7 @@
 Status: Observed (2026-10-17, decision 0254 stage 2)
 
 The amd64 backend translates the arm64 front half's templates
-(selfhost/arm64 x86.xo). Each of these cost a debugging round; each
+(compiler/arm64 x86.xo). Each of these cost a debugging round; each
 looked like a correct translation instruction by instruction.
 
 ## arm64's sdiv does not trap; x86's idiv does

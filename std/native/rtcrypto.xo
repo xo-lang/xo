@@ -3,7 +3,7 @@
 // as `use native/rtcrypto`. Bytes arguments are their bytes and length.
 // The hashes, base64, and verify_password are std/native/llrt/digest.xo
 // (decision 0195; decision 0198 deleted their C, and crypto_sha256 and
-// crypto_b64 stay declared for the wasm runtime, selfhost/wasm).
+// crypto_b64 stay declared for the wasm runtime, compiler/wasm).
 // crypto.equal and Ed25519 are std/native/llrt/ct.xo and ed25519.xo
 // (decision 0222).
 

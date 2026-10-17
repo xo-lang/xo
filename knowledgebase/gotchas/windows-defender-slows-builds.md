@@ -5,7 +5,7 @@ Status: Observed (2026-10-14, verifying the windows-amd64 seed)
 ## Symptom
 
 On a fresh EC2 Windows Server 2025 instance, `go run ./scripts/xobuild`
-from the windows-amd64 seed (a Go-backend build of selfhost/xo) used one
+from the windows-amd64 seed (a Go-backend build of compiler/xo) used one
 core for over two hours (8,285 s of CPU in xo.exe), and the chain build
 from go-compiler-final ran past the instance's 240 minute lifetime. The
 same Go-backend build cross-compiled on the Mac

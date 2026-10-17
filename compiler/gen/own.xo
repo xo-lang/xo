@@ -2,7 +2,7 @@
 // blocks a value holds wherever it copies the value out of a place into
 // something that outlives the read, unless the read is a borrow.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// Whether values of t may hold a List inline (holdsList).
 fn (var g: Gen) holds_list(t: Int) -> Bool {

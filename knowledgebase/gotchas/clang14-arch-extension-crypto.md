@@ -23,6 +23,6 @@ wants the names `aes` and `sha2` (pmull is under aes).
 
 ## Fix
 
-The emitter writes all three (selfhost/arm64 gen.xo):
+The emitter writes all three (compiler/arm64 gen.xo):
 `.arch_extension crypto`, `.arch_extension aes`, `.arch_extension sha2`.
 Clang 14, clang 19, Apple clang 17, and GNU as 2.40 assemble that.

@@ -14,14 +14,14 @@ std/native/llrt/rand.xo entropy() picks the system generator by
 target (getrandom, getentropy, BCryptGenRandom) and faults for a wasm32
 module (source 0). A WASI program's `Rand` capability works: the SSA
 builder sends Rand's methods to the wasm runtime's random_get
-(selfhost/ssa rand_rt). But the crypto code calls rand.xo directly (no
+(compiler/ssa rand_rt). But the crypto code calls rand.xo directly (no
 capability), so in a WASI module it reaches the faulting arm.
 
 ## Fix
 
 In a WASI module the SSA builder sends a call of rand.xo's `entropy` to
 the wasm runtime's `rand_bytes` (WASI random_get), as `Rand.bytes`
-(selfhost/ssa call.xo wasi_served; decision 0231's "WASI entropy"
+(compiler/ssa call.xo wasi_served; decision 0231's "WASI entropy"
 addendum, owner 2026-10-16). It is a lowering, not a std/native/rt.xo
 declaration, so the native backends compile rand.xo unchanged and seed
 0.18.0 still builds the compiler. TestSelfhostWasm no longer counts the

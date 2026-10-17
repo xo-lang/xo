@@ -11,8 +11,8 @@
 // one line with at most one item, line breaks the grammar allows kept,
 // comments kept and trailing ones aligned, literals copied byte for byte.
 
-use github.com/xo-lang/xo/selfhost/lexer
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/parser
 
 type Expr = parser.Expr
 type Stmt = parser.Stmt

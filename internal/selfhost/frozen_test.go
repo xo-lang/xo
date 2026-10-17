@@ -22,7 +22,7 @@ import (
 )
 
 // irParts is a module GenerateSSA printed, split into its parts (the
-// comparison with the self hosted emitter, selfhost/llvm, decision 0166):
+// comparison with the self hosted emitter, compiler/llvm, decision 0166):
 // the declarations of the runtime calls used, the named types, the
 // globals (string literals and fault locations), and every definition by
 // name, in the order the module has them.
@@ -248,7 +248,7 @@ func ssaHeaderName(header string) string {
 
 // formatGenFile is what file does to the text of a package after generating
 // it: the blank uses Go does not need and repeated //line directives
-// dropped, then gofmt. The self hosted generator (selfhost/gen, decision
+// dropped, then gofmt. The self hosted generator (compiler/gen, decision
 // 0167) writes the text before this step; its comparison applies it.
 func formatGenFile(raw []byte) ([]byte, error) {
 	return format.Source(dropRepeatedLineDirectives(dropBlankUses(raw)))

@@ -1,8 +1,8 @@
 // Concurrency (internal/gen conc.go): spawning, `fault`, `dbg`, scopes,
 // and `select`.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// Whether fo is the method name of type typ of std module mod
 /// ("prelude" for the prelude) (isStdMethod).

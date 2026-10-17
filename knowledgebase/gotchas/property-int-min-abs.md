@@ -1,6 +1,6 @@
 # Property tests generate `Int.MIN`, and `n.abs()` faults on it
 
-Status: Observed (2026-10-08, `selfhost/lexer/lexer_test.xo`)
+Status: Observed (2026-10-08, `compiler/lexer/lexer_test.xo`)
 
 Symptom: `test "..." for n: Int { let v = n.abs() % 1000 ... }` fails on
 case 49 with `n = -9223372036854775808` and `fault: integer overflow:

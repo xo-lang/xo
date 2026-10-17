@@ -8,7 +8,7 @@ every call (seven extra instructions on the free list pop), though the
 pop path calls nothing: only the rare chunk refill called
 `rt.heap_chunk` and then kept using h, the size, and the class.
 
-Cause: the arm64 emitters (internal/arm64, selfhost/arm64) make a
+Cause: the arm64 emitters (internal/arm64, compiler/arm64) make a
 function a leaf only when it has no call at all, and a value live
 across a call goes to a callee saved register that the prologue saves
 on every path (no shrink wrapping, no tail calls).
@@ -32,10 +32,10 @@ five register pairs on the path with no drop, and an inlined
 alloc.refill five pairs on every allocation. Two workarounds, both
 measured: test the cheap case in the C entry before calling Xo, and
 keep a rare large path out of the arm64 inliner with a call of itself
-on a path never taken (selfhost/arm64/inline.xo does not inline a
+on a path never taken (compiler/arm64/inline.xo does not inline a
 function on a call cycle). The fix is shrink wrapping in the emitters (below).
 
-Update (2026-10-14, decision 0224): selfhost/arm64 now shrink wraps
+Update (2026-10-14, decision 0224): compiler/arm64 now shrink wraps
 (the frame made only in the region of blocks that need it, entered and
 left through save and restore blocks) and emits tail calls (`b sym`
 after the epilogue). alloc.alloc and alloc.free have no frame at all;

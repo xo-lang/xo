@@ -1,6 +1,6 @@
 # `xs.sort()` returns a sorted copy; a bare call does nothing
 
-Status: Observed (2026-10-12, decision 0178 stage 5, selfhost/cli/servers
+Status: Observed (2026-10-12, decision 0178 stage 5, compiler/cli/servers
 json.xo).
 
 ## Symptom

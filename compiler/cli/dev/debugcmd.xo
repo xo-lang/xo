@@ -1,15 +1,15 @@
 // `xo dev debug --snap FILE [--dwarf FILE] [--json] -c CMD... EXE`: `xo
 // debug --batch` (decision 0253 point 4) on a recorded stopped thread
 // until the process control of stage 2: each command echoed as `(xo)
-// CMD`, then its output (selfhost/debug session.xo); with --json one JSON
+// CMD`, then its output (compiler/debug session.xo); with --json one JSON
 // line per command instead (spec 11.5, version 1). With no -c the
 // commands are read from standard input, a line each, until its end or
 // `quit`: the prompt `(xo) ` on a terminal, and an empty line repeats the
 // last command, as gdb and lldb do; with --json that is the line protocol
 // (one command in, one JSON line out).
 
-use github.com/xo-lang/xo/selfhost/cli/core
-use github.com/xo-lang/xo/selfhost/debug
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/debug
 
 fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   let interactive = !args.contains("-c")

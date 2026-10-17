@@ -5,8 +5,8 @@
 // lowered as the capabilities they stand for, `expect`, testing.run_main,
 // testing.gen, and the inputs of property tests (xo.gen[T]).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// A test block of the root modules, in TestDecls order: its file and
 /// declaration.

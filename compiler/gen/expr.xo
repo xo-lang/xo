@@ -1,8 +1,8 @@
 // Expressions (internal/gen expr.go): conversions, literals, names,
 // operators, indexing, `?`, and closures.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// Where an operation is, for its fault position and the range analysis:
 /// a binary or unary expression, an index, or a compound assignment (xe

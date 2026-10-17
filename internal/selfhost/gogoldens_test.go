@@ -88,7 +88,7 @@ import (
 // any checkout. A piece name or a meta text with a blank or a quote is
 // written quoted (strconv.Quote).
 //
-// Full dumps are not recorded: the selfhost/<component> binary of the
+// Full dumps are not recorded: the compiler/<component> binary of the
 // test with the arguments the hint names prints the Xo side's.
 
 const (
@@ -985,7 +985,7 @@ func (p *goldPieces) missingText() string {
 // goldHint tells how to see the Xo side's full dump of a unit: the
 // test's self hosted component with its arguments, from wd.
 func goldHint(test, component, xoArgs, wd string) string {
-	return fmt.Sprintf("selfhost/%s (`xo build selfhost/%s`, or the binary %s builds) with %s from %s", component, component, test, xoArgs, wd)
+	return fmt.Sprintf("compiler/%s (`xo build compiler/%s`, or the binary %s builds) with %s from %s", component, component, test, xoArgs, wd)
 }
 
 // goldenCtx holds the forms of the repository root and of the test's

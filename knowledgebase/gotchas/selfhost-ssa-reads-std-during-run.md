@@ -10,6 +10,6 @@ Cause: the test runs the Go SSA builder and the Xo one at different
 times over `--std=std`, the working tree's std directory; a line added to
 std/native/llrt/num.xo between the two runs moved every position after it.
 
-Fix: do not edit std/ (or selfhost/) while a selfhost differential test
+Fix: do not edit std/ (or compiler/) while a selfhost differential test
 runs; rerun it on a quiet tree. Differences that are only positions one
 line apart are this, not a builder bug.

@@ -18,11 +18,11 @@ frame record in each stub, and its `.cfi_def_cfa w29, 16` and
 `.cfi_offset` directives come after the returns. DWARF CFI (`.eh_frame`,
 Linux) keeps the position: before the directives the CFA is sp and the
 return address is in lr. A compact encoding has no position: the
-assembler (selfhost/macho, and clang's) and ld64 make it
+assembler (compiler/macho, and clang's) and ld64 make it
 `UNWIND_ARM64_MODE_FRAME` for the whole function, which is wrong for its
 body.
 
-Fix (the debugger, selfhost/debug unwind.xo): for the stopped frame
+Fix (the debugger, compiler/debug unwind.xo): for the stopped frame
 only, a compact FRAME encoding counts once the function's code from its
 start to the pc holds the frame record's store (`stp x29, x30, [sp, ...]`);
 before that the frame is a leaf (the return address in lr, sp
@@ -43,7 +43,7 @@ the directives' positions.
 Fix plan (the arm64 emitter and the assemblers' compact encoding; for
 Xo lang 4, who owns the profiler and its emitter end):
 
-1. In selfhost/arm64, give a function whose frame record is built only
+1. In compiler/arm64, give a function whose frame record is built only
    in its fault stubs (no `stp x29, x30` in its entry: the shrink
    wrapped leaf) two unwind regions: `.cfi_endproc` after the body's
    last instruction, then `.cfi_startproc` for the stubs with the rules
@@ -59,7 +59,7 @@ Xo lang 4, who owns the profiler and its emitter end):
    A body that moves sp without a frame record (spills below sp with no
    fp) gets `.cfi_def_cfa_offset` in its region, which compact encodes
    as FRAMELESS with a stack size.
-2. Check that selfhost/macho's assembler (cfi.xo) and linker, and ld64
+2. Check that compiler/macho's assembler (cfi.xo) and linker, and ld64
    with clang's assembler (--ld=cc, --as=cc), emit one compact entry
    per region and that `__unwind_info` keeps them in address order
    (objdump --unwind-info: two entries for such a function, 0x02000000
@@ -68,11 +68,11 @@ Xo lang 4, who owns the profiler and its emitter end):
    a test beside the profiler's in internal/arm64), a fault in mix
    (its traceback still shows mix, outer, main), lldb `bt` in mix's
    body and in a stub, and decision 0252's same code gate (only
-   directives change). Then drop the frame 0 check in selfhost/debug
+   directives change). Then drop the frame 0 check in compiler/debug
    unwind.xo (frame_set_up), or keep it for programs built before the
    fix.
 
-Done (2026-10-17, xo-4): selfhost/arm64 emit.xo closes the body's region
+Done (2026-10-17, xo-4): compiler/arm64 emit.xo closes the body's region
 before a leaf's fault stubs and opens one for them (`.cfi_endproc`,
 `.cfi_startproc`, then the stubs' frame rules) when the function has no
 landing pads. testdata/prof/leaf's mix: two compact entries, 0x02000000

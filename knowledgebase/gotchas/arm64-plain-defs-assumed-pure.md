@@ -1,7 +1,7 @@
 # arm64 MIR: a plain instruction with a result is assumed to have no side effect
 
 Status: Anticipated for the deletion, Observed for the spill registers
-(2026-10-13, decision 0200; selfhost/arm64 and internal/arm64)
+(2026-10-13, decision 0200; compiler/arm64 and internal/arm64)
 
 Symptom: an inline atomic whose result is unused (`ldaddal` of a fetch
 add nobody reads, `swpal` of a swap) disappears from the output; a

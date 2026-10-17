@@ -3,7 +3,7 @@
 Status: Observed (2026-10-12, decision 0182 stage 3)
 
 Symptom: `xo check` and `xo build --backend=arm64` accepted a loop over
-a list of 8-tuples in `selfhost/macho/elflink.xo`, but `xo test` (the Go
+a list of 8-tuples in `compiler/macho/elflink.xo`, but `xo test` (the Go
 backend) failed to compile it: `macho/elflink.xo:1512:28: undefined:
 rt.Tuple8`.
 

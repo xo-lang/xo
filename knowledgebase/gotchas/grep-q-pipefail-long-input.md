@@ -4,7 +4,7 @@ Status: Observed (2026-10-14).
 
 Symptom: scripts/ci/suite.sh `auto` printed "fixed point: not needed for
 these paths" (and skipped the internal/selfhost merge tier) for a change
-that touched selfhost/. A reproduction with 1,000 or more changed paths
+that touched compiler/. A reproduction with 1,000 or more changed paths
 skipped it every time; 400 paths never did.
 
 Cause: `cmd | grep -q PATTERN` under `set -o pipefail`. `grep -q` exits at

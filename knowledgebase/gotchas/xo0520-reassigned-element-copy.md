@@ -14,7 +14,7 @@ while steps < 3 && bs[j].insts.len() == 1 {
 }
 ```
 
-Hit while writing `thread_const` in selfhost/arm64/opt.xo (decision
+Hit while writing `thread_const` in compiler/arm64/opt.xo (decision
 0184). Reproduced with a 20 line program (the code above with two
 structs) by the Go checker of 2026-10-12.
 
@@ -26,6 +26,6 @@ Fix (workaround): initialize through a `let` first, `let j0 =
 bs[p].insts[0].targets[0]; var j = j0`, or move the loop into a helper
 that takes the start as a parameter. Next step for a real fix: in the
 checker's XO0520 analysis (internal/check, and its mirror in
-selfhost/check), exempt plain reassignment `x = e` of the whole
+compiler/check), exempt plain reassignment `x = e` of the whole
 variable, and add the program above as a checker golden that must stay
 clean.

@@ -4,7 +4,7 @@
 // The backends only noticed when the assembler or linker saw the second
 // definition (gotchas/duplicate-cabi-export-name.md); the checker reports
 // XO0608 at the second definition, with the first as a note.
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// Whether module path is a C ABI export module whose functions are
 /// xo_x_<name> (cabi_libc's keep their C names, malloc and the rest, and

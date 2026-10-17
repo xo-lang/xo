@@ -3,8 +3,8 @@
 // specialization, and List higher order methods with closure literals
 // lowered to loops.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 use std/crypto
 
 /// Chains of copies requested from copies are cut at this depth.

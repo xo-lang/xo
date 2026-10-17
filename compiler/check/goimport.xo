@@ -11,7 +11,7 @@
 // checks again (decision 0178 stage 6: the binder stays Go).
 
 use std/crypto
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// gobind.Version: bindings of another binder version are stale.
 const GOBIND_VERSION: Int = 5

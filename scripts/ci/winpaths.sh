@@ -8,7 +8,7 @@ command -v cygpath >/dev/null || { echo "winpaths.sh: for Windows (Git Bash)"; e
 w=$(cygpath -w "$PWD")
 out=$(cygpath -w "$XO_CI_OUT")
 set -x
-"$XO_CLI" check "$w\\selfhost\\xo"
+"$XO_CLI" check "$w\\compiler\\xo"
 "$XO_CLI" build --backend=llvm --std="$w\\std" -o "$out\\recursion.exe" "$w\\internal\\llvm\\testdata\\golden\\recursion"
 "$XO_CLI" build --backend=llvm --std "$w\\std" -o "$out\\recursion2.exe" "$w\\internal\\llvm\\testdata\\golden\\recursion"
 "$out\\recursion.exe" | grep -q 'fib 75025'

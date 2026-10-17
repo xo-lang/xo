@@ -13,15 +13,15 @@ import (
 )
 
 // TestSelfhostLLVMEndToEnd is stage 4 of decision 0166: the self hosted
-// pipeline (selfhost/check, selfhost/ssa and its passes, selfhost/llvm,
-// in the binary of selfhost/llvm built with the go backend, or the one
+// pipeline (compiler/check, compiler/ssa and its passes, compiler/llvm,
+// in the binary of compiler/llvm built with the go backend, or the one
 // XO_SELFHOST_BACKEND names) lowers a self hosted component, its IR must
 // be the recorded one (internal/llvm's until decision 0215; a dump
 // replay, so only with XO_SELFHOST_DUMPS=all, decision 0217), and `xo
 // build --backend=llvm` (the same pipeline in xo, no binary cache) must
 // build a binary whose output on a fixed input is the go backend build's
 // output. The component is
-// selfhost/lexer, or the one XO_SELFHOST_E2E names (lexer, parser,
+// compiler/lexer, or the one XO_SELFHOST_E2E names (lexer, parser,
 // check, ssa, llvm; clang on the IR of ssa took 34
 // minutes). Full tier only, unless XO_SELFHOST_E2E is set.
 func TestSelfhostLLVMEndToEnd(t *testing.T) {
@@ -37,11 +37,11 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	}
 	// what the built binary is run on, from the repository root
 	args := map[string][]string{
-		"lexer":  {"selfhost/lexer/lexer.xo", "selfhost/lexer/token.xo"},
-		"parser": {"selfhost/parser/parser.xo"},
-		"check":  {"--std=std", "--each", "selfhost/lexer"},
-		"ssa":    {"--std=std", "--each", "--stages", "selfhost/lexer"},
-		"llvm":   {"--std=std", "--each", "selfhost/lexer"},
+		"lexer":  {"compiler/lexer/lexer.xo", "compiler/lexer/token.xo"},
+		"parser": {"compiler/parser/parser.xo"},
+		"check":  {"--std=std", "--each", "compiler/lexer"},
+		"ssa":    {"--std=std", "--each", "--stages", "compiler/lexer"},
+		"llvm":   {"--std=std", "--each", "compiler/lexer"},
 	}[comp]
 	if args == nil {
 		t.Fatalf("XO_SELFHOST_E2E=%s: want lexer, parser, check, ssa, or llvm", comp)
@@ -59,7 +59,7 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := "selfhost/" + comp
+	dir := "compiler/" + comp
 	t.Chdir(root)
 	setModEnv(t, root)
 	t0 := time.Now()

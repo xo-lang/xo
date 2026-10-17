@@ -1,5 +1,5 @@
 // The Go code generator in Xo (internal/gen, decision 0167): it lowers
-// the modules selfhost/check checked to the Go source internal/gen
+// the modules compiler/check checked to the Go source internal/gen
 // writes, file by file and declaration by declaration, `//line`
 // directives included. Each Xo module becomes one Go package under the
 // build module `xoprog` (`xoprog/m/<name>`), std modules map onto the
@@ -13,8 +13,8 @@
 // it is in as skipped (Gen.skip): the declaration is left out and listed,
 // never written wrong.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 type Expr = parser.Expr
 type Stmt = parser.Stmt

@@ -38,7 +38,7 @@ pub struct Info {
 /// inode ones under plain names, gotchas/darwin-amd64-stat-inode64.md),
 /// 3 kernel32 (Windows), 0 the wasm runtime. The SSA builders fold a call
 /// of layer() compared with a literal (`layer() == 2`), as they fold
-/// `target` tests (decision 0246; selfhost/ssa expr.xo layer_call keeps
+/// `target` tests (decision 0246; compiler/ssa expr.xo layer_call keeps
 /// these numbers): the helpers below test `target.os` so another OS's
 /// calls are never built.
 pub fn layer() -> Int {

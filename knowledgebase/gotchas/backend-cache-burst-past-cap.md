@@ -23,7 +23,7 @@ bcache.xo prunes with keep 2 minutes (a hit refreshes an entry's time
 once a minute) and with `Policy.burst` an eighth of the cap: every store
 adds its bytes to `DIR/prune-stored` (prune.note_stored), and a prune
 runs before the hour once they reach the burst (decision 0223
-addendum). selfhost/prune test "a burst of stores prunes before the
+addendum). compiler/prune test "a burst of stores prunes before the
 interval and keeps the cache near its cap" stores 50 bytes every 10
 seconds for an hour against a 1,000 byte cap: over 100 prunes, never
 above 1,125 bytes (one prune and 18,000 bytes without burst). A cache

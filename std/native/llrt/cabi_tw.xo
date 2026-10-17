@@ -1,7 +1,7 @@
 // The C ABI exports of the test world (decisions 0204, 0207; the zero-C
 // audit's B14): like cabi.xo, every top level function here is called
 // through its address. The SSA builders build them in test binaries
-// only (selfhost/ssa build.xo declare_exports), and the test world names
+// only (compiler/ssa build.xo declare_exports), and the test world names
 // them itself when it starts (twrun.xo start: rt.fn_addr, atexit.xo and
 // the record's TW_KICK; decision 0233). The state is testworld.xo's,
 // twrun.xo's and twflags.xo's.

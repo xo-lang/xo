@@ -370,7 +370,7 @@ Each section is tagged with the phase in which it is implemented.
 
 - **[P1]** Prototype: `xo` frontend written in Go, emits Go source, uses the Go
   toolchain for codegen, GC, scheduler, and cross compilation. Since
-  decision 0215 the toolchain is written in Xo (selfhost/); the Go
+  decision 0215 the toolchain is written in Xo (compiler/); the Go
   backend (Go source, the Go toolchain) remains one of its backends.
 - **[P2]** Own runtime: deterministic scheduler, full record/replay, task tree.
 - **[P3]** Own backend and content addressed code store.
@@ -2467,7 +2467,7 @@ resolution (`modules`: every command that loads a program reports these
 on the xo.mod, xo.lock, or xo.work line, and so do `xo get`, `xo mod
 tidy`, and `xo vendor`; 4.2, 4.3), and `xo publish` (`publish`).
 `xo explain <code>` prints the long form of each. The registry is
-`selfhost/cli/core/explain_data.xo` (internal/diag/codes.go until
+`compiler/cli/core/explain_data.xo` (internal/diag/codes.go until
 decision 0215); a test (internal/repotest) keeps this table equal to it.
 
 | Code | Severity | Reported by | Meaning |
@@ -2723,7 +2723,7 @@ call and its result, plus scheduler decisions.
 breakpoints, break on contract failure, eval, step, step back with replay).
 `xo debug --dap` speaks the Debug Adapter Protocol for editors.
 
-The protocol's version 1 (decision 0253; selfhost/debug session.xo; until
+The protocol's version 1 (decision 0253; compiler/debug session.xo; until
 the process control of stage 2 it runs on a recorded thread as `xo dev
 debug --json`): each command (decision 0253 point 4) gives one line, an
 object with `v` (1), `cmd` (the command's long name: `break`, `delete`,
@@ -2866,7 +2866,7 @@ specified in `spec/std.md`. Modules:
 ## 15. Grammar summary (informal EBNF)
 
 Every comma separated list allows a trailing comma and may span lines. The
-parser of `xo` (`selfhost/parser`; `internal/parser` until decision 0215)
+parser of `xo` (`compiler/parser`; `internal/parser` until decision 0215)
 is the reference implementation of this grammar.
 
 ```

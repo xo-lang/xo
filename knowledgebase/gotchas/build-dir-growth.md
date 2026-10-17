@@ -10,4 +10,4 @@ Status: Observed (2026-10-10); fixed 2026-10-10.
 
 Related: go-build-cache-growth.md.
 
-Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by selfhost/prune (caches-unpruned-after-go-deletion.md, decision 0223).
+Update (2026-10-14): this trim was deleted with the Go driver and the cache grew again; it is now pruned by age and size by compiler/prune (caches-unpruned-after-go-deletion.md, decision 0223).

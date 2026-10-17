@@ -14,7 +14,7 @@ went away (other timing). The arm64 backend and darwin/arm64 were fine.
 
 ## Cause
 
-selfhost/llvm sched.xo read the thread local table with a plain
+compiler/llvm sched.xo read the thread local table with a plain
 `getelementptr ... @xo_tlocal`. For LLVM 15 and later a use of a
 thread_local global is a constant address; interprocedural constant
 propagation folded xo_tlocal_addr to `ret` and its callers computed
@@ -28,7 +28,7 @@ is a call of the variable's descriptor, which happened to be repeated.
 
 xo_tlocal_at takes the address with
 `call ptr @llvm.threadlocal.address.p0(ptr @xo_tlocal)`, which LLVM
-evaluates on the thread that runs it (selfhost/llvm sched.xo
+evaluates on the thread that runs it (compiler/llvm sched.xo
 sched_tlocal). Any new thread_local in emitted IR must do the same.
 
 ## To check when CI is re-enabled: the runner image's clang version

@@ -1,5 +1,5 @@
 // Tests of the DWARF reader on hand made sections. The reader against
-// the backends' real DWARF (arm64 with selfhost/macho and with dsymutil,
+// the backends' real DWARF (arm64 with compiler/macho and with dsymutil,
 // LLVM, and Linux ELF) is internal/arm64 TestDwarfReader through `xo dev
 // dwarf`.
 

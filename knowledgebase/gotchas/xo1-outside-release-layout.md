@@ -15,7 +15,7 @@ printed nothing. Earlier gates set `XO_STD=<repo>/std` and passed.
 ## Cause
 
 The Xo commands find their files from the running binary (Env.program,
-selfhost/check locate.xo and selfhost/cli/bind gobind_helper): std as
+compiler/check locate.xo and compiler/cli/bind gobind_helper): std as
 `<bin>/../lib/xo/std`, then `<bin>/std`, `<bin>/../std`, else `std`
 relative to the working directory; xo-gobind as `$XO_GOBIND`, beside the
 binary, in `<prefix>/bin` of a release layout, beside std's parent, on

@@ -3,7 +3,7 @@
 // filepath.EvalSymlinks find it for the Go `xo` (internal/build
 // RTPackRoot), and the std sources of a release archive, lib/xo/std
 // beside the binary's bin directory. One place for xo1 and every command
-// of selfhost/cli.
+// of compiler/cli.
 
 /// The running binary, absolute with its symbolic links followed:
 /// Env.program as the program was started, a name without a slash looked

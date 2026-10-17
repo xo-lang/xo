@@ -24,11 +24,11 @@ function isFile(p) {
 }
 
 // candidates returns the binaries dir may hold, best first. bin/xo counts
-// only in an Xo checkout (it has selfhost/xo/main.xo), where it is the
+// only in an Xo checkout (it has compiler/xo/main.xo), where it is the
 // current compiler and .tools/bin/xo may be an old one.
 function candidates(d) {
   const out = [];
-  if (isFile(path.join(d, "selfhost", "xo", "main.xo"))) {
+  if (isFile(path.join(d, "compiler", "xo", "main.xo"))) {
     out.push(path.join(d, "bin", "xo"));
   }
   out.push(path.join(d, ".tools", "bin", "xo"));

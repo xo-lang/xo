@@ -1,13 +1,13 @@
 // x86_64's generated helpers and trampolines (decision 0254 stage 2):
 // the reference counting and equality helpers (rc.xo, closures.xo), the
 // system call trampolines, the task switch and thread locals (sched.xo,
-// whose x86_64 bodies are the LLVM emitter's, selfhost/llvm sched.xo),
+// whose x86_64 bodies are the LLVM emitter's, compiler/llvm sched.xo),
 // xo_entry, and the C ABI exports, as x86 text. They take their words
 // in the x86_64 convention (x86_call_locs: rdi, rsi, rdx, rcx, r8, r9,
 // then the stack); r11 is their scratch register, rax the object of an
 // inline count, rbx a base kept across calls (x19 on arm64).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The integer argument registers.
 fn x86_arg(k: Int) -> Str { ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"][k] }
@@ -420,7 +420,7 @@ fn (g: G) x86_trampolines(var out: List[Str]) {
   }
 }
 
-/// selfhost/llvm sched.xo's xo_unwind_save on x86_64: the callee saved
+/// compiler/llvm sched.xo's xo_unwind_save on x86_64: the callee saved
 /// registers, sp past the return, and the return address by DWARF number.
 fn x86_unwind_save() -> List[Str] {
   ["movq %rbx, 24(%rdi)", "movq %rbp, 48(%rdi)", "movq %r12, 96(%rdi)", "movq %r13, 104(%rdi)", "movq %r14, 112(%rdi)", "movq %r15, 120(%rdi)", "leaq 8(%rsp), %rax", "movq %rax, 56(%rdi)", "movq (%rsp), %rax", "movq %rax, 128(%rdi)", "retq"]
@@ -431,7 +431,7 @@ fn x86_unwind_resume() -> List[Str] {
 }
 
 /// The task switch functions and thread locals on linux/amd64 (sched_asm,
-/// with selfhost/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
+/// with compiler/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
 /// the x87 control word; a new fiber's argument in rbx, its function in
 /// r12).
 fn x86_sched_asm(split: Bool) -> Str {

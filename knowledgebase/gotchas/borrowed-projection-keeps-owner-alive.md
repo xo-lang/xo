@@ -21,5 +21,5 @@ an owner that would otherwise die first.
 Fix: a projection is borrowed only if, at every instruction that
 consumes it, the owner's root still has a use of its own on some path
 after it (`usedAfter` in internal/ssa/rcborrow.go, `used_after` in
-selfhost/ssa/borrow.xo). Check allocation counts (XO_LEAKCHECK=1), not
+compiler/ssa/borrow.xo). Check allocation counts (XO_LEAKCHECK=1), not
 only rc counts, when changing what the RC pass borrows.

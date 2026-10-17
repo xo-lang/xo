@@ -1,9 +1,9 @@
 # arm64: the reference counting helper of a value over about 500 words fails
 
-Status: Observed (2026-10-10, selfhost/parser on `--backend=arm64`)
+Status: Observed (2026-10-10, compiler/parser on `--backend=arm64`)
 
 Symptom: after adding an optional `bound: Expr?` to the `ForStmt` and
-`WhileStmt` variants of selfhost/parser's `Stmt` enum, `TestSelfhostParserDifferential/arm64`
+`WhileStmt` variants of compiler/parser's `Stmt` enum, `TestSelfhostParserDifferential/arm64`
 failed with `arm64 backend: reference counting of MatchArm (too many
 words)`. The Go and LLVM backends built the same program.
 

@@ -1,7 +1,7 @@
 // The core commands of the `xo` command line in Xo (decision 0178 stage
 // 2): check, parse, explain, version, init, fmt, fix, vet, and doc, each
 // with the flags, exit codes, and output of cmd/xo (the Go side is the
-// reference). selfhost/xo (xo1) dispatches them here.
+// reference). compiler/xo (xo1) dispatches them here.
 //
 // Global flags before the command: --std=DIR names the std declaration
 // files (default $XO_STD, else lib/xo/std beside the binary's directory's
@@ -9,8 +9,8 @@
 // directory (default $PWD). After the command, as in cmd/xo,
 // --offline and --workspace=off|on are taken from anywhere before `--`.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
 /// them equal).
@@ -115,7 +115,7 @@ fn find_std(os: Os) -> Str uses (env, fs.read) {
 }
 
 /// A checker for dirs with the module environment of ctx (as xo1 and
-/// selfhost/check's command line set it up).
+/// compiler/check's command line set it up).
 pub fn new_checker(os: Os, ctx: Ctx) -> check.Checker uses fs.read, env {
   var c = check.new_checker(os.fs, ctx.std)
   c.set_mod_env(ctx.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", ctx.offline, ctx.work)

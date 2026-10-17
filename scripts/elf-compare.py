@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# The self hosted ELF assembler (selfhost/macho `asm --elf`, decision 0182
+# The self hosted ELF assembler (compiler/macho `asm --elf`, decision 0182
 # stage 3) against LLVM's: scripts/elf-compare.py <macho> <file.s...>
 # assembles each linux/arm64 assembly file with `<macho> asm --elf` and
 # with `$ELF_CC -c` (default `clang --target=aarch64-linux-gnu`), and

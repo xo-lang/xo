@@ -19,7 +19,7 @@ which in the test's temp module does not exist. load_std then returned
 time a body named `Int`.
 
 Fix: two parts.
-- selfhost/check: check_dirs returns an error when the std directory
+- compiler/check: check_dirs returns an error when the std directory
   has no prelude.xo ("std library not found: no DIR/prelude.xo (set
   XO_STD ...)"), and run returns one after the declarations when the
   prelude lacks a core type (Bool, Int, Never, Option, Result, Str), so

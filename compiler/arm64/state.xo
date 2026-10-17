@@ -3,7 +3,7 @@
 // that every pass is a method of one `var` receiver. The function state
 // is reset for each function (begin_func).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// A spill location: a physical register, or a spill slot (reg -1).
 struct Loc {

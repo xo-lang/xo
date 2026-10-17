@@ -17,6 +17,6 @@ everywhere, including after `.`.
 ## Fix
 
 Name the field something else (`reqs`, `req_cache` in
-selfhost/check/modfile.xo). When a port of Go code shows a burst of XO0160
+compiler/check/modfile.xo). When a port of Go code shows a burst of XO0160
 and XO0403 with an empty field name, look for a Go identifier that is an
 Xo keyword.

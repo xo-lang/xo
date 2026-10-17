@@ -24,7 +24,7 @@
 // fault (rt.int_wrap: op 0 add, 1 subtract, 2 multiply, 3 shift left, 4
 // shift right), and calls only inline intrinsics and the platform calls
 // rt.heap_* (heapos.xo's big blocks, a new chunk, the central lists'
-// mutex); selfhost/ssa contract.xo check_no_alloc checks it on every
+// mutex); compiler/ssa contract.xo check_no_alloc checks it on every
 // function here. The single threaded paths (alloc, free) make
 // their calls last, with nothing live after them, so the arm64 code
 // keeps no register across a call.

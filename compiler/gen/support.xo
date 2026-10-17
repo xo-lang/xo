@@ -1,8 +1,8 @@
 // Walks, std defaults, interface adapters, and the entry points
 // (internal/gen support.go).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 // ---------------------------------------------------------------------------
 // Walks

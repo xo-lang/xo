@@ -14,7 +14,7 @@
 // cancelling the task that waits on a child kills it (std.md 3.8).
 
 use std/task
-use github.com/xo-lang/xo/selfhost/prune
+use github.com/xo-lang/xo/compiler/prune
 
 /// One golden program.
 pub struct Prog {
@@ -422,7 +422,7 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
 
 /// Prunes the build directories the runs' builds leave under out (xo
 /// prunes a build directory itself only where it chose the location, not
-/// under an XO_BUILD_DIR, selfhost/xo cache.xo build_dir): after every
+/// under an XO_BUILD_DIR, compiler/xo cache.xo build_dir): after every
 /// run, the ones unused for a day, then the least recently used past 2
 /// GiB ($XO_DEV_BUILD_MAX bytes), keeping those used within ten minutes
 /// (another session's run may be building in one).

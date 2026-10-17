@@ -10,7 +10,7 @@
 // of midpoints are told to LLVM (llvm.assume). A call of a function the
 // arm64 cost model (decision 0184) finds inlinable is `alwaysinline`.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 const MAX_INT = 9223372036854775807
 

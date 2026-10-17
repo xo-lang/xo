@@ -2,7 +2,7 @@
 // type of the matched value, binding its names, and its form for the
 // exhaustiveness check (exhaust.xo, stage 6 of decision 0141).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// Types p against t, declares its bindings in the current scope, and
 /// returns its exhaustiveness form.

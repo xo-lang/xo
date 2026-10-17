@@ -11,7 +11,7 @@ import (
 //
 //   - short (`go test -short`): the go backend (the lexer and parser
 //     also arm64 and LLVM), small corpora, every 25th run for the SSA
-//     builder and the LLVM emitter but the mergeHeavy ones (selfhost/llvm
+//     builder and the LLVM emitter but the mergeHeavy ones (compiler/llvm
 //     fell in the sample and took 58 s and 4.7 GB in the SSA builder,
 //     2026-10-12), no SSA mutations and no Xo test binaries;
 //   - merge (the default without -short): the go backend at full size
@@ -25,7 +25,7 @@ import (
 //     third; the arm64 and LLVM lexers and parsers at -short's sizes are
 //     the native smoke test, so no native build of the checker, the SSA
 //     builder, or the emitters (the slow builds: the LLVM link of
-//     selfhost/ssa takes minutes), and no end to end LLVM test;
+//     compiler/ssa takes minutes), and no end to end LLVM test;
 //   - full (XO_SELFHOST_TIER=full): every backend, every corpus at full
 //     size (nightly, release tagging, and changes the merge tier does
 //     not cover).
@@ -82,17 +82,17 @@ func byTier[T any](t testing.TB, short, merge, full T) T {
 // but the lexer and the parser. Each takes from tens of seconds to
 // minutes in each comparison where the other runs take under a second
 // (knowledgebase/gotchas/selfhost-ssa-passes-three-runs.md): with
-// selfhost/arm64, selfhost/llvm, and selfhost/xo missing from the old
+// compiler/arm64, compiler/llvm, and compiler/xo missing from the old
 // fixed lists the merge tier took 1,329 s (2026-10-12). A new component
-// under selfhost/ is heavy by this rule without an edit here.
+// under compiler/ is heavy by this rule without an edit here.
 func mergeHeavy(d string) bool {
 	switch d {
 	case "internal/arm64/testdata/run/huge_frame":
 		return true
-	case "selfhost/lexer", "selfhost/parser", "selfhost/prune":
+	case "compiler/lexer", "compiler/parser", "compiler/prune":
 		return false
 	}
-	return strings.HasPrefix(d, "selfhost/")
+	return strings.HasPrefix(d, "compiler/")
 }
 
 // tierBackends are the backends a differential of the parser, checker,

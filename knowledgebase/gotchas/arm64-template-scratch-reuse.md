@@ -6,12 +6,12 @@ Fixed in the emitter the same day (the second Fix below); the chains
 are back on (ADC_CHAINS true, up to 8 pairs, 2026-10-16).
 
 Symptom: none yet seen; the risk is a wrong value with no error. An
-instruction template with many operands (selfhost/arm64 calls.xo
+instruction template with many operands (compiler/arm64 calls.xo
 adc_chain: up to ten uses and six definitions in one template) computes
 with the wrong operand when several of them were spilled by the register
 allocator.
 
-Cause: selfhost/arm64 emit.xo emit_plain reloads a template's spilled
+Cause: compiler/arm64 emit.xo emit_plain reloads a template's spilled
 uses into scratch registers gp_scratch(0), (1), (2): x16, x17, then x15
 for the third and every later one (d30, d29, then d31 for floating
 point). A fourth spilled use is reloaded into x15 over the third, and

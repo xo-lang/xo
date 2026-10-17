@@ -4,8 +4,8 @@
 // directory, as the Go checker prints them; an xo.mod above the working
 // directory is not looked for.
 
-use github.com/xo-lang/xo/selfhost/lexer
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/parser
 
 /// The checker: its tables (objects.xo), the state of the walk
 /// (resolve.xo), and what it recorded.

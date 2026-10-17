@@ -22,4 +22,4 @@ main that returned an error), so the gap shows
 that drop `xo leakcheck:` lines drop it too; tests that require a count
 run only programs whose main returns. For a count from xo itself, its
 main would have to return instead of calling os.proc.exit at its end
-(selfhost/xo, not changed).
+(compiler/xo, not changed).

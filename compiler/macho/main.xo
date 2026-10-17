@@ -11,7 +11,7 @@
 //       link linux/arm64 ELF objects and archives into an executable
 //       (glibc imported)
 //
-// The package is also the library xo1 (selfhost/xo) calls: assemble, link,
+// The package is also the library xo1 (compiler/xo) calls: assemble, link,
 // assemble_elf, link_elf.
 
 fn main(os: Os) ! {

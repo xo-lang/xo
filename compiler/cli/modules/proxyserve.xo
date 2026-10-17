@@ -4,7 +4,7 @@
 // version or list the cache lacks is fetched from git first (never
 // through XO_PROXY, so proxies do not loop).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 use std/archive
 use std/http
 

@@ -18,10 +18,10 @@ import (
 // step 4: native_json, text_table, codex_gaps, json_text).
 const wasmMinPass = 154
 
-// TestSelfhostWasm is stages 1 and 2 of decision 0179: selfhost/wasm (built
+// TestSelfhostWasm is stages 1 and 2 of decision 0179: compiler/wasm (built
 // with the go backend) lowers every golden program of
 // internal/llvm/testdata/golden to a WebAssembly module, Node runs it
-// under WASI preview1 (selfhost/wasm/run.mjs, what the playground's
+// under WASI preview1 (compiler/wasm/run.mjs, what the playground's
 // worker does), and its exit status, standard output, and fault lines
 // must be want.txt's. A golden the backend does not support yet must say
 // so (`== unsupported <why>`, no module) and is counted; any other
@@ -42,7 +42,7 @@ var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on 
 
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {
-		t.Skip("builds selfhost/wasm (merge and full tiers)")
+		t.Skip("builds compiler/wasm (merge and full tiers)")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -70,17 +70,17 @@ func TestSelfhostWasm(t *testing.T) {
 	cmd.Stderr = &stderr
 	res, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("selfhost/wasm: %v\n%s", err, stderr.String())
+		t.Fatalf("compiler/wasm: %v\n%s", err, stderr.String())
 	}
 	results := parseWasmRuns(string(res))
-	runner := filepath.Join(root, "selfhost", "wasm", "run.mjs")
+	runner := filepath.Join(root, "compiler", "wasm", "run.mjs")
 	pass, unsupported, failed := 0, 0, 0
 	var why []string
 	for _, r := range rel {
 		name := filepath.Base(r)
 		line, ok := results[r]
 		if !ok {
-			t.Errorf("%s: no result from selfhost/wasm", name)
+			t.Errorf("%s: no result from compiler/wasm", name)
 			failed++
 			continue
 		}
@@ -172,12 +172,12 @@ dir: IsDir(path: "d")
 `
 
 // TestSelfhostWasmFsWrite is stage 3's rt.fs_write (decision 0179): a
-// program built by selfhost/wasm writes files under Node's WASI in its
+// program built by compiler/wasm writes files under Node's WASI in its
 // working directory, prints what the go backend prints, and frees every
 // allocation; the files hold what was written.
 func TestSelfhostWasmFsWrite(t *testing.T) {
 	if selfhostTier(t) == tierShort {
-		t.Skip("builds selfhost/wasm (merge and full tiers)")
+		t.Skip("builds compiler/wasm (merge and full tiers)")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -201,13 +201,13 @@ func TestSelfhostWasmFsWrite(t *testing.T) {
 	cmd.Dir = src
 	res, err := cmd.CombinedOutput()
 	if err != nil || !strings.HasPrefix(string(res), "== ok ") {
-		t.Fatalf("selfhost/wasm: %v\n%s", err, res)
+		t.Fatalf("compiler/wasm: %v\n%s", err, res)
 	}
 	run := t.TempDir()
 	if err := os.Mkdir(filepath.Join(run, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := runWasm(t, node, filepath.Join(root, "selfhost", "wasm", "run.mjs"), filepath.Join(out, "fsw.wasm"), run, true)
+	got := runWasm(t, node, filepath.Join(root, "compiler", "wasm", "run.mjs"), filepath.Join(out, "fsw.wasm"), run, true)
 	if got.exit != 0 || got.stdout != wasmFsWriteWant {
 		t.Fatalf("got %s\nwant stdout\n%s", got, wasmFsWriteWant)
 	}
@@ -226,7 +226,7 @@ var wasmTimeRE = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
 
 var wasmLeakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
-// parseWasmRuns maps each run of `selfhost/wasm --each` to its result line.
+// parseWasmRuns maps each run of `compiler/wasm --each` to its result line.
 func parseWasmRuns(s string) map[string]string {
 	out := map[string]string{}
 	cur := ""

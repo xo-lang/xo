@@ -5,7 +5,7 @@
 #
 #   auto         short, then the touched Go packages' full tests (a
 #                changed file belongs to its nearest directory with .go
-#                files), the internal/selfhost merge tier when selfhost/ or
+#                files), the internal/selfhost merge tier when compiler/ or
 #                std/ changed, internal/gen, llvm, and arm64 when std/
 #                changed, and the fixed point when the change touches what
 #                the self build compiles (the CLAUDE.md test policy)
@@ -39,7 +39,7 @@
 #                point)
 #
 # auto's full tests: the touched packages, ./internal/selfhost and
-# ./cmd/xo when selfhost/ or std/ changed, ./internal/gen, llvm, and
+# ./cmd/xo when compiler/ or std/ changed, ./internal/gen, llvm, and
 # arm64 when std/ changed, and PACKAGE... (the workflow's packages input)
 # on top.
 #
@@ -77,8 +77,8 @@ touched_pkgs() {
 
 # The CLAUDE.md fixed point rule: what the self build compiles or runs.
 needs_fixed_point() {
-  grep -E '^(selfhost/|std/native/|std/llrt/|internal/xotool/(xotool|chain|seed|lock_[^/]*)\.go$|scripts/xobuild/|scripts/seed-chain\.txt$)' <<<"$files" |
-    grep -vE '^selfhost/(macho|wasm)/|_test\.xo$' >/dev/null
+  grep -E '^(compiler/|std/native/|std/llrt/|internal/xotool/(xotool|chain|seed|lock_[^/]*)\.go$|scripts/xobuild/|scripts/seed-chain\.txt$)' <<<"$files" |
+    grep -vE '^compiler/(macho|wasm)/|_test\.xo$' >/dev/null
 }
 
 run_short() {

@@ -7,8 +7,8 @@
 // (--std, --wd, --cc, --asm, --go-tree, --phase-times, --target) are
 // parsed the same way.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// Everything a command line sets.
 struct Opts {
@@ -26,7 +26,7 @@ struct Opts {
   /// for asm; main.xo).
   backend: Str = ""
   go_tree: Str = ""
-  /// --as and --ld (decision 0182): cc, or macho (selfhost/macho; --ld=macho
+  /// --as and --ld (decision 0182): cc, or macho (compiler/macho; --ld=macho
   /// implies --as=macho); "" when not given: main.xo default_ld picks
   /// macho for a darwin/arm64 host link the pack covers, else cc.
   assembler: Str = ""
@@ -42,7 +42,7 @@ struct Opts {
   /// --trace-support: a --release build keeps the execution trace's
   /// recorder (decision 0240; development builds always have it)
   trace_support: Bool = false
-  /// -s: no debug information and no local symbols (selfhost/macho's
+  /// -s: no debug information and no local symbols (compiler/macho's
   /// LinkOpts.strip, `ld -x` on darwin, `ld -s` on Linux; the Go
   /// backend's `-s -w`); --debug-info: debug information in a release
   /// build too (decision 0239)
@@ -94,7 +94,7 @@ fn bool_flags() -> List[Str] {
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
-/// build, run, and test print `xo`'s usage (selfhost/cli/cmdhelp), which
+/// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
   "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
@@ -130,7 +130,7 @@ struct Front {
 /// directories reads as D (each of them already covers the directories
 /// below D) once D/... is known to match a directory with .xo files. The
 /// global --std=DIR and --wd=DIR may come before the command
-/// (selfhost/cli/core).
+/// (compiler/cli/core).
 fn front(os: Os, args: List[Str]) -> Front {
   var i = 0
   while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
@@ -223,8 +223,8 @@ fn path_flags() -> List[Str] {
 
 /// A path argument as the rest of xo takes it: on Windows `\` is a
 /// separator (std.md 3.1: `C:\data` is absolute), and the checker and
-/// driver split paths only at `/`, so `C:\x\selfhost\xo` becomes
-/// `C:/x/selfhost/xo` (gotchas/windows-seed-xo1306-module-not-required.md);
+/// driver split paths only at `/`, so `C:\x\compiler\xo` becomes
+/// `C:/x/compiler/xo` (gotchas/windows-seed-xo1306-module-not-required.md);
 /// elsewhere `\` is an ordinary character of a name.
 fn os_path(p: Str) -> Str {
   if is_windows() { p.replace("\\", "/") } else { p }

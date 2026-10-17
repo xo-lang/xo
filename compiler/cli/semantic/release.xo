@@ -5,8 +5,8 @@
 // hash too (decision 0125, defhash.xo).
 
 use std/archive
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// One export of a module version: a pub declaration of one of its
 /// packages, as `xo query api` lists it (release.Item).

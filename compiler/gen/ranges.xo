@@ -6,8 +6,8 @@
 // it proves it (loops iterate to a fixed point), and one the analysis
 // never visits is never marked.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 const MIN_INT = -9223372036854775807 - 1
 const MAX_INT = 9223372036854775807

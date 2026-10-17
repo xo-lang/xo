@@ -5,7 +5,7 @@
 //       [--no-arenas] [--release] [--no-error-args] <dirs...>
 //
 // It checks the directories as `xo build` does for the Go backend
-// (selfhost/check, not in native mode) and prints the files the
+// (compiler/check, not in native mode) and prints the files the
 // generator writes, sorted by path, each after `== file <path>`, with
 // the text of each package before internal/gen's last step (blank uses,
 // repeated //line directives, gofmt), then `== skipped` and one line per
@@ -18,7 +18,7 @@
 // preceded by `=== gen <dir>`. --wd is the working directory relative
 // paths are relative to (default $PWD).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var each = false

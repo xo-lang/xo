@@ -3,8 +3,8 @@
 // the checked syntax tree before code generation, so every backend sees
 // the stamped text. A name that is not such a constant is XO1501.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// applyStamps: the stamped constants of the root modules replaced in c;
 /// the XO1501 diagnostics of the names that are not stamped constants.

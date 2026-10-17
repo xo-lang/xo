@@ -1,9 +1,9 @@
 # The native backends read an assignment's list before its value
 
-Status: Observed (2026-10-10, selfhost/check built with arm64 and LLVM);
+Status: Observed (2026-10-10, compiler/check built with arm64 and LLVM);
 fixed by decision 0140.
 
-Symptom: the arm64 and LLVM builds of selfhost/check faulted with
+Symptom: the arm64 and LLVM builds of compiler/check faulted with
 `index 161 out of range for List of length 161` on modules with a
 generic declaration; the Go backend build ran fine. Reduced:
 `c.objs[o].kids = c.add_kids()`, where `add_kids` pushes onto `c.objs`,

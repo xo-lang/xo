@@ -2,7 +2,7 @@
 // type, inference, literals, operators, control flow expressions, struct
 // literals, `with`, and closures.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// An expected type (expr.go check's want): none, a type, a value in
 /// return position of a function declared `-> T ! E`, or a discarded

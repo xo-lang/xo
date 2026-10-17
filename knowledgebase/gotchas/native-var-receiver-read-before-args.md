@@ -1,9 +1,9 @@
 # The native backends read a `var` receiver before the call's arguments
 
-Status: Observed (2026-10-10, selfhost/check stage 2 built with arm64 and
+Status: Observed (2026-10-10, compiler/check stage 2 built with arm64 and
 LLVM); fixed by decision 0142.
 
-Symptom: the arm64 and LLVM builds of selfhost/check faulted on almost
+Symptom: the arm64 and LLVM builds of compiler/check faulted on almost
 every run with `index 692 out of range for List of length 692` in
 `implements` or `resolve`; the Go backend build matched the Go checker
 on every run. Reduced: `t.get(t.add(7))`, where `add` pushes onto

@@ -1,6 +1,6 @@
 // Instructions of the CPU that Xo cannot name, as functions with a
 // portable body (decision 0231): the native emitters (arm64 and LLVM)
-// lower a call of each to its instruction (selfhost/ssa cpu_call); a wasm
+// lower a call of each to its instruction (compiler/ssa cpu_call); a wasm
 // module, and an xo older than the decision (a seed building xo), run the
 // body. Each is constant time either way: no branch on data, no table, no
 // comparison in the body (loops and indexes are over public counts).

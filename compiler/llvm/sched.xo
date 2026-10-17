@@ -33,7 +33,7 @@ fn (var g: Gen) sched_switch() {
 
 /// Defines xo_unwind_save and xo_unwind_resume (rt.unwind_save and
 /// rt.unwind_resume, decision 0221) at the first use: the lines of
-/// selfhost/arm64 sched.xo unwind_save_body and unwind_resume_body on
+/// compiler/arm64 sched.xo unwind_save_body and unwind_resume_body on
 /// arm64. On x86_64 (stage 2) the save stores the callee saved rbx, rbp,
 /// r12 to r15 at their DWARF numbers' words (3, 6, 12 to 15), the
 /// caller's rsp (7) and the return address (16, the return address

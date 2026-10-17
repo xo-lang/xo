@@ -1,8 +1,8 @@
 # arm64: `add` takes a 12 bit immediate, and a frame's $OUT slot can be past it
 
-Status: Observed (2026-10-10, the arm64 build of selfhost/ssa)
+Status: Observed (2026-10-10, the arm64 build of compiler/ssa)
 
-Symptom: `xo build --backend=arm64 selfhost/ssa` failed in the assembler:
+Symptom: `xo build --backend=arm64 compiler/ssa` failed in the assembler:
 `error: expected compatible register, symbol or integer in range [0,
 4095]` at `add x6, sp, #4808`, before a call of `xo_str_replace` in
 `Builder.expr`.

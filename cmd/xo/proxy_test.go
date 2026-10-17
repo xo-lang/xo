@@ -93,5 +93,5 @@ func TestModProxy(t *testing.T) {
 
 // TestChecksumLogCommand (a checksum log on loopback, decision 0124) went
 // with decision 0215: its log server was the Go internal/sumdb, and xo
-// has no server of its own yet (the client is selfhost/cli/modules
+// has no server of its own yet (the client is compiler/cli/modules
 // sumdb.xo). See decision 0215, "Tests not carried over".

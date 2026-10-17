@@ -2,9 +2,9 @@
 // build.go): literals, names, selectors, operators, `if`, `match`, and
 // patterns.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/lexer
 
 // ---------------------------------------------------------------------------
 // Types of expressions (build.go)

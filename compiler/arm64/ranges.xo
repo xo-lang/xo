@@ -4,7 +4,7 @@
 // a loop parameter whose interval keeps growing is widened to the next
 // threshold. Branches do not narrow (the memo's bounds do that).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 fn full_interval() -> Interval {
   Interval{lo: MIN_INT, hi: MAX_INT}

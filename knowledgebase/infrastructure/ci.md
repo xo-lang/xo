@@ -58,7 +58,7 @@ split by each package's weight (seconds on a big runner: internal/llvm
 others 30; longest first, each to the least loaded job) with the fixed
 point (150) counted as one more load. A run watched with `gh run watch`
 shows every job. Verified 2026-10-14 (run 38615252053, a probe
-changing selfhost/ and std/): four jobs in parallel (short 49 s;
+changing compiler/ and std/): four jobs in parallel (short 49 s;
 selfhost, arm64, and std 3 min 19 s; cmd/xo, gen, and the fixed point
 5 min 20 s; llvm 5 min 34 s), 6 min 18 s from the plan to the last job,
 against about 8 minutes for the same tests in one job without cmd/xo.
@@ -72,7 +72,7 @@ with Go and clang, so a failing suite can be reproduced locally.
 
 | suite | runs |
 |---|---|
-| `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package), `./internal/selfhost` (merge tier) and `./cmd/xo` when anything under `selfhost/` or `std/` changed, `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed, and `packages`; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `selfhost/` but not `selfhost/macho`, `selfhost/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). In the workflow these are parallel jobs (above); `suite.sh auto` on a machine runs them in order |
+| `auto` | `short`; then the full tests of the Go packages a changed file belongs to (its nearest directory holding `.go` files, so a `testdata` golden or `.xo` fixture tests its package), `./internal/selfhost` (merge tier) and `./cmd/xo` when anything under `compiler/` or `std/` changed, `./internal/gen`, `./internal/llvm`, and `./internal/arm64` (every backend's program output goldens) when `std/` changed, and `packages`; the fixed point when the change touches what the self build compiles (CLAUDE.md's list: `compiler/` but not `compiler/macho`, `compiler/wasm`, or `_test.xo` files; `std/native/`; `std/llrt/`; `internal/xotool` xotool.go, chain.go, seed.go, lock_*.go; `scripts/xobuild/`; `scripts/seed-chain.txt`). In the workflow these are parallel jobs (above); `suite.sh auto` on a machine runs them in order |
 | `short` | `go vet` and `go test -short` over every package but `runs/` |
 | `vet` | `go vet` only |
 | `merge` | `go test -timeout 60m` of `packages` (default: the touched ones) |
@@ -334,7 +334,7 @@ From the first runs, 2026-10-14 (runs 38595689932, 38596682112,
 | stopped machine to job running, through the webhook (delivery 5 s, Lambda starts xo-ci-arm64-big2, runner online and job assigned 12 s later) | 17 s |
 | the same through the one minute sweep only (webhook broken at the time) | 75 s |
 | idle stop after the last job | 5 min 24 s |
-| `auto` on a branch changing selfhost/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
+| `auto` on a branch changing compiler/lexer/dump.xo and a file under internal/gen/testdata (short, internal/gen 80 s, internal/selfhost 161 s, fixed point) | 6.5 min |
 | xo-ci-windows first boot after adoption (boot.ps1 start to registered; the toolchain was already there) | 14 s |
 | `windows` (run 38627432745): plan with the xo.exe cross build 18 s, then the Windows job (checkout, windows-batch.sh steps 1 to 4) | 5 min 33 s job; 156 of 157 windows/amd64 goldens pass (proc_cmd fails, below), 157 of 157 windows/arm64 built, LLVM runtime tests ok, `xo test` LLVM against Go 16 same, 0 differ |
 | `windows` without the cross build (run 38633141732): plan 4 s, the Windows job with xo built on the runner (scripts/xobuild, seed cached) | 6 min 43 s job; 157 of 157 goldens pass, 157 arm64 built, runtime ok, 16 same |

@@ -2,7 +2,7 @@
 
 Xo is a small, statically typed language for backends and web services,
 designed for AI agents to write, check, cross compile, and debug. The
-compiler and the `xo` toolchain are written in Xo (selfhost/); the Go
+compiler and the `xo` toolchain are written in Xo (compiler/); the Go
 implementation the language started with was deleted (decision 0215).
 
 ## Safety rules for every agent (required)
@@ -116,8 +116,8 @@ Update the knowledgebase in the same change as the work, not later:
     chased by default. Every merge touching what the self build
     compiles or runs also passes the self rebuild fixed point
     (scripts/bootstrap-xo.sh, s2 and s3 identical) on arm64, so a
-    miscompile cannot build the next compiler: selfhost/ (but not
-    selfhost/macho or selfhost/wasm, which the bootstrap never uses,
+    miscompile cannot build the next compiler: compiler/ (but not
+    compiler/macho or compiler/wasm, which the bootstrap never uses,
     and not `_test.xo` files), std/native/, std/llrt/, and the xo build
     code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
     scripts/xobuild, scripts/seed-chain.txt). Other merges (tests, docs,
@@ -149,13 +149,13 @@ Update the knowledgebase in the same change as the work, not later:
     run ci.yml -f suite=full -f runner=xo-arm64-big`,
     knowledgebase/infrastructure/ci.md); `XO_SELFHOST_JOBS` sizes its
     worker pool (default min(GOMAXPROCS, 4)); full runs before tagging and
-    for a change under selfhost/ or the compiler's SSA or native backends
+    for a change under compiler/ or the compiler's SSA or native backends
     that the merge tier does not exercise.
 - The Go compiler is gone (decision 0215, 2026-10-13; the last commit
   with it is tagged `go-compiler-final`, 87873aa5): `xo` is xo1, built
-  from selfhost/xo, and the Xo implementation (selfhost/, std/) plus the
+  from compiler/xo, and the Xo implementation (compiler/, std/) plus the
   spec are the source of truth. Every compiler change (language,
-  backends, targets, driver) lands in selfhost/. What stays in Go: std/rt
+  backends, targets, driver) lands in compiler/. What stays in Go: std/rt
   (the Go backend's runtime), internal/gobind and cmd/xo-gobind (`use
   go`), internal/gotool, the test infrastructure (internal/xotool,
   progen, testtmp, mod/modtest), and test only packages (cmd/xo,
@@ -163,7 +163,7 @@ Update the knowledgebase in the same change as the work, not later:
   binary.
 - The xo the Go tests and scripts run (internal/xotool): `$XO_CLI`, else
   the checkout's `bin/xo`, which `go run ./scripts/xobuild` (and any Go
-  test that needs it) rebuilds when selfhost/ or a std module it uses
+  test that needs it) rebuilds when compiler/ or a std module it uses
   changed: several minutes and several GB, once per source key, shared
   by worktrees in `<user cache>/xo/checkout/<key>`. An earlier xo builds
   it (`XO_SEED`, the earlier bin/xo, the newest cached build of an

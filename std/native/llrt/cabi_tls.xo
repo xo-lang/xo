@@ -2,7 +2,7 @@
 // entries hconn.xo and hserve.xo call through the table srvtls.xo makes
 // when a program configures TLS (http.Server.with_tls). Only srvtls.xo
 // imports this module, so a program that never calls with_tls builds
-// none of these (selfhost/ssa build.xo importer_built) and links no TLS
+// none of these (compiler/ssa build.xo importer_built) and links no TLS
 // server and no HTTP/2: a plain HTTP server is about half the size
 // (bench/results/binary-size-native-2026-10-16.md). Every top level
 // function here is an export, xo_x_<name>; the arguments and results are

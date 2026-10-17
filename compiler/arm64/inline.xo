@@ -20,7 +20,7 @@
 // order); a function that calls one still being walked (a cycle, or
 // itself) is not inlinable, so copies never nest without end.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 const INLINE_MAX_INSTRS = 40
 const INLINE_MAX_BLOCKS = 12

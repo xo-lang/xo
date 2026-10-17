@@ -6,7 +6,7 @@ Symptom: `xo: assembler: LpGL1jtk_f8_l4 is used but not defined` when
 a label referenced only from outside the function's text (a debug
 line row, referenced from .debug_line) sat between two loads or stores.
 
-Cause: selfhost/arm64 lsr.xo pair_mem joins two loads or stores into
+Cause: compiler/arm64 lsr.xo pair_mem joins two loads or stores into
 ldp or stp across labels that neither the function's text nor its call
 site table refers to, and drops those labels (block labels only fallen
 into).

@@ -10,7 +10,7 @@ import (
 )
 
 // Pruning of <cache base>/checkout/<key> (decision 0223), the xo builds
-// Ensure shares across worktrees: the stamp format of selfhost/prune
+// Ensure shares across worktrees: the stamp format of compiler/prune
 // (an entry's last use is its modification time, refreshed at most
 // hourly; the last prune is the time of checkout/prune-stamp). At most
 // once an hour, the keys beyond the newest $XO_CHECKOUT_KEEP (default 4)

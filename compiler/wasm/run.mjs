@@ -1,7 +1,7 @@
 // run.mjs: runs a module of the WebAssembly backend (decision 0179) under
 // Node's WASI preview1, as the playground's worker will (decision 0144):
 //
-//   node --no-warnings selfhost/wasm/run.mjs PROG.wasm [args...]
+//   node --no-warnings compiler/wasm/run.mjs PROG.wasm [args...]
 //
 // The module's only imports must be wasi_snapshot_preview1's. It runs in
 // a worker with a 1 GiB stack (deep recursion of the goldens), its exit

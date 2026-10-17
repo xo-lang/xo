@@ -4,8 +4,8 @@
 //   wasm --asm=IN.wat -o OUT.wasm                                  assemble
 //   wasm [--std=DIR] [--wd=DIR] --play check|fmt|build ...         the playground (play.xo)
 //
-// A build checks the directories as `xo1 build` does (selfhost/check in
-// native mode), builds the SSA module with selfhost/ssa and its passes,
+// A build checks the directories as `xo1 build` does (compiler/check in
+// native mode), builds the SSA module with compiler/ssa and its passes,
 // lowers it with this backend, and prints `== ok <bytes>` with the module
 // written to DIR/<name>.wasm and its text to DIR/<name>.wat (--out; the
 // name is the directory's), or `== unsupported <why>` (no module: a
@@ -21,8 +21,8 @@
 // the code of every SSA instruction in the .wat with its opcode
 // (`;; @op`), to attribute the module's bytes to constructs.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
 
 fn main(os: Os) ! {
   var asm_in = ""
@@ -152,7 +152,7 @@ fn base_name(p: Str) -> Str {
   parts[parts.len() - 1]
 }
 
-/// The directory fault positions are relative to (selfhost/xo
+/// The directory fault positions are relative to (compiler/xo
 /// line_root, internal/build lineRoot): the nearest directory holding
 /// xo.mod at or above dir, else dir itself, relative to wd when below it.
 fn line_root(os: Os, wd: Str, dir: Str) -> Str {

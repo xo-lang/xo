@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# The self hosted assembler (selfhost/macho, decision 0182) against the
+# The self hosted assembler (compiler/macho, decision 0182) against the
 # system assembler: scripts/macho-compare.py <macho> <file.s...> assembles
 # each file with `<macho> asm --minos=<host>` and with `cc -c`, and counts
 # byte identical objects, and per section and per function (the __text

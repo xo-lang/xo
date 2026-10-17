@@ -6,7 +6,7 @@
 // absolute inside a message is made absolute with Checker.abs.
 
 use std/crypto
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// One `require <module path> <version> [uses <effects|none>]` line.
 pub struct Require {

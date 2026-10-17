@@ -1,6 +1,6 @@
 # XO0305 asked to list 79 variants for a default arm on a large enum
 
-Status: Observed (2026-10-08, `selfhost/lexer`, enum `Kind` with 88 variants).
+Status: Observed (2026-10-08, `compiler/lexer`, enum `Kind` with 88 variants).
 Resolved (2026-10-08) by decision 0080.
 
 Symptom (before 0080): `match k { Ident => "id" ... _ => "" }` on a token

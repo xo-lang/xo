@@ -2,8 +2,8 @@
 // them, the module flags every command takes (--offline, --workspace),
 // and the human and JSON output of xo get, xo mod, and xo vendor.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The commands of this package, for the driver's dispatch.
 pub fn is_command(name: Str) -> Bool {
@@ -217,7 +217,7 @@ fn unquote_usage(d: FlagDef) -> (Str, Str) {
 fn (c: ModCtx) print_usage(f: FlagSet) uses stdio {
   let u = cmdhelp.usage_of(f.name)
   if !u.is_empty() {
-    // the command's usage (selfhost/cli/cmdhelp)
+    // the command's usage (compiler/cli/cmdhelp)
     c.os.stdio.eprint(u)
     return
   }

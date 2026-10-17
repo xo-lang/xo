@@ -1,6 +1,6 @@
 # `x[...]` is type arguments or an index, decided by shape
 
-Status: Observed (2026-10-10, `KIND_NAMES[k]` in selfhost/check)
+Status: Observed (2026-10-10, `KIND_NAMES[k]` in compiler/check)
 
 The grammar uses square brackets for both explicit type arguments
 (`json.decode[User](b)`, `Mutex[Int].new(0)`) and indexing (`xs[i]`). The

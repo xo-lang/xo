@@ -15,4 +15,4 @@ built from `$PWD` (`/var/...`), found no subdirectory, and compared a
 subdirectory module with the root tags (TestSubdirModules failed against
 xomod). internal/release resolves both with `filepath.EvalSymlinks`; the
 Xo port asks git for the subdirectory (`git rev-parse --show-prefix`)
-when the plain comparison finds none (selfhost/cli/semantic/release.xo).
+when the plain comparison finds none (compiler/cli/semantic/release.xo).

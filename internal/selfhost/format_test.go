@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestSelfhostFormat runs the self hosted formatter (selfhost/cli/core/
+// TestSelfhostFormat runs the self hosted formatter (compiler/cli/core/
 // format, which `xo fmt` uses; decision 0178 stage 2) on every .xo file
 // of the repository and requires the recorded output (internal/format's
 // until decision 0215): the same formatted text, or a syntax error.

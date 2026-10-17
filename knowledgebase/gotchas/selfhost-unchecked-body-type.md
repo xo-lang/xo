@@ -3,7 +3,7 @@
 Status: Observed (2026-10-10, stage 8 mutations of the self hosted checker)
 
 Symptom: the Xo checker faulted with `index -1 out of range` in
-`named_obj` (selfhost/check/types.xo) on a module where a real-time
+`named_obj` (compiler/check/types.xo) on a module where a real-time
 function was declared twice; the Go checker reported XO0603 and an
 XO1401 inside the duplicate's body.
 

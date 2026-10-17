@@ -27,7 +27,7 @@ stopped compiling the TLS library (`src/library/debug.c ... fatal error:
 modules), so a build of xo1 always builds the library.
 
 Cause: the TLS library is built once per "flavor" of the link flags
-(sanitizers and the cross `--target=`, selfhost/xo tls.xo `tls_args`);
+(sanitizers and the cross `--target=`, compiler/xo tls.xo `tls_args`);
 the sysroot pair `-Xmicrosoft-windows-sys-root DIR` was not part of the
 flavor, so the library compiled for Windows without its headers.
 

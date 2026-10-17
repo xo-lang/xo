@@ -6,7 +6,7 @@ XO_UNICODE_C symbols to IOFlags only).
 
 ## Symptom
 
-xo1 (`selfhost/xo`) keeps its own copy of tables internal/build owns.
+xo1 (`compiler/xo`) keeps its own copy of tables internal/build owns.
 `io_flags` (link.xo), the symbols that turn on `-DXO_FS`, still had the
 list from before decision 0172: `xo_fs_open`, `xo_fs_file_`,
 `xo_fs_copy`, `xo_fs_perm`, `xo_fs_chmod`, `xo_fs_symlink`,
@@ -29,8 +29,8 @@ is not covered by either.
 
 The list is in step again (decision 0178). Until the Go driver is
 retired: a change to `build.IOFlags`, `tlsSymbols`, mbedtls.go's
-configuration, or a runtime flag list must touch selfhost/xo in the
-same change; grep selfhost/xo for the Go function's name, which each
+configuration, or a runtime flag list must touch compiler/xo in the
+same change; grep compiler/xo for the Go function's name, which each
 port names in its doc comment. `TestXo1IOFlagsSymbols`
 (internal/selfhost/xo1_tables_test.go, runs with -short) now compares
 the symbol lists of `IOFlags` and `io_flags`; the other tables

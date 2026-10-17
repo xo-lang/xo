@@ -1,10 +1,10 @@
-// xobind: `xo bind` of selfhost/cli/bind as a program of its own, to
+// xobind: `xo bind` of compiler/cli/bind as a program of its own, to
 // compare the C binder in Xo with internal/cbind without building xo1
 // (decision 0178 stage 6, cmd/xo TestBindCXoSame): `xobind bind ...` runs
 // the Xo port; any other command is handed to the Go `xo` named by
 // $XOBIND_FALLBACK (same arguments, standard streams, and exit status).
 
-use github.com/xo-lang/xo/selfhost/cli/bind
+use github.com/xo-lang/xo/compiler/cli/bind
 
 fn main(os: Os) uses (fs, proc, env, stdio) {
   let args = os.env.args()

@@ -3,8 +3,8 @@
 // selector, check.Info.MethodValueLit), and the generated equality and
 // order helpers (build_map.go eqColl, cmpFunc), stage 2 of decision 0150.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// The hidden fields of an interface value: the Display and Debug text,
 /// equality, and the concrete type's id.

@@ -22,7 +22,7 @@
 # (e.g. 0.10.0 and linux-arm64). The commit (full hash) is
 # $XO_SEED_COMMIT, else the HEAD of the checkout holding XO's std, else
 # of the working directory. XO_SEED_NOTE is the manifest note (default:
-# the layout packed). A checkout with changes under selfhost/ or std/ is
+# the layout packed). A checkout with changes under compiler/ or std/ is
 # refused unless XO_SEED_ALLOW_DIRTY=1.
 #
 #   seed-pack.sh --manifest OUTDIR   only rebuild OUTDIR/manifest.txt
@@ -111,8 +111,8 @@ else
   commit=$(git rev-parse HEAD 2>/dev/null) || die "no commit: set XO_SEED_COMMIT"
 fi
 echo "$commit" | grep -Eq '^[0-9a-f]{40}$' || die "commit $commit: want a full hash"
-if [ -n "$gitroot" ] && [ -z "${XO_SEED_ALLOW_DIRTY:-}" ] && [ -n "$(git -C "$gitroot" status --porcelain -- selfhost std)" ]; then
-  die "$gitroot has changes under selfhost/ or std/ (commit them, or XO_SEED_ALLOW_DIRTY=1)"
+if [ -n "$gitroot" ] && [ -z "${XO_SEED_ALLOW_DIRTY:-}" ] && [ -n "$(git -C "$gitroot" status --porcelain -- compiler std)" ]; then
+  die "$gitroot has changes under compiler/ or std/ (commit them, or XO_SEED_ALLOW_DIRTY=1)"
 fi
 date=$(date -u +%Y-%m-%d)
 seed=$version-${commit:0:8}

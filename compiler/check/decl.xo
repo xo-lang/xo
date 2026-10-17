@@ -1,7 +1,7 @@
 // Declarations, type declarations, signatures, and type expressions
 // (internal/check/decl.go).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The context of a type expression (decl.go typeEnv).
 struct TypeEnv {

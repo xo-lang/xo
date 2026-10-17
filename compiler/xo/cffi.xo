@@ -7,7 +7,7 @@
 // from the binding's key (`c:<header>|<link files>|<libraries>|<effects>`
 // for a header next to the module).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// What `use c` adds to a link: C sources, objects, and archives, and -l
 /// flags; err is set when a binding cannot be linked.

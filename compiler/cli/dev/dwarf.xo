@@ -1,4 +1,4 @@
-// `xo dev dwarf FILE`: what selfhost/debug's DWARF reader (decision 0253,
+// `xo dev dwarf FILE`: what compiler/debug's DWARF reader (decision 0253,
 // stage 1) reads from an executable or a dSYM's DWARF file: each function
 // with its address range and its variables (name, type, parameter or
 // not, declaration line, and each location range with its pieces), the
@@ -8,8 +8,8 @@
 // tables. The text is for tests and agents; `xo debug` is the command
 // built on the reader.
 
-use github.com/xo-lang/xo/selfhost/cli/core
-use github.com/xo-lang/xo/selfhost/debug
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/debug
 
 fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var fl = core.new_flags("dev dwarf")

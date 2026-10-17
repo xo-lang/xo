@@ -10,8 +10,8 @@ TestSelfhostDefhash (internal/selfhost) fails for most modules.
 Cause: internal/defhash encodes a declaration by reflection over the Go
 syntax tree: `(` and the Go type name, then every exported field in
 declaration order (Base and Doc skipped; nil fields as `0`, false
-booleans as `b1:0`). selfhost/cli/semantic/defhash.xo writes the same
-encoding out by hand over selfhost/parser's tree, so it has to change in
+booleans as `b1:0`). compiler/cli/semantic/defhash.xo writes the same
+encoding out by hand over compiler/parser's tree, so it has to change in
 the same place in the same commit. A change to the hash scheme also
 needs a new prefix (`d1:`, decision 0125), or old and new hashes compare
 as different definitions.

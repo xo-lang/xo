@@ -1,6 +1,6 @@
 # Native heap: allocation is a cache miss when a size class's free list is cold
 
-Status: Observed (2026-10-13, xo1 compiling selfhost/xo; xo1-speed work)
+Status: Observed (2026-10-13, xo1 compiling compiler/xo; xo1-speed work)
 
 Symptom: a native program that allocates and frees many small blocks
 in waves (xo1: millions of MIR instructions per function, freed when

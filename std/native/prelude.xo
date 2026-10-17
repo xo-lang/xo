@@ -1649,7 +1649,7 @@ fn proc_kill(p: Proc, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc 
   }
 }
 
-/// FakeProc.killed, as the SSA builder calls it (selfhost/ssa testmode.xo):
+/// FakeProc.killed, as the SSA builder calls it (compiler/ssa testmode.xo):
 /// the recorded signals, oldest first.
 fn llrt_proc_killed() -> List[Str] { proc.killed() }
 
@@ -2356,7 +2356,7 @@ fn llrt_exit(code: Int) {
   process.exit(code)
 }
 
-/// `s[lo..hi]` on a Str (selfhost/ssa expr.xo; was xo_bytes.c's): the
+/// `s[lo..hi]` on a Str (compiler/ssa expr.xo; was xo_bytes.c's): the
 /// range must be one of s, its ends on UTF-8 boundaries.
 fn llrt_str_slice_at(s: Str, lo: Int, hi: Int, loc: Str) -> Str {
   slice_check(lo, hi, s.len(), "Str", loc)
@@ -2370,7 +2370,7 @@ fn llrt_str_slice_at(s: Str, lo: Int, hi: Int, loc: Str) -> Str {
 
 /// `b[lo..hi]` on Bytes.
 /// A List[Int] of the little endian 8 byte words of b: a constant List
-/// of Int literals kept as data (selfhost/ssa show.xo int_list_data), read
+/// of Int literals kept as data (compiler/ssa show.xo int_list_data), read
 /// once at the constant's first use.
 fn llrt_list_of_le64(b: Bytes) -> List[Int] {
   let n = b.len() / 8
@@ -2396,7 +2396,7 @@ fn slice_check(lo: Int, hi: Int, n: Int, what: Str, loc: Str) {
 }
 
 /// The clamped slice and the repeat of the SSA builders' show and
-/// assertion texts (selfhost/ssa show.xo; was xo_std.c's).
+/// assertion texts (compiler/ssa show.xo; was xo_std.c's).
 fn llrt_str_slice(s: Str, lo: Int, hi: Int) -> Str { raw.str_slice(s, lo, hi) }
 
 fn llrt_str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
@@ -2404,7 +2404,7 @@ fn llrt_str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
 /// BytesBuilder.write_rune (the SSA builders call it with a Rune value).
 fn llrt_rs_push_rune(s: Str, r: Rune) -> Str { raw.push_rune(s, Int(r)) }
 
-/// `stdio.set_tty(width)` of a test binary (selfhost/ssa testmode.xo).
+/// `stdio.set_tty(width)` of a test binary (compiler/ssa testmode.xo).
 fn llrt_tw_set_tty(width: Int) { stdinrt.set_tty(width) }
 
 // The program's arguments and environment, for Env.args, Env.program,
@@ -2505,12 +2505,12 @@ fn llrt_gen_time(g: Int) -> Int { gen.time(g) }
 // The test world of test binaries, part 1 (std/native/llrt/testworld.xo,
 // the zero-C audit's B14; it was std/llrt/xo_testing.c): the test to
 // run, a failure, the captured streams, FakeEnv, FakeProc.exit_code, the
-// view of `xo test --real`, and the generators, as selfhost/ssa
+// view of `xo test --real`, and the generators, as compiler/ssa
 // testmode.xo calls them.
 
 /// Starts the test world when the test binary runs one test (XO_TEST,
 /// as `xo test` runs it): the first thing a test binary's main does
-/// (selfhost/ssa testmode.xo; was the C's weak xo_x_tw_start, which
+/// (compiler/ssa testmode.xo; was the C's weak xo_x_tw_start, which
 /// entry.xo start called through the services record until decision
 /// 0233 step 2).
 fn llrt_tw_start() {

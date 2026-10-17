@@ -277,7 +277,7 @@ func isDir(p string) bool {
 // TestGobindDir is a `use go` binding cache (XO_GOBIND_DIR) for test
 // binaries that is kept across runs: <user cache>/xo/testgobind/<key>,
 // keyed by the xo binary's contents (the binder is xo's
-// selfhost/cli/bind) and the go command's version (the bindings read Go's
+// compiler/cli/bind) and the go command's version (the bindings read Go's
 // export data). A fresh directory per run bound every `use go` golden
 // again (about 0.8 s each) and so missed XO_BIN_CACHE as well. Entries
 // unused for XO_CACHE_MAX_AGE are removed (testCacheAge).
@@ -425,7 +425,7 @@ func CleanupTemp() {
 // XO_CACHE_MAX_AGE (a Go duration, 0 keeps everything) as for xo's
 // caches (decision 0223), default 24 hours, and never under two hours
 // (an entry in use is touched at most when used, the same margin as
-// selfhost/prune).
+// compiler/prune).
 func testCacheAge() time.Duration {
 	age := 24 * time.Hour
 	if v := os.Getenv("XO_CACHE_MAX_AGE"); v != "" {

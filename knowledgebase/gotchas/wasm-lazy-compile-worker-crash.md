@@ -1,11 +1,11 @@
 # Node's worker crashes compiling a large wasm module lazily
 
 Status: Observed (2026-10-12), Node 22.22.1 on darwin/arm64,
-selfhost/wasm stage 2 (decision 0179).
+compiler/wasm stage 2 (decision 0179).
 
 **Symptom.** The self hosted checker built by the wasm backend (a
 40 MB module) died with SIGSEGV (status 139, nothing on stderr) about
-2 s into its run under `selfhost/wasm/run.mjs`, whatever the worker's
+2 s into its run under `compiler/wasm/run.mjs`, whatever the worker's
 stack size (8 MB to 1 GB) and with `--liftoff-only`,
 `--no-wasm-tier-up`, or `--wasm-lazy-validation`. The same module run
 on Node's main thread (a script without the worker, `--stack-size=7500`)

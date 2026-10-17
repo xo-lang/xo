@@ -15,9 +15,9 @@ semantic highlighting, and formatting.
 | `language-configuration.json` | `//` comments, brackets, auto closing pairs, indentation. |
 | `syntaxes/xo.tmLanguage.json` | Grammar, scope `source.xo`. Built from spec/core.md section 1. |
 | `syntaxes/xo.markdown.tmLanguage.json` | Injection: ` ```xo ` fences in Markdown use `source.xo`. |
-| `extension.js` | Starts `xo lsp` with vscode-languageclient 9.0.1. Binary: setting `xo.path`, else, in or above a workspace folder or the active file, `bin/xo` of an Xo checkout (a directory with `selfhost/xo/main.xo`) then `.tools/bin/xo`, else the same in the checkout the extension is symlinked from, else `xo` on PATH (2026-10-10: the first version only checked workspace folder roots; 2026-10-13: `bin/xo` added ahead of `.tools/bin/xo`, see gotcha). One output channel "Xo" for the session (2026-10-13: each restart used to leave another "Xo" channel, since every LanguageClient opens its own; stop now disposes the client), logging the binary and its `xo version` at each start. The server starts in the first workspace folder (else the home directory) with `PWD` set to it, since xo reads its working directory from `$PWD` (gotchas/xo-working-dir-is-pwd.md). Failed requests go to that channel, not popups (`revealOutputChannelOn: Never`). Command "Xo: Restart Language Server". Setting `xo.lsp.enabled`. |
+| `extension.js` | Starts `xo lsp` with vscode-languageclient 9.0.1. Binary: setting `xo.path`, else, in or above a workspace folder or the active file, `bin/xo` of an Xo checkout (a directory with `compiler/xo/main.xo`) then `.tools/bin/xo`, else the same in the checkout the extension is symlinked from, else `xo` on PATH (2026-10-10: the first version only checked workspace folder roots; 2026-10-13: `bin/xo` added ahead of `.tools/bin/xo`, see gotcha). One output channel "Xo" for the session (2026-10-13: each restart used to leave another "Xo" channel, since every LanguageClient opens its own; stop now disposes the client), logging the binary and its `xo version` at each start. The server starts in the first workspace folder (else the home directory) with `PWD` set to it, since xo reads its working directory from `$PWD` (gotchas/xo-working-dir-is-pwd.md). Failed requests go to that channel, not popups (`revealOutputChannelOn: Never`). Command "Xo: Restart Language Server". Setting `xo.lsp.enabled`. |
 | `test/syntax.xo` | Tokenization assertions (`// ^^^ scope` lines), run by `npm test`. |
-| `grammar_test.go` | Go test: grammar keywords equal `KEYWORDS` in `selfhost/lexer/token.xo`, manifest matches grammar. Runs in `go test -short`. |
+| `grammar_test.go` | Go test: grammar keywords equal `KEYWORDS` in `compiler/lexer/token.xo`, manifest matches grammar. Runs in `go test -short`. |
 
 Install for local use (picks up edits on window reload, no packaging):
 
@@ -54,10 +54,10 @@ When the lexical structure changes (a keyword, a literal form, a
 contextual word, a predeclared name), update the grammar and
 `test/syntax.xo` in the same change as `spec/core.md`. The builtin type
 and interface lists in the grammar mirror `is_protected` in
-`selfhost/check/base.xo` (equal on 2026-10-13); only keywords are checked
+`compiler/check/base.xo` (equal on 2026-10-13); only keywords are checked
 automatically.
 
-## `xo lsp` (`selfhost/cli/servers/`)
+## `xo lsp` (`compiler/cli/servers/`)
 
 The Go server of `internal/lsp` was deleted with the Go compiler
 (decision 0215); its Xo port (decision 0178 stage 5) is what `xo lsp`

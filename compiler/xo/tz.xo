@@ -9,8 +9,8 @@
 // decision 0094's addendum): $XO_ZONEINFO, else std's, else an older
 // release's lib/xo/zoneinfo.zip. No Go is needed.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
 
 /// What a program needs of the zone database (ssa.TZUse): the constant
 /// names, sorted, and the calls whose name is known only at run time.

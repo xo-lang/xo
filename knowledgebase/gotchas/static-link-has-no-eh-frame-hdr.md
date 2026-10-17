@@ -12,7 +12,7 @@ only for dynamic (or static-pie) links; a plain `-static` link relies on
 crtbegin.o registering .eh_frame with libgcc, and `-nostdlib` drops both.
 So the binary has .eh_frame but no header table or segment.
 
-**Fix**: selfhost/xo link.xo sys_link_args passes `-Wl,--eh-frame-hdr`
+**Fix**: compiler/xo link.xo sys_link_args passes `-Wl,--eh-frame-hdr`
 (and `-Wl,--defsym=xo_personality=xo_x_personality`) for XO_NOLIBC links.
 Check a binary with `readelf -lW prog | grep GNU_EH_FRAME`. The ELF
 linker of decision 0182 must write the segment too before it links static

@@ -11,7 +11,7 @@ relocation type, padding, or a header field.
 ## Cause and what the assembler does
 
 Each of these was a difference against `clang -c -target
-x86_64-unknown-linux-gnu`, now matched (selfhost/macho enc_amd64.xo,
+x86_64-unknown-linux-gnu`, now matched (compiler/macho enc_amd64.xo,
 asm_amd64.xo):
 
 - **Encodings**: the imm8 form when the value fits (83 /n), the

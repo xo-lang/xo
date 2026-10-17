@@ -1,7 +1,7 @@
 // Instruction selection (internal/arm64 isel.go): SSA values to MIR over
 // virtual registers, block by block in reverse postorder.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The least heap leaves of a struct held in memory whose release calls
 /// its type's mem_drop helper; fewer are released one by one.

@@ -2,11 +2,11 @@
 // headers with the binder in this package; Go packages are bound by the
 // helper xo-gobind (cmd/xo-gobind), which stays Go because it reads Go's
 // export data, so the self hosted `xo` execs it with the same flags and
-// passes its output and status through. selfhost/check uses the same
+// passes its output and status through. compiler/check uses the same
 // helpers to bind a `use go` package or a `use c` header missing from
 // the binding cache (check_dirs_bound).
 
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status,
 /// with the std directory $XO_STD, else "std" in the working directory
@@ -290,7 +290,7 @@ fn (f: Flags) fail(os: Os, msg: Str) -> Bool uses stdio {
 fn (f: Flags) usage(os: Os) uses stdio {
   let u = cmdhelp.usage("bind")
   if !u.is_empty() {
-    // the command's usage (selfhost/cli/cmdhelp)
+    // the command's usage (compiler/cli/cmdhelp)
     os.stdio.eprint(u)
     return
   }

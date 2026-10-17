@@ -1,10 +1,10 @@
 # Xo native builds: updating a collection inside a list element copies it
 
-Status: Observed (2026-10-11, the arm64 build of selfhost/xo); fixed by decision 0169 (2026-10-11)
+Status: Observed (2026-10-11, the arm64 build of compiler/xo); fixed by decision 0169 (2026-10-11)
 
 Symptom: the arm64 build of the self hosted compiler driver
-(selfhost/xo) ran for over 20 minutes compiling itself, where the go
-build of the same code emits selfhost/parser in a few seconds. `sample`
+(compiler/xo) ran for over 20 minutes compiling itself, where the go
+build of the same code emits compiler/parser in a few seconds. `sample`
 showed nearly every sample in `xo_rl_copy` and `xo_rl_free` under
 `G.add`, whose body was `g.blocks[g.cur].insts.push(x)`.
 
@@ -29,7 +29,7 @@ collection out, update it, and put it back:
     ins.push(x)
     g.blocks[b].insts = ins
 
-selfhost/arm64 does this for its instruction lists (take_insts,
+compiler/arm64 does this for its instruction lists (take_insts,
 put_insts), keeps the current block's memo out of the memo list (g.cm),
 and pushes onto lists of lists through push_rng and push_int. Next
 experiment for the compiler: InsertRC (or the backends) should treat
@@ -44,6 +44,6 @@ unique (bench/results/nested-update-2026-10-11.md: 20,000 pushes 63.6
 ms to 0.1 ms on arm64). What still copies: the contents of a box (a
 field of a recursive type) under an element, `Map.update` on a map in
 an element, and any update whose outer list is shared (value
-semantics). The hand workarounds in selfhost/arm64 are no longer
-needed for speed (the driver without them compiles selfhost/xo as fast; results file,
+semantics). The hand workarounds in compiler/arm64 are no longer
+needed for speed (the driver without them compiles compiler/xo as fast; results file,
 2026-10-12).

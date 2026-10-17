@@ -1,7 +1,7 @@
 // Interface adapters for conversions in generic code (internal/gen
 // adapt.go), and the zone data a program needs (timezone.go).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 fn (var g: Gen) init_adapt() {
   g.ad = AdaptState{kp: g.pkgs.len()}

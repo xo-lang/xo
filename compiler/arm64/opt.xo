@@ -8,7 +8,7 @@
 //   - Dead code: instructions without side effects whose definitions are
 //     never used are deleted.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The memo of the current block (s.m()): its index. The current memo
 /// is kept in g.cm, out of the list (an update of a map inside a list

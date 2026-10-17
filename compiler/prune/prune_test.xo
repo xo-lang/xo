@@ -154,7 +154,7 @@ test "a shorter keep lets the cap remove entries younger than KEEP" {
 }
 
 test "a burst of stores prunes before the interval and keeps the cache near its cap" {
-  // the back-end cache (selfhost/xo bcache.xo): keep 2m, burst an eighth
+  // the back-end cache (compiler/xo bcache.xo): keep 2m, burst an eighth
   // of the cap; a store of 50 bytes every 10 seconds for an hour, each
   // followed by note_stored and run, as fn_cache_store does
   let p = Policy{max_age: 168h, max_bytes: 1000, keep: 2m, burst: 125}

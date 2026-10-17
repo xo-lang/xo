@@ -1,6 +1,6 @@
 # A Go `string` ports to Xo `Bytes`, not `Str`
 
-Status: Observed (2026-10-08, porting the lexer to Xo, `selfhost/lexer`)
+Status: Observed (2026-10-08, porting the lexer to Xo, `compiler/lexer`)
 
 Symptom: Go code that slices strings at byte offsets and keeps arbitrary
 bytes (comments, string literal bodies, an invalid character in a message)

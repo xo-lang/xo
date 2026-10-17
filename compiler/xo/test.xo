@@ -18,8 +18,8 @@
 // capabilities (XO_TEST_REAL, decision 0120). Not here yet: a test that
 // does not finish is not stopped (the native Proc has no timeout yet).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/gen
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/gen
 
 /// A test of the binary (internal/build TestInfo).
 struct TestInfo {

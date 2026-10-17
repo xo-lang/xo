@@ -1,8 +1,8 @@
-// What the self hosted command line (selfhost/cli/core) asks of the
+// What the self hosted command line (compiler/cli/core) asks of the
 // checker beyond a check run: the modules of a workspace, the functions
 // of a module and the effects they perform.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The directory of the nearest xo.mod at or above dir, absolute, or ""
 /// (mod.ModRoot).

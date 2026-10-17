@@ -3,7 +3,7 @@
 // "unix:PATH", decision 0190), Listener.accept, addr and close, and
 // Conn.read, write and close, over sock.xo's system calls, dns.xo's (or
 // the system's) name resolution, and poll.xo's descriptors. cabi_net.xo
-// exports them, and generated code calls the exports (selfhost/ssa
+// exports them, and generated code calls the exports (compiler/ssa
 // exports.xo). Each operation
 // records its outcome in the context (ctx.xo C_NET_STATUS, C_NET_MSG, a
 // malloc'd C string), which the generated code reads to build the

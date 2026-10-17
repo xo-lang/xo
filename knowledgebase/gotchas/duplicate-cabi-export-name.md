@@ -15,7 +15,7 @@ export names of different modules, so the clash shows up only when the
 backend writes both symbols.
 
 Fix: give the export a name no cabi module has (`poll_park_wait`).
-Since 2026-10-15 the checker reports it as XO0608 (selfhost/check
+Since 2026-10-15 the checker reports it as XO0608 (compiler/check
 exports.xo, run after the declarations), at the second definition with
 the first as a note, before any code is generated. The native runtime's
 modules are loaded with `native` set and `is_std` false

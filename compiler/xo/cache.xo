@@ -4,7 +4,7 @@
 // and find each other's linked binaries in the same cache (XO_BIN_CACHE,
 // off by default; decision 0178 stage 1).
 
-use github.com/xo-lang/xo/selfhost/prune
+use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
 /// filepath.Clean of a slash separated path.

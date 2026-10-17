@@ -1,14 +1,14 @@
 // `xo1 build --backend=go` (decision 0167): the checker and the Go code
-// generator in Xo (selfhost/gen), then the Go toolchain, as internal/build
+// generator in Xo (compiler/gen), then the Go toolchain, as internal/build
 // does for `xo build --backend=go`: the generated packages after
-// internal/gen's last step (selfhost/gen format_prep, then gofmt), the
+// internal/gen's last step (compiler/gen format_prep, then gofmt), the
 // runtime package copied from DIR/rt (DIR the std directory), the build
 // information, the zone data (internal/build tzFiles, embedded from the
 // Go toolchain's zoneinfo.zip), and `go build`.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/gen
-use github.com/xo-lang/xo/selfhost/prune
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/gen
+use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 use std/internal
 

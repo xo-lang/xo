@@ -12,8 +12,8 @@ Cause: two things together. (1) The SSA builders build `target` as a
 constant struct and lower every arm of a `match` on it; no SSA pass
 folds the match (spec core 12.2 says only the chosen arm is code
 generated: the native backends' optimizers drop the dead arm, the wasm
-emitter and selfhost/arm64 do not). So every arm must lower on every
-backend. (2) xo1 `--backend=wasm` and the selfhost/wasm harness build
+emitter and compiler/arm64 do not). So every arm must lower on every
+backend. (2) xo1 `--backend=wasm` and the compiler/wasm harness build
 with the compiler's own `target` (the host's OS and architecture), so on
 a Linux host a WASI module would even take the Linux arm at run time.
 

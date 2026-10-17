@@ -16,8 +16,8 @@ Cause: the commands were ported one package at a time (decision 0178),
 each with the Go side's `Usage of NAME:` text, and xo1's own usage line
 was never meant for users.
 
-Fix: selfhost/cli/cmdhelp holds every user command's usage; xo1's
-front end (selfhost/xo opts.xo `front`) answers `-h`, `--help`, and
+Fix: compiler/cli/cmdhelp holds every user command's usage; xo1's
+front end (compiler/xo opts.xo `front`) answers `-h`, `--help`, and
 `xo help [command]` anywhere before `--` (run: before its directory,
 after which arguments are the program's) on stdout with exit 0, and
 every flag parser prints the cmdhelp usage after its error (exit 2).

@@ -3,8 +3,8 @@
 //   arm64 [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] <dirs...>
 //   arm64 [--std=DIR] [--wd=DIR] ... --bench=N <dirs...>
 //
-// It checks the directories as `xo asmdump` does (selfhost/check in
-// native mode), builds them with selfhost/ssa and its passes, and prints
+// It checks the directories as `xo asmdump` does (compiler/check in
+// native mode), builds them with compiler/ssa and its passes, and prints
 // the assembly internal/arm64 prints, then `== skipped` and one line per
 // function it did not emit (`<name>: <why>`, a construct of a later
 // stage). A run the checker rejects prints `== rejected`; one the Xo SSA
@@ -13,8 +13,8 @@
 // of its own, each preceded by `=== asm <dir>`. --bench=N times the
 // emitter alone (from a copy of the module after the passes) N times.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0

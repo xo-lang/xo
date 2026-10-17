@@ -15,6 +15,6 @@ because no test had a C binding in a dependency.
 
 **Fix.** `loadCImport` uses `goBindRoot` too (2026-10-11), so a
 dependency's binding lands in the main module's `.xo/cbind`. The self
-hosted checker (selfhost/check/cimport.xo) still looks in the
+hosted checker (compiler/check/cimport.xo) still looks in the
 dependency's root; it finds no cached binding there and reports the run
 unsupported, which TestSelfhostChecker counts but does not compare.

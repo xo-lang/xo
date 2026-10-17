@@ -13,7 +13,7 @@
 // thread local; a negative count is shared and updated atomically; the
 // immortal count of literals is negative with bit 62 clear.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The code that adds a reference to the shared count at [obj] (a
 /// relaxed atomic decrement of the negative count), with scratch

@@ -20,8 +20,8 @@ on the link line (weak linking of an OS version's API).
 ## Fix
 
 Pass `-Wl,-U,_sym` for each such symbol: the link leaves it to dyld,
-which binds a weak import it cannot find to 0. selfhost/xo link.xo
+which binds a weak import it cannot find to 0. compiler/xo link.xo
 (weak_undefined_args) and internal/xotool (WeakUndefinedFlags) add it
-for every weak reference of the program's .s or .ll; selfhost/macho's
+for every weak reference of the program's .s or .ll; compiler/macho's
 own linker marks such an import weak in the chained fixups. A new place
 that links Xo output with the system linker on macOS needs the same.

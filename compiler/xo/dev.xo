@@ -1,19 +1,19 @@
 // `xo dev` (decision 0209): the hidden developer commands. `dump` runs a
 // compiler component's own command line (its dump_main) in this
 // process, and the rest (goldens, errorcheck, codegen) are
-// selfhost/cli/dev's (`rtpack` went with the C runtime, decision 0234).
+// compiler/cli/dev's (`rtpack` went with the C runtime, decision 0234).
 //
 //   xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH...
 //   xo dev goldens|errorcheck|codegen [flags] DIR...
 
-use github.com/xo-lang/xo/selfhost/lexer
-use github.com/xo-lang/xo/selfhost/parser
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/ssa
-use github.com/xo-lang/xo/selfhost/arm64
-use github.com/xo-lang/xo/selfhost/llvm
-use github.com/xo-lang/xo/selfhost/gen
-use github.com/xo-lang/xo/selfhost/cli/dev
+use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/arm64
+use github.com/xo-lang/xo/compiler/llvm
+use github.com/xo-lang/xo/compiler/gen
+use github.com/xo-lang/xo/compiler/cli/dev
 
 fn dev_cmd(os: Os, args: List[Str]) -> Int {
   if args.is_empty() {

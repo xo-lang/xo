@@ -8,17 +8,17 @@ import (
 )
 
 // TestKeywordsMatchLexer keeps xoKeywords equal to the lexer's keywords
-// (the keys of KEYWORDS in selfhost/lexer/token.xo; internal/token's
+// (the keys of KEYWORDS in compiler/lexer/token.xo; internal/token's
 // table until decision 0215 deleted it).
 func TestKeywordsMatchLexer(t *testing.T) {
-	data, err := os.ReadFile("../../selfhost/lexer/token.xo")
+	data, err := os.ReadFile("../../compiler/lexer/token.xo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(data)
 	i := strings.Index(s, "const KEYWORDS = {\n")
 	if i < 0 {
-		t.Fatal("no KEYWORDS in selfhost/lexer/token.xo")
+		t.Fatal("no KEYWORDS in compiler/lexer/token.xo")
 	}
 	s = s[i:]
 	s = s[:strings.Index(s, "\n}\n")]

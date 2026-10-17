@@ -22,7 +22,8 @@ import (
 //
 //	<commit> [std=<commit>]  # why
 //
-// A hop builds the commit's selfhost/xo with the previous xo and the
+// A hop builds the commit's compiler/xo (selfhost/xo before decision
+// 0249, CompilerDir) with the previous xo and the
 // std of std=<commit> (default: the commit's own): a hop whose own std
 // already uses the change takes the std of an older commit, so the
 // older xo compiles the new compiler against a runtime it knows. Each
@@ -108,7 +109,7 @@ func Chain(root, seed string, log io.Writer) (string, error) {
 		t0 := time.Now()
 		backend, env := hostBackend()
 		tmp := bin + ".tmp"
-		if out, err := runIn(tree, env, cur, "build", "--backend="+backend, "--std="+xoPath(std), "-o", xoPath(tmp), xoPath(filepath.Join(tree, "selfhost", "xo"))); err != nil {
+		if out, err := runIn(tree, env, cur, "build", "--backend="+backend, "--std="+xoPath(std), "-o", xoPath(tmp), xoPath(filepath.Join(tree, CompilerDir(tree), "xo"))); err != nil {
 			return "", fmt.Errorf("hop %s: %v\n%s", h.Commit, err, lastLines(out, 20))
 		}
 		if err := os.Rename(tmp, bin); err != nil {

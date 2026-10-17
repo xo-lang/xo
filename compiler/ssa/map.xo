@@ -11,8 +11,8 @@
 // The operations are functions generated per type (xo.map.*), and keys
 // hash with generated functions per type (xo.hash[T]).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// The key type of the Map or Set struct t (mapKey).
 fn map_key(m: Module, t: Int) -> Int {

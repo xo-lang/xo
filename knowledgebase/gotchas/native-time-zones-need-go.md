@@ -17,7 +17,7 @@ archives (`lib/xo/zoneinfo.zip`) and look there before `go env GOROOT`.
 
 Update (2026-10-12, later): done for xo1, the released `xo`: release.sh
 copies Go's zoneinfo.zip to each archive's `lib/xo/zoneinfo.zip`, and
-selfhost/xo tz.xo `shipped_zoneinfo` reads it (beside the running
+compiler/xo tz.xo `shipped_zoneinfo` reads it (beside the running
 binary's `lib/xo`, or beside `$XO_RTPACK`) before `go env GOROOT`. With
 the zip and the pack, the time_zones and time_dynamic_zone goldens
 build and pass on darwin/arm64 with `PATH=/nonexistent` (no Go, no cc).

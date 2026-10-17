@@ -31,8 +31,8 @@ func TestArchiveTree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		t.Fatalf("go.mod not unpacked: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "selfhost", "xo", "main.xo")); err != nil {
-		t.Fatalf("selfhost/xo/main.xo not unpacked: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "compiler", "xo", "main.xo")); err != nil {
+		t.Fatalf("compiler/xo/main.xo not unpacked: %v", err)
 	}
 	if runtime.GOOS != "windows" {
 		fi, err := os.Stat(filepath.Join(dir, "scripts", "bootstrap-xo.sh"))
@@ -57,7 +57,7 @@ func smallRepo(t *testing.T) string {
 		t.Skip("no git")
 	}
 	dir := t.TempDir()
-	for name, mode := range map[string]os.FileMode{"go.mod": 0o644, "selfhost/xo/main.xo": 0o644, "scripts/bootstrap-xo.sh": 0o755} {
+	for name, mode := range map[string]os.FileMode{"go.mod": 0o644, "compiler/xo/main.xo": 0o644, "scripts/bootstrap-xo.sh": 0o755} {
 		p := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -77,4 +77,26 @@ func smallRepo(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+// TestCompilerDir: compiler/ since decision 0249, selfhost/ in the older
+// trees the seed chain and the go-compiler-final tag build.
+func TestCompilerDir(t *testing.T) {
+	for _, tc := range []struct {
+		dirs []string
+		want string
+	}{
+		{[]string{"compiler/xo"}, "compiler"},
+		{[]string{"selfhost/xo"}, "selfhost"},
+		{[]string{"selfhost/xo", "compiler/xo"}, "compiler"},
+		{nil, "compiler"},
+	} {
+		root := t.TempDir()
+		for _, d := range tc.dirs {
+			os.MkdirAll(filepath.Join(root, filepath.FromSlash(d)), 0o755)
+		}
+		if got := CompilerDir(root); got != tc.want {
+			t.Errorf("%v: CompilerDir %s, want %s", tc.dirs, got, tc.want)
+		}
+	}
 }

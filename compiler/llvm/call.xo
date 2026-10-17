@@ -2,7 +2,7 @@
 // the operations lowered inline (lists, strings, numbers, Stdio), and of
 // the task runtime (`rt.name` is the C function xo_name, decision 0068).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The object, data pointer, and length of a Str (strParts).
 fn (var g: Gen) str_parts(x: Str) -> (Str, Str, Str) {
@@ -519,7 +519,7 @@ fn (var g: Gen) zero_handle() -> Str {
 /// (a function of the C runtime), or the C library's data symbols the
 /// module defines (ssa.nolibc_data). A C name is plain (an identifier), so
 /// unquoted: the split build matches a reference to its definition by
-/// the text (selfhost/xo split.xo).
+/// the text (compiler/xo split.xo).
 fn (var g: Gen) c_sym(name: Str) -> Str {
   let sym = "@${name}"
   if name != "xo_entry" && !(g.m.nolibc && ssa.nolibc_data().contains(name)) {
@@ -529,7 +529,7 @@ fn (var g: Gen) c_sym(name: Str) -> Str {
 }
 
 /// Defines the placeholder sym (its type and value) once per module:
-/// linkonce_odr, as a split build (selfhost/xo split.xo) copies a global
+/// linkonce_odr, as a split build (compiler/xo split.xo) copies a global
 /// into every module that uses it, and the linker keeps one of them (and
 /// of xo_rt.c's weak one, for code of earlier compilers).
 fn (var g: Gen) placeholder(sym: Str, init: Str) {

@@ -2,7 +2,7 @@
 // and each command's usage, which `xo <command> -h` prints on standard
 // output (exit 0) and a usage error (an unknown flag, a missing
 // argument) prints on standard error (exit 2). Every package of the
-// command line (selfhost/cli/*, selfhost/xo) takes its usage from here,
+// command line (compiler/cli/*, compiler/xo) takes its usage from here,
 // so the texts are the same whichever package parses the flags. The
 // texts follow cmd/xo's usage (the Go reference) and spec/core.md 10.1;
 // internal flags (xo1's --std, --wd, --cc, --asm, --go-tree,

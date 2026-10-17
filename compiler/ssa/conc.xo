@@ -8,8 +8,8 @@
 // them is built again with unwinding checks (`rt.unwinding` after the
 // calls that can be canceled), as the Go builder does.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// Code run on the unwind path of a check before it unwinds (checkThen's
 /// cleanup).

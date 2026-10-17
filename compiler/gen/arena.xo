@@ -1,8 +1,8 @@
 // Request scoped arenas (internal/gen arena.go, decision 0066): the escape
 // analysis that decides what may live in an arena.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// Whether arena lowering is on for this package (arenasOn).
 fn (g: Gen) arenas_on() -> Bool {

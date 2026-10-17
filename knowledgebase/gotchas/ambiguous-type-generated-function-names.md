@@ -1,7 +1,7 @@
 # Two packages with a type of the same name shared generated SSA functions
 
 Status: Observed (2026-10-12, decision 0178 stage 4), fixed the same day
-in internal/ssa and selfhost/ssa; regression test
+in internal/ssa and compiler/ssa; regression test
 internal/ssa TestAmbiguousGeneratedNames.
 
 ## Symptom
@@ -10,11 +10,11 @@ A native build (`--backend=arm64` or `llvm`) of a program whose packages
 each declare a type of the same name failed in the SSA verifier:
 
     xo build: ssa: xo.debug[List[Ctx]]: b6: v23: Str = call xo.debug[Ctx], v21, v22:
-    argument 1 has type github.com/xo-lang/xo/selfhost/check.Ctx,
-    want github.com/xo-lang/xo/selfhost/cli/modules.Ctx
+    argument 1 has type github.com/xo-lang/xo/compiler/check.Ctx,
+    want github.com/xo-lang/xo/compiler/cli/modules.Ctx
 
-It appeared when selfhost/cli/modules (with a `Ctx` struct holding a
-`check.Checker`) was linked with selfhost/check (whose `Checker` holds a
+It appeared when compiler/cli/modules (with a `Ctx` struct holding a
+`check.Checker`) was linked with compiler/check (whose `Checker` holds a
 `List[Ctx]` of its own `Ctx`). Two packages `a` and `b` that each declare
 `struct Ctx` and interpolate `xs.debug()` of a `List[Ctx]` reproduce it.
 The Go backend was not affected (Go generates per Go type).
@@ -32,7 +32,7 @@ it with the wrong type.
 ## Fix
 
 Name the generated functions with `b.typeName(ct)` (Go) and
-`b.type_name(ct)` (selfhost/ssa), the same qualified text the types use.
+`b.type_name(ct)` (compiler/ssa), the same qualified text the types use.
 Without an ambiguous name nothing changes (typeName is the printed
 form), so goldens and dumps are unchanged.
 

@@ -4,7 +4,7 @@
 # Linux rows in bench/results. On this Mac's Docker, natively:
 #
 #   - a Linux xo built here with the Go backend (`$XO build --backend=go
-#     --targets=linux/arm64`, the checkout's selfhost/xo and std),
+#     --targets=linux/arm64`, the checkout's compiler/xo and std),
 #   - the Go side cross compiled here (GOOS=linux, CGO_ENABLED=0),
 #   - the Rust side built in the official image rust:$RUST_IMAGE
 #     (default 1.99.1-slim-trixie, Debian trixie like the run's image),
@@ -26,7 +26,7 @@ image=rust:${RUST_IMAGE:-1.99.1-slim-trixie}
 works=${WORKLOADS:-fib sieve nbody sort interp collatz strings}
 sides=${SIDES:-go rust xo-llvm xo-arm64}
 if [ ! -x "$out/lx/bin/xo" ]; then
-	"$xo" build --backend=go --targets=linux/arm64 -o "$out/lx/bin/xo" "$root/selfhost/xo" >/dev/null
+	"$xo" build --backend=go --targets=linux/arm64 -o "$out/lx/bin/xo" "$root/compiler/xo" >/dev/null
 	rm -rf "$out/lx/std"
 	cp -R "$root/std" "$out/lx/std"
 fi

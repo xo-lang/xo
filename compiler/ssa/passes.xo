@@ -537,7 +537,7 @@ pub fn (var b: Builder) write_passes(var out: StrBuilder) {
 
 /// Runs the passes after the build without printing them: unwind,
 /// landings, cleanup, rc (what a native build generates code from;
-/// selfhost/arm64, decision 0158).
+/// compiler/arm64, decision 0158).
 pub fn (var b: Builder) run_passes() {
   b.prune_unwind()
   b.add_landings()

@@ -20,7 +20,7 @@ libxotls.a; its replacement in internal/xotool did not. Without
 Fix: internal/xotool/tls.go is internal/build's tls.go again, and
 CompileC adds its compile flags and the library (built for the
 sanitizer flavor of the flags, cached in <user cache>/xo/mbedtls) when
-an .ll source needs TLS. selfhost/xo/tls.xo does the same for xo.
+an .ll source needs TLS. compiler/xo/tls.xo does the same for xo.
 
 Avoid: a test helper that replaces a build path must keep every input
 the old one added; a link that "only" lost a library fails only for the

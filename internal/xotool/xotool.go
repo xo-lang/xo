@@ -1,9 +1,9 @@
 // Package xotool finds the xo the repository's Go tests and scripts
-// drive: the self hosted compiler (selfhost/xo) of this checkout.
+// drive: the self hosted compiler (compiler/xo) of this checkout.
 //
 // Since decision 0215 the Go implementation of the compiler is gone, so
 // `xo` is never built by `go build`: an existing xo builds the checkout's
-// selfhost/xo (bootstrapping, toolchain.md "Bootstrapping without Go").
+// compiler/xo (bootstrapping, toolchain.md "Bootstrapping without Go").
 // Path returns, in order:
 //
 //   - $XO_CLI (its first field), when set: that binary, as it is, so a
@@ -118,7 +118,7 @@ func Path() (string, error) {
 // Command is Path with the leading flags $XO_CLI carries (its fields
 // after the first), for a command line.
 // init makes every xo the tests run fail a build whose inlined arm64
-// module does not verify (selfhost/xo main.xo inline_or_say), where a
+// module does not verify (compiler/xo main.xo inline_or_say), where a
 // normal build says so and goes on without inlining: a broken inliner
 // must fail the tests, not pass them slowly
 // (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_STRICT=0 in the
@@ -165,8 +165,8 @@ func Key(root string) (string, error) {
 }
 
 // Inputs are the files the built xo depends on, relative to root with
-// slashes, sorted: every .xo file and xo.mod under selfhost/, and of std
-// the Xo files of the prelude and of each module selfhost reaches
+// slashes, sorted: every .xo file and xo.mod under compiler/, and of std
+// the Xo files of the prelude and of each module compiler/ reaches
 // through `use` lines, followed through the std files themselves
 // (std/NAME.xo and std/native/NAME.xo for `use std/NAME`;
 // std/native/NAME.xo for `use native/NAME`; std/native/llrt/NAME.xo and
@@ -186,7 +186,7 @@ func Inputs(root string) ([]string, error) {
 		in[name] = true
 		queue = append(queue, name)
 	}
-	err := filepath.WalkDir(filepath.Join(root, "selfhost"), func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(filepath.Join(root, CompilerDir(root)), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -311,7 +311,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 // so it runs only when asked for.
 func SeedFallback() string { return strings.TrimSpace(os.Getenv("XO_SEED_FALLBACK")) }
 
-// buildLocked builds root's selfhost/xo into out once across processes.
+// buildLocked builds root's compiler/xo into out once across processes.
 func buildLocked(root, out string, log io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
@@ -340,7 +340,7 @@ func buildLocked(root, out string, log io.Writer) error {
 			}
 			s.Path = p
 		}
-		fmt.Fprintf(log, "xotool: building xo (selfhost/xo of %s) with %s (%s), a few minutes, into %s\n", root, s.Why, s.Path, out)
+		fmt.Fprintf(log, "xotool: building xo (compiler/xo of %s) with %s (%s), a few minutes, into %s\n", root, s.Why, s.Path, out)
 		t0 := time.Now()
 		err := BuildXo(root, s.Path, out)
 		if err != nil {
@@ -381,7 +381,7 @@ func buildLocked(root, out string, log io.Writer) error {
 	return fmt.Errorf("%s:\n  %s", msg, strings.Join(errs, "\n  "))
 }
 
-// Seed is an xo that can compile selfhost/xo, and where it came from.
+// Seed is an xo that can compile compiler/xo, and where it came from.
 // An empty Path is resolved when the seed is reached (Resolve): the
 // prebuilt seed (FetchSeed) and the go-compiler-final root through the
 // seed chain (SeedFromTag, Chain). NoChain skips the seed chain when
@@ -454,7 +454,7 @@ func Seeds(root string) ([]Seed, error) {
 // recordCommit writes, beside a build in dir, the commit its sources came
 // from (the commit file) and that they were that commit's (the clean
 // file), for ancestorBuild. A build from a tree with uncommitted changes
-// under selfhost/ or std/ is not that commit's: its xo can call runtime
+// under compiler/ or std/ is not that commit's: its xo can call runtime
 // exports the commit's std lacks (`dyld: Symbol not found:
 // _xo_x_task_spawn_fn`, 2026-10-16, gotchas/xobuild-dirty-build-as-ancestor.md),
 // so it gets neither file (an older one is removed).
@@ -468,13 +468,13 @@ func recordCommit(root, dir string) {
 		return
 	}
 	os.WriteFile(commitFile, []byte(c+"\n"), 0o644)
-	os.WriteFile(cleanFile, []byte("selfhost/ and std/ had no uncommitted changes\n"), 0o644)
+	os.WriteFile(cleanFile, []byte("compiler/ and std/ had no uncommitted changes\n"), 0o644)
 }
 
-// sourcesClean reports whether root's selfhost/ and std/ match HEAD: no
+// sourcesClean reports whether root's compiler/ and std/ match HEAD: no
 // modified, staged, or untracked files there.
 func sourcesClean(root string) bool {
-	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--", "selfhost", "std").Output()
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--", CompilerDir(root), "std").Output()
 	return err == nil && len(strings.TrimSpace(string(out))) == 0
 }
 
@@ -532,7 +532,7 @@ func summary(err error) string {
 // (SeedCommit, else the go-compiler-final tag), built once into
 // <user cache>/xo/seed/<commit>/tree/bin/xo: `git archive` of the
 // commit, `go build ./cmd/xo` (the Go compiler at its last commit), and
-// that xo builds the commit's selfhost/xo with its own driver (so the
+// that xo builds the commit's compiler/xo with its own driver (so the
 // seed is a self hosted xo that takes --std like every later one).
 func SeedFromTag(root string, log io.Writer) (string, error) {
 	rev, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", SeedCommit+"^{commit}").Output()
@@ -585,7 +585,7 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 		return "", err
 	}
 	tmp := bin + ".tmp"
-	if out, err := runIn(tree, env, goXo, "build", "--backend="+backend, "-o", tmp, "./selfhost/xo"); err != nil {
+	if out, err := runIn(tree, env, goXo, "build", "--backend="+backend, "-o", tmp, "./"+CompilerDir(tree)+"/xo"); err != nil {
 		return "", fmt.Errorf("the %s Go xo building its selfhost/xo: %v\n%s", SeedTag, err, out)
 	}
 	return bin, os.Rename(tmp, bin)
@@ -617,7 +617,7 @@ func LLVMOpt() string {
 // hostBackend is hostBackendNative's backend and environment, with
 // XO_NOLIBC=0 on Linux: since decision 0243 a Linux program without `use
 // c` links no C library by default, but the toolchain's own native Linux
-// builds of selfhost/xo keep the C library until a Linux self rebuild
+// builds of compiler/xo keep the C library until a Linux self rebuild
 // fixed point has passed with none (0243, pending; the seeds' Linux xo is
 // cross built with the Go backend, which no-libc does not touch).
 func hostBackend() (string, []string) {
@@ -632,7 +632,7 @@ func hostBackend() (string, []string) {
 // environment it needs.
 func hostBackendNative() (string, []string) {
 	if runtime.GOOS == "windows" {
-		// the Go backend (selfhost/gen and the go command), as
+		// the Go backend (compiler/gen and the go command), as
 		// scripts/windows-batch.sh built xo1 there
 		return "go", nil
 	}
@@ -655,13 +655,25 @@ func hostBackendNative() (string, []string) {
 	return "llvm", env
 }
 
-// BuildXo has the xo seed build root's selfhost/xo into out with the
+// CompilerDir is the directory of the compiler's sources in the tree at
+// root: compiler/ since decision 0249, selfhost/ in older commits (the
+// seed chain's hops and the go-compiler-final tag build those).
+func CompilerDir(root string) string {
+	if _, err := os.Stat(filepath.Join(root, "selfhost", "xo")); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "compiler", "xo")); err != nil {
+			return "selfhost"
+		}
+	}
+	return "compiler"
+}
+
+// BuildXo has the xo seed build root's compiler/xo into out with the
 // host's backend and root's std.
 func BuildXo(root, seed, out string) error {
 	backend, env := hostBackend()
 	tmp := fmt.Sprintf("%s.%d.tmp", out, os.Getpid())
 	defer os.Remove(tmp)
-	o, err := runIn(root, env, seed, "build", "--backend="+backend, "--std="+xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp), xoPath(filepath.Join(root, "selfhost", "xo")))
+	o, err := runIn(root, env, seed, "build", "--backend="+backend, "--std="+xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp), xoPath(filepath.Join(root, CompilerDir(root), "xo")))
 	if err != nil {
 		return fmt.Errorf("%v\n%s", err, lastLines(o, 20))
 	}

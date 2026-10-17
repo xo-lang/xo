@@ -4,7 +4,7 @@
 // records become .debug_line (a DWARF 5 line program, one sequence per
 // function), .debug_abbrev, and .debug_info (a compile unit with a
 // subprogram per function). Addresses are `.quad label` (absolute
-// relocations only, which every assembler and selfhost/macho handle);
+// relocations only, which every assembler and compiler/macho handle);
 // every length is counted here, so no label differences are needed.
 
 /// The debug sections of the part, or "" with none.
@@ -166,7 +166,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("${abbrev_lab}:\n")
   // 1: compile_unit, children: stmt_list, low_pc, high_pc (the part's
   // functions are one run of its text; at fixed places, bytes 13, 17,
-  // and 25, for selfhost/macho dsym.xo), producer, language, name,
+  // and 25, for compiler/macho dsym.xo), producer, language, name,
   // comp_dir; 2: subprogram, children: name, low_pc, high_pc; 3: an
   // inlined callee's abstract subprogram: name, inline (1, inlined); 4:
   // inlined_subroutine, children (the calls inlined into it):

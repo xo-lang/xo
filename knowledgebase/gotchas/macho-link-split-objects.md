@@ -12,7 +12,7 @@ this one on the Mac, where a checkout has no pack either.
 
 Cause: decision 0220 stage 1 (fastbuild, merged da6a55c1) splits a large
 program's assembly into parts, one object each, so the link inputs are
-`[prog.0.o, prog.1.o, ..., xo_rt.c, zone data, ...]`. selfhost/xo/ld.xo
+`[prog.0.o, prog.1.o, ..., xo_rt.c, zone data, ...]`. compiler/xo/ld.xo
 (macho_link and elf_link, decision 0182) assumed one program object:
 srcs[0] the program, srcs[1] the runtime's source, the rest objects. With
 two parts, xo_rt.c landed in srcs[2..] and was rejected as a C source;

@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-11, decision 0166 stage 1)
 
-Symptom: the self hosted LLVM emitter's module for selfhost/lexer
+Symptom: the self hosted LLVM emitter's module for compiler/lexer
 differed from internal/llvm's only by where `xo.debug[Str]` stood,
 although TestSelfhostSSA reported every function identical at every
 stage, and the emitter lowered every function identically.
@@ -16,7 +16,7 @@ the parts) came later in the module. The LLVM emitter writes functions
 in the module's order and numbers string literals, defines types, and
 writes helpers in the order of first use, so the order shows there.
 
-Fix: selfhost/ssa builds `xo.debug[T]` when asked for, as decision
+Fix: compiler/ssa builds `xo.debug[T]` when asked for, as decision
 0150 already did for the generated functions whose bodies declare
 functions; then (stage 2 of decision 0166) 17 modules still had
 `zero.fn(...)` and the Debug text a frame's arguments ask for out of

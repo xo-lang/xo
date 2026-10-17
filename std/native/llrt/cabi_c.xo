@@ -1,7 +1,7 @@
 // The C ABI exports under their exact C names (decision 0234): every top
 // level function of this module is the C symbol of its name, not
 // xo_x_<name>, in every native program (the native prelude imports it;
-// selfhost/ssa declare_exports), with the C calling convention and the
+// compiler/ssa declare_exports), with the C calling convention and the
 // parameters and results of cabi.xo's exports. Nothing here may fault.
 use native/llrt/entry
 use native/rt

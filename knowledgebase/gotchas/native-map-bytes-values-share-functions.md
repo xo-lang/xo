@@ -1,7 +1,7 @@
 # Map[K, Bytes] and Map[K, Str] share their native helper functions
 
 Status: Observed (2026-10-12, decision 0178 stage 5: xo1 failed to build
-once selfhost/cli/servers removed from a `Map[Str, Bytes]`).
+once compiler/cli/servers removed from a `Map[Str, Bytes]`).
 
 ## Symptom
 
@@ -20,7 +20,7 @@ called the first's function with the wrong result type.
 
 ## Fix
 
-internal/ssa mapRemove and selfhost/ssa map_remove name a second remove
+internal/ssa mapRemove and compiler/ssa map_remove name a second remove
 of the same map type with a different result `xo.map.remove[T][V?]`.
 Golden internal/llvm/testdata/golden/map_remove_bytes. Any new map
 helper whose signature mentions the value's option or another type built

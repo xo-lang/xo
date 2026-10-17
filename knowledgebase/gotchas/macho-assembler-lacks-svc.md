@@ -1,4 +1,4 @@
-# selfhost/macho could not assemble `svc #0`, so every linux/arm64 `--ld=macho` build failed
+# compiler/macho could not assemble `svc #0`, so every linux/arm64 `--ld=macho` build failed
 
 Status: Observed (2026-10-13), fixed (2026-10-13).
 
@@ -11,16 +11,16 @@ scripts/elf-goldens.py reported all 179 programs as build failures
 cc assembled linux builds were not affected.
 
 Cause: decision 0206 makes the arm64 emitter write raw Linux system
-calls (`svc #0` in selfhost/arm64/gen.xo's xo_sigreturn and xo_clone,
+calls (`svc #0` in compiler/arm64/gen.xo's xo_sigreturn and xo_clone,
 and the inline `rt.sys6` calls in calls.xo), and the self hosted
-assembler in selfhost/macho had no encoding for `svc`. The same lag as
+assembler in compiler/macho had no encoding for `svc`. The same lag as
 knowledgebase/gotchas/selfhost-assembler-lags-emitters.md: no test
-assembled a linux/arm64 program with selfhost/macho on the Mac, and the
+assembled a linux/arm64 program with compiler/macho on the Mac, and the
 ELF goldens need Docker, which is not running on the Mac by default.
 
-Fix: selfhost/macho/enc.xo encodes `svc #imm16` (0xD4000001 | imm16 <<
+Fix: compiler/macho/enc.xo encodes `svc #imm16` (0xD4000001 | imm16 <<
 5), with `svc #0` and `svc #0x80` in macho_test.xo's encoding table
-(`xo test selfhost/macho`: 14 passed). An ELF `--ld=macho` build on the
+(`xo test compiler/macho`: 14 passed). An ELF `--ld=macho` build on the
 Mac then needs a linux/arm64 runtime pack (XO_RTPACK, or lib/xo/rtpack);
 on a linux/arm64 host the ELF goldens run directly (`xo dev goldens
 --flags='--target=linux/arm64 --ld=macho'`, decision 0209).
@@ -32,6 +32,6 @@ and clock program: clock_timers, http_client, http_fault, http_server,
 http_stream, http_tls, http_wire, net_echo, net_only, request_eq,
 select_arm_order, sys_files_clock, unix_kill) stopped on `unsupported
 directive .data`, which the linux arm64 emitter writes for writable data
-(selfhost/arm64/gen.xo section "data"). selfhost/macho's ELF path now
+(compiler/arm64/gen.xo section "data"). compiler/macho's ELF path now
 takes `.data` as `.section .data` (elf.xo elf_directive), with a test in
 macho_test.xo.

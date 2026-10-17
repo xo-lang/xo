@@ -14,7 +14,7 @@ Cause: a call of an rt.xo function lowers to `Op.Call` with aux
 make themselves (`b.rt("atomic_add", ...)`, internal/ssa `s.rt`), and
 the emitters dispatch on that text alone.
 
-Fix: grep `"rt.<name>"` and `rt("<name>"` in selfhost/ssa and
+Fix: grep `"rt.<name>"` and `rt("<name>"` in compiler/ssa and
 internal/ssa (and `xo_<name>` in std/llrt) before naming an intrinsic.
 The audit's `rt.atomic_load`/`atomic_swap`/`atomic_cas`/`atomic_add`
 became `rt.slot_load`, `slot_swap`, `slot_cas`, `slot_add` for this

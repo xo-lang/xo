@@ -435,5 +435,5 @@ const timeDiffRun = `  for (i, z) in zones.indexed() {
 
 // TestZoneDataPerUseNative read the zone data file (xo_tzdata.c) the Go
 // build package wrote into its build directory; it went with decision
-// 0215 (xo's zone data selection is selfhost/xo tz.xo; the runs of the
+// 0215 (xo's zone data selection is compiler/xo tz.xo; the runs of the
 // time goldens check what it embeds).

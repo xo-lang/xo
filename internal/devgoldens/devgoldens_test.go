@@ -2,7 +2,7 @@
 // 0209): each runs one harness of the xo the tests use (internal/xotool)
 // and fails with the programs that failed. The harness logic (building,
 // running, comparing byte for byte, the pass cache, the workers) is in
-// Xo, selfhost/cli/dev; these tests only keep `go test` tiers and the EC2
+// Xo, compiler/cli/dev; these tests only keep `go test` tiers and the EC2
 // batches running it. -short samples every 25th golden program; the
 // default runs all with the pass cache; XO_DEV_FORCE=1 (the full tier,
 // releases) ignores the cache.
@@ -137,7 +137,7 @@ func TestDevGoldensGo(t *testing.T) {
 }
 
 // TestDevGoldensELF is scripts/elf-goldens.py on a linux/arm64 host: the
-// programs linked by selfhost/macho with no C toolchain (and, since
+// programs linked by compiler/macho with no C toolchain (and, since
 // decision 0234, no C runtime), run directly.
 func TestDevGoldensELF(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {

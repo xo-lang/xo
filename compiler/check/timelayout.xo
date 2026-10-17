@@ -4,7 +4,7 @@
 // language's date pattern syntax is the habit XO0177, and any other bad
 // layout is XO0420, each with its note and machine fix.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The module constant an identifier of file f names, or -1.
 fn (c: Checker) const_obj_at(f: Int, id: Ident) -> Int {

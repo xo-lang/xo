@@ -2,8 +2,8 @@
 // destinations, returns through block closures, statements, loops, and
 // places.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// A loop being generated (loopInfo).
 struct LoopInfo {

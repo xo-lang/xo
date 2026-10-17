@@ -1,4 +1,4 @@
-# selfhost/ssa: made up locals are negative, so -1 is not "none" for them
+# compiler/ssa: made up locals are negative, so -1 is not "none" for them
 
 Status: Observed (2026-10-11, SSA stage 4)
 
@@ -14,6 +14,6 @@ value. Made up variables (`Builder.local`, the Go builder's
 counter looked like "no bound".
 
 Fix: `loop_bound` returns 0 for none and `loop_tick` asks the bound
-table (`S.bounds`). In selfhost/ssa an Int that may hold a variable uses
+table (`S.bounds`). In compiler/ssa an Int that may hold a variable uses
 a table or 0, not a sign test; value, block, type, and object indexes
 are the ones where -1 means none.

@@ -3,7 +3,7 @@
 // the program's own modules polls the budget (`rt.tick`, then an
 // unwinding check) at the start of every loop iteration (loop_tick) and
 // at the entry of every function, closure, and test body.
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// Whether a user module calls task.with_budget (usesBudgets): the walk
 /// of uses_os_tasks, looking for those calls.

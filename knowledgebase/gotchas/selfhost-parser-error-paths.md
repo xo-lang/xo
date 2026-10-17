@@ -1,6 +1,6 @@
 # A port that stops at the first error hides simplified error paths
 
-Status: Observed (2026-10-10, selfhost/parser resynchronization)
+Status: Observed (2026-10-10, compiler/parser resynchronization)
 
 Symptom: once the Xo parser went on after a hard error, 26 of 20,000
 token mutations still differed from the Go parser, and many hard error

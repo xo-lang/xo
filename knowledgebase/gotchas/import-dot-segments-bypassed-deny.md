@@ -13,7 +13,7 @@ cleaned the path, so the package loaded, but `checkDeny` matched the
 path as written, which no rule named.
 
 Fix: the lexers (`internal/lexer/lexer.go` `hasDotSegment`,
-`selfhost/lexer/lexer.xo` `has_dot_segment`) report such paths as
+`compiler/lexer/lexer.xo` `has_dot_segment`) report such paths as
 `XO0158`, and both `loadImports` and `checkDeny` use `path.Clean` of the
 path, so a package has one spelling everywhere even if a malformed path
 reaches them. After the deny check, the loader binds such an import to

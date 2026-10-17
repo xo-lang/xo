@@ -17,7 +17,7 @@
 // (int_wrap for the count arithmetic), and calls nothing but the inline
 // intrinsics, so the code under them never allocates, counts, or
 // faults; the self hosted SSA builder checks it on every function here
-// (selfhost/ssa contract.xo check_no_alloc), a build error of std.
+// (compiler/ssa contract.xo check_no_alloc), a build error of std.
 use native/rt
 
 /// Bit 62: set in every shared count, clear in the immortal one.

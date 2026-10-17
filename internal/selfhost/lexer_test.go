@@ -30,10 +30,10 @@ func repoRoot(t testing.TB) string {
 	return root
 }
 
-// binaries holds the self hosted components (selfhost/lexer,
-// selfhost/parser, ...) built once per component and backend.
+// binaries holds the self hosted components (compiler/lexer,
+// compiler/parser, ...) built once per component and backend.
 var (
-	selfhostDir = filepath.Join("..", "..", "selfhost") // absolute after TestMain
+	selfhostDir = filepath.Join("..", "..", "compiler") // absolute after TestMain
 	binMu       sync.Mutex
 	binaries    = map[string]*binEntry{}
 )
@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if d, err := filepath.Abs(filepath.Join("..", "..", "selfhost")); err == nil {
+	if d, err := filepath.Abs(filepath.Join("..", "..", "compiler")); err == nil {
 		selfhostDir = d
 	}
 	selfhostJobs()
@@ -68,7 +68,7 @@ func TestMain(m *testing.M) {
 	// the clang compiles of an LLVM build share XO_LLVM_JOBS slots: 4
 	// held a 32 core run to a load of 4 for its first 18 minutes
 	// (2026-10-12), so scale them with the pool, at most one per 2 GiB
-	// (a clang on a part of selfhost/ssa holds about 1.1 GB)
+	// (a clang on a part of compiler/ssa holds about 1.1 GB)
 	if _, ok := os.LookupEnv("XO_LLVM_JOBS"); !ok {
 		n := max(4, selfhostJobs())
 		if mem := totalMemory(); mem > 0 {
@@ -102,11 +102,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// lexerBinary builds selfhost/lexer with backend ("go", "arm64", or
+// lexerBinary builds compiler/lexer with backend ("go", "arm64", or
 // "llvm"; decision 0081) once.
 func lexerBinary(backend string) (string, error) { return selfhostBinary("lexer", backend) }
 
-// selfhostBinary builds selfhost/<component> with backend once, in a
+// selfhostBinary builds compiler/<component> with backend once, in a
 // slot of the pool (jobs_test.go). Builds of different components or
 // backends run at the same time (each has its own build directory); one
 // of the same key waits for the first.
@@ -147,7 +147,7 @@ func buildBinary(e *binEntry, component, backend string, slot bool) {
 		case err != nil:
 			e.err = err
 		case res.Failed:
-			e.err = fmt.Errorf("xo build --backend=%s selfhost/%s failed:\n%s", backend, component, res.Output)
+			e.err = fmt.Errorf("xo build --backend=%s compiler/%s failed:\n%s", backend, component, res.Output)
 		default:
 			e.bin = res.Binaries[xotool.Host()]
 		}
@@ -192,7 +192,7 @@ func selfhostBinaries(t *testing.T, component string, backends []string) map[str
 			t.Fatalf("%s: %v", b, err)
 		}
 		if _, ok := bins[b]; ok {
-			t.Logf("selfhost/%s with %s: built in %.1f s", component, b, binEntryFor(component, b).took.Seconds())
+			t.Logf("compiler/%s with %s: built in %.1f s", component, b, binEntryFor(component, b).took.Seconds())
 		}
 	}
 	return bins
@@ -483,7 +483,7 @@ func compare(t *testing.T, bin, root string, paths []string) {
 	}
 }
 
-// TestSelfhostDifferential runs the Xo lexer (selfhost/lexer), built with
+// TestSelfhostDifferential runs the Xo lexer (compiler/lexer), built with
 // each backend (Go, and the native arm64 and LLVM backends where the host
 // has them, decision 0081), and the Go lexer on every .xo file of the
 // repository, the spec's code blocks, runes, and a seeded corpus of
@@ -552,7 +552,7 @@ func differential(t *testing.T, bin, backend string) {
 	t.Run("fuzz", func(t *testing.T) { compare(t, bin, root, fuzzCorpus(t, root, tmp, files, n)) })
 }
 
-// TestSelfhostXoTests runs the Xo tests of selfhost/lexer (`xo test`).
+// TestSelfhostXoTests runs the Xo tests of compiler/lexer (`xo test`).
 func TestSelfhostXoTests(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds and runs the Xo test binary")
@@ -560,7 +560,7 @@ func TestSelfhostXoTests(t *testing.T) {
 	runXoTests(t, "lexer")
 }
 
-// runXoTests builds the test binary of selfhost/<component> (`xo test`,
+// runXoTests builds the test binary of compiler/<component> (`xo test`,
 // the go backend), runs it in the component's directory, and requires
 // every test to pass.
 func runXoTests(t *testing.T, component string) {
@@ -571,13 +571,13 @@ func runXoTests(t *testing.T, component string) {
 		t.Fatal(err)
 	}
 	if res.Failed {
-		t.Fatalf("xo test selfhost/%s built no test binary:\n%s", component, res.Output)
+		t.Fatalf("xo test compiler/%s built no test binary:\n%s", component, res.Output)
 	}
 	cmd := exec.Command(res.Binaries[xotool.Host()])
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("xo test selfhost/%s: %v\n%s", component, err, out)
+		t.Fatalf("xo test compiler/%s: %v\n%s", component, err, out)
 	}
 	if !strings.Contains(string(out), "0 failed") {
 		t.Fatalf("unexpected test output:\n%s", out)

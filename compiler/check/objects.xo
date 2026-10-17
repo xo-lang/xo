@@ -6,7 +6,7 @@
 // Int into `objs`, a module an Int into `mods`, a file an Int into
 // `files`, a type an Int into `tys` (types.xo). -1 stands for "none".
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 pub type Span = parser.Span
 pub type Ident = parser.Ident

@@ -5,7 +5,7 @@
 // (solve_effects, a fixpoint), and the obligations checked against them
 // (XO0701), stage 4 of decision 0141.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// One member of an effect set: a label, an effect parameter (a TParam
 /// object), an effect variable, or the (inferred) effects of a function

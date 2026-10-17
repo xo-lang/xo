@@ -4,7 +4,7 @@
 // a package that is not pure, in a module the build gets as a required
 // version without a vouch of the consuming module for that version).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// One `vouch` line of an xo.mod (mod.Vouch).
 pub struct Vouch {

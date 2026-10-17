@@ -6,7 +6,7 @@
 // launder2 inline. The generated functions are built when asked for, as
 // the Go builder's genFunc builds them (they declare functions).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 // Tape node kinds (std/native/llrt/jsontext.xo).
 const JK_NULL = 0

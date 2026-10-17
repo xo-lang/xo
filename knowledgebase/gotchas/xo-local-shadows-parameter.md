@@ -1,6 +1,6 @@
 # Xo: a local binding may shadow a parameter of its function
 
-Status: Observed (2026-10-11, selfhost/arm64)
+Status: Observed (2026-10-11, compiler/arm64)
 
 Symptom: the first run of the self hosted arm64 emitter faulted with
 `index 0 out of range for List of length 0` while expanding an

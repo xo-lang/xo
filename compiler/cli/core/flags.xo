@@ -4,8 +4,8 @@
 // `--name`, `=value` or the next argument for a non boolean flag, parsing
 // stops at the first argument that is not a flag or after `--`.
 
-use github.com/xo-lang/xo/selfhost/cli/core/format
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/cli/core/format
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The kind of a flag's value.
 enum FlagKind {
@@ -171,7 +171,7 @@ fn (f: Flags) fail(os: Os, msg: Str) -> Bool {
 fn (f: Flags) usage(os: Os) {
   let u = cmdhelp.usage_of(f.name)
   if !u.is_empty() {
-    // the command's usage (selfhost/cli/cmdhelp)
+    // the command's usage (compiler/cli/cmdhelp)
     os.stdio.eprint(u)
     return
   }

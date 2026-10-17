@@ -1,7 +1,7 @@
 // Expression habits (decision 0087), a port of internal/parser
 // habits_expr.go.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 /// Binary operators of other languages at the current token, after the
 /// left operand x, or None.

@@ -20,7 +20,7 @@ libgcc's outline helpers (`__aarch64_cas8_acq` and friends), as clang's
 libgcc. Stage 1 did not see it: no runtime module made such a call yet.
 
 Fix: the driver writes the helpers itself for an XO_NOLIBC arm64 link
-(selfhost/xo link.xo `nolibc_atomics`, from the ELF linker's
+(compiler/xo link.xo `nolibc_atomics`, from the ELF linker's
 `macho.outline_atomic`, load and store exclusive loops, one section
 each for --gc-sections). The C runtime is compiled with
 `-mno-outline-atomics` there and the LLVM IR carries the same target

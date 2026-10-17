@@ -2,7 +2,7 @@
 // ceilings: internal/check deps.go, deny.go, and ceiling.go (decisions
 // 0086, 0095), over the build lists of modfile.xo.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The environment module loading reads: the absolute working directory,
 /// XO_MODCACHE (else the user cache directory under HOME), XO_OFFLINE,

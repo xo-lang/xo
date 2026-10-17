@@ -14,7 +14,7 @@ predecessor ending in a branch on a compare, and the join's branch is
 on its parameter, so neither `i < n` nor `i < m` reached the body.
 
 Fix: `joinSource` (internal/arm64/opt.go, `join_source` in
-selfhost/arm64/opt.xo) recognizes a block entered only from a join that
+compiler/arm64/opt.xo) recognizes a block entered only from a join that
 holds nothing but a branch on its one parameter, where every other
 predecessor passes the constant that takes the other edge; the block
 then inherits the memo of the one predecessor that can take its edge

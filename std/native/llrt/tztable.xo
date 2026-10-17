@@ -2,7 +2,7 @@
 // work item B27; moved out of tzhost.xo on 2026-10-15 so that a module
 // needing only the host's zones does not link it): the TZif data of each
 // constant zone name, or the embedded zoneinfo.zip, through
-// rttime.tz_table (selfhost/xo/ld.xo emits xo_tz_table for std/time
+// rttime.tz_table (compiler/xo/ld.xo emits xo_tz_table for std/time
 // programs only).
 use native/llrt/raw
 use native/llrt/tzhost

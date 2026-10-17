@@ -18,7 +18,7 @@ are on the stack (memory.grow makes the external memory grow, which
 starts collections); not in the module, whose memory accesses are
 checked.
 
-**Fix.** `selfhost/wasm/run.mjs` calls
+**Fix.** `compiler/wasm/run.mjs` calls
 `v8.setFlagsFromString('--single-threaded-gc')` before it starts the
 worker. Run modules through run.mjs (or pass the flag); retest without
 it when Node is upgraded, and check the playground's browsers, which run

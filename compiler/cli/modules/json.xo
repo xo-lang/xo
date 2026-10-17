@@ -2,7 +2,7 @@
 // SetEscapeHTML(false) and two space indentation), and the diagnostics
 // of module problems (cmd/xo problemDiags, diag.Human).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// A JSON value with its object keys in order.
 enum J {

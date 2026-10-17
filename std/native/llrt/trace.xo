@@ -184,7 +184,7 @@ fn section(fd: Int, typ: Int, n: Int) -> Bool {
   put_bytes(fd, b.freeze())
 }
 
-/// Section types (keep in step with selfhost/xo trace.xo).
+/// Section types (keep in step with compiler/xo trace.xo).
 const S_EVENTS = 1
 const S_SITES = 2
 

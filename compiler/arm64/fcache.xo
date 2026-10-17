@@ -7,10 +7,10 @@
 // depends on (fn_key: its SSA after inlining and reference counting,
 // the signatures of the functions it names, the layouts of the types it
 // reaches, the target, and the compiler); on a hit the emitter skips
-// isel, the MIR passes, and register allocation for it. selfhost/xo
+// isel, the MIR passes, and register allocation for it. compiler/xo
 // reads and writes the entries (XO_BACKEND_CACHE=on|verify|off).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 use std/crypto
 
 /// The token of a function's label prefix ("<ns>f<n>").

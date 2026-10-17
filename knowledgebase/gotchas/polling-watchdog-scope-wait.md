@@ -17,7 +17,7 @@ output the scope still waited for the watchdog's sleep to end: up to
 Fix: the watchdog waits on events, not time slices: the reader sends
 on a channel at each run's start and closes it at the end of the
 output, and the watchdog is a `select` of a receive and `after limit`
-(selfhost/xo test.xo watchdog). A closed channel ends it at once.
+(compiler/xo test.xo watchdog). A closed channel ends it at once.
 TestNoGCShrinkOverhead fails when a warm run of the fixture takes more
 than 5 s, so an overhead per run that grows tenfold is caught. In
 general: a helper task that must outlive nothing should block on a

@@ -13,17 +13,17 @@ import (
 )
 
 // lexerKeywords are the keywords of the lexer: the keys of KEYWORDS in
-// selfhost/lexer/token.xo (internal/token's table until decision 0215).
+// compiler/lexer/token.xo (internal/token's table until decision 0215).
 func lexerKeywords(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile("../../selfhost/lexer/token.xo")
+	data, err := os.ReadFile("../../compiler/lexer/token.xo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(data)
 	i := strings.Index(s, "const KEYWORDS = {\n")
 	if i < 0 {
-		t.Fatal("no KEYWORDS in selfhost/lexer/token.xo")
+		t.Fatal("no KEYWORDS in compiler/lexer/token.xo")
 	}
 	s = s[i:]
 	s = s[:strings.Index(s, "\n}\n")]
@@ -83,7 +83,7 @@ func TestKeywordsMatchLexer(t *testing.T) {
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("grammar keywords differ from selfhost/lexer\n got: %v\nwant: %v", got, want)
+		t.Errorf("grammar keywords differ from compiler/lexer\n got: %v\nwant: %v", got, want)
 	}
 }
 

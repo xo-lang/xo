@@ -16,7 +16,7 @@
 // before it, which the allocator coalesces when the source dies) and the
 // instruction with the definition also among its uses (a tie).
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// x86_64's registers: 0 to 15 are rax, rcx, rdx, rbx, rsp, rbp, rsi,
 /// rdi, r8 to r15; FP_BASE + k is xmm k.

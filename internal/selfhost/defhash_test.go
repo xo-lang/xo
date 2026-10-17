@@ -14,17 +14,17 @@ import (
 
 // defhashCorpus are the trees whose directories TestSelfhostDefhash
 // hashes: every directory holding .xo files or an xo.mod is one module.
-var defhashCorpus = []string{"bench/xo", "bench/paper", "internal/check/testdata", "internal/gen/testdata", "internal/arm64/testdata", "selfhost", "std", "examples"}
+var defhashCorpus = []string{"bench/xo", "bench/paper", "internal/check/testdata", "internal/gen/testdata", "internal/arm64/testdata", "compiler", "std", "examples"}
 
 // TestSelfhostDefhash compares the definition hashes of the Xo port
-// (selfhost/cli/semantic, `semantic defhash`) with the recording
+// (compiler/cli/semantic, `semantic defhash`) with the recording
 // (internal/defhash's until decision 0215) on every module of the corpus,
 // byte for byte as JSON: IDs, kinds, own and deep hashes, references,
 // files, and lines (decision 0178 stage 3).
 func TestSelfhostDefhash(t *testing.T) {
 	skipDumpReplay(t)
 	if testing.Short() {
-		t.Skip("builds selfhost/cli/semantic")
+		t.Skip("builds compiler/cli/semantic")
 	}
 	root := repoRoot(t)
 	var args []string

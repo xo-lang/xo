@@ -1,10 +1,10 @@
 // The check's diagnostics as `xo build|run|test` print them (decision
 // 0178 stage 1): the human form of internal/diag Human on standard error,
 // and `xo build --json`'s indented object on standard output, from the
-// diagnostics selfhost/check reports (the JSON text of each one is
-// selfhost/check's full_lines, the form `xo check --json` prints).
+// diagnostics compiler/check reports (the JSON text of each one is
+// compiler/check's full_lines, the form `xo check --json` prints).
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 /// The diagnostics in diag.Sort's order: by file, line, and column,
 /// equal positions in report order.

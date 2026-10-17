@@ -1,7 +1,7 @@
 // Patterns, match, and if (internal/gen pattern.go).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// A compiled pattern: conditions joined with &&, the bindings to make
 /// once they hold, and the declarations of or patterns' bindings (match).

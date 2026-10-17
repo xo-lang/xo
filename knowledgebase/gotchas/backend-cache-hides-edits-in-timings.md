@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-14, decision 0220 addendum stage A).
 
-**Symptom**: a rebuild of selfhost/xo after a one-constant edit reported
+**Symptom**: a rebuild of compiler/xo after a one-constant edit reported
 `cache objects 43/43 reused` (nothing assembled), yet the binary differed
 from the unedited build's. It looked like the cache key missed the edit.
 

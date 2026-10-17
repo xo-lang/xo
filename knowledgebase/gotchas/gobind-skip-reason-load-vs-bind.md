@@ -16,5 +16,5 @@ kept the Go name as part of the reason; `Bind` did not.
 
 **Fix.** `Load` drops the trailing ` (Go name)` (TestMapping compares
 `Load`'s Skipped with `Bind`'s), and the self hosted checker
-(selfhost/check goimport.xo) does the same. Keep any text that both
+(compiler/check goimport.xo) does the same. Keep any text that both
 writes and reads in one place when it feeds a diagnostic.

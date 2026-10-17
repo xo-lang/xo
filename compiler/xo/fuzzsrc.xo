@@ -5,9 +5,9 @@
 // if !(REQUIRES) { return } F(p, ...) }`. The native test binary then
 // runs it as any property test: generated inputs, cases, shrinking.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/gen
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/gen
+use github.com/xo-lang/xo/compiler/parser
 
 /// A contract fuzz test's regression data (rt.RegressRecord's call,
 /// result, and parameters) and where its target is.

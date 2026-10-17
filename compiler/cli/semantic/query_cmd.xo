@@ -1,8 +1,8 @@
 // `xo query` (cmd/xo tools.go runQueryWith, hash.go queryHash).
 
-use github.com/xo-lang/xo/selfhost/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
-/// The usage text of `xo query` (selfhost/cli/cmdhelp).
+/// The usage text of `xo query` (compiler/cli/cmdhelp).
 fn query_usage() -> Str {
   cmdhelp.usage("query")
 }

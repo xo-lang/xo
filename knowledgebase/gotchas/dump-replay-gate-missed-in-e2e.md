@@ -5,7 +5,7 @@ Status: Observed (2026-10-14), fixed (2026-10-14).
 Symptom: TestSelfhostLLVMEndToEnd (internal/selfhost, full tier) failed
 in the Linux arm64 milestone run at main f8ebc9ec with `the IR differs
 from the recording: the hash differs from the recorded output's of an
-earlier input`, the llvmdump of selfhost/lexer, after any edit to the
+earlier input`, the llvmdump of compiler/lexer, after any edit to the
 lexer or std.
 
 Cause: decision 0217 turns recorded dump replays off by default through

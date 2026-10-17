@@ -5,7 +5,7 @@
 // these sections (the arm64 emitter's compile unit names its line table
 // and abbreviations by labels there) is the offset of its object's
 // chunk in the joined section; any other symbol is its address. Each xo
-// compile unit (selfhost/arm64 debug.xo, producer "xo" at byte 33) also
+// compile unit (compiler/arm64 debug.xo, producer "xo" at byte 33) also
 // gives a .debug_aranges set, from its low_pc and high_pc (bytes 17 and
 // 25), which debuggers map addresses to units by.
 

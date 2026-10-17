@@ -5,7 +5,7 @@
 // task.with_budget anywhere; a log record written by a dependency's code
 // carries the dependency.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// Whether the program calls task.with_budget anywhere (usesBudgets),
 /// cached.

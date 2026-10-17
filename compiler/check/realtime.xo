@@ -5,7 +5,7 @@
 // and run after every body is checked, on the recorded types and calls.
 // Loop bounds (`bound N`) are checked with the loops (XO1402).
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 /// The prelude functions and methods a real-time function may call
 /// (realtime.go rtBounded).

@@ -3,8 +3,8 @@
 // functions and methods, std functions with native implementations, the
 // prelude operations lowered inline, closures, function values, and `?`.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 fn call_parts(e: Expr) -> (Span, Expr, List[parser.Arg]) {
   match e {

@@ -49,7 +49,7 @@ func xoTest(t *testing.T, args ...string) (int, string) {
 
 // TestNoGCTests runs native test binaries (`xo test --no-gc`, decision
 // 0083): the report of testdata/nogc/same, examples/notes-service, and
-// selfhost/check (MemFs symbolic links) is the Go backend's, line for
+// compiler/check (MemFs symbolic links) is the Go backend's, line for
 // line; testdata/nogc/native (error traces, fault frames, and deadlock
 // details, which native builds do not record) matches its want.txt.
 func TestNoGCTests(t *testing.T) {
@@ -66,7 +66,7 @@ func TestNoGCTests(t *testing.T) {
 	// none; TestTraceback checks it)
 	setenv(t, "XO_TRACEBACK", "0")
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "selfhost", "check"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_unix_kill")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "compiler", "check"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_unix_kill")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			goCode, goOut := xoTest(t, "-v", dir)
@@ -362,7 +362,7 @@ func TestNoGCNotesServer(t *testing.T) {
 }
 
 // TestNoGCRunCache: the run cache of native `xo test` (decision 0236,
-// selfhost/xo testcache.xo) reuses an unchanged program's binary and test
+// compiler/xo testcache.xo) reuses an unchanged program's binary and test
 // list, and an edit, a new file, or a changed xo.mod misses it.
 func TestNoGCRunCache(t *testing.T) {
 	if testing.Short() {

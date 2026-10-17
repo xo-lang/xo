@@ -16,7 +16,7 @@ the checksum covers the header, so it changes with it. clang's driver
 passes no determinism flag for the msvc triples by default.
 
 Fix: both drivers link Windows with `-fuse-ld=lld -Wl,/Brepro`
-(selfhost/xo/link.xo sys_link_args, internal/build/llvm.go
+(compiler/xo/link.xo sys_link_args, internal/build/llvm.go
 sysLinkArgs). With /Brepro, lld-link writes a hash of the output in the
 time stamp field instead of the time. Checked 2026-10-13 on a Windows
 Server 2025 EC2 instance (scripts/remote-windows.sh --cmd, on demand,

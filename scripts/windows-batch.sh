@@ -7,7 +7,7 @@
 #   1. go run ./scripts/xobuild: an earlier xo, normally the prebuilt
 #      windows-amd64 seed (decision 0216; the go-compiler-final chain only
 #      when XO_SEED_FALLBACK=chain is set), builds xo1, the shipped xo,
-#      from selfhost/xo with the Go backend;
+#      from compiler/xo with the Go backend;
 #   2. xo1 builds every LLVM golden for windows/amd64 and runs it
 #      (TestGoldenWant with XO_GOLDEN_WANT_XO), then cross builds them all
 #      for windows/arm64 (not run: no host);

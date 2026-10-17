@@ -1,4 +1,4 @@
-// Package arm64 holds the tests of the arm64 backend (selfhost/arm64)
+// Package arm64 holds the tests of the arm64 backend (compiler/arm64)
 // through the xo binary (internal/xotool): since decision 0215 the Go
 // emitter is gone and this package has no Go code of its own.
 package arm64
@@ -364,7 +364,7 @@ func TestLinuxEmit(t *testing.T) {
 // The tests of the Go emitter's internals (TestUnsupported on a module
 // built by hand, TestInlineVerifies on internal/ssa modules, the layout
 // and share probe options of the Go build package) went with decision
-// 0215; selfhost/arm64 has its own Xo tests (TestSelfhostArm64 compares
+// 0215; compiler/arm64 has its own Xo tests (TestSelfhostArm64 compares
 // its assembly with the recording).
 
 // TestGoldenRunSpill builds golden programs whose code has long straight
@@ -372,7 +372,7 @@ func TestLinuxEmit(t *testing.T) {
 // add_with_flag's adds and cset), and faults with the register allocator
 // limited to a few registers (XO_ARM64_REGS), so most operands spill:
 // every template must still get a distinct register for each spilled
-// operand (selfhost/arm64 emit.xo scratch_reg; 2026-10-16, before which
+// operand (compiler/arm64 emit.xo scratch_reg; 2026-10-16, before which
 // the fourth spilled use, or a second spilled result, shared a scratch
 // register with no error).
 func TestGoldenRunSpill(t *testing.T) {

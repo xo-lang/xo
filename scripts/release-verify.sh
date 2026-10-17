@@ -12,7 +12,7 @@
 #      GOROOT unset, XO_GO pointing at nothing, empty caches. `xo
 #      version`, `xo check`, and a hello program
 #      with `xo run` on each native backend: arm64 with the default
-#      linker (selfhost/macho on darwin with the pack, decision 0182; cc
+#      linker (compiler/macho on darwin with the pack, decision 0182; cc
 #      on linux), arm64 with --ld=cc, arm64 with --ld=macho (no cc), llvm
 #      (clang); and the time zone golden on arm64, its zone data from the
 #      archive's lib/xo/std/tzdata/zoneinfo.zip (decision 0094's addendum). On a host with no native backend

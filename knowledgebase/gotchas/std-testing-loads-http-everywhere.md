@@ -15,7 +15,7 @@ imports, is loaded into every native program; the SSA builders only
 build what is reachable, which hid this until code was rooted by module.
 
 Fix: root a feature's exports by what the program builds, not by what
-it loads: the SSA builders (internal/ssa declareExports, selfhost/ssa
+it loads: the SSA builders (internal/ssa declareExports, compiler/ssa
 declare_exports) build cabi_<feature> only when a function of a module
 that imports it was declared, after the program's own code is built.
 Use the same rule for anything else that should follow a feature.

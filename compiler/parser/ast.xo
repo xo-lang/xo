@@ -14,7 +14,7 @@
 // fields of a variant or struct pattern) keep that difference: `List[T]?`
 // or the pattern's own flags.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 pub type Kind = lexer.Kind
 pub type Token = lexer.Token

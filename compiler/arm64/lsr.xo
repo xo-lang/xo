@@ -9,7 +9,7 @@
 // parameter of H, p = xs + i * size, which the back edges advance by c *
 // size and the entry edges compute once.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// Whether SSA block a dominates b (idom: immediate dominators, -1 for
 /// the entry and the blocks not reached).

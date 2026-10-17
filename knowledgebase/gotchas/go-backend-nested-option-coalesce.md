@@ -1,9 +1,9 @@
 # `??` on a nested optional produced Go that did not compile
 
-Status: Observed (2026-10-10, selfhost/check `fs.stat(p).ok() ?? None`);
+Status: Observed (2026-10-10, compiler/check `fs.stat(p).ok() ?? None`);
 fixed.
 
-Symptom: `xo build selfhost/check` (Go backend) failed with "cannot use
+Symptom: `xo build compiler/check` (Go backend) failed with "cannot use
 x (variable of struct type rt.Option[rt.Option[rt.FileInfo]]) as
 rt.Option[rt.FileInfo] value"; the checker accepted the program and LLVM
 built it. `fs.stat` returns `FileInfo? ! FsErr`, so `.ok()` is a

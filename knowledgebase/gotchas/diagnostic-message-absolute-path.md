@@ -15,5 +15,5 @@ paths were absolute and differed.
 
 Fix: a message names a module by its path, not its directory (XO1306 now
 says "not required by the xo.mod of example.com/shop"; same in
-selfhost/check/deps.xo). The file a diagnostic is about belongs in its
+compiler/check/deps.xo). The file a diagnostic is about belongs in its
 span, which tests normalize; never put a directory in the message text.

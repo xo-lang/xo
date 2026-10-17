@@ -23,12 +23,12 @@ decision 0232), which declares it `extern_weak` (LLVM) or `.weak`
 (arm64); in an XO_NOLIBC build cabi_libc.xo also exports that name, so
 the module declares and defines it (LLVM rejects both in one module;
 GNU as may let `.globl` win, LLVM's assembler does not). The atomics:
-selfhost/xo main.xo chose the nolibc flags by the host's architecture
+compiler/xo main.xo chose the nolibc flags by the host's architecture
 for the LLVM backend, not the target's.
 
 ## Fix
 
 The emitters skip the weak declaration of a name the module exports
-(selfhost/llvm gen.xo generate drops the declare; selfhost/arm64
+(compiler/llvm gen.xo generate drops the declare; compiler/arm64
 calls.xo weak_ref returns early), and the driver takes the target's
 architecture for the nolibc flags and atomics (link_inputs' tgoarch).

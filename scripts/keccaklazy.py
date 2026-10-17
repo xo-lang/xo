@@ -5,7 +5,7 @@
 # right by q), so a rotation costs nothing where it is made (rho, D's
 # rotation by 1) and is applied where the lane is read, as the rotated
 # operand of the eor or bic that reads it: arm64 folds a rotation by a
-# constant read once into that operand (selfhost/arm64 isel.xo
+# constant read once into that operand (compiler/arm64 isel.xo
 # rot_operand). The 4 rounds of the loop's body run lazily; at its end
 # the 25 pending rotations are applied, so the loop carries plain lanes.
 out = []

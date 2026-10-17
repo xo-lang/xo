@@ -1,11 +1,11 @@
-// --ld=macho (decision 0182): the link without a C compiler. selfhost/macho
-// links the program's objects (assembled by selfhost/macho; no C runtime
+// --ld=macho (decision 0182): the link without a C compiler. compiler/macho
+// links the program's objects (assembled by compiler/macho; no C runtime
 // since decision 0234, so no pack's rt.o) into a signed executable (the
 // Security framework is loaded at run time, std/native/llrt/tlscert.xo);
 // for
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
-use github.com/xo-lang/xo/selfhost/macho
+use github.com/xo-lang/xo/compiler/macho
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not. strip leaves the local symbols out (`-s`); nolibc: a Linux
@@ -130,7 +130,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
 /// tzSource as an object: the zone data std/time reads (xo_tz_mode,
 /// xo_tz_zip_len, xo_tz_zip, xo_tz_blobs, and the table of them that
 /// xo_tz_table returns to std/native/llrt/tzhost.xo), as
-/// assembly for selfhost/macho (Mach-O, or ELF for goos linux); the path
+/// assembly for compiler/macho (Mach-O, or ELF for goos linux); the path
 /// of the object.
 fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str, goarch: Str) -> Str ! FsErr {
   if goos == "linux" {

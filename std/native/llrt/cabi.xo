@@ -1,7 +1,7 @@
 // The C ABI exports of the runtime (decisions 0204, 0207): every top
 // level function of this module is a global symbol xo_x_<name> with the
 // C calling convention, which generated code calls (the emitters' runtime
-// calls, selfhost/ssa exports.xo), the runtime names by address
+// calls, compiler/ssa exports.xo), the runtime names by address
 // (rt.fn_addr), or a `use c` binding calls back (cffi_str). The module is the
 // marker: the SSA builders build every function here in every native
 // program (the native prelude imports it); the modules cabi_<feature>.xo
@@ -234,7 +234,7 @@ fn heap_big_release(b: Int) {
 
 /// The runtime's records (rt.heap_large, its resize, rt.heap_release;
 /// the zero-C inventory's rank 10, 2026-10-15): libcmem.xo's allocator,
-/// which the native emitters call for those (selfhost/ssa exports.xo);
+/// which the native emitters call for those (compiler/ssa exports.xo);
 /// xo_rt.c's xo_heap_large and the rest forward here for code of
 /// earlier compilers.
 fn heap_large(n: Int) -> Int { libcmem.heap_large(n) }
@@ -367,7 +367,7 @@ fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {
   obj.rs_with_cap(n)
 }
 
-/// The Str results of the C adapters of `use c` (selfhost/cli/bind
+/// The Str results of the C adapters of `use c` (compiler/cli/bind
 /// gen.xo, decision 0116; was xo_std.c xo_cffi_str): a new string of the
 /// n bytes at p, its length stored at lenp.
 fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
@@ -399,7 +399,7 @@ fn poll_timer_del(t: Int) { poll.timer_del(t) }
 /// park is signaled or it is canceled, not counted as blocked.
 fn poll_park_wait(c: Int) { tasks.park_wait_n(c, true, false) }
 
-// The clock and cancellation checks of generated code (selfhost/ssa
+// The clock and cancellation checks of generated code (compiler/ssa
 // exports.xo; xo_rt.c's xo_clock_now and the rest stay for code of
 // compilers up to 0.12.0).
 

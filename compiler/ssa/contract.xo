@@ -2,8 +2,8 @@
 // loop bounds (build_stmt.go loopBound), and real-time sections
 // (build_call.go), stage 4 of decision 0150.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 /// The source text of the span sp of file f (sourceText).
 fn (var b: Builder) source_text(f: Int, sp: Span) -> Str {

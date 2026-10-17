@@ -14,9 +14,9 @@ Both checkers printed the same single diagnostic: XO1315, `edition
 
 ## Cause
 
-selfhost/check's `Diag` has `warning: Bool` and, for XO1315,
+compiler/check's `Diag` has `warning: Bool` and, for XO1315,
 `note_sev: Bool` (decision 0177). The note set `note_sev` only, and
-every tool's `rejected` test (selfhost/ssa, arm64, llvm, gen, xo main.xo:
+every tool's `rejected` test (compiler/ssa, arm64, llvm, gen, xo main.xo:
 `!d.warning || d.code == "XO0900"`) reads `warning` as "not an error".
 A diagnostic of severity note therefore failed the check, where Go's
 `diag.HasErrors` ignores notes. The runs only showed up once the xo.mod
@@ -26,4 +26,4 @@ lines of those modules were reported at all.
 
 A note sets `warning` too (load.xo report_edition_aliases); the field's
 doc comment says `warning` means "not an error". A new severity added
-to selfhost/check must set `warning` unless it is an error.
+to compiler/check must set `warning` unless it is an error.

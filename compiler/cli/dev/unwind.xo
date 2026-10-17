@@ -1,13 +1,13 @@
 // `xo dev unwind --snap FILE [--dwarf FILE] [--locals] EXE`: the
-// backtrace selfhost/debug's unwinder (decision 0253) finds for a
+// backtrace compiler/debug's unwinder (decision 0253) finds for a
 // recorded stopped thread (a snapshot: its registers and stack, from
 // lldb or gdb at a breakpoint), each frame's function, file, and line
 // from the DWARF (EXE's own, or --dwarf: a dSYM's DWARF file), and with
 // --locals each frame's variables read in that frame. For tests and
 // agents until `xo debug` controls processes itself.
 
-use github.com/xo-lang/xo/selfhost/cli/core
-use github.com/xo-lang/xo/selfhost/debug
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/debug
 
 fn unwind_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var fl = core.new_flags("dev unwind")

@@ -12,7 +12,7 @@
 // reason.
 
 use std/crypto
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 /// cbind.Version: the format version of generated C bindings.
 const CBIND_VERSION: Int = 1

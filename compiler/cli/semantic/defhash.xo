@@ -7,13 +7,13 @@
 //
 // The Go package encodes the tree by reflection over internal/ast: a node
 // is "(" and its Go type name, then its exported fields in declaration
-// order (Base and Doc skipped). The encoder below walks selfhost/parser's
+// order (Base and Doc skipped). The encoder below walks compiler/parser's
 // tree field by field in that same order, with the same special cases, so
 // the hashes are byte identical (TestSelfhostDefhash compares them on the
 // corpus).
 
 use std/crypto
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 type Ident = parser.Ident
 type Decl = parser.Decl

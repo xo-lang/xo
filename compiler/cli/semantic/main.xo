@@ -1,6 +1,6 @@
 // The semantic tools of the `xo` command line in Xo (decision 0178 stage
 // 3): `query`, `edit`, and the definition hashes of decision 0125.
-// xo1 (selfhost/xo) dispatches these commands to run; this package's own
+// xo1 (compiler/xo) dispatches these commands to run; this package's own
 // main runs them too, so they can be built and tested without the whole
 // compiler driver:
 //

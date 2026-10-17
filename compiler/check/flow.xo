@@ -11,7 +11,7 @@
 // name records (uses) and decl_at (the names a pattern or `var`
 // declares), the two halves of check.go identObj.
 
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/parser
 
 // ---------------------------------------------------------------------------
 // Places and mutability (stmt.go placeRoot, requireMutable)

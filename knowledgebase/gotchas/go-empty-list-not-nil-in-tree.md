@@ -11,7 +11,7 @@ as `name: []`, and omits a nil one. The Go parser's `parseImpl` drops the
 `self` parameter with `fn.Params = fn.Params[1:]`, which leaves an empty
 non nil slice; the Xo tree has no nil lists.
 
-Fix: the Xo `FnDecl` carries `params_list` (selfhost/parser/ast.xo), set
+Fix: the Xo `FnDecl` carries `params_list` (compiler/parser/ast.xo), set
 by the `impl` recovery, and the dump prints `params: []` for it, as it
 already did for a variant's fields, a `use c` ceiling, and pattern
 fields. A new recovery in internal/parser that slices or makes an empty

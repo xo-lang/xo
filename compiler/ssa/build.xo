@@ -1,5 +1,5 @@
 // The SSA builder (internal/ssa build.go), stage 1 of decision 0150: it
-// lowers the program checked by selfhost/check (native mode) into the
+// lowers the program checked by compiler/check (native mode) into the
 // SSA internal/ssa's builder makes before its passes, function by
 // function in the same order, so `xo ssadump --stage=build` and this
 // builder print the same text for every function it completes. A
@@ -7,8 +7,8 @@
 // skipped (Func.skip) and the build goes on, as the Go builder goes on
 // after an unsupported construct.
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/parser
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 type Expr = parser.Expr
 type Stmt = parser.Stmt

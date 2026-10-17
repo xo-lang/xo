@@ -6,7 +6,7 @@ flip").
 
 ## Symptom
 
-`xo1 build --backend=arm64 --target=linux/arm64 --ld=macho selfhost/xo`
+`xo1 build --backend=arm64 --target=linux/arm64 --ld=macho compiler/xo`
 (the linux/arm64 release binary) stopped after 1,000 s with
 `xo1: assembler: line 2: .file in __text`. Decision 0182's stage 3
 results had assembled the same program's linux assembly byte identical
@@ -20,11 +20,11 @@ Commit 15b3a46 (Linux fixes) made both arm64 emitters write
 links reproducible). It landed after stage 3 was measured, and the only
 path that assembles linux assembly in Xo (`--as=macho` / `--ld=macho`)
 was not in any merge-tier test, so nothing saw the new directive reach
-selfhost/macho, whose ELF mode had no `.file`.
+compiler/macho, whose ELF mode had no `.file`.
 
 ## Fix
 
-selfhost/macho's ELF mode takes `.file "NAME"`: an STB_LOCAL STT_FILE
+compiler/macho's ELF mode takes `.file "NAME"`: an STB_LOCAL STT_FILE
 symbol in SHN_ABS, first in the symbol table after the null symbol, as
 LLVM writes it (commit 9d8fac8; the macho Xo test "a .file directive is
 an STT_FILE symbol first in the symbol table"; the hello program's object

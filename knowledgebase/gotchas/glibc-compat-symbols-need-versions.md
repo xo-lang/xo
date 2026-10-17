@@ -17,7 +17,7 @@ non hidden version; a hidden version is matched only by a reference that
 names it.
 
 Fix: the ELF linker gives every import the version glibc 2.31 defines
-for it, as `cc` would bind it there: `selfhost/macho/glibc.xo`, generated
+for it, as `cc` would bind it there: `compiler/macho/glibc.xo`, generated
 by `scripts/elf-glibc-versions.py` from Debian bullseye's libc.so.6,
 libm.so.6, libpthread.so.0, and libgcc_s.so.1 (libc.so.6 and GLIBC_2.17,
 the arm64 baseline, for every name not listed). The same rule keeps

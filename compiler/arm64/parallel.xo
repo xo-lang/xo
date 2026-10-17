@@ -6,7 +6,7 @@
 // on the number of tasks, so the assembly is the same for any number of
 // jobs; a module of one part is generated as before.
 
-use github.com/xo-lang/xo/selfhost/ssa
+use github.com/xo-lang/xo/compiler/ssa
 
 /// A module of fewer functions than PART_FUNCS is one part. A larger one
 /// is cut by its contents (decision 0220 addendum): after a function whose
@@ -72,7 +72,7 @@ fn (var g: G) defers(key: Str, w: Want) -> Bool {
 /// the FNV-1a hash of the key, so every part names it alike.
 fn (g: G) helper_ext(key: Str) -> Str {
   // 60 bits of it in ten base 62 digits: the name is in every call of
-  // the helper (millions of lines of selfhost/xo), so it is kept short
+  // the helper (millions of lines of compiler/xo), so it is kept short
   g.sym("xo_h${base62(fnv(key), 10)}")
 }
 

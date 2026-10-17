@@ -3,7 +3,7 @@
 //   ssa [--std=DIR] [--wd=DIR] [--each] [--test] [--stages] <dirs...>  print the dump
 //   ssa [--std=DIR] [--wd=DIR] [--each] --bench=N <dirs...> build N times, print the time
 //
-// It checks the directories as `xo ssadump` does (selfhost/check in
+// It checks the directories as `xo ssadump` does (compiler/check in
 // native mode) and prints the build stage of `xo ssadump`: the type lines
 // and the functions it completed, then `== skipped` and one line per
 // function left incomplete (`<name>: <why>`), which are not compared. A
@@ -13,7 +13,7 @@
 // preceded by `=== ssa <dir>`. Fault positions are relative to DIR of
 // --wd (default $PWD), as the Go builder's are to its working directory.
 
-use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/compiler/check
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0

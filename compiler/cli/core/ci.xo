@@ -2,8 +2,8 @@
 // build.go ciCheck, mod.go workspaceRelease), for xo1's build command
 // (decision 0178 switch point B).
 
-use github.com/xo-lang/xo/selfhost/check
-use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/core/format
 
 /// workspaceRelease: the XO1308 error of a release (or --ci) build while
 /// the xo.work workspace of dirs[0]'s module overrides a module that one

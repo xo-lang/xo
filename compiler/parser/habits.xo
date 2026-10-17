@@ -6,7 +6,7 @@
 // The machine fixes and notes of the Go parser are not ported (stage 7 of
 // decision 0141); the messages, spans, and recovered trees are the same.
 
-use github.com/xo-lang/xo/selfhost/lexer
+use github.com/xo-lang/xo/compiler/lexer
 
 // ---------------------------------------------------------------------------
 // Helpers (habits.go)
