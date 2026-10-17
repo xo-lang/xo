@@ -111,12 +111,15 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     var line = 1
     // the sequence starts at the function (its prologue takes the first
     // statement's line), then a row per label (an inlined callee's rows
-    // in its own file)
+    // in its own file); the first statement's row ends the prologue
+    // (DW_LNS_set_prologue_end), where lldb and gdb stop for a breakpoint
+    // on the function, as on clang's tables (without it they skipped to
+    // the second line, past the first statement)
     var rows = fr.rows
     if !rows.is_empty() {
       rows.insert(0, DbgRow{label: fr.begin, line: rows[0].line, file: rows[0].file, site: rows[0].site})
     }
-    for row in rows {
+    for (ri, row) in rows.indexed() {
       let ln = row.line / 4096
       let col = row.line % 4096
       prog.u8(0)
@@ -135,6 +138,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
       }
       prog.u8(5) // DW_LNS_set_column
       prog.uleb(col)
+      if ri == 1 {
+        prog.u8(10) // DW_LNS_set_prologue_end
+      }
       prog.u8(1) // DW_LNS_copy
     }
     prog.u8(0)

@@ -92,14 +92,19 @@ fn scope_of(info: Info, a: Int) -> Str {
   ""
 }
 
-/// A function's first statement past its prologue: the address of its
-/// second line table row inside it (the first row is the entry, at the
-/// function's own line), or its entry when it has one row.
+/// A function's first statement past its prologue: its row marked
+/// prologue_end (both backends mark it), else the first row after its
+/// entry, else its entry.
 fn after_prologue(l: Lines, f: Func) -> Int {
   var rows: List[Int] = []
   for r in l.rows {
-    if !r.end && r.stmt && r.addr >= f.lo && r.addr < f.hi {
-      rows.push(r.addr)
+    if !r.end && r.addr >= f.lo && r.addr < f.hi {
+      if r.prologue_end {
+        return r.addr
+      }
+      if r.stmt {
+        rows.push(r.addr)
+      }
     }
   }
   let s = rows.sort()

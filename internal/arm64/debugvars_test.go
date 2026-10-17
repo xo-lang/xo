@@ -258,6 +258,22 @@ func TestDwarfReader(t *testing.T) {
 			if c.name == "llvm" {
 				return
 			}
+			// a breakpoint on sum: past its prologue, at its first statement
+			// (line 6, the prologue_end row), for lldb and xo debug alike
+			fb, err := exec.Command(xo, "dev", "dwarf", "--break=sum", dw).CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo dev dwarf --break=sum: %v\n%s", err, fb)
+			}
+			lf, err := lldb(t, false, "-b", "-o", "breakpoint set -n sum", bin)
+			if err != nil {
+				t.Fatalf("lldb: %v\n%s", err, lf)
+			}
+			if !bytes.Contains(lf, []byte("at main.xo:6:")) {
+				t.Errorf("lldb's breakpoint on sum is not at its first statement, main.xo:6:\n%s", lf)
+			}
+			if m := regexp.MustCompile(`address = 0x0*([0-9a-f]+)`).FindSubmatch(lf); m == nil || strings.TrimSpace(string(fb)) != "0x"+string(m[1]) {
+				t.Errorf("xo dev dwarf --break=sum: %s, lldb:\n%s", fb, lf)
+			}
 			// each variable's ranges against dwarfdump's
 			dd, err := exec.Command("dwarfdump", "--name=sum", "--show-children", bin+".dSYM").CombinedOutput()
 			if err != nil {

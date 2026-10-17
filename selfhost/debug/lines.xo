@@ -5,14 +5,16 @@
 // reads the same tables from a running image's memory.
 
 /// A row of a line table: the first address of its code, its file (an
-/// index of Lines.files), its line, whether it starts a statement, and
-/// whether it ends its sequence (then the address is past the code).
+/// index of Lines.files), its line, whether it starts a statement,
+/// whether it ends its sequence (then the address is past the code), and
+/// whether a function's prologue ends there.
 pub struct Row {
   pub addr: Int
   pub file: Int
   pub line: Int
   pub stmt: Bool
   pub end: Bool
+  pub prologue_end: Bool = false
 }
 
 /// Every sequence's rows in the order of the tables, and the files by
@@ -147,6 +149,7 @@ fn unit_lines(s: Sections, u: Int, next: Int, var at: Map[Str, Int], var out: Li
   var file = 1
   var line = 1
   var stmt = def_stmt
+  var pend = false
   while r.p < next {
     let op = r.byte()
     var emit = false
@@ -185,7 +188,8 @@ fn unit_lines(s: Sections, u: Int, next: Int, var at: Map[Str, Int], var out: Li
         12 => {
           let _i = r.uleb()
         }
-        7 | 10 | 11 => {}
+        10 => pend = true
+        7 | 11 => {}
         _ => {
           // an opcode of a later version: skip its operands
           for _ in 0..(if op < lens.len() { lens[op] } else { 0 }) {
@@ -196,7 +200,8 @@ fn unit_lines(s: Sections, u: Int, next: Int, var at: Map[Str, Int], var out: Li
     }
     if emit {
       let fi = if file >= 0 && file < fmap.len() { fmap[file] } else { -1 }
-      out.rows.push(Row{addr: addr, file: fi, line: line, stmt: stmt, end: false})
+      out.rows.push(Row{addr: addr, file: fi, line: line, stmt: stmt, end: false, prologue_end: pend})
+      pend = false
     }
   }
 }

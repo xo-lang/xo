@@ -181,6 +181,10 @@ test "breakpoints: numbers, addresses, deletion" {
   var b = Bpts{}
   expect(b.add(info, l, Spot.Line(file: "main.xo", line: 4))) == Ok(1)
   expect(b.add(info, l, Spot.Func(name: "f"))) == Ok(2)
+  // a prologue_end row is where a function's breakpoint goes
+  var l3 = l
+  l3.rows[2] = Row{addr: 0x10c, file: 0, line: 4, stmt: true, end: false, prologue_end: true}
+  expect(resolve(info, l3, Spot.Func(name: "f"))) == Ok([0x10c])
   expect(b.add(info, l, Spot.Line(file: "main.xo", line: 9)).is_err()) == true
   expect(b.add(info, l, Spot.Line(file: "other.xo", line: 4)).is_err()) == true
   expect(b.add(info, l, Spot.Func(name: "h")).is_err()) == true
