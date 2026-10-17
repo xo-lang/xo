@@ -11,7 +11,7 @@
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -337,6 +337,16 @@ fn rt4_text(var g: Gen) -> Str {
 
     (func $fs_status (result i64)
       global.get $fsst)
+
+    ;; the target of link p: none (WASI preview1's path_readlink is not
+    ;; used; a browser's file system has no links), success, so callers
+    ;; that resolve links (selfhost/check locate.xo) go on with p
+    (func $fs_read_link (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i32)
+      i64.const 0
+      global.set $fsst
+      i32.const 1
+      i32.const 16
+      call $rl_new)
 
     ;; the path and the message of the last error
     (func $fs_msg (result i32) (local $l i32) (local $a i32) (local $s i32) (local $k i32)

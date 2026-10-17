@@ -605,3 +605,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [tsan-fences-not-modeled.md](tsan-fences-not-modeled.md): ThreadSanitizer orders only atomic accesses and locks, so a fence plus a plain store is a race to it; put acquire or release on the access.
 - [native-http-client-gzip-body.md](native-http-client-gzip-body.md): Observed and fixed 2026-10-16: the native HTTP client asked for gzip and returned the compressed body undecoded (the Go backend decoded it).
 - [tsan-evloop-park-reuse.md](tsan-evloop-park-reuse.md): Observed and fixed: evloop under --race reported the poller against a block's earlier owner; the macOS kqueue registration to event edge lacked the release and acquire Linux's epoll had.
+- [wasm-checker-deep-expression-stack.md](wasm-checker-deep-expression-stack.md): Observed: a 138-term operator chain overflowed a browser worker's stack in the wasm checker; infer_left walks chains in a loop

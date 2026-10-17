@@ -393,6 +393,13 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
+      if name == "rt.fs_raw_getcwd" {
+        // WASI has no working directory: "" (std's fs_cwd_path reports
+        // Io, and its callers fall back to $PWD)
+        g.push_hole(x.ty)
+        g.def(v)
+        return
+      }
       if name == "rt.heap_large" {
         // the runtime's records (decision 0207): whole pages from
         // memory.grow (zeroed), outside the allocator, so neither the

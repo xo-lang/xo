@@ -39,7 +39,9 @@ struct RtWalk {
 fn (var c: Checker) check_realtime() {
   var walks: List[RtWalk] = []
   for fo in c.realtime_fns {
-    if c.objs[fo].fn_decl.is_empty() || c.mods[c.objs[fo].module].is_std {
+    if c.objs[fo].fn_decl.is_empty() || c.mods[c.objs[fo].module].is_std || c.lazy_mod(c.objs[fo].module) {
+      // std's, and a lazy module's (not checked yet; TestStdChecks walks
+      // them in an eager check)
       continue
     }
     let fd = c.objs[fo].fn_decl[0]

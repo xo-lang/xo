@@ -309,3 +309,24 @@ test "File, FileLock, Child, and values holding them are not comparable (XO0404)
   expect(ls.any(fn(l) { l.contains("`Job` does not implement `Eq`, so it cannot be compared with `!=`") })) == true
   expect(ls.any(fn(l) { l.contains("`Result[Child, Str]` does not implement `Eq`") })) == true
 }
+
+test "a long chain of operators gets every node's type, and one error where it goes wrong (infer_left)" {
+  var terms: List[Str] = []
+  for i in 0..400 {
+    terms.push("${i}")
+  }
+  let out = check_files(os, "ch", [("ch/main.xo", "fn f(x: Int, s: Str) -> Int {\n  x + ${terms.join(" + ")}\n}\n\nfn g(x: Int, s: Str) -> Int {\n  x + 1 + s + 2 + 3\n}\n")])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.starts_with("2:") && l.contains(" BinaryExpr Int") }).len()) == 400
+  let errs = ls.filter(fn(l) { l.contains("\"XO0406\"") })
+  expect(errs.len()) == 1
+  expect(errs[0].contains("\"line\":6,\"col\":3")) == true
+}
+
+test "the directory above . is unknown when the working directory is relative" {
+  var c = new_checker(os.fs, "std")
+  c.deps.wd = "."
+  expect(c.up(".")) == None
+  c.deps.wd = "/a/b"
+  expect(c.up(".")) == Some("/a")
+}

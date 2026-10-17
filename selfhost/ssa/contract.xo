@@ -31,10 +31,22 @@ fn (var b: Builder) ensures_of(fo: Int) -> List[parser.Clause] {
   out
 }
 
+/// Checks fo's body first when the checker left it to the build (a
+/// native module's, decision 0247). An error there is std's own, which
+/// TestStdChecks reports; the build stops with it.
+fn (var b: Builder) check_lazy(fo: Int) {
+  let errs = b.c.check_lazy(fo)
+  if !errs.is_empty() {
+    let d = errs[0]
+    b.impossible("the runtime does not check: ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}")
+  }
+}
+
 /// Builds the body of fo into fi (body): as a wrapper around it when fo
 /// has `ensures` clauses or is a `var` method of a type with an
 /// invariant (contractBody), else directly (bodyOf).
 fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
+  b.check_lazy(fo)
   let decl = b.c.objs[fo].fn_decl
   if !decl.is_empty() && decl[0].body != None {
     let ens = b.ensures_of(fo)
@@ -63,6 +75,7 @@ fn (var b: Builder) user_realtime() -> Bool {
 /// Builds fo's body into fi, checking its `requires` clauses first when
 /// requires is set (bodyOf).
 fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires: Bool) {
+  b.check_lazy(fo)
   let file = b.decl_file(fo)
   let saved = b.begin(fi, file)
   b.s.fo = fo

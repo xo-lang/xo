@@ -275,146 +275,150 @@ pub fn local_name() -> Str {
 
 /// The abbreviations of the Windows time zones by key name (Go 1.26's
 /// time/zoneinfo_abbrs_windows.go, from CLDR windowsZones.xml): `key|std|dst`
-/// lines, as Go's time.Local names its zones on Windows.
-const WIN_ABBRS: Str = "Egypt Standard Time|EET|EEST\n" +
-  "Morocco Standard Time|+00|+01\n" +
-  "South Africa Standard Time|SAST|SAST\n" +
-  "South Sudan Standard Time|CAT|CAT\n" +
-  "Sudan Standard Time|CAT|CAT\n" +
-  "W. Central Africa Standard Time|WAT|WAT\n" +
-  "E. Africa Standard Time|EAT|EAT\n" +
-  "Sao Tome Standard Time|GMT|GMT\n" +
-  "Libya Standard Time|EET|EET\n" +
-  "Namibia Standard Time|CAT|CAT\n" +
-  "Aleutian Standard Time|HST|HDT\n" +
-  "Alaskan Standard Time|AKST|AKDT\n" +
-  "Tocantins Standard Time|-03|-03\n" +
-  "Paraguay Standard Time|-04|-03\n" +
-  "Bahia Standard Time|-03|-03\n" +
-  "SA Pacific Standard Time|-05|-05\n" +
-  "Argentina Standard Time|-03|-03\n" +
-  "Eastern Standard Time (Mexico)|EST|EST\n" +
-  "Venezuela Standard Time|-04|-04\n" +
-  "SA Eastern Standard Time|-03|-03\n" +
-  "Central Standard Time|CST|CDT\n" +
-  "Central Brazilian Standard Time|-04|-04\n" +
-  "Mountain Standard Time|MST|MDT\n" +
-  "Greenland Standard Time|-02|-01\n" +
-  "Turks And Caicos Standard Time|EST|EDT\n" +
-  "Central America Standard Time|CST|CST\n" +
-  "Atlantic Standard Time|AST|ADT\n" +
-  "Cuba Standard Time|CST|CDT\n" +
-  "US Eastern Standard Time|EST|EDT\n" +
-  "SA Western Standard Time|-04|-04\n" +
-  "Pacific Standard Time|PST|PDT\n" +
-  "Mountain Standard Time (Mexico)|MST|MST\n" +
-  "Central Standard Time (Mexico)|CST|CST\n" +
-  "Saint Pierre Standard Time|-03|-02\n" +
-  "Montevideo Standard Time|-03|-03\n" +
-  "Eastern Standard Time|EST|EDT\n" +
-  "US Mountain Standard Time|MST|MST\n" +
-  "Haiti Standard Time|EST|EDT\n" +
-  "Magallanes Standard Time|-03|-03\n" +
-  "Canada Central Standard Time|CST|CST\n" +
-  "Pacific SA Standard Time|-04|-03\n" +
-  "E. South America Standard Time|-03|-03\n" +
-  "Newfoundland Standard Time|NST|NDT\n" +
-  "Pacific Standard Time (Mexico)|PST|PDT\n" +
-  "Yukon Standard Time|MST|MST\n" +
-  "Jordan Standard Time|+03|+03\n" +
-  "Arabic Standard Time|+03|+03\n" +
-  "Azerbaijan Standard Time|+04|+04\n" +
-  "SE Asia Standard Time|+07|+07\n" +
-  "Altai Standard Time|+07|+07\n" +
-  "Middle East Standard Time|EET|EEST\n" +
-  "Central Asia Standard Time|+06|+06\n" +
-  "India Standard Time|IST|IST\n" +
-  "Transbaikal Standard Time|+09|+09\n" +
-  "Sri Lanka Standard Time|+0530|+0530\n" +
-  "Syria Standard Time|+03|+03\n" +
-  "Bangladesh Standard Time|+06|+06\n" +
-  "Arabian Standard Time|+04|+04\n" +
-  "West Bank Standard Time|EET|EEST\n" +
-  "W. Mongolia Standard Time|+07|+07\n" +
-  "North Asia East Standard Time|+08|+08\n" +
-  "Israel Standard Time|IST|IDT\n" +
-  "Afghanistan Standard Time|+0430|+0430\n" +
-  "Russia Time Zone 11|+12|+12\n" +
-  "Pakistan Standard Time|PKT|PKT\n" +
-  "Nepal Standard Time|+0545|+0545\n" +
-  "North Asia Standard Time|+07|+07\n" +
-  "Magadan Standard Time|+11|+11\n" +
-  "N. Central Asia Standard Time|+07|+07\n" +
-  "Omsk Standard Time|+06|+06\n" +
-  "North Korea Standard Time|KST|KST\n" +
-  "Qyzylorda Standard Time|+05|+05\n" +
-  "Myanmar Standard Time|+0630|+0630\n" +
-  "Arab Standard Time|+03|+03\n" +
-  "Sakhalin Standard Time|+11|+11\n" +
-  "Korea Standard Time|KST|KST\n" +
-  "China Standard Time|CST|CST\n" +
-  "Singapore Standard Time|+08|+08\n" +
-  "Russia Time Zone 10|+11|+11\n" +
-  "Taipei Standard Time|CST|CST\n" +
-  "West Asia Standard Time|+05|+05\n" +
-  "Georgian Standard Time|+04|+04\n" +
-  "Iran Standard Time|+0330|+0330\n" +
-  "Tokyo Standard Time|JST|JST\n" +
-  "Tomsk Standard Time|+07|+07\n" +
-  "Ulaanbaatar Standard Time|+08|+08\n" +
-  "Vladivostok Standard Time|+10|+10\n" +
-  "Yakutsk Standard Time|+09|+09\n" +
-  "Ekaterinburg Standard Time|+05|+05\n" +
-  "Caucasus Standard Time|+04|+04\n" +
-  "Azores Standard Time|-01|+00\n" +
-  "Cape Verde Standard Time|-01|-01\n" +
-  "Greenwich Standard Time|GMT|GMT\n" +
-  "Cen. Australia Standard Time|ACST|ACDT\n" +
-  "E. Australia Standard Time|AEST|AEST\n" +
-  "AUS Central Standard Time|ACST|ACST\n" +
-  "Aus Central W. Standard Time|+0845|+0845\n" +
-  "Tasmania Standard Time|AEST|AEDT\n" +
-  "Lord Howe Standard Time|+1030|+11\n" +
-  "W. Australia Standard Time|AWST|AWST\n" +
-  "AUS Eastern Standard Time|AEST|AEDT\n" +
-  "UTC-11|-11|-11\n" +
-  "Dateline Standard Time|-12|-12\n" +
-  "UTC-02|-02|-02\n" +
-  "UTC-08|-08|-08\n" +
-  "UTC-09|-09|-09\n" +
-  "UTC+12|+12|+12\n" +
-  "UTC+13|+13|+13\n" +
-  "UTC|UTC|UTC\n" +
-  "Astrakhan Standard Time|+04|+04\n" +
-  "W. Europe Standard Time|CET|CEST\n" +
-  "GTB Standard Time|EET|EEST\n" +
-  "Central Europe Standard Time|CET|CEST\n" +
-  "E. Europe Standard Time|EET|EEST\n" +
-  "Turkey Standard Time|+03|+03\n" +
-  "Kaliningrad Standard Time|EET|EET\n" +
-  "FLE Standard Time|EET|EEST\n" +
-  "GMT Standard Time|GMT|BST\n" +
-  "Belarus Standard Time|+03|+03\n" +
-  "Russian Standard Time|MSK|MSK\n" +
-  "Romance Standard Time|CET|CEST\n" +
-  "Russia Time Zone 3|+04|+04\n" +
-  "Saratov Standard Time|+04|+04\n" +
-  "Volgograd Standard Time|MSK|MSK\n" +
-  "Central European Standard Time|CET|CEST\n" +
-  "Mauritius Standard Time|+04|+04\n" +
-  "Samoa Standard Time|+13|+13\n" +
-  "New Zealand Standard Time|NZST|NZDT\n" +
-  "Bougainville Standard Time|+11|+11\n" +
-  "Chatham Islands Standard Time|+1245|+1345\n" +
-  "Easter Island Standard Time|-06|-05\n" +
-  "Fiji Standard Time|+12|+12\n" +
-  "Central Pacific Standard Time|+11|+11\n" +
-  "Hawaiian Standard Time|HST|HST\n" +
-  "Line Islands Standard Time|+14|+14\n" +
-  "Marquesas Standard Time|-0930|-0930\n" +
-  "Norfolk Standard Time|+11|+12\n" +
-  "West Pacific Standard Time|+10|+10\n" +
-  "Tonga Standard Time|+13|+13\n"
+/// lines, as Go's time.Local names its zones on Windows. One literal, not
+/// a `+` chain: 138 terms nested the checker's recursion 138 deep, more
+/// than a browser worker's stack holds for the wasm build of the compiler.
+const WIN_ABBRS: Str = """
+  Egypt Standard Time|EET|EEST
+  Morocco Standard Time|+00|+01
+  South Africa Standard Time|SAST|SAST
+  South Sudan Standard Time|CAT|CAT
+  Sudan Standard Time|CAT|CAT
+  W. Central Africa Standard Time|WAT|WAT
+  E. Africa Standard Time|EAT|EAT
+  Sao Tome Standard Time|GMT|GMT
+  Libya Standard Time|EET|EET
+  Namibia Standard Time|CAT|CAT
+  Aleutian Standard Time|HST|HDT
+  Alaskan Standard Time|AKST|AKDT
+  Tocantins Standard Time|-03|-03
+  Paraguay Standard Time|-04|-03
+  Bahia Standard Time|-03|-03
+  SA Pacific Standard Time|-05|-05
+  Argentina Standard Time|-03|-03
+  Eastern Standard Time (Mexico)|EST|EST
+  Venezuela Standard Time|-04|-04
+  SA Eastern Standard Time|-03|-03
+  Central Standard Time|CST|CDT
+  Central Brazilian Standard Time|-04|-04
+  Mountain Standard Time|MST|MDT
+  Greenland Standard Time|-02|-01
+  Turks And Caicos Standard Time|EST|EDT
+  Central America Standard Time|CST|CST
+  Atlantic Standard Time|AST|ADT
+  Cuba Standard Time|CST|CDT
+  US Eastern Standard Time|EST|EDT
+  SA Western Standard Time|-04|-04
+  Pacific Standard Time|PST|PDT
+  Mountain Standard Time (Mexico)|MST|MST
+  Central Standard Time (Mexico)|CST|CST
+  Saint Pierre Standard Time|-03|-02
+  Montevideo Standard Time|-03|-03
+  Eastern Standard Time|EST|EDT
+  US Mountain Standard Time|MST|MST
+  Haiti Standard Time|EST|EDT
+  Magallanes Standard Time|-03|-03
+  Canada Central Standard Time|CST|CST
+  Pacific SA Standard Time|-04|-03
+  E. South America Standard Time|-03|-03
+  Newfoundland Standard Time|NST|NDT
+  Pacific Standard Time (Mexico)|PST|PDT
+  Yukon Standard Time|MST|MST
+  Jordan Standard Time|+03|+03
+  Arabic Standard Time|+03|+03
+  Azerbaijan Standard Time|+04|+04
+  SE Asia Standard Time|+07|+07
+  Altai Standard Time|+07|+07
+  Middle East Standard Time|EET|EEST
+  Central Asia Standard Time|+06|+06
+  India Standard Time|IST|IST
+  Transbaikal Standard Time|+09|+09
+  Sri Lanka Standard Time|+0530|+0530
+  Syria Standard Time|+03|+03
+  Bangladesh Standard Time|+06|+06
+  Arabian Standard Time|+04|+04
+  West Bank Standard Time|EET|EEST
+  W. Mongolia Standard Time|+07|+07
+  North Asia East Standard Time|+08|+08
+  Israel Standard Time|IST|IDT
+  Afghanistan Standard Time|+0430|+0430
+  Russia Time Zone 11|+12|+12
+  Pakistan Standard Time|PKT|PKT
+  Nepal Standard Time|+0545|+0545
+  North Asia Standard Time|+07|+07
+  Magadan Standard Time|+11|+11
+  N. Central Asia Standard Time|+07|+07
+  Omsk Standard Time|+06|+06
+  North Korea Standard Time|KST|KST
+  Qyzylorda Standard Time|+05|+05
+  Myanmar Standard Time|+0630|+0630
+  Arab Standard Time|+03|+03
+  Sakhalin Standard Time|+11|+11
+  Korea Standard Time|KST|KST
+  China Standard Time|CST|CST
+  Singapore Standard Time|+08|+08
+  Russia Time Zone 10|+11|+11
+  Taipei Standard Time|CST|CST
+  West Asia Standard Time|+05|+05
+  Georgian Standard Time|+04|+04
+  Iran Standard Time|+0330|+0330
+  Tokyo Standard Time|JST|JST
+  Tomsk Standard Time|+07|+07
+  Ulaanbaatar Standard Time|+08|+08
+  Vladivostok Standard Time|+10|+10
+  Yakutsk Standard Time|+09|+09
+  Ekaterinburg Standard Time|+05|+05
+  Caucasus Standard Time|+04|+04
+  Azores Standard Time|-01|+00
+  Cape Verde Standard Time|-01|-01
+  Greenwich Standard Time|GMT|GMT
+  Cen. Australia Standard Time|ACST|ACDT
+  E. Australia Standard Time|AEST|AEST
+  AUS Central Standard Time|ACST|ACST
+  Aus Central W. Standard Time|+0845|+0845
+  Tasmania Standard Time|AEST|AEDT
+  Lord Howe Standard Time|+1030|+11
+  W. Australia Standard Time|AWST|AWST
+  AUS Eastern Standard Time|AEST|AEDT
+  UTC-11|-11|-11
+  Dateline Standard Time|-12|-12
+  UTC-02|-02|-02
+  UTC-08|-08|-08
+  UTC-09|-09|-09
+  UTC+12|+12|+12
+  UTC+13|+13|+13
+  UTC|UTC|UTC
+  Astrakhan Standard Time|+04|+04
+  W. Europe Standard Time|CET|CEST
+  GTB Standard Time|EET|EEST
+  Central Europe Standard Time|CET|CEST
+  E. Europe Standard Time|EET|EEST
+  Turkey Standard Time|+03|+03
+  Kaliningrad Standard Time|EET|EET
+  FLE Standard Time|EET|EEST
+  GMT Standard Time|GMT|BST
+  Belarus Standard Time|+03|+03
+  Russian Standard Time|MSK|MSK
+  Romance Standard Time|CET|CEST
+  Russia Time Zone 3|+04|+04
+  Saratov Standard Time|+04|+04
+  Volgograd Standard Time|MSK|MSK
+  Central European Standard Time|CET|CEST
+  Mauritius Standard Time|+04|+04
+  Samoa Standard Time|+13|+13
+  New Zealand Standard Time|NZST|NZDT
+  Bougainville Standard Time|+11|+11
+  Chatham Islands Standard Time|+1245|+1345
+  Easter Island Standard Time|-06|-05
+  Fiji Standard Time|+12|+12
+  Central Pacific Standard Time|+11|+11
+  Hawaiian Standard Time|HST|HST
+  Line Islands Standard Time|+14|+14
+  Marquesas Standard Time|-0930|-0930
+  Norfolk Standard Time|+11|+12
+  West Pacific Standard Time|+10|+10
+  Tonga Standard Time|+13|+13
+  """
 
 /// "Local" on Windows as TZif data for tz.xo, as Go's time.Local makes
 /// it (zoneinfo_windows.go initLocal, initLocalFromTZI): one zone when the

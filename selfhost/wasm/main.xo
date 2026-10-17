@@ -2,6 +2,7 @@
 //
 //   wasm [--std=DIR] [--wd=DIR] [--each] [--why] [--lax] [--annotate] [--out=DIR] <dirs...>   build
 //   wasm --asm=IN.wat -o OUT.wasm                                  assemble
+//   wasm [--std=DIR] [--wd=DIR] --play check|fmt|build ...         the playground (play.xo)
 //
 // A build checks the directories as `xo1 build` does (selfhost/check in
 // native mode), builds the SSA module with selfhost/ssa and its passes,
@@ -57,6 +58,9 @@ fn main(os: Os) ! {
       why = true
     } else if a == "--each" {
       each = true
+    } else if a == "--play" {
+      play(os, std_dir, wd, args[i + 1..])
+      return
     } else {
       dirs.push(a)
     }

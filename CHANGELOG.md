@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native builds check the runtime's function bodies only as the SSA
+  builder reaches them (decision 0247): a hello build 947 to 622 ms,
+  the 180 goldens 21% faster on arm64, the same binaries and LLVM IR on
+  every golden. `xo check --no-gc` still checks every body, and
+  TestStdChecks (-short) checks all of std's.
+- The checker walks a long chain of operators (`a + b + c + ...`) in a
+  loop instead of recursing once per term, and std/native/llrt/tzhost.xo's
+  138-term string is one literal: the wasm build of the compiler
+  overflowed a browser worker's stack on it.
 - linux/arm64: with no `--ld`, a program with no C library now links with
   Xo's own ELF linker (static, no C toolchain at link time; decision 0243
   step 3); `XO_NOLIBC=0` and `use c` programs keep cc and glibc.

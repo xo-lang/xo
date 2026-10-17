@@ -293,6 +293,9 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   var c = check.new_checker(os.fs, o.std)
   c.parse_cache = o.parse_cache
   c.native = native
+  // a native build checks the runtime's bodies as it builds them
+  // (decision 0247); XO_CHECK_EAGER=1 checks them all first, as before
+  c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
   var offline = os.env.get("XO_OFFLINE") ?? ""

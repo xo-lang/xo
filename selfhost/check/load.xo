@@ -28,6 +28,15 @@ pub struct Checker {
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
+  /// Lazy runtime bodies (decision 0247): in native mode, the function
+  /// bodies of the implementation and runtime modules (Module.native) are
+  /// checked when the SSA builder first builds them (check_lazy), not by
+  /// run; a build reaches a small part of the runtime. Off for `xo check`
+  /// and the checker's own runs, which check every body.
+  pub lazy: Bool = false
+  /// The functions of the native modules whose bodies run left to
+  /// check_lazy (true), and those it checked (false).
+  pub lazy_fns: Map[Int, Bool] = {}
   /// $XO_LLRT_C: the runtime modules (or `all`) loaded from their C path,
   /// std/native/llrt/<name>_c.xo, where they have one (load.go
   /// LLRTUsesC; decisions 0193, 0206).

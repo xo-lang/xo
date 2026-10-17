@@ -1,0 +1,153 @@
+// The browser playground's compiler (decision 0242): this backend built
+// for wasm by itself, run in the page's worker over an in-memory file
+// system (the page's std at --std, the program in a module directory).
+// One JSON object a run on standard output:
+//
+//   wasm --std=DIR --wd=DIR --play check DIR        {"diagnostics":[...]}
+//   wasm --std=DIR --wd=DIR --play fmt FILE         {"changed":B} or {"error":S}
+//   wasm --std=DIR --wd=DIR --play build DIR OUT    {"ok":B,"bytes":N,"diagnostics":[...]} or
+//                                                   {"ok":false,"unsupported":S,"diagnostics":[...]}
+//
+// Diagnostics are the checker's JSON (spec 10, stable XOnnnn codes), as
+// `xo check --json` prints them. build writes the program's module to
+// OUT, for the page's runner (WASI preview1, as selfhost/wasm/run.mjs).
+
+use github.com/xo-lang/xo/selfhost/check
+use github.com/xo-lang/xo/selfhost/cli/core/format
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// Runs one playground command and prints its JSON line.
+fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {
+  if args.len() < 2 {
+    os.stdio.println("{\"error\":\"usage: --play check DIR | fmt FILE | build DIR OUT\"}")
+    return
+  }
+  match args[0] {
+    "check" => {
+      let (c, err) = play_check(os, std_dir, wd, args[1], false)
+      if !err.is_empty() {
+        os.stdio.println("{\"error\":${json_text(err)}}")
+        return
+      }
+      os.stdio.println("{\"diagnostics\":${diags_json(c.diags)}}")
+    }
+    "fmt" => {
+      let src = match os.fs.read(args[1]) {
+        Ok(b) => b
+        Err(e) => {
+          os.stdio.println("{\"error\":${json_text("${e}")}}")
+          return
+        }
+      }
+      match format.format_source(args[1], src) {
+        format.Formatted.Ok(text) => {
+          let changed = text != src
+          if changed {
+            match os.fs.write(args[1], text) {
+              Ok(_) => {}
+              Err(e) => {
+                os.stdio.println("{\"error\":${json_text("${e}")}}")
+                return
+              }
+            }
+          }
+          os.stdio.println("{\"changed\":${changed}}")
+        }
+        format.Formatted.SyntaxErrors(_) => os.stdio.println("{\"error\":\"the program has syntax errors: check shows them\"}")
+      }
+    }
+    "build" => {
+      if args.len() < 3 {
+        os.stdio.println("{\"error\":\"usage: --play build DIR OUT\"}")
+        return
+      }
+      os.stdio.println(play_build(os, std_dir, wd, args[1], args[2]))
+    }
+    _ => os.stdio.println("{\"error\":${json_text("unknown command ${args[0]}")}}")
+  }
+}
+
+/// Checks dir: in native mode for a build (the wasm backend builds on the
+/// native prelude), else as `xo check` does (the program's diagnostics,
+/// without checking the native runtime: what the editor shows as you
+/// type); the checker, or an error.
+fn play_check(os: Os, std_dir: Str, wd: Str, dir: Str, native: Bool) -> (check.Checker, Str) {
+  var c = check.new_checker(os.fs, std_dir)
+  c.native = native
+  // a build checks the runtime's bodies as it builds them (decision 0247)
+  c.lazy = native
+  c.set_mod_env(wd, "", os.env.get("HOME") ?? "", "", "1", "")
+  match c.check_dirs([dir]) {
+    Ok(_) => {}
+    Err(e) => return (c, "${e}")
+  }
+  (c, "")
+}
+
+/// Builds dir to the module out: the JSON line.
+fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
+  let (c, err) = play_check(os, std_dir, wd, dir, true)
+  if !err.is_empty() {
+    return "{\"ok\":false,\"error\":${json_text(err)}}"
+  }
+  let ds = diags_json(c.diags)
+  if !c.unsupported.is_empty() {
+    return "{\"ok\":false,\"unsupported\":${json_text("${c.unsupported}")},\"diagnostics\":${ds}}"
+  }
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return "{\"ok\":false,\"diagnostics\":${ds}}"
+    }
+  }
+  let root = line_root(os, wd, dir)
+  var b = ssa.build_program_for(c, root, false, false, false, "", "wasm", true)
+  if !b.why.is_empty() {
+    return "{\"ok\":false,\"unsupported\":${json_text(b.why)},\"diagnostics\":${ds}}"
+  }
+  for f in b.m.funcs {
+    if !f.skip.is_empty() {
+      return "{\"ok\":false,\"unsupported\":${json_text("the SSA builder skipped ${f.name}: ${f.skip}")},\"diagnostics\":${ds}}"
+    }
+  }
+  b.run_passes()
+  let p = generate_with(b.m, false, false, false)
+  if !p.err.is_empty() {
+    return "{\"ok\":false,\"unsupported\":${json_text(p.err)},\"diagnostics\":${ds}}"
+  }
+  match os.fs.write(out, p.wasm) {
+    Ok(_) => {}
+    Err(e) => return "{\"ok\":false,\"error\":${json_text("${e}")}}"
+  }
+  "{\"ok\":true,\"bytes\":${p.wasm.len()},\"diagnostics\":${ds}}"
+}
+
+/// The JSON array of the diagnostics (check.full_lines: sorted, each the
+/// checker's JSON object).
+fn diags_json(ds: List[check.Diag]) -> Str { "[${check.full_lines(ds).join(",")}]" }
+
+/// s as a JSON string (UTF-8 kept; quotes, backslashes and control
+/// bytes escaped).
+fn json_text(s: Str) -> Str {
+  let hex = "0123456789abcdef".bytes()
+  var out = BytesBuilder.new()
+  out.write_byte('"')
+  for c in s.bytes() {
+    if c == '"' || c == '\\' {
+      out.write_byte('\\')
+      out.write_byte(c)
+    } else if c == '\n' {
+      out.write_byte('\\')
+      out.write_byte('n')
+    } else if Int(c) < 32 {
+      for x in "\\u00".bytes() {
+        out.write_byte(x)
+      }
+      out.write_byte(hex[Int(c) / 16])
+      out.write_byte(hex[Int(c) % 16])
+    } else {
+      out.write_byte(c)
+    }
+  }
+  out.write_byte('"')
+  out.freeze().to_str() ?? ""
+}

@@ -57,7 +57,8 @@ fn (var c: Checker) run() -> () ! Str {
   }
   c.finish_renames()
   for m in c.order {
-    if !c.mods[m].is_std {
+    if !c.mods[m].is_std && !c.lazy_mod(m) {
+      // a lazy module's imports are used in bodies not checked yet
       c.check_unused_imports(m)
     }
   }

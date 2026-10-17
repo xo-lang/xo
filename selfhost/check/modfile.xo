@@ -199,10 +199,12 @@ fn (c: Checker) up(d: Str) -> Str? {
     return Some(p)
   }
   if d == "." {
-    if c.deps.wd.is_empty() {
+    let wd = clean(c.deps.wd)
+    if wd.is_empty() || wd == "." {
+      // not known (a relative --wd of "." would recurse here forever)
       return None
     }
-    return c.up(clean(c.deps.wd))
+    return c.up(wd)
   }
   if d == ".." || d.ends_with("/..") {
     return None

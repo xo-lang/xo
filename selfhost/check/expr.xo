@@ -1193,10 +1193,65 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     if is_literal(x) && is_literal(y) {
       h = hint
     }
-    xt = c.infer(x, h)
+    xt = if h < 0 { c.infer_left(x) } else { c.infer(x, h) }
     yt = c.infer(y, c.operand_hint(op, xt))
   }
   c.binary_type(op, xt, yt, span)
+}
+
+/// c.infer(x, -1), without recursing down a chain of operators nested to
+/// the left (the parser's `a + b + c + ...`): the recursion went as deep
+/// as the chain is long, and a chain of 138 terms overflowed a browser
+/// worker's stack in the wasm build of the compiler (decision 0242). Each
+/// node of the chain takes binary's plain path (hint -1 for its left
+/// operand, which is not a literal), so the types, the recorded types,
+/// and the diagnostics are the recursive walk's, in its order.
+fn (var c: Checker) infer_left(x: Expr) -> Int {
+  var spine: List[Expr] = []
+  var cur = x
+  while c.chain_node(cur) {
+    spine.push(cur)
+    cur = match cur {
+      BinaryExpr(x: l, ..) => l
+      _ => cur
+    }
+  }
+  if spine.is_empty() {
+    return c.infer(x, -1)
+  }
+  var t = c.infer(cur, -1)
+  var i = spine.len()
+  while i > 0 {
+    i -= 1
+    let n = spine[i]
+    if let BinaryExpr(span: span, op: op, y: y, ..) = n {
+      let yt = c.infer(y, c.operand_hint(op, t))
+      t = c.binary_type(op, t, yt, span)
+      if t < 0 {
+        t = c.bad_ty
+      }
+      c.set_type(n, t)
+      c.nat_at[c.expr_key(n)] = t
+    }
+  }
+  t
+}
+
+/// Whether binary checks e, under hint -1, by its plain path with its
+/// left operand under hint -1 too (infer_left).
+fn (var c: Checker) chain_node(e: Expr) -> Bool {
+  match e {
+    BinaryExpr(op: op, x: x, ..) => {
+      if op == parser.Kind.AndAnd || op == parser.Kind.OrOr || op == parser.Kind.Coalesce || is_literal(x) {
+        return false
+      }
+      if let CallExpr(fun: fun, ..) = x {
+        return !c.is_expect_call(fun)
+      }
+      true
+    }
+    _ => false
+  }
 }
 
 /// `x is Pattern` (core 3.5): a Bool test that binds nothing.

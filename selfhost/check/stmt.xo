@@ -100,6 +100,7 @@ fn (c: Checker) body_want(x: Int) -> Want {
 
 fn (var c: Checker) check_module(m: Int) {
   c.cur_mod = m
+  let lazy = c.lazy_mod(m)
   for f in c.mods[m].files {
     c.set_file(f)
     let decls = c.files[f].ast.decls
@@ -108,7 +109,12 @@ fn (var c: Checker) check_module(m: Int) {
         FnDecl(d: fd) => {
           let fo = c.files[f].decl_objs[i]
           if fo >= 0 && (fd.recv != None || c.is_scope_entry(f, i, fd.name.name)) {
-            c.check_fn_decl(fd, fo)
+            if lazy {
+              c.lazy_fns[fo] = true
+              c.check_fn_defaults(fo)
+            } else {
+              c.check_fn_decl(fd, fo)
+            }
           }
         }
         TestDecl(d: td) => c.check_test(td)
@@ -159,7 +165,7 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
     c.objs.push(Obj{kind: ObjKind.Local, name: p.name, file: c.path, line: p.line, col: p.col, local: if p.is_var { "var-param" } else { "param" }, ty: p.ty, mutable: p.is_var, vctx: cx})
     c.declare_var(pv)
     pvs.push(pv)
-    if !p.default.is_empty() {
+    if !p.default.is_empty() && !c.lazy_fns.contains(fo) {
       c.check_default(p.default[0], p.ty)
     }
   }
@@ -176,6 +182,61 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
     let (title, edits) = c.log_fix(fd)
     c.obligations.push(EffOb{kind: ObKind.Decl, sub: body_eff, sup: c.objs[fo].declared, file: c.path, span: fd.name.span, fo: fo, log_title: title, log_edits: edits})
   }
+}
+
+/// Whether module m's function bodies wait for check_lazy: a native
+/// module of a lazy run.
+fn (c: Checker) lazy_mod(m: Int) -> Bool {
+  c.lazy && c.mods[m].native
+}
+
+/// The default values of fo's parameters (check_fn_decl's), for a
+/// function whose body waits for check_lazy: a caller's build reads them.
+fn (var c: Checker) check_fn_defaults(fo: Int) {
+  for p in c.objs[fo].params {
+    if !p.default.is_empty() {
+      c.check_default(p.default[0], p.ty)
+    }
+  }
+}
+
+/// Checks the body of fo when it waits for check_lazy (decision 0247),
+/// as run would have, and returns the errors it reported (none for a
+/// std that TestStdChecks checks in full). The flow passes, effect
+/// obligations, and unused name reports of run are not run for it: they
+/// only report diagnostics, which an eager check of std already has.
+pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
+  if !(c.lazy_fns.get(fo) ?? false) {
+    return []
+  }
+  c.lazy_fns[fo] = false
+  let saved_file = c.cur_file
+  let saved_mod = c.cur_mod
+  let saved_path = c.path
+  let n0 = c.diags.len()
+  let nr0 = c.never_results.len()
+  c.cur_mod = c.objs[fo].module
+  c.set_file(c.objs[fo].decl_file)
+  c.check_fn_decl(c.objs[fo].fn_decl[0], fo)
+  // run's: a closure result that nothing determined and whose body
+  // never completes is Never
+  for t in c.never_results[nr0..] {
+    if c.is_open_var(t) {
+      c.unify(t, c.named("Never"))
+    }
+  }
+  if saved_file >= 0 {
+    c.set_file(saved_file)
+  }
+  c.cur_mod = saved_mod
+  c.path = saved_path
+  var errs: List[Diag] = []
+  for d in c.diags[n0..] {
+    if !d.warning {
+      errs.push(d)
+    }
+  }
+  errs
 }
 
 fn (var c: Checker) check_default(e: Expr, t: Int) {
