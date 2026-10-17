@@ -51,3 +51,19 @@ explicit adc-chain helper Xo Lang 2 suggested.
 Gates for D: spill and traceback tests, macho crypto/TLS/concurrency/
 fault goldens, arm64 goldens, devgoldens, xo built by the new xo
 building a program, the fixed point, -short.
+
+## sub_p256 after the restart (same day, parked)
+
+A larger instruction limit for leaves (INLINE_LEAF_INSTRS 80 against
+40) does not make nistec.sub_p256 inline: bench/perf/tls still has its
+36 calls. Its limit is the block count, not the instructions: each of
+its nine inlined calls (four cpu.adc, four cpu.adc_carry, ct.mask_bit)
+adds a continuation block, about 19 against INLINE_MAX_BLOCKS 12, and
+discounting those blocks cost more than it gained
+(arm64-inline-2026-10-15.md, variants A to C). Not landed. What would
+make it inline: cpu.adc and cpu.adc_carry as SSA intrinsics (no call,
+no continuation block; the emitter's adcs chain already fuses them), or
+Xo Lang 2's explicit adc chain helper. The sweep driver of these runs is
+now bench/perf/sweep.py (each bench/perf/<dir>/measure.sh with two xo
+binaries in alternating rounds).
+
