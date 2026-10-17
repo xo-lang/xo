@@ -104,9 +104,14 @@ fn (var g: G) x86_emit() {
   if g.out {
     fr.spill_base += 8
   }
-  fr.save_base = fr.spill_base + 8 * g.slots
-  fr.mem_off = fr.save_base + 8 * g.saved.len()
-  fr.size = align16(fr.mem_off + g.mem_bytes)
+  // the callee saved registers are pushed after rbp (below it, first at
+  // rbp - 8); below them, from rsp: the stack arguments, $OUT, the spill
+  // slots, the by reference memory. size is everything below rbp (an
+  // incoming stack word is at rsp + size + 16).
+  fr.mem_off = fr.spill_base + 8 * g.slots
+  let pushed = 8 * g.saved.len()
+  fr.size = align16(fr.mem_off + g.mem_bytes + pushed)
+  fr.save_base = fr.size - pushed
   if fr.leaf {
     fr.size = 0
   }
@@ -122,13 +127,44 @@ fn (var g: G) x86_emit() {
   }
   g.cfi_start(b, pads)
   g.x86_prologue(b)
-  for (bi, mb) in g.order.indexed() {
+  // the blocks reached once branches skip the blocks that only jump
+  // (emit.xo's walk)
+  var live: List[Bool] = []
+  for _ in 0..g.blocks.len() {
+    live.push(false)
+  }
+  var work = [g.order[0]]
+  while !work.is_empty() {
+    let mb = work.pop() ?? 0
+    if live[mb] {
+      continue
+    }
+    live[mb] = true
+    for t in g.blocks[mb].succs {
+      let ft = g.fwd(t)
+      work.push(ft)
+      let ti = g.blocks[ft].insts
+      if ti.len() == 1 && ti[0].kind == K_CONDBR {
+        for t2 in ti[0].targets {
+          work.push(g.fwd(t2))
+        }
+      }
+    }
+  }
+  var emitted: List[Int] = []
+  for mb in g.order {
+    if live[mb] {
+      emitted.push(mb)
+    }
+  }
+  for (bi, mb) in emitted.indexed() {
     var next = -1
-    if bi + 1 < g.order.len() {
-      next = g.order[bi + 1]
+    if bi + 1 < emitted.len() {
+      next = emitted[bi + 1]
     }
     b.push("${g.label(mb)}:\n")
     g.cur = mb
+    let head = g.x86_check_head(mb)
     let ins = g.blocks[mb].insts
     g.ended = false
     for (k, inst) in ins.indexed() {
@@ -146,6 +182,10 @@ fn (var g: G) x86_emit() {
       }
       g.x86_emit_inst(b, inst, next)
       g.pos = -1
+      if k == 0 && head {
+        // past the check (x86_rotate_jump)
+        b.push("${g.label(mb)}_c:\n")
+      }
     }
   }
   if g.fr.leaf && !g.stubs.is_empty() {
@@ -181,23 +221,22 @@ fn (g: G) x86_prologue(var b: List[Str]) {
     return
   }
   b.push("\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
-  if fr.size > 0 {
-    if fr.size >= 4096 {
+  for (k, r) in g.saved.indexed() {
+    b.push("\tpushq ${x86_reg(r, 8)}\n\t.cfi_offset ${x86_reg(r, 8)}, ${-24 - 8 * k}\n")
+  }
+  let rest = fr.size - 8 * g.saved.len()
+  if rest > 0 {
+    if rest >= 4096 {
       // touch each page on the way down (the guard page)
       var off = 4096
-      while off < fr.size {
+      while off < rest {
         b.push("\tsubq $4096, %rsp\n\tmovq $0, (%rsp)\n")
         off += 4096
       }
       b.push("\tleaq -${fr.size}(%rbp), %rsp\n")
     } else {
-      b.push("\tsubq $${fr.size}, %rsp\n")
+      b.push("\tsubq $${rest}, %rsp\n")
     }
-  }
-  for (k, r) in g.saved.indexed() {
-    let off = fr.save_base + 8 * k
-    b.push("\tmovq ${x86_reg(r, 8)}, ${off}(%rsp)\n")
-    b.push("\t.cfi_offset ${x86_reg(r, 8)}, ${off - fr.size - 16}\n")
   }
 }
 
@@ -207,10 +246,18 @@ fn (g: G) x86_unframe(var b: List[Str]) {
   if fr.leaf {
     return
   }
-  for (k, r) in g.saved.indexed() {
-    b.push("\tmovq ${fr.save_base + 8 * k}(%rsp), ${x86_reg(r, 8)}\n")
+  if g.saved.is_empty() {
+    b.push("\tleave\n")
+    return
   }
-  b.push("\tleave\n")
+  // to the pushed registers, popped in reverse
+  b.push("\tleaq -${8 * g.saved.len()}(%rbp), %rsp\n")
+  var k = g.saved.len() - 1
+  while k >= 0 {
+    b.push("\tpopq ${x86_reg(g.saved[k], 8)}\n")
+    k -= 1
+  }
+  b.push("\tpopq %rbp\n")
 }
 
 fn (g: G) x86_call_moves(srcs: List[Src], vfix: Int) -> List[Move] {
@@ -325,9 +372,23 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     b.push("\tretq\n")
   } else if inst.kind == K_JUMP {
     let t = g.fwd(inst.targets[0])
-    if t != next {
-      b.push("\tjmp ${g.label(t)}\n")
+    if t == next {
+      return
     }
+    if g.x86_rotate_jump(b, t) {
+      return
+    }
+    let ti = g.blocks[t].insts
+    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur {
+      // a loop header that only tests: test here (one taken branch per
+      // iteration instead of two), as allocated at the header
+      let pos = g.pos
+      g.pos = g.blocks[t].start
+      g.x86_emit_condbr(b, ti[0], next)
+      g.pos = pos
+      return
+    }
+    b.push("\tjmp ${g.label(t)}\n")
   } else if inst.kind == K_CONDBR {
     g.x86_emit_condbr(b, inst, next)
   } else if inst.kind == K_SWITCH {
@@ -965,4 +1026,42 @@ fn (g: G) x86_move(var b: List[Str], dst: MLoc, src: MSrc) {
     // both offsets are rsp's before the push)
     b.push("\tpushq ${x86_mem_ref(sl)}\n\tpopq ${x86_mem_ref(dst)}\n")
   }
+}
+
+/// Whether block b starts with a check (a fault-checked compare with no
+/// definitions, alone on its line) followed by more (lsr.xo check_head on
+/// x86 text).
+fn (g: G) x86_check_head(b: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  if ins.len() < 2 {
+    return false
+  }
+  let inst = ins[0]
+  inst.kind == K_PLAIN && inst.has_fault && inst.defs.is_empty() && inst.recover.is_empty() &&
+    inst.text.starts_with("cmp") && !inst.text.contains("\n") && !x86_inv(inst.fcond).is_empty() &&
+    !inst.fcond.contains("&") && !inst.fcond.contains("|")
+}
+
+/// A jump back to t, a block laid out before the current one that starts
+/// with a check, as the check and a branch past it (lsr.xo rotate_jump);
+/// false when it does not apply.
+fn (var g: G) x86_rotate_jump(var b: List[Str], t: Int) -> Bool {
+  if !g.x86_check_head(t) {
+    return false
+  }
+  var back = false
+  for x in g.order {
+    if x == g.cur {
+      break
+    }
+    back = back || x == t
+  }
+  if !back {
+    return false
+  }
+  let inst = g.blocks[t].insts[0]
+  g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, x86: true})
+  let lt = g.label(t)
+  b.push("\tj${x86_inv(inst.fcond)} ${lt}_c\n\tjmp ${lt}\n")
+  true
 }

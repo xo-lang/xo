@@ -1402,7 +1402,7 @@ fn (var g: G) x86_retarget() {
                 srcs.push(s)
                 ni.us.push(p.defs[di])
               }
-              out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, line: inst.line, inl: inst.inl, x86: true})
+              out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
             }
             out.push(ni)
           }
@@ -1455,7 +1455,15 @@ fn (var g: G) x86_retarget() {
             // the definition is read too
             ni.us.push(inst.defs[di])
           }
-          out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, line: inst.line, inl: inst.inl, x86: true})
+          out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
+          if inst.has_fault && !inst.recover.is_empty() {
+            // a checked add, sub, or neg whose fault stub recomputes the
+            // operand from the result (x86_recover_operand): the tied
+            // operand need not live past the copy, so the copy can be
+            // coalesced away (2026-10-17: collatz's step was a copy, the
+            // add, and a copy back)
+            ni.us = x86_untie_recovered(ni.us, ni.text, srcs, inst.defs)
+          }
         }
         out.push(ni)
         continue
@@ -1695,4 +1703,53 @@ fn x86_carry_polarity(lines: List[Str], inv0: Bool) -> (List[Str], Bool) {
     out.push(l)
   }
   (out, inv)
+}
+
+/// The uses of a checked instruction without its tie sources (srcs)
+/// wherever its x86 template does not name them: the template and fault
+/// arguments' occurrences become 0 (no register).
+fn x86_untie_recovered(us: List[Int], text: Str, srcs: List[Src], defs: List[Int]) -> List[Int] {
+  var out = us
+  let tb = text.bytes()
+  var named: List[Bool] = []
+  for _ in 0..us.len() {
+    named.push(false)
+  }
+  var i = 0
+  while i < tb.len() {
+    if tb[i] == '$' {
+      let (_, ud, k, end) = x86_operand(tb, i)
+      if k >= 0 && ud == Int('u') && k < named.len() {
+        named[k] = true
+      }
+      i = if end > i { end } else { i + 1 }
+      continue
+    }
+    i += 1
+  }
+  for s in srcs {
+    // a source that is also the definition (`p = p + k`, the MIR not
+    // SSA) keeps its uses: they are the tie's read of the old value
+    if s.kind != S_REG || s.v == 0 || defs.contains(s.v) {
+      continue
+    }
+    for k in 0..out.len() {
+      if out[k] == s.v && !named[k] {
+        out[k] = 0
+      }
+    }
+  }
+  out
+}
+
+/// The registers a parallel move reads (its uses, as isel.xo pmove_srcs
+/// lists them: liveness reads uses, not sources).
+fn src_regs(srcs: List[Src]) -> List[Int] {
+  var us: List[Int] = []
+  for a in srcs {
+    if a.kind == S_REG && a.v != 0 {
+      us.push(a.v)
+    }
+  }
+  us
 }
