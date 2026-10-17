@@ -123,11 +123,11 @@ instead of lines.
   same samples (xo-heap.txt of testdata/prof/heap at rate 1 is
   identical to main's): pprof (gzip, stored blocks) and the .txt
   summary for each, the heap profile's allocator frames left off and
-  its values scaled there. std has no exclusive create, so it writes a
-  new temporary file (mode 0600) in the target's directory and renames
-  it into place after checking nothing is at the path; rename never
-  writes through a link (an exclusive create in std would be a new
-  capability, for the owner).
+  its values scaled there. It creates each file with Fs.create_new
+  (O_EXCL, the owner's, 2026-10-17: nothing at the path, not even a
+  symbolic link) and sets mode 0600 while it is empty; until then it
+  wrote a temporary file and renamed it into place after checking the
+  path, which left a window between the check and the rename.
 - `xo run --profile` writes the raw file beside the binary and converts
   it into the working directory; `xo test --profile` gives each process
   `.xo-prof-<pid>.xoraw` and converts each to xo-cpu-<pid>.pprof and

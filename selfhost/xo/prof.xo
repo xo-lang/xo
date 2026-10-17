@@ -10,12 +10,9 @@
 // sections of a type and a length.
 //
 // A profile file is created new: never through a symbolic link and
-// never over a file that is there (decision 0238's addendum), mode 0600.
-// std has no exclusive create, so the bytes go to a new temporary file
-// in the same directory, set to 0600, renamed into place after a look
-// that nothing is at the path: rename replaces the name itself and never
-// writes through a link; a file made between the look and the rename is
-// the one thing it could replace.
+// never over a file that is there (decision 0238's addendum), mode 0600:
+// Fs.create_new (O_EXCL: Exists when anything is at the path, a symbolic
+// link too) makes it, set to 0600 while it is empty (prof_write).
 
 /// Section types (std/native/llrt/prof.xo writes them).
 const PS_CPU = 16
@@ -360,35 +357,21 @@ fn prof_heap_out(os: Os, h0: ProfHeap, out: Str) -> () ! Str uses (fs, stdio) {
 }
 
 /// Writes data to a new file at path, mode 0600 (see the top): false
-/// when anything is at path already, a symbolic link too.
+/// when anything is at path already, a symbolic link too. Fs.create_new
+/// (O_EXCL) makes the file, so nothing can take the path between a check
+/// and the write (until 2026-10-17: a temporary file renamed after a
+/// check). Its mode is set while it is empty.
 fn prof_write(os: Os, path: Str, data: Bytes) -> Bool uses fs {
-  if prof_taken(os, path) {
-    return false
-  }
-  let dir = dir_name(path)
-  let tmp = match os.fs.create_temp(dir, ".xo-prof-") {
-    Ok(p) => p
+  let f = match os.fs.create_new(path) {
+    Ok(f) => f
     Err(_) => return false
   }
-  let ok = os.fs.write(tmp, data).is_ok() && os.fs.set_mode(tmp, 384).is_ok() && !prof_taken(os, path) && os.fs.rename(tmp, path).is_ok()
-  if !ok {
-    os.fs.remove(tmp).ignore_err("a temporary file left from a write that failed")
+  let ok = os.fs.set_mode(path, 384).is_ok() && f.write(data).is_ok()
+  let closed = f.close().is_ok()
+  if !(ok && closed) {
+    os.fs.remove(path).ignore_err("a profile left from a write that failed")
   }
-  ok
-}
-
-/// Whether something is at path: a file, a directory, or a symbolic link
-/// (dangling or not).
-fn prof_taken(os: Os, path: Str) -> Bool uses fs {
-  match os.fs.read_link(path) {
-    Ok(Some(_)) => return true
-    Ok(None) => {}
-    Err(_) => {}
-  }
-  match os.fs.exists(path) {
-    Ok(e) => e
-    Err(_) => true
-  }
+  ok && closed
 }
 
 /// The summary's path beside a profile at out: .txt for .pprof.
