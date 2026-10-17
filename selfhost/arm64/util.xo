@@ -101,6 +101,16 @@ fn mov_imm(n: Int) -> Str {
   if n >= -65536 && n < 65536 {
     return "mov $d0, #${n}"
   }
+  // one orr of a logical immediate (the assembler's mov picks it), as
+  // LLVM: -2^32, P-256's limb, was a movn and a movk (2026-10-17)
+  if ones_run(n) {
+    return "mov $d0, #${n}"
+  }
+  // one 32 bit movn, its result zero extended: 2^32 - 2 was a mov and a
+  // movk
+  if n > 0 && n <= 0xffffffff && single_chunk(~n & 0xffffffff) {
+    return "mov $wd0, #${n}"
+  }
   var lines: List[Str] = []
   let inv = ~n
   // prefer movn when most chunks are all ones
@@ -150,9 +160,21 @@ fn mov_imm(n: Int) -> Str {
   lines.join("\n")
 }
 
-/// The assembly that puts n in register r (immText).
+/// Whether at most one 16 bit chunk of n is not zero.
+fn single_chunk(n: Int) -> Bool {
+  var nz = 0
+  for k in 0..4 {
+    if chunk(n, k) != 0 {
+      nz += 1
+    }
+  }
+  nz <= 1
+}
+
+/// The assembly that puts n in register r, an x register (immText).
 fn imm_text(n: Int, r: Str) -> Str {
-  "\t${mov_imm(n).replace("\n", "\n\t").replace("$d0", r)}\n"
+  let w = "w" + r.trim_prefix("x")
+  "\t${mov_imm(n).replace("\n", "\n\t").replace("$wd0", w).replace("$d0", r)}\n"
 }
 
 /// Whether n fits an unsigned 12 bit immediate.

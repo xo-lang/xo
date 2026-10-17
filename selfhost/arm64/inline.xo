@@ -61,6 +61,43 @@ fn inline_intrinsic(n: Str) -> Bool {
   n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow"
 }
 
+/// The rt.u64_adc and rt.u64_adc_carry calls of a block with the same
+/// operands: each pair is one adcs, counted once (a P-256 field add,
+/// nistec.add4p, was 44 and a call 29,000 times a handshake, 2026-10-17).
+fn adc_pairs(f: ssa.Func, instrs: List[Int]) -> Int {
+  var sums: Map[Str, Int] = {}
+  var carries: Map[Str, Int] = {}
+  for v in instrs {
+    let x = f.values[v]
+    if x.op != ssa.Op.Call {
+      continue
+    }
+    let n = aux_str(x.aux)
+    if n == "rt.u64_adc" {
+      let k = args_key(x.args)
+      sums[k] = (sums.get(k) ?? 0) + 1
+    } else if n == "rt.u64_adc_carry" {
+      let k = args_key(x.args)
+      carries[k] = (carries.get(k) ?? 0) + 1
+    }
+  }
+  var n = 0
+  for (k, a) in sums {
+    let b = carries.get(k) ?? 0
+    n += if a < b { a } else { b }
+  }
+  n
+}
+
+/// A call's operands as a map key.
+fn args_key(args: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for a in args {
+    parts.push("${a}")
+  }
+  parts.join(",")
+}
+
 /// Walks function fi and its callees (inline.go inlinableSet's walk):
 /// state is 1 while a function is walked, 2 once done.
 fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
@@ -69,6 +106,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
   // the runtime's slow paths stay calls (ssa.cold_fn)
   var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name)}
   for bl in f.blocks {
+    c.instrs -= adc_pairs(f, bl.instrs)
     for v in bl.instrs {
       let x = f.values[v]
       if x.pad >= 0 {

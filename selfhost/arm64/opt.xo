@@ -1050,8 +1050,9 @@ fn (g: G) const_before(p: Int, end: Int, r: Int) -> (Int, Bool) {
         }
         return (0, false)
       }
-      if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && inst.text.starts_with("mov $d0, #") {
-        let rest = inst.text.trim_prefix("mov $d0, #")
+      if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && (inst.text.starts_with("mov $d0, #") || inst.text.starts_with("mov $wd0, #")) {
+        // mov_imm's one instruction forms (a w register's zero extends)
+        let rest = inst.text.trim_prefix("mov $d0, #").trim_prefix("mov $wd0, #")
         if let Some(n) = Int.parse(rest) {
           if "${n}" == rest {
             return (n, true)
