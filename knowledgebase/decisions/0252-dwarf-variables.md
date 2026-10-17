@@ -254,4 +254,9 @@ What the compiler has to work with:
   which Linux clang gives an unwind entry, the escape alone), beside the
   zero fp they already had; gdb's backtraces then end at xo_clone with no
   note, on both backends. Linux goldens in Docker: 183 of 183 on each
-  backend.
+  backend. A fiber's backtrace (a task that parks on a channel receive
+  and resumes on its own stack, then breaks in work): arm64 work, the
+  task's closure, xo.run, tasks.run_entry, tasks.run_claimed,
+  sched.fiber_main, cabi.fiber_main, xo_fiber_entry; LLVM work (n=9),
+  the closure, xo.run, tasks.run_claimed, xo_x_fiber_main,
+  xo_fiber_entry; both end there with no note.
