@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xo-lang/xo/internal/mod/modtest"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // emptyCache points XO_MODCACHE at a new, empty module cache.
@@ -56,6 +57,7 @@ func startProxy(t *testing.T, root string) string {
 // proxy (decision 0126, `xo mod proxy serve --fetch`) on loopback, never
 // from git themselves.
 func TestModProxy(t *testing.T) {
+	xotool.NeedPorts(t)
 	t.Parallel()
 	modSetup(t, "../../internal/mod/testdata/repos")
 	ws := t.TempDir()

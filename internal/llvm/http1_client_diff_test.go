@@ -244,6 +244,7 @@ const http1ClientN = 400
 // port: -golden-update rewrites it), and the Go backend (net/http) the
 // same for the responses both read alike (http1ClientAgree).
 func TestHTTP1ClientDiff(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds an HTTP client with three backends")
 	}

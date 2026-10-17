@@ -297,6 +297,7 @@ func probeMatrix(out *strings.Builder, addrs map[string]string, certs []matrixCe
 // Go's client by tls13_server's recorded trace (Go's client offers
 // X25519MLKEM768, which a Go server takes without one).
 func TestTLSInteropMatrix(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds a TLS program with three backends")
 	}

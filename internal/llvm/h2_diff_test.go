@@ -49,6 +49,7 @@ import (
 //
 // The native binaries run with XO_LEAKCHECK=1.
 func TestH2Diff(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds an HTTP/2 program with three backends")
 	}

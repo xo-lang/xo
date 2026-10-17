@@ -183,7 +183,9 @@ func http1Send(addr string, input string) string {
 	var c net.Conn
 	var err error
 	for try := 0; ; try++ {
-		c, err = net.DialTimeout("tcp", addr, 10*time.Second)
+		// a private local port: its TIME_WAIT (this side closes first)
+		// takes none of the machine's ephemeral ports (xotool ports.go)
+		c, err = xotool.DialLoopback(addr, 10*time.Second)
 		if err == nil || try == 300 {
 			break
 		}
@@ -192,17 +194,12 @@ func http1Send(addr string, input string) string {
 		if e := serverExited(addr); e != "" {
 			return "dial: " + e
 		}
-		time.Sleep(200 * time.Millisecond) // ports in TIME_WAIT
+		time.Sleep(200 * time.Millisecond)
 	}
 	if err != nil {
 		return "dial: " + err.Error()
 	}
-	defer func() {
-		// the client closed its side first: a reset at the end leaves no
-		// TIME_WAIT behind (thousands of connections run here)
-		c.(*net.TCPConn).SetLinger(0)
-		c.Close()
-	}()
+	defer c.Close()
 	c.SetDeadline(time.Now().Add(30 * time.Second))
 	go func() {
 		io.WriteString(c, input)
@@ -306,6 +303,7 @@ func http1DiffInputs(n int, seed int64) []string {
 // must be equal byte for byte (Date values aside). XO_HTTP_DIFF_N sets
 // the number of random requests (default 2000).
 func TestHTTP1ParseDiff(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds an HTTP server with three backends")
 	}

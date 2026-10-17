@@ -371,6 +371,7 @@ func TestCancelStopsReadLine(t *testing.T) {
 // TestSignalHTTPInFlight: after SIGTERM, `serve` stops accepting, finishes
 // the request in flight, and returns Ok.
 func TestSignalHTTPInFlight(t *testing.T) {
+	xotool.NeedPorts(t)
 	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

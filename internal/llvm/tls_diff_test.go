@@ -51,6 +51,7 @@ import (
 // The native binaries also run with XO_LEAKCHECK=1: no allocation of
 // the runtime may be live at exit.
 func TestTLSDiff(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds an HTTPS program with three backends")
 	}

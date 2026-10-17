@@ -455,6 +455,7 @@ func httpParseDiffInputs(n int, seed int64) []string {
 // on the corpus and on random requests, valid and mutated: LLVM and arm64
 // (on arm64), 3000 random requests (XO_HTTP_DIFF_N, XO_HTTP_DIFF_SEED).
 func TestHTTPParseDiff(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds an HTTP server with the native backends")
 	}
@@ -728,6 +729,7 @@ func h2FuzzFrames() []byte {
 // these are Xo (bounds checked), so the checks are a fault, a hang, and a
 // leak.
 func TestHTTPFuzz(t *testing.T) {
+	xotool.NeedPorts(t)
 	if testing.Short() {
 		t.Skip("builds std/http programs with a native backend")
 	}
