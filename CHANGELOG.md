@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A plain HTTP server links no TLS server and no HTTP/2 (decision 0244,
+  owner): they are reached only through what `Server.with_tls` sets up,
+  so json_server is 62 percent smaller on arm64 (2.5 MB to 944 KB
+  stripped) and 70 percent on LLVM; HTTPS servers are unchanged.
+
 - ELF objects from the arm64 backend give each function symbol its
   size (to the next named symbol), so valgrind and perf name Xo
   functions on Linux (callgrind showed ??? for all of them).
