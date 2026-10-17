@@ -1,6 +1,6 @@
 # 0245: Where the native profiler lives in a binary
 
-Status: Accepted (owner, 2026-10-17): option 3 with the fault traceback's symbolizer kept in binaries (lead, 2026-10-17); being implemented by xo-4.
+Status: Accepted (owner, 2026-10-17): option 3 with the fault traceback's symbolizer kept in binaries (lead, 2026-10-17); implemented 2026-10-17 (xo-4).
 
 ## Context
 
@@ -101,3 +101,46 @@ and the build ID, `xo run` and `xo test` symbolizing them, a deployed
 binary needing `xo prof`): about 50 KiB more per binary, but it would
 change 0239's behavior, a crash in production printing addresses
 instead of lines.
+
+## Implementation (2026-10-17, xo-4)
+
+- The binary (std/native/llrt/prof.xo finish) stops both profilers and
+  writes one raw file at XO_PROF_OUT (default `xo-prof.xoraw`, %p the
+  process id; O_EXCL, no symbolic link, mode 0600): the XORAW1 header
+  (kind 2, version 1; the start time, the lost samples, the rate, the
+  target), then a CPU section (rate, period, duration, lost, each
+  sample's pcs) and a heap section (rate, lost, untracked, each sample's
+  pcs, size and freed flag), each with its locations named: the pc, its
+  frames innermost first (a function's index, its line, its file: the
+  callees inlined there from .debug_info, then the function) and the
+  names. The program names them itself with the symbolizer the traceback
+  keeps (table_of, resolve), so `xo prof` needs neither the binary nor
+  its dSYM, and a profile from a deployed server is read anywhere. One
+  line on stderr names the file; XO_PROF_QUIET=1 drops it.
+  XO_PROF_HEAP_OUT is gone (one file holds both).
+- `xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]` (selfhost/xo
+  prof.xo) writes what the program wrote before, byte for byte for the
+  same samples (xo-heap.txt of testdata/prof/heap at rate 1 is
+  identical to main's): pprof (gzip, stored blocks) and the .txt
+  summary for each, the heap profile's allocator frames left off and
+  its values scaled there. std has no exclusive create, so it writes a
+  new temporary file (mode 0600) in the target's directory and renames
+  it into place after checking nothing is at the path; rename never
+  writes through a link (an exclusive create in std would be a new
+  capability, for the owner).
+- `xo run --profile` writes the raw file beside the binary and converts
+  it into the working directory; `xo test --profile` gives each process
+  `.xo-prof-<pid>.xoraw` and converts each to xo-cpu-<pid>.pprof and
+  xo-heap-<pid>.pprof; neither leaves the raw file.
+- Measured (darwin/arm64, arm64 backend, development builds, main's xo
+  against this): hello 633,314 to 565,106 bytes (66.6 KiB less),
+  json_text 741,838 to 673,693 (66.5 KiB), http_server 2,556,704 to
+  2,505,135 (50.4 KiB: it links some of the moved helpers for itself).
+  A release build (no profiler, decision 0238's addendum) is 528,098
+  for hello: the 37 KiB between are the sampler, the heap hooks, the
+  0240 trace recorder, and the location naming (table_of, resolve, the
+  two sections: about 17 KiB).
+- Tests: internal/llvm TestProfCPU, TestProfHeap, TestProfGating (the raw
+  file's rules; xo prof's mode 0600 and its refusal to overwrite) run the
+  program and then `xo prof`; TestProfDrivers runs `xo run --profile` and
+  `xo test --profile` (testdata/prof/tested).

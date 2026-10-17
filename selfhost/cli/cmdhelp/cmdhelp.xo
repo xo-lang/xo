@@ -38,6 +38,7 @@ pub fn commands() -> List[Command] {
     Command{name: "bind", purpose: "bind Go packages (use go) or C headers (use c)"},
     Command{name: "dump", purpose: "print the task tree of a running Xo program"},
     Command{name: "replay", purpose: "rerun a recorded trace or crash bundle offline"},
+    Command{name: "prof", purpose: "pprof files and summaries of a native program's profile"},
     Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
@@ -103,6 +104,7 @@ pub fn usage(name: Str) -> Str {
     "bind" => bind_text()
     "dump" => dump_text()
     "replay" => replay_text()
+    "prof" => prof_text()
     "trace" => trace_text()
     "lsp" => lsp_text()
     "mcp" => mcp_text()
@@ -547,6 +549,21 @@ test "package patterns" {
   expect(pattern_dir("a/.../b")) == ""
   expect(pattern_dir("a/b...")) == ""
   expect(pattern_dir(".../...")) == ""
+}
+
+fn prof_text() -> Str {
+  """
+usage: xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]
+
+Read the raw profile a native program wrote under XO_PROF (decision
+0238; the file XO_PROF_OUT names, default xo-prof.xoraw; decision 0245)
+and write what `go tool pprof` reads: the CPU profile as PATH (default
+xo-cpu.pprof) with its text summary beside it (.txt: the top 30 by flat
+and by cumulative samples, each with its hottest line), the heap profile
+as xo-heap.pprof and its .txt. The program named its locations already,
+so neither the binary nor its dSYM is needed. A file that exists is not
+overwritten. xo run --profile and xo test --profile run it for you.
+"""
 }
 
 fn trace_text() -> Str {

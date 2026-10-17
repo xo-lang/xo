@@ -84,6 +84,11 @@ fn main(os: Os) ! {
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }
+  if !args.is_empty() && args[0] == "prof" {
+    // a native program's raw profile as pprof and text (prof.xo,
+    // decision 0245)
+    os.proc.exit(prof_cmd(os, args[1..]))
+  }
   if !args.is_empty() && args[0] == "trace" {
     // the execution trace's JSON and summary (trace.xo, decision 0240)
     os.proc.exit(trace_cmd(os, args[1..]))
@@ -206,6 +211,7 @@ fn main(os: Os) ! {
       if let Some(hit) = run_fetch(os, ctx, o.run_key) {
         lap(os, o.phases, "run_cache", t0)
         let code = run_tests(os, hit.bin, hit.tests, o.topts)
+        prof_tests(os, o.topts)
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
         os.proc.exit(code)
       }
@@ -218,6 +224,7 @@ fn main(os: Os) ! {
     to.profile_dir = o.wd
     to.std = o.std
     let code = run_tests(os, nb.bin, nb.tests, to)
+    prof_tests(os, to)
     if !o.trace.is_empty() {
       // a raw trace per test process (decision 0240)
       os.stdio.eprintln("xo test: execution traces in ${trace_path(to).replace("%p", "<pid>")}; read one with `xo trace FILE`")
@@ -229,13 +236,28 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo run: --record needs the Go backend")
       os.proc.exit(2)
     }
-    // --profile: xo-cpu.pprof, xo-heap.pprof in the working directory
-    var pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}"] }
+    // --profile: the raw profile beside the binary, then xo-cpu.pprof and
+    // xo-heap.pprof (and their .txt) in the working directory (prof.xo,
+    // decision 0245)
+    let raw = "${nb.bin}.prof.xoraw"
+    var pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}", "XO_PROF_OUT=${raw}", "XO_PROF_QUIET=1"] }
+    if !o.profile.is_empty() {
+      os.fs.remove(raw).ignore_err("not there")
+    }
     if !o.trace.is_empty() {
       // --trace (decision 0240): the raw file, then its JSON and summary
       pe.push("XO_TRACE=${o.trace}")
     }
     let code = exec_binary(os, nb.bin, o.prog_args, pe)
+    if !o.profile.is_empty() {
+      if os.fs.exists(raw).ok() ?? false {
+        match prof_convert(os, raw, "xo-cpu.pprof", "xo-heap.pprof") {
+          Ok(_) => {}
+          Err(e) => os.stdio.eprintln("xo run: ${e}")
+        }
+      }
+      os.fs.remove(raw).ignore_err("not there")
+    }
     if !o.trace.is_empty() {
       let _t = trace_convert(os, o.trace, o.trace + ".json", false)
     }

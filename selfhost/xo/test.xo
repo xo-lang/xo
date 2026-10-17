@@ -813,12 +813,40 @@ fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int
 fn prof_words(o: TestOpts) -> List[Str] {
   var w: List[Str] = []
   if !o.profile.is_empty() {
-    w = ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-cpu-%p.pprof", "XO_PROF_HEAP_OUT=${o.profile_dir}/xo-heap-%p.pprof"]
+    // a raw profile per test process (decision 0245), which prof_tests
+    // turns into xo-cpu-<pid>.pprof and xo-heap-<pid>.pprof
+    w = ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/.xo-prof-%p.xoraw", "XO_PROF_QUIET=1"]
   }
   if !o.trace.is_empty() {
     w.push("XO_TRACE=${trace_path(o)}")
   }
   w
+}
+
+/// After `xo test --profile`: each test process's raw profile (prof_words)
+/// as xo-cpu-<pid>.pprof and xo-heap-<pid>.pprof (and their .txt) in the
+/// profile directory, the raw file removed.
+fn prof_tests(os: Os, o: TestOpts) uses (fs, stdio) {
+  if o.profile.is_empty() {
+    return
+  }
+  let entries = match os.fs.read_dir(o.profile_dir) {
+    Ok(es) => es
+    Err(_) => return
+  }
+  for e in entries {
+    let n = e.name
+    if !n.starts_with(".xo-prof-") || !n.ends_with(".xoraw") {
+      continue
+    }
+    let pid = n.trim_prefix(".xo-prof-").trim_suffix(".xoraw")
+    let raw = "${o.profile_dir}/${n}"
+    match prof_convert(os, raw, "${o.profile_dir}/xo-cpu-${pid}.pprof", "${o.profile_dir}/xo-heap-${pid}.pprof") {
+      Ok(_) => {}
+      Err(e) => os.stdio.eprintln("xo test: ${e}")
+    }
+    os.fs.remove(raw).ignore_err("a raw profile left behind")
+  }
 }
 
 /// The XO_TRACE of `xo test --trace` (decision 0240): absolute, with %p.
@@ -934,7 +962,7 @@ fn shrink(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, failing: Li
           cand[i] = mid
           budget -= 1
           let (out, pc, s2) = serve_run(os, bin, limit, t, seed, join_choices(cand), join_choices(best), srv)
-        srv = s2
+          srv = s2
           if !pc.not_smaller && pc.reported && out.status == "fail" {
             best = pc.choices
             best_in = pc.input
@@ -1111,4 +1139,3 @@ fn drop_generated_frames(msg: Str) -> Str {
   }
   kept.join("\n")
 }
-

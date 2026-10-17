@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo prof FILE` (decision 0245): a native program under XO_PROF writes a
+  raw profile (xo-prof.xoraw: the samples and their locations, named by
+  the program) and `xo prof` writes xo-cpu.pprof, xo-heap.pprof and their
+  summaries from it; `xo run --profile` and `xo test --profile` do both
+  steps as before. The pprof and summary writers left every binary:
+  hello 66.6 KiB smaller (633,314 to 565,106 bytes, darwin/arm64).
+  XO_PROF_OUT now names the raw file; XO_PROF_HEAP_OUT is gone.
 - Smaller frames from the wasm backend (decision 0179's addendum): wide
   parameters by address, wide values retained and released through an
   address, and the cold locals of big functions in a memory frame. The

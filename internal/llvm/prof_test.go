@@ -48,9 +48,10 @@ func TestProfCPU(t *testing.T) {
 			bin := res.Binaries[xotool.Host()]
 			dir := t.TempDir()
 			out := filepath.Join(dir, "cpu.pprof")
+			raw := filepath.Join(dir, "prof.xoraw")
 			cmd := exec.Command(bin)
 			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+out)
+			cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
 			got, err := runCombined(cmd, 2*time.Minute)
 			if err != nil {
 				t.Fatalf("run: %v\n%s", err, got)
@@ -58,6 +59,9 @@ func TestProfCPU(t *testing.T) {
 			if !strings.Contains(got, "fib 102334155") || !strings.Contains(got, "xo profile: ") {
 				t.Fatalf("output: %s", got)
 			}
+			// the program wrote the raw profile; xo prof the pprof and
+			// the summary (decision 0245)
+			xoProf(t, dir, raw, "--cpu-out="+out)
 			txt, err := os.ReadFile(filepath.Join(dir, "cpu.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -141,11 +145,16 @@ func TestProfHeap(t *testing.T) {
 				}
 				return dir, got
 			}
+			// the raw profile at XO_PROF_OUT's default, as pprof files in dir
+			conv := func(dir string, args ...string) {
+				xoProf(t, dir, filepath.Join(dir, "xo-prof.xoraw"), args...)
+			}
 			// rate 1: every allocation
 			dir, got := run("XO_PROF=heap", "XO_PROF_HEAP_RATE=1")
 			if !strings.Contains(got, "heap samples in ") {
 				t.Fatalf("output: %s", got)
 			}
+			conv(dir)
 			txt, err := os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -178,6 +187,7 @@ func TestProfHeap(t *testing.T) {
 			}
 			// the default rate (512 KiB): an estimate
 			dir, _ = run("XO_PROF=heap")
+			conv(dir)
 			txt, err = os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
 			if err != nil {
 				t.Fatal(err)
@@ -192,7 +202,8 @@ func TestProfHeap(t *testing.T) {
 				}
 			}
 			// cpu,heap: both profiles, each at its own path
-			dir, _ = run("XO_PROF=cpu,heap", "XO_PROF_OUT=c.pprof", "XO_PROF_HEAP_OUT=h.pprof")
+			dir, _ = run("XO_PROF=cpu,heap")
+			conv(dir, "--cpu-out=c.pprof", "--heap-out=h.pprof")
 			for _, f := range []string{"c.pprof", "c.txt", "h.pprof", "h.txt"} {
 				if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 					t.Fatalf("cpu,heap: %v", err)
@@ -206,7 +217,8 @@ func TestProfHeap(t *testing.T) {
 // profiler out (prof.start's symbol is not in the binary) and says so
 // when XO_PROF asks; --profile-support keeps it; a profile is written
 // only to a new file (O_EXCL, no symbolic link followed, mode 0600), so a
-// second run with the same output keeps the first file and says so.
+// second run with the same output keeps the first file and says so; the
+// same holds for xo prof's pprof files (decision 0245).
 func TestProfGating(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program three ways")
@@ -264,7 +276,7 @@ func TestProfGating(t *testing.T) {
 	if got := run(sup, d); !strings.Contains(got, "samples in") {
 		t.Errorf("--profile-support: %s", got)
 	}
-	fi, err := os.Lstat(filepath.Join(d, "xo-cpu.pprof"))
+	fi, err := os.Lstat(filepath.Join(d, "xo-prof.xoraw"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,10 +286,17 @@ func TestProfGating(t *testing.T) {
 	if got := run(sup, d); !strings.Contains(got, "could not write") {
 		t.Errorf("a second run over an existing profile: %s", got)
 	}
+	xoProf(t, d, filepath.Join(d, "xo-prof.xoraw"))
+	if fi, err := os.Lstat(filepath.Join(d, "xo-cpu.pprof")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("xo prof's profile: %v %v, want mode 0600", err, fi)
+	}
+	if out, err := xoProfRun(d, filepath.Join(d, "xo-prof.xoraw")); err == nil || !strings.Contains(out, "could not write") {
+		t.Errorf("xo prof over an existing profile: %v %s", err, out)
+	}
 	// a symbolic link where the profile goes is not written through
 	d = t.TempDir()
 	target := filepath.Join(d, "elsewhere")
-	if err := os.Symlink(target, filepath.Join(d, "xo-cpu.pprof")); err != nil {
+	if err := os.Symlink(target, filepath.Join(d, "xo-prof.xoraw")); err != nil {
 		t.Fatal(err)
 	}
 	if got := run(sup, d); !strings.Contains(got, "could not write") {
@@ -286,6 +305,96 @@ func TestProfGating(t *testing.T) {
 	if _, err := os.Stat(target); err == nil {
 		t.Errorf("the profile was written through a symbolic link")
 	}
+}
+
+// TestProfDrivers: `xo run --profile` and `xo test --profile` (decision
+// 0245) leave the pprof files and summaries the program wrote itself
+// before: xo-cpu.pprof and xo-cpu.txt in the working directory for run,
+// xo-heap-<pid>.pprof and .txt per test process for test, and no raw
+// file behind.
+func TestProfDrivers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the profiler runs on darwin and linux")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := func(p string) string {
+		a, err := filepath.Abs(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	runIn := func(dir string, args ...string) string {
+		cmd := exec.Command(xo, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PWD="+dir)
+		out, err := runCombined(cmd, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("xo %v: %v\n%s", args, err, out)
+		}
+		return out
+	}
+	noRaw := func(dir string) {
+		ents, _ := os.ReadDir(dir)
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".xoraw") {
+				t.Errorf("a raw profile left behind: %s", e.Name())
+			}
+		}
+	}
+	d := t.TempDir()
+	out := runIn(d, "run", "--profile=cpu", abs(filepath.Join("testdata", "prof", "fib")))
+	if !strings.Contains(out, "samples in xo-cpu.pprof and xo-cpu.txt") {
+		t.Errorf("xo run --profile=cpu said: %s", out)
+	}
+	txt, err := os.ReadFile(filepath.Join(d, "xo-cpu.txt"))
+	if err != nil || topFlat(string(txt)) != "fib" {
+		t.Errorf("xo run --profile=cpu summary: %v\n%s", err, txt)
+	}
+	noRaw(d)
+	d = t.TempDir()
+	runIn(d, "test", "--profile=heap", abs(filepath.Join("testdata", "prof", "tested")))
+	ents, _ := os.ReadDir(d)
+	var pprofs, txts int
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "xo-heap-") && strings.HasSuffix(e.Name(), ".pprof") {
+			pprofs++
+		}
+		if strings.HasPrefix(e.Name(), "xo-heap-") && strings.HasSuffix(e.Name(), ".txt") {
+			txts++
+		}
+	}
+	if pprofs == 0 || pprofs != txts {
+		t.Errorf("xo test --profile=heap wrote %v", ents)
+	}
+	noRaw(d)
+}
+
+// xoProf runs `xo prof raw args...` in dir (decision 0245) and fails t when
+// it fails.
+func xoProf(t *testing.T, dir, raw string, args ...string) {
+	t.Helper()
+	if out, err := xoProfRun(dir, raw, args...); err != nil {
+		t.Fatalf("xo prof %s: %v\n%s", raw, err, out)
+	}
+}
+
+func xoProfRun(dir, raw string, args ...string) (string, error) {
+	xo, err := xotool.Path()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(xo, append([]string{"prof", raw}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PWD="+dir)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // heapTotal reads "<label>N.NNMB in K objects" of a heap summary as bytes

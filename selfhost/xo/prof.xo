@@ -1,0 +1,840 @@
+// `xo prof FILE` (decision 0245): reads the raw profile a native program
+// writes with XO_PROF (std/native/llrt/prof.xo, decision 0238) and writes
+// what the program wrote itself before: the CPU profile as pprof's
+// protobuf (gzip with stored blocks) and its text summary, the heap
+// profile the same. The program keeps the sampler and the fault
+// traceback's symbolizer, so the raw file already names every location
+// (its function, file and line, inlined callees first): this side needs
+// neither the binary nor its dSYM, only the file. The file is decision
+// 0240's container: the 64 byte XORAW1 header (kind 2, a profile), then
+// sections of a type and a length.
+//
+// A profile file is created new: never through a symbolic link and
+// never over a file that is there (decision 0238's addendum), mode 0600.
+// std has no exclusive create, so the bytes go to a new temporary file
+// in the same directory, set to 0600, renamed into place after a look
+// that nothing is at the path: rename replaces the name itself and never
+// writes through a link; a file made between the look and the rename is
+// the one thing it could replace.
+
+/// Section types (std/native/llrt/prof.xo writes them).
+const PS_CPU = 16
+const PS_HEAP = 17
+
+/// A raw profile's locations and functions, as the program named them.
+struct ProfTable {
+  /// the distinct pcs, sorted (a location's id is its index plus 1)
+  locs: List[Int] = []
+  /// each location's frames, innermost first (inlined callees, then the
+  /// function): an index of names, its file, its line
+  cf: List[List[Int]] = []
+  cfile: List[List[Str]] = []
+  cline: List[List[Int]] = []
+  names: List[Str] = []
+}
+
+struct ProfCpu {
+  hz: Int = 0
+  period: Int = 0
+  dur: Int = 0
+  lost: Int = 0
+  /// each sample's locations' pcs, innermost first
+  samples: List[List[Int]] = []
+  tab: ProfTable = ProfTable{}
+}
+
+struct ProfHeap {
+  rate: Int = 0
+  lost: Int = 0
+  unset: Int = 0
+  samples: List[List[Int]] = []
+  sizes: List[Int] = []
+  /// 0 live, 1 freed, 2 not tracked for frees
+  freed: List[Int] = []
+  tab: ProfTable = ProfTable{}
+}
+
+/// A cursor over a raw profile's bytes.
+struct PRd {
+  b: Bytes
+  at: Int = 0
+  bad: Bool = false
+}
+
+fn (var r: PRd) word() -> Int {
+  if r.at + 8 > r.b.len() {
+    r.bad = true
+    return 0
+  }
+  let v = u64(r.b, r.at)
+  r.at += 8
+  v
+}
+
+fn (var r: PRd) text() -> Str {
+  let n = r.word()
+  if r.bad || n < 0 || r.at + n > r.b.len() {
+    r.bad = true
+    return ""
+  }
+  let s = r.b[r.at..r.at + n].to_str() ?? ""
+  r.at += n
+  s
+}
+
+fn (var r: PRd) table() -> ProfTable {
+  var t = ProfTable{}
+  let nl = r.word()
+  for _ in 0..nl {
+    if r.bad {
+      break
+    }
+    t.locs.push(r.word())
+    let nf = r.word()
+    var fi: List[Int] = []
+    var ff: List[Str] = []
+    var ll: List[Int] = []
+    for _ in 0..nf {
+      fi.push(r.word())
+      ll.push(r.word())
+      ff.push(r.text())
+    }
+    t.cf.push(fi)
+    t.cfile.push(ff)
+    t.cline.push(ll)
+  }
+  let nn = r.word()
+  for _ in 0..nn {
+    if r.bad {
+      break
+    }
+    t.names.push(r.text())
+  }
+  t
+}
+
+fn (var r: PRd) stack() -> List[Int] {
+  let d = r.word()
+  var s: List[Int] = []
+  for _ in 0..d {
+    if r.bad {
+      break
+    }
+    s.push(r.word())
+  }
+  s
+}
+
+/// The CPU and heap parts of the raw profile b (each None when the
+/// program did not take it), or why b is not one.
+fn prof_parse(b: Bytes) -> (ProfCpu?, ProfHeap?) ! Str {
+  if b.len() < 64 || (b[0..6].to_str() ?? "") != "XORAW1" {
+    return Err("not an xo raw file (no XORAW1 header)")
+  }
+  if (u64(b, 8) & 4294967295) != 2 {
+    return Err("not a profile (an xo raw file of another kind: `xo trace` reads a trace)")
+  }
+  var cpu: ProfCpu? = None
+  var heap: ProfHeap? = None
+  var at = 64
+  while at + 16 <= b.len() {
+    let typ = u64(b, at)
+    let n = u64(b, at + 8)
+    if n < 0 || at + 16 + n > b.len() {
+      return Err("a section runs past the end of the file")
+    }
+    var r = PRd{b: b[at + 16..at + 16 + n]}
+    if typ == PS_CPU {
+      var c = ProfCpu{}
+      c.hz = r.word()
+      c.period = r.word()
+      c.dur = r.word()
+      c.lost = r.word()
+      let ns = r.word()
+      for _ in 0..ns {
+        if r.bad {
+          break
+        }
+        c.samples.push(r.stack())
+      }
+      c.tab = r.table()
+      if r.bad {
+        return Err("a truncated CPU profile section")
+      }
+      cpu = Some(c)
+    } else if typ == PS_HEAP {
+      var h = ProfHeap{}
+      h.rate = r.word()
+      h.lost = r.word()
+      h.unset = r.word()
+      let ns = r.word()
+      for _ in 0..ns {
+        if r.bad {
+          break
+        }
+        h.samples.push(r.stack())
+        h.sizes.push(r.word())
+        h.freed.push(r.word())
+      }
+      h.tab = r.table()
+      if r.bad {
+        return Err("a truncated heap profile section")
+      }
+      heap = Some(h)
+    }
+    at = at + 16 + n
+  }
+  Ok((cpu, heap))
+}
+
+/// `xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]` (main.xo): its exit
+/// status.
+fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
+  var file = ""
+  var cpu_out = "xo-cpu.pprof"
+  var heap_out = "xo-heap.pprof"
+  for a in args {
+    if a.starts_with("--cpu-out=") {
+      cpu_out = a.trim_prefix("--cpu-out=")
+    } else if a.starts_with("--heap-out=") {
+      heap_out = a.trim_prefix("--heap-out=")
+    } else if a == "-h" || a == "--help" {
+      os.stdio.println(PROF_USAGE)
+      return 0
+    } else if file.is_empty() && !a.starts_with("-") {
+      file = a
+    } else {
+      os.stdio.eprintln("xo prof: unexpected argument ${a}\n${PROF_USAGE}")
+      return 2
+    }
+  }
+  if file.is_empty() {
+    os.stdio.eprintln(PROF_USAGE)
+    return 2
+  }
+  match prof_convert(os, file, cpu_out, heap_out) {
+    Ok(_) => 0
+    Err(e) => {
+      os.stdio.eprintln("xo prof: ${e}")
+      1
+    }
+  }
+}
+
+const PROF_USAGE = "usage: xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]"
+
+/// Writes the profiles of the raw file at path (the CPU one to cpu_out
+/// and cpu_out's .txt, the heap one to heap_out and its .txt), each with
+/// the line the program printed before decision 0245.
+fn prof_convert(os: Os, path: Str, cpu_out: Str, heap_out: Str) -> () ! Str uses (fs, stdio) {
+  let b = match os.fs.read(path) {
+    Ok(x) => x
+    Err(e) => return Err("cannot read ${path}: ${e}")
+  }
+  let (cpu, heap) = prof_parse(b)?
+  if cpu.is_none() && heap.is_none() {
+    return Err("${path} holds no samples")
+  }
+  if let Some(h) = heap {
+    prof_heap_out(os, h, heap_out)?
+  }
+  if let Some(c) = cpu {
+    prof_cpu_out(os, c, cpu_out)?
+  }
+  Ok(())
+}
+
+fn prof_cpu_out(os: Os, c: ProfCpu, out: Str) -> () ! Str uses (fs, stdio) {
+  let t = c.tab
+  var names = t.names
+  var flat: List[Int] = []
+  var cum: List[Int] = []
+  var seen: List[Int] = []
+  for _ in 0..names.len() {
+    flat.push(0)
+    cum.push(0)
+    seen.push(-1)
+  }
+  // per location: samples it is the leaf of, and stacks it is in
+  var lleaf: List[Int] = []
+  var lany: List[Int] = []
+  for _ in 0..t.locs.len() {
+    lleaf.push(0)
+    lany.push(0)
+  }
+  for (k, s) in c.samples.indexed() {
+    for (j, pc) in s.indexed() {
+      let li = loc_index(t.locs, pc)
+      lany[li] = lany[li] + 1
+      if j == 0 {
+        // the innermost frame's function: an inlined callee's when the
+        // pc is in one
+        let f0 = t.cf[li][0]
+        flat[f0] = flat[f0] + 1
+        lleaf[li] = lleaf[li] + 1
+      }
+      for f in t.cf[li] {
+        if seen[f] != k {
+          seen[f] = k
+          cum[f] = cum[f] + 1
+        }
+      }
+    }
+  }
+  // each function's hottest line: its most frequent leaf frame, else its
+  // most frequent frame anywhere
+  var hot: List[Str] = []
+  var hot_n: List[Int] = []
+  for _ in 0..names.len() {
+    hot.push("")
+    hot_n.push(0)
+  }
+  for li in 0..t.locs.len() {
+    let f = t.cf[li][0]
+    if lleaf[li] > 0 && lleaf[li] > hot_n[f] && !t.cfile[li][0].is_empty() {
+      hot[f] = "${base_name(t.cfile[li][0])}:${t.cline[li][0]}"
+      hot_n[f] = lleaf[li]
+    }
+  }
+  for li in 0..t.locs.len() {
+    for (q, f) in t.cf[li].indexed() {
+      if flat[f] == 0 && lany[li] > hot_n[f] && !t.cfile[li][q].is_empty() {
+        hot[f] = "${base_name(t.cfile[li][q])}:${t.cline[li][q]}"
+        hot_n[f] = lany[li]
+      }
+    }
+  }
+  let total = c.samples.len()
+  let pb = cpu_pprof(c.samples, t, c.period, c.dur)
+  let txt = text_path(out)
+  let ok = prof_write(os, out, gzip(pb)) && prof_write(os, txt, top_text(flat, cum, names, hot, total, c.lost, c.dur, c.hz, c.period).bytes())
+  if !ok {
+    return Err("could not write ${out} (it must not exist: a profile never overwrites a file)")
+  }
+  os.stdio.eprintln("xo profile: ${total} samples in ${out} and ${txt}")
+  Ok(())
+}
+
+fn prof_heap_out(os: Os, h0: ProfHeap, out: Str) -> () ! Str uses (fs, stdio) {
+  let h = heap_trim(h0)
+  let t = h.tab
+  var vals: List[List[Int]] = []
+  for (i, size) in h.sizes.indexed() {
+    let sc = heap_scale(size, h.rate)
+    let objs = Int(sc + 0.5)
+    let bytes = Int(Float(size) * sc + 0.5)
+    let live = h.freed[i] == 0
+    vals.push([objs, bytes, if live { objs } else { 0 }, if live { bytes } else { 0 }])
+  }
+  // pprof: Go's four sample types, the period the rate in bytes
+  var strs: List[Str] = ["", "alloc_objects", "count", "alloc_space", "bytes", "inuse_objects", "inuse_space", "space"]
+  var b = BytesBuilder.new()
+  fbytes(b, 1, value_type(1, 2))
+  fbytes(b, 1, value_type(3, 4))
+  fbytes(b, 1, value_type(5, 2))
+  fbytes(b, 1, value_type(6, 4))
+  for (i, s) in h.samples.indexed() {
+    var ids = BytesBuilder.new()
+    for pc in s {
+      varint(ids, loc_index(t.locs, pc) + 1)
+    }
+    var vb = BytesBuilder.new()
+    for x in vals[i] {
+      varint(vb, x)
+    }
+    var smp = BytesBuilder.new()
+    fbytes(smp, 1, ids.freeze())
+    fbytes(smp, 2, vb.freeze())
+    fbytes(b, 2, smp.freeze())
+  }
+  pprof_tail(b, strs, t)
+  fbytes(b, 11, value_type(7, 4))
+  fint(b, 12, h.rate)
+  let txt = text_path(out)
+  let ok = prof_write(os, out, gzip(b.freeze())) && prof_write(os, txt, heap_text(h.samples, vals, t, h.rate, h.lost, h.unset).bytes())
+  if !ok {
+    return Err("could not write ${out} (it must not exist: a profile never overwrites a file)")
+  }
+  os.stdio.eprintln("xo profile: ${h.samples.len()} heap samples in ${out} and ${txt}")
+  Ok(())
+}
+
+/// Writes data to a new file at path, mode 0600 (see the top): false
+/// when anything is at path already, a symbolic link too.
+fn prof_write(os: Os, path: Str, data: Bytes) -> Bool uses fs {
+  if prof_taken(os, path) {
+    return false
+  }
+  let dir = dir_name(path)
+  let tmp = match os.fs.create_temp(dir, ".xo-prof-") {
+    Ok(p) => p
+    Err(_) => return false
+  }
+  let ok = os.fs.write(tmp, data).is_ok() && os.fs.set_mode(tmp, 384).is_ok() && !prof_taken(os, path) && os.fs.rename(tmp, path).is_ok()
+  if !ok {
+    os.fs.remove(tmp).ignore_err("a temporary file left from a write that failed")
+  }
+  ok
+}
+
+/// Whether something is at path: a file, a directory, or a symbolic link
+/// (dangling or not).
+fn prof_taken(os: Os, path: Str) -> Bool uses fs {
+  match os.fs.read_link(path) {
+    Ok(Some(_)) => return true
+    Ok(None) => {}
+    Err(_) => {}
+  }
+  match os.fs.exists(path) {
+    Ok(e) => e
+    Err(_) => true
+  }
+}
+
+/// The summary's path beside a profile at out: .txt for .pprof.
+fn text_path(out: Str) -> Str {
+  if out.ends_with(".pprof") {
+    return out.trim_suffix(".pprof") + ".txt"
+  }
+  out + ".txt"
+}
+
+/// ms of n samples at period ns, as `go tool pprof -top` prints (ms, or s
+/// with two decimals from 10 s).
+fn dur_text(ns: Int) -> Str {
+  let ms = ns / 1000000
+  if ms >= 10000 {
+    return "${ms / 1000}.${pad2((ms % 1000) / 10)}s"
+  }
+  "${ms}ms"
+}
+
+fn pad2(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
+
+/// x of total as a percent with two decimals.
+fn pct(x: Int, total: Int) -> Str {
+  if total <= 0 {
+    return "0.00%"
+  }
+  let h = (x * 10000 + total / 2) / total
+  "${h / 100}.${pad2(h % 100)}%"
+}
+
+fn rpad(s: Str, w: Int) -> Str {
+  if s.len() >= w {
+    return s
+  }
+  s + " ".repeat(w - s.len())
+}
+
+/// The CPU summary: the totals, then the top 30 by flat and by cumulative.
+fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
+  var b = StrBuilder.new()
+  b.write("xo cpu profile: ${total} samples (${dur_text(total * period)}) in ${dur_text(dur)} of wall time at ${hz} Hz")
+  if lost > 0 {
+    b.write(", ${lost} lost")
+  }
+  b.write("\n")
+  for by_cum in [false, true] {
+    b.write(if by_cum { "\ntop 30 by cumulative\n" } else { "\ntop 30 by flat\n" })
+    b.write("      flat  flat%   sum%        cum   cum%  line (the hottest)  function\n")
+    // the order: count << 24 | function, descending
+    var keys: List[Int] = []
+    for f in 0..flat.len() {
+      let v = if by_cum { cum[f] } else { flat[f] }
+      if v > 0 {
+        keys.push((v << 24) | f)
+      }
+    }
+    keys = keys.sort()
+    var sum = 0
+    var shown = 0
+    var i = keys.len() - 1
+    while i >= 0 && shown < 30 {
+      let f = keys[i] & 16777215
+      sum += flat[f]
+      // the function name stays last (TestProfCPU reads it there)
+      let at = if hot[f].is_empty() { "-" } else { hot[f] }
+      b.write("${lpad(dur_text(flat[f] * period), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(dur_text(cum[f] * period), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${names[f]}\n")
+      shown += 1
+      i -= 1
+    }
+  }
+  b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// pprof's protobuf (github.com/google/pprof proto/profile.proto)
+
+fn varint(var b: BytesBuilder, v0: Int) {
+  var v = v0
+  while true {
+    let low = v & 127
+    v = v >> 7
+    if v == 0 {
+      b.write_byte(UInt8(low))
+      return
+    }
+    b.write_byte(UInt8(low | 128))
+  }
+}
+
+/// A varint field.
+fn fint(var b: BytesBuilder, field: Int, v: Int) {
+  varint(b, field * 8)
+  varint(b, v)
+}
+
+/// A length delimited field.
+fn fbytes(var b: BytesBuilder, field: Int, data: Bytes) {
+  varint(b, field * 8 + 2)
+  varint(b, data.len())
+  b.write(data)
+}
+
+/// A ValueType message of two string indexes.
+fn value_type(t: Int, u: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  fint(b, 1, t)
+  fint(b, 2, u)
+  b.freeze()
+}
+
+/// The index of location pc in the sorted locs (its id is that plus 1).
+fn loc_index(locs: List[Int], pc: Int) -> Int {
+  var a = 0
+  var b = locs.len()
+  while a < b {
+    let m = (a + b) / 2
+    if locs[m] < pc {
+      a = m + 1
+    } else {
+      b = m
+    }
+  }
+  a
+}
+
+/// The CPU Profile message: every sample its own (pprof sums equal
+/// stacks); a location per distinct pc; a function per name used.
+fn cpu_pprof(samples: List[List[Int]], t: ProfTable, period: Int, dur: Int) -> Bytes {
+  var strs: List[Str] = ["", "samples", "count", "cpu", "nanoseconds"]
+  var b = BytesBuilder.new()
+  fbytes(b, 1, value_type(1, 2))
+  fbytes(b, 1, value_type(3, 4))
+  for s in samples {
+    var ids = BytesBuilder.new()
+    for pc in s {
+      varint(ids, loc_index(t.locs, pc) + 1)
+    }
+    var vals = BytesBuilder.new()
+    varint(vals, 1)
+    varint(vals, period)
+    var smp = BytesBuilder.new()
+    fbytes(smp, 1, ids.freeze())
+    fbytes(smp, 2, vals.freeze())
+    fbytes(b, 2, smp.freeze())
+  }
+  pprof_tail(b, strs, t)
+  fint(b, 10, dur)
+  fbytes(b, 11, value_type(3, 4))
+  fint(b, 12, period)
+  b.freeze()
+}
+
+/// The Profile's locations, functions, and string table (after its
+/// samples): a location per distinct pc, a line per frame of its call
+/// (innermost first, inlined callees before the function); a function
+/// (id: its index + 1) per name used; strs, with the names and files
+/// added, last.
+fn pprof_tail(var b: BytesBuilder, var strs: List[Str], t: ProfTable) {
+  var used: List[Bool] = []
+  var ffile: List[Str] = []
+  for _ in 0..t.names.len() {
+    used.push(false)
+    ffile.push("")
+  }
+  for i in 0..t.locs.len() {
+    var loc = BytesBuilder.new()
+    fint(loc, 1, i + 1)
+    fint(loc, 3, t.locs[i])
+    for (q, f) in t.cf[i].indexed() {
+      used[f] = true
+      if ffile[f].is_empty() {
+        ffile[f] = t.cfile[i][q]
+      }
+      var line = BytesBuilder.new()
+      fint(line, 1, f + 1)
+      if t.cline[i][q] > 0 {
+        fint(line, 2, t.cline[i][q])
+      }
+      fbytes(loc, 4, line.freeze())
+    }
+    fbytes(b, 4, loc.freeze())
+  }
+  for f in 0..t.names.len() {
+    if !used[f] {
+      continue
+    }
+    strs.push(t.names[f])
+    var fn_ = BytesBuilder.new()
+    fint(fn_, 1, f + 1)
+    fint(fn_, 2, strs.len() - 1)
+    fint(fn_, 3, strs.len() - 1)
+    if !ffile[f].is_empty() {
+      strs.push(ffile[f])
+      fint(fn_, 4, strs.len() - 1)
+    }
+    fbytes(b, 5, fn_.freeze())
+  }
+  for s in strs {
+    fbytes(b, 6, s.bytes())
+  }
+}
+
+/// data as a gzip member with stored deflate blocks.
+fn gzip(data: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(data.len() + data.len() / 65535 * 5 + 32)
+  for x in [31, 139, 8, 0, 0, 0, 0, 0, 0, 255] {
+    b.write_byte(UInt8(x))
+  }
+  var off = 0
+  while true {
+    let left = data.len() - off
+    let n = if left > 65535 { 65535 } else { left }
+    b.write_byte(UInt8(if n == left { 1 } else { 0 }))
+    b.write_byte(UInt8(n & 255))
+    b.write_byte(UInt8(n / 256))
+    b.write_byte(UInt8((65535 - n) & 255))
+    b.write_byte(UInt8((65535 - n) / 256))
+    b.write(data[off..off + n])
+    off += n
+    if off >= data.len() {
+      break
+    }
+  }
+  let c = crc32(data)
+  for i in 0..4 {
+    b.write_byte(UInt8((c >> (8 * i)) & 255))
+  }
+  for i in 0..4 {
+    b.write_byte(UInt8((data.len() >> (8 * i)) & 255))
+  }
+  b.freeze()
+}
+
+/// CRC-32 (IEEE, reflected) of data, bit at a time (a profile is small).
+fn crc32(data: Bytes) -> Int {
+  var c = 4294967295
+  for x in data {
+    c = c ^ Int(x)
+    for _ in 0..8 {
+      c = if (c & 1) != 0 { (c >> 1) ^ 3988292384 } else { c >> 1 }
+    }
+  }
+  c ^ 4294967295
+}
+
+// ---------------------------------------------------------------------------
+// The heap profile
+
+/// The prefixes of the allocator's own functions, left off the top of a
+/// heap sample's stack (the sampler, the heap, the exports generated code
+/// calls to allocate).
+const RUNTIME_PREFIXES: List[Str] = ["unwind.", "heapprof.", "obj.", "alloc.", "heapos.", "cabi.", "libcmem."]
+
+fn runtime_fn(name: Str) -> Bool {
+  // C ABI exports are named bare (xo_x_heap_grow and the other heap_*,
+  // where the LLVM build inlined the sampler; xo_x_obj_*, generated
+  // code's allocations)
+  if name.starts_with("heap_") || name.starts_with("obj_") {
+    return true
+  }
+  for p in RUNTIME_PREFIXES {
+    if name.starts_with(p) {
+      return true
+    }
+  }
+  false
+}
+
+/// h with the allocator's own frames left off each sample's top (a
+/// frame whose function is the allocator's, as the program wrote it
+/// before decision 0245), the locations no kept frame has dropped, and
+/// the allocator's callees inlined at a kept location's top dropped
+/// (its fast path inlined into the code that allocates: obj.rs_with_cap
+/// into raw.str_repeat).
+fn heap_trim(h: ProfHeap) -> ProfHeap {
+  let t = h.tab
+  var rtf: List[Bool] = []
+  for li in 0..t.locs.len() {
+    let fs = t.cf[li]
+    rtf.push(runtime_fn(t.names[fs[fs.len() - 1]]))
+  }
+  var used: List[Bool] = []
+  for _ in 0..t.locs.len() {
+    used.push(false)
+  }
+  var samples: List[List[Int]] = []
+  for s in h.samples {
+    var j = 0
+    while j < s.len() - 1 && rtf[loc_index(t.locs, s[j])] {
+      j += 1
+    }
+    var kept: List[Int] = []
+    while j < s.len() {
+      used[loc_index(t.locs, s[j])] = true
+      kept.push(s[j])
+      j += 1
+    }
+    samples.push(kept)
+  }
+  var nt = ProfTable{names: t.names}
+  for li in 0..t.locs.len() {
+    if !used[li] {
+      continue
+    }
+    let fi = t.cf[li]
+    var drop = 0
+    while drop < fi.len() - 1 && runtime_fn(t.names[fi[drop]]) {
+      drop += 1
+    }
+    nt.locs.push(t.locs[li])
+    nt.cf.push(fi[drop..fi.len()])
+    nt.cfile.push(t.cfile[li][drop..t.cfile[li].len()])
+    nt.cline.push(t.cline[li][drop..t.cline[li].len()])
+  }
+  h with {samples: samples, tab: nt}
+}
+
+/// e^x for x >= 0: x = k ln 2 + f, e^f by its series.
+fn exp_pos(x: Float) -> Float {
+  let k = Int(x / 0.6931471805599453)
+  let f = x - Float(k) * 0.6931471805599453
+  var term = 1.0
+  var sum = 1.0
+  for i in 1..16 {
+    term = term * f / Float(i)
+    sum = sum + term
+  }
+  var r = sum
+  for _ in 0..k {
+    r = r * 2.0
+  }
+  r
+}
+
+/// A sample of size bytes at rate stands for this many allocations (Go's
+/// scaleHeapSample: 1 / (1 - e^(-size/rate))).
+fn heap_scale(size: Int, rate: Int) -> Float {
+  if rate <= 1 || size <= 0 {
+    return 1.0
+  }
+  let x = Float(size) / Float(rate)
+  if x > 40.0 {
+    return 1.0
+  }
+  1.0 / (1.0 - 1.0 / exp_pos(x))
+}
+
+/// n bytes as `go tool pprof` prints them (B, kB, MB, GB by 1024s, two
+/// decimals).
+fn bytes_text(n: Int) -> Str {
+  if n < 1024 {
+    return "${n}B"
+  }
+  var unit = "kB"
+  var d = 1024
+  if n >= 1073741824 {
+    unit = "GB"
+    d = 1073741824
+  } else if n >= 1048576 {
+    unit = "MB"
+    d = 1048576
+  }
+  let h = (n * 100 + d / 2) / d
+  "${h / 100}.${pad2(h % 100)}${unit}"
+}
+
+/// The heap summary: the totals (estimated, as the profile's values),
+/// then the top 30 functions by inuse_space and by alloc_space, flat (the
+/// stack's leaf, the allocating code) and cumulative.
+fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], t: ProfTable, rate: Int, lost: Int, unset: Int) -> Str {
+  let names = t.names
+  var tot = [0, 0, 0, 0]
+  for v in vals {
+    for i in 0..4 {
+      tot[i] = tot[i] + v[i]
+    }
+  }
+  var b = StrBuilder.new()
+  b.write("xo heap profile: ${stacks.len()} samples at one per ${bytes_text(rate)} allocated (estimated totals)\n")
+  b.write("in use: ${bytes_text(tot[3])} in ${tot[2]} objects; allocated: ${bytes_text(tot[1])} in ${tot[0]} objects")
+  if lost > 0 {
+    b.write(", ${lost} samples lost")
+  }
+  if unset > 0 {
+    b.write(", ${unset} not tracked for frees")
+  }
+  b.write("\n")
+  for (vi, title) in [(3, "inuse_space"), (1, "alloc_space")] {
+    var flat: List[Int] = []
+    var cum: List[Int] = []
+    var seen: List[Int] = []
+    var hot: List[Str] = []
+    var hot_v: List[Int] = []
+    for _ in 0..names.len() {
+      flat.push(0)
+      cum.push(0)
+      seen.push(-1)
+      hot.push("")
+      hot_v.push(0)
+    }
+    for (k, s) in stacks.indexed() {
+      let x = vals[k][vi]
+      if x == 0 {
+        continue
+      }
+      for (j, pc) in s.indexed() {
+        // the location's frames: an inlined callee's first (flat goes to
+        // the innermost)
+        let li = loc_index(t.locs, pc)
+        if j == 0 {
+          let f = t.cf[li][0]
+          flat[f] = flat[f] + x
+          if x > hot_v[f] && !t.cfile[li][0].is_empty() {
+            hot[f] = "${base_name(t.cfile[li][0])}:${t.cline[li][0]}"
+            hot_v[f] = x
+          }
+        }
+        for f in t.cf[li] {
+          if seen[f] != k {
+            seen[f] = k
+            cum[f] = cum[f] + x
+          }
+        }
+      }
+    }
+    let total = tot[vi]
+    b.write("\ntop 30 by ${title}\n")
+    b.write("      flat  flat%   sum%        cum   cum%  line (the largest)  function\n")
+    // the order: flat, then cumulative, descending (sort_by is stable)
+    var order: List[Int] = []
+    for f in 0..names.len() {
+      if flat[f] > 0 || cum[f] > 0 {
+        order.push(f)
+      }
+    }
+    order = order.sort_by(fn(f: Int) -> Int { -cum[f] }).sort_by(fn(f: Int) -> Int { -flat[f] })
+    var sum = 0
+    for (i, f) in order.indexed() {
+      if i >= 30 {
+        break
+      }
+      sum += flat[f]
+      let at = if hot[f].is_empty() { "-" } else { hot[f] }
+      b.write("${lpad(bytes_text(flat[f]), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(bytes_text(cum[f]), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${names[f]}\n")
+    }
+  }
+  b.freeze()
+}

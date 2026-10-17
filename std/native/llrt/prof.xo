@@ -6,17 +6,20 @@
 // no allocation, no lock, no C library call in the handler; a sample the
 // full ring cannot take is counted. At the end of main (entry.xo) or at
 // os.proc.exit (process.xo, through cabi.xo prof_finish) the timer stops
-// and the samples are symbolized from the program's own symbol table
-// (macOS: LC_SYMTAB in __LINKEDIT, in memory; Linux: .symtab of
-// /proc/self/exe) and written as pprof's protobuf, gzip with stored
-// blocks (`go tool pprof`, speedscope, flame graph tools read it), to
-// XO_PROF_OUT (xo-cpu.pprof by default), with a text summary beside it
-// (the top 30 by flat and by cumulative samples, as `go tool pprof -top`
-// prints, in the same path with .txt for .pprof), with each location's
-// file and line from the program's DWARF line tables when it has them
-// (dwline.xo, decision 0239: Linux's .debug_line, macOS's PROG.dSYM):
-// pprof's Line.line and Function.filename, and the text summary's
-// hottest line of each function. Off (no XO_PROF) it costs one
+// and the samples' locations are named from the program's own symbol
+// table (macOS: LC_SYMTAB in __LINKEDIT, in memory; Linux: .symtab of
+// /proc/self/exe) and its DWARF (dwline.xo, decision 0239: each
+// location's function, file and line, the callees inlined there first):
+// the fault traceback's symbolizer, which every binary keeps. The samples
+// and the named locations go to a raw file (decision 0245: decision
+// 0240's XORAW1 container, kind 2) at XO_PROF_OUT (xo-prof.xoraw by
+// default, %p the process id), and `xo prof FILE` (selfhost/xo prof.xo)
+// writes from it what the program wrote itself before: pprof's protobuf,
+// gzip with stored blocks (`go tool pprof`, speedscope, flame graph tools
+// read it), and a text summary beside it (the top 30 by flat and by
+// cumulative samples with each function's hottest line). The writers
+// moved out of every binary: hello 633,314 to 565,106 bytes on
+// darwin/arm64 (2026-10-17). Off (no XO_PROF) it costs one
 // environment lookup at start. On Windows (amd64) there is no SIGPROF: a
 // sampler thread wakes every 1/XO_PROF_HZ s on a high resolution
 // waitable timer, and each of the process's other threads whose CPU
@@ -27,14 +30,14 @@
 //
 // XO_PROF=heap (decision 0238 item 4; with cpu: XO_PROF=cpu,heap) samples
 // allocations, an exponential gap of mean XO_PROF_HEAP_RATE bytes (512
-// KiB; 1 is every allocation), through heapprof.xo, and writes Go's four
-// heap values (alloc_objects, alloc_space, inuse_objects, inuse_space,
-// each scaled by the sample's inverse probability, as Go does) to
-// XO_PROF_HEAP_OUT (else XO_PROF_OUT when cpu is not profiled, else
-// xo-heap.pprof), with the same text summary beside it (the top 30 by
-// inuse_space and by alloc_space). The allocator's own frames (obj.xo,
-// alloc.xo, cabi.xo's exports, the sampler) are left off each stack, so
-// a stack's leaf is the code that allocated.
+// KiB; 1 is every allocation), through heapprof.xo, into the same raw
+// file: each sample's frames, its size, whether it was freed. `xo prof`
+// writes Go's four heap values (alloc_objects, alloc_space,
+// inuse_objects, inuse_space, each scaled by the sample's inverse
+// probability, as Go does) as xo-heap.pprof and its text summary, the
+// allocator's own frames (obj.xo, alloc.xo, cabi.xo's exports, the
+// sampler) left off each stack, so a stack's leaf is the code that
+// allocated.
 use native/llrt/dwline
 use native/llrt/heapos
 use native/llrt/heapprof
@@ -71,6 +74,8 @@ const R_THI = 64
 const R_HZ = 72
 const R_T0 = 80
 const R_NOREC = 88
+/// The profile's duration, set when it stops.
+const R_DUR = 112
 /// Windows: the sampler's record (WB_*) and its thread's handle.
 const R_WIN = 96
 const R_WTHREAD = 104
@@ -359,18 +364,75 @@ pub fn on_signal(uc: Int) {
   rt.slot_store[Int](p, 0, n, 2)
 }
 
-/// Stops the profilers and writes their profiles (entry.xo at main's end,
-/// cabi.xo prof_finish from os.proc.exit). Once.
+/// Stops the profilers and writes their raw profile (entry.xo at main's
+/// end, cabi.xo prof_finish from os.proc.exit). Once. The file is
+/// decision 0240's container (the XORAW1 header, kind 2), its sections
+/// the CPU and the heap profile with their locations already named
+/// (functions, files, lines: this binary's symbols and DWARF, which the
+/// fault traceback keeps anyway); `xo prof FILE` writes the pprof files
+/// and the text summaries from it (decision 0245). XO_PROF_OUT names it
+/// (default xo-prof.xoraw, %p the process id); XO_PROF_QUIET=1 (xo run
+/// and xo test, which convert it themselves) drops the line it prints.
 pub fn finish() {
-  finish_heap()
-  finish_cpu()
+  let rc = stop_cpu()
+  let rh = heapprof.stop()
+  if rc == 0 && rh == 0 {
+    return
+  }
+  var b = BytesBuilder.new()
+  b.write("XORAW1".bytes())
+  b.write_byte(UInt8(0))
+  b.write_byte(UInt8(0))
+  put(b, 2 | rt.int_wrap(3, 1, 32))
+  put(b, if rc != 0 { ld(rc, R_T0) } else { 0 })
+  put(b, 0)
+  put(b, if rc != 0 { ld(rc, R_LOST) + ld(rc, R_NOREC) } else { 0 })
+  put(b, if rc != 0 { ld(rc, R_HZ) } else { 0 })
+  let os_id = match target.os {
+    TargetOs.Linux => 1
+    TargetOs.Darwin => 2
+    TargetOs.Windows => 3
+    TargetOs.Wasi => 4
+  }
+  let arch_id = match target.arch {
+    TargetArch.Arm64 => 1
+    TargetArch.Amd64 => 2
+    TargetArch.Wasm32 => 3
+  }
+  put(b, os_id | rt.int_wrap(3, arch_id, 8))
+  put(b, 0)
+  var nh = 0
+  var nc = 0
+  if rh != 0 {
+    nh = heap_section(b, rh)
+  }
+  if rc != 0 {
+    nc = cpu_section(b, rc)
+  }
+  let out0 = process.env_real("XO_PROF_OUT")
+  let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-prof.xoraw" } else { out0[0] })
+  let ok = write_file(out, b.freeze())
+  let quiet = process.env_real_at("XO_PROF_QUIET") != 0
+  if !ok {
+    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
+  } else if !quiet {
+    var what = ""
+    if rc != 0 {
+      what = "${nc} samples"
+    }
+    if rh != 0 {
+      what = if what.is_empty() { "${nh} heap samples" } else { "${what} and ${nh} heap samples" }
+    }
+    stdio.eprint("xo profile: ${what} in ${out} (`xo prof ${out}` writes the pprof files and summaries)", true)
+  }
 }
 
-fn finish_cpu() {
+/// Stops the CPU profile: its record, or 0 when it was off.
+fn stop_cpu() -> Int {
   let w = rt.static_word(W_PROF)
   let r = rt.slot_swap[Int](w, 0, 0, 4)
   if r == 0 {
-    return
+    return 0
   }
   if ld(r, R_WIN) != 0 {
     // the sampler sees the switch off at its next tick and returns
@@ -382,18 +444,100 @@ fn finish_cpu() {
     timer(0)
     handler(1)
   }
-  let dur = sysio.mono_ns() - ld(r, R_T0)
-  var n = ld(r, R_NEXT)
-  if n > ld(r, R_CAP) {
-    n = ld(r, R_CAP)
-  }
-  let lost = ld(r, R_LOST) + ld(r, R_NOREC)
-  let out0 = process.env_real("XO_PROF_OUT")
-  let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-cpu.pprof" } else { out0[0] })
-  let syms = symbols(ld(r, R_TLO), ld(r, R_THI))
-  let lines = dwline.load(ld(r, R_TLO), ld(r, R_THI))
-  write_profile(r, n, lost, dur, syms, lines, out)
+  st(r, R_DUR, sysio.mono_ns() - ld(r, R_T0))
+  r
 }
+
+// The raw profile's words and texts (xo prof's prof.xo reads them):
+// little endian 64 bit words; a text is its length, then its bytes.
+
+fn put(var b: BytesBuilder, v: Int) {
+  for i in 0..8 {
+    b.write_byte(UInt8(rt.int_wrap(4, v, 8 * i) & 255))
+  }
+}
+
+fn put_text(var b: BytesBuilder, s: Str) {
+  put(b, s.len())
+  b.write(s.bytes())
+}
+
+/// A section: its type, its length, then its payload.
+fn put_section(var b: BytesBuilder, typ: Int, payload: Bytes) {
+  put(b, typ)
+  put(b, payload.len())
+  b.write(payload)
+}
+
+/// The locations of a profile, named (resolve).
+struct Table {
+  /// the pcs, sorted
+  locs: List[Int]
+  /// each location's frames, innermost first (the callees inlined there,
+  /// then the function holding it): a function's index in names, its
+  /// file, its line
+  cf: List[List[Int]]
+  cfile: List[List[Str]]
+  cline: List[List[Int]]
+  names: List[Str]
+}
+
+/// The frames of each location in locs (sorted; fr its functions'
+/// indexes in names, which inlined callees are added to): the callees
+/// inlined at its call (dwline inline_chain, .debug_info), then its
+/// function. xo_entry (LLVM
+/// inlines the program's main into it) is main.
+fn resolve(lines: dwline.Lines, locs: List[Int], fr: List[Int], var names: List[Str]) -> Table {
+  var cf: List[List[Int]] = []
+  var cfile: List[List[Str]] = []
+  var cline: List[List[Int]] = []
+  for (li, pc) in locs.indexed() {
+    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr[li]])
+    var fi: List[Int] = []
+    var ff: List[Str] = []
+    var ll: List[Int] = []
+    for fm in fs {
+      fi.push(name_index(fm.name, names))
+      ff.push(fm.file)
+      ll.push(fm.line)
+    }
+    fi.push(fr[li])
+    ff.push(pf)
+    ll.push(pl)
+    cf.push(fi)
+    cfile.push(ff)
+    cline.push(ll)
+  }
+  for i in 0..names.len() {
+    if names[i] == "xo_entry" {
+      names[i] = "main"
+    }
+  }
+  Table{locs: locs, cf: cf, cfile: cfile, cline: cline, names: names}
+}
+
+/// A Table: its locations (each pc, then its frames: a function's index,
+/// its line, its file), then the names.
+fn put_table(var b: BytesBuilder, t: Table) {
+  put(b, t.locs.len())
+  for (i, pc) in t.locs.indexed() {
+    put(b, pc)
+    put(b, t.cf[i].len())
+    for (q, f) in t.cf[i].indexed() {
+      put(b, f)
+      put(b, t.cline[i][q])
+      put_text(b, t.cfile[i][q])
+    }
+  }
+  put(b, t.names.len())
+  for n in t.names {
+    put_text(b, n)
+  }
+}
+
+/// Section types (keep in step with selfhost/xo prof.xo).
+const PS_CPU = 16
+const PS_HEAP = 17
 
 /// path with each %p as the process id (a profile per process of xo
 /// test --profile).
@@ -692,145 +836,41 @@ fn hexv(c: Int) -> Int {
 // ---------------------------------------------------------------------------
 // The profile
 
-/// Writes the pprof file at out and the text summary beside it.
-fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.Lines, out: Str) {
+/// The CPU profile's section into b (finish): its rate, period, duration
+/// and lost samples, each sample's locations (pcs, innermost first), and
+/// the locations named; the number of samples.
+fn cpu_section(var b: BytesBuilder, r: Int) -> Int {
   let ring = ld(r, R_RING)
   let hz = ld(r, R_HZ)
-  let period = 1000000000 / hz
-  // the distinct pcs (locations), by sorting
-  var pcs: List[Int] = []
-  var total = 0
+  var n = ld(r, R_NEXT)
+  if n > ld(r, R_CAP) {
+    n = ld(r, R_CAP)
+  }
+  var samples: List[List[Int]] = []
   for k in 0..n {
     let p = ring + k * SLOT
     let d = ld(p, 0)
     if d <= 0 {
       continue
     }
-    total += 1
+    var st: List[Int] = []
     for j in 0..d {
-      pcs.push(frame_pc(p, j))
+      st.push(frame_pc(p, j))
     }
+    samples.push(st)
   }
-  pcs = pcs.sort()
-  var locs: List[Int] = []
-  for pc in pcs {
-    if locs.len() == 0 || locs[locs.len() - 1] != pc {
-      locs.push(pc)
-    }
+  var o = BytesBuilder.new()
+  put(o, hz)
+  put(o, 1000000000 / hz)
+  put(o, ld(r, R_DUR))
+  put(o, ld(r, R_LOST) + ld(r, R_NOREC))
+  put(o, samples.len())
+  for st in samples {
+    put_stack(o, st)
   }
-  // the functions: the program's symbols, then the names of the pcs
-  // outside it (a C library function, the dynamic loader); each
-  // location read as a return address, whose call is at pc - 1 (fr; a
-  // leaf's interrupted pc is kept plus 1, frame_pc, as Go's profiles
-  // do, so pc - 1 is the instruction itself)
-  var names = syms.names
-  var fr: List[Int] = []
-  for pc in locs {
-    fr.push(func_of(syms, pc - 1, names))
-  }
-  // each location's frames, innermost first: the callees inlined there
-  // (dwline inline_chain, .debug_info), then the function holding it;
-  // their functions (indexes of names, inlined callees added) and lines
-  var cf: List[List[Int]] = []
-  var cfile: List[List[Str]] = []
-  var cline: List[List[Int]] = []
-  for (li, pc) in locs.indexed() {
-    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr[li]])
-    var fi: List[Int] = []
-    var ff: List[Str] = []
-    var ll: List[Int] = []
-    for fm in fs {
-      fi.push(name_index(fm.name, names))
-      ff.push(fm.file)
-      ll.push(fm.line)
-    }
-    fi.push(fr[li])
-    ff.push(pf)
-    ll.push(pl)
-    cf.push(fi)
-    cfile.push(ff)
-    cline.push(ll)
-  }
-  // xo_entry (LLVM inlines the program's main into it) is main
-  for i in 0..names.len() {
-    if names[i] == "xo_entry" {
-      names[i] = "main"
-    }
-  }
-  var flat: List[Int] = []
-  var cum: List[Int] = []
-  var seen: List[Int] = []
-  for _ in 0..names.len() {
-    flat.push(0)
-    cum.push(0)
-    seen.push(-1)
-  }
-  var stacks: List[Int] = []
-  // per location: samples it is the leaf of, and stacks it is in
-  var lleaf: List[Int] = []
-  var lany: List[Int] = []
-  for _ in 0..locs.len() {
-    lleaf.push(0)
-    lany.push(0)
-  }
-  for k in 0..n {
-    let p = ring + k * SLOT
-    let d = ld(p, 0)
-    if d <= 0 {
-      continue
-    }
-    for j in 0..d {
-      let li = loc_index(locs, frame_pc(p, j))
-      lany[li] = lany[li] + 1
-      if j == 0 {
-        // the innermost frame's function: an inlined callee's when the
-        // pc is in one
-        let f0 = cf[li][0]
-        flat[f0] = flat[f0] + 1
-        lleaf[li] = lleaf[li] + 1
-      }
-      for f in cf[li] {
-        if seen[f] != k {
-          seen[f] = k
-          cum[f] = cum[f] + 1
-        }
-      }
-    }
-    stacks.push(k)
-  }
-  // each function's hottest line: its most frequent leaf frame, else its
-  // most frequent frame anywhere
-  var hot: List[Str] = []
-  var hot_n: List[Int] = []
-  for _ in 0..names.len() {
-    hot.push("")
-    hot_n.push(0)
-  }
-  for li in 0..locs.len() {
-    let f = cf[li][0]
-    if lleaf[li] > 0 && lleaf[li] > hot_n[f] && !cfile[li][0].is_empty() {
-      hot[f] = "${base_name(cfile[li][0])}:${cline[li][0]}"
-      hot_n[f] = lleaf[li]
-    }
-  }
-  for li in 0..locs.len() {
-    for (q, f) in cf[li].indexed() {
-      if flat[f] == 0 && lany[li] > hot_n[f] && !cfile[li][q].is_empty() {
-        hot[f] = "${base_name(cfile[li][q])}:${cline[li][q]}"
-        hot_n[f] = lany[li]
-      }
-    }
-  }
-  let pb = pprof(ring, stacks, locs, cf, names, cfile, cline, period, dur)
-  let ok = write_file(out, gzip(pb))
-  let txt = text_path(out)
-  let summary = top_text(flat, cum, names, hot, total, lost, dur, hz, period)
-  let ok2 = write_file(txt, summary.bytes())
-  if ok && ok2 {
-    stdio.eprint("xo profile: ${total} samples in ${out} and ${txt}", true)
-  } else {
-    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
-  }
+  put_table(o, table_of(samples, ld(r, R_TLO), ld(r, R_THI)))
+  put_section(b, PS_CPU, o.freeze())
+  samples.len()
 }
 
 /// The index of function name in names, added once (an inlined
@@ -962,124 +1002,6 @@ fn linux_object_name(pc: Int) -> Str {
   "?"
 }
 
-/// out with .txt for a .pprof ending (else .txt added).
-fn text_path(out: Str) -> Str {
-  if out.len() > 6 && out[out.len() - 6..out.len()] == ".pprof" {
-    return out[0..out.len() - 6] + ".txt"
-  }
-  out + ".txt"
-}
-
-/// ms of n samples at period ns, as `go tool pprof -top` prints (ms, or s
-/// with two decimals from 10 s).
-fn dur_text(ns: Int) -> Str {
-  let ms = ns / 1000000
-  if ms >= 10000 {
-    return "${ms / 1000}.${pad2((ms % 1000) / 10)}s"
-  }
-  "${ms}ms"
-}
-
-fn pad2(v: Int) -> Str { if v < 10 { "0${v}" } else { "${v}" } }
-
-/// x of total as a percent with two decimals.
-fn pct(x: Int, total: Int) -> Str {
-  if total <= 0 {
-    return "0.00%"
-  }
-  let h = (x * 10000 + total / 2) / total
-  "${h / 100}.${pad2(h % 100)}%"
-}
-
-fn rpad(s: Str, w: Int) -> Str {
-  if s.len() >= w {
-    return s
-  }
-  s + " ".repeat(w - s.len())
-}
-
-fn lpad(s: Str, w: Int) -> Str {
-  var t = s
-  while t.len() < w {
-    t = " " + t
-  }
-  t
-}
-
-/// The summary: the totals, then the top 30 by flat and by cumulative.
-fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
-  var b = StrBuilder.new()
-  b.write("xo cpu profile: ${total} samples (${dur_text(total * period)}) in ${dur_text(dur)} of wall time at ${hz} Hz")
-  if lost > 0 {
-    b.write(", ${lost} lost")
-  }
-  b.write("\n")
-  for by_cum in [false, true] {
-    b.write(if by_cum { "\ntop 30 by cumulative\n" } else { "\ntop 30 by flat\n" })
-    b.write("      flat  flat%   sum%        cum   cum%  line (the hottest)  function\n")
-    // the order: count << 24 | function, descending
-    var keys: List[Int] = []
-    for f in 0..flat.len() {
-      let v = if by_cum { cum[f] } else { flat[f] }
-      if v > 0 {
-        keys.push(rt.int_wrap(3, v, 24) | f)
-      }
-    }
-    keys = keys.sort()
-    var sum = 0
-    var shown = 0
-    var i = keys.len() - 1
-    while i >= 0 && shown < 30 {
-      let f = keys[i] & 16777215
-      sum += flat[f]
-      let name = names[f]
-      // the function name stays last (TestProfCPU reads it there)
-      let at = if hot[f].is_empty() { "-" } else { hot[f] }
-      b.write("${lpad(dur_text(flat[f] * period), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(dur_text(cum[f] * period), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${name}\n")
-      shown += 1
-      i -= 1
-    }
-  }
-  b.freeze()
-}
-
-// ---------------------------------------------------------------------------
-// pprof's protobuf (github.com/google/pprof proto/profile.proto)
-
-fn varint(var b: BytesBuilder, v0: Int) {
-  var v = v0
-  while true {
-    let low = v & 127
-    v = rt.int_wrap(4, v, 7)
-    if v == 0 {
-      b.write_byte(UInt8(low))
-      return
-    }
-    b.write_byte(UInt8(low | 128))
-  }
-}
-
-/// A varint field.
-fn fint(var b: BytesBuilder, field: Int, v: Int) {
-  varint(b, field * 8)
-  varint(b, v)
-}
-
-/// A length delimited field.
-fn fbytes(var b: BytesBuilder, field: Int, data: Bytes) {
-  varint(b, field * 8 + 2)
-  varint(b, data.len())
-  b.write(data)
-}
-
-/// A ValueType message of two string indexes.
-fn value_type(t: Int, u: Int) -> Bytes {
-  var b = BytesBuilder.new()
-  fint(b, 1, t)
-  fint(b, 2, u)
-  b.freeze()
-}
-
 /// Frame j of the sample at p as a location: a return address, or for
 /// the leaf (j 0) the interrupted pc plus 1.
 fn frame_pc(p: Int, j: Int) -> Int {
@@ -1099,131 +1021,6 @@ fn loc_index(locs: List[Int], pc: Int) -> Int {
     }
   }
   a
-}
-
-/// The Profile message: every sample its own (pprof sums equal stacks);
-/// a location per distinct pc with one line naming its function; a
-/// function per symbol used.
-fn pprof(ring: Int, stacks: List[Int], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]], period: Int, dur: Int) -> Bytes {
-  var strs: List[Str] = ["", "samples", "count", "cpu", "nanoseconds"]
-  var b = BytesBuilder.new()
-  fbytes(b, 1, value_type(1, 2))
-  fbytes(b, 1, value_type(3, 4))
-  for k in stacks {
-    let p = ring + k * SLOT
-    let d = ld(p, 0)
-    var ids = BytesBuilder.new()
-    for j in 0..d {
-      varint(ids, loc_index(locs, frame_pc(p, j)) + 1)
-    }
-    var vals = BytesBuilder.new()
-    varint(vals, 1)
-    varint(vals, period)
-    var smp = BytesBuilder.new()
-    fbytes(smp, 1, ids.freeze())
-    fbytes(smp, 2, vals.freeze())
-    fbytes(b, 2, smp.freeze())
-  }
-  pprof_tail(b, strs, locs, cf, names, cfile, cline)
-  fint(b, 10, dur)
-  fbytes(b, 11, value_type(3, 4))
-  fint(b, 12, period)
-  b.freeze()
-}
-
-/// The Profile's locations, functions, and string table (after its
-/// samples): a location per distinct pc, a line per frame of its call
-/// (cf, cfile, cline: innermost first, inlined callees before the
-/// function); a function (id: its index + 1) per name used; strs, with
-/// the names and files added, last.
-fn pprof_tail(var b: BytesBuilder, var strs: List[Str], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]]) {
-  var used: List[Bool] = []
-  var ffile: List[Str] = []
-  for _ in 0..names.len() {
-    used.push(false)
-    ffile.push("")
-  }
-  for i in 0..locs.len() {
-    var loc = BytesBuilder.new()
-    fint(loc, 1, i + 1)
-    fint(loc, 3, locs[i])
-    // a line per frame, innermost first (pprof: the last is the
-    // function the code is in, the others inlined into it)
-    for (q, f) in cf[i].indexed() {
-      used[f] = true
-      if ffile[f].is_empty() {
-        ffile[f] = cfile[i][q]
-      }
-      var line = BytesBuilder.new()
-      fint(line, 1, f + 1)
-      if cline[i][q] > 0 {
-        fint(line, 2, cline[i][q])
-      }
-      fbytes(loc, 4, line.freeze())
-    }
-    fbytes(b, 4, loc.freeze())
-  }
-  for f in 0..names.len() {
-    if !used[f] {
-      continue
-    }
-    strs.push(names[f])
-    var fn_ = BytesBuilder.new()
-    fint(fn_, 1, f + 1)
-    fint(fn_, 2, strs.len() - 1)
-    fint(fn_, 3, strs.len() - 1)
-    if !ffile[f].is_empty() {
-      strs.push(ffile[f])
-      fint(fn_, 4, strs.len() - 1)
-    }
-    fbytes(b, 5, fn_.freeze())
-  }
-  for s in strs {
-    fbytes(b, 6, s.bytes())
-  }
-}
-
-/// data as a gzip member with stored deflate blocks.
-fn gzip(data: Bytes) -> Bytes {
-  var b = BytesBuilder.with_capacity(data.len() + data.len() / 65535 * 5 + 32)
-  for x in [31, 139, 8, 0, 0, 0, 0, 0, 0, 255] {
-    b.write_byte(UInt8(x))
-  }
-  var off = 0
-  while true {
-    let left = data.len() - off
-    let n = if left > 65535 { 65535 } else { left }
-    b.write_byte(UInt8(if n == left { 1 } else { 0 }))
-    b.write_byte(UInt8(n & 255))
-    b.write_byte(UInt8(n / 256))
-    b.write_byte(UInt8((65535 - n) & 255))
-    b.write_byte(UInt8((65535 - n) / 256))
-    b.write(data[off..off + n])
-    off += n
-    if off >= data.len() {
-      break
-    }
-  }
-  let c = crc32(data)
-  for i in 0..4 {
-    b.write_byte(UInt8(rt.int_wrap(4, c, 8 * i) & 255))
-  }
-  for i in 0..4 {
-    b.write_byte(UInt8(rt.int_wrap(4, data.len(), 8 * i) & 255))
-  }
-  b.freeze()
-}
-
-/// CRC-32 (IEEE, reflected) of data, bit at a time (a profile is small).
-fn crc32(data: Bytes) -> Int {
-  var c = 4294967295
-  for x in data {
-    c = c ^ Int(x)
-    for _ in 0..8 {
-      c = if (c & 1) != 0 { rt.int_wrap(4, c, 1) ^ 3988292384 } else { rt.int_wrap(4, c, 1) }
-    }
-  }
-  c ^ 4294967295
 }
 
 /// Writes data to a new file at path (mode 0600): false when anything
@@ -1336,313 +1133,76 @@ pub fn trace_text(pcs: List[Int]) -> Str {
 // ---------------------------------------------------------------------------
 // The heap profile's writer
 
-/// The prefixes of the allocator's own functions, left off the top of a
-/// heap sample's stack (the sampler, the heap, the exports generated code
-/// calls to allocate).
-const RUNTIME_PREFIXES: List[Str] = ["unwind.", "heapprof.", "obj.", "alloc.", "heapos.", "cabi.", "libcmem."]
-
-fn runtime_fn(name: Str) -> Bool {
-  // C ABI exports are named bare (xo_x_heap_grow and the other heap_*,
-  // where the LLVM build inlined the sampler; xo_x_obj_*, generated
-  // code's allocations)
-  if name.starts_with("heap_") || name.starts_with("obj_") {
-    return true
-  }
-  for p in RUNTIME_PREFIXES {
-    if name.starts_with(p) {
-      return true
-    }
-  }
-  false
-}
-
-/// e^x for x >= 0: x = k ln 2 + f, e^f by its series.
-fn exp_pos(x: Float) -> Float {
-  let k = Int(x / 0.6931471805599453)
-  let f = x - Float(k) * 0.6931471805599453
-  var term = 1.0
-  var sum = 1.0
-  for i in 1..16 {
-    term = term * f / Float(i)
-    sum = sum + term
-  }
-  var r = sum
-  for _ in 0..k {
-    r = r * 2.0
-  }
-  r
-}
-
-/// A sample of size bytes at rate stands for this many allocations (Go's
-/// scaleHeapSample: 1 / (1 - e^(-size/rate))).
-fn heap_scale(size: Int, rate: Int) -> Float {
-  if rate <= 1 || size <= 0 {
-    return 1.0
-  }
-  let x = Float(size) / Float(rate)
-  if x > 40.0 {
-    return 1.0
-  }
-  1.0 / (1.0 - 1.0 / exp_pos(x))
-}
-
-/// Stops the heap profile and writes it (finish). Nothing when it is off.
-fn finish_heap() {
-  let r = heapprof.stop()
-  if r == 0 {
-    return
-  }
+/// The heap profile's section into b (finish; r stopped): its rate, lost
+/// and untracked samples, each sample's locations (the allocator's own
+/// frames too: xo prof leaves them off) with its size and whether it was
+/// freed, and the locations named; the number of samples.
+fn heap_section(var b: BytesBuilder, r: Int) -> Int {
   let n = heapprof.count(r)
-  let rate = heapprof.rate(r)
   let slots = heapprof.slots(r)
-  let v = process.env_real_at("XO_PROF")
-  let ho = process.env_real("XO_PROF_HEAP_OUT")
-  let po = process.env_real("XO_PROF_OUT")
-  var out0 = "xo-heap.pprof"
-  if !ho.is_empty() && !ho[0].is_empty() {
-    out0 = ho[0]
-  } else if !(v != 0 && names(v, "cpu")) && !po.is_empty() && !po[0].is_empty() {
-    out0 = po[0]
-  }
-  let out = expand_pid(out0)
-  let (lo, hi) = heapprof.text(r)
-  let syms = symbols(lo, hi)
-  let lines = dwline.load(lo, hi)
-  var names = syms.names
-  // the distinct pcs of every sample (locations), each symbolized once
-  var all: List[Int] = []
-  for k in 0..n {
-    let p = slots + k * heapprof.SLOT
-    let d = ld(p, 0)
-    for j in 0..d {
-      all.push(ld(p, 8 + 8 * j))
-    }
-  }
-  all = all.sort()
-  var pcs0: List[Int] = []
-  for pc in all {
-    if pcs0.len() == 0 || pcs0[pcs0.len() - 1] != pc {
-      pcs0.push(pc)
-    }
-  }
-  var fr0: List[Int] = []
-  var rtf: List[Bool] = []
-  for pc in pcs0 {
-    let f = func_of(syms, pc - 1, names)
-    fr0.push(f)
-    rtf.push(runtime_fn(names[f]))
-  }
-  // each sample: its frames (return addresses) below the allocator's,
-  // and its four values
-  var stacks: List[List[Int]] = []
-  var vals: List[List[Int]] = []
-  var used: List[Bool] = []
-  for _ in 0..pcs0.len() {
-    used.push(false)
-  }
+  var samples: List[List[Int]] = []
+  var o = BytesBuilder.new()
+  put(o, heapprof.rate(r))
+  put(o, heapprof.lost(r))
+  put(o, heapprof.unset(r))
+  var body = BytesBuilder.new()
   for k in 0..n {
     let p = slots + k * heapprof.SLOT
     let d = ld(p, 0)
     if d == 0 {
       continue
     }
-    var pcs: List[Int] = []
-    if d > 0 {
-      var j = 0
-      while j < d - 1 && rtf[loc_index(pcs0, ld(p, 8 + 8 * j))] {
-        j += 1
-      }
-      while j < d {
-        let pc = ld(p, 8 + 8 * j)
-        used[loc_index(pcs0, pc)] = true
-        pcs.push(pc)
-        j += 1
-      }
+    var st: List[Int] = []
+    for j in 0..d {
+      st.push(ld(p, 8 + 8 * j))
     }
-    let size = ld(p, heapprof.S_SIZE)
-    let sc = heap_scale(size, rate)
-    let objs = Int(sc + 0.5)
-    let bytes = Int(Float(size) * sc + 0.5)
-    let live = ld(p, heapprof.S_FREED) == 0
-    stacks.push(pcs)
-    vals.push([objs, bytes, if live { objs } else { 0 }, if live { bytes } else { 0 }])
+    put_stack(body, st)
+    put(body, ld(p, heapprof.S_SIZE))
+    put(body, ld(p, heapprof.S_FREED))
+    samples.push(st)
   }
-  // the locations: the pcs a kept frame has, their functions, files,
-  // and lines
+  put(o, samples.len())
+  o.write(body.freeze())
+  let (lo, hi) = heapprof.text(r)
+  put_table(o, table_of(samples, lo, hi))
+  put_section(b, PS_HEAP, o.freeze())
+  samples.len()
+}
+
+fn put_stack(var b: BytesBuilder, st: List[Int]) {
+  put(b, st.len())
+  for pc in st {
+    put(b, pc)
+  }
+}
+
+/// The locations of samples' pcs, named from the program's symbols in
+/// [lo, hi) and its DWARF (each read as a return address, whose call is
+/// at pc - 1: a leaf's interrupted pc is kept plus 1, frame_pc, as Go's
+/// profiles do; a pc outside the program is named by what holds it, a C
+/// library function or the dynamic loader).
+fn table_of(samples: List[List[Int]], lo: Int, hi: Int) -> Table {
+  let syms = symbols(lo, hi)
+  let lines = dwline.load(lo, hi)
+  var all: List[Int] = []
+  for st in samples {
+    for pc in st {
+      all.push(pc)
+    }
+  }
+  all = all.sort()
   var locs: List[Int] = []
-  var cf: List[List[Int]] = []
-  var cfile: List[List[Str]] = []
-  var cline: List[List[Int]] = []
-  for (i, pc) in pcs0.indexed() {
-    if !used[i] {
-      continue
-    }
-    locs.push(pc)
-    // the callees inlined at the call, then the function (as the cpu
-    // profile's frames)
-    let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, names[fr0[i]])
-    var fi: List[Int] = []
-    var ff: List[Str] = []
-    var ll: List[Int] = []
-    for fm in fs {
-      fi.push(name_index(fm.name, names))
-      ff.push(fm.file)
-      ll.push(fm.line)
-    }
-    fi.push(fr0[i])
-    ff.push(pf)
-    ll.push(pl)
-    // the allocator's own callees inlined at the sample's pc (the heap's
-    // fast path inlined into the code that allocates: obj.rs_with_cap
-    // into raw.str_repeat) are left off, as its own functions are
-    var drop = 0
-    while drop < fi.len() - 1 && runtime_fn(names[fi[drop]]) {
-      drop += 1
-    }
-    cf.push(fi[drop..fi.len()])
-    cfile.push(ff[drop..ff.len()])
-    cline.push(ll[drop..ll.len()])
-  }
-  // xo_entry (LLVM inlines the program's main into it) is main
-  for k in 0..names.len() {
-    if names[k] == "xo_entry" {
-      names[k] = "main"
+  for pc in all {
+    if locs.len() == 0 || locs[locs.len() - 1] != pc {
+      locs.push(pc)
     }
   }
-  // pprof: Go's four sample types, the period the rate in bytes
-  var strs: List[Str] = ["", "alloc_objects", "count", "alloc_space", "bytes", "inuse_objects", "inuse_space", "space"]
-  var b = BytesBuilder.new()
-  fbytes(b, 1, value_type(1, 2))
-  fbytes(b, 1, value_type(3, 4))
-  fbytes(b, 1, value_type(5, 2))
-  fbytes(b, 1, value_type(6, 4))
-  for (i, s) in stacks.indexed() {
-    var ids = BytesBuilder.new()
-    for pc in s {
-      varint(ids, loc_index(locs, pc) + 1)
-    }
-    var vb = BytesBuilder.new()
-    for x in vals[i] {
-      varint(vb, x)
-    }
-    var smp = BytesBuilder.new()
-    fbytes(smp, 1, ids.freeze())
-    fbytes(smp, 2, vb.freeze())
-    fbytes(b, 2, smp.freeze())
+  var names = syms.names
+  var fr: List[Int] = []
+  for pc in locs {
+    fr.push(func_of(syms, pc - 1, names))
   }
-  pprof_tail(b, strs, locs, cf, names, cfile, cline)
-  fbytes(b, 11, value_type(7, 4))
-  fint(b, 12, rate)
-  let ok = write_file(out, gzip(b.freeze()))
-  let txt = text_path(out)
-  let summary = heap_text(stacks, vals, locs, cf, names, cfile, cline, rate, heapprof.lost(r), heapprof.unset(r))
-  let ok2 = write_file(txt, summary.bytes())
-  if ok && ok2 {
-    stdio.eprint("xo profile: ${stacks.len()} heap samples in ${out} and ${txt}", true)
-  } else {
-    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
-  }
-}
-
-/// n bytes as `go tool pprof` prints them (B, kB, MB, GB by 1024s, two
-/// decimals).
-fn bytes_text(n: Int) -> Str {
-  if n < 1024 {
-    return "${n}B"
-  }
-  var unit = "kB"
-  var d = 1024
-  if n >= 1073741824 {
-    unit = "GB"
-    d = 1073741824
-  } else if n >= 1048576 {
-    unit = "MB"
-    d = 1048576
-  }
-  let h = (n * 100 + d / 2) / d
-  "${h / 100}.${pad2(h % 100)}${unit}"
-}
-
-/// The heap summary: the totals (estimated, as the profile's values),
-/// then the top 30 functions by inuse_space and by alloc_space, flat (the
-/// stack's leaf, the allocating code) and cumulative.
-fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], locs: List[Int], cf: List[List[Int]], names: List[Str], cfile: List[List[Str]], cline: List[List[Int]], rate: Int, lost: Int, unset: Int) -> Str {
-  var tot = [0, 0, 0, 0]
-  for v in vals {
-    for i in 0..4 {
-      tot[i] = tot[i] + v[i]
-    }
-  }
-  var b = StrBuilder.new()
-  b.write("xo heap profile: ${stacks.len()} samples at one per ${bytes_text(rate)} allocated (estimated totals)\n")
-  b.write("in use: ${bytes_text(tot[3])} in ${tot[2]} objects; allocated: ${bytes_text(tot[1])} in ${tot[0]} objects")
-  if lost > 0 {
-    b.write(", ${lost} samples lost")
-  }
-  if unset > 0 {
-    b.write(", ${unset} not tracked for frees")
-  }
-  b.write("\n")
-  for (vi, title) in [(3, "inuse_space"), (1, "alloc_space")] {
-    var flat: List[Int] = []
-    var cum: List[Int] = []
-    var seen: List[Int] = []
-    var hot: List[Str] = []
-    var hot_v: List[Int] = []
-    for _ in 0..names.len() {
-      flat.push(0)
-      cum.push(0)
-      seen.push(-1)
-      hot.push("")
-      hot_v.push(0)
-    }
-    for (k, s) in stacks.indexed() {
-      let x = vals[k][vi]
-      if x == 0 {
-        continue
-      }
-      for (j, pc) in s.indexed() {
-        // the location's frames: an inlined callee's first (flat goes to
-        // the innermost)
-        let li = loc_index(locs, pc)
-        if j == 0 {
-          let f = cf[li][0]
-          flat[f] = flat[f] + x
-          if x > hot_v[f] && !cfile[li][0].is_empty() {
-            hot[f] = "${base_name(cfile[li][0])}:${cline[li][0]}"
-            hot_v[f] = x
-          }
-        }
-        for f in cf[li] {
-          if seen[f] != k {
-            seen[f] = k
-            cum[f] = cum[f] + x
-          }
-        }
-      }
-    }
-    let total = tot[vi]
-    b.write("\ntop 30 by ${title}\n")
-    b.write("      flat  flat%   sum%        cum   cum%  line (the largest)  function\n")
-    // the order: flat, then cumulative, descending (sort_by is stable)
-    var order: List[Int] = []
-    for f in 0..names.len() {
-      if flat[f] > 0 || cum[f] > 0 {
-        order.push(f)
-      }
-    }
-    order = order.sort_by(fn(f: Int) -> Int { -cum[f] }).sort_by(fn(f: Int) -> Int { -flat[f] })
-    var sum = 0
-    for (i, f) in order.indexed() {
-      if i >= 30 {
-        break
-      }
-      sum += flat[f]
-      let at = if hot[f].is_empty() { "-" } else { hot[f] }
-      b.write("${lpad(bytes_text(flat[f]), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(bytes_text(cum[f]), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${names[f]}\n")
-    }
-  }
-  b.freeze()
+  resolve(lines, locs, fr, names)
 }
 
 // ---------------------------------------------------------------------------

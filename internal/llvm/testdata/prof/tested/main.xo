@@ -1,0 +1,12 @@
+// `xo test --profile=heap` (TestProfDrivers): a test that allocates.
+pub fn words(n: Int) -> List[Str] {
+  var out: List[Str] = []
+  for i in 0..n {
+    out.push("word ${i}")
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${words(3).len()}")
+}

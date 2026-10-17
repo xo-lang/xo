@@ -250,8 +250,8 @@ XO_BACKEND_CACHE=on|verify|off xo build --backend=arm64 ...   # decision 0220 ad
 XO_LEAKCHECK=1 <native program>                       # when main returns, `xo leakcheck: N live of M allocations` on stderr; a program that ends with os.proc.exit (or a main returning an error) prints `xo leakcheck: skipped (os.proc.exit)` instead (gotchas/leakcheck-skipped-at-exit.md; last verified: 2026-10-14)
 XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 xo build|run|test --backend=llvm --race <dir>          # ThreadSanitizer (decision 0241 addendum): every function, the runtime's too, marked sanitize_thread and built with clang -fsanitize=thread; a race prints a ThreadSanitizer report (TSAN_OPTIONS=halt_on_error=1 to stop at the first); arm64 and wasm refuse it, the Go backend uses Go's race detector
-XO_PROF=cpu <native program>                            # the sampling CPU profile (decision 0238): SIGPROF at XO_PROF_HZ (100) a second of CPU time, frames by the fault unwinder's tables; at exit pprof (gzip) at XO_PROF_OUT (xo-cpu.pprof; %p is the pid) and a text top 30 by flat and by cumulative beside it (.txt); `xo run --profile=cpu` and `xo test --profile=cpu` (xo-cpu-<pid>.pprof per test process) set it; darwin and linux, arm64 and llvm, and windows/amd64 (llvm, a sampler thread); `go tool pprof -top xo-cpu.pprof` reads it (last verified: 2026-10-16)
-XO_PROF=heap <native program>                           # the heap profile (decision 0238): allocations sampled every XO_PROF_HEAP_RATE bytes on average (512 KiB; 1 = all), alloc and inuse objects and bytes as Go; pprof at XO_PROF_HEAP_OUT (else XO_PROF_OUT without cpu, else xo-heap.pprof) and a .txt top 30 by inuse_space and alloc_space; XO_PROF=cpu,heap takes both
+XO_PROF=cpu <native program>                            # the sampling CPU profile (decision 0238): SIGPROF at XO_PROF_HZ (100) a second of CPU time, frames by the fault unwinder's tables; at exit a raw file at XO_PROF_OUT (xo-prof.xoraw; %p is the pid; decision 0245) with the samples and their locations named; `xo prof FILE` writes pprof (gzip) as xo-cpu.pprof and a text top 30 by flat and by cumulative beside it (.txt); `xo run --profile=cpu` and `xo test --profile=cpu` (xo-cpu-<pid>.pprof per test process) do both steps; darwin and linux, arm64 and llvm, and windows/amd64 (llvm, a sampler thread); `go tool pprof -top xo-cpu.pprof` reads it (last verified: 2026-10-17)
+XO_PROF=heap <native program>                           # the heap profile (decision 0238): allocations sampled every XO_PROF_HEAP_RATE bytes on average (512 KiB; 1 = all) into the same raw file; `xo prof` writes alloc and inuse objects and bytes as Go (xo-heap.pprof) and a .txt top 30 by inuse_space and alloc_space; XO_PROF=cpu,heap takes both
 xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
 go run ./cmd/xo run selfhost/xo -- build|asm [--std=DIR] [--wd=DIR] [--cc=CC] [-o OUT] [--asm=PATH] <dir>   # xo1, the self hosted compiler driver of decision 0158's switch-over experiment: selfhost/check, selfhost/ssa and its passes, selfhost/arm64, then cc (or $XO_CC, --cc) assembles and links with std/llrt (copied next to OUT as OUT.rt), trying the macOS SDKs internal/build tries ($XO_SYSROOT, the remembered one, none, xcrun's, Xcode's); fault positions relative to the program's line root (the nearest xo.mod); refuses programs that need time zone data (std/time), TLS (std/http), or `use c` sources; not the released xo (last verified: 2026-10-11)
@@ -787,17 +787,22 @@ and for diffing two builds function by function, not for a first look.
 
 - `XO_PROF=cpu ./prog`: SIGPROF at `XO_PROF_HZ` per second of CPU time
   (default 100; 1000 for a short program), frames walked with the fault
-  unwinder's tables. At exit (main's end or os.proc.exit) it writes
-  `XO_PROF_OUT` (default `xo-cpu.pprof` in the working directory; `%p`
-  is the process id) and a text summary beside it (`.txt` for
-  `.pprof`): the totals, then the top 30 functions by flat and by
-  cumulative samples, as `go tool pprof -top` prints. One line on
-  stderr names both files. On windows/amd64 a sampler thread suspends
+  unwinder's tables. At exit (main's end or os.proc.exit) it writes a
+  raw file at `XO_PROF_OUT` (default `xo-prof.xoraw` in the working
+  directory; `%p` is the process id; decision 0245) and one line on
+  stderr naming it (`XO_PROF_QUIET=1` drops the line). `xo prof FILE
+  [--cpu-out=PATH] [--heap-out=PATH]` writes `xo-cpu.pprof` and a text
+  summary beside it (`.txt` for `.pprof`): the totals, then the top 30
+  functions by flat and by cumulative samples, as `go tool pprof -top`
+  prints. The program named the locations, so `xo prof` needs neither
+  the binary nor its dSYM; it never overwrites a file (a new temporary
+  file, mode 0600, renamed into place). `xo run --profile` and `xo test
+  --profile` do both steps. On windows/amd64 a sampler thread suspends
   each thread that used CPU (no SIGPROF), and names come from the COFF
   symbol table Windows links keep (no lines); to check it on the Mac,
   cross build (above) and run under Wine with Box64:
   `scripts/docker-wine.sh box64 WORK 'cd /work && XO_PROF=cpu,heap wine
-  /work/win/P.exe; cat xo-cpu.txt xo-heap.txt'` (decision 0238
+  /work/win/P.exe'`, then `xo prof WORK/xo-prof.xoraw` on the Mac (decision 0238
   "Windows"; Box64 cuts some stacks short, gotchas/box64-thread-context-skewed.md).
 - `xo build --release` leaves the profiler out (XO_PROF then prints one
   line saying so) unless `--profile-support` is given; `xo run`, `xo

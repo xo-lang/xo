@@ -22,6 +22,7 @@ commands:
   bind      bind Go packages (use go) or C headers (use c)
   dump      print the task tree of a running Xo program
   replay    rerun a recorded trace or crash bundle offline
+  prof      pprof files and summaries of a native program's profile
   trace     Perfetto JSON and a summary of a native execution trace
   lsp       Language Server Protocol server on stdin/stdout
   mcp       Model Context Protocol server on stdin/stdout

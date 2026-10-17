@@ -1,6 +1,6 @@
 # 0238: A sampling profiler in the native runtime
 
-Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile too, 2026-10-16 (xo-4); both on windows/amd64 (LLVM), 2026-10-16 (xo-4), checked under Wine with Box64 only; windows/arm64 not yet.
+Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile too, 2026-10-16 (xo-4); both on windows/amd64 (LLVM), 2026-10-16 (xo-4), checked under Wine with Box64 only; windows/arm64 not yet. Since decision 0245 (2026-10-17) the program writes a raw file and `xo prof` writes the pprof files and summaries.
 
 ## Context
 
