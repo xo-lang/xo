@@ -1,7 +1,11 @@
 // The runtime of the WebAssembly backend, stage 2 (decision 0179): what
-// the self hosted checker needs beyond the goldens' runtime. Reading the
-// file system through WASI preview1 (`path_open`, `fd_read`,
-// `path_filestat_get`, `fd_readdir`), the constants of collection types
+// the self hosted checker needs beyond the goldens' runtime. The file
+// system through WASI preview1 (`path_open`, `fd_read`, `fd_write`,
+// `path_filestat_get`, `fd_readdir`, `path_create_directory`,
+// `path_remove_directory`, `path_unlink_file`): whole files, file
+// handles (Fs.open, create, open_append, create_new and their reads,
+// lines, writes, close; 2026-10-17), and fspath.xo's raw calls
+// (create_dir_all, remove_all, create_temp); the constants of collection types
 // (`const_once`, decision 0081), Time as its Unix nanoseconds, and
 // SHA-256. A relative path resolves against the first preopened
 // directory (fd 3, the working directory), an absolute one against the
@@ -11,7 +15,7 @@
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -22,6 +26,9 @@ fn rt4_imports() -> Str {
     (import "wasi_snapshot_preview1" "fd_close" (func $fd_close (param i32) (result i32)))
     (import "wasi_snapshot_preview1" "path_filestat_get" (func $path_filestat_get (param i32 i32 i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "fd_readdir" (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_create_directory" (func $path_create_directory (param i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_remove_directory" (func $path_remove_directory (param i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_unlink_file" (func $path_unlink_file (param i32 i32 i32) (result i32)))
 
   """
 }
@@ -31,6 +38,7 @@ fn rt4_imports() -> Str {
 fn rt4_globals() -> Str {
   """
     (global $fsst (mut i64) (i64.const 0))
+    (global $rawerr (mut i64) (i64.const 0))
     (global $fspath (mut i32) (i32.const 0))
     (global $fspathn (mut i32) (i32.const 0))
     (global $fsmsg (mut i32) (i32.const 0))
@@ -64,6 +72,7 @@ fn rt4_text(var g: Gen) -> Str {
     kb.write(le32(k))
   }
   let ka = g.place(kb.freeze())
+  let file_free = g.table_index("$fsfile_free")
   """
     ;; the WASI directory and path of the OS path at o (n bytes): fd 3 and
     ;; the path for a relative one, fd 4 and the rest for an absolute one;
@@ -1214,6 +1223,856 @@ fn rt4_text(var g: Gen) -> Str {
       i32.store offset=36
       local.get $out
       i32.const 32)
+
+    ;; ------------------------------------------------------------------
+    ;; The raw calls under std/native/llrt/fspath.xo (create_dir_all,
+    ;; remove_all, create_temp): 0 or the errno, as the native layers give
+    ;; it (the Unix numbers fspath.xo tests: ENOENT 2, ENOTDIR 20, EEXIST
+    ;; 17), from WASI's codes
+
+    ;; the Unix errno of WASI error e (5, EIO, for one fspath.xo does not
+    ;; tell apart)
+    (func $wasi_errno (param $e i32) (result i64)
+      local.get $e
+      i32.eqz
+      if
+        i64.const 0
+        return
+      end
+      local.get $e
+      i32.const 44
+      i32.eq
+      if
+        i64.const 2
+        return
+      end
+      local.get $e
+      i32.const 20
+      i32.eq
+      if
+        i64.const 17
+        return
+      end
+      local.get $e
+      i32.const 54
+      i32.eq
+      if
+        i64.const 20
+        return
+      end
+      local.get $e
+      i32.const 55
+      i32.eq
+      if
+        i64.const 39
+        return
+      end
+      local.get $e
+      i32.const 31
+      i32.eq
+      if
+        i64.const 21
+        return
+      end
+      local.get $e
+      i32.const 2
+      i32.eq
+      if
+        i64.const 13
+        return
+      end
+      local.get $e
+      i32.const 63
+      i32.eq
+      if
+        i64.const 1
+        return
+      end
+      i64.const 5)
+
+    ;; the WASI error of Unix errno n ($wasi_errno's inverse; 29, EIO, for
+    ;; another)
+    (func $errno_wasi (param $n i64) (result i32)
+      local.get $n
+      i64.const 2
+      i64.eq
+      if
+        i32.const 44
+        return
+      end
+      local.get $n
+      i64.const 17
+      i64.eq
+      if
+        i32.const 20
+        return
+      end
+      local.get $n
+      i64.const 20
+      i64.eq
+      if
+        i32.const 54
+        return
+      end
+      local.get $n
+      i64.const 39
+      i64.eq
+      local.get $n
+      i64.const 66
+      i64.eq
+      i32.or
+      if
+        i32.const 55
+        return
+      end
+      local.get $n
+      i64.const 21
+      i64.eq
+      if
+        i32.const 31
+        return
+      end
+      local.get $n
+      i64.const 13
+      i64.eq
+      if
+        i32.const 2
+        return
+      end
+      local.get $n
+      i64.const 1
+      i64.eq
+      if
+        i32.const 63
+        return
+      end
+      i32.const 29)
+
+    (func $fs_raw_mkdir (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $wpath
+      call $path_create_directory
+      call $wasi_errno)
+
+    (func $fs_raw_rmdir (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $wpath
+      call $path_remove_directory
+      call $wasi_errno)
+
+    (func $fs_raw_unlink (param $o i32) (param $n i32) (result i64)
+      local.get $o
+      local.get $n
+      call $wpath
+      call $path_unlink_file
+      call $wasi_errno)
+
+    ;; 1 a directory, 0 another file, minus the errno (follow: through a
+    ;; final link)
+    (func $fs_raw_kind (param $o i32) (param $n i32) (param $follow i32) (result i64) (local $fd i32) (local $t i32) (local $k i32) (local $e i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $t
+      local.set $fd
+      local.get $fd
+      local.get $follow
+      local.get $t
+      local.get $k
+      i32.const 24
+      call $path_filestat_get
+      local.tee $e
+      if
+        i64.const 0
+        local.get $e
+        call $wasi_errno
+        i64.sub
+        return
+      end
+      i32.const 40
+      i32.load8_u
+      i32.const 3
+      i32.eq
+      i64.extend_i32_u)
+
+    ;; the entries of directory p; fs_raw_errno tells whether they were
+    ;; read ($fs_names' status as the errno)
+    (func $fs_raw_names (param $o i32) (param $n i32) (result i32) (local $l i32)
+      local.get $o
+      local.get $n
+      local.get $o
+      local.get $n
+      call $fs_names
+      local.set $l
+      i64.const 0
+      global.set $rawerr
+      global.get $fsst
+      i64.eqz
+      i32.eqz
+      if
+        ;; FsErr's tag plus one back to the errno
+        global.get $fsst
+        i64.const 1
+        i64.eq
+        if (result i64)
+          i64.const 2
+        else
+          global.get $fsst
+          i64.const 4
+          i64.eq
+          if (result i64)
+            i64.const 20
+          else
+            global.get $fsst
+            i64.const 6
+            i64.eq
+            if (result i64)
+              i64.const 13
+            else
+              i64.const 5
+            end
+          end
+        end
+        global.set $rawerr
+      end
+      local.get $l)
+
+    (func $fs_raw_errno (result i64)
+      global.get $rawerr)
+
+    ;; creates the file p (O_EXCL): 0 or the errno
+    (func $fs_raw_create (param $o i32) (param $n i32) (result i64) (local $fd i32) (local $t i32) (local $k i32) (local $e i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $t
+      local.set $fd
+      local.get $fd
+      i32.const 0
+      local.get $t
+      local.get $k
+      i32.const 5
+      i64.const 0x200064
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        call $wasi_errno
+        return
+      end
+      i32.const 16
+      i32.load
+      call $fd_close
+      drop
+      i64.const 0)
+
+    ;; records errno err (0: success) for the path x: the status
+    (func $fs_raw_fail (param $err i64) (param $x i32) (param $xn i32) (result i64)
+      local.get $err
+      i64.eqz
+      if
+        i64.const 0
+        global.set $fsst
+        i64.const 0
+        return
+      end
+      local.get $err
+      call $errno_wasi
+      local.get $x
+      local.get $xn
+      call $fs_fail)
+
+    ;; ------------------------------------------------------------------
+    ;; File handles (Fs.open, create, open_append, create_new; std/native
+    ;; llrt/fsops.xo's layer 0): an object {rc, drop, fd (-1 closed),
+    ;; buffer (a string object of FS_BUF bytes, 0 before the first
+    ;; buffered read), r, w}, read and write through WASI's fd_read and
+    ;; fd_write; the semantics are fsops.xo's for the other layers
+
+    ;; a handle on fd (-1: a failed open's, closed)
+    (func $fsfile_new (param $fd i32) (result i32) (local $p i32)
+      i32.const 24
+      call $alloc
+      local.tee $p
+      i32.const 0
+      i32.const 24
+      memory.fill
+      local.get $p
+      i32.const 1
+      i32.store
+      local.get $p
+      i32.const ${file_free}
+      i32.store offset=4
+      local.get $p
+      local.get $fd
+      i32.store offset=8
+      local.get $p)
+
+    ;; the handle's last release: its descriptor closed if open
+    (func $fsfile_free (param $p i32)
+      local.get $p
+      i32.load offset=8
+      i32.const 0
+      i32.ge_s
+      if
+        local.get $p
+        i32.load offset=8
+        call $fd_close
+        drop
+      end
+      local.get $p
+      i32.load offset=12
+      if
+        local.get $p
+        i32.load offset=12
+        call $free
+      end
+      local.get $p
+      call $free)
+
+    ;; opens the OS path (o, n) in mode m (fsops.xo open_once's kinds: 0
+    ;; read, 1 create or truncate, 2 append, 3 read and write, 4 and 5 a
+    ;; new file only); a failed open's handle is closed, the status set
+    ;; for the path x
+    (func $fs_open (param $o i32) (param $n i32) (param $mode i64) (param $x i32) (param $xn i32) (result i32)
+      (local $fd i32) (local $t i32) (local $k i32) (local $e i32) (local $m i32) (local $of i32) (local $ff i32) (local $rights i64)
+      local.get $mode
+      i32.wrap_i64
+      local.set $m
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $t
+      local.set $fd
+      local.get $m
+      i32.eqz
+      if
+        ;; reading a directory is IsDir, as fsops.xo's stat first
+        local.get $fd
+        i32.const 1
+        local.get $t
+        local.get $k
+        i32.const 24
+        call $path_filestat_get
+        i32.eqz
+        if
+          i32.const 40
+          i32.load8_u
+          i32.const 3
+          i32.eq
+          if
+            i32.const 31
+            local.get $x
+            local.get $xn
+            call $fs_fail
+            drop
+            i32.const -1
+            call $fsfile_new
+            return
+          end
+        end
+      end
+      ;; oflags: CREAT 1, EXCL 4, TRUNC 8
+      i32.const 0
+      local.set $of
+      local.get $m
+      i32.const 1
+      i32.eq
+      if
+        i32.const 9
+        local.set $of
+      end
+      local.get $m
+      i32.const 2
+      i32.eq
+      local.get $m
+      i32.const 3
+      i32.eq
+      i32.or
+      if
+        i32.const 1
+        local.set $of
+      end
+      local.get $m
+      i32.const 4
+      i32.ge_u
+      if
+        i32.const 5
+        local.set $of
+      end
+      ;; rights: fd_read, fd_seek, fd_tell, fd_filestat_get for reading;
+      ;; fd_write for writing; both for kinds 3 and 4
+      i64.const 0x200064
+      local.set $rights
+      local.get $m
+      i32.eqz
+      if
+        i64.const 0x200026
+        local.set $rights
+      end
+      local.get $m
+      i32.const 3
+      i32.eq
+      local.get $m
+      i32.const 4
+      i32.eq
+      i32.or
+      if
+        i64.const 0x200066
+        local.set $rights
+      end
+      ;; fdflags: APPEND 1
+      local.get $m
+      i32.const 2
+      i32.eq
+      local.set $ff
+      local.get $fd
+      i32.const 1
+      local.get $t
+      local.get $k
+      local.get $of
+      local.get $rights
+      i64.const 0
+      local.get $ff
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        drop
+        i32.const -1
+        call $fsfile_new
+        return
+      end
+      i64.const 0
+      global.set $fsst
+      i32.const 16
+      i32.load
+      call $fsfile_new)
+
+    (func $fs_file_closed (param $f i32) (result i32)
+      local.get $f
+      i32.load offset=8
+      i32.const -1
+      i32.eq)
+
+    ;; one read into the handle's empty buffer: the count (r 0, w the
+    ;; count), 0 at the end, or the negated WASI error
+    (func $fsfile_fill (param $f i32) (result i32) (local $e i32) (local $k i32)
+      local.get $f
+      i32.load offset=12
+      i32.eqz
+      if
+        local.get $f
+        i32.const 65536
+        call $rs_new
+        i32.store offset=12
+      end
+      local.get $f
+      i32.const 0
+      i32.store offset=16
+      local.get $f
+      i32.const 0
+      i32.store offset=20
+      i32.const 0
+      local.get $f
+      i32.load offset=12
+      i32.const 8
+      i32.add
+      i32.store
+      i32.const 4
+      i32.const 65536
+      i32.store
+      local.get $f
+      i32.load offset=8
+      i32.const 0
+      i32.const 1
+      i32.const 8
+      call $fd_read
+      local.tee $e
+      if
+        i32.const 0
+        local.get $e
+        i32.sub
+        return
+      end
+      i32.const 8
+      i32.load
+      local.set $k
+      local.get $f
+      local.get $k
+      i32.store offset=20
+      local.get $k)
+
+    ;; f.read(max): up to max bytes (at most 1 MiB) in a list of one, the
+    ;; empty list at the end or with the status set (fsops.xo file_read:
+    ;; from the buffer first; a read of FS_BUF or more with an empty
+    ;; buffer goes straight into the result)
+    (func $fs_file_read (param $f i32) (param $max i64) (param $x i32) (param $xn i32) (result i32)
+      (local $m i32) (local $k i32) (local $s i32) (local $r i32) (local $w i32) (local $e i32)
+      local.get $max
+      i64.const 1048576
+      i64.gt_s
+      if (result i32)
+        i32.const 1048576
+      else
+        local.get $max
+        i32.wrap_i64
+      end
+      local.set $m
+      local.get $f
+      i32.load offset=16
+      local.set $r
+      local.get $f
+      i32.load offset=20
+      local.set $w
+      local.get $r
+      local.get $w
+      i32.eq
+      if
+        local.get $m
+        i32.const 65536
+        i32.ge_s
+        if
+          local.get $m
+          call $rs_new
+          local.set $s
+          i32.const 0
+          local.get $s
+          i32.const 8
+          i32.add
+          i32.store
+          i32.const 4
+          local.get $m
+          i32.store
+          local.get $f
+          i32.load offset=8
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_read
+          local.tee $e
+          if
+            local.get $s
+            call $free
+            local.get $e
+            local.get $x
+            local.get $xn
+            call $fs_fail
+            drop
+            i32.const ${empty}
+            return
+          end
+          i64.const 0
+          global.set $fsst
+          i32.const 8
+          i32.load
+          local.tee $k
+          i32.eqz
+          if
+            local.get $s
+            call $free
+            i32.const ${empty}
+            return
+          end
+          local.get $s
+          local.get $k
+          call $str_list1
+          return
+        end
+        local.get $f
+        call $fsfile_fill
+        local.tee $k
+        i32.const 0
+        i32.lt_s
+        if
+          i32.const 0
+          local.get $k
+          i32.sub
+          local.get $x
+          local.get $xn
+          call $fs_fail
+          drop
+          i32.const ${empty}
+          return
+        end
+        i64.const 0
+        global.set $fsst
+        local.get $k
+        i32.eqz
+        if
+          i32.const ${empty}
+          return
+        end
+        i32.const 0
+        local.set $r
+        local.get $k
+        local.set $w
+      end
+      local.get $w
+      local.get $r
+      i32.sub
+      local.tee $k
+      local.get $m
+      i32.gt_s
+      if
+        local.get $m
+        local.set $k
+      end
+      local.get $k
+      call $rs_new
+      local.tee $s
+      i32.const 8
+      i32.add
+      local.get $f
+      i32.load offset=12
+      i32.const 8
+      i32.add
+      local.get $r
+      i32.add
+      local.get $k
+      memory.copy
+      local.get $f
+      local.get $r
+      local.get $k
+      i32.add
+      i32.store offset=16
+      i64.const 0
+      global.set $fsst
+      local.get $s
+      local.get $k
+      call $str_list1)
+
+    ;; f.read_line(): the next line without its newline (and a carriage
+    ;; return before it) in a list of one, the empty list at the end or
+    ;; with the status set (fsops.xo file_read_line)
+    (func $fs_file_read_line (param $f i32) (param $x i32) (param $xn i32) (result i32)
+      (local $s i32) (local $n i32) (local $r i32) (local $w i32) (local $k i32) (local $i i32) (local $b i32)
+      i32.const 64
+      call $rs_new
+      local.set $s
+      block $done
+        loop $l
+          local.get $f
+          i32.load offset=16
+          local.set $r
+          local.get $f
+          i32.load offset=20
+          local.set $w
+          local.get $r
+          local.get $w
+          i32.eq
+          if
+            local.get $f
+            call $fsfile_fill
+            local.tee $k
+            i32.const 0
+            i32.lt_s
+            if
+              local.get $n
+              br_if $done
+              local.get $s
+              call $free
+              i32.const 0
+              local.get $k
+              i32.sub
+              local.get $x
+              local.get $xn
+              call $fs_fail
+              drop
+              i32.const ${empty}
+              return
+            end
+            local.get $k
+            i32.eqz
+            if
+              local.get $n
+              br_if $done
+              local.get $s
+              call $free
+              i64.const 0
+              global.set $fsst
+              i32.const ${empty}
+              return
+            end
+            i32.const 0
+            local.set $r
+            local.get $k
+            local.set $w
+          end
+          local.get $f
+          i32.load offset=12
+          i32.const 8
+          i32.add
+          local.set $b
+          ;; the first newline in r..w, or w
+          local.get $r
+          local.set $i
+          block $found
+            loop $scan
+              local.get $i
+              local.get $w
+              i32.ge_u
+              br_if $found
+              local.get $b
+              local.get $i
+              i32.add
+              i32.load8_u
+              i32.const 10
+              i32.eq
+              br_if $found
+              local.get $i
+              i32.const 1
+              i32.add
+              local.set $i
+              br $scan
+            end
+          end
+          local.get $s
+          local.get $n
+          local.get $b
+          local.get $r
+          i32.add
+          local.get $i
+          local.get $r
+          i32.sub
+          call $rs_append
+          local.set $s
+          local.get $n
+          local.get $i
+          local.get $r
+          i32.sub
+          i32.add
+          local.set $n
+          local.get $i
+          local.get $w
+          i32.lt_u
+          if
+            ;; past the newline
+            local.get $f
+            local.get $i
+            i32.const 1
+            i32.add
+            i32.store offset=16
+            br $done
+          end
+          local.get $f
+          local.get $w
+          i32.store offset=16
+          br $l
+        end
+      end
+      local.get $n
+      if
+        local.get $s
+        i32.const 8
+        i32.add
+        local.get $n
+        i32.add
+        i32.const 1
+        i32.sub
+        i32.load8_u
+        i32.const 13
+        i32.eq
+        if
+          local.get $n
+          i32.const 1
+          i32.sub
+          local.set $n
+        end
+      end
+      i64.const 0
+      global.set $fsst
+      local.get $s
+      local.get $n
+      call $str_list1)
+
+    ;; f.write(data): every byte, 0 or the status (fsops.xo file_write)
+    (func $fs_file_write (param $f i32) (param $d i32) (param $dn i32) (param $x i32) (param $xn i32) (result i64) (local $off i32) (local $e i32)
+      block $x
+        loop $l
+          local.get $off
+          local.get $dn
+          i32.ge_u
+          br_if $x
+          i32.const 0
+          local.get $d
+          i32.const 8
+          i32.add
+          local.get $off
+          i32.add
+          i32.store
+          i32.const 4
+          local.get $dn
+          local.get $off
+          i32.sub
+          i32.store
+          local.get $f
+          i32.load offset=8
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_write
+          local.tee $e
+          if
+            local.get $e
+            local.get $x
+            local.get $xn
+            call $fs_fail
+            return
+          end
+          local.get $off
+          i32.const 8
+          i32.load
+          i32.add
+          local.set $off
+          br $l
+        end
+      end
+      i64.const 0
+      global.set $fsst
+      i64.const 0)
+
+    ;; f.close(): a second close does nothing (fsops.xo file_close)
+    (func $fs_file_close (param $f i32) (param $x i32) (param $xn i32) (result i64) (local $fd i32) (local $e i32)
+      local.get $f
+      i32.load offset=8
+      local.tee $fd
+      i32.const -1
+      i32.eq
+      if
+        i64.const 0
+        global.set $fsst
+        i64.const 0
+        return
+      end
+      local.get $f
+      i32.const -1
+      i32.store offset=8
+      local.get $fd
+      call $fd_close
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
+      i64.const 0
+      global.set $fsst
+      i64.const 0)
   """
 }
 

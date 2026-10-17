@@ -455,7 +455,7 @@ fn (var g: Gen) call(v: Int) {
         g.fail("the wasm backend does not support the network (`${name}`): WASI preview1 has no sockets")
         return
       }
-      g.fail("the wasm backend does not support the call `${name}` (stage 2)")
+      g.fail("the wasm backend does not support the call `${name}` (stage 2), in ${g.f.name}")
     }
   }
 }

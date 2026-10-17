@@ -481,7 +481,7 @@ test binary's MemFs has all of them, as on the Go backend, since
 fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
 fn (f: Fs) create(path: Str) -> File ! FsErr      uses fs.write  // write; created or truncated
 fn (f: Fs) open_append(path: Str) -> File ! FsErr uses fs.write  // write at the end; created if missing
-fn (f: Fs) create_new(path: Str) -> File ! FsErr  uses fs.write  // write a new file: Exists(path) if anything is there (O_EXCL; a symbolic link counts); not on wasm, which has no file handles
+fn (f: Fs) create_new(path: Str) -> File ! FsErr  uses fs.write  // write a new file: Exists(path) if anything is there (O_EXCL; a symbolic link counts)
 fn (f: Fs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
 fn (f: Fs) copy(from: Str, to: Str) -> () ! FsErr uses fs        // contents and permission bits
 fn (f: Fs) mode(path: Str) -> Int ! FsErr         uses fs.read   // permission bits: 0o644

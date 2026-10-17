@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- WebAssembly builds (WASI) open files as handles: `Fs.open`, `create`,
+  `open_append`, and `create_new` with their reads, line reads, writes,
+  and close, and `create_dir_all`, `remove_all`, and `create_temp`, with
+  the native backends' results (golden fs_handles); symbolic links,
+  copies, modes, and locks are still native only.
+
 - Files of more than 2 GB can be written and read on macOS (one system
   call refused more than INT_MAX bytes): the native runtime moves at most
   1 GiB a call. Toolchain tests shrink the chunk through std/internal's

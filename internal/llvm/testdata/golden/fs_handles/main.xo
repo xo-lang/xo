@@ -1,0 +1,54 @@
+// File handles on every backend, the WebAssembly one included (its WASI
+// runtime, compiler/wasm rt4.xo): create, write in parts, close twice;
+// open and read by lines (a last line without a newline, a carriage
+// return dropped) and by sizes; open_append; create_new on a new path
+// and on an existing one; open of a missing file and of a directory.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-handles-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/sub")?
+  let root = base.sub(name)
+
+  let w = root.create("a.txt")?
+  w.write(b"one\r\ntwo\n")?
+  w.write(b"\nthree")?
+  w.close()?
+  w.close()?
+
+  let r = root.open("a.txt")?
+  while let Some(line) = r.read_line()? {
+    out.println("line ${line.quote()}")
+  }
+  r.close()?
+
+  let s = root.open("a.txt")?
+  while let Some(part) = s.read(4)? {
+    out.println("part ${(part.to_str() ?? "?").quote()}")
+  }
+  s.close()?
+
+  let ap = root.open_append("a.txt")?
+  ap.write(b"\nfour")?
+  ap.close()?
+  out.println("appended ${root.read_text("a.txt")?.quote()}")
+
+  let n = root.create_new("b.txt")?
+  n.write(b"new")?
+  n.close()?
+  out.println("created ${root.read_text("b.txt")?}")
+  match root.create_new("b.txt") {
+    Ok(_) => out.println("again: created")
+    Err(e) => out.println("again: ${e}")
+  }
+  match root.open("missing.txt") {
+    Ok(_) => out.println("missing: opened")
+    Err(e) => out.println("missing: ${e}")
+  }
+  match root.open("sub") {
+    Ok(_) => out.println("dir: opened")
+    Err(e) => out.println("dir: ${e}")
+  }
+  base.remove_all(name)?
+}

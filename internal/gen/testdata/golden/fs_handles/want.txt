@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+line "one"
+line "two"
+line ""
+line "three"
+part "one\r"
+part "\ntwo"
+part "\n\nth"
+part "ree"
+appended "one\r\ntwo\n\nthree\nfour"
+created new
+again: Exists(path: "b.txt")
+missing: NotFound(path: "missing.txt")
+dir: IsDir(path: "sub")
+--- stderr
