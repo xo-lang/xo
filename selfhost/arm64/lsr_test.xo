@@ -1,0 +1,16 @@
+// Tests of the text passes (reload_reuse).
+
+test "reload_reuse: a reload of a slot x16 holds goes" {
+  let t = "Lf_b0:\n\tstr x0, [sp, #984]\n\tldr x16, [sp, #984]\n\tldr x9, [x16]\n\ttbz x9, #63, Lf_b2\n\tb Lf_b1\nLf_b2:\n\tadd x9, x9, #1\n\tldr x16, [sp, #984]\n\tstr x9, [x16]\nLf_b1:\n\tret"
+  expect(reload_reuse(t, "")) == "Lf_b0:\n\tstr x0, [sp, #984]\n\tldr x16, [sp, #984]\n\tldr x9, [x16]\n\ttbz x9, #63, Lf_b2\n\tb Lf_b1\nLf_b2:\n\tadd x9, x9, #1\n\tstr x9, [x16]\nLf_b1:\n\tret"
+}
+
+test "reload_reuse: a label reached later forgets" {
+  let t = "\tldr x16, [sp, #8]\nLf_b1:\n\tldr x16, [sp, #8]\n\tcbz x0, Lf_b1\n\tret"
+  expect(reload_reuse(t, "")) == t
+}
+
+test "reload_reuse: a call, a write of x16, another store forget" {
+  let t = "\tldr x16, [sp, #8]\n\tbl _f\n\tldr x16, [sp, #8]\n\tadd x16, x16, #1\n\tldr x16, [sp, #8]\n\tstr x3, [sp, #8]\n\tldr x16, [sp, #8]\n\tldr x16, [sp, #8]"
+  expect(reload_reuse(t, "")) == "\tldr x16, [sp, #8]\n\tbl _f\n\tldr x16, [sp, #8]\n\tadd x16, x16, #1\n\tldr x16, [sp, #8]\n\tstr x3, [sp, #8]\n\tldr x16, [sp, #8]"
+}

@@ -304,7 +304,7 @@ fn (var g: G) emit() {
     ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
-  g.text.push(g.far_tests(g.far_slots(pair_mem(b.join(""), ext))))
+  g.text.push(g.far_tests(g.far_slots(pair_mem(reload_reuse(b.join(""), ext), ext))))
 }
 
 /// The number of instructions past which a function's tbz and tbnz may

@@ -190,3 +190,20 @@ Mac bench/perf/tls, min of 7: x25519 (with ML-KEM) 1395.7 to 1392.0 M
 instructions; x25519only 1310.6 to 1310.5. Sweep (digest, tls, json,
 text; 59 workloads, 3 rounds): 0 slower, 0 faster beyond spread.
 TestMLKEMAccumulated (10,000 iterations, both backends) passes.
+
+## Scratch reload cache (2026-10-17, xo-4)
+
+Spill traffic is broad: in bench/perf/tls's client, 56K of 419K static
+arm64 instructions were reloads into or spill stores from x16 and x17
+(x509.parse 3.5K reloads, an 1840 byte frame; tls13, tlsio). emit.xo
+sc_slot (the first version, which the fixed point caught miscompiling:
+gotchas/arm64-scratch-reload-cache.md; the numbers below are its sweep)
+gave static reloads 32,334 to 29,208. The version that landed is a text
+pass, lsr.xo reload_reuse: reloads 32,334 to 27,886 (13.8%), static
+instructions 419,100 to 413,934.
+
+Sweep (base main 9f35cc6a's compiler, the same std, 114 workloads, 3
+rounds): 0 slower, 6 faster beyond spread: fault/defer 0.901, tls/p384
+0.984, text/zone_fmt 0.991, tls/chacha 0.992, tls/p256 0.993, tls/x25519
+0.994; median 0.999. ctx/await and ctx/spawn (spreads 1.46 and 1.34)
+again with 5 rounds: 0.957 and 0.883, within spread.

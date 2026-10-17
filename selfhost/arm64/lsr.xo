@@ -663,6 +663,219 @@ fn pair_mem(text: Str, ext: Str) -> Str {
   out.join("\n")
 }
 
+/// A function's text without the reloads of a spill slot into x16 or
+/// x17 that already hold it (2026-10-17: 13% of bench/perf/tls's arm64
+/// instructions were spill reloads and stores, many of one slot again
+/// before anything wrote it). On the final text, so every branch the
+/// emitter made counts (forwarded jumps, rotated loop tests): what the
+/// registers hold since their last `ldr x16|x17, [sp, #k]` or `str
+/// x16|x17, [sp, #k]` is forgotten at a label anything refers to (text
+/// or ext), at a call, at an instruction that may write the register or
+/// moves sp, and for slot k at another store to it
+/// (gotchas/arm64-scratch-reload-cache.md). At a label every reference
+/// to which (in text and ext) came before it, the registers hold what
+/// they held at each of those branches and on the way falling into it;
+/// a label referred to later (a loop's head), or from ext, starts empty.
+fn reload_reuse(text: Str, ext: Str) -> Str {
+  let lines = text.split("\n")
+  // how many times each label is referred to, in text and in ext
+  var nrefs: Map[Str, Int] = {}
+  for x in lines {
+    if label_def(x).is_empty() {
+      for r in line_label_refs(x) {
+        nrefs[r] = (nrefs.get(r) ?? 0) + 1
+      }
+    }
+  }
+  for x in ext.split("\n") {
+    for r in line_label_refs(x) {
+      nrefs[r] = (nrefs.get(r) ?? 0) + 1000000
+    }
+  }
+  // per label, the references seen so far and what x16 and x17 held at
+  // them (the intersection)
+  var seen: Map[Str, Int] = {}
+  var at16: Map[Str, Int] = {}
+  var at17: Map[Str, Int] = {}
+  // the slot offsets x16 and x17 hold, -1 for none; whether the line
+  // before can fall into the next
+  var h16 = -1
+  var h17 = -1
+  var falls = true
+  var out: List[Str] = List.with_capacity(lines.len())
+  for l in lines {
+    let name = label_def(l)
+    if !name.is_empty() {
+      let n = nrefs.get(name) ?? 0
+      if n > 0 {
+        if (seen.get(name) ?? 0) != n {
+          h16 = -1
+          h17 = -1
+        } else {
+          let b16 = at16.get(name) ?? -1
+          let b17 = at17.get(name) ?? -1
+          h16 = if falls && h16 != b16 { -1 } else { b16 }
+          h17 = if falls && h17 != b17 { -1 } else { b17 }
+        }
+      }
+      falls = true
+      out.push(l)
+      continue
+    }
+    if !l.starts_with("\t") {
+      // a symbol, a comment, or a blank line: forget
+      if !l.is_empty() && !l.starts_with("//") {
+        h16 = -1
+        h17 = -1
+      }
+      out.push(l)
+      continue
+    }
+    if l.starts_with("\t.") {
+      out.push(l) // a directive
+      continue
+    }
+    // the labels this instruction may branch to: what x16 and x17 hold
+    // here (before it runs: a branch writes neither)
+    for r in line_label_refs(l) {
+      let k = seen.get(r) ?? 0
+      if k == 0 {
+        at16[r] = h16
+        at17[r] = h17
+      } else {
+        if (at16.get(r) ?? -1) != h16 {
+          at16[r] = -1
+        }
+        if (at17.get(r) ?? -1) != h17 {
+          at17[r] = -1
+        }
+      }
+      seen[r] = k + 1
+    }
+    falls = !(l.starts_with("\tb ") || l.starts_with("\tret") || l.starts_with("\tbr ") || l.starts_with("\tbrk"))
+    let (lok, lr, lbase, loff) = parse_ldr(l)
+    if lok && lbase == "sp" && (lr == "x16" || lr == "x17") {
+      if (lr == "x16" && h16 == loff) || (lr == "x17" && h17 == loff) {
+        continue // it holds the slot already
+      }
+      if lr == "x16" {
+        h16 = loff
+      } else {
+        h17 = loff
+      }
+      out.push(l)
+      continue
+    }
+    let (sok, sr, soff) = parse_sp_str(l)
+    if sok {
+      // the slot's value is the stored register's now
+      if h16 == soff {
+        h16 = -1
+      }
+      if h17 == soff {
+        h17 = -1
+      }
+      if sr == "x16" {
+        h16 = soff
+      } else if sr == "x17" {
+        h17 = soff
+      }
+      out.push(l)
+      continue
+    }
+    if writes_scratch(l) {
+      h16 = -1
+      h17 = -1
+    }
+    out.push(l)
+  }
+  out.join("\n")
+}
+
+/// The labels line l refers to (label_refs's names, of one line).
+fn line_label_refs(l: Str) -> List[Str] {
+  var out: List[Str] = []
+  let bs = l.bytes()
+  var k = 0
+  while k < bs.len() {
+    if bs[k] != 'L' {
+      k += 1
+      continue
+    }
+    var e = k + 1
+    while e < bs.len() && is_label_byte(bs[e]) {
+      e += 1
+    }
+    out.push(l[k..e])
+    k = e
+  }
+  out
+}
+
+/// Whether l is `\tstr x<n>|xzr, [sp, #<off>]`: the register and the
+/// offset.
+fn parse_sp_str(l: Str) -> (Bool, Str, Int) {
+  let bad = (false, "", 0)
+  if !l.starts_with("\tstr x") || !l.ends_with("]") {
+    return bad
+  }
+  let rest = l[5..l.len()]
+  let comma = rest.find(", [sp, #") ?? -1
+  if comma < 0 {
+    return bad
+  }
+  let r = rest[0..comma]
+  if r != "xzr" && !is_xreg(r) {
+    return bad
+  }
+  let num = rest[comma + 8..rest.len() - 1]
+  if !is_signed_digits(num) {
+    return bad
+  }
+  match Int.parse(num) {
+    Some(off) => (true, r, off)
+    None => bad
+  }
+}
+
+/// Whether instruction line l may change what x16 or x17 hold, or what a
+/// spill slot holds: a call, anything that moves sp or stores through it
+/// other than parse_sp_str's form, and an instruction naming x16, x17,
+/// w16, or w17 other than as a read (a store's source, a compare's or a
+/// test's operand, a later operand of a computation).
+fn writes_scratch(l: Str) -> Bool {
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let op = body[0..sp]
+  let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
+  if op is "bl" | "blr" | "blraa" | "blrab" | "svc" | "br" {
+    return true
+  }
+  if ops.starts_with("sp") || ops.contains("[sp]") || ops.contains("]!") || ops.contains("[sp, #") {
+    // sp moves, or the stack is written or read in another form
+    return !op.starts_with("ldr") || ops.contains("]!") || ops.contains("], #")
+  }
+  let names = ops.contains("x16") || ops.contains("x17") || ops.contains("w16") || ops.contains("w17")
+  if !names {
+    return false
+  }
+  if op.starts_with("ld") {
+    // a load writes the registers before its address (x16 as the base
+    // is a read)
+    let br = ops.find("[") ?? ops.len()
+    let dst = ops[0..br]
+    return dst.contains("x16") || dst.contains("x17") || dst.contains("w16") || dst.contains("w17") || ops.contains("]!") || ops.contains("], #")
+  }
+  if op.starts_with("sw") || op.starts_with("cas") || op.starts_with("st") && op != "str" && op != "stp" && op != "strb" && op != "strh" && op != "stur" {
+    return true // a swap, an exclusive store's status
+  }
+  if op is "str" | "stp" | "strb" | "strh" | "stur" | "cmp" | "cmn" | "tst" | "cbz" | "cbnz" | "tbz" | "tbnz" | "ccmp" | "ccmn" {
+    return false
+  }
+  // a computation: its first operand is its result
+  ops.starts_with("x16") || ops.starts_with("x17") || ops.starts_with("w16") || ops.starts_with("w17")
+}
+
 /// Whether label name is a debug line row's (emit.xo: `..._dl<n>`) or
 /// a variable location's (`..._dv<n>`, dwvars.xo): kept, as the debug
 /// sections refer to them. Before a pair, a location label is one
