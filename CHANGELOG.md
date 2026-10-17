@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: pushing a byte or a word onto a string the code holds alone and
+  that has room is inline (a count and capacity check, a store), the
+  call only for a shared, literal, or full string: json/enc_strings 3.7%
+  fewer instructions, json and text workloads 0.7 to 2%.
 - arm64 debug builds describe a variable's word that holds a constant by
   the constant (DW_OP_constu, or DW_OP_addrx of a string literal's
   static object): a literal field that no register keeps (an immortal

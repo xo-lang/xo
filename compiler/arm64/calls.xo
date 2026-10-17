@@ -10,6 +10,72 @@ use github.com/xo-lang/xo/compiler/ssa
 /// clear) goes up by one; a shared count (bits 63 and 62 set) is updated
 /// atomically in a cold block; the immortal count is left alone
 /// (decision 0058).
+/// rt.rs_push_byte's and rt.rs_push_word's fast path inline (obj.xo
+/// rs_push_byte, rs_push_word: a string object a of length an, held only
+/// here and with room, takes the byte, or the word's 8 bytes of which n
+/// count, in place): the count is 1 and the capacity (word 1) has 1 (8)
+/// bytes past an, so the byte (word) goes at a + 16 + an and the length
+/// is an + 1 (n); else the call (a shared, immortal, or full string).
+/// Seven or eight instructions instead of a call (2026-10-17:
+/// obj_rs_push_byte and obj_rs_push_word were 65K instructions a TLS
+/// handshake on arm64; LLVM inlines them).
+/// Whether the SSA block being selected is in a loop (push_fast's
+/// condition).
+fn (g: G) push_loops() -> Bool {
+  g.cur_sb >= 0 && in_loop(g.f, g.cur_sb)
+}
+
+fn (var g: G) push_fast(v: Int, word: Bool) {
+  let x = g.f.values[v]
+  let ws = g.words(x.args[0])
+  let a = g.real(ws[0])
+  let an = g.real(ws[1])
+  let b = g.word(x.args[1])
+  let rp = g.new_vreg(false)
+  let rn = g.new_vreg(false)
+  let c = g.def1(false, "ldr $d0, [$u0]", [a])
+  let before = g.m_()
+  let slow = g.new_block(true)
+  let room = g.new_block(false)
+  let fast = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #1", us: [c], cond: "ne", targets: [slow, room]})
+  g.cur = room
+  let cap = g.def1(false, "ldr $d0, [$u0, #8]", [a])
+  if word {
+    // 8 bytes of room: an + 8 above the capacity is the slow path
+    let end = g.def1(false, "add $d0, $u0, #8", [an])
+    let _b2 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [end, cap], cond: "hi", targets: [slow, fast]})
+  } else {
+    let _b2 = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [an, cap], cond: "hs", targets: [slow, fast]})
+  }
+  g.cur = fast
+  let at = g.def1(false, "add $d0, $u0, $u1", [a, an])
+  var n1 = 0
+  if word {
+    g.store("str $u0, [$u1, #16]", [b, at])
+    n1 = g.def1(false, "add $d0, $u0, $u1", [an, g.word(x.args[2])])
+  } else {
+    g.store("strb $wu0, [$u1, #16]", [b, at])
+    n1 = g.def1(false, "add $d0, $u0, #1", [an])
+  }
+  g.pmove([rp, rn], regs([a, n1]))
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = slow
+  var args = [rsrc(a), rsrc(an), rsrc(b)]
+  if word {
+    args.push(rsrc(g.word(x.args[2])))
+  }
+  let o = g.rt(if word { "xo_x_obj_rs_push_word" } else { "xo_x_obj_rs_push_byte" }, args + [framesrc()], [false])
+  let n = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+  g.pmove([rp, rn], regs([o[0], n]))
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+  g.set(v, [rp, rn])
+}
+
 fn (var g: G) inc(p0: Int) {
   let p = g.real(p0)
   let c = g.def1(false, "ldr $d0, [$u0]", [p])
@@ -794,6 +860,11 @@ fn (var g: G) call_op(v: Int) {
 fn (var g: G) inline_rt(v: Int) -> Bool {
   let x = g.f.values[v]
   match aux_str(x.aux) {
+    // in a loop only: a push outside one (a value formatted into ""
+    // once) finds the string shared or immortal, and the check is four
+    // instructions more before the same call (text/int_fmt 1.006x)
+    "rt.rs_push_byte" if g.push_loops() => g.push_fast(v, false)
+    "rt.rs_push_word" if g.f.values[v].args.len() == 3 && g.push_loops() => g.push_fast(v, true)
     "rt.int_wrap" => {
       let (op, ok) = g.const_int(x.args[0])
       if !ok || op < 0 || op > 7 {
