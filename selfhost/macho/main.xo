@@ -7,7 +7,7 @@
 //   macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...
 //       link objects and archives into an executable (libSystem, and each
 //       --dylib, imported)
-//   macho elflink -o OUT [--interp=PATH] IN.o|IN.a...
+//   macho elflink -o OUT [--interp=PATH] [--static] IN.o|IN.a...
 //       link linux/arm64 ELF objects and archives into an executable
 //       (glibc imported)
 //
@@ -137,6 +137,9 @@ fn elflink_main(os: Os, args: List[Str]) -> () ! FsErr {
       i += 1
     } else if a.starts_with("--interp=") {
       opts.interp = a.trim_prefix("--interp=")
+    } else if a == "--static" {
+      // no loader, no imports (decision 0243; x86-64 links only this way)
+      opts.static = true
     } else {
       ins.push(LinkInput{path: a, data: os.fs.read(a)?})
     }
@@ -159,7 +162,7 @@ fn elflink_main(os: Os, args: List[Str]) -> () ! FsErr {
 fn usage(os: Os) -> Never {
   os.stdio.eprintln("usage: macho asm [-o OUT.o] [--minos=X.Y] [--elf] [--bench=N] IN.s")
   os.stdio.eprintln("       macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...")
-  os.stdio.eprintln("       macho elflink -o OUT [--interp=PATH] IN.o|IN.a...")
+  os.stdio.eprintln("       macho elflink -o OUT [--interp=PATH] [--static] IN.o|IN.a...")
   os.proc.exit(2)
 }
 

@@ -204,6 +204,19 @@ To be filled in as stages land.
     to clang's objects byte for byte.
   LLVM's choices the assembler matches are in
   gotchas/amd64-encoder-llvm-choices.md.
+- Stage 4, static links (Xo Lang 2, 2026-10-17): selfhost/macho elflink
+  links x86-64 objects in its static mode (decision 0243), `macho
+  elflink --static`: R_X86_64_64, PC32, PLT32, PC64, GOTPCREL(X) through
+  GOT slots, 32 and 32S, TPOFF32 with TLS variant 2 (the block ends at
+  the thread pointer), GOTTPOFF relaxed to local exec (the mov or add
+  load becomes an immediate), and calls of weak undefined symbols a
+  5 byte nop or a ret. End to end: 30 goldens compiled by the LLVM
+  backend in Docker (linux/amd64, `clang -S -O2` with local exec thread
+  locals), assembled by Xo's assembler and linked by elflink on the Mac,
+  run in Docker linux/amd64: 29 of 29 linked pass their want.txt
+  (tz_table needs the build's generated zone table object, outside the
+  dump). A dynamic link (glibc, PLT stubs, GLOB_DAT) on x86-64 is still
+  to come.
 
 ## Alternatives
 

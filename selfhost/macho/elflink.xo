@@ -68,6 +68,7 @@ const SHN_LORESERVE = 0xff00
 const SHN_ABS = 0xfff1
 const SHN_COMMON = 0xfff2
 const R_AARCH64_NONE = 0
+const R_X86_64_PC64 = 24
 const R_AARCH64_PREL64 = 260
 const R_AARCH64_ADR_PREL_PG_HI21_NC = 276
 const R_AARCH64_TSTBR14 = 279
@@ -144,6 +145,8 @@ struct ESym {
 
 struct EObj {
   path: Str
+  /// e_machine: 183 (arm64) or 62 (x86-64)
+  machine: Int = 183
   sects: List[ESect] = []
   syms: List[ESym] = []
   live: Bool = true
@@ -205,6 +208,8 @@ struct ELinker {
   phnum: Int = 0
   /// common symbols allocated in .bss: (object, symbol) to offset
   commons: Map[(Int, Int), Int] = {}
+  /// x86-64 objects (decision 0254, stage 4): every input's machine
+  amd64: Bool = false
   err: Str = ""
 }
 
@@ -225,8 +230,20 @@ pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str
       }
     }
   }
+  if !l.objs.is_empty() {
+    l.amd64 = l.objs[0].machine == 62
+    for o in l.objs {
+      if o.machine != l.objs[0].machine {
+        return Err("${o.path}: an object of another machine than ${l.objs[0].path}")
+      }
+    }
+    if l.amd64 && !l.opts.static {
+      return Err("x86-64: only a static link (no C library) so far")
+    }
+  }
   l.resolve()
-  if l.err.is_empty() {
+  if l.err.is_empty() && !l.amd64 {
+    // glibc's _start for arm64 (an x86-64 static link has the program's)
     l.synthesize_start()
   }
   if l.err.is_empty() {
@@ -267,8 +284,9 @@ fn parse_elf_object(path: Str, b: Bytes) -> Result[EObj, Str] {
   if b.len() < 64 || b[0] != 0x7f || bstr(b[1..4]) != "ELF" || b[4] != 2 || b[5] != 1 {
     return Err("${path}: not a 64 bit little endian ELF file")
   }
-  if rd16(b, 16) != 1 || rd16(b, 18) != 183 {
-    return Err("${path}: not an arm64 relocatable object")
+  let machine = rd16(b, 18)
+  if rd16(b, 16) != 1 || (machine != 183 && machine != 62) {
+    return Err("${path}: not an arm64 or x86-64 relocatable object")
   }
   let shoff = rd64(b, 40)
   let shnum = rd16(b, 60)
@@ -277,7 +295,7 @@ fn parse_elf_object(path: Str, b: Bytes) -> Result[EObj, Str] {
     return Err("${path}: truncated section headers")
   }
   let stro = rd64(b, shoff + 64 * shstrndx + 24)
-  var obj = EObj{path: path}
+  var obj = EObj{path: path, machine: machine}
   var symtab = -1
   for i in 0..shnum {
     let h = shoff + 64 * i
@@ -785,7 +803,8 @@ fn (var l: ELinker) place() {
       if out < 0 {
         continue
       }
-      if s.typ != SHT_NOBITS && s.typ != SHT_PROGBITS && s.typ != SHT_NOTE && s.typ != 14 && s.typ != 15 {
+      // 0x70000001: SHT_X86_64_UNWIND, x86-64's .eh_frame
+      if s.typ != SHT_NOBITS && s.typ != SHT_PROGBITS && s.typ != SHT_NOTE && s.typ != 14 && s.typ != 15 && s.typ != 0x70000001 {
         l.fail("${l.objs[o].path}: section ${s.name} of type ${s.typ}")
         return
       }
@@ -839,6 +858,12 @@ fn (var l: ELinker) scan() {
         if d < 0 && i < 0 {
           l.fail("${l.objs[o].path}: ${bstr(l.objs[o].syms[r.sym].name)} is not defined")
           return
+        }
+        if l.amd64 {
+          if r.typ == R_X86_64_GOTPCREL || r.typ == R_X86_64_GOTPCRELX || r.typ == R_X86_64_REX_GOTPCRELX {
+            l.need_got(d, i)
+          }
+          continue
         }
         if r.typ == R_AARCH64_ADR_GOT_PAGE || r.typ == R_AARCH64_LD64_GOT_LO12_NC {
           l.need_got(d, i)
@@ -1117,7 +1142,11 @@ fn (var l: ELinker) relocate() {
         if r.typ == R_AARCH64_NONE {
           continue
         }
-        l.reloc(o, s, base, r)
+        if l.amd64 {
+          l.reloc_x86(o, s, base, r)
+        } else {
+          l.reloc(o, s, base, r)
+        }
         if !l.err.is_empty() {
           return
         }
@@ -1134,6 +1163,81 @@ fn (var l: ELinker) relocate() {
     } else {
       l.patches.push(Patch{addr: at, size: 8, value: l.sym_addr(d, i)})
     }
+  }
+}
+
+/// The offset from the thread pointer of a TLS address on x86-64 (TLS
+/// variant 2): the TLS block ends at the thread pointer, its size rounded
+/// up to its alignment.
+fn (l: ELinker) tp_off_x86(addr: Int) -> Int {
+  addr - l.tls_start - align_up(l.tls_size, l.tls_align)
+}
+
+/// An x86-64 relocation of a static link (decision 0254, stage 4).
+fn (var l: ELinker) reloc_x86(o: Int, s: ESect, base: Int, r: ERel) {
+  let p = base + r.off
+  let (d, i) = l.def_of(o, r.sym)
+  let imp = d < 0
+  let sv = if imp { 0 } else { l.sym_addr(d, i) }
+  let v = sv + r.addend
+  let t = r.typ
+  let path = l.objs[o].path
+  if t == R_X86_64_64 {
+    l.patches.push(Patch{addr: p, size: 8, value: v})
+  } else if t == R_X86_64_PC64 {
+    l.patches.push(Patch{addr: p, size: 8, value: v - p})
+  } else if (t == R_X86_64_PLT32 || t == R_X86_64_PC32) && imp && r.off >= 1 && (s.data[r.off - 1] == 0xe8 || s.data[r.off - 1] == 0xe9) {
+    // a call of a weak undefined symbol (the sanitizer hooks, which the
+    // runtime calls only when linked): a call becomes a 5 byte nop, a
+    // tail jump a ret, as the arm64 link's
+    if s.data[r.off - 1] == 0xe8 {
+      l.patches.push(Patch{addr: p - 1, size: 4, value: 0x441f0f})
+      l.patches.push(Patch{addr: p + 3, size: 1, value: 0})
+    } else {
+      l.patches.push(Patch{addr: p - 1, size: 1, value: 0xc3})
+    }
+  } else if t == R_X86_64_PC32 || t == R_X86_64_PLT32 {
+    let x = v - p
+    if x < -2147483648 || x >= 2147483648 {
+      return l.fail("${path}: R_X86_64_PC32 out of range in ${s.name}")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: x & 0xffffffff})
+  } else if t == R_X86_64_GOTPCREL || t == R_X86_64_GOTPCRELX || t == R_X86_64_REX_GOTPCRELX {
+    let x = l.got_addr(d, i) + r.addend - p
+    l.patches.push(Patch{addr: p, size: 4, value: x & 0xffffffff})
+  } else if t == R_X86_64_32 || t == R_X86_64_32S {
+    if (t == R_X86_64_32 && (v < 0 || v >= 4294967296)) || (t == R_X86_64_32S && (v < -2147483648 || v >= 2147483648)) {
+      return l.fail("${path}: an absolute 32 bit relocation out of range")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: v & 0xffffffff})
+  } else if t == R_X86_64_TPOFF32 {
+    if imp {
+      return l.fail("${path}: thread local ${bstr(l.imports[i].name)} is imported")
+    }
+    l.patches.push(Patch{addr: p, size: 4, value: (l.tp_off_x86(sv) + r.addend) & 0xffffffff})
+  } else if t == R_X86_64_GOTTPOFF {
+    // initial exec relaxed to local exec, as linkers do: `movq
+    // sym@GOTTPOFF(%rip), %reg` (REX 8b /r with mod 00 r/m 101) becomes
+    // `movq $off, %reg` (REX c7 /0), `addq` (03) `addq $off, %reg` (81 /0)
+    if imp || r.off < 3 {
+      return l.fail("${path}: an initial exec TLS reference that cannot be relaxed")
+    }
+    let rex = Int(s.data[r.off - 3])
+    let op = Int(s.data[r.off - 2])
+    let modrm = Int(s.data[r.off - 1])
+    if (rex & 0xf0) != 0x40 || (op != 0x8b && op != 0x03) || (modrm & 0xc7) != 5 {
+      return l.fail("${path}: an initial exec TLS reference that cannot be relaxed")
+    }
+    let reg = (modrm >> 3) & 7
+    // REX.R (the destination's bit 3) becomes REX.B
+    let rex2 = (rex & 0xfb) | (if (rex & 4) != 0 { 1 } else { 0 })
+    l.patches.push(Patch{addr: p - 3, size: 1, value: rex2})
+    l.patches.push(Patch{addr: p - 2, size: 1, value: if op == 0x8b { 0xc7 } else { 0x81 }})
+    l.patches.push(Patch{addr: p - 1, size: 1, value: 0xc0 | reg})
+    // the addend is -4 (the field's end): the offset itself
+    l.patches.push(Patch{addr: p, size: 4, value: l.tp_off_x86(sv) & 0xffffffff})
+  } else {
+    l.fail("${path}: x86-64 relocation type ${t} in ${s.name} is not supported")
   }
 }
 
@@ -1538,7 +1642,7 @@ fn (var l: ELinker) write() -> Bytes {
   o.u8(1)
   o.zeros(9)
   o.u16(ET_EXEC)
-  o.u16(183)
+  o.u16(if l.amd64 { 62 } else { 183 })
   o.u32(1)
   let entry = match l.globals.get(l.opts.entry.bytes()) {
     Some((d, i)) => l.sym_addr(d, i)

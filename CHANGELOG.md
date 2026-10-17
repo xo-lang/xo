@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- selfhost/macho elflink links x86-64 static executables (decision 0254,
+  stage 4; `macho elflink --static`): LLVM-compiled goldens assembled by
+  Xo's x86-64 assembler and linked by it pass on linux/amd64 (29 of 29).
+
 - P-256's final subtraction takes its first limb as t0 + 1 and its masks
   as (carry - 1): three instructions fewer per field add, subtract and
   multiply (bench/perf/tls p256 on arm64: 1.3% fewer instructions, about

@@ -1015,3 +1015,33 @@ test "each amd64 test file assembles to clang's ELF object" {
   }
   expect(bad) == []
 }
+
+test "an x86-64 static link: EM_X86_64, weak hooks a nop and a ret, GOT and initial exec TLS relaxed" {
+  // decision 0254 stage 4: the program's own _start; __hook_a called and
+  // __hook_b tail called, both weak and undefined; a GOT load of helper;
+  // an initial exec load of tv relaxed to local exec
+  let src = "\t.text\n\t.globl _start\n\t.type _start,@function\n_start:\n\tcallq helper\n\tcallq __hook_a\n\tmovq helper@GOTPCREL(%rip), %rax\n\tmovq tv@GOTTPOFF(%rip), %r9\n\tjmp __hook_b\n\t.type helper,@function\nhelper:\n\tretq\n\t.weak __hook_a\n\t.weak __hook_b\n\t.section .tdata,\"awT\",@progbits\n\t.p2align 3\ntv:\n\t.quad 7\n"
+  let obj = assemble_elf_amd64(src.bytes()).or_fault("assemble")
+  let exe = match link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{static: true}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(rd16(exe, 18)) == 62
+  let off = rd64(exe, 24) - ELF_BASE
+  // callq helper: e8 to helper, past 5 + 7 + 7 + 5 bytes (the jmp to an
+  // undefined symbol is the rel32 form)
+  expect(Int(exe[off])) == 0xe8
+  expect(rd32(exe, off + 1)) == 24
+  // callq __hook_a: a 5 byte nop
+  expect(Int(exe[off + 5])) == 0x0f
+  expect(Int(exe[off + 6])) == 0x1f
+  // movq tv@GOTTPOFF(%rip), %r9 -> movq $-8, %r9 (49 c7 c1 f8 ff ff ff)
+  expect(Int(exe[off + 17])) == 0x49
+  expect(Int(exe[off + 18])) == 0xc7
+  expect(Int(exe[off + 19])) == 0xc1
+  expect(rd32(exe, off + 20)) == 0xfffffff8
+  // jmp __hook_b: a ret
+  expect(Int(exe[off + 24])) == 0xc3
+  // an x86-64 dynamic link is not there yet
+  expect(link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{})) == Err("x86-64: only a static link (no C library) so far")
+}
