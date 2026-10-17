@@ -116,6 +116,49 @@ pub fn alloc(h: Int, n: Int) -> Int {
   // the class's words are at fl + FREE_LISTS, fl + NFREE, fl + MAG
   let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
   var r = rt.mem_load(fl, FREE_LISTS, 8)
+  if r == 0 && rt.mem_load(h, CENTRAL, 8) != 0 {
+    // the class's list is empty: a magazine of blocks other threads freed
+    // first (refill's take, written out: a function of this module calls
+    // no other, decision 0207), else the bump below. One size class
+    // computation an allocation, and no refill call while the list has
+    // blocks (2026-10-17: halloc called refill before every allocation)
+    var m = rt.mem_load(fl, MAG, 8)
+    if m != 0 {
+      rt.mem_store(fl, MAG, 0, 8)
+    } else {
+      // central_take: a magazine is linked by its first block's second word
+      let cen = rt.mem_load(h, CENTRAL, 8)
+      if rt.slot_load(cen, c, RELAXED) != 0 {
+        rt.heap_lock()
+        m = rt.slot_load(cen, c, RELAXED)
+        if m != 0 {
+          rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
+        }
+        rt.heap_unlock()
+      }
+    }
+    if m != 0 {
+      rt.mem_store(fl, FREE_LISTS, m, 8)
+      // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
+      // division: no `/`, which can fault)
+      var q = 0
+      var rem = MAG_BYTES
+      var k = 12
+      while k >= 0 {
+        let d = rt.int_wrap(3, size, k)
+        if d <= rem {
+          rem = rt.int_wrap(1, rem, d)
+          q = q | rt.int_wrap(3, 1, k)
+        }
+        k = rt.int_wrap(1, k, 1)
+      }
+      if q < 8 {
+        q = 8
+      }
+      rt.mem_store(fl, NFREE, q, 8)
+      r = m
+    }
+  }
   if r != 0 {
     let next = rt.mem_load(r, 0, 8)
     rt.mem_store(fl, FREE_LISTS, next, 8)

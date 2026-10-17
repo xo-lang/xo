@@ -116,12 +116,9 @@ fn halloc(hw: Int, n: Int) -> Int {
   if n < 0 {
     return halloc(hw, 0) // not taken: the inliner's cycle
   }
-  let mt = hw & 1
-  let h = subw(hw, mt)
-  if mt != 0 {
-    alloc.refill(h, n)
-  }
-  alloc.alloc(h, n)
+  // with other threads running, alloc refills an empty class from the
+  // central lists itself (alloc.refill_at)
+  alloc.alloc(subw(hw, hw & 1), n)
 }
 
 /// Frees the block p to heap word hw (xo_rt.c xo_free; free_mt with
