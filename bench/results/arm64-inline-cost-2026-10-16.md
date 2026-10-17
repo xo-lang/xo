@@ -207,3 +207,11 @@ rounds): 0 slower, 6 faster beyond spread: fault/defer 0.901, tls/p384
 0.984, text/zone_fmt 0.991, tls/chacha 0.992, tls/p256 0.993, tls/x25519
 0.994; median 0.999. ctx/await and ctx/spawn (spreads 1.46 and 1.34)
 again with 5 rounds: 0.957 and 0.883, within spread.
+
+Sweep of the text pass (base main 9f35cc6a's compiler, the same std,
+114 workloads, 3 rounds): 0 slower beyond spread but tls/aes128 1.026
+and tls/aes128tls13 1.043 at the edge of theirs (1.020, 1.040); again
+with 5 rounds over tls: aes128 1.001, aes128tls13 0.977, 0 slower, 5
+faster (chacha 0.980, p384 0.981, p256 0.992, x25519 0.993, x25519only
+0.992). The full sweep's faster rows: fault/defer 0.901, atomic/contended
+0.956, p384 0.981, digest/argon2, json/small, text/zone_fmt 0.993.

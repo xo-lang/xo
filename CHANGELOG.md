@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a reload of a spilled value that x16 or x17 already holds is
+  dropped (13.8% of reloads in the TLS client; fault/defer 10% fewer
+  instructions, TLS handshakes 0.7 to 2%).
 - The amd64 backend selects x86's own forms for checked multiplies (imul
   and jo), constant offsets (displacements), and logical immediates:
   collatz 13%, iface 24%, hof 18% fewer instructions.
