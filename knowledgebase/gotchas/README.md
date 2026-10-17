@@ -10,6 +10,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-template-cmp-cset-folded.md](arm64-template-cmp-cset-folded.md): Observed 2026-10-15: a def1 template ending in cmp and cset loses the cset to a branch fold; give the compare its own template.
 - [arm64-if-conversion-cost.md](arm64-if-conversion-cost.md): Observed 2026-10-17: csel if-conversion that removed mispredicts still cost cycles on a loaded condition in a loop, a speculated `&&` half, and every test of `is_leap`; skip those shapes and measure in cycles.
 - [arm64-skipped-block-memo.md](arm64-skipped-block-memo.md): Anticipated 2026-10-17: an if-conversion leaves blocks unreachable but still selected; a block they dominate would inherit registers nothing writes; skip only blocks that dominate nothing or keep no registers.
+- [git-pull-rebase-stops-silently.md](git-pull-rebase-stops-silently.md): Observed 2026-10-17: a quiet `git pull --rebase` that stopped on a conflict let a gate run on a half finished rebase; check `git status`; repotest TestNoConflictMarkers fails on markers.
 - [git-stash-shared-across-worktrees.md](git-stash-shared-across-worktrees.md): Observed 2026-10-15: `git stash pop` in a worktree can apply another agent's stash; use `git pull --rebase --autostash`.
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
