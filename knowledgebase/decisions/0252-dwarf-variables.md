@@ -64,7 +64,7 @@ What the compiler has to work with:
      DW_TAG_enumeration_type for the tag naming the variants. If lldb's
      clang type system does not show variant parts (stage 2 checks it
      first), the fallback is the tag and the payload words as members,
-     with the formatter of point 4 choosing the variant.
+     with the Xo debugger (0253) choosing the variant.
    - Str, List[T], Map, Set, Box, function values, handles: a structure
      of their words (Str: `obj`, a pointer to a structure `count, cap`
      with the bytes after it, and `len`; List: a pointer to a structure
@@ -109,7 +109,8 @@ What the compiler has to work with:
 6. **Test.** internal/arm64 and internal/llvm tests build a program with
    a struct, a List[Int], a Str, a Map, and an enum local, run it under
    lldb in batch mode to a breakpoint on a known line, and compare
-   `frame variable` (with the formatter) against a golden, on the arm64
+   `frame variable` against a golden (a cross check of the DWARF; the
+   Xo debugger's own tests come with 0253), on the arm64
    backend (macho and --ld=cc) and on LLVM, plus `dwarfdump --verify`
    on the dSYM. Linux: the same program's `.debug_info` and
    `.debug_loclists` checked by llvm-dwarfdump in the Docker image.
@@ -140,8 +141,8 @@ What the compiler has to work with:
 - Every pass that removes or copies SSA values keeps the binding
   records consistent; the SSA verifier checks that each record names a
   live value of the right type.
-- The object layouts become an interface of the formatter; changing one
-  changes xo.py and its test.
+- The object layouts become an interface of the Xo debugger (0253);
+  changing one changes its reader and their test.
 
 ## Alternatives
 
