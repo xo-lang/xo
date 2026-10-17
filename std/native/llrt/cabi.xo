@@ -680,8 +680,6 @@ fn prog_group_clear() { tasks.prog_group_set(0) }
 
 fn prog_group() -> Int { tasks.prog_group() }
 
-fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { tasks.task_spawn(s, fl, run, drop, fdrop, flags, site, lp, ln) }
-
 fn task_wanted(t: Int) -> Int { if tasks.task_wanted(t) { 1 } else { 0 } }
 
 fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { tasks.task_spawn_fn(s, code, env, run, drop, fdrop, flags, site, lp, ln) }

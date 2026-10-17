@@ -139,10 +139,11 @@ index. Each list cost an allocation, a share walk and a free per spawn:
 bench/perf/conc spawn at XO_THREADS=1 on macOS 2,250 to 1,843
 instructions and about 574 to 490 cycles a spawn (rust-ct: 1,450 and
 about 320). The wasm backend's runtime (selfhost/wasm rt3.xo) keeps the
-list of one (rt.task_spawn). The native runtime keeps rt.task_spawn too
-(the task's T_TWO word tells which entry form to call) for code that an
-older compiler built, the self build's seed: a seed that knows
-task_spawn_fn can drop it (gotchas/runtime-abi-change-breaks-seed.md).
+list of one (rt.task_spawn). The native runtime kept rt.task_spawn too
+(the task's T_TWO word told which entry form to call) for code that an
+older compiler built, the self build's seed, until seed 0.19.0, which
+knows task_spawn_fn; it went on 2026-10-17
+(gotchas/runtime-abi-change-breaks-seed.md).
 Test: testdata/golden/conc_closure_env (environments of tasks canceled
 before they ran, of finished and background tasks, under TestGolden's
 leak check on both native backends).

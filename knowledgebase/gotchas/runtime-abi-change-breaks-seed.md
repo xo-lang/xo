@@ -24,5 +24,7 @@ Keep the old entry point beside the new one until a seed knows the new
 one: rt.task_spawn (the list of one) stays and rt.task_spawn_fn is the
 new name, the task records which form it got (tasks.xo T_TWO). Remove
 the old one after the next seed cut (a minor version, owner approved).
+Done for rt.task_spawn after seed 0.19.0 (2026-10-17): the build from
+that seed and the fixed point proved no seed code calls it.
 The alternative is cutting a seed first (gotchas
 seed-older-than-intrinsics.md), which needs the owner.

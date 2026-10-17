@@ -30,8 +30,7 @@ use native/rt
 /// xo_task (248 bytes): the header (count, free function), the
 /// cancellation node (56 bytes), the scope (not counted), the state
 /// (atomic: 0 queued, 1 running, 2 done), the entry function, the result
-/// list's drop function, the closure until it runs (its code, or a list
-/// of one from task_spawn), the
+/// list's drop function, the closure's code until it runs, the
 /// result (a shared list of one), whether it unwound (a C int), whether
 /// it is background and its handle consumed (C ints), the spawn site,
 /// the lock of the waiters, the wait list of its awaiters, the scope
@@ -48,9 +47,7 @@ const T_RESULT = 112
 const T_UNWOUND = 120
 const T_BACKGROUND = 124
 const T_CONSUMED = 128
-/// 1 when the closure is its two words (task_spawn_fn: T_FL its code,
-/// T_FENV its environment), 0 for a list of one in T_FL (a C int)
-const T_TWO = 132
+// 132: free (T_TWO, the list of one form's flag, until seed 0.19.0)
 const T_SITE = 136
 const T_MU = 144
 const T_WAITERS = 152
@@ -510,15 +507,11 @@ fn stat(k: Int) { rtstats.count(k) }
 /// faults at the ln bytes at lp and gives the closure back, decision
 /// 0085, through the environment's own drop; fdrop is unused). site
 /// tells the scope which spawn failed.
-pub fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, code, env, true, run, drop, fdrop, flags, site, lp, ln) }
+/// (The list of one form, rt.task_spawn, went with seed 0.19.0, which
+/// calls this.)
+pub fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, code, env, run, drop, flags, site, lp, ln) }
 
-/// task_spawn_fn with the closure in a list of one, fl (consumed), which
-/// fdrop releases and run takes with t: what code from a compiler older
-/// than task_spawn_fn calls (the self build's seed), until a seed knows
-/// task_spawn_fn.
-pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, fl, 0, false, run, drop, fdrop, flags, site, lp, ln) }
-
-fn spawn(s: Int, fl: Int, env: Int, two: Bool, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
+fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
   let pl = pool_ready()
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
@@ -538,7 +531,6 @@ fn spawn(s: Int, fl: Int, env: Int, two: Bool, run: Int, drop: Int, fdrop: Int, 
   st(t, T_DROP, drop)
   st(t, T_FL, fl)
   st(t, T_FENV, env)
-  st4(t, T_TWO, if two { 1 } else { 0 })
   st4(t, T_BACKGROUND, flags & 1)
   st4(t, T_CONSUMED, (flags / 2) & 1)
   st(t, T_SITE, site)
@@ -559,11 +551,7 @@ fn spawn(s: Int, fl: Int, env: Int, two: Bool, run: Int, drop: Int, fdrop: Int, 
   if r == -1 {
     budget.release(bud)
     obj.free_obj(t)
-    if two {
-      env_release(env)
-    } else if fl != empty_list() {
-      let _d = rt.call_c2(fdrop, fl, 0)
-    }
+    env_release(env)
     fault.raise_str_at("a task was started on a scope that has ended", lp, ln)
   }
   // the pruned tasks: their nodes unlinked, the list's references
@@ -805,13 +793,8 @@ const RELEASE = 2
 /// run_entry, rt.sched_rt op 29, until decision 0233's rt.frame_addr).
 fn run_entry(c: Int, t: Int, fl: Int, env: Int) {
   st(c, ctx.C_BOUNDARY, rt.frame_addr())
-  // the entry function takes the closure (its two words, or a list of
-  // one) and the task
-  if ld4(t, T_TWO) != 0 {
-    let _r = rt.call_c4(ld(t, T_RUN), fl, env, t, 0)
-  } else {
-    let _r = rt.call_c2(ld(t, T_RUN), fl, t)
-  }
+  // the entry function takes the closure's two words and the task
+  let _r = rt.call_c4(ld(t, T_RUN), fl, env, t, 0)
 }
 
 /// Wakes every context waiting in the list l (its mutex held).
