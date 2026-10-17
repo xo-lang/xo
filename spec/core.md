@@ -2723,6 +2723,38 @@ call and its result, plus scheduler decisions.
 breakpoints, break on contract failure, eval, step, step back with replay).
 `xo debug --dap` speaks the Debug Adapter Protocol for editors.
 
+The protocol's version 1 (decision 0253; selfhost/debug session.xo; until
+the process control of stage 2 it runs on a recorded thread as `xo dev
+debug --json`): each command (decision 0253 point 4) gives one line, an
+object with `v` (1), `cmd` (the command's long name: `break`, `delete`,
+`run`, `continue`, `step`, `next`, `finish`, `print`, `locals`,
+`backtrace`, `frame`, `tasks`, `task`, `threads`, `quit`; `""` for a line
+that is not a command), and `ok`. With `ok` false the object has `error`
+(the text), nothing else. With `ok` true, by command:
+
+- `break`: `id`, `locations` (each `{pc, file, line}`; `pc` is a `"0x..."`
+  string, `file` a base name).
+- `delete`: `id`.
+- `backtrace`: `frames`, each `{index, pc, function, inlined, file, line,
+  selected}`; an inlined call is a frame of its own (`inlined` true) with
+  its physical frame's `pc`, innermost first.
+- `frame`: `frame`, one frame as in `backtrace`.
+- `locals`: `frame` (the selected frame's index), `vars`, each `{name,
+  type, param, text}` and `value`, or `error` instead of `value` when the
+  variable cannot be read there (`text` then says why, as
+  `<optimized out>`).
+- `print`: `frame`, `path` (`p.a.x`), `text`, `value`.
+- `threads`: `threads`, each `{id, selected}` (and `recorded` for a
+  recorded thread).
+- `quit`: no more fields.
+
+A `value` is `{"text": T}` for a scalar (`T` its text: an integer keeps
+its 64 bits, a float has Xo's float text, `true` or `false`, a pointer
+`0x...`), `{"type": NAME, "fields": [{"name", "value"}, ...]}` for a
+structure, and `{"type": "[N]", "elements": [value, ...]}` for an array.
+Fields are added to a version without changing `v`; removing or changing
+one takes the next `v`, as an `XOnnnn` code keeps its meaning.
+
 **[P1]** The generated Go code carries `//line file.xo:N` directives, so Delve,
 Go stack traces, and pprof report Xo source locations.
 

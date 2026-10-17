@@ -316,3 +316,10 @@ programs):
   one failed). `xo debug --batch` becomes this with a live process.
   TestUnwind runs it on each build: frame N to sum or run_claimed, print
   k or units (lldb's values), break, and the refusal to run.
+- --json (2026-10-17): the session's commands also give one JSON line
+  each (session.xo exec_json), version 1 as spec 11.5 documents it (a
+  top level `v`; fields added keep it, a removed or changed field takes
+  the next, as the XOnnnn codes keep their meaning); `xo dev debug
+  --json`. selfhost/debug json_test.xo holds a golden line per command
+  on a hand made session; TestUnwind decodes the lines of a real one
+  (v 1, ok, the printed value, the selected frame).

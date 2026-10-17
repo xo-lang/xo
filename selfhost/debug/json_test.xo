@@ -1,0 +1,54 @@
+// The JSON of `xo debug --json` (spec 10.7), one golden line per
+// command, on a hand made session: f(k: Int) with a Point p, stopped at
+// main.xo:4 and called from main.
+
+fn json_session() -> Session {
+  var info = Info{}
+  info.types[1] = Type{tag: 0x24, name: "Int", size: 8, enc: 5, of: -1, members: []}
+  info.types[4] = Type{tag: 0x13, name: "Point", size: 16, enc: 0, of: -1, members: [Member{name: "x", ty: 1, offset: 0}, Member{name: "y", ty: 1, offset: 8}]}
+  let k = Var{name: "k", ty: 1, param: true, line: 3, locs: [Loc{lo: 0x100, hi: 0x200, pieces: [Piece{place: Place.Reg(reg: 0), size: 0}]}]}
+  let p = Var{name: "p", ty: 4, param: false, line: 4, locs: [Loc{lo: 0x100, hi: 0x200, pieces: [Piece{place: Place.Reg(reg: 11), size: 8}, Piece{place: Place.Reg(reg: 12), size: 8}]}]}
+  info.funcs = [Func{name: "f", lo: 0x100, hi: 0x200, vars: [k, p]}]
+  var l = Lines{}
+  l.files = ["/w/app/main.xo"]
+  l.rows = [
+    Row{addr: 0x100, file: 0, line: 3, stmt: true, end: false},
+    Row{addr: 0x108, file: 0, line: 4, stmt: true, end: false},
+    Row{addr: 0x110, file: 0, line: 5, stmt: true, end: false},
+    Row{addr: 0x200, file: -1, line: 0, stmt: false, end: true},
+  ]
+  let snap = Snapshot{regs: {-1: 0x108, 0: 10, 11: 7, 12: 8, 31: 0x7000}, chunks: []}
+  let frames = [
+    VFrame{pc: 0x108, name: "f", file: "main.xo", line: 4, inlined: false, vars: [k, p], regs: snap.regs, how: "start"},
+    VFrame{pc: 0x300, name: "main", file: "main.xo", line: 9, inlined: false, vars: [], regs: {31: 0x7010}, how: "cfi"},
+  ]
+  Session{info: info, lines: l, tab: Tables{}, snap: snap, frames: frames}
+}
+
+test "xo debug --json: one line per command" {
+  var s = json_session()
+  let golden: List[(Str, Str)] = [
+    ("bt", "{\"v\":1,\"cmd\":\"backtrace\",\"ok\":true,\"frames\":[{\"index\":0,\"pc\":\"0x108\",\"function\":\"f\",\"inlined\":false,\"file\":\"main.xo\",\"line\":4,\"selected\":true},{\"index\":1,\"pc\":\"0x300\",\"function\":\"main\",\"inlined\":false,\"file\":\"main.xo\",\"line\":9,\"selected\":false}]}"),
+    ("locals", "{\"v\":1,\"cmd\":\"locals\",\"ok\":true,\"frame\":0,\"vars\":[{\"name\":\"k\",\"type\":\"Int\",\"param\":true,\"text\":\"10\",\"value\":{\"text\":\"10\"}},{\"name\":\"p\",\"type\":\"Point\",\"param\":false,\"text\":\"Point{x: 7, y: 8}\",\"value\":{\"type\":\"Point\",\"fields\":[{\"name\":\"x\",\"value\":{\"text\":\"7\"}},{\"name\":\"y\",\"value\":{\"text\":\"8\"}}]}}]}"),
+    ("print p.y", "{\"v\":1,\"cmd\":\"print\",\"ok\":true,\"frame\":0,\"path\":\"p.y\",\"text\":\"8\",\"value\":{\"text\":\"8\"}}"),
+    ("p q", "{\"v\":1,\"cmd\":\"print\",\"ok\":false,\"error\":\"no variable \\\"q\\\" in frame 0\"}"),
+    ("b main.xo:4", "{\"v\":1,\"cmd\":\"break\",\"ok\":true,\"id\":1,\"locations\":[{\"pc\":\"0x108\",\"file\":\"main.xo\",\"line\":4}]}"),
+    ("b main.xo:40", "{\"v\":1,\"cmd\":\"break\",\"ok\":false,\"error\":\"no code at main.xo:40\"}"),
+    ("d 1", "{\"v\":1,\"cmd\":\"delete\",\"ok\":true,\"id\":1}"),
+    ("frame 1", "{\"v\":1,\"cmd\":\"frame\",\"ok\":true,\"frame\":{\"index\":1,\"pc\":\"0x300\",\"function\":\"main\",\"inlined\":false,\"file\":\"main.xo\",\"line\":9,\"selected\":true}}"),
+    ("frame 5", "{\"v\":1,\"cmd\":\"frame\",\"ok\":false,\"error\":\"no frame 5 (2 frames)\"}"),
+    ("threads", "{\"v\":1,\"cmd\":\"threads\",\"ok\":true,\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]}"),
+    ("run", "{\"v\":1,\"cmd\":\"run\",\"ok\":false,\"error\":\"this session is a recorded thread: running the program comes with the process control (decision 0253 stage 2)\"}"),
+    ("c", "{\"v\":1,\"cmd\":\"continue\",\"ok\":false,\"error\":\"this session is a recorded thread: running the program comes with the process control (decision 0253 stage 2)\"}"),
+    ("tasks", "{\"v\":1,\"cmd\":\"tasks\",\"ok\":false,\"error\":\"the task views come with decision 0253 stage 4\"}"),
+    ("frob", "{\"v\":1,\"cmd\":\"\",\"ok\":false,\"error\":\"unknown command \\\"frob\\\"\"}"),
+    ("q", "{\"v\":1,\"cmd\":\"quit\",\"ok\":true}"),
+  ]
+  for (cmd, want) in golden {
+    expect(s.exec_json(cmd)) == want
+  }
+}
+
+test "JSON strings escape quotes, backslashes, and control characters" {
+  expect(json_str("a\"b\\c\nd\te")) == "\"a\\\"b\\\\c\\nd\\u0009e\""
+}

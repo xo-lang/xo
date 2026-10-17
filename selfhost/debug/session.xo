@@ -97,78 +97,203 @@ pub fn session(exe: Bytes, dwarf: Sections, snap: Snapshot) -> Session {
   Session{info: info, lines: l, tab: tab, snap: snap, frames: fs}
 }
 
+/// The version of the JSON of `xo debug --json` (spec 10.7): a change
+/// that removes or changes a field takes the next number; added fields
+/// keep it.
+pub const JSON_V = 1
+
+/// A command's result: its text, and its JSON fields after "v", "cmd",
+/// and "ok" (a comma separated list of `"name":value`, or "").
+struct Res {
+  text: Str
+  json: Str
+}
+
 /// Runs command line `line`: its output, or an error's text.
 pub fn (var s: Session) exec(line: Str) -> Str {
   match parse_cmd(line) {
     Ok(c) => match s.run_cmd(c) {
-      Ok(t) => t
+      Ok(r) => r.text
       Err(e) => "error: ${e}"
     }
     Err(e) => "error: ${e}"
   }
 }
 
-fn (var s: Session) run_cmd(c: Cmd) -> Str ! Str {
+/// Runs command line `line`: one line of JSON, `{"v":1,"cmd":NAME,
+/// "ok":true,...}` with the command's fields, or with "ok":false its
+/// "error" (spec 10.7).
+pub fn (var s: Session) exec_json(line: Str) -> Str {
+  match parse_cmd(line) {
+    Ok(c) => {
+      let head = "{\"v\":${JSON_V},\"cmd\":${json_str(cmd_name(c))}"
+      match s.run_cmd(c) {
+        Ok(r) => "${head},\"ok\":true${if r.json.is_empty() { "" } else { ",${r.json}" }}}"
+        Err(e) => "${head},\"ok\":false,\"error\":${json_str(e)}}"
+      }
+    }
+    Err(e) => "{\"v\":${JSON_V},\"cmd\":\"\",\"ok\":false,\"error\":${json_str(e)}}"
+  }
+}
+
+/// The command's name in JSON: its long form.
+pub fn cmd_name(c: Cmd) -> Str {
+  match c {
+    Cmd.Break(_) => "break"
+    Cmd.Delete(_) => "delete"
+    Cmd.Run => "run"
+    Cmd.Continue => "continue"
+    Cmd.Step => "step"
+    Cmd.Next => "next"
+    Cmd.Finish => "finish"
+    Cmd.Print(_) => "print"
+    Cmd.Locals => "locals"
+    Cmd.Backtrace => "backtrace"
+    Cmd.Frame(_) => "frame"
+    Cmd.Tasks => "tasks"
+    Cmd.Task(_, _) => "task"
+    Cmd.Threads => "threads"
+    Cmd.Quit => "quit"
+  }
+}
+
+fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str {
   match c {
     Cmd.Break(spot) => {
       let id = s.bpts.add(s.info, s.lines, spot)?
       var at: List[Str] = []
+      var js: List[Str] = []
       for p in s.bpts.list {
         if p.id == id {
           for a in p.addrs {
             at.push("0x${hex(a)}${s.where_(a)}")
+            js.push(s.loc_json(a))
           }
         }
       }
-      Ok("breakpoint ${id}: ${at.join(", ")}")
+      Ok(Res{text: "breakpoint ${id}: ${at.join(", ")}", json: "\"id\":${id},\"locations\":[${js.join(",")}]"})
     }
     Cmd.Delete(id) => {
       let _a = s.bpts.delete(id)?
-      Ok("deleted breakpoint ${id}")
+      Ok(Res{text: "deleted breakpoint ${id}", json: "\"id\":${id}"})
     }
     Cmd.Backtrace => {
       var out: List[Str] = []
+      var js: List[Str] = []
       for (i, f) in s.frames.indexed() {
         let mark = if i == s.sel { "*" } else { " " }
         out.push("${mark} #${i} ${s.frame_text(f)}")
+        js.push(s.frame_json(i, f))
       }
-      Ok(out.join("\n"))
+      Ok(Res{text: out.join("\n"), json: "\"frames\":[${js.join(",")}]"})
     }
     Cmd.Frame(n) => {
       if n >= s.frames.len() {
         return Err("no frame ${n} (${s.frames.len()} frames)")
       }
       s.sel = n
-      Ok("#${n} ${s.frame_text(s.frames[n])}")
+      Ok(Res{text: "#${n} ${s.frame_text(s.frames[n])}", json: "\"frame\":${s.frame_json(n, s.frames[n])}"})
     }
     Cmd.Locals => {
       let f = s.cur()?
       var out: List[Str] = []
+      var js: List[Str] = []
       for v in f.vars {
-        out.push("${v.name} = ${s.show(f, v)}")
+        let (text, vj) = s.var_value(v)
+        out.push("${v.name} = ${text}")
+        js.push("{\"name\":${json_str(v.name)},\"type\":${json_str(s.info.type_name(v.ty))},\"param\":${v.param},${vj}}")
       }
-      Ok(if out.is_empty() { "no variables" } else { out.join("\n") })
+      Ok(Res{text: if out.is_empty() { "no variables" } else { out.join("\n") }, json: "\"frame\":${s.sel},\"vars\":[${js.join(",")}]"})
     }
     Cmd.Print(path) => {
       let f = s.cur()?
       for v in f.vars {
         if v.name == path[0] {
-          let k = s.selected_pc()
-          let val = value_in(s.info, v, k, s.regs_of(), s.snap)?
+          let val = value_in(s.info, v, s.selected_pc(), s.regs_of(), s.snap)?
           let x = field(val, path[1..])?
-          return Ok("${path.join(".")} = ${x.show()}")
+          let shown = x.show()
+          return Ok(Res{text: "${path.join(".")} = ${shown}", json: "\"frame\":${s.sel},\"path\":${json_str(path.join("."))},\"text\":${json_str(shown)},\"value\":${val_json(x)}"})
         }
       }
       Err("no variable ${path[0].quote()} in frame ${s.sel}")
     }
     Cmd.Run | Cmd.Continue | Cmd.Step | Cmd.Next | Cmd.Finish => Err("this session is a recorded thread: running the program comes with the process control (decision 0253 stage 2)")
     Cmd.Tasks | Cmd.Task(_, _) => Err("the task views come with decision 0253 stage 4")
-    Cmd.Threads => Ok("* thread 1 (recorded)")
+    Cmd.Threads => Ok(Res{text: "* thread 1 (recorded)", json: "\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]"})
     Cmd.Quit => {
       s.done = true
-      Ok("")
+      Ok(Res{text: "", json: ""})
     }
   }
+}
+
+/// A variable's value in the selected frame: its text, and the JSON
+/// fields "text" and "value" (or "error" when it cannot be read).
+fn (s: Session) var_value(v: Var) -> (Str, Str) {
+  match value_in(s.info, v, s.selected_pc(), s.regs_of(), s.snap) {
+    Ok(x) => {
+      let t = x.show()
+      (t, "\"text\":${json_str(t)},\"value\":${val_json(x)}")
+    }
+    Err(e) => (e, "\"text\":${json_str(e)},\"error\":${json_str(e)}")
+  }
+}
+
+/// A value as JSON: a scalar `{"text":"10"}` (its text: integers keep
+/// their 64 bits), a structure `{"type":"Point","fields":[{"name":"x",
+/// "value":...}]}`, an array `{"type":"[3]","elements":[...]}`.
+pub fn val_json(v: Val) -> Str {
+  match v {
+    Val.Text(t) => "{\"text\":${json_str(t)}}"
+    Val.Parts(t, names, vals) => {
+      var parts: List[Str] = []
+      if t.starts_with("[") {
+        for x in vals {
+          parts.push(val_json(x))
+        }
+        "{\"type\":${json_str(t)},\"elements\":[${parts.join(",")}]}"
+      } else {
+        for (i, x) in vals.indexed() {
+          parts.push("{\"name\":${json_str(names[i])},\"value\":${val_json(x)}}")
+        }
+        "{\"type\":${json_str(t)},\"fields\":[${parts.join(",")}]}"
+      }
+    }
+  }
+}
+
+fn (s: Session) frame_json(i: Int, f: VFrame) -> Str {
+  "{\"index\":${i},\"pc\":\"0x${hex(f.pc)}\",\"function\":${json_str(f.name)},\"inlined\":${f.inlined},\"file\":${json_str(f.file)},\"line\":${f.line},\"selected\":${i == s.sel}}"
+}
+
+fn (s: Session) loc_json(a: Int) -> Str {
+  match s.lines.at(a) {
+    Some((f, n)) => "{\"pc\":\"0x${hex(a)}\",\"file\":${json_str(base_of(f))},\"line\":${n}}"
+    None => "{\"pc\":\"0x${hex(a)}\"}"
+  }
+}
+
+/// s as a JSON string: `"` and `\\` escaped, control characters as
+/// \\u00XX.
+pub fn json_str(s: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("\"")
+  for r in s.runes() {
+    if r == '"' {
+      b.write("\\\"")
+    } else if r == '\\' {
+      b.write("\\\\")
+    } else if r == '\n' {
+      b.write("\\n")
+    } else if Int(r) < 32 {
+      let h = hex(Int(r))
+      b.write("\\u${"0000"[0..4 - h.len()]}${h}")
+    } else {
+      b.write("${r}")
+    }
+  }
+  b.write("\"")
+  b.freeze()
 }
 
 fn (s: Session) cur() -> VFrame ! Str {

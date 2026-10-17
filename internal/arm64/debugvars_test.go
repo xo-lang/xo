@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -470,6 +471,29 @@ func TestUnwind(t *testing.T) {
 					if !bytes.Contains(sess, []byte(w)) {
 						t.Errorf("xo dev debug lacks %q:\n%s", w, sess)
 					}
+				}
+				// the same with --json (spec 11.5): one object a line, v 1
+				js, _ := exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "bt", bin).CombinedOutput()
+				var objs []map[string]any
+				for _, l := range strings.Split(strings.TrimSpace(string(js)), "\n") {
+					var o map[string]any
+					if err := json.Unmarshal([]byte(l), &o); err != nil {
+						t.Fatalf("xo dev debug --json: a line is not JSON (%v): %s", err, l)
+					}
+					if o["v"] != 1.0 || o["ok"] != true {
+						t.Errorf("xo dev debug --json: want v 1 and ok: %s", l)
+					}
+					objs = append(objs, o)
+				}
+				if len(objs) != 3 {
+					t.Fatalf("xo dev debug --json: want 3 lines:\n%s", js)
+				}
+				if got := objs[1]["text"]; got != strings.TrimPrefix(p.want, p.print+" = ") {
+					t.Errorf("print %s: text %v, want %s", p.print, got, p.want)
+				}
+				frames, _ := objs[2]["frames"].([]any)
+				if len(frames) <= frame || frames[frame].(map[string]any)["selected"] != true {
+					t.Errorf("backtrace: frame %d is not the selected one:\n%s", frame, js)
 				}
 			})
 		}
