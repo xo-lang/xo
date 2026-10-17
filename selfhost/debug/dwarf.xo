@@ -1,0 +1,929 @@
+// The DWARF reader of `xo debug` (decision 0253, stage 1): the debug
+// sections of an executable (ELF) or of its dSYM (Mach-O), read from the
+// file's bytes, and from them the functions with their variables and
+// locations, the global variables, and the types (decision 0252's
+// subset: base types, structures and their members, typedefs and
+// pointers by name). Locations are expressions in register, frame, and
+// address terms with pieces (DW_OP_reg, regx, breg, bregx, fbreg, addr,
+// piece), as one expression (exprloc) or a location list (DWARF 5
+// .debug_loclists, by loclistx or offset, every DW_LLE kind). DWARF 4
+// and 5 units, the forms both backends and dsymutil write; std/native
+// llrt/dwline.xo reads the line tables and inlined frames of a running
+// image the same way from its own memory.
+
+/// A file's debug sections by name without the `.debug_` or `__debug_`
+/// prefix (a Mach-O name is cut at 16 bytes: `str_offs` is
+/// `str_offsets`).
+pub struct Sections {
+  pub info: Bytes = b""
+  pub abbrev: Bytes = b""
+  pub str: Bytes = b""
+  pub line_str: Bytes = b""
+  pub str_offsets: Bytes = b""
+  pub addr: Bytes = b""
+  pub loclists: Bytes = b""
+  pub rnglists: Bytes = b""
+  pub line: Bytes = b""
+  /// the file's format: "elf" or "macho"
+  pub format: Str = ""
+}
+
+fn (var s: Sections) set(name: Str, b: Bytes) {
+  match name {
+    "info" => s.info = b
+    "abbrev" => s.abbrev = b
+    "str" => s.str = b
+    "line_str" => s.line_str = b
+    "str_offsets" | "str_offs" => s.str_offsets = b
+    "addr" => s.addr = b
+    "loclists" => s.loclists = b
+    "rnglists" => s.rnglists = b
+    "line" => s.line = b
+    _ => {}
+  }
+}
+
+/// The debug sections of an ELF executable or object, or of a Mach-O
+/// file (a dSYM's DWARF file, or an object); an error for another format
+/// or a file with no .debug_info.
+pub fn sections(data: Bytes) -> Result[Sections, Str] {
+  if data.len() < 64 {
+    return Err("too short for an object file")
+  }
+  var s = Sections{}
+  if rd32(data, 0) == 0x464c457f {
+    s.format = "elf"
+    if data[4] != 2 || data[5] != 1 {
+      return Err("not a 64 bit little endian ELF file")
+    }
+    // Elf64_Ehdr: e_shoff 40, e_shentsize 58, e_shnum 60, e_shstrndx 62
+    let shoff = rd64(data, 40)
+    let shn = rd16(data, 60)
+    let shx = rd16(data, 62)
+    if shoff <= 0 || shoff + 64 * shn > data.len() || shx >= shn {
+      return Err("bad ELF section headers")
+    }
+    let strs = rd64(data, shoff + 64 * shx + 24)
+    for i in 0..shn {
+      // Elf64_Shdr: sh_name 0, sh_type 4, sh_flags 8, sh_offset 24, sh_size 32
+      let sh = shoff + 64 * i
+      let off = rd64(data, sh + 24)
+      let size = rd64(data, sh + 32)
+      if rd32(data, sh + 4) == 8 || off + size > data.len() {
+        // SHT_NOBITS, or past the end
+        continue
+      }
+      let name = cstr(data, strs + rd32(data, sh), data.len())
+      if name.starts_with(".debug_") {
+        if rd64(data, sh + 8) & 0x800 != 0 {
+          return Err("compressed debug section ${name} (SHF_COMPRESSED) is not read yet")
+        }
+        s.set(name[7..], data[off..off + size])
+      }
+    }
+  } else if rd32(data, 0) == 0xfeedfacf {
+    s.format = "macho"
+    let ncmds = rd32(data, 16)
+    var lc = 32
+    for _ in 0..ncmds {
+      if lc + 8 > data.len() {
+        break
+      }
+      let cmd = rd32(data, lc)
+      if cmd == 25 {
+        // LC_SEGMENT_64: nsects at 64, section_64 entries (80 bytes) at 72
+        let nsects = rd32(data, lc + 64)
+        for k in 0..nsects {
+          let sc = lc + 72 + 80 * k
+          if sc + 80 > data.len() {
+            break
+          }
+          let name = cstr(data, sc, sc + 16)
+          let size = rd64(data, sc + 40)
+          let off = rd32(data, sc + 48)
+          if name.starts_with("__debug_") && off > 0 && off + size <= data.len() {
+            s.set(name[8..], data[off..off + size])
+          }
+        }
+      }
+      lc += rd32(data, lc + 4)
+    }
+  } else {
+    return Err("not an ELF or 64 bit Mach-O file (a universal binary: pick its arm64 slice)")
+  }
+  if s.info.is_empty() {
+    return Err("no .debug_info")
+  }
+  Ok(s)
+}
+
+/// Where a value, or one piece of it, lives.
+pub enum Place {
+  /// in register n (DWARF's numbering: x0 to x30 0 to 30, sp 31, v0 to
+  /// v31 64 to 95 on arm64)
+  Reg(reg: Int)
+  /// in memory at register n plus an offset
+  Breg(reg: Int, off: Int)
+  /// in memory at the frame base plus an offset
+  Fbreg(off: Int)
+  /// in memory at an address (a global)
+  Addr(addr: Int)
+  /// a constant value (DW_OP_lit, constu, consts with stack_value)
+  Value(v: Int)
+  /// optimized out (an empty expression or piece)
+  Gone
+  /// an expression this reader does not evaluate: its first operation
+  Other(op: Int)
+}
+
+/// A piece of a value: its place and size in bytes (0: the whole value).
+pub struct Piece {
+  pub place: Place
+  pub size: Int
+}
+
+/// A location over [lo, hi) of the unit's addresses (lo 0 and hi -1: at
+/// every address, an exprloc).
+pub struct Loc {
+  pub lo: Int
+  pub hi: Int
+  pub pieces: List[Piece]
+}
+
+/// A variable or a parameter.
+pub struct Var {
+  pub name: Str
+  /// the offset of its type's entry in .debug_info (-1: none)
+  pub ty: Int
+  pub param: Bool
+  pub line: Int
+  pub locs: List[Loc]
+}
+
+/// A function: its name, address range, variables (those of its
+/// lexical blocks too), and the calls inlined into it.
+pub struct Func {
+  pub name: Str
+  pub lo: Int
+  pub hi: Int
+  pub vars: List[Var]
+  pub inlined: List[Inlined] = []
+}
+
+/// A call inlined into a function: the callee's name, the address ranges
+/// of its code, its nesting depth (1: called by the function itself, 2:
+/// by an inlined call at depth 1), the line of the call, and the callee's
+/// variables in this copy.
+pub struct Inlined {
+  pub name: Str
+  pub ranges: List[(Int, Int)]
+  pub depth: Int
+  pub call_line: Int
+  pub vars: List[Var]
+}
+
+/// A structure's member.
+pub struct Member {
+  pub name: Str
+  pub ty: Int
+  pub offset: Int
+}
+
+/// A type entry: its tag (DW_TAG_base_type 0x24, structure_type 0x13,
+/// pointer_type 0x0f, typedef 0x16, ...), name, size in bytes, encoding
+/// (a base type's DW_ATE), the type it refers to (a pointer's or
+/// typedef's, -1: none), and a structure's members.
+pub struct Type {
+  pub tag: Int
+  pub name: Str
+  pub size: Int
+  pub enc: Int
+  pub of: Int
+  pub members: List[Member]
+}
+
+/// What the reader found: the functions, the global variables, and the
+/// types by their offset in .debug_info.
+pub struct Info {
+  pub funcs: List[Func] = []
+  pub globals: List[Var] = []
+  pub types: Map[Int, Type] = {}
+}
+
+/// The name of the type at offset t (`?` for none or one not read).
+pub fn (i: Info) type_name(t: Int) -> Str {
+  match i.types.get(t) {
+    Some(x) => {
+      if !x.name.is_empty() {
+        return x.name
+      }
+      if x.tag == 0x0f {
+        return "*${i.type_name(x.of)}"
+      }
+      "?"
+    }
+    None => "?"
+  }
+}
+
+/// The function whose range holds address pc (the first one).
+pub fn (i: Info) func_at(pc: Int) -> Func? {
+  for f in i.funcs {
+    if pc >= f.lo && pc < f.hi {
+      return Some(f)
+    }
+  }
+  None
+}
+
+/// The pieces of v's location at address pc (empty: no location there).
+pub fn (v: Var) at(pc: Int) -> List[Piece] {
+  for l in v.locs {
+    if (l.lo == 0 && l.hi == -1) || (pc >= l.lo && pc < l.hi) {
+      return l.pieces
+    }
+  }
+  []
+}
+
+// ---- reading
+
+struct Rd {
+  b: Bytes
+  p: Int
+  end: Int
+}
+
+fn (var r: Rd) byte() -> Int {
+  if r.p >= r.end {
+    r.p += 1
+    return 0
+  }
+  let v = Int(r.b[r.p])
+  r.p += 1
+  v
+}
+
+fn (var r: Rd) n(k: Int) -> Int {
+  var v = 0
+  if r.p + k <= r.end {
+    for i in 0..k {
+      v = v | shl(Int(r.b[r.p + i]), 8 * i)
+    }
+  }
+  r.p += k
+  v
+}
+
+fn (var r: Rd) uleb() -> Int {
+  var v = 0
+  var sh = 0
+  while r.p < r.end {
+    let b = Int(r.b[r.p])
+    r.p += 1
+    if sh < 64 {
+      v = v | shl(b & 127, sh)
+    }
+    sh += 7
+    if b < 128 {
+      break
+    }
+  }
+  v
+}
+
+fn (var r: Rd) sleb() -> Int {
+  var v = 0
+  var sh = 0
+  var b = 0
+  while r.p < r.end {
+    b = Int(r.b[r.p])
+    r.p += 1
+    if sh < 64 {
+      v = v | shl(b & 127, sh)
+    }
+    sh += 7
+    if b < 128 {
+      break
+    }
+  }
+  if sh < 64 && b & 64 != 0 {
+    v = v | shl(-1, sh)
+  }
+  v
+}
+
+fn (var r: Rd) cstr() -> Str {
+  let s = cstr(r.b, r.p, r.end)
+  r.p += s.len() + 1
+  s
+}
+
+fn rd16(b: Bytes, o: Int) -> Int {
+  Int(b[o]) | (Int(b[o + 1]) * 256)
+}
+
+fn rd32(b: Bytes, o: Int) -> Int {
+  Int(b[o]) | (Int(b[o + 1]) * 256) | (Int(b[o + 2]) * 65536) | (Int(b[o + 3]) * 16777216)
+}
+
+fn rd64(b: Bytes, o: Int) -> Int {
+  rd32(b, o) | shl(rd32(b, o + 4), 32)
+}
+
+const MIN_INT: Int = -9223372036854775807 - 1
+
+/// v << n with the bits shifted out dropped (Xo's << faults on overflow).
+fn shl(v: Int, n: Int) -> Int {
+  if n <= 0 {
+    return v
+  }
+  if n >= 64 {
+    return 0
+  }
+  if n == 63 {
+    return if v & 1 != 0 { MIN_INT } else { 0 }
+  }
+  // the bits that stay below bit 63, then bit 63
+  var r = (v & ((1 << (63 - n)) - 1)) * (1 << n)
+  if (v >> (63 - n)) & 1 != 0 {
+    r = r | MIN_INT
+  }
+  r
+}
+
+/// The NUL terminated text at o (up to end).
+fn cstr(b: Bytes, o: Int, end: Int) -> Str {
+  var e = o
+  let lim = end.min(b.len())
+  while e < lim && b[e] != 0 {
+    e += 1
+  }
+  if o >= e {
+    return ""
+  }
+  b[o..e].to_str() ?? ""
+}
+
+// ---- abbreviations and forms
+
+struct AbAttr {
+  at: Int
+  form: Int
+  imp: Int = 0
+}
+
+struct Abbrev {
+  tag: Int
+  kids: Bool
+  attrs: List[AbAttr]
+}
+
+fn abbrevs(s: Sections, off: Int) -> Map[Int, Abbrev] {
+  var out: Map[Int, Abbrev] = {}
+  var r = Rd{b: s.abbrev, p: off, end: s.abbrev.len()}
+  while r.p < r.end {
+    let code = r.uleb()
+    if code == 0 {
+      break
+    }
+    let tag = r.uleb()
+    let kids = r.byte() != 0
+    var attrs: List[AbAttr] = []
+    while r.p < r.end {
+      let at = r.uleb()
+      let form = r.uleb()
+      if at == 0 && form == 0 {
+        break
+      }
+      var imp = 0
+      if form == 0x21 {
+        imp = r.sleb()
+      }
+      attrs.push(AbAttr{at: at, form: form, imp: imp})
+    }
+    out[code] = Abbrev{tag: tag, kids: kids, attrs: attrs}
+  }
+  out
+}
+
+/// A unit's header and bases.
+struct Unit {
+  start: Int
+  ver: Int
+  asize: Int = 8
+  str_base: Int = 8
+  addr_base: Int = 8
+  loc_base: Int = 12
+  rng_base: Int = 12
+  low: Int = 0
+}
+
+/// A field's value: a number (an address, offset, index, or constant), a
+/// string, or a block (an expression).
+struct FVal {
+  n: Int = 0
+  str: Str = ""
+  str_ok: Bool = false
+  /// an index (strx, addrx, loclistx, rnglistx) to resolve by the unit
+  idx: Bool = false
+  block: Bytes = b""
+  block_ok: Bool = false
+}
+
+fn read_form(var r: Rd, fm: Int, s: Sections, u: Unit, imp: Int) -> (FVal, Bool) {
+  match fm {
+    0x01 => (FVal{n: r.n(u.asize)}, true)
+    0x0b | 0x11 => (FVal{n: r.byte()}, true)
+    0x05 | 0x12 => (FVal{n: r.n(2)}, true)
+    0x06 | 0x13 | 0x17 | 0x10 => (FVal{n: r.n(4)}, true)
+    0x07 | 0x14 | 0x20 => (FVal{n: r.n(8)}, true)
+    0x0f | 0x15 => (FVal{n: r.uleb()}, true)
+    0x0d => (FVal{n: r.sleb()}, true)
+    0x08 => (FVal{str: r.cstr(), str_ok: true}, true)
+    0x0e => {
+      let o = r.n(4)
+      (FVal{str: cstr(s.str, o, s.str.len()), str_ok: true}, true)
+    }
+    0x1f => {
+      let o = r.n(4)
+      (FVal{str: cstr(s.line_str, o, s.line_str.len()), str_ok: true}, true)
+    }
+    0x1a => (str_x(s, u, r.uleb()), true)
+    0x25 => (str_x(s, u, r.byte()), true)
+    0x26 => (str_x(s, u, r.n(2)), true)
+    0x27 => (str_x(s, u, r.n(3)), true)
+    0x28 => (str_x(s, u, r.n(4)), true)
+    0x1b | 0x22 | 0x23 => (FVal{n: r.uleb(), idx: true}, true)
+    0x29 => (FVal{n: r.byte(), idx: true}, true)
+    0x2a => (FVal{n: r.n(2), idx: true}, true)
+    0x2b => (FVal{n: r.n(3), idx: true}, true)
+    0x2c => (FVal{n: r.n(4), idx: true}, true)
+    0x0c => (FVal{n: r.byte()}, true)
+    0x19 => (FVal{n: 1}, true)
+    0x21 => (FVal{n: imp}, true)
+    0x1e => {
+      r.p += 16
+      (FVal{}, true)
+    }
+    0x0a => block(r, r.byte())
+    0x03 => block(r, r.n(2))
+    0x04 => block(r, r.n(4))
+    0x09 | 0x18 => block(r, r.uleb())
+    _ => (FVal{}, false)
+  }
+}
+
+fn block(var r: Rd, n: Int) -> (FVal, Bool) {
+  if n < 0 || r.p + n > r.end {
+    return (FVal{}, false)
+  }
+  let b = r.b[r.p..r.p + n]
+  r.p += n
+  (FVal{block: b, block_ok: true}, true)
+}
+
+fn str_x(s: Sections, u: Unit, k: Int) -> FVal {
+  let o = u.str_base + 4 * k
+  if o + 4 > s.str_offsets.len() {
+    return FVal{str_ok: true}
+  }
+  FVal{str: cstr(s.str, rd32(s.str_offsets, o), s.str.len()), str_ok: true}
+}
+
+fn addr_x(s: Sections, u: Unit, k: Int) -> Int {
+  let o = u.addr_base + 8 * k
+  if o + 8 > s.addr.len() {
+    return 0
+  }
+  rd64(s.addr, o)
+}
+
+// ---- locations
+
+/// The pieces of a location expression (an empty one: optimized out).
+pub fn expr(b: Bytes, asize: Int) -> List[Piece] {
+  var out: List[Piece] = []
+  var r = Rd{b: b, p: 0, end: b.len()}
+  var cur = Place.Gone
+  var stack: List[Int] = []
+  while r.p < r.end {
+    let op = r.byte()
+    if op >= 0x50 && op <= 0x6f {
+      cur = Place.Reg(op - 0x50)
+    } else if op >= 0x70 && op <= 0x8f {
+      cur = Place.Breg(reg: op - 0x70, off: r.sleb())
+    } else if op >= 0x30 && op <= 0x4f {
+      stack.push(op - 0x30)
+    } else {
+      match op {
+        0x90 => cur = Place.Reg(r.uleb())
+        0x92 => {
+          let reg = r.uleb()
+          cur = Place.Breg(reg: reg, off: r.sleb())
+        }
+        0x91 => cur = Place.Fbreg(r.sleb())
+        0x03 => cur = Place.Addr(r.n(asize))
+        0x10 => stack.push(r.uleb())
+        0x11 => stack.push(r.sleb())
+        0x9f => {
+          // stack_value: the value is the top of the stack
+          if let Some(v) = stack.pop() {
+            cur = Place.Value(v)
+          }
+        }
+        0x93 => {
+          out.push(Piece{place: cur, size: r.uleb()})
+          cur = Place.Gone
+          stack = []
+        }
+        _ => {
+          cur = Place.Other(op)
+          r.p = r.end
+        }
+      }
+    }
+  }
+  // the last piece, or the whole value (an empty expression: gone)
+  let gone = match cur {
+    Place.Gone => true
+    Place.Reg(_) | Place.Breg(_, _) | Place.Fbreg(_) | Place.Addr(_) | Place.Value(_) | Place.Other(_) => false
+  }
+  if !gone || out.is_empty() {
+    out.push(Piece{place: cur, size: 0})
+  }
+  out
+}
+
+/// The location list at offset off of .debug_loclists (DWARF 5).
+fn loclist(s: Sections, u: Unit, off: Int) -> List[Loc] {
+  var out: List[Loc] = []
+  var r = Rd{b: s.loclists, p: off, end: s.loclists.len()}
+  var base = u.low
+  while r.p < r.end {
+    let k = r.byte()
+    var lo = 0
+    var hi = 0
+    match k {
+      0 => break
+      1 => {
+        base = addr_x(s, u, r.uleb())
+        continue
+      }
+      2 => {
+        lo = addr_x(s, u, r.uleb())
+        hi = addr_x(s, u, r.uleb())
+      }
+      3 => {
+        lo = addr_x(s, u, r.uleb())
+        hi = lo + r.uleb()
+      }
+      4 => {
+        lo = base + r.uleb()
+        hi = base + r.uleb()
+      }
+      5 => {
+        lo = 0
+        hi = -1
+      }
+      6 => {
+        base = r.n(u.asize)
+        continue
+      }
+      7 => {
+        lo = r.n(u.asize)
+        hi = r.n(u.asize)
+      }
+      8 => {
+        lo = r.n(u.asize)
+        hi = lo + r.uleb()
+      }
+      _ => break
+    }
+    let n = r.uleb()
+    if r.p + n > r.end {
+      break
+    }
+    out.push(Loc{lo: lo, hi: hi, pieces: expr(s.loclists[r.p..r.p + n], u.asize)})
+    r.p += n
+  }
+  out
+}
+
+/// The ranges of the range list at offset off of .debug_rnglists.
+fn rnglist(s: Sections, u: Unit, off: Int) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  var r = Rd{b: s.rnglists, p: off, end: s.rnglists.len()}
+  var base = u.low
+  while r.p < r.end {
+    match r.byte() {
+      0 => break
+      1 => base = addr_x(s, u, r.uleb())
+      2 => {
+        let a = addr_x(s, u, r.uleb())
+        out.push((a, addr_x(s, u, r.uleb())))
+      }
+      3 => {
+        let a = addr_x(s, u, r.uleb())
+        out.push((a, a + r.uleb()))
+      }
+      4 => {
+        let a = r.uleb()
+        out.push((base + a, base + r.uleb()))
+      }
+      5 => base = r.n(u.asize)
+      6 => {
+        let a = r.n(u.asize)
+        out.push((a, r.n(u.asize)))
+      }
+      7 => {
+        let a = r.n(u.asize)
+        out.push((a, a + r.uleb()))
+      }
+      _ => break
+    }
+  }
+  out
+}
+
+// ---- entries
+
+/// A variable's attributes as read, before its location is resolved.
+struct VarRec {
+  name: Str = ""
+  ty: Int = -1
+  line: Int = 0
+  loc: FVal = FVal{}
+  loc_form: Int = 0
+  has_loc: Bool = false
+  origin: Int = -1
+  call_line: Int = 0
+}
+
+/// Reads every unit of s.
+pub fn read(s: Sections) -> Info {
+  var out = Info{}
+  var p = 0
+  let end = s.info.len()
+  while p + 11 <= end {
+    let len = rd32(s.info, p)
+    if len == 0 || len >= 0xfffffff0 {
+      break
+    }
+    let next = p + 4 + len
+    if next > end {
+      break
+    }
+    read_unit(s, p, next, out)
+    p = next
+  }
+  out
+}
+
+fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
+  var u = Unit{start: p, ver: rd16(s.info, p + 4)}
+  var r = Rd{b: s.info, p: p + 6, end: next}
+  var aoff = 0
+  if u.ver >= 5 {
+    let ut = r.byte()
+    u.asize = r.byte()
+    aoff = r.n(4)
+    if ut != 1 {
+      // only full compile units (no type, skeleton, or split units)
+      return
+    }
+  } else {
+    aoff = r.n(4)
+    u.asize = r.byte()
+  }
+  let tab = abbrevs(s, aoff)
+  // the enclosing function per level of the tree (-1: none)
+  var fn_at: List[Int] = [-1]
+  // per level, the inlined call it is in (an index of the function's
+  // inlined, -1: none)
+  var inl_at: List[Int] = [-1]
+  // the structure whose members follow, per level
+  var st_at: List[Int] = [-1]
+  // variables waiting for their unit's bases (a location list needs
+  // loclists_base, which may come late in the unit's entry)
+  var pending: List[(Int, Int, Bool, VarRec)] = []
+  // names of entries other entries refer to (abstract origins)
+  var names: Map[Int, VarRec] = {}
+  // the inlined calls (function, call, abstract origin) to name
+  var calls: List[(Int, Int, Int)] = []
+  while r.p < next {
+    let die = r.p
+    let code = r.uleb()
+    if code == 0 {
+      if fn_at.len() > 1 {
+        let _a = fn_at.pop()
+        let _b = inl_at.pop()
+        let _c = st_at.pop()
+      }
+      continue
+    }
+    let ab = match tab.get(code) {
+      Some(a) => a
+      None => return
+    }
+    var v = VarRec{}
+    var size = 0
+    var enc = 0
+    var of = -1
+    var mloc = 0
+    var low = 0
+    var low_x = false
+    var high = 0
+    var high_x = false
+    var high_off = false
+    var rng = -1
+    var rng_x = false
+    for a in ab.attrs {
+      let (fv, ok) = read_form(r, a.form, s, u, a.imp)
+      if !ok {
+        return
+      }
+      match a.at {
+        0x03 => if fv.str_ok { v.name = fv.str }
+        0x49 => {
+          v.ty = ref(u, a.form, fv.n)
+          of = v.ty
+        }
+        0x3b => v.line = fv.n
+        0x02 => {
+          v.loc = fv
+          v.loc_form = a.form
+          v.has_loc = true
+        }
+        0x31 | 0x47 => v.origin = ref(u, a.form, fv.n)
+        0x0b => size = fv.n
+        0x3e => enc = fv.n
+        0x38 => mloc = fv.n
+        0x11 => {
+          low = fv.n
+          low_x = fv.idx
+        }
+        0x12 => {
+          high = fv.n
+          high_x = fv.idx
+          high_off = !(a.form == 0x01 || a.form == 0x1b || (a.form >= 0x29 && a.form <= 0x2c))
+        }
+        0x55 => {
+          rng = fv.n
+          rng_x = fv.idx
+        }
+        0x59 => v.call_line = fv.n
+        0x72 => u.str_base = fv.n
+        0x73 => u.addr_base = fv.n
+        0x8c => u.loc_base = fv.n
+        0x74 => u.rng_base = fv.n
+        _ => {}
+      }
+    }
+    if low_x {
+      low = addr_x(s, u, low)
+    }
+    if high_x {
+      high = addr_x(s, u, high)
+    }
+    if high_off {
+      high = low + high
+    }
+    let depth = fn_at.len() - 1
+    var here_fn = fn_at[depth]
+    var here_inl = inl_at[depth]
+    var here_st = -1
+    match ab.tag {
+      0x11 => u.low = low
+      0x2e => {
+        if !v.name.is_empty() || v.origin >= 0 {
+          names[die] = v
+        }
+        if high > low {
+          var name = v.name
+          if name.is_empty() {
+            name = (names.get(v.origin) ?? VarRec{}).name
+          }
+          out.funcs.push(Func{name: name, lo: low, hi: high, vars: []})
+          here_fn = out.funcs.len() - 1
+          here_inl = -1
+        }
+      }
+      0x1d => if here_fn >= 0 {
+        var ranges: List[(Int, Int)] = []
+        if rng >= 0 {
+          var off = rng
+          if rng_x {
+            let o = u.rng_base + 4 * rng
+            off = if o + 4 <= s.rnglists.len() { u.rng_base + rd32(s.rnglists, o) } else { s.rnglists.len() }
+          }
+          ranges = rnglist(s, u, off)
+        } else if high > low {
+          ranges = [(low, high)]
+        }
+        let outer = if here_inl >= 0 { out.funcs[here_fn].inlined[here_inl].depth } else { 0 }
+        var f = out.funcs[here_fn]
+        f.inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: []})
+        out.funcs[here_fn] = f
+        here_inl = f.inlined.len() - 1
+        calls.push((here_fn, here_inl, v.origin))
+      }
+      0x05 | 0x34 => {
+        names[die] = v
+        if v.has_loc || here_fn >= 0 {
+          pending.push((here_fn, here_inl, ab.tag == 0x05, v))
+        }
+      }
+      0x24 | 0x0f | 0x16 | 0x26 | 0x35 => {
+        out.types[die] = Type{tag: ab.tag, name: v.name, size: size, enc: enc, of: of, members: []}
+      }
+      0x13 | 0x17 => {
+        out.types[die] = Type{tag: ab.tag, name: v.name, size: size, enc: 0, of: -1, members: []}
+        here_st = die
+      }
+      0x0d => {
+        let st = st_at[depth]
+        if st >= 0 {
+          if let Some(t) = out.types.get(st) {
+            var t2 = t
+            t2.members.push(Member{name: v.name, ty: v.ty, offset: mloc})
+            out.types[st] = t2
+          }
+        }
+      }
+      _ => {}
+    }
+    if ab.kids {
+      fn_at.push(here_fn)
+      inl_at.push(here_inl)
+      st_at.push(here_st)
+    }
+  }
+  for (fi, ii, origin) in calls {
+    // the callee's name: its origin's, or the origin's origin's
+    var name = ""
+    var o = origin
+    var guard = 0
+    while o >= 0 && guard < 4 && name.is_empty() {
+      let rec = names.get(o) ?? VarRec{}
+      name = rec.name
+      o = rec.origin
+      guard += 1
+    }
+    var f = out.funcs[fi]
+    var c = f.inlined[ii]
+    c.name = if name.is_empty() { "?" } else { name }
+    f.inlined[ii] = c
+    out.funcs[fi] = f
+  }
+  for (fi, ii, param, rec) in pending {
+    var v = rec
+    // a concrete entry of an abstract one: the name, type, and line from it
+    if v.origin >= 0 {
+      if let Some(o) = names.get(v.origin) {
+        if v.name.is_empty() {
+          v.name = o.name
+        }
+        if v.ty < 0 {
+          v.ty = o.ty
+        }
+        if v.line == 0 {
+          v.line = o.line
+        }
+      }
+    }
+    var locs: List[Loc] = []
+    if v.has_loc {
+      if v.loc.block_ok {
+        locs = [Loc{lo: 0, hi: -1, pieces: expr(v.loc.block, u.asize)}]
+      } else if v.loc.idx {
+        // loclistx: an offset in the unit's table at loclists_base
+        let o = u.loc_base + 4 * v.loc.n
+        if o + 4 <= s.loclists.len() {
+          locs = loclist(s, u, u.loc_base + rd32(s.loclists, o))
+        }
+      } else if u.ver >= 5 {
+        locs = loclist(s, u, v.loc.n)
+      }
+    }
+    let var_ = Var{name: v.name, ty: v.ty, param: param, line: v.line, locs: locs}
+    if fi >= 0 && ii >= 0 {
+      var f = out.funcs[fi]
+      var c = f.inlined[ii]
+      c.vars.push(var_)
+      f.inlined[ii] = c
+      out.funcs[fi] = f
+    } else if fi >= 0 {
+      var f = out.funcs[fi]
+      f.vars.push(var_)
+      out.funcs[fi] = f
+    } else {
+      out.globals.push(var_)
+    }
+  }
+}
+
+/// A reference attribute's target as an offset in .debug_info.
+fn ref(u: Unit, form: Int, n: Int) -> Int {
+  if form == 0x10 { n } else { u.start + n }
+}

@@ -24,3 +24,13 @@ func TestSelfhostArm64XoTests(t *testing.T) {
 	}
 	runXoTests(t, "arm64")
 }
+
+// TestSelfhostDebugXoTests runs the Xo tests of selfhost/debug (`xo
+// test`), the DWARF reader of decision 0253: location expressions, a hand
+// made DWARF 5 unit with a location list, the section readers.
+func TestSelfhostDebugXoTests(t *testing.T) {
+	if selfhostTier(t) == tierShort {
+		t.Skip("builds and runs the Xo test binary")
+	}
+	runXoTests(t, "debug")
+}

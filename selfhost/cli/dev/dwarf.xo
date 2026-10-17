@@ -1,0 +1,136 @@
+// `xo dev dwarf FILE`: what selfhost/debug's DWARF reader (decision 0253,
+// stage 1) reads from an executable or a dSYM's DWARF file: each function
+// with its address range and its variables (name, type, parameter or
+// not, declaration line, and each location range with its pieces), the
+// global variables, and with --types the types. The text is for tests
+// and agents; `xo debug` is the command built on the reader.
+
+use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/selfhost/debug
+
+fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  var fl = core.new_flags("dev dwarf")
+  fl.str_flag("func", "", "only the functions of this name")
+  fl.bool_flag("types", "print the types too")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 {
+    os.stdio.eprintln("usage: xo dev dwarf [--func=NAME] [--types] FILE (an executable, or a dSYM's DWARF file)")
+    return 2
+  }
+  let data = match os.fs.read(fl.args[0]) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo dev dwarf: ${e}")
+      return 1
+    }
+  }
+  let s = match debug.sections(data) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev dwarf: ${fl.args[0]}: ${e}")
+      return 1
+    }
+  }
+  let info = debug.read(s)
+  let only = fl.get_str("func")
+  for f in info.funcs {
+    if !only.is_empty() && f.name != only {
+      var calls = false
+      for c in f.inlined {
+        if c.name == only {
+          calls = true
+        }
+      }
+      if !calls {
+        continue
+      }
+    }
+    os.stdio.println("func ${f.name} ${hex(f.lo)}..${hex(f.hi)}")
+    for v in f.vars {
+      print_var(os, info, v, "  ")
+    }
+    for c in f.inlined {
+      let lead = "  ".repeat(c.depth)
+      var rs: List[Str] = []
+      for (a, z) in c.ranges {
+        rs.push("${hex(a)}..${hex(z)}")
+      }
+      os.stdio.println("${lead}inlined ${c.name} call line ${c.call_line} ${rs.join(" ")}")
+      for v in c.vars {
+        print_var(os, info, v, "${lead}  ")
+      }
+    }
+  }
+  if only.is_empty() {
+    for v in info.globals {
+      print_var(os, info, v, "global ")
+    }
+  }
+  if fl.get_bool("types") {
+    var offs: List[Int] = []
+    for (k, _) in info.types {
+      offs.push(k)
+    }
+    for k in offs.sort() {
+      let t = info.types.get_or_fault(k, "a key of the map")
+      os.stdio.println("type ${hex(k)} tag ${hex(t.tag)} ${info.type_name(k)} size ${t.size}${if t.enc != 0 { " enc ${t.enc}" } else { "" }}")
+      for m in t.members {
+        os.stdio.println("  member ${m.name}: ${info.type_name(m.ty)} at ${m.offset}")
+      }
+    }
+  }
+  0
+}
+
+fn print_var(os: Os, info: debug.Info, v: debug.Var, lead: Str) uses (stdio) {
+  let kind = if v.param { "param" } else { "var" }
+  os.stdio.println("${lead}${kind} ${v.name}: ${info.type_name(v.ty)} line ${v.line}")
+  for l in v.locs {
+    let range = if l.lo == 0 && l.hi == -1 { "always" } else { "${hex(l.lo)}..${hex(l.hi)}" }
+    var ps: List[Str] = []
+    for p in l.pieces {
+      let at = place(p.place)
+      ps.push(if p.size > 0 { "${at} (${p.size})" } else { at })
+    }
+    os.stdio.println("${lead}  ${range} ${ps.join(", ")}")
+  }
+}
+
+fn place(p: debug.Place) -> Str {
+  match p {
+    debug.Place.Reg(n) => "reg${n}"
+    debug.Place.Breg(n, o) => "[reg${n}${off(o)}]"
+    debug.Place.Fbreg(o) => "[fb${off(o)}]"
+    debug.Place.Addr(a) => "[${hex(a)}]"
+    debug.Place.Value(v) => "=${v}"
+    debug.Place.Gone => "gone"
+    debug.Place.Other(op) => "op ${hex(op)}"
+  }
+}
+
+fn off(o: Int) -> Str {
+  if o < 0 { "${o}" } else { "+${o}" }
+}
+
+fn hex(v: Int) -> Str {
+  if v == 0 {
+    return "0x0"
+  }
+  let digits = "0123456789abcdef"
+  var out = ""
+  var x = v
+  var n = 0
+  // an Int's 16 nibbles, high zeros dropped
+  while x != 0 && n < 16 {
+    let d = x & 15
+    out = digits[d..d + 1] + out
+    x = x >> 4
+    if x < 0 {
+      x = x & 0x0fffffffffffffff
+    }
+    n += 1
+  }
+  "0x${out}"
+}

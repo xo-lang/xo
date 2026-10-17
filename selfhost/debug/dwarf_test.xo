@@ -1,0 +1,121 @@
+// Tests of the DWARF reader on hand made sections. The reader against
+// the backends' real DWARF (arm64 with selfhost/macho and with dsymutil,
+// LLVM, and Linux ELF) is internal/arm64 TestDwarfReader through `xo dev
+// dwarf`.
+
+fn bytes_of(xs: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for x in xs {
+    b.write_byte(UInt8(x & 255))
+  }
+  b.freeze()
+}
+
+fn le(v: Int, n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..n {
+    out.push((v >> (8 * i)) & 255)
+  }
+  out
+}
+
+fn text(s: Str) -> List[Int] {
+  var out: List[Int] = []
+  for x in s.bytes() {
+    out.push(Int(x))
+  }
+  out.push(0)
+  out
+}
+
+fn show(ps: List[Piece]) -> Str {
+  var out: List[Str] = []
+  for p in ps {
+    let at = match p.place {
+      Place.Reg(n) => "reg${n}"
+      Place.Breg(n, o) => "[reg${n}${if o < 0 { "" } else { "+" }}${o}]"
+      Place.Fbreg(o) => "[fb${if o < 0 { "" } else { "+" }}${o}]"
+      Place.Addr(a) => "[${a}]"
+      Place.Value(v) => "=${v}"
+      Place.Gone => "gone"
+      Place.Other(op) => "op ${op}"
+    }
+    out.push(if p.size > 0 { "${at} (${p.size})" } else { at })
+  }
+  out.join(", ")
+}
+
+test "location expressions: registers, memory, constants, pieces" {
+  expect(show(expr(bytes_of([0x51]), 8))) == "reg1"
+  // DW_OP_regx 65: v1 on arm64
+  expect(show(expr(bytes_of([0x90, 0x41]), 8))) == "reg65"
+  // DW_OP_breg31 +16: a spill slot above sp
+  expect(show(expr(bytes_of([0x8f, 0x10]), 8))) == "[reg31+16]"
+  expect(show(expr(bytes_of([0x92, 0x1d, 0x70]), 8))) == "[reg29-16]"
+  expect(show(expr(bytes_of([0x91, 0x78]), 8))) == "[fb-8]"
+  expect(show(expr(bytes_of([0x03] + le(0x100004000, 8)), 8))) == "[4294983680]"
+  // DW_OP_consts 10, DW_OP_stack_value (LLVM's constant k), DW_OP_lit3
+  expect(show(expr(bytes_of([0x11, 0x0a, 0x9f]), 8))) == "=10"
+  expect(show(expr(bytes_of([0x33, 0x9f]), 8))) == "=3"
+  // two words, the second optimized out
+  expect(show(expr(bytes_of([0x5b, 0x93, 0x08, 0x93, 0x08]), 8))) == "reg11 (8), gone (8)"
+  expect(show(expr(b"", 8))) == "gone"
+  expect(show(expr(bytes_of([0xe0, 0x51]), 8))) == "op 224"
+}
+
+test "shifts drop the bits shifted out" {
+  expect(shl(1, 63)) == MIN_INT
+  expect(shl(3, 63)) == MIN_INT
+  expect(shl(0xff, 60)) == MIN_INT | (7 << 60)
+  expect(shl(-1, 1)) == -2
+  expect(shl(5, 64)) == 0
+  expect(rd64(bytes_of([1, 0, 0, 0, 0, 0, 0, 0x80]), 0)) == MIN_INT | 1
+}
+
+test "a DWARF 5 unit: a function, its parameter's location list, its type" {
+  // .debug_abbrev: 1 compile_unit, 2 subprogram, 3 formal_parameter
+  // (loclistx), 4 base_type
+  let abbrev = bytes_of([
+    1, 0x11, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x07, 0x8c, 0x01, 0x17, 0, 0,
+    2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x06, 0, 0,
+    3, 0x05, 0, 0x03, 0x08, 0x49, 0x13, 0x02, 0x22, 0, 0,
+    4, 0x24, 0, 0x03, 0x08, 0x0b, 0x0b, 0x3e, 0x0b, 0, 0,
+    0,
+  ])
+  // .debug_info: the header (12 bytes) then the entries
+  let cu = [1] + text("m.xo") + le(0x1000, 8) + le(0x100, 8) + le(12, 4)
+  let sub = [2] + text("f") + le(0x1000, 8) + le(0x40, 4)
+  let param_len = 1 + 2 + 4 + 1
+  let int_at = 12 + cu.len() + sub.len() + param_len + 1
+  let param = [3] + text("k") + le(int_at, 4) + [0]
+  let body = cu + sub + param + [0] + [4] + text("Int") + [8, 5] + [0]
+  let info = bytes_of(le(8 + body.len(), 4) + [5, 0, 1, 8, 0, 0, 0, 0] + body)
+  // .debug_loclists: the header, one offset, a list: offset_pair 0 8 in
+  // x0, offset_pair 8 0x40 in [sp+16], end
+  let list = [4, 0, 8, 1, 0x50, 4, 8, 0x40, 2, 0x8f, 0x10, 0]
+  let lists = bytes_of(le(8 + 4 + list.len(), 4) + [5, 0, 8, 0] + le(1, 4) + le(4, 4) + list)
+  let s = Sections{info: info, abbrev: abbrev, loclists: lists}
+  let got = read(s)
+  expect(got.funcs.len()) == 1
+  let f = got.funcs[0]
+  expect(f.name) == "f"
+  expect(f.lo) == 0x1000
+  expect(f.hi) == 0x1040
+  expect(f.vars.len()) == 1
+  let k = f.vars[0]
+  expect(k.name) == "k"
+  expect(k.param) == true
+  expect(got.type_name(k.ty)) == "Int"
+  expect(k.locs.len()) == 2
+  expect(k.locs[0].lo) == 0x1000
+  expect(k.locs[0].hi) == 0x1008
+  expect(show(k.locs[0].pieces)) == "reg0"
+  expect(show(k.at(0x1010))) == "[reg31+16]"
+  expect(show(k.at(0x1040))) == ""
+  expect((got.func_at(0x1004) ?? Func{name: "", lo: 0, hi: 0, vars: []}).name) == "f"
+  expect(got.func_at(0x2000).is_none()) == true
+}
+
+test "sections: neither ELF nor Mach-O is an error" {
+  expect(sections(bytes_of(le(0, 8) + le(0, 8) + le(0, 8) + le(0, 8) + le(0, 8) + le(0, 8) + le(0, 8) + le(0, 8))).is_err()) == true
+}

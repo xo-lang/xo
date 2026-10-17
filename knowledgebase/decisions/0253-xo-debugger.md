@@ -217,3 +217,27 @@ programs):
   it was built.
 - Writing the debugger in Go or C: against the self-hosted toolchain
   (decision 0215).
+
+## Implementation
+
+- Stage 1 (2026-10-17): selfhost/debug dwarf.xo reads the debug sections
+  of an ELF file or of a Mach-O file (a dSYM's DWARF file) from its
+  bytes, then every DWARF 4 and 5 compile unit: functions with their
+  address ranges, their variables and parameters (lexical blocks
+  included), the calls inlined into them (ranges from DW_AT_ranges and
+  .debug_rnglists, depth, call line) with their variables (names, types,
+  and lines from the abstract origin), global variables, and types (base,
+  structure with members, pointer, typedef). A location is an exprloc or
+  a .debug_loclists list (loclistx through DW_AT_loclists_base, or an
+  offset; every DW_LLE kind, addrx through DW_AT_addr_base), decoded into
+  pieces of registers, register plus offset, frame base plus offset,
+  addresses, constants (DW_OP_lit, constu, consts with stack_value), or
+  optimized out. `xo dev dwarf FILE` prints what it reads
+  (toolchain.md). Tests: selfhost/debug dwarf_test.xo (expressions, a
+  hand made unit with a location list; internal/selfhost
+  TestSelfhostDebugXoTests) and internal/arm64 TestDwarfReader (the arm64
+  backend's dSYM through selfhost/macho and dsymutil, every variable's
+  ranges equal to dwarfdump's; the LLVM backend's, sum inlined with k the
+  constant 10). Not yet: the xo_static global (it comes with stage 4,
+  where the task views read it), compressed ELF sections, DWARF 4
+  .debug_loc lists (neither backend writes them).
