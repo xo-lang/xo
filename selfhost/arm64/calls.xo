@@ -1490,6 +1490,16 @@ fn (var g: G) add_with_flag(v: Int, op: Int) -> Bool {
 /// gotchas/arm64-template-scratch-reuse.md).
 const ADC_CHAINS = true
 
+/// Whether a chain is one instruction per pair (the carry passing in the
+/// flags from one to the next, as LLVM's adcs runs; nothing selected
+/// between them sets flags: the products the chain takes, and the movs
+/// of constants and of spills), so that a sum may take a register an
+/// operand frees, and a product used once by the chain is made right
+/// before its pair. One template for the whole chain (false) kept every
+/// sum apart from every operand: nistec.mul4p saved 5 callee saved
+/// pairs where LLVM saves 1 (2026-10-17).
+const ADC_SPLIT = true
+
 /// The most pairs in one chain instruction: an early template's uses and
 /// defs all need registers of their own (2 per pair and one def each, plus
 /// the cset), so a longer chain goes on in the next instruction.
@@ -1545,7 +1555,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
       // (a constant operand is defined anywhere: 0 is xzr, any other is
       // made by a mov before the chain's instruction, 2026-10-16:
       // nistec.sub_p256's t + ~p + 1 broke at every pair)
-      if g.nuses[last] == nu && (g.is_const(y.args[0]) || g.before_ix(y.args[0], ins)) && (g.is_const(y.args[1]) || g.before_ix(y.args[1], ins)) {
+      if g.nuses[last] == nu && g.chain_operand(y.args[0], ins, k, nu) && g.chain_operand(y.args[1], ins, k, nu) {
         sums.push(u)
         cars.push(c)
         if c < 0 {
@@ -1557,6 +1567,10 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   }
   if sums.len() < 2 {
     return false
+  }
+  if ADC_SPLIT {
+    g.adc_chain_split(sums, cars)
+    return true
   }
   let x0 = g.f.values[sums[0]]
   var us: List[Int] = []
@@ -1600,6 +1614,97 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
     }
   }
   true
+}
+
+/// Whether a, an addend of a later pair of a chain (at index k of ins),
+/// can be read there: a constant (0 is xzr, any other a mov, which sets
+/// no flags), a value defined before the chain, or (ADC_SPLIT) a product
+/// the chain alone uses (chain_product); nu is the pair's size (its sum
+/// and carry, or the sum alone).
+fn (var g: G) chain_operand(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
+  g.is_const(a) || g.before_ix(a, ins) || (ADC_SPLIT && g.chain_product(a, ins, k, nu))
+}
+
+/// Whether a is a product (rt.u64_mul_hi, or rt.int_wrap's multiply of
+/// two registers) defined after the chain's start and before index k,
+/// not selected yet, read by its pair alone (nu uses: the sum and the
+/// carry, or the sum), of values defined before the chain: the chain
+/// makes it right before its pair (mul and umulh set no flags).
+fn (var g: G) chain_product(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
+  if g.has_val[a] || g.nuses[a] != nu {
+    return false
+  }
+  var at = -1
+  for j in (g.cur_ix + 1)..k {
+    if ins[j] == a {
+      at = j
+    }
+  }
+  if at < 0 {
+    return false
+  }
+  let x = g.f.values[a]
+  if x.op != ssa.Op.Call || g.kind(x.ty) != ssa.Kind.Int {
+    return false
+  }
+  let n = aux_str(x.aux)
+  if n == "rt.u64_mul_hi" && x.args.len() == 2 {
+    return g.before_ix(x.args[0], ins) && g.before_ix(x.args[1], ins)
+  }
+  if n == "rt.int_wrap" && x.args.len() == 3 {
+    let (op, opk) = g.const_int(x.args[0])
+    return opk && op == 2 && !g.is_const(x.args[1]) && !g.is_const(x.args[2]) && g.before_ix(x.args[1], ins) && g.before_ix(x.args[2], ins)
+  }
+  false
+}
+
+/// adc_chain's instructions with ADC_SPLIT: per pair its products not
+/// made yet (chain_product), then adds or adcs; the last pair's cset
+/// reads its carry. Every pair is keep: a pair whose sum nothing reads
+/// still sets the flags the next one reads.
+fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
+  let lastc = cars[cars.len() - 1]
+  for i in 0..sums.len() {
+    let y = g.f.values[sums[i]]
+    for a in [y.args[0], y.args[1]] {
+      let p = g.f.values[a]
+      if !g.has_val[a] && p.op == ssa.Op.Call && aux_str(p.aux) is "rt.u64_mul_hi" | "rt.int_wrap" {
+        let op = if aux_str(p.aux) == "rt.u64_mul_hi" { "umulh" } else { "mul" }
+        let n = p.args.len()
+        g.set(a, [g.def1(false, "${op} $d0, $u0, $u1", [g.word(p.args[n - 2]), g.word(p.args[n - 1])])])
+      }
+    }
+    var us: List[Int] = []
+    let b0 = g.adc_op(y.args[0], us)
+    let b1 = g.adc_op(y.args[1], us)
+    var text = ""
+    if i == 0 {
+      let (cin, cin_k) = g.const_int(y.args[2])
+      if cin_k && cin == 0 {
+        text = "adds $d0, ${b0}, ${b1}"
+      } else {
+        let ct = g.carry_in(y.args[2], us)
+        text = "${ct}adcs $d0, ${b0}, ${b1}"
+      }
+    } else {
+      text = "adcs $d0, ${b0}, ${b1}"
+    }
+    let d = g.new_vreg(false)
+    var defs = [d]
+    let last = i == sums.len() - 1
+    if last && lastc >= 0 {
+      defs.push(g.new_vreg(false))
+      text = "${text}\ncset $d1, cs"
+    }
+    let ii = g.plain(text, defs, us)
+    g.blocks[g.cur].insts[ii].keep = true
+    g.set(sums[i], [d])
+    if cars[i] >= 0 {
+      // a carry inside the chain has no reader but the next pair (the
+      // flag): marked selected
+      g.set(cars[i], [if last { defs[1] } else { d }])
+    }
+  }
 }
 
 /// The instruction setting the carry flag to the carry in a (0 or 1)

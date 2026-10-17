@@ -157,6 +157,19 @@ bump.
   instruction (ADC_CHAIN_PAIRS; the ten operand limit is gone). Under
   the spill test (XO_ARM64_REGS = N) a chain keeps to (2 N + 2) / 3
   pairs, so that its 3 p + 1 registers fit: N = 2 makes none.
+- **One instruction per pair (2026-10-17).** The chain's one template
+  kept every sum in a register apart from every operand (early), and its
+  operands had to be defined before it, so P-256's product computed all
+  8 products of a row first: nistec.mul4p saved 5 callee saved pairs on
+  arm64, LLVM 1. With calls.xo ADC_SPLIT each pair is its own adds or
+  adcs, the carry passing in the flags (nothing between sets flags:
+  gotchas/arm64-carry-flag-between-instructions.md), every pair keep;
+  a product used only by its pair (umulh, or int_wrap's multiply of two
+  registers) defined inside the chain is made right before the pair.
+  scripts/nistecmul4p.py makes each product right before its pair and
+  ends a chain whose carry is added on with that add (adcs with xzr).
+  mul4p: 166 to 154 instructions, 1 callee saved pair, no spill; sqr4p
+  143 to 135 (bench/results/arm64-inline-cost-2026-10-16.md).
 
 ## SHA-256 (owner, 2026-10-16)
 

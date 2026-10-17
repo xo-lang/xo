@@ -50,12 +50,27 @@ def wadd(a, b):
     return s
 
 
+def force(x):
+    """An operand: a name, or a product (half, a, b) made here, right
+    before the pair that reads it (the arm64 chain makes it between its
+    adcs, which mul and umulh leave the flags of)."""
+    if isinstance(x, tuple):
+        half, a, b = x
+        r = v(half)
+        op = f"rt.int_wrap(2, {a}, {b})" if half == "lo" else f"rt.u64_mul_hi({a}, {b})"
+        emit(f"let {r} = {op}")
+        return r
+    return x
+
+
 def chain(xs, ys, cin="0", keep=True):
     """xs[j] + ys[j] with the carry chained; the sums and the last carry
     (None when keep is false: the last pair makes only its sum)."""
     c = cin
     r = []
     for idx, (x, y) in enumerate(zip(xs, ys)):
+        x = force(x)
+        y = force(y)
         if not keep and idx == len(xs) - 1:
             s = v("s")
             emit(f"let {s} = cpu.adc({x}, {y}, {c})")
@@ -67,30 +82,30 @@ def chain(xs, ys, cin="0", keep=True):
 
 
 def gen_mul():
-    for nm in ["f", "g"]:
-        for i in range(4):
-            emit(f"let {nm}{i} = ld({nm}, {8 * i})")
+    # g's words load at their rows and each product is made right before
+    # the pair of the chain that adds it: fewer values live at once (all
+    # 8 products and g up front kept 5 callee saved pairs on arm64, LLVM
+    # 1)
+    for i in range(4):
+        emit(f"let f{i} = ld(f, {8 * i})")
     T = None
     for i in range(4):
-        lo = []
-        hi = []
-        for j in range(4):
-            a = v("lo")
-            b = v("hi")
-            emit(f"let {a} = rt.int_wrap(2, f{j}, g{i})")
-            emit(f"let {b} = rt.u64_mul_hi(f{j}, g{i})")
-            lo.append(a)
-            hi.append(b)
+        emit(f"let g{i} = ld(g, {8 * i})")
+        lo = [("lo", f"f{j}", f"g{i}") for j in range(4)]
+        hi = [("hi", f"f{j}", f"g{i}") for j in range(4)]
         if T is None:
             # t = lo, then + hi a word up (hi3 + 1 does not overflow)
-            r, c = chain(lo[1:], hi[:3])
-            t = [lo[0]] + r + [wadd(hi[3], c), "0"]
+            # (the top word is hi3 + the carry: the chain's last pair, one
+            # adcs with xzr, not a cset and an add)
+            lo0 = force(lo[0])
+            r, _ = chain(lo[1:] + [hi[3]], hi[:3] + ["0"], keep=False)
+            t = [lo0] + r + ["0"]
         else:
             # T is t0..t4 (the reduction's shifted words and its top)
             r, c = chain(T, lo + ["0"])
             t5 = c
-            r2, c2 = chain(r[1:5], hi)
-            t = [r[0]] + r2 + [wadd(t5, c2)]
+            r2, _ = chain(r[1:5] + [t5], hi + ["0"], keep=False)
+            t = [r[0]] + r2
         # reduce: q = t0; t + q p is divisible by 2^64; shifted down a word
         # the addend over t1..t4 is (ql, qh, q - ql, hi3) (q m3's halves)
         q = t[0]
@@ -102,9 +117,11 @@ def gen_mul():
         hi3 = v("hi")
         emit(f"let {lo3} = rt.int_wrap(1, {q}, {ql})")
         emit(f"let {hi3} = rt.int_wrap(1, rt.int_wrap(1, {q}, {qh}), cpu.borrow({q}, {ql}))")
-        r, c = chain(t[1:5], [ql, qh, lo3, hi3])
-        top = wadd(t[5], c) if t[5] != "0" else c
-        T = r + [top]
+        if t[5] != "0":
+            T, _ = chain(t[1:6], [ql, qh, lo3, hi3, "0"], keep=False)
+        else:
+            r, c = chain(t[1:5], [ql, qh, lo3, hi3])
+            T = r + [c]
     return T
 
 
