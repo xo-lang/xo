@@ -622,13 +622,19 @@ fn pair_mem(text: Str, ext: Str) -> Str {
     let a3 = if lok { l3 } else { s3 }
     if lok || sok {
       var j = i + 1
-      // the debug line rows among the labels passed: kept, before the
-      // pair (decision 0239; nothing in the text refers to them)
+      // the debug line rows and variable locations among the labels
+      // passed: kept, before the pair (decisions 0239, 0252; only the
+      // debug sections refer to them, never a branch)
       var rows: List[Str] = []
       while j < n {
         let name = label_def(lines[j])
         if name.is_empty() {
           break
+        }
+        if is_row_label(name) {
+          rows.push(lines[j])
+          j += 1
+          continue
         }
         if !have_refs {
           refs = label_refs(text, ext)
@@ -636,9 +642,6 @@ fn pair_mem(text: Str, ext: Str) -> Str {
         }
         if refs.contains(name) {
           break
-        }
-        if is_row_label(name) {
-          rows.push(lines[j])
         }
         j += 1
       }
@@ -705,6 +708,12 @@ fn reload_reuse(text: Str, ext: Str) -> Str {
   var out: List[Str] = List.with_capacity(lines.len())
   for l in lines {
     let name = label_def(l)
+    if !name.is_empty() && is_row_label(name) {
+      // a debug line row or variable location: only the debug sections
+      // refer to it, never a branch, so what the registers hold stays
+      out.push(l)
+      continue
+    }
     if !name.is_empty() {
       let n = nrefs.get(name) ?? 0
       if n > 0 {
@@ -890,9 +899,13 @@ fn is_row_label(name: Str) -> Bool {
   k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv")
 }
 
-/// The name of the label line l defines (`L<letters, digits, _>:`), or
-/// "".
-fn label_def(l: Str) -> Str {
+/// The name of the label line l defines (`L<letters, digits, _>:`, or
+/// ELF's `.L...:`, named without the dot as label_refs names its
+/// references), or "". (Until 2026-10-17 only the Mach-O form: on Linux
+/// every label ended a pair_mem search and cleared reload_reuse's
+/// registers, the debug rows before nearly every line among them.)
+fn label_def(l0: Str) -> Str {
+  let l = if l0.starts_with(".L") { l0[1..l0.len()] } else { l0 }
   if l.len() < 3 || !l.starts_with("L") || !l.ends_with(":") {
     return ""
   }

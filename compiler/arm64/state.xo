@@ -71,6 +71,9 @@ struct Memo {
   lens: Map[Int, Int] = {}
   checked: Map[(Int, Int), Bool] = {}
   bases: Map[(Int, Int, Int), Int] = {}
+  /// base + index registers of rt.mem_load and rt.mem_store (addr_base),
+  /// by the SSA values of the base and the index
+  addrs: Map[(Int, Int), Int] = {}
   loaded: Map[Int, MemAt] = {}
   epoch: Int = 0
   lo: Map[Int, Int] = {}

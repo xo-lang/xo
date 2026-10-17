@@ -184,6 +184,73 @@ fn (var g: G) elem_fn(kind: Str, t: Int) -> Src {
 /// {rc, len, cap}
 const LIST_HDR = 24
 
+/// The base register and immediate of an rt.mem_load or rt.mem_store of
+/// width w at base + off, off being i + c (c the scaled immediate) or i,
+/// when base + i serves two or more accesses of the SSA block (addr_uses):
+/// base + i is one add (addr_base), and each access its immediate, where
+/// [base, t] needs t = i + c an add each (copy_words: 18 instructions a
+/// 32 bytes, now 2 ldp, 2 stp after pair_mem). None leaves the access
+/// as it was (x86 has [base + i + c] itself).
+fn (var g: G) addr_fold(base: Int, off: Int, w: Int) -> (Int, Int)? {
+  if g.x86 || g.cur_sb < 0 {
+    return None
+  }
+  var i = off
+  var c = 0
+  if let Some((i1, c1)) = g.x86_disp(off) {
+    if !raw_imm_off(c1, w) {
+      return None
+    }
+    i = i1
+    c = c1
+  }
+  let (_, ic) = g.const_int(i)
+  if ic || g.addr_uses(base, i) < 2 {
+    return None
+  }
+  Some((g.addr_base(base, i), c))
+}
+
+/// The rt.mem_load and rt.mem_store calls of the SSA block being
+/// selected at base + i or base + i + c (c a constant), up to 2.
+fn (var g: G) addr_uses(base: Int, i: Int) -> Int {
+  var n = 0
+  for u in g.f.blocks[g.cur_sb].instrs {
+    let y = g.f.values[u]
+    if y.op != ssa.Op.Call || y.args.len() < 3 || y.args[0] != base {
+      continue
+    }
+    let name = aux_str(y.aux)
+    if name != "rt.mem_load" && name != "rt.mem_store" {
+      continue
+    }
+    let off = y.args[1]
+    let j = match g.x86_disp(off) {
+      Some((j1, _)) => j1
+      None => off
+    }
+    if j == i {
+      n += 1
+      if n >= 2 {
+        return n
+      }
+    }
+  }
+  n
+}
+
+/// A register holding base + i, made once a block (addr_fold).
+fn (var g: G) addr_base(base: Int, i: Int) -> Int {
+  let _mi = g.m_()
+  if let Some(p) = g.cm.addrs.get((base, i)) {
+    return p
+  }
+  let p = g.def1(false, "add $d0, $u0, $u1", [g.real(g.word(base)), g.real(g.word(i))])
+  let _mi2 = g.m_()
+  g.cm.addrs[(base, i)] = p
+  p
+}
+
 /// A register b such that element i of list l starts at b + LIST_HDR.
 fn (var g: G) elem_base(l: Int, i: Int, es: Int) -> Int {
   let _mi = g.m_()
@@ -1359,6 +1426,17 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0]))])])
         return true
       }
+      if let Some((p, c)) = g.addr_fold(x.args[0], x.args[1], w) {
+        // base + i once, i + c as the immediate (addr_fold)
+        let ins = match w {
+          1 => "ldrb $wd0, [$u0, #${c}]"
+          2 => "ldrh $wd0, [$u0, #${c}]"
+          4 => "ldr $wd0, [$u0, #${c}]"
+          _ => "ldr $d0, [$u0, #${c}]"
+        }
+        g.set(v, [g.def1(false, ins, [p])])
+        return true
+      }
       let ins = match w {
         1 => "ldrb $wd0, [$u0, $u1]"
         2 => "ldrh $wd0, [$u0, $u1]"
@@ -1391,6 +1469,17 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
           _ => "str $u0, [$u1, #${off}]"
         }
         g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0])])
+        g.set(v, [])
+        return true
+      }
+      if let Some((p, c)) = g.addr_fold(x.args[0], x.args[1], w) {
+        let ins = match w {
+          1 => "strb $wu0, [$u1, #${c}]"
+          2 => "strh $wu0, [$u1, #${c}]"
+          4 => "str $wu0, [$u1, #${c}]"
+          _ => "str $u0, [$u1, #${c}]"
+        }
+        g.store(ins, [g.real(g.word(x.args[2])), p])
         g.set(v, [])
         return true
       }

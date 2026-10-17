@@ -14,3 +14,25 @@ test "reload_reuse: a call, a write of x16, another store forget" {
   let t = "\tldr x16, [sp, #8]\n\tbl _f\n\tldr x16, [sp, #8]\n\tadd x16, x16, #1\n\tldr x16, [sp, #8]\n\tstr x3, [sp, #8]\n\tldr x16, [sp, #8]\n\tldr x16, [sp, #8]"
   expect(reload_reuse(t, "")) == "\tldr x16, [sp, #8]\n\tbl _f\n\tldr x16, [sp, #8]\n\tadd x16, x16, #1\n\tldr x16, [sp, #8]\n\tstr x3, [sp, #8]\n\tldr x16, [sp, #8]"
 }
+
+test "reload_reuse: ELF labels (.L) are labels: a loop head reached later forgets" {
+  let t = "\tldr x16, [sp, #8]\n.Lf_b1:\n\tldr x16, [sp, #8]\n\tcbz x0, .Lf_b1\n\tret"
+  expect(reload_reuse(t, "")) == t
+  let u = ".Lf_b0:\n\tstr x0, [sp, #984]\n\tldr x16, [sp, #984]\n\tldr x9, [x16]\n\ttbz x9, #63, .Lf_b2\n\tb .Lf_b1\n.Lf_b2:\n\tadd x9, x9, #1\n\tldr x16, [sp, #984]\n\tstr x9, [x16]\n.Lf_b1:\n\tret"
+  expect(reload_reuse(u, "")) == ".Lf_b0:\n\tstr x0, [sp, #984]\n\tldr x16, [sp, #984]\n\tldr x9, [x16]\n\ttbz x9, #63, .Lf_b2\n\tb .Lf_b1\n.Lf_b2:\n\tadd x9, x9, #1\n\tstr x9, [x16]\n.Lf_b1:\n\tret"
+}
+
+test "reload_reuse: a debug row or variable label keeps what the registers hold" {
+  let t = "\tldr x16, [sp, #8]\n.Lf_dl3:\n\tldr x16, [sp, #8]\nLf_dv4:\n\tldr x16, [sp, #8]\n\tret"
+  expect(reload_reuse(t, "\t.xword .Lf_dl3\n\t.xword Lf_dv4")) == "\tldr x16, [sp, #8]\n.Lf_dl3:\nLf_dv4:\n\tret"
+}
+
+test "pair_mem: pairs across debug labels the debug sections refer to, ELF and Mach-O" {
+  let t = "\tldr x10, [x11, #0]\n.Lf_dv8:\n\tldr x13, [x11, #8]\n\tstr x10, [x9, #0]\nLf_dl2:\n\tstr x13, [x9, #8]\n\tret"
+  expect(pair_mem(t, "\t.xword .Lf_dv8\n\t.xword Lf_dl2")) == ".Lf_dv8:\n\tldp x10, x13, [x11, #0]\nLf_dl2:\n\tstp x10, x13, [x9, #0]\n\tret"
+}
+
+test "pair_mem: a branch target between two loads ends the pair (ELF)" {
+  let t = "\tldr x10, [x11, #0]\n.Lf_b3:\n\tldr x13, [x11, #8]\n\tcbz x0, .Lf_b3\n\tret"
+  expect(pair_mem(t, "")) == t
+}
