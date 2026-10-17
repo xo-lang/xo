@@ -3570,7 +3570,9 @@ worktrees, and is copied to bin/xo. The seed is the first of `$XO_SEED`,
 the checkout's earlier bin/xo, the newest earlier build in that cache
 whose recorded commit (`<key>/commit`, written since 2026-10-14) is an
 ancestor of HEAD, so another branch's xo on a shared CI runner is never
-used,
+used, and only from a clean tree (`<key>/clean`, since 2026-10-16: a
+build with uncommitted changes under selfhost/ or std/ is never offered,
+gotchas/xobuild-dirty-build-as-ancestor.md),
 `xo` on PATH, and the newest prebuilt seed (below; needs the aws CLI
 and read access to the seed bucket); a seed that fails is reported and
 the next one tried, and the log names the path taken ("xotool: building
