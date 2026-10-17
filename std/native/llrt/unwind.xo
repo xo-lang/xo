@@ -51,7 +51,7 @@ const SCRATCH = 20480 + FC_ENTRIES * FC_BYTES
 /// args size) and its rule set (the CFA's rule and bits, then the rules
 /// of the registers whose bit is set, in bit order, at most FC_REGS).
 const FC = 20480
-const FC_ENTRIES = 64
+const FC_ENTRIES = 256
 const FC_BYTES = 512
 const FC_RULES = 112
 const FC_REGS = 25
@@ -410,8 +410,13 @@ fn fc_restore(s: Int, e: Int) {
 fn lookup_frame(s: Int, pc: Int, darwin: Bool) -> Bool {
   // two ways a set: the hot frames of a walk that share a set do not
   // evict each other (direct mapped, two of fault isolate's frames
-  // collided in one layout and each lookup missed: 1.14x, 2026-10-16)
-  let set = s + FC + 2 * FC_BYTES * (((pc >> 2) ^ (pc >> 10)) & (FC_ENTRIES / 2 - 1))
+  // collided in one layout and each lookup missed: 1.14x, 2026-10-16).
+  // The set is a multiplicative (Fibonacci) hash of pc over 128 sets,
+  // not its low bits: three frames in one set thrashed after unrelated
+  // code moved (macOS 1.42x, then Linux 1.68x, 2026-10-17); a dozen hot
+  // frames meet three in a set about 1% of layouts now
+  // (gotchas/unwind-frame-cache-collisions.md)
+  let set = s + FC + 2 * FC_BYTES * ((rt.int_wrap(2, pc >> 2, -7046029254386353131) >> 57) & (FC_ENTRIES / 2 - 1))
   if rt.mem_load(set, 0, 8) == pc {
     fc_restore(s, set)
     return true
