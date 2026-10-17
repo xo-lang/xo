@@ -1239,6 +1239,19 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     "rt.mem_load" => {
       let (w, _) = g.const_int(x.args[2])
       let (off, oc) = g.const_int(x.args[1])
+      if g.x86 && !oc {
+        if let Some((i, c)) = g.x86_disp(x.args[1]) {
+          // decision 0254: i + c folded into the displacement
+          let ins = match w {
+            1 => "ldrb $wd0, [$u0, $u1, #${c}]"
+            2 => "ldrh $wd0, [$u0, $u1, #${c}]"
+            4 => "ldr $wd0, [$u0, $u1, #${c}]"
+            _ => "ldr $d0, [$u0, $u1, #${c}]"
+          }
+          g.set(v, [g.def1(false, ins, [g.real(g.word(x.args[0])), g.real(g.word(i))])])
+          return true
+        }
+      }
       if oc && raw_imm_off(off, w) {
         // a constant offset is the instruction's scaled immediate
         // (decision 0207 stage 3: the heap record's words)
@@ -1262,6 +1275,19 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     "rt.mem_store" => {
       let (w, _) = g.const_int(x.args[3])
       let (off, oc) = g.const_int(x.args[1])
+      if g.x86 && !oc {
+        if let Some((i, c)) = g.x86_disp(x.args[1]) {
+          let ins = match w {
+            1 => "strb $wu0, [$u1, $u2, #${c}]"
+            2 => "strh $wu0, [$u1, $u2, #${c}]"
+            4 => "str $wu0, [$u1, $u2, #${c}]"
+            _ => "str $u0, [$u1, $u2, #${c}]"
+          }
+          g.store(ins, [g.real(g.word(x.args[2])), g.word(x.args[0]), g.word(i)])
+          g.set(v, [])
+          return true
+        }
+      }
       if oc && raw_imm_off(off, w) {
         let ins = match w {
           1 => "strb $wu0, [$u1, #${off}]"

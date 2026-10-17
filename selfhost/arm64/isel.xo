@@ -907,7 +907,8 @@ fn (var g: G) instr1(v: Int) {
         q = x.args[0]
       }
       let (n, qc) = g.logic_const(q)
-      if qc && ones_run(n) {
+      // x86 takes any sign extended 32 bit immediate (decision 0254)
+      if qc && (ones_run(n) || (g.x86 && imm32(n))) {
         // a logical immediate (decision 0184)
         let w = g.word(p)
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${n}", [w])])
@@ -920,6 +921,15 @@ fn (var g: G) instr1(v: Int) {
         let c = x.args[j]
         let cx = g.f.values[c]
         if cx.op == ssa.Op.Not && g.kind(cx.ty) != ssa.Kind.Bool {
+          if g.x86 {
+            // ~k of a constant k: x86's immediate (`n & ~31`: andq $-32,
+            // not a mov, a not, and an and)
+            let (k, kc) = g.logic_const(cx.args[0])
+            if kc && imm32(~k) {
+              g.set(v, [g.def1(false, "${ins} $d0, $u0, #${~k}", [g.word(x.args[1 - j])])])
+              return
+            }
+          }
           let inv = match x.op {
             And => "bic"
             Or => "orn"
@@ -1858,6 +1868,20 @@ fn (var g: G) mul(v: Int) {
     } else {
       g.set(v, [g.def1(false, "mul $d0, $u0, $u1", [a, b])])
     }
+    return
+  }
+  if g.x86 {
+    // decision 0254: imul and its overflow flag, not arm64's smulh and
+    // compare (eight x86 instructions through rdx:rax); a constant factor
+    // is imul's immediate
+    let l = g.loc_label(x.pos)
+    let (k, kc) = g.const_int(q)
+    let r = if kc && imm32(k) {
+      g.checked(false, "x86_mulo $d0, $u0, #${k}", [g.word(p)], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+    } else {
+      g.checked(false, "x86_mulo $d0, $u0, $u1", [a, b], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+    }
+    g.set(v, [r])
     return
   }
   var r = 0

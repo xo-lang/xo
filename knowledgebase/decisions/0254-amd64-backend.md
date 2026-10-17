@@ -273,6 +273,13 @@ condition).
   the Mac's Rosetta). SHA-256's compression keeps its body: SHA-NI needs
   CPUID leaf 7, a new runtime primitive (the owner's call). AES-GCM
   sealing 32 MiB in Docker: 571 ms with the bodies, 38 ms lowered.
+- The first native x86 selection (Xo Lang 2, 2026-10-17; the ranking in
+  bench/results/amd64-vs-llvm-2026-10-17.md, split with Xo lang 5): a
+  checked product is imul and jo (`x86_mulo`), a load or store at i + c
+  takes c as its displacement (calls.xo x86_disp, xmem's `[base, index,
+  #disp]`), and and, or, xor take any 32 bit immediate (a complemented
+  constant too); arm64's output is unchanged. collatz -12.6%, iface
+  -23.6%, hof -18.3%.
 - Open, SHA-256 on x86-64 (waits for the owner: a new runtime primitive,
   rule 7b; lead to ask 2026-10-17). The plan: (1) `rt.cpuid7_ebx`, CPUID
   leaf 7 subleaf 0's EBX, beside rt.cpuid1_ecx (cpu.xo `cpuid7_ebx`, body

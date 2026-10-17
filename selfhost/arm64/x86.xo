@@ -164,7 +164,8 @@ fn a64_ops(s: Str) -> List[Str] {
 }
 
 /// The x86 memory operand of arm64's `[base]`, `[base, #n]`, `[base,
-/// index]`, `[base, index, lsl #k]`; "" if another form.
+/// index]`, `[base, index, lsl #k]`, and x86's own `[base, index,
+/// #disp]`; "" if another form.
 fn xmem(m: Str) -> Str {
   if !m.starts_with("[") || !m.ends_with("]") {
     return ""
@@ -203,6 +204,13 @@ fn xmem(m: Str) -> Str {
     let k = Int.parse(ps[2][5..ps[2].len()]) ?? -1
     if k >= 0 && k <= 3 {
       return "(${b},${x},${1 << k})"
+    }
+  }
+  // `[base, index, #disp]`: x86 only (calls.xo's folded offsets, no arm64
+  // form)
+  if ps.len() == 3 {
+    if let Some(d) = imm_of(ps[2]) {
+      return "${d}(${b},${x})"
     }
   }
   ""
@@ -548,6 +556,21 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       x.lines.push("imul${q} ${xop(ops[2], size)}, ${x86_reg(XR_SCRATCH, size)}")
       let op = if m == "madd" { "add" } else { "sub" }
       g.x86_binop(inst, x, ops[0], ops[3], "%r11", "${op}${q}", single)
+      true
+    }
+    "x86_mulo" => {
+      // isel's checked product under g.x86: imul sets OF on a signed
+      // overflow (the fault's vs, jo); the definition is early (the fault
+      // stub reads the operands), so no tie
+      if n != 3 {
+        return false
+      }
+      if let Some(k) = imm_of(ops[2]) {
+        x.lines.push("imulq $${k}, ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+        return true
+      }
+      x.lines.push("movq ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      x.lines.push("imulq ${xop(ops[2], 8)}, ${xop(ops[0], 8)}")
       true
     }
     "smulh" | "umulh" => {
@@ -1463,6 +1486,34 @@ fn (var g: G) x86_def1(text: Str, us: List[Int]) -> Int {
   }
   let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: [d], us: rs, x86: true})
   d
+}
+
+/// An offset that is i + c with c a 32 bit constant (an unchecked add:
+/// rt.int_wrap's, or the SSA's add of no position), as (i, c), for x86's
+/// displacement; None for another.
+fn (var g: G) x86_disp(off: Int) -> (Int, Int)? {
+  let y = g.f.values[off]
+  if y.op == ssa.Op.Call && aux_str(y.aux) == "rt.int_wrap" && y.args.len() == 3 {
+    let (op, ok) = g.const_int(y.args[0])
+    if ok && op == 0 {
+      for j in [2, 1] {
+        let (c, cc) = g.const_int(y.args[j])
+        if cc && imm32(c) {
+          return Some((y.args[3 - j], c))
+        }
+      }
+    }
+    return None
+  }
+  if y.op == ssa.Op.Add && y.pos.is_empty() && g.kind(y.ty) == ssa.Kind.Int {
+    for j in [1, 0] {
+      let (c, cc) = g.const_int(y.args[j])
+      if cc && imm32(c) {
+        return Some((y.args[1 - j], c))
+      }
+    }
+  }
+  None
 }
 
 /// x86_def1 with n definitions.

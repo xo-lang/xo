@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The amd64 backend selects x86's own forms for checked multiplies (imul
+  and jo), constant offsets (displacements), and logical immediates:
+  collatz 13%, iface 24%, hof 18% fewer instructions.
+
 - Debuggers see Int, Float, and Bool locals and parameters of LLVM
   native builds too (decision 0252 stage 3): lldb's `frame variable`
   prints them. -s and release builds carry none of it and cost what they
