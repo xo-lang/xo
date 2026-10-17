@@ -564,6 +564,15 @@ fn (var g: G) isel() {
         }
       }
     }
+    if g.spec.contains(b) {
+      // an if-conversion selected its instructions into its predecessor
+      // or left it unreachable: nothing to select (selecting it would
+      // run the if-conversions of its own branch, which can mark a block
+      // the new path reaches), only its memo for the blocks it dominates
+      g.end_memo[b] = g.m_()
+      let _t = g.add(Inst{kind: K_TRAP})
+      continue
+    }
     g.cur_sb = b
     for (ix, v) in g.f.blocks[b].instrs.indexed() {
       g.cur_ix = ix
@@ -1123,8 +1132,17 @@ fn (var g: G) branch_op(v: Int) {
     return
   }
   var inst = Inst{kind: K_CONDBR}
+  if g.lazy[c] && (g.range_branch(x) || g.range_and(x)) {
+    return
+  }
+  if g.logic_value(x) {
+    return
+  }
   if g.lazy[c] {
     let cmp = g.compare(c)
+    if g.select_branch(x, cmp) {
+      return
+    }
     inst = Inst{kind: K_CONDBR, text: cmp.text, us: cmp.us, cond: cmp.cond}
     let k = tst_bit(cmp.text)
     if k >= 0 && (cmp.cond == "eq" || cmp.cond == "ne") {
@@ -1137,7 +1155,11 @@ fn (var g: G) branch_op(v: Int) {
       inst = Inst{kind: K_CONDBR, us: cmp.us, cond: "cbnz", bit: if cmp.cond == "eq" { 1 } else { 0 }}
     }
   } else {
-    inst = Inst{kind: K_CONDBR, cond: "cbnz", us: [g.word(c)]}
+    let w = g.word(c)
+    if g.select_branch(x, Cmp{text: "cmp $u0, #0", us: [w], cond: "ne"}) {
+      return
+    }
+    inst = Inst{kind: K_CONDBR, cond: "cbnz", us: [w]}
   }
   var t0 = g.edge(x.succs[0])
   var t1 = g.edge(x.succs[1])
@@ -1150,6 +1172,575 @@ fn (var g: G) branch_op(v: Int) {
   }
   inst.targets = [t0, t1]
   let _i = g.add(inst)
+}
+
+/// If-conversion: when both edges of branch x (cmp holding on its first)
+/// reach the same block J, each directly or through a block that only
+/// jumps (no parameters, no other instructions), and J's parameters
+/// that the two paths give different values are Int or Bool words (at
+/// most 4), selects them with csel and jumps to J: no branch to
+/// mispredict (ndigits8's `if v < 10 { 1 } else { 2 }`). The values
+/// both paths pass are computed before the branch, so nothing runs that
+/// would not have.
+fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
+  if g.from_memory(x.args[0], 3) {
+    // a condition on a loaded value (a binary search's `sec < w[m]`): a
+    // select makes the next load wait for this one, where a predicted
+    // branch runs ahead (std time zone_offset 1.17x the cycles,
+    // 2026-10-17; LLVM's x86 cmov conversion keeps such branches too)
+    return false
+  }
+  let (j0, e0, s0) = g.forward(x.succs[0])
+  let (j1, e1, s1) = g.forward(x.succs[1])
+  if j0 != j1 || (e0 == x.succs[0] && e1 == x.succs[1]) || !g.plans_of(j0).is_empty() {
+    return false
+  }
+  let ps = g.f.blocks[j0].params
+  var nsel = 0
+  for (i, p) in ps.indexed() {
+    let a0 = g.f.edges[e0].args[i]
+    let a1 = g.f.edges[e1].args[i]
+    if g.mem_only(p) >= 0 {
+      return false
+    }
+    if a0 != a1 {
+      if !(g.vkind(p) is ssa.Kind.Int | ssa.Kind.Bool | ssa.Kind.Float) || g.vals[p].len() != 1 {
+        return false
+      }
+      nsel += 1
+    }
+  }
+  if nsel == 0 || nsel > 4 {
+    return false
+  }
+  let jbl = g.f.blocks[j0]
+  if jbl.instrs.len() == 1 && g.op(jbl.instrs[0]) == ssa.Op.Branch && ps.contains(g.arg(jbl.instrs[0], 0)) {
+    return false // J only branches on what it would select: a branch stays a branch
+  }
+  // the instructions of a side block, selected here (forward)
+  for (sb, vs) in [(g.f.edges[x.succs[0]].to, s0), (g.f.edges[x.succs[1]].to, s1)] {
+    if vs.is_empty() {
+      continue
+    }
+    let save = g.cur_sb
+    g.cur_sb = -1
+    for v in vs {
+      g.instr(v)
+    }
+    g.cur_sb = save
+    g.spec[sb] = true
+  }
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  for (i, p) in ps.indexed() {
+    let a0 = g.f.edges[e0].args[i]
+    let a1 = g.f.edges[e1].args[i]
+    if a0 == a1 {
+      g.param_moves(p, a0, dsts, srcs)
+      continue
+    }
+    let w = g.csel_of(cmp, a0, a1)
+    let pw = g.vals[p][0]
+    if w != pw {
+      dsts.push(pw)
+      srcs.push(rsrc(w))
+    }
+  }
+  g.pmove(dsts, srcs)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[j0]]})
+  true
+}
+
+/// The word of an Int or Bool constant (a Bool is 0 or 1).
+fn (g: G) word_const(v: Int) -> (Int, Bool) {
+  let (n, ok) = g.const_int(v)
+  if ok {
+    return (n, true)
+  }
+  let x = g.f.values[g.through_params(v)]
+  if x.op == ssa.Op.Const {
+    if let B(k) = x.aux {
+      return (if k { 1 } else { 0 }, true)
+    }
+  }
+  (0, false)
+}
+
+/// A register holding a0 when cmp holds, else a1 (Int or Bool words):
+/// csel, or for constants csinc (one apart) and xzr (zero), so that
+/// `if c { 1 } else { 2 }` takes one constant and `{ 0 } else { 1 }`
+/// none.
+fn (var g: G) csel_of(cmp: Cmp, a0: Int, a1: Int) -> Int {
+  let n = cmp.us.len()
+  let c = cmp.cond
+  let ic = inv_cond(c)
+  if g.vkind(a0) == ssa.Kind.Float {
+    let f0 = g.word(a0)
+    let f1 = g.word(a1)
+    return g.def1(true, "${cmp.text}\nfcsel $d0, $u${n}, $u${n + 1}, ${c}", cmp.us + [f0, f1])
+  }
+  let (c0, k0) = g.word_const(a0)
+  let (c1, k1) = g.word_const(a1)
+  if k0 && k1 {
+    if c0 == 0 && c1 == 1 {
+      return g.def1(false, "${cmp.text}\ncsinc $d0, xzr, xzr, ${c}", cmp.us)
+    }
+    if c0 == 1 && c1 == 0 && ic != "" {
+      return g.def1(false, "${cmp.text}\ncsinc $d0, xzr, xzr, ${ic}", cmp.us)
+    }
+    if c0 != MAX_INT && c1 == c0 + 1 {
+      return g.def1(false, "${cmp.text}\ncsinc $d0, $u${n}, $u${n}, ${c}", cmp.us + [g.word(a0)])
+    }
+    if c1 != MAX_INT && c0 == c1 + 1 && ic != "" {
+      return g.def1(false, "${cmp.text}\ncsinc $d0, $u${n}, $u${n}, ${ic}", cmp.us + [g.word(a1)])
+    }
+  }
+  if k0 && c0 == 0 {
+    return g.def1(false, "${cmp.text}\ncsel $d0, xzr, $u${n}, ${c}", cmp.us + [g.word(a1)])
+  }
+  if k1 && c1 == 0 {
+    return g.def1(false, "${cmp.text}\ncsel $d0, $u${n}, xzr, ${c}", cmp.us + [g.word(a0)])
+  }
+  let w0 = g.word(a0)
+  let w1 = g.word(a1)
+  g.def1(false, "${cmp.text}\ncsel $d0, $u${n}, $u${n + 1}, ${c}", cmp.us + [w0, w1])
+}
+
+/// A range test: branch x on `c >= lo` whose true edge enters a block
+/// that holds only `c <= hi` (and constants) and its branch, the two
+/// false edges reaching the same block with the same arguments (`c >=
+/// 48 && c <= 57`): one subtract and an unsigned compare, c - lo <= hi -
+/// lo as UInt64s, and a branch to the inner true edge or the false
+/// edge (the subtract wraps, so it holds for every Int); whether it did.
+fn (var g: G) range_branch(x: ssa.Value) -> Bool {
+  let (v, lo, ok) = g.bound_of(x.args[0], true)
+  if !ok {
+    return false
+  }
+  let e_in = x.succs[0]
+  let e_out = x.succs[1]
+  let b = g.f.blocks[g.f.edges[e_in].to]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n < 2 || b.preds.len() != 1 {
+    return false
+  }
+  let br = g.f.values[b.instrs[n - 1]]
+  if br.op != ssa.Op.Branch || br.pad >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
+    return false
+  }
+  for k in 0..n - 2 {
+    if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+      return false
+    }
+  }
+  let (v2, hi, ok2) = g.bound_of(br.args[0], false)
+  if !ok2 || v2 != v || hi < lo || g.nuses[br.args[0]] != 1 || hi <= -65536 || hi >= 65536 {
+    // (the skipped block is still selected, unreachable, and its true
+    // successor inherits its memo: a constant it would put in a
+    // register for the blocks it dominates (inherit keeps those of
+    // 65536 and more) would be read there unwritten)
+    return false
+  }
+  let e2 = br.succs[1]
+  if g.f.edges[e2].to != g.f.edges[e_out].to || g.f.edges[e2].args != g.f.edges[e_out].args {
+    return false
+  }
+  g.spec[g.f.edges[e_in].to] = true
+  g.range_test(v, lo, hi, br.succs[0], e_out)
+}
+
+/// The same range test for `c >= lo && c <= hi` as the SSA builder
+/// gives a condition: branch x on `c >= lo` to block B, which holds
+/// only `c <= hi` (and constants) and jumps to J passing it, and
+/// otherwise to J (directly or through a block of constants) passing
+/// false; J only branches on that parameter, its other parameters get
+/// the same value on both edges, and its targets take none of them.
+/// Moves those values and branches to J's targets directly (B and J are
+/// left unreachable; J's memo, which its targets inherit, is A's).
+fn (var g: G) range_and(x: ssa.Value) -> Bool {
+  let (v, lo, ok) = g.bound_of(x.args[0], true)
+  if !ok {
+    return false
+  }
+  let b = g.f.blocks[g.f.edges[x.succs[0]].to]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n < 2 || b.preds.len() != 1 {
+    return false
+  }
+  let jmp = g.f.values[b.instrs[n - 1]]
+  if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+    return false
+  }
+  let eb = jmp.succs[0]
+  let jb = g.f.edges[eb].to
+  let (jf, ef, sp) = g.forward(x.succs[1])
+  if !sp.is_empty() {
+    return false
+  }
+  let j = g.f.blocks[jb]
+  if jf != jb || j.instrs.len() != 1 || j.preds.len() != 2 {
+    return false
+  }
+  let c2 = b.instrs[n - 2]
+  if g.nuses[c2] != 1 {
+    return false
+  }
+  for k in 0..n - 2 {
+    if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+      return false
+    }
+  }
+  let br = g.f.values[j.instrs[0]]
+  if br.op != ssa.Op.Branch || br.pad >= 0 {
+    return false
+  }
+  let p = br.args[0]
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  for (i, q) in j.params.indexed() {
+    let ab = g.f.edges[eb].args[i]
+    let af = g.f.edges[ef].args[i]
+    if q == p {
+      let (f, fok) = g.word_const(af)
+      if ab != c2 || !fok || f != 0 || g.nuses[p] != 1 {
+        return false
+      }
+      continue
+    }
+    if ab != af || g.mem_only(q) >= 0 || g.vals[q].len() != 1 || g.vkind(q) == ssa.Kind.List {
+      return false
+    }
+    let w = g.word(ab)
+    if w != g.vals[q][0] {
+      dsts.push(g.vals[q][0])
+      srcs.push(rsrc(w))
+    }
+  }
+  if !j.params.contains(p) {
+    return false
+  }
+  let (v2, hi, ok2) = g.bound_of(c2, false)
+  if !ok2 || v2 != v || hi < lo {
+    return false
+  }
+  g.pmove(dsts, srcs)
+  g.spec[g.f.edges[x.succs[0]].to] = true
+  g.spec[jb] = true
+  g.range_test(v, lo, hi, br.succs[0], br.succs[1])
+}
+
+/// `c0 && c2` (and) or `c0 || c2` as a Bool value, without branches:
+/// branch x on c0 to block B, which holds only the compare c2 (and
+/// constants) and jumps to J passing it, and otherwise to J (directly or
+/// through a block of constants) passing false (true for ||), J's other
+/// parameters getting the same value on both edges, and J not just a
+/// branch on it (range_and takes that). c2 has no effect and its
+/// operands are computed before x, so evaluating it early is safe. A
+/// range `c >= lo && c <= hi` is a subtract and one compare; else cset
+/// of each, and and orr.
+fn (var g: G) logic_value(x: ssa.Value) -> Bool {
+  let c0 = x.args[0]
+  if !is_compare(g.op(c0)) || !(g.vkind(g.arg(c0, 0)) is ssa.Kind.Int | ssa.Kind.Bool | ssa.Kind.Float) {
+    return false // (compare takes these; an enum's == is lowered elsewhere)
+  }
+  for is_and in [true, false] {
+    let e_b = if is_and { x.succs[0] } else { x.succs[1] }
+    let e_j = if is_and { x.succs[1] } else { x.succs[0] }
+    let b = g.f.blocks[g.f.edges[e_b].to]
+    let n = b.instrs.len()
+    if !b.params.is_empty() || n < 2 || b.preds.len() != 1 {
+      continue
+    }
+    let jmp = g.f.values[b.instrs[n - 1]]
+    if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+      continue
+    }
+    let eb = jmp.succs[0]
+    let jb = g.f.edges[eb].to
+    let (jf, ef, sp) = g.forward(e_j)
+    if jf != jb || !sp.is_empty() || !g.plans_of(jb).is_empty() {
+      continue
+    }
+    let c2 = b.instrs[n - 2]
+    if !is_compare(g.op(c2)) || g.nuses[c2] != 1 || !(g.vkind(g.arg(c2, 0)) is ssa.Kind.Int | ssa.Kind.Bool) {
+      continue
+    }
+    if g.divides(c0) || g.divides(c2) {
+      // `y % 4 == 0 && y % 100 != 0`: the second test is a multiply or
+      // a division, worth a branch to skip (std time is_leap, zone_civil
+      // 1.04x the cycles, 2026-10-17)
+      continue
+    }
+    var consts = true
+    for k in 0..n - 2 {
+      if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+        consts = false
+      }
+    }
+    if !consts {
+      continue
+    }
+    let j = g.f.blocks[jb]
+    var pk = -1
+    var ok = true
+    for (i, q) in j.params.indexed() {
+      let ab = g.f.edges[eb].args[i]
+      let af = g.f.edges[ef].args[i]
+      if ab == c2 {
+        let (f, fok) = g.word_const(af)
+        if pk >= 0 || !fok || f != (if is_and { 0 } else { 1 }) {
+          ok = false
+        }
+        pk = i
+      } else if ab != af || g.mem_only(q) >= 0 || g.vals[q].len() != 1 || g.vkind(q) == ssa.Kind.List {
+        ok = false
+      }
+    }
+    if !ok || pk < 0 {
+      continue
+    }
+    let p = j.params[pk]
+    if j.instrs.len() == 1 && g.op(j.instrs[0]) == ssa.Op.Branch && g.arg(j.instrs[0], 0) == p {
+      return false // a branch on it: range_and, or two branches
+    }
+    var pv = -1
+    if is_and {
+      let (v, lo, lok) = g.bound_of(c0, true)
+      let (v2, hi, hok) = g.bound_of(c2, false)
+      if lok && hok && v == v2 && hi >= lo {
+        let span = hi.wrapping_sub(lo)
+        let w = g.word(v)
+        var t = w
+        if lo != 0 {
+          t = if imm12(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
+        }
+        pv = if span >= 0 && imm12(span) {
+          g.def1(false, "cmp $u0, #${span}\ncset $d0, ls", [t])
+        } else {
+          g.def1(false, "cmp $u0, $u1\ncset $d0, ls", [t, g.cimm(span)])
+        }
+      }
+    }
+    if pv < 0 {
+      let k0 = g.compare(c0)
+      let w0 = g.def1(false, "${k0.text}\ncset $d0, ${k0.cond}", k0.us)
+      let k2 = g.compare(c2)
+      let w2 = g.def1(false, "${k2.text}\ncset $d0, ${k2.cond}", k2.us)
+      pv = g.def1(false, if is_and { "and $d0, $u0, $u1" } else { "orr $d0, $u0, $u1" }, [w0, w2])
+    }
+    var dsts: List[Int] = []
+    var srcs: List[Src] = []
+    for (i, q) in j.params.indexed() {
+      let w = if i == pk { pv } else { g.word(g.f.edges[eb].args[i]) }
+      if w != g.vals[q][0] {
+        dsts.push(g.vals[q][0])
+        srcs.push(rsrc(w))
+      }
+    }
+    g.pmove(dsts, srcs)
+    g.spec[g.f.edges[e_b].to] = true
+    let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[jb]]})
+    return true
+  }
+  false
+}
+
+/// Whether value v is, within depth operations, the result of a call or
+/// a memory read (rt.int_wrap is arithmetic): a list element, a field of
+/// an object, a word of bytes.
+fn (g: G) from_memory(v: Int, depth: Int) -> Bool {
+  let x = g.f.values[g.through_params(v)]
+  if x.op == ssa.Op.Call {
+    let (_, w) = g.wrap_op(g.through_params(v))
+    if !w {
+      return true
+    }
+  }
+  if depth == 0 || x.op is ssa.Op.Param | ssa.Op.Const {
+    return false
+  }
+  for a in x.args {
+    if a >= 0 && g.from_memory(a, depth - 1) {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether compare c has an operand that is a division or a remainder.
+fn (g: G) divides(c: Int) -> Bool {
+  for a in g.f.values[c].args {
+    if g.op(g.through_params(a)) is ssa.Op.Div | ssa.Op.Rem {
+      return true
+    }
+  }
+  false
+}
+
+/// Branches on lo <= v <= hi (lo <= hi) to edge e_in, else to e_out:
+/// v - lo <= hi - lo as UInt64s, both differences wrapping (range_branch,
+/// range_and).
+fn (var g: G) range_test(v: Int, lo: Int, hi: Int, e_in: Int, e_out: Int) -> Bool {
+  let span = hi.wrapping_sub(lo)
+  let w = g.word(v)
+  var t = w
+  if lo != 0 {
+    if imm12(lo) {
+      t = g.def1(false, "sub $d0, $u0, #${lo}", [w])
+    } else if lo != MIN_INT && imm12(-lo) {
+      t = g.def1(false, "add $d0, $u0, #${-lo}", [w])
+    } else {
+      t = g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)])
+    }
+  }
+  var inst = Inst{kind: K_CONDBR, text: "cmp $u0, #${span}", us: [t], cond: "ls"}
+  if span < 0 || !imm12(span) {
+    inst = Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [t, g.cimm(span)], cond: "ls"}
+  }
+  let t0 = g.edge(e_in)
+  let t1 = g.edge(e_out)
+  inst.targets = [t0, t1]
+  let _i = g.add(inst)
+  true
+}
+
+/// The Int value v and the bound k of compare c that is `v >= k` (lower
+/// true) or `v <= k` (lower false), with the constant on either side and
+/// < or > adjusted by one; ok false otherwise.
+fn (g: G) bound_of(c: Int, lower: Bool) -> (Int, Int, Bool) {
+  let o = g.op(c)
+  if !(o is ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge) || g.vkind(g.arg(c, 0)) != ssa.Kind.Int {
+    return (0, 0, false)
+  }
+  let a = g.arg(c, 0)
+  let b = g.arg(c, 1)
+  let (kb, okb) = g.const_int(b)
+  let (ka, oka) = g.const_int(a)
+  if g.tname(g.vty(a)) == "UInt64" && (okb && kb < 0 || oka && ka < 0) {
+    // an unsigned compare: the test agrees with it for bounds below 2^63
+    return (0, 0, false)
+  }
+  // v op k, the constant moved to the right
+  var v = a
+  var k = kb
+  var op = o
+  if !okb {
+    if !oka {
+      return (0, 0, false)
+    }
+    v = b
+    k = ka
+    op = match o {
+      Lt => ssa.Op.Gt
+      Le => ssa.Op.Ge
+      Gt => ssa.Op.Lt
+      _ => ssa.Op.Le
+    }
+  } else if oka {
+    return (0, 0, false)
+  }
+  if lower {
+    match op {
+      Ge => return (v, k, true)
+      Gt => {
+        if k == MAX_INT {
+          return (0, 0, false)
+        }
+        return (v, k + 1, true)
+      }
+      _ => return (0, 0, false)
+    }
+  }
+  match op {
+    Le => (v, k, true)
+    Lt => if k == MIN_INT { (0, 0, false) } else { (v, k - 1, true) }
+    _ => (0, 0, false)
+  }
+}
+
+/// The block edge e reaches past a block that only jumps (no
+/// parameters, nothing but constants before the jump, or, when the edge
+/// is its only way in, up to SPEC_MAX instructions that can be run
+/// whatever the branch decides: spec_ok), the edge that carries the
+/// arguments into it, and those instructions (select_branch).
+fn (g: G) forward(e: Int) -> (Int, Int, List[Int]) {
+  let t = g.f.edges[e].to
+  let b = g.f.blocks[t]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n == 0 {
+    return (t, e, [])
+  }
+  var spec: List[Int] = []
+  for k in 0..n - 1 {
+    let v = b.instrs[k]
+    let o = g.f.values[v].op
+    if o == ssa.Op.Const || o == ssa.Op.Tuple && g.f.values[v].args.is_empty() {
+      continue // nothing to compute (a unit is a tuple of nothing)
+    }
+    if b.preds.len() != 1 || !g.spec_ok(v) {
+      return (t, e, [])
+    }
+    spec.push(v)
+  }
+  if spec.len() > SPEC_MAX {
+    return (t, e, [])
+  }
+  let j = g.f.values[b.instrs[n - 1]]
+  if j.op != ssa.Op.Jump || j.pad >= 0 {
+    return (t, e, [])
+  }
+  (g.f.edges[j.succs[0]].to, j.succs[0], spec)
+}
+
+/// The most instructions select_branch runs of a side it selects.
+const SPEC_MAX = 4
+
+/// Whether v can run whatever a branch before it decides: no fault, no
+/// effect, cheap (Float add, subtract, multiply, negate; logic;
+/// unchecked or wrapping Int arithmetic; Int to Float). Not compares:
+/// speculating the second half of `a && b` or `a || b` ran it every time
+/// for a Bool that is branched on anyway (json enc_strings 1.09x the
+/// cycles, 2026-10-17).
+fn (g: G) spec_ok(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if x.pad >= 0 || x.ty < 0 {
+    return false
+  }
+  let k = g.kind(x.ty)
+  match x.op {
+    Add | Sub | Mul => k == ssa.Kind.Float || k == ssa.Kind.Int && x.pos.is_empty()
+    Neg => k == ssa.Kind.Float
+    And | Or | Xor | Not => k is ssa.Kind.Int | ssa.Kind.Bool
+    IntToFloat => true
+    Call => {
+      let (op, ok) = g.wrap_op(v)
+      ok && op >= 0 && op <= 2
+    }
+    _ => false
+  }
+}
+
+/// Adds the moves that give parameter p the words of value a (as
+/// edge_moves).
+fn (var g: G) param_moves(p: Int, a: Int, var dsts: List[Int], var srcs: List[Src]) {
+  let pw = g.vals[p]
+  let aw = g.words(a)
+  for k in 0..pw.len() {
+    if pw[k] != aw[k] {
+      dsts.push(pw[k])
+      srcs.push(rsrc(aw[k]))
+    }
+  }
+  if g.vkind(p) != ssa.Kind.List {
+    return
+  }
+  if let Some(c) = g.len_param.get(pw[0]) {
+    let n = g.list_len(aw[0])
+    if n != c {
+      dsts.push(c)
+      srcs.push(rsrc(n))
+    }
+  }
 }
 
 fn (g: G) used_by_branch(v: Int) -> Bool {
@@ -1396,9 +1987,11 @@ fn (g: G) rem_test(v: Int) -> Bool {
     return false
   }
   let (_, ok) = g.pow2(x.args[1])
-  if !ok {
-    return false
-  }
+  ok && g.zero_test_use(v)
+}
+
+/// Whether the one user of v is `v == 0` or `v != 0`.
+fn (g: G) zero_test_use(v: Int) -> Bool {
   let u = g.users[v]
   if u < 0 || !(g.op(u) is ssa.Op.Eq | ssa.Op.Ne) {
     return false

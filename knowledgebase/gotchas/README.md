@@ -7,6 +7,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [c-macro-tested-before-defined.md](c-macro-tested-before-defined.md): Observed 2026-10-15: xo_rt.c tested XO_TSAN and XO_ASAN 1,600 lines before defining them, so sanitizer builds never mapped the heap through the C library; heapos.xo now decides at run time.
 - [arm64-inline-verify-fallback.md](arm64-inline-verify-fallback.md): Observed 2026-10-15: an inlined module that fails verification is dropped for the uninlined one, silently; check verification when changing the inliner.
 - [arm64-template-cmp-cset-folded.md](arm64-template-cmp-cset-folded.md): Observed 2026-10-15: a def1 template ending in cmp and cset loses the cset to a branch fold; give the compare its own template.
+- [arm64-if-conversion-cost.md](arm64-if-conversion-cost.md): Observed 2026-10-17: csel if-conversion that removed mispredicts still cost cycles on a loaded condition in a loop, a speculated `&&` half, and every test of `is_leap`; skip those shapes and measure in cycles.
+- [arm64-skipped-block-memo.md](arm64-skipped-block-memo.md): Anticipated 2026-10-17: an if-conversion leaves blocks unreachable but still selected; a block they dominate would inherit registers nothing writes; skip only blocks that dominate nothing or keep no registers.
 - [git-stash-shared-across-worktrees.md](git-stash-shared-across-worktrees.md): Observed 2026-10-15: `git stash pop` in a worktree can apply another agent's stash; use `git pull --rebase --autostash`.
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.

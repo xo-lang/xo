@@ -831,6 +831,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       if op == 0 && g.fused_add(v) {
         return true
       }
+      if op == 1 && g.fused_sub(v) {
+        return true
+      }
       if (op == 0 || op == 1) && g.add_with_flag(v, op) {
         return true
       }
@@ -1395,15 +1398,16 @@ fn (g: G) wrap_op(v: Int) -> (Int, Bool) {
 }
 
 /// Lowers rt.int_wrap(0, a, b) when a or b, used only there, is a long
-/// multiply (umaddl, smaddl) or a shift left by a constant (an add with a
-/// shifted operand; fusedAdd).
+/// multiply (umaddl, smaddl), another wrapping multiply (madd), or a
+/// shift left by a constant (an add with a shifted operand; fusedAdd).
 fn (var g: G) fused_add(v: Int) -> Bool {
   let args = g.f.values[v].args
   for j in 1..3 {
-    let x = args[j]
+    // through an inlined helper's result parameter (num.addw(num.mulw(..)))
+    let x = g.through_params(args[j])
     let o = args[3 - j]
     let (op, ok) = g.wrap_op(x)
-    if !ok || g.nuses[x] != 1 {
+    if !ok || g.nuses[x] != 1 || g.nuses[args[j]] != 1 {
       continue
     }
     let xa = g.f.values[x].args
@@ -1414,6 +1418,11 @@ fn (var g: G) fused_add(v: Int) -> Bool {
         g.set(v, [g.def1(false, t2, us + [g.word(o)])])
         return true
       }
+      // a wrapping multiply and add: madd (parse's mant * 10 + digit)
+      let m1 = g.word(xa[1])
+      let m2 = g.word(xa[2])
+      g.set(v, [g.def1(false, "madd $d0, $u0, $u1, $u2", [m1, m2, g.word(o)])])
+      return true
     } else if op == 3 {
       let (k, kc) = g.const_int(xa[2])
       if kc && k & 63 != 0 {
@@ -1423,6 +1432,22 @@ fn (var g: G) fused_add(v: Int) -> Bool {
     }
   }
   false
+}
+
+/// Lowers rt.int_wrap(1, a, b) when b, used only there, is a wrapping
+/// multiply: msub.
+fn (var g: G) fused_sub(v: Int) -> Bool {
+  let args = g.f.values[v].args
+  let x = g.through_params(args[2])
+  let (op, ok) = g.wrap_op(x)
+  if !ok || op != 2 || g.nuses[x] != 1 || g.nuses[args[2]] != 1 {
+    return false
+  }
+  let xa = g.f.values[x].args
+  let m1 = g.word(xa[1])
+  let m2 = g.word(xa[2])
+  g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [m1, m2, g.word(args[1])])])
+  true
 }
 
 /// The add (op 0) or subtract (op 1) v = a op b with its carry or borrow

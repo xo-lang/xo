@@ -233,6 +233,10 @@ struct G {
   end_memo: List[Int] = []
   /// compares lowered into the branch that uses them
   lazy: List[Bool] = []
+  /// SSA blocks an if-conversion left unreachable (select_branch
+  /// selected their instructions into their one predecessor; range_and,
+  /// range_branch, logic_value jumped past them): selected as a trap
+  spec: Map[Int, Bool] = {}
   /// the function uses the $OUT slot
   out: Bool = false
   /// releases cancelled by a retain (rc.xo cancel_rc)
@@ -356,6 +360,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.nuses = []
   g.users = []
   g.lazy = []
+  g.spec = {}
   g.cancel = []
   for _ in 0..nv {
     g.vals.push([])

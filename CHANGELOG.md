@@ -13,6 +13,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A task whose handle is dropped no longer boxes its value result (it
   cannot be read): spawn 1,835 to 1,620 instructions a spawn on macOS,
   1.12 times rust-ct's (decision 0068's addendum).
+- arm64: if-conversion (a branch whose sides only pass values to one
+  block, or run up to four instructions that cannot fault, becomes csel,
+  csinc, or fcsel), `c >= lo && c <= hi` as one unsigned compare,
+  `a && b` and `a || b` as Bool values without branches, and madd/msub
+  for a wrapping multiply and add: json floats 0.965 and text lines
+  0.941 of the cycles, no workload slower in cycles
+  (bench/results/arm64-float-text-2026-10-17.md). Conditions on loaded
+  values keep their branches (gotchas/arm64-if-conversion-cost.md).
+
 - Native contract fuzzing draws small numbers, as the Go backend's does
   (std/rt GenRand.Small): it drew MaxInt and MinInt, so a function that
   overflows only at the extremes failed natively and passed on Go
