@@ -325,7 +325,13 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
         return b.call("list.index", b.m.types[lt].elems[0], b.pos(span), [l, i])
       }
     }
-    CallExpr(..) => return b.call_expr(e)
+    CallExpr(..) => {
+      if b.recorder_call(e) {
+        // tracerec.built(): the build decides it (decision 0240)
+        return b.cbool(!b.release || b.trace_support)
+      }
+      return b.call_expr(e)
+    }
     TryExpr(..) => return b.try_expr(e)
     FnLit(f) => return b.closure(e, f)
     MapLit(entries: entries, ..) => {
@@ -584,6 +590,46 @@ fn (var b: Builder) layer_call(e: Expr) -> Int? {
   })
 }
 
+/// Whether e is `tracerec.built()` (native/llrt/tracerec, decision
+/// 0240), which the build decides.
+fn (var b: Builder) recorder_call(e: Expr) -> Bool {
+  let (fun, args) = match e {
+    CallExpr(fun: fun, args: args, ..) => (fun, args)
+    _ => return false
+  }
+  if !args.is_empty() {
+    return false
+  }
+  let id = match fun {
+    Ident(id: id) => id
+    SelectorExpr(sel: sel, ..) => sel
+    _ => return false
+  }
+  if id.name != b"built" {
+    return false
+  }
+  let r = b.c.ref_of(b.s.file, id)
+  if r < 0 || b.c.objs[r].kind != check.ObjKind.Func {
+    return false
+  }
+  let m = b.obj_mod(r)
+  m >= 0 && b.c.mods[m].path == "native/llrt/tracerec"
+}
+
+/// cond without its left sides the build decides true: `a && rest` with
+/// a decided true is rest (so `tracerec.built() && x` costs only x).
+fn (var b: Builder) strip_true(e: Expr) -> Expr {
+  match e {
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      if op == lexer.Kind.AndAnd && b.target_test(x) == Some(true) {
+        return b.strip_true(y)
+      }
+      e
+    }
+    _ => e
+  }
+}
+
 /// Whether e is a constant with no effects: a literal, a constant's name
 /// (or a module's), or `|` of them.
 fn (var b: Builder) const_arg(e: Expr) -> Bool {
@@ -615,6 +661,11 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
   }
   if b.prof_call(e) {
     return Some(b.prof)
+  }
+  if b.recorder_call(e) {
+    // the execution trace's recorder: in a development build, and in a
+    // release build only with --trace-support (decision 0240)
+    return Some(!b.release || b.trace_support)
   }
   match e {
     ParenExpr(x: x, ..) => b.target_test(x)
@@ -1229,6 +1280,15 @@ fn (var b: Builder) binary(e: Expr) -> Int {
   }
   let bt = b.bool_t()
   if op == lexer.Kind.AndAnd || op == lexer.Kind.OrOr {
+    // a left side the build decides (target, test mode, the trace's
+    // recorder, decision 0246 and 0240): the right side is lowered only
+    // when it decides the value
+    if let Some(lv) = b.target_test(x) {
+      if lv == (op == lexer.Kind.OrOr) {
+        return b.cbool(lv)
+      }
+      return b.value_as(y, bt)
+    }
     let l = b.value_as(x, bt)
     let join = b.new_block()
     let res = b.s.f.add_param(join, bt)
@@ -1620,7 +1680,7 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
       }
       return b.unit()
     }
-    let c = b.value_as(cond, b.bool_t())
+    let c = b.value_as(b.strip_true(cond), b.bool_t())
     let (yes, no) = b.branch(c)
     else_b = no
     b.s.cur = yes

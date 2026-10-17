@@ -22,6 +22,7 @@ use native/llrt/rc
 use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sched
+use native/llrt/tracerec
 use native/llrt/stdio
 use native/llrt/twflags
 use native/rt
@@ -156,7 +157,18 @@ pub fn park_wait_n(c: Int, cancelable: Bool, counted: Bool) {
   // in the test world nothing outside the program ends a wait (the
   // flags' static words: no C call on the wait's path)
   let counts = counted || twflags.virt()
+  // the context's trace word (ctx.xo C_TRACE: a load of a record in
+  // hand, not the static switch) for both hooks
+  let tr = tracerec.built() && ld(c, ctx.C_TRACE) != 0
+  if tracerec.built() && tr {
+    // the reason its caller set (ctx.xo C_WHY), for the next park too
+    tracerec.ev(tracerec.K_PARK, ld(c, ctx.C_WHY), c, 0)
+    st(c, ctx.C_WHY, 0)
+  }
   pool.park_wait(pl, c, if cancelable { 1 } else { 0 }, if counts { 1 } else { 0 }, f, rw)
+  if tracerec.built() && tr {
+    tracerec.ev(tracerec.K_RESUME, 0, c, 0)
+  }
   sanhook.acquire(c + ctx.C_PARK)
   budget.resume(c)
 }
@@ -307,6 +319,9 @@ pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
     }
     pool.lock(t + T_MU)
     while rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {
+      if tracerec.built() {
+        rt.mem_store(c, ctx.C_WHY, tracerec.WHY_JOIN, 8)
+      }
       if !wl_wait(c, t + T_MU, t + T_WAITERS, true) {
         pool.unlock(t + T_MU)
         st4(c, ctx.C_UNWINDING, 1)
@@ -481,8 +496,12 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   st4(t, T_BACKGROUND, flags & 1)
   st4(t, T_CONSUMED, (flags / 2) & 1)
   st(t, T_SITE, site)
+  let cur = ctx.cur()
+  if tracerec.built() && ld(cur, ctx.C_TRACE) != 0 {
+    tracerec.ev(tracerec.K_SPAWN, tracerec.site(lp, ln), cur, t)
+  }
   // the spawning context's budget (decision 0175)
-  let bud = ld(ctx.cur(), ctx.C_BUD)
+  let bud = ld(cur, ctx.C_BUD)
   st(t, T_BUD, bud)
   budget.retain(bud)
   tsan(RT_TSAN_RELEASE, t)
@@ -767,7 +786,15 @@ pub fn run_claimed(t: Int, units: Int) {
   let fl = ld(t, T_FL)
   st(t, T_FL, 0)
   rc.inc(t) // the entry function's own reference
+  let tr = tracerec.built() && tracerec.on()
+  if tracerec.built() && tr {
+    st(c, ctx.C_TRACE, 1)
+    tracerec.ev(tracerec.K_START, 0, c, t)
+  }
   run_entry(c, t, fl)
+  if tracerec.built() && tr {
+    tracerec.ev(tracerec.K_END, 0, c, t)
+  }
   if b != 0 {
     budget.charge(c, false)
     budget.release(b)

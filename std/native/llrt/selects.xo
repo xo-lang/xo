@@ -19,6 +19,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
+use native/llrt/tracerec
 use native/rt
 
 /// xo_sarm (88 bytes): the channel (a reference), send (a C int), a
@@ -180,6 +181,9 @@ pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
       tm = poll.timer_fn(ld(s, SE_AFTER), poll.FN_SELECT, s)
     }
     while true {
+      if tracerec.built() {
+        rt.mem_store(x, ctx.C_WHY, tracerec.WHY_SELECT, 8)
+      }
       tasks.park_wait_n(x, true, counted)
       if rt.slot_load[Int](s + SE_FIRED, 0, ACQUIRE) != 0 {
         break

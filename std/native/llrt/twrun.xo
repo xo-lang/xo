@@ -29,6 +29,7 @@ use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/testworld
+use native/llrt/tracerec
 use native/llrt/twflags
 use native/rt
 
@@ -251,6 +252,9 @@ fn wait_counted(d: Int) {
   pool.park_reset(park)
   let t = poll.timer_park(deadline(d), park)
   while !poll.timer_fired(t) {
+    if tracerec.built() {
+      rt.mem_store(c, ctx.C_WHY, tracerec.WHY_TEST, 8)
+    }
     tasks.park_wait_n(c, false, true)
   }
   poll.timer_end(t)

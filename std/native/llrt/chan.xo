@@ -16,6 +16,7 @@ use native/llrt/fault
 use native/llrt/obj
 use native/llrt/pool
 use native/llrt/tasks
+use native/llrt/tracerec
 use native/rt
 
 /// xo_cent (64 bytes): the waiter's park, the address of its fired word
@@ -269,6 +270,9 @@ pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
   cq_push(c + CH_SENDQ, e)
   pool.unlock(c + CH_MU)
   while true {
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_SEND, 8)
+    }
     tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
     if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
       break
@@ -332,6 +336,9 @@ pub fn recv(c: Int) -> Int {
   cq_push(c + CH_RECVQ, e)
   pool.unlock(c + CH_MU)
   while true {
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_RECV, 8)
+    }
     tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
     if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
       break

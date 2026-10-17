@@ -1130,12 +1130,24 @@ fn (var g: G) branch_op(v: Int) {
     if k >= 0 && (cmp.cond == "eq" || cmp.cond == "ne") {
       // test one bit and branch
       inst = Inst{kind: K_CONDBR, us: cmp.us, cond: if cmp.cond == "eq" { "tbz" } else { "tbnz" }, bit: k}
+    } else if cmp.text == "cmp $u0, #0" && (cmp.cond == "eq" || cmp.cond == "ne") {
+      // a word against 0: cbnz (or cbz, as cbnz with the targets
+      // swapped), one instruction for the compare and the branch (the
+      // execution trace's context checks, decision 0240)
+      inst = Inst{kind: K_CONDBR, us: cmp.us, cond: "cbnz", bit: if cmp.cond == "eq" { 1 } else { 0 }}
     }
   } else {
     inst = Inst{kind: K_CONDBR, cond: "cbnz", us: [g.word(c)]}
   }
-  let t0 = g.edge(x.succs[0])
-  let t1 = g.edge(x.succs[1])
+  var t0 = g.edge(x.succs[0])
+  var t1 = g.edge(x.succs[1])
+  if inst.cond == "cbnz" && inst.bit == 1 {
+    // `== 0`: taken when the word is 0, so cbnz goes the other way
+    let t = t0
+    t0 = t1
+    t1 = t
+    inst.bit = 0
+  }
   inst.targets = [t0, t1]
   let _i = g.add(inst)
 }

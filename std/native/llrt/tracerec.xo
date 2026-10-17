@@ -1,0 +1,168 @@
+// The execution trace's recorder (decision 0240): what the scheduler's
+// hooks call (pool.xo, tasks.xo, poll.xo and the parks' callers), below
+// stdio and process so pool.xo can import it. trace.xo starts the trace
+// and writes it. See trace.xo for the design.
+use native/llrt/sysio
+use native/rt
+use native/sys_darwin
+
+/// rt.static_word: the trace's record (below), 0 when off.
+pub const W_TRACE = 67
+
+/// The worker record's word with its current chunk (pool.xo W_TRACE).
+pub const W_CHUNK = 3416
+
+/// The worker record of the thread (pool.xo TLS_W), 0 outside the pool.
+pub const TLS_W = 2
+
+// The record (byte offsets): the chunks' base, their number, the next
+// unclaimed chunk (atomic), lost events (atomic), the start's monotonic
+// and wall times, the shared chunk and its used bytes (atomic), whether
+// finish ran, the path (a C string of the environment), the trace's own
+// lock free count of chunks given to workers.
+pub const R_BASE = 0
+pub const R_N = 8
+pub const R_NEXT = 16
+pub const R_LOST = 24
+pub const R_T0 = 32
+pub const R_WALL0 = 40
+pub const R_SHARED = 48
+pub const R_SHARED_USED = 56
+pub const R_DONE = 64
+pub const R_PATH = 72
+pub const R_SIZE = 128
+
+/// A chunk: its owner (the worker record, 0 for the shared one), the
+/// bytes of events written, then the events from byte HDR.
+pub const CHUNK = 1048576
+pub const C_OWNER = 0
+pub const C_USED = 8
+pub const HDR = 64
+pub const CAP = 1048512
+
+/// An event's size and its words: the time in ns since the start, the
+/// kind in the low byte with the auxiliary value above it (56 bits: an
+/// address and a length fit), then two values.
+pub const EV = 32
+
+// Kinds (keep in step with selfhost/xo trace.xo).
+pub const K_SPAWN = 1
+pub const K_START = 2
+pub const K_END = 3
+pub const K_PARK = 4
+pub const K_RESUME = 5
+pub const K_WAKE = 6
+pub const K_LATE = 7
+pub const K_IDLE = 8
+pub const K_WAKEP = 9
+pub const K_MON = 10
+pub const K_POLL = 11
+/// a wake left on the waker's worker (pool.xo push, defer_wake)
+pub const K_DEFER = 12
+
+// Park reasons (ctx.xo C_WHY; keep in step with selfhost/xo trace.xo).
+pub const WHY_OTHER = 0
+pub const WHY_SEND = 1
+pub const WHY_RECV = 2
+pub const WHY_SELECT = 3
+pub const WHY_MUTEX = 4
+pub const WHY_JOIN = 5
+pub const WHY_SLEEP = 6
+pub const WHY_NET = 7
+pub const WHY_HTTP = 8
+pub const WHY_TEST = 9
+
+pub const RELAXED = 0
+pub const ACQUIRE = 1
+pub const RELEASE = 2
+pub const SEQ_CST = 4
+
+fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
+
+fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
+
+/// The trace's clock in ns: CLOCK_UPTIME_RAW on macOS (CLOCK_MONOTONIC
+/// there counts in microseconds, too coarse for a wake's latency), the
+/// monotonic clock elsewhere.
+pub fn now() -> Int {
+  match target.os {
+    TargetOs.Darwin => sys_darwin.clock_gettime_nsec_np(8)
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => sysio.mono_ns()
+  }
+}
+
+/// The trace's record (an acquire load of the static word), 0 when off.
+pub fn rec() -> Int { rt.slot_load[Int](rt.static_word(W_TRACE), 0, ACQUIRE) }
+
+/// Arms the trace with record r (trace.xo start).
+pub fn set_rec(r: Int) { rt.slot_store[Int](rt.static_word(W_TRACE), 0, r, RELEASE) }
+
+/// Whether the binary has the recorder: the SSA builders decide a call
+/// of it (false in a release build without --trace-support, decision
+/// 0240, the owner's rule), so every hook is `if tracerec.built() && ...`
+/// and a release build links none of them.
+pub fn built() -> Bool { true }
+
+/// Whether the trace records (the hooks' test: one load).
+pub fn on() -> Bool { rt.mem_load(rt.static_word(W_TRACE), 0, 8) != 0 }
+
+/// A new chunk for worker w, or 0 when the pool is spent.
+fn claim(r: Int, w: Int) -> Int {
+  let i = rt.slot_add[Int](r + R_NEXT, 0, 1, SEQ_CST)
+  if i >= ld(r, R_N) {
+    return 0
+  }
+  let c = ld(r, R_BASE) + i * CHUNK
+  st(c, C_OWNER, w)
+  rt.slot_store[Int](c + C_USED, 0, 0, RELEASE)
+  st(w, W_CHUNK, c)
+  c
+}
+
+/// Records an event: kind, the auxiliary value (56 bits), and a and b.
+/// The callers test on() first.
+pub fn ev(kind: Int, aux: Int, a: Int, b: Int) {
+  let r = rt.slot_load[Int](rt.static_word(W_TRACE), 0, ACQUIRE)
+  if r == 0 || ld(r, R_DONE) != 0 {
+    return
+  }
+  let now = rt.int_wrap(1, now(), ld(r, R_T0))
+  let w = rt.tlocal_get(TLS_W)
+  var at = 0
+  if w == 0 {
+    let off = rt.slot_add[Int](r + R_SHARED_USED, 0, EV, SEQ_CST)
+    if off + EV > CAP {
+      let _l = rt.slot_add[Int](r + R_LOST, 0, 1, RELAXED)
+      return
+    }
+    at = ld(r, R_SHARED) + HDR + off
+  } else {
+    var c = ld(w, W_CHUNK)
+    if c == 0 || ld(c, C_USED) + EV > CAP {
+      c = claim(r, w)
+      if c == 0 {
+        let _l = rt.slot_add[Int](r + R_LOST, 0, 1, RELAXED)
+        return
+      }
+    }
+    let u = ld(c, C_USED)
+    at = c + HDR + u
+    st(at, 0, now)
+    st(at, 8, kind | rt.int_wrap(3, aux, 8))
+    st(at, 16, a)
+    st(at, 24, b)
+    rt.slot_store[Int](c + C_USED, 0, u + EV, RELEASE)
+    return
+  }
+  st(at, 0, now)
+  st(at, 8, kind | rt.int_wrap(3, aux, 8))
+  st(at, 16, a)
+  st(at, 24, b)
+}
+
+/// A spawn's site for the event: the location's address and its length
+/// (at most 255) packed in 56 bits.
+pub fn site(lp: Int, ln: Int) -> Int {
+  let n = if ln > 255 { 255 } else { ln }
+  (lp & 281474976710655) | rt.int_wrap(3, n, 48)
+}

@@ -44,6 +44,8 @@ use native/llrt/stdio
 use native/llrt/stop
 use native/llrt/sysio
 use native/llrt/tasks
+use native/llrt/trace
+use native/llrt/tracerec
 use native/llrt/twflags
 use native/llrt/twrun
 use native/llrt/unwind
@@ -465,6 +467,13 @@ fn prof_sampler(r: Int) -> Int {
 fn prof_finish() {
   if prof.supported() {
     prof.finish()
+  }
+}
+
+/// The execution trace's file at os.proc.exit (process.xo exit).
+fn trace_finish() {
+  if tracerec.built() {
+    trace.finish()
   }
 }
 

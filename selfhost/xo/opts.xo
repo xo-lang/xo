@@ -39,6 +39,9 @@ struct Opts {
   json: Bool = false
   ci: Bool = false
   release: Bool = false
+  /// --trace-support: a --release build keeps the execution trace's
+  /// recorder (decision 0240; development builds always have it)
+  trace_support: Bool = false
   /// -s: no debug information and no local symbols (selfhost/macho's
   /// LinkOpts.strip, `ld -x` on darwin, `ld -s` on Linux; the Go
   /// backend's `-s -w`); --debug-info: debug information in a release
@@ -58,6 +61,9 @@ struct Opts {
   /// --profile: the sampling profiles run and test take (decision 0238:
   /// "cpu", "heap", or "cpu,heap"; XO_PROF for the program), "" for none.
   profile: Str = ""
+  /// --trace=FILE (decision 0240): XO_TRACE for the program, then `xo
+  /// trace FILE` after it ran; "" for none.
+  trace: Str = ""
   real: Bool = false
   record: Str = ""
   explore: Int = 0
@@ -79,12 +85,12 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile"]
 }
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -396,6 +402,10 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     }
   } else if name == "record" {
     o.record = v
+  } else if name == "trace" {
+    // decision 0240: the raw execution trace's file (XO_TRACE)
+    o.trace = v
+    o.topts.trace = v
   } else if name == "profile" {
     // decision 0238: the CPU profile, the heap profile, or both
     if v != "cpu" && v != "heap" && v != "cpu,heap" && v != "heap,cpu" {
@@ -441,6 +451,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.topts.json = on
   } else if name == "ci" {
     o.ci = on
+  } else if name == "trace-support" {
+    o.trace_support = on
   } else if name == "release" {
     o.release = on
   } else if name == "s" {

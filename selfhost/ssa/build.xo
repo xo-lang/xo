@@ -239,6 +239,10 @@ pub struct Builder {
   /// native/llrt/prof.supported is false (target_test), so the profiler
   /// is neither built nor linked.
   pub prof: Bool = true
+  /// `--trace-support`: a release build keeps the execution trace's
+  /// recorder (decision 0240; the owner's rule, decision 0238's
+  /// addendum): tracerec.built() is true unless release and not this.
+  pub trace_support: Bool = false
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false
@@ -312,8 +316,15 @@ pub fn build_program_libc(c: check.Checker, line_root: Str, tests: Bool, release
 /// false (`xo build --release` without `--profile-support`, decision
 /// 0238's gating).
 pub fn build_program_prof(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool) -> Builder uses fs.read {
+  build_program_support(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, false)
+}
+
+/// build_program_prof, with a release build keeping the execution
+/// trace's recorder when trace_support (`--trace-support`, decision 0240).
+pub fn build_program_support(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool) -> Builder uses fs.read {
   var b = new_builder(c, line_root)
   b.prof = prof
+  b.trace_support = trace_support
   b.nolibc = nolibc
   b.tests = tests
   b.release = release
@@ -332,6 +343,7 @@ pub fn build_program_prof(c: check.Checker, line_root: Str, tests: Bool, release
     b.wasm = wasm
     b.nolibc = nolibc
     b.prof = prof
+    b.trace_support = trace_support
     b.conc = true
     b.build()
   }

@@ -1,0 +1,48 @@
+// The execution trace's test program (internal/llvm TestTrace, decision
+// 0240): a channel ping-pong, a mutex, a sleep, a select, and a join.
+fn main(os: Os) {
+  let ch = Chan[Int].new(0)
+  let done = Chan[Int].new(0)
+  let m = Mutex[Int].new(0)
+  scope s {
+    // a join that waits: this task, started first, still sleeps when the
+    // scope ends (a task not yet started main would run inline instead)
+    let _e = s.spawn(fn() { os.clock.sleep(80ms) })
+    let _a = s.spawn(fn() {
+      for i in 0..200 {
+        ch.send(i)
+      }
+      ch.close()
+    })
+    let _b = s.spawn(fn() {
+      var sum = 0
+      for v in ch {
+        sum += v
+        m.with(fn(var x) { x += 1 })
+      }
+      done.send(sum)
+    })
+    // holds the mutex for 20 ms, so main waits for it (a mutex park)
+    let _c = s.spawn(fn() {
+      m.with(fn(var x) {
+        os.clock.sleep(20ms)
+        x += 1
+      })
+    })
+    os.clock.sleep(5ms)
+    m.with(fn(var x) { x += 1 })
+    os.stdio.println("sum ${done.recv() ?? -1}")
+    // a select that waits: the sender sleeps first
+    let late = Chan[Int].new(0)
+    let _d = s.spawn(fn() {
+      os.clock.sleep(5ms)
+      late.send(1)
+    })
+    select {
+      v = late.recv() => os.stdio.println("late ${v ?? -1}")
+      after 10s => os.stdio.println("timeout")
+    }
+
+  }
+  os.stdio.println("count ${m.with_read(fn(x) { x })}")
+}

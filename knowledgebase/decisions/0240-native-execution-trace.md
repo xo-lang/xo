@@ -1,7 +1,8 @@
 # 0240: A scheduler execution trace for native programs
 
-Status: Proposed (2026-10-16, Xo lang 3, from Xo Lang 2's stub; hook
-points agreed with Xo lang 4, owner of the scheduler)
+Status: Accepted, implemented 2026-10-16 (Xo lang 3, from Xo Lang 2's
+stub; hook points agreed with and reviewed by Xo lang 4, owner of the
+scheduler)
 
 ## Context
 
@@ -87,7 +88,8 @@ profiler.
    build constant folding of decision 0246), so the hooks and trace.xo
    are not linked. XO_TRACE on a release build without it prints
    `xo: built without the trace recorder; rebuild with --trace-support`
-   and runs normally.
+   and runs normally. (As built: it does nothing; the start is folded
+   out with the rest.)
 8. **Platforms**: darwin and linux, arm64 and LLVM backends; Windows
    when its profiler is (0238's Windows item); the Go backend keeps
    runtime/trace.
@@ -122,3 +124,43 @@ profiler.
   where the reason is known.
 - OS tracers (dtrace, perf, ETW): per platform, privileged, and blind
   to Xo's tasks.
+
+## Implementation (2026-10-16)
+
+What changed from the proposal above, and where:
+
+- Two modules: std/native/llrt/tracerec.xo, the recorder the hooks call
+  (below stdio and process, which import pool.xo), and trace.xo, which
+  starts the trace (entry.xo, beside prof.start) and writes the file
+  (the end of main, and os.proc.exit through cabi.xo trace_finish).
+- The off check of the hot hooks is a word of a context already in a
+  register, not the static word: ctx.xo C_TRACE (C_SIZE 336 to 352,
+  with C_WHY at 336), set where a context is made while tracing
+  (run_claimed, ctx.root, trace.start for one that already exists).
+  pool.xo signal reads the wakee's word at its park (every park is a
+  context's, at C_PARK). park_wait_n, run_claimed and scope_join read
+  it once for their pair of hooks. The cold paths (go_idle, wakep, the
+  monitor, defer_check, the poller) test static word 67.
+- Gating: every hook is `if tracerec.built() && ...`. The SSA builders
+  decide tracerec.built() wherever it appears (true, or false in a
+  `--release` build without `--trace-support`), and do not lower the
+  right side of a `&&` or `||` whose left side the build decides; a
+  release build has no hook, load, store or recorder symbol.
+- selfhost/arm64 isel: a branch on a compare with 0 is cbnz or cbz (one
+  instruction, for every such branch in the runtime), so a hot check
+  is a load and a cbz.
+- Events also mark a wake of a park that was signaled already (bit 1 of
+  the wake's auxiliary value); the summary counts them apart, since
+  they change nothing (the first trace found a Mutex unlock signaling a
+  waiting root thread 200 times before it ran; Xo lang 4's fix).
+- A deferred wake is its own kind (pool.xo push when defer_wake
+  defers); late wakes say who woke (the monitor, or the waker's own
+  check) and the deferral's age.
+- The clock is CLOCK_UPTIME_RAW on macOS (CLOCK_MONOTONIC there counts
+  in microseconds), the monotonic clock on Linux.
+- Spawn sites come from task_spawn's location (the compiler's
+  `file:line` for the spawn); the file has their texts, so `xo trace`
+  needs no binary. Function names and DWARF lines are not used yet.
+- `xo test --trace=FILE` writes FILE.<pid> (or FILE with %p) per test
+  process; `xo run --trace=FILE` runs `xo trace` after the program.
+- Test: internal/llvm TestTrace (arm64 and LLVM).

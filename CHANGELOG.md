@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- An execution trace for native programs (decision 0240): XO_TRACE=FILE
+  (`xo run --trace=FILE`, `xo test --trace=FILE`) records spawns, task
+  runs, parks with their reason (chan send and recv, select, mutex,
+  join, sleep, net, http), wakes and hand offs, deferred and late
+  wakes, worker idling, the monitor and the poller; `xo trace FILE`
+  writes Chrome trace JSON for ui.perfetto.dev and a summary (time
+  parked by reason, runnable latency, top wakers, longest parks). Off,
+  a hook is a load and a branch; `xo build --release` leaves the
+  recorder out unless `--trace-support`. arm64 branches on a compare
+  with 0 as cbz or cbnz.
+
 - The wasm build of the compiler (the playground, decision 0242) is
   28.7 MB instead of 51.7 MB and builds a program in 1.53 s under Node
   instead of 8.5 s: the SSA builder's RC pass runs sequentially in a

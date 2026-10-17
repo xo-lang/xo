@@ -1,0 +1,449 @@
+// `xo trace FILE` (decision 0240): reads the raw execution trace a native
+// program wrote under XO_TRACE (std/native/llrt/trace.xo) and writes
+// Chrome trace event JSON (ui.perfetto.dev, chrome://tracing) and a text
+// summary: time parked by reason, runnable latency, the top wakers,
+// the longest parks, worker idling, deferred and late wakes, lost
+// events. `xo run --trace=FILE` runs it after the program.
+//
+//   xo trace FILE [--json OUT] [--text]
+//
+// --json writes the JSON (default FILE.json); --text prints only the
+// summary. The event kinds and park reasons are trace.xo's and
+// tracerec.xo's numbers.
+
+const K_SPAWN = 1
+const K_START = 2
+const K_END = 3
+const K_PARK = 4
+const K_RESUME = 5
+const K_WAKE = 6
+const K_LATE = 7
+const K_IDLE = 8
+const K_WAKEP = 9
+const K_MON = 10
+const K_POLL = 11
+const K_DEFER = 12
+
+/// The park's offset in a context (std/native/llrt/ctx.xo C_PARK): a
+/// wake names the park, whose context is this much below.
+const C_PARK = 16
+
+const S_EVENTS = 1
+const S_SITES = 2
+
+/// One event of the file.
+struct Ev {
+  t: Int
+  kind: Int
+  aux: Int
+  a: Int
+  b: Int
+  /// the thread's track: 0 for the shared chunk, else the worker's
+  /// number in order of appearance
+  tid: Int
+}
+
+/// A task's life: its context while it runs, its spawn site, its name.
+struct Task {
+  name: Str
+  site: Str
+  parent: Int
+}
+
+/// A parsed trace.
+struct Raw {
+  t0: Int
+  wall0: Int
+  lost: Int
+  os_id: Int
+  arch_id: Int
+  events: List[Ev]
+  sites: Map[Int, Str]
+  workers: Int
+}
+
+fn u64(b: Bytes, at: Int) -> Int {
+  var v = 0
+  var i = 7
+  while i >= 0 {
+    v = v * 256 + Int(b[at + i])
+    i -= 1
+  }
+  v
+}
+
+/// The raw file's contents, or why not.
+fn parse_raw(b: Bytes) -> Raw ! Str {
+  if b.len() < 64 || (b[0..6].to_str() ?? "") != "XORAW1" {
+    return Err("not an xo raw trace (no XORAW1 header)")
+  }
+  let kv = u64(b, 8)
+  if (kv & 4294967295) != 1 {
+    return Err("not an execution trace (a profile?)")
+  }
+  let tgt = u64(b, 48)
+  var r = Raw{t0: u64(b, 16), wall0: u64(b, 24), lost: u64(b, 32), os_id: tgt & 255, arch_id: (tgt / 256) & 255, events: [], sites: {}, workers: 0}
+  var owners: Map[Int, Int] = {}
+  var at = 64
+  while at + 16 <= b.len() {
+    let typ = u64(b, at)
+    let n = u64(b, at + 8)
+    at += 16
+    if at + n > b.len() {
+      return Err("truncated section at byte ${at}")
+    }
+    if typ == S_EVENTS {
+      let owner = u64(b, at)
+      var tid = 0
+      if owner != 0 {
+        tid = owners.get(owner) ?? {
+          r.workers += 1
+          owners[owner] = r.workers
+          r.workers
+        }
+      }
+      var e = at + 8
+      while e + 32 <= at + n {
+        let k = u64(b, e + 8)
+        r.events.push(Ev{t: u64(b, e), kind: k & 255, aux: k / 256, a: u64(b, e + 16), b: u64(b, e + 24), tid: tid})
+        e += 32
+      }
+    } else if typ == S_SITES {
+      var e = at
+      while e + 16 <= at + n {
+        let site = u64(b, e)
+        let ln = u64(b, e + 8)
+        let text = b[e + 16..e + 16 + ln].to_str() ?? "?"
+        r.sites[site] = text
+        e += 16 + ln + (8 - ln % 8) % 8
+      }
+    }
+    at += n
+  }
+  r.events = r.events.sort_by(fn(e: Ev) -> Int { e.t })
+  Ok(r)
+}
+
+fn why_name(w: Int) -> Str {
+  match w {
+    1 => "chan send"
+    2 => "chan recv"
+    3 => "select"
+    4 => "mutex"
+    5 => "join"
+    6 => "sleep"
+    7 => "net"
+    8 => "http"
+    9 => "test world"
+    _ => "other"
+  }
+}
+
+/// Microseconds with three decimals, for the JSON's ts and dur.
+fn us(ns: Int) -> Str {
+  let whole = ns / 1000
+  let frac = ns % 1000
+  let f = if frac < 10 { "00${frac}" } else if frac < 100 { "0${frac}" } else { "${frac}" }
+  "${whole}.${f}"
+}
+
+/// A duration for the summary: ns, us, ms, or s with one decimal.
+fn dur(ns: Int) -> Str {
+  if ns < 1000 {
+    return "${ns} ns"
+  }
+  if ns < 1000000 {
+    return "${ns / 1000}.${(ns % 1000) / 100} us"
+  }
+  if ns < 1000000000 {
+    return "${ns / 1000000}.${(ns % 1000000) / 100000} ms"
+  }
+  "${ns / 1000000000}.${(ns % 1000000000) / 100000000} s"
+}
+
+fn jstr(s: Str) -> Str {
+  var out = "\""
+  for r in s.runes() {
+    let c = Int(r)
+    if c == 34 {
+      out = out + "\\\""
+    } else if c == 92 {
+      out = out + "\\\\"
+    } else if c < 32 {
+      out = out + " "
+    } else {
+      out = out + "${r}"
+    }
+  }
+  out + "\""
+}
+
+/// What the analysis keeps.
+struct Analysis {
+  json: Str
+  summary: Str
+}
+
+fn analyze(r: Raw, file: Str) -> Analysis {
+  // the task each context runs (START to END); a context never started
+  // is a root (main's)
+  var tasks: List[Task] = []
+  var task_of_ctx: Map[Int, Int] = {}
+  var site_of_t: Map[Int, Str] = {}
+  var parent_of_t: Map[Int, Int] = {}
+  var site_count: Map[Str, Int] = {}
+  var running: Map[Int, (Int, Int)] = {}
+  var parked: Map[Int, (Int, Int)] = {}
+  var woken: Map[Int, (Int, Int)] = {}
+  var idle_at: Map[Int, Int] = {}
+  var park_by_why: Map[Int, (Int, Int)] = {}
+  var latencies: List[Int] = []
+  var wakers: Map[Str, Int] = {}
+  var longest: List[(Int, Str, Str)] = []
+  var idle_ns: Map[Int, Int] = {}
+  var defers = 0
+  var late_mon = 0
+  var late_waker = 0
+  var late_age = 0
+  var mon_ticks = 0
+  var polls = 0
+  var flow = 0
+  var redundant = 0
+  var redundant_by: Map[Str, Int] = {}
+  var j: List[Str] = []
+  let end = if r.events.is_empty() { 0 } else { r.events.last().or_fault("events").t }
+  for e in r.events {
+    let k = e.kind
+    if k == K_SPAWN {
+      let s = r.sites.get(e.aux) ?? "?"
+      site_of_t[e.b] = s
+      parent_of_t[e.b] = e.a
+    } else if k == K_START {
+      let s = site_of_t.get(e.b) ?? "?"
+      let n = (site_count.get(s) ?? 0) + 1
+      site_count[s] = n
+      tasks.push(Task{name: "${s} #${n}", site: s, parent: parent_of_t.get(e.b) ?? 0})
+      task_of_ctx[e.a] = tasks.len() - 1
+      running[e.a] = (e.t, e.tid)
+    } else if k == K_RESUME {
+      running[e.a] = (e.t, e.tid)
+      if let Some((pt, why)) = parked.get(e.a) {
+        let d = e.t - pt
+        let (tot, cnt) = park_by_why.get(why) ?? (0, 0)
+        park_by_why[why] = (tot + d, cnt + 1)
+        longest.push((d, name_of(task_of_ctx, tasks, e.a), why_name(why)))
+        j.push("{\"name\":${jstr("parked: " + why_name(why))},\"ph\":\"X\",\"pid\":2,\"tid\":${task_tid(task_index(task_of_ctx, e.a))},\"ts\":${us(pt)},\"dur\":${us(d)}}")
+        parked.remove(e.a)
+      }
+      if let Some((wt, id)) = woken.get(e.a) {
+        latencies.push(e.t - wt)
+        j.push("{\"name\":\"wake\",\"cat\":\"wake\",\"ph\":\"f\",\"bp\":\"e\",\"id\":${id},\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)}}")
+        woken.remove(e.a)
+      }
+    } else if k == K_PARK || k == K_END {
+      if let Some((st, tid)) = running.get(e.a) {
+        let nm = name_of(task_of_ctx, tasks, e.a)
+        j.push("{\"name\":${jstr(nm)},\"ph\":\"X\",\"pid\":1,\"tid\":${tid},\"ts\":${us(st)},\"dur\":${us(e.t - st)}}")
+        j.push("{\"name\":\"running\",\"ph\":\"X\",\"pid\":2,\"tid\":${task_tid(task_index(task_of_ctx, e.a))},\"ts\":${us(st)},\"dur\":${us(e.t - st)}}")
+        running.remove(e.a)
+      }
+      if e.kind == K_PARK {
+        parked[e.a] = (e.t, e.aux)
+      } else {
+        task_of_ctx.remove(e.a)
+      }
+    } else if k == K_WAKE && (e.aux & 2) != 0 {
+      // the park was signaled already: a wake that changes nothing
+      let wakee = e.b - C_PARK
+      redundant += 1
+      let key = "${name_of(task_of_ctx, tasks, e.a)} -> ${name_of(task_of_ctx, tasks, wakee)}"
+      redundant_by[key] = (redundant_by.get(key) ?? 0) + 1
+    } else if k == K_WAKE {
+      let wakee = e.b - C_PARK
+      flow += 1
+      woken[wakee] = (e.t, flow)
+      let key = "${name_of(task_of_ctx, tasks, e.a)} -> ${name_of(task_of_ctx, tasks, wakee)}"
+      wakers[key] = (wakers.get(key) ?? 0) + 1
+      j.push("{\"name\":\"wake\",\"cat\":\"wake\",\"ph\":\"s\",\"id\":${flow},\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)}}")
+      j.push("{\"name\":${jstr(if e.aux & 1 != 0 { "hand off" } else { "wake" })},\"ph\":\"i\",\"s\":\"t\",\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)},\"args\":{\"wakee\":${jstr(name_of(task_of_ctx, tasks, wakee))}}}")
+    } else if k == K_DEFER {
+      defers += 1
+      j.push("{\"name\":\"deferred wake\",\"ph\":\"i\",\"s\":\"t\",\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)}}")
+    } else if k == K_LATE {
+      if e.aux == 1 { late_mon += 1 } else { late_waker += 1 }
+      late_age += e.b
+      j.push("{\"name\":${jstr(if e.aux == 1 { "late wake (monitor)" } else { "late wake (waker)" })},\"ph\":\"i\",\"s\":\"t\",\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)},\"args\":{\"age_us\":${us(e.b)}}}")
+    } else if k == K_IDLE {
+      if e.aux == 0 {
+        idle_at[e.a] = e.t
+      } else if let Some(st) = idle_at.get(e.a) {
+        idle_ns[e.tid] = (idle_ns.get(e.tid) ?? 0) + e.t - st
+        j.push("{\"name\":\"idle\",\"ph\":\"X\",\"pid\":1,\"tid\":${e.tid},\"ts\":${us(st)},\"dur\":${us(e.t - st)}}")
+        idle_at.remove(e.a)
+      }
+    } else if k == K_WAKEP {
+      j.push("{\"name\":\"wake worker\",\"ph\":\"i\",\"s\":\"t\",\"pid\":1,\"tid\":${e.tid},\"ts\":${us(e.t)}}")
+    } else if k == K_MON {
+      mon_ticks += 1
+      if e.aux != 0 {
+        j.push("{\"name\":\"monitor\",\"ph\":\"i\",\"s\":\"t\",\"pid\":1,\"tid\":0,\"ts\":${us(e.t)}}")
+      }
+    } else if k == K_POLL {
+      polls += 1
+      j.push("{\"name\":\"poller\",\"ph\":\"C\",\"pid\":1,\"tid\":0,\"ts\":${us(e.t)},\"args\":{\"ready\":${e.a}}}")
+    }
+  }
+  // the names of the tracks
+  j.push("{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":1,\"args\":{\"name\":\"workers\"}}")
+  j.push("{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":2,\"args\":{\"name\":\"tasks\"}}")
+  j.push("{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":1,\"tid\":0,\"args\":{\"name\":\"runtime (monitor, poller)\"}}")
+  for w in 1..r.workers + 1 {
+    j.push("{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":1,\"tid\":${w},\"args\":{\"name\":\"worker ${w}\"}}")
+  }
+  j.push("{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":2,\"tid\":0,\"args\":{\"name\":\"main\"}}")
+  for (i, t) in tasks.indexed() {
+    j.push("{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":2,\"tid\":${task_tid(i)},\"args\":{\"name\":${jstr(t.name)}}}")
+  }
+  let json = "{\"displayTimeUnit\":\"ns\",\"traceEvents\":[\n" + j.join(",\n") + "\n]}\n"
+  // the summary
+  var s: List[Str] = []
+  s.push("xo trace: ${file}: ${tasks.len()} tasks, ${r.workers} workers, ${r.events.len()} events, ${r.lost} lost, ${dur(end)}")
+  s.push("time parked by reason:")
+  var whys: List[(Int, Int, Int)] = []
+  for (w, (tot, cnt)) in park_by_why {
+    whys.push((tot, cnt, w))
+  }
+  for (tot, cnt, w) in whys.sort_by(fn(x: (Int, Int, Int)) -> Int { 0 - x.0 }) {
+    s.push("  ${pad(why_name(w), 12)} ${lpad(dur(tot), 10)}  (${cnt} parks)")
+  }
+  if !latencies.is_empty() {
+    let l = latencies.sort()
+    let p99 = l[(l.len() * 99) / 100 - (if (l.len() * 99) % 100 == 0 && l.len() > 0 { 1 } else { 0 })]
+    s.push("runnable latency (wake to run): median ${dur(l[l.len() / 2])}, p99 ${dur(p99)}, max ${dur(l.last().or_fault("l"))} (${l.len()} wakes)")
+  }
+  if !wakers.is_empty() {
+    s.push("top wakers (waker -> wakee: wakes):")
+    var ws: List[(Int, Str)] = []
+    for (k, n) in wakers {
+      ws.push((n, k))
+    }
+    for (i, (n, k)) in ws.sort_by(fn(x: (Int, Str)) -> Int { 0 - x.0 }).indexed() {
+      if i == 10 {
+        break
+      }
+      s.push("  ${k}: ${n}")
+    }
+  }
+  if !longest.is_empty() {
+    s.push("longest parks:")
+    for (i, (d, nm, why)) in longest.sort_by(fn(x: (Int, Str, Str)) -> Int { 0 - x.0 }).indexed() {
+      if i == 5 {
+        break
+      }
+      s.push("  ${lpad(dur(d), 10)}  ${nm} (${why})")
+    }
+  }
+  if redundant > 0 {
+    var top = ""
+    var topn = 0
+    for (k, n) in redundant_by {
+      if n > topn {
+        top = k
+        topn = n
+      }
+    }
+    s.push("wakes of a park already signaled: ${redundant} (most: ${top}: ${topn})")
+  }
+  var idle_line = "workers idle:"
+  for w in 1..r.workers + 1 {
+    idle_line = idle_line + " ${w}: ${dur(idle_ns.get(w) ?? 0)}"
+  }
+  s.push(idle_line)
+  s.push("deferred wakes: ${defers}; late wakes: ${late_mon} by the monitor, ${late_waker} by the waker${if late_mon + late_waker > 0 { ", mean age " + dur(late_age / (late_mon + late_waker)) } else { "" }}; monitor ticks: ${mon_ticks}; poller wakeups: ${polls}")
+  Analysis{json: json, summary: s.join("\n") + "\n"}
+}
+
+/// The task context c runs, -1 for a root (main's).
+fn task_index(m: Map[Int, Int], c: Int) -> Int { m.get(c) ?? -1 }
+
+/// The name of the task context c runs; a context never started is a
+/// root's (main's).
+fn name_of(m: Map[Int, Int], tasks: List[Task], c: Int) -> Str {
+  match m.get(c) {
+    Some(i) => tasks[i].name
+    None => "main"
+  }
+}
+
+/// s padded with spaces to n characters on the right (pad) or the left
+/// (lpad).
+fn pad(s: Str, n: Int) -> Str { if s.len() >= n { s } else { s + " ".repeat(n - s.len()) } }
+
+fn lpad(s: Str, n: Int) -> Str { if s.len() >= n { s } else { " ".repeat(n - s.len()) + s } }
+
+/// A task's track in the JSON's tasks process (0 is main).
+fn task_tid(i: Int) -> Int { i + 1 }
+
+/// `xo trace` (main.xo): its exit status.
+fn trace_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
+  var file = ""
+  var json_out = ""
+  var text_only = false
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    if a == "--text" {
+      text_only = true
+    } else if a == "--json" && i + 1 < args.len() {
+      i += 1
+      json_out = args[i]
+    } else if a.starts_with("--json=") {
+      json_out = a.trim_prefix("--json=")
+    } else if a.starts_with("-") || !file.is_empty() {
+      os.stdio.eprintln("usage: xo trace FILE [--json OUT] [--text]")
+      return 2
+    } else {
+      file = a
+    }
+    i += 1
+  }
+  if file.is_empty() {
+    os.stdio.eprintln("usage: xo trace FILE [--json OUT] [--text]")
+    return 2
+  }
+  trace_convert(os, file, if json_out.is_empty() { file + ".json" } else { json_out }, text_only)
+}
+
+/// Reads the raw trace file and writes the JSON to json_out (unless
+/// text_only) and the summary to standard error; the exit status.
+fn trace_convert(os: Os, file: Str, json_out: Str, text_only: Bool) -> Int uses (fs, stdio) {
+  let b = match os.fs.read(file) {
+    Ok(b) => b
+    Err(e) => {
+      os.stdio.eprintln("xo trace: ${e}")
+      return 1
+    }
+  }
+  let r = match parse_raw(b) {
+    Ok(r) => r
+    Err(e) => {
+      os.stdio.eprintln("xo trace: ${file}: ${e}")
+      return 1
+    }
+  }
+  let an = analyze(r, file)
+  if !text_only {
+    match os.fs.write(json_out, an.json.bytes()) {
+      Ok(_) => {}
+      Err(e) => {
+        os.stdio.eprintln("xo trace: ${e}")
+        return 1
+      }
+    }
+  }
+  os.stdio.eprint(an.summary)
+  if !text_only {
+    os.stdio.eprintln("xo trace: wrote ${json_out} (open it in ui.perfetto.dev)")
+  }
+  0
+}

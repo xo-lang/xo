@@ -1,0 +1,289 @@
+// The scheduler's execution trace (decision 0240): XO_TRACE=FILE records
+// spawns, task starts and ends, parks with their reason, wakes, deferred
+// and late wakes, worker idling and waking, the monitor's ticks, and the
+// poller's events into FILE as raw 32 byte events; `xo trace FILE` turns
+// them into Chrome trace event JSON (Perfetto) and a text summary.
+//
+// Off: static word 67 is 0, and every hook is `if trace.on() { ... }`, a
+// load and a branch. On: start maps a pool of 1 MiB chunks (XO_TRACE_MB,
+// default 64); each worker record keeps its current chunk (pool.xo
+// W_TRACE) and writes it alone; threads without a worker record (the
+// monitor, the poller) share one chunk, an event's slot claimed with an
+// atomic add. A full pool counts the rest as lost. Nothing here locks,
+// allocates from the heap of Xo values, or faults on the hooks' path:
+// they run under the scheduler's locks (pool.xo signal) and on threads
+// with no current context (the monitor).
+//
+// The file (finish, at the end of main and at os.proc.exit): created new
+// (O_EXCL, never through a symbolic link, mode 0600: the owner's rules of
+// decision 0238's addendum), a 64 byte header shared with the profiler's
+// raw output (decision 0245), then sections: each worker chunk's events,
+// the shared chunk's, and the spawn sites' texts.
+use native/llrt/ctx
+use native/llrt/linux
+use native/llrt/process
+use native/llrt/prof
+use native/llrt/raw
+use native/llrt/stdio
+use native/llrt/sysio
+use native/llrt/tracerec
+use native/rt
+use native/sys_darwin
+
+fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
+
+fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
+
+/// Anonymous memory of n bytes (zeroed), or 0.
+fn map(n: Int) -> Int {
+  let m = match target.os {
+    TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+  if m == 0 || (m < 0 && m > -4096) {
+    return 0
+  }
+  m
+}
+
+/// The decimal value of the C string at a, or -1.
+fn atoi(a: Int) -> Int {
+  var n = 0
+  var i = 0
+  while true {
+    let c = rt.mem_load(a, i, 1)
+    if c == 0 {
+      break
+    }
+    if c < 48 || c > 57 || n > 1000000 {
+      return -1
+    }
+    n = n * 10 + c - 48
+    i += 1
+  }
+  if i == 0 { -1 } else { n }
+}
+
+/// Arms the trace when XO_TRACE names a file (entry.xo start, beside
+/// prof.start). Nothing else is touched when it is unset.
+pub fn start() {
+  let path = process.env_real_at("XO_TRACE")
+  if path == 0 || rt.mem_load(path, 0, 1) == 0 {
+    return
+  }
+  match target.os {
+    TargetOs.Darwin | TargetOs.Linux => {}
+    TargetOs.Windows | TargetOs.Wasi => {
+      stdio.eprint("xo trace: XO_TRACE is not supported on this target yet", true)
+      return
+    }
+  }
+  var mb = 64
+  let m = process.env_real_at("XO_TRACE_MB")
+  if m != 0 {
+    let n = atoi(m)
+    if n >= 2 && n <= 65536 {
+      mb = n
+    }
+  }
+  let r = map(tracerec.R_SIZE)
+  let base = map(mb * tracerec.CHUNK)
+  if r == 0 || base == 0 {
+    stdio.eprint("xo trace: no memory for the trace", true)
+    return
+  }
+  st(r, tracerec.R_BASE, base)
+  st(r, tracerec.R_N, mb)
+  // chunk 0 is the shared one
+  st(r, tracerec.R_SHARED, base)
+  rt.slot_store[Int](r + tracerec.R_NEXT, 0, 1, tracerec.RELAXED)
+  st(r, tracerec.R_T0, tracerec.now())
+  st(r, tracerec.R_WALL0, sysio.real_ns())
+  st(r, tracerec.R_PATH, path)
+  tracerec.set_rec(r)
+  // a context made before this (the root's) records too
+  let c = rt.tlocal_get(0)
+  if c != 0 {
+    rt.mem_store(c, ctx.C_TRACE, 1, 8)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The file
+
+/// Opens path for writing: created new, not through a symbolic link, mode
+/// 0600; the descriptor, or a negative value.
+fn create(path: Str) -> Int {
+  match target.os {
+    TargetOs.Linux => {
+      // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC (O_NOFOLLOW
+      // is 0x8000 on arm64, 0x20000 on x86_64)
+      let nofollow = match target.arch {
+        TargetArch.Arm64 => 32768
+        TargetArch.Amd64 | TargetArch.Wasm32 => 131072
+      }
+      linux.open(path, 1 | 64 | 128 | nofollow | 524288, 384)
+    }
+    TargetOs.Darwin => {
+      var z = BytesBuilder.with_capacity(path.len() + 1)
+      z.write(path.bytes())
+      z.write_byte(UInt8(0))
+      // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC
+      Int(sys_darwin.open(z.freeze(), 1 | 512 | 2048 | 256 | 16777216, 384))
+    }
+    TargetOs.Windows | TargetOs.Wasi => -1
+  }
+}
+
+/// Writes n bytes at a to fd; whether all were written.
+fn put(fd: Int, a: Int, n: Int) -> Bool {
+  var off = 0
+  while off < n {
+    let w = match target.os {
+      TargetOs.Linux => linux.write_at(fd, a + off, n - off)
+      TargetOs.Darwin => sys_darwin.write(fd, a + off, n - off)
+      TargetOs.Windows | TargetOs.Wasi => -1
+    }
+    if w == -4 {
+      continue
+    }
+    if w <= 0 {
+      return false
+    }
+    off += w
+  }
+  true
+}
+
+fn put_bytes(fd: Int, b: Bytes) -> Bool { put(fd, raw.bytes_addr(b), b.len()) }
+
+fn close(fd: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let _c = linux.close(fd)
+    }
+    TargetOs.Darwin => {
+      let _c = sys_darwin.close(fd)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+fn u64(var b: BytesBuilder, v: Int) {
+  for i in 0..8 {
+    b.write_byte(UInt8(rt.int_wrap(4, v, 8 * i) & 255))
+  }
+}
+
+/// A section's header: its type and the length of what follows.
+fn section(fd: Int, typ: Int, n: Int) -> Bool {
+  var b = BytesBuilder.with_capacity(16)
+  u64(b, typ)
+  u64(b, n)
+  put_bytes(fd, b.freeze())
+}
+
+/// Section types (keep in step with selfhost/xo trace.xo).
+const S_EVENTS = 1
+const S_SITES = 2
+
+/// Writes the trace (the end of main, os.proc.exit). Once; later events
+/// are dropped.
+pub fn finish() {
+  let r = tracerec.rec()
+  if r == 0 || ld(r, tracerec.R_DONE) != 0 {
+    return
+  }
+  st(r, tracerec.R_DONE, 1)
+  let pa = ld(r, tracerec.R_PATH)
+  // %p: the process id (xo test --trace, a file per process)
+  let path = prof.expand_pid(raw.str_at(pa, raw.cstr_len(pa)))
+  let fd = create(path)
+  if fd < 0 {
+    stdio.eprint("xo trace: cannot create ${path} (it must not exist; mode 0600, no symbolic link)", true)
+    return
+  }
+  var n = rt.slot_load[Int](r + tracerec.R_NEXT, 0, tracerec.ACQUIRE)
+  if n > ld(r, tracerec.R_N) {
+    n = ld(r, tracerec.R_N)
+  }
+  // the header (the profiler's raw output shares it, decision 0245):
+  // magic, kind 1 (trace), version 1, the start's times, the lost
+  // events, the chunk size, the target (os, arch)
+  var h = BytesBuilder.with_capacity(64)
+  h.write("XORAW1".bytes())
+  h.write_byte(UInt8(0))
+  h.write_byte(UInt8(0))
+  u64(h, 1 | rt.int_wrap(3, 1, 32))
+  u64(h, ld(r, tracerec.R_T0))
+  u64(h, ld(r, tracerec.R_WALL0))
+  u64(h, rt.slot_load[Int](r + tracerec.R_LOST, 0, tracerec.ACQUIRE))
+  u64(h, tracerec.CHUNK)
+  let os_id = match target.os {
+    TargetOs.Linux => 1
+    TargetOs.Darwin => 2
+    TargetOs.Windows => 3
+    TargetOs.Wasi => 4
+  }
+  let arch_id = match target.arch {
+    TargetArch.Arm64 => 1
+    TargetArch.Amd64 => 2
+    TargetArch.Wasm32 => 3
+  }
+  u64(h, os_id | rt.int_wrap(3, arch_id, 8))
+  u64(h, 0)
+  var ok = put_bytes(fd, h.freeze())
+  // the chunks' events: the shared chunk first (owner 0)
+  var sites: List[Int] = []
+  for i in 0..n {
+    let c = ld(r, tracerec.R_BASE) + i * tracerec.CHUNK
+    var used = if i == 0 { rt.slot_load[Int](r + tracerec.R_SHARED_USED, 0, tracerec.ACQUIRE) } else { rt.slot_load[Int](c + tracerec.C_USED, 0, tracerec.ACQUIRE) }
+    if used > tracerec.CAP {
+      used = tracerec.CAP
+    }
+    if used == 0 {
+      continue
+    }
+    ok = ok && section(fd, S_EVENTS, 8 + used)
+    var o = BytesBuilder.with_capacity(8)
+    u64(o, if i == 0 { 0 } else { ld(c, tracerec.C_OWNER) })
+    ok = ok && put_bytes(fd, o.freeze())
+    ok = ok && put(fd, c + tracerec.HDR, used)
+    // the spawn sites named in this chunk
+    var e = 0
+    while e < used {
+      let k = ld(c + tracerec.HDR, e + 8)
+      if (k & 255) == tracerec.K_SPAWN {
+        let site = rt.int_wrap(4, k, 8)
+        if !sites.contains(site) {
+          sites.push(site)
+        }
+      }
+      e += tracerec.EV
+    }
+  }
+  // the spawn sites' texts: the address and length (as the events have
+  // them), then the text padded to 8 bytes
+  var sb = BytesBuilder.new()
+  for s in sites {
+    let a = s & 281474976710655
+    let ln = rt.int_wrap(4, s, 48)
+    u64(sb, s)
+    u64(sb, ln)
+    sb.write(raw.str_at(a, ln).bytes())
+    var pad = (8 - ln % 8) % 8
+    while pad > 0 {
+      sb.write_byte(UInt8(0))
+      pad -= 1
+    }
+  }
+  let sbytes = sb.freeze()
+  ok = ok && section(fd, S_SITES, sbytes.len())
+  ok = ok && put_bytes(fd, sbytes)
+  close(fd)
+  if !ok {
+    stdio.eprint("xo trace: writing ${path} failed", true)
+  }
+}
+

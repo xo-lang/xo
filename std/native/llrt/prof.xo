@@ -397,7 +397,7 @@ fn finish_cpu() {
 
 /// path with each %p as the process id (a profile per process of xo
 /// test --profile).
-fn expand_pid(path: Str) -> Str {
+pub fn expand_pid(path: Str) -> Str {
   if !path.contains("%p") {
     return path
   }

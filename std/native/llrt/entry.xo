@@ -24,6 +24,8 @@ use native/llrt/prof
 use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/stop
+use native/llrt/trace
+use native/llrt/tracerec
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -112,6 +114,10 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
   if prof.supported() {
     prof.finish()
   }
+  // XO_TRACE's file (decision 0240)
+  if tracerec.built() {
+    trace.finish()
+  }
   // XO_LEAKCHECK's and XO_HEAPSTATS' reports
   finish()
   0
@@ -172,6 +178,10 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     prof.start()
   } else {
     prof.unsupported_note()
+  }
+  // XO_TRACE (decision 0240): nothing when unset
+  if tracerec.built() {
+    trace.start()
   }
   fault.init_traceback(rt.fn_addr("fault_traceback"))
   if process.env_real_at("XO_TEST") != 0 {

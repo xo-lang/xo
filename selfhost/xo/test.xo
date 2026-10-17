@@ -116,6 +116,10 @@ struct TestOpts {
   /// cases), each writing xo-cpu-<pid>.pprof (and xo-heap-<pid>.pprof)
   /// in the directory xo test ran in (decision 0238).
   profile: Str = ""
+  /// --trace=FILE (decision 0240): XO_TRACE for the test processes, each
+  /// writing FILE with its process id for %p (FILE.%p when FILE has none),
+  /// relative to profile_dir.
+  trace: Str = ""
   /// That directory, absolute (the tests run in their own).
   profile_dir: Str = ""
 }
@@ -722,10 +726,20 @@ fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int
 /// exec env words bin'`, three execs per run, until 2026-10-15).
 /// The environment of --profile (decision 0238): none without it.
 fn prof_words(o: TestOpts) -> List[Str] {
-  if o.profile.is_empty() {
-    return []
+  var w: List[Str] = []
+  if !o.profile.is_empty() {
+    w = ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-cpu-%p.pprof", "XO_PROF_HEAP_OUT=${o.profile_dir}/xo-heap-%p.pprof"]
   }
-  ["XO_PROF=${o.profile}", "XO_PROF_OUT=${o.profile_dir}/xo-cpu-%p.pprof", "XO_PROF_HEAP_OUT=${o.profile_dir}/xo-heap-%p.pprof"]
+  if !o.trace.is_empty() {
+    w.push("XO_TRACE=${trace_path(o)}")
+  }
+  w
+}
+
+/// The XO_TRACE of `xo test --trace` (decision 0240): absolute, with %p.
+fn trace_path(o: TestOpts) -> Str {
+  let p = if o.trace.starts_with("/") { o.trace } else { "${o.profile_dir}/${o.trace}" }
+  if p.contains("%p") { p } else { "${p}.%p" }
 }
 
 fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {

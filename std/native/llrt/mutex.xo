@@ -15,6 +15,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
+use native/llrt/tracerec
 use native/rt
 
 /// xo_mutex (88 bytes): the header, the lock of the fields below, a
@@ -234,6 +235,9 @@ pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
   if ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
     st(m, M_WWAIT, ld(m, M_WWAIT) + 1)
     while ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
+      if tracerec.built() {
+        rt.mem_store(c, ctx.C_WHY, tracerec.WHY_MUTEX, 8)
+      }
       if !tasks.wl_wait_as(c, m + M_MU, m + M_WAITERS, true, 1) {
         st(m, M_WWAIT, ld(m, M_WWAIT) - 1)
         // readers held back by this writer, or the next writer
@@ -284,6 +288,9 @@ pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
     st(m, M_RWAIT, ld(m, M_RWAIT) + 1)
     pool.unlock(m + M_MU)
     while true {
+      if tracerec.built() {
+        rt.mem_store(c, ctx.C_WHY, tracerec.WHY_MUTEX, 8)
+      }
       tasks.park_wait(c, true)
       if rt.slot_load(e, E_WRITER_W, ACQUIRE) == GRANTED {
         // the last writer set the value under m's lock before the grant,

@@ -84,6 +84,10 @@ fn main(os: Os) ! {
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }
+  if !args.is_empty() && args[0] == "trace" {
+    // the execution trace's JSON and summary (trace.xo, decision 0240)
+    os.proc.exit(trace_cmd(os, args[1..]))
+  }
   if !args.is_empty() && args[0] == "dev" {
     // hidden: the developer commands (dev.xo, decision 0209)
     os.proc.exit(dev_cmd(os, args[1..]))
@@ -113,8 +117,12 @@ fn main(os: Os) ! {
   if backend.is_empty() {
     // --profile (decision 0238) is the native runtime's: the host's
     // native backend, as --no-gc
-    let native = o.no_gc || !o.profile.is_empty()
+    let native = o.no_gc || !o.profile.is_empty() || !o.trace.is_empty()
     backend = if o.cmd == "asm" || (native && host_arch() == "arm64") { "arm64" } else if native { "llvm" } else { "go" }
+  }
+  if !o.trace.is_empty() && backend == "go" {
+    os.stdio.eprintln("xo ${what}: --trace needs a native backend (llvm or arm64); a Go backend program traces with runtime/trace")
+    os.proc.exit(2)
   }
   if !o.profile.is_empty() && backend == "go" {
     os.stdio.eprintln("xo ${what}: --profile needs a native backend (llvm or arm64); a Go backend program profiles with runtime/pprof")
@@ -200,7 +208,12 @@ fn main(os: Os) ! {
   if o.cmd == "test" {
     var to = o.topts
     to.profile_dir = o.wd
-    os.proc.exit(run_tests(os, nb.bin, nb.tests, to))
+    let code = run_tests(os, nb.bin, nb.tests, to)
+    if !o.trace.is_empty() {
+      // a raw trace per test process (decision 0240)
+      os.stdio.eprintln("xo test: execution traces in ${trace_path(to).replace("%p", "<pid>")}; read one with `xo trace FILE`")
+    }
+    os.proc.exit(code)
   }
   if o.cmd == "run" {
     if !o.record.is_empty() {
@@ -208,8 +221,16 @@ fn main(os: Os) ! {
       os.proc.exit(2)
     }
     // --profile: xo-cpu.pprof, xo-heap.pprof in the working directory
-    let pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}"] }
-    os.proc.exit(exec_binary(os, nb.bin, o.prog_args, pe))
+    var pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}"] }
+    if !o.trace.is_empty() {
+      // --trace (decision 0240): the raw file, then its JSON and summary
+      pe.push("XO_TRACE=${o.trace}")
+    }
+    let code = exec_binary(os, nb.bin, o.prog_args, pe)
+    if !o.trace.is_empty() {
+      let _t = trace_convert(os, o.trace, o.trace + ".json", false)
+    }
+    os.proc.exit(code)
   }
 }
 
@@ -761,7 +782,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   // the runtime's profiler: in every build but a release one without
   // --profile-support (decision 0238); --profile asks for it too
   let prof = !release || o.profile_support || !o.profile.is_empty()
-  var b = ssa.build_program_prof(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof)
+  var b = ssa.build_program_support(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support)
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)

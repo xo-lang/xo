@@ -45,8 +45,7 @@ LpGL1jtk_f1_b8:
 LpGL1jtk_f1_b9:
 	add x19, x10, x2
 LpGL1jtk_f1_b10:
-	cmp x20, #0
-	b.eq LpGL1jtk_f1_b29
+	cbz x20, LpGL1jtk_f1_b29
 LpGL1jtk_f1_b11:
 	mov x9, #32768
 	cmp x2, x9

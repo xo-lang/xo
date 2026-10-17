@@ -835,6 +835,29 @@ and for diffing two builds function by function, not for a first look.
   only leaks (main's values are dropped); at os.proc.exit, what other
   tasks still hold. Profiling costs an allocation bound program 1.13x to
   1.33x (bench/results/prof-heap-2026-10-16.md); 65,536 samples at most.
+- `XO_TRACE=FILE ./prog` (decision 0240): the execution trace. The
+  scheduler records spawns, task starts and ends, parks with their
+  reason (chan send, chan recv, select, mutex, join, sleep, net, http,
+  test world), wakes (hand offs, and wakes of a park already signaled),
+  deferred and late wakes, worker idling and waking, the monitor's ticks
+  and the poller's wakeups, as raw 32 byte events in per worker 1 MiB
+  chunks (`XO_TRACE_MB`, default 64; events past them are counted lost).
+  FILE is written at exit, created new (an existing file or a symbolic
+  link is refused), mode 0600; `%p` is the process id. Timestamps are
+  ns (CLOCK_UPTIME_RAW on macOS). darwin and linux; not Windows yet.
+- `xo trace FILE [--json OUT] [--text]` reads it: Chrome trace event
+  JSON (default FILE.json; open it in ui.perfetto.dev or
+  chrome://tracing: a track per worker with each task's runs named by
+  its spawn site (`main.xo:14 #1`), wake arrows to the run they caused,
+  idle slices, and a track per task with its runs and parks), and a text
+  summary on stderr: time parked by reason, runnable latency (wake to
+  run: median, p99, max), the top wakers, the longest parks, worker
+  idle time, deferred and late wakes, wakes of an already signaled park.
+  `xo run --trace=FILE` runs the program and then this; `xo test
+  --trace=FILE` writes FILE.<pid> per test process (or FILE with `%p`).
+- Release builds: `xo build --release` leaves the recorder out unless
+  `--trace-support` (the owner's rule, decision 0238's addendum); then
+  XO_TRACE does nothing. Development builds always have it.
 
 ## Benchmark tooling
 

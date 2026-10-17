@@ -21,6 +21,7 @@ use native/llrt/rtstats
 use native/llrt/sanhook
 use native/llrt/sysio
 use native/llrt/text
+use native/llrt/tracerec
 use native/rt
 
 /// xo_ctx (336 bytes, 16 aligned; the owner of each field in decision 0229):
@@ -73,7 +74,16 @@ pub const C_FIRED = 312
 /// in (fault.xo trace; a block from rt.heap_large: the count, then the
 /// addresses), with XO_TRACEBACK only, else 0.
 pub const C_FAULT_TRACE = 320
-pub const C_SIZE = 336
+/// why: the reason of the context's next park for the execution trace
+/// (trace.xo WHY_*, decision 0240), set by the park's caller and cleared
+/// by tasks.xo park_wait_n
+pub const C_WHY = 336
+/// trace: 1 when the execution trace records this context's events
+/// (decision 0240): set where a context is made while tracing
+/// (tasks.xo run_claimed, root, trace.xo start), so the scheduler's hot
+/// hooks test a word of a context they hold, not the static switch
+pub const C_TRACE = 344
+pub const C_SIZE = 352
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.
@@ -199,6 +209,9 @@ const DLK_SIZE = 24
 pub fn root() -> Int {
   let c = rt.heap_large(C_SIZE)
   rt.mem_set(c, 0, C_SIZE)
+  if tracerec.built() && tracerec.on() {
+    rt.mem_store(c, C_TRACE, 1, 8)
+  }
   let n = rt.heap_large(N_BYTES)
   rt.mem_set(n, 0, N_BYTES)
   rt.mem_store(c, C_NODE, n, 8)

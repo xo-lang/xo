@@ -38,6 +38,7 @@ use native/llrt/rc
 use native/llrt/stop
 use native/llrt/tasks
 use native/llrt/tlssrv
+use native/llrt/tracerec
 use native/rt
 use native/rthttp
 
@@ -147,6 +148,9 @@ pub fn srv_wait(s: rthttp.Srv) {
     hconn.unlock(a)
     if until != 0 && t == 0 {
       t = poll.timer_park(until, park)
+    }
+    if tracerec.built() {
+      rt.mem_store(c, ctx.C_WHY, tracerec.WHY_HTTP, 8)
     }
     tasks.park_wait_n(c, stopping, false)
     hconn.lock(a)

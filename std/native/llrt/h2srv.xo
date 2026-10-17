@@ -46,6 +46,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sysio
 use native/llrt/hconn
+use native/llrt/tracerec
 use native/rt
 use native/rthttp
 
@@ -841,6 +842,9 @@ fn wait_backlog(st: Int) -> Bool {
     pool.park_reset(park)
     sto(st, S_WAITER, park)
     unlk(c)
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_HTTP, 8)
+    }
     poll.park_wait(x)
     lk(c)
     if ld(st, S_WAITER) == park {
@@ -1094,6 +1098,9 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
   sto(c, C_WAITER, park)
   let when = ld(c, C_DEADLINE)
   unlk(c)
+  if tracerec.built() {
+    rt.mem_store(x, ctx.C_WHY, tracerec.WHY_HTTP, 8)
+  }
   var ok = poll.pd_wait_or_signal(hconn.pd(h.h), x, when)
   lk(c)
   if ld(c, C_WAITER) == park {
