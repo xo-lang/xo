@@ -1,0 +1,34 @@
+// A leaf with checked arithmetic (its frame record only in its fault
+// stubs) called from outer: every CPU sample in mix has outer as its
+// caller (gotchas/arm64-compact-unwind-leaf-fault-frames.md). The never
+// taken self calls keep mix and outer out of line.
+fn mix(x: Int, n: Int) -> Int {
+  if n < 0 {
+    return mix(x, n + 1)
+  }
+  var h = x
+  for i in 0..n {
+    h = (h * 31 + i) % 1000003
+  }
+  h
+}
+
+fn outer(x: Int) -> Int {
+  if x < 0 {
+    return outer(x + 1)
+  }
+  var s = 0
+  for i in 0..400 {
+    s = (s + mix(x + i, 200000)) % 1000003
+  }
+  s
+}
+
+fn main(os: Os) {
+  if os.env.args().len() > 0 {
+    // an overflow in mix: its traceback goes through mix's fault stub
+    // (its frame record), then outer and main
+    os.stdio.println("fault ${outer(4611686018427387904)}")
+  }
+  os.stdio.println("leaf ${outer(7)}")
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,73 @@ func TestProfCPU(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProfLeafCaller: on the arm64 backend a leaf whose frame record is
+// built only in its fault stubs (testdata/prof/leaf's mix, called from
+// outer) has the stubs in an unwind region of their own, so the body's
+// compact encoding is frameless: every CPU sample in mix has outer as its
+// caller (before, darwin's profile had none: the encoding said FRAME and
+// the unwinder took outer's frame record for mix's;
+// gotchas/arm64-compact-unwind-leaf-fault-frames.md), and a fault in mix
+// still unwinds mix, outer, main through the stub's frame.
+func TestProfLeafCaller(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's unwind tables, with SIGPROF")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "leaf")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "prof.xoraw")
+	cmd := exec.Command(bin)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil || !strings.Contains(got, "leaf 680656") {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	xoProf(t, dir, raw, "--cpu-out="+filepath.Join(dir, "cpu.pprof"))
+	txt, err := os.ReadFile(filepath.Join(dir, "cpu.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := topFlat(string(txt)); f != "mix" {
+		t.Fatalf("top function by flat %q, want mix:\n%s", f, txt)
+	}
+	if c := cumPercent(string(txt), "outer"); c < 90 {
+		t.Fatalf("outer's cumulative share %.1f%%, want at least 90 (every sample in mix has it as the caller):\n%s", c, txt)
+	}
+	cmd = exec.Command(bin, "fault")
+	cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
+	got, _ = runCombined(cmd, 2*time.Minute)
+	i, j, k := strings.Index(got, "  mix ("), strings.Index(got, "  outer ("), strings.Index(got, "  main (")
+	if i < 0 || j < i || k < j {
+		t.Fatalf("the fault's traceback is not mix, outer, main:\n%s", got)
+	}
+}
+
+// cumPercent is the cum% of the row of function fn in an `xo prof` text
+// summary's "top by cumulative" table (its last column the function), or
+// -1.
+func cumPercent(txt, fn string) float64 {
+	best := -1.0
+	for _, l := range strings.Split(txt, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 7 || f[len(f)-1] != fn {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSuffix(f[4], "%"), 64)
+		if err == nil && v > best {
+			best = v
+		}
+	}
+	return best
 }
 
 // TestProfHeap: XO_PROF=heap (decision 0238 item 4) on each native

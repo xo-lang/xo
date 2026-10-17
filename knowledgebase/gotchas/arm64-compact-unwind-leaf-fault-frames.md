@@ -1,7 +1,8 @@
 # Compact unwind says FRAME for a leaf whose frame is only on its fault paths
 
 Status: Observed (2026-10-17: decision 0253's unwinder, and the runtime's
-CPU profiler on darwin/arm64; fix planned, below)
+CPU profiler on darwin/arm64); fixed 2026-10-17 for leaves without landing
+pads (step 1 below, xo-4), open for leaves with them
 
 Symptom: a stop (or a sample) in the body of an arm64 function such as
 testdata/debugvars' `sum` on macOS: an unwinder that trusts
@@ -70,3 +71,15 @@ Xo lang 4, who owns the profiler and its emitter end):
    directives change). Then drop the frame 0 check in selfhost/debug
    unwind.xo (frame_set_up), or keep it for programs built before the
    fix.
+
+Done (2026-10-17, xo-4): selfhost/arm64 emit.xo closes the body's region
+before a leaf's fault stubs and opens one for them (`.cfi_endproc`,
+`.cfi_startproc`, then the stubs' frame rules) when the function has no
+landing pads. testdata/prof/leaf's mix: two compact entries, 0x02000000
+(the body, frameless) then 0x04000000 (the stubs); outer is the caller in
+100% of mix's samples (was 0); a fault in mix still unwinds mix, outer,
+main (internal/llvm TestProfLeafCaller, which fails on the old emitter).
+Only directives change, so the code is the same (decision 0252's gate).
+Open: a leaf with landing pads keeps one region, because the LSDA's
+call-site offsets count from its region's start; the stubs' region would
+need an LSDA of its own (or @LPStart set to the body's start).

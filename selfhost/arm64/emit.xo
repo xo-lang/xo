@@ -276,7 +276,19 @@ fn (var g: G) emit() {
   }
   if g.fr.leaf && !g.stubs.is_empty() {
     // a leaf function's fault stubs make a frame record before their call
-    // (emit_plain), so the unwinder can go past them
+    // (emit_plain), so the unwinder can go past them. Without landing pads
+    // they are an unwind region of their own: a compact encoding has no
+    // position, so one region made the body FRAME too, and an unwinder
+    // trusting it took the caller's record for the leaf's (darwin's CPU
+    // profile lost the caller of every sample in such a leaf,
+    // gotchas/arm64-compact-unwind-leaf-fault-frames.md). The body's
+    // region then states nothing: frameless, the return address in lr.
+    // With landing pads the stubs stay in the body's region: their call
+    // sites are in the function's LSDA, whose offsets count from the
+    // region's start
+    if !pads {
+      b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
+    }
     b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   }
   b.push(g.stubs.join(""))
