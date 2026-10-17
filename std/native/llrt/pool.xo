@@ -1515,11 +1515,22 @@ const T_GONE = 22
 /// spawning thread's record (s.spawn): the tasks it
 /// pruned from s's list (linked by snext, for the C to release), 0, or -1
 /// when s has ended (nothing done).
-pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
-  // defer_check with the spawner's record (no thread local read)
-  let mon = rt.slot_load[Int](rt.static_word(W_MON), 0, RELAXED)
-  if mon != 0 && mon != 1 {
-    defer_check_w(w)
+pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int { scope_add_at(pl, s, t, w, false) }
+
+/// scope_add, own when w is the calling thread's own record (its thread
+/// local TLS_W): defer_check then takes it without reading the thread
+/// local again. Not own (a root thread's spawn into the root worker's
+/// ring), defer_check finds no record of the thread's and does nothing,
+/// as before (checking the root worker's deferral there made the
+/// multi-threaded spawn take 1.7 times the cycles, 2026-10-17).
+pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
+  if own {
+    let mon = rt.slot_load[Int](rt.static_word(W_MON), 0, RELAXED)
+    if mon != 0 && mon != 1 {
+      defer_check_w(w)
+    }
+  } else {
+    defer_check()
   }
   let m = rt.int_wrap(0, s, S_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {

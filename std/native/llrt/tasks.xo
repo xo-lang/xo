@@ -515,6 +515,7 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   let pl = pool_ready()
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
+  let own = w != 0
   if w == 0 {
     w = poolsetup.root_worker(pl)
   }
@@ -547,7 +548,7 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   tsan(RT_TSAN_RELEASE, t)
   // linked into s, counted, and queued (pool.xo scope_add): the tasks it
   // pruned from s's list, or -1 when s has ended
-  let r = pool.scope_add(pl, s, t, w)
+  let r = pool.scope_add_at(pl, s, t, w, own)
   if r == -1 {
     budget.release(bud)
     obj.free_obj(t)
