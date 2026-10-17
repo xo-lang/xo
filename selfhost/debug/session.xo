@@ -1,0 +1,221 @@
+// A debugging session of `xo debug` (decision 0253 point 4): the
+// program's DWARF, line tables, unwind tables, and breakpoints, the
+// stopped thread's frames, and the commands run against them, each
+// giving its text (--batch prints them; the interactive prompt will too).
+// Until the per OS process control (stage 2) the stopped thread is a
+// snapshot (snap.xo): break, delete, backtrace, frame, locals, and print
+// work; run, continue, step, next, and finish say that the process
+// control is not there yet.
+
+/// A frame as shown: a physical frame, or a call inlined in one (then
+/// its pc and registers are the physical frame's).
+pub struct VFrame {
+  pub pc: Int
+  pub name: Str
+  /// the base name of the file and the line (file "" when unknown)
+  pub file: Str
+  pub line: Int
+  pub inlined: Bool
+  pub vars: List[Var]
+  pub regs: Map[Int, Int]
+  pub how: Str
+}
+
+/// The frames of a backtrace with each inlined call as its own frame,
+/// innermost first, as lldb lists them: an inlined callee at its own
+/// line, each caller at the line of its call (DW_AT_call_file and
+/// DW_AT_call_line).
+pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[VFrame] {
+  var out: List[VFrame] = []
+  for (k, f) in frames.indexed() {
+    // a caller's line is its call's: the instruction before the return
+    let look = if k == 0 { f.pc } else { f.pc - 4 }
+    var file = ""
+    var line = 0
+    if let Some((fl, ln)) = l.at(look) {
+      file = base_of(fl)
+      line = ln
+    }
+    var name = tab.sym_at(f.pc)
+    var vars: List[Var] = []
+    var chain: List[Inlined] = []
+    if let Some(fn_) = info.func_at(look) {
+      name = fn_.name
+      vars = fn_.vars
+      for c in fn_.inlined {
+        for (lo, hi) in c.ranges {
+          if look >= lo && look < hi {
+            chain.push(c)
+          }
+        }
+      }
+    }
+    var order: List[(Int, Int)] = []
+    for (i, c) in chain.indexed() {
+      order.push((-c.depth, i))
+    }
+    for (_, i) in order.sort() {
+      let c = chain[i]
+      out.push(VFrame{pc: f.pc, name: c.name, file: file, line: line, inlined: true, vars: c.vars, regs: f.regs, how: f.how})
+      let cf = l.call_file(c.unit_line, c.call_file)
+      if !cf.is_empty() {
+        file = base_of(cf)
+      }
+      line = c.call_line
+    }
+    out.push(VFrame{pc: f.pc, name: name, file: file, line: line, inlined: false, vars: vars, regs: f.regs, how: f.how})
+  }
+  out
+}
+
+fn base_of(p: Str) -> Str {
+  let parts = p.split("/")
+  parts[parts.len() - 1]
+}
+
+/// A session: the program's debug information and the stopped thread.
+pub struct Session {
+  pub info: Info
+  pub lines: Lines
+  pub tab: Tables
+  pub bpts: Bpts = Bpts{}
+  pub snap: Snapshot
+  pub frames: List[VFrame] = []
+  /// the selected frame (`frame N`)
+  pub sel: Int = 0
+  pub done: Bool = false
+}
+
+/// A session on a recorded stopped thread: exe is the executable (its
+/// unwind and symbol tables), dwarf its debug sections (the executable's
+/// own, or a dSYM's).
+pub fn session(exe: Bytes, dwarf: Sections, snap: Snapshot) -> Session {
+  let info = read(dwarf)
+  let l = lines(dwarf)
+  let tab = tables(exe)
+  let fs = vframes(info, l, tab, backtrace(tab, snap.regs, snap, 64))
+  Session{info: info, lines: l, tab: tab, snap: snap, frames: fs}
+}
+
+/// Runs command line `line`: its output, or an error's text.
+pub fn (var s: Session) exec(line: Str) -> Str {
+  match parse_cmd(line) {
+    Ok(c) => match s.run_cmd(c) {
+      Ok(t) => t
+      Err(e) => "error: ${e}"
+    }
+    Err(e) => "error: ${e}"
+  }
+}
+
+fn (var s: Session) run_cmd(c: Cmd) -> Str ! Str {
+  match c {
+    Cmd.Break(spot) => {
+      let id = s.bpts.add(s.info, s.lines, spot)?
+      var at: List[Str] = []
+      for p in s.bpts.list {
+        if p.id == id {
+          for a in p.addrs {
+            at.push("0x${hex(a)}${s.where_(a)}")
+          }
+        }
+      }
+      Ok("breakpoint ${id}: ${at.join(", ")}")
+    }
+    Cmd.Delete(id) => {
+      let _a = s.bpts.delete(id)?
+      Ok("deleted breakpoint ${id}")
+    }
+    Cmd.Backtrace => {
+      var out: List[Str] = []
+      for (i, f) in s.frames.indexed() {
+        let mark = if i == s.sel { "*" } else { " " }
+        out.push("${mark} #${i} ${s.frame_text(f)}")
+      }
+      Ok(out.join("\n"))
+    }
+    Cmd.Frame(n) => {
+      if n >= s.frames.len() {
+        return Err("no frame ${n} (${s.frames.len()} frames)")
+      }
+      s.sel = n
+      Ok("#${n} ${s.frame_text(s.frames[n])}")
+    }
+    Cmd.Locals => {
+      let f = s.cur()?
+      var out: List[Str] = []
+      for v in f.vars {
+        out.push("${v.name} = ${s.show(f, v)}")
+      }
+      Ok(if out.is_empty() { "no variables" } else { out.join("\n") })
+    }
+    Cmd.Print(path) => {
+      let f = s.cur()?
+      for v in f.vars {
+        if v.name == path[0] {
+          let k = s.selected_pc()
+          let val = value_in(s.info, v, k, s.regs_of(), s.snap)?
+          let x = field(val, path[1..])?
+          return Ok("${path.join(".")} = ${x.show()}")
+        }
+      }
+      Err("no variable ${path[0].quote()} in frame ${s.sel}")
+    }
+    Cmd.Run | Cmd.Continue | Cmd.Step | Cmd.Next | Cmd.Finish => Err("this session is a recorded thread: running the program comes with the process control (decision 0253 stage 2)")
+    Cmd.Tasks | Cmd.Task(_, _) => Err("the task views come with decision 0253 stage 4")
+    Cmd.Threads => Ok("* thread 1 (recorded)")
+    Cmd.Quit => {
+      s.done = true
+      Ok("")
+    }
+  }
+}
+
+fn (s: Session) cur() -> VFrame ! Str {
+  if s.frames.is_empty() {
+    return Err("no frames")
+  }
+  Ok(s.frames[s.sel])
+}
+
+/// The pc the selected frame's variables are read at: a caller's call
+/// (the instruction before its return address).
+fn (s: Session) selected_pc() -> Int {
+  let f = s.frames[s.sel]
+  // the first physical frame is the one at index 0 and the frames
+  // inlined in it
+  var first = true
+  for i in 0..s.sel {
+    if !s.frames[i].inlined {
+      first = false
+    }
+  }
+  if first { f.pc } else { f.pc - 4 }
+}
+
+/// The registers of the selected frame: none (the thread's own) for the
+/// first physical frame.
+fn (s: Session) regs_of() -> Map[Int, Int] {
+  if s.selected_pc() == s.frames[s.sel].pc { {} } else { s.frames[s.sel].regs }
+}
+
+fn (s: Session) show(f: VFrame, v: Var) -> Str {
+  let _f = f
+  match value_in(s.info, v, s.selected_pc(), s.regs_of(), s.snap) {
+    Ok(x) => x.show()
+    Err(e) => e
+  }
+}
+
+fn (s: Session) frame_text(f: VFrame) -> Str {
+  let at = if f.file.is_empty() { "" } else { " at ${f.file}:${f.line}" }
+  "0x${hex(f.pc)} ${f.name}${if f.inlined { " [inlined]" } else { "" }}${at}"
+}
+
+/// " at FILE:LINE" for address a, or "".
+fn (s: Session) where_(a: Int) -> Str {
+  match s.lines.at(a) {
+    Some((f, n)) => " (${base_of(f)}:${n})"
+    None => ""
+  }
+}

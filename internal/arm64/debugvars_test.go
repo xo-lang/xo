@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -368,9 +369,12 @@ func TestUnwind(t *testing.T) {
 	for _, p := range []struct {
 		name, dir, stop string
 		locals          []string
+		// a frame's function and a variable to print in it, and what the
+		// session prints
+		fn, print, want string
 	}{
-		{"sum", "debugvars", "main.xo:12", []string{"k = 10", "total = 0", "d = 12"}},
-		{"fiber", filepath.Join("unwind", "fiber"), "main.xo:4", []string{"units = 4"}},
+		{"sum", "debugvars", "main.xo:12", []string{"k = 10", "total = 0", "d = 12"}, "sum", "k", "k = 10"},
+		{"fiber", filepath.Join("unwind", "fiber"), "main.xo:4", []string{"units = 4"}, "tasks.run_claimed", "units", "units = 4"},
 	} {
 		src, err := filepath.Abs(filepath.Join("testdata", p.dir))
 		if err != nil {
@@ -448,6 +452,23 @@ func TestUnwind(t *testing.T) {
 				for _, w := range p.locals {
 					if !bytes.Contains(got, []byte("    "+w+"\n")) {
 						t.Errorf("xo dev unwind --locals lacks %q:\n%s", w, got)
+					}
+				}
+				// the batch session on the same thread: select p.fn's frame,
+				// print p.print there, set a breakpoint, and refuse to run
+				frame := -1
+				for i, h := range have {
+					if frame < 0 && strings.HasPrefix(h, p.fn+" ") {
+						frame = i
+					}
+				}
+				if frame < 0 {
+					t.Fatalf("no frame of %s in %v", p.fn, have)
+				}
+				sess, _ := exec.Command(xo, "dev", "debug", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "b "+p.stop, "-c", "continue", bin).CombinedOutput()
+				for _, w := range []string{"(xo) print " + p.print + "\n" + p.want + "\n", "breakpoint 1: 0x", "error: this session is a recorded thread"} {
+					if !bytes.Contains(sess, []byte(w)) {
+						t.Errorf("xo dev debug lacks %q:\n%s", w, sess)
 					}
 				}
 			})

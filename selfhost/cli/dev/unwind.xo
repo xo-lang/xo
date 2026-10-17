@@ -60,58 +60,22 @@ fn unwind_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     }
   }
   let info = debug.read(s)
-  let lines = debug.lines(s)
   let tab = debug.tables(exe)
   let frames = debug.backtrace(tab, snap.regs, snap, 64)
-  // a frame per physical frame and per inlined call in it, innermost
-  // first, as lldb lists them: an inlined callee at its own line, each
-  // caller at the line of its call
-  var n = 0
-  for (k, f) in frames.indexed() {
-    // a caller's line is its call's: the instruction before the return
-    let look = if k == 0 { f.pc } else { f.pc - 4 }
-    var line_at = match lines.at(look) {
-      Some((file, line)) => " at ${base_name(file)}:${line}"
-      None => ""
-    }
-    var fname = tab.sym_at(f.pc)
-    var fvars: List[debug.Var] = []
-    var chain: List[debug.Inlined] = []
-    if let Some(fn_) = info.func_at(look) {
-      fname = fn_.name
-      fvars = fn_.vars
-      for c in fn_.inlined {
-        for (lo, hi) in c.ranges {
-          if look >= lo && look < hi {
-            chain.push(c)
-          }
-        }
-      }
-    }
-    // innermost (deepest) first
-    var order: List[(Int, Int)] = []
-    for (i, c) in chain.indexed() {
-      order.push((-c.depth, i))
-    }
-    var file = ""
-    if let Some((fl, _)) = lines.at(look) {
-      file = base_name(fl)
-    }
-    for (_, i) in order.sort() {
-      let c = chain[i]
-      os.stdio.println("#${n} ${hex(f.pc)} ${c.name} [inlined]${line_at} (${f.how})")
-      if fl.get_bool("locals") {
-        print_locals(os, info, c.vars, look, f.regs, snap)
-      }
-      n += 1
-      let cf = lines.call_file(c.unit_line, c.call_file)
-      line_at = if !cf.is_empty() { " at ${base_name(cf)}:${c.call_line}" } else if file.is_empty() { "" } else { " at ${file}:${c.call_line}" }
-    }
-    os.stdio.println("#${n} ${hex(f.pc)} ${fname}${line_at} (${f.how})")
+  // the first physical frame and the calls inlined in it read the
+  // thread's own registers, at its pc
+  var first = true
+  for (n, f) in debug.vframes(info, debug.lines(s), tab, frames).indexed() {
+    let at = if f.file.is_empty() { "" } else { " at ${f.file}:${f.line}" }
+    os.stdio.println("#${n} ${hex(f.pc)} ${f.name}${if f.inlined { " [inlined]" } else { "" }}${at} (${f.how})")
     if fl.get_bool("locals") {
-      print_locals(os, info, fvars, look, f.regs, snap)
+      let pc = if first { f.pc } else { f.pc - 4 }
+      let regs: Map[Int, Int] = if first { {} } else { f.regs }
+      print_locals(os, info, f.vars, pc, regs, snap)
     }
-    n += 1
+    if !f.inlined {
+      first = false
+    }
   }
   0
 }

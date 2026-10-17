@@ -1,0 +1,85 @@
+// `xo dev debug --snap FILE [--dwarf FILE] -c CMD... EXE`: `xo debug
+// --batch` (decision 0253 point 4) on a recorded stopped thread until the
+// process control of stage 2: each command echoed as `(xo) CMD`, then its
+// output (selfhost/debug session.xo).
+
+use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/selfhost/debug
+
+fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  // -c may repeat: gather them before the flag parser
+  var cmds: List[Str] = []
+  var rest: List[Str] = []
+  var i = 0
+  while i < args.len() {
+    if args[i] == "-c" && i + 1 < args.len() {
+      cmds.push(args[i + 1])
+      i += 2
+    } else {
+      rest.push(args[i])
+      i += 1
+    }
+  }
+  var fl = core.new_flags("dev debug")
+  fl.str_flag("snap", "", "the recorded thread (reg and mem lines)")
+  fl.str_flag("dwarf", "", "the DWARF file (default the executable)")
+  if !fl.parse(os, rest) {
+    return 2
+  }
+  if fl.args.len() != 1 || fl.get_str("snap").is_empty() {
+    os.stdio.eprintln("usage: xo dev debug --snap FILE [--dwarf FILE] [-c CMD]... EXE")
+    return 2
+  }
+  let exe = match os.fs.read(fl.args[0]) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo dev debug: ${e}")
+      return 1
+    }
+  }
+  let dpath = if fl.get_str("dwarf").is_empty() { fl.args[0] } else { fl.get_str("dwarf") }
+  let ddata = if dpath == fl.args[0] { exe } else {
+    match os.fs.read(dpath) {
+      Ok(d) => d
+      Err(e) => {
+        os.stdio.eprintln("xo dev debug: ${e}")
+        return 1
+      }
+    }
+  }
+  let sections = match debug.sections(ddata) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev debug: ${dpath}: ${e}")
+      return 1
+    }
+  }
+  let stext = match os.fs.read(fl.get_str("snap")) {
+    Ok(t) => t.to_str() ?? ""
+    Err(e) => {
+      os.stdio.eprintln("xo dev debug: ${e}")
+      return 1
+    }
+  }
+  let snap = match debug.parse_snapshot(stext) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev debug: ${fl.get_str("snap")}: ${e}")
+      return 1
+    }
+  }
+  var s = debug.session(exe, sections, snap)
+  var failed = false
+  for c in cmds {
+    os.stdio.println("(xo) ${c}")
+    let out = s.exec(c)
+    if !out.is_empty() {
+      os.stdio.println(out)
+    }
+    failed = failed || out.starts_with("error: ")
+    if s.done {
+      break
+    }
+  }
+  if failed { 1 } else { 0 }
+}

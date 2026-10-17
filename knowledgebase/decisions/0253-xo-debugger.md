@@ -302,3 +302,17 @@ programs):
   address), with gdb's values for run_claimed (t, units) and
   cabi.fiber_main (f); where gdb printed arguments in x0 to x18 of a
   caller (run_entry's), xo dev unwind says `<unavailable>`.
+- The batch session (2026-10-17): selfhost/debug session.xo holds a
+  program's DWARF, line, unwind, and symbol tables, the breakpoints, and
+  a stopped thread's frames (vframes: inlined calls as frames, as lldb),
+  and runs point 4's commands, each giving its text: break (the
+  addresses and their lines), delete, backtrace (the selected frame
+  marked), frame N, locals and print (read in the selected frame: a
+  caller's at its call, with its own registers), threads, quit; run,
+  continue, step, next, and finish answer that process control comes
+  with stage 2, tasks and task with stage 4. Until then the thread is a
+  snapshot: `xo dev debug --snap FILE [--dwarf FILE] -c CMD... EXE`
+  echoes each command as `(xo) CMD` and prints its output (exit 1 when
+  one failed). `xo debug --batch` becomes this with a live process.
+  TestUnwind runs it on each build: frame N to sum or run_claimed, print
+  k or units (lldb's values), break, and the refusal to run.
