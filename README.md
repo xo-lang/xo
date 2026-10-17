@@ -7,8 +7,17 @@ programs with fast, structured feedback. It keeps what makes Go productive
 standard library, a compatibility promise) and moves the bugs tests usually
 miss into the compiler.
 
-Status: experimental. The spec is at draft 0.7 and the P1 toolchain compiles
-Xo to Go. Expect breaking changes.
+Status: experimental, toolchain 0.19.0. The compiler and the `xo`
+toolchain are written in Xo and compile to native code (arm64, LLVM),
+Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
+1.0.
+
+Xo is built almost entirely by AI agents working under one maintainer,
+and the full git history is kept to show it: every design decision is an
+ADR in `knowledgebase/decisions/`, and every surprise a gotcha in
+`knowledgebase/gotchas/`. This repository is a mirror of the development
+repository, published with private values (account IDs, addresses, local
+paths) replaced; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```
 use std/http
@@ -68,125 +77,102 @@ fn main(os: Os) ! {
 | Any package can touch files or the network | Effects in signatures (`uses net, fs.read`) and capabilities passed from `main` |
 | Broken code hidden behind build tags | Every `match target.os` arm is type checked for every target |
 | Flaky concurrency tests | Deterministic scheduler; `xo test --explore=N` searches interleavings |
-| Hard to reproduce failures | Contract fuzzing writes regression tests; record and replay (in progress) |
+| Hard to reproduce failures | Contract fuzzing writes regression tests; `xo run --record` and `xo replay` |
 
-## Install
+## Building from source
 
-`xo` is written in Xo (the self hosted toolchain, `compiler/xo`; decision
-0178 switch point B). A release archive (`scripts/release.sh`, for
-darwin/arm64, linux/arm64, and linux/amd64) unpacks to
-
-```
-xo-<version>-<os>-<arch>/bin/xo          the toolchain
-xo-<version>-<os>-<arch>/bin/xo-gobind   the Go binder helper (`use go`)
-xo-<version>-<os>-<arch>/lib/xo/         std, the prebuilt C runtime
-```
-
-Keep the layout: `bin/xo` finds std and the runtime in `../lib/xo`
-(or set `XO_STD`), so a copy of `bin/xo` alone does not work. Put the
-`bin` directory on PATH, or link `bin/xo` from a PATH directory
-(symbolic links are followed).
-
-From a checkout, an existing `xo` builds the next one: there is no Go
-implementation of the compiler any more (decision 0215). The seed is a
-previous `xo`: a release's `bin/xo`, an earlier build, or a prebuilt
-seed (decision 0216: release N is built by release N-1; the project's
-prebuilt seeds are kept privately and are not public downloads). One
-command does it:
+The compiler is written in Xo, so an existing `xo` builds the next one
+(decision 0215 removed the Go implementation; decision 0216: release N is
+built by release N-1). There are no public releases or prebuilt seeds
+yet, so the first build starts from Go:
 
 ```
-XO_SEED=/path/to/xo go run ./scripts/xobuild   # prints the path of bin/xo
-go run ./scripts/xobuild                       # with an earlier build or xo on PATH
+go run ./scripts/xobuild --from-source   # Go 1.26 or later; prints the path of bin/xo
 ```
 
-It builds `bin/xo` (git ignored) from the checkout's `compiler/xo` when
-its sources changed, with the arm64 backend on an arm64 host (Apple
-Silicon, arm64 Linux) and the LLVM backend on an x86-64 host (clang
-needed). The seed order (`$XO_SEED`, the checkout's earlier `bin/xo`,
-the newest earlier build in `<user cache>/xo/checkout`, `xo` on PATH,
-then the project's prebuilt seed) is internal/xotool's; when none is
-found, it stops with an error instead of building one.
+It builds the `go-compiler-final` tag (the last commit with the Go
+compiler), then the hops in `scripts/seed-chain.txt`, then this
+checkout's `compiler/xo` into `bin/xo` (git ignored): 25 to 37 minutes on
+a 16 vCPU machine (2026-10-13). After that, any `xo` rebuilds the next
+one without Go:
 
-With no `xo` at all, build from source (opt in, slow):
-`go run ./scripts/xobuild --from-source` builds the `go-compiler-final`
-tag (the last commit with the Go compiler; Go 1.26 or later), then the
-hops in `scripts/seed-chain.txt`, then the checkout (25 to 37 minutes on
-a 16 vCPU machine as of 2026-10-13, decision 0216). `bin/xo` finds
-`std` at `../std`, as a release's finds `lib/xo/std`. After that, any Xo
-`xo` rebuilds itself without Go (`scripts/bootstrap-xo.sh`).
+```
+XO_SEED=/path/to/xo go run ./scripts/xobuild   # or with bin/xo or xo on PATH
+scripts/bootstrap-xo.sh                         # the self rebuild fixed point
+```
 
-The module path is `github.com/xo-lang/xo` (local name; see
-`knowledgebase/infrastructure/toolchain.md`).
+`bin/xo` finds the standard library at `../std`; a release layout
+(`scripts/release.sh`) puts it in `lib/xo/std` beside `bin/`, and
+`XO_STD` overrides both.
 
-The default backend is native (decision 0248): arm64 on arm64 hosts,
-LLVM (which needs clang) on x86_64 hosts. `--backend=go` builds through
-the Go toolchain, and programs with `use go` need it. The arm64 backend
-assembles and links with Xo's own assembler and linkers on macOS and
-for Linux (no C toolchain); `--ld=cc` uses the system's. The arm64 backend's C runtime (std/llrt)
-comes prebuilt in a release archive (`lib/xo/rtpack`, built by
-`scripts/release.sh`); an xo built from a checkout compiles it on the
-first native build and caches it (decision 0157).
+## Backends
+
+The default backend is native (decision 0248): arm64 on arm64 hosts
+(Apple Silicon, arm64 Linux), with Xo's own assembler and linkers for
+macOS and Linux, and LLVM on x86-64 hosts (clang needed). `--backend=go`
+builds through the Go toolchain, which `use go` bindings need, and
+`--backend=wasm` builds a WASI preview1 module. `xo build --targets=all`
+cross compiles for linux, darwin, windows, and wasi.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `xo check [--json] <dirs>` | Type check; JSON diagnostics with stable codes and fixes |
-| `xo build [--targets=all] [--backend=go\|llvm] <dir>` | Static binaries for linux, darwin, windows, wasi |
-| `xo run <dir>` | Build and run for the host |
-| `xo test [--seed=N] [--explore=N] [--race] <dir>` | Tests, property tests, contract fuzzing, deterministic scheduling |
-| `xo fmt [--check]` | Canonical formatting, no options |
-| `xo vet` | Advisory checks |
-| `xo query <type\|def\|callers\|effects\|holes\|api>` | Semantic queries for tools and agents |
-| `xo edit <rename\|add-field\|change-sig>` | Semantic edits through resolved symbols, rechecked before writing |
+| `xo check [--json] <dirs>` | Type check; JSON diagnostics with stable codes and machine fixes |
+| `xo build`, `xo run` | Static binaries for the host or `--targets`; build and run |
+| `xo test [--seed=N] [--explore=N]` | Tests, property tests, contract fuzzing, deterministic scheduling |
+| `xo fmt`, `xo fix`, `xo vet` | Canonical formatting, machine fixes, advisory checks |
+| `xo query`, `xo edit` | Semantic queries (type, def, callers, effects, holes, api) and edits (rename, add-field, change-sig) |
 | `xo doc`, `xo explain <code>` | Documentation and diagnostic explanations |
-| `xo bind <go package>` | Bindings for `use go "<package>"` |
-| `xo bind --c <header>` | Bindings for `use c "<header>"` (native builds, `--no-gc`) |
-| `xo dump <pid>` | Task tree of a running program |
+| `xo init`, `xo get`, `xo mod`, `xo vendor`, `xo publish`, `xo audit` | Modules, versions, and supply chain checks |
+| `xo bind` | Bindings for `use go` packages and `use c` headers |
+| `xo dump`, `xo replay`, `xo prof`, `xo trace` | Task trees, replay of recorded runs, profiles, execution traces |
+| `xo lsp`, `xo mcp`, `xo serve` | Language server, Model Context Protocol server, warm checker |
+
+`xo help` lists them all; `xo <command> -h` gives the flags.
 
 ## Project layout
 
 | Path | Contents |
 |---|---|
-| `spec/core.md`, `spec/std.md` | Language specification and standard library (source of truth) |
-| `cmd/xo` | The CLI |
-| `internal/lexer`, `parser`, `ast` | Front end |
-| `internal/check` | Type, effect, mutation, and concurrency checking |
-| `internal/gen`, `internal/build` | Code generation to Go, build driver |
-| `internal/llvm`, `std/llrt` | LLVM backend prototype and its C runtime |
-| `internal/gobind` | Go package bindings |
-| `std/*.xo`, `std/rt` | Standard library declarations and the Go runtime |
-| `compiler/` | Compiler components written in Xo (`compiler/lexer`), checked against the Go ones by `internal/selfhost` |
-| `bench/` | Benchmarks: tasks, Go and Xo solutions, planted bugs, results |
-| `examples/` | Realistic programs; `notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown |
+| `spec/core.md`, `spec/std.md` | The language specification and standard library surface (source of truth) |
+| `compiler/` | The compiler and toolchain in Xo: `lexer`, `parser`, `check`, `ssa`, backends (`arm64`, `llvm`, `gen` for Go, `wasm`), `macho` (assembler and linkers), `cli`, `xo` (the driver) |
+| `std/` | The standard library: declarations, `std/native` and `std/llrt` (native runtime), `std/rt` (the Go backend's runtime) |
+| `cmd/xo`, `internal/`, `test/` | Go test drivers that run the `xo` binary, Go support code (`xotool`, `gobind`, `progen`), compiler test inputs |
+| `cmd/xo-gobind` | The Go binder helper for `use go` |
+| `bench/` | Benchmark tasks, Go and Xo solutions, planted bugs, results |
+| `examples/` | Realistic programs (`notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown) |
 | `knowledgebase/` | Decisions (ADRs), gotchas, infrastructure notes |
+| `editors/` | Editor support (VS Code) |
 
-## Evidence so far
+## Evidence
 
-All measured in `bench/results/`:
-
-- Writing code: agents passed their own tests on the first try about as often
-  in Xo as in Go, with Xo programs about half the size.
-- Planted safety bugs (ignored errors, nil, missing cases, races, leaks, lost
-  updates): Xo prevented or caught 23 to 29 of 30 across two independent bug
-  authors, against 13 for Go with strict analyzers and 9 for plain Go. Logic
-  bugs were caught at the same rate in both.
-- Performance: with monomorphization, Xo beats idiomatic Go generics on 5 of 6
-  generic workloads; the LLVM prototype is at or near Go on compute. Request
-  throughput is still about 1.7x behind Go.
+Planted safety bugs (ignored errors, nil, missing cases, races, leaks,
+lost updates), 30 per language: Xo prevented or caught 23 to 29, against
+13 for Go with strict analyzers and 9 for plain Go
+([planted-xo-2026-10-07.md](bench/results/planted-xo-2026-10-07.md));
+with Codex, a second model family, as the author, 22 to 27 against 17
+for strict Go and 12 for plain Go
+([codex-2026-10-09.md](bench/results/codex-2026-10-09.md)). Performance
+and code size results for each backend are indexed in
+[bench/results/README.md](bench/results/README.md).
 
 ## Development
 
 ```
-go test ./...
+go test -short ./...   # about 10 s once bin/xo is built
 go vet ./...
-GOBIN=$PWD/.tools/bin go install honnef.co/go/tools/cmd/staticcheck@latest
-.tools/bin/staticcheck ./...
 ```
 
-The Go benchmark arms also use errcheck, nilaway, and exhaustive in
-`.tools/bin` (see `bench/go/strict-check.sh`). LLVM builds need `clang`;
-arm64 builds need `cc` (see Install).
+The Go tests drive the `xo` binary (`$XO_CLI`, else the checkout's
+`bin/xo`, rebuilt when `compiler/` or std changes). Tiers, the fixed
+point, and the full suites are described in `CLAUDE.md` and
+`knowledgebase/infrastructure/toolchain.md`.
 
-Read `CLAUDE.md` before contributing (safety rules and the knowledgebase
-workflow). Design decisions live in `knowledgebase/decisions/`.
+## Contributing and license
+
+Issues are welcome; code arrives as proposals, see
+[CONTRIBUTING.md](CONTRIBUTING.md) and, for vulnerabilities,
+[SECURITY.md](SECURITY.md). Xo is MIT licensed ([LICENSE](LICENSE)); the
+standard library is MIT-0 ([std/LICENSE](std/LICENSE)), and code from Go
+keeps its BSD license ([THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)).
