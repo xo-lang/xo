@@ -85,6 +85,11 @@ fn signal(p: Int) {
 /// checking again. Nothing here touches its entry after the wake up.
 fn grant_readers(m: Int) {
   let l = m + M_WAITERS
+  // the readers this wakes run on this worker for a moment unless it
+  // keeps computing (pool.xo GRACE_NS): a reader stolen at once moved to
+  // a freshly woken worker without the lock's cache lines (decision
+  // 0077's addendum, the known RWMutex gap)
+  pool.grace_begin()
   var e = ld(l, WL_FIRST)
   while e != 0 {
     let next = ld(e, E_NEXT)

@@ -18,8 +18,9 @@ import (
 // Mutex's grant, which main wakes directly for now)
 // still runs its task while the waker keeps computing and never parks,
 // because the monitor wakes an idle worker for it after about 1 ms.
-// testdata/sched handoff (a sender), spawnbusy (a spawner), and mutexbusy
-// (a Mutex's holder) compute 200 ms after the wake and print the worst
+// testdata/sched handoff (a sender), spawnbusy (a spawner), mutexbusy
+// (a Mutex's holder), and rwbusy (a writer that granted a reader, whose
+// grace a woken worker waits out) compute 200 ms after the wake and print the worst
 // delay of 5 rounds at XO_THREADS=4; it must stay under 100 ms. Without
 // the monitor the task waits the whole 200 ms; with it, about 2 ms on an
 // idle machine, but its 1 ms ticks overslept by tens of ms on a Mac at
@@ -36,7 +37,7 @@ func TestDeferredWakeBound(t *testing.T) {
 	}
 	worst := regexp.MustCompile(`worst (\d+) us \(busy\)`)
 	for _, be := range backends {
-		for _, run := range []struct{ prog, threads string }{{"handoff", "4"}, {"spawnbusy", "4"}, {"mutexbusy", "4"}, {"handoff", "1"}, {"spawnbusy", "1"}} {
+		for _, run := range []struct{ prog, threads string }{{"handoff", "4"}, {"spawnbusy", "4"}, {"mutexbusy", "4"}, {"rwbusy", "4"}, {"handoff", "1"}, {"spawnbusy", "1"}} {
 			prog := run.prog
 			t.Run(be+"/"+prog+"/"+run.threads, func(t *testing.T) {
 				if be == xotool.BackendLLVM {

@@ -96,7 +96,17 @@ const C_TRACE = 344
 /// ctx.xo C_WHY, C_PARK_FP (`xo dump`, decision 0251)
 const C_WHY = 336
 const C_PARK_FP = 352
-const W_SIZE = 3424
+/// When this worker last granted readers a RWMutex (mutex.xo
+/// grant_readers; ns): a thief leaves its ring alone for GRACE_NS after
+/// (steal_round), so the granted readers run here, with the lock's cache
+/// lines and the value, when this worker gets to them in time.
+const W_GRACE_AT = 3424
+const W_GRACE_AT_W = 428
+/// The least time a steal round of this worker found left on another's
+/// grace (ns, 0 when none): find_work waits it out once, the bound on how
+/// long a grant can wait for a worker that keeps computing.
+const W_GRACE_WAIT = 3432
+const W_SIZE = 3440
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -170,6 +180,9 @@ const ST_DEFER = 25
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
 const NEXT_GRACE_NS = 50000
+
+/// A reader grant's grace (W_GRACE_AT).
+const GRACE_NS = 20000
 
 /// The stack a worker thread reserves (as the threads before fibers).
 const THREAD_STACK = 67108864
@@ -709,6 +722,8 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
   rt.mem_store(w, W_RNG, r, 8)
   let start = rt.int_wrap(4, r, 1) % n
   let batch = rt.int_wrap(0, w, W_BATCH)
+  rt.mem_store(w, W_GRACE_WAIT, 0, 8)
+  var now = 0
   var i = 0
   while i < n {
     let v = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, rt.int_wrap(0, start, i) % n, 3)), 8)
@@ -717,7 +732,23 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
       continue
     }
     var t = 0
-    let got = if rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) { sched.rq_grab(v, batch) } else { 0 }
+    let nonempty = rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST)
+    let ga = if nonempty { rt.slot_load(v, W_GRACE_AT_W, ACQUIRE) } else { 0 }
+    if ga != 0 {
+      if now == 0 {
+        now = sysio.mono_ns()
+      }
+      let left = rt.int_wrap(1, GRACE_NS, rt.int_wrap(1, now, ga))
+      if left > 0 {
+        // readers its grant woke, theirs to run for a moment yet
+        let seen = rt.mem_load(w, W_GRACE_WAIT, 8)
+        if seen == 0 || left < seen {
+          rt.mem_store(w, W_GRACE_WAIT, left, 8)
+        }
+        continue
+      }
+    }
+    let got = if nonempty { sched.rq_grab(v, batch) } else { 0 }
     if got > 0 {
       t = rt.mem_load(batch, rt.int_wrap(3, rt.int_wrap(1, got, 1), 3), 8)
       if got > 1 {
@@ -799,7 +830,29 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
     }
     r = rt.int_wrap(0, r, 1)
   }
+  let wait = rt.mem_load(w, W_GRACE_WAIT, 8)
+  if t == 0 && wait > 0 {
+    // a ring left alone for a grant's grace: wait it out, then take from
+    // it (the readers' bound when the granting worker keeps computing)
+    let until = rt.int_wrap(0, sysio.mono_ns(), wait)
+    while sysio.mono_ns() < until {
+      rt.spin_hint()
+      rt.spin_hint()
+      rt.spin_hint()
+      rt.spin_hint()
+    }
+    t = steal_round(p, w, 1)
+  }
   t
+}
+
+/// Marks the calling worker's ring as granted readers now (mutex.xo
+/// grant_readers, before it signals them): W_GRACE_AT.
+pub fn grace_begin() {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.slot_store(w, W_GRACE_AT_W, sysio.mono_ns(), RELEASE)
+  }
 }
 
 /// Puts w on the idle list and sleeps until wakep takes it off: 1, or 0

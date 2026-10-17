@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- RWMutex: readers a writer's release grants run on the granting worker
+  for a short grace (20 us) before another worker may take them
+  (decision 0077's addendum): bench/perf/conc rwmutex 90 to 40 ms wall,
+  half the CPU; a reader's wait stays bounded (testdata/sched/rwbusy) and
+  bench/perf/http p99 is unchanged or better.
 - stdio's mode word is read and written with relaxed atomics: a first
   print racing a task's flush was a ThreadSanitizer report
   (TestGoldenTasks/http_wire, 2 of 40 runs under load).

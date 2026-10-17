@@ -1,0 +1,43 @@
+// A RWMutex grant's grace has a bound (pool.xo GRACE_NS, decision 0077's
+// addendum): a reader waits for a lock that main holds for writing; main
+// releases it and keeps computing without parking; the reader, granted
+// onto main's worker, must still run soon (a woken worker waits out the
+// grace and takes it). Prints the worst delay in microseconds over 5
+// rounds.
+fn busy(c: Clock, t: Time, d: Duration) -> Int {
+  var x = 0
+  while c.since(t) < d {
+    x = x + 1
+  }
+  x
+}
+
+fn main(os: Os) {
+  let c = os.clock
+  let start = c.now()
+  var worst = 0
+  var work = 0
+  for _ in 0..5 {
+    let m = Mutex[Int].new(0)
+    let at = Atomic[Int].new(0)
+    let released = Atomic[Int].new(0)
+    let late = scope s {
+      m.with(fn(var v) {
+        s.spawn(fn() {
+          let _r = m.with_read(fn(w) { w })
+          let _a = at.max(c.since(start).nanos())
+        })
+        // the reader parks on the lock first
+        c.sleep(5ms)
+        v += 1
+        let _r = released.max(c.since(start).nanos())
+      })
+      work += busy(c, c.now(), 200ms)
+      (at.get() - released.get()) / 1000
+    }
+    if late > worst || late < 0 {
+      worst = if late < 0 { 999999 } else { late }
+    }
+  }
+  os.stdio.println("rwbusy worst ${worst} us (${if work > 0 { "busy" } else { "idle" }})")
+}

@@ -176,7 +176,8 @@ both parts against main, medians of 9 interleaved rounds):
   lock's cache lines, the value, and the fiber's stack. A fix would keep
   that locality without delaying a grant (for example a short steal
   grace on granted readers with a spinning worker to cover it), at a
-  CPU cost; not done.
+  CPU cost; not done. Done 2026-10-17 (xo-4, the lead's request): see
+  "Addendum: a reader grant's grace" below.
 
 Latency model of a hand off whose waker keeps computing without calling
 the runtime (worst case; mutexbusy and handoff, 20 rounds of 30 ms, 5
@@ -258,6 +259,29 @@ Mcycles (about 414 to 335 cycles and 1,620 to 1,513 instructions a
 spawn; rust-ct about 283 and 1,440); at the default threads spawn and
 fanout within noise or better (spawn 811, 772, 801 to 814, 745, 770;
 fanout 326, 325, 322 to 320, 315, 320).
+
+## Addendum: a reader grant's grace (2026-10-17, xo-4)
+
+The known RWMutex gap above, closed the way it suggested. A writer's
+release that grants waiting readers (mutex.xo grant_readers) stamps its
+worker's ring (pool.xo grace_begin, W_GRACE_AT): for GRACE_NS (20 us) a
+thief's steal_round leaves that ring alone, so the readers run on the
+granting worker, with the lock's cache lines, the value and their
+stacks, when it gets to them in time (it parks, or its task ends). A
+woken worker that found nothing but a ring in grace waits the rest of
+the grace out (find_work, W_GRACE_WAIT) and then steals: the bound on a
+grant when the granting worker keeps computing. Mutex grants are
+unchanged (direct, decision 0077's latency rule).
+
+Measured on macOS (main's std against this, the same compiler,
+interleaved): bench/perf/conc rwmutex wall 90 to 40 ms, CPU 160 to 80
+ms, 434 to 262 Mcycles (11 runs each); mutex within noise. A reader
+behind a writer that releases and computes 200 ms without parking
+(testdata/sched/rwbusy, TestDeferredWakeBound, XO_THREADS=4): worst 100
+to 119 us, against 58 to 136 us before, at load 18 to 30. bench/perf/http
+(the users CRUD API, whose Store reads under with_read; 5 interleaved
+rounds of 10 s, medians): 96,942 rps, p50 260 us, p99 1,328 us, p99.9
+3,510 us against 95,675, 268, 1,536 and 4,651 before.
 
 ## Alternatives
 - **Chase and Lev deques** (built first, commit 9198503): lock free for
