@@ -949,6 +949,40 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       let s = g.raw_ptr(x.args[1])
       g.emit("call void ${f}(ptr ${d}, ptr ${s}, i64 ${g.op(x.args[2])}, i1 false)")
     }
+    "rt.mem_copy_block" => {
+      // the loop libcstr.copy_words had (two words loaded, then stored,
+      // twice per 32 bytes), which LLVM vectorizes; llvm.memcpy would call
+      // memcpy, this function's caller
+      let d = g.raw_ptr(x.args[0])
+      let s = g.raw_ptr(x.args[1])
+      let n = g.op(x.args[2])
+      let pre = g.label
+      let head = g.new_label("cbh")
+      let body = g.new_label("cbb")
+      let done = g.new_label("cbd")
+      g.emit("br label %${head}")
+      g.start(head)
+      g.emit("%${head}.i = phi i64 [ 0, %${pre} ], [ %${body}.n, %${body} ]")
+      g.emit("%${head}.c = icmp ult i64 %${head}.i, ${n}")
+      g.emit("br i1 %${head}.c, label %${body}, label %${done}")
+      g.start(body)
+      var vs: List[Str] = []
+      for k in 0..4 {
+        let o = if k == 0 { "%${head}.i" } else { g.def("add i64 %${head}.i, ${8 * k}") }
+        let ps = g.def("getelementptr i8, ptr ${s}, i64 ${o}")
+        vs.push(g.def("load i64, ptr ${ps}, align 1"))
+        if k % 2 == 1 {
+          for j in [k - 1, k] {
+            let oj = if j == 0 { "%${head}.i" } else { g.def("add i64 %${head}.i, ${8 * j}") }
+            let pd = g.def("getelementptr i8, ptr ${d}, i64 ${oj}")
+            g.emit("store i64 ${vs[j]}, ptr ${pd}, align 1")
+          }
+        }
+      }
+      g.emit("%${body}.n = add i64 %${head}.i, 32")
+      g.emit("br label %${head}")
+      g.start(done)
+    }
     "rt.mem_set" => {
       g.llvm_decl("@llvm.memset.p0.i64", "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
       let d = g.raw_ptr(x.args[0])

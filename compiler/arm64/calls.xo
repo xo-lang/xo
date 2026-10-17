@@ -1549,6 +1549,27 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       }
       g.set(v, [])
     }
+    "rt.mem_copy_block" if g.x86 => {
+      // 32 bytes an iteration through xmm14 and xmm15 (the emitter's
+      // scratch registers), r11 the offset
+      g.x86_store("xorl %r11d, %r11d\ncmpq $u2, %r11\njae 2f\n1:\nmovups ($u1,%r11), %xmm14\nmovups 16($u1,%r11), %xmm15\nmovups %xmm14, ($u0,%r11)\nmovups %xmm15, 16($u0,%r11)\naddq $32, %r11\ncmpq $u2, %r11\njb 1b\n2:", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, [])
+    }
+    "rt.mem_copy_block" => {
+      // 64 bytes an iteration as two ldp and stp of q30 and q31 (the
+      // emitter's scratch registers, with x16 and x17 the pointers), then
+      // the last 32 when n is an odd multiple of 32: the count $d0, a
+      // copy of n, read last of the operands (2026-10-17: the word loop
+      // of libcstr.copy_words was 18 instructions per 32 bytes, LLVM's
+      // vectorized one 5.5 times faster on bench/perf/xo branch)
+      let t = "mov x16, $u1\nmov x17, $u0\nsubs $d0, $u2, #64\nb.lt 2f\n1:\nldp q30, q31, [x16], #32\nstp q30, q31, [x17], #32\nldp q30, q31, [x16], #32\nstp q30, q31, [x17], #32\nsubs $d0, $d0, #64\nb.ge 1b\n2:\ntbz $d0, #5, 3f\nldp q30, q31, [x16]\nstp q30, q31, [x17]\n3:"
+      let c = g.new_vreg(false)
+      let i = g.plain(t, [c], [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      // a store: not dropped for its dead count
+      g.blocks[g.cur].insts[i].keep = true
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.mem_copy" | "rt.mem_move" | "rt.mem_set" => {
       let fname = match name {
         "rt.mem_copy" => "memcpy"

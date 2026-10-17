@@ -308,6 +308,22 @@ Item 2 landed as decision 0212's `rt.tlocal_get/tlocal_set/tlocal_addr`
   locals shared with xo_fs.c and xo_bytes.c), and `xo_auxval`, which
   move with their items (B15, B16, B04/B26).
 
+## Amendment: rt.mem_copy_block (owner, 2026-10-17)
+
+Approved by the owner on 2026-10-17 (relayed by the lead): a raw memory
+intrinsic `rt.mem_copy_block(dst, src, n)` (std/native/rt.xo), n a
+multiple of 32, the ranges not overlapping, used by
+std/native/llrt/libcstr.xo copy_words for the bulk of the no-libc
+memcpy and the forward memmove (each lowering loads 32 bytes before it
+stores them, so a forward overlapping copy stays correct). The native
+emitters lower it to vector loops: arm64 ldp and stp of q30 and q31,
+64 bytes an iteration; x86_64 movups through xmm14 and xmm15, 32 bytes
+an iteration. The LLVM emitter expands the plain loop copy_words had,
+which LLVM vectorizes (llvm.memcpy would call memcpy itself). Like the
+other intrinsics of this decision it is internal to std. Measurements:
+bench/results/mem-copy-block-2026-10-17.md (bench/perf/xo branch 0.345
+of main's instructions on arm64, now 1.01 times LLVM's; 0.643 on amd64).
+
 ## Consequences
 
 - C may call Xo, and Xo may read and write C memory: the remaining C

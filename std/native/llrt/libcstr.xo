@@ -54,27 +54,19 @@ pub fn s32(v: Int) -> Int {
 // words held across their stores cost x86-64 a callee saved register
 // on every call (bench/results/amd64-vs-llvm-2026-10-17.md).
 
-/// The 8 byte words of n bytes from s to d, forward: 32 bytes an
-/// iteration at index i, two words loaded then stored at a time (the
-/// index form LLVM vectorizes; at most seven values live, within x86-64's
-/// caller saved registers), then the rest's words; the bytes copied. The
-/// offsets are rt.int_wrap itself, not addw: a helper is inlined after
-/// instruction selection, so x86's i + c displacement (calls.xo
+/// The 8 byte words of n bytes from s to d, forward: the multiple of 32
+/// as rt.mem_copy_block (arm64 q registers 64 bytes an iteration, x86_64
+/// movups, LLVM the index loop of two words loaded then stored at a time
+/// that it vectorizes; each loads 32 bytes before storing them, so
+/// memmove forward stays safe), then the rest's words; the bytes copied.
+/// The offsets are rt.int_wrap itself, not addw: a helper is inlined
+/// after instruction selection, so x86's i + c displacement (calls.xo
 /// x86_disp) would not see the add.
 fn copy_words(d: Int, s: Int, n: Int) -> Int {
   let n32 = n & -32
-  var i = 0
-  while i < n32 {
-    let a = rt.mem_load(s, i, 8)
-    let b = rt.mem_load(s, rt.int_wrap(0, i, 8), 8)
-    rt.mem_store(d, i, a, 8)
-    rt.mem_store(d, rt.int_wrap(0, i, 8), b, 8)
-    let c = rt.mem_load(s, rt.int_wrap(0, i, 16), 8)
-    let e = rt.mem_load(s, rt.int_wrap(0, i, 24), 8)
-    rt.mem_store(d, rt.int_wrap(0, i, 16), c, 8)
-    rt.mem_store(d, rt.int_wrap(0, i, 24), e, 8)
-    i = rt.int_wrap(0, i, 32)
-  }
+  // the vector loop of each emitter (rt.mem_copy_block)
+  rt.mem_copy_block(d, s, n32)
+  var i = n32
   let n8 = n & -8
   while i < n8 {
     rt.mem_store(d, i, rt.mem_load(s, i, 8), 8)

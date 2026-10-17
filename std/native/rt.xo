@@ -193,6 +193,13 @@ fn mem_store(a: Int, off: Int, v: Int, w: Int)
 fn mem_copy(dst: Int, src: Int, n: Int)
 /// Copies n bytes from src to dst (the ranges may overlap).
 fn mem_move(dst: Int, src: Int, n: Int)
+/// Copies n bytes from src to dst, n a multiple of 32 (zero allowed; the
+/// ranges do not overlap): the bulk of std/native/llrt's memcpy
+/// (libcstr.copy_words). arm64 lowers it to a loop of ldp and stp of q
+/// registers, 64 bytes an iteration, x86_64 to movups of 16 bytes, and
+/// the LLVM emitter to the 8 byte loop LLVM vectorizes itself (owner,
+/// 2026-10-17).
+fn mem_copy_block(dst: Int, src: Int, n: Int)
 /// Sets the n bytes at dst to the low byte of b.
 fn mem_set(dst: Int, b: Int, n: Int)
 /// Compares n bytes at a and b as unsigned bytes: below zero, zero, or

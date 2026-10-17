@@ -10,6 +10,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   do: the TZif data of each constant zone name, only when the program
   looks zones up (hello world and the playground's compiler do not
   grow); a wasm program reads the wall clock through WASI.
+- Programs without a C library copy memory with vector loads and
+  stores on arm64 and x86_64 (copying a large map: 65% fewer
+  instructions on arm64, now even with LLVM; 36% on x86_64). The
+  runtime intrinsic behind it, rt.mem_copy_block, was approved by the
+  owner on 2026-10-17 (decision 0207).
 
 - WebAssembly builds (WASI) read `Env.program`, `Env.vars` (sorted),
   `Proc.set_grace` and `task.stop_requested` (no signals: never), request

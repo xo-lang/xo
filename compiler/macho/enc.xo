@@ -1637,7 +1637,8 @@ fn (var a: Asm) ldst(m: Str, ops: List[Bytes]) {
   a.word(head | (opc * 0x400000) | ((mo.off & 0x1ff) * 0x1000) | rn | t)
 }
 
-/// ldp and stp of x or d registers: signed offset, pre, post index.
+/// ldp and stp of x, w, d, or q registers: signed offset, pre, post
+/// index.
 fn (var a: Asm) ldstp(m: Str, ops: List[Bytes]) {
   if ops.len() < 3 {
     return a.bad(m, ops)
@@ -1647,12 +1648,16 @@ fn (var a: Asm) ldstp(m: Str, ops: List[Bytes]) {
   if k1 != k2 {
     return a.bad(m, ops)
   }
-  // opc and V: x 10/0, w 00/0, d 01/1
+  // opc and V: x 10/0, w 00/0, d 01/1, q 10/1
   var opc = 0
   var v = 0
   var scale = 8
   if k1 == RX {
     opc = 2
+  } else if k1 == RQ {
+    opc = 2
+    v = 1
+    scale = 16
   } else if k1 == RW {
     scale = 4
   } else if k1 == RD {

@@ -75,7 +75,7 @@ struct InlineCost {
 /// nistec.sub_p256 a non-leaf, its constants counted, and a call
 /// (bench/results/arm64-inline-cost-2026-10-16.md).
 fn inline_intrinsic(n: Str) -> Bool {
-  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow" | "rt.rl_empty" | "rt.h_zero"
+  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_copy_block" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow" | "rt.rl_empty" | "rt.h_zero"
 }
 
 /// The rt.u64_adc and rt.u64_adc_carry calls of a block with the same
