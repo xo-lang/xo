@@ -88,3 +88,46 @@ L except in field 3 of one element.
   with less information.
 - Hoist only the fields and keep the checks. That was measured: nbody
   -1.9%, because the `i` and `j` checks moved to the stores.
+
+## Addendum (2026-10-17): fields kept in registers across a loop
+
+nbody's inner loop still loaded and stored bs[i].vx, vy and vz in every
+iteration. j > i, so nothing else in the loop touches element i's
+velocity. promote_loop (fieldlicm.xo) keeps such fields in registers.
+
+- When it applies:
+  - the loop has one preheader edge ending a jump, one latch, and one
+    exit that is not a fault's, from the header into a block only it
+    enters;
+  - a header list parameter goes round as a straight chain of list.set
+    and reuse;
+  - every set of element idx stores `setfield(k, list.index(X, idx), y)`
+    of one Int, Float or Bool field k of a struct without heap values.
+    idx is defined outside the loop and proven in range at the
+    preheader;
+  - every other set and read of a version is one of these: at an index
+    distinct from idx; a field read of element idx; the length; or a
+    release on a fault's path.
+- distinct(j, idx): j is a header parameter that enters as idx + c
+  (c >= 1) and comes back as j + c2 (c2 >= 0), neither sum wrapping. So
+  j > idx in every iteration.
+- What it does:
+  - each field k becomes a header parameter, loaded in the preheader;
+  - reads of field k of element idx become the field's value at that
+    version;
+  - the sets and their landing checks are removed. A cleanup only a
+    removed check reached becomes unreachable;
+  - a new block on the exit edge stores the fields with one list.set,
+    which uses after the loop see.
+- On a fault inside the loop the list in memory lacks the kept values.
+  The function's list is then dropped (the unwind exit returns zero
+  values), so nothing observes it.
+- nbody: 3,243M to 3,091M instructions retired (-4.7%; LLVM 2,701M,
+  1.20 to 1.14 times). The inner loop is 39 instructions an iteration,
+  latch included, against LLVM's 38. The rest of the corpus is within
+  noise, sizes the same.
+- The golden list_field_licm adds these cases: promoted with a read back
+  after the set; j over i (j == i, not promoted); j below i; a loop left
+  by break; the whole element read; a one-element list; a fault inside a
+  promoted loop. Output is identical on main's arm64, LLVM and this
+  change.

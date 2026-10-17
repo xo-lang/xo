@@ -53,8 +53,28 @@ fn hoist_fields(var f: ssa.Func, types: List[ssa.SType]) -> Bool {
   for l in loops {
     changed = hoist_loop(f, types, pr, l.0, l.1) || changed
   }
+  // then the fields kept in registers across a loop (promote_loop): each
+  // adds a block, so the loops are found again after one
+  for _ in 0..PROMOTE_MAX {
+    let rpo2 = rpo_of(f)
+    let pr2 = new_proof(f, rpo2)
+    var any = false
+    for l in natural_loops(f, rpo2, pr2.idom, pr2.entry) {
+      if promote_loop(f, types, pr2, l.0, l.1) {
+        any = true
+        break
+      }
+    }
+    if !any {
+      break
+    }
+    changed = true
+  }
   changed
 }
+
+/// The most loops of a function promote_loop changes.
+const PROMOTE_MAX = 8
 
 /// The natural loops of f: each header with the blocks of its loops'
 /// bodies (the blocks that reach a back edge's source without passing
@@ -485,4 +505,605 @@ fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
 /// reference counting).
 fn scalar(types: List[ssa.SType], t: Int) -> Bool {
   t >= 0 && t < types.len() && (types[t].kind is ssa.Kind.Int | ssa.Kind.Float | ssa.Kind.Bool)
+}
+
+// ---------------------------------------------------------------------------
+// Fields kept in registers across a loop (decision 0257): nbody's inner
+// loop added to bs[i].vx, vy and vz in every iteration, a load and a store
+// each, though j > i means nothing else in the loop reads or writes
+// element i's velocity. Field k of element idx becomes a parameter of
+// the loop's header, from a load in the preheader; the sets of it in the
+// loop go, and one set on the loop's exit stores it.
+
+/// Keeps fields of one list element in registers across the loop with
+/// header h when promote_plan finds them; whether it changed f.
+fn promote_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: List[Bool]) -> Bool {
+  let plan = promote_plan(f, types, pr, h, body)
+  if plan.fields.is_empty() {
+    return false
+  }
+  let idx = plan.idx
+  let p = f.edges[plan.pe].from
+  let lp = f.edges[plan.pe].args[plan.pi]
+  let l = f.blocks[h].params[plan.pi]
+  let et = f.values[l].ty
+  let elem = types[et].elems[0]
+  // the preheader loads the fields
+  var moved: List[Int] = []
+  let e0 = f.values.len()
+  f.values.push(ssa.Value{op: ssa.Op.Call, ty: elem, args: [lp, idx], aux: ssa.Aux.S(s: "list.index"), block: p})
+  moved.push(e0)
+  var accs: List[Int] = []
+  for k in plan.fields {
+    let ft = types[elem].fields[k].ty
+    let a0 = f.values.len()
+    f.values.push(ssa.Value{op: ssa.Op.Field, ty: ft, args: [e0], aux: ssa.Aux.I(n: k), block: p})
+    moved.push(a0)
+    let acc = f.add_param(h, ft)
+    accs.push(acc)
+    f.edges[plan.pe].args.push(a0)
+  }
+  let pins = f.blocks[p].instrs
+  f.blocks[p].instrs = pins[0..pins.len() - 1] + moved + [pins[pins.len() - 1]]
+  // the chain: the field's value at each version of the list, the reads
+  // of it replaced, the sets of it removed
+  var cur = accs
+  var at: Map[Int, List[Int]] = {}
+  at[l] = cur
+  var repl: Map[Int, Int] = {}
+  for t in 0..plan.chain.len() {
+    let x = plan.chain[t]
+    let xv = f.values[x]
+    if xv.op == ssa.Op.Call && xv.args[1] == idx {
+      let sv = f.values[xv.args[2]]
+      let fi = plan.fields.index_of(aux_int(sv.aux)) ?? -1
+      if fi >= 0 {
+        var c2 = cur
+        c2[fi] = sv.args[1]
+        cur = c2
+        repl[x] = repl.get(xv.args[0]) ?? xv.args[0]
+        remove_op(f, x)
+      }
+    }
+    at[x] = cur
+  }
+  // reads of a promoted field of element idx of a version
+  for b in 0..f.blocks.len() {
+    if b >= body.len() || !body[b] {
+      continue
+    }
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Field {
+        continue
+      }
+      let e = f.values[x.args[0]]
+      if e.op != ssa.Op.Call || aux_str(e.aux) != "list.index" || e.args[1] != idx {
+        continue
+      }
+      let fi = plan.fields.index_of(aux_int(x.aux)) ?? -1
+      if fi < 0 {
+        continue
+      }
+      if let Some(vs) = at.get(e.args[0]) {
+        repl[v] = vs[fi]
+      }
+    }
+  }
+  // the latch passes the fields' last values
+  for e in f.blocks[h].preds {
+    if e != plan.pe {
+      let la = f.edges[e].args[plan.pi]
+      let vs = at.get(la) ?? cur
+      for a in vs {
+        f.edges[e].args.push(a)
+      }
+    }
+  }
+  replace_all_uses(f, repl)
+  // the exit stores the fields: a block on the exit edge
+  let t = f.edges[plan.ex].to
+  let xb = f.new_block()
+  let old_args = f.edges[plan.ex].args
+  f.edges[plan.ex].to = xb
+  f.edges[plan.ex].args = []
+  f.blocks[xb].preds = [plan.ex]
+  var tp: List[Int] = []
+  for e in f.blocks[t].preds {
+    if e != plan.ex {
+      tp.push(e)
+    }
+  }
+  let e1 = f.add(xb, ssa.Op.Call, elem, ssa.Aux.S(s: "list.index"), [l, idx])
+  var s = e1
+  for (fi, k) in plan.fields.indexed() {
+    s = f.add(xb, ssa.Op.SetField, elem, ssa.Aux.I(n: k), [s, accs[fi]])
+  }
+  let l2 = f.add(xb, ssa.Op.Call, et, ssa.Aux.S(s: "list.set"), [l, idx, s])
+  var out_args: List[Int] = []
+  for a in old_args {
+    out_args.push(if a == l { l2 } else { a })
+  }
+  let ne = f.edges.len()
+  f.edges.push(ssa.Edge{from: xb, to: t, args: out_args})
+  tp.push(ne)
+  f.blocks[t].preds = tp
+  let _j = f.add(xb, ssa.Op.Jump, -1, ssa.Aux.None, [])
+  f.values[_j].succs = [ne]
+  // after the loop the list is the stored one
+  for b in 0..f.blocks.len() {
+    if b == xb || b >= pr.idom.len() || !dominates_b(pr.idom, pr.entry, t, b) {
+      continue
+    }
+    for v in f.blocks[b].instrs {
+      for (i, a) in f.values[v].args.indexed() {
+        if a == l {
+          f.values[v].args[i] = l2
+        }
+      }
+      for e in f.values[v].succs {
+        for (i, a) in f.edges[e].args.indexed() {
+          if a == l {
+            f.edges[e].args[i] = l2
+          }
+        }
+      }
+    }
+  }
+  true
+}
+
+/// What promote_loop keeps in registers in one loop: fields (indexes into
+/// the element's struct) of element idx of the header's list parameter
+/// pi; pe is the preheader's edge, ex the exit edge; chain holds the
+/// list's versions in one iteration, from the header's parameter's first
+/// update to the latch's.
+struct Promote {
+  idx: Int = -1
+  pi: Int = -1
+  pe: Int = -1
+  ex: Int = -1
+  fields: List[Int] = []
+  chain: List[Int] = []
+}
+
+/// The plan of promote_loop for the loop with header h, empty fields
+/// when it does not apply: one preheader edge ending a jump, one latch,
+/// one exit (from the header, into a block it alone enters); a list
+/// parameter that goes round as a straight chain of list.set and reuse;
+/// every set of element idx (defined outside the loop, proven in range at
+/// the preheader) stores `setfield(k, list.index(X, idx), y)` for one
+/// field k, an Int, Float or Bool of a struct without heap values; and
+/// every other set, and every read of the list, is at an index that
+/// cannot be idx (distinct) or reads element idx's fields only.
+fn promote_plan(f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: List[Bool]) -> Promote {
+  let none = Promote{}
+  var pe = -1
+  var latch = -1
+  for e in f.blocks[h].preds {
+    if body[f.edges[e].from] {
+      if latch >= 0 {
+        return none
+      }
+      latch = e
+    } else {
+      if pe >= 0 {
+        return none
+      }
+      pe = e
+    }
+  }
+  if pe < 0 || latch < 0 {
+    return none
+  }
+  let p = f.edges[pe].from
+  let pt = f.term(p)
+  if pt < 0 || f.values[pt].op != ssa.Op.Jump {
+    return none
+  }
+  // the one exit that is not a fault's
+  var ex = -1
+  for b in 0..body.len() {
+    if !body[b] {
+      continue
+    }
+    let tv = f.term(b)
+    if tv < 0 {
+      return none
+    }
+    let x = f.values[tv]
+    for (si, e) in x.succs.indexed() {
+      if body[f.edges[e].to] {
+        continue
+      }
+      if x.op == ssa.Op.Branch && si == 0 && is_landing(f, x.args[0]) {
+        continue
+      }
+      if ex >= 0 {
+        return none
+      }
+      ex = e
+    }
+  }
+  if ex < 0 || f.edges[ex].from != h || f.blocks[f.edges[ex].to].preds.len() != 1 || f.edges[ex].to == h {
+    return none
+  }
+  let hp = f.blocks[h].params
+  for (pi, l) in hp.indexed() {
+    let lt = f.values[l].ty
+    if lt < 0 || types[lt].kind != ssa.Kind.List || types[lt].elems.is_empty() {
+      continue
+    }
+    let elem = types[lt].elems[0]
+    if types[elem].kind != ssa.Kind.Struct || !plain_type(types, elem, 4) {
+      continue
+    }
+    // the chain, from the latch's value back to the parameter
+    var chain: List[Int] = []
+    var x = f.edges[latch].args[pi]
+    var ok = true
+    while x != l && ok {
+      let xv = f.values[x]
+      if xv.block < 0 || !body[xv.block] {
+        ok = false
+      } else if xv.op == ssa.Op.Call && aux_str(xv.aux) == "list.set" && xv.args.len() == 3 {
+        chain.push(x)
+        x = xv.args[0]
+      } else if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
+        chain.push(x)
+        x = xv.args[0]
+      } else {
+        ok = false
+      }
+    }
+    if !ok || chain.is_empty() {
+      continue
+    }
+    chain = chain.reverse()
+    // the element: the first set's index defined outside the loop
+    var idx = -1
+    for c in chain {
+      let cv = f.values[c]
+      if cv.op == ssa.Op.Call {
+        let ib = f.values[cv.args[1]].block
+        if ib >= 0 && !body[ib] && idx < 0 {
+          idx = cv.args[1]
+        }
+      }
+    }
+    if idx < 0 || !pr.proven(f, p, idx, f.edges[pe].args[pi]) {
+      continue
+    }
+    // the fields its sets store, one a set
+    var fields: List[Int] = []
+    for c in chain {
+      let cv = f.values[c]
+      if cv.op != ssa.Op.Call {
+        continue
+      }
+      if cv.args[1] == idx {
+        let sv = f.values[cv.args[2]]
+        if sv.op != ssa.Op.SetField || !scalar(types, f.values[sv.args[1]].ty) {
+          ok = false
+          break
+        }
+        let base = f.values[sv.args[0]]
+        if base.op != ssa.Op.Call || aux_str(base.aux) != "list.index" || base.args[0] != cv.args[0] || base.args[1] != idx {
+          ok = false
+          break
+        }
+        let k = aux_int(sv.aux)
+        if !fields.contains(k) {
+          fields.push(k)
+        }
+      } else if !distinct(f, pr, h, body, cv.args[1], idx) {
+        ok = false
+        break
+      }
+    }
+    if !ok || fields.is_empty() {
+      continue
+    }
+    // every use of a version: the chain's next link, the store's element
+    // read, a field read of element idx, a read of another element, the
+    // length, or a release on a fault's path
+    var versions = [l]
+    for c in chain {
+      versions.push(c)
+    }
+    if !versions_ok(f, pr, h, body, versions, idx, chain, latch, pi, ex) {
+      continue
+    }
+    return Promote{idx: idx, pi: pi, pe: pe, ex: ex, fields: fields, chain: chain}
+  }
+  none
+}
+
+/// Whether every use of the list versions of a promotion is one
+/// promote_loop accounts for (promote_plan).
+fn versions_ok(f: ssa.Func, pr: Proof, h: Int, body: List[Bool], versions: List[Int], idx: Int, chain: List[Int], latch: Int, pi: Int, ex: Int) -> Bool {
+  let l = versions[0]
+  let t = f.edges[ex].to
+  for b in 0..f.blocks.len() {
+    let inside = b < body.len() && body[b]
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      for (ai, a) in x.args.indexed() {
+        if !versions.contains(a) {
+          continue
+        }
+        if !inside {
+          // after the loop only the parameter (where the exit's
+          // target dominates: it becomes the stored list), and releases
+          // on the paths of faults
+          if x.op == ssa.Op.Release || (a == l && dominates_b(pr.idom, pr.entry, t, b)) {
+            continue
+          }
+          return false
+        }
+        if chain.contains(v) && ai == 0 {
+          continue
+        }
+        if x.op == ssa.Op.Release {
+          continue
+        }
+        if x.op == ssa.Op.Call && ai == 0 {
+          let name = aux_str(x.aux)
+          if name == "list.len" {
+            continue
+          }
+          if name == "list.index" && x.args.len() == 2 {
+            if x.args[1] == idx {
+              if index_uses_ok(f, v, chain) {
+                continue
+              }
+              return false
+            }
+            if distinct(f, pr, h, body, x.args[1], idx) {
+              continue
+            }
+          }
+        }
+        return false
+      }
+      for e in x.succs {
+        for (k, a) in f.edges[e].args.indexed() {
+          if !versions.contains(a) {
+            continue
+          }
+          if e == latch && k == pi {
+            continue
+          }
+          if a == l && !inside && dominates_b(pr.idom, pr.entry, t, b) {
+            continue
+          }
+          if a == l && !body[f.edges[e].to] {
+            // the exit's edge (promote_loop passes the stored list)
+            continue
+          }
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+/// Whether every use of v, a list.index of element idx of a version, is
+/// a field read or the element a set of the chain stores a field of.
+fn index_uses_ok(f: ssa.Func, v: Int, chain: List[Int]) -> Bool {
+  for bl in f.blocks {
+    for u in bl.instrs {
+      let x = f.values[u]
+      if !x.args.contains(v) {
+        continue
+      }
+      if x.op == ssa.Op.Field {
+        continue
+      }
+      if x.op == ssa.Op.SetField && x.args[0] == v {
+        // the stored element of a set of the chain
+        var used = false
+        for c in chain {
+          let cv = f.values[c]
+          used = used || (cv.op == ssa.Op.Call && cv.args.len() == 3 && cv.args[2] == u)
+        }
+        if used {
+          continue
+        }
+      }
+      return false
+    }
+    for u in bl.instrs {
+      for e in f.values[u].succs {
+        if f.edges[e].args.contains(v) {
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+/// Whether Int values j and i are never equal: j is a parameter of the
+/// loop's header h that enters as i + c (c a constant at least 1) and
+/// comes back as j + c2 (c2 at least 0), neither sum wrapping
+/// (no_wrap): j > i in every iteration.
+fn distinct(f: ssa.Func, pr: Proof, h: Int, body: List[Bool], j: Int, i: Int) -> Bool {
+  let jv = f.values[j]
+  if jv.op != ssa.Op.Param || jv.block != h {
+    return false
+  }
+  var pi = -1
+  for (k, q) in f.blocks[h].params.indexed() {
+    if q == j {
+      pi = k
+    }
+  }
+  if pi < 0 {
+    return false
+  }
+  for e in f.blocks[h].preds {
+    let a = f.edges[e].args[pi]
+    let inside = body[f.edges[e].from]
+    let base = if inside { j } else { i }
+    let least = if inside { 0 } else { 1 }
+    if !step_of(f, pr, a, base, least) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether a is base + c for a constant c >= least, and the sum cannot
+/// wrap: a checked add, or an add of 1 to base where `base < n` holds.
+fn step_of(f: ssa.Func, pr: Proof, a: Int, base: Int, least: Int) -> Bool {
+  let x = f.values[a]
+  if x.op != ssa.Op.Add || x.args.len() != 2 {
+    return false
+  }
+  for k in 0..2 {
+    if x.args[k] != base {
+      continue
+    }
+    let c = f.values[x.args[1 - k]]
+    if c.op != ssa.Op.Const {
+      continue
+    }
+    let n = aux_int(c.aux)
+    if n < least {
+      continue
+    }
+    if !x.pos.is_empty() {
+      return true
+    }
+    if (n is 0 | 1) && !pr.bounds(x.block, base).is_empty() {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether value c is a landing check (rt.landing), the condition of a
+/// branch whose first edge goes to a fault's cleanup.
+fn is_landing(f: ssa.Func, c: Int) -> Bool {
+  let x = f.values[c]
+  x.op == ssa.Op.Call && aux_str(x.aux) == "rt.landing"
+}
+
+/// Whether type t holds no heap value: Int, Float, Bool, Unit, and
+/// structs and tuples of those, d levels deep.
+fn plain_type(types: List[ssa.SType], t: Int, d: Int) -> Bool {
+  if t < 0 || t >= types.len() || d <= 0 {
+    return false
+  }
+  let st = types[t]
+  match st.kind {
+    Int | Float | Bool | Unit => true
+    Struct => {
+      for fl in st.fields {
+        if !plain_type(types, fl.ty, d - 1) {
+          return false
+        }
+      }
+      true
+    }
+    Tuple => {
+      for e in st.elems {
+        if !plain_type(types, e, d - 1) {
+          return false
+        }
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+/// Removes operation v from its block; its landing check, when it has
+/// one, goes too: the check's branch becomes a jump to its normal
+/// successor, and the cleanup only it reached becomes unreachable.
+fn remove_op(var f: ssa.Func, v: Int) {
+  let b = f.values[v].block
+  let w = f.values[v].pad
+  var ins: List[Int] = []
+  for u in f.blocks[b].instrs {
+    if u != v && u != w {
+      ins.push(u)
+    }
+  }
+  f.blocks[b].instrs = ins
+  if w < 0 {
+    return
+  }
+  let t = f.term(b)
+  let tv = f.values[t]
+  if tv.op != ssa.Op.Branch || tv.args.is_empty() || tv.args[0] != w || tv.succs.len() != 2 {
+    return
+  }
+  let cleanup = tv.succs[0]
+  f.values[t] = ssa.Value{op: ssa.Op.Jump, succs: [tv.succs[1]], block: b, line: tv.line, inl: tv.inl}
+  kill_edge(f, cleanup)
+}
+
+/// Removes edge e from its target's predecessors; a target left with
+/// none (not the entry) ends in unreachable, and its edges go too.
+fn kill_edge(var f: ssa.Func, e: Int) {
+  let to = f.edges[e].to
+  var ps: List[Int] = []
+  for q in f.blocks[to].preds {
+    if q != e {
+      ps.push(q)
+    }
+  }
+  f.blocks[to].preds = ps
+  if !ps.is_empty() || to == 0 {
+    return
+  }
+  let t = f.term(to)
+  let succs = if t >= 0 { f.values[t].succs } else { [] }
+  let u = f.values.len()
+  f.values.push(ssa.Value{op: ssa.Op.Unreachable, block: to})
+  f.blocks[to].instrs = [u]
+  for s in succs {
+    kill_edge(f, s)
+  }
+}
+
+/// Replaces the uses of the keys of repl (operands and edge arguments)
+/// by their values, following chains.
+fn replace_all_uses(var f: ssa.Func, repl: Map[Int, Int]) {
+  if repl.is_empty() {
+    return
+  }
+  for b in 0..f.blocks.len() {
+    for v in f.blocks[b].instrs {
+      for (i, a) in f.values[v].args.indexed() {
+        var r = a
+        for _ in 0..64 {
+          match repl.get(r) {
+            Some(n) => r = n
+            None => break
+          }
+        }
+        if r != a {
+          f.values[v].args[i] = r
+        }
+      }
+    }
+  }
+  for ei in 0..f.edges.len() {
+    for (i, a) in f.edges[ei].args.indexed() {
+      var r = a
+      for _ in 0..64 {
+        match repl.get(r) {
+          Some(n) => r = n
+          None => break
+        }
+      }
+      if r != a {
+        f.edges[ei].args[i] = r
+      }
+    }
+  }
 }

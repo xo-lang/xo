@@ -5,6 +5,12 @@ same 122.5
 whole 54
 replaced 419
 empty 3.0
+promoted -57.5
+aliased 20.0
+below 50.5
+whole_read 13.0
+one 0.0
+faulting -4.883333333333333
 checked 7.5
 --- stderr
-fault: index 3 out of range for List of length 3 at main.xo:107:10
+fault: division by zero: 3 / 0 at main.xo:188:17

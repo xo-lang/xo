@@ -100,6 +100,97 @@ fn empty_inner(var ps: List[P], m: Int) -> Float {
   s + Float(i)
 }
 
+// kept in registers (j > i): vx of element i, read back after its set
+// in the same iteration
+fn promoted(var ps: List[P]) -> Float {
+  let k = ps.len()
+  var s = 0.0
+  for i in 0..k {
+    for j in i + 1..k {
+      let d = ps[i].x - ps[j].x
+      ps[i].vx += d
+      s += ps[i].vx
+      ps[j].vx -= d * 0.25
+      ps[i].n += 1
+    }
+  }
+  for p in ps {
+    s += p.vx + Float(p.n)
+  }
+  s
+}
+
+// j runs over i too (j == i aliases): not kept in registers
+fn aliased(var ps: List[P]) -> Float {
+  let k = ps.len()
+  for i in 0..k {
+    for j in i..k {
+      ps[i].vx += 1.0
+      ps[j].vx *= 2.0
+    }
+  }
+  var s = 0.0
+  for p in ps {
+    s += p.vx
+  }
+  s
+}
+
+// j below i, and a loop that leaves by break
+fn below(var ps: List[P]) -> Float {
+  let k = ps.len()
+  for i in 0..k {
+    var j = 0
+    while j < i {
+      ps[i].vx += ps[j].x
+      ps[j].vx -= 0.5
+      j += 1
+    }
+    for j2 in i + 1..k {
+      if j2 == 3 {
+        break
+      }
+      ps[i].vx += 10.0
+      ps[j2].vx += 0.125
+    }
+  }
+  var s = 0.0
+  for p in ps {
+    s += p.vx
+  }
+  s
+}
+
+// the whole element read in the loop
+fn whole_read(var ps: List[P]) -> Float {
+  let k = ps.len()
+  var s = 0.0
+  for i in 0..k {
+    for j in i + 1..k {
+      ps[i].vx += 1.0
+      let q = ps[i]
+      s += q.vx
+      ps[j].vx += q.x
+    }
+  }
+  s
+}
+
+// a fault in the loop after the field was kept in registers: the
+// message is the same
+fn faulting(var ps: List[P], at: Int) -> Float {
+  let k = ps.len()
+  var s = 0.0
+  for i in 0..k {
+    for j in i + 1..k {
+      ps[i].vx += 1.0
+      s += ps[j].x / Float(k - at - j)
+      ps[j].n = ps[j].n / (at - j)
+    }
+  }
+  s
+}
+
 // an index the loop does not prove: the check stays and faults inside
 fn checked(ps: List[P], i: Int) -> Float {
   var s = 0.0
@@ -120,6 +211,19 @@ fn main(os: Os) {
   os.stdio.println("replaced ${replaced(d)}")
   var e = mk(3)
   os.stdio.println("empty ${empty_inner(e, 2)}")
+  var f = mk(6)
+  os.stdio.println("promoted ${promoted(f)}")
+  var g = mk(5)
+  os.stdio.println("aliased ${aliased(g)}")
+  var h = mk(5)
+  os.stdio.println("below ${below(h)}")
+  var w = mk(4)
+  os.stdio.println("whole_read ${whole_read(w)}")
+  var z = mk(1)
+  os.stdio.println("one ${promoted(z)}")
+  var y = mk(5)
+  os.stdio.println("faulting ${faulting(y, 9)}")
   os.stdio.println("checked ${checked(mk(3), 2)}")
-  os.stdio.println("checked ${checked(mk(3), 3)}")
+  var q = mk(5)
+  os.stdio.println("faulting ${faulting(q, 3)}")
 }
