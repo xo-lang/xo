@@ -255,8 +255,40 @@ condition).
   `scripts/elf-glibc-versions.py --amd64`), and libc_nonshared's stat
   wrappers with version 1. 12 LLVM-compiled goldens of the glibc build
   linked this way pass on linux/amd64 (Debian bullseye's loader).
-
-## Alternatives
+- The amd64 corpus through Xo's own tools (Xo Lang 2, 2026-10-17, wip/
+  fa-amd64 270879e8): `xo asm --backend=amd64 --targets=linux/amd64` of
+  all 182 goldens, `macho asm --amd64` and `macho elflink --static` on
+  the Mac, run in Docker linux/amd64: 181 link (tz_table needs the
+  build's zone table object) and all 181 pass.
+- Stage 3, crypto (Xo Lang 2, 2026-10-17): the carry intrinsics were
+  already lowered (the arm64 adcs and cset templates retargeted, cut by
+  x86_split). Added under `if g.x86` in selfhost/arm64/calls.xo: clmul_lo
+  and clmul_hi as PCLMULQDQ (one for a pair), aes_round as pxor then
+  aesenc with a zero key (arm64's aese and aesmc add the key first),
+  aes_last as pxor then aesenclast, aes_enc10/12/14 as the standard
+  block (round keys loaded with movdqu, no alignment assumed), and
+  cpuid1_ecx as CPUID leaf 1 (rbx kept in r11). selfhost/ssa cpu_call
+  lowers every cpu.xo intrinsic on amd64 but sha256_block, so lowered()
+  is 1 and hw() reads CPUID (AES and CLMUL; 3 in Docker linux/amd64 on
+  the Mac's Rosetta). SHA-256's compression keeps its body: SHA-NI needs
+  CPUID leaf 7, a new runtime primitive (the owner's call). AES-GCM
+  sealing 32 MiB in Docker: 571 ms with the bodies, 38 ms lowered.
+- Open, SHA-256 on x86-64 (waits for the owner: a new runtime primitive,
+  rule 7b; lead to ask 2026-10-17). The plan: (1) `rt.cpuid7_ebx`, CPUID
+  leaf 7 subleaf 0's EBX, beside rt.cpuid1_ecx (cpu.xo `cpuid7_ebx`, body
+  0; on x86 `movq %rbx, %r11; movl $7, %eax; xorl %ecx, %ecx; cpuid;
+  movl %ebx, $wd0; movq %r11, %rbx`), and detect() setting HW_SHA256 from
+  its bit 29; (2) sha256_block's x86 template: the state packed into
+  ABEF and CDGH (pshufd, palignr, pblendw from the eight 8 byte words),
+  the message bytes swapped (pshufb with a constant mask), 16 groups of
+  sha256rnds2 twice (xmm0 is its implicit W + K operand, so the template
+  saves the allocator's xmm0) with sha256msg1, palignr and sha256msg2
+  for the schedule, then the sums unpacked to the 8 byte words; (3) the
+  ssa soft_cpu exclusion dropped. Testing: Docker on this Mac (Rosetta)
+  reports no sha_ni, so cpu_prims' sha256 rows (the lowered result
+  against the body) run on a real x86-64 CPU with SHA-NI (Intel since
+  Goldmont and Ice Lake, AMD since Zen) or under qemu-x86_64 with
+  `-cpu max`, with a forced HW_SHA256 for the test only.
 
 - Keep LLVM on x86_64: clang on every x86_64 machine, and no control of
   its code shape (the reason for the arm64 backend).

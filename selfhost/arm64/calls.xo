@@ -940,6 +940,21 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       let lo = aux_str(x.aux) == "rt.clmul_lo"
       let other = g.clmul_pair(v, if lo { "rt.clmul_hi" } else { "rt.clmul_lo" })
+      if g.x86 {
+        // PCLMULQDQ (cpu.hw()'s HW_CLMUL): the operands in xmm15 and
+        // xmm14, the product's halves out of xmm15
+        let us = [g.word(x.args[0]), g.word(x.args[1])]
+        let mul = "movq $u0, %xmm15\nmovq $u1, %xmm14\npclmulqdq $0, %xmm14, %xmm15"
+        if other >= 0 {
+          let ds = g.x86_defs("${mul}\nmovq %xmm15, $d0\npextrq $1, %xmm15, $d1", 2, us)
+          g.set(if lo { v } else { other }, [ds[0]])
+          g.set(if lo { other } else { v }, [ds[1]])
+        } else {
+          let out = if lo { "movq %xmm15, $d0" } else { "pextrq $1, %xmm15, $d0" }
+          g.set(v, [g.x86_def1("${mul}\n${out}", us)])
+        }
+        return true
+      }
       if other >= 0 {
         // one pmull for both halves of the product
         let d = g.new_vreg(false)
@@ -951,6 +966,30 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       let out = if lo { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
       g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
+    }
+    "rt.aes_round" if g.x86 => {
+      // AES-NI (cpu.hw()'s HW_AES): arm64's aese then aesmc is
+      // MixColumns(ShiftRows(SubBytes(st ^ rk))), aesenc's rounds with
+      // the key added first and a zero key after
+      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\npxor %xmm14, %xmm14\naesenc %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(x.args[0]), g.word(x.args[1])])
+      g.set(v, [])
+    }
+    "rt.aes_last" if g.x86 => {
+      // ShiftRows(SubBytes(st ^ rk)) ^ rk2: aesenclast with rk2
+      g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\nmovdqu ($u2), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, [])
+    }
+    "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" if g.x86 => {
+      // the block: the first key added, nr - 1 aesenc, aesenclast with
+      // the last (round keys loaded with movdqu: no alignment assumed)
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_enc")) ?? 10
+      var t = "movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15"
+      for r in 1..nr {
+        t = t + "\nmovdqu ${16 * r}($u1), %xmm14\naesenc %xmm14, %xmm15"
+      }
+      t = t + "\nmovdqu ${16 * nr}($u1), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)"
+      g.x86_store(t, [g.word(x.args[0]), g.word(x.args[1])])
+      g.set(v, [])
     }
     "rt.aes_round" => {
       g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
@@ -1004,7 +1043,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [])
     }
     // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
-    "rt.cpuid1_ecx" => g.set(v, [g.def1(false, "mov $d0, #0", [])])
+    // and on x86-64 CPUID leaf 1's ECX; rbx (callee saved) kept in r11
+    "rt.cpuid1_ecx" => {
+      if g.x86 {
+        g.set(v, [g.x86_atomic_def("movq %rbx, %r11\nmovl $1, %eax\nxorl %ecx, %ecx\ncpuid\nmovq %r11, %rbx\nmovl %ecx, $wd0", [], [XR_AX, XR_CX, XR_DX])])
+      } else {
+        g.set(v, [g.def1(false, "mov $d0, #0", [])])
+      }
+    }
     // decision 0222: the value barrier is the operand itself (this
     // emitter neither folds through a call's result nor turns masks
     // into branches; test/codegen/consttime checks it)

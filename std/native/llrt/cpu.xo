@@ -42,8 +42,9 @@ fn cpuid1_ecx() -> Int { 0 }
 /// The instructions of this CPU that the callers can use: HW_AES,
 /// HW_CLMUL, and HW_SHA256, looked up once a process (macOS on arm64:
 /// always; Linux on arm64: AT_HWCAP; x86-64: CPUID, never HW_SHA256,
-/// which no x86-64 lowering has; otherwise none; UNTESTED on Linux, on
-/// Windows, and on x86-64).
+/// which no x86-64 lowering has (SHA-NI needs CPUID leaf 7; checked on
+/// linux/amd64 in Docker, 2026-10-17); otherwise none; UNTESTED on Linux
+/// arm64 and on Windows).
 pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)

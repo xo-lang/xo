@@ -24,6 +24,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   toolchain: `xo build --backend=amd64` (decision 0254). All 182 native
   goldens pass on linux/amd64, assembled and linked by Xo's own
   assembler and ELF linker.
+- The amd64 backend lowers the carry-less multiply and the AES rounds to
+  PCLMULQDQ and AES-NI when CPUID has them (decision 0254, stage 3):
+  AES-GCM about 15 times faster on linux/amd64.
 
 - ML-KEM in the native TLS client costs less than half as much
   (bench/results/mlkem-client-2026-10-17.md): the hybrid handshake's

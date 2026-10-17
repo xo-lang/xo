@@ -1465,6 +1465,30 @@ fn (var g: G) x86_def1(text: Str, us: List[Int]) -> Int {
   d
 }
 
+/// x86_def1 with n definitions.
+fn (var g: G) x86_defs(text: Str, n: Int, us: List[Int]) -> List[Int] {
+  var ds: List[Int] = []
+  for _ in 0..n {
+    ds.push(g.new_vreg(false))
+  }
+  var rs: List[Int] = []
+  for u in us {
+    rs.push(g.real(u))
+  }
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: ds, us: rs, x86: true})
+  ds
+}
+
+/// An x86 template that writes memory and defines nothing (g.store's).
+fn (var g: G) x86_store(text: Str, us: List[Int]) {
+  var rs: List[Int] = []
+  for u in us {
+    rs.push(g.real(u))
+  }
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, us: rs, x86: true})
+  g.clobber()
+}
+
 /// rt.bytes_eq16 and rt.bytes_high16 on x86_64 (SSE2): the 16 bytes at
 /// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
 /// contract std/native/llrt/scan.xo reads).
