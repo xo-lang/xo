@@ -66,7 +66,7 @@ xo_f_main:
 	cmp x2, x9
 	b.gt .LpGL1jtk_f1_b33
 .LpGL1jtk_f1_b18:
-	movz x9, #1, lsl #16
+	mov x9, #65536
 	cmp x19, x9
 	b.ge .LpGL1jtk_f1_b33
 .LpGL1jtk_f1_b22:
