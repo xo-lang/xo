@@ -113,10 +113,14 @@ def gen_mul():
         qh = v("qh")
         emit(f"let {ql} = rt.int_wrap(3, {q}, 32)")
         emit(f"let {qh} = rt.int_wrap(4, {q}, 32)")
+        # q - ql and q - qh - borrow as one chain of q + ~x: subs, sbcs on
+        # arm64 (was sub, subs and cset for the borrow, sub, sub)
         lo3 = v("lo")
+        bk = v("k")
         hi3 = v("hi")
-        emit(f"let {lo3} = rt.int_wrap(1, {q}, {ql})")
-        emit(f"let {hi3} = rt.int_wrap(1, rt.int_wrap(1, {q}, {qh}), cpu.borrow({q}, {ql}))")
+        emit(f"let {lo3} = cpu.adc({q}, ~{ql}, 1)")
+        emit(f"let {bk} = cpu.adc_carry({q}, ~{ql}, 1)")
+        emit(f"let {hi3} = cpu.adc({q}, ~{qh}, {bk})")
         if t[5] != "0":
             T, _ = chain(t[1:6], [ql, qh, lo3, hi3, "0"], keep=False)
         else:
@@ -173,10 +177,14 @@ def gen_sqr():
         qh = v("qh")
         emit(f"let {ql} = rt.int_wrap(3, {q}, 32)")
         emit(f"let {qh} = rt.int_wrap(4, {q}, 32)")
+        # q - ql and q - qh - borrow as one chain of q + ~x: subs, sbcs on
+        # arm64 (was sub, subs and cset for the borrow, sub, sub)
         lo3 = v("lo")
+        bk = v("k")
         hi3 = v("hi")
-        emit(f"let {lo3} = rt.int_wrap(1, {q}, {ql})")
-        emit(f"let {hi3} = rt.int_wrap(1, rt.int_wrap(1, {q}, {qh}), cpu.borrow({q}, {ql}))")
+        emit(f"let {lo3} = cpu.adc({q}, ~{ql}, 1)")
+        emit(f"let {bk} = cpu.adc_carry({q}, ~{ql}, 1)")
+        emit(f"let {hi3} = cpu.adc({q}, ~{qh}, {bk})")
         xs = t[i + 1:9]
         ys = [ql, qh, lo3, hi3] + ["0"] * (len(xs) - 4)
         r, _ = chain(xs, ys, keep=False)
