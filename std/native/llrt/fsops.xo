@@ -158,6 +158,8 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
       1 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC
       2 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_APPEND
       3 => darwin.O_RDWR | darwin.O_CREAT
+      // Fs.create_new: a new file only
+      5 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_EXCL
       _ => darwin.O_RDWR | darwin.O_CREAT | darwin.O_EXCL
     }
     return darwin.open(p, f | darwin.O_CLOEXEC, mode)
@@ -167,6 +169,7 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
     1 => linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC
     2 => linux.O_WRONLY | linux.O_CREAT | linux.O_APPEND
     3 => linux.O_RDWR | linux.O_CREAT
+    5 => linux.O_WRONLY | linux.O_CREAT | linux.O_EXCL
     _ => linux.O_RDWR | linux.O_CREAT | linux.O_EXCL
   }
   linux.open(p, f | linux.O_CLOEXEC, mode)

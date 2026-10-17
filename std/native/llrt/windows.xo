@@ -594,6 +594,8 @@ pub fn open_kind(path: Str, k: Int, mode: Int) -> Int {
     1 => open(path, GENERIC_WRITE, CREATE_ALWAYS, attr)
     2 => open(path, FILE_APPEND_DATA, OPEN_ALWAYS, attr)
     3 => open(path, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS, attr)
+    // Fs.create_new: a new file only
+    5 => open(path, GENERIC_WRITE, CREATE_NEW, attr)
     _ => open(path, GENERIC_READ | GENERIC_WRITE, CREATE_NEW, attr)
   }
 }

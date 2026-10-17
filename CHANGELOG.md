@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `Fs.create_new(path)`: a handle on a new file, or `Exists(path)` when
+  anything is already there (a file, a directory, a symbolic link even
+  when it dangles), as O_EXCL; on the native backends (Linux, macOS,
+  Windows CREATE_NEW), the Go backend, and MemFs. Not on wasm, which has
+  no file handles.
+
 - Linux arm64 programs linked without libgcc use ARMv8.1's single
   instruction atomics when the CPU has them (XO_LSE=0 turns them off):
   task spawning and fan-out take 21 to 33% less CPU time.

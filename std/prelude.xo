@@ -468,6 +468,9 @@ interface Fs {
   fn create(self, path: Str) -> File ! FsErr uses fs.write
   /// A handle that writes at the end of the file, created if missing.
   fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that writes a new file: Exists(path) when something is
+  /// already at path (O_EXCL; a symbolic link counts, dangling or not).
+  fn create_new(self, path: Str) -> File ! FsErr uses fs.write
   /// Adds data at the end of the file, created if missing.
   fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
   /// Copies the contents and permission bits of a file.

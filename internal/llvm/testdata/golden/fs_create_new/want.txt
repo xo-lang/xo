@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+new: first
+again: Exists(path: "new.txt")
+kept: first
+dir: Exists(path: "dir")
+dangling: Exists(path: "dangling")
+target made: false
+read only: Denied(path: "other.txt")
+in a missing dir: NotFound(path: "nodir/x.txt")
+--- stderr

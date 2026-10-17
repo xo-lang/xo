@@ -1,0 +1,35 @@
+// Fs.create_new (owner, 2026-10-17): a handle on a new file, and
+// Exists(path) when anything is already there (O_EXCL): a file, a
+// directory, a symbolic link even when it dangles (its target is not
+// created); a read only view refuses it.
+
+fn tried(r: Result[File, FsErr]) -> Str {
+  match r {
+    Ok(f) => {
+      f.close().ignore_err("the probe wrote nothing")
+      "created"
+    }
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-create-new-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/dir")?
+  let root = base.sub(name)
+  let f = root.create_new("new.txt")?
+  f.write(b"first")?
+  f.close()?
+  out.println("new: ${root.read_text("new.txt")?}")
+  out.println("again: ${tried(root.create_new("new.txt"))}")
+  out.println("kept: ${root.read_text("new.txt")?}")
+  out.println("dir: ${tried(root.create_new("dir"))}")
+  root.symlink("missing.txt", "dangling")?
+  out.println("dangling: ${tried(root.create_new("dangling"))}")
+  out.println("target made: ${root.exists("missing.txt")?}")
+  out.println("read only: ${tried(root.read_only().create_new("other.txt"))}")
+  out.println("in a missing dir: ${tried(root.create_new("nodir/x.txt"))}")
+  base.remove_all(name)?
+}

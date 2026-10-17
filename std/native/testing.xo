@@ -622,17 +622,22 @@ fn memfs_loop_err(p: Str) -> FsErr { FsErr.Io(path: p, msg: "too many levels of 
 // memfs_open_file is std/rt's openFile: a read handle holds the contents
 // at open; a write handle writes through (created, truncated when
 // truncate).
-fn memfs_open_file(f: Fs, p: Str, write: Bool, truncate: Bool) -> File ! FsErr {
+fn memfs_open_file(f: Fs, p: Str, write: Bool, truncate: Bool, excl: Bool = false) -> File ! FsErr {
   let given = memfs_begin(f, p, write)?
   var st = memfs_load()
-  let r = memfs_open_in(st, f, given, p, write, truncate)
+  let r = memfs_open_in(st, f, given, p, write, truncate, excl)
   memfs_store(st)
   r?
 }
 
-fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, truncate: Bool) -> File ! FsErr {
+fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, truncate: Bool, excl: Bool = false) -> File ! FsErr {
   if let Some(e) = memfs_failed(st, if write { 2 } else { 1 }, [given]) {
     return Err(e)
+  }
+  // create_new: anything at the path itself, a symbolic link too (dangling
+  // or not), as O_EXCL
+  if excl && memfs_get(st, given) != None {
+    return Err(memfs_err(2, p))
   }
   let full = match memfs_follow(st, given) {
     Some(t) => t
@@ -685,6 +690,8 @@ fn memfs_open(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, false, fals
 fn memfs_create(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, true) }
 
 fn memfs_open_append(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, false) }
+
+fn memfs_create_new(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, true, true) }
 
 // memfile_state is std/rt File's checks: canceled, closed, or open for
 // the other direction; the open file.

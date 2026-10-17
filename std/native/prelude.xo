@@ -1049,6 +1049,8 @@ fn fs_create(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 1) }
 
 fn fs_open_append(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 2) }
 
+fn fs_create_new(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 5) }
+
 /// The state errors of a handle (std/rt File.M_read): canceled, closed,
 /// or open for the other direction.
 fn file_state(f: File, write: Bool) -> () ! FsErr {

@@ -1260,6 +1260,7 @@ type Fs interface {
 	M_open(tk *Task, p0 string) Result[File, FsErr]
 	M_create(tk *Task, p0 string) Result[File, FsErr]
 	M_open_append(tk *Task, p0 string) Result[File, FsErr]
+	M_create_new(tk *Task, p0 string) Result[File, FsErr]
 	M_append(tk *Task, p0 string, p1 Bytes) Result[Unit, FsErr]
 	M_copy(tk *Task, p0 string, p1 string) Result[Unit, FsErr]
 	M_mode(tk *Task, p0 string) Result[int64, FsErr]

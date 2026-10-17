@@ -199,6 +199,10 @@ func (f *realFs) M_open_append(tk *Task, p string) Result[File, FsErr] {
 	return f.openFile(tk, p, true, os.O_WRONLY|os.O_CREATE|os.O_APPEND)
 }
 
+func (f *realFs) M_create_new(tk *Task, p string) Result[File, FsErr] {
+	return f.openFile(tk, p, true, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+}
+
 func (f *realFs) M_append(tk *Task, p string, data Bytes) Result[Unit, FsErr] {
 	return fx(tk, "fs.append", false, func() []any { return []any{p, data} }, func() Result[Unit, FsErr] {
 		r := f.M_open_append(tk, p)

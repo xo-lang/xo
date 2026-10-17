@@ -76,7 +76,7 @@ func (fs *memFs) follow(full string) (string, bool) {
 	return full, false
 }
 
-func (f Testing_MemFs) openFile(tk *Task, p string, write, truncate bool) Result[File, FsErr] {
+func (f Testing_MemFs) openFile(tk *Task, p string, write, truncate bool, excl ...bool) Result[File, FsErr] {
 	full, e := f.v.begin(tk, p, write)
 	if e != nil {
 		return Err[File](*e)
@@ -89,6 +89,11 @@ func (f Testing_MemFs) openFile(tk *Task, p string, write, truncate bool) Result
 	}
 	if e := fs.failed(op, full); e != nil {
 		return Err[File](*e)
+	}
+	// create_new: anything at the path itself, a symbolic link too
+	// (dangling or not), as O_EXCL
+	if len(excl) > 0 && excl[0] && fs.get(full) != nil {
+		return Err[File](fsErr(2, p))
 	}
 	full, ok := fs.follow(full)
 	if !ok {
@@ -138,6 +143,13 @@ func (f Testing_MemFs) M_open_append(tk *Task, p string) Result[File, FsErr] {
 		return f.v.real.M_open_append(tk, p)
 	}
 	return f.openFile(tk, p, true, false)
+}
+
+func (f Testing_MemFs) M_create_new(tk *Task, p string) Result[File, FsErr] {
+	if f.v.real != nil {
+		return f.v.real.M_create_new(tk, p)
+	}
+	return f.openFile(tk, p, true, true, true)
 }
 
 func (f Testing_MemFs) M_append(tk *Task, p string, data Bytes) Result[Unit, FsErr] {

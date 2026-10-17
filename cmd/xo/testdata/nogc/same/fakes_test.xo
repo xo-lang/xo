@@ -100,6 +100,31 @@ test "a failing os.tasks task fails the test" {
   expect(true)
 }
 
+fn created(r: Result[File, FsErr]) -> Result[(), FsErr] {
+  match r {
+    Ok(f) => {
+      f.close().ignore_err("a probe writes nothing")
+      Ok(())
+    }
+    Err(e) => Err(e)
+  }
+}
+
+test "memfs create_new: a new file only" {
+  let f = os.fs.create_new("n/new.txt")?
+  f.write(b"one")?
+  f.close()?
+  expect(os.fs.read_text("n/new.txt")?) == "one"
+  expect(created(os.fs.create_new("n/new.txt"))) == Err(FsErr.Exists(path: "n/new.txt"))
+  expect(os.fs.read_text("n/new.txt")?) == "one"
+  expect(created(os.fs.create_new("n"))) == Err(FsErr.Exists(path: "n"))
+  os.fs.symlink("gone.txt", "n/dead")?
+  expect(created(os.fs.create_new("n/dead"))) == Err(FsErr.Exists(path: "n/dead"))
+  expect(os.fs.exists("n/gone.txt")?) == false
+  expect(created(os.fs.read_only().create_new("n/x.txt"))) == Err(FsErr.Denied(path: "n/x.txt"))
+  expect(created(os.fs.create_new("n/fresh.txt"))) == Ok(())
+}
+
 test "memfs symbolic links" {
   os.fs.write("d/f.txt", b"data")?
   os.fs.symlink("f.txt", "d/l")?
