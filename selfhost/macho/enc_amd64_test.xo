@@ -1949,6 +1949,7 @@ const AMD64_ENCODINGS: List[(Str, Str)] = [
   ("syscall", "0f05"),
   ("cpuid", "0fa2"),
   ("stc", "f9"),
+  ("cmc", "f5"),
   ("clc", "f8"),
   ("roundsd $9, %xmm1, %xmm2", "660f3a0bd109"),
   ("roundsd $10, %xmm9, %xmm3", "66410f3a0bd90a"),

@@ -713,6 +713,7 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     }
     "cltd" | "cdq" => return e.byte(0x99)
     "stc" => return e.byte(0xf9)
+    "cmc" => return e.byte(0xf5)
     "leave" | "leaveq" => return e.byte(0xc9)
     "clc" => return e.byte(0xf8)
     "cltq" | "cdqe" => {
