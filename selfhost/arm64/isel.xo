@@ -842,10 +842,20 @@ fn (var g: G) instr(v: Int) {
   g.cur_pad = -1
 }
 
+/// Whether a logical operation takes a rotated operand (rot_operand): not
+/// where the target has no such operand (the amd64 retarget, decision
+/// 0254, would pay a mov and a ror into a temporary).
+fn (g: G) logic_ror() -> Bool {
+  true
+}
+
 /// For an operand c of a 64 bit logical operation that is a rotation of
 /// y right by a constant k (rt.int_wrap 5) read only there: (y, k), else
 /// (-1, 0).
 fn (g: G) rot_operand(c: Int) -> (Int, Int) {
+  if !g.logic_ror() {
+    return (-1, 0)
+  }
   let x = g.f.values[c]
   if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 || g.nuses[c] != 1 {
     return (-1, 0)

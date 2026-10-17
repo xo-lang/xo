@@ -173,3 +173,20 @@ branch's): p256 1877.0 to 1650.5 M instructions (-12.1%), tls12 1672.2
 to 1474.3 (-11.8%), x25519only 1392.6 to 1318.2 (-5.3%); median cycles
 867.9 to 814.7, 619.6 to 590.8, 662.9 to 650.6 (a loaded machine).
 LLVM p256: about 1613.
+
+## Rotated operands and a lazy-rotation Keccak (2026-10-17, xo-4)
+
+isel.xo rot_operand: a rotation by a constant read once by eor, orr,
+and, bic, orn or eon is that instruction's rotated register operand
+(logic_ror; false on x86 when the amd64 retarget lands).
+scripts/keccaklazy.py generates sha3.keccak with lazy rotations (XKCP's
+ARMv8 form): a lane is a value and a pending rotation, applied through
+the operands that read it, and the 25 pending rotations at the 4-round
+body's end. arm64 keccak 906 to 829 instructions, ror 116 to 25; its
+stack accesses 261 to 288 (the spills are the next lever: about 72 a
+round against a floor near 42, bench/results/keccak-spills-2026-10-17.md).
+
+Mac bench/perf/tls, min of 7: x25519 (with ML-KEM) 1395.7 to 1392.0 M
+instructions; x25519only 1310.6 to 1310.5. Sweep (digest, tls, json,
+text; 59 workloads, 3 rounds): 0 slower, 0 faster beyond spread.
+TestMLKEMAccumulated (10,000 iterations, both backends) passes.
