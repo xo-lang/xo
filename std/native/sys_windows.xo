@@ -259,3 +259,44 @@ fn CertOpenSystemStoreW(prov: Int, name: Bytes) -> Int
 /// first), or 0 at the end (it frees prev).
 fn CertEnumCertificatesInStore(store: Int, prev: Int) -> Int
 fn CertCloseStore(store: Int, flags: Int) -> Int32
+
+// The CPU profile's sampler thread (decision 0238, std/native/llrt
+// prof.xo win_sampler): the process's threads from a snapshot, each
+// suspended for its context, and a high resolution waitable timer.
+
+/// CreateToolhelp32Snapshot: a snapshot handle, or INVALID_HANDLE_VALUE
+/// (-1); TH32CS_SNAPTHREAD (4) lists every thread of the system.
+fn CreateToolhelp32Snapshot(flags: Int, pid: Int) -> Int
+/// Thread32First and Thread32Next into the THREADENTRY32 at e (28 bytes,
+/// its dwSize set): nonzero while there is one.
+fn Thread32First(snap: Int, e: Int) -> Int32
+fn Thread32Next(snap: Int, e: Int) -> Int32
+/// OpenThread: a handle of the thread tid with the access asked, or 0.
+fn OpenThread(access: Int, inherit: Int, tid: Int) -> Int
+/// SuspendThread and ResumeThread: the previous suspend count, or
+/// (DWORD)-1 on failure.
+fn SuspendThread(h: Int) -> UInt32
+fn ResumeThread(h: Int) -> UInt32
+/// GetThreadContext into the CONTEXT at cx (16 byte aligned, its
+/// ContextFlags set): nonzero on success.
+fn GetThreadContext(h: Int, cx: Int) -> Int32
+/// GetThreadTimes: the four FILETIMEs (creation, exit, kernel, user),
+/// nonzero on success.
+fn GetThreadTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
+fn GetCurrentProcessId() -> UInt32
+fn GetCurrentThreadId() -> UInt32
+/// CreateWaitableTimerExW: a timer handle, or 0
+/// (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 2 in flags, Windows 10 1803).
+fn CreateWaitableTimerExW(security: Int, name: Int, flags: Int, access: Int) -> Int
+/// SetWaitableTimer: due at the LARGE_INTEGER at the address due
+/// (negative: relative, in 100 ns), nonzero on success.
+fn SetWaitableTimer(h: Int, due: Int, period: Int, f: Int, arg: Int, resume: Int) -> Int32
+/// GetModuleHandleW(0): the program's image base.
+fn GetModuleHandleW(name: Int) -> Int
+/// GetModuleFileNameW of the module m (0: the program) into the n UTF-16
+/// units at the address buf: the units written (without the NUL).
+fn GetModuleFileNameW(m: Int, buf: Int, n: Int) -> UInt32
+/// QueryThreadCycleTime: the thread's CPU cycles into the word at c,
+/// nonzero on success (moves while it runs, unlike GetThreadTimes' 15.6
+/// ms ticks).
+fn QueryThreadCycleTime(h: Int, c: Int) -> Int32

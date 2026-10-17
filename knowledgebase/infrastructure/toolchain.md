@@ -250,7 +250,7 @@ XO_BACKEND_CACHE=on|verify|off xo build --backend=arm64 ...   # decision 0220 ad
 XO_LEAKCHECK=1 <native program>                       # when main returns, `xo leakcheck: N live of M allocations` on stderr; a program that ends with os.proc.exit (or a main returning an error) prints `xo leakcheck: skipped (os.proc.exit)` instead (gotchas/leakcheck-skipped-at-exit.md; last verified: 2026-10-14)
 XO_HEAPSTATS=1 <native program>                       # at exit, the heap by size class on stderr (`xo heapstats: class C size S free blocks N bytes B`, then the 4 MiB chunks carved); with XO_LEAKCHECK=1 the allocation count; XO_HEAP_MID_MAX=<bytes> (1024 up to 256 KiB) sends larger blocks to malloc (an experiment knob; decision 0199, bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 xo build|run|test --backend=llvm --race <dir>          # ThreadSanitizer (decision 0241 addendum): every function, the runtime's too, marked sanitize_thread and built with clang -fsanitize=thread; a race prints a ThreadSanitizer report (TSAN_OPTIONS=halt_on_error=1 to stop at the first); arm64 and wasm refuse it, the Go backend uses Go's race detector
-XO_PROF=cpu <native program>                            # the sampling CPU profile (decision 0238): SIGPROF at XO_PROF_HZ (100) a second of CPU time, frames by the fault unwinder's tables; at exit pprof (gzip) at XO_PROF_OUT (xo-cpu.pprof; %p is the pid) and a text top 30 by flat and by cumulative beside it (.txt); `xo run --profile=cpu` and `xo test --profile=cpu` (xo-cpu-<pid>.pprof per test process) set it; darwin and linux, arm64 and llvm (not Windows yet); `go tool pprof -top xo-cpu.pprof` reads it (last verified: 2026-10-16)
+XO_PROF=cpu <native program>                            # the sampling CPU profile (decision 0238): SIGPROF at XO_PROF_HZ (100) a second of CPU time, frames by the fault unwinder's tables; at exit pprof (gzip) at XO_PROF_OUT (xo-cpu.pprof; %p is the pid) and a text top 30 by flat and by cumulative beside it (.txt); `xo run --profile=cpu` and `xo test --profile=cpu` (xo-cpu-<pid>.pprof per test process) set it; darwin and linux, arm64 and llvm, and windows/amd64 (llvm, a sampler thread); `go tool pprof -top xo-cpu.pprof` reads it (last verified: 2026-10-16)
 XO_PROF=heap <native program>                           # the heap profile (decision 0238): allocations sampled every XO_PROF_HEAP_RATE bytes on average (512 KiB; 1 = all), alloc and inuse objects and bytes as Go; pprof at XO_PROF_HEAP_OUT (else XO_PROF_OUT without cpu, else xo-heap.pprof) and a .txt top 30 by inuse_space and alloc_space; XO_PROF=cpu,heap takes both
 xo1 asm --phase-times selfhost/xo                      # xo1 compiling itself to assembly: 163.83 s, 2,035.4 billion instructions, 9.66 GB footprint on the Mac (was 588.86 s, 26.1 GB); byte identical to `cd selfhost && xo asmdump xo` (bench/results/xo1-speed-2026-10-13.md; last verified: 2026-10-13)
 go run ./cmd/xo run selfhost/arm64 -- [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] [--bench=N] <dirs...>   # the self hosted (Xo) arm64 emitter: checks with selfhost/check, builds with selfhost/ssa and its passes, prints the assembly of xo asmdump, then == skipped and <function>: <why> for the functions of a later stage of decision 0158; == unsupported for a run the Xo SSA builder does not build completely; --bench=N times the emitter alone (last verified: 2026-10-11)
@@ -788,7 +788,13 @@ and for diffing two builds function by function, not for a first look.
   is the process id) and a text summary beside it (`.txt` for
   `.pprof`): the totals, then the top 30 functions by flat and by
   cumulative samples, as `go tool pprof -top` prints. One line on
-  stderr names both files.
+  stderr names both files. On windows/amd64 a sampler thread suspends
+  each thread that used CPU (no SIGPROF), and names come from the COFF
+  symbol table Windows links keep (no lines); to check it on the Mac,
+  cross build (above) and run under Wine with Box64:
+  `scripts/docker-wine.sh box64 WORK 'cd /work && XO_PROF=cpu,heap wine
+  /work/win/P.exe; cat xo-cpu.txt xo-heap.txt'` (decision 0238
+  "Windows"; Box64 cuts some stacks short, gotchas/box64-thread-context-skewed.md).
 - `xo build --release` leaves the profiler out (XO_PROF then prints one
   line saying so) unless `--profile-support` is given; `xo run`, `xo
   test` and a plain `xo build` keep it. A profile file is created new
@@ -3323,11 +3329,14 @@ for this Mac, for xwin). Homebrew could not install llvm, lld, or xwin
 (it does not know macOS 27: "unknown or unsupported macOS version"), so
 everything is in the user cache, `~/Library/Caches/xo/winxc` (9.3 GB:
 the LLVM release 7.6 GB unpacked, the sysroot 1.1 GB, a minimal Rust
-toolchain and xwin the rest), no sudo, no shell profile change:
+toolchain and xwin the rest; rebuilt 2026-10-16 on the main drive with
+the recipe below in 134 s, 9.3 GB after removing the 832 MB LLVM
+tarball), no sudo, no shell profile change:
 
     X=~/Library/Caches/xo/winxc
     gh release download llvmorg-23.1.3 -R llvm/llvm-project -p 'LLVM-23.1.3-macOS-ARM64.tar.zst' -D $X
     zstd --long=30 -dc $X/LLVM-23.1.3-macOS-ARM64.tar.zst > $X/llvm.tar && tar -xf $X/llvm.tar -C $X
+    rm $X/llvm.tar $X/LLVM-23.1.3-macOS-ARM64.tar.zst
     # (zstd without --long=30 refuses the 1 GiB window)
     curl -sSfL -o $X/rustup-init https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init
     CARGO_HOME=$X/cargo RUSTUP_HOME=$X/rustup $X/rustup-init -y --no-modify-path --profile minimal

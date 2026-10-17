@@ -1,5 +1,5 @@
 // win_consts.c: the Windows constants and layouts the native runtime's
-// Xo hard codes (std/native/llrt sock.xo, cabi_net.xo, poll.xo), checked
+// Xo hard codes (std/native/llrt sock.xo, cabi_net.xo, poll.xo, prof.xo), checked
 // against the Windows SDK's headers. Compiled, never run, for
 // windows/amd64 and windows/arm64 by internal/llvm TestWinConsts with the
 // Windows cross toolchain (knowledgebase/infrastructure/toolchain.md
@@ -10,6 +10,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <tlhelp32.h>
 #include <errno.h>
 #include <stddef.h>
 
@@ -33,3 +34,27 @@ _Static_assert(WSAHOST_NOT_FOUND == 11001 && WSATRY_AGAIN == 11002 && WSANO_RECO
 
 // poll.xo reads the completions GetQueuedCompletionStatusEx returns
 _Static_assert(sizeof(OVERLAPPED_ENTRY) == 32 && offsetof(OVERLAPPED_ENTRY, lpOverlapped) == 8, "poll.xo's OVERLAPPED_ENTRY");
+
+// prof.xo's sampler thread (decision 0238): the snapshot's entries, the
+// thread access, the timer, the image's headers, and (x86_64) CONTEXT
+_Static_assert(sizeof(THREADENTRY32) == 28 && offsetof(THREADENTRY32, th32ThreadID) == 8 &&
+                   offsetof(THREADENTRY32, th32OwnerProcessID) == 12 && TH32CS_SNAPTHREAD == 4,
+               "prof.xo's THREADENTRY32");
+_Static_assert((THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION) == 74 && TIMER_ALL_ACCESS == 2031619 &&
+                   CREATE_WAITABLE_TIMER_HIGH_RESOLUTION == 2 && MEM_COMMIT + MEM_RESERVE == 12288,
+               "prof.xo's access rights and flags");
+_Static_assert(offsetof(IMAGE_DOS_HEADER, e_lfanew) == 60 && offsetof(IMAGE_NT_HEADERS64, OptionalHeader) == 24 &&
+                   offsetof(IMAGE_FILE_HEADER, NumberOfSections) == 2 && offsetof(IMAGE_FILE_HEADER, PointerToSymbolTable) == 8 &&
+                   offsetof(IMAGE_FILE_HEADER, NumberOfSymbols) == 12 && offsetof(IMAGE_FILE_HEADER, SizeOfOptionalHeader) == 16 &&
+                   offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) + 8 * IMAGE_DIRECTORY_ENTRY_EXCEPTION == 136 &&
+                   sizeof(IMAGE_SECTION_HEADER) == 40 && offsetof(IMAGE_SECTION_HEADER, VirtualAddress) == 12 &&
+                   offsetof(IMAGE_SECTION_HEADER, Misc.VirtualSize) == 8 && offsetof(IMAGE_SECTION_HEADER, Characteristics) == 36 &&
+                   IMAGE_SCN_MEM_EXECUTE == 0x20000000 && IMAGE_SCN_CNT_CODE == 0x20 && IMAGE_SIZEOF_SYMBOL == 18 &&
+                   IMAGE_SYM_CLASS_EXTERNAL == 2 && IMAGE_SYM_CLASS_STATIC == 3,
+               "prof.xo's PE and COFF headers");
+#if defined(__x86_64__)
+_Static_assert(sizeof(CONTEXT) == 1232 && offsetof(CONTEXT, ContextFlags) == 48 && offsetof(CONTEXT, Rsp) == 152 &&
+                   offsetof(CONTEXT, Rip) == 248 && (CONTEXT_CONTROL | CONTEXT_INTEGER) == 1048579 &&
+                   sizeof(RUNTIME_FUNCTION) == 12,
+               "prof.xo's x86_64 CONTEXT and RUNTIME_FUNCTION");
+#endif

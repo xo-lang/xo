@@ -1,6 +1,6 @@
 # 0238: A sampling profiler in the native runtime
 
-Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile too, 2026-10-16 (xo-4); Windows is not yet.
+Status: Accepted (owner, 2026-10-16). CPU profile implemented on darwin and linux, arm64 and LLVM, 2026-10-16 (xo-4); the heap profile too, 2026-10-16 (xo-4); both on windows/amd64 (LLVM), 2026-10-16 (xo-4), checked under Wine with Box64 only; windows/arm64 not yet.
 
 ## Context
 
@@ -154,39 +154,60 @@ selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
   estimates the 40 MB allocated within 2x; cpu,heap writes both; go
   tool pprof reads it), arm64 and LLVM.
 
-## Planned: Windows (parked 2026-10-16)
+## Windows (implemented 2026-10-16, windows/amd64)
 
-Not built yet: the Mac's windows cross toolchain is gone and CI is off
-(the lead parked it, 2026-10-16). The design, as Go's profileloop:
+Designed as Go's profileloop (parked 2026-10-16, built the same day once
+the owner made room for the cross toolchain on the Mac):
 
-- A sampler thread (CreateThread) ticks every 1/XO_PROF_HZ s on a high
-  resolution waitable timer (CreateWaitableTimerExW with
+- A sampler thread (CreateThread, prof.xo win_sampler) ticks every
+  1/XO_PROF_HZ s on a waitable timer (CreateWaitableTimerExW with
   CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, a relative due time each tick;
-  Sleep's 15.6 ms granularity is too coarse for 100 Hz).
-- Each tick: CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD) and
-  Thread32First/Next for the process's threads (not the sampler's);
-  OpenThread once per thread id (SUSPEND_RESUME | GET_CONTEXT |
-  QUERY_INFORMATION), kept in a table with the thread's last CPU time;
-  a thread whose GetThreadTimes kernel plus user time moved since the
-  last tick is sampled (the CPU profile's meaning): SuspendThread,
-  GetThreadContext (CONTEXT_CONTROL | CONTEXT_INTEGER), the frames walked
-  with RtlLookupFunctionEntry and RtlVirtualUnwind (a leaf without
-  unwind data: the return address at Rsp) into the same ring of slots,
-  then ResumeThread. Nothing allocates while a thread is suspended.
-- The text range is the image's (GetModuleHandleW(0), SizeOfImage);
-  windows/amd64 first (the CONTEXT layout is per architecture).
-- Symbols: Windows builds link with lld-link and keep no symbol table,
-  so dev builds add `-Wl,/debug:symtab` (a COFF symbol table in the PE,
-  outside the mapped image), and the writer reads it from the program's
-  file (GetModuleFileNameW, CreateFileW, ReadFile): the COFF header's
-  PointerToSymbolTable and NumberOfSymbols, 18 byte records (a name, or
-  an offset into the string table after them; the value plus the
-  section's VirtualAddress plus the image base), functions by type 0x20
-  or by an external or static symbol in a code section; the same
-  demangling as Mach-O and ELF. No line tables (no DWARF in a PE).
-- Checked natively (the CI windows runner) or under Wine with Box64
-  (scripts/docker-wine.sh box64), which runs SuspendThread and
-  GetThreadContext.
+  an ordinary timer where that flag is refused). Each tick it lists the
+  process's threads (CreateToolhelp32Snapshot TH32CS_SNAPTHREAD,
+  Thread32First/Next), opens each once (SUSPEND_RESUME | GET_CONTEXT |
+  QUERY_INFORMATION, a table of 256 with the last CPU reading), and
+  samples a thread whose CPU moved since the last tick
+  (QueryThreadCycleTime; where that fails, as under Wine, GetThreadTimes'
+  kernel plus user time, which moves in clock ticks): SuspendThread,
+  GetThreadContext (CONTEXT_CONTROL | CONTEXT_INTEGER), the walk into the
+  ring, ResumeThread. A thread whose GetThreadTimes shows it exited is
+  reopened (its id reused).
+- The walk (unwind.xo win_walk) reads only the image and the stack:
+  the function's RUNTIME_FUNCTION by a binary search of the image's
+  .pdata (not RtlLookupFunctionEntry, which takes the loader's lock that
+  a suspended thread may hold), RtlVirtualUnwind for the frame; a leaf
+  without an entry, or a first frame outside the program, returns to the
+  word at Rsp. Each return address must follow a call in the program's
+  text and the stack pointer must rise, or the walk ends. Nothing
+  allocates while a thread is suspended (no list literal either).
+- The heap profile walks its own thread the same way from
+  RtlCaptureContext (unwind.xo prof_trace).
+- Symbols: Windows links pass `-Wl,/debug:symtab` (selfhost/xo link.xo),
+  so lld-link keeps a COFF symbol table in the file (not mapped, no
+  PDB); prof.xo coff_symbols reads it from the program's file
+  (GetModuleFileNameW): functions by type 0x20, or external and static
+  symbols in a code section. No line numbers (no DWARF in the PE).
+- The fault traceback (XO_TRACEBACK, decision 0239) collects its frames
+  with the same walk (unwind.xo trace, which returned none on Windows)
+  and names them from these symbols: functions only, no lines or
+  inlined frames (user_fault prints `main`, where macOS prints the
+  inlined withdraw and both lines).
+- Files are created with CREATE_NEW (an existing file or link is not
+  written); Windows has no mode bits, so the file inherits its
+  directory's ACL.
+- Constants and layouts (THREADENTRY32, CONTEXT, the PE and COFF headers,
+  the access rights): std/llrt/testdata/win_consts.c, TestWinConsts.
+
+Checked 2026-10-16 under Wine 10.0 with Box64 0.3.4 in Docker
+(knowledgebase/infrastructure/toolchain.md "Windows programs under
+Wine"): testdata/prof/fib names fib at 100% flat; testdata/prof/heap's
+heap profile names raw.str_repeat under main.fn1 through the task's
+fiber. Under Box64, 25 to 40% of the CPU stacks stop after fib: Box64
+reports Rip at a call instruction while Rsp has already taken the
+call's push, so the caller read is fib's saved n (gotcha
+box64-thread-context-skewed.md). Native Windows is not checked (CI is
+off). windows/arm64 prints that the profile is not supported (its
+CONTEXT and RUNTIME_FUNCTION differ).
 
 ## Consequences
 

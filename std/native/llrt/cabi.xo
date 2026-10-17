@@ -451,6 +451,15 @@ fn on_prof(sig: Int, info: Int, uc: Int) {
   }
 }
 
+/// The CPU profile's sampler thread on Windows (prof.xo win_start, a
+/// CreateThread entry taking the profile's record).
+fn prof_sampler(r: Int) -> Int {
+  if prof.supported() {
+    return prof.win_sampler(r)
+  }
+  0
+}
+
 /// Writes the sampling profile now (process.xo exit: os.proc.exit does
 /// not return to entry.xo main's end).
 fn prof_finish() {
@@ -481,7 +490,6 @@ fn stop_chan_new(drop: Int) -> Int {
 }
 
 fn stop_set_grace(d: Int) { stop.set_grace(d) }
-
 
 /// The C function main's threads run (entry.xo run_main, the fault
 /// boundary), with xo_entry's address.
@@ -515,12 +523,9 @@ fn mon_main(p: Int) -> Int { pool.mon_main(p) }
 
 fn park_reset(p: Int) { pool.park_reset(p) }
 
-
-
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
 
 fn node_unlink(n: Int) { pool.node_unlink(n) }
-
 
 fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int { pool.scope_add(pl, s, t, w) }
 

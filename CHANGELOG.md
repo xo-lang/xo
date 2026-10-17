@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The native profiler on windows/amd64 (decision 0238 "Windows"):
+  XO_PROF=cpu runs a sampler thread that suspends each thread whose CPU
+  moved and walks it by the image's .pdata and RtlVirtualUnwind;
+  XO_PROF=heap walks the allocating thread the same way. Windows links
+  keep a COFF symbol table (lld-link /debug:symtab), which names the
+  functions, also in a fault's XO_TRACEBACK (which had no frames on
+  Windows). Checked under Wine with Box64 only.
 - Native builds check the runtime's function bodies only as the SSA
   builder reaches them (decision 0247): a hello build 947 to 622 ms,
   the 180 goldens 21% faster on arm64, the same binaries and LLVM IR on

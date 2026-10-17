@@ -17,8 +17,13 @@
 // (dwline.xo, decision 0239: Linux's .debug_line, macOS's PROG.dSYM):
 // pprof's Line.line and Function.filename, and the text summary's
 // hottest line of each function. Off (no XO_PROF) it costs one
-// environment lookup at start. Windows (a sampling thread) is not here
-// yet.
+// environment lookup at start. On Windows (amd64) there is no SIGPROF: a
+// sampler thread wakes every 1/XO_PROF_HZ s on a high resolution
+// waitable timer, and each of the process's other threads whose CPU
+// cycles moved since the last tick is suspended, its context read, its
+// frames walked (the image's .pdata and RtlVirtualUnwind) into the same
+// ring, and resumed (win_sampler; symbols from the PE's COFF symbol
+// table, which Windows links keep with /debug:symtab).
 //
 // XO_PROF=heap (decision 0238 item 4; with cpu: XO_PROF=cpu,heap) samples
 // allocations, an exponential gap of mean XO_PROF_HEAP_RATE bytes (512
@@ -39,8 +44,10 @@ use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/unwind
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// rt.static_word: the profiler's record (0: off).
 const W_PROF = 13
@@ -64,6 +71,9 @@ const R_THI = 64
 const R_HZ = 72
 const R_T0 = 80
 const R_NOREC = 88
+/// Windows: the sampler's record (WB_*) and its thread's handle.
+const R_WIN = 96
+const R_WTHREAD = 104
 const R_SIZE = 128
 
 /// The deepest stack a sample keeps, and a slot's bytes: the frame count,
@@ -99,7 +109,9 @@ fn map(n: Int) -> Int {
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
-    TargetOs.Windows | TargetOs.Wasi => 0
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
+    TargetOs.Wasi => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -135,9 +147,16 @@ pub fn start() {
   if !names(v, "cpu") {
     return
   }
-  match target.os {
-    TargetOs.Darwin | TargetOs.Linux => {}
-    TargetOs.Windows | TargetOs.Wasi => {
+  let win = match target.os {
+    TargetOs.Darwin | TargetOs.Linux => false
+    TargetOs.Windows => match target.arch {
+      TargetArch.Amd64 => true
+      TargetArch.Arm64 | TargetArch.Wasm32 => {
+        stdio.eprint("xo profile: XO_PROF=cpu is not supported on windows/arm64 yet", true)
+        return
+      }
+    }
+    TargetOs.Wasi => {
       stdio.eprint("xo profile: XO_PROF=cpu is not supported on this target yet", true)
       return
     }
@@ -172,6 +191,12 @@ pub fn start() {
   st(r, R_THI, hi)
   st(r, R_HZ, hz)
   st(r, R_T0, sysio.mono_ns())
+  if win {
+    // the pool's first record is the sampler's (no thread of the
+    // program claims one: no signal handler runs on Windows)
+    win_start(r, pool, hz)
+    return
+  }
   rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
   handler(rt.fn_addr("on_prof"))
   timer(1000000 / hz)
@@ -214,12 +239,17 @@ const HEAP_RATE = 524288
 /// copies it). The heap keeps its paths: one thread keeps its single
 /// threaded record and fast paths.
 fn start_heap() {
-  match target.os {
-    TargetOs.Darwin | TargetOs.Linux => {}
-    TargetOs.Windows | TargetOs.Wasi => {
-      stdio.eprint("xo profile: XO_PROF=heap is not supported on this target yet", true)
-      return
+  let ok = match target.os {
+    TargetOs.Darwin | TargetOs.Linux => true
+    TargetOs.Windows => match target.arch {
+      TargetArch.Amd64 => true
+      TargetArch.Arm64 | TargetArch.Wasm32 => false
     }
+    TargetOs.Wasi => false
+  }
+  if !ok {
+    stdio.eprint("xo profile: XO_PROF=heap is not supported on this target yet", true)
+    return
   }
   var rate = HEAP_RATE
   let rv = process.env_real_at("XO_PROF_HEAP_RATE")
@@ -342,8 +372,16 @@ fn finish_cpu() {
   if r == 0 {
     return
   }
-  timer(0)
-  handler(1)
+  if ld(r, R_WIN) != 0 {
+    // the sampler sees the switch off at its next tick and returns
+    let th = ld(r, R_WTHREAD)
+    let _w = sys_windows.WaitForSingleObject(th, 4294967295)
+    let _c = sys_windows.CloseHandle(th)
+    win_close(ld(r, R_WIN))
+  } else {
+    timer(0)
+    handler(1)
+  }
   let dur = sysio.mono_ns() - ld(r, R_T0)
   var n = ld(r, R_NEXT)
   if n > ld(r, R_CAP) {
@@ -392,10 +430,10 @@ struct Syms {
 fn symbols(lo: Int, hi: Int) -> Syms {
   var addrs: List[Int] = []
   var names: List[Str] = []
-  if target.os == TargetOs.Darwin {
-    macho_symbols(lo, hi, addrs, names)
-  } else {
-    elf_symbols(lo, hi, addrs, names)
+  match target.os {
+    TargetOs.Darwin => macho_symbols(lo, hi, addrs, names)
+    TargetOs.Windows => coff_symbols(lo, hi, addrs, names)
+    TargetOs.Linux | TargetOs.Wasi => elf_symbols(lo, hi, addrs, names)
   }
   // sort by address: (offset in the text << 24) | index
   var keys: List[Int] = []
@@ -1232,7 +1270,18 @@ fn write_file(path: Str, data: Bytes) -> Bool {
       let _c = sys_darwin.close(fd)
       ok
     }
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows => {
+      // kind 4: CREATE_NEW (an existing file or link is not written
+      // through), read and write; mode 0600 keeps it writable
+      let h = windows.open_kind(path, 4, 384)
+      if h < 0 {
+        return false
+      }
+      let w = windows.write_all(h, data)
+      let _c = windows.close(h)
+      w == 0
+    }
+    TargetOs.Wasi => false
   }
 }
 
@@ -1593,5 +1642,323 @@ fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], locs: List[Int], cf
       b.write("${lpad(bytes_text(flat[f]), 10)} ${lpad(pct(flat[f], total), 6)} ${lpad(pct(sum, total), 6)} ${lpad(bytes_text(cum[f]), 10)} ${lpad(pct(cum[f], total), 6)}  ${rpad(at, 18)}  ${names[f]}\n")
     }
   }
+  b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Windows: the sampler thread (decision 0238, as Go's profileloop)
+
+/// The sampler's record (byte offsets; VirtualAlloc'd, page aligned): the
+/// timer, the unwind record it walks with (unwind.xo prof_init, its
+/// CONTEXT there), the sampler's own thread and process ids, the tick in
+/// 100 ns, a due time, the four FILETIMEs of GetThreadTimes, a cycle
+/// count, a THREADENTRY32 (28 bytes), and the table of threads seen: WT_N
+/// entries of (thread id, handle, last cycles).
+const WB_TIMER = 0
+const WB_UNW = 8
+const WB_ME = 32
+const WB_PID = 40
+const WB_TICK = 48
+const WB_DUE = 56
+const WB_FT = 64
+const WB_CYC = 96
+const WB_TE = 104
+const WB_TAB = 1408
+const WT_N = 256
+const WB_SIZE = 7552
+/// OpenThread's access: THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+/// THREAD_QUERY_INFORMATION.
+const THREAD_SAMPLE = 74
+const INFINITE = 4294967295
+
+/// Starts the sampler thread for the profile record r (its ring, rate,
+/// and text set up by start; it walks with the unwind record u): the
+/// switch on first, then the thread, which ticks until finish turns it
+/// off.
+fn win_start(r: Int, u: Int, hz: Int) {
+  let w = map(WB_SIZE)
+  if w == 0 {
+    stdio.eprint("xo profile: no memory for the profile", true)
+    return
+  }
+  st(w, WB_UNW, u)
+  // TIMER_ALL_ACCESS; a high resolution timer where the system has one
+  // (Windows 10 1803), else an ordinary one (about 1 ms with the default
+  // timer resolution raised, 15.6 ms without)
+  var t = sys_windows.CreateWaitableTimerExW(0, 0, 2, 2031619)
+  if t == 0 {
+    t = sys_windows.CreateWaitableTimerExW(0, 0, 0, 2031619)
+  }
+  if t == 0 {
+    stdio.eprint("xo profile: no timer for the sampler", true)
+    return
+  }
+  st(w, WB_TIMER, t)
+  st(w, WB_PID, Int(sys_windows.GetCurrentProcessId()))
+  st(w, WB_TICK, 10000000 / hz)
+  st(r, R_WIN, w)
+  rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
+  let th = sys_windows.CreateThread(0, 65536, rt.fn_addr("prof_sampler"), r, 65536, 0)
+  if th == 0 {
+    rt.slot_store[Int](rt.static_word(W_PROF), 0, 0, 2)
+    stdio.eprint("xo profile: the sampler thread did not start", true)
+    return
+  }
+  st(r, R_WTHREAD, th)
+}
+
+/// The sampler thread's body (cabi.xo prof_sampler, a CreateThread
+/// entry): a tick every 1/hz s until the profile's switch is off. It
+/// never allocates and takes no lock: a thread it suspends may hold
+/// either.
+pub fn win_sampler(r: Int) -> Int {
+  let w = ld(r, R_WIN)
+  st(w, WB_ME, Int(sys_windows.GetCurrentThreadId()))
+  let sw = rt.static_word(W_PROF)
+  while rt.slot_load[Int](sw, 0, 1) == r {
+    // a relative due time, in 100 ns
+    st(w, WB_DUE, 0 - ld(w, WB_TICK))
+    if Int(sys_windows.SetWaitableTimer(ld(w, WB_TIMER), w + WB_DUE, 0, 0, 0, 0)) == 0 {
+      break
+    }
+    let _w = sys_windows.WaitForSingleObject(ld(w, WB_TIMER), INFINITE)
+    if rt.slot_load[Int](sw, 0, 1) != r {
+      break
+    }
+    win_tick(r, w)
+  }
+  0
+}
+
+/// One tick: every other thread of the process, from a snapshot.
+fn win_tick(r: Int, w: Int) {
+  let snap = sys_windows.CreateToolhelp32Snapshot(4, 0)
+  if snap == -1 {
+    return
+  }
+  let te = w + WB_TE
+  rt.mem_store(te, 0, 28, 4)
+  var more = Int(sys_windows.Thread32First(snap, te)) != 0
+  while more {
+    // th32ThreadID, th32OwnerProcessID
+    let tid = rt.mem_load(te, 8, 4)
+    if rt.mem_load(te, 12, 4) == ld(w, WB_PID) && tid != ld(w, WB_ME) {
+      win_sample(r, w, tid)
+    }
+    rt.mem_store(te, 0, 28, 4)
+    more = Int(sys_windows.Thread32Next(snap, te)) != 0
+  }
+  let _c = sys_windows.CloseHandle(snap)
+}
+
+/// The table entry of thread tid, opened on first sight (its last
+/// cycles -1); 0 when the table is full or the thread cannot be opened.
+fn win_entry(w: Int, tid: Int) -> Int {
+  var free = 0
+  for i in 0..WT_N {
+    let e = w + WB_TAB + 24 * i
+    let id = ld(e, 0)
+    if id == tid {
+      return e
+    }
+    if id == 0 && free == 0 {
+      free = e
+    }
+  }
+  if free == 0 {
+    return 0
+  }
+  let h = sys_windows.OpenThread(THREAD_SAMPLE, 0, tid)
+  if h == 0 {
+    return 0
+  }
+  st(free, 0, tid)
+  st(free, 8, h)
+  st(free, 16, -1)
+  free
+}
+
+/// Samples thread tid when its CPU cycles moved since the last tick: the
+/// thread is suspended for its context and its walk, then resumed.
+fn win_sample(r: Int, w: Int, tid: Int) {
+  var e = win_entry(w, tid)
+  if e == 0 {
+    let _l = rt.slot_add[Int](r, R_NOREC / 8, 1, RELAXED)
+    return
+  }
+  var h = ld(e, 8)
+  let ft = w + WB_FT
+  let timed = Int(sys_windows.GetThreadTimes(h, ft, ft + 8, ft + 16, ft + 24)) != 0
+  if timed && ld(ft, 8) != 0 {
+    // the entry's thread exited and its id was reused: a fresh handle
+    let _c = sys_windows.CloseHandle(h)
+    st(e, 0, 0)
+    e = win_entry(w, tid)
+    if e == 0 {
+      return
+    }
+    h = ld(e, 8)
+    if Int(sys_windows.GetThreadTimes(h, ft, ft + 8, ft + 16, ft + 24)) == 0 {
+      return
+    }
+  }
+  // its CPU cycles, else (Wine has no QueryThreadCycleTime) its kernel
+  // and user time, which moves in clock ticks (10 to 15.6 ms)
+  var cyc = 0
+  if Int(sys_windows.QueryThreadCycleTime(h, w + WB_CYC)) != 0 {
+    cyc = ld(w, WB_CYC)
+  } else if timed {
+    cyc = ld(ft, 16) + ld(ft, 24)
+  } else {
+    return
+  }
+  let last = ld(e, 16)
+  st(e, 16, cyc)
+  if last == -1 || cyc == last {
+    return
+  }
+  if Int(sys_windows.SuspendThread(h)) == -1 {
+    return
+  }
+  let u = ld(w, WB_UNW)
+  if Int(sys_windows.GetThreadContext(h, unwind.win_context(u))) != 0 {
+    let k = rt.slot_add[Int](r, R_NEXT / 8, 1, ACQ_REL)
+    if k < ld(r, R_CAP) {
+      let p = ld(r, R_RING) + k * SLOT
+      let n = unwind.win_walk(u, p + 8, DEPTH, true)
+      rt.slot_store[Int](p, 0, n, 2)
+    } else {
+      let _l = rt.slot_add[Int](r, R_LOST / 8, 1, RELAXED)
+    }
+  }
+  let _r = sys_windows.ResumeThread(h)
+}
+
+/// Closes the sampler's handles once its thread has ended.
+fn win_close(w: Int) {
+  let _t = sys_windows.CloseHandle(ld(w, WB_TIMER))
+  for i in 0..WT_N {
+    let e = w + WB_TAB + 24 * i
+    if ld(e, 0) != 0 {
+      let _c = sys_windows.CloseHandle(ld(e, 8))
+    }
+  }
+}
+
+/// Windows: the functions of the program's COFF symbol table (the PE
+/// file's PointerToSymbolTable, which lld-link writes with /debug:symtab;
+/// it is not mapped, so the file is read) whose address is in [lo, hi):
+/// a symbol of type 0x20 (a function), or an external or static one in a
+/// code section, without auxiliary records, its name not a section's.
+fn coff_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
+  let f = read_self()
+  if f.len() < 64 {
+    return
+  }
+  let base = sys_windows.GetModuleHandleW(0)
+  let pe = u32(f, 60)
+  if pe + 24 > f.len() {
+    return
+  }
+  let coff = pe + 4
+  let nsec = u16(f, coff + 2)
+  let sym = u32(f, coff + 8)
+  let nsym = u32(f, coff + 12)
+  let sec = coff + 20 + u16(f, coff + 16)
+  let strs = sym + 18 * nsym
+  if sym == 0 || strs > f.len() || sec + 40 * nsec > f.len() {
+    return
+  }
+  var i = 0
+  while i < nsym {
+    let p = sym + 18 * i
+    let aux = Int(f[p + 17])
+    let sn = u16(f, p + 12)
+    let typ = u16(f, p + 14)
+    let cls = Int(f[p + 16])
+    i += 1 + aux
+    if aux != 0 || sn < 1 || sn > nsec {
+      continue
+    }
+    let s = sec + 40 * (sn - 1)
+    // IMAGE_SCN_CNT_CODE
+    let code = (u32(f, s + 36) & 32) != 0
+    if typ != 32 && !(code && (cls == 2 || cls == 3)) {
+      continue
+    }
+    let a = base + u32(f, s + 12) + u32(f, p + 8)
+    if a < lo || a >= hi {
+      continue
+    }
+    let name = if u32(f, p) == 0 { zstr(f, strs + u32(f, p + 4)) } else { zstr_n(f, p, 8) }
+    if name.is_empty() || name.starts_with(".") || name.starts_with("$") {
+      continue
+    }
+    addrs.push(a)
+    names.push(name)
+  }
+}
+
+fn u16(b: Bytes, o: Int) -> Int { Int(b[o]) | (Int(b[o + 1]) << 8) }
+
+fn u32(b: Bytes, o: Int) -> Int { u16(b, o) | (u16(b, o + 2) << 16) }
+
+/// The zero terminated string at o of b.
+fn zstr(b: Bytes, o: Int) -> Str {
+  if o >= b.len() {
+    return ""
+  }
+  var e = o
+  while e < b.len() && b[e] != 0 {
+    e += 1
+  }
+  b[o..e].to_str() ?? ""
+}
+
+/// The at most n bytes at o of b, up to a zero.
+fn zstr_n(b: Bytes, o: Int, n: Int) -> Str {
+  var e = o
+  while e < o + n && b[e] != 0 {
+    e += 1
+  }
+  b[o..e].to_str() ?? ""
+}
+
+/// Windows: the program's own file (GetModuleFileNameW), or empty.
+fn read_self() -> Bytes {
+  // 32,767 UTF-16 units and the NUL, written in place
+  var z = BytesBuilder.with_capacity(65536)
+  for _ in 0..65536 {
+    z.write_byte(UInt8(0))
+  }
+  let path = z.freeze()
+  let n = Int(sys_windows.GetModuleFileNameW(0, raw.bytes_addr(path), 32767))
+  if n == 0 || n >= 32767 {
+    return b""
+  }
+  // GENERIC_READ, shared for reading, writing and deleting, OPEN_EXISTING
+  let h = sys_windows.CreateFileW(path, 2147483648, 7, 0, 3, 128, 0)
+  if h == -1 {
+    return b""
+  }
+  let size = windows.file_size(h)
+  if size <= 0 {
+    let _c = windows.close(h)
+    return b""
+  }
+  var b = BytesBuilder.with_capacity(size)
+  var zb = BytesBuilder.with_capacity(65536)
+  for _ in 0..65536 {
+    zb.write_byte(UInt8(0))
+  }
+  let buf = zb.freeze()
+  while true {
+    let r = windows.read(h, buf, 0, 65536)
+    if r <= 0 {
+      break
+    }
+    b.write(buf[0..r])
+  }
+  let _c = windows.close(h)
   b.freeze()
 }

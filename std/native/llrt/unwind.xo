@@ -267,7 +267,20 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
 pub fn trace(out: Int, max: Int) -> Int {
   match target.os {
     TargetOs.Linux | TargetOs.Darwin => {}
-    TargetOs.Windows | TargetOs.Wasi => return 0
+    TargetOs.Windows => match target.arch {
+      TargetArch.Amd64 => {
+        // the profiler's walk (win_walk) from this frame, the image found
+        // once per thread; before any raise, which reuses the CONTEXT
+        let s = scratch()
+        if s == 0 || (rt.mem_load(s, W_PDATA_N, 8) == 0 && !win_image(s)) {
+          return 0
+        }
+        sys_windows.RtlCaptureContext(s + W_CX)
+        return win_walk(s, out, max, false)
+      }
+      TargetArch.Arm64 | TargetArch.Wasm32 => return 0
+    }
+    TargetOs.Wasi => return 0
   }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
@@ -321,7 +334,13 @@ pub fn trace(out: Int, max: Int) -> Int {
 pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
   match target.os {
     TargetOs.Linux | TargetOs.Darwin => {}
-    TargetOs.Windows | TargetOs.Wasi => return 0
+    TargetOs.Windows => {
+      // from this frame's own context; its pc is a return address in
+      // prof_trace
+      sys_windows.RtlCaptureContext(s + W_CX)
+      return win_walk(s, out, max, false)
+    }
+    TargetOs.Wasi => return 0
   }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
@@ -1080,6 +1099,14 @@ const W_HERE = 3040
 const W_BASE = 4288
 const W_DATA = 4296
 const W_EST = 4304
+/// A profiler record's image (prof_init on Windows): the program's base,
+/// its .pdata (RUNTIME_FUNCTIONs of 12 bytes, sorted) and their count,
+/// and its executable sections' start and end.
+const W_PBASE = 4312
+const W_PDATA = 4320
+const W_PDATA_N = 4328
+const W_PLO = 4336
+const W_PHI = 4344
 /// A cache of RtlLookupFunctionEntry by pc (every raise of a fault walks
 /// the same frames again): W_CACHE_N entries of three words (the pc,
 /// its RUNTIME_FUNCTION, its image base), direct mapped by pc.
@@ -1780,7 +1807,11 @@ pub fn prof_init(s: Int) -> Bool {
       rt.mem_store(s, H_HDR, hdr, 8)
       hdr != 0
     }
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows => match target.arch {
+      TargetArch.Amd64 => win_image(s)
+      TargetArch.Arm64 | TargetArch.Wasm32 => false
+    }
+    TargetOs.Wasi => false
   }
 }
 
@@ -1821,7 +1852,8 @@ pub fn prof_text(s: Int) -> (Int, Int) {
       }
       (lo, hi)
     }
-    TargetOs.Windows | TargetOs.Wasi => (0, 0)
+    TargetOs.Windows => (rt.mem_load(s, W_PLO, 8), rt.mem_load(s, W_PHI, 8))
+    TargetOs.Wasi => (0, 0)
   }
 }
 
@@ -1987,4 +2019,136 @@ fn x64_linux_reg(i: Int) -> Int {
     15 => 7
     _ => i + 8
   }
+}
+
+// Windows profiles (decision 0238): the walk reads only the image (its
+// .pdata, searched here, not with RtlLookupFunctionEntry, which takes
+// the loader's lock a thread the sampler suspended may hold) and the
+// stack (RtlVirtualUnwind), and allocates nothing.
+
+/// The program's image into the profiler record s: its base, .pdata, and
+/// executable sections (x86_64, PE32+). Whether its .pdata was found.
+fn win_image(s: Int) -> Bool {
+  let base = sys_windows.GetModuleHandleW(0)
+  if base == 0 {
+    return false
+  }
+  let pe = base + rt.mem_load(base, 60, 4)
+  let nsec = rt.mem_load(pe, 6, 2)
+  let opt = pe + 24
+  // the data directories at 112; the exception directory is the fourth
+  rt.mem_store(s, W_PBASE, base, 8)
+  rt.mem_store(s, W_PDATA, base + rt.mem_load(opt, 136, 4), 8)
+  rt.mem_store(s, W_PDATA_N, rt.mem_load(opt, 140, 4) / 12, 8)
+  let sec = opt + rt.mem_load(pe, 20, 2)
+  var lo = 0
+  var hi = 0
+  for i in 0..nsec {
+    let h = sec + 40 * i
+    // IMAGE_SCN_MEM_EXECUTE
+    if (rt.mem_load(h, 36, 4) & 536870912) != 0 {
+      let a = base + rt.mem_load(h, 12, 4)
+      let b = a + rt.mem_load(h, 8, 4)
+      if lo == 0 || a < lo {
+        lo = a
+      }
+      if b > hi {
+        hi = b
+      }
+    }
+  }
+  rt.mem_store(s, W_PLO, lo, 8)
+  rt.mem_store(s, W_PHI, hi, 8)
+  lo != 0 && rt.mem_load(s, W_PDATA_N, 8) != 0
+}
+
+/// The CONTEXT of the profiler record s (16 byte aligned), its
+/// ContextFlags set for GetThreadContext: CONTEXT_AMD64 | CONTEXT_CONTROL
+/// | CONTEXT_INTEGER.
+pub fn win_context(s: Int) -> Int {
+  let cx = s + W_CX
+  rt.mem_store(cx, 48, 1048579, 4)
+  cx
+}
+
+/// The pcs of the frames from the CONTEXT of record s (the innermost
+/// first) into the words at out, at most max: their count. first: the
+/// context's pc is an interrupted instruction (a suspended thread's),
+/// else a return address. A frame of the program is unwound by its
+/// .pdata entry; a leaf without one, or a first frame outside the program
+/// (a system DLL's: its return address taken at Rsp once), returns to the
+/// word at Rsp. Each return address must follow a call in the program's
+/// text and the stack pointer must rise, or the walk ends.
+pub fn win_walk(s: Int, out: Int, max: Int, first0: Bool) -> Int {
+  let cx = s + W_CX
+  let lo = rt.mem_load(s, W_PLO, 8)
+  let hi = rt.mem_load(s, W_PHI, 8)
+  var n = 0
+  var first = first0
+  while n < max {
+    let pc = rt.mem_load(cx, WX_PC, 8)
+    let sp = rt.mem_load(cx, WX_SP, 8)
+    if pc == 0 || sp == 0 {
+      break
+    }
+    if !first && !after_call(pc, lo, hi) {
+      break
+    }
+    rt.mem_store(out, 8 * n, pc, 8)
+    n += 1
+    let f = if pc >= lo && pc < hi { pdata_find(s, if first { pc } else { pc - 1 }) } else { 0 }
+    if f == 0 {
+      if !first && (pc < lo || pc >= hi) {
+        break
+      }
+      rt.mem_store(cx, WX_PC, rt.mem_load(sp, 0, 8), 8)
+      rt.mem_store(cx, WX_SP, sp + 8, 8)
+    } else {
+      // UNW_FLAG_NHANDLER
+      let _h = sys_windows.RtlVirtualUnwind(0, rt.mem_load(s, W_PBASE, 8), pc, f, cx, s + W_DATA, s + W_EST, 0)
+      let nsp = rt.mem_load(cx, WX_SP, 8)
+      if nsp <= sp || nsp - sp > PROF_SPAN {
+        break
+      }
+    }
+    first = false
+  }
+  n
+}
+
+/// Whether ra is a return address in the program's text: it follows a
+/// call (E8 rel32, or FF /2 with a register, a memory operand, or a
+/// displacement).
+fn after_call(ra: Int, lo: Int, hi: Int) -> Bool {
+  if ra < lo + 7 || ra >= hi {
+    return false
+  }
+  if rt.mem_load(ra, -5, 1) == 232 {
+    return true
+  }
+  call_ff(ra, 2) || call_ff(ra, 3) || call_ff(ra, 6) || call_ff(ra, 7)
+}
+
+/// Whether the k bytes before ra are an FF /2 call.
+fn call_ff(ra: Int, k: Int) -> Bool { rt.mem_load(ra, 0 - k, 1) == 255 && (rt.mem_load(ra, 1 - k, 1) & 56) == 16 }
+
+/// The RUNTIME_FUNCTION of record s's image whose range holds pc (a
+/// binary search of its .pdata), or 0.
+fn pdata_find(s: Int, pc: Int) -> Int {
+  let rva = pc - rt.mem_load(s, W_PBASE, 8)
+  let t = rt.mem_load(s, W_PDATA, 8)
+  var a = 0
+  var b = rt.mem_load(s, W_PDATA_N, 8)
+  while a < b {
+    let m = (a + b) / 2
+    let f = t + 12 * m
+    if rt.mem_load(f, 0, 4) > rva {
+      b = m
+    } else if rt.mem_load(f, 4, 4) <= rva {
+      a = m + 1
+    } else {
+      return f
+    }
+  }
+  0
 }

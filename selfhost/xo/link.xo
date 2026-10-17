@@ -181,14 +181,17 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: 
 /// clang picks; /Brepro makes the link deterministic: lld-link
 /// writes a hash of the output in the COFF header's time stamp (and the
 /// debug directory) instead of the link time, so a rebuild is byte
-/// identical (gotchas/windows-lld-link-time-stamp.md). A Linux link with
+/// identical (gotchas/windows-lld-link-time-stamp.md); /debug:symtab
+/// keeps a COFF symbol table in the file (not mapped, no PDB), which the
+/// profiler and the fault traceback read (std/native/llrt/prof.xo
+/// coff_symbols, decision 0238). A Linux link with
 /// XO_NOLIBC=1 (the runtime compiled with nolibc_flags) is static with no
 /// C library, keeping only the sections the program reaches (decision
 /// 0206), with the .eh_frame_hdr table the Xo unwinder searches (a
 /// static link has none by default).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   if goos == "windows" {
-    return ["-fuse-ld=lld", "-Wl,/Brepro", "-lkernel32", "-lws2_32", "-lbcrypt", "-lsynchronization", "-lntdll", "-lshell32", "-lcrypt32"]
+    return ["-fuse-ld=lld", "-Wl,/Brepro", "-Wl,/debug:symtab", "-lkernel32", "-lws2_32", "-lbcrypt", "-lsynchronization", "-lntdll", "-lshell32", "-lcrypt32"]
   }
   if goos == "linux" && flags.contains("-DXO_NOLIBC") {
     return ["-static", "-nostdlib", "-Wl,--gc-sections", "-Wl,--eh-frame-hdr"]
