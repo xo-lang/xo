@@ -243,4 +243,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0250-native-contract-fuzzing.md](0250-native-contract-fuzzing.md): Accepted: native contract fuzzing as generated property tests in the checker overlay; the Go backend's targets, cases, seeds, and regression files
 - [0251-native-dump.md](0251-native-dump.md): Proposed (stub): `xo dump` and SIGQUIT for native programs
 - [0248-native-default-backend.md](0248-native-default-backend.md): Accepted: native is the default backend (arm64 on arm64 hosts, LLVM on x86_64); --backend=go kept; use go needs it; contract fuzzing and xo dump stay on Go for now
-- [0252-dwarf-variables.md](0252-dwarf-variables.md): Proposed (stub): DWARF types, variables, and locations on top of 0239's line tables, so lldb prints locals, struct fields, lists, and enums
+- [0252-dwarf-variables.md](0252-dwarf-variables.md): Proposed: DWARF types, variables, and locations on top of 0239's line tables, so lldb prints locals, struct fields, lists, and enums
