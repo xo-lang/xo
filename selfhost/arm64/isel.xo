@@ -842,6 +842,22 @@ fn (var g: G) instr(v: Int) {
   g.cur_pad = -1
 }
 
+/// For an operand c of a 64 bit logical operation that is a rotation of
+/// y right by a constant k (rt.int_wrap 5) read only there: (y, k), else
+/// (-1, 0).
+fn (g: G) rot_operand(c: Int) -> (Int, Int) {
+  let x = g.f.values[c]
+  if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 || g.nuses[c] != 1 {
+    return (-1, 0)
+  }
+  let (op, ok) = g.const_int(x.args[0])
+  let (k, kc) = g.const_int(x.args[2])
+  if !ok || op != 5 || !kc || k & 63 == 0 {
+    return (-1, 0)
+  }
+  (x.args[1], k & 63)
+}
+
 fn (var g: G) instr1(v: Int) {
   let x = g.f.values[v]
   match x.op {
@@ -889,8 +905,25 @@ fn (var g: G) instr1(v: Int) {
             _ => "eon"
           }
           let a = g.word(x.args[1 - j])
+          // ~(y rotated): the rotation the operand's shift too
+          let (y, k) = g.rot_operand(cx.args[0])
+          if k > 0 {
+            g.set(v, [g.def1(false, "${inv} $d0, $u0, $u1, ror #${k}", [a, g.word(y)])])
+            return
+          }
           let b = g.word(cx.args[0])
           g.set(v, [g.def1(false, "${inv} $d0, $u0, $u1", [a, b])])
+          return
+        }
+      }
+      // an operand rotated by a constant: the shifted register operand's
+      // ror (Keccak's D = C ^ rot(C, 1) and rho, 2026-10-17: a ror each);
+      // the ror, with no other use, is then dead
+      for j in [1, 0] {
+        let (y, k) = g.rot_operand(x.args[j])
+        if k > 0 {
+          let a = g.word(x.args[1 - j])
+          g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1, ror #${k}", [a, g.word(y)])])
           return
         }
       }

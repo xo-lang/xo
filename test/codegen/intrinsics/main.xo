@@ -15,7 +15,8 @@ fn main(os: Os) {
   let c = internal.crypto_op("sysc.present", b"", b"", b"", b"")
   let cc = internal.crypto_op("chacha.seal", k, k[0..12], k, b"")
   let h = internal.crypto_op("hash.sha256", k, b"", b"", b"")
-  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()}")
+  let s3 = internal.crypto_op("sha3.sha3_256", k, b"", b"", b"")
+  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()}")
 }
 
 // P-256's Montgomery product: each add and its carry are one adds and
@@ -45,6 +46,11 @@ fn main(os: Os) {
 // of memcpy (rt.mem_copy of a known small length).
 // func nistec.pt_double256
 // arm64: "adcs" -"memcpy"
+
+// Keccak's D = C ^ rot(C, 1): the rotation is eor's shifted operand (a
+// rotation by a constant read once folds into eor, bic, orr).
+// func sha3.keccak
+// arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+, ror #63"
 
 // The final subtraction's borrows.
 // func nistec.sub4
