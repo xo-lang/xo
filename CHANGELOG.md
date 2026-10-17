@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native contract fuzzing draws small numbers, as the Go backend's does
+  (std/rt GenRand.Small): it drew MaxInt and MinInt, so a function that
+  overflows only at the extremes failed natively and passed on Go
+  (the website tour's deposit; TestContractFuzzSmallInts).
+
 - An `else if` chain is parsed, checked, walked by the flow passes, and
   lowered to SSA in a loop instead of a call per `if`: in the wasm build
   of the compiler (the playground) a 200-branch chain needed more than

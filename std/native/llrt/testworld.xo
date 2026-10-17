@@ -681,7 +681,9 @@ const G_NREPLAY = 56
 const G_POS = 64
 const G_REPLAYING = 72
 const G_RECORDS = 80
-const G_SIZE = 88
+/// small numbers only (contract fuzzing, std/rt's GenRand.Small)
+const G_SMALL = 88
+const G_SIZE = 96
 
 fn gen_alloc() -> Int {
   let g = rt.heap_large(G_SIZE)
@@ -706,6 +708,13 @@ pub fn gen_new(seed: Int) -> Int {
   gen_seed(g, seed)
   g
 }
+
+/// Keeps generator g's numbers small (std/rt's GenRand.Small: contract
+/// fuzzing, where a generated Int may bound a loop; decision 0250).
+pub fn gen_set_small(g: Int) { rt.mem_store(g, G_SMALL, 1, 8) }
+
+/// Whether generator g keeps its numbers small.
+pub fn gen_small(g: Int) -> Bool { rt.mem_load(g, G_SMALL, 8) != 0 }
 
 /// Frees generator g.
 pub fn gen_free(g: Int) {

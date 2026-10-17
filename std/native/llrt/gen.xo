@@ -40,6 +40,14 @@ pub fn size(g: Int) -> Int {
 /// std/rt's genInt: small values and edges preferred (contract
 /// fuzzing's small numbers are not used natively).
 pub fn any_int(g: Int) -> Int {
+  if testworld.gen_small(g) {
+    // std/rt's genInt with Small: no extremes
+    if testworld.gen_draw(g, 5) < 4 {
+      return zigzag(testworld.gen_draw(g, 2001))
+    }
+    let k = intn(g, 3)
+    return if k == 0 { 0 } else if k == 1 { 1 } else { -1 }
+  }
   let c = testworld.gen_draw(g, 10)
   if c < 7 {
     return zigzag(testworld.gen_draw(g, 201))

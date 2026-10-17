@@ -2486,6 +2486,8 @@ fn llrt_gen_size(g: Int) -> Int { gen.size(g) }
 
 fn llrt_gen_any_int(g: Int) -> Int { gen.any_int(g) }
 
+fn llrt_gen_set_small(g: Int) { testworld.gen_set_small(g) }
+
 fn llrt_gen_sized(g: Int, kind: Int) -> Int { gen.sized(g, kind) }
 
 fn llrt_gen_float(g: Int) -> Float { gen.float(g) }

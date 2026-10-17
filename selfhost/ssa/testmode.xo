@@ -110,7 +110,10 @@ fn (var b: Builder) build_tests() {
     let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [idx, b.cint(t.i)]))
     var args = [b.zero(os_t, [])]
     if !t.params.is_empty() {
-      for v in b.prop_inputs(t.params) {
+      // a generated contract fuzz test (decision 0250) draws small
+      // numbers, as the Go backend's (std/rt GenRand.Small)
+      let small = b.c.files[tr.file].path.ends_with(".xo_contract_fuzz_test.xo")
+      for v in b.prop_inputs(t.params, small) {
         args.push(v)
       }
       if looped && b.prelude_impl("llrt_test_skip") >= 0 {
@@ -528,10 +531,13 @@ fn (var b: Builder) testing_gen(x: Expr, ci: check.CallInfo) -> Int {
 /// The inputs of a property test's case: each from the case's generator
 /// in order, then their choices and `name = Debug` lines reported to the
 /// harness (propInputs).
-fn (var b: Builder) prop_inputs(params: List[Int]) -> List[Int] {
+fn (var b: Builder) prop_inputs(params: List[Int], small: Bool) -> List[Int] {
   let st = b.str_t()
   let it = b.int_t()
   let g = b.tw_rt("gen_prop", it, [])
+  if small {
+    b.tw_rt("gen_set_small", -1, [g])
+  }
   var vals: List[Int] = []
   for vo in params {
     let ct = b.c.objs[vo].ty

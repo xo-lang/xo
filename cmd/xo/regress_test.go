@@ -86,3 +86,32 @@ func TestRegressionCrossBackend(t *testing.T) {
 		t.Fatalf("the backends wrote different regression files:\n--- go\n%s--- %s\n%s", files["--backend=go"], native, files[native])
 	}
 }
+
+// TestContractFuzzSmallInts: contract fuzzing draws small numbers on every
+// backend (std/rt GenRand.Small, decision 0250), so a function that
+// overflows only at the extremes, as a deposit adding to a balance,
+// passes on both (it failed natively before the native generator had the
+// small mode: the website tour's mutation example, 2026-10-17).
+func TestContractFuzzSmallInts(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs test binaries on two backends")
+	}
+	src := "struct Account {\n  owner: Str\n  balance: Int\n}\n\nfn (var a: Account) deposit(amount: Int)\n  requires amount > 0\n{\n  a.balance += amount\n}\n"
+	for _, be := range []string{"--backend=go", "--backend=" + xotool.NativeBackend()} {
+		dir := filepath.Join(t.TempDir(), "bank")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		if code := runTest(t, []string{be, "-v", dir}, &out, &errb); code != 0 || !strings.Contains(out.String(), "--- PASS: contract fuzz: bank.Account.deposit") {
+			t.Fatalf("%s: want the contract fuzz to pass\n%s%s", be, out.String(), errb.String())
+		}
+		if _, err := os.Stat(filepath.Join(dir, regressFile)); err == nil {
+			t.Fatalf("%s: wrote a regression test", be)
+		}
+	}
+}
