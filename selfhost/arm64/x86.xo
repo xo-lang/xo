@@ -950,10 +950,26 @@ fn (var g: G) x86_binop(inst: Inst, var x: XT, dt: Str, at: Str, b: Str, op: Str
   let size = if is_w(dt) { 4 } else { 8 }
   let d = xop(dt, size)
   let fp = g.tok_fp(inst, dt)
-  let line = "${op} ${b}, ${d}"
+  var line = "${op} ${b}, ${d}"
   let di = def_index(dt)
   if single && di >= 0 {
-    if let Some(s) = tie_src(inst, at) {
+    if let Some(s0) = tie_src(inst, at) {
+      var s = s0
+      if x86_commutes(op) && s.kind == S_REG && s.v != 0 && !g.x86_dead.contains(s.v) {
+        // the tied operand lives on, the other dies here: tie that one
+        // (its copy coalesces away)
+        let (bb, _) = tpl_ref(b)
+        if bb.starts_with("u") {
+          let k = Int.parse(bb[1..bb.len()]) ?? -1
+          if k >= 0 && k < inst.us.len() && inst.us[k] != 0 && g.x86_dead.contains(inst.us[k]) {
+            let a2 = xop(at, if b.starts_with("$w") { 4 } else { 8 })
+            if !a2.is_empty() && !a2.starts_with("$0") {
+              s = rsrc(inst.us[k])
+              line = "${op} ${a2}, ${d}"
+            }
+          }
+        }
+      }
       x.ties.push((di, s))
       x.lines.push(line)
       return
@@ -1361,11 +1377,27 @@ fn (var g: G) x86_fccmp(inst: Inst, var x: XT, ops: List[Str], next: Str) -> Boo
 /// condition, each fault's condition. The ties become parallel moves
 /// before their instruction.
 fn (var g: G) x86_retarget() {
+  let lout = g.x86_live_out()
   for b in 0..g.blocks.len() {
     var out: List[Inst] = []
     // CF holds not ARM's C (x86_carry_polarity)
     var inv = false
+    // each use's last instruction in the block, for x86_dead
+    var last: Map[Int, Int] = {}
+    for (i, inst) in g.blocks[b].insts.indexed() {
+      for u in inst.us {
+        last[u] = i
+      }
+    }
+    var ii = -1
     for inst in g.blocks[b].insts {
+      ii += 1
+      g.x86_dead = []
+      for u in inst.us {
+        if u != 0 && (last.get(u) ?? -1) == ii && !lout[b].contains(u) && !g.x86_dead.contains(u) {
+          g.x86_dead.push(u)
+        }
+      }
       if inst.kind != K_PLAIN && inst.kind != K_PMOVE {
         inv = false
       }
@@ -1464,6 +1496,9 @@ fn (var g: G) x86_retarget() {
             // add, and a copy back)
             ni.us = x86_untie_recovered(ni.us, ni.text, srcs, inst.defs)
           }
+        }
+        if inst.kind == K_PLAIN && !inst.has_fault {
+          g.x86_fuse_load(out, ni)
         }
         out.push(ni)
         continue
@@ -1752,4 +1787,145 @@ fn src_regs(srcs: List[Src]) -> List[Int] {
     }
   }
   us
+}
+
+/// Whether x86 operation op commutes (its two operands exchangeable).
+fn x86_commutes(op: Str) -> Bool {
+  op is "addq" | "addl" | "imulq" | "imull" | "andq" | "andl" | "orq" | "orl" | "xorq" | "xorl" | "addsd" | "mulsd"
+}
+
+/// The registers live out of each block (by block index), the arm64
+/// MIR's (regalloc.xo's liveness, before the translation).
+fn (var g: G) x86_live_out() -> List[List[Int]] {
+  let order = g.hot + g.cold
+  let n = g.fp.len()
+  var idx: List[Int] = []
+  for _ in 0..g.blocks.len() {
+    idx.push(-1)
+  }
+  for (k, b) in order.indexed() {
+    idx[b] = k
+  }
+  var gens: List[List[Int]] = []
+  var kills: List[List[Int]] = []
+  var succs: List[List[Int]] = []
+  var kst: List[Int] = List.with_capacity(n)
+  var ust: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    kst.push(0)
+    ust.push(0)
+  }
+  for k in 0..order.len() {
+    let b = order[k]
+    var gl: List[Int] = []
+    var kl: List[Int] = []
+    gen_kill(g.blocks[b].insts, k + 1, gl, kl, kst, ust)
+    gens.push(gl)
+    kills.push(kl)
+    var ss: List[Int] = []
+    for t in g.msuccs(b) {
+      if idx[t] >= 0 {
+        ss.push(idx[t])
+      }
+    }
+    succs.push(ss)
+  }
+  let lv = solve_live(succs, gens, kills, n)
+  var out: List[List[Int]] = []
+  for _ in 0..g.blocks.len() {
+    out.push([])
+  }
+  for (k, b) in order.indexed() {
+    out[b] = lv.outs[k]
+  }
+  out
+}
+
+/// Load-op fusion: when ni is one two operand line `OP $uK, $d0` whose
+/// source K dies there and the instruction before it (past a tie's move)
+/// is the plain load of that register at the operation's width, the load
+/// becomes ni's memory operand and is dropped from out (its address
+/// registers become ni's uses).
+fn (var g: G) x86_fuse_load(var out: List[Inst], var ni: Inst) {
+  if ni.text.contains("\n") || out.is_empty() {
+    return
+  }
+  let sp = ni.text.find(" ") ?? -1
+  if sp < 0 {
+    return
+  }
+  let op = ni.text[0..sp]
+  if !(op is "addq" | "addl" | "subq" | "subl" | "andq" | "andl" | "orq" | "orl" | "xorq" | "xorl" | "imulq" | "imull" | "addsd" | "subsd" | "mulsd" | "divsd") {
+    return
+  }
+  let ops = x86_ops(ni.text[sp + 1..ni.text.len()])
+  if ops.len() != 2 || !ops[1].starts_with("$") {
+    return
+  }
+  let (bb, _) = tpl_ref(ops[0])
+  if !bb.starts_with("u") {
+    return
+  }
+  let k = Int.parse(bb[1..bb.len()]) ?? -1
+  if k < 0 || k >= ni.us.len() {
+    return
+  }
+  let x = ni.us[k]
+  if x == 0 || !g.x86_dead.contains(x) {
+    return
+  }
+  // the use K only once in ni (its other uses, a tie's, are other indices)
+  var li = out.len() - 1
+  if out[li].kind == K_PMOVE && li > 0 {
+    for u in out[li].us {
+      if u == x {
+        return
+      }
+    }
+    li -= 1
+  }
+  let ld = out[li]
+  if ld.kind != K_PLAIN || ld.has_fault || ld.keep || ld.defs.len() != 1 || ld.defs[0] != x || ld.text.contains("\n") {
+    return
+  }
+  let lsp = ld.text.find(" ") ?? -1
+  if lsp < 0 {
+    return
+  }
+  let lop = ld.text[0..lsp]
+  let width_ok = (lop == "movq" && op.ends_with("q")) || (lop == "movl" && op.ends_with("l")) || (lop == "movsd" && op.ends_with("sd"))
+  if !width_ok {
+    return
+  }
+  let lops = x86_ops(ld.text[lsp + 1..ld.text.len()])
+  if lops.len() != 2 || !lops[0].contains("(") || lops[0].contains("%r11") {
+    return
+  }
+  // the load's address, its uses renumbered past ni's
+  let base = ni.us.len()
+  var mem = StrBuilder.new()
+  let mb = lops[0].bytes()
+  var i = 0
+  var from = 0
+  while i < mb.len() {
+    if mb[i] == '$' {
+      let (w, ud, kk, end) = x86_operand(mb, i)
+      if kk >= 0 && ud == Int('u') {
+        mem.write(lops[0][from..i])
+        mem.write("$${w}u${base + kk}")
+        i = end
+        from = i
+        continue
+      }
+    }
+    i += 1
+  }
+  mem.write(lops[0][from..mb.len()])
+  ni.text = "${op} ${mem.freeze()}, ${ops[1]}"
+  // the fused register is no longer read
+  ni.us[k] = 0
+  for u in ld.us {
+    ni.us.push(u)
+  }
+  out = out[0..li] + out[li + 1..out.len()]
 }

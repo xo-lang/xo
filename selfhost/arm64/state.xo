@@ -131,6 +131,9 @@ struct G {
   os: Str
   /// x86_64 (decision 0254): the front half's MIR retargeted (x86.xo)
   x86: Bool = false
+  /// x86_retarget: the uses of the instruction being translated that die
+  /// there (no later use in its block, not live out of it)
+  x86_dead: List[Int] = []
   /// the last function of each name (Go's byName)
   by_name: Map[Str, Int] = {}
   /// value layouts by type: 0 not computed, 1 on the current path, 2 done
