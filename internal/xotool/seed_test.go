@@ -356,10 +356,18 @@ func TestAncestorBuild(t *testing.T) {
 		os.WriteFile(p, []byte("x"), 0o755)
 		if commit != "" {
 			os.WriteFile(filepath.Join(d, "commit"), []byte(commit+"\n"), 0o644)
+			os.WriteFile(filepath.Join(d, "clean"), nil, 0o644)
 		}
 		return p
 	}
 	norecord := build("k0", "")
+	// a build recorded before the clean file (or by an older xotool): its
+	// commit is an ancestor, but it may have come from a dirty tree
+	unmarked := build("k3", a)
+	os.Remove(filepath.Join(cache, "k3", "clean"))
+	if got := ancestorBuild(root, []string{unmarked}); got != "" {
+		t.Errorf("a build with no clean file: ancestorBuild = %q", got)
+	}
 	other := build("k1", b)
 	mine := build("k2", a)
 	if got := ancestorBuild(root, []string{norecord, other, mine}); got != mine {
@@ -373,5 +381,68 @@ func TestAncestorBuild(t *testing.T) {
 	}
 	if s := summary(errors.New("exit status 1\nld: one\nld: two")); s != "exit status 1; 2 more lines" {
 		t.Errorf("summary %q", s)
+	}
+}
+
+// TestRecordCommitDirty: a build from a tree with uncommitted changes
+// under selfhost/ or std/ records no commit, so ancestorBuild never offers
+// it to another checkout (2026-10-16: a dirty build recorded under its
+// HEAD was picked for another checkout, whose xo then called a runtime
+// export its std lacked); a clean tree's build is recorded and found.
+func TestRecordCommitDirty(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	os.MkdirAll(filepath.Join(root, "std"), 0o755)
+	os.MkdirAll(filepath.Join(root, "selfhost"), 0o755)
+	os.WriteFile(filepath.Join(root, "std", "a.xo"), []byte("a"), 0o644)
+	git("add", "-A")
+	git("commit", "-q", "-m", "a")
+	cache := t.TempDir()
+	dir := func(name string) (string, string) {
+		d := filepath.Join(cache, name)
+		os.MkdirAll(d, 0o755)
+		p := filepath.Join(d, exeName("xo"))
+		os.WriteFile(p, []byte("x"), 0o755)
+		return d, p
+	}
+	// clean: recorded, and offered
+	cd, cp := dir("clean")
+	recordCommit(root, cd)
+	if got := ancestorBuild(root, []string{cp}); got != cp {
+		t.Fatalf("a clean build: ancestorBuild = %q, want %q", got, cp)
+	}
+	// a modified std file, then an untracked selfhost file: not recorded
+	for _, change := range []func(){
+		func() { os.WriteFile(filepath.Join(root, "std", "a.xo"), []byte("changed"), 0o644) },
+		func() { os.WriteFile(filepath.Join(root, "selfhost", "new.xo"), []byte("new"), 0o644) },
+	} {
+		change()
+		dd, dp := dir("dirty")
+		recordCommit(root, dd)
+		if _, err := os.Stat(filepath.Join(dd, "commit")); err == nil {
+			t.Fatal("a dirty build recorded a commit")
+		}
+		if got := ancestorBuild(root, []string{dp}); got != "" {
+			t.Fatalf("a dirty build: ancestorBuild = %q", got)
+		}
+	}
+	// a change outside selfhost/ and std/ does not count
+	git("checkout", "-q", "--", "std")
+	os.Remove(filepath.Join(root, "selfhost", "new.xo"))
+	os.WriteFile(filepath.Join(root, "README.md"), []byte("x"), 0o644)
+	od, op := dir("other")
+	recordCommit(root, od)
+	if got := ancestorBuild(root, []string{op}); got != op {
+		t.Fatalf("a change outside selfhost/ and std/: ancestorBuild = %q, want %q", got, op)
 	}
 }

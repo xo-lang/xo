@@ -369,10 +369,7 @@ func buildLocked(root, out string, log io.Writer) error {
 			}
 		}
 		fmt.Fprintf(log, "xotool: built in %.0f s with %s\n", time.Since(t0).Seconds(), s.Why)
-		if c := headCommit(root); c != "" {
-			// which commit these sources came from, for ancestorBuild
-			os.WriteFile(filepath.Join(filepath.Dir(out), "commit"), []byte(c+"\n"), 0o644)
-		}
+		recordCommit(root, filepath.Dir(out))
 		return nil
 	}
 	msg := "xotool: no seed built xo"
@@ -454,12 +451,41 @@ func Seeds(root string) ([]Seed, error) {
 	return out, nil
 }
 
+// recordCommit writes, beside a build in dir, the commit its sources came
+// from (the commit file) and that they were that commit's (the clean
+// file), for ancestorBuild. A build from a tree with uncommitted changes
+// under selfhost/ or std/ is not that commit's: its xo can call runtime
+// exports the commit's std lacks (`dyld: Symbol not found:
+// _xo_x_task_spawn_fn`, 2026-10-16, gotchas/xobuild-dirty-build-as-ancestor.md),
+// so it gets neither file (an older one is removed).
+func recordCommit(root, dir string) {
+	commitFile := filepath.Join(dir, "commit")
+	cleanFile := filepath.Join(dir, "clean")
+	os.Remove(cleanFile)
+	c := headCommit(root)
+	if c == "" || !sourcesClean(root) {
+		os.Remove(commitFile)
+		return
+	}
+	os.WriteFile(commitFile, []byte(c+"\n"), 0o644)
+	os.WriteFile(cleanFile, []byte("selfhost/ and std/ had no uncommitted changes\n"), 0o644)
+}
+
+// sourcesClean reports whether root's selfhost/ and std/ match HEAD: no
+// modified, staged, or untracked files there.
+func sourcesClean(root string) bool {
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--", "selfhost", "std").Output()
+	return err == nil && len(strings.TrimSpace(string(out))) == 0
+}
+
 // ancestorBuild is the newest of the cached builds ms (newest first)
-// whose recorded commit (the commit file buildLocked writes beside it)
-// is an ancestor of root's HEAD, or "". A build of another branch can
-// emit calls into a runtime this checkout's std does not have (on a
-// shared CI runner, 2026-10-14, run 38632539643), and a build with no
-// record or outside a git checkout cannot be placed, so neither is used.
+// whose recorded commit (the commit file recordCommit writes beside it,
+// with the clean file) is an ancestor of root's HEAD, or "". A build of
+// another branch can emit calls into a runtime this checkout's std does
+// not have (on a shared CI runner, 2026-10-14, run 38632539643), and so
+// can a build of a dirty tree (2026-10-16); a build with no record, no
+// clean file (a dirty tree's, or one recorded before 2026-10-16), or
+// outside a git checkout cannot be placed, so none of those is used.
 func ancestorBuild(root string, ms []string) string {
 	head := headCommit(root)
 	if head == "" {
@@ -468,6 +494,9 @@ func ancestorBuild(root string, ms []string) string {
 	for i, m := range ms {
 		if i == 20 {
 			break
+		}
+		if _, err := os.Stat(filepath.Join(filepath.Dir(m), "clean")); err != nil {
+			continue
 		}
 		b, err := os.ReadFile(filepath.Join(filepath.Dir(m), "commit"))
 		c := strings.TrimSpace(string(b))
