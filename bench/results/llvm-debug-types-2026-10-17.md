@@ -29,3 +29,19 @@ reaping it; wall and user time were too noisy with other sessions
 running. The 0252 option (1) budget holds: -s and --release builds
 change nothing (identical IR), and a debug build costs clang 1.2% more
 instructions.
+
+## Addendum: the code's own extractvalues (dbg_note_ext)
+
+Main 6c40366c against branch llvmext (a fragment dbg.value after the
+code's own extractvalue of a value whose variable is bound to it only),
+the same program and method:
+
+| | main | branch | change |
+|---|---|---|---|
+| IR, --release | | | byte identical (cmp) |
+| llvm.dbg.value calls | 32,472 | 37,610 | +16% |
+| clang -cc1 -O2 -g, instructions retired (3 runs) | 228.54, 228.18, 227.77 G | 231.37, 230.94, 230.66 G | +1.2% |
+| clang -cc1 peak footprint (median of 3) | 1.285 GB | 1.331 GB | +3.6% |
+| object __text | 2,364,972 B | 2,364,972 B | same |
+| object __debug_info | 892,584 B | 1,108,844 B | +24% |
+| object __debug_loclists | 832,914 B | 872,293 B | +5% |

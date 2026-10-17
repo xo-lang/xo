@@ -575,14 +575,16 @@ func TestDebugTypes(t *testing.T) {
 		// (gotchas/dsymutil-loclist-address-function-offset.md)
 		{"cc", []string{"--backend=arm64", "--ld=cc"}, arm64Cmds, append(append([]string{}, arm64Wants[:3]...), arm64Wants[4:]...), nil},
 		// LLVM (compiler/llvm debug.xo): a value the function builds (a
-		// struct or enum literal) by its parts, a list through its object;
-		// not an aggregate that arrives whole (a parameter, a call's
-		// result, a phi: m and sh here), and not the string's address on
-		// macOS (gotchas/llvm-aggregate-dbg-value.md). m was the zero map
-		// of `{}` until a later binding ended that location
-		{"llvm", []string{"--backend=llvm"}, []string{"frame variable *xs", "frame variable m", "frame variable it"},
-			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4", "(Item) it = {", "len = 3", "tags = 0x"},
-			[]string{"keys = NULL"}},
+		// struct or enum literal) by its parts, a list through its object,
+		// and the parts of a parameter the code extracts (report's name.len,
+		// m.n); not the other parts of an aggregate that arrives whole (lldb
+		// prints such an empty piece as 0 or NULL, gdb as <optimized out>),
+		// not main's m, a call's result it never splits, and not the
+		// string's address (gotchas/llvm-aggregate-dbg-value.md). main's m
+		// was the zero map of `{}` until a later binding ended that location
+		{"llvm", []string{"--backend=llvm"}, []string{"frame variable *xs", "frame variable m", "frame variable it", "frame select 0", "frame variable name m"},
+			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4", "(Item) it = {", "len = 3", "tags = 0x", "(Str) name = {", "len = 5", "n = 2"},
+			[]string{"(Map[Str, Int]) m = {\n  keys = NULL\n  vals = NULL\n  live = NULL\n  slots = NULL\n  n = 0"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)

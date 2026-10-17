@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM debug builds show the parts of a parameter or a call's result
+  that the code itself reads (a string parameter's length, a map's
+  count), where before such values showed as not available.
+
 - arm64: pushing a byte or a word onto a string the code holds alone and
   that has room is inline (a count and capacity check, a store), the
   call only for a shared, literal, or full string: json/enc_strings 3.7%

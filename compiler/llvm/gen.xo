@@ -100,6 +100,13 @@ pub struct Gen {
   /// by the name they define: (aggregate, index, inserted operand), so a
   /// variable's part is the scalar inserted (debug_bind)
   dbg_ins: Map[Str, (Str, Int, Str)] = {}
+  /// The function's aggregate operands whose parts are a variable's:
+  /// the value of a variable bound to that one value only (or a part of
+  /// one: the variables and the path of the part), so the code's own
+  /// extractvalue of a part describes it (dbg_note_ext)
+  dbg_aggs: Map[Str, (List[Int], List[Int])] = {}
+  /// The variables bound to one value only in the function
+  dbg_once: Map[Int, Bool] = {}
   cur_line: Int = 0
 
   // The function being lowered (sfn).

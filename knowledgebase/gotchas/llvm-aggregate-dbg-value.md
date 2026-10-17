@@ -32,17 +32,22 @@ function's, gotchas/dsymutil-loclist-address-function-offset.md). A
 part not found that way (an aggregate that arrived whole: a parameter, a
 call's result, a phi) gets `poison`, which ends the part's earlier
 location instead of letting it go on showing an earlier value (the
-`{}` map's zero words, before this). So on LLVM a struct, enum, or
-string literal shows by its parts, Lists, Boxes, and handles (one
-pointer) and the scalars fully, and an aggregate parameter or call
-result as `<variable not available>`.
+`{}` map's zero words, before this). And where the code itself
+extracts a part of a value that a variable is bound to (and to no
+other value in the function: a parameter, `let x = f()`), a fragment
+dbg.value of that live extractvalue follows it (dbg_note_ext; a part
+that is itself an aggregate, a Str in a struct, is followed through its
+own extractvalues). So on LLVM a struct, enum, or string literal shows
+by its parts, Lists, Boxes, and handles (one pointer) and the scalars
+fully, a parameter or call result by the parts the code extracts
+(report's `name.len`, `m.n`), and its other parts as empty pieces: lldb
+prints an empty piece as 0 or NULL, gdb as `<optimized out>`.
 
-Next: describe the parts of aggregates that arrive whole. Options, in
-order of likelihood: (1) a fragment dbg.value on the code's own
-extractvalue of a bound aggregate (in def and set, when the operand is a
-variable's value of the block): a live instruction, so it survives; a
-new debug only extractvalue does not, even after a live one, since
-EarlyCSE deletes dead instructions before it merges equal ones; (2) llvm.fake.use of each part in debug builds (keeps
-them alive: a code cost in every default build, to measure against
-0252 point 5); (3) passing Str and small structs as scalars in the LLVM
-backend's calling convention (a larger change with its own benefits).
+Next, for the parts the code never extracts: (2) llvm.fake.use of each
+part in debug builds keeps them alive, a code cost in every default
+build (lead, 2026-10-17: skipped unless measured at zero for default
+builds, 0252 point 5); (3) passing Str and small structs as scalars in
+the LLVM backend's calling convention (backlog: a combined speed and
+debuggability item; it touches the ABI and every call). A new debug
+only extractvalue does not help even after a live one: EarlyCSE
+deletes dead instructions before it merges equal ones.

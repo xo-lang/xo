@@ -310,8 +310,11 @@ What the compiler has to work with:
   location (before, `var m = {}`'s zero map went on showing after m
   changed). LLVM cannot describe the parts of an aggregate that arrives
   whole (a parameter, a call's result, a phi; gotchas/
-  llvm-aggregate-dbg-value.md), so those show as not available. At most
-  32 parts per variable. internal/arm64 TestDebugTypes's llvm case:
+  llvm-aggregate-dbg-value.md), so those show as not available, except
+  the parts the code itself extracts: a fragment dbg.value follows the
+  code's own extractvalue of a value whose variable is bound to it only
+  (a parameter, `let x = f()`; dbg_note_ext, 2026-10-17), so report's
+  parameters show name.len 5 and m.n 2. At most 32 parts per variable. internal/arm64 TestDebugTypes's llvm case:
   `*xs` (count 1, len 3, cap 4) and `it` (name.len 3, tags), and m not
   shown with a stale value; gdb 16.3 on Linux (Docker, xo cross built)
   gives the same: `it = {name = {obj = <optimized out>, len = 3}, tags =

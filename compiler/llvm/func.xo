@@ -80,6 +80,7 @@ fn (var g: Gen) def(s: Str) -> Str {
   if g.dbg_sp >= 0 {
     g.dbg_temps[t] = true
     g.dbg_note_ins(t, s)
+    g.dbg_note_ext(t, s)
   }
   t
 }
@@ -105,6 +106,7 @@ fn (var g: Gen) set(v: Int, s: Str) {
   g.emit("${vname(v)} = ${s}")
   if g.dbg_sp >= 0 {
     g.dbg_note_ins(vname(v), s)
+    g.dbg_note_ext(vname(v), s)
   }
 }
 

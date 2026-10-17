@@ -83,6 +83,8 @@ fn (var g: Gen) debug_func() {
 fn (var g: Gen) debug_vars(file: Int) {
   g.dbg_vars = []
   g.dbg_binds = {}
+  g.dbg_aggs = {}
+  g.dbg_once = {}
   let entry = g.f.blocks[0].params
   for (k, d) in g.f.dvars.indexed() {
     let t = if d.inl >= 0 || d.ty < 0 { -1 } else { g.dbg_type(d.ty) }
@@ -104,11 +106,21 @@ fn (var g: Gen) debug_vars(file: Int) {
     }
     g.dbg_vars.push(g.dbg_node("!DILocalVariable(name: \"${ir_escape(d.name)}\", ${arg}scope: !${g.dbg_sp}, file: !${file}, line: ${d.line / 4096}, type: !${t})"))
   }
+  var first: Map[Int, Int] = {}
   for b in g.f.dbinds {
     if b.dvar >= 0 && b.dvar < g.dbg_vars.len() && g.dbg_vars[b.dvar] >= 0 {
       var l = g.dbg_binds.get(b.value) ?? []
       l.push(b.dvar)
       g.dbg_binds[b.value] = l
+      // bound to one value only: where that value's part is extracted,
+      // the variable holds it
+      match first.get(b.dvar) {
+        Some(v) => g.dbg_once[b.dvar] = v == b.value && (g.dbg_once.get(b.dvar) ?? false)
+        None => {
+          first[b.dvar] = b.value
+          g.dbg_once[b.dvar] = true
+        }
+      }
     }
   }
   if !g.dbg_binds.is_empty() {
@@ -390,6 +402,19 @@ fn (var g: Gen) debug_bind(v: Int) {
   // netconn.dial_timeout, 2026-10-17)
   let here = (o == vname(v) && g.blk[v] == g.dbg_block) || g.dbg_temps.contains(o) || !(o.starts_with("%") || o.starts_with("@"))
   let leaves = g.dbg_leaves(g.f.values[v].ty)
+  if leaves.len() > 1 || !(leaves.len() == 1 && leaves[0].0.is_empty()) {
+    // the code's own extractvalues of its parts describe a variable
+    // bound to it only
+    var once: List[Int] = []
+    for d in ds {
+      if g.dbg_once.get(d) ?? false {
+        once.push(d)
+      }
+    }
+    if !once.is_empty() {
+      g.dbg_aggs[o] = (once, [])
+    }
+  }
   if leaves.len() == 1 && leaves[0].0.is_empty() {
     // poison where the value is not described: it ends the variable's
     // earlier location, which would go on showing its earlier value
@@ -415,6 +440,51 @@ fn (var g: Gen) debug_bind(v: Int) {
     let frag = if leaves.len() == 1 && off == 0 && size == 8 * whole { "" } else { "DW_OP_LLVM_fragment, ${off}, ${size}" }
     for d in ds {
       g.emit("call void @llvm.dbg.value(metadata ${plt} ${p}, metadata !${g.dbg_vars[d]}, metadata !DIExpression(${frag}))")
+    }
+  }
+}
+
+/// After the code's own extractvalue s defining name: when its aggregate
+/// is a variable's value (dbg_aggs), a fragment dbg.value of the part
+/// for each variable, or, for a part that is itself an aggregate (a Str
+/// in a struct), name recorded as that part. It is a live instruction,
+/// so the location survives where an extractvalue of debug information's
+/// own is deleted as dead (gotchas/llvm-aggregate-dbg-value.md).
+fn (var g: Gen) dbg_note_ext(name: Str, s: Str) {
+  if !s.starts_with("extractvalue ") || g.dbg_aggs.is_empty() {
+    return
+  }
+  let (_, rest) = ir_token(s[13..])
+  let parts = ir_split(rest)
+  if parts.len() < 2 {
+    return
+  }
+  let (ds, prefix) = match g.dbg_aggs.get(parts[0]) {
+    Some(x) => x
+    None => return
+  }
+  var path = prefix
+  for x in parts[1..] {
+    let i = Int.parse(x) ?? -1
+    if i < 0 {
+      return
+    }
+    path.push(i)
+  }
+  let ty = g.f.dvars[ds[0]].ty
+  let (whole, _) = g.layout(ty)
+  let leaves = g.dbg_leaves(ty)
+  for (lp, lt, off, size) in leaves {
+    if lp == path {
+      let frag = if leaves.len() == 1 && off == 0 && size == 8 * whole { "" } else { "DW_OP_LLVM_fragment, ${off}, ${size}" }
+      for d in ds {
+        g.emit("call void @llvm.dbg.value(metadata ${lt} ${name}, metadata !${g.dbg_vars[d]}, metadata !DIExpression(${frag}))")
+      }
+      return
+    }
+    if lp.len() > path.len() && lp[0..path.len()] == path {
+      g.dbg_aggs[name] = (ds, path)
+      return
     }
   }
 }
