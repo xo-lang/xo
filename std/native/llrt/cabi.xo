@@ -194,7 +194,7 @@ fn mono_ns() -> Int { sysio.mono_ns() }
 
 fn heap_big(n: Int) -> Int {
   let a = heapos.large(n)
-  if heapprof.record() != 0 {
+  if prof.supported() && heapprof.record() != 0 {
     heapprof.big_alloc(obj.heap(), a, n)
   }
   a
@@ -202,7 +202,7 @@ fn heap_big(n: Int) -> Int {
 
 fn heap_big_resize(b: Int, n: Int) -> Int {
   let a = heapos.large_resize(b, n)
-  if a != b + 8 && heapprof.record() != 0 {
+  if prof.supported() && a != b + 8 && heapprof.record() != 0 {
     heapprof.moved(b + 8, a)
   }
   a
@@ -215,7 +215,7 @@ fn heap_big_resize(b: Int, n: Int) -> Int {
 /// counted already: one taken off).
 fn heap_big_release(b: Int) {
   let c = rt.mem_load(b, 0, 8)
-  if c < 0 && c > -128 {
+  if prof.supported() && c < 0 && c > -128 {
     heapprof.freed(b + 8)
     rt.mem_store(b, 0, 0 - c, 8)
     let h = obj.heap()
@@ -223,7 +223,7 @@ fn heap_big_release(b: Int) {
     obj.free_obj(b + 8)
     return
   }
-  if heapprof.record() != 0 {
+  if prof.supported() && heapprof.record() != 0 {
     heapprof.freed(b + 8)
   }
   heapos.release(b)
@@ -244,7 +244,7 @@ fn heap_release(b: Int) { libcmem.heap_release(b) }
 /// heap profile's SAMPLE added to n (alloc.xo), samples the block the
 /// heap just allocated (kept in the record's PSAMPLE) and returns it.
 fn heap_grow(h: Int, n: Int) -> Int {
-  if n >= SAMPLE {
+  if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
   heapos.chunk(h)
@@ -445,11 +445,19 @@ fn on_signal(sig: Int) { poll.on_signal() }
 
 /// SIGPROF's handler that prof.xo installs (SA_SIGINFO: the signal, its
 /// siginfo, the interrupted thread's ucontext).
-fn on_prof(sig: Int, info: Int, uc: Int) { prof.on_signal(uc) }
+fn on_prof(sig: Int, info: Int, uc: Int) {
+  if prof.supported() {
+    prof.on_signal(uc)
+  }
+}
 
 /// Writes the sampling profile now (process.xo exit: os.proc.exit does
 /// not return to entry.xo main's end).
-fn prof_finish() { prof.finish() }
+fn prof_finish() {
+  if prof.supported() {
+    prof.finish()
+  }
+}
 
 /// Windows' console handler that entry.xo installs (SetConsoleCtrlHandler:
 /// the event, a DWORD; 1 when handled).

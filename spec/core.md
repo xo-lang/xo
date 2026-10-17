@@ -2107,7 +2107,10 @@ marked `requires(debug)` or `ensures(debug)`.
   other contract, every invariant, and every fault check stays. A release
   build fails while an xo.work workspace overrides a required module
   (`XO1308`, 4.2) and is the only build that accepts
-  `--error-args=false` (11.1). Error frames are recorded in both.
+  `--error-args=false` (11.1). Error frames are recorded in both. It
+  also leaves the native runtime's profiler (XO_PROF) out unless
+  `--profile-support` is given (decision 0238): not a semantic change,
+  only that diagnostic tool.
 - Every other build is a debug build: `xo build` without `--release`,
   `xo run`, `xo test` (whose contract fuzzing checks the debug clauses
   too), and `xo replay`, which rebuilds in the mode recorded in the

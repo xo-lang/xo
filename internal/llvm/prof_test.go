@@ -202,6 +202,92 @@ func TestProfHeap(t *testing.T) {
 	}
 }
 
+// TestProfGating: decision 0238's gating. A --release build leaves the
+// profiler out (prof.start's symbol is not in the binary) and says so
+// when XO_PROF asks; --profile-support keeps it; a profile is written
+// only to a new file (O_EXCL, no symbolic link followed, mode 0600), so a
+// second run with the same output keeps the first file and says so.
+func TestProfGating(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program three ways")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the profiler runs on darwin and linux")
+	}
+	be := xotool.BackendLLVM
+	if runtime.GOARCH == "arm64" {
+		be = xotool.BackendArm64
+	} else if _, err := xotool.Clang(); err != nil {
+		t.Skip("clang not found")
+	}
+	dir := filepath.Join("testdata", "prof", "fib")
+	build := func(release bool, flags ...string) string {
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Release: release, Flags: flags, Out: filepath.Join(t.TempDir(), "fib")})
+		if err != nil || res.Failed {
+			t.Fatalf("build: %v %v", err, res)
+		}
+		return res.Binaries[xotool.Host()]
+	}
+	has := func(bin string) bool {
+		out, err := exec.Command("nm", bin).CombinedOutput()
+		if err != nil {
+			t.Fatalf("nm: %v\n%s", err, out)
+		}
+		return strings.Contains(string(out), "prof_2estart") || strings.Contains(string(out), "prof.start")
+	}
+	run := func(bin, dir string) string {
+		cmd := exec.Command(bin)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000")
+		got, err := runCombined(cmd, 2*time.Minute)
+		if err != nil {
+			t.Fatalf("run: %v\n%s", err, got)
+		}
+		return got
+	}
+	rel := build(true)
+	if has(rel) {
+		t.Errorf("a --release build has the profiler's prof.start")
+	}
+	d := t.TempDir()
+	if got := run(rel, d); !strings.Contains(got, "built without the profiler") {
+		t.Errorf("a --release build with XO_PROF said: %s", got)
+	}
+	if ents, _ := os.ReadDir(d); len(ents) != 0 {
+		t.Errorf("a --release build wrote %v", ents)
+	}
+	sup := build(true, "--profile-support")
+	if !has(sup) {
+		t.Errorf("--release --profile-support has no prof.start")
+	}
+	d = t.TempDir()
+	if got := run(sup, d); !strings.Contains(got, "samples in") {
+		t.Errorf("--profile-support: %s", got)
+	}
+	fi, err := os.Lstat(filepath.Join(d, "xo-cpu.pprof"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("the profile's mode is %v, want 0600", fi.Mode().Perm())
+	}
+	if got := run(sup, d); !strings.Contains(got, "could not write") {
+		t.Errorf("a second run over an existing profile: %s", got)
+	}
+	// a symbolic link where the profile goes is not written through
+	d = t.TempDir()
+	target := filepath.Join(d, "elsewhere")
+	if err := os.Symlink(target, filepath.Join(d, "xo-cpu.pprof")); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(sup, d); !strings.Contains(got, "could not write") {
+		t.Errorf("a profile path that is a symbolic link: %s", got)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Errorf("the profile was written through a symbolic link")
+	}
+}
+
 // heapTotal reads "<label>N.NNMB in K objects" of a heap summary as bytes
 // (to the summary's two decimals) and objects.
 func heapTotal(txt, label string) (int64, int64) {

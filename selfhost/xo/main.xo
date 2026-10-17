@@ -755,7 +755,10 @@ struct Lowered {
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
-  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos))
+  // the runtime's profiler: in every build but a release one without
+  // --profile-support (decision 0238); --profile asks for it too
+  let prof = !release || o.profile_support || !o.profile.is_empty()
+  var b = ssa.build_program_prof(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof)
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)

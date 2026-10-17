@@ -234,6 +234,11 @@ pub struct Builder {
   checks: List[UCheck] = []
   /// A release build (`--release`): debug contract clauses are left out.
   pub release: Bool = false
+  /// The runtime's profiler is built (decision 0238's gating): false for
+  /// `--release` without `--profile-support`, where a call of
+  /// native/llrt/prof.supported is false (target_test), so the profiler
+  /// is neither built nor linked.
+  pub prof: Bool = true
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false
@@ -300,7 +305,15 @@ pub fn build_program_for(c: check.Checker, line_root: Str, tests: Bool, release:
 /// is set (XO_NOLIBC=1, decision 0206 stage 2): the exports of
 /// native/llrt/cabi_nolibc, which std/llrt/xo_nolibc.c calls, are built.
 pub fn build_program_libc(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool) -> Builder uses fs.read {
+  build_program_prof(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, true)
+}
+
+/// build_program_libc with the runtime's profiler left out when prof is
+/// false (`xo build --release` without `--profile-support`, decision
+/// 0238's gating).
+pub fn build_program_prof(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool) -> Builder uses fs.read {
   var b = new_builder(c, line_root)
+  b.prof = prof
   b.nolibc = nolibc
   b.tests = tests
   b.release = release
@@ -318,6 +331,7 @@ pub fn build_program_libc(c: check.Checker, line_root: Str, tests: Bool, release
     b.goarch = goarch
     b.wasm = wasm
     b.nolibc = nolibc
+    b.prof = prof
     b.conc = true
     b.build()
   }

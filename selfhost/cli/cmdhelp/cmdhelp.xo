@@ -175,7 +175,8 @@ fn build_text() -> Str {
   """
 usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
-                [--release [--error-args=false]] [--stamp NAME=VALUE]... [--hybrid]
+                [--release [--error-args=false] [--profile-support]]
+                [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
@@ -189,8 +190,9 @@ Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)
 is left in code (core 11.4). --release is a release build:
-requires(debug) and ensures(debug) compiled out; --error-args=false drops
-parameter values from error frames. --stamp (repeatable, also on run)
+requires(debug) and ensures(debug) compiled out, and the runtime's
+profiler (XO_PROF) left out unless --profile-support; --error-args=false
+drops parameter values from error frames. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
 otherwise). std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database
@@ -203,7 +205,7 @@ fn run_text() -> Str {
   """
 usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
-              [--profile=cpu] [--stamp NAME=VALUE]... [dir] [-- args...]
+              [--profile=cpu|heap|cpu,heap] [--stamp NAME=VALUE]... [dir] [-- args...]
 
 Build for the host and run the program in dir (default .) with args.
 --seed makes task interleavings reproducible. --record writes every
@@ -213,7 +215,9 @@ requests, signals) and every scheduling decision into the trace (core
 evaluated. --seed and --record need the Go backend. --profile=cpu
 samples the program's CPU time (a native backend, the host's by default)
 into xo-cpu.pprof (go tool pprof reads it) and a text summary,
-xo-cpu.txt, in the working directory.
+xo-cpu.txt, in the working directory; --profile=heap samples its
+allocations into xo-heap.pprof and xo-heap.txt; cpu,heap takes both. A
+profile file that exists is not overwritten.
 """
 }
 
@@ -221,7 +225,7 @@ fn test_text() -> Str {
   """
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
-               [--profile=cpu] <dirs...>
+               [--profile=cpu|heap|cpu,heap] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -231,9 +235,10 @@ gives tests real capabilities for their declared effects; --timeout
 is the real time each test (each property case) may take, 60s by
 default, 0 for no limit: a test past it fails and, natively, its
 process is killed. Shrunk contract failures are written to the
-module's regressions_test.xo. --profile=cpu samples each test process
-(not property cases) into xo-cpu-<pid>.pprof and .txt in the working
-directory; go tool pprof merges several.
+module's regressions_test.xo. --profile=cpu (heap, cpu,heap) samples
+each test process (not property cases) into xo-cpu-<pid>.pprof
+(xo-heap-<pid>.pprof) and .txt in the working directory; go tool pprof
+merges several.
 """
 }
 

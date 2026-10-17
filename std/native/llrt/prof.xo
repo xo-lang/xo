@@ -107,6 +107,20 @@ fn map(n: Int) -> Int {
   m
 }
 
+/// Whether this build has the profiler: true here, and the SSA builders
+/// fold a call of it to the build's answer (selfhost/ssa expr.xo
+/// prof_call): false in `xo build --release` without --profile-support,
+/// so what it guards is neither built nor linked (decision 0238).
+pub fn supported() -> Bool { true }
+
+/// A build without the profiler (supported false): one line when XO_PROF
+/// asks for a profile.
+pub fn unsupported_note() {
+  if process.env_real_at("XO_PROF") != 0 {
+    stdio.eprint("xo profile: this program was built without the profiler (xo build --release; add --profile-support)", true)
+  }
+}
+
 /// Arms the profiler when XO_PROF names cpu, heap, or both (entry.xo
 /// start, after the environment is kept). Nothing else is touched when it
 /// names neither.
@@ -777,7 +791,7 @@ fn write_profile(r: Int, n: Int, lost: Int, dur: Int, syms: Syms, lines: dwline.
   if ok && ok2 {
     stdio.eprint("xo profile: ${total} samples in ${out} and ${txt}", true)
   } else {
-    stdio.eprint("xo profile: could not write ${out}", true)
+    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
   }
 }
 
@@ -1174,12 +1188,20 @@ fn crc32(data: Bytes) -> Int {
   c ^ 4294967295
 }
 
-/// Writes data to the file at path (created or truncated, mode 0644).
+/// Writes data to a new file at path (mode 0600): false when anything
+/// is there already, a symbolic link too (decision 0238's gating: a
+/// profile never writes through a file it did not create).
 fn write_file(path: Str, data: Bytes) -> Bool {
   match target.os {
     TargetOs.Linux => {
-      // O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
-      let fd = linux.open(path, 1 | 64 | 512 | 524288, 420)
+      // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode 0600: a
+      // file or a symbolic link already there is not written through
+      // (O_NOFOLLOW is 0100000 on arm64, 0400000 on x86_64)
+      let nofollow = match target.arch {
+        TargetArch.Amd64 => 131072
+        TargetArch.Arm64 | TargetArch.Wasm32 => 32768
+      }
+      let fd = linux.open(path, 1 | 64 | 128 | nofollow | 524288, 384)
       if fd < 0 {
         return false
       }
@@ -1191,8 +1213,8 @@ fn write_file(path: Str, data: Bytes) -> Bool {
       var z = BytesBuilder.with_capacity(path.len() + 1)
       z.write(path.bytes())
       z.write_byte(UInt8(0))
-      // O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
-      let fd = Int(sys_darwin.open(z.freeze(), 1 | 512 | 1024 | 16777216, 420))
+      // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode 0600
+      let fd = Int(sys_darwin.open(z.freeze(), 1 | 512 | 2048 | 256 | 16777216, 384))
       if fd < 0 {
         return false
       }
@@ -1469,7 +1491,7 @@ fn finish_heap() {
   if ok && ok2 {
     stdio.eprint("xo profile: ${stacks.len()} heap samples in ${out} and ${txt}", true)
   } else {
-    stdio.eprint("xo profile: could not write ${out}", true)
+    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
   }
 }
 

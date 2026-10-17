@@ -789,6 +789,11 @@ and for diffing two builds function by function, not for a first look.
   `.pprof`): the totals, then the top 30 functions by flat and by
   cumulative samples, as `go tool pprof -top` prints. One line on
   stderr names both files.
+- `xo build --release` leaves the profiler out (XO_PROF then prints one
+  line saying so) unless `--profile-support` is given; `xo run`, `xo
+  test` and a plain `xo build` keep it. A profile file is created new
+  (O_EXCL, no symbolic link followed, mode 0600): a run whose output
+  exists says so and writes nothing (decision 0238's addendum).
 - `xo run --profile=cpu [dir]` sets it for the program (with no
   `--backend` it picks the host's native backend; `--backend=go` is
   refused: a Go backend program uses runtime/pprof). `xo test

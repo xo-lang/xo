@@ -208,7 +208,7 @@ Not built yet: the Mac's windows cross toolchain is gone and CI is off
   what is measured (inlining, small functions) and costs when on.
 - A custom profile format: pprof is already read by everything.
 
-## Addendum: release builds and the files written (owner, 2026-10-16, not yet implemented)
+## Addendum: release builds and the files written (owner, 2026-10-16; implemented 2026-10-16, xo-4)
 
 Relayed by the lead. Development builds (`xo run`, `xo test`, a plain
 `xo build`) keep the profiler; `xo build --release` leaves it out unless
@@ -217,3 +217,27 @@ a new one (O_EXCL), refuses a symbolic link, and uses mode 0600. The
 same rules apply to the execution trace's recorder (decision 0240:
 `--trace-support`). Decision 0245 (sampling in the binary, symbolizing
 with `xo prof`) is a separate proposal, still waiting on the owner.
+
+Implementation:
+
+- `prof.supported()` (std/native/llrt/prof.xo) is `true`, and the SSA
+  builders fold a call of it to the build's answer (selfhost/ssa expr.xo
+  prof_call, in target_test as decision 0246's test world switches):
+  false when the driver builds with `--release` and neither
+  `--profile-support` nor `--profile` (selfhost/xo main.xo lower,
+  ssa.build_program_prof). entry.xo's start and finish, cabi.xo's
+  SIGPROF handler and prof_finish, and the heap hooks in cabi.xo
+  (heap_grow's sample, heap_big, heap_big_release, heap_big_resize) test
+  it, so neither prof.xo's profiler nor heapprof.xo is built or linked
+  in such a release build (the fault traceback's symbolizer, prof.xo
+  trace_text, stays: XO_TRACEBACK is not the profiler). With XO_PROF set
+  such a binary prints one line: built without the profiler, add
+  `--profile-support`.
+- The profile and its summary open with O_WRONLY | O_CREAT | O_EXCL |
+  O_NOFOLLOW | O_CLOEXEC, mode 0600 (O_NOFOLLOW is 0100000 on Linux
+  arm64, 0400000 on x86_64): an existing file or symbolic link is not
+  written, and the run says so. A second `xo run --profile=cpu` in the
+  same directory needs the first xo-cpu.pprof moved away.
+- Test: internal/llvm TestProfGating (no prof.start in a --release
+  binary and its note; --profile-support samples; mode 0600; a second
+  run and a symbolic link are refused).

@@ -19,6 +19,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Xo's own ELF linker (static, no C toolchain at link time; decision 0243
   step 3); `XO_NOLIBC=0` and `use c` programs keep cc and glibc.
 
+- `xo build --release` leaves the native profiler out unless
+  `--profile-support` (decision 0238's addendum, the owner's rule): the
+  SSA builders fold prof.supported(), so neither prof.xo's sampler nor
+  heapprof.xo is linked; XO_PROF on such a binary prints one line. A
+  profile file is created new: O_EXCL, no symbolic link followed, mode
+  0600 (internal/llvm TestProfGating). `xo run` and `xo test` help name
+  --profile=heap and cpu,heap.
 - Linux without C (decision 0243): a Linux program with no `use c` links
   no C library by default, on the arm64 and LLVM backends (XO_NOLIBC=0
   links glibc). selfhost/macho's ELF linker has a static mode (plain

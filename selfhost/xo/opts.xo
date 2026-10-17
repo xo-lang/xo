@@ -45,6 +45,9 @@ struct Opts {
   /// build too (decision 0239)
   strip: Bool = false
   debug_info: Bool = false
+  /// --profile-support: a release build keeps the runtime's profiler
+  /// (XO_PROF), which --release otherwise leaves out (decision 0238)
+  profile_support: Bool = false
   error_args: Bool = true
   hybrid: Bool = false
   no_mono: Bool = false
@@ -81,14 +84,14 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
 /// build, run, and test print `xo`'s usage (selfhost/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -444,6 +447,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.strip = on
   } else if name == "debug-info" {
     o.debug_info = on
+  } else if name == "profile-support" {
+    o.profile_support = on
   } else if name == "error-args" {
     o.error_args = on
   } else if name == "hybrid" {
