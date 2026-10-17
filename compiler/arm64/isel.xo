@@ -1267,6 +1267,9 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
     // 2026-10-17; LLVM's x86 cmov conversion keeps such branches too)
     return false
   }
+  if g.cond_from_const(x) {
+    return false
+  }
   let (j0, e0, s0) = g.forward(x.succs[0])
   let (j1, e1, s1) = g.forward(x.succs[1])
   if j0 != j1 || (e0 == x.succs[0] && e1 == x.succs[1]) || !g.plans_of(j0).is_empty() {
@@ -1290,9 +1293,8 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
   if nsel == 0 || nsel > 4 {
     return false
   }
-  let jbl = g.f.blocks[j0]
-  if jbl.instrs.len() == 1 && g.op(jbl.instrs[0]) == ssa.Op.Branch && ps.contains(g.arg(jbl.instrs[0], 0)) {
-    return false // J only branches on what it would select: a branch stays a branch
+  if g.join_tests(j0) {
+    return false // J only tests what it would select: a branch stays a branch
   }
   // the instructions of a side block, selected here (forward)
   for (sb, vs) in [(g.f.edges[x.succs[0]].to, s0), (g.f.edges[x.succs[1]].to, s1)] {
@@ -1326,6 +1328,69 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
   g.pmove(dsts, srcs)
   let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[j0]]})
   true
+}
+
+/// Whether branch x tests a parameter of its own block that a
+/// predecessor passes a constant (a `||` or `&&` made a Bool, true on one
+/// path): left a branch, that path goes straight to its side, where a
+/// select keeps the Bool, a cset, a compare, and a csel
+/// (bench/perf/text float_fmt 1.004x, 2026-10-17).
+fn (g: G) cond_from_const(x: ssa.Value) -> Bool {
+  let c = x.args[0]
+  let bl = g.f.blocks[x.block]
+  var at = -1
+  for (i, p) in bl.params.indexed() {
+    if p == c {
+      at = i
+    }
+  }
+  if at < 0 {
+    return false
+  }
+  for e in bl.preds {
+    let a = g.f.edges[e].args[at]
+    if g.op(a) == ssa.Op.Const {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether join j only branches on its parameters or on a test made
+/// from them (at most three instructions before the branch: constants,
+/// and operations each using a parameter or an earlier one, no call):
+/// select_branch leaves such a diamond a branch, as
+/// each side's constant then decides the test at once (a compare's -1,
+/// 0, or 1 tested < 0: a csel and a compare after the join were
+/// bench/perf/xo sortpt 1.025x on Linux, 2026-10-17).
+fn (g: G) join_tests(j: Int) -> Bool {
+  let ins = g.f.blocks[j].instrs
+  let n = ins.len()
+  if n == 0 || n > 4 || g.op(ins[n - 1]) != ssa.Op.Branch {
+    return false
+  }
+  var known: Map[Int, Bool] = {}
+  for p in g.f.blocks[j].params {
+    known[p] = true
+  }
+  for v in ins[0..n - 1] {
+    let x = g.f.values[v]
+    if x.op == ssa.Op.Call {
+      return false
+    }
+    if x.op == ssa.Op.Const {
+      continue
+    }
+    var hit = false
+    for a in x.args {
+      hit = hit || known.contains(a)
+    }
+    if !hit {
+      return false
+    }
+    known[v] = true
+  }
+  known.contains(g.arg(ins[n - 1], 0))
 }
 
 /// The word of an Int or Bool constant (a Bool is 0 or 1).

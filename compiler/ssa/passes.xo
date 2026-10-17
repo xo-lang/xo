@@ -321,6 +321,104 @@ fn prune_func(var f: Func) {
   remove_blocks(f, reach)
 }
 
+/// Joins each block that ends in a jump to a block reached by that jump
+/// alone (not the entry, the unwind exit, or a block split off after a
+/// check) with that block, when no parameter of it is a heap value of m
+/// (the references held on each edge, which verify checks, are by value:
+/// an owned parameter replaced by its argument broke them): its
+/// parameters become the jump's arguments.
+/// After inlining, a one block callee left its caller's block in three
+/// (the call's block, the copy, the continuation), and the passes that
+/// look within an SSA block (the arm64 address fold, the reload memo,
+/// adc pairs) saw each helper call's operations apart: bigmod's
+/// ld(t, o + 8) loads each a register offset (2026-10-17). Neither block
+/// may make a call (calls[b], the caller's say: an intrinsic emitted in
+/// line is none): a joined block that a value lives across a call in
+/// took a callee saved register for it, a frame where there was none
+/// (obj.rs_new_n's slow path joined to its tail: text 1.01 to 1.02x).
+/// Reports whether it joined any.
+pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
+  let nb = f.blocks.len()
+  var keep: List[Bool] = []
+  for _ in 0..nb {
+    keep.push(true)
+  }
+  var repl: Map[Int, Int] = {}
+  var any = false
+  for a in 0..nb {
+    if !keep[a] {
+      continue
+    }
+    var steps = 0
+    while steps < nb {
+      steps += 1
+      let t = f.term(a)
+      if t < 0 || f.values[t].op != Op.Jump {
+        break
+      }
+      let e = f.values[t].succs[0]
+      let b = f.edges[e].to
+      if b == a || b == 0 || b < 0 || !keep[b] || f.blocks[b].preds.len() != 1 || b == f.unwind_exit || f.land_rest.contains(b) || calls[a] || calls[b] {
+        break
+      }
+      // nothing joins a join (two or more predecessors): the emitter
+      // copies a small join and its test into each predecessor (a
+      // compare's -1, 0, 1 tested at once), and grown it was too big to
+      // copy (bench/perf/xo sortpt 1.025x on Linux)
+      var plain = true
+      for p in f.blocks[b].params {
+        plain = plain && !m.heap(f.values[p].ty)
+      }
+      if !plain {
+        break
+      }
+      for (i, p) in f.blocks[b].params.indexed() {
+        repl[p] = f.edges[e].args[i]
+      }
+      let n = f.blocks[a].instrs.len()
+      var ins = f.blocks[a].instrs[0..n - 1]
+      for v in f.blocks[b].instrs {
+        f.values[v].block = a
+        for se in f.values[v].succs {
+          f.edges[se].from = a
+        }
+        ins.push(v)
+      }
+      f.blocks[a].instrs = ins
+      f.blocks[b].instrs = []
+      f.blocks[b].params = []
+      f.blocks[b].preds = []
+      keep[b] = false
+      any = true
+    }
+  }
+  if !any {
+    return false
+  }
+  if !repl.is_empty() {
+    for bl in 0..f.blocks.len() {
+      if !keep[bl] {
+        continue
+      }
+      for v in f.blocks[bl].instrs {
+        for i in 0..f.values[v].args.len() {
+          f.values[v].args[i] = find_repl(repl, f.values[v].args[i])
+        }
+        for se in f.values[v].succs {
+          for i in 0..f.edges[se].args.len() {
+            f.edges[se].args[i] = find_repl(repl, f.edges[se].args[i])
+          }
+        }
+      }
+    }
+    for k in 0..f.dbinds.len() {
+      f.dbinds[k].value = find_repl(repl, f.dbinds[k].value)
+    }
+  }
+  remove_blocks(f, keep)
+  true
+}
+
 /// Keeps the blocks keep marks, in order, and renumbers them in the
 /// values, edges, and the function's block references.
 fn remove_blocks(var f: Func, keep: List[Bool]) {
