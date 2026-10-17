@@ -36,6 +36,7 @@ const LEN = 8
 const LEN_W = 1
 const LOCK = 16
 const MODE = 24
+const MODE_W = 3
 
 /// The mode's bits: the test world was asked whether stdio is a fake (it
 /// is set up before the program runs, so once is enough); stdio is a
@@ -55,6 +56,7 @@ const HALF = 32768
 const TW_STDIO = 32
 
 /// The memory orders of the slot atomics (rt.xo).
+const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
 
@@ -62,14 +64,16 @@ fn add(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
 
 /// The mode, asking the test world first when it was not asked yet.
 fn mode(w: Int) -> Int {
-  let m = rt.mem_load(w, MODE, 8)
+  let m = rt.slot_load[Int](w, MODE_W, RELAXED)
   if m & ASKED != 0 {
     return m
   }
   // before the first print, while one thread runs, or from several
-  // threads that all store the same answer
+  // threads that all store the same answer (relaxed atomics: a plain
+  // load here and in flush_out was a race ThreadSanitizer reported,
+  // http_wire, 2026-10-17)
   let k = m | ASKED | (if testworld.fake(TW_STDIO) { FAKE } else { 0 })
-  rt.mem_store(w, MODE, k, 8)
+  rt.slot_store[Int](w, MODE_W, k, RELAXED)
   k
 }
 
@@ -77,7 +81,7 @@ fn mode(w: Int) -> Int {
 /// second thread runs Xo code.
 pub fn threads() {
   let w = rt.static_word(WORDS)
-  rt.mem_store(w, MODE, rt.mem_load(w, MODE, 8) | THREADS, 8)
+  rt.slot_store[Int](w, MODE_W, rt.slot_load[Int](w, MODE_W, RELAXED) | THREADS, RELAXED)
 }
 
 /// Takes the lock when several threads run (m is the mode).
@@ -173,7 +177,7 @@ fn out_slow(w: Int, m: Int, p: Int, n: Int, nl: Bool) {
 /// common case (one thread, room in the buffer) is a copy and a store.
 pub fn out(p: Int, n: Int, nl: Bool) {
   let w = rt.static_word(WORDS)
-  let m = rt.mem_load(w, MODE, 8)
+  let m = rt.slot_load[Int](w, MODE_W, RELAXED)
   if m == SOLO {
     let buf = rt.mem_load(w, BUF, 8)
     let len = rt.mem_load(w, LEN, 8)
@@ -239,7 +243,7 @@ fn flush_out(w: Int) {
     flush_out(rt.static_word(WORDS)) // not taken: the inliner's cycle
     return
   }
-  let m = rt.mem_load(w, MODE, 8)
+  let m = rt.slot_load[Int](w, MODE_W, RELAXED)
   lock(w, m)
   flush_locked(w)
   unlock(w, m)
@@ -250,7 +254,7 @@ fn flush_out(w: Int) {
 /// the overflowed stack).
 pub fn flush_try() {
   let w = rt.static_word(WORDS)
-  let m = rt.mem_load(w, MODE, 8)
+  let m = rt.slot_load[Int](w, MODE_W, RELAXED)
   if m & THREADS == 0 {
     flush_locked(w)
     return

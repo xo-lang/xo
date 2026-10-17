@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- stdio's mode word is read and written with relaxed atomics: a first
+  print racing a task's flush was a ThreadSanitizer report
+  (TestGoldenTasks/http_wire, 2 of 40 runs under load).
 - `xo prof FILE` (decision 0245): a native program under XO_PROF writes a
   raw profile (xo-prof.xoraw: the samples and their locations, named by
   the program) and `xo prof` writes xo-cpu.pprof, xo-heap.pprof and their
