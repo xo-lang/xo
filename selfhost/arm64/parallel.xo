@@ -290,7 +290,12 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
   g.data(out)
   g.end_data(out)
   files.push(out.join(""))
-  Program{asm: files.join(""), err: g.err, skipped: skipped + g.skipped, parts: files, stores: stores, reused: reused, mismatches: mismatches}
+  // the module's own symbols are not weak (weak_ref)
+  var own: List[Str] = []
+  for f in files {
+    own.push(g.drop_own_weak(f))
+  }
+  Program{asm: own.join(""), err: g.err, skipped: skipped + g.skipped, parts: own, stores: stores, reused: reused, mismatches: mismatches}
 }
 
 /// Part functions lo..hi of m by an emitter of its own, its labels in

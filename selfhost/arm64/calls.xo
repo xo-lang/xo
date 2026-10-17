@@ -2271,18 +2271,29 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 
 /// The directive that makes sym a weak reference (decision 0232): the
 /// linker leaves it 0 when nothing defines it (macOS's ld needs `-U` for
-/// that, which the driver adds for each weak reference).
+/// that, which the driver adds for each weak reference). Always written:
+/// drop_own_weak removes it from the module's text when the module
+/// defines sym, so a function's text (the per-function cache's entry)
+/// does not depend on the module (2026-10-17: it did, and a libc build's
+/// entry gave a no-libc build `.weak` lines).
 fn (var g: G) weak_ref(sym: Str) {
-  for f in g.m.funcs {
-    if f.export == sym {
-      // the module defines it (an XO_NOLIBC build's C library,
-      // cabi_libc.xo: __errno_location); `.weak` and then `.globl` is an
-      // error in LLVM's assembler ("changed binding to STB_GLOBAL")
-      return
-    }
-  }
   let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
   g.store("${d} ${g.sym(sym)}", [])
+}
+
+/// text without the weak references (weak_ref) to the symbols the module
+/// exports (an XO_NOLIBC build's C library, cabi_libc.xo:
+/// __errno_location): `.weak` and then `.globl` is an error in LLVM's
+/// assembler ("changed binding to STB_GLOBAL").
+fn (g: G) drop_own_weak(text: Str) -> Str {
+  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
+  var t = text
+  for f in g.m.funcs {
+    if !f.export.is_empty() {
+      t = t.replace("\t${d} ${g.sym(f.export)}\n", "")
+    }
+  }
+  t
 }
 
 /// rt.sym_addr (decision 0234): the address of the C level symbol name,

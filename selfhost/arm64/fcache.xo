@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v4"
+const FN_CACHE_VERSION = "xo fn cache v5"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is
@@ -438,7 +438,9 @@ fn aux_text(a: ssa.Aux) -> Str {
 fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
   let f = m.funcs[fi]
   var b = StrBuilder.new()
-  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} debug=${m.debug_info}\n")
+  // the module facts a function's text reads: c_sym_addr's direct or GOT
+  // address (nolibc); the weak references are the module's (weak_ref)
+  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} debug=${m.debug_info} nolibc=${m.nolibc}\n")
   b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
   var lr: List[Int] = []

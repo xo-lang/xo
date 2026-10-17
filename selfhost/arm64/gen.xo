@@ -75,7 +75,7 @@ fn (var g: G) generate() -> Program {
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
-  Program{asm: out.join(""), err: g.err, skipped: g.skipped}
+  Program{asm: g.drop_own_weak(out.join("")), err: g.err, skipped: g.skipped}
 }
 
 /// The first lines of the assembly file.
