@@ -178,6 +178,10 @@ pub struct Client {
   sid: Bytes
   share_group: Int
   priv: Bytes
+  /// a hybrid priv's ML-KEM key, expanded once for the share and the
+  /// decapsulation (mlkem.hybrid_key_for); none for another group or a
+  /// ClientHello given whole
+  kem: mlkem.Key?
   cookie: Bytes
   hrr: Bool
   ccs_sent: Bool
@@ -193,7 +197,7 @@ pub struct Client {
 
 /// A new client for conf: its ClientHello is ready in take().
 pub fn client(cf: Conf) -> Client {
-  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, alpn: "", peer: [], rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", share_group: 0, priv: b"", cookie: b"", hrr: false, ccs_sent: false, cert_req: false, req_ctx: b"", hs_secret: b"", c_hs: b"", s_hs: b"", rk: tlsrec.plain(), wk: tlsrec.plain(), handoff: b""}
+  var c = Client{conf: cf, state: WAIT_SH, err: "", closed: false, suite: 0, alpn: "", peer: [], rin: b"", hs: b"", app: b"", out: b"", tr: b"", random: b"", sid: b"", share_group: 0, priv: b"", kem: None, cookie: b"", hrr: false, ccs_sent: false, cert_req: false, req_ctx: b"", hs_secret: b"", c_hs: b"", s_hs: b"", rk: tlsrec.plain(), wk: tlsrec.plain(), handoff: b""}
   var ch = cf.hello
   if ch.is_empty() {
     let fixed = !cf.random.is_empty()
@@ -204,6 +208,7 @@ pub fn client(cf: Conf) -> Client {
     }
     c.share_group = cf.groups[0]
     c.priv = key_for(cf, c.share_group)
+    c.kem = kem_for(c.share_group, c.priv)
     ch = hello(c)
   } else if ch.len() > 38 {
     let n = Int(ch[38])
@@ -449,11 +454,15 @@ fn hello(c: Client) -> Bytes {
   if !c.cookie.is_empty() {
     exts.push(ext(EXT_COOKIE, vec16(c.cookie)))
   }
-  var shares = [u16(c.share_group), vec16(public_key(c.share_group, c.priv))]
+  let share = match c.kem {
+    Some(key) => mlkem.hybrid_share_key(c.share_group, c.priv, key)
+    None => public_key(c.share_group, c.priv)
+  }
+  var shares = [u16(c.share_group), vec16(share)]
   if shared_groups(c).len() == 2 {
     let eg = mlkem.hybrid_ecdh_group(c.share_group)
     shares.push(u16(eg))
-    shares.push(vec16(public_key(eg, mlkem.hybrid_ecdh_priv(c.priv))))
+    shares.push(vec16(mlkem.hybrid_ecdh_share(c.share_group, share)))
   }
   exts.push(ext(EXT_KEY_SHARE, vec16(asn1.cat(shares))))
   let body = asn1.cat([u16(0x0303), c.random, vec8(c.sid), vec16(asn1.cat(suites)), b"\x01\x00", vec16(asn1.cat(exts))])
@@ -610,7 +619,11 @@ fn server_hello(var c: Client, msg: Bytes) {
     }
     // the ECDH group next to the hybrid: the hybrid's own ECDH key
     let priv = if h.group != c.share_group { mlkem.hybrid_ecdh_priv(c.priv) } else { c.priv }
-    shared = match shared_secret(h.group, priv, h.key) {
+    let sec = match c.kem {
+      Some(key) if h.group == c.share_group => mlkem.hybrid_client_shared_key(h.group, priv, key, h.key)
+      _ => shared_secret(h.group, priv, h.key)
+    }
+    shared = match sec {
       Some(s) => s
       None => {
         fail(c, ALERT_ILLEGAL_PARAMETER, "tls: invalid server key share")
@@ -660,6 +673,7 @@ fn retry(var c: Client, msg: Bytes, h: Hello) {
     }
     c.share_group = h.group
     c.priv = key_for(c.conf, h.group)
+    c.kem = kem_for(h.group, c.priv)
   }
   c.hrr = true
   c.cookie = h.cookie
@@ -985,6 +999,12 @@ fn key_for(cf: Conf, group: Int) -> Bytes {
   }
   let n = if group == GROUP_X25519 { 32 } else { nistec.size(curve(group)) }
   if cf.priv.len() == n { cf.priv } else { keygen(group) }
+}
+
+/// The expanded ML-KEM key of a hybrid group's private key; none for
+/// another group.
+fn kem_for(group: Int, priv: Bytes) -> mlkem.Key? {
+  if mlkem.is_hybrid(group) { Some(mlkem.hybrid_key_for(group, priv)) } else { None }
 }
 
 /// The groups the ClientHello has key shares for: the first group's, and

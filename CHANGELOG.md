@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- ML-KEM in the native TLS client costs less than half as much
+  (bench/results/mlkem-client-2026-10-17.md): the hybrid handshake's
+  ML-KEM part is 62% smaller on arm64 and 59% on LLVM, and
+  encapsulation and decapsulation 28% and 29% smaller.
+
 - arm64: a chain of adds with carry is one instruction per pair with the
   carry in the flags, and each product it adds is made right before its
   pair: P-256's field product saves 1 register pair where it saved 5,

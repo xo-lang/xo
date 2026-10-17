@@ -384,8 +384,12 @@ fn keccak(var a: List[Int]) {
   rt.mem_store(la, 192, a24, 8)
 }
 
+/// The zero state, copied by a sponge's first write (one allocation and
+/// a copy rather than 25 pushes).
+const ZERO_LANES: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
 fn sponge(rate: Int, dsbyte: Int) -> Sponge {
-  Sponge{lanes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], rate: rate, dsbyte: dsbyte, pos: 0, squeezing: false}
+  Sponge{lanes: ZERO_LANES, rate: rate, dsbyte: dsbyte, pos: 0, squeezing: false}
 }
 
 /// A SHA3-256 sponge (rate 136), SHA3-512 (72), SHAKE128 (168),
@@ -417,9 +421,17 @@ pub fn write(var s: Sponge, data: Bytes) {
       keccak(s.lanes)
       continue
     }
-    xor_byte(s, s.pos, Int(data[i]))
-    s.pos += 1
-    i += 1
+    if (s.pos & 7) == 0 && n - i >= 8 && s.rate - s.pos >= 8 {
+      // a whole lane
+      let l = s.pos / 8
+      s.lanes[l] = s.lanes[l] ^ rt.bytes_word(data, i)
+      s.pos += 8
+      i += 8
+    } else {
+      xor_byte(s, s.pos, Int(data[i]))
+      s.pos += 1
+      i += 1
+    }
     if s.pos == s.rate {
       keccak(s.lanes)
       s.pos = 0
@@ -461,6 +473,21 @@ pub fn read(var s: Sponge, n: Int) -> Bytes {
     k += 1
   }
   out.bytes()
+}
+
+/// The next whole block of output as the state's lanes (the first
+/// rate / 8 are the block), for a reader of whole blocks only (ML-KEM's
+/// sampling of A): no copy into Bytes. The lanes are the caller's to
+/// read; the next permutation copies them first if the caller still
+/// holds them.
+pub fn next_block(var s: Sponge) -> List[Int] {
+  if !s.squeezing {
+    finish(s)
+  } else if s.pos != 0 {
+    keccak(s.lanes)
+  }
+  s.pos = s.rate
+  s.lanes
 }
 
 /// The digest of a SHA-3 sponge (its output length: 32 or 64 bytes).

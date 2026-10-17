@@ -125,6 +125,24 @@ fn fmul(a: Int, b: Int) -> Int {
   rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
 }
 
+// Lazy reduction (the NTTs and their products): coefficients are Ints,
+// so sums may grow past q between reductions. bred is a Barrett step for
+// x < 2^32 with the constant floor(2^32 / q) = 1290167: the quotient
+// estimate is floor(x / q) or one less (x * 1353 / (q * 2^32) < 1 for x
+// below about 10^10), so the result is congruent to x and in [0, 2q).
+// No branch or index on a value.
+
+/// x mod q up to one extra q: [0, 2q), for 0 <= x < 2^32.
+fn bred(x: Int) -> Int {
+  rt.int_wrap(1, x, rt.int_wrap(2, rt.int_wrap(4, rt.int_wrap(2, x, 1290167), 32), Q))
+}
+
+/// x mod q, for 0 <= x < 2^32.
+fn bfull(x: Int) -> Int {
+  let r = rt.int_wrap(1, rt.int_wrap(1, x, rt.int_wrap(2, rt.int_wrap(4, rt.int_wrap(2, x, 1290167), 32), Q)), Q)
+  rt.int_wrap(0, r, rt.int_wrap(2, rt.int_wrap(4, r, 63), Q))
+}
+
 /// Go's compress: round(2^d x / q) mod 2^d.
 fn compress(x: Int, d: Int) -> Int {
   let dividend = rt.int_wrap(3, x, d)
@@ -141,13 +159,18 @@ fn decompress(y: Int, d: Int) -> Int {
   (dividend >> d) + ((dividend >> (d - 1)) & 1)
 }
 
+/// N zeros: a copy of a constant (the first write copies it: one
+/// allocation and a copy rather than N pushes).
 fn zeros() -> List[Int] {
-  var p: List[Int] = List.with_capacity(N)
-  for _ in 0..N {
-    p.push(0)
-  }
+  var p = ZEROS
+  p[0] = 0
   p
 }
+
+const ZEROS: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+/// N + 16 zeros (sample_ntt's).
+const ZEROS16: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 fn padd(a: List[Int], b: List[Int]) -> List[Int] {
   var s = a
@@ -176,71 +199,104 @@ const ZETAS: List[Int] = [1, 1729, 2580, 3289, 2642, 630, 1897, 848, 1062, 1919,
 const GAMMAS: List[Int] = [17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692, 723, 2606, 2288, 1041, 1100, 2229, 1409, 1920, 2662, 667, 3281, 48, 233, 3096, 756, 2573, 2156, 1173, 3015, 314, 3050, 279, 1703, 1626, 1651, 1678, 2789, 540, 1789, 1540, 1847, 1482, 952, 2377, 1461, 1868, 2687, 642, 939, 2390, 2308, 1021, 2437, 892, 2388, 941, 733, 2596, 2337, 992, 268, 3061, 641, 2688, 1584, 1745, 2298, 1031, 2037, 1292, 3220, 109, 375, 2954, 2549, 780, 2090, 1239, 1645, 1684, 1063, 2266, 319, 3010, 2773, 556, 757, 2572, 2099, 1230, 561, 2768, 2466, 863, 2594, 735, 2804, 525, 1092, 2237, 403, 2926, 1026, 2303, 1143, 2186, 2150, 1179, 2775, 554, 886, 2443, 1722, 1607, 1212, 2117, 1874, 1455, 1029, 2300, 2110, 1219, 2935, 394, 885, 2444, 2154, 1175]
 
 
-/// The NTT (FIPS 203 Algorithm 9), in place.
+/// The raw words of a constant list (ZETAS, GAMMAS): the constant keeps
+/// it alive.
+fn const_words(c: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(c), rt.layout(2)) }
+
+/// The NTT (FIPS 203 Algorithm 9), in place, for coefficients below q.
+/// Lazy: t = zeta * f[j + len] is reduced to [0, 2q) by bred, f[j] + t and
+/// f[j] - t + 2q are not reduced, so a layer adds at most 2q to the bound
+/// (seven layers: below 15q, and every product below q * 15q < 2^28); the
+/// last layer (len 2, written out) reduces its outputs below q. Offsets
+/// are in bytes (lb = 8 len, zo = 8 k).
 fn ntt(f0: List[Int]) -> List[Int] {
-  // the constant list once (a constant's every use reads it through
-  // const_once)
-  let zetas = ZETAS
+  let zp = const_words(ZETAS)
   var f = f0
   let p = coeffs(f)
-  var k = 1
-  var len = 128
-  while len >= 2 {
-    var start = 0
-    let lb = 8 * len
-    while start < N {
-      let z = zetas[k]
-      k += 1
-      // byte offsets
-      var j = 8 * start
-      let end = add(j, lb)
+  var zo = 8
+  var lb = 1024
+  while lb >= 32 {
+    var j0 = 0
+    while j0 < 2048 {
+      let z = ldc(zp, zo)
+      zo = add(zo, 8)
+      var j = j0
+      let end = add(j0, lb)
       while j < end {
         let jl = add(j, lb)
-        let t = fmul(z, ldc(p, jl))
+        let t = bred(mul(z, ldc(p, jl)))
         let fj = ldc(p, j)
-        stc(p, jl, fsub(fj, t))
-        stc(p, j, fadd(fj, t))
+        stc(p, jl, add(sub(fj, t), 2 * Q))
+        stc(p, j, add(fj, t))
         j = add(j, 8)
       }
-      start = add(start, add(len, len))
+      j0 = add(end, lb)
     }
-    len = len / 2
+    lb = rt.int_wrap(4, lb, 1)
+  }
+  // len 2: the butterflies (j, j + 2) and (j + 1, j + 3)
+  var j = 0
+  while j < 2048 {
+    let z = ldc(zp, zo)
+    zo = add(zo, 8)
+    let t0 = bred(mul(z, ldc(p, add(j, 16))))
+    let f0 = ldc(p, j)
+    stc(p, add(j, 16), bfull(add(sub(f0, t0), 2 * Q)))
+    stc(p, j, bfull(add(f0, t0)))
+    let t1 = bred(mul(z, ldc(p, add(j, 24))))
+    let f1 = ldc(p, add(j, 8))
+    stc(p, add(j, 24), bfull(add(sub(f1, t1), 2 * Q)))
+    stc(p, add(j, 8), bfull(add(f1, t1)))
+    j = add(j, 32)
   }
   f
 }
 
-/// The inverse NTT (FIPS 203 Algorithm 10).
+/// The inverse NTT (FIPS 203 Algorithm 10), for coefficients below q.
+/// Lazy: with every coefficient below b entering a layer (b = q, 2q, 4q,
+/// ...), f[j] + f[j + len] is not reduced (below 2b) and zeta * (f[j +
+/// len] - f[j] + b) is reduced to [0, 2q) by bred (the difference is
+/// not negative and below 2b, every product below q * 128q < 2^31). The
+/// last layer (len 128, b = 64q) is written out with the scaling by
+/// 128^-1 (3303) folded in: (f[j] + f[j + len]) 3303 and (zeta 3303 mod
+/// q) (f[j + len] - f[j] + b), each below 2^31, reduced below q.
 fn inverse_ntt(f0: List[Int]) -> List[Int] {
-  let zetas = ZETAS
+  let zp = const_words(ZETAS)
   var f = f0
   let p = coeffs(f)
-  var k = 127
-  var len = 2
-  while len <= 128 {
-    var start = 0
-    let lb = 8 * len
-    while start < N {
-      let z = zetas[k]
-      k -= 1
-      // byte offsets
-      var j = 8 * start
-      let end = add(j, lb)
+  // zetas[127] down to zetas[2] for len 2 to 64
+  var zo = 8 * 127
+  var lb = 16
+  var b = Q
+  while lb <= 512 {
+    var j0 = 0
+    while j0 < 2048 {
+      let z = ldc(zp, zo)
+      zo = sub(zo, 8)
+      var j = j0
+      let end = add(j0, lb)
       while j < end {
         let jl = add(j, lb)
         let t = ldc(p, j)
         let u = ldc(p, jl)
-        stc(p, j, fadd(t, u))
-        stc(p, jl, freduce(mul(z, add(sub(u, t), Q))))
+        stc(p, j, add(t, u))
+        stc(p, jl, bred(mul(z, add(sub(u, t), b))))
         j = add(j, 8)
       }
-      start = add(start, add(len, len))
+      j0 = add(end, lb)
     }
-    len = len * 2
+    lb = add(lb, lb)
+    b = add(b, b)
   }
-  var o = 0
-  while o < 8 * N {
-    stc(p, o, fmul(ldc(p, o), 3303))
-    o = add(o, 8)
+  // len 128 with zetas[1]
+  let z = bfull(mul(ldc(zp, 8), 3303))
+  var j = 0
+  while j < 1024 {
+    let t = ldc(p, j)
+    let u = ldc(p, add(j, 1024))
+    stc(p, j, bfull(mul(add(t, u), 3303)))
+    stc(p, add(j, 1024), bfull(mul(z, add(sub(u, t), b))))
+    j = add(j, 8)
   }
   f
 }
@@ -248,7 +304,7 @@ fn inverse_ntt(f0: List[Int]) -> List[Int] {
 /// h += f * g in the NTT domain, in place (the sums of products of
 /// K-PKE, without a product's own list).
 fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
-  let gammas = GAMMAS
+  let gp = const_words(GAMMAS)
   let ph = coeffs(h)
   let pf = coeffs_read(f)
   let pg = coeffs_read(g)
@@ -261,10 +317,12 @@ fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
     let a1 = ldc(pf, o1)
     let b0 = ldc(pg, o)
     let b1 = ldc(pg, o1)
-    stc(ph, o, fadd(ldc(ph, o), freduce(add(mul(a0, b0), mul(fmul(a1, b1), gammas[gi])))))
-    stc(ph, o1, fadd(ldc(ph, o1), freduce(add(mul(a0, b1), mul(a1, b0)))))
+    // a1 b1 to [0, 2q); each sum below q^2 + 2q^2 + q < 2^26
+    let r = bred(mul(a1, b1))
+    stc(ph, o, bfull(add(add(mul(a0, b0), mul(r, ldc(gp, gi))), ldc(ph, o))))
+    stc(ph, o1, bfull(add(add(mul(a0, b1), mul(a1, b0)), ldc(ph, o1))))
     o = add(o, 16)
-    gi = add(gi, 1)
+    gi = add(gi, 8)
   }
 }
 
@@ -277,38 +335,82 @@ fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
 /// SHAKE128's rate in bytes (FIPS 202): a multiple of 3.
 const SHAKE128_RATE = 168
 
-/// a block rather than seven of 24 bytes, the same stream.
+/// a block rather than seven of 24 bytes, the same stream. A block is
+/// read as 7 groups of three little endian words, 16 candidates each
+/// (bits 12i to 12i + 11 of the 192, the byte stream's order); every
+/// candidate is stored at the count, which advances only past an
+/// accepted one, so the list has 16 slots more than N (a group writes at
+/// most 15 past the count) and drops them at the end.
 fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
   var s = sha3.new_shake128()
   sha3.write(s, asn1.cat([rho, byte(ii), byte(jj)]))
-  var a: List[Int] = List.with_capacity(N)
-  while a.len() < N {
-    let b = sha3.read(s, SHAKE128_RATE)
+  var a = ZEROS16
+  a[0] = 0
+  let p = rt.int_wrap(0, rt.obj_addr(a), rt.layout(2))
+  // the count's byte offset
+  var o = 0
+  while o < 8 * N {
+    let lanes = sha3.next_block(s)
+    let lp = rt.int_wrap(0, rt.obj_addr(lanes), rt.layout(2))
     var off = 0
-    while off < SHAKE128_RATE && a.len() < N {
-      let d1 = Int(b[off]) | ((Int(b[off + 1]) & 15) << 8)
-      let d2 = (Int(b[off + 1]) >> 4) | (Int(b[off + 2]) << 4)
-      if d1 < Q {
-        a.push(d1)
-      }
-      if d2 < Q && a.len() < N {
-        a.push(d2)
-      }
-      off += 3
+    while off < SHAKE128_RATE && o < 8 * N {
+      let w0 = ldc(lp, off)
+      let w1 = ldc(lp, add(off, 8))
+      let w2 = ldc(lp, add(off, 16))
+      o = take(p, o, w0 & 4095)
+      o = take(p, o, rt.int_wrap(4, w0, 12) & 4095)
+      o = take(p, o, rt.int_wrap(4, w0, 24) & 4095)
+      o = take(p, o, rt.int_wrap(4, w0, 36) & 4095)
+      o = take(p, o, rt.int_wrap(4, w0, 48) & 4095)
+      o = take(p, o, rt.int_wrap(4, w0, 60) | ((w1 & 255) << 4))
+      o = take(p, o, rt.int_wrap(4, w1, 8) & 4095)
+      o = take(p, o, rt.int_wrap(4, w1, 20) & 4095)
+      o = take(p, o, rt.int_wrap(4, w1, 32) & 4095)
+      o = take(p, o, rt.int_wrap(4, w1, 44) & 4095)
+      o = take(p, o, rt.int_wrap(4, w1, 56) | ((w2 & 15) << 8))
+      o = take(p, o, rt.int_wrap(4, w2, 4) & 4095)
+      o = take(p, o, rt.int_wrap(4, w2, 16) & 4095)
+      o = take(p, o, rt.int_wrap(4, w2, 28) & 4095)
+      o = take(p, o, rt.int_wrap(4, w2, 40) & 4095)
+      o = take(p, o, rt.int_wrap(4, w2, 52))
+      off += 24
     }
+  }
+  while a.len() > N {
+    a.pop()
   }
   a
 }
 
+/// Stores the candidate d (below 4096) at byte offset o of p; the next
+/// offset: o + 8 when d < q, else o.
+fn take(p: Int, o: Int, d: Int) -> Int {
+  rt.mem_store(p, o, d, 8)
+  rt.int_wrap(0, o, rt.int_wrap(3, rt.int_wrap(4, rt.int_wrap(1, d, Q), 63), 3))
+}
+
 /// A polynomial from the centered binomial distribution with eta 2
-/// (FIPS 203 Algorithm 8): SHAKE256 of s || b, 128 bytes.
+/// (FIPS 203 Algorithm 8): SHAKE256 of s || b, 128 bytes. A word (8
+/// bytes, 16 coefficients) at a time: y holds the sums of each pair of
+/// bits, and coefficient i of the word is the low pair's sum of nibble i
+/// minus the high pair's, plus q when negative.
 fn sample_cbd(s: Bytes, b: Int) -> List[Int] {
   let bs = sha3.shake256(asn1.cat([s, byte(b)]), 128)
   var f = zeros()
-  for i in 0..N / 2 {
-    let x = Int(bs[i])
-    f[2 * i] = fsub((x & 1) + ((x >> 1) & 1), ((x >> 2) & 1) + ((x >> 3) & 1))
-    f[2 * i + 1] = fsub(((x >> 4) & 1) + ((x >> 5) & 1), ((x >> 6) & 1) + ((x >> 7) & 1))
+  let p = coeffs(f)
+  var o = 0
+  var w = 0
+  while w < 128 {
+    let x = rt.bytes_word(bs, w)
+    let y = rt.int_wrap(0, x & 0x5555555555555555, rt.int_wrap(4, x, 1) & 0x5555555555555555)
+    var k = 0
+    while k < 64 {
+      let d = rt.int_wrap(1, rt.int_wrap(4, y, k) & 3, rt.int_wrap(4, y, rt.int_wrap(0, k, 2)) & 3)
+      stc(p, o, rt.int_wrap(0, d, rt.int_wrap(2, rt.int_wrap(4, d, 63), Q)))
+      o = add(o, 8)
+      k = add(k, 4)
+    }
+    w = add(w, 8)
   }
   f
 }
@@ -387,13 +489,17 @@ fn byte(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
 // K-PKE and ML-KEM
 
 /// A key expanded from its seed: the matrix A (A[i*k+j]), the secret s
-/// and t (NTT domain), rho, H(ek), z, and the encapsulation key's bytes.
-struct Key {
+/// and t (NTT domain), rho, z, and the encapsulation key's bytes. H(ek)
+/// (nine Keccak permutations) is computed by the decapsulation, which
+/// alone uses it: a TLS client whose server picks plain X25519 only
+/// sends ek.
+/// TLS's client keeps a hybrid key's (hybrid_key_for) for its share and
+/// its decapsulation, as Go keeps a DecapsulationKey768.
+pub struct Key {
   a: List[List[Int]]
   s: List[List[Int]]
   t: List[List[Int]]
   rho: Bytes
-  h: Bytes
   z: Bytes
   ek: Bytes
 }
@@ -438,7 +544,7 @@ fn expand(seed: Bytes, k: Int) -> Key {
   }
   parts.push(rho)
   let ek = asn1.cat(parts)
-  Key{a: a, s: s, t: t, rho: rho, h: sha3.sha3_256(ek), z: z, ek: ek}
+  Key{a: a, s: s, t: t, rho: rho, z: z, ek: ek}
 }
 
 /// The encapsulation key of a seed (1184 bytes).
@@ -526,9 +632,14 @@ fn decaps_k(seed: Bytes, c: Bytes, k: Int) -> Bytes? {
   if seed.len() != SEED_SIZE || c.len() != n {
     return None
   }
-  let key = expand(seed, k)
+  Some(decaps_key(expand(seed, k), c, k))
+}
+
+/// decaps_k with the expanded key, for a ciphertext of the right length.
+fn decaps_key(key: Key, c: Bytes, k: Int) -> Bytes {
+  let n = ct_size(k)
   let m = pke_decrypt(key.s, c, k)
-  let g = sha3.sha3_512(asn1.cat([m, key.h]))
+  let g = sha3.sha3_512(asn1.cat([m, sha3.sha3_256(key.ek)]))
   let kprime = g[0..32]
   let kbar = sha3.shake256(asn1.cat([key.z, c]), 32)
   let c1 = pke_encrypt(key.a, key.t, m, g[32..64], k)
@@ -541,7 +652,7 @@ fn decaps_k(seed: Bytes, c: Bytes, k: Int) -> Bytes? {
   for i in 0..32 {
     out = rt.rs_push_byte(out, ct.pick(same, Int(kprime[i]), Int(kbar[i])))
   }
-  Some(out.bytes())
+  out.bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -620,17 +731,35 @@ fn ecdh_secret(group: Int, priv: Bytes, peer: Bytes) -> Bytes? {
   if all_zero(x) { None } else { Some(x) }
 }
 
+/// The ML-KEM key of a hybrid private key of the group, expanded once
+/// for hybrid_share_key and hybrid_client_shared_key.
+pub fn hybrid_key_for(group: Int, priv: Bytes) -> Key { expand(priv[0..SEED_SIZE], kem_k(group)) }
+
 /// A client's hybrid key share of the group.
-pub fn hybrid_share_for(group: Int, priv: Bytes) -> Bytes {
-  let ek = expand(priv[0..SEED_SIZE], kem_k(group)).ek
+pub fn hybrid_share_for(group: Int, priv: Bytes) -> Bytes { hybrid_share_key(group, priv, hybrid_key_for(group, priv)) }
+
+/// hybrid_share_for with the private key's expanded ML-KEM key.
+pub fn hybrid_share_key(group: Int, priv: Bytes, key: Key) -> Bytes {
+  let ek = key.ek
   let e = ecdh_public(group, hybrid_ecdh_priv(priv))
   if group == GROUP_X25519_MLKEM768 { asn1.cat([ek, e]) } else { asn1.cat([e, ek]) }
+}
+
+/// The ECDH public key inside a client's hybrid share of the group (the
+/// plain ECDH share a client sends next to it is the same key's: one
+/// scalar multiplication, not two).
+pub fn hybrid_ecdh_share(group: Int, share: Bytes) -> Bytes {
+  let ec = ecdh_pub_size(group)
+  if group == GROUP_X25519_MLKEM768 { share[share.len() - ec..share.len()] } else { share[0..ec] }
 }
 
 /// The client's shared secret from the server's share of the group;
 /// none on a share of another length, an invalid ECDH share, or a
 /// ciphertext that does not decapsulate.
-pub fn hybrid_client_shared_for(group: Int, priv: Bytes, share: Bytes) -> Bytes? {
+pub fn hybrid_client_shared_for(group: Int, priv: Bytes, share: Bytes) -> Bytes? { hybrid_client_shared_key(group, priv, hybrid_key_for(group, priv), share) }
+
+/// hybrid_client_shared_for with the private key's expanded ML-KEM key.
+pub fn hybrid_client_shared_key(group: Int, priv: Bytes, key: Key, share: Bytes) -> Bytes? {
   let k = kem_k(group)
   let ec = ecdh_pub_size(group)
   let cn = ct_size(k)
@@ -641,8 +770,8 @@ pub fn hybrid_client_shared_for(group: Int, priv: Bytes, share: Bytes) -> Bytes?
   let e_share = if x25519_first { share[cn..cn + ec] } else { share[0..ec] }
   let c = if x25519_first { share[0..cn] } else { share[ec..ec + cn] }
   let x = ecdh_secret(group, hybrid_ecdh_priv(priv), e_share)?
-  let key = decaps_k(priv[0..SEED_SIZE], c, k)?
-  Some(if x25519_first { asn1.cat([key, x]) } else { asn1.cat([x, key]) })
+  let s = decaps_key(key, c, k)
+  Some(if x25519_first { asn1.cat([s, x]) } else { asn1.cat([x, s]) })
 }
 
 /// The server's side for a client's hybrid share of the group, with its
