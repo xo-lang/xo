@@ -356,6 +356,12 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   for (k, cs) in callee.inl_sites.indexed() {
     f.inl_sites[smap[k]].parent = if cs.parent >= 0 { smap[cs.parent] } else { site }
   }
+  // the callee's source variables and binding records (decision 0252),
+  // after the copy below has mapped its values
+  let dv0 = f.dvars.len()
+  for d in callee.dvars {
+    f.dvars.push(ssa.DVar{name: d.name, ty: d.ty, line: d.line, param: d.param, inl: if d.inl >= 0 && d.inl < smap.len() { smap[d.inl] } else { site }})
+  }
   // copy the callee
   var vm: Map[Int, Int] = {}
   let cparams = callee.blocks[0].params
@@ -428,11 +434,22 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     }
     f.edges[p.e].args = args
   }
+  for d in callee.dbinds {
+    if let Some(nv) = vm.get(d.value) {
+      f.dbinds.push(ssa.DBind{dvar: dv0 + d.dvar, value: nv, line: d.line})
+    }
+  }
   let _j = f.jump(b, bm.get(0) ?? -1, [])
 }
 
-/// Replaces every use of old in f by x.
+/// Replaces every use of old in f by x, binding records too (decision
+/// 0252).
 fn replace_uses(var f: ssa.Func, old: Int, x: Int) {
+  for k in 0..f.dbinds.len() {
+    if f.dbinds[k].value == old {
+      f.dbinds[k].value = x
+    }
+  }
   for bl in 0..f.blocks.len() {
     for v in f.blocks[bl].instrs {
       for i in 0..f.values[v].args.len() {

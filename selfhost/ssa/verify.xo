@@ -153,6 +153,13 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
       }
     }
   }
+  // binding records name a variable and a value of the function (decision
+  // 0252)
+  for d in f.dbinds {
+    if d.dvar < 0 || d.dvar >= f.dvars.len() || d.value < 0 || d.value >= f.values.len() {
+      errs.push("${pre}binding record of variable ${d.dvar} names v${d.value}, out of range")
+    }
+  }
   errs
 }
 

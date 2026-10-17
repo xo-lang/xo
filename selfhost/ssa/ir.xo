@@ -218,6 +218,29 @@ pub struct InlSite {
   pub parent: Int = -1
 }
 
+/// A source variable of a function (decision 0252): its name, the type
+/// of its values (a module type), the packed line of its declaration
+/// (Value.line's form), whether it is a parameter, and the inline site
+/// it came in with (-1: the function's own; the arm64 inliner).
+pub struct DVar {
+  pub name: Str
+  pub ty: Int
+  pub line: Int = 0
+  pub param: Bool = false
+  pub inl: Int = -1
+}
+
+/// A binding record (decision 0252): from the packed line `line` on (0:
+/// from the start of value's block, a join's parameter), variable `dvar`
+/// (an index into Func.dvars) holds `value`. A side table, not an
+/// instruction: passes that renumber or replace values update it
+/// (passes.xo), and a record whose value is gone is dropped.
+pub struct DBind {
+  pub dvar: Int
+  pub value: Int
+  pub line: Int = 0
+}
+
 /// A control flow edge with the arguments for the target's parameters.
 pub struct Edge {
   pub from: Int
@@ -242,6 +265,9 @@ pub struct Func {
   pub file: Str = ""
   /// The arm64 inliner's call sites (Value.inl).
   pub inl_sites: List[InlSite] = []
+  /// The source variables and their binding records (decision 0252).
+  pub dvars: List[DVar] = []
+  pub dbinds: List[DBind] = []
   pub results: List[Int] = []
   pub blocks: List[Block] = []
   pub values: List[Value] = []
@@ -274,6 +300,9 @@ pub struct Func {
 
 /// A lowered program (ssa.Module).
 pub struct Module {
+  /// write_func also prints each function's source variables and their
+  /// binding records (`xo dev dump ssa --debug-vars`, decision 0252).
+  pub show_dvars: Bool = false
   pub funcs: List[Func] = []
   /// The first function of each name.
   pub func_at: Map[Str, Int] = {}
@@ -776,6 +805,16 @@ fn (m: Module) write_func(var b: StrBuilder, f: Func) {
       b.write("  ")
       m.write_value(b, f, v)
       b.write("\n")
+    }
+  }
+  if m.show_dvars {
+    for (i, d) in f.dvars.indexed() {
+      let p = if d.param { " param" } else { "" }
+      let s = if d.inl >= 0 { " site ${d.inl}" } else { "" }
+      b.write("  ; var ${i} ${d.name}: ${m.type_name(d.ty)} line ${d.line / 4096}:${d.line % 4096}${p}${s}\n")
+    }
+    for d in f.dbinds {
+      b.write("  ; bind ${d.dvar} = v${d.value} from ${d.line / 4096}:${d.line % 4096}\n")
     }
   }
   b.write("}\n")

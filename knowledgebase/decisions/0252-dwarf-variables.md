@@ -157,3 +157,18 @@ What the compiler has to work with:
 - A private debugger (a Delve for Xo, consider-later): DWARF works with
   lldb, Instruments, and every other tool first; a Xo debugger can read
   the same DWARF later.
+
+## Implementation
+
+- Stage 1 (2026-10-17): ssa Func.dvars (DVar: name, type, declaration
+  line, parameter, inline site) and Func.dbinds (DBind: variable, value,
+  line, 0 for a join's parameter). The builder records them in
+  write_var and new_param for checker locals (Obj.kind Local, not `_`);
+  passes.xo remaps them in remove_trivial_params and renumber (a record
+  whose value is gone is dropped); the arm64 inliner copies the callee's
+  under the call's site and replace_uses moves them; the verifier checks
+  their indexes; the rc cache (v3) keys and stores them. `xo dev dump
+  ssa --debug-vars` prints them (cmd/xo TestDebugVarsDump); the default
+  dump is unchanged. No code generation change: the assembly of five
+  programs (http, text, json, nbody, a test program) is byte identical to
+  main's, and the fixed point holds.

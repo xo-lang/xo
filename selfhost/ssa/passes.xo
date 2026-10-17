@@ -414,6 +414,9 @@ fn remove_trivial_params(var f: Func) {
   if repl.is_empty() {
     return
   }
+  for k in 0..f.dbinds.len() {
+    f.dbinds[k].value = find_repl(repl, f.dbinds[k].value)
+  }
   for bl in 0..f.blocks.len() {
     for v in f.blocks[bl].instrs {
       for k in 0..f.values[v].args.len() {
@@ -490,6 +493,15 @@ fn renumber(var f: Func) {
     }
     f.edges[e].args = args
   }
+  // binding records follow their values; one whose value no block holds
+  // any more is dropped (decision 0252)
+  var bs: List[DBind] = []
+  for d in f.dbinds {
+    if d.value >= 0 && d.value < map.len() && map[d.value] >= 0 {
+      bs.push(DBind{dvar: d.dvar, value: map[d.value], line: d.line})
+    }
+  }
+  f.dbinds = bs
 }
 
 /// Runs cleanup on every function (the cleanup stage).

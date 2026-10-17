@@ -21,6 +21,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
   var all = false
   var tests = false
   var stages = false
+  var debug_vars = false
   var std_dir = "std"
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var dirs: List[Str] = []
@@ -39,12 +40,14 @@ fn dump_body(os: Os, args: List[Str]) ! {
       tests = true
     } else if a == "--stages" {
       stages = true
+    } else if a == "--debug-vars" {
+      debug_vars = true
     } else {
       dirs.push(a)
     }
   }
   if dirs.is_empty() {
-    os.stdio.eprintln("usage: ssa [--std=DIR] [--wd=DIR] [--each] [--bench=N] <dirs...>")
+    os.stdio.eprintln("usage: ssa [--std=DIR] [--wd=DIR] [--each] [--bench=N] [--debug-vars] <dirs...>")
     os.proc.exit(2)
   }
   let modcache = os.env.get("XO_MODCACHE") ?? ""
@@ -113,6 +116,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
       continue
     }
     var b = build_program(c, wd, tests)
+    b.m.show_dvars = debug_vars
     if !b.why.is_empty() {
       out.write("== unsupported ${b.why}\n")
       continue

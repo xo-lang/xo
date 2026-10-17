@@ -54,6 +54,8 @@ struct S {
   sealed: Map[Int, Bool] = {}
   incomplete: Map[Int, List[Int]] = {}
   param_var: Map[Int, Int] = {}
+  /// The Func.dvars index of each checker local (decision 0252).
+  dvar_of: Map[Int, Int] = {}
   loops: List[LoopCtx] = []
   /// The bindings of `var` parameters, returned updated.
   var_params: List[Int] = []
@@ -1865,6 +1867,30 @@ fn (var b: Builder) write_var(vo: Int, v: Int) {
   if !b.s.var_type.contains(vo) {
     b.s.var_type[vo] = b.s.f.values[v].ty
   }
+  b.debug_bind(vo, v, b.s.line)
+}
+
+/// Records that checker local vo holds value v from packed line `line`
+/// on (decision 0252): a source variable of the function the first time,
+/// and a binding record. Made up variables (negative) and `_` are not
+/// source variables.
+fn (var b: Builder) debug_bind(vo: Int, v: Int, line: Int) {
+  if vo < 0 || vo >= b.c.objs.len() || b.c.objs[vo].kind != check.ObjKind.Local {
+    return
+  }
+  var k = b.s.dvar_of.get(vo) ?? -1
+  if k < 0 {
+    let o = b.c.objs[vo]
+    let name = check.text(o.name)
+    if name.is_empty() || name == "_" {
+      return
+    }
+    let col = if o.col > 4095 { 4095 } else { o.col }
+    k = b.s.f.dvars.len()
+    b.s.f.dvars.push(DVar{name: name, ty: b.s.f.values[v].ty, line: o.line * 4096 + col, param: o.local is "param" | "var-param" | "recv" | "var-recv"})
+    b.s.dvar_of[vo] = k
+  }
+  b.s.f.dbinds.push(DBind{dvar: k, value: v, line: line})
 }
 
 fn (var b: Builder) read_var(vo: Int, bl0: Int) -> Int {
@@ -1915,6 +1941,7 @@ fn (var b: Builder) new_param(bl: Int, vo: Int) -> Int {
   }
   let p = b.s.f.add_param(bl, t)
   b.s.param_var[p] = vo
+  b.debug_bind(vo, p, 0)
   p
 }
 

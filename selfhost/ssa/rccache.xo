@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v2"
+const RC_CACHE_VERSION = "xo rc cache v3"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -156,6 +156,12 @@ fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
   for (ei, e) in f.edges.indexed() {
     b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
   }
+  for d in f.dvars {
+    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+  }
+  for d in f.dbinds {
+    b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
+  }
 }
 
 fn key_aux(var b: BytesBuilder, a: Aux) {
@@ -272,6 +278,20 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   for e in f.edges {
     put_s(b, "${e.from} ${e.to}")
     put_s(b, ints_line(e.args))
+  }
+  put_s(b, "${f.dvars.len()}")
+  for d in f.dvars {
+    put_s(b, d.name)
+    let (tn, ok) = type_name_of(m, d.ty)
+    if !ok {
+      return None
+    }
+    put_s(b, if d.ty < 0 { "-" } else { "t${tn}" })
+    put_s(b, "${d.line} ${d.param} ${d.inl}")
+  }
+  put_s(b, "${f.dbinds.len()}")
+  for d in f.dbinds {
+    put_s(b, "${d.dvar} ${d.value} ${d.line}")
   }
   Some(b.freeze())
 }
@@ -454,6 +474,37 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
     }
     let args = r.ints()
     f.edges.push(Edge{from: Int.parse(ft[0]) ?? -1, to: Int.parse(ft[1]) ?? -1, args: args})
+  }
+  let ndv = r.int()
+  for _ in 0..ndv {
+    if !r.ok {
+      return None
+    }
+    let name = r.str()
+    let tn = r.str()
+    var ty = -1
+    if tn != "-" {
+      ty = m.type_at.get(tn[1..tn.len()]) ?? -1
+      if ty < 0 {
+        return None
+      }
+    }
+    let lp = r.str().split(" ")
+    if lp.len() != 3 {
+      return None
+    }
+    f.dvars.push(DVar{name: name, ty: ty, line: Int.parse(lp[0]) ?? 0, param: lp[1] == "true", inl: Int.parse(lp[2]) ?? -1})
+  }
+  let ndb = r.int()
+  for _ in 0..ndb {
+    if !r.ok {
+      return None
+    }
+    let vl = r.str().split(" ")
+    if vl.len() != 3 {
+      return None
+    }
+    f.dbinds.push(DBind{dvar: Int.parse(vl[0]) ?? -1, value: Int.parse(vl[1]) ?? -1, line: Int.parse(vl[2]) ?? 0})
   }
   if !r.ok || r.at != d.len() {
     return None
