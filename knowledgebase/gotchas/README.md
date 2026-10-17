@@ -615,3 +615,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [runtime-abi-change-breaks-seed.md](runtime-abi-change-breaks-seed.md): Observed 2026-10-16: changing what a runtime entry takes crashed the seed-built xo (SIGBUS, no output); keep the old entry beside a new name until a seed knows it
 - [static-word-clash-exit-hang.md](static-word-clash-exit-hang.md): Observed: a static word outside the file's range corrupted tzhost's lock; HTTP/TLS programs hung at exit
 - [dwarf-dsymutil-addr-base.md](dwarf-dsymutil-addr-base.md): Observed 2026-10-17: DWARF 5 location lists: ULEB attribute codes above 127, pair_mem dropping location labels, and dsymutil needing DW_AT_addr_base; verify both darwin links and Linux.
+- [llvm-linux-str-offsets-verify.md](llvm-linux-str-offsets-verify.md): Observed 2026-10-17, open: llvm-dwarfdump --verify reports .debug_str_offsets errors in Linux LLVM binaries with either link; debuggers still work; how to narrow it down.
