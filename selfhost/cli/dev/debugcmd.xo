@@ -2,12 +2,17 @@
 // debug --batch` (decision 0253 point 4) on a recorded stopped thread
 // until the process control of stage 2: each command echoed as `(xo)
 // CMD`, then its output (selfhost/debug session.xo); with --json one JSON
-// line per command instead (spec 11.5, version 1).
+// line per command instead (spec 11.5, version 1). With no -c the
+// commands are read from standard input, a line each, until its end or
+// `quit`: the prompt `(xo) ` on a terminal, and an empty line repeats the
+// last command, as gdb and lldb do; with --json that is the line protocol
+// (one command in, one JSON line out).
 
 use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/debug
 
 fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  let interactive = !args.contains("-c")
   // -c may repeat: gather them before the flag parser
   var cmds: List[Str] = []
   var rest: List[Str] = []
@@ -73,6 +78,9 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var s = debug.session(exe, sections, snap)
   var failed = false
   let json = fl.get_bool("json")
+  if interactive {
+    return prompt_loop(os, s, json)
+  }
   for c in cmds {
     if json {
       let out = s.exec_json(c)
@@ -91,4 +99,41 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     }
   }
   if failed { 1 } else { 0 }
+}
+
+/// The commands of standard input, a line each (see the file's comment):
+/// 0 at its end or `quit`, 1 when it could not be read.
+fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio) {
+  let tty = os.stdio.stdin_is_tty()
+  var last = ""
+  while !s.done {
+    if tty && !json {
+      os.stdio.print("(xo) ")
+    }
+    let line = match os.stdio.read_line() {
+      Ok(Some(l)) => l.trim()
+      Ok(None) => return 0
+      Err(e) => {
+        os.stdio.eprintln("xo dev debug: ${e}")
+        return 1
+      }
+    }
+    var c = line
+    if c.is_empty() {
+      if last.is_empty() {
+        continue
+      }
+      c = last
+    }
+    last = c
+    if json {
+      os.stdio.println(s.exec_json(c))
+    } else {
+      let out = s.exec(c)
+      if !out.is_empty() {
+        os.stdio.println(out)
+      }
+    }
+  }
+  0
 }

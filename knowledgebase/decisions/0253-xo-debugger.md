@@ -324,3 +324,8 @@ programs):
   --json`. selfhost/debug json_test.xo holds a golden line per command
   on a hand made session; TestUnwind decodes the lines of a real one
   (v 1, ok, the printed value, the selected frame).
+- The prompt (2026-10-17): with no -c, `xo dev debug` reads commands
+  from standard input a line each until its end or quit, with the prompt
+  `(xo) ` on a terminal and an empty line repeating the last command (as
+  gdb and lldb); with --json that is the line protocol of spec 11.5 (one
+  command in, one JSON line out). TestUnwind drives it through a pipe.

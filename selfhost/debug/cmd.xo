@@ -30,7 +30,7 @@ pub enum Cmd {
 }
 
 /// The command on line, or an error naming what is wrong (an empty line
-/// is an error too: the prompt repeats nothing).
+/// is an error too: the prompt repeats the last command itself).
 pub fn parse_cmd(line: Str) -> Cmd ! Str {
   var words: List[Str] = []
   for w in line.trim().split(" ") {

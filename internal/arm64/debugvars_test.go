@@ -495,6 +495,18 @@ func TestUnwind(t *testing.T) {
 				if len(frames) <= frame || frames[frame].(map[string]any)["selected"] != true {
 					t.Errorf("backtrace: frame %d is not the selected one:\n%s", frame, js)
 				}
+				// the line protocol on standard input: an empty line repeats
+				// the last command; quit ends it
+				in := exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, bin)
+				in.Stdin = strings.NewReader(fmt.Sprintf("frame %d\nprint %s\n\nquit\nbt\n", frame, p.print))
+				lp, err := in.CombinedOutput()
+				if err != nil {
+					t.Fatalf("xo dev debug on standard input: %v\n%s", err, lp)
+				}
+				ls := strings.Split(strings.TrimSpace(string(lp)), "\n")
+				if len(ls) != 4 || !strings.Contains(ls[1], `"cmd":"print"`) || ls[1] != ls[2] || !strings.Contains(ls[3], `"cmd":"quit"`) {
+					t.Errorf("xo dev debug on standard input: want frame, print twice, quit (and nothing after quit):\n%s", lp)
+				}
 			})
 		}
 	}
