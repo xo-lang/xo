@@ -248,3 +248,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0254-amd64-backend.md](0254-amd64-backend.md): Proposed: Xo's own x86_64 backend (selfhost/amd64), AT&T text assembled by selfhost/macho; stages split between xo-fa and Xo Lang 2
 - [0255-preserve-most-drops.md](0255-preserve-most-drops.md): Rejected: arm64 drop helpers that keep the caller saved registers (three conventions) were slower: 29 of 114 workloads; drops stay plain calls.
 - [0256-inline-landing-pads.md](0256-inline-landing-pads.md): Accepted: the arm64 and amd64 inliner copies a callee's landing pads, at calls that pass a closure literal (supersedes 0085's inliner rule there); hof -24%, maxby -16% on arm64
+- [0257-loop-invariant-list-fields.md](0257-loop-invariant-list-fields.md): Proposed: the arm64/amd64 backends hoist loop invariant fields of list elements past sets of other fields, and drop bounds checks a dominating branch proves; stub claimed 2026-10-17
