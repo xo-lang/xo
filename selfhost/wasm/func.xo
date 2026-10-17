@@ -214,6 +214,7 @@ fn (var g: Gen) func(fi: Int) {
   }
   g.coalesce_locals(g.pc_local)
   g.renumber_locals()
+  g.memory_frame()
   var head = "(func $f${fi}"
   if !ps.is_empty() {
     head = "${head} (param ${ps.join(" ")})"
@@ -253,6 +254,145 @@ fn (var g: Gen) func(fi: Int) {
 /// self hosted checker's functions have thousands of locals). Those come
 /// first and the rest after, each group by type, so the run length coded
 /// declarations stay short.
+/// A Retain or Release of a value of more leaves than this goes through
+/// its address (rc_addr_fn).
+const WIDE_RC = 16
+
+/// A function with more locals than this keeps its FRAME_KEEP most used
+/// ones as wasm locals and the rest in a frame of linear memory
+/// (memory_frame).
+const FRAME_MIN = 160
+const FRAME_KEEP = 64
+/// The bytes of the linear memory stack of those frames.
+const FRAME_STACK = 16777216
+
+/// Moves the locals of the function in the current buffer beyond its
+/// FRAME_KEEP most used ones into a frame of linear memory, 8 bytes a
+/// local, on the stack between $ls and $lsend: a browser's baseline
+/// compiler (V8's Liftoff) gives every declared local a slot of its
+/// native stack, a worker's is about 0.6 MB, and the self hosted
+/// checker's expression walk declared hundreds of locals a level of a
+/// program's nesting (decision 0242). The frame is zeroed at entry (wasm
+/// locals start at zero) and popped at every return and at the end. Not
+/// for a function that can suspend: its frame would outlive the order of
+/// the stack.
+fn (var g: Gen) memory_frame() {
+  let np = g.cur.nparams
+  let nl = g.cur.locals.len()
+  if g.su || nl <= FRAME_MIN {
+    return
+  }
+  var count: List[Int] = []
+  for _ in 0..nl {
+    count.push(0)
+  }
+  for l in g.cur.lines {
+    if l.starts_with("local.") && l.len() > 10 {
+      let i = (Int.parse(l[10..l.len()]) ?? 0) - np
+      if i >= 0 && i < nl {
+        count[i] += 1
+      }
+    }
+  }
+  // the kept locals: the most used (ties by index)
+  var order: List[Int] = []
+  for i in 0..nl {
+    order.push(i)
+  }
+  order = order.sort_by(fn(a) { a - count[a] * 1048576 })
+  var keep: List[Bool] = []
+  for _ in 0..nl {
+    keep.push(false)
+  }
+  for k in 0..FRAME_KEEP {
+    keep[order[k]] = true
+  }
+  var newidx: List[Int] = []
+  var slot: List[Int] = []
+  var locals: List[Str] = []
+  var nslots = 0
+  for i in 0..nl {
+    if keep[i] {
+      newidx.push(np + locals.len())
+      slot.push(-1)
+      locals.push(g.cur.locals[i])
+    } else {
+      newidx.push(-1)
+      slot.push(8 * nslots)
+      nslots += 1
+    }
+  }
+  let fp = np + locals.len()
+  locals.push("i32")
+  var tmp: Map[Str, Int] = {}
+  for t in ["i32", "i64", "f32", "f64"] {
+    tmp[t] = np + locals.len()
+    locals.push(t)
+  }
+  let size = 8 * nslots
+  var out: List[Str] = []
+  out.push("global.get $ls")
+  out.push("i32.eqz")
+  out.push("if")
+  out.push("call $ls_init")
+  out.push("end")
+  out.push("global.get $ls")
+  out.push("local.tee ${fp}")
+  out.push("i32.const ${size}")
+  out.push("i32.add")
+  out.push("global.set $ls")
+  out.push("global.get $ls")
+  out.push("global.get $lsend")
+  out.push("i32.gt_u")
+  out.push("if")
+  out.push("unreachable") // the frames' stack is full
+  out.push("end")
+  out.push("local.get ${fp}")
+  out.push("i32.const 0")
+  out.push("i32.const ${size}")
+  out.push("memory.fill")
+  for l in g.cur.lines {
+    if l.starts_with("local.") && l.len() > 10 {
+      let n = Int.parse(l[10..l.len()]) ?? -1
+      let i = n - np
+      if n < 0 || i < 0 || i >= nl {
+        out.push(l)
+        continue
+      }
+      let op = l[0..10]
+      if keep[i] {
+        out.push("${op}${newidx[i]}")
+        continue
+      }
+      let t = g.cur.locals[i]
+      let tv = tmp.get(t) ?? fp
+      if op == "local.get " {
+        out.push("local.get ${fp}")
+        out.push("${t}.load offset=${slot[i]}")
+      } else {
+        out.push("local.set ${tv}")
+        out.push("local.get ${fp}")
+        out.push("local.get ${tv}")
+        out.push("${t}.store offset=${slot[i]}")
+        if op == "local.tee " {
+          out.push("local.get ${tv}")
+        }
+      }
+      continue
+    }
+    if l == "return" {
+      out.push("local.get ${fp}")
+      out.push("global.set $ls")
+    }
+    out.push(l)
+  }
+  out.push("local.get ${fp}")
+  out.push("global.set $ls")
+  g.cur.lines = out
+  g.cur.locals = locals
+  g.frames_used = true
+}
+
 fn (var g: Gen) renumber_locals() {
   let np = g.cur.nparams
   let nl = g.cur.locals.len()
@@ -1190,8 +1330,51 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       if g.f.values[a].op == ssa.Op.Const || !g.heap(at) {
         return
       }
+      let op = if x.op == ssa.Op.Retain { "dup" } else { "drop" }
+      let n = g.nleaves(at)
+      if n > WIDE_RC {
+        // a wide value is retained or released through its address: in
+        // memory where it is (a home), else stored a leaf at a time into
+        // a block of the frames' stack; pushed whole, its leaves set a
+        // browser's baseline frame size by the deepest operand stack
+        // (decision 0242)
+        let (mp, mo) = g.mem_of(a)
+        if mp >= 0 {
+          g.get(mp)
+          if mo > 0 {
+            g.e("i32.const ${mo}")
+            g.e("i32.add")
+          }
+          g.e("call ${g.rc_addr_fn(op, at)}")
+          return
+        }
+        let bl = g.tmps(["i32"])
+        g.frames_used = true
+        g.e("global.get $ls")
+        g.e("i32.eqz")
+        g.e("if")
+        g.e("call $ls_init")
+        g.e("end")
+        g.e("global.get $ls")
+        g.set(bl)
+        g.get(bl)
+        g.e("i32.const ${8 * n}")
+        g.e("i32.add")
+        g.e("global.set $ls")
+        let ls = g.leaves(at)
+        for k in 0..n {
+          g.get(bl)
+          g.push_part(a, k, k + 1)
+          g.e("${ls[k]}.store offset=${8 * k}")
+        }
+        g.get(bl)
+        g.e("call ${g.rc_addr_fn(op, at)}")
+        g.get(bl)
+        g.e("global.set $ls")
+        return
+      }
       g.push(a)
-      let fname = g.rc_fn(if x.op == ssa.Op.Retain { "dup" } else { "drop" }, at)
+      let fname = g.rc_fn(op, at)
       g.e("call ${fname}")
     }
     Reuse => {

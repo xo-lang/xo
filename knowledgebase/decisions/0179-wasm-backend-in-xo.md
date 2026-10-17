@@ -418,3 +418,36 @@ page running it in a worker on the virtual tree.
 - **Port xo_rt.c with clang --target=wasm32-wasi**: rejected above.
 - **WebAssembly exception handling for faults**: rejected above; it may
   return as an optimization once runtimes agree on the final proposal.
+
+## Smaller frames for a browser's stack (xo-4b, 2026-10-17)
+
+Figures: bench/results/playground-wasm-2026-10-16.md, "Smaller frames".
+
+A browser worker's stack (about 0.6 MB of a Node worker's) held about
+ten levels of a program's nested calls in the playground's compiler
+(decision 0242): V8's baseline compiler gives every declared local a
+slot and sizes a frame's spill area by its deepest operand stack, and
+the checker's walk of one nested call took about nine frames with
+hundreds of locals and operand stacks of 286 values (a release of a
+`Checker` pushed its 286 leaves). Three changes:
+
+- **Read only homes for every wide parameter.** A parameter (not `var`)
+  of a struct, tuple or enum of HOME_MIN (16) leaves or more, of a
+  function only called directly, is passed by address as the read only
+  homes of `Checker` were (home.xo compute_homes): `Checker.infer0`
+  went from 46 parameters and 1,407 locals to 3 and 256.
+- **Retain and release through an address.** A Retain or Release of a
+  value of more than WIDE_RC (16) leaves calls a helper taking its
+  address (home.xo rc_addr_fn): the value's home when it is in memory,
+  else a block of the frames' stack it is stored into a leaf at a time.
+- **Memory frames.** A function that cannot suspend with more than
+  FRAME_MIN (160) locals keeps its FRAME_KEEP (64) most used ones as
+  wasm locals and the rest in a frame of linear memory (func.xo
+  memory_frame), on a 16 MiB stack ($ls, $lsend, $ls_init): zeroed at
+  entry, popped at every return.
+
+The compiler's module went from 29.1 to 19.4 MB, a build of the sample
+from 1,654 to 1,086 ms under Node (best of 5), and in headless Chrome a
+program's calls nest 40 deep where 10 did (60 still overflows), at the
+same run time (about 0.49 s after the first; 0.61 s the first, from
+0.73). Programs other than the compiler get the same frames.

@@ -105,6 +105,9 @@ pub struct Gen {
   susp: List[Bool] = []
   /// Why the function just lowered took the dispatch loop (--annotate).
   why_dispatch: Str = ""
+  /// Some function keeps locals in a frame of linear memory
+  /// (memory_frame): the module has $ls, $lsend and $ls_init.
+  frames_used: Bool = false
   /// The function being lowered can suspend.
   su: Bool = false
   /// The dispatch labels of the function being lowered, in text order,
@@ -1388,6 +1391,11 @@ fn (var g: Gen) module_text() -> Str {
   }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
+  if g.frames_used {
+    // the stack of the functions' memory frames (func.xo memory_frame)
+    b.write("  (global $ls (mut i32) (i32.const 0))\n  (global $lsend (mut i32) (i32.const 0))\n")
+    g.helpers.push("  (func $ls_init\n    i32.const ${FRAME_STACK}\n    call $heap_large\n    global.set $ls\n    global.get $ls\n    i32.const ${FRAME_STACK}\n    i32.add\n    global.set $lsend)\n")
+  }
   // only the runtime functions the program reaches: the calls of its
   // code, the table, and the exports
   var roots: List[Str] = []

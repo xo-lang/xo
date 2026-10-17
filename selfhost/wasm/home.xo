@@ -79,7 +79,8 @@ fn (var g: Gen) compute_homes(main: Int) {
     let ok = fi != main && !f.indirect && !f.entry && !f.catches && !named.contains(f.name) && f.skip.is_empty()
     if ok {
       for (pi, p) in f.blocks[0].params.indexed() {
-        if !f.var_params.contains(pi) && htypes.contains(f.values[p].ty) {
+        let pt = f.values[p].ty
+        if !f.var_params.contains(pi) && (htypes.contains(pt) || (g.kind(pt) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum && g.nleaves(pt) >= HOME_MIN)) {
           rs.push(pi)
           g.homes[fi].push(pi)
         }
@@ -942,6 +943,25 @@ fn (var g: Gen) zero_homes() {
     g.e("i32.const ${g.size(g.f.values[g.hval[h]].ty)}")
     g.e("memory.fill")
   }
+}
+
+/// The helper that retains (op "dup") or releases ("drop") the value of
+/// type t at the address its parameter holds (8 bytes a leaf), emitted
+/// on first use.
+fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
+  let key = "a${op}${t}"
+  if let Some(n) = g.dropf.get(key) {
+    return n
+  }
+  let name = "$rca${g.dropf.len()}"
+  g.dropf[key] = name
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  g.mem_push(0, 0, g.leaves(t))
+  g.e("call ${g.rc_fn(op, t)}")
+  g.end_helper(name, ["i32"], [], "${op} ${g.m.types[t].name} in memory")
+  g.cur = saved
+  name
 }
 
 /// The helper that releases fields fs of struct or tuple t held in

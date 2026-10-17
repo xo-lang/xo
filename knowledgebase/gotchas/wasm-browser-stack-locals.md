@@ -41,3 +41,14 @@ recursion depth alone, and test with a Node worker of about 0.6 MB
 Also seen: V8 refuses a function type of more than 1,000 parameters
 (`param count of 1001 exceeds internal limit of 1000`); the checker's
 largest has 168.
+
+Locals were not all of it (2026-10-17, xo-4b): V8's baseline compiler
+also sizes a frame's spill area by the function's deepest operand
+stack, and pushing a wide value whole (a release of the 286 leaves of
+`Checker`, an `Expr` of 44 as an argument) made the checker's frames
+about 10 KB even with few locals. The backend now passes wide
+parameters by address, retains and releases wide values through an
+address, and keeps the cold locals of big functions in a memory frame
+(decision 0179's addendum "Smaller frames"). To find the cost of a
+frame, compute the function's deepest operand stack from its .wat as
+well as counting its locals.

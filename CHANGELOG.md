@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Smaller frames from the wasm backend (decision 0179's addendum): wide
+  parameters by address, wide values retained and released through an
+  address, and the cold locals of big functions in a memory frame. The
+  playground's compiler is 19.4 MB instead of 29.1, builds the sample in
+  1,086 ms instead of 1,654 under Node, and compiles calls nested 40
+  deep in Chrome where 10 did, at the same run time.
 - Debuggers see local variables of arm64 native builds (decision 0252
   stage 2): Int, Float, Bool, and struct and tuple locals and parameters
   get DWARF types and location lists from the register allocator, so

@@ -40,3 +40,19 @@ about 0.6 MB of a Node worker's, gotchas/wasm-browser-stack-locals.md):
 | tzhost's 138-term chain as one literal, infer_left, lazy runtime bodies (decision 0247) | 51.7 MB | check 0.8 MB, build 1 to 1.5 MB | not measured |
 | the RC pass sequential on wasm: nothing waits, so no function needs suspension frames, and every function gets structured control flow (514 had used the dispatch loop) | 28.7 MB | check 0.4 MB, build of the sample 0.6 MB, of a file system program 1 MB | 1.53 s |
 | read_var walks single-predecessor chains in a loop (the same code on all 180 goldens); a program importing std/http is refused before the HTTP runtime is checked | 28.8 MB | the sample and the file system program 0.6 MB | |
+
+## Smaller frames (2026-10-17)
+
+decision 0179's addendum "Smaller frames for a browser's stack": read
+only homes for every wide parameter, retain and release of wide values
+through an address, memory frames for functions of more than 160
+locals. main is xo 7ef498ad era (origin/main of 2026-10-17 01:00), the
+change is the same tree plus those three.
+
+| | main | change |
+|---|---|---|
+| the compiler's wasm module | 29,139,283 bytes | 19,447,034 bytes |
+| build of the sample under Node, best of 5 | 1,654 ms | 1,086 ms |
+| build of a file system program under Node, best of 5 | 2,020 ms | 1,145 ms |
+| run in headless Chrome, first then five more (5 ms polling) | 729, 484, 490, 485, 482, 481 ms | 605, 496, 516, 505, 486, 486 ms |
+| nested calls `f0(f1(...(x)))` that compile in Chrome | 10 (20 overflows) | 40 (60 overflows) |
