@@ -78,3 +78,4 @@
 - [playground-wasm-2026-10-16.md](playground-wasm-2026-10-16.md): decision 0242: the new playground downloads 2.13 MB (from 23.5) and runs a program in 0.45 s (from about 2.7) in Chrome
 - [trace-off-2026-10-16.md](trace-off-2026-10-16.md): the execution trace's hooks when off (decision 0240): one thread spawn 1.009, fanout 1.012, pingpong 1.012, mutex 0.995; the arm64 sweep with the cbz isel.
 - [arm64-float-text-2026-10-17.md](arm64-float-text-2026-10-17.md): arm64 float workloads: nbody's gap to Rust is LTO specializing its constant input (Rust with black_box 695M cycles, Xo 690M); if-conversion, range tests, branchless && and ||, madd: json floats 0.965, float_parse 0.987, lines 0.941 of main's cycles.
+- [keccak-spills-2026-10-17.md](keccak-spills-2026-10-17.md): keccak is 2.7% of the TLS x25519 client (21% of ML-KEM); its extra spills are at most 0.3% of a handshake; parked behind nistec.mul4p
