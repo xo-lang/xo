@@ -319,6 +319,11 @@ struct Any {}
 fn any_of[T](v: T) -> Any
 /// The value if it has type T.
 fn any_get[T](a: Any) -> T?
+/// The value if it has type T, moved out: a is left holding nothing
+/// (any_get and any_take then give None), so the value is not copied
+/// and can be changed in place; for an Any only its owner reads (the TLS
+/// server's connection state, tlssrv.xo).
+fn any_take[T](a: Any) -> T?
 
 /// The address of the object x refers to (decision 0207): a Str's string
 /// object, a List's list object, a handle's record; no count changes.

@@ -753,6 +753,8 @@ fn any_new(l: Int, drop: Int, tag: Int, tn: Int) -> Int { anyval.new(l, drop, ta
 
 fn any_get(a: Int, tag: Int, tn: Int) -> Int { anyval.get(a, tag, tn) }
 
+fn any_take(a: Int, tag: Int, tn: Int) -> Int { anyval.take(a, tag, tn) }
+
 fn any_free(a: Int) { anyval.free(a) }
 
 /// Faults with the n bytes of msg at p at the ln bytes of location at lp

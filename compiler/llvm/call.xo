@@ -1269,7 +1269,7 @@ fn (var g: Gen) rt_call(v: Int) {
   // anyval.xo) are nounwind and not inlined at the call: inlined
   // into the heap's fast paths, the slow paths cost LLVM alloc tasks and
   // strings 1.10 and 1.03 times the instructions (2026-10-15)
-  let nounw = if !export.is_empty() && (name.starts_with("rt.heap_") || name is "rt.any_new" | "rt.any_get") { " #8" } else { "" }
+  let nounw = if !export.is_empty() && (name.starts_with("rt.heap_") || name is "rt.any_new" | "rt.any_get" | "rt.any_take") { " #8" } else { "" }
   if !export.is_empty() && ret == "ptr" {
     let r = g.tmp()
     g.raise(r, "i64 ${sym}(${args.join(", ")})${nounw}")
@@ -1447,7 +1447,7 @@ fn xo_export(name: Str) -> Str {
     // fault.xo's raise, continue, and record through their exports
     return "xo_x_${name.trim_prefix("rt.")}"
   }
-  if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+  if name is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" | "rt.any_take" {
     // heapos.xo's platform calls (B21) and anyval.xo through their
     // exports
     return "xo_x_${name.trim_prefix("rt.")}"

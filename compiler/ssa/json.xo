@@ -109,12 +109,14 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let (v, _) = b.raw_generic(name, b.typ(b.intrinsic_targ(ci, 0)), es)
     return v
   }
-  if name == "any_get" {
+  if name is "any_get" | "any_take" {
+    // any_take: the Any's list of one itself, moved out (unique, so the
+    // pop moves the value without a copy)
     let ct = b.intrinsic_targ(ci, 0)
     let t = b.typ(ct)
     let a = b.value_as(es[0] ?? fault("arg"), b.typ(b.c.objs[fo].params[0].ty))
     let tn = b.const_str(b.m.types[t].name)
-    let l = b.rt("any_get", b.m.list(t), [a, tn])
+    let l = b.rt(name, b.m.list(t), [a, tn])
     return b.pop_one(l, nt)
   }
   b.unsupported("the intrinsic `${name}`")

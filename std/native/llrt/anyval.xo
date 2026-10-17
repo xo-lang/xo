@@ -47,6 +47,18 @@ pub fn get(a: Int, tag: Int, tn: Int) -> Int {
   l
 }
 
+/// The list of one holding a's value, moved out (a holds the empty list
+/// after: its reference is the caller's now) when its type's tag is the
+/// tn bytes at tag, else the empty list (rt.any_take).
+pub fn take(a: Int, tag: Int, tn: Int) -> Int {
+  if ld(a, A_TN) != tn || (tn > 0 && rt.mem_cmp(ld(a, A_TAG), tag, tn) != 0) {
+    return tasks.empty_list()
+  }
+  let l = ld(a, A_L)
+  st(a, A_L, tasks.empty_list())
+  l
+}
+
 /// Frees a (its free function: the last reference went).
 pub fn free(a: Int) {
   tasks.list_release(ld(a, A_L), ld(a, A_DROP))

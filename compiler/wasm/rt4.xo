@@ -94,7 +94,7 @@ fn le64(n: Int) -> Bytes {
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "tz_table" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "any_take" | "tz_table" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -2379,6 +2379,42 @@ ${tz_fn}
       i32.load offset=8
       local.tee $l
       call $rc_inc
+      local.get $l)
+
+    ;; the list of one holding a's value, moved out (a holds the empty
+    ;; list after) when its type's tag is (t, tn), else the empty list
+    (func $any_take (param $a i32) (param $t i32) (param $tn i32) (result i32) (local $l i32)
+      local.get $a
+      i32.load offset=20
+      local.get $tn
+      i32.ne
+      if
+        i32.const ${empty}
+        return
+      end
+      local.get $tn
+      if
+        local.get $a
+        i32.load offset=16
+        i32.const 8
+        i32.add
+        local.get $t
+        i32.const 8
+        i32.add
+        local.get $tn
+        call $mem_at
+        i32.eqz
+        if
+          i32.const ${empty}
+          return
+        end
+      end
+      local.get $a
+      i32.load offset=8
+      local.set $l
+      local.get $a
+      i32.const ${empty}
+      i32.store offset=8
       local.get $l)
 
     ;; the last release: the list through its drop function

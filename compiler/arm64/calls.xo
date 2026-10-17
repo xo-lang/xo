@@ -2492,7 +2492,7 @@ fn (var g: G) rt_call(v: Int) {
     // likewise
     name = "xo_x_${name0.trim_prefix("rt.")}"
   }
-  if name0 is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" {
+  if name0 is "rt.heap_big" | "rt.heap_big_resize" | "rt.heap_big_release" | "rt.heap_grow" | "rt.heap_lock" | "rt.heap_unlock" | "rt.any_new" | "rt.any_get" | "rt.any_take" {
     // heapos.xo's platform calls (B21) and anyval.xo through their
     // exports, likewise
     name = "xo_x_${name0.trim_prefix("rt.")}"

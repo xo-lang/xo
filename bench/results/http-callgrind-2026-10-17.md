@@ -26,3 +26,32 @@ change, or more REPS, to judge. Rough split: TLS adds about 81k
 instructions per request on arm64 (74k on LLVM) of record encryption and
 decryption, a full handshake about 2.6M (P-256 and the key schedule), a
 connection about 9k (accept, the connection's task and buffers).
+
+## The arm64 and LLVM gap, and the TLS connection copy (2026-10-17)
+
+Per function (callgrind_annotate of the N and 2N runs, differenced; the
+arm64 helpers named from nm and the assembly's `// drop T` comments, since
+they lack ELF .type and .size), arm64 over LLVM at main 0e67542f: plain
++4,538, TLS +11,777 per request. By cause: TLS record functions LLVM
+inlines (flush, write, step, recv_some, ghash_hw: +7,450 TLS), reference
+count helpers called out of line (drop Str alone 1,152 / 3,339; +1,103 /
++5,875), runtime fast paths behind entry functions (rl_free_n_slow,
+cabi.obj_* bodies, str_eq: +1,560 / +1,985), a 2.5 KB struct passed by
+value to its drop helper (7,338 against 3,564), memcpy and memmove calls
+(+615 / +2,212), HTTP path helpers not inlined (about +1,000 plain), and
+outlined LSE atomics (+300 plain); the emitter items went to Xo lang 4,
+the inliner items to Xo Lang 2.
+
+On both backends each TLS read and write took a copy of the connection's
+state out of its Any (tlssrv.load: a dup of every buffer of the TLS
+state) and saved a new Any (a drop of the old copy): about 20k of LLVM's
+104k instructions per request. tlssrv.xo now moves it out
+(rt.any_take) and back, and keeps the handshake state beside it.
+Measured base 8084d588 against the branch, N=100, REPS=2, medians:
+
+| Scenario | arm64 base | arm64 new | change | LLVM base | LLVM new | change |
+|---|---|---|---|---|---|---|
+| plain (control) | 34,784 | 35,034 | +0.7% (within the spread) | 30,819 | 30,940 | +0.4% |
+| tls | 116,265 | 94,555 | -18.7% | 104,474 | 76,211 | -27.1% |
+| tls-newconn | 2,642,508 | 2,610,058 | -1.2% | 2,316,521 | 2,277,409 | -1.7% |
+| h2 | 183,847 | 159,750 | -13.1% | 159,896 | 129,775 | -18.8% |

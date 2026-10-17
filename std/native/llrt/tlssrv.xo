@@ -310,7 +310,21 @@ fn load(h: Int) -> Conn? {
   rt.any_get[Conn](a)
 }
 
-fn save(h: Int, c: Conn) { put(h, rt.any_of(c)) }
+/// The connection of block h moved out (rt.any_take: not copied, so it
+/// changes in place); save puts it back. A read and a write took a copy
+/// and dropped the old one, a dup and a drop of every buffer of the TLS
+/// state per call (bench/results/http-callgrind-2026-10-17.md).
+fn take_conn(h: Int) -> Conn? {
+  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
+  rt.any_take[Conn](a)
+}
+
+/// Puts c in block h, and its handshake state in word 1 (handshake's
+/// check, which then needs no take).
+fn save(h: Int, c: Conn) {
+  put(h, rt.any_of(c))
+  rt.mem_store(h, 8, c.done, 8)
+}
 
 /// Replaces the Any in block h.
 fn put(h: Int, a: rt.Any) {
@@ -349,8 +363,10 @@ pub fn conn(h: Int, pd: Int) -> Int {
   for c in cs[1..cs.len()] {
     cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
   }
-  let t = rt.heap_large(8)
+  // the Any, the handshake state (save)
+  let t = rt.heap_large(16)
   rt.mem_store(t, 0, 0, 8)
+  rt.mem_store(t, 8, 0, 8)
   cf.handoff = true
   save(t, Conn{s: tls13srv.server(cf), s12: None, pd: pd, when: 0, status: 0, first: b"", eof: false, done: 0, pend: b""})
   t
@@ -359,12 +375,13 @@ pub fn conn(h: Int, pd: Int) -> Int {
 /// Runs the server's handshake: whether it succeeded. A client that
 /// sent plain HTTP gets net/http's answer.
 pub fn handshake(t: Int) -> Bool {
-  var c = match load(t) {
+  let d = rt.mem_load(t, 8, 8)
+  if d != 0 {
+    return d == 1
+  }
+  var c = match take_conn(t) {
     Some(x) => x
     None => return false
-  }
-  if c.done != 0 {
-    return c.done == 1
   }
   while !done(c) && !failed(c) {
     if !flush(c) || !fill(c, false) {
@@ -407,7 +424,7 @@ pub fn hc_read(t: Int, p: Int, n: Int) -> Int {
 pub fn nb_read(t: Int, p: Int, n: Int) -> Int { read(t, p, n, true) }
 
 fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
-  var c = match load(t) {
+  var c = match take_conn(t) {
     Some(x) => x
     None => return -1
   }
@@ -455,11 +472,12 @@ fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
 
 /// Writes the n bytes at p: CC_OK or why it failed.
 pub fn write(t: Int, p: Int, n: Int) -> Int {
-  var c = match load(t) {
+  var c = match take_conn(t) {
     Some(x) => x
     None => return CC_ERR
   }
   if !done(c) {
+    save(t, c)
     return CC_ERR
   }
   send(c, raw.str_at(p, n).bytes())
@@ -471,14 +489,14 @@ pub fn write(t: Int, p: Int, n: Int) -> Int {
 /// Ends a connection whose handshake completed with close_notify
 /// (tls.Conn.Close), waiting at most 5 s to send it.
 pub fn close_notify(t: Int) {
-  if let Some(x) = load(t) {
+  if let Some(x) = take_conn(t) {
     var c = x
     if c.done == 1 {
       c.when = deadline(5000000000)
       close(c)
       let _sent = flush(c)
-      save(t, c)
     }
+    save(t, c)
   }
 }
 
