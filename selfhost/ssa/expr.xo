@@ -1640,7 +1640,75 @@ fn (var b: Builder) holds_coll_in(t: Int, seen0: List[Int]) -> (Bool, List[Int])
 
 /// `if` and `if let`, joining the branch values in a block parameter
 /// (ifExpr).
-fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
+/// A level of an `if` lowered up to its `else` (if_head): done with its
+/// value, or an `else if` (els) left to if_expr, with what finishing the
+/// level needs.
+struct IfStep {
+  done: Bool = false
+  v: Int = -1
+  e: List[Expr] = []
+  t: Int = -1
+  has_val: Bool = false
+  join: Int = -1
+  res: Int = -1
+  els: List[Expr] = []
+  pa: List[Span] = []
+  pf: Int = -1
+}
+
+fn (var b: Builder) if_expr(e0: Expr, x0: parser.IfExpr) -> Int {
+  // an `else if` chain in a loop, each level finished innermost first as
+  // the recursion through b.expr did (the recursion overflowed a browser
+  // worker's stack in the wasm build of the compiler, decision 0242)
+  var pending: List[IfStep] = []
+  var e = e0
+  var x = x0
+  var v = -1
+  while true {
+    var st = b.if_head(e, x)
+    if st.done {
+      v = st.v
+      break
+    }
+    let els = st.els[0]
+    // b.expr(els): its position while it is lowered
+    st.pa = [b.at]
+    st.pf = b.at_file
+    b.at = parser.expr_span(els)
+    b.at_file = b.s.file
+    pending.push(st)
+    e = els
+    x = match els {
+      IfExpr(nx) => nx
+      _ => fault("else if")
+    }
+  }
+  var i = pending.len()
+  while i > 0 {
+    i -= 1
+    let st = pending[i]
+    b.at = st.pa[0]
+    b.at_file = st.pf
+    b.arm_to(st.join, st.has_val, v, st.t, Some(st.els[0]))
+    v = b.if_finish(st)
+  }
+  v
+}
+
+/// The end of an `if` level whose arms jumped to st.join: its value.
+fn (var b: Builder) if_finish(st: IfStep) -> Int {
+  b.seal(st.join)
+  b.s.cur = st.join
+  if st.res >= 0 {
+    return st.res
+  }
+  if b.expr_never(st.e[0]) {
+    return b.undef(st.t)
+  }
+  b.unit()
+}
+
+fn (var b: Builder) if_head(e: Expr, x: parser.IfExpr) -> IfStep {
   let t = b.type_of(e)
   let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
   let join = b.new_block()
@@ -1658,13 +1726,13 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
           // the arm returned: what follows the `if` is never reached
           // (block stops lowering), so the other platforms' code after
           // an early return is not built either
-          return b.undef(t)
+          return IfStep{done: true, v: b.undef(t)}
         }
         b.arm_to(join, has_val, tv, t, Some(Expr.Block(b: x.then)))
       } else if let Some(els) = x.els {
         let ev = b.expr(els)
         if b.is_dead() {
-          return b.undef(t)
+          return IfStep{done: true, v: b.undef(t)}
         }
         b.arm_to(join, has_val, ev, t, Some(els))
       } else {
@@ -1673,12 +1741,12 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
       b.seal(join)
       b.s.cur = join
       if res >= 0 {
-        return res
+        return IfStep{done: true, v: res}
       }
       if b.expr_never(e) {
-        return b.undef(t)
+        return IfStep{done: true, v: b.undef(t)}
       }
-      return b.unit()
+      return IfStep{done: true, v: b.unit()}
     }
     let c = b.value_as(b.strip_true(cond), b.bool_t())
     let (yes, no) = b.branch(c)
@@ -1705,21 +1773,18 @@ fn (var b: Builder) if_expr(e: Expr, x: parser.IfExpr) -> Int {
   let tv = b.block(x.then)
   b.arm_to(join, has_val, tv, t, Some(Expr.Block(b: x.then)))
   b.s.cur = else_b
+  let step = IfStep{e: [e], t: t, has_val: has_val, join: join, res: res}
   if let Some(els) = x.els {
+    if let IfExpr(_) = els {
+      // the `else if`: if_expr lowers it next, as b.expr(els) would
+      return IfStep{e: [e], t: t, has_val: has_val, join: join, res: res, els: [els]}
+    }
     let ev = b.expr(els)
     b.arm_to(join, has_val, ev, t, Some(els))
   } else {
     b.arm_to(join, has_val, b.unit(), t, Some(e))
   }
-  b.seal(join)
-  b.s.cur = join
-  if res >= 0 {
-    return res
-  }
-  if b.expr_never(e) {
-    return b.undef(t)
-  }
-  b.unit()
+  IfStep{done: true, v: b.if_finish(step)}
 }
 
 fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int, at: Expr?) {

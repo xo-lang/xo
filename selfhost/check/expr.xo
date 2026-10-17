@@ -745,50 +745,92 @@ fn (var c: Checker) join(ts: List[Int], spans: List[Span]) -> Int {
   base
 }
 
-fn (var c: Checker) if_expr(x: parser.IfExpr, w: Want) -> Int {
-  c.push_scope()
-  if let Some(cond) = x.cond {
-    c.check_ty(cond, c.named("Bool"))
-  } else {
-    let value = x.value ?? fault("if let has a value")
-    let vt = c.infer(value, -1)
-    let pat = x.pattern ?? fault("if let has a pattern")
-    c.refutable_pattern(pat, vt)
-  }
-  let els = match x.els {
-    Some(e) => e
-    None => {
-      c.block(x.then, discard())
-      c.pop_scope()
-      let t = c.unit_ty
-      if w.kind == 0 || w.kind == 3 {
-        return t
+/// An `else if` level that if_expr left to finish after the levels below
+/// it: the `if`, the expected type's openness and the diagnostic count at
+/// its start (missing_else_fix), and its `else` expression.
+struct IfLevel {
+  x: parser.IfExpr
+  open: Bool
+  n: Int
+  els: Expr
+}
+
+fn (var c: Checker) if_expr(x0: parser.IfExpr, w: Want) -> Int {
+  // an `else if` chain is walked in a loop where a type is expected (the
+  // recursion through check went as deep as the chain is long, which
+  // overflowed a browser worker's stack in the wasm build of the
+  // compiler, decision 0242); each level then finishes innermost first,
+  // as the recursion did
+  var levels: List[IfLevel] = []
+  var x = x0
+  var r = -1
+  while true {
+    c.push_scope()
+    if let Some(cond) = x.cond {
+      c.check_ty(cond, c.named("Bool"))
+    } else {
+      let value = x.value ?? fault("if let has a value")
+      let vt = c.infer(value, -1)
+      let pat = x.pattern ?? fault("if let has a pattern")
+      c.refutable_pattern(pat, vt)
+    }
+    let els = match x.els {
+      Some(e) => e
+      None => {
+        c.block(x.then, discard())
+        c.pop_scope()
+        let t = c.unit_ty
+        if w.kind == 0 || w.kind == 3 {
+          r = t
+          break
+        }
+        let n = c.diags.len()
+        r = c.coerce_to(t, w, x.span, [Expr.IfExpr(x)])
+        c.missing_else_note(x, w, n)
+        break
       }
+    }
+    if w.kind != 0 {
+      let open = w.kind != 3 && w.t >= 0 && c.is_open_var(w.t)
       let n = c.diags.len()
-      let r = c.coerce_to(t, w, x.span, [Expr.IfExpr(x)])
-      c.missing_else_note(x, w, n)
-      return r
+      c.block(x.then, w)
+      c.pop_scope()
+      if let IfExpr(e: nx) = els {
+        levels.push(IfLevel{x: x, open: open, n: n, els: els})
+        x = nx
+        continue
+      }
+      c.check(els, w)
+      c.missing_else_fix(x, open, n)
+      r = c.if_value(w)
+      break
     }
-  }
-  if w.kind != 0 {
-    let open = w.kind != 3 && w.t >= 0 && c.is_open_var(w.t)
-    let n = c.diags.len()
-    c.block(x.then, w)
+    let t1 = c.block(x.then, no_want())
     c.pop_scope()
-    c.check(els, w)
-    c.missing_else_fix(x, open, n)
-    if w.kind == 2 {
-      return c.result_of(w.t, w.e)
-    }
-    if w.kind == 3 {
-      return c.unit_ty
-    }
-    return w.t
+    let t2 = c.infer(els, -1)
+    r = c.join([t1, t2], [x.then.span, parser.expr_span(els)])
+    break
   }
-  let t1 = c.block(x.then, no_want())
-  c.pop_scope()
-  let t2 = c.infer(els, -1)
-  c.join([t1, t2], [x.then.span, parser.expr_span(els)])
+  var i = levels.len()
+  while i > 0 {
+    i -= 1
+    let l = levels[i]
+    c.set_type(l.els, r)
+    c.missing_else_fix(l.x, l.open, l.n)
+    r = c.if_value(w)
+  }
+  r
+}
+
+/// The type of an `if` with an `else` checked against w.
+fn (var c: Checker) if_value(w: Want) -> Int {
+  if w.kind == 2 {
+    return c.result_of(w.t, w.e)
+  }
+  if w.kind == 3 {
+    return c.unit_ty
+  }
+  w.t
 }
 
 /// The XO0401 at sp reported since diagnostic n, or -1 (ifnoelse.go

@@ -26,3 +26,10 @@ diagnostics), and the constant is one triple-quoted literal. To find
 such a cycle: run the module under Node with a small
 `XO_WASM_STACK_MB` and `--stack-trace-limit`, and map the `fN` frames
 to names with the annotated .wat.
+
+An `else if` chain hit the same wall in five places, one after another:
+the parser's parse_if, the checker's if_expr, the flow passes' pre_expr
+and fw_expr, the SSA builder's tasks_expr and if_expr. Each now walks the
+chain in a loop (2026-10-16); a 200-branch chain went from over 2 MB of
+stack to 0.6 MB. When adding a walker over expressions, loop over an
+`else` (the last thing visited) instead of recursing on it.

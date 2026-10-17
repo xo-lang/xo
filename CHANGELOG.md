@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- An `else if` chain is parsed, checked, walked by the flow passes, and
+  lowered to SSA in a loop instead of a call per `if`: in the wasm build
+  of the compiler (the playground) a 200-branch chain needed more than
+  2 MB of stack and now builds in 0.6 MB. The same code on every golden;
+  golden else_if_chain (300 branches, a 300-term sum).
 - Time zones need no Go: std ships the IANA database (std/tzdata,
   2026e; decision 0094's addendum), which native and Go backend builds
   embed per use as before; scripts/tzdata-update.sh refreshes it per

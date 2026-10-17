@@ -331,110 +331,118 @@ fn children(n: Node) -> List[Node] {
 /// assignments, `let` and `var` statements) at or below a node, in source
 /// order (walk.go inspect, filtered). A direct walk: building the child
 /// lists of every node made the flow checks most of the checker's time.
-fn pre_expr(e: Expr, idents: Bool, var out: List[Node]) {
-  match e {
-    Ident(..) => {
-      if idents {
-        out.push(Node.NExpr(e))
+fn pre_expr(e0: Expr, idents: Bool, var out: List[Node]) {
+  // an `else if` chain in a loop (its `else` is the last thing visited),
+  // not a call per `if`: the recursion overflowed a browser worker's
+  // stack in the wasm build of the compiler (decision 0242)
+  var e = e0
+  while true {
+    match e {
+      Ident(..) => {
+        if idents {
+          out.push(Node.NExpr(e))
+        }
+        return
       }
-      return
+      CallExpr(..) | IfExpr(_) => out.push(Node.NExpr(e))
+      _ => {}
     }
-    CallExpr(..) | IfExpr(_) => out.push(Node.NExpr(e))
-    _ => {}
-  }
-  match e {
-    StringLit(s) => {
-      for p in s.parts {
-        if let Some(x) = p.expr {
+    match e {
+      StringLit(s) => {
+        for p in s.parts {
+          if let Some(x) = p.expr {
+            pre_expr(x, idents, out)
+          }
+        }
+      }
+      ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => pre_expr(x, idents, out)
+      TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+        for x in els {
           pre_expr(x, idents, out)
         }
       }
-    }
-    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => pre_expr(x, idents, out)
-    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
-      for x in els {
-        pre_expr(x, idents, out)
-      }
-    }
-    MapLit(entries: entries, ..) => {
-      for en in entries {
-        pre_expr(en.key, idents, out)
-        pre_expr(en.value, idents, out)
-      }
-    }
-    StructLit(fields: fields, ..) => {
-      for f in fields {
-        pre_expr(f.value, idents, out)
-      }
-    }
-    BinaryExpr(x: x, y: y, ..) => {
-      pre_expr(x, idents, out)
-      pre_expr(y, idents, out)
-    }
-    RangeExpr(lo: lo, hi: hi, ..) => {
-      if let Some(x) = lo {
-        pre_expr(x, idents, out)
-      }
-      if let Some(x) = hi {
-        pre_expr(x, idents, out)
-      }
-    }
-    CallExpr(fun: fun, args: args, ..) => {
-      pre_expr(fun, idents, out)
-      for a in args {
-        pre_expr(a.value, idents, out)
-      }
-    }
-    IndexExpr(x: x, index: index, ..) => {
-      pre_expr(x, idents, out)
-      pre_expr(index, idents, out)
-    }
-    WithExpr(x: x, fields: fields, ..) => {
-      pre_expr(x, idents, out)
-      for f in fields {
-        pre_expr(f.value, idents, out)
-      }
-    }
-    IfExpr(e: ie) => {
-      if let Some(x) = ie.cond {
-        pre_expr(x, idents, out)
-      }
-      if let Some(x) = ie.value {
-        pre_expr(x, idents, out)
-      }
-      pre_block(ie.then, idents, out)
-      if let Some(x) = ie.els {
-        pre_expr(x, idents, out)
-      }
-    }
-    MatchExpr(subject: subject, arms: arms, ..) => {
-      pre_expr(subject, idents, out)
-      for a in arms {
-        if let Some(g) = a.guard {
-          pre_expr(g, idents, out)
-        }
-        if let Some(b) = a.body {
-          pre_stmt(b, idents, out)
+      MapLit(entries: entries, ..) => {
+        for en in entries {
+          pre_expr(en.key, idents, out)
+          pre_expr(en.value, idents, out)
         }
       }
-    }
-    SelectExpr(arms: arms, ..) => {
-      for a in arms {
-        if let Some(x) = a.op {
+      StructLit(fields: fields, ..) => {
+        for f in fields {
+          pre_expr(f.value, idents, out)
+        }
+      }
+      BinaryExpr(x: x, y: y, ..) => {
+        pre_expr(x, idents, out)
+        pre_expr(y, idents, out)
+      }
+      RangeExpr(lo: lo, hi: hi, ..) => {
+        if let Some(x) = lo {
           pre_expr(x, idents, out)
         }
-        if let Some(x) = a.after {
+        if let Some(x) = hi {
           pre_expr(x, idents, out)
         }
-        if let Some(b) = a.body {
-          pre_stmt(b, idents, out)
+      }
+      CallExpr(fun: fun, args: args, ..) => {
+        pre_expr(fun, idents, out)
+        for a in args {
+          pre_expr(a.value, idents, out)
         }
       }
+      IndexExpr(x: x, index: index, ..) => {
+        pre_expr(x, idents, out)
+        pre_expr(index, idents, out)
+      }
+      WithExpr(x: x, fields: fields, ..) => {
+        pre_expr(x, idents, out)
+        for f in fields {
+          pre_expr(f.value, idents, out)
+        }
+      }
+      IfExpr(e: ie) => {
+        if let Some(x) = ie.cond {
+          pre_expr(x, idents, out)
+        }
+        if let Some(x) = ie.value {
+          pre_expr(x, idents, out)
+        }
+        pre_block(ie.then, idents, out)
+        if let Some(x) = ie.els {
+          e = x
+          continue
+        }
+      }
+      MatchExpr(subject: subject, arms: arms, ..) => {
+        pre_expr(subject, idents, out)
+        for a in arms {
+          if let Some(g) = a.guard {
+            pre_expr(g, idents, out)
+          }
+          if let Some(b) = a.body {
+            pre_stmt(b, idents, out)
+          }
+        }
+      }
+      SelectExpr(arms: arms, ..) => {
+        for a in arms {
+          if let Some(x) = a.op {
+            pre_expr(x, idents, out)
+          }
+          if let Some(x) = a.after {
+            pre_expr(x, idents, out)
+          }
+          if let Some(b) = a.body {
+            pre_stmt(b, idents, out)
+          }
+        }
+      }
+      ScopeExpr(body: body, ..) | WhileExpr(body: body, ..) => pre_block(body, idents, out)
+      Block(b) => pre_block(b, idents, out)
+      FnLit(f) => pre_block(f.body, idents, out)
+      Ident(..) | IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
     }
-    ScopeExpr(body: body, ..) | WhileExpr(body: body, ..) => pre_block(body, idents, out)
-    Block(b) => pre_block(b, idents, out)
-    FnLit(f) => pre_block(f.body, idents, out)
-    Ident(..) | IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
+    return
   }
 }
 
@@ -528,106 +536,114 @@ struct FlowWalk {
 /// and the loops (For, While, WhileExpr) around each site. walkDecl is
 /// the same walk without the closures (in_fn 0) and its order of `var`
 /// statements is the same.
-fn fw_expr(e: Expr, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
-  match e {
-    Ident(id) => w.sites.push(FlowSite{id: id, in_defer: in_defer, in_fn: in_fn, loops: w.loops})
-    StringLit(s) => {
-      for p in s.parts {
-        if let Some(x) = p.expr {
+fn fw_expr(e0: Expr, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
+  // an `else if` chain in a loop (its `else` is the last thing visited),
+  // not a call per `if`: the recursion overflowed a browser worker's
+  // stack in the wasm build of the compiler (decision 0242)
+  var e = e0
+  while true {
+    match e {
+      Ident(id) => w.sites.push(FlowSite{id: id, in_defer: in_defer, in_fn: in_fn, loops: w.loops})
+      StringLit(s) => {
+        for p in s.parts {
+          if let Some(x) = p.expr {
+            fw_expr(x, in_defer, in_fn, w)
+          }
+        }
+      }
+      ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => fw_expr(x, in_defer, in_fn, w)
+      TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
+        for x in els {
           fw_expr(x, in_defer, in_fn, w)
         }
       }
-    }
-    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) | IsExpr(x: x, ..) | SelectorExpr(x: x, ..) | TypeArgsExpr(x: x, ..) | TryExpr(x: x, ..) => fw_expr(x, in_defer, in_fn, w)
-    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => {
-      for x in els {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-    }
-    MapLit(entries: entries, ..) => {
-      for en in entries {
-        fw_expr(en.key, in_defer, in_fn, w)
-        fw_expr(en.value, in_defer, in_fn, w)
-      }
-    }
-    StructLit(fields: fields, ..) => {
-      for f in fields {
-        fw_expr(f.value, in_defer, in_fn, w)
-      }
-    }
-    BinaryExpr(x: x, y: y, ..) => {
-      fw_expr(x, in_defer, in_fn, w)
-      fw_expr(y, in_defer, in_fn, w)
-    }
-    RangeExpr(lo: lo, hi: hi, ..) => {
-      if let Some(x) = lo {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-      if let Some(x) = hi {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-    }
-    CallExpr(fun: fun, args: args, ..) => {
-      fw_expr(fun, in_defer, in_fn, w)
-      for a in args {
-        fw_expr(a.value, in_defer, in_fn, w)
-      }
-    }
-    IndexExpr(x: x, index: index, ..) => {
-      fw_expr(x, in_defer, in_fn, w)
-      fw_expr(index, in_defer, in_fn, w)
-    }
-    WithExpr(x: x, fields: fields, ..) => {
-      fw_expr(x, in_defer, in_fn, w)
-      for f in fields {
-        fw_expr(f.value, in_defer, in_fn, w)
-      }
-    }
-    IfExpr(e: ie) => {
-      if let Some(x) = ie.cond {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-      if let Some(x) = ie.value {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-      fw_block(ie.then, in_defer, in_fn, w)
-      if let Some(x) = ie.els {
-        fw_expr(x, in_defer, in_fn, w)
-      }
-    }
-    MatchExpr(subject: subject, arms: arms, ..) => {
-      fw_expr(subject, in_defer, in_fn, w)
-      for a in arms {
-        if let Some(g) = a.guard {
-          fw_expr(g, in_defer, in_fn, w)
-        }
-        if let Some(b) = a.body {
-          fw_stmt(b, in_defer, in_fn, w)
+      MapLit(entries: entries, ..) => {
+        for en in entries {
+          fw_expr(en.key, in_defer, in_fn, w)
+          fw_expr(en.value, in_defer, in_fn, w)
         }
       }
-    }
-    SelectExpr(arms: arms, ..) => {
-      for a in arms {
-        if let Some(x) = a.op {
+      StructLit(fields: fields, ..) => {
+        for f in fields {
+          fw_expr(f.value, in_defer, in_fn, w)
+        }
+      }
+      BinaryExpr(x: x, y: y, ..) => {
+        fw_expr(x, in_defer, in_fn, w)
+        fw_expr(y, in_defer, in_fn, w)
+      }
+      RangeExpr(lo: lo, hi: hi, ..) => {
+        if let Some(x) = lo {
           fw_expr(x, in_defer, in_fn, w)
         }
-        if let Some(x) = a.after {
+        if let Some(x) = hi {
           fw_expr(x, in_defer, in_fn, w)
         }
-        if let Some(b) = a.body {
-          fw_stmt(b, in_defer, in_fn, w)
+      }
+      CallExpr(fun: fun, args: args, ..) => {
+        fw_expr(fun, in_defer, in_fn, w)
+        for a in args {
+          fw_expr(a.value, in_defer, in_fn, w)
         }
       }
+      IndexExpr(x: x, index: index, ..) => {
+        fw_expr(x, in_defer, in_fn, w)
+        fw_expr(index, in_defer, in_fn, w)
+      }
+      WithExpr(x: x, fields: fields, ..) => {
+        fw_expr(x, in_defer, in_fn, w)
+        for f in fields {
+          fw_expr(f.value, in_defer, in_fn, w)
+        }
+      }
+      IfExpr(e: ie) => {
+        if let Some(x) = ie.cond {
+          fw_expr(x, in_defer, in_fn, w)
+        }
+        if let Some(x) = ie.value {
+          fw_expr(x, in_defer, in_fn, w)
+        }
+        fw_block(ie.then, in_defer, in_fn, w)
+        if let Some(x) = ie.els {
+          e = x
+          continue
+        }
+      }
+      MatchExpr(subject: subject, arms: arms, ..) => {
+        fw_expr(subject, in_defer, in_fn, w)
+        for a in arms {
+          if let Some(g) = a.guard {
+            fw_expr(g, in_defer, in_fn, w)
+          }
+          if let Some(b) = a.body {
+            fw_stmt(b, in_defer, in_fn, w)
+          }
+        }
+      }
+      SelectExpr(arms: arms, ..) => {
+        for a in arms {
+          if let Some(x) = a.op {
+            fw_expr(x, in_defer, in_fn, w)
+          }
+          if let Some(x) = a.after {
+            fw_expr(x, in_defer, in_fn, w)
+          }
+          if let Some(b) = a.body {
+            fw_stmt(b, in_defer, in_fn, w)
+          }
+        }
+      }
+      ScopeExpr(body: body, ..) => fw_block(body, in_defer, in_fn, w)
+      WhileExpr(span: sp, body: body) => {
+        w.loops.push(sp.start.offset * 4 + 3)
+        fw_block(body, in_defer, in_fn, w)
+        w.loops.pop()
+      }
+      Block(b) => fw_block(b, in_defer, in_fn, w)
+      FnLit(f) => fw_block(f.body, in_defer, in_fn + 1, w)
+      IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
     }
-    ScopeExpr(body: body, ..) => fw_block(body, in_defer, in_fn, w)
-    WhileExpr(span: sp, body: body) => {
-      w.loops.push(sp.start.offset * 4 + 3)
-      fw_block(body, in_defer, in_fn, w)
-      w.loops.pop()
-    }
-    Block(b) => fw_block(b, in_defer, in_fn, w)
-    FnLit(f) => fw_block(f.body, in_defer, in_fn + 1, w)
-    IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | HoleExpr(..) | UnitExpr(..) | BadExpr(..) => {}
+    return
   }
 }
 

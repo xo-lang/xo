@@ -1692,125 +1692,144 @@ fn (var b: Builder) tasks_stmt(f: Int, st: Stmt) -> Bool {
 
 /// Whether e holds `x.tasks` on an Os or a test's TestOs
 /// (build_tasks.go usesOsTasks).
-fn (var b: Builder) tasks_expr(f: Int, e: Expr) -> Bool {
-  match e {
-    SelectorExpr(x: x, sel: sel, ..) => {
-      if !b.scan_budget && sel.name == b"tasks" {
-        var t = b.c.nat_in(f, x)
-        if t < 0 {
-          t = b.c.type_in(f, x)
+fn (var b: Builder) tasks_expr(f: Int, e0: Expr) -> Bool {
+  // an `else if` chain in a loop (its `else` is the last thing visited),
+  // not a call per `if`: the recursion overflowed a browser worker's
+  // stack in the wasm build of the compiler (decision 0242)
+  var e = e0
+  while true {
+    let r = match e {
+      SelectorExpr(x: x, sel: sel, ..) => {
+        if !b.scan_budget && sel.name == b"tasks" {
+          var t = b.c.nat_in(f, x)
+          if t < 0 {
+            t = b.c.type_in(f, x)
+          }
+          let o = b.named_obj(t)
+          if o >= 0 && b.obj_mod(o) >= 0 {
+            let om = b.obj_mod(o)
+            let n = b.obj_name(o)
+            if (b.c.mods[om].is_prelude && n == "Os") || (b.c.mods[om].path == "std/testing" && n == "TestOs") {
+              return true
+            }
+          }
         }
-        let o = b.named_obj(t)
-        if o >= 0 && b.obj_mod(o) >= 0 {
-          let om = b.obj_mod(o)
-          let n = b.obj_name(o)
-          if (b.c.mods[om].is_prelude && n == "Os") || (b.c.mods[om].path == "std/testing" && n == "TestOs") {
+        b.tasks_expr(f, x)
+      }
+      StringLit(s) => {
+        for p in s.parts {
+          if b.tasks_opt(f, p.expr) {
             return true
           }
         }
+        false
       }
-      b.tasks_expr(f, x)
-    }
-    StringLit(s) => {
-      for p in s.parts {
-        if b.tasks_opt(f, p.expr) {
-          return true
-        }
-      }
-      false
-    }
-    ParenExpr(x: x, ..) => b.tasks_expr(f, x)
-    TupleExpr(elems: elems, ..) => b.tasks_list(f, elems)
-    ListLit(elems: elems, ..) => b.tasks_list(f, elems)
-    SetLit(elems: elems, ..) => b.tasks_list(f, elems)
-    MapLit(entries: entries, ..) => {
-      for en in entries {
-        if b.tasks_expr(f, en.key) || b.tasks_expr(f, en.value) {
-          return true
-        }
-      }
-      false
-    }
-    StructLit(fields: fields, ..) => {
-      for fi in fields {
-        if b.tasks_expr(f, fi.value) {
-          return true
-        }
-      }
-      false
-    }
-    UnaryExpr(x: x, ..) => b.tasks_expr(f, x)
-    BinaryExpr(x: x, y: y, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, y)
-    IsExpr(x: x, ..) => b.tasks_expr(f, x)
-    RangeExpr(lo: lo, hi: hi, ..) => b.tasks_opt(f, lo) || b.tasks_opt(f, hi)
-    CallExpr(fun: fun, args: args, ..) => {
-      if b.scan_budget {
-        if let Some(ci) = b.c.call_in(f, e) {
-          if b.is_with_budget(ci.fn_obj) {
+      ParenExpr(x: x, ..) => b.tasks_expr(f, x)
+      TupleExpr(elems: elems, ..) => b.tasks_list(f, elems)
+      ListLit(elems: elems, ..) => b.tasks_list(f, elems)
+      SetLit(elems: elems, ..) => b.tasks_list(f, elems)
+      MapLit(entries: entries, ..) => {
+        for en in entries {
+          if b.tasks_expr(f, en.key) || b.tasks_expr(f, en.value) {
             return true
           }
         }
+        false
       }
-      if b.tasks_expr(f, fun) {
-        return true
-      }
-      for a in args {
-        if b.tasks_expr(f, a.value) {
-          return true
-        }
-      }
-      false
-    }
-    TypeArgsExpr(x: x, ..) => b.tasks_expr(f, x)
-    IndexExpr(x: x, index: index, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, index)
-    TryExpr(x: x, ..) => b.tasks_expr(f, x)
-    WithExpr(x: x, fields: fields, ..) => {
-      if b.tasks_expr(f, x) {
-        return true
-      }
-      for fi in fields {
-        if b.tasks_expr(f, fi.value) {
-          return true
-        }
-      }
-      false
-    }
-    IfExpr(x) => b.tasks_opt(f, x.cond) || b.tasks_opt(f, x.value) || b.tasks_block(f, x.then) || b.tasks_opt(f, x.els)
-    MatchExpr(subject: subject, arms: arms, ..) => {
-      if b.tasks_expr(f, subject) {
-        return true
-      }
-      for a in arms {
-        if b.tasks_opt(f, a.guard) {
-          return true
-        }
-        if let Some(st) = a.body {
-          if b.tasks_stmt(f, st) {
+      StructLit(fields: fields, ..) => {
+        for fi in fields {
+          if b.tasks_expr(f, fi.value) {
             return true
           }
         }
+        false
       }
-      false
-    }
-    ScopeExpr(body: body, ..) => b.tasks_block(f, body)
-    SelectExpr(arms: arms, ..) => {
-      for a in arms {
-        if b.tasks_opt(f, a.op) || b.tasks_opt(f, a.after) {
+      UnaryExpr(x: x, ..) => b.tasks_expr(f, x)
+      BinaryExpr(x: x, y: y, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, y)
+      IsExpr(x: x, ..) => b.tasks_expr(f, x)
+      RangeExpr(lo: lo, hi: hi, ..) => b.tasks_opt(f, lo) || b.tasks_opt(f, hi)
+      CallExpr(fun: fun, args: args, ..) => {
+        if b.scan_budget {
+          if let Some(ci) = b.c.call_in(f, e) {
+            if b.is_with_budget(ci.fn_obj) {
+              return true
+            }
+          }
+        }
+        if b.tasks_expr(f, fun) {
           return true
         }
-        if let Some(st) = a.body {
-          if b.tasks_stmt(f, st) {
+        for a in args {
+          if b.tasks_expr(f, a.value) {
             return true
           }
         }
+        false
       }
-      false
+      TypeArgsExpr(x: x, ..) => b.tasks_expr(f, x)
+      IndexExpr(x: x, index: index, ..) => b.tasks_expr(f, x) || b.tasks_expr(f, index)
+      TryExpr(x: x, ..) => b.tasks_expr(f, x)
+      WithExpr(x: x, fields: fields, ..) => {
+        if b.tasks_expr(f, x) {
+          return true
+        }
+        for fi in fields {
+          if b.tasks_expr(f, fi.value) {
+            return true
+          }
+        }
+        false
+      }
+      IfExpr(x) => {
+        if b.tasks_opt(f, x.cond) || b.tasks_opt(f, x.value) || b.tasks_block(f, x.then) {
+          return true
+        }
+        match x.els {
+          Some(el) => {
+            e = el
+            continue
+          }
+          None => false
+        }
+      }
+      MatchExpr(subject: subject, arms: arms, ..) => {
+        if b.tasks_expr(f, subject) {
+          return true
+        }
+        for a in arms {
+          if b.tasks_opt(f, a.guard) {
+            return true
+          }
+          if let Some(st) = a.body {
+            if b.tasks_stmt(f, st) {
+              return true
+            }
+          }
+        }
+        false
+      }
+      ScopeExpr(body: body, ..) => b.tasks_block(f, body)
+      SelectExpr(arms: arms, ..) => {
+        for a in arms {
+          if b.tasks_opt(f, a.op) || b.tasks_opt(f, a.after) {
+            return true
+          }
+          if let Some(st) = a.body {
+            if b.tasks_stmt(f, st) {
+              return true
+            }
+          }
+        }
+        false
+      }
+      Block(bl) => b.tasks_block(f, bl)
+      FnLit(lit) => b.tasks_block(f, lit.body)
+      WhileExpr(body: body, ..) => b.tasks_block(f, body)
+      _ => false
     }
-    Block(bl) => b.tasks_block(f, bl)
-    FnLit(lit) => b.tasks_block(f, lit.body)
-    WhileExpr(body: body, ..) => b.tasks_block(f, body)
-    _ => false
+    return r
   }
+  false
 }
 
 // ---------------------------------------------------------------------------

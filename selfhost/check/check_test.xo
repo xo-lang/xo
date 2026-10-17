@@ -330,3 +330,16 @@ test "the directory above . is unknown when the working directory is relative" {
   c.deps.wd = "/a/b"
   expect(c.up(".")) == Some("/a")
 }
+
+test "a long else if chain is checked in a loop with each branch's error (if_expr)" {
+  var arms: List[Str] = []
+  for i in 0..300 {
+    arms.push("if x == ${i} {\n    ${i}\n  }")
+  }
+  let src = "fn f(x: Int) -> Int {\n  ${arms.join(" else ")} else {\n    0\n  }\n}\n\nfn g(x: Int) -> Int {\n  if x == 1 {\n    1\n  } else if x == 2 {\n    \"two\"\n  } else {\n    3\n  }\n}\n"
+  let out = check_files(os, "ei", [("ei/main.xo", src)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains(" IfExpr Int") }).len()) >= 300
+  let errs = ls.filter(fn(l) { l.contains("\"XO0401\"") })
+  expect(errs.len()) == 1
+}

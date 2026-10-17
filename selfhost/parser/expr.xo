@@ -537,52 +537,79 @@ fn (var p: Parser) parse_field_inits() -> List[FieldInit] {
   out
 }
 
+/// One `if` of an `else if` chain, parsed before the `if`s after it
+/// (parse_if).
+struct IfHead {
+  start: Pos
+  cond: Expr?
+  pattern: Pattern?
+  value: Expr?
+  then: Block
+}
+
 fn (var p: Parser) parse_if() -> Expr {
-  let start = p.tok.span.start
-  p.next() // if
-  var cond: Expr? = None
-  var pattern: Pattern? = None
-  var value: Expr? = None
-  var head: Expr = Expr.BadExpr(p.tok.span)
-  if p.got(Kind.Let) {
-    let pat = p.parse_pattern()
-    pattern = Some(pat)
-    p.expect(Kind.Assign, "`=` in `if let`")
-    head = p.parse_expr_no_lit()
-    value = Some(head)
-  } else {
-    head = p.parse_expr_no_lit()
-    cond = Some(head)
-  }
-  if let ParenExpr(..) = head {
-    if !p.bad && !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
-      return p.braceless_if(cond, pattern, value, start)
-    }
-  }
-  let then = p.parse_cond_block(Some(head))
-  // `}` newline `else` is a common mistake; report it and keep going.
-  if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Else {
-    let nl = p.tok
-    let else_tok = p.peek_past_newlines()
-    let d = p.soft(ELSE_ON_NEW_LINE, else_tok.span, "`else` must be on the same line as the closing `}` (core 1.3)")
-    if d >= 0 {
-      p.diags[d].fixes.push(Fix{title: b"join `} else`", edits: [replace_range(nl.span.start, else_tok.span.start, " ")]})
-    }
-    p.skip_newlines()
-  }
-  var els: Expr? = None
-  if !p.bad && p.foreign_elif() {
-    els = Some(p.parse_if())
-  } else if p.got(Kind.Else) {
-    if p.at(Kind.If) {
-      els = Some(p.parse_if())
-    } else if p.at(Kind.LBrace) {
-      els = Some(Expr.Block(p.parse_block()))
+  // an `else if` chain in a loop, then its IfExpr nodes from the last one
+  // out (the recursion went as deep as the chain is long, which overflowed
+  // a browser worker's stack in the wasm build of the compiler, decision
+  // 0242); every span ends where the chain does, as before
+  var heads: List[IfHead] = []
+  var inner: Expr? = None
+  while true {
+    let start = p.tok.span.start
+    p.next() // if
+    var cond: Expr? = None
+    var pattern: Pattern? = None
+    var value: Expr? = None
+    var head: Expr = Expr.BadExpr(p.tok.span)
+    if p.got(Kind.Let) {
+      let pat = p.parse_pattern()
+      pattern = Some(pat)
+      p.expect(Kind.Assign, "`=` in `if let`")
+      head = p.parse_expr_no_lit()
+      value = Some(head)
     } else {
-      p.error_expected("`if` or `{` after `else`")
+      head = p.parse_expr_no_lit()
+      cond = Some(head)
     }
+    if let ParenExpr(..) = head {
+      if !p.bad && !p.at(Kind.LBrace) && !p.at(Kind.Newline) && (starts_expr(p.tok.kind) || (p.tok.kind is Return | Break | Continue)) {
+        inner = Some(p.braceless_if(cond, pattern, value, start))
+        break
+      }
+    }
+    let then = p.parse_cond_block(Some(head))
+    // `}` newline `else` is a common mistake; report it and keep going.
+    if p.at(Kind.Newline) && p.peek_past_newlines().kind == Kind.Else {
+      let nl = p.tok
+      let else_tok = p.peek_past_newlines()
+      let d = p.soft(ELSE_ON_NEW_LINE, else_tok.span, "`else` must be on the same line as the closing `}` (core 1.3)")
+      if d >= 0 {
+        p.diags[d].fixes.push(Fix{title: b"join `} else`", edits: [replace_range(nl.span.start, else_tok.span.start, " ")]})
+      }
+      p.skip_newlines()
+    }
+    heads.push(IfHead{start: start, cond: cond, pattern: pattern, value: value, then: then})
+    if !p.bad && p.foreign_elif() {
+      continue
+    }
+    if p.got(Kind.Else) {
+      if p.at(Kind.If) {
+        continue
+      } else if p.at(Kind.LBrace) {
+        inner = Some(Expr.Block(p.parse_block()))
+      } else {
+        p.error_expected("`if` or `{` after `else`")
+      }
+    }
+    break
   }
-  Expr.IfExpr(IfExpr{span: p.span_from(start), cond: cond, pattern: pattern, value: value, then: then, els: els})
+  var i = heads.len()
+  while i > 0 {
+    i -= 1
+    let h = heads[i]
+    inner = Some(Expr.IfExpr(IfExpr{span: p.span_from(h.start), cond: h.cond, pattern: h.pattern, value: h.value, then: h.then, els: inner}))
+  }
+  inner ?? Expr.BadExpr(p.tok.span)
 }
 
 /// Kotlin, Java, and C's `if (c) a else b` (no braces), after the

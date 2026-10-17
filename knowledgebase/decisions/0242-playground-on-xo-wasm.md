@@ -72,11 +72,13 @@ toolchain.
 - First load 2.13 MB brotli (the compiler 1.46, std 0.67) instead of
   23.5 MB; a run 0.45 s after the first (0.66 s the first) instead of
   about 2.7 s, in headless Chrome on the development Mac.
-- The stack is still the limit: a program with a long `else if` chain
-  (about 700 slots of the checker's frames per level) or a deeply nested
-  expression can overflow it; the next steps are an iterative `else if`
-  walk in the checker (as infer_left does for operators) and smaller
-  frames in the wasm backend (the Checker passed as 45 leaves).
+- The stack is still the limit for nesting: an `else if` chain and a
+  left-nested chain of operators are walked in loops (the parser, the
+  checker, the flow passes and the SSA builder; a 200-branch chain builds
+  in 0.6 MB, golden else_if_chain), but deeply nested blocks or calls
+  still recurse once per level in each of those stages. The next step
+  for them is smaller frames in the wasm backend (the Checker passed as
+  45 leaves).
 - The playground runs what the wasm backend runs: no network (WASI
   preview1 has no sockets), no working directory (`--wd` is given;
   a program's cwd_path reports Io), no `use go`, no tests yet. Crypto
