@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Linux arm64 programs linked without libgcc use ARMv8.1's single
+  instruction atomics when the CPU has them (XO_LSE=0 turns them off):
+  task spawning and fan-out take 21 to 33% less CPU time.
+
 - arm64: a reload of a spilled value that x16 or x17 already holds is
   dropped (13.8% of reloads in the TLS client; fault/defer 10% fewer
   instructions, TLS handshakes 0.7 to 2%).

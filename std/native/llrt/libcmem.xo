@@ -465,3 +465,25 @@ pub fn auxval(k: Int) -> Int {
   }
   0
 }
+
+/// Whether the environment at envp (a C array of C strings) has the
+/// entry kv exactly (no allocation: cabi_nolibc.xo nl_start runs before the heap).
+pub fn env_has(envp: Int, kv: Str) -> Bool {
+  let kb = kv.bytes()
+  var i = 0
+  while true {
+    let p = rt.mem_load(envp, 8 * i, 8)
+    if p == 0 {
+      return false
+    }
+    var k = 0
+    while k < kb.len() && rt.mem_load(p, k, 1) == Int(kb[k]) {
+      k += 1
+    }
+    if k == kb.len() && rt.mem_load(p, k, 1) == 0 {
+      return true
+    }
+    i += 1
+  }
+  false
+}

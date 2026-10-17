@@ -339,8 +339,9 @@ pub struct Module {
 /// The C library's data symbols of a program with no C library (Module
 /// nolibc, decision 0234): one word each, zero at start, defined by the
 /// emitters and set by cabi_nolibc.xo nl_start (environ and the
-/// standard streams' FILE records).
-pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr"] }
+/// standard streams' FILE records; xo_lse, 1 when the CPU has ARMv8.1's
+/// LSE atomics, which selfhost/macho elflink's outline atomics test).
+pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr", "xo_lse"] }
 
 /// The process entry of a program linked with no C library (Module
 /// nolibc_start), as assembly for arm64 Linux (the same text through

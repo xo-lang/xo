@@ -538,7 +538,9 @@ fn (var l: ELinker) synthesize_start() {
   for (name, _) in l.undefined() {
     let n = bstr(name)
     if n.starts_with("__aarch64_") && !l.amd64 {
-      match outline_atomic(n) {
+      // with the LSE dispatch when the program defines xo_lse (an
+      // XO_NOLIBC program, whose start sets it from AT_HWCAP)
+      match outline_atomic_lse(n, l.globals.contains("xo_lse".bytes())) {
         Some(body) => src.write_str(body)
         None => {
           l.fail("no outline atomic ${n}")
@@ -609,7 +611,15 @@ fn nonshared(name: Str, amd64: Bool) -> Str? {
 /// exclusive loops: cas (x0 expected, x1 desired, x2 address), swp and
 /// ldadd, ldclr, ldeor, ldset (x0 operand, x1 address); the old value in
 /// x0. Sizes 4 and 8; models relax, acq, rel, acq_rel.
-pub fn outline_atomic(name: Str) -> Str? {
+pub fn outline_atomic(name: Str) -> Str? { outline_atomic_lse(name, false) }
+
+/// outline_atomic, with lse: first a test of the program's byte xo_lse
+/// (ssa.nolibc_data, set at the start from AT_HWCAP's ATOMICS bit) and,
+/// when set, the one ARMv8.1 instruction libgcc's helper uses (cas, swp,
+/// ldadd with the model's a and l); the loop otherwise (ARMv8.0, and
+/// XO_LSE=0). ldclr, ldeor and ldset keep the loop only (the emitters
+/// call none of them).
+pub fn outline_atomic_lse(name: Str, lse: Bool) -> Str? {
   let rest = name.trim_prefix("__aarch64_")
   var op = ""
   for o in ["cas", "swp", "ldadd", "ldclr", "ldeor", "ldset"] {
@@ -637,6 +647,21 @@ pub fn outline_atomic(name: Str) -> Str? {
   }
   var b = StrBuilder.new()
   b.write("\t.globl ${name}\n\t.p2align 2\n\t.type ${name}, %function\n${name}:\n")
+  if lse && (op is "cas" | "swp" | "ldadd") {
+    let sfx = match model {
+      "acq" => "a"
+      "rel" => "l"
+      "acq_rel" => "al"
+      _ => ""
+    }
+    b.write("\tadrp x16, xo_lse\n\tadd x16, x16, :lo12:xo_lse\n\tldrb w16, [x16]\n\tcbz w16, 3f\n")
+    if op == "cas" {
+      b.write("\tcas${sfx} ${r}0, ${r}1, [x2]\n\tret\n")
+    } else {
+      b.write("\t${op}${sfx} ${r}0, ${r}0, [x1]\n\tret\n")
+    }
+    b.write("3:\n")
+  }
   if op == "cas" {
     b.write("\tmov ${r}16, ${r}0\n1:\n\t${ld} ${r}0, [x2]\n\tcmp ${r}0, ${r}16\n\tb.ne 2f\n")
     b.write("\t${st} w17, ${r}1, [x2]\n\tcbnz w17, 1b\n2:\n\tret\n")

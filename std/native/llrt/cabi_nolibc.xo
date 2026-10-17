@@ -9,6 +9,7 @@
 // fault or allocate: they run before the main thread has its thread
 // pointer.
 use native/llrt/libcio
+use native/llrt/libcmem
 use native/llrt/libcthr
 use native/llrt/linux
 use native/rt
@@ -27,6 +28,17 @@ fn nl_start(sp: Int) -> Int {
   rt.mem_store(rt.sym_addr("stdin"), 0, libcio.std_file(0), 8)
   rt.mem_store(rt.sym_addr("stdout"), 0, libcio.std_file(1), 8)
   rt.mem_store(rt.sym_addr("stderr"), 0, libcio.std_file(2), 8)
+  match target.arch {
+    TargetArch.Arm64 => {
+      // the LSE atomics (AT_HWCAP's ATOMICS bit) for the link's outline
+      // atomics (selfhost/macho elflink.xo), unless XO_LSE=0 (their load
+      // and store exclusive loops, tested so)
+      if (libcmem.auxval(16) & 256) != 0 && !libcmem.env_has(env, "XO_LSE=0") {
+        rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)
+      }
+    }
+    TargetArch.Amd64 | TargetArch.Wasm32 => {}
+  }
   env
 }
 
