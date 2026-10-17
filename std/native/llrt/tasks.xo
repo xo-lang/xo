@@ -246,6 +246,16 @@ pub fn wl_wait_as(c: Int, mu: Int, l: Int, cancelable: Bool, writer: Int) -> Boo
   !(cancelable && budget.canceled(c))
 }
 
+/// Whether anything but t's scope list and its running entry function
+/// holds task t (xo_task_wanted): its handle, an awaiter, a scope's
+/// failure slot. With neither the result cannot be read (a handle that
+/// is gone does not come back), so an entry function whose closure
+/// cannot fail reports the empty list instead of boxing its value (a
+/// list, a share walk and a free a spawn whose handle was dropped,
+/// 2026-10-17). t's count is shared: minus its references, two of them
+/// the list's and the entry function's.
+pub fn task_wanted(t: Int) -> Bool { rt.slot_load[Int](t, H_RC, 1) != -2 }
+
 /// Records the result of the current task t (xo_task_done: a shared list
 /// of one, consumed); failed tells that it is an error, which fails the
 /// scope unless the handle is awaited or the task was canceled.

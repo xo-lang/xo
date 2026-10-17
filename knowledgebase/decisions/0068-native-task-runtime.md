@@ -147,6 +147,16 @@ Test: testdata/golden/conc_closure_env (environments of tasks canceled
 before they ran, of finished and background tasks, under TestGolden's
 leak check on both native backends).
 
+A value result nothing can read is not boxed either (2026-10-17): an
+entry function whose closure cannot fail asks rt.task_wanted(t), true
+while anything but the scope's list and the entry function itself holds
+the task (its handle, an awaiter); with neither it reports the empty
+list and drops the value (a handle that is gone does not come back).
+`s.spawn(fn() { count.add(i) })` returns the Int of add: bench/perf/conc
+spawn 1,835 to 1,620 instructions and about 449 to 409 cycles a spawn on
+macOS (rust-ct: 1,440 and about 280). conc_closure_env drops a counted
+Str result this way.
+
 ## Alternatives
 - **Stackful green threads** (Go, Lean's tasks on fibers): a blocked task
   would not hold a thread, but each needs its own stack, context switch

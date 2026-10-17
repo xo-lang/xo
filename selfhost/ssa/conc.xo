@@ -590,17 +590,38 @@ fn (var b: Builder) runner(ft: Int, tt: Int, fails: Bool) -> Str {
     failed = b.m.funcs[fi].add(done, Op.Const, bt, Aux.B(b: false), [])
   }
   let lt = b.m.list(rt)
-  var l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.new"), [])
-  if b.tkind(rt) != Kind.Unit {
-    l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.push"), [l, r])
-    b.m.funcs[fi].add(done, Op.Share, -1, Aux.None, [l])
-  }
   // a () result is the empty list (immortal: no block, no share, no
   // free; 2026-10-16, bench/perf/conc spawn), which await never indexes
-  b.m.funcs[fi].add(done, Op.Call, unit, Aux.S(s: "rt.task_done"), [t, l, failed])
-  let u2 = b.m.funcs[fi].add(done, Op.Tuple, unit, Aux.None, [])
-  b.m.funcs[fi].add(done, Op.Return, -1, Aux.None, [u2])
+  if b.tkind(rt) == Kind.Unit {
+    let l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.new"), [])
+    b.finish_task(fi, done, t, l, failed)
+    return name
+  }
+  var boxed = done
+  if !fails && !b.wasm {
+    // a value nothing can read (the task's handle is gone, and it cannot
+    // fail) is dropped, not boxed (rt.task_wanted, 2026-10-17)
+    let wanted = b.m.funcs[fi].add(done, Op.Call, bt, Aux.S(s: "rt.task_wanted"), [t])
+    boxed = b.m.funcs[fi].new_block()
+    let unread = b.m.funcs[fi].new_block()
+    b.m.funcs[fi].branch(done, wanted, boxed, unread)
+    let e = b.m.funcs[fi].add(unread, Op.Call, lt, Aux.S(s: "list.new"), [])
+    b.finish_task(fi, unread, t, e, failed)
+  }
+  let l0 = b.m.funcs[fi].add(boxed, Op.Call, lt, Aux.S(s: "list.new"), [])
+  let l = b.m.funcs[fi].add(boxed, Op.Call, lt, Aux.S(s: "list.push"), [l0, r])
+  b.m.funcs[fi].add(boxed, Op.Share, -1, Aux.None, [l])
+  b.finish_task(fi, boxed, t, l, failed)
   name
+}
+
+/// The end of a task's entry function fi in block k: rt.task_done with
+/// the result list l and whether it failed, then the return.
+fn (var b: Builder) finish_task(fi: Int, k: Int, t: Int, l: Int, failed: Int) {
+  let unit = b.unit_t()
+  b.m.funcs[fi].add(k, Op.Call, unit, Aux.S(s: "rt.task_done"), [t, l, failed])
+  let u = b.m.funcs[fi].add(k, Op.Tuple, unit, Aux.None, [])
+  b.m.funcs[fi].add(k, Op.Return, -1, Aux.None, [u])
 }
 
 /// `t.await`: the task's result (await, a cancellation point).

@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A task whose handle is dropped no longer boxes its value result (it
+  cannot be read): spawn 1,835 to 1,620 instructions a spawn on macOS,
+  1.12 times rust-ct's (decision 0068's addendum).
 - Native contract fuzzing draws small numbers, as the Go backend's does
   (std/rt GenRand.Small): it drew MaxInt and MinInt, so a function that
   overflows only at the extremes failed natively and passed on Go

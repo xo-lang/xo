@@ -1,8 +1,10 @@
 // A spawned closure crosses to its task as its code and environment
-// (std/native/llrt/tasks.xo task_spawn_fn, 2026-10-16), and a () result
-// needs no list: every environment is freed whether its task ran, was
-// canceled before it ran, or ran on a canceled scope (TestGolden's
-// XO_LEAKCHECK=1 run of this program).
+// (std/native/llrt/tasks.xo task_spawn_fn, 2026-10-16), a () result
+// needs no list, and a result nothing can read (its handle dropped) is
+// dropped, not boxed (task_wanted, 2026-10-17): every environment and
+// result is freed whether its task ran, was canceled before it ran, or
+// ran on a canceled scope (TestGolden's XO_LEAKCHECK=1 run of this
+// program).
 fn main(os: Os) {
   let words = ["alpha", "beta", "gamma"]
   let ran = Atomic[Int].new(0)
@@ -33,6 +35,9 @@ fn main(os: Os) {
         u.await
       }
       s.spawn_background(fn() { ran.add(1) })
+      // a value result (a string, counted) whose handle is dropped at
+      // once: nothing can read it, so it is dropped, not kept in a list
+      s.spawn(fn() -> Str { "${w}!" })
     }
     for t in ts {
       total += t.await
