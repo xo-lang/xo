@@ -1,6 +1,9 @@
 # 0085: native contracts and fault unwinding
 
 Status: Accepted (2026-10-09). Supersedes point 4 of 0070 (a fault exits
+The arm64 inliner's rule that a function with landing pads of its own
+is not inlined is superseded by decision 0256 (2026-10-17) for calls that
+pass a closure literal.
 without running deferred code) and the "a fault in a handler still exits"
 item of 0083. Contracts: `internal/ssa/build_contract.go`,
 `xo_fault_detail`. Unwinding: `internal/ssa/landing.go` (and the builder,

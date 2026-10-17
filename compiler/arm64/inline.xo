@@ -60,6 +60,9 @@ struct InlineCost {
   /// not inlinable for another reason than its size (main, a slow path,
   /// landing pads, rt.frame_addr, a cycle)
   hard: Bool = false
+  /// it has landing pads of its own: inlined only at a call that passes a
+  /// closure literal (decision 0256; elsewhere the copies grew hot loops)
+  pads: Bool = false
 }
 
 /// The rt intrinsics the arm64 emitter makes instructions, not calls: a
@@ -134,10 +137,19 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
     c.instrs -= adc_pairs(f, bl.instrs)
     for v in bl.instrs {
       let x = f.values[v]
-      if x.pad >= 0 {
-        // it has landing pads of its own (decision 0085)
+      // landing pads of its own (decision 0085) are copied with the
+      // body since decision 0256: each copied value's pad is the copy of
+      // its check, and the callee's unwind exit re-raises into the
+      // caller's landing (inline_call); but not a pad of an operation
+      // that faults before it takes its operands (list.set, list.take):
+      // its cleanup releases them only for an owned root, and the
+      // callee's owned parameter can be a borrowed root of the caller
+      if x.pad >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && !x.pos.is_empty() {
         c.bad = true
         c.hard = true
+      }
+      if x.pad >= 0 {
+        c.pads = true
       }
       var ci = -1
       if x.op == ssa.Op.Call {
@@ -178,7 +190,9 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
       } else {
         k = inline_walk(m, by_name, sites, ci, state, costs)
       }
-      if k.bad {
+      if k.bad || k.pads {
+        // a callee with pads is a call here unless its site passes a
+        // closure (find_call), so it counts as one
         c.instrs += 1
         c.leaf = false
       } else {
@@ -205,8 +219,9 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
 }
 
 /// The names of the inlinable functions of m (inline.go inlinableSet),
-/// and of those inlinable only at a call inside a loop (INLINE_LOOP_*).
-fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool]) {
+/// of those inlinable only at a call inside a loop (INLINE_LOOP_*), and of
+/// those with landing pads, inlinable only at a call passing a closure.
+fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
   var state: Map[Str, Int] = {}
   var costs: Map[Str, InlineCost] = {}
   // the call sites of each function, not counting its own
@@ -231,16 +246,21 @@ fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[
   }
   var small: Map[Str, Bool] = {}
   var loopy: Map[Str, Bool] = {}
+  var padded: Map[Str, Bool] = {}
   for f in m.funcs {
     if let Some(c) = costs.get(f.name) {
-      if !c.bad {
+      if c.pads {
+        if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
+          padded[f.name] = true
+        }
+      } else if !c.bad {
         small[f.name] = true
       } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
         loopy[f.name] = true
       }
     }
   }
-  (small, loopy)
+  (small, loopy, padded)
 }
 
 /// Whether block b of f is in a loop: it reaches itself (through its
@@ -306,7 +326,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
 /// changed anything.
 fn inline_module(var m: ssa.Module) -> Bool {
   let by_name = funcs_by_name(m)
-  let (small, loopy) = inlinable_set(m, by_name)
+  let (small, loopy, padded) = inlinable_set(m, by_name)
   var changed = false
   for fi in 0..m.funcs.len() {
     var f = m.funcs[fi]
@@ -316,6 +336,9 @@ fn inline_module(var m: ssa.Module) -> Bool {
     for _ in 0..200 {
       devirtualize(f, m, by_name)
       var v = find_call(f, m, small, by_name)
+      if v < 0 {
+        v = find_closure_call(f, m, padded, by_name)
+      }
       if v < 0 && loop_left > 0 {
         v = find_loop_call(f, m, loopy, by_name)
         if v >= 0 {
@@ -454,6 +477,37 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
   -1
 }
 
+/// A call of a function of padded that passes a closure literal made in
+/// f (decision 0256: inlined, its call of the closure becomes direct and
+/// is inlined in turn: hof's map and filter), find_call's rules
+/// otherwise; else -1.
+fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || !padded.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name {
+        continue
+      }
+      var closure = false
+      for a in x.args {
+        let y = f.values[a]
+        closure = closure || (y.op == ssa.Op.Closure && y.args.is_empty())
+      }
+      if !closure {
+        continue
+      }
+      if x.pad < 0 {
+        return v
+      }
+      let ci = by_name.get(aux_str(x.aux)) ?? -1
+      if m.funcs[ci].results.len() == 1 {
+        return v
+      }
+    }
+  }
+  -1
+}
+
 /// A call of a function of loopy inside a loop of f (find_call's rules
 /// otherwise), else -1.
 fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
@@ -558,6 +612,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     }
   }
   let pad = f.values[call].pad
+  var pads: List[(Int, Int)] = []
   var edges: List[Pending] = []
   for cb in order {
     let nb = bm.get(cb) ?? -1
@@ -598,8 +653,13 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
             f.values[nv].inl = f.values[call].inl
           }
           // a fault in the copy lands where one in the call would
-          // (decision 0085): the callee holds nothing then
+          // (decision 0085), unless the callee gave it a landing of its own
+          // (decision 0256): then the copy of that check, set below once
+          // every value is copied (a check comes after what it guards)
           f.values[nv].pad = pad
+          if x.pad >= 0 {
+            pads.push((nv, x.pad))
+          }
           vm[v] = nv
         }
       }
@@ -611,6 +671,9 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
       args.push(vm.get(a) ?? a)
     }
     f.edges[p.e].args = args
+  }
+  for (nv, cp) in pads {
+    f.values[nv].pad = vm.get(cp) ?? pad
   }
   for d in callee.dbinds {
     if let Some(nv) = vm.get(d.value) {
