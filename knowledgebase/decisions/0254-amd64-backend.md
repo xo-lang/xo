@@ -105,6 +105,26 @@ lines), and .cfi_startproc, .cfi_endproc, .cfi_def_cfa,
 .cfi_def_cfa_offset, .cfi_offset, .cfi_personality, .cfi_lsda (the
 encoder writes .eh_frame from them, as the arm64 assembler does).
 
+Details the encoder matches (Xo Lang 2's review, 2026-10-17), so its
+bytes stay clang's:
+- The shortest immediate: `addq $1, %rax` is the imm8 form (83 /0),
+  `$300` imm32; `movq $n` with n outside int32 assembles as clang does
+  (movabsq); the emitter writes `movabsq` for 64 bit constants anyway.
+- `.p2align` in text pads with LLVM's long NOPs (0f 1f ... up to 15
+  bytes, then repeated), not `90`s.
+- A `call`/`jmp` to a global symbol defined in the same section still
+  gets R_X86_64_PLT32 (it can be preempted), to a local label none.
+- TLS in a dynamically linked ELF (XO_NOLIBC=0): initial exec,
+  `movq sym@GOTTPOFF(%rip), %reg` R_X86_64_GOTTPOFF, then `%fs:(%reg)`.
+- CFI also takes `.cfi_def_cfa_register %rbp` (an rbp frame after `movq
+  %rsp, %rbp`), so the emitter may write clang's prologue CFI.
+- The crypto set named: `adcxq`, `adoxq`, `mulxq` (BMI2/ADX),
+  `sha256rnds2`, `sha256msg1`, `sha256msg2`, `aesenc`, `aesenclast`,
+  `aesdec`, `aesdeclast`, `aesimc`, `aeskeygenassist`, `pclmulqdq`,
+  with the SSE moves they need (`movdqu`, `movdqa`, `pshufd`,
+  `pshufb`, `pxor`, `movq %xmm, %reg` and back, `pinsrq`/`pextrq` from
+  SSE4.1).
+
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
