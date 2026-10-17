@@ -29,6 +29,7 @@ fn (var g: G) function(fi: Int) {
   g.live_dce()
   g.select_compares()
   g.hoist_consts()
+  g.hoist_invariants()
   if g.x86 {
     // x86_64 (decision 0254): each branch keeps its compare (no reused
     // flags), no shrink wrapping yet; the templates become x86

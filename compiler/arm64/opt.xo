@@ -1351,6 +1351,158 @@ fn (var g: G) hoist_consts() {
   }
 }
 
+/// The mnemonics hoist_invariants moves: arithmetic of registers that
+/// reads and writes no memory and no flags and cannot fault.
+fn pure_mnemonic(m: Str) -> Bool {
+  m is "add" | "sub" | "mul" | "madd" | "msub" | "lsl" | "lsr" | "asr" | "and" | "orr" | "eor" | "sxtw" | "neg" | "mov"
+}
+
+/// Moves loop invariant arithmetic out of loops into the preheader, as
+/// hoist_consts moves constants: a plain one line instruction of
+/// pure_mnemonic whose one definition is its register's only one and
+/// whose every use is defined only outside the loop (or by an
+/// instruction already moved). Only from the loop's hot blocks, at most
+/// HOIST_MAX a loop (each lives across the loop: a register), and not
+/// in loops that call on their hot path (hoist_consts' rule). nbody's
+/// inner loop recomputed bs[i]'s address each step (2026-10-17,
+/// bench/results/amd64-vs-llvm-2026-10-17.md).
+fn (var g: G) hoist_invariants() {
+  let blocks = g.all_blocks()
+  let preds = g.mpreds_all(blocks)
+  // each register's definitions and their blocks
+  var ndef: Map[Int, Int] = {}
+  var defb: Map[Int, List[Int]] = {}
+  for b in blocks {
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+        var bs = defb.get(d) ?? []
+        bs.push(b)
+        defb[d] = bs
+      }
+    }
+  }
+  var loops = g.dfs_loops(g.hot[0], preds)
+  var sizes: List[Int] = []
+  for l in loops {
+    sizes.push(count_true(l.1))
+  }
+  for i in 0..loops.len() {
+    for j in i + 1..loops.len() {
+      if sizes[j] < sizes[i] {
+        let t = loops[i]
+        loops[i] = loops[j]
+        loops[j] = t
+        let ts = sizes[i]
+        sizes[i] = sizes[j]
+        sizes[j] = ts
+      }
+    }
+  }
+  for l in loops {
+    let (head, body) = l
+    var pre = -1
+    for p in preds[head] {
+      if body[p] {
+        continue
+      }
+      if pre >= 0 {
+        pre = -1
+        break
+      }
+      pre = p
+    }
+    if pre < 0 || g.term_kind(pre) != K_JUMP {
+      continue
+    }
+    var calls = false
+    for b in 0..g.blocks.len() {
+      if !body[b] || g.blocks[b].cold {
+        continue
+      }
+      for inst in g.blocks[b].insts {
+        calls = calls || inst.kind == K_CALL
+      }
+    }
+    if calls {
+      continue
+    }
+    var hoisted: List[Inst] = []
+    var outside: Map[Int, Bool] = {}
+    var again = true
+    while again && hoisted.len() < HOIST_MAX {
+      again = false
+      for b in blocks {
+        if !body[b] || g.blocks[b].cold || hoisted.len() >= HOIST_MAX {
+          continue
+        }
+        var out: List[Inst] = []
+        var any = false
+        for inst in g.blocks[b].insts {
+          if hoisted.len() < HOIST_MAX && g.hoistable(inst, body, ndef, defb, outside) {
+            hoisted.push(inst)
+            outside[inst.defs[0]] = true
+            any = true
+            again = true
+            continue
+          }
+          out.push(inst)
+        }
+        if any {
+          g.blocks[b].insts = out
+        }
+      }
+    }
+    if hoisted.is_empty() {
+      continue
+    }
+    for inst in hoisted {
+      defb[inst.defs[0]] = [pre]
+    }
+    let ins = g.blocks[pre].insts
+    let n = ins.len()
+    g.blocks[pre].insts = ins[0..n - 1] + hoisted + [ins[n - 1]]
+  }
+}
+
+const HOIST_MAX = 4
+
+/// Whether inst may move to the preheader of the loop body
+/// (hoist_invariants' rule).
+fn (g: G) hoistable(inst: Inst, body: List[Bool], ndef: Map[Int, Int], defb: Map[Int, List[Int]], outside: Map[Int, Bool]) -> Bool {
+  if inst.kind != K_PLAIN || inst.konst || inst.keep || inst.frame || inst.has_fault || inst.x86 || inst.early || !inst.recover.is_empty() || !inst.clobbers.is_empty() {
+    return false
+  }
+  if inst.defs.len() != 1 || inst.text.contains("\n") || inst.text.contains("[") {
+    return false
+  }
+  let sp = inst.text.find(" ") ?? -1
+  if sp < 0 || !pure_mnemonic(inst.text[0..sp]) {
+    return false
+  }
+  let d = inst.defs[0]
+  if (ndef.get(d) ?? 0) != 1 {
+    return false
+  }
+  // every definition of a use outside the loop: the use cannot change in
+  // it (an outer loop's counter is defined twice, both outside)
+  for u in inst.us {
+    if u == 0 || outside.contains(u) {
+      continue
+    }
+    let bs = defb.get(u) ?? []
+    if bs.is_empty() {
+      return false
+    }
+    for b in bs {
+      if body[b] {
+        return false
+      }
+    }
+  }
+  true
+}
+
 /// Whether a condbr tests flags a compare set (not cbnz, tbz, tbnz).
 fn flag_test(inst: Inst) -> Bool {
   inst.kind == K_CONDBR && !inst.text.is_empty() && inst.cond != "cbnz" && inst.cond != "tbz" && inst.cond != "tbnz" &&
