@@ -68,3 +68,11 @@ rt.call_c2) mid function. bench/perf/alloc tasks took 1.061 times the
 instructions with the profile off. Fix: the rare call last, and the
 helper kept out of line with a call of itself on a path never taken
 (1.026, the two instructions of the check itself).
+
+Seen again (2026-10-16, the heap profile's second design): a call (a
+tail call through rt.heap_grow) in alloc.xo alloc_fast's counting
+branch, taken only while counting, gave obj.xo rl_new_n and rs_new_n,
+which inline alloc_fast, a frame on every call (bench/perf/alloc small
+1.014 with the profile off): shrink wrapping did not keep it to that
+branch. alloc_fast stays without a call (a due sample returns 0 and the
+slow path samples).

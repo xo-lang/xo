@@ -63,6 +63,16 @@ const MAG = 1248
 /// text split 0.986). FREES is always counted: guarding it too moved
 /// the inliner's choices and made maps and mixed slower.
 const COUNT = 1864
+/// The heap profile (heapprof.xo, decision 0238): sampled while counting
+/// (COUNT) once ABYTES reaches SAMPLE_AT (the largest Int when not
+/// profiling), the sampled block kept in PSAMPLE for the hook, which
+/// rt.heap_grow calls with SAMPLE added to the size (cabi.xo heap_grow:
+/// alloc.xo makes no other call). A sampled block of a class has minus
+/// its class in its header, so its free goes the way of a big block's
+/// (rt.heap_big_release, which tells the two apart).
+const SAMPLE_AT = 10344
+const PSAMPLE = 10360
+const SAMPLE = 4611686018427387904
 
 const SMALL_MAX = 1024
 /// The bytes of blocks in a magazine (at least 8 blocks).
@@ -125,12 +135,18 @@ pub fn alloc(h: Int, n: Int) -> Int {
     r = rt.int_wrap(0, cur, 8)
   }
   rt.mem_store(h, LAST, size, 8)
-  if rt.mem_load(h, COUNT, 8) != 0 {
-    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
-  }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
     rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+  }
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
+    let ab = rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n)
+    rt.mem_store(h, ABYTES, ab, 8)
+    if ab >= rt.mem_load(h, SAMPLE_AT, 8) {
+      // the heap profile's next sample (heapprof.xo, cabi.xo heap_grow)
+      rt.mem_store(h, PSAMPLE, r, 8)
+      return rt.heap_grow(h, rt.int_wrap(0, n, SAMPLE))
+    }
   }
   r
 }
@@ -138,8 +154,8 @@ pub fn alloc(h: Int, n: Int) -> Int {
 /// alloc's common cases, small enough for the arm64 inliner: a block of
 /// n bytes (at most SMALL_MAX) popped from its class's free list, or
 /// carved from the chunk when it has room, and counted as alloc counts
-/// it; else 0 (the caller then calls alloc: a new chunk, or a real-time
-/// section). It makes no call, so a caller that inlines it keeps its
+/// it; else 0 (the caller then calls alloc: a new chunk, a real-time
+/// section, or the heap profile's next sample). It makes no call, so a caller that inlines it keeps its
 /// values in registers with no frame on these paths (obj.xo try_new,
 /// bench/results/string-list-objects-2026-10-14.md).
 pub fn alloc_fast(h: Int, n: Int) -> Int {
@@ -170,6 +186,17 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
   }
   rt.mem_store(h, LAST, size, 8)
   if rt.mem_load(h, COUNT, 8) != 0 {
+    if rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n) >= rt.mem_load(h, SAMPLE_AT, 8) {
+      // the heap profile's next sample: the block goes back to its
+      // class's list (a carved one is a free block of its class too) and
+      // the caller's slow path takes it through alloc, which samples it;
+      // alloc_fast stays without a call, so a caller that inlines it
+      // keeps no frame (a call here gave rl_new_n and rs_new_n one)
+      rt.mem_store(r, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+      rt.mem_store(fl, FREE_LISTS, r, 8)
+      rt.mem_store(fl, NFREE, rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1), 8)
+      return 0
+    }
     rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
     rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
   }
@@ -314,7 +341,9 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   let b = rt.int_wrap(1, p, 8)
   let hdr = rt.mem_load(b, 0, 8)
   let mid = rt.mem_load(h, MID_MAX, 8)
-  if hdr < 0 && n > mid {
+  // a big block (minus its size, at least the classes' limit); a size
+  // class's sampled block (minus its class, heapprof.xo) moves
+  if hdr < -128 && n > mid {
     if n > old {
       if rt.mem_load(h, COUNT, 8) != 0 {
         rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
@@ -365,9 +394,12 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     rt.mem_store(cur, 0, c, 8)
     q = rt.int_wrap(0, cur, 8)
   }
+  var due = false
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+    let ab = rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n)
+    rt.mem_store(h, ABYTES, ab, 8)
+    due = ab >= rt.mem_load(h, SAMPLE_AT, 8)
   }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
     rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
@@ -380,5 +412,9 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
   rt.mem_store(pl, FREE_LISTS, p, 8)
   rt.mem_store(pl, NFREE, rt.int_wrap(0, rt.mem_load(pl, NFREE, 8), 1), 8)
+  if due {
+    rt.mem_store(h, PSAMPLE, q, 8)
+    return rt.heap_grow(h, rt.int_wrap(0, n, SAMPLE))
+  }
   q
 }

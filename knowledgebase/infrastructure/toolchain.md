@@ -822,9 +822,8 @@ and for diffing two builds function by function, not for a first look.
   allocated (the allocator's own frames are left off). In use means
   still allocated when the profile is written: at main's end that is
   only leaks (main's values are dropped); at os.proc.exit, what other
-  tasks still hold. Profiling switches the program to the threaded heap,
-  which costs a single threaded, allocation bound program up to 2x
-  (bench/results/prof-heap-2026-10-16.md); 65,536 samples at most.
+  tasks still hold. Profiling costs an allocation bound program 1.13x to
+  1.33x (bench/results/prof-heap-2026-10-16.md); 65,536 samples at most.
 
 ## Benchmark tooling
 

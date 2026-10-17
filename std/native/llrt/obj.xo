@@ -62,17 +62,6 @@ const RT_DEPTH = 40
 const RT_N = 2144
 const RT_Q = 2152
 
-/// The heap record's words of the heap profile (heapprof.xo, decision
-/// 0238): the hook's address (0: off, the only word the allocator reads
-/// then), the bytes to the record's next sample.
-const H_PROF = 1872
-const H_PLEFT = 10344
-/// A sampled block's mark in its header (heapprof.xo MARK).
-const H_MARK = 65536
-/// The heap word's bit of an armed heap profile (heapprof.xo ARMED): a
-/// thread's word is its record plus 1 (threaded) plus 2 (armed), the
-/// thread local TLS_HEAP the record plus 2 (heapos.xo thread_heap).
-const ARMED = 2
 const RTQ = 256
 
 /// What a deferred free frees (xo_rt.c RT_*): a string object, a list
@@ -128,33 +117,11 @@ fn halloc(hw: Int, n: Int) -> Int {
     return halloc(hw, 0) // not taken: the inliner's cycle
   }
   let mt = hw & 1
-  let h = hw & -4
+  let h = subw(hw, mt)
   if mt != 0 {
-    // the heap profile: only on this path (profiling makes every
-    // thread's heap word threaded), armed by the word's bit 2 (a register
-    // test, no load, when off); the record's countdown of bytes to its
-    // next sample, which halloc_prof takes
-    if hw & ARMED != 0 {
-      let left = subw(rt.mem_load(h, H_PLEFT, 8), n)
-      if left <= 0 {
-        return halloc_prof(h, n, rt.mem_load(h, H_PROF, 8))
-      }
-      rt.mem_store(h, H_PLEFT, left, 8)
-    }
     alloc.refill(h, n)
   }
   alloc.alloc(h, n)
-}
-
-/// halloc of the heap profile's next sample: the allocation (halloc on
-/// record h without the thread bit, so alloc.alloc keeps its one call
-/// site), then the hook, which samples the block and sets the record's
-/// next countdown.
-fn halloc_prof(h: Int, n: Int, hk: Int) -> Int {
-  alloc.refill(h, n)
-  let r = halloc(h, n)
-  let _s = rt.call_c2(hk, r, n)
-  r
 }
 
 /// Frees the block p to heap word hw (xo_rt.c xo_free; free_mt with
@@ -168,43 +135,7 @@ fn hfree(hw: Int, p: Int) {
     free1(hw, p)
     return
   }
-  let h = hw & -4
-  // with the heap profile armed (the word's bit 2), only a sampled block
-  // (marked) or a big one goes to hfree_prof
-  if hw & ARMED == 0 || unmarked(p) {
-    alloc.free_mt(h, p)
-    return
-  }
-  // last, so a tail call: a call followed by more code here gave every
-  // free a frame (6% more instructions on bench/perf/alloc tasks)
-  hfree_prof(h, p)
-}
-
-/// Whether block p is of a size class and not sampled (heapprof.xo MARK).
-fn unmarked(p: Int) -> Bool {
-  let c = rt.mem_load(p, -8, 8)
-  c > 0 && c & H_MARK == 0
-}
-
-/// hfree with the heap profile on: a sampled block (its header's size
-/// class marked, heapprof.xo MARK) has the mark cleared and the hook
-/// forget it before it is freed, so its address cannot be handed out
-/// again first; a big block (a negative size) always asks the hook.
-/// Out of line (it calls itself on a path never taken), so hfree keeps
-/// no frame.
-fn hfree_prof(h: Int, p: Int) {
-  if p == 0 {
-    hfree_prof(h, p) // not taken: the inliner's cycle
-    return
-  }
-  let c = rt.mem_load(p, -8, 8)
-  if c < 0 {
-    let _b = rt.call_c2(rt.mem_load(h, H_PROF, 8), p, -1)
-  } else if c & H_MARK != 0 {
-    rt.mem_store(p, -8, c ^ H_MARK, 8)
-    let _k = rt.call_c2(rt.mem_load(h, H_PROF, 8), p, -1)
-  }
-  alloc.free_mt(h, p)
+  alloc.free_mt(subw(hw, 1), p)
 }
 
 /// A block of n bytes for a runtime object (xo_alloc): the calling
@@ -233,31 +164,11 @@ fn free1(h: Int, p: Int) { alloc.free(h, p) }
 /// caller's path through it has no frame.
 fn hresize(hw: Int, p: Int, old: Int, n: Int) -> Int {
   let mt = hw & 1
-  let q = alloc.resize(hw & -4, p, old, n, mt)
+  let q = alloc.resize(subw(hw, mt), p, old, n, mt)
   if q != 0 {
-    if q != p && hw & ARMED != 0 {
-      return hmoved(hw, p, q)
-    }
     return q
   }
   hmove(hw, p, old, n)
-}
-
-/// A big block p the heap moved to q (alloc.resize, threaded): with the
-/// heap profile on, a sampled p's slot follows it to q. q. Out of line,
-/// as hfree_prof, so hresize keeps no frame.
-fn hmoved(hw: Int, p: Int, q: Int) -> Int {
-  if q == 0 {
-    return hmoved(hw, p, q) // not taken: the inliner's cycle
-  }
-  let hk = rt.mem_load(hw & -4, H_PROF, 8)
-  if hk != 0 {
-    let k = rt.call_c2(hk, p, -1)
-    if k >= 0 {
-      let _m = rt.call_c2(hk, q, subw(-2, k))
-    }
-  }
-  q
 }
 
 /// hresize's move: a new block, the copy, the free of p. Out of line
@@ -358,7 +269,7 @@ pub fn rl_free_n(l: Int, esize: Int, drop: Int) {
 
 fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
   let hw = heap_word()
-  let h = hw & -4
+  let h = hw & -2
   if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_LIST, l, esize, drop) {
     return
   }
@@ -378,7 +289,7 @@ pub fn rc_free_n(p: Int) {
 /// (xo_h_free): its free function (word 1), unless a real-time section
 /// defers it.
 pub fn h_free_n(p: Int) {
-  let h = heap_word() & -4
+  let h = heap_word() & -2
   if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_HANDLE, p, 0, 0) {
     return
   }
@@ -465,7 +376,7 @@ pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_
 /// rc_defer for generated code (xo_rc_defer); a real-time section defers
 /// the object (its queue) unless a drain runs.
 pub fn rc_defer_n(obj: Int, drop: Int) {
-  let h = heap_word() & -4
+  let h = heap_word() & -2
   if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt.mem_load(h, DEFER_BUSY, 8) == 0 && rt_defer(h, RT_DEFER, obj, 0, drop) {
     return
   }
@@ -523,16 +434,14 @@ pub fn rt_drain(h: Int) {
 /// (xo_rt.c struct xo_heap), valid until its next system call through
 /// it. Heap records of exited threads are reused, so it is never freed
 /// (work item B02; was the C thread local sys_scratch of xo_sys.c).
-pub fn scratch() -> Int { addw(heap_word() & -4, H_SCRATCH) }
+pub fn scratch() -> Int { addw(heap_word() & -2, H_SCRATCH) }
 
 /// The calling thread's heap record (xo_rt.c heap).
-pub fn heap() -> Int { heap_word() & -4 }
+pub fn heap() -> Int { heap_word() & -2 }
 
 /// The calling thread's heap word (xo_rt.c hw): the single threaded heap
 /// record, else the thread's heap record (thread local TLS_HEAP, which the
-/// C sets on the thread's first allocation, heap_slow) plus 1, and plus
-/// ARMED (in TLS_HEAP already) while the heap profile runs; `& -4` is the
-/// record.
+/// C sets on the thread's first allocation, heap_slow) plus 1.
 fn heap_word() -> Int {
   let w = rt.static_word(HEAP)
   let h = rt.mem_load(w, 0, 8)
@@ -550,7 +459,7 @@ fn heap_word() -> Int {
 pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 
 /// The calling thread's heap record (prof.xo's heap profile).
-pub fn heap_now() -> Int { heap_word() & -4 }
+pub fn heap_now() -> Int { heap_word() & -2 }
 
 /// Sets the heap words (C main, before the program runs, with the main
 /// heap record; xo_rt_threads_begin with 0, before a second thread runs).
@@ -703,7 +612,7 @@ const H_LAST = 72
 fn rs_new(hw: Int, n: Int) -> Int {
   let s = halloc(hw, addw(S_HDR, n))
   rt.mem_store(s, 0, 1, 8)
-  rt.mem_store(s, 8, subw(rt.mem_load(hw & -4, H_LAST, 8), S_HDR), 8)
+  rt.mem_store(s, 8, subw(rt.mem_load(hw & -2, H_LAST, 8), S_HDR), 8)
   s
 }
 
@@ -760,7 +669,7 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
       want = need
     }
     let s = hresize(hw, a, addw(S_HDR, an), addw(S_HDR, want))
-    rt.mem_store(s, 8, subw(rt.mem_load(hw & -4, H_LAST, 8), S_HDR), 8)
+    rt.mem_store(s, 8, subw(rt.mem_load(hw & -2, H_LAST, 8), S_HDR), 8)
     return s
   }
   let s = rs_new(hw, if need < 16 { 16 } else { need })
@@ -871,5 +780,5 @@ pub fn rt_queued() -> Int uses realtime { rt.mem_load(rt_heap(), RT_N, 8) }
 /// its slow path, which a thread that entered a section has passed).
 pub fn rt_heap() -> Int uses realtime {
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
-  (if h != 0 { h } else { rt.tlocal_get(TLS_HEAP) }) & -4
+  (if h != 0 { h } else { rt.tlocal_get(TLS_HEAP) }) & -2
 }

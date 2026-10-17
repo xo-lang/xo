@@ -34,7 +34,6 @@ use native/llrt/dwline
 use native/llrt/heapos
 use native/llrt/heapprof
 use native/llrt/linux
-use native/llrt/obj
 use native/llrt/process
 use native/llrt/raw
 use native/llrt/stdio
@@ -196,10 +195,10 @@ fn names(v: Int, w: Str) -> Bool {
 /// The heap profile's default rate: Go's runtime.MemProfileRate.
 const HEAP_RATE = 524288
 
-/// Starts the heap profile: the program goes to one heap record per
-/// thread now (as cabi.xo heap_threads does before a second thread; the
-/// single threaded fast paths never reach the sampler), then heapprof.xo
-/// samples on the caller's record and every thread's new one.
+/// Starts the heap profile: heapprof.xo's tables, then every heap record
+/// counts and samples (heapos.xo profile_on; a thread's new record
+/// copies it). The heap keeps its paths: one thread keeps its single
+/// threaded record and fast paths.
 fn start_heap() {
   match target.os {
     TargetOs.Darwin | TargetOs.Linux => {}
@@ -216,21 +215,11 @@ fn start_heap() {
       rate = n
     }
   }
-  let h = obj.solo_heap()
-  if h != 0 {
-    heapos.set_thread_heap(h)
-    obj.heap_init(0, rt.fn_addr("heap_thread"))
-    stdio.threads()
-  }
-  let rec = obj.heap_now()
-  if !heapprof.start(rec, rt.fn_addr("heap_prof"), rate) {
+  if !heapprof.start(rate) {
     stdio.eprint("xo profile: no memory or unwind tables for the heap profile", true)
     return
   }
-  // armed: this thread's heap word carries obj.xo's ARMED bit (other
-  // threads' records copy the hook, and their words the bit, heapos.xo
-  // thread_heap)
-  heapos.set_thread_heap(rec | 2)
+  heapos.profile_on()
 }
 
 /// The decimal digits of the C string at a (0 when none).
@@ -1282,9 +1271,10 @@ pub fn trace_text(pcs: List[Int]) -> Str {
 const RUNTIME_PREFIXES: List[Str] = ["unwind.", "heapprof.", "obj.", "alloc.", "heapos.", "cabi.", "libcmem."]
 
 fn runtime_fn(name: Str) -> Bool {
-  // C ABI exports are named bare (xo_x_heap_prof, where the LLVM build
-  // inlined the sampler; xo_x_obj_*, generated code's allocations)
-  if name == "heap_prof" || name.starts_with("obj_") {
+  // C ABI exports are named bare (xo_x_heap_grow and the other heap_*,
+  // where the LLVM build inlined the sampler; xo_x_obj_*, generated
+  // code's allocations)
+  if name.starts_with("heap_") || name.starts_with("obj_") {
     return true
   }
   for p in RUNTIME_PREFIXES {
@@ -1431,9 +1421,16 @@ fn finish_heap() {
     fi.push(fr0[i])
     ff.push(pf)
     ll.push(pl)
-    cf.push(fi)
-    cfile.push(ff)
-    cline.push(ll)
+    // the allocator's own callees inlined at the sample's pc (the heap's
+    // fast path inlined into the code that allocates: obj.rs_with_cap
+    // into raw.str_repeat) are left off, as its own functions are
+    var drop = 0
+    while drop < fi.len() - 1 && runtime_fn(names[fi[drop]]) {
+      drop += 1
+    }
+    cf.push(fi[drop..fi.len()])
+    cfile.push(ff[drop..ff.len()])
+    cline.push(ll[drop..ll.len()])
   }
   // xo_entry (LLVM inlines the program's main into it) is main
   for k in 0..names.len() {

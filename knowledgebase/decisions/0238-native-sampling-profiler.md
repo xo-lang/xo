@@ -98,17 +98,28 @@ the hook copied into a thread's new record), prof.xo (start_heap,
 finish_heap, the writer), unwind.xo prof_trace, cabi.xo heap_prof;
 selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
 
-- Not the counting hook item 4 named: alloc.alloc and alloc_fast make
-  no call (decision 0207's rule) and the single threaded fast paths are
-  inlined into generated code, so a check there would cost every
-  program. Starting the profile switches the program to one heap record
-  per thread (as cabi.xo heap_threads does before a second thread), and
-  only the threaded paths check the record's word H_PROF (1872, the
-  hook's address, 0 off): halloc counts down the record's bytes to the
-  next sample (H_PLEFT) inline and calls the hook when it ends; hfree
-  calls it only for a block whose header's size class carries the
-  sample mark (65536, set by the sampler, cleared before the free) or a
-  big block; hresize when a big block moved.
+- Through the counting hook item 4 named (since 2026-10-16, the second
+  design): starting the profile turns counting on in every heap record
+  (heapos.xo profile_on; a thread's new record copies it), and
+  alloc.xo's counting branch (alloc, alloc_fast, resize's move) compares
+  the record's ABYTES with its SAMPLE_AT (the largest Int while not
+  profiling). alloc.xo makes no call but rt.heap_*, so a due sample keeps
+  the block in the record's PSAMPLE and tail calls rt.heap_grow with
+  SAMPLE added to the size (cabi.xo heap_grow hands it to
+  heapprof.sampled); alloc_fast, which generated code inlines, stays
+  without a call: it gives the block back to its class's list and
+  returns 0, and the caller's slow path (alloc) takes it and samples it.
+  A sampled block of a class gets minus its class in its header, so its
+  free takes the big block's way to rt.heap_big_release (cabi.xo: a
+  header from -1 to -72 is forgotten, its class put back, and freed the
+  ordinary way); resize's big block test is `hdr < -128`, so a sampled
+  block moves. Big blocks are sampled, forgotten, and followed in
+  cabi.xo heap_big, heap_big_release, heap_big_resize. The heap keeps
+  its paths: a single threaded program keeps its record and fast paths.
+  (The first design, 02792d0c and before, switched the program to the
+  threaded heap and hooked obj.xo's threaded paths: an off cost of one
+  bit test per allocation and free, and an on cost of up to 2x for a
+  single threaded program.)
 - A sample: an exponential gap of mean XO_PROF_HEAP_RATE (Go's
   MemProfileRate, 512 KiB; 1 samples every allocation; xorshift and a
   5 term atanh logarithm, no allocation), the frames by the fault
@@ -129,20 +140,14 @@ selfhost/xo `--profile=heap` and `cpu,heap` for run and test.
   main's end Xo has dropped main's values (0 in use but leaks); at
   os.proc.exit the values of other tasks still held. A value whose last
   use is before os.proc.exit is dropped before the call too.
-- Cost, bench/perf/alloc on the Mac (instructions,
-  bench/results/prof-heap-2026-10-16.md). Off: a thread's heap word
-  carries the profile's armed bit (obj.xo ARMED: the thread local
-  heapos.xo thread_heap sets), so the threaded allocation and free test
-  a bit of a register they already hold (one tbnz with the arm64 isel
-  of a17622af) and load nothing; against the same build with no hooks at
-  all: small and strings 1.000, mixed 1.006, maps 1.010, tasks 1.009,
-  conc within noise (the first version, a load of the record's H_PROF
-  word, was tasks 1.023). Item 5's "off costs nothing" is this: within
-  about 1%. On at the default rate: a threaded program 1.09 to 1.14
-  (tasks); a single threaded one 1.46 to 2.2 (mixed, grow), the price of
-  the threaded heap (a thread local read per allocation on macOS, the
-  magazines) rather than of the samples (taking them: 1% of tasks'
-  instructions, 7% of mixed's).
+- Cost, bench/perf/alloc on the Mac (instructions, minimum of 7 runs,
+  bench/results/prof-heap-2026-10-16.md). Off: the counting branch is
+  not taken, so the heap is main's before either design within noise
+  (small 1.000, mixed 1.004, maps 1.000, strings 1.006, tasks 1.008;
+  conc within noise). On at the default rate: small 1.33x, strings and
+  maps 1.27x, mixed 1.22x, tasks 1.13x (the first design: 2.05x, 1.58x,
+  1.46x, 1.14x), grow 2.08x (a 65M instruction run: the profile's fixed
+  start and writing, about 30M, dominate).
 - Test: internal/llvm TestProfHeap (rate 1: the 2000 strings a task
   holds at os.proc.exit are in use and the top function by inuse_space
   is str_repeat, the churned lists are churn's; the default rate

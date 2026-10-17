@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The heap profile samples in the heap's counting branch instead of
+  switching the program to the threaded heap (decision 0238): with the
+  profile on, a single threaded allocation bound program pays 1.22x to
+  1.33x (was up to 2.05x); off, the heap is as before the profile
+  (bench/results/prof-heap-2026-10-16.md).
 - The wasm backend runs the TLS servers, signing, and every crypto
   golden: in a WASI module the native runtime's entropy and environment
   reads go to the wasm runtime's WASI random_get and environ_get

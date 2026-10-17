@@ -319,9 +319,12 @@ const H_NFREE = 664
 const H_NEXT = 2136
 /// Whether the record counts (alloc.xo COUNT).
 const H_COUNT = 1864
-/// The heap profile's hook (heapprof.xo, obj.xo H_PROF): a thread's new
-/// record copies it.
+/// The heap profile (heapprof.xo, alloc.xo SAMPLE_AT): whether it runs
+/// (a thread's new record copies it), and the bytes allocated at which
+/// the record's next sample is taken (the largest Int: none).
 const H_PROF = 1872
+const H_SAMPLE_AT = 10344
+const NEVER = 9223372036854775807
 
 /// The thread local word of the calling thread's heap record (sched.xo
 /// TLS_HEAP).
@@ -335,11 +338,12 @@ const W_HSIZE = 29
 
 /// A heap record's size (alloc.xo's and obj.xo's fields, then the
 /// real-time section's queue of 256 entries of 32 bytes: xo_rt.c's
-/// xo_heap until decision 0233 step 2; then the heap profile's countdown
-/// and thread state, heapprof.xo H_PLEFT, H_PSTATE), the size classes' limit
+/// xo_heap until decision 0233 step 2; then the heap profile's next
+/// sample, its thread state, and its sampled block: alloc.xo SAMPLE_AT,
+/// heapprof.xo H_PSTATE, alloc.xo PSAMPLE), the size classes' limit
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
 /// per size class, 1 to 72).
-const H_SIZE = 2152 + 32 * 256 + 16
+const H_SIZE = 2152 + 32 * 256 + 24
 const MID_MAX = 262144
 const NCLASS1 = 73
 
@@ -350,6 +354,7 @@ pub fn main_record() -> Int {
   let h = map(H_SIZE)
   rt.mem_store(h, H_MID_MAX, MID_MAX, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
+  rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)
   rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
@@ -387,8 +392,7 @@ pub fn set_mid_max(m: Int) { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0
 pub fn set_thread_heap(h: Int) { rt.tlocal_set(TLS_HEAP, h) }
 
 /// The calling thread's heap record, made on its first use: the size
-/// classes' limit and the central lists are the other records'. Plus 2
-/// (obj.xo ARMED) while the heap profile runs: the thread local's value.
+/// classes' limit and the central lists are the other records'.
 pub fn thread_heap() -> Int {
   let t = rt.tlocal_get(TLS_HEAP)
   if t != 0 {
@@ -401,15 +405,30 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
-  let hook = rt.mem_load(first, H_PROF, 8)
-  rt.mem_store(h, H_PROF, hook, 8)
+  let prof = rt.mem_load(first, H_PROF, 8)
+  rt.mem_store(h, H_PROF, prof, 8)
+  // profiling: the first allocation's hook draws this record's first gap
+  rt.mem_store(h, H_SAMPLE_AT, if prof != 0 { 0 } else { NEVER }, 8)
   rt.mem_store(h, H_NEXT, first, 8)
   rt.mem_store(w, 0, h, 8)
   hlock_give()
-  // the heap profile armed: the thread's word carries obj.xo's ARMED bit
-  let word = if hook != 0 { h | 2 } else { h }
-  rt.tlocal_set(TLS_HEAP, word)
-  word
+  rt.tlocal_set(TLS_HEAP, h)
+  h
+}
+
+/// Starts the heap profile on every record (prof.xo start_heap): counting
+/// on (alloc.xo COUNT, where the sample check is), and each record's
+/// next sample at once (the hook draws its first gap).
+pub fn profile_on() {
+  hlock_take()
+  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  while r != 0 {
+    rt.mem_store(r, H_COUNT, 1, 8)
+    rt.mem_store(r, H_PROF, 1, 8)
+    rt.mem_store(r, H_SAMPLE_AT, 0, 8)
+    r = rt.mem_load(r, H_NEXT, 8)
+  }
+  hlock_give()
 }
 
 /// The blocks allocated and not freed, and the blocks allocated, over

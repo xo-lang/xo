@@ -10,13 +10,18 @@
 // open addressed set, so the free of a sampled block marks its slot
 // freed: the profile's inuse values.
 //
-// The allocator calls it through the heap record's word H_PROF (obj.xo
-// halloc, hfree and hresize, threaded paths only: profiling switches the
-// program to one heap record per thread at start, as a second thread
-// would, so the single threaded fast paths stay untouched and never see
-// it): with the profile off that word is 0 and the allocator only loads
-// it. Inside an allocation nothing here allocates or takes a lock: Int
-// words, the slot atomics, and the unwind walk.
+// The heap calls it from its counting branch (alloc.xo COUNT, taken only
+// while something counts: the profile turns counting on, heapos.xo
+// profile_on): once a record's ABYTES reaches its SAMPLE_AT, the block is
+// kept in PSAMPLE and rt.heap_grow is called with SAMPLE added to the size
+// (cabi.xo heap_grow calls sampled). A sampled block of a size class gets
+// minus its class in its header, so its free takes the big block's way
+// (rt.heap_big_release, cabi.xo: freed, the header back, the ordinary
+// free); big blocks (cabi.xo heap_big, heap_big_release,
+// heap_big_resize) are sampled, forgotten, and followed there. With the
+// profile off the heap pays nothing more (no counting, or a compare while
+// another counter counts). Inside an allocation nothing here allocates
+// or takes a lock: Int words, the slot atomics, and the unwind walk.
 use native/llrt/linux
 use native/llrt/unwind
 use native/rt
@@ -70,21 +75,13 @@ const POOL_N = 128
 const T_RNG = unwind.PROF_RECORD
 const T_SIZE = unwind.PROF_RECORD + 8
 
-/// The mark of a sampled block's size class in its header (classes are
-/// 1 to 72; obj.xo hfree_prof clears it before the block is freed).
-pub const MARK = 65536
-
-/// The heap record's words of the profile (heapos.xo H_PROF, H_PLEFT,
-/// H_PSTATE): the hook's address (cabi.xo heap_prof; 0 off, copied into
-/// a thread's new record), the bytes to the record's next sample, the
-/// record's thread state (0 none yet, 1 none to be had).
-const H_PROF = 1872
-const H_PLEFT = 10344
+/// The heap record's words of the profile (alloc.xo, heapos.xo): the
+/// bytes allocated (alloc.xo ABYTES), the next sample's (SAMPLE_AT; NEVER:
+/// none), the record's thread state (0 none yet, 1 none to be had).
+const H_ABYTES = 16
+const H_SAMPLE_AT = 10344
 const H_PSTATE = 10352
-
-/// The thread local word of the calling thread's heap record (sched.xo
-/// TLS_HEAP).
-const TLS_HEAP = 3
+const NEVER = 9223372036854775807
 
 const RELAXED = 0
 const ACQUIRE = 1
@@ -108,12 +105,11 @@ fn map(n: Int) -> Int {
   m
 }
 
-/// Maps the table, the address set, and the unwind records, and turns
-/// the profile on for heap record h (the caller's, the only one yet:
-/// prof.xo start, after switching the program to a record per thread)
-/// with hook (cabi.xo heap_prof's address). False when memory or the
-/// unwind tables are missing (nothing is on then).
-pub fn start(h: Int, hook: Int, rate: Int) -> Bool {
+/// Maps the table, the address set, and the unwind records, and sets the
+/// profile's record (prof.xo start_heap, which then turns the heap's
+/// sampling on, heapos.xo profile_on). False when memory or the unwind
+/// tables are missing (nothing is on then).
+pub fn start(rate: Int) -> Bool {
   let r = map(R_SIZE)
   let slots = map(CAP * SLOT)
   let set = map(SET_N * 8)
@@ -134,8 +130,6 @@ pub fn start(h: Int, hook: Int, rate: Int) -> Bool {
   st(r, R_POOL, pool)
   st(r, R_POOL_N, POOL_N)
   rt.slot_store(rt.static_word(W_HPROF), 0, r, RELEASE)
-  st(h, H_PLEFT, 0)
-  st(h, H_PROF, hook)
   true
 }
 
@@ -147,44 +141,60 @@ pub fn record() -> Int { rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE) }
 /// started finds the profile off).
 pub fn stop() -> Int { rt.slot_swap(rt.static_word(W_HPROF), 0, 0, ACQ_REL) }
 
-/// The allocator's hook (cabi.xo heap_prof, through H_PROF): with b >= 0,
-/// block a of b bytes ended the calling thread's countdown: a sample,
-/// and the next countdown; with b = -1, block a is being freed: its
-/// slot, if it was sampled, is marked freed (the slot, else -1); with
-/// b <= -2, block a is where the sampled block of slot -2 - b moved (a
-/// big block's resize). Returns the slot or 0.
-pub fn hook(a: Int, b: Int) -> Int {
+/// The sample the heap asks for (cabi.xo heap_grow): block a of n bytes
+/// on record h reached the record's SAMPLE_AT. a.
+pub fn sampled(h: Int, a: Int, n: Int) -> Int {
   let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
-  if b >= 0 {
-    // the thread's record (its thread local carries obj.xo's ARMED bit)
-    let h = rt.tlocal_get(TLS_HEAP) & -4
-    if r == 0 {
-      // stopped: no more samples from this record
-      if h != 0 {
-        st(h, H_PLEFT, 9223372036854775807)
-      }
-      return 0
-    }
-    sample(r, h, a, b)
-    return 0
-  }
   if r == 0 {
-    return -1
+    // stopped: no more samples from this record
+    st(h, H_SAMPLE_AT, NEVER)
+    return a
   }
-  if b == -1 {
-    return forget(r, a)
+  sample(r, h, a, n)
+  a
+}
+
+/// A big block a of n bytes (cabi.xo heap_big; alloc.xo counted it): a
+/// sample when the record's SAMPLE_AT is reached.
+pub fn big_alloc(h: Int, a: Int, n: Int) {
+  if ld(h, H_ABYTES) < ld(h, H_SAMPLE_AT) {
+    return
   }
-  let k = rt.int_wrap(1, -2, b)
+  let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
+  if r == 0 {
+    st(h, H_SAMPLE_AT, NEVER)
+    return
+  }
+  sample(r, h, a, n)
+}
+
+/// Block a is being freed (cabi.xo heap_big_release: a marked block of a
+/// class, or a big block): its slot, if it was sampled, is marked freed.
+pub fn freed(a: Int) {
+  let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
+  if r != 0 {
+    let _k = forget(r, a)
+  }
+}
+
+/// Big block a moved to b (cabi.xo heap_big_resize): a sampled a's slot
+/// follows it.
+pub fn moved(a: Int, b: Int) {
+  let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
+  if r == 0 {
+    return
+  }
+  let k = forget(r, a)
+  if k < 0 {
+    return
+  }
   let p = rt.int_wrap(0, ld(r, R_SLOTS), rt.int_wrap(2, k, SLOT))
-  st(p, S_ADDR, a)
-  if !remember(r, a, k) {
-    st(p, S_FREED, 2)
-  }
-  0
+  st(p, S_ADDR, b)
+  st(p, S_FREED, if remember(r, b, k) { 0 } else { 2 })
 }
 
 /// Records block a of n bytes on heap record h (its thread's) and draws
-/// h's next countdown. A thread's first call only draws (as Go's first
+/// h's next sample (SAMPLE_AT, from its ABYTES). A thread's first call only draws (as Go's first
 /// sample point is drawn, not taken), except at rate 1.
 fn sample(r: Int, h: Int, a: Int, n: Int) {
   if h == 0 {
@@ -193,7 +203,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
   let rate = ld(r, R_RATE)
   var t = ld(h, H_PSTATE)
   if t == 1 {
-    st(h, H_PLEFT, 9223372036854775807)
+    st(h, H_SAMPLE_AT, NEVER)
     return
   }
   var first = false
@@ -203,7 +213,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
       // no record left for this thread: it is not sampled
       let _l = rt.slot_add(r, R_LOST / 8, 1, RELAXED)
       st(h, H_PSTATE, 1)
-      st(h, H_PLEFT, 9223372036854775807)
+      st(h, H_SAMPLE_AT, NEVER)
       return
     }
     t = rt.int_wrap(0, ld(r, R_POOL), rt.int_wrap(2, i, T_SIZE))
@@ -212,7 +222,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
     st(h, H_PSTATE, t)
     first = rate > 1
   }
-  st(h, H_PLEFT, next_gap(t, rate))
+  st(h, H_SAMPLE_AT, rt.int_wrap(0, ld(h, H_ABYTES), next_gap(t, rate)))
   if first {
     return
   }
@@ -228,12 +238,12 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
   if !remember(r, a, k) {
     st(p, S_FREED, 2)
   } else {
-    // a block of a size class is marked in its header, so only its free
-    // looks it up (obj.xo hfree_prof); a big block's (a negative size)
-    // free always does
+    // a block of a size class gets minus its class in its header, so its
+    // free takes the big block's way to cabi.xo heap_big_release, which
+    // forgets it (a big block's header is minus its size already)
     let c = ld(a, -8)
     if c > 0 {
-      st(a, -8, c | MARK)
+      st(a, -8, rt.int_wrap(1, 0, c))
     }
   }
   // the count last: a slot read with 0 is skipped
