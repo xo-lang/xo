@@ -557,6 +557,57 @@ fn inject_pop(p: Int, w: Int) -> Int {
   first
 }
 
+/// Takes the item at the head of w's ring (the owner) when it is a task
+/// of scope s, else 0 (scope_join). The item is taken first, then looked
+/// at: a task only a queue entry holds may be run and freed by a thief
+/// once it takes the entry, so its fields are read only while the entry
+/// is this thread's (ThreadSanitizer, conc_stress, 2026-10-17). Another
+/// item goes back to the ring's tail, and the join stops taking.
+fn ring_get_scope(p: Int, w: Int, s: Int) -> Int {
+  let x = sched.rq_get(w)
+  if x == 0 {
+    return 0
+  }
+  if (x & 1) == 0 && rt.mem_load(x, T_SCOPE, 8) == s {
+    // this thread runs its own work: no wake is owed (as take_local; a
+    // deferral left set made the monitor wake the one worker 1 ms into
+    // a long join, which then stole from it, TestOneThreadSpawnJoin)
+    if rt.slot_load(w, W_DEFER_AT_W, RELAXED) != 0 {
+      rt.slot_store(w, W_DEFER_AT_W, 0, RELAXED)
+    }
+    return x
+  }
+  rq_put(p, w, x)
+  0
+}
+
+/// Takes the inject queue's oldest item when it is a task of scope s,
+/// else 0 (scope_join: the tasks a ring that was full moved here).
+fn inject_get_scope(p: Int, s: Int) -> Int {
+  if rt.slot_load(p, P_ILEN, SEQ_CST) == 0 {
+    return 0
+  }
+  let im = rt.int_wrap(0, p, P_IMU)
+  if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    lock_slow(im)
+  }
+  var it = 0
+  let len = rt.mem_load(p, P_ILEN_AT, 8)
+  if len > 0 {
+    let buf = rt.mem_load(p, P_IBUF, 8)
+    let cap = rt.mem_load(p, P_ICAP, 8)
+    let head = rt.mem_load(p, P_IHEAD, 8)
+    let x = rt.mem_load(buf, rt.int_wrap(3, head, 3), 8)
+    if (x & 1) == 0 && rt.mem_load(x, T_SCOPE, 8) == s {
+      it = x
+      rt.mem_store(p, P_IHEAD, rt.int_wrap(0, head, 1) % cap, 8)
+      rt.slot_store(p, P_ILEN, rt.int_wrap(1, len, 1), RELAXED)
+    }
+  }
+  unlock(im)
+  it
+}
+
 // ---------------------------------------------------------------------------
 // Queues
 
@@ -1485,6 +1536,31 @@ fn scope_prune(s: Int) -> Int {
 /// its park. f and rw are park_wait's.
 pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
   let m = rt.int_wrap(0, s, S_MU)
+  // first the scope's tasks at the heads of this thread's own ring and
+  // of the inject queue (where a full ring moved its older half): each
+  // runs here and its entry is taken with it (units 4), where one run
+  // from the list below leaves its entry for a later, cold visit
+  // (pool.xo run_item: 15% of a spawn loop's samples, 2026-10-17)
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    while true {
+      var t = ring_get_scope(pl, w, s)
+      if t == 0 {
+        t = inject_get_scope(pl, s)
+      }
+      if t == 0 {
+        break
+      }
+      if sched.task_claim(t) != 0 {
+        sanhook.acquire(t)
+        let _r = rt.call_c2(rt.fn_addr("run_claimed"), t, 4)
+      } else {
+        // a thread that helped runs it: the entry was ours to take (this
+        // join has not set its waiting bit, so nobody is signaled)
+        let _d = sched.task_dequeued(t, s)
+      }
+    }
+  }
   var found = true
   while found {
     found = false

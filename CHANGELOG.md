@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A scope's join takes its own tasks' queue entries as it runs them
+  (decision 0077's addendum), instead of visiting each task a second
+  time later: bench/perf/conc spawn at XO_THREADS=1 83.5 to 66.2
+  Mcycles on macOS (about 1.18 times rust-ct's cycles a spawn).
 - A task whose handle is dropped no longer boxes its value result (it
   cannot be read): spawn 1,835 to 1,620 instructions a spawn on macOS,
   1.12 times rust-ct's (decision 0068's addendum).

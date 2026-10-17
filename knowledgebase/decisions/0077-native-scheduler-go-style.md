@@ -235,6 +235,30 @@ bench/perf/http p99 was within noise in every configuration (loaded:
   minute; CPU time unchanged); at XO_THREADS=1 the monitor starts at
   the first deferral (2026-10-16; before, it never started there).
 
+## Addendum: a scope's join takes its tasks' queue entries (2026-10-17, xo-4)
+
+A scope's join ran the scope's unstarted tasks from its list on the
+joining thread, but left each task's queue entry (in the spawner's ring,
+or in the inject queue where a full ring moved its older half) for a
+later visit: run_item's claim failed and it counted the entry taken,
+touching every task again when it was out of cache (15% of a spawn
+loop's samples on macOS, `sample`). The join now first takes, from the
+heads of its own ring (pool.xo ring_get_scope: rq_get's compare and
+swap first, then a look at the item, which goes back to the ring's tail
+when it is not the scope's: looking before the take read a task a thief
+had taken, run and freed, a race ThreadSanitizer found in conc_stress)
+and of the inject queue (inject_get_scope, under its lock), each item
+that is a task of its scope (clearing the ring's deferral as take_local
+does, or the monitor woke the one worker 1 ms into a long join and it
+stole: TestOneThreadSpawnJoin), runs it there and counts
+both units at once (run_claimed units 4); the list walk then runs what
+is left. Only the scope's own tasks run on the joiner's stack, as
+before. bench/perf/conc at XO_THREADS=1 on macOS: spawn 83.5 to 66.2
+Mcycles (about 414 to 335 cycles and 1,620 to 1,513 instructions a
+spawn; rust-ct about 283 and 1,440); at the default threads spawn and
+fanout within noise or better (spawn 811, 772, 801 to 814, 745, 770;
+fanout 326, 325, 322 to 320, 315, 320).
+
 ## Alternatives
 - **Chase and Lev deques** (built first, commit 9198503): lock free for
   the owner, but a thief takes one item per CAS on the spawner's top, and
