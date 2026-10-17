@@ -240,3 +240,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0246-fold-target-and-test-mode.md](0246-fold-target-and-test-mode.md): Accepted: if and match on the build's target (and the test world's switches outside test binaries) lower only the arm taken; with -s dropping local symbols, hello 646,616 to 580,344 bytes stripped.
 - [0247-lazy-runtime-bodies.md](0247-lazy-runtime-bodies.md): Accepted: a native build checks the runtime's function bodies as the SSA builder builds them (hello -34%, same output on every golden); TestStdChecks and `xo check --no-gc` check them all
 - [0248-native-default-backend.md](0248-native-default-backend.md): Proposed (stub): native is the default backend (arm64 on arm64 hosts, LLVM on x86_64); --backend=go kept
+- [0249-public-repo-and-layout.md](0249-public-repo-and-layout.md): Proposed (stub): development moves to github.com/xo-lang/xo with the full history, and its layout.
