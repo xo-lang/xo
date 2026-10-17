@@ -1,7 +1,7 @@
 # 0252: DWARF types, variables, and locations for native builds
 
-Status: Proposed (claimed 2026-10-17 by Xo lang 3; the lead assigned
-the work as the full debugger milestone)
+Status: Accepted (the lead, for the owner's debugger milestone,
+2026-10-17; proposed by Xo lang 3)
 
 ## Context
 
@@ -91,12 +91,17 @@ What the compiler has to work with:
      emitter did not keep in a register) is an empty piece: lldb shows
      it as unavailable; constants get DW_OP_constu in a later step.
 
-4. **Pretty printing.** A Python formatter, std/lldb/xo.py, shipped in
-   the std tree and loaded with `command script import`, gives
+4. **Pretty printing.** A Python formatter, lib/lldb/xo.py in the repo
+   (toolchain, not the standard library: std/ holds Xo sources only),
+   copied into the release beside bin/ and std/ and found by `xo debug`
+   relative to the xo binary, loaded with `command script import`, gives
    summaries and children for Str (the text), List (the elements), Map
    and Set (the entries), Box, and enums if point 2's variant part is not
-   shown natively. `xo debug PROG [ARGS]` starts lldb with it loaded and
-   the program's dSYM; darwin dSYMs also carry it under
+   shown natively. `xo debug PROG [ARGS]` stays thin: it builds the
+   program with debug information when given a package, then runs lldb
+   with the formatter loaded and the program's arguments, and says
+   clearly when lldb is not installed (help and its golden, the spec's
+   command list, toolchain.md); darwin dSYMs also carry it under
    Contents/Resources/Python for lldb's own loading when the user allows
    it. The formatter reads the documented object layouts only; a change
    of a layout changes the formatter in the same commit (a test reads
@@ -106,9 +111,9 @@ What the compiler has to work with:
    run and test, off with `-s` and for `--release` unless
    `--debug-info` (0239 point 2). The function cache key includes the
    binding records when debug information is on. Code generation does
-   not change with debug information (a test compares the text of a
-   program built with and without it), so a debug build profiles like a
-   stripped one.
+   not change with debug information, a hard gate (lead, 2026-10-17):
+   a test compares the code of every golden built with and without it,
+   so a debug build profiles like a stripped one.
 
 6. **Test.** internal/arm64 and internal/llvm tests build a program with
    a struct, a List[Int], a Str, a Map, and an enum local, run it under
