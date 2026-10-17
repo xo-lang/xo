@@ -1622,7 +1622,14 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
 /// the chain alone uses (chain_product); nu is the pair's size (its sum
 /// and carry, or the sum alone).
 fn (var g: G) chain_operand(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
-  g.is_const(a) || g.before_ix(a, ins) || (ADC_SPLIT && g.chain_product(a, ins, k, nu))
+  g.is_const(a) || g.before_ix(a, ins) || (g.chain_products() && g.chain_product(a, ins, k, nu))
+}
+
+/// Whether a chain makes its products between its pairs (ADC_SPLIT):
+/// not where they would write the flags (the amd64 retarget, decision
+/// 0254, lowers mul to imul; only moves may come between its links).
+fn (g: G) chain_products() -> Bool {
+  ADC_SPLIT
 }
 
 /// Whether a is a product (rt.u64_mul_hi, or rt.int_wrap's multiply of

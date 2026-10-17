@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a chain of adds with carry is one instruction per pair with the
+  carry in the flags, and each product it adds is made right before its
+  pair: P-256's field product saves 1 register pair where it saved 5,
+  TLS handshakes 3.1 to 3.3% fewer instructions.
 - arm64: a constant that is a logical immediate or a 32 bit movn is one
   instruction, and the inliner counts an add with carry and its carry
   as one, so P-256's field add and subtract inline: bench/perf 0 of 114

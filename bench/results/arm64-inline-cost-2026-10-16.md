@@ -112,3 +112,34 @@ tls/x25519 0.978, portable/u64 0.981, text/quote 0.981, tls/rsa2048
 0.984, tls/ed25519 0.985. Mac cycles (bench/perf/tls, median of 7):
 p256 556.1 to 540.8 M, x25519only 418.9 to 413.7 M, tls12 511.7 to
 502.7 M.
+
+## adc chains an instruction per pair (2026-10-17, xo-4)
+
+nistec.mul4p saved 5 callee saved pairs on arm64 (LLVM 1): an adc
+chain was one template whose sums could share no register with its
+operands, and whose operands had to be defined before it, so the
+generator made a row's 8 products first. selfhost/arm64 calls.xo
+ADC_SPLIT makes each pair its own adds or adcs (keep), the carry in the
+flags (gotchas/arm64-carry-flag-between-instructions.md), and a product
+read only by its pair is made right before it (chain_products; false on
+x86, whose imul writes the flags). scripts/nistecmul4p.py makes each
+product before its pair and ends a chain whose carry is added on with
+an adcs of xzr. mul4p 166 to 154 instructions, 1 callee saved pair, no
+spill; sqr4p 143 to 135, 5 pairs to 1.
+
+Mac, bench/perf/tls (min of 7 instructions, median cycles), main's
+compiler and std against the branch's:
+
+| workload   | arm64 Minstr     | arm64 Mcycles  | LLVM Minstr      |
+|------------|------------------|----------------|------------------|
+| p256       | 1934.1 to 1873.4 | 558.4 to 548.1 | 1620.8 to 1613.2 |
+| x25519only | 1440.1 to 1392.5 | 422.7 to 418.2 | 1201.4 to 1195.7 |
+| tls12      | 1731.8 to 1674.8 | 517.6 to 514.3 | 1443.6 to 1437.7 |
+
+Sweep of the compiler alone (bench/perf/sweep.py, both sides the
+branch's std, 114 workloads, 3 rounds): 0 slower, 11 faster beyond
+spread, tls/x25519only 0.908, tls/p256 0.910, tls/x25519 0.917,
+tls/tls12 0.918, tls/rsa2048 0.934, tls/ed25519 0.940 (the old
+compiler on the new mul4p, whose products come between the pairs,
+breaks its chains: these ratios are the new std's dependence on the
+split, not the gain over main).
