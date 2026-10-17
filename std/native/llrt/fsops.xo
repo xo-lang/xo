@@ -302,10 +302,10 @@ fn errno_of(r: Int) -> Int {
 /// The entries of directory p (not `.` and `..`, in no order); the status
 /// is set (the error names x).
 pub fn names(p: Str, x: Str) -> List[Str] {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_names(p, x)
   }
+  let l = layer()
   let (ns, e) = dir_names(l, p)
   if e != 0 {
     fail(l, e, x)
@@ -317,20 +317,20 @@ pub fn names(p: Str, x: Str) -> List[Str] {
 
 /// os.Rename(a, b): the status, an error naming x.
 pub fn rename(a: Str, b: Str, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_rename(a, b, x)
   }
+  let l = layer()
   done(l, if l == 3 { windows.rename(a, b) } else if l == 2 { darwin.rename(a, b) } else { linux.rename(a, b) }, x)
 }
 
 /// os.Remove(p): unlink, then rmdir; the rmdir's error unless it is
 /// ENOTDIR. The status, an error naming x.
 pub fn remove(p: Str, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_remove(p, x)
   }
+  let l = layer()
   let u = unlink(l, p, false)
   if u >= 0 {
     return ok()
@@ -345,10 +345,10 @@ pub fn remove(p: Str, x: Str) -> Int {
 /// os.Chtimes(p, t, t), t in Unix nanoseconds: the status, an error
 /// naming x.
 pub fn chtimes(p: Str, t: Int, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_chtimes(p, t, x)
   }
+  let l = layer()
   var s = t / 1000000000
   var ns = t % 1000000000
   if ns < 0 {
@@ -373,35 +373,35 @@ pub fn case_sensitive() -> Bool {
 // OS path and returns 0 or the errno.
 
 pub fn raw_mkdir(p: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_mkdir(p)
   }
+  let l = layer()
   errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, 493) } else { linux.mkdir(p, 493) })
 }
 
 pub fn raw_rmdir(p: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_rmdir(p)
   }
+  let l = layer()
   errno_of(unlink(l, p, true))
 }
 
 pub fn raw_unlink(p: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_unlink(p)
   }
+  let l = layer()
   errno_of(unlink(l, p, false))
 }
 
 /// 1 a directory, 0 another file, minus the errno (lstat unless follow).
 pub fn raw_kind(p: Str, follow: Bool) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_kind(p, follow)
   }
+  let l = layer()
   let (m, e) = stat_mode(l, p, follow)
   if e != 0 {
     return -e
@@ -411,20 +411,20 @@ pub fn raw_kind(p: Str, follow: Bool) -> Int {
 
 /// The entries of directory p and 0, or the errno.
 pub fn raw_names(p: Str) -> (List[Str], Int) {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     let ns = rt.fs_raw_names(p)
     return (ns, rt.fs_raw_errno())
   }
+  let l = layer()
   dir_names(l, p)
 }
 
 /// Creates the file p for os.CreateTemp (O_EXCL, 0600).
 pub fn raw_create(p: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_create(p)
   }
+  let l = layer()
   let fd = open(l, p, 4, 384)
   if fd < 0 {
     return -fd
@@ -435,19 +435,19 @@ pub fn raw_create(p: Str) -> Int {
 
 /// The working directory as the system gives it.
 pub fn raw_getcwd() -> Str {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_getcwd()
   }
+  let l = layer()
   if l == 3 { windows.getcwd() } else if l == 2 { darwin.getcwd() } else { linux.getcwd() }
 }
 
 /// Records err (0: success) for the Xo path x: the operation's status.
 pub fn raw_fail(err: Int, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_raw_fail(err, x)
   }
+  let l = layer()
   if err == 0 {
     return ok()
   }
@@ -699,10 +699,10 @@ pub fn file_close(f: rt.FsFile, x: Str) -> Int {
 /// xa, or xb once b's open was tried (as the C runtime, a read error of
 /// a too).
 pub fn copy(a: Str, b: Str, xa: Str, xb: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_copy(a, b, xa, xb)
   }
+  let l = layer()
   var err = 0
   var to = false
   let fin = open(l, a, 0, 0)
@@ -762,10 +762,10 @@ pub fn copy(a: Str, b: Str, xa: Str, xb: Str) -> Int {
 /// The permission bits of p (following links), or -1 with the status
 /// set.
 pub fn perm(p: Str, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_perm(p, x)
   }
+  let l = layer()
   let (m, e) = stat_mode(l, p, true)
   if e != 0 {
     fail(l, e, x)
@@ -777,29 +777,29 @@ pub fn perm(p: Str, x: Str) -> Int {
 
 /// chmod(2) of p to mode & 0777: the status, an error naming x.
 pub fn set_perm(p: Str, mode: Int, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_chmod(p, mode, x)
   }
+  let l = layer()
   done(l, chmod(l, p, mode & 511), x)
 }
 
 /// A symbolic link at p to target: the status, an error naming x.
 pub fn symlink(target: Str, p: Str, x: Str) -> Int {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_symlink(target, p, x)
   }
+  let l = layer()
   done(l, if l == 3 { windows.symlink(target, p) } else if l == 2 { darwin.symlink(target, p) } else { linux.symlink(target, p) }, x)
 }
 
 /// The target of the link p in a list of one, the empty list when p is
 /// not a link (status 0) or on an error.
 pub fn read_link(p: Str, x: Str) -> List[Str] {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_read_link(p, x)
   }
+  let l = layer()
   let (m, e) = stat_mode(l, p, false)
   if e != 0 {
     fail(l, e, x)
@@ -827,13 +827,13 @@ pub fn read_link(p: Str, x: Str) -> List[Str] {
 /// 8). The handle holds the lock when lock_held says so; else the status
 /// tells an error or 0 (a try found it held).
 pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     if shared {
       return rt.fs_lock_shared(p, wait, x)
     }
     return rt.fs_lock(p, wait, x)
   }
+  let l = layer()
   let fd = open(l, p, 3, 438)
   if fd < 0 {
     fail(l, -fd, x)
@@ -880,11 +880,11 @@ pub fn lock_held(h: rt.FsLock) -> Bool {
 
 /// `l.unlock()`; a second unlock does nothing.
 pub fn unlock(h: rt.FsLock) {
-  let l = layer()
-  if l == 0 {
+  if sysio.layer() == 0 {
     rt.fs_unlock(h)
     return
   }
+  let l = layer()
   let a = rt.obj_addr(h)
   if rt.mem_load(a, L_HELD, 8) == 0 {
     return

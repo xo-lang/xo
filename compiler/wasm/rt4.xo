@@ -4,8 +4,12 @@
 // `path_filestat_get`, `fd_readdir`, `path_create_directory`,
 // `path_remove_directory`, `path_unlink_file`): whole files, file
 // handles (Fs.open, create, open_append, create_new and their reads,
-// lines, writes, close; 2026-10-17), and fspath.xo's raw calls
-// (create_dir_all, remove_all, create_temp); the constants of collection types
+// lines, writes, close; 2026-10-17), fspath.xo's raw calls
+// (create_dir_all, remove_all, create_temp), rename, remove, chtimes,
+// symlink, and copy (`path_rename`, `path_symlink`,
+// `path_filestat_set_times`); WASI preview1 has no permission bits and no
+// advisory locks, so perm, chmod, and lock fail with an Io error that
+// says so; the constants of collection types
 // (`const_once`, decision 0081), Time as its Unix nanoseconds, and
 // SHA-256. A relative path resolves against the first preopened
 // directory (fd 3, the working directory), an absolute one against the
@@ -15,7 +19,7 @@
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -29,6 +33,10 @@ fn rt4_imports() -> Str {
     (import "wasi_snapshot_preview1" "path_create_directory" (func $path_create_directory (param i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "path_remove_directory" (func $path_remove_directory (param i32 i32 i32) (result i32)))
     (import "wasi_snapshot_preview1" "path_unlink_file" (func $path_unlink_file (param i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_rename" (func $path_rename (param i32 i32 i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_readlink" (func $path_readlink (param i32 i32 i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_symlink" (func $path_symlink (param i32 i32 i32 i32 i32) (result i32)))
+    (import "wasi_snapshot_preview1" "path_filestat_set_times" (func $path_filestat_set_times (param i32 i32 i32 i32 i64 i64 i32) (result i32)))
 
   """
 }
@@ -66,6 +74,11 @@ fn rt4_text(var g: Gen) -> Str {
   let e_acces = g.litp("permission denied")
   let e_perm = g.litp("operation not permitted")
   let e_io = g.litp("input/output error")
+  let e_toolong = g.litp("file name too long")
+  let e_inval = g.litp("invalid argument")
+  let e_prepoch = g.litp("WASI has no times before 1970")
+  let e_notsup = g.litp("operation not supported by the WASI host")
+  let e_nomode = g.litp("operation not supported (WASI has no file modes or locks)")
   // SHA-256's round constants, little endian words
   var kb = BytesBuilder.new()
   for k in SHA_K {
@@ -190,6 +203,48 @@ fn rt4_text(var g: Gen) -> Str {
         i64.const 6
         local.set $st
         ${e_perm}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 28
+      i32.eq
+      if
+        ${e_inval}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 37
+      i32.eq
+      if
+        ${e_toolong}
+        local.set $mn
+        local.set $m
+      end
+      local.get $e
+      i32.const 58
+      i32.eq
+      if
+        ${e_notsup}
+        local.set $mn
+        local.set $m
+      end
+      ;; PREEPOCH, rt4.xo's own code: a time before 1970
+      local.get $e
+      i32.const 0x10001
+      i32.eq
+      if
+        ${e_prepoch}
+        local.set $mn
+        local.set $m
+      end
+      ;; NOMODE, not a WASI code: rt4.xo's own for modes and locks
+      local.get $e
+      i32.const 0x10000
+      i32.eq
+      if
+        ${e_nomode}
         local.set $mn
         local.set $m
       end
@@ -347,15 +402,73 @@ fn rt4_text(var g: Gen) -> Str {
     (func $fs_status (result i64)
       global.get $fsst)
 
-    ;; the target of link p: none (WASI preview1's path_readlink is not
-    ;; used; a browser's file system has no links), success, so callers
-    ;; that resolve links (compiler/check locate.xo) go on with p
+    ;; the target of link p in a list of one; the empty list when p is
+    ;; not a link (status 0: a browser's file system has none, so callers
+    ;; that resolve links, compiler/check locate.xo, go on with p) or on an
+    ;; error (status set), as fsops.xo read_link
     (func $fs_read_link (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i32)
+      (local $fd i32) (local $p i32) (local $k i32) (local $e i32) (local $s i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 0
+      local.get $p
+      local.get $k
+      i32.const 24
+      call $path_filestat_get
+      local.tee $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        drop
+        i32.const ${empty}
+        return
+      end
       i64.const 0
       global.set $fsst
-      i32.const 1
+      ;; filetype SYMBOLIC_LINK 7
+      i32.const 40
+      i32.load8_u
+      i32.const 7
+      i32.ne
+      if
+        i32.const ${empty}
+        return
+      end
+      i32.const 4096
+      call $rs_new
+      local.set $s
+      local.get $fd
+      local.get $p
+      local.get $k
+      local.get $s
+      i32.const 8
+      i32.add
+      i32.const 4096
       i32.const 16
-      call $rl_new)
+      call $path_readlink
+      local.tee $e
+      if
+        local.get $s
+        call $free
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        drop
+        i32.const ${empty}
+        return
+      end
+      local.get $s
+      i32.const 16
+      i32.load
+      call $str_list1)
 
     ;; the path and the message of the last error
     (func $fs_msg (result i32) (local $l i32) (local $a i32) (local $s i32) (local $k i32)
@@ -1288,6 +1401,13 @@ fn rt4_text(var g: Gen) -> Str {
         i64.const 1
         return
       end
+      local.get $e
+      i32.const 37
+      i32.eq
+      if
+        i64.const 36
+        return
+      end
       i64.const 5)
 
     ;; the WASI error of Unix errno n ($wasi_errno's inverse; 29, EIO, for
@@ -1344,6 +1464,17 @@ fn rt4_text(var g: Gen) -> Str {
       i64.eq
       if
         i32.const 63
+        return
+      end
+      local.get $n
+      i64.const 36
+      i64.eq
+      local.get $n
+      i64.const 63
+      i64.eq
+      i32.or
+      if
+        i32.const 37
         return
       end
       i32.const 29)
@@ -1488,6 +1619,367 @@ fn rt4_text(var g: Gen) -> Str {
       local.get $x
       local.get $xn
       call $fs_fail)
+
+    ;; ------------------------------------------------------------------
+    ;; Renames, removals, times, links, copies (std/native/llrt fsops.xo's
+    ;; layer 0); WASI preview1 has no permission bits and no locks, so
+    ;; perm, chmod, and lock report NOMODE (0x10000, rt4.xo's own code) as
+    ;; an Io error that says so, after a stat's error if any. Node's WASI
+    ;; sets times in whole seconds, and WASI timestamps are unsigned: no
+    ;; time before 1970 (golden fs_ops_edges)
+
+    ;; the status of WASI result e for the path x (0: success)
+    (func $fs_done (param $e i32) (param $x i32) (param $xn i32) (result i64)
+      local.get $e
+      if
+        local.get $e
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
+      i64.const 0
+      global.set $fsst
+      i64.const 0)
+
+    (func $fs_rename (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (param $x i32) (param $xn i32) (result i64)
+      (local $fa i32) (local $pa i32) (local $na i32)
+      local.get $a
+      local.get $an
+      call $wpath
+      local.set $na
+      local.set $pa
+      local.set $fa
+      local.get $fa
+      local.get $pa
+      local.get $na
+      local.get $b
+      local.get $bn
+      call $wpath
+      call $path_rename
+      local.get $x
+      local.get $xn
+      call $fs_done)
+
+    ;; os.Remove: unlink, then rmdir; the rmdir's error unless it is
+    ;; ENOTDIR
+    (func $fs_remove (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i64) (local $u i32) (local $r i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      call $path_unlink_file
+      local.tee $u
+      i32.eqz
+      if
+        i64.const 0
+        global.set $fsst
+        i64.const 0
+        return
+      end
+      local.get $o
+      local.get $n
+      call $wpath
+      call $path_remove_directory
+      local.tee $r
+      i32.eqz
+      if
+        i64.const 0
+        global.set $fsst
+        i64.const 0
+        return
+      end
+      local.get $r
+      i32.const 54
+      i32.eq
+      if (result i32)
+        local.get $u
+      else
+        local.get $r
+      end
+      local.get $x
+      local.get $xn
+      call $fs_done)
+
+    ;; os.Chtimes(p, t, t), t in Unix nanoseconds (through a final link);
+    ;; a time before 1970 is PREEPOCH (0x10001; WASI timestamps are
+    ;; unsigned)
+    (func $fs_chtimes (param $o i32) (param $n i32) (param $t i64) (param $x i32) (param $xn i32) (result i64) (local $fd i32) (local $p i32) (local $k i32)
+      local.get $t
+      i64.const 0
+      i64.lt_s
+      if
+        i32.const 0x10001
+        local.get $x
+        local.get $xn
+        call $fs_fail
+        return
+      end
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $k
+      local.get $t
+      local.get $t
+      ;; ATIM 1, MTIM 4
+      i32.const 5
+      call $path_filestat_set_times
+      local.get $x
+      local.get $xn
+      call $fs_done)
+
+    ;; a link at p to target, the target's text as given
+    (func $fs_symlink (param $t i32) (param $tn i32) (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i64) (local $fd i32) (local $p i32) (local $k i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $t
+      i32.const 8
+      i32.add
+      local.get $tn
+      local.get $fd
+      local.get $p
+      local.get $k
+      call $path_symlink
+      local.get $x
+      local.get $xn
+      call $fs_done)
+
+    ;; a's contents into b (created or truncated); an error names xa, or
+    ;; xb once b's open was tried (permission bits: none in WASI)
+    (func $fs_copy (param $a i32) (param $an i32) (param $b i32) (param $bn i32) (param $xa i32) (param $xan i32) (param $xb i32) (param $xbn i32) (result i64)
+      (local $fin i32) (local $fout i32) (local $buf i32) (local $e i32) (local $k i32) (local $off i32) (local $fd i32) (local $p i32) (local $pn i32)
+      local.get $a
+      local.get $an
+      call $wpath
+      local.set $pn
+      local.set $p
+      local.set $fd
+      ;; a directory is IsDir
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $pn
+      i32.const 24
+      call $path_filestat_get
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 40
+        i32.load8_u
+        i32.const 3
+        i32.eq
+        if
+          i32.const 31
+          local.set $e
+        end
+      end
+      local.get $e
+      if
+        local.get $e
+        local.get $xa
+        local.get $xan
+        call $fs_fail
+        return
+      end
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $pn
+      i32.const 0
+      i64.const 0x200026
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $e
+        local.get $xa
+        local.get $xan
+        call $fs_fail
+        return
+      end
+      i32.const 16
+      i32.load
+      local.set $fin
+      local.get $b
+      local.get $bn
+      call $wpath
+      local.set $pn
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $pn
+      i32.const 9
+      i64.const 0x200064
+      i64.const 0
+      i32.const 0
+      i32.const 16
+      call $path_open
+      local.tee $e
+      if
+        local.get $fin
+        call $fd_close
+        drop
+        local.get $e
+        local.get $xb
+        local.get $xbn
+        call $fs_fail
+        return
+      end
+      i32.const 16
+      i32.load
+      local.set $fout
+      i32.const 65536
+      call $alloc
+      local.set $buf
+      block $done
+        loop $l
+          i32.const 0
+          local.get $buf
+          i32.store
+          i32.const 4
+          i32.const 65536
+          i32.store
+          local.get $fin
+          i32.const 0
+          i32.const 1
+          i32.const 8
+          call $fd_read
+          local.tee $e
+          br_if $done
+          i32.const 8
+          i32.load
+          local.tee $k
+          i32.eqz
+          br_if $done
+          i32.const 0
+          local.set $off
+          loop $w
+            i32.const 0
+            local.get $buf
+            local.get $off
+            i32.add
+            i32.store
+            i32.const 4
+            local.get $k
+            local.get $off
+            i32.sub
+            i32.store
+            local.get $fout
+            i32.const 0
+            i32.const 1
+            i32.const 8
+            call $fd_write
+            local.tee $e
+            br_if $done
+            local.get $off
+            i32.const 8
+            i32.load
+            i32.add
+            local.tee $off
+            local.get $k
+            i32.lt_u
+            br_if $w
+          end
+          br $l
+        end
+      end
+      local.get $buf
+      call $free
+      local.get $fin
+      call $fd_close
+      drop
+      local.get $fout
+      call $fd_close
+      local.set $k
+      local.get $e
+      i32.eqz
+      if
+        local.get $k
+        local.set $e
+      end
+      local.get $e
+      local.get $xb
+      local.get $xbn
+      call $fs_done)
+
+    ;; the error of p's stat (through a final link), else ENOTSUP: a
+    ;; missing file is NotFound as natively
+    (func $fs_nomode (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i64) (local $e i32) (local $fd i32) (local $p i32) (local $k i32)
+      local.get $o
+      local.get $n
+      call $wpath
+      local.set $k
+      local.set $p
+      local.set $fd
+      local.get $fd
+      i32.const 1
+      local.get $p
+      local.get $k
+      i32.const 24
+      call $path_filestat_get
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 0x10000
+        local.set $e
+      end
+      local.get $e
+      local.get $x
+      local.get $xn
+      call $fs_fail)
+
+    ;; the permission bits: -1 with the status set
+    (func $fs_perm (param $o i32) (param $n i32) (param $x i32) (param $xn i32) (result i64)
+      local.get $o
+      local.get $n
+      local.get $x
+      local.get $xn
+      call $fs_nomode
+      drop
+      i64.const -1)
+
+    (func $fs_chmod (param $o i32) (param $n i32) (param $mode i64) (param $x i32) (param $xn i32) (result i64)
+      local.get $o
+      local.get $n
+      local.get $x
+      local.get $xn
+      call $fs_nomode)
+
+    ;; a lock handle that holds nothing, NOMODE
+    (func $fs_lock (param $o i32) (param $n i32) (param $wait i32) (param $x i32) (param $xn i32) (result i32)
+      i32.const 0x10000
+      local.get $x
+      local.get $xn
+      call $fs_fail
+      drop
+      i32.const -1
+      call $fsfile_new)
+
+    (func $fs_lock_shared (param $o i32) (param $n i32) (param $wait i32) (param $x i32) (param $xn i32) (result i32)
+      local.get $o
+      local.get $n
+      local.get $wait
+      local.get $x
+      local.get $xn
+      call $fs_lock)
+
+    (func $fs_lock_held (param $l i32) (result i32)
+      i32.const 0)
+
+    (func $fs_unlock (param $l i32))
 
     ;; ------------------------------------------------------------------
     ;; File handles (Fs.open, create, open_append, create_new; std/native
@@ -1635,7 +2127,11 @@ fn rt4_text(var g: Gen) -> Str {
       i32.eq
       local.set $ff
       local.get $fd
-      i32.const 1
+      ;; lookupflags: follow a final link, except for a new file only
+      ;; (O_EXCL: a dangling link is Exists, its target not created)
+      local.get $m
+      i32.const 4
+      i32.lt_u
       local.get $t
       local.get $k
       local.get $of

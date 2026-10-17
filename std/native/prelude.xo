@@ -788,7 +788,13 @@ fn fs_sub(f: Fs, dir: Str) -> Fs {
   }
 }
 
-fn fs_cwd(f: Fs) -> Fs { rt.fs_new(fspath.cwd(), 1 | (rt.fs_mode(f) & 6)) }
+// fs_cwd roots the capability at "." when the system gives no working
+// directory (WASI preview1 has none): its paths stay relative, so they
+// resolve against the working directory's preopen, not against `/`.
+fn fs_cwd(f: Fs) -> Fs {
+  let w = fspath.cwd()
+  rt.fs_new(if w.is_empty() { "." } else { w }, 1 | (rt.fs_mode(f) & 6))
+}
 
 // fs_cwd_path is the working directory as os.Getwd gives it (decision
 // 0218): $PWD when it names the same directory as getcwd (its links

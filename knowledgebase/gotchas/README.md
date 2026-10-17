@@ -17,6 +17,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-line-directives.md](go-line-directives.md): `//line` directive rules; lines after a directive count up, so the generator repeats it per Go line; relative paths kept verbatim; line but no column at run time.
 - [defer-differs-from-go.md](defer-differs-from-go.md): Xo `defer` is block scoped; blocks with defer run as closures.
 - [extension-availability-checks.md](extension-availability-checks.md): Linguist misses non source extensions.
+- [layer-wrapper-not-folded.md](layer-wrapper-not-folded.md): Observed: only `sysio.layer()` compared with a literal folds (ssa expr.xo layer_call); fsops.xo's `let l = layer()` kept every native arm, and the native heap, in wasm builds; write the guard as `if sysio.layer() == 0`.
 - [lowered-intrinsic-bodies-untested.md](lowered-intrinsic-bodies-untested.md): Observed 2026-10-15: an intrinsic's Xo body is dead on arm64 and LLVM and the crypto goldens do not build on wasm; test it through a `_soft` name (cpu_prims).
 - [macos-weak-reference-needs-U.md](macos-weak-reference-needs-U.md): Observed 2026-10-15: ld64 rejects a weak reference to an undefined symbol unless `-Wl,-U,_sym`; the driver and xotool add it (decision 0232).
 - [value-semantics-lost-update.md](value-semantics-lost-update.md): forgetting to write back a mutated copy loses the update silently.

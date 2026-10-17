@@ -16,7 +16,7 @@ import (
 // run correctly (stage 2 of decision 0179: 116 of 134; raise it as
 // stages land). 128 of 145 since std/json's text is Xo (decision 0193
 // step 4: native_json, text_table, codex_gaps, json_text).
-const wasmMinPass = 159
+const wasmMinPass = 161
 
 // TestSelfhostWasm is stages 1 and 2 of decision 0179: compiler/wasm (built
 // with the go backend) lowers every golden program of
@@ -34,11 +34,14 @@ const wasmMinPass = 159
 // rt.frame_addr, rt.call_c2, rt.call_c4), and the working directory
 // (WASI preview1 has none: rt.fs_raw_getcwd gives "", so
 // os.fs.cwd_path() reports Io "getcwd failed"; the playground's compiler
-// passes --wd). The test counts them as
+// passes --wd), and a file's permission bits or advisory lock (WASI
+// preview1 has neither: compiler/wasm rt4.xo's fs_perm, fs_chmod, and
+// fs_lock report it as an Io error), and a modification time before 1970
+// (WASI timestamps are unsigned). The test counts them as
 // unsupported and logs each. (The native runtime's entropy was one until
 // the SSA builder sent rand.xo's entropy to the wasm runtime's
 // random_get, gotchas/wasm-native-rand-no-entropy.md.)
-var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|msg: \"getcwd failed\"")
+var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|msg: \"getcwd failed\"|msg: \"operation not supported \\(WASI has no file modes or locks\\)\"|msg: \"WASI has no times before 1970\"")
 
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {

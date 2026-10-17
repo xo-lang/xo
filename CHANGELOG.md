@@ -9,11 +9,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - linux/amd64 floating point loops read their operands from memory
   directly (n-body 3% fewer instructions).
 
+- WebAssembly builds (WASI) rename, remove, set modification times,
+  create and read symbolic links, and copy files (goldens fs_create_new
+  and sys_files_clock now run on wasm). WASI preview1 has no permission
+  bits and no advisory locks: `mode`, `set_mode`, and `lock` report
+  `Io(msg: "operation not supported (WASI has no file modes or locks)")`
+  (after NotFound and the other stat errors), and `set_modified` before
+  1970 reports `Io(msg: "WASI has no times before 1970")`. `os.fs.cwd()` under WASI,
+  which has no working directory, is rooted at "." (its paths resolve
+  against the working directory's preopen, not against `/`).
+
 - WebAssembly builds (WASI) open files as handles: `Fs.open`, `create`,
   `open_append`, and `create_new` with their reads, line reads, writes,
   and close, and `create_dir_all`, `remove_all`, and `create_temp`, with
-  the native backends' results (golden fs_handles); symbolic links,
-  copies, modes, and locks are still native only.
+  the native backends' results (golden fs_handles).
 
 - Files of more than 2 GB can be written and read on macOS (one system
   call refused more than INT_MAX bytes): the native runtime moves at most
@@ -31,8 +40,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `Fs.create_new(path)`: a handle on a new file, or `Exists(path)` when
   anything is already there (a file, a directory, a symbolic link even
   when it dangles), as O_EXCL; on the native backends (Linux, macOS,
-  Windows CREATE_NEW), the Go backend, and MemFs. Not on wasm, which has
-  no file handles.
+  Windows CREATE_NEW), the Go backend, MemFs, and wasm.
 - The LLVM backend's Linux arm64 programs without a C library take the
   same single instruction atomics (one thread: task spawning 34% and
   fan-out 25 to 32% less CPU time).
