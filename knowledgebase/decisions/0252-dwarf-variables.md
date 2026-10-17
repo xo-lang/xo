@@ -91,21 +91,12 @@ What the compiler has to work with:
      emitter did not keep in a register) is an empty piece: lldb shows
      it as unavailable; constants get DW_OP_constu in a later step.
 
-4. **Pretty printing.** A Python formatter, lib/lldb/xo.py in the repo
-   (toolchain, not the standard library: std/ holds Xo sources only),
-   copied into the release beside bin/ and std/ and found by `xo debug`
-   relative to the xo binary, loaded with `command script import`, gives
-   summaries and children for Str (the text), List (the elements), Map
-   and Set (the entries), Box, and enums if point 2's variant part is not
-   shown natively. `xo debug PROG [ARGS]` stays thin: it builds the
-   program with debug information when given a package, then runs lldb
-   with the formatter loaded and the program's arguments, and says
-   clearly when lldb is not installed (help and its golden, the spec's
-   command list, toolchain.md); darwin dSYMs also carry it under
-   Contents/Resources/Python for lldb's own loading when the user allows
-   it. The formatter reads the documented object layouts only; a change
-   of a layout changes the formatter in the same commit (a test reads
-   every kind).
+4. **Readers.** Xo's own debugger (decision 0253, owner 2026-10-17)
+   reads these types and locations; lldb, gdb, and other DWARF tools
+   read them too (a cross check, not the product). No lldb formatter and
+   no lldb-launching `xo debug` (superseded by 0253 before it was
+   built); Str, List, Map, and enum values are shown by the Xo debugger,
+   and to lldb as the structures of point 2.
 
 5. **Flags and cost.** Variables go with the line tables: on for build,
    run and test, off with `-s` and for `--release` unless
@@ -129,10 +120,12 @@ What the compiler has to work with:
    rc cache), with a dump in `xo dev dump ssa`; no output change.
 2. arm64 types and locations for Int, Float, Bool, structs, tuples
    (base types, structures, location lists, pieces), dsym.xo and elflink
-   carrying `.debug_loclists`; the test for those types; check lldb on
-   a variant part.
+   carrying `.debug_loclists`; the test for those types (dwarfdump
+   --verify and the entries read back; lldb `frame variable` as a cross
+   check); check lldb on a variant part.
 3. LLVM: DILocalVariable, DI types, `#dbg_value`; the same test.
-4. Enums, Str, List, Map, Set, Box; std/lldb/xo.py; `xo debug`.
+4. Enums, Str, List, Map, Set, Box as the structures of point 2
+   (the Xo debugger, 0253, shows their contents).
 5. Lexical scopes, constants (DW_OP_constu), captured variables of
    closures (through the environment), the profiler and fault reports
    unchanged (they read only lines).
