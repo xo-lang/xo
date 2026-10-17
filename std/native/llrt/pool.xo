@@ -93,6 +93,9 @@ const W_DEFER_N = 3408
 const W_TRACE = 3416
 /// ctx.xo C_TRACE: the context's trace word.
 const C_TRACE = 344
+/// ctx.xo C_WHY, C_PARK_FP (`xo dump`, decision 0251)
+const C_WHY = 336
+const C_PARK_FP = 352
 const W_SIZE = 3424
 const FCACHE = 8
 
@@ -1535,6 +1538,10 @@ fn scope_prune(s: Int) -> Int {
 /// bit 0 of pending while that is not zero, and the last unit signals
 /// its park. f and rw are park_wait's.
 pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
+  // waiting for its tasks, also while it runs them here (`xo dump`,
+  // decision 0251; ctx.xo C_WHY, C_PARK_FP)
+  rt.mem_store(c, C_WHY, tracerec.WHY_JOIN, 8)
+  rt.mem_store(c, C_PARK_FP, rt.frame_addr(), 8)
   let m = rt.int_wrap(0, s, S_MU)
   // first the scope's tasks at the heads of this thread's own ring and
   // of the inject queue (where a full ring moved its older half): each
@@ -1600,6 +1607,8 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
       tracerec.ev(tracerec.K_RESUME, 0, c, 0)
     }
   }
+  rt.mem_store(c, C_WHY, 0, 8)
+  rt.mem_store(c, C_PARK_FP, 0, 8)
 }
 
 // ---------------------------------------------------------------------------

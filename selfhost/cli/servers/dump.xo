@@ -85,7 +85,7 @@ pub fn run_dump(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
       Err(_) => {}
     }
     if os.clock.now() > deadline {
-      os.stdio.eprintln("xo dump: no dump from process ${pid} within ${timeout} (is it an Xo program built with --backend=go? native builds have no task dump yet, decision 0248)")
+      os.stdio.eprintln("xo dump: no dump from process ${pid} within ${timeout} (is it an Xo program? a test binary has no dump)")
       return 1
     }
     os.clock.sleep(20ms)

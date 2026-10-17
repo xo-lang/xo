@@ -1229,7 +1229,7 @@ fn crc32(data: Bytes) -> Int {
 /// Writes data to a new file at path (mode 0600): false when anything
 /// is there already, a symbolic link too (decision 0238's gating: a
 /// profile never writes through a file it did not create).
-fn write_file(path: Str, data: Bytes) -> Bool {
+pub fn write_file(path: Str, data: Bytes) -> Bool {
   match target.os {
     TargetOs.Linux => {
       // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode 0600: a

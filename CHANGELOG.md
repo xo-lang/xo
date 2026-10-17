@@ -21,6 +21,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0.941 of the cycles, no workload slower in cycles
   (bench/results/arm64-float-text-2026-10-17.md). Conditions on loaded
   values keep their branches (gotchas/arm64-if-conversion-cost.md).
+- `xo dump` and SIGQUIT on native programs (decision 0251): the task tree
+  with each task's wait in the Go backend's words and its line (`task 2
+  (spawned at main.xo:6): blocked in sleep at main.xo:9`), on standard
+  error and in `$XO_DUMP_DIR/xo-dump-<pid>.txt` (mode 0600, never through
+  a symlink). The program keeps running; one worker or an idle server
+  dumps too (the poller's thread writes it).
 
 - Native contract fuzzing draws small numbers, as the Go backend's does
   (std/rt GenRand.Small): it drew MaxInt and MinInt, so a function that

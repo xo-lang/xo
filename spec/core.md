@@ -2286,8 +2286,7 @@ backend's ThreadSanitizer. Contract fuzzing (9.2) runs on every backend
 the same regression tests; a target whose generated native test does not
 check is skipped and counted per module (`MODULE: contract fuzzing needs
 --backend=go: N contracts not fuzzed`, the reason under `-v`). `xo dump`
-(11.4) is the Go backend's for now: of a native program it says it needs a
-Go backend build.
+(11.4) works on every backend (decision 0251).
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
@@ -2687,9 +2686,14 @@ call and its result, plus scheduler decisions.
 ### 11.4 Live inspection
 
 - `xo dump <pid>` (or SIGQUIT) prints the task tree: each scope, its children,
-  and what each task is blocked on, with locations. The program keeps running;
-  the dump is also written to `$XO_DUMP_DIR` (or the temp dir) as
-  `xo-dump-<pid>.txt`.
+  and what each task is blocked on, with locations. The program keeps running
+  (unlike a Go program's default SIGQUIT, which exits); the dump goes to the
+  program's standard error and to `$XO_DUMP_DIR` (or the temp dir) as
+  `xo-dump-<pid>.txt`, a new file of mode 0600 that replaces an earlier one
+  and is never written through a symbolic link. On the native backends
+  (decision 0251) a task's wait is named as on the Go backend (`blocked in
+  receive at main.xo:5`); the scopes' own sites and the holders of a mutex
+  are not shown yet. A test binary has no dump.
 - **[P2]** Deadlocks are detected by the runtime and reported as a wait cycle
   with locations (fault `XO-F001`, exit status 70, crash bundle). A task
   counts as blocked when it waits on another task (channel, mutex, semaphore,

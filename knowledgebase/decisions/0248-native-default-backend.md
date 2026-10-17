@@ -32,7 +32,7 @@ native the default as part of the "native out of preview" milestone.
   build. Native contract fuzzing is a priority backlog item (contracts
   are a core feature); done the same day, decision 0250: the "not
   fuzzed" line now counts only targets whose generated test does not
-  check.
+  check. `xo dump` works on native programs since decision 0251.
 - Tests: internal/xotool's Build names `--backend=go` when a test gives
   no backend (they were written for the Go default); cmd/xo's dump and
   regression tests name it too; the help golden is regenerated.

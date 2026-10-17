@@ -251,6 +251,8 @@ const EV_WW = 72
 const EV_REGS = 80
 const EV_NREG = 88
 const EV_CREG = 96
+/// SIGQUITs not yet handled (`xo dump`, decision 0251)
+const EV_QUITS = 104
 
 /// A descriptor record's size off Windows (without the AFD words of
 /// D_SIZE_WIN).
@@ -806,6 +808,28 @@ pub fn on_signal() {
   }
 }
 
+/// SIGQUIT's handler (cabi.xo on_quit, decision 0251): counts it and
+/// wakes the poller, whose thread writes the task tree (`xo dump`); async
+/// signal safe as on_signal.
+pub fn on_quit() {
+  let e = ev()
+  let _n = rt.slot_add(addw(e, EV_QUITS), 0, 1, ACQ_REL)
+  let b = "q"
+  let w = s32(rt.mem_load(e, EV_PIPE_W, 4))
+  match target.os {
+    TargetOs.Darwin => {
+      let ep = sys_darwin.__error()
+      let saved = rt.mem_load(ep, 0, 4)
+      let _w = sys_darwin.write(w, raw.data(b), 1)
+      rt.mem_store(ep, 0, saved, 4)
+    }
+    TargetOs.Linux => {
+      let _w = linux.write_at(w, raw.data(b), 1)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
 /// Windows' console handler (cabi.xo on_console, which entry.xo installs
 /// with SetConsoleCtrlHandler; was xo_rt.c's): Ctrl-C, Ctrl-Break,
 /// closing the console, and shutdown (CTRL_C_EVENT 0, CTRL_BREAK_EVENT
@@ -1097,6 +1121,10 @@ pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int) {
         while k > 0 {
           stop.signal()
           k = subw(k, 1)
+        }
+        // SIGQUIT: the task tree, on this thread (cabi.xo dump_now)
+        if rt.slot_swap(addw(sigs, EV_QUITS - EV_SIGS), 0, 0, ACQ_REL) > 0 {
+          let _d = rt.call_c2(rt.fn_addr("dump_now"), 0, 0)
         }
       }
       i = addw(i, 1)

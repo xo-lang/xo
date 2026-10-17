@@ -17,6 +17,7 @@
 use native/llrt/alloc
 use native/llrt/anyval
 use native/llrt/budget
+use native/llrt/dump
 use native/llrt/chan
 use native/llrt/consts
 use native/llrt/ctx
@@ -444,6 +445,16 @@ fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 }
 /// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
 /// handler: the signal number, unused).
 fn on_signal(sig: Int) { poll.on_signal() }
+
+/// SIGQUIT's handler (decision 0251: `xo dump`).
+fn on_quit(sig: Int) { poll.on_quit() }
+
+/// Writes the task tree (`xo dump`, decision 0251), on the poller's
+/// thread after a SIGQUIT.
+fn dump_now(a: Int, b: Int) -> Int {
+  dump.write()
+  0
+}
 
 /// SIGPROF's handler that prof.xo installs (SA_SIGINFO: the signal, its
 /// siginfo, the interrupted thread's ucontext).

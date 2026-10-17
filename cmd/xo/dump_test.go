@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // dumpProg holds a mutex in one task (sleeping for an hour) while a second
@@ -41,6 +43,16 @@ const wantDump = `main: blocked in scope end at main.xo:5 for task 2, task 3
   scope at main.xo:5: waiting for its tasks
     task 2 (spawned at main.xo:6): blocked in sleep at main.xo:9
     task 3 (spawned at main.xo:13): blocked in Mutex.with at main.xo:15 on a mutex made at main.xo:2, held by task 2 since main.xo:7
+end of xo dump
+`
+
+// wantDumpNative is the native runtime's (decision 0251): the same tree
+// and waits in the Go backend's words, without the Go backend's scope
+// sites, main's own wait, and the mutex's holder (follow ups).
+const wantDumpNative = `main: in scope
+  scope: waiting for its tasks
+    task 2 (spawned at main.xo:6): blocked in sleep at main.xo:9
+    task 3 (spawned at main.xo:13): blocked in Mutex.with at main.xo:15
 end of xo dump
 `
 
@@ -80,11 +92,22 @@ func (l *lockedBuffer) String() string {
 func TestDump(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
-		t.Skip("builds Go")
+		t.Skip("builds and runs programs")
 	}
 	if runtime.GOOS == "windows" {
 		t.Skip("no SIGQUIT on windows")
 	}
+	t.Run("go", func(t *testing.T) { testDump(t, "--backend=go", nil, wantDump) })
+	// the native runtime's dump (decision 0251): the poller's thread writes
+	// it, so it comes with one worker (XO_THREADS=1) too
+	native := "--backend=" + xotool.NativeBackend()
+	t.Run("native", func(t *testing.T) { testDump(t, native, nil, wantDumpNative) })
+	t.Run("native1", func(t *testing.T) { testDump(t, native, []string{"XO_THREADS=1"}, wantDumpNative) })
+}
+
+// testDump builds dumpProg with backend, runs it with env, asks it for
+// its dump with `xo dump`, and checks the dump after its header is want.
+func testDump(t *testing.T, backend string, env []string, want string) {
 	dir := t.TempDir()
 	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
 	setenv(t, "XO_DUMP_DIR", dir)
@@ -97,13 +120,18 @@ func TestDump(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	bin := filepath.Join(dir, "app.bin")
-	// xo dump reads a Go backend program's state (decision 0248: named,
-	// since the default is native)
-	if code := run(t, []string{"build", "--backend=go", "-o", bin, src}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"build", backend, "-o", bin, src}, &out, &errOut); code != 0 {
 		t.Fatalf("build: exit %d: %s", code, errOut.String())
 	}
 	cmd := command(t, bin)
 	cmd.Dir = src
+	if len(env) > 0 {
+		base := cmd.Env
+		if base == nil {
+			base = os.Environ()
+		}
+		cmd.Env = append(base, env...)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -131,16 +159,16 @@ func TestDump(t *testing.T) {
 			t.Fatalf("xo dump: exit %d: %s", code, errOut.String())
 		}
 		got = out.String()
-		if strings.HasSuffix(got, wantDump) {
+		if strings.HasSuffix(got, want) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !dumpHeader.MatchString(got) || !strings.HasSuffix(got, wantDump) || len(dumpHeader.FindString(got))+len(wantDump) != len(got) {
-		t.Fatalf("dump:\n%s\nwant (after the header):\n%s", got, wantDump)
+	if !dumpHeader.MatchString(got) || !strings.HasSuffix(got, want) || len(dumpHeader.FindString(got))+len(want) != len(got) {
+		t.Fatalf("dump:\n%s\nwant (after the header):\n%s", got, want)
 	}
 	// the program printed the same dump on its standard error and goes on
-	if !strings.Contains(stderr.String(), wantDump) {
+	if !strings.Contains(stderr.String(), want) {
 		t.Errorf("stderr lacks the dump:\n%s", stderr.String())
 	}
 	if cmd.ProcessState != nil {

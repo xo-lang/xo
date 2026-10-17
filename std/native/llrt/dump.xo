@@ -1,0 +1,366 @@
+// `xo dump` and SIGQUIT for native programs (decision 0251; the Go
+// backend's std/rt sched.go dumpText): the task tree of the running
+// program, each scope and its tasks with what each task is blocked on and
+// where, written to standard error and to $XO_DUMP_DIR (else the
+// temporary directory) as xo-dump-<pid>.txt. The program keeps running.
+//
+// It runs on the poller's thread (poll.xo poll_main, after the SIGQUIT
+// handler on_quit woke it), so it may allocate and lock. The walk is best
+// effort, as the Go backend's: each node's children are read under its
+// lock, and a task's state and context may change while they are read.
+use native/llrt/ctx
+use native/llrt/dwline
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/prof
+use native/llrt/raw
+use native/llrt/stdio
+use native/llrt/tasks
+use native/llrt/tracerec
+use native/llrt/unwind
+use native/rt
+use native/sys_darwin
+
+/// xo_node (pool.xo N_*): parent, first child, next sibling, the
+/// canceled word, the lock.
+const N_PARENT = 0
+const N_CHILD = 8
+const N_NEXT = 24
+const N_CANCELED = 32
+const N_MU = 48
+/// An object's header (tasks.xo H_*): its free function.
+const H_FREE = 8
+/// A task's and a scope's node (tasks.xo T_NODE, S_BODY) and a task's
+/// state (tasks.xo T_STATE: 0 queued, 1 running, 2 done).
+const T_NODE = 16
+const S_BODY = 16
+const T_STATE = 80
+/// A park record's parked fiber (pool.xo PK_FIBER).
+const PK_FIBER = 24
+/// The frames looked at for a blocked task's location.
+const MAX_FRAMES = 64
+
+/// The walk's state: the lines, the task count, the line tables.
+struct Dump {
+  lines: List[Str] = []
+  tasks: Int = 0
+  lt: dwline.Lines = dwline.Lines{}
+  lo: Int = 0
+  hi: Int = 0
+  /// a profiler record for the fibers' walks (unwind.prof_init), 0
+  rec: Int = 0
+  task_free: Int = 0
+  scope_free: Int = 0
+}
+
+/// Writes the task tree (cabi.xo dump_now, on the poller's thread).
+pub fn write() {
+  var d = Dump{task_free: rt.fn_addr("task_free"), scope_free: rt.fn_addr("scope_free")}
+  let rec = rt.heap_large(unwind.PROF_RECORD)
+  rt.mem_set(rec, 0, unwind.PROF_RECORD)
+  if unwind.prof_init(rec) {
+    d.rec = rec
+    let (lo, hi) = unwind.prof_text(rec)
+    d.lo = lo
+    d.hi = hi
+    d.lt = dwline.load(lo, hi)
+  }
+  let r = ctx.roots()
+  if r != 0 {
+    let n = rt.slot_load[Int](r, 0, 1).min(ctx.ROOTS_MAX)
+    for k in 0..n {
+      let c = rt.slot_load[Int](r + 8 * (k + 1), 0, 1)
+      if c == 0 {
+        continue
+      }
+      // the root's own node: the top of its context's current node
+      var top = rt.mem_load(c, ctx.C_NODE, 8)
+      var guard = 0
+      while top != 0 && rt.mem_load(top, N_PARENT, 8) != 0 && guard < 10000 {
+        top = rt.mem_load(top, N_PARENT, 8)
+        guard += 1
+      }
+      if top == 0 {
+        continue
+      }
+      d.tasks += 1
+      d.line(0, "${if k == 0 { "main" } else { "runtime" }}: ${d.state(top, c, false)}${canceled(top)}")
+      d.walk_kids(top, c, 1)
+    }
+  }
+  var b = StrBuilder.new()
+  b.write("xo dump: pid ${pid()}, ${d.tasks} tasks\n")
+  for l in d.lines {
+    b.write(l)
+    b.write("\n")
+  }
+  b.write("end of xo dump\n")
+  let text = b.freeze()
+  stdio.eprint(text, false)
+  write_file(text)
+  rt.heap_release(rec - 8)
+}
+
+fn (var d: Dump) line(depth: Int, s: Str) {
+  d.lines.push("${"  ".repeat(depth)}${s}")
+}
+
+/// The children of node n (c: the context running n's task or its scope
+/// bodies), each with its subtree, at depth.
+fn (var d: Dump) walk_kids(n: Int, c: Int, depth: Int) {
+  var kids: List[Int] = []
+  pool.lock(n + N_MU)
+  var k = rt.mem_load(n, N_CHILD, 8)
+  while k != 0 && kids.len() < 100000 {
+    kids.push(k)
+    k = rt.mem_load(k, N_NEXT, 8)
+  }
+  pool.unlock(n + N_MU)
+  // the list is newest first; the Go backend shows the oldest first
+  var i = kids.len() - 1
+  while i >= 0 {
+    d.walk(kids[i], c, depth)
+    i -= 1
+  }
+}
+
+/// Node n and its subtree: a task, a scope's body, or a node that only
+/// holds others (a scope's node of tasks), shown through its children.
+fn (var d: Dump) walk(n: Int, c: Int, depth: Int) {
+  let free = rt.mem_load(n - 16, H_FREE, 8)
+  if free == d.task_free {
+    let t = n - T_NODE
+    let tc = rt.slot_load[Int](t + tasks.T_CTX, 0, 1)
+    d.tasks += 1
+    // numbered as the Go backend numbers its threads: main is 1
+    var label = "task ${d.tasks}"
+    let lp = rt.mem_load(t, tasks.T_LOC_P, 8)
+    let ln = rt.mem_load(t, tasks.T_LOC_N, 8)
+    if lp != 0 && ln > 0 {
+      label = "${label} (spawned at ${raw.str_at(lp, ln)})"
+    }
+    d.line(depth, "${label}: ${d.task_state(n, t, tc)}${canceled(n)}")
+    d.walk_kids(n, tc, depth + 1)
+  } else if free == d.scope_free {
+    d.line(depth, "scope: ${d.state(n, c, true)}${canceled(n)}")
+    d.walk_kids(n, c, depth + 1)
+  } else {
+    d.walk_kids(n, c, depth)
+  }
+}
+
+/// What task t (node n, context tc) does.
+fn (var d: Dump) task_state(n: Int, t: Int, tc: Int) -> Str {
+  let st = rt.slot_load[Int](t + T_STATE, 0, 1)
+  if st == 0 {
+    return "ready"
+  }
+  if st == 2 {
+    return "finished"
+  }
+  if tc == 0 {
+    return "running"
+  }
+  d.state(n, tc, false)
+}
+
+/// What the context c does at node n (a task's, the root's, or a scope
+/// body's when body): blocked (on what and where), in a scope it opened,
+/// waiting for its scope's tasks, or running.
+fn (var d: Dump) state(n: Int, c: Int, body: Bool) -> Str {
+  if c == 0 {
+    return "running"
+  }
+  let cur = rt.mem_load(c, ctx.C_NODE, 8)
+  if cur != n {
+    return "in scope"
+  }
+  let p = c + ctx.C_PARK
+  let f = rt.slot_load[Int](p + PK_FIBER, 0, 1)
+  let why = rt.mem_load(c, ctx.C_WHY, 8)
+  if f == 0 && why == 0 {
+    return "running"
+  }
+  if body && why == tracerec.WHY_JOIN {
+    return "waiting for its tasks"
+  }
+  var s = "blocked in ${op_name(why)}"
+  var loc = ""
+  if f != 0 && d.rec != 0 {
+    loc = d.user_loc(rt.mem_load(f, 0, 8))
+  }
+  if loc.is_empty() {
+    // a wait no fiber holds (a root thread's, or a task run inline on
+    // one): the frame pointers from the park's caller
+    loc = d.fp_loc(rt.mem_load(c, ctx.C_PARK_FP, 8))
+  }
+  if !loc.is_empty() {
+    s = "${s} at ${loc}"
+  }
+  s
+}
+
+/// The Go backend's names of the waits (std/rt sched.go waitOps) for the
+/// park reasons (tracerec.xo WHY_*).
+fn op_name(why: Int) -> Str {
+  if why == tracerec.WHY_SEND {
+    return "send"
+  }
+  if why == tracerec.WHY_RECV {
+    return "receive"
+  }
+  if why == tracerec.WHY_SELECT {
+    return "select"
+  }
+  if why == tracerec.WHY_MUTEX {
+    return "Mutex.with"
+  }
+  if why == tracerec.WHY_JOIN {
+    return "await"
+  }
+  if why == tracerec.WHY_SLEEP {
+    return "sleep"
+  }
+  if why == tracerec.WHY_NET {
+    return "network I/O"
+  }
+  if why == tracerec.WHY_HTTP {
+    return "serve"
+  }
+  if why == tracerec.WHY_TEST {
+    return "advance"
+  }
+  "a wait"
+}
+
+/// The first frame of the program's own code (not std's) of the fiber
+/// whose switch frame is at saved: `file:line`, or "".
+fn (var d: Dump) user_loc(saved: Int) -> Str {
+  let out = rt.heap_large(8 * MAX_FRAMES)
+  let n = unwind.fiber_walk(d.rec, saved, out, MAX_FRAMES, d.lo, d.hi)
+  var loc = ""
+  for i in 0..n {
+    let pc = rt.mem_load(out, 8 * i, 8)
+    let (fs, file, line) = dwline.inline_chain(d.lt, pc - 1, "")
+    // innermost first: an inlined frame of the program's code counts
+    var cands: List[(Str, Int)] = []
+    for fr in fs {
+      cands.push((fr.file, fr.line))
+    }
+    cands.push((file, line))
+    for (f, l) in cands {
+      if loc.is_empty() && !f.is_empty() && l > 0 && !f.contains("/std/") {
+        loc = "${base(f)}:${l}"
+      }
+    }
+    if !loc.is_empty() {
+      break
+    }
+  }
+  rt.heap_release(out - 8)
+  loc
+}
+
+/// The first frame of the program's own code following the frame
+/// pointers from fp (each frame record: the caller's frame pointer, then
+/// the return address): `file:line`, or "".
+fn (var d: Dump) fp_loc(fp0: Int) -> Str {
+  var fp = fp0
+  var k = 0
+  while fp != 0 && (fp & 7) == 0 && k < MAX_FRAMES {
+    let pc = rt.mem_load(fp, 8, 8) & 281474976710655
+    if pc == 0 {
+      break
+    }
+    let loc = d.pc_loc(pc)
+    if !loc.is_empty() {
+      return loc
+    }
+    let next = rt.mem_load(fp, 0, 8)
+    // frames are older at higher addresses, on one stack
+    if next <= fp || next - fp > 1048576 {
+      break
+    }
+    fp = next
+    k += 1
+  }
+  ""
+}
+
+/// The program's own code (not std's) at return address pc, innermost
+/// inlined frame first: `file:line`, or "".
+fn (var d: Dump) pc_loc(pc: Int) -> Str {
+  let (fs, file, line) = dwline.inline_chain(d.lt, pc - 1, "")
+  var cands: List[(Str, Int)] = []
+  for fr in fs {
+    cands.push((fr.file, fr.line))
+  }
+  cands.push((file, line))
+  for (f, l) in cands {
+    if !f.is_empty() && l > 0 && !f.contains("/std/") {
+      return "${base(f)}:${l}"
+    }
+  }
+  ""
+}
+
+fn base(p: Str) -> Str {
+  let parts = p.split("/")
+  parts[parts.len() - 1]
+}
+
+fn canceled(n: Int) -> Str {
+  if rt.slot_load[Int](n + N_CANCELED, 0, 1) != 0 { " (canceled)" } else { "" }
+}
+
+/// The process id (prof.xo's way).
+fn pid() -> Int {
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.getpid())
+    TargetOs.Linux => {
+      let nr = match target.arch {
+        TargetArch.Amd64 => 39
+        TargetArch.Arm64 | TargetArch.Wasm32 => 172
+      }
+      rt.sys6(nr, 0, 0, 0, 0, 0, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+/// Removes the file at path, if any (not following a symlink: the link
+/// itself goes).
+fn unlink(path: Str) {
+  match target.os {
+    TargetOs.Darwin => {
+      let _r = sys_darwin.unlink("${path}\x00".bytes())
+    }
+    TargetOs.Linux => {
+      let _r = linux.unlink(path, false)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+/// The dump at $XO_DUMP_DIR (else $TMPDIR, else /tmp) as
+/// xo-dump-<pid>.txt, as the Go backend's (std/rt DumpPath): a file there
+/// from an earlier dump is removed first, then the new one is created
+/// with prof.xo's rules (O_EXCL, O_NOFOLLOW, mode 0600).
+fn write_file(text: Str) {
+  var dir = env1("XO_DUMP_DIR")
+  if dir.is_empty() {
+    dir = env1("TMPDIR")
+  }
+  if dir.is_empty() {
+    dir = "/tmp"
+  }
+  let path = "${dir.trim_suffix("/")}/xo-dump-${pid()}.txt"
+  unlink(path)
+  let _ok = prof.write_file(path, text.bytes())
+}
+
+fn env1(name: Str) -> Str {
+  let vs = process.env_real(name)
+  if vs.is_empty() { "" } else { vs[0] }
+}

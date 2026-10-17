@@ -1873,9 +1873,41 @@ pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
   if !prof_regs(uc, cur, darwin) {
     return 0
   }
+  walk_regs(s, out, max, lo, hi, darwin, true)
+}
+
+/// The pcs of a parked fiber's frames, innermost first, into out (at most
+/// max): their count (`xo dump`, decision 0251). saved is the fiber's
+/// saved stack pointer: the switch's frame (selfhost/arm64 sched.xo
+/// stack_switch_body: x19 to x28, x29, x30 at saved + 0 to 88, the
+/// caller's stack at saved + 160), so the first pc is the switch's
+/// return address. s is a profiler record (prof_init). arm64 only (0 on
+/// x86_64).
+pub fn fiber_walk(s: Int, saved: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
+  if x64() || saved == 0 {
+    return 0
+  }
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  let cur = s + REGS_A
+  rt.mem_set(cur, 0, PC + 8)
+  for k in 0..12 {
+    rt.mem_store(cur, 8 * (19 + k), rt.mem_load(saved, 8 * k, 8), 8)
+  }
+  rt.mem_store(cur, SP, saved + 160, 8)
+  rt.mem_store(cur, PC, rt.mem_load(saved, 88, 8) & 281474976710655, 8)
+  walk_regs(s, out, max, lo, hi, darwin, false)
+}
+
+/// prof_walk's walk from the registers at s + REGS_A; leaf: the pc is an
+/// interrupted instruction's (a signal's), else a return address.
+fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: Bool) -> Int {
+  let cur = s + REGS_A
   let spo = sp_off()
   var n = 0
-  var first = true
+  var first = leaf
   while n < max {
     var pc = rt.mem_load(cur, PC, 8)
     if pc == 0 {

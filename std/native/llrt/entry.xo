@@ -54,6 +54,8 @@ const CHUNK_MB = 4
 /// macOS.
 const SIGINT = 2
 const SIGTERM = 15
+/// `xo dump` (decision 0251)
+const SIGQUIT = 3
 const SIGPIPE = 13
 const SIG_IGN = 1
 const SA_RESTART_LINUX = 268435456
@@ -224,7 +226,8 @@ fn atoll(a: Int) -> Int {
 
 /// Installs the handlers (not in a test binary): SIGINT and SIGTERM
 /// count a signal and wake the poller, which the C's ev_start starts
-/// first; SIGPIPE is ignored (a write to a closed socket returns EPIPE).
+/// first; SIGQUIT likewise, and the poller writes the task tree (`xo
+/// dump`, decision 0251); SIGPIPE is ignored (a write to a closed socket returns EPIPE).
 /// On Windows Ctrl-C, Ctrl-Break, and closing the console are SIGINT
 /// and SIGTERM, and a stack overflow ends the program with "fatal error:
 /// stack overflow" and status 2 (decision 0197, stage 5).
@@ -240,6 +243,7 @@ fn signals() {
     TargetOs.Linux => {
       let _i = linux.sigaction(SIGINT, h, SA_RESTART_LINUX)
       let _t = linux.sigaction(SIGTERM, h, SA_RESTART_LINUX)
+      let _q = linux.sigaction(SIGQUIT, rt.fn_addr("on_quit"), SA_RESTART_LINUX)
       let _p = linux.sigaction(SIGPIPE, SIG_IGN, 0)
     }
     TargetOs.Darwin => {
@@ -247,6 +251,7 @@ fn signals() {
       let sa = rt.heap_large(16)
       darwin_sig(sa, SIGINT, h, SA_RESTART_DARWIN)
       darwin_sig(sa, SIGTERM, h, SA_RESTART_DARWIN)
+      darwin_sig(sa, SIGQUIT, rt.fn_addr("on_quit"), SA_RESTART_DARWIN)
       darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
       release(sa)
     }

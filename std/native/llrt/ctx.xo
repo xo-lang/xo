@@ -83,7 +83,11 @@ pub const C_WHY = 336
 /// (tasks.xo run_claimed, root, trace.xo start), so the scheduler's hot
 /// hooks test a word of a context they hold, not the static switch
 pub const C_TRACE = 344
-pub const C_SIZE = 352
+/// The frame pointer of the current park's caller, 0 when not parked:
+/// where a wait is when no fiber holds it (a root thread's, or a task run
+/// inline on one), for `xo dump` (decision 0251)
+pub const C_PARK_FP = 352
+pub const C_SIZE = 360
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.
@@ -91,6 +95,9 @@ const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
 const PROG = 17
+/// The registry of root contexts' size (`xo dump`, decision 0251; the
+/// services record's SV_ROOTS).
+pub const ROOTS_MAX = 64
 
 /// The services record (made by init; was xo_rt.c's svc, decision 0233
 /// step 2): the worker pool record (pool.xo's pl) and whether
@@ -128,7 +135,12 @@ pub const SV_STDIN_PUMP = 248
 pub const SV_AT_TZ = 264
 pub const SV_AT_STREAMS = 272
 pub const SV_AT_TW_END = 280
-const SV_SIZE = 288
+/// The registry of root contexts (`xo dump`, decision 0251): a block of
+/// ROOTS_MAX words after a count word, made by the first root. (A static
+/// word of its own would not do: ctx.xo's range is 16 to 17, and 18 is
+/// tzhost.xo's lock; using it hung programs at exit, 2026-10-17.)
+const SV_ROOTS = 288
+const SV_SIZE = 296
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
 /// stack size, page size, where a fiber starts).
 const FS_SIZE = 48
@@ -217,7 +229,37 @@ pub fn root() -> Int {
   rt.mem_store(c, C_NODE, n, 8)
   rt.tlocal_set(0, c)
   let _r = rt.slot_add[Int](rt.mem_load(pool(), P_DLK, 8), DLK_ROOTS, 1, 4)
+  add_root(c)
   c
+}
+
+/// Records root context c for `xo dump` (the first is main's; at most
+/// ROOTS_MAX are kept).
+fn add_root(c: Int) {
+  let sv = svc()
+  if sv == 0 {
+    return
+  }
+  var r = rt.slot_load[Int](sv, SV_ROOTS, 3)
+  if r == 0 {
+    let blk = rt.heap_large(8 * (ROOTS_MAX + 1))
+    rt.mem_set(blk, 0, 8 * (ROOTS_MAX + 1))
+    if !rt.slot_cas(sv, SV_ROOTS, 0, blk, 3) {
+      rt.heap_release(blk - 8)
+    }
+    r = rt.slot_load[Int](sv, SV_ROOTS, 3)
+  }
+  let k = rt.slot_add[Int](r, 0, 1, 3)
+  if k < ROOTS_MAX {
+    rt.slot_store[Int](r + 8 * (k + 1), 0, c, 3)
+  }
+}
+
+/// The registry of root contexts: its address (a count word, then the
+/// contexts), 0 before any.
+pub fn roots() -> Int {
+  let sv = svc()
+  if sv == 0 { 0 } else { rt.slot_load[Int](sv, SV_ROOTS, 3) }
 }
 
 /// Starts deferred code (xo_shield_begin): it is shielded from
