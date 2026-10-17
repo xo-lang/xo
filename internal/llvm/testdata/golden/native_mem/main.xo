@@ -1,0 +1,11 @@
+// The native runtime's memcpy, memmove, and memset (std/native/llrt
+// libcstr.xo: 32 byte blocks, an overlapping last word) against byte
+// loops through internal.crypto_op's rt.mem_check (std/native
+// internal.xo; not rt_probe, which needs a C library): every size to 130, every
+// source and destination alignment to 7, and memmove at every overlap
+// shift from -40 to 40, forward and backward.
+use std/internal
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("mismatches ${internal.crypto_op("rt.mem_check", b"", b"", b"", b"").to_str() ?? ""}")
+}

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The native runtime's memcpy, memmove, and memset move 32 bytes an
+  iteration (no C library builds): copy-heavy programs 35 to 49% fewer
+  instructions on amd64, arm64, and LLVM
+  (bench/results/amd64-vs-llvm-2026-10-17.md).
+
 - arm64: small fixed-size copies are loads and stores (no memcpy call),
   and a chain of subtractions with borrow is subs and sbcs: P-256 and
   TLS 1.2 handshakes 12% fewer instructions.

@@ -8,6 +8,7 @@ use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/hkdf
 use native/llrt/hmac
+use native/llrt/libcstr
 use native/llrt/linux
 use native/llrt/mlkem
 use native/llrt/raw
@@ -90,6 +91,10 @@ fn sysc_op(what: Str) -> Bytes? {
 /// is below it, and within 64 KiB.
 fn rt_op(what: Str) -> Bytes? {
   var s = rt.rs_with_cap(3)
+  if what == "mem_check" {
+    // libcstr's copies against byte loops: the mismatches, in decimal
+    return Some("${probe_mem_check()}".bytes())
+  }
   if what == "fn_addr" {
     let buf = rt.heap_large(32)
     let n = rt.call_c2(rt.fn_addr("fmt_int"), buf, 12345)
@@ -293,6 +298,97 @@ fn probe_inherited() -> Int {
 /// byte up to 4 KiB, then one in every 4 KiB page, and the last).
 fn probe_pat(t: Int, i: Int) -> Int {
   rt.int_wrap(4, rt.int_wrap(0, rt.int_wrap(2, t, -7046029254386353131), rt.int_wrap(2, i, 31)), 56)
+}
+
+/// crypto_op's "rt.mem_check": libcstr's memcpy, memmove, and memset against
+/// byte loops, every size to 130 at source and destination alignments 0
+/// to 7 (memcpy, memset) and memmove at every overlap shift from -40 to
+/// 40; the mismatches (0 when they agree).
+fn probe_mem_check() -> Int {
+  // lists for the buffers (not obj.alloc_obj: reached from crypto_op, it
+  // would take the heap's lock into every program of std/internal, which
+  // the wasm backend does not have)
+  var lb = mem_words(128)
+  var lw = mem_words(128)
+  var lt = mem_words(32)
+  let buf = rt.int_wrap(0, rt.obj_addr(lb), rt.layout(2))
+  let want = rt.int_wrap(0, rt.obj_addr(lw), rt.layout(2))
+  let tmp = rt.int_wrap(0, rt.obj_addr(lt), rt.layout(2))
+  var bad = 0
+  for n in 0..131 {
+    for sa in 0..8 {
+      for da in 0..8 {
+        mem_pattern(buf, n + sa)
+        mem_pattern(want, n + sa)
+        let s = buf + sa
+        let d = buf + 512 + da
+        for i in 0..n {
+          rt.mem_store(want + 512 + da, i, rt.mem_load(want + sa, i, 1), 1)
+        }
+        if libcstr.memcpy(d, s, n) != d {
+          bad += 1
+        }
+        bad += mem_diff(buf, want, 1024)
+      }
+      mem_pattern(buf, 0)
+      mem_pattern(want, 0)
+      for i in 0..n {
+        rt.mem_store(want + sa, i, 0xa5, 1)
+      }
+      if libcstr.memset(buf + sa, 0x1a5, n) != buf + sa {
+        bad += 1
+      }
+      bad += mem_diff(buf, want, 1024)
+    }
+    for shift in -40..41 {
+      mem_pattern(buf, 0)
+      mem_pattern(want, 0)
+      let s = buf + 200
+      let d = s + shift
+      for i in 0..n {
+        rt.mem_store(tmp, i, rt.mem_load(want + 200, i, 1), 1)
+      }
+      for i in 0..n {
+        rt.mem_store(want + 200 + shift, i, rt.mem_load(tmp, i, 1), 1)
+      }
+      if libcstr.memmove(d, s, n) != d {
+        bad += 1
+      }
+      bad += mem_diff(buf, want, 1024)
+    }
+  }
+  // the lists outlive every access through their addresses
+  lb[0] = 0
+  lw[0] = 0
+  lt[0] = 0
+  bad
+}
+
+/// n zero words, this function's own list.
+fn mem_words(n: Int) -> List[Int] {
+  var l: List[Int] = List.with_capacity(n)
+  for _ in 0..n {
+    l.push(0)
+  }
+  l
+}
+
+/// The 1024 bytes at p set to a pattern (byte i: 7 i + 3 mod 251).
+fn mem_pattern(p: Int, _n: Int) {
+  for i in 0..1024 {
+    rt.mem_store(p, i, (7 * i + 3) % 251, 1)
+  }
+}
+
+/// The bytes of the n at a and b that differ.
+fn mem_diff(a: Int, b: Int, n: Int) -> Int {
+  var k = 0
+  for i in 0..n {
+    if rt.mem_load(a, i, 1) != rt.mem_load(b, i, 1) {
+      k += 1
+    }
+  }
+  k
 }
 
 fn probe_fill(p: Int, n: Int, t: Int) {

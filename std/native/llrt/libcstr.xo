@@ -45,17 +45,56 @@ pub fn s32(v: Int) -> Int {
 // ---------------------------------------------------------------------------
 // Memory
 
-/// memcpy: n bytes from s to d (not overlapping); d.
-pub fn memcpy(d: Int, s: Int, n: Int) -> Int {
+// The copies move 32 bytes an iteration, then words: counted loops (k
+// blocks down to 0) through pointers at constant offsets, each word
+// stored as it is loaded. That is safe for memmove too: copying forward
+// with d below s (backward with d above s), a store reaches only bytes
+// of s already read. An 8 byte loop tested on `i + 8 <= n` cost about
+// four times LLVM's vectorized copy on both native backends, and four
+// words held across their stores cost x86-64 a callee saved register
+// on every call (bench/results/amd64-vs-llvm-2026-10-17.md).
+
+/// The 8 byte words of n bytes from s to d, forward: 32 bytes an
+/// iteration at index i, two words loaded then stored at a time (the
+/// index form LLVM vectorizes; at most seven values live, within x86-64's
+/// caller saved registers), then the rest's words; the bytes copied.
+fn copy_words(d: Int, s: Int, n: Int) -> Int {
+  let n32 = n & -32
   var i = 0
-  while addw(i, 8) <= n {
+  while i < n32 {
+    let a = rt.mem_load(s, i, 8)
+    let b = rt.mem_load(s, addw(i, 8), 8)
+    rt.mem_store(d, i, a, 8)
+    rt.mem_store(d, addw(i, 8), b, 8)
+    let c = rt.mem_load(s, addw(i, 16), 8)
+    let e = rt.mem_load(s, addw(i, 24), 8)
+    rt.mem_store(d, addw(i, 16), c, 8)
+    rt.mem_store(d, addw(i, 24), e, 8)
+    i = addw(i, 32)
+  }
+  let n8 = n & -8
+  while i < n8 {
     rt.mem_store(d, i, rt.mem_load(s, i, 8), 8)
     i = addw(i, 8)
   }
-  while i < n {
-    rt.mem_store(d, i, byte(s, i), 1)
-    i = addw(i, 1)
+  n8
+}
+
+/// memcpy: n bytes from s to d (not overlapping); d. From 8 bytes on,
+/// the tail is one word ending at n (overlapping bytes already copied:
+/// s and d do not overlap), so a short copy has no byte loop.
+pub fn memcpy(d: Int, s: Int, n: Int) -> Int {
+  if n < 8 {
+    var j = 0
+    while j < n {
+      rt.mem_store(d, j, byte(s, j), 1)
+      j = addw(j, 1)
+    }
+    return d
   }
+  let _w = copy_words(d, s, n)
+  let t = subw(n, 8)
+  rt.mem_store(d, t, rt.mem_load(s, t, 8), 8)
   d
 }
 
@@ -66,25 +105,37 @@ pub fn memmove(d: Int, s: Int, n: Int) -> Int {
   }
   // forward when d is below s or past its end (unsigned: addresses)
   if ult(d, s) || !ult(subw(d, s), n) {
-    var i = 0
-    while addw(i, 8) <= n {
-      rt.mem_store(d, i, rt.mem_load(s, i, 8), 8)
-      i = addw(i, 8)
-    }
+    var i = copy_words(d, s, n)
     while i < n {
       rt.mem_store(d, i, byte(s, i), 1)
       i = addw(i, 1)
     }
     return d
   }
+  // backward: the bytes past the last whole word, then words from the end
   var k = n
-  while k >= 8 {
-    k = subw(k, 8)
-    rt.mem_store(d, k, rt.mem_load(s, k, 8), 8)
-  }
-  while k > 0 {
+  while (k & 7) != 0 {
     k = subw(k, 1)
     rt.mem_store(d, k, byte(s, k), 1)
+  }
+  var sp = addw(s, k)
+  var dp = addw(d, k)
+  var b = rt.int_wrap(4, k, 5)
+  while b > 0 {
+    sp = subw(sp, 32)
+    dp = subw(dp, 32)
+    rt.mem_store(dp, 24, rt.mem_load(sp, 24, 8), 8)
+    rt.mem_store(dp, 16, rt.mem_load(sp, 16, 8), 8)
+    rt.mem_store(dp, 8, rt.mem_load(sp, 8, 8), 8)
+    rt.mem_store(dp, 0, rt.mem_load(sp, 0, 8), 8)
+    b = subw(b, 1)
+  }
+  var w = rt.int_wrap(4, k & 31, 3)
+  while w > 0 {
+    sp = subw(sp, 8)
+    dp = subw(dp, 8)
+    rt.mem_store(dp, 0, rt.mem_load(sp, 0, 8), 8)
+    w = subw(w, 1)
   }
   d
 }
@@ -92,16 +143,33 @@ pub fn memmove(d: Int, s: Int, n: Int) -> Int {
 /// memset: the n bytes at d set to the low byte of c; d.
 pub fn memset(d: Int, c: Int, n: Int) -> Int {
   let b = c & 255
+  if n < 8 {
+    var j = 0
+    while j < n {
+      rt.mem_store(d, j, b, 1)
+      j = addw(j, 1)
+    }
+    return d
+  }
   let w = mulw(b, 72340172838076673)
-  var i = 0
-  while addw(i, 8) <= n {
-    rt.mem_store(d, i, w, 8)
-    i = addw(i, 8)
+  var dp = d
+  var k = rt.int_wrap(4, n, 5)
+  while k > 0 {
+    rt.mem_store(dp, 0, w, 8)
+    rt.mem_store(dp, 8, w, 8)
+    rt.mem_store(dp, 16, w, 8)
+    rt.mem_store(dp, 24, w, 8)
+    dp = addw(dp, 32)
+    k = subw(k, 1)
   }
-  while i < n {
-    rt.mem_store(d, i, b, 1)
-    i = addw(i, 1)
+  var r = rt.int_wrap(4, n & 31, 3)
+  while r > 0 {
+    rt.mem_store(dp, 0, w, 8)
+    dp = addw(dp, 8)
+    r = subw(r, 1)
   }
+  // the tail: one word ending at n
+  rt.mem_store(d, subw(n, 8), w, 8)
   d
 }
 

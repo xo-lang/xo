@@ -82,8 +82,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 		// has no C ABI exports, frame records, C symbols, or auxiliary
 		// vector of its own; it answers what they give, "12345"'s length and
 		// first byte, the three frame facts, xo_entry's address not 0 with
-		// strlen of seven bytes, the three auxv facts, and raw.alive's two
-		// (Go's collector keeps the bytes)
+		// strlen of seven bytes, the three auxv facts, raw.alive's two
+		// (Go's collector keeps the bytes), and mem_check's 0
 		switch what {
 		case "alive":
 			r, ok = Bytes([]byte{1, 1}), true
@@ -96,6 +96,10 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 			r, ok = Bytes([]byte{1, 1, 1}), true
 		case "sym_addr":
 			r, ok = Bytes([]byte{1, byte(len("xxxxxxx"))}), true
+		case "mem_check":
+			// libcstr's copies are the native runtime's; Go's copy has no
+			// mismatches to report
+			r, ok = Bytes("0"), true
 		}
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
