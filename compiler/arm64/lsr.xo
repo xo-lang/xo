@@ -574,8 +574,175 @@ fn (var g: G) rotate_jump(var b: List[Str], t: Int) -> Bool {
   true
 }
 
+/// Moves loads and stores of adjacent words through one base register
+/// next to each other before register allocation, so pair_mem can join
+/// them (decision 0257's follow up: nbody's loads of bs[j].x, y and z
+/// and its loads and stores of bs[j].vx and vy were each apart, between
+/// arithmetic, and all used one register). A load moves up to the load
+/// of the word beside it past arithmetic and loads, and past stores
+/// through the same base register to other words; a store moves down to
+/// the store of the word beside it past arithmetic and accesses through
+/// the same base register to other words. Neither moves past a check
+/// (a guarded access stays guarded), a call, a branch, or an instruction
+/// that writes the base or its own register.
+fn (var g: G) cluster_mem() {
+  for b in g.all_blocks() {
+    var ins = g.blocks[b].insts
+    if ins.len() < 3 {
+      continue
+    }
+    var moved = false
+    var i = 0
+    while i < ins.len() {
+      let (lk, base, off) = mem_word(ins[i])
+      if lk == 0 {
+        i += 1
+        continue
+      }
+      var j = i + 1
+      var found = -1
+      while j < ins.len() {
+        let (k2, b2, o2) = mem_word(ins[j])
+        if k2 == lk && b2 == base && (o2 == off + 8 || o2 == off - 8) && g.fp[mem_reg(ins[j])] == g.fp[mem_reg(ins[i])] {
+          found = j
+          break
+        }
+        if !cluster_past(ins[j], lk, base, if lk == 1 { -1 } else { off }) {
+          break
+        }
+        j += 1
+      }
+      if found < 0 || found == i + 1 {
+        i += 1
+        continue
+      }
+      if lk == 1 {
+        // the later load moves up: nothing between may write its
+        // register, read it, or write memory it reads
+        let (_, _, o2) = mem_word(ins[found])
+        var ok = true
+        for k in i + 1..found {
+          ok = ok && cluster_past(ins[k], 1, base, o2) && !ins[k].defs.contains(ins[found].defs[0]) && !ins[k].us.contains(ins[found].defs[0])
+        }
+        if ok {
+          let x = ins[found]
+          var out: List[Inst] = []
+          for k in 0..ins.len() {
+            if k == found {
+              continue
+            }
+            if k == i && o2 == off - 8 {
+              out.push(x)
+            }
+            out.push(ins[k])
+            if k == i && o2 == off + 8 {
+              out.push(x)
+            }
+          }
+          ins = out
+          moved = true
+        }
+      } else {
+        // the earlier store moves down: nothing between may write its
+        // register or read memory it writes
+        let (_, _, o2) = mem_word(ins[found])
+        var ok = true
+        for k in i + 1..found {
+          ok = ok && cluster_past(ins[k], 2, base, off) && !ins[k].defs.contains(ins[i].us[0])
+        }
+        if ok {
+          let x = ins[i]
+          var out: List[Inst] = []
+          for k in 0..ins.len() {
+            if k == i {
+              continue
+            }
+            if k == found && o2 == off + 8 {
+              out.push(x)
+            }
+            out.push(ins[k])
+            if k == found && o2 == off - 8 {
+              out.push(x)
+            }
+          }
+          ins = out
+          moved = true
+        }
+      }
+      i += 1
+    }
+    if moved {
+      g.blocks[b].insts = ins
+    }
+  }
+}
+
+/// Whether inst is a word load `ldr $d0, [$u0, #off]` (1) or store `str
+/// $u0, [$u1, #off]` (2) of cluster_mem, with its base register and
+/// offset; 0 otherwise.
+fn mem_word(inst: Inst) -> (Int, Int, Int) {
+  if inst.kind != K_PLAIN || inst.has_fault || inst.keep || inst.frame || inst.x86 || !inst.clobbers.is_empty() {
+    return (0, 0, 0)
+  }
+  let t = inst.text
+  var k = 0
+  var pre = ""
+  if t.starts_with("ldr $d0, [$u0, #") && inst.defs.len() == 1 && inst.us.len() == 1 {
+    k = 1
+    pre = "ldr $d0, [$u0, #"
+  } else if t.starts_with("str $u0, [$u1, #") && inst.defs.is_empty() && inst.us.len() == 2 {
+    k = 2
+    pre = "str $u0, [$u1, #"
+  } else {
+    return (0, 0, 0)
+  }
+  if !t.ends_with("]") {
+    return (0, 0, 0)
+  }
+  let num = t[pre.len()..t.len() - 1]
+  if !is_signed_digits(num) {
+    return (0, 0, 0)
+  }
+  let off = Int.parse(num) ?? 1
+  if off % 8 != 0 {
+    return (0, 0, 0)
+  }
+  (k, inst.us[k - 1], off)
+}
+
+/// The register a word load defines or a word store stores.
+fn mem_reg(inst: Inst) -> Int {
+  if inst.defs.len() == 1 { inst.defs[0] } else { inst.us[0] }
+}
+
+/// Whether a load (k 1) of the word at off through base, or a store (k 2)
+/// of it, may move past inst (cluster_mem's rule): inst is arithmetic of
+/// registers, or an access of another word through the same base (or,
+/// for a load, any load), and writes neither base nor a register the
+/// access reads; off -1 skips the memory test.
+fn cluster_past(inst: Inst, k: Int, base: Int, off: Int) -> Bool {
+  if inst.kind != K_PLAIN || inst.has_fault || inst.keep || inst.frame || inst.x86 || !inst.clobbers.is_empty() || inst.early {
+    return false
+  }
+  if inst.text.contains("\n") || inst.defs.contains(base) {
+    return false
+  }
+  if !inst.text.contains("[") {
+    return true
+  }
+  let (k2, b2, o2) = mem_word(inst)
+  if k2 == 0 {
+    // another access: a load past a load only, whatever its form
+    return k == 1 && (inst.text.starts_with("ldr") || inst.text.starts_with("ldp")) && !inst.text.contains("!")
+  }
+  if b2 == base && (off < 0 || o2 >= off + 8 || o2 + 8 <= off) {
+    return k == 2 || k2 == 1 || off >= 0
+  }
+  k == 1 && k2 == 1
+}
+
 /// Joins two loads of adjacent words through one base register into a
-/// load pair (pairLoads). Integer registers only.
+/// load pair (pairLoads): two x registers or two d registers.
 fn pair_loads(text: Str) -> Str {
   let lines = text.split("\n")
   var out: List[Str] = []
@@ -586,7 +753,7 @@ fn pair_loads(text: Str) -> Str {
       let (aok, a1, a2, a3) = parse_ldr(lines[i])
       if aok {
         let (cok, c1, c2, c3) = parse_ldr(lines[i + 1])
-        if cok && a2 == c2 && a1 != c1 && a1 != a2 {
+        if cok && a2 == c2 && a1 != c1 && a1 != a2 && same_class(a1, c1) {
           if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
             out.push("\tldp ${a1}, ${c1}, [${a2}, #${a3}]")
             i += 2
@@ -647,7 +814,7 @@ fn pair_mem(text: Str, ext: Str) -> Str {
       }
       if j < n {
         let (cok, c1, c2, c3) = if st { parse_str(lines[j]) } else { parse_ldr(lines[j]) }
-        if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) {
+        if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) && same_class(a1, c1) {
           if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
             let op = if st { "stp" } else { "ldp" }
             for r in rows {
@@ -952,11 +1119,11 @@ fn label_refs(text: Str, ext: Str) -> Map[Str, Bool] {
   refs
 }
 
-/// Whether l is `\tstr x<n>|xzr, [x<m>, #<off>]` (strRE): the register,
+/// Whether l is `\tstr x<n>|xzr|d<n>, [x<m>, #<off>]` (strRE): the register,
 /// the base, and the offset.
 fn parse_str(l: Str) -> (Bool, Str, Str, Int) {
   let bad = (false, "", "", 0)
-  if !l.starts_with("\tstr x") {
+  if !l.starts_with("\tstr x") && !l.starts_with("\tstr d") {
     return bad
   }
   let rest = l[5..l.len()]
@@ -965,7 +1132,7 @@ fn parse_str(l: Str) -> (Bool, Str, Str, Int) {
     return bad
   }
   let r = rest[0..comma]
-  if r != "xzr" && !is_xreg(r) {
+  if r != "xzr" && !is_xreg(r) && !is_dreg(r) {
     return bad
   }
   let rest2 = rest[comma + 3..rest.len()]
@@ -991,11 +1158,11 @@ fn parse_str(l: Str) -> (Bool, Str, Str, Int) {
   }
 }
 
-/// Whether l is `\tldr x<n>, [x<m>|sp, #<off>]` (ldrRE): the register,
+/// Whether l is `\tldr x<n>|d<n>, [x<m>|sp, #<off>]` (ldrRE): the register,
 /// the base, and the offset.
 fn parse_ldr(l: Str) -> (Bool, Str, Str, Int) {
   let bad = (false, "", "", 0)
-  if !l.starts_with("\tldr x") {
+  if !l.starts_with("\tldr x") && !l.starts_with("\tldr d") {
     return bad
   }
   let rest = l[5..l.len()]
@@ -1004,7 +1171,7 @@ fn parse_ldr(l: Str) -> (Bool, Str, Str, Int) {
     return bad
   }
   let r = rest[0..comma]
-  if !is_xreg(r) {
+  if !is_xreg(r) && !is_dreg(r) {
     return bad
   }
   let rest2 = rest[comma + 3..rest.len()]
@@ -1028,6 +1195,18 @@ fn parse_ldr(l: Str) -> (Bool, Str, Str, Int) {
     Some(off) => (true, r, base, off)
     None => bad
   }
+}
+
+/// Whether s is `d` and one or more digits (a double register: ldp and
+/// stp pair two of them as they pair two x registers).
+fn is_dreg(s: Str) -> Bool {
+  s.len() >= 2 && s.starts_with("d") && is_digits(s[1..s.len()])
+}
+
+/// Whether registers a and b can be one ldp or stp (both x, xzr counting
+/// as one, or both d).
+fn same_class(a: Str, b: Str) -> Bool {
+  a.starts_with("d") == b.starts_with("d")
 }
 
 /// Whether s is `x` and one or more digits.

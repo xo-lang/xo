@@ -45,6 +45,7 @@ fn (var g: G) function(fi: Int) {
   g.place_latches()
   g.mark_tails()
   g.shrink_split()
+  g.cluster_mem()
   g.regalloc()
   g.emit()
 }

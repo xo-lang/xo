@@ -36,3 +36,10 @@ test "pair_mem: a branch target between two loads ends the pair (ELF)" {
   let t = "\tldr x10, [x11, #0]\n.Lf_b3:\n\tldr x13, [x11, #8]\n\tcbz x0, .Lf_b3\n\tret"
   expect(pair_mem(t, "")) == t
 }
+
+test "pair_mem: d registers pair like x registers; an x and a d do not" {
+  let t = "\tldr d16, [x9, #24]\n\tldr d17, [x9, #32]\n\tstr d22, [x9, #48]\n\tstr d23, [x9, #56]\n\tret"
+  expect(pair_mem(t, "")) == "\tldp d16, d17, [x9, #24]\n\tstp d22, d23, [x9, #48]\n\tret"
+  let u = "\tldr x10, [x9, #24]\n\tldr d17, [x9, #32]\n\tstr d22, [x9, #48]\n\tstr x11, [x9, #56]\n\tret"
+  expect(pair_mem(u, "")) == u
+}
