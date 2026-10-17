@@ -812,17 +812,20 @@ pub fn run_claimed(t: Int, units: Int) {
   // the context: the thread's spare (an earlier run's), else a new one
   // from the runtime's malloc (the C's was on its stack; a heap block
   // and its free per run cost spawn heavy programs, the zero-C perf
-  // sweep of 2026-10-15)
-  var c = rt.tlocal_get(TLS_CTX_SPARE)
+  // sweep of 2026-10-15). The thread's table once until the task runs
+  // (nothing before parks; on macOS each tlocal_get or set across a call
+  // was a _tlv_get_addr: 7 a spawn, 9% of spawn's cycles, 2026-10-17)
+  let tb = rt.tlocal_addr()
+  var c = ld(tb, 8 * TLS_CTX_SPARE)
   if c != 0 {
-    rt.tlocal_set(TLS_CTX_SPARE, 0)
+    st(tb, 8 * TLS_CTX_SPARE, 0)
   } else {
     c = rt.heap_large(ctx.C_SIZE)
   }
   rt.mem_set(c, 0, ctx.C_SIZE)
   st(c, ctx.C_NODE, t + T_NODE)
   rt.slot_store[Int](t + T_CTX, 0, c, RELEASE)
-  let saved = rt.tlocal_get(0)
+  let saved = ld(tb, 0)
   // a task started under a budget works under it (decision 0175); the
   // context it runs inline on does not run meanwhile
   budget.pause(saved)
@@ -834,7 +837,7 @@ pub fn run_claimed(t: Int, units: Int) {
     st(c, ctx.C_BUD_LEFT, budget.QUANTUM)
     budget.mark(c)
   }
-  rt.tlocal_set(0, c)
+  st(tb, 0, c)
   let fl = ld(t, T_FL)
   let env = ld(t, T_FENV)
   st(t, T_FL, 0)
@@ -854,16 +857,17 @@ pub fn run_claimed(t: Int, units: Int) {
     budget.charge(c, false)
     budget.release(b)
   }
-  rt.tlocal_set(0, saved)
+  // the table of the thread that ends the run (a fiber may have moved)
+  let te = rt.tlocal_addr()
+  st(te, 0, saved)
   budget.resume(saved)
   mfree(ld(c, ctx.C_HELD))
   mfree(ld(c, ctx.C_NET_MSG))
   fault.clear(c)
-  // the spare of the thread that ends the run (a fiber may have moved);
-  // a spare is never freed (one per thread, like a root context), so the
-  // leak check does not see it
-  if rt.tlocal_get(TLS_CTX_SPARE) == 0 {
-    rt.tlocal_set(TLS_CTX_SPARE, c)
+  // that thread's spare; a spare is never freed (one per thread, like a
+  // root context), so the leak check does not see it
+  if ld(te, 8 * TLS_CTX_SPARE) == 0 {
+    st(te, 8 * TLS_CTX_SPARE, c)
   } else {
     rt.heap_release(c - 8)
   }

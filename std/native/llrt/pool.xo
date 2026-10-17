@@ -1516,7 +1516,11 @@ const T_GONE = 22
 /// pruned from s's list (linked by snext, for the C to release), 0, or -1
 /// when s has ended (nothing done).
 pub fn scope_add(pl: Int, s: Int, t: Int, w: Int) -> Int {
-  defer_check()
+  // defer_check with the spawner's record (no thread local read)
+  let mon = rt.slot_load[Int](rt.static_word(W_MON), 0, RELAXED)
+  if mon != 0 && mon != 1 {
+    defer_check_w(w)
+  }
   let m = rt.int_wrap(0, s, S_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
@@ -1852,8 +1856,22 @@ pub fn defer_check() {
   if w == 0 {
     return
   }
+  defer_check_w(w)
+}
+
+/// defer_check for the calling thread's record w (scope_add has it: no
+/// thread local read, a _tlv_get_addr on macOS, per spawn).
+fn defer_check_w(w: Int) {
   let at = rt.slot_load(w, W_DEFER_AT_W, RELAXED)
   if at == 0 {
+    return
+  }
+  // a root at one worker (XO_THREADS=1): its join or next park runs what
+  // it deferred, and this call shows it is not blocked; waking the worker
+  // made the two threads take the same tasks (Linux spawn: 400 wakes, 1.6
+  // threads busy); the monitor stays the bound for a root blocked in the
+  // system. Before the count and the clock, which it never needs
+  if rt.mem_load(w, W_ROOT, 4) != 0 && rt.mem_load(rt.mem_load(w, W_POOL, 8), P_NCPU, 8) < 2 {
     return
   }
   // the clock every 16th call (a clock read cost a ping pong 12% more
@@ -1862,14 +1880,6 @@ pub fn defer_check() {
   let n = rt.int_wrap(0, rt.mem_load(w, W_DEFER_N, 8), 1)
   rt.mem_store(w, W_DEFER_N, n, 8)
   if (n & 15) != 0 || rt.int_wrap(1, sysio.mono_ns(), at) < DEFER_CHECK_NS {
-    return
-  }
-  // a root at one worker (XO_THREADS=1): its join or next park runs what
-  // it deferred, and this call shows it is not blocked; waking the worker
-  // made the two threads take the same tasks (Linux spawn: 400 wakes, 1.6
-  // threads busy); the monitor stays the bound for a root blocked in the
-  // system
-  if rt.mem_load(w, W_ROOT, 4) != 0 && rt.mem_load(rt.mem_load(w, W_POOL, 8), P_NCPU, 8) < 2 {
     return
   }
   if rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
