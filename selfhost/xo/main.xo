@@ -929,7 +929,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if !(o.tzdata is "" | "embedded" | "system") {
       fail(os, "unknown --tzdata=${o.tzdata} (want embedded or system)")
     }
-    let sel = tz_select(os, tu, o.tzdata)
+    let sel = tz_select(os, ctx.std, tu, o.tzdata)
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }

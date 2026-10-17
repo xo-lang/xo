@@ -1,0 +1,9 @@
+// A constant zone name (internal/llvm TestZonesWithoutGo, decision 0094's
+// addendum): its data comes from std/tzdata, with no Go on PATH.
+use std/time
+
+fn main(os: Os) {
+  let berlin = time.zone("Europe/Berlin").or_fault("Berlin is embedded")
+  let t = Time.parse_rfc3339("2026-07-01T12:00:00Z").or_fault("rfc3339")
+  os.stdio.println("Europe/Berlin: ${time.format(t, berlin, time.RFC1123)} ${berlin.offset_at(t)}")
+}

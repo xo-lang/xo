@@ -1,0 +1,13 @@
+// Zone names known only at run time (internal/llvm TestZonesWithoutGo):
+// the whole database from std/tzdata, with no Go on PATH.
+use std/time
+
+fn main(os: Os) uses env, stdio {
+  let t = Time.parse_rfc3339("2026-07-01T12:00:00Z").or_fault("rfc3339")
+  for name in os.env.args() {
+    match time.zone(name) {
+      Ok(z) => os.stdio.println("${name}: ${time.format(t, z, time.RFC1123)} ${z.offset_at(t)}")
+      Err(e) => os.stdio.println("${name}: ${e}")
+    }
+  }
+}

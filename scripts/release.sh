@@ -38,9 +38,10 @@
 #
 #   xo-<version>-<os>-<arch>/bin/xo                      xo1
 #   xo-<version>-<os>-<arch>/bin/xo-gobind               the Go binder helper (`use go`)
-#   xo-<version>-<os>-<arch>/lib/xo/std/                 std (with llrt and rt)
-#   xo-<version>-<os>-<arch>/lib/xo/zoneinfo.zip         Go's zone database, for std/time
-#                                                        (decision 0157 next step 1: no Go needed)
+#   xo-<version>-<os>-<arch>/lib/xo/std/                 std (with llrt and rt, and
+#                                                        std/tzdata: the IANA zone
+#                                                        database std/time embeds,
+#                                                        decision 0094's addendum)
 #   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md
 #
 # xo1 finds std and xo-gobind beside itself (bin/../lib/xo), so
@@ -105,9 +106,8 @@ layout() {
 	stage=$(stage_of "$target")
 	mkdir -p "$stage/bin" "$stage/lib/xo"
 	git ls-files -z std | rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
-	# the zone database std/time embeds (selfhost/xo tz.xo looks here
-	# before `go env GOROOT`)
-	cp "$(go env GOROOT)/lib/time/zoneinfo.zip" "$stage/lib/xo/zoneinfo.zip"
+	# the zone database std/time embeds is std/tzdata/zoneinfo.zip, a
+	# tracked file of std (decision 0094's addendum), copied above
 	local exe=""
 	[ "${target%/*}" = windows ] && exe=.exe
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \

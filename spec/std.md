@@ -2000,8 +2000,11 @@ Settled while implementing; examples are in the goldens
 `internal/gen/testdata/golden/time_*` and
 `internal/check/testdata/golden/time_layout`.
 
-- **Zone data.** The zone data is the `lib/time/zoneinfo.zip` of the Go
-  toolchain that builds the program (`XO_ZONEINFO` names another file).
+- **Zone data.** The zone data is the IANA time zone database that ships
+  with std (`std/tzdata/zoneinfo.zip`, its IANA version in
+  `std/tzdata/VERSION`), on every backend; no Go toolchain is needed.
+  `XO_ZONEINFO` names another file, and `--tzdata=system` reads the
+  operating system's database at run time instead.
   `time.zone("UTC")` needs no data. A constant name is a string literal,
   a `const`, or a `+` of them; a constant name the database does not have
   gets a build note and returns `ZoneErr.Unknown` at run time. `time.zone`

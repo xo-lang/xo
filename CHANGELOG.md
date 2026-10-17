@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Time zones need no Go: std ships the IANA database (std/tzdata,
+  2026e; decision 0094's addendum), which native and Go backend builds
+  embed per use as before; scripts/tzdata-update.sh refreshes it per
+  release. `--tzdata=system` still reads the operating system's.
+
 - A plain HTTP server links no TLS server and no HTTP/2 (decision 0244,
   owner): they are reached only through what `Server.with_tls` sets up,
   so json_server is 62 percent smaller on arm64 (2.5 MB to 944 KB

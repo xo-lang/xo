@@ -615,13 +615,16 @@ command (default: `go` on PATH). A program that calls `time.zone` also
 gets `xo_tzdata.go` (package main: `rt.TZEmbed` per constant zone name,
 or `rt.TZFull` over `xo_zoneinfo.zip` embedded with go:embed when a name
 is known only at run time, or `rt.TZUseSystem` with `--tzdata=system`).
-The zone data is `$(go env GOROOT)/lib/time/zoneinfo.zip` of the go
-command the build uses; `XO_ZONEINFO=<file>` names another zip. xo1
-(the released `xo`) looks at `lib/xo/zoneinfo.zip` of its release
-layout first (beside the running binary's `lib/xo`, or beside the pack
-root `$XO_RTPACK`), then `go env GOROOT` (selfhost/xo tz.xo
-shipped_zoneinfo; 2026-10-12). Last
-verified: 2026-10-09.
+The zone data is std's IANA database, `std/tzdata/zoneinfo.zip` (its
+version and the archives' SHA-256 in `std/tzdata/VERSION`; decision
+0094's addendum, 2026-10-16), on the native and Go backends alike, so a
+build needs no Go for it; `XO_ZONEINFO=<file>` names another zip, and
+an older release's `lib/xo/zoneinfo.zip` is read when std has none.
+Refresh it per release: `scripts/tzdata-update.sh [VERSION]` (IANA's
+tzcode and tzdata, its zic with backzone, a stored zip with sorted
+names and fixed times, as Go's lib/time/update.bash; the same VERSION
+gives the same bytes), then commit both files. Last verified:
+2026-10-16 (2026e).
 
 ## Deterministic scheduling and live inspection
 

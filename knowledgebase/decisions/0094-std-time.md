@@ -140,3 +140,30 @@ output byte identical to the Go backend's; nothing is left `XO1201`.
   against LLVM and arm64 with the leak check;
   `XO_TIMEDIFF_OUT=<prefix>` keeps the program and its output);
   `TestZoneDataPerUseNative`.
+
+## Addendum: the zone database ships with std (owner, 2026-10-16)
+
+Approved by the owner, relayed by the lead. The zone data was Go's
+`lib/time/zoneinfo.zip` (`go env GOROOT`, or a release's copy of it), so
+a native build that named a zone needed Go installed or XO_ZONEINFO.
+Now std carries the IANA database itself:
+
+- `std/tzdata/zoneinfo.zip`: the IANA time zone database (598 zones,
+  about 400 KB), built by `scripts/tzdata-update.sh VERSION` the way Go's
+  lib/time/update.bash builds its own: IANA's tzcode and tzdata of that
+  release, IANA's zic (`make posix_only` with backzone and zone.tab's
+  zones), every TZif file stored in a zip with sorted names and fixed
+  times (the same VERSION gives the same bytes). `std/tzdata/VERSION`
+  records the version, the SHA-256 of both archives and their source.
+  First version 2026e (2026-10-16). Refresh per release.
+- Every layout has it because it is a tracked file of std: a checkout, a
+  seed (bin/xo beside std), a release (lib/xo, scripts/release.sh no
+  longer copies Go's file).
+- Lookup (selfhost/xo tz.xo zoneinfo_zip, gobackend.xo tz_files):
+  `XO_ZONEINFO`, else std's file, else an older release's
+  `lib/xo/zoneinfo.zip`; no `go env GOROOT`. Both backends use it.
+- Unchanged: a constant name embeds only that zone, a name known only at
+  run time the whole database, `--tzdata=system` reads the operating
+  system's database at run time.
+- Test: internal/llvm TestZonesWithoutGo (a constant and a run time
+  name, built with no go on PATH and no XO_ZONEINFO, arm64).

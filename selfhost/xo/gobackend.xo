@@ -89,7 +89,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   if !tests {
     write_file(os, "${tree}/xo_buildinfo.go", build_info_file(os, c, root, o.dirs[0], wd, o.std, o))?
   }
-  tz_files(os, prog.tz_names, prog.tz_dynamic, tree, o.tzdata, o.json && o.cmd == "build")?
+  tz_files(os, ctx.std, prog.tz_names, prog.tz_dynamic, tree, o.tzdata, o.json && o.cmd == "build")?
   // the runtime
   os.fs.create_dir_all("${tree}/rt")?
   for fi in os.fs.read_dir("${o.std}/rt")? {
@@ -507,7 +507,7 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
 /// name, or the whole zoneinfo.zip when a name is known only at run time;
 /// with --tzdata=system the host's database; nothing when no zone is
 /// asked for.
-fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str, quiet: Bool) -> () ! Str {
+fn tz_files(os: Os, std: Str, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str, quiet: Bool) -> () ! Str {
   if !(mode is "" | "embedded" | "system") {
     return Err("unknown --tzdata=${mode} (want embedded or system)")
   }
@@ -526,13 +526,11 @@ fn tz_files(os: Os, names0: List[Str], dynamic: List[Str], tree: Str, mode: Str,
   if names.is_empty() && dynamic.is_empty() {
     return Ok(())
   }
+  // std's IANA database (tz.xo zoneinfo_zip, decision 0094's
+  // addendum), as the native backends'
   var path = os.env.get("XO_ZONEINFO") ?? ""
   if path.is_empty() {
-    let goroot = match os.proc.run(go_cmd(os), ["env", "GOROOT"]) {
-      Ok(r) => (r.stdout.to_str() ?? "").trim()
-      Err(e) => return Err("zone data: cannot find GOROOT: ${e}")
-    }
-    path = "${goroot}/lib/time/zoneinfo.zip"
+    path = "${std}/tzdata/zoneinfo.zip"
   }
   let zip = match os.fs.read(path) {
     Ok(z) => z
