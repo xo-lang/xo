@@ -246,6 +246,12 @@ What the compiler has to work with:
   stopped: previous frame identical to this frame (corrupt stack?)" at
   xo_clone: the thread's first frame does not mark itself outermost (its
   CFI does not make the return address undefined), so gdb stops on a
-  repeated frame instead of a clean end. Next: `.cfi_undefined x30` in
-  xo_clone's thread start (selfhost/arm64's and the LLVM runtime's), then
-  rerun this check.
+  repeated frame instead of a clean end. Fixed the same day: the
+  outermost frames on Linux arm64 (xo_clone's child, the no C library
+  `_start`, xo_fiber_entry; both backends) have an unwind entry whose
+  return address is undefined (`.cfi_escape 0x07, 30`, DW_CFA_undefined
+  x30: every assembler Xo uses takes it; inside LLVM's naked functions,
+  which Linux clang gives an unwind entry, the escape alone), beside the
+  zero fp they already had; gdb's backtraces then end at xo_clone with no
+  note, on both backends. Linux goldens in Docker: 183 of 183 on each
+  backend.

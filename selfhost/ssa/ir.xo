@@ -354,13 +354,16 @@ pub fn nolibc_data() -> List[Str] { ["environ", "stdin", "stdout", "stderr"] }
 /// information, so the unwinder's walk ends there (std/native/llrt
 /// unwind.xo: a pc with no frame).
 pub fn entry_stub_arm64() -> Str {
-  "\t.text\n\t.globl _start\n\t.type _start, %function\n\t.p2align 2\n_start:\n" +
+  // the process's outermost frame: fp zero, and its unwind entry's
+  // return address undefined (DW_CFA_undefined x30), where debuggers'
+  // backtraces end
+  "\t.text\n\t.globl _start\n\t.type _start, %function\n\t.p2align 2\n_start:\n\t.cfi_startproc\n\t.cfi_escape 0x07, 30\n" +
     "\tmov x29, #0\n\tmov x30, #0\n\tmov x19, sp\n\tand sp, x19, #-16\n" +
     "\tmov x0, x19\n\tbl xo_x_nl_start\n\tmov x20, x0\n" +
     "\tbl xo_x_nl_main_tp\n\tmsr tpidr_el0, x0\n" +
     "\tbl xo_x_nl_main_stack\n\tcbz x0, 1f\n\tmov sp, x0\n1:\n" +
     "\tmov x29, #0\n\tldr x0, [x19]\n\tadd x1, x19, #8\n\tmov x2, x20\n\tbl main\n\tbl exit\n\tbrk #1\n" +
-    "\t.size _start, .-_start\n"
+    "\t.cfi_endproc\n\t.size _start, .-_start\n"
 }
 
 /// entry_stub_arm64 for x86_64 Linux: the thread pointer (fs) is set by

@@ -112,6 +112,11 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
   if goos == "windows" {
     return (arm64_win_switch(), start)
   }
+  if goos == "linux" {
+    // a fiber's outermost frame: its unwind entry (Linux clang gives a
+    // naked function one) has the return address undefined
+    return (arm64_switch(), [".cfi_escape 0x07, 30"] + start)
+  }
   (arm64_switch(), start)
 }
 

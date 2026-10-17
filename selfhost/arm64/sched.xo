@@ -10,6 +10,10 @@
 // static TLS block, reached through a TLV descriptor on Darwin and the
 // local exec model on Linux.
 
+/// DW_CFA_undefined x30: the directive that makes a frame outermost for
+/// unwinders (`.cfi_escape`: every assembler Xo uses takes it).
+const OUTERMOST_CFI = ".cfi_escape 0x07, 30"
+
 /// The body of xo_stack_switch.
 fn stack_switch_body() -> List[Str] {
   ["sub sp, sp, #160", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]", "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]", "stp d14, d15, [sp, #144]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]", "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]", "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #160", "ret"]
@@ -61,7 +65,11 @@ fn sched_asm(os: Str, split: Bool) -> Str {
   if split {
     b.push(if os == "darwin" { "\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n" } else { "\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n" })
   }
-  b.push(sched_fn(os, "xo_fiber_entry", false, ["mov x0, x19", "blr x20", "brk #1"]))
+  // a fiber's outermost frame (fiber_frame zeroes its fp): on ELF, an
+  // unwind entry whose return address is undefined, where gdb's
+  // backtrace of the fiber ends
+  let fiber = ["mov x0, x19", "blr x20", "brk #1"]
+  b.push(sched_fn(os, "xo_fiber_entry", false, if os == "linux" { [".cfi_startproc", OUTERMOST_CFI] + fiber + [".cfi_endproc"] } else { fiber }))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and
     // keeps every register but x0, x16, x17, and lr (Darwin's TLV

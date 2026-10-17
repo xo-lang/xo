@@ -111,9 +111,11 @@ fn (g: G) trampolines(var out: List[Str]) {
     // rt.sys_clone (decision 0206 stage 2): clone(flags x0, stack x1,
     // parent tid x2, tls x3, child tid x4 = x2); the child loads the
     // function and its argument from its stack, calls it, and exits the
-    // thread (exit, 93)
-    out.push("${g.tramp_def("xo_clone")}\t.p2align 2\n${g.tramp("xo_clone")}:\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n" +
-      "${g.local("xo_clone_child")}:\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n")
+    // thread (exit, 93); the child is the thread's outermost frame: fp
+    // zero for frame pointer walks, and its unwind entry's return address
+    // undefined (DW_CFA_undefined x30), where gdb's backtrace ends
+    out.push("${g.tramp_def("xo_clone")}\t.p2align 2\n${g.tramp("xo_clone")}:\n\t.cfi_startproc\n\tmov x4, x2\n\tmov x8, #220\n\tsvc #0\n\tcbz x0, ${g.local("xo_clone_child")}\n\tret\n\t.cfi_endproc\n" +
+      "${g.local("xo_clone_child")}:\n\t.cfi_startproc\n\t${OUTERMOST_CFI}\n\tldp x9, x0, [sp], #16\n\tmov x29, #0\n\tmov x30, #0\n\tblr x9\n\tmov x0, #0\n\tmov x8, #93\n\tsvc #0\n\tbrk #1\n\t.cfi_endproc\n")
     // rt.unwind_save and rt.unwind_resume (decision 0221), which only the
     // same programs (no C library) use
     out.push("${g.tramp_def("xo_unwind_save")}\t.p2align 2\n${g.tramp("xo_unwind_save")}:\n\t${unwind_save_body().join("\n\t")}\n")
