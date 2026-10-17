@@ -620,10 +620,14 @@ fn total(b: Big, d: Int) -> Int {
   b.f1 + b.f599
 }
 
+fn total_twice(b: Big, d: Int) -> Int { 2 * total(b, d) }
+
 fn show(b: Big, s: Str) -> Str {
   // through a function value: direct calls pass a struct this large by
-  // reference (decision 0151), calls of function values pass its words
-  let f = total
+  // reference (decision 0151), calls of function values pass its words;
+  // chosen at run time, so the inliner cannot make it a direct call of a
+  // known closure (2026-10-17, inline.xo devirtualize)
+  let f = if s.len() > 100 { total_twice } else { total }
   let n = f(b, 1)
   var bb = BytesBuilder.new()
   bb.write_str("${n}${n}")

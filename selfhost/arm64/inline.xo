@@ -29,6 +29,14 @@ const INLINE_MAX_BLOCKS = 12
 const INLINE_FEW_SITES = 2
 const INLINE_FEW_BUDGET = 500
 const INLINE_FEW_BLOCKS = 80
+/// A function over those limits only by its size is still inlined at a
+/// call inside a loop of its caller when it stays within these, at most
+/// INLINE_LOOP_SITES times a caller (2026-10-17: map.find in a lookup
+/// loop was a call where LLVM inlines it; get 1.58 times LLVM on arm64,
+/// bench/results/amd64-vs-llvm-2026-10-17.md).
+const INLINE_LOOP_INSTRS = 60
+const INLINE_LOOP_BLOCKS = 24
+const INLINE_LOOP_SITES = 8
 
 /// The last function of each name (Go's byName).
 fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
@@ -49,6 +57,9 @@ struct InlineCost {
   /// with its inlined callees calls nothing but inline intrinsics
   consts: Int = 0
   leaf: Bool = true
+  /// not inlinable for another reason than its size (main, a slow path,
+  /// landing pads, rt.frame_addr, a cycle)
+  hard: Bool = false
 }
 
 /// The rt intrinsics the arm64 emitter makes instructions, not calls: a
@@ -112,7 +123,10 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
   let f = m.funcs[fi]
   state[f.name] = 1
   // the runtime's slow paths stay calls (ssa.cold_fn)
-  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name)}
+  // a function that catches its faults returns on one (ssa raises):
+  // inlined, the fault would reach the caller
+  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name) || f.catches}
+  c.hard = c.bad
   for bl in f.blocks {
     c.instrs -= adc_pairs(f, bl.instrs)
     for v in bl.instrs {
@@ -120,6 +134,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
       if x.pad >= 0 {
         // it has landing pads of its own (decision 0085)
         c.bad = true
+        c.hard = true
       }
       var ci = -1
       if x.op == ssa.Op.Call {
@@ -127,6 +142,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
         if aux_str(x.aux) == "rt.frame_addr" {
           // its frame is the function's own (decision 0233)
           c.bad = true
+          c.hard = true
         }
         if ci < 0 && !inline_intrinsic(aux_str(x.aux)) {
           c.leaf = false
@@ -152,6 +168,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
       let st = state.get(cname) ?? 0
       if st == 1 {
         c.bad = true // a cycle through f
+        c.hard = true
         k.bad = true
       } else if st == 2 {
         k = costs.get(cname) ?? k
@@ -184,8 +201,9 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
   c
 }
 
-/// The names of the inlinable functions of m (inline.go inlinableSet).
-fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> Map[Str, Bool] {
+/// The names of the inlinable functions of m (inline.go inlinableSet),
+/// and of those inlinable only at a call inside a loop (INLINE_LOOP_*).
+fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool]) {
   var state: Map[Str, Int] = {}
   var costs: Map[Str, InlineCost] = {}
   // the call sites of each function, not counting its own
@@ -209,28 +227,98 @@ fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> Map[Str, Bool] {
     }
   }
   var small: Map[Str, Bool] = {}
+  var loopy: Map[Str, Bool] = {}
   for f in m.funcs {
     if let Some(c) = costs.get(f.name) {
       if !c.bad {
         small[f.name] = true
+      } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
+        loopy[f.name] = true
       }
     }
   }
-  small
+  (small, loopy)
+}
+
+/// Whether block b of f is in a loop: it reaches itself (through its
+/// predecessors, Block.preds being edges, a bounded walk).
+fn in_loop(f: ssa.Func, b: Int) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  var work: List[Int] = []
+  for e in f.blocks[b].preds {
+    work.push(f.edges[e].from)
+  }
+  var steps = 0
+  while !work.is_empty() && steps < 4096 {
+    steps += 1
+    let p = work.pop() ?? 0
+    if p == b {
+      return true
+    }
+    if seen.contains(p) {
+      continue
+    }
+    seen[p] = true
+    for e in f.blocks[p].preds {
+      work.push(f.edges[e].from)
+    }
+  }
+  false
+}
+
+/// Turns each call through a closure made in f itself (a Closure value
+/// with no captures) into a direct call of the closure's function: the same machine call
+/// (the function value's words, then the arguments: the function's first
+/// parameter is the closure), which the inliner can then take (a fold's
+/// function literal inside hof_chain, 2026-10-17).
+fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
+  for bi in 0..f.blocks.len() {
+    for v in f.blocks[bi].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.CallValue || x.args.is_empty() {
+        continue
+      }
+      let c = f.values[x.args[0]]
+      // a closure with captures stays a value call: its function's
+      // capture ops must read their own environment (an inlined copy
+      // would read the caller's closure value; the verifier refuses it)
+      if c.op != ssa.Op.Closure || !c.args.is_empty() {
+        continue
+      }
+      let name = aux_str(c.aux)
+      // only a function made to be called through values (parameter 0
+      // the closure: a literal, or a named function's `.value` thunk)
+      let ci = by_name.get(name) ?? -1
+      // and not one that catches its faults (a task's body: the call has
+      // no landing, and an inlined copy would fault into the caller)
+      if ci >= 0 && m.funcs[ci].indirect && !m.funcs[ci].catches {
+        f.values[v].op = ssa.Op.Call
+        f.values[v].aux = ssa.Aux.S(s: name)
+      }
+    }
+  }
 }
 
 /// Inlines the calls of small functions in m and reports whether it
 /// changed anything.
 fn inline_module(var m: ssa.Module) -> Bool {
   let by_name = funcs_by_name(m)
-  let small = inlinable_set(m, by_name)
+  let (small, loopy) = inlinable_set(m, by_name)
   var changed = false
   for fi in 0..m.funcs.len() {
     var f = m.funcs[fi]
     m.funcs[fi] = ssa.Func{name: ""}
     var here = false
+    var loop_left = INLINE_LOOP_SITES
     for _ in 0..200 {
-      let v = find_call(f, m, small, by_name)
+      devirtualize(f, m, by_name)
+      var v = find_call(f, m, small, by_name)
+      if v < 0 && loop_left > 0 {
+        v = find_loop_call(f, m, loopy, by_name)
+        if v >= 0 {
+          loop_left -= 1
+        }
+      }
       if v < 0 {
         break
       }
@@ -355,6 +443,34 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
         return v
       }
       let ci = by_name.get(name) ?? -1
+      if m.funcs[ci].results.len() == 1 {
+        return v
+      }
+    }
+  }
+  -1
+}
+
+/// A call of a function of loopy inside a loop of f (find_call's rules
+/// otherwise), else -1.
+fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+  for (bi, bl) in f.blocks.indexed() {
+    var looped = -1
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || !loopy.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name {
+        continue
+      }
+      if looped < 0 {
+        looped = if in_loop(f, bi) { 1 } else { 0 }
+      }
+      if looped == 0 {
+        break
+      }
+      if x.pad < 0 {
+        return v
+      }
+      let ci = by_name.get(aux_str(x.aux)) ?? -1
       if m.funcs[ci].results.len() == 1 {
         return v
       }
