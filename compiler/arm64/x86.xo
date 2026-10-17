@@ -1797,6 +1797,11 @@ fn x86_commutes(op: Str) -> Bool {
 /// The registers live out of each block (by block index), the arm64
 /// MIR's (regalloc.xo's liveness, before the translation).
 fn (var g: G) x86_live_out() -> List[List[Int]] {
+  g.x86_live().outs
+}
+
+/// The registers live into and out of each block (by block index).
+fn (var g: G) x86_live() -> Live {
   let order = g.hot + g.cold
   let n = g.fp.len()
   var idx: List[Int] = []
@@ -1831,14 +1836,17 @@ fn (var g: G) x86_live_out() -> List[List[Int]] {
     succs.push(ss)
   }
   let lv = solve_live(succs, gens, kills, n)
+  var ins: List[List[Int]] = []
   var out: List[List[Int]] = []
   for _ in 0..g.blocks.len() {
+    ins.push([])
     out.push([])
   }
   for (k, b) in order.indexed() {
+    ins[b] = lv.ins[k]
     out[b] = lv.outs[k]
   }
-  out
+  Live{ins: ins, outs: out}
 }
 
 /// Load-op fusion: when ni is one two operand line `OP $uK, $d0` whose
@@ -1874,19 +1882,40 @@ fn (var g: G) x86_fuse_load(var out: List[Inst], var ni: Inst) {
   if x == 0 || !g.x86_dead.contains(x) {
     return
   }
-  // the use K only once in ni (its other uses, a tie's, are other indices)
+  // the load of x earlier in the block: past instructions that neither
+  // touch memory (no operand in parentheses, no call), nor read x, nor
+  // define a register (the load's address registers must keep their
+  // values; a definition between is allowed only when the load's uses
+  // do not include it, checked below)
   var li = out.len() - 1
-  if out[li].kind == K_PMOVE && li > 0 {
-    for u in out[li].us {
-      if u == x {
-        return
-      }
+  var between: List[Int] = []
+  while li >= 0 {
+    let o = out[li]
+    if o.kind == K_PLAIN && o.defs.len() == 1 && o.defs[0] == x {
+      break
+    }
+    if o.kind != K_PLAIN && o.kind != K_PMOVE {
+      return
+    }
+    if o.us.contains(x) || o.has_fault || o.keep || o.text.contains("(") || o.text.contains("call") || o.text.contains("lock") || o.text.contains("xchg") {
+      return
+    }
+    for d in o.defs {
+      between.push(d)
     }
     li -= 1
+  }
+  if li < 0 {
+    return
   }
   let ld = out[li]
   if ld.kind != K_PLAIN || ld.has_fault || ld.keep || ld.defs.len() != 1 || ld.defs[0] != x || ld.text.contains("\n") {
     return
+  }
+  for u in ld.us {
+    if between.contains(u) {
+      return
+    }
   }
   let lsp = ld.text.find(" ") ?? -1
   if lsp < 0 {
@@ -1928,4 +1957,118 @@ fn (var g: G) x86_fuse_load(var out: List[Inst], var ni: Inst) {
     ni.us.push(u)
   }
   out = out[0..li] + out[li + 1..out.len()]
+}
+
+/// Merges each block into its predecessor when that is its one
+/// predecessor and ends in a jump to it (the SSA's blocks between bounds
+/// checks, which are inline fault stubs here): a load and its use meet in
+/// one block for x86_fuse_load, and the layout has fewer labels. Never
+/// the entry, a landing pad, or a block of the other temperature. A jump
+/// that also names landing pads (for liveness, decision 0085; each its
+/// own edge block) merges only with a block that ends in a jump and has
+/// every value those pads need live out already, and the merged jump
+/// names both blocks' pads: no value lives longer (with longer lives,
+/// interp spilled twice as often, 10% more instructions).
+fn (var g: G) x86_merge_blocks() {
+  let n = g.blocks.len()
+  var npred: List[Int] = []
+  var pinned: List[Bool] = []
+  var cold: List[Bool] = []
+  var merged: List[Bool] = []
+  for _ in 0..n {
+    npred.push(0)
+    pinned.push(false)
+    cold.push(false)
+    merged.push(false)
+  }
+  for b in g.cold {
+    cold[b] = true
+  }
+  for b in g.hot + g.cold {
+    for t in g.msuccs(b) {
+      npred[t] = npred[t] + 1
+    }
+    for inst in g.blocks[b].insts {
+      if inst.pad >= 0 {
+        pinned[inst.pad] = true
+      }
+      if inst.kind == K_JUMP && inst.targets.len() > 1 {
+        for t in inst.targets[1..inst.targets.len()] {
+          pinned[t] = true
+        }
+      }
+    }
+  }
+  if !g.hot.is_empty() {
+    pinned[g.hot[0]] = true
+  }
+  let lv = g.x86_live()
+  for b in g.hot + g.cold {
+    if merged[b] {
+      continue
+    }
+    while true {
+      let k = g.term_kind(b)
+      if k != K_JUMP {
+        break
+      }
+      let last = g.blocks[b].insts[g.blocks[b].insts.len() - 1]
+      let t = last.targets[0]
+      if t == b || pinned[t] || npred[t] != 1 || merged[t] || cold[t] != cold[b] {
+        break
+      }
+      let pads = last.targets[1..last.targets.len()]
+      if !pads.is_empty() {
+        // the same pads past their empty edge blocks: no longer lives
+        if g.term_kind(t) != K_JUMP {
+          break
+        }
+        var out: Map[Int, Bool] = {}
+        for r in lv.outs[t] {
+          out[r] = true
+        }
+        var covered = true
+        for p in pads {
+          for r in lv.ins[p] {
+            covered = covered && out.contains(r)
+          }
+        }
+        if !covered {
+          break
+        }
+      }
+      var ins = g.take_insts(b)
+      let _j = ins.pop()
+      for x in g.blocks[t].insts {
+        ins.push(x)
+      }
+      if !pads.is_empty() {
+        let li = ins.len() - 1
+        var ts = ins[li].targets
+        for p in pads {
+          if !ts.contains(p) {
+            ts.push(p)
+          }
+        }
+        ins[li].targets = ts
+      }
+      g.put_insts(b, ins)
+      g.blocks[t].insts = []
+      merged[t] = true
+    }
+  }
+  var hot: List[Int] = []
+  for b in g.hot {
+    if !merged[b] {
+      hot.push(b)
+    }
+  }
+  var cl: List[Int] = []
+  for b in g.cold {
+    if !merged[b] {
+      cl.push(b)
+    }
+  }
+  g.hot = hot
+  g.cold = cl
 }

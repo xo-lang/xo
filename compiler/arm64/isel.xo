@@ -35,6 +35,7 @@ fn (var g: G) function(fi: Int) {
     // flags), no shrink wrapping yet; the templates become x86
     g.place_latches()
     g.mark_tails()
+    g.x86_merge_blocks()
     g.x86_retarget()
     g.regalloc()
     g.x86_emit()

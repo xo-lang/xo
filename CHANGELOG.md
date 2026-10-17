@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- linux/amd64 floating point loops read their operands from memory
+  directly (n-body 3% fewer instructions).
+
 - WebAssembly builds (WASI) open files as handles: `Fs.open`, `create`,
   `open_append`, and `create_new` with their reads, line reads, writes,
   and close, and `create_dir_all`, `remove_all`, and `create_temp`, with
