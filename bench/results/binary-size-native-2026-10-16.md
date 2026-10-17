@@ -185,3 +185,29 @@ darwin hello went from 13,568 to 992 bytes, the test world from 5,836 to
 before). Decisions 0244 (TLS only when configured, measured: json_server
 2,727,600 to 1,291,000 bytes stripped) and 0245 (the profiler, about
 148 of its 158 KiB movable to `xo prof`) are proposals for the owner.
+
+## Follow up: TLS and HTTP/2 only with with_tls (decision 0244)
+
+Same day, darwin/arm64, stripped bytes; before is main at 47078973
+(with decision 0246), after is the change.
+
+| Program | arm64 before | arm64 after | LLVM before | LLVM after |
+|---|---:|---:|---:|---:|
+| hello | 580,360 | 580,360 | 448,832 | 448,832 |
+| https_get | 2,166,264 | 2,166,264 | 2,349,432 | 2,349,432 |
+| json_server | 2,512,920 | 944,232 | 2,712,840 | 813,176 |
+| notes | 2,925,720 | 1,390,104 | 3,175,520 | 1,308,976 |
+
+A plain HTTP server is 62 percent smaller on arm64 and 70 percent on
+LLVM (json_server); notes-service, which keeps SHA-256 and Argon2id, 52
+and 59 percent. Programs without a server (hello) or with only the client
+(https_get) are unchanged. The Rust tiny_http server of the first table
+is 755 KiB (773,000 bytes): json_server is 922 KiB on arm64 and 794 KiB
+on LLVM now.
+
+The indirect calls cost an HTTPS server nothing measurable
+(bench/perf/tls server workloads, instructions of the server process,
+two interleaved runs each): srv-p256 549,459,159 and 548,706,863 against
+550,044,551 and 550,335,614 (0.997 to 0.999); srv-rsa2048 4,697,980,023
+and 4,695,783,622 against 4,696,077,701 and 4,697,108,802 (0.9997 to
+1.0004).

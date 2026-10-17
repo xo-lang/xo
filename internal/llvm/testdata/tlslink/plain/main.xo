@@ -1,0 +1,11 @@
+// A plain HTTP server (internal/llvm TestTLSLinkedOnlyWithTLS, decision
+// 0244): it must link no TLS server and no HTTP/2.
+use std/http
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "plain") })
+  let l = os.net.listen("127.0.0.1:0")?
+  os.stdio.println("listening ${l.addr()}")
+  http.server(l, r).serve()?
+}

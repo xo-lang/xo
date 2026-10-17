@@ -10,6 +10,7 @@ use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/srvtls
 use native/llrt/tlssrv
 use native/llrt/tlsio
 use native/llrt/cabi_http
@@ -69,6 +70,12 @@ struct Server {
   /// with_tls (std.md 4.6): HTTPS with these certificates
   tls: List[TlsCert] = []
   tls_on: Bool = false
+  /// What serve does with TLS and HTTP/2 (decision 0244): no_tls and
+  /// no_h2 (server), or setup_tls and serve_h2 (with_tls). Only with_tls
+  /// names the TLS server's and HTTP/2's code, so a plain server links
+  /// none of it.
+  tls_setup: fn(rthttp.Srv, List[TlsCert]) -> ()
+  h2: fn(rthttp.HConn, Int, Router) -> ()
 }
 
 struct Client {
@@ -533,11 +540,28 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
 // ---------------------------------------------------------------------------
 // Server (std.md 4.4)
 
-fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r} }
+fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r, tls_setup: no_tls, h2: no_h2} }
 
 fn (s: Server) addr() -> Str { s.l.addr() }
 
-fn (s: Server) with_tls(certs: List[TlsCert]) -> Server { Server{l: s.l, r: s.r, tls: certs, tls_on: true} }
+fn (s: Server) with_tls(certs: List[TlsCert]) -> Server {
+  // the table of the TLS server and HTTP/2 (srvtls.xo), made once
+  srvtls.install()
+  Server{l: s.l, r: s.r, tls: certs, tls_on: true, tls_setup: setup_tls, h2: serve_h2}
+}
+
+/// A plain server's TLS setup and HTTP/2: none (serve_h2 is never
+/// reached without TLS: hserve.hc_h2 is 0).
+fn no_tls(_srv: rthttp.Srv, _certs: List[TlsCert]) {}
+
+fn no_h2(_hc: rthttp.HConn, _h2: Int, _r: Router) {}
+
+/// The certificates of a server with TLS (with_tls).
+fn setup_tls(srv: rthttp.Srv, certs: List[TlsCert]) {
+  for c in certs {
+    hserve.srv_tls(srv, c.c)
+  }
+}
 
 fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
   let (c, e) = tlssrv.cert(cert_pem, key_pem)
@@ -559,12 +583,12 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   }
   let srv = hserve.srv_new()
   defer hserve.srv_close(srv)
-  for c in s.tls {
-    hserve.srv_tls(srv, c.c)
-  }
+  let setup = s.tls_setup
+  setup(srv, s.tls)
   let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
+  let h2 = s.h2
   var failed = ""
   scope sc {
     sc.spawn_background(fn() {
@@ -578,7 +602,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       match l.accept() {
         Ok(c) => {
           let hc = hserve.hc_new(srv, c)
-          conns.spawn_background(fn() { serve_conn_isolated(hc, r) })
+          conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2) })
         }
         Err(NetErr.Io(msg)) => {
           if !task.stop_requested() && !task.is_canceled() {
@@ -615,8 +639,8 @@ fn serve_mem(l: Listener, r: Router) {
 /// as net/http recovers per connection ("http: panic serving"): logged,
 /// the connection closed (serve_conn's defer), the server serving on. It
 /// once stopped the server (gotchas/native-server-unisolated-fault-wedges.md).
-fn serve_conn_isolated(hc: rthttp.HConn, r: Router) {
-  match task.isolate(fn() -> () ! () { serve_conn(hc, r) }) {
+fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Router) -> ()) {
+  match task.isolate(fn() -> () ! () { serve_conn(hc, r, h2) }) {
     // the message alone: the location is the runtime's, not the program's
     Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
     _ => ()
@@ -624,35 +648,45 @@ fn serve_conn_isolated(hc: rthttp.HConn, r: Router) {
 }
 
 /// Serves the requests of one connection until it closes.
-fn serve_conn(hc: rthttp.HConn, r: Router) {
+fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> ()) {
   defer hserve.hc_close(hc)
   let h2 = hserve.hc_h2(hc)
   if h2 != 0 {
-    // HTTP/2 (decision 0121, std/native/llrt/h2srv.xo): each request is
-    // a task of its own, as net/http runs a handler per stream; the
-    // scope ends when the connection does
-    var hp = h2srv.conn(hc, h2)
-    scope s {
-      while true {
-        match hp.next() {
-          Some(q) => {
-            s.spawn(fn() { serve_stream(q, r) })
-          }
-          None => break
-        }
-      }
-    }
+    serve_h2(hc, h2, r)
     return
   }
   var rd = http1.reader(hc)
   while true {
     match rd.read() {
       Some(q) => {
-        if !respond(hc, true, head_request(rd, q), r) {
+        let (open, resp) = respond(hc, head_request(rd, q), r)
+        let keep = match resp {
+          Some(x) => http1.respond(hc, x.status, x.body)
+          None => open
+        }
+        if !keep {
           break
         }
       }
       None => break
+    }
+  }
+}
+
+/// HTTP/2 (decision 0121, std/native/llrt/h2srv.xo): each request is a
+/// task of its own, as net/http runs a handler per stream; the scope ends
+/// when the connection does. Reached only through Server.h2, which only
+/// with_tls sets (decision 0244).
+fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) {
+  var hp = h2srv.conn(hc, h2)
+  scope s {
+    while true {
+      match hp.next() {
+        Some(q) => {
+          s.spawn(fn() { serve_stream(q, r) })
+        }
+        None => break
+      }
     }
   }
 }
@@ -663,13 +697,21 @@ fn serve_conn(hc: rthttp.HConn, r: Router) {
 fn serve_stream(q: h2srv.H2Req, r: Router) {
   let st = q.conn
   defer h2srv.end(st)
-  task.isolate(fn() -> Bool ! () { respond(st, false, stream_request(q), r) }).ignore_err("a fault resets the stream (h2srv.end)")
+  task.isolate(fn() -> Bool ! () {
+    let (open, resp) = respond(st, stream_request(q), r)
+    match resp {
+      Some(x) => h2srv.respond(st, x.status, x.body)
+      None => open
+    }
+  }).ignore_err("a fault resets the stream (h2srv.end)")
 }
 
-/// Answers req, read on hc (h1: an HTTP/1.1 connection, whose response
-/// is std/native/llrt/http1.xo's; else an HTTP/2 stream): whether the
-/// connection stays open.
-fn respond(hc: rthttp.HConn, h1: Bool, req: Request, r: Router) -> Bool {
+/// Answers req, read on hc (an HTTP/1.1 connection or an HTTP/2
+/// stream): a streamed body goes out here, with whether the connection
+/// stays open; any other response is returned for the caller to send
+/// (http1.respond, or h2srv.respond in serve_stream, so the HTTP/1.1 path
+/// names no HTTP/2 code, decision 0244).
+fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
   for (k, v) in resp.headers {
     http1.header_set(hc, k, v)
@@ -683,12 +725,9 @@ fn respond(hc: rthttp.HConn, h1: Bool, req: Request, r: Router) -> Bool {
         f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
       }
     }
-    return hserve.sink_end(s)
+    return (hserve.sink_end(s), None)
   }
-  if h1 {
-    return http1.respond(hc, resp.status, resp.body)
-  }
-  h2srv.respond(hc, resp.status, resp.body)
+  (true, Some(resp))
 }
 
 /// The request of an HTTP/1.1 head read by rd (std/rt's serve).

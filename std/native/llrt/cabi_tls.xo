@@ -1,0 +1,83 @@
+// The C ABI exports of the TLS and HTTP/2 server (decision 0244): the
+// entries hconn.xo and hserve.xo call through the table srvtls.xo makes
+// when a program configures TLS (http.Server.with_tls). Only srvtls.xo
+// imports this module, so a program that never calls with_tls builds
+// none of these (selfhost/ssa build.xo importer_built) and links no TLS
+// server and no HTTP/2: a plain HTTP server is about half the size
+// (bench/results/binary-size-native-2026-10-16.md). Every top level
+// function here is an export, xo_x_<name>; the arguments and results are
+// Ints (rt.call_c2 and call_c4).
+use native/llrt/h2srv
+use native/llrt/hconn
+use native/llrt/poll
+use native/llrt/tlssrv
+use native/rt
+
+/// The number of entries of the table (hconn.xo TO_*).
+pub const N = 13
+
+fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
+
+fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
+
+fn srvtls_srv_free(t: Int) { tlssrv.srv_free(t) }
+
+fn srvtls_conn(t: Int, pd: Int) -> Int { tlssrv.conn(t, pd) }
+
+fn srvtls_close_notify(t: Int) { tlssrv.close_notify(t) }
+
+fn srvtls_free(t: Int) { tlssrv.free(t) }
+
+fn srvtls_read(t: Int, p: Int, n: Int) -> Int { tlssrv.hc_read(t, p, n) }
+
+fn srvtls_write(t: Int, p: Int, n: Int) -> Int { tlssrv.write(t, p, n) }
+
+fn srvtls_h2_stop(c: Int) { h2srv.conn_stop(c) }
+
+fn srvtls_h2_free(c: Int) { h2srv.conn_free(c) }
+
+fn srvtls_h2_stream_release(s: Int) { h2srv.stream_release(s) }
+
+/// h2srv.emit, the status and whether the response started packed into
+/// one argument (status * 2 + started: call_c4 takes four).
+fn srvtls_h2_emit(hc: Int, status2: Int, p: Int, n: Int) -> Int { h2srv.emit(hconn.handle(hc), status2 / 2, (status2 & 1) != 0, p, n) }
+
+fn srvtls_h2_respond_at(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(hconn.handle(hc), status, p, n) }
+
+fn srvtls_h2_finish(hc: Int, p: Int, n: Int) -> Int { if h2srv.finish(hconn.handle(hc), p, n) { 1 } else { 0 } }
+
+/// Finishes the TLS handshake of server connection hc (its TLS
+/// connection t): when ALPN chose HTTP/2, the connection's HTTP/2 record
+/// (h2srv.conn_new, freed with the connection), else 0: HTTP/1.1, or the
+/// handshake failed (which http1.xo's reads find). Was hserve.xo hc_h2's
+/// second half; hserve.xo marked the connection idle first.
+fn srvtls_h2(hc: Int, t: Int) -> Int {
+  let s = ld(hc, hconn.HC_SRV)
+  let ok = !poll.canceled() && tlssrv.handshake(t)
+  hconn.set_idle(hc, false)
+  if !ok || !tlssrv.alpn_h2(t) {
+    return 0
+  }
+  // rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
+  let why = tlssrv.bad_cipher(t)
+  // Windows resets a connection closed with unread input (the client's
+  // preface, gotchas/windows-shutdown-resets-unread-input.md), and the
+  // reset can overtake the GOAWAY: linger as after a connection error,
+  // dropping input, until the client closes or a second passes
+  let linger = match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+  let c = h2srv.conn_new(why, linger)
+  if s != 0 {
+    hconn.lock(s)
+    st(hc, hconn.HC_H2, c)
+    if ld(s, hconn.SR_STOPPING) != 0 {
+      h2srv.conn_stop(c)
+    }
+    hconn.unlock(s)
+  } else {
+    st(hc, hconn.HC_H2, c)
+  }
+  c
+}

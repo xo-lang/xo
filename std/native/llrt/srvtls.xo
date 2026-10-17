@@ -1,0 +1,34 @@
+// The TLS and HTTP/2 server's table (decision 0244): http.Server.with_tls
+// calls install, which stores in static word 68 a record of the
+// addresses of cabi_tls.xo's exports, in hconn.xo's TO_* order. hconn.xo
+// and hserve.xo call TLS and HTTP/2 only through it, and only for a
+// connection that has TLS (HC_TLS) or HTTP/2 (HC_H2), so a program that
+// never calls with_tls builds and links none of that code: this module
+// is the only importer of cabi_tls.xo, and nothing reaches it but
+// with_tls.
+use native/llrt/cabi_tls
+use native/llrt/hconn
+use native/rt
+
+/// Makes the table, once (a later call finds it; two servers racing to
+/// make it store the same addresses).
+pub fn install() {
+  if hconn.tls_ops_made() {
+    return
+  }
+  let t = rt.heap_large(8 * cabi_tls.N)
+  rt.mem_store(t, 8 * hconn.TO_SRV_FREE, rt.fn_addr("srvtls_srv_free"), 8)
+  rt.mem_store(t, 8 * hconn.TO_CONN, rt.fn_addr("srvtls_conn"), 8)
+  rt.mem_store(t, 8 * hconn.TO_CLOSE_NOTIFY, rt.fn_addr("srvtls_close_notify"), 8)
+  rt.mem_store(t, 8 * hconn.TO_FREE, rt.fn_addr("srvtls_free"), 8)
+  rt.mem_store(t, 8 * hconn.TO_READ, rt.fn_addr("srvtls_read"), 8)
+  rt.mem_store(t, 8 * hconn.TO_WRITE, rt.fn_addr("srvtls_write"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_STOP, rt.fn_addr("srvtls_h2_stop"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_FREE, rt.fn_addr("srvtls_h2_free"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_STREAM_RELEASE, rt.fn_addr("srvtls_h2_stream_release"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_EMIT, rt.fn_addr("srvtls_h2_emit"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_RESPOND_AT, rt.fn_addr("srvtls_h2_respond_at"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_FINISH, rt.fn_addr("srvtls_h2_finish"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2, rt.fn_addr("srvtls_h2"), 8)
+  hconn.tls_ops_set(t)
+}

@@ -1,6 +1,6 @@
 # 0244: TLS and HTTP/2 linked only when a program configures TLS
 
-Status: Proposed (2026-10-16, Xo lang 3; for the owner, through the lead)
+Status: Accepted (owner, 2026-10-16); implemented 2026-10-16 (Xo lang 3)
 
 ## Context
 
@@ -80,3 +80,32 @@ TLS server code is reachable only from `Server.with_tls`:
 - Compiler analysis that proves `with_tls` is never called and folds
   `HC_TLS` to 0: a whole program constant propagation through memory
   words; far more work and fragile next to the function table.
+
+## Implementation (2026-10-16)
+
+As decided, with these details:
+
+- std/native/llrt/cabi_tls.xo: C ABI exports wrapping the TLS server's
+  and HTTP/2's entries (srv_free, conn, close_notify, free, read, write,
+  the HTTP/2 connection's stop and free, a stream's release, emit,
+  respond_at, finish, and the handshake with HTTP/2's setup, moved from
+  hserve.xo hc_h2). Every argument and result is an Int (rt.call_c2,
+  call_c4; emit packs the status and whether the response started into
+  one).
+- std/native/llrt/srvtls.xo install: the table of their addresses
+  (rt.fn_addr) in static word 68, in hconn.xo's TO_* order, made once.
+  It is the only importer of cabi_tls.xo, so the exports are built only
+  when it is (selfhost/ssa build.xo importer_built), and only
+  Server.with_tls calls it.
+- hconn.xo and hserve.xo call those entries through the table
+  (hconn.tls_op), only for a connection with TLS (HC_TLS) or HTTP/2
+  (HC_H2), which exist only after with_tls.
+- std/native/http.xo: Server carries two functions, the TLS setup and
+  the HTTP/2 serve loop, which server() sets to no-ops and with_tls to
+  setup_tls and serve_h2; respond returns a response for its caller to
+  send (http1.respond, or h2srv.respond in serve_stream), so the
+  HTTP/1.1 path names no HTTP/2 code.
+- No new runtime intrinsic, no API or behavior change.
+- Test: internal/llvm TestTLSLinkedOnlyWithTLS (a plain http.server has
+  no tlssrv, tls13srv, tls12srv or h2srv symbols; a with_tls one has
+  them; arm64).

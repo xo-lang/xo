@@ -86,6 +86,36 @@ pub fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 /// The record of h.
 pub fn rec(h: rthttp.HConn) -> Int { rt.obj_addr(h) }
 
+// The TLS and HTTP/2 server's table (decision 0244, srvtls.xo install,
+// at the first http.Server.with_tls): the addresses of cabi_tls.xo's
+// exports, by index; a connection with TLS (HC_TLS) or HTTP/2 (HC_H2)
+// exists only after it, so these calls never find the word 0.
+
+/// rt.static_word: the table, 0 before with_tls.
+pub const W_TLS_OPS = 68
+pub const TO_SRV_FREE = 0
+pub const TO_CONN = 1
+pub const TO_CLOSE_NOTIFY = 2
+pub const TO_FREE = 3
+pub const TO_READ = 4
+pub const TO_WRITE = 5
+pub const TO_H2_STOP = 6
+pub const TO_H2_FREE = 7
+pub const TO_H2_STREAM_RELEASE = 8
+pub const TO_H2_EMIT = 9
+pub const TO_H2_RESPOND_AT = 10
+pub const TO_H2_FINISH = 11
+pub const TO_H2 = 12
+
+/// Whether the table is made (srvtls.xo install).
+pub fn tls_ops_made() -> Bool { rt.slot_load[Int](rt.static_word(W_TLS_OPS), 0, 1) != 0 }
+
+/// Publishes the table t (srvtls.xo install).
+pub fn tls_ops_set(t: Int) { rt.slot_store[Int](rt.static_word(W_TLS_OPS), 0, t, 2) }
+
+/// The address of the table's entry k (TO_*).
+pub fn tls_op(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_TLS_OPS), 0, 8), 8 * k, 8) }
+
 /// The connection handle of record hc (counted once more; the record's
 /// count is unchanged once the value is dead).
 pub fn handle(hc: Int) -> rthttp.HConn { rt.obj_at[rthttp.HConn](hc) }
@@ -230,7 +260,7 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
     r = -1
   } else if tls != 0 {
     // the handshake first, then decrypted bytes
-    r = tlssrv.hc_read(tls, p, cap)
+    r = rt.call_c4(tls_op(TO_READ), tls, p, cap, 0)
   } else {
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {
@@ -261,7 +291,7 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   let hc = rec(h)
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
-    return tlssrv.write(tls, p, n) == 0
+    return rt.call_c4(tls_op(TO_WRITE), tls, p, n, 0) == 0
   }
   let pd = conn_pd(hc)
   if !poll.pd_begin(pd) {

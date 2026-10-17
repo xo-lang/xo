@@ -26,7 +26,6 @@
 use std/task
 use native/llrt/atexit
 use native/llrt/ctx
-use native/llrt/h2srv
 use native/llrt/hclient
 use native/llrt/hconn
 use native/llrt/http1
@@ -112,7 +111,7 @@ fn stop_at(a: Int) {
     let h2 = ld(hc, hconn.HC_H2)
     if h2 != 0 {
       // GOAWAY, then the streams in flight finish
-      h2srv.conn_stop(h2)
+      let _s = rt.call_c2(hconn.tls_op(hconn.TO_H2_STOP), h2, 0)
     } else if ld(hc, hconn.HC_IDLE) != 0 {
       poll.pd_close(hconn.conn_pd(hc))
     }
@@ -203,7 +202,7 @@ pub fn srv_free(a: Int) {
   }
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
-    tlssrv.srv_free(tls)
+    let _f = rt.call_c2(hconn.tls_op(hconn.TO_SRV_FREE), tls, 0)
   }
   obj.free_obj(a)
 }
@@ -233,7 +232,7 @@ pub fn hc_new(s: rthttp.Srv, c: Conn) -> rthttp.HConn {
   st(hc, hconn.HC_REG, 1)
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
-    st(hc, hconn.HC_TLS, tlssrv.conn(tls, pd))
+    st(hc, hconn.HC_TLS, rt.call_c2(hconn.tls_op(hconn.TO_CONN), tls, pd))
   }
   if ld(a, hconn.SR_STOPPING) != 0 {
     poll.pd_close(pd)
@@ -262,33 +261,8 @@ pub fn hc_h2(h: rthttp.HConn) -> Int {
     st(hc, hconn.HC_IDLE, 1)
     hconn.unlock(s)
   }
-  let ok = !poll.canceled() && tlssrv.handshake(tls)
-  hconn.set_idle(hc, false)
-  if !ok || !tlssrv.alpn_h2(tls) {
-    return 0
-  }
-  // rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
-  let why = tlssrv.bad_cipher(tls)
-  // Windows resets a connection closed with unread input (the client's
-  // preface, gotchas/windows-shutdown-resets-unread-input.md), and the
-  // reset can overtake the GOAWAY: linger as after a connection error,
-  // dropping input, until the client closes or a second passes
-  let linger = match target.os {
-    TargetOs.Windows => true
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
-  }
-  let c = h2srv.conn_new(why, linger)
-  if s != 0 {
-    hconn.lock(s)
-    st(hc, hconn.HC_H2, c)
-    if ld(s, hconn.SR_STOPPING) != 0 {
-      h2srv.conn_stop(c)
-    }
-    hconn.unlock(s)
-  } else {
-    st(hc, hconn.HC_H2, c)
-  }
-  c
+  // the handshake and HTTP/2's setup (cabi_tls.xo srvtls_h2)
+  rt.call_c2(hconn.tls_op(hconn.TO_H2), hc, tls)
 }
 
 /// Closes the connection and ends its registration.
@@ -296,7 +270,7 @@ pub fn hc_close(h: rthttp.HConn) {
   let hc = hconn.rec(h)
   let tls = ld(hc, hconn.HC_TLS)
   if tls != 0 {
-    tlssrv.close_notify(tls)
+    let _c = rt.call_c2(hconn.tls_op(hconn.TO_CLOSE_NOTIFY), tls, 0)
   }
   poll.pd_close(hconn.conn_pd(hc))
   hconn.unregister(hc)
@@ -311,7 +285,7 @@ pub fn hc_free(hc: Int) {
     // an HTTP/2 stream's connection
     let sr = ld(hc, hconn.HC_H2S)
     if sr != 0 {
-      h2srv.stream_release(sr)
+      let _r = rt.call_c2(hconn.tls_op(hconn.TO_H2_STREAM_RELEASE), sr, 0)
     }
     if x1 != 0 {
       http1.x1_free(x1)
@@ -323,7 +297,7 @@ pub fn hc_free(hc: Int) {
   hconn.unregister(hc)
   let h2 = ld(hc, hconn.HC_H2)
   if h2 != 0 {
-    h2srv.conn_free(h2)
+    let _f = rt.call_c2(hconn.tls_op(hconn.TO_H2_FREE), h2, 0)
   }
   let cn = ld(hc, hconn.HC_CONN)
   poll.pd_close(hconn.conn_pd(hc))
@@ -334,7 +308,7 @@ pub fn hc_free(hc: Int) {
   }
   let tls = ld(hc, hconn.HC_TLS)
   if tls != 0 {
-    tlssrv.free(tls)
+    let _f = rt.call_c2(hconn.tls_op(hconn.TO_FREE), tls, 0)
   }
   obj.free_obj(hc)
 }
@@ -395,7 +369,7 @@ fn emit(k: Int, p: Int, n: Int) {
   let hc = ld(k, SK_HC)
   let h = hconn.handle(hc)
   if ld(hc, hconn.HC_H2S) != 0 {
-    let r = h2srv.emit(h, ld(k, SK_STATUS), ld(k, SK_STARTED) != 0, p, n)
+    let r = rt.call_c4(hconn.tls_op(hconn.TO_H2_EMIT), hc, 2 * ld(k, SK_STATUS) + (if ld(k, SK_STARTED) != 0 { 1 } else { 0 }), p, n)
     st(k, SK_STARTED, r & 1)
     st(k, SK_FAILED, if (r & 2) == 0 { 1 } else { 0 })
     return
@@ -459,7 +433,7 @@ pub fn sink_end(s: rthttp.Sink) -> Bool {
   let n = ld(k, SK_N)
   if ld(k, SK_STARTED) == 0 {
     if h2 {
-      h2srv.respond_at(h, ld(k, SK_STATUS), p, n)
+      let _r = rt.call_c4(hconn.tls_op(hconn.TO_H2_RESPOND_AT), hc, ld(k, SK_STATUS), p, n)
       return false
     }
     return http1.respond(h, ld(k, SK_STATUS), raw.str_at(p, n).bytes())
@@ -467,7 +441,7 @@ pub fn sink_end(s: rthttp.Sink) -> Bool {
   st(k, SK_N, 0)
   if h2 {
     // the rest with the end of the stream (h2srv.xo finish)
-    let _ok = h2srv.finish(h, p, n)
+    let _ok = rt.call_c4(hconn.tls_op(hconn.TO_H2_FINISH), hc, p, n, 0)
     return false
   }
   // HTTP/1.1 (http1.xo stream_end): the rest, the last chunk

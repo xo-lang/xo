@@ -1,0 +1,11 @@
+// An HTTPS server (internal/llvm TestTLSLinkedOnlyWithTLS, decision
+// 0244): with_tls links the TLS server and HTTP/2.
+use std/http
+
+fn main(os: Os) ! {
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "tls") })
+  let cert = http.tls_cert(os.fs.read("cert.pem")?, os.fs.read("key.pem")?)?
+  let l = os.net.listen("127.0.0.1:0")?
+  http.server(l, r).with_tls([cert]).serve()?
+}
