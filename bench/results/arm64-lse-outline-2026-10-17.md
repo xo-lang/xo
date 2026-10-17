@@ -16,9 +16,13 @@ selfhost/macho elflink synthesizes for a link without libgcc (decision
   define xo_lse, which gets the loop only). ldclr, ldeor and ldset keep
   the loop (no emitter calls them).
 
-The LLVM backend's no-libc Linux builds inline their atomics as load and
-store exclusive loops (-mno-outline-atomics, decision 0206); a cc link
-uses libgcc's helpers, which already dispatch. Neither changes here.
+Follow-up (the same day): the LLVM backend's no-libc Linux builds
+compile with -moutline-atomics (they inlined ARMv8.0's load and store
+exclusive loops, -mno-outline-atomics), and the helpers every cc no-libc
+link gets (selfhost/xo link.xo nolibc_atomics, xo_atomics.s) are the
+dispatching bodies above, sizes 4 and 8, under `.arch_extension lse`;
+so an arm64 backend program linked by cc dispatches too. A libc link
+uses libgcc's helpers, which dispatch already.
 
 CPU time (user + sys) of 20 runs, bench/perf/conc, linux/arm64 in Docker
 on the Mac (Apple M-series, `atomics` in /proc/cpuinfo), two rounds:
@@ -35,3 +39,17 @@ on the Mac (Apple M-series, `atomics` in /proc/cpuinfo), two rounds:
 | mutex | all | 292, 328 | 255, 283 | 286, 309 |
 
 (ms; XO_LSE=0 is the loop path, about main's.)
+
+LLVM backend, no-libc linux/arm64 (Docker, 20 runs, user + sys ms, two
+rounds; the inline loops before):
+
+| workload | threads | inline loops | outline, LSE | XO_LSE=0 |
+|---|---|---|---|---|
+| spawn | 1 | 504, 514 | 339, 338 | 493, 487 |
+| fanout | 1 | 323, 350 | 219, 263 | 310, 399 |
+| pingpong | 1 | 622, 693 | 491, 604 | 622, 723 |
+| mutex | 1 | 99, 96 | 66, 66 | 98, 99 |
+| fanout | all | 3078, 1920 | 1270, 1454 | 3300, 3117 |
+| mutex | all | 382, 610 | 219, 167 | 351, 341 |
+
+(spawn and pingpong with all threads vary more than the change.)

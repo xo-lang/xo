@@ -15,6 +15,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   when it dangles), as O_EXCL; on the native backends (Linux, macOS,
   Windows CREATE_NEW), the Go backend, and MemFs. Not on wasm, which has
   no file handles.
+- The LLVM backend's Linux arm64 programs without a C library take the
+  same single instruction atomics (one thread: task spawning 34% and
+  fan-out 25 to 32% less CPU time).
 
 - Linux arm64 programs linked without libgcc use ARMv8.1's single
   instruction atomics when the CPU has them (XO_LSE=0 turns them off):

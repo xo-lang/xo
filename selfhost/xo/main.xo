@@ -557,8 +557,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if !g.skipped.is_empty() {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
-    // with no C library, no libgcc: arm64 atomics inline (decision 0206)
-    let attr_flags = if nolibc(os, o, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
+    // with no C library, no libgcc: arm64 atomics call the outline helpers
+    // the link writes (nolibc_atomics), which dispatch on xo_lse
+    let attr_flags = if nolibc(os, o, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-moutline-atomics"] } else { cross }
     let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
     if o.cmd == "asm" {
       os.stdio.print(code)
