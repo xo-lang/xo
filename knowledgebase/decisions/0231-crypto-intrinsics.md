@@ -170,6 +170,13 @@ bump.
   ends a chain whose carry is added on with that add (adcs with xzr).
   mul4p: 166 to 154 instructions, 1 callee saved pair, no spill; sqr4p
   143 to 135 (bench/results/arm64-inline-cost-2026-10-16.md).
+- **Subtractions and immediates in chains (2026-10-17).** A pair adding
+  ~b (a Not, or the constant -1) is sbcs of b (subs for a first pair
+  with carry in 1): a + ~b + c sets the carry flag as a - b - (1 - c)
+  does, so no mvn. Two Not values of one operand (the sum's ~g and the
+  carry's, written twice) are one operand for pairing (same_arg) and for
+  the inliner's pair count. A first pair adding a constant 1 to 4095 is
+  adds with an immediate. nistec.sub4p 42 to 19 instructions.
 
 ## SHA-256 (owner, 2026-10-16)
 

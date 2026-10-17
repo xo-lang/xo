@@ -1255,6 +1255,31 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.store(lines.join("\n"), [g.real(g.word(x.args[0]))])
       g.set(v, [])
     }
+    "rt.mem_copy" if g.copy_inline(x) => {
+      // a known small length: loads and stores per 16 bytes, no call
+      // (2026-10-17: nistec's point functions copied 32 bytes through
+      // libc's memcpy; bench/perf/tls spent 3x LLVM's instructions in
+      // memcpy, which inlines them)
+      let (n, _) = g.const_int(x.args[2])
+      let dst = g.real(g.word(x.args[0]))
+      let src = g.real(g.word(x.args[1]))
+      var off = 0
+      while off + 16 <= n {
+        let a = g.new_vreg(false)
+        let c = g.new_vreg(false)
+        let _i = g.plain("ldp $d0, $d1, [$u0, #${off}]", [a, c], [src])
+        g.store("stp $u0, $u1, [$u2, #${off}]", [a, c, dst])
+        off += 16
+      }
+      for (w, ld, st) in [(8, "ldr $d0", "str $u0"), (4, "ldr $wd0", "str $wu0"), (2, "ldrh $wd0", "strh $wu0"), (1, "ldrb $wd0", "strb $wu0")] {
+        if off + w <= n {
+          let a = g.def1(false, "${ld}, [$u0, #${off}]", [src])
+          g.store("${st}, [$u1, #${off}]", [a, dst])
+          off += w
+        }
+      }
+      g.set(v, [])
+    }
     "rt.mem_copy" | "rt.mem_move" | "rt.mem_set" => {
       let fname = match name {
         "rt.mem_copy" => "memcpy"
@@ -1325,6 +1350,13 @@ fn (var g: G) tl_base() -> Int {
 
 /// Whether rt.mem_set x sets a constant length of at most 512 bytes
 /// (stp's reach) to zero, which mem_set then writes as stores of xzr.
+/// Whether rt.mem_copy x has a known length of at most 128 bytes (the
+/// copy inline: at most 8 ldp and stp, and one of each tail width).
+fn (g: G) copy_inline(x: ssa.Value) -> Bool {
+  let (n, nok) = g.const_int(x.args[2])
+  nok && n > 0 && n <= 128
+}
+
 fn (g: G) zero_inline(x: ssa.Value) -> Bool {
   let (b, bok) = g.const_int(x.args[1])
   let (n, nok) = g.const_int(x.args[2])
@@ -1618,11 +1650,12 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
 
 /// Whether a, an addend of a later pair of a chain (at index k of ins),
 /// can be read there: a constant (0 is xzr, any other a mov, which sets
-/// no flags), a value defined before the chain, or (ADC_SPLIT) a product
-/// the chain alone uses (chain_product); nu is the pair's size (its sum
-/// and carry, or the sum alone).
+/// no flags), a value defined before the chain, (ADC_SPLIT) a product
+/// the chain alone uses (chain_product), or ~b of a b defined before the
+/// chain (the pair is sbcs of b: inverted); nu is the pair's size (its
+/// sum and carry, or the sum alone).
 fn (var g: G) chain_operand(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
-  g.is_const(a) || g.before_ix(a, ins) || (g.chain_products() && g.chain_product(a, ins, k, nu))
+  g.is_const(a) || g.before_ix(a, ins) || (g.chain_products() && g.chain_product(a, ins, k, nu)) || (ADC_SPLIT && g.inverted(a) >= 0 && g.ready(g.inverted(a), ins))
 }
 
 /// Whether a chain makes its products between its pairs (ADC_SPLIT):
@@ -1688,20 +1721,54 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
         g.set(a, [g.def1(false, "${op} $d0, $u0, $u1", [g.word(p.args[n - 2]), g.word(p.args[n - 1])])])
       }
     }
+    // a + ~b with carry in is a - b with the borrow its complement:
+    // sbcs a, b sets the carry flag as adcs a, ~b (a constant -1 is ~0:
+    // xzr; a Not's operand needs no mvn)
+    var a0 = y.args[0]
+    var a1 = y.args[1]
+    var neg = g.inverted(a1) >= -1
+    if !neg && g.inverted(a0) >= -1 {
+      a0 = y.args[1]
+      a1 = y.args[0]
+      neg = true
+    }
     var us: List[Int] = []
-    let b0 = g.adc_op(y.args[0], us)
-    let b1 = g.adc_op(y.args[1], us)
+    let b0 = g.adc_op(a0, us)
+    var b1 = ""
+    if neg {
+      let src = g.inverted(a1)
+      if src < 0 {
+        b1 = "xzr"
+      } else {
+        us.push(g.word(src))
+        b1 = "$u${us.len() - 1}"
+      }
+    }
+    let (cin, cin_k) = g.const_int(y.args[2])
+    let (k1, k1ok) = g.const_int(a1)
     var text = ""
-    if i == 0 {
-      let (cin, cin_k) = g.const_int(y.args[2])
-      if cin_k && cin == 0 {
+    if i == 0 && cin_k && cin == 0 && !neg && k1ok && k1 > 0 && k1 < 4096 {
+      // a small constant addend is adds' immediate (no mov)
+      text = "adds $d0, ${b0}, #${k1}"
+    } else if i == 0 && cin_k && cin != 0 && neg {
+      // a + ~b + 1 is subs a, b (its carry: no borrow)
+      text = "subs $d0, ${b0}, ${b1}"
+    } else if i == 0 && cin_k && cin == 0 && neg {
+      // a + ~b: cmn xzr, xzr clears the carry, then sbcs (a - b - 1)
+      text = "cmn xzr, xzr\nsbcs $d0, ${b0}, ${b1}"
+    } else {
+      if !neg {
+        b1 = g.adc_op(a1, us)
+      }
+      let op = if neg { "sbcs" } else { "adcs" }
+      if i == 0 && !(cin_k && cin == 0) {
+        let ct = g.carry_in(y.args[2], us)
+        text = "${ct}${op} $d0, ${b0}, ${b1}"
+      } else if i == 0 {
         text = "adds $d0, ${b0}, ${b1}"
       } else {
-        let ct = g.carry_in(y.args[2], us)
-        text = "${ct}adcs $d0, ${b0}, ${b1}"
+        text = "${op} $d0, ${b0}, ${b1}"
       }
-    } else {
-      text = "adcs $d0, ${b0}, ${b1}"
     }
     let d = g.new_vreg(false)
     var defs = [d]
@@ -1719,6 +1786,20 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
       g.set(cars[i], [if last { defs[1] } else { d }])
     }
   }
+}
+
+/// For an addend a of a chain that is ~b: b (a Not's operand), -1 for the
+/// constant -1 (~0, xzr), else -2.
+fn (g: G) inverted(a: Int) -> Int {
+  let (k, kc) = g.const_int(a)
+  if kc {
+    return if k == -1 { -1 } else { -2 }
+  }
+  let x = g.f.values[a]
+  if x.op == ssa.Op.Not && x.args.len() == 1 && g.kind(x.ty) == ssa.Kind.Int {
+    return x.args[0]
+  }
+  -2
 }
 
 /// The instruction setting the carry flag to the carry in a (0 or 1)
@@ -1767,7 +1848,14 @@ fn (g: G) same_arg(a: Int, b: Int) -> Bool {
   }
   let (x, xk) = g.const_int(a)
   let (y, yk) = g.const_int(b)
-  xk && yk && x == y
+  if xk && yk {
+    return x == y
+  }
+  // ~v written twice (sub4p's f + ~g + 1: the sum's and the carry's) is
+  // two Not values of one operand
+  let va = g.f.values[a]
+  let vb = g.f.values[b]
+  va.op == ssa.Op.Not && vb.op == ssa.Op.Not && va.args.len() == 1 && vb.args.len() == 1 && g.same_arg(va.args[0], vb.args[0])
 }
 
 /// Whether value a is defined before the current value: in an earlier

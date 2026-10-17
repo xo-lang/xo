@@ -96,6 +96,9 @@ fn args_key(f: ssa.Func, args: List[Int]) -> Str {
   for a in args {
     if let Some(n) = const_value(f, a) {
       parts.push("k${n}")
+    } else if f.values[a].op == ssa.Op.Not && f.values[a].args.len() == 1 {
+      // ~v written for the sum and again for the carry
+      parts.push("~${f.values[a].args[0]}")
     } else {
       parts.push("${a}")
     }
