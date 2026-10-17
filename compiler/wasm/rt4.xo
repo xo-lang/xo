@@ -19,7 +19,7 @@
 
 /// The runtime functions of rt4.xo called with the operands' leaves.
 fn rt4_direct(name: Str) -> Bool {
-  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
+  name is "fs_read" | "fs_write" | "fs_status" | "fs_msg" | "fs_stat" | "fs_info" | "fs_names" | "fs_read_link" | "fs_open" | "fs_file_closed" | "fs_file_read" | "fs_file_read_line" | "fs_file_write" | "fs_file_close" | "fs_raw_mkdir" | "fs_raw_rmdir" | "fs_raw_unlink" | "fs_raw_kind" | "fs_raw_names" | "fs_raw_errno" | "fs_raw_create" | "fs_raw_fail" | "fs_rename" | "fs_remove" | "fs_chtimes" | "fs_symlink" | "fs_copy" | "fs_perm" | "fs_chmod" | "fs_lock" | "fs_lock_shared" | "fs_lock_held" | "fs_unlock" | "fs_case_sensitive" | "any_new" | "any_get" | "const_once" | "time_of" | "time_ns" | "crypto_sha256"
 }
 
 /// The WASI imports of rt4.xo.
@@ -47,6 +47,7 @@ fn rt4_globals() -> Str {
   """
     (global $fsst (mut i64) (i64.const 0))
     (global $rawerr (mut i64) (i64.const 0))
+    (global $casesens (mut i32) (i32.const 0))
     (global $fspath (mut i32) (i32.const 0))
     (global $fspathn (mut i32) (i32.const 0))
     (global $fsmsg (mut i32) (i32.const 0))
@@ -86,6 +87,9 @@ fn rt4_text(var g: Gen) -> Str {
   }
   let ka = g.place(kb.freeze())
   let file_free = g.table_index("$fsfile_free")
+  let any_free = g.table_index("$any_free")
+  let probe_lo = g.litp(".xocaseprobe")
+  let probe_up = g.litp(".XOCASEPROBE")
   """
     ;; the WASI directory and path of the OS path at o (n bytes): fd 3 and
     ;; the path for a relative one, fd 4 and the rest for an absolute one;
@@ -292,6 +296,30 @@ fn rt4_text(var g: Gen) -> Str {
       local.set $k
       local.set $t
       local.set $fd
+      ;; a directory is IsDir, as natively (reading one is an error
+      ;; the host may report otherwise)
+      local.get $fd
+      i32.const 1
+      local.get $t
+      local.get $k
+      i32.const 24
+      call $path_filestat_get
+      i32.eqz
+      if
+        i32.const 40
+        i32.load8_u
+        i32.const 3
+        i32.eq
+        if
+          i32.const 31
+          local.get $o
+          local.get $n
+          call $fs_fail
+          drop
+          i32.const ${empty}
+          return
+        end
+      end
       local.get $fd
       i32.const 1
       local.get $t
@@ -1980,6 +2008,321 @@ fn rt4_text(var g: Gen) -> Str {
       i32.const 0)
 
     (func $fs_unlock (param $l i32))
+
+    ;; ------------------------------------------------------------------
+    ;; Whether the file system is case sensitive (Fs.case_sensitive): WASI
+    ;; does not say, and a macOS host's preopen usually is not, so it is
+    ;; probed once in the working directory's preopen (fd 3): an entry
+    ;; whose name has a letter, stat'ed with its letters' case flipped (the
+    ;; same inode: not sensitive; no such file: sensitive); else a new file
+    ;; .xocaseprobe and .XOCASEPROBE, the file removed after; else true
+
+    (func $fs_case_sensitive (result i32) (local $buf i32) (local $used i32) (local $o i32) (local $n i32) (local $name i32) (local $i i32) (local $c i32) (local $letter i32) (local $fl i32) (local $e i32) (local $r i32)
+      global.get $casesens
+      if
+        global.get $casesens
+        i32.const 1
+        i32.eq
+        return
+      end
+      ;; sensitive unless a probe says otherwise
+      i32.const 1
+      local.set $r
+      i32.const 4096
+      call $alloc
+      local.set $buf
+      i32.const 3
+      local.get $buf
+      i32.const 4096
+      i64.const 0
+      i32.const 16
+      call $fd_readdir
+      i32.eqz
+      if
+        i32.const 16
+        i32.load
+        local.set $used
+        block $done
+          loop $ent
+            ;; a dirent: d_next, d_ino, d_namlen at 16, d_type, the name at 24
+            local.get $o
+            i32.const 24
+            i32.add
+            local.get $used
+            i32.gt_u
+            br_if $done
+            local.get $buf
+            local.get $o
+            i32.add
+            i32.load offset=16
+            local.set $n
+            local.get $o
+            i32.const 24
+            i32.add
+            local.get $n
+            i32.add
+            local.get $used
+            i32.gt_u
+            br_if $done
+            local.get $buf
+            local.get $o
+            i32.add
+            i32.const 24
+            i32.add
+            local.set $name
+            ;; a letter in the name
+            i32.const 0
+            local.set $letter
+            i32.const 0
+            local.set $i
+            block $lx
+              loop $ll
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $lx
+                local.get $name
+                local.get $i
+                i32.add
+                i32.load8_u
+                i32.const 32
+                i32.or
+                local.tee $c
+                i32.const 97
+                i32.ge_u
+                local.get $c
+                i32.const 122
+                i32.le_u
+                i32.and
+                if
+                  i32.const 1
+                  local.set $letter
+                  br $lx
+                end
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $ll
+              end
+            end
+            local.get $letter
+            if
+              ;; the name with its letters' case flipped
+              local.get $n
+              call $alloc
+              local.set $fl
+              i32.const 0
+              local.set $i
+              block $fx
+                loop $fp
+                  local.get $i
+                  local.get $n
+                  i32.ge_u
+                  br_if $fx
+                  local.get $name
+                  local.get $i
+                  i32.add
+                  i32.load8_u
+                  local.set $c
+                  local.get $c
+                  i32.const 32
+                  i32.or
+                  i32.const 97
+                  i32.ge_u
+                  local.get $c
+                  i32.const 32
+                  i32.or
+                  i32.const 122
+                  i32.le_u
+                  i32.and
+                  if
+                    local.get $c
+                    i32.const 32
+                    i32.xor
+                    local.set $c
+                  end
+                  local.get $fl
+                  local.get $i
+                  i32.add
+                  local.get $c
+                  i32.store8
+                  local.get $i
+                  i32.const 1
+                  i32.add
+                  local.set $i
+                  br $fp
+                end
+              end
+              i32.const 3
+              i32.const 0
+              local.get $fl
+              local.get $n
+              i32.const 24
+              call $path_filestat_get
+              local.set $e
+              local.get $fl
+              call $free
+              ;; found as the same inode: not sensitive; not found: sensitive
+              local.get $e
+              i32.eqz
+              if
+                i32.const 32
+                i64.load
+                local.get $buf
+                local.get $o
+                i32.add
+                i64.load offset=8
+                i64.eq
+                if
+                  i32.const 0
+                  local.set $r
+                end
+                br $done
+              end
+              local.get $e
+              i32.const 44
+              i32.eq
+              br_if $done
+            end
+            local.get $o
+            i32.const 24
+            i32.add
+            local.get $n
+            i32.add
+            local.set $o
+            br $ent
+          end
+        end
+      end
+      local.get $buf
+      call $free
+      ;; no entry with a letter (or none read): a probe file, if writable
+      local.get $letter
+      i32.eqz
+      if
+        i32.const 3
+        i32.const 0
+        ${probe_lo}
+        i32.const 5
+        i64.const 0x200064
+        i64.const 0
+        i32.const 0
+        i32.const 16
+        call $path_open
+        i32.eqz
+        if
+          i32.const 16
+          i32.load
+          call $fd_close
+          drop
+          i32.const 3
+          i32.const 0
+          ${probe_up}
+          i32.const 24
+          call $path_filestat_get
+          i32.eqz
+          if
+            i32.const 0
+            local.set $r
+          end
+          i32.const 3
+          ${probe_lo}
+          call $path_unlink_file
+          drop
+        end
+      end
+      local.get $r
+      if (result i32)
+        i32.const 1
+      else
+        i32.const 2
+      end
+      global.set $casesens
+      local.get $r)
+
+    ;; ------------------------------------------------------------------
+    ;; Any (request values, std/native/llrt/anyval.xo): a handle {rc,
+    ;; drop, the list of one holding the value, its drop function's table
+    ;; index, the type's tag (a constant Str object) and its length}
+
+    (func $any_new (param $l i32) (param $d i64) (param $t i32) (param $tn i32) (result i32) (local $p i32)
+      i32.const 24
+      call $alloc
+      local.tee $p
+      i32.const 1
+      i32.store
+      local.get $p
+      i32.const ${any_free}
+      i32.store offset=4
+      local.get $p
+      local.get $l
+      i32.store offset=8
+      local.get $p
+      local.get $d
+      i32.wrap_i64
+      i32.store offset=12
+      local.get $p
+      local.get $t
+      i32.store offset=16
+      local.get $p
+      local.get $tn
+      i32.store offset=20
+      local.get $p)
+
+    ;; the list of one holding a's value (a reference) when its type's tag
+    ;; is (t, tn), else the empty list
+    (func $any_get (param $a i32) (param $t i32) (param $tn i32) (result i32) (local $l i32)
+      local.get $a
+      i32.load offset=20
+      local.get $tn
+      i32.ne
+      if
+        i32.const ${empty}
+        return
+      end
+      local.get $tn
+      if
+        local.get $a
+        i32.load offset=16
+        i32.const 8
+        i32.add
+        local.get $t
+        i32.const 8
+        i32.add
+        local.get $tn
+        call $mem_at
+        i32.eqz
+        if
+          i32.const ${empty}
+          return
+        end
+      end
+      local.get $a
+      i32.load offset=8
+      local.tee $l
+      call $rc_inc
+      local.get $l)
+
+    ;; the last release: the list through its drop function
+    (func $any_free (param $p i32) (local $l i32)
+      local.get $p
+      i32.load offset=8
+      local.tee $l
+      i32.const ${empty}
+      i32.ne
+      local.get $l
+      i32.const 0
+      i32.ne
+      i32.and
+      if
+        local.get $l
+        local.get $p
+        i32.load offset=12
+        call_indirect (type ${dropsig})
+      end
+      local.get $p
+      call $free)
 
     ;; ------------------------------------------------------------------
     ;; File handles (Fs.open, create, open_append, create_new; std/native

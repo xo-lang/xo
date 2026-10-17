@@ -198,6 +198,7 @@ pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Pro
   for (i, f) in m.funcs.indexed() {
     g.by_name[f.name] = i
   }
+  g.no_processes()
   let wat = g.module_text()
   // the functions' text is in wat now: the assembler gets their memory
   g.funcs = []
@@ -210,6 +211,28 @@ pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Pro
     return Program{wat: wat, err: "the assembler: ${aerr}"}
   }
   Program{wat: wat, wasm: bin}
+}
+
+/// Fails a module that starts processes (std/native/llrt/proc.xo's run,
+/// exec, spawn: Proc.cmd, Cmd.output, Proc.pipeline, Child): WASI preview1
+/// has none, as it has no sockets. Before the functions are generated, so
+/// the reason is this one and not the first native call of that code.
+fn (var g: Gen) no_processes() {
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      if name is "proc.run" | "proc.exec" | "proc.spawn" {
+        g.fail("the wasm backend does not support processes (`${name}`): WASI preview1 has none")
+        return
+      }
+    }
+  }
 }
 
 /// Records the first construct the backend does not support.

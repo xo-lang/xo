@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- WebAssembly builds (WASI) read `Env.program`, `Env.vars` (sorted),
+  `Proc.set_grace` and `task.stop_requested` (no signals: never), request
+  values (`Any`), and `Fs.case_sensitive` (probed in the working
+  directory, not assumed); reading a directory as a file is `IsDir`. A
+  program that starts processes fails to build for wasm with "WASI
+  preview1 has none", as one that uses sockets does.
+
 - LLVM debug builds show the parts of a parameter or a call's result
   that the code itself reads (a string parameter's length, a map's
   count), where before such values showed as not available.

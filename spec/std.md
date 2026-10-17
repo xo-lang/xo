@@ -528,6 +528,16 @@ fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
   `from`'s permission bits; a directory is `IsDir(from)`.
 - `mode` and `set_mode` are the permission bits (`0o777` mask). Windows
   reports and sets what it can (read only or not).
+- On WebAssembly (WASI preview1), which has no permission bits or
+  advisory locks, `mode`, `set_mode`, and `lock` are `Io(path,
+  "operation not supported (WASI has no file modes or locks)")` (after
+  `NotFound` and the other errors of the path itself), and
+  `set_modified` before 1970 is `Io(path, "WASI has no times before
+  1970")`. `case_sensitive` is probed once in the working directory: an
+  entry whose name has a letter, looked up with its letters' case
+  flipped (found as the same file: not case sensitive; not found: case
+  sensitive), else a probe file created and removed; `true` when neither
+  is possible.
 - `symlink(target, link)` stores `target` as written; a relative target
   is relative to the link's directory. In a sub capability a target that
   is absolute or leaves the root (`..` past it) is `Denied(link)`: a sub

@@ -16,7 +16,7 @@ import (
 // run correctly (stage 2 of decision 0179: 116 of 134; raise it as
 // stages land). 128 of 145 since std/json's text is Xo (decision 0193
 // step 4: native_json, text_table, codex_gaps, json_text).
-const wasmMinPass = 161
+const wasmMinPass = 167
 
 // TestSelfhostWasm is stages 1 and 2 of decision 0179: compiler/wasm (built
 // with the go backend) lowers every golden program of

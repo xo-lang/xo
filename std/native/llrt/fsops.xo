@@ -360,7 +360,7 @@ pub fn chtimes(p: Str, t: Int, x: Str) -> Int {
 
 /// Whether paths are case sensitive: not on macOS and Windows (std/rt).
 pub fn case_sensitive() -> Bool {
-  if layer() == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_case_sensitive()
   }
   match target.os {
@@ -872,7 +872,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
 }
 
 pub fn lock_held(h: rt.FsLock) -> Bool {
-  if layer() == 0 {
+  if sysio.layer() == 0 {
     return rt.fs_lock_held(h)
   }
   rt.mem_load(rt.obj_addr(h), L_HELD, 8) != 0

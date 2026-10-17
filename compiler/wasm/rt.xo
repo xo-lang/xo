@@ -5155,6 +5155,206 @@ fn rt_text(var g: Gen) -> Str {
       end
       local.get $n)
 
+    ;; env.program(): argv[0] in a list of one (WASI args_get; the empty
+    ;; string when the host passes no arguments)
+    (func $env_program (result i32) (local $argc i32) (local $argv i32) (local $buf i32) (local $l i32) (local $p i32)
+      i32.const 0
+      i32.const 4
+      call $args_sizes_get
+      drop
+      i32.const 0
+      i32.load
+      local.set $argc
+      local.get $argc
+      i32.const 2
+      i32.shl
+      i32.const 4
+      i32.add
+      call $alloc
+      local.set $argv
+      i32.const 4
+      i32.load
+      i32.const 1
+      i32.add
+      call $alloc
+      local.set $buf
+      local.get $argv
+      local.get $buf
+      call $args_get
+      drop
+      i32.const 1
+      i32.const 16
+      call $rl_new_n
+      local.set $l
+      local.get $argc
+      if
+        local.get $argv
+        i32.load
+        local.set $p
+      else
+        local.get $buf
+        i32.const 0
+        i32.store8
+        local.get $buf
+        local.set $p
+      end
+      local.get $l
+      local.get $p
+      local.get $p
+      call $strlen
+      call $list_add_str
+      local.set $l
+      local.get $argv
+      call $free
+      local.get $buf
+      call $free
+      local.get $l)
+
+    ;; env.vars(): the NAME=VALUE entries sorted (os.Environ() sorted; WASI
+    ;; environ_get), by an insertion sort of the list's Str elements
+    (func $env_vars (result i32) (local $c i32) (local $vv i32) (local $buf i32) (local $l i32) (local $i i32) (local $j i32) (local $p i32) (local $a i32) (local $b i32) (local $t0 i64) (local $t1 i64)
+      i32.const 0
+      i32.const 4
+      call $environ_sizes_get
+      drop
+      i32.const 0
+      i32.load
+      local.set $c
+      local.get $c
+      i32.const 2
+      i32.shl
+      i32.const 4
+      i32.add
+      call $alloc
+      local.set $vv
+      i32.const 4
+      i32.load
+      i32.const 1
+      i32.add
+      call $alloc
+      local.set $buf
+      local.get $vv
+      local.get $buf
+      call $environ_get
+      drop
+      local.get $c
+      i32.const 16
+      call $rl_new_n
+      local.set $l
+      block $x
+        loop $lp
+          local.get $i
+          local.get $c
+          i32.ge_u
+          br_if $x
+          local.get $vv
+          local.get $i
+          i32.const 2
+          i32.shl
+          i32.add
+          i32.load
+          local.set $p
+          local.get $l
+          local.get $p
+          local.get $p
+          call $strlen
+          call $list_add_str
+          local.set $l
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $lp
+        end
+      end
+      local.get $vv
+      call $free
+      local.get $buf
+      call $free
+      ;; insertion sort: element i moves down past the larger ones
+      i32.const 1
+      local.set $i
+      block $sx
+        loop $si
+          local.get $i
+          local.get $l
+          i32.load offset=4
+          i32.ge_u
+          br_if $sx
+          local.get $i
+          local.set $j
+          block $ix
+            loop $il
+              local.get $j
+              i32.eqz
+              br_if $ix
+              ;; a: element j - 1, b: element j
+              local.get $l
+              i32.const 16
+              i32.add
+              local.get $j
+              i32.const 4
+              i32.shl
+              i32.add
+              local.tee $b
+              i32.const 16
+              i32.sub
+              local.tee $a
+              i32.load
+              local.get $a
+              i32.load offset=8
+              local.get $b
+              i32.load
+              local.get $b
+              i32.load offset=8
+              call $str_cmp
+              i64.const 0
+              i64.le_s
+              br_if $ix
+              ;; swap the two 16 byte elements
+              local.get $a
+              i64.load
+              local.set $t0
+              local.get $a
+              i64.load offset=8
+              local.set $t1
+              local.get $a
+              local.get $b
+              i64.load
+              i64.store
+              local.get $a
+              local.get $b
+              i64.load offset=8
+              i64.store offset=8
+              local.get $b
+              local.get $t0
+              i64.store
+              local.get $b
+              local.get $t1
+              i64.store offset=8
+              local.get $j
+              i32.const 1
+              i32.sub
+              local.set $j
+              br $il
+            end
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $si
+        end
+      end
+      local.get $l)
+
+    ;; proc.set_grace(d): nothing to wait for (WASI has no signals)
+    (func $set_grace (param $d i64))
+
+    ;; task.stop_requested(): never (WASI has no signals)
+    (func $stop_requested (result i32)
+      i32.const 0)
+
     ;; env.get(name): the value in a list of one, or the empty list
     (func $env_get (param $o i32) (param $n i32) (result i32) (local $c i32) (local $vv i32) (local $buf i32) (local $i i32) (local $p i32) (local $k i32) (local $l i32)
       i32.const 0
