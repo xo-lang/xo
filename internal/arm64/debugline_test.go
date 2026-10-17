@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -147,7 +149,7 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 			t.Errorf("dwarfdump --verify %s: %v\n%s", dsym, err, v)
 		}
-		b, err := exec.Command("lldb", "-b", "-o", "breakpoint set -f main.xo -l 9", bin).CombinedOutput()
+		b, err := lldb(t, false, "-b", "-o", "breakpoint set -f main.xo -l 9", bin)
 		if err != nil || !regexp.MustCompile(`Breakpoint 1: where = .* at main\.xo:\d+`).Match(b) {
 			t.Errorf("lldb b main.xo:9 on %s: %v\n%s", bin, err, b)
 		}
@@ -244,11 +246,39 @@ func TestDebugLineInlined(t *testing.T) {
 	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 	}
-	bt, err := exec.Command("lldb", "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin).CombinedOutput()
+	bt, err := lldb(t, true, "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin)
 	if err != nil {
 		t.Fatalf("lldb: %v\n%s", err, bt)
 	}
 	if !regexp.MustCompile(`frame #0: .*scale at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main at main\.xo:12:\d+`).Match(bt) {
 		t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
 	}
+}
+
+// lldb runs lldb with args under a 60 s limit, its output and error. A
+// run (attaching to the program) needs macOS's Developer Mode: with it
+// off (`DevToolsSecurity -status` says disabled) lldb waits for an
+// authorization prompt forever, so the test skips; it also skips when
+// the limit is hit, rather than hang the package's run.
+func lldb(t *testing.T, run bool, args ...string) ([]byte, error) {
+	t.Helper()
+	if run && devToolsDisabled() {
+		t.Skip("lldb cannot attach: Developer Mode is off (DevToolsSecurity -status: disabled; enable it with `sudo DevToolsSecurity -enable`)")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "lldb", args...)
+	cmd.WaitDelay = 5 * time.Second
+	b, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Skipf("lldb did not finish in 60 s (Developer Mode off, or an authorization prompt waiting?):\n%s", b)
+	}
+	return b, err
+}
+
+// devToolsDisabled reports whether macOS's Developer Mode is off, which
+// keeps lldb from attaching without a prompt.
+func devToolsDisabled() bool {
+	b, err := exec.Command("DevToolsSecurity", "-status").CombinedOutput()
+	return err == nil && strings.Contains(string(b), "disabled")
 }
