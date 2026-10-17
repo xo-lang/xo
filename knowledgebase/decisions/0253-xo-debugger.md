@@ -238,6 +238,16 @@ programs):
   TestSelfhostDebugXoTests) and internal/arm64 TestDwarfReader (the arm64
   backend's dSYM through selfhost/macho and dsymutil, every variable's
   ranges equal to dwarfdump's; the LLVM backend's, sum inlined with k the
-  constant 10). Not yet: the xo_static global (it comes with stage 4,
-  where the task views read it), compressed ELF sections, DWARF 4
-  .debug_loc lists (neither backend writes them).
+  constant 10). Not yet: compressed ELF sections, DWARF 4 .debug_loc
+  lists (neither backend writes them).
+- The xo_static global (2026-10-17): with debug information both
+  backends describe rt.static_word's table as a global variable
+  `xo_static` of type [256]Int (DW_TAG_array_type with a subrange). The
+  arm64 backend writes it in the unit of the file that defines the table
+  (DW_OP_addr of its label; in a split build, the last file, a unit
+  with no functions when that file has none: low_pc and high_pc both
+  the table's address). The LLVM backend lists a DIGlobalVariable in
+  each module's unit's globals and attaches it to `@.xo.static` where a
+  module defines that (LLVM writes DW_OP_addrx, which the reader resolves
+  through the unit's .debug_addr). The text is unchanged (decision
+  0252's gate). TestDwarfReader reads it from each build.

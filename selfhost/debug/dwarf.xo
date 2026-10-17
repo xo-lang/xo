@@ -190,9 +190,10 @@ pub struct Member {
 }
 
 /// A type entry: its tag (DW_TAG_base_type 0x24, structure_type 0x13,
-/// pointer_type 0x0f, typedef 0x16, ...), name, size in bytes, encoding
-/// (a base type's DW_ATE), the type it refers to (a pointer's or
-/// typedef's, -1: none), and a structure's members.
+/// pointer_type 0x0f, typedef 0x16, array_type 0x01, ...), name, size in
+/// bytes, encoding (a base type's DW_ATE), the type it refers to (a
+/// pointer's, typedef's, or array's element, -1: none), a structure's
+/// members, and an array's element count (its subrange's).
 pub struct Type {
   pub tag: Int
   pub name: Str
@@ -200,6 +201,7 @@ pub struct Type {
   pub enc: Int
   pub of: Int
   pub members: List[Member]
+  pub count: Int = 0
 }
 
 /// What the reader found: the functions, the global variables, and the
@@ -219,6 +221,9 @@ pub fn (i: Info) type_name(t: Int) -> Str {
       }
       if x.tag == 0x0f {
         return "*${i.type_name(x.of)}"
+      }
+      if x.tag == 0x01 {
+        return "[${x.count}]${i.type_name(x.of)}"
       }
       "?"
     }
@@ -503,6 +508,12 @@ fn addr_x(s: Sections, u: Unit, k: Int) -> Int {
 
 /// The pieces of a location expression (an empty one: optimized out).
 pub fn expr(b: Bytes, asize: Int) -> List[Piece] {
+  expr_in(b, asize, b"", 0)
+}
+
+/// expr with the unit's address table (.debug_addr from addr_base) for
+/// DW_OP_addrx and DW_OP_constx.
+fn expr_in(b: Bytes, asize: Int, addr: Bytes, base: Int) -> List[Piece] {
   var out: List[Piece] = []
   var r = Rd{b: b, p: 0, end: b.len()}
   var cur = Place.Gone
@@ -524,6 +535,11 @@ pub fn expr(b: Bytes, asize: Int) -> List[Piece] {
         }
         0x91 => cur = Place.Fbreg(r.sleb())
         0x03 => cur = Place.Addr(r.n(asize))
+        0xa1 => {
+          // DW_OP_addrx: an address of the unit's table
+          let o = base + 8 * r.uleb()
+          cur = Place.Addr(if o >= 0 && o + 8 <= addr.len() { rd64(addr, o) } else { 0 })
+        }
         0x10 => stack.push(r.uleb())
         0x11 => stack.push(r.sleb())
         0x9f => {
@@ -604,7 +620,7 @@ fn loclist(s: Sections, u: Unit, off: Int) -> List[Loc] {
     if r.p + n > r.end {
       break
     }
-    out.push(Loc{lo: lo, hi: hi, pieces: expr(s.loclists[r.p..r.p + n], u.asize)})
+    out.push(Loc{lo: lo, hi: hi, pieces: expr_in(s.loclists[r.p..r.p + n], u.asize, s.addr, u.addr_base)})
     r.p += n
   }
   out
@@ -738,6 +754,7 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
     var high_off = false
     var rng = -1
     var rng_x = false
+    var count = -1
     for a in ab.attrs {
       let (fv, ok) = read_form(r, a.form, s, u, a.imp)
       if !ok {
@@ -757,6 +774,8 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
         }
         0x31 | 0x47 => v.origin = ref(u, a.form, fv.n)
         0x0b => size = fv.n
+        0x37 => count = fv.n
+        0x2f => count = fv.n + 1
         0x3e => enc = fv.n
         0x38 => mloc = fv.n
         0x11 => {
@@ -837,9 +856,20 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
       0x24 | 0x0f | 0x16 | 0x26 | 0x35 => {
         out.types[die] = Type{tag: ab.tag, name: v.name, size: size, enc: enc, of: of, members: []}
       }
-      0x13 | 0x17 => {
-        out.types[die] = Type{tag: ab.tag, name: v.name, size: size, enc: 0, of: -1, members: []}
+      0x13 | 0x17 | 0x01 => {
+        out.types[die] = Type{tag: ab.tag, name: v.name, size: size, enc: 0, of: of, members: []}
         here_st = die
+      }
+      0x21 => {
+        // an array's subrange: its element count
+        let st = st_at[depth]
+        if st >= 0 && count >= 0 {
+          if let Some(t) = out.types.get(st) {
+            var t2 = t
+            t2.count = count
+            out.types[st] = t2
+          }
+        }
       }
       0x0d => {
         let st = st_at[depth]
@@ -895,7 +925,7 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
     var locs: List[Loc] = []
     if v.has_loc {
       if v.loc.block_ok {
-        locs = [Loc{lo: 0, hi: -1, pieces: expr(v.loc.block, u.asize)}]
+        locs = [Loc{lo: 0, hi: -1, pieces: expr_in(v.loc.block, u.asize, s.addr, u.addr_base)}]
       } else if v.loc.idx {
         // loclistx: an offset in the unit's table at loclists_base
         let o = u.loc_base + 4 * v.loc.n

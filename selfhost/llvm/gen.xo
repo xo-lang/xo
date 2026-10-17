@@ -81,6 +81,8 @@ pub struct Gen {
   /// and the line of the value being lowered
   dbg_n: Int = 1000000
   dbg_cu: Int = -1
+  /// xo_static's DIGlobalVariableExpression (-1: no debug information)
+  dbg_static: Int = -1
   dbg_ty: Int = -1
   dbg_files: Map[Str, Int] = {}
   dbg_sp: Int = -1

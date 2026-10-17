@@ -793,7 +793,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // of a split build
       if !g.emitted.contains("@.xo.static") {
         g.emitted["@.xo.static"] = true
-        g.helpers.push("@.xo.static = weak global [256 x i64] zeroinitializer, align 8\n\n")
+        let dbg = if g.dbg_static >= 0 { ", !dbg !${g.dbg_static}" } else { "" }
+        g.helpers.push("@.xo.static = weak global [256 x i64] zeroinitializer, align 8${dbg}\n\n")
       }
       let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
       g.set(v, "ptrtoint ptr ${p} to i64")

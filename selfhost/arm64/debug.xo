@@ -8,8 +8,8 @@
 // every length is counted here, so no label differences are needed.
 
 /// The debug sections of the part, or "" with none.
-fn (g: G) debug_sections() -> Str {
-  if g.dbgs.is_empty() {
+fn (g: G) debug_sections(with_static: Bool) -> Str {
+  if !g.m.debug_info || (g.dbgs.is_empty() && !with_static) {
     return ""
   }
   let mac = g.os == "darwin"
@@ -64,6 +64,10 @@ fn (g: G) debug_sections() -> Str {
       }
     }
     recs.push(DbgFunc{file: fi, name: p[1], begin: p[2], end: p[3], rows: rows, sites: sites, vars: vars})
+  }
+  if files.is_empty() {
+    // a unit for xo_static alone (the last file of a split build)
+    files.push("<generated>")
   }
   let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   var out = StrBuilder.new()
@@ -169,7 +173,10 @@ fn (g: G) debug_sections() -> Str {
   // dsym.xo; decision 0252) 5: base_type: name, encoding, byte_size; 6:
   // structure_type, children: name, byte_size; 7: member: name, type,
   // data_member_location; 8: variable and 9: formal_parameter: name,
-  // type, decl_line, location (loclistx)
+  // type, decl_line, location (loclistx); 10: the global variable
+  // xo_static (decision 0253: the debugger finds the runtime's records
+  // through it): name, type, external, location (exprloc, DW_OP_addr);
+  // 11: array_type, children: type; 12: subrange_type: count
   out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x8c, 0x01, 0x17, 0x73, 0x17, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
   out.write("\t.byte 2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
   out.write("\t.byte 3, 0x2e, 0, 0x03, 0x08, 0x20, 0x0b, 0, 0\n")
@@ -179,13 +186,17 @@ fn (g: G) debug_sections() -> Str {
   out.write("\t.byte 7, 0x0d, 0, 0x03, 0x08, 0x49, 0x13, 0x38, 0x0f, 0, 0\n")
   out.write("\t.byte 8, 0x34, 0, 0x03, 0x08, 0x49, 0x13, 0x3b, 0x0f, 0x02, 0x22, 0, 0\n")
   out.write("\t.byte 9, 0x05, 0, 0x03, 0x08, 0x49, 0x13, 0x3b, 0x0f, 0x02, 0x22, 0, 0\n")
+  out.write("\t.byte 10, 0x34, 0, 0x03, 0x08, 0x49, 0x13, 0x3f, 0x19, 0x02, 0x18, 0, 0\n")
+  out.write("\t.byte 11, 0x01, 1, 0x49, 0x13, 0, 0\n")
+  out.write("\t.byte 12, 0x21, 0, 0x37, 0x05, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
   var die = Dw{}
   die.uleb(1)
   die.offset(if mac { "0" } else { line_lab })
-  die.quad(recs[0].begin)
-  die.quad(recs[recs.len() - 1].end)
+  let st = g.tramp("xo_static")
+  die.quad(if recs.is_empty() { st } else { recs[0].begin })
+  die.quad(if recs.is_empty() { st } else { recs[recs.len() - 1].end })
   die.str("xo")
   die.u16(0x0c) // DW_LANG_C99: no code for Xo
   // the offsets table of this unit's .debug_loclists, past its 12 byte
@@ -202,6 +213,30 @@ fn (g: G) debug_sections() -> Str {
     for v in fr.vars {
       let _t = g.dw_type(die, tys, v.ty)
     }
+  }
+  if with_static {
+    // xo_static: STATIC_WORDS words (gen.xo end_data) of Int
+    var it = tys.get("Int") ?? -1
+    if it < 0 {
+      it = 12 + die.n
+      die.uleb(5)
+      die.str("Int")
+      die.u8(5) // DW_ATE_signed
+      die.u8(8)
+      tys["Int"] = it
+    }
+    let arr = 12 + die.n
+    die.uleb(11)
+    die.u32(it)
+    die.uleb(12)
+    die.u16(STATIC_WORDS)
+    die.u8(0)
+    die.uleb(10)
+    die.str("xo_static")
+    die.u32(arr)
+    die.uleb(9) // the expression's length: DW_OP_addr and 8 bytes
+    die.u8(0x03)
+    die.quad(st)
   }
   var lists: List[List[DbgLoc]] = []
   // the runs of inlined code (outermost sites) of each function, and an

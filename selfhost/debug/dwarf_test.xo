@@ -61,6 +61,9 @@ test "location expressions: registers, memory, constants, pieces" {
   expect(show(expr(bytes_of([0x5b, 0x93, 0x08, 0x93, 0x08]), 8))) == "reg11 (8), gone (8)"
   expect(show(expr(b"", 8))) == "gone"
   expect(show(expr(bytes_of([0xe0, 0x51]), 8))) == "op 224"
+  // DW_OP_addrx 1: the second address of the table at base 8
+  let table = bytes_of(le(0, 8) + le(0x4000, 8) + le(0x5000, 8))
+  expect(show(expr_in(bytes_of([0xa1, 0x01]), 8, table, 8))) == "[20480]"
 }
 
 test "shifts drop the bits shifted out" {

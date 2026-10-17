@@ -49,7 +49,7 @@ fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     }
     os.stdio.println("func ${f.name} ${hex(f.lo)}..${hex(f.hi)}")
     for v in f.vars {
-      print_var(os, info, v, "  ")
+      print_var(os, info, v, "  ", "  ")
     }
     for c in f.inlined {
       let lead = "  ".repeat(c.depth)
@@ -59,13 +59,13 @@ fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
       }
       os.stdio.println("${lead}inlined ${c.name} call line ${c.call_line} ${rs.join(" ")}")
       for v in c.vars {
-        print_var(os, info, v, "${lead}  ")
+        print_var(os, info, v, "${lead}  ", "${lead}  ")
       }
     }
   }
   if only.is_empty() {
     for v in info.globals {
-      print_var(os, info, v, "global ")
+      print_var(os, info, v, "global ", "")
     }
   }
   if fl.get_bool("types") {
@@ -84,9 +84,10 @@ fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   0
 }
 
-fn print_var(os: Os, info: debug.Info, v: debug.Var, lead: Str) uses (stdio) {
+/// v on a line after head, its locations below, indented by indent.
+fn print_var(os: Os, info: debug.Info, v: debug.Var, head: Str, indent: Str) uses (stdio) {
   let kind = if v.param { "param" } else { "var" }
-  os.stdio.println("${lead}${kind} ${v.name}: ${info.type_name(v.ty)} line ${v.line}")
+  os.stdio.println("${head}${kind} ${v.name}: ${info.type_name(v.ty)} line ${v.line}")
   for l in v.locs {
     let range = if l.lo == 0 && l.hi == -1 { "always" } else { "${hex(l.lo)}..${hex(l.hi)}" }
     var ps: List[Str] = []
@@ -94,7 +95,7 @@ fn print_var(os: Os, info: debug.Info, v: debug.Var, lead: Str) uses (stdio) {
       let at = place(p.place)
       ps.push(if p.size > 0 { "${at} (${p.size})" } else { at })
     }
-    os.stdio.println("${lead}  ${range} ${ps.join(", ")}")
+    os.stdio.println("${indent}  ${range} ${ps.join(", ")}")
   }
 }
 

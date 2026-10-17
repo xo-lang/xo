@@ -224,6 +224,14 @@ func TestDwarfReader(t *testing.T) {
 					t.Errorf("xo dev dwarf --func=sum lacks %q:\n%s", w, got)
 				}
 			}
+			// the runtime's static words, the debugger's way to its records
+			all, err := exec.Command(xo, "dev", "dwarf", dw).CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo dev dwarf: %v\n%s", err, all)
+			}
+			if !regexp.MustCompile(`(?m)^global var xo_static: \[256\]Int line 0\n\s+always \[0x[0-9a-f]+\]$`).Match(all) {
+				t.Errorf("xo dev dwarf: no xo_static global with an address:\n%s", lastLines(all, 20))
+			}
 			if c.name == "llvm" {
 				return
 			}
@@ -260,4 +268,13 @@ func TestDwarfReader(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lastLines is the last n lines of b.
+func lastLines(b []byte, n int) string {
+	ls := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(ls) > n {
+		ls = ls[len(ls)-n:]
+	}
+	return strings.Join(ls, "\n")
 }

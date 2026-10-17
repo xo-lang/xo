@@ -71,7 +71,7 @@ fn (var g: G) generate() -> Program {
   out.push(g.helpers.join(""))
   g.trampolines(out)
   out.push(g.lsdas.join(""))
-  out.push(g.debug_sections())
+  out.push(g.debug_sections(g.static_ref))
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
@@ -138,6 +138,9 @@ fn (g: G) shared_code(var out: List[Str]) {
   }
 }
 
+/// The words of rt.static_word's table (xo_static).
+const STATIC_WORDS = 256
+
 /// The process words of rt.sys_words and rt.static_word, and the end of an ELF file.
 fn (g: G) end_data(var out: List[Str]) {
   // the immortal placeholders first, at the data's start (page offset
@@ -165,7 +168,7 @@ fn (g: G) end_data(var out: List[Str]) {
     // process globals (64 until decision 0237), zero at start (.quad
     // lines: selfhost/macho's assembler has no .zero)
     out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
-    for _ in 0..256 {
+    for _ in 0..STATIC_WORDS {
       out.push("\t.quad 0\n")
     }
   }

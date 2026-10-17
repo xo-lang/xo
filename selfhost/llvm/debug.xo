@@ -14,7 +14,19 @@ fn (var g: Gen) debug_unit() {
   }
   let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   let f0 = g.dbg_file("main.xo")
-  g.dbg_cu = g.dbg_node("distinct !DICompileUnit(language: DW_LANG_C99, file: !${f0}, producer: \"xo compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, nameTableKind: None)")
+  // the unit's number first: its globals refer to it
+  g.dbg_n += 1
+  g.dbg_cu = g.dbg_n
+  // xo_static, rt.static_word's table (decision 0253: the debugger finds
+  // the runtime's records through it), as 256 Ints; call.xo attaches it
+  // to @.xo.static where a module defines that
+  let it = g.dbg_node("!DIBasicType(name: \"Int\", size: 64, encoding: DW_ATE_signed)")
+  g.dbg_types["Int"] = it
+  let sub = g.dbg_node("!DISubrange(count: 256)")
+  let arr = g.dbg_node("!DICompositeType(tag: DW_TAG_array_type, baseType: !${it}, size: 16384, elements: !{!${sub}})")
+  let gv = g.dbg_node("distinct !DIGlobalVariable(name: \"xo_static\", scope: !${g.dbg_cu}, file: !${f0}, type: !${arr}, isLocal: false, isDefinition: true)")
+  g.dbg_static = g.dbg_node("!DIGlobalVariableExpression(var: !${gv}, expr: !DIExpression())")
+  g.meta.push("!${g.dbg_cu} = distinct !DICompileUnit(language: DW_LANG_C99, file: !${f0}, producer: \"xo compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, globals: !{!${g.dbg_static}}, nameTableKind: None)\n")
   g.dbg_ty = g.dbg_node("!DISubroutineType(types: !{})")
   let v = g.dbg_node("!{i32 7, !\"Dwarf Version\", i32 5}")
   let d = g.dbg_node("!{i32 2, !\"Debug Info Version\", i32 3}")
