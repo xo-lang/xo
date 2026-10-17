@@ -122,7 +122,15 @@ fn wake(m: Int, after_writer: Bool) {
     var e = ld(m, M_WAITERS + WL_FIRST)
     while e != 0 {
       if ld4(e, E_WRITER) != 0 {
-        signal(ld(e, E_PARK))
+        // a writer already signaled that has not run yet is not signaled
+        // again: under m's lock it re-checks the Mutex when it runs, and
+        // re-arms its park before it waits again (Xo lang 3's execution
+        // trace, 2026-10-16: 200 such wakes of main in 0.16 ms, a lock
+        // and stores each)
+        let p = ld(e, E_PARK)
+        if !pool.park_signaled(p) {
+          signal(p)
+        }
         return
       }
       e = ld(e, E_NEXT)

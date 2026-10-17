@@ -586,6 +586,7 @@ struct EShdr {
 }
 
 fn (var a: Asm) write_elf() -> Bytes {
+  a.func_sizes()
   // the section header table: null, .strtab, then each section after
   // its group (when new) and before its relocations, then .symtab
   var hdrs: List[EShdr] = [EShdr{name: "", typ: 0, align: 0}, EShdr{name: ".strtab", typ: SHT_STRTAB}]
@@ -785,4 +786,49 @@ fn (var a: Asm) write_elf() -> Bytes {
   hd.u16(1)
   hd.bytes(body[64..])
   hd.done()
+}
+
+/// Gives each function symbol of a code section that no `.size` sized
+/// its extent: up to the next named symbol of its section (a function,
+/// or a hashed helper's untyped label), else the section's end. The arm64 backend writes no `.size`, and
+/// valgrind and perf name an address only by a symbol whose extent
+/// holds it (a size of 0 showed every Xo function as ??? in callgrind,
+/// 2026-10-16).
+fn (var a: Asm) func_sizes() {
+  // the code sections' named symbols as section << 56 | offset << 20 |
+  // index, sorted (an object file has fewer than 128 sections, less than
+  // 64 GiB of code, and fewer than a million symbols, or it is left as
+  // it is)
+  if a.sects.len() >= 128 || a.syms.len() >= 1048576 {
+    return
+  }
+  var keys: List[Int] = []
+  for (i, s) in a.syms.indexed() {
+    if s.sect >= 0 && !s.temp && !s.secsym && a.sects[s.sect].code {
+      keys.push((s.sect << 56) | (s.off << 20) | i)
+    }
+  }
+  keys = keys.sort()
+  for (k, key) in keys.indexed() {
+    let i = key & 1048575
+    let sect = a.syms[i].sect
+    let off = a.syms[i].off
+    if a.syms[i].kind != STT_FUNC || a.syms[i].size != 0 {
+      continue
+    }
+    var end = a.sects[sect].words.len() * 4
+    var j = k + 1
+    while j < keys.len() {
+      let n = keys[j] & 1048575
+      if a.syms[n].sect != sect {
+        break
+      }
+      if a.syms[n].off > off {
+        end = a.syms[n].off
+        break
+      }
+      j += 1
+    }
+    a.syms[i].size = end - off
+  }
 }

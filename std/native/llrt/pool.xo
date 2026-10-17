@@ -1134,6 +1134,10 @@ pub fn park_reset(p: Int) {
   unlock(p)
 }
 
+/// Whether the park at p was signaled since its last park_reset (its
+/// waiter has not run since, or not yet re-armed it).
+pub fn park_signaled(p: Int) -> Bool { rt.slot_load(p, PK_SIGNALED, ACQUIRE) != 0 }
+
 /// Wakes the context waiting at p. The waiter takes p's lock before it
 /// returns, so p stays valid until the unlock here.
 pub fn park_signal(pl: Int, p: Int) { signal(pl, p, false) }
@@ -1720,6 +1724,14 @@ pub fn defer_check() {
   let n = rt.int_wrap(0, rt.mem_load(w, W_DEFER_N, 8), 1)
   rt.mem_store(w, W_DEFER_N, n, 8)
   if (n & 15) != 0 || rt.int_wrap(1, sysio.mono_ns(), at) < DEFER_CHECK_NS {
+    return
+  }
+  // a root at one worker (XO_THREADS=1): its join or next park runs what
+  // it deferred, and this call shows it is not blocked; waking the worker
+  // made the two threads take the same tasks (Linux spawn: 400 wakes, 1.6
+  // threads busy); the monitor stays the bound for a root blocked in the
+  // system
+  if rt.mem_load(w, W_ROOT, 4) != 0 && rt.mem_load(rt.mem_load(w, W_POOL, 8), P_NCPU, 8) < 2 {
     return
   }
   if rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {

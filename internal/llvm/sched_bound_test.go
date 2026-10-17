@@ -116,9 +116,12 @@ func TestDeferWakeOff(t *testing.T) {
 
 // TestOneThreadSpawnJoin: at XO_THREADS=1 main's spawns defer (decision
 // 0077's addendum) and its join runs them: testdata/sched/spawnjoin's
-// 5,000 spawns in 50 scopes wake the worker at most a few times
+// 50,000 spawns in 50 scopes wake the worker at most a few times
 // (XO_RTSTATS wake), where every spawn woke it before (2026-10-16: 188
 // wakes in 200,000 spawns, each a futex call of about 70 us on macOS).
+// Nor does main's own runtime call wake it for a deferral it will run
+// itself (mon_wake, steal): on Linux that made the worker take main's
+// tasks 950 times in 200,000 spawns, two threads busy for one's work.
 func TestOneThreadSpawnJoin(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
@@ -139,7 +142,7 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
-	if !regexp.MustCompile(`spawnjoin 247500\b`).MatchString(out) {
+	if !regexp.MustCompile(`spawnjoin 24975000\b`).MatchString(out) {
 		t.Fatalf("output: %s", out)
 	}
 	m := regexp.MustCompile(`\bwake=(\d+)`).FindStringSubmatch(out)
@@ -147,6 +150,15 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 		t.Fatalf("no wake count: %s", out)
 	}
 	if n, _ := strconv.Atoi(m[1]); n > 5 {
-		t.Fatalf("the worker was woken %d times for 5,000 spawns its spawner joined", n)
+		t.Fatalf("the worker was woken %d times for 50,000 spawns its spawner joined", n)
+	}
+	for _, k := range []string{"mon_wake", "steal"} {
+		m := regexp.MustCompile(`\b` + k + `=(\d+)`).FindStringSubmatch(out)
+		if m == nil {
+			t.Fatalf("no %s count: %s", k, out)
+		}
+		if n, _ := strconv.Atoi(m[1]); n > 5 {
+			t.Errorf("%s=%d for 50,000 spawns its spawner joined (want at most 5)", k, n)
+		}
 	}
 }

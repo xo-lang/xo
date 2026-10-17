@@ -784,3 +784,17 @@ test "a static link: no loader, weak hooks a nop and a ret, -s drops locals" {
   let bad = assemble_elf("\t.text\n\t.globl _start\n_start:\n\tbl puts\n".bytes()).or_fault("bad")
   expect(link_elf([LinkInput{path: "b.o", data: bad}], ElfLinkOpts{static: true})) == Err("puts is not defined (a static link with no C library)")
 }
+
+test "a function without .size gets its extent: to the next named symbol or the section's end" {
+  // valgrind and perf name an address by a symbol whose extent holds it
+  // (callgrind showed every Xo function as ??? with sizes of 0)
+  let o = elf_obj("\t.text\n\t.globl f\n\t.type f, %function\nf:\n\tnop\n\tnop\n\tret\nh:\n\tret\n\t.globl g\n\t.type g, %function\ng:\n\tnop\n\tret\n\t.globl k\n\t.type k, %function\nk:\n\tret\n\t.size k, 12\n")
+  var sizes: Map[Str, Int] = {}
+  for s in o.syms {
+    sizes.put(s.name.to_str() ?? "", s.size)
+  }
+  // f stops at the untyped label h, g at k, k keeps its .size
+  expect(sizes.get("f")) == Some(12)
+  expect(sizes.get("g")) == Some(8)
+  expect(sizes.get("k")) == Some(12)
+}

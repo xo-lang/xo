@@ -112,7 +112,8 @@ Decision:
    work is still queued. It ticks every 1 ms while deferrals come and,
    after 10 ticks without one, sleeps on a futex with no timeout until
    the next deferral wakes it (once per idle period). One worker
-   (XO_THREADS=1) defers nothing and starts no monitor. Its record is
+   (XO_THREADS=1) defers every spawn since 2026-10-16 (below), so its
+   monitor starts at the first deferral too. Its record is
    static word 46. XO_RTSTATS counts mon_tick, mon_wake, defer.
 3. A worker that finds no work no longer spins before going idle: the
    default spin rounds are 0 (XO_SPIN_ROUNDS still sets them). 16
@@ -206,6 +207,21 @@ internal/llvm TestOneThreadSpawnJoin (5,000 spawns joined wake the
 worker at most 5 times; 50 before), TestDeferredWakeBound at
 XO_THREADS=1 (a computing spawner's task still starts within 100 ms).
 
+The waker side bound (defer_check, below) skips a root at one worker
+too (xo-4, 2026-10-16): main's runtime calls while it spawns show it is
+not blocked, and its join runs what it deferred. Before, a scope's
+1,000 spawns outlasted the 50 us bound, so main's own spawn calls woke
+the worker, which then took main's tasks from its ring while main kept
+spawning: on Linux (Docker on the Mac) bench/perf/conc spawn at
+XO_THREADS=1 used 93 ms of CPU in 58 ms of wall time (two threads busy:
+200 wakes, 950 steals, 400 waker side wakes), 4.7 times rust-ct's;
+after, 36 ms in 37 ms (no wake, no steal), 1.8 times. macOS had fewer
+such wakes (spawn 1.77x rust-ct's cycles before, within noise after).
+The monitor still wakes the worker for a root that stops calling the
+runtime or blocks in the system. TestOneThreadSpawnJoin now spawns
+1,000 tasks a scope and bounds mon_wake and steal too (main's std:
+12 to 50 wakes, 79 to 121 mon_wake, 40 to 414 steals; now 0).
+
 A waker that calls the runtime (sends, locks, spawns) bounds its
 deferral at about 50 us plus 16 calls; one that only computes leaves it
 to the monitor, whose 1 ms timer oversleeps under load (up to 40 ms at
@@ -216,8 +232,8 @@ bench/perf/http p99 was within noise in every configuration (loaded:
 
 - An idle program pays nothing: an idle HTTP server's monitor sleeps
   (90 ticks over a 63 s run with 11 deferrals, none during the idle
-  minute; CPU time unchanged); XO_THREADS=1 starts no monitor (the same
-  4 threads as before).
+  minute; CPU time unchanged); at XO_THREADS=1 the monitor starts at
+  the first deferral (2026-10-16; before, it never started there).
 
 ## Alternatives
 - **Chase and Lev deques** (built first, commit 9198503): lock free for

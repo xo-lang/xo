@@ -6,6 +6,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- ELF objects from the arm64 backend give each function symbol its
+  size (to the next named symbol), so valgrind and perf name Xo
+  functions on Linux (callgrind showed ??? for all of them).
+- XO_THREADS=1: main's own runtime calls no longer wake the one worker
+  for tasks main deferred and will run at its join (decision 0077); on
+  Linux spawn-heavy code used two threads for one's work (bench/perf/conc
+  spawn: 93 to 36 ms of CPU, 4.7 to 1.8 times rust-ct's).
+- Mutex: an unlock no longer signals a waiting writer whose park is
+  already signaled and that has not run yet (found with the execution
+  trace, decision 0240); bench/perf/conc mutex at the default threads
+  31 to 39 Mcycles against 46 to 57 (macOS, three rounds of 15 runs at
+  load 17 to 29), rwmutex within noise.
+
 - An execution trace for native programs (decision 0240): XO_TRACE=FILE
   (`xo run --trace=FILE`, `xo test --trace=FILE`) records spawns, task
   runs, parks with their reason (chan send and recv, select, mutex,

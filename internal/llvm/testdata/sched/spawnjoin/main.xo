@@ -1,12 +1,14 @@
 // Spawns and a join at one worker (decision 0077's addendum,
-// XO_THREADS=1): main spawns 100 tasks per scope, 50 scopes, and joins
-// each; the join runs them (main's thread claims its scope's tasks), so
-// no worker is woken per spawn. Prints the sum the tasks added.
+// XO_THREADS=1): main spawns 1,000 tasks per scope, 50 scopes, and
+// joins each; the join runs them (main's thread claims its scope's
+// tasks), so no worker is woken per spawn, nor by main's own runtime
+// calls while it spawns (a scope's spawns take longer than the 50 us
+// waker side bound). Prints the sum the tasks added.
 fn main(os: Os) {
   let count = Atomic[Int].new(0)
   for _ in 0..50 {
     scope s {
-      for i in 0..100 {
+      for i in 0..1000 {
         s.spawn(fn() { count.add(i) })
       }
     }
