@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Debuggers see local variables of arm64 native builds (decision 0252
+  stage 2): Int, Float, Bool, and struct and tuple locals and parameters
+  get DWARF types and location lists from the register allocator, so
+  lldb's `frame variable` and gdb's `info locals` print them (Str, List,
+  Map, and enums come later). Code is the same with and without debug
+  information, checked on every golden.
+
 - A scope's join takes its own tasks' queue entries as it runs them
   (decision 0077's addendum), instead of visiting each task a second
   time later: bench/perf/conc spawn at XO_THREADS=1 83.5 to 66.2

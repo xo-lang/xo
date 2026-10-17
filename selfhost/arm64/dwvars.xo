@@ -1,0 +1,269 @@
+// DWARF variables and their locations (decision 0252, stage 2): after
+// register allocation, each binding record (ssa Func.dbinds) of a source
+// variable becomes, per word of its value, the instruction ranges where
+// that word's virtual register is live and the place it lives there (a
+// register, or a spill slot below sp). Emission puts a label at each
+// range's ends (dv_label) and the function's debug record carries the
+// variables (dv_field): their name, type, whether a parameter, their
+// declaration line, and location entries (start label, end label, the
+// bytes of a DWARF expression), which debug.xo turns into
+// DW_TAG_variable entries and .debug_loclists. Nothing here changes the
+// code: the labels are only labels (decision 0252's gate).
+
+/// Where one word of a binding's value lives over the instructions
+/// [lo, hi): the bytes of a DWARF location for it.
+struct DvSpan {
+  lo: Int
+  hi: Int
+  op: List[Int]
+}
+
+/// A binding record with its words' spans; def is where its value
+/// starts (the least lo), for choosing between bindings of one variable.
+struct DvBind {
+  dvar: Int
+  def: Int
+  words: List[List[DvSpan]]
+}
+
+/// The function's variables to describe and the instruction indexes
+/// where a location range starts or ends.
+struct DvPlan {
+  binds: List[DvBind] = []
+  need: List[Int] = []
+}
+
+/// Whether type t has a DWARF description in this stage: Int (any
+/// size), Float, Bool, and structs and tuples of them (decision 0252
+/// point 2; the rest come in stage 4).
+fn (var g: G) dv_type_ok(t: Int) -> Bool {
+  if t < 0 {
+    return false
+  }
+  let x = g.m.types[t]
+  match x.kind {
+    Int | Float | Bool => true
+    Struct => {
+      if x.coll {
+        return false
+      }
+      for f in x.fields {
+        if !g.dv_type_ok(f.ty) {
+          return false
+        }
+      }
+      !x.fields.is_empty()
+    }
+    Tuple => {
+      for e in x.elems {
+        if !g.dv_type_ok(e) {
+          return false
+        }
+      }
+      !x.elems.is_empty()
+    }
+    _ => false
+  }
+}
+
+/// The DWARF location of virtual register r, or an empty list when it
+/// has none (a far frame's slot, or no home).
+fn (g: G) dv_op(r: Int) -> List[Int] {
+  if r <= 0 || r >= g.loc.len() {
+    return []
+  }
+  let l = g.loc[r]
+  if l.reg >= 0 {
+    if l.reg < 32 {
+      return [0x50 + l.reg] // DW_OP_reg0 + n: x0 to x30
+    }
+    return [0x90] + uleb_bytes(64 + l.reg - FP_BASE) // DW_OP_regx: v0 to v31
+  }
+  if l.slot >= 0 && g.base == 0 && !g.fr.leaf {
+    return [0x8f] + sleb_bytes(g.fr.spill_base + 8 * l.slot) // DW_OP_breg31: sp
+  }
+  []
+}
+
+/// The plan of the current function's variables (after regalloc, before
+/// emission).
+fn (var g: G) dv_plan() -> DvPlan {
+  var p = DvPlan{}
+  if !g.m.debug_info || g.f.dvars.is_empty() || g.vranges.is_empty() {
+    return p
+  }
+  var need: Map[Int, Bool] = {}
+  for d in g.f.dbinds {
+    let dv = g.f.dvars[d.dvar]
+    if dv.inl >= 0 || !g.has_val[d.value] || !g.dv_type_ok(dv.ty) {
+      continue
+    }
+    let ws = g.vals[d.value]
+    if ws.len() != g.layout(dv.ty).len() {
+      continue
+    }
+    var words: List[List[DvSpan]] = []
+    var def = -1
+    for r in ws {
+      var spans: List[DvSpan] = []
+      let op = g.dv_op(r)
+      if !op.is_empty() && r < g.vranges.len() {
+        for rg in g.vranges[r] {
+          let lo = (rg.s + 3) / 4
+          let hi = rg.e / 4 + 1
+          if hi <= lo {
+            continue
+          }
+          spans.push(DvSpan{lo: lo, hi: hi, op: op})
+          need[lo] = true
+          need[hi] = true
+          if def < 0 || lo < def {
+            def = lo
+          }
+        }
+      }
+      words.push(spans)
+    }
+    if def >= 0 {
+      p.binds.push(DvBind{dvar: d.dvar, def: def, words: words})
+    }
+  }
+  var ks: List[Int] = []
+  for (k, _) in need {
+    ks.push(k)
+  }
+  p.need = ks.sort()
+  p
+}
+
+/// The debug record's variable field: per described variable,
+/// `name|type|param|line|entries`, the entries `start end bytes` joined by
+/// `~`, variables by `;`. labels maps an instruction index to the label
+/// at it (or at the next emitted instruction, or the end).
+fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
+  var out: List[Str] = []
+  for (vi, dv) in g.f.dvars.indexed() {
+    if dv.inl >= 0 || !g.dv_type_ok(dv.ty) {
+      continue
+    }
+    var mine: List[DvBind] = []
+    for b in p.binds {
+      if b.dvar == vi {
+        mine.push(b)
+      }
+    }
+    // the elementary intervals between every boundary of its spans
+    var cuts: Map[Int, Bool] = {}
+    for b in mine {
+      for w in b.words {
+        for s in w {
+          cuts[s.lo] = true
+          cuts[s.hi] = true
+        }
+      }
+    }
+    var cs: List[Int] = []
+    for (k, _) in cuts {
+      cs.push(k)
+    }
+    cs = cs.sort()
+    let nw = g.layout(dv.ty).len()
+    var entries: List[Str] = []
+    var last_end = ""
+    var last_op = ""
+    for i in 0..cs.len() {
+      if i + 1 >= cs.len() {
+        break
+      }
+      let a = cs[i]
+      let z = cs[i + 1]
+      // the binding defined last among those with a word here
+      var best = -1
+      for (bi, b) in mine.indexed() {
+        var here = false
+        for w in b.words {
+          for s in w {
+            if s.lo <= a && s.hi >= z {
+              here = true
+            }
+          }
+        }
+        if here && (best < 0 || b.def > mine[best].def) {
+          best = bi
+        }
+      }
+      if best < 0 {
+        continue
+      }
+      var expr: List[Int] = []
+      for w in mine[best].words {
+        var op: List[Int] = []
+        for s in w {
+          if s.lo <= a && s.hi >= z {
+            op = s.op
+          }
+        }
+        expr = expr + op
+        if nw > 1 {
+          expr.push(0x93) // DW_OP_piece 8
+          expr.push(8)
+        }
+      }
+      let la = labels.get(a) ?? ""
+      let lz = labels.get(z) ?? ""
+      if la.is_empty() || lz.is_empty() || la == lz {
+        continue
+      }
+      var bs: List[Str] = []
+      for x in expr {
+        bs.push("${x}")
+      }
+      let ops = bs.join(",")
+      if la == last_end && ops == last_op && !entries.is_empty() {
+        // the same place as the entry before: extend it
+        let prev = entries.pop() ?? ""
+        let parts = prev.split(" ")
+        entries.push("${parts[0]} ${lz} ${ops}")
+      } else {
+        entries.push("${la} ${lz} ${ops}")
+      }
+      last_end = lz
+      last_op = ops
+    }
+    let tn = g.m.types[dv.ty].name
+    out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}")
+  }
+  out.join(";")
+}
+
+fn uleb_bytes(v0: Int) -> List[Int] {
+  var v = v0
+  var out: List[Int] = []
+  while true {
+    var b = v & 127
+    v = v >> 7
+    if v != 0 {
+      b = b | 128
+    }
+    out.push(b)
+    if v == 0 {
+      break
+    }
+  }
+  out
+}
+
+fn sleb_bytes(v0: Int) -> List[Int] {
+  var v = v0
+  var out: List[Int] = []
+  while true {
+    let b = v & 127
+    v = v >> 7
+    let done = (v == 0 && b & 64 == 0) || (v == -1 && b & 64 != 0)
+    out.push(if done { b } else { b | 128 })
+    if done {
+      break
+    }
+  }
+  out
+}

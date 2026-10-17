@@ -172,3 +172,26 @@ What the compiler has to work with:
   dump is unchanged. No code generation change: the assembly of five
   programs (http, text, json, nbody, a test program) is byte identical to
   main's, and the fixed point holds.
+- Stage 2, arm64 (2026-10-17): regalloc keeps each virtual register's
+  live ranges from before coalescing (G.vranges, debug information on);
+  dwvars.xo turns each binding record's words into instruction spans in
+  their homes (DW_OP_regN, DW_OP_regx for v registers, DW_OP_breg31 for
+  a spill slot, DW_OP_piece 8 per word of a struct), and per variable the
+  binding defined last wins where several are live. Emission labels the
+  first emitted instruction at each span boundary (`_dv<n>`, kept by
+  pair_mem like the `_dl` rows); the debug record's seventh field carries
+  the variables (the function cache keys on dvars and dbinds, v4).
+  debug.xo writes base types (Int and the sized integers as 8 byte
+  signed or unsigned, Float, Float32, Bool) and structures of words
+  (structs and tuples), a DW_TAG_variable or DW_TAG_formal_parameter per
+  variable with DW_FORM_loclistx, .debug_loclists, and an empty
+  .debug_addr; the unit has DW_AT_loclists_base and DW_AT_addr_base at
+  bytes 38 and 42, which selfhost/macho dsym.xo moves (dsymutil, for
+  --ld=cc, rewrites the lists to address indexes and needs addr_base,
+  gotchas/dwarf-dsymutil-addr-base.md). Inlined copies' variables and
+  Str, List, Map, Set, enums come later (stage 4). internal/arm64
+  TestDebugVars: dwarfdump --verify and lldb `frame variable` (k = 10,
+  total = 0, d = 12 at main.xo:12) for the macho and cc links;
+  TestDebugInfoSameCode: every golden's machine code is the same with
+  and without debug information. Linux: llvm-dwarfdump --verify and
+  gdb `info locals` give the same values (Docker).

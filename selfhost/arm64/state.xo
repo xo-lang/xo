@@ -272,6 +272,9 @@ struct G {
   occ_regs: List[List[Rng]] = []
   pos: Int = -1
   slots: Int = 0
+  /// Each virtual register's live ranges before coalescing, kept with
+  /// debug information on for the variables' locations (dwvars.xo).
+  vranges: List[List[Rng]] = []
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0
   saved: List[Int] = []
@@ -342,6 +345,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.dl_last_inl = -1
   g.dl_rows = []
   g.dl_stub_rows = []
+  g.vranges = []
   g.dl_n = 0
   g.tl_v = -1
   g.tl_blk = -1

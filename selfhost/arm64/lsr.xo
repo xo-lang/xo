@@ -663,15 +663,18 @@ fn pair_mem(text: Str, ext: Str) -> Str {
   out.join("\n")
 }
 
-/// Whether label name is a debug line row's (emit.xo: `..._dl<n>`).
+/// Whether label name is a debug line row's (emit.xo: `..._dl<n>`) or
+/// a variable location's (`..._dv<n>`, dwvars.xo): kept, as the debug
+/// sections refer to them. Before a pair, a location label is one
+/// instruction early (a word may be shown a load before it arrives).
 fn is_row_label(name: Str) -> Bool {
-  // the digits at the end, after `_dl`
+  // the digits at the end, after `_dl` or `_dv`
   let bs = name.bytes()
   var k = bs.len()
   while k > 0 && Int(bs[k - 1]) >= 48 && Int(bs[k - 1]) <= 57 {
     k -= 1
   }
-  k < bs.len() && k >= 3 && name[k - 3..k] == "_dl"
+  k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv")
 }
 
 /// The name of the label line l defines (`L<letters, digits, _>:`), or

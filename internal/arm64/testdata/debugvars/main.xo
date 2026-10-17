@@ -1,0 +1,25 @@
+struct Point { x: Int, y: Int }
+
+struct Pair { a: Point, w: Float, ok: Bool }
+
+fn sum(ps: List[Point], k: Int) -> Int {
+  if k < 0 {
+    return sum(ps, k + 1)
+  }
+  var total = 0
+  for p in ps {
+    let d = p.x * k + p.y
+    total += d
+  }
+  let pr = Pair{a: ps[0], w: Float(total) / 3.0, ok: total > 10}
+  if pr.ok {
+    return total + pr.a.x
+  }
+  total
+}
+
+fn main(os: Os) {
+  let ps = [Point{x: 1, y: 2}, Point{x: 3, y: 4}]
+  let name = "pts"
+  os.stdio.println("${name} ${sum(ps, 10)}")
+}

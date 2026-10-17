@@ -8,9 +8,12 @@
 // The arm64 emitter's compile units (selfhost/arm64 debug.xo, producer
 // "xo") give their abbreviations' and line program's offsets as 0 within
 // their object; here each is moved by where its object's chunk lands:
-// the abbreviation offset at byte 8 of the unit, and DW_AT_stmt_list,
-// the unit's first attribute, at byte 13. Its low_pc and high_pc (bytes
-// 17 and 25) make .debug_aranges, which lldb maps addresses to units by.
+// the abbreviation offset at byte 8 of the unit, DW_AT_stmt_list, the
+// unit's first attribute, at byte 13, and DW_AT_loclists_base and
+// DW_AT_addr_base at bytes 38 and 42 (decision 0252: its variables'
+// location lists, and the address table dsymutil's rewrite needs). Its low_pc and high_pc
+// (bytes 17 and 25) make .debug_aranges, which lldb maps addresses to
+// units by.
 
 const MH_DSYM = 0xa
 
@@ -20,7 +23,7 @@ fn (var l: Linker) dsym() -> Bytes {
   // "xo"): another compiler's Mach-O DWARF refers between its sections by
   // offsets in its own object, with no relocations, which joining would
   // break (ld64 leaves them in the objects for dsymutil)
-  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges"]
+  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges", "__debug_loclists", "__debug_addr"]
   // per section: the joined bytes, and per object the chunk's offset
   var data: List[List[Int]] = []
   var at: List[Map[Int, Int]] = []
@@ -78,6 +81,10 @@ fn (var l: Linker) dsym() -> Bytes {
     let ln = at[0].get(o) ?? 0
     put32(info, off + 8, get32(info, off + 8) + ab)
     put32(info, off + 13, get32(info, off + 13) + ln)
+    if off + 46 <= info.len() {
+      put32(info, off + 38, get32(info, off + 38) + (at[4].get(o) ?? 0))
+      put32(info, off + 42, get32(info, off + 42) + (at[5].get(o) ?? 0))
+    }
     let lo = get64(info, off + 17)
     let hi = get64(info, off + 25)
     // a set: length, version 2, the unit's offset, address size 8,

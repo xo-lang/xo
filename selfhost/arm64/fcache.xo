@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v3"
+const FN_CACHE_VERSION = "xo fn cache v4"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is
@@ -458,6 +458,13 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
     b.write("file ${f.file.len()}:${f.file}\n")
     for s in f.inl_sites {
       b.write("inl ${s.callee.len()}:${s.callee} ${s.file.len()}:${s.file} ${s.call_line} ${s.parent}\n")
+    }
+    // the variables' inputs (decision 0252)
+    for d in f.dvars {
+      b.write("dvar ${d.name.len()}:${d.name} ${tk_of(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+    }
+    for d in f.dbinds {
+      b.write("dbind ${d.dvar} ${d.value} ${d.line}\n")
     }
   }
   for (vi, x) in f.values.indexed() {

@@ -20,7 +20,7 @@ fn (g: G) debug_sections() -> Str {
   var recs: List[DbgFunc] = []
   for d in g.dbgs {
     let p = d.split("\t")
-    if p.len() != 6 {
+    if p.len() != 6 && p.len() != 7 {
       continue
     }
     let file = if p[0].is_empty() { "<generated>" } else { p[0] }
@@ -44,7 +44,26 @@ fn (g: G) debug_sections() -> Str {
         rows.push(DbgRow{label: lr[0], line: Int.parse(lr[1]) ?? 0, file: rf, site: if site < sites.len() { site } else { -1 }})
       }
     }
-    recs.push(DbgFunc{file: fi, name: p[1], begin: p[2], end: p[3], rows: rows, sites: sites})
+    var vars: List[DbgVar] = []
+    if p.len() == 7 && !p[6].is_empty() {
+      for v in p[6].split(";") {
+        let q = v.split("|")
+        if q.len() != 5 {
+          continue
+        }
+        var ents: List[DbgLoc] = []
+        if !q[4].is_empty() {
+          for e in q[4].split("~") {
+            let t = e.split(" ")
+            if t.len() == 3 {
+              ents.push(DbgLoc{start: t[0], end: t[1], ops: t[2]})
+            }
+          }
+        }
+        vars.push(DbgVar{name: q[0], ty: q[1], param: q[2] == "1", line: Int.parse(q[3]) ?? 0, locs: ents})
+      }
+    }
+    recs.push(DbgFunc{file: fi, name: p[1], begin: p[2], end: p[3], rows: rows, sites: sites, vars: vars})
   }
   let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   var out = StrBuilder.new()
@@ -143,10 +162,23 @@ fn (g: G) debug_sections() -> Str {
   // inlined_subroutine, children (the calls inlined into it):
   // abstract_origin (unit relative), low_pc, high_pc, call_file,
   // call_line, call_column
-  out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
+  // (1 also: loclists_base and addr_base, at bytes 38 and 42, after the
+  // language, for dsym.xo; dsymutil turns the location lists into
+  // indexes of an address table and needs the unit's addr_base to give
+  // it; decision 0252; for
+  // dsym.xo; decision 0252) 5: base_type: name, encoding, byte_size; 6:
+  // structure_type, children: name, byte_size; 7: member: name, type,
+  // data_member_location; 8: variable and 9: formal_parameter: name,
+  // type, decl_line, location (loclistx)
+  out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x8c, 0x01, 0x17, 0x73, 0x17, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
   out.write("\t.byte 2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
   out.write("\t.byte 3, 0x2e, 0, 0x03, 0x08, 0x20, 0x0b, 0, 0\n")
   out.write("\t.byte 4, 0x1d, 1, 0x31, 0x13, 0x11, 0x01, 0x12, 0x01, 0x58, 0x0f, 0x59, 0x0f, 0x57, 0x0f, 0, 0\n")
+  out.write("\t.byte 5, 0x24, 0, 0x03, 0x08, 0x3e, 0x0b, 0x0b, 0x0b, 0, 0\n")
+  out.write("\t.byte 6, 0x13, 1, 0x03, 0x08, 0x0b, 0x0f, 0, 0\n")
+  out.write("\t.byte 7, 0x0d, 0, 0x03, 0x08, 0x49, 0x13, 0x38, 0x0f, 0, 0\n")
+  out.write("\t.byte 8, 0x34, 0, 0x03, 0x08, 0x49, 0x13, 0x3b, 0x0f, 0x02, 0x22, 0, 0\n")
+  out.write("\t.byte 9, 0x05, 0, 0x03, 0x08, 0x49, 0x13, 0x3b, 0x0f, 0x02, 0x22, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
   var die = Dw{}
@@ -156,8 +188,22 @@ fn (g: G) debug_sections() -> Str {
   die.quad(recs[recs.len() - 1].end)
   die.str("xo")
   die.u16(0x0c) // DW_LANG_C99: no code for Xo
+  // the offsets table of this unit's .debug_loclists, past its 12 byte
+  // header (dsym.xo moves it by where the object's chunk lands)
+  let ll_base = g.local("xo_dwllbase_${g.ns}")
+  die.offset(if mac { "12" } else { ll_base })
+  let addr_base = g.local("xo_dwaddrbase_${g.ns}")
+  die.offset(if mac { "8" } else { addr_base })
   die.str(files[0])
   die.str(dir)
+  // the types of the variables (unit relative offsets, by type name)
+  var tys: Map[Str, Int] = {}
+  for fr in recs {
+    for v in fr.vars {
+      let _t = g.dw_type(die, tys, v.ty)
+    }
+  }
+  var lists: List[List[DbgLoc]] = []
   // the runs of inlined code (outermost sites) of each function, and an
   // abstract subprogram per callee they name (unit relative offset: the
   // 12 byte unit header, then the entries)
@@ -185,6 +231,15 @@ fn (g: G) debug_sections() -> Str {
       chains.push(site_chain(fr, row.site))
     }
     inline_level(die, fr, chains, origin, 0, fr.rows.len(), 0)
+    // its variables (decision 0252), each with a location list
+    for v in fr.vars {
+      die.uleb(if v.param { 9 } else { 8 })
+      die.str(v.name)
+      die.u32(tys.get(v.ty) ?? 0)
+      die.uleb(v.line / 4096)
+      die.uleb(lists.len())
+      lists.push(v.locs)
+    }
     die.u8(0)
   }
   die.u8(0)
@@ -194,6 +249,35 @@ fn (g: G) debug_sections() -> Str {
   out.write("\t.long ${2 + 1 + 1 + 4 + die.n}\n\t.short 5\n\t.byte 1\n\t.byte 8\n")
   out.write("\t.long ${if mac { "0" } else { abbrev_lab }}\n")
   out.write(die.text())
+  // .debug_loclists: the header, an offset per list (from the end of the
+  // header, DW_AT_loclists_base), then the lists of DW_LLE_start_end
+  // entries
+  var body = Dw{}
+  var offs: List[Int] = []
+  for l in lists {
+    offs.push(4 * lists.len() + body.n)
+    for e in l {
+      body.u8(7) // DW_LLE_start_end
+      body.quad(e.start)
+      body.quad(e.end)
+      let ops = e.ops.split(",")
+      body.uleb(ops.len())
+      for o in ops {
+        body.u8(Int.parse(o) ?? 0)
+      }
+    }
+    body.u8(0) // DW_LLE_end_of_list
+  }
+  out.write(if mac { "\t.section __DWARF,__debug_loclists,regular,debug\n" } else { "\t.section .debug_loclists,\"\",@progbits\n" })
+  out.write("\t.long ${2 + 1 + 1 + 4 + 4 * lists.len() + body.n}\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${lists.len()}\n")
+  out.write("${ll_base}:\n")
+  for o in offs {
+    out.write("\t.long ${o}\n")
+  }
+  out.write(body.text())
+  // .debug_addr: an empty address table (addr_base above)
+  out.write(if mac { "\t.section __DWARF,__debug_addr,regular,debug\n" } else { "\t.section .debug_addr,\"\",@progbits\n" })
+  out.write("\t.long 4\n\t.short 5\n\t.byte 8\n\t.byte 0\n${addr_base}:\n")
   out.write(g.section("text"))
   out.freeze()
 }
@@ -206,6 +290,104 @@ struct DbgFunc {
   end: Str
   rows: List[DbgRow]
   sites: List[DbgSite]
+  vars: List[DbgVar] = []
+}
+
+/// A variable of a function (dwvars.xo): its name, its type's name,
+/// whether a parameter, its packed declaration line, and its locations.
+struct DbgVar {
+  name: Str
+  ty: Str
+  param: Bool
+  line: Int
+  locs: List[DbgLoc]
+}
+
+/// A location entry: from label start to label end, the bytes of a
+/// DWARF expression (comma separated).
+struct DbgLoc {
+  start: Str
+  end: Str
+  ops: Str
+}
+
+/// The unit relative offset of the DWARF type named n (an SSA type of
+/// the module, dwvars.xo dv_type_ok), written into die before the
+/// subprograms the first time it is asked for, its fields' types first.
+fn (g: G) dw_type(var die: Dw, var tys: Map[Str, Int], n: Str) -> Int {
+  if let Some(o) = tys.get(n) {
+    return o
+  }
+  let t = g.m.type_at.get(n) ?? -1
+  if t < 0 {
+    return 0
+  }
+  let x = g.m.types[t]
+  let enc = match x.kind {
+    Float => 4 // DW_ATE_float
+    Bool => 2 // DW_ATE_boolean
+    Int => if x.unsigned { 7 } else { 5 } // DW_ATE_unsigned, DW_ATE_signed
+    _ => 0
+  }
+  if enc != 0 {
+    let o = 12 + die.n
+    die.uleb(5)
+    die.str(n)
+    die.u8(enc)
+    die.u8(if enc == 4 && x.bits == 32 { 4 } else { 8 })
+    tys[n] = o
+    return o
+  }
+  // a struct or tuple: its fields at their word offsets
+  var names: List[Str] = []
+  var types: List[Int] = []
+  if x.fields.is_empty() {
+    for (i, e) in x.elems.indexed() {
+      names.push("${i}")
+      types.push(e)
+    }
+  } else {
+    for f in x.fields {
+      names.push(f.name)
+      types.push(f.ty)
+    }
+  }
+  var refs: List[Int] = []
+  for ft in types {
+    refs.push(g.dw_type(die, tys, g.m.types[ft].name))
+  }
+  let o = 12 + die.n
+  die.uleb(6)
+  die.str(n)
+  die.uleb(8 * g.dw_words(t))
+  var at = 0
+  for (i, fname) in names.indexed() {
+    die.uleb(7)
+    die.str(fname)
+    die.u32(refs[i])
+    die.uleb(8 * at)
+    at += g.dw_words(types[i])
+  }
+  die.u8(0)
+  tys[n] = o
+  o
+}
+
+/// The words of a type dw_type describes: one for Int, Float, and Bool,
+/// the sum of the fields' for a struct or tuple (gen.xo layout's count).
+fn (g: G) dw_words(t: Int) -> Int {
+  let x = g.m.types[t]
+  if x.fields.is_empty() && x.elems.is_empty() {
+    return 1
+  }
+  var n = 0
+  for f in x.fields {
+    n += g.dw_words(f.ty)
+  }
+  for e in x.elems {
+    n += g.dw_words(e)
+  }
+  n
 }
 
 /// A row: its label, packed line, file (the unit's index), and inline
