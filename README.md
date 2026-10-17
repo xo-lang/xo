@@ -118,10 +118,11 @@ a 16 vCPU machine as of 2026-10-13, decision 0216). `bin/xo` finds
 The module path is `github.com/xo-lang/xo` (local name; see
 `knowledgebase/infrastructure/toolchain.md`).
 
-The Go backend (the default) needs the Go toolchain. The native backends
-need a C toolchain: `--backend=llvm` needs clang, and `--backend=arm64`
-needs a C compiler driver (`cc`: clang or gcc) to assemble the generated
-code and run the system linker. The arm64 backend's C runtime (std/llrt)
+The default backend is native (decision 0248): arm64 on arm64 hosts,
+LLVM (which needs clang) on x86_64 hosts. `--backend=go` builds through
+the Go toolchain, and programs with `use go` need it. The arm64 backend
+assembles and links with Xo's own assembler and linkers on macOS and
+for Linux (no C toolchain); `--ld=cc` uses the system's. The arm64 backend's C runtime (std/llrt)
 comes prebuilt in a release archive (`lib/xo/rtpack`, built by
 `scripts/release.sh`); an xo built from a checkout compiles it on the
 first native build and caches it (decision 0157).

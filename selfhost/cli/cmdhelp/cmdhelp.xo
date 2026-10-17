@@ -180,11 +180,12 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no
                 [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
-program. --backend=llvm and --backend=arm64 build natively (arm64 is
-emitted as assembly when it is not the host); --no-gc (also on run and
-test) builds without a garbage collector: arm64 on arm64 hosts, llvm
-otherwise (--backend may name one); every construct, std API, or effect
-the native backends do not support is reported as XO1201 before code
+program. The default backend is native (decision 0248): arm64 on arm64
+hosts, llvm (which needs clang) otherwise; --backend=go builds through
+the Go toolchain, and a program with `use go` needs it. A linux/arm64
+target links with Xo's own linker, from any host (decision 0243).
+--no-gc (also on run and test) reports every construct, std API, or
+effect the native backends do not support as XO1201 before code
 generation (decision 0083). --backend=wasm builds a WASI preview1 module.
 Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails

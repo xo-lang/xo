@@ -97,7 +97,9 @@ func TestDump(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	bin := filepath.Join(dir, "app.bin")
-	if code := run(t, []string{"build", "-o", bin, src}, &out, &errOut); code != 0 {
+	// xo dump reads a Go backend program's state (decision 0248: named,
+	// since the default is native)
+	if code := run(t, []string{"build", "--backend=go", "-o", bin, src}, &out, &errOut); code != 0 {
 		t.Fatalf("build: exit %d: %s", code, errOut.String())
 	}
 	cmd := command(t, bin)

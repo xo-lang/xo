@@ -2272,6 +2272,19 @@ loop's check: an agent runs `xo check --fix` and then `xo test`, so a
 diagnostic with an exact fix never costs a run (decision 0096). The MCP
 `check` tool takes `fix: true` for the same.
 
+**Backends.** `xo build`, `run`, and `test` compile natively by default
+(decision 0248): the arm64 backend on arm64 hosts, the LLVM backend (which
+needs clang) otherwise. `--backend=go` compiles through the Go toolchain
+and is required by a program with a `use go` package; with no `--backend`
+such a program is a usage error naming it. The flags only the Go backend
+has (`--hybrid`, `--holes`, `xo test --explore`, `xo run --seed` and
+`--record`) choose it when no backend is given, and `--race` the LLVM
+backend's ThreadSanitizer. Contract fuzzing (9.2) and `xo dump` (11.4)
+are the Go backend's for now: a native `xo test` skips the contract fuzz
+tests and prints, per module, `MODULE: contract fuzzing needs
+--backend=go: N contracts not fuzzed`, and `xo dump` of a native program
+says it needs a Go backend build.
+
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
 reference counted instead of collected: arm64 on darwin/arm64 and

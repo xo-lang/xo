@@ -24,7 +24,9 @@ func TestRegressionWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runTest(t, []string{dir}, &out, &errb); code == 0 {
+	// contract fuzzing is the Go backend's (decision 0248: named, since
+	// the default is native, where it is skipped)
+	if code := runTest(t, []string{"--backend=go", dir}, &out, &errb); code == 0 {
 		t.Fatalf("want the contract fuzz to fail\n%s%s", out.String(), errb.String())
 	}
 	got, err := os.ReadFile(filepath.Join(dir, regressFile))

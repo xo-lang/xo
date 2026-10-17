@@ -35,6 +35,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   keep a COFF symbol table (lld-link /debug:symtab), which names the
   functions, also in a fault's XO_TRACEBACK (which had no frames on
   Windows). Checked under Wine with Box64 only.
+- Native is the default backend (decision 0248): `xo build`, `run` and
+  `test` with no `--backend` use arm64 on arm64 hosts and LLVM elsewhere.
+  `--backend=go` stays; a `use go` program with no `--backend` is a usage
+  error naming the package; `--hybrid`, `--holes`, `xo test --explore`,
+  `xo run --seed`/`--record` pick the Go backend and `--race` LLVM. A
+  native `xo test` says how many contracts it did not fuzz (contract
+  fuzzing needs `--backend=go` until native fuzzing lands).
+
 - Native builds check the runtime's function bodies only as the SSA
   builder reaches them (decision 0247): a hello build 947 to 622 ms,
   the 180 goldens 21% faster on arm64, the same binaries and LLVM IR on

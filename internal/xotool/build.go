@@ -31,8 +31,11 @@ type Options struct {
 	// Mode is ModeBuild (`xo build`, the default) or ModeTest (`xo
 	// test`, which builds the test binary and runs it; the binary stays
 	// at Out).
-	Mode    string
-	Backend string // "" is xo's default (go)
+	Mode string
+	// Backend: "" is the Go backend, named explicitly (xo's own default
+	// is native since decision 0248; these tests were written for Go),
+	// or the native one with NoGC
+	Backend string
 	NoGC    bool
 	// Out is the binary's path; "" is a fresh file in a temporary
 	// directory (the caller's to remove: Result.Dir).
@@ -151,6 +154,8 @@ func Build(dirs []string, o Options) (*Result, error) {
 	args = append(args, mode)
 	if o.Backend != "" {
 		args = append(args, "--backend="+o.Backend)
+	} else if !o.NoGC {
+		args = append(args, "--backend="+BackendGo)
 	}
 	for _, f := range []struct {
 		on   bool

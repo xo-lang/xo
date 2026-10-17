@@ -110,15 +110,23 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo build: --error-args=false needs --release (debug builds always record parameters)")
     os.proc.exit(2)
   }
-  // the default backend is `xo`'s (cmd/xo backendFlag): go for build,
-  // run, and test, the host's native backend with --no-gc (arm64 on
-  // arm64 hosts, llvm otherwise, as cmd/xo); asm prints the arm64 assembly
+  // the default backend is the host's native one (decision 0248): arm64
+  // on arm64 hosts, llvm otherwise; asm prints the arm64 assembly. The
+  // flags only the Go backend has (--hybrid, --holes, xo test --explore,
+  // xo run --seed and --record) choose it, and --race llvm's
+  // ThreadSanitizer (arm64 has no race detector).
   var backend = o.backend
   if backend.is_empty() {
-    // --profile (decision 0238) is the native runtime's: the host's
-    // native backend, as --no-gc
-    let native = o.no_gc || !o.profile.is_empty() || !o.trace.is_empty()
-    backend = if o.cmd == "asm" || (native && host_arch() == "arm64") { "arm64" } else if native { "llvm" } else { "go" }
+    let go_only = o.hybrid || o.holes || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && (o.topts.seed != 0 || !o.record.is_empty()))
+    if o.cmd == "asm" {
+      backend = "arm64"
+    } else if go_only {
+      backend = "go"
+    } else if host_arch() == "arm64" && !o.race {
+      backend = "arm64"
+    } else {
+      backend = "llvm"
+    }
   }
   if !o.trace.is_empty() && backend == "go" {
     os.stdio.eprintln("xo ${what}: --trace needs a native backend (llvm or arm64); a Go backend program traces with runtime/trace")
@@ -407,6 +415,16 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var t = os.clock.now()
   let c = check_program(os, o, true)
   t = lap(os, phases, "check", t)
+  if o.backend.is_empty() {
+    // a program with `use go` builds only with the Go backend: say so,
+    // rather than the native build's errors on each Go use (decision 0248)
+    for m in c.mods {
+      if !m.go_path.is_empty() {
+        os.stdio.eprintln("xo ${o.cmd}: this program uses the Go package \"${m.go_path}\" (`use go`), which needs the Go backend: add --backend=go (the default backend is native, decision 0248)")
+        os.proc.exit(2)
+      }
+    }
+  }
   var uses_time = false
   for m in c.mods {
     uses_time = uses_time || m.path == "native/time"
@@ -455,6 +473,10 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if cc.is_empty() {
       cc = find_clang(os)
       if cc.is_empty() {
+        if o.backend.is_empty() {
+          // the default backend on this host (decision 0248)
+          fail(os, "the LLVM backend (the default on this host) needs clang: install it (xcode-select --install on macOS, your distribution's clang package on Linux) or set XO_CLANG, or build with --backend=go")
+        }
         fail(os, "the LLVM backend needs clang: install it or set XO_CLANG")
       }
     }
