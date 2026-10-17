@@ -160,7 +160,9 @@ func TestDebugInfoSameCode(t *testing.T) {
 // through `xo dev dwarf`) on testdata/debugvars: from the arm64
 // backend's dSYM (selfhost/macho and dsymutil) it reads sum's variables
 // with the address ranges dwarfdump prints for each, and from the LLVM
-// backend's, sum inlined into main with k the constant 10.
+// backend's, sum inlined into main with k the constant 10; from each, a
+// breakpoint at main.xo:11 resolves to lldb's address, and the line
+// tables give that address's line back.
 func TestDwarfReader(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -231,6 +233,27 @@ func TestDwarfReader(t *testing.T) {
 			}
 			if !regexp.MustCompile(`(?m)^global var xo_static: \[256\]Int line 0\n\s+always \[0x[0-9a-f]+\]$`).Match(all) {
 				t.Errorf("xo dev dwarf: no xo_static global with an address:\n%s", lastLines(all, 20))
+			}
+			// a breakpoint at main.xo:11 (in sum's loop; inlined into main
+			// by LLVM) at lldb's address, and the line at that address
+			brk, err := exec.Command(xo, "dev", "dwarf", "--break=main.xo:11", dw).CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo dev dwarf --break: %v\n%s", err, brk)
+			}
+			lb, err := lldb(t, false, "-b", "-o", "breakpoint set -f main.xo -l 11", bin)
+			if err != nil {
+				t.Fatalf("lldb: %v\n%s", err, lb)
+			}
+			m := regexp.MustCompile(`address = 0x0*([0-9a-f]+)`).FindSubmatch(lb)
+			if m == nil {
+				t.Fatalf("lldb set no breakpoint:\n%s", lb)
+			}
+			if got := strings.TrimSpace(string(brk)); got != "0x"+string(m[1]) {
+				t.Errorf("xo dev dwarf --break=main.xo:11: %s, lldb: 0x%s", got, m[1])
+			}
+			at, err := exec.Command(xo, "dev", "dwarf", "--pc=0x"+string(m[1]), dw).CombinedOutput()
+			if err != nil || !strings.HasSuffix(strings.TrimSpace(string(at)), "/main.xo:11") {
+				t.Errorf("xo dev dwarf --pc=0x%s: %v %s, want .../main.xo:11", m[1], err, at)
 			}
 			if c.name == "llvm" {
 				return

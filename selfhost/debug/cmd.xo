@@ -1,0 +1,147 @@
+// The commands of `xo debug` (decision 0253 point 4), parsed from a line
+// of the interactive prompt or of --batch -c: their names and short
+// forms, and their arguments.
+
+/// Where a breakpoint goes: a file and line, or a function by name.
+pub enum Spot {
+  Line(file: Str, line: Int)
+  Func(name: Str)
+}
+
+/// A parsed command.
+pub enum Cmd {
+  Break(spot: Spot)
+  Delete(id: Int)
+  Run
+  Continue
+  Step
+  Next
+  Finish
+  /// a variable or a field path (`p.a.x`), as names
+  Print(path: List[Str])
+  Locals
+  Backtrace
+  Frame(n: Int)
+  Tasks
+  /// a task, and whether its backtrace is asked (`task N bt`)
+  Task(id: Int, bt: Bool)
+  Threads
+  Quit
+}
+
+/// The command on line, or an error naming what is wrong (an empty line
+/// is an error too: the prompt repeats nothing).
+pub fn parse_cmd(line: Str) -> Cmd ! Str {
+  var words: List[Str] = []
+  for w in line.trim().split(" ") {
+    if !w.is_empty() {
+      words.push(w)
+    }
+  }
+  if words.is_empty() {
+    return Err("no command")
+  }
+  let name = words[0]
+  let args = words[1..]
+  match name {
+    "break" | "b" => {
+      if args.len() != 1 {
+        return Err("usage: break FILE:LINE or break FUNCTION")
+      }
+      Ok(Cmd.Break(spot: parse_spot(args[0])?))
+    }
+    "delete" | "d" => Ok(Cmd.Delete(id: one_int(args, "delete N")?))
+    "run" | "r" => none(Cmd.Run, args, "run")
+    "continue" | "c" => none(Cmd.Continue, args, "continue")
+    "step" | "s" => none(Cmd.Step, args, "step")
+    "next" | "n" => none(Cmd.Next, args, "next")
+    "finish" => none(Cmd.Finish, args, "finish")
+    "print" | "p" => {
+      if args.len() != 1 {
+        return Err("usage: print NAME or print NAME.FIELD...")
+      }
+      var path: List[Str] = []
+      for part in args[0].split(".") {
+        if !is_name(part) {
+          return Err("print: ${args[0].quote()} is not a variable or a field path")
+        }
+        path.push(part)
+      }
+      Ok(Cmd.Print(path: path))
+    }
+    "locals" => none(Cmd.Locals, args, "locals")
+    "backtrace" | "bt" => none(Cmd.Backtrace, args, "backtrace")
+    "frame" | "f" => Ok(Cmd.Frame(n: one_int(args, "frame N")?))
+    "tasks" => none(Cmd.Tasks, args, "tasks")
+    "task" => {
+      if args.len() == 2 && args[1] == "bt" {
+        return Ok(Cmd.Task(id: one_int(args[0..1], "task N [bt]")?, bt: true))
+      }
+      Ok(Cmd.Task(id: one_int(args, "task N [bt]")?, bt: false))
+    }
+    "threads" => none(Cmd.Threads, args, "threads")
+    "quit" | "q" => none(Cmd.Quit, args, "quit")
+    _ => Err("unknown command ${name.quote()}")
+  }
+}
+
+/// FILE:LINE or a function name.
+fn parse_spot(s: Str) -> Spot ! Str {
+  // the last colon (a path may hold one)
+  var i = -1
+  let bs = s.bytes()
+  for k in 0..bs.len() {
+    if bs[k] == 58 {
+      i = k
+    }
+  }
+  if i >= 0 {
+    let file = s[0..i]
+    let line = Int.parse(s[i + 1..]) ?? -1
+    if file.is_empty() || line <= 0 {
+      return Err("break: ${s.quote()}: want FILE:LINE with a line from 1")
+    }
+    return Ok(Spot.Line(file: file, line: line))
+  }
+  if s.is_empty() {
+    return Err("break: no place")
+  }
+  Ok(Spot.Func(name: s))
+}
+
+fn none(c: Cmd, args: List[Str], name: Str) -> Cmd ! Str {
+  if !args.is_empty() {
+    return Err("${name} takes no arguments")
+  }
+  Ok(c)
+}
+
+fn one_int(args: List[Str], usage: Str) -> Int ! Str {
+  if args.len() != 1 {
+    return Err("usage: ${usage}")
+  }
+  match Int.parse(args[0]) {
+    Some(n) => if n >= 0 { Ok(n) } else { Err("usage: ${usage}") }
+    None => Err("usage: ${usage}")
+  }
+}
+
+/// A variable or field name: a letter or `_` then letters, digits, `_`,
+/// or digits alone (a tuple's field).
+fn is_name(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  if Int.parse(s) != None {
+    return true
+  }
+  var first = true
+  for r in s.runes() {
+    let ok = (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (!first && r >= '0' && r <= '9')
+    if !ok {
+      return false
+    }
+    first = false
+  }
+  true
+}

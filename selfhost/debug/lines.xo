@@ -1,0 +1,266 @@
+// The line tables of a file's DWARF (.debug_line, versions 2 to 5) for
+// `xo debug` (decision 0253): the rows (address, file, line, statement
+// flag) of every sequence, for a stopped thread's file and line and for
+// the addresses of a breakpoint at FILE:LINE. std/native/llrt/dwline.xo
+// reads the same tables from a running image's memory.
+
+/// A row of a line table: the first address of its code, its file (an
+/// index of Lines.files), its line, whether it starts a statement, and
+/// whether it ends its sequence (then the address is past the code).
+pub struct Row {
+  pub addr: Int
+  pub file: Int
+  pub line: Int
+  pub stmt: Bool
+  pub end: Bool
+}
+
+/// Every sequence's rows in the order of the tables, and the files by
+/// full path.
+pub struct Lines {
+  pub rows: List[Row] = []
+  pub files: List[Str] = []
+}
+
+/// The rows of every line program of s.
+pub fn lines(s: Sections) -> Lines {
+  var out = Lines{}
+  var at: Map[Str, Int] = {}
+  let b = s.line
+  var u = 0
+  while u + 12 <= b.len() {
+    let len = rd32(b, u)
+    if len == 0 || len >= 0xfffffff0 {
+      break
+    }
+    let next = u + 4 + len
+    if next > b.len() {
+      break
+    }
+    unit_lines(s, u, next, at, out)
+    u = next
+  }
+  out
+}
+
+fn unit_lines(s: Sections, u: Int, next: Int, var at: Map[Str, Int], var out: Lines) {
+  let b = s.line
+  var r = Rd{b: b, p: u + 4, end: next}
+  let ver = r.n(2)
+  if ver < 2 || ver > 5 {
+    return
+  }
+  if ver >= 5 {
+    // address_size, segment_selector_size
+    r.p += 2
+  }
+  let hlen = r.n(4)
+  let prog = r.p + hlen
+  let min_inst = r.byte()
+  if ver >= 4 {
+    let _ops = r.byte()
+  }
+  let def_stmt = r.byte() != 0
+  var line_base = r.byte()
+  if line_base >= 128 {
+    line_base -= 256
+  }
+  let line_range = r.byte()
+  let op_base = r.byte()
+  var lens: List[Int] = [0]
+  for _ in 1..op_base {
+    lens.push(r.byte())
+  }
+  // the unit's files by the program's numbering: indexes of out.files
+  var fmap: List[Int] = []
+  // a unit as dwarf.xo's forms read it: v5 line tables use DW_FORM_string,
+  // line_strp, strp, udata, data1 to data16, and block (MD5)
+  let u0 = Unit{start: 0, ver: ver}
+  if ver >= 5 {
+    var dirs: List[Str] = []
+    var dfmt: List[(Int, Int)] = []
+    for _ in 0..r.byte() {
+      let c = r.uleb()
+      dfmt.push((c, r.uleb()))
+    }
+    for _ in 0..r.uleb() {
+      var path = ""
+      for (c, fm) in dfmt {
+        let (v, ok) = read_form(r, fm, s, u0, 0)
+        if !ok {
+          return
+        }
+        if c == 1 {
+          path = v.str
+        }
+      }
+      dirs.push(path)
+    }
+    var ffmt: List[(Int, Int)] = []
+    for _ in 0..r.byte() {
+      let c = r.uleb()
+      ffmt.push((c, r.uleb()))
+    }
+    for _ in 0..r.uleb() {
+      var path = ""
+      var di = 0
+      for (c, fm) in ffmt {
+        let (v, ok) = read_form(r, fm, s, u0, 0)
+        if !ok {
+          return
+        }
+        if c == 1 {
+          path = v.str
+        } else if c == 2 {
+          di = v.n
+        }
+      }
+      fmap.push(intern(join(if di < dirs.len() { dirs[di] } else { "" }, path), at, out))
+    }
+  } else {
+    var dirs: List[Str] = [""]
+    while r.p < prog {
+      let d = r.cstr()
+      if d.is_empty() {
+        break
+      }
+      dirs.push(d)
+    }
+    // versions 2 to 4 number files from 1
+    fmap.push(-1)
+    while r.p < prog {
+      let name = r.cstr()
+      if name.is_empty() {
+        break
+      }
+      let di = r.uleb()
+      let _t = r.uleb()
+      let _l = r.uleb()
+      fmap.push(intern(join(if di < dirs.len() { dirs[di] } else { "" }, name), at, out))
+    }
+  }
+  if line_range == 0 {
+    return
+  }
+  r.p = prog
+  var addr = 0
+  var file = 1
+  var line = 1
+  var stmt = def_stmt
+  while r.p < next {
+    let op = r.byte()
+    var emit = false
+    if op >= op_base {
+      let adj = op - op_base
+      addr += (adj / line_range) * min_inst
+      line += line_base + adj % line_range
+      emit = true
+    } else {
+      match op {
+        0 => {
+          let n = r.uleb()
+          let at0 = r.p
+          let sub = r.byte()
+          if sub == 1 {
+            out.rows.push(Row{addr: addr, file: -1, line: 0, stmt: false, end: true})
+            addr = 0
+            file = 1
+            line = 1
+            stmt = def_stmt
+          } else if sub == 2 {
+            addr = r.n(n - 1)
+          }
+          r.p = at0 + n
+        }
+        1 => emit = true
+        2 => addr += r.uleb() * min_inst
+        3 => line += r.sleb()
+        4 => file = r.uleb()
+        5 => {
+          let _c = r.uleb()
+        }
+        6 => stmt = !stmt
+        8 => addr += ((255 - op_base) / line_range) * min_inst
+        9 => addr += r.n(2)
+        12 => {
+          let _i = r.uleb()
+        }
+        7 | 10 | 11 => {}
+        _ => {
+          // an opcode of a later version: skip its operands
+          for _ in 0..(if op < lens.len() { lens[op] } else { 0 }) {
+            let _x = r.uleb()
+          }
+        }
+      }
+    }
+    if emit {
+      let fi = if file >= 0 && file < fmap.len() { fmap[file] } else { -1 }
+      out.rows.push(Row{addr: addr, file: fi, line: line, stmt: stmt, end: false})
+    }
+  }
+}
+
+fn join(dir: Str, p: Str) -> Str {
+  if p.starts_with("/") || dir.is_empty() {
+    return p
+  }
+  "${dir}/${p}"
+}
+
+fn intern(name: Str, var at: Map[Str, Int], var out: Lines) -> Int {
+  if let Some(k) = at.get(name) {
+    return k
+  }
+  out.files.push(name)
+  at[name] = out.files.len() - 1
+  out.files.len() - 1
+}
+
+/// Whether file path f is named by name: the same path, or a path that
+/// ends in /name (`main.xo` names `/w/app/main.xo`).
+pub fn file_matches(f: Str, name: Str) -> Bool {
+  f == name || f.ends_with("/${name}")
+}
+
+/// The file and line of the code at pc (the row at or before it in its
+/// sequence), or None.
+pub fn (l: Lines) at(pc: Int) -> (Str, Int)? {
+  var best = -1
+  for (i, r) in l.rows.indexed() {
+    if r.end || r.addr > pc {
+      continue
+    }
+    // the next row of the sequence must be past pc
+    if i + 1 < l.rows.len() && l.rows[i + 1].addr <= pc {
+      continue
+    }
+    if best < 0 || r.addr > l.rows[best].addr {
+      best = i
+    }
+  }
+  if best < 0 || l.rows[best].file < 0 {
+    return None
+  }
+  Some((l.files[l.rows[best].file], l.rows[best].line))
+}
+
+/// The addresses to stop at for FILE:LINE: in each sequence, the first
+/// statement row of every run of rows on that line (a line's code can be
+/// in several places: a loop's test, inlined copies), in address order.
+pub fn (l: Lines) addrs(name: Str, line: Int) -> List[Int] {
+  var out: List[Int] = []
+  var prev_here = false
+  for r in l.rows {
+    if r.end {
+      prev_here = false
+      continue
+    }
+    let here = r.file >= 0 && r.line == line && file_matches(l.files[r.file], name)
+    if here && !prev_here && r.stmt {
+      out.push(r.addr)
+    }
+    prev_here = here && (r.stmt || prev_here)
+  }
+  out.sort()
+}

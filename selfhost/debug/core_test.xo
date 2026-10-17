@@ -1,0 +1,193 @@
+// Tests of the debugger's parts that call no OS: commands, breakpoints'
+// table, values from registers and memory.
+
+fn desc(c: Cmd) -> Str {
+  match c {
+    Cmd.Break(Spot.Line(f, l)) => "break line ${f} ${l}"
+    Cmd.Break(Spot.Func(n)) => "break func ${n}"
+    Cmd.Delete(n) => "delete ${n}"
+    Cmd.Run => "run"
+    Cmd.Continue => "continue"
+    Cmd.Step => "step"
+    Cmd.Next => "next"
+    Cmd.Finish => "finish"
+    Cmd.Print(p) => "print ${p.join("/")}"
+    Cmd.Locals => "locals"
+    Cmd.Backtrace => "backtrace"
+    Cmd.Frame(n) => "frame ${n}"
+    Cmd.Tasks => "tasks"
+    Cmd.Task(n, bt) => "task ${n} ${bt}"
+    Cmd.Threads => "threads"
+    Cmd.Quit => "quit"
+  }
+}
+
+fn parsed(line: Str) -> Str {
+  match parse_cmd(line) {
+    Ok(c) => desc(c)
+    Err(e) => "error: ${e}"
+  }
+}
+
+test "commands and their short forms" {
+  expect(parsed("b main.xo:12")) == "break line main.xo 12"
+  expect(parsed("  break   /w/app/main.xo:7 ")) == "break line /w/app/main.xo 7"
+  expect(parsed("b sum")) == "break func sum"
+  expect(parsed("b http.serve")) == "break func http.serve"
+  expect(parsed("p total")) == "print total"
+  expect(parsed("print p.a.x")) == "print p/a/x"
+  expect(parsed("p pair.0")) == "print pair/0"
+  expect(parsed("c")) == "continue"
+  expect(parsed("s")) == "step"
+  expect(parsed("n")) == "next"
+  expect(parsed("bt")) == "backtrace"
+  expect(parsed("frame 2")) == "frame 2"
+  expect(parsed("task 3")) == "task 3 false"
+  expect(parsed("task 3 bt")) == "task 3 true"
+  expect(parsed("d 1")) == "delete 1"
+  expect(parsed("q")) == "quit"
+}
+
+test "malformed commands say what is wrong" {
+  expect(parsed("")) == "error: no command"
+  expect(parsed("frob")) == "error: unknown command \"frob\""
+  expect(parsed("b main.xo:0")) == "error: break: \"main.xo:0\": want FILE:LINE with a line from 1"
+  expect(parsed("b")) == "error: usage: break FILE:LINE or break FUNCTION"
+  expect(parsed("c 1")) == "error: continue takes no arguments"
+  expect(parsed("p a..b")) == "error: print: \"a..b\" is not a variable or a field path"
+  expect(parsed("frame x")) == "error: usage: frame N"
+}
+
+/// A stopped thread: registers, and memory from base.
+struct Fake {
+  regs: Map[Int, Int]
+  base: Int
+  data: Bytes
+}
+
+fn (f: Fake) reg(n: Int) -> Int? {
+  f.regs.get(n)
+}
+
+fn (f: Fake) mem(a: Int, n: Int) -> Bytes? {
+  if a < f.base || a + n > f.base + f.data.len() {
+    return None
+  }
+  Some(f.data[a - f.base..a - f.base + n])
+}
+
+fn words(xs: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for x in xs {
+    for k in 0..8 {
+      b.write_byte(UInt8((x >> (8 * k)) & 255))
+    }
+  }
+  b.freeze()
+}
+
+/// Types at fixed offsets: 1 Int, 2 Float, 3 Bool, 4 Point{x, y}, 5
+/// [3]Int, 6 Int32.
+fn types() -> Info {
+  var i = Info{}
+  i.types[1] = Type{tag: 0x24, name: "Int", size: 8, enc: 5, of: -1, members: []}
+  i.types[2] = Type{tag: 0x24, name: "Float", size: 8, enc: 4, of: -1, members: []}
+  i.types[3] = Type{tag: 0x24, name: "Bool", size: 8, enc: 2, of: -1, members: []}
+  i.types[4] = Type{tag: 0x13, name: "Point", size: 16, enc: 0, of: -1, members: [Member{name: "x", ty: 1, offset: 0}, Member{name: "y", ty: 1, offset: 8}]}
+  i.types[5] = Type{tag: 0x01, name: "", size: 0, enc: 0, of: 1, members: [], count: 3}
+  i.types[6] = Type{tag: 0x24, name: "Int32", size: 4, enc: 5, of: -1, members: []}
+  i
+}
+
+fn var_of(ty: Int, pieces: List[Piece]) -> Var {
+  Var{name: "v", ty: ty, param: false, line: 1, locs: [Loc{lo: 0x100, hi: 0x200, pieces: pieces}]}
+}
+
+fn shown(i: Info, v: Var, pc: Int, t: Fake) -> Str {
+  match value(i, v, pc, t) {
+    Ok(x) => x.show()
+    Err(e) => e
+  }
+}
+
+test "values from registers, the stack, addresses, and constants" {
+  let i = types()
+  let sp = 0x7000
+  let t = Fake{regs: {0: -3, 1: 0x4004000000000000, 2: 1, 11: 7, 31: sp}, base: sp, data: words([0, 0, 42, 10, 20, 30])}
+  expect(shown(i, var_of(1, [Piece{place: Place.Reg(reg: 0), size: 0}]), 0x100, t)) == "-3"
+  expect(shown(i, var_of(2, [Piece{place: Place.Reg(reg: 1), size: 0}]), 0x100, t)) == "2.5"
+  expect(shown(i, var_of(3, [Piece{place: Place.Reg(reg: 2), size: 0}]), 0x100, t)) == "true"
+  expect(shown(i, var_of(1, [Piece{place: Place.Value(v: 10), size: 0}]), 0x100, t)) == "10"
+  // a struct: x in x11, y in the spill slot [sp+16]
+  let p = var_of(4, [Piece{place: Place.Reg(reg: 11), size: 8}, Piece{place: Place.Breg(reg: 31, off: 16), size: 8}])
+  expect(shown(i, p, 0x180, t)) == "Point{x: 7, y: 42}"
+  // y optimized out: x still shows
+  let q = var_of(4, [Piece{place: Place.Reg(reg: 11), size: 8}, Piece{place: Place.Gone, size: 8}])
+  expect(shown(i, q, 0x180, t)) == "Point{x: 7, y: <optimized out>}"
+  expect(shown(i, var_of(5, [Piece{place: Place.Addr(addr: sp + 24), size: 0}]), 0x100, t)) == "[10, 20, 30]"
+  expect(shown(i, var_of(6, [Piece{place: Place.Value(v: 0xffffffff), size: 0}]), 0x100, t)) == "-1"
+  // outside the location's range, unreadable memory, an unknown register
+  expect(shown(i, p, 0x200, t)) == "<optimized out>"
+  expect(shown(i, var_of(1, [Piece{place: Place.Addr(addr: 8), size: 0}]), 0x100, t)) == "<unreadable: memory>"
+  expect(shown(i, var_of(1, [Piece{place: Place.Reg(reg: 5), size: 0}]), 0x100, t)) == "<unreadable: register 5>"
+}
+
+test "field paths into structures and arrays" {
+  let i = types()
+  let t = Fake{regs: {11: 7, 12: 8}, base: 0, data: b""}
+  let p = var_of(4, [Piece{place: Place.Reg(reg: 11), size: 8}, Piece{place: Place.Reg(reg: 12), size: 8}])
+  let v = value(i, p, 0x100, t).ok() ?? Val.Text("")
+  expect((field(v, ["y"]).ok() ?? Val.Text("")).show()) == "8"
+  expect(field(v, ["z"]).is_err()) == true
+  let arr = Val.Parts(type_name: "[2]", names: ["", ""], vals: [Val.Text("1"), Val.Text("2")])
+  expect((field(arr, ["1"]).ok() ?? Val.Text("")).show()) == "2"
+}
+
+test "floats from their bits" {
+  expect(float_of(0x3ff0000000000000)) == 1.0
+  expect(float_of(MIN_INT | 0x3fe0000000000000)) == -0.5
+  expect(float_of(0)) == 0.0
+  expect(float_of(0x7ff0000000000000)) == 1.0 / 0.0
+  expect(float_of(0x7ff8000000000000).is_nan()) == true
+  expect(float_of(1)) == 4.9e-324
+  expect(float_of(f32_to_f64_bits(0x40490fdb))) == 3.1415927410125732
+}
+
+test "breakpoints: numbers, addresses, deletion" {
+  var l = Lines{}
+  l.files = ["/w/app/main.xo", "/w/std/prelude.xo"]
+  // two sequences: f at 0x100 (lines 3, 4, 4, 5) and g at 0x200 (4)
+  l.rows = [
+    Row{addr: 0x100, file: 0, line: 3, stmt: true, end: false},
+    Row{addr: 0x108, file: 0, line: 4, stmt: true, end: false},
+    Row{addr: 0x10c, file: 0, line: 4, stmt: true, end: false},
+    Row{addr: 0x110, file: 0, line: 5, stmt: true, end: false},
+    Row{addr: 0x118, file: -1, line: 0, stmt: false, end: true},
+    Row{addr: 0x200, file: 1, line: 4, stmt: true, end: false},
+    Row{addr: 0x204, file: 0, line: 4, stmt: true, end: false},
+    Row{addr: 0x210, file: -1, line: 0, stmt: false, end: true},
+  ]
+  var info = Info{}
+  info.funcs = [Func{name: "f", lo: 0x100, hi: 0x118, vars: []}, Func{name: "g", lo: 0x200, hi: 0x210, vars: []}]
+  expect(l.addrs("main.xo", 4)) == [0x108, 0x204]
+  // a line in two places of one function: one breakpoint address
+  var l2 = l
+  l2.rows.insert(4, Row{addr: 0x114, file: 0, line: 4, stmt: true, end: false})
+  expect(l2.addrs("main.xo", 4)) == [0x108, 0x114, 0x204]
+  expect(resolve(info, l2, Spot.Line(file: "main.xo", line: 4))) == Ok([0x108, 0x204])
+  expect(l.at(0x10e)) == Some(("/w/app/main.xo", 4))
+  expect(l.at(0x202)) == Some(("/w/std/prelude.xo", 4))
+  expect(l.at(0x300)) == None
+  var b = Bpts{}
+  expect(b.add(info, l, Spot.Line(file: "main.xo", line: 4))) == Ok(1)
+  expect(b.add(info, l, Spot.Func(name: "f"))) == Ok(2)
+  expect(b.add(info, l, Spot.Line(file: "main.xo", line: 9)).is_err()) == true
+  expect(b.add(info, l, Spot.Line(file: "other.xo", line: 4)).is_err()) == true
+  expect(b.add(info, l, Spot.Func(name: "h")).is_err()) == true
+  expect(b.traps()) == [0x108, 0x204]
+  expect(b.at(0x204)) == Some(1)
+  expect(b.delete(1)) == Ok([0x108, 0x204])
+  expect(b.traps()) == [0x108]
+  expect(b.at(0x108)) == Some(2)
+  expect(b.delete(1).is_err()) == true
+}

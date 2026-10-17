@@ -1,0 +1,335 @@
+// Values of a stopped program's variables (decision 0253): a variable's
+// location at the stop's pc (dwarf.xo pieces) read through the process
+// (Target: registers and memory, given by the per OS layer, or a test's
+// record), then shown by its DWARF type: integers, floats, booleans,
+// structures by their members, arrays by their elements, a pointer as an
+// address. A word the location says is gone, or that could not be read,
+// shows as `<optimized out>` or `<unreadable>` and does not hide the
+// rest of the value.
+
+/// A stopped thread's registers (DWARF numbering) and the process's
+/// memory.
+pub interface Target {
+  /// register n's value (a v register's low 64 bits), None when unknown
+  fn reg(self, n: Int) -> Int?
+  /// n bytes at address a, None when they cannot be read
+  fn mem(self, a: Int, n: Int) -> Bytes?
+}
+
+/// A value shown: its text, or the parts of a structure or array.
+pub enum Val {
+  Text(s: Str)
+  Parts(type_name: Str, names: List[Str], vals: List[Val])
+}
+
+/// The value as one line: `Point{x: 1, y: 2}`, `[1, 2, 3]`.
+pub fn (v: Val) show() -> Str {
+  match v {
+    Val.Text(s) => s
+    Val.Parts(t, names, vals) => {
+      var parts: List[Str] = []
+      for (i, x) in vals.indexed() {
+        parts.push(if names[i].is_empty() { x.show() } else { "${names[i]}: ${x.show()}" })
+      }
+      if t.starts_with("[") { "[${parts.join(", ")}]" } else { "${t}{${parts.join(", ")}}" }
+    }
+  }
+}
+
+/// The bytes of a value, with which of them are known (a piece that is
+/// gone or unreadable leaves its bytes unknown) and why the first unknown
+/// one is.
+struct Raw {
+  b: List[Int]
+  known: List[Bool]
+  why: Str = ""
+}
+
+/// The size in bytes of type t (a typedef's or const's referent's).
+pub fn (i: Info) type_size(t: Int) -> Int {
+  match i.types.get(t) {
+    Some(x) => {
+      if x.size > 0 {
+        return x.size
+      }
+      if x.tag == 0x01 {
+        return x.count * i.type_size(x.of)
+      }
+      if x.tag == 0x16 || x.tag == 0x26 || x.tag == 0x35 {
+        return i.type_size(x.of)
+      }
+      if x.tag == 0x0f {
+        return 8
+      }
+      0
+    }
+    None => 0
+  }
+}
+
+/// The value of v at pc, read through t: an error when v has no location
+/// there (`<optimized out>`) or a location this reader does not evaluate.
+pub fn value[T: Target](i: Info, v: Var, pc: Int, t: T) -> Val ! Str {
+  let ps = v.at(pc)
+  if ps.is_empty() {
+    return Err("<optimized out>")
+  }
+  let size = i.type_size(v.ty)
+  if size <= 0 {
+    return Err("<no size for type ${i.type_name(v.ty)}>")
+  }
+  let raw = gather(ps, size, t)?
+  Ok(decode(i, v.ty, raw, 0))
+}
+
+fn gather[T: Target](ps: List[Piece], size: Int, t: T) -> Raw ! Str {
+  var raw = Raw{b: [], known: []}
+  for p in ps {
+    let n = if p.size > 0 { p.size } else { size - raw.b.len() }
+    if n <= 0 {
+      break
+    }
+    var bytes: List[Int] = []
+    var why = ""
+    match p.place {
+      Place.Reg(r) => match t.reg(r) {
+        Some(x) => bytes = le_bytes(x, n)
+        None => why = "<unreadable: register ${r}>"
+      }
+      Place.Breg(r, off) => match t.reg(r) {
+        Some(x) => match t.mem(x + off, n) {
+          Some(m) => bytes = to_list(m)
+          None => why = "<unreadable: memory>"
+        }
+        None => why = "<unreadable: register ${r}>"
+      }
+      Place.Addr(a) => match t.mem(a, n) {
+        Some(m) => bytes = to_list(m)
+        None => why = "<unreadable: memory>"
+      }
+      Place.Value(c) => bytes = le_bytes(c, n)
+      Place.Fbreg(_) => return Err("<a frame base location: not read yet>")
+      Place.Gone => why = "<optimized out>"
+      Place.Other(op) => return Err("<a location with DWARF operation ${op}: not read yet>")
+    }
+    for k in 0..n {
+      if k < bytes.len() {
+        raw.b.push(bytes[k])
+        raw.known.push(true)
+      } else {
+        raw.b.push(0)
+        raw.known.push(false)
+      }
+    }
+    if bytes.len() < n && raw.why.is_empty() {
+      raw.why = if why.is_empty() { "<unreadable>" } else { why }
+    }
+  }
+  while raw.b.len() < size {
+    raw.b.push(0)
+    raw.known.push(false)
+    if raw.why.is_empty() {
+      raw.why = "<optimized out>"
+    }
+  }
+  Ok(raw)
+}
+
+/// The value of type t at byte off of raw.
+fn decode(i: Info, t: Int, raw: Raw, off: Int) -> Val {
+  let x = match i.types.get(t) {
+    Some(x) => x
+    None => return Val.Text("<unknown type>")
+  }
+  match x.tag {
+    0x16 | 0x26 | 0x35 => decode(i, x.of, raw, off)
+    0x13 | 0x17 => {
+      var names: List[Str] = []
+      var vals: List[Val] = []
+      for m in x.members {
+        names.push(m.name)
+        vals.push(decode(i, m.ty, raw, off + m.offset))
+      }
+      Val.Parts(type_name: x.name, names: names, vals: vals)
+    }
+    0x01 => {
+      let es = i.type_size(x.of)
+      var names: List[Str] = []
+      var vals: List[Val] = []
+      for k in 0..x.count {
+        names.push("")
+        vals.push(if es > 0 { decode(i, x.of, raw, off + k * es) } else { Val.Text("?") })
+      }
+      Val.Parts(type_name: "[${x.count}]", names: names, vals: vals)
+    }
+    _ => {
+      let n = if x.tag == 0x0f { 8 } else { x.size }
+      if n <= 0 || off + n > raw.b.len() {
+        return Val.Text("<unknown size>")
+      }
+      for k in off..off + n {
+        if !raw.known[k] {
+          return Val.Text(if raw.why.is_empty() { "<optimized out>" } else { raw.why })
+        }
+      }
+      var u = 0
+      for k in 0..n {
+        u = u | shl(raw.b[off + k], 8 * k)
+      }
+      if x.tag == 0x0f {
+        return Val.Text("0x${hex(u)}")
+      }
+      Val.Text(scalar(x.enc, n, u))
+    }
+  }
+}
+
+/// A base type's value from its n bytes u (little endian).
+fn scalar(enc: Int, n: Int, u: Int) -> Str {
+  match enc {
+    // DW_ATE_boolean
+    2 => if u & 255 != 0 { "true" } else { "false" }
+    // DW_ATE_float
+    4 => if n == 8 { "${float_of(u)}" } else { "${float_of(f32_to_f64_bits(u))}" }
+    // DW_ATE_signed, signed_char
+    5 | 6 => "${sext(u, n)}"
+    // DW_ATE_unsigned, unsigned_char: as unsigned (an 8 byte one above
+    // the largest Int in hex)
+    7 | 8 => if n == 8 && u < 0 { "0x${hex(u)}" } else { "${u}" }
+    _ => "0x${hex(u)}"
+  }
+}
+
+fn sext(u: Int, n: Int) -> Int {
+  if n >= 8 {
+    return u
+  }
+  let bit = shl(1, 8 * n - 1)
+  if u & bit != 0 { u - shl(1, 8 * n) } else { u }
+}
+
+fn le_bytes(v: Int, n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for k in 0..n {
+    out.push(if k < 8 { (v >> (8 * k)) & 255 } else { 0 })
+  }
+  out
+}
+
+fn to_list(b: Bytes) -> List[Int] {
+  var out: List[Int] = []
+  for x in b {
+    out.push(Int(x))
+  }
+  out
+}
+
+/// The Float of IEEE 754 binary64 bits b.
+pub fn float_of(b: Int) -> Float {
+  let neg = b < 0
+  let e = (b >> 52) & 2047
+  let frac = b & 4503599627370495
+  var f = 0.0
+  if e == 2047 {
+    if frac != 0 {
+      return 0.0 / 0.0
+    }
+    f = 1.0 / 0.0
+  } else if e == 0 {
+    // subnormal: frac * 2^-1074
+    f = Float(frac) * pow2f(-1074)
+  } else {
+    f = (1.0 + Float(frac) / 4503599627370496.0) * pow2f(e - 1023)
+  }
+  if neg { -f } else { f }
+}
+
+/// binary32 bits as binary64 bits (for float_of).
+fn f32_to_f64_bits(u: Int) -> Int {
+  let neg = u & 0x80000000 != 0
+  let e = (u >> 23) & 255
+  let frac = u & 0x7fffff
+  var bits = 0
+  if e == 255 {
+    bits = 0x7ff0000000000000 | shl(frac, 29)
+  } else if e == 0 {
+    if frac == 0 {
+      bits = 0
+    } else {
+      // subnormal binary32: normalize
+      var m = frac
+      var ee = -126
+      while m & 0x800000 == 0 {
+        m = m << 1
+        ee -= 1
+      }
+      bits = shl(ee + 1023, 52) | shl(m & 0x7fffff, 29)
+    }
+  } else {
+    bits = shl(e - 127 + 1023, 52) | shl(frac, 29)
+  }
+  if neg { bits | MIN_INT } else { bits }
+}
+
+fn pow2f(k: Int) -> Float {
+  var f = 1.0
+  if k >= 0 {
+    for _ in 0..k {
+      f = f * 2.0
+    }
+  } else {
+    for _ in 0..-k {
+      f = f / 2.0
+    }
+  }
+  f
+}
+
+/// v in lowercase hex digits (its 64 bits, no prefix).
+fn hex(v: Int) -> Str {
+  if v == 0 {
+    return "0"
+  }
+  let digits = "0123456789abcdef"
+  var out = ""
+  var x = v
+  var n = 0
+  while x != 0 && n < 16 {
+    let d = x & 15
+    out = digits[d..d + 1] + out
+    x = (x >> 4) & 0x0fffffffffffffff
+    n += 1
+  }
+  out
+}
+
+/// The part of v at a field path (`print p.a.x`: path ["a", "x"] of p's
+/// value; an array's element by its index).
+pub fn field(v: Val, path: List[Str]) -> Val ! Str {
+  var cur = v
+  for name in path {
+    var next: Val? = None
+    match cur {
+      Val.Parts(t, names, vals) => {
+        if t.starts_with("[") {
+          let k = Int.parse(name) ?? -1
+          if k >= 0 && k < vals.len() {
+            next = Some(vals[k])
+          }
+        } else {
+          for (i, n) in names.indexed() {
+            if n == name {
+              next = Some(vals[i])
+            }
+          }
+        }
+      }
+      Val.Text(_) => {}
+    }
+    match next {
+      Some(x) => cur = x
+      None => return Err("no field ${name.quote()}")
+    }
+  }
+  Ok(cur)
+}

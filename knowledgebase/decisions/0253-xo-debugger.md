@@ -251,3 +251,21 @@ programs):
   module defines that (LLVM writes DW_OP_addrx, which the reader resolves
   through the unit's .debug_addr). The text is unchanged (decision
   0252's gate). TestDwarfReader reads it from each build.
+- Stage 2's parts that call no OS (2026-10-17, while the owner reviews
+  the per OS calls): selfhost/debug lines.xo reads .debug_line (versions
+  2 to 5) into rows with their statement flags, gives the file and line
+  at an address, and the addresses of FILE:LINE; bpt.xo resolves a
+  breakpoint (FILE:LINE: one address per function or inlined copy, its
+  lowest, as lldb's locations; a function: its first statement past the
+  prologue, the first row after its entry, and each inlined copy's
+  start) and keeps the table (numbers, the traps to plant, the
+  breakpoint at a trap's address, deletion); cmd.xo parses point 4's
+  commands and short forms; value.xo reads a variable at a pc through a
+  Target (registers and memory, which the per OS layer will give) and
+  shows it by its DWARF type (integers, floats from their bits, booleans,
+  structures, arrays, pointers; a gone or unreadable word shows as
+  `<optimized out>` or `<unreadable>` without hiding the rest) and
+  follows a field path. Tests: core_test.xo (commands, values from a
+  fake thread, floats, breakpoints on hand made line tables) and
+  TestDwarfReader (`xo dev dwarf --break=main.xo:11` is lldb's address
+  for the arm64 and LLVM builds, `--pc` gives the line back).

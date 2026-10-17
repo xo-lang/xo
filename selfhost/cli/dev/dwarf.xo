@@ -2,8 +2,11 @@
 // stage 1) reads from an executable or a dSYM's DWARF file: each function
 // with its address range and its variables (name, type, parameter or
 // not, declaration line, and each location range with its pieces), the
-// global variables, and with --types the types. The text is for tests
-// and agents; `xo debug` is the command built on the reader.
+// global variables, and with --types the types; with --break SPOT the
+// addresses a breakpoint at SPOT (FILE:LINE or a function) resolves to,
+// and with --pc ADDR the file and line of the code at ADDR, from the line
+// tables. The text is for tests and agents; `xo debug` is the command
+// built on the reader.
 
 use github.com/xo-lang/xo/selfhost/cli/core
 use github.com/xo-lang/xo/selfhost/debug
@@ -12,6 +15,8 @@ fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var fl = core.new_flags("dev dwarf")
   fl.str_flag("func", "", "only the functions of this name")
   fl.bool_flag("types", "print the types too")
+  fl.str_flag("break", "", "print the addresses of a breakpoint at FILE:LINE or FUNCTION instead")
+  fl.str_flag("pc", "", "print the file and line of the code at this address (0x...) instead")
   if !fl.parse(os, args) {
     return 2
   }
@@ -34,6 +39,9 @@ fn dwarf_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     }
   }
   let info = debug.read(s)
+  if !fl.get_str("break").is_empty() || !fl.get_str("pc").is_empty() {
+    return lines_query(os, info, debug.lines(s), fl.get_str("break"), fl.get_str("pc"))
+  }
   let only = fl.get_str("func")
   for f in info.funcs {
     if !only.is_empty() && f.name != only {
@@ -134,4 +142,48 @@ fn hex(v: Int) -> Str {
     n += 1
   }
   "0x${out}"
+}
+
+/// --break and --pc: a breakpoint's addresses, one a line, or the file
+/// and line at an address.
+fn lines_query(os: Os, info: debug.Info, l: debug.Lines, spot: Str, pc: Str) -> Int uses (stdio) {
+  if !spot.is_empty() {
+    let sp = match debug.parse_cmd("break ${spot}") {
+      Ok(debug.Cmd.Break(x)) => x
+      Ok(_) => return 2
+      Err(e) => {
+        os.stdio.eprintln("xo dev dwarf: ${e}")
+        return 2
+      }
+    }
+    match debug.resolve(info, l, sp) {
+      Ok(addrs) => {
+        for a in addrs {
+          os.stdio.println(hex(a))
+        }
+      }
+      Err(e) => {
+        os.stdio.eprintln("xo dev dwarf: ${e}")
+        return 1
+      }
+    }
+    return 0
+  }
+  var a = 0
+  for c in pc.trim_prefix("0x").runes() {
+    let d = "0123456789abcdef".find("${c}".to_lower()) ?? -1
+    if d < 0 {
+      os.stdio.eprintln("xo dev dwarf: --pc ${pc.quote()}: want a hex address")
+      return 2
+    }
+    a = a * 16 + d
+  }
+  match l.at(a) {
+    Some((f, n)) => os.stdio.println("${f}:${n}")
+    None => {
+      os.stdio.eprintln("xo dev dwarf: no line at ${hex(a)}")
+      return 1
+    }
+  }
+  0
 }

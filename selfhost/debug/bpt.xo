@@ -1,0 +1,160 @@
+// The breakpoint table of `xo debug` (decision 0253): each breakpoint's
+// number, its spot, and the addresses it resolved to (every address of a
+// line's code, inlined copies included, or a function's first statement
+// after its prologue), and which breakpoint an address belongs to. The
+// process control layer (stage 2, per OS) plants and removes the traps;
+// this table is the same on every OS.
+
+/// A breakpoint: its number (from 1, as shown), what was asked, and its
+/// addresses.
+pub struct Bpt {
+  pub id: Int
+  pub spot: Spot
+  pub addrs: List[Int]
+}
+
+/// The breakpoints, and the next number.
+pub struct Bpts {
+  pub list: List[Bpt] = []
+  next: Int = 1
+}
+
+/// The addresses of spot in a program with line tables l and functions
+/// info: an error when the spot names no code.
+pub fn resolve(info: Info, l: Lines, spot: Spot) -> List[Int] ! Str {
+  match spot {
+    Spot.Line(file, line) => {
+      var known = false
+      for f in l.files {
+        if file_matches(f, file) {
+          known = true
+        }
+      }
+      if !known {
+        return Err("no file ${file.quote()} in the program's line tables")
+      }
+      let a = l.addrs(file, line)
+      if a.is_empty() {
+        return Err("no code at ${file}:${line}")
+      }
+      // one address per function or inlined copy, its lowest (a line's
+      // code in several places of one function, a loop's test, stops
+      // there once: lldb's locations)
+      var seen: Map[Str, Bool] = {}
+      var out: List[Int] = []
+      for x in a {
+        let k = scope_of(info, x)
+        if k.is_empty() || !seen.contains(k) {
+          seen[k] = true
+          out.push(x)
+        }
+      }
+      Ok(out)
+    }
+    Spot.Func(name) => {
+      var out: List[Int] = []
+      for f in info.funcs {
+        if f.name == name {
+          out.push(after_prologue(l, f))
+        }
+        for c in f.inlined {
+          if c.name == name && !c.ranges.is_empty() {
+            out.push(c.ranges[0].0)
+          }
+        }
+      }
+      if out.is_empty() {
+        return Err("no function ${name.quote()}")
+      }
+      Ok(out.sort())
+    }
+  }
+}
+
+/// The function and innermost inlined call holding address a, as a key
+/// ("" when no function holds it).
+fn scope_of(info: Info, a: Int) -> Str {
+  for (fi, f) in info.funcs.indexed() {
+    if a >= f.lo && a < f.hi {
+      var best = -1
+      var depth = 0
+      for (ci, c) in f.inlined.indexed() {
+        for (lo, hi) in c.ranges {
+          if a >= lo && a < hi && c.depth > depth {
+            best = ci
+            depth = c.depth
+          }
+        }
+      }
+      return "${fi}/${best}"
+    }
+  }
+  ""
+}
+
+/// A function's first statement past its prologue: the address of its
+/// second line table row inside it (the first row is the entry, at the
+/// function's own line), or its entry when it has one row.
+fn after_prologue(l: Lines, f: Func) -> Int {
+  var rows: List[Int] = []
+  for r in l.rows {
+    if !r.end && r.stmt && r.addr >= f.lo && r.addr < f.hi {
+      rows.push(r.addr)
+    }
+  }
+  let s = rows.sort()
+  var i = 0
+  while i < s.len() && s[i] == f.lo {
+    i += 1
+  }
+  if i < s.len() { s[i] } else { f.lo }
+}
+
+/// Adds a breakpoint at spot: its number, or why it names no code.
+pub fn (var b: Bpts) add(info: Info, l: Lines, spot: Spot) -> Int ! Str {
+  let addrs = resolve(info, l, spot)?
+  let id = b.next
+  b.next += 1
+  b.list.push(Bpt{id: id, spot: spot, addrs: addrs})
+  Ok(id)
+}
+
+/// Removes breakpoint id: its addresses (to clear in the process), or an
+/// error when there is no such breakpoint.
+pub fn (var b: Bpts) delete(id: Int) -> List[Int] ! Str {
+  for (i, p) in b.list.indexed() {
+    if p.id == id {
+      let _x = b.list.remove_at(i)
+      return Ok(p.addrs)
+    }
+  }
+  Err("no breakpoint ${id}")
+}
+
+/// The breakpoint whose address is pc (the first added), or None.
+pub fn (b: Bpts) at(pc: Int) -> Int? {
+  for p in b.list {
+    for a in p.addrs {
+      if a == pc {
+        return Some(p.id)
+      }
+    }
+  }
+  None
+}
+
+/// Every address of every breakpoint, each once, sorted: the traps to
+/// plant.
+pub fn (b: Bpts) traps() -> List[Int] {
+  var seen: Map[Int, Bool] = {}
+  var out: List[Int] = []
+  for p in b.list {
+    for a in p.addrs {
+      if !seen.contains(a) {
+        seen[a] = true
+        out.push(a)
+      }
+    }
+  }
+  out.sort()
+}
