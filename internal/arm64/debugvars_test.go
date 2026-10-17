@@ -15,10 +15,11 @@ import (
 
 // TestDebugVars checks decision 0252's variables on darwin/arm64:
 // testdata/debugvars built by the arm64 backend, linked by selfhost/macho
-// and by cc (dsymutil), has a dSYM that verifies and describes sum's
-// parameter k, its locals, and the struct Pair with its fields; lldb
-// stopped at main.xo:12 in the loop prints k, total, and d with the
-// values of the first iteration.
+// and by cc (dsymutil), and by the LLVM backend, has a dSYM that verifies
+// and describes sum's parameter k and its locals (and, from the arm64
+// backend, the struct Pair with its fields); lldb stopped at main.xo:12
+// in the loop prints k, total, and d with the values of the first
+// iteration.
 func TestDebugVars(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -54,6 +55,7 @@ func TestDebugVars(t *testing.T) {
 	}{
 		{"macho", []string{"--backend=arm64", "--ld=macho"}},
 		{"cc", []string{"--backend=arm64", "--ld=cc"}},
+		{"llvm", []string{"--backend=llvm"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
@@ -72,14 +74,18 @@ func TestDebugVars(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dwarfdump --debug-info: %v", err)
 			}
-			for _, want := range []string{
+			wants := []string{
 				`DW_TAG_formal_parameter`,
 				`DW_AT_name	("k")`,
 				`DW_AT_name	("total")`,
-				`DW_AT_name	("Pair")`,
-				`DW_AT_name	("ok")`,
 				`DW_AT_location	(`,
-			} {
+			}
+			if c.name != "llvm" {
+				// structs: arm64 only (an LLVM aggregate has no per field
+				// dbg.value, decision 0252 stage 3)
+				wants = append(wants, `DW_AT_name	("Pair")`, `DW_AT_name	("ok")`)
+			}
+			for _, want := range wants {
 				if !strings.Contains(string(info), want) {
 					t.Errorf("the dSYM's .debug_info lacks %s", want)
 				}

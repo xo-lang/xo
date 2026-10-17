@@ -77,6 +77,9 @@ fn (var g: Gen) emit(s: Str) {
 fn (var g: Gen) def(s: Str) -> Str {
   let t = g.tmp()
   g.emit("${t} = ${s}")
+  if g.dbg_sp >= 0 {
+    g.dbg_temps[t] = true
+  }
   t
 }
 
@@ -425,8 +428,14 @@ fn (var g: Gen) lower_func(fi: Int) {
         }
       }
     }
+    g.dbg_block = b
+    g.dbg_temps = {}
+    for p in g.f.blocks[b].params {
+      g.debug_bind(p)
+    }
     for v in g.f.blocks[b].instrs {
       g.instr(v)
+      g.debug_bind(v)
       if g.rng_mid[v] {
         // a binary search's midpoint (ranges.xo)
         let o = g.op(v)

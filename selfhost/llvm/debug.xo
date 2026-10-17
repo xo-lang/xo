@@ -14,7 +14,7 @@ fn (var g: Gen) debug_unit() {
   }
   let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   let f0 = g.dbg_file("main.xo")
-  g.dbg_cu = g.dbg_node("distinct !DICompileUnit(language: DW_LANG_C99, file: !${f0}, producer: \"xo compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, nameTableKind: None)")
+  g.dbg_cu = g.dbg_node("distinct !DICompileUnit(language: DW_LANG_C99, file: !${f0}, producer: \"xo compiler\", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, nameTableKind: None)")
   g.dbg_ty = g.dbg_node("!DISubroutineType(types: !{})")
   let v = g.dbg_node("!{i32 7, !\"Dwarf Version\", i32 5}")
   let d = g.dbg_node("!{i32 2, !\"Debug Info Version\", i32 3}")
@@ -60,6 +60,102 @@ fn (var g: Gen) debug_func() {
   }
   let file = g.dbg_file(g.f.file)
   g.dbg_sp = g.dbg_node("distinct !DISubprogram(name: \"${ir_escape(g.f.name)}\", scope: !${file}, file: !${file}, line: ${line}, type: !${g.dbg_ty}, scopeLine: ${line}, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !${g.dbg_cu})")
+  g.debug_vars(file)
+}
+
+/// The function's source variables (decision 0252, stage 3): a
+/// DILocalVariable per variable of a scalar type (Int, Float, Bool; a
+/// struct is an LLVM aggregate, which a dbg.value does not describe per
+/// field), parameters numbered by their place in the entry block, and
+/// the binding records by value, for debug_bind.
+fn (var g: Gen) debug_vars(file: Int) {
+  g.dbg_vars = []
+  g.dbg_binds = {}
+  let entry = g.f.blocks[0].params
+  for (k, d) in g.f.dvars.indexed() {
+    let t = g.dbg_basic(d.ty)
+    if t < 0 || d.inl >= 0 {
+      g.dbg_vars.push(-1)
+      continue
+    }
+    var arg = ""
+    if d.param {
+      for b in g.f.dbinds {
+        if b.dvar == k {
+          for (i, p) in entry.indexed() {
+            if p == b.value {
+              arg = "arg: ${i + 1}, "
+            }
+          }
+        }
+      }
+    }
+    g.dbg_vars.push(g.dbg_node("!DILocalVariable(name: \"${ir_escape(d.name)}\", ${arg}scope: !${g.dbg_sp}, file: !${file}, line: ${d.line / 4096}, type: !${t})"))
+  }
+  for b in g.f.dbinds {
+    if b.dvar >= 0 && b.dvar < g.dbg_vars.len() && g.dbg_vars[b.dvar] >= 0 {
+      var l = g.dbg_binds.get(b.value) ?? []
+      l.push(b.dvar)
+      g.dbg_binds[b.value] = l
+    }
+  }
+  if !g.dbg_binds.is_empty() {
+    g.llvm_decl("@llvm.dbg.value", "declare void @llvm.dbg.value(metadata, metadata, metadata)")
+  }
+}
+
+/// The DIBasicType of an Int, Float, or Bool type, -1 for another type.
+fn (var g: Gen) dbg_basic(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
+  let x = g.m.types[t]
+  let enc = match x.kind {
+    Int => if x.unsigned { "DW_ATE_unsigned" } else { "DW_ATE_signed" }
+    Float => "DW_ATE_float"
+    Bool => "DW_ATE_boolean"
+    _ => ""
+  }
+  if enc.is_empty() {
+    return -1
+  }
+  if let Some(k) = g.dbg_types.get(x.name) {
+    return k
+  }
+  let size = match x.kind {
+    Bool => 8
+    Float => if x.bits == 32 { 32 } else { 64 }
+    _ => 64
+  }
+  let k = g.dbg_node("!DIBasicType(name: \"${ir_escape(x.name)}\", size: ${size}, encoding: ${enc})")
+  g.dbg_types[x.name] = k
+  k
+}
+
+/// The dbg.value calls of the binding records of value v (after its
+/// definition, or at its block's start for a parameter): none for a value
+/// held in memory (reading it would add a load) or of no type.
+fn (var g: Gen) debug_bind(v: Int) {
+  if g.dbg_sp < 0 {
+    return
+  }
+  let ds = g.dbg_binds.get(v) ?? []
+  if ds.is_empty() || g.lazy[v] >= 0 || g.is_void(g.f.values[v].ty) {
+    return
+  }
+  let lt = g.ll(g.f.values[v].ty)
+  let o = g.op(v)
+  // only a value defined in this block, or a constant: a debug use of a
+  // value of another block makes instruction selection carry it across
+  // blocks, which changes register allocation (decision 0252's gate;
+  // netconn.dial_timeout, 2026-10-17)
+  let here = (o == vname(v) && g.blk[v] == g.dbg_block) || g.dbg_temps.contains(o) || !(o.starts_with("%") || o.starts_with("@"))
+  if !here {
+    return
+  }
+  for d in ds {
+    g.emit("call void @llvm.dbg.value(metadata ${lt} ${o}, metadata !${g.dbg_vars[d]}, metadata !DIExpression())")
+  }
 }
 
 /// The location of the instruction being emitted, inline.

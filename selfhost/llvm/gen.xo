@@ -84,6 +84,16 @@ pub struct Gen {
   dbg_ty: Int = -1
   dbg_files: Map[Str, Int] = {}
   dbg_sp: Int = -1
+  /// The function's DILocalVariable per ssa dvar (-1: not described),
+  /// its binding records by value, and the basic types by name
+  /// (decision 0252).
+  dbg_vars: List[Int] = []
+  dbg_binds: Map[Int, List[Int]] = {}
+  dbg_types: Map[Str, Int] = {}
+  /// The block being lowered and the temporaries defined in it so far
+  /// (debug_bind uses only values of the block).
+  dbg_block: Int = -1
+  dbg_temps: Map[Str, Bool] = {}
   cur_line: Int = 0
 
   // The function being lowered (sfn).

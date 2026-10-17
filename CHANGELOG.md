@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Debuggers see Int, Float, and Bool locals and parameters of LLVM
+  native builds too (decision 0252 stage 3): lldb's `frame variable`
+  prints them. -s and release builds carry none of it and cost what they
+  did; with debug information LLVM's code can differ, so every golden
+  built with `--release --debug-info` is checked to print what its
+  `--release` build prints.
 - The native runtime's memcpy, memmove, and memset move 32 bytes an
   iteration (no C library builds): copy-heavy programs 35 to 49% fewer
   instructions on amd64, arm64, and LLVM

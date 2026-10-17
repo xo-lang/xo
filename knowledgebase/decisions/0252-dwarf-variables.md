@@ -104,7 +104,13 @@ What the compiler has to work with:
    binding records when debug information is on. Code generation does
    not change with debug information, a hard gate (lead, 2026-10-17):
    a test compares the code of every golden built with and without it,
-   so a debug build profiles like a stripped one.
+   so a debug build profiles like a stripped one. The arm64 backend
+   meets it by construction. The LLVM backend does not (stage 3, lead
+   2026-10-17): its dbg.value calls change register allocation and the
+   MachineOutliner's choices in some functions, as clang -g can, and
+   carrying the metadata into every build costs too much; there the gate
+   is that every golden built with `--release --debug-info` runs with the
+   output of its `--release` build (TestDebugInfoSameOutputLLVM).
 
 6. **Test.** internal/arm64 and internal/llvm tests build a program with
    a struct, a List[Int], a Str, a Map, and an enum local, run it under
@@ -154,6 +160,21 @@ What the compiler has to work with:
   that depends on code generation hides under the debugger.
 - Rust-style DW_LANG_Rust: lldb's clang type system does not read it;
   Apple's lldb has no Rust support.
+- For the LLVM backend's gate (stage 3, measured 2026-10-17 with
+  clang's instructions retired and peak RSS over the full LTO pipeline,
+  -O2 -flto -c and the post link -O2 codegen, of a 1701 function
+  program, against main's IR):
+  (a) emit the metadata in every build and drop the DWARF at the link
+  (no dSYM; -Wl,-S on Linux), the same code by construction: +6.4%
+  instructions and +22% peak RSS for -s and release builds (and the
+  self build -s 2306 s to 3170 s, wall clock under load); rejected, a
+  self build that much slower hits every fixed point and seed cut.
+  (a) with dbg.value only at definitions (none for a block's parameters):
+  +2.4% instructions, +10.6% RSS, over the 10% bound, and a variable
+  carried around a loop shows only its first value; rejected.
+  (b) DILocalVariables without dbg.value: the same code, but lldb shows
+  no LLVM locals; rejected. FullDebug alone costs nothing measurable
+  (+0%); the cost is the dbg.value calls.
 - A private debugger (a Delve for Xo, consider-later): DWARF works with
   lldb, Instruments, and every other tool first; a Xo debugger can read
   the same DWARF later.
@@ -195,3 +216,17 @@ What the compiler has to work with:
   TestDebugInfoSameCode: every golden's machine code is the same with
   and without debug information. Linux: llvm-dwarfdump --verify and
   gdb `info locals` give the same values (Docker).
+- Stage 3, LLVM (2026-10-17): with debug information the compile unit
+  is FullDebug, each function has a DILocalVariable per variable of a
+  scalar type (Int and the sized integers, Float, Bool; a struct is an
+  LLVM aggregate, which a dbg.value does not describe per field),
+  parameters numbered by their place in the entry block, and a
+  `llvm.dbg.value` after each binding record's value is defined (and at
+  a block's start for its parameters), only for a value of the block or
+  a constant (a debug use of another block's value makes instruction
+  selection carry it across blocks). -s and release builds emit none of
+  it, as before. internal/arm64 TestDebugVars's llvm case: lldb prints
+  k = 10, total = 0, d = 12 at main.xo:12; internal/llvm
+  TestDebugInfoSameOutputLLVM (point 5's gate for LLVM) and
+  TestStrippedNoDWARF (-s and --release: no dSYM, no __DWARF, no
+  compile unit; --release --debug-info keeps the dSYM).
