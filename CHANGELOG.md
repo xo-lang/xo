@@ -6,12 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- P-256's final subtraction takes its first limb as t0 + 1 and its masks
+  as (carry - 1): three instructions fewer per field add, subtract and
+  multiply (bench/perf/tls p256 on arm64: 1.3% fewer instructions, about
+  4% fewer cycles).
 - Xo's own x86-64 assembler (decision 0254, stage 1): selfhost/macho
   encodes the amd64 emitter's AT&T text into ELF objects byte for byte
   as clang does (1,953 instruction forms, 3,192 forms of LLVM's own
   output, whole files, and 42 LLVM-generated programs compared with
   clang); `macho asm --amd64`.
-
 - RWMutex: readers a writer's release grants run on the granting worker
   for a short grace (20 us) before another worker may take them
   (decision 0077's addendum): bench/perf/conc rwmutex 90 to 40 ms wall,

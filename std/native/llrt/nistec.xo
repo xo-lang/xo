@@ -795,17 +795,22 @@ fn sqr4p(h: Int, f: Int) {
 
 /// sub_m4 for P-256's p (-1, 2^32 - 1, 0, 2^64 - 2^32 + 1): ~p as
 /// constants (0, -2^32, -1, 2^32 - 2), so the body is small enough for
-/// the arm64 inliner at every call site (mul4p, sqr4p, add4p).
+/// the arm64 inliner at every call site (mul4p, sqr4p, add4p). The first
+/// limb is t0 + 1 (one adds; t0 + 0 with a carry in was a cmp and an
+/// adcs) and the keep mask (c3 | top) - 1 (two instructions, mask_bit of
+/// its complement was four): add4p went under the inliner's 40 (a P-256
+/// handshake on arm64 called it 29,000 times, 2026-10-17).
 fn sub_p256(h: Int, t0: Int, t1: Int, t2: Int, t3: Int, top: Int) {
-  let d0 = cpu.adc(t0, 0, 1)
-  let c0 = cpu.adc_carry(t0, 0, 1)
+  let d0 = cpu.adc(t0, 1, 0)
+  let c0 = cpu.adc_carry(t0, 1, 0)
   let d1 = cpu.adc(t1, -4294967296, c0)
   let c1 = cpu.adc_carry(t1, -4294967296, c0)
   let d2 = cpu.adc(t2, -1, c1)
   let c2 = cpu.adc_carry(t2, -1, c1)
   let d3 = cpu.adc(t3, 4294967294, c2)
   let c3 = cpu.adc_carry(t3, 4294967294, c2)
-  let keep = ct.mask_bit((c3 | top) ^ 1)
+  // all ones when t < p (no carry out of t - p, none in top): keep t
+  let keep = ct.barrier(rt.int_wrap(1, c3 | top, 1))
   rt.mem_store(h, 0, d0 ^ (keep & (t0 ^ d0)), 8)
   rt.mem_store(h, 8, d1 ^ (keep & (t1 ^ d1)), 8)
   rt.mem_store(h, 16, d2 ^ (keep & (t2 ^ d2)), 8)
@@ -947,7 +952,8 @@ fn sub4p(h: Int, f: Int, g: Int) {
   let k2 = cpu.adc_carry(f2, ~g2, k1)
   let d3 = cpu.adc(f3, ~g3, k2)
   let k3 = cpu.adc_carry(f3, ~g3, k2)
-  let mask = ct.mask_bit(k3 ^ 1)
+  // all ones when f - g borrowed (k3 0): k3 - 1, two instructions
+  let mask = ct.barrier(rt.int_wrap(1, k3, 1))
   let m1 = 4294967295 & mask
   let m3 = -4294967295 & mask
   let s0 = cpu.adc(d0, mask, 0)
