@@ -241,4 +241,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0247-lazy-runtime-bodies.md](0247-lazy-runtime-bodies.md): Accepted: a native build checks the runtime's function bodies as the SSA builder builds them (hello -34%, same output on every golden); TestStdChecks and `xo check --no-gc` check them all
 - [0249-public-repo-and-layout.md](0249-public-repo-and-layout.md): Proposed (stub): development moves to github.com/xo-lang/xo with the full history, and its layout.
 - [0250-native-contract-fuzzing.md](0250-native-contract-fuzzing.md): Accepted: native contract fuzzing as generated property tests in the checker overlay; the Go backend's targets, cases, seeds, and regression files
+- [0251-native-dump.md](0251-native-dump.md): Proposed (stub): `xo dump` and SIGQUIT for native programs
 - [0248-native-default-backend.md](0248-native-default-backend.md): Accepted: native is the default backend (arm64 on arm64 hosts, LLVM on x86_64); --backend=go kept; use go needs it; contract fuzzing and xo dump stay on Go for now
