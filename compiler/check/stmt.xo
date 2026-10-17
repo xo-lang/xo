@@ -834,16 +834,181 @@ fn label_name(l: Ident?) -> Bytes {
   }
 }
 
+/// An expression statement: a call's effects go to a set of their own as
+/// well (discards), so XO0209 can tell, once effects are solved, a call
+/// that only computes the value it discards (decision 0258).
+fn (var c: Checker) expr_stmt(x: Expr) {
+  var call = x
+  while true {
+    if let ParenExpr(x: inner, ..) = call {
+      call = inner
+    } else {
+      break
+    }
+  }
+  let is_call = if let CallExpr(..) = call { true } else { false }
+  // native std modules call memory and system intrinsics whose effects
+  // are not tracked (decision 0258)
+  let native = c.cur_mod >= 0 && c.mods[c.cur_mod].native
+  if !is_call || native || c.ctx < 0 || c.ctxs[c.ctx].eff < 0 {
+    c.check(x, discard())
+    return
+  }
+  let saved = c.ctxs[c.ctx].eff
+  let sink = c.new_eset([])
+  c.ctxs[c.ctx].eff = sink
+  let m0 = c.mut_calls
+  let t = c.check(x, discard())
+  c.ctxs[c.ctx].eff = saved
+  for it in c.esets[sink] {
+    c.esets[saved].push(it)
+  }
+  if c.mut_calls != m0 || c.is_bad(t) || c.is_never(t) || c.is_result(t) || c.is_unit(t) {
+    return
+  }
+  let sp = parser.expr_span(x)
+  var what = "this call"
+  var fixes: List[DFix] = []
+  var operands: List[Int] = []
+  if let CallExpr(fun: fun, args: args, ..) = call {
+    let n = callee_name(fun)
+    if !n.is_empty() {
+      what = "`${n}(...)`"
+    }
+    // `.ignore_err("reason")` is how a Result is discarded (core 2.6)
+    if n == "ignore_err" || n.ends_with(".ignore_err") {
+      return
+    }
+    for a in args {
+      operands.push(c.type_of(a.value))
+    }
+    match fun {
+      SelectorExpr(x: recv, ..) => operands.push(c.type_of(recv))
+      _ => {}
+    }
+    // a call of a function value (not a declared function) may do
+    // anything its closure captured
+    if !c.fn_calls.contains(c.expr_key(call)) {
+      operands.push(c.type_of(fun))
+    }
+    // a method of a `var` binding: assign the result back
+    if let SelectorExpr(x: recv, ..) = fun {
+      if let Ident(id) = recv {
+        let v = c.lookup_local(id.name)
+        if v >= 0 && c.objs[v].mutable && c.objs[v].vctx == c.ctx && c.objs[v].ty >= 0 && c.show(c.objs[v].ty) == c.show(t) {
+          fixes.push(DFix{title: "assign the result back to `${text(id.name)}`", edits: [c.insert_edit(sp.start, "${text(id.name)} = ")]})
+        }
+      }
+    }
+  }
+  fixes.push(DFix{title: "discard the result on purpose", edits: [c.insert_edit(sp.start, "let _ = ")]})
+  c.discards.push(Discard{eff: sink, file: c.path, span: sp, t: t, what: what, fixes: fixes, operands: operands})
+}
+
+/// Whether a value of type t can reach state a call may change without
+/// performing an effect: a function value (what it captured), a handle
+/// (Atomic, Chan, Mutex, Scope, Task, a file; is_handle), an interface
+/// value, or a type not known here (a type parameter, a type still
+/// open, an unrecorded operand), in it at any depth.
+fn (var c: Checker) reaches_state(t0: Int, seen: List[Int], depth: Int) -> Bool {
+  if t0 < 0 || depth <= 0 {
+    return true
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Func | Param | Var => true
+    Bad | EffArg => false
+    Tuple => {
+      for e in x.args {
+        if c.reaches_state(e, seen, depth - 1) {
+          return true
+        }
+      }
+      false
+    }
+    Named => {
+      let o = x.obj
+      if c.is_handle(o) || c.objs[o].tkind == "interface" {
+        return true
+      }
+      for a in x.args {
+        if c.tys[a].kind != TyKind.EffArg && c.reaches_state(a, seen, depth - 1) {
+          return true
+        }
+      }
+      if seen.contains(o) {
+        return false
+      }
+      var seen2 = seen
+      seen2.push(o)
+      let sm = c.args_subst(c.objs[o].tparams, x.args)
+      let tk = c.objs[o].tkind
+      if tk == "struct" {
+        for f in c.objs[o].fields {
+          if c.reaches_state(c.subst(f.ty, sm), seen2, depth - 1) {
+            return true
+          }
+        }
+      } else if tk == "enum" {
+        for v in c.objs[o].variants {
+          for f in v.fields {
+            if c.reaches_state(c.subst(f.ty, sm), seen2, depth - 1) {
+              return true
+            }
+          }
+        }
+      } else if (tk == "newtype" || tk == "alias") && c.objs[o].target >= 0 {
+        return c.reaches_state(c.subst(c.objs[o].target, sm), seen2, depth - 1)
+      }
+      false
+    }
+  }
+}
+
+/// XO0209 for each discarded call that performs no effect (decision
+/// 0258): it can only compute the value the statement drops.
+fn (var c: Checker) report_discards() {
+  let ds = c.discards
+  for d in ds {
+    let fl = c.flatten(d.eff, true)
+    if !fl.labels.is_empty() || !fl.params.is_empty() {
+      continue
+    }
+    var state = false
+    for t in d.operands {
+      state = state || c.reaches_state(t, [], 12)
+    }
+    if state {
+      continue
+    }
+    let di = c.report(d.file, "XO0209", d.span, "the `${c.show(d.t)}` that ${d.what} returns is discarded, and the call does nothing else")
+    if di < 0 {
+      continue
+    }
+    c.note(di, "values are not changed in place: a method that returns a new value leaves its receiver as it was (core 2.6); write `let _ = ...` to discard on purpose")
+    for f in d.fixes {
+      c.fix(di, f.title, f.edits)
+    }
+  }
+}
+
 fn (var c: Checker) stmt(s: Stmt) {
   match s {
-    ExprStmt(x: x, ..) => {
-      c.check(x, discard())
-    }
+    ExprStmt(x: x, ..) => c.expr_stmt(x)
     LetStmt(span: span, pattern: pattern, typ: typ, value: value) => c.let_stmt(span, pattern, typ, value)
     VarStmt(name: name, typ: typ, value: value, ..) => c.var_stmt(name, typ, value)
     ConstDecl(d: cd) => c.local_const(cd)
     AssignStmt(span: span, op: op, target: target, value: value) => c.assign(span, op, target, value)
-    DeferStmt(body: body, ..) => c.stmt(body)
+    DeferStmt(body: body, ..) => {
+      // a deferred call runs for what it does at exit, or to fault there
+      // (decision 0258: not XO0209)
+      if let ExprStmt(x: x, ..) = body {
+        c.check(x, discard())
+      } else {
+        c.stmt(body)
+      }
+    }
     ReturnStmt(span: span, value: value) => {
       let w = c.body_want(c.ctx)
       match value {

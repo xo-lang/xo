@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Discarded pure results** (2.6, decision 0258): an expression statement
+  that drops the value of a call that only computes it (`xs.reverse()`,
+  `s.trim()`, a function with no effects) is error `XO0209`, fixed by
+  `xs = xs.reverse()` or `let _ = f()`.
 - **`xo build --stamp NAME=VALUE`** (10.1, decision 0165): sets a `const
   NAME: Str` of the main module for one build (versions, commits);
   `XO1501` when there is no such constant. `std/cli` writes shell
@@ -747,7 +751,15 @@ pub interface Store {
   `r.ok()` remains for when failure simply means "no value".
 - A closure whose tail is a `Result` is a failing closure; the `Result` is
   returned as is. A closure declared `-> T` with no `!` cannot fail.
-- A non `Result` value may be discarded as an expression statement.
+- A non `Result` value may be discarded as an expression statement, except
+  the value of a call that only computes it: one that performs no effect
+  (section 6), mutates no `var` receiver or argument, and reaches no
+  handle, interface, or function value through its receiver or arguments.
+  `xs.reverse()` or `s.trim()` as a statement is error `XO0209` (values
+  are not changed in place); its fix assigns the result back
+  (`xs = xs.reverse()`). Write `let _ = f()` to discard such a result on
+  purpose. A `defer` statement's call is not reported (it runs for what
+  it does at exit, or to fault there).
 
 ### 2.7 Generics
 
@@ -2510,6 +2522,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0206` | error | checker | `let _ =` discards a Result; use `.ignore_err("reason")` (core 2.6) |
 | `XO0207` | warning | vet | method chain on the right of `??` starts at a literal, so it applies only to the default (core 15 precedence) |
 | `XO0208` | note | vet | `.ignore_err("reason")` discards an error; listed with its reason for review (core 2.6) |
+| `XO0209` | error | checker | an expression statement discards the result of a call that only computes it, such as `xs.reverse()` (core 2.6) |
 | `XO0301` | error | checker | match does not cover every case (core 2.3) |
 | `XO0302` | error | checker | pattern does not fit the type of the matched value (core 3.5) |
 | `XO0303` | error | checker | refutable pattern where an irrefutable one is required (core 3.5) |

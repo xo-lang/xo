@@ -19,5 +19,5 @@ compiles and does nothing.
 
 ## Fix
 
-Write `xs = xs.reverse()`. When a list built backward shows up in a pass,
-check every `reverse()` call for an assignment.
+Write `xs = xs.reverse()`. Since decision 0258 (2026-10-17) the checker
+reports the bare statement as error XO0209, with that fix.

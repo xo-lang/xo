@@ -31,6 +31,7 @@ fn place_root(e: Expr) -> Ident? {
 /// function: a `var` binding, `var` parameter, or `var` receiver (core
 /// 5.2). code is XO0501 for `var` method calls and XO0502 otherwise.
 fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
+  c.mut_calls += 1
   let id = match place_root(e) {
     Some(x) => x
     None => {

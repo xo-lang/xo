@@ -513,7 +513,7 @@ var stageDiagRE = regexp.MustCompile("^" + `\{"code":"(` + strings.Join([]string
 	// stage 4: effects and real-time functions
 	`(XO0701|XO1401|XO1402|XO1403|XO1404|XO1405)",.*`,
 	// stage 5: value semantics and unused bindings
-	`(XO0110|XO0201|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
+	`(XO0110|XO0201|XO0209|XO0501|XO0502|XO0503|XO0510|XO0520|XO0804)",.*`,
 	// stage 6: exhaustiveness
 	`(XO0301|XO0303|XO0305)",.*`,
 	// stage 8: naming, habits, time layouts

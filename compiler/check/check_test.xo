@@ -26,6 +26,10 @@ const PRELUDE = """
     fn display(self) -> Str
   }
   fn (xs: List[T]) len() -> Int
+  fn (xs: List[T]) reverse() -> List[T]
+  fn (var xs: List[T]) push(x: T)
+  struct Atomic {}
+  fn (a: Atomic) add(n: Int) -> Int
   """
 
 /// Checks the module in dir after writing files (path, source) and the
@@ -342,4 +346,29 @@ test "a long else if chain is checked in a loop with each branch's error (if_exp
   expect(ls.filter(fn(l) { l.contains(" IfExpr Int") }).len()) >= 300
   let errs = ls.filter(fn(l) { l.contains("\"XO0401\"") })
   expect(errs.len()) == 1
+}
+
+test "a discarded result of a call that only computes it is XO0209 (decision 0258)" {
+  let out = check_files(os, "d", [("d/main.xo", """
+    fn helper(x: Int) -> Int {
+      x * 2
+    }
+
+    fn f(a: Atomic, g: fn(Int) -> Int) -> List[Int] {
+      var xs = [3, 1, 2]
+      xs.reverse()
+      helper(4)
+      let _ = xs.reverse()
+      xs = xs.reverse()
+      xs.push(4)
+      a.add(1)
+      g(1)
+      xs
+    }
+    """)])?
+  let ls = lines(out).filter(fn(l) { l.contains("\"XO0209\"") })
+  expect(ls.len()) == 2
+  expect(ls[0].contains("`xs.reverse(...)`")) == true
+  expect(ls[0].contains("the `List[Int]` that")) == true
+  expect(ls[1].contains("`helper(...)`")) == true
 }

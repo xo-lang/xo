@@ -33,6 +33,7 @@ fn (var c: Checker) run() -> () ! Str {
   c.report_edition_aliases()
   c.check_key_types()
   c.solve_effects()
+  c.report_discards()
   c.check_realtime()
   c.flow_bodies()
   c.check_time_layouts()
