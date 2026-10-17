@@ -195,6 +195,15 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("\t.byte 10, 0x34, 0, 0x03, 0x08, 0x49, 0x13, 0x3f, 0x19, 0x02, 0x18, 0, 0\n")
   out.write("\t.byte 11, 0x01, 1, 0x49, 0x13, 0, 0\n")
   out.write("\t.byte 12, 0x21, 0, 0x37, 0x05, 0, 0\n")
+  // decision 0252 stage 4: 13 pointer_type: type, byte_size; 16
+  // enumeration_type, children: name, byte_size, type; 17 enumerator:
+  // name, const_value; 18 union_type, children: name, byte_size; 19
+  // typedef: name, type
+  out.write("\t.byte 13, 0x0f, 0, 0x49, 0x13, 0x0b, 0x0b, 0, 0\n")
+  out.write("\t.byte 16, 0x04, 1, 0x03, 0x08, 0x0b, 0x0b, 0x49, 0x13, 0, 0\n")
+  out.write("\t.byte 17, 0x28, 0, 0x03, 0x08, 0x1c, 0x0f, 0, 0\n")
+  out.write("\t.byte 18, 0x17, 1, 0x03, 0x08, 0x0b, 0x0f, 0, 0\n")
+  out.write("\t.byte 19, 0x16, 0, 0x03, 0x08, 0x49, 0x13, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
   var die = Dw{}
@@ -213,24 +222,18 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   die.offset(if mac { "8" } else { addr_base })
   die.str(files[0])
   die.str(dir)
-  // the types of the variables (unit relative offsets, by type name)
-  var tys: Map[Str, Int] = {}
+  // the types of the variables (unit relative offsets, by type name),
+  // then the objects their pointers point at
+  var tys = DwTys{}
   for fr in recs {
     for v in fr.vars {
       let _t = g.dw_type(die, tys, v.ty)
     }
   }
+  g.dw_flush(die, tys)
   if with_static {
     // xo_static: STATIC_WORDS words (gen.xo end_data) of Int
-    var it = tys.get("Int") ?? -1
-    if it < 0 {
-      it = 12 + die.n
-      die.uleb(5)
-      die.str("Int")
-      die.u8(5) // DW_ATE_signed
-      die.u8(8)
-      tys["Int"] = it
-    }
+    let it = g.dw_base(die, tys, "Int", 5, 8)
     let arr = 12 + die.n
     die.uleb(11)
     die.u32(it)
@@ -244,7 +247,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     die.u8(0x03)
     die.quad(st)
   }
-  var lists: List[List[DbgLoc]] = []
+  // each variable's location list, with its function's first label (the
+  // list's base address)
+  var lists: List[(Str, List[DbgLoc])] = []
   // the runs of inlined code (outermost sites) of each function, and an
   // abstract subprogram per callee they name (unit relative offset: the
   // 12 byte unit header, then the entries)
@@ -276,10 +281,10 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     for v in fr.vars {
       die.uleb(if v.param { 9 } else { 8 })
       die.str(v.name)
-      die.u32(tys.get(v.ty) ?? 0)
+      die.u32(tys.at.get(v.ty) ?? 0)
       die.uleb(v.line / 4096)
       die.uleb(lists.len())
-      lists.push(v.locs)
+      lists.push((fr.begin, v.locs))
     }
     die.u8(0)
   }
@@ -291,31 +296,42 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("\t.long ${if mac { "0" } else { abbrev_lab }}\n")
   out.write(die.text())
   // .debug_loclists: the header, an offset per list (from the end of the
-  // header, DW_AT_loclists_base), then the lists of DW_LLE_start_end
-  // entries
+  // header, DW_AT_loclists_base), then each list: its function's start
+  // as the base address (DW_LLE_base_address) and its entries as offsets
+  // from it (DW_LLE_offset_pair: two ULEB128 label differences, where
+  // two addresses of DW_LLE_start_end made the lists twice as large;
+  // decision 0252 stage 4). The sizes are label differences: the
+  // assembler knows the ULEB128s' lengths
+  let ll_start = g.local("xo_dwllstart_${g.ns}")
+  let ll_end = g.local("xo_dwllend_${g.ns}")
   var body = Dw{}
-  var offs: List[Int] = []
-  for l in lists {
-    offs.push(4 * lists.len() + body.n)
+  var offs: List[Str] = []
+  for (k, (fb, l)) in lists.indexed() {
+    let lab = g.local("xo_dwll_${g.ns}_${k}")
+    offs.push(lab)
+    body.lines.push("${lab}:\n")
+    if !l.is_empty() {
+      body.u8(6) // DW_LLE_base_address
+      body.quad(fb)
+    }
     for e in l {
-      body.u8(7) // DW_LLE_start_end
-      body.quad(e.start)
-      body.quad(e.end)
+      body.u8(4) // DW_LLE_offset_pair
+      body.lines.push("\t.uleb128 ${e.start}-${fb}\n\t.uleb128 ${e.end}-${fb}\n")
       let ops = e.ops.split(",")
       body.uleb(ops.len())
-      for o in ops {
-        body.u8(Int.parse(o) ?? 0)
-      }
+      // the expression's bytes on one line
+      body.bytes(ops)
     }
     body.u8(0) // DW_LLE_end_of_list
   }
   out.write(if mac { "\t.section __DWARF,__debug_loclists,regular,debug\n" } else { "\t.section .debug_loclists,\"\",@progbits\n" })
-  out.write("\t.long ${2 + 1 + 1 + 4 + 4 * lists.len() + body.n}\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${lists.len()}\n")
+  out.write("\t.long ${ll_end}-${ll_start}\n${ll_start}:\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${lists.len()}\n")
   out.write("${ll_base}:\n")
   for o in offs {
-    out.write("\t.long ${o}\n")
+    out.write("\t.long ${o}-${ll_base}\n")
   }
   out.write(body.text())
+  out.write("${ll_end}:\n")
   // .debug_addr: an empty address table (addr_base above)
   out.write(if mac { "\t.section __DWARF,__debug_addr,regular,debug\n" } else { "\t.section .debug_addr,\"\",@progbits\n" })
   out.write("\t.long 4\n\t.short 5\n\t.byte 8\n\t.byte 0\n${addr_base}:\n")
@@ -352,11 +368,91 @@ struct DbgLoc {
   ops: Str
 }
 
+/// The unit's DWARF types: each entry's unit relative offset by name,
+/// and the references written before their targets (the line of the
+/// `.long` in the unit's Dw and the target's name), which dw_flush
+/// writes and patches.
+struct DwTys {
+  at: Map[Str, Int] = {}
+  refs: List[(Int, Str)] = []
+}
+
+/// A base type: its offset, written the first time.
+fn (g: G) dw_base(var die: Dw, var tys: DwTys, n: Str, enc: Int, size: Int) -> Int {
+  if let Some(o) = tys.at.get(n) {
+    return o
+  }
+  let o = 12 + die.n
+  die.uleb(5)
+  die.str(n)
+  die.u8(enc)
+  die.u8(size)
+  tys.at[n] = o
+  o
+}
+
+/// A reference to the type named target, patched by dw_flush when it is
+/// written after this (a pointer's target may contain the pointer).
+fn (g: G) dw_ref(var die: Dw, var tys: DwTys, target: Str) {
+  if let Some(o) = tys.at.get(target) {
+    die.u32(o)
+    return
+  }
+  tys.refs.push((die.lines.len(), target))
+  die.u32(0)
+}
+
+/// A pointer to the type named target (8 bytes).
+fn (g: G) dw_ptr(var die: Dw, var tys: DwTys, target: Str) -> Int {
+  let o = 12 + die.n
+  die.uleb(13)
+  g.dw_ref(die, tys, target)
+  die.u8(8)
+  o
+}
+
+/// A structure named n of size words, its members (name, type offset,
+/// byte offset) written after their types.
+fn (g: G) dw_struct(var die: Dw, var tys: DwTys, n: Str, words: Int, members: List[(Str, Int, Int)]) -> Int {
+  let o = 12 + die.n
+  die.uleb(6)
+  die.str(n)
+  die.uleb(8 * words)
+  for (mn, mt, mo) in members {
+    die.uleb(7)
+    die.str(mn)
+    die.u32(mt)
+    die.uleb(mo)
+  }
+  die.u8(0)
+  tys.at[n] = o
+  o
+}
+
+/// An array of the type at offset elem with count elements (0: an
+/// object's trailing items, as many as its length says).
+fn (g: G) dw_array(var die: Dw, elem: Int, count: Int) -> Int {
+  let o = 12 + die.n
+  die.uleb(11)
+  die.u32(elem)
+  die.uleb(12)
+  die.u16(count)
+  die.u8(0)
+  o
+}
+
 /// The unit relative offset of the DWARF type named n (an SSA type of
-/// the module, dwvars.xo dv_type_ok), written into die before the
-/// subprograms the first time it is asked for, its fields' types first.
-fn (g: G) dw_type(var die: Dw, var tys: Map[Str, Int], n: Str) -> Int {
-  if let Some(o) = tys.get(n) {
+/// the module, dwvars.xo dv_type_ok), written into die at the unit's top
+/// level the first time it is asked for, the types it holds first (a
+/// pointer's target later, dw_flush). Decision 0252 point 2: base types;
+/// structs and tuples as structures of their words; Str as its object
+/// pointer and length; List[T] and Box[T] as typedefs of a pointer to
+/// their objects (count, length, capacity, items; count, value); Map and
+/// Set as their struct of lists; an enum as its tag (an enumeration of
+/// the variants' names) and a union of the variants' fields; a function
+/// value as its code and environment words; a handle as a word.
+fn (g: G) dw_type(var die: Dw, var tys: DwTys, n: Str) -> Int {
+  if let Some(o) = tys.at.get(n) {
     return o
   }
   let t = g.m.type_at.get(n) ?? -1
@@ -364,71 +460,193 @@ fn (g: G) dw_type(var die: Dw, var tys: Map[Str, Int], n: Str) -> Int {
     return 0
   }
   let x = g.m.types[t]
-  let enc = match x.kind {
-    Float => 4 // DW_ATE_float
-    Bool => 2 // DW_ATE_boolean
-    Int => if x.unsigned { 7 } else { 5 } // DW_ATE_unsigned, DW_ATE_signed
-    _ => 0
-  }
-  if enc != 0 {
-    let o = 12 + die.n
-    die.uleb(5)
-    die.str(n)
-    die.u8(enc)
-    die.u8(if enc == 4 && x.bits == 32 { 4 } else { 8 })
-    tys[n] = o
-    return o
-  }
-  // a struct or tuple: its fields at their word offsets
-  var names: List[Str] = []
-  var types: List[Int] = []
-  if x.fields.is_empty() {
-    for (i, e) in x.elems.indexed() {
-      names.push("${i}")
-      types.push(e)
+  match x.kind {
+    Float => g.dw_base(die, tys, n, 4, if x.bits == 32 { 4 } else { 8 })
+    Bool => g.dw_base(die, tys, n, 2, 8)
+    Int => g.dw_base(die, tys, n, if x.unsigned { 7 } else { 5 }, 8)
+    Handle => g.dw_base(die, tys, n, 7, 8)
+    Str => {
+      let it = g.dw_base(die, tys, "Int", 5, 8)
+      let p = g.dw_ptr(die, tys, "Str.obj")
+      g.dw_struct(die, tys, n, 2, [("obj", p, 0), ("len", it, 8)])
     }
-  } else {
-    for f in x.fields {
-      names.push(f.name)
-      types.push(f.ty)
+    Func => {
+      let it = g.dw_base(die, tys, "Int", 5, 8)
+      g.dw_struct(die, tys, n, 2, [("code", it, 0), ("env", it, 8)])
     }
+    List | Box => {
+      // a typedef of the pointer, so the variable's type reads List[T]
+      let p = g.dw_ptr(die, tys, "${n}.obj")
+      let o = 12 + die.n
+      die.uleb(19)
+      die.str(n)
+      die.u32(p)
+      tys.at[n] = o
+      o
+    }
+    Enum => g.dw_enum(die, tys, t)
+    Struct | Tuple => {
+      var names: List[Str] = []
+      var types: List[Int] = []
+      if x.fields.is_empty() {
+        for (i, e) in x.elems.indexed() {
+          names.push("${i}")
+          types.push(e)
+        }
+      } else {
+        for f in x.fields {
+          names.push(f.name)
+          types.push(f.ty)
+        }
+      }
+      var ms: List[(Str, Int, Int)] = []
+      var at = 0
+      for (i, fname) in names.indexed() {
+        ms.push((fname, g.dw_type(die, tys, g.m.types[types[i]].name), 8 * at))
+        at += g.dw_words(types[i])
+      }
+      g.dw_struct(die, tys, n, g.dw_words(t), ms)
+    }
+    Unit | Cap | Bad => 0
   }
-  var refs: List[Int] = []
-  for ft in types {
-    refs.push(g.dw_type(die, tys, g.m.types[ft].name))
-  }
-  let o = 12 + die.n
-  die.uleb(6)
-  die.str(n)
-  die.uleb(8 * g.dw_words(t))
-  var at = 0
-  for (i, fname) in names.indexed() {
-    die.uleb(7)
-    die.str(fname)
-    die.u32(refs[i])
-    die.uleb(8 * at)
-    at += g.dw_words(types[i])
-  }
-  die.u8(0)
-  tys[n] = o
-  o
 }
 
-/// The words of a type dw_type describes: one for Int, Float, and Bool,
-/// the sum of the fields' for a struct or tuple (gen.xo layout's count).
+/// An enum: its tag's enumeration (`E.tag`), a structure per variant
+/// with fields (`E.V`), their union (`E.payload`), and the enum's
+/// structure of the tag and the union after it.
+fn (g: G) dw_enum(var die: Dw, var tys: DwTys, t: Int) -> Int {
+  let x = g.m.types[t]
+  let n = x.name
+  let it = g.dw_base(die, tys, "Int", 5, 8)
+  let tag = 12 + die.n
+  die.uleb(16)
+  die.str("${n}.tag")
+  die.u8(8)
+  die.u32(it)
+  for (k, v) in x.variants.indexed() {
+    die.uleb(17)
+    die.str(v.name)
+    die.uleb(k)
+  }
+  die.u8(0)
+  tys.at["${n}.tag"] = tag
+  // the variants with fields, each a structure of its words
+  var vs: List[(Str, Int)] = []
+  var most = 0
+  for v in x.variants {
+    if v.fields.is_empty() {
+      continue
+    }
+    var ms: List[(Str, Int, Int)] = []
+    var at = 0
+    for f in v.fields {
+      ms.push((f.name, g.dw_type(die, tys, g.m.types[f.ty].name), 8 * at))
+      at += g.dw_words(f.ty)
+    }
+    if at > most {
+      most = at
+    }
+    vs.push((v.name, g.dw_struct(die, tys, "${n}.${v.name}", at, ms)))
+  }
+  var members: List[(Str, Int, Int)] = [("tag", tag, 0)]
+  if !vs.is_empty() {
+    let u = 12 + die.n
+    die.uleb(18)
+    die.str("${n}.payload")
+    die.uleb(8 * most)
+    for (vn, vo) in vs {
+      die.uleb(7)
+      die.str(vn)
+      die.u32(vo)
+      die.uleb(0)
+    }
+    die.u8(0)
+    members.push(("payload", u, 8))
+  }
+  g.dw_struct(die, tys, n, 1 + most, members)
+}
+
+/// Writes the objects the pointers point at (Str.obj, List[T].obj,
+/// Box[T].obj: the types they hold first), until none is missing, then
+/// patches every reference to its target's offset.
+fn (g: G) dw_flush(var die: Dw, var tys: DwTys) {
+  var i = 0
+  while i < tys.refs.len() {
+    let (_, target) = tys.refs[i]
+    if !tys.at.contains(target) {
+      let _o = g.dw_object(die, tys, target)
+    }
+    i += 1
+  }
+  for (line, target) in tys.refs {
+    die.lines[line] = "\t.long ${tys.at.get(target) ?? 0}\n"
+  }
+  tys.refs = []
+}
+
+/// The object type named key (`Str.obj`, `List[T].obj`, `Box[T].obj`;
+/// the layouts of rt.layout's table and rc.xo BOX_HDR).
+fn (g: G) dw_object(var die: Dw, var tys: DwTys, key: Str) -> Int {
+  let it = g.dw_base(die, tys, "Int", 5, 8)
+  if key == "Str.obj" {
+    // count, capacity, the bytes at 16
+    let bytes = g.dw_array(die, g.dw_base(die, tys, "UInt8", 8, 1), 0)
+    return g.dw_struct(die, tys, key, 2, [("count", it, 0), ("cap", it, 8), ("bytes", bytes, 16)])
+  }
+  let n = key.trim_suffix(".obj")
+  let t = g.m.type_at.get(n) ?? -1
+  if t < 0 {
+    return g.dw_struct(die, tys, key, 1, [("count", it, 0)])
+  }
+  let x = g.m.types[t]
+  let elem = if x.elems.is_empty() { -1 } else { x.elems[0] }
+  let et = if elem >= 0 { g.dw_type(die, tys, g.m.types[elem].name) } else { it }
+  let boxed = match x.kind {
+    Box => true
+    Unit | Int | Float | Bool | Str | Struct | Enum | Tuple | List | Cap | Func | Handle | Bad => false
+  }
+  if boxed {
+    // the count, the value's words at BOX_HDR
+    return g.dw_struct(die, tys, key, 1 + (if elem >= 0 { g.dw_words(elem) } else { 1 }), [("count", it, 0), ("value", et, BOX_HDR)])
+  }
+  // a list: count, length, capacity, the items at 24
+  let items = g.dw_array(die, et, 0)
+  g.dw_struct(die, tys, key, 3, [("count", it, 0), ("len", it, 8), ("cap", it, 16), ("items", items, 24)])
+}
+
+/// The words of type t (gen.xo layout's count): two for Str and a
+/// function value, the tag and the largest variant's for an enum, the
+/// fields' for a struct or tuple, one otherwise.
 fn (g: G) dw_words(t: Int) -> Int {
   let x = g.m.types[t]
-  if x.fields.is_empty() && x.elems.is_empty() {
-    return 1
+  match x.kind {
+    Str | Func => 2
+    Unit | Cap | Bad => 0
+    Enum => {
+      var most = 0
+      for v in x.variants {
+        var n = 0
+        for f in v.fields {
+          n += g.dw_words(f.ty)
+        }
+        if n > most {
+          most = n
+        }
+      }
+      1 + most
+    }
+    Struct | Tuple => {
+      var n = 0
+      for f in x.fields {
+        n += g.dw_words(f.ty)
+      }
+      for e in x.elems {
+        n += g.dw_words(e)
+      }
+      n
+    }
+    Int | Float | Bool | List | Box | Handle => 1
   }
-  var n = 0
-  for f in x.fields {
-    n += g.dw_words(f.ty)
-  }
-  for e in x.elems {
-    n += g.dw_words(e)
-  }
-  n
 }
 
 /// A row: its label, packed line, file (the unit's index), and inline
@@ -564,6 +782,15 @@ fn (var d: Dw) sleb(v0: Int) {
     if done {
       break
     }
+  }
+  d.lines.push("\t.byte ${bs.join(", ")}\n")
+  d.n += bs.len()
+}
+
+/// Bytes given as decimal text, on one line.
+fn (var d: Dw) bytes(bs: List[Str]) {
+  if bs.is_empty() {
+    return
   }
   d.lines.push("\t.byte ${bs.join(", ")}\n")
   d.n += bs.len()

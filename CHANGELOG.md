@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Debuggers see Str, List, Map, Set, enum, and function values of arm64
+  native builds (decision 0252 stage 4): lldb's `frame variable` shows a
+  list's object (count, length, capacity, items), a string's bytes, and
+  an enum's variant by name with its fields.
 - SHA-256 uses x86-64's SHA-NI instructions when CPUID reports them
   (owner approved, 2026-10-17; decision 0254), on Xo's amd64 backend and
   on LLVM, with the portable code kept for CPUs without them.

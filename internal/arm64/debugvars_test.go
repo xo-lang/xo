@@ -511,3 +511,143 @@ func TestUnwind(t *testing.T) {
 		}
 	}
 }
+
+// TestDebugTypes checks decision 0252 stage 4's types on darwin/arm64:
+// testdata/debugtypes built by the arm64 backend (compiler/macho and cc)
+// has a dSYM that verifies, and lldb stopped in report (inlined into
+// main) reads main's List[Int] through its object (count, length,
+// capacity), a Map[Str, Int] as its struct of lists, a Str's bytes
+// through its object, and an enum as its tag's name and the union of its
+// variants.
+func TestDebugTypes(t *testing.T) {
+	if runtime.GOOS != "darwin" || !native() {
+		t.Skip("darwin/arm64 only")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	for _, tool := range []string{"dwarfdump", "lldb"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("no " + tool)
+		}
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := testtmp.Dir("xo-debugtypes-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(out)
+	src, err := filepath.Abs(filepath.Join("testdata", "debugtypes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"macho", []string{"--backend=arm64", "--ld=macho"}},
+		{"cc", []string{"--backend=arm64", "--ld=cc"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin := filepath.Join(out, c.name)
+			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
+			cmd := exec.Command(xo, args...)
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			if b, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("xo %v: %v\n%s", args, err, b)
+			}
+			if v, err := exec.Command("dwarfdump", "--verify", bin+".dSYM").CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
+			}
+			b, err := lldb(t, true, "-b", "-o", "breakpoint set -f main.xo -l 19", "-o", "run", "-o", "frame select 1",
+				"-o", "frame variable *xs", "-o", "frame variable m", "-o", "frame variable *it.name.obj", "-o", "frame variable sh", bin)
+			if err != nil {
+				t.Fatalf("lldb: %v\n%s", err, b)
+			}
+			for _, want := range []string{
+				"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4",
+				"(Map[Str, Int]) m = {",
+				"keys = 0x",
+				`bytes = "box`,
+				"(Shape) sh = {",
+				"tag = Rect",
+				"Rect = (w = 4, h = 5)",
+			} {
+				if !bytes.Contains(b, []byte(want)) {
+					t.Errorf("lldb lacks %q:\n%s", want, b)
+				}
+			}
+		})
+	}
+}
+
+// TestDebugLoclistsBudget pins the size of the arm64 backend's variable
+// locations (decision 0252 stage 4): the dSYM of internal/llvm's
+// http_server golden has a __debug_loclists under 3 MB (2.35 MB on
+// 2026-10-17, 445 KB before stage 4 described Str, Map, and struct
+// values; 4.2 MB before they were compacted: one piece per run of absent
+// words or of consecutive spill slots, offset pairs from a base address).
+// A change that grows it past the bound should compact it again, not
+// raise the bound without a measurement.
+func TestDebugLoclistsBudget(t *testing.T) {
+	if runtime.GOOS != "darwin" || !native() {
+		t.Skip("darwin/arm64 only")
+	}
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	if _, err := exec.LookPath("otool"); err != nil {
+		t.Skip("no otool")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(root, "internal", "llvm", "testdata", "golden", "http_server")
+	bin := filepath.Join(t.TempDir(), "hs")
+	cmd := exec.Command(xo, "build", "--backend=arm64", "-o", bin, ".")
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, b)
+	}
+	lc, err := exec.Command("otool", "-l", filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", "hs")).Output()
+	if err != nil {
+		t.Fatalf("otool -l: %v", err)
+	}
+	size := int64(-1)
+	in := false
+	for _, l := range strings.Split(string(lc), "\n") {
+		f := strings.Fields(l)
+		if len(f) == 2 && f[0] == "sectname" {
+			in = f[1] == "__debug_loclists"
+		}
+		if in && len(f) == 2 && f[0] == "size" {
+			size, err = strconv.ParseInt(strings.TrimPrefix(f[1], "0x"), 16, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if size < 0 {
+		t.Fatalf("no __debug_loclists in the dSYM:\n%s", lc)
+	}
+	const budget = 3 << 20
+	t.Logf("__debug_loclists: %d bytes (budget %d)", size, budget)
+	if size > budget {
+		t.Errorf("__debug_loclists is %d bytes, over its %d byte budget: compact the location lists (dwvars.xo dv_field, debug.xo)", size, budget)
+	}
+}

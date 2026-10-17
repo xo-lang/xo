@@ -33,20 +33,36 @@ struct DvPlan {
   need: List[Int] = []
 }
 
-/// Whether type t has a DWARF description in this stage: Int (any
-/// size), Float, Bool, and structs and tuples of them (decision 0252
-/// point 2; the rest come in stage 4).
+/// The most words of a value whose locations are described: a larger
+/// one (the emitter's own G, a record of hundreds of words) keeps its
+/// variable and type with no location, as unavailable. Without the bound
+/// xo's own assembly passed 2 GB, which one write(2) on macOS refuses
+/// (decision 0252 stage 4).
+const DV_MAX_WORDS = 32
+
+/// Whether type t has a DWARF description (debug.xo dw_type, decision
+/// 0252 point 2 and stage 4): Int (any size), Float, Bool, Str, List,
+/// Box, a function value, a handle, and structs (Map and Set too),
+/// tuples, and enums of them. A List's or Box's element is behind a
+/// pointer, described when the object is (a recursive type stops there).
 fn (var g: G) dv_type_ok(t: Int) -> Bool {
   if t < 0 {
     return false
   }
   let x = g.m.types[t]
   match x.kind {
-    Int | Float | Bool => true
-    Struct => {
-      if x.coll {
-        return false
+    Int | Float | Bool | Str | List | Box | Func | Handle => true
+    Enum => {
+      for v in x.variants {
+        for f in v.fields {
+          if !g.dv_type_ok(f.ty) {
+            return false
+          }
+        }
       }
+      !x.variants.is_empty()
+    }
+    Struct => {
       for f in x.fields {
         if !g.dv_type_ok(f.ty) {
           return false
@@ -99,7 +115,7 @@ fn (var g: G) dv_plan() -> DvPlan {
       continue
     }
     let ws = g.vals[d.value]
-    if ws.len() != g.layout(dv.ty).len() {
+    if ws.len() != g.layout(dv.ty).len() || ws.len() > DV_MAX_WORDS {
       continue
     }
     var words: List[List[DvSpan]] = []
@@ -195,7 +211,13 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       if best < 0 {
         continue
       }
-      var expr: List[Int] = []
+      // the words' pieces: a run of words with no place there is one
+      // empty piece of their bytes, words in consecutive spill slots one
+      // piece of memory, and the words after the last one with a place are
+      // left out (an object a composite does not cover is unavailable).
+      // Decision 0252 stage 4: values of hundreds of words wrote a piece
+      // per word, and .debug_loclists grew 26 times
+      var parts: List[(List[Int], Int, Int)] = []
       for w in mine[best].words {
         var op: List[Int] = []
         for s in w {
@@ -203,11 +225,38 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
             op = s.op
           }
         }
-        expr = expr + op
-        if nw > 1 {
-          expr.push(0x93) // DW_OP_piece 8
-          expr.push(8)
+        let k = parts.len() - 1
+        if op.is_empty() {
+          if k >= 0 && parts[k].0.is_empty() {
+            parts[k] = (parts[k].0, -1, parts[k].2 + 8)
+          } else {
+            parts.push(([], -1, 8))
+          }
+          continue
         }
+        let mo = sp_offset(op)
+        if mo >= 0 && k >= 0 && parts[k].1 >= 0 && parts[k].1 + parts[k].2 == mo {
+          parts[k] = (parts[k].0, parts[k].1, parts[k].2 + 8)
+        } else {
+          parts.push((op, mo, 8))
+        }
+      }
+      while !parts.is_empty() && parts[parts.len() - 1].0.is_empty() {
+        let _p = parts.pop()
+      }
+      var expr: List[Int] = []
+      if nw == 1 {
+        if !parts.is_empty() {
+          expr = parts[0].0
+        }
+      } else {
+        for (op, _, size) in parts {
+          expr = expr + op + [0x93] + uleb_bytes(size) // DW_OP_piece
+        }
+      }
+      if expr.is_empty() {
+        // no word has a place over [a, z)
+        continue
       }
       let la = labels.get(a) ?? ""
       let lz = labels.get(z) ?? ""
@@ -234,6 +283,30 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}")
   }
   out.join(";")
+}
+
+/// The offset from sp of a spill slot's location (DW_OP_breg31 and its
+/// SLEB128), or -1 for another location.
+fn sp_offset(op: List[Int]) -> Int {
+  if op.is_empty() || op[0] != 0x8f {
+    return -1
+  }
+  var v = 0
+  var sh = 0
+  var i = 1
+  while i < op.len() {
+    let b = op[i]
+    v = v | ((b & 127) << sh)
+    sh += 7
+    i += 1
+    if b < 128 {
+      if b & 64 != 0 {
+        v = v - (1 << sh)
+      }
+      break
+    }
+  }
+  v
 }
 
 fn uleb_bytes(v0: Int) -> List[Int] {

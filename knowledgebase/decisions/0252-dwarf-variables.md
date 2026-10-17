@@ -260,3 +260,35 @@ What the compiler has to work with:
   sched.fiber_main, cabi.fiber_main, xo_fiber_entry; LLVM work (n=9),
   the closure, xo.run, tasks.run_claimed, xo_x_fiber_main,
   xo_fiber_entry; both end there with no note.
+- Stage 4, arm64 (2026-10-17): the variables of every type but Unit and
+  capabilities get DWARF types (debug.xo dw_type): Str as a structure of
+  its object pointer (`Str.obj`: count, cap, the bytes at 16) and length;
+  List[T] and Box[T] as typedefs of a pointer to their objects
+  (`List[T].obj`: count, len, cap, items at 24 as an array of T with no
+  bound; `Box[T].obj`: count, the value at 8); Map and Set as their
+  struct of lists (keys, vals, live, slots, n); an enum as a structure of
+  its tag (an enumeration `E.tag` of the variants' names) and a union
+  `E.payload` of a structure per variant with fields (`E.V`); a function
+  value as its code and environment words; a handle as an unsigned word.
+  A pointer's target is written after the type that needs it and the
+  reference patched (DwTys), so recursive types end at their List or Box.
+  internal/arm64 TestDebugTypes (testdata/debugtypes, compiler/macho and
+  cc): dwarfdump --verify, and lldb reads `*xs` (count 1, len 3, cap 4),
+  the Map's lists, a Str's bytes through `obj`, and `sh` as `tag = Rect`
+  with `Rect = (w = 4, h = 5)`. Size (internal/llvm's http_server
+  golden, 2026-10-17): describing these values grew the arm64 assembly's
+  .debug_loclists text from 1.9 MB to 50.3 MB (26 times; values of
+  hundreds of words wrote a piece per word, and the self build's s2 spent
+  46 minutes in a whole text pass, drop_own_weak, over the larger text);
+  compacted, it is 17.2 MB of text and 2.35 MB in the dSYM (445 KB before
+  stage 4, 4.2 MB before the compaction), the whole dSYM 4.0 MB (2.1 MB
+  before): a run of words with no place is one empty piece, words in
+  consecutive spill slots one piece of memory, trailing absent words are
+  left out, an entry with no word placed is not written, and the entries
+  are DW_LLE_offset_pair from a DW_LLE_base_address (the function's
+  start) instead of two addresses each. internal/arm64
+  TestDebugLoclistsBudget keeps that dSYM's .debug_loclists under 3 MB.
+  Still to come: inlined callees'
+  variables, LLVM's aggregates, and the Xo debugger's own views (Str as
+  text, List as its elements, an enum as its variant: decision 0253
+  stage 3).
