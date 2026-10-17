@@ -669,6 +669,7 @@ fn (var r: Rc) vstart() {
     r.mark = []
     r.touched = []
     r.vleafs = {}
+    r.vimm = {}
     r.vuses = {}
   }
 }
@@ -722,6 +723,17 @@ fn (var r: Rc) get(s: RcState, l: Leaf) -> Int {
 
 fn (var r: Rc) set(var s: RcState, l: Leaf, k: Int) {
   s.put(r.lid(l), k)
+}
+
+/// Whether verifier leaf number i is immortal (immortal_leaf): its
+/// count is never tracked, retains and releases of it being skipped.
+fn (var r: Rc) imm_id(f: Func, i: Int) -> Bool {
+  if let Some(b) = r.vimm.get(i) {
+    return b
+  }
+  let b = immortal_leaf(f, r.vleaves[i], r.imm_ret)
+  r.vimm[i] = b
+  b
 }
 
 fn (var r: Rc) cset(i: Int, k: Int) {
@@ -859,18 +871,26 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
       if x.op == Op.Retain {
         for i in r.lids(f, x.args[0]) {
           if !r.alive(f, i) {
-            errs.push("${bp}retain of ${leaf_text(r.vleaves[i])}, which is not alive")
+            if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+              errs.push("${bp}retain of ${leaf_text(r.vleaves[i])}, which is not alive")
+            }
           }
-          r.cset(i, r.cur[i] + 1)
+          if !r.imm_id(f, i) {
+            r.cset(i, r.cur[i] + 1)
+          }
         }
         continue
       }
       if x.op == Op.Release {
         for i in r.lids(f, x.args[0]) {
           if r.cur[i] < 1 {
-            errs.push("${bp}release of ${leaf_text(r.vleaves[i])}, which is not held")
+            if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+              errs.push("${bp}release of ${leaf_text(r.vleaves[i])}, which is not held")
+            }
           }
-          r.cset(i, r.cur[i] - 1)
+          if !r.imm_id(f, i) {
+            r.cset(i, r.cur[i] - 1)
+          }
         }
         continue
       }
@@ -889,7 +909,9 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
       let us = r.luses(f, v)
       for us1 in us {
         if us1.m == Mode.Borrow && !r.alive(f, us1.id) {
-          errs.push("${bp}v${v} uses ${leaf_text(r.vleaves[us1.id])}, which is not alive")
+          if !immortal_leaf(f, r.vleaves[us1.id], r.imm_ret) {
+            errs.push("${bp}v${v} uses ${leaf_text(r.vleaves[us1.id])}, which is not alive")
+          }
         }
       }
       for us1 in us {
@@ -897,9 +919,13 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
           continue
         }
         if r.cur[us1.id] < 1 {
-          errs.push("${bp}v${v} consumes ${leaf_text(r.vleaves[us1.id])}, which is not held")
+          if !immortal_leaf(f, r.vleaves[us1.id], r.imm_ret) {
+            errs.push("${bp}v${v} consumes ${leaf_text(r.vleaves[us1.id])}, which is not held")
+          }
         }
-        r.cset(us1.id, r.cur[us1.id] - 1)
+        if !r.imm_id(f, us1.id) {
+          r.cset(us1.id, r.cur[us1.id] - 1)
+        }
       }
       if x.pad < 0 && !is_terminator(x.op) && raises(m, f, x, faults) {
         // a fault here leaves the function without cleanup (decision
@@ -908,14 +934,18 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
         for l in r.held(snap) {
           let c = r.get(snap, l)
           if c > 0 {
-            errs.push("${bp}v${v} can fault while ${leaf_text(l)} is held ${c} times (no landing releases it)")
+            if !immortal_leaf(f, l, r.imm_ret) {
+              errs.push("${bp}v${v} can fault while ${leaf_text(l)} is held ${c} times (no landing releases it)")
+            }
           }
         }
         if keeps_operands(x) {
           for us1 in us {
             let l = r.vleaves[us1.id]
             if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned {
-              errs.push("${bp}v${v} can fault before it takes ${leaf_text(l)} (no landing releases it)")
+              if !immortal_leaf(f, l, r.imm_ret) {
+                errs.push("${bp}v${v} can fault before it takes ${leaf_text(l)} (no landing releases it)")
+              }
             }
           }
         }
@@ -924,15 +954,21 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
         let k = if r.kind(f, v) == RootKind.Owned { 1 } else { 0 }
         for i in r.lids(f, v) {
           if r.cur[i] != 0 {
-            errs.push("${bp}${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times when it is defined again (a leak around a loop)")
+            if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+              errs.push("${bp}${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times when it is defined again (a leak around a loop)")
+            }
           }
-          r.cset(i, k)
+          if !r.imm_id(f, i) {
+            r.cset(i, k)
+          }
         }
       }
       if x.op == Op.Return {
         let snap = r.snapshot()
         for l in r.held(snap) {
-          errs.push("${bp}${leaf_text(l)} is held ${r.get(snap, l)} times at ret (leak or imbalance)")
+          if !immortal_leaf(f, l, r.imm_ret) {
+            errs.push("${bp}${leaf_text(l)} is held ${r.get(snap, l)} times at ret (leak or imbalance)")
+          }
         }
       }
       if x.op is Op.Jump | Op.Branch {
@@ -957,7 +993,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
               // it faulted before taking its operands
               for us1 in r.luses(f, site) {
                 let l = r.vleaves[us1.id]
-                if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned {
+                if us1.m == Mode.Consume && r.tracked(f, l) && r.kind(f, l.root) == RootKind.Owned && !r.imm_id(f, us1.id) {
                   est.put(us1.id, est.at(us1.id) + 1)
                 }
               }
@@ -965,16 +1001,22 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
             for a in f.edges[e].args {
               for i in r.lids(f, a) {
                 if est.at(i) < 1 {
-                  errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
+                  if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+                    errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
+                  }
                 }
-                est.put(i, est.at(i) - 1)
+                if !r.imm_id(f, i) {
+                  est.put(i, est.at(i) - 1)
+                }
               }
             }
             for p in f.blocks[to].params {
               if r.is_root(f, p) {
                 for i in r.lids(f, p) {
                   if est.at(i) != 0 {
-                    errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${est.at(i)} times (a leak around a loop)")
+                    if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+                      errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${est.at(i)} times (a leak around a loop)")
+                    }
                   }
                   est.put(i, 1)
                 }
@@ -986,22 +1028,30 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
             for a in f.edges[e].args {
               for i in r.lids(f, a) {
                 if r.cur[i] < 1 {
-                  errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
+                  if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+                    errs.push("${bp}edge to ${bname(to)} passes ${leaf_text(r.vleaves[i])}, which is not held")
+                  }
                 }
                 undo.push(i)
                 undo.push(r.cur[i])
-                r.cset(i, r.cur[i] - 1)
+                if !r.imm_id(f, i) {
+                  r.cset(i, r.cur[i] - 1)
+                }
               }
             }
             for p in f.blocks[to].params {
               if r.is_root(f, p) {
                 for i in r.lids(f, p) {
                   if r.cur[i] != 0 {
-                    errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times (a leak around a loop)")
+                    if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+                      errs.push("${bp}edge to ${bname(to)}: the previous ${leaf_text(r.vleaves[i])} is still held ${r.cur[i]} times (a leak around a loop)")
+                    }
                   }
                   undo.push(i)
                   undo.push(r.cur[i])
-                  r.cset(i, 1)
+                  if !r.imm_id(f, i) {
+                    r.cset(i, 1)
+                  }
                 }
               }
             }
@@ -1040,7 +1090,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
 
 /// The verifier's checker over the module after reference counting.
 fn rc_checker(m: Module) -> Rc {
-  var r = Rc{types: m.types}
+  var r = Rc{types: m.types, imm_ret: immortal_returns(m.funcs)}
   for (i, f) in m.funcs.indexed() {
     r.fidx[f.name] = i
     r.borrowed.push(f.borrowed)

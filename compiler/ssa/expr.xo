@@ -292,6 +292,20 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
           if b.m.is_sized(vt) {
             return b.sized_neg(v, span)
           }
+          if b.tkind(vt) == Kind.Int {
+            // a negative literal (`-1`): the constant itself, which cannot
+            // overflow, so no fault check and no landing pad (one in
+            // x509.empty's defaults kept that constructor from being
+            // inlined, 2026-10-17); the minimum stays a negation
+            let cv = b.s.f.values[v]
+            if cv.op == Op.Const {
+              if let I(n) = cv.aux {
+                if n != -9223372036854775807 - 1 {
+                  return b.add(Op.Const, vt, Aux.I(n: 0 - n), [])
+                }
+              }
+            }
+          }
           let r = b.add(Op.Neg, vt, Aux.None, [v])
           if b.tkind(vt) == Kind.Int {
             b.set_pos(r, b.pos(span))

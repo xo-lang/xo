@@ -65,6 +65,15 @@ struct Rc {
   cur: List[Int] = []
   mark: List[Bool] = []
   touched: List[Int] = []
+  /// whether each verifier leaf number is immortal (immortal_leaf), by
+  /// number: never counted
+  vimm: Map[Int, Bool] = {}
+  /// the functions whose one return is a struct literal, and which of its
+  /// fields are immortal (immortal_returns): immortal_leaf sees through a
+  /// call of one (x509.empty, the defaults of x509.parse's setfield chain)
+  imm_ret: Map[Str, List[Bool]] = {}
+  /// whether rc_ops skips immortal leaves (Builder.imm_rc)
+  skip_imm: Bool = false
 }
 
 /// The runtime calls whose operand modes matter (runtimeModes), or
@@ -679,7 +688,7 @@ pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
 /// The whole-program half of insert_rc: the `var` List parameters made
 /// unique, then borrow inference.
 fn (var b: Builder) rc_prepare() -> Rc {
-  var r = Rc{types: b.m.types}
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
   }
@@ -952,12 +961,137 @@ fn (r: Rc) leaf_value(var f: Func, l: Leaf, bl: Int) -> (List[Int], Int) {
 /// n retains or releases of leaf l in block bl (rc).
 fn (r: Rc) rc_ops(var f: Func, op: Op, l: Leaf, bl: Int, n: Int) -> List[Int] {
   var out: List[Int] = []
+  if r.skip_imm && immortal_leaf(f, l, r.imm_ret) {
+    // counting an immortal value changes nothing: no projection, no call
+    return out
+  }
   for _ in 0..n {
     let (code, v) = r.leaf_value(f, l, bl)
     for x in code {
       out.push(x)
     }
     out.push(new_value(f, bl, op, -1, Aux.None, [v]))
+  }
+  out
+}
+
+/// Whether leaf l is statically an immortal value, which retains and
+/// releases leave alone: through the struct and tuple literals and field
+/// updates that made it, a Str constant, the empty list (rt.rl_empty),
+/// the zero handle (rt.h_zero), or a closure of nothing (a null
+/// environment). The release of a field's old value was most often one
+/// of these: x509.parse's 588 releases of a setfield's old value
+/// (2026-10-17, Xo lang 4's count).
+fn immortal_leaf(f: Func, l: Leaf, sums: Map[Str, List[Bool]]) -> Bool {
+  imm_at(f, l.root, l.path.split("."), 1, sums, 0)
+}
+
+/// Whether the part at path parts[k..] of value v is immortal
+/// (immortal_leaf): through struct and tuple literals, field updates, a
+/// call of a function of sums, and block parameters whose every incoming
+/// argument is (an inlined call's continuation; around a loop the depth
+/// bound answers no).
+fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]], depth: Int) -> Bool {
+  if depth > 24 {
+    return false
+  }
+  let x = f.values[v]
+  if x.op == Op.Param && x.block > 0 {
+    var pi = -1
+    for (i, p) in f.blocks[x.block].params.indexed() {
+      if p == v {
+        pi = i
+      }
+    }
+    let es = f.blocks[x.block].preds
+    if pi < 0 || es.is_empty() {
+      return false
+    }
+    for e in es {
+      let args = f.edges[e].args
+      if pi >= args.len() || args[pi] < 0 || !imm_at(f, args[pi], parts, k, sums, depth + 1) {
+        return false
+      }
+    }
+    return true
+  }
+  if k >= parts.len() {
+    return imm_value(x)
+  }
+  let idx = Int.parse(parts[k]) ?? -1
+  if x.op is Op.Struct | Op.Tuple {
+    if idx < 0 || idx >= x.args.len() {
+      return false
+    }
+    return imm_at(f, x.args[idx], parts, k + 1, sums, depth + 1)
+  }
+  if x.op == Op.SetField {
+    if aux_int(x.aux) == idx {
+      return imm_at(f, x.args[1], parts, k + 1, sums, depth + 1)
+    }
+    return imm_at(f, x.args[0], parts, k, sums, depth + 1)
+  }
+  if x.op == Op.Call && k == parts.len() - 1 {
+    // a field of a call of a function whose one return is a struct
+    // literal with that field immortal (immortal_returns)
+    if let Some(fs) = sums.get(aux_name(x.aux)) {
+      return idx >= 0 && idx < fs.len() && fs[idx]
+    }
+  }
+  false
+}
+
+/// Whether value x is an immortal object: a Str or Bytes constant, the
+/// empty list, the zero handle, or a closure of nothing.
+fn imm_value(x: Value) -> Bool {
+  match x.op {
+    Const => {
+      if let S(_) = x.aux {
+        return true
+      }
+      if let Bs(_) = x.aux {
+        return true
+      }
+      false
+    }
+    Call => aux_name(x.aux) is "rt.rl_empty" | "rt.h_zero"
+    Closure => x.args.is_empty()
+    _ => false
+  }
+}
+
+/// The functions of fs whose one return is a struct literal, with which
+/// of its fields are immortal (imm_value); for immortal_leaf.
+fn immortal_returns(fs: List[Func]) -> Map[Str, List[Bool]] {
+  var out: Map[Str, List[Bool]] = {}
+  for f in fs {
+    var ret = -1
+    var n = 0
+    for bl in f.blocks {
+      for v in bl.instrs {
+        if f.values[v].op == Op.Return {
+          n += 1
+          ret = v
+        }
+      }
+    }
+    if n != 1 || f.values[ret].args.len() != 1 {
+      continue
+    }
+    let s = f.values[f.values[ret].args[0]]
+    if s.op != Op.Struct {
+      continue
+    }
+    var flags: List[Bool] = []
+    var any = false
+    for a in s.args {
+      let b = imm_value(f.values[a])
+      flags.push(b)
+      any = any || b
+    }
+    if any {
+      out[f.name] = flags
+    }
   }
   out
 }
@@ -1117,6 +1251,11 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
             after.push(x)
           }
         } else if !lv && kd == RootKind.Owned {
+          // a leaf dying here is released, unless it is statically
+          // immortal (immortal_leaf: a field's old value along a setfield
+          // chain from a literal of constants, x509.parse's 588); only
+          // deaths are skipped, so every edge and every join keeps the
+          // same counts for the verifier
           for x in r.rc_ops(f, Op.Release, l, bl, 1) {
             after.push(x)
           }

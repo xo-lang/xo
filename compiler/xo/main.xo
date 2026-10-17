@@ -868,6 +868,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   // the amd64 backend lowers only cpu.xo's carry arithmetic yet
   let soft_cpu = o.backend == "amd64"
   var b = ssa.build_program_cpu(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support, soft_cpu)
+  b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)

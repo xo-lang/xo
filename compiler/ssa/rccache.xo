@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v3"
+const RC_CACHE_VERSION = "xo rc cache v4"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -88,7 +88,7 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
   b.write_str("${RC_CACHE_VERSION}\n${id}\n${m.goarch}\n")
-  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi}\n")
+  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm}\n")
   key_func(b, f, tk)
   var seen: Map[Str, Bool] = {}
   for x in f.values {
@@ -97,7 +97,9 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
         seen[s] = true
         let ci = r.fidx.get(s) ?? -1
         let bs = if ci >= 0 { bools_text(r.borrowed[ci]) } else { "none" }
-        b.write_str("callee ${s.len()}:${s} ${bs}\n")
+        // its immortal fields too (immortal_returns, read by immortal_leaf)
+        let ir = if let Some(fs) = r.imm_ret.get(s) { bools_text(fs) } else { "-" }
+        b.write_str("callee ${s.len()}:${s} ${bs} ${ir}\n")
       }
     }
   }

@@ -256,6 +256,11 @@ pub struct Builder {
   /// intrinsic of std/native/llrt/cpu.xo is lowered, so this no longer
   /// changes which (kept for the builder's callers).
   pub soft_cpu: Bool = false
+  /// Reference counting emits no retain or release of a statically
+  /// immortal leaf (rc.xo immortal_leaf); off for the LLVM backend, whose
+  /// own inliner grew the TLS client 2% with it at no gain in run time
+  /// (bench/results/amd64-vs-llvm-2026-10-17.md).
+  pub imm_rc: Bool = true
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""
 }
