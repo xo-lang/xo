@@ -123,7 +123,9 @@ func TestDevGoldensLLVM(t *testing.T) {
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip(err)
 	}
-	devGoldens(t, "--backend=llvm", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
+	// 240 s a build, not xo dev's 120: http_tls took 71 s at load 47 on
+	// the Mac (2026-10-16), and clang's -O pass dominates under load
+	devGoldens(t, "--backend=llvm", "--timeout=240", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
 }
 
 // TestDevGoldensGo is scripts/selfhost-gogoldens.py.
