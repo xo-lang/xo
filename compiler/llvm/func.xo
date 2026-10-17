@@ -79,6 +79,7 @@ fn (var g: Gen) def(s: Str) -> Str {
   g.emit("${t} = ${s}")
   if g.dbg_sp >= 0 {
     g.dbg_temps[t] = true
+    g.dbg_note_ins(t, s)
   }
   t
 }
@@ -102,6 +103,9 @@ fn (var g: Gen) alloca(t: Str) -> Str {
 /// Defines v as the result of an expression (by naming the result).
 fn (var g: Gen) set(v: Int, s: Str) {
   g.emit("${vname(v)} = ${s}")
+  if g.dbg_sp >= 0 {
+    g.dbg_note_ins(vname(v), s)
+  }
 }
 
 /// Makes operand x the value of v (no instruction).
@@ -430,6 +434,7 @@ fn (var g: Gen) lower_func(fi: Int) {
     }
     g.dbg_block = b
     g.dbg_temps = {}
+    g.dbg_ins = {}
     for p in g.f.blocks[b].params {
       g.debug_bind(p)
     }

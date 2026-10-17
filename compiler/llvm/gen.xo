@@ -87,8 +87,8 @@ pub struct Gen {
   dbg_files: Map[Str, Int] = {}
   dbg_sp: Int = -1
   /// The function's DILocalVariable per ssa dvar (-1: not described),
-  /// its binding records by value, and the basic types by name
-  /// (decision 0252).
+  /// its binding records by value, and the types by name (decision
+  /// 0252).
   dbg_vars: List[Int] = []
   dbg_binds: Map[Int, List[Int]] = {}
   dbg_types: Map[Str, Int] = {}
@@ -96,6 +96,10 @@ pub struct Gen {
   /// (debug_bind uses only values of the block).
   dbg_block: Int = -1
   dbg_temps: Map[Str, Bool] = {}
+  /// With debug information, the insertvalue instructions of the block
+  /// by the name they define: (aggregate, index, inserted operand), so a
+  /// variable's part is the scalar inserted (debug_bind)
+  dbg_ins: Map[Str, (Str, Int, Str)] = {}
   cur_line: Int = 0
 
   // The function being lowered (sfn).

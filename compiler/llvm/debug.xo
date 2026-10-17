@@ -75,18 +75,18 @@ fn (var g: Gen) debug_func() {
   g.debug_vars(file)
 }
 
-/// The function's source variables (decision 0252, stage 3): a
-/// DILocalVariable per variable of a scalar type (Int, Float, Bool; a
-/// struct is an LLVM aggregate, which a dbg.value does not describe per
-/// field), parameters numbered by their place in the entry block, and
-/// the binding records by value, for debug_bind.
+/// The function's source variables (decision 0252, stages 3 and 4): a
+/// DILocalVariable per variable of a type with a description (dbg_type)
+/// and at most DV_MAX_LEAVES scalar parts, parameters numbered by their
+/// place in the entry block, and the binding records by value, for
+/// debug_bind.
 fn (var g: Gen) debug_vars(file: Int) {
   g.dbg_vars = []
   g.dbg_binds = {}
   let entry = g.f.blocks[0].params
   for (k, d) in g.f.dvars.indexed() {
-    let t = g.dbg_basic(d.ty)
-    if t < 0 || d.inl >= 0 {
+    let t = if d.inl >= 0 || d.ty < 0 { -1 } else { g.dbg_type(d.ty) }
+    if t < 0 || g.dbg_leaves(d.ty).len() > DV_MAX_LEAVES {
       g.dbg_vars.push(-1)
       continue
     }
@@ -116,6 +116,11 @@ fn (var g: Gen) debug_vars(file: Int) {
   }
 }
 
+/// The most scalar parts of a value whose variable is described: a
+/// larger one (a record of hundreds of words) is left out, as on arm64
+/// (compiler/arm64 dwvars.xo DV_MAX_WORDS).
+const DV_MAX_LEAVES = 32
+
 /// The DIBasicType of an Int, Float, or Bool type, -1 for another type.
 fn (var g: Gen) dbg_basic(t: Int) -> Int {
   if t < 0 {
@@ -134,9 +139,10 @@ fn (var g: Gen) dbg_basic(t: Int) -> Int {
   if let Some(k) = g.dbg_types.get(x.name) {
     return k
   }
+  // a Float32 is a double in this backend's values (gen.xo ll_new), so
+  // it is described as the double the register holds
   let size = match x.kind {
     Bool => 8
-    Float => if x.bits == 32 { 32 } else { 64 }
     _ => 64
   }
   let k = g.dbg_node("!DIBasicType(name: \"${ir_escape(x.name)}\", size: ${size}, encoding: ${enc})")
@@ -144,14 +150,235 @@ fn (var g: Gen) dbg_basic(t: Int) -> Int {
   k
 }
 
+/// The DWARF type of t (decision 0252 stage 4, the arm64 backend's
+/// descriptions in compiler/arm64 debug.xo, with the LLVM data layout):
+/// Int, Float, Bool; a handle as an unsigned word; Str as {obj, len}
+/// with obj a pointer to its object {count, cap, bytes}; a function value
+/// as {code, env}; List[T] and Box[T] as a pointer to their object
+/// ({count, len, cap, items}, {count, value}); a struct or tuple by its
+/// fields; an enum as {tag, payload}, the tag an enumeration of its
+/// variants and the payload a union of their fields. -1 for no type
+/// (Unit, a capability).
+fn (var g: Gen) dbg_type(t: Int) -> Int {
+  let x = g.m.types[t]
+  match x.kind {
+    Int | Float | Bool => return g.dbg_basic(t)
+    Unit | Cap | Bad => return -1
+    Str | Func | Handle | List | Box | Struct | Tuple | Enum => {}
+  }
+  if let Some(k) = g.dbg_types.get(x.name) {
+    return k
+  }
+  // the number first: a recursive type refers to itself (metadata may be
+  // referred to before its definition)
+  let k = g.dbg_reserve()
+  g.dbg_types[x.name] = k
+  let n = ir_escape(x.name)
+  let it = g.dbg_int()
+  let text = match x.kind {
+    Handle => "!DIBasicType(name: \"${n}\", size: 64, encoding: DW_ATE_unsigned)"
+    Str => {
+      let obj = g.dbg_ptr(g.dbg_str_obj())
+      g.dbg_struct(k, n, 128, [("obj", obj, 0, 64), ("len", it, 64, 64)])
+    }
+    Func => g.dbg_struct(k, n, 128, [("code", it, 0, 64), ("env", it, 64, 64)])
+    List | Box => {
+      let obj = g.dbg_reserve()
+      let et = if x.elems.is_empty() { -1 } else { x.elems[0] }
+      let ed = if et >= 0 { g.dbg_type(et) } else { -1 }
+      let ek = if ed >= 0 { ed } else { it }
+      let boxed = match x.kind {
+        Box => true
+        Int | Float | Bool | Str | Func | Handle | List | Struct | Tuple | Enum | Unit | Cap | Bad => false
+      }
+      let obj_text = if boxed {
+        // box_ll: {i64 rc, T}
+        let (_, ea) = if et >= 0 { g.layout(et) } else { (8, 8) }
+        let (es, _) = if et >= 0 { g.layout(et) } else { (8, 8) }
+        let at = align_up(8, ea)
+        g.dbg_struct(obj, "${n}.obj", 8 * align_up(at + es, 8), [("count", it, 0, 64), ("value", ek, 8 * at, 8 * es)])
+      } else {
+        // %xo.rlist {count, len, cap}, then the items
+        let arr = g.dbg_node("!DICompositeType(tag: DW_TAG_array_type, baseType: !${ek}, size: 0, elements: !{!${g.dbg_node("!DISubrange(count: 0)")}})")
+        g.dbg_struct(obj, "${n}.obj", 192, [("count", it, 0, 64), ("len", it, 64, 64), ("cap", it, 128, 64), ("items", arr, 192, 0)])
+      }
+      g.meta.push("!${obj} = ${obj_text}\n")
+      "!DIDerivedType(tag: DW_TAG_typedef, name: \"${n}\", baseType: !${g.dbg_ptr(obj)})"
+    }
+    Struct | Tuple => {
+      var ts: List[Int] = []
+      var names: List[Str] = []
+      if x.fields.is_empty() {
+        for (i, e) in x.elems.indexed() {
+          ts.push(e)
+          names.push("${i}")
+        }
+      } else {
+        for f in x.fields {
+          ts.push(f.ty)
+          names.push(f.name)
+        }
+      }
+      let (size, _) = g.layout(t)
+      g.dbg_struct(k, n, 8 * size, g.dbg_members(ts, names, 0))
+    }
+    Enum => {
+      var es: List[Str] = []
+      for (i, v) in x.variants.indexed() {
+        es.push("!DIEnumerator(name: \"${ir_escape(v.name)}\", value: ${i})")
+      }
+      let tag = g.dbg_node("!DICompositeType(tag: DW_TAG_enumeration_type, name: \"${n}.tag\", baseType: !${it}, size: 64, elements: !{${es.join(", ")}})")
+      let words = g.words(t)
+      var us: List[Str] = []
+      for v in x.variants {
+        if v.fields.is_empty() {
+          continue
+        }
+        var ts: List[Int] = []
+        var names: List[Str] = []
+        for f in v.fields {
+          ts.push(f.ty)
+          names.push(f.name)
+        }
+        let (vs, _) = g.struct_layout(ts)
+        let vk = g.dbg_reserve()
+        g.meta.push("!${vk} = ${g.dbg_struct(vk, "${n}.${ir_escape(v.name)}", 8 * vs, g.dbg_members(ts, names, 0))}\n")
+        us.push("!DIDerivedType(tag: DW_TAG_member, name: \"${ir_escape(v.name)}\", baseType: !${vk}, size: ${8 * vs}, offset: 0)")
+      }
+      var ms: List[(Str, Int, Int, Int)] = [("tag", tag, 0, 64)]
+      if !us.is_empty() {
+        let u = g.dbg_node("!DICompositeType(tag: DW_TAG_union_type, name: \"${n}.payload\", size: ${64 * words}, elements: !{${us.join(", ")}})")
+        ms.push(("payload", u, 64, 64 * words))
+      }
+      g.dbg_struct(k, n, 64 + 64 * words, ms)
+    }
+    Int | Float | Bool | Unit | Cap | Bad => ""
+  }
+  g.meta.push("!${k} = ${text}\n")
+  k
+}
+
+/// A metadata number for a node defined later (dbg_type).
+fn (var g: Gen) dbg_reserve() -> Int {
+  g.dbg_n += 1
+  g.dbg_n
+}
+
+fn (var g: Gen) dbg_int() -> Int {
+  if let Some(k) = g.dbg_types.get("Int") {
+    return k
+  }
+  let k = g.dbg_node("!DIBasicType(name: \"Int\", size: 64, encoding: DW_ATE_signed)")
+  g.dbg_types["Int"] = k
+  k
+}
+
+/// A pointer to the type with metadata number k.
+fn (var g: Gen) dbg_ptr(k: Int) -> Int {
+  g.dbg_node("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !${k}, size: 64)")
+}
+
+/// A string's object: {count, cap, bytes} (the runtime's, as on arm64).
+fn (var g: Gen) dbg_str_obj() -> Int {
+  if let Some(k) = g.dbg_types.get("Str.obj") {
+    return k
+  }
+  let it = g.dbg_int()
+  let u8 = g.dbg_node("!DIBasicType(name: \"UInt8\", size: 8, encoding: DW_ATE_unsigned_char)")
+  let arr = g.dbg_node("!DICompositeType(tag: DW_TAG_array_type, baseType: !${u8}, size: 0, elements: !{!${g.dbg_node("!DISubrange(count: 0)")}})")
+  let k = g.dbg_reserve()
+  g.dbg_types["Str.obj"] = k
+  g.meta.push("!${k} = ${g.dbg_struct(k, "Str.obj", 128, [("count", it, 0, 64), ("cap", it, 64, 64), ("bytes", arr, 128, 0)])}\n")
+  k
+}
+
+/// The members of fields of types ts named names, at their offsets in
+/// the LLVM layout of a struct of them from base bits: (name, type,
+/// offset, size) in bits, leaving out the fields of no type.
+fn (var g: Gen) dbg_members(ts: List[Int], names: List[Str], base: Int) -> List[(Str, Int, Int, Int)] {
+  var out: List[(Str, Int, Int, Int)] = []
+  var at = 0
+  for (i, ft) in ts.indexed() {
+    let (fs, fa) = g.layout(ft)
+    at = align_up(at, fa)
+    let d = g.dbg_type(ft)
+    if d >= 0 {
+      out.push((names[i], d, base + 8 * at, 8 * fs))
+    }
+    at += fs
+  }
+  out
+}
+
+/// A DICompositeType structure numbered k named n of size bits with
+/// members (name, type, offset, size), as text.
+fn (var g: Gen) dbg_struct(k: Int, n: Str, size: Int, members: List[(Str, Int, Int, Int)]) -> Str {
+  var ms: List[Str] = []
+  for (mn, mt, mo, msz) in members {
+    ms.push("!DIDerivedType(tag: DW_TAG_member, name: \"${ir_escape(mn)}\", scope: !${k}, baseType: !${mt}, size: ${msz}, offset: ${mo})")
+  }
+  "!DICompositeType(tag: DW_TAG_structure_type, name: \"${n}\", size: ${size}, elements: !{${ms.join(", ")}})"
+}
+
+/// The scalar parts of a value of t in its LLVM type: (extractvalue
+/// indexes, LLVM type, offset and size in bits).
+fn (var g: Gen) dbg_leaves(t: Int) -> List[(List[Int], Str, Int, Int)] {
+  let x = g.m.types[t]
+  match x.kind {
+    Int => [([], "i64", 0, 64)]
+    Float => [([], "double", 0, 64)]
+    Bool => [([], "i1", 0, 8)]
+    List | Box | Handle => [([], "ptr", 0, 64)]
+    Str => [([0], "ptr", 0, 64), ([1], "i64", 64, 64)]
+    Func => [([0], "ptr", 0, 64), ([1], "ptr", 64, 64)]
+    Unit | Cap | Bad => []
+    Enum => {
+      var out: List[(List[Int], Str, Int, Int)] = [([0], "i64", 0, 64)]
+      for j in 0..g.words(t) {
+        out.push(([1, j], "i64", 64 + 64 * j, 64))
+      }
+      out
+    }
+    Struct | Tuple => {
+      var ts: List[Int] = []
+      if x.fields.is_empty() {
+        ts = x.elems
+      } else {
+        for f in x.fields {
+          ts.push(f.ty)
+        }
+      }
+      var out: List[(List[Int], Str, Int, Int)] = []
+      var at = 0
+      for (i, ft) in ts.indexed() {
+        let (fs, fa) = g.layout(ft)
+        at = align_up(at, fa)
+        for (path, lt, o, sz) in g.dbg_leaves(ft) {
+          out.push(([i] + path, lt, 8 * at + o, sz))
+        }
+        at += fs
+      }
+      out
+    }
+  }
+}
+
 /// The dbg.value calls of the binding records of value v (after its
 /// definition, or at its block's start for a parameter): none for a value
-/// held in memory (reading it would add a load) or of no type.
+/// held in memory (reading it would add a load) or of no type. A value of
+/// several scalar parts (Str, a struct, an enum) has a call per part the
+/// block's insertvalue chains name, as a fragment of the variable.
 fn (var g: Gen) debug_bind(v: Int) {
   if g.dbg_sp < 0 {
     return
   }
-  let ds = g.dbg_binds.get(v) ?? []
+  // each variable once (a value can have several records of one)
+  var ds: List[Int] = []
+  for d in g.dbg_binds.get(v) ?? [] {
+    if !ds.contains(d) {
+      ds.push(d)
+    }
+  }
   if ds.is_empty() || g.lazy[v] >= 0 || g.is_void(g.f.values[v].ty) {
     return
   }
@@ -162,12 +389,176 @@ fn (var g: Gen) debug_bind(v: Int) {
   // blocks, which changes register allocation (decision 0252's gate;
   // netconn.dial_timeout, 2026-10-17)
   let here = (o == vname(v) && g.blk[v] == g.dbg_block) || g.dbg_temps.contains(o) || !(o.starts_with("%") || o.starts_with("@"))
-  if !here {
+  let leaves = g.dbg_leaves(g.f.values[v].ty)
+  if leaves.len() == 1 && leaves[0].0.is_empty() {
+    // poison where the value is not described: it ends the variable's
+    // earlier location, which would go on showing its earlier value
+    let x = if here { o } else { "poison" }
+    for d in ds {
+      g.emit("call void @llvm.dbg.value(metadata ${lt} ${x}, metadata !${g.dbg_vars[d]}, metadata !DIExpression())")
+    }
     return
   }
-  for d in ds {
-    g.emit("call void @llvm.dbg.value(metadata ${lt} ${o}, metadata !${g.dbg_vars[d]}, metadata !DIExpression())")
+  let (whole, _) = g.layout(g.f.values[v].ty)
+  for (path, plt, off, size) in leaves {
+    // the scalar inserted at path when this block built the value; none
+    // for a part of an aggregate that arrived whole (a parameter, a call's
+    // result, a phi): an extractvalue only debug information uses is
+    // deleted as dead (LLVM does not salvage it), and a dbg.value of the
+    // aggregate is given its first register as the whole variable
+    // (gotchas/llvm-aggregate-dbg-value.md). Poison then: it ends the
+    // part's earlier location, which would go on showing an earlier
+    // value of the variable
+    let (part, _) = if here { g.dbg_part(o, path, plt) } else { ("", true) }
+    let p = if part.is_empty() { "poison" } else { part }
+    // a fragment that is the whole variable is the variable
+    let frag = if leaves.len() == 1 && off == 0 && size == 8 * whole { "" } else { "DW_OP_LLVM_fragment, ${off}, ${size}" }
+    for d in ds {
+      g.emit("call void @llvm.dbg.value(metadata ${plt} ${p}, metadata !${g.dbg_vars[d]}, metadata !DIExpression(${frag}))")
+    }
   }
+}
+
+/// Records s if it is an insertvalue defining name: `insertvalue T AGG,
+/// TY X, K` with one index K.
+fn (var g: Gen) dbg_note_ins(name: Str, s: Str) {
+  if !s.starts_with("insertvalue ") {
+    return
+  }
+  // T, then `AGG, TY X, K` split at the commas outside braces
+  let (_, rest) = ir_token(s[12..])
+  let parts = ir_split(rest)
+  if parts.len() != 3 {
+    return
+  }
+  let k = Int.parse(parts[2]) ?? -1
+  let (_, x) = ir_token(parts[1])
+  if k < 0 || x.is_empty() {
+    return
+  }
+  g.dbg_ins[name] = (parts[0], k, x)
+}
+
+/// The first type or operand of s (balanced braces, brackets, angle
+/// brackets, and quotes) and the rest after its space.
+fn ir_token(s: Str) -> (Str, Str) {
+  var depth = 0
+  var quoted = false
+  let bs = s.bytes()
+  for i in 0..bs.len() {
+    let c = bs[i]
+    if c == 34 {
+      quoted = !quoted
+    } else if quoted {
+      continue
+    } else if c == 123 || c == 91 || c == 60 {
+      depth += 1
+    } else if c == 125 || c == 93 || c == 62 {
+      depth -= 1
+    } else if c == 32 && depth == 0 {
+      return (s[0..i], s[i + 1..])
+    }
+  }
+  (s, "")
+}
+
+/// s split at the ", " outside braces, brackets, and quotes.
+fn ir_split(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  var depth = 0
+  var quoted = false
+  var start = 0
+  let bs = s.bytes()
+  var i = 0
+  while i < bs.len() {
+    let c = bs[i]
+    if c == 34 {
+      quoted = !quoted
+    } else if !quoted {
+      if c == 123 || c == 91 || c == 60 {
+        depth += 1
+      } else if c == 125 || c == 93 || c == 62 {
+        depth -= 1
+      } else if c == 44 && depth == 0 && i + 1 < bs.len() && bs[i + 1] == 32 {
+        out.push(s[start..i])
+        start = i + 2
+        i += 1
+      }
+    }
+    i += 1
+  }
+  out.push(s[start..])
+  out
+}
+
+/// The operand of the scalar at path of aggregate operand o, from the
+/// block's insertvalue chains: (operand, true); ("", true) for a part
+/// that is undefined (undef, poison) or of a value of another block
+/// (decision 0252's gate, as debug_bind); ("", false) when not known.
+fn (var g: Gen) dbg_part(o0: Str, path0: List[Int], lt: Str) -> (Str, Bool) {
+  var o = o0
+  var path = path0
+  var guard = 0
+  while guard < 256 {
+    guard += 1
+    if path.is_empty() {
+      if o.starts_with("@") {
+        // a global's address (a string literal's object): none. On Linux
+        // code generation drops it (gdb: <optimized out>), and on macOS
+        // dsymutil would relocate it as the function's
+        // (gotchas/llvm-aggregate-dbg-value.md)
+        return ("", true)
+      }
+      if !o.starts_with("%") {
+        return (o, true)
+      }
+      if g.dbg_temps.contains(o) {
+        return (o, true)
+      }
+      if o.starts_with("%v") {
+        let n = Int.parse(o[2..]) ?? -1
+        if n >= 0 && n < g.blk.len() && g.blk[n] == g.dbg_block {
+          return (o, true)
+        }
+      }
+      return ("", true)
+    }
+    if o == "undef" || o == "poison" {
+      return ("", true)
+    }
+    if o == "zeroinitializer" {
+      let z = match lt {
+        "ptr" => "null"
+        "double" | "float" => "0.0"
+        "i1" => "false"
+        _ => "0"
+      }
+      return (z, true)
+    }
+    if o.starts_with("{ ") && o.ends_with(" }") {
+      // a constant struct: its members `TY V`
+      let ms = ir_split(o[2..o.len() - 2])
+      if path[0] >= ms.len() {
+        return ("", false)
+      }
+      let (_, mv) = ir_token(ms[path[0]])
+      o = mv
+      path = path[1..]
+      continue
+    }
+    match g.dbg_ins.get(o) {
+      Some((agg, k, x)) => {
+        if path[0] == k {
+          o = x
+          path = path[1..]
+        } else {
+          o = agg
+        }
+      }
+      None => return ("", false)
+    }
+  }
+  ("", false)
 }
 
 /// The location of the instruction being emitted, inline.

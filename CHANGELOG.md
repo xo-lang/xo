@@ -10,6 +10,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   that has room is inline (a count and capacity check, a store), the
   call only for a shared, literal, or full string: json/enc_strings 3.7%
   fewer instructions, json and text workloads 0.7 to 2%.
+
+- LLVM debug builds describe Str, List, Box, Map, Set, enum, function,
+  and handle values to lldb and gdb as arm64 builds do (decision 0252
+  stage 4): a list through its object, a struct, enum, or string the
+  function builds by its parts; a value that arrives whole (a parameter,
+  a call's result) shows as not available rather than with an earlier
+  value. A Float32 variable now shows its value (it was read as half of
+  the double the register holds). --release and -s builds are unchanged.
+
 - arm64 debug builds describe a variable's word that holds a constant by
   the constant (DW_OP_constu, or DW_OP_addrx of a string literal's
   static object): a literal field that no register keeps (an immortal

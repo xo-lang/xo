@@ -514,7 +514,7 @@ func TestUnwind(t *testing.T) {
 
 // TestDebugTypes checks decision 0252 stage 4's types on darwin/arm64:
 // testdata/debugtypes built by the arm64 backend (compiler/macho and cc)
-// has a dSYM that verifies, and lldb stopped in report (inlined into
+// and by LLVM has a dSYM that verifies, and lldb stopped in report (inlined into
 // main) reads main's List[Int] through its object (count, length,
 // capacity), a Map[Str, Int] as its struct of lists, a Str's bytes
 // through its object, and an enum as its tag's name and the union of its
@@ -548,12 +548,41 @@ func TestDebugTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	arm64Cmds := []string{"frame variable *xs", "frame variable m", "frame variable *it.name.obj", "frame variable sh"}
+	arm64Wants := []string{
+		"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4",
+		"(Map[Str, Int]) m = {",
+		"keys = 0x",
+		// it.name, a literal: no retain keeps its word in a register
+		// (an immortal field), so its location is the constant itself,
+		// DW_OP_addrx of the static object (dwvars.xo)
+		`bytes = "box`,
+		"(Shape) sh = {",
+		"tag = Rect",
+		"Rect = (w = 4, h = 5)",
+	}
 	for _, c := range []struct {
-		name string
-		args []string
+		name  string
+		args  []string
+		cmds  []string
+		wants []string
+		// what lldb must not print: a stale value of a variable
+		nots []string
 	}{
-		{"macho", []string{"--backend=arm64", "--ld=macho"}},
-		{"cc", []string{"--backend=arm64", "--ld=cc"}},
+		{"macho", []string{"--backend=arm64", "--ld=macho"}, arm64Cmds, arm64Wants, nil},
+		// not the string's bytes: dsymutil relocates an address in a
+		// location list as the function's
+		// (gotchas/dsymutil-loclist-address-function-offset.md)
+		{"cc", []string{"--backend=arm64", "--ld=cc"}, arm64Cmds, append(append([]string{}, arm64Wants[:3]...), arm64Wants[4:]...), nil},
+		// LLVM (compiler/llvm debug.xo): a value the function builds (a
+		// struct or enum literal) by its parts, a list through its object;
+		// not an aggregate that arrives whole (a parameter, a call's
+		// result, a phi: m and sh here), and not the string's address on
+		// macOS (gotchas/llvm-aggregate-dbg-value.md). m was the zero map
+		// of `{}` until a later binding ended that location
+		{"llvm", []string{"--backend=llvm"}, []string{"frame variable *xs", "frame variable m", "frame variable it"},
+			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4", "(Item) it = {", "len = 3", "tags = 0x"},
+			[]string{"keys = NULL"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
@@ -567,30 +596,22 @@ func TestDebugTypes(t *testing.T) {
 			if v, err := exec.Command("dwarfdump", "--verify", bin+".dSYM").CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 			}
-			b, err := lldb(t, true, "-b", "-o", "breakpoint set -f main.xo -l 19", "-o", "run", "-o", "frame select 1",
-				"-o", "frame variable *xs", "-o", "frame variable m", "-o", "frame variable *it.name.obj", "-o", "frame variable sh", bin)
+			largs := []string{"-b", "-o", "breakpoint set -f main.xo -l 19", "-o", "run", "-o", "frame select 1"}
+			for _, x := range c.cmds {
+				largs = append(largs, "-o", x)
+			}
+			b, err := lldb(t, true, append(largs, bin)...)
 			if err != nil {
 				t.Fatalf("lldb: %v\n%s", err, b)
 			}
-			for _, want := range []string{
-				"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4",
-				"(Map[Str, Int]) m = {",
-				"keys = 0x",
-				// it.name, a literal: no retain keeps its word in a register
-				// (an immortal field), so its location is the constant itself,
-				// DW_OP_addrx of the static object (dwvars.xo); not through
-				// dsymutil, which relocates an address in a location list as
-				// the function's (gotchas/debug-immortal-field-no-location.md)
-				`bytes = "box`,
-				"(Shape) sh = {",
-				"tag = Rect",
-				"Rect = (w = 4, h = 5)",
-			} {
-				if c.name == "cc" && strings.HasPrefix(want, "bytes = ") {
-					continue
-				}
+			for _, want := range c.wants {
 				if !bytes.Contains(b, []byte(want)) {
 					t.Errorf("lldb lacks %q:\n%s", want, b)
+				}
+			}
+			for _, not := range c.nots {
+				if bytes.Contains(b, []byte(not)) {
+					t.Errorf("lldb shows %q:\n%s", not, b)
 				}
 			}
 		})

@@ -289,6 +289,33 @@ What the compiler has to work with:
   start) instead of two addresses each. internal/arm64
   TestDebugLoclistsBudget keeps that dSYM's .debug_loclists under 3 MB.
   Still to come: inlined callees'
-  variables, LLVM's aggregates, and the Xo debugger's own views (Str as
-  text, List as its elements, an enum as its variant: decision 0253
-  stage 3).
+  variables, and the Xo debugger's own views (Str as text, List as its
+  elements, an enum as its variant: decision 0253 stage 3).
+- arm64 constant words (2026-10-17): a word in a register that holds an
+  Int constant or a string literal's address (imm, sym_addr), whose
+  definition may have been deleted as unused, is described by the
+  constant over its binding's range: DW_OP_constu or consts, or
+  DW_OP_addrx of a .debug_addr entry (dwvars.xo, debug.xo); string
+  addresses only for ELF and the compiler/macho link (ssa.Module
+  dw_data_addrs: dsymutil relocates an address in a location list as the
+  function's, gotchas/dsymutil-loclist-address-function-offset.md).
+- Stage 4, LLVM (2026-10-17): compiler/llvm debug.xo dbg_type describes
+  the stage 4 types as arm64 does, with the LLVM data layout (a Bool is
+  one byte, fields aligned; a Float32 as the double this backend holds),
+  recursive types through numbers reserved before their nodes. A value
+  of several scalar parts (Str, a struct, a tuple, a function value, an
+  enum) gets a fragment dbg.value per part, of the scalar the block's
+  insertvalue chains (or a constant struct) put there; a part not found
+  that way, and a global's address, gets poison, which ends an earlier
+  location (before, `var m = {}`'s zero map went on showing after m
+  changed). LLVM cannot describe the parts of an aggregate that arrives
+  whole (a parameter, a call's result, a phi; gotchas/
+  llvm-aggregate-dbg-value.md), so those show as not available. At most
+  32 parts per variable. internal/arm64 TestDebugTypes's llvm case:
+  `*xs` (count 1, len 3, cap 4) and `it` (name.len 3, tags), and m not
+  shown with a stale value; gdb 16.3 on Linux (Docker, xo cross built)
+  gives the same: `it = {name = {obj = <optimized out>, len = 3}, tags =
+  0x...}`, `*xs = {count = 1, len = 3, cap = 4, items = 0x...}`, m
+  `<optimized out>`. Cost (bench/results/llvm-debug-types-2026-10-17.md):
+  --release IR byte identical; a debug build's clang -O2 -g +1.2%
+  instructions and +1.5% peak memory; xo itself within noise.
