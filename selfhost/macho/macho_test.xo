@@ -241,6 +241,13 @@ const ENCODINGS: List[(Str, Int)] = [
   ("lsl x9, x16, #1", 0xd37ffa09),
   ("lsl x11, x24, x9", 0x9ac9230b),
   ("mov x9, #1", 0xd2800029),
+  // mov_imm's one instruction constants (2026-10-17): a logical
+  // immediate (orr) and a 32 bit movn, zero extended
+  ("mov x0, #-4294967296", 0xb2607fe0),
+  ("mov x3, #4294967295", 0xb2407fe3),
+  ("mov w0, #4294967294", 0x12800020),
+  ("mov w5, #4294901759", 0x12a00025),
+  ("mov w17, #4294906420", 0x129db971),
   ("mov x1, x19", 0xaa1303e1),
   ("mov x1, xzr", 0xaa1f03e1),
   ("movk x14, #32586, lsl #16", 0xf2afe94e),

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a constant that is a logical immediate or a 32 bit movn is one
+  instruction, and the inliner counts an add with carry and its carry
+  as one, so P-256's field add and subtract inline: bench/perf 0 of 114
+  workloads slower, 19 faster (TLS handshakes 1.5 to 2.5% fewer
+  instructions, json/parse 3.4%).
 - selfhost/macho elflink links x86-64 static executables (decision 0254,
   stage 4; `macho elflink --static`): LLVM-compiled goldens assembled by
   Xo's x86-64 assembler and linked by it pass on linux/amd64 (29 of 29),

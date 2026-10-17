@@ -1,0 +1,26 @@
+// Tests of the constant materialization (mov_imm).
+
+test "mov_imm: one instruction when one fits" {
+  // movz or movn of one chunk, a logical immediate, a 32 bit movn
+  expect(mov_imm(5)) == "mov $d0, #5"
+  expect(mov_imm(-65536)) == "mov $d0, #-65536"
+  expect(mov_imm(-4294967296)) == "mov $d0, #-4294967296"
+  expect(mov_imm(4294967295)) == "mov $d0, #4294967295"
+  expect(mov_imm(0x5555555555555555)) == "mov $d0, #6148914691236517205"
+  // 2^32 - 2 is a run of ones too (orr)
+  expect(mov_imm(4294967294)) == "mov $d0, #4294967294"
+  // ~n is one chunk and n no run: the 64 bit movn
+  expect(mov_imm(-3989504001)) == "movn $d0, #60875, lsl #16"
+  expect(mov_imm(0xffff1234)) == "mov $wd0, #4294906420"
+  expect(mov_imm(4294901759)) == "mov $wd0, #4294901759"
+}
+
+test "mov_imm: chunks otherwise" {
+  expect(mov_imm(0x12345678)) == "movz $d0, #22136, lsl #0\nmovk $d0, #4660, lsl #16"
+  expect(mov_imm(0x123400005678).split("\n").len()) == 2
+}
+
+test "imm_text: a w register for the 32 bit form" {
+  expect(imm_text(0xffff1234, "x17")) == "\tmov w17, #4294906420\n"
+  expect(imm_text(-4294967296, "x9")) == "\tmov x9, #-4294967296\n"
+}

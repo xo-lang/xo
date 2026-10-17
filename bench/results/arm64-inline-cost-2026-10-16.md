@@ -83,3 +83,32 @@ Sweep (bench/perf/sweep.py, base its merge base, 114 workloads): 0
 slower, 1 faster beyond spread (httpclient/len 0.991). P-256 within
 spread: tls/p256 0.998, tls/srv-p256 0.996, tls/srv-p256-0 0.993; the
 call was cheap next to the field multiplications around it.
+
+## Carry pairs count once; one instruction constants (2026-10-17, xo-4)
+
+Callgrind on linux/arm64 (bench/perf/tls, p256 handshakes, after
+72bb4214) put arm64 at 9.55M instructions a handshake and LLVM at 7.30M;
+nistec.add4p and sub4p, calls 29,000 and 13,000 times a handshake, were
+0.78M of the gap. Their SSA cost was 47 and 41 (INLINE_MAX_INSTRS 40):
+
+- an rt.u64_adc and an rt.u64_adc_carry of the same operands are one
+  adcs but counted two. inline.xo adc_pairs counts each pair once,
+  keying constants by value (every use of a literal is its own Const);
+- a negative literal is a Neg of a Const and counted as an instruction;
+  it folds (fold_value), so it counts as a constant.
+
+add4p and sub4p cost 38 each and inline at every site (70 and 30 calls
+to 0). x25519.fe64_add, fe64_sub and cswap stay calls: their loops are
+17 to 25 blocks (INLINE_MAX_BLOCKS 12).
+
+util.xo mov_imm puts a logical immediate (one orr, as `mov $d0, #N`;
+-2^32 was a movn and a movk) and a 32 bit movn (`mov $wd0, #N`, zero
+extended) in one instruction: 98 movk fewer in the TLS client.
+
+Sweep (bench/perf/sweep.py, base main's compiler with the same std, 114
+workloads, 3 rounds): 0 slower, 19 faster beyond spread, among them
+json/parse 0.966, tls/p256 0.975, tls/x25519only 0.975, tls/tls12 0.979,
+tls/x25519 0.978, portable/u64 0.981, text/quote 0.981, tls/rsa2048
+0.984, tls/ed25519 0.985. Mac cycles (bench/perf/tls, median of 7):
+p256 556.1 to 540.8 M, x25519only 418.9 to 413.7 M, tls12 511.7 to
+502.7 M.

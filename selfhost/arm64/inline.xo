@@ -74,10 +74,10 @@ fn adc_pairs(f: ssa.Func, instrs: List[Int]) -> Int {
     }
     let n = aux_str(x.aux)
     if n == "rt.u64_adc" {
-      let k = args_key(x.args)
+      let k = args_key(f, x.args)
       sums[k] = (sums.get(k) ?? 0) + 1
     } else if n == "rt.u64_adc_carry" {
-      let k = args_key(x.args)
+      let k = args_key(f, x.args)
       carries[k] = (carries.get(k) ?? 0) + 1
     }
   }
@@ -89,11 +89,16 @@ fn adc_pairs(f: ssa.Func, instrs: List[Int]) -> Int {
   n
 }
 
-/// A call's operands as a map key.
-fn args_key(args: List[Int]) -> Str {
+/// A call's operands as a map key: a constant by its value (each use
+/// of a literal is its own Const, a negative one a Neg of it).
+fn args_key(f: ssa.Func, args: List[Int]) -> Str {
   var parts: List[Str] = []
   for a in args {
-    parts.push("${a}")
+    if let Some(n) = const_value(f, a) {
+      parts.push("k${n}")
+    } else {
+      parts.push("${a}")
+    }
   }
   parts.join(",")
 }
@@ -131,7 +136,8 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
         // INLINE_MAX_INSTRS. Elsewhere it counts: free constants let
         // the scheduler's run_item and steal_round into park_wait
         // (sysio chan 1.019, 2026-10-16)
-        if x.op == ssa.Op.Const {
+        // a negative literal (Neg of a Const) folds as one
+        if x.op == ssa.Op.Const || (x.op != ssa.Op.Call && const_value(f, v) is Some(_)) {
           c.consts += 1
         } else {
           c.instrs += 1
@@ -270,6 +276,14 @@ fn fold_consts(var f: ssa.Func, types: List[ssa.SType]) {
       }
     }
   }
+}
+
+/// The integer v is when it is a constant or folds to one.
+fn const_value(f: ssa.Func, v: Int) -> Int? {
+  if let Some(n) = const_int(f, v) {
+    return Some(n)
+  }
+  fold_value(f, f.values[v])
 }
 
 /// The integer constant v is, if it is one.

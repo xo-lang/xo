@@ -15,3 +15,12 @@ func TestSelfhostMachoXoTests(t *testing.T) {
 	}
 	runXoTests(t, "macho")
 }
+
+// TestSelfhostArm64XoTests runs the Xo tests of selfhost/arm64 (`xo
+// test`): the constants mov_imm puts in one instruction.
+func TestSelfhostArm64XoTests(t *testing.T) {
+	if selfhostTier(t) == tierShort {
+		t.Skip("builds and runs the Xo test binary")
+	}
+	runXoTests(t, "arm64")
+}
