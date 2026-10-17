@@ -246,4 +246,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0252-dwarf-variables.md](0252-dwarf-variables.md): Accepted: DWARF types, variables, and locations on top of 0239's line tables, so lldb prints locals, struct fields, lists, and enums
 - [0253-xo-debugger.md](0253-xo-debugger.md): Proposed (for the owner): the architecture of `xo debug`, a debugger written in Xo (out of process, an in-runtime agent, or a hybrid), for the owner's review
 - [0254-amd64-backend.md](0254-amd64-backend.md): Proposed: Xo's own x86_64 backend (selfhost/amd64), AT&T text assembled by selfhost/macho; stages split between xo-fa and Xo Lang 2
-- [0255-preserve-most-drops.md](0255-preserve-most-drops.md): Proposed (stub): arm64 drop helpers that keep x0 to x15, so a release is no call to the register allocator.
+- [0255-preserve-most-drops.md](0255-preserve-most-drops.md): Rejected: arm64 drop helpers that keep the caller saved registers (three conventions) were slower: 29 of 114 workloads; drops stay plain calls.
