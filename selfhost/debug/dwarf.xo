@@ -179,6 +179,10 @@ pub struct Inlined {
   pub ranges: List[(Int, Int)]
   pub depth: Int
   pub call_line: Int
+  /// the call's file: DW_AT_call_file, a file number of the line table
+  /// at unit_line (Lines.call_file names it)
+  pub call_file: Int = -1
+  pub unit_line: Int = -1
   pub vars: List[Var]
 }
 
@@ -674,6 +678,7 @@ struct VarRec {
   has_loc: Bool = false
   origin: Int = -1
   call_line: Int = 0
+  call_file: Int = -1
 }
 
 /// Reads every unit of s.
@@ -723,6 +728,8 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
   // variables waiting for their unit's bases (a location list needs
   // loclists_base, which may come late in the unit's entry)
   var pending: List[(Int, Int, Bool, VarRec)] = []
+  // the unit's line table (DW_AT_stmt_list), for its calls' files
+  var stmt = -1
   // names of entries other entries refer to (abstract origins)
   var names: Map[Int, VarRec] = {}
   // the inlined calls (function, call, abstract origin) to name
@@ -792,6 +799,8 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
           rng_x = fv.idx
         }
         0x59 => v.call_line = fv.n
+        0x58 => v.call_file = fv.n
+        0x10 => if ab.tag == 0x11 { stmt = fv.n }
         0x72 => u.str_base = fv.n
         0x73 => u.addr_base = fv.n
         0x8c => u.loc_base = fv.n
@@ -842,7 +851,7 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
         }
         let outer = if here_inl >= 0 { out.funcs[here_fn].inlined[here_inl].depth } else { 0 }
         var f = out.funcs[here_fn]
-        f.inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: []})
+        f.inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: [], call_file: v.call_file, unit_line: stmt})
         out.funcs[here_fn] = f
         here_inl = f.inlined.len() - 1
         calls.push((here_fn, here_inl, v.origin))

@@ -9,6 +9,7 @@
 //   xo dev codegen [flags] DIR...     assembly or IR against // arm64: patterns
 //   xo dev dwarf [--func=NAME] FILE   the functions, variables, locations, and
 //                                     types of FILE's DWARF (decision 0253)
+//   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
 
 use github.com/xo-lang/xo/selfhost/cli/core
 
@@ -25,7 +26,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|dwarf|dump|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|dwarf|unwind|dump|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns
@@ -40,6 +41,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
     "errorcheck" => errorcheck_cmd(os, h, args[1..])
     "codegen" => codegen_cmd(os, h, args[1..])
     "dwarf" => dwarf_cmd(os, args[1..])
+    "unwind" => unwind_cmd(os, args[1..])
     _ => {
       os.stdio.eprintln("xo dev: unknown command ${args[0].quote()}\n${usage()}")
       2

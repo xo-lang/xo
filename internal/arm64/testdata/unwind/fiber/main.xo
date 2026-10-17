@@ -1,0 +1,22 @@
+fn work(n: Int) -> Int {
+  var t = 0
+  for i in 0..n {
+    t += i * n
+  }
+  t
+}
+
+fn main(os: Os) {
+  let go_on = Chan[Int].new(cap: 0)
+  let back = Chan[Int].new(cap: 1)
+  scope sc {
+    sc.spawn(fn() {
+      // parks here until main sends, then resumes on its own stack
+      let n = go_on.recv() ?? 0
+      back.send(work(n))
+    })
+    os.clock.sleep(50ms)
+    go_on.send(os.env.args().len() + 9)
+  }
+  os.stdio.println("${back.recv() ?? 0}")
+}

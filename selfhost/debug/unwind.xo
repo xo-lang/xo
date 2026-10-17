@@ -1,0 +1,664 @@
+// The backtrace of a stopped thread for `xo debug` (decision 0253): from
+// the thread's registers and its memory (Target), each caller's pc, sp,
+// fp, and the callee saved registers its callee restored, by the
+// executable's unwind tables (ELF .eh_frame; Mach-O __unwind_info's
+// compact encodings and __eh_frame for the DWARF mode ones), else by the
+// frame pointer chain (fp, then lr at fp + 8, both backends keep a frame
+// pointer). A frame whose return address is undefined (DW_CFA_undefined:
+// the outermost frames of threads and fibers, decision 0252) or zero
+// ends the walk, as does an fp of zero. arm64 only, as the per OS layer.
+
+/// The executable's unwind tables and the addresses they were made for.
+pub struct Tables {
+  pub eh: Bytes = b""
+  /// the address .eh_frame (__eh_frame) is loaded at, for its pc
+  /// relative pointers
+  pub eh_addr: Int = 0
+  pub ui: Bytes = b""
+  /// the image's base (the __TEXT segment's address), which compact
+  /// unwind function offsets count from
+  pub base: Int = 0
+  /// the code (__TEXT,__text) and its address, for the first frame's
+  /// check of whether its function's frame is set up yet
+  pub text: Bytes = b""
+  pub text_addr: Int = 0
+  /// the defined function symbols, sorted by address (Mach-O's without
+  /// their leading `_`), for frames with no DWARF
+  pub syms: List[(Int, Str)] = []
+}
+
+/// The symbol whose address is the greatest at or below pc, with the
+/// offset (`xo_entry+12`), or "?" (also for a pc outside the
+/// executable's code: a system library's).
+pub fn (t: Tables) sym_at(pc: Int) -> Str {
+  if !t.text.is_empty() && (pc < t.text_addr || pc >= t.text_addr + t.text.len()) {
+    return "?"
+  }
+  var lo = 0
+  var hi = t.syms.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if t.syms[mid].0 <= pc {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo == 0 {
+    return "?"
+  }
+  let (a, name) = t.syms[lo - 1]
+  if pc == a { name } else { "${name}+${pc - a}" }
+}
+
+/// The symbols in t.syms sorted by address.
+fn sort_syms(var t: Tables) {
+  var keyed: List[(Int, Int)] = []
+  for (i, (a, _)) in t.syms.indexed() {
+    keyed.push((a, i))
+  }
+  var out: List[(Int, Str)] = []
+  for (_, i) in keyed.sort() {
+    out.push(t.syms[i])
+  }
+  t.syms = out
+}
+
+/// The unwind tables of an ELF or Mach-O executable (empty when it has
+/// none: the walk then follows frame pointers).
+pub fn tables(data: Bytes) -> Tables {
+  var t = Tables{}
+  if data.len() < 64 {
+    return t
+  }
+  if rd32(data, 0) == 0x464c457f {
+    let shoff = rd64(data, 40)
+    let shn = rd16(data, 60)
+    let shx = rd16(data, 62)
+    if shoff <= 0 || shoff + 64 * shn > data.len() || shx >= shn {
+      return t
+    }
+    let strs = rd64(data, shoff + 64 * shx + 24)
+    for i in 0..shn {
+      let sh = shoff + 64 * i
+      let off = rd64(data, sh + 24)
+      let size = rd64(data, sh + 32)
+      if off + size > data.len() {
+        continue
+      }
+      let sname = cstr(data, strs + rd32(data, sh), data.len())
+      if sname == ".eh_frame" {
+        t.eh = data[off..off + size]
+        t.eh_addr = rd64(data, sh + 16)
+      } else if sname == ".text" {
+        t.text = data[off..off + size]
+        t.text_addr = rd64(data, sh + 16)
+      }
+      if rd32(data, sh + 4) == 2 {
+        // SHT_SYMTAB: Elf64_Sym entries (24 bytes), names in sh_link's
+        // string table; the functions (STT_FUNC) with an address
+        let link = rd32(data, sh + 40)
+        let soff = rd64(data, shoff + 64 * link + 24)
+        var e = off
+        while e + 24 <= off + size {
+          let value = rd64(data, e + 8)
+          if Int(data[e + 4]) & 15 == 2 && value != 0 {
+            t.syms.push((value, cstr(data, soff + rd32(data, e), data.len())))
+          }
+          e += 24
+        }
+      }
+    }
+    sort_syms(t)
+  } else if rd32(data, 0) == 0xfeedfacf {
+    var lc = 32
+    for _ in 0..rd32(data, 16) {
+      if lc + 8 > data.len() {
+        break
+      }
+      if rd32(data, lc) == 25 {
+        let seg = cstr(data, lc + 8, lc + 24)
+        if seg == "__TEXT" {
+          t.base = rd64(data, lc + 24)
+        }
+        for k in 0..rd32(data, lc + 64) {
+          let sc = lc + 72 + 80 * k
+          if sc + 80 > data.len() {
+            break
+          }
+          let name = cstr(data, sc, sc + 16)
+          let addr = rd64(data, sc + 32)
+          let size = rd64(data, sc + 40)
+          let off = rd32(data, sc + 48)
+          if off <= 0 || off + size > data.len() {
+            continue
+          }
+          if name == "__eh_frame" {
+            t.eh = data[off..off + size]
+            t.eh_addr = addr
+          } else if name == "__unwind_info" {
+            t.ui = data[off..off + size]
+          } else if name == "__text" && seg == "__TEXT" {
+            t.text = data[off..off + size]
+            t.text_addr = addr
+          }
+        }
+      }
+      if rd32(data, lc) == 2 {
+        // LC_SYMTAB: nlist_64 entries (16 bytes) of the defined section
+        // symbols (n_type & N_TYPE == N_SECT), without the stabs
+        let symoff = rd32(data, lc + 8)
+        let nsyms = rd32(data, lc + 12)
+        let stroff = rd32(data, lc + 16)
+        for k in 0..nsyms {
+          let e = symoff + 16 * k
+          if e + 16 > data.len() {
+            break
+          }
+          let ty = Int(data[e + 4])
+          if ty & 0xe0 == 0 && ty & 0x0e == 0x0e {
+            let name = cstr(data, stroff + rd32(data, e), data.len())
+            t.syms.push((rd64(data, e + 8), name.trim_prefix("_")))
+          }
+        }
+      }
+      lc += rd32(data, lc + 4)
+    }
+    sort_syms(t)
+  }
+  t
+}
+
+/// A frame of the backtrace: its pc (a caller's: the return address),
+/// its registers as far as known (DWARF numbering: sp 31, fp 29, lr 30),
+/// and how it was found ("start", "cfi", "compact", "fp").
+pub struct UFrame {
+  pub pc: Int
+  pub regs: Map[Int, Int]
+  pub how: Str
+}
+
+// ---- DWARF CFI (.eh_frame)
+
+/// How a register of the caller is found from the CFA.
+enum Rule {
+  Same
+  Undefined
+  /// saved at CFA + n
+  At(n: Int)
+  /// CFA + n is its value
+  Val(n: Int)
+  /// in register r
+  Reg(r: Int)
+}
+
+struct CfiState {
+  cfa_reg: Int = 31
+  cfa_off: Int = 0
+  rules: Map[Int, Rule] = {}
+  /// the CFA is an expression this reader does not evaluate
+  bad: Bool = false
+}
+
+struct Cie {
+  code_align: Int
+  data_align: Int
+  ra: Int
+  fde_enc: Int
+  init: Bytes
+}
+
+/// A pointer of encoding enc at r (DW_EH_PE_*), pc relative ones by
+/// where the section is loaded.
+fn read_enc(var r: Rd, enc: Int, sect_addr: Int) -> Int {
+  if enc == 0xff {
+    return 0
+  }
+  let at = sect_addr + r.p
+  var v = match enc & 0x0f {
+    0x00 => r.n(8)
+    0x01 => r.uleb()
+    0x02 => r.n(2)
+    0x03 => r.n(4)
+    0x04 => r.n(8)
+    0x09 => r.sleb()
+    0x0a => sext_n(r.n(2), 2)
+    0x0b => sext_n(r.n(4), 4)
+    0x0c => r.n(8)
+    _ => 0
+  }
+  if enc & 0x70 == 0x10 {
+    v = v + at
+  }
+  v
+}
+
+fn sext_n(u: Int, n: Int) -> Int {
+  let bit = shl(1, 8 * n - 1)
+  if u & bit != 0 { u - shl(1, 8 * n) } else { u }
+}
+
+fn cie_at(eh: Bytes, off: Int, sect_addr: Int) -> Cie? {
+  if off + 8 > eh.len() {
+    return None
+  }
+  let len = rd32(eh, off)
+  let end = off + 4 + len
+  if len == 0 || len == 0xffffffff || end > eh.len() || rd32(eh, off + 4) != 0 {
+    return None
+  }
+  var r = Rd{b: eh, p: off + 8, end: end}
+  let ver = r.byte()
+  let aug = r.cstr()
+  if aug.contains("eh") {
+    r.p += 8
+  }
+  let ca = r.uleb()
+  let da = r.sleb()
+  let ra = if ver == 1 { r.byte() } else { r.uleb() }
+  var enc = 0
+  if aug.starts_with("z") {
+    let alen = r.uleb()
+    let aend = r.p + alen
+    for c in aug[1..].runes() {
+      match c {
+        'R' => enc = r.byte()
+        'L' => {
+          let _l = r.byte()
+        }
+        'P' => {
+          let pe = r.byte()
+          let _p = read_enc(r, pe, sect_addr)
+        }
+        _ => {}
+      }
+    }
+    r.p = aend
+  }
+  Some(Cie{code_align: ca, data_align: da, ra: ra, fde_enc: enc, init: eh[r.p..end]})
+}
+
+/// The CFI rules at pc from the FDE that covers it, or None.
+fn cfi_at(t: Tables, pc: Int) -> (CfiState, Int)? {
+  let eh = t.eh
+  var off = 0
+  while off + 8 <= eh.len() {
+    let len = rd32(eh, off)
+    if len == 0 {
+      break
+    }
+    if len == 0xffffffff {
+      return None
+    }
+    let end = off + 4 + len
+    if end > eh.len() {
+      break
+    }
+    let id = rd32(eh, off + 4)
+    if id != 0 {
+      // an FDE: its CIE at the id's distance back from the id's field
+      if let Some(cie) = cie_at(eh, off + 4 - id, t.eh_addr) {
+        var r = Rd{b: eh, p: off + 8, end: end}
+        let begin = read_enc(r, cie.fde_enc, t.eh_addr)
+        let range = read_enc(r, cie.fde_enc & 0x0f, t.eh_addr)
+        if pc >= begin && pc < begin + range {
+          // the augmentation data (an LSDA pointer)
+          let alen = r.uleb()
+          r.p += alen
+          var st = CfiState{}
+          run_cfi(cie, cie.init, begin, pc, st, CfiState{})
+          let init = st
+          run_cfi(cie, eh[r.p..end], begin, pc, st, init)
+          return Some((st, cie.ra))
+        }
+      }
+    }
+    off = end
+  }
+  None
+}
+
+/// Runs CFI instructions b from location loc while it is not past pc;
+/// init is the state after the CIE's instructions (DW_CFA_restore's).
+fn run_cfi(cie: Cie, b: Bytes, loc0: Int, pc: Int, var st: CfiState, init: CfiState) {
+  var r = Rd{b: b, p: 0, end: b.len()}
+  var loc = loc0
+  var stack: List[CfiState] = []
+  while r.p < r.end {
+    let op = r.byte()
+    let hi = op & 0xc0
+    let lo = op & 0x3f
+    var adv = -1
+    if hi == 0x40 {
+      adv = lo * cie.code_align
+    } else if hi == 0x80 {
+      st.rules[lo] = Rule.At(n: r.uleb() * cie.data_align)
+    } else if hi == 0xc0 {
+      st.rules[lo] = init.rules.get(lo) ?? Rule.Same
+    } else {
+      match op {
+        0x00 => {}
+        0x01 => loc = r.n(8)
+        0x02 => adv = r.byte() * cie.code_align
+        0x03 => adv = r.n(2) * cie.code_align
+        0x04 => adv = r.n(4) * cie.code_align
+        0x05 => {
+          let reg = r.uleb()
+          st.rules[reg] = Rule.At(n: r.uleb() * cie.data_align)
+        }
+        0x06 => {
+          let reg = r.uleb()
+          st.rules[reg] = init.rules.get(reg) ?? Rule.Same
+        }
+        0x07 => st.rules[r.uleb()] = Rule.Undefined
+        0x08 => st.rules[r.uleb()] = Rule.Same
+        0x09 => {
+          let reg = r.uleb()
+          st.rules[reg] = Rule.Reg(r: r.uleb())
+        }
+        0x0a => stack.push(st)
+        0x0b => {
+          if let Some(s) = stack.pop() {
+            // the CFA stays; the rules come back
+            st.rules = s.rules
+          }
+        }
+        0x0c => {
+          st.cfa_reg = r.uleb()
+          st.cfa_off = r.uleb()
+        }
+        0x0d => st.cfa_reg = r.uleb()
+        0x0e => st.cfa_off = r.uleb()
+        0x0f => {
+          r.p += r.uleb()
+          st.bad = true
+        }
+        0x10 | 0x16 => {
+          let _reg = r.uleb()
+          r.p += r.uleb()
+          st.bad = true
+        }
+        0x11 => {
+          let reg = r.uleb()
+          st.rules[reg] = Rule.At(n: r.sleb() * cie.data_align)
+        }
+        0x12 => {
+          st.cfa_reg = r.uleb()
+          st.cfa_off = r.sleb() * cie.data_align
+        }
+        0x13 => st.cfa_off = r.sleb() * cie.data_align
+        0x14 => {
+          let reg = r.uleb()
+          st.rules[reg] = Rule.Val(n: r.uleb() * cie.data_align)
+        }
+        0x15 => {
+          let reg = r.uleb()
+          st.rules[reg] = Rule.Val(n: r.sleb() * cie.data_align)
+        }
+        0x2e => {
+          let _sz = r.uleb()
+        }
+        _ => {
+          st.bad = true
+          return
+        }
+      }
+    }
+    if adv >= 0 {
+      if loc + adv > pc {
+        return
+      }
+      loc += adv
+    }
+  }
+}
+
+// ---- compact unwind (__unwind_info)
+
+const UNWIND_MODE_MASK = 0x0f000000
+const UNWIND_FRAMELESS = 0x02000000
+const UNWIND_DWARF = 0x03000000
+const UNWIND_FRAME = 0x04000000
+
+/// The compact encoding of the function holding pc (0: none).
+fn compact_at(t: Tables, pc: Int) -> Int {
+  compact_entry(t, pc).0
+}
+
+/// The compact encoding of the function holding pc and the function's
+/// first address ((0, 0): none).
+fn compact_entry(t: Tables, pc: Int) -> (Int, Int) {
+  let ui = t.ui
+  if ui.len() < 28 || rd32(ui, 0) != 1 {
+    return (0, 0)
+  }
+  let common_off = rd32(ui, 4)
+  let common_n = rd32(ui, 8)
+  let index_off = rd32(ui, 20)
+  let index_n = rd32(ui, 24)
+  let fo = pc - t.base
+  // the last first level entry at or before fo (the last is a sentinel)
+  var page = -1
+  var page_fn = 0
+  for i in 0..index_n {
+    let e = index_off + 12 * i
+    if e + 12 > ui.len() {
+      break
+    }
+    let f = rd32(ui, e)
+    if f > fo {
+      break
+    }
+    page = rd32(ui, e + 4)
+    page_fn = f
+  }
+  if page <= 0 || page + 8 > ui.len() {
+    return (0, 0)
+  }
+  let kind = rd32(ui, page)
+  if kind == 2 {
+    // regular: entries of (function offset, encoding)
+    let eoff = page + rd16(ui, page + 4)
+    let n = rd16(ui, page + 6)
+    var enc = 0
+    var start = 0
+    for k in 0..n {
+      let e = eoff + 8 * k
+      if e + 8 > ui.len() || rd32(ui, e) > fo {
+        break
+      }
+      enc = rd32(ui, e + 4)
+      start = rd32(ui, e)
+    }
+    return (enc, t.base + start)
+  }
+  if kind == 3 {
+    // compressed: 24 bits of offset from the page's first function, 8 of
+    // encoding index (common ones first, then the page's own)
+    let eoff = page + rd16(ui, page + 4)
+    let n = rd16(ui, page + 6)
+    let encs = page + rd16(ui, page + 8)
+    var idx = -1
+    var start = 0
+    for k in 0..n {
+      let e = eoff + 4 * k
+      if e + 4 > ui.len() {
+        break
+      }
+      let w = rd32(ui, e)
+      if page_fn + (w & 0xffffff) > fo {
+        break
+      }
+      idx = (w >> 24) & 255
+      start = page_fn + (w & 0xffffff)
+    }
+    if idx < 0 {
+      return (0, 0)
+    }
+    if idx < common_n {
+      return (rd32(ui, common_off + 4 * idx), t.base + start)
+    }
+    let o = encs + 4 * (idx - common_n)
+    return (if o + 4 <= ui.len() { rd32(ui, o) } else { 0 }, t.base + start)
+  }
+  (0, 0)
+}
+
+// ---- the walk
+
+/// The frames of the stopped thread whose registers are regs (x0 to x30,
+/// sp 31, and pc under key -1), reading its memory through t, at most
+/// max frames.
+pub fn backtrace[T: Target](tab: Tables, regs: Map[Int, Int], t: T, max: Int) -> List[UFrame] {
+  var out: List[UFrame] = []
+  var cur = regs
+  let pc0 = regs.get(-1) ?? 0
+  var pc = pc0 + 0
+  var how = "start"
+  while out.len() < max && pc != 0 {
+    out.push(UFrame{pc: pc, regs: cur, how: how})
+    // a caller's pc is a return address: look up the call's own
+    // instruction (it may be the function's last)
+    let look = if out.len() == 1 { pc } else { pc - 4 }
+    match step(tab, look, cur, t, out.len() == 1) {
+      Some((next, h)) => {
+        let npc = next.get(30) ?? 0
+        let nsp = next.get(31) ?? 0
+        let osp = cur.get(31) ?? 0
+        // the stack grows down: a caller's frame is above; a frame that
+        // does not move is a loop to stop
+        if npc == 0 || nsp < osp || (nsp == osp && npc == pc) {
+          break
+        }
+        // a caller's x0 to x18 are not preserved across its call (AAPCS64):
+        // only what the unwind said, the callee saved registers, sp, fp
+        var kept: Map[Int, Int] = {}
+        for (r, v) in next {
+          if r >= 19 {
+            kept[r] = v
+          }
+        }
+        cur = kept
+        pc = npc
+        how = h
+      }
+      None => break
+    }
+  }
+  out
+}
+
+/// The caller's registers of the frame at pc with registers regs (its
+/// return address under 30, its sp under 31), and how they were found;
+/// None at an outermost frame or when nothing says where the caller is.
+fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool) -> (Map[Int, Int], Str)? {
+  if !tab.eh.is_empty() || !tab.ui.is_empty() {
+    let (enc, start) = compact_entry(tab, pc)
+    let mode = enc & UNWIND_MODE_MASK
+    if mode == UNWIND_FRAME {
+      // a compact encoding holds for the whole function, but the arm64
+      // backend sets a leaf's frame up only on its fault paths (after its
+      // returns): the first frame is frameless when no fp and lr store
+      // ran on the way from the function's start to pc
+      if first && !frame_set_up(tab, start, pc) {
+        var next = regs
+        next[30] = regs.get(30) ?? 0
+        return Some((next, "leaf"))
+      }
+      return Some((frame_step(regs, t, enc)?, "compact"))
+    }
+    if mode == UNWIND_FRAMELESS {
+      // the return address is still in lr; the frame's stack is popped
+      var next = regs
+      next[31] = (regs.get(31) ?? 0) + 16 * ((enc >> 12) & 0xfff)
+      next[30] = regs.get(30) ?? 0
+      return Some((next, "compact"))
+    }
+    if let Some((st, ra)) = cfi_at(tab, pc) {
+      if st.bad {
+        return None
+      }
+      let cfa = (regs.get(st.cfa_reg) ?? 0) + st.cfa_off
+      var next = regs
+      next[31] = cfa
+      // the return address column first: undefined ends the walk
+      match st.rules.get(ra) ?? Rule.Same {
+        Rule.Undefined => return None
+        Rule.Same | Rule.At(_) | Rule.Val(_) | Rule.Reg(_) => {}
+      }
+      for (reg, rule) in st.rules {
+        match rule {
+          Rule.Same => {}
+          Rule.Undefined => {
+            let _x = next.remove(reg)
+          }
+          Rule.At(n) => match load64(t, cfa + n) {
+            Some(v) => next[reg] = v
+            None => return None
+          }
+          Rule.Val(n) => next[reg] = cfa + n
+          Rule.Reg(r) => next[reg] = regs.get(r) ?? 0
+        }
+      }
+      if ra != 30 {
+        next[30] = next.get(ra) ?? 0
+      }
+      return Some((next, "cfi"))
+    }
+  }
+  // no table entry: the frame pointer chain
+  if (regs.get(29) ?? 0) == 0 {
+    return None
+  }
+  Some((frame_step(regs, t, 0)?, "fp"))
+}
+
+/// Whether the code from start to pc (in tab.text) has an `stp x29,
+/// x30, [sp, ...]` (pre-indexed or not): the frame record's store, which
+/// the backends' prologues begin with (unknown code counts as set up).
+fn frame_set_up(tab: Tables, start: Int, pc: Int) -> Bool {
+  if tab.text.is_empty() || start < tab.text_addr || pc > tab.text_addr + tab.text.len() {
+    return true
+  }
+  var a = start
+  while a < pc {
+    let w = rd32(tab.text, a - tab.text_addr)
+    let m = w & 0xffc07fff
+    if m == 0xa9807bfd || m == 0xa9007bfd {
+      return true
+    }
+    a += 4
+  }
+  false
+}
+
+/// A frame with fp and lr saved at its fp (fp at fp, lr at fp + 8, the
+/// CFA fp + 16) and, by a compact frame encoding, its callee saved pairs
+/// below fp (x19 and x20 first: x19 at fp - 8, x20 at fp - 16, ...).
+fn frame_step[T: Target](regs: Map[Int, Int], t: T, enc: Int) -> Map[Int, Int]? {
+  let fp = regs.get(29) ?? 0
+  if fp == 0 {
+    return None
+  }
+  var next = regs
+  next[29] = load64(t, fp)?
+  next[30] = load64(t, fp + 8)?
+  next[31] = fp + 16
+  var at = fp - 8
+  for (bit, first) in [(1, 19), (2, 21), (4, 23), (8, 25), (16, 27)] {
+    if enc & bit != 0 {
+      next[first] = load64(t, at)?
+      next[first + 1] = load64(t, at - 8)?
+      at -= 16
+    }
+  }
+  Some(next)
+}
+
+fn load64[T: Target](t: T, a: Int) -> Int? {
+  let b = t.mem(a, 8)?
+  if b.len() < 8 {
+    return None
+  }
+  Some(rd64(b, 0))
+}

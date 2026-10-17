@@ -1,0 +1,69 @@
+// A stopped thread recorded as text (decision 0253): its registers and
+// pieces of its memory, a Target the debugger's parts read like a live
+// process. Tests make one from lldb or gdb at a breakpoint
+// (internal/arm64 TestUnwind); later a core file can become one.
+//
+//   reg N 0xVALUE        register N (DWARF numbering; -1 the pc)
+//   mem 0xADDR HEXBYTES  bytes at ADDR
+
+/// A recorded thread.
+pub struct Snapshot {
+  pub regs: Map[Int, Int] = {}
+  pub chunks: List[(Int, Bytes)] = []
+}
+
+/// The snapshot in text s, or the first line it cannot read.
+pub fn parse_snapshot(s: Str) -> Snapshot ! Str {
+  var out = Snapshot{}
+  for (i, line) in s.lines().indexed() {
+    let w = line.trim().split(" ")
+    if w.len() == 0 || w[0].is_empty() || w[0].starts_with("#") {
+      continue
+    }
+    if w[0] == "reg" && w.len() == 3 {
+      let n = Int.parse(w[1]) ?? -2
+      let v = parse_hex(w[2]) ?? -1
+      if n < -1 || !w[2].starts_with("0x") {
+        return Err("line ${i + 1}: bad register ${line.quote()}")
+      }
+      out.regs[n] = v
+    } else if w[0] == "mem" && w.len() == 3 {
+      let a = parse_hex(w[1]) ?? -1
+      let b = Bytes.from_hex(w[2]) ?? b""
+      if a < 0 || (b.is_empty() && !w[2].is_empty()) {
+        return Err("line ${i + 1}: bad memory ${line.quote()}")
+      }
+      out.chunks.push((a, b))
+    } else {
+      return Err("line ${i + 1}: want `reg N 0xV` or `mem 0xA HEX`")
+    }
+  }
+  Ok(out)
+}
+
+/// 0x hex digits as an Int (all 64 bits), or None.
+pub fn parse_hex(s: Str) -> Int? {
+  let t = s.trim_prefix("0x")
+  if t.is_empty() || t.len() > 16 {
+    return None
+  }
+  var v = 0
+  for c in t.runes() {
+    let d = "0123456789abcdef".find("${c}".to_lower())?
+    v = shl(v, 4) | d
+  }
+  Some(v)
+}
+
+fn (s: Snapshot) reg(n: Int) -> Int? {
+  s.regs.get(n)
+}
+
+fn (s: Snapshot) mem(a: Int, n: Int) -> Bytes? {
+  for (base, b) in s.chunks {
+    if a >= base && a + n <= base + b.len() {
+      return Some(b[a - base..a - base + n])
+    }
+  }
+  None
+}

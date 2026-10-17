@@ -70,6 +70,13 @@ pub fn (i: Info) type_size(t: Int) -> Int {
 /// The value of v at pc, read through t: an error when v has no location
 /// there (`<optimized out>`) or a location this reader does not evaluate.
 pub fn value[T: Target](i: Info, v: Var, pc: Int, t: T) -> Val ! Str {
+  value_in(i, v, pc, {}, t)
+}
+
+/// value in a frame whose registers are regs (the unwinder's: a
+/// register it does not give is unknown there), memory from t; with no
+/// regs, t's registers (the stopped frame).
+pub fn value_in[T: Target](i: Info, v: Var, pc: Int, regs: Map[Int, Int], t: T) -> Val ! Str {
   let ps = v.at(pc)
   if ps.is_empty() {
     return Err("<optimized out>")
@@ -78,11 +85,11 @@ pub fn value[T: Target](i: Info, v: Var, pc: Int, t: T) -> Val ! Str {
   if size <= 0 {
     return Err("<no size for type ${i.type_name(v.ty)}>")
   }
-  let raw = gather(ps, size, t)?
+  let raw = gather(ps, size, regs, t)?
   Ok(decode(i, v.ty, raw, 0))
 }
 
-fn gather[T: Target](ps: List[Piece], size: Int, t: T) -> Raw ! Str {
+fn gather[T: Target](ps: List[Piece], size: Int, regs: Map[Int, Int], t: T) -> Raw ! Str {
   var raw = Raw{b: [], known: []}
   for p in ps {
     let n = if p.size > 0 { p.size } else { size - raw.b.len() }
@@ -92,16 +99,16 @@ fn gather[T: Target](ps: List[Piece], size: Int, t: T) -> Raw ! Str {
     var bytes: List[Int] = []
     var why = ""
     match p.place {
-      Place.Reg(r) => match t.reg(r) {
+      Place.Reg(r) => match if regs.is_empty() { t.reg(r) } else { regs.get(r) } {
         Some(x) => bytes = le_bytes(x, n)
-        None => why = "<unreadable: register ${r}>"
+        None => why = if regs.is_empty() { "<unreadable: register ${r}>" } else { "<unavailable>" }
       }
-      Place.Breg(r, off) => match t.reg(r) {
+      Place.Breg(r, off) => match if regs.is_empty() { t.reg(r) } else { regs.get(r) } {
         Some(x) => match t.mem(x + off, n) {
           Some(m) => bytes = to_list(m)
           None => why = "<unreadable: memory>"
         }
-        None => why = "<unreadable: register ${r}>"
+        None => why = if regs.is_empty() { "<unreadable: register ${r}>" } else { "<unavailable>" }
       }
       Place.Addr(a) => match t.mem(a, n) {
         Some(m) => bytes = to_list(m)

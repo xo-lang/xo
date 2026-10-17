@@ -317,3 +317,140 @@ func lastLines(b []byte, n int) string {
 	}
 	return strings.Join(ls, "\n")
 }
+
+// TestUnwind checks decision 0253's unwinder (selfhost/debug unwind.xo,
+// through `xo dev unwind`) against lldb: testdata/debugvars stopped in sum
+// and testdata/unwind/fiber stopped in work on a task that parked on a
+// channel and resumed on its own fiber stack, each built by the arm64
+// backend (selfhost/macho and cc) and by LLVM. lldb records the stopped
+// thread (testdata/unwind/snap.py: registers and stack), and the frames
+// xo dev unwind finds in it (inlined calls as frames, each with its
+// function and line, or symbol and offset) are lldb's own, in order.
+func TestUnwind(t *testing.T) {
+	if runtime.GOOS != "darwin" || !native() {
+		t.Skip("darwin/arm64 only")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := testtmp.Dir("xo-unwind-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(out)
+	snapPy, err := filepath.Abs(filepath.Join("testdata", "unwind", "snap.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// an lldb frame: its function (arguments dropped) at file:line, or its
+	// symbol + offset
+	lldbAt := regexp.MustCompile(`^(.*?)(\(.*\))? at ([^ :]+):(\d+)`)
+	lldbOff := regexp.MustCompile(`^(.*) \+ (\d+)$`)
+	norm := func(rest string) string {
+		rest = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(rest), " [inlined]"), " [opt]")
+		rest = strings.TrimSuffix(rest, " [opt]")
+		if m := lldbAt.FindStringSubmatch(rest); m != nil {
+			return m[1] + " at " + m[3] + ":" + m[4]
+		}
+		if m := lldbOff.FindStringSubmatch(rest); m != nil {
+			return m[1] + "+" + m[2]
+		}
+		return rest
+	}
+	for _, p := range []struct {
+		name, dir, stop string
+		locals          []string
+	}{
+		{"sum", "debugvars", "main.xo:12", []string{"k = 10", "total = 0", "d = 12"}},
+		{"fiber", filepath.Join("unwind", "fiber"), "main.xo:4", []string{"units = 4"}},
+	} {
+		src, err := filepath.Abs(filepath.Join("testdata", p.dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			name string
+			args []string
+		}{
+			{"macho", []string{"--backend=arm64", "--ld=macho"}},
+			{"cc", []string{"--backend=arm64", "--ld=cc"}},
+			{"llvm", []string{"--backend=llvm"}},
+		} {
+			t.Run(p.name+"/"+c.name, func(t *testing.T) {
+				bin := filepath.Join(out, p.name+"-"+c.name)
+				args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
+				cmd := exec.Command(xo, args...)
+				cmd.Dir = src
+				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+				if b, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("xo %v: %v\n%s", args, err, b)
+				}
+				snap := bin + ".snap"
+				lb, err := lldb(t, true, "-b", "-o", "command script import "+snapPy, "-o", "breakpoint set -f main.xo -l "+strings.TrimPrefix(p.stop, "main.xo:"), "-o", "run", "-o", "snap "+snap, "-o", "bt", bin)
+				if err != nil {
+					t.Fatalf("lldb: %v\n%s", err, lb)
+				}
+				img := filepath.Base(bin) + "`"
+				var want []string
+				seen := map[string]bool{}
+				for _, l := range strings.Split(string(lb), "\n") {
+					l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "*"))
+					if !strings.HasPrefix(l, "frame #") || !strings.Contains(l, img) {
+						continue
+					}
+					// lldb prints the stop's frame twice (the stop, then bt)
+					n := l[:strings.Index(l, ":")]
+					if seen[n] {
+						want = nil
+						seen = map[string]bool{}
+					}
+					seen[n] = true
+					want = append(want, norm(l[strings.Index(l, img)+len(img):]))
+				}
+				if len(want) == 0 {
+					t.Fatalf("lldb printed no frames of %s:\n%s", img, lb)
+				}
+				dw := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", filepath.Base(bin))
+				got, err := exec.Command(xo, "dev", "unwind", "--snap="+snap, "--dwarf="+dw, "--locals", bin).CombinedOutput()
+				if err != nil {
+					t.Fatalf("xo dev unwind: %v\n%s", err, got)
+				}
+				var have []string
+				for _, l := range strings.Split(string(got), "\n") {
+					if !strings.HasPrefix(l, "#") {
+						continue
+					}
+					f := strings.SplitN(l, " ", 3)
+					if len(f) < 3 {
+						continue
+					}
+					rest := f[2]
+					if i := strings.LastIndex(rest, " ("); i >= 0 {
+						rest = rest[:i]
+					}
+					rest = strings.Replace(rest, " [inlined]", "", 1)
+					if rest == "?" {
+						continue
+					}
+					have = append(have, rest)
+				}
+				if strings.Join(have, "\n") != strings.Join(want, "\n") {
+					t.Errorf("xo dev unwind's frames:\n  %s\nlldb's:\n  %s\n(lldb:\n%s)", strings.Join(have, "\n  "), strings.Join(want, "\n  "), lb)
+				}
+				for _, w := range p.locals {
+					if !bytes.Contains(got, []byte("    "+w+"\n")) {
+						t.Errorf("xo dev unwind --locals lacks %q:\n%s", w, got)
+					}
+				}
+			})
+		}
+	}
+}

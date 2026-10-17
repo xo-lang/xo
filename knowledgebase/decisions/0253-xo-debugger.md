@@ -271,3 +271,34 @@ programs):
   fake thread, floats, breakpoints on hand made line tables) and
   TestDwarfReader (`xo dev dwarf --break=main.xo:11` is lldb's address
   for the arm64 and LLVM builds, `--pc` gives the line back).
+- The unwinder (2026-10-17): selfhost/debug unwind.xo walks a stopped
+  thread's frames from its registers and memory (Target) by the
+  executable's unwind tables: ELF .eh_frame (DWARF CFI: CIEs, FDEs, the
+  register rules, remember and restore state; DW_CFA_undefined on the
+  return address ends the walk, the outermost frames' mark), Mach-O
+  __unwind_info (regular and compressed pages; FRAME with its saved
+  pairs, FRAMELESS, DWARF mode through __eh_frame), else the frame
+  pointer chain; a caller keeps only the callee saved registers (x19 and
+  up, fp, sp: a variable in x0 to x18 there is `<unavailable>`, as
+  lldb shows it). For the stopped frame a compact FRAME encoding counts
+  only once the frame record's store ran
+  (gotchas/arm64-compact-unwind-leaf-fault-frames.md). Frames without
+  DWARF are named from the symbol table (ELF .symtab, Mach-O LC_SYMTAB).
+  snap.xo reads a stopped thread recorded as text (registers, memory) as
+  a Target; `xo dev unwind --snap FILE [--dwarf FILE] [--locals] EXE`
+  prints the frames, inlined calls as their own frames (each caller at
+  its call's file and line, DW_AT_call_file through its unit's line
+  table), and each frame's variables read in that frame. internal/arm64
+  TestUnwind: lldb records the thread (testdata/unwind/snap.py) at a
+  breakpoint in debugvars' sum and in a task's work after it parked on a
+  channel and resumed on its own fiber stack, built by the arm64 backend
+  (selfhost/macho and cc) and by LLVM; xo dev unwind's frames are lldb's,
+  in order, with their lines or symbol offsets, and its values match
+  (k, total, d; run_claimed's units). Linux (by hand, 2026-10-17): gdb
+  16.3 in Docker recorded the fiber's stop (a gdb Python `snap` command
+  like snap.py, reading /proc/PID/maps for the stack's end) on the arm64
+  and LLVM builds; xo dev unwind on the Mac read the ELF's .eh_frame and
+  gave gdb's frames in order, to xo_fiber_entry (its undefined return
+  address), with gdb's values for run_claimed (t, units) and
+  cabi.fiber_main (f); where gdb printed arguments in x0 to x18 of a
+  caller (run_entry's), xo dev unwind says `<unavailable>`.

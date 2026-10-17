@@ -1,0 +1,127 @@
+// `xo dev unwind --snap FILE [--dwarf FILE] [--locals] EXE`: the
+// backtrace selfhost/debug's unwinder (decision 0253) finds for a
+// recorded stopped thread (a snapshot: its registers and stack, from
+// lldb or gdb at a breakpoint), each frame's function, file, and line
+// from the DWARF (EXE's own, or --dwarf: a dSYM's DWARF file), and with
+// --locals each frame's variables read in that frame. For tests and
+// agents until `xo debug` controls processes itself.
+
+use github.com/xo-lang/xo/selfhost/cli/core
+use github.com/xo-lang/xo/selfhost/debug
+
+fn unwind_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  var fl = core.new_flags("dev unwind")
+  fl.str_flag("snap", "", "the recorded thread (reg and mem lines)")
+  fl.str_flag("dwarf", "", "the DWARF file (default the executable)")
+  fl.bool_flag("locals", "print each frame's variables")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 || fl.get_str("snap").is_empty() {
+    os.stdio.eprintln("usage: xo dev unwind --snap FILE [--dwarf FILE] [--locals] EXE")
+    return 2
+  }
+  let exe = match os.fs.read(fl.args[0]) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo dev unwind: ${e}")
+      return 1
+    }
+  }
+  let dpath = if fl.get_str("dwarf").is_empty() { fl.args[0] } else { fl.get_str("dwarf") }
+  let ddata = if dpath == fl.args[0] { exe } else {
+    match os.fs.read(dpath) {
+      Ok(d) => d
+      Err(e) => {
+        os.stdio.eprintln("xo dev unwind: ${e}")
+        return 1
+      }
+    }
+  }
+  let stext = match os.fs.read(fl.get_str("snap")) {
+    Ok(t) => t.to_str() ?? ""
+    Err(e) => {
+      os.stdio.eprintln("xo dev unwind: ${e}")
+      return 1
+    }
+  }
+  let snap = match debug.parse_snapshot(stext) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev unwind: ${fl.get_str("snap")}: ${e}")
+      return 1
+    }
+  }
+  let s = match debug.sections(ddata) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev unwind: ${dpath}: ${e}")
+      return 1
+    }
+  }
+  let info = debug.read(s)
+  let lines = debug.lines(s)
+  let tab = debug.tables(exe)
+  let frames = debug.backtrace(tab, snap.regs, snap, 64)
+  // a frame per physical frame and per inlined call in it, innermost
+  // first, as lldb lists them: an inlined callee at its own line, each
+  // caller at the line of its call
+  var n = 0
+  for (k, f) in frames.indexed() {
+    // a caller's line is its call's: the instruction before the return
+    let look = if k == 0 { f.pc } else { f.pc - 4 }
+    var line_at = match lines.at(look) {
+      Some((file, line)) => " at ${base_name(file)}:${line}"
+      None => ""
+    }
+    var fname = tab.sym_at(f.pc)
+    var fvars: List[debug.Var] = []
+    var chain: List[debug.Inlined] = []
+    if let Some(fn_) = info.func_at(look) {
+      fname = fn_.name
+      fvars = fn_.vars
+      for c in fn_.inlined {
+        for (lo, hi) in c.ranges {
+          if look >= lo && look < hi {
+            chain.push(c)
+          }
+        }
+      }
+    }
+    // innermost (deepest) first
+    var order: List[(Int, Int)] = []
+    for (i, c) in chain.indexed() {
+      order.push((-c.depth, i))
+    }
+    var file = ""
+    if let Some((fl, _)) = lines.at(look) {
+      file = base_name(fl)
+    }
+    for (_, i) in order.sort() {
+      let c = chain[i]
+      os.stdio.println("#${n} ${hex(f.pc)} ${c.name} [inlined]${line_at} (${f.how})")
+      if fl.get_bool("locals") {
+        print_locals(os, info, c.vars, look, f.regs, snap)
+      }
+      n += 1
+      let cf = lines.call_file(c.unit_line, c.call_file)
+      line_at = if !cf.is_empty() { " at ${base_name(cf)}:${c.call_line}" } else if file.is_empty() { "" } else { " at ${file}:${c.call_line}" }
+    }
+    os.stdio.println("#${n} ${hex(f.pc)} ${fname}${line_at} (${f.how})")
+    if fl.get_bool("locals") {
+      print_locals(os, info, fvars, look, f.regs, snap)
+    }
+    n += 1
+  }
+  0
+}
+
+fn print_locals(os: Os, info: debug.Info, vars: List[debug.Var], pc: Int, regs: Map[Int, Int], snap: debug.Snapshot) uses (stdio) {
+  for v in vars {
+    let shown = match debug.value_in(info, v, pc, regs, snap) {
+      Ok(x) => x.show()
+      Err(e) => e
+    }
+    os.stdio.println("    ${v.name} = ${shown}")
+  }
+}

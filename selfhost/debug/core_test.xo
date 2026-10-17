@@ -195,3 +195,33 @@ test "breakpoints: numbers, addresses, deletion" {
   expect(b.at(0x108)) == Some(2)
   expect(b.delete(1).is_err()) == true
 }
+
+test "snapshots: registers and memory, as a Target" {
+  let s = parse_snapshot("# a stopped thread\nreg -1 0x100000844\nreg 29 0x7000\nmem 0x7000 0102030405060708090a\n").ok() ?? Snapshot{}
+  expect(s.reg(-1)) == Some(0x100000844)
+  expect(s.reg(29)) == Some(0x7000)
+  expect(s.reg(3)) == None
+  expect(s.mem(0x7002, 2)) == Some(bytes_of2([3, 4]))
+  expect(s.mem(0x7009, 2)) == None
+  expect(parse_snapshot("reg x 0x1").is_err()) == true
+  expect(parse_snapshot("mem 0x10 zz").is_err()) == true
+  expect(parse_hex("0xffffffffffffffff")) == Some(-1)
+  expect(parse_hex("0x")) == None
+}
+
+fn bytes_of2(xs: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for x in xs {
+    b.write_byte(UInt8(x))
+  }
+  b.freeze()
+}
+
+test "symbols by address" {
+  var t = Tables{}
+  t.syms = [(0x1000, "a"), (0x1100, "b")]
+  expect(t.sym_at(0x1000)) == "a"
+  expect(t.sym_at(0x10f0)) == "a+240"
+  expect(t.sym_at(0x1104)) == "b+4"
+  expect(t.sym_at(0xfff)) == "?"
+}

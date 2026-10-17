@@ -22,6 +22,19 @@ pub struct Row {
 pub struct Lines {
   pub rows: List[Row] = []
   pub files: List[Str] = []
+  /// each line table's files by its own numbering (indexes of files), by
+  /// the table's offset in .debug_line (a unit's DW_AT_stmt_list)
+  pub unit_files: Map[Int, List[Int]] = {}
+}
+
+/// The path of file number n of the line table at offset unit ("" when
+/// unknown): an inlined call's DW_AT_call_file.
+pub fn (l: Lines) call_file(unit: Int, n: Int) -> Str {
+  let fs = l.unit_files.get(unit) ?? []
+  if n < 0 || n >= fs.len() || fs[n] < 0 {
+    return ""
+  }
+  l.files[fs[n]]
 }
 
 /// The rows of every line program of s.
@@ -141,6 +154,7 @@ fn unit_lines(s: Sections, u: Int, next: Int, var at: Map[Str, Int], var out: Li
       fmap.push(intern(join(if di < dirs.len() { dirs[di] } else { "" }, name), at, out))
     }
   }
+  out.unit_files[u] = fmap
   if line_range == 0 {
     return
   }
