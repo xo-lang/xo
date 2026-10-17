@@ -579,7 +579,10 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   g.cm.checked[(l, i)] = true
   let n = g.list_len(l)
   let iv = g.arg(v, 1)
-  if !g.proved_index(iv, n, -1) {
+  // decision 0257: a branch on idx < len in a dominating block, which
+  // the per block memo does not carry into a loop
+  let x = g.f.values[v]
+  if !g.proved_index(iv, n, -1) && !g.proof.proven(g.f, x.block, x.args[1], x.args[0]) {
     let lb = g.loc_label(pos)
     g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
   }

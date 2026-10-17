@@ -356,6 +356,11 @@ fn inline_module(var m: ssa.Module) -> Bool {
     if here {
       fold_consts(f, m.types)
     }
+    // decision 0257: after inlining, which brings the loops' list reads
+    // into one function
+    if hoist_fields(f, m.types) {
+      changed = true
+    }
     m.funcs[fi] = f
   }
   changed

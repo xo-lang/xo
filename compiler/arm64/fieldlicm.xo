@@ -1,0 +1,488 @@
+// Loop invariant fields of list elements and proven list indexes
+// (decision 0257), on the SSA after inlining, before instruction
+// selection: the module verifier checks the result with the inlined code.
+//
+// A list is a value in the SSA: `bs[j].vx += d` is
+// list.set(L, j, setfield(3, list.index(L, j), ...)), a new list that
+// differs from L in field 3 of one element. So field k of any element of
+// it is field k of the same element of L, for every k but 3, whatever j
+// is: a loop whose list parameter comes back only through such sets
+// keeps field k of every element, and reading field k of element i (i
+// defined outside the loop) is the same in every iteration. nbody's inner
+// loop read bs[i].x, y, z and mass each step past its stores to bs[i].vx
+// and bs[j].vx (2026-10-17, bench/results/amd64-vs-llvm-2026-10-17.md).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The most fields hoisted out of one loop: each lives in a register
+/// across it.
+const FIELD_HOIST_MAX = 8
+
+/// How deep the walks through block parameters go.
+const FIELD_DEPTH = 12
+
+/// Hoists the loop invariant fields of list elements out of the loops of
+/// f, and drops the bounds check of a list.index whose index is proven
+/// in range; whether it changed f.
+fn hoist_fields(var f: ssa.Func, types: List[ssa.SType]) -> Bool {
+  if f.blocks.len() < 2 {
+    return false
+  }
+  let rpo = rpo_of(f)
+  let pr = new_proof(f, rpo)
+  var changed = false
+  var loops = natural_loops(f, rpo, pr.idom, pr.entry)
+  // inner loops first: a field hoisted to an inner loop's preheader can
+  // leave the outer loop next
+  var sizes: List[Int] = []
+  for l in loops {
+    sizes.push(count_true(l.1))
+  }
+  for i in 0..loops.len() {
+    for j in i + 1..loops.len() {
+      if sizes[j] < sizes[i] {
+        let t = loops[i]
+        loops[i] = loops[j]
+        loops[j] = t
+        let ts = sizes[i]
+        sizes[i] = sizes[j]
+        sizes[j] = ts
+      }
+    }
+  }
+  for l in loops {
+    changed = hoist_loop(f, types, pr, l.0, l.1) || changed
+  }
+  changed
+}
+
+/// The natural loops of f: each header with the blocks of its loops'
+/// bodies (the blocks that reach a back edge's source without passing
+/// the header).
+fn natural_loops(f: ssa.Func, rpo: List[Int], idom: List[Int], entry: Int) -> List[(Int, List[Bool])] {
+  var out: List[(Int, List[Bool])] = []
+  let nb = f.blocks.len()
+  for h in rpo {
+    var body: List[Bool] = []
+    for _ in 0..nb {
+      body.push(false)
+    }
+    var work: List[Int] = []
+    for e in f.blocks[h].preds {
+      let u = f.edges[e].from
+      if idom[u] >= 0 || u == entry {
+        if dominates_b(idom, entry, h, u) {
+          work.push(u)
+        }
+      }
+    }
+    if work.is_empty() {
+      continue
+    }
+    body[h] = true
+    while !work.is_empty() {
+      let b = work.pop() ?? 0
+      if body[b] {
+        continue
+      }
+      body[b] = true
+      for e in f.blocks[b].preds {
+        work.push(f.edges[e].from)
+      }
+    }
+    out.push((h, body))
+  }
+  out
+}
+
+/// Hoists the invariant fields of the loop with header h and blocks body
+/// into its preheader; whether it moved any.
+fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: List[Bool]) -> Bool {
+  // the preheader: the one predecessor outside the loop, ending in a
+  // jump to the header
+  var pe = -1
+  for e in f.blocks[h].preds {
+    if body[f.edges[e].from] {
+      continue
+    }
+    if pe >= 0 {
+      return false
+    }
+    pe = e
+  }
+  if pe < 0 {
+    return false
+  }
+  let p = f.edges[pe].from
+  let pt = f.term(p)
+  if pt < 0 || f.values[pt].op != ssa.Op.Jump || f.values[pt].succs.len() != 1 {
+    return false
+  }
+  // (index, list, field) to the hoisted field
+  var made: Map[(Int, Int, Int), Int] = {}
+  var repl: Map[Int, Int] = {}
+  var moved: List[Int] = []
+  let nb = f.blocks.len()
+  for b in 0..nb {
+    if !body[b] {
+      continue
+    }
+    for v in f.blocks[b].instrs {
+      if made.len() >= FIELD_HOIST_MAX {
+        break
+      }
+      let x = f.values[v]
+      if x.op != ssa.Op.Field || x.args.len() != 1 || !scalar(types, x.ty) {
+        continue
+      }
+      let k = aux_int(x.aux)
+      let e = f.values[x.args[0]]
+      if e.op != ssa.Op.Call || aux_str(e.aux) != "list.index" || e.args.len() != 2 {
+        continue
+      }
+      let idx = e.args[1]
+      let ib = f.values[idx].block
+      if ib < 0 || body[ib] {
+        continue
+      }
+      // the list at the loop's entry that field k of the element is read
+      // from in every iteration
+      let l = field_root(f, e.args[0], k, h, body, [], FIELD_DEPTH)
+      if l < 0 {
+        continue
+      }
+      var lp = l
+      let hp = f.blocks[h].params
+      var pi = -1
+      for (i, q) in hp.indexed() {
+        if q == l {
+          pi = i
+        }
+      }
+      if pi >= 0 {
+        // every way back to the header keeps field k
+        var keeps = true
+        for e2 in f.blocks[h].preds {
+          if e2 == pe {
+            continue
+          }
+          let r = field_root(f, f.edges[e2].args[pi], k, h, body, [], FIELD_DEPTH)
+          keeps = keeps && (r == l || r == -2)
+        }
+        if !keeps {
+          continue
+        }
+        lp = f.edges[pe].args[pi]
+      } else if f.values[l].block < 0 || body[f.values[l].block] {
+        continue
+      }
+      if !pr.proven(f, p, idx, lp) {
+        continue
+      }
+      var nu = made.get((idx, lp, k)) ?? -1
+      if nu < 0 {
+        let ne = f.values.len()
+        f.values.push(ssa.Value{op: ssa.Op.Call, ty: e.ty, args: [lp, idx], aux: e.aux, block: p, line: e.line, inl: e.inl})
+        nu = f.values.len()
+        f.values.push(ssa.Value{op: ssa.Op.Field, ty: x.ty, args: [ne], aux: x.aux, block: p, line: x.line, inl: x.inl})
+        moved.push(ne)
+        moved.push(nu)
+        made[(idx, lp, k)] = nu
+      }
+      repl[v] = nu
+    }
+  }
+  if repl.is_empty() {
+    return false
+  }
+  let ins = f.blocks[p].instrs
+  let n = ins.len()
+  f.blocks[p].instrs = ins[0..n - 1] + moved + [ins[n - 1]]
+  for b in 0..nb {
+    for v in f.blocks[b].instrs {
+      for (i, a) in f.values[v].args.indexed() {
+        if let Some(r) = repl.get(a) {
+          f.values[v].args[i] = r
+        }
+      }
+    }
+  }
+  for ei in 0..f.edges.len() {
+    for (i, a) in f.edges[ei].args.indexed() {
+      if let Some(r) = repl.get(a) {
+        f.edges[ei].args[i] = r
+      }
+    }
+  }
+  true
+}
+
+/// The list value x reads field k of its elements from in every
+/// iteration of the loop with header h: a parameter of h, or a value
+/// defined outside the loop; through list.set calls that change only
+/// other fields of an element (`list.set(X, j, setfield(k2,
+/// list.index(X, j), y))`, k2 != k), reuse, and parameters of the loop's
+/// other blocks whose incoming values agree. -1 when there is none, -2
+/// for a parameter already being walked (it agrees with anything).
+fn field_root(f: ssa.Func, x: Int, k: Int, h: Int, body: List[Bool], seen: List[Int], d: Int) -> Int {
+  if d <= 0 {
+    return -1
+  }
+  let xv = f.values[x]
+  if xv.block < 0 {
+    return -1
+  }
+  if !body[xv.block] {
+    return x
+  }
+  if xv.op == ssa.Op.Param {
+    if xv.block == h {
+      return x
+    }
+    if seen.contains(x) {
+      return -2
+    }
+    let s2 = seen + [x]
+    var pi = -1
+    for (i, q) in f.blocks[xv.block].params.indexed() {
+      if q == x {
+        pi = i
+      }
+    }
+    var r = -2
+    for e in f.blocks[xv.block].preds {
+      let a = field_root(f, f.edges[e].args[pi], k, h, body, s2, d - 1)
+      if a == -1 {
+        return -1
+      }
+      if a == -2 {
+        continue
+      }
+      if r == -2 {
+        r = a
+      } else if r != a {
+        return -1
+      }
+    }
+    return r
+  }
+  if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
+    return field_root(f, xv.args[0], k, h, body, seen, d - 1)
+  }
+  if xv.op == ssa.Op.Call && aux_str(xv.aux) == "list.set" && xv.args.len() == 3 {
+    // the stored element: element j of the same list with other fields
+    // set
+    var s = -1
+    s = xv.args[2]
+    for _ in 0..16 {
+      let sv = f.values[s]
+      if sv.op != ssa.Op.SetField {
+        break
+      }
+      if aux_int(sv.aux) == k {
+        return -1
+      }
+      s = sv.args[0]
+    }
+    let sv = f.values[s]
+    if sv.op != ssa.Op.Call || aux_str(sv.aux) != "list.index" || sv.args.len() != 2 || sv.args[0] != xv.args[0] || sv.args[1] != xv.args[1] {
+      return -1
+    }
+    return field_root(f, xv.args[0], k, h, body, seen, d - 1)
+  }
+  -1
+}
+
+/// What proves a list index in range in a function: its dominators and
+/// the branches on `x < n` (x to each n and the block the true edge
+/// enters, when it has only that edge).
+struct Proof {
+  idom: List[Int]
+  entry: Int
+  less: Map[Int, List[(Int, Int)]] = {}
+}
+
+fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
+  var pr = Proof{idom: dominators_of(f, rpo), entry: rpo[0]}
+  for bl in f.blocks {
+    if bl.instrs.is_empty() {
+      continue
+    }
+    let tv = f.values[bl.instrs[bl.instrs.len() - 1]]
+    if tv.op != ssa.Op.Branch || tv.args.is_empty() || tv.succs.len() != 2 {
+      continue
+    }
+    let c = f.values[tv.args[0]]
+    var x = -1
+    var n = -1
+    if c.op == ssa.Op.Lt && c.args.len() == 2 {
+      x = c.args[0]
+      n = c.args[1]
+    } else if c.op == ssa.Op.Gt && c.args.len() == 2 {
+      x = c.args[1]
+      n = c.args[0]
+    }
+    if x < 0 {
+      continue
+    }
+    let tb = f.edges[tv.succs[0]].to
+    if f.blocks[tb].preds.len() != 1 {
+      continue
+    }
+    var xs = pr.less.get(x) ?? []
+    xs.push((n, tb))
+    pr.less[x] = xs
+  }
+  pr
+}
+
+/// Whether 0 <= idx < the length of list l is known in block at: idx is
+/// not negative (nonneg), and a branch `idx < list.len(l2)`, l2 of l's
+/// length (len_root), took its true edge into a block that has only that
+/// edge and dominates at.
+fn (pr: Proof) proven(f: ssa.Func, at: Int, idx: Int, l: Int) -> Bool {
+  if !pr.less.contains(idx) {
+    return false
+  }
+  let r = len_root(f, l, [], FIELD_DEPTH)
+  if r < 0 {
+    return false
+  }
+  for n in pr.bounds(at, idx) {
+    let nv = f.values[n]
+    if nv.op == ssa.Op.Call && aux_str(nv.aux) == "list.len" && nv.args.len() == 1 && len_root(f, nv.args[0], [], FIELD_DEPTH) == r {
+      return pr.nonneg(f, idx, [], FIELD_DEPTH)
+    }
+  }
+  false
+}
+
+/// The values n with `x < n` known in block at.
+fn (pr: Proof) bounds(at: Int, x: Int) -> List[Int] {
+  var out: List[Int] = []
+  for (n, tb) in pr.less.get(x) ?? [] {
+    if dominates_b(pr.idom, pr.entry, tb, at) {
+      out.push(n)
+    }
+  }
+  out
+}
+
+/// The list whose length list value x always has: through list.set,
+/// reuse, and block parameters whose incoming values agree; x itself
+/// when there is none other, -2 for a parameter already being walked.
+fn len_root(f: ssa.Func, x: Int, seen: List[Int], d: Int) -> Int {
+  if d <= 0 {
+    return x
+  }
+  let xv = f.values[x]
+  if xv.op == ssa.Op.Reuse && xv.args.len() == 1 {
+    return len_root(f, xv.args[0], seen, d - 1)
+  }
+  if xv.op == ssa.Op.Call && aux_str(xv.aux) == "list.set" && xv.args.len() == 3 {
+    return len_root(f, xv.args[0], seen, d - 1)
+  }
+  if xv.op == ssa.Op.Param && xv.block > 0 {
+    if seen.contains(x) {
+      return -2
+    }
+    let s2 = seen + [x]
+    var pi = -1
+    for (i, q) in f.blocks[xv.block].params.indexed() {
+      if q == x {
+        pi = i
+      }
+    }
+    if pi < 0 {
+      return x
+    }
+    var r = -2
+    for e in f.blocks[xv.block].preds {
+      let a = len_root(f, f.edges[e].args[pi], s2, d - 1)
+      if a == -2 {
+        continue
+      }
+      if r == -2 {
+        r = a
+      } else if r != a {
+        return x
+      }
+    }
+    return r
+  }
+  x
+}
+
+/// Whether Int value v is never negative: a constant at least 0, a
+/// length, a block parameter whose incoming values are (one being walked
+/// counts), or the sum of two such: a checked add (it faults rather than
+/// wrap), or an unchecked add of 0 or 1 to a where `a < n` holds (n a
+/// length or another value not negative), so the sum is at most n.
+fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
+  if d <= 0 {
+    return false
+  }
+  let x = f.values[v]
+  match x.op {
+    Const => match x.aux {
+      I(n) => n >= 0
+      _ => false
+    }
+    Call => aux_str(x.aux) is "list.len" | "Str.len" | "bytes.len"
+    Param => {
+      if x.block <= 0 {
+        return false
+      }
+      if seen.contains(v) {
+        return true
+      }
+      let s2 = seen + [v]
+      var pi = -1
+      for (i, q) in f.blocks[x.block].params.indexed() {
+        if q == v {
+          pi = i
+        }
+      }
+      if pi < 0 || f.blocks[x.block].preds.is_empty() {
+        return false
+      }
+      for e in f.blocks[x.block].preds {
+        if !pr.nonneg(f, f.edges[e].args[pi], s2, d - 1) {
+          return false
+        }
+      }
+      true
+    }
+    Add => {
+      if x.args.len() != 2 {
+        return false
+      }
+      if !pr.nonneg(f, x.args[0], seen, d - 1) || !pr.nonneg(f, x.args[1], seen, d - 1) {
+        return false
+      }
+      if !x.pos.is_empty() {
+        return true
+      }
+      for j in 0..2 {
+        let c = f.values[x.args[1 - j]]
+        let small = c.op == ssa.Op.Const && (aux_int(c.aux) is 0 | 1)
+        if !small {
+          continue
+        }
+        for n in pr.bounds(x.block, x.args[j]) {
+          if pr.nonneg(f, n, seen, d - 1) {
+            return true
+          }
+        }
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// Whether type t is an Int, Float or Bool (a field read without
+/// reference counting).
+fn scalar(types: List[ssa.SType], t: Int) -> Bool {
+  t >= 0 && t < types.len() && (types[t].kind is ssa.Kind.Int | ssa.Kind.Float | ssa.Kind.Bool)
+}

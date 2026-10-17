@@ -1,0 +1,125 @@
+// Decision 0257: fields of list elements read in a loop past sets of
+// other fields (hoisted), past sets of the same field (not), with the
+// element read being the one set (i == j), a list replaced or grown in
+// the loop, and indexes proven by a branch on the length.
+
+struct P {
+  x: Float
+  y: Float
+  vx: Float
+  n: Int
+  on: Bool
+}
+
+fn mk(k: Int) -> List[P] {
+  var ps: List[P] = []
+  for i in 0..k {
+    ps.push(P{x: Float(i) + 0.5, y: Float(i * 3), vx: 0.0, n: i, on: i % 2 == 0})
+  }
+  ps
+}
+
+// other fields set, j runs over i too: x, y, n, on of ps[i] are the same
+// in every iteration
+fn others(var ps: List[P]) -> Float {
+  var s = 0.0
+  let k = ps.len()
+  for i in 0..k {
+    for j in 0..k {
+      let d = ps[i].x - ps[j].y
+      if ps[i].on {
+        s += Float(ps[i].n)
+      }
+      ps[i].vx += d
+      ps[j].vx -= d * 0.5
+    }
+  }
+  for p in ps {
+    s += p.vx
+  }
+  s
+}
+
+// the field read is set in the loop: ps[i].x changes when j == i
+fn same(var ps: List[P]) -> Float {
+  var s = 0.0
+  let k = ps.len()
+  for i in 0..k {
+    for j in 0..k {
+      s += ps[i].x
+      ps[j].x += 1.0
+    }
+  }
+  s
+}
+
+// a set through a whole element: every field can change
+fn whole(var ps: List[P]) -> Int {
+  var s = 0
+  let k = ps.len()
+  for i in 0..k {
+    for j in 0..k {
+      s += ps[i].n
+      ps[j] = P{x: 0.0, y: 0.0, vx: 0.0, n: ps[j].n + 1, on: false}
+    }
+  }
+  s
+}
+
+// the list is replaced and grown in the loop
+fn replaced(var ps: List[P]) -> Int {
+  var s = 0
+  let k = ps.len()
+  for i in 0..k {
+    var j = 0
+    while j < 3 {
+      s += ps[i].n
+      if j == 1 {
+        ps = mk(k + j)
+        ps[i].n = 100
+      }
+      ps.push(P{x: 0.0, y: 0.0, vx: 0.0, n: 7, on: true})
+      j += 1
+    }
+  }
+  s + ps.len()
+}
+
+// an inner loop that runs no times, at an index the branch proves
+fn empty_inner(var ps: List[P], m: Int) -> Float {
+  var s = 0.0
+  let k = ps.len()
+  var i = 0
+  while i < k {
+    for j in m..0 {
+      s += ps[i].x
+      ps[j].vx = 1.0
+    }
+    i += 1
+  }
+  s + Float(i)
+}
+
+// an index the loop does not prove: the check stays and faults inside
+fn checked(ps: List[P], i: Int) -> Float {
+  var s = 0.0
+  for _ in 0..3 {
+    s += ps[i].x
+  }
+  s
+}
+
+fn main(os: Os) {
+  var a = mk(6)
+  os.stdio.println("others ${others(a)}")
+  var b = mk(5)
+  os.stdio.println("same ${same(b)}")
+  var c = mk(4)
+  os.stdio.println("whole ${whole(c)}")
+  var d = mk(4)
+  os.stdio.println("replaced ${replaced(d)}")
+  var e = mk(3)
+  os.stdio.println("empty ${empty_inner(e, 2)}")
+  os.stdio.println("checked ${checked(mk(3), 2)}")
+  os.stdio.println("checked ${checked(mk(3), 3)}")
+}

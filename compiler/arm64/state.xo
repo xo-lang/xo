@@ -255,6 +255,8 @@ struct G {
   /// intervals of Int values (ranges.xo)
   ranges: List[Interval] = []
   has_range: List[Bool] = []
+  /// what proves list indexes in range across blocks (decision 0257)
+  proof: Proof = Proof{idom: [], entry: 0}
   /// registers that are another plus a constant (lsr.xo)
   offs: Map[Int, Offset] = {}
   /// the Int values a list index adds a constant to (xs[i] beside xs[i +

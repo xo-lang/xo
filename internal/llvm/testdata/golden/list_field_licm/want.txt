@@ -1,0 +1,10 @@
+exit 70
+--- stdout
+others -45.0
+same 122.5
+whole 54
+replaced 419
+empty 3.0
+checked 7.5
+--- stderr
+fault: index 3 out of range for List of length 3 at main.xo:107:10
