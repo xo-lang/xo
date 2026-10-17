@@ -67,3 +67,19 @@ Xo Lang 2's explicit adc chain helper. The sweep driver of these runs is
 now bench/perf/sweep.py (each bench/perf/<dir>/measure.sh with two xo
 binaries in alternating rounds).
 
+
+## sub_p256 inlines (2026-10-17, xo-fa)
+
+The parked section's diagnosis was wrong. cpu.adc and cpu.adc_carry were
+already SSA intrinsics (ssa call.xo cpu_call: rt.u64_adc and
+rt.u64_adc_carry, decision 0231), so no continuation blocks came from
+them. What kept sub_p256 a call was arm64 inline.xo's inline_intrinsic:
+its list of rt intrinsics that are instructions lacked the carry ones,
+so sub_p256 was not a leaf and paid the non-leaf limits. With
+rt.u64_adc, rt.u64_adc_carry, rt.u64_carry and rt.u64_borrow in it, the
+calls of sub_p256 in bench/perf/tls go from 36 to 1.
+
+Sweep (bench/perf/sweep.py, base its merge base, 114 workloads): 0
+slower, 1 faster beyond spread (httpclient/len 0.991). P-256 within
+spread: tls/p256 0.998, tls/srv-p256 0.996, tls/srv-p256-0 0.993; the
+call was cheap next to the field multiplications around it.
