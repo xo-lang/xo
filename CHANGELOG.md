@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: small fixed-size copies are loads and stores (no memcpy call),
+  and a chain of subtractions with borrow is subs and sbcs: P-256 and
+  TLS 1.2 handshakes 12% fewer instructions.
 - ML-KEM in the native TLS client costs less than half as much
   (bench/results/mlkem-client-2026-10-17.md): the hybrid handshake's
   ML-KEM part is 62% smaller on arm64 and 59% on LLVM, and

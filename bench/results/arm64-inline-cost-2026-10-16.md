@@ -155,3 +155,21 @@ operand (the reduction's 38: a mov, no flags). x25519.fe64_mul 123 to
 1385.8 M instructions, p256 1871.4 to 1864.6, tls12 1674.8 to 1662.2;
 cycles within noise (406.6 to 407.1, 521.6 to 529.4, 519.0 to 512.5).
 TestX25519Diff and TestNistecDiff pass on both backends.
+
+## Inline copies and sbcs in chains (2026-10-17, xo-4)
+
+Linux callgrind (bench/perf/tls p256, after 37c6ed8d): arm64 8.80M
+instructions a handshake, LLVM 7.30M; nistec 857K over LLVM, libc's
+memcpy, memset and memmove 242K. calls.xo: rt.mem_copy of a known length
+up to 128 bytes is ldp and stp (nistec's point functions copied 32 bytes
+through memcpy); a chain pair adding ~b (a Not, or -1) is sbcs of b
+(subs for a first pair with carry in 1); two Nots of one operand pair
+(same_arg; the inliner's pair key too); a first pair adding 1 to 4095
+is adds #k. nistec.sub4p 42 to 19 instructions, pt_add256 1349 to 1047,
+pt_double256 875 to 686.
+
+Mac bench/perf/tls, min of 7 runs (main 37c6ed8d's compiler against the
+branch's): p256 1877.0 to 1650.5 M instructions (-12.1%), tls12 1672.2
+to 1474.3 (-11.8%), x25519only 1392.6 to 1318.2 (-5.3%); median cycles
+867.9 to 814.7, 619.6 to 590.8, 662.9 to 650.6 (a loaded machine).
+LLVM p256: about 1613.
