@@ -52,6 +52,62 @@ goldens, progen across backends; CI on x86_64 runners when CI is back.
 The self build's fixed point on x86_64 is the last gate before the
 default changes.
 
+## The interface between the emitter and the encoder (agreed 2026-10-17)
+
+The emitter's output is one text file per module (or per part, as
+arm64's generate_parallel), GNU assembler syntax, AT&T operand order.
+The encoder takes that text and gives the object writers' sections,
+symbols and relocations, as selfhost/macho's arm64 assembler does. The
+encoder accepts exactly this subset; anything else is an error with the
+line, never a guess. The same text must assemble with
+`clang -c -target x86_64-unknown-linux-gnu` (and the Mach-O and COFF
+triples) to the same bytes, which is the encoder's test.
+
+Instructions:
+- Mnemonics carry their size suffix always (movq, movl, movw, movb,
+  addq, cmpl, movzbl, movsbq, movslq, ...); SSE scalar forms (movsd,
+  addsd, cvtsi2sdq, ucomisd, ...), and the crypto set of stage 3.
+- Registers %rax to %r15 and their 32, 16, 8 bit names (%eax, %r8d,
+  %ax, %r8w, %al, %r8b, %sil, %dil, %bpl, %spl), %xmm0 to %xmm15,
+  %rip only in memory operands.
+- Immediates `$n` (decimal or 0x hex, signed), `$sym` and `$sym+n`.
+- Memory: `disp(base)`, `disp(base,index,scale)`, `(,index,scale)`
+  with disp a number, `sym`, `sym+n`, or `sym-sym2` within a section;
+  `sym(%rip)`, `sym+n(%rip)`; `%fs:` and `%gs:` prefixes.
+- Branches: `jmp L`, `jCC L` (the jcc set by condition code), `call sym`,
+  `jmp sym` (a tail call), `call *%reg`, `call *disp(%reg)`,
+  `jmp *%reg` (jump tables). Local jumps relax: the shortest form that
+  reaches, iterated to a fixed point (clang's choice, so the bytes
+  match).
+- One instruction per line; a `#` starts a comment to the end of the
+  line; labels end in `:`; local labels start with `.L` (ELF, COFF) or
+  `L` (Mach-O).
+
+Symbol references and their relocations:
+- ELF: `sym(%rip)` R_X86_64_PC32; `call sym` and `jmp sym` to a
+  symbol outside the section R_X86_64_PLT32; `sym@GOTPCREL(%rip)` in a
+  movq R_X86_64_REX_GOTPCRELX; `%fs:sym@TPOFF` R_X86_64_TPOFF32 (local
+  exec thread locals, static links); `.quad sym` R_X86_64_64; `.long
+  sym-.` R_X86_64_PC32.
+- Mach-O: `_sym(%rip)` X86_64_RELOC_SIGNED, branches
+  X86_64_RELOC_BRANCH, `_sym@GOTPCREL(%rip)` X86_64_RELOC_GOT_LOAD,
+  `_sym@TLVP(%rip)` X86_64_RELOC_TLV, `.quad _sym` X86_64_RELOC_UNSIGNED.
+- COFF: `sym(%rip)` IMAGE_REL_AMD64_REL32, `.quad sym`
+  IMAGE_REL_AMD64_ADDR64, `.secrel32` for the TLS index (to be fixed
+  with the PE stage).
+
+Directives (the arm64 emitter's set): .text, .data, .section with the
+ELF flags and types it prints (.rodata, .rodata.str1.1, .tdata,
+.gcc_except_table, .note.GNU-stack, .data.DW.ref.*), .globl, .hidden,
+.weak, .type, .size, .p2align, .byte, .short, .long, .quad, .ascii,
+.asciz, .zero, .uleb128, .sleb128, .file and .loc (decision 0239's
+lines), and .cfi_startproc, .cfi_endproc, .cfi_def_cfa,
+.cfi_def_cfa_offset, .cfi_offset, .cfi_personality, .cfi_lsda (the
+encoder writes .eh_frame from them, as the arm64 assembler does).
+
+What the encoder does not need: no macros, no .if, no expressions
+beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
+
 ## Consequences
 
 To be filled in as stages land.
