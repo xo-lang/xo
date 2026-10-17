@@ -112,7 +112,11 @@ fn (var g: G) alias(key: Str) -> Str {
     }
   }
   g.ext_keys[ext] = key
-  "${g.hidden_global(ext)}${ext}:\n"
+  // a function symbol on ELF, as func_header's: without a type (and no
+  // size) valgrind and perf dropped it, and profiles showed every
+  // helper as ??? (Xo Lang 3, 2026-10-17)
+  let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
+  "${g.hidden_global(ext)}${ty}${ext}:\n"
 }
 
 /// Generates the helper a part wanted (Want), once.
