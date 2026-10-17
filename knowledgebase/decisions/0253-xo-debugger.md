@@ -134,6 +134,22 @@ rejected.
    locals (as structures of words for Xo's collections). Nothing here
    takes that away; their tests stay as cross checks.
 
+8. **Writing variables (`set`) comes after the read only stages.** The
+   arm64 emitter keeps a spilled value in x16 or x17 across instructions
+   of a block and into a block that follows its single predecessor
+   (emit.xo sc_slot, Xo lang 4, 2026-10-17; gotcha
+   arm64-scratch-reload-cache), so a write to a spilled variable's stack
+   slot can go unseen until the next call or join while the code uses the
+   register copy. Reading is unaffected: the slot and the register agree.
+   When `set` is built it has the emitter describe the cache: a location
+   list entry for each range where x16 or x17 holds the variable's slot
+   (DWARF 5 allows overlapping entries: both places are valid there),
+   and the write updates every place the word lives at the stop's pc. A
+   build without those entries gets no write to a spilled word, with a
+   message naming the reason. Values in registers and the LLVM backend's
+   locations (LLVM describes its own copies) are writable from the start
+   of `set`.
+
 ## New OS capabilities (for the owner's approval, rule 7b)
 
 These are calls the debugger's process control layer makes (std/native
