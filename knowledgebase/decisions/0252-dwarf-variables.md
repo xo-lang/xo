@@ -230,3 +230,22 @@ What the compiler has to work with:
   TestDebugInfoSameOutputLLVM (point 5's gate for LLVM) and
   TestStrippedNoDWARF (-s and --release: no dSYM, no __DWARF, no
   compile unit; --release --debug-info keeps the dSYM).
+- gdb on Linux (2026-10-17, GNU gdb 16.3 in scripts/docker-linux.sh's
+  Debian image, linux/arm64, internal/arm64 testdata/debugvars; xo
+  cross built at main 4141e07c): `break sum`, `break main.xo:12`, `run`,
+  `bt`, `info locals`, `info args`. arm64 backend (elflink): `break sum`
+  stops at main.xo:6, the first statement (the prologue_end row); at
+  main.xo:12 `info locals` gives total = 0, d = 12 (p and pr are
+  `<optimized out>` there: their words are dead past line 11) and `info
+  args` k = 10; `bt` is sum, main (main.xo:24), xo_entry,
+  entry.run_main, cabi.run_main, xo_clone. LLVM backend: sum is inlined
+  into main, so `break sum` stops at main.xo:10 (LLVM folded line 6's
+  test for k = 10); at main.xo:12 total = 0, d = 12, k = 10; `bt` shows
+  the inlined frame (sum at main.xo:12, main at 24 and 22),
+  xo_x_run_main, xo_clone. Both backtraces end with gdb's "Backtrace
+  stopped: previous frame identical to this frame (corrupt stack?)" at
+  xo_clone: the thread's first frame does not mark itself outermost (its
+  CFI does not make the return address undefined), so gdb stops on a
+  repeated frame instead of a clean end. Next: `.cfi_undefined x30` in
+  xo_clone's thread start (selfhost/arm64's and the LLVM runtime's), then
+  rerun this check.
