@@ -1,7 +1,8 @@
 # 0253: the architecture of `xo debug`
 
-Status: Proposed (for the owner's review before it is built; Xo lang 3,
-2026-10-17, written around the design the owner chose through the lead)
+Status: Accepted (owner, 2026-10-17, through the lead: the design and the
+per OS process calls below approved as written; written by Xo lang 3
+around the design the owner chose)
 
 ## Context
 
@@ -152,7 +153,7 @@ rejected.
    locations (LLVM describes its own copies) are writable from the start
    of `set`.
 
-## New OS capabilities (for the owner's approval, rule 7b)
+## New OS capabilities (rule 7b: approved by the owner as written, 2026-10-17)
 
 These are calls the debugger's process control layer makes (std/native
 syscall and libSystem bindings, reached only by `xo debug`, not by

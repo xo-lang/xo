@@ -244,6 +244,6 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0251-native-dump.md](0251-native-dump.md): Accepted: `xo dump` and SIGQUIT for native programs: the poller writes the task tree in the Go backend's format and words
 - [0248-native-default-backend.md](0248-native-default-backend.md): Accepted: native is the default backend (arm64 on arm64 hosts, LLVM on x86_64); --backend=go kept; use go needs it; contract fuzzing and xo dump stay on Go for now
 - [0252-dwarf-variables.md](0252-dwarf-variables.md): Accepted: DWARF types, variables, and locations on top of 0239's line tables, so lldb prints locals, struct fields, lists, and enums
-- [0253-xo-debugger.md](0253-xo-debugger.md): Proposed (for the owner): the architecture of `xo debug`, a debugger written in Xo (out of process, an in-runtime agent, or a hybrid), for the owner's review
+- [0253-xo-debugger.md](0253-xo-debugger.md): Accepted (owner, 2026-10-17): the architecture of `xo debug`, a debugger written in Xo, out of process (Mach task and exception ports on macOS, ptrace on Linux, the debug API on Windows), with task views from the runtime's records
 - [0254-amd64-backend.md](0254-amd64-backend.md): Proposed: Xo's own x86_64 backend (selfhost/amd64), AT&T text assembled by selfhost/macho; stages split between xo-fa and Xo Lang 2
 - [0255-preserve-most-drops.md](0255-preserve-most-drops.md): Rejected: arm64 drop helpers that keep the caller saved registers (three conventions) were slower: 29 of 114 workloads; drops stay plain calls.
