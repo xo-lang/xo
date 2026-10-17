@@ -1632,8 +1632,8 @@ fn (g: G) chain_products() -> Bool {
   ADC_SPLIT
 }
 
-/// Whether a is a product (rt.u64_mul_hi, or rt.int_wrap's multiply of
-/// two registers) defined after the chain's start and before index k,
+/// Whether a is a product (rt.u64_mul_hi, or rt.int_wrap's multiply)
+/// defined after the chain's start and before index k,
 /// not selected yet, read by its pair alone (nu uses: the sum and the
 /// carry, or the sum), of values defined before the chain: the chain
 /// makes it right before its pair (mul and umulh set no flags).
@@ -1656,13 +1656,20 @@ fn (var g: G) chain_product(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
   }
   let n = aux_str(x.aux)
   if n == "rt.u64_mul_hi" && x.args.len() == 2 {
-    return g.before_ix(x.args[0], ins) && g.before_ix(x.args[1], ins)
+    return g.ready(x.args[0], ins) && g.ready(x.args[1], ins)
   }
   if n == "rt.int_wrap" && x.args.len() == 3 {
     let (op, opk) = g.const_int(x.args[0])
-    return opk && op == 2 && !g.is_const(x.args[1]) && !g.is_const(x.args[2]) && g.before_ix(x.args[1], ins) && g.before_ix(x.args[2], ins)
+    return opk && op == 2 && g.ready(x.args[1], ins) && g.ready(x.args[2], ins)
   }
   false
+}
+
+/// Whether a chain's product can read a: a value defined before the
+/// chain, or a constant (a mov, which sets no flags; x25519's reduction
+/// multiplies by 38).
+fn (g: G) ready(a: Int, ins: List[Int]) -> Bool {
+  g.is_const(a) || g.before_ix(a, ins)
 }
 
 /// adc_chain's instructions with ADC_SPLIT: per pair its products not

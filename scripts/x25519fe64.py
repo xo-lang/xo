@@ -49,12 +49,27 @@ def wadd(a, b):
     return s
 
 
+def force(x):
+    """An operand: a name, or a product (half, a, b) made here, right
+    before the pair that reads it (the arm64 chain makes it between its
+    adcs, which mul and umulh leave the flags of: calls.xo ADC_SPLIT)."""
+    if isinstance(x, tuple):
+        half, a, b = x
+        r = v(half)
+        op = f"rt.int_wrap(2, {a}, {b})" if half == "lo" else f"rt.u64_mul_hi({a}, {b})"
+        emit(f"let {r} = {op}")
+        return r
+    return x
+
+
 def chain(xs, ys, cin="0", keep=True):
     """xs[j] + ys[j] with the carry chained; the sums and the last carry
     (None when keep is false: the last pair makes only its sum)."""
     c = cin
     r = []
     for idx, (x, y) in enumerate(zip(xs, ys)):
+        x = force(x)
+        y = force(y)
         # a literal 0 operand with no carry in adds nothing: no
         # instruction, and no carry out (the arm64 emitter would hold
         # the 0 in a register and break the adcs chain at it)
@@ -110,19 +125,16 @@ def fold_top(r, top):
 def reduce8(t):
     """t (8 words) modulo 2^256 - 38: the high half times 38 added to the
     low half (two chains), then the small top folded."""
-    lo = []
-    hi = []
-    for i in range(4):
-        a = v("lo")
-        b = v("hi")
-        emit(f"let {a} = rt.int_wrap(2, {t[4 + i]}, 38)")
-        emit(f"let {b} = rt.u64_mul_hi({t[4 + i]}, 38)")
-        lo.append(a)
-        hi.append(b)
+    lo = [("lo", t[4 + i], "38") for i in range(4)]
+    hi = [("hi", t[4 + i], "38") for i in range(3)]
     r, c1 = chain(t[:4], lo)
-    r2, c2 = chain(r[1:], hi[:3])
-    top = wadd(wadd(hi[3], c1), c2)
-    return fold_top([r[0]] + r2, top)
+    h3 = v("hi")
+    emit(f"let {h3} = rt.u64_mul_hi({t[7]}, 38)")
+    # the top word hi3 + c1 + the second chain's carry: that chain's last
+    # pair (adcs, no cset and add)
+    r2, _ = chain(r[1:] + [h3], hi + [c1], keep=False)
+    top = r2[3]
+    return fold_top([r[0]] + r2[:3], top)
 
 
 def store(rs):
@@ -135,31 +147,36 @@ def load(nm):
         emit(f"let {nm}{i} = ld({nm}, {8 * i})")
 
 
-def gen_mul():
-    load("f")
-    load("g")
-    # the product's words t[0..8] (t[8] stays 0: the product is below 2^512)
-    t = ["0"] * 10
-    for i in range(4):
-        lo = []
-        hi = []
-        for j in range(4):
-            a = v("lo")
-            b = v("hi")
-            emit(f"let {a} = rt.int_wrap(2, f{j}, g{i})")
-            emit(f"let {b} = rt.u64_mul_hi(f{j}, g{i})")
-            lo.append(a)
-            hi.append(b)
-        # the low halves at words i..i+3, the carry on to word i+4
-        r, c = chain(t[i:i + 5], lo + ["0"])
+def add_row(t, i, ps):
+    """t[i..i+3] += ps, the carry on through t[i+4] to t[i+5] (which then
+    cannot carry: the product's bound)."""
+    if t[i + 5] == "0":
+        r, c = chain(t[i:i + 5], ps + ["0"])
         t[i:i + 5] = r
         if c != "0":
-            t[i + 5] = c if t[i + 5] == "0" else wadd(t[i + 5], c)
+            t[i + 5] = c
+    else:
+        r, _ = chain(t[i:i + 6], ps + ["0", "0"], keep=False)
+        t[i:i + 6] = r
+
+
+def gen_mul():
+    load("f")
+    # the product's words t[0..8] (t[8] stays 0: the product is below 2^512);
+    # g's words load at their rows and each product is made right before
+    # the pair that adds it (all 8 products of a row up front kept 7
+    # callee saved pairs on arm64)
+    t = ["0"] * 10
+    for i in range(4):
+        emit(f"let g{i} = ld(g, {8 * i})")
+        lo = [("lo", f"f{j}", f"g{i}") for j in range(4)]
+        hi = [("hi", f"f{j}", f"g{i}") for j in range(4)]
+        # the low halves at words i..i+3, the carry on to word i+4, then
+        # i+5 (a word there takes the last carry in the chain: one adcs
+        # with xzr, not a cset and an add)
+        add_row(t, i, lo)
         # the high halves at words i+1..i+4, the carry on to word i+5
-        r, c = chain(t[i + 1:i + 6], hi + ["0"])
-        t[i + 1:i + 6] = r
-        if c != "0":
-            t[i + 6] = c if t[i + 6] == "0" else wadd(t[i + 6], c)
+        add_row(t, i + 1, hi)
     store(reduce8(t[:8]))
 
 

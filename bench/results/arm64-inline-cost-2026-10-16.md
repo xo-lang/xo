@@ -143,3 +143,15 @@ tls/tls12 0.918, tls/rsa2048 0.934, tls/ed25519 0.940 (the old
 compiler on the new mul4p, whose products come between the pairs,
 breaks its chains: these ratios are the new std's dependence on the
 split, not the gain over main).
+
+## x25519's field product with lazy products (2026-10-17, xo-4)
+
+scripts/x25519fe64.py makes each product right before its pair (as
+nistecmul4p.py), folds the carry-adds into the chains (add_row, and
+reduce8's top word), and calls.xo chain_product takes a constant
+operand (the reduction's 38: a mov, no flags). x25519.fe64_mul 123 to
+113 instructions, callee saved pairs 7 to 3 (2 spill moves); fe64_sq
+88 to 86, 5 to 4. Mac bench/perf/tls, min of 7: x25519only 1391.6 to
+1385.8 M instructions, p256 1871.4 to 1864.6, tls12 1674.8 to 1662.2;
+cycles within noise (406.6 to 407.1, 521.6 to 529.4, 519.0 to 512.5).
+TestX25519Diff and TestNistecDiff pass on both backends.
