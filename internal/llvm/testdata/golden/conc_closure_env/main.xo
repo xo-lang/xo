@@ -1,0 +1,56 @@
+// A spawned closure crosses to its task as its code and environment
+// (std/native/llrt/tasks.xo task_spawn_fn, 2026-10-16), and a () result
+// needs no list: every environment is freed whether its task ran, was
+// canceled before it ran, or ran on a canceled scope (TestGolden's
+// XO_LEAKCHECK=1 run of this program).
+fn main(os: Os) {
+  let words = ["alpha", "beta", "gamma"]
+  let ran = Atomic[Int].new(0)
+  // canceled first: these tasks may never run their closures
+  scope s {
+    s.cancel()
+    for i in 0..200 {
+      let w = "${words[i % 3]}-${i}"
+      let l = [i, i + 1, i + 2]
+      s.spawn(fn() {
+        if w.len() + l.len() > 0 {
+          ran.add(1)
+        }
+      })
+      s.spawn(fn() { })
+    }
+  }
+  os.stdio.println("canceled scope ended")
+  // run to the end: a value, a () and a failing result, awaited or not
+  var total = 0
+  scope s {
+    var ts: List[Task[Int, Never]] = []
+    for i in 0..50 {
+      let w = "${words[i % 3]}${i}"
+      ts.push(s.spawn(fn() -> Int { w.len() }))
+      let u = s.spawn(fn() { ran.add(w.len()) })
+      if i % 2 == 0 {
+        u.await
+      }
+      s.spawn_background(fn() { ran.add(1) })
+    }
+    for t in ts {
+      total += t.await
+    }
+  }
+  os.stdio.println("total ${total}")
+  let failed: Result[Int, Str] = scope s {
+    let w = "nested"
+    s.spawn(fn() -> Result[(), Str] {
+      if w.len() == 6 {
+        return Err("task ${w} failed")
+      }
+      Ok(())
+    })
+    Ok(1)
+  }
+  match failed {
+    Ok(n) => os.stdio.println("ok ${n}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

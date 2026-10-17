@@ -81,7 +81,7 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     "list.push" => Some([c, c])
     "list.pop" => Some([c])
     "list.take" => Some([c, n])
-    "rt.task_spawn" => Some([w, c, n, n, n, n, n, w])
+    "rt.task_spawn" | "rt.task_spawn_fn" => Some([w, c, n, n, n, n, n, w])
     "rt.task_done" => Some([w, c, n])
     "rt.chan_send" => Some([w, c, w])
     "rt.chan_try_send" => Some([w, c])

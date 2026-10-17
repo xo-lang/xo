@@ -27,15 +27,17 @@ use native/llrt/stdio
 use native/llrt/twflags
 use native/rt
 
-/// xo_task (216 bytes): the header (count, free function), the
+/// xo_task (224 bytes): the header (count, free function), the
 /// cancellation node (56 bytes), the scope (not counted), the state
 /// (atomic: 0 queued, 1 running, 2 done), the entry function, the result
-/// list's drop function, the closure (a list of one) until it runs, the
+/// list's drop function, the closure until it runs (its code, or a list
+/// of one from task_spawn), the
 /// result (a shared list of one), whether it unwound (a C int), whether
 /// it is background and its handle consumed (C ints), the spawn site,
 /// the lock of the waiters, the wait list of its awaiters, the scope
 /// list's link, the gone count (atomic), the fault that ended it (three
-/// malloc'd strings), the budget it was started under.
+/// malloc'd strings), the budget it was started under, the closure's
+/// environment until it runs (shared; 0 for one that captures nothing).
 const T_NODE = 16
 const T_SCOPE = 72
 const T_STATE = 80
@@ -46,6 +48,9 @@ const T_RESULT = 112
 const T_UNWOUND = 120
 const T_BACKGROUND = 124
 const T_CONSUMED = 128
+/// 1 when the closure is its two words (task_spawn_fn: T_FL its code,
+/// T_FENV its environment), 0 for a list of one in T_FL (a C int)
+const T_TWO = 132
 const T_SITE = 136
 const T_MU = 144
 const T_WAITERS = 152
@@ -54,7 +59,8 @@ const T_FAULT_MSG = 184
 const T_FAULT_LOC = 192
 const T_FAULT_DETAIL = 200
 const T_BUD = 208
-const T_SIZE = 216
+const T_FENV = 216
+const T_SIZE = 224
 const T_DONE = 2
 
 /// xo_scope (464 bytes): the body's node, the lock of the list and the
@@ -474,25 +480,43 @@ fn stat(k: Int) { rtstats.count(k) }
 
 /// Starts a task in scope s (xo_task_spawn, `s.spawn(f)`; flags bit 0:
 /// background, bit 1: its handle is bound and awaited, so its error does
-/// not fail the scope). fl is the closure in a list of one (consumed);
-/// run is the entry function that calls it, drop the one that releases
-/// its result list, fdrop the one that releases fl (a spawn on a scope
-/// that has ended faults at the ln bytes at lp and gives it back,
-/// decision 0085). site tells the scope which spawn failed.
-pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
+/// not fail the scope). code and env are the closure's two words
+/// (consumed; env shared, or 0): it crosses as itself, not in a list of
+/// one (an allocation, a share walk and a free a spawn, 2026-10-16); run
+/// is the entry function that calls it with them and t, drop the one
+/// that releases its result list (a spawn on a scope that has ended
+/// faults at the ln bytes at lp and gives the closure back, decision
+/// 0085, through the environment's own drop; fdrop is unused). site
+/// tells the scope which spawn failed.
+pub fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, code, env, true, run, drop, fdrop, flags, site, lp, ln) }
+
+/// task_spawn_fn with the closure in a list of one, fl (consumed), which
+/// fdrop releases and run takes with t: what code from a compiler older
+/// than task_spawn_fn calls (the self build's seed), until a seed knows
+/// task_spawn_fn.
+pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, fl, 0, false, run, drop, fdrop, flags, site, lp, ln) }
+
+fn spawn(s: Int, fl: Int, env: Int, two: Bool, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
   let pl = pool_ready()
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
   if w == 0 {
     w = poolsetup.root_worker(pl)
   }
-  let t = new_object(T_SIZE, rt.fn_addr("task_free"))
+  // new_object's work with the size constant, so the zeroing is stores
+  // of xzr (the arm64 backend's inline mem_set), not the runtime's
+  // memset loop (162 instructions a spawn, 2026-10-16)
+  let t = obj.alloc_obj(T_SIZE)
+  rt.mem_set(t, 0, T_SIZE)
+  st(t, H_FREE, rt.fn_addr("task_free"))
   // references: the handle returned, and the scope's list (which keeps
   // t alive while a queue holds it)
   st(t, H_RC, -2)
   st(t, T_RUN, run)
   st(t, T_DROP, drop)
   st(t, T_FL, fl)
+  st(t, T_FENV, env)
+  st4(t, T_TWO, if two { 1 } else { 0 })
   st4(t, T_BACKGROUND, flags & 1)
   st4(t, T_CONSUMED, (flags / 2) & 1)
   st(t, T_SITE, site)
@@ -511,7 +535,9 @@ pub fn task_spawn(s: Int, fl: Int, run: Int, drop: Int, fdrop: Int, flags: Int, 
   if r == -1 {
     budget.release(bud)
     obj.free_obj(t)
-    if fl != empty_list() {
+    if two {
+      env_release(env)
+    } else if fl != empty_list() {
       let _d = rt.call_c2(fdrop, fl, 0)
     }
     fault.raise_str_at("a task was started on a scope that has ended", lp, ln)
@@ -696,6 +722,18 @@ fn mfree(b: Int) {
 }
 
 /// A task's (task_free): its budget, its result, the fault that ended it.
+/// Drops a closure environment's reference (0: none), its drop function
+/// (word 1) running when it was the last.
+fn env_release(env: Int) {
+  if env != 0 && rc.dec(env) == 1 {
+    // through the export's address: a third direct call of rc_defer_n
+    // made the arm64 inliner keep it out of line where faults drop
+    // values (bench/perf/fault defer 1.021, owned 1.018), and this path
+    // is rare (a spawn on a scope that has ended)
+    let _r = rt.call_c2(rt.fn_addr("obj_rc_defer_n"), env, ld(env, 8))
+  }
+}
+
 pub fn task_free(t: Int) {
   budget.release(ld(t, T_BUD))
   list_release(ld(t, T_RESULT), ld(t, T_DROP))
@@ -741,9 +779,15 @@ const RELEASE = 2
 /// run_claimed made: the entry function catches a fault in the task, and
 /// the unwinding never goes past this frame (decision 0085; was xo_rt.c
 /// run_entry, rt.sched_rt op 29, until decision 0233's rt.frame_addr).
-fn run_entry(c: Int, t: Int, fl: Int) {
+fn run_entry(c: Int, t: Int, fl: Int, env: Int) {
   st(c, ctx.C_BOUNDARY, rt.frame_addr())
-  let _r = rt.call_c2(ld(t, T_RUN), fl, t)
+  // the entry function takes the closure (its two words, or a list of
+  // one) and the task
+  if ld4(t, T_TWO) != 0 {
+    let _r = rt.call_c4(ld(t, T_RUN), fl, env, t, 0)
+  } else {
+    let _r = rt.call_c2(ld(t, T_RUN), fl, t)
+  }
 }
 
 /// Wakes every context waiting in the list l (its mutex held).
@@ -784,14 +828,16 @@ pub fn run_claimed(t: Int, units: Int) {
   }
   rt.tlocal_set(0, c)
   let fl = ld(t, T_FL)
+  let env = ld(t, T_FENV)
   st(t, T_FL, 0)
+  st(t, T_FENV, 0)
   rc.inc(t) // the entry function's own reference
   let tr = tracerec.built() && tracerec.on()
   if tracerec.built() && tr {
     st(c, ctx.C_TRACE, 1)
     tracerec.ev(tracerec.K_START, 0, c, t)
   }
-  run_entry(c, t, fl)
+  run_entry(c, t, fl, env)
   if tracerec.built() && tr {
     tracerec.ev(tracerec.K_END, 0, c, t)
   }

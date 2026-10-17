@@ -126,6 +126,27 @@ needs tasks first.
 - A blocked task holds a thread (64 MiB of reserved stack): thousands of
   tasks blocked at once mean thousands of threads (at most 4096 workers).
 
+## Addendum: a spawn's closure and a () result without lists (2026-10-16, xo-4)
+
+A native spawn no longer puts its closure in a list of one: the SSA
+builder shares the closure and passes its two words (code, environment)
+to rt.task_spawn_fn, the task keeps them (tasks.xo T_FL, T_FENV), and
+the entry function takes them as a function value; a task that never
+runs (a spawn on a scope that has ended) releases its environment
+through the environment's own drop function (its word 1). A task whose
+result is () reports the immortal empty list, which `await` does not
+index. Each list cost an allocation, a share walk and a free per spawn:
+bench/perf/conc spawn at XO_THREADS=1 on macOS 2,250 to 1,843
+instructions and about 574 to 490 cycles a spawn (rust-ct: 1,450 and
+about 320). The wasm backend's runtime (selfhost/wasm rt3.xo) keeps the
+list of one (rt.task_spawn). The native runtime keeps rt.task_spawn too
+(the task's T_TWO word tells which entry form to call) for code that an
+older compiler built, the self build's seed: a seed that knows
+task_spawn_fn can drop it (gotchas/runtime-abi-change-breaks-seed.md).
+Test: testdata/golden/conc_closure_env (environments of tasks canceled
+before they ran, of finished and background tasks, under TestGolden's
+leak check on both native backends).
+
 ## Alternatives
 - **Stackful green threads** (Go, Lean's tasks on fibers): a blocked task
   would not hold a thread, but each needs its own stack, context switch

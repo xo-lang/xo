@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+canceled scope ended
+total 323
+ok 1
+--- stderr

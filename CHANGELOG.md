@@ -26,6 +26,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   so json_server is 62 percent smaller on arm64 (2.5 MB to 944 KB
   stripped) and 70 percent on LLVM; HTTPS servers are unchanged.
 
+- A native spawn passes its closure as its code and environment, not in
+  a list of one, and a task with a () result needs no result list
+  (decision 0068's addendum): bench/perf/conc spawn at XO_THREADS=1 on
+  macOS 2,250 to 1,843 instructions a spawn (1.27 times rust-ct's,
+  from 1.55), about 15% fewer cycles. The task object is zeroed with
+  constant-size stores (Linux: 168 instructions a spawn fewer).
 - ELF objects from the arm64 backend give each function symbol its
   size (to the next named symbol), so valgrind and perf name Xo
   functions on Linux (callgrind showed ??? for all of them).

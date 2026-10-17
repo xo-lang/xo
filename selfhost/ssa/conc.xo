@@ -497,8 +497,9 @@ fn (var b: Builder) walk_expr(e: Expr, var out: List[Walk]) {
 
 /// `s.spawn(f)`, `s.spawn_background(f)`, `g.spawn(f)`,
 /// `g.spawn_background(f)` (spawn): the closure crosses to the task
-/// (marked shared) in a list of one, run by the entry function of its
-/// type.
+/// (marked shared) as itself, its two words (code and environment) the
+/// runtime call's arguments, run by the entry function of its type; the
+/// wasm backend's runtime takes it in a list of one.
 fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   let (span, _, args) = call_parts(x)
   let arg = args[0].value
@@ -514,7 +515,14 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   let ft = b.m.func_type([], rt)
   let tt = b.task_type(res, err_t)
   let f = b.value_as(arg, ft)
-  let fl = b.one(f)
+  var fl = f
+  if b.wasm {
+    fl = b.one(f)
+  } else {
+    // no list of one around it: an allocation, a share walk and a free
+    // a spawn (2026-10-16, bench/perf/conc spawn)
+    b.add(Op.Share, -1, Aux.None, [f])
+  }
   var flags = 0
   if background {
     flags += 1
@@ -527,7 +535,10 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   let run = b.add(Op.FuncAddr, it, Aux.S(s: b.runner(ft, tt, err_t >= 0)), [])
   let drop = b.add(Op.FuncAddr, it, Aux.S(s: b.drop_list(rt)), [])
   let fdrop = b.add(Op.FuncAddr, it, Aux.S(s: b.drop_list(ft)), [])
-  let t = b.rt("task_spawn", tt, [h, fl, run, drop, fdrop, b.cint(flags), b.cint(site), b.loc(span)])
+  // task_spawn_fn: the closure's two words (std/native/llrt tasks.xo);
+  // task_spawn: a list of one (the wasm runtime, and a native runtime
+  // that an older compiler's code calls, until a seed knows this one)
+  let t = b.rt(if b.wasm { "task_spawn" } else { "task_spawn_fn" }, tt, [h, fl, run, drop, fdrop, b.cint(flags), b.cint(site), b.loc(span)])
   if !ret {
     return b.unit()
   }
@@ -547,13 +558,17 @@ fn (var b: Builder) runner(ft: Int, tt: Int, fails: Bool) -> Str {
   let bt = b.bool_t()
   let it = b.int_t()
   let rt = b.m.types[ft].ret
-  let lft = b.m.list(ft)
-  let fi = b.m.new_func(name, [lft, tt], [unit])
+  // the closure itself (native), or in a list of one (wasm)
+  let pt = if b.wasm { b.m.list(ft) } else { ft }
+  let fi = b.m.new_func(name, [pt, tt], [unit])
   b.m.funcs[fi].entry = true
   let fl = b.m.funcs[fi].blocks[0].params[0]
   let t = b.m.funcs[fi].blocks[0].params[1]
-  let c0 = b.m.funcs[fi].add(0, Op.Const, it, Aux.I(n: 0), [])
-  let fv = b.m.funcs[fi].add(0, Op.Call, ft, Aux.S(s: "list.index"), [fl, c0])
+  var fv = fl
+  if b.wasm {
+    let c0 = b.m.funcs[fi].add(0, Op.Const, it, Aux.I(n: 0), [])
+    fv = b.m.funcs[fi].add(0, Op.Call, ft, Aux.S(s: "list.index"), [fl, c0])
+  }
   let r = b.m.funcs[fi].add(0, Op.CallValue, rt, Aux.None, [fv])
   let u = b.m.funcs[fi].add(0, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
   // a fault in the task lands here too: rt.task_unwound records it for
@@ -575,9 +590,13 @@ fn (var b: Builder) runner(ft: Int, tt: Int, fails: Bool) -> Str {
     failed = b.m.funcs[fi].add(done, Op.Const, bt, Aux.B(b: false), [])
   }
   let lt = b.m.list(rt)
-  let l0 = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.new"), [])
-  let l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.push"), [l0, r])
-  b.m.funcs[fi].add(done, Op.Share, -1, Aux.None, [l])
+  var l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.new"), [])
+  if b.tkind(rt) != Kind.Unit {
+    l = b.m.funcs[fi].add(done, Op.Call, lt, Aux.S(s: "list.push"), [l, r])
+    b.m.funcs[fi].add(done, Op.Share, -1, Aux.None, [l])
+  }
+  // a () result is the empty list (immortal: no block, no share, no
+  // free; 2026-10-16, bench/perf/conc spawn), which await never indexes
   b.m.funcs[fi].add(done, Op.Call, unit, Aux.S(s: "rt.task_done"), [t, l, failed])
   let u2 = b.m.funcs[fi].add(done, Op.Tuple, unit, Aux.None, [])
   b.m.funcs[fi].add(done, Op.Return, -1, Aux.None, [u2])
@@ -594,6 +613,10 @@ fn (var b: Builder) await_expr(e: Expr, x: Expr) -> Int {
   let h = b.expr(x)
   let l = b.rt("task_await", b.m.list(t), [h, b.loc(parser.expr_span(e))])
   b.check("")
+  if b.tkind(t) == Kind.Unit {
+    // the runner's empty list for a () result
+    return b.unit()
+  }
   b.call("list.index", t, "", [l, b.cint(0)])
 }
 
