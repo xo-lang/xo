@@ -1,6 +1,7 @@
 usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
-                [--release [--error-args=false] [--profile-support]]
+                [--release [--error-args=false] [--profile-support] [--trace-support]]
+                [-s] [--debug-info] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
@@ -16,9 +17,14 @@ Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)
 is left in code (core 11.4). --release is a release build:
-requires(debug) and ensures(debug) compiled out, and the runtime's
-profiler (XO_PROF) left out unless --profile-support; --error-args=false
-drops parameter values from error frames. --stamp (repeatable, also on run)
+requires(debug) and ensures(debug) compiled out, the runtime's profiler
+(XO_PROF) left out unless --profile-support, and the execution trace's
+recorder (XO_TRACE) unless --trace-support; --error-args=false drops
+parameter values from error frames. Native builds carry DWARF line tables
+(a .dSYM beside a darwin binary); -s leaves them and the local symbols
+out, --debug-info keeps them in a --release build. --ld picks the native
+linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
+on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
 otherwise). std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database

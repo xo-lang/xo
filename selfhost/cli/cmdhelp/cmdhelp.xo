@@ -38,6 +38,7 @@ pub fn commands() -> List[Command] {
     Command{name: "bind", purpose: "bind Go packages (use go) or C headers (use c)"},
     Command{name: "dump", purpose: "print the task tree of a running Xo program"},
     Command{name: "replay", purpose: "rerun a recorded trace or crash bundle offline"},
+    Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
     Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
@@ -102,6 +103,7 @@ pub fn usage(name: Str) -> Str {
     "bind" => bind_text()
     "dump" => dump_text()
     "replay" => replay_text()
+    "trace" => trace_text()
     "lsp" => lsp_text()
     "mcp" => mcp_text()
     "serve" => serve_text()
@@ -175,7 +177,8 @@ fn build_text() -> Str {
   """
 usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
-                [--release [--error-args=false] [--profile-support]]
+                [--release [--error-args=false] [--profile-support] [--trace-support]]
+                [-s] [--debug-info] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
@@ -191,9 +194,14 @@ Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)
 is left in code (core 11.4). --release is a release build:
-requires(debug) and ensures(debug) compiled out, and the runtime's
-profiler (XO_PROF) left out unless --profile-support; --error-args=false
-drops parameter values from error frames. --stamp (repeatable, also on run)
+requires(debug) and ensures(debug) compiled out, the runtime's profiler
+(XO_PROF) left out unless --profile-support, and the execution trace's
+recorder (XO_TRACE) unless --trace-support; --error-args=false drops
+parameter values from error frames. Native builds carry DWARF line tables
+(a .dSYM beside a darwin binary); -s leaves them and the local symbols
+out, --debug-info keeps them in a --release build. --ld picks the native
+linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
+on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
 otherwise). std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database
@@ -206,7 +214,8 @@ fn run_text() -> Str {
   """
 usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
-              [--profile=cpu|heap|cpu,heap] [--stamp NAME=VALUE]... [dir] [-- args...]
+              [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
+              [--stamp NAME=VALUE]... [dir] [-- args...]
 
 Build for the host and run the program in dir (default .) with args.
 --seed makes task interleavings reproducible. --record writes every
@@ -218,7 +227,10 @@ samples the program's CPU time (a native backend, the host's by default)
 into xo-cpu.pprof (go tool pprof reads it) and a text summary,
 xo-cpu.txt, in the working directory; --profile=heap samples its
 allocations into xo-heap.pprof and xo-heap.txt; cpu,heap takes both. A
-profile file that exists is not overwritten.
+profile file that exists is not overwritten. --trace=FILE records the
+scheduler's execution trace (XO_TRACE, a native backend; decision 0240)
+into FILE, then writes FILE.json for ui.perfetto.dev and prints a summary
+(xo trace).
 """
 }
 
@@ -226,7 +238,7 @@ fn test_text() -> Str {
   """
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
-               [--profile=cpu|heap|cpu,heap] <dirs...>
+               [--profile=cpu|heap|cpu,heap] [--trace=FILE] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -239,7 +251,8 @@ process is killed. Shrunk contract failures are written to the
 module's regressions_test.xo. --profile=cpu (heap, cpu,heap) samples
 each test process (not property cases) into xo-cpu-<pid>.pprof
 (xo-heap-<pid>.pprof) and .txt in the working directory; go tool pprof
-merges several.
+merges several. --trace=FILE writes an execution trace per test process
+(FILE.<pid>, or FILE with %p); read one with xo trace.
 """
 }
 
@@ -534,4 +547,19 @@ test "package patterns" {
   expect(pattern_dir("a/.../b")) == ""
   expect(pattern_dir("a/b...")) == ""
   expect(pattern_dir(".../...")) == ""
+}
+
+fn trace_text() -> Str {
+  """
+usage: xo trace FILE [--json OUT] [--text]
+
+Read the raw execution trace a native program wrote under XO_TRACE=FILE
+(or xo run --trace=FILE; decision 0240): Chrome trace event JSON for
+ui.perfetto.dev or chrome://tracing (OUT, default FILE.json: a track per
+worker with each task's runs and the wakes that caused them, and a track
+per task with its runs and parks), and a summary on standard error: time
+parked by reason (chan send and recv, select, mutex, join, sleep, net,
+http), runnable latency, the top wakers, the longest parks, worker idle
+time, deferred and late wakes. --text prints only the summary.
+"""
 }
