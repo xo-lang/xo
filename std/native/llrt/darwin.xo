@@ -52,18 +52,18 @@ fn ret_keep(b: Bytes, r: Int) -> Int { keep(b, ret(r)) }
 
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let r = ret(sys_darwin.read(fd, raw.bytes_addr(buf) + off, n))
+  let r = ret(sys_darwin.read(fd, raw.bytes_addr(buf) + off, raw.io_len(n)))
   keep(buf, r)
 }
 
 /// write(2) of the bytes lo..hi of b.
 pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
-  let r = ret(sys_darwin.write(fd, raw.bytes_addr(b) + lo, hi - lo))
+  let r = ret(sys_darwin.write(fd, raw.bytes_addr(b) + lo, raw.io_len(hi - lo)))
   keep(b, r)
 }
 
 /// write(2) of the n bytes at the address a (std/native/llrt/stdio.xo).
-pub fn write_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.write(fd, a, n)) }
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.write(fd, a, raw.io_len(n))) }
 
 /// Writes all of b (retrying after EINTR and short writes): 0, or the
 /// errno.
@@ -151,7 +151,7 @@ const DIRENT_BUF = 16384
 const AT_FDCWD: Int = -2
 
 /// read(2) of at most n bytes to the address a.
-pub fn read_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.read(fd, a, n)) }
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.read(fd, a, raw.io_len(n))) }
 
 /// rename(2) of a to b (as written: "" is no file).
 pub fn rename(a: Str, b: Str) -> Int {

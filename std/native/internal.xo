@@ -178,6 +178,12 @@ fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int {
       r
     }
     "chunks" => heapos.chunks()
+    "io_chunk" => {
+      // the chunk size of one read(2) or write(2) (raw.io_len): a for
+      // tests (small, to make every transfer many chunks), 0 back to 1 GiB
+      raw.set_io_chunk(a)
+      0
+    }
     "thread" => rt.tlocal_addr()
     "alloc" => obj.alloc_obj(a)
     "free" => {

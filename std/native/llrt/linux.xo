@@ -58,18 +58,18 @@ fn nr(arm64: Int, amd64: Int) -> Int {
 
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let r = rt.sys6(nr(63, 0), fd, raw.bytes_addr(buf) + off, n, 0, 0, 0)
+  let r = rt.sys6(nr(63, 0), fd, raw.bytes_addr(buf) + off, raw.io_len(n), 0, 0, 0)
   keep(buf, r)
 }
 
 /// write(2) of the bytes lo..hi of b.
 pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
-  let r = rt.sys6(nr(64, 1), fd, raw.bytes_addr(b) + lo, hi - lo, 0, 0, 0)
+  let r = rt.sys6(nr(64, 1), fd, raw.bytes_addr(b) + lo, raw.io_len(hi - lo), 0, 0, 0)
   keep(b, r)
 }
 
 /// write(2) of the n bytes at the address a (std/native/llrt/stdio.xo).
-pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(64, 1), fd, a, n, 0, 0, 0) }
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(64, 1), fd, a, raw.io_len(n), 0, 0, 0) }
 
 /// Writes all of b (retrying after EINTR and short writes): 0, or the
 /// errno.
@@ -575,7 +575,7 @@ fn o_directory() -> Int {
 }
 
 /// read(2) of at most n bytes to the address a.
-pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, n, 0, 0, 0) }
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, raw.io_len(n), 0, 0, 0) }
 
 /// renameat(2) of a to b (as written: "" is no file, as for the C
 /// runtime's rename).

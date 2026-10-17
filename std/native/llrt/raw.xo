@@ -267,3 +267,20 @@ pub fn alive_str(s: Str) {
     return
   }
 }
+
+/// The bytes one read(2) or write(2) of n bytes may ask for: at most a
+/// chunk (1 GiB; static word 47 when a test set it, std/internal
+/// rt_probe "io_chunk"). macOS refuses a count above INT_MAX (EINVAL) and
+/// Linux moves at most about 2 GiB a call, so a larger transfer goes in
+/// chunks; every caller loops on short counts.
+pub fn io_len(n: Int) -> Int {
+  let set = rt.mem_load(rt.static_word(47), 0, 8)
+  let c = if set > 0 { set } else { 1073741824 }
+  if n > c { c } else { n }
+}
+
+/// Sets io_len's chunk size (a test's, std/internal rt_probe "io_chunk";
+/// 0 restores 1 GiB).
+pub fn set_io_chunk(c: Int) {
+  rt.mem_store(rt.static_word(47), 0, c, 8)
+}

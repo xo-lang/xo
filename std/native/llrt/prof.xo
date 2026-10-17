@@ -1057,7 +1057,7 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
       let a = raw.bytes_addr(data)
       var ok = true
       while off < data.len() {
-        let w = sys_darwin.write(fd, a + off, data.len() - off)
+        let w = sys_darwin.write(fd, a + off, raw.io_len(data.len() - off))
         if w <= 0 {
           ok = false
           break

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Files of more than 2 GB can be written and read on macOS (one system
+  call refused more than INT_MAX bytes): the native runtime moves at most
+  1 GiB a call. Toolchain tests shrink the chunk through std/internal's
+  rt_probe "io_chunk" (runtime static word 47).
+
 - Debuggers see Str, List, Map, Set, enum, and function values of arm64
   native builds (decision 0252 stage 4): lldb's `frame variable` shows a
   list's object (count, length, capacity, items), a string's bytes, and

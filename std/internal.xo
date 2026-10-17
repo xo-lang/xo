@@ -55,7 +55,9 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes
 /// qsort", through libc's frames), "workers" and "cpus" (the pool's
 /// workers alive and CPUs), "inherited" (evloop.c's test of a pipe a
 /// child holds after its registration was freed: 1 when run, 2 off
-/// Linux). An unknown op faults, and
+/// Linux), "io_chunk" (the most bytes one read(2) or write(2) asks for:
+/// a, so a test makes every transfer many chunks; 0 restores 1 GiB). An
+/// unknown op faults, and
 /// every op faults on the Go backend.
 fn rt_probe(op: Str, a: Int, b: Int, c: Int, d: Int) -> Int
 

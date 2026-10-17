@@ -1,0 +1,93 @@
+// The chunks of large reads and writes (std/native/llrt/raw.xo io_len:
+// macOS refuses a read(2) or write(2) count above INT_MAX, Linux moves
+// at most about 2 GiB a call), run by internal/llvm's TestRuntimeIOChunk
+// on both native backends. With the chunk set to 7 bytes (std/internal's
+// rt_probe "io_chunk") every transfer is many chunks: a whole file
+// written and read back, a file handle's writes and reads, standard
+// output, a child's standard input, and a child that stops reading
+// midway (the write fails partway through, with what it took kept). With
+// XO_IO_CHUNK_BIG=1 one real file of 2^31 + 16 bytes is written and read
+// back with the default chunk (slow and 2 GB of disk: opt in).
+//
+// Prints "<test>: ok" per test; exit status 0 means every test passed.
+use std/internal
+
+fn pattern(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    b.write_byte(UInt8((i * 31 + 7) % 251))
+  }
+  b.freeze()
+}
+
+fn check(os: Os, name: Str, ok: Bool) {
+  if ok {
+    os.stdio.println("${name}: ok")
+  } else {
+    os.stdio.println("${name}: FAIL")
+    os.proc.exit(1)
+  }
+}
+
+fn main(os: Os) ! {
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-iochunk-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let dir = base.sub(name)
+  let _old = internal.rt_probe("io_chunk", 7, 0, 0, 0)
+
+  // a whole file, written and read back
+  let data = pattern(1000)
+  dir.write("whole.bin", data)?
+  check(os, "whole file", dir.read("whole.bin")? == data)
+
+  // a handle's writes, and reads of more than a chunk
+  let f = dir.create("handle.bin")?
+  f.write(data[0..333])?
+  f.write(data[333..])?
+  f.close()?
+  let r = dir.open("handle.bin")?
+  var got = BytesBuilder.new()
+  while let Some(part) = r.read(100)? {
+    got.write(part)
+  }
+  r.close()?
+  check(os, "file handle", got.freeze() == data)
+
+  // standard output: a line longer than many chunks
+  os.stdio.println("x".repeat(50))
+
+  // a child's standard input, many chunks
+  let cat = os.proc.cmd("wc", ["-c"]).stdin(pattern(5000)).output()?
+  check(os, "child stdin", (cat.stdout.to_str() ?? "").trim() == "5000")
+
+  // a child that reads 20 bytes and exits while the write goes on: the
+  // write fails partway (a broken pipe), not at its start, and the child
+  // got its 20 bytes
+  let c = os.proc.cmd("head", ["-c", "20"]).spawn()?
+  let res = c.write(pattern(200000))
+  var heard = BytesBuilder.new()
+  while let Some(part) = c.read(4096)? {
+    heard.write(part)
+  }
+  let _st = c.wait()?
+  check(os, "reader gone midway", res.is_err() && heard.len() == 20)
+
+  let _r = internal.rt_probe("io_chunk", 0, 0, 0, 0)
+  if (os.env.get("XO_IO_CHUNK_BIG") ?? "") == "1" {
+    // one file past INT_MAX, with the default chunk
+    let big = (1 << 31) + 16
+    var bb = BytesBuilder.with_capacity(big)
+    let block = pattern(1 << 20)
+    while bb.len() < big {
+      let n = (big - bb.len()).min(block.len())
+      bb.write(block[0..n])
+    }
+    let blob = bb.freeze()
+    dir.write("big.bin", blob)?
+    let back = dir.read("big.bin")?
+    check(os, "past INT_MAX", back.len() == big && back[big - 1] == blob[big - 1] && back[1 << 31] == blob[1 << 31])
+    dir.remove("big.bin")?
+  }
+  base.remove_all(name)?
+}

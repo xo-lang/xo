@@ -142,7 +142,7 @@ fn put(fd: Int, a: Int, n: Int) -> Bool {
   while off < n {
     let w = match target.os {
       TargetOs.Linux => linux.write_at(fd, a + off, n - off)
-      TargetOs.Darwin => sys_darwin.write(fd, a + off, n - off)
+      TargetOs.Darwin => sys_darwin.write(fd, a + off, raw.io_len(n - off))
       TargetOs.Windows | TargetOs.Wasi => -1
     }
     if w == -4 {
