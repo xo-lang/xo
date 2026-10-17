@@ -23,14 +23,15 @@ What the compiler has to work with:
   the length); a function value two; a struct or tuple the words of its
   fields in order; an enum the tag, then the most payload words of any
   variant. A list object is its count, length, capacity, then its
-  elements; a string object its count, then its bytes; a Map is a struct
-  of such objects.
+  elements; a string object its count and capacity (16 bytes, obj.xo
+  S_HDR), then its bytes; a Map is a struct of such objects.
 - arm64's register allocator gives each virtual register one home (a
   physical register or a spill slot) with holes in its live range;
   values are split across several virtual registers only word by word.
 - The LLVM emitter already writes DICompileUnit, DISubprogram, DIFile,
   and inline DILocations; LLVM can carry DILocalVariable through its
-  optimizations with `#dbg_value` records.
+  optimizations with debug value records (`#dbg_value`, LLVM 19 and
+  later; `llvm.dbg.value` calls before).
 - lldb on the Mac is lldb-2103 (Apple LLVM 21). It reads DWARF 5,
   location lists, composite locations (DW_OP_piece), and loads Python
   formatters.
@@ -65,7 +66,8 @@ What the compiler has to work with:
      first), the fallback is the tag and the payload words as members,
      with the formatter of point 4 choosing the variant.
    - Str, List[T], Map, Set, Box, function values, handles: a structure
-     of their words (Str: `obj`, `len`; List: a pointer to a structure
+     of their words (Str: `obj`, a pointer to a structure `count, cap`
+     with the bytes after it, and `len`; List: a pointer to a structure
      `count, len, cap` and a zero length array of T after it), so the
      raw words are always visible.
 
