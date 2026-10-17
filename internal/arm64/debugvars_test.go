@@ -651,3 +651,43 @@ func TestDebugLoclistsBudget(t *testing.T) {
 		t.Errorf("__debug_loclists is %d bytes, over its %d byte budget: compact the location lists (dwvars.xo dv_field, debug.xo)", size, budget)
 	}
 }
+
+// TestNoLeafWithPads fails when the arm64 backend emits a leaf function
+// with fault stubs and landing pads (the `_leafpads` label emit.xo puts
+// after such a function's code): it keeps one unwind region, whose body
+// a compact encoding then gets wrong
+// (gotchas/arm64-compact-unwind-leaf-fault-frames.md); none existed on
+// 2026-10-17, so the fix waits for one to test it on.
+func TestNoLeafWithPads(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generates every golden's assembly")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs, err := filepath.Glob(filepath.Join(root, "internal", "llvm", "testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	for _, dir := range dirs {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(xo, "asm", "--backend=arm64", ".")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+dir)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Skipf("xo asm: %v", err)
+			}
+			if bytes.Contains(out, []byte("_leafpads:")) {
+				t.Errorf("a leaf with fault stubs and landing pads: give its stubs an unwind region of their own (gotchas/arm64-compact-unwind-leaf-fault-frames.md)")
+			}
+		})
+	}
+}

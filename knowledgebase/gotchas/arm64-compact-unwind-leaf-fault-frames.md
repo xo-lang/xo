@@ -83,3 +83,14 @@ Only directives change, so the code is the same (decision 0252's gate).
 Open: a leaf with landing pads keeps one region, because the LSDA's
 call-site offsets count from its region's start; the stubs' region would
 need an LSDA of its own (or @LPStart set to the body's start).
+
+Leaves with landing pads (2026-10-17, Xo lang 3): Xo lang 4's split
+(258f3c45) leaves a leaf with fault stubs and landing pads in one region,
+whose body is then still FRAME. A scan found none: 0 in xo's own
+assembly and in all 184 internal/llvm goldens (`xo asm --backend=arm64`).
+The fix, written and dropped for having no case to test, would give the
+stubs' region the personality and an LSDA of its own with sdata4 call
+sites relative to the region, a landing pad in the body at a negative
+offset (std/native/llrt/unwind.xo landing reads sdata4 signed). The
+emitter marks such a leaf with a `_leafpads` label after its code, and
+internal/arm64 TestNoLeafWithPads fails when a golden has one.

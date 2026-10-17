@@ -292,6 +292,13 @@ fn (var g: G) emit() {
     b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   }
   b.push(g.stubs.join(""))
+  if g.fr.leaf && !g.stubs.is_empty() && pads {
+    // a leaf with fault stubs and landing pads keeps one unwind region
+    // (its compact encoding FRAME for the body too); none was found
+    // (2026-10-17: xo and every golden). The label, after the code, marks
+    // it for internal/arm64 TestNoLeafWithPads
+    b.push("${g.local("${g.lbl_prefix()}_leafpads")}:\n")
+  }
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
