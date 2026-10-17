@@ -115,6 +115,37 @@ Stage 3 runs:
 - [2026-10-12 LLVM build time](results/llvm-build-time-2026-10-12.md): selfhost/ssa (380 MB of IR) builds in 2,394 s as one module with full LTO (2,023 s of it the serial link); split into 12 modules compiled by 4 parallel clangs, 512 s without LTO (output 2 to 3 percent slower) or 556 s with ThinLTO (output as fast); one module at -O2 without LTO 1,589 s, -O0 207 s (decision 0168).
 - [2026-10-11 prebuilt runtime](results/prebuilt-runtime-2026-10-11.md): the first arm64 build with cold caches takes 0.13 s instead of 1.94 s (darwin) and 0.07 s instead of 3.21 s (linux/arm64) with a release's prebuilt C runtime, an HTTPS server 0.28 s instead of 4.27 s (decision 0157); the linux pack cross compiled with zig cc links with gcc 10 on glibc 2.31; packs and release archives reproducible byte for byte.
 - [2026-10-10 HTTP/2](results/http2-2026-10-10.md): HTTP/2 over TLS on every backend (decision 0121), 32 workers as streams of one connection: native 87.8k req/s at 37 us CPU each, Go backend 58.2k at 51 us; over HTTP/1.1 with 32 TLS connections the same session measured 108k native and 133k Go.
+- [2026-10-17 HTTP instructions per request](results/http-callgrind-2026-10-17.md): the quiet measurement's baseline (callgrind in Docker, linux/arm64, main 0e67542f): plain 35.2k (arm64) and 30.9k (LLVM) instructions per request, a connection per request 44.5k and 38.8k, TLS 116.1k and 104.5k, a full handshake 2.64M and 2.32M, HTTP/2 186k and 161k; HTTP/1.1 repeats agree within 0.7%, HTTP/2 within 7%.
+
+## Quiet HTTP measurement: `bench/perf/http/callgrind-docker.sh`
+
+Wall clock HTTP rates on the Mac swing too much to judge a change (42k to
+74k req/s for one configuration on one day, 2026-10-17). This measures the
+server's instructions per request instead, a count that does not depend
+on the machine's load:
+
+```sh
+bench/perf/http/callgrind-docker.sh <darwin xo> <out dir> [arm64] [llvm]
+```
+
+It cross builds a linux/arm64 xo and the Go load generator
+(`bench/perf/http/loadgen`), and in scripts/docker-linux.sh's Debian image
+installs valgrind, builds the users CRUD API (`bench/perf/http/xo`) with
+each backend, and runs `bench/perf/http/callgrind.sh`: the server under
+callgrind, loaded by loadgen (a separate process) with a fixed count of
+serial requests of the `cycle` mix (POST, GET, PATCH, GET, DELETE of a
+new user, a list every 8th cycle), N cycles and then 2N, each run stopped
+by SIGTERM; instructions per request = (Ir(2N) - Ir(N)) / (requests(2N) -
+requests(N)), so startup, preload, and shutdown cancel. Ir counts every
+thread of the server. Scenarios: `plain` (HTTP/1.1 on one keep-alive
+connection), `plain-newconn` (a connection per request), `tls`,
+`tls-newconn` (a full handshake per request), `h2` (HTTP/2 over TLS,
+requests as streams of one connection). Each prints `<scenario> <backend>
+<instructions per request> <requests>`; REPS (2) repeats each, N (100)
+sets the cycles, SCENARIOS narrows the list. Repeats agree within about
+0.5% for HTTP/1.1 and a few percent for HTTP/2 (its framing depends on
+when reads return). Docker Desktop's VM has no hardware counters, so
+`perf stat` (the CI measure suite) does not work there; callgrind does.
 
 ## Other models: `bench/harness/`
 
