@@ -84,10 +84,15 @@ backend's no-libc path; elflink is arm64 only).
   a static ET_EXEC needs no PIE. Cross builds from the Mac still emit
   assembly unless `--ld=macho` is given (a follow-up). The LLVM backend
   links with clang as before. Evidence: below.
+- Cross builds (2026-10-16, the lead's next step): `xo build
+  --targets=linux/arm64` from any host, with no `--ld`, links a no-libc
+  program with elflink too (main.xo default_ld for every linux target),
+  as GOOS=linux go build does; all 180 goldens built on the Mac this way
+  are static and pass when run in Docker linux/arm64. With the C library
+  a cross build emits assembly as before. `-s` drops elflink's local
+  symbols (ElfLinkOpts.strip, as macho's LinkOpts.strip).
 - Next: flip the toolchain's self build once a Linux fixed point passes
   (CI back or Docker with more memory, the owner's setting).
-- elflink still writes local symbols under -s (a strip option is Xo Lang
-  3's follow-up, with decision 0246's LinkOpts.strip).
 
 ## Alternatives
 

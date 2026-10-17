@@ -15,6 +15,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   loop instead of recursing once per term, and std/native/llrt/tzhost.xo's
   138-term string is one literal: the wasm build of the compiler
   overflowed a browser worker's stack on it.
+- Cross builds: `xo build --targets=linux/arm64` on a Mac (or any host)
+  now produces a runnable static Linux binary for a program with no C
+  library, linked by Xo's ELF linker (decision 0243); `-s` drops the ELF
+  linker's local symbols.
+
 - linux/arm64: with no `--ld`, a program with no C library now links with
   Xo's own ELF linker (static, no C toolchain at link time; decision 0243
   step 3); `XO_NOLIBC=0` and `use c` programs keep cc and glibc.

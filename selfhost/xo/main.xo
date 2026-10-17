@@ -604,9 +604,11 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // --ld=macho links arm64 programs without cc, linux/arm64 ones from
     // any host (decision 0182); with no --ld, the host's darwin/arm64
     // link is macho's when the pack has its runtime and no `use c`
-    // source is linked, else cc's (default_ld)
+    // source is linked, else cc's, and a linux/arm64 program with no C
+    // library links with the ELF linker from any host, a cross build too
+    // (default_ld, decision 0243: as GOOS=linux go build)
     var no_cc = o.linker == "macho"
-    if o.linker.is_empty() && tg == host {
+    if o.linker.is_empty() && (tg == host || tgoos == "linux") {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
     let macho_as = o.assembler == "macho" || (no_cc && o.assembler.is_empty())
@@ -721,16 +723,17 @@ fn emit_jobs(os: Os) -> Int {
 /// selects cc. (cc was the default again from 643b8261 to this change,
 /// while macho's binaries waited at exec: an XProtect false positive,
 /// gotchas/xprotect-false-positive-empty-list.md, and a path relinked
-/// under a running exec, gotchas/amfi-gatekeeper-macho-layout.md.) On a
-/// linux host (arm64, the backend this link serves) a program with no C
-/// library links with the ELF linker's static mode (decision 0243 step
-/// 3, as Go links); one with the C library (XO_NOLIBC=0, or `use c`)
-/// keeps cc and glibc.
+/// under a running exec, gotchas/amfi-gatekeeper-macho-layout.md.) For a
+/// linux/arm64 target, from a linux host or cross built from any other,
+/// a program with no C library links with the ELF linker's static mode
+/// (decision 0243, as Go links); one with the C library (XO_NOLIBC=0, or
+/// `use c`) keeps cc and glibc (a cross build of one: its assembly, as
+/// before).
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
   if o.assembler == "cc" {
     return false
   }
-  if ctx.goos == "linux" && tgoos == "linux" {
+  if tgoos == "linux" {
     return nolibc(os, o, c, tgoos)
   }
   if ctx.goos != "darwin" || tgoos != "darwin" {

@@ -748,3 +748,39 @@ test "a COMDAT group is kept once, a symbol defined twice is an error" {
   expect(link_elf([LinkInput{path: "a.o", data: oa}, LinkInput{path: "b.o", data: ob}], ElfLinkOpts{}).is_ok()) == true
   expect(link_elf([LinkInput{path: "a.o", data: oa}, LinkInput{path: "a2.o", data: oa}], ElfLinkOpts{})) == Err("main is defined in a.o and in a2.o")
 }
+
+test "a static link: no loader, weak hooks a nop and a ret, -s drops locals" {
+  // decision 0243: the program's own _start; __hook_a called, __hook_b
+  // tail called, both weak and undefined; a local function helper
+  let src = "\t.text\n\t.globl _start\n\t.type _start, %function\n_start:\n\tbl helper\n\tbl __hook_a\n\tb __hook_b\n\t.type helper, %function\nhelper:\n\tret\n\t.weak __hook_a\n\t.weak __hook_b\n"
+  let obj = assemble_elf(src.bytes()).or_fault("assemble")
+  let exe = match link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{static: true}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  // PT_PHDR then the loads: no PT_INTERP, no PT_DYNAMIC
+  let phnum = rd16(exe, 56)
+  var types: List[Int] = []
+  for i in 0..phnum {
+    types.push(rd32(exe, 64 + 56 * i))
+  }
+  expect(types.contains(PT_INTERP)) == false
+  expect(types.contains(PT_DYNAMIC)) == false
+  expect(types[0..4]) == [PT_PHDR, PT_LOAD, PT_LOAD, PT_LOAD]
+  // the entry is _start: bl helper, then the hooks' nop and ret
+  let entry = rd64(exe, 24)
+  let off = entry - ELF_BASE
+  expect(rd32(exe, off + 4)) == 0xd503201f
+  expect(rd32(exe, off + 8)) == 0xd65f03c0
+  expect(has(exe, "helper")) == true
+  // -s: the local helper is gone from .symtab, _start stays
+  let st = match link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{static: true, strip: true}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(has(st, "helper")) == false
+  expect(has(st, "_start")) == true
+  // a strong undefined symbol is an error
+  let bad = assemble_elf("\t.text\n\t.globl _start\n_start:\n\tbl puts\n".bytes()).or_fault("bad")
+  expect(link_elf([LinkInput{path: "b.o", data: bad}], ElfLinkOpts{static: true})) == Err("puts is not defined (a static link with no C library)")
+}

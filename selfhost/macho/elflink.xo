@@ -105,6 +105,8 @@ pub struct ElfLinkOpts {
   pub entry: Str = "_start"
   /// a static executable with no C library (decision 0243)
   pub static: Bool = false
+  /// leave the local symbols out of .symtab (`-s`, as LinkOpts.strip)
+  pub strip: Bool = false
 }
 
 /// An input section, by its header index.
@@ -1662,6 +1664,9 @@ fn (l: ELinker) symtab(shown: List[Int]) -> (Bytes, Bytes, Int) {
         continue
       }
       if s.shndx == SHN_UNDEF || s.shndx == SHN_ABS || s.shndx >= SHN_LORESERVE && s.shndx != SHN_COMMON {
+        continue
+      }
+      if bind == STB_LOCAL && l.opts.strip {
         continue
       }
       var out = O_BSS
