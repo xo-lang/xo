@@ -1140,13 +1140,23 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // xo_empty_list, xo_zero_handle)
     "rt.rl_empty" => g.set(v, [g.sym_addr(g.sym("xo_empty_list"))])
     "rt.h_zero" => g.set(v, [g.sym_addr(g.sym("xo_zero_handle"))])
-    "rt.popcount" => g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
+    "rt.popcount" => {
+      if g.x86 {
+        g.set(v, [g.x86_def1("popcntq $u0, $d0", [g.word(x.args[0])])])
+      } else {
+        g.set(v, [g.def1(false, "fmov d30, $u0\ncnt v30.8b, v30.8b\naddv b30, v30.8b\nfmov $d0, d30", [g.word(x.args[0])])])
+      }
+    }
     "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let ws = g.words(x.args[0])
       let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
       var us = [d, g.word(x.args[1])]
+      if g.x86 {
+        g.set(v, [g.x86_bytes16(x, us)])
+        return true
+      }
       var cmp = "cmlt v30.16b, v30.16b, #0"
       if aux_str(x.aux) == "rt.bytes_eq16" {
         let (c, ok) = g.const_int(x.args[2])
@@ -1662,7 +1672,8 @@ fn (var g: G) chain_operand(a: Int, ins: List[Int], k: Int, nu: Int) -> Bool {
 /// not where they would write the flags (the amd64 retarget, decision
 /// 0254, lowers mul to imul; only moves may come between its links).
 fn (g: G) chain_products() -> Bool {
-  ADC_SPLIT
+  // not on x86_64: its multiplies write the flags (decision 0254)
+  ADC_SPLIT && !g.x86
 }
 
 /// Whether a is a product (rt.u64_mul_hi, or rt.int_wrap's multiply)
@@ -2019,6 +2030,17 @@ fn (var g: G) cell_base_off(v: Int) -> (Int, Int) {
 /// Adds an atomic instruction defining one register: kept when its
 /// result is dead and never folded into a branch (keep); early, since a
 /// template may write its result before it reads every operand.
+/// atomic_def with an x86 template and its fixed registers (decision
+/// 0254).
+fn (var g: G) x86_atomic_def(text: Str, us: List[Int], clob: List[Int]) -> Int {
+  let d = g.atomic_def(text, us)
+  let b = g.cur
+  let i = g.blocks[b].insts.len() - 1
+  g.blocks[b].insts[i].x86 = true
+  g.blocks[b].insts[i].clobbers = clob
+  d
+}
+
 fn (var g: G) atomic_def(text: Str, us: List[Int]) -> Int {
   let d = g.new_vreg(false)
   let i = g.plain(text, [d], us)
@@ -2102,7 +2124,11 @@ fn (var g: G) atomic(v: Int) {
     "rt.slot_swap" | "rt.slot_add" => {
       let val = g.word(x.args[2])
       let op = if name == "rt.slot_swap" { "swp" } else { "ldadd" }
-      if g.os == "darwin" {
+      if g.x86 {
+        // xchg and lock xadd: sequentially consistent, every order's
+        let t = if name == "rt.slot_swap" { "xchgq" } else { "lock xaddq" }
+        g.atomic_result(v, g.x86_atomic_def("movq $u0, $d0\n${t} $d0, ($u1)", [val, a], []))
+      } else if g.os == "darwin" {
         g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
       } else {
         let r = g.rt("__aarch64_${op}8_${model}", [rsrc(val), rsrc(a)], [false])
@@ -2113,7 +2139,9 @@ fn (var g: G) atomic(v: Int) {
       // rt.slot_cas: the old value seen, compared with the expected one
       let old = g.word(x.args[2])
       let new = g.word(x.args[3])
-      if g.os == "darwin" {
+      if g.x86 {
+        g.set(v, [g.x86_atomic_def("movq $u0, %rax\nlock cmpxchgq $u1, ($u2)\nsete $bd0\nmovzbl $bd0, $wd0", [old, new, a], [0])])
+      } else if g.os == "darwin" {
         g.set(v, [g.atomic_def("mov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", [old, new, a])])
       } else {
         let r = g.rt("__aarch64_cas8_${model}", [rsrc(old), rsrc(new), rsrc(a)], [false])

@@ -252,6 +252,10 @@ pub struct Builder {
   /// GOARCH): "" for the builder's own (the host, as `xo ssadump`).
   pub goos: Str = ""
   pub goarch: Str = ""
+  /// Only the carry arithmetic of std/native/llrt/cpu.xo is lowered (the
+  /// amd64 backend until its crypto intrinsics, decision 0254 stage 3):
+  /// the other functions' Xo bodies run.
+  pub soft_cpu: Bool = false
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""
 }
@@ -324,7 +328,13 @@ pub fn build_program_prof(c: check.Checker, line_root: Str, tests: Bool, release
 /// build_program_prof, with a release build keeping the execution
 /// trace's recorder when trace_support (`--trace-support`, decision 0240).
 pub fn build_program_support(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool) -> Builder uses fs.read {
+  build_program_cpu(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, false)
+}
+
+/// build_program_support with soft_cpu (Builder.soft_cpu).
+pub fn build_program_cpu(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool) -> Builder uses fs.read {
   var b = new_builder(c, line_root)
+  b.soft_cpu = soft_cpu
   b.prof = prof
   b.trace_support = trace_support
   b.nolibc = nolibc
@@ -346,6 +356,7 @@ pub fn build_program_support(c: check.Checker, line_root: Str, tests: Bool, rele
     b.nolibc = nolibc
     b.prof = prof
     b.trace_support = trace_support
+    b.soft_cpu = soft_cpu
     b.conc = true
     b.build()
   }

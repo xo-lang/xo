@@ -1,0 +1,1623 @@
+// x86_64 (decision 0254 stage 2): the arm64 MIR retargeted. The front
+// half (isel, calls, closures, rc, byref, and the MIR passes) builds
+// arm64 templates over virtual registers; retarget rewrites each plain
+// instruction's template, each branch's compare, and each fault's
+// condition as an x86 template (AT&T syntax) before register
+// allocation, and x86emit.xo expands them.
+//
+// An x86 template names its operands as an arm64 one does, by width:
+// `$d0`, `$u1` (64 bits, or the xmm register of a Float), `$wd0`,
+// `$wu1` (32), `$hd0`, `$hu1` (16), `$bd0`, `$bu1` (8). Immediates are
+// AT&T's `$n` (a `$` and a digit or `-`). `%r11` and `%xmm15` are the
+// template's own registers: no value is allocated to them.
+//
+// A two operand instruction (`addq $u1, $d0` reads and writes $d0) is
+// a copy of the first source into the definition (a parallel move
+// before it, which the allocator coalesces when the source dies) and the
+// instruction with the definition also among its uses (a tie).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// x86_64's registers: 0 to 15 are rax, rcx, rdx, rbx, rsp, rbp, rsi,
+/// rdi, r8 to r15; FP_BASE + k is xmm k.
+const XR_AX = 0
+const XR_CX = 1
+const XR_DX = 2
+const XR_SP = 4
+const XR_BP = 5
+/// the emitter's and templates' scratch register (arm64's x16 and x17):
+/// never allocated
+const XR_SCRATCH = 11
+/// xmm14: reloads of spilled Floats and parallel move cycles
+const XF_SCRATCH = 46
+/// xmm15: a template's own register
+const XF_TPL = 47
+
+/// The AT&T name of register r at size bytes (8, 4, 2, 1); an xmm
+/// register by its number at any size.
+fn x86_reg(r: Int, size: Int) -> Str {
+  if r < 0 {
+    return "%?${r}"
+  }
+  if r >= FP_BASE {
+    return "%xmm${r - FP_BASE}"
+  }
+  if r >= 8 {
+    return match size {
+      8 => "%r${r}"
+      4 => "%r${r}d"
+      2 => "%r${r}w"
+      _ => "%r${r}b"
+    }
+  }
+  let q = ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"][r]
+  match size {
+    8 => "%r${q}"
+    4 => "%e${q}"
+    2 => "%${q}"
+    _ => ["%al", "%cl", "%dl", "%bl", "%spl", "%bpl", "%sil", "%dil"][r]
+  }
+}
+
+/// The translation of one template.
+struct XT {
+  lines: List[Str] = []
+  /// definitions tied to a source: (definition index, the source),
+  /// copied into the definition before the instruction
+  ties: List[(Int, Src)] = []
+  early: Bool = false
+  clobbers: List[Int] = []
+  /// the kind of the last instruction that set the flags: "sub" (cmp,
+  /// subs: x86's carry is arm64's borrow complemented), "add" (adds,
+  /// adcs, cmn as an add), "logic" (tst), "fcmp", "fcmps" (a float
+  /// compare with its operands swapped), "fnan" (fccmp's ordered
+  /// compare), "" none
+  kind: Str = ""
+  err: Str = ""
+  /// the lines after this one the translation consumed (adrp's add,
+  /// rbit's clz, mrs's adds, fcmp's fccmp)
+  skip: Int = 0
+}
+
+/// A template operand's base (`u3`, `d0`) and its width prefix (`w` or
+/// ""), or ("", "") for anything else.
+fn tpl_ref(tok: Str) -> (Str, Str) {
+  if !tok.starts_with("$") || tok.len() < 3 {
+    return ("", "")
+  }
+  var w = ""
+  var rest = tok[1..tok.len()]
+  if rest.starts_with("w") {
+    w = "w"
+    rest = rest[1..rest.len()]
+  }
+  if !(rest.starts_with("u") || rest.starts_with("d")) || !is_digits(rest[1..rest.len()]) {
+    return ("", "")
+  }
+  (rest, w)
+}
+
+/// An x86 operand for arm64 operand tok at size bytes: a template
+/// reference, a register, or an immediate (`#n` as `$n`); "" for the
+/// zero register (the caller writes zero its own way).
+fn xop(tok: Str, size: Int) -> Str {
+  let (base, _) = tpl_ref(tok)
+  if !base.is_empty() {
+    return match size {
+      8 => "$${base}"
+      4 => "$w${base}"
+      2 => "$h${base}"
+      _ => "$b${base}"
+    }
+  }
+  if tok.starts_with("#") {
+    return "$${tok[1..tok.len()]}"
+  }
+  match tok {
+    "xzr" | "wzr" => ""
+    "sp" => "%rsp"
+    "x29" => "%rbp"
+    "x16" | "x17" => x86_reg(XR_SCRATCH, size)
+    _ => "?${tok}"
+  }
+}
+
+/// The 32 bit form of an arm64 register operand (`$wu0`, `wzr`).
+fn is_w(tok: Str) -> Bool {
+  tok.starts_with("$w") || (tok.starts_with("w") && tok != "wzr") || tok == "wzr"
+}
+
+fn imm_of(tok: Str) -> Int? {
+  if !tok.starts_with("#") {
+    return None
+  }
+  Int.parse(tok[1..tok.len()])
+}
+
+/// Whether n is an x86 immediate of a 64 bit operation (sign extended 32
+/// bits).
+fn imm32(n: Int) -> Bool { n >= -2147483648 && n <= 2147483647 }
+
+/// The operands of an arm64 instruction line after its mnemonic, split
+/// at the commas outside brackets.
+fn a64_ops(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let bs = s.bytes()
+  var depth = 0
+  var from = 0
+  for i in 0..bs.len() {
+    let c = bs[i]
+    if c == '[' {
+      depth += 1
+    } else if c == ']' {
+      depth -= 1
+    } else if c == ',' && depth == 0 {
+      out.push(s[from..i].trim())
+      from = i + 1
+    }
+  }
+  let last = s[from..s.len()].trim()
+  if !last.is_empty() {
+    out.push(last)
+  }
+  out
+}
+
+/// The x86 memory operand of arm64's `[base]`, `[base, #n]`, `[base,
+/// index]`, `[base, index, lsl #k]`; "" if another form.
+fn xmem(m: Str) -> Str {
+  if !m.starts_with("[") || !m.ends_with("]") {
+    return ""
+  }
+  let ps = a64_ops(m[1..m.len() - 1])
+  if ps.is_empty() {
+    return ""
+  }
+  let b = xop(ps[0], 8)
+  if b.is_empty() || b.starts_with("?") {
+    return ""
+  }
+  if ps.len() == 1 {
+    return "(${b})"
+  }
+  if ps[1] == "#$OUT" {
+    return "$OUT(${b})"
+  }
+  if let Some(n) = imm_of(ps[1]) {
+    if ps.len() != 2 {
+      return ""
+    }
+    return if n == 0 { "(${b})" } else { "${n}(${b})" }
+  }
+  if ps[1] == "xzr" {
+    return "(${b})"
+  }
+  let x = xop(ps[1], 8)
+  if x.is_empty() || x.starts_with("?") {
+    return ""
+  }
+  if ps.len() == 2 {
+    return "(${b},${x})"
+  }
+  if ps.len() == 3 && ps[2].starts_with("lsl #") {
+    let k = Int.parse(ps[2][5..ps[2].len()]) ?? -1
+    if k >= 0 && k <= 3 {
+      return "(${b},${x},${1 << k})"
+    }
+  }
+  ""
+}
+
+/// The x86 condition code of arm64 condition c after a flag producer of
+/// kind k ("" when there is none); a compound one is `e&np` (both) or
+/// `ne|p` (either), for the float compares' equality.
+fn x86_cond(c: Str, k: Str) -> Str {
+  if k == "fcmp" || k == "fcmps" {
+    // ucomisd: above (CF=0, ZF=0) is ordered greater, below (CF=1) is
+    // less or unordered; fcmps swapped the operands for mi, lo, cc, ls,
+    // hi, hs, cs, pl (x86_fswap)
+    return match c {
+      "eq" => "e&np"
+      "ne" => "ne|p"
+      "gt" => "a"
+      "ge" => "ae"
+      "lt" => "b"
+      "le" => "be"
+      "mi" | "lo" | "cc" => "a"
+      "ls" => "ae"
+      "hi" => "b"
+      "hs" | "cs" | "pl" => "be"
+      "vs" => "p"
+      "vc" => "np"
+      _ => ""
+    }
+  }
+  if k == "fnan" {
+    return match c {
+      "ge" => "ae"
+      "lt" => "b"
+      _ => ""
+    }
+  }
+  match c {
+    "eq" => "e"
+    "ne" => "ne"
+    "lt" => "l"
+    "ge" => "ge"
+    "gt" => "g"
+    "le" => "le"
+    "mi" => "s"
+    "pl" => "ns"
+    "vs" => "o"
+    "vc" => "no"
+    "hs" | "cs" => if k == "add" { "b" } else if k == "sub" { "ae" } else { "" }
+    "lo" | "cc" => if k == "add" { "ae" } else if k == "sub" { "b" } else { "" }
+    "hi" => if k == "sub" { "a" } else { "" }
+    "ls" => if k == "sub" { "be" } else { "" }
+    _ => ""
+  }
+}
+
+/// Whether a float compare tested with c swaps its operands (x86_cond).
+fn x86_fswap(c: Str) -> Bool { c is "mi" | "lo" | "cc" | "ls" | "hi" | "hs" | "cs" | "pl" }
+
+/// The negation of an x86 condition (a compound one by De Morgan).
+fn x86_inv(c: Str) -> Str {
+  if c == "e&np" {
+    return "ne|p"
+  }
+  if c == "ne|p" {
+    return "e&np"
+  }
+  if c.starts_with("n") && c != "np" && c != "ns" && c != "no" && c != "ne" {
+    return c[1..c.len()]
+  }
+  match c {
+    "e" => "ne"
+    "ne" => "e"
+    "l" => "ge"
+    "ge" => "l"
+    "g" => "le"
+    "le" => "g"
+    "a" => "be"
+    "be" => "a"
+    "ae" => "b"
+    "b" => "ae"
+    "s" => "ns"
+    "ns" => "s"
+    "o" => "no"
+    "no" => "o"
+    "p" => "np"
+    "np" => "p"
+    _ => ""
+  }
+}
+
+/// The lines that jump to label when x86 condition c holds.
+fn x86_jcc(c: Str, label: Str) -> List[Str] {
+  if c == "e&np" {
+    // both: skip past the jump when unordered
+    return ["jp 9f", "je ${label}", "9:"]
+  }
+  if c == "ne|p" {
+    return ["jne ${label}", "jp ${label}"]
+  }
+  ["j${c} ${label}"]
+}
+
+/// The lines that set byte register b to x86 condition c (0 or 1).
+fn x86_setcc(c: Str, b: Str) -> List[Str] {
+  if c == "e&np" {
+    return ["sete ${b}", "setnp %r11b", "andb %r11b, ${b}"]
+  }
+  if c == "ne|p" {
+    return ["setne ${b}", "setp %r11b", "orb %r11b, ${b}"]
+  }
+  ["set${c} ${b}"]
+}
+
+/// The suffix of an integer operation of size bytes.
+fn sfx(size: Int) -> Str {
+  match size {
+    8 => "q"
+    4 => "l"
+    2 => "w"
+    _ => "b"
+  }
+}
+
+/// The condition the template's consumers test: a select's, a set's, or
+/// the branch's or the fault's (the first given).
+fn tpl_cond(lines: List[Str], conds: List[Str]) -> Str {
+  for l in lines {
+    let sp = l.find(" ") ?? -1
+    if sp < 0 {
+      continue
+    }
+    let m = l[0..sp]
+    if m is "csel" | "csinc" | "cset" | "fcsel" | "cneg" {
+      let ops = a64_ops(l[sp + 1..l.len()])
+      if !ops.is_empty() {
+        return ops[ops.len() - 1]
+      }
+    }
+  }
+  for c in conds {
+    if !c.is_empty() {
+      return c
+    }
+  }
+  ""
+}
+
+/// The value of a movz, movk, movn chain (`#imm, lsl #s` operands), or
+/// None.
+fn mov_wide(lines: List[Str]) -> Int? {
+  var v = 0
+  for l in lines {
+    let sp = l.find(" ") ?? -1
+    if sp < 0 {
+      return None
+    }
+    let m = l[0..sp]
+    let ops = a64_ops(l[sp + 1..l.len()])
+    if ops.len() != 3 || !ops[2].starts_with("lsl #") {
+      return None
+    }
+    let a = imm_of(ops[1]) ?? -1
+    let s = Int.parse(ops[2][5..ops[2].len()]) ?? -1
+    if a < 0 || s < 0 {
+      return None
+    }
+    match m {
+      "movz" => {
+        v = a.wrapping_mul(1 << s)
+      }
+      "movn" => {
+        v = ~a.wrapping_mul(1 << s)
+      }
+      "movk" => {
+        v = (v & ~65535.wrapping_mul(1 << s)) | a.wrapping_mul(1 << s)
+      }
+      _ => return None
+    }
+  }
+  Some(v)
+}
+
+/// The lines that put constant n in register operand d (size 8).
+fn x86_const(n: Int, d: Str) -> List[Str] {
+  if n >= 0 && n <= 4294967295 {
+    // a 32 bit move zero extends
+    let dw = if d.starts_with("$") { "$w${d[1..d.len()]}" } else { d }
+    return ["movl $${n}, ${dw}"]
+  }
+  if imm32(n) {
+    return ["movq $${n}, ${d}"]
+  }
+  ["movabsq $${n}, ${d}"]
+}
+
+/// The class (Float or not) of template operand tok of inst.
+fn (g: G) tok_fp(inst: Inst, tok: Str) -> Bool {
+  let (base, _) = tpl_ref(tok)
+  if base.is_empty() {
+    return false
+  }
+  let k = Int.parse(base[1..base.len()]) ?? 0
+  if base.starts_with("u") {
+    return k < inst.us.len() && inst.us[k] != 0 && g.fp[inst.us[k]]
+  }
+  k < inst.defs.len() && g.fp[inst.defs[k]]
+}
+
+/// The source of template operand tok (a use, or the zero register) for
+/// a tie's copy.
+fn tie_src(inst: Inst, tok: Str) -> Src? {
+  if tok == "xzr" || tok == "wzr" {
+    return Some(rsrc(0))
+  }
+  let (base, _) = tpl_ref(tok)
+  if base.is_empty() || !base.starts_with("u") {
+    return None
+  }
+  let k = Int.parse(base[1..base.len()]) ?? -1
+  if k < 0 || k >= inst.us.len() {
+    return None
+  }
+  Some(rsrc(inst.us[k]))
+}
+
+/// The definition index of template operand tok, or -1.
+fn def_index(tok: Str) -> Int {
+  let (base, _) = tpl_ref(tok)
+  if !base.starts_with("d") {
+    return -1
+  }
+  Int.parse(base[1..base.len()]) ?? -1
+}
+
+/// Translates inst's arm64 template; conds are the conditions its flags
+/// are tested with outside it (the branch's, the fault's).
+fn (var g: G) x86_tpl(inst: Inst, conds: List[Str]) -> XT {
+  var x = XT{}
+  let src = inst.text.replace("\n\t", "\n")
+  let lines = src.split("\n")
+  if lines.len() == 1 && lines[0].starts_with(".weak ") {
+    x.lines = lines
+    return x
+  }
+  if lines[0] == "1:" {
+    return g.x86_llsc(inst, lines)
+  }
+  if lines[0].starts_with("movz ") || lines[0].starts_with("movn ") {
+    match mov_wide(lines) {
+      Some(n) => {
+        let ops = a64_ops(lines[0][5..lines[0].len()])
+        x.lines = x86_const(n, xop(ops[0], 8))
+      }
+      None => {
+        x.err = "a wide move"
+      }
+    }
+    return x
+  }
+  let single = lines.len() == 1
+  // the flag consumers' condition decides a float compare's operand order
+  let cond = tpl_cond(lines, conds)
+  var k = 0
+  while k < lines.len() {
+    let l = lines[k]
+    k += 1
+    let sp = l.find(" ") ?? -1
+    let m = if sp < 0 { l } else { l[0..sp] }
+    let ops = if sp < 0 { [] } else { a64_ops(l[sp + 1..l.len()]) }
+    let next = if k < lines.len() { lines[k] } else { "" }
+    if !g.x86_line(inst, x, m, ops, single, next, cond) {
+      if x.err.is_empty() {
+        x.err = "`${l}`"
+      }
+      return x
+    }
+    k += x.skip
+    x.skip = 0
+  }
+  for l in x.lines {
+    if l.contains("?") {
+      x.err = "an operand of `${l}`"
+      return x
+    }
+  }
+  x
+}
+
+/// Appends the x86 lines of one arm64 instruction (mnemonic m, operands
+/// ops) to x; false for one it does not translate. single: the template
+/// is this one instruction (a two operand form ties its definition); next
+/// is the following line.
+fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool, next: Str, cond: Str) -> Bool {
+  let n = ops.len()
+  // the operation width of the first (definition or compared) operand
+  let size = if n > 0 && is_w(ops[0]) { 4 } else { 8 }
+  let q = sfx(size)
+  match m {
+    "mov" => {
+      if n != 2 {
+        return false
+      }
+      if let Some(v) = imm_of(ops[1]) {
+        x.lines = x.lines + x86_const(v, xop(ops[0], 8))
+        return true
+      }
+      let s = xop(ops[1], size)
+      if s.is_empty() {
+        x.lines.push("movl $0, ${xop(ops[0], 4)}")
+        return true
+      }
+      x.lines.push("mov${q} ${s}, ${xop(ops[0], size)}")
+      true
+    }
+    "add" | "sub" => g.x86_addsub(inst, x, m, ops, single, size)
+    "adds" | "subs" | "adcs" | "adc" | "sbcs" | "sbc" => g.x86_flagop(inst, x, m, ops, single, size)
+    "neg" | "negs" | "mvn" | "rev" => {
+      if n != 2 {
+        return false
+      }
+      let op = match m {
+        "mvn" => "not"
+        "rev" => "bswap"
+        _ => "neg"
+      }
+      g.x86_unary(inst, x, ops[0], ops[1], "${op}${q}", single)
+      if m == "negs" {
+        x.kind = "sub"
+      }
+      true
+    }
+    "and" | "orr" | "eor" | "bic" | "eon" => g.x86_logic(inst, x, m, ops, single, size)
+    "lsl" | "lsr" | "asr" | "ror" => g.x86_shift(inst, x, m, ops, single, size)
+    "mul" => {
+      g.x86_binop(inst, x, ops[0], ops[1], xop(ops[2], size), "imul${q}", single)
+      true
+    }
+    "madd" | "msub" => {
+      if n != 4 {
+        return false
+      }
+      x.lines.push("mov${q} ${xop(ops[1], size)}, ${x86_reg(XR_SCRATCH, size)}")
+      x.lines.push("imul${q} ${xop(ops[2], size)}, ${x86_reg(XR_SCRATCH, size)}")
+      let op = if m == "madd" { "add" } else { "sub" }
+      g.x86_binop(inst, x, ops[0], ops[3], "%r11", "${op}${q}", single)
+      true
+    }
+    "smulh" | "umulh" => {
+      if n != 3 {
+        return false
+      }
+      x.clobbers = x.clobbers + [XR_AX, XR_DX]
+      x.lines.push("movq ${xop(ops[1], 8)}, %rax")
+      x.lines.push("${if m == "smulh" { "imulq" } else { "mulq" }} ${xop(ops[2], 8)}")
+      x.lines.push("movq %rdx, ${xop(ops[0], 8)}")
+      true
+    }
+    "smull" | "umull" => {
+      if n != 3 {
+        return false
+      }
+      if m == "smull" {
+        x.lines.push("movslq ${xop(ops[1], 4)}, %r11")
+        x.lines.push("movslq ${xop(ops[2], 4)}, ${xop(ops[0], 8)}")
+      } else {
+        x.lines.push("movl ${xop(ops[1], 4)}, %r11d")
+        x.lines.push("movl ${xop(ops[2], 4)}, ${xop(ops[0], 4)}")
+      }
+      x.lines.push("imulq %r11, ${xop(ops[0], 8)}")
+      true
+    }
+    "sdiv" => {
+      if n != 3 {
+        return false
+      }
+      // arm64's sdiv does not trap: a / 0 is 0 and the minimum / -1 the
+      // minimum, and the front half may speculate a division (an if
+      // conversion's both arms); x86's idiv traps on both
+      x.clobbers = x.clobbers + [XR_AX, XR_DX]
+      let dv = xop(ops[2], 8)
+      x.lines = x.lines + ["movq ${xop(ops[1], 8)}, %rax", "cmpq $-1, ${dv}", "je 1f", "testq ${dv}, ${dv}", "je 2f", "cqto", "idivq ${dv}", "jmp 3f", "1:", "negq %rax", "jmp 3f", "2:", "xorl %eax, %eax", "3:", "movq %rax, ${xop(ops[0], 8)}"]
+      true
+    }
+    "sxtw" => {
+      x.lines.push("movslq ${xop(ops[1], 4)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "clz" => {
+      x.lines.push("bsrq ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      x.lines.push("movl $127, %r11d")
+      x.lines.push("cmovzq %r11, ${xop(ops[0], 8)}")
+      x.lines.push("xorq $63, ${xop(ops[0], 8)}")
+      true
+    }
+    "rbit" => {
+      // rbit then clz: the trailing zeros (64 for zero)
+      if !next.starts_with("clz ") {
+        return false
+      }
+      x.lines.push("bsfq ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      x.lines.push("movl $64, %r11d")
+      x.lines.push("cmovzq %r11, ${xop(ops[0], 8)}")
+      x.skip = 1
+      true
+    }
+    "extr" => {
+      if n != 4 {
+        return false
+      }
+      let kk = imm_of(ops[3]) ?? -1
+      if kk < 0 {
+        return false
+      }
+      g.x86_binop(inst, x, ops[0], ops[2], xop(ops[1], 8), "shrdq $${kk},", single)
+      true
+    }
+    "cmp" | "cmn" | "tst" => g.x86_cmp(inst, x, m, ops, next, cond, size)
+    "ccmn" => {
+      // after `cmp a, b`: when eq, the flags of c + k, else nzcv (decision:
+      // only the Z clear case, tested with eq and ne)
+      if n != 4 || ops[2] != "#0" || ops[3] != "eq" {
+        return false
+      }
+      let kk = imm_of(ops[1]) ?? -1
+      if kk < 0 {
+        return false
+      }
+      x.lines.push("jne 8f")
+      x.lines.push("cmpq $${-kk}, ${xop(ops[0], 8)}")
+      x.lines.push("8:")
+      x.kind = "sub"
+      true
+    }
+    "cset" | "csinc" | "csel" | "cneg" | "fcsel" => g.x86_select(inst, x, m, ops, single)
+    "ldr" | "ldrb" | "ldrh" | "ldar" | "str" | "strb" | "strh" | "stlr" | "stp" | "ldp" => g.x86_mem(inst, x, m, ops)
+    "adrp" => {
+      // adrp and its add or ldr: the address, or the GOT entry's word
+      if n != 2 {
+        return false
+      }
+      let d = xop(ops[0], 8)
+      if ops[1].starts_with(":got:") {
+        x.lines.push("movq ${ops[1][5..ops[1].len()]}@GOTPCREL(%rip), ${d}")
+      } else {
+        x.lines.push("leaq ${ops[1]}(%rip), ${d}")
+      }
+      x.skip = 1
+      true
+    }
+    "mrs" => {
+      // the thread pointer and the two tprel adds: local exec
+      if n != 2 || ops[1] != "tpidr_el0" {
+        return false
+      }
+      let at = next.find(":tprel_hi12:") ?? -1
+      if at < 0 {
+        return false
+      }
+      let d = xop(ops[0], 8)
+      x.lines.push("movq %fs:0, ${d}")
+      x.lines.push("leaq ${next[at + 12..next.len()]}@TPOFF(${d}), ${d}")
+      x.skip = 2
+      true
+    }
+    "prfm" => {
+      x.lines.push("prefetcht0 ${xmem(ops[1])}")
+      true
+    }
+    "yield" => {
+      x.lines.push("pause")
+      true
+    }
+    "brk" => {
+      x.lines.push("ud2")
+      true
+    }
+    // x86_split's pseudo lines: a carry chain's setup and its kind
+    // x86_split's carry setup: the setup line and the kind of the
+    // instruction after it ("x86setup adc|sbc cmp|cmn op, op")
+    "x86setup" => {
+      let l = x86_carry_setup(ops[1], ops[2..ops.len()], ops[0] == "sbc")
+      if l.is_empty() {
+        return false
+      }
+      x.lines = x.lines + l
+      true
+    }
+    "x86kind" => {
+      x.kind = ops[0]
+      true
+    }
+    "dmb" => {
+      if n == 1 && ops[0] == "ishld" {
+        // x86 keeps loads in order
+        x.lines.push("# dmb ishld")
+      } else {
+        x.lines.push("mfence")
+      }
+      true
+    }
+    "fmov" => {
+      if n != 2 {
+        return false
+      }
+      let dfp = g.tok_fp(inst, ops[0])
+      if ops[1] == "xzr" {
+        x.lines.push("xorpd ${xop(ops[0], 8)}, ${xop(ops[0], 8)}")
+        return true
+      }
+      let sfp = g.tok_fp(inst, ops[1])
+      if dfp && sfp {
+        x.lines.push("movapd ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      } else {
+        x.lines.push("movq ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      }
+      true
+    }
+    "fadd" | "fsub" | "fmul" | "fdiv" => {
+      let op = match m {
+        "fadd" => "addsd"
+        "fsub" => "subsd"
+        "fmul" => "mulsd"
+        _ => "divsd"
+      }
+      g.x86_binop(inst, x, ops[0], ops[1], xop(ops[2], 8), op, single)
+      true
+    }
+    "fneg" | "fabs" => {
+      let mask = if m == "fneg" { "0x8000000000000000" } else { "0x7fffffffffffffff" }
+      x.lines.push("movabsq $${mask}, %r11")
+      x.lines.push("movq %r11, %xmm15")
+      g.x86_unary(inst, x, ops[0], ops[1], if m == "fneg" { "xorpd %xmm15," } else { "andpd %xmm15," }, single)
+      true
+    }
+    "fsqrt" => {
+      x.lines.push("sqrtsd ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "frintz" | "frintm" | "frintp" => {
+      let mode = match m {
+        "frintz" => 3
+        "frintm" => 1
+        _ => 2
+      }
+      x.lines.push("roundsd $${mode}, ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "frinta" => {
+      // to nearest, ties away from zero: trunc(x + copysign(0.5 - ulp, x))
+      let d = xop(ops[0], 8)
+      let u = xop(ops[1], 8)
+      x.lines = x.lines + ["movq ${u}, %r11", "shrq $63, %r11", "shlq $63, %r11", "movq %r11, %xmm15", "movabsq $0x3fdfffffffffffff, %r11", "movq %r11, ${d}", "orpd %xmm15, ${d}", "addsd ${u}, ${d}", "roundsd $3, ${d}, ${d}"]
+      x.early = true
+      true
+    }
+    "fcvtzs" => {
+      x.lines.push("cvttsd2siq ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "scvtf" => {
+      let op = if is_w(ops[0]) { "cvtsi2ssq" } else { "cvtsi2sdq" }
+      x.lines.push("${op} ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "ucvtf" => {
+      // unsigned: halve (keeping the low bit, round to odd) past 2^63
+      let d = xop(ops[0], 8)
+      let u = xop(ops[1], 8)
+      x.lines = x.lines + ["testq ${u}, ${u}", "js 6f", "cvtsi2sdq ${u}, ${d}", "jmp 7f", "6:", "movq ${u}, %r11", "shrq $1, %r11", "jnc 5f", "orq $1, %r11", "5:", "cvtsi2sdq %r11, ${d}", "addsd ${d}, ${d}", "7:"]
+      true
+    }
+    "fcvt" => {
+      // to single (the w form) or back to double
+      let op = if is_w(ops[0]) { "cvtsd2ss" } else { "cvtss2sd" }
+      x.lines.push("${op} ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
+      true
+    }
+    "fcmp" => {
+      if n != 2 {
+        return false
+      }
+      if next.starts_with("fccmp ") {
+        return g.x86_fccmp(inst, x, ops, next)
+      }
+      var a = xop(ops[0], 8)
+      var b = xop(ops[1], 8)
+      if ops[1].starts_with("#") {
+        x.lines.push("xorpd %xmm15, %xmm15")
+        b = "%xmm15"
+      }
+      if x86_fswap(cond) {
+        x.lines.push("ucomisd ${a}, ${b}")
+        x.kind = "fcmps"
+      } else {
+        x.lines.push("ucomisd ${b}, ${a}")
+        x.kind = "fcmp"
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+/// `add` and `sub` (no flags): lea when it can, else a two operand form.
+fn (var g: G) x86_addsub(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool, size: Int) -> Bool {
+  let n = ops.len()
+  if n < 3 {
+    return false
+  }
+  let d = xop(ops[0], size)
+  let a = xop(ops[1], 8)
+  if a.is_empty() {
+    return false
+  }
+  if let Some(v0) = imm_of(ops[2]) {
+    var v = v0
+    if n == 4 {
+      if ops[3] != "lsl #12" {
+        return false
+      }
+      v = v << 12
+    }
+    if m == "sub" {
+      v = -v
+    }
+    if !imm32(v) {
+      return false
+    }
+    x.lines.push("lea${sfx(size)} ${v}(${a}), ${d}")
+    return true
+  }
+  if ops[2] == "#$OUT" {
+    x.lines.push("lea${sfx(size)} $OUT(${a}), ${d}")
+    return true
+  }
+  let b = xop(ops[2], 8)
+  if b.is_empty() || b.starts_with("?") {
+    return false
+  }
+  if m == "add" && n == 3 {
+    x.lines.push("lea${sfx(size)} (${a},${b}), ${d}")
+    return true
+  }
+  if m == "add" && n == 4 && ops[3].starts_with("lsl #") {
+    let k = Int.parse(ops[3][5..ops[3].len()]) ?? 99
+    if k <= 3 {
+      x.lines.push("lea${sfx(size)} (${a},${b},${1 << k}), ${d}")
+      return true
+    }
+  }
+  if n == 4 {
+    // a shifted operand: shift it in the scratch register first
+    let sh = ops[3]
+    let op = if sh.starts_with("lsl #") { "shlq" } else if sh.starts_with("lsr #") { "shrq" } else if sh.starts_with("asr #") { "sarq" } else { "" }
+    if op.is_empty() {
+      return false
+    }
+    x.lines.push("movq ${b}, %r11")
+    x.lines.push("${op} $${sh[5..sh.len()]}, %r11")
+    if m == "add" {
+      x.lines.push("leaq (${a},%r11), ${xop(ops[0], 8)}")
+    } else {
+      g.x86_binop(inst, x, ops[0], ops[1], "%r11", "subq", single)
+    }
+    return true
+  }
+  // sub d, a, b
+  g.x86_binop(inst, x, ops[0], ops[1], xop(ops[2], size), "sub${sfx(size)}", single)
+  true
+}
+
+/// adds, subs (flags), adcs, adc (with the carry).
+fn (var g: G) x86_flagop(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool, size: Int) -> Bool {
+  if ops.len() != 3 {
+    return false
+  }
+  // sbc: a - b - borrow, arm64's C being no borrow, x86's CF the borrow
+  // (the polarity a sub or sbb left)
+  let op = match m {
+    "adds" => "add"
+    "subs" => "sub"
+    "sbcs" | "sbc" => "sbb"
+    _ => "adc"
+  }
+  var b = xop(ops[2], size)
+  if ops[2] == "xzr" || ops[2] == "wzr" {
+    b = "$0"
+  }
+  if ops[0] == "xzr" {
+    // only the flags (adcs xzr, a, b): in the scratch register
+    let a = if ops[1] == "xzr" { "$0" } else { xop(ops[1], 8) }
+    x.lines.push("movq ${a}, %r11")
+    x.lines.push("${op}q ${b}, %r11")
+  } else {
+    g.x86_binop(inst, x, ops[0], ops[1], b, "${op}${sfx(size)}", single)
+  }
+  x.kind = if m is "subs" | "sbcs" | "sbc" { "sub" } else { "add" }
+  true
+}
+
+/// The x86 lines that set CF to ARM's C for arm64's carry setup m ops
+/// (x86_carry_polarity turns it into the borrow an sbb reads): cmp xzr,
+/// xzr sets C, cmn xzr, xzr clears it, cmp c, #1 makes it c (0 or 1);
+/// none for another setup. sbc is the instruction after it being an sbc
+/// (unused: the polarity is the tracker's).
+fn x86_carry_setup(m: Str, ops: List[Str], sbc: Bool) -> List[Str] {
+  let _s = sbc
+  if ops.len() == 2 && ops[0] == "xzr" && ops[1] == "xzr" {
+    return [if m == "cmp" { "stc" } else { "clc" }]
+  }
+  if m == "cmp" && ops.len() == 2 && ops[1] == "#1" {
+    return ["btq $0, ${xop(ops[0], 8)}"]
+  }
+  []
+}
+
+/// d = a op b as a two operand x86 instruction `op b, d`: a tie when the
+/// template is this one instruction, else a move first (and the
+/// definitions written early). op may end in "," (a three operand form
+/// whose last two are b and d, `shrdq $k, b, d`).
+fn (var g: G) x86_binop(inst: Inst, var x: XT, dt: Str, at: Str, b: Str, op: Str, single: Bool) {
+  let size = if is_w(dt) { 4 } else { 8 }
+  let d = xop(dt, size)
+  let fp = g.tok_fp(inst, dt)
+  let line = "${op} ${b}, ${d}"
+  let di = def_index(dt)
+  if single && di >= 0 {
+    if let Some(s) = tie_src(inst, at) {
+      x.ties.push((di, s))
+      x.lines.push(line)
+      return
+    }
+  }
+  // a move of a into d, then the operation: d must not share a register
+  // with a later use
+  let a = xop(at, size)
+  if a.is_empty() {
+    x.lines.push(if fp { "xorpd ${d}, ${d}" } else { "mov${sfx(size)} $0, ${d}" })
+  } else if fp {
+    x.lines.push("movapd ${xop(at, 8)}, ${d}")
+  } else {
+    x.lines.push("mov${sfx(size)} ${a}, ${d}")
+  }
+  x.lines.push(line)
+  x.early = true
+}
+
+/// d = op a (one operand in place).
+fn (var g: G) x86_unary(inst: Inst, var x: XT, dt: Str, at: Str, op: Str, single: Bool) {
+  let size = if is_w(dt) { 4 } else { 8 }
+  let d = xop(dt, size)
+  let line = "${op} ${d}"
+  let di = def_index(dt)
+  if single && di >= 0 {
+    if let Some(s) = tie_src(inst, at) {
+      x.ties.push((di, s))
+      x.lines.push(line)
+      return
+    }
+  }
+  let fp = g.tok_fp(inst, dt)
+  x.lines.push(if fp { "movapd ${xop(at, 8)}, ${d}" } else { "mov${sfx(size)} ${xop(at, size)}, ${d}" })
+  x.lines.push(line)
+  x.early = true
+}
+
+/// and, orr, eor, bic, eon.
+fn (var g: G) x86_logic(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool, size: Int) -> Bool {
+  if ops.len() != 3 {
+    return false
+  }
+  let op = match m {
+    "and" | "bic" => "and"
+    "orr" => "or"
+    _ => "xor"
+  }
+  let q = sfx(size)
+  if let Some(v) = imm_of(ops[2]) {
+    if (size == 8 && imm32(v)) || size == 4 {
+      g.x86_binop(inst, x, ops[0], ops[1], "$${v}", "${op}${q}", single)
+    } else {
+      x.lines.push("movabsq $${v}, %r11")
+      g.x86_binop(inst, x, ops[0], ops[1], "%r11", "${op}${q}", single)
+    }
+    return true
+  }
+  var b = xop(ops[2], size)
+  if m == "bic" || m == "eon" {
+    x.lines.push("mov${q} ${b}, ${x86_reg(XR_SCRATCH, size)}")
+    x.lines.push("not${q} ${x86_reg(XR_SCRATCH, size)}")
+    b = x86_reg(XR_SCRATCH, size)
+  }
+  g.x86_binop(inst, x, ops[0], ops[1], b, "${op}${q}", single)
+  true
+}
+
+/// lsl, lsr, asr, ror by an immediate or by a register (in cl).
+fn (var g: G) x86_shift(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool, size: Int) -> Bool {
+  if ops.len() != 3 {
+    return false
+  }
+  let op = match m {
+    "lsl" => "shl"
+    "lsr" => "shr"
+    "asr" => "sar"
+    _ => "ror"
+  }
+  let q = sfx(size)
+  if let Some(v) = imm_of(ops[2]) {
+    g.x86_binop(inst, x, ops[0], ops[1], "$${v}", "${op}${q}", single)
+    return true
+  }
+  x.clobbers.push(XR_CX)
+  x.lines.push("movq ${xop(ops[2], 8)}, %rcx")
+  g.x86_binop(inst, x, ops[0], ops[1], "%cl", "${op}${q}", single)
+  true
+}
+
+/// cmp, cmn, tst (and cmp's carry setups for an adc that follows).
+fn (var g: G) x86_cmp(inst: Inst, var x: XT, m: Str, ops: List[Str], next: Str, cond: Str, size: Int) -> Bool {
+  let n = ops.len()
+  if n < 2 {
+    return false
+  }
+  let q = sfx(size)
+  let a = xop(ops[0], size)
+  let adc_next = next.starts_with("adcs ") || next.starts_with("adc ")
+  let sbc_next = next.starts_with("sbcs ") || next.starts_with("sbc ")
+  if (m == "cmp" || m == "cmn") && (adc_next || sbc_next) {
+    // the carry an adc or sbc reads (x86_carry_setup)
+    let l = x86_carry_setup(m, ops, sbc_next)
+    if l.is_empty() {
+      return false
+    }
+    x.lines = x.lines + l
+    return true
+  }
+  if m == "tst" {
+    if let Some(v) = imm_of(ops[1]) {
+      if size == 4 || imm32(v) {
+        x.lines.push("test${q} $${v}, ${a}")
+      } else {
+        x.lines.push("movabsq $${v}, %r11")
+        x.lines.push("testq %r11, ${a}")
+      }
+    } else {
+      x.lines.push("test${q} ${xop(ops[1], size)}, ${a}")
+    }
+    x.kind = "logic"
+    return true
+  }
+  if m == "cmn" {
+    // a + b: as a compare with -b when only the signed and equality
+    // conditions are tested, else an add in the scratch register
+    let carry = cond is "hs" | "cs" | "lo" | "cc" | "hi" | "ls"
+    if let Some(v) = imm_of(ops[1]) {
+      if !carry && imm32(-v) {
+        x.lines.push("cmp${q} $${-v}, ${a}")
+        x.kind = "sub"
+        return true
+      }
+      x.lines.push("mov${q} ${a}, ${x86_reg(XR_SCRATCH, size)}")
+      x.lines.push("add${q} $${v}, ${x86_reg(XR_SCRATCH, size)}")
+      x.kind = "add"
+      return true
+    }
+    x.lines.push("mov${q} ${a}, ${x86_reg(XR_SCRATCH, size)}")
+    x.lines.push("add${q} ${xop(ops[1], size)}, ${x86_reg(XR_SCRATCH, size)}")
+    x.kind = "add"
+    return true
+  }
+  // cmp
+  if a.is_empty() {
+    return false
+  }
+  if let Some(v) = imm_of(ops[1]) {
+    if size == 4 || imm32(v) {
+      x.lines.push("cmp${q} $${v}, ${a}")
+    } else {
+      x.lines.push("movabsq $${v}, %r11")
+      x.lines.push("cmpq %r11, ${a}")
+    }
+  } else if n == 3 {
+    // cmp a, b, asr #k (the multiply's overflow test)
+    let sh = ops[2]
+    if !sh.starts_with("asr #") {
+      return false
+    }
+    x.lines.push("movq ${xop(ops[1], 8)}, %r11")
+    x.lines.push("sarq $${sh[5..sh.len()]}, %r11")
+    x.lines.push("cmpq %r11, ${a}")
+  } else {
+    let b = xop(ops[1], size)
+    if b.is_empty() {
+      x.lines.push("cmp${q} $0, ${a}")
+    } else {
+      x.lines.push("cmp${q} ${b}, ${a}")
+    }
+  }
+  x.kind = "sub"
+  true
+}
+
+/// cset, csinc, csel, cneg, fcsel after the template's compare.
+fn (var g: G) x86_select(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bool) -> Bool {
+  let n = ops.len()
+  let c = x86_cond(ops[n - 1], x.kind)
+  if c.is_empty() {
+    x.err = "the condition ${ops[n - 1]} after a ${x.kind} compare"
+    return false
+  }
+  let d = xop(ops[0], 8)
+  let di = def_index(ops[0])
+  if m == "cset" {
+    x.lines = x.lines + x86_setcc(c, xop(ops[0], 1))
+    x.lines.push("movzbl ${xop(ops[0], 1)}, ${xop(ops[0], 4)}")
+    return true
+  }
+  if m == "csinc" {
+    if ops[1] == "xzr" && ops[2] == "xzr" {
+      // c ? 0 : 1
+      x.lines = x.lines + x86_setcc(x86_inv(c), xop(ops[0], 1))
+      x.lines.push("movzbl ${xop(ops[0], 1)}, ${xop(ops[0], 4)}")
+      return true
+    }
+    if ops[1] != ops[2] || di < 0 {
+      return false
+    }
+    // c ? a : a + 1
+    x.lines = x.lines + x86_setcc(x86_inv(c), "%r11b")
+    x.lines.push("movzbl %r11b, %r11d")
+    let so = tie_src(inst, ops[1])
+    if so.is_none() {
+      return false
+    }
+    let s = so ?? rsrc(0)
+    x.ties.push((di, s))
+    x.lines.push("addq %r11, ${d}")
+    return true
+  }
+  if m == "cneg" {
+    // the negation is computed before the compare: the scratch register
+    // at the template's start
+    let so = tie_src(inst, ops[1])
+    if so.is_none() {
+      return false
+    }
+    let s = so ?? rsrc(0)
+    x.ties.push((di, s))
+    x.lines = ["movq ${xop(ops[1], 8)}, %r11", "negq %r11"] + x.lines
+    x.lines.push("cmov${c}q %r11, ${d}")
+    return true
+  }
+  // csel and fcsel: d = c ? a : b
+  if di < 0 {
+    return false
+  }
+  if ops[2] == ops[0] {
+    // b is d itself (a cset before it in the template made it): only the
+    // conditional move
+    var a0 = xop(ops[1], 8)
+    if a0.is_empty() {
+      x.lines.push("movl $0, %r11d")
+      a0 = "%r11"
+    }
+    if m == "fcsel" || c.contains("&") || c.contains("|") {
+      x.lines = x.lines + x86_jcc(x86_inv(c), "4f")
+      x.lines.push("${if m == "fcsel" { "movapd" } else { "movq" }} ${a0}, ${d}")
+      x.lines.push("4:")
+    } else {
+      x.lines.push("cmov${c}q ${a0}, ${d}")
+    }
+    return true
+  }
+  let so = tie_src(inst, ops[2])
+  if so.is_none() {
+    return false
+  }
+  let s = so ?? rsrc(0)
+  x.ties.push((di, s))
+  if m == "fcsel" {
+    x.lines = x.lines + x86_jcc(x86_inv(c), "4f")
+    x.lines.push("movapd ${xop(ops[1], 8)}, ${d}")
+    x.lines.push("4:")
+    return true
+  }
+  var a = xop(ops[1], 8)
+  if a.is_empty() {
+    x.lines.push("movl $0, %r11d")
+    a = "%r11"
+  }
+  if c == "ne|p" {
+    // either: two conditional moves of a
+    x.lines.push("cmovneq ${a}, ${d}")
+    x.lines.push("cmovpq ${a}, ${d}")
+    return true
+  }
+  if c == "e&np" {
+    // both: a move past two branches
+    x.lines = x.lines + ["jne 3f", "jp 3f", "movq ${a}, ${d}", "3:"]
+    return true
+  }
+  x.lines.push("cmov${c}q ${a}, ${d}")
+  true
+}
+
+/// Loads and stores (ldar is a load: x86 keeps loads in order; stlr an
+/// xchg, which orders it with later loads as stlr with ldar does).
+fn (var g: G) x86_mem(inst: Inst, var x: XT, m: Str, ops: List[Str]) -> Bool {
+  if m == "stp" || m == "ldp" {
+    // a pair of words at [base, #off] (a known length copy, zeroing)
+    if ops.len() != 3 {
+      return false
+    }
+    let mm = xmem(ops[2])
+    let ps = a64_ops(ops[2][1..ops[2].len() - 1])
+    let base = xop(ps[0], 8)
+    let off = if ps.len() > 1 { imm_of(ps[1]) ?? 0 } else { 0 }
+    if mm.is_empty() || (ps.len() > 1 && imm_of(ps[1]).is_none()) {
+      return false
+    }
+    if m == "ldp" {
+      // both definitions written early: one may be the base's register
+      x.lines.push("movq ${off}(${base}), ${xop(ops[0], 8)}")
+      x.lines.push("movq ${off + 8}(${base}), ${xop(ops[1], 8)}")
+      x.early = true
+      return true
+    }
+    for (k, r) in ops[0..2].indexed() {
+      let v = if r == "xzr" { "$0" } else { xop(r, 8) }
+      x.lines.push("movq ${v}, ${off + 8 * k}(${base})")
+    }
+    return true
+  }
+  if ops.len() != 2 {
+    return false
+  }
+  let mm = xmem(ops[1])
+  if mm.is_empty() {
+    return false
+  }
+  let r = ops[0]
+  let fp = g.tok_fp(inst, r)
+  let w = is_w(r)
+  match m {
+    "ldr" | "ldar" => {
+      if fp {
+        x.lines.push("${if w { "movss" } else { "movsd" }} ${mm}, ${xop(r, 8)}")
+      } else if w {
+        x.lines.push("movl ${mm}, ${xop(r, 4)}")
+      } else {
+        x.lines.push("movq ${mm}, ${xop(r, 8)}")
+      }
+    }
+    "ldrb" => x.lines.push("movzbl ${mm}, ${xop(r, 4)}")
+    "ldrh" => x.lines.push("movzwl ${mm}, ${xop(r, 4)}")
+    "str" => {
+      if r == "xzr" || r == "wzr" {
+        x.lines.push("mov${if w { "l" } else { "q" }} $0, ${mm}")
+      } else if fp {
+        x.lines.push("${if w { "movss" } else { "movsd" }} ${xop(r, 8)}, ${mm}")
+      } else if w {
+        x.lines.push("movl ${xop(r, 4)}, ${mm}")
+      } else {
+        x.lines.push("movq ${xop(r, 8)}, ${mm}")
+      }
+    }
+    "strb" => x.lines.push(if r == "wzr" { "movb $0, ${mm}" } else { "movb ${xop(r, 1)}, ${mm}" })
+    "strh" => x.lines.push(if r == "wzr" { "movw $0, ${mm}" } else { "movw ${xop(r, 2)}, ${mm}" })
+    "stlr" => {
+      x.lines.push("movq ${xop(r, 8)}, %r11")
+      x.lines.push("xchgq %r11, ${mm}")
+    }
+    _ => return false
+  }
+  true
+}
+
+/// The load and store exclusive loops of the reference counts
+/// (calls.xo atomic_inc, closures.xo atomic_dec): an atomic add of a
+/// constant to the word at $u0, then optionally a compare of the new
+/// value.
+fn (var g: G) x86_llsc(inst: Inst, lines: List[Str]) -> XT {
+  var x = XT{}
+  // 1: / ld(a)xr x17, [$u0] / add|sub x17, x17, #n / st(l)xr w15, x17,
+  // [$u0] / cbnz w15, 1b [/ cmp x17, #m]
+  if lines.len() < 5 {
+    x.err = "a load and store exclusive loop"
+    return x
+  }
+  let l2 = lines[2]
+  let sp = l2.find(" ") ?? -1
+  let ops = a64_ops(l2[sp + 1..l2.len()])
+  let sp1 = lines[1].find(" ") ?? 0
+  let mem = a64_ops(lines[1][sp1..lines[1].len()])
+  if sp < 0 || ops.len() != 3 || mem.len() != 2 {
+    x.err = "a load and store exclusive loop"
+    return x
+  }
+  var v = imm_of(ops[2]) ?? 0
+  if l2.starts_with("sub ") {
+    v = -v
+  }
+  let addr = xmem(mem[1])
+  if lines.len() == 5 {
+    x.lines.push("lock addq $${v}, ${addr}")
+    return x
+  }
+  let cmp = a64_ops(lines[5][4..lines[5].len()])
+  let c = imm_of(cmp[1]) ?? 0
+  x.lines = ["movq $${v}, %r11", "lock xaddq %r11, ${addr}", "addq $${v}, %r11", "cmpq $${c}, %r11"]
+  x.kind = "sub"
+  x
+}
+
+/// `fcmp a, a` then `fccmp a, b, #0, vc`: a NaN a compares as greater
+/// or equal (the flags nzcv 0), else a with b (an unordered b as less).
+fn (var g: G) x86_fccmp(inst: Inst, var x: XT, ops: List[Str], next: Str) -> Bool {
+  let fo = a64_ops(next[6..next.len()])
+  if fo.len() != 4 || fo[2] != "#0" || fo[3] != "vc" || fo[0] != ops[0] || ops[0] != ops[1] {
+    return false
+  }
+  let a = xop(fo[0], 8)
+  let b = xop(fo[1], 8)
+  x.lines = x.lines + ["ucomisd ${a}, ${a}", "jp 3f", "ucomisd ${b}, ${a}", "jmp 2f", "3:", "clc", "2:"]
+  x.kind = "fnan"
+  x.skip = 1
+  true
+}
+
+/// Rewrites the function's MIR as x86 (decision 0254 stage 2): each
+/// plain instruction's template, each compare and branch's template and
+/// condition, each fault's condition. The ties become parallel moves
+/// before their instruction.
+fn (var g: G) x86_retarget() {
+  for b in 0..g.blocks.len() {
+    var out: List[Inst] = []
+    // CF holds not ARM's C (x86_carry_polarity)
+    var inv = false
+    for inst in g.blocks[b].insts {
+      if inst.kind != K_PLAIN && inst.kind != K_PMOVE {
+        inv = false
+      }
+      if inst.x86 {
+        if inst.kind == K_PLAIN {
+          let (_l, i2) = x86_carry_polarity(inst.text.split("\n"), inv)
+          inv = i2
+        }
+        out.push(inst)
+        continue
+      }
+      if inst.kind == K_PLAIN && !inst.has_fault {
+        // a carry chain: one instruction per link (x86_split)
+        let parts = x86_split(inst)
+        if !parts.is_empty() {
+          for p in parts {
+            let x = g.x86_tpl(p, [])
+            if !x.err.is_empty() {
+              g.skipped.push("amd64 template: ${x.err} (`${p.text}`)")
+              continue
+            }
+            var ni = p
+            let (pl, i2) = x86_carry_polarity(x.lines, inv)
+            inv = i2
+            ni.text = pl.join("\n")
+            ni.x86 = true
+            ni.early = x.early
+            ni.clobbers = x.clobbers
+            if !x.ties.is_empty() {
+              var dsts: List[Int] = []
+              var srcs: List[Src] = []
+              for (di, s) in x.ties {
+                dsts.push(p.defs[di])
+                srcs.push(s)
+                ni.us.push(p.defs[di])
+              }
+              out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, line: inst.line, inl: inst.inl, x86: true})
+            }
+            out.push(ni)
+          }
+          continue
+        }
+      }
+      if inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty()) {
+        var conds: List[Str] = []
+        if inst.kind == K_CONDBR {
+          conds.push(inst.cond)
+        }
+        if inst.has_fault {
+          conds.push(inst.fcond)
+        }
+        let x = g.x86_tpl(inst, conds)
+        if !x.err.is_empty() {
+          // every untranslated template is listed (the function is not
+          // emitted), not only the first
+          g.skipped.push("amd64 template: ${x.err} (`${inst.text.replace("\n", "; ").replace("\t", "")}`)")
+          out.push(inst)
+          continue
+        }
+        var ni = inst
+        let (pl, i2) = x86_carry_polarity(x.lines, inv)
+        inv = i2
+        ni.text = pl.join("\n")
+        ni.x86 = true
+        ni.early = inst.early || x.early
+        ni.clobbers = x.clobbers
+        if inst.kind == K_CONDBR && !(inst.cond is "cbnz" | "tbz" | "tbnz") {
+          ni.cond = x86_cond(inst.cond, x.kind)
+          if ni.cond.is_empty() {
+            g.fail("amd64: ${g.f.name}: the branch condition ${inst.cond} after a ${x.kind} compare")
+            return
+          }
+        }
+        if inst.has_fault {
+          ni.fcond = x86_cond(inst.fcond, x.kind)
+          if ni.fcond.is_empty() {
+            g.fail("amd64: ${g.f.name}: the fault condition ${inst.fcond} after a ${x.kind} compare")
+            return
+          }
+        }
+        if !x.ties.is_empty() {
+          var dsts: List[Int] = []
+          var srcs: List[Src] = []
+          for (di, s) in x.ties {
+            dsts.push(inst.defs[di])
+            srcs.push(s)
+            // the definition is read too
+            ni.us.push(inst.defs[di])
+          }
+          out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, line: inst.line, inl: inst.inl, x86: true})
+        }
+        out.push(ni)
+        continue
+      }
+      var ni = inst
+      ni.x86 = true
+      if inst.kind == K_CALL && inst.svc {
+        // the system call's locations (x86_call_locs)
+        ni.vfix = -2
+      }
+      if inst.kind == K_SWITCH {
+        // the table's base (x86_emit_switch)
+        ni.clobbers = [10]
+      }
+      out.push(ni)
+    }
+    g.blocks[b].insts = out
+  }
+}
+
+/// Adds an instruction with an x86 template defining one integer word
+/// (the front half's x86 forms, decision 0254).
+fn (var g: G) x86_def1(text: Str, us: List[Int]) -> Int {
+  let d = g.new_vreg(false)
+  var rs: List[Int] = []
+  for u in us {
+    rs.push(g.real(u))
+  }
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: [d], us: rs, x86: true})
+  d
+}
+
+/// rt.bytes_eq16 and rt.bytes_high16 on x86_64 (SSE2): the 16 bytes at
+/// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
+/// contract std/native/llrt/scan.xo reads).
+fn (var g: G) x86_bytes16(x: ssa.Value, var us: List[Int]) -> Int {
+  var cmp: List[Str] = []
+  if aux_str(x.aux) == "rt.bytes_eq16" {
+    let (c, ok) = g.const_int(x.args[2])
+    if ok {
+      cmp.push("movl $${(c & 255) * 16843009}, %r11d")
+    } else {
+      cmp.push("movzbl $bu2, %r11d")
+      cmp.push("imull $16843009, %r11d, %r11d")
+      us.push(g.word(x.args[2]))
+    }
+    cmp = cmp + ["movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "pcmpeqb %xmm14, %xmm15"]
+  } else {
+    cmp = ["pxor %xmm14, %xmm14", "pcmpgtb %xmm15, %xmm14", "movdqa %xmm14, %xmm15"]
+  }
+  let t = ["movdqu ($u0,$u1), %xmm15"] + cmp + ["psrlw $4, %xmm15", "pcmpeqw %xmm14, %xmm14", "psrlw $8, %xmm14", "pand %xmm14, %xmm15", "packuswb %xmm15, %xmm15", "movq %xmm15, $d0"]
+  g.x86_def1(t.join("\n"), us)
+}
+
+/// A carry chain (adds, adcs, adc, subs, the carry's setup by cmp, and a
+/// cset of the carry) cut into one instruction per line, each with its
+/// own definition and uses, so each link ties its definition to its
+/// first source: as one template every definition would be written early
+/// (none sharing a register with any use), more registers than x86 has
+/// for the long chains of x25519 and nistec. The flags pass from one
+/// instruction to the next (nothing between them writes flags: the
+/// parallel moves of the ties and the spill code are moves). Empty when
+/// inst is not such a chain.
+fn x86_split(inst: Inst) -> List[Inst] {
+  let lines = inst.text.replace("\n\t", "\n").split("\n")
+  if lines.len() < 2 {
+    return []
+  }
+  var has_adc = false
+  for l in lines {
+    let m = l.split(" ")[0]
+    if !(m is "adds" | "adcs" | "adc" | "subs" | "sbcs" | "sbc" | "cmp" | "cmn" | "cset") {
+      return []
+    }
+    has_adc = has_adc || m is "adcs" | "adc" | "sbcs" | "sbc"
+    if m == "cmp" && !(l.ends_with(", #1") || l == "cmp xzr, xzr") {
+      return []
+    }
+    if m == "cmn" && l != "cmn xzr, xzr" {
+      return []
+    }
+    if m == "cset" && !(l.ends_with(", cs") || l.ends_with(", cc")) {
+      return []
+    }
+  }
+  if !has_adc {
+    return []
+  }
+  var sub = false
+  for l in lines {
+    sub = sub || l.starts_with("subs ") || l.starts_with("sbcs ") || l.starts_with("sbc ")
+  }
+  var out: List[Inst] = []
+  for (li, l) in lines.indexed() {
+    // the line's operands renumbered: its defs from 0, its uses from 0
+    var defs: List[Int] = []
+    var us: List[Int] = []
+    var dmap: Map[Int, Int] = {}
+    var umap: Map[Int, Int] = {}
+    var t = StrBuilder.new()
+    let lb = l.bytes()
+    var i = 0
+    var from = 0
+    while i < lb.len() {
+      if lb[i] != '$' {
+        i += 1
+        continue
+      }
+      var j = i + 1
+      var w = ""
+      if j < lb.len() && lb[j] == 'w' {
+        w = "w"
+        j += 1
+      }
+      if j >= lb.len() || !(lb[j] == 'u' || lb[j] == 'd') {
+        i += 1
+        continue
+      }
+      let isu = lb[j] == 'u'
+      let (k, end) = operand_num(lb, j + 1)
+      t.write(l[from..i])
+      if isu {
+        if !umap.contains(k) {
+          umap[k] = us.len()
+          us.push(inst.us[k])
+        }
+        t.write("$${w}u${umap.get(k) ?? 0}")
+      } else {
+        if !dmap.contains(k) {
+          dmap[k] = defs.len()
+          defs.push(inst.defs[k])
+        }
+        t.write("$${w}d${dmap.get(k) ?? 0}")
+      }
+      i = end
+      from = i
+    }
+    t.write(l[from..lb.len()])
+    var text = t.freeze()
+    if text.starts_with("cmp ") || text.starts_with("cmn ") {
+      // the carry's setup, which depends on the instruction after it
+      let nx = if li + 1 < lines.len() { lines[li + 1] } else { "" }
+      let k = if nx.starts_with("sbc") { "sbc" } else { "adc" }
+      text = "x86setup ${k}, ${text.replace(" ", ", ").replace(",,", ",")}"
+    } else if text.starts_with("cset ") {
+      // the carry of the chain's adds and adcs, or its borrow
+      text = "x86kind ${if sub { "sub" } else { "add" }}\n${text}"
+    }
+    out.push(Inst{kind: K_PLAIN, text: text, defs: defs, us: us, line: inst.line, inl: inst.inl, keep: inst.keep})
+  }
+  out
+}
+
+/// Carries ARM's C flag through x86 lines (decision 0254): arm64 has one
+/// carry, which adcs reads as a carry and sbcs as a carry too (a + ~b +
+/// C), while x86's CF is the carry after add and adc but the borrow (not
+/// C) after sub, sbb, cmp and neg. inv says CF holds not C on entry; an
+/// adc reading an inverted CF, or an sbb reading a plain one, gets a cmc
+/// before it. The lines and inv after them.
+fn x86_carry_polarity(lines: List[Str], inv0: Bool) -> (List[Str], Bool) {
+  var out: List[Str] = []
+  var inv = inv0
+  for l in lines {
+    let m = l.split(" ")[0]
+    if m.starts_with("adc") {
+      if inv {
+        out.push("cmc")
+      }
+      inv = false
+    } else if m.starts_with("sbb") {
+      if !inv {
+        out.push("cmc")
+      }
+      inv = true
+    } else if m.starts_with("add") || m.starts_with("lock") || m == "clc" || m == "stc" || m == "btq" {
+      // an add's CF is C; the setups (x86_carry_setup) set CF for the
+      // instruction after them, whose polarity they already took (a cmc
+      // there when it is an sbb)
+      inv = false
+    } else if m == "cmc" {
+      inv = !inv
+    } else if m.starts_with("sub") || m.starts_with("cmp") || m.starts_with("neg") {
+      inv = true
+    }
+    out.push(l)
+  }
+  (out, inv)
+}

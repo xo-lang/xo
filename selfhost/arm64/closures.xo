@@ -107,7 +107,7 @@ fn (var g: G) env_drop(fi: Int) -> Str {
   }
   let sym = g.helper_label("envdrop")
   g.helped[key] = sym
-  var b: List[Str] = ["// envdrop ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
+  var b: List[Str] = ["${g.cmt()} envdrop ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
   var ls: List[Leaf] = []
   for (i, c) in g.m.funcs[fi].captures.indexed() {
     let (off, _) = g.capture_words(fi, i)
@@ -130,7 +130,7 @@ fn (var g: G) env_share(fi: Int) -> Str {
   }
   let sym = g.helper_label("envshare")
   g.helped[key] = sym
-  var b: List[Str] = ["// envshare ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
+  var b: List[Str] = ["${g.cmt()} envshare ${g.m.funcs[fi].name}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
   var ls: List[Leaf] = []
   for (i, c) in g.m.funcs[fi].captures.indexed() {
     let (off, _) = g.capture_words(fi, i)
@@ -327,7 +327,12 @@ fn (var g: G) eq_helper(t: Int) -> Str {
   let yes = g.helper_label("eq_yes")
   let no = g.helper_label("eq_no")
   let done = g.helper_label("eq_done")
-  var b: List[Str] = ["// eq ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
+  var b: List[Str] = ["${g.cmt()} eq ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"]
+  if g.x86 {
+    g.x86_eq_body(b, sym, t, yes, no, done)
+    g.helpers.push(b.join(""))
+    return sym
+  }
   var frame = 32
   let k = g.kind(t)
   match k {

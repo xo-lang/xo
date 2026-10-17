@@ -1,0 +1,968 @@
+// x86_64 emission (decision 0254 stage 2): the frame, the prologue and
+// epilogue, the x86 templates retarget wrote with their spilled operands
+// reloaded and stored, the parallel moves, the branches and calls, and
+// the out of line fault stubs, as emit.xo does for arm64.
+//
+// The frame (System V): the return address, then rbp's old value at
+// rbp; below it, from rsp (16 byte aligned), the stack arguments of calls,
+// the $OUT slot, the spill slots, the callee saved registers, and the
+// memory of by reference arguments; rbp = rsp + size. A leaf makes no
+// frame (its fault stubs make one before their call).
+
+/// The x86_64 calling convention of Xo functions: the arguments in rdi,
+/// rsi, rdx, rcx, r8, r9 and xmm0 to xmm7, then the stack; a system call's
+/// (vfix -2, retarget) in rdi, rsi, rdx, r10, r8, r9 and its number in rax.
+fn (g: G) x86_call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
+  let gp = if vfix == -2 { [7, 6, 2, 10, 8, 9] } else { [7, 6, 2, 1, 8, 9] }
+  var out: List[Loc] = []
+  var ngp = 0
+  var nfp = 0
+  var nst = 0
+  for (k, a) in srcs.indexed() {
+    let fp = a.kind == S_REG && g.fp[a.v]
+    if vfix == -2 && k == 6 {
+      out.push(Loc{reg: XR_AX, slot: 0})
+    } else if fp && nfp < 8 {
+      out.push(Loc{reg: FP_BASE + nfp, slot: 0})
+      nfp += 1
+    } else if !fp && ngp < gp.len() {
+      out.push(Loc{reg: gp[ngp], slot: 0})
+      ngp += 1
+    } else {
+      out.push(Loc{reg: -1, slot: nst})
+      nst += 1
+    }
+  }
+  out
+}
+
+/// The results of an Xo function on x86_64: rax, rdx (C's two), then
+/// rcx, rsi, rdi, r8, r9, r10, and xmm0 to xmm7; past them the stack
+/// argument area.
+fn (g: G) x86_res_locs(srcs: List[Src]) -> List[Loc] {
+  let gp = [0, 2, 1, 6, 7, 8, 9, 10]
+  var out: List[Loc] = []
+  var ngp = 0
+  var nfp = 0
+  var nst = 0
+  for a in srcs {
+    let fp = a.kind == S_REG && g.fp[a.v]
+    if fp && nfp < 8 {
+      out.push(Loc{reg: FP_BASE + nfp, slot: 0})
+      nfp += 1
+    } else if !fp && ngp < gp.len() {
+      out.push(Loc{reg: gp[ngp], slot: 0})
+      ngp += 1
+    } else {
+      out.push(Loc{reg: -1, slot: nst})
+      nst += 1
+    }
+  }
+  out
+}
+
+/// The line that puts constant n in register r.
+fn x86_const_reg(n: Int, r: Int) -> Str {
+  if n == 0 {
+    return "\tmovl $0, ${x86_reg(r, 4)}\n"
+  }
+  if n > 0 && n <= 4294967295 {
+    return "\tmovl $${n}, ${x86_reg(r, 4)}\n"
+  }
+  if imm32(n) {
+    return "\tmovq $${n}, ${x86_reg(r, 8)}\n"
+  }
+  "\tmovabsq $${n}, ${x86_reg(r, 8)}\n"
+}
+
+fn x86_mem_ref(l: MLoc) -> Str {
+  "${l.off}(%rsp)"
+}
+
+/// The offset of incoming stack word k from rsp after the prologue.
+fn (g: G) x86_in_arg(k: Int) -> Int {
+  if g.fr.leaf {
+    return 8 + 8 * k
+  }
+  g.fr.size + 16 + 8 * k
+}
+
+fn (var g: G) x86_emit() {
+  g.nfunc += 1
+  var fr = Frame{out_args: g.out_arg_bytes()}
+  var calls = false
+  var stubs = false
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      calls = calls || (inst.kind == K_CALL && !inst.tail) || inst.frame
+      stubs = stubs || inst.has_fault
+    }
+  }
+  fr.leaf = !calls && g.saved.is_empty() && g.slots == 0 && !g.out && g.mem_bytes == 0
+  fr.out_off = fr.out_args
+  fr.spill_base = fr.out_off
+  if g.out {
+    fr.spill_base += 8
+  }
+  fr.save_base = fr.spill_base + 8 * g.slots
+  fr.mem_off = fr.save_base + 8 * g.saved.len()
+  fr.size = align16(fr.mem_off + g.mem_bytes)
+  if fr.leaf {
+    fr.size = 0
+  }
+  g.fr = fr
+  var b: List[Str] = []
+  b.push("# func ${g.f.name}\n")
+  g.func_header(b, g.fname(g.f.name), false)
+  var pads = false
+  for mb in g.order {
+    for inst in g.blocks[mb].insts {
+      pads = pads || inst.pad >= 0
+    }
+  }
+  g.cfi_start(b, pads)
+  g.x86_prologue(b)
+  for (bi, mb) in g.order.indexed() {
+    var next = -1
+    if bi + 1 < g.order.len() {
+      next = g.order[bi + 1]
+    }
+    b.push("${g.label(mb)}:\n")
+    g.cur = mb
+    let ins = g.blocks[mb].insts
+    g.ended = false
+    for (k, inst) in ins.indexed() {
+      if g.ended {
+        break
+      }
+      g.pos = g.blocks[mb].start + 4 * k
+      if g.m.debug_info && inst.line != 0 && (inst.line != g.dl_last || inst.inl != g.dl_last_inl) {
+        let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
+        g.dl_n += 1
+        b.push("${lab}:\n")
+        g.dl_rows.push("${lab} ${inst.line} ${inst.inl}")
+        g.dl_last = inst.line
+        g.dl_last_inl = inst.inl
+      }
+      g.x86_emit_inst(b, inst, next)
+      g.pos = -1
+    }
+  }
+  if g.fr.leaf && !g.stubs.is_empty() {
+    // a leaf function's fault stubs make a frame record before their call
+    b.push("\t.cfi_def_cfa %rbp, 16\n\t.cfi_offset %rbp, -16\n")
+  }
+  b.push(g.stubs.join(""))
+  if g.m.debug_info && !g.dl_rows.is_empty() {
+    let end = g.local("${g.lbl_prefix()}_dend")
+    b.push("${end}:\n")
+    var sites: List[Str] = []
+    for s in g.f.inl_sites {
+      sites.push("${s.callee}|${s.file}|${s.call_line}|${s.parent}")
+    }
+    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t")
+  }
+  b.push("\t.cfi_endproc\n")
+  if g.os == "linux" {
+    let fnm = g.fname(g.f.name)
+    b.push("\t.size ${fnm}, .-${fnm}\n")
+  }
+  let sites = g.sites + g.stub_sites
+  if !sites.is_empty() {
+    g.lsda(sites)
+  }
+  b.push("\n")
+  g.text.push(b.join(""))
+}
+
+fn (g: G) x86_prologue(var b: List[Str]) {
+  let fr = g.fr
+  if fr.leaf {
+    return
+  }
+  b.push("\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
+  if fr.size > 0 {
+    if fr.size >= 4096 {
+      // touch each page on the way down (the guard page)
+      var off = 4096
+      while off < fr.size {
+        b.push("\tsubq $4096, %rsp\n\tmovq $0, (%rsp)\n")
+        off += 4096
+      }
+      b.push("\tleaq -${fr.size}(%rbp), %rsp\n")
+    } else {
+      b.push("\tsubq $${fr.size}, %rsp\n")
+    }
+  }
+  for (k, r) in g.saved.indexed() {
+    let off = fr.save_base + 8 * k
+    b.push("\tmovq ${x86_reg(r, 8)}, ${off}(%rsp)\n")
+    b.push("\t.cfi_offset ${x86_reg(r, 8)}, ${off - fr.size - 16}\n")
+  }
+}
+
+/// Undoes the prologue (the epilogue but its `ret`).
+fn (g: G) x86_unframe(var b: List[Str]) {
+  let fr = g.fr
+  if fr.leaf {
+    return
+  }
+  for (k, r) in g.saved.indexed() {
+    b.push("\tmovq ${fr.save_base + 8 * k}(%rsp), ${x86_reg(r, 8)}\n")
+  }
+  b.push("\tleave\n")
+}
+
+fn (g: G) x86_call_moves(srcs: List[Src], vfix: Int) -> List[Move] {
+  var ms: List[Move] = []
+  for (k, l) in g.x86_call_locs(srcs, vfix).indexed() {
+    var dst = MLoc{reg: l.reg}
+    if l.reg < 0 {
+      dst = MLoc{reg: -1, base: "%rsp", off: 8 * l.slot}
+    }
+    ms.push(Move{dst: dst, src: g.msrc_of(srcs[k])})
+  }
+  ms
+}
+
+fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
+  if inst.kind == K_PLAIN {
+    g.x86_emit_plain(b, inst)
+  } else if inst.kind == K_PMOVE {
+    var ms: List[Move] = []
+    for (k, d) in inst.defs.indexed() {
+      let (l, ok) = g.vloc(d)
+      if !ok {
+        continue
+      }
+      ms.push(Move{dst: l, src: g.msrc_of(inst.srcs[k])})
+    }
+    g.x86_parallel(b, ms)
+  } else if inst.kind == K_CALL {
+    let locs = g.x86_call_locs(inst.srcs, inst.vfix)
+    g.x86_parallel(b, g.x86_call_moves(inst.srcs, inst.vfix))
+    // the register a C pointer call goes through: its last argument's
+    var target = ""
+    if inst.cptr {
+      let l = locs[locs.len() - 1]
+      if l.reg >= 0 {
+        target = x86_reg(l.reg, 8)
+      } else {
+        b.push("\tmovq ${8 * l.slot}(%rsp), %r11\n")
+        target = "%r11"
+      }
+    }
+    if inst.tail {
+      g.x86_unframe(b)
+      if inst.indirect {
+        b.push("\tjmpq *%rdi\n")
+      } else if inst.cptr {
+        b.push("\tjmpq *${target}\n")
+      } else {
+        b.push("\tjmp ${inst.sym}\n")
+      }
+      g.ended = true
+      return
+    }
+    var cs_to = ""
+    if inst.pad >= 0 {
+      let (from, to) = g.call_site_labels()
+      b.push("${from}:\n")
+      g.sites.push(CallSite{from: from, to: to, pad: g.pad_of(inst.pad)})
+      cs_to = to
+    }
+    if inst.indirect {
+      b.push("\tcallq *%rdi\n")
+    } else if inst.svc {
+      b.push("\tsyscall\n")
+    } else if inst.cptr {
+      b.push("\tcallq *${target}\n")
+    } else {
+      b.push("\tcallq ${inst.sym}\n")
+    }
+    if !cs_to.is_empty() {
+      b.push("${cs_to}:\n")
+    }
+    if inst.noret {
+      return
+    }
+    var ms: List[Move] = []
+    for (k, l) in g.x86_res_locs(regs(inst.defs)).indexed() {
+      var src = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        src = MLoc{reg: -1, base: "%rsp", off: 8 * l.slot}
+      }
+      let (d, ok) = g.vloc(inst.defs[k])
+      if ok {
+        ms.push(Move{dst: d, src: MSrc{kind: M_LOC, l: src}})
+      }
+    }
+    g.x86_parallel(b, ms)
+  } else if inst.kind == K_ENTRY {
+    var ms: List[Move] = []
+    for (k, l) in g.x86_call_locs(regs(inst.defs), -1).indexed() {
+      var src = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        src = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg(l.slot)}
+      }
+      let (d, ok) = g.vloc(inst.defs[k])
+      if ok {
+        ms.push(Move{dst: d, src: MSrc{kind: M_LOC, l: src}})
+      }
+    }
+    g.x86_parallel(b, ms)
+  } else if inst.kind == K_RET {
+    var ms: List[Move] = []
+    for (k, l) in g.x86_res_locs(inst.srcs).indexed() {
+      var dst = MLoc{reg: l.reg}
+      if l.reg < 0 {
+        dst = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg(l.slot)}
+      }
+      ms.push(Move{dst: dst, src: g.msrc_of(inst.srcs[k])})
+    }
+    g.x86_parallel(b, ms)
+    g.x86_unframe(b)
+    b.push("\tretq\n")
+  } else if inst.kind == K_JUMP {
+    let t = g.fwd(inst.targets[0])
+    if t != next {
+      b.push("\tjmp ${g.label(t)}\n")
+    }
+  } else if inst.kind == K_CONDBR {
+    g.x86_emit_condbr(b, inst, next)
+  } else if inst.kind == K_SWITCH {
+    g.x86_emit_switch(b, inst)
+  } else if inst.kind == K_TRAP {
+    b.push("\tud2\n")
+  }
+}
+
+fn (var g: G) x86_emit_condbr(var b: List[Str], inst: Inst, next: Int) {
+  let t = g.fwd(inst.targets[0])
+  let f = g.fwd(inst.targets[1])
+  var cond = inst.cond
+  if inst.cond == "cbnz" {
+    let r = g.x86_use_reg(b, inst.us[0])
+    b.push("\ttestq ${r}, ${r}\n")
+    cond = "ne"
+  } else if inst.cond == "tbz" || inst.cond == "tbnz" {
+    let r = g.x86_use_reg(b, inst.us[0])
+    b.push("\tbtq $${inst.bit}, ${r}\n")
+    cond = if inst.cond == "tbz" { "ae" } else { "b" }
+  } else {
+    g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, x86: true})
+  }
+  if t == f {
+    if t != next {
+      b.push("\tjmp ${g.label(t)}\n")
+    }
+    return
+  }
+  if t == next {
+    for l in x86_jcc(x86_inv(cond), g.label(f)) {
+      b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
+    }
+    return
+  }
+  for l in x86_jcc(cond, g.label(t)) {
+    b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
+  }
+  if f != next {
+    b.push("\tjmp ${g.label(f)}\n")
+  }
+}
+
+/// A jump through a table of 32 bit offsets (r10 is the instruction's
+/// clobber, r11 the scratch register).
+fn (var g: G) x86_emit_switch(var b: List[Str], inst: Inst) {
+  let lo = Int.parse(inst.text) ?? 0
+  let n = inst.targets.len() - 1
+  let idx = g.x86_use_reg(b, inst.us[0])
+  b.push("\tmovq ${idx}, %r11\n")
+  if lo != 0 {
+    b.push("\tsubq $${lo}, %r11\n")
+  }
+  let tab = g.local("${g.lbl_prefix()}_jt${g.blocks[g.cur].id}")
+  b.push("\tcmpq $${n - 1}, %r11\n")
+  b.push("\tja ${g.label(g.fwd(inst.targets[n]))}\n")
+  b.push("\tleaq ${tab}(%rip), %r10\n")
+  b.push("\tmovslq (%r10,%r11,4), %r11\n")
+  b.push("\taddq %r10, %r11\n\tjmpq *%r11\n")
+  var s: List[Str] = ["\t.p2align 2\n${tab}:\n"]
+  for t in inst.targets[0..n] {
+    s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
+  }
+  g.stubs.push(s.join(""))
+}
+
+/// The register name of use v, reloading a spilled one into the scratch
+/// register.
+fn (g: G) x86_use_reg(var b: List[Str], v: Int) -> Str {
+  if v == 0 {
+    b.push("\tmovl $0, %r11d\n")
+    return "%r11"
+  }
+  let (l, _) = g.vloc(v)
+  if l.reg >= 0 {
+    return x86_reg(l.reg, 8)
+  }
+  let r = if g.fp[v] { XF_SCRATCH } else { XR_SCRATCH }
+  b.push("\t${if g.fp[v] { "movsd" } else { "movq" }} ${x86_mem_ref(l)}, ${x86_reg(r, 8)}\n")
+  x86_reg(r, 8)
+}
+
+/// The register for the n-th reload or spilled result (of class fp): the
+/// scratch register first (unless the template uses it), then a caller
+/// saved register no value holds at the instruction, not one in taken.
+fn (g: G) x86_scratch(fp: Bool, n: Int, taken: List[Int], own: Bool) -> Int {
+  if n == 0 && !own {
+    return if fp { XF_SCRATCH } else { XR_SCRATCH }
+  }
+  if g.pos >= 0 && !g.occ_regs.is_empty() {
+    let span = [Rng{s: g.pos, e: g.pos + 3}]
+    let pool = if fp { g.fp_caller_t() } else { g.gp_caller_t() }
+    for r in pool {
+      if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() {
+        continue
+      }
+      if !overlaps_sorted(g.occ_regs[r], span) {
+        return r
+      }
+    }
+    for r in g.saved {
+      if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() {
+        continue
+      }
+      if !overlaps_sorted(g.occ_regs[r], span) {
+        return r
+      }
+    }
+  }
+  -1
+}
+
+/// A register the instruction does not use, borrowed for a spilled
+/// operand when none is free (x86_scratch -1): emit_plain saves it in the
+/// red zone below rsp (System V keeps 128 bytes there from signal
+/// handlers) and restores it after the instruction.
+fn x86_borrow(fp: Bool, taken: List[Int]) -> Int {
+  let pool = if fp { [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45] } else { [10, 9, 8, 1, 2, 6, 7, 0, 3, 12, 13, 14, 15] }
+  for r in pool {
+    if !taken.contains(r) {
+      return r
+    }
+  }
+  fault("amd64: no register to borrow for a spilled operand")
+}
+
+/// The operand reference at byte i of template tb: (width prefix, 'u' or
+/// 'd', number, index past it), or ("", 0, -1, i) for a `$` that is not
+/// one (an immediate).
+fn x86_operand(tb: Bytes, i: Int) -> (Str, Int, Int, Int) {
+  var j = i + 1
+  var w = ""
+  if j < tb.len() && (tb[j] == 'w' || tb[j] == 'h' || tb[j] == 'b') {
+    w = match tb[j] {
+      'w' => "w"
+      'h' => "h"
+      _ => "b"
+    }
+    j += 1
+  }
+  if j + 1 >= tb.len() + 1 || j >= tb.len() || !(tb[j] == 'u' || tb[j] == 'd') {
+    return ("", 0, -1, i)
+  }
+  let ud = Int(tb[j])
+  if j + 1 >= tb.len() || Int(tb[j + 1]) < 48 || Int(tb[j + 1]) > 57 {
+    return ("", 0, -1, i)
+  }
+  let (k, end) = operand_num(tb, j + 1)
+  (w, ud, k, end)
+}
+
+fn width_size(w: Str) -> Int {
+  match w {
+    "w" => 4
+    "h" => 2
+    "b" => 1
+    _ => 8
+  }
+}
+
+/// The mnemonics whose first (source) operand may be memory, when their
+/// other operand is not.
+fn x86_src_mem(m: Str) -> Bool {
+  if m.starts_with("cmov") || m.starts_with("movz") || m.starts_with("movs") && !(m is "movsd" | "movss") {
+    return true
+  }
+  m is "movq" | "movl" | "movw" | "movb" | "movsd" | "movss" | "addq" | "addl" | "adcq" | "subq" | "subl" | "sbbq" | "andq" | "andl" | "orq" | "orl" | "xorq" | "xorl" | "cmpq" | "cmpl" | "testq" | "testl" | "imulq" | "imull" | "addsd" | "subsd" | "mulsd" | "divsd" | "ucomisd" | "sqrtsd" | "cvtsi2sdq" | "cvtsi2ssq" | "cvttsd2siq" | "cvtsd2ss" | "cvtss2sd" | "popcntq" | "bsfq" | "bsrq"
+}
+
+/// Whether every occurrence of use k in template t is the source of an
+/// instruction that takes a memory source there (x86_src_mem): a spilled
+/// use is then its slot, not a reload.
+fn x86_mem_ok(t: Str, k: Int) -> Bool {
+  var seen = false
+  for l in t.split("\n") {
+    if !l.contains("$") {
+      continue
+    }
+    let sp = l.find(" ") ?? -1
+    if sp < 0 {
+      continue
+    }
+    let ops = x86_ops(l[sp + 1..l.len()])
+    for (i, o) in ops.indexed() {
+      if !x86_names_use(o, k) {
+        continue
+      }
+      seen = true
+      if i != 0 || ops.len() != 2 || ops[1].contains("(") || o.contains("(") || !x86_src_mem(l[0..sp]) {
+        return false
+      }
+    }
+  }
+  seen
+}
+
+/// The operands of an x86 line after its mnemonic, split at the commas
+/// outside parentheses.
+fn x86_ops(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let bs = s.bytes()
+  var depth = 0
+  var from = 0
+  for i in 0..bs.len() {
+    let c = bs[i]
+    if c == '(' {
+      depth += 1
+    } else if c == ')' {
+      depth -= 1
+    } else if c == ',' && depth == 0 {
+      out.push(s[from..i].trim())
+      from = i + 1
+    }
+  }
+  out.push(s[from..s.len()].trim())
+  out
+}
+
+/// Whether operand o names use k (as `$uK`, `$wuK`, `$huK`, `$buK`), in
+/// any position (an address's register too).
+fn x86_names_use(o: Str, k: Int) -> Bool {
+  let ob = o.bytes()
+  var i = 0
+  while i < ob.len() {
+    if ob[i] == '$' {
+      let (_, ud, n, end) = x86_operand(ob, i)
+      if n == k && ud == Int('u') {
+        return true
+      }
+      i = if end > i { end } else { i + 1 }
+      continue
+    }
+    i += 1
+  }
+  false
+}
+
+/// Expands an x86 template.
+fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
+  let t = inst.text
+  let tb = t.bytes()
+  let tn = tb.len()
+  let own_gp = t.contains("%r11")
+  let own_fp = t.contains("%xmm15")
+  // the tied definitions: read and written (retarget appended them to the
+  // uses past the template's)
+  var tied: List[Bool] = []
+  for d in inst.defs {
+    tied.push(inst.us.contains(d))
+  }
+  var borrowed: List[Int] = []
+  var use_reg: List[Int] = []
+  // a spilled use read as its slot (x86_mem_ok): the slot's reference
+  var use_mem: List[Str] = []
+  for _ in 0..imax(inst.us.len(), 10) {
+    use_reg.push(-1)
+    use_mem.push("")
+  }
+  var ngp = 0
+  var nfp = 0
+  var taken: List[Int] = []
+  for d in inst.defs {
+    let (l, ok) = g.vloc(d)
+    if ok && l.reg >= 0 {
+      taken.push(l.reg)
+    }
+  }
+  for u in inst.us {
+    if u != 0 {
+      let (l, ok) = g.vloc(u)
+      if ok && l.reg >= 0 {
+        taken.push(l.reg)
+      }
+    }
+  }
+  var i = 0
+  while i < tn {
+    if tb[i] != '$' {
+      i += 1
+      continue
+    }
+    let (_, ud, k, end) = x86_operand(tb, i)
+    if k < 0 || ud != Int('u') {
+      i += 1
+      continue
+    }
+    if use_reg[k] == -1 {
+      let v = inst.us[k]
+      if v == 0 {
+        // the zero register: zero in a register (only where a template
+        // reads it as a register)
+        let r = g.x86_scratch_b(b, false, ngp, taken, own_gp, borrowed)
+        ngp += 1
+        taken.push(r)
+        use_reg[k] = r
+        b.push("\tmovl $0, ${x86_reg(r, 4)}\n")
+      } else {
+        let (l, _) = g.vloc(v)
+        if l.reg >= 0 {
+          use_reg[k] = l.reg
+        } else if x86_mem_ok(t, k) {
+          use_reg[k] = -2
+          use_mem[k] = x86_mem_ref(l)
+        } else {
+          let fp = g.fp[v]
+          let r = if fp { g.x86_scratch_b(b, true, nfp, taken, own_fp, borrowed) } else { g.x86_scratch_b(b, false, ngp, taken, own_gp, borrowed) }
+          if fp {
+            nfp += 1
+          } else {
+            ngp += 1
+          }
+          taken.push(r)
+          b.push("\t${if fp { "movsd" } else { "movq" }} ${x86_mem_ref(l)}, ${x86_reg(r, 8)}\n")
+          use_reg[k] = r
+        }
+      }
+    }
+    i = end
+  }
+  var def_reg: List[Int] = []
+  var stores: List[Str] = []
+  for (k, d) in inst.defs.indexed() {
+    let (l, ok) = g.vloc(d)
+    if ok && l.reg >= 0 {
+      def_reg.push(l.reg)
+      continue
+    }
+    let fp = g.fp[d]
+    let r = if fp { g.x86_scratch_b(b, true, nfp, taken, own_fp, borrowed) } else { g.x86_scratch_b(b, false, ngp, taken, own_gp, borrowed) }
+    if fp {
+      nfp += 1
+    } else {
+      ngp += 1
+    }
+    taken.push(r)
+    def_reg.push(r)
+    if ok {
+      let mv = if fp { "movsd" } else { "movq" }
+      if tied[k] {
+        b.push("\t${mv} ${x86_mem_ref(l)}, ${x86_reg(r, 8)}\n")
+      }
+      stores.push("\t${mv} ${x86_reg(r, 8)}, ${x86_mem_ref(l)}\n")
+    }
+  }
+  var out = StrBuilder.new()
+  out.write("\t")
+  var from = 0
+  i = 0
+  while i < tn {
+    let c = tb[i]
+    if c == '\n' {
+      out.write(t[from..i])
+      // a label line has no tab
+      if i + 1 < tn && x86_label_at(tb, i + 1) {
+        out.write("\n")
+      } else {
+        out.write("\n\t")
+      }
+      i += 1
+      from = i
+      continue
+    }
+    if c != '$' {
+      i += 1
+      continue
+    }
+    if t[i..tn].starts_with("$OUT") {
+      out.write(t[from..i])
+      out.write("${g.fr.out_off}")
+      i += 4
+      from = i
+      continue
+    }
+    let (w, ud, k, end) = x86_operand(tb, i)
+    if k < 0 {
+      i += 1
+      continue
+    }
+    out.write(t[from..i])
+    if ud == Int('u') && use_reg[k] == -2 {
+      out.write(use_mem[k])
+    } else {
+      let r = if ud == Int('u') { use_reg[k] } else { def_reg[k] }
+      out.write(x86_reg(r, width_size(w)))
+    }
+    i = end
+    from = i
+  }
+  out.write(t[from..tn])
+  out.write("\n")
+  var text = out.freeze()
+  if text.starts_with("\t") && x86_label_at(tb, 0) {
+    text = text[1..text.len()]
+  }
+  // a copy into the same register is nothing
+  if def_reg.is_empty() || text != "\tmovq ${x86_reg(def_reg[0], 8)}, ${x86_reg(def_reg[0], 8)}\n" {
+    b.push(text)
+  }
+  // the spilled definitions' stores and the borrowed registers back
+  // before the fault's branch (moves: the flags stay)
+  for st in stores {
+    b.push(st)
+  }
+  for (k, br) in borrowed.indexed() {
+    b.push("\t${if br >= FP_BASE { "movsd" } else { "movq" }} ${-8 * (k + 1)}(%rsp), ${x86_reg(br, 8)}\n")
+  }
+  if inst.has_fault {
+    g.nstub += 1
+    let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
+    for jl in x86_jcc(inst.fcond, l) {
+      b.push(if jl.ends_with(":") { "${jl}\n" } else { "\t${jl}\n" })
+    }
+    var sb: List[Str] = []
+    sb.push("${l}:\n")
+    if g.m.debug_info && inst.line != 0 {
+      let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
+      g.dl_n += 1
+      sb.push("${lab}:\n")
+      g.dl_stub_rows.push("${lab} ${inst.line} ${inst.inl}")
+    }
+    if g.fr.leaf {
+      // a frame record for the unwinder
+      sb.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+    }
+    var ms = g.x86_call_moves(inst.fargs, -1)
+    g.x86_recover_operand(sb, inst, ms)
+    g.x86_parallel(sb, ms)
+    if inst.pad >= 0 {
+      let (from2, to2) = g.call_site_labels()
+      g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
+      sb.push("${from2}:\n\tcallq ${inst.ffn}\n${to2}:\n\tud2\n")
+    } else {
+      sb.push("\tcallq ${inst.ffn}\n\tud2\n")
+    }
+    g.stubs.push(sb.join(""))
+  }
+}
+
+/// x86_scratch, or a borrowed register (x86_borrow), saved in the red
+/// zone at -8 (k + 1) from rsp for the k-th borrowed.
+fn (g: G) x86_scratch_b(var b: List[Str], fp: Bool, n: Int, taken: List[Int], own: Bool, var borrowed: List[Int]) -> Int {
+  let r = g.x86_scratch(fp, n, taken, own)
+  if r >= 0 {
+    return r
+  }
+  let br = x86_borrow(fp, taken + borrowed)
+  borrowed.push(br)
+  b.push("\t${if fp { "movsd" } else { "movq" }} ${x86_reg(br, 8)}, ${-8 * borrowed.len()}(%rsp)\n")
+  br
+}
+
+/// Whether a label (`name:`, a numeric local label) starts at byte i.
+fn x86_label_at(tb: Bytes, i: Int) -> Bool {
+  var j = i
+  while j < tb.len() && tb[j] != '\n' && tb[j] != ' ' && tb[j] != '\t' {
+    j += 1
+  }
+  j > i && tb[j - 1] == ':' && (j == tb.len() || tb[j] == '\n')
+}
+
+/// Recomputes, in a fault stub, an operand of a checked add, sub, or neg
+/// whose register the result took (emit.xo recover_operand).
+fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
+  if inst.recover.is_empty() {
+    return
+  }
+  let (dl, ok) = g.vloc(inst.defs[0])
+  if !ok || dl.reg < 0 {
+    return
+  }
+  let d = x86_reg(dl.reg, 8)
+  let args = inst.fargs
+  var used: List[Int] = [dl.reg]
+  for (k, l) in g.x86_call_locs(args, -1).indexed() {
+    used.push(l.reg)
+    if args[k].kind == S_REG && args[k].v != 0 {
+      let (al, _) = g.vloc(args[k].v)
+      used.push(al.reg)
+    }
+  }
+  var tmp = 10
+  for r in [10, 9, 8, 1, 2, 6, 7, 0] {
+    if !used.contains(r) {
+      tmp = r
+      break
+    }
+  }
+  let tr = x86_reg(tmp, 8)
+  for k in [0, 2] {
+    if !g.clobbered(args, k, dl.reg) {
+      continue
+    }
+    if inst.recover == "neg" {
+      b.push("\tmovq ${d}, ${tr}\n\tnegq ${tr}\n")
+    } else if inst.recover == "add" {
+      let o = g.x86_other_reg(b, args, 2 - k)
+      b.push("\tmovq ${d}, ${tr}\n\tsubq ${o}, ${tr}\n")
+    } else if inst.recover == "sub" && k == 0 {
+      let o = g.x86_other_reg(b, args, 2)
+      b.push("\tmovq ${d}, ${tr}\n\taddq ${o}, ${tr}\n")
+    } else if inst.recover == "sub" {
+      let o = g.x86_other_reg(b, args, 0)
+      b.push("\tmovq ${o}, ${tr}\n\tsubq ${d}, ${tr}\n")
+    }
+    ms[k].src = MSrc{kind: M_LOC, l: MLoc{reg: tmp}}
+  }
+}
+
+/// Puts fault argument k in a register (or the scratch register).
+fn (g: G) x86_other_reg(var b: List[Str], args: List[Src], k: Int) -> Str {
+  let a = args[k]
+  if a.kind == S_IMM {
+    b.push(x86_const_reg(a.imm, XR_SCRATCH))
+    return "%r11"
+  }
+  let (l, _) = g.vloc(a.v)
+  if l.reg >= 0 {
+    return x86_reg(l.reg, 8)
+  }
+  b.push("\tmovq ${x86_mem_ref(l)}, %r11\n")
+  "%r11"
+}
+
+// ---------------------------------------------------------------------------
+// Parallel moves
+
+fn (g: G) x86_parallel(var b: List[Str], moves: List[Move]) {
+  var pending: List[Move] = []
+  var consts: List[Move] = []
+  for m in moves {
+    if m.src.kind != M_LOC {
+      consts.push(m)
+      continue
+    }
+    if same_loc(m.dst, m.src.l) {
+      continue
+    }
+    pending.push(m)
+  }
+  while !pending.is_empty() {
+    var progress = false
+    for (i, m) in pending.indexed() {
+      var read = false
+      for (j, o) in pending.indexed() {
+        if j != i && same_loc(o.src.l, m.dst) {
+          read = true
+          break
+        }
+      }
+      if !read {
+        g.x86_move(b, m.dst, m.src)
+        pending = pending[0..i] + pending[i + 1..pending.len()]
+        progress = true
+        break
+      }
+    }
+    if progress {
+      continue
+    }
+    let m = pending[0]
+    var tmp = MLoc{reg: XR_SCRATCH}
+    if m.dst.reg >= FP_BASE {
+      tmp = MLoc{reg: XF_SCRATCH}
+    }
+    g.x86_move(b, tmp, MSrc{kind: M_LOC, l: m.dst})
+    for j in 0..pending.len() {
+      if same_loc(pending[j].src.l, m.dst) {
+        pending[j].src.l = tmp
+      }
+    }
+  }
+  for m in consts {
+    g.x86_move(b, m.dst, m.src)
+  }
+}
+
+/// Puts a source that is not a location in register r.
+fn (g: G) x86_put(var b: List[Str], r: Int, src: MSrc) {
+  if src.kind == M_ZERO {
+    // a move, not xor: the flags may pass through a parallel move (a carry
+    // chain's ties, x86_split)
+    if r >= FP_BASE {
+      b.push("\txorpd ${x86_reg(r, 8)}, ${x86_reg(r, 8)}\n")
+    } else {
+      b.push("\tmovl $0, ${x86_reg(r, 4)}\n")
+    }
+  } else if src.kind == M_IMM {
+    if r >= FP_BASE {
+      b.push(x86_const_reg(src.imm, XR_SCRATCH))
+      b.push("\tmovq %r11, ${x86_reg(r, 8)}\n")
+      return
+    }
+    b.push(x86_const_reg(src.imm, r))
+  } else if src.kind == M_SYM {
+    b.push("\tleaq ${src.sym}(%rip), ${x86_reg(r, 8)}\n")
+  } else if src.kind == M_FRAME {
+    b.push("\tleaq ${g.fr.out_off}(%rsp), ${x86_reg(r, 8)}\n")
+  } else if src.kind == M_MEM {
+    b.push("\tleaq ${g.fr.mem_off + src.imm}(%rsp), ${x86_reg(r, 8)}\n")
+  }
+}
+
+fn (g: G) x86_move(var b: List[Str], dst: MLoc, src: MSrc) {
+  if src.kind != M_LOC {
+    if dst.reg >= 0 {
+      g.x86_put(b, dst.reg, src)
+      return
+    }
+    if src.kind == M_ZERO {
+      b.push("\tmovq $0, ${x86_mem_ref(dst)}\n")
+      return
+    }
+    g.x86_put(b, XR_SCRATCH, src)
+    b.push("\tmovq %r11, ${x86_mem_ref(dst)}\n")
+    return
+  }
+  let sl = src.l
+  if dst.reg >= 0 && sl.reg >= 0 {
+    let dfp = dst.reg >= FP_BASE
+    let sfp = sl.reg >= FP_BASE
+    if dfp && sfp {
+      b.push("\tmovapd ${x86_reg(sl.reg, 8)}, ${x86_reg(dst.reg, 8)}\n")
+    } else {
+      b.push("\tmovq ${x86_reg(sl.reg, 8)}, ${x86_reg(dst.reg, 8)}\n")
+    }
+  } else if dst.reg >= 0 {
+    b.push("\t${if dst.reg >= FP_BASE { "movsd" } else { "movq" }} ${x86_mem_ref(sl)}, ${x86_reg(dst.reg, 8)}\n")
+  } else if sl.reg >= 0 {
+    b.push("\t${if sl.reg >= FP_BASE { "movsd" } else { "movq" }} ${x86_reg(sl.reg, 8)}, ${x86_mem_ref(dst)}\n")
+  } else {
+    // memory to memory with no register: r11 may hold a parallel move
+    // cycle's saved value (arm64 has x16 for that and x17 for this; a
+    // pop to an rsp relative address computes it after the increment, so
+    // both offsets are rsp's before the push)
+    b.push("\tpushq ${x86_mem_ref(sl)}\n\tpopq ${x86_mem_ref(dst)}\n")
+  }
+}

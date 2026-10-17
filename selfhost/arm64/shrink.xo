@@ -499,7 +499,8 @@ fn (g: G) tail_call(b: Int, k: Int) -> Bool {
       return false
     }
   }
-  if stack_words(g.abi_locs(c.srcs)) || stack_words(g.abi_locs(regs(c.defs))) {
+  // the arguments' locations (x86_64's differ from its results')
+  if stack_words(g.call_locs(c.srcs, -1)) || stack_words(g.abi_locs(regs(c.defs))) {
     return false
   }
   // the registers holding each result word, through the moves

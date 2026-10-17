@@ -36,6 +36,35 @@ fn is_callee(r: Int) -> Bool {
   (r >= 19 && r <= 28) || (r >= FP_BASE + 8 && r <= FP_BASE + 15)
 }
 
+// The target's lists (x86_64's, decision 0254: r11, xmm14 and xmm15 are
+// the emitter's, rsp and rbp the stack and frame pointers; System V
+// keeps no xmm register across a call).
+fn (g: G) gp_caller_t() -> List[Int] {
+  if g.x86 { [10, 9, 8, 1, 2, 6, 7, 0] } else { gp_caller() }
+}
+
+fn (g: G) gp_callee_t() -> List[Int] {
+  if g.x86 { [3, 12, 13, 14, 15] } else { gp_callee() }
+}
+
+fn (g: G) fp_caller_t() -> List[Int] {
+  if g.x86 { [40, 41, 42, 43, 44, 45, 39, 38, 37, 36, 35, 34, 33, 32] } else { fp_caller() }
+}
+
+fn (g: G) fp_callee_t() -> List[Int] {
+  if g.x86 { [] } else { fp_callee() }
+}
+
+fn (g: G) is_callee_t(r: Int) -> Bool {
+  if g.x86 { r == 3 || (r >= 12 && r <= 15) } else { is_callee(r) }
+}
+
+/// The locations of a function's parameters (the arguments' on x86_64,
+/// whose results go elsewhere).
+fn (g: G) param_locs(srcs: List[Src]) -> List[Loc] {
+  if g.x86 { g.x86_call_locs(srcs, -1) } else { g.abi_locs(srcs) }
+}
+
 /// A closed range of positions. Instruction i reads its uses at 4i, the
 /// registers a call clobbers die at 4i+1, and it writes its definitions
 /// at 4i+2 (at 4i when early).
@@ -393,7 +422,7 @@ fn (var g: G) regalloc() {
           }
         }
       } else if inst.kind == K_ENTRY {
-        for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+        for (k, l) in g.param_locs(regs(inst.defs)).indexed() {
           if l.reg >= 0 {
             push_int(fixed, inst.defs[k], l.reg)
           }
@@ -481,10 +510,10 @@ fn (var g: G) regalloc() {
   }
   // by priority, highest first; the order is by register before (stable)
   let by_prio = order.sort_by(fn(v) { -prio[v] })
-  var gp_c = gp_caller()
-  var gp_e = gp_callee()
-  var fp_c = fp_caller()
-  var fp_e = fp_callee()
+  var gp_c = g.gp_caller_t()
+  var gp_e = g.gp_callee_t()
+  var fp_c = g.fp_caller_t()
+  var fp_e = g.fp_callee_t()
   let lim = g.m.arm64_regs
   if lim > 0 {
     // the spill test ($XO_ARM64_REGS): few registers, most values spill
@@ -512,10 +541,10 @@ fn (var g: G) regalloc() {
     // a call clobbers every caller saved register (the full sets: the
     // spill test's shorter lists too)
     for c in calls {
-      for r in gp_caller() {
+      for r in g.gp_caller_t() {
         push_rng(occ, r, Rng{s: c, e: c})
       }
-      for r in fp_caller() {
+      for r in g.fp_caller_t() {
         push_rng(occ, r, Rng{s: c, e: c})
       }
     }
@@ -570,13 +599,13 @@ fn (var g: G) regalloc() {
       var chosen = -1
       for r0 in cands {
         var r = r0
-        if overlaps_sorted(occ[r], ranges[v]) || (nc && !is_callee(r)) {
+        if overlaps_sorted(occ[r], ranges[v]) || (nc && !g.is_callee_t(r)) {
           continue
         }
-        if is_callee(r) && !used_callee[r] {
+        if g.is_callee_t(r) && !used_callee[r] {
           // a callee saved register already saved before a fresh one
           for r2 in cands {
-            if is_callee(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) {
+            if g.is_callee_t(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) {
               r = r2
               break
             }
@@ -601,7 +630,7 @@ fn (var g: G) regalloc() {
         continue
       }
       g.loc[v] = Loc{reg: chosen, slot: 0}
-      if is_callee(chosen) && !used_callee[chosen] {
+      if g.is_callee_t(chosen) && !used_callee[chosen] {
         used_callee[chosen] = true
         ncallee += 1
       }
@@ -609,7 +638,7 @@ fn (var g: G) regalloc() {
     }
     // a frame past the reach of an sp relative ldr or str: allocate again
     // with x28 kept free, for the addresses of the far slots
-    if g.base != 0 || g.frame_bound(ncallee) <= MAX_FRAME {
+    if g.base != 0 || g.x86 || g.frame_bound(ncallee) <= MAX_FRAME {
       g.occ_regs = occ
       break
     }
@@ -842,12 +871,20 @@ fn (var g: G) loop_depth() {
 /// AAPCS64 locations of call operands: integer words to x0 to x7,
 /// floating point words to d0 to d7, the rest to 8 byte stack slots (reg
 /// -1, slot k is [sp + 8k] at the call, [x29 + 16 + 8k] in the callee).
-fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] { g.call_locs(srcs, -1) }
+fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
+  if g.x86 {
+    return g.x86_res_locs(srcs)
+  }
+  g.call_locs(srcs, -1)
+}
 
 /// abi_locs of a call whose arguments from index vfix on are the
 /// variadic ones of a C function on Apple arm64, which go on the stack
 /// (decision 0213); vfix -1 for none.
 fn (g: G) call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
+  if g.x86 {
+    return g.x86_call_locs(srcs, vfix)
+  }
   var out: List[Loc] = []
   var ngp = 0
   var nfp = 0

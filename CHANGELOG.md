@@ -9,6 +9,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - arm64: small fixed-size copies are loads and stores (no memcpy call),
   and a chain of subtractions with borrow is subs and sbcs: P-256 and
   TLS 1.2 handshakes 12% fewer instructions.
+- Xo builds for linux/amd64 with its own x86_64 backend and no C
+  toolchain: `xo build --backend=amd64` (decision 0254). All 182 native
+  goldens pass on linux/amd64, assembled and linked by Xo's own
+  assembler and ELF linker.
+
 - ML-KEM in the native TLS client costs less than half as much
   (bench/results/mlkem-client-2026-10-17.md): the hybrid handshake's
   ML-KEM part is 62% smaller on arm64 and 59% on LLVM, and

@@ -2291,7 +2291,8 @@ check is skipped and counted per module (`MODULE: contract fuzzing needs
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is
 reference counted instead of collected: arm64 on darwin/arm64 and
-linux/arm64 hosts, LLVM otherwise; `--backend=llvm` or `--backend=arm64`
+linux/arm64 hosts, LLVM otherwise; `--backend=llvm`, `--backend=arm64`, or
+`--backend=amd64` (Xo's own x86_64 backend for linux/amd64, decision 0254)
 picks one, and `--backend=go` with `--no-gc` is a usage error. After type
 checking and before any code generation, a check reports every construct,
 std API, or effect the native backends do not support as error `XO1201` at

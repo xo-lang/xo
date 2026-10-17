@@ -8,13 +8,13 @@ use std/crypto
 
 /// The objects of the assembly files srcs (ELF when elf, else Mach-O) by
 /// selfhost/macho, on up to jobs tasks, in the order of srcs.
-fn macho_objects(srcs: List[Str], elf: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
+fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
   let w = jobs.min(n)
   if w <= 1 {
     var out: List[Result[Bytes, Str]] = []
     for s in srcs {
-      out.push(assemble_one(s, elf))
+      out.push(assemble_one(s, elf, amd64))
     }
     return out
   }
@@ -29,7 +29,7 @@ fn macho_objects(srcs: List[Str], elf: Bool, jobs: Int) -> List[Result[Bytes, St
           if i >= n {
             break
           }
-          mine.push((i, assemble_one(srcs[i], elf)))
+          mine.push((i, assemble_one(srcs[i], elf, amd64)))
         }
         mine
       }))
@@ -50,7 +50,11 @@ fn macho_objects(srcs: List[Str], elf: Bool, jobs: Int) -> List[Result[Bytes, St
   out
 }
 
-fn assemble_one(src: Str, elf: Bool) -> Result[Bytes, Str] {
+fn assemble_one(src: Str, elf: Bool, amd64: Bool) -> Result[Bytes, Str] {
+  if amd64 {
+    // x86_64 ELF (decision 0254: the amd64 backend's text)
+    return macho.assemble_elf_amd64(src.bytes())
+  }
   if elf { macho.assemble_elf(src.bytes()) } else { macho.assemble(src.bytes()) }
 }
 
@@ -167,14 +171,14 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// macho_objects through the back-end cache (decision 0220 addendum): a
 /// part whose assembly the cache holds is not assembled again. A program
 /// of one file does not use the cache.
-fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int) {
+fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || srcs.len() < 2 {
-    return (macho_objects(srcs, elf, jobs), srcs.len())
+    return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
   }
   let id = self_id(os)
   if id.is_empty() {
-    return (macho_objects(srcs, elf, jobs), srcs.len())
+    return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
   }
   let keys = part_keys("xo backend v1 obj macho elf=${elf} ${id}", [], srcs, jobs)
   var out: List[Result[Bytes, Str]] = []
@@ -194,7 +198,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, jobs: Int)
     return (out, 0)
   }
   var n = 0
-  for (j, r) in macho_objects(msrcs, elf, jobs).indexed() {
+  for (j, r) in macho_objects(msrcs, elf, amd64, jobs).indexed() {
     let i = miss[j]
     out[i] = r
     match r {

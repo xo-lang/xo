@@ -179,7 +179,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "lowered" => "lowered"
     _ => ""
   }
-  if name.is_empty() {
+  if name.is_empty() || (b.soft_cpu && !(name is "u64_carry" | "u64_borrow" | "u64_adc" | "u64_adc_carry")) {
     return None
   }
   if name == "lowered" {

@@ -1,7 +1,8 @@
 # 0254: Xo's own x86_64 backend (selfhost/amd64)
 
-Status: Proposed (claimed 2026-10-17 by xo-fa; the lead's milestone
-"native x86_64 without clang", with Xo Lang 2)
+Status: Accepted (lead, 2026-10-17); stages 1, 2a and 4 implemented
+(xo-fa and Xo Lang 2), stage 3 (crypto intrinsics) and 2b (the module
+split) next
 
 ## Context
 
@@ -184,7 +185,36 @@ beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
 ## Consequences
 
-To be filled in as stages land.
+Stage 2a landed 2026-10-17: `xo build --backend=amd64` builds for
+linux/amd64 (from any host; on a linux/amd64 host it links). All 182
+goldens pass on linux/amd64 (Docker, emulated), and with no C toolchain
+(XO_CC and XO_CLANG set to /bin/false): a no-libc program is assembled
+by selfhost/macho's x86-64 assembler (stage 1) and linked by elflink's
+static x86-64 link (stage 4); the arm64 output is byte identical (the
+arm64 assembly of every golden and selfhost/xo for darwin and linux, 366
+builds, against the merge base). What it took beyond the plan, in
+knowledgebase/gotchas/amd64-retarget-semantic-gaps.md:
+
+- the x86 sdiv branches around idiv for 0 and -1 (arm64's sdiv does not
+  trap, and the front half speculates divisions);
+- a spilled source operand is used from its slot where x86 takes a
+  memory source, and when no register is free at an instruction one is
+  borrowed through the red zone below rsp;
+- carry chains are cut into one instruction per link (x86_split), as one
+  template they needed more registers than x86 has;
+- memory to memory parallel moves are push and pop (r11 may hold a move
+  cycle's value);
+- shrink.xo's tail call test takes the arguments' locations (call_locs),
+  which on x86 differ from the results';
+- the SSA builder lowers only cpu.xo's carry arithmetic for amd64
+  (Builder.soft_cpu); AES, SHA-256 and carry-less multiply run their Xo
+  bodies until stage 3.
+
+Not yet: darwin/amd64 and windows/amd64 (Mach-O and PE, stage 4's
+rest), shrink wrapping, DWARF variable locations (debug_info is off for
+amd64), the per-function cache, native x86 selection where the
+translation costs (the bench/perf comparison with LLVM, the lead's third
+condition).
 
 - Stage 1 landed (Xo Lang 2, 2026-10-17): selfhost/macho enc_amd64.xo
   (the encoder) and asm_amd64.xo (the assembler, with amd64 paths in

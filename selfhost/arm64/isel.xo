@@ -29,6 +29,16 @@ fn (var g: G) function(fi: Int) {
   g.live_dce()
   g.select_compares()
   g.hoist_consts()
+  if g.x86 {
+    // x86_64 (decision 0254): each branch keeps its compare (no reused
+    // flags), no shrink wrapping yet; the templates become x86
+    g.place_latches()
+    g.mark_tails()
+    g.x86_retarget()
+    g.regalloc()
+    g.x86_emit()
+    return
+  }
   g.reuse_flags()
   g.place_latches()
   g.mark_tails()
@@ -846,7 +856,8 @@ fn (var g: G) instr(v: Int) {
 /// where the target has no such operand (the amd64 retarget, decision
 /// 0254, would pay a mov and a ror into a temporary).
 fn (g: G) logic_ror() -> Bool {
-  true
+  // not on x86_64: no rotated operand (decision 0254)
+  !g.x86
 }
 
 /// For an operand c of a 64 bit logical operation that is a rotation of

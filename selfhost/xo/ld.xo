@@ -132,9 +132,9 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
 /// xo_tz_table returns to std/native/llrt/tzhost.xo), as
 /// assembly for selfhost/macho (Mach-O, or ELF for goos linux); the path
 /// of the object.
-fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str) -> Str ! FsErr {
+fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str, goarch: Str) -> Str ! FsErr {
   if goos == "linux" {
-    return tz_object_elf(os, dir, sel)
+    return tz_object_elf(os, dir, sel, goarch == "amd64")
   }
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
@@ -183,7 +183,7 @@ fn tz_object(os: Os, dir: Str, sel: TZSel, goos: Str) -> Str ! FsErr {
 /// tz_object's ELF assembly: the same symbols without the underscore,
 /// `.L` labels, the names in .rodata and the table of pointers in
 /// .data.rel.ro.
-fn tz_object_elf(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
+fn tz_object_elf(os: Os, dir: Str, sel: TZSel, amd64: Bool) -> Str ! FsErr {
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
   b.write_str("\t.section .rodata\n\t.globl xo_tz_mode\n\t.p2align 3\nxo_tz_mode:\n\t.quad ${sel.mode}\n")
@@ -216,8 +216,13 @@ fn tz_object_elf(os: Os, dir: Str, sel: TZSel) -> Str ! FsErr {
   b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
   // the table of tz_object's Mach-O form
   b.write_str("\t.p2align 3\n.Lxo_tzt:\n\t.quad ${sel.mode}\n\t.quad xo_tz_zip\n\t.quad ${zip.len()}\n\t.quad xo_tz_blobs\n")
-  b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 2\nxo_tz_table:\n\tadrp x0, .Lxo_tzt\n\tadd x0, x0, :lo12:.Lxo_tzt\n\tret\n")
-  let obj = match macho.assemble_elf(b.freeze()) {
+  if amd64 {
+    b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 4\nxo_tz_table:\n\tleaq .Lxo_tzt(%rip), %rax\n\tretq\n")
+  } else {
+    b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 2\nxo_tz_table:\n\tadrp x0, .Lxo_tzt\n\tadd x0, x0, :lo12:.Lxo_tzt\n\tret\n")
+  }
+  let src = b.freeze()
+  let obj = match if amd64 { macho.assemble_elf_amd64(src) } else { macho.assemble_elf(src) } {
     Ok(o) => o
     Err(e) => fault("the zone data does not assemble: ${e}")
   }

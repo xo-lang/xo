@@ -1,0 +1,524 @@
+// x86_64's generated helpers and trampolines (decision 0254 stage 2):
+// the reference counting and equality helpers (rc.xo, closures.xo), the
+// system call trampolines, the task switch and thread locals (sched.xo,
+// whose x86_64 bodies are the LLVM emitter's, selfhost/llvm sched.xo),
+// xo_entry, and the C ABI exports, as x86 text. They take their words
+// in the x86_64 convention (x86_call_locs: rdi, rsi, rdx, rcx, r8, r9,
+// then the stack); r11 is their scratch register, rax the object of an
+// inline count, rbx a base kept across calls (x19 on arm64).
+
+use github.com/xo-lang/xo/selfhost/ssa
+
+/// The integer argument registers.
+fn x86_arg(k: Int) -> Str { ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"][k] }
+
+/// The comment leader of the target's assembly.
+fn (g: G) cmt() -> Str {
+  if g.x86 { "#" } else { "//" }
+}
+
+/// A shared count's retain: a relaxed atomic decrement of the negative
+/// count.
+fn x86_atomic_inc(obj: Str) -> Str { "lock subq $1, (${obj})" }
+
+/// The code that retains the object at register obj (inc_text): it falls
+/// through when done, or returns when ret is set.
+fn x86_inc_text(obj: Str, lbl: Str, ret: Bool) -> Str {
+  if ret {
+    return "\tmovq (${obj}), %r11\n\ttestq %r11, %r11\n\tjs ${lbl}_sh\n\taddq $1, %r11\n\tmovq %r11, (${obj})\n\tretq\n" +
+      "${lbl}_sh:\n\tbtq $62, %r11\n\tjnc ${lbl}_ret\n\t${x86_atomic_inc(obj)}\n${lbl}_ret:\n\tretq\n"
+  }
+  "\tmovq (${obj}), %r11\n\ttestq %r11, %r11\n\tjns ${lbl}_loc\n\tbtq $62, %r11\n\tjnc ${lbl}_inc\n\t${x86_atomic_inc(obj)}\n\tjmp ${lbl}_inc\n" +
+    "${lbl}_loc:\n\taddq $1, %r11\n\tmovq %r11, (${obj})\n${lbl}_inc:\n"
+}
+
+/// The code that releases the object at register obj (dec_text): to free
+/// at the last reference, else to done (or a return, when done is empty).
+fn x86_dec_text(obj: Str, lbl: Str, free: Str, done: Str) -> Str {
+  let end = if done.is_empty() { "retq" } else { "jmp ${done}" }
+  "\tmovq (${obj}), %r11\n\tcmpq $1, %r11\n\tjle ${lbl}_slow\n\tsubq $1, %r11\n\tmovq %r11, (${obj})\n\t${end}\n" +
+    "${lbl}_slow:\n\tje ${free}\n\tbtq $62, %r11\n\tjnc ${lbl}_kept\n\tlock addq $1, (${obj})\n\tje ${free}\n${lbl}_kept:\n\t${end}\n"
+}
+
+/// The code that marks the object at register obj shared (mark_text).
+fn x86_mark_text(obj: Str, done: Str) -> Str {
+  "\tmovq (${obj}), %r11\n\tcmpq $0, %r11\n\tjle ${done}\n\tnegq %r11\n\tmovq %r11, (${obj})\n"
+}
+
+/// The body of rc_helper's kind helper of t on x86_64.
+fn (var g: G) x86_rc_body(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
+  match g.kind(t) {
+    Func => {
+      // rdi the code, rsi the environment
+      b.push("\ttestq %rsi, %rsi\n\tjz ${sym}_none\n")
+      if kind == "dup" {
+        b.push(x86_inc_text("%rsi", sym, true))
+      } else if kind == "drop" {
+        b.push(x86_dec_text("%rsi", sym, "${sym}_free", ""))
+        b.push("${sym}_free:\n\tmovq %rsi, %rdi\n\tmovq 8(%rdi), %rsi\n\tjmp ${g.sym("xo_x_obj_rc_defer_n")}\n")
+      } else if kind == "share" {
+        b.push(x86_mark_text("%rsi", "${sym}_none"))
+        b.push("\tmovq %rsi, %rdi\n\tmovq 16(%rdi), %rsi\n\tjmp ${g.sym("xo_x_obj_rc_defer_n")}\n")
+      }
+      b.push("${sym}_none:\n\tretq\n")
+    }
+    Box => {
+      if kind == "dup" {
+        b.push(x86_inc_text("%rdi", sym, true))
+      } else if kind == "drop" {
+        b.push(x86_dec_text("%rdi", sym, "${sym}_free", ""))
+        b.push("${sym}_free:\n\tleaq ${g.box_drop(t)}(%rip), %rsi\n\tjmp ${g.sym("xo_x_obj_rc_defer_n")}\n")
+      } else if kind == "share" {
+        b.push(x86_mark_text("%rdi", "${sym}_ret"))
+        if g.heap(g.m.types[t].elems[0]) {
+          b.push("\tleaq ${g.box_share(t)}(%rip), %rsi\n\tjmp ${g.sym("xo_x_obj_rc_defer_n")}\n")
+        }
+        b.push("${sym}_ret:\n\tretq\n")
+      }
+    }
+    Handle => {
+      if kind == "dup" {
+        b.push(x86_inc_text("%rdi", sym, true))
+      } else if kind == "drop" {
+        let free = g.local("xo_${g.ns}${kind}${id}_free")
+        b.push(x86_dec_text("%rdi", sym, free, ""))
+        b.push("${free}:\n\tjmp ${g.sym("xo_x_obj_h_free")}\n")
+      } else {
+        b.push("\tretq\n")
+      }
+    }
+    Str | List => {
+      if kind == "dup" {
+        b.push(x86_inc_text("%rdi", sym, true))
+      } else if kind == "share" {
+        let ret = g.local("xo_${g.ns}${kind}${id}_ret")
+        b.push(x86_mark_text("%rdi", ret))
+        if g.kind(t) == ssa.Kind.List {
+          let et = g.m.types[t].elems[0]
+          if g.heap(et) {
+            b.push(x86_const_reg(g.esize(et), 6))
+            b.push("\tleaq ${g.elem_helper("share", et)}(%rip), %rdx\n")
+            b.push("\tjmp ${g.sym("xo_x_obj_rl_share")}\n")
+          }
+        }
+        b.push("${ret}:\n\tretq\n")
+      } else {
+        let free = g.local("xo_${g.ns}${kind}${id}_free")
+        b.push(x86_dec_text("%rdi", sym, free, ""))
+        b.push("${free}:\n")
+        if g.kind(t) == ssa.Kind.Str {
+          b.push("\tjmp ${g.sym("xo_x_obj_rc_free")}\n")
+        } else {
+          let et = g.m.types[t].elems[0]
+          b.push(x86_const_reg(g.esize(et), 6))
+          if g.heap(et) {
+            b.push("\tleaq ${g.elem_helper("drop", et)}(%rip), %rdx\n")
+          } else {
+            b.push("\txorl %edx, %edx\n")
+          }
+          b.push("\tjmp ${g.sym("xo_x_obj_rl_free_n")}\n")
+        }
+      }
+    }
+    _ => g.x86_agg_rc(b, kind, sym, id, t)
+  }
+}
+
+/// The dup, drop, or share helper of an enum, struct, or tuple (agg_rc):
+/// the value's words saved at base + 8k from rsp; the leaves' helpers get
+/// their words past the sixth at 8k from rsp.
+fn (var g: G) x86_agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
+  let n = g.nwords(t)
+  let x = g.m.types[t]
+  var all: List[Leaf] = []
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, all)
+      }
+    }
+  } else {
+    g.heap_leaves(t, 0, all)
+  }
+  var out = 0
+  for l in all {
+    out = imax(out, align16(8 * (g.leaf_words(l.t) - 6)))
+  }
+  let base = out
+  let frame = align16(base + 8 * n)
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tsubq $${frame}, %rsp\n")
+  for k in 0..n {
+    if k < 6 {
+      b.push("\tmovq ${x86_arg(k)}, ${base + 8 * k}(%rsp)\n")
+    } else {
+      b.push("\tmovq ${16 + 8 * (k - 6)}(%rbp), %r11\n\tmovq %r11, ${base + 8 * k}(%rsp)\n")
+    }
+  }
+  let done = g.local("xo_${g.ns}${kind}${id}_done")
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      var ls: List[Leaf] = []
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, ls)
+      }
+      if ls.is_empty() {
+        continue
+      }
+      let next = g.local("xo_${g.ns}${kind}${id}_v${vi}")
+      b.push("\tcmpq $${vi}, ${base}(%rsp)\n\tjne ${next}\n")
+      for (li, l) in ls.indexed() {
+        g.x86_leaf_call(b, kind, l, "%rsp", base, "${sym}_v${vi}l${li}")
+      }
+      b.push("\tjmp ${done}\n${next}:\n")
+    }
+  } else {
+    for (li, l) in all.indexed() {
+      g.x86_leaf_call(b, kind, l, "%rsp", base, "${sym}_l${li}")
+    }
+  }
+  b.push("${done}:\n\tleave\n\tretq\n")
+}
+
+/// Loads leaf l of the value saved at base from reg (rsp, or rbx for an
+/// element in place) and retains or releases it (leaf_call).
+fn (var g: G) x86_leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: Int, lbl: Str) {
+  let lk = g.kind(l.t)
+  if kind == "dup" && (lk is ssa.Kind.Str | ssa.Kind.List | ssa.Kind.Box | ssa.Kind.Handle) {
+    b.push("\tmovq ${base + 8 * l.off}(${reg}), %rax\n")
+    b.push(x86_inc_text("%rax", lbl, false))
+    return
+  }
+  if kind == "share" {
+    // out of line (helpers of the leaf types)
+  } else if lk == ssa.Kind.Func {
+    b.push("\tmovq ${base + 8 * (l.off + 1)}(${reg}), %rdi\n\ttestq %rdi, %rdi\n\tjz ${lbl}_done\n")
+    if kind == "dup" {
+      b.push(x86_inc_text("%rdi", lbl, false))
+      b.push("${lbl}_done:\n")
+      return
+    }
+    b.push(x86_dec_text("%rdi", lbl, "${lbl}_free", "${lbl}_done"))
+    b.push("${lbl}_free:\n\tmovq 8(%rdi), %rsi\n\tcallq ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
+    return
+  } else if lk == ssa.Kind.Box {
+    b.push("\tmovq ${base + 8 * l.off}(${reg}), %rdi\n")
+    b.push(x86_dec_text("%rdi", lbl, "${lbl}_free", "${lbl}_done"))
+    b.push("${lbl}_free:\n\tleaq ${g.box_drop(l.t)}(%rip), %rsi\n")
+    b.push("\tcallq ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
+    return
+  }
+  x86_load_call(b, g.rc_helper(kind, l.t), reg, base + 8 * l.off, g.leaf_words(l.t))
+}
+
+/// Calls sym with the n words at off from base as its integer arguments:
+/// past the sixth at 8k from rsp (load_call).
+fn x86_load_call(var b: List[Str], sym: Str, base: Str, off: Int, n: Int) {
+  for k in 6..imax(n, 6) {
+    b.push("\tmovq ${off + 8 * k}(${base}), %r11\n\tmovq %r11, ${8 * (k - 6)}(%rsp)\n")
+  }
+  // rdi last: it may be the base
+  var k = imin(n, 6) - 1
+  while k >= 0 {
+    b.push("\tmovq ${off + 8 * k}(${base}), ${x86_arg(k)}\n")
+    k -= 1
+  }
+  b.push("\tcallq ${sym}\n")
+}
+
+/// The element callback body (elem_helper) of t on x86_64: rdi points to
+/// the element.
+fn (var g: G) x86_elem_body(var b: List[Str], kind: Str, sym: Str, t: Int) {
+  if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
+    var ls: List[Leaf] = []
+    g.heap_leaves(t, 0, ls)
+    var small = true
+    for l in ls {
+      if g.leaf_words(l.t) > 6 {
+        small = false
+      }
+    }
+    if small {
+      // each heap leaf read from the element (its address in rbx)
+      b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tpushq %rbx\n\tsubq $8, %rsp\n\tmovq %rdi, %rbx\n")
+      for (li, l) in ls.indexed() {
+        g.x86_leaf_call(b, kind, l, "%rbx", 0, "${sym}_l${li}")
+      }
+      b.push("\tmovq -8(%rbp), %rbx\n\tleave\n\tretq\n\n")
+      return
+    }
+  }
+  let inner = g.rc_helper(kind, t)
+  let n = g.leaf_words(t)
+  if n > 6 {
+    let out = align16(8 * (n - 6))
+    b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tsubq $${out}, %rsp\n")
+    x86_load_call(b, inner, "%rdi", 0, n)
+    b.push("\tleave\n\tretq\n\n")
+    return
+  }
+  var k = n - 1
+  while k >= 0 {
+    b.push("\tmovq ${8 * k}(%rdi), ${x86_arg(k)}\n")
+    k -= 1
+  }
+  b.push("\tjmp ${inner}\n\n")
+}
+
+/// leaves_and_then on x86_64: the kind helper of each leaf of the words
+/// at hdr from rdi (kept in rbx), then then with the cell in rdi.
+fn (var g: G) x86_leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], hdr: Int, then: Str) {
+  let tail = if then.is_empty() { "\tretq\n\n" } else { "\tjmp ${then}\n\n" }
+  if ls.is_empty() {
+    b.push(tail)
+    return
+  }
+  var out = 0
+  for l in ls {
+    out = imax(out, align16(8 * (g.leaf_words(l.t) - 6)))
+  }
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tpushq %rbx\n\tsubq $${out + 8}, %rsp\n\tmovq %rdi, %rbx\n")
+  for l in ls {
+    let h = g.rc_helper(kind, l.t)
+    x86_load_call(b, h, "%rbx", hdr + 8 * l.off, g.leaf_words(l.t))
+  }
+  b.push("\tmovq %rbx, %rdi\n\tmovq -8(%rbp), %rbx\n\tleave\n${tail}")
+}
+
+/// The equality helper body (eq_helper) of t on x86_64: the two values'
+/// words in the arguments; rax 1 when equal.
+fn (var g: G) x86_eq_body(var b: List[Str], sym: Str, t: Int, yes: Str, no: Str, done: Str) {
+  let k = g.kind(t)
+  // rbx and r12 the two values' addresses; r13 to r15 the list loop's
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n\tpushq %rbx\n\tpushq %r12\n\tpushq %r13\n\tpushq %r14\n\tpushq %r15\n")
+  var frame = 8
+  match k {
+    Box => {
+      b.push("\tsubq $8, %rsp\n")
+      let et = g.m.types[t].elems[0]
+      if !g.has_float(et) {
+        b.push("\tcmpq %rsi, %rdi\n\tje ${yes}\n")
+      }
+      b.push("\tleaq 8(%rdi), %rbx\n\tleaq 8(%rsi), %r12\n")
+      g.x86_eq_at(b, et, "%rbx", "%r12", 0, no, false)
+    }
+    List => {
+      b.push("\tsubq $8, %rsp\n")
+      b.push("\tmovq 8(%rdi), %r13\n\tcmpq 8(%rsi), %r13\n\tjne ${no}\n")
+      let et = g.m.types[t].elems[0]
+      let es = g.esize(et)
+      if es == 0 {
+        b.push("\tjmp ${yes}\n")
+      } else {
+        let lp = g.helper_label("eq_loop")
+        b.push("\txorl %r14d, %r14d\n\tleaq ${LIST_HDR}(%rdi), %rbx\n\tleaq ${LIST_HDR}(%rsi), %r12\n")
+        b.push("${lp}:\n\tcmpq %r13, %r14\n\tje ${yes}\n")
+        g.x86_eq_at(b, et, "%rbx", "%r12", 0, no, g.kind(et) == ssa.Kind.Bool)
+        b.push("\taddq $${es}, %rbx\n\taddq $${es}, %r12\n\taddq $1, %r14\n\tjmp ${lp}\n")
+      }
+    }
+    Struct | Tuple | Enum => {
+      let n = g.nwords(t)
+      frame = align16(16 * n) + 8
+      b.push("\tsubq $${frame}, %rsp\n")
+      for w in 0..2 * n {
+        if w < 6 {
+          b.push("\tmovq ${x86_arg(w)}, ${8 * w}(%rsp)\n")
+        } else {
+          b.push("\tmovq ${16 + 8 * (w - 6)}(%rbp), %r11\n\tmovq %r11, ${8 * w}(%rsp)\n")
+        }
+      }
+      b.push("\tmovq %rsp, %rbx\n\tleaq ${8 * n}(%rsp), %r12\n")
+      g.x86_eq_at(b, t, "%rbx", "%r12", 0, no, false)
+    }
+    _ => g.fail("equality of `${g.tname(t)}`")
+  }
+  b.push("${yes}:\n\tmovl $1, %eax\n\tjmp ${done}\n${no}:\n\txorl %eax, %eax\n${done}:\n")
+  b.push("\tmovq -8(%rbp), %rbx\n\tmovq -16(%rbp), %r12\n\tmovq -24(%rbp), %r13\n\tmovq -32(%rbp), %r14\n\tmovq -40(%rbp), %r15\n\tleave\n\tretq\n\n")
+}
+
+/// Compares the values of type t at off from ra and rb and jumps to no
+/// when they differ (eq_at).
+fn (var g: G) x86_eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: Str, byte: Bool) {
+  let x = g.m.types[t]
+  match x.kind {
+    Unit | Cap => {}
+    Int | Bool => {
+      if byte {
+        b.push("\tmovzbl ${off}(${ra}), %r11d\n\tcmpb ${off}(${rb}), %r11b\n\tjne ${no}\n")
+      } else {
+        b.push("\tmovq ${off}(${ra}), %r11\n\tcmpq ${off}(${rb}), %r11\n\tjne ${no}\n")
+      }
+    }
+    Float => {
+      // unordered (NaN) is unequal
+      b.push("\tmovsd ${off}(${ra}), %xmm0\n\tucomisd ${off}(${rb}), %xmm0\n\tjne ${no}\n\tjp ${no}\n")
+    }
+    Str => {
+      b.push("\tmovq ${off}(${ra}), %rdi\n\taddq $16, %rdi\n\tmovq ${off + 8}(${ra}), %rsi\n")
+      b.push("\tmovq ${off}(${rb}), %rdx\n\taddq $16, %rdx\n\tmovq ${off + 8}(${rb}), %rcx\n")
+      b.push("\tcallq ${g.sym("xo_x_obj_str_eq")}\n\ttestl %eax, %eax\n\tjz ${no}\n")
+    }
+    List | Box => {
+      let h = g.eq_helper(t)
+      b.push("\tmovq ${off}(${ra}), %rdi\n\tmovq ${off}(${rb}), %rsi\n\tcallq ${h}\n\ttestq %rax, %rax\n\tjz ${no}\n")
+    }
+    Struct => {
+      for i in 0..x.fields.len() {
+        let (fo, _) = g.field_words(t, i)
+        g.x86_eq_at(b, x.fields[i].ty, ra, rb, off + 8 * fo, no, false)
+      }
+    }
+    Tuple => {
+      for i in 0..x.elems.len() {
+        let (fo, _) = g.field_words(t, i)
+        g.x86_eq_at(b, x.elems[i], ra, rb, off + 8 * fo, no, false)
+      }
+    }
+    Enum => {
+      b.push("\tmovq ${off}(${ra}), %r11\n\tcmpq ${off}(${rb}), %r11\n\tjne ${no}\n")
+      let end = g.helper_label("eq_tag")
+      for (vi, vr) in x.variants.indexed() {
+        var words = 0
+        for f in vr.fields {
+          words += g.nwords(f.ty)
+        }
+        if words == 0 {
+          continue
+        }
+        let next = g.helper_label("eq_var")
+        b.push("\tcmpq $${vi}, ${off}(${ra})\n\tjne ${next}\n")
+        for (fi, f) in vr.fields.indexed() {
+          let (po, _) = g.payload_words(t, vi, fi)
+          g.x86_eq_at(b, f.ty, ra, rb, off + 8 * po, no, false)
+        }
+        b.push("\tjmp ${end}\n${next}:\n")
+      }
+      b.push("${end}:\n")
+    }
+    _ => g.fail("equality of `${x.name}`")
+  }
+}
+
+/// The system call trampolines on linux/amd64 (trampolines): rt_sigreturn
+/// (15), clone (56: flags rdi, stack rsi, parent tid rdx, child tid r10,
+/// tls r8), and the unwinder's save and resume (the LLVM emitter's).
+fn (g: G) x86_trampolines(var out: List[Str]) {
+  if g.restorer_ref {
+    out.push("${g.tramp_def("xo_sigreturn")}\t.p2align 4\n${g.tramp("xo_sigreturn")}:\n\tmovl $15, %eax\n\tsyscall\n")
+  }
+  if g.clone_ref {
+    // rt.sys_clone(flags, stack, parent tid, tls): the arm64 order is
+    // flags, stack, parent tid, tls, child tid (= parent tid); x86_64's
+    // clone takes flags, stack, parent tid, child tid, tls. The child
+    // pops the function and its argument, calls it, and exits (60).
+    out.push("${g.tramp_def("xo_clone")}\t.p2align 4\n${g.tramp("xo_clone")}:\n\tmovq %rcx, %r8\n\tmovq %rdx, %r10\n\tmovl $56, %eax\n\tsyscall\n\ttestq %rax, %rax\n\tjz ${g.local("xo_clone_child")}\n\tretq\n" +
+      "${g.local("xo_clone_child")}:\n\tpopq %r11\n\tpopq %rdi\n\txorl %ebp, %ebp\n\tcallq *%r11\n\txorl %edi, %edi\n\tmovl $60, %eax\n\tsyscall\n\tud2\n")
+    out.push("${g.tramp_def("xo_unwind_save")}\t.p2align 4\n${g.tramp("xo_unwind_save")}:\n\t${x86_unwind_save().join("\n\t")}\n")
+    out.push("${g.tramp_def("xo_unwind_resume")}\t.p2align 4\n${g.tramp("xo_unwind_resume")}:\n\t${x86_unwind_resume().join("\n\t")}\n")
+  }
+}
+
+/// selfhost/llvm sched.xo's xo_unwind_save on x86_64: the callee saved
+/// registers, sp past the return, and the return address by DWARF number.
+fn x86_unwind_save() -> List[Str] {
+  ["movq %rbx, 24(%rdi)", "movq %rbp, 48(%rdi)", "movq %r12, 96(%rdi)", "movq %r13, 104(%rdi)", "movq %r14, 112(%rdi)", "movq %r15, 120(%rdi)", "leaq 8(%rsp), %rax", "movq %rax, 56(%rdi)", "movq (%rsp), %rax", "movq %rax, 128(%rdi)", "retq"]
+}
+
+fn x86_unwind_resume() -> List[Str] {
+  ["movq %rdi, %r11", "movq 24(%r11), %rbx", "movq 48(%r11), %rbp", "movq 96(%r11), %r12", "movq 104(%r11), %r13", "movq 112(%r11), %r14", "movq 120(%r11), %r15", "movq 0(%r11), %rax", "movq 8(%r11), %rdx", "movq 56(%r11), %rsp", "jmpq *768(%r11)"]
+}
+
+/// The task switch functions and thread locals on linux/amd64 (sched_asm,
+/// with selfhost/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
+/// the x87 control word; a new fiber's argument in rbx, its function in
+/// r12).
+fn x86_sched_asm(split: Bool) -> Str {
+  var b: List[Str] = []
+  b.push("\t.text\n")
+  b.push(x86_sched_fn("xo_stack_switch", true, ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "retq"]))
+  if split {
+    b.push("\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n")
+  }
+  b.push(x86_sched_fn("xo_fiber_entry", false, ["movq %rbx, %rdi", "callq *%r12", "ud2"]))
+  let tp = ["movq %fs:0, %rax", "leaq xo_tlocal@TPOFF(%rax), %rax"]
+  b.push(x86_sched_fn("xo_tlocal_get", true, tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
+  b.push(x86_sched_fn("xo_tlocal_set", true, tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
+  b.push(x86_sched_fn("xo_tlocal_addr", true, tp + ["retq"]))
+  b.push("\t.section .tdata,\"awT\",@progbits\n\t.globl xo_tlocal\n\t.hidden xo_tlocal\n\t.p2align 3\n\t.type xo_tlocal, @tls_object\n\t.size xo_tlocal, 128\nxo_tlocal:\n")
+  b.push("\t.quad 0\n".repeat(16))
+  b.join("")
+}
+
+fn x86_sched_fn(name: Str, global: Bool, body: List[Str]) -> Str {
+  var b: List[Str] = []
+  if global {
+    b.push("\t.globl ${name}\n\t.hidden ${name}\n")
+  }
+  b.push("\t.type ${name}, @function\n\t.p2align 4\n${name}:\n")
+  for l in body {
+    b.push("\t${l}\n")
+  }
+  b.join("")
+}
+
+/// xo_entry on x86_64: Xo's main with zero words for its parameters.
+fn (var g: G) x86_entry(main: Int) {
+  var b: List[Str] = []
+  g.func_header(b, g.sym("xo_entry"), true)
+  b.push("\t.cfi_startproc\n\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
+  var ngp = 0
+  var nfp = 0
+  for p in g.m.funcs[main].blocks[0].params {
+    for fp in g.layout(g.m.funcs[main].values[p].ty) {
+      if fp {
+        if nfp < 8 {
+          b.push("\txorpd %xmm${nfp}, %xmm${nfp}\n")
+        }
+        nfp += 1
+      } else {
+        if ngp < 6 {
+          b.push("\txorl ${x86_reg([7, 6, 2, 1, 8, 9][ngp], 4)}, ${x86_reg([7, 6, 2, 1, 8, 9][ngp], 4)}\n")
+        }
+        ngp += 1
+      }
+    }
+  }
+  if ngp > 6 || nfp > 8 {
+    g.fail("main takes too many words")
+  }
+  b.push("\tcallq ${g.fname(g.m.funcs[main].name)}\n\tpopq %rbp\n\t.cfi_def_cfa %rsp, 8\n\tretq\n\t.cfi_endproc\n\n")
+  g.text.push(b.join(""))
+}
+
+/// The C ABI exports on x86_64 (exports): a jump to the function, or for
+/// a Str result a frame that stores the length (rdx) through the pointer
+/// after the parameters.
+fn (var g: G) x86_exports() {
+  for f in g.m.funcs {
+    if f.export.is_empty() {
+      continue
+    }
+    var b: List[Str] = []
+    g.func_header(b, g.sym(f.export), true)
+    if g.m.types[f.results[0]].kind != ssa.Kind.Str {
+      b.push("\tjmp ${g.fname(f.name)}\n\n")
+      g.text.push(b.join(""))
+      continue
+    }
+    var ngp = 0
+    for p in f.blocks[0].params {
+      if g.m.types[f.values[p].ty].kind != ssa.Kind.Float {
+        ngp += 1
+      }
+    }
+    if ngp >= 6 {
+      g.fail("the C ABI export ${f.export} takes too many words")
+    }
+    b.push("\t.cfi_startproc\n\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n\tpushq %rbx\n\tsubq $8, %rsp\n\t.cfi_offset %rbx, -24\n")
+    b.push("\tmovq ${x86_arg(ngp)}, %rbx\n\tcallq ${g.fname(f.name)}\n\tmovq %rdx, (%rbx)\n")
+    b.push("\tmovq -8(%rbp), %rbx\n\tleave\n\t.cfi_def_cfa %rsp, 8\n\tretq\n\t.cfi_endproc\n\n")
+    g.text.push(b.join(""))
+  }
+}

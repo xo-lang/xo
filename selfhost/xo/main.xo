@@ -182,8 +182,8 @@ fn main(os: Os) ! {
     build_go(os, ctx, o)?
     return
   }
-  if !(backend is "arm64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
-    fail(os, "--backend=${backend}: want arm64, llvm, or go for build, run, and test, or wasm for build")
+  if !(backend is "arm64" | "amd64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
+    fail(os, "--backend=${backend}: want arm64, amd64, llvm, or go for build, run, and test, or wasm for build")
   }
   if !(o.assembler is "" | "cc" | "macho") {
     fail(os, "--as=${o.assembler}: want cc or macho")
@@ -202,7 +202,7 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
       os.proc.exit(2)
     }
-    if o.out.is_empty() && (backend is "arm64" | "llvm") {
+    if o.out.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
       // the run cache (testcache.xo): an unchanged program's binary and
       // tests without a build
       let t0 = os.clock.now()
@@ -429,7 +429,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let goos = ctx.goos
   // LLVM builds for the host; the arm64 backend for arm64 (on an amd64
   // host its default is still the arm64 code of the host's OS)
-  let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/arm64" }
+  // amd64: Xo's own x86_64 backend (decision 0254), linux/amd64 only
+  let march = if backend == "amd64" { "amd64" } else { "arm64" }
+  let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/${march}" }
   let targets = parse_targets(os, o.targets, host)
   // the LLVM backend: the host, or one other target clang cross
   // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
@@ -441,6 +443,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   for tg in targets {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
+    }
+    if backend == "amd64" && tg != "linux/amd64" {
+      fail(os, "the amd64 backend builds for linux/amd64, not ${tg} (decision 0254)")
     }
     if backend == "llvm" && tg != host {
       let sysroot = if tg.starts_with("linux/") { os.env.get("XO_LINUXSYSROOT") ?? "" } else { winsysroot }
@@ -489,9 +494,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   // arm64 loop below
   var tgoos = ""
   var tgoarch = ""
-  if backend == "arm64" || backend == "llvm" {
+  if backend is "arm64" | "amd64" | "llvm" {
     tgoos = targets[0].split("/")[0]
-    tgoarch = if backend == "arm64" { "arm64" } else { ltarget.split("/")[1] }
+    tgoarch = if backend == "llvm" { ltarget.split("/")[1] } else { march }
   } else if backend == "wasm" {
     // the architecture of a WASI module: std/native/llrt/sysio.xo's
     // Linux system calls are not for it (decision 0206); `target.os`
@@ -633,8 +638,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     lap(os, phases, "cc", t)
     return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
   }
-  // arm64: the assembly of each target; the host's is linked
-  let dir = "${bdir}/arm64"
+  // arm64 (and amd64, the arm64 MIR retargeted): the assembly of each
+  // target; the host's is linked
+  let dir = "${bdir}/${march}"
   write_or_fail(os, dir, "", b"")
   var cur = b
   var cur_tu = tu
@@ -647,7 +653,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, "arm64", false, t)
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, march, false, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -666,11 +672,12 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     gm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     let sd = dir_name(ctx.std.trim_suffix("/"))
     gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
-    let (fc, fdir) = fn_cache_load(os, ctx, gm, tgoos, jobs, release)
+    // no per-function cache for amd64 yet (its canonical text is arm64's)
+    let (fc, fdir) = if march == "amd64" { (arm64.FnCache{}, "") } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
-    let p = arm64.generate_cached(gm, tgoos, jobs, fc)
+    let p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
       fn_cache_store(os, fdir, p.stores)
@@ -722,7 +729,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, false)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, "arm64")
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
@@ -740,7 +747,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       // tasks for the parts
       let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
       var objs: List[Str] = []
-      let (assembled, nasm) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", jobs)
+      let (assembled, nasm) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
       for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
@@ -764,7 +771,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       bins.push((tg, bin))
       continue
     }
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, ["arm64"] + flags + lk.link_only, srcs) }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + lk.link_only, srcs) }
     let (hit, entry) = fetch_bin(os, ctx, key, bin)
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
@@ -857,7 +864,9 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   // the runtime's profiler: in every build but a release one without
   // --profile-support (decision 0238); --profile asks for it too
   let prof = !release || o.profile_support || !o.profile.is_empty()
-  var b = ssa.build_program_support(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support)
+  // the amd64 backend lowers only cpu.xo's carry arithmetic yet
+  let soft_cpu = o.backend == "amd64"
+  var b = ssa.build_program_cpu(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support, soft_cpu)
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)
@@ -955,7 +964,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }
-    match if no_cc { tz_object(os, dir, sel, tgoos) } else { tz_source(os, dir, sel) } {
+    match if no_cc { tz_object(os, dir, sel, tgoos, tgoarch) } else { tz_source(os, dir, sel) } {
       Ok(p) => lk.srcs.push(p)
       Err(e) => fail(os, "${e}")
     }

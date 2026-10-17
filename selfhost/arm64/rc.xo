@@ -83,7 +83,13 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   let sym = g.local("xo_${g.ns}${kind}${id}")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// ${kind} ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} ${kind} ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  if g.x86 {
+    g.x86_rc_body(b, kind, sym, id, t)
+    b.push("\n")
+    g.helpers.push(b.join(""))
+    return sym
+  }
   match g.kind(t) {
     Func => g.func_rc(b, kind, sym)
     Box => g.box_rc(b, kind, sym, t)
@@ -274,7 +280,12 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
   let sym = g.local("xo_${g.ns}${kind}p${g.nhelp}")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// ${kind}p ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} ${kind}p ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  if g.x86 {
+    g.x86_elem_body(b, kind, sym, t)
+    g.helpers.push(b.join(""))
+    return sym
+  }
   if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
     // a struct element counted in place: each heap leaf read from the
     // element (its address kept in x19), not the whole value loaded and
@@ -485,7 +496,7 @@ fn (var g: G) box_share(t: Int) -> Str {
   let sym = g.helper_label("boxshare")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// boxshare ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} boxshare ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "share", ls, BOX_HDR, "")
@@ -507,7 +518,7 @@ fn (var g: G) mem_drop(t: Int) -> Str {
   let sym = g.helper_label("dropm")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// dropm ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} dropm ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(t, 0, ls)
   g.leaves_and_then(b, "drop", ls, 0, "")
@@ -528,7 +539,7 @@ fn (var g: G) box_drop(t: Int) -> Str {
   let sym = g.helper_label("boxdrop")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("// boxdrop ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} boxdrop ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_x_obj_rc_free"))
@@ -540,6 +551,10 @@ fn (var g: G) box_drop(t: Int) -> Str {
 /// the leaves ls of the words at [x0, #hdr], then goes to then with the
 /// cell x0 (or returns, when then is empty).
 fn (var g: G) leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], hdr: Int, then: Str) {
+  if g.x86 {
+    g.x86_leaves_and_then(b, kind, ls, hdr, then)
+    return
+  }
   let tail = if then.is_empty() { "\tret\n\n" } else { "\tb ${then}\n\n" }
   if ls.is_empty() {
     b.push(tail)
