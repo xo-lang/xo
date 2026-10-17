@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The wasm build of the compiler (the playground, decision 0242) is
+  28.7 MB instead of 51.7 MB and builds a program in 1.53 s under Node
+  instead of 8.5 s: the SSA builder's RC pass runs sequentially in a
+  wasm build, so nothing in the module waits and no function needs
+  suspension frames. `--annotate` notes why a function uses the
+  dispatch loop. The SSA builder's read_var walks single-predecessor
+  chains in a loop (the same code on every golden), and `--play build`
+  refuses a program that imports std/http before checking the HTTP
+  runtime: the new playground downloads 2.13 MB instead of 23.5 MB and
+  runs a program in 0.45 s instead of about 2.7 s in Chrome.
+
 - The native profiler on windows/amd64 (decision 0238 "Windows"):
   XO_PROF=cpu runs a sampler thread that suspends each thread whose CPU
   moved and walks it by the image's .pdata and RtlVirtualUnwind;

@@ -103,6 +103,8 @@ pub struct Gen {
   lax: Bool = false
   /// Per function: it can suspend (it waits, or calls what can).
   susp: List[Bool] = []
+  /// Why the function just lowered took the dispatch loop (--annotate).
+  why_dispatch: Str = ""
   /// The function being lowered can suspend.
   su: Bool = false
   /// The dispatch labels of the function being lowered, in text order,

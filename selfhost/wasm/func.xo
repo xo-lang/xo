@@ -187,6 +187,7 @@ fn (var g: Gen) func(fi: Int) {
   }
   // structured control flow when the graph allows it, else the dispatch
   // loop (layout.xo)
+  g.why_dispatch = if g.su { "suspends" } else { "" }
   if g.su || !g.structured(body, nb) {
     g.dispatch(body, nb)
   }
@@ -232,6 +233,9 @@ fn (var g: Gen) func(fi: Int) {
       hs.push(if g.hro[h] { "ro" } else if ok { "held" } else { "fallback" })
     }
     note = " (homes: ${hs.join(" ")})"
+  }
+  if g.annotate && !g.why_dispatch.is_empty() {
+    note = "${note} (dispatch: ${g.why_dispatch})"
   }
   b.write("  ;; ${comment_text(f.name)}${note}\n  ${head}\n")
   for l in g.cur.lines {

@@ -737,7 +737,11 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], ve
   let ops = ops_by_name()
   var out = RcOut{}
   let nc = (n / RC_CHUNK_FUNCS).min(RC_MAX_CHUNKS)
-  if jobs <= 1 || nc <= 1 {
+  // sequential in a wasm build of the compiler (one thread): the build
+  // decides the test (decision 0246), so the tasks and channel below are
+  // not built, nothing in the module waits, and no function needs the
+  // wasm backend's suspension frames (the playground, decision 0242)
+  if target.arch == TargetArch.Wasm32 || jobs <= 1 || nc <= 1 {
     for fi in 0..n {
       var f = b.m.funcs[fi]
       b.m.funcs[fi] = Func{name: ""}

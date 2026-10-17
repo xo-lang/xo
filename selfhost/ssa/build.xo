@@ -1836,26 +1836,44 @@ fn (var b: Builder) write_var(vo: Int, v: Int) {
   }
 }
 
-fn (var b: Builder) read_var(vo: Int, bl: Int) -> Int {
-  let k = def_key(vo, bl)
-  if let Some(v) = b.s.defs.get(k) {
-    return v
-  }
+fn (var b: Builder) read_var(vo: Int, bl0: Int) -> Int {
+  // up a chain of sealed blocks with one predecessor each in a loop,
+  // not a call per block: a long function's chains nested the recursion
+  // deep enough to overflow a browser worker's stack in the wasm build
+  // of the compiler (decision 0242). The blocks passed get the value
+  // found, innermost first, as the recursion gave them.
+  var chain: List[Int] = []
+  var bl = bl0
   var v = -1
-  if !(b.s.sealed.get(bl) ?? false) {
+  while true {
+    if let Some(d) = b.s.defs.get(def_key(vo, bl)) {
+      v = d
+      break
+    }
+    if !(b.s.sealed.get(bl) ?? false) {
+      v = b.new_param(bl, vo)
+      var inc = b.s.incomplete.get(bl) ?? []
+      inc.push(v)
+      b.s.incomplete[bl] = inc
+      b.s.defs[def_key(vo, bl)] = v
+      break
+    }
+    if b.s.f.blocks[bl].preds.len() == 1 {
+      chain.push(bl)
+      bl = b.s.f.edges[b.s.f.blocks[bl].preds[0]].from
+      continue
+    }
     v = b.new_param(bl, vo)
-    var inc = b.s.incomplete.get(bl) ?? []
-    inc.push(v)
-    b.s.incomplete[bl] = inc
-  } else if b.s.f.blocks[bl].preds.len() == 1 {
-    let e = b.s.f.blocks[bl].preds[0]
-    v = b.read_var(vo, b.s.f.edges[e].from)
-  } else {
-    v = b.new_param(bl, vo)
-    b.s.defs[k] = v
+    b.s.defs[def_key(vo, bl)] = v
     b.add_args(vo, v)
+    b.s.defs[def_key(vo, bl)] = v
+    break
   }
-  b.s.defs[k] = v
+  var i = chain.len()
+  while i > 0 {
+    i -= 1
+    b.s.defs[def_key(vo, chain[i])] = v
+  }
   v
 }
 

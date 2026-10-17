@@ -99,6 +99,20 @@ fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
       return "{\"ok\":false,\"diagnostics\":${ds}}"
     }
   }
+  var http = false
+  for m in c.root_mods {
+    for f in c.mods[m].files {
+      for u in c.files[f].ast.imports {
+        http = http || u.path == b"std/http"
+      }
+    }
+  }
+  if http {
+    // the result the build would reach, before it checks the HTTP
+    // runtime's bodies (deep enough to overflow a browser worker's
+    // stack): WASI preview1 has no sockets
+    return "{\"ok\":false,\"unsupported\":${json_text("the wasm backend does not support the network (std/http): WASI preview1 has no sockets")},\"diagnostics\":${ds}}"
+  }
   let root = line_root(os, wd, dir)
   var b = ssa.build_program_for(c, root, false, false, false, "", "wasm", true)
   if !b.why.is_empty() {

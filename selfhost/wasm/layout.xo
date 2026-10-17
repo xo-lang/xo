@@ -90,17 +90,20 @@ fn (var g: Gen) structured(body: List[Str], nb: Int) -> Bool {
     if l.starts_with("@block ") {
       cur = Int.parse(l[7..l.len()]) ?? -1
       if cur < 0 || cur >= nb {
+        g.why_dispatch = "block marker"
         return false
       }
       continue
     }
     if l.starts_with("@resume ") || cur < 0 {
+      g.why_dispatch = "resume point or code before a block"
       return false
     }
     code[cur].push(l)
     let t = jump_target(l)
     if t >= 0 {
       if t >= nb {
+        g.why_dispatch = "jump past the last block"
         return false
       }
       if !succ[cur].contains(t) {
@@ -209,6 +212,7 @@ fn (var g: Gen) structured(body: List[Str], nb: Int) -> Bool {
           d = idom[d]
         }
         if d != s {
+          g.why_dispatch = "irreducible"
           return false
         }
         header[s] = true
