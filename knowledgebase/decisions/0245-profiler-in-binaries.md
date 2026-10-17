@@ -1,6 +1,6 @@
 # 0245: Where the native profiler lives in a binary
 
-Status: Proposed (2026-10-16, Xo lang 3; for the owner, through the lead)
+Status: Accepted (owner, 2026-10-17): option 3 with the fault traceback's symbolizer kept in binaries (lead, 2026-10-17); being implemented by xo-4.
 
 ## Context
 
@@ -79,3 +79,25 @@ symbolization of a stripped binary.
 - The heap profile's text at exit (XO_PROF=heap printing a summary to
   standard error) becomes `xo prof`'s output; programs that relied on
   the in process text need the extra step.
+
+## Addendum: the measured split, and the traceback (2026-10-17)
+
+The fault traceback (XO_TRACEBACK, decision 0239; `xo test` sets it)
+symbolizes in the process with the same symbol reader and dwline.xo, so
+those stay in every binary: a crash on a deployed server prints
+`FUNCTION (FILE:LINE)`. Measured on hello (darwin/arm64, 2026-10-17):
+618 KiB as a development build, 516 KiB as a release build, which since
+decision 0238's addendum leaves the profiler out but keeps the traceback
+symbolizer. So the profiler's output side (the pprof writer and its
+gzip, the text summaries, the heap profile's writer) is about 102 KiB,
+and that is what moves to `xo prof`; the ADR's earlier 148 KiB counted
+dwline.xo, which the traceback keeps.
+
+The raw file is decision 0240's container: the 64 byte `XORAW1` header
+(kind 2 for a profile), then typed sections.
+
+Considered and rejected: the traceback raw as well (program counters
+and the build ID, `xo run` and `xo test` symbolizing them, a deployed
+binary needing `xo prof`): about 50 KiB more per binary, but it would
+change 0239's behavior, a crash in production printing addresses
+instead of lines.
