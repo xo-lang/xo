@@ -115,6 +115,10 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
       a.text()
       true
     }
+    ".bss" => {
+      a.elf_section_directive(".bss".bytes())
+      true
+    }
     ".data" => {
       // the arm64 emitter's `.data` on Linux (G.section "data": the
       // socket and poll state of decision 0206 stage 3), as
@@ -184,12 +188,20 @@ fn (var a: Asm) elf_directive(d: Str, rest: Bytes) -> Bool {
           a.fail("bad .size ${bstr(v)}: not code of this section")
           return true
         }
-        a.syms[i].size = a.sects[a.cur].words.len() * 4 - a.syms[j].off
+        a.syms[i].size = a.code_len(a.cur) - a.syms[j].off
         return true
       }
       match parse_int(v) {
         Some(n) => a.syms[i].size = n
-        None => a.fail("bad .size ${bstr(v)}")
+        None => {
+          // `END-START`: two labels defined before, in one section
+          let (x, y, k) = a.expr(v)
+          if x >= 0 && y >= 0 && a.syms[x].sect >= 0 && a.syms[x].sect == a.syms[y].sect && a.sects[a.syms[x].sect].code {
+            a.syms[i].size = a.syms[x].off - a.syms[y].off + k
+          } else {
+            a.fail("bad .size ${bstr(v)}")
+          }
+        }
       }
       true
     }
@@ -205,7 +217,7 @@ fn (var a: Asm) elf_section_directive(rest: Bytes) {
     a.fail(".section needs a name")
     return
   }
-  let name = bstr(parts[0])
+  let name = bstr(unquote(parts[0]) ?? parts[0])
   var flags = 0
   var typ = SHT_PROGBITS
   if name == ".rodata" || name.starts_with(".rodata.") {
@@ -237,6 +249,8 @@ fn (var a: Asm) elf_section_directive(rest: Bytes) {
             'S' => flags = flags | SHF_STRINGS
             'G' => flags = flags | SHF_GROUP
             'T' => flags = flags | SHF_TLS
+            // SHF_GNU_RETAIN: kept by the linker's garbage collection
+            'R' => flags = flags | 0x200000
             _ => {
               a.fail("section flags ${bstr(parts[1])}")
               return
@@ -290,6 +304,10 @@ fn (var a: Asm) elf_section_directive(rest: Bytes) {
 /// A mapping symbol ($x before instructions, $d before data) when the
 /// section's state changes.
 fn (var a: Asm) map_code() {
+  if a.amd64 {
+    // mapping symbols are AArch64's
+    return
+  }
   if a.sects[a.cur].mapstate != 1 {
     a.sects[a.cur].mapstate = 1
     a.map_sym("$x")
@@ -297,6 +315,9 @@ fn (var a: Asm) map_code() {
 }
 
 fn (var a: Asm) map_data() {
+  if a.amd64 {
+    return
+  }
   if a.sects[a.cur].mapstate != 2 {
     a.sects[a.cur].mapstate = 2
     a.map_sym("$d")
@@ -313,10 +334,23 @@ fn (var a: Asm) map_sym(name: Str) {
   }
   a.register(i)
   if a.sects[a.cur].code {
-    a.syms[i].off = a.sects[a.cur].words.len() * 4
+    a.syms[i].off = a.code_len(a.cur)
   } else {
     a.sects[a.cur].items.push(Item.Label(i))
   }
+}
+
+/// The pointer and pc relative 4 byte relocation types of the target.
+fn (a: Asm) r_abs64() -> Int {
+  if a.amd64 { R_X86_64_64 } else { R_AARCH64_ABS64 }
+}
+
+fn (a: Asm) r_abs32() -> Int {
+  if a.amd64 { R_X86_64_32 } else { R_AARCH64_ABS32 }
+}
+
+fn (a: Asm) r_prel32() -> Int {
+  if a.amd64 { R_X86_64_PC32 } else { R_AARCH64_PREL32 }
 }
 
 /// A RELA relocation at off of section si to sym + addend: undefined,
@@ -328,7 +362,8 @@ fn (var a: Asm) elf_reloc(si: Int, off: Int, typ: Int, sym: Int, addend: Int) {
   var target = sym
   var add = addend
   // a TLS relocation names its symbol, as LLVM's (decision 0212)
-  let tls = typ == R_AARCH64_TLSLE_ADD_TPREL_HI12 || typ == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC
+  // and so does a GOT one on x86-64, as LLVM's X86 ELF writer
+  let tls = if a.amd64 { typ == R_X86_64_TPOFF32 || typ == R_X86_64_GOTTPOFF || typ == R_X86_64_GOTPCRELX || typ == R_X86_64_REX_GOTPCRELX || typ == R_X86_64_GOTPCREL || typ == R_X86_64_TLSGD || typ == R_X86_64_TLSLD || typ == R_X86_64_DTPOFF32 } else { typ == R_AARCH64_TLSLE_ADD_TPREL_HI12 || typ == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC }
   if s.sect >= 0 && !s.global && !s.weak && !s.secsym && !tls {
     let merge = (a.sects[s.sect].eflags & SHF_MERGE) != 0
     if !(merge && addend != 0) {
@@ -431,7 +466,8 @@ fn (var a: Asm) elf_eh_frame() {
     return
   }
   let sorted = a.frames.sort_by(fn(f: Frame) -> Int { cie_key(f) })
-  a.elf_section(".eh_frame", SHT_PROGBITS, SHF_ALLOC, 0, -1)
+  // SHT_X86_64_UNWIND on x86-64, as LLVM's
+  a.elf_section(".eh_frame", if a.amd64 { 0x70000001 } else { SHT_PROGBITS }, SHF_ALLOC, 0, -1)
   let eh = a.cur
   a.sects[eh].align = 3
   a.sects[eh].raw = true
@@ -452,17 +488,17 @@ fn (var a: Asm) elf_eh_frame() {
     // CIE pointer: from this field back to the CIE
     body.u32(start + 4 - cie)
     // pc begin: the function's start, pc relative
-    a.elf_reloc_sect(eh, start + 8, R_AARCH64_PREL32, f.sect, f.start)
+    a.elf_reloc_sect(eh, start + 8, a.r_prel32(), f.sect, f.start)
     body.u32(0)
     body.u32(f.end - f.start)
     if f.lsda >= 0 {
       body.uleb(4)
-      a.elf_reloc(eh, start + 4 + body.n, R_AARCH64_PREL32, f.lsda, 0)
+      a.elf_reloc(eh, start + 4 + body.n, a.r_prel32(), f.lsda, 0)
       body.u32(0)
     } else {
       body.uleb(0)
     }
-    cfa_insts(body, f, -4)
+    cfa_insts(body, f, if a.amd64 { -8 } else { -4 })
     let al = if fi == sorted.len() - 1 { 8 } else { 4 }
     while (start + 4 + body.n) % al != 0 {
       body.u8(0)
@@ -508,10 +544,11 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
   aug = aug + "R"
   body.bytes(aug.bytes())
   body.u8(0)
-  // code alignment 1, data alignment -4, return address x30
+  // code alignment 1, data alignment -4, return address x30; x86-64:
+  // data alignment -8, return address %rip (16)
   body.uleb(1)
-  body.sleb(-4)
-  body.uleb(30)
+  body.sleb(if a.amd64 { -8 } else { -4 })
+  body.uleb(if a.amd64 { 16 } else { 30 })
   var alen = 1
   if f.pers >= 0 {
     alen += 5
@@ -522,7 +559,7 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
   body.uleb(alen)
   if f.pers >= 0 {
     body.u8(f.pers_enc)
-    a.elf_reloc(eh, start + 4 + body.n, R_AARCH64_PREL32, f.pers, 0)
+    a.elf_reloc(eh, start + 4 + body.n, a.r_prel32(), f.pers, 0)
     body.u32(0)
   }
   if f.lsda >= 0 {
@@ -530,10 +567,19 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
   }
   // the FDE pointers: pc relative signed 4 bytes
   body.u8(0x1b)
-  // DW_CFA_def_cfa sp, 0
-  body.u8(0x0c)
-  body.u8(31)
-  body.u8(0)
+  if a.amd64 {
+    // DW_CFA_def_cfa %rsp, 8; DW_CFA_offset %rip, cfa - 8
+    body.u8(0x0c)
+    body.u8(7)
+    body.u8(8)
+    body.u8(0x90)
+    body.u8(1)
+  } else {
+    // DW_CFA_def_cfa sp, 0
+    body.u8(0x0c)
+    body.u8(31)
+    body.u8(0)
+  }
   while (start + 4 + body.n) % 4 != 0 {
     body.u8(0)
   }
@@ -681,7 +727,11 @@ fn (var a: Asm) write_elf() -> Bytes {
     let h = ordinal[i]
     hdrs[h].off = o.n
     if s.etype != SHT_NOBITS {
-      if s.code {
+      if s.code && a.amd64 {
+        for w in s.words {
+          o.u8(w)
+        }
+      } else if s.code {
         for w in s.words {
           o.u32(w)
         }
@@ -765,14 +815,22 @@ fn (var a: Asm) write_elf() -> Bytes {
   var hd = new_out(64)
   hd.u8(0x7f)
   hd.bytes("ELF".bytes())
-  // ELFCLASS64, little endian, version 1, System V ABI
+  // ELFCLASS64, little endian, version 1, System V ABI (GNU when a
+  // section is SHF_GNU_RETAIN, as LLVM marks it)
   hd.u8(2)
   hd.u8(1)
   hd.u8(1)
-  hd.zeros(9)
-  // ET_REL, EM_AARCH64
+  var gnu = false
+  for s in a.sects {
+    if (s.eflags & 0x200000) != 0 {
+      gnu = true
+    }
+  }
+  hd.u8(if gnu { 3 } else { 0 })
+  hd.zeros(8)
+  // ET_REL, EM_AARCH64 (EM_X86_64)
   hd.u16(1)
-  hd.u16(183)
+  hd.u16(if a.amd64 { 62 } else { 183 })
   hd.u32(1)
   hd.u64(0)
   hd.u64(0)
@@ -816,7 +874,7 @@ fn (var a: Asm) func_sizes() {
     if a.syms[i].kind != STT_FUNC || a.syms[i].size != 0 {
       continue
     }
-    var end = a.sects[sect].words.len() * 4
+    var end = a.code_len(sect)
     var j = k + 1
     while j < keys.len() {
       let n = keys[j] & 1048575

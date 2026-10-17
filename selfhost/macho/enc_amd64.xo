@@ -1,0 +1,1466 @@
+// x86-64 instruction encoding (decision 0254, stage 1): the AT&T forms
+// the amd64 emitter writes, encoded as LLVM's assembler (clang -c)
+// encodes them: the shortest immediate, the accumulator forms LLVM picks,
+// REX only where needed, ModRM and SIB with the shortest displacement.
+// asm_amd64.xo places the bytes and resolves the fixups.
+
+/// Operand kinds.
+const XO_REG = 0
+const XO_IMM = 1
+const XO_MEM = 2
+
+/// Register classes.
+const RC_GPR = 0
+const RC_XMM = 1
+
+/// The base of a rip relative memory operand.
+const RIP = 16
+
+/// An operand in AT&T syntax.
+struct XOp {
+  kind: Int
+  /// a register: its number (0 to 15), class, width in bytes; rex8 for
+  /// %spl, %bpl, %sil, %dil (a REX prefix selects them)
+  reg: Int = 0
+  rclass: Int = 0
+  size: Int = 0
+  rex8: Bool = false
+  /// an immediate, or a memory operand's displacement: a number plus an
+  /// optional symbol, minus an optional symbol, and a relocation operator
+  /// (`@GOTPCREL`, `@TPOFF`, `@GOTTPOFF`, `@PLT`)
+  imm: Int = 0
+  sym: Bytes = b""
+  sym2: Bytes = b""
+  rel: Str = ""
+  /// memory: base (-1 none, RIP), index (-1 none), scale, segment
+  /// prefix byte (0x64 %fs, 0x65 %gs, 0 none)
+  base: Int = -1
+  index: Int = -1
+  scale: Int = 1
+  seg: Int = 0
+  /// `*` of an indirect call or jump
+  star: Bool = false
+}
+
+/// A reference to fill in: at byte `at` of the instruction, `size`
+/// bytes, pc relative or absolute, to sym (minus sym2) plus addend; rel
+/// the operator. For a pc relative field the addend is already the
+/// offset from the field's end to the instruction's end subtracted, as
+/// LLVM writes the RELA addend.
+pub struct XFix {
+  pub at: Int
+  pub size: Int
+  pub pcrel: Bool
+  pub sym: Bytes
+  pub sym2: Bytes = b""
+  pub addend: Int = 0
+  pub rel: Str = ""
+}
+
+/// An encoded instruction, or the error.
+pub struct XEnc {
+  pub b: List[Int] = []
+  pub fixes: List[XFix] = []
+  pub err: Str = ""
+}
+
+// ---------------------------------------------------------------------------
+// Operands
+
+/// The register named by b (without the `%`): (number, class, width,
+/// rex8), or None.
+fn x86_reg(b: Bytes) -> (Int, Int, Int, Bool)? {
+  let s = bstr(b)
+  let r64 = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"]
+  let r32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
+  let r16 = ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"]
+  let r8 = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil"]
+  // %ah to %bh: byte registers 4 to 7 without a REX prefix
+  let hi8 = ["ah", "ch", "dh", "bh"]
+  for i in 0..4 {
+    if s == hi8[i] {
+      return Some((4 + i, RC_GPR, 1, false))
+    }
+  }
+  for i in 0..8 {
+    if s == r64[i] {
+      return Some((i, RC_GPR, 8, false))
+    }
+    if s == r32[i] {
+      return Some((i, RC_GPR, 4, false))
+    }
+    if s == r16[i] {
+      return Some((i, RC_GPR, 2, false))
+    }
+    if s == r8[i] {
+      return Some((i, RC_GPR, 1, i >= 4))
+    }
+  }
+  if s.starts_with("xmm") {
+    let n = parse_int(b[3..]) ?? -1
+    if n >= 0 && n < 16 {
+      return Some((n, RC_XMM, 16, false))
+    }
+    return None
+  }
+  if s.starts_with("r") && s.len() >= 2 {
+    // r8 to r15 with an optional d, w, b suffix
+    var e = b.len()
+    var size = 8
+    let last = b[b.len() - 1]
+    if last == 'd' || last == 'w' || last == 'b' {
+      e = b.len() - 1
+      size = if last == 'd' { 4 } else if last == 'w' { 2 } else { 1 }
+    }
+    let n = parse_int(b[1..e]) ?? -1
+    if n >= 8 && n < 16 {
+      return Some((n, RC_GPR, size, false))
+    }
+  }
+  None
+}
+
+/// A displacement or immediate expression: `n`, `sym`, `sym+n`, `sym-n`,
+/// `sym-sym2`, each with an optional `@OP`: (number, sym, sym2, op).
+fn x86_expr(b0: Bytes) -> (Int, Bytes, Bytes, Str)? {
+  var b = trim(b0)
+  var op = ""
+  for i in 0..b.len() {
+    if b[i] == '@' {
+      op = bstr(b[i + 1..])
+      b = b[0..i]
+      break
+    }
+  }
+  if b.is_empty() {
+    return Some((0, b"", b"", op))
+  }
+  if let Some(n) = parse_int(b) {
+    return Some((n, b"", b"", op))
+  }
+  // sym (quoted when it has other characters), then an optional +n,
+  // -n, or -sym2
+  var i = 1
+  if b[0] == '"' {
+    while i < b.len() && b[i] != '"' {
+      i += 1
+    }
+    i += 1
+  }
+  while i < b.len() && b[i] != '+' && b[i] != '-' {
+    i += 1
+  }
+  let sym = trim(b[0..i])
+  if i == b.len() {
+    return Some((0, sym, b"", op))
+  }
+  let rest = trim(b[i + 1..])
+  if let Some(n) = parse_int(rest) {
+    return Some((if b[i] == '-' { 0 - n } else { n }, sym, b"", op))
+  }
+  if b[i] == '-' {
+    return Some((0, sym, rest, op))
+  }
+  None
+}
+
+/// Parses an operand in AT&T syntax, or None.
+fn x86_operand(b0: Bytes) -> XOp? {
+  var b = trim(b0)
+  var star = false
+  if !b.is_empty() && b[0] == '*' {
+    star = true
+    b = trim(b[1..])
+  }
+  if b.is_empty() {
+    return None
+  }
+  if b[0] == '$' {
+    let (n, sym, sym2, op) = x86_expr(b[1..])?
+    return Some(XOp{kind: XO_IMM, imm: n, sym: sym, sym2: sym2, rel: op})
+  }
+  var seg = 0
+  if b.len() > 4 && b[0] == '%' && b[3] == ':' {
+    let s = bstr(b[1..3])
+    if s == "fs" {
+      seg = 0x64
+    } else if s == "gs" {
+      seg = 0x65
+    } else {
+      return None
+    }
+    b = trim(b[4..])
+  }
+  if seg == 0 && b[0] == '%' {
+    let (n, rc, size, rex8) = x86_reg(b[1..])?
+    return Some(XOp{kind: XO_REG, reg: n, rclass: rc, size: size, rex8: rex8, star: star})
+  }
+  // memory: disp(base,index,scale), disp alone
+  var lp = -1
+  var q = false
+  for i in 0..b.len() {
+    if b[i] == '"' {
+      q = !q
+    } else if b[i] == '(' && !q {
+      lp = i
+      break
+    }
+  }
+  var m = XOp{kind: XO_MEM, seg: seg, star: star}
+  let dpart = if lp < 0 { b } else { b[0..lp] }
+  let (n, sym, sym2, op) = x86_expr(dpart)?
+  m.imm = n
+  m.sym = sym
+  m.sym2 = sym2
+  m.rel = op
+  if lp < 0 {
+    return Some(m)
+  }
+  if b[b.len() - 1] != ')' {
+    return None
+  }
+  let inner = b[lp + 1..b.len() - 1]
+  var parts: List[Bytes] = []
+  var st = 0
+  for i in 0..inner.len() {
+    if inner[i] == ',' {
+      parts.push(trim(inner[st..i]))
+      st = i + 1
+    }
+  }
+  parts.push(trim(inner[st..]))
+  if !parts[0].is_empty() {
+    if bstr(parts[0]) == "%rip" {
+      m.base = RIP
+    } else {
+      if parts[0][0] != '%' {
+        return None
+      }
+      let (r, rc, size, _) = x86_reg(parts[0][1..])?
+      if rc != RC_GPR || size != 8 {
+        return None
+      }
+      m.base = r
+    }
+  }
+  if parts.len() >= 2 && !parts[1].is_empty() {
+    if parts[1][0] != '%' {
+      return None
+    }
+    let (r, rc, size, _) = x86_reg(parts[1][1..])?
+    if rc != RC_GPR || size != 8 || r == 4 {
+      return None
+    }
+    m.index = r
+  }
+  if parts.len() >= 3 {
+    m.scale = parse_int(parts[2]) ?? 0
+    if !(m.scale is 1 | 2 | 4 | 8) {
+      return None
+    }
+  }
+  if parts.len() > 3 {
+    return None
+  }
+  Some(m)
+}
+
+// ---------------------------------------------------------------------------
+// The encoder's state for one instruction
+
+struct XB {
+  b: List[Int] = []
+  fixes: List[XFix] = []
+  err: Str = ""
+}
+
+fn (var e: XB) byte(v: Int) {
+  e.b.push(v & 0xff)
+}
+
+fn (var e: XB) le(v: Int, n: Int) {
+  for k in 0..n {
+    e.b.push((v >> (8 * k)) & 0xff)
+  }
+}
+
+fn (var e: XB) fail(why: Str) {
+  if e.err.is_empty() {
+    e.err = why
+  }
+}
+
+fn fits8(v: Int) -> Bool {
+  v >= -128 && v <= 127
+}
+
+fn fits32(v: Int) -> Bool {
+  v >= -2147483648 && v <= 2147483647
+}
+
+/// The REX bits an operand in the r/m (and SIB) position needs: X and B.
+fn rm_rex(rm: XOp) -> Int {
+  if rm.kind == XO_REG {
+    return if rm.reg >= 8 { 1 } else { 0 }
+  }
+  var r = 0
+  if rm.base >= 0 && rm.base != RIP && rm.base >= 8 {
+    r = r | 1
+  }
+  if rm.index >= 8 {
+    r = r | 2
+  }
+  r
+}
+
+/// Emits the prefixes and the REX byte: w the REX.W bit, reg the ModRM
+/// reg field's register (its bit 3 is REX.R), rm the r/m operand, force
+/// a REX for %spl, %bpl, %sil, %dil.
+fn (var e: XB) rex(w: Bool, reg: Int, rm: XOp, force: Bool) {
+  var r = 0x40
+  if w {
+    r = r | 8
+  }
+  if reg >= 8 {
+    r = r | 4
+  }
+  r = r | rm_rex(rm)
+  if r != 0x40 || force {
+    e.byte(r)
+  }
+}
+
+/// The segment prefix of a memory operand (before everything else).
+fn (var e: XB) seg(rm: XOp) {
+  if rm.kind == XO_MEM && rm.seg != 0 {
+    e.byte(rm.seg)
+  }
+}
+
+/// Emits ModRM, SIB and displacement of r/m operand rm with reg field
+/// reg (the low three bits are used).
+fn (var e: XB) modrm(reg: Int, rm: XOp) {
+  let r = (reg & 7) << 3
+  if rm.kind == XO_REG {
+    e.byte(0xc0 | r | (rm.reg & 7))
+    return
+  }
+  let hassym = !rm.sym.is_empty()
+  if rm.base == RIP {
+    e.byte(r | 5)
+    e.disp32(rm, true)
+    return
+  }
+  if rm.base < 0 && rm.index < 0 {
+    // absolute: SIB with no base and no index
+    e.byte(r | 4)
+    e.byte(0x25)
+    e.disp32(rm, false)
+    return
+  }
+  if rm.base < 0 {
+    // (,index,scale): no base, disp32
+    e.byte(r | 4)
+    e.byte((scale_bits(rm.scale) << 6) | ((rm.index & 7) << 3) | 5)
+    e.disp32(rm, false)
+    return
+  }
+  let b = rm.base & 7
+  var md = 0
+  if hassym || !fits8(rm.imm) {
+    md = 2
+  } else if rm.imm != 0 || b == 5 {
+    md = 1
+  }
+  if rm.index >= 0 {
+    e.byte((md << 6) | r | 4)
+    e.byte((scale_bits(rm.scale) << 6) | ((rm.index & 7) << 3) | b)
+  } else if b == 4 {
+    e.byte((md << 6) | r | 4)
+    e.byte(0x24)
+  } else {
+    e.byte((md << 6) | r | b)
+  }
+  if md == 1 {
+    e.byte(rm.imm)
+  } else if md == 2 {
+    e.disp32(rm, false)
+  }
+}
+
+fn scale_bits(s: Int) -> Int {
+  match s {
+    2 => 1
+    4 => 2
+    8 => 3
+    _ => 0
+  }
+}
+
+/// A 32 bit displacement, with its fixup when it names a symbol.
+fn (var e: XB) disp32(rm: XOp, pcrel: Bool) {
+  if !rm.sym.is_empty() {
+    e.fixes.push(XFix{at: e.b.len(), size: 4, pcrel: pcrel, sym: rm.sym, sym2: rm.sym2, addend: rm.imm, rel: rm.rel})
+    e.le(0, 4)
+    return
+  }
+  e.le(rm.imm, 4)
+}
+
+/// An immediate of n bytes, with its fixup when it names a symbol.
+fn (var e: XB) immn(op: XOp, n: Int) {
+  if !op.sym.is_empty() {
+    e.fixes.push(XFix{at: e.b.len(), size: n, pcrel: false, sym: op.sym, sym2: op.sym2, addend: op.imm, rel: op.rel})
+    e.le(0, n)
+    return
+  }
+  e.le(op.imm, n)
+}
+
+/// The usual instruction shape: [66] [seg] [REX] opcode bytes, ModRM with
+/// reg and rm. size 2 adds the operand size prefix, 8 sets REX.W, 1 with
+/// a byte register needing REX forces it.
+fn (var e: XB) op_rm(size: Int, ops: List[Int], reg: Int, rex8: Bool, rm: XOp) {
+  e.seg(rm)
+  if size == 2 {
+    e.byte(0x66)
+  }
+  e.rex(size == 8, reg, rm, rex8 || (rm.kind == XO_REG && rm.rex8))
+  for o in ops {
+    e.byte(o)
+  }
+  e.modrm(reg, rm)
+}
+
+/// Fixes the pc relative fixups' addends once the instruction's length is
+/// known: LLVM's RELA addend is the displacement minus the bytes from the
+/// field to the end of the instruction.
+fn (var e: XB) settle() -> XEnc {
+  var fs: List[XFix] = []
+  for f in e.fixes {
+    var g = f
+    if g.pcrel {
+      g.addend = g.addend - (e.b.len() - g.at)
+    }
+    fs.push(g)
+  }
+  XEnc{b: e.b, fixes: fs, err: e.err}
+}
+
+// ---------------------------------------------------------------------------
+// Mnemonics
+
+/// The width a size suffix names.
+fn suffix_size(c: UInt8) -> Int {
+  match c {
+    'b' => 1
+    'w' => 2
+    'l' => 4
+    'q' => 8
+    _ => 0
+  }
+}
+
+/// The condition codes of jcc, setcc and cmovcc.
+fn x86_cc(s: Str) -> Int {
+  match s {
+    "o" => 0
+    "no" => 1
+    "b" | "c" | "nae" => 2
+    "ae" | "nb" | "nc" => 3
+    "e" | "z" => 4
+    "ne" | "nz" => 5
+    "be" | "na" => 6
+    "a" | "nbe" => 7
+    "s" => 8
+    "ns" => 9
+    "p" | "pe" => 10
+    "np" | "po" => 11
+    "l" | "nge" => 12
+    "ge" | "nl" => 13
+    "le" | "ng" => 14
+    "g" | "nle" => 15
+    _ => -1
+  }
+}
+
+/// The ALU operations with their /digit (add 0, or 1, adc 2, sbb 3, and
+/// 4, sub 5, xor 6, cmp 7).
+fn alu_op(s: Str) -> Int {
+  match s {
+    "add" => 0
+    "or" => 1
+    "adc" => 2
+    "sbb" => 3
+    "and" => 4
+    "sub" => 5
+    "xor" => 6
+    "cmp" => 7
+    _ => -1
+  }
+}
+
+/// The shift and rotate operations with their /digit.
+fn shift_op_x86(s: Str) -> Int {
+  match s {
+    "rol" => 0
+    "ror" => 1
+    "rcl" => 2
+    "rcr" => 3
+    "shl" | "sal" => 4
+    "shr" => 5
+    "sar" => 7
+    _ => -1
+  }
+}
+
+/// The unary group 3 and 4 operations: (opcode byte for 8 bit, other,
+/// /digit).
+fn unary_op(s: Str) -> (Int, Int, Int)? {
+  match s {
+    "not" => Some((0xf6, 0xf7, 2))
+    "neg" => Some((0xf6, 0xf7, 3))
+    "mul" => Some((0xf6, 0xf7, 4))
+    "imul" => Some((0xf6, 0xf7, 5))
+    "div" => Some((0xf6, 0xf7, 6))
+    "idiv" => Some((0xf6, 0xf7, 7))
+    "inc" => Some((0xfe, 0xff, 0))
+    "dec" => Some((0xfe, 0xff, 1))
+    _ => None
+  }
+}
+
+/// SSE operations reg <- r/m: (mandatory prefix 0 for none, opcode).
+fn sse_op(s: Str) -> (Int, Int)? {
+  match s {
+    "addsd" => Some((0xf2, 0x58))
+    "mulsd" => Some((0xf2, 0x59))
+    "subsd" => Some((0xf2, 0x5c))
+    "divsd" => Some((0xf2, 0x5e))
+    "sqrtsd" => Some((0xf2, 0x51))
+    "minsd" => Some((0xf2, 0x5d))
+    "maxsd" => Some((0xf2, 0x5f))
+    "addss" => Some((0xf3, 0x58))
+    "mulss" => Some((0xf3, 0x59))
+    "subss" => Some((0xf3, 0x5c))
+    "divss" => Some((0xf3, 0x5e))
+    "sqrtss" => Some((0xf3, 0x51))
+    "ucomisd" => Some((0x66, 0x2e))
+    "comisd" => Some((0x66, 0x2f))
+    "ucomiss" => Some((0, 0x2e))
+    "comiss" => Some((0, 0x2f))
+    "cvtsd2ss" => Some((0xf2, 0x5a))
+    "cvtss2sd" => Some((0xf3, 0x5a))
+    "xorps" => Some((0, 0x57))
+    "xorpd" => Some((0x66, 0x57))
+    "andps" => Some((0, 0x54))
+    "andpd" => Some((0x66, 0x54))
+    "andnps" => Some((0, 0x55))
+    "andnpd" => Some((0x66, 0x55))
+    "orps" => Some((0, 0x56))
+    "orpd" => Some((0x66, 0x56))
+    "unpcklpd" => Some((0x66, 0x14))
+    "por" => Some((0x66, 0xeb))
+    "pxor" => Some((0x66, 0xef))
+    "pand" => Some((0x66, 0xdb))
+    "pandn" => Some((0x66, 0xdf))
+    "paddb" => Some((0x66, 0xfc))
+    "paddw" => Some((0x66, 0xfd))
+    "paddd" => Some((0x66, 0xfe))
+    "paddq" => Some((0x66, 0xd4))
+    "psubb" => Some((0x66, 0xf8))
+    "psubw" => Some((0x66, 0xf9))
+    "psubd" => Some((0x66, 0xfa))
+    "psubq" => Some((0x66, 0xfb))
+    "pcmpeqb" => Some((0x66, 0x74))
+    "pcmpeqw" => Some((0x66, 0x75))
+    "pcmpeqd" => Some((0x66, 0x76))
+    "pcmpgtb" => Some((0x66, 0x64))
+    "pcmpgtw" => Some((0x66, 0x65))
+    "pcmpgtd" => Some((0x66, 0x66))
+    "pmuludq" => Some((0x66, 0xf4))
+    "punpcklbw" => Some((0x66, 0x60))
+    "punpcklwd" => Some((0x66, 0x61))
+    "punpckldq" => Some((0x66, 0x62))
+    "punpcklqdq" => Some((0x66, 0x6c))
+    "punpckhbw" => Some((0x66, 0x68))
+    "punpckhwd" => Some((0x66, 0x69))
+    "punpckhdq" => Some((0x66, 0x6a))
+    "punpckhqdq" => Some((0x66, 0x6d))
+    "packuswb" => Some((0x66, 0x67))
+    "pmaxub" => Some((0x66, 0xde))
+    "pminub" => Some((0x66, 0xda))
+    "psadbw" => Some((0x66, 0xf6))
+    "psrlw" => Some((0x66, 0xd1))
+    "psrld" => Some((0x66, 0xd2))
+    "psrlq" => Some((0x66, 0xd3))
+    "psllw" => Some((0x66, 0xf1))
+    "pslld" => Some((0x66, 0xf2))
+    "psllq" => Some((0x66, 0xf3))
+    "psraw" => Some((0x66, 0xe1))
+    "psrad" => Some((0x66, 0xe2))
+    _ => None
+  }
+}
+
+/// SSE shifts by an immediate: (opcode, /digit).
+fn sse_shift_imm(s: Str) -> (Int, Int)? {
+  match s {
+    "psrlw" => Some((0x71, 2))
+    "psraw" => Some((0x71, 4))
+    "psllw" => Some((0x71, 6))
+    "psrld" => Some((0x72, 2))
+    "psrad" => Some((0x72, 4))
+    "pslld" => Some((0x72, 6))
+    "psrlq" => Some((0x73, 2))
+    "psrldq" => Some((0x73, 3))
+    "psllq" => Some((0x73, 6))
+    "pslldq" => Some((0x73, 7))
+    _ => None
+  }
+}
+
+/// The SSE compare predicates of cmpXXpd and cmpXXsd.
+fn sse_pred(s: Str) -> Int {
+  match s {
+    "eq" => 0
+    "lt" => 1
+    "le" => 2
+    "unord" => 3
+    "neq" => 4
+    "nlt" => 5
+    "nle" => 6
+    "ord" => 7
+    _ => -1
+  }
+}
+
+/// Instructions with a 0f 38 or 0f 3a opcode and prefix 66 (AES-NI,
+/// PCLMULQDQ, SHA, SSSE3, SSE4.1): (map 0x38 or 0x3a, opcode, prefix, an
+/// immediate first).
+fn sse_map(s: Str) -> (Int, Int, Int, Bool)? {
+  match s {
+    "aesenc" => Some((0x38, 0xdc, 0x66, false))
+    "aesenclast" => Some((0x38, 0xdd, 0x66, false))
+    "aesdec" => Some((0x38, 0xde, 0x66, false))
+    "aesdeclast" => Some((0x38, 0xdf, 0x66, false))
+    "aesimc" => Some((0x38, 0xdb, 0x66, false))
+    "aeskeygenassist" => Some((0x3a, 0xdf, 0x66, true))
+    "pclmulqdq" => Some((0x3a, 0x44, 0x66, true))
+    "pshufb" => Some((0x38, 0x00, 0x66, false))
+    "sha256rnds2" => Some((0x38, 0xcb, 0, false))
+    "sha256msg1" => Some((0x38, 0xcc, 0, false))
+    "sha256msg2" => Some((0x38, 0xcd, 0, false))
+    _ => None
+  }
+}
+
+/// Encodes one instruction: mnemonic mn with its operands (AT&T order,
+/// the destination last).
+pub fn encode_x86(mn0: Bytes, args: List[Bytes]) -> XEnc {
+  var e = XB{}
+  var ops: List[XOp] = []
+  for a in args {
+    match x86_operand(a) {
+      Some(o) => ops.push(o)
+      None => return XEnc{err: "bad operand `${bstr(a)}`"}
+    }
+  }
+  var mn = bstr(mn0)
+  var lock = false
+  if mn.starts_with("lock ") {
+    lock = true
+    mn = mn.trim_prefix("lock ").trim()
+  }
+  e.inst(mn, ops)
+  if lock {
+    // as LLVM: the lock prefix after an operand size prefix (66 f0)
+    var k = 0
+    while k < e.b.len() && e.b[k] == 0x66 {
+      k += 1
+    }
+    e.b = e.b[0..k] + [0xf0] + e.b[k..]
+    for i in 0..e.fixes.len() {
+      e.fixes[i].at += 1
+    }
+  }
+  e.settle()
+}
+
+fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
+  let n = ops.len()
+  match mn {
+    "ret" | "retq" => return e.byte(0xc3)
+    "nop" => return e.byte(0x90)
+    "hlt" => return e.byte(0xf4)
+    "int3" => return e.byte(0xcc)
+    "ud2" => {
+      e.byte(0x0f)
+      return e.byte(0x0b)
+    }
+    "pause" => {
+      e.byte(0xf3)
+      return e.byte(0x90)
+    }
+    "lfence" | "mfence" | "sfence" => {
+      e.byte(0x0f)
+      e.byte(0xae)
+      return e.byte(if mn == "lfence" { 0xe8 } else if mn == "mfence" { 0xf0 } else { 0xf8 })
+    }
+    "cqto" | "cqo" => {
+      e.byte(0x48)
+      return e.byte(0x99)
+    }
+    "cltd" | "cdq" => return e.byte(0x99)
+    "stc" => return e.byte(0xf9)
+    "clc" => return e.byte(0xf8)
+    "cltq" | "cdqe" => {
+      e.byte(0x48)
+      return e.byte(0x98)
+    }
+    "cwtl" | "cwde" => return e.byte(0x98)
+    _ => {}
+  }
+  if mn == "movabsq" {
+    if n != 2 || ops[0].kind != XO_IMM || ops[1].kind != XO_REG {
+      return e.fail("movabsq takes an immediate and a register")
+    }
+    e.rex(true, 0, ops[1], false)
+    e.byte(0xb8 + (ops[1].reg & 7))
+    return e.immn(ops[0], 8)
+  }
+  if mn is "call" | "callq" | "jmp" | "jmpq" {
+    if n == 1 && ops[0].star {
+      // indirect: ff /2 (call), ff /4 (jmp)
+      var rm = ops[0]
+      rm.star = false
+      e.seg(rm)
+      e.rex(false, 0, rm, false)
+      e.byte(0xff)
+      return e.modrm(if mn.starts_with("call") { 2 } else { 4 }, rm)
+    }
+    return e.fail("a direct branch is placed by the assembler")
+  }
+  if mn.starts_with("rep ") {
+    // rep bsf (tzcnt as LLVM prints it), rep movsb, rep stosq, ...
+    e.byte(0xf3)
+    return e.inst(mn.trim_prefix("rep ").trim(), ops)
+  }
+  match mn {
+    "cpuid" => {
+      e.byte(0x0f)
+      return e.byte(0xa2)
+    }
+    "syscall" => {
+      e.byte(0x0f)
+      return e.byte(0x05)
+    }
+    "movsb" | "stosb" | "movsq" | "stosq" => {
+      if mn.ends_with("q") {
+        e.byte(0x48)
+      }
+      return e.byte(match mn {
+        "movsb" => 0xa4
+        "movsq" => 0xa5
+        "stosb" => 0xaa
+        _ => 0xab
+      })
+    }
+    "fldcw" | "fnstcw" => {
+      if n == 1 {
+        return e.op_rm(4, [0xd9], if mn == "fldcw" { 5 } else { 7 }, false, ops[0])
+      }
+    }
+    "ldmxcsr" | "stmxcsr" => {
+      if n == 1 {
+        return e.op_rm(4, [0x0f, 0xae], if mn == "ldmxcsr" { 2 } else { 3 }, false, ops[0])
+      }
+    }
+    "prefetcht0" | "prefetcht1" | "prefetcht2" | "prefetchnta" => {
+      if n == 1 {
+        let d = match mn {
+          "prefetchnta" => 0
+          "prefetcht0" => 1
+          "prefetcht1" => 2
+          _ => 3
+        }
+        return e.op_rm(4, [0x0f, 0x18], d, false, ops[0])
+      }
+    }
+    _ => {}
+  }
+  if mn is "movaps" | "movups" | "movapd" | "movupd" | "movdqa" | "movdqu" {
+    let (p, ld, st) = match mn {
+      "movaps" => (0, 0x28, 0x29)
+      "movapd" => (0x66, 0x28, 0x29)
+      "movups" => (0, 0x10, 0x11)
+      "movupd" => (0x66, 0x10, 0x11)
+      "movdqa" => (0x66, 0x6f, 0x7f)
+      _ => (0xf3, 0x6f, 0x7f)
+    }
+    if n == 2 && ops[1].kind == XO_MEM {
+      return e.sse_store(p, [0x0f, st], ops[0], ops[1])
+    }
+    return e.sse(p, [0x0f, ld], ops)
+  }
+  if let Some(v) = sse_shift_imm(mn) {
+    if n == 2 && ops[0].kind == XO_IMM {
+      e.byte(0x66)
+      e.rex(false, 0, ops[1], false)
+      e.byte(0x0f)
+      e.byte(v.0)
+      e.modrm(v.1, ops[1])
+      return e.immn(ops[0], 1)
+    }
+  }
+  if mn == "sha256rnds2" && n == 3 {
+    // the first operand is the implicit %xmm0
+    return e.inst(mn, [ops[1], ops[2]])
+  }
+  if mn is "adcxq" | "adcxl" | "adoxq" | "adoxl" {
+    // 66 (adcx) or f3 (adox), REX.W for q, 0f 38 f6 /r
+    if n != 2 || ops[1].kind != XO_REG {
+      return e.fail("${mn} needs a register destination")
+    }
+    e.seg(ops[0])
+    e.byte(if mn.starts_with("adcx") { 0x66 } else { 0xf3 })
+    e.rex(mn.ends_with("q"), ops[1].reg, ops[0], false)
+    e.byte(0x0f)
+    e.byte(0x38)
+    e.byte(0xf6)
+    return e.modrm(ops[1].reg, ops[0])
+  }
+  if mn is "mulxq" | "mulxl" {
+    // VEX.LZ.F2.0F38.W1 f6 /r: mulx r/m, vvvv, reg
+    if n != 3 || ops[1].kind != XO_REG || ops[2].kind != XO_REG {
+      return e.fail("mulx takes r/m, register, register")
+    }
+    e.seg(ops[0])
+    let rx = rm_rex(ops[0])
+    let r = if ops[2].reg >= 8 { 0 } else { 0x80 }
+    let x = if rx & 2 != 0 { 0 } else { 0x40 }
+    let b = if rx & 1 != 0 { 0 } else { 0x20 }
+    e.byte(0xc4)
+    e.byte(r | x | b | 0x02)
+    let w = if mn == "mulxq" { 0x80 } else { 0 }
+    e.byte(w | ((15 - ops[1].reg) << 3) | 3)
+    e.byte(0xf6)
+    return e.modrm(ops[2].reg, ops[0])
+  }
+  if mn is "pinsrq" | "pinsrd" | "pextrq" | "pextrd" {
+    // 66 [REX.W] 0f 3a 22 /r ib (pinsr: reg the xmm), 16 /r ib (pextr:
+    // reg the xmm, r/m the general register or memory)
+    if n != 3 {
+      return e.fail("${mn} takes three operands")
+    }
+    let ins = mn.starts_with("pinsr")
+    let x = if ins { ops[2] } else { ops[1] }
+    let rm = if ins { ops[1] } else { ops[2] }
+    e.seg(rm)
+    e.byte(0x66)
+    e.rex(mn.ends_with("q"), x.reg, rm, false)
+    e.byte(0x0f)
+    e.byte(0x3a)
+    e.byte(if ins { 0x22 } else { 0x16 })
+    e.modrm(x.reg, rm)
+    return e.immn(ops[0], 1)
+  }
+  if mn is "roundsd" | "roundss" && n == 3 {
+    // 66 0f 3a 0b (sd), 0a (ss) /r ib
+    e.seg(ops[1])
+    e.byte(0x66)
+    e.rex(false, ops[2].reg, ops[1], false)
+    e.byte(0x0f)
+    e.byte(0x3a)
+    e.byte(if mn == "roundsd" { 0x0b } else { 0x0a })
+    e.modrm(ops[2].reg, ops[1])
+    return e.immn(ops[0], 1)
+  }
+  if mn is "movhlps" | "movlhps" {
+    return e.sse(0, [0x0f, if mn == "movhlps" { 0x12 } else { 0x16 }], ops)
+  }
+  if let Some(v) = sse_map(mn) {
+    let src = if v.3 { 1 } else { 0 }
+    if n != src + 2 || ops[n - 1].kind != XO_REG {
+      return e.fail("${mn} needs a register destination")
+    }
+    e.seg(ops[src])
+    if v.2 != 0 {
+      e.byte(v.2)
+    }
+    e.rex(false, ops[n - 1].reg, ops[src], false)
+    e.byte(0x0f)
+    e.byte(v.0)
+    e.byte(v.1)
+    e.modrm(ops[n - 1].reg, ops[src])
+    if v.3 {
+      e.immn(ops[0], 1)
+    }
+    return
+  }
+  if mn is "pshufd" | "pshuflw" | "pshufhw" | "shufpd" | "shufps" {
+    let p = match mn {
+      "pshufd" | "shufpd" => 0x66
+      "pshuflw" => 0xf2
+      "pshufhw" => 0xf3
+      _ => 0
+    }
+    let opc = if mn.starts_with("shuf") { 0xc6 } else { 0x70 }
+    if n == 3 {
+      e.sse(p, [0x0f, opc], [ops[1], ops[2]])
+      return e.immn(ops[0], 1)
+    }
+  }
+  if mn is "pextrw" && n == 3 {
+    // 66 0f c5 /r ib: the general register in the reg field
+    e.byte(0x66)
+    e.rex(false, ops[2].reg, ops[1], false)
+    e.byte(0x0f)
+    e.byte(0xc5)
+    e.modrm(ops[2].reg, ops[1])
+    return e.immn(ops[0], 1)
+  }
+  if mn is "pmovmskb" | "movmskps" | "movmskpd" {
+    let p = if mn == "movmskps" { 0 } else { 0x66 }
+    let opc = if mn == "pmovmskb" { 0xd7 } else { 0x50 }
+    return e.sse_w(p, [0x0f, opc], false, ops)
+  }
+  if mn.starts_with("cmp") && (mn.ends_with("pd") || mn.ends_with("sd") || mn.ends_with("ps") || mn.ends_with("ss")) && n == 2 {
+    let pr = sse_pred(mn[3..mn.len() - 2])
+    if pr >= 0 {
+      let p = match mn[mn.len() - 2..] {
+        "pd" => 0x66
+        "sd" => 0xf2
+        "ss" => 0xf3
+        _ => 0
+      }
+      e.sse(p, [0x0f, 0xc2], ops)
+      return e.byte(pr)
+    }
+  }
+  if let Some(v) = sse_op(mn) {
+    return e.sse(v.0, [0x0f, v.1], ops)
+  }
+  if mn is "movsd" | "movss" {
+    let p = if mn == "movsd" { 0xf2 } else { 0xf3 }
+    if n == 2 && ops[1].kind == XO_MEM {
+      return e.sse_store(p, [0x0f, 0x11], ops[0], ops[1])
+    }
+    return e.sse(p, [0x0f, 0x10], ops)
+  }
+  if mn.starts_with("cvtsi2") {
+    // cvtsi2sdq, cvtsi2sdl, cvtsi2ssq, cvtsi2ssl
+    let p = if mn.starts_with("cvtsi2sd") { 0xf2 } else { 0xf3 }
+    let w = mn.ends_with("q") || (n == 2 && ops[0].kind == XO_REG && ops[0].size == 8)
+    return e.sse_w(p, [0x0f, 0x2a], w, ops)
+  }
+  if mn is "cvttsd2si" | "cvttss2si" | "cvtsd2si" | "cvtss2si" {
+    let p = if mn.contains("sd2") { 0xf2 } else { 0xf3 }
+    let opc = if mn.starts_with("cvtt") { 0x2c } else { 0x2d }
+    if n != 2 || ops[1].kind != XO_REG || ops[1].rclass != RC_GPR {
+      return e.fail("${mn} needs a general register destination")
+    }
+    return e.sse_w(p, [0x0f, opc], ops[1].size == 8, ops)
+  }
+  if mn is "movq" | "movd" {
+    if n == 2 && (ops[0].rclass == RC_XMM && ops[0].kind == XO_REG || ops[1].rclass == RC_XMM && ops[1].kind == XO_REG) {
+      return e.movq_xmm(mn == "movq", ops[0], ops[1])
+    }
+  }
+  if mn.len() >= 2 {
+    let base = mn[0..mn.len() - 1]
+    let size = suffix_size(mn.bytes()[mn.len() - 1])
+    if size > 0 {
+      if e.sized(base, size, ops) {
+        return
+      }
+    }
+  }
+  if mn.starts_with("set") {
+    let cc = x86_cc(mn.trim_prefix("set"))
+    if cc >= 0 && n == 1 {
+      return e.op_rm(1, [0x0f, 0x90 + cc], 0, false, ops[0])
+    }
+  }
+  e.fail("unknown instruction `${mn}`")
+}
+
+/// The sized integer instructions: base mnemonic and operand width.
+/// False when base is not one of them.
+fn (var e: XB) sized(base: Str, size: Int, ops: List[XOp]) -> Bool {
+  let n = ops.len()
+  let alu = alu_op(base)
+  if alu >= 0 && n == 2 {
+    e.alu(alu, size, ops[0], ops[1])
+    return true
+  }
+  let sh = shift_op_x86(base)
+  if sh >= 0 && (n == 1 || n == 2) {
+    e.shift(sh, size, ops)
+    return true
+  }
+  if base == "imul" && (n == 2 || n == 3) {
+    e.imul(size, ops)
+    return true
+  }
+  if let Some(u) = unary_op(base) {
+    if n == 1 {
+      e.op_rm(size, [if size == 1 { u.0 } else { u.1 }], u.2, false, ops[0])
+      return true
+    }
+  }
+  if base is "bt" | "bts" | "btr" | "btc" && n == 2 {
+    let (d, opc) = match base {
+      "bt" => (4, 0xa3)
+      "bts" => (5, 0xab)
+      "btr" => (6, 0xb3)
+      _ => (7, 0xbb)
+    }
+    if ops[0].kind == XO_IMM {
+      e.op_rm(size, [0x0f, 0xba], d, false, ops[1])
+      e.immn(ops[0], 1)
+    } else {
+      e.op_rm(size, [0x0f, opc], ops[0].reg, false, ops[1])
+    }
+    return true
+  }
+  if base is "shld" | "shrd" && n == 3 {
+    let l = base == "shld"
+    if ops[0].kind == XO_IMM {
+      e.op_rm(size, [0x0f, if l { 0xa4 } else { 0xac }], ops[1].reg, false, ops[2])
+      e.immn(ops[0], 1)
+    } else {
+      e.op_rm(size, [0x0f, if l { 0xa5 } else { 0xad }], ops[1].reg, false, ops[2])
+    }
+    return true
+  }
+  match base {
+    "mov" => {
+      e.mov(size, ops)
+      return true
+    }
+    "lea" => {
+      if n == 2 && ops[0].kind == XO_MEM && ops[1].kind == XO_REG {
+        e.op_rm(size, [0x8d], ops[1].reg, false, ops[0])
+      } else {
+        e.fail("lea takes a memory operand and a register")
+      }
+      return true
+    }
+    "test" => {
+      e.test_op(size, ops)
+      return true
+    }
+    "push" | "pop" => {
+      e.pushpop(base == "push", ops)
+      return true
+    }
+    "xchg" => {
+      e.rr_rm(size, if size == 1 { 0x86 } else { 0x87 }, ops)
+      return true
+    }
+    "cmpxchg" => {
+      e.rr_rm0f(size, if size == 1 { 0xb0 } else { 0xb1 }, ops)
+      return true
+    }
+    "xadd" => {
+      e.rr_rm0f(size, if size == 1 { 0xc0 } else { 0xc1 }, ops)
+      return true
+    }
+    "bswap" => {
+      if n == 1 && ops[0].kind == XO_REG {
+        e.rex(size == 8, 0, ops[0], false)
+        e.byte(0x0f)
+        e.byte(0xc8 + (ops[0].reg & 7))
+      } else {
+        e.fail("bswap takes a register")
+      }
+      return true
+    }
+    _ => {}
+  }
+  if base is "bsf" | "bsr" | "tzcnt" | "lzcnt" | "popcnt" {
+    if n != 2 || ops[1].kind != XO_REG {
+      e.fail("${base} needs a register destination")
+      return true
+    }
+    let (pre, opc) = match base {
+      "bsf" => (0, 0xbc)
+      "bsr" => (0, 0xbd)
+      "tzcnt" => (0xf3, 0xbc)
+      "lzcnt" => (0xf3, 0xbd)
+      _ => (0xf3, 0xb8)
+    }
+    e.seg(ops[0])
+    if size == 2 {
+      e.byte(0x66)
+    }
+    if pre != 0 {
+      e.byte(pre)
+    }
+    e.rex(size == 8, ops[1].reg, ops[0], false)
+    e.byte(0x0f)
+    e.byte(opc)
+    e.modrm(ops[1].reg, ops[0])
+    return true
+  }
+  if base.starts_with("cmov") {
+    let cc = x86_cc(base.trim_prefix("cmov"))
+    if cc >= 0 && n == 2 && ops[1].kind == XO_REG {
+      e.op_rm(size, [0x0f, 0x40 + cc], ops[1].reg, false, ops[0])
+      return true
+    }
+  }
+  if base.starts_with("movz") || base.starts_with("movs") {
+    // movzbl, movzwq, movsbq, movslq, ...: base is movzb, movzw, movsb,
+    // movsw, movsl; size the destination's
+    if base.len() == 5 && n == 2 && ops[1].kind == XO_REG {
+      let from = suffix_size(base.bytes()[4])
+      let sx = base.bytes()[3] == 's'
+      if from == 4 && sx {
+        e.op_rm(size, [0x63], ops[1].reg, false, ops[0])
+        return true
+      }
+      if from == 1 || from == 2 {
+        let opc = if sx { if from == 1 { 0xbe } else { 0xbf } } else { if from == 1 { 0xb6 } else { 0xb7 } }
+        let rex8 = from == 1 && ops[0].kind == XO_REG && ops[0].rex8
+        e.op_rm(size, [0x0f, opc], ops[1].reg, rex8, ops[0])
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// add, or, adc, sbb, and, sub, xor, cmp.
+fn (var e: XB) alu(op: Int, size: Int, src: XOp, dst: XOp) {
+  if src.kind == XO_IMM {
+    let small = src.sym.is_empty() && fits8(src.imm)
+    if size == 1 {
+      if dst.kind == XO_REG && dst.reg == 0 {
+        e.byte(0x04 + 8 * op)
+        return e.immn(src, 1)
+      }
+      e.op_rm(1, [0x80], op, false, dst)
+      return e.immn(src, 1)
+    }
+    if small {
+      e.op_rm(size, [0x83], op, false, dst)
+      return e.immn(src, 1)
+    }
+    let isz = if size == 2 { 2 } else { 4 }
+    if dst.kind == XO_REG && dst.reg == 0 {
+      if size == 2 {
+        e.byte(0x66)
+      }
+      if size == 8 {
+        e.byte(0x48)
+      }
+      e.byte(0x05 + 8 * op)
+      return e.immn(src, isz)
+    }
+    e.op_rm(size, [0x81], op, false, dst)
+    return e.immn(src, isz)
+  }
+  if src.kind == XO_REG {
+    // r -> r/m: 00 + 8 op (8 bit), 01 + 8 op
+    let rex8 = size == 1 && src.rex8
+    return e.op_rm(size, [8 * op + if size == 1 { 0 } else { 1 }], src.reg, rex8, dst)
+  }
+  if dst.kind == XO_REG {
+    let rex8 = size == 1 && dst.rex8
+    return e.op_rm(size, [8 * op + if size == 1 { 2 } else { 3 }], dst.reg, rex8, src)
+  }
+  e.fail("two memory operands")
+}
+
+fn (var e: XB) mov(size: Int, ops: List[XOp]) {
+  if ops.len() != 2 {
+    return e.fail("mov takes two operands")
+  }
+  let src = ops[0]
+  let dst = ops[1]
+  if src.kind == XO_IMM {
+    if dst.kind == XO_REG {
+      if size == 1 {
+        e.rex(false, 0, dst, dst.rex8)
+        e.byte(0xb0 + (dst.reg & 7))
+        return e.immn(src, 1)
+      }
+      if size == 8 {
+        if src.sym.is_empty() && !fits32(src.imm) {
+          // as LLVM: a constant outside int32 takes movabsq
+          e.rex(true, 0, dst, false)
+          e.byte(0xb8 + (dst.reg & 7))
+          return e.immn(src, 8)
+        }
+        e.op_rm(8, [0xc7], 0, false, dst)
+        return e.immn(src, 4)
+      }
+      if size == 2 {
+        e.byte(0x66)
+      }
+      e.rex(false, 0, dst, false)
+      e.byte(0xb8 + (dst.reg & 7))
+      return e.immn(src, size)
+    }
+    e.op_rm(size, [if size == 1 { 0xc6 } else { 0xc7 }], 0, false, dst)
+    return e.immn(src, if size == 8 { 4 } else { size })
+  }
+  if src.kind == XO_REG {
+    let rex8 = size == 1 && src.rex8
+    return e.op_rm(size, [if size == 1 { 0x88 } else { 0x89 }], src.reg, rex8, dst)
+  }
+  if dst.kind == XO_REG {
+    let rex8 = size == 1 && dst.rex8
+    return e.op_rm(size, [if size == 1 { 0x8a } else { 0x8b }], dst.reg, rex8, src)
+  }
+  e.fail("two memory operands")
+}
+
+fn (var e: XB) test_op(size: Int, ops: List[XOp]) {
+  if ops.len() != 2 {
+    return e.fail("test takes two operands")
+  }
+  let src = ops[0]
+  let dst = ops[1]
+  if src.kind == XO_IMM {
+    if dst.kind == XO_REG && dst.reg == 0 {
+      if size == 2 {
+        e.byte(0x66)
+      }
+      if size == 8 {
+        e.byte(0x48)
+      }
+      e.byte(if size == 1 { 0xa8 } else { 0xa9 })
+      return e.immn(src, if size == 8 { 4 } else { size })
+    }
+    e.op_rm(size, [if size == 1 { 0xf6 } else { 0xf7 }], 0, false, dst)
+    return e.immn(src, if size == 8 { 4 } else { size })
+  }
+  if src.kind == XO_REG {
+    let rex8 = size == 1 && (src.rex8 || dst.rex8)
+    return e.op_rm(size, [if size == 1 { 0x84 } else { 0x85 }], src.reg, rex8, dst)
+  }
+  e.fail("test with a memory source")
+}
+
+/// shl, shr, sar, rol, ror: by 1 (d0/d1), by an immediate (c0/c1), by
+/// %cl (d2/d3), or with no count (by 1).
+fn (var e: XB) shift(op: Int, size: Int, ops: List[XOp]) {
+  let dst = ops[ops.len() - 1]
+  let o8 = size == 1
+  if ops.len() == 1 {
+    return e.op_rm(size, [if o8 { 0xd0 } else { 0xd1 }], op, false, dst)
+  }
+  let c = ops[0]
+  if c.kind == XO_REG {
+    if c.reg != 1 || c.size != 1 {
+      return e.fail("a shift count register must be %cl")
+    }
+    return e.op_rm(size, [if o8 { 0xd2 } else { 0xd3 }], op, false, dst)
+  }
+  if c.kind == XO_IMM && c.sym.is_empty() && c.imm == 1 {
+    return e.op_rm(size, [if o8 { 0xd0 } else { 0xd1 }], op, false, dst)
+  }
+  e.op_rm(size, [if o8 { 0xc0 } else { 0xc1 }], op, false, dst)
+  e.immn(c, 1)
+}
+
+/// imul with two operands (0f af) or three (6b ib, 69 iz).
+fn (var e: XB) imul(size: Int, ops: List[XOp]) {
+  let dst = ops[ops.len() - 1]
+  if dst.kind != XO_REG {
+    return e.fail("imul needs a register destination")
+  }
+  if ops.len() == 2 {
+    return e.op_rm(size, [0x0f, 0xaf], dst.reg, false, ops[0])
+  }
+  let c = ops[0]
+  if c.sym.is_empty() && fits8(c.imm) {
+    e.op_rm(size, [0x6b], dst.reg, false, ops[1])
+    return e.immn(c, 1)
+  }
+  e.op_rm(size, [0x69], dst.reg, false, ops[1])
+  e.immn(c, if size == 2 { 2 } else { 4 })
+}
+
+fn (var e: XB) pushpop(push: Bool, ops: List[XOp]) {
+  if ops.len() != 1 {
+    return e.fail("push and pop take one operand")
+  }
+  let o = ops[0]
+  if o.kind == XO_REG {
+    e.rex(false, 0, o, false)
+    return e.byte((if push { 0x50 } else { 0x58 }) + (o.reg & 7))
+  }
+  if o.kind == XO_IMM {
+    if !push {
+      return e.fail("pop of an immediate")
+    }
+    if o.sym.is_empty() && fits8(o.imm) {
+      e.byte(0x6a)
+      return e.immn(o, 1)
+    }
+    e.byte(0x68)
+    return e.immn(o, 4)
+  }
+  e.op_rm(4, [if push { 0xff } else { 0x8f }], if push { 6 } else { 0 }, false, o)
+}
+
+/// xchg: register to r/m (87 /r, 86 /r for bytes), the register in reg.
+fn (var e: XB) rr_rm(size: Int, opc: Int, ops: List[XOp]) {
+  if ops.len() != 2 || ops[0].kind != XO_REG {
+    return e.fail("needs a register source")
+  }
+  let rex8 = size == 1 && (ops[0].rex8 || ops[1].rex8)
+  if ops[1].kind == XO_REG {
+    // two registers: LLVM puts the destination in the reg field
+    return e.op_rm(size, [opc], ops[1].reg, rex8, ops[0])
+  }
+  e.op_rm(size, [opc], ops[0].reg, rex8, ops[1])
+}
+
+/// cmpxchg, xadd: 0f opc /r with the source register in reg.
+fn (var e: XB) rr_rm0f(size: Int, opc: Int, ops: List[XOp]) {
+  if ops.len() != 2 || ops[0].kind != XO_REG {
+    return e.fail("needs a register source")
+  }
+  let rex8 = size == 1 && (ops[0].rex8 || ops[1].rex8)
+  e.op_rm(size, [0x0f, opc], ops[0].reg, rex8, ops[1])
+}
+
+/// An SSE instruction xmm <- xmm/m with mandatory prefix p (0 none).
+fn (var e: XB) sse(p: Int, opc: List[Int], ops: List[XOp]) {
+  e.sse_w(p, opc, false, ops)
+}
+
+fn (var e: XB) sse_w(p: Int, opc: List[Int], w: Bool, ops: List[XOp]) {
+  if ops.len() != 2 || ops[1].kind != XO_REG {
+    return e.fail("needs a register destination")
+  }
+  e.seg(ops[0])
+  if p != 0 {
+    e.byte(p)
+  }
+  e.rex(w, ops[1].reg, ops[0], false)
+  for o in opc {
+    e.byte(o)
+  }
+  e.modrm(ops[1].reg, ops[0])
+}
+
+/// An SSE store xmm -> m.
+fn (var e: XB) sse_store(p: Int, opc: List[Int], src: XOp, dst: XOp) {
+  e.seg(dst)
+  if p != 0 {
+    e.byte(p)
+  }
+  e.rex(false, src.reg, dst, false)
+  for o in opc {
+    e.byte(o)
+  }
+  e.modrm(src.reg, dst)
+}
+
+/// movq and movd between a general register (or memory) and an xmm
+/// register, and movq xmm to xmm.
+fn (var e: XB) movq_xmm(q: Bool, src: XOp, dst: XOp) {
+  let sx = src.kind == XO_REG && src.rclass == RC_XMM
+  let dx = dst.kind == XO_REG && dst.rclass == RC_XMM
+  if sx && dx {
+    // f3 0f 7e: movq xmm2/m64 -> xmm1
+    e.byte(0xf3)
+    e.rex(false, dst.reg, src, false)
+    e.byte(0x0f)
+    e.byte(0x7e)
+    return e.modrm(dst.reg, src)
+  }
+  if dx {
+    if src.kind == XO_MEM && q {
+      // f3 0f 7e from memory
+      e.seg(src)
+      e.byte(0xf3)
+      e.rex(false, dst.reg, src, false)
+      e.byte(0x0f)
+      e.byte(0x7e)
+      return e.modrm(dst.reg, src)
+    }
+    // 66 [REX.W] 0f 6e
+    e.seg(src)
+    e.byte(0x66)
+    e.rex(q, dst.reg, src, false)
+    e.byte(0x0f)
+    e.byte(0x6e)
+    return e.modrm(dst.reg, src)
+  }
+  if dst.kind == XO_MEM && q {
+    // 66 0f d6: movq xmm -> m64
+    e.seg(dst)
+    e.byte(0x66)
+    e.rex(false, src.reg, dst, false)
+    e.byte(0x0f)
+    e.byte(0xd6)
+    return e.modrm(src.reg, dst)
+  }
+  // 66 [REX.W] 0f 7e: xmm -> r/m
+  e.seg(dst)
+  e.byte(0x66)
+  e.rex(q, src.reg, dst, false)
+  e.byte(0x0f)
+  e.byte(0x7e)
+  e.modrm(src.reg, dst)
+}
+
+/// Splits AT&T operands at the commas outside parentheses.
+fn split_x86_operands(b: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  var depth = 0
+  var start = 0
+  var q = false
+  var esc = false
+  for i in 0..b.len() {
+    let c = b[i]
+    if esc {
+      esc = false
+    } else if q && c == '\\' {
+      esc = true
+    } else if c == '"' {
+      q = !q
+    } else if q {
+      // inside a quoted name
+    } else if c == '(' {
+      depth += 1
+    } else if c == ')' {
+      depth -= 1
+    } else if c == ',' && depth == 0 {
+      out.push(trim(b[start..i]))
+      start = i + 1
+    }
+  }
+  let last = trim(b[start..])
+  if !last.is_empty() || !out.is_empty() {
+    out.push(last)
+  }
+  out
+}
+
+/// Encodes one line of AT&T assembly: `[lock ]mnemonic operands`.
+pub fn encode_x86_line(line: Bytes) -> XEnc {
+  let l = trim(line)
+  var i = 0
+  while i < l.len() && !is_space(l[i]) {
+    i += 1
+  }
+  var mn = l[0..i]
+  var rest = trim(l[i..])
+  if bstr(mn) is "lock" | "rep" {
+    var j = 0
+    while j < rest.len() && !is_space(rest[j]) {
+      j += 1
+    }
+    mn = "${bstr(mn)} ${bstr(rest[0..j])}".bytes()
+    rest = trim(rest[j..])
+  }
+  encode_x86(mn, split_x86_operands(rest))
+}

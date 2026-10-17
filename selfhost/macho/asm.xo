@@ -155,8 +155,10 @@ struct Fix {
 
 /// A .cfi_ directive: at a byte offset of the function's section.
 struct Cfi {
+  raw: List[Int] = []
   at: Int
-  /// 0 def_cfa, 1 offset
+  /// 0 def_cfa, 1 offset, 2 def_cfa_offset, 3 def_cfa_register, 4 restore,
+  /// 5 escape (the bytes raw)
   op: Int
   /// DWARF register number
   reg: Int
@@ -210,6 +212,22 @@ pub struct Asm {
   num_back: Map[Bytes, Int] = {}
   num_fwd: Map[Bytes, Int] = {}
   num_count: Int = 0
+  /// x86-64 (asm_amd64.xo, decision 0254): code sections hold bytes, not
+  /// words; the relaxable branches made long (by their number in the
+  /// source), the next number, the branches and fixups of this pass
+  amd64: Bool = false
+  xlong: Map[Int, Bool] = {}
+  xseq: Int = 0
+  xbrs: List[XBr] = []
+  xfixes: List[XFx] = []
+  /// x86-64: the CFA offset of the open frame, for .cfi_adjust_cfa_offset
+  cfa_off: Int = 0
+}
+
+/// The bytes of code in section si so far: 4 a word, or the bytes of an
+/// x86-64 section.
+fn (a: Asm) code_len(si: Int) -> Int {
+  if a.amd64 { a.sects[si].words.len() } else { a.sects[si].words.len() * 4 }
 }
 
 /// assemble: the Mach-O object of src, or the first error as
@@ -278,6 +296,25 @@ fn (var a: Asm) parse(src: Bytes) {
 fn (var a: Asm) parse_line(l0: Bytes) {
   var s = 0
   var e = l0.len()
+  if a.amd64 {
+    // `#` starts a comment, outside a quoted string
+    var q = false
+    var i = 0
+    while i < l0.len() {
+      if q && l0[i] == '\\' {
+        // an escaped character of a string
+        i += 2
+        continue
+      }
+      if l0[i] == '"' {
+        q = !q
+      } else if l0[i] == '#' && !q {
+        e = i
+        break
+      }
+      i += 1
+    }
+  }
   while s < e && is_space(l0[s]) {
     s += 1
   }
@@ -310,6 +347,10 @@ fn (var a: Asm) parse_line(l0: Bytes) {
     a.fail("an instruction outside __text")
     return
   }
+  if a.amd64 {
+    a.x86_instruction(l)
+    return
+  }
   if a.elf {
     a.map_code()
   }
@@ -328,9 +369,19 @@ fn split_operands(b: Bytes) -> List[Bytes] {
   var out: List[Bytes] = []
   var depth = 0
   var start = 0
+  var q = false
+  var esc = false
   for i in 0..b.len() {
     let c = b[i]
-    if c == '[' {
+    if esc {
+      esc = false
+    } else if q && c == '\\' {
+      esc = true
+    } else if c == '"' {
+      q = !q
+    } else if q {
+      // inside a quoted name
+    } else if c == '[' {
       depth += 1
     } else if c == ']' {
       depth -= 1
@@ -359,7 +410,9 @@ fn trim(b: Bytes) -> Bytes {
 }
 
 /// The symbol of name, made undefined when new.
-fn (var a: Asm) sym(name: Bytes) -> Int {
+fn (var a: Asm) sym(name0: Bytes) -> Int {
+  // a quoted name ("x.f[Int]") is the name without its quotes
+  let name = if name0.len() >= 2 && name0[0] == '"' { unquote(name0) ?? name0 } else { name0 }
   match a.names.get(name) {
     Some(i) => i
     None => {
@@ -375,7 +428,7 @@ fn (var a: Asm) sym(name: Bytes) -> Int {
 /// The current offset of the section.
 fn (a: Asm) here() -> Int {
   let s = a.sects[a.cur]
-  if s.code { s.words.len() * 4 } else { 0 }
+  if s.code { a.code_len(a.cur) } else { 0 }
 }
 
 fn (var a: Asm) define(name: Bytes) {
@@ -451,7 +504,7 @@ fn (var a: Asm) define_sym(i: Int, name: Bytes) {
     a.sects[a.cur].last_atom = i
   }
   if a.sects[a.cur].code {
-    a.syms[i].off = a.sects[a.cur].words.len() * 4
+    a.syms[i].off = a.code_len(a.cur)
   } else {
     a.sects[a.cur].items.push(Item.Label(i))
   }
@@ -585,7 +638,34 @@ fn (var a: Asm) directive(l: Bytes) {
     a.text()
   }
   if d == ".p2align" {
-    let p = parse_int(rest) ?? -1
+    var arg = rest
+    if a.amd64 {
+      // `.p2align P, 0x90` in code: 0x90 bytes, as LLVM writes an
+      // explicit fill (no fill: its long NOPs); `.p2align P, 0x0` in data:
+      // zeros as with no fill
+      let ps = split_operands(rest)
+      if ps.len() == 2 && a.cur >= 0 {
+        let fill = parse_int(ps[1]) ?? -1
+        if fill == 0x90 && a.sects[a.cur].code {
+          let p = parse_int(ps[0]) ?? -1
+          if p < 0 || p > 15 {
+            a.fail("bad .p2align ${bstr(rest)}")
+            return
+          }
+          if p > a.sects[a.cur].align {
+            a.sects[a.cur].align = p
+          }
+          while a.code_len(a.cur) % pow2(p) != 0 {
+            a.sects[a.cur].words.push(0x90)
+          }
+          return
+        }
+        if fill == 0 && !a.sects[a.cur].code {
+          arg = ps[0]
+        }
+      }
+    }
+    let p = parse_int(arg) ?? -1
     if p < 0 || p > 15 {
       a.fail("bad .p2align ${bstr(rest)}")
       return
@@ -593,13 +673,19 @@ fn (var a: Asm) directive(l: Bytes) {
     if p > a.sects[a.cur].align {
       a.sects[a.cur].align = p
     }
-    if a.sects[a.cur].code {
+    if a.sects[a.cur].code && a.amd64 {
+      a.x86_pad(p)
+    } else if a.sects[a.cur].code {
       while a.sects[a.cur].words.len() * 4 % pow2(p) != 0 {
         a.sects[a.cur].words.push(NOP)
       }
     } else {
       a.sects[a.cur].items.push(Item.Align(p))
     }
+    return
+  }
+  if d == ".long" && a.sects[a.cur].code && a.amd64 {
+    a.fail(".long in a code section")
     return
   }
   if d == ".long" && a.sects[a.cur].code {
@@ -622,6 +708,25 @@ fn (var a: Asm) directive(l: Bytes) {
   }
   if a.sects[a.cur].code {
     a.fail("${d} in __text")
+    return
+  }
+  if d == ".zero" {
+    // `.zero N` or `.zero N, FILL`: N bytes of FILL (0)
+    let ps = split_operands(rest)
+    let n = parse_int(if ps.is_empty() { rest } else { ps[0] }) ?? -1
+    let fill = if ps.len() == 2 { parse_int(ps[1]) ?? -1 } else { 0 }
+    if n < 0 || fill < 0 || fill > 255 {
+      a.fail("bad .zero ${bstr(rest)}")
+      return
+    }
+    if a.elf {
+      a.map_data()
+    }
+    var b = BytesBuilder.with_capacity(n)
+    for _ in 0..n {
+      b.write_byte(UInt8(fill))
+    }
+    a.sects[a.cur].items.push(Item.Raw(b.freeze()))
     return
   }
   if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" || (a.elf && d == ".xword") {
@@ -676,9 +781,23 @@ fn (var a: Asm) expr(b: Bytes) -> (Int, Int, Int) {
       }
     }
   }
+  if b[0] == '"' {
+    // a quoted name (x86-64's mangled names)
+    match unquote(b) {
+      Some(n) => return (a.sym(n), -1, 0)
+      None => {}
+    }
+  }
   for i in 1..b.len() {
-    if b[i] == '-' {
-      return (a.sym(trim(b[0..i])), a.sym(trim(b[i + 1..])), 0)
+    if b[i] == '+' || b[i] == '-' {
+      let rest = trim(b[i + 1..])
+      // sym+n, sym-n
+      if let Some(n) = parse_int(rest) {
+        return (a.sym(trim(b[0..i])), -1, if b[i] == '-' { 0 - n } else { n })
+      }
+      if b[i] == '-' {
+        return (a.sym(trim(b[0..i])), a.sym(rest), 0)
+      }
     }
   }
   (a.sym(b), -1, 0)
@@ -848,7 +967,7 @@ fn (var a: Asm) finish() {
   }
   for i in 0..a.sects.len() {
     if a.sects[i].code {
-      a.sects[i].size = a.sects[i].words.len() * 4
+      a.sects[i].size = a.code_len(i)
     } else {
       a.layout(i)
     }
@@ -874,7 +993,9 @@ fn (var a: Asm) finish() {
     a.sects[i].addr = if a.elf { 0 } else { addr }
     addr += a.sects[i].size
   }
-  if a.elf {
+  if a.amd64 {
+    a.x86_apply_fixes()
+  } else if a.elf {
     a.elf_apply_fixes()
   } else {
     a.apply_fixes()
@@ -1026,14 +1147,14 @@ fn (var a: Asm) emit_data(si: Int) {
             // decision 0239), which the link relocates as the sections
             // are concatenated. A loaded 4 byte pointer stays an error
             // (an absolute address no PIE could relocate).
-            a.elf_reloc(si, off, R_AARCH64_ABS32, x, k)
+            a.elf_reloc(si, off, a.r_abs32(), x, k)
             v = 0
           } else if n != 8 {
             a.fail("a ${n} byte pointer to ${bstr(a.syms[x].name)}")
             return
           } else if a.elf {
             // R_AARCH64_ABS64, the addend in the relocation
-            a.elf_reloc(si, off, R_AARCH64_ABS64, x, k)
+            a.elf_reloc(si, off, a.r_abs64(), x, k)
             v = 0
           } else {
             v = k + a.pointer_reloc(si, off, x)
@@ -1042,8 +1163,16 @@ fn (var a: Asm) emit_data(si: Int) {
           match a.rel_value(x, y, k) {
             Some(r) => v = r
             None => {
-              a.fail("a data word of symbols in different sections (${a.sects[si].name})")
-              return
+              if a.elf && n == 4 && a.syms[y].sect == si {
+                // A - B with B in this section (a jump table's entries):
+                // pc relative, the field's distance from B in the addend,
+                // as LLVM writes it
+                a.elf_reloc(si, off, a.r_prel32(), x, k + off - a.syms[y].off)
+                v = 0
+              } else {
+                a.fail("a data word of symbols in different sections (${a.sects[si].name})")
+                return
+              }
             }
           }
         }

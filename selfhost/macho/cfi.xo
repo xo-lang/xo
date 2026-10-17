@@ -29,7 +29,7 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
     a.fail("${d} outside __text")
     return
   }
-  let here = a.sects[a.cur].words.len() * 4
+  let here = a.code_len(a.cur)
   if d == ".cfi_startproc" {
     if a.open {
       a.fail("nested .cfi_startproc")
@@ -37,6 +37,8 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
     }
     a.open = true
     a.frame = Frame{sect: a.cur, start: here, atom: a.sects[a.cur].last_atom}
+    // x86-64: the CFA is %rsp + 8 at entry (the return address)
+    a.cfa_off = 8
     return
   }
   if !a.open {
@@ -50,14 +52,50 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
       a.frames.push(a.frame)
       a.open = false
     }
+    ".cfi_def_cfa_offset" | ".cfi_adjust_cfa_offset" => {
+      let off = parse_int(rest) ?? MIN_INT
+      if off == MIN_INT {
+        return a.fail("bad ${d} ${bstr(rest)}")
+      }
+      a.cfa_off = if d == ".cfi_def_cfa_offset" { off } else { a.cfa_off + off }
+      a.frame.insts.push(Cfi{at: here, op: 2, reg: 0, off: a.cfa_off})
+    }
+    ".cfi_escape" => {
+      var raw: List[Int] = []
+      for o in ops {
+        let v = parse_int(o) ?? -1
+        if v < 0 || v > 255 {
+          return a.fail("bad ${d} ${bstr(rest)}")
+        }
+        raw.push(v)
+      }
+      a.frame.insts.push(Cfi{raw: raw, at: here, op: 5, reg: 0, off: 0})
+    }
+    ".cfi_restore" => {
+      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
+      if r < 0 {
+        return a.fail("bad ${d} ${bstr(rest)}")
+      }
+      a.frame.insts.push(Cfi{at: here, op: 4, reg: r, off: 0})
+    }
+    ".cfi_def_cfa_register" => {
+      let r = if a.amd64 { x86_dwarf_reg(trim(rest)) } else { dwarf_reg(trim(rest)) }
+      if r < 0 {
+        return a.fail("bad ${d} ${bstr(rest)}")
+      }
+      a.frame.insts.push(Cfi{at: here, op: 3, reg: r, off: 0})
+    }
     ".cfi_def_cfa" | ".cfi_offset" => {
       if ops.len() != 2 {
         return a.fail("${d} takes a register and an offset")
       }
-      let r = dwarf_reg(ops[0])
+      let r = if a.amd64 { x86_dwarf_reg(ops[0]) } else { dwarf_reg(ops[0]) }
       let off = parse_int(ops[1]) ?? MIN_INT
       if r < 0 || off == MIN_INT {
         return a.fail("bad ${d} ${bstr(rest)}")
+      }
+      if d == ".cfi_def_cfa" {
+        a.cfa_off = off
       }
       a.frame.insts.push(Cfi{at: here, op: if d == ".cfi_def_cfa" { 0 } else { 1 }, reg: r, off: off})
     }
@@ -286,6 +324,21 @@ fn cfa_insts(var body: Out, f: Frame, factor: Int) {
       body.u8(0x0c)
       body.uleb(c.reg)
       body.uleb(c.off)
+    } else if c.op == 2 {
+      // DW_CFA_def_cfa_offset
+      body.u8(0x0e)
+      body.uleb(c.off)
+    } else if c.op == 3 {
+      // DW_CFA_def_cfa_register
+      body.u8(0x0d)
+      body.uleb(c.reg)
+    } else if c.op == 4 {
+      // DW_CFA_restore
+      body.u8(0xc0 | c.reg)
+    } else if c.op == 5 {
+      for v in c.raw {
+        body.u8(v)
+      }
     } else {
       let fo = c.off / factor
       if fo < 0 {

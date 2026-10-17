@@ -1,8 +1,9 @@
 // macho: the self hosted Mach-O assembler and linker of decision 0182.
 //
-//   macho asm [-o OUT.o] [--minos=X.Y] [--elf] [--bench=N] IN.s
+//   macho asm [-o OUT.o] [--minos=X.Y] [--elf] [--amd64] [--bench=N] IN.s
 //       assemble the arm64 emitter's assembly into an object (--elf: its
-//       linux/arm64 assembly into an ELF object)
+//       linux/arm64 assembly into an ELF object; --amd64: linux/amd64
+//       assembly into an ELF object)
 //   macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...
 //       link objects and archives into an executable (libSystem, and each
 //       --dylib, imported)
@@ -31,6 +32,7 @@ fn main(os: Os) ! {
   var minos = (11, 0)
   var ins: List[Str] = []
   var elf = false
+  var amd64 = false
   var i = 1
   while i < args.len() {
     let a = args[i]
@@ -41,6 +43,9 @@ fn main(os: Os) ! {
       minos = version(a.trim_prefix("--minos="))
     } else if a == "--elf" {
       elf = true
+    } else if a == "--amd64" {
+      // linux/amd64 assembly into an ELF object (decision 0254)
+      amd64 = true
     } else if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? 0
     } else {
@@ -56,7 +61,7 @@ fn main(os: Os) ! {
     let t0 = os.clock.now()
     var size = 0
     for _ in 0..repeat {
-      match if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
+      match if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
         Ok(b) => size = b.len()
         Err(e) => fail(os, "${ins[0]}: ${e}")
       }
@@ -68,7 +73,7 @@ fn main(os: Os) ! {
   if out.is_empty() {
     out = ins[0].trim_suffix(".s") + ".o"
   }
-  match if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
+  match if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
     Ok(b) => os.fs.write(out, b)?
     Err(e) => fail(os, "${ins[0]}: ${e}")
   }

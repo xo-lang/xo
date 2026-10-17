@@ -186,6 +186,25 @@ beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
 To be filled in as stages land.
 
+- Stage 1 landed (Xo Lang 2, 2026-10-17): selfhost/macho enc_amd64.xo
+  (the encoder) and asm_amd64.xo (the assembler, with amd64 paths in
+  asm.xo, elf.xo and cfi.xo); `macho asm --amd64`, and
+  `assemble_elf_amd64` for xo1. Tests, all against clang's integrated
+  assembler (scripts/amd64-enc-goldens.py regenerates them):
+  - 1,953 instruction forms (the emitter's set and stage 3's crypto
+    set) encode to clang's bytes (enc_amd64_test.xo);
+  - 3,192 forms of LLVM's own x86_64 output for 42 goldens (symbol free
+    lines, up to 30 per mnemonic) likewise (enc_amd64_survey_test.xo);
+  - whole files under selfhost/macho/testdata/amd64 give clang's ELF
+    object byte for byte (asm_amd64_test.xo: a frame with CFI, calls,
+    GOTPCREL, TLS, numeric labels; relaxation at the rel8 boundary; a
+    jump table, a personality and LSDA, SSE and crypto);
+  - the 42 LLVM-generated programs (their `.addrsig` lines removed,
+    LLVM's address significance table being out of the subset) assemble
+    to clang's objects byte for byte.
+  LLVM's choices the assembler matches are in
+  gotchas/amd64-encoder-llvm-choices.md.
+
 ## Alternatives
 
 - Keep LLVM on x86_64: clang on every x86_64 machine, and no control of
