@@ -21,8 +21,8 @@ terraform {
       version = "~> 3.0"
     }
   }
+  # bucket: from backend.hcl (git-ignored; terraform init -backend-config=backend.hcl, decision 0249)
   backend "s3" {
-    bucket       = "xo-tfstate-ACCOUNT_ID"
     key          = "ci-runners/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true

@@ -12,7 +12,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-account=ACCOUNT_ID
+account=${XO_AWS_ACCOUNT:?set XO_AWS_ACCOUNT to the AWS account ID (CLAUDE.local.md)}
 stamp="$(date +%Y%m%d-%H%M%S)"
 logs="$here/logs/$stamp"
 mkdir -p "$logs"

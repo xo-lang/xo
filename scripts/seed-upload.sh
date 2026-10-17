@@ -11,13 +11,13 @@
 # last (a host whose platform is missing from the newest seed would
 # fail), and reads latest.txt back. A dry run's output is refused.
 #
-# XO_SEED_BUCKET overrides the bucket (default xo-seeds-ACCOUNT_ID).
+# XO_SEED_BUCKET names the bucket (required; CLAUDE.local.md, decision 0249).
 set -euo pipefail
 
 die() { echo "seed-upload: $*" >&2; exit 1; }
 [ $# -eq 1 ] || die "usage: seed-upload.sh WORKDIR"
 out=$1/out
-bucket=${XO_SEED_BUCKET:-xo-seeds-ACCOUNT_ID}
+bucket=${XO_SEED_BUCKET:?set XO_SEED_BUCKET to the seed bucket (CLAUDE.local.md)}
 [ -s "$out/SEED" ] || die "$out/SEED missing: seed-cut.sh did not finish"
 [ ! -e "$out/DRY_RUN" ] || die "$out is a dry run's output"
 seed=$(cat "$out/SEED")

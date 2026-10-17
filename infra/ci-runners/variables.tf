@@ -6,7 +6,6 @@ variable "region" {
 variable "allowed_account" {
   description = "The only AWS account this configuration may touch."
   type        = string
-  default     = "ACCOUNT_ID"
 }
 
 variable "github_owner" {
@@ -22,7 +21,6 @@ variable "github_repo" {
 variable "seed_bucket" {
   description = "Private bucket of the seeds (decision 0216); also holds ci/boot/ and the dev/ binaries CI uploads."
   type        = string
-  default     = "xo-seeds-ACCOUNT_ID"
 }
 
 variable "idle_minutes" {

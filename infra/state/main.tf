@@ -20,7 +20,6 @@ variable "region" {
 variable "allowed_account" {
   description = "The only AWS account this configuration may touch."
   type        = string
-  default     = "ACCOUNT_ID"
 }
 
 provider "aws" {

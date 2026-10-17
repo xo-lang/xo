@@ -163,8 +163,25 @@ func TestSeedOrder(t *testing.T) {
 	t.Setenv("XO_SEED_URL", "")
 	t.Setenv("XO_SEED_BUCKET", "")
 	t.Setenv("XO_SEED_FALLBACK", "")
+	home := t.TempDir() // the user config dir, without this machine's seed-bucket file
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("AppData", home)
+	if ss, _ := Seeds(root); len(ss) != 1 || SeedURL() != "off" {
+		t.Errorf("no XO_SEED_URL, XO_SEED_BUCKET or seed-bucket file: SeedURL %s, seeds %+v", SeedURL(), ss)
+	}
+	f := SeedBucketFile()
+	os.MkdirAll(filepath.Dir(f), 0o755)
+	os.WriteFile(f, []byte(" filebucket/pre/ \nignored\n"), 0o644)
+	if u := SeedURL(); u != "s3://filebucket/pre" {
+		t.Errorf("seed-bucket file: SeedURL %s", u)
+	}
+	t.Setenv("XO_SEED_BUCKET", "b")
+	if u := SeedURL(); u != "s3://b" {
+		t.Errorf("XO_SEED_BUCKET over the seed-bucket file: SeedURL %s", u)
+	}
 	ss, _ := Seeds(root)
-	if len(ss) != 2 || ss[0].Path != seed || !strings.Contains(ss[1].Why, "s3://"+DefaultSeedBucket) {
+	if len(ss) != 2 || ss[0].Path != seed || !strings.Contains(ss[1].Why, "s3://b") {
 		t.Fatalf("seeds %+v", ss)
 	}
 	t.Setenv("XO_SEED_FALLBACK", "chain")

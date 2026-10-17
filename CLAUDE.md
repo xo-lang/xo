@@ -174,8 +174,11 @@ Update the knowledgebase in the same change as the work, not later:
 - Seeds (decision 0216, owner 2026-10-13): release N builds with release
   N-1. Prebuilt seeds (a tarball of bin/xo plus its std, since xo finds
   std at bin/../std, per goos-goarch, with a .sha256) live in the PRIVATE
-  S3 bucket `xo-seeds-ACCOUNT_ID` (us-east-1, public access blocked,
-  versioned): `seeds/<version>/<goos>-<goarch>.tar.gz`,
+  S3 bucket named by `$XO_SEED_BUCKET`, else the first line of
+  `<user config dir>/xo/seed-bucket` (us-east-1, public access blocked,
+  versioned; the repository names no bucket or account, decision 0249:
+  the values are in the untracked CLAUDE.local.md, and xobuild with
+  neither, and no XO_SEED_URL, fetches no seed): `seeds/<version>/<goos>-<goarch>.tar.gz`,
   `seeds/<version>/manifest.txt`, `seeds/latest.txt`. Seeds are not
   public releases. This Mac's AWS user and EC2 instances (instance
   profile `xo-ci-seed-read`, read only on that bucket) download them

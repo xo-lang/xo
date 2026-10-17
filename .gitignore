@@ -46,3 +46,9 @@ infra/state/tfplan
 infra/ci-runners/.terraform/
 infra/ci-runners/tfplan
 infra/ci-runners/lambda/*.zip
+
+# Private values kept out of the repository (decision 0249): Terraform
+# variables and S3 backend settings, and the owner's local notes
+terraform.tfvars
+backend.hcl
+CLAUDE.local.md

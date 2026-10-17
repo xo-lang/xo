@@ -3714,8 +3714,15 @@ and the bucket path; the chain runs only with `XO_SEED_FALLBACK=chain`
 (TestFetchFailNoChain). Seeds are unpacked only into the user cache,
 never into $HOME: the tarball's top directory is xo/, and on EC2 the
 checkout is ~/xo (unpacking there overwrote its bin/xo and std,
-2026-10-13). Variables: `XO_SEED_BUCKET` (bucket[/prefix], default
-xo-seeds-ACCOUNT_ID), `XO_SEED_URL` (the location instead:
+2026-10-13). Variables: `XO_SEED_BUCKET` (bucket[/prefix]; no default since
+decision 0249: unset, xo reads the first line of
+`<user config dir>/xo/seed-bucket` (`~/Library/Application
+Support/xo/seed-bucket` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on
+Linux), which sessions started before XO_SEED_BUCKET was set also see;
+with neither, and no XO_SEED_URL, there is no prebuilt seed. The owner's
+machines have both, their value in the untracked CLAUDE.local.md, and
+CI reads the repository variable XO_SEED_BUCKET; last verified
+2026-10-17), `XO_SEED_URL` (the location instead:
 `s3://bucket[/prefix]`, `file:///dir`, or a directory laid out like the
 bucket; `off` skips fetching). `XO_SEED` still comes first. The fetch
 read the lead's darwin-arm64 tarball of 0.9.0-5e21dc31 from a local copy

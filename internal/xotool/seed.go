@@ -35,27 +35,47 @@ import (
 // CLI, checks its sha256, and unpacks it into
 // <user cache>/xo/seeds/<seed>/<goos>-<goarch>/tree (bin: tree/xo/bin/xo).
 
-// DefaultSeedBucket is the bucket seeds are read from when
-// $XO_SEED_BUCKET is unset.
-const DefaultSeedBucket = "xo-seeds-ACCOUNT_ID"
-
 // defaultSeedRegion is the bucket's region ($XO_SEED_REGION overrides).
 const defaultSeedRegion = "us-east-1"
 
 // SeedURL is the location seeds are fetched from: $XO_SEED_URL (an
 // s3://bucket[/prefix] URL, a file:// URL, or a local directory; "off"
-// turns fetching off), else s3://$XO_SEED_BUCKET (default
-// DefaultSeedBucket; it may carry a /prefix). The location holds
-// seeds/latest.txt and seeds/<seed>/.
+// turns fetching off), else s3://BUCKET (it may carry a /prefix) for
+// the bucket $XO_SEED_BUCKET or SeedBucketFile names, else "off": the
+// repository names no bucket (decision 0249; the owner's machines set
+// one, CLAUDE.local.md). The location holds seeds/latest.txt and
+// seeds/<seed>/.
 func SeedURL() string {
 	if u := strings.TrimSpace(os.Getenv("XO_SEED_URL")); u != "" {
 		return strings.TrimRight(u, "/")
 	}
-	b := strings.Trim(strings.TrimSpace(os.Getenv("XO_SEED_BUCKET")), "/")
+	b := strings.TrimSpace(os.Getenv("XO_SEED_BUCKET"))
 	if b == "" {
-		b = DefaultSeedBucket
+		if f := SeedBucketFile(); f != "" {
+			if data, err := os.ReadFile(f); err == nil {
+				b, _, _ = strings.Cut(string(data), "\n")
+				b = strings.TrimSpace(b)
+			}
+		}
+	}
+	b = strings.Trim(b, "/")
+	if b == "" {
+		return "off"
 	}
 	return "s3://" + strings.TrimPrefix(b, "s3://")
+}
+
+// SeedBucketFile is <user config dir>/xo/seed-bucket, whose first line
+// names the seed bucket when XO_SEED_BUCKET is unset. It lives outside
+// every checkout, and a session whose environment was fixed before the
+// owner set XO_SEED_BUCKET still reads it. "" when there is no user
+// config dir.
+func SeedBucketFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "xo", "seed-bucket")
 }
 
 // HostPlatform is the seed platform of this host, <goos>-<goarch>.
@@ -115,7 +135,7 @@ func (s seedStore) fetch(rel, dst string) error {
 func LatestSeedVersion() (string, error) {
 	loc := SeedURL()
 	if loc == "off" {
-		return "", errors.New("seed fetching is off (XO_SEED_URL=off)")
+		return "", errors.New("seed fetching is off (XO_SEED_URL=off, or no XO_SEED_URL, XO_SEED_BUCKET, or " + SeedBucketFile() + ")")
 	}
 	b, err := seedStore{loc}.read("seeds/latest.txt")
 	if err != nil {

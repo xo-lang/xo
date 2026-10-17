@@ -1,0 +1,30 @@
+# gitleaks configuration (decision 0249): run before every push to the
+# public repository,
+#   gitleaks git --log-opts="--all" -v .
+# The allowlist covers known false positives only: self-signed test keys
+# in the TLS goldens, and TLS code that compares key types.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "TLS test fixtures, key-type comparisons, time zone name lists"
+paths = [
+  '''internal/llvm/testdata/golden/http_tls[^/]*/main\.xo''',
+  '''internal/llvm/testdata/golden/http_conn_fault/main\.xo''',
+  '''std/native/llrt/tls1[23](srv)?\.xo''',
+  '''third_party/mbedtls/''',
+  '''internal/llvm/time_diff_test\.go''',
+]
+
+# Values that must never be committed again (the private account, its
+# buckets, and the owner's SSH allowlist address) live in CLAUDE.local.md;
+# these rules catch them by shape.
+[[rules]]
+id = "aws-account-id-in-bucket"
+description = "An S3 bucket name ending in a 12 digit AWS account ID"
+regex = '''xo-(seeds|tfstate)-[0-9]{12}'''
+
+[[rules]]
+id = "ec2-resource-id"
+description = "An EC2 instance, security group or AMI ID"
+regex = '''\b(i|sg|ami)-0[0-9a-f]{16}\b'''

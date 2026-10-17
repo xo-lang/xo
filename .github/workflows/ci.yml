@@ -30,6 +30,11 @@ on:
         options: [planned, xo-arm64, xo-arm64-big, xo-windows]
         default: planned
 
+# The seed bucket is a repository variable, not a value in the repository
+# (decision 0249); scripts/xobuild reads it.
+env:
+  XO_SEED_BUCKET: ${{ vars.XO_SEED_BUCKET }}
+
 jobs:
   # One run, several jobs: plan fixes the commits (the ref and main as
   # they are now, so every job tests the same merge) and lists the jobs

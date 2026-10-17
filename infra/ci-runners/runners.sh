@@ -14,7 +14,7 @@
 #
 # add, adopt, remove, and apply show the plan and ask before applying
 # (XO_TF_AUTO=1 applies without asking). The runner name on GitHub is
-# xo-ci-NAME. Needs terraform, the AWS CLI for account ACCOUNT_ID, gh
+# xo-ci-NAME. Needs terraform, the AWS CLI for the account in terraform.tfvars, gh
 # signed in as a repository admin, and python3.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -26,7 +26,7 @@ die() { echo "runners.sh: $*" >&2; exit 1; }
 edit() { python3 -I - "$J" "$@"; }
 instance() { terraform output -json runners 2>/dev/null | python3 -I -c 'import json,sys; r=json.load(sys.stdin); print(r.get(sys.argv[1],{}).get("id",""))' "$1"; }
 apply() {
-  terraform init -input=false >/dev/null
+  terraform init -input=false -backend-config=backend.hcl >/dev/null
   if [ "${XO_TF_AUTO:-}" = 1 ]; then terraform apply -input=false -auto-approve; else terraform apply -input=false; fi
 }
 
