@@ -2,6 +2,7 @@
 
 Status: Accepted (owner approved the work, 2026-10-16, to start after
 seed 0.18.0; lead's plan); steps 1 and 2 implemented 2026-10-16 (xo-fa,
+step 3 the same night after the Mac restart,
 elflink reviewed by Xo Lang 3). The toolchain's own Linux self build
 keeps the C library until a Linux self rebuild fixed point has passed
 with none (below).
@@ -74,10 +75,17 @@ backend's no-libc path; elflink is arm64 only).
   distribution, any glibc version, scratch containers).
 - A C library function the runtime reaches that cabi_libc.xo lacks fails
   the link, naming it; `XO_NOLIBC=0` is the way out until it is added.
+- Step 3 (2026-10-16): on a linux host the arm64 backend's default
+  linker (no `--ld`) is elflink's static mode for a program with no C
+  library (selfhost/xo main.xo default_ld); with the C library
+  (`XO_NOLIBC=0`, `use c`) it stays cc, a dynamic PIE against glibc.
+  `--ld=cc` and `--ld=macho` choose as before. This settles decision
+  0182 stage 3's "a linux host keeps cc until the ELF linker writes PIE":
+  a static ET_EXEC needs no PIE. Cross builds from the Mac still emit
+  assembly unless `--ld=macho` is given (a follow-up). The LLVM backend
+  links with clang as before. Evidence: below.
 - Next: flip the toolchain's self build once a Linux fixed point passes
-  (CI back or Docker with more memory, the owner's setting); then the
-  default linker for linux/arm64 (`--ld=macho`, step 3 of the plan),
-  with `--ld=cc` kept; `use c` programs keep linking libc through cc.
+  (CI back or Docker with more memory, the owner's setting).
 - elflink still writes local symbols under -s (a strip option is Xo Lang
   3's follow-up, with decision 0246's LinkOpts.strip).
 

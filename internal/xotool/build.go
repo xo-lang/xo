@@ -333,6 +333,13 @@ func asm(dir, backend, target string, flags ...string) ([]byte, error) {
 	}
 	cmd := exec.Command(cli[0], append(args, dir)...)
 	cmd.Env = append(os.Environ(), "XO_LLVM_SPLIT=1")
+	if os.Getenv("XO_NOLIBC") == "" {
+		// the tests link this code with clang and the C library (the
+		// sanitizers among them), or compare it with assembly recorded
+		// so: since decision 0243 a Linux program has no C library by
+		// default, its own _start
+		cmd.Env = append(cmd.Env, "XO_NOLIBC=0")
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

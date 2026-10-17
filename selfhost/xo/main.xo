@@ -454,7 +454,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       fail_unsupported(os, "the LLVM emitter skipped ${g.skipped[0]}")
     }
     // with no C library, no libgcc: arm64 atomics inline (decision 0206)
-    let attr_flags = if nolibc(os, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
+    let attr_flags = if nolibc(os, o, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-mno-outline-atomics"] } else { cross }
     let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
     if o.cmd == "asm" {
       os.stdio.print(code)
@@ -655,7 +655,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let srcs = progs + lk.srcs
     if no_cc {
       write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nolibc(os, c, tgoos))
+      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nolibc(os, o, c, tgoos))
       if !why.is_empty() {
         fail(os, why)
       }
@@ -718,11 +718,19 @@ fn emit_jobs(os: Os) -> Int {
 /// selects cc. (cc was the default again from 643b8261 to this change,
 /// while macho's binaries waited at exec: an XProtect false positive,
 /// gotchas/xprotect-false-positive-empty-list.md, and a path relinked
-/// under a running exec, gotchas/amfi-gatekeeper-macho-layout.md.) A
-/// linux host keeps cc until the ELF linker writes PIE (decision 0182
-/// stage 3 next step 1).
+/// under a running exec, gotchas/amfi-gatekeeper-macho-layout.md.) On a
+/// linux host (arm64, the backend this link serves) a program with no C
+/// library links with the ELF linker's static mode (decision 0243 step
+/// 3, as Go links); one with the C library (XO_NOLIBC=0, or `use c`)
+/// keeps cc and glibc.
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
-  if ctx.goos != "darwin" || tgoos != "darwin" || o.assembler == "cc" {
+  if o.assembler == "cc" {
+    return false
+  }
+  if ctx.goos == "linux" && tgoos == "linux" {
+    return nolibc(os, o, c, tgoos)
+  }
+  if ctx.goos != "darwin" || tgoos != "darwin" {
     return false
   }
   for m in c.mods {
@@ -744,9 +752,9 @@ struct Lowered {
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
 fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
-  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, c, tgoos))
-  b.m.nolibc_start = !wasm && nolibc(os, c, tgoos)
-  b.m.nolibc = !wasm && nolibc(os, c, tgoos)
+  var b = ssa.build_program_libc(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos))
+  b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
+  b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
   var t = lap(os, o.phases, "ssa", t0)
   if !b.why.is_empty() {
     fail_unsupported(os, b.why)
@@ -857,7 +865,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   if !ci.err.is_empty() {
     fail(os, ci.err)
   }
-  if nolibc(os, c, tgoos) {
+  if nolibc(os, o, c, tgoos) {
     // a static program with no C library (decisions 0203, 0206)
     if !ci.srcs.is_empty() || !ci.flags.is_empty() {
       fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")

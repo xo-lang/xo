@@ -200,8 +200,10 @@ fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
 /// 0243): on Linux, the default for a program with no `use c` module, as
 /// Go links static binaries with no libc; XO_NOLIBC=0 links the C
 /// library, and XO_NOLIBC=1 asks for none (an error with `use c`).
-fn nolibc(os: Os, c: check.Checker, tgoos: Str) -> Bool {
-  if tgoos != "linux" {
+/// --race links the C library always: ThreadSanitizer's runtime is
+/// built on it (a static -nostdlib link of it cannot work).
+fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
+  if tgoos != "linux" || o.race {
     return false
   }
   match os.env.get("XO_NOLIBC") ?? "" {

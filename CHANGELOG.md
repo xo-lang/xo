@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- linux/arm64: with no `--ld`, a program with no C library now links with
+  Xo's own ELF linker (static, no C toolchain at link time; decision 0243
+  step 3); `XO_NOLIBC=0` and `use c` programs keep cc and glibc.
+
 - Linux without C (decision 0243): a Linux program with no `use c` links
   no C library by default, on the arm64 and LLVM backends (XO_NOLIBC=0
   links glibc). selfhost/macho's ELF linker has a static mode (plain
