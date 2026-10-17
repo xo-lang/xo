@@ -116,8 +116,11 @@ std/rt vendors golang.org/x/crypto code without its BSD notice.
      refs; the owner's account is not on the bypass list, so the shared
      SSH key and `gh` login are refused;
    - no private checkout or worktree has xo-lang/xo as a remote, and a
-     pre-push hook in the private repository refuses xo-lang URLs (a
-     last guard only: `--no-verify` skips it);
+     pre-push hook in the private repository's shared `.git/hooks` (so
+     every worktree has it; it is not versioned) refuses any push whose
+     URL contains xo-lang (a last guard only: `--no-verify` skips it).
+     The owner's push is not affected: it runs from ../xo-publish, a
+     separate repository without the hook;
    - the first publish goes to xo-lang/xo while it is private; the
      owner checks it and makes it public as a separate step.
 7. **Published refs.** main and the tags (v*, go-compiler-final).

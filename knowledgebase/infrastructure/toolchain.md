@@ -3870,3 +3870,28 @@ development Mac (commit 7b3da52, Go installed but off PATH): seed 336
 s; s1 556 s, s2 548 s, s3 555 s; s2 and s3 identical (assembly
 384,779,554 bytes, binary 76,874,400 bytes), s1 too. Last verified:
 2026-10-12.
+
+## Publishing the public mirror (decision 0249)
+
+Development stays in the private josephspurrier/xo; github.com/xo-lang/xo
+is a scrubbed mirror of main and the version tags. Only the owner pushes
+it. The tools live outside every repository, in
+`../xo-publish-tools` next to the main checkout, because the
+replacement rules hold the private values:
+
+- `publish.sh prepare` (the publisher agent): rebuilds `../xo-publish` from
+  the private origin/main and tags with `git filter-repo` (replacements,
+  removed paths, commit hashes in files mapped to public commits), checks
+  for leftovers, runs gitleaks, checks that every seed-chain.txt hop is a
+  public commit, refuses a non fast-forward against what was last
+  published, runs the purity check, and writes `last-prepare.txt`.
+- `publish.sh push` (the owner, in a terminal): shows the summary, asks
+  for a typed confirmation, and pushes with the deploy key
+  (`~/.ssh/xo-lang-publish`, passphrase only the owner knows; the SSH
+  agent is not used). It refuses without a terminal.
+
+The private repository has a pre-push hook in its shared `.git/hooks`
+(every worktree uses it; it is not versioned, so a fresh clone needs it
+reinstalled) that refuses a push to any URL containing `xo-lang`. It does
+not affect the owner's push, which runs from `../xo-publish`, a separate
+repository without the hook. Last verified: 2026-10-17.
