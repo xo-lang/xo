@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64 debug builds describe a variable's word that holds a constant by
+  the constant (DW_OP_constu, or DW_OP_addrx of a string literal's
+  static object): a literal field that no register keeps (an immortal
+  string, which reference counting no longer retains) shows its value in
+  lldb and gdb. On macOS a program linked with cc (it links C sources)
+  shows the string's length but not its bytes: dsymutil cannot relocate
+  a data address in a location list.
+
 - linux/amd64 floating point loops read their operands from memory
   directly (n-body 3% fewer instructions).
 

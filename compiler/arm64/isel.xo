@@ -218,7 +218,11 @@ fn (var g: G) rt(name: Str, args: List[Src], res: List[Bool]) -> List[Int] {
 }
 
 fn (var g: G) imm(n: Int) -> Int {
-  g.konst(g.def1(false, mov_imm(n), []))
+  let r = g.konst(g.def1(false, mov_imm(n), []))
+  if g.m.debug_info {
+    g.kints[r] = n
+  }
+  r
 }
 
 /// Marks the instruction that just defined d as a constant (loop
@@ -252,10 +256,15 @@ fn (var g: G) fimm(bits: Int) -> Int {
 
 /// Puts the address of a symbol in a register.
 fn (var g: G) sym_addr(sym: Str) -> Int {
-  if g.os == "darwin" {
-    return g.konst(g.def1(false, "adrp $d0, ${sym}@PAGE\nadd $d0, $d0, ${sym}@PAGEOFF", []))
+  let r = if g.os == "darwin" {
+    g.konst(g.def1(false, "adrp $d0, ${sym}@PAGE\nadd $d0, $d0, ${sym}@PAGEOFF", []))
+  } else {
+    g.konst(g.def1(false, "adrp $d0, ${sym}\nadd $d0, $d0, :lo12:${sym}", []))
   }
-  g.konst(g.def1(false, "adrp $d0, ${sym}\nadd $d0, $d0, :lo12:${sym}", []))
+  if g.m.debug_info {
+    g.ksyms[r] = sym
+  }
+  r
 }
 
 /// The bytes of a string or Bytes constant.

@@ -306,6 +306,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   let ll_end = g.local("xo_dwllend_${g.ns}")
   var body = Dw{}
   var offs: List[Str] = []
+  // the addresses of DW_OP_addrx operands: .debug_addr's entries
+  var addr_ix: Map[Str, Int] = {}
+  var addr_syms: List[Str] = []
   for (k, (fb, l)) in lists.indexed() {
     let lab = g.local("xo_dwll_${g.ns}_${k}")
     offs.push(lab)
@@ -318,9 +321,28 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
       body.u8(4) // DW_LLE_offset_pair
       body.lines.push("\t.uleb128 ${e.start}-${fb}\n\t.uleb128 ${e.end}-${fb}\n")
       let ops = e.ops.split(",")
-      body.uleb(ops.len())
+      // a symbol (DW_OP_addrx's operand, dwvars.xo) is the ULEB128 index
+      // of its entry in this part's .debug_addr
+      var bs: List[Str] = []
+      for o in ops {
+        let c = o.bytes()[0]
+        if c >= 48 && c <= 57 {
+          bs.push(o)
+          continue
+        }
+        var k = addr_ix.get(o) ?? -1
+        if k < 0 {
+          k = addr_syms.len()
+          addr_ix[o] = k
+          addr_syms.push(o)
+        }
+        for x in uleb_bytes(k) {
+          bs.push("${x}")
+        }
+      }
+      body.uleb(bs.len())
       // the expression's bytes on one line
-      body.bytes(ops)
+      body.bytes(bs)
     }
     body.u8(0) // DW_LLE_end_of_list
   }
@@ -332,9 +354,13 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   }
   out.write(body.text())
   out.write("${ll_end}:\n")
-  // .debug_addr: an empty address table (addr_base above)
+  // .debug_addr: the address table (addr_base above) of the constant
+  // words' DW_OP_addrx (dwvars.xo)
   out.write(if mac { "\t.section __DWARF,__debug_addr,regular,debug\n" } else { "\t.section .debug_addr,\"\",@progbits\n" })
-  out.write("\t.long 4\n\t.short 5\n\t.byte 8\n\t.byte 0\n${addr_base}:\n")
+  out.write("\t.long ${4 + 8 * addr_syms.len()}\n\t.short 5\n\t.byte 8\n\t.byte 0\n${addr_base}:\n")
+  for a in addr_syms {
+    out.write("\t.quad ${a}\n")
+  }
   out.write(g.section("text"))
   out.freeze()
 }

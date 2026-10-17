@@ -576,16 +576,19 @@ func TestDebugTypes(t *testing.T) {
 				"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4",
 				"(Map[Str, Int]) m = {",
 				"keys = 0x",
-				// `bytes = "box` (it.name, a literal) is skipped until the
-				// locations describe constant valued words (DW_OP_addr of the
-				// static object): since fewer drops (a) no retain keeps an
-				// immortal field live, so its word has no register (Xo Lang 3
-				// is adding constant locations in compiler/arm64 dwvars.xo and
-				// restores this check; gotchas/debug-immortal-field-no-location.md)
+				// it.name, a literal: no retain keeps its word in a register
+				// (an immortal field), so its location is the constant itself,
+				// DW_OP_addrx of the static object (dwvars.xo); not through
+				// dsymutil, which relocates an address in a location list as
+				// the function's (gotchas/debug-immortal-field-no-location.md)
+				`bytes = "box`,
 				"(Shape) sh = {",
 				"tag = Rect",
 				"Rect = (w = 4, h = 5)",
 			} {
+				if c.name == "cc" && strings.HasPrefix(want, "bytes = ") {
+					continue
+				}
 				if !bytes.Contains(b, []byte(want)) {
 					t.Errorf("lldb lacks %q:\n%s", want, b)
 				}

@@ -31,6 +31,10 @@ struct DvBind {
 struct DvPlan {
   binds: List[DvBind] = []
   need: List[Int] = []
+  /// the symbols of DW_OP_addrx operands: an op byte -1 - k stands for
+  /// syms[k] (dv_field writes the name, debug.xo its index in the
+  /// address table)
+  syms: List[Str] = []
 }
 
 /// The most words of a value whose locations are described: a larger
@@ -109,6 +113,26 @@ fn (var g: G) dv_plan() -> DvPlan {
     return p
   }
   var need: Map[Int, Bool] = {}
+  // the constant registers no other instruction defines: a word in one
+  // is that constant wherever its binding is described, even when its
+  // definition was deleted as unused (a literal field that no reference
+  // count operation keeps in a register still shows)
+  var knot: Map[Int, Bool] = {}
+  if !g.kints.is_empty() || !g.ksyms.is_empty() {
+    for b in g.blocks {
+      for ins in b.insts {
+        if ins.konst {
+          continue
+        }
+        for d in ins.defs {
+          if g.kints.contains(d) || g.ksyms.contains(d) {
+            knot[d] = true
+          }
+        }
+      }
+    }
+  }
+  var symix: Map[Str, Int] = {}
   for d in g.f.dbinds {
     let dv = g.f.dvars[d.dvar]
     if dv.inl >= 0 || !g.has_val[d.value] || !g.dv_type_ok(dv.ty) {
@@ -120,8 +144,28 @@ fn (var g: G) dv_plan() -> DvPlan {
     }
     var words: List[List[DvSpan]] = []
     var def = -1
-    for r in ws {
+    var end = -1
+    var kops: List[(Int, List[Int])] = []
+    for (wi, r) in ws.indexed() {
       var spans: List[DvSpan] = []
+      if !knot.contains(r) && (g.kints.contains(r) || g.ksyms.contains(r)) {
+        if let Some(n) = g.kints.get(r) {
+          // DW_OP_constu or DW_OP_consts, DW_OP_stack_value
+          kops.push((wi, (if n >= 0 { [0x10] + uleb_bytes(n) } else { [0x11] + sleb_bytes(n) }) + [0x9f]))
+        } else if g.m.dw_data_addrs && g.ksyms.contains(r) {
+          let s = g.ksyms.get(r) ?? ""
+          if !symix.contains(s) {
+            symix[s] = p.syms.len()
+            p.syms.push(s)
+          }
+          // DW_OP_addrx sym (an entry of .debug_addr, which dsymutil
+          // relocates; it leaves a DW_OP_addr in a location list as the
+          // object file's address), DW_OP_stack_value
+          kops.push((wi, [0xa1, -1 - (symix.get(s) ?? 0), 0x9f]))
+        }
+        words.push(spans)
+        continue
+      }
       let op = g.dv_op(r)
       if !op.is_empty() && r < g.vranges.len() {
         for rg in g.vranges[r] {
@@ -136,9 +180,19 @@ fn (var g: G) dv_plan() -> DvPlan {
           if def < 0 || lo < def {
             def = lo
           }
+          if hi > end {
+            end = hi
+          }
         }
       }
       words.push(spans)
+    }
+    // a constant word: over the binding's other words' range (a binding
+    // of constants only has no range to borrow and stays unavailable)
+    if def >= 0 {
+      for (wi, op) in kops {
+        words[wi] = [DvSpan{lo: def, hi: end, op: op}]
+      }
     }
     if def >= 0 {
       p.binds.push(DvBind{dvar: d.dvar, def: def, words: words})
@@ -265,7 +319,8 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       }
       var bs: List[Str] = []
       for x in expr {
-        bs.push("${x}")
+        // -1 - k: the name of DW_OP_addrx's symbol k
+        bs.push(if x < 0 { p.syms[-1 - x] } else { "${x}" })
       }
       let ops = bs.join(",")
       if la == last_end && ops == last_op && !entries.is_empty() {

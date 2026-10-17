@@ -326,6 +326,12 @@ pub struct Module {
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false
+  /// Variable locations may name a data address (a string literal's
+  /// object, DW_OP_addrx; compiler/arm64 dwvars.xo): set by the driver
+  /// when the debug information's writer relocates it, an ELF link or
+  /// compiler/macho's dSYM; dsymutil adds the function's own offset to an
+  /// address in a location list, so not for a cc link on macOS.
+  pub dw_data_addrs: Bool = false
   /// The directory the sources' names are relative to (DW_AT_comp_dir).
   pub comp_dir: Str = ""
   /// The directory std/'s files are named relative to (std/..): their

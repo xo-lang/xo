@@ -280,6 +280,11 @@ struct G {
   /// Each virtual register's live ranges before coalescing, kept with
   /// debug information on for the variables' locations (dwvars.xo).
   vranges: List[List[Rng]] = []
+  /// With debug information on, the virtual registers that hold an Int
+  /// constant (imm) or a symbol's address (sym_addr), for the variables'
+  /// locations of words no register keeps (dwvars.xo)
+  kints: Map[Int, Int] = {}
+  ksyms: Map[Int, Str] = {}
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0
   saved: List[Int] = []
@@ -351,6 +356,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.dl_rows = []
   g.dl_stub_rows = []
   g.vranges = []
+  g.kints = {}
+  g.ksyms = {}
   g.dl_n = 0
   g.tl_v = -1
   g.tl_blk = -1
