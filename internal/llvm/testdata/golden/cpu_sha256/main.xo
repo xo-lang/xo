@@ -1,0 +1,73 @@
+// SHA-256's compression of std/native/llrt/cpu.xo (sha256_block: SHA256H
+// and SHA256H2 on arm64, SHA-NI on x86-64 since decision 0254's approval
+// of 2026-10-17) against its portable body, through internal.crypto_op:
+// the padded block of "abc" from the initial state (FIPS 180-4's digest),
+// then 50 states and blocks from a SHA-256 stream; the lowered one runs
+// only where cpu.hw() reports SHA-256 (else the body twice), and only
+// whether the two agree is printed, the same on every machine.
+use std/crypto
+use std/internal
+
+const K: List[Int] = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]
+
+const IV: List[Int] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+
+/// Words as little endian 32 bit bytes (crypto_op's layout).
+fn le32(ws: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for w in ws {
+    for i in 0..4 {
+      b.write_byte(UInt8((w >> (8 * i)) & 255))
+    }
+  }
+  b.freeze()
+}
+
+/// The state as big endian bytes (the digest's order).
+fn be_digest(st: Bytes) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..8 {
+    for j in 0..4 {
+      b.write_byte(st[4 * i + 3 - j])
+    }
+  }
+  b.freeze().to_hex()
+}
+
+fn main(os: Os) uses stdio {
+  let hw = Int.parse(internal.crypto_op("cpu.hw", b"", b"", b"", b"").to_str() ?? "0") ?? 0
+  let lowered = if (hw & 8) != 0 { "cpu.sha256_block" } else { "cpu.sha256_block_soft" }
+  let k = le32(K)
+  // "abc", 0x80, zeros, the bit length 24
+  var blk = BytesBuilder.new()
+  blk.write_str("abc")
+  blk.write_byte(UInt8(0x80))
+  for _ in 0..52 {
+    blk.write_byte(UInt8(0))
+  }
+  for _ in 0..7 {
+    blk.write_byte(UInt8(0))
+  }
+  blk.write_byte(UInt8(24))
+  let abc = blk.freeze()
+  let d1 = internal.crypto_op(lowered, le32(IV), abc, k, b"")
+  let d2 = internal.crypto_op("cpu.sha256_block_soft", le32(IV), abc, k, b"")
+  os.stdio.println("abc ${be_digest(d1)} ${if d1 == d2 { "same" } else { "differs" }}")
+  os.stdio.println("want ${crypto.sha256("abc".bytes()).to_hex()}")
+  var seed = crypto.sha256(b"cpu_sha256")
+  var same = 0
+  for i in 0..50 {
+    let st = seed
+    seed = crypto.sha256(seed)
+    let b = seed + crypto.sha256(seed + b"x")
+    seed = crypto.sha256(b)
+    let x = internal.crypto_op(lowered, st, b, k, b"")
+    let y = internal.crypto_op("cpu.sha256_block_soft", st, b, k, b"")
+    if x == y {
+      same += 1
+    } else {
+      os.stdio.println("block ${i} differs: ${x.to_hex()} ${y.to_hex()}")
+    }
+  }
+  os.stdio.println("blocks ${same} of 50 agree")
+}

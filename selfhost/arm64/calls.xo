@@ -1011,6 +1011,22 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
+    "rt.sha256_block" if g.x86 => {
+      // SHA-NI (cpu.hw()'s HW_SHA256 from CPUID leaf 7): xmm0 to xmm10
+      // saved below rsp and restored, as the arm64 template saves v16
+      // to v20
+      var t: List[Str] = ["subq $176, %rsp"]
+      for r in 0..11 {
+        t.push("movdqu %xmm${r}, ${16 * r}(%rsp)")
+      }
+      t = t + ssa.sha256_ni_lines("$u0", "$u1", "$u2")
+      for r in 0..11 {
+        t.push("movdqu ${16 * r}(%rsp), %xmm${r}")
+      }
+      t.push("addq $176, %rsp")
+      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, [])
+    }
     "rt.sha256_block" => {
       // the state as abcd in v16 and efgh in v17 (each packed from four
       // 8 byte words), the message in v19, v20, v29, v30, W + K in v31,
@@ -1043,6 +1059,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, [])
     }
     // x86-64's CPUID (cpu.xo cpuid1_ecx): never on arm64
+    // CPUID leaf 7's EBX (bit 29 SHA-NI): rbx is the answer, kept in r11
+    "rt.cpuid7_ebx" => {
+      if g.x86 {
+        g.set(v, [g.x86_atomic_def("movq %rbx, %r11\nmovl $7, %eax\nxorl %ecx, %ecx\ncpuid\nmovl %ebx, $wd0\nmovq %r11, %rbx", [], [XR_AX, XR_CX, XR_DX])])
+      } else {
+        g.set(v, [g.def1(false, "mov $d0, #0", [])])
+      }
+    }
     // and on x86-64 CPUID leaf 1's ECX; rbx (callee saved) kept in r11
     "rt.cpuid1_ecx" => {
       if g.x86 {

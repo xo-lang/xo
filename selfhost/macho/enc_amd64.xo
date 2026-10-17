@@ -867,6 +867,17 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     e.modrm(x.reg, rm)
     return e.immn(ops[0], 1)
   }
+  if mn == "palignr" && n == 3 {
+    // 66 0f 3a 0f /r ib (SHA-256's message schedule)
+    e.seg(ops[1])
+    e.byte(0x66)
+    e.rex(false, ops[2].reg, ops[1], false)
+    e.byte(0x0f)
+    e.byte(0x3a)
+    e.byte(0x0f)
+    e.modrm(ops[2].reg, ops[1])
+    return e.immn(ops[0], 1)
+  }
   if mn is "roundsd" | "roundss" && n == 3 {
     // 66 0f 3a 0b (sd), 0a (ss) /r ib
     e.seg(ops[1])

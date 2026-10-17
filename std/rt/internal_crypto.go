@@ -693,6 +693,45 @@ func cryptoSHA1(what string, a, b Bytes) (Bytes, bool) {
 func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 	what = strings.TrimSuffix(what, "_soft")
 	switch what {
+	case "hw":
+		// cpu.xo hw(): a Go build lowers nothing
+		return Bytes("0"), true
+	case "sha256_block":
+		// SHA-256's compression of the 64 byte block b into the state a
+		// (eight little endian 32 bit words) with the 64 constants c (little
+		// endian 32 bit words), as cpu.xo's op lays them out
+		var st, k [64]uint32
+		for i := 0; i < 8; i++ {
+			st[i] = binary.LittleEndian.Uint32([]byte(a[4*i:]))
+		}
+		for i := 0; i < 64; i++ {
+			k[i] = binary.LittleEndian.Uint32([]byte(c[4*i:]))
+		}
+		var w [64]uint32
+		for i := 0; i < 16; i++ {
+			w[i] = binary.BigEndian.Uint32([]byte(b[4*i:]))
+		}
+		for i := 16; i < 64; i++ {
+			s0 := bits.RotateLeft32(w[i-15], -7) ^ bits.RotateLeft32(w[i-15], -18) ^ w[i-15]>>3
+			s1 := bits.RotateLeft32(w[i-2], -17) ^ bits.RotateLeft32(w[i-2], -19) ^ w[i-2]>>10
+			w[i] = w[i-16] + s0 + w[i-7] + s1
+		}
+		h := st[:8]
+		x := [8]uint32{h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]}
+		for i := 0; i < 64; i++ {
+			s1 := bits.RotateLeft32(x[4], -6) ^ bits.RotateLeft32(x[4], -11) ^ bits.RotateLeft32(x[4], -25)
+			ch := x[4]&x[5] ^ ^x[4]&x[6]
+			t1 := x[7] + s1 + ch + k[i] + w[i]
+			s0 := bits.RotateLeft32(x[0], -2) ^ bits.RotateLeft32(x[0], -13) ^ bits.RotateLeft32(x[0], -22)
+			maj := x[0]&x[1] ^ x[0]&x[2] ^ x[1]&x[2]
+			t2 := s0 + maj
+			x = [8]uint32{t1 + t2, x[0], x[1], x[2], x[3] + t1, x[4], x[5], x[6]}
+		}
+		out := make([]byte, 0, 32)
+		for i := 0; i < 8; i++ {
+			out = binary.LittleEndian.AppendUint32(out, h[i]+x[i])
+		}
+		return Bytes(out), true
 	case "carry":
 		x := binary.LittleEndian.Uint64([]byte(a))
 		y := binary.LittleEndian.Uint64([]byte(b))

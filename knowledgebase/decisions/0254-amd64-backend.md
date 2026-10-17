@@ -280,8 +280,17 @@ condition).
   #disp]`), and and, or, xor take any 32 bit immediate (a complemented
   constant too); arm64's output is unchanged. collatz -12.6%, iface
   -23.6%, hof -18.3%.
-- Open, SHA-256 on x86-64 (waits for the owner: a new runtime primitive,
-  rule 7b; lead to ask 2026-10-17). The plan: (1) `rt.cpuid7_ebx`, CPUID
+- SHA-256 on x86-64, approved by the owner on 2026-10-17 (the new
+  runtime primitive rt.cpuid7_ebx included) and done the same day (Xo
+  Lang 2): cpu.xo cpuid7_ebx and hw()'s HW_SHA256 from its bit 29; the
+  SHA-NI sequence (ssa.sha256_ni_lines, the Linux kernel's sha256_ni
+  form) in the Xo backend (calls.xo, xmm0 to xmm10 saved around it) and
+  in LLVM (inline asm, clobbered); the assembler's palignr; a Go
+  compression for crypto_op's cpu.sha256_block and a cpu.hw op; the
+  golden cpu_sha256 (the "abc" digest and 50 blocks, lowered against
+  the body where hw() has SHA-256). Under qemu-x86_64 -cpu max hw() is
+  11 and both lowerings agree with the body; with -cpu Nehalem and under
+  Rosetta hw() is 0 and the body runs. The plan as proposed: (1) `rt.cpuid7_ebx`, CPUID
   leaf 7 subleaf 0's EBX, beside rt.cpuid1_ecx (cpu.xo `cpuid7_ebx`, body
   0; on x86 `movq %rbx, %r11; movl $7, %eax; xorl %ecx, %ecx; cpuid;
   movl %ebx, $wd0; movq %r11, %rbx`), and detect() setting HW_SHA256 from

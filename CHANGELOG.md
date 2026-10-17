@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- SHA-256 uses x86-64's SHA-NI instructions when CPUID reports them
+  (owner approved, 2026-10-17; decision 0254), on Xo's amd64 backend and
+  on LLVM, with the portable code kept for CPUs without them.
+
 - `Fs.create_new(path)`: a handle on a new file, or `Exists(path)` when
   anything is already there (a file, a directory, a symbolic link even
   when it dangles), as O_EXCL; on the native backends (Linux, macOS,

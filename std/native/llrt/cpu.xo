@@ -39,12 +39,16 @@ fn lowered() -> Int { 0 }
 /// AES-NI); 0 off x86-64 and in the body.
 fn cpuid1_ecx() -> Int { 0 }
 
+/// The EBX word of x86-64's CPUID leaf 7, subleaf 0 (bit 29 SHA-NI); 0
+/// off x86-64 and in the body (decision 0254, owner 2026-10-17).
+fn cpuid7_ebx() -> Int { 0 }
+
 /// The instructions of this CPU that the callers can use: HW_AES,
 /// HW_CLMUL, and HW_SHA256, looked up once a process (macOS on arm64:
-/// always; Linux on arm64: AT_HWCAP; x86-64: CPUID, never HW_SHA256,
-/// which no x86-64 lowering has (SHA-NI needs CPUID leaf 7; checked on
-/// linux/amd64 in Docker, 2026-10-17); otherwise none; UNTESTED on Linux
-/// arm64 and on Windows).
+/// always; Linux on arm64: AT_HWCAP; x86-64: CPUID leaf 1 for AES and
+/// CLMUL, leaf 7 for SHA-256 (SHA-NI; checked on linux/amd64 in Docker
+/// and under qemu -cpu max, 2026-10-17); otherwise none; UNTESTED on
+/// Linux arm64 and on Windows).
 pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
@@ -68,7 +72,8 @@ fn detect() -> Int {
     }
     TargetArch.Amd64 => {
       let c = cpuid1_ecx()
-      (if (rt.int_wrap(4, c, 25) & 1) != 0 { HW_AES } else { 0 }) | (if (rt.int_wrap(4, c, 1) & 1) != 0 { HW_CLMUL } else { 0 })
+      let b = cpuid7_ebx()
+      (if (rt.int_wrap(4, c, 25) & 1) != 0 { HW_AES } else { 0 }) | (if (rt.int_wrap(4, c, 1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (rt.int_wrap(4, b, 29) & 1) != 0 { HW_SHA256 } else { 0 })
     }
     _ => 0
   }
@@ -367,6 +372,11 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// the instructions on arm64 and LLVM, on a CPU that has them). None if
 /// unknown.
 pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
+  if what == "hw" {
+    // hw()'s bits in decimal (the goldens call a lowered intrinsic only
+    // when the CPU has it)
+    return Some("${hw()}".bytes())
+  }
   let soft = what.ends_with("_soft")
   match what.trim_suffix("_soft") {
     "carry" => {

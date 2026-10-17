@@ -252,9 +252,9 @@ pub struct Builder {
   /// GOARCH): "" for the builder's own (the host, as `xo ssadump`).
   pub goos: Str = ""
   pub goarch: Str = ""
-  /// Only the carry arithmetic of std/native/llrt/cpu.xo is lowered (the
-  /// amd64 backend until its crypto intrinsics, decision 0254 stage 3):
-  /// the other functions' Xo bodies run.
+  /// The amd64 backend's builds (decision 0254): since stage 3 every
+  /// intrinsic of std/native/llrt/cpu.xo is lowered, so this no longer
+  /// changes which (kept for the builder's callers).
   pub soft_cpu: Bool = false
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""

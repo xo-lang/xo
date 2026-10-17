@@ -176,13 +176,13 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc14" => "aes_enc14"
     "sha256_block" => "sha256_block"
     "cpuid1_ecx" => "cpuid1_ecx"
+    "cpuid7_ebx" => "cpuid7_ebx"
     "lowered" => "lowered"
     _ => ""
   }
-  // amd64 (decision 0254 stage 3): every one but SHA-256's compression,
-  // which needs SHA-NI and CPUID leaf 7 (cpu.xo's hw() never reports it
-  // on x86-64), so its body runs
-  if name.is_empty() || (b.soft_cpu && name == "sha256_block") {
+  // amd64 (decision 0254 stage 3): every one, SHA-256's compression too
+  // (SHA-NI, found by CPUID leaf 7: the owner's approval, 2026-10-17)
+  if name.is_empty() {
     return None
   }
   if name == "lowered" {
