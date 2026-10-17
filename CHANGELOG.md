@@ -23,6 +23,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   trace, decision 0240); bench/perf/conc mutex at the default threads
   31 to 39 Mcycles against 46 to 57 (macOS, three rounds of 15 runs at
   load 17 to 29), rwmutex within noise.
+- Contract fuzzing on the native backends (decision 0250): `xo test`
+  fuzzes every function with contracts natively, with the Go backend's
+  targets, cases, seeds, shrinking, and regression tests (a regression
+  written by one backend replays on the other). A 20 contract module:
+  the check 0.19 to 0.27 s before (20 skipped), 0.40 to 0.44 s now (20
+  fuzzed, 100 cases each), the whole `xo test` 0.98 to 1.02 s.
 
 - An execution trace for native programs (decision 0240): XO_TRACE=FILE
   (`xo run --trace=FILE`, `xo test --trace=FILE`) records spawns, task

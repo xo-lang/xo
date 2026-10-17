@@ -603,6 +603,18 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
       names.push(e.name)
     }
   }
+  // files only in the overlay (generated test files, decision 0250)
+  if !c.overlay.is_empty() {
+    let ad = c.abs(dir).trim_suffix("/")
+    for p in c.overlay.keys() {
+      if p.ends_with(".xo") && dir_of_path(p) == ad {
+        let n = p.trim_prefix(ad + "/")
+        if !names.contains(n) {
+          names.push(n)
+        }
+      }
+    }
+  }
   for n in names.sort() {
     let p = join(dir, n)
     let src = c.overlay.get(c.abs(p)) ?? (c.fs.read(p).ok() ?? b"")
@@ -958,3 +970,13 @@ fn (var c: Checker) report_edition_aliases() {
     c.fix(d, "rewrite `${kw} ${r.alias}` to `${kw} ${ed}`", [DEdit{span: JSpan{file: f, line: sp.start.line, col: sp.start.col, end_line: sp.end.line, end_col: sp.end.col}, replace: ed}])
   }
 }
+
+/// The directory of an absolute path: what precedes its last `/`.
+fn dir_of_path(p: Str) -> Str {
+  let parts = p.split("/")
+  if parts.len() <= 1 {
+    return ""
+  }
+  parts[0..parts.len() - 1].join("/")
+}
+

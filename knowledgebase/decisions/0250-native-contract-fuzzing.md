@@ -1,7 +1,6 @@
 # 0250: Native contract fuzzing
 
-Status: Proposed (claimed 2026-10-16 by xo-fa; the lead's priority item
-after decision 0248)
+Status: Accepted (lead, 2026-10-16); implemented the same day (xo-fa)
 
 ## Context
 
@@ -20,7 +19,7 @@ driver (selfhost/xo test.xo run_property), and contract checks
 (`requires`, `ensures`, loop bounds) compiled into debug builds, faulting
 on a violation.
 
-## Decision (proposed)
+## Decision
 
 Native contract fuzzing is a generated property test per target, checked
 with the program:
@@ -51,8 +50,33 @@ with the program:
 
 ## Consequences
 
-To be filled in with the implementation: the cost of the second check,
-the targets dropped on the goldens, and tests.
+- As built (selfhost/xo fuzzsrc.xo, test.xo, main.xo check_program_ov,
+  selfhost/check load.xo): the generated file of `<dir>/<f>.xo` is
+  `<dir>/<f>.xo_contract_fuzz_test.xo`, in the overlay only. Its
+  diagnostics are never printed or kept; an unused name there (the
+  copied `use` lines) is ignored; any other error drops the test (at most
+  three checks), and the target is counted as not fuzzed with the reason
+  under `-v`. A target taking `os: Os` is not generated (a test cannot
+  pass one), as on the Go backend's regressions.
+- The tests are named `contract fuzz: MODULE.F`, the Go backend's names;
+  `--run` matches them like any test; they are listed where the Go backend
+  lists them (after their function, before the file's next test block)
+  and report at the function's location, without the generated file's
+  traceback frames.
+- Parity: the same targets (gen.contract_fuzz_targets), 100 cases, case
+  seeds `seed * 1000003 + i`, shrinking, and the regression record and
+  file; the native and Go generators draw differently, so the first
+  failing case can differ (case 7 against 2 on halver.half) while the
+  shrunk input and the regression test agree. cmd/xo
+  TestRegressionCrossBackend records a regression on each backend and
+  replays it on the other, and checks the two files are the same.
+- Cost: the program is checked twice in a native `xo test` with targets.
+  A module of 20 contract functions (Int, Str, List[Int] parameters, `use
+  std/json`), three runs each with the caches off: the check phase 192 to
+  274 ms before (20 targets skipped) and 401 to 443 ms after (20 fuzzed);
+  the whole `xo test` 0.73 to 0.94 s before, 0.98 to 1.02 s after,
+  including 2000 cases.
+- Decision 0248's "not fuzzed" note now applies only to dropped targets.
 
 ## Alternatives
 

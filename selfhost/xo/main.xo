@@ -216,6 +216,7 @@ fn main(os: Os) ! {
   if o.cmd == "test" {
     var to = o.topts
     to.profile_dir = o.wd
+    to.std = o.std
     let code = run_tests(os, nb.bin, nb.tests, to)
     if !o.trace.is_empty() {
       // a raw trace per test process (decision 0240)
@@ -319,7 +320,17 @@ fn llrt_c_names(os: Os, std: Str) -> List[Str] {
 /// fails prints its diagnostics (or, with --json on build, the JSON
 /// result) and exits 1. Warnings are printed and the build goes on.
 fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
+  let (c, _) = check_program_ov(os, o, native, {})
+  c
+}
+
+/// check_program with the files of ov (absolute path to source) in the
+/// checker's overlay: the generated contract fuzz tests (decision 0250).
+/// Their diagnostics are returned, never printed or kept in c.diags; with
+/// an overlay the user's own are not printed again (the first check did).
+fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (check.Checker, List[check.Diag]) {
   var c = check.new_checker(os.fs, o.std)
+  c.overlay = ov
   c.parse_cache = o.parse_cache
   c.native = native
   // a native build checks the runtime's bodies as it builds them
@@ -352,6 +363,19 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
   if !c.unsupported.is_empty() {
     fail_unsupported(os, "unsupported: ${c.unsupported}")
   }
+  // the generated tests' diagnostics apart from the user's
+  var gen_ds: List[check.Diag] = []
+  if !ov.is_empty() {
+    var user: List[check.Diag] = []
+    for d in c.diags {
+      if is_fuzz_path(d.file) {
+        gen_ds.push(d)
+      } else {
+        user.push(d)
+      }
+    }
+    c.diags = user
+  }
   var ds = c.diags
   var bad = blocks(ds, o.holes)
   if !bad && o.cmd != "test" {
@@ -370,10 +394,10 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
     }
     os.proc.exit(1)
   }
-  if !(o.json && o.cmd == "build") {
+  if !(o.json && o.cmd == "build") && ov.is_empty() {
     print_diags(os, c.diags)
   }
-  c
+  (c, gen_ds)
 }
 
 /// A native build (arm64 or llvm, or wasm): check, SSA, passes, code,
@@ -413,7 +437,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   let tests = o.cmd == "test"
   let release = o.release && !tests
   var t = os.clock.now()
-  let c = check_program(os, o, true)
+  var c = check_program(os, o, true)
+  var fz = FuzzSet{}
+  if o.cmd == "test" {
+    // contract fuzzing as generated property tests (decision 0250)
+    let (c2, f2) = fuzz_check(os, o, c)
+    c = c2
+    fz = f2
+  }
   t = lap(os, phases, "check", t)
   if o.backend.is_empty() {
     // a program with `use go` builds only with the Go backend: say so,
@@ -578,7 +609,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       store_bin(os, ctx, entry, bin)
     }
     lap(os, phases, "cc", t)
-    return finish(os, ctx, o, c, root, [(ltarget, bin)], tests)
+    return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
   }
   // arm64: the assembly of each target; the host's is linked
   let dir = "${bdir}/arm64"
@@ -743,7 +774,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   if o.cmd == "asm" {
     return Native{pc: c.parse_cache}
   }
-  finish(os, ctx, o, c, root, bins, tests)
+  finish(os, ctx, o, c, root, bins, tests, fz)
 }
 
 /// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
@@ -849,13 +880,13 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
 /// The end of a native build: the test list of a test binary, or the
 /// result of `build` (`os/arch: path` lines on standard output, or the
 /// JSON result).
-fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool) -> Native {
+fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool, fz: FuzzSet) -> Native {
   var host_bin = ""
   for (_, p) in bins {
     host_bin = p
   }
   if tests {
-    let ts = test_infos(c, root, o.wd)
+    let ts = test_infos(c, root, o.wd, fz)
     if !o.run_key.is_empty() && c.diags.is_empty() {
       run_store(os, ctx, o.run_key, c, o.std, o.wd, host_bin, ts, o.run_start)
     }

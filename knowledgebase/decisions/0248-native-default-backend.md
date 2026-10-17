@@ -30,7 +30,9 @@ native the default as part of the "native out of preview" milestone.
   `MODULE: contract fuzzing needs --backend=go: N contracts not fuzzed`
   per module; `xo dump` of a native program says it needs a Go backend
   build. Native contract fuzzing is a priority backlog item (contracts
-  are a core feature).
+  are a core feature); done the same day, decision 0250: the "not
+  fuzzed" line now counts only targets whose generated test does not
+  check.
 - Tests: internal/xotool's Build names `--backend=go` when a test gives
   no backend (they were written for the Go default); cmd/xo's dump and
   regression tests name it too; the help golden is regenerated.

@@ -33,15 +33,22 @@ struct TestInfo {
   prop: Bool = false
   /// Why the test does not run natively (a contract fuzz test), or "".
   skip: Str = ""
+  /// a generated contract fuzz test (decision 0250): its regression data
+  fuzz: FuzzMeta? = None
 }
 
 /// The skip reason of a contract fuzz test in a native test binary:
 /// contract fuzzing is the Go backend's (native fuzzing is planned).
-const FUZZ_SKIP = "contract fuzzing needs --backend=go (native contract fuzzing is planned)"
+const FUZZ_SKIP = "contract fuzzing needs --backend=go"
 
 /// testInfos: the test blocks of the root modules in the order the test
 /// binary numbers them (module, file, declaration).
-fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
+fn test_infos(c: check.Checker, root: Str, wd: Str, fz: FuzzSet) -> List[TestInfo] {
+  // the generated contract fuzz tests by name (decision 0250)
+  var gens: Map[Str, FuzzMeta] = {}
+  for g in fz.gens {
+    gens[g.name] = g.meta
+  }
   var out: List[TestInfo] = []
   var i = 0
   // the contract fuzz tests the Go backend runs (core 9.1) are listed
@@ -49,12 +56,25 @@ fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
   // them, as skipped
   var fuzz_at: Map[Int, List[TestInfo]] = {}
   for ft in gen.contract_fuzz_targets(c) {
+    if gens.contains(ft.name) {
+      // a generated property test runs it: listed here (index -2, a
+      // place holder) as the Go backend lists it, filled in below
+      var l = fuzz_at.get(ft.fo) ?? []
+      l.push(TestInfo{index: -2, name: ft.name, module: "", dir: "", loc: ""})
+      fuzz_at[ft.fo] = l
+      continue
+    }
     let o = c.objs[ft.fo]
-    let ti = TestInfo{index: -1, name: ft.name, module: c.mods[o.module].path, dir: abs_path(wd, c.mods[o.module].dir), loc: "${o.file.trim_prefix(root + "/")}:${o.fn_decl[0].span.start.line}:${o.fn_decl[0].span.start.col}", skip: FUZZ_SKIP}
+    var why = FUZZ_SKIP
+    if let Some(r) = fz.dropped.get(ft.name) {
+      why = "${FUZZ_SKIP}: ${r}"
+    }
+    let ti = TestInfo{index: -1, name: ft.name, module: c.mods[o.module].path, dir: abs_path(wd, c.mods[o.module].dir), loc: "${o.file.trim_prefix(root + "/")}:${o.fn_decl[0].span.start.line}:${o.fn_decl[0].span.start.col}", skip: why}
     var l = fuzz_at.get(ft.fo) ?? []
     l.push(ti)
     fuzz_at[ft.fo] = l
   }
+  var gen_info: Map[Str, TestInfo] = {}
   var held: List[TestInfo] = []
   for m in c.root_mods {
     for f in c.mods[m].files {
@@ -74,6 +94,18 @@ fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
             }
           }
           var ti = TestInfo{index: i, name: name.freeze(), module: c.mods[m].path, dir: abs_path(wd, c.mods[m].dir), loc: "${c.files[f].path.trim_prefix(root + "/")}:${td.span.start.line}:${td.span.start.col}", prop: !td.params.is_empty()}
+          if is_fuzz_path(c.files[f].path) {
+            if let Some(meta) = gens.get(ti.name) {
+              // reported at the target, not the generated file; listed
+              // at its place holder
+              ti.loc = meta.loc.trim_prefix(root + "/")
+              ti.prop = !td.params.is_empty()
+              ti.fuzz = Some(meta)
+              gen_info[ti.name] = ti
+              i += 1
+              continue
+            }
+          }
           if let Some(IntLit(value: v, ..)) = td.seed {
             ti.seed = Int.parse(v.to_str() ?? "") ?? 0
           }
@@ -90,7 +122,17 @@ fn test_infos(c: check.Checker, root: Str, wd: Str) -> List[TestInfo] {
       }
     }
   }
-  out + held
+  var all: List[TestInfo] = []
+  for ti in out + held {
+    if ti.index == -2 {
+      if let Some(g) = gen_info.get(ti.name) {
+        all.push(g)
+      }
+    } else {
+      all.push(ti)
+    }
+  }
+  all
 }
 
 fn abs_path(wd: Str, p: Str) -> Str {
@@ -106,6 +148,8 @@ fn abs_path(wd: Str, p: Str) -> Str {
 /// The options of `xo1 test`.
 struct TestOpts {
   seed: Int = 0
+  /// the std directory: the check of a written regression test
+  std: Str = ""
   /// --real: the tests that declare `uses` run with real capabilities.
   real: Bool = false
   run: Str = ""
@@ -134,6 +178,9 @@ struct Outcome {
   status: Str
   msg: Str = ""
   logs: List[Str] = []
+  /// a failed property case's input (shrunk when it could be): its
+  /// `name = value` lines
+  input: Str = ""
 }
 
 /// What a property case reported (cmd/xo propCase).
@@ -159,6 +206,9 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   // the contract fuzz tests skipped natively, by module: one line each
   // (decision 0248), so the default backend loses no check quietly
   var unfuzzed: Map[Str, Int] = {}
+  // the shrunk failures of generated contract fuzz tests, as the Go
+  // runtime's regression records (rt.RegressRecord, one JSON line each)
+  var regress: List[Str] = []
   // the outcomes of the tests run in batches, by place in tests; the
   // rest run below, one process each
   var pre: Map[Int, Outcome] = {}
@@ -203,13 +253,22 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       let (oc, _) = run_test_env(os, bin, limit, t, s, prof_words(o))
       out = oc
     }
+    if t.fuzz != None {
+      // the generated test's own frames are not the user's code
+      out.msg = drop_generated_frames(out.msg)
+    }
     if out.status == "pass" {
       pass += 1
     } else if out.status == "fail" {
       failed += 1
+      if let Some(meta) = t.fuzz {
+        if !out.input.is_empty() {
+          regress.push(regress_record(t, s, meta, out.input))
+        }
+      }
     } else {
       skip += 1
-      if t.skip == FUZZ_SKIP {
+      if t.skip.starts_with(FUZZ_SKIP) {
         unfuzzed[t.module] = (unfuzzed.get(t.module) ?? 0) + 1
       }
     }
@@ -238,6 +297,18 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     } else if out.status == "pass" && o.verbose {
       os.stdio.println("--- PASS: ${t.name}")
       print_logs(os, out.logs)
+    }
+  }
+  if !regress.is_empty() && !o.std.is_empty() {
+    // regressions_test.xo in each module (regress.xo), as on the Go
+    // backend
+    let rf = "${(os.env.get("TMPDIR") ?? "/tmp").trim_suffix("/")}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
+    match os.fs.write(rf, (regress.join("\n") + "\n").bytes()) {
+      Ok(_) => {
+        write_regressions(os, rf, o.std)
+        os.fs.remove(rf).ignore_err("a temporary file")
+      }
+      Err(_) => {}
     }
   }
   if !o.json {
@@ -729,10 +800,10 @@ fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int
   if pc.reported {
     let (s_in, s_out, steps) = shrink(os, bin, limit, t, seed, pc.choices)
     if steps > 0 {
-      return Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs}
+      return Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs, input: s_in}
     }
   }
-  Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs}
+  Outcome{status: "fail", msg: "property failed on case ${c + 1} with\n${pc.input}${out.msg}", logs: out.logs, input: pc.input}
 }
 
 /// The test binary bin run in dir with the NAME=value words added to the
@@ -1001,3 +1072,43 @@ fn serve_end(srv: Server) {
     c.wait().ignore_err("the server's status after its last run does not matter")
   }
 }
+
+/// The regression record (rt.RegressRecord's JSON) of contract fuzz test
+/// t failing with the shrunk input (`name = value` lines) at seed.
+fn regress_record(t: TestInfo, seed: Int, meta: FuzzMeta, input: Str) -> Str {
+  var vals: Map[Str, Str] = {}
+  for ln in input.lines() {
+    let parts = ln.split(" = ")
+    if parts.len() >= 2 {
+      vals[parts[0]] = parts[1..parts.len()].join(" = ")
+    }
+  }
+  var ps: List[Str] = []
+  for (k, n) in meta.names.indexed() {
+    let v = vals.get(n) ?? ""
+    ps.push("{\"name\":${json_str(n)},\"value\":${json_str(v)},\"cap\":${json_str(meta.caps[k])},\"var\":${if meta.vars[k] { "true" } else { "false" }}}")
+  }
+  "{\"module\":${json_str(t.module)},\"dir\":${json_str(t.dir)},\"test\":${json_str(t.name)},\"seed\":${seed},\"call\":${json_str(meta.call)},\"result\":${json_str(meta.result)},\"params\":[${ps.join(",")}]}"
+}
+
+/// msg without the traceback frames in generated contract fuzz test files
+/// (decision 0250), and without a `traceback:` line left with none.
+fn drop_generated_frames(msg: Str) -> Str {
+  var out: List[Str] = []
+  for ln in msg.split("\n") {
+    if ln.contains(".xo_contract_fuzz_test.xo") {
+      continue
+    }
+    out.push(ln)
+  }
+  // a traceback whose frames were all generated
+  var kept: List[Str] = []
+  for (k, ln) in out.indexed() {
+    if ln.trim() == "traceback:" && (k + 1 >= out.len() || !out[k + 1].starts_with("  ") || out[k + 1].trim().is_empty()) {
+      continue
+    }
+    kept.push(ln)
+  }
+  kept.join("\n")
+}
+

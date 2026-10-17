@@ -2279,11 +2279,14 @@ and is required by a program with a `use go` package; with no `--backend`
 such a program is a usage error naming it. The flags only the Go backend
 has (`--hybrid`, `--holes`, `xo test --explore`, `xo run --seed` and
 `--record`) choose it when no backend is given, and `--race` the LLVM
-backend's ThreadSanitizer. Contract fuzzing (9.2) and `xo dump` (11.4)
-are the Go backend's for now: a native `xo test` skips the contract fuzz
-tests and prints, per module, `MODULE: contract fuzzing needs
---backend=go: N contracts not fuzzed`, and `xo dump` of a native program
-says it needs a Go backend build.
+backend's ThreadSanitizer. Contract fuzzing (9.2) runs on every backend
+(decision 0250): the same targets, cases, and seeds, the same tests named
+`contract fuzz: MODULE.F` (which `--run` matches like any test name), and
+the same regression tests; a target whose generated native test does not
+check is skipped and counted per module (`MODULE: contract fuzzing needs
+--backend=go: N contracts not fuzzed`, the reason under `-v`). `xo dump`
+(11.4) is the Go backend's for now: of a native program it says it needs a
+Go backend build.
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is

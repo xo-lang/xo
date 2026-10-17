@@ -1,4 +1,4 @@
---- SKIP: contract fuzz: native.half (contract fuzzing needs --backend=go (native contract fuzzing is planned))
+--- PASS: contract fuzz: native.half
 --- FAIL: error returned (main.xo:33:1, seed 1)
     error: Bad(msg: "negative -3")
 --- FAIL: fault (main.xo:38:1, seed 1)
@@ -9,5 +9,4 @@
 --- PASS: run_main
 --- FAIL: a failing os.tasks task (main.xo:61:1, seed 1)
     error: Bad(msg: "negative -5")
-testdata/nogc/native: contract fuzzing needs --backend=go: 1 contract not fuzzed
-FAIL: 2 passed, 4 failed, 1 skipped
+FAIL: 3 passed, 4 failed, 0 skipped
