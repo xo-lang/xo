@@ -112,7 +112,14 @@ stage() {
   mkdir -p "$out/s$n" "$out/cache-s$n"
   say "s$n: $bin builds selfhost/xo"
   t0=$(date +%s)
-  if XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
+  # s2 and s3 (built by the new compiler) with XO_INLINE_STRICT=1: a
+  # module that fails verification after inlining fails the stage
+  # instead of building the compiler without inlining, which the fixed
+  # point alone does not notice (gotchas/arm64-inline-verify-fallback.md);
+  # s1's seed may be older than the sources and fall back
+  strict=0
+  [ "$n" -gt 1 ] && strict=1
+  if XO_INLINE_STRICT=$strict XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
     "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm selfhost/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else

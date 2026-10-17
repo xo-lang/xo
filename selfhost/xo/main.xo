@@ -1103,6 +1103,6 @@ fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
   if (os.env.get("XO_INLINE_STRICT") ?? "") == "1" {
     fail(os, "${msg}; failing the build (XO_INLINE_STRICT=1)")
   }
-  os.stdio.eprintln("xo: ${msg}, so it is built without inlining")
+  os.stdio.eprintln("xo: warning: ${msg}, so it is built without inlining (slower; XO_INLINE_STRICT=1 makes this an error)")
   false
 }

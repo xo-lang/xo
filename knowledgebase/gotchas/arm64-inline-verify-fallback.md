@@ -29,3 +29,13 @@ error (the first verification error names the function), and fails
 with XO_INLINE_STRICT=1, which internal/xotool sets for the Go tests
 (TestInlineFallbackLoud breaks the module on purpose with
 XO_INLINE_BREAK=1).
+
+Observed again (2026-10-17, Xo Lang 2): an SSA reference counting change
+read as a 16% cut of the TLS client's code in `xo asm`, which was the
+fallback (that build without inlining); measured against main it was
++0.04%, and the compiler's own build had fallen back (its first error:
+ssa.Builder.cleanup_all) while the fixed point still passed. Since then
+the message starts with `warning:`, and scripts/bootstrap-xo.sh builds s2
+and s3 with XO_INLINE_STRICT=1, so a self build that falls back fails
+the fixed point. Measure RC, borrowing, and inlining changes with
+XO_INLINE_STRICT=1 set.
