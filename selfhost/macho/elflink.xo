@@ -69,6 +69,7 @@ const SHN_ABS = 0xfff1
 const SHN_COMMON = 0xfff2
 const R_AARCH64_NONE = 0
 const R_X86_64_PC64 = 24
+const R_X86_64_GLOB_DAT = 6
 const R_AARCH64_PREL64 = 260
 const R_AARCH64_ADR_PREL_PG_HI21_NC = 276
 const R_AARCH64_TSTBR14 = 279
@@ -237,13 +238,12 @@ pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str
         return Err("${o.path}: an object of another machine than ${l.objs[0].path}")
       }
     }
-    if l.amd64 && !l.opts.static {
-      return Err("x86-64: only a static link (no C library) so far")
+    if l.amd64 && l.opts.interp == "/lib/ld-linux-aarch64.so.1" {
+      l.opts.interp = "/lib64/ld-linux-x86-64.so.2"
     }
   }
   l.resolve()
-  if l.err.is_empty() && !l.amd64 {
-    // glibc's _start for arm64 (an x86-64 static link has the program's)
+  if l.err.is_empty() {
     l.synthesize_start()
   }
   if l.err.is_empty() {
@@ -522,6 +522,12 @@ fn (var l: ELinker) synthesize_start() {
       l.fail("no ${l.opts.entry}: a static link takes the program's (built with no C library)")
       return
     }
+  } else if !l.globals.contains(l.opts.entry.bytes()) && l.amd64 {
+    // glibc's crt1 on x86-64: rdx the loader's fini, the stack holds
+    // argc and argv; the stack aligned for __libc_start_main
+    src.write_str("\t.globl _start\n\t.type _start,@function\n_start:\n")
+    src.write_str("\txorl %ebp, %ebp\n\tmovq %rdx, %r9\n\tpopq %rsi\n\tmovq %rsp, %rdx\n\tandq $-16, %rsp\n\tpushq %rax\n\tpushq %rsp\n")
+    src.write_str("\txorl %r8d, %r8d\n\txorl %ecx, %ecx\n\tleaq main(%rip), %rdi\n\tcallq *__libc_start_main@GOTPCREL(%rip)\n\thlt\n")
   } else if !l.globals.contains(l.opts.entry.bytes()) {
     // glibc's crt1: x0 the loader's fini, the stack holds argc and argv
     src.write_str("\t.globl _start\n\t.p2align 2\n\t.type _start, %function\n_start:\n")
@@ -531,7 +537,7 @@ fn (var l: ELinker) synthesize_start() {
   }
   for (name, _) in l.undefined() {
     let n = bstr(name)
-    if n.starts_with("__aarch64_") {
+    if n.starts_with("__aarch64_") && !l.amd64 {
       match outline_atomic(n) {
         Some(body) => src.write_str(body)
         None => {
@@ -540,13 +546,14 @@ fn (var l: ELinker) synthesize_start() {
         }
       }
     } else if !l.opts.static {
-      match nonshared(n) {
+      match nonshared(n, l.amd64) {
         Some(body) => src.write_str(body)
         None => {}
       }
     }
   }
-  match assemble_elf(src.freeze()) {
+  let start = if l.amd64 { assemble_elf_amd64(src.freeze()) } else { assemble_elf(src.freeze()) }
+  match start {
     Ok(obj) => {
       match parse_elf_object("<start>", obj) {
         Ok(o) => {
@@ -565,8 +572,9 @@ fn (var l: ELinker) synthesize_start() {
 /// 64 names) call `__xstat`, `__fxstat`, `__lxstat`, `__fxstatat` with
 /// the structure version first (0 on arm64), so a binary binds on glibc
 /// 2.31 and, through the GLIBC_2.17 compatibility symbols, on 2.33 and
-/// later (gotchas/glibc-nonshared-stat.md). None for other names.
-fn nonshared(name: Str) -> Str? {
+/// later (gotchas/glibc-nonshared-stat.md). None for other names. On
+/// x86-64 the version is 1 (_STAT_VER_LINUX) and the base GLIBC_2.2.5.
+fn nonshared(name: Str, amd64: Bool) -> Str? {
   let (target, args) = match name {
     "stat" | "stat64" => ("__xstat", 2)
     "lstat" | "lstat64" => ("__lxstat", 2)
@@ -575,14 +583,25 @@ fn nonshared(name: Str) -> Str? {
     _ => return None
   }
   var b = StrBuilder.new()
-  b.write("\t.globl ${name}\n\t.p2align 2\n\t.type ${name}, %function\n${name}:\n")
-  // shift the arguments up one register, the version (0) in w0
-  var i = args
-  while i > 0 {
-    b.write("\tmov x${i}, x${i - 1}\n")
-    i -= 1
+  if amd64 {
+    let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"]
+    b.write("\t.globl ${name}\n\t.type ${name},@function\n${name}:\n")
+    var k = args
+    while k > 0 {
+      b.write("\tmovq ${regs[k - 1]}, ${regs[k]}\n")
+      k -= 1
+    }
+    b.write("\tmovl $1, %edi\n\tjmp ${target}\n")
+  } else {
+    b.write("\t.globl ${name}\n\t.p2align 2\n\t.type ${name}, %function\n${name}:\n")
+    // shift the arguments up one register, the version (0) in w0
+    var i = args
+    while i > 0 {
+      b.write("\tmov x${i}, x${i - 1}\n")
+      i -= 1
+    }
+    b.write("\tmov w0, #0\n\tb ${target}\n")
   }
-  b.write("\tmov w0, #0\n\tb ${target}\n")
   Some(b.freeze())
 }
 
@@ -637,10 +656,10 @@ pub fn outline_atomic(name: Str) -> Str? {
 }
 
 /// The symbol versions of glibc.xo: name to (library, version).
-fn glibc_versions() -> Map[Bytes, (Str, Str)] {
+fn glibc_versions(amd64: Bool) -> Map[Bytes, (Str, Str)] {
   var m: Map[Bytes, (Str, Str)] = {}
   var rank: Map[Bytes, Int] = {}
-  for line in GLIBC_VERSIONS.split("\n") {
+  for line in (if amd64 { GLIBC_VERSIONS_AMD64 } else { GLIBC_VERSIONS }).split("\n") {
     let parts = line.split(" ")
     if parts.len() < 3 {
       continue
@@ -683,10 +702,11 @@ fn (var l: ELinker) collect_imports() {
     }
     return
   }
-  let vers = glibc_versions()
+  let vers = glibc_versions(l.amd64)
+  let base = if l.amd64 { "GLIBC_2.2.5" } else { "GLIBC_2.17" }
   var gcc = false
   for (name, weak) in l.undefined() {
-    let (lib, ver) = vers.get(name) ?? ("libc.so.6", "GLIBC_2.17")
+    let (lib, ver) = vers.get(name) ?? ("libc.so.6", base)
     gcc = gcc || lib == "libgcc_s.so.1"
     l.import_ix.put(name, l.imports.len())
     l.imports.push(EImport{name: name, lib: lib, ver: ver, weak: weak})
@@ -862,6 +882,20 @@ fn (var l: ELinker) scan() {
         if l.amd64 {
           if r.typ == R_X86_64_GOTPCREL || r.typ == R_X86_64_GOTPCRELX || r.typ == R_X86_64_REX_GOTPCRELX {
             l.need_got(d, i)
+          } else if d < 0 && !l.opts.static {
+            // an import: a call through a stub, data through the GOT, an
+            // address in data bound by the loader
+            if r.typ == R_X86_64_PLT32 || (r.typ == R_X86_64_PC32 && x86_is_branch(s, r.off)) {
+              l.imports[i].func = true
+              if l.imports[i].plt < 0 {
+                l.need_got(d, i)
+                l.imports[i].plt = l.plt.len()
+                l.plt.push(i)
+              }
+            } else if r.typ != R_X86_64_64 {
+              l.fail("${l.objs[o].path}: ${bstr(l.imports[i].name)} (from ${l.imports[i].lib}) is used by relocation ${r.typ}, which needs a copy relocation")
+              return
+            }
           }
           continue
         }
@@ -1015,7 +1049,7 @@ fn (var l: ELinker) layout() {
         continue
       }
       for r in s.relocs {
-        if r.typ == R_AARCH64_ABS64 {
+        if r.typ == (if l.amd64 { R_X86_64_64 } else { R_AARCH64_ABS64 }) {
           let (d, _) = l.def_of(o, r.sym)
           if d < 0 {
             ndyn += 1
@@ -1159,7 +1193,7 @@ fn (var l: ELinker) relocate() {
     if imp >= 0 && l.opts.static {
       // a weak undefined symbol: 0 (the GOT's zeros)
     } else if imp >= 0 {
-      l.dynrels.push(EDynRel{addr: at, typ: R_AARCH64_GLOB_DAT, sym: imp + 1, addend: 0})
+      l.dynrels.push(EDynRel{addr: at, typ: if l.amd64 { R_X86_64_GLOB_DAT } else { R_AARCH64_GLOB_DAT }, sym: imp + 1, addend: 0})
     } else {
       l.patches.push(Patch{addr: at, size: 8, value: l.sym_addr(d, i)})
     }
@@ -1173,7 +1207,12 @@ fn (l: ELinker) tp_off_x86(addr: Int) -> Int {
   addr - l.tls_start - align_up(l.tls_size, l.tls_align)
 }
 
-/// An x86-64 relocation of a static link (decision 0254, stage 4).
+/// Whether the 4 bytes at off are a call's or a jmp's rel32 (e8, e9).
+fn x86_is_branch(s: ESect, off: Int) -> Bool {
+  off >= 1 && (s.data[off - 1] == 0xe8 || s.data[off - 1] == 0xe9)
+}
+
+/// An x86-64 relocation (decision 0254, stage 4).
 fn (var l: ELinker) reloc_x86(o: Int, s: ESect, base: Int, r: ERel) {
   let p = base + r.off
   let (d, i) = l.def_of(o, r.sym)
@@ -1182,11 +1221,18 @@ fn (var l: ELinker) reloc_x86(o: Int, s: ESect, base: Int, r: ERel) {
   let v = sv + r.addend
   let t = r.typ
   let path = l.objs[o].path
-  if t == R_X86_64_64 {
+  if t == R_X86_64_64 && imp && !l.opts.static {
+    l.dynrels.push(EDynRel{addr: p, typ: R_X86_64_64, sym: i + 1, addend: r.addend})
+    l.patches.push(Patch{addr: p, size: 8, value: 0})
+  } else if t == R_X86_64_64 {
     l.patches.push(Patch{addr: p, size: 8, value: v})
   } else if t == R_X86_64_PC64 {
     l.patches.push(Patch{addr: p, size: 8, value: v - p})
-  } else if (t == R_X86_64_PLT32 || t == R_X86_64_PC32) && imp && r.off >= 1 && (s.data[r.off - 1] == 0xe8 || s.data[r.off - 1] == 0xe9) {
+  } else if (t == R_X86_64_PLT32 || t == R_X86_64_PC32) && imp && !l.opts.static {
+    // through the import's stub
+    let x = l.osects[O_PLT].addr + 16 * l.imports[i].plt + r.addend - p
+    l.patches.push(Patch{addr: p, size: 4, value: x & 0xffffffff})
+  } else if (t == R_X86_64_PLT32 || t == R_X86_64_PC32) && imp && x86_is_branch(s, r.off) {
     // a call of a weak undefined symbol (the sanitizer hooks, which the
     // runtime calls only when linked): a call becomes a 5 byte nop, a
     // tail jump a ret, as the arm64 link's
@@ -1552,6 +1598,16 @@ fn (var l: ELinker) write() -> Bytes {
   for (k, imp) in l.plt.indexed() {
     let at = l.osects[O_PLT].addr + 16 * k
     let slot = l.osects[O_GOT].addr + 8 * l.imports[imp].got
+    if l.amd64 {
+      // jmp *slot(%rip), then int3 to 16 bytes
+      b.u8(0xff)
+      b.u8(0x25)
+      b.u32((slot - (at + 6)) & 0xffffffff)
+      for _ in 0..10 {
+        b.u8(0xcc)
+      }
+      continue
+    }
     let x = (page(slot) - page(at)) >> 12
     b.u32(0x90000010 | ((x & 3) * 0x20000000) | (((x >> 2) & 0x7ffff) * 32))
     b.u32(0xf9400000 | (((slot & 0xfff) / 8) * 1024) | (16 * 32) | 17)

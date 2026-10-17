@@ -714,8 +714,8 @@ test "stat, fstat, and lstat call glibc's __xstat family, as libc_nonshared.a do
   expect(has(exe, "__xstat")) == true
   expect(has(exe, "__fxstat")) == true
   expect(has(exe, "__lxstat")) == true
-  expect(nonshared("stat")) == Some("\t.globl stat\n\t.p2align 2\n\t.type stat, %function\nstat:\n\tmov x2, x1\n\tmov x1, x0\n\tmov w0, #0\n\tb __xstat\n")
-  expect(nonshared("puts")) == None
+  expect(nonshared("stat", false)) == Some("\t.globl stat\n\t.p2align 2\n\t.type stat, %function\nstat:\n\tmov x2, x1\n\tmov x1, x0\n\tmov w0, #0\n\tb __xstat\n")
+  expect(nonshared("puts", false)) == None
 }
 
 /// b holds the bytes of s.
@@ -732,7 +732,7 @@ fn has(b: Bytes, s: Str) -> Bool {
 }
 
 test "glibc versions: libm and libgcc_s names, libc's default" {
-  let v = glibc_versions()
+  let v = glibc_versions(false)
   expect(v.get("fmod".bytes())) == Some(("libm.so.6", "GLIBC_2.17"))
   expect(v.get("_Unwind_RaiseException".bytes())) == Some(("libgcc_s.so.1", "GCC_3.0"))
   expect(v.get("getrandom".bytes())) == Some(("libc.so.6", "GLIBC_2.25"))

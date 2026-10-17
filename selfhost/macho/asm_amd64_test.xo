@@ -1042,8 +1042,6 @@ test "an x86-64 static link: EM_X86_64, weak hooks a nop and a ret, GOT and init
   expect(rd32(exe, off + 20)) == 0xfffffff8
   // jmp __hook_b: a ret
   expect(Int(exe[off + 24])) == 0xc3
-  // an x86-64 dynamic link is not there yet
-  expect(link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{})) == Err("x86-64: only a static link (no C library) so far")
 }
 
 test "the amd64 emitter's forms: leave, cvttsd2siq, a jump table in .text, one STT_FILE per .file" {
@@ -1073,4 +1071,37 @@ fn has_bytes(b: Bytes, want: List[Int]) -> Bool {
     }
   }
   false
+}
+
+test "an x86-64 glibc link: crt1 _start, PLT stubs through GOT slots, GLIBC_2.2.5 and later versions" {
+  // decision 0254 stage 4: main calls puts (a stub) and reads stdout
+  // through the GOT; the loader and versions are x86-64's
+  let src = "\t.text\n\t.globl main\n\t.type main,@function\nmain:\n\tpushq %rax\n\tmovq stdout@GOTPCREL(%rip), %rax\n\tcallq puts@PLT\n\tcallq memcpy@PLT\n\txorl %eax, %eax\n\tpopq %rcx\n\tretq\n"
+  let obj = assemble_elf_amd64(src.bytes()).or_fault("assemble")
+  let exe = match link_elf([LinkInput{path: "m.o", data: obj}], ElfLinkOpts{}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(rd16(exe, 18)) == 62
+  expect(has(exe, "/lib64/ld-linux-x86-64.so.2")) == true
+  expect(has(exe, "GLIBC_2.2.5")) == true
+  // memcpy's x86-64 default version
+  expect(has(exe, "GLIBC_2.14")) == true
+  expect(has(exe, "__libc_start_main")) == true
+  // _start: xorl %ebp, %ebp; movq %rdx, %r9 (the entry's file offset
+  // through its PT_LOAD)
+  let entry = rd64(exe, 24)
+  var off = -1
+  for k in 0..rd16(exe, 56) {
+    let ph = 64 + 56 * k
+    let va = rd64(exe, ph + 16)
+    if rd32(exe, ph) == PT_LOAD && entry >= va && entry < va + rd64(exe, ph + 32) {
+      off = rd64(exe, ph + 8) + entry - va
+    }
+  }
+  expect(Int(exe[off])) == 0x31
+  expect(Int(exe[off + 1])) == 0xed
+  expect(Int(exe[off + 2])) == 0x49
+  // stat wraps __xstat with version 1
+  expect(nonshared("stat", true)) == Some("\t.globl stat\n\t.type stat,@function\nstat:\n\tmovq %rsi, %rdx\n\tmovq %rdi, %rsi\n\tmovl $1, %edi\n\tjmp __xstat\n")
 }

@@ -215,8 +215,16 @@ To be filled in as stages land.
   locals), assembled by Xo's assembler and linked by elflink on the Mac,
   run in Docker linux/amd64: 29 of 29 linked pass their want.txt
   (tz_table needs the build's generated zone table object, outside the
-  dump). A dynamic link (glibc, PLT stubs, GLOB_DAT) on x86-64 is still
-  to come.
+  dump).
+- Stage 4, glibc links (Xo Lang 2, 2026-10-17): elflink's dynamic mode
+  takes x86-64 objects too: crt1's `_start` for x86-64, 16 byte stubs
+  (`jmp *slot(%rip)`) through GLOB_DAT GOT slots (bound at load,
+  BIND_NOW), R_X86_64_64 to an import as a dynamic relocation, the
+  loader /lib64/ld-linux-x86-64.so.2, versions from glibc 2.31 on
+  linux/amd64 (selfhost/macho/glibc_amd64.xo, base GLIBC_2.2.5;
+  `scripts/elf-glibc-versions.py --amd64`), and libc_nonshared's stat
+  wrappers with version 1. 12 LLVM-compiled goldens of the glibc build
+  linked this way pass on linux/amd64 (Debian bullseye's loader).
 
 ## Alternatives
 
