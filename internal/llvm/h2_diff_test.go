@@ -459,7 +459,11 @@ func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string)
 // probeH2Client checks the program's server with net/http's HTTP/2
 // client.
 func probeH2Client(t *testing.T, out *strings.Builder, addr string, p *testPKI) {
-	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p.roots}, ForceAttemptHTTP2: true}
+	// One connection per host: without the cap the first burst of
+	// requests dials one TLS connection each before any is known to speak
+	// HTTP/2, and 400 dials overflow the server's listen queue (macOS
+	// somaxconn 128) under load, a reset dial that is not an h2 result.
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p.roots}, ForceAttemptHTTP2: true, MaxConnsPerHost: 1}
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr, Timeout: 20 * time.Second}
 	do := func(label, method, path string, body io.Reader, hdr map[string]string) {
