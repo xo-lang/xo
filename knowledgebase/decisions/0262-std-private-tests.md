@@ -54,9 +54,13 @@ That costs every time a std function needs checking on its own
   be part of (scan.xo is used by the runtime's own HTTP code): the build
   must not duplicate the module, which the root-module build already
   handles for user modules.
-- Test files are part of std's source key, so a test-only change
-  rebuilds xo's cached copies once; they could be excluded from the key
-  if that cost shows.
+- std test files never enter xo's source key: internal/xotool Inputs
+  adds std files by name (std/NAME.xo, std/native/llrt/NAME.xo and
+  NAME_c.xo), so a std scan_test.xo changes nothing there (corrected by
+  the lead, 2026-10-18). Only Inputs' walk of compiler/ takes every .xo
+  file; as part of this decision's work it skips *_test.xo too (tests are
+  not compiled into xo, and the fixed point ignores them), with a test
+  that adding a _test.xo leaves Key unchanged.
 
 ## Alternatives
 
