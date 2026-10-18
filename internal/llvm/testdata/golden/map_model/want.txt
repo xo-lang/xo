@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+int keys in 3: 0 mismatches
+int keys in 5: 0 mismatches
+int keys in 6: 0 mismatches
+int keys in 9: 0 mismatches
+int keys in 16: 0 mismatches
+str keys in 4: 0 mismatches
+str keys in 6: 0 mismatches
+str keys in 11: 0 mismatches
+--- stderr
