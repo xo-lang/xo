@@ -253,7 +253,7 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0259-external-bytes-to-str.md](0259-external-bytes-to-str.md): Proposed: one rule for raw external bytes (HTTP request lines, headers, environment, files, sockets) that are not valid UTF-8 becoming Str
 - [0260-named-wrapping-unsigned-ops.md](0260-named-wrapping-unsigned-ops.md): Proposed: named wrapping and unsigned operations in place of rt.int_wrap's numeric codes, and whether Xo gets an unsigned type
 - [0261-agent-commands.md](0261-agent-commands.md): Accepted (stage (a) in progress): Agent-facing commands on xo lsp's engine (lookups, refactors, fixes as JSON with diff previews)
-- [0262-std-private-tests.md](0262-std-private-tests.md): Proposed: Private-function tests inside std (_test.xo with private access in std/native)
+- [0262-std-private-tests.md](0262-std-private-tests.md): Accepted: Private-function tests inside std (_test.xo with private access in std/native)
 - [0263-copy-lint.md](0263-copy-lint.md): Accepted: A perf lint for copy-prone shapes under xo vet (XO0530, XO0531)
 - [0264-compare-and-provenance.md](0264-compare-and-provenance.md): Accepted: xo dev compare and build provenance stamps
 - [0265-debug-print-pure.md](0265-debug-print-pure.md): Proposed: dbg on every backend (native --no-gc too), one stderr line, compiled out of --release

@@ -1,6 +1,6 @@
 # 0262: Private-function tests inside std
 
-Status: Proposed (Xo Lang 3, 2026-10-18; for the owner)
+Status: Accepted (owner, 2026-10-18, through the lead: approved as written); scheduled after decision 0261 stage (a) (Xo Lang 3); it lets the map_model and canonical_names goldens become module tests
 
 ## Context
 
