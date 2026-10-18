@@ -15,8 +15,8 @@ than a file watcher:
 
 - the native run cache of `xo test` (compiler/xo/testcache.xo, decision
   0236 addendum) records every file a build read, with its hash;
-- per-declaration hashes (compiler/cli/semantic/defhash.xo, decision
-  0122 lineage) say which functions an edit changed;
+- per-declaration hashes (compiler/cli/semantic/defhash.xo, decision 0125) say which
+  functions an edit changed;
 - the backend function cache keeps a rebuild of a small edit fast;
 - std's Proc has `kill(pid, "TERM")` and Child.wait, enough for a
   graceful handoff.
