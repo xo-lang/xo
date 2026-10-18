@@ -257,6 +257,6 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0263-copy-lint.md](0263-copy-lint.md): Accepted (XO0530 implemented): A perf lint for copy-prone shapes under xo vet (XO0530, XO0531)
 - [0264-compare-and-provenance.md](0264-compare-and-provenance.md): Accepted: xo dev compare and build provenance stamps
 - [0265-debug-print-pure.md](0265-debug-print-pure.md): Accepted (owner, 2026-10-18): dbg on every backend (native --no-gc too), one stderr line, compiled out of --release
-- [0266-map-update-or.md](0266-map-update-or.md): Accepted (owner, 2026-10-18): no update_or (Map.update exists); vet hints XO0532 (copy-modify-store) and XO0533 (a mutated copy never stored)
+- [0266-map-update-or.md](0266-map-update-or.md): Accepted (owner, 2026-10-18), implemented: no update_or (Map.update exists); vet hint XO0532 (copy-modify-store; the lost write is already XO0520)
 - [0267-watch.md](0267-watch.md): Accepted (written, not implemented): `xo run --watch` (restart only when the binary changed, graceful handoff) and `xo test --watch` (only affected tests), JSON events per cycle
 - [0268-fault-report-locals.md](0268-fault-report-locals.md): Accepted, implemented: XO_TRACEBACK=locals lists each frame's variables in a native fault report, from the program's own DWARF (0252), read by llrt dwline.xo (0253), no side table

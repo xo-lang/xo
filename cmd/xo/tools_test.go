@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,93 @@ func TestVetCLI(t *testing.T) {
 	errOut.Reset()
 	if code := run(t, []string{"vet", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "warning XO0703") || !strings.Contains(errOut.String(), "1 module(s)") {
 		t.Errorf("human output: exit %d\n%s\n%s", code, out.String(), errOut.String())
+	}
+}
+
+// copyStoreProg has the shape of decision 0266, a copy changed and
+// stored back (XO0532, line 4), and three that are not: a store with
+// another statement between, a copy that is only read, and the update
+// form the fix writes. (A change never stored back is the checker's
+// error XO0520, so a program that vets has none.)
+const copyStoreProg = `fn index(var by: Map[Str, List[Int]], name: Str, i: Int) {
+  let seen = 1
+  let _ = seen
+  var ids = by.get(name) ?? []
+  ids.push(i)
+  by[name] = ids
+}
+
+fn count(by: Map[Str, List[Int]], name: Str) -> Int {
+  let ids = by.get(name) ?? []
+  ids.len()
+}
+
+fn gap(var by: Map[Str, List[Int]], name: Str, var n: Int) {
+  var ids = by.get(name) ?? []
+  ids.push(1)
+  n += 1
+  by[name] = ids
+}
+
+fn fixed(var by: Map[Str, List[Int]], name: Str, i: Int) {
+  by.update(name, [], fn(var ids) {
+    ids.push(i)
+  })
+}
+
+fn main(os: Os) {
+  var by: Map[Str, List[Int]] = {}
+  index(by, "a", 1)
+  var n = 0
+  gap(by, "a", n)
+  fixed(by, "a", 2)
+  os.stdio.println("${count(by, "a")} ${by.len()}")
+}
+`
+
+func TestVetCopyStore(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": copyStoreProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Span    struct {
+				Line int `json:"line"`
+			} `json:"span"`
+			Fixes []struct {
+				Edits []struct {
+					Replace string `json:"replace"`
+				} `json:"edits"`
+			} `json:"fixes"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code != "XO0532" {
+			continue
+		}
+		got = append(got, fmt.Sprintf("%s %d", d.Code, d.Span.Line))
+		if d.Code == "XO0532" {
+			want := "by.update(name, [], fn(var ids) {\n    ids.push(i)\n  })"
+			if len(d.Fixes) != 1 || len(d.Fixes[0].Edits) != 1 || d.Fixes[0].Edits[0].Replace != want {
+				t.Errorf("XO0532 fix: %+v, want %q", d.Fixes, want)
+			}
+		}
+	}
+	if strings.Join(got, ", ") != "XO0532 4" {
+		t.Errorf("got %v\n%s", got, out.String())
 	}
 }
 

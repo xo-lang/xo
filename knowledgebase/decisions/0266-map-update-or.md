@@ -57,3 +57,19 @@ looks the key up twice.
   needs references, which value semantics avoids.
 - Docs only: the agent read std.md and still missed it; a hint at the
   point of writing is what reaches it.
+
+## Implementation (2026-10-18)
+
+compiler/cli/core vet.xo copy_store: in every block, `var x = m.get(k)
+?? d` on a Map, followed by statements that only change x (a call of a
+method with a `var` receiver on x, `x op= v`, or an assignment to a field
+or element of x), then `m[k] = x` with the same m and k text is XO0532
+(a note, with the `m.update` rewrite as its fix). Any other statement
+between them ends the match. `m.put(k, x)` as the store is not matched
+yet. Tests: cmd/xo TestVetCopyStore; `xo explain XO0532`.
+
+Point 3 (XO0533) was not added: the checker already reports the lost
+write as the error XO0520, "mutation of `x` is never written back"
+(core 5.2), found when TestVetCopyStore's program failed to check. An
+error is stronger than a vet warning, and a second code for the same
+mistake would break the one code per meaning rule (spec 10).

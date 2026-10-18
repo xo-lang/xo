@@ -253,6 +253,8 @@ fn ([var] m: Map[K, V]) put(k: K, v: V)
 fn ([var] m: Map[K, V]) remove(k: K) -> V?
 fn ([var] m: Map[K, V]) update[R](k: K, init: V, f: fn(var V) -> R) -> R
     // reads k (or init if missing), runs f, stores the result, returns f's value
+    // in place of copy-modify-store (`var ids = by.get(n) ?? []; ids.push(i); by[n] = ids`):
+    //   by.update(n, [], fn(var ids) { ids.push(i) })   (xo vet XO0532, decision 0266)
 
 fn (s: Set[T]) len() -> Int
 fn (s: Set[T]) contains(x: T) -> Bool

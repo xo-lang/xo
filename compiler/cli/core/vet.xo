@@ -113,6 +113,9 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
             }
           }
         }
+        Block(b) => {
+          out = out + copy_store(c, f, path, b)
+        }
         _ => {}
       }
     }
@@ -124,6 +127,121 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
     out.push(d)
   }
   out
+}
+
+/// XO0532 (decision 0266) in block b: `var x = m.get(k) ?? d` on a Map,
+/// then statements that only change x (a call of a `var` method on x, an
+/// assignment to x, its fields or elements), then `m[k] = x`: m.update
+/// reads, changes, and stores in one lookup. The change without the store
+/// is the checker's XO0520 (core 5.2).
+fn copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag] {
+  var out: List[Diag] = []
+  let ss = b.stmts
+  for (i, s) in ss.indexed() {
+    if let Some((x, m, k, d)) = get_or_var(c, f, s) {
+      var j = i + 1
+      while j < ss.len() && changes(c, f, ss[j], x) {
+        j += 1
+      }
+      if j == i + 1 {
+        continue
+      }
+      if j < ss.len() && stores_back(c, f, ss[j], x, m, k) {
+        let sp = parser.Span{start: stmt_span(s).start, end: stmt_span(ss[j]).end}
+        var dg = vdiag("XO0532", true, file, sp, "`${x}` is read from `${m}`, changed, and stored back; `${m}.update(${k}, ${d}, fn(var ${x}) { ... })` does it in one lookup (std.md 2.4)")
+        let ind = " ".repeat(sp.start.col - 1)
+        var body = ""
+        for t in ss[i + 1..j] {
+          body = body + "${ind}  ${src_text(c, f, stmt_span(t)).replace("\n", "\n  ")}\n"
+        }
+        dg.fixes.push(check.DFix{title: "use `${m}.update`", edits: [check.DEdit{span: jspan(file, sp), replace: "${m}.update(${k}, ${d}, fn(var ${x}) {\n${body}${ind}})"}]})
+        out.push(dg)
+      }
+    }
+  }
+  out
+}
+
+/// `var x = m.get(k) ?? d` with m a Map: the texts of x, m, k, d.
+fn get_or_var(c: check.Checker, f: Int, s: parser.Stmt) -> (Str, Str, Str, Str)? {
+  if let VarStmt(_, name, _, value) = s {
+    if let BinaryExpr(_, op, call, dflt) = value {
+      if op != lexer.Kind.Coalesce {
+        return None
+      }
+      if let CallExpr(_, fun, args) = call {
+        if let SelectorExpr(_, mx, sel) = fun {
+          if text_of(sel.name) == "get" && args.len() == 1 && c.type_text_in(f, mx).starts_with("Map[") {
+            return Some((text_of(name.name), src_text(c, f, parser.expr_span(mx)), src_text(c, f, parser.expr_span(args[0].value)), src_text(c, f, parser.expr_span(dflt))))
+          }
+        }
+      }
+    }
+  }
+  None
+}
+
+/// Whether s only changes x: `x.method(...)` of a `var` receiver as a
+/// statement, or an assignment whose target is x, a field, or an element
+/// of it.
+fn changes(c: check.Checker, f: Int, s: parser.Stmt, x: Str) -> Bool {
+  match s {
+    ExprStmt(_, e) => {
+      if let CallExpr(_, fun, _) = e {
+        if let SelectorExpr(_, recv, _) = fun {
+          if root_name(recv) == x && is_ident(recv) {
+            if let Some(ci) = c.call_in(f, e) {
+              return ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var
+            }
+          }
+        }
+      }
+      false
+    }
+    // `x = v` replaces the copy rather than changing it; `x += v` and
+    // `x.f = v` change it
+    AssignStmt(_, op, target, _) => root_name(target) == x && (op != lexer.Kind.Assign || !is_ident(target))
+    _ => false
+  }
+}
+
+/// Whether s is `m[k] = x`.
+fn stores_back(c: check.Checker, f: Int, s: parser.Stmt, x: Str, m: Str, k: Str) -> Bool {
+  if let AssignStmt(_, op, target, value) = s {
+    if let IndexExpr(_, mx, kx) = target {
+      return op == lexer.Kind.Assign && is_ident(value) && root_name(value) == x && src_text(c, f, parser.expr_span(mx)) == m && src_text(c, f, parser.expr_span(kx)) == k
+    }
+  }
+  false
+}
+
+/// The name at the root of a chain of selectors and indexes (`x` of
+/// `x.f[i].g`), or "".
+fn root_name(e: parser.Expr) -> Str {
+  match e {
+    Ident(id) => text_of(id.name)
+    SelectorExpr(_, x, _) => root_name(x)
+    IndexExpr(_, x, _) => root_name(x)
+    ParenExpr(_, x) => root_name(x)
+    _ => ""
+  }
+}
+
+fn is_ident(e: parser.Expr) -> Bool {
+  if let Ident(_) = e { true } else { false }
+}
+
+fn stmt_span(s: parser.Stmt) -> parser.Span {
+  parser.stmt_span(s)
+}
+
+/// The source text of span sp of file f.
+fn src_text(c: check.Checker, f: Int, sp: parser.Span) -> Str {
+  let src = c.files[f].src
+  if sp.start.offset < 0 || sp.end.offset > src.len() || sp.start.offset > sp.end.offset {
+    return ""
+  }
+  src[sp.start.offset..sp.end.offset].to_str() ?? ""
 }
 
 /// The number of heap fields (core 5's reference counted values: Str,
@@ -532,6 +650,8 @@ fn walk_fn(fd: parser.FnDecl, var out: List[parser.Expr]) {
 }
 
 fn walk_block(b: parser.Block, var out: List[parser.Expr]) {
+  // the block itself, for the checks over its statements (copy_store)
+  out.push(parser.Expr.Block(b: b))
   for s in b.stmts {
     walk_stmt(s, out)
   }
