@@ -268,7 +268,15 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
 /// traceback, fault.xo trace; any backend, no frame pointers needed):
 /// stored at out, at most max; their count. Nothing is run or changed
 /// but the thread's unwind scratch (raise sets it up again).
-pub fn trace(out: Int, max: Int) -> Int {
+pub fn trace(out: Int, max: Int) -> Int { trace_frames(out, max, 0) }
+
+/// trace with each frame's registers: per frame its return address, then
+/// the first rw words of the walk's register state there (by DWARF
+/// register number: what the unwind tables restored for that frame),
+/// so the record is 1 + rw words a frame (decision 0268's locals). The
+/// state's callee saved registers, frame pointer, and sp are the frame's;
+/// the others are left over from frames below it.
+pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
   match target.os {
     TargetOs.Linux | TargetOs.Darwin => {}
     TargetOs.Windows => match target.arch {
@@ -277,6 +285,9 @@ pub fn trace(out: Int, max: Int) -> Int {
         // once per thread; before any raise, which reuses the CONTEXT
         let s = scratch()
         if s == 0 || (rt.mem_load(s, W_PDATA_N, 8) == 0 && !win_image(s)) {
+          return 0
+        }
+        if rw > 0 {
           return 0
         }
         sys_windows.RtlCaptureContext(s + W_CX)
@@ -320,7 +331,11 @@ pub fn trace(out: Int, max: Int) -> Int {
     if pc == 0 || !lookup_frame(s, pc, darwin) {
       break
     }
-    rt.mem_store(out, 8 * n, pc, 8)
+    let rec = out + 8 * (1 + rw) * n
+    rt.mem_store(rec, 0, pc, 8)
+    if rw > 0 {
+      rt.mem_copy(rec + 8, cur, 8 * rw)
+    }
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
     if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {

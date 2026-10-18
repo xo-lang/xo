@@ -566,9 +566,26 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
 // c is the context (xo_ctx *).
 
 /// XO_TRACEBACK: prints the frames of the trace block t (fault.xo exit
-/// calls it through its address, decision 0239).
-fn fault_traceback(t: Int, _u: Int) -> Int {
-  let s = prof.trace_text(fault.trace_pcs(t))
+/// calls it through its address, decision 0239), with each frame's
+/// variables under XO_TRACEBACK=locals (decision 0268): then fault.xo
+/// trace calls it at the fault (now 1), while the values are alive, and
+/// the report prints the text made there.
+fn fault_traceback(t: Int, now: Int) -> Int {
+  if now == 1 {
+    // at the fault (XO_TRACEBACK=locals): the text, kept in the block
+    // (words 2 and 3) for the report
+    let s = prof.trace_text_at(fault.trace_pcs(t), fault.trace_regs(t))
+    let b = rt.heap_large(s.len() + 1)
+    rt.mem_copy(b, raw.data(s), s.len())
+    rt.mem_store(t, 16, b, 8)
+    rt.mem_store(t, 24, s.len(), 8)
+    return 0
+  }
+  if rt.mem_load(t, 16, 8) > 0 {
+    stdio.write_all(2, rt.mem_load(t, 16, 8), rt.mem_load(t, 24, 8))
+    return 0
+  }
+  let s = prof.trace_text_at(fault.trace_pcs(t), fault.trace_regs(t))
   stdio.write_all(2, raw.data(s), s.len())
   0
 }

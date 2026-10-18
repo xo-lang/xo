@@ -12,6 +12,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   that a method exists before calling it (`Map.update` existed while
   agents guessed `update_or`, 2026-10-18).
 
+## Writing low-level arithmetic
+
+- Int word methods (decision 0260, on main since 34dab50f):
+  `wrapping_add|sub|mul`, `wrapping_shl`, `shr_logical`,
+  `rotate_right[32]`, `swap_bytes`, `mul_hi_unsigned`,
+  `lt_unsigned`/`le_unsigned`, lowered to the same instructions as the
+  rt.int_wrap intrinsics (spec/std.md). Prefer them over `rt.int_wrap`
+  in new code.
+
 ## Debugging a wrong program or a fault
 
 - `XO_PASSES=-name,...` turns optional passes off; `xo dev bisect-pass
@@ -23,8 +32,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   read before a write shows up at once.
 - `XO_DCE=off|debug|list` controls and lists native dead function
   removal.
-- Fault reports with each frame's locals (`XO_TRACEBACK=locals`, decision
-  0268) are in progress.
+- `XO_TRACEBACK=locals` (decision 0268): a native fault report lists each
+  frame's variables under it (Int, Float, Bool, Str text, a list's first
+  elements, struct fields, enum variants), read from the program's own
+  DWARF; `<unavailable>` means the frame no longer keeps the value.
+  Off by default; toolchain.md has the details.
 
 ## Testing
 
@@ -50,7 +62,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   callgrind: short or full" lists. `ANN=1` keeps per-function counts and
   `bench/perf/http/cgcompare.py BASE/run NEW/run` prints the top changed
   functions (to be folded into `xo dev compare`, decision 0264).
-- `scripts/fieldcheck.py`.
+- `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
+  nistec.xo's field code, interprets the generated Xo against Python big
+  integers and checks that a planted dropped carry is caught.
 - `xo vet` XO0530 (large copies).
 
 ## Coordinating (scripts/lead/README.md)
@@ -64,4 +78,5 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 - `xo run --watch` and `xo test --watch` (decision 0267), `xo dev
   compare` (0264), `dbg` in pure and no-GC code (0265), vet hints for
-  copy-modify-store (0266), Int word methods (0260).
+  copy-modify-store (0266); std moving from rt.int_wrap to the Int word
+  methods (0260 step 3, after seed 0.21.0).

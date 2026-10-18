@@ -1,7 +1,11 @@
 # 0268: Fault reports with the frames' locals
 
-Status: Proposed (xo-4, 2026-10-18; owner approved the item in the
+Status: Accepted (xo-4, 2026-10-18; owner approved the item in the
 agents' survey recommendations; the design agreed with Xo Lang 3).
+Implemented 2026-10-18: std/native/llrt dwline.xo's variables section
+(not a separate dwvars.xo: it shares dwline's DWARF readers), fault.xo,
+unwind.xo trace_frames, cabi.xo fault_traceback, prof.xo trace_text_at;
+test internal/llvm TestFaultLocals.
 
 ## Context
 
@@ -39,8 +43,11 @@ and never in a signal handler.
    structures and members, typedefs, pointers by name), and locations
    (DW_OP_reg, regx, breg, bregx, fbreg, addr, piece; exprloc and DWARF 5
    loclists).
-4. **Frames**: the trace block records each frame's frame pointer next
-   to its return address. The faulting frame's registers are those the
+4. **Frames**: the trace block records each frame's register state next
+   to its return address (the unwinder's 96 words, by DWARF number), and
+   the report's text is made at the fault itself: the unwinding before
+   the report releases the frames' values (a list read at the report
+   showed reused memory). The faulting frame's registers are those the
    fault path saved (the trap context for a signal fault; the callee
    saved registers and fp, sp at the raise for a software fault); a
    caller frame has x19 to x28 (as the unwinder restores them), fp, and

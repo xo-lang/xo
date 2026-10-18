@@ -1091,14 +1091,32 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
 /// has them), from the first frame past the runtime's own (fault.,
 /// cabi.fault, unwind.) to the program's main (or xo_entry, which LLVM
 /// inlines main into).
-pub fn trace_text(pcs: List[Int]) -> Str {
+pub fn trace_text(pcs: List[Int]) -> Str { trace_text_at(pcs, []) }
+
+/// trace_text with each frame's variables under it (decision 0268,
+/// XO_TRACEBACK=locals): regs[i] the address of frame i's registers
+/// (fault.xo trace_regs); none, or a program without DWARF, prints the
+/// frames alone (with the reason).
+pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
   let syms = symbols(1, 9223372036854775807)
   let lines = dwline.load(1, 9223372036854775807)
   var names = syms.names
   var b = StrBuilder.new()
   b.write("traceback:\n")
+  var vars = dwline.Vars{}
+  if !regs.is_empty() {
+    vars = dwline.vars_load()
+    if !vars.why.is_empty() {
+      b.write("  (locals unavailable: ${vars.why})\n")
+    }
+  }
+  let have = dwline.callee_saved()
+  let sp_reg = match target.arch {
+    TargetArch.Amd64 => 7
+    TargetArch.Arm64 | TargetArch.Wasm32 => 31
+  }
   var started = false
-  for pc in pcs {
+  for (fi, pc) in pcs.indexed() {
     // a return address: its call is at pc - 1
     let f = func_of(syms, pc - 1, names)
     let name = names[f]
@@ -1121,6 +1139,13 @@ pub fn trace_text(pcs: List[Int]) -> Str {
       b.write("  ${shown}\n")
     } else {
       b.write("  ${shown} (${base_name(pf)}:${pl})\n")
+    }
+    if fi < regs.len() && vars.why.is_empty() {
+      // the frame's CFA: the next frame's sp
+      let cfa = if fi + 1 < regs.len() { rt.mem_load(regs[fi + 1], 8 * sp_reg, 8) } else { 0 }
+      for l in dwline.frame_locals(vars, pc - 1, dwline.Regs{at: regs[fi], have: have, cfa: cfa}) {
+        b.write("      ${l}\n")
+      }
     }
     // the program's main (LLVM inlines it into xo_entry)
     if name == "main" || name == "xo_entry" {
