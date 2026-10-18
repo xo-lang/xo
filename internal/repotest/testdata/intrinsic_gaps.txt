@@ -1,0 +1,224 @@
+# The rt.* intrinsics of std/native/rt.xo a backend does not lower, and why
+# (internal/repotest TestRuntimeIntrinsicsLowered): `backend name reason`.
+# A new intrinsic needs a lowering in each backend, or a line here.
+
+arm64 any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 env_get lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 env_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 env_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 env_vars lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 eprintln lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 floor_div lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fn_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fs_canceled lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fs_case_sensitive layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_chmod layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_chtimes layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_copy layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_close layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_closed layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_read_line layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_info layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_lock layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_lock_held layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_lock_shared layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_mode lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fs_msg layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_names layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fs_open layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_perm layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_create layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_errno layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_fail layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_getcwd layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_kind layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_mkdir layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_names layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_rmdir layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_raw_unlink layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_read_link layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_remove layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_rename layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_root lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 fs_set_err layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_stat layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_status layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_symlink layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_unlock layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 int_conv lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 int_fits layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 int_op lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 int_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 int_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 launder1 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 launder2 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 layout lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 mem_file lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 mem_file_id layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 mem_file_path layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 mem_file_writes layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 mem_lock lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 mem_lock_id layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 net_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 net_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 proc_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 proc_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 rs_append_duration layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 rs_append_quote layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 rs_append_rune_quote layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 rs_append_time layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 rs_append_u64 layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 rs_push_rune lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 rune_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 str_find layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 str_hash lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 str_repeat lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 str_rune_count lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 str_slice lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 sym_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+arm64 time_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 time_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm duration_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm duration_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm env_get lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm env_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm env_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm env_vars lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm eprintln lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm floor_div lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fn_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fs_canceled lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fs_case_sensitive layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_chmod layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_chtimes layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_copy layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_close layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_closed layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_read_line layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_info layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_lock layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_lock_held layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_lock_shared layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_mode lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fs_msg layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_names layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fs_open layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_perm layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_create layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_errno layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_fail layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_getcwd layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_kind layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_mkdir layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_names layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_rmdir layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_raw_unlink layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_read_link layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_remove layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_rename layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_root lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm fs_set_err layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_stat layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_status layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_symlink layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_unlock layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm int_conv lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm int_fits layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm int_op lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm int_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm int_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm launder1 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm launder2 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm layout lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm mem_file lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm mem_file_id layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm mem_file_path layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm mem_file_writes layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm mem_lock lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm mem_lock_id layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm net_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm net_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm proc_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm proc_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm rs_append_duration layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm rs_append_quote layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm rs_append_rune_quote layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm rs_append_time layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm rs_append_u64 layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm rs_push_rune lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm rune_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm str_find layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm str_hash lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm str_repeat lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm str_rune_count lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm str_slice lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm sym_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm time_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm time_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+wasm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm dyn_text lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm env_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm env_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm fiber_start_addr the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm flush not supported on wasm yet (no program the wasm goldens build reaches it)
+wasm fs_mode lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm fs_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm fs_root lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm heap_big the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm heap_big_release the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm heap_big_resize the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm heap_grow the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm heap_lock the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm heap_unlock the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm launder1 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm launder2 lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm layout lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm mem_file lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm mem_file_id a native test's MemFs handle (std/native/testing.xo), not built for wasm
+wasm mem_file_path a native test's MemFs handle (std/native/testing.xo), not built for wasm
+wasm mem_file_writes a native test's MemFs handle (std/native/testing.xo), not built for wasm
+wasm mem_lock lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm mem_lock_id a native test's MemFs handle (std/native/testing.xo), not built for wasm
+wasm net_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm net_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm proc_lists lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm proc_new lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm sched_hook the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm sched_run_task the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm stack_switch the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm sym_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm time_parse not supported on wasm yet (no program the wasm goldens build reaches it)
+wasm time_parse_ok not supported on wasm yet (no program the wasm goldens build reaches it)
+wasm unwind_resume the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+wasm unwind_save the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own

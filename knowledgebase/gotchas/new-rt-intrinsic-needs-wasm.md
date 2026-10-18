@@ -27,4 +27,7 @@ emitter, the LLVM emitter, and the wasm runtime (compiler/wasm/rt2.xo:
 a function plus its name in the direct list; rt.mem_copy_block became
 `memory.copy`, like $mem_copy). Before merging, run the wasm goldens
 (TestSelfhostWasm, or `xo build --backend=wasm` of a golden that copies
-a string) next to the native ones.
+a string) next to the native ones. internal/repotest
+TestRuntimeIntrinsicsLowered (-short, 2026-10-17) catches it in a second:
+every intrinsic needs a lowering in arm64, LLVM, and wasm, or a line with
+its reason in internal/repotest/testdata/intrinsic_gaps.txt.
