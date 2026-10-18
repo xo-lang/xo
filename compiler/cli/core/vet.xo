@@ -249,16 +249,36 @@ fn src_text(c: check.Checker, f: Int, sp: parser.Span) -> Str {
 /// changes: a struct's are its fields', an enum's those of its largest
 /// variant, a scalar's none (decision 0263).
 fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
+  var memo: Map[Int, Int] = {}
+  heap_fields_in(c, t0, depth, memo)
+}
+
+/// heap_fields with the counts found so far by type: each type is
+/// counted once (the compiler's own enums nest each other in every
+/// variant, and walking them afresh at each level took exponential time:
+/// `xo vet compiler` ran for 25 minutes, 2026-10-18), and a type met
+/// again while it is being counted (a recursive type) counts 0 there.
+fn heap_fields_in(c: check.Checker, t0: Int, depth: Int, var memo: Map[Int, Int]) -> Int {
   let t = c.resolve(t0)
-  if t < 0 || depth > 6 {
+  if t < 0 || depth > 64 {
     return 0
   }
+  if let Some(n) = memo.get(t) {
+    return n
+  }
+  memo[t] = 0
+  let n = heap_fields_of(c, t, depth, memo)
+  memo[t] = n
+  n
+}
+
+fn heap_fields_of(c: check.Checker, t: Int, depth: Int, var memo: Map[Int, Int]) -> Int {
   let ty = c.tys[t]
   match ty.kind {
     check.TyKind.Tuple => {
       var n = 0
       for a in ty.args {
-        n += heap_fields(c, a, depth + 1)
+        n += heap_fields_in(c, a, depth + 1, memo)
       }
       n
     }
@@ -285,7 +305,7 @@ fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
         "struct" => {
           var n = 0
           for fl in o.fields {
-            n += heap_fields(c, arg(fl.ty), depth + 1)
+            n += heap_fields_in(c, arg(fl.ty), depth + 1, memo)
           }
           n
         }
@@ -294,7 +314,7 @@ fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
           for v in o.variants {
             var n = 0
             for vf in v.fields {
-              n += heap_fields(c, arg(vf.ty), depth + 1)
+              n += heap_fields_in(c, arg(vf.ty), depth + 1, memo)
             }
             if n > most {
               most = n

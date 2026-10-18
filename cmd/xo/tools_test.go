@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFmt(t *testing.T) {
@@ -458,5 +459,36 @@ func TestAgentCLI(t *testing.T) {
 	all := agentJSON(t, 0, "symbols", "--all", dir)["symbols"].([]any)
 	if len(all) <= len(syms) {
 		t.Errorf("symbols --all (%d) not more than pub (%d)", len(all), len(syms))
+	}
+}
+
+// TestVetDeepTypes: xo vet counts the heap fields of each type once. The
+// count walked the types afresh at every level, and on enums that nest
+// each other in every variant (the compiler's own syntax trees) `xo vet
+// compiler` ran for 25 minutes (2026-10-18); a recursive type counts
+// itself once.
+func TestVetDeepTypes(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	// eight enums of eight variants, each holding three of the others
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&b, "pub enum E%d {\n", i)
+		for v := 0; v < 8; v++ {
+			fmt.Fprintf(&b, "  V%d(a: E%d?, b: E%d?, c: List[E%d], d: Str)\n", v, (i+1)%8, (i+2)%8, (i+3)%8)
+		}
+		b.WriteString("}\n\n")
+	}
+	b.WriteString("pub struct Holder {\n  e: E0?\n}\n\npub fn first(h: Holder) -> Int {\n  match h.e {\n    Some(x) => 1\n    None => 0\n  }\n}\n")
+	dir := writeFiles(t, map[string]string{"main.xo": b.String()})
+	done := make(chan int, 1)
+	var out, errOut bytes.Buffer
+	go func() { done <- run(t, []string{"vet", "--json", dir}, &out, &errOut) }()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("xo vet: exit %d\n%s%s", code, out.String(), errOut.String())
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("xo vet did not finish in 60 s on nested enums")
 	}
 }
