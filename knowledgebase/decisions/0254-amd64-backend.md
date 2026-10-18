@@ -211,10 +211,11 @@ knowledgebase/gotchas/amd64-retarget-semantic-gaps.md:
   bodies until stage 3.
 
 Not yet: darwin/amd64 and windows/amd64 (Mach-O and PE, stage 4's
-rest), shrink wrapping, DWARF variable locations (debug_info is off for
+rest), DWARF variable locations (debug_info is off for
 amd64), the per-function cache, native x86 selection where the
 translation costs (the bench/perf comparison with LLVM, the lead's third
-condition).
+condition). Shrink wrapping (decision 0224) runs for amd64 since
+2026-10-17.
 
 - Stage 1 landed (Xo Lang 2, 2026-10-17): selfhost/macho enc_amd64.xo
   (the encoder) and asm_amd64.xo (the assembler, with amd64 paths in

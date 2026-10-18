@@ -116,6 +116,7 @@ fn (var g: G) x86_emit() {
     fr.size = 0
   }
   g.fr = fr
+  g.shrink_plan()
   var b: List[Str] = []
   b.push("# func ${g.f.name}\n")
   g.func_header(b, g.fname(g.f.name), false)
@@ -126,7 +127,10 @@ fn (var g: G) x86_emit() {
     }
   }
   g.cfi_start(b, pads)
-  g.x86_prologue(b)
+  if !g.shrink {
+    g.x86_prologue(b)
+    g.x86_cfi_frame(b)
+  }
   // the blocks reached once branches skip the blocks that only jump
   // (emit.xo's walk)
   var live: List[Bool] = []
@@ -164,6 +168,15 @@ fn (var g: G) x86_emit() {
     }
     b.push("${g.label(mb)}:\n")
     g.cur = mb
+    if g.shrink && g.fedge[mb] == 1 {
+      // a way into the blocks that need the frame (shrink.xo)
+      g.x86_prologue(b)
+    }
+    if g.shrink && mb == g.pro {
+      // the first block laid out with the frame: its unwind rules from
+      // here on (the blocks without it are laid out first)
+      g.x86_cfi_frame(b)
+    }
     let head = g.x86_check_head(mb)
     let ins = g.blocks[mb].insts
     g.ended = false
@@ -215,14 +228,19 @@ fn (var g: G) x86_emit() {
   g.text.push(b.join(""))
 }
 
+/// The frame: rbp and the callee saved registers pushed, the rest of
+/// the frame below them. Its unwind rules are x86_cfi_frame's, given once
+/// where the frame's blocks start (with shrink wrapping a save block's
+/// prologue runs where the rules already say the frame is made; no call
+/// is inside it).
 fn (g: G) x86_prologue(var b: List[Str]) {
   let fr = g.fr
   if fr.leaf {
     return
   }
-  b.push("\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
-  for (k, r) in g.saved.indexed() {
-    b.push("\tpushq ${x86_reg(r, 8)}\n\t.cfi_offset ${x86_reg(r, 8)}, ${-24 - 8 * k}\n")
+  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+  for r in g.saved {
+    b.push("\tpushq ${x86_reg(r, 8)}\n")
   }
   let rest = fr.size - 8 * g.saved.len()
   if rest > 0 {
@@ -240,10 +258,23 @@ fn (g: G) x86_prologue(var b: List[Str]) {
   }
 }
 
-/// Undoes the prologue (the epilogue but its `ret`).
+/// The unwind rules of the frame x86_prologue makes: the CFA at rbp + 16,
+/// rbp and the pushed registers below it.
+fn (g: G) x86_cfi_frame(var b: List[Str]) {
+  if g.fr.leaf {
+    return
+  }
+  b.push("\t.cfi_def_cfa %rbp, 16\n\t.cfi_offset %rbp, -16\n")
+  for (k, r) in g.saved.indexed() {
+    b.push("\t.cfi_offset ${x86_reg(r, 8)}, ${-24 - 8 * k}\n")
+  }
+}
+
+/// Undoes the prologue (the epilogue but its `ret`), when the current
+/// block runs with the frame.
 fn (g: G) x86_unframe(var b: List[Str]) {
   let fr = g.fr
-  if fr.leaf {
+  if fr.leaf || (g.shrink && g.fl[g.cur]) {
     return
   }
   if g.saved.is_empty() {
@@ -371,15 +402,33 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     g.x86_unframe(b)
     b.push("\tretq\n")
   } else if inst.kind == K_JUMP {
+    if g.shrink && g.fedge[g.cur] == 2 {
+      // a way out of the blocks that need the frame (shrink.xo)
+      g.x86_unframe(b)
+      let r = g.fwd(inst.targets[0])
+      if g.only_return(r) {
+        // the return copied here, past the frame (no branch back to it)
+        let cur = g.cur
+        let pos = g.pos
+        g.cur = r
+        for (k, x) in g.blocks[r].insts.indexed() {
+          g.pos = g.blocks[r].start + 4 * k
+          g.x86_emit_inst(b, x, -1)
+        }
+        g.pos = pos
+        g.cur = cur
+        return
+      }
+    }
     let t = g.fwd(inst.targets[0])
     if t == next {
       return
     }
-    if g.x86_rotate_jump(b, t) {
+    if g.same_frame(t) && g.x86_rotate_jump(b, t) {
       return
     }
     let ti = g.blocks[t].insts
-    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur {
+    if ti.len() == 1 && ti[0].kind == K_CONDBR && t != g.cur && g.same_frame(t) {
       // a loop header that only tests: test here (one taken branch per
       // iteration instead of two), as allocated at the header
       let pos = g.pos
@@ -813,6 +862,10 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     if g.fr.leaf {
       // a frame record for the unwinder
       sb.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+    } else if g.shrink && g.fl[g.cur] {
+      // a block that runs without the frame: the stub makes it, so the
+      // stubs' unwind rules are the frame's (shrink.xo)
+      g.x86_prologue(sb)
     }
     var ms = g.x86_call_moves(inst.fargs, -1)
     g.x86_recover_operand(sb, inst, ms)

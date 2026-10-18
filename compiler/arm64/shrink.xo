@@ -390,7 +390,7 @@ fn (g: G) frame_loc(v: Int) -> Bool {
   }
   let l = g.loc[v]
   if l.reg >= 0 {
-    return is_callee(l.reg)
+    return g.is_callee_t(l.reg)
   }
   l.slot >= 0
 }

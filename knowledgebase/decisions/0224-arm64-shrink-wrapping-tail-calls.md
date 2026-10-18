@@ -1,7 +1,10 @@
 # 0224: Shrink wrapping and tail calls in the arm64 emitter
 
 Status: Accepted, implemented (2026-10-14, selfhost/arm64/shrink.xo;
-measurements in bench/results/shrink-wrapping-2026-10-14.md).
+measurements in bench/results/shrink-wrapping-2026-10-14.md). The amd64
+backend (decision 0254) uses it too since 2026-10-17 (x86emit.xo: the
+prologue without unwind rules on each save block, x86_cfi_frame where
+the frame's blocks start; bench/results/compare-2026-10-17.md).
 
 ## Context
 

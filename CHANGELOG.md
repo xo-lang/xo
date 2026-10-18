@@ -17,6 +17,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (LLVM) instructions per request (its headers Map); lookups in such a
   map cost 0.88 (4 entries) to 1.00 (5) times the table's, and a lookup
   in a map with a table about 1% more (it checks for the table).
+- x86_64 functions make their stack frame only on the paths that need
+  it (recursive Fibonacci: 26% fewer instructions, now fewer than
+  LLVM's).
 
 - A Map's lists are sized at each rebuild for every entry until the next
   one, so small maps (an HTTP request's headers) do not grow them:
