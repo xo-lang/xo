@@ -455,9 +455,6 @@ fn heap_word() -> Int {
 /// The single threaded heap record, 0 once other threads run.
 pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 
-/// The calling thread's heap record (prof.xo's heap profile).
-pub fn heap_now() -> Int { heap_word() & -2 }
-
 /// Sets the heap words (C main, before the program runs, with the main
 /// heap record; xo_rt_threads_begin with 0, before a second thread runs).
 pub fn heap_init(h: Int, slow: Int) {

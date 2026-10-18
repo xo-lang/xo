@@ -94,12 +94,6 @@ fn stc(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
 // before its own calls were inlined, so a helper that calls a helper
 // stays a call in the NTT's loop (2026-10-15).
 
-/// a - q when a >= q, for a < 2q.
-fn reduce_once(a: Int) -> Int {
-  let x = rt.int_wrap(1, a, Q)
-  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
-}
-
 fn fadd(a: Int, b: Int) -> Int {
   let x = rt.int_wrap(1, rt.int_wrap(0, a, b), Q)
   rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
@@ -108,21 +102,6 @@ fn fadd(a: Int, b: Int) -> Int {
 /// a - b + q, reduced once: a - b when it is not negative.
 fn fsub(a: Int, b: Int) -> Int {
   let x = rt.int_wrap(1, a, b)
-  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
-}
-
-/// Barrett reduction of a < 2^25 (Go's fieldReduce).
-fn freduce(a: Int) -> Int {
-  let quotient = rt.int_wrap(4, rt.int_wrap(2, a, 5039), 24)
-  let x = rt.int_wrap(1, rt.int_wrap(1, a, rt.int_wrap(2, quotient, Q)), Q)
-  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
-}
-
-/// freduce of a * b.
-fn fmul(a: Int, b: Int) -> Int {
-  let p = rt.int_wrap(2, a, b)
-  let quotient = rt.int_wrap(4, rt.int_wrap(2, p, 5039), 24)
-  let x = rt.int_wrap(1, rt.int_wrap(1, p, rt.int_wrap(2, quotient, Q)), Q)
   rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
 }
 
@@ -823,15 +802,8 @@ pub fn hybrid_server_for(group: Int, share: Bytes, e_priv: Bytes, m: Bytes) -> (
   Some((asn1.cat([x, key]), asn1.cat([e, c])))
 }
 
-// X25519MLKEM768's names (tls13srv.xo's, and the tests')
-
-/// A hybrid private key: the ML-KEM seed (64 bytes), then the X25519
-/// private key (32).
-pub fn hybrid_keygen() -> Bytes { hybrid_keygen_for(GROUP_X25519_MLKEM768) }
-
-/// The X25519 private key of a hybrid private key (for the plain X25519
-/// share a client sends next to the hybrid one, as Go's).
-pub fn hybrid_x25519_priv(priv: Bytes) -> Bytes { priv[64..96] }
+// X25519MLKEM768's fixed names (the crypto_mlkem golden's, and std/rt
+// internal_mlkem.go's mirror); TLS 1.3 uses the _for forms
 
 /// A client's hybrid key share: the encapsulation key, then the X25519
 /// public key (1216 bytes).

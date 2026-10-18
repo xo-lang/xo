@@ -107,10 +107,6 @@ fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
 
 fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
 
-/// The high bit of each byte of w that is 0 (and maybe of bytes above
-/// a 0 one: the lowest is exact).
-fn zero_bytes(w: Int) -> Int { subw(w, ONES) & (w ^ -1) & HIGHS }
-
 /// The high bit of each byte of w, as a JSON string's body has it, that
 /// ends a run of plain bytes: below 0x20, `"`, or `\` (the lowest
 /// exact).

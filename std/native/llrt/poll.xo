@@ -960,10 +960,6 @@ pub fn poll_thread() {
 /// it.
 pub fn ev_mu() -> Int { addw(ev(), EV_MU) }
 
-pub fn ev_lock() { lk(ev_mu()) }
-
-pub fn ev_unlock() { unlk(ev_mu()) }
-
 /// Whether timer t (of timer_park) fired.
 pub fn timer_fired(t: Int) -> Bool { fired(t) }
 

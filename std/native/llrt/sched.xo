@@ -169,11 +169,6 @@ pub fn rq_put_batch(q: Int, batch: Int, n: Int) {
   rt.slot_store(q, RQ_TAIL, rt.int_wrap(0, t, n), SEQ_CST)
 }
 
-/// Whether the ring at q holds an item: 1 or 0.
-pub fn rq_nonempty(q: Int) -> Int {
-  if rt.slot_load(q, 0, SEQ_CST) != rt.slot_load(q, RQ_TAIL, SEQ_CST) { 1 } else { 0 }
-}
-
 // ---------------------------------------------------------------------------
 // Fibers (decision 0069): every task a worker starts runs on a stack of
 // its own; a task that waits parks, and its worker runs other work.

@@ -133,9 +133,6 @@ fn append_uint(out: Str, u: Int, sk: Int) -> Str {
   rt.rs_push_words(out, 45, digits_k(top, k), digits8(q % 100000000), lo, sk | ((k & 15) << 4) | 0x8800)
 }
 
-/// The decimal text of v.
-pub fn int_text(v: Int) -> Str { append_int("", v) }
-
 // ---------------------------------------------------------------------------
 // Words as UInt64 (the arithmetic of Dragonbox and Eisel-Lemire)
 //

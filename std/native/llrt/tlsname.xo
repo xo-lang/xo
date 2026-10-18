@@ -322,30 +322,6 @@ pub struct Names {
   pub ips: List[List[Int]]
 }
 
-/// The names at the addresses the C gives: dn bytes at dp, the DNS names
-/// each followed by a zero byte, and ni IP addresses of 16 bytes at ip.
-pub fn names_at(dp: Int, dn: Int, ip: Int, ni: Int) -> Names {
-  var dns: List[Str] = []
-  var i = 0
-  while i < dn {
-    var e = i
-    while e < dn && raw.byte_at(dp, e) != 0 {
-      e += 1
-    }
-    dns.push(raw.str_at(dp + i, e - i))
-    i = e + 1
-  }
-  var ips: List[List[Int]] = []
-  for k in 0..ni {
-    var a: List[Int] = []
-    for j in 0..16 {
-      a.push(raw.byte_at(ip, 16 * k + j))
-    }
-    ips.push(a)
-  }
-  Names{dns: dns, ips: ips}
-}
-
 /// x509.Certificate.VerifyHostname: whether host matches the names.
 pub fn host_ok(nm: Names, h: Str) -> Bool {
   var cand = h

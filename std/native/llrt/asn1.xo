@@ -162,21 +162,6 @@ pub fn small_int(b: Bytes, t: Tlv) -> Int? {
   Some(v)
 }
 
-/// The BOOLEAN t (DER: 0x00 or 0xff).
-pub fn boolean(b: Bytes, t: Tlv) -> Bool? {
-  if t.tag != BOOLEAN || t.hi - t.lo != 1 {
-    return None
-  }
-  let v = Int(b[t.lo])
-  if v == 0 {
-    return Some(false)
-  }
-  if v == 255 {
-    return Some(true)
-  }
-  None
-}
-
 /// The bytes of the BIT STRING t with no unused bits (keys and
 /// signatures).
 pub fn bits(b: Bytes, t: Tlv) -> Bytes? {
@@ -184,33 +169,6 @@ pub fn bits(b: Bytes, t: Tlv) -> Bytes? {
     return None
   }
   Some(b[t.lo + 1..t.hi])
-}
-
-/// The first two bytes of the BIT STRING t as flags, bit 0 the first
-/// (KeyUsage's numbering), and whether it is one.
-pub fn bit_flags(b: Bytes, t: Tlv) -> Int? {
-  if t.tag != BIT_STRING || t.hi == t.lo || Int(b[t.lo]) > 7 {
-    return None
-  }
-  let unused = Int(b[t.lo])
-  if t.hi - t.lo == 1 && unused != 0 {
-    return None
-  }
-  var v = 0
-  var i = 0
-  while i < 2 && t.lo + 1 + i < t.hi {
-    let x = Int(b[t.lo + 1 + i])
-    // bit 7 of the first byte is flag 0
-    var k = 0
-    while k < 8 {
-      if (x & rt.int_wrap(3, 1, 7 - k)) != 0 {
-        v = v | rt.int_wrap(3, 1, 8 * i + k)
-      }
-      k += 1
-    }
-    i += 1
-  }
-  Some(v)
 }
 
 /// The dotted text of the OBJECT IDENTIFIER t ("1.2.840.10045.2.1"); ""

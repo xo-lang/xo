@@ -138,15 +138,6 @@ pub fn find(t: Lines, pc: Int) -> (Str, Int) {
   (t.names[t.files[i]], t.lines[i])
 }
 
-/// `file:line` of pc with the file's last element, or "".
-pub fn short(t: Lines, pc: Int) -> Str {
-  let (f, l) = find(t, pc)
-  if f.is_empty() {
-    return ""
-  }
-  "${base(f)}:${l}"
-}
-
 fn base(p: Str) -> Str {
   let parts = p.split("/")
   parts[parts.len() - 1]

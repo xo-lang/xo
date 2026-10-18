@@ -19,9 +19,11 @@ A reachability walk over the arm64 binary's own disassembly (calls,
 branches, adrp+add addresses, data words that hold a function's address;
 every non-Xo symbol a root) found 578 of 1,222 functions (87,488 bytes,
 24.4% of __text) unreachable. They are runtime and std code
-(std/native/llrt): the old thread pool, the Windows poll loops on
-darwin, unwinder and profiler paths the program does not use, Map
-instances. LLVM's globaldce drops them; the arm64 backend emitted every
+(std/native/llrt): parts of the thread pool inlined into their callers,
+the Windows poll loops on darwin, unwinder and profiler paths the program
+does not use, Map instances. Unreachable after inlining is not dead
+source: llrt-coverage-2026-10-18.md has that survey.
+LLVM's globaldce drops them; the arm64 backend emitted every
 SSA function and compiler/macho does no dead stripping. User code was
 already pruned by the checker (lazy checking).
 
@@ -68,7 +70,5 @@ XO_TRACE, DWARF on arm64) before the gate.
 - Running the removal before RC insertion and inlining would also cut
   their time, once each SSA pass that adds calls by name (conc.xo,
   budget.xo, build.xo's rt helpers) is audited.
-- Source that is dead on every target, to delete rather than prune: the
-  union of reached functions over every golden on every target is the
-  evidence; per program and target lists are not (they drop tasks and
-  channels in programs without tasks).
+- Source dead on every target: llrt-coverage-2026-10-18.md (19 functions
+  deleted, 141 to cover with tests).

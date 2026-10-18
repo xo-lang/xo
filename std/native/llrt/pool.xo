@@ -656,19 +656,6 @@ fn rq_put(p: Int, w: Int, x: Int) {
   }
 }
 
-/// Queues t (a task, or a fiber's address with the low bit set): a woken
-/// fiber goes to the waking thread's next (the one there before moves to
-/// its ring) unless the thread asked for its ring (nonext), a new task
-/// to its ring, and either from a thread without a record to the inject
-/// queue.
-pub fn pool_push(p: Int, t: Int) { push(p, t, false) }
-
-/// pool_push of a fiber a channel handed a value to (chan.xo hand): put
-/// in this worker's next slot, it wakes no idle worker; the waker's next
-/// runtime call (defer_check) or the monitor does if it still waits
-/// (defer_wake).
-pub fn pool_push_handoff(p: Int, t: Int) { push(p, t, true) }
-
 fn push(p: Int, t: Int, handoff: Bool) {
   let w = rt.tlocal_get(TLS_W)
   if w == 0 {
