@@ -2372,6 +2372,14 @@ fn (var b: Builder) retv(v: Int) {
 /// program built with unwinding checks, else a check only a fault takes
 /// (`rt.landing`); its unwind path leaves the open blocks and scopes.
 fn (var b: Builder) check(callee: Str) {
+  // a call of a function of the same no allocation module (decision
+  // 0207's amendment): the callee keeps the same rule, so it cannot
+  // fault, and no check follows (one would give the caller an unwind
+  // block, which the rule refuses)
+  let p = b.no_alloc_prefix()
+  if p != "" && callee.starts_with(p) {
+    return
+  }
   b.check_then(callee, Cleanup.None)
 }
 

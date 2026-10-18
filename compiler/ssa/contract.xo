@@ -112,7 +112,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     let v = b.block(body)
     b.ret_at(v, Some(Expr.Block(b: body)))
   }
-  if om >= 0 && b.c.mods[om].path is "native/llrt/rc" | "native/llrt/alloc" | "native/llrt/sched" {
+  if b.no_alloc_prefix() != "" {
     b.check_no_alloc()
   }
   b.finish_fn()
@@ -125,10 +125,12 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
 /// scalar values (nothing to count, nothing allocated), no fault (a
 /// fault allocates its message and unwinds through the C caller), and
 /// calls only of the inline intrinsics of raw memory and the slot
-/// atomics, of the C paths' rt.rc_*_c and rt.alloc_*_c, and of the
-/// heap's platform calls rt.heap_* (a call of a function adds a landing
-/// check, which may fault). A violation is a build error of std
-/// (unsupported), not a runtime surprise.
+/// atomics, of the C paths' rt.rc_*_c and rt.alloc_*_c, of the heap's
+/// platform calls rt.heap_*, and of the functions of the same module
+/// (no_alloc_prefix: they keep this rule, so check adds no landing check
+/// after them; a call of another function adds one, which may fault). A
+/// violation is a build error of std (unsupported), not a runtime
+/// surprise.
 fn (var b: Builder) check_no_alloc() {
   if b.s.unwind_b >= 0 {
     b.unsupported("a reference count or heap function that can fault (decision 0207: no allocation, no counting)")
@@ -147,13 +149,29 @@ fn (var b: Builder) check_no_alloc() {
     }
     if v.op == Op.Call {
       if let Aux.S(s: n) = v.aux {
-        if !rc_callee_ok(n) {
+        if !rc_callee_ok(n) && !n.starts_with(b.no_alloc_prefix()) {
           b.unsupported("a call of `${n}` in a reference count or heap function (decision 0207: no allocation, no counting)")
           return
         }
       }
     }
   }
+}
+
+/// The name prefix of the functions of the no allocation module (rc,
+/// alloc, sched: decision 0207 design 3, 0212) that the function being
+/// built belongs to, such as "alloc.", else "". Such a function may call
+/// another of its module, which keeps the same rule (decision 0207's
+/// amendment: alloc's magazine take out of line).
+fn (var b: Builder) no_alloc_prefix() -> Str {
+  if b.s.fo < 0 {
+    return ""
+  }
+  let om = b.obj_mod(b.s.fo)
+  if om >= 0 && b.c.mods[om].path is "native/llrt/rc" | "native/llrt/alloc" | "native/llrt/sched" {
+    return "${b.c.mods[om].path.trim_prefix("native/llrt/")}."
+  }
+  ""
 }
 
 /// Whether a reference count or heap function may call the function
