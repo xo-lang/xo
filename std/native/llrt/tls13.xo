@@ -1082,13 +1082,20 @@ pub fn cat2(a: Bytes, b: Bytes) -> Bytes {
 
 pub fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
 
-pub fn u16(x: Int) -> Bytes { asn1.cat([u8(x >> 8), u8(x)]) }
+// u16, u24, vec8, and vec16 write into one string (each was a list of
+// one byte strings and a concatenation: about 100 calls a handshake;
+// 2026-10-18).
 
-pub fn u24(x: Int) -> Bytes { asn1.cat([u8(x >> 16), u8(x >> 8), u8(x)]) }
+pub fn u16(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(2), (x >> 8) & 255), x & 255).bytes() }
 
-pub fn vec8(b: Bytes) -> Bytes { asn1.cat([u8(b.len()), b]) }
+pub fn u24(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(3), (x >> 16) & 255), (x >> 8) & 255), x & 255).bytes() }
 
-pub fn vec16(b: Bytes) -> Bytes { asn1.cat([u16(b.len()), b]) }
+pub fn vec8(b: Bytes) -> Bytes { rt.rs_append_bytes(rt.rs_push_byte(rt.rs_with_cap(1 + b.len()), b.len() & 255), b, 0, b.len(), 0).bytes() }
+
+pub fn vec16(b: Bytes) -> Bytes {
+  let n = b.len()
+  rt.rs_append_bytes(rt.rs_push_byte(rt.rs_push_byte(rt.rs_with_cap(2 + n), (n >> 8) & 255), n & 255), b, 0, n, 0).bytes()
+}
 
 pub fn ext(t: Int, d: Bytes) -> Bytes { asn1.cat([u16(t), vec16(d)]) }
 
