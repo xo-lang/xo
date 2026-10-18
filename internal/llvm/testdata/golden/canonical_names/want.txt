@@ -1,4 +1,0 @@
-exit 0
---- stdout
-canonical names: 3000 checked (942 lower case), 0 mismatches
---- stderr

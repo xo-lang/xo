@@ -1,0 +1,60 @@
+// Tests of http1.xo's header names (decision 0262; they replace the
+// canonical_names golden): canonical_key (the common names answered with
+// constants, common_name) against Go's rule written here
+// (textproto.CanonicalMIMEHeaderKey for token names: upper at the start
+// and after a dash, lower elsewhere), on case variants of the common
+// names and of others.
+
+const CN_NAMES: List[Str] = ["Host", "Accept", "Cookie", "User-Agent", "Connection", "Content-Type", "Authorization", "Content-Length", "Accept-Encoding", "Accept-Language", "X-Request-Id", "Etag", "Hostname", "Accept-Charset", "Content-Types", "Te", "a", "x-a-b-c"]
+
+fn cn_reference(s: Str) -> Str {
+  var out = BytesBuilder.new()
+  var up = true
+  for b in s.bytes() {
+    var c = Int(b)
+    if up && c >= 97 && c <= 122 {
+      c = c - 32
+    } else if !up && c >= 65 && c <= 90 {
+      c = c + 32
+    }
+    out.write_byte(UInt8(c))
+    up = c == 45
+  }
+  out.freeze().to_str() ?? ""
+}
+
+/// s with the case of byte i flipped when bit i (mod 30) of mask is set.
+fn cn_vary(s: Str, mask: Int) -> Str {
+  var out = BytesBuilder.new()
+  var i = 0
+  for b in s.bytes() {
+    var c = Int(b)
+    if ((mask >> (i % 30)) & 1) == 1 {
+      if c >= 97 && c <= 122 {
+        c = c - 32
+      } else if c >= 65 && c <= 90 {
+        c = c + 32
+      }
+    }
+    out.write_byte(UInt8(c))
+    i += 1
+  }
+  out.freeze().to_str() ?? ""
+}
+
+test "canonical_key of the lower case forms (HTTP/2's)" {
+  for name in CN_NAMES {
+    expect(canonical_key(name.to_lower()) == cn_reference(name))
+  }
+}
+
+test "canonical_key of any case mix is Go's" for which: Int, mask: Int {
+  let name = CN_NAMES[(which & 1023) % CN_NAMES.len()]
+  let v = cn_vary(name, mask)
+  expect(canonical_key(v) == cn_reference(v))
+}
+
+test "canonical_key keeps a name with a non-token byte" {
+  expect(canonical_key("bad name") == "bad name")
+  expect(canonical_key("x:y") == "x:y")
+}

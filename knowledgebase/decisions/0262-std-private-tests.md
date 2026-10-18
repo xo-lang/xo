@@ -1,6 +1,6 @@
 # 0262: Private-function tests inside std
 
-Status: Accepted (owner, 2026-10-18, through the lead: approved as written); scheduled after decision 0261 stage (a) (Xo Lang 3); it lets the map_model and canonical_names goldens become module tests
+Status: Accepted (owner, 2026-10-18, through the lead: approved as written); scheduled after decision 0261 stage (a) (Xo Lang 3); implemented 2026-10-18 (41a6afe2); the map_model and canonical_names goldens became module tests (std/native/prelude_test.xo, std/native/llrt/http1_test.xo)
 
 ## Context
 

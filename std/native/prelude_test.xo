@@ -1,0 +1,134 @@
+// Map against an insertion-ordered list of pairs (decision 0262; they
+// replace the map_model golden). spec/std.md: put on an existing key
+// keeps its position. Sequences of puts and removes over small key
+// spaces, so maps cross the tableless small map's size (compiler/ssa
+// map.xo SMALL_MAP, 5) both ways: after every step the length, the keys
+// in order, every value, a missing key, and equality with a map built
+// fresh from the model. Int and Str keys (the Str keys share lengths and
+// prefixes: the small map compares lengths first).
+
+fn mm_next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn mm_find(ks: List[Int], k: Int) -> Int {
+  for i in 0..ks.len() {
+    if ks[i] == k {
+      return i
+    }
+  }
+  -1
+}
+
+fn mm_key(k: Int) -> Str {
+  match k % 3 {
+    0 => "key-${k + 10}"
+    1 => "kex-${k + 10}"
+    _ => "k-${k}"
+  }
+}
+
+/// Applies ops (a step each: its key `op % space`, a remove when op % 3
+/// is 2, else a put) to an Int map and the model; "" when they agree
+/// after every step, else the first step that differs.
+fn mm_int(ops: List[Int], space: Int) -> Str {
+  var m: Map[Int, Int] = {}
+  var ks: List[Int] = []
+  var vs: List[Int] = []
+  for (i, op0) in ops.indexed() {
+    let op = op0 & 2147483647
+    let k = op % space
+    let at = mm_find(ks, k)
+    if op % 3 == 2 {
+      let _r = m.remove(k)
+      if at >= 0 {
+        let _a = ks.remove_at(at)
+        let _b = vs.remove_at(at)
+      }
+    } else {
+      m.put(k, i)
+      if at >= 0 {
+        vs[at] = i
+      } else {
+        ks.push(k)
+        vs.push(i)
+      }
+    }
+    var fresh: Map[Int, Int] = {}
+    for j in 0..ks.len() {
+      fresh.put(ks[j], vs[j])
+    }
+    if m.len() != ks.len() || m.keys() != ks || m.values() != vs || m.get(space + 1) != None || m != fresh {
+      return "int step ${i}: map length ${m.len()}, model ${ks.len()}"
+    }
+  }
+  ""
+}
+
+/// mm_int with Str keys (a remove when op % 4 is 3).
+fn mm_str(ops: List[Int], space: Int) -> Str {
+  var m: Map[Str, Int] = {}
+  var ks: List[Int] = []
+  var vs: List[Int] = []
+  for (i, op0) in ops.indexed() {
+    let op = op0 & 2147483647
+    let k = op % space
+    let at = mm_find(ks, k)
+    if op % 4 == 3 {
+      let _r = m.remove(mm_key(k))
+      if at >= 0 {
+        let _a = ks.remove_at(at)
+        let _b = vs.remove_at(at)
+      }
+    } else {
+      m.put(mm_key(k), i)
+      if at >= 0 {
+        vs[at] = i
+      } else {
+        ks.push(k)
+        vs.push(i)
+      }
+    }
+    var names: List[Str] = []
+    var ok = m.len() == ks.len()
+    for j in 0..ks.len() {
+      names.push(mm_key(ks[j]))
+      ok = ok && m.get(mm_key(ks[j])) == Some(vs[j])
+    }
+    if !ok || m.keys() != names || m.contains("k-999") {
+      return "str step ${i}: map length ${m.len()}, model ${names.len()}"
+    }
+  }
+  ""
+}
+
+/// The golden's sequences: n steps of the generator from seed.
+fn mm_ops(seed: Int, n: Int, div: Int) -> List[Int] {
+  var out: List[Int] = []
+  var x = seed
+  for _ in 0..n {
+    x = mm_next(x)
+    // the remove test (op % 3 or op % 4) is x's, as in the golden; the
+    // key mixes x / div into it
+    out.push(x / div * 12 + x % 12)
+  }
+  out
+}
+
+test "Map[Int, Int] against the model, 600 steps a key space" {
+  for space in [3, 5, 6, 9, 16] {
+    expect(mm_int(mm_ops(7 + space, 600, 7), space) == "")
+  }
+}
+
+test "Map[Str, Int] against the model, 600 steps a key space" {
+  for space in [4, 6, 11] {
+    expect(mm_str(mm_ops(13 + space, 600, 11), space) == "")
+  }
+}
+
+test "Map[Int, Int] against the model" for ops: List[Int], space: Int {
+  expect(mm_int(ops, 1 + (space & 15)) == "")
+}
+
+test "Map[Str, Int] against the model" for ops: List[Int], space: Int {
+  expect(mm_str(ops, 1 + (space & 15)) == "")
+}
