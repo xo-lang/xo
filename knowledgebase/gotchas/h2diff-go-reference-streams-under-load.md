@@ -14,7 +14,10 @@ starting servers) some of the Go reference server's streams time out
 before they are served. The native servers answered all of them.
 
 Fix: rerun TestH2Diff alone before calling a native change at fault;
-run it apart from the TLS diff tests in gate scripts.
+run it apart from the TLS diff tests in gate scripts. Seen again
+2026-10-18 in a gate that ran it as its own `go test` (ok=386): the
+machine's load average was about 36 from other sessions' work; it
+passed alone at a load of 6.
 
 Related: h2diff-window-case-flaky-under-load.md (another TestH2Diff case
 that timing under load changes).
