@@ -1678,6 +1678,14 @@ fn rt2_text(var g: Gen) -> Str {
       i64.store align=1)
 
     ;; memcpy and memmove (memory.copy allows overlap)
+    ;; rt.mem_copy_block: n a multiple of 32 (libcstr.copy_words' bulk);
+    ;; memory.copy, as mem_copy
+    (func $mem_copy_block (param $d i64) (param $s i64) (param $n i64)
+      local.get $d
+      local.get $s
+      local.get $n
+      call $mem_copy)
+
     (func $mem_copy (param $d i64) (param $s i64) (param $n i64)
       local.get $d
       i32.wrap_i64
@@ -2500,5 +2508,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "rs_put_word" | "rs_set_len"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "rs_put_word" | "rs_set_len"
 }
