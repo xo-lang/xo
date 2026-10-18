@@ -29,6 +29,9 @@ const INLINE_MAX_BLOCKS = 12
 const INLINE_FEW_SITES = 2
 const INLINE_FEW_BUDGET = 500
 const INLINE_FEW_BLOCKS = 80
+/// A larger function with more than one site is inlined only at a loop
+/// site (InlineCost.few), and only up to this size
+const INLINE_FEW_LOOP_INSTRS = 100
 /// A function over those limits only by its size is still inlined at a
 /// call inside a loop of its caller when it stays within these, at most
 /// INLINE_LOOP_SITES times a caller (2026-10-17: map.find in a lookup
@@ -63,6 +66,14 @@ struct InlineCost {
   /// it has landing pads of its own: inlined only at a call that passes a
   /// closure literal (decision 0256; elsewhere the copies grew hot loops)
   pads: Bool = false
+  /// over INLINE_MAX_INSTRS (within INLINE_FEW_LOOP_INSTRS), inlinable
+  /// only by the few sites rule with more than one site: at a call inside
+  /// a loop only (find_loop_call), since a copy outside one only saves a
+  /// call and adds the body. A function over only the block limit stays
+  /// inlined at both sites: its blocks are the joins of its tests, and
+  /// the HTTP server's memcmp and map scan lost as calls
+  /// (bench/results/inline-ledger-2026-10-17.md)
+  few: Bool = false
 }
 
 /// The rt intrinsics the arm64 emitter makes instructions, not calls: a
@@ -131,7 +142,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
   // the runtime's slow paths stay calls (ssa.cold_fn)
   // a function that catches its faults returns on one (ssa raises):
   // inlined, the fault would reach the caller
-  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name) || f.catches}
+  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name) || f.catches || denied(m, f.name)}
   c.hard = c.bad
   for bl in f.blocks {
     c.instrs -= adc_pairs(f, bl.instrs)
@@ -190,7 +201,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
       } else {
         k = inline_walk(m, by_name, sites, ci, state, costs)
       }
-      if k.bad || k.pads {
+      if k.bad || k.pads || k.few {
         // a callee with pads is a call here unless its site passes a
         // closure (find_call), so it counts as one
         c.instrs += 1
@@ -211,6 +222,10 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
     let n = sites.get(f.name) ?? 0
     if n > INLINE_FEW_SITES || n * c.instrs > INLINE_FEW_BUDGET || c.blocks > INLINE_FEW_BLOCKS {
       c.bad = true
+    } else if n > 1 && c.instrs > INLINE_MAX_INSTRS && c.instrs <= INLINE_FEW_LOOP_INSTRS {
+      c.few = true
+    } else if n > 1 && c.instrs > INLINE_MAX_INSTRS {
+      c.bad = true
     }
   }
   state[f.name] = 2
@@ -221,7 +236,7 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
 /// The names of the inlinable functions of m (inline.go inlinableSet),
 /// of those inlinable only at a call inside a loop (INLINE_LOOP_*), and of
 /// those with landing pads, inlinable only at a call passing a closure.
-fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
+fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
   var state: Map[Str, Int] = {}
   var costs: Map[Str, InlineCost] = {}
   // the call sites of each function, not counting its own
@@ -247,12 +262,15 @@ fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[
   var small: Map[Str, Bool] = {}
   var loopy: Map[Str, Bool] = {}
   var padded: Map[Str, Bool] = {}
+  var fewl: Map[Str, Bool] = {}
   for f in m.funcs {
     if let Some(c) = costs.get(f.name) {
       if c.pads {
         if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
           padded[f.name] = true
         }
+      } else if !c.bad && c.few {
+        fewl[f.name] = true
       } else if !c.bad || (!c.hard && f.name.starts_with("xo.map.find[") && c.instrs <= INLINE_MAX_INSTRS) {
         // a map's find: its blocks are mostly the joins of its tests (14
         // for 36 instructions, over INLINE_MAX_BLOCKS), and put, get and
@@ -264,7 +282,7 @@ fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[
       }
     }
   }
-  (small, loopy, padded)
+  (small, loopy, padded, fewl)
 }
 
 /// Whether block b of f is in a loop: it reaches itself (through its
@@ -330,7 +348,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
 /// changed anything.
 fn inline_module(var m: ssa.Module) -> Bool {
   let by_name = funcs_by_name(m)
-  let (small, loopy, padded) = inlinable_set(m, by_name)
+  let (small, loopy, padded, fewl) = inlinable_set(m, by_name)
   var changed = false
   for fi in 0..m.funcs.len() {
     var f = m.funcs[fi]
@@ -348,6 +366,11 @@ fn inline_module(var m: ssa.Module) -> Bool {
         if v >= 0 {
           loop_left -= 1
         }
+      }
+      if v < 0 {
+        // the few sites rule's callees, at loop sites only: their own
+        // pass, not the loop budget's (two sites each at most)
+        v = find_loop_call(f, m, fewl, by_name)
       }
       if v < 0 {
         break
@@ -763,4 +786,15 @@ fn block_calls_inline(f: ssa.Func) -> List[Bool] {
     out.push(c)
   }
   out
+}
+
+/// Whether $XO_INLINE_DENY names f (ssa.Module inline_deny: a name, or a
+/// prefix ending in `*`).
+fn denied(m: ssa.Module, name: Str) -> Bool {
+  for d in m.inline_deny {
+    if d == name || (d.ends_with("*") && name.starts_with(d[0..d.len() - 1])) {
+      return true
+    }
+  }
+  false
 }

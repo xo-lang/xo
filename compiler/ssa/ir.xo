@@ -328,6 +328,11 @@ pub struct Module {
   /// calling convention's own), so most values spill ($XO_ARM64_REGS;
   /// 0, the default: all of them).
   pub arm64_regs: Int = 0
+  /// Functions the arm64 inliner leaves out, by name, or by prefix for
+  /// an entry ending in `*` ($XO_INLINE_DENY, comma separated): a
+  /// measurement knob, each callee's speed against its text
+  /// (bench/results/inline-ledger-2026-10-17.md).
+  pub inline_deny: List[Str] = []
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false

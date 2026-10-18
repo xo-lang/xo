@@ -1103,6 +1103,10 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
 /// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
 /// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
 fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
+  let deny = os.env.get("XO_INLINE_DENY") ?? ""
+  if !deny.is_empty() {
+    mi.inline_deny = deny.split(",")
+  }
   let errs = arm64.inline_check(mi, jobs, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
   if errs.is_empty() {
     return true
