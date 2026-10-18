@@ -44,7 +44,9 @@ use native/llrt/http1w
 use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
+use native/llrt/rc
 use native/llrt/sysio
+use native/llrt/tasks
 use native/llrt/hconn
 use native/llrt/tracerec
 use native/rt
@@ -177,8 +179,8 @@ const C_SIZE = 616
 
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
-/// the request (the fiber's, until dispatched): its parts packed (a
-/// block: req_pack), its body (a block), its Content-Length (-1: none),
+/// the request (the fiber's, until dispatched): its parts (an Any of
+/// ReqParts: req_keep, then two unused words), its body (a block), its Content-Length (-1: none),
 /// the body bytes received, whether trailers came, whether the body
 /// passed the largest (the rest is dropped), whether it was handed to a
 /// handler (or answered here), its kind (h2w.K_*), whether it asked for
@@ -388,7 +390,7 @@ fn wake(c: Int) {
 }
 
 fn stream_free(st: Int) {
-  bfree(st, S_REQ)
+  req_free(st)
   bfree(st, S_BODY)
   bfree(st, S_RH)
   bfree(st, S_OUT)
@@ -934,56 +936,61 @@ pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
 
 fn word(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
 
-fn packs(s: Str, v: Str) -> Str { rt.rs_append(word(s, v.len()), v) }
+/// A request's parts, in a stream record's S_REQ as an Any (req_keep):
+/// request builds them, request_of moves them out (they were packed into
+/// one string and copied out again, three copies of every header byte;
+/// 2026-10-18).
+struct ReqParts {
+  method: Str
+  path: Str
+  scheme: Str
+  urlhost: Str
+  host: Str
+  headers: List[Str]
+  query: List[Str]
+}
 
-fn u32_at(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24) }
+/// Keeps the parts in a (an Any of ReqParts) in stream record st's
+/// S_REQ, with a reference of its own.
+fn req_keep(st: Int, a: rt.Any) {
+  req_free(st)
+  let p = rt.obj_addr(a)
+  rc.inc(p)
+  sto(st, S_REQ, p)
+}
 
-/// The request's parts packed into one string (a stream record's
-/// S_REQ): the method, the URL's path, scheme and host, the Host, the
-/// header's pairs and the query's, each string after its length and
-/// each list after its count (4 bytes little endian).
-fn req_pack(method: Str, path: Str, scheme: Str, urlhost: Str, host: Str, hdr: List[Str], query: List[Str]) -> Str {
-  var s = packs(packs(packs(packs(packs("", method), path), scheme), urlhost), host)
-  s = word(s, hdr.len())
-  for v in hdr {
-    s = packs(s, v)
+/// The parts in stream record st's S_REQ, moved out (S_REQ then 0).
+fn req_take(st: Int) -> ReqParts {
+  let p = ld(st, S_REQ)
+  if p == 0 {
+    return ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: []}
   }
-  s = word(s, query.len())
-  for v in query {
-    s = packs(s, v)
+  sto(st, S_REQ, 0)
+  let parts = match rt.any_take[ReqParts](rt.obj_at[rt.Any](p)) {
+    Some(x) => x
+    None => ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: []}
   }
-  s
+  tasks.h_release(p)
+  parts
+}
+
+/// Releases the parts in stream record st's S_REQ, if any.
+fn req_free(st: Int) {
+  let p = ld(st, S_REQ)
+  if p != 0 {
+    sto(st, S_REQ, 0)
+    tasks.h_release(p)
+  }
 }
 
 /// The request of a stream record st taken from the queue, on its new
 /// stream connection.
 fn (h: H2Conn) request_of(st: Int) -> H2Req {
-  let s = bstr(st, S_REQ)
-  let b = s.bytes()
-  var i = 0
-  var parts: List[Str] = []
-  for _k in 0..5 {
-    let n = u32_at(b, i)
-    parts.push(raw.str_slice(s, i + 4, i + 4 + n))
-    i += 4 + n
-  }
-  var lists: List[List[Str]] = []
-  for _l in 0..2 {
-    let cnt = u32_at(b, i)
-    i += 4
-    var xs: List[Str] = []
-    for _e in 0..cnt {
-      let n = u32_at(b, i)
-      xs.push(raw.str_slice(s, i + 4, i + 4 + n))
-      i += 4 + n
-    }
-    lists.push(xs)
-  }
+  let p = req_take(st)
   let body = bstr(st, S_BODY).bytes()
-  bfree(st, S_REQ)
   bfree(st, S_BODY)
-  http1.fault_probe(parts[1], "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: parts[0], path: parts[1], scheme: parts[2], urlhost: parts[3], host: parts[4], headers: lists[0], query: lists[1], body: body}
+  http1.fault_probe(p.path, "frame")
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, body: body}
 }
 
 /// Runs the connection until a request is ready for a handler (then its
@@ -1523,9 +1530,8 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
     hdr.push(hk[i])
     hdr.push(hv[i])
   }
-  var req = ""
   if method == "CONNECT" {
-    req = req_pack(method, "", "", auth, host, hdr, [])
+    req_keep(st, rt.any_of(ReqParts{method: method, path: "", scheme: "", urlhost: auth, host: host, headers: hdr, query: []}))
   } else {
     // the URL and its query, parsed by http1.h2_target (fragment)
     let t = h.tgt
@@ -1538,9 +1544,8 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       query.push(t[i])
       i += 1
     }
-    req = req_pack(method, t[4], t[2], t[3], host, hdr, query)
+    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query}))
   }
-  put(st, S_REQ, raw.data(req), req.len())
   flag(st, S_HEAD, method == "HEAD")
   sto(st, S_DECLEN, -1)
   if !end_stream && has_clen {
