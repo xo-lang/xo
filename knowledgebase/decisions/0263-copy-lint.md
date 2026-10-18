@@ -1,7 +1,8 @@
 # 0263: A copy lint under xo vet
 
 Status: Accepted (owner, 2026-10-18, through the lead: "a perf lint for
-copy-prone shapes ... as warnings under xo vet"); not implemented yet
+copy-prone shapes ... as warnings under xo vet"); XO0530 implemented 2026-10-18 (vet.xo
+payload_share, TestVetCLI); XO0531 not yet
 
 ## Context
 

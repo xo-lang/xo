@@ -2,8 +2,9 @@
 
 Status: Accepted (owner, 2026-10-18, through the lead: "agent-facing
 commands on xo lsp's engine ... stateless, arguments up front, JSON
-output, a diff preview by default and --write to apply"); stage (a) in
-progress (Xo Lang 3)
+output, a diff preview by default and --write to apply"); stage (a), the
+lookups (`xo def`, `refs`, `type`, `doc NAME`, `symbols`), implemented
+2026-10-18 (compiler/cli/servers/agent.xo, TestAgentCLI)
 
 ## Context
 
