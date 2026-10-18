@@ -7,7 +7,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - macOS x86_64 programs are assembled by Xo's own assembler (objects byte
-  identical to clang's).
+  identical to clang's) and linked by Xo's own linker: no C toolchain.
 
 - Xo's own x86_64 backend builds macOS x86_64 programs
   (`--backend=amd64 --target=darwin/amd64`; linked by Apple's cc for now).

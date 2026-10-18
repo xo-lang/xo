@@ -39,6 +39,17 @@ Mach-O's:
 - No ltmpN section symbols (arm64's writer makes them), code as bytes,
   CPU_TYPE_X86_64 with subtype 3.
 
+The linker's side (compiler/macho link.xo x86_reloc, x86_eh_frame;
+2026-10-18): those resolved fields stay correct only while their section
+moves as a unit, and __eh_frame's do not: an FDE's function and LSDA
+pointers are pc relative into __text and __gcc_except_tab with no
+relocation, and the output puts __stubs, __const, __cstring and the
+unwind info between, so each pointer is moved by hand (the FDE test of
+link_amd64_test.xo fails without it). A SIGNED_n field is read as
+target plus field less the address after the field, whatever n is; a
+section relocation's target is the field's address plus 4 plus n plus
+the field.
+
 ## Fix
 
 Probe clang rather than reason from the documentation: assemble one

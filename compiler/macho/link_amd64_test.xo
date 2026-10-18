@@ -1,0 +1,97 @@
+// The x86_64 path of the Mach-O linker (decision 0254 stage 6a): a small
+// program assembled by assemble_macho_amd64, linked, and its references
+// read back from the executable.
+
+const LINK_AMD64_SRC = "\t.section __TEXT,__text,regular,pure_instructions\n\t.globl _main\n\t.p2align 4\n_main:\n\t.cfi_startproc\n\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n\tleaq Lstr(%rip), %rdi\n\tcallq _puts\n\tcallq _helper\n\txorl %eax, %eax\n\tpopq %rbp\n\tretq\n\t.cfi_endproc\n\t.globl _helper\n_helper:\n\t.cfi_startproc\n\tmovl $7, _counter+4(%rip)\n\tretq\n\t.cfi_endproc\n\t.section __TEXT,__cstring,cstring_literals\nLstr:\n\t.asciz \"hi\"\n\t.section __DATA,__data\n\t.globl _counter\n\t.p2align 3\n_counter:\n\t.quad 0\n\t.quad 0\n\t.quad _helper\n"
+
+/// An output section of a linked executable: (address, file offset, size).
+fn exe_sect(b: Bytes, seg: Str, name: Str) -> (Int, Int, Int) {
+  var off = 32
+  for _ in 0..rd32(b, 16) {
+    if rd32(b, off) == LC_SEGMENT_64 {
+      for k in 0..rd32(b, off + 64) {
+        let s = off + 72 + 80 * k
+        if name16(b, s) == name && name16(b, s + 16) == seg {
+          return (rd64(b, s + 32), rd32(b, s + 48), rd64(b, s + 40))
+        }
+      }
+    }
+    off += rd32(b, off + 4)
+  }
+  (-1, -1, 0)
+}
+
+test "an x86_64 link: calls, stubs, rip relative data, pointers, and FDEs resolve" {
+  let obj = match assemble_macho_amd64(LINK_AMD64_SRC.bytes(), (11, 0)) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let exe = match link([LinkInput{path: "t.o", data: obj}], LinkOpts{name: "t"}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  expect(rd32(exe, 4)) == CPU_TYPE_X86_64
+  expect(rd32(exe, 8)) == 3
+  let o = match parse_object("t.o", obj) {
+    Ok(p) => p
+    Err(e) => fault(e)
+  }
+  let (text, text_off, _) = exe_sect(exe, "__TEXT", "__text")
+  let (stubs, stubs_off, stubs_size) = exe_sect(exe, "__TEXT", "__stubs")
+  let (cstr0, _, _) = exe_sect(exe, "__TEXT", "__cstring")
+  let (data, data_off, _) = exe_sect(exe, "__DATA", "__data")
+  let (got, _, got_size) = exe_sect(exe, "__DATA_CONST", "__got")
+  let (eh, eh_off, eh_size) = exe_sect(exe, "__TEXT", "__eh_frame")
+  var helper = -1
+  for s in o.syms {
+    if bstr(s.name) == "_helper" {
+      helper = text + s.value
+    }
+  }
+  expect(helper > text) == true
+  // the targets of the text's relocations, read from the executable: the
+  // address after each field plus its displacement (movl's 4 byte
+  // immediate after the field: SIGNED_4 or SIGNED with the offset in it)
+  var seen: List[Str] = []
+  for r in o.sects[0].relocs {
+    let p = text + r.addr
+    let disp = sext32(rd32(exe, text_off + r.addr))
+    let tail = if r.typ == RX_SIGNED_4 || (r.typ == RX_SIGNED && r.ext && bstr(o.syms[r.sym].name) == "_counter") { 4 } else { 0 }
+    let dest = p + 4 + tail + disp
+    let what = if r.ext { bstr(o.syms[r.sym].name) } else { "section ${r.sym}" }
+    if what == "_helper" {
+      expect(dest) == helper
+    } else if what == "_puts" {
+      // a stub: jmp *slot(%rip), the slot in the GOT
+      expect(dest >= stubs && dest < stubs + stubs_size) == true
+      let so = stubs_off + dest - stubs
+      expect(Int(exe[so])) == 0xff
+      expect(Int(exe[so + 1])) == 0x25
+      let slot = dest + 6 + sext32(rd32(exe, so + 2))
+      expect(slot >= got && slot < got + got_size) == true
+    } else if what == "_counter" {
+      expect(dest) == data + 4
+    } else {
+      // the string, by section
+      expect(dest) == cstr0
+    }
+    seen.push(what)
+  }
+  expect(seen.len()) == 4
+  // the pointer to _helper: a chained rebase to its image offset
+  expect(rd64(exe, data_off + 16) & 0xfffffffff) == helper - 0x100000000
+  // each FDE's function: _main, then _helper
+  var fns: List[Int] = []
+  var at = 0
+  while at + 8 <= eh_size {
+    let len = rd32(exe, eh_off + at)
+    if len == 0 {
+      break
+    }
+    if rd32(exe, eh_off + at + 4) != 0 {
+      fns.push(eh + at + 8 + rd64(exe, eh_off + at + 8))
+    }
+    at += 4 + len
+  }
+  expect(fns) == [text, helper]
+}

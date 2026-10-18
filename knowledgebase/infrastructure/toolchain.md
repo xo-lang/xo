@@ -3490,6 +3490,7 @@ Three scripts:
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
     scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME...]   # a Linux xo of the checkout cross built here, then linux-goldens.sh in Docker (amd64 with no C toolchain); 2026-10-18
     scripts/arm64-identity.sh BASE_XO NEW_XO [BACKEND]    # the arm64 (or amd64) output of every golden and compiler/xo, darwin and linux, byte compared; for changes meant for another target; 2026-10-18
+    scripts/macho-link-compare.sh XO WORK                 # every golden for darwin/amd64 linked by Xo's linker and by Apple's ld, compared layout independently; 2026-10-18
     scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK [BACKEND]   # every golden built for darwin/amd64 here, run on an Intel Mac over ssh in a NEW REMOTE_DIR (nothing deleted there; ask the owner first); 2026-10-18
     scripts/golden-run.sh BINARY GOLDEN_DIR                # one golden, on a writable copy of its directory
 
@@ -3579,8 +3580,11 @@ ARM64 PE (a hello hangs), so windows/arm64 is cross linked only
 
 Since 2026-10-18 (xo-fa, decision 0254 stage 6a): `xo build
 --backend=amd64 --target=darwin/amd64 -o prog .` on a Mac writes the
-x86_64 text and links it with Apple's cc (`-arch x86_64`; it needs no
-Rosetta to link). This arm64 Mac has no Rosetta ("Bad CPU type in
+x86_64 text, assembles it with Xo's Mach-O x86_64 assembler and links it
+with Xo's Mach-O linker, no C toolchain (`--as=cc`, or a `use c` program:
+Apple's cc with `-arch x86_64`, which needs no Rosetta).
+`scripts/macho-link-compare.sh XO WORK` compares the two links of every
+golden (macho-symview.py). This arm64 Mac has no Rosetta ("Bad CPU type in
 executable"), so the programs run only on the owner's Intel MacBook:
 build them here, copy them to a new directory under ~/xo-ci there and
 run them with scripts/golden-run.sh (macOS has no `timeout`: a perl

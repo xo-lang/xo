@@ -1,6 +1,7 @@
 // The linker of decision 0182: arm64 Mach-O objects (the program's, the
 // C runtime's, archive members) into a position independent MH_EXECUTE
-// for macOS, as `ld` links them for `cc`:
+// for macOS, as `ld` links them for `cc` (x86_64 ones too, decision 0254
+// stage 6a: x86_reloc, x86_eh_frame, 6 byte stubs):
 //
 // - input sections concatenated into output sections by name (no dead
 //   stripping, no literal merging);
@@ -153,6 +154,8 @@ struct Linker {
   cmds_size: Int = 0
   /// the output's LC_UUID (write), which its dSYM carries too
   uuid: Bytes = zeros(0)
+  /// an x86_64 link (every object x86_64)
+  x86: Bool = false
   err: Str = ""
 }
 
@@ -179,6 +182,14 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
       match parse_object(inp.path, inp.data) {
         Ok(o) => l.objs.push(o)
         Err(e) => return Err(e)
+      }
+    }
+  }
+  if !l.objs.is_empty() {
+    l.x86 = l.objs[0].x86
+    for ob in l.objs {
+      if ob.x86 != l.x86 {
+        return Err("${ob.path}: an ${if ob.x86 { "x86_64" } else { "arm64" }} object in an ${if l.x86 { "x86_64" } else { "arm64" }} link")
       }
     }
   }
@@ -493,8 +504,15 @@ fn (var l: Linker) scan() {
           l.fail("${l.objs[o].path}: undefined symbol ${bstr(l.objs[o].syms[r.sym].name)}")
           return
         }
-        if r.typ == R_BRANCH26 && d < 0 {
+        if (r.typ == R_BRANCH26 || r.typ == RX_BRANCH) && d < 0 {
           l.need_stub(i)
+        } else if r.typ == RX_GOT_LOAD || r.typ == RX_GOT {
+          // the slot even for a symbol of the image (ld relaxes a movq of
+          // one to a leaq; the load through the GOT is the same value)
+          l.need_got(d, i)
+        } else if (r.typ == RX_TLV || r.typ == RX_SIGNED || r.typ == RX_SIGNED_1 || r.typ == RX_SIGNED_2 || r.typ == RX_SIGNED_4) && d < 0 {
+          l.fail("${l.objs[o].path}: a pc relative reference to the import ${bstr(l.imports[i])}")
+          return
         } else if r.typ == R_GOT_LOAD_PAGE21 || r.typ == R_GOT_LOAD_PAGEOFF12 || r.typ == R_POINTER_TO_GOT {
           l.need_got(d, i)
         } else if unwind && r.addr % 32 == 16 {
@@ -511,9 +529,10 @@ fn (var l: Linker) scan() {
   }
   if !l.stubs.is_empty() {
     l.s_stubs = l.osect("__TEXT", "__stubs", S_SYMBOL_STUBS + S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)
-    l.osects[l.s_stubs].align = 2
-    l.osects[l.s_stubs].size = 12 * l.stubs.len()
-    l.osects[l.s_stubs].reserved2 = 12
+    let size = l.stub_size()
+    l.osects[l.s_stubs].align = if l.x86 { 1 } else { 2 }
+    l.osects[l.s_stubs].size = size * l.stubs.len()
+    l.osects[l.s_stubs].reserved2 = size
   }
   // the unwind info: sized from the entries now
   l.count_unwind()
@@ -552,6 +571,11 @@ fn (var l: Linker) scan() {
       l.s_eh = i
     }
   }
+}
+
+/// The size of a stub: adrp, ldr, br (arm64); jmp *slot(%rip) (x86_64).
+fn (l: Linker) stub_size() -> Int {
+  if l.x86 { 6 } else { 12 }
 }
 
 fn (var l: Linker) need_stub(imp: Int) {
@@ -698,6 +722,9 @@ fn (var l: Linker) relocate() {
     }
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]
+      if s.out >= 0 && l.x86 && s.seg == "__TEXT" && s.name == "__eh_frame" {
+        l.x86_eh_frame(o, k)
+      }
       if s.out < 0 || s.relocs.is_empty() {
         continue
       }
@@ -717,6 +744,13 @@ fn (var l: Linker) relocate() {
         if r.typ == R_SUBTRACTOR {
           sub = l.target(o, r, 0)
           has_sub = true
+          continue
+        }
+        if r.typ >= 64 {
+          l.x86_reloc(o, s, r, p)
+          if !l.err.is_empty() {
+            return
+          }
           continue
         }
         let ins = if r.len == 2 { word_at(s, r.addr) } else { 0 }
@@ -750,7 +784,7 @@ fn (var l: Linker) relocate() {
           var t = l.target(o, r, if has_addend { addend } else { 0 })
           var dest = t.addr
           if t.imp >= 0 {
-            dest = l.osects[l.s_stubs].addr + 12 * (l.stub_ix.get(t.imp) ?? 0)
+            dest = l.stub_addr(t.imp)
           }
           let d = dest - p
           if d < -134217728 || d >= 134217728 {
@@ -843,8 +877,18 @@ fn (var l: Linker) relocate() {
       l.fixups.push(Fixup{addr: a, bind: false, target: l.sym_addr(d, i)})
     }
   }
-  // the stubs: adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
-  if l.s_stubs >= 0 {
+  // the stubs: adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16,
+  // or jmp *slot(%rip)
+  if l.s_stubs >= 0 && l.x86 {
+    var o = new_out(6 * l.stubs.len())
+    for (k, imp) in l.stubs.indexed() {
+      let p = l.osects[l.s_stubs].addr + 6 * k
+      o.u8(0xff)
+      o.u8(0x25)
+      o.u32((l.got_addr(-1, imp) - (p + 6)) & 0xffffffff)
+    }
+    l.osects[l.s_stubs].synth = o.done()
+  } else if l.s_stubs >= 0 {
     var o = new_out(12 * l.stubs.len())
     for (k, imp) in l.stubs.indexed() {
       let p = l.osects[l.s_stubs].addr + 12 * k
@@ -856,6 +900,127 @@ fn (var l: Linker) relocate() {
     }
     l.osects[l.s_stubs].synth = o.done()
   }
+}
+
+fn (l: Linker) stub_addr(imp: Int) -> Int {
+  l.osects[l.s_stubs].addr + l.stub_size() * (l.stub_ix.get(imp) ?? 0)
+}
+
+/// An x86_64 relocation of a 32 bit pc relative field at p (output
+/// address), as ld64 reads them: the target plus the field's content, less
+/// the address after the field; a section relocation's field is the
+/// displacement in the object's layout (SIGNED_n's n bytes of immediate
+/// after it included).
+fn (var l: Linker) x86_reloc(o: Int, s: ISect, r: IReloc, p: Int) {
+  let path = l.objs[o].path
+  if !r.pcrel || r.len != 2 {
+    l.fail("${path}: x86_64 relocation type ${r.typ - 64} of length ${r.len} in ${s.seg},${s.name}")
+    return
+  }
+  let field = sext32(rd32(s.data, r.addr))
+  var dest = 0
+  if r.typ == RX_SIGNED || r.typ == RX_SIGNED_1 || r.typ == RX_SIGNED_2 || r.typ == RX_SIGNED_4 || r.typ == RX_BRANCH {
+    let n = if r.typ == RX_SIGNED_1 { 1 } else if r.typ == RX_SIGNED_2 { 2 } else if r.typ == RX_SIGNED_4 { 4 } else { 0 }
+    if !r.ext {
+      // the target in the object's layout, moved as its section moved
+      let t = l.translate(o, r.sym, s.addr + r.addr + 4 + n + field)
+      l.x86_patch(path, p, t - (p + 4 + n))
+      return
+    }
+    let t = l.target(o, r, 0)
+    dest = if t.imp >= 0 { l.stub_addr(t.imp) } else { t.addr }
+  } else if r.typ == RX_GOT_LOAD || r.typ == RX_GOT {
+    let (d, i) = l.def_of(o, r.sym)
+    dest = l.got_addr(d, i)
+  } else if r.typ == RX_TLV {
+    // the descriptor is in the image: movq x@TLVP(%rip), %reg becomes
+    // leaq (the descriptor's address, which the thunk call takes)
+    if r.addr < 2 || s.data[r.addr - 2] != 0x8b {
+      l.fail("${path}: a TLV load that is not a movq")
+      return
+    }
+    l.patch(p - 2, 1, 0x8d)
+    dest = l.target(o, r, 0).addr
+  } else {
+    l.fail("${path}: x86_64 relocation type ${r.typ - 64} in ${s.seg},${s.name}")
+    return
+  }
+  l.x86_patch(path, p, dest + field - (p + 4))
+}
+
+fn (var l: Linker) x86_patch(path: Str, p: Int, d: Int) {
+  if d < -2147483648 || d > 2147483647 {
+    l.fail("${path}: a pc relative reference out of range")
+    return
+  }
+  l.patch(p, 4, d & 0xffffffff)
+}
+
+/// An x86_64 object's __eh_frame: the FDEs' function and LSDA pointers are
+/// pc relative with no relocation (resolved in the object, as LLVM writes
+/// them), so each moves with the section it points into.
+fn (var l: Linker) x86_eh_frame(o: Int, k: Int) {
+  let s = l.objs[o].sects[k]
+  let b = s.data
+  let base = l.osects[s.out].addr + s.off
+  var relocated: Set[Int] = #{}
+  for r in s.relocs {
+    relocated.add(r.addr)
+  }
+  // each CIE's pointer encodings: (FDE pointers, LSDA or -1 for none)
+  var cies: Map[Int, (Int, Int)] = {}
+  var off = 0
+  while off + 8 <= b.len() {
+    let len = rd32(b, off)
+    if len == 0 {
+      break
+    }
+    if len == 0xffffffff {
+      l.fail("${l.objs[o].path}: 64 bit DWARF in __eh_frame")
+      return
+    }
+    let id = rd32(b, off + 4)
+    if id == 0 {
+      cies.put(off, cie_encodings(b, off + 8))
+    } else {
+      let (fenc, lenc) = cies.get(off + 4 - id) ?? (0x10, -1)
+      var at = off + 8
+      l.x86_eh_pointer(o, s, base, relocated, at, fenc)
+      at += 2 * enc_size(fenc)
+      if lenc >= 0 {
+        // the augmentation's length, then the LSDA pointer
+        at = skip_leb(b, at)
+        l.x86_eh_pointer(o, s, base, relocated, at, lenc)
+      }
+    }
+    off += 4 + len
+  }
+}
+
+/// One pc relative pointer of an x86_64 __eh_frame at offset at, moved
+/// with the object section it points into (none for a null LSDA).
+fn (var l: Linker) x86_eh_pointer(o: Int, s: ISect, base: Int, relocated: Set[Int], at: Int, enc: Int) {
+  if relocated.contains(at) || (enc & 0x70) != 0x10 {
+    return
+  }
+  let size = enc_size(enc)
+  let v = if size == 8 { rd64(s.data, at) } else { sext32(rd32(s.data, at)) }
+  if v == 0 {
+    return
+  }
+  let t = s.addr + at + v
+  var ord = 0
+  for (k, os) in l.objs[o].sects.indexed() {
+    if t >= os.addr && t < os.addr + os.size {
+      ord = k + 1
+    }
+  }
+  if ord == 0 {
+    l.fail("${l.objs[o].path}: an __eh_frame pointer outside the object's sections")
+    return
+  }
+  let p = base + at
+  l.patch(p, size, (l.translate(o, ord, t) - p) & (if size == 8 { -1 } else { 0xffffffff }))
 }
 
 /// A 24 bit field as a signed Int.
@@ -1026,8 +1191,8 @@ fn (var l: Linker) write() -> Bytes {
   }
   let ncmds = l.segs.len() + 9 + l.opts.dylibs.len()
   h.u32(MH_MAGIC_64)
-  h.u32(CPU_TYPE_ARM64)
-  h.u32(0)
+  h.u32(if l.x86 { CPU_TYPE_X86_64 } else { CPU_TYPE_ARM64 })
+  h.u32(if l.x86 { 3 } else { 0 })
   h.u32(MH_EXECUTE)
   h.u32(ncmds)
   h.u32(l.cmds_size)

@@ -780,16 +780,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // source is linked, else cc's, and a linux/arm64 program with no C
     // library links with the ELF linker from any host, a cross build too
     // (default_ld, decision 0243: as GOOS=linux go build)
-    // the amd64 backend's darwin/amd64 program: Apple's cc assembles and
-    // links it, on an arm64 Mac too (decision 0254 stage 6a, before Xo's
-    // own Mach-O x86_64 assembler and linker)
+    // the amd64 backend's darwin/amd64 program, on an arm64 Mac too
+    // (decision 0254 stage 6a): Xo's Mach-O x86_64 assembler and linker
+    // as darwin/arm64's (--as=cc for Apple's cc, which then links too)
     let mac_x86 = march == "amd64" && tg == "darwin/amd64" && host.starts_with("darwin/")
-    var no_cc = o.linker == "macho" && !mac_x86
-    if o.linker.is_empty() && (tg == host || tgoos == "linux") && !mac_x86 {
+    var no_cc = o.linker == "macho"
+    if o.linker.is_empty() && (tg == host || tgoos == "linux" || mac_x86) {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
-    // darwin/amd64: Xo's Mach-O x86_64 assembler unless --as=cc (step 2),
-    // the link still cc's
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     if tg != host && !(no_cc && tgoos == "linux") && !mac_x86 {
       // another target: its assembly only (internal/build buildArm64)
@@ -1086,9 +1084,8 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs
   if tgoos == "darwin" && tgoarch == "amd64" {
-    // the amd64 backend's darwin/amd64 program, assembled and linked by
-    // the Mac's cc for x86_64 (decision 0254 stage 6a, before Xo's own
-    // Mach-O x86_64 assembler and linker)
+    // the amd64 backend's darwin/amd64 program when the Mac's cc links it
+    // (--as=cc, or `use c`; decision 0254 stage 6a)
     lk.flags = ["-arch", "x86_64"] + lk.flags
   }
   lk

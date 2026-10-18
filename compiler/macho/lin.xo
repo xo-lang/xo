@@ -1,5 +1,5 @@
-// The linker's inputs: Mach-O relocatable objects (MH_OBJECT, arm64)
-// and BSD archives of them (`ar`).
+// The linker's inputs: Mach-O relocatable objects (MH_OBJECT, arm64 or
+// x86_64) and BSD archives of them (`ar`).
 
 /// Section types (the low byte of the flags).
 const S_ZEROFILL = 0x1
@@ -64,6 +64,10 @@ struct IObj {
   /// taken into the link (archive members only when they define a symbol
   /// the link needs)
   live: Bool = true
+  /// an x86_64 object (decision 0254 stage 6a): its relocation types are
+  /// RX_* (64 plus the X86_64_RELOC_ type), but for R_UNSIGNED and
+  /// R_SUBTRACTOR, which mean what arm64's do
+  x86: Bool = false
 }
 
 fn rd8(b: Bytes, o: Int) -> Int {
@@ -101,15 +105,16 @@ fn name16(b: Bytes, o: Int) -> Str {
   bstr(cstr(b[o..o + 16], 0))
 }
 
-/// parse_object: an arm64 MH_OBJECT.
+/// parse_object: an arm64 or x86_64 MH_OBJECT.
 fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
   if b.len() < 32 || rd32(b, 0) != MH_MAGIC_64 {
     return Err("${path}: not a 64 bit Mach-O file")
   }
-  if rd32(b, 4) != CPU_TYPE_ARM64 || rd32(b, 12) != MH_OBJECT {
-    return Err("${path}: not an arm64 object")
+  let x86 = rd32(b, 4) == CPU_TYPE_X86_64
+  if !(rd32(b, 4) == CPU_TYPE_ARM64 || x86) || rd32(b, 12) != MH_OBJECT {
+    return Err("${path}: not an arm64 or x86_64 object")
   }
-  var obj = IObj{path: path}
+  var obj = IObj{path: path, x86: x86}
   let ncmds = rd32(b, 16)
   var off = 32
   for _ in 0..ncmds {
@@ -134,7 +139,11 @@ fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
           if (a & 0x80000000) != 0 {
             return Err("${path}: scattered relocations are not supported")
           }
-          sect.relocs.push(IReloc{addr: a, sym: w & 0xffffff, pcrel: (w >> 24) & 1 == 1, len: (w >> 25) & 3, ext: (w >> 27) & 1 == 1, typ: (w >> 28) & 15})
+          var typ = (w >> 28) & 15
+          if x86 {
+            typ = if typ == 0 { R_UNSIGNED } else if typ == 5 { R_SUBTRACTOR } else { 64 + typ }
+          }
+          sect.relocs.push(IReloc{addr: a, sym: w & 0xffffff, pcrel: (w >> 24) & 1 == 1, len: (w >> 25) & 3, ext: (w >> 27) & 1 == 1, typ: typ})
         }
         obj.sects.push(sect)
       }

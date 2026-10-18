@@ -259,6 +259,17 @@ assembly and for the two test files of compiler/macho/testdata/amd64-macho
 for clang's), the link still Apple's cc until step 3. Hello's 134,785
 lines assemble in about a second.
 
+6a, step 3 (xo-fa, 2026-10-18): Xo's Mach-O linker links x86_64 objects
+(compiler/macho link.xo x86_reloc, x86_eh_frame, 6 byte `jmp *slot(%rip)`
+stubs, CPU_TYPE_X86_64 subtype 3, x86_64's DWARF compact unwind mode;
+the same chained fixups, DYLD_CHAINED_PTR_64_OFFSET, as Apple's ld
+writes for x86_64), and xo links darwin/amd64 programs with it (cc only
+for `--as=cc` or `use c`). Against Apple's ld linking the same assembly,
+scripts/macho-link-compare.sh finds 192 of 193 goldens the same, layout
+independently (every instruction's operands named, every fixup, unwind
+entry, LSDA, and FDE): the strings differ only because ld merges equal
+literals, and tz_table because cc's link builds its zone data from C.
+
 ### 6b. windows/amd64
 
 - Calling convention (Win64): arguments in rcx, rdx, r8, r9 (each
