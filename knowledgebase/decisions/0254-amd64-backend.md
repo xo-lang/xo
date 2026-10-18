@@ -296,6 +296,20 @@ value is always an Xo function (System V); a function whose address
 goes to the OS is an export. Unwind: LLVM writes .pdata and .xdata for
 x86_64_sysvcc functions on a Windows target as for any other.
 
+Thread locals with it (folded in 2026-10-18, lead): Windows' implicit
+TLS is four dependent loads per access (`_tls_index`, `gs:0x58`, the
+module's slot, the word) behind the out of line xo_tlocal_get; a
+TlsAlloc'd TEB slot read Go's way is three (a global holding
+0x1480 + 8 * slot, `gs:` at it for the table's address, the word): one
+instruction and one dependent load fewer of about seven with the call.
+Every thread must store its table's address in the slot before its
+first access (the OS's slot is zero): the workers, the pump thread
+(cabi.xo's CreateThread entry), the profiler's sampler, the console
+handler (a thread Windows makes, entry.xo), and the vectored exception
+handler on the faulting thread; a lazy check instead (a test and a
+branch) costs the gain. Done with 6c's boundary work, as those entries
+are where the convention changes too.
+
 What to measure on a real Windows machine once EC2 and CI are back
 (scripts/remote-windows.sh is off by the owner's order): instructions
 retired (Windows' perf counters through `xperf` or a hardware counter
