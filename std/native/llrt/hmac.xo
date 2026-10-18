@@ -15,10 +15,27 @@ pub struct Mac {
 fn pad(hash: Int, key0: Bytes, x: Int) -> Bytes {
   let bs = sha256.block_size(hash)
   let key = if key0.len() > bs { sha256.sum(hash, key0) } else { key0 }
+  // a word at a time (a byte at a time with a bounds check each was
+  // about 1,100 instructions a pad, 84 pads a TLS handshake; 2026-10-18)
+  let xw = rt.int_wrap(2, x, 0x0101010101010101)
+  let kl = key.len()
   var t = rt.rs_with_cap(bs)
-  for i in 0..bs {
-    let k = if i < key.len() { Int(key[i]) } else { 0 }
-    t = rt.rs_push_byte(t, k ^ x)
+  var i = 0
+  while i + 8 <= kl {
+    t = rt.rs_push_word(t, rt.bytes_word(key, i) ^ xw, 8)
+    i += 8
+  }
+  while i < kl {
+    t = rt.rs_push_byte(t, Int(key[i]) ^ x)
+    i += 1
+  }
+  while i % 8 != 0 && i < bs {
+    t = rt.rs_push_byte(t, x)
+    i += 1
+  }
+  while i < bs {
+    t = rt.rs_push_word(t, xw, 8)
+    i += 8
   }
   t.bytes()
 }
