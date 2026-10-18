@@ -42,6 +42,9 @@ That costs every time a std function needs checking on its own
    backend the tier names (-short: the host's native backend; the merge
    tier: LLVM and arm64; full: also wasm and Go where the module
    compiles there), so the tests are part of the gates.
+4. The runtime's own modules (llrt) are tested on the native backends
+   only; a module that std/rt (the Go backend) implements in Go has its
+   Go tests there.
 5. A repository rule (owner, 2026-10-18; a convention of this
    repository, not a language rule: user code keeps inline `test`
    blocks): under std/ and compiler/, tests live only in `_test.xo`
@@ -50,9 +53,6 @@ That costs every time a std function needs checking on its own
    file there. The 14 inline blocks of 2026-10-18 (compiler/cli cmdhelp
    2, dev/codegen 2, dev/compare 5, dev/errorcheck 2, dev/goldens 2,
    dev/key 1) move to `_test.xo` files beside them.
-4. The runtime's own modules (llrt) are tested on the native backends
-   only; a module that std/rt (the Go backend) implements in Go has its
-   Go tests there.
 
 ## Consequences
 
