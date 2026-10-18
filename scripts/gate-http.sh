@@ -63,7 +63,7 @@ for s in $steps; do
 	codegen)
 		run codegen "$XO_CLI" dev codegen test/codegen/consttime ;;
 	fp)
-		seed=${XO_SEED:-$(ls -d "$HOME"/Library/Caches/xo/seeds/*/*/tree/xo/bin/xo "${XDG_CACHE_HOME:-$HOME/.cache}"/xo/seeds/*/*/tree/xo/bin/xo 2>/dev/null | sort -V | tail -1)}
+		seed=${XO_SEED:-$(command ls -d "$HOME"/Library/Caches/xo/seeds/*/*/tree/xo/bin/xo "${XDG_CACHE_HOME:-$HOME/.cache}"/xo/seeds/*/*/tree/xo/bin/xo 2>/dev/null | sort -V | tail -1)}
 		if [ -z "$seed" ]; then
 			echo "fp=no-seed" >> "$log"
 			continue
