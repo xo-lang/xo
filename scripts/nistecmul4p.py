@@ -6,6 +6,8 @@
 # sum a chain of cpu.adc and cpu.adc_carry (decision 0231's addendum):
 # per word of g the low halves of f g_i, then the high halves, then
 # q p / 2^64 for q = t0, whose limbs are shifts of q.
+# After regenerating, run scripts/fieldcheck.py (the generated code against
+# big integers, and a planted mutation it must catch).
 out = []
 n = [0]
 

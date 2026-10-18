@@ -5,6 +5,8 @@
 # sum a chain of cpu.adc and cpu.adc_carry (decision 0231's addendum),
 # every difference a chain of cpu.borrow; constant time (no branch or
 # index on a value).
+# After regenerating, run scripts/fieldcheck.py (the generated code against
+# big integers, and a planted mutation it must catch).
 out = []
 n = [0]
 
