@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- darwin/amd64 (LLVM): a fault that task.isolate or a server's handler
+  should catch no longer ends the program when the walk passes a frame
+  with compact unwind information before a DWARF one (the unwinder's
+  frame cache reset the return address register; 13 tests on the Intel
+  Mac).
+
 - HTTP/1.1 responses on the native backends take the Date header's text
   from a cache of the current second shared by the threads (a sequence
   lock in runtime static words 69 to 74), as net/http does: plain HTTP

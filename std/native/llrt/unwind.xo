@@ -109,6 +109,10 @@ const H_CIE_PERS = 192
 /// return went to an address in data: cli_decl_fault and the http fault
 /// goldens on linux/amd64, 2026-10-15). arm64 code has none.
 const H_ARGS = 200
+/// The CIE's return address register (H_RAREG is the frame's: the frame
+/// cache restores it with each frame, a compact frame's too, so a CIE
+/// still in H_CIE_ADDR sets it again from here in read_fde).
+const H_CIE_RAREG = 208
 /// The register set: word n is DWARF register n (arm64: x0 to x30, sp
 /// 31, v0 to v31 at 64 to 95; x86_64: rax, rdx, rcx, rbx, rsi, rdi, rbp,
 /// rsp 7, r8 to r15, the return address 16, xmm0 to xmm15 at 17 to 32),
@@ -1448,6 +1452,11 @@ fn read_fde(s: Int, fde: Int, pc: Int) -> Bool {
   }
   rt.mem_store(s, H_LSDA, lsda, 8)
   rt.mem_store(s, H_PERS, rt.mem_load(s, H_CIE_PERS, 8), 8)
+  // the CIE's, not the last cached frame's (a compact frame cached
+  // before any CIE was read left 0, rax on x86_64, and the next DWARF
+  // step returned to 0: every fault isolated past such a frame went
+  // uncaught on darwin/amd64, gotchas/unwind-rareg-from-frame-cache.md)
+  rt.mem_store(s, H_RAREG, rt.mem_load(s, H_CIE_RAREG, 8), 8)
   rt.mem_store(s, H_FDE, p, 8)
   rt.mem_store(s, H_FDE_END, end, 8)
   true
@@ -1526,6 +1535,7 @@ fn read_cie(s: Int, cie: Int) -> Bool {
   rt.mem_store(s, H_CALIGN, ca, 8)
   rt.mem_store(s, H_DALIGN, da, 8)
   rt.mem_store(s, H_RAREG, ra, 8)
+  rt.mem_store(s, H_CIE_RAREG, ra, 8)
   rt.mem_store(s, H_FENC, fenc, 8)
   rt.mem_store(s, H_LENC, lenc, 8)
   rt.mem_store(s, H_AUGZ, augz, 8)
