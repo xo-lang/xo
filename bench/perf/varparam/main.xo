@@ -1,0 +1,71 @@
+// A large record passed as a `var` parameter to a helper that reads and
+// writes two of its fields, the shape of std/native/llrt/tlssrv.xo's
+// flush(var c: Conn) before 2026-10-18: the arm64 backend loaded and
+// spilled every word of the record (over 1 KB) on each call, about 2,200
+// instructions a call against LLVM's 200 (bench/results/http-callgrind-
+// 2026-10-17.md, "HTTP/2"). CALLS (default 10^6) calls; prints a checksum.
+// Count with ri.py or /usr/bin/time -l and compare backends; the cost
+// of a call should not grow with the record's size.
+
+struct Keys {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  secret: Bytes
+  iv: Bytes
+}
+
+struct Side {
+  read: Keys
+  write: Keys
+  seq: Int
+  pending: Bytes
+  out: List[Bytes]
+}
+
+struct Big {
+  client: Side
+  server: Side
+  early: Side
+  hand: Side
+  name: Str
+  alpn: Str
+  extra: Keys?
+  fd: Int
+  status: Int
+  n: Int
+}
+
+fn keys(x: Int) -> Keys {
+  Keys{a: x, b: x + 1, c: x + 2, d: x + 3, e: x + 4, f: x + 5, g: x + 6, h: x + 7, secret: b"0123456789abcdef", iv: b"iv"}
+}
+
+fn side(x: Int) -> Side {
+  Side{read: keys(x), write: keys(x + 10), seq: 0, pending: b"", out: [b"x"]}
+}
+
+/// Touches two fields; the rest of c is only passed through.
+fn bump(var c: Big, k: Int) -> Bool {
+  if c.status != 0 {
+    return false
+  }
+  c.n += k
+  c.n % 7 != 3
+}
+
+fn main(os: Os) {
+  let calls = Int.parse(os.env.get("CALLS") ?? "1000000") ?? 1000000
+  var c = Big{client: side(1), server: side(2), early: side(3), hand: side(4), name: "conn", alpn: "h2", extra: Some(keys(9)), fd: 3, status: 0, n: 0}
+  var ok = 0
+  for i in 0..calls {
+    if bump(c, i & 3) {
+      ok += 1
+    }
+  }
+  os.stdio.println("${ok} ${c.n}")
+}
