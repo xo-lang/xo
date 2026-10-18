@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster rebuilds after an edit: borrow inference rescans only the
+  callers of a function whose flags changed, the back-end cache's entries
+  are read in parallel, and the verification after inlining skips
+  functions that verified before. A one-constant edit of xo rebuilds in
+  11.1 s instead of 14.1 s (17.0 s of CPU instead of 25.2 s), and the
+  binary is the same file as a build without the cache.
+
 - macOS x86_64 programs are assembled by Xo's own assembler (objects byte
   identical to clang's) and linked by Xo's own linker: no C toolchain.
 

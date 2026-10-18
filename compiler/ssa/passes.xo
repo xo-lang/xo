@@ -537,6 +537,18 @@ pub fn cse(var f: Func, m: Module) -> Bool {
 /// check failed on cached_macho_objects' list.index element).
 /// False when nothing changed.
 pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
+  // most functions have no tuple: no use map for them (a third of the
+  // inliner's time on xo's self build, 2026-10-18)
+  var any = false
+  for x in f.values {
+    if x.op == Op.Tuple {
+      any = true
+      break
+    }
+  }
+  if !any {
+    return false
+  }
   var us: Map[Int, List[Int]] = {}
   for bl in f.blocks {
     for v in bl.instrs {

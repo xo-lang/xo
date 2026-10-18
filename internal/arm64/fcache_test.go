@@ -1,9 +1,13 @@
 package arm64
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -62,5 +66,89 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBackendCacheEditIdentity is the edit loop's invariant (decision
+// 0220 addendum stage D): a build through a warm back-end cache is the
+// same file as a full build of the same source. One program of 300
+// functions (enough for the per-function caches) and one cache directory:
+// a first build, a second, an edit of one function's constant, a
+// statement added to it, and the revert; after each, the cached build's
+// binary must equal the binary of XO_BACKEND_CACHE=off.
+func TestBackendCacheEditIdentity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-editid-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gen := func(k int, stmt bool) string {
+		var b strings.Builder
+		for i := 0; i < 300; i++ {
+			fmt.Fprintf(&b, "fn f%d(x: Int) -> Int {\n", i)
+			if i == 150 && stmt {
+				b.WriteString("  if x == 12345 {\n    return 1\n  }\n")
+			}
+			mul := 3
+			if i == 150 {
+				mul = k
+			}
+			if i == 299 {
+				fmt.Fprintf(&b, "  x * %d\n}\n\n", mul)
+				continue
+			}
+			fmt.Fprintf(&b, "  if x > %d {\n    f%d(x - 1) + %d\n  } else {\n    x * %d\n  }\n}\n\n", i, i+1, i, mul)
+		}
+		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)}\")\n}\n")
+		return b.String()
+	}
+	build := func(t *testing.T, name string, env ...string) ([]byte, string) {
+		// the same file name in both directories: a Mach-O signature names it
+		out := filepath.Join(work, name, "prog")
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = src
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	// "cache functions 312/320 reused": some read from the cache
+	reused := func(log, what string) bool {
+		m := regexp.MustCompile(`cache ` + what + ` (\d+)/\d+ reused`).FindStringSubmatch(log)
+		return m != nil && m[1] != "0"
+	}
+	for _, s := range []struct {
+		name string
+		k    int
+		stmt bool
+	}{{"first", 3, false}, {"again", 3, false}, {"edit", 5, false}, {"statement", 5, true}, {"revert", 3, false}} {
+		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(s.k, s.stmt)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		on, log := build(t, "on")
+		off, _ := build(t, "off", "XO_BACKEND_CACHE=off")
+		if !bytes.Equal(on, off) {
+			t.Errorf("%s: the build through the cache differs from the build with XO_BACKEND_CACHE=off", s.name)
+		}
+		if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
+			t.Errorf("%s: no function read from the cache, so the test compares nothing:\n%s", s.name, log)
+		}
 	}
 }

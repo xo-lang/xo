@@ -1182,10 +1182,40 @@ fn (var b: Builder) verify_mutants(n: Int) -> Str {
 /// in the same order. Each task checks against its own copy of the
 /// module, which the checks may intern types into.
 pub fn (var m: Module) verify_all_jobs(jobs: Int) -> List[Str] {
+  m.verify_jobs_skip(jobs, [])
+}
+
+/// verify_all_jobs without the functions skip marks (the driver's: they
+/// verified before under the same verify_keys); skip empty for none.
+pub fn (var m: Module) verify_jobs_skip(jobs: Int, skip: List[Bool]) -> List[Str] {
   let n = m.funcs.len()
   let nc = (n / 64).min(64)
-  if jobs <= 1 || nc <= 1 {
+  if (jobs <= 1 || nc <= 1) && skip.is_empty() {
     return m.verify_all()
+  }
+  if !skip.is_empty() && !skip.contains(false) {
+    // every function verified before
+    return []
+  }
+  if jobs <= 1 || nc <= 1 {
+    var errs: List[Str] = []
+    for (fi, f) in m.funcs.indexed() {
+      if !skip[fi] {
+        errs = errs + m.verify_func(f)
+      }
+    }
+    if !errs.is_empty() {
+      return errs
+    }
+    let faults = m.may_fault()
+    var r = rc_checker(m)
+    for (fi, f) in m.funcs.indexed() {
+      if !skip[fi] {
+        r.fi = fi
+        errs = errs + r.verify_rc(m, f, faults)
+      }
+    }
+    return errs
   }
   var bounds: List[Int] = []
   for k in 0..nc + 1 {
@@ -1196,6 +1226,8 @@ pub fn (var m: Module) verify_all_jobs(jobs: Int) -> List[Str] {
   // the structural checks, then (when they pass) the reference counts
   for pass in 0..2 {
     let faults = if pass == 1 { base.may_fault() } else { [] }
+    // the checker's whole-program facts once, copied by each task
+    let r0 = if pass == 1 { rc_checker(base) } else { Rc{types: []} }
     let next = Atomic[Int].new(0)
     let done = scope s {
       var ts = []
@@ -1203,7 +1235,7 @@ pub fn (var m: Module) verify_all_jobs(jobs: Int) -> List[Str] {
         ts.push(s.spawn(fn() -> List[(Int, List[Str])] {
           var mine: List[(Int, List[Str])] = []
           var mm = base
-          var r = rc_checker(base)
+          var r = r0
           while true {
             let k = next.add(1) - 1
             if k >= nc {
@@ -1211,6 +1243,9 @@ pub fn (var m: Module) verify_all_jobs(jobs: Int) -> List[Str] {
             }
             var errs: List[Str] = []
             for fi in starts[k]..starts[k + 1] {
+              if !skip.is_empty() && skip[fi] {
+                continue
+              }
               let f = base.funcs[fi]
               if pass == 0 {
                 errs = errs + mm.verify_func(f)

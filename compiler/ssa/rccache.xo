@@ -687,3 +687,50 @@ pub fn type_keys(m: Module) -> List[Str] {
   }
   out
 }
+
+/// The verifier's key of each function (decision 0220 addendum stage D),
+/// for a driver that verifies only the functions whose key it has not
+/// seen verify: the SHA-256 of keys[fi] (the emitter's key: the function
+/// in full, its types, and the signatures of the functions it names) and
+/// what the verifier reads of each function it names besides: the first
+/// and last function of the name, their borrowed parameters, whether
+/// they can fault (may_fault), whether they catch, and their immortal
+/// results. "" where keys[fi] is "" (always verified).
+pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
+  let faults = m.may_fault()
+  let imm = immortal_returns(m.funcs)
+  var last: Map[Str, Int] = {}
+  for (i, f) in m.funcs.indexed() {
+    last[f.name] = i
+  }
+  var out: List[Str] = []
+  for (fi, f) in m.funcs.indexed() {
+    if fi >= keys.len() || keys[fi].is_empty() {
+      out.push("")
+      continue
+    }
+    var b = BytesBuilder.new()
+    b.write_str("xo verify key v1\n${keys[fi]}\nself ${faults[fi]} ${f.catches} ${bools_text(f.borrowed)}\n")
+    var seen: Map[Str, Bool] = {}
+    for x in f.values {
+      if let S(s) = x.aux {
+        if !seen.contains(s) {
+          seen[s] = true
+          b.write_str("name ${s.len()}:${s}")
+          for ci in [m.func_index(s), last.get(s) ?? -1] {
+            if ci >= 0 {
+              let g = m.funcs[ci]
+              b.write_str(" ${ci} ${faults[ci]} ${g.catches} ${bools_text(g.borrowed)}")
+            } else {
+              b.write_str(" -")
+            }
+          }
+          let ir = if let Some(fs) = imm.get(s) { bools_text(fs) } else { "-" }
+          b.write_str(" ${ir}\n")
+        }
+      }
+    }
+    out.push(crypto.sha256(b.freeze()).to_hex())
+  }
+  out
+}

@@ -562,3 +562,52 @@ counting already cached by the goldens), on warm (6825/6847 rc,
 go test -short clean. scripts/bootstrap-xo.sh fixed point cold, with
 verify warm, and warm (s2 38 s to 24 s, s3 35 s to 23 s); the warm
 run's s2, s3, and s3 assembly the same files as the cold run's.
+
+## Stage D: the edit loop (the Mac, 2026-10-18)
+
+Decision 0220 addendum stage D. Steps (scratchpad fe-measure.sh, then
+fe-g3.sh): a copy of compiler/ and its own cache directory; `xo build
+--backend=arm64 --phase-times -o OUT/xo ./xo` from the copy's compiler/,
+cold, warm, after an edit of one constant (compiler/cli/core/fix.xo
+MAX_ROUNDS to a value not built before), after one statement added to
+select_rewriters, and on the reverted source; after each warm build the
+same source built with XO_BACKEND_CACHE=off, and the two binaries
+compared with cmp (the same file name, which the Mach-O signature
+names). Before: ad912d04's xo. After: stage D part 1 on 6fb58769.
+
+Before (the cache's work all hits; what still ran, from the CPU profile
+at XO_PROF_HZ=500 and the new sub-phase times):
+
+| build | check | ssa | insert_rc | inline | wall | user CPU |
+|---|---|---|---|---|---|---|
+| cold | 1.16 s | 2.01 s | 12.14 s | 3.32 s | 29.22 s | 117.86 s |
+| warm | 1.04 s | 1.96 s | 5.21 s | 3.23 s | 13.92 s | 25.06 s |
+| constant edit | 1.04 s | 1.94 s | 5.29 s | 3.21 s | 14.09 s | 25.15 s |
+| statement edit | 1.03 s | 1.97 s | 5.24 s | 3.17 s | 14.42 s | 26.38 s |
+
+In the warm build's profile: borrow inference 2.69 s of CPU (every
+function scanned each round of its fixed point), the verification of
+the inlined module 4.11 s of CPU on 8 tasks (verify_rc 3.47 s), the
+inliner 1.71 s (fold_tuple_fields 0.62 s), the decoding of cached
+reference counting 1.55 s; the reads of 15,900 cache files, one task, 1.2
+s of wall clock in a run with other builds on the machine (the profile
+counts CPU only).
+
+After:
+
+| build | insert_rc (plan, read, apply) | inline (apply, verify) | wall | user CPU |
+|---|---|---|---|---|
+| cold | 8.81 s (1.07, 0.02, 6.54) | 3.70 s (1.92, 1.78) | 27.51 s | 119.89 s |
+| warm | 1.74 s (1.06, 0.19, 0.48) | 2.42 s (1.91, 0.50) | 9.77 to 10.06 s | 15.82 to 15.86 s |
+| constant edit | 2.07 s (1.21, 0.27, 0.58) | 2.75 s (1.98, 0.77) | 11.12 s | 17.00 s |
+| statement edit | 1.90 s (1.15, 0.23, 0.51) | 2.76 s (2.08, 0.68) | 11.57 s | 18.03 s |
+| revert | 1.85 s | 2.42 s | 10.09 s | 15.95 s |
+
+Every cached build's binary was the same file as the cache-off build of
+its source (warm, constant, statement, revert). The assembly of the 195
+goldens and compiler/xo for darwin and linux, arm64 and amd64, with the
+cache off: 392 of 392 the same as main's (scripts/arm64-identity.sh);
+darwin/arm64 goldens 195/195; the fixed point ok. Left after an edit, in
+order: ssa 2.1 s, inline.apply 1.9 s, check 1.1 s, borrow inference 1.1
+s, assemble and link 1 s, the reference counting entries' decoding 0.5
+s, emit 0.5 s, the emitter's keys 0.45 s.

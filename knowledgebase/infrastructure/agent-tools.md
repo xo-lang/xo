@@ -50,7 +50,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `scripts/arm64-identity.sh`, `scripts/docker-goldens.sh`,
   `scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK` (the Intel laptop;
   owner rules in the lead's notes: one new directory, nothing deleted),
-  `scripts/macho-link-compare.sh`.
+  `scripts/macho-link-compare.sh` (`scripts/macho-symview.py code|data
+  EXE` prints an executable's code or data by symbol, for its
+  differences).
 - `scripts/gate-http.sh OUTDIR [STEP...]`, `scripts/fuzz-http.sh OUTDIR
   [SECONDS]`.
 - Test programs started by Go tests run in their own process group and
@@ -58,6 +60,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- The compiler's own edit-build time: `xo build --backend=arm64
+  --phase-times ./xo` in compiler/ prints each phase, its sub-phases
+  (insert_rc.plan|read|apply, inline.apply|verify) and the cache's hits
+  (decision 0220 addendum stage D, bench/results/fast-builds-2026-10-13.md
+  "Stage D"); `XO_PROF=cpu XO_PROF_HZ=500` on the build, then `xo prof`,
+  for where a phase spends its CPU. XO_BACKEND_CACHE=off for the full
+  build a cached one must equal.
 - HTTP callgrind: `MODE=short bench/perf/http/callgrind-docker.sh` for
   gates (2 to 3 minutes); the full run only for what toolchain.md "HTTP
   callgrind: short or full" lists. `ANN=1` keeps per-function counts and

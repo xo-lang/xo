@@ -96,16 +96,7 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
   if keys.is_empty() {
     return (arm64.FnCache{}, "")
   }
-  var entries: Map[Str, Bytes] = {}
-  for k in keys {
-    if k.is_empty() || entries.contains(k) {
-      continue
-    }
-    match cache_get(os, entry_path(dir, "fn", k)) {
-      Some(b) => entries[k] = b
-      None => {}
-    }
-  }
+  let entries = cache_get_all(os, dir, "fn", keys, jobs)
   (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir)
 }
 
@@ -139,18 +130,13 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
     b.insert_rc_jobs(jobs)
     return
   }
+  var t = os.clock.now()
   let plan = b.insert_rc_plan(id, jobs)
-  var entries: Map[Str, Bytes] = {}
-  for k in plan.keys {
-    if k.is_empty() || entries.contains(k) {
-      continue
-    }
-    match cache_get(os, entry_path(dir, "rc", k)) {
-      Some(e) => entries[k] = e
-      None => {}
-    }
-  }
+  t = lap(os, phases, "insert_rc.plan", t)
+  let entries = cache_get_all(os, dir, "rc", plan.keys, jobs)
+  t = lap(os, phases, "insert_rc.read", t)
   let out = b.insert_rc_apply(plan, entries, backend_cache_mode(os) == "verify", jobs)
+  t = lap(os, phases, "insert_rc.apply", t)
   var n = 0
   for (k, e) in out.stores {
     cache_put(os, entry_path(dir, "rc", k), e)
@@ -170,6 +156,117 @@ fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
   if on {
     os.stdio.eprintln("cache ${what} ${hits}/${total} reused")
   }
+}
+
+/// The verification of the inlined module mi (inline_or_say) through the
+/// set of verified keys (decision 0220 addendum stage D): a function
+/// whose verify key (ssa verify_keys over arm64.function_keys) verified
+/// in an earlier build is not verified again, which gives the errors a
+/// full verification gives (none from such a function). The set is one
+/// file per compiler, <cache>/ver/<identity>, rewritten with this
+/// build's keys after a clean verification that found new ones. Every
+/// function is verified with the cache off, verify, --release, or a
+/// module the emitter's cache does not split.
+fn verify_inlined(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> List[Str] {
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  if dir.is_empty() || release || backend_cache_mode(os) == "verify" {
+    return mi.verify_all_jobs(jobs)
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return mi.verify_all_jobs(jobs)
+  }
+  let keys = arm64.function_keys(mi, tgoos, id, jobs)
+  if keys.is_empty() {
+    return mi.verify_all_jobs(jobs)
+  }
+  let vk = mi.verify_keys(keys)
+  let path = "${dir}/ver/${id}"
+  var known: Map[Str, Bool] = {}
+  if let Some(b) = cache_get(os, path) {
+    for l in (b.to_str() ?? "").split("\n") {
+      if !l.is_empty() {
+        known[l] = true
+      }
+    }
+  }
+  var skip: List[Bool] = []
+  var fresh = 0
+  for k in vk {
+    let s = !k.is_empty() && known.contains(k)
+    skip.push(s)
+    if !k.is_empty() && !s {
+      fresh += 1
+    }
+  }
+  let errs = mi.verify_jobs_skip(jobs, skip)
+  if errs.is_empty() && fresh > 0 {
+    // the keys of earlier builds too (an edit and its revert), until
+    // they outnumber this build's four to one
+    var keep = known
+    if known.len() > 4 * vk.len() {
+      keep = {}
+    }
+    for k in vk {
+      if !k.is_empty() {
+        keep[k] = true
+      }
+    }
+    var sb = StrBuilder.new()
+    for (k, _) in keep {
+      sb.write(k)
+      sb.write("\n")
+    }
+    cache_put(os, path, sb.freeze().bytes())
+  }
+  errs
+}
+
+/// The entries of keys under kind that the cache holds (cache_get), read
+/// on up to jobs tasks: thousands of small files, which one task reads in
+/// about a second.
+fn cache_get_all(os: Os, dir: Str, kind: Str, keys: List[Str], jobs: Int) -> Map[Str, Bytes] {
+  var seen: Map[Str, Bool] = {}
+  var ks: List[Str] = []
+  for k in keys {
+    if !k.is_empty() && !seen.contains(k) {
+      seen[k] = true
+      ks.push(k)
+    }
+  }
+  let n = ks.len()
+  let next = Atomic[Int].new(0)
+  let done = scope sc {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(sc.spawn(fn() -> List[(Str, Bytes)] {
+        var mine: List[(Str, Bytes)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for j in i..(i + 64).min(n) {
+            if let Some(b) = cache_get(os, entry_path(dir, kind, ks[j])) {
+              mine.push((ks[j], b))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Str, Bytes)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var entries: Map[Str, Bytes] = {}
+  for (k, b) in done {
+    entries[k] = b
+  }
+  entries
 }
 
 /// The path of the entry of key in the cache dir under kind ("obj").

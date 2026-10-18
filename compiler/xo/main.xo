@@ -696,7 +696,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var cur_tu = tu
   var cur_os = tgoos
   var mi = cur.m
-  var inl = inline_or_say(os, mi, emit_jobs(os))
+  var inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release)
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
@@ -708,7 +708,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cur_tu = l.tu
       cur_os = tgoos
       mi = cur.m
-      inl = inline_or_say(os, mi, emit_jobs(os))
+      inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release)
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
@@ -1188,13 +1188,18 @@ fn passes_off(os: Os) -> List[Str] {
 /// broken inliner cannot pass the tests as a slow one
 /// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
 /// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
-fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
+fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool) -> Bool {
   let deny = os.env.get("XO_INLINE_DENY") ?? ""
   if !deny.is_empty() {
     mi.inline_deny = deny.split(",")
   }
   mi.passes_off = passes_off(os)
-  let errs = arm64.inline_check(mi, jobs, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
+  // arm64.inline_check(mi, jobs, ...), its two halves timed
+  var t = os.clock.now()
+  let changed = arm64.inline_apply(mi, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
+  t = lap(os, phases, "inline.apply", t)
+  let errs = if changed { verify_inlined(os, mi, tgoos, jobs, release) } else { [] }
+  lap(os, phases, "inline.verify", t)
   if errs.is_empty() {
     return true
   }

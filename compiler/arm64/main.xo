@@ -186,8 +186,18 @@ pub fn inline_step_jobs(var m: ssa.Module, jobs: Int) -> Bool { inline_check(m, 
 /// adds an argument to the first branch's edge, so the inlined module
 /// does not verify.
 pub fn inline_check(var m: ssa.Module, jobs: Int, break_inline: Bool) -> List[Str] {
-  if !inline_module(m) && !break_inline {
+  if !inline_apply(m, break_inline) {
     return []
+  }
+  m.verify_all_jobs(jobs)
+}
+
+/// The first half of inline_check: inlines into m (and breaks it, with
+/// break_inline); false when m did not change, so it needs no
+/// verification.
+pub fn inline_apply(var m: ssa.Module, break_inline: Bool) -> Bool {
+  if !inline_module(m) && !break_inline {
+    return false
   }
   if break_inline {
     var done = false
@@ -206,7 +216,7 @@ pub fn inline_check(var m: ssa.Module, jobs: Int, break_inline: Bool) -> List[St
       }
     }
   }
-  m.verify_all_jobs(jobs)
+  true
 }
 
 pub fn generate_plain(m: ssa.Module, os: Str) -> Program {

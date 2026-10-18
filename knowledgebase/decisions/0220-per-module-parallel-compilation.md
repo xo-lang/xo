@@ -321,3 +321,80 @@ module code generation (largest gain, largest change).
   insert_rc 9.25 s to 3.6 s. Left after an edit: check and ssa (3.3 s,
   stage 2), borrow inference and inlining (whole program), the keys,
   the assembly of the changed parts, the link.
+
+### Addendum stage D: the edit loop (implemented in part 2026-10-18)
+
+Status: Accepted (the lead, 2026-10-18: "rebuild only the changed
+modules and relink, reusing the back-end function cache and per-module
+SSA where safe; the binary identical to a full build").
+
+Measured first (bench/results/fast-builds-2026-10-13.md, "Stage D: the
+edit loop"): a one-constant edit of xo rebuilt in 14.1 s and 25.2 s of
+CPU with 9,450 of 9,480 functions' reference counting and all but one
+function's assembly read from the cache. What ran every build: borrow inference (2.7 s of CPU, a
+whole-program fixed point rescanning every function each round), the
+serial reads of about 16,000 cache files (1.2 s with other builds on the
+machine), inlining (1.9 s) and the verification of the inlined module
+(about 1.3 s, every function), the
+checker and the SSA builder (3.3 s).
+
+Done (part 1):
+
+1. **Borrow inference by a work list** (compiler/ssa rc.xo
+   infer_borrows): after one scan of every function, only a function
+   whose flags changed and its callers are scanned again. The flags only
+   go from borrowed to owned and each scan is monotone in them, so the
+   result is the same greatest fixed point the round robin reached.
+2. **Cache entries read on tasks** (compiler/xo bcache.xo
+   cache_get_all), for the reference counting and the assembly entries.
+3. **The inlined module's verification by key** (bcache.xo
+   verify_inlined, compiler/ssa rccache.xo verify_keys, verify.xo
+   verify_jobs_skip): a function's verify key is the SHA-256 of its
+   emitter key (the function in full after inlining, its types, the
+   signatures of the functions it names) and what the verifier reads of
+   each function it names besides (the first and last function of the
+   name, their borrowed flags, whether they can fault, whether they
+   catch, their immortal results). A function whose key verified clean
+   in an earlier build is not verified again; the set is one file per
+   compiler (<cache>/ver/<identity>), rewritten after a clean
+   verification that found new keys. The verification still runs on the
+   whole inlined module before dead function removal, so it reports
+   what a full verification reports, and the fallback to the module
+   without inlining happens in the same builds. XO_BACKEND_CACHE=off and
+   verify, --release, and modules the emitter does not split verify
+   every function.
+4. **fold_tuple_fields** returns at once for a function with no tuple
+   (a third of the inliner's time).
+5. `--phase-times` prints insert_rc.plan, insert_rc.read,
+   insert_rc.apply, inline.apply, and inline.verify.
+6. **The test of the invariant**: internal/arm64
+   TestBackendCacheEditIdentity builds a program of 300 functions
+   through one cache directory first, again, after an edit of one
+   constant, after a statement added, and after the revert, and
+   requires each binary to be the file XO_BACKEND_CACHE=off builds, with
+   functions read from the cache.
+
+Measured (the Mac, main 6fb58769): the warm self build 13.9 s to 9.8 to
+10.1 s and 25.1 s to 15.9 s of CPU; a one-constant edit 14.1 s to 11.1
+s (CPU 25.2 s to 17.0 s); a statement edit 14.4 s to 11.6 s. insert_rc
+5.2 s to 1.7 to 2.1 s, the inlined module's verification about 1.3 s
+to 0.5 to 0.8 s. Left after an edit: ssa 2.1 s, inline.apply 1.9 s, check 1.1
+s, borrow inference 1.1 s, the decoding of the cached reference
+counting 0.5 s, the emitter's keys 0.45 s, emit 0.5 s, assemble and
+link 1 s.
+
+Next (part 2), in order of the measured time left:
+
+- **Chained per-function keys**: the reference counting key (stage C),
+  then an inlining key (the function before inlining and the version of
+  every callee body it can inline, which for an earlier function is its
+  inlined body, for a later one its body before), then the emitter's
+  key over those. An unchanged function is then never decoded or
+  inlined, only the changed ones and the callee bodies they inline.
+- **Stage 2** (front end per module) for the checker and the SSA
+  builder.
+
+Invariant, tested by every change of this stage: the binary of a build
+with the cache warm, after an edit and after its revert, is the same
+file as the binary of a build of the same source with
+XO_BACKEND_CACHE=off.

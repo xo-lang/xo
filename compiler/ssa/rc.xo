@@ -502,10 +502,40 @@ fn (var r: Rc) infer_borrows(funcs: List[Func]) {
     }
     r.borrowed.push(bs)
   }
+  // a function's flags depend on its own and its callees' (through the
+  // modes of its calls): after the first pass over every function, only
+  // the callers of a function whose flags changed, and it, are scanned
+  // again. The flags only go from borrowed to owned, so the result is the
+  // fixed point of the scans in any order: the same as rescanning every
+  // function until none changes, in a fraction of the scans
+  let n = funcs.len()
+  var callers: List[List[Int]] = []
+  var dirty: List[Bool] = []
+  for _ in 0..n {
+    callers.push([])
+    dirty.push(true)
+  }
+  for (fi, f) in funcs.indexed() {
+    var seen: Map[Int, Bool] = {}
+    for x in f.values {
+      if let S(s) = x.aux {
+        if let Some(ci) = r.fidx.get(s) {
+          if ci != fi && !seen.contains(ci) {
+            seen[ci] = true
+            callers[ci].push(fi)
+          }
+        }
+      }
+    }
+  }
   var changed = true
   while changed {
     changed = false
     for (fi, f) in funcs.indexed() {
+      if !dirty[fi] {
+        continue
+      }
+      dirty[fi] = false
       r.fi = fi
       // the blocks that consume each borrowed parameter
       var cons: Map[Int, List[Bool]] = {}
@@ -528,6 +558,10 @@ fn (var r: Rc) infer_borrows(funcs: List[Func]) {
         if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
           r.borrowed[fi][i] = false
           changed = true
+          dirty[fi] = true
+          for c in callers[fi] {
+            dirty[c] = true
+          }
         }
       }
     }
