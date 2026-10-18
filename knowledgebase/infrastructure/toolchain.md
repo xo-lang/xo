@@ -3688,6 +3688,13 @@ a checkout of the repository, in two steps:
     # 3. upload, latest.txt last (a minute)
     scripts/seed-upload.sh WORKDIR
 
+Run the scripts from a worktree of origin/main, not the main checkout
+(which stays at an old commit): seed-cut.sh refuses to run when its seed
+scripts differ from origin/main's, since a stale copy once ran pre-rename
+paths (2026-10-18). Let seed-cut.sh make the version commit; if main
+already carries a `Version X.Y.0` commit at its head (a manual bump),
+it cuts from that commit as is instead of refusing.
+
 seed-cut.sh stops at the first failure, before anything is pushed when
 the failure is in the bump, `-short` (internal/xotool, cmd/xo), or the
 gate (the bump's xo builds and runs hello, and the fixed point holds).

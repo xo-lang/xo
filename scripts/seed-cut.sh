@@ -56,6 +56,12 @@ head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must b
 command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
 
 repo=$(git rev-parse --show-toplevel)
+# a stale copy of this script (e.g. the main checkout, kept at an old commit)
+# runs old paths and steps: run it from a checkout of origin/main
+# (2026-10-18: a pre-rename copy read selfhost/ paths and failed)
+git -C "$repo" fetch -q origin
+git -C "$repo" diff --quiet origin/main -- scripts/seed-cut.sh scripts/seed-pack.sh scripts/seed-upload.sh ||
+  die "this checkout's seed scripts differ from origin/main's: run seed-cut.sh from a worktree of origin/main"
 case "$work" in "$repo"/*) die "WORKDIR must be outside the repository" ;; esac
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
@@ -70,17 +76,28 @@ fi
 cur=$(git -C "$repo" show origin/main:compiler/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
 [ -n "$cur" ] || die "no VERSION in origin/main's compiler/cli/core/cli.xo"
 newest=$(printf '%s\n%s\n' "$cur" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-[ "$version" != "$cur" ] && [ "$newest" = "$version" ] || die "version $version is not above main's $cur"
+prebumped=0
+if [ "$version" = "$cur" ]; then
+  # main already carries the bump (2026-10-18: a manual "Version X" commit):
+  # cut from origin/main as is when its head is that commit
+  git -C "$repo" log -1 --format=%s origin/main | grep -q "^Version $version " ||
+    die "main is already at $version but its head is not the \"Version $version\" commit; tag or bump by hand"
+  prebumped=1
+else
+  [ "$newest" = "$version" ] || die "version $version is not above main's $cur"
+fi
 
 step "1. worktree of origin/main, version $cur to $version"
 tree=$work/tree
 git -C "$repo" worktree add -q --detach "$tree" origin/main
 cd "$tree"
-sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" compiler/cli/core/cli.xo
-sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" compiler/cli/servers/servers.xo
-[ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo " ] ||
-  die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo and servers.xo)"
-git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
+if [ "$prebumped" = 0 ]; then
+  sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" compiler/cli/core/cli.xo
+  sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" compiler/cli/servers/servers.xo
+  [ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo " ] ||
+    die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo and servers.xo)"
+  git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
+fi
 commit=$(git rev-parse HEAD)
 
 step "2. go test -short ./internal/xotool ./cmd/xo"
