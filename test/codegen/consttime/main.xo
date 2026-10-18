@@ -4,11 +4,13 @@
 // an empty asm. internal/llvm's TestConstantTimeLLVM checks what clang
 // -O2 makes of it.
 use std/crypto
+use std/internal
 
 fn main(os: Os) {
   let n = os.env.args().len()
   let seed = "0123456789abcdef0123456789abcde${n}".bytes()
   os.stdio.println("${crypto.equal(b"abcdefghij", "abcdefghi${n}".bytes())} ${crypto.ed25519_sign(seed, b"m").to_hex()}")
+  os.stdio.println(internal.crypto_op("x25519.base", seed, b"", b"", b"").to_hex())
 }
 
 // The comparison's accumulator goes through the barrier in both loops
@@ -41,3 +43,15 @@ fn main(os: Os) {
 // func ed25519.sc_reduce
 // llvm: "call i64 @\"x.ct.mask_bit\"" "call i64 @\"x.ct.pick\"" -"select"
 // arm64: -"csel" -"cset"
+
+// X25519's public key (x25519.xo base, 57541a18): the fixed base table's
+// row is read whole, its entry kept by masks (ct.mask_eq), a negative
+// digit's entry swapped and negated by ct.pick, and the scalar recoded
+// to signed digits with wrapping arithmetic; the branches left are loops
+// over public counts and bounds checks on public indices.
+// func x25519.madd_digit
+// arm64: -"csel" -"cset"
+// llvm: "call i64 @\"x.ct.mask_eq\"" "call i64 @\"x.ct.pick\"" -"select"
+// func x25519.base
+// arm64: -"csel" -"cset"
+// llvm: -"select"

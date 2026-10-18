@@ -108,7 +108,11 @@ def sbb_chain(xs, ys):
 
 
 def mul38(x):
-    return f"rt.int_wrap(2, {x}, 38)"
+    # through the barrier (decision 0222): x is a carry or borrow bit, or
+    # a small top word; LLVM made 38 times a bit a conditional select
+    # (TestConstantTimeLLVM, 2026-10-18), which x86's cmov conversion may
+    # turn into a branch
+    return f"rt.int_wrap(2, rt.ct_barrier({x}), 38)"
 
 
 def fold_top(r, top):

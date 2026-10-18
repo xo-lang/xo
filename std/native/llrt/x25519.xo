@@ -54,7 +54,11 @@ const RY: Int = 1080
 const RZ: Int = 1120
 const RT: Int = 1160
 const T0: Int = 1200
-const BEXTRA: Int = 160
+// the clamped scalar's 4 words and its 64 signed digits, as raw words
+// (no list: its length checks gave LLVM selects; TestConstantTimeLLVM)
+const KW: Int = 1240
+const DG: Int = 1272
+const BEXTRA: Int = 230
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
@@ -205,15 +209,30 @@ pub fn base(scalar: Bytes) -> Bytes {
   let tb = rt.int_wrap(0, rt.obj_addr(x25519_btab.BTAB), rt.layout(2))
   // clamped as scalar_mult
   let top = rt.int_wrap(3, 1, 63)
-  let k = [rt.bytes_word(scalar, 0) & ~7, rt.bytes_word(scalar, 8), rt.bytes_word(scalar, 16), (rt.bytes_word(scalar, 24) & ~top) | rt.int_wrap(3, 1, 62)]
-  var dg: List[Int] = []
-  for i in 0..64 {
-    dg.push(rt.int_wrap(4, k[i / 16], 4 * (i % 16)) & 15)
+  let kw = at(e, KW)
+  st(kw, 0, rt.bytes_word(scalar, 0) & ~7)
+  st(kw, 8, rt.bytes_word(scalar, 8))
+  st(kw, 16, rt.bytes_word(scalar, 16))
+  st(kw, 24, (rt.bytes_word(scalar, 24) & ~top) | rt.int_wrap(3, 1, 62))
+  // the signed radix 16 digits; secret values by wrapping arithmetic
+  // only (decision 0222: a checked + or - is a branch on its operands),
+  // offsets too (public, but a checked product's fault path is code
+  // with selects)
+  let dg = at(e, DG)
+  var i = 0
+  while i < 64 {
+    let wv = ld(kw, rt.int_wrap(3, rt.int_wrap(4, i, 4), 3))
+    st(dg, rt.int_wrap(3, i, 3), rt.int_wrap(4, wv, rt.int_wrap(3, i & 15, 2)) & 15)
+    i = rt.int_wrap(0, i, 1)
   }
-  for i in 0..63 {
-    let carry = rt.int_wrap(4, dg[i] + 8, 4)
-    dg[i] = dg[i] - 16 * carry
-    dg[i + 1] = dg[i + 1] + carry
+  i = 0
+  while i < 63 {
+    let at_i = rt.int_wrap(3, i, 3)
+    let x = ld(dg, at_i)
+    let carry = rt.int_wrap(4, rt.int_wrap(0, x, 8), 4)
+    st(dg, at_i, rt.int_wrap(1, x, rt.int_wrap(3, carry, 4)))
+    st(dg, rt.int_wrap(0, at_i, 8), rt.int_wrap(0, ld(dg, rt.int_wrap(0, at_i, 8)), carry))
+    i = rt.int_wrap(0, i, 1)
   }
   fe64_set(at(e, ZERO), 0)
   // the identity (0 : 1 : 1 : 0)
@@ -221,18 +240,19 @@ pub fn base(scalar: Bytes) -> Bytes {
   fe64_set(at(e, VY), 1)
   fe64_set(at(e, VZ), 1)
   fe64_set(at(e, VT), 0)
-  var i = 1
+  i = 1
   while i < 64 {
-    madd_digit(e, tb, i / 2, dg[i])
-    i += 2
+    madd_digit(e, tb, rt.int_wrap(4, i, 1), ld(dg, rt.int_wrap(3, i, 3)))
+    i = rt.int_wrap(0, i, 2)
   }
-  for _ in 0..4 {
-    dbl(e)
-  }
+  dbl(e)
+  dbl(e)
+  dbl(e)
+  dbl(e)
   i = 0
   while i < 64 {
-    madd_digit(e, tb, i / 2, dg[i])
-    i += 2
+    madd_digit(e, tb, rt.int_wrap(4, i, 1), ld(dg, rt.int_wrap(3, i, 3)))
+    i = rt.int_wrap(0, i, 2)
   }
   let u = at(e, RX)
   let z = at(e, RY)
@@ -242,9 +262,10 @@ pub fn base(scalar: Bytes) -> Bytes {
   fe64_mul(u, u, z)
   fe64_freeze(u, u)
   var s = rt.rs_with_cap(32)
-  for b in 0..4 {
-    s = rt.rs_push_word(s, ld(u, 8 * b), 8)
-  }
+  s = rt.rs_push_word(s, ld(u, 0), 8)
+  s = rt.rs_push_word(s, ld(u, 8), 8)
+  s = rt.rs_push_word(s, ld(u, 16), 8)
+  s = rt.rs_push_word(s, ld(u, 24), 8)
   keep(w)
   s.bytes()
 }
@@ -257,7 +278,7 @@ fn at(e: Int, off: Int) -> Int { rt.int_wrap(0, e, off) }
 /// negated. ref10's ge_madd, then the completed point to (X : Y : Z : T).
 fn madd_digit(e: Int, tb: Int, row: Int, d: Int) {
   let sg = ct.mask_bit(rt.int_wrap(4, d, 63))
-  let a = (d ^ sg) - sg
+  let a = rt.int_wrap(1, d ^ sg, sg)
   var p0 = 0
   var p1 = 0
   var p2 = 0
@@ -273,7 +294,9 @@ fn madd_digit(e: Int, tb: Int, row: Int, d: Int) {
   var j = 1
   while j < 9 {
     let msk = ct.mask_eq(j, a)
-    let en = rt.int_wrap(0, tb, 96 * (8 * row + j - 1))
+    // the entry's offset by wrapping arithmetic too (public, below 2^15:
+    // no overflow check, whose fault path LLVM gave a select)
+    let en = rt.int_wrap(0, tb, rt.int_wrap(2, rt.int_wrap(0, rt.int_wrap(2, row, 8), rt.int_wrap(1, j, 1)), 96))
     p0 = p0 | (ld(en, 0) & msk)
     p1 = p1 | (ld(en, 8) & msk)
     p2 = p2 | (ld(en, 16) & msk)
@@ -523,7 +546,7 @@ fn fe64_mul(h: Int, f: Int, g: Int) {
   let s126 = cpu.adc(s116, hi125, k124)
   let k127 = cpu.adc_carry(s116, hi125, k124)
   let s128 = cpu.adc(hi118, k117, k127)
-  let t129 = rt.int_wrap(2, s128, 38)
+  let t129 = rt.int_wrap(2, rt.ct_barrier(s128), 38)
   let s130 = cpu.adc(s107, t129, 0)
   let k131 = cpu.adc_carry(s107, t129, 0)
   let s132 = cpu.adc(s120, 0, k131)
@@ -532,7 +555,7 @@ fn fe64_mul(h: Int, f: Int, g: Int) {
   let k135 = cpu.adc_carry(s123, 0, k133)
   let s136 = cpu.adc(s126, 0, k135)
   let k137 = cpu.adc_carry(s126, 0, k135)
-  let w138 = rt.int_wrap(0, s130, rt.int_wrap(2, k137, 38))
+  let w138 = rt.int_wrap(0, s130, rt.int_wrap(2, rt.ct_barrier(k137), 38))
   st(h, 0, w138)
   st(h, 8, s132)
   st(h, 16, s134)
@@ -633,7 +656,7 @@ fn fe64_sq(h: Int, f: Int) {
   let s85 = cpu.adc(s75, hi84, k83)
   let k86 = cpu.adc_carry(s75, hi84, k83)
   let s87 = cpu.adc(hi77, k76, k86)
-  let t88 = rt.int_wrap(2, s87, 38)
+  let t88 = rt.int_wrap(2, rt.ct_barrier(s87), 38)
   let s89 = cpu.adc(s66, t88, 0)
   let k90 = cpu.adc_carry(s66, t88, 0)
   let s91 = cpu.adc(s79, 0, k90)
@@ -642,7 +665,7 @@ fn fe64_sq(h: Int, f: Int) {
   let k94 = cpu.adc_carry(s82, 0, k92)
   let s95 = cpu.adc(s85, 0, k94)
   let k96 = cpu.adc_carry(s85, 0, k94)
-  let w97 = rt.int_wrap(0, s89, rt.int_wrap(2, k96, 38))
+  let w97 = rt.int_wrap(0, s89, rt.int_wrap(2, rt.ct_barrier(k96), 38))
   st(h, 0, w97)
   st(h, 8, s91)
   st(h, 16, s93)
@@ -667,7 +690,7 @@ fn fe64_add(h: Int, f: Int, g: Int) {
   let k6 = cpu.adc_carry(f2, g2, k4)
   let s7 = cpu.adc(f3, g3, k6)
   let k8 = cpu.adc_carry(f3, g3, k6)
-  let t9 = rt.int_wrap(2, k8, 38)
+  let t9 = rt.int_wrap(2, rt.ct_barrier(k8), 38)
   let s10 = cpu.adc(s1, t9, 0)
   let k11 = cpu.adc_carry(s1, t9, 0)
   let s12 = cpu.adc(s3, 0, k11)
@@ -676,7 +699,7 @@ fn fe64_add(h: Int, f: Int, g: Int) {
   let k15 = cpu.adc_carry(s5, 0, k13)
   let s16 = cpu.adc(s7, 0, k15)
   let k17 = cpu.adc_carry(s7, 0, k15)
-  let w18 = rt.int_wrap(0, s10, rt.int_wrap(2, k17, 38))
+  let w18 = rt.int_wrap(0, s10, rt.int_wrap(2, rt.ct_barrier(k17), 38))
   st(h, 0, w18)
   st(h, 8, s12)
   st(h, 16, s14)
@@ -704,7 +727,7 @@ fn fe64_sub(h: Int, f: Int, g: Int) {
   let e9 = rt.int_wrap(1, f3, g3)
   let d10 = rt.int_wrap(1, e9, b8)
   let b11 = cpu.borrow(f3, g3) | cpu.borrow(e9, b8)
-  let t12 = rt.int_wrap(2, b11, 38)
+  let t12 = rt.int_wrap(2, rt.ct_barrier(b11), 38)
   let e13 = rt.int_wrap(1, e1, t12)
   let b14 = cpu.borrow(e1, t12)
   let e15 = rt.int_wrap(1, d4, 0)
@@ -716,7 +739,7 @@ fn fe64_sub(h: Int, f: Int, g: Int) {
   let e21 = rt.int_wrap(1, d10, 0)
   let d22 = rt.int_wrap(1, e21, b20)
   let b23 = cpu.borrow(d10, 0) | cpu.borrow(e21, b20)
-  let w24 = rt.int_wrap(1, e13, rt.int_wrap(2, b23, 38))
+  let w24 = rt.int_wrap(1, e13, rt.int_wrap(2, rt.ct_barrier(b23), 38))
   st(h, 0, w24)
   st(h, 8, d16)
   st(h, 16, d19)
@@ -744,7 +767,7 @@ fn fe64_mul121665(h: Int, f: Int) {
   let s13 = cpu.adc(lo7, hi6, k12)
   let k14 = cpu.adc_carry(lo7, hi6, k12)
   let w15 = rt.int_wrap(0, hi8, k14)
-  let t16 = rt.int_wrap(2, w15, 38)
+  let t16 = rt.int_wrap(2, rt.ct_barrier(w15), 38)
   let s17 = cpu.adc(lo1, t16, 0)
   let k18 = cpu.adc_carry(lo1, t16, 0)
   let s19 = cpu.adc(s9, 0, k18)
@@ -753,7 +776,7 @@ fn fe64_mul121665(h: Int, f: Int) {
   let k22 = cpu.adc_carry(s11, 0, k20)
   let s23 = cpu.adc(s13, 0, k22)
   let k24 = cpu.adc_carry(s13, 0, k22)
-  let w25 = rt.int_wrap(0, s17, rt.int_wrap(2, k24, 38))
+  let w25 = rt.int_wrap(0, s17, rt.int_wrap(2, rt.ct_barrier(k24), 38))
   st(h, 0, w25)
   st(h, 8, s19)
   st(h, 16, s21)

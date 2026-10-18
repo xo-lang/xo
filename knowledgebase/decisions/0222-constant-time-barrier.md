@@ -63,7 +63,8 @@ written, with no if-conversion or range reasoning across calls.
     self-hosted arm64 emitter's code of ct.mask_nonzero, ct.pick, and
     ed25519.ge_cmov has no conditional branch, csel, or cset,
     ct.bytes_equal no csel, cbz, or tbz, ed25519.ge_mul and sc_reduce
-    no csel or cset; the LLVM IR carries the barrier asm (twice in
+    no csel or cset, x25519.madd_digit and base (the fixed base
+    public key, 2026-10-18) no csel or cset; the LLVM IR carries the barrier asm (twice in
     bytes_equal) or calls ct's masks. `xo dev codegen` gained `// func
     MOD.NAME` lines to name a function of another module (a std runtime
     module's).
@@ -75,7 +76,14 @@ written, with no if-conversion or range reasoning across calls.
     where the check says (ct.mask_nonzero, ct.bytes_equal,
     ed25519.ge_cmov, sc_reduce, ge_mul). Its control compiles the same
     IR with every barrier an add of 0 and logs the selects: sc_reduce
-    gets 4 csel on arm64, which is what the barrier prevents. On arm64 hosts it checks arm64; the same test
+    gets 4 csel on arm64, which is what the barrier prevents.
+    x25519.madd_digit and base are checked outside -short (their
+    program reaches them through std/internal's crypto_op, about 80 s of
+    clang); adding them found 38 times a carry bit turned into a select
+    in x25519.xo's generated field code (now through the barrier,
+    scripts/x25519fe64.py mul38) and selects in checked arithmetic's
+    fault paths (now wrapping arithmetic). Their control: 20 and 5
+    selects without the barriers. On arm64 hosts it checks arm64; the same test
     checks x86-64 on an amd64 host (the LLVM backend builds for the host
     only).
 - **crypto.equal is Xo** (std/native/crypto.xo calls ct.bytes_equal, as

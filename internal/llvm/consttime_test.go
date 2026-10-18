@@ -134,6 +134,21 @@ fn main(os: Os) {
 }
 `
 
+// ctLLVMProgFull adds X25519's public key (std/internal's crypto_op,
+// which pulls every crypto module in: clang takes about 80 s on its IR,
+// so it runs outside -short).
+const ctLLVMProgFull = `use std/crypto
+use std/internal
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  let seed = "0123456789abcdef0123456789abcde${n}".bytes()
+  let sig = crypto.ed25519_sign(seed, b"m")
+  os.stdio.println("${crypto.equal(b"abcdefghij", "abcdefghi${n}".bytes())} ${crypto.ed25519_verify(crypto.ed25519_public_key(seed), b"m", sig)}")
+  os.stdio.println(internal.crypto_op("x25519.base", seed, b"", b"", b"").to_hex())
+}
+`
+
 // ctCheck is what TestConstantTimeLLVM requires of one function after
 // clang -O2: barriers is the least number of rt.ct_barrier asm blocks
 // left in it; branchFree forbids conditional branches; noSelect forbids
@@ -145,6 +160,8 @@ type ctCheck struct {
 	barriers   int
 	branchFree bool
 	noSelect   bool
+	// full: only in ctLLVMProgFull (not under -short)
+	full bool
 }
 
 var ctChecks = []ctCheck{
@@ -160,6 +177,12 @@ var ctChecks = []ctCheck{
 	{fn: "ed25519.ge_cmov", barriers: 1, branchFree: true, noSelect: true},
 	{fn: "ed25519.sc_reduce", barriers: 1, noSelect: true},
 	{fn: "ed25519.ge_mul", noSelect: true},
+	// X25519's fixed base path (57541a18): the table row's 8 entries
+	// taken under ct.mask_eq, the sign by ct.mask_bit and ct.pick, and the
+	// scalar's signed digits by wrapping arithmetic (the branches left are
+	// loops over public counts)
+	{fn: "x25519.madd_digit", noSelect: true, full: true},
+	{fn: "x25519.base", noSelect: true, full: true},
 }
 
 // TestConstantTimeLLVM compiles the LLVM IR xo emits for ctLLVMProg with
@@ -186,7 +209,22 @@ func TestConstantTimeLLVM(t *testing.T) {
 		t.Skipf("no instruction patterns for %s", runtime.GOARCH)
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(ctLLVMProg), 0o644); err != nil {
+	prog := ctLLVMProgFull
+	checks := ctChecks
+	if testing.Short() {
+		prog = ctLLVMProg
+		checks = nil
+		for _, c := range ctChecks {
+			if !c.full {
+				checks = append(checks, c)
+			}
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// a module of the toolchain's own (std/internal, for x25519.base)
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module github.com/xo-lang/xo/test/consttimellvm\nedition preview\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ir, err := xotool.LLVMIR(dir)
@@ -194,7 +232,7 @@ func TestConstantTimeLLVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	var names []string
-	for _, c := range ctChecks {
+	for _, c := range checks {
 		names = append(names, c.fn)
 	}
 	kept, err := ctKeep(string(ir), names)
@@ -222,13 +260,13 @@ func TestConstantTimeLLVM(t *testing.T) {
 	out := compile("prog", kept)
 	// the control: the same IR with each barrier an add of 0
 	plain := compile("nobarrier", regexp.MustCompile(`call i64 asm "", "=r,0"\(i64 ([^)]*)\)`).ReplaceAllString(kept, "add i64 $1, 0"))
-	for _, c := range ctChecks {
+	for _, c := range checks {
 		if c.noSelect {
 			t.Logf("without the barriers %s has %d conditional selects", c.fn, len(selectRE.FindAllString(ctAsmFunc(plain, "x."+c.fn), -1)))
 		}
 	}
 	asmRE := regexp.MustCompile(`(?m)InlineAsm Start|^\s*[#/;]+APP$`)
-	for _, c := range ctChecks {
+	for _, c := range checks {
 		body := ctAsmFunc(out, "x."+c.fn)
 		if body == "" {
 			t.Errorf("%s: no function in clang's output", c.fn)
