@@ -574,6 +574,56 @@ fn (g: G) prologue(var b: List[Str]) {
     }
   }
   g.saves(b, "str", "stp")
+  g.poison_frame(b)
+}
+
+/// The poison word (ssa.Module.poison_frames): 0xdeadbeefdeadbeef, not a
+/// canonical address, so a load through it faults, and recognizable in a
+/// register dump or a printed length.
+const POISON_HALVES = [48879, 57005, 48879, 57005]
+
+/// Fills the frame's words that the code writes before it reads (the
+/// outgoing arguments, the spill slots, the memory area) with the poison
+/// word when the module asks for it (XO_POISON_FRAMES=1), so a read of one
+/// that no path wrote shows at once. Not the frame record or the saved
+/// registers; not a far frame (g.base, its slots past sp's reach).
+fn (g: G) poison_frame(var b: List[Str]) {
+  if !g.m.poison_frames || g.x86 || g.fr.leaf || g.base != 0 {
+    return
+  }
+  let fr = g.fr
+  let lo = if fr.out_args == 0 { 16 } else { 0 }
+  let spans = [(lo, fr.save_base), (fr.mem_off, fr.mem_off + g.mem_bytes)]
+  var any = false
+  for (s, e) in spans {
+    any = any || s + 8 <= e
+  }
+  if !any {
+    return
+  }
+  b.push("\tmov x16, #${POISON_HALVES[0]}\n")
+  for k in 1..4 {
+    b.push("\tmovk x16, #${POISON_HALVES[k]}, lsl #${16 * k}\n")
+  }
+  for (s, e) in spans {
+    var off = s
+    while off + 16 <= e && off <= 496 {
+      b.push("\tstp x16, x16, [sp, #${off}]\n")
+      off += 16
+    }
+    while off + 8 <= e {
+      if off <= 32760 {
+        b.push("\tstr x16, [sp, #${off}]\n")
+      } else {
+        b.push("\tadd x17, sp, #${off >> 12}, lsl #12\n")
+        if (off & 4095) > 0 {
+          b.push("\tadd x17, x17, #${off & 4095}\n")
+        }
+        b.push("\tstr x16, [x17]\n")
+      }
+      off += 8
+    }
+  }
 }
 
 /// Stores or loads the callee saved registers, in pairs when it can (the

@@ -370,6 +370,42 @@ func TestLinuxEmit(t *testing.T) {
 // 0215; compiler/arm64 has its own Xo tests (TestSelfhostArm64 compares
 // its assembly with the recording).
 
+// TestGoldenRunPoison runs goldens that keep values in frame slots,
+// frame homes, and memory areas, built with XO_POISON_FRAMES=1 (each
+// frame's words filled with 0xdeadbeefdeadbeef in the prologue): a correct
+// program never reads a word it did not write, so the output is the same,
+// and a read before any write shows as the poison (2026-10-18: a frame
+// home that one loop entry left unwritten read old return addresses).
+func TestGoldenRunPoison(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	names := []string{"byref_home_loop", "byref_held", "byref_struct", "byref_enum", "var_alias", "value_semantics", "structs", "closures", "maps", "conc_scopes", "fault_unwind", "json_text", "tls_nistec", "http_server"}
+	for _, name := range names {
+		dir := filepath.Join("..", "llvm", "testdata", "golden", name)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_POISON_FRAMES=1", "XO_BACKEND_CACHE=off"}})
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != got.String() {
+				t.Errorf("output differs from want.txt with XO_POISON_FRAMES=1\n--- want\n%s\n--- got\n%s", want, got)
+			}
+		})
+	}
+}
+
 // TestGoldenRunSpill builds golden programs whose code has long straight
 // blocks, multi-operand templates (the adc chains of cpu_prims and P-256,
 // add_with_flag's adds and cset), and faults with the register allocator

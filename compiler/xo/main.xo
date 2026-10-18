@@ -730,6 +730,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     }
     gm.passes_off = passes_off(os)
     gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
+    gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
     // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
     // a release build without --debug-info
     gm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)

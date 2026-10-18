@@ -112,6 +112,8 @@ fn dump_body(os: Os, args: List[Str]) ! {
       continue
     }
     b.run_passes()
+    // as xo build does (compiler/xo main.xo)
+    b.m.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
     if repeat > 0 {
       let t0 = os.clock.now()
       for _ in 0..repeat {

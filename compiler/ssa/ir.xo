@@ -328,6 +328,13 @@ pub struct Module {
   /// calling convention's own), so most values spill ($XO_ARM64_REGS;
   /// 0, the default: all of them).
   pub arm64_regs: Int = 0
+  /// The arm64 backend fills each frame's spill slots, outgoing argument
+  /// words and memory area (frame homes, aggregates) with POISON in the
+  /// prologue (XO_POISON_FRAMES=1): a read before any write sees a value
+  /// no pointer, length or tag has, and faults or prints it at once
+  /// instead of reading a stale word (2026-10-18: a frame home left
+  /// unwritten on one loop entry read old return addresses).
+  pub poison_frames: Bool = false
   /// Functions the arm64 inliner leaves out, by name, or by prefix for
   /// an entry ending in `*` ($XO_INLINE_DENY, comma separated): a
   /// measurement knob, each callee's speed against its text
