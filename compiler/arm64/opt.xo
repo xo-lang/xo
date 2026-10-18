@@ -879,6 +879,18 @@ fn (var g: G) safe_add(a: Int, n0: Int, o: ssa.Op) -> Bool {
 /// Sends a jump to a block that only tests a register straight to the
 /// test's outcome when the jumping block set that register to a constant.
 fn (var g: G) thread_const() {
+  let kd = g.const_defs()
+  // a jump sent on can reach another test of the constant (a derived
+  // compare's `c != 0`, then its caller's `c < 0`): again until nothing
+  // moves
+  var rounds = 0
+  while rounds < 4 && g.thread_const_once(kd) {
+    rounds += 1
+  }
+}
+
+fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
+  var moved = false
   for p in g.all_blocks() {
     if g.term_kind(p) != K_JUMP {
       continue
@@ -896,7 +908,7 @@ fn (var g: G) thread_const() {
     }
     var r = br.us[0]
     var k = 0
-    if br.cond != "cbnz" {
+    if br.cond != "cbnz" && br.cond != "tbz" && br.cond != "tbnz" {
       if br.us.len() != 1 {
         continue
       }
@@ -943,7 +955,7 @@ fn (var g: G) thread_const() {
       c -= 1
     }
     if !found {
-      let (v0, ok0) = g.const_before(p, np - 1, r)
+      let (v0, ok0) = g.const_before(p, np - 1, r, kd)
       val = v0
       ok = ok0
     }
@@ -953,6 +965,8 @@ fn (var g: G) thread_const() {
     var taken = false
     match br.cond {
       "cbnz" => taken = val != 0
+      "tbnz" => taken = ((val >> br.bit) & 1) != 0
+      "tbz" => taken = ((val >> br.bit) & 1) == 0
       "eq" => taken = val == k
       "ne" => taken = val != k
       "lt" => taken = val < k
@@ -968,7 +982,9 @@ fn (var g: G) thread_const() {
       ins = copy_moves(ins, chain)
     }
     g.put_insts(p, ins)
+    moved = true
   }
+  moved
 }
 
 /// Follows j0, p's jump target, through blocks that only move registers
@@ -1029,7 +1045,7 @@ fn copy_moves(ins: List[Inst], chain: List[Inst]) -> List[Inst] {
 /// (opt.go constBefore): the last definition of r there is a parallel
 /// move of an immediate or of a register that holds one, or a `mov` of a
 /// constant.
-fn (g: G) const_before(p: Int, end: Int, r: Int) -> (Int, Bool) {
+fn (g: G) const_before(p: Int, end: Int, r: Int, kd: Map[Int, Int]) -> (Int, Bool) {
   var k = end - 1
   while k >= 0 {
     let inst = g.blocks[p].insts[k]
@@ -1046,24 +1062,66 @@ fn (g: G) const_before(p: Int, end: Int, r: Int) -> (Int, Bool) {
           return (0, true) // xzr
         }
         if sr.kind == S_REG {
-          return g.const_before(p, k, sr.v)
+          return g.const_before(p, k, sr.v, kd)
         }
         return (0, false)
       }
-      if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && (inst.text.starts_with("mov $d0, #") || inst.text.starts_with("mov $wd0, #")) {
-        // mov_imm's one instruction forms (a w register's zero extends)
-        let rest = inst.text.trim_prefix("mov $d0, #").trim_prefix("mov $wd0, #")
-        if let Some(n) = Int.parse(rest) {
-          if "${n}" == rest {
-            return (n, true)
-          }
-        }
-      }
-      return (0, false)
+      return konst_value(inst)
     }
     k -= 1
   }
+  // set in another block: a constant's only definition (a Const of a
+  // dominating block, the inliner's -1, 0, 1 of a compare)
+  if let Some(n) = kd.get(r) {
+    return (n, true)
+  }
   (0, false)
+}
+
+/// The value of a constant's mov_imm instruction (its one instruction
+/// forms; a w register's zero extends).
+fn konst_value(inst: Inst) -> (Int, Bool) {
+  if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && (inst.text.starts_with("mov $d0, #") || inst.text.starts_with("mov $wd0, #")) {
+    let rest = inst.text.trim_prefix("mov $d0, #").trim_prefix("mov $wd0, #")
+    if let Some(n) = Int.parse(rest) {
+      if "${n}" == rest {
+        return (n, true)
+      }
+    }
+  }
+  (0, false)
+}
+
+/// The registers defined once in the function, by a constant's mov_imm
+/// or a move of an immediate, and their values.
+fn (g: G) const_defs() -> Map[Int, Int] {
+  var ndefs: Map[Int, Int] = {}
+  var vals: Map[Int, Int] = {}
+  for b in g.all_blocks() {
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+      }
+      let (n, ok) = konst_value(inst)
+      if ok {
+        vals[inst.defs[0]] = n
+      }
+      if inst.kind == K_PMOVE {
+        for (i, d) in inst.defs.indexed() {
+          if inst.srcs[i].kind == S_IMM {
+            vals[d] = inst.srcs[i].imm
+          }
+        }
+      }
+    }
+  }
+  var out: Map[Int, Int] = {}
+  for (r, n) in vals {
+    if (ndefs.get(r) ?? 0) == 1 {
+      out[r] = n
+    }
+  }
+  out
 }
 
 /// Turns `t = cmp ...; cset; r = t; jump J` where J only branches on r

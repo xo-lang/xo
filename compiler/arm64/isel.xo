@@ -1244,6 +1244,9 @@ fn (var g: G) branch_op(v: Int) {
       // swapped), one instruction for the compare and the branch (the
       // execution trace's context checks, decision 0240)
       inst = Inst{kind: K_CONDBR, us: cmp.us, cond: "cbnz", bit: if cmp.cond == "eq" { 1 } else { 0 }}
+    } else if cmp.text == "cmp $u0, #0" && (cmp.cond == "lt" || cmp.cond == "ge") {
+      // a word's sign: test bit 63 and branch (tbnz when negative)
+      inst = Inst{kind: K_CONDBR, us: cmp.us, cond: if cmp.cond == "lt" { "tbnz" } else { "tbz" }, bit: 63}
     }
   } else {
     let w = g.word(c)
