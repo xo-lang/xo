@@ -189,3 +189,23 @@ on arm64), tlssrv write and recv_some (the same shape), any_of's share
 walk of the TLS connection (both backends), allocation fast paths and
 drops not inlined (alloc.alloc 6,134 against 4,450; `drop Str` 1,396
 against 0), and the AES-GCM loops (Gcm.ctr 2,052 against 1,315).
+
+## The full TLS handshake (tls-newconn), the std side (2026-10-18)
+
+Per handshake request (X25519MLKEM768 key exchange, an ECDSA P-256
+certificate), N=20, REPS=2; arm64 and LLVM on arm64:
+
+| Change | arm64 | LLVM |
+|---|---|---|
+| main 58f5f245 | 2,531,690 | 2,228,711 |
+| X25519's public key from a fixed base Edwards table (3eea92b1; one ladder a handshake instead of two) | 2,287,554 (-9.6%) | 2,018,675 (-9.4%) |
+| the transcript hashed as it grows (it was hashed whole at six points) | 2,246,611 (-1.8%) | 1,986,943 (-1.6%) |
+| tls13 encoders into one string, and list literals with room for their elements (SSA) | 2,180,430 (-2.9%) | 1,926,408 (-3.0%) |
+
+In all -13.9% and -13.6%. On linux/amd64 (emulated, no SHA
+instructions) the first two: Xo amd64 5,652,832 to 4,402,664 (-22%),
+LLVM 4,143,682 to 3,174,248 (-23%).
+
+Where a handshake went before (arm64): x25519 31%, P-256 signing 16%,
+ML-KEM 13% and its SHAKE 7%, the runtime (allocation, counts) 10%,
+SHA-256/HMAC/HKDF 6%, AES-GCM 4%.

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Full TLS 1.3 handshakes: -13.9% (arm64) and -13.6% (LLVM)
+  instructions on the callgrind benchmark, -22% on linux/amd64: X25519's
+  public key from a fixed base table (one ladder instead of two), the
+  transcript hashed incrementally, cheaper encoders, and list literals
+  allocated at their final size.
+
 - HTTP/2 server: -12.3% (arm64) and -8.2% (LLVM) instructions per
   request on the callgrind benchmark: the request checks compare in
   place, a request's parts are no longer packed and copied out again,
