@@ -8,10 +8,13 @@
 // decision 0231's addendum; no branch or index on a secret), and the
 // inversion as a fixed power. A
 // low order point gives all zeros; Go's ECDH reports that as an error,
-// and the TLS layer must reject it.
+// and the TLS layer must reject it. A public key ([scalar]9, base) is
+// computed on the twisted Edwards curve instead, from a table of fixed
+// multiples (x25519_btab.xo), about a third of the ladder's work.
 use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/ed25519
+use native/llrt/x25519_btab
 use native/rt
 
 // byte offsets of the ladder's elements past ed25519.SPARE
@@ -34,6 +37,24 @@ const S3: Int = 600
 const S4: Int = 640
 // the elements' words
 const EXTRA: Int = 85
+// base's elements past ed25519.SPARE (the ladder's S0 to S4 for the
+// inversion): the selected entry (y + x, y - x, 2 d x y), the point
+// (X : Y : Z : T), a completed point (ref10's p1p1), and temporaries
+const PX: Int = 680
+const MX: Int = 720
+const XY: Int = 760
+const NEG: Int = 800
+const ZERO: Int = 840
+const VX: Int = 880
+const VY: Int = 920
+const VZ: Int = 960
+const VT: Int = 1000
+const RX: Int = 1040
+const RY: Int = 1080
+const RZ: Int = 1120
+const RT: Int = 1160
+const T0: Int = 1200
+const BEXTRA: Int = 160
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
@@ -168,13 +189,178 @@ fn fe64_inv(h: Int, z: Int, s0: Int, s1: Int, s2: Int, s3: Int, s4: Int) {
   fe64_mul(h, s3, s2) // z^(2^255 - 21)
 }
 
-/// The public key of scalar: [scalar]9 (RFC 7748 6.1).
+/// The public key of scalar: [scalar]9 (RFC 7748 6.1), as Go's
+/// edwards25519 ScalarBaseMult then the map to Montgomery u: the clamped
+/// scalar's 64 signed radix 16 digits d (in -8 to 7, the last up to 8),
+/// each digit's multiple of 16^i B taken from x25519_btab.xo's 8 entries
+/// of 256^(i/2) B under masks (negated by a masked swap and a masked
+/// negation), the odd digits added first, then 4 doublings, then the
+/// even ones: 64 mixed additions and 4 doublings, then u = (Z + Y) / (Z -
+/// Y). Constant time in the scalar as scalar_mult; about 120,000
+/// instructions where the ladder took 390,000 (2026-10-18).
 pub fn base(scalar: Bytes) -> Bytes {
-  var nine = rt.rs_push_byte(rt.rs_with_cap(32), 9)
-  for _ in 0..31 {
-    nine = rt.rs_push_byte(nine, 0)
+  let w = ed25519.field_workspace(BEXTRA)
+  let m = ed25519.base(w)
+  let e = rt.int_wrap(0, m, ed25519.SPARE)
+  let tb = rt.int_wrap(0, rt.obj_addr(x25519_btab.BTAB), rt.layout(2))
+  // clamped as scalar_mult
+  let top = rt.int_wrap(3, 1, 63)
+  let k = [rt.bytes_word(scalar, 0) & ~7, rt.bytes_word(scalar, 8), rt.bytes_word(scalar, 16), (rt.bytes_word(scalar, 24) & ~top) | rt.int_wrap(3, 1, 62)]
+  var dg: List[Int] = []
+  for i in 0..64 {
+    dg.push(rt.int_wrap(4, k[i / 16], 4 * (i % 16)) & 15)
   }
-  scalar_mult(scalar, nine.bytes())
+  for i in 0..63 {
+    let carry = rt.int_wrap(4, dg[i] + 8, 4)
+    dg[i] = dg[i] - 16 * carry
+    dg[i + 1] = dg[i + 1] + carry
+  }
+  fe64_set(at(e, ZERO), 0)
+  // the identity (0 : 1 : 1 : 0)
+  fe64_set(at(e, VX), 0)
+  fe64_set(at(e, VY), 1)
+  fe64_set(at(e, VZ), 1)
+  fe64_set(at(e, VT), 0)
+  var i = 1
+  while i < 64 {
+    madd_digit(e, tb, i / 2, dg[i])
+    i += 2
+  }
+  for _ in 0..4 {
+    dbl(e)
+  }
+  i = 0
+  while i < 64 {
+    madd_digit(e, tb, i / 2, dg[i])
+    i += 2
+  }
+  let u = at(e, RX)
+  let z = at(e, RY)
+  fe64_add(u, at(e, VZ), at(e, VY))
+  fe64_sub(z, at(e, VZ), at(e, VY))
+  fe64_inv(z, z, at(e, S0), at(e, S1), at(e, S2), at(e, S3), at(e, S4))
+  fe64_mul(u, u, z)
+  fe64_freeze(u, u)
+  var s = rt.rs_with_cap(32)
+  for b in 0..4 {
+    s = rt.rs_push_word(s, ld(u, 8 * b), 8)
+  }
+  keep(w)
+  s.bytes()
+}
+
+fn at(e: Int, off: Int) -> Int { rt.int_wrap(0, e, off) }
+
+/// Adds to base's point the multiple d 256^row B (d in -8 to 8), chosen
+/// from the table tb under masks: the identity entry (1, 1, 0) for 0, a
+/// negative digit's entry with y + x and y - x swapped and 2 d x y
+/// negated. ref10's ge_madd, then the completed point to (X : Y : Z : T).
+fn madd_digit(e: Int, tb: Int, row: Int, d: Int) {
+  let sg = ct.mask_bit(rt.int_wrap(4, d, 63))
+  let a = (d ^ sg) - sg
+  var p0 = 0
+  var p1 = 0
+  var p2 = 0
+  var p3 = 0
+  var m0 = 0
+  var m1 = 0
+  var m2 = 0
+  var m3 = 0
+  var t0 = 0
+  var t1 = 0
+  var t2 = 0
+  var t3 = 0
+  var j = 1
+  while j < 9 {
+    let msk = ct.mask_eq(j, a)
+    let en = rt.int_wrap(0, tb, 96 * (8 * row + j - 1))
+    p0 = p0 | (ld(en, 0) & msk)
+    p1 = p1 | (ld(en, 8) & msk)
+    p2 = p2 | (ld(en, 16) & msk)
+    p3 = p3 | (ld(en, 24) & msk)
+    m0 = m0 | (ld(en, 32) & msk)
+    m1 = m1 | (ld(en, 40) & msk)
+    m2 = m2 | (ld(en, 48) & msk)
+    m3 = m3 | (ld(en, 56) & msk)
+    t0 = t0 | (ld(en, 64) & msk)
+    t1 = t1 | (ld(en, 72) & msk)
+    t2 = t2 | (ld(en, 80) & msk)
+    t3 = t3 | (ld(en, 88) & msk)
+    j += 1
+  }
+  let zm = ct.mask_eq(0, a)
+  p0 = p0 | (1 & zm)
+  m0 = m0 | (1 & zm)
+  let px = at(e, PX)
+  let mx = at(e, MX)
+  let xy = at(e, XY)
+  st(px, 0, ct.pick(sg, m0, p0))
+  st(px, 8, ct.pick(sg, m1, p1))
+  st(px, 16, ct.pick(sg, m2, p2))
+  st(px, 24, ct.pick(sg, m3, p3))
+  st(mx, 0, ct.pick(sg, p0, m0))
+  st(mx, 8, ct.pick(sg, p1, m1))
+  st(mx, 16, ct.pick(sg, p2, m2))
+  st(mx, 24, ct.pick(sg, p3, m3))
+  st(xy, 0, t0)
+  st(xy, 8, t1)
+  st(xy, 16, t2)
+  st(xy, 24, t3)
+  let ng = at(e, NEG)
+  fe64_sub(ng, at(e, ZERO), xy)
+  for b in 0..4 {
+    st(xy, 8 * b, ct.pick(sg, ld(ng, 8 * b), ld(xy, 8 * b)))
+  }
+  let rx = at(e, RX)
+  let ry = at(e, RY)
+  let rz = at(e, RZ)
+  let rtt = at(e, RT)
+  let tz = at(e, T0)
+  fe64_add(rx, at(e, VY), at(e, VX))
+  fe64_sub(ry, at(e, VY), at(e, VX))
+  fe64_mul(rz, rx, px)
+  fe64_mul(ry, ry, mx)
+  fe64_mul(rtt, xy, at(e, VT))
+  fe64_add(tz, at(e, VZ), at(e, VZ))
+  fe64_sub(rx, rz, ry)
+  fe64_add(ry, rz, ry)
+  fe64_add(rz, tz, rtt)
+  fe64_sub(rtt, tz, rtt)
+  p1p1_to_p3(e)
+}
+
+/// Doubles base's point: ref10's ge_p2_dbl, then the completed point to
+/// (X : Y : Z : T).
+fn dbl(e: Int) {
+  let rx = at(e, RX)
+  let ry = at(e, RY)
+  let rz = at(e, RZ)
+  let rtt = at(e, RT)
+  let tz = at(e, T0)
+  fe64_sq(rx, at(e, VX))
+  fe64_sq(rz, at(e, VY))
+  fe64_sq(rtt, at(e, VZ))
+  fe64_add(rtt, rtt, rtt)
+  fe64_add(ry, at(e, VX), at(e, VY))
+  fe64_sq(tz, ry)
+  fe64_add(ry, rz, rx)
+  fe64_sub(rz, rz, rx)
+  fe64_sub(rx, tz, ry)
+  fe64_sub(rtt, rtt, rz)
+  p1p1_to_p3(e)
+}
+
+/// base's completed point (RX : RY : RZ : RT, ref10's p1p1) to its
+/// point: X = RX RT, Y = RY RZ, Z = RZ RT, T = RX RY.
+fn p1p1_to_p3(e: Int) {
+  let rx = at(e, RX)
+  let ry = at(e, RY)
+  let rz = at(e, RZ)
+  let rtt = at(e, RT)
+  fe64_mul(at(e, VX), rx, rtt)
+  fe64_mul(at(e, VY), ry, rz)
+  fe64_mul(at(e, VZ), rz, rtt)
+  fe64_mul(at(e, VT), rx, ry)
 }
 
 /// The workspace is alive up to here (ed25519.xo's keep).

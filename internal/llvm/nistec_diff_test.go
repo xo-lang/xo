@@ -211,9 +211,19 @@ func TestX25519Diff(t *testing.T) {
 		}
 		want = append(want, hex.EncodeToString(ref))
 	}
-	for i := 0; i < 20; i++ {
+	// base takes the twisted Edwards curve's fixed base table (signed
+	// radix 16 digits): scalars whose clamped digits carry through every
+	// position, all zeros and all ones, and many random ones
+	var bases [][]byte
+	for _, f := range []byte{0x00, 0xff, 0x88, 0x77, 0x08, 0xf8} {
+		bases = append(bases, bytes.Repeat([]byte{f}, 32))
+	}
+	for i := 0; i < 300; i++ {
 		k := make([]byte, 32)
 		rand.Read(k)
+		bases = append(bases, k)
+	}
+	for _, k := range bases {
 		in.WriteString(fmt.Sprintf("x25519 base %x - -\n", k))
 		nine := make([]byte, 32)
 		nine[0] = 9
