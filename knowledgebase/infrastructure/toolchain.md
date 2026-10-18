@@ -1381,6 +1381,23 @@ run) has two modes (2026-10-18):
 - `ARCH=amd64` works with either mode; N, REPS, and SCENARIOS given
   explicitly override the mode's.
 
+### Gate and fuzz runners (2026-10-18)
+
+- `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to
+  std/native, the runtime, HTTP, TLS, or the compiler, from the checkout
+  under test: build (xobuild, unless XO_CLI is set), short, llvm goldens,
+  arm64 goldens, tls (the TLS, crypto, and HTTP/1 diff tests with the fuzz
+  corpora), h2diff (alone: it is load sensitive), codegen (the constant
+  time checks), fp (bootstrap-xo.sh from $XO_SEED or the newest cached
+  seed; the stage outputs deleted after). OUTDIR/gate.log has a
+  STEP=STATUS line per step; each step's output is OUTDIR/STEP.log. Run
+  it in a heavy slot. Add `MODE=short bench/perf/http/callgrind-docker.sh`
+  for the cost of an HTTP change.
+- `scripts/fuzz-http.sh OUTDIR [SECONDS]`: TestHTTPFuzz (seeded from the
+  clock) and the Go fuzzer on FuzzHTTPDiff, SECONDS each (default 1800);
+  new FuzzHTTPDiff failures land in internal/llvm/testdata/fuzz for
+  review.
+
 ## Package layout (P1, implemented parts)
 
 ```
