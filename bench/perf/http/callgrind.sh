@@ -28,6 +28,8 @@
 # bench/perf/http/cgcompare.py and xo dev compare. KEEP=1 keeps each
 # run's callgrind output too, as OUT/cg.SCENARIO.CYCLES, for
 # callgrind_annotate --tree=caller (who calls the allocator, 2026-10-18).
+# CGFLAGS adds valgrind flags (--dump-instr=yes: each call's site by
+# instruction address, which tail calls cannot confuse).
 #
 # Prints one line per measurement: `<scenario> <name> <instructions per
 # request> <requests>`, and the raw counts to OUT/raw.txt.
@@ -62,9 +64,9 @@ run() {
 	cg="$out/cg.$port"
 	if [ "$scheme" = https ]; then
 		TLS_CERT=$(cat "$out/cert.pem") TLS_KEY=$(cat "$out/key.pem") PORT=$port \
-			valgrind --tool=callgrind --callgrind-out-file="$cg" "$srv" > "$out/srv.$port.log" 2> "$out/vg.$port.log" &
+			valgrind --tool=callgrind ${CGFLAGS:-} --callgrind-out-file="$cg" "$srv" > "$out/srv.$port.log" 2> "$out/vg.$port.log" &
 	else
-		PORT=$port valgrind --tool=callgrind --callgrind-out-file="$cg" "$srv" > "$out/srv.$port.log" 2> "$out/vg.$port.log" &
+		PORT=$port valgrind --tool=callgrind ${CGFLAGS:-} --callgrind-out-file="$cg" "$srv" > "$out/srv.$port.log" 2> "$out/vg.$port.log" &
 	fi
 	vp=$!
 	reqs=$("$lg" -url "$scheme://127.0.0.1:$port" -preload 8 -route cycle -n "$cycles" $flags | sed 's/[^0-9]//g')
