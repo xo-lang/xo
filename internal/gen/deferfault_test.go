@@ -41,7 +41,13 @@ func TestDeferFaultProperty(t *testing.T) {
 		}
 		n = k
 	}
-	for seed := 1; seed <= n; seed++ {
+	// XO_DEFER_FAULT_PROP_FIRST: the first seed, for batches
+	// (scripts/progen-batches.sh)
+	first := 1
+	if v, err := strconv.Atoi(os.Getenv("XO_DEFER_FAULT_PROP_FIRST")); err == nil && v > 0 {
+		first = v
+	}
+	for seed := first; seed < first+n; seed++ {
 		seed := seed
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
