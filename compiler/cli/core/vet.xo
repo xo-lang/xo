@@ -1040,14 +1040,14 @@ fn store_only_params(c: check.Checker, m: Int) -> List[Diag] {
       var nodes: List[parser.Expr] = []
       walk_fn(fd, nodes)
       let stored = stored_locals(c, f, nodes)
-      let uses = local_uses(c, f, nodes)
+      let named = local_uses(c, f, nodes)
       for (k, p) in fd.params.indexed() {
         if p.is_var || p.is_self || k >= c.objs[fo].params.len() {
           continue
         }
         let v = c.var_of(f, p.name)
         let st = stored.get(v) ?? 0
-        if v < 0 || st == 0 || st != (uses.get(v) ?? 0) {
+        if v < 0 || st == 0 || st != (named.get(v) ?? 0) {
           continue
         }
         let t = c.objs[fo].params[k].ty
