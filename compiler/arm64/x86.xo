@@ -451,7 +451,7 @@ fn (var g: G) x86_tpl(inst: Inst, conds: List[Str]) -> XT {
   var x = XT{}
   let src = inst.text.replace("\n\t", "\n")
   let lines = src.split("\n")
-  if lines.len() == 1 && lines[0].starts_with(".weak ") {
+  if lines.len() == 1 && (lines[0].starts_with(".weak ") || lines[0].starts_with(".weak_reference ")) {
     x.lines = lines
     return x
   }
@@ -669,6 +669,11 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       let d = xop(ops[0], 8)
       if ops[1].starts_with(":got:") {
         x.lines.push("movq ${ops[1][5..ops[1].len()]}@GOTPCREL(%rip), ${d}")
+      } else if ops[1].ends_with("@GOTPAGE") {
+        // Mach-O's GOT entry (darwin)
+        x.lines.push("movq ${ops[1][0..ops[1].len() - 8]}@GOTPCREL(%rip), ${d}")
+      } else if ops[1].ends_with("@PAGE") {
+        x.lines.push("leaq ${ops[1][0..ops[1].len() - 5]}(%rip), ${d}")
       } else {
         x.lines.push("leaq ${ops[1]}(%rip), ${d}")
       }

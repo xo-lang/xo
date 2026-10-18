@@ -19,7 +19,7 @@ use github.com/xo-lang/xo/compiler/ssa
 /// relaxed atomic decrement of the negative count), with scratch
 /// registers t (64 bit) and st (32 bit, Linux only).
 fn (g: G) atomic_inc(obj: Str, t: Str, st: Str) -> Str {
-  if g.os == "darwin" {
+  if g.os == "darwin" && !g.x86 {
     return "mov ${t}, #-1\n\tstadd ${t}, [${obj}]"
   }
   "1:\n\tldxr ${t}, [${obj}]\n\tsub ${t}, ${t}, #1\n\tstxr ${st}, ${t}, [${obj}]\n\tcbnz ${st}, 1b"
@@ -29,7 +29,7 @@ fn (g: G) atomic_inc(obj: Str, t: Str, st: Str) -> Str {
 /// acquire and release order, and leaves the flags eq when it was the
 /// last reference.
 fn (g: G) atomic_dec(obj: Str, t: Str, st: Str) -> Str {
-  if g.os == "darwin" {
+  if g.os == "darwin" && !g.x86 {
     return "mov ${t}, #1\n\tldaddal ${t}, ${t}, [${obj}]\n\tcmn ${t}, #1"
   }
   "1:\n\tldaxr ${t}, [${obj}]\n\tadd ${t}, ${t}, #1\n\tstlxr ${st}, ${t}, [${obj}]\n\tcbnz ${st}, 1b\n\tcmp ${t}, #0"

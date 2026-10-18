@@ -445,8 +445,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
     }
-    if backend == "amd64" && tg != "linux/amd64" {
-      fail(os, "the amd64 backend builds for linux/amd64, not ${tg} (decision 0254)")
+    if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64") {
+      fail(os, "the amd64 backend builds for linux/amd64 and darwin/amd64, not ${tg} (decision 0254)")
     }
     if backend == "llvm" && tg != host {
       let sysroot = if tg.starts_with("linux/") { os.env.get("XO_LINUXSYSROOT") ?? "" } else { winsysroot }
@@ -717,12 +717,16 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // source is linked, else cc's, and a linux/arm64 program with no C
     // library links with the ELF linker from any host, a cross build too
     // (default_ld, decision 0243: as GOOS=linux go build)
-    var no_cc = o.linker == "macho"
-    if o.linker.is_empty() && (tg == host || tgoos == "linux") {
+    // the amd64 backend's darwin/amd64 program: Apple's cc assembles and
+    // links it, on an arm64 Mac too (decision 0254 stage 6a, before Xo's
+    // own Mach-O x86_64 assembler and linker)
+    let mac_x86 = march == "amd64" && tg == "darwin/amd64" && host.starts_with("darwin/")
+    var no_cc = o.linker == "macho" && !mac_x86
+    if o.linker.is_empty() && (tg == host || tgoos == "linux") && !mac_x86 {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
-    let macho_as = o.assembler == "macho" || (no_cc && o.assembler.is_empty())
-    if tg != host && !(no_cc && tgoos == "linux") {
+    let macho_as = !mac_x86 && (o.assembler == "macho" || (no_cc && o.assembler.is_empty()))
+    if tg != host && !(no_cc && tgoos == "linux") && !mac_x86 {
       // another target: its assembly only (internal/build buildArm64)
       if !o.json {
         os.stdio.println("${tg}: ${s}")
@@ -1016,6 +1020,12 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   }
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs
+  if tgoos == "darwin" && tgoarch == "amd64" {
+    // the amd64 backend's darwin/amd64 program, assembled and linked by
+    // the Mac's cc for x86_64 (decision 0254 stage 6a, before Xo's own
+    // Mach-O x86_64 assembler and linker)
+    lk.flags = ["-arch", "x86_64"] + lk.flags
+  }
   lk
 }
 

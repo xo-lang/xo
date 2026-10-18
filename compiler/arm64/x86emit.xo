@@ -319,6 +319,10 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
   } else if inst.kind == K_CALL {
     let locs = g.x86_call_locs(inst.srcs, inst.vfix)
     g.x86_parallel(b, g.x86_call_moves(inst.srcs, inst.vfix))
+    if inst.vfix == -3 {
+      // a C call (darwin): no vector registers for a variadic callee
+      b.push("\tmovl $0, %eax\n")
+    }
     // the register a C pointer call goes through: its last argument's
     var target = ""
     if inst.cptr {

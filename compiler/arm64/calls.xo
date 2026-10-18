@@ -1629,6 +1629,15 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
 /// scheduler steals work, decision 0077), so a base is never kept across
 /// one.
 fn (var g: G) tl_base() -> Int {
+  if g.x86 && g.os == "darwin" {
+    // the TLV descriptor's thunk: the table's address in rax, every
+    // register but rax and rdi kept; a call, so the function makes its
+    // frame (rsp aligned to 16 for the thunk's slow path)
+    let d = g.new_vreg(false)
+    let i = g.add(Inst{kind: K_PLAIN, text: "movq _xo_tlocal@TLVP(%rip), %rdi\ncallq *(%rdi)\nmovq %rax, $d0", defs: [d], us: [], x86: true, clobbers: [0, 7], keep: true, frame: true})
+    let _i = i
+    return d
+  }
   if g.os != "darwin" {
     return g.def1(false, "mrs $d0, tpidr_el0\nadd $d0, $d0, :tprel_hi12:xo_tlocal\nadd $d0, $d0, :tprel_lo12_nc:xo_tlocal", [])
   }
@@ -2715,7 +2724,10 @@ fn (var g: G) platform_call(v: Int) {
   }
   var vfix = -1
   if g.os == "darwin" {
-    vfix = nfixed
+    // Apple arm64 passes the variadic arguments on the stack; x86_64's
+    // System V passes them as the others, with the vector registers'
+    // count in al (-3: the emitter zeroes al before the call)
+    vfix = if g.x86 { -3 } else { nfixed }
   }
   let defs = g.new_vregs(res)
   var real: List[Int] = []

@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Xo's own x86_64 backend builds macOS x86_64 programs
+  (`--backend=amd64 --target=darwin/amd64`; linked by Apple's cc for now).
+
 - x86_64 operates on spilled values in place (SHA-3's permutation 26%
   fewer instructions; a TLS handshake with ML-KEM 5%).
 

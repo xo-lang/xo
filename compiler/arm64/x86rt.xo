@@ -434,7 +434,10 @@ fn x86_unwind_resume() -> List[Str] {
 /// with compiler/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
 /// the x87 control word; a new fiber's argument in rbx, its function in
 /// r12).
-fn x86_sched_asm(split: Bool) -> Str {
+fn x86_sched_asm(os: Str, split: Bool) -> Str {
+  if os == "darwin" {
+    return x86_sched_asm_darwin(split)
+  }
   var b: List[Str] = []
   b.push("\t.text\n")
   b.push(x86_sched_fn("xo_stack_switch", true, ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "retq"]))
@@ -521,4 +524,39 @@ fn (var g: G) x86_exports() {
     b.push("\tmovq -8(%rbp), %rbx\n\tleave\n\t.cfi_def_cfa %rsp, 8\n\tretq\n\t.cfi_endproc\n\n")
     g.text.push(b.join(""))
   }
+}
+
+/// x86_sched_asm on darwin/amd64: Mach-O's names and directives, and the
+/// thread locals through the TLV descriptor's thunk (rax the table's
+/// address, every other register kept but rdi; rsp aligned to 16 for
+/// its slow path: one push, which the return address makes 16).
+fn x86_sched_asm_darwin(split: Bool) -> Str {
+  var b: List[Str] = []
+  b.push("\t.section __TEXT,__text,regular,pure_instructions\n")
+  b.push(x86_sched_fn_darwin("xo_stack_switch", true, ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "retq"]))
+  if split {
+    b.push("\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n")
+  }
+  b.push(x86_sched_fn_darwin("xo_fiber_entry", false, ["movq %rbx, %rdi", "callq *%r12", "ud2"]))
+  let tlv = ["pushq %rbp", "movq %rsp, %rbp", "movq _xo_tlocal@TLVP(%rip), %rdi", "callq *(%rdi)", "popq %rbp"]
+  b.push(x86_sched_fn_darwin("xo_tlocal_get", true, ["movq %rdi, %rsi"] + tlv + ["movq (%rax,%rsi,8), %rax", "retq"]))
+  b.push(x86_sched_fn_darwin("xo_tlocal_set", true, ["movq %rdi, %rdx"] + tlv + ["movq %rsi, (%rax,%rdx,8)", "retq"]))
+  b.push(x86_sched_fn_darwin("xo_tlocal_addr", true, tlv + ["retq"]))
+  b.push("\t.section __DATA,__thread_data,thread_local_regular\n\t.p2align 3\n_xo_tlocal_init:\n")
+  b.push("\t.quad 0\n".repeat(16))
+  b.push("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
+  b.push("\t.quad __tlv_bootstrap\n\t.quad 0\n\t.quad _xo_tlocal_init\n")
+  b.join("")
+}
+
+fn x86_sched_fn_darwin(name: Str, global: Bool, body: List[Str]) -> Str {
+  var b: List[Str] = []
+  if global {
+    b.push("\t.globl _${name}\n\t.private_extern _${name}\n")
+  }
+  b.push("\t.p2align 4\n_${name}:\n")
+  for l in body {
+    b.push("\t${l}\n")
+  }
+  b.join("")
 }

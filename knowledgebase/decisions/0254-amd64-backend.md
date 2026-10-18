@@ -234,6 +234,22 @@ runs (a real CPU: SHA-NI, AES-NI, native speed).
   copied over), byte comparison of the assembler against clang's
   `-target x86_64-apple-macos` as stage 1 did for ELF.
 
+6a, step 1 landed (xo-fa, 2026-10-18): `xo build --backend=amd64
+--target=darwin/amd64` builds from either Mac. The emitter writes the
+Mach-O spellings (the arm64 darwin templates' `@PAGE` and `@GOTPAGE`
+addresses as rip relative ones, `.weak_reference` kept), thread locals
+through the TLV descriptor's thunk (`movq _xo_tlocal@TLVP(%rip), %rdi;
+callq *(%rdi)`: rax the table, rdi clobbered; the function makes its
+frame so rsp is aligned for the thunk's slow path; x86rt.xo's darwin
+xo_tlocal_get, _set, _addr and the __thread_vars definition), al zeroed
+before a C call (System V's variadic vector count, where Apple arm64
+passes the variadic arguments on the stack), and the reference counts'
+load and store exclusive loops (darwin arm64's LSE forms are arm64
+only). Apple's cc assembles and links the text for x86_64 (`-arch
+x86_64`, the weak references' `-Wl,-U`), until steps 2 and 3. All 193
+goldens pass on the owner's Intel MacBook (i7-9750H, macOS 26.5.2,
+2026-10-18): built on the arm64 Mac, run there in a new directory.
+
 ### 6b. windows/amd64
 
 - Calling convention (Win64): arguments in rcx, rdx, r8, r9 (each

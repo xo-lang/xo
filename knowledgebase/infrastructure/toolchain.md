@@ -3503,6 +3503,19 @@ use box64 for any structured exception; Debian's arm64 Wine runs no
 ARM64 PE (a hello hangs), so windows/arm64 is cross linked only
 (gotchas/wine-rosetta-no-exceptions.md). Last verified: 2026-10-16.
 
+### darwin/amd64 with Xo's amd64 backend
+
+Since 2026-10-18 (xo-fa, decision 0254 stage 6a): `xo build
+--backend=amd64 --target=darwin/amd64 -o prog .` on a Mac writes the
+x86_64 text and links it with Apple's cc (`-arch x86_64`; it needs no
+Rosetta to link). This arm64 Mac has no Rosetta ("Bad CPU type in
+executable"), so the programs run only on the owner's Intel MacBook:
+build them here, copy them to a new directory under ~/xo-ci there and
+run them with scripts/golden-run.sh (macOS has no `timeout`: a perl
+alarm shim on PATH gives it one), with the owner's OK for the run and
+their rules (new files only, nothing deleted, no --clean). Last
+verified: 2026-10-18 (193 of 193 goldens).
+
 ### XO_NOLIBC cross links on the Mac
 
 Since 2026-10-15 (xo-fa, the backend entry stubs) an XO_NOLIBC=1 program
