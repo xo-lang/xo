@@ -86,4 +86,5 @@
 - [amd64-layout-2026-10-17.md](amd64-layout-2026-10-17.md): amd64 loop layout, coalescable checked-op ties, push/pop frames: collatz 0.787, sieve 0.774, interp 0.886 of main's instructions
 - [arm64-lse-outline-2026-10-17.md](arm64-lse-outline-2026-10-17.md): Linux arm64 elflink outline atomics use LSE when AT_HWCAP has it (xo_lse, XO_LSE=0 off): spawn 0.71 to 0.79, fanout 0.67 to 0.72 of main's CPU time
 - [mem-copy-block-2026-10-17.md](mem-copy-block-2026-10-17.md): the no-libc memcpy's bulk copy as rt.mem_copy_block (arm64 ldp/stp q, amd64 movups): branch 0.345 on arm64 (1.01x LLVM), 0.643 on amd64; copyset 0.607 and 0.789
+- [compare-2026-10-17.md](compare-2026-10-17.md): main ff426087 against LLVM (linux amd64 and arm64, 25 workloads) and Go and Rust (Mac): arm64/LLVM 1.09 geomean (1.32 before), amd64 1.27 (1.63); top gaps maxby, update, strings, nbody
 - [task-gap-2026-10-17.md](task-gap-2026-10-17.md): spawn at XO_THREADS=1 against tokio current_thread: macOS 1.15 to about 1.06, Linux 1.35 to 0.96; two ideas dropped; the task layout parked as the next experiment.
