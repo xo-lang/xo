@@ -906,9 +906,12 @@ pub fn app_secrets(hash: Int, hs: Bytes, tr: Bytes) -> List[Bytes] {
 
 /// The Finished verify data of a base traffic secret over the transcript
 /// so far (RFC 8446 4.4.4).
-pub fn verify_data(hash: Int, base: Bytes, tr: Bytes) -> Bytes {
+pub fn verify_data(hash: Int, base: Bytes, tr: Bytes) -> Bytes { finished_mac(hash, base, sha256.sum(hash, tr)) }
+
+/// verify_data of a transcript whose hash is th.
+pub fn finished_mac(hash: Int, base: Bytes, th: Bytes) -> Bytes {
   let key = hkdf.expand_label(hash, base, "finished", b"", sha256.size(hash))
-  hmac.mac(hash, key, sha256.sum(hash, tr))
+  hmac.mac(hash, key, th)
 }
 
 fn finished(var c: Client, msg: Bytes) {
