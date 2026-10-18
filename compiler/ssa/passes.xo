@@ -600,6 +600,14 @@ fn renumber(var f: Func) {
     }
   }
   f.dbinds = bs
+  // the payloads that took their enum's ownership follow theirs too
+  var mv: Map[Int, Bool] = {}
+  for (k, _) in f.moved {
+    if k >= 0 && k < map.len() && map[k] >= 0 {
+      mv[map[k]] = true
+    }
+  }
+  f.moved = mv
 }
 
 /// Runs cleanup on every function (the cleanup stage).

@@ -1240,17 +1240,23 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   while k >= 0 {
     let v = body[k]
     var after: List[Int] = []
+    // a payload whose owned enum dies here takes its ownership (movable)
+    var mv = false
     if r.is_root(f, v) {
       let kd = r.kind(f, v)
+      mv = kd == RootKind.Proj && r.movable(f, v, live)
+      if mv {
+        f.moved[v] = true
+      }
       for l in r.leaves(f, v) {
         let key = leaf_key(l)
         let lv = live.contains(key)
         if kd == RootKind.Borrowed {
-        } else if lv && kd == RootKind.Proj {
+        } else if lv && kd == RootKind.Proj && !mv {
           for x in r.rc_ops(f, Op.Retain, l, bl, 1) {
             after.push(x)
           }
-        } else if !lv && kd == RootKind.Owned {
+        } else if !lv && (kd == RootKind.Owned || mv) {
           // a leaf dying here is released, unless it is statically
           // immortal (immortal_leaf: a field's old value along a setfield
           // chain from a literal of constants, x509.parse's 588); only
@@ -1273,7 +1279,9 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       let n0 = k2.consumes(l)
       let n1 = k2.borrows(l)
       let tr = r.tracked(f, l)
-      if !tr || live.contains(key) {
+      if mv && !live.contains(key) {
+        // the enum the moved payload came from: consumed by the move
+      } else if !tr || live.contains(key) {
         for x in r.rc_ops(f, Op.Retain, l, bl, n0) {
           before.push(x)
         }
@@ -2186,4 +2194,32 @@ fn merge_jumps(var f: Func) {
       break
     }
   }
+}
+
+/// Whether payload v takes its enum's ownership (Func.moved): it is the
+/// only field of its variant, and the enum leaf it reads is owned,
+/// counted, and dead after v, so the enum's release and the retains of
+/// the payload's live leaves would count the same words.
+fn (var r: Rc) movable(f: Func, v: Int, live: Map[Str, Leaf]) -> Bool {
+  let x = f.values[v]
+  if x.op != Op.Payload || x.args.len() != 1 {
+    return false
+  }
+  let et = f.values[x.args[0]].ty
+  if et < 0 || r.types[et].kind != Kind.Enum {
+    return false
+  }
+  let tag = match x.aux {
+    P(tag, ..) => tag
+    None | I(..) | F(..) | B(..) | S(..) | Bs(..) => -1
+  }
+  if tag < 0 || tag >= r.types[et].variants.len() || r.types[et].variants[tag].fields.len() != 1 {
+    return false
+  }
+  let ls = r.leaves(f, x.args[0])
+  if ls.len() != 1 {
+    return false
+  }
+  let p = ls[0]
+  r.kind(f, p.root) == RootKind.Owned && r.tracked(f, p) && !live.contains(leaf_key(p))
 }

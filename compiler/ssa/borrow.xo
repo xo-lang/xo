@@ -163,11 +163,16 @@ fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
   }
   var seen: Map[Int, Bool] = {}
   var work: List[Int] = [s.b]
+  // a path that reaches root's own block makes it anew there: a use past
+  // it (around a loop) is of the next value, not this one (2026-10-18:
+  // an Option matched in a loop stayed a borrowed projection, and its
+  // payload was shared at the move and dropped with it)
+  let home = f.values[root].block
   while !work.is_empty() {
     let b = work.pop() ?? 0
     for e in f.values[f.term(b)].succs {
       let to = f.edges[e].to
-      if seen.contains(to) {
+      if seen.contains(to) || (to == home && home != s.b) {
         continue
       }
       if used.contains(to) {

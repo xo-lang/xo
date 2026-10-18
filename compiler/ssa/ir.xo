@@ -290,6 +290,11 @@ pub struct Func {
   /// The blocks split off after a check (Func.landRest: merged back when
   /// the check goes, mergeJumps).
   pub land_rest: Map[Int, Bool] = {}
+  /// The payloads that take their enum's ownership (rc.xo walk): the
+  /// enum dies there, so the payload's live leaves are not retained and
+  /// the enum is not released (an Option matched and moved out of, where
+  /// every field was shared and then dropped again, 2026-10-18).
+  pub moved: Map[Int, Bool] = {}
   /// Per parameter, whether the callee only reads it (Func.Borrowed, set
   /// by InsertRC); empty before.
   pub borrowed: List[Bool] = []

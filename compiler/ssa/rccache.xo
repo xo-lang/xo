@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v4"
+const RC_CACHE_VERSION = "xo rc cache v5"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -243,6 +243,11 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
     lr.push(k)
   }
   put_s(b, ints_line(lr))
+  var mv: List[Int] = []
+  for (k, _) in f.moved {
+    mv.push(k)
+  }
+  put_s(b, ints_line(mv.sort()))
   put_s(b, bools_text(f.borrowed))
   put_s(b, f.skip)
   put_s(b, "${f.blocks.len()}")
@@ -401,6 +406,9 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
   f.file = r.str()
   for k in r.ints() {
     f.land_rest[k] = true
+  }
+  for k in r.ints() {
+    f.moved[k] = true
   }
   let bs = r.str()
   if bs.len() < 2 {

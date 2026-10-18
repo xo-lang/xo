@@ -950,8 +950,21 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
           }
         }
       }
+      if f.moved.contains(v) {
+        // the payload takes its enum's ownership (rc.xo movable)
+        for i in r.lids(f, f.values[v].args[0]) {
+          if r.cur[i] < 1 {
+            if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {
+              errs.push("${bp}v${v} moves out of ${leaf_text(r.vleaves[i])}, which is not held")
+            }
+          }
+          if !r.imm_id(f, i) {
+            r.cset(i, r.cur[i] - 1)
+          }
+        }
+      }
       if r.is_root(f, v) {
-        let k = if r.kind(f, v) == RootKind.Owned { 1 } else { 0 }
+        let k = if r.kind(f, v) == RootKind.Owned || f.moved.contains(v) { 1 } else { 0 }
         for i in r.lids(f, v) {
           if r.cur[i] != 0 {
             if !immortal_leaf(f, r.vleaves[i], r.imm_ret) {

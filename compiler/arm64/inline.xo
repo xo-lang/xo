@@ -712,6 +712,12 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
       f.dbinds.push(ssa.DBind{dvar: dv0 + d.dvar, value: nv, line: d.line})
     }
   }
+  // the payloads that took their enum's ownership (Func.moved)
+  for (k, _) in callee.moved {
+    if let Some(nv) = vm.get(k) {
+      f.moved[nv] = true
+    }
+  }
   let _j = f.jump(b, bm.get(0) ?? -1, [])
 }
 
