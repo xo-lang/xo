@@ -422,7 +422,12 @@ func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string)
 		t.Fatal(err)
 	}
 	rc.headers(1, true, h2Req("GET", "/slow")...)
-	time.Sleep(50 * time.Millisecond)
+	// the server reads a connection's frames in order, so the PING's
+	// acknowledgment means it has the stream (a fixed sleep lost the race
+	// under load: GOAWAY last=0 and no response, 2026-10-18)
+	if err := rc.sync(); err != nil {
+		t.Fatalf("stop with a stream in flight: %v", err)
+	}
 	if err := sendStop(cmd.Process); err != nil {
 		t.Fatal(err)
 	}
@@ -506,10 +511,14 @@ func probeH2Client(t *testing.T, out *strings.Builder, addr string, p *testPKI) 
 	do("go fields", "GET", "/fields", nil, nil)
 	do("go expect", "POST", "/echo", strings.NewReader("zzz"), map[string]string{"Expect": "100-continue"})
 	// streams at once on one connection: 200, then 400 (over the limit of
-	// 250 the client waits for streams to end)
+	// 250 the client waits for streams to end); the client's deadline is
+	// h2EventsMax's, and each failure is logged (not compared), since at a
+	// load average of 55 a 20 s deadline lost 19 of 400 (2026-10-18)
+	sc := &http.Client{Transport: tr, Timeout: 2 * h2EventsMax}
 	for _, n := range []int{200, 400} {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
+		errs := map[string]int{}
 		ok := 0
 		protos := map[string]bool{}
 		start := time.Now()
@@ -517,8 +526,11 @@ func probeH2Client(t *testing.T, out *strings.Builder, addr string, p *testPKI) 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				resp, err := hc.Get("https://" + addr + "/slow")
+				resp, err := sc.Get("https://" + addr + "/slow")
 				if err != nil {
+					mu.Lock()
+					errs[err.Error()]++
+					mu.Unlock()
 					return
 				}
 				data, _ := io.ReadAll(resp.Body)
@@ -532,6 +544,9 @@ func probeH2Client(t *testing.T, out *strings.Builder, addr string, p *testPKI) 
 			}()
 		}
 		wg.Wait()
+		for e, k := range errs {
+			t.Logf("go %d streams: %d failed: %s", n, k, e)
+		}
 		fmt.Fprintf(out, "go %d streams: ok=%d protos=%v concurrent=%v\n", n, ok, protos, time.Since(start) < 5*time.Second)
 	}
 }
@@ -706,6 +721,32 @@ func h2Status(b []byte) string {
 		return string(out)
 	}
 	return fmt.Sprintf("literal 0x%02x", b[0])
+}
+
+// sync sends a PING and reads until its acknowledgment, past SETTINGS
+// and WINDOW_UPDATE frames: every frame sent before it has been read by
+// the server. Any other frame first is an error (sync is for a stream the
+// server cannot have answered yet).
+func (h *h2conn) sync() error {
+	h.frame(6, 0, 0, []byte("xosync00"))
+	if h.err != nil {
+		return h.err
+	}
+	h.c.SetReadDeadline(time.Now().Add(h2EventsMax))
+	defer h.c.SetReadDeadline(time.Time{})
+	for {
+		typ, flags, _, p, err := h.read()
+		if err != nil {
+			return err
+		}
+		switch {
+		case typ == 6 && flags&1 != 0 && string(p) == "xosync00":
+			return nil
+		case typ == 4 || typ == 8:
+		default:
+			return fmt.Errorf("frame type %d before the PING acknowledgment", typ)
+		}
+	}
 }
 
 // h2EventsMax bounds how long events waits for the frames a case expects:
