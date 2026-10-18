@@ -232,8 +232,16 @@ fn compare_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var fl = core.new_flags("dev compare")
   fl.bool_flag("json", "one JSON object a scenario")
   fl.int_flag("top", 15, "the functions that moved most, per scenario")
+  fl.str_flag("callers", "", "who calls the functions this regexp matches, per request, in one KEEP=1 run (RUN [SCENARIO...])")
   if !fl.parse(os, args) {
     return 2
+  }
+  if !fl.get_str("callers").is_empty() {
+    if fl.args.is_empty() {
+      os.stdio.eprintln("usage: xo dev compare --callers=REGEXP [--json] [--top=N] RUN [SCENARIO...]: a run directory made with KEEP=1")
+      return 2
+    }
+    return callers_cmd(os, fl.get_str("callers"), fl.args, fl.get_int("top"), fl.get_bool("json"))
   }
   if fl.args.len() < 2 {
     os.stdio.eprintln("usage: xo dev compare [--json] [--top=N] BASE NEW [SCENARIO...]: two HTTP callgrind run directories made with ANN=1")

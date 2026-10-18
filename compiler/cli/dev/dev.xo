@@ -14,7 +14,8 @@
 //   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
 //   xo dev debug --snap FILE -c CMD EXE  xo debug --batch on a recorded thread
 //   xo dev compare BASE NEW [SCENARIO...]  two HTTP callgrind ANN=1 runs, per
-//                                     request and per function (decision 0264)
+//                                     request and per function (decision 0264);
+//                                     --callers=RE RUN: who calls RE (KEEP=1)
 
 use github.com/xo-lang/xo/compiler/cli/core
 

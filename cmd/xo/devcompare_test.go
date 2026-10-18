@@ -70,3 +70,34 @@ func TestDevCompare(t *testing.T) {
 		t.Errorf("an empty run directory: exit %d, want 1", code)
 	}
 }
+
+// TestDevCompareCallers: xo dev compare --callers reads a KEEP=1 run's
+// callgrind outputs (callgrind's "(N) name" compression included) and
+// prints each caller's calls and inclusive instructions a request.
+func TestDevCompareCallers(t *testing.T) {
+	keep, _ := filepath.Abs(filepath.Join("testdata", "devcompare", "keep"))
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"dev", "compare", "--callers=halloc$", keep, "plain"}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	want := "== plain: 2.40 calls, 72 instructions a request into /halloc$/\n" +
+		"   2.00       60  main -> obj.halloc\n" +
+		"   0.40       12  helper -> obj.halloc\n"
+	if out.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	// --dump-instr=yes outputs ("positions: instr line"): the count is the
+	// third field; a caller whose calls did not change is left out
+	out.Reset()
+	if code := run(t, []string{"dev", "compare", "--callers=halloc$", keep, "plain-newconn"}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	want = strings.ReplaceAll(want, "== plain:", "== plain-newconn:")
+	if out.String() != want {
+		t.Errorf("instr positions: got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	out.Reset()
+	if code := run(t, []string{"dev", "compare", "--callers=halloc$", "--json", keep, "plain"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"caller":"helper"`) {
+		t.Errorf("--json: exit %d: %s", code, out.String())
+	}
+}

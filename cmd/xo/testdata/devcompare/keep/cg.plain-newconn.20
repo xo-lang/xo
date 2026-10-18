@@ -1,0 +1,26 @@
+version: 1
+creator: callgrind-3.24.0
+cmd: srv
+positions: instr line
+events: Ir
+fl=(1) ???
+fn=(1) main
+0x4000 0 10
+cfn=(2) xo_f_obj_2ehalloc
+calls=30 0x5000 0
++4 * 900
+cfn=(3) helper
+calls=5 0x6000 0
++4 * 100
+fn=(4) init
+0x7000 0 5
+cfn=(2)
+calls=2 0x5000 0
+* * 60
+fn=(3)
+0x6000 0 20
+cfn=(2)
+calls=8 0x5000 0
++8 * 240
+fn=(2)
+0x5000 0 400

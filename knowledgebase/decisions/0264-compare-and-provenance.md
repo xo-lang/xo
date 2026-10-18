@@ -90,6 +90,13 @@ moved. Each step had its own failure:
   it sets XO_INLINE_STRICT=1 unless set and XO_STAMP, which the scripts
   print (callgrind-docker.sh into OUT/stamp.txt).
 
+- `--callers=REGEXP RUN [SCENARIO...]` (2026-10-18, the lead's request
+  after the HTTP allocation hunt): the callers of the functions REGEXP
+  matches, per request, from the raw callgrind outputs a run keeps with
+  KEEP=1; a caller that itself matches is left out, so the allocator's
+  own layers do not hide who allocates. Symbols are demangled (arm64
+  gen.xo fname), so a pattern and the output use Xo names.
+
 ## Consequences
 
 - One command replaces the scratch tool chain and its mistakes; the

@@ -80,6 +80,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   prints each scenario's instructions a request and the functions that
   changed most (decision 0264 stage 1; cgcompare.py prints the same and
   stays as the cross-check until stage 2's build stamps land).
+- Who allocates (or calls anything) per request: run the callgrind with
+  `KEEP=1` (bench/perf/http/callgrind.sh keeps OUT/cg.SCENARIO.N), then
+  `xo dev compare --callers='halloc$|rs_new_n$' OUT/run plain`: each
+  caller's calls and inclusive instructions a request, names as Xo
+  writes them (`obj.halloc`, not `xo_f_obj_2ehalloc`; decision 0264).
+  Arm64 tail calls (`b`) bill a callee to the caller's caller; for call
+  sites by address run with `CGFLAGS=--dump-instr=yes` (both formats
+  read).
 - Which build an xo is: `xo version --json` (or `-v`): commit, dirty
   diff hash, source key, the xo that built it (decision 0264). The bench
   runners (bench/perf/run.sh, llvm/native.sh, conc/run.sh,

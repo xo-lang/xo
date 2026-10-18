@@ -1,0 +1,218 @@
+// `xo dev compare --callers=REGEXP RUN [SCENARIO...]` (decision 0264):
+// who calls the functions REGEXP matches, per request, from the
+// callgrind outputs a run kept with KEEP=1 (RUN/cg.SCENARIO.N): for each
+// caller and callee, the calls and the inclusive instructions of the
+// largest run minus the smallest, over the request difference. A caller
+// that itself matches is left out, so `halloc$|rs_new_n$` shows who
+// allocates, not the allocator's own layers. callgrind writes a name
+// once with its number, "(12) name", and the number alone after.
+
+use std/regexp
+
+/// A call edge's totals: calls and inclusive instructions.
+struct PerfEdge {
+  calls: Int = 0
+  incl: Int = 0
+}
+
+/// The name of a callgrind name field ("(12) name" or "(12)"), noting a
+/// new number in names.
+fn cg_name(var names: Map[Str, Str], tok: Str) -> Str {
+  if !tok.starts_with("(") {
+    return tok
+  }
+  let close = tok.find(")") ?? -1
+  if close < 0 {
+    return tok
+  }
+  let id = tok[1..close]
+  let rest = tok[close + 1..tok.len()].trim()
+  if !rest.is_empty() {
+    names[id] = rest
+    return rest
+  }
+  names.get(id) ?? tok
+}
+
+/// The Xo name of a function symbol (arm64 gen.xo fname: `_` doubled,
+/// other bytes `_` and two hex digits), so a pattern reads `obj.halloc`;
+/// any other name (a C one, a hashed xo_h one) as it is.
+fn perf_demangle(sym: Str) -> Str {
+  if !sym.starts_with("xo_f_") {
+    return sym
+  }
+  let bs = sym.bytes()
+  var b = StrBuilder.new()
+  var i = 5
+  while i < bs.len() {
+    let c = Int(bs[i])
+    if c == 95 && i + 1 < bs.len() && bs[i + 1] == 95 {
+      b.write("_")
+      i += 2
+    } else if c == 95 && i + 2 < bs.len() {
+      // an ASCII byte; any other stays as written
+      let hx = bs[i + 1..i + 3].to_str() ?? ""
+      let one = match Bytes.from_hex(hx) {
+        Some(x) => x.to_str() ?? ""
+        None => ""
+      }
+      b.write(if one.is_empty() { "_" + hx } else { one })
+      i += 3
+    } else {
+      b.write(bs[i..i + 1].to_str() ?? "")
+      i += 1
+    }
+  }
+  b.freeze()
+}
+
+/// The call edges of a callgrind output: "caller\ncallee" to totals.
+fn cg_edges(os: Os, path: Str) -> Map[Str, PerfEdge] {
+  var names: Map[Str, Str] = {}
+  var fnames: Map[Str, Str] = {}
+  var out: Map[Str, PerfEdge] = {}
+  var cur = ""
+  var callee = ""
+  var calls = 0
+  // "positions: instr line" (--dump-instr=yes) puts two fields before
+  // the count, the default "line" one
+  var npos = 1
+  let text = os.fs.read_text(path).ok() ?? ""
+  for line in text.split("\n") {
+    if line.starts_with("positions:") {
+      npos = line[10..line.len()].trim().split(" ").len()
+    } else if line.starts_with("fn=") {
+      cur = perf_demangle(cg_name(fnames, line[3..line.len()]))
+      callee = ""
+    } else if line.starts_with("cfn=") {
+      callee = perf_demangle(cg_name(fnames, line[4..line.len()]))
+      calls = 0
+    } else if line.starts_with("calls=") {
+      calls = Int.parse(line[6..line.len()].split(" ")[0]) ?? 0
+    } else if !callee.is_empty() && calls > 0 && !line.is_empty() {
+      // the cost line after calls=: the positions, then the inclusive count
+      let parts = line.split(" ")
+      let incl = if parts.len() > npos { Int.parse(parts[npos]) ?? 0 } else { 0 }
+      let key = "${cur}\n${callee}"
+      var e = out.get(key) ?? PerfEdge{}
+      e.calls += calls
+      e.incl += incl
+      out[key] = e
+      callee = ""
+      calls = 0
+    } else if line.starts_with("fl=") || line.starts_with("fi=") || line.starts_with("fe=") || line.starts_with("ob=") || line.starts_with("cob=") || line.starts_with("cfi=") || line.starts_with("cfl=") {
+      // file and object names share callgrind's numbering of their own
+      let _f = cg_name(names, line[(line.find("=") ?? 0) + 1..line.len()])
+    }
+  }
+  out
+}
+
+/// One caller row: calls and instructions a request.
+struct PerfCaller {
+  caller: Str
+  callee: Str
+  calls: Float
+  incl: Float
+}
+
+fn perf_callers(os: Os, dir: Str, sc: Str, re: regexp.Regex, top: Int) -> (Float, Float, List[PerfCaller])? {
+  var runs: List[Int] = []
+  for fi in os.fs.read_dir(dir).ok() ?? [] {
+    if fi.name.starts_with("cg.${sc}.") {
+      if let Some(n) = Int.parse(fi.name.trim_prefix("cg.${sc}.")) {
+        runs.push(n)
+      }
+    }
+  }
+  if runs.len() < 2 {
+    return None
+  }
+  runs = runs.sort()
+  let n1 = runs[0]
+  let n2 = runs[runs.len() - 1]
+  let r1 = Int.parse((os.fs.read_text("${dir}/req.${sc}.${n1}").ok() ?? "").trim()) ?? 0
+  let r2 = Int.parse((os.fs.read_text("${dir}/req.${sc}.${n2}").ok() ?? "").trim()) ?? 0
+  if r2 <= r1 {
+    return None
+  }
+  let q = Float(r2 - r1)
+  let e1 = cg_edges(os, "${dir}/cg.${sc}.${n1}")
+  let e2 = cg_edges(os, "${dir}/cg.${sc}.${n2}")
+  var rows: List[PerfCaller] = []
+  var tc = 0.0
+  var ti = 0.0
+  for (key, e) in e2 {
+    let parts = key.split("\n")
+    if parts.len() != 2 || !re.is_match(parts[1]) || re.is_match(parts[0]) {
+      continue
+    }
+    let b = e1.get(key) ?? PerfEdge{}
+    let c = Float(e.calls - b.calls) / q
+    let i = Float(e.incl - b.incl) / q
+    tc += c
+    ti += i
+    if perf_round(c * 100.0) == 0 && perf_round(i) == 0 {
+      continue
+    }
+    rows.push(PerfCaller{caller: parts[0], callee: parts[1], calls: c, incl: i})
+  }
+  rows = rows.sort_by(fn(r: PerfCaller) -> Str { r.caller })
+  rows = rows.sort_by(fn(r: PerfCaller) -> Int { 0 - perf_round(r.calls * 100.0) })
+  rows = rows.sort_by(fn(r: PerfCaller) -> Int { 0 - perf_round(r.incl) })
+  if rows.len() > top {
+    rows = rows[0..top]
+  }
+  Some((tc, ti, rows))
+}
+
+/// f with two decimals.
+fn perf_two(f: Float) -> Str {
+  let m = perf_round(f * 100.0)
+  let neg = m < 0
+  let a = if neg { 0 - m } else { m }
+  let frac = "${a % 100}"
+  "${if neg { "-" } else { "" }}${a / 100}.${"0".repeat(2 - frac.len())}${frac}"
+}
+
+fn callers_cmd(os: Os, pattern: Str, args: List[Str], top: Int, json: Bool) -> Int uses (fs.read, stdio) {
+  let re = match regexp.compile(pattern) {
+    Ok(r) => r
+    Err(e) => {
+      os.stdio.eprintln("xo dev compare: --callers=${pattern}: ${e.display()}")
+      return 2
+    }
+  }
+  let scs = if args.len() > 1 { args[1..args.len()] } else { PERF_SCENARIOS }
+  var any = false
+  for sc in scs {
+    if let Some((tc, ti, rows)) = perf_callers(os, args[0], sc, re, top) {
+      any = true
+      if json {
+        var b = StrBuilder.new()
+        b.write("{\"scenario\":${sc.quote()},\"calls\":${perf_two(tc)},\"instructions\":${perf_round(ti)},\"callers\":[")
+        for (i, r) in rows.indexed() {
+          if i > 0 {
+            b.write(",")
+          }
+          b.write("{\"caller\":${r.caller.quote()},\"callee\":${r.callee.quote()},\"calls\":${perf_two(r.calls)},\"instructions\":${perf_round(r.incl)}}")
+        }
+        b.write("]}")
+        os.stdio.println(b.freeze())
+      } else {
+        var b = StrBuilder.new()
+        b.write("== ${sc}: ${perf_two(tc)} calls, ${perf_round(ti)} instructions a request into /${pattern}/\n")
+        for r in rows {
+          let c = perf_two(r.calls)
+          b.write("${" ".repeat(if c.len() < 7 { 7 - c.len() } else { 0 })}${c} ${perf_num(r.incl, 8)}  ${r.caller} -> ${r.callee}\n")
+        }
+        os.stdio.print(b.freeze())
+      }
+    }
+  }
+  if !any {
+    os.stdio.eprintln("xo dev compare: no scenario has two KEEP=1 runs (cg.SCENARIO.N and req.SCENARIO.N) in ${args[0]}")
+    return 1
+  }
+  0
+}
