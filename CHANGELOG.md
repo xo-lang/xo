@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- x86_64 multiprecision arithmetic keeps its carries in the flags
+  (X25519's field multiply 22% fewer instructions; a TLS handshake 5%).
+
 - Full TLS 1.3 handshakes: -13.9% (arm64) and -13.6% (LLVM)
   instructions on the callgrind benchmark, -22% on linux/amd64: X25519's
   public key from a fixed base table (one ladder instead of two), the
