@@ -158,6 +158,11 @@ fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
         }
         ft
       }
+      if o.tkind == "struct" && o.fields.is_empty() && c.mods[o.module].is_prelude {
+        // the prelude's built in types are field-less structs (Str,
+        // List[T], Int): a scalar holds no count, the others are one
+        return builtin_heap(check.text(o.name))
+      }
       match o.tkind {
         "struct" => {
           var n = 0
@@ -179,17 +184,20 @@ fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
           }
           most
         }
-        _ => {
-          let name = check.text(o.name)
-          if name is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Float64" | "Bool" | "Char" | "Duration" | "Instant" {
-            0
-          } else {
-            1
-          }
-        }
+        _ => builtin_heap(check.text(o.name))
       }
     }
     _ => 0
+  }
+}
+
+/// The heap fields of a built in or opaque type named name: none for a
+/// scalar, else one (its reference count).
+fn builtin_heap(name: Str) -> Int {
+  if name is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Float64" | "Bool" | "Char" | "Rune" | "Duration" | "Instant" {
+    0
+  } else {
+    1
   }
 }
 

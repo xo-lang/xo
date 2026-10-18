@@ -349,7 +349,10 @@ func TestAgentCLI(t *testing.T) {
 	if !strings.Contains(ty["signature"].(string), "Counter") {
 		t.Errorf("type = %v", ty)
 	}
-	agentJSON(t, 2, "type")
+	var out, errOut bytes.Buffer
+	if got := run(t, []string{"type"}, &out, &errOut); got != 2 {
+		t.Errorf("type with no position: exit %d, want 2: %s%s", got, out.String(), errOut.String())
+	}
 
 	doc := agentJSON(t, 0, "doc", d, "Counter")["declarations"].([]any)
 	if len(doc) != 1 || !strings.Contains(doc[0].(map[string]any)["doc"].(string), "A counter") || len(doc[0].(map[string]any)["methods"].([]any)) != 1 {
