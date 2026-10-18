@@ -107,13 +107,23 @@ fn main(os: Os) ! {
     os.proc.exit(2)
   }
   var o = parse_args(os, args)
-  if o.watch {
-    if o.cmd != "run" {
-      os.stdio.eprintln("xo ${o.cmd}: --watch is a flag of xo run")
-      os.proc.exit(2)
+  // the tests `xo test --watch` selected (decision 0267)
+  for name in (os.env.get("XO_TEST_ONLY") ?? "").split("\n") {
+    if !name.is_empty() {
+      o.topts.only.push(name)
     }
-    // decision 0267: build, run, watch, rebuild, restart when changed
-    os.proc.exit(watch_run(os, o, args))
+  }
+  if o.watch {
+    // decision 0267: build and run (or test), watch, rebuild, restart
+    // when the program changed (run only the tests a change reaches)
+    if o.cmd == "run" {
+      os.proc.exit(watch_run(os, o, args))
+    }
+    if o.cmd == "test" {
+      os.proc.exit(watch_test(os, o, args))
+    }
+    os.stdio.eprintln("xo ${o.cmd}: --watch is a flag of xo run and xo test")
+    os.proc.exit(2)
   }
   let goos = host_os(os)
   var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}

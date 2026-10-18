@@ -70,11 +70,12 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   }
   k.strs(kept)
   // the environment that can change a build: every XO_ variable (but
-  // XO_TEST_JOBS, how many test processes run at once), and where tools
+  // XO_TEST_JOBS, how many test processes run at once, and
+  // XO_TEST_ONLY, which of the tests run), and where tools
   // and modules are found
   var env: List[Str] = []
   for (n, v) in os.env.vars().entries() {
-    if (n.starts_with("XO_") && n != "XO_TEST_JOBS") || n is "PATH" | "HOME" | "XDG_CACHE_HOME" | "CC" | "SDKROOT" | "DEVELOPER_DIR" {
+    if (n.starts_with("XO_") && !(n is "XO_TEST_JOBS" | "XO_TEST_ONLY")) || n is "PATH" | "HOME" | "XDG_CACHE_HOME" | "CC" | "SDKROOT" | "DEVELOPER_DIR" {
       env.push("${n}=${v}")
     }
   }

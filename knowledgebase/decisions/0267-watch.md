@@ -1,8 +1,8 @@
 # 0267: xo run --watch and xo test --watch
 
 Status: Accepted (owner, 2026-10-18, through the lead: the scope below);
-written by Xo Lang 3 2026-10-18, not implemented yet (after decisions
-0261 stage (a) and 0262)
+written and implemented by Xo Lang 3 2026-10-18 (compiler/xo/watch.xo;
+cmd/xo TestRunWatch, TestTestWatch)
 
 ## Context
 
@@ -71,6 +71,20 @@ Agreed scope (owner, 2026-10-18):
 6. When it ships, spec/core.md 9's "Where tests live" note gains: `xo
    run --watch` compares the built program, so it needs no file-name
    exclusions for test files.
+
+## Implementation notes (2026-10-18)
+
+- `xo test --watch` selects tests without the checker: a test reaches the
+  definitions whose name (or method name) is an identifier of its text,
+  and a definition counts as changed when its semantic.module_defs hash
+  changed (that hash covers the definitions of the module it uses, so a
+  change deep in a call chain reaches a test that names a caller). A
+  cross-package call is named in the text too (`pkg.f`), so it is seen
+  the same way. The child `xo test` gets the selection in XO_TEST_ONLY
+  (one name a line), which the run cache's key leaves out, so the cached
+  test binary is reused.
+- A cycle's `xo test --json` lines are the cycle object's `results`;
+  `ran` lists the selected test names, `unaffected` counts the rest.
 
 ## Consequences
 

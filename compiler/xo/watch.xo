@@ -11,6 +11,9 @@
 // core 7.5) stops the program as a restart would and ends the watch.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/parser
+use std/crypto
 use std/task
 
 /// The files a cycle compares: path to "size:modified".
@@ -288,6 +291,274 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
     diff = stamp_changes(seen, cur)
     seen = cur
     changed = diff
+    pending = true
+  }
+  0
+}
+
+// `xo test --watch` (decision 0267): run the tests, then after each
+// change only the tests the change reaches: a test whose own text
+// changed or that is new, every test of a changed _test.xo file, and a
+// test that names a definition whose hash changed (semantic.module_defs:
+// a definition's hash covers the definitions of its module it uses, so
+// an edit deep in a call chain changes the hash of every function
+// above it). A test reaches the definitions it names (an identifier of
+// its text matching a definition's name or method name), so the set errs
+// toward rerunning. A change to a module file (xo.mod, xo.lock) reruns
+// every test, as does `a` and Enter.
+
+/// A test block: where it is, its name, its text's hash, and the words
+/// of its text.
+struct TestBlock {
+  file: Str
+  name: Str
+  hash: Str
+  words: Map[Str, Bool] = {}
+}
+
+/// What a cycle compares: each definition's hash by key, its name, and
+/// the test blocks.
+struct TestState {
+  defs: Map[Str, Str] = {}
+  names: Map[Str, Str] = {}
+  tests: List[TestBlock] = []
+}
+
+fn is_word_byte(c: Int) -> Bool {
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95
+}
+
+/// The identifiers of text (runs of letters, digits, and underscores).
+fn words_of(text: Bytes) -> Map[Str, Bool] {
+  var out: Map[Str, Bool] = {}
+  var i = 0
+  let n = text.len()
+  while i < n {
+    if !is_word_byte(Int(text[i])) {
+      i += 1
+      continue
+    }
+    var j = i
+    while j < n && is_word_byte(Int(text[j])) {
+      j += 1
+    }
+    out[(text[i..j]).to_str() ?? ""] = true
+    i = j
+  }
+  out
+}
+
+fn lit_text(l: parser.StringLit) -> Str {
+  var b = StrBuilder.new()
+  for p in l.parts {
+    b.write(p.text.to_str() ?? "")
+  }
+  b.freeze()
+}
+
+fn test_state(os: Os, root: Str) -> TestState {
+  var st = TestState{}
+  for d in semantic.module_defs(os.fs, root, "watch").ok() ?? [] {
+    st.defs[d.key] = d.hash
+    st.names[d.key] = d.name
+  }
+  for fi in os.fs.walk(root).ok() ?? [] {
+    let rel = fi.path.trim_prefix(root + "/")
+    if fi.is_dir || !rel.ends_with(".xo") || !watched_path(rel) {
+      continue
+    }
+    let src = os.fs.read(fi.path).ok() ?? "".bytes()
+    let r = parser.parse_file(fi.path.bytes(), src, false)
+    for d in r.file.decls {
+      if let TestDecl(d: td) = d {
+        let text = src[td.span.start.offset..td.span.end.offset]
+        let name = match td.name {
+          Some(l) => lit_text(l)
+          None => ""
+        }
+        st.tests.push(TestBlock{file: fi.path, name: name, hash: crypto.sha256(text).to_hex(), words: words_of(text)})
+      }
+    }
+  }
+  st
+}
+
+/// The tests of now a change from before reaches (see above); all of
+/// them when all.
+fn affected(before: TestState, now: TestState, changed: List[Str], all: Bool) -> List[Str] {
+  var run: Map[Str, Bool] = {}
+  var every = all || changed.any(fn(p) { !p.ends_with(".xo") })
+  // the names of the definitions whose hash changed, appeared, or went
+  var moved: Map[Str, Bool] = {}
+  for (k, h) in now.defs {
+    if before.defs.get(k) != Some(h) {
+      moved[now.names.get(k) ?? ""] = true
+    }
+  }
+  for (k, _) in before.defs {
+    if !now.defs.contains(k) {
+      moved[before.names.get(k) ?? ""] = true
+    }
+  }
+  var old: Map[Str, Bool] = {}
+  for t in before.tests {
+    old["${t.file}\n${t.name}\n${t.hash}"] = true
+  }
+  for t in now.tests {
+    var hit = every || !old.contains("${t.file}\n${t.name}\n${t.hash}")
+    hit = hit || (t.file.ends_with("_test.xo") && changed.contains(t.file))
+    if !hit {
+      for (name, _) in moved {
+        let last = name.split(".").last() ?? name
+        if t.words.contains(last) {
+          hit = true
+          break
+        }
+      }
+    }
+    if hit {
+      run[t.name] = true
+    }
+  }
+  var out: List[Str] = []
+  for (name, _) in run {
+    out.push(name)
+  }
+  out.sort()
+}
+
+/// One test cycle's report.
+struct TestCycle {
+  n: Int
+  changed: List[Str] = []
+  ran: List[Str] = []
+  unaffected: Int = 0
+  status: Int = 0
+  results: List[Str] = []
+}
+
+fn test_cycle_json(c: TestCycle) -> Str {
+  let strs = fn(xs: List[Str]) -> Str { "[" + xs.map(fn(x: Str) { json_str(x) }).join(",") + "]" }
+  "{\"cycle\":${c.n},\"changed\":${strs(c.changed)},\"ran\":${strs(c.ran)},\"unaffected\":${c.unaffected},\"status\":${c.status},\"results\":[${c.results.join(",")}]}"
+}
+
+/// Runs the selected tests (all when only is None) in a child xo test;
+/// its status and, with --json, its result lines.
+fn run_test_child(os: Os, o: Opts, xo_bin: Str, flags: List[Str], only: List[Str]?) -> (Int, List[Str]) {
+  var words = ["test"] + flags + (if o.json { ["--json"] } else { [] }) + o.dirs
+  var cmd = os.proc.cmd(xo_bin, words).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std)
+  if let Some(names) = only {
+    cmd = cmd.set_env("XO_TEST_ONLY", names.join("\n"))
+  }
+  if !o.json {
+    return (cmd.inherit().run().ok() ?? 1, [])
+  }
+  match cmd.output() {
+    Ok(r) => {
+      var lines: List[Str] = []
+      for l in (r.stdout.to_str() ?? "").split("\n") {
+        if l.starts_with("{") {
+          lines.push(l)
+        }
+      }
+      if r.code != 0 && lines.is_empty() {
+        // the build failed: its diagnostics
+        lines.push("{\"output\":${json_str((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""))}}")
+      }
+      (r.code, lines)
+    }
+    Err(e) => (1, ["{\"output\":${json_str("${e}")}}"])
+  }
+}
+
+/// `xo test --watch`: runs until a stop request.
+fn watch_test(os: Os, o: Opts, args: List[Str]) -> Int {
+  let xo_bin = check.executable(os.env, os.fs)
+  let root = abs_path(o.wd, line_root(os, o.wd, o.dirs[0]))
+  let dir = "${root}/.xo/watch"
+  os.fs.create_dir_all(dir).ignore_err("last.json is a convenience")
+  let flags = build_flags(args)
+  // lines typed on standard input: `a` (or `all`) reruns every test
+  let typed = Chan[Str].new(cap: 16)
+  let _r = os.tasks.spawn_background(fn() {
+    while true {
+      match os.stdio.read_line() {
+        Ok(Some(l)) => {
+          let _ = typed.try_send(l.trim())
+        }
+        _ => break
+      }
+    }
+  })
+  var seen = snapshot(os, root)
+  var state = test_state(os, root)
+  var n = 0
+  var pending = true
+  var all = true
+  var changed: List[Str] = []
+  while true {
+    if pending {
+      pending = false
+      n += 1
+      var c = TestCycle{n: n, changed: changed}
+      var only: List[Str]? = None
+      let now = test_state(os, root)
+      if !all {
+        let names = affected(state, now, changed, false)
+        c.unaffected = now.tests.len() - names.len()
+        only = Some(names)
+        c.ran = names
+      } else {
+        c.ran = now.tests.map(fn(t: TestBlock) { t.name })
+      }
+      state = now
+      let none = match only {
+        Some(ns) => ns.is_empty()
+        None => false
+      }
+      if !none {
+        let (code, lines) = run_test_child(os, o, xo_bin, flags, only)
+        c.status = code
+        c.results = lines
+      }
+      let j = test_cycle_json(c)
+      os.fs.write("${dir}/last.json", (j + "\n").bytes()).ignore_err("last.json is a convenience")
+      if o.json {
+        os.stdio.println(j)
+      } else {
+        os.stdio.eprintln("xo test --watch: ran ${c.ran.len()} test(s), ${c.unaffected} unaffected; `a` and Enter runs all")
+      }
+      all = false
+      changed = []
+    }
+    select {
+      l = typed.recv() => {
+        if (l ?? "") is "a" | "all" {
+          all = true
+          pending = true
+        }
+      }
+      _s = task.stopping().recv() => return 0
+      after 200ms => {}
+    }
+    if pending {
+      continue
+    }
+    let now = snapshot(os, root)
+    if stamp_changes(seen, now).is_empty() {
+      continue
+    }
+    var cur = now
+    while true {
+      os.clock.sleep(100ms)
+      let again = snapshot(os, root)
+      if stamp_changes(cur, again).is_empty() {
+        break
+      }
+      cur = again
+    }
+    changed = stamp_changes(seen, cur)
+    seen = cur
     pending = true
   }
   0

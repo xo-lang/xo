@@ -180,6 +180,15 @@ struct TestOpts {
   trace: Str = ""
   /// That directory, absolute (the tests run in their own).
   profile_dir: Str = ""
+  /// The names of the tests to run, none for all: $XO_TEST_ONLY, one
+  /// name a line, which `xo test --watch` sets for the tests an edit
+  /// reaches (decision 0267).
+  only: List[Str] = []
+}
+
+/// Whether the run takes test t: --run's text and the --watch selection.
+fn selected(o: TestOpts, t: TestInfo) -> Bool {
+  (o.run.is_empty() || t.name.contains(o.run)) && (o.only.is_empty() || o.only.contains(t.name))
 }
 
 /// The outcome of a test: pass, fail, or skip, the message, and the
@@ -226,7 +235,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     pre = run_batched(os, bin, limit, tests, o)
   }
   for (k, t) in tests.indexed() {
-    if !o.run.is_empty() && !t.name.contains(o.run) {
+    if !selected(o, t) {
       continue
     }
     var s = t.seed
@@ -572,7 +581,7 @@ fn test_seed(t: TestInfo, o: TestOpts) -> Int {
 fn run_batched(os: Os, bin: Str, limit: Duration, tests: List[TestInfo], o: TestOpts) -> Map[Int, Outcome] {
   var runs: List[Run] = []
   for (k, t) in tests.indexed() {
-    if (!o.run.is_empty() && !t.name.contains(o.run)) || !t.skip.is_empty() || !t.effects.is_empty() {
+    if !selected(o, t) || !t.skip.is_empty() || !t.effects.is_empty() {
       continue
     }
     let s = test_seed(t, o)

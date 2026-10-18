@@ -1,6 +1,6 @@
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
-               [--profile=cpu|heap|cpu,heap] [--trace=FILE] <dirs...>
+               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -14,7 +14,12 @@ module's regressions_test.xo. --profile=cpu (heap, cpu,heap) samples
 each test process (not property cases) into xo-cpu-<pid>.pprof
 (xo-heap-<pid>.pprof) and .txt in the working directory; go tool pprof
 merges several. --trace=FILE writes an execution trace per test process
-(FILE.<pid>, or FILE with %p); read one with xo trace.
+(FILE.<pid>, or FILE with %p); read one with xo trace. --watch runs
+the tests, then after each change to the sources only the tests it
+reaches (a new or edited test, the tests of a changed _test.xo file,
+and the tests that name a function whose definition, or one it uses,
+changed); typing a and Enter runs them all. With --json each cycle is
+a JSON line, the last also in .xo/watch/last.json (decision 0267).
 
 A directory covers the directories below it, so DIR/... is DIR (decision
 0210); a DIR/... with no .xo file at or below DIR is an error.

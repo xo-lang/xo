@@ -152,3 +152,121 @@ func TestRunWatch(t *testing.T) {
 		t.Errorf("last.json: %v", err)
 	}
 }
+
+// testCycle is one line of `xo test --watch --json` (decision 0267).
+type testCycle struct {
+	Cycle      int               `json:"cycle"`
+	Ran        []string          `json:"ran"`
+	Unaffected int               `json:"unaffected"`
+	Status     int               `json:"status"`
+	Results    []json.RawMessage `json:"results"`
+}
+
+// statuses are the results' test names by status.
+func (c testCycle) statuses() map[string]string {
+	out := map[string]string{}
+	for _, r := range c.Results {
+		var v struct{ Name, Status string }
+		if json.Unmarshal(r, &v) == nil && v.Name != "" {
+			out[v.Name] = v.Status
+		}
+	}
+	return out
+}
+
+// TestTestWatch: xo test --watch runs every test first, then only the
+// tests an edit reaches: the one test that names a changed function, a
+// failing one after a broken edit, and a new test file's tests.
+func TestTestWatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the tests four times")
+	}
+	lib := "pub fn double(x: Int) -> Int { x * 2 }\n\npub fn triple(x: Int) -> Int { x * 3 }\n"
+	dir := writeFiles(t, map[string]string{
+		"lib.xo":    lib,
+		"a_test.xo": "test \"double\" {\n  expect(double(2) == 4)\n}\n\ntest \"triple\" {\n  expect(triple(2) == 6)\n}\n",
+	})
+	cmd := command(t, xoBin(t), "test", "--watch", "--json", dir)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ended := false
+	defer func() {
+		if !ended {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}()
+	lines := make(chan testCycle, 16)
+	go func() {
+		sc := bufio.NewScanner(out)
+		sc.Buffer(make([]byte, 1<<20), 1<<24)
+		for sc.Scan() {
+			var c testCycle
+			if json.Unmarshal(sc.Bytes(), &c) == nil && c.Cycle > 0 {
+				lines <- c
+			}
+		}
+		close(lines)
+	}()
+	next := func(what string) testCycle {
+		t.Helper()
+		select {
+		case c, ok := <-lines:
+			if !ok {
+				t.Fatalf("%s: xo test --watch ended", what)
+			}
+			t.Logf("%s: ran %v, %d unaffected, status %d, %v", what, c.Ran, c.Unaffected, c.Status, c.statuses())
+			return c
+		case <-time.After(3 * time.Minute):
+			t.Fatalf("%s: no cycle", what)
+		}
+		return testCycle{}
+	}
+	write := func(name, text string) {
+		t.Helper()
+		time.Sleep(50 * time.Millisecond)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c := next("first run")
+	if st := c.statuses(); st["double"] != "pass" || st["triple"] != "pass" {
+		t.Fatalf("first run: %v", st)
+	}
+
+	write("lib.xo", strings.Replace(lib, "x * 3", "x + x + x", 1))
+	c = next("an edit of triple")
+	if st := c.statuses(); len(st) != 1 || st["triple"] != "pass" || c.Unaffected != 1 {
+		t.Errorf("an edit of triple ran %v (%d unaffected), want triple only", st, c.Unaffected)
+	}
+
+	write("lib.xo", strings.Replace(lib, "x * 2", "x * 5", 1))
+	c = next("a broken double")
+	if st := c.statuses(); st["double"] != "fail" || c.Status == 0 {
+		t.Errorf("a broken double: %v, status %d", st, c.Status)
+	}
+
+	write("b_test.xo", "test \"quad\" {\n  expect(double(double(1)) == 20)\n}\n")
+	c = next("a new test file")
+	if st := c.statuses(); st["quad"] == "" || st["triple"] != "" {
+		t.Errorf("a new test file ran %v, want quad and not triple", st)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+		ended = true
+	case <-time.After(20 * time.Second):
+		t.Fatal("xo test --watch did not end after SIGTERM")
+	}
+}

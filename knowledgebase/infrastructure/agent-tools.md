@@ -55,6 +55,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   differences).
 - `scripts/gate-http.sh OUTDIR [STEP...]`, `scripts/fuzz-http.sh OUTDIR
   [SECONDS]`.
+- `xo test --watch DIR` reruns only the tests an edit reaches (a test
+  that names a changed function, an edited or new test; `a` and Enter
+  runs all); `xo run --watch DIR` restarts the program only when the
+  built binary changed (SIGTERM, `--grace`, then SIGKILL). `--json` gives
+  a line a cycle and `.xo/watch/last.json` (decision 0267).
 - Test programs started by Go tests run in their own process group and
   are stopped (TERM, then KILL) when the test ends (testtmp.Guard).
 
@@ -86,7 +91,6 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Coming
 
-- `xo run --watch` and `xo test --watch` (decision 0267), `xo dev
-  compare` (0264), `dbg` in pure and no-GC code (0265), vet hints for
+- `xo dev compare` (0264), `dbg` in pure and no-GC code (0265), vet hints for
   copy-modify-store (0266); std moving from rt.int_wrap to the Int word
   methods (0260 step 3, after seed 0.21.0).
