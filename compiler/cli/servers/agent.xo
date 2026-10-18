@@ -241,6 +241,17 @@ struct Found {
 
 /// The declarations whose qualified name is name or ends with "." name.
 fn (var s: Session) declarations(name: Str) -> List[Found] {
+  s.declared(fn(full: Str) { full == name || full.ends_with("." + name) })
+}
+
+/// The declarations of the members of type name (`Counter.next` for
+/// `Counter`).
+fn (var s: Session) members(name: Str) -> List[Found] {
+  s.declared(fn(full: Str) { full.starts_with(name + ".") })
+}
+
+/// The declarations of the checked files whose full name matches.
+fn (var s: Session) declared(matches: fn(Str) -> Bool) -> List[Found] {
   let c = s.res[0].c
   var out: List[Found] = []
   for f in s.user_files() {
@@ -258,7 +269,7 @@ fn (var s: Session) declarations(name: Str) -> List[Found] {
       if full.is_empty() {
         continue
       }
-      if full == name || full.ends_with("." + name) {
+      if matches(full) {
         out.push(Found{f: f, site: site, tg: tg, name: full})
       }
     }
@@ -329,7 +340,7 @@ fn (var s: Session) agent_def(os: Os, target: Str, with_methods: Bool) -> J ! St
     var d = s.decl_json(found)
     if with_methods && found.tg.what == "type" {
       var ms: List[J] = []
-      for m in s.declarations(found.name + ".") {
+      for m in s.members(found.name) {
         if m.tg.what == "func" {
           ms.push(s.decl_json(m))
         }
