@@ -7,9 +7,11 @@ landed before the seed (34dab50f). Step 3, after seed 0.21.0: std's
 7,787 calls (7,557 rt.int_wrap, 230 rt.u64_mul_hi, in 68 files) are
 the methods, the generators emit them, scripts/fieldcheck.py reads
 them, and internal/repotest TestStdUsesWordMethods rejects the
-intrinsics elsewhere in std. The compiler binary and every
-internal/llvm golden (arm64 and LLVM backends) build byte identical
-before and after.
+intrinsics elsewhere in std. The compiler and every internal/llvm
+golden build to the same arm64 code and data before and after (the
+binaries are not byte identical: shorter lines move source columns,
+which DWARF and fault locations carry; gotchas
+rewrite-moves-source-columns.md).
 
 ## Context
 
@@ -60,8 +62,9 @@ followed the runtime's style.
    No `>>>`, `+%` or similar: an operator is not discoverable from the
    type, and Xo keeps one spelling per operation.
 4. **Migration.** std and compiler/ move to the methods mechanically
-   (a rewrite of `rt.int_wrap(K, a, b)` to `a.METHOD(b)`, checked by the
-   fixed point being byte identical, since the lowering is the same);
+   (a rewrite of `rt.int_wrap(K, a, b)` to `a.METHOD(b)`, checked by
+   comparing the builds' assembly without DWARF and source columns,
+   since the lowering is the same);
    `rt.int_wrap` then stays only as the methods' lowering, and a
    repotest check rejects it outside std/native/prelude.xo (and its
 declaration in std/native/rt.xo). The crypto

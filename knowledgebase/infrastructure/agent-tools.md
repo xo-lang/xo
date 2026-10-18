@@ -86,6 +86,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   http/callgrind-docker.sh) refuse an xo whose source key is not the
   checkout's (`go run ./scripts/xobuild --key`); XO_BENCH_ANY=1
   overrides.
+- `scripts/asmnorm.py FILE`: an `xo build --asm` file without DWARF
+  sections and source columns, to check that a source rewrite builds the
+  same code and data (gotchas/rewrite-moves-source-columns.md).
 - `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
   nistec.xo's field code, interprets the generated Xo against Python big
   integers and checks that a planted dropped carry is caught. The
