@@ -21,7 +21,7 @@ const RCS: List[Int] = [1, 32898, -9223372036854742902, -9223372034707259392, 32
 
 
 /// Keccak-f[1600] on the 25 lanes, with lazy rotations (XKCP's ARMv8
-/// form, scripts/keccaklazy.py): a lane is a value and a pending
+/// form, scripts/gen/keccaklazy): a lane is a value and a pending
 /// rotation, so rho's and theta's rotations are the rotated operand of
 /// the eor or bic that reads the lane (arm64 folds a rotation by a
 /// constant read once there: isel.xo rot_operand), not instructions of

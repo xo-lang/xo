@@ -1,0 +1,280 @@
+// Generates std/native/llrt/nistec.xo mul4p and sqr4p (xo run
+// scripts/gen/nistecmul4p): the Montgomery product for P-256's field
+// prime p = 2^256 - 2^224 + 2^192 + 2^96 - 1 (limbs m0 = 2^64-1, m1 =
+// 2^32-1, m2 = 0, m3 = 2^64-2^32+1; -p^-1 mod 2^64 = 1), CIOS over local
+// words with every sum a chain of cpu.adc and cpu.adc_carry (decision
+// 0231's addendum): per word of g the low halves of f g_i, then the high
+// halves, then q p / 2^64 for q = t0, whose limbs are shifts of q.
+// After regenerating, run scripts/fieldcheck.py (the generated code
+// against big integers, and a planted mutation it must catch).
+
+/// An operand: a name (half "") or a product's half ("lo" or "hi") of a
+/// and b, made right before the pair that reads it (the arm64 chain makes
+/// it between its adcs, which mul and umulh leave the flags of).
+struct Opd {
+  half: Str
+  a: Str
+  b: Str
+}
+
+struct Gen {
+  out: List[Str]
+  n: Int
+}
+
+fn name(s: Str) -> Opd {
+  Opd { half: "", a: s, b: "" }
+}
+
+fn prod(half: Str, a: Str, b: Str) -> Opd {
+  Opd { half: half, a: a, b: b }
+}
+
+fn names(xs: List[Str]) -> List[Opd] {
+  xs.map(fn(s) { name(s) })
+}
+
+fn (var g: Gen) v(p: Str) -> Str {
+  g.n += 1
+  "${p}${g.n}"
+}
+
+fn (var g: Gen) emit(s: Str) {
+  g.out.push("  " + s)
+}
+
+fn (var g: Gen) adc(a: Str, b: Str, cin: Str) -> (Str, Str) {
+  let s = g.v("s")
+  let k = g.v("k")
+  g.emit("let ${s} = cpu.adc(${a}, ${b}, ${cin})")
+  g.emit("let ${k} = cpu.adc_carry(${a}, ${b}, ${cin})")
+  (s, k)
+}
+
+fn (var g: Gen) force(x: Opd) -> Str {
+  if x.half == "" {
+    return x.a
+  }
+  let r = g.v(x.half)
+  let op = if x.half == "lo" { "${x.a}.wrapping_mul(${x.b})" } else { "${x.a}.mul_hi_unsigned(${x.b})" }
+  g.emit("let ${r} = ${op}")
+  r
+}
+
+/// xs[j] + ys[j] with the carry chained; the sums and the last carry
+/// ("" when keep is false: the last pair makes only its sum).
+fn (var g: Gen) chain(xs: List[Opd], ys: List[Opd], cin: Str, keep: Bool) -> (List[Str], Str) {
+  var c = cin
+  var r: List[Str] = []
+  let n = if xs.len() < ys.len() { xs.len() } else { ys.len() }
+  for idx in 0..n {
+    let x = g.force(xs[idx])
+    let y = g.force(ys[idx])
+    if !keep && idx == n - 1 {
+      let s = g.v("s")
+      g.emit("let ${s} = cpu.adc(${x}, ${y}, ${c})")
+      r.push(s)
+      return (r, "")
+    }
+    let (s, k) = g.adc(x, y, c)
+    c = k
+    r.push(s)
+  }
+  (r, c)
+}
+
+/// The reduction's addend for q: ql, qh and the chain of q + ~x giving
+/// q - ql and q - qh - borrow (subs, sbcs on arm64; was sub, subs and
+/// cset for the borrow, sub, sub).
+fn (var g: Gen) reduce_addend(q: Str) -> List[Str] {
+  let ql = g.v("ql")
+  let qh = g.v("qh")
+  g.emit("let ${ql} = ${q}.wrapping_shl(32)")
+  g.emit("let ${qh} = ${q}.shr_logical(32)")
+  let lo3 = g.v("lo")
+  let bk = g.v("k")
+  let hi3 = g.v("hi")
+  g.emit("let ${lo3} = cpu.adc(${q}, ~${ql}, 1)")
+  g.emit("let ${bk} = cpu.adc_carry(${q}, ~${ql}, 1)")
+  g.emit("let ${hi3} = cpu.adc(${q}, ~${qh}, ${bk})")
+  [ql, qh, lo3, hi3]
+}
+
+fn (var g: Gen) gen_mul() -> List[Str] {
+  // g's words load at their rows and each product is made right before
+  // the pair of the chain that adds it: fewer values live at once (all
+  // 8 products and g up front kept 5 callee saved pairs on arm64, LLVM
+  // 1)
+  for i in 0..4 {
+    g.emit("let f${i} = ld(f, ${8 * i})")
+  }
+  var tt: List[Str] = []
+  for i in 0..4 {
+    g.emit("let g${i} = ld(g, ${8 * i})")
+    var lo: List[Opd] = []
+    var hi: List[Opd] = []
+    for j in 0..4 {
+      lo.push(prod("lo", "f${j}", "g${i}"))
+      hi.push(prod("hi", "f${j}", "g${i}"))
+    }
+    var t: List[Str] = []
+    if i == 0 {
+      // t = lo, then + hi a word up (hi3 + 1 does not overflow)
+      // (the top word is hi3 + the carry: the chain's last pair, one
+      // adcs with xzr, not a cset and an add)
+      let lo0 = g.force(lo[0])
+      let (r, _) = g.chain(lo[1..4] + [hi[3]], hi[0..3] + [name("0")], "0", false)
+      t = [lo0] + r + ["0"]
+    } else {
+      // T is t0..t4 (the reduction's shifted words and its top bit),
+      // below 2p for f below p (every P-256 field value is: nistec.xo
+      // field_mul), so T + f g_i is below p 2^64 + p < 2^320: five
+      // words, neither chain carries out of word 4
+      let (r, _) = g.chain(names(tt), lo + [name("0")], "0", false)
+      let (r2, _) = g.chain(names(r[1..5]), hi, "0", false)
+      t = [r[0]] + r2 + ["0"]
+    }
+    // reduce: q = t0; t + q p is divisible by 2^64; shifted down a word
+    // the addend over t1..t4 is (ql, qh, q - ql, hi3) (q m3's halves)
+    let add = g.reduce_addend(t[0])
+    if t[5] != "0" {
+      let (r, _) = g.chain(names(t[1..6]), names(add + ["0"]), "0", false)
+      tt = r
+    } else {
+      let (r, c) = g.chain(names(t[1..5]), names(add), "0", true)
+      tt = r + [c]
+    }
+  }
+  tt
+}
+
+fn sq(half: Str, i: Int, j: Int) -> Opd {
+  prod(half, "f${i}", "f${j}")
+}
+
+/// sqr4p: h = f f / R mod p, the square's 6 cross products once,
+/// doubled, plus the 4 diagonal squares (10 products, not 16), then 4
+/// Montgomery reduction rounds over the square's low half and its high
+/// half added once.
+fn (var g: Gen) gen_sqr() -> List[Str] {
+  g.out = []
+  g.n = 0
+  for i in 0..4 {
+    g.emit("let f${i} = ld(f, ${8 * i})")
+  }
+  // the cross products f_i f_j (i < j) at words 1..6, each made right
+  // before the pair that adds it (all 12 up front kept callee saved
+  // registers on arm64); their sum is below 2^448, so no word 7. Row
+  // f0 (f1, f2, f3) at words 1..4:
+  var w: List[Str] = ["", g.force(sq("lo", 0, 1))]
+  let (r0, _) = g.chain([sq("lo", 0, 2), sq("lo", 0, 3), name("0")], [sq("hi", 0, 1), sq("hi", 0, 2), sq("hi", 0, 3)], "0", false)
+  w = w + r0
+  // f1 f2, f1 f3 and f2 f3 together at words 3..6, then added in
+  let u3 = g.force(sq("lo", 1, 2))
+  let (u, _) = g.chain([sq("lo", 1, 3), sq("hi", 1, 3), name("0")], [sq("hi", 1, 2), sq("lo", 2, 3), sq("hi", 2, 3)], "0", false)
+  let (r1, _) = g.chain(names([w[3], w[4], "0", "0"]), names([u3] + u), "0", false)
+  w = w[0..3] + r1
+  // doubled (word 7 the carry), plus the squares f_k^2 at words 2k, 2k + 1
+  let (d, c) = g.chain(names(w[1..7]), names(w[1..7]), "0", true)
+  let t0 = g.force(sq("lo", 0, 0))
+  let sqs = [sq("hi", 0, 0), sq("lo", 1, 1), sq("hi", 1, 1), sq("lo", 2, 2), sq("hi", 2, 2), sq("lo", 3, 3), sq("hi", 3, 3)]
+  let (t1, _) = g.chain(names(d + [c]), sqs, "0", false)
+  let t = [t0] + t1
+  // 4 reduction rounds over the low half a = t0..t3: q = a0, a = (a + q
+  // p) / 2^64 (below 2^192 + p < 2^256: four words, the last pair hi3
+  // and the carry); then the high half added: (f f + Q p) / 2^256,
+  // below 2p for f below p, its top bit the carry
+  var a = t[0..4]
+  for _ in 0..4 {
+    let add = g.reduce_addend(a[0])
+    let (r, _) = g.chain(names(a[1..4] + ["0"]), names(add), "0", false)
+    a = r
+  }
+  let (r, c2) = g.chain(names(a), names(t[4..8]), "0", true)
+  r + [c2]
+}
+
+fn is_word(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+/// The identifiers of a line (runs of [A-Za-z0-9_], as Python's \w).
+fn words(l: Str) -> Set[Str] {
+  let b = l.bytes()
+  var out: Set[Str] = #{}
+  var i = 0
+  while i < b.len() {
+    if is_word(b[i]) {
+      let st = i
+      while i < b.len() && is_word(b[i]) {
+        i += 1
+      }
+      out.add(l[st..i])
+    } else {
+      i += 1
+    }
+  }
+  out
+}
+
+/// Names a value nothing reads with a leading _ (Xo's rule for an unused
+/// binding; the compiler drops the code).
+fn mark_unused(lines: List[Str]) -> List[Str] {
+  var later: Set[Str] = #{}
+  var out: List[Str] = []
+  var i = lines.len() - 1
+  while i >= 0 {
+    var l = lines[i]
+    if l.starts_with("  let ") {
+      let rest = l[6..l.len()]
+      match rest.find(" = ") {
+        Some(e) => {
+          let nm = rest[0..e]
+          if !later.contains(nm) && words(nm).len() == 1 && words(nm).contains(nm) {
+            l = "  let _" + rest
+          }
+        }
+        None => ()
+      }
+    }
+    for w in words(lines[i]) {
+      later.add(w)
+    }
+    out.push(l)
+    i -= 1
+  }
+  out.reverse()
+}
+
+fn main(os: Os) {
+  var g = Gen { out: [], n: 0 }
+  let mt = g.gen_mul()
+  g.out.push("  sub_p256(h, ${mt[0]}, ${mt[1]}, ${mt[2]}, ${mt[3]}, ${mt[4]})")
+  let mul_text = mark_unused(g.out).join("\n")
+  let st = g.gen_sqr()
+  g.out.push("  sub_p256(h, ${st[0]}, ${st[1]}, ${st[2]}, ${st[3]}, ${st[4]})")
+  let sqr_text = mark_unused(g.out).join("\n")
+  let lines: List[Str] = [
+    "/// mul4 for P-256's field prime (p's limbs 2^64 - 1, 2^32 - 1, 0,",
+    "/// 2^64 - 2^32 + 1; -1/p mod 2^64 = 1): CIOS over local words, every sum",
+    "/// a chain of cpu.adc (adcs), each reduction step by shifts (t0 + q m0",
+    "/// is q 2^64 for q = t0, q m1 + q is q 2^32, m2 is 0, q m3 is q 2^64 -",
+    "/// q 2^32 + q). The same result as mul4 with P-256's modulus for f and g",
+    "/// below p (the accumulator's width rests on it: field_mul); generated",
+    "/// by scripts/gen/nistecmul4p.",
+    "fn mul4p(h: Int, f: Int, g: Int) {",
+    mul_text,
+    "}",
+    "",
+    "/// mul4p of f with itself: the square's 6 cross products once, doubled,",
+    "/// plus the 4 diagonal squares (10 products where mul4p makes 16), then",
+    "/// 4 Montgomery reduction rounds over the square's low half, each one",
+    "/// chain of cpu.adc with mul4p's addend of shifts, and its high half",
+    "/// added once. The same result as mul4p for f below p; generated by",
+    "/// scripts/gen/nistecmul4p.",
+    "fn sqr4p(h: Int, f: Int) {",
+    sqr_text,
+    "}",
+  ]
+  os.stdio.println(lines.join("\n"))
+}

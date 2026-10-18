@@ -1,0 +1,164 @@
+// Generates std/native/llrt/sha3.xo keccak (xo run scripts/gen/keccaklazy):
+// Keccak-f[1600] with lazy rotations (XKCP's ARMv8 form). Each lane is
+// held as a value s and a pending rotation q (the lane is s rotated
+// right by q), so a rotation costs nothing where it is made (rho, D's
+// rotation by 1) and is applied where the lane is read, as the rotated
+// operand of the eor or bic that reads it: arm64 folds a rotation by a
+// constant read once into that operand (compiler/arm64 isel.xo
+// rot_operand). The 4 rounds of the loop's body run lazily; at its end
+// the 25 pending rotations are applied, so the loop carries plain lanes.
+
+// FIPS 202 3.2.2's rotation offsets (left), lane x + 5 y
+const ROT: List[Int] = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]
+
+/// A lane: the value s rotated right by the pending rotation q.
+struct Lane {
+  s: Str
+  q: Int
+}
+
+struct Gen {
+  out: List[Str]
+  n: Int
+}
+
+/// a mod m in 0..m.
+fn md(a: Int, m: Int) -> Int {
+  ((a % m) + m) % m
+}
+
+/// x rotated right by k as Xo source (a plain x for 0).
+fn rot(x: Str, k: Int) -> Str {
+  let r = md(k, 64)
+  if r == 0 {
+    return x
+  }
+  "${x}.rotate_right(${r})"
+}
+
+/// a rotated left by r: only its pending rotation changes.
+fn rotl(a: Lane, r: Int) -> Lane {
+  Lane { s: a.s, q: md(a.q - r, 64) }
+}
+
+fn (var g: Gen) v(p: Str) -> Str {
+  g.n += 1
+  "${p}${g.n}"
+}
+
+fn (var g: Gen) emit(s: Str) {
+  g.out.push("    " + s)
+}
+
+/// a ^ b: ror(sa, qa) ^ ror(sb, qb) is ror(sa ^ ror(sb, qb - qa), qa).
+fn (var g: Gen) xor(a: Lane, b: Lane) -> Lane {
+  let t = g.v("t")
+  g.emit("let ${t} = ${a.s} ^ ${rot(b.s, b.q - a.q)}")
+  Lane { s: t, q: a.q }
+}
+
+/// ~a & b: ror(sb, qb) & ~ror(sa, qa) is ror(sb & ~ror(sa, qa - qb), qb).
+fn (var g: Gen) andn(a: Lane, b: Lane) -> Lane {
+  let t = g.v("t")
+  g.emit("let ${t} = ${b.s} & ~${rot(a.s, a.q - b.q)}")
+  Lane { s: t, q: b.q }
+}
+
+fn (var g: Gen) round(a: List[Lane], j: Int) -> List[Lane] {
+  // theta
+  var c: List[Lane] = []
+  for x in 0..5 {
+    var l = a[x]
+    for y in 1..5 {
+      l = g.xor(l, a[x + 5 * y])
+    }
+    c.push(l)
+  }
+  var d: List[Lane] = []
+  for x in 0..5 {
+    d.push(g.xor(c[md(x - 1, 5)], rotl(c[(x + 1) % 5], 1)))
+  }
+  // rho and pi: B[y, 2x + 3y] = rotl(A[x, y] ^ D[x], r), made per
+  // plane of chi right before it (25 at once spilled more)
+  var src: List[Int] = []
+  var b: List[Lane] = []
+  var nl: List[Lane] = []
+  for _ in 0..25 {
+    src.push(0)
+    b.push(Lane { s: "", q: 0 })
+    nl.push(Lane { s: "", q: 0 })
+  }
+  for x in 0..5 {
+    for y in 0..5 {
+      src[y + 5 * ((2 * x + 3 * y) % 5)] = x + 5 * y
+    }
+  }
+  // chi
+  for y in 0..5 {
+    for x in 0..5 {
+      let i = x + 5 * y
+      let k = src[i]
+      b[i] = rotl(g.xor(a[k], d[k % 5]), ROT[k])
+    }
+    for x in 0..5 {
+      let i = x + 5 * y
+      let t = g.andn(b[(x + 1) % 5 + 5 * y], b[(x + 2) % 5 + 5 * y])
+      // a ^ t keeps t's pending rotation (t is the fresh value, read once)
+      nl[i] = g.xor(t, b[i])
+    }
+  }
+  // iota: the round constant rotated left by lane 0's pending rotation
+  let s = nl[0].s
+  let q = nl[0].q
+  let t = g.v("t")
+  g.emit("let ${t} = ${s} ^ ${rot("rcs[round + ${j}]", 64 - q)}")
+  nl[0] = Lane { s: t, q: q }
+  nl
+}
+
+fn main(os: Os) {
+  var g = Gen { out: [], n: 0 }
+  var a: List[Lane] = []
+  for i in 0..25 {
+    a.push(Lane { s: "a${i}", q: 0 })
+  }
+  for j in 0..4 {
+    a = g.round(a, j)
+  }
+  for i in 0..25 {
+    g.emit("a${i} = ${rot(a[i].s, a[i].q)}")
+  }
+  var lines: List[Str] = [
+    r#"/// Keccak-f[1600] on the 25 lanes, with lazy rotations (XKCP's ARMv8"#,
+    r#"/// form, scripts/gen/keccaklazy): a lane is a value and a pending"#,
+    r#"/// rotation, so rho's and theta's rotations are the rotated operand of"#,
+    r#"/// the eor or bic that reads the lane (arm64 folds a rotation by a"#,
+    r#"/// constant read once there: isel.xo rot_operand), not instructions of"#,
+    r#"/// their own. The loop's body is 4 rounds; the pending rotations are"#,
+    r#"/// applied at its end. Generated: do not edit."#,
+    r#"fn keccak(var a: List[Int]) {"#,
+    r#"  // the lanes as raw memory at constant offsets (the arm64 backend"#,
+    r#"  // checked each index): a write first makes a this call's own"#,
+    r#"  if a.len() != 25 {"#,
+    r#"    fault("sha3: a state of ${a.len()} lanes")"#,
+    r#"  }"#,
+    r#"  a[0] = a[0]"#,
+    r#"  let la = rt.obj_addr(a).wrapping_add(rt.layout(2))"#,
+  ]
+  for i in 0..25 {
+    lines.push("  var a${i} = rt.mem_load(la, ${8 * i}, 8)")
+  }
+  lines.push(r#"  // the round constants once (a constant's every use reads it through"#)
+  lines.push(r#"  // const_once)"#)
+  lines.push(r#"  let rcs = RCS"#)
+  lines.push(r#"  var round = 0"#)
+  lines.push(r#"  while round < 24 {"#)
+  lines = lines + g.out
+  lines.push("    round += 4")
+  lines.push("  }")
+  for i in 0..25 {
+    lines.push("  rt.mem_store(la, ${8 * i}, a${i}, 8)")
+  }
+  lines.push("}")
+  os.stdio.println(lines.join("\n"))
+}

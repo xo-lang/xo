@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """fieldcheck.py [--quick]: checks the generated field code of
 std/native/llrt (x25519.xo's fe64_mul and fe64_sq from
-scripts/x25519fe64.py, nistec.xo's mul4p and sqr4p from
-scripts/nistecmul4p.py) by interpreting the generated Xo against Python's
+scripts/gen/x25519fe64, nistec.xo's mul4p and sqr4p from
+scripts/gen/nistecmul4p) by interpreting the generated Xo against Python's
 big integers, on random operands and the fields' edges; then a planted
 mutation (one carry dropped in each function) must be caught, so the
 oracle is known to bite. Run it from the checkout root after

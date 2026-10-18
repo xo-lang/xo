@@ -88,7 +88,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   overrides.
 - `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
   nistec.xo's field code, interprets the generated Xo against Python big
-  integers and checks that a planted dropped carry is caught.
+  integers and checks that a planted dropped carry is caught. The
+  generators are Xo programs: `xo run scripts/gen/x25519fe64` (also
+  nistecmul4p, keccaklazy for sha3.xo) prints the code to splice in;
+  internal/llvm TestFieldGeneratorsInSync fails when a file and its
+  generator disagree.
 - `xo vet` XO0530 (a field's large payload bound and shared) and XO0531
   (a large parameter only stored while each caller passes its last use),
   decision 0263.

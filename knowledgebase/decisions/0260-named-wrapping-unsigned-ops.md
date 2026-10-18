@@ -65,8 +65,9 @@ followed the runtime's style.
    `rt.int_wrap` then stays only as the methods' lowering, and a
    repotest check rejects it outside std/native/prelude.xo (and its
 declaration in std/native/rt.xo). The crypto
-   generators (scripts/x25519fe64.py, nistecmul4p.py, keccaklazy.py)
-   emit the methods.
+   generators (scripts/gen/x25519fe64, nistecmul4p and keccaklazy,
+   Xo ports of the Python scripts with byte identical output) emit the
+   methods.
 5. **Seed.** An older xo does not know the new methods as intrinsics, so
    the compiler change lands first and std's use of them after a new
    minor version's seeds (gotchas/seed-older-than-intrinsics.md), batched

@@ -1,0 +1,390 @@
+// Generates the field arithmetic of std/native/llrt/x25519.xo (xo run
+// scripts/gen/x25519fe64): elements of GF(2^255 - 19) as four 64 bit
+// limbs, kept below 2^256 and reduced modulo 2^256 - 38 (twice p), every
+// sum a chain of cpu.adc and cpu.adc_carry (decision 0231's addendum),
+// every difference a chain of cpu.borrow; constant time (no branch or
+// index on a value).
+// After regenerating, run scripts/fieldcheck.py (the generated code
+// against big integers, and a planted mutation it must catch).
+
+/// An operand: a name (half "") or a product's half ("lo" or "hi") of a
+/// and b, made right before the pair that reads it (the arm64 chain makes
+/// it between its adcs, which mul and umulh leave the flags of: calls.xo
+/// ADC_SPLIT).
+struct Opd {
+  half: Str
+  a: Str
+  b: Str
+}
+
+struct Gen {
+  out: List[Str]
+  n: Int
+}
+
+fn name(s: Str) -> Opd {
+  Opd { half: "", a: s, b: "" }
+}
+
+fn prod(half: Str, a: Str, b: Str) -> Opd {
+  Opd { half: half, a: a, b: b }
+}
+
+fn names(xs: List[Str]) -> List[Opd] {
+  xs.map(fn(s) { name(s) })
+}
+
+fn zeros(n: Int) -> List[Str] {
+  var r: List[Str] = []
+  for _ in 0..n {
+    r.push("0")
+  }
+  r
+}
+
+fn (var g: Gen) v(p: Str) -> Str {
+  g.n += 1
+  "${p}${g.n}"
+}
+
+fn (var g: Gen) emit(s: Str) {
+  g.out.push("  " + s)
+}
+
+fn (var g: Gen) adc(a: Str, b: Str, cin: Str) -> (Str, Str) {
+  let s = g.v("s")
+  let k = g.v("k")
+  g.emit("let ${s} = cpu.adc(${a}, ${b}, ${cin})")
+  g.emit("let ${k} = cpu.adc_carry(${a}, ${b}, ${cin})")
+  (s, k)
+}
+
+fn (var g: Gen) wadd(a: Str, b: Str) -> Str {
+  let s = g.v("w")
+  g.emit("let ${s} = ${a}.wrapping_add(${b})")
+  s
+}
+
+fn (var g: Gen) force(x: Opd) -> Str {
+  if x.half == "" {
+    return x.a
+  }
+  let r = g.v(x.half)
+  let op = if x.half == "lo" { "${x.a}.wrapping_mul(${x.b})" } else { "${x.a}.mul_hi_unsigned(${x.b})" }
+  g.emit("let ${r} = ${op}")
+  r
+}
+
+/// xs[j] + ys[j] with the carry chained; the sums and the last carry
+/// ("" when keep is false: the last pair makes only its sum).
+fn (var g: Gen) chain(xs: List[Opd], ys: List[Opd], keep: Bool) -> (List[Str], Str) {
+  var c = "0"
+  var r: List[Str] = []
+  let n = if xs.len() < ys.len() { xs.len() } else { ys.len() }
+  for idx in 0..n {
+    let x = g.force(xs[idx])
+    let y = g.force(ys[idx])
+    // a literal 0 operand with no carry in adds nothing: no
+    // instruction, and no carry out (the arm64 emitter would hold
+    // the 0 in a register and break the adcs chain at it)
+    if c == "0" && (x == "0" || y == "0") {
+      r.push(if x == "0" { y } else { x })
+      continue
+    }
+    if !keep && idx == xs.len() - 1 {
+      let s = g.v("s")
+      g.emit("let ${s} = cpu.adc(${x}, ${y}, ${c})")
+      r.push(s)
+      return (r, "")
+    }
+    let (s, k) = g.adc(x, y, c)
+    c = k
+    r.push(s)
+  }
+  (r, c)
+}
+
+/// xs - ys with the borrow chained (bits.Sub64's borrow formula).
+fn (var g: Gen) sbb_chain(xs: List[Str], ys: List[Str]) -> (List[Str], Str) {
+  var b = ""
+  var r: List[Str] = []
+  for i in 0..xs.len() {
+    let x = xs[i]
+    let y = ys[i]
+    let e = g.v("e")
+    g.emit("let ${e} = ${x}.wrapping_sub(${y})")
+    var bo = ""
+    if b == "" {
+      bo = g.v("b")
+      g.emit("let ${bo} = cpu.borrow(${x}, ${y})")
+      r.push(e)
+    } else {
+      let d = g.v("d")
+      g.emit("let ${d} = ${e}.wrapping_sub(${b})")
+      bo = g.v("b")
+      g.emit("let ${bo} = cpu.borrow(${x}, ${y}) | cpu.borrow(${e}, ${b})")
+      r.push(d)
+    }
+    b = bo
+  }
+  (r, b)
+}
+
+/// 38 x through the barrier (decision 0222): x is a carry or borrow bit,
+/// or a small top word; LLVM made 38 times a bit a conditional select
+/// (TestConstantTimeLLVM, 2026-10-18), which x86's cmov conversion may
+/// turn into a branch.
+fn mul38(x: Str) -> Str {
+  "rt.ct_barrier(${x}).wrapping_mul(38)"
+}
+
+/// r (4 words) + top 2^256 modulo 2^256 - 38, top small: + 38 top, and
+/// the carry out again (38 more on word 0, which then cannot carry).
+fn (var g: Gen) fold_top(r: List[Str], top: Str) -> List[Str] {
+  let t = g.v("t")
+  g.emit("let ${t} = ${mul38(top)}")
+  let (r2, c) = g.chain(names(r), names([t, "0", "0", "0"]), true)
+  let w = g.v("w")
+  g.emit("let ${w} = ${r2[0]}.wrapping_add(${mul38(c)})")
+  [w] + r2[1..r2.len()]
+}
+
+/// t (8 words) modulo 2^256 - 38: the high half times 38 added to the
+/// low half (two chains), then the small top folded.
+fn (var g: Gen) reduce8(t: List[Str]) -> List[Str] {
+  var lo: List[Opd] = []
+  for i in 0..4 {
+    lo.push(prod("lo", t[4 + i], "38"))
+  }
+  var hi: List[Opd] = []
+  for i in 0..3 {
+    hi.push(prod("hi", t[4 + i], "38"))
+  }
+  let (r, c1) = g.chain(names(t[0..4]), lo, true)
+  let h3 = g.v("hi")
+  g.emit("let ${h3} = ${t[7]}.mul_hi_unsigned(38)")
+  // the top word hi3 + c1 + the second chain's carry: that chain's last
+  // pair (adcs, no cset and add)
+  let (r2, _) = g.chain(names(r[1..4] + [h3]), hi + [name(c1)], false)
+  g.fold_top([r[0]] + r2[0..3], r2[3])
+}
+
+fn (var g: Gen) store(rs: List[Str]) {
+  for i in 0..rs.len() {
+    g.emit("st(h, ${8 * i}, ${rs[i]})")
+  }
+}
+
+fn (var g: Gen) load(nm: Str) {
+  for i in 0..4 {
+    g.emit("let ${nm}${i} = ld(${nm}, ${8 * i})")
+  }
+}
+
+fn limbs(nm: Str) -> List[Str] {
+  ["${nm}0", "${nm}1", "${nm}2", "${nm}3"]
+}
+
+fn (var g: Gen) gen_mul() {
+  g.load("f")
+  // the product's words t[0..7]; g's words load two rows at a time and
+  // each product is made right before the pair that adds it (all 8 products
+  // of a row up front kept 7 callee saved pairs on arm64). After row i
+  // the sum is below 2^(64 (i + 5)) (f g_0..g_i): five words t[i..i+4]
+  // take a row, the low halves' carry is word i+4 and the high halves'
+  // chain ends there with no carry out.
+  var t = zeros(8)
+  for i in 0..4 {
+    // g's words two at a time (one ldp on arm64)
+    if i % 2 == 0 {
+      g.emit("let g${i} = ld(g, ${8 * i})")
+      g.emit("let g${i + 1} = ld(g, ${8 * i + 8})")
+    }
+    var lo: List[Opd] = []
+    var hi: List[Opd] = []
+    for j in 0..4 {
+      lo.push(prod("lo", "f${j}", "g${i}"))
+      hi.push(prod("hi", "f${j}", "g${i}"))
+    }
+    if i == 0 {
+      t[0] = g.force(lo[0])
+      let (r, _) = g.chain(lo[1..4] + [name("0")], hi, false)
+      t = t[0..1] + r + t[5..8]
+      continue
+    }
+    let (r, c) = g.chain(names(t[i..i + 4]), lo, true)
+    t = t[0..i] + r + [c] + t[i + 5..8]
+    let (r2, _) = g.chain(names(t[i + 1..i + 5]), hi, false)
+    t = t[0..i + 1] + r2 + t[i + 5..8]
+  }
+  g.store(g.reduce8(t))
+}
+
+fn sq(half: Str, i: Int, j: Int) -> Opd {
+  prod(half, "f${i}", "f${j}")
+}
+
+fn (var g: Gen) gen_sq() {
+  g.load("f")
+  // the cross products f_i f_j (i < j) at words 1..6, each made right
+  // before the pair that adds it (all 12 up front kept 3 callee saved
+  // registers on arm64); their sum is below 2^448, so no word 7. Row
+  // f0 (f1, f2, f3) at words 1..4:
+  var w: List[Str] = ["", g.force(sq("lo", 0, 1))]
+  let (r0, _) = g.chain([sq("lo", 0, 2), sq("lo", 0, 3), name("0")], [sq("hi", 0, 1), sq("hi", 0, 2), sq("hi", 0, 3)], false)
+  w = w + r0
+  // f1 f2, f1 f3 and f2 f3 together at words 3..6, then added in
+  let u3 = g.force(sq("lo", 1, 2))
+  let (u, _) = g.chain([sq("lo", 1, 3), sq("hi", 1, 3), name("0")], [sq("hi", 1, 2), sq("lo", 2, 3), sq("hi", 2, 3)], false)
+  let (r1, _) = g.chain(names([w[3], w[4], "0", "0"]), names([u3] + u), false)
+  w = w[0..3] + r1
+  // doubled (word 7 the carry), plus the squares f_k^2 at words 2k, 2k + 1
+  let (d, c) = g.chain(names(w[1..7]), names(w[1..7]), true)
+  let t0 = g.force(sq("lo", 0, 0))
+  let sqs = [sq("hi", 0, 0), sq("lo", 1, 1), sq("hi", 1, 1), sq("lo", 2, 2), sq("hi", 2, 2), sq("lo", 3, 3), sq("hi", 3, 3)]
+  let (t, _) = g.chain(names(d + [c]), sqs, false)
+  g.store(g.reduce8([t0] + t))
+}
+
+fn (var g: Gen) gen_add() {
+  g.load("f")
+  g.load("g")
+  let (r, c) = g.chain(names(limbs("f")), names(limbs("g")), true)
+  g.store(g.fold_top(r, c))
+}
+
+fn (var g: Gen) gen_sub() {
+  g.load("f")
+  g.load("g")
+  let (r, b) = g.sbb_chain(limbs("f"), limbs("g"))
+  // borrowed: + 2^256 - 38 (that is, - 38), and again on a second borrow
+  let t = g.v("t")
+  g.emit("let ${t} = ${mul38(b)}")
+  let (r2, b2) = g.sbb_chain(r, [t, "0", "0", "0"])
+  let w = g.v("w")
+  g.emit("let ${w} = ${r2[0]}.wrapping_sub(${mul38(b2)})")
+  g.store([w] + r2[1..4])
+}
+
+fn (var g: Gen) gen_mul121665() {
+  g.load("f")
+  var lo: List[Str] = []
+  var hi: List[Str] = []
+  for j in 0..4 {
+    let a = g.v("lo")
+    let b = g.v("hi")
+    g.emit("let ${a} = f${j}.wrapping_mul(121665)")
+    g.emit("let ${b} = f${j}.mul_hi_unsigned(121665)")
+    lo.push(a)
+    hi.push(b)
+  }
+  let (r, c) = g.chain(names(lo[1..4]), names(hi[0..3]), true)
+  let top = g.wadd(hi[3], c)
+  g.store(g.fold_top([lo[0]] + r, top))
+}
+
+/// f reduced below p: bit 255 folded as 19, then p subtracted when the
+/// value + 19 reaches 2^255 (one subtraction: the value is below p + 38).
+fn (var g: Gen) gen_freeze() {
+  g.load("f")
+  let c = g.v("c")
+  g.emit("let ${c} = f3.shr_logical(63)")
+  let m = g.v("m")
+  g.emit("let ${m} = f3 & 9223372036854775807")
+  let t = g.v("t")
+  g.emit("let ${t} = ${c}.wrapping_mul(19)")
+  let (r, _) = g.chain(names(["f0", "f1", "f2", m]), names([t, "0", "0", "0"]), false)
+  let (u, _) = g.chain(names(r), names(["19", "0", "0", "0"]), false)
+  let mk = g.v("mk")
+  g.emit("let ${mk} = ct.mask_bit(${u[3]}.shr_logical(63))")
+  var res: List[Str] = []
+  for i in 0..4 {
+    let y = if i < 3 { u[i] } else { "(${u[3]} & 9223372036854775807)" }
+    let x = g.v("x")
+    g.emit("let ${x} = ct.pick(${mk}, ${y}, ${r[i]})")
+    res.push(x)
+  }
+  g.store(res)
+}
+
+fn is_word(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+/// The identifiers of a line (runs of [A-Za-z0-9_], as Python's \w).
+fn words(l: Str) -> Set[Str] {
+  let b = l.bytes()
+  var out: Set[Str] = #{}
+  var i = 0
+  while i < b.len() {
+    if is_word(b[i]) {
+      let st = i
+      while i < b.len() && is_word(b[i]) {
+        i += 1
+      }
+      out.add(l[st..i])
+    } else {
+      i += 1
+    }
+  }
+  out
+}
+
+/// Names a value nothing reads with a leading _ (Xo's rule for an unused
+/// binding; the compiler drops the code).
+fn mark_unused(lines: List[Str]) -> List[Str] {
+  var later: Set[Str] = #{}
+  var out: List[Str] = []
+  var i = lines.len() - 1
+  while i >= 0 {
+    var l = lines[i]
+    if l.starts_with("  let ") {
+      let rest = l[6..l.len()]
+      match rest.find(" = ") {
+        Some(e) => {
+          let nm = rest[0..e]
+          if !later.contains(nm) && words(nm).len() == 1 && words(nm).contains(nm) {
+            l = "  let _" + rest
+          }
+        }
+        None => ()
+      }
+    }
+    for w in words(lines[i]) {
+      later.add(w)
+    }
+    out.push(l)
+    i -= 1
+  }
+  out.reverse()
+}
+
+fn main(os: Os) {
+  let names_: List[Str] = ["fe64_mul", "fe64_sq", "fe64_add", "fe64_sub", "fe64_mul121665", "fe64_freeze"]
+  let params: List[Str] = ["h: Int, f: Int, g: Int", "h: Int, f: Int", "h: Int, f: Int, g: Int", "h: Int, f: Int, g: Int", "h: Int, f: Int", "h: Int, f: Int"]
+  let docs: List[Str] = [
+    "/// h = f g modulo 2^256 - 38 (f, g below 2^256): the 512 bit product's\n/// high half times 38 added to its low half.",
+    "/// h = f f modulo 2^256 - 38: 6 cross products once, doubled, plus the\n/// 4 squares (10 products where fe64_mul makes 16).",
+    "/// h = f + g modulo 2^256 - 38.",
+    "/// h = f - g modulo 2^256 - 38.",
+    "/// h = 121665 f modulo 2^256 - 38 (RFC 7748's a24).",
+    "/// h = f reduced below p (the canonical value).",
+  ]
+  var text: List[Str] = ["// ---------------------------------------------------------------------------\n// The field on 64 bit limbs, generated by scripts/gen/x25519fe64: do not edit\n"]
+  for k in 0..names_.len() {
+    var g = Gen { out: [], n: 0 }
+    match k {
+      0 => g.gen_mul()
+      1 => g.gen_sq()
+      2 => g.gen_add()
+      3 => g.gen_sub()
+      4 => g.gen_mul121665()
+      _ => g.gen_freeze()
+    }
+    text.push(docs[k])
+    text.push("fn ${names_[k]}(${params[k]}) {")
+    text.push(mark_unused(g.out).join("\n"))
+    text.push("}\n")
+  }
+  os.stdio.println(text.join("\n"))
+}
