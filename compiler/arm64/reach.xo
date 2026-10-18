@@ -1,0 +1,76 @@
+// Whole program dead function removal before code generation (the
+// native backends' globaldce): a function no root reaches is not
+// emitted, nor are its strings, constants and unwind entries. The roots
+// are main, the C ABI exports (Func.export: the runtime's xo_x_ entry
+// points, which the scheduler, the personality routine and the process
+// entry call) and the functions the runtime calls (Func.entry). A
+// function reaches every function an operation of it names (Call,
+// Closure, FuncAddr, Rebind: each names its callee in aux), which are
+// the only ways the emitter refers to a function's symbol (fname).
+// A function it missed fails the link as an undefined symbol.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Drops the functions of m that no root reaches and returns how many
+/// it dropped (a line of counts, then the dropped names, a line each);
+/// XO_DCE=off in the driver keeps them all.
+pub fn drop_unreached(var m: ssa.Module) -> Str {
+  var by_name: Map[Str, List[Int]] = {}
+  for (i, f) in m.funcs.indexed() {
+    var ids = by_name.get(f.name) ?? []
+    ids.push(i)
+    by_name[f.name] = ids
+  }
+  var reached: Map[Str, Bool] = {}
+  var work: List[Str] = []
+  for f in m.funcs {
+    if (f.name == "main" || !f.export.is_empty() || f.entry) && !reached.contains(f.name) {
+      reached[f.name] = true
+      work.push(f.name)
+    }
+  }
+  while let Some(n) = work.pop() {
+    for fi in by_name.get(n) ?? [] {
+      let f = m.funcs[fi]
+      // the operations in blocks: values outside them (inlined or
+      // removed calls) are not emitted
+      for bl in f.blocks {
+        for v in bl.instrs {
+          if let S(s) = f.values[v].aux {
+            if by_name.contains(s) && !reached.contains(s) {
+              reached[s] = true
+              work.push(s)
+            }
+          }
+        }
+      }
+    }
+  }
+  var ne = 0
+  var nx = 0
+  for f in m.funcs {
+    if f.entry { ne += 1 }
+    if !f.export.is_empty() { nx += 1 }
+  }
+  let stats = "funcs ${m.funcs.len()} names ${by_name.len()} reached ${reached.len()} entry ${ne} export ${nx}"
+  if reached.len() == by_name.len() {
+    return stats
+  }
+  var kept: List[ssa.Func] = []
+  var gone: List[Str] = []
+  for f in m.funcs {
+    if reached.contains(f.name) {
+      kept.push(f)
+    } else {
+      gone.push(f.name)
+    }
+  }
+  m.funcs = kept
+  m.func_at = {}
+  for (i, f) in m.funcs.indexed() {
+    if !m.func_at.contains(f.name) {
+      m.func_at[f.name] = i
+    }
+  }
+  "${stats}\n${gone.join("\n")}"
+}

@@ -1,0 +1,33 @@
+// Functions reached only as values (a struct field, a list, a returned
+// closure, an if's result), which the native backends' dead function
+// removal (compiler/arm64 reach.xo) must keep.
+
+struct Op {
+  name: Str
+  apply: fn(Int) -> Int
+}
+
+fn twice(x: Int) -> Int { x * 2 }
+
+fn inc(x: Int) -> Int { x + 1 }
+
+fn square(x: Int) -> Int { x * x }
+
+fn neg(x: Int) -> Int { -x }
+
+fn adder(k: Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { x + k }
+}
+
+fn apply_all(fs: List[fn(Int) -> Int], x: Int) -> Int {
+  fs.fold(x, fn(a: Int, f: fn(Int) -> Int) -> Int { f(a) })
+}
+
+fn main(os: Os) {
+  let op = Op{name: "twice", apply: twice}
+  os.stdio.println("${op.name} ${op.apply(21)}")
+  os.stdio.println("list ${apply_all([inc, square, neg], 3)}")
+  os.stdio.println("closure ${adder(5)(10)}")
+  let pick = if op.name.len() > 3 { inc } else { twice }
+  os.stdio.println("picked ${pick(1)}")
+}

@@ -672,6 +672,22 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let jobs = emit_jobs(os)
     // with the per-function cache (decision 0220 addendum stage B)
     var gm = if inl { mi } else { cur.m }
+    // whole program dead function removal (arm64 reach.xo)
+    if (os.env.get("XO_DCE") ?? "") != "off" {
+      let d = arm64.drop_unreached(gm)
+      // XO_DCE=debug says how many, =list also which
+      let how = os.env.get("XO_DCE") ?? ""
+      if how == "debug" || how == "list" {
+        let ls = d.split("\n")
+        os.stdio.eprintln("dce: ${ls[0]}")
+        if how == "list" {
+          for n in ls[1..ls.len()] {
+            os.stdio.eprintln("dce dropped ${n}")
+          }
+        }
+      }
+      t = lap(os, phases, "dce", t)
+    }
     gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
     // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
     // a release build without --debug-info

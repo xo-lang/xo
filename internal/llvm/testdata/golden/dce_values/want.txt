@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+twice 42
+list -16
+closure 15
+picked 2
+--- stderr
