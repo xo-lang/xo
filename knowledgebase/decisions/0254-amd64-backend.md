@@ -183,7 +183,11 @@ bytes stay clang's:
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
-## Stage 6 (Proposed, xo-fa, 2026-10-18): darwin/amd64 and windows/amd64
+## Stage 6 (6a accepted, owner 2026-10-18; 6b and 6c Proposed): darwin/amd64 and windows/amd64
+
+The owner chose darwin/amd64 first (2026-10-18, through the lead): the
+Intel MacBook verifies it on real hardware. 6a is in progress (xo-fa);
+the Windows convention (6c) is with the owner.
 
 The owner asked (2026-10-18, through the lead) for a plan and size for
 the amd64 backend on Windows and on macOS x86_64, ranked. Today both
