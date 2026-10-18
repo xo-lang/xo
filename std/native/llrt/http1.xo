@@ -932,8 +932,9 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     clen = -1
   }
   // the merged header, without the fields Go removes
-  var hn: List[Str] = []
-  var hv: List[Str] = []
+  // at most one entry a field: no growth (2.4 copies a request before)
+  var hn: List[Str] = List.with_capacity(nraw)
+  var hv: List[Str] = List.with_capacity(nraw)
   var pragma = -1
   var have_cc = false
   k = 0

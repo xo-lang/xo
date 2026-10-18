@@ -112,17 +112,24 @@ struct BodyWriter {
 fn router() -> Router { Router{routes: [], mws: []} }
 
 fn split_path(p: Str) -> List[Str] {
-  var s = p
-  while s.starts_with("/") {
-    s = s.trim_prefix("/")
+  // the slashes at both ends dropped by index: one slice, where trimming
+  // one slash at a time made a string each (a request's path every time)
+  let b = p.bytes()
+  var lo = 0
+  var hi = b.len()
+  while lo < hi && b[lo] == 47 {
+    lo += 1
   }
-  while s.ends_with("/") {
-    s = s.trim_suffix("/")
+  while hi > lo && b[hi - 1] == 47 {
+    hi -= 1
   }
-  if s.is_empty() {
+  if lo == hi {
     return []
   }
-  s.split("/")
+  if lo == 0 && hi == b.len() {
+    return p.split("/")
+  }
+  raw.str_slice(p, lo, hi).split("/")
 }
 
 fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
