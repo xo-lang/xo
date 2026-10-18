@@ -4014,3 +4014,21 @@ The private repository has a pre-push hook in its shared `.git/hooks`
 reinstalled) that refuses a push to any URL containing `xo-lang`. It does
 not affect the owner's push, which runs from `../xo-publish`, a separate
 repository without the hook. Last verified: 2026-10-17.
+
+Also checked since 2026-10-18: every author and committer is the one
+public identity (`mailmap.txt` maps any other), and replacement rules
+cover the Intel Mac's host. A rule that matches already published
+history changes its hashes, so prepare refuses it; before the mirror was
+public, the fix was to delete and recreate xo-lang/xo (a deploy key can
+belong to one repository, and a deleted one keeps it, so that took a new
+key at the same path) and publish again from scratch.
+
+What the public repository shows comes from the private one's files:
+README.md, LICENSE (the plain MIT text, so GitHub detects it; the notes
+about std/ and third-party code are in README.md), CONTRIBUTING.md,
+SECURITY.md, CODE_OF_CONDUCT.md (Contributor Covenant 2.1), and the
+issue forms in .github/ISSUE_TEMPLATE (bug, spec, use case; blank issues
+allowed; the vulnerability link goes to private reporting). Settings live
+on GitHub: Actions disabled, homepage https://xolang.dev, topics, the
+rulesets in `../xo-publish-tools` (enforced once public), private
+vulnerability reporting. Last verified: 2026-10-18.

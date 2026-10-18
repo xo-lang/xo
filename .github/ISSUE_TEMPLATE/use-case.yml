@@ -1,0 +1,22 @@
+name: Use case
+description: Something you tried to build in Xo, and where the language or std got in the way.
+labels: [use-case]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you were building
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: Where it got in the way
+      description: The code you wrote, or wanted to write, and what stopped you.
+    validations:
+      required: true
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: How other languages handle it
+      description: Optional. How you would write it in Go, Rust, or another language you know.

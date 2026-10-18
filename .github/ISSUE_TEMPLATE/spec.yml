@@ -1,0 +1,24 @@
+name: Spec question or gap
+description: spec/core.md or spec/std.md is unclear, contradicts itself, or disagrees with the compiler.
+labels: [spec]
+body:
+  - type: input
+    id: section
+    attributes:
+      label: Section
+      description: The spec file and section, for example spec/core.md 4.2.
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: What is unclear or wrong
+      description: Quote the text, and say what you read it to mean.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: A program where the spec and the compiler disagree, if you have one, with what each says.
+      render: xo

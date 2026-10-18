@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/xo-lang/xo/security/advisories/new
+    about: Report security issues privately, not as an issue (see SECURITY.md).
+  - name: Documentation and tour
+    url: https://xolang.dev
+    about: The language tour, the spec, and the playground.

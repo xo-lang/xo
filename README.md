@@ -174,5 +174,7 @@ point, and the full suites are described in `CLAUDE.md` and
 Issues are welcome; code arrives as proposals, see
 [CONTRIBUTING.md](CONTRIBUTING.md) and, for vulnerabilities,
 [SECURITY.md](SECURITY.md). Xo is MIT licensed ([LICENSE](LICENSE)); the
-standard library is MIT-0 ([std/LICENSE](std/LICENSE)), and code from Go
-keeps its BSD license ([THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)).
+standard library is MIT-0 ([std/LICENSE](std/LICENSE)), so programs
+built with Xo need not carry Xo's notice, and code from Go keeps its BSD
+license ([THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)). Everyone taking part
+follows the [code of conduct](CODE_OF_CONDUCT.md).
