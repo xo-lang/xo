@@ -735,7 +735,7 @@ fn (var g: G) call_op(v: Int) {
       let w = g.store_words(x.args[2])
       g.bounds_check(v, l, i)
       let base = g.elem_addr(l, i, x.args[1], et)
-      if g.heap(et) {
+      if g.heap(et) && !g.after_take(v) {
         let old = g.load_elem(base, et, false)
         g.release(et, old)
       }
@@ -2724,4 +2724,19 @@ fn (var g: G) platform_call(v: Int) {
     return
   }
   g.set(v, defs)
+}
+
+/// Whether list.set v stores into the slot a list.take of the same list
+/// value and index emptied (`g[i][j] += 1`: take g[i], set its element,
+/// set it back): the slot holds the take's placeholder, which releasing
+/// ignores, so its release (a call, which also kept the loop's constants
+/// in it, hoist_consts) is left out (2026-10-17, grid).
+fn (g: G) after_take(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let l = g.f.values[x.args[0]]
+  if l.op != ssa.Op.Field || aux_int(l.aux) != 0 || l.args.len() != 1 {
+    return false
+  }
+  let t = g.f.values[l.args[0]]
+  t.op == ssa.Op.Call && aux_str(t.aux) == "list.take" && t.args.len() == 2 && t.args[1] == x.args[1]
 }
