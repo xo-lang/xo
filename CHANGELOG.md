@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- x86_64 operates on spilled values in place (SHA-3's permutation 26%
+  fewer instructions; a TLS handshake with ML-KEM 5%).
+
 - x86_64 multiprecision arithmetic keeps its carries in the flags
   (X25519's field multiply 22% fewer instructions; a TLS handshake 5%).
 

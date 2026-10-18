@@ -225,7 +225,7 @@ fn (var g: G) x86_emit() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(b.join(""))
+  g.text.push(x86_reload_peep(b.join("")))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -678,6 +678,9 @@ fn x86_names_use(o: Str, k: Int) -> Bool {
 
 /// Expands an x86 template.
 fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
+  if g.x86_emit_mem_rmw(b, inst) {
+    return
+  }
   let t = inst.text
   let tb = t.bytes()
   let tn = tb.len()
@@ -1117,4 +1120,184 @@ fn (var g: G) x86_rotate_jump(var b: List[Str], t: Int) -> Bool {
   let lt = g.label(t)
   b.push("\tj${x86_inv(inst.fcond)} ${lt}_c\n\tjmp ${lt}\n")
   true
+}
+
+/// A 64 bit read modify write on a spilled tied definition, `OP SRC, $d0`
+/// or `OP $d0`, as the operation on the definition's slot (x86 takes
+/// memory as the destination): one instruction where the general path
+/// loads the slot, operates, and stores it back (2026-10-18: keccak's
+/// state lives in slots, 2,336 instructions to arm64's 885). SRC is an
+/// immediate or a register (a spilled SRC goes through r11 first). Not
+/// 32 bit operations: on memory they keep the slot's upper half, where a
+/// register's is zeroed.
+fn (var g: G) x86_emit_mem_rmw(var b: List[Str], inst: Inst) -> Bool {
+  if inst.has_fault || inst.defs.len() != 1 {
+    return false
+  }
+  let lines = inst.text.split("\n")
+  if lines.len() > 1 {
+    return g.x86_emit_mem_rmw_r11(b, inst, lines)
+  }
+  let t = inst.text
+  if t.contains("%r11") {
+    return false
+  }
+  let d = inst.defs[0]
+  if d == 0 || !inst.us.contains(d) {
+    return false
+  }
+  let (dl, ok) = g.vloc(d)
+  if !ok || dl.reg >= 0 || g.fp[d] {
+    return false
+  }
+  let parts = t.split(" ")
+  if parts.len() < 2 {
+    return false
+  }
+  let m = parts[0]
+  let ops = t[m.len() + 1..t.len()].split(", ")
+  let unary = m is "notq" | "negq"
+  let binary = m is "addq" | "subq" | "andq" | "orq" | "xorq" | "rorq" | "rolq" | "shlq" | "shrq" | "sarq"
+  if !(unary && ops.len() == 1 && ops[0] == "$d0") && !(binary && ops.len() == 2 && ops[1] == "$d0") {
+    return false
+  }
+  let mem = x86_mem_ref(dl)
+  if unary {
+    b.push("\t${m} ${mem}\n")
+    return true
+  }
+  let src = ops[0]
+  let shift = m is "rorq" | "rolq" | "shlq" | "shrq" | "sarq"
+  if src.starts_with("$") && src.len() > 1 && (src.bytes()[1] >= '0' && src.bytes()[1] <= '9' || src.bytes()[1] == '-') {
+    // an immediate
+    b.push("\t${m} ${src}, ${mem}\n")
+    return true
+  }
+  if shift || !src.starts_with("$u") {
+    return false
+  }
+  let k = Int.parse(src[2..src.len()]) ?? -1
+  if k < 0 || k >= inst.us.len() || inst.us[k] == 0 || inst.us[k] == d {
+    return false
+  }
+  let (sl, sok) = g.vloc(inst.us[k])
+  if !sok || g.fp[inst.us[k]] {
+    return false
+  }
+  if sl.reg >= 0 {
+    b.push("\t${m} ${x86_reg(sl.reg, 8)}, ${mem}\n")
+  } else {
+    b.push("\tmovq ${x86_mem_ref(sl)}, %r11\n\t${m} %r11, ${mem}\n")
+  }
+  true
+}
+
+/// x86_emit_mem_rmw for the templates that build the source in r11
+/// first (bic and eon: `movq $uK, %r11`, `notq %r11`, then `OP %r11,
+/// $d0`): the first lines as they are, the last on the slot.
+fn (var g: G) x86_emit_mem_rmw_r11(var b: List[Str], inst: Inst, lines: List[Str]) -> Bool {
+  if lines.len() > 3 {
+    return false
+  }
+  let d = inst.defs[0]
+  if d == 0 || !inst.us.contains(d) || g.fp[d] {
+    return false
+  }
+  let (dl, ok) = g.vloc(d)
+  if !ok || dl.reg >= 0 {
+    return false
+  }
+  let last = lines[lines.len() - 1]
+  let lp = last.split(" ")
+  if lp.len() != 3 || !(lp[0] is "andq" | "orq" | "xorq" | "addq" | "subq") || lp[1] != "%r11," || lp[2] != "$d0" {
+    return false
+  }
+  let first = lines[0]
+  if !first.starts_with("movq $u") || !first.ends_with(", %r11") {
+    return false
+  }
+  let k = Int.parse(first["movq $u".len()..first.len() - ", %r11".len()]) ?? -1
+  if k < 0 || k >= inst.us.len() || inst.us[k] == 0 || inst.us[k] == d || g.fp[inst.us[k]] {
+    return false
+  }
+  if lines.len() == 3 && lines[1] != "notq %r11" {
+    return false
+  }
+  let (sl, sok) = g.vloc(inst.us[k])
+  if !sok {
+    return false
+  }
+  let src = if sl.reg >= 0 { x86_reg(sl.reg, 8) } else { x86_mem_ref(sl) }
+  b.push("\tmovq ${src}, %r11\n")
+  if lines.len() == 3 {
+    b.push("\tnotq %r11\n")
+  }
+  b.push("\t${lp[0]} %r11, ${x86_mem_ref(dl)}\n")
+  true
+}
+
+/// The operands of a line `\tmovq A, B` (no other mnemonic), or none.
+fn movq_ops(l: Str) -> (Str, Str, Bool) {
+  if !l.starts_with("\tmovq ") {
+    return ("", "", false)
+  }
+  let ops = l["\tmovq ".len()..l.len()].split(", ")
+  if ops.len() != 2 {
+    return ("", "", false)
+  }
+  (ops[0], ops[1], true)
+}
+
+/// Whether s is a 64 bit general register (%rax ... %r15).
+fn gp64(s: Str) -> Bool {
+  s.starts_with("%r") && !s.ends_with("d") && !s.ends_with("w") && !s.ends_with("b") && !s.contains("(")
+}
+
+/// Whether s is a stack slot reference `N(%rsp)`.
+fn rsp_slot(s: Str) -> Bool {
+  s.ends_with("(%rsp)") && !s.contains(",")
+}
+
+/// A pass over a function's emitted text (as the arm64 backend's
+/// lsr.xo reload_reuse over its own): a reload right after the store of
+/// the same register to the same slot reads the register (`movq %r12,
+/// 208(%rsp)` then `movq 208(%rsp), %r9` copies r12, or goes when r9 is
+/// r12); a memory copy through the stack right before the load of its
+/// destination, `pushq A; popq B; movq B, %r`, is `movq A, %r; movq %r,
+/// B` (2026-10-18, keccak).
+fn x86_reload_peep(text: Str) -> Str {
+  let ls = text.split("\n")
+  var out: List[Str] = List.with_capacity(ls.len())
+  var i = 0
+  while i < ls.len() {
+    let l = ls[i]
+    if i + 2 < ls.len() && l.starts_with("\tpushq ") && ls[i + 1].starts_with("\tpopq ") {
+      let a = l["\tpushq ".len()..l.len()]
+      let bslot = ls[i + 1]["\tpopq ".len()..ls[i + 1].len()]
+      let (s2, d2, ok2) = movq_ops(ls[i + 2])
+      if ok2 && rsp_slot(a) && rsp_slot(bslot) && s2 == bslot && gp64(d2) {
+        // pushq computes A's address before rsp moves, popq B's after
+        // it moves back: both are relative to the same rsp
+        out.push("\tmovq ${a}, ${d2}")
+        out.push("\tmovq ${d2}, ${bslot}")
+        i += 3
+        continue
+      }
+    }
+    if i + 1 < ls.len() {
+      let (s1, d1, ok1) = movq_ops(l)
+      let (s2, d2, ok2) = movq_ops(ls[i + 1])
+      if ok1 && ok2 && gp64(s1) && rsp_slot(d1) && s2 == d1 && gp64(d2) {
+        out.push(l)
+        if d2 != s1 {
+          out.push("\tmovq ${s1}, ${d2}")
+        }
+        i += 2
+        continue
+      }
+    }
+    out.push(l)
+    i += 1
+  }
+  out.join("\n")
 }
