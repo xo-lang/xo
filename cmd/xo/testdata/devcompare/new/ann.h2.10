@@ -1,16 +1,16 @@
 --------------------------------------------------------------------------------
 Ir
 --------------------------------------------------------------------------------
-10,142,699 (100.0%)  PROGRAM TOTALS
+10,140,199 (100.0%)  PROGRAM TOTALS
 
 --------------------------------------------------------------------------------
 Ir                 file:function
 --------------------------------------------------------------------------------
-2,269,668 (22.38%)  ???:xo_f_main [/work/run/plain]
-2,175,539 (21.45%)  ???:xo_f_http.serve [/work/run/plain]
-2,087,207 (20.58%)  ???:xo_f_scan.find_byte [/work/run/plain]
-1,500,934 (14.80%)  ???:xo_f_hpack.encode [/work/run/plain]
-884,030 ( 8.72%)  ???:xo_f_tlssrv.flush [/work/run/plain]
-787,533 ( 7.76%)  ???:memcpy [/usr/lib/libc.so.6]
-437,788 ( 4.32%)  ???:xo_f_rc_inc'2 [/work/run/plain]
+2,268,868 (22.37%)  ???:xo_f_main [/work/run/plain]
+2,175,439 (21.45%)  ???:xo_f_http.serve [/work/run/plain]
+2,086,507 (20.58%)  ???:xo_f_scan.find_byte [/work/run/plain]
+1,500,434 (14.80%)  ???:xo_f_hpack.encode [/work/run/plain]
+883,830 ( 8.72%)  ???:xo_f_tlssrv.flush [/work/run/plain]
+787,433 ( 7.77%)  ???:memcpy [/usr/lib/libc.so.6]
+437,688 ( 4.32%)  ???:xo_f_rc_inc'2 [/work/run/plain]
    1,234 ( 0.01%)  < ???:xo_f_main (3x) [/work/run/plain]
