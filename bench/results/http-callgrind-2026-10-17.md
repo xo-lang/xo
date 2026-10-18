@@ -93,3 +93,12 @@ a 12 byte common prefix, base / new): 4 entries 0.88, 5 entries 0.99,
 6 (a table) 1.01, 8 and 16 (tables) 1.01. A SMALL_MAP of 8 cost 1.28 at
 8 entries and 1.07 at 6, so 5 it is; the scan kept out of xo.map.find,
 which the arm64 inliner takes only while it stays small.
+
+## The Date header cached per second (2026-10-17)
+
+http1w.put_date formatted the date on every response (the clock, a
+civil date conversion, 29 bytes). It now keeps the current second's text
+in static words 69 to 74 (a sequence lock: a reader that sees the
+sequence change, or a writer busy, formats it itself). Base 018e3969
+against the branch, the same xo, N=100, REPS=3, medians: arm64 31,787 to
+31,426 (-1.1%), LLVM 27,889 to 27,805 (-0.3%, within the spread).

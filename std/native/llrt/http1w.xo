@@ -265,10 +265,51 @@ fn two(d: Int, at: Int, v: Int) {
   rt.mem_store(d, at + 1, 48 + v % 10, 1)
 }
 
+/// The static words of the Date cache (std/native/rt.xo's table): 69 a
+/// sequence (odd while a writer fills it), 70 the second it holds, 71 to
+/// 74 its 29 bytes.
+const W_DATE = 69
+
 /// Writes the Date header value of the wall clock now (http.TimeFormat,
 /// "Mon, 02 Jan 2006 15:04:05 GMT": 29 bytes) at d; the offset after it.
+/// The text of the current second comes from a cache shared by the
+/// threads (a sequence lock in static words: a reader that sees the
+/// sequence change formats it itself), as net/http's per second date.
 pub fn put_date(d: Int, at: Int) -> Int {
-  var secs = sysio.real_ns() / 1000000000
+  let secs = sysio.real_ns() / 1000000000
+  let c = rt.static_word(W_DATE)
+  let s1 = rt.slot_load(c, 0, 1)
+  if (s1 & 1) == 0 && rt.slot_load(c, 1, 1) == secs {
+    let w0 = rt.slot_load(c, 2, 1)
+    let w1 = rt.slot_load(c, 3, 1)
+    let w2 = rt.slot_load(c, 4, 1)
+    let w3 = rt.slot_load(c, 5, 1)
+    if rt.slot_load(c, 0, 1) == s1 {
+      rt.mem_store(d, at, w0, 8)
+      rt.mem_store(d, at + 8, w1, 8)
+      rt.mem_store(d, at + 16, w2, 8)
+      rt.mem_store(d, at + 24, w3, 4)
+      rt.mem_store(d, at + 28, (w3 >> 32) & 255, 1)
+      return at + 29
+    }
+  }
+  let end = date_at(d, at, secs)
+  // publish this second's text when no writer holds the cache
+  if (s1 & 1) == 0 && rt.slot_cas(c, 0, s1, s1 + 1, 3) {
+    rt.slot_store(c, 1, secs, 2)
+    rt.slot_store(c, 2, rt.mem_load(d, at, 8), 2)
+    rt.slot_store(c, 3, rt.mem_load(d, at + 8, 8), 2)
+    rt.slot_store(c, 4, rt.mem_load(d, at + 16, 8), 2)
+    rt.slot_store(c, 5, rt.mem_load(d, at + 24, 4) | (rt.mem_load(d, at + 28, 1) << 32), 2)
+    rt.slot_store(c, 0, s1 + 2, 2)
+  }
+  end
+}
+
+/// The Date text of second secs at d (put_date's formatting); the offset
+/// after it.
+fn date_at(d: Int, at: Int, secs0: Int) -> Int {
+  var secs = secs0
   var days = secs / 86400
   var rem = secs % 86400
   if rem < 0 {

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- HTTP/1.1 responses on the native backends take the Date header's text
+  from a cache of the current second shared by the threads (a sequence
+  lock in runtime static words 69 to 74), as net/http does: plain HTTP
+  -1.1% instructions per request on arm64.
+
 - Maps of up to 5 entries keep no hash table: a put appends without
   hashing or rebuilding, a lookup scans the keys (their lengths first),
   and the sixth put builds the table. Plain HTTP -4.5% (arm64) and -5.3%

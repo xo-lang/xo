@@ -255,6 +255,7 @@ fn prefetch(a: Int)
 ///   66 std/native/llrt/heapprof.xo: the heap profile's record (decision 0238), 0 when off
 ///   67 std/native/llrt/tracerec.xo: the execution trace's record (decision 0240), 0 when off (trace.xo and ctx.xo use tracerec's accessors)
 ///   68 std/native/llrt/hconn.xo: the TLS and HTTP/2 server's table (decision 0244, srvtls.xo install), 0 before Server.with_tls
+///   69-74 std/native/llrt/http1w.xo: the Date header cache: its sequence, its second, its 29 bytes (put_date)
 ///   64-65 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), and XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239)
 fn static_word(k: Int) -> Int uses realtime
 
