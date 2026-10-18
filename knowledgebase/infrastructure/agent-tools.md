@@ -89,6 +89,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `scripts/asmnorm.py FILE`: an `xo build --asm` file without DWARF
   sections and source columns, to check that a source rewrite builds the
   same code and data (gotchas/rewrite-moves-source-columns.md).
+  `scripts/std-identity.sh XO REV_A REV_B` runs it over every
+  internal/llvm golden and the compiler with std at two revisions (heavy
+  lock, about 25 minutes).
 - `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
   nistec.xo's field code, interprets the generated Xo against Python big
   integers and checks that a planted dropped carry is caught. The

@@ -22,7 +22,9 @@ the rest of the data were the same.
 
 Compare the assembly (`xo build --asm`) with the DWARF sections and the
 columns of location strings removed: `scripts/asmnorm.py FILE` prints
-it, and two builds whose sources differ only in columns hash equal. For
+it, and two builds whose sources differ only in columns hash equal;
+`scripts/std-identity.sh XO REV_A REV_B` compares every internal/llvm
+golden and the compiler that way for a std rewrite. For
 a rewrite that also moves lines (one call split over two), drop the line
 numbers too, or the check fails the same way. Say "the same code and
 data", not "byte identical", for such a change.
