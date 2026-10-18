@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,7 +176,7 @@ func xo1Build(xo1, dir, name, target string) (string, string, error) {
 	if target != xotool.Host() {
 		args = append(args, "--targets="+target)
 	}
-	cmd := exec.Command(xo1, append(args, filepath.ToSlash(dir))...)
+	cmd := testtmp.Guard(exec.Command(xo1, append(args, filepath.ToSlash(dir))...))
 	wd, _ := os.Getwd()
 	cmd.Env = append(os.Environ(), "PWD="+filepath.ToSlash(wd))
 	b, err := cmd.CombinedOutput()
@@ -187,7 +188,7 @@ func xo1Build(xo1, dir, name, target string) (string, string, error) {
 func runBinary(bin, dir string, env ...string) (runResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, progArgs(dir)...)
+	cmd := testtmp.Guard(exec.CommandContext(ctx, bin, progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), env...)
 	cmd.Stdin = progStdin(dir)

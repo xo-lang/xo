@@ -1,6 +1,6 @@
 # Test server children outlive a killed `go test`
 
-Status: Observed (2026-10-16, Xo Lang 2; fixed by xo-4).
+Status: Observed (2026-10-16, Xo Lang 2; fixed by xo-4; again 2026-10-17, fixed by xo-4 with testtmp.Guard).
 
 **Symptom.** Native network servers that Go tests start (TestHTTPParseDiff's
 http-parse-* binaries, TestHTTPFuzz's fuzz server, the TLS and H2 diff
@@ -25,3 +25,18 @@ child a Go test starts; tests: internal/testtmp TestLifelineParentDies
 TestLifelineCut, TestLifelineExitStatus. $XO_LIFELINE names a prebuilt
 wrapper where there is no Go toolchain (Docker runs of cross built test
 binaries).
+
+**Seen again (2026-10-17, found 2026-10-18).** Four golden programs
+(tz_table, http_conn_fault, http_tls_keys, http_tls) from one `go test`
+process's xotool build directory ran 27 hours with PPID 1 and needed
+SIGKILL: the golden runners (internal/llvm runBinary and buildRun,
+internal/arm64, internal/gen) started programs with plain exec.Command,
+not Lifeline, and these ignore SIGTERM. Fix (xo-4): testtmp.Guard(cmd),
+for runners with no testing.T: one lifeline per test process (its write
+end held until the process ends), the program in a process group of its
+own, and the watcher sends the group SIGTERM, then SIGKILL after 3 s;
+the golden runners, internal/gen's run helpers, cmd/xo's env helper,
+and xotool's runIn (every xo the tests run) use it. Test: internal/testtmp
+TestGuardOutlivesNothing (a guarded shell and its grandchild, both
+ignoring SIGTERM, gone 3.2 s after their parent exits with no cleanup;
+it fails with Guard disabled).

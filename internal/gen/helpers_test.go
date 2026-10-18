@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 
@@ -14,7 +15,7 @@ import (
 // run runs name with args in dir and returns its combined output; a go
 // command runs with goVetEnv on the Xo Go cache.
 func run(dir, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := testtmp.Guard(exec.Command(name, args...))
 	cmd.Dir = dir
 	if name == "go" {
 		cmd.Env = goVetEnv()

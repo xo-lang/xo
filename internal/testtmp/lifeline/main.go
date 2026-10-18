@@ -8,10 +8,13 @@
 // It starts a watcher (itself, with XO_LIFELINE_WATCH set) that holds the
 // lifeline and an "alive" pipe, then execs PROGRAM in its own process, so
 // the test's exec.Cmd is PROGRAM itself: its signals, exit status, and
-// Kill are the program's. The watcher kills PROGRAM when the lifeline
-// reaches end of file (the test closed it, or the test process died) and
-// exits when PROGRAM does (the alive pipe's write end, which PROGRAM
-// holds, closes).
+// Kill are the program's. PROGRAM leads a process group of its own, so
+// what it starts goes with it. When the lifeline reaches end of file (the
+// test closed it, or the test process died or timed out) the watcher
+// sends the group SIGTERM, then SIGKILL after a grace period (a program
+// that ignores SIGTERM ran on for 27 hours, 2026-10-18); it exits when
+// the group is gone (the alive pipe's write end, which PROGRAM and its
+// children hold, closes).
 package main
 
 import (
@@ -21,6 +24,7 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -57,13 +61,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "lifeline:", e)
 		os.Exit(127)
 	}
+	// a process group of its own: the watcher signals the whole group
+	if err := syscall.Setpgid(0, 0); err != nil {
+		fmt.Fprintln(os.Stderr, "lifeline: setpgid:", err)
+		os.Exit(127)
+	}
 	err = syscall.Exec(path, os.Args[1:], os.Environ())
 	fmt.Fprintln(os.Stderr, "lifeline: exec:", err)
 	os.Exit(127)
 }
 
-// watch kills process pid when the lifeline (fd 3) ends, and returns when
-// the alive pipe (fd 4) ends: pid exited.
+// grace is how long the group has after SIGTERM before SIGKILL.
+const grace = 3 * time.Second
+
+// watch signals process group pid when the lifeline (fd 3) ends (SIGTERM,
+// then SIGKILL after grace), and returns when the alive pipe (fd 4)
+// ends: the group exited.
 func watch(pid string) {
 	p, _ := strconv.Atoi(pid)
 	life := os.NewFile(3, "lifeline")
@@ -81,6 +94,11 @@ func watch(pid string) {
 	select {
 	case <-gone:
 	case <-ended:
-		syscall.Kill(p, syscall.SIGKILL)
+		syscall.Kill(-p, syscall.SIGTERM)
+		select {
+		case <-gone:
+		case <-time.After(grace):
+			syscall.Kill(-p, syscall.SIGKILL)
+		}
 	}
 }

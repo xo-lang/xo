@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"net"
 	"net/http"
@@ -57,7 +58,7 @@ type progRun struct {
 // runProg runs bin in dir with the extra environment and standard input.
 func runProg(t *testing.T, bin, dir, stdin string, env ...string) progRun {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	if stdin != "" {
@@ -232,7 +233,7 @@ func startServer(t *testing.T, bin, dir string, env ...string) *serverChild {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), env...), fmt.Sprintf("PORT=%d", port))
 	pipe, err := cmd.StdoutPipe()

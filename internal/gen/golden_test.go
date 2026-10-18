@@ -123,7 +123,7 @@ func buildAndRunOpts(t *testing.T, dir string, opts xotool.Options, extra ...str
 		args = strings.Fields(string(data))
 	}
 	args = append(args, extra...)
-	cmd := exec.Command(res.Binaries[xotool.Host()], args...)
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], args...))
 	cmd.Dir = dir
 	cmd.Env = goldenEnv()
 	if data, err := os.ReadFile(filepath.Join(dir, "env.txt")); err == nil {

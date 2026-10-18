@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,7 +160,7 @@ func modSetup(t testing.TB, src string) *modtest.Env {
 
 // command is exec.Command in t's working directory with t's environment.
 func command(t testing.TB, name string, args ...string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
+	cmd := testtmp.Guard(exec.Command(name, args...))
 	cmd.Dir, cmd.Env = workdir(t), environ(t)
 	return cmd
 }

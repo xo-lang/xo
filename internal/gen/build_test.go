@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"net"
 	"net/http"
@@ -66,7 +67,7 @@ func testGoldenRace(t *testing.T, names []string, noArenas bool) {
 			if data, err := os.ReadFile(filepath.Join(dir, "args.txt")); err == nil {
 				args = strings.Fields(string(data))
 			}
-			cmd := exec.Command(res.Binaries[xotool.Host()], args...)
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], args...))
 			cmd.Dir = dir
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -163,7 +164,7 @@ func startSignalChild(t *testing.T, env ...string) *signalChild {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), env...)
 	if slices.Contains(env, "STDIN=pipe") {
 		// standard input stays open, so read_line blocks
@@ -430,7 +431,7 @@ func TestHoles(t *testing.T) {
 	if err != nil || res.Failed {
 		t.Fatalf("build --holes: %v %+v", err, res)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -462,7 +463,7 @@ func TestRunSeedReproduces(t *testing.T) {
 	}
 	bin := res.Binaries[xotool.Host()]
 	runSeed := func(seed int) string {
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Env = append(os.Environ(), fmt.Sprintf("XO_SEED=%d", seed))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -501,7 +502,7 @@ func TestTestSeedReproduces(t *testing.T) {
 	}
 	bin := res.Binaries[xotool.Host()]
 	runSeed := func(seed string) string {
-		cmd := exec.Command(bin, "-seed", seed, "-run", "lost update", "-v")
+		cmd := testtmp.Guard(exec.Command(bin, "-seed", seed, "-run", "lost update", "-v"))
 		cmd.Dir = dir
 		out, _ := cmd.CombinedOutput()
 		return string(out)

@@ -212,7 +212,7 @@ func buildRunWith(t *testing.T, dir string, opts xotool.Options) (runResult, err
 	if res.Failed {
 		t.Fatalf("build failed:\n%s", res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...)
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	cmd.Stdin = progStdin(dir)

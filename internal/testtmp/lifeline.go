@@ -23,12 +23,13 @@ import (
 // t.Cleanup closes the lifeline and kills a child still running, and
 // the child is killed after d in any case, or at the test's own deadline
 // (-timeout, t.Deadline) when that is later: a long run reaches a late
-// test well after d. cmd must have no ExtraFiles
+// test well after d. cmd must have no ExtraFiles, except a Guard's
 // (the lifeline is file descriptor 3). The result cuts the lifeline, as
 // the test process's death would.
 func Lifeline(t testing.TB, cmd *exec.Cmd, d time.Duration) (cut func()) {
 	t.Helper()
-	if len(cmd.ExtraFiles) != 0 {
+	guarded := len(cmd.ExtraFiles) == 1 && cmd.ExtraFiles[0] == procLife.r && procLife.r != nil
+	if len(cmd.ExtraFiles) != 0 && !guarded {
 		t.Fatal("testtmp.Lifeline: cmd has ExtraFiles")
 	}
 	var w *os.File
@@ -42,8 +43,12 @@ func Lifeline(t testing.TB, cmd *exec.Cmd, d time.Duration) (cut func()) {
 			t.Fatal(err)
 		}
 		w = pw
-		cmd.Args = append([]string{wrapper, cmd.Path}, cmd.Args[1:]...)
-		cmd.Path = wrapper
+		if !guarded {
+			cmd.Args = append([]string{wrapper, cmd.Path}, cmd.Args[1:]...)
+			cmd.Path = wrapper
+		}
+		// a Guard'ed cmd already runs behind the wrapper: this test's
+		// lifeline takes the place of the process's (it ends no later)
 		cmd.ExtraFiles = []*os.File{r}
 		t.Cleanup(func() { r.Close() })
 	}

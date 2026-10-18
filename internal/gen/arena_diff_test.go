@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"net"
 	"net/http"
@@ -104,7 +105,7 @@ func serveNotes(t *testing.T, bin, dir string) string {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "NOTES_TOKEN=tok-admin", fmt.Sprintf("NOTES_ADDR=127.0.0.1:%d", port))
 	var errb strings.Builder

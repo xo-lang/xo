@@ -44,6 +44,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"io/fs"
 	"os"
@@ -691,7 +692,9 @@ func BuildXo(root, seed, out string) error {
 func xoPath(p string) string { return filepath.ToSlash(p) }
 
 func runIn(dir string, env []string, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	// behind the process's lifeline: a killed or timed out test leaves no
+	// xo build, and no program it runs, behind (testtmp.Guard)
+	cmd := testtmp.Guard(exec.Command(name, args...))
 	cmd.Dir = dir
 	cmd.Env = TestJobsEnv(append(append(os.Environ(), "PWD="+xoPath(dir)), env...))
 	out, err := cmd.CombinedOutput()

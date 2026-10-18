@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,7 +144,7 @@ func runProp(t *testing.T, bin, dir string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin)
+	cmd := testtmp.Guard(exec.CommandContext(ctx, bin))
 	cmd.Dir = dir
 	// crash bundles go to a directory the test removes, not $TMPDIR
 	cmd.Env = append(os.Environ(), "XO_CRASH_DIR="+t.TempDir())

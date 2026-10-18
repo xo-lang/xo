@@ -113,7 +113,7 @@ func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool
 		}
 		t.Fatalf("build (%s) failed:\n%s", opts.Backend, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...)
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), progEnv(dir)...)
 	cmd.Stdin = progStdin(dir)
@@ -134,7 +134,7 @@ func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool
 // freed at exit.
 func leakCheck(t *testing.T, bin, dir string) string {
 	t.Helper()
-	cmd := exec.Command(bin, progArgs(dir)...)
+	cmd := testtmp.Guard(exec.Command(bin, progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), progEnv(dir)...), "XO_LEAKCHECK=1")
 	cmd.Stdin = progStdin(dir)
@@ -356,7 +356,7 @@ func TestLeakCheckExit(t *testing.T) {
 			if r.exit != 3 || r.stdout != "bye\n" || strings.Contains(r.stderr, "xo leakcheck") {
 				t.Fatalf("run without XO_LEAKCHECK: %s", r)
 			}
-			cmd := exec.Command(b.Binaries[xotool.Host()])
+			cmd := testtmp.Guard(exec.Command(b.Binaries[xotool.Host()]))
 			cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
