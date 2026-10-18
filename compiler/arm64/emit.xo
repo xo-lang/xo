@@ -323,7 +323,61 @@ fn (var g: G) emit() {
     ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
-  g.text.push(g.far_tests(g.far_slots(pair_mem(reload_reuse(b.join(""), ext), ext))))
+  g.text.push(g.local_empty(g.far_tests(g.far_slots(pair_mem(reload_reuse(b.join(""), ext), ext)))))
+}
+
+/// The number of instructions past which a function keeps adrp and add
+/// for the empty list: its own copy, after the function, must stay in
+/// adr's reach (1 MB).
+const LOCAL_EMPTY_LIMIT = 200000
+
+/// Rewrites each adrp and add of xo_empty_list in a function's text as
+/// one adr of the function's own read only empty list ({IMMORTAL, 0,
+/// 0}, placed after it, as a literal's count never written: decision
+/// 0058): 453,000 pairs in xo, 1.8 MB (bench/results/
+/// xo-code-size-2026-10-18.md, fix 4). A `[]` is then not one address,
+/// so the runtime tests an empty list by its count (llrt
+/// obj.is_immortal), never by address.
+fn (g: G) local_empty(text: Str) -> Str {
+  let s = g.sym("xo_empty_list")
+  let (pg, off) = if g.os == "darwin" { ("${s}@PAGE", "${s}@PAGEOFF") } else { (s, ":lo12:${s}") }
+  if g.x86 || !text.contains("adrp") || !text.contains(pg) {
+    return text
+  }
+  let lines = text.split("\n")
+  var n = 0
+  for l in lines {
+    if l.starts_with("\t") && !l.starts_with("\t.") {
+      n += 1
+    }
+  }
+  if n > LOCAL_EMPTY_LIMIT {
+    return text
+  }
+  let lab = g.local("${g.lbl_prefix()}_el")
+  var out: List[Str] = []
+  var hit = false
+  var i = 0
+  while i < lines.len() {
+    let l = lines[i]
+    if i + 1 < lines.len() && l.starts_with("\tadrp ") && l.ends_with(", ${pg}") {
+      let r = l[6..l.len() - pg.len() - 2]
+      if lines[i + 1] == "\tadd ${r}, ${r}, ${off}" {
+        out.push("\tadr ${r}, ${lab}")
+        hit = true
+        i += 2
+        continue
+      }
+    }
+    out.push(l)
+    i += 1
+  }
+  if !hit {
+    return text
+  }
+  // .long words: compiler/macho takes no .quad in code (IMMORTAL is
+  // 1 << 63, its high half 2^31)
+  out.join("\n") + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
 }
 
 /// The number of instructions past which a function's tbz and tbnz may

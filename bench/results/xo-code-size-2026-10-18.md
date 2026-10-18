@@ -205,3 +205,25 @@ XO_PASSES=-inline bin/xo build --backend=arm64 --std=$PWD/std -o /tmp/xo-noinlin
 
 Toolchain: macOS 27.0 arm64, Apple clang 21.0.0 objdump and nm, xo of
 main fbaae84c. Last verified: 2026-10-18.
+
+## Fix 4, landed (2026-10-18, Xo lang 4)
+
+The emitter-only form: compiler/arm64 emit.xo local_empty rewrites each
+`adrp`+`add` of `xo_empty_list` in a function as one `adr` of the
+function's own read only empty list (`{IMMORTAL, 0, 0}` as `.long` words
+after it, like a literal's count never written), for functions up to
+200,000 instructions (adr reaches 1 MB; build_native is 653 KB). A `[]`
+is then not one address, so llrt's two address tests (tasks.list_release,
+chan.release) test the immortal count instead (obj.is_immortal).
+xo's `__text` 40.05 to 38.36 MB (-1.69 MB, 4.2%; binary 44.09 to 42.07
+MB); 987 adrp loads of the empty list remain (not yet examined).
+The Mac sweep (bench/perf/sweep.py, 114 workloads, 3 rounds): 0 slower,
+2 faster beyond spread; httpparse h1 rows at 1.02 to 1.08 inside spreads
+of 1.06 to 1.09 read 0.96 to 0.97 on a 5 round rerun (noise).
+
+The empty list as zero was not taken: llrt uses 0 for "no list" apart
+from the empty list (list_release, the channel results), and generated
+code reads a list's length from its header without a null test, so it
+is an ABI change needing a seed; a pinned register would cost one
+allocatable register and C callbacks' entry.
+

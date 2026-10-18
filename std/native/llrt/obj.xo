@@ -36,6 +36,11 @@ const IMMORTAL: Int = -9223372036854775807 - 1
 /// ThreadSanitizer, decision 0241); a plain load on arm64 either way.
 fn count(p: Int) -> Int { rt.slot_load(p, 0, 0) }
 
+/// Whether the object at p is immortal (a literal, an empty list): its
+/// count is never written. Not an address test: the arm64 emitter gives
+/// each function its own read only empty list.
+pub fn is_immortal(p: Int) -> Bool { count(p) == IMMORTAL }
+
 /// Words of the heap record (xo_rt.c struct xo_heap, checked by its
 /// _Static_assert): the drop worklist (its array, length, capacity, and
 /// whether a drain runs).

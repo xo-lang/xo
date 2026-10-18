@@ -136,9 +136,10 @@ fn st4(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 4) }
 
 fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE) != 0 }
 
-/// The list a canceled operation returns while it unwinds: the immortal
-/// empty list (xo_rt.c xo_empty_list), which a `[]` is (the emitters give
-/// its address, rt.rl_empty).
+/// The list a canceled operation returns while it unwinds: an immortal
+/// empty list, as a `[]` is (rt.rl_empty: xo_empty_list, or on arm64 the
+/// function's own read only copy, so never compare a list's address
+/// with it; obj.is_immortal).
 pub fn empty_list() -> Int {
   let e: List[Int] = []
   rt.obj_addr(e)
@@ -720,9 +721,9 @@ pub fn atomic_new(v: Int) -> Int {
 // these exports' addresses for the services record's SV_*_FREE words).
 
 /// Releases the list l (a list of one) with its drop function, unless it
-/// is 0 or the empty list.
+/// is 0 or immortal (an empty list: not one address, obj.is_immortal).
 pub fn list_release(l: Int, drop: Int) {
-  if l != 0 && l != empty_list() {
+  if l != 0 && !obj.is_immortal(l) {
     let _r = rt.call_c2(drop, l, 0)
   }
 }

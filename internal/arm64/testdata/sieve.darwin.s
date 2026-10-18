@@ -155,8 +155,7 @@ LpGL1jtk_f2_begin:
 	.cfi_offset w23, -8
 LpGL1jtk_f2_b0:
 	mov x22, x0
-	adrp x21, _xo_empty_list@PAGE
-	add x21, x21, _xo_empty_list@PAGEOFF
+	adr x21, LpGL1jtk_f2_el
 	adds x24, x22, #1
 	b.vs LpGL1jtk_f2_fault1
 LpGL1jtk_f2_b2:
