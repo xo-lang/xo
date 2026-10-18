@@ -488,6 +488,14 @@ pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
   if rc.claim(l) != 0 {
     return l
   }
+  if count(l) == IMMORTAL && rt.mem_load(l, 8, 8) == 0 {
+    // the empty literal's list (the first push into `[]` or a new
+    // Map's lists, 7.7 times an HTTP request): a new list, with nothing
+    // to copy, count, or give back. The count is read atomically: a
+    // shared list's count changes under other threads (a plain load is a
+    // ThreadSanitizer race, rc_threads test_list)
+    return rl_new(hw, 4, esize)
+  }
   let len = rt.mem_load(l, 8, 8)
   let c = rl_new(hw, if len < 4 { 4 } else { len }, esize)
   rt.mem_store(c, 8, len, 8)
