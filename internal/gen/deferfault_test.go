@@ -55,11 +55,11 @@ func TestDeferFaultProperty(t *testing.T) {
 					os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
 				}
 			}
-			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(out, "prog")})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(out), Out: filepath.Join(out, "prog")})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
-			nres, err := xotool.Build([]string{dir}, xotool.Options{Backend: native, Out: filepath.Join(out, "prog-native")})
+			nres, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(out), Backend: native, Out: filepath.Join(out, "prog-native")})
 			if err != nil || nres.Failed {
 				t.Fatalf("seed %d: the native build (%s) failed: %v\n%s\n--- program\n%s", seed, native, err, diagText(nres), numbered(src))
 			}

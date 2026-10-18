@@ -144,7 +144,7 @@ func TestArithProperty(t *testing.T) {
 			t.Parallel()
 			dir, src := writeArith(t, seed)
 			tree := filepath.Join(dir, "gotree")
-			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(dir), Out: filepath.Join(dir, "prog"), Flags: []string{"--go-tree=" + tree}})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
@@ -157,7 +157,7 @@ func TestArithProperty(t *testing.T) {
 			}
 			want := runProp(t, res.Binaries[xotool.Host()], dir)
 			for _, be := range natives {
-				nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: be, Out: filepath.Join(dir, "prog-"+be)})
+				nres, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(dir), NoGC: true, Backend: be, Out: filepath.Join(dir, "prog-"+be)})
 				if err != nil || nres.Failed {
 					t.Fatalf("seed %d: the %s build failed: %v\n%s\n--- program\n%s", seed, be, err, diagText(nres), numbered(src))
 				}

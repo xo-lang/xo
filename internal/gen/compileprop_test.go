@@ -31,8 +31,9 @@ import (
 // the same output.
 //
 // -short builds compilePropShort programs from fixed seeds;
-// XO_COMPILE_PROPS=N builds N (seeds 1..N) in the full suite (default
-// compilePropFull; bench/nightly.sh builds 500, decision 0111).
+// XO_COMPILE_PROPS=N builds N (seeds 1..N, or from
+// XO_COMPILE_PROP_FIRST) in the full suite (default compilePropFull;
+// bench/nightly.sh builds 500, decision 0111).
 // XO_COMPILE_PROP_SEED=S builds only seed S, and XO_COMPILE_PROP_KEEP=dir
 // keeps the programs there; XO_COMPILE_PROP_LLVM=1 also compares the
 // LLVM backend's run on an arm64 host. The programs live in directories
@@ -53,6 +54,13 @@ func TestCompileProperty(t *testing.T) {
 		n = k
 	}
 	first := 1
+	if v := os.Getenv("XO_COMPILE_PROP_FIRST"); v != "" {
+		k, err := strconv.Atoi(v)
+		if err != nil {
+			t.Fatalf("XO_COMPILE_PROP_FIRST=%q", v)
+		}
+		first = k
+	}
 	if v := os.Getenv("XO_COMPILE_PROP_SEED"); v != "" {
 		k, err := strconv.Atoi(v)
 		if err != nil {
@@ -89,14 +97,14 @@ func TestCompileProperty(t *testing.T) {
 					os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
 				}
 			}
-			res, err := xotool.Build([]string{dir}, xotool.Options{Out: filepath.Join(out, "prog")})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(out), Out: filepath.Join(out, "prog")})
 			if err != nil || res.Failed {
 				t.Fatalf("seed %d: the Go build failed: %v\n%s\n--- program\n%s", seed, err, diagText(res), numbered(src))
 			}
 			if native == "" {
 				return
 			}
-			nres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: native, Out: filepath.Join(out, "prog-native")})
+			nres, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(out), NoGC: true, Backend: native, Out: filepath.Join(out, "prog-native")})
 			if nres != nil && nres.Failed && err == nil && onlyNoGC(nres.Diagnostics) {
 				t.Logf("seed %d: not native (%s)", seed, firstMsg(nres.Diagnostics))
 				return
@@ -111,7 +119,7 @@ func TestCompileProperty(t *testing.T) {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
 			}
 			if alsoLLVM && native != xotool.BackendLLVM {
-				lres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: xotool.BackendLLVM, Out: filepath.Join(out, "prog-llvm")})
+				lres, err := xotool.Build([]string{dir}, xotool.Options{Env: propEnv(out), NoGC: true, Backend: xotool.BackendLLVM, Out: filepath.Join(out, "prog-llvm")})
 				if err != nil || lres.Failed {
 					t.Fatalf("seed %d: the llvm build failed: %v\n%s\n--- program\n%s", seed, err, diagText(lres), numbered(src))
 				}
@@ -252,3 +260,13 @@ func TestNormStderr(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // The generator
+
+// propEnv points a property test program's builds at a build directory
+// of its own under tmp (its t.TempDir()), removed with it. The package's
+// XO_BUILD_DIR (TestMain) is chosen by the test, so xo never prunes it,
+// and each generated program adds its Go tree and objects there: 18 GB in
+// 17 minutes of XO_COMPILE_PROPS=3000 on 2026-10-18
+// (gotchas/property-tests-fill-build-dir.md).
+func propEnv(tmp string) []string {
+	return []string{"XO_BUILD_DIR=" + filepath.Join(tmp, "build")}
+}
