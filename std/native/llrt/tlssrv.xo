@@ -556,9 +556,16 @@ pub fn free(h: Int) {
   rt.heap_release(h - 8)
 }
 
-// The TLS 1.3 server, or the TLS 1.2 one after a HANDOFF.
+// The TLS 1.3 server, or the TLS 1.2 one after a HANDOFF. Each helper
+// tests s12 for None before it matches: a match on c.s12 duplicated and
+// dropped the Option even when it was None (TLS 1.3, every connection
+// but a TLS 1.2 client's), about 4,000 instructions an HTTP/2 request on
+// arm64 (2026-10-18).
 
 fn done(c: Conn) -> Bool {
+  if c.s12.is_none() {
+    return c.s.state == tls13srv.DONE
+  }
   match c.s12 {
     Some(x) => x.state == tls12srv.DONE
     None => c.s.state == tls13srv.DONE
@@ -566,6 +573,9 @@ fn done(c: Conn) -> Bool {
 }
 
 fn failed(c: Conn) -> Bool {
+  if c.s12.is_none() {
+    return c.s.state == tls13srv.FAILED
+  }
   match c.s12 {
     Some(x) => x.state == tls12srv.FAILED
     None => c.s.state == tls13srv.FAILED
@@ -573,6 +583,9 @@ fn failed(c: Conn) -> Bool {
 }
 
 fn closed(c: Conn) -> Bool {
+  if c.s12.is_none() {
+    return c.s.closed
+  }
   match c.s12 {
     Some(x) => x.closed
     None => c.s.closed
@@ -580,6 +593,9 @@ fn closed(c: Conn) -> Bool {
 }
 
 fn take(var c: Conn) -> Bytes {
+  if c.s12.is_none() {
+    return tls13srv.take(c.s)
+  }
   match c.s12 {
     Some(x) => {
       var y = x
@@ -592,6 +608,9 @@ fn take(var c: Conn) -> Bytes {
 }
 
 fn recv_some(var c: Conn, n: Int) -> Bytes {
+  if c.s12.is_none() {
+    return tls13srv.recv_some(c.s, n)
+  }
   match c.s12 {
     Some(x) => {
       var y = x
@@ -604,6 +623,10 @@ fn recv_some(var c: Conn, n: Int) -> Bytes {
 }
 
 fn send(var c: Conn, data: Bytes) {
+  if c.s12.is_none() {
+    tls13srv.send(c.s, data)
+    return
+  }
   match c.s12 {
     Some(x) => {
       var y = x
