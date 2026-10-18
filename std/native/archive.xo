@@ -8,6 +8,7 @@
 // common fields.
 use std/archive
 use native/llrt/raw
+use native/llrt/scan
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -1755,7 +1756,8 @@ fn parse_cstr(b: Bytes, at: Int, n: Int) -> Str {
   while i < n && byte_of(b, at + i) != 0 {
     i += 1
   }
-  rt.cast[Bytes, Str](sub(b, at, at + i))
+  // a name from the archive: outside bytes (decision 0259)
+  scan.text_of(sub(b, at, at + i))
 }
 
 /// parseNumeric: the value, or None (ErrHeader).
@@ -1904,7 +1906,9 @@ fn parse_pax(text: Bytes) -> Map[Str, Str]? {
     if v.contains("\u{0}") && k != "path" && k != "linkpath" {
       return None
     }
-    m.put(k, v)
+    // keys and values from the archive: outside bytes (decision 0259);
+    // the records are parsed on the raw bytes (their lengths count bytes)
+    m.put(scan.text(k), scan.text(v))
     s = rest[rest_n..]
   }
   Some(m)
@@ -2320,7 +2324,7 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int)? ! Str {
   if csize == 0xffffffff || offset == 0xffffffff || usize == 0xffffffff {
     return Err("zip: zip64 archives are not supported by native builds yet (decision 0172)")
   }
-  let zf = ZipFile{name: rt.cast[Bytes, Str](sub(data, p, p + nlen)), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize, usize: usize, extra: sub(data, p + nlen, p + nlen + xlen), attrs: get_u32(data, pos + 38), offset: offset}
+  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize, usize: usize, extra: sub(data, p + nlen, p + nlen + xlen), attrs: get_u32(data, pos + 38), offset: offset}
   Some((zf, p + nlen + xlen + clen))
 }
 

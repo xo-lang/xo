@@ -72,19 +72,21 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		} else {
 			h = mapCap[string, string](len(hr.Header))
 		}
+		// outside bytes (decision 0259): U+FFFD in the fields, percent
+		// escapes in the URL parts
 		for k, vs := range hr.Header {
-			Map_put(nil, &h, k, strings.Join(vs, ", "))
+			Map_put(nil, &h, textOf(k), textOf(strings.Join(vs, ", ")))
 		}
 		u := urlOf(a, hr.URL)
-		u.F_host = hr.Host
+		u.F_host = urlTextOf(hr.Host)
 		if hostOnly, _, err := net.SplitHostPort(hr.Host); err == nil {
-			u.F_host = hostOnly
+			u.F_host = urlTextOf(hostOnly)
 		}
 		ip := hr.RemoteAddr
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		req := Http_Request{F_method: hr.Method, F_path: hr.URL.Path, F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
+		req := Http_Request{F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip}
 		// the recorder keeps what it is given past the request: never
 		// arena memory (recCopy)
 		recReq := req
@@ -334,7 +336,8 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	}
 	var h Map[string, string]
 	for k, vs := range resp.Header {
-		Map_put(tk, &h, k, strings.Join(vs, ", "))
+		// a response's fields: outside bytes (decision 0259)
+		Map_put(tk, &h, textOf(k), textOf(strings.Join(vs, ", ")))
 	}
 	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body)})
 }

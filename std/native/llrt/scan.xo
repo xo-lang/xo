@@ -265,6 +265,83 @@ pub fn utf8_valid(b: Bytes) -> Bool {
   true
 }
 
+// Outside bytes becoming Str (decision 0259): the only way native std
+// turns bytes it read (a request, a file, the environment, an archive)
+// into Str. Valid UTF-8 is copied as it is (one scan, 16 bytes at a time
+// over ASCII); each byte of an invalid sequence becomes U+FFFD, as a
+// decoder sees it (one rune per invalid byte: Bytes.rune_count, JSON);
+// URL paths and queries keep the byte as a percent escape instead
+// (url_text_at). internal/repotest TestOutsideBytesValidated lists the
+// boundaries that must call these.
+
+/// The Str of the n bytes at address p, valid UTF-8 (decision 0259).
+pub fn text_at(p: Int, n: Int) -> Str { text(raw.str_at(p, n)) }
+
+/// The Str of b, valid UTF-8 (decision 0259).
+pub fn text_of(b: Bytes) -> Str { text(rt.cast[Bytes, Str](b)) }
+
+/// s when it is valid UTF-8, else a copy with each byte of an invalid
+/// sequence U+FFFD (s holds outside bytes, made with raw's conversions).
+pub fn text(s: Str) -> Str {
+  let b = s.bytes()
+  if utf8_valid(b) {
+    return s
+  }
+  fix_utf8(b, false)
+}
+
+/// The Str of the n bytes at p, a URL path or query: valid UTF-8 as it
+/// is, each byte of an invalid sequence as a percent escape (%XX) so the
+/// URL keeps it (decision 0259).
+pub fn url_text_at(p: Int, n: Int) -> Str {
+  let s = raw.str_at(p, n)
+  let b = s.bytes()
+  if utf8_valid(b) {
+    return s
+  }
+  fix_utf8(b, true)
+}
+
+/// s (a URL path or query made from outside bytes) as url_text_at.
+pub fn url_text(s: Str) -> Str {
+  let b = s.bytes()
+  if utf8_valid(b) {
+    return s
+  }
+  fix_utf8(b, true)
+}
+
+/// b with each byte of an invalid sequence replaced: by U+FFFD, or (esc)
+/// by its percent escape.
+fn fix_utf8(b: Bytes, esc: Bool) -> Str {
+  let n = b.len()
+  let hex = "0123456789ABCDEF"
+  var o = rt.rs_with_cap(n + 8)
+  var i = 0
+  while i < n {
+    if b[i] < 0x80 {
+      let j = span(b, i, 0)
+      o = rt.rs_append_bytes(o, b, i, j, 0)
+      i = j
+      continue
+    }
+    let k = seq_len(b, i, n)
+    if k > 1 {
+      o = rt.rs_append_bytes(o, b, i, i + k, 0)
+    } else if esc {
+      let c = Int(b[i])
+      o = rt.rs_push_byte(o, 37)
+      o = rt.rs_push_byte(o, raw.byte_at(raw.data(hex), c >> 4))
+      o = rt.rs_push_byte(o, raw.byte_at(raw.data(hex), c & 15))
+    } else {
+      // U+FFFD
+      o = rt.rs_push_byte(rt.rs_push_byte(rt.rs_push_byte(o, 0xEF), 0xBF), 0xBD)
+    }
+    i += k
+  }
+  o
+}
+
 /// utf8.RuneCount (Bytes.rune_count): an invalid byte is one rune.
 pub fn bytes_rune_count(b: Bytes) -> Int {
   let n = b.len()

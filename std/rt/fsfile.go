@@ -117,7 +117,7 @@ func (f File) M_read_line(tk *Task) Result[Option[string], FsErr] {
 		}
 		return Err[Option[string]](mapFsErr(err, h.path))
 	}
-	return Ok[Option[string], FsErr](Some(trimLine(line)))
+	return Ok[Option[string], FsErr](Some(textOf(trimLine(line))))
 }
 
 func trimLine(s string) string { return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r") }
@@ -341,7 +341,7 @@ func (f *realFs) M_read_link(tk *Task, p string) Result[Option[string], FsErr] {
 		if err != nil {
 			return Err[Option[string]](mapFsErr(err, p))
 		}
-		return Ok[Option[string], FsErr](Some(filepath.ToSlash(t)))
+		return Ok[Option[string], FsErr](Some(textOf(filepath.ToSlash(t))))
 	})
 }
 
@@ -436,7 +436,7 @@ func fsGlob(tk *Task, f Fs, pattern string) Result[List[string], FsErr] {
 	add := func(p string) {
 		if !seen[p] {
 			seen[p] = true
-			out = append(out, p)
+			out = append(out, textOf(p))
 		}
 	}
 	join := func(dir, name string) string {

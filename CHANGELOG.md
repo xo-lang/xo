@@ -8,6 +8,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 - Xo's own x86_64 backend builds macOS x86_64 programs
   (`--backend=amd64 --target=darwin/amd64`; linked by Apple's cc for now).
+- Outside text is always valid UTF-8 (decision 0259): HTTP header values,
+  files read as text, file names, standard input, child output, the
+  environment and arguments, and archive names replace each invalid byte
+  with U+FFFD; URL paths and queries keep it as a percent escape. A
+  request path with a raw `\x82` used to fault a handler that sliced it,
+  and a redirect to such a host ended an HTTP client.
 
 - x86_64 operates on spilled values in place (SHA-3's permutation 26%
   fewer instructions; a TLS handshake with ML-KEM 5%).

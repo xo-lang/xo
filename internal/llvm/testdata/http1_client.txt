@@ -44,7 +44,7 @@
 43 200 [: empty|Content-Length: 0|X-A: |x a: b] 0 
 44 200 [Content-Length: 0|X-Long: a] 0 
 45 Protocol Get "http://ADDR/r/45": net/http: HTTP/1.x transport connection broken: malformed HTTP response 
-46 200 [Content-Length: 0|X-Ctl: ab|X-Hi: café] 0 
+46 200 [Content-Length: 0|X-Ctl: ab|X-Hi: cafï¿½] 0 
 47 Protocol Get "http://ADDR/r/47": net/http: HTTP/1.x transport connection broken: malformed HTTP status code
 48 Protocol Head "http://ADDR/r/48": net/http: HTTP/1.x transport connection broken: malformed HTTP status code
 49 Protocol Get "/r/49": stopped after 10 redirects
@@ -178,7 +178,7 @@
 177 404 [Content-Type: v26|Location: /r/5|X-A: v38] 58 77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777
 178 Protocol Get "http://ADDR/r/178": net/http: HTTP/1.x transport connection broken: malformed HTTP response HTTP/1.1 404 Reason
 179 404 [Content-Length: 21] 21 6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e
-180 301 [Cache-Control: 59|Caphe-Control: v24|Content-Length: 0|Contentÿ-Type: v52|X-B: v41] 0 
+180 301 [Cache-Control: 59|Caphe-Control: v24|Content-Length: 0|Contentï¿½-Type: v52|X-B: v41] 0 
 181 200 [Cache-Control: v90|Connection: v36|Set-Cookie: v94] 23 7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a
 182 Protocol Get "http://ADDR/r/16": unexpected EOF
 183 400 [] 69 6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b

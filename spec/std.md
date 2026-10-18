@@ -23,6 +23,19 @@ edition, named at 1.0 (core 13); until then the only edition is `preview`
   patterns are ordinary strings: `"GET /users/{id}"`.
 - Fields of std structs are `pub`: they can be read and the structs can be
   constructed (useful for testing pure functions).
+- **Outside text is valid UTF-8** (decision 0259). Every std API that makes a
+  `Str` from bytes it read keeps `Str` valid UTF-8: each byte of an invalid
+  sequence becomes U+FFFD (as a decoder counts it, one per byte). That covers
+  `Fs.read_text`, `File.read_line`, file names (`read_dir`, `glob`,
+  `read_link`, `cwd_path`), `Stdio.read_line`, `read_all`, `lines`,
+  `Child.read_line`, `Env.get`, `vars`, `args`, `program`, `home`, CLI values,
+  archive entry names, HTTP header names and values (requests and responses),
+  and JSON strings. URL parts keep the byte instead, as a percent escape:
+  `Request.path`, `url.path`, `url.host`, and query keys and values (a request
+  for `/a/\x82` has the path `/a/%82`, and a query escape that decodes to an
+  invalid byte stays escaped). `Bytes.to_str()` and `Response.text()` return
+  None instead; the exact bytes stay available where an API returns `Bytes`
+  (`Fs.read`, `Response.body`, `Request.body`).
 
 ---
 

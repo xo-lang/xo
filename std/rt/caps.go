@@ -182,7 +182,7 @@ func (f *realFs) M_cwd_path(*Task) Result[string, FsErr] {
 	if err != nil {
 		return Err[string](fsIo(".", err.Error()))
 	}
-	return Ok[string, FsErr](filepath.ToSlash(wd))
+	return Ok[string, FsErr](textOf(filepath.ToSlash(wd)))
 }
 
 func (f *realFs) M_read_only(*Task) Fs {
@@ -253,7 +253,7 @@ func (f *realFs) M_read_text(tk *Task, p string) Result[string, FsErr] {
 	if !r.Ok {
 		return Err[string](r.E)
 	}
-	return Ok[string, FsErr](string(r.V))
+	return Ok[string, FsErr](textOf(string(r.V)))
 }
 
 func (f *realFs) M_read_dir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
@@ -275,7 +275,8 @@ func (f *realFs) readDir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 		if err != nil {
 			continue
 		}
-		out = append(out, f.info(filepath.Join(op, de.Name()), path.Join(dir, de.Name()), fi))
+		// the name the program sees: outside bytes (decision 0259)
+		out = append(out, f.info(filepath.Join(op, de.Name()), path.Join(dir, textOf(de.Name())), fi))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].F_name < out[j].F_name })
 	return Ok[List[FileInfo], FsErr](ListOf(out...))
@@ -833,7 +834,7 @@ type realEnv struct{}
 func (realEnv) M_get(tk *Task, name string) Option[string] {
 	return fx(tk, "env.get", false, func() []any { return []any{name} }, func() Option[string] {
 		v, ok := os.LookupEnv(name)
-		return Option[string]{Some: ok, V: v}
+		return Option[string]{Some: ok, V: textOf(v)}
 	})
 }
 
@@ -847,7 +848,7 @@ func (realEnv) vars() Map[string, string] {
 	sort.Strings(env)
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
-		Map_put(nil, &m, k, v)
+		Map_put(nil, &m, textOf(k), textOf(v))
 	}
 	return m
 }
@@ -857,13 +858,13 @@ func (realEnv) M_args(tk *Task) List[string] {
 		if len(os.Args) <= 1 {
 			return List[string]{}
 		}
-		return ListOf(os.Args[1:]...)
+		return ListOf(textsOf(os.Args[1:])...)
 	})
 }
 
 func (realEnv) M_program(tk *Task) string {
 	// with / separators on Windows, as every path Xo is given (std.md 3.1)
-	return fx(tk, "env.program", false, nil, func() string { return filepath.ToSlash(os.Args[0]) })
+	return fx(tk, "env.program", false, nil, func() string { return textOf(filepath.ToSlash(os.Args[0])) })
 }
 
 func (realEnv) M_home(tk *Task) Result[string, EnvErr] {
@@ -872,7 +873,7 @@ func (realEnv) M_home(tk *Task) Result[string, EnvErr] {
 		if err != nil {
 			return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "HOME"}})
 		}
-		return Ok[string, EnvErr](filepath.ToSlash(h))
+		return Ok[string, EnvErr](textOf(filepath.ToSlash(h)))
 	})
 }
 
@@ -936,7 +937,7 @@ func (realStdio) readLine(tk *Task) Result[Option[string], IoErr] {
 		return Ok[Option[string], IoErr](Option[string]{})
 	}
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	return Ok[Option[string], IoErr](Some(line))
+	return Ok[Option[string], IoErr](Some(textOf(line)))
 }
 
 func (s realStdio) M_read_all(tk *Task) Result[string, IoErr] {
@@ -951,7 +952,7 @@ func (realStdio) readAll(tk *Task) Result[string, IoErr] {
 	if !r.Ok {
 		return Err[string](r.E)
 	}
-	return Ok[string, IoErr](data)
+	return Ok[string, IoErr](textOf(data))
 }
 
 func (s realStdio) M_lines(tk *Task) Result[List[string], IoErr] {

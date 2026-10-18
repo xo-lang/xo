@@ -686,7 +686,8 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     return fail(BAD) // malformed HTTP version
   }
   let method = rawb.str_slice(s, 0, sp1)
-  let target = rawb.str_slice(s, sp1 + 1, sp2)
+  // outside bytes: an invalid byte stays a percent escape (decision 0259)
+  let target = scan.url_text_at(rawb.data(s) + sp1 + 1, sp2 - sp1 - 1)
   let connect = method == "CONNECT"
   let url = parse_target(target, connect)
   if !url.ok {
@@ -802,7 +803,9 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
       return fail(TOO_LARGE)
     }
     keys.push(canonical_at(rawb.data(src) + p0, colon - p0))
-    vals.push(rawb.str_slice(src, v0, cn))
+    // a value may hold obs-text (RFC 9110): valid UTF-8 or U+FFFD
+    // (decision 0259)
+    vals.push(scan.text_at(rawb.data(src) + v0, cn - v0))
   }
   if i > MAX_HEAD {
     return fail(TOO_LARGE)
@@ -2327,8 +2330,9 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
     if off + nn + vn > f.data.len() {
       break
     }
-    names.push(rawb.str_slice(f.data, off, off + nn))
-    values.push(rawb.str_slice(f.data, off + nn, off + nn + vn))
+    // outside bytes (decision 0259)
+    names.push(scan.text_at(rawb.data(f.data) + off, nn))
+    values.push(scan.text_at(rawb.data(f.data) + off + nn, vn))
     off += nn + vn
   }
   var si = -1
@@ -2651,9 +2655,10 @@ pub fn parse_response(s: Str) -> RespHead {
     }
     let colon = find(s, 58, i, le)
     if colon >= 0 {
-      let k = canonical_key(rawb.str_slice(s, i, colon))
+      // a response's fields: outside bytes (decision 0259)
+      let k = canonical_key(scan.text_at(rawb.data(s) + i, colon - i))
       let (a, z) = trim_sp(b, colon + 1, le)
-      let v = rawb.str_slice(s, a, z)
+      let v = scan.text_at(rawb.data(s) + a, z - a)
       if k == "Transfer-Encoding" {
         chunked = z - a == 7 && equal_fold(v, "chunked")
       } else {

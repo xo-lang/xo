@@ -17,6 +17,7 @@ use native/llrt/netconn
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
+use native/llrt/scan
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sock
@@ -407,8 +408,9 @@ pub fn headers(r: rthttp.CResp) -> List[Str] {
   let ha = ld(a, R_HDR)
   var out: List[Str] = []
   for i in 0..ld(a, R_HDR_N) {
-    out.push(raw.str_at(http1w.key_p(ha, i), http1w.key_n(ha, i)))
-    out.push(raw.str_at(http1w.val_p(ha, i), http1w.val_n(ha, i)))
+    // a response's fields: outside bytes (decision 0259)
+    out.push(scan.text_at(http1w.key_p(ha, i), http1w.key_n(ha, i)))
+    out.push(scan.text_at(http1w.val_p(ha, i), http1w.val_n(ha, i)))
   }
   out
 }

@@ -560,6 +560,10 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 | `()` | Unit |
 | `Never` | The type with no values. Type of `return`, `break`, `continue`, `fault(...)`, `proc.exit(...)`, and infinite loops. Converts to every type. |
 
+A `Str` is always valid UTF-8: literals are, operations on `Str` keep it, and
+std makes outside bytes valid where they become a `Str` (std.md 0, decision
+0259), so slicing faults only at an offset inside a sequence of valid text.
+
 There are no implicit numeric conversions. Conversions are calls on the target
 type: `Float(i)`, `Int(f)` (truncates toward zero, faults on NaN or out of
 range), `Int32(x)` (faults out of range), `Int32.try(x) -> Int32?`. Parsing

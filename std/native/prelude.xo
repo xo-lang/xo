@@ -801,7 +801,12 @@ fn fs_cwd(f: Fs) -> Fs {
 // kept, the path the shell shows), else getcwd itself (std/llrt/xo_fs.c:
 // libc on Darwin, the system call on Linux, GetCurrentDirectoryW on
 // Windows, where $PWD is not consulted). Io when getcwd fails.
-fn fs_cwd_path(_f: Fs) -> Str ! FsErr {
+fn fs_cwd_path(f: Fs) -> Str ! FsErr {
+  // outside bytes (decision 0259)
+  Ok(scan.text(fs_cwd_path_raw(f)?))
+}
+
+fn fs_cwd_path_raw(_f: Fs) -> Str ! FsErr {
   let wasi = match target.os {
     TargetOs.Wasi => true
     TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows => false
@@ -890,7 +895,17 @@ fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
 
 fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
   let b = fs_read(f, p)?
-  rt.cast[Bytes, Str](b)
+  // outside bytes: U+FFFD for an invalid sequence (decision 0259)
+  scan.text_of(b)
+}
+
+/// Each of xs (outside bytes) as scan.text (decision 0259).
+fn texts(xs: List[Str]) -> List[Str] {
+  var out = List[Str].with_capacity(xs.len())
+  for x in xs {
+    out.push(scan.text(x))
+  }
+  out
 }
 
 fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
@@ -905,7 +920,9 @@ fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
     let child = fs_join(op, n)
     let i = sysio.fs_stat(child, false, n)
     if i.st == 0 {
-      out.push(fs_info_of(f, child, fs_join(dir, n), i))
+      // the name the program sees: outside bytes (decision 0259); the
+      // system's path keeps the bytes
+      out.push(fs_info_of(f, child, fs_join(dir, scan.text(n)), i))
     }
   }
   out.sort_by(fn(fi) { fi.name })
@@ -919,7 +936,7 @@ fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! F
   }
   for n in names.sort() {
     let child = fs_join(osdir, n)
-    let xc = fs_join(xodir, n)
+    let xc = fs_join(xodir, scan.text(n))
     let i = sysio.fs_stat(child, false, xc)
     if i.st == 0 {
       let fi = fs_info_of(f, child, xc, i)
@@ -1094,7 +1111,10 @@ fn file_read_line(f: File) -> Str? ! FsErr {
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
-  l.get(0)
+  match l.get(0) {
+    Some(x) => Some(scan.text(x))
+    None => None
+  }
 }
 
 fn file_write(f: File, data: Bytes) -> () ! FsErr {
@@ -1215,7 +1235,11 @@ fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
   if st != 0 {
     return Err(fs_err(st, p))
   }
-  l.get(0)
+  // outside bytes (decision 0259)
+  match l.get(0) {
+    Some(x) => Some(scan.text(x))
+    None => None
+  }
 }
 
 fn fs_lock_wait(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
@@ -1968,7 +1992,7 @@ fn child_read_line(c: Child) -> Str? ! ProcErr uses proc {
   if st != "0" {
     return Err(proc_err(st, r.get(1) ?? ""))
   }
-  Some(r.get(1) ?? "")
+  Some(scan.text(r.get(1) ?? ""))
 }
 
 fn child_wait(c: Child) -> Int ! ProcErr uses proc {
@@ -1985,7 +2009,7 @@ fn child_kill(c: Child) { proc.child_kill(c.h) }
 fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
   let (line, st, msg) = stdinrt.read(false)
   if st == 0 {
-    return Some(line)
+    return Some(scan.text(line))
   }
   if st == 1 {
     return None
@@ -1996,7 +2020,7 @@ fn stdio_read_line(_s: Stdio) -> Str? ! IoErr {
 fn stdio_read_all(_s: Stdio) -> Str ! IoErr {
   let (text, st, msg) = stdinrt.read(true)
   if st == 0 {
-    return text
+    return scan.text(text)
   }
   Err(stdin_err(st, msg))
 }
@@ -2416,13 +2440,14 @@ fn llrt_tw_set_tty(width: Int) { stdinrt.set_tty(width) }
 // The program's arguments and environment, for Env.args, Env.program,
 // and the runtime calls rt.env_get and rt.env_vars (std/native/llrt/process.xo).
 
-fn llrt_env_args() -> List[Str] { process.args() }
+// the environment and arguments: outside bytes (decision 0259)
+fn llrt_env_args() -> List[Str] { texts(process.args()) }
 
-fn llrt_env_program() -> List[Str] { [process.program()] }
+fn llrt_env_program() -> List[Str] { [scan.text(process.program())] }
 
-fn llrt_env_get(name: Str) -> List[Str] { process.env_get(name) }
+fn llrt_env_get(name: Str) -> List[Str] { texts(process.env_get(name)) }
 
-fn llrt_env_vars() -> List[Str] { process.env_vars() }
+fn llrt_env_vars() -> List[Str] { texts(process.env_vars()) }
 
 // std/json's tape readers and text, as the decoders and encoders the SSA
 // builder generates per type call them (decision 0193 step 4): in Xo

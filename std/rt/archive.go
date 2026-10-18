@@ -111,7 +111,8 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 		if err != nil {
 			return Err[List[Archive_Entry]](archiveErr("untar: " + err.Error()))
 		}
-		p, ok := archivePath(h.Name)
+		// a name from the archive: outside bytes (decision 0259)
+		p, ok := archivePath(textOf(h.Name))
 		if !ok {
 			return Err[List[Archive_Entry]](archiveErr("untar: entry path " + strconv.Quote(h.Name) + " leaves the archive"))
 		}
@@ -176,7 +177,8 @@ func Archive_unzip(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 	}
 	var out []Archive_Entry
 	for _, f := range r.File {
-		p, ok := archivePath(f.Name)
+		// a name from the archive: outside bytes (decision 0259)
+		p, ok := archivePath(textOf(f.Name))
 		if !ok {
 			return Err[List[Archive_Entry]](archiveErr("unzip: entry path " + strconv.Quote(f.Name) + " leaves the archive"))
 		}

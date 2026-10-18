@@ -489,7 +489,8 @@ func parseURLArena(a *Arena, raw string) Http_Url {
 // (when not nil). The server passes the request's own URL: printing it
 // and parsing the text again cost two allocations per request.
 func urlOf(a *Arena, pu *url.URL) Http_Url {
-	u := Http_Url{F_scheme: pu.Scheme, F_host: pu.Hostname(), F_path: pu.Path}
+	// outside bytes: an invalid byte stays a percent escape (decision 0259)
+	u := Http_Url{F_scheme: pu.Scheme, F_host: urlTextOf(pu.Hostname()), F_path: urlTextOf(pu.Path)}
 	if u.F_path == "" {
 		u.F_path = "/"
 	}
@@ -503,15 +504,20 @@ func urlOf(a *Arena, pu *url.URL) Http_Url {
 	}
 	q := pu.Query()
 	keys := make([]string, 0, len(q))
+	val := make(map[string]string, len(q))
 	for k := range q {
-		keys = append(keys, k)
+		// the escaped key (decision 0259) is the one sorted, as the native
+		// backend sorts it
+		ek := urlTextOf(k)
+		keys = append(keys, ek)
+		val[ek] = urlTextOf(q.Get(k))
 	}
 	sortStrings(keys)
 	if a != nil {
 		u.F_query = a.strMap()
 	}
 	for _, k := range keys {
-		Map_put(nil, &u.F_query, k, q.Get(k))
+		Map_put(nil, &u.F_query, k, val[k])
 	}
 	return u
 }

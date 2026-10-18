@@ -509,7 +509,7 @@ func (c Child) M_read_line(tk *Task) Result[Option[string], ProcErr] {
 		return Ok[Option[string], ProcErr](Option[string]{})
 	}
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	return Ok[Option[string], ProcErr](Some(line))
+	return Ok[Option[string], ProcErr](Some(textOf(line)))
 }
 
 func (c Child) M_wait(tk *Task) Result[int64, ProcErr] {

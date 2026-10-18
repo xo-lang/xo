@@ -1,7 +1,8 @@
 # 0259: External bytes becoming Str
 
-Status: Proposed (Xo Lang 3, 2026-10-18; for the owner: a language
-invariant)
+Status: Accepted (owner, 2026-10-18: the recommendation, (c) for URL
+paths and queries and (b) at every other boundary; implemented by Xo
+Lang 3 the same day)
 
 ## Context
 
@@ -102,7 +103,7 @@ invalid bytes as Go does (U+FFFD per bad byte when decoding).
   fault, every API that promises text), and the checker's string
   invariants (length in runes, `Str` keys) become runtime questions.
 
-## Decision (proposed, for the owner)
+## Decision
 
 (c) for URL paths and query values (percent-encode invalid bytes, never
 decode a percent escape to a non-UTF-8 byte), (b) for every other
@@ -142,3 +143,24 @@ invariant the rest of the language relies on.
 Listed above as (a), (a) only for HTTP with (b) elsewhere, and (d). A
 per-API choice without one helper was considered and rejected: the
 table shows that is how the gaps arose.
+
+## Implementation (2026-10-18)
+
+- Native: std/native/llrt/scan.xo text_at, text_of, text, url_text_at,
+  url_text (one scan when the input is valid, a copy with U+FFFD or %XX
+  otherwise), called at every boundary of the table: http1.xo (the request
+  target, header values, a response's fields, HTTP/2 client fields),
+  neturl.xo unescape (an escape that decodes to an invalid byte stays
+  escaped), h2srv.xo fragment (:path escaped, other values U+FFFD),
+  hclient.xo headers, prelude.xo (read_text, read_line, stdin, child
+  lines, env and args, cwd_path, read_link, read_dir and the walk's names:
+  the system's paths keep the raw bytes), archive.xo (names, pax records).
+- Go backend: std/rt text.go textOf, urlTextOf at the same boundaries
+  (caps.go, fsfile.go, proccmd.go, http.go urlOf, http_net.go, archive.go),
+  so the two agree (TestHTTP1ClientDiff compares them).
+- internal/repotest TestOutsideBytesValidated lists the boundaries and
+  fails when one stops calling a helper, or when std/native gains an
+  rt.cast[Bytes, Str].
+- FuzzHTTPDiff's Go handler applies the same rule (urlText, validText), so
+  the input 8d7429a4e28ec7ca runs and passes; its skip is gone.
+- spec/std.md 0 (outside text) and spec/core.md 3 state the guarantee.

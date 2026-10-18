@@ -104,16 +104,47 @@ func xoReadBody(hr *http.Request) []byte {
 	return data
 }
 
-// diffHandler is http1DiffProgram's handler in Go.
+// urlText is std's rule (decision 0259) for a URL path, host, or query
+// part: valid UTF-8 as it is, each byte of an invalid sequence a percent
+// escape (scan.xo url_text_at).
+func urlText(s string) string { return fixUTF8(s, true) }
+
+// validText is std's rule for other outside text: each byte of an
+// invalid sequence U+FFFD (scan.xo text_at).
+func validText(s string) string { return fixUTF8(s, false) }
+
+func fixUTF8(s string, esc bool) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			if esc {
+				fmt.Fprintf(&b, "%%%02X", s[i])
+			} else {
+				b.WriteString("\uFFFD")
+			}
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
+// diffHandler is http1DiffProgram's handler in Go, with the native
+// server's text rules (decision 0259) applied to what it reports.
 func diffHandler(w http.ResponseWriter, hr *http.Request) {
 	body := xoReadBody(hr)
 	var b strings.Builder
-	b.WriteString("method=" + hr.Method + "\npath=" + hr.URL.Path + "\nurl=" + hr.URL.Scheme + "|")
+	b.WriteString("method=" + hr.Method + "\npath=" + urlText(hr.URL.Path) + "\nurl=" + hr.URL.Scheme + "|")
 	host := hr.Host
 	if h, _, err := net.SplitHostPort(hr.Host); err == nil {
 		host = h
 	}
-	b.WriteString(host + "|")
+	b.WriteString(urlText(host) + "|")
 	if p := hr.URL.Port(); p != "" {
 		if n, err := strconv.ParseInt(p, 10, 64); err == nil {
 			b.WriteString(strconv.FormatInt(n, 10))
@@ -127,14 +158,17 @@ func diffHandler(w http.ResponseWriter, hr *http.Request) {
 	if upath == "" {
 		upath = "/"
 	}
-	b.WriteString("|" + upath + "|")
+	b.WriteString("|" + urlText(upath) + "|")
 	q := map[string]string{}
 	var qkeys []string
 	if hr.URL.RawQuery != "" {
 		vals := hr.URL.Query()
 		for k := range vals {
-			qkeys = append(qkeys, k)
-			q[k] = vals.Get(k)
+			// the escaped key is the one sorted, as the native server
+			// sorts its query's keys (decision 0259)
+			ek := urlText(k)
+			qkeys = append(qkeys, ek)
+			q[ek] = urlText(vals.Get(k))
 		}
 		sort.Strings(qkeys)
 		for i, k := range qkeys {
@@ -154,7 +188,7 @@ func diffHandler(w http.ResponseWriter, hr *http.Request) {
 		if i > 0 {
 			b.WriteString("|")
 		}
-		b.WriteString(k + ": " + strings.Join(hr.Header[k], ", "))
+		b.WriteString(validText(k) + ": " + validText(strings.Join(hr.Header[k], ", ")))
 	}
 	b.WriteString("\nbody=" + hex.EncodeToString(body) + "\n")
 	status := 200
@@ -562,20 +596,6 @@ func FuzzHTTPDiff(f *testing.F) {
 		goAns := c.out.String()
 		c.mu.Unlock()
 		if normDate(native) != normDate(goAns) {
-			// a request head that is not UTF-8 reaches the handler as a
-			// Str that is not UTF-8 (the request line and header values are
-			// taken as they come), and the diff program's req.path[8..]
-			// faults inside a sequence: a known failure until decision 0259
-			// (Proposed) picks the rule
-			// (testdata/fuzz/FuzzHTTPDiff/8d7429a4e28ec7ca); inputs like it
-			// that agree still run
-			head := input
-			if i := bytes.Index(head, []byte("\n\n")); i >= 0 {
-				head = head[:i]
-			}
-			if !utf8.Valid(head) {
-				t.Skip("decision 0259: a request head that is not UTF-8 (a known failure)")
-			}
 			t.Errorf("input %q:\n--- native\n%s\n--- net/http\n%s", input, native, goAns)
 		}
 	})
