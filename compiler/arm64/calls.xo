@@ -827,8 +827,21 @@ fn (var g: G) call_op(v: Int) {
       let b = g.words(x.args[1])
       let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
       let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
-      if name == "str.cmp" {
+      if name == "str.cmp" && g.x86 {
+        // x86_64 retargets no cneg yet: the export
         g.set(v, g.rt("xo_x_obj_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
+        return
+      }
+      if name == "str.cmp" {
+        // obj.str_cmp in line: memcmp of the shorter length, then the
+        // lengths; -1, 0, 1 (the export was a call into a call of
+        // memcmp: maxby's Str key, 2026-10-17)
+        let n = g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, lt", [a[1], b[1]])
+        let r = g.rt("memcmp", regs([xd, yd, n]), [false])
+        let c = g.def1(false, "sxtw $d0, $wu0", [r[0]])
+        let s1 = g.def1(false, "cmp $u0, #0\ncset $d0, ne\ncneg $d0, $d0, lt", [c])
+        let s2 = g.def1(false, "cmp $u0, $u1\ncset $d0, ne\ncneg $d0, $d0, lt", [a[1], b[1]])
+        g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [c, s1, s2])])
         return
       }
       let r = g.rt("xo_x_obj_str_eq", regs([xd, a[1], yd, b[1]]), [false])
