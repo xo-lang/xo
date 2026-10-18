@@ -1,0 +1,243 @@
+// `xo dev compare BASE NEW [SCENARIO...]` (decision 0264): the
+// instructions a request of two HTTP callgrind runs made with ANN=1
+// (bench/perf/http/callgrind-docker.sh; each run directory holds
+// ann.SCENARIO.N, callgrind_annotate's per function self counts of the
+// N request run, and req.SCENARIO.N, its request count), base against
+// new. A function's count a request is its self count in the largest
+// run minus the smallest, over the request difference, so startup
+// cancels. Prints each scenario's totals and the functions that moved
+// most; --json one object a scenario. It replaces
+// bench/perf/http/cgcompare.py (after Xo lang 5's cgdiff.py), whose
+// output it matches.
+
+use github.com/xo-lang/xo/compiler/cli/core
+
+/// The scenarios of callgrind-docker.sh, in its order.
+const PERF_SCENARIOS: List[Str] = ["plain", "plain-newconn", "tls", "tls-newconn", "h2"]
+
+/// The index of the last sub in s.
+fn perf_rfind(s: Str, sub: Str) -> Int? {
+  var at: Int? = None
+  var from = 0
+  while from <= s.len() {
+    match s[from..s.len()].find(sub) {
+      Some(i) => {
+        at = Some(from + i)
+        from = from + i + 1
+      }
+      None => break
+    }
+  }
+  at
+}
+
+/// The function of one line of callgrind_annotate's self counts, and
+/// its count; None for the header, totals, and call lines.
+fn perf_line(line: Str) -> (Str, Int)? {
+  let t = line.trim()
+  // "1,234 ( 0.50%)  file:function'2 [object]"
+  let open = t.find("(") ?? -1
+  let close = t.find("%)") ?? -1
+  if open <= 0 || close < open {
+    return None
+  }
+  let digits = t[0..open].trim().replace(",", "")
+  let n = Int.parse(digits)?
+  var name = t[close + 2..t.len()].trim()
+  if name.contains("PROGRAM TOTALS") || name.contains("events annotated") {
+    return None
+  }
+  // a call line ends in "(Nx)"
+  if name.ends_with("x)") && name.contains(" (") {
+    let inner = name[(perf_rfind(name, " (") ?? 0) + 2..name.len() - 2]
+    if Int.parse(inner).is_some() {
+      return None
+    }
+  }
+  // the function: the object and callgrind's recursion suffix dropped
+  if name.ends_with("]") {
+    if let Some(i) = perf_rfind(name, " [") {
+      name = name[0..i].trim()
+    }
+  }
+  if let Some(i) = perf_rfind(name, ":") {
+    name = name[i + 1..name.len()].trim()
+  }
+  if let Some(i) = perf_rfind(name, "'") {
+    if Int.parse(name[i + 1..name.len()]).is_some() {
+      name = name[0..i]
+    }
+  }
+  if name.is_empty() || name.contains(" ") {
+    return None
+  }
+  Some((name, n))
+}
+
+/// The self counts of an annotate file by function.
+fn perf_load(os: Os, path: Str) -> Map[Str, Int] {
+  var out: Map[Str, Int] = {}
+  let text = os.fs.read_text(path).ok() ?? ""
+  for line in text.split("\n") {
+    if let Some((name, n)) = perf_line(line) {
+      out[name] = (out.get(name) ?? 0) + n
+    }
+  }
+  out
+}
+
+/// Each function's instructions a request in run directory dir for
+/// scenario sc; None when it has fewer than two annotated runs.
+fn perf_per_request(os: Os, dir: Str, sc: Str) -> Map[Str, Float]? {
+  var runs: List[Int] = []
+  for fi in os.fs.read_dir(dir).ok() ?? [] {
+    if fi.name.starts_with("ann.${sc}.") {
+      if let Some(n) = Int.parse(fi.name.trim_prefix("ann.${sc}.")) {
+        runs.push(n)
+      }
+    }
+  }
+  if runs.len() < 2 {
+    return None
+  }
+  runs = runs.sort()
+  let n1 = runs[0]
+  let n2 = runs[runs.len() - 1]
+  let d1 = perf_load(os, "${dir}/ann.${sc}.${n1}")
+  let d2 = perf_load(os, "${dir}/ann.${sc}.${n2}")
+  let r1 = Int.parse((os.fs.read_text("${dir}/req.${sc}.${n1}").ok() ?? "").trim()) ?? 0
+  let r2 = Int.parse((os.fs.read_text("${dir}/req.${sc}.${n2}").ok() ?? "").trim()) ?? 0
+  if r2 <= r1 {
+    return None
+  }
+  let q = Float(r2 - r1)
+  var out: Map[Str, Float] = {}
+  for (k, v) in d2 {
+    out[k] = Float(v - (d1.get(k) ?? 0)) / q
+  }
+  for (k, v) in d1 {
+    if !d2.contains(k) {
+      out[k] = Float(0 - v) / q
+    }
+  }
+  Some(out)
+}
+
+/// A function's row: the change and both sides, a request.
+struct PerfRow {
+  name: Str
+  diff: Float
+  base: Float
+  new: Float
+}
+
+/// One scenario's comparison.
+struct PerfScenario {
+  name: Str
+  base: Float
+  new: Float
+  rows: List[PerfRow]
+}
+
+fn perf_compare(os: Os, base: Str, new: Str, sc: Str, top: Int) -> PerfScenario? {
+  let b = perf_per_request(os, base, sc)?
+  let n = perf_per_request(os, new, sc)?
+  var tb = 0.0
+  var tn = 0.0
+  for (_, v) in b {
+    tb += v
+  }
+  for (_, v) in n {
+    tn += v
+  }
+  var rows: List[PerfRow] = []
+  var keys: Map[Str, Bool] = {}
+  for (k, _) in b {
+    keys[k] = true
+  }
+  for (k, _) in n {
+    keys[k] = true
+  }
+  for (k, _) in keys {
+    let bv = b.get(k) ?? 0.0
+    let nv = n.get(k) ?? 0.0
+    rows.push(PerfRow{name: k, diff: nv - bv, base: bv, new: nv})
+  }
+  // the largest changes first; a tie by name (sort_by keeps the order of
+  // equal keys)
+  rows = rows.sort_by(fn(r: PerfRow) -> Str { r.name })
+  rows = rows.sort_by(fn(r: PerfRow) -> Int { 0 - Int((r.diff.abs() * 1000.0).round()) })
+  if rows.len() > top {
+    rows = rows[0..top]
+  }
+  Some(PerfScenario{name: sc, base: tb, new: tn, rows: rows})
+}
+
+/// f rounded to an integer, right aligned in width w.
+fn perf_num(f: Float, w: Int) -> Str {
+  let s = "${Int(f.round())}"
+  if s.len() >= w {
+    return s
+  }
+  " ".repeat(w - s.len()) + s
+}
+
+/// f with three decimals.
+fn perf_ratio(f: Float) -> Str {
+  let m = Int((f * 1000.0).round())
+  let frac = "${m % 1000}"
+  "${m / 1000}.${"0".repeat(3 - frac.len())}${frac}"
+}
+
+fn perf_text(s: PerfScenario) -> Str {
+  var b = StrBuilder.new()
+  b.write("== ${s.name}: base ${Int(s.base.round())} new ${Int(s.new.round())} ratio ${perf_ratio(s.new / s.base)}\n")
+  for r in s.rows {
+    let name = if r.name.len() > 70 { r.name[0..70] } else { r.name }
+    b.write("${perf_num(r.diff, 8)} ${perf_num(r.base, 8)} ${perf_num(r.new, 8)}  ${name}\n")
+  }
+  b.freeze()
+}
+
+fn perf_json(s: PerfScenario) -> Str {
+  var b = StrBuilder.new()
+  b.write("{\"scenario\":${s.name.quote()},\"base\":${Int(s.base.round())},\"new\":${Int(s.new.round())},\"ratio\":${perf_ratio(s.new / s.base)},\"functions\":[")
+  for (i, r) in s.rows.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    b.write("{\"name\":${r.name.quote()},\"diff\":${Int(r.diff.round())},\"base\":${Int(r.base.round())},\"new\":${Int(r.new.round())}}")
+  }
+  b.write("]}")
+  b.freeze()
+}
+
+fn compare_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  var fl = core.new_flags("dev compare")
+  fl.bool_flag("json", "one JSON object a scenario")
+  fl.int_flag("top", 15, "the functions that moved most, per scenario")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() < 2 {
+    os.stdio.eprintln("usage: xo dev compare [--json] [--top=N] BASE NEW [SCENARIO...]: two HTTP callgrind run directories made with ANN=1")
+    return 2
+  }
+  let scs = if fl.args.len() > 2 { fl.args[2..fl.args.len()] } else { PERF_SCENARIOS }
+  var any = false
+  for sc in scs {
+    if let Some(s) = perf_compare(os, fl.args[0], fl.args[1], sc, fl.get_int("top")) {
+      any = true
+      if fl.get_bool("json") {
+        os.stdio.println(perf_json(s))
+      } else {
+        os.stdio.print(perf_text(s))
+      }
+    }
+  }
+  if !any {
+    os.stdio.eprintln("xo dev compare: no scenario has two ANN=1 runs on both sides (ann.SCENARIO.N and req.SCENARIO.N)")
+    return 1
+  }
+  0
+}

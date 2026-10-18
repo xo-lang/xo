@@ -13,6 +13,8 @@
 //                                     types of FILE's DWARF (decision 0253)
 //   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
 //   xo dev debug --snap FILE -c CMD EXE  xo debug --batch on a recorded thread
+//   xo dev compare BASE NEW [SCENARIO...]  two HTTP callgrind ANN=1 runs, per
+//                                     request and per function (decision 0264)
 
 use github.com/xo-lang/xo/compiler/cli/core
 
@@ -32,7 +34,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|debug|dump|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|debug|compare|dump|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns
@@ -50,6 +52,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
     "dwarf" => dwarf_cmd(os, args[1..])
     "unwind" => unwind_cmd(os, args[1..])
     "debug" => debug_cmd(os, args[1..])
+    "compare" => compare_cmd(os, args[1..])
     _ => {
       os.stdio.eprintln("xo dev: unknown command ${args[0].quote()}\n${usage()}")
       2

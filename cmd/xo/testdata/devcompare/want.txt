@@ -1,0 +1,16 @@
+== plain: base 11307 new 7195 ratio 0.636
+   -3240     3776      536  memcpy
+   -1331     1547      216  xo_f_main
+   -1016     2128     1112  xo_f_hpack.encode
+     782      287     1069  xo_f_tlssrv.flush
+     660      929     1589  xo_f_rc_inc
+     373      203      576  xo_f_scan.find_byte
+    -340     2437     2097  xo_f_http.serve
+== h2: base 13333 new 9761 ratio 0.732
+   -3526     3930      404  xo_f_rc_inc
+   -2637     3436      799  xo_f_tlssrv.flush
+    1858      292     2150  xo_f_http.serve
+   -1629     2366      737  memcpy
+    1100      964     2064  xo_f_scan.find_byte
+     860      557     1418  xo_f_hpack.encode
+     401     1788     2189  xo_f_main
