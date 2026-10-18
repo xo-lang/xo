@@ -258,3 +258,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0264-compare-and-provenance.md](0264-compare-and-provenance.md): Accepted: xo dev compare and build provenance stamps
 - [0265-debug-print-pure.md](0265-debug-print-pure.md): Proposed: dbg on every backend (native --no-gc too), one stderr line, compiled out of --release
 - [0266-map-update-or.md](0266-map-update-or.md): Proposed: no update_or (Map.update exists); vet hints XO0532 (copy-modify-store) and XO0533 (a mutated copy never stored)
+- [0267-watch.md](0267-watch.md): Accepted (stub): `xo run --watch` (restart only when the binary changed, graceful handoff) and `xo test --watch` (only affected tests), JSON events per cycle
