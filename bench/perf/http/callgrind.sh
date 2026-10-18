@@ -25,7 +25,9 @@
 # REPS (2) repeats each measurement; N (100) cycles. ANN=1 also keeps each
 # run's per function counts (callgrind_annotate) in OUT/ann.SCENARIO.CYCLES
 # with its requests in OUT/req.SCENARIO.CYCLES (the last repeat's), for
-# bench/perf/http/cgcompare.py.
+# bench/perf/http/cgcompare.py and xo dev compare. KEEP=1 keeps each
+# run's callgrind output too, as OUT/cg.SCENARIO.CYCLES, for
+# callgrind_annotate --tree=caller (who calls the allocator, 2026-10-18).
 #
 # Prints one line per measurement: `<scenario> <name> <instructions per
 # request> <requests>`, and the raw counts to OUT/raw.txt.
@@ -71,6 +73,10 @@ run() {
 	ir=$(sed -n 's/.*I *refs: *//p' "$out/vg.$port.log" | tr -d ',')
 	if [ "${ANN:-0}" = 1 ]; then
 		callgrind_annotate --auto=no --threshold=100 "$cg" > "$out/ann.$sc.$cycles" 2>/dev/null || true
+		echo "$reqs" > "$out/req.$sc.$cycles"
+	fi
+	if [ "${KEEP:-0}" = 1 ]; then
+		mv "$cg" "$out/cg.$sc.$cycles"
 		echo "$reqs" > "$out/req.$sc.$cycles"
 	fi
 	rm -f "$cg"
