@@ -97,6 +97,22 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
             out.push(d)
           }
         }
+        MatchExpr(_, subject, arms) => {
+          var pats: List[parser.Pattern] = []
+          for a in arms {
+            pats.push(a.pattern)
+          }
+          if let Some(d) = payload_share(c, f, path, subject, pats) {
+            out.push(d)
+          }
+        }
+        IfExpr(ie) => {
+          if let (Some(p), Some(x)) = (ie.pattern, ie.value) {
+            if let Some(d) = payload_share(c, f, path, x, [p]) {
+              out.push(d)
+            }
+          }
+        }
         _ => {}
       }
     }
@@ -108,6 +124,118 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
     out.push(d)
   }
   out
+}
+
+/// The number of heap fields (core 5's reference counted values: Str,
+/// Bytes, List, Map, handles) whose counts a copy of a value of type t
+/// changes: a struct's are its fields', an enum's those of its largest
+/// variant, a scalar's none (decision 0263).
+fn heap_fields(c: check.Checker, t0: Int, depth: Int) -> Int {
+  let t = c.resolve(t0)
+  if t < 0 || depth > 6 {
+    return 0
+  }
+  let ty = c.tys[t]
+  match ty.kind {
+    check.TyKind.Tuple => {
+      var n = 0
+      for a in ty.args {
+        n += heap_fields(c, a, depth + 1)
+      }
+      n
+    }
+    check.TyKind.Named => {
+      let o = c.objs[ty.obj]
+      // a field of a generic type: its type argument
+      let arg = fn(ft: Int) -> Int {
+        let r = c.resolve(ft)
+        if r >= 0 && c.tys[r].kind == check.TyKind.Param {
+          for i in 0..o.tparams.len() {
+            if o.tparams[i] == c.tys[r].obj && i < ty.args.len() {
+              return ty.args[i]
+            }
+          }
+        }
+        ft
+      }
+      match o.tkind {
+        "struct" => {
+          var n = 0
+          for fl in o.fields {
+            n += heap_fields(c, arg(fl.ty), depth + 1)
+          }
+          n
+        }
+        "enum" => {
+          var most = 0
+          for v in o.variants {
+            var n = 0
+            for vf in v.fields {
+              n += heap_fields(c, arg(vf.ty), depth + 1)
+            }
+            if n > most {
+              most = n
+            }
+          }
+          most
+        }
+        _ => {
+          let name = check.text(o.name)
+          if name is "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" | "Float64" | "Bool" | "Char" | "Duration" | "Instant" {
+            0
+          } else {
+            1
+          }
+        }
+      }
+    }
+    _ => 0
+  }
+}
+
+/// Whether pattern p binds a name inside a variant's payload.
+fn binds_payload(p: parser.Pattern, inside: Bool) -> Bool {
+  match p {
+    BindPat(..) => inside
+    OrPat(_, alts) => alts.any(fn(a) { binds_payload(a, inside) })
+    TuplePat(_, elems) => elems.any(fn(a) { binds_payload(a, inside) })
+    VariantPat(_, _, _, fields, _) => fields.any(fn(pf) { binds_payload(pf.pattern, true) })
+    StructPat(_, _, fields, _) => fields.any(fn(pf) { binds_payload(pf.pattern, inside) })
+    _ => false
+  }
+}
+
+/// The copy lint's threshold: payloads with at least this many heap
+/// fields are reported (decision 0263).
+const COPY_THRESHOLD = 8
+
+/// XO0530: `match c.f { Some(x) => ... }` (or `if let`) on a field binds
+/// the payload of a value that lives on, so every heap field of the
+/// payload is shared and released again later (decision 0263).
+fn payload_share(c: check.Checker, f: Int, file: Str, subject: parser.Expr, pats: List[parser.Pattern]) -> Diag? {
+  let base = match subject {
+    SelectorExpr(_, x, _) => x
+    _ => return None
+  }
+  // a field of a value (not a module's or a type's member)
+  if c.type_in(f, base) < 0 {
+    return None
+  }
+  if !pats.any(fn(p) { binds_payload(p, false) }) {
+    return None
+  }
+  let t = c.type_in(f, subject)
+  if t < 0 {
+    return None
+  }
+  let n = heap_fields(c, t, 0)
+  if n < COPY_THRESHOLD {
+    return None
+  }
+  let what = c.show(t)
+  var d = vdiag("XO0530", false, file, parser.expr_span(subject), "binding the payload of this field shares the ${n} heap fields of `${what}`, and releasing the field later releases them again")
+  d.notes.push(check.DNote{message: "test it with `.is_none()` (or a pattern without bindings) first when the payload is not needed, or take the value out of its owner before matching (decision 0263)"})
+  Some(d)
 }
 
 /// XO0703: the effects named in the `uses` clauses of fo that its body
@@ -558,8 +686,12 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
         walk_expr(f.value, out)
       }
     }
-    IfExpr(ie) => walk_if(ie, out)
+    IfExpr(ie) => {
+      out.push(e)
+      walk_if(ie, out)
+    }
     MatchExpr(_, subject, arms) => {
+      out.push(e)
       walk_expr(subject, out)
       for a in arms {
         walk_pat(a.pattern, out)

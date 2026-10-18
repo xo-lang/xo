@@ -79,6 +79,10 @@ fn main(os: Os) ! {
   if !args.is_empty() && args[0] is "query" | "edit" {
     os.proc.exit(semantic.run(os, args))
   }
+  // agents' lookups (decision 0261): xo def, refs, type, symbols, doc NAME
+  if servers.is_agent_command(os, args) {
+    os.proc.exit(servers.run_agent(os, args[0], args[1..]))
+  }
   if !args.is_empty() && servers.is_command(args[0]) {
     os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION))
   }

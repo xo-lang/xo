@@ -375,6 +375,8 @@ struct Session {
   res: List[Res] = []
   sites: Map[Int, List[Site]] = {}
   keys: Map[Str, Int] = {}
+  /// a headless session (agent.xo's commands): no notifications written
+  quiet: Bool = false
 }
 
 fn abs_of(wd: Str, p: Str) -> Str {
@@ -434,7 +436,9 @@ fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
     Ok(_) => {}
     Err(e) => {
       s.err = e
-      notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${e}"), jint(2)]))
+      if !s.quiet {
+        notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${e}"), jint(2)]))
+      }
       s.publish(os)
       return
     }
@@ -499,6 +503,9 @@ fn to_lsp(d: check.Diag, t: Text) -> J {
 }
 
 fn (var s: Session) publish(os: Os) uses (stdio, fs) {
+  if s.quiet {
+    return
+  }
   var all: List[Str] = []
   for (p, _) in s.docs {
     all.push(p)

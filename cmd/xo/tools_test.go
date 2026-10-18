@@ -103,6 +103,22 @@ pub fn twice(c: Counter) -> Counter {
   let m = c.next()
   dbg(m.next())
 }
+
+pub struct Wide {
+  a: Str, b: Str, c: Str, d: Str
+  e: Str, f: Str, g: List[Int], h: Map[Str, Str]
+}
+
+pub struct Holder {
+  w: Wide?
+}
+
+pub fn first(h: Holder) -> Str {
+  match h.w {
+    Some(w) => w.a
+    None => ""
+  }
+}
 `
 
 func TestVetCLI(t *testing.T) {
@@ -129,7 +145,7 @@ func TestVetCLI(t *testing.T) {
 			t.Errorf("vet reported an error: %+v", d)
 		}
 	}
-	for _, c := range []string{"XO0703", "XO0900", "XO0901"} {
+	for _, c := range []string{"XO0530", "XO0703", "XO0900", "XO0901"} {
 		if !got[c] {
 			t.Errorf("missing %s in %s", c, out.String())
 		}
@@ -277,5 +293,79 @@ func TestExplainCLI(t *testing.T) {
 	}
 	if code := run(t, []string{"explain"}, &out, &errOut); code != 2 {
 		t.Errorf("no code: exit %d", code)
+	}
+}
+
+// agentJSON runs one of decision 0261's agent commands and decodes its
+// JSON; code is the exit status wanted.
+func agentJSON(t *testing.T, code int, args ...string) map[string]any {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	if got := run(t, args, &out, &errOut); got != code {
+		t.Fatalf("%v: exit %d, want %d: %s%s", args, got, code, out.String(), errOut.String())
+	}
+	var v map[string]any
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+		t.Fatalf("%v: not JSON: %v\n%s", args, err, out.String())
+	}
+	return v
+}
+
+// TestAgentCLI covers xo def, refs, type, doc NAME, and symbols (decision
+// 0261 stage (a)) on toolsProg.
+func TestAgentCLI(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": toolsProg})
+	file := filepath.Join(dir, "main.xo")
+	d := "--dir=" + dir
+
+	decls := agentJSON(t, 0, "def", d, "Counter.next")["declarations"].([]any)
+	if len(decls) != 1 {
+		t.Fatalf("def Counter.next = %v", decls)
+	}
+	d0 := decls[0].(map[string]any)
+	if d0["kind"] != "func" || !strings.Contains(d0["signature"].(string), "next() -> Counter") || d0["line"].(float64) < 1 {
+		t.Errorf("def Counter.next = %v", d0)
+	}
+	// a short name finds the method too
+	if ds := agentJSON(t, 0, "def", d, "next")["declarations"].([]any); len(ds) != 1 {
+		t.Errorf("def next = %v", ds)
+	}
+	agentJSON(t, 1, "def", d, "nosuchname")
+
+	refs := agentJSON(t, 0, "refs", d, "Counter.next")["references"].([]any)
+	decl := 0
+	for _, r := range refs {
+		if r.(map[string]any)["declaration"] == true {
+			decl++
+		}
+	}
+	// the declaration and the two calls in twice
+	if len(refs) != 3 || decl != 1 {
+		t.Errorf("refs Counter.next = %v", refs)
+	}
+
+	ty := agentJSON(t, 0, "type", file+":30:7")
+	if !strings.Contains(ty["signature"].(string), "Counter") {
+		t.Errorf("type = %v", ty)
+	}
+	agentJSON(t, 2, "type")
+
+	doc := agentJSON(t, 0, "doc", d, "Counter")["declarations"].([]any)
+	if len(doc) != 1 || !strings.Contains(doc[0].(map[string]any)["doc"].(string), "A counter") || len(doc[0].(map[string]any)["methods"].([]any)) != 1 {
+		t.Errorf("doc Counter = %v", doc)
+	}
+
+	syms := agentJSON(t, 0, "symbols", dir)["symbols"].([]any)
+	names := map[string]bool{}
+	for _, s := range syms {
+		names[s.(map[string]any)["name"].(string)] = true
+	}
+	if !names["Counter"] || !names["Counter.next"] || !names["load"] || names["read_it"] {
+		t.Errorf("symbols = %v", names)
+	}
+	all := agentJSON(t, 0, "symbols", "--all", dir)["symbols"].([]any)
+	if len(all) <= len(syms) {
+		t.Errorf("symbols --all (%d) not more than pub (%d)", len(all), len(syms))
 	}
 }

@@ -1,0 +1,407 @@
+// `xo def`, `xo refs`, `xo type`, `xo doc NAME`, and `xo symbols`
+// (decision 0261 stage (a)): lookups for agents on `xo lsp`'s engine,
+// stateless (the directory checked from disk on each run, as a headless
+// Session) and JSON on standard output. A target is a position,
+// FILE:LINE:COL (1 based, the column in bytes), or a name: NAME, or
+// Type.member, matched against the declarations of the checked modules
+// (not std). Exit 0 with an answer, 1 when nothing matches or the program
+// does not check, 2 on a usage error.
+
+use github.com/xo-lang/xo/compiler/check
+
+/// Whether args (the command line after `xo`) is one of these commands:
+/// `xo doc` is one only with a name that is not a directory or an import
+/// path (`xo doc MODULE` stays core's).
+pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
+  if args.is_empty() {
+    return false
+  }
+  if args[0] is "def" | "refs" | "type" | "symbols" {
+    return true
+  }
+  if args[0] != "doc" {
+    return false
+  }
+  var name = ""
+  for a in args[1..] {
+    if !a.starts_with("-") {
+      name = a
+    }
+  }
+  if name.is_empty() || name.contains("/") || name == "." {
+    return false
+  }
+  match os.fs.stat(name) {
+    Ok(Some(_)) => false
+    _ => true
+  }
+}
+
+/// A command's arguments: the target and --dir.
+struct AgentArgs {
+  target: Str
+  dir: Str
+  all: Bool
+}
+
+fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
+  var a = AgentArgs{target: "", dir: ".", all: false}
+  for x in args {
+    if x.starts_with("--dir=") {
+      a.dir = x.trim_prefix("--dir=")
+    } else if x == "--all" {
+      a.all = true
+    } else if x is "--json" | "-json" {
+      // JSON is the only output
+    } else if x.starts_with("-") {
+      return Err("xo ${cmd}: unknown flag ${x}")
+    } else if a.target.is_empty() {
+      a.target = x
+    } else {
+      return Err("xo ${cmd}: one target only (got ${a.target} and ${x})")
+    }
+  }
+  if a.target.is_empty() && cmd != "symbols" {
+    return Err("xo ${cmd}: usage: xo ${cmd} [--dir=DIR] NAME|FILE:LINE:COL")
+  }
+  Ok(a)
+}
+
+/// Runs `xo CMD ARGS`: the exit status.
+pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env) {
+  let a = match agent_args(cmd, args) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln(e)
+      return 2
+    }
+  }
+  var dir = a.dir
+  if cmd == "symbols" && !a.target.is_empty() {
+    dir = a.target
+  }
+  // a position's file is checked with its directory
+  if let Some((file, _, _)) = position_of(a.target) {
+    dir = dir_of(abs_of(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", file))
+  }
+  var s = match agent_session(os, dir) {
+    Ok(x) => x
+    Err(e) => {
+      print_json(os, jobj(["error"], [jstr(e)]))
+      return 1
+    }
+  }
+  let out = match cmd {
+    "def" => s.agent_def(os, a.target, false)
+    "doc" => s.agent_def(os, a.target, true)
+    "refs" => s.agent_refs(os, a.target)
+    "type" => s.agent_type(os, a.target)
+    _ => s.agent_symbols(os, a.all)
+  }
+  match out {
+    Ok(v) => {
+      print_json(os, v)
+      0
+    }
+    Err(e) => {
+      print_json(os, jobj(["error"], [jstr(e)]))
+      1
+    }
+  }
+}
+
+fn print_json(os: Os, v: J) uses stdio { os.stdio.println(encode(v, false)) }
+
+/// FILE:LINE:COL, when target is one.
+fn position_of(target: Str) -> (Str, Int, Int)? {
+  let parts = target.split(":")
+  if parts.len() < 3 {
+    return None
+  }
+  let n = parts.len()
+  let line = Int.parse(parts[n - 2])?
+  let col = Int.parse(parts[n - 1])?
+  if line < 1 || col < 1 {
+    return None
+  }
+  Some((parts[0..n - 2].join(":"), line, col))
+}
+
+/// A Session over the .xo files of dir, checked as `xo lsp` checks open
+/// documents, with nothing written to standard output.
+fn agent_session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true}
+  let d = abs_of(wd, dir)
+  let entries = os.fs.read_dir(d).map_err(fn(e) { e.display() })?
+  for fi in entries {
+    if fi.is_dir || !fi.name.ends_with(".xo") {
+      continue
+    }
+    let p = d.trim_suffix("/") + "/" + fi.name
+    match os.fs.read(p) {
+      Ok(b) => s.docs[p] = b
+      Err(e) => return Err(e.display())
+    }
+  }
+  if s.docs.is_empty() {
+    return Err("no .xo files in ${d}")
+  }
+  s.dirty = true
+  s.recheck(os)
+  if !s.err.is_empty() {
+    return Err(s.err)
+  }
+  if s.res.is_empty() {
+    return Err("the program did not check")
+  }
+  Ok(s)
+}
+
+/// The 1 based line and byte column of offset off in src.
+fn line_col(src: Bytes, off: Int) -> (Int, Int) {
+  var line = 1
+  var start = 0
+  var i = 0
+  while i < off && i < src.len() {
+    if src[i] == 10 {
+      line += 1
+      start = i + 1
+    }
+    i += 1
+  }
+  (line, off - start + 1)
+}
+
+/// The byte offset of 1 based line and byte column in src, or -1.
+fn offset_of(src: Bytes, line: Int, col: Int) -> Int {
+  var l = 1
+  var i = 0
+  while l < line && i < src.len() {
+    if src[i] == 10 {
+      l += 1
+    }
+    i += 1
+  }
+  if l != line {
+    return -1
+  }
+  i + col - 1
+}
+
+/// A location's JSON: the file (as the checker names it), line, column,
+/// and end.
+fn (s: Session) loc_json(f: Int, a: Int, b: Int) -> (List[Str], List[J]) {
+  let src = s.res[0].c.files[f].src
+  let (l, c) = line_col(src, a)
+  let (el, ec) = line_col(src, b)
+  (["file", "line", "col", "end_line", "end_col"], [jstr(s.res[0].c.files[f].path), jint(l), jint(c), jint(el), jint(ec)])
+}
+
+/// The user files (not std) of the last check, by path.
+fn (s: Session) user_files() -> List[Int] {
+  let c = s.res[0].c
+  var out: List[(Str, Int)] = []
+  for (p, f) in s.keys {
+    let m = c.files[f].module
+    if m >= 0 && !c.mods[m].is_std {
+      out.push((p, f))
+    }
+  }
+  var fs: List[Int] = []
+  for (_, f) in out.sort_by(fn(x) { x.0 }) {
+    fs.push(f)
+  }
+  fs
+}
+
+/// The qualified name of a declaration target: name, Type.member,
+/// Enum.Variant, Type.field ("" for a local or another kind).
+fn (s: Session) target_name(tg: LspTarget) -> Str {
+  let c = s.res[0].c
+  if tg.oi < 0 {
+    return ""
+  }
+  match tg.what {
+    "func" => c.display_name(tg.oi)
+    "type" | "const" => check.text(c.objs[tg.oi].name)
+    "field" => "${check.text(c.objs[tg.oi].name)}.${check.text(c.objs[tg.oi].fields[tg.sub].name)}"
+    "variant" => "${check.text(c.objs[tg.oi].name)}.${check.text(c.objs[tg.oi].variants[tg.sub].name)}"
+    _ => ""
+  }
+}
+
+/// A declaration of the checked modules.
+struct Found {
+  f: Int
+  site: Site
+  tg: LspTarget
+  name: Str
+}
+
+/// The declarations whose qualified name is name or ends with "." name.
+fn (var s: Session) declarations(name: Str) -> List[Found] {
+  let c = s.res[0].c
+  var out: List[Found] = []
+  for f in s.user_files() {
+    for site in s.sites_of(f) {
+      if site.id.name.is_empty() {
+        continue
+      }
+      let tg = s.resolve(f, site)
+      let sp = site.id.span
+      // a declaration: the identifier is where its target is declared
+      if tg.def_file != c.files[f].path || sp.start.offset != tg.def_start || sp.end.offset != tg.def_end {
+        continue
+      }
+      let full = s.target_name(tg)
+      if full.is_empty() {
+        continue
+      }
+      if full == name || full.ends_with("." + name) {
+        out.push(Found{f: f, site: site, tg: tg, name: full})
+      }
+    }
+  }
+  out
+}
+
+/// The identifier at position target (FILE:LINE:COL).
+fn (var s: Session) at_position(os: Os, target: Str) -> Found ! Str {
+  let (file, line, col) = match position_of(target) {
+    Some(x) => x
+    None => return Err("not FILE:LINE:COL: ${target}")
+  }
+  let p = abs_of(s.wd, file)
+  let f = s.file_at(p)
+  if f < 0 {
+    return Err("${file}: not a file of the checked program")
+  }
+  let off = offset_of(s.res[0].c.files[f].src, line, col)
+  if off < 0 {
+    return Err("${target}: no such line")
+  }
+  for site in s.sites_of(f) {
+    let sp = site.id.span
+    if sp.start.offset <= off && off <= sp.end.offset && !site.id.name.is_empty() {
+      let tg = s.resolve(f, site)
+      return Ok(Found{f: f, site: site, tg: tg, name: s.target_name(tg)})
+    }
+  }
+  Err("${target}: no identifier there")
+}
+
+/// The targets of a command: the identifier at a position, or the
+/// declarations of a name.
+fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str {
+  if position_of(target).is_some() {
+    return Ok([s.at_position(os, target)?])
+  }
+  let ds = s.declarations(target)
+  if ds.is_empty() {
+    return Err("no declaration named ${target}")
+  }
+  Ok(ds)
+}
+
+/// The JSON of a target's declaration: name, kind, signature, doc, and
+/// location.
+fn (var s: Session) decl_json(found: Found) -> J {
+  let tg = found.tg
+  let (sig, doc) = s.describe(tg)
+  var keys = ["name", "kind", "signature", "doc"]
+  var vals = [jstr(found.name), jstr(tg.what), jstr(sig), jstr(doc)]
+  if !tg.def_file.is_empty() {
+    let df = s.file_named(tg.def_file)
+    if df >= 0 {
+      let (k, v) = s.loc_json(df, tg.def_start, tg.def_end)
+      keys = keys + k
+      vals = vals + v
+    }
+  }
+  jobj(keys, vals)
+}
+
+/// `xo def` (and `xo doc NAME`, with methods): the declarations.
+fn (var s: Session) agent_def(os: Os, target: Str, with_methods: Bool) -> J ! Str {
+  var out: List[J] = []
+  for found in s.targets(os, target)? {
+    var d = s.decl_json(found)
+    if with_methods && found.tg.what == "type" {
+      var ms: List[J] = []
+      for m in s.declarations(found.name + ".") {
+        if m.tg.what == "func" {
+          ms.push(s.decl_json(m))
+        }
+      }
+      d = match d {
+        J.Obj(keys, vals, raws) => J.Obj(keys: keys + ["methods"], vals: vals + [jarr(ms)], raws: raws)
+        _ => d
+      }
+    }
+    out.push(d)
+  }
+  Ok(jobj(["target", "declarations"], [jstr(target), jarr(out)]))
+}
+
+/// `xo refs`: every reference of the target, the declaration marked.
+fn (var s: Session) agent_refs(os: Os, target: Str) -> J ! Str {
+  let founds = s.targets(os, target)?
+  if founds.len() > 1 {
+    var names: List[J] = []
+    for f in founds {
+      names.push(jstr(f.name))
+    }
+    return Err("${target} names ${founds.len()} declarations: give Type.member or a position (${encode(jarr(names), false)})")
+  }
+  let tg = founds[0].tg
+  if tg.obj.is_empty() && tg.def_file.is_empty() {
+    return Err("${target}: nothing to find references of")
+  }
+  var refs: List[J] = []
+  for (f, r) in s.refs(tg) {
+    let sp = r.id.span
+    let (k, v) = s.loc_json(f, sp.start.offset, sp.end.offset)
+    let decl = s.res[0].c.files[f].path == tg.def_file && sp.start.offset == tg.def_start && sp.end.offset == tg.def_end
+    refs.push(jobj(k + ["declaration"], v + [jbool(decl)]))
+  }
+  Ok(jobj(["target", "declaration", "references"], [jstr(target), s.decl_json(founds[0]), jarr(refs)]))
+}
+
+/// `xo type FILE:LINE:COL`: the identifier there, described.
+fn (var s: Session) agent_type(os: Os, target: Str) -> J ! Str {
+  if position_of(target).is_none() {
+    return Err("xo type: a position (FILE:LINE:COL), not ${target}")
+  }
+  let found = s.at_position(os, target)?
+  let (sig, doc) = s.describe(found.tg)
+  Ok(jobj(["target", "kind", "signature", "doc", "declaration"], [jstr(target), jstr(found.tg.what), jstr(sig), jstr(doc), s.decl_json(found)]))
+}
+
+/// `xo symbols [MODULE]`: the declarations of the checked module, pub
+/// ones only unless all.
+fn (var s: Session) agent_symbols(os: Os, all: Bool) -> J ! Str {
+  let c = s.res[0].c
+  var out: List[J] = []
+  for f in s.user_files() {
+    for site in s.sites_of(f) {
+      if site.id.name.is_empty() {
+        continue
+      }
+      let tg = s.resolve(f, site)
+      let sp = site.id.span
+      if tg.def_file != c.files[f].path || sp.start.offset != tg.def_start || sp.end.offset != tg.def_end || tg.oi < 0 {
+        continue
+      }
+      let name = s.target_name(tg)
+      if name.is_empty() {
+        continue
+      }
+      if !all && !c.objs[tg.oi].is_pub {
+        continue
+      }
+      out.push(s.decl_json(Found{f: f, site: site, tg: tg, name: name}))
+    }
+  }
+  Ok(jobj(["symbols"], [jarr(out)]))
+}
