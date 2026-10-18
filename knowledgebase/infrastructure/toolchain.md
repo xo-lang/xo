@@ -1386,7 +1386,10 @@ run) has two modes (2026-10-18):
 - `MODE=short`: plain and tls, one repeat, N=30: about 3.3 minutes on
   the Mac with a fresh linux xo, 1.8 with the one OUT already holds
   (its commit stamp matches); repeats agree within about 0.3% (arm64) and
-  1% (LLVM tls). The default for a gate touching HTTP or the runtime.
+  1% (LLVM tls), but byte identical arm64 servers built from two
+  checkouts measured plain +0.51% and tls -0.85% (2026-10-18), so
+  `cmp OUT1/srv-arm64 OUT2/srv-arm64` before reading a difference under
+  1% as the change's. The default for a gate touching HTTP or the runtime.
 - `MODE=full` (the default): all five scenarios (plain, plain-newconn,
   tls, tls-newconn, h2), REPS=2, N=100: 25 to 45 minutes. Run it nightly,
   per batch, and for a change in:
