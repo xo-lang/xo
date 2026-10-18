@@ -51,6 +51,10 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Res
 }
 
 fn assemble_one(src: Str, elf: Bool, amd64: Bool) -> Result[Bytes, Str] {
+  if amd64 && !elf {
+    // x86_64 Mach-O (decision 0254 stage 6a: darwin/amd64)
+    return macho.assemble_macho_amd64(src.bytes(), (11, 0))
+  }
   if amd64 {
     // x86_64 ELF (decision 0254: the amd64 backend's text)
     return macho.assemble_elf_amd64(src.bytes())

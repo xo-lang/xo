@@ -250,6 +250,15 @@ x86_64`, the weak references' `-Wl,-U`), until steps 2 and 3. All 193
 goldens pass on the owner's Intel MacBook (i7-9750H, macOS 26.5.2,
 2026-10-18): built on the arm64 Mac, run there in a new directory.
 
+6a, step 2 (xo-fa, 2026-10-18): Xo's own Mach-O x86_64 assembler
+(compiler/macho asm_amd64.xo assemble_macho_amd64, x86_macho_fixes; cfi.xo
+x86_compact_encoding, x86_eh_frame; `macho asm --darwin-amd64`) writes the
+object clang writes, byte for byte, for all 193 goldens' darwin/amd64
+assembly and for the two test files of compiler/macho/testdata/amd64-macho
+(gotchas/macho-x86-64-reloc-rules.md); xo uses it for darwin/amd64 (`--as=cc`
+for clang's), the link still Apple's cc until step 3. Hello's 134,785
+lines assemble in about a second.
+
 ### 6b. windows/amd64
 
 - Calling convention (Win64): arguments in rcx, rdx, r8, r9 (each

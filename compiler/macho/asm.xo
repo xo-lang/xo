@@ -53,6 +53,18 @@ const R_POINTER_TO_GOT = 7
 const R_TLVP_LOAD_PAGE21 = 8
 const R_TLVP_LOAD_PAGEOFF12 = 9
 const R_ADDEND = 10
+/// x86_64 Mach-O relocation types (mach-o/x86_64/reloc.h), as internal
+/// codes past arm64's: obj.xo writes X86_64_RELOC_<n> as code - 64, and
+/// the shared R_UNSIGNED, R_SUBTRACTOR and R_POINTER_TO_GOT as their
+/// x86_64 numbers (0, 5, and GOT 4)
+const RX_SIGNED = 65
+const RX_BRANCH = 66
+const RX_GOT_LOAD = 67
+const RX_GOT = 68
+const RX_SIGNED_1 = 70
+const RX_SIGNED_2 = 71
+const RX_SIGNED_4 = 72
+const RX_TLV = 73
 
 /// A symbol: a label of a section, or a name used but not defined.
 struct Sym {
@@ -180,6 +192,10 @@ struct Frame {
   lsda_enc: Int = 0xff
   /// the compact unwind encoding (cfi.xo)
   enc: Int = 0
+  /// x86_64: the offsets in __eh_frame of its FDE's pc begin and LSDA
+  /// fields, patched once the sections have addresses (-1 for none)
+  pc_field: Int = -1
+  lsda_field: Int = -1
 }
 
 pub struct Asm {
@@ -540,7 +556,11 @@ fn (var a: Asm) switch_section(seg: Str, name: Str, flags: Int) {
   a.sects.push(Sect{seg: seg, name: name, flags: flags, code: code})
   a.cur = a.sects.len() - 1
   // the section start symbol LLVM makes for every section (ltmpN), so
-  // relocations never need to be section relative
+  // relocations never need to be section relative; not x86_64's (its
+  // relocations may be section relative, and LLVM makes none)
+  if a.amd64 && !a.elf {
+    return
+  }
   let n = a.sects.len() - 1
   let t = a.sym("ltmp${n}".bytes())
   a.syms[t].sect = a.cur
@@ -1006,7 +1026,9 @@ fn (var a: Asm) finish() {
     a.sects[i].addr = if a.elf { 0 } else { addr }
     addr += a.sects[i].size
   }
-  if a.amd64 {
+  if a.amd64 && !a.elf {
+    a.x86_macho_fixes()
+  } else if a.amd64 {
     a.x86_apply_fixes()
   } else if a.elf {
     a.elf_apply_fixes()
@@ -1292,6 +1314,12 @@ fn (var a: Asm) apply_fixes() {
 /// returned as the addend (a literal section's label stays a symbol).
 fn (var a: Asm) pointer_reloc(si: Int, off: Int, sym: Int) -> Int {
   let s = a.syms[sym]
+  if a.amd64 && s.temp && s.sect >= 0 && s.atom < 0 {
+    // x86_64, a label in no atom (a literal section's): the label itself
+    a.syms[sym].used = true
+    a.sects[si].relocs.push(Reloc{addr: off, typ: R_UNSIGNED, pcrel: false, len: 3, sym: sym})
+    return 0
+  }
   var target = sym
   var addend = 0
   if s.temp {

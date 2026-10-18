@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- macOS x86_64 programs are assembled by Xo's own assembler (objects byte
+  identical to clang's).
+
 - Xo's own x86_64 backend builds macOS x86_64 programs
   (`--backend=amd64 --target=darwin/amd64`; linked by Apple's cc for now).
 - Outside text is always valid UTF-8 (decision 0259): HTTP header values,

@@ -3473,6 +3473,9 @@ Three scripts:
 
     scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
+    scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME...]   # a Linux xo of the checkout cross built here, then linux-goldens.sh in Docker (amd64 with no C toolchain); 2026-10-18
+    scripts/arm64-identity.sh BASE_XO NEW_XO [BACKEND]    # the arm64 (or amd64) output of every golden and compiler/xo, darwin and linux, byte compared; for changes meant for another target; 2026-10-18
+    scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK [BACKEND]   # every golden built for darwin/amd64 here, run on an Intel Mac over ssh in a NEW REMOTE_DIR (nothing deleted there; ask the owner first); 2026-10-18
     scripts/golden-run.sh BINARY GOLDEN_DIR                # one golden, on a writable copy of its directory
 
 A Linux xo for the container: cross build it on the Mac with the Go
@@ -3625,6 +3628,7 @@ neither runs on this Mac (no Rosetta). Last verified: 2026-10-15.
     scripts/xo1-host-check.sh [OUTDIR]          # on the host, Go on PATH
     scripts/remote-xo1-x86.sh [--dry-run] [COMMIT]   # the same on EC2 linux/amd64
     scripts/intel-mac-test.sh --clean COMMIT -- 'XO_LLVM_JOBS=4 scripts/xo1-host-check.sh $HOME/out; cat $HOME/out/summary.txt'
+    # (owner, 2026-10-17 and 2026-10-18: no --clean on the laptop any more, nothing deleted there)
 
 xo1-host-check.sh builds xo1 as a checkout does (`go run
 ./scripts/xobuild --from-source` with a fresh cache, since 2026-10-13 opted in to the go-compiler-final root: arm64 backend on arm64, LLVM

@@ -7,6 +7,8 @@
 const UNWIND_ARM64_MODE_FRAMELESS = 0x02000000
 const UNWIND_ARM64_MODE_DWARF = 0x03000000
 const UNWIND_ARM64_MODE_FRAME = 0x04000000
+const UNWIND_X86_64_MODE_RBP_FRAME = 0x01000000
+const UNWIND_X86_64_MODE_DWARF = 0x04000000
 
 /// The DWARF register number of a .cfi_ register operand: x and w n,
 /// sp 31, d n 64 + n.
@@ -125,6 +127,9 @@ fn (var a: Asm) cfi(d: Str, rest: Bytes) {
 /// them, frameless with no directives, else DWARF mode; always DWARF
 /// with a personality other than ___gxx_personality_v0.
 fn (a: Asm) compact_encoding(f: Frame) -> Int {
+  if a.amd64 {
+    return a.x86_compact_encoding(f)
+  }
   let ins = f.insts
   if ins.is_empty() {
     return UNWIND_ARM64_MODE_FRAMELESS
@@ -224,9 +229,20 @@ fn (var a: Asm) unwind_sections() {
   for i in 0..a.frames.len() {
     a.frames[i].enc = a.compact_encoding(a.frames[i])
   }
-  let cu = a.add_raw_section("__LD", "__compact_unwind", S_ATTR_DEBUG, 3)
-  a.sects[cu].size = 32 * a.frames.len()
-  a.cu_sect = cu
+  var ncu = 0
+  for f in a.frames {
+    if a.cu_entry(f) {
+      ncu += 1
+    }
+  }
+  if ncu > 0 {
+    let cu = a.add_raw_section("__LD", "__compact_unwind", S_ATTR_DEBUG, 3)
+    a.sects[cu].size = 32 * ncu
+    a.cu_sect = cu
+  }
+  if a.amd64 {
+    return a.x86_eh_frame()
+  }
   var dwarf: List[Frame] = []
   for f in a.frames {
     if f.enc == UNWIND_ARM64_MODE_DWARF {
@@ -428,20 +444,26 @@ fn (var a: Asm) unwind_relocs() {
   if a.cu_sect < 0 {
     return
   }
+  if a.amd64 {
+    a.x86_patch_eh_frame()
+  }
   var o = new_out(32 * a.frames.len())
   var relocs: List[Reloc] = []
   for f in a.frames {
+    if !a.cu_entry(f) {
+      continue
+    }
     let at = o.n
     o.u64(a.sects[f.sect].addr + f.start)
     relocs.push(Reloc{addr: at, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.sect + 1, sect: true})
     o.u32(f.end - f.start)
     o.u32(f.enc)
-    if f.enc != UNWIND_ARM64_MODE_DWARF && f.pers >= 0 {
+    if f.enc != a.dwarf_mode() && f.pers >= 0 {
       relocs.push(Reloc{addr: at + 16, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.pers})
       a.syms[f.pers].used = true
     }
     o.u64(0)
-    if f.enc != UNWIND_ARM64_MODE_DWARF && f.lsda >= 0 {
+    if f.enc != a.dwarf_mode() && f.lsda >= 0 {
       relocs.push(Reloc{addr: at + 24, typ: R_UNSIGNED, pcrel: false, len: 3, sym: f.lsda})
       a.syms[f.lsda].used = true
     }
@@ -449,4 +471,226 @@ fn (var a: Asm) unwind_relocs() {
   }
   a.sects[a.cu_sect].bytes = o.done()
   a.sects[a.cu_sect].relocs = relocs
+}
+
+/// The compact unwind mode that defers to DWARF.
+fn (a: Asm) dwarf_mode() -> Int {
+  if a.amd64 { UNWIND_X86_64_MODE_DWARF } else { UNWIND_ARM64_MODE_DWARF }
+}
+
+/// Whether frame f has a __compact_unwind entry: always on arm64; on
+/// x86_64 not with encoding 0 and no personality or LSDA (a function
+/// with no CFI instructions: its FDE alone describes it).
+fn (a: Asm) cu_entry(f: Frame) -> Bool {
+  !a.amd64 || f.enc != 0 || f.pers >= 0 || f.lsda >= 0
+}
+
+/// The compact register number of a DWARF x86_64 register (rbx 1, r12 to
+/// r15 2 to 5, rbp 6), or -1.
+fn x86_cu_reg(r: Int) -> Int {
+  match r {
+    3 => 1
+    12 => 2
+    13 => 3
+    14 => 4
+    15 => 5
+    6 => 6
+    _ => -1
+  }
+}
+
+/// LLVM's X86 generateCompactUnwindEncoding for x86_64: an rbp frame
+/// (push rbp, its offset, mov rsp to rbp, the pushed callee saved
+/// registers next to it), 0 with no instructions, else DWARF (any other
+/// directive, `.cfi_def_cfa` among them, and frames without rbp).
+fn (a: Asm) x86_compact_encoding(f: Frame) -> Int {
+  if f.insts.is_empty() {
+    return 0
+  }
+  if f.pers >= 0 && bstr(a.syms[f.pers].name) != "___gxx_personality_v0" {
+    return UNWIND_X86_64_MODE_DWARF
+  }
+  var saved: List[Int] = []
+  var min_abs = 1 << 40
+  var has_fp = false
+  for c in f.insts {
+    if c.op == 3 {
+      if c.reg != 6 {
+        return UNWIND_X86_64_MODE_DWARF
+      }
+      has_fp = true
+      saved = []
+      min_abs = 1 << 40
+    } else if c.op == 2 {
+      // the stack size: only a frameless function's
+    } else if c.op == 1 {
+      if saved.len() == 5 {
+        return UNWIND_X86_64_MODE_DWARF
+      }
+      saved.push(c.reg)
+      let ab = if c.off < 0 { 0 - c.off } else { c.off }
+      min_abs = min_abs.min(ab)
+    } else {
+      return UNWIND_X86_64_MODE_DWARF
+    }
+  }
+  if !has_fp {
+    // frameless: the emitter makes none with saved registers
+    return UNWIND_X86_64_MODE_DWARF
+  }
+  if !saved.is_empty() && min_abs != 24 {
+    return UNWIND_X86_64_MODE_DWARF
+  }
+  var regs = 0
+  for (i, r) in saved.indexed() {
+    let n = x86_cu_reg(r)
+    if n < 0 {
+      return UNWIND_X86_64_MODE_DWARF
+    }
+    regs = regs | (n << (3 * i))
+  }
+  UNWIND_X86_64_MODE_RBP_FRAME | ((saved.len() & 0xff) << 16) | (regs & 0x7fff)
+}
+
+/// x86_64's __eh_frame, as LLVM writes it for Mach-O: an FDE for every
+/// frame (in order), under one CIE per (personality, encodings); the pc
+/// begin and LSDA fields pc relative and resolved in this object (no
+/// relocations: ld64 reads the FDEs), so x86_patch_eh_frame fills them
+/// once the sections have addresses. The personality's word is a GOT
+/// relocation.
+fn (var a: Asm) x86_eh_frame() {
+  let eh = a.add_raw_section("__TEXT", "__eh_frame", S_COALESCED + S_ATTR_NO_TOC + S_ATTR_STRIP_STATIC_SYMS + S_ATTR_LIVE_SUPPORT, 3)
+  a.eh_sect = eh
+  var o = new_out(64 * a.frames.len())
+  var relocs: List[Reloc] = []
+  var cies: Map[(Int, Int, Int), Int] = {}
+  // FDEs grouped by CIE: LLVM sorts them stably by the CIE key, no
+  // personality first
+  var idx: List[Int] = []
+  for fi in 0..a.frames.len() {
+    idx.push(fi)
+  }
+  let frames = a.frames
+  let order = idx.sort_by(fn(i: Int) -> Int { if frames[i].pers < 0 { -1 } else { frames[i].pers } })
+  for fi in order {
+    let f = a.frames[fi]
+    let key = (f.pers, f.pers_enc, f.lsda_enc)
+    var cie = -1
+    match cies.get(key) {
+      Some(c) => cie = c
+      None => {
+        cie = o.n
+        cies.put(key, cie)
+        a.x86_write_cie(o, relocs, f)
+      }
+    }
+    var body = new_out(64)
+    let start = o.n
+    body.u32(start + 4 - cie)
+    a.frames[fi].pc_field = start + 8
+    body.u64(0)
+    body.u64(f.end - f.start)
+    if f.lsda >= 0 {
+      body.uleb(8)
+      a.frames[fi].lsda_field = start + 4 + body.n
+      body.u64(0)
+    } else {
+      body.uleb(0)
+    }
+    cfa_insts(body, f, -8)
+    while (start + 4 + body.n) % 8 != 0 {
+      body.u8(0)
+    }
+    o.u32(body.n)
+    o.bytes(body.done())
+  }
+  a.sects[eh].bytes = o.done()
+  a.sects[eh].size = a.sects[eh].bytes.len()
+  a.sects[eh].relocs = relocs
+}
+
+/// An x86_64 CIE: "zR" (or with P and L), code alignment 1, data
+/// alignment -8, return address 16 (rip), the CFA rsp + 8 and the return
+/// address at CFA - 8.
+fn (var a: Asm) x86_write_cie(var o: Out, var relocs: List[Reloc], f: Frame) {
+  var body = new_out(32)
+  body.u32(0)
+  body.u8(1)
+  var aug = "z"
+  if f.pers >= 0 {
+    aug = aug + "P"
+  }
+  if f.lsda >= 0 {
+    aug = aug + "L"
+  }
+  aug = aug + "R"
+  body.bytes(aug.bytes())
+  body.u8(0)
+  body.uleb(1)
+  body.sleb(-8)
+  body.uleb(16)
+  var adata = new_out(16)
+  var pers_at = -1
+  if f.pers >= 0 {
+    adata.u8(f.pers_enc)
+    pers_at = adata.n
+    // the GOT relocation's field: pc relative from the field's end, as
+    // LLVM writes it (4)
+    adata.u32(4)
+  }
+  if f.lsda >= 0 {
+    adata.u8(f.lsda_enc)
+  }
+  adata.u8(0x10)
+  body.uleb(adata.n)
+  let adata_at = body.n
+  body.bytes(adata.done())
+  // DW_CFA_def_cfa rsp, 8; DW_CFA_offset rip, 1
+  body.u8(0x0c)
+  body.u8(7)
+  body.u8(8)
+  body.u8(0x90)
+  body.u8(1)
+  while (body.n + 4) % 4 != 0 {
+    body.u8(0)
+  }
+  let start = o.n
+  if pers_at >= 0 {
+    let field = start + 4 + adata_at + pers_at
+    relocs.push(Reloc{addr: field, typ: R_POINTER_TO_GOT, pcrel: true, len: 2, sym: f.pers})
+    a.syms[f.pers].used = true
+  }
+  o.u32(body.n)
+  o.bytes(body.done())
+}
+
+/// Fills the FDEs' pc begin and LSDA fields: the target's address less
+/// the field's.
+fn (var a: Asm) x86_patch_eh_frame() {
+  if a.eh_sect < 0 {
+    return
+  }
+  let eh = a.eh_sect
+  let base = a.sects[eh].addr
+  var b = a.sects[eh].bytes
+  var o = new_out(b.len())
+  var patches: List[(Int, Int)] = []
+  for f in a.frames {
+    if f.pc_field >= 0 {
+      patches.push((f.pc_field, a.sects[f.sect].addr + f.start - (base + f.pc_field)))
+    }
+    if f.lsda_field >= 0 {
+      let l = a.syms[f.lsda]
+      patches.push((f.lsda_field, a.sects[l.sect].addr + l.off - (base + f.lsda_field)))
+    }
+  }
+  let sorted = patches.sort_by(fn(p: (Int, Int)) -> Int { p.0 })
+  var at = 0
+  for (field, v) in sorted {
+    o.bytes(b[at..field])
+    o.u64(v)
+    at = field + 8
+  }
+  o.bytes(b[at..b.len()])
+  a.sects[eh].bytes = o.done()
 }

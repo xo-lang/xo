@@ -725,7 +725,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if o.linker.is_empty() && (tg == host || tgoos == "linux") && !mac_x86 {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
-    let macho_as = !mac_x86 && (o.assembler == "macho" || (no_cc && o.assembler.is_empty()))
+    // darwin/amd64: Xo's Mach-O x86_64 assembler unless --as=cc (step 2),
+    // the link still cc's
+    let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     if tg != host && !(no_cc && tgoos == "linux") && !mac_x86 {
       // another target: its assembly only (internal/build buildArm64)
       if !o.json {

@@ -37,6 +37,9 @@ struct XBr {
   sym: Int
   cc: Int
   line: Int
+  /// Mach-O: the atom the branch is in (the section's last non-temporary
+  /// symbol)
+  atom: Int = -1
 }
 
 /// A fixup of an x86-64 code section: at byte `at` of section sect, size
@@ -58,14 +61,30 @@ struct XFx {
   /// call or jmp, a test, or an ALU operation reg <- mem, as LLVM's
   relax: Bool = false
   line: Int
+  /// the offset just past the instruction (Mach-O's SIGNED_1, _2 and _4
+  /// count the bytes between the field and it)
+  end: Int = 0
+  /// Mach-O: the atom the fixup is in
+  atom: Int = -1
 }
 
 /// assemble_elf_amd64: the ELF64 relocatable object of src (the amd64
 /// emitter's linux/amd64 assembly), or the first error as "line N: why".
 pub fn assemble_elf_amd64(src: Bytes) -> Result[Bytes, Str] {
+  assemble_amd64(src, true, (0, 0))
+}
+
+/// assemble_macho_amd64: the Mach-O x86_64 object of src (the amd64
+/// emitter's darwin/amd64 assembly), as `clang -c -arch x86_64` writes
+/// it (decision 0254 stage 6a), with the minimum macOS version minos.
+pub fn assemble_macho_amd64(src: Bytes, minos: (Int, Int)) -> Result[Bytes, Str] {
+  assemble_amd64(src, false, minos)
+}
+
+fn assemble_amd64(src: Bytes, elf: Bool, minos: (Int, Int)) -> Result[Bytes, Str] {
   var long: Map[Int, Bool] = {}
   while true {
-    var a = Asm{elf: true, amd64: true, xlong: long}
+    var a = Asm{elf: elf, amd64: true, xlong: long, minos: minos}
     a.parse(src)
     if !a.err.is_empty() {
       return Err(a.err)
@@ -84,7 +103,7 @@ pub fn assemble_elf_amd64(src: Bytes) -> Result[Bytes, Str] {
     if !a.err.is_empty() {
       return Err(a.err)
     }
-    return Ok(a.write_elf())
+    return Ok(if elf { a.write_elf() } else { a.write_object() })
   }
   Err("unreachable")
 }
@@ -94,9 +113,14 @@ pub fn assemble_elf_amd64(src: Bytes) -> Result[Bytes, Str] {
 /// branch's end.
 fn (a: Asm) x86_short_reaches(br: XBr) -> Bool {
   let s = a.syms[br.sym]
-  if s.sect != br.sect || s.global || s.weak {
+  if !a.elf {
+    if !a.x86_macho_local(br.sym, br.sect, br.atom) {
+      return false
+    }
+  } else if s.sect != br.sect || s.global || s.weak {
     return false
   }
+
   let d = s.off - (br.at + 2)
   d >= -128 && d <= 127
 }
@@ -138,7 +162,7 @@ fn (var a: Asm) x86_instruction(l: Bytes) {
       s2 = a.sym(f.sym2)
       a.register(s2)
     }
-    a.xfixes.push(XFx{sect: a.cur, at: base + f.at, size: f.size, pcrel: f.pcrel, sym: s, sym2: s2, addend: f.addend, rel: f.rel, rex: rex, relax: relax, line: a.line})
+    a.xfixes.push(XFx{sect: a.cur, at: base + f.at, size: f.size, pcrel: f.pcrel, sym: s, sym2: s2, addend: f.addend, rel: f.rel, rex: rex, relax: relax, line: a.line, atom: a.sects[a.cur].last_atom, end: base + r.b.len()})
   }
   a.push_code(r.b)
 }
@@ -191,24 +215,24 @@ fn (var a: Asm) x86_branch(cc: Int, t0: Bytes) {
   let at = a.code_len(a.cur)
   if cc == -2 {
     a.push_code([0xe8, 0, 0, 0, 0])
-    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line})
+    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line, atom: a.sects[a.cur].last_atom, end: at + 5})
     return
   }
   let seq = a.xseq
   a.xseq += 1
   let long = a.xlong.contains(seq)
-  a.xbrs.push(XBr{seq: seq, sect: a.cur, at: at, long: long, sym: s, cc: cc, line: a.line})
+  a.xbrs.push(XBr{seq: seq, sect: a.cur, at: at, long: long, sym: s, cc: cc, line: a.line, atom: a.sects[a.cur].last_atom})
   if !long {
     a.push_code([if cc < 0 { 0xeb } else { 0x70 + cc }, 0])
-    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 1, pcrel: true, sym: s, addend: -1, line: a.line})
+    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 1, pcrel: true, sym: s, addend: -1, line: a.line, atom: a.sects[a.cur].last_atom, end: at + 2})
     return
   }
   if cc < 0 {
     a.push_code([0xe9, 0, 0, 0, 0])
-    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line})
+    a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line, atom: a.sects[a.cur].last_atom, end: at + 5})
   } else {
     a.push_code([0x0f, 0x80 + cc, 0, 0, 0, 0])
-    a.xfixes.push(XFx{sect: a.cur, at: at + 2, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line})
+    a.xfixes.push(XFx{sect: a.cur, at: at + 2, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line, atom: a.sects[a.cur].last_atom, end: at + 6})
   }
 }
 
@@ -330,4 +354,115 @@ fn x86_dwarf_reg(b: Bytes) -> Int {
       -1
     }
   }
+}
+
+/// The code fixups of a Mach-O x86_64 object, as LLVM's
+/// X86MachObjectWriter: a symbol of the fixup's own section that is not
+/// external is resolved here; a temporary label of another section is a section
+/// relocation (the displacement as if the sections were where this
+/// object puts them); any other symbol is an extern relocation with the
+/// addend in the field. call and jmp are BRANCH, `@GOTPCREL` a mov's
+/// GOT_LOAD (else GOT), `@TLVP` TLV, other rip relative references
+/// SIGNED, or SIGNED_1, _2, _4 by the bytes between the field and the
+/// instruction's end.
+fn (var a: Asm) x86_macho_fixes() {
+  for f in a.xfixes {
+    let s = a.syms[f.sym]
+    if f.sym2 >= 0 {
+      match a.rel_value(f.sym, f.sym2, f.addend) {
+        Some(v) => a.put_code(f.sect, f.at, v, f.size)
+        None => {
+          a.err = "line ${f.line}: a difference of symbols in different sections"
+          return
+        }
+      }
+      continue
+    }
+    // the bytes after the field, and the expression's own addend (the
+    // encoder's ELF addends count the field and those bytes)
+    let after = f.end - f.at - f.size
+    let expr = if f.pcrel { f.addend + f.size + after } else { f.addend }
+    if f.pcrel && f.rel is "" | "PLT" && a.x86_macho_local(f.sym, f.sect, f.atom) {
+      let v = s.off + f.addend - f.at
+      if f.size == 1 && (v < -128 || v > 127) {
+        a.err = "line ${f.line}: internal: a short branch out of reach"
+        return
+      }
+      a.put_code(f.sect, f.at, v, f.size)
+      continue
+    }
+    if f.size == 1 {
+      a.err = "line ${f.line}: a short branch to ${bstr(s.name)} (relocated)"
+      return
+    }
+    if !f.pcrel {
+      if f.size != 8 && f.size != 4 {
+        a.err = "line ${f.line}: a ${f.size} byte reference to ${bstr(s.name)}"
+        return
+      }
+      let ln = if f.size == 8 { 3 } else { 2 }
+      if s.temp && s.sect >= 0 {
+        a.put_code(f.sect, f.at, a.sects[s.sect].addr + s.off + expr, f.size)
+        a.sects[f.sect].relocs.push(Reloc{addr: f.at, typ: R_UNSIGNED, pcrel: false, len: ln, sym: s.sect + 1, sect: true})
+      } else {
+        a.put_code(f.sect, f.at, expr, f.size)
+        a.sects[f.sect].relocs.push(Reloc{addr: f.at, typ: R_UNSIGNED, pcrel: false, len: ln, sym: f.sym})
+        a.syms[f.sym].used = true
+      }
+      continue
+    }
+    // as LLVM's RecordX86_64Relocation (probed against clang, 2026-10-18):
+    // the field is the target's offset from the relocated symbol less the
+    // bytes after the field; SIGNED_1, _2, _4 only for an expression of no
+    // constant of its own
+    var typ = match f.rel {
+      "PLT" => RX_BRANCH
+      "GOTPCREL" => if f.relax && after == 0 { RX_GOT_LOAD } else { RX_GOT }
+      "TLVP" => RX_TLV
+      "" => if expr != 0 || after == 0 { RX_SIGNED } else if after == 1 { RX_SIGNED_1 } else if after == 2 { RX_SIGNED_2 } else if after == 4 { RX_SIGNED_4 } else { -1 }
+      _ => -1
+    }
+    if typ < 0 {
+      a.err = "line ${f.line}: @${f.rel} (${after} bytes after the field) has no x86_64 Mach-O relocation"
+      return
+    }
+    var target = f.sym
+    var off = 0
+    if s.temp && s.sect >= 0 {
+      if s.atom >= 0 {
+        // a temporary label in another atom: relocated to the atom's
+        // symbol, the label's offset from it in the field
+        target = s.atom
+        off = s.off - a.syms[s.atom].off
+      } else if expr - after == 0 && f.rel == "" && !a.syms[f.sym].used {
+        // in no atom (a literal section's): a section relocation, the
+        // displacement within this object's layout, until an earlier
+        // relocation has named the label itself (as LLVM decides, fixup by
+        // fixup)
+        let p = a.sects[f.sect].addr + f.at + f.size
+        a.put_code(f.sect, f.at, a.sects[s.sect].addr + s.off - p, f.size)
+        a.sects[f.sect].relocs.push(Reloc{addr: f.at, typ: typ, pcrel: true, len: 2, sym: s.sect + 1, sect: true})
+        continue
+      }
+      // else the label itself, a local symbol of the object
+    }
+    a.put_code(f.sect, f.at, off + expr - after, f.size)
+    a.sects[f.sect].relocs.push(Reloc{addr: f.at, typ: typ, pcrel: true, len: 2, sym: target})
+    a.syms[target].used = true
+  }
+}
+
+/// Whether a pc relative reference in atom `atom` of section sect to sym
+/// is resolved in a Mach-O x86_64 object (LLVM's
+/// isSymbolRefDifferenceFullyResolved): its target, a symbol or a
+/// temporary label, is in the same atom (the span from one non-temporary
+/// symbol to the next; with none, the section's start). Any other target
+/// is relocated, a .private_extern symbol too.
+fn (a: Asm) x86_macho_local(sym: Int, sect: Int, atom: Int) -> Bool {
+  let s = a.syms[sym]
+  if s.sect != sect || s.weak {
+    return false
+  }
+  let t = if s.temp { s.atom } else { sym }
+  t == atom
 }
