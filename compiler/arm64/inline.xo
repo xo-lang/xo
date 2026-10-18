@@ -361,6 +361,8 @@ fn inline_module(var m: ssa.Module) -> Bool {
       // one block per straight run again (ssa.merge_straight)
       let _j = ssa.merge_straight(f, m, block_calls(f))
       fold_consts(f, m.types)
+      // a callee's release of its parameter meets the caller's retain
+      let _c = cancel_rc_pairs(f)
     }
     // decision 0257: after inlining, which brings the loops' list reads
     // into one function

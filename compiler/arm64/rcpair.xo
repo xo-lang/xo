@@ -1,0 +1,105 @@
+// Retain and release pairs the inliner leaves (decision 0257's follow
+// up): a call that takes an owned argument retains it, and the callee
+// releases its parameter when done. Once the callee is inlined and reads
+// only fields of it (maxby's key closure, `fn(it) { it.score }`), the
+// element's Str is retained and released around those reads in every
+// iteration, a release being a call.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Removes each retain whose value is released later in the same block,
+/// or in a block a jump from it alone enters, with nothing but pure
+/// operations between (rc_pure), the two counting the same heap word
+/// (leaf_key: the value, or a field of one, by path); whether it changed
+/// f.
+fn cancel_rc_pairs(var f: ssa.Func) -> Bool {
+  var gone: Map[Int, Bool] = {}
+  for b in 0..f.blocks.len() {
+    let ins = f.blocks[b].instrs
+    for (i, v) in ins.indexed() {
+      let x = f.values[v]
+      if x.op != ssa.Op.Retain || x.args.len() != 1 || gone.contains(v) {
+        continue
+      }
+      let key = leaf_key(f, x.args[0])
+      if key.is_empty() {
+        continue
+      }
+      // the rest of the block, then on through jumps to blocks only it
+      // enters (the inlined callee's body after the call's split)
+      var cb = b
+      var j = i + 1
+      var hops = 0
+      var done = false
+      while !done && hops < 8 {
+        let cins = f.blocks[cb].instrs
+        while j < cins.len() {
+          let y = f.values[cins[j]]
+          if y.op == ssa.Op.Release && y.args.len() == 1 && !gone.contains(cins[j]) && leaf_key(f, y.args[0]) == key {
+            gone[v] = true
+            gone[cins[j]] = true
+            done = true
+            break
+          }
+          if y.op == ssa.Op.Jump && j == cins.len() - 1 && y.succs.len() == 1 {
+            let to = f.edges[y.succs[0]].to
+            if f.blocks[to].preds.len() == 1 && f.edges[y.succs[0]].args.is_empty() {
+              cb = to
+              j = -1
+              hops += 1
+              break
+            }
+          }
+          if !rc_pure(y) {
+            done = true
+            break
+          }
+          j += 1
+        }
+        if j >= cins.len() {
+          done = true
+        }
+        if j == -1 {
+          j = 0
+        }
+      }
+    }
+  }
+  if gone.is_empty() {
+    return false
+  }
+  for b in 0..f.blocks.len() {
+    var out: List[Int] = []
+    for v in f.blocks[b].instrs {
+      if !gone.contains(v) {
+        out.push(v)
+      }
+    }
+    f.blocks[b].instrs = out
+  }
+  true
+}
+
+/// A value's heap word as its root and field path ("v27.2"): the same
+/// for two Field chains of one root; "" for a value whose root is not
+/// known here.
+fn leaf_key(f: ssa.Func, v: Int) -> Str {
+  var path = ""
+  var x = v
+  for _ in 0..8 {
+    let xv = f.values[x]
+    if xv.op != ssa.Op.Field || xv.args.len() != 1 {
+      return "v${x}${path}"
+    }
+    path = ".${aux_int(xv.aux)}${path}"
+    x = xv.args[0]
+  }
+  ""
+}
+
+/// Whether x neither counts, frees, nor consumes a heap value, nor calls
+/// anything that could: fields, constants, arithmetic, compares, tags
+/// and payloads read, and the unit tuple (a tuple of values takes them).
+fn rc_pure(x: ssa.Value) -> Bool {
+  (x.op == ssa.Op.Tuple && x.args.is_empty()) || x.op is ssa.Op.Field | ssa.Op.Const | ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.And | ssa.Op.Or | ssa.Op.Xor | ssa.Op.Not | ssa.Op.Neg | ssa.Op.Shl | ssa.Op.Shr | ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge | ssa.Op.Tag | ssa.Op.Payload | ssa.Op.IntConv | ssa.Op.IntToFloat
+}
