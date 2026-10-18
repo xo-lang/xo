@@ -342,17 +342,6 @@ pub fn sigaction(sig: Int, handler: Int, flags: Int) -> Int {
   rt.bytes_word(old, 0)
 }
 
-/// The restorer the kernel would return through for signal sig (0 when
-/// none is set): rt_sigaction's sa_restorer read back.
-pub fn sig_restorer(sig: Int) -> Int {
-  let old = raw.bytes_buf(32)
-  let r = rt.sys6(nr(134, 13), sig, 0, raw.bytes_addr(old), 8, 0, 0)
-  if r < 0 {
-    return r
-  }
-  rt.bytes_word(old, 16)
-}
-
 /// The bytes of the words ws, the lowest byte first.
 fn words(ws: List[Int]) -> Bytes {
   var s = BytesBuilder.with_capacity(8 * ws.len())

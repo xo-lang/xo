@@ -23,14 +23,13 @@ place for glob, asn1, tzhost and the cpu fallbacks).
   compiler/wasm; it reaches llrt only through `target.os` arms).
 
 Of 3,569 llrt functions, 573 were unreached on darwin LLVM, 461 after the
-Linux union. 22 had no call site, string reference or export role: 19
-were deleted (the same change as this note; owners confirmed), and 3 are
-kept: cabi_tw.tw_kick (the test world calls it through its address),
-ct.mask_lt (decision 0222's constant-time helper set), linux.sig_restorer
-(nolibc signal setup; owner asked). The rest, below, have call sites on
+Linux union. 22 had no call site, string reference or export role: 20
+were deleted (owners confirmed), and 2 are kept: cabi_tw.tw_kick (the
+test world calls it through its address) and ct.mask_lt (decision 0222's
+constant-time helper set). The rest, below, have call sites on
 paths no golden takes.
 
-## The list (141 functions)
+## The list (140 functions)
 
 | File | Count | Functions |
 |---|---|---|
@@ -38,7 +37,7 @@ paths no golden takes.
 | dns | 15 | gai_text, is_space, v4_at, v4_fields, space_at, name_is, is_domain_name, u16, server_addr, only, zeros, loopback6, zero_to, common_prefix, before |
 | tzhost | 11 | i32, abbrev, caps, ascii, pseudo_unix, days_in, days_from_civil, year_of, tzif, be, header |
 | prof | 10 | darwin, supported, unsupported_note, loc_index, coff_symbols, u16, u32, zstr, zstr_n, read_self |
-| linux | 9 | read, is_dir, clock_gettime, elf_dynsym, mprotect, sig_restorer, fs_status, nanosleep_at, auxv_init |
+| linux | 8 | read, is_dir, clock_gettime, elf_dynsym, mprotect, fs_status, nanosleep_at, auxv_init |
 | sock | 8 | loopback_pair, wret, recv, ioctl, epoll_wait, ppoll, sockaddr_ip, connect_to |
 | asn1 | 7 | raw, bits, text, digits, days, month_days, time |
 | glob | 7 | rune_at, get_esc, match_class, chunk_failed, match_chunk, chunk_end, matches |

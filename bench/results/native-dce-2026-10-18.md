@@ -70,5 +70,5 @@ XO_TRACE, DWARF on arm64) before the gate.
 - Running the removal before RC insertion and inlining would also cut
   their time, once each SSA pass that adds calls by name (conc.xo,
   budget.xo, build.xo's rt helpers) is audited.
-- Source dead on every target: llrt-coverage-2026-10-18.md (19 functions
-  deleted, 141 to cover with tests).
+- Source dead on every target: llrt-coverage-2026-10-18.md (20 functions
+  deleted, 140 to cover with tests).
