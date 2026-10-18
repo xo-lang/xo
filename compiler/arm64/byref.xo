@@ -233,6 +233,27 @@ fn (var g: G) compute_held(mems: List[HMem]) {
                   st[m] = g.key_of(x.args[i])
                 }
               }
+              // a `var` argument that is a field of a value held in a
+              // memory is passed at its address there (field homes)
+              var fs: List[Int] = []
+              let cb = g.by_ref_of(ci)
+              for (i, a) in x.args.indexed() {
+                if sm[i] >= 0 || cb.is_empty() || !cb[i] || !g.is_var_param(ci, i) || g.op(a) != ssa.Op.Field {
+                  continue
+                }
+                let c = g.f.values[a].args[0]
+                let m = g.held_mem_of(g.vty(c))
+                if m < 0 || st[m] != g.key_of(c) || fs.contains(m) {
+                  continue
+                }
+                let (off, _n) = g.field_words(g.vty(c), aux_int(g.f.values[a].aux))
+                g.held.fslot[(v, i)] = (m, off)
+                g.held.fbase[(v, i)] = g.key_of(c)
+                fs.push(m)
+                st[m] = HKey{v: v, k: -10 - i}
+              }
+              // a fault in the call leaves the other fields as they were
+              // (the landing reads them to drop them)
               pad = st
               for (i, m) in sm.indexed() {
                 if m >= 0 {
@@ -251,6 +272,11 @@ fn (var g: G) compute_held(mems: List[HMem]) {
             let m = g.held_mem_of(g.vty(u))
             if m >= 0 && st[m] == g.key_of(u) {
               g.held.in_place[v] = m
+              st[m] = HKey{v: v, k: -1}
+            } else if m >= 0 && g.field_done(v, st[m]) {
+              // the call before it wrote the field in place
+              g.held.in_place[v] = m
+              g.held.set_done[v] = true
               st[m] = HKey{v: v, k: -1}
             }
           }
@@ -391,9 +417,15 @@ fn (var g: G) find_mem_only() {
   for b in 0..g.f.blocks.len() {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      for a in x.args {
+      for (ai, a) in x.args.indexed() {
         let m = cands.get(a) ?? -1
         if m < 0 {
+          continue
+        }
+        if ai == 0 && g.held.set_done.contains(v) {
+          continue // its call wrote the rest in place
+        }
+        if ai == 0 && x.op == ssa.Op.Field && g.other_field(v, a, m) {
           continue
         }
         match g.held.before.get(v) {
@@ -433,13 +465,8 @@ fn (var g: G) find_mem_only() {
   }
 }
 
-/// Whether result k of call v (a `var` parameter the callee wrote back
-/// into a tracked memory) needs no load after the call: the call is only
-/// read by field reads, and those of result k are held at every use.
-fn (var g: G) lazy_result(v: Int, k: Int) -> Bool {
-  if !g.has_held {
-    return false
-  }
+/// The users of every value (once per function).
+fn (var g: G) held_uses() {
   if !g.held.has_uses {
     var us: Map[Int, List[Int]] = {}
     for b in 0..g.f.blocks.len() {
@@ -461,6 +488,32 @@ fn (var g: G) lazy_result(v: Int, k: Int) -> Bool {
     g.held.us = us
     g.held.has_uses = true
   }
+}
+
+/// Whether field read v (of a call's `var` result) is only stored by set
+/// fields done in place (field homes).
+fn (var g: G) held_field_done(v: Int) -> Bool {
+  g.held_uses()
+  let us = g.held.us.get(v) ?? []
+  if us.is_empty() {
+    return false
+  }
+  for w in us {
+    if !g.held.set_done.contains(w) || g.f.values[w].args[1] != v || g.f.values[w].args[0] == v {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether result k of call v (a `var` parameter the callee wrote back
+/// into a tracked memory) needs no load after the call: the call is only
+/// read by field reads, and those of result k are held at every use.
+fn (var g: G) lazy_result(v: Int, k: Int) -> Bool {
+  if !g.has_held {
+    return false
+  }
+  g.held_uses()
   for u in g.held.us.get(v) ?? [] {
     if g.op(u) != ssa.Op.Field {
       return false
@@ -609,6 +662,9 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
         if seen.contains(t) {
           continue
         }
+        if g.op(a) == ssa.Op.Field && seen.contains(g.vty(g.f.values[a].args[0])) {
+          continue // a field of a value with a home: passed at its address there
+        }
         seen[t] = true
         let r = g.new_vreg(false)
         let off = g.mem_bytes
@@ -618,6 +674,69 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
       }
     }
   }
+}
+
+/// Whether field read v of a reads a field of a other than the one a
+/// pending call writes in memory m (field homes): the others are as a
+/// left them.
+fn (g: G) other_field(v: Int, a: Int, m: Int) -> Bool {
+  let st = match g.held.before.get(v) {
+    Some(s) => s
+    None => return false
+  }
+  let k = st[m]
+  if k.k > -10 || k.v < 0 {
+    return false
+  }
+  let i = -10 - k.k
+  if (g.held.fbase.get((k.v, i)) ?? h_bot()) != g.key_of(a) {
+    return false
+  }
+  let fa = g.f.values[k.v].args[i]
+  aux_int(g.f.values[fa].aux) != aux_int(g.f.values[v].aux)
+}
+
+/// Whether set field v stores, into the value the pending call (state k)
+/// wrote a field of in place, that call's `var` result for that field.
+fn (g: G) field_done(v: Int, k: HKey) -> Bool {
+  if k.k > -10 || k.v < 0 {
+    return false
+  }
+  let i = -10 - k.k
+  let base = g.held.fbase.get((k.v, i)) ?? h_bot()
+  let x = g.f.values[v]
+  if base != g.key_of(x.args[0]) {
+    return false
+  }
+  let a = g.f.values[k.v].args[i]
+  if aux_int(g.f.values[a].aux) != aux_int(x.aux) {
+    return false
+  }
+  let ci = g.by_name.get(aux_str(g.f.values[k.v].aux)) ?? -1
+  if ci < 0 {
+    return false
+  }
+  for (j, vi) in g.m.funcs[ci].var_params.indexed() {
+    if vi == i {
+      return g.key_of(x.args[1]) == (HKey{v: k.v, k: 1 + j})
+    }
+  }
+  false
+}
+
+/// Whether result k of call v is only read by field reads whose only
+/// uses are set fields done in place (field homes).
+fn (var g: G) field_res_done(v: Int, k: Int) -> Bool {
+  g.held_uses()
+  for u in g.held.us.get(v) ?? [] {
+    if g.op(u) != ssa.Op.Field {
+      return false
+    }
+    if g.vint(u) == k && !g.held_field_done(u) {
+      return false
+    }
+  }
+  true
 }
 
 /// Finds the homes of the function and runs the dataflow; returns the
@@ -692,7 +811,7 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
   var words: List[List[Int]] = []
   var has_words: List[Bool] = []
   for (i, a) in args.indexed() {
-    if (br[i] && sm[i] >= 0 && g.held_at(v, a) == sm[i]) || in_place.contains(i) {
+    if (br[i] && sm[i] >= 0 && g.held_at(v, a) == sm[i]) || in_place.contains(i) || g.held.fslot.contains((v, i)) {
       words.push([])
       has_words.push(false)
       continue
@@ -710,6 +829,10 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
     }
     if let Some(ptr) = in_place.get(i) {
       srcs.push(rsrc(ptr))
+      continue
+    }
+    if let Some((fm, off)) = g.held.fslot.get((v, i)) {
+      srcs.push(rsrc(g.addr_at(g.held.mems[fm].ptr, 8 * off)))
       continue
     }
     let m = sm[i]
@@ -750,6 +873,19 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
       continue
     }
     let i = callee.var_params[k - 1]
+    if let Some((fm, off)) = g.held.fslot.get((v, i)) {
+      // written in place, at a field of a value held in a memory: read
+      // only by a set field already done, or loaded there
+      if g.field_res_done(v, k) {
+        g.lazy_res[(v, k)] = true
+        for _ in 0..n {
+          out.push(0)
+        }
+        continue
+      }
+      out = out + g.load_words(g.held.mems[fm].ptr, off, g.layout(rt))
+      continue
+    }
     let m = sm[i]
     if m >= 0 {
       if g.lazy_result(v, k) {

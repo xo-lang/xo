@@ -45,6 +45,14 @@ struct Held {
   /// the state along each edge
   edge: Map[Int, List[HKey]] = {}
   in_place: Map[Int, Int] = {}
+  /// a `var` argument of a call (call, argument) that is a field of a
+  /// value held in a memory, passed by its address there: memory, word
+  /// offset (byref.xo field homes)
+  fslot: Map[(Int, Int), (Int, Int)] = {}
+  /// the value whose field the pending call writes, by (call, argument)
+  fbase: Map[(Int, Int), HKey] = {}
+  /// set fields the call before them already wrote in place
+  set_done: Map[Int, Bool] = {}
   mem_only: Map[Int, Int] = {}
   us: Map[Int, List[Int]] = {}
   has_uses: Bool = false
