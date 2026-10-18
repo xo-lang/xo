@@ -449,6 +449,20 @@ fn (var g: G) regalloc() {
   for v in 0..n {
     leader.push(v)
   }
+  // a move whose reverse is a move too (a loop parameter passed on
+  // unchanged to a join and back at the latch) first: joined both ways,
+  // both moves go, where the join joined with the new value instead left
+  // the unchanged path a load and a store a word every iteration
+  // (2026-10-17, bench/perf/xo maxby: best's four words)
+  var dirs: Map[(Int, Int), Bool] = {}
+  for p in pairs {
+    dirs[(p.a, p.b)] = true
+  }
+  for i in 0..pairs.len() {
+    if dirs.contains((pairs[i].b, pairs[i].a)) {
+      pairs[i].wt = pairs[i].wt * 2.0
+    }
+  }
   let sorted = pairs.sort_by(fn(p) { -p.wt })
   var partners: List[List[Int]] = []
   for _ in 0..n {
