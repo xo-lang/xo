@@ -130,9 +130,13 @@ fn signals(os: Os) ! {
 }
 
 fn main(os: Os) ! {
-  let tmp = os.env.get("TMPDIR") ?? "/tmp"
   let name = "xo-unix-${os.rand.int(0, 1000000000)}"
-  let dir = "${tmp.trim_suffix("/")}/${name}"
+  var dir = "${(os.env.get("TMPDIR") ?? "/tmp").trim_suffix("/")}/${name}"
+  // A socket path is at most 103 bytes (sun_path), and the longest one
+  // here adds "/other.sock": a deep TMPDIR falls back to /tmp.
+  if dir.len() + 11 > 103 {
+    dir = "/tmp/${name}"
+  }
   os.fs.create_dir_all(dir)?
   sockets(os, dir)?
   signals(os)?

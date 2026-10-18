@@ -100,7 +100,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-generic-method-sets-per-package.md](go-generic-method-sets-per-package.md): every Go package that mentioned rt.Task compiled all methods of about 80 runtime generic instantiations (17 MB, 280 MB RSS per package); runtime generic types now keep only protocol methods, the rest are `rt.<Type>_<name>` functions, and package main names no runtime type.
 - [std-testing-always-loaded.md](std-testing-always-loaded.md): the checker loads std/testing (and so std/http, std/log, std/sql) for every program; test "uses std/http" by walking the program's imports (`reachesStd`), not by whether the module is loaded.
 - [serve-tests-and-stale-server.md](serve-tests-and-stale-server.md): `xo check` and `xo query` forward to a running `xo serve`, which runs the code it was built from; tests set `XO_NO_SERVE=1`.
-- [unix-socket-path-length.md](unix-socket-path-length.md): unix socket paths over 104 bytes fail on macOS; keep test sockets under a short temp dir.
+- [unix-socket-path-length.md](unix-socket-path-length.md): Observed: unix socket paths over 104 bytes fail on macOS (a deep TMPDIR failed unix_kill); keep test sockets under a short temp dir.
 - [mcp-stdout-is-the-protocol.md](mcp-stdout-is-the-protocol.md): `xo mcp` runs commands in process, so a direct write to os.Stdout corrupts the JSON-RPC stream.
 - [xo-fix-applies-suggestion-fixes.md](xo-fix-applies-suggestion-fixes.md): `xo fix` also applies the nearest name guesses of XO0601; review the report or use `--dry-run`.
 - [hash-brace-is-set-literal.md](hash-brace-is-set-literal.md): `#{"a": 1}` is a Set literal and derails the parser; maps are `{"a": 1}`.
