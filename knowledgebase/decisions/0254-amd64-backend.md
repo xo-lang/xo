@@ -267,6 +267,45 @@ runs (a real CPU: SHA-NI, AES-NI, native speed).
   toolchain.md), and on a Windows EC2 instance or CI runner once CI is
   back (remote-windows.sh; agents do not start it themselves).
 
+### 6c. Xo's own calls on Windows use System V (Proposed, 2026-10-18)
+
+One convention decision for both Windows/amd64 code generators, the
+LLVM backend's builds today and 6b's native backend: every call from Xo
+code to Xo code uses the System V convention (LLVM's x86_64_sysvcc on a
+Windows target), and Win64 stays only at the operating system's
+boundary: the C ABI exports (decision 0207), the functions the OS calls
+(thread starts, the vectored exception handler, console and timer
+callbacks), and the platform calls of std/native/sys_windows.xo.
+
+Why: Win64 makes xmm6 to xmm15, rdi and rsi callee saved and every
+caller reserves 32 bytes of shadow space; System V saves no xmm, passes
+six integer and eight float arguments in registers (Win64: four in
+all), and needs no shadow space. The measured cost, from the windows/
+amd64 build's code (bench/results/windows-wine-2026-10-18.md): the task
+switch is 57 instructions against Linux's 21, 24 of them xmm6 to xmm15,
+rdi and rsi. Making the switch alone System V only moved those saves to
+its three Win64 callers (pool.park_wait, pool.run_item, fiber_main),
+which switch once a call: the saves go only where the chain of Xo calls
+is System V throughout. The native backend (6b) gets the same split for
+free, as its emitter's convention is System V already.
+
+What it needs: the LLVM emitter marks Xo functions and their direct
+and indirect calls x86_64_sysvcc on windows/amd64; exports, OS
+callbacks and platform calls keep the default; a closure or function
+value is always an Xo function (System V); a function whose address
+goes to the OS is an export. Unwind: LLVM writes .pdata and .xdata for
+x86_64_sysvcc functions on a Windows target as for any other.
+
+What to measure on a real Windows machine once EC2 and CI are back
+(scripts/remote-windows.sh is off by the owner's order): instructions
+retired (Windows' perf counters through `xperf` or a hardware counter
+sample) and wall time for bench/perf/conc (spawn, pingpong, fanout,
+mutex) and bench/perf/llvm/xo, before and after; the switch's share of
+spawn and pingpong's instructions; the goldens and the Windows only
+goldens; the stack overflow handler (stack_overflow golden) and fault
+unwinding through System V frames. Under Wine only the goldens' results
+mean anything.
+
 ### Order
 
 The lead suggested Windows first for its audience. The evidence for
