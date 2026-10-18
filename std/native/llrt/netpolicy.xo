@@ -6,6 +6,7 @@
 // must admit an address. std/native/http.xo calls `admits` for a
 // client's requests; the C runtime's listen, dial, and redirects call the
 // exports in cabi.xo, which call these.
+use native/llrt/raw
 
 /// The first index of byte c in b from lo to hi, or -1.
 fn index_in(b: Bytes, lo: Int, hi: Int, c: Int) -> Int {
@@ -196,8 +197,8 @@ pub fn admits_addr(lists: Str, addr: Str) -> Bool {
   if !ok {
     return false
   }
-  let host = if h0 == h1 { "0.0.0.0" } else { addr[h0..h1] }
-  admits(lists, host, addr[p0..p1])
+  let host = if h0 == h1 { "0.0.0.0" } else { raw.str_slice(addr, h0, h1) }
+  admits(lists, host, raw.str_slice(addr, p0, p1))
 }
 
 /// Splits "host:port", "[v6]:port", or ":port" at the last colon (the
@@ -218,7 +219,10 @@ pub fn split_hostport(a: Str) -> (Bool, Str, Str) {
     h0 = 1
     h1 = c - 1
   }
-  (true, a[h0..h1], a[c + 1..b.len()])
+  // byte copies, not Str slices: a may come from outside (a redirect's
+  // Location) and not be UTF-8, and a slice next to a broken sequence
+  // faults (TestHTTPFuzz/client, 2026-10-18; decision 0259)
+  (true, raw.str_slice(a, h0, h1), raw.str_slice(a, c + 1, b.len()))
 }
 
 /// Whether port is a number above 65535. Darwin's getaddrinfo rejects

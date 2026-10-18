@@ -334,3 +334,51 @@ func TestHTTP1ClientDiff(t *testing.T) {
 	}
 	t.Logf("%d responses, backends %v", len(inputs), backends)
 }
+
+// TestHTTPClientRedirectNotUTF8: a redirect whose Location host is not
+// UTF-8 (it starts with continuation bytes) reached
+// netpolicy.split_hostport through the dial, whose Str slice faulted
+// inside the sequence and ended the client (TestHTTPFuzz/client,
+// 2026-10-18; decision 0259 decides what such a host becomes). The client
+// must answer with an error instead, on each native backend.
+func TestHTTPClientRedirectNotUTF8(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds an HTTP client with each native backend")
+	}
+	for _, be := range httpBackends(false) {
+		t.Run(be, func(t *testing.T) {
+			bin := buildHTTPProgram(t, "client", http1ClientProgram, be)
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			go func() {
+				for {
+					c, err := l.Accept()
+					if err != nil {
+						return
+					}
+					go func() {
+						defer c.Close()
+						c.SetDeadline(time.Now().Add(10 * time.Second))
+						buf := make([]byte, 4096)
+						c.Read(buf)
+						c.Write([]byte("HTTP/1.1 302 Found\r\nLocation: http://\x82\x82:1/x\r\nContent-Length: 0\r\n\r\n"))
+					}()
+				}
+			}()
+			cmd := exec.Command(bin)
+			cmd.Env = append(os.Environ(), "ADDR="+l.Addr().String(), "N=2", "XO_LEAKCHECK=1")
+			var out, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &stderr
+			if err := runWithin(cmd, 2*time.Minute); err != nil {
+				t.Fatalf("client: %v\n%s", err, clip(stderr.String()))
+			}
+			if lines := strings.Count(out.String(), "\n"); lines != 2 {
+				t.Errorf("client: %d answers of 2\n%s\n%s", lines, out.String(), clip(stderr.String()))
+			}
+			t.Logf("%s", out.String())
+		})
+	}
+}
