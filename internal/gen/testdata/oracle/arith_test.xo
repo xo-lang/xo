@@ -1,0 +1,55 @@
+// Int arithmetic against an exact reference (limbs.xo): checked_add,
+// checked_sub, checked_mul, / and % on random values and on the edges of
+// Int's range, on every backend `xo test` builds with (internal/gen
+// TestArithOracle runs it with go, arm64 and llvm).
+
+test "limbs round trip" for n: Int, k: Int {
+  let a = edge(n, k)
+  expect(to_int(normal(limbs(a)))) == Some(a)
+}
+
+test "checked_add is exact" for n: Int, m: Int, k: Int, j: Int {
+  let a = edge(n, k)
+  let b = edge(m, j)
+  expect(a.checked_add(b)) == to_int(add(limbs(a), limbs(b)))
+}
+
+test "checked_sub is exact" for n: Int, m: Int, k: Int, j: Int {
+  let a = edge(n, k)
+  let b = edge(m, j)
+  expect(a.checked_sub(b)) == to_int(add(limbs(a), neg(limbs(b))))
+}
+
+test "checked_mul is exact" for n: Int, m: Int, k: Int, j: Int {
+  let a = edge(n, k)
+  let b = edge(m, j)
+  expect(a.checked_mul(b)) == to_int(mul(limbs(a), limbs(b)))
+}
+
+test "division truncates and the remainder has the dividend's sign" for n: Int, m: Int, k: Int, j: Int {
+  let a = edge(n, k)
+  let b = edge(m, j)
+  if b == 0 || (a == MIN && b == -1) {
+    expect(a.checked_div(b)) == None
+    return
+  }
+  let q = a / b
+  let r = a % b
+  // a == q * b + r exactly
+  expect(to_int(add(mul(limbs(q), limbs(b)), limbs(r)))) == Some(a)
+  expect(r == 0 || (r > 0) == (a > 0))
+  if b != MIN {
+    let ab = b.abs()
+    expect(r > 0 - ab && r < ab)
+  }
+}
+
+test "wrapping_mul keeps the low 64 bits" for n: Int, m: Int, k: Int, j: Int {
+  let a = edge(n, k)
+  let b = edge(m, j)
+  let p = mul(limbs(a), limbs(b))
+  // the low 64 bits of the exact product, as an Int
+  let top = if (p[2] & 8) != 0 { MIN } else { 0 }
+  let lo = p[0] + (p[1] << BITS) + ((p[2] & 7) << (2 * BITS)) + top
+  expect(a.wrapping_mul(b)) == lo
+}

@@ -1,0 +1,78 @@
+// An exact reference for Int arithmetic (the oracle of arith_test.xo):
+// a value as limbs of 30 bits, least significant first, every limb but
+// the last in [0, 2^30) and the last signed. Products of two limbs fit
+// an Int, so no step here can overflow; the results the backends compute
+// with their own overflow checks are compared with these.
+
+const BITS = 30
+const MASK = 1073741823
+
+/// The limbs of n: three, the last signed (n >> 60 is in [-8, 7]).
+fn limbs(n: Int) -> List[Int] {
+  [n & MASK, (n >> BITS) & MASK, n >> (2 * BITS), 0, 0]
+}
+
+/// Carries every limb into the next by floor division, so that all but
+/// the last are in [0, 2^30).
+fn normal(xs: List[Int]) -> List[Int] {
+  var r = xs
+  for i in 0..r.len() - 1 {
+    let c = r[i] >> BITS
+    r[i] = r[i] & MASK
+    r[i + 1] = r[i + 1] + c
+  }
+  r
+}
+
+fn add(a: List[Int], b: List[Int]) -> List[Int] {
+  var r: List[Int] = []
+  for i in 0..a.len() {
+    r.push(a[i] + b[i])
+  }
+  normal(r)
+}
+
+fn neg(a: List[Int]) -> List[Int] {
+  var r: List[Int] = []
+  for x in a {
+    r.push(0 - x)
+  }
+  normal(r)
+}
+
+/// The exact product of two values given as limbs (only the first three
+/// are set).
+fn mul(a: List[Int], b: List[Int]) -> List[Int] {
+  var r = [0, 0, 0, 0, 0]
+  for i in 0..3 {
+    for j in 0..3 {
+      r[i + j] = r[i + j] + a[i] * b[j]
+    }
+    // keep each limb small before the next row adds to it
+    r = normal(r)
+  }
+  r
+}
+
+/// The Int the normalized limbs hold, or None outside Int's range.
+fn to_int(r: List[Int]) -> Int? {
+  // above bit 60: the last limb and the ones before it are the sign
+  // extension of a top part in [-8, 7]
+  if r[4] == 0 && r[3] == 0 && r[2] <= 7 {
+    return Some(r[0] + (r[1] << BITS) + (r[2] << (2 * BITS)))
+  }
+  if r[4] == -1 && r[3] == MASK && r[2] >= MASK - 7 {
+    return Some(r[0] + (r[1] << BITS) + ((r[2] - MASK - 1) << (2 * BITS)))
+  }
+  None
+}
+
+/// One of the values that make overflow checks interesting, picked by k,
+/// or n itself.
+fn edge(n: Int, k: Int) -> Int {
+  let es = [n, 0, 1, -1, 2, -2, 3037000499, 3037000500, -3037000499, -3037000500, 4294967295, 4294967296, -4294967296, 1 << 62, -(1 << 62), MAX, MIN, MAX - 1, MIN + 1]
+  es[(k & 1023) % es.len()]
+}
+
+const MAX = 9223372036854775807
+const MIN = -9223372036854775807 - 1
