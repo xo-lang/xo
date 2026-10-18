@@ -15,3 +15,6 @@ before they are served. The native servers answered all of them.
 
 Fix: rerun TestH2Diff alone before calling a native change at fault;
 run it apart from the TLS diff tests in gate scripts.
+
+Related: h2diff-window-case-flaky-under-load.md (another TestH2Diff case
+that timing under load changes).
