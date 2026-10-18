@@ -87,7 +87,7 @@ for b in $backends; do
 	servers="\$servers \$b=/work/srv-\$b"
 done
 valgrind --version
-N=${N:-100} REPS=${REPS:-2} SCENARIOS="${SCENARIOS:-plain plain-newconn tls tls-newconn h2}" sh /work/callgrind.sh /work/run /work/loadgen \$servers
+ANN=${ANN:-0} N=${N:-100} REPS=${REPS:-2} SCENARIOS="${SCENARIOS:-plain plain-newconn tls tls-newconn h2}" sh /work/callgrind.sh /work/run /work/loadgen \$servers
 INSIDE
 chmod +x "$out/inside.sh"
 # not through a pipe: its status is the container's

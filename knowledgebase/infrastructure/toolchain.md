@@ -1380,6 +1380,12 @@ run) has two modes (2026-10-18):
   short.
 - `ARCH=amd64` works with either mode; N, REPS, and SCENARIOS given
   explicitly override the mode's.
+- `ANN=1` keeps each run's per function counts (callgrind_annotate) as
+  OUT/run/ann.SCENARIO.CYCLES with the requests in req.SCENARIO.CYCLES;
+  `bench/perf/http/cgcompare.py BASE/run NEW/run [SCENARIO...]` prints
+  each scenario's instructions a request, base against new, and the
+  functions that changed most (the 2N run minus the N run, so startup
+  cancels). Last verified: 2026-10-18.
 
 ### Tests in std/ and compiler/ (decision 0262, 2026-10-18)
 

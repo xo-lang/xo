@@ -22,7 +22,10 @@
 # pauses 20 ms before each request so the server is waiting when it comes:
 # without them its count varied 5% between repeats, as the client's
 # flushes and the server's read attempts raced, 2026-10-17).
-# REPS (2) repeats each measurement; N (100) cycles.
+# REPS (2) repeats each measurement; N (100) cycles. ANN=1 also keeps each
+# run's per function counts (callgrind_annotate) in OUT/ann.SCENARIO.CYCLES
+# with its requests in OUT/req.SCENARIO.CYCLES (the last repeat's), for
+# bench/perf/http/cgcompare.py.
 #
 # Prints one line per measurement: `<scenario> <name> <instructions per
 # request> <requests>`, and the raw counts to OUT/raw.txt.
@@ -66,6 +69,10 @@ run() {
 	kill -TERM "$vp"
 	wait "$vp" || true
 	ir=$(sed -n 's/.*I *refs: *//p' "$out/vg.$port.log" | tr -d ',')
+	if [ "${ANN:-0}" = 1 ]; then
+		callgrind_annotate --auto=no --threshold=100 "$cg" > "$out/ann.$sc.$cycles" 2>/dev/null || true
+		echo "$reqs" > "$out/req.$sc.$cycles"
+	fi
 	rm -f "$cg"
 	echo "$ir $reqs"
 }
