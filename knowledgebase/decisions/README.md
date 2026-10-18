@@ -256,3 +256,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0262-std-private-tests.md](0262-std-private-tests.md): Proposed: Private-function tests inside std (_test.xo with private access in std/native)
 - [0263-copy-lint.md](0263-copy-lint.md): Accepted: A perf lint for copy-prone shapes under xo vet (XO0530, XO0531)
 - [0264-compare-and-provenance.md](0264-compare-and-provenance.md): Accepted: xo dev compare and build provenance stamps
+- [0265-debug-print-pure.md](0265-debug-print-pure.md): Proposed: a debug print allowed in pure and no-GC code, compiled out of release builds
+- [0266-map-update-or.md](0266-map-update-or.md): Proposed: Map.update_or and related in-place helpers instead of copy-modify-store
