@@ -466,7 +466,12 @@ fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
   if c.status == -2 {
     c.status = 0
   }
-  save(t, c)
+  // save's body here, c's last use: c moves into the Any (save's
+  // parameter is borrowed, so its any_of shared every field of the
+  // connection and this frame then dropped them all: about 5,600
+  // instructions a call on arm64, 2026-10-18)
+  rt.mem_store(t, 8, c.done, 8)
+  put(t, rt.any_of(c))
   out
 }
 
@@ -482,8 +487,14 @@ pub fn write(t: Int, p: Int, n: Int) -> Int {
   }
   send(c, raw.str_at(p, n).bytes())
   let ok = flush(c)
-  save(t, c)
-  if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
+  let st = c.status
+  // save's body here, c's last use: c moves into the Any (save's
+  // parameter is borrowed, so its any_of shared every field of the
+  // connection and this frame then dropped them all: about 5,600
+  // instructions a call on arm64, 2026-10-18)
+  rt.mem_store(t, 8, c.done, 8)
+  put(t, rt.any_of(c))
+  if ok { CC_OK } else if st == 0 { CC_ERR } else { st }
 }
 
 /// Ends a connection whose handshake completed with close_notify

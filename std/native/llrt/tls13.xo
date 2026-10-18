@@ -1062,7 +1062,20 @@ pub fn zeros(n: Int) -> Bytes {
   asn1.cat(parts)
 }
 
-pub fn cat2(a: Bytes, b: Bytes) -> Bytes { asn1.cat([a, b]) }
+/// a then b. Either one empty is the other (no copy): the record layer
+/// appends each record to an output, input, or data buffer that is
+/// almost always empty (tls13srv.xo).
+pub fn cat2(a: Bytes, b: Bytes) -> Bytes {
+  if a.is_empty() {
+    return b
+  }
+  if b.is_empty() {
+    return a
+  }
+  var s = rt.rs_with_cap(a.len() + b.len())
+  s = rt.rs_append_bytes(s, a, 0, a.len(), 0)
+  rt.rs_append_bytes(s, b, 0, b.len(), 0).bytes()
+}
 
 pub fn u8(x: Int) -> Bytes { rt.rs_push_byte(rt.rs_with_cap(1), x & 255).bytes() }
 
