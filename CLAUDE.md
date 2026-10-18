@@ -18,6 +18,12 @@ implementation the language started with was deleted (decision 0215).
 
 ## Where things live
 
+- Finding Xo code (decision 0261): use `xo def NAME` (`Type.method` or a
+  bare name), `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`
+  (a type's methods), and `xo symbols [--all]`, with `--dir=DIR` and
+  `--json`, instead of grep for declarations, references, types, and
+  available methods; exit 1 means no match, 2 a usage error.
+
 - `spec/core.md`: the language specification. Source of truth for syntax and
   semantics.
 - `spec/std.md`: prelude methods and standard library surface.
