@@ -101,11 +101,13 @@ def gen_mul():
             r, _ = chain(lo[1:] + [hi[3]], hi[:3] + ["0"], keep=False)
             t = [lo0] + r + ["0"]
         else:
-            # T is t0..t4 (the reduction's shifted words and its top)
-            r, c = chain(T, lo + ["0"])
-            t5 = c
-            r2, _ = chain(r[1:5] + [t5], hi + ["0"], keep=False)
-            t = [r[0]] + r2
+            # T is t0..t4 (the reduction's shifted words and its top bit),
+            # below 2p for f below p (every P-256 field value is: nistec.xo
+            # field_mul), so T + f g_i is below p 2^64 + p < 2^320: five
+            # words, neither chain carries out of word 4
+            r, _ = chain(T, lo + ["0"], keep=False)
+            r2, _ = chain(r[1:5], hi, keep=False)
+            t = [r[0]] + r2 + ["0"]
         # reduce: q = t0; t + q p is divisible by 2^64; shifted down a word
         # the addend over t1..t4 is (ql, qh, q - ql, hi3) (q m3's halves)
         q = t[0]
@@ -132,47 +134,41 @@ def gen_mul():
 def gen_sqr():
     """sqr4p: h = f f / R mod p, the square's 6 cross products once,
     doubled, plus the 4 diagonal squares (10 products, not 16), then 4
-    Montgomery reduction rounds over the 8 word square, each one chain."""
+    Montgomery reduction rounds over the square's low half and its high
+    half added once."""
     out.clear()
     n[0] = 0
     for i in range(4):
         emit(f"let f{i} = ld(f, {8 * i})")
-    def prod(i, j):
-        a = v("lo")
-        b = v("hi")
-        emit(f"let {a} = rt.int_wrap(2, f{i}, f{j})")
-        emit(f"let {b} = rt.u64_mul_hi(f{i}, f{j})")
-        return a, b
-    l01, h01 = prod(0, 1)
-    l02, h02 = prod(0, 2)
-    l03, h03 = prod(0, 3)
-    l12, h12 = prod(1, 2)
-    l13, h13 = prod(1, 3)
-    l23, h23 = prod(2, 3)
-    # f0 (f1, f2, f3) at words 1..4
-    r, c = chain([l02, l03], [h01, h02])
-    w = {1: l01, 2: r[0], 3: r[1], 4: wadd(h03, c)}
-    # f1 (f2, f3) at words 3..5
-    x, c = chain([l13], [h12])
-    x4 = x[0]
-    x5 = wadd(h13, c)
-    r, c = chain([w[3], w[4], "0"], [l12, x4, x5])
-    w[3], w[4], w[5] = r
-    w6 = c
-    # f2 f3 at words 5..6
-    r, c = chain([w[5], w6], [l23, h23])
-    w[5], w[6] = r
-    w[7] = c
-    # doubled: words 1..7 (the top carry is 0: the cross sum is below 2^447)
-    d, _ = chain([w[k] for k in range(1, 8)], [w[k] for k in range(1, 8)], keep=False)
-    # the diagonal squares at words 0..7
-    sq = [prod(k, k) for k in range(4)]
-    t, _ = chain(["0"] + d, [sq[0][0], sq[0][1], sq[1][0], sq[1][1], sq[2][0], sq[2][1], sq[3][0], sq[3][1]], keep=False)
-    t.append("0")
-    # 4 reduction rounds: q = t[i]; t + q p 2^(64 i) has word i zero; the
-    # addend (ql, qh, q - ql, hi3) at words i+1..i+4, the carry on to the top
+
+    def p(half, i, j):
+        return (half, f"f{i}", f"f{j}")
+    # the cross products f_i f_j (i < j) at words 1..6, each made right
+    # before the pair that adds it (all 12 up front kept callee saved
+    # registers on arm64); their sum is below 2^448, so no word 7. Row
+    # f0 (f1, f2, f3) at words 1..4:
+    w = [None, force(p("lo", 0, 1))]
+    r, _ = chain([p("lo", 0, 2), p("lo", 0, 3), "0"], [p("hi", 0, 1), p("hi", 0, 2), p("hi", 0, 3)], keep=False)
+    w += r
+    # f1 f2, f1 f3 and f2 f3 together at words 3..6, then added in
+    u3 = force(p("lo", 1, 2))
+    u, _ = chain([p("lo", 1, 3), p("hi", 1, 3), "0"], [p("hi", 1, 2), p("lo", 2, 3), p("hi", 2, 3)], keep=False)
+    r, _ = chain([w[3], w[4], "0", "0"], [u3] + u, keep=False)
+    w[3:5] = r[:2]
+    w += r[2:]
+    # doubled (word 7 the carry), plus the squares f_k^2 at words 2k, 2k + 1
+    d, c = chain(w[1:7], w[1:7])
+    t0 = force(p("lo", 0, 0))
+    sq = [p("hi", 0, 0), p("lo", 1, 1), p("hi", 1, 1), p("lo", 2, 2), p("hi", 2, 2), p("lo", 3, 3), p("hi", 3, 3)]
+    t, _ = chain(d + [c], sq, keep=False)
+    t = [t0] + t
+    # 4 reduction rounds over the low half a = t0..t3: q = a0, a = (a + q
+    # p) / 2^64 (below 2^192 + p < 2^256: four words, the last pair hi3
+    # and the carry); then the high half added: (f f + Q p) / 2^256,
+    # below 2p for f below p, its top bit the carry
+    a = t[:4]
     for i in range(4):
-        q = t[i]
+        q = a[0]
         ql = v("ql")
         qh = v("qh")
         emit(f"let {ql} = rt.int_wrap(3, {q}, 32)")
@@ -185,11 +181,9 @@ def gen_sqr():
         emit(f"let {lo3} = cpu.adc({q}, ~{ql}, 1)")
         emit(f"let {bk} = cpu.adc_carry({q}, ~{ql}, 1)")
         emit(f"let {hi3} = cpu.adc({q}, ~{qh}, {bk})")
-        xs = t[i + 1:9]
-        ys = [ql, qh, lo3, hi3] + ["0"] * (len(xs) - 4)
-        r, _ = chain(xs, ys, keep=False)
-        t[i + 1:9] = r
-    return t[4], t[5], t[6], t[7], t[8]
+        a, _ = chain(a[1:] + ["0"], [ql, qh, lo3, hi3], keep=False)
+    r, c = chain(a, t[4:8])
+    return r[0], r[1], r[2], r[3], c
 
 
 mul_top = gen_mul()
@@ -202,7 +196,8 @@ print("""/// mul4 for P-256's field prime (p's limbs 2^64 - 1, 2^32 - 1, 0,
 /// 2^64 - 2^32 + 1; -1/p mod 2^64 = 1): CIOS over local words, every sum
 /// a chain of cpu.adc (adcs), each reduction step by shifts (t0 + q m0
 /// is q 2^64 for q = t0, q m1 + q is q 2^32, m2 is 0, q m3 is q 2^64 -
-/// q 2^32 + q). The same result as mul4 with P-256's modulus; generated
+/// q 2^32 + q). The same result as mul4 with P-256's modulus for f and g
+/// below p (the accumulator's width rests on it: field_mul); generated
 /// by scripts/nistecmul4p.py.
 fn mul4p(h: Int, f: Int, g: Int) {""")
 print(mul_text)
@@ -210,9 +205,10 @@ print("}")
 print("""
 /// mul4p of f with itself: the square's 6 cross products once, doubled,
 /// plus the 4 diagonal squares (10 products where mul4p makes 16), then
-/// 4 Montgomery reduction rounds over the 8 word square, each one chain
-/// of cpu.adc with mul4p's addend of shifts. The same result as mul4p;
-/// generated by scripts/nistecmul4p.py.
+/// 4 Montgomery reduction rounds over the square's low half, each one
+/// chain of cpu.adc with mul4p's addend of shifts, and its high half
+/// added once. The same result as mul4p for f below p; generated by
+/// scripts/nistecmul4p.py.
 fn sqr4p(h: Int, f: Int) {""")
 print(sqr_text)
 print("}")

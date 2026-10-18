@@ -44,6 +44,8 @@ fn main(os: Os) {
 // crypto/ecdsa, on each native backend: a change to one curve's field
 // code that reaches another curve of the same limb count (P-224 and
 // P-256 both have 4) shows here, not only in the tls_nistec golden.
+// P-256's mul4p and sqr4p also run directly on field elements at the
+// field's edges against math/big (nistec.xo's fieldmul op).
 func TestNistecDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program on each native backend")
@@ -107,6 +109,46 @@ func TestNistecDiff(t *testing.T) {
 					return nil
 				}})
 		}
+	}
+	// P-256's field products (mul4p, sqr4p) at the field's edges: they
+	// take operands below p only (their accumulators' widths rest on it),
+	// so p and above give an empty result
+	p := elliptic.P256().Params().P
+	rinv := new(big.Int).ModInverse(new(big.Int).Lsh(big.NewInt(1), 256), p)
+	pow := func(k uint) *big.Int { return new(big.Int).Lsh(big.NewInt(1), k) }
+	sub := func(a *big.Int, k int64) *big.Int { return new(big.Int).Sub(a, big.NewInt(k)) }
+	edges := []*big.Int{big.NewInt(0), big.NewInt(1), big.NewInt(2), sub(p, 1), sub(p, 2), sub(p, 3), new(big.Int).Rsh(p, 1),
+		pow(64), sub(pow(64), 1), pow(192), sub(pow(192), 1), pow(224), pow(255), sub(pow(255), 1), new(big.Int).Sub(pow(256), pow(224))}
+	for i := 0; i < 40; i++ {
+		r, err := rand.Int(rand.Reader, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edges = append(edges, r)
+	}
+	for i, f := range edges {
+		for _, g := range []*big.Int{f, edges[(i*7+3)%len(edges)], sub(p, 1), edges[len(edges)-1-i]} {
+			m := new(big.Int).Mul(f, g)
+			m.Mul(m, rinv).Mod(m, p)
+			s := new(big.Int).Mul(f, f)
+			s.Mul(s, rinv).Mod(s, p)
+			want := hex.EncodeToString(append(m.FillBytes(make([]byte, 32)), s.FillBytes(make([]byte, 32))...))
+			name := fmt.Sprintf("p256 fieldmul %x %x", f, g)
+			cases = append(cases, tcase{fmt.Sprintf("p256 fieldmul %x %x -", f.FillBytes(make([]byte, 32)), g.FillBytes(make([]byte, 32))), func(out string) error {
+				if out != want {
+					return fmt.Errorf("%s: %s, want %s", name, out, want)
+				}
+				return nil
+			}})
+		}
+	}
+	for _, f := range []*big.Int{p, new(big.Int).Add(p, big.NewInt(1)), sub(pow(256), 1)} {
+		cases = append(cases, tcase{fmt.Sprintf("p256 fieldmul %x %x -", f.FillBytes(make([]byte, 32)), big.NewInt(5).FillBytes(make([]byte, 32))), func(out string) error {
+			if out != "" {
+				return fmt.Errorf("p256 fieldmul of an operand at or above p: %s, want empty", out)
+			}
+			return nil
+		}})
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(nistecDiffProgram), 0o644); err != nil {
