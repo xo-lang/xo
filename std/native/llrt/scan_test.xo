@@ -1,0 +1,78 @@
+// Tests of scan.xo's private helpers (decision 0262): `xo test
+// --std-module=native/llrt/scan`, run by internal/stdtest.
+
+fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? "".bytes() }
+
+/// The bytes of xs, each taken mod 256.
+fn bytes_of(xs: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for x in xs {
+    b.write_byte(UInt8(x & 255))
+  }
+  b.freeze()
+}
+
+test "seq_len follows utf8.DecodeRune" {
+  expect(seq_len(hex("c3a9"), 0, 2) == 2)
+  // an overlong form, a surrogate, and a rune above U+10FFFF
+  expect(seq_len(hex("c0af"), 0, 2) == 1)
+  expect(seq_len(hex("eda080"), 0, 3) == 1)
+  expect(seq_len(hex("f4908080"), 0, 4) == 1)
+  // a sequence cut by the end of the range
+  expect(seq_len(hex("e282ac"), 0, 2) == 1)
+  expect(seq_len(hex("e282ac"), 0, 3) == 3)
+}
+
+test "fix_utf8 replaces each invalid byte" {
+  expect(fix_utf8(hex("61ff62"), false) == "a\u{FFFD}b")
+  expect(fix_utf8(hex("61ff62"), true) == "a%FFb")
+  // a continuation byte at the end of the value
+  expect(fix_utf8(hex("6180"), false) == "a\u{FFFD}")
+  expect(fix_utf8(hex("e282"), true) == "%E2%82")
+}
+
+test "text keeps valid UTF-8" {
+  expect(text("h\u{e9}llo \u{1F600}") == "h\u{e9}llo \u{1F600}")
+  expect(utf8_valid("".bytes()))
+  expect(!utf8_valid(hex("80")))
+}
+
+test "fix_utf8 output is valid and keeps valid input" for xs: List[Int] {
+  let b = bytes_of(xs)
+  let s = fix_utf8(b, false)
+  expect(utf8_valid(s.bytes()))
+  if utf8_valid(b) {
+    expect(s.bytes() == b)
+  }
+  expect(utf8_valid(fix_utf8(b, true).bytes()))
+}
+
+test "find_byte matches a byte loop" for xs: List[Int], c: Int {
+  let b = bytes_of(xs)
+  let want_c = c & 255
+  var want = -1
+  var i = 0
+  while i < b.len() {
+    if Int(b[i]) == want_c {
+      want = i
+      break
+    }
+    i += 1
+  }
+  expect(find_byte(b, 0, b.len(), want_c) == want)
+}
+
+test "count_cont counts continuation bytes in any range" for xs: List[Int], from: Int {
+  let b = bytes_of(xs)
+  let n = b.len()
+  let f = if n == 0 { 0 } else { (from & 1023) % (n + 1) }
+  var want = 0
+  var i = f
+  while i < n {
+    if (Int(b[i]) & 0xC0) == 0x80 {
+      want += 1
+    }
+    i += 1
+  }
+  expect(count_cont(b, f, n) == want)
+}

@@ -241,6 +241,7 @@ fn test_text() -> Str {
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
                [--profile=cpu|heap|cpu,heap] [--trace=FILE] <dirs...>
+       xo test --std-module=MODULE [flags]
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -255,6 +256,10 @@ each test process (not property cases) into xo-cpu-<pid>.pprof
 (xo-heap-<pid>.pprof) and .txt in the working directory; go tool pprof
 merges several. --trace=FILE writes an execution trace per test process
 (FILE.<pid>, or FILE with %p); read one with xo trace.
+--std-module runs the tests of one std module, in the _test.xo file
+beside its source, with access to its private functions (decision
+0262): MODULE as `use` names it below std (json, native/http,
+native/llrt/scan), on a native backend.
 """
 }
 

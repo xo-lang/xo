@@ -185,9 +185,10 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
 }
 
 /// Whether module m's function bodies wait for check_lazy: a native
-/// module of a lazy run.
+/// module of a lazy run, but not the std module under test (std_test),
+/// which is checked in full like any root module.
 fn (c: Checker) lazy_mod(m: Int) -> Bool {
-  c.lazy && c.mods[m].native
+  c.lazy && c.mods[m].native && !c.mods[m].root
 }
 
 /// The default values of fo's parameters (check_fn_decl's), for a

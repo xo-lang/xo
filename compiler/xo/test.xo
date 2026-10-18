@@ -93,7 +93,7 @@ fn test_infos(c: check.Checker, root: Str, wd: Str, fz: FuzzSet) -> List[TestInf
               name.write(p.text.to_str() ?? "")
             }
           }
-          var ti = TestInfo{index: i, name: name.freeze(), module: c.mods[m].path, dir: abs_path(wd, c.mods[m].dir), loc: "${c.files[f].path.trim_prefix(root + "/")}:${td.span.start.line}:${td.span.start.col}", prop: !td.params.is_empty()}
+          var ti = TestInfo{index: i, name: name.freeze(), module: c.mods[m].path, dir: test_dir(c, m, wd), loc: "${c.files[f].path.trim_prefix(root + "/")}:${td.span.start.line}:${td.span.start.col}", prop: !td.params.is_empty()}
           if is_fuzz_path(c.files[f].path) {
             if let Some(meta) = gens.get(ti.name) {
               // reported at the target, not the generated file; listed
@@ -133,6 +133,16 @@ fn test_infos(c: check.Checker, root: Str, wd: Str, fz: FuzzSet) -> List[TestInf
     }
   }
   all
+}
+
+/// The directory a test of module m runs in: the module's, or for a std
+/// module under test (decision 0262) the working directory, since its
+/// directory is only a name (`std/native/llrt`).
+fn test_dir(c: check.Checker, m: Int, wd: Str) -> Str {
+  if c.mods[m].is_std || c.mods[m].native {
+    return wd
+  }
+  abs_path(wd, c.mods[m].dir)
 }
 
 fn abs_path(wd: Str, p: Str) -> Str {

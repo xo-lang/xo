@@ -183,6 +183,9 @@ fn main(os: Os) ! {
     // report says why, as the Go driver's does when its assembly fails
     os.stdio.eprintln("hybrid: no assembly (the self hosted arm64 backend has no Go assembler mode yet)")
   }
+  if backend == "go" && !o.std_module.is_empty() {
+    fail(os, "--std-module needs a native backend (llvm or arm64): the Go backend's std is std/rt, in Go")
+  }
   if backend == "go" && (o.cmd == "build" || o.cmd == "test" || o.cmd == "run") {
     build_go(os, ctx, o)?
     return
@@ -207,7 +210,7 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
       os.proc.exit(2)
     }
-    if o.out.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
+    if o.out.is_empty() && o.std_module.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
       // the run cache (testcache.xo): an unchanged program's binary and
       // tests without a build
       let t0 = os.clock.now()
@@ -365,6 +368,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
+  c.std_test = std_test_path(o.std_module)
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"
@@ -1200,4 +1204,14 @@ fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
   }
   os.stdio.eprintln("xo: warning: ${msg}, so it is built without inlining (slower; XO_INLINE_STRICT=1 makes this an error)")
   false
+}
+
+/// The checker's path of the std module `xo test --std-module` names
+/// (check.Checker.std_test): `native/...` as given, `std/NAME` for a
+/// plain NAME; "" for none.
+fn std_test_path(m: Str) -> Str {
+  if m.is_empty() || m.starts_with("native/") || m.starts_with("std/") {
+    return m
+  }
+  "std/${m}"
 }

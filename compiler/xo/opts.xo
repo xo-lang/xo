@@ -74,6 +74,10 @@ struct Opts {
   /// --stamp NAME=VALUE, in command line order.
   stamps: List[(Str, Str)] = []
   topts: TestOpts = TestOpts{}
+  /// --std-module=MODULE (test, decision 0262): the std module whose
+  /// _test.xo tests run, as `use` names it below std (`json`,
+  /// `native/http`, `native/llrt/scan`); "" for none.
+  std_module: Str = ""
   /// The directories (build, test, asm) or the one directory of run.
   dirs: List[Str] = []
   /// run: the program's arguments (after the directory, or after --).
@@ -85,7 +89,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module"]
 }
 
 /// The boolean flags.
@@ -97,7 +101,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -363,6 +367,18 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
     o.prog_args = r
     return o
   }
+  if !o.std_module.is_empty() {
+    if o.cmd != "test" {
+      usage(os, o.cmd, "--std-module is a flag of xo test")
+    }
+    if !rest.is_empty() {
+      usage(os, o.cmd, "--std-module tests one std module: no directories")
+    }
+    // the std directory stands for the module's (a program's root); the
+    // checker loads the module itself (check.Checker.std_test)
+    o.dirs = [o.std]
+    return o
+  }
   o.dirs = if rest.is_empty() { ["."] } else { rest }
   o
 }
@@ -417,6 +433,8 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.topts.run = v
   } else if name == "std" {
     o.std = v
+  } else if name == "std-module" {
+    o.std_module = v
   } else if name == "wd" {
     o.wd = v
   } else if name == "cc" {

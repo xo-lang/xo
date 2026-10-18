@@ -41,6 +41,11 @@ pub struct Checker {
   /// std/native/llrt/<name>_c.xo, where they have one (load.go
   /// LLRTUsesC; decisions 0193, 0206).
   pub llrt_c: List[Str] = []
+  /// The std module under test (`xo test --std-module`, decision 0262):
+  /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
+  /// That module's _test.xo file, beside its source, is loaded with it,
+  /// and it is the run's root module in place of any directory.
+  pub std_test: Str = ""
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
@@ -223,6 +228,9 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   if c.prelude < 0 {
     return Err(c.prelude_missing())
   }
+  if !c.std_test.is_empty() {
+    return c.check_std_test()
+  }
   for d in dirs {
     let st = c.fs.stat(d).ok() ?? None
     match st {
@@ -256,6 +264,47 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   }
   if c.unsupported.is_empty() {
     c.run()?
+  }
+}
+
+/// check_dirs for a std module under test (std_test): loads it, with
+/// its test file, and the implementation modules, then makes it the root
+/// module, so its tests run with private access (decision 0262).
+fn (var c: Checker) check_std_test() -> () ! Str uses fs.read {
+  let p = c.std_test
+  if p.starts_with("native/llrt/") {
+    c.load_runtime_module(p)
+  } else if p.starts_with("native/") {
+    // the implementation module loads with the std module it implements
+    c.load_std(p.trim_prefix("native/"))
+  } else {
+    c.load_std(p.trim_prefix("std/"))
+  }
+  if c.native {
+    c.load_native()
+  }
+  let m = match c.mod_index.get(p) {
+    Some(m) => m
+    None => return Err("std module ${p} not found in ${c.std_dir}")
+  }
+  c.mods[m].root = true
+  c.root_mods.push(m)
+  if c.unsupported.is_empty() {
+    c.run()?
+  }
+}
+
+/// Parses the test file of module m into it when m is the std module
+/// under test: file is m's source (`std/native/llrt/scan.xo`), the test
+/// file is beside it (`scan_test.xo`; a runtime module loaded from its C
+/// path, scan_c.xo, has the same test file).
+fn (var c: Checker) load_std_tests(m: Int, file: Str) {
+  if c.std_test.is_empty() || c.mods[m].path != c.std_test {
+    return
+  }
+  let name = "${file.trim_suffix(".xo").trim_suffix("_c")}_test.xo"
+  if let Some(src) = c.fs.read("${c.std_dir}/${name.trim_prefix("std/")}").ok() {
+    c.parse_into(m, name, src, false)
   }
 }
 
@@ -340,6 +389,7 @@ fn (var c: Checker) load_std(name: Str) -> Int {
   }
   let m = c.new_module(path, name, "std", true)
   c.parse_into(m, "std/${name}.xo", data, true)
+  c.load_std_tests(m, "std/${name}.xo")
   c.mods[m].state = 1
   c.load_imports(m)
   c.mods[m].state = 2
@@ -375,6 +425,7 @@ fn (var c: Checker) load_native() {
       c.mods[m].native = true
       c.mods[m].implements = path
       c.parse_into(m, "std/native/${name}.xo", data, false)
+      c.load_std_tests(m, "std/native/${name}.xo")
       c.mods[m].state = 1
       c.load_imports(m)
       c.mods[m].state = 2
@@ -412,6 +463,7 @@ fn (var c: Checker) load_runtime_module(path: Str) -> Int {
   let m = c.new_module(path, name, "std/native/llrt", false)
   c.mods[m].native = true
   c.parse_into(m, "std/${file}", data, false)
+  c.load_std_tests(m, "std/${file}")
   c.mods[m].state = 1
   c.load_imports(m)
   c.mods[m].state = 2
