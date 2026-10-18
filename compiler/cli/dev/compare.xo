@@ -48,13 +48,6 @@ pub fn stable(s: Str, r: Rules) -> Str {
   out.freeze()
 }
 
-test "stable drops frames and fixes times" {
-  let s = "fault: boom at 2026-10-13T01:02:03.5Z\n  at main.xo:3\n\tframe\ncrash bundle: /x\nxo leakcheck: 0 live of 3 allocations\ndone\n"
-  expect(stable(s, Rules{}) == "fault: boom at <time>\ndone\n")
-  expect(stable(s, Rules{go_frames: true, drop_leak: false}) == "fault: boom at <time>\n  at main.xo:3\nxo leakcheck: 0 live of 3 allocations\ndone\n")
-  expect(stable("", Rules{}) == "")
-}
-
 /// layout is want.txt's form of a run: the status, stdout as is, and
 /// the stable stderr. stderr that is not UTF-8 is kept unfiltered.
 pub fn layout(code: Int, stdout: Bytes, stderr: Bytes, r: Rules) -> Bytes {
@@ -67,10 +60,6 @@ pub fn layout(code: Int, stdout: Bytes, stderr: Bytes, r: Rules) -> Bytes {
     None => b.write(stderr)
   }
   b.freeze()
-}
-
-test "layout" {
-  expect(layout(1, "hi\n".bytes(), "oops\n  frame\n".bytes(), Rules{}) == "exit 1\n--- stdout\nhi\n--- stderr\noops\n".bytes())
 }
 
 /// drop_go_frames removes the Go frame pairs (`  x_name` then `  file.xo:N`)
@@ -91,13 +80,6 @@ pub fn same(got: Bytes, want: Bytes, r: Rules) -> Bool {
   got == want
 }
 
-test "same is byte exact" {
-  expect(same("a\r\n".bytes(), "a\r\n".bytes(), Rules{}))
-  expect(!same("a\r\n".bytes(), "a\n\n".bytes(), Rules{}))
-  let g = "exit 2\n--- stdout\n--- stderr\nfault\n  x_main\n  main.xo:3\n".bytes()
-  expect(same(g, "exit 2\n--- stdout\n--- stderr\nfault\n".bytes(), Rules{go_frames: true}))
-}
-
 /// leak_problem is what the leak check of a native run that exited 0
 /// finds wrong in its stderr: "" when it printed `xo leakcheck: 0 live`.
 pub fn leak_problem(stderr: Bytes) -> Str {
@@ -114,12 +96,6 @@ pub fn leak_problem(stderr: Bytes) -> Str {
   "no leak check line"
 }
 
-test "leak_problem" {
-  expect(leak_problem("xo leakcheck: 0 live of 9 allocations\n".bytes()) == "")
-  expect(leak_problem("x\nxo leakcheck: 2 live of 9 allocations\n".bytes()) == "2 allocations live")
-  expect(leak_problem("".bytes()) == "no leak check line")
-}
-
 /// first_diff is a short report of where got and want part: the first
 /// differing line of each, with its line number.
 pub fn first_diff(got: Bytes, want: Bytes) -> Str {
@@ -132,8 +108,4 @@ pub fn first_diff(got: Bytes, want: Bytes) -> Str {
   let gl = if i < g.len() { g[i].quote() } else { "(end)" }
   let wl = if i < w.len() { w[i].quote() } else { "(end)" }
   "line ${i + 1}: want ${wl}, got ${gl}"
-}
-
-test "first_diff" {
-  expect(first_diff("a\nb\n".bytes(), "a\nc\n".bytes()) == "line 2: want \"c\", got \"b\"")
 }

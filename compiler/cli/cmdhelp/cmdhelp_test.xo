@@ -1,0 +1,26 @@
+// Tests of the command table (moved from cmdhelp.xo, decision 0262: tests under
+// compiler/ live in _test.xo files).
+
+test "every command has a usage" {
+  for c in commands() {
+    let u = usage(c.name)
+    expect(u.starts_with("usage: xo ${c.name}")) == true
+    expect(u.ends_with("\n")) == true
+  }
+  expect(usage("asm")) == ""
+  expect(is_command("help")) == true
+  expect(is_command("keys")) == false
+}
+
+test "package patterns" {
+  expect(is_pattern("./...")) == true
+  expect(is_pattern("...")) == true
+  expect(is_pattern(".")) == false
+  expect(pattern_dir("./...")) == "."
+  expect(pattern_dir("std/...")) == "std"
+  expect(pattern_dir("/...")) == "/"
+  expect(pattern_dir("...")) == ""
+  expect(pattern_dir("a/.../b")) == ""
+  expect(pattern_dir("a/b...")) == ""
+  expect(pattern_dir(".../...")) == ""
+}

@@ -174,11 +174,13 @@ func Key(root string) (string, error) {
 // NAME_c.xo for `use native/llrt/NAME`). The other std modules and the
 // C runtime (std/llrt) are read by xo at run time from
 // the checkout (<bin>/../std), so a change there needs no new xo.
+// Test files (*_test.xo) are never inputs: xo does not compile them into
+// itself (decision 0262), so adding or editing a test rebuilds nothing.
 func Inputs(root string) ([]string, error) {
 	in := map[string]bool{}
 	var queue []string
 	add := func(name string) {
-		if in[name] {
+		if in[name] || strings.HasSuffix(name, "_test.xo") {
 			return
 		}
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil {

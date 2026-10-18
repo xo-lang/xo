@@ -65,15 +65,6 @@ pub fn expectations(file: Str, src: Str) -> List[Expect] {
   out
 }
 
-test "expectations" {
-  let src = "fn main() {\n  let x = 1 // ERROR XO0110\n  g(y) // ERROR XO0601 \"name `y`\" XO0110\n}\n"
-  let es = expectations("m.xo", src)
-  expect(es.len() == 3)
-  expect(es[0].line == 2 && es[0].code == "XO0110" && es[0].pattern == "")
-  expect(es[1].line == 3 && es[1].code == "XO0601" && es[1].pattern == "name `y`")
-  expect(es[2].code == "XO0110")
-}
-
 fn base(p: Str) -> Str {
   let parts = p.split("/")
   parts[parts.len() - 1]
@@ -113,13 +104,6 @@ pub fn verdict(want: List[Expect], got: List[(Str, Int, Str, Str, Str)]) -> List
     }
   }
   problems
-}
-
-test "verdict" {
-  let want = [Expect{file: "a/m.xo", line: 2, code: "XO0110"}, Expect{file: "a/m.xo", line: 3, code: "XO0601", pattern: "`y`"}]
-  expect(verdict(want, [("/x/a/m.xo", 2, "XO0110", "error", "`x` is never used"), ("/x/a/m.xo", 3, "XO0601", "error", "name `y` not found")]).is_empty())
-  let p = verdict(want, [("/x/a/m.xo", 3, "XO0601", "error", "name `z` not found"), ("/x/a/m.xo", 9, "XO0401", "error", "bad")])
-  expect(p.len() == 4)
 }
 
 fn errorcheck_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {

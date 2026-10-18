@@ -91,7 +91,3 @@ fn hex2(n: Int) -> Str {
   let digits = "0123456789abcdef"
   "${digits[n / 16..n / 16 + 1]}${digits[n % 16..n % 16 + 1]}"
 }
-
-test "json_str" {
-  expect(json_str("a\"b\\\n\u{1}") == "\"a\\\"b\\\\\\n\\u0001\"")
-}

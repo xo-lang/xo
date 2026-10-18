@@ -1,6 +1,7 @@
 package xotool
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -61,6 +62,44 @@ func TestInputs(t *testing.T) {
 	k2, _ := Key(root)
 	if k1 != k2 || len(k1) != 16 {
 		t.Errorf("keys %q %q", k1, k2)
+	}
+}
+
+// TestInputsSkipTests: a _test.xo file under compiler/ or std/ leaves
+// the key unchanged (decision 0262); a source file beside it changes it.
+func TestInputsSkipTests(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, text string) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("compiler/xo.mod", "module xo\n")
+	write("compiler/xo/main.xo", "use std/json\nfn main() {}\n")
+	write("std/prelude.xo", "")
+	write("std/json.xo", "pub fn f() {}\n")
+	key := func() string {
+		t.Helper()
+		k, err := Key(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	k0 := key()
+	write("compiler/xo/main_test.xo", "test \"t\" { expect 1 == 1 }\n")
+	write("std/json_test.xo", "test \"t\" { expect 1 == 1 }\n")
+	if k := key(); k != k0 {
+		t.Errorf("a _test.xo file changed the key: %s to %s", k0, k)
+	}
+	write("compiler/xo/more.xo", "fn g() {}\n")
+	if k := key(); k == k0 {
+		t.Errorf("a new source file left the key at %s", k0)
 	}
 }
 

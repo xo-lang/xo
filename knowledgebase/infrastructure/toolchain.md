@@ -1402,10 +1402,12 @@ Repository convention, not a language rule (user code keeps inline
 `test` blocks): under std/ and compiler/, tests live only in `_test.xo`
 files. xo's source key (internal/xotool Inputs) takes every .xo file of
 compiler/ and the std files the compiler uses, so an inline test block
-there would rebuild xo for a test change; Inputs skips `_test.xo` files.
-A repotest check rejects a `test "` block elsewhere under std/ and
-compiler/ (with decision 0262's work; until then 14 inline blocks remain
-in compiler/cli cmdhelp and dev).
+there would rebuild xo for a test change; Inputs skips `_test.xo` files
+(TestInputsSkipTests). internal/repotest TestTestsInTestFiles rejects a
+`test "` block in any other tracked .xo file under std/ and compiler/.
+The tests of compiler/cli/dev and compiler/cli/cmdhelp (moved out of the
+sources 2026-10-18) run in internal/selfhost TestSelfhostCLIXoTests
+(merge tier). Last verified: 2026-10-18.
 
 ### Gate and fuzz runners (2026-10-18)
 

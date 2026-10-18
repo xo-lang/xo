@@ -155,11 +155,6 @@ fn fields(s: Str) -> List[Str] {
   out
 }
 
-test "fields" {
-  expect(fields(" a  b\tc\n") == ["a", "b", "c"])
-  expect(fields("") == [])
-}
-
 fn harness(fs: Fs, d: Str) -> Harness uses fs.read {
   let read = fn(n: Str) -> Bytes { fs.read("${d}/${n}").ok() ?? "".bytes() }
   var env: List[(Str, Str)] = []
@@ -186,12 +181,6 @@ pub fn order(progs: List[Prog], times: Map[Str, Int]) -> List[Prog] {
     let t = times.get(p.dir) ?? 0
     (-t, -p.size, p.dir)
   })
-}
-
-test "order puts the slow first" {
-  let ps = [Prog{dir: "a", name: "a", want: "", size: 10}, Prog{dir: "b", name: "b", want: "", size: 5}, Prog{dir: "c", name: "c", want: "", size: 1}]
-  let o = order(ps, {"c": 900})
-  expect(o.map(fn(p: Prog) { p.dir }) == ["c", "a", "b"])
 }
 
 /// one builds, runs, and compares program p.

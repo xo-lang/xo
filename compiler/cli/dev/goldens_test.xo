@@ -1,0 +1,13 @@
+// Tests of xo dev goldens (moved from goldens.xo, decision 0262: tests under
+// compiler/ live in _test.xo files).
+
+test "fields" {
+  expect(fields(" a  b\tc\n") == ["a", "b", "c"])
+  expect(fields("") == [])
+}
+
+test "order puts the slow first" {
+  let ps = [Prog{dir: "a", name: "a", want: "", size: 10}, Prog{dir: "b", name: "b", want: "", size: 5}, Prog{dir: "c", name: "c", want: "", size: 1}]
+  let o = order(ps, {"c": 900})
+  expect(o.map(fn(p: Prog) { p.dir }) == ["c", "a", "b"])
+}
