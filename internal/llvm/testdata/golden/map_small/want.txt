@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+empty 0 -1 false
+put k0: len 1 all found true missing -1
+put k1: len 2 all found true missing -1
+put k2: len 3 all found true missing -1
+put k3: len 4 all found true missing -1
+put k4: len 5 all found true missing -1
+put k5: len 6 all found true missing -1
+put k6: len 7 all found true missing -1
+put k7: len 8 all found true missing -1
+put k8: len 9 all found true missing -1
+put k9: len 10 all found true missing -1
+put k10: len 11 all found true missing -1
+put k11: len 12 all found true missing -1
+replaced {a=3, b=2}
+removed 3 {b=2} contains a false
+again {b=2, a=4} len 2
+big shrunk {b=2, a=4} small {b=2, a=4} equal true true
+literal {one=1, two=2} equal built true
+order k0 k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11
+--- stderr

@@ -182,11 +182,11 @@ fn (var b: Builder) map_find(t: Int) -> Str {
   let h = b.param(2)
   let slots = b.mfield(t, 3, mp)
   let n = b.call("list.len", it, "", [slots])
+  let keys = b.mfield(t, 0, mp)
+  let live = b.mfield(t, 2, mp)
   let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)]))
   b.retv(b.cint(-1))
   b.if_then_end(no, join)
-  let keys = b.mfield(t, 0, mp)
-  let live = b.mfield(t, 2, mp)
   let mask = b.add(Op.Sub, it, Aux.None, [n, b.cint(1)])
   let iv = b.local()
   b.write_var(iv, b.add(Op.And, it, Aux.None, [h, mask]))
@@ -348,14 +348,93 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   name
 }
 
+/// The entries a map keeps with no hash table (its slots empty): their
+/// keys are scanned (xo.map.scan, as cheap as hashing them for so few:
+/// with same-length keys of a common prefix, a lookup costs 0.88 times
+/// the table's at 4 entries, 1.00 at 5, 1.07 at 6; 2026-10-17, Mac), and
+/// the put of one more builds the table (map_put). A lookup in a map with
+/// a table checks that it has one first (about 1% more). An HTTP request's
+/// headers Map hashed each name and rebuilt its table on its first put.
+const SMALL_MAP = 5
+
+/// xo.map.scan[T](m, k) -> Int: the index of k's live entry of a map
+/// with no table (SMALL_MAP), its keys compared in order, or -1.
+fn (var b: Builder) map_scan(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let name = "xo.map.scan[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let keys = b.mfield(t, 0, mp)
+  let live = b.mfield(t, 2, mp)
+  let lv = b.local()
+  let total = b.call("list.len", it, "", [keys])
+  let (li, lhead, lexit) = b.for_up_to_begin(total, lv)
+  let (lno, ljoin) = b.if_then_begin(b.call("list.index", bt, "", [live, li]))
+  let lk = b.call("list.index", kt, "", [keys, li])
+  if b.tkind(kt) == Kind.Str {
+    // the lengths first, inline: str.eq is a call on arm64
+    let samelen = b.add(Op.Eq, bt, Aux.None, [b.call("Str.len", it, "", [lk]), b.call("Str.len", it, "", [k])])
+    let (lno3, ljoin3) = b.if_then_begin(samelen)
+    let (lno2, ljoin2) = b.if_then_begin(b.eq_values(lk, k))
+    b.retv(li)
+    b.if_then_end(lno2, ljoin2)
+    b.if_then_end(lno3, ljoin3)
+  } else {
+    let (lno2, ljoin2) = b.if_then_begin(b.eq_values(lk, k))
+    b.retv(li)
+    b.if_then_end(lno2, ljoin2)
+  }
+  b.if_then_end(lno, ljoin)
+  b.for_up_to_end(li, lv, lhead, lexit)
+  b.retv(b.cint(-1))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The index of k's live entry of map mv (of struct t), or -1, in the
+/// function being built: a scan when mv has no table (xo.map.scan), else
+/// its hash and xo.map.find, so a lookup in a map with a table is what it
+/// was (find stays small enough for the arm64 inliner).
+fn (var b: Builder) map_lookup(t: Int, mv: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let scan = b.map_scan(t)
+  let find = b.map_find(t)
+  let hf = b.hash_func(map_key(b.m, t))
+  let res = b.local()
+  let tcap = b.call("list.len", it, "", [b.mfield(t, 3, mv)])
+  let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tcap, b.cint(0)]))
+  let join = b.new_block()
+  b.s.cur = yes
+  b.write_var(res, b.call(scan, it, "", [mv, k]))
+  b.jump(join, [])
+  b.s.cur = no
+  let h = b.call(hf, it, "", [k])
+  b.write_var(res, b.call(find, it, "", [mv, k, h]))
+  b.jump(join, [])
+  b.seal(join)
+  b.s.cur = join
+  b.read(res)
+}
+
 /// xo.map.put[T](m, k, v) -> T: k's value replaced (its place kept), or a
-/// new entry at the end (mapPut).
+/// new entry at the end (mapPut); a small map's entry with no hash
+/// (SMALL_MAP).
 fn (var b: Builder) map_put(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
   let vt = map_val(b.m, t)
-  let find = b.map_find(t)
+  let _scan = b.map_scan(t)
+  let _find = b.map_find(t)
   let rebuild = b.map_rebuild(t)
   let hash = b.hash_func(kt)
   let name = "xo.map.put[${b.m.types[t].name}]"
@@ -367,8 +446,7 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   let mp = b.param(0)
   let k = b.param(1)
   let v = b.param(2)
-  let h = b.call(hash, it, "", [k])
-  let idx = b.call(find, it, "", [mp, k, h])
+  let idx = b.map_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
   let vl = b.mfield(t, 1, mp)
   let vals0 = b.call("list.set", b.m.types[t].fields[1].ty, "", [vl, idx, v])
@@ -378,6 +456,16 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   b.write_var(mv, mp)
   let total = b.call("list.len", it, "", [b.mfield(t, 0, mp)])
   let tcap = b.call("list.len", it, "", [b.mfield(t, 3, mp)])
+  // a small map with no table: the entry appended, no hash
+  let notab = b.add(Op.Eq, bt, Aux.None, [tcap, b.cint(0)])
+  let few = b.add(Op.Lt, bt, Aux.None, [total, b.cint(SMALL_MAP)])
+  let (sno, sjoin) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [notab, few]))
+  let sk = b.call("list.push", b.vty(b.mfield(t, 0, mp)), "", [b.mfield(t, 0, mp), k])
+  let sv = b.call("list.push", b.vty(b.mfield(t, 1, mp)), "", [b.mfield(t, 1, mp), v])
+  let sl = b.call("list.push", b.vty(b.mfield(t, 2, mp)), "", [b.mfield(t, 2, mp), b.cbool(true)])
+  let sn = b.add(Op.Add, it, Aux.None, [b.add(Op.Field, it, Aux.I(n: 4), [mp]), b.cint(1)])
+  b.retv(b.add(Op.Struct, t, Aux.None, [sk, sv, sl, b.mfield(t, 3, mp), sn]))
+  b.if_then_end(sno, sjoin)
   let t1 = b.add(Op.Add, it, Aux.None, [total, b.cint(1)])
   let t4 = b.add(Op.Mul, it, Aux.None, [t1, b.cint(4)])
   let c3 = b.add(Op.Mul, it, Aux.None, [tcap, b.cint(3)])
@@ -394,6 +482,7 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   var slots = b.mfield(t, 3, cur)
   let n = b.add(Op.Field, it, Aux.I(n: 4), [cur])
   let pos = b.call("list.len", it, "", [keys])
+  let h = b.call(hash, it, "", [k])
   keys = b.call("list.push", b.vty(keys), "", [keys, k])
   vals = b.call("list.push", b.vty(vals), "", [vals, v])
   let tr = b.cbool(true)
@@ -412,7 +501,8 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
   let vt = map_val(b.m, t)
-  let find = b.map_find(t)
+  let _scan = b.map_scan(t)
+  let _find = b.map_find(t)
   let rt = b.m.tuple([t, ot])
   var name = "xo.map.remove[${b.m.types[t].name}]"
   let have = b.m.func_index(name)
@@ -428,9 +518,8 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let k = b.param(1)
-  let hf = b.hash_func(kt)
-  let h = b.call(hf, it, "", [k])
-  let idx = b.call(find, it, "", [mp, k, h])
+  let _hf = b.hash_func(kt)
+  let idx = b.map_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
   let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, none]))
@@ -529,13 +618,7 @@ fn (var b: Builder) map_lit(t: Int, keys: List[Expr], vals: List[Expr], set: Boo
 
 /// The index of k's live entry in the map mv (of struct t) (mapCall's
 /// find).
-fn (var b: Builder) map_index(t: Int, mv: Int, k: Int) -> Int {
-  let it = b.int_t()
-  let find = b.map_find(t)
-  let hf = b.hash_func(map_key(b.m, t))
-  let h = b.call(hf, it, "", [k])
-  b.call(find, it, "", [mv, k, h])
-}
+fn (var b: Builder) map_index(t: Int, mv: Int, k: Int) -> Int { b.map_lookup(t, mv, k) }
 
 /// A method of Map or Set; None for one it does not lower (mapCall).
 fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {

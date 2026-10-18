@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Maps of up to 5 entries keep no hash table: a put appends without
+  hashing or rebuilding, a lookup scans the keys (their lengths first),
+  and the sixth put builds the table. Plain HTTP -4.5% (arm64) and -5.3%
+  (LLVM) instructions per request (its headers Map); lookups in such a
+  map cost 0.88 (4 entries) to 1.00 (5) times the table's, and a lookup
+  in a map with a table about 1% more (it checks for the table).
+
 - A Map's lists are sized at each rebuild for every entry until the next
   one, so small maps (an HTTP request's headers) do not grow them:
   plain HTTP -1.4% (arm64) and -1.2% (LLVM) instructions per request.

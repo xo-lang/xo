@@ -472,10 +472,8 @@ fn (var b: Builder) inline_method(name: Str, recv: Int, args: List[Int]) -> Int 
   }
   if name == "contains" && args.len() == 1 && b.m.types[t].coll && b.vty(args[0]) == map_key(b.m, t) {
     let k = args[0]
-    let find = b.map_find(t)
-    let hash = b.hash_func(map_key(b.m, t))
-    let h = b.call(hash, it, "", [k])
-    let idx = b.call(find, it, "", [recv, k, h])
+    // a scan when the map has no table (map.xo SMALL_MAP)
+    let idx = b.map_lookup(t, recv, k)
     return b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)])
   }
   -1
@@ -794,15 +792,15 @@ fn (var b: Builder) eq_coll(t: Int) -> Str {
     let vals = b.add(Op.Field, x.fields[1].ty, Aux.I(n: 1), [l])
     let live = b.add(Op.Field, x.fields[2].ty, Aux.I(n: 2), [l])
     let rvals = b.add(Op.Field, x.fields[1].ty, Aux.I(n: 1), [r])
-    let find = b.map_find(t)
+    let _scan = b.map_scan(t)
+    let _find = b.map_find(t)
     let iv = b.local()
     let n = b.call("list.len", it, "", [keys])
     let (i, head, exit) = b.for_up_to_begin(n, iv)
     let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
     let k = b.call("list.index", kt, "", [keys, i])
-    let hash = b.hash_func(kt)
-    let h = b.call(hash, it, "", [k])
-    let j = b.call(find, it, "", [r, k, h])
+    // a scan when r has no table (map.xo SMALL_MAP)
+    let j = b.map_lookup(t, r, k)
     b.ret_false_unless(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
     if b.tkind(vt) != Kind.Unit {
       let a = b.call("list.index", vt, "", [vals, i])

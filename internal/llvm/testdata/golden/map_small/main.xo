@@ -1,0 +1,59 @@
+// Maps of a few entries keep no hash table (compiler/ssa map.xo
+// SMALL_MAP: their keys are scanned until the put of the ninth builds the
+// table): puts, replacing a value in place, removing and putting again,
+// lookups of every key while a map grows past eight, iteration in
+// insertion order, and equality between a small map and a large one that
+// shrank to the same entries.
+
+fn show(m: Map[Str, Int]) -> Str {
+  var parts: List[Str] = []
+  for (k, v) in m {
+    parts.push("${k}=${v}")
+  }
+  "{${parts.join(", ")}}"
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  var m: Map[Str, Int] = {}
+  out.println("empty ${m.len()} ${m.get("a") ?? -1} ${m.contains("a")}")
+  for i in 0..12 {
+    m.put("k${i}", i)
+    var ok = true
+    for j in 0..i + 1 {
+      if (m.get("k${j}") ?? -1) != j {
+        ok = false
+      }
+    }
+    out.println("put k${i}: len ${m.len()} all found ${ok} missing ${m.get("zz") ?? -1}")
+  }
+  var s: Map[Str, Int] = {}
+  s.put("a", 1)
+  s.put("b", 2)
+  s.put("a", 3)
+  out.println("replaced ${show(s)}")
+  let r = s.remove("a")
+  out.println("removed ${r ?? -1} ${show(s)} contains a ${s.contains("a")}")
+  s.put("a", 4)
+  out.println("again ${show(s)} len ${s.len()}")
+  for i in 0..10 {
+    s.put("x${i}", i)
+  }
+  for i in 0..10 {
+    let _x = s.remove("x${i}")
+  }
+  var t: Map[Str, Int] = {}
+  t.put("b", 2)
+  t.put("a", 4)
+  out.println("big shrunk ${show(s)} small ${show(t)} equal ${s == t} ${t == s}")
+  let lit = {"one": 1, "two": 2}
+  var built: Map[Str, Int] = {}
+  built.put("one", 1)
+  built.put("two", 2)
+  out.println("literal ${show(lit)} equal built ${lit == built}")
+  var keys: List[Str] = []
+  for (k, _) in m {
+    keys.push(k)
+  }
+  out.println("order ${keys.join(" ")}")
+}

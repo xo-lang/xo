@@ -71,3 +71,25 @@ REPS=3, medians:
 | Scenario | arm64 base | arm64 new | change | LLVM base | LLVM new | change |
 |---|---|---|---|---|---|---|
 | plain | 35,003 | 33,940 | -3.0% | 30,844 | 29,688 | -3.7% |
+
+## Small maps with no table (2026-10-17)
+
+A request's headers Map was built by a put per field from `{}`: each
+name hashed, the table rebuilt on the first put, each list copied off
+the empty literal's. compiler/ssa map.xo now keeps a map of up to
+SMALL_MAP (5) entries with no table: put appends, lookups scan the keys
+(xo.map.scan; Str lengths compared first, inline), the sixth put builds
+the table. (An rt.map_parts intrinsic that let std build the Map whole
+was dropped: xo itself compiles std/http, and the seed's checker rejects
+an intrinsic it does not know, gotchas/seed-older-than-intrinsics.md.)
+Base c25c0d54 against the branch, N=100, REPS=3, medians:
+
+| Scenario | arm64 base | arm64 new | change | LLVM base | LLVM new | change |
+|---|---|---|---|---|---|---|
+| plain | 33,276 | 31,783 | -4.5% | 29,401 | 27,832 | -5.3% |
+
+Lookups on the Mac (instructions of 10^6 gets of same-length keys with
+a 12 byte common prefix, base / new): 4 entries 0.88, 5 entries 0.99,
+6 (a table) 1.01, 8 and 16 (tables) 1.01. A SMALL_MAP of 8 cost 1.28 at
+8 entries and 1.07 at 6, so 5 it is; the scan kept out of xo.map.find,
+which the arm64 inliner takes only while it stays small.

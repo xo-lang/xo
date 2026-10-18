@@ -42,3 +42,10 @@ first seed that has the intrinsic. This does not work for a change the
 seed's SSA builder rejects in std code (a new type accepted by
 `rt.obj_at`, say): that is a build error, not a link error, and needs
 the seed first.
+
+Seen again 2026-10-17 (Xo Lang 3): an rt.map_parts intrinsic used in
+std/native/http.xo stopped the build of xo itself at the seed
+(`XO1201 ... the intrinsic map_parts`): xo imports std/http, so every
+std module xo compiles must use only the seed's intrinsics. The change
+went into compiler/ssa instead (small maps with no table), which needs
+no std change.
