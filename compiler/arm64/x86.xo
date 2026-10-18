@@ -970,6 +970,14 @@ fn (var g: G) x86_binop(inst: Inst, var x: XT, dt: Str, at: Str, b: Str, op: Str
           }
         }
       }
+      // a op a: the operation reads d twice, so a need not outlive the copy
+      let (bb2, _) = tpl_ref(b)
+      if s.kind == S_REG && s.v != 0 && bb2.starts_with("u") {
+        let k2 = Int.parse(bb2[1..bb2.len()]) ?? -1
+        if k2 >= 0 && k2 < inst.us.len() && inst.us[k2] == s.v && line == "${op} ${b}, ${d}" {
+          line = "${op} ${d}, ${d}"
+        }
+      }
       x.ties.push((di, s))
       x.lines.push(line)
       return
@@ -1435,6 +1443,8 @@ fn (var g: G) x86_retarget() {
                 ni.us.push(p.defs[di])
               }
               out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
+              // the tied source is read by the copy, not the link
+              ni.us = x86_untie_recovered(ni.us, ni.text, srcs, p.defs)
             }
             out.push(ni)
           }
@@ -1488,12 +1498,15 @@ fn (var g: G) x86_retarget() {
             ni.us.push(inst.defs[di])
           }
           out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
-          if inst.has_fault && !inst.recover.is_empty() {
+          if !inst.has_fault || !inst.recover.is_empty() {
             // a checked add, sub, or neg whose fault stub recomputes the
             // operand from the result (x86_recover_operand): the tied
             // operand need not live past the copy, so the copy can be
             // coalesced away (2026-10-17: collatz's step was a copy, the
-            // add, and a copy back)
+            // add, and a copy back). Without a fault the tied source is
+            // read by the copy alone: listed as the operation's use too, it
+            // lived past the copy and no tie coalesced (2026-10-17: nbody's
+            // floating point, a movapd before each operation)
             ni.us = x86_untie_recovered(ni.us, ni.text, srcs, inst.defs)
           }
         }
