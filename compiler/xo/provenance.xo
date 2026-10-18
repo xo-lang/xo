@@ -28,7 +28,7 @@ fn version_cmd(os: Os, args: List[Str]) -> Int? {
   let goos = host_os(os)
   let arch = host_arch()
   if args[1] == "--json" {
-    os.stdio.println("{\\"version\\":${json_str(core.VERSION)},\\"goos\\":${json_str(goos)},\\"goarch\\":${json_str(arch)},\\"commit\\":${json_str(XO_COMMIT)},\\"dirty\\":${!XO_DIRTY.is_empty()},\\"diff_hash\\":${json_str(XO_DIRTY)},\\"source_key\\":${json_str(XO_SOURCE_KEY)},\\"built_by\\":${json_str(XO_BUILT_BY)}}")
+    os.stdio.println("{\"version\":${json_str(core.VERSION)},\"goos\":${json_str(goos)},\"goarch\":${json_str(arch)},\"commit\":${json_str(XO_COMMIT)},\"dirty\":${!XO_DIRTY.is_empty()},\"diff_hash\":${json_str(XO_DIRTY)},\"source_key\":${json_str(XO_SOURCE_KEY)},\"built_by\":${json_str(XO_BUILT_BY)}}")
     return Some(0)
   }
   os.stdio.println("xo ${core.VERSION} ${goos}/${arch}")
