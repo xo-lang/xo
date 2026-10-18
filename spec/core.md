@@ -2197,8 +2197,7 @@ test "retries after 503" {
     from. A tool that rebuilds or restarts on file changes (a file
     watcher, a cached build of the program keyed by its source files)
     then skips test-only edits by name, which it cannot do for an inline
-    test; `xo run --watch` does not need that, since it compares the
-    built program. Large modules and long running servers usually keep
+    test. Large modules and long running servers usually keep
     their tests there. In the Xo repository, tests under `std/` and
     `compiler/` live only in `_test.xo` files (decision 0262), because
     the cached xo is keyed by those sources.
