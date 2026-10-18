@@ -13,7 +13,7 @@ use github.com/xo-lang/xo/compiler/ssa
 
 /// Drops the functions of m that no root reaches and returns how many
 /// it dropped (a line of counts, then the dropped names, a line each);
-/// XO_DCE=off in the driver keeps them all.
+/// XO_DCE=off in the driver keeps them all, and `xo asm` never drops any.
 pub fn drop_unreached(var m: ssa.Module) -> Str {
   var by_name: Map[Str, List[Int]] = {}
   for (i, f) in m.funcs.indexed() {

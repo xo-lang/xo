@@ -37,6 +37,8 @@ Closure, FuncAddr, Rebind), which is every way the emitter refers to a
 function symbol. Values left outside blocks (inlined calls) do not count:
 counting them kept 1,009 of 1,015 hello functions. XO_DCE=off keeps every
 function, XO_DCE=debug prints the counts, XO_DCE=list the dropped names.
+`xo asm` skips DCE: it shows every function, and `xo dev codegen` (test/codegen)
+reads the code of functions that inlining made unreachable.
 
 ## Results
 

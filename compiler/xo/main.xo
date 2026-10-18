@@ -711,8 +711,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let jobs = emit_jobs(os)
     // with the per-function cache (decision 0220 addendum stage B)
     var gm = if inl { mi } else { cur.m }
-    // whole program dead function removal (arm64 reach.xo)
-    if (os.env.get("XO_DCE") ?? "") != "off" {
+    // whole program dead function removal (arm64 reach.xo); not for `xo
+    // asm`, which shows every function (xo dev codegen reads inlined ones)
+    if o.cmd != "asm" && (os.env.get("XO_DCE") ?? "") != "off" {
       let d = arm64.drop_unreached(gm)
       // XO_DCE=debug says how many, =list also which
       let how = os.env.get("XO_DCE") ?? ""
