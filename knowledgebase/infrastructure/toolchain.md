@@ -3436,8 +3436,8 @@ linux/amd64 (slow: about 3x for a build).
 Docker runs go outside the heavy lock (lead decision, 2026-10-15, after
 long Docker runs held both heavy slots): docker-linux.sh, docker-wine.sh
 and valgrind runs in a container are started directly, with `nice -n 10`
-so they yield to the Mac's own work, not through scripts/lead/agents
-heavy.sh. Agents remove only containers
+so they yield to the Mac's own work, not through scripts/lead/heavy.sh
+(installed in ~/xo-lead/agents). Agents remove only containers
 they started, by ID (`docker rm ID`), never by name or pattern. Last
 verified: 2026-10-16.
 
