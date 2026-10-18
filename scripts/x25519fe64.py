@@ -166,53 +166,57 @@ def add_row(t, i, ps):
 
 def gen_mul():
     load("f")
-    # the product's words t[0..8] (t[8] stays 0: the product is below 2^512);
-    # g's words load at their rows and each product is made right before
-    # the pair that adds it (all 8 products of a row up front kept 7
-    # callee saved pairs on arm64)
-    t = ["0"] * 10
+    # the product's words t[0..7]; g's words load two rows at a time and
+    # each product is made right before the pair that adds it (all 8 products
+    # of a row up front kept 7 callee saved pairs on arm64). After row i
+    # the sum is below 2^(64 (i + 5)) (f g_0..g_i): five words t[i..i+4]
+    # take a row, the low halves' carry is word i+4 and the high halves'
+    # chain ends there with no carry out.
+    t = ["0"] * 8
     for i in range(4):
-        emit(f"let g{i} = ld(g, {8 * i})")
+        # g's words two at a time (one ldp on arm64)
+        if i % 2 == 0:
+            emit(f"let g{i} = ld(g, {8 * i})")
+            emit(f"let g{i + 1} = ld(g, {8 * i + 8})")
         lo = [("lo", f"f{j}", f"g{i}") for j in range(4)]
         hi = [("hi", f"f{j}", f"g{i}") for j in range(4)]
-        # the low halves at words i..i+3, the carry on to word i+4, then
-        # i+5 (a word there takes the last carry in the chain: one adcs
-        # with xzr, not a cset and an add)
-        add_row(t, i, lo)
-        # the high halves at words i+1..i+4, the carry on to word i+5
-        add_row(t, i + 1, hi)
-    store(reduce8(t[:8]))
+        if i == 0:
+            t[0] = force(lo[0])
+            r, _ = chain(lo[1:] + ["0"], hi, keep=False)
+            t[1:5] = r
+            continue
+        r, c = chain(t[i:i + 4], lo)
+        t[i:i + 4] = r
+        t[i + 4] = c
+        r, _ = chain(t[i + 1:i + 5], hi, keep=False)
+        t[i + 1:i + 5] = r
+    store(reduce8(t))
 
 
 def gen_sq():
     load("f")
 
-    def prod(i, j):
-        a = v("lo")
-        b = v("hi")
-        emit(f"let {a} = rt.int_wrap(2, f{i}, f{j})")
-        emit(f"let {b} = rt.u64_mul_hi(f{i}, f{j})")
-        return a, b
-    l01, h01 = prod(0, 1)
-    l02, h02 = prod(0, 2)
-    l03, h03 = prod(0, 3)
-    l12, h12 = prod(1, 2)
-    l13, h13 = prod(1, 3)
-    l23, h23 = prod(2, 3)
-    r, c = chain([l02, l03], [h01, h02])
-    w = {1: l01, 2: r[0], 3: r[1], 4: wadd(h03, c)}
-    x, c = chain([l13], [h12])
-    x5 = wadd(h13, c)
-    r, c = chain([w[3], w[4], "0"], [l12, x[0], x5])
-    w[3], w[4], w[5] = r
-    w6 = c
-    r, c = chain([w[5], w6], [l23, h23])
-    w[5], w[6] = r
-    w[7] = c
-    d, _ = chain([w[k] for k in range(1, 8)], [w[k] for k in range(1, 8)], keep=False)
-    sq = [prod(k, k) for k in range(4)]
-    t, _ = chain(["0"] + d, [sq[0][0], sq[0][1], sq[1][0], sq[1][1], sq[2][0], sq[2][1], sq[3][0], sq[3][1]], keep=False)
-    store(reduce8(t))
+    def p(half, i, j):
+        return (half, f"f{i}", f"f{j}")
+    # the cross products f_i f_j (i < j) at words 1..6, each made right
+    # before the pair that adds it (all 12 up front kept 3 callee saved
+    # registers on arm64); their sum is below 2^448, so no word 7. Row
+    # f0 (f1, f2, f3) at words 1..4:
+    w = [None, force(p("lo", 0, 1))]
+    r, _ = chain([p("lo", 0, 2), p("lo", 0, 3), "0"], [p("hi", 0, 1), p("hi", 0, 2), p("hi", 0, 3)], keep=False)
+    w += r
+    # f1 f2, f1 f3 and f2 f3 together at words 3..6, then added in
+    u3 = force(p("lo", 1, 2))
+    u, _ = chain([p("lo", 1, 3), p("hi", 1, 3), "0"], [p("hi", 1, 2), p("lo", 2, 3), p("hi", 2, 3)], keep=False)
+    r, _ = chain([w[3], w[4], "0", "0"], [u3] + u, keep=False)
+    w[3:5] = r[:2]
+    w += r[2:]
+    # doubled (word 7 the carry), plus the squares f_k^2 at words 2k, 2k + 1
+    d, c = chain(w[1:7], w[1:7])
+    t0 = force(p("lo", 0, 0))
+    sq = [p("hi", 0, 0), p("lo", 1, 1), p("hi", 1, 1), p("lo", 2, 2), p("hi", 2, 2), p("lo", 3, 3), p("hi", 3, 3)]
+    t, _ = chain(d + [c], sq, keep=False)
+    store(reduce8([t0] + t))
 
 
 def gen_add():
