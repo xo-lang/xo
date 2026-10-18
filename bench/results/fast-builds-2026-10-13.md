@@ -611,3 +611,30 @@ darwin/arm64 goldens 195/195; the fixed point ok. Left after an edit, in
 order: ssa 2.1 s, inline.apply 1.9 s, check 1.1 s, borrow inference 1.1
 s, assemble and link 1 s, the reference counting entries' decoding 0.5
 s, emit 0.5 s, the emitter's keys 0.45 s.
+
+### Stage D part 2a: the inliner per function (the Mac, 2026-10-18)
+
+The inliner's result per function cached under a key chained from the
+reference counting keys (decision 0220 addendum stage D 2a). Steps as
+above (fe-g4.sh), on c9498eef, plus an XO_BACKEND_CACHE=verify build
+after each edit. With the hits decoded inside the walk (one task) the
+warm inline.apply was 2.6 to 5.5 s, slower than inlining (1.9 s); with
+the hits decoded first on tasks:
+
+| build | inline (keys, read, apply, verify) | cache inline | wall | user CPU |
+|---|---|---|---|---|
+| cold | 9.37 s (1.03, 0.03, 7.55, 1.81) | 0/9554 | 50.50 s | 132.18 s |
+| warm | 1.35 to 1.45 s (0.29, 0.12 to 0.20, 0.92 to 1.01, 0.43) | 9521/9554 | 9.09 to 9.14 s | 16.55 to 16.91 s |
+| constant edit | 1.62 s (0.29, 0.26, 1.04, 0.58) | 9520/9554 | 9.48 s | 16.83 s |
+| statement edit | 1.62 s (0.28, 0.25, 1.05, 0.56) | 9495/9554 | 9.66 s | 18.20 s |
+| revert | 2.01 s | 9521/9554 | 14.41 s | 20.34 s |
+
+The cold run's insert_rc.apply (22.18 s against 6.54 s before for the
+same work) and the revert's check and ssa (1.8 s and 3.5 s against 1.1 s
+and 2.1 s) show other load on the machine in those two runs. Every
+cached binary, for darwin/arm64 and (in TestBackendCacheEditIdentity)
+linux/arm64, was the file of the cache-off build; verify clean after
+both edits; identity 392/392 on arm64 and amd64; goldens 195/195; the
+fixed point ok. Left after an edit: ssa 2.1 s, check 1.1 s, borrow
+inference 1.1 s, inline.apply 1.0 s, insert_rc.apply 0.5 s, verify 0.6
+s, assemble and link 0.9 s, emit 0.5 s, the keys 0.65 s.

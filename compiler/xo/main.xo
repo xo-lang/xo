@@ -717,8 +717,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
   var cur = b
   var cur_tu = tu
   var cur_os = tgoos
+  var cur_rk = lo.rc_keys
   var mi = cur.m
-  var inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release)
+  var inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk)
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for tg in targets {
@@ -729,8 +730,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
+      cur_rk = l.rc_keys
       mi = cur.m
-      inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release)
+      inl = inline_or_say(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk)
       t = lap(os, phases, "inline", l.t)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
@@ -956,6 +958,8 @@ struct Lowered {
   b: ssa.Builder
   tu: tzsel.TZUse
   t: Time
+  /// the functions' reference counting keys ([] without the cache)
+  rc_keys: List[Str] = []
 }
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
@@ -1004,9 +1008,9 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "add_landings", t)
   b.cleanup_all()
   t = lap(os, o.phases, "cleanup", t)
-  rc_cached(os, b, release, emit_jobs(os), o.phases)
+  let rk = rc_cached(os, b, release, emit_jobs(os), o.phases)
   t = lap(os, o.phases, "insert_rc", t)
-  Lowered{b: b, tu: tu, t: t}
+  Lowered{b: b, tu: tu, t: t, rc_keys: rk}
 }
 
 /// The end of a native build: the test list of a test binary, or the
@@ -1210,7 +1214,7 @@ fn passes_off(os: Os) -> List[Str] {
 /// broken inliner cannot pass the tests as a slow one
 /// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
 /// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
-fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool) -> Bool {
+fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str]) -> Bool {
   let deny = os.env.get("XO_INLINE_DENY") ?? ""
   if !deny.is_empty() {
     mi.inline_deny = deny.split(",")
@@ -1218,7 +1222,7 @@ fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str
   mi.passes_off = passes_off(os)
   // arm64.inline_check(mi, jobs, ...), its two halves timed
   var t = os.clock.now()
-  let changed = arm64.inline_apply(mi, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
+  let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases)
   t = lap(os, phases, "inline.apply", t)
   let errs = if changed { verify_inlined(os, mi, tgoos, jobs, release) } else { [] }
   lap(os, phases, "inline.verify", t)

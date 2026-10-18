@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v5"
+const RC_CACHE_VERSION = "xo rc cache v6"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -277,7 +277,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
       }
       P(tag, field) => put_s(b, "p${tag} ${field}")
     }
-    put_s(b, "${x.block} ${x.pad} ${x.line}")
+    put_s(b, "${x.block} ${x.pad} ${x.line} ${x.inl}")
     put_s(b, ints_line(x.succs))
     put_s(b, x.pos)
   }
@@ -299,6 +299,13 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   put_s(b, "${f.dbinds.len()}")
   for d in f.dbinds {
     put_s(b, "${d.dvar} ${d.value} ${d.line}")
+  }
+  // the inline sites (after the arm64 inliner, its cache: stage D 2a)
+  put_s(b, "${f.inl_sites.len()}")
+  for st in f.inl_sites {
+    put_s(b, st.callee)
+    put_s(b, st.file)
+    put_s(b, "${st.call_line} ${st.parent}")
   }
   Some(b.freeze())
 }
@@ -466,12 +473,12 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
       return None
     }
     let bp = r.str().split(" ")
-    if bp.len() != 3 {
+    if bp.len() != 4 {
       return None
     }
     let succs = r.ints()
     let pos = r.str()
-    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1, line: Int.parse(bp[2]) ?? 0})
+    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1, line: Int.parse(bp[2]) ?? 0, inl: Int.parse(bp[3]) ?? -1})
   }
   let ne = r.int()
   for _ in 0..ne {
@@ -515,6 +522,19 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
       return None
     }
     f.dbinds.push(DBind{dvar: Int.parse(vl[0]) ?? -1, value: Int.parse(vl[1]) ?? -1, line: Int.parse(vl[2]) ?? 0})
+  }
+  let nis = r.int()
+  for _ in 0..nis {
+    if !r.ok {
+      return None
+    }
+    let callee = r.str()
+    let file = r.str()
+    let cp = r.str().split(" ")
+    if cp.len() != 2 {
+      return None
+    }
+    f.inl_sites.push(InlSite{callee: callee, file: file, call_line: Int.parse(cp[0]) ?? 0, parent: Int.parse(cp[1]) ?? -1})
   }
   if !r.ok || r.at != d.len() {
     return None
@@ -734,3 +754,14 @@ pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
   }
   out
 }
+
+/// Function f as a cache entry (encode_func's codec), for the inliner's
+/// cache (compiler/arm64 inlcache.xo); none for one an entry cannot hold.
+pub fn func_entry(m: Module, f: Func) -> Option[Bytes] { encode_func(m, f) }
+
+/// The function of an entry func_entry wrote, with m's type ids
+/// (decode_func; ops from op_names); none for a malformed entry.
+pub fn func_of_entry(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] { decode_func(m, d, ops) }
+
+/// The opcodes by name, for func_of_entry.
+pub fn op_names() -> Map[Str, Op] { ops_by_name() }

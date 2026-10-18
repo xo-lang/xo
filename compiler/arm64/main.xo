@@ -200,20 +200,27 @@ pub fn inline_apply(var m: ssa.Module, break_inline: Bool) -> Bool {
     return false
   }
   if break_inline {
-    var done = false
-    for fi in 0..m.funcs.len() {
-      for b in m.funcs[fi].blocks {
-        for v in b.instrs {
-          let succs = m.funcs[fi].values[v].succs
-          if !done && !succs.is_empty() {
-            m.funcs[fi].edges[succs[0]].args.push(v)
-            done = true
-          }
+    let _b = inline_break(m)
+  }
+  true
+}
+
+/// XO_INLINE_BREAK=1's damage (inline_check): an argument added to the
+/// first branch's edge, so the module does not verify; true.
+fn inline_break(var m: ssa.Module) -> Bool {
+  var done = false
+  for fi in 0..m.funcs.len() {
+    for b in m.funcs[fi].blocks {
+      for v in b.instrs {
+        let succs = m.funcs[fi].values[v].succs
+        if !done && !succs.is_empty() {
+          m.funcs[fi].edges[succs[0]].args.push(v)
+          done = true
         }
       }
-      if done {
-        break
-      }
+    }
+    if done {
+      break
     }
   }
   true

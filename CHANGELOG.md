@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache also keeps each function's inlining, under a key
+  chained from its reference counting key: a one-constant edit of xo
+  rebuilds in 9.5 s (11.1 s before).
+
 - Faster rebuilds after an edit: borrow inference rescans only the
   callers of a function whose flags changed, the back-end cache's entries
   are read in parallel, and the verification after inlining skips

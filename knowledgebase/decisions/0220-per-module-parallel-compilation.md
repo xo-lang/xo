@@ -415,6 +415,23 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   not cached. The entry: the function after inlining (ssa's codec of
   stage C) and whether the pass changed it. XO_BACKEND_CACHE=verify
   computes every function and fails on a difference.
+  Implemented (2026-10-18, compiler/arm64 inlcache.xo, inline.xo
+  inline_state and inline_one, compiler/xo bcache.xo
+  inline_through_cache): the hits are decoded first on tasks into a
+  list of their own, and the walk in function order puts each in place
+  when it reaches it (decoding inside the walk, on one task, took 2.6
+  s, more than inlining); the computed functions are encoded on tasks
+  after it. The codec had dropped what only the inliner sets (each
+  value's inline site, the function's inline sites), so a function read
+  back lost its DWARF inline records: found by
+  TestBackendCacheModuleFacts under verify, now in the codec (rc cache
+  v6), and TestBackendCacheEditIdentity also compares a linux/arm64
+  build (an ELF with DWARF; the darwin binary has none), which fails
+  without the fix. Measured (the Mac, on c9498eef): a one-constant edit
+  of xo 11.1 s to 9.5 s, a statement edit 11.6 s to 9.7 s, the warm
+  build 9.8 s to 9.1 s; inlining after an edit 2.75 s to 1.6 s (9,520
+  of 9,554 functions read); every cached binary the file the cache-off
+  build writes, verify clean after both edits.
 - **2b, no decoding of what nothing reads**: a function whose inlined
   result is read from the cache needs its reference counting result
   only as the body a later caller's miss copies; the decoding (0.5 s)

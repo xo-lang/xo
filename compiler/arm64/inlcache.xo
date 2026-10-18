@@ -1,0 +1,272 @@
+// The inliner per function through the back-end cache (decision 0220
+// addendum stage D part 2a). inline_module visits the functions in
+// order and copies callee bodies as they are at that moment: a callee
+// before the caller is already inlined into, one after it not. So the
+// result for function i is decided by its body before inlining (its
+// reference counting key, compiler/ssa rccache.xo: that key decides the
+// pass's output, the inliner's input), the inliner's settings, and for
+// every name it can reach through inlinable callees (the closure over
+// their bodies before inlining: inlining copies names, it makes none)
+// the facts inline_one reads of it (index, membership in each inlinable
+// set, indirect, catches, result count) and the version of its body:
+// the inline key of j for j < i, the reference counting key of j for
+// j > i. compiler/xo reads and writes the entries (bcache.xo).
+
+use std/crypto
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The version of the keys and entries.
+const INLINE_CACHE_VERSION = "xo inline cache v1"
+
+/// What inline_cached did: the entries to store (key, entry), the
+/// functions read from entries, the functions whose computed result
+/// differs from their entry (verify), and whether anything changed.
+pub struct InlineOut {
+  pub changed: Bool = false
+  pub stores: List[(Str, Bytes)] = []
+  pub reused: Int = 0
+  pub mismatches: List[Str] = []
+}
+
+/// The inline key of each function of m (before inlining), from the
+/// reference counting keys of its functions (rc_keys, one per function;
+/// "" for one not cached); "" for a function not cached, [] for none.
+pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
+  let n = m.funcs.len()
+  if rc_keys.len() != n {
+    return []
+  }
+  let st = inline_state(m)
+  // the names each function's body before inlining refers to
+  var names: List[List[Str]] = []
+  for f in m.funcs {
+    var seen: Map[Str, Bool] = {}
+    var ns: List[Str] = []
+    for x in f.values {
+      let s = aux_str(x.aux)
+      if !s.is_empty() && !seen.contains(s) {
+        seen[s] = true
+        ns.push(s)
+      }
+    }
+    names.push(ns)
+  }
+  let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\n"
+  var keys: List[Str] = []
+  for i in 0..n {
+    if rc_keys[i].is_empty() {
+      keys.push("")
+      continue
+    }
+    // the closure of i's names over the bodies of inlinable callees
+    var seen: Map[Str, Bool] = {}
+    var all: List[Str] = []
+    var work: List[Str] = []
+    for s in names[i] {
+      seen[s] = true
+      all.push(s)
+      work.push(s)
+    }
+    while !work.is_empty() {
+      let s = work.pop() ?? ""
+      if !inlinable(st, s) {
+        continue
+      }
+      let ci = st.by_name.get(s) ?? -1
+      if ci < 0 {
+        continue
+      }
+      for t in names[ci] {
+        if !seen.contains(t) {
+          seen[t] = true
+          all.push(t)
+          work.push(t)
+        }
+      }
+    }
+    var b = BytesBuilder.new()
+    b.write_str(head)
+    b.write_str("self ${i} ${rc_keys[i]}\n")
+    var ok = true
+    for s in all.sort() {
+      let ci = st.by_name.get(s) ?? -1
+      b.write_str("name ${s.len()}:${s} ${ci} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
+      if ci >= 0 {
+        let g = m.funcs[ci]
+        b.write_str(" ${g.indirect} ${g.catches} ${g.results.len()}")
+        if inlinable(st, s) {
+          let ver = if ci < i { keys[ci] } else if ci > i { rc_keys[ci] } else { "self" }
+          if ver.is_empty() {
+            ok = false
+            break
+          }
+          b.write_str(" ${ver}")
+        }
+      }
+      b.write_str("\n")
+    }
+    keys.push(if ok { crypto.sha256(b.freeze()).to_hex() } else { "" })
+  }
+  keys
+}
+
+/// Whether name s is in one of the inlinable sets.
+fn inlinable(st: InlineState, s: Str) -> Bool {
+  st.small.contains(s) || st.loopy.contains(s) || st.padded.contains(s) || st.fewl.contains(s)
+}
+
+/// inline_apply through the cache: each function with an entry for its
+/// key (keys from inline_keys; [] for none) is read from it, unless
+/// verify, which computes every function and compares; the others are
+/// inlined and encoded for the cache. The same module as inline_apply's.
+/// The entries are decoded first, on up to jobs tasks, into a list of
+/// their own: the walk in function order then puts each in place when it
+/// reaches it, so a function it inlines sees every later callee before
+/// inlining, as inline_module does. The computed functions are encoded
+/// on tasks after the walk.
+pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int) -> InlineOut {
+  var out = InlineOut{}
+  let st = inline_state(m)
+  // the module's types for the codec, without its functions
+  let mt = ssa.Module{types: m.types, type_at: m.type_at, goarch: m.goarch}
+  let n = m.funcs.len()
+  var hits: List[(Int, Bytes)] = []
+  if !verify {
+    for fi in 0..n.min(keys.len()) {
+      if !keys[fi].is_empty() {
+        if let Some(e) = entries.get(keys[fi]) {
+          hits.push((fi, e))
+        }
+      }
+    }
+  }
+  var post: List[Option[(ssa.Func, Bool)]] = []
+  for _ in 0..n {
+    post.push(None)
+  }
+  for (fi, g, ch) in decode_all(mt, hits, jobs) {
+    post[fi] = Some((g, ch))
+  }
+  var computed: List[(Int, Bool)] = []
+  for fi in 0..n {
+    if let Some((g, ch)) = post[fi] {
+      m.funcs[fi] = g
+      out.changed = out.changed || ch
+      out.reused += 1
+      continue
+    }
+    let ch = inline_one(m, st, fi)
+    out.changed = out.changed || ch
+    if fi < keys.len() && !keys[fi].is_empty() {
+      computed.push((fi, ch))
+    }
+  }
+  for (fi, enc) in encode_all(mt, m, computed, jobs) {
+    let k = keys[fi]
+    match entries.get(k) {
+      Some(e) => {
+        if e != enc {
+          out.mismatches.push(m.funcs[fi].name)
+        }
+      }
+      None => out.stores.push((k, enc))
+    }
+  }
+  if break_inline {
+    out.changed = inline_break(m) || out.changed
+  }
+  out
+}
+
+/// The functions of the entries (index, entry), on up to jobs tasks; an
+/// entry that does not decode is left out (its function is computed).
+fn decode_all(mt: ssa.Module, hits: List[(Int, Bytes)], jobs: Int) -> List[(Int, ssa.Func, Bool)] {
+  let ops = ssa.op_names()
+  let n = hits.len()
+  let next = Atomic[Int].new(0)
+  scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, ssa.Func, Bool)] {
+        var mine: List[(Int, ssa.Func, Bool)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for j in i..(i + 64).min(n) {
+            let (fi, e) = hits[j]
+            if let Some((g, ch)) = inline_of_entry(mt, e, ops) {
+              mine.push((fi, g, ch))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, ssa.Func, Bool)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+}
+
+/// The entries of the computed functions of m (index, changed), on up to
+/// jobs tasks; a function the codec cannot hold is left out.
+fn encode_all(mt: ssa.Module, m: ssa.Module, computed: List[(Int, Bool)], jobs: Int) -> List[(Int, Bytes)] {
+  let n = computed.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Bytes)] {
+        var mine: List[(Int, Bytes)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for j in i..(i + 64).min(n) {
+            let (fi, ch) = computed[j]
+            if let Some(enc) = inline_entry(mt, m.funcs[fi], ch) {
+              mine.push((fi, enc))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Bytes)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  // in function order, for the stores' and mismatches' order
+  done.sort_by(fn(x) { x.0 })
+}
+
+/// Function f after inlining and whether the pass changed it, as an
+/// entry; none when the codec cannot hold f.
+fn inline_entry(m: ssa.Module, f: ssa.Func, ch: Bool) -> Option[Bytes] {
+  match ssa.func_entry(m, f) {
+    Some(e) => {
+      var b = BytesBuilder.new()
+      b.write_str(if ch { "1" } else { "0" })
+      b.write(e)
+      Some(b.freeze())
+    }
+    None => None
+  }
+}
+
+fn inline_of_entry(m: ssa.Module, e: Bytes, ops: Map[Str, ssa.Op]) -> Option[(ssa.Func, Bool)] {
+  if e.is_empty() {
+    return None
+  }
+  match ssa.func_of_entry(m, e[1..e.len()], ops) {
+    Some(g) => Some((g, e[0] == 0x31))
+    None => None
+  }
+}

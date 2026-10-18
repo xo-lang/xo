@@ -54,7 +54,7 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 				if err != nil {
 					t.Fatalf("XO_NOLIBC=%s, cache off: %v", nl, err)
 				}
-				got, err := asm(t, cache, "XO_NOLIBC="+nl)
+				got, err := asm(t, cache, "XO_NOLIBC="+nl, "XO_BACKEND_CACHE=on")
 				if err != nil {
 					t.Fatalf("XO_NOLIBC=%s: %v", nl, err)
 				}
@@ -75,7 +75,10 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 // functions (enough for the per-function caches) and one cache directory:
 // a first build, a second, an edit of one function's constant, a
 // statement added to it, and the revert; after each, the cached build's
-// binary must equal the binary of XO_BACKEND_CACHE=off.
+// binary must equal the binary of XO_BACKEND_CACHE=off, for the host and
+// for linux/arm64 (an ELF with DWARF: a decoded function that lost its
+// inline sites changed only that, 2026-10-18). XO_BACKEND_CACHE=on is
+// set, since a gate may export off (scripts/gate.sh).
 func TestBackendCacheEditIdentity(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
@@ -113,10 +116,14 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)}\")\n}\n")
 		return b.String()
 	}
-	build := func(t *testing.T, name string, env ...string) ([]byte, string) {
+	build := func(t *testing.T, name, target string, env ...string) ([]byte, string) {
 		// the same file name in both directories: a Mach-O signature names it
-		out := filepath.Join(work, name, "prog")
-		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), "prog")
+		args := []string{"build", "--backend=arm64", "--phase-times", "-o", out}
+		if target != "" {
+			args = append(args, "--targets="+target)
+		}
+		cmd := exec.Command(xo, append(args, ".")...)
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
 		log, err := cmd.CombinedOutput()
@@ -142,13 +149,15 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(s.k, s.stmt)), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		on, log := build(t, "on")
-		off, _ := build(t, "off", "XO_BACKEND_CACHE=off")
-		if !bytes.Equal(on, off) {
-			t.Errorf("%s: the build through the cache differs from the build with XO_BACKEND_CACHE=off", s.name)
-		}
-		if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
-			t.Errorf("%s: no function read from the cache, so the test compares nothing:\n%s", s.name, log)
+		for _, target := range []string{"", "linux/arm64"} {
+			on, log := build(t, "on", target, "XO_BACKEND_CACHE=on")
+			off, _ := build(t, "off", target, "XO_BACKEND_CACHE=off")
+			if !bytes.Equal(on, off) {
+				t.Errorf("%s %s: the build through the cache differs from the build with XO_BACKEND_CACHE=off", s.name, target)
+			}
+			if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
+				t.Errorf("%s %s: no function read from the cache, so the test compares nothing:\n%s", s.name, target, log)
+			}
 		}
 	}
 }

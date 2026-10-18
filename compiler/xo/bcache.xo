@@ -117,18 +117,19 @@ fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
 /// rccache.xo) in <user cache>/xo/backend/rc; the plain insert_rc_jobs
 /// when the cache is off, for a --release build, or for a module under
 /// 256 functions. verify computes every function and fails the build
-/// when an entry differs.
-fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool) {
+/// when an entry differs. Returns the functions' keys, [] when the cache
+/// is not used (the inliner's cache chains them, stage D part 2a).
+fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool) -> List[Str] {
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() || release || b.m.funcs.len() < 256 {
     b.insert_rc_jobs(jobs)
-    return
+    return []
   }
   let id = self_id(os)
   if id.is_empty() {
     b.insert_rc_jobs(jobs)
-    return
+    return []
   }
   var t = os.clock.now()
   let plan = b.insert_rc_plan(id, jobs)
@@ -149,6 +150,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
   if !out.mismatches.is_empty() {
     fail(os, "XO_BACKEND_CACHE=verify: ${out.mismatches.len()} functions' reference counting differs from their cache entries, the first ${out.mismatches[0]}")
   }
+  plan.keys
 }
 
 /// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.
@@ -156,6 +158,46 @@ fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
   if on {
     os.stdio.eprintln("cache ${what} ${hits}/${total} reused")
   }
+}
+
+/// arm64.inline_apply through the cache (decision 0220 addendum stage D
+/// part 2a, compiler/arm64 inlcache.xo): the inline key of each function
+/// chained from the reference counting keys (rc_keys, rc_cached's), the
+/// entries in <cache>/inl, a hit read instead of inlined. The plain
+/// inline_apply without rc_keys (the cache off, --release, a small
+/// module). verify inlines every function and fails the build when an
+/// entry differs. Whether the module changed.
+fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: Int, release: Bool, brk: Bool, phases: Bool) -> Bool {
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  if dir.is_empty() || release || rc_keys.is_empty() {
+    return arm64.inline_apply(mi, brk)
+  }
+  var t = os.clock.now()
+  let keys = arm64.inline_keys(mi, rc_keys)
+  t = lap(os, phases, "inline.keys", t)
+  let entries = cache_get_all(os, dir, "inl", keys, jobs)
+  t = lap(os, phases, "inline.read", t)
+  let out = arm64.inline_cached(mi, keys, entries, backend_cache_mode(os) == "verify", brk, jobs)
+  var n = 0
+  for (k, e) in out.stores {
+    cache_put(os, entry_path(dir, "inl", k), e)
+    n += e.len()
+  }
+  if !out.stores.is_empty() {
+    prune_backend_cache(os, dir, n)
+  }
+  var nk = 0
+  for k in keys {
+    if !k.is_empty() {
+      nk += 1
+    }
+  }
+  cache_note(os, phases, "inline", out.reused, nk)
+  if !out.mismatches.is_empty() {
+    fail(os, "XO_BACKEND_CACHE=verify: ${out.mismatches.len()} functions' inlining differs from their cache entries, the first ${out.mismatches[0]}")
+  }
+  out.changed
 }
 
 /// The verification of the inlined module mi (inline_or_say) through the

@@ -344,80 +344,107 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
   }
 }
 
-/// Inlines the calls of small functions in m and reports whether it
-/// changed anything.
-fn inline_module(var m: ssa.Module) -> Bool {
+/// What inline_module reads of the whole module before it changes it:
+/// the last function of each name and the inlinable sets.
+struct InlineState {
+  by_name: Map[Str, Int] = {}
+  small: Map[Str, Bool] = {}
+  loopy: Map[Str, Bool] = {}
+  padded: Map[Str, Bool] = {}
+  fewl: Map[Str, Bool] = {}
+  rounds: Int = 0
+}
+
+fn inline_state(m: ssa.Module) -> InlineState {
   let by_name = funcs_by_name(m)
   let (small, loopy, padded, fewl) = inlinable_set(m, by_name)
-  var changed = false
   // XO_PASSES=-inline: no call is inlined (devirtualize, which runs
   // with the call search, neither); the other passes here still run
   let rounds = if pass_on(m, "inline") { 200 } else { 0 }
+  InlineState{by_name: by_name, small: small, loopy: loopy, padded: padded, fewl: fewl, rounds: rounds}
+}
+
+/// Inlines the calls of small functions in m and reports whether it
+/// changed anything.
+fn inline_module(var m: ssa.Module) -> Bool {
+  let st = inline_state(m)
+  var changed = false
   for fi in 0..m.funcs.len() {
-    var f = m.funcs[fi]
-    m.funcs[fi] = ssa.Func{name: ""}
-    var here = false
-    var loop_left = INLINE_LOOP_SITES
-    for _ in 0..rounds {
-      if pass_on(m, "devirtualize") {
-        devirtualize(f, m, by_name)
-      }
-      var v = find_call(f, m, small, by_name)
-      if v < 0 {
-        v = find_closure_call(f, m, padded, by_name)
-      }
-      if v < 0 && loop_left > 0 {
-        v = find_loop_call(f, m, loopy, by_name)
-        if v >= 0 {
-          loop_left -= 1
-        }
-      }
-      if v < 0 {
-        // the few sites rule's callees, at loop sites only: their own
-        // pass, not the loop budget's (two sites each at most)
-        v = find_loop_call(f, m, fewl, by_name)
-      }
-      if v < 0 {
-        break
-      }
-      let ci = by_name.get(aux_str(f.values[v].aux)) ?? -1
-      inline_call(f, v, m.funcs[ci])
-      changed = true
-      here = true
-    }
-    if here {
-      // one block per straight run again (ssa.merge_straight)
-      let _j = ssa.merge_straight(f, m, block_calls(f))
-      if pass_on(m, "fold_consts") {
-        fold_consts(f, m.types)
-      }
-      // a callee's release of its parameter meets the caller's retain
-      if pass_on(m, "cancel_rc_pairs") {
-        let _c = cancel_rc_pairs(f)
-      }
-    }
-    // decision 0257: after inlining, which brings the loops' list reads
-    // into one function
-    if pass_on(m, "hoist_fields") && hoist_fields(f, m.types) {
-      changed = true
-      // a dropped landing (drop_proven_pads) leaves a jump to a block
-      // only it reaches: join them, so a loop body's loads are one
-      // block for cluster_mem
-      let _k = ssa.merge_straight(f, m, block_calls_inline(f))
-    }
-    // an inlined body repeats its caller's arithmetic (j + 1 tested,
-    // then indexed with): computed once
-    if pass_on(m, "fold_tuples") && ssa.fold_tuple_fields(f, m) {
+    if inline_one(m, st, fi) {
       changed = true
     }
-    if pass_on(m, "cse") && ssa.cse(f, m) {
-      changed = true
-      // a block left only its jump joins the next
-      let _s = ssa.merge_straight(f, m, block_calls_inline(f))
-    }
-    m.funcs[fi] = f
   }
   changed
+}
+
+/// inline_module's work on function fi: the bodies it copies are the
+/// module's at that moment (functions before fi already inlined into);
+/// whether it changed fi.
+fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
+  var ch = false
+  var f = m.funcs[fi]
+  m.funcs[fi] = ssa.Func{name: ""}
+  var here = false
+  var loop_left = INLINE_LOOP_SITES
+  for _ in 0..st.rounds {
+    if pass_on(m, "devirtualize") {
+      devirtualize(f, m, st.by_name)
+    }
+    var v = find_call(f, m, st.small, st.by_name)
+    if v < 0 {
+      v = find_closure_call(f, m, st.padded, st.by_name)
+    }
+    if v < 0 && loop_left > 0 {
+      v = find_loop_call(f, m, st.loopy, st.by_name)
+      if v >= 0 {
+        loop_left -= 1
+      }
+    }
+    if v < 0 {
+      // the few sites rule's callees, at loop sites only: their own
+      // pass, not the loop budget's (two sites each at most)
+      v = find_loop_call(f, m, st.fewl, st.by_name)
+    }
+    if v < 0 {
+      break
+    }
+    let ci = st.by_name.get(aux_str(f.values[v].aux)) ?? -1
+    inline_call(f, v, m.funcs[ci])
+    ch = true
+    here = true
+  }
+  if here {
+    // one block per straight run again (ssa.merge_straight)
+    let _j = ssa.merge_straight(f, m, block_calls(f))
+    if pass_on(m, "fold_consts") {
+      fold_consts(f, m.types)
+    }
+    // a callee's release of its parameter meets the caller's retain
+    if pass_on(m, "cancel_rc_pairs") {
+      let _c = cancel_rc_pairs(f)
+    }
+  }
+  // decision 0257: after inlining, which brings the loops' list reads
+  // into one function
+  if pass_on(m, "hoist_fields") && hoist_fields(f, m.types) {
+    ch = true
+    // a dropped landing (drop_proven_pads) leaves a jump to a block
+    // only it reaches: join them, so a loop body's loads are one
+    // block for cluster_mem
+    let _k = ssa.merge_straight(f, m, block_calls_inline(f))
+  }
+  // an inlined body repeats its caller's arithmetic (j + 1 tested,
+  // then indexed with): computed once
+  if pass_on(m, "fold_tuples") && ssa.fold_tuple_fields(f, m) {
+    ch = true
+  }
+  if pass_on(m, "cse") && ssa.cse(f, m) {
+    ch = true
+    // a block left only its jump joins the next
+    let _s = ssa.merge_straight(f, m, block_calls_inline(f))
+  }
+  m.funcs[fi] = f
+  ch
 }
 
 /// Per block of f, whether it makes a call (not an intrinsic emitted
