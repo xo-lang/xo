@@ -164,3 +164,28 @@ between in compiler/ and std/native), both servers built from
 
 The take side of tlssrv (`var c = match take_conn(t) { Some(x) => x ...}`)
 no longer shares and drops the connection.
+
+## linux/amd64, the first baseline (2026-10-18)
+
+`ARCH=amd64 bench/perf/http/callgrind-docker.sh` (an emulated
+linux/amd64 container: valgrind counts the guest's instructions, the
+same run to run; 8 minutes), main bfdc0a6c, N=100, REPS=2, instructions
+per request, Xo's own amd64 backend (decision 0254) against LLVM:
+
+| Scenario | amd64 | LLVM | amd64 / LLVM | arm64 / LLVM on arm64 |
+|---|---|---|---|---|
+| plain | 37,277 / 37,290 | 28,740 / 28,941 | 1.30 | about 1.14 |
+| plain-newconn | 48,045 / 47,994 | 37,074 / 36,961 | 1.30 | |
+| tls | 88,330 / 88,929 | 61,809 / 62,010 | 1.43 | 1.25 |
+| tls-newconn | 5,653,593 / 5,652,832 | 4,143,682 / 4,146,802 | 1.36 | 1.13 |
+| h2 | 145,600 / 145,542 | 98,447 / 98,617 | 1.48 | 1.32 |
+
+A full TLS handshake costs both amd64 backends far more than arm64's
+(LLVM 4.14M against 2.23M on arm64): the crypto that has arm64
+instructions (AES, PMULL, SHA) runs as portable code or is slower here.
+The biggest per function gaps (sent to Xo lang 5): tlssrv.flush (h2
+12,656 against 1,514: the var-parameter record copy Xo lang 4 is fixing
+on arm64), tlssrv write and recv_some (the same shape), any_of's share
+walk of the TLS connection (both backends), allocation fast paths and
+drops not inlined (alloc.alloc 6,134 against 4,450; `drop Str` 1,396
+against 0), and the AES-GCM loops (Gcm.ctr 2,052 against 1,315).
