@@ -884,14 +884,22 @@ fn (var g: G) thread_const() {
   // compare's `c != 0`, then its caller's `c < 0`): again until nothing
   // moves
   var rounds = 0
-  while rounds < 4 && g.thread_const_once(kd) {
+  while rounds < 16 && g.thread_const_once(kd) {
     rounds += 1
   }
 }
 
 fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
   var moved = false
-  for p in g.all_blocks() {
+  let blocks = g.all_blocks()
+  let preds = g.mpreds_all(blocks)
+  var bodies: Map[Int, List[Bool]] = {}
+  if !g.hot.is_empty() {
+    for (h, body) in g.dfs_loops(g.hot[0], preds) {
+      bodies[h] = body
+    }
+  }
+  for p in blocks {
     if g.term_kind(p) != K_JUMP {
       continue
     }
@@ -900,6 +908,40 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     // their moves are copied into p (opt.go threadConst, decision 0184)
     let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR {
+      continue
+    }
+    // a jump into a loop past its header from outside: only the loop's
+    // one entry may, through blocks only it reaches (the loop is then
+    // entered further on); else the loop has two entries, and
+    // hoist_consts' natural loop of it reaches outside
+    // (tlsname.ip_string read a register no path wrote, 2026-10-18).
+    // The loops are found again after such a jump moves.
+    var path = g.chain_blocks(p, g.blocks[p].insts[np - 1].targets[0])
+    path.push(j)
+    var entry = false
+    var two = false
+    var from = p
+    // whether the blocks passed so far are reached only through p (they
+    // die when p jumps past them)
+    var only = true
+    for h in path {
+      if let Some(body) = bodies.get(h) {
+        if !body[from] {
+          entry = true
+          if !only {
+            two = true
+          }
+          for q in preds[h] {
+            if q != from && !body[q] {
+              two = true
+            }
+          }
+        }
+      }
+      only = only && preds[h].len() == 1
+      from = h
+    }
+    if two {
       continue
     }
     let br = g.blocks[j].insts[0]
@@ -983,8 +1025,25 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     }
     g.put_insts(p, ins)
     moved = true
+    if entry {
+      return true
+    }
   }
   moved
+}
+
+/// The blocks move_chain(p, j0) passes through before its test.
+fn (g: G) chain_blocks(p: Int, j0: Int) -> List[Int] {
+  var j = j0
+  var out: List[Int] = []
+  var steps = 0
+  while steps < 8 && j != p && g.blocks[j].insts.len() == 2 && g.blocks[j].insts[0].kind == K_PMOVE &&
+    g.blocks[j].insts[1].kind == K_JUMP && g.blocks[j].insts[1].targets.len() == 1 {
+    out.push(j)
+    j = g.blocks[j].insts[1].targets[0]
+    steps += 1
+  }
+  out
 }
 
 /// Follows j0, p's jump target, through blocks that only move registers
