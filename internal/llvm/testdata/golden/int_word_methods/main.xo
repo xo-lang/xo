@@ -1,0 +1,15 @@
+// Int's word methods (decision 0260): every method at the word's edges,
+// the same on every backend (inline intrinsics on the native ones).
+fn main(os: Os) {
+  let vals = [0, 1, -1, 2, -2, 9223372036854775807, -9223372036854775807 - 1, 81985529216486895, -81985529216486895, 255, 3735928559, 65537]
+  let ks = [0, 1, 7, 31, 32, 63, 64, 65, -1]
+  for n in vals {
+    os.stdio.println("${n} swap ${n.swap_bytes()}")
+    for k in ks {
+      os.stdio.println("  ${k} shl ${n.wrapping_shl(k)} shr ${n.shr_logical(k)} ror ${n.rotate_right(k)} ror32 ${n.rotate_right32(k)}")
+    }
+    for m in vals {
+      os.stdio.println("  * ${m} add ${n.wrapping_add(m)} sub ${n.wrapping_sub(m)} mul ${n.wrapping_mul(m)} hi ${n.mul_hi_unsigned(m)} lt ${n.lt_unsigned(m)} le ${n.le_unsigned(m)}")
+    }
+  }
+}

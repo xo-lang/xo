@@ -101,12 +101,23 @@ Rune.try(n: Int) -> Rune?
 fn (n: Int) abs() -> Int
 fn (n: Int) pow(e: Int) -> Int
 fn (n: Int) wrapping_add(m: Int) -> Int      // also wrapping_sub, wrapping_mul
+fn (n: Int) wrapping_shl(k: Int) -> Int      // k mod 64, the bits shifted out dropped
+fn (n: Int) shr_logical(k: Int) -> Int       // the 64 bits shifted right by k mod 64, zeros in (`>>` keeps the sign)
+fn (n: Int) rotate_right(k: Int) -> Int      // also rotate_right32: the low 32 bits by k mod 32, zero extended
+fn (n: Int) swap_bytes() -> Int              // the 8 bytes reversed
+fn (n: Int) mul_hi_unsigned(m: Int) -> Int   // the high word of the 128 bit product as unsigned words
+fn (n: Int) lt_unsigned(m: Int) -> Bool      // also le_unsigned: compared as unsigned 64 bit words
 fn (n: Int) saturating_add(m: Int) -> Int    // also saturating_sub, saturating_mul
 fn (n: Int) checked_add(m: Int) -> Int?      // also checked_sub, checked_mul, checked_div
 
 fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sqrt
 fn (f: Float) is_nan() -> Bool
 ```
+
+Int's word methods (decision 0260) treat an `Int` as a 64 bit word for
+hashes, checksums, and protocol and crypto code: none faults, and the
+native backends compile each to its instruction (a shift, `ror`, `rev`,
+`umulh`, an unsigned compare), not a call.
 
 `Int.parse(s)` is Go's `strconv.ParseInt(s, 10, 64)` and `Float.parse(s)`
 is `strconv.ParseFloat(s, 64)`, None where they return an error: decimal

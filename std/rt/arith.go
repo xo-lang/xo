@@ -2,6 +2,7 @@ package rt
 
 import (
 	"math"
+	"math/bits"
 	"strconv"
 	"unsafe"
 )
@@ -278,6 +279,37 @@ func Int_wrapping_sub(_ *Task, a, b int64) int64 { return a - b }
 
 // Int_wrapping_mul is `n.wrapping_mul(m)`.
 func Int_wrapping_mul(_ *Task, a, b int64) int64 { return a * b }
+
+// Int_wrapping_shl is `n.wrapping_shl(k)` (decision 0260): k mod 64.
+func Int_wrapping_shl(_ *Task, a, k int64) int64 { return a << (uint64(k) & 63) }
+
+// Int_shr_logical is `n.shr_logical(k)`: a logical shift by k mod 64.
+func Int_shr_logical(_ *Task, a, k int64) int64 { return int64(uint64(a) >> (uint64(k) & 63)) }
+
+// Int_rotate_right is `n.rotate_right(k)`.
+func Int_rotate_right(_ *Task, a, k int64) int64 {
+	return int64(bits.RotateLeft64(uint64(a), -int(uint64(k)&63)))
+}
+
+// Int_rotate_right32 is `n.rotate_right32(k)`: the low 32 bits, zero extended.
+func Int_rotate_right32(_ *Task, a, k int64) int64 {
+	return int64(bits.RotateLeft32(uint32(a), -int(uint64(k)&31)))
+}
+
+// Int_swap_bytes is `n.swap_bytes()`.
+func Int_swap_bytes(_ *Task, a int64) int64 { return int64(bits.ReverseBytes64(uint64(a))) }
+
+// Int_mul_hi_unsigned is `n.mul_hi_unsigned(m)`.
+func Int_mul_hi_unsigned(_ *Task, a, b int64) int64 {
+	hi, _ := bits.Mul64(uint64(a), uint64(b))
+	return int64(hi)
+}
+
+// Int_lt_unsigned is `n.lt_unsigned(m)`.
+func Int_lt_unsigned(_ *Task, a, b int64) bool { return uint64(a) < uint64(b) }
+
+// Int_le_unsigned is `n.le_unsigned(m)`.
+func Int_le_unsigned(_ *Task, a, b int64) bool { return uint64(a) <= uint64(b) }
 
 // Int_saturating_add is `n.saturating_add(m)`.
 func Int_saturating_add(_ *Task, a, b int64) int64 {

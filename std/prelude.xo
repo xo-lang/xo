@@ -165,6 +165,24 @@ fn (n: Int) pow(e: Int) -> Int
 fn (n: Int) wrapping_add(m: Int) -> Int
 fn (n: Int) wrapping_sub(m: Int) -> Int
 fn (n: Int) wrapping_mul(m: Int) -> Int
+/// n shifted left by k mod 64 (the bits shifted out dropped; decision
+/// 0260: Int's word methods, inline on every native backend).
+fn (n: Int) wrapping_shl(k: Int) -> Int
+/// n's 64 bits shifted right by k mod 64 with zeros in at the top (a
+/// logical shift: `>>` keeps the sign).
+fn (n: Int) shr_logical(k: Int) -> Int
+/// n's 64 bits rotated right by k mod 64.
+fn (n: Int) rotate_right(k: Int) -> Int
+/// n's low 32 bits rotated right by k mod 32, zero extended.
+fn (n: Int) rotate_right32(k: Int) -> Int
+/// n's 8 bytes in the reverse order.
+fn (n: Int) swap_bytes() -> Int
+/// The high 64 bits of the 128 bit product of n and m as unsigned words.
+fn (n: Int) mul_hi_unsigned(m: Int) -> Int
+/// Whether n < m as unsigned 64 bit words.
+fn (n: Int) lt_unsigned(m: Int) -> Bool
+/// Whether n <= m as unsigned 64 bit words.
+fn (n: Int) le_unsigned(m: Int) -> Bool
 fn (n: Int) saturating_add(m: Int) -> Int
 fn (n: Int) saturating_sub(m: Int) -> Int
 fn (n: Int) saturating_mul(m: Int) -> Int

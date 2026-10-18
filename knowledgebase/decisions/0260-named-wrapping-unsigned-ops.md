@@ -1,7 +1,10 @@
 # 0260: Named wrapping and unsigned operations
 
-Status: Proposed (xo-4, 2026-10-18; for the owner: the language surface
-of std's word arithmetic).
+Status: Accepted (owner, 2026-10-18), with seed 0.21.0. Step 1 (the
+methods, their native and Go bodies, and the SSA builders' inline
+lowering: compiler/ssa call.xo word_method; golden int_word_methods)
+lands before the seed, which today's seed builds; the std migration of
+the rt.int_wrap calls and the repotest ban land after it.
 
 ## Context
 

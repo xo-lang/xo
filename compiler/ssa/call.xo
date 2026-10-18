@@ -133,6 +133,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
         return b.undef(b.nat_of(x))
       }
     }
+    if let Some(v) = b.word_method(x, ci) {
+      return v
+    }
     let impl = b.impl_of(fo)
     if impl >= 0 {
       // a dependency's log record carries the dependency (decision
@@ -1927,6 +1930,56 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")
   b.undef(nt)
+}
+
+/// Int's word methods (decision 0260) as the intrinsics their native
+/// bodies call (std/native/prelude.xo), inline in every emitter with no
+/// call and no landing check, so the no allocation modules and the adcs
+/// chains may use them: wrapping_add, wrapping_sub, wrapping_mul,
+/// wrapping_shl, shr_logical, rotate_right, rotate_right32, swap_bytes
+/// as rt.int_wrap's operations 0 to 7, mul_hi_unsigned as rt.u64_mul_hi,
+/// lt_unsigned and le_unsigned as the signed compare of both words with
+/// the sign bit flipped. None for any other call.
+fn (var b: Builder) word_method(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  if fo < 0 || ci.recv.len() != 1 {
+    return None
+  }
+  let r = b.c.objs[fo].recv
+  if r < 0 || b.c.objs[fo].is_static || b.obj_name(r) != "Int" || !b.c.mods[b.obj_mod(fo)].is_prelude {
+    return None
+  }
+  let code = match b.obj_name(fo) {
+    "wrapping_add" => 0
+    "wrapping_sub" => 1
+    "wrapping_mul" => 2
+    "wrapping_shl" => 3
+    "shr_logical" => 4
+    "rotate_right" => 5
+    "rotate_right32" => 6
+    "swap_bytes" => 7
+    "mul_hi_unsigned" => 8
+    "lt_unsigned" => 9
+    "le_unsigned" => 10
+    _ => -1
+  }
+  if code < 0 {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  let it = b.int_t()
+  let a = b.value_as(ci.recv[0], it)
+  let c = if args.is_empty() { b.cint(0) } else { b.value_as(args[0].value, it) }
+  if code <= 7 {
+    return Some(b.rt("int_wrap", it, [b.cint(code), a, c]))
+  }
+  if code == 8 {
+    return Some(b.rt("u64_mul_hi", it, [a, c]))
+  }
+  let min = b.cint(-9223372036854775807 - 1)
+  let ax = b.add(Op.Xor, it, Aux.None, [a, min])
+  let cx = b.add(Op.Xor, it, Aux.None, [c, min])
+  Some(b.add(if code == 9 { Op.Lt } else { Op.Le }, b.bool_t(), Aux.None, [ax, cx]))
 }
 
 fn strip_parens(e: Expr) -> Expr {

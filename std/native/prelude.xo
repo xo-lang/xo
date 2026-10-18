@@ -193,6 +193,26 @@ fn int_wrapping_sub(n: Int, m: Int) -> Int { rt.int_wrap(1, n, m) }
 
 fn int_wrapping_mul(n: Int, m: Int) -> Int { rt.int_wrap(2, n, m) }
 
+// Int's word methods (decision 0260): the SSA builders lower these calls
+// inline as the same intrinsics (call.xo word_method); the bodies serve an
+// xo that does not know them yet.
+
+fn int_wrapping_shl(n: Int, k: Int) -> Int { rt.int_wrap(3, n, k) }
+
+fn int_shr_logical(n: Int, k: Int) -> Int { rt.int_wrap(4, n, k) }
+
+fn int_rotate_right(n: Int, k: Int) -> Int { rt.int_wrap(5, n, k) }
+
+fn int_rotate_right32(n: Int, k: Int) -> Int { rt.int_wrap(6, n, k) }
+
+fn int_swap_bytes(n: Int) -> Int { rt.int_wrap(7, n, 0) }
+
+fn int_mul_hi_unsigned(n: Int, m: Int) -> Int { rt.u64_mul_hi(n, m) }
+
+fn int_lt_unsigned(n: Int, m: Int) -> Bool { (n ^ (-9223372036854775807 - 1)) < (m ^ (-9223372036854775807 - 1)) }
+
+fn int_le_unsigned(n: Int, m: Int) -> Bool { (n ^ (-9223372036854775807 - 1)) <= (m ^ (-9223372036854775807 - 1)) }
+
 fn checked(op: Int, n: Int, m: Int) -> Int? {
   if !ints.fits(op, n, m) {
     return None
