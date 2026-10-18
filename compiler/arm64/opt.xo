@@ -1309,8 +1309,12 @@ fn (var g: G) hoist_consts() {
       continue
     }
     // across a call a constant needs a callee saved register, and a
-    // spilled one would be reloaded from the stack: leave loops that call
-    // on their hot path alone
+    // spilled one is reloaded from the stack: in a loop that calls on its
+    // hot path only the dearest constants move (three instructions or
+    // more, at most HOIST_CALL_CONSTS, dearest first), where even a reload
+    // is cheaper than making them (2026-10-17: the hash multiplier and a
+    // modulus's magic number were four instructions each in every
+    // iteration of update's and grid's loops)
     var calls = false
     for b in 0..g.blocks.len() {
       if !body[b] || g.blocks[b].cold {
@@ -1320,8 +1324,29 @@ fn (var g: G) hoist_consts() {
         calls = calls || inst.kind == K_CALL
       }
     }
+    // under calls: the lines of the constants that may move, dearest
+    // first, cut at the budget
+    var min_lines = 0
     if calls {
-      continue
+      var costs: List[Int] = []
+      for b in blocks {
+        if !body[b] {
+          continue
+        }
+        for inst in g.blocks[b].insts {
+          if inst.konst && !moved.contains(inst.defs[0]) {
+            let k = inst_lines(inst)
+            if k >= 3 {
+              costs.push(k)
+            }
+          }
+        }
+      }
+      if costs.is_empty() {
+        continue
+      }
+      costs = costs.sort()
+      min_lines = if costs.len() > HOIST_CALL_CONSTS { costs[costs.len() - HOIST_CALL_CONSTS] } else { costs[0] }
     }
     var hoisted: List[Inst] = []
     for b in blocks {
@@ -1331,7 +1356,7 @@ fn (var g: G) hoist_consts() {
       var out: List[Inst] = []
       var any = false
       for inst in g.blocks[b].insts {
-        if inst.konst && !moved.contains(inst.defs[0]) {
+        if inst.konst && !moved.contains(inst.defs[0]) && (!calls || (inst_lines(inst) >= min_lines && hoisted.len() < HOIST_CALL_CONSTS)) {
           hoisted.push(inst)
           any = true
           continue
@@ -1349,6 +1374,21 @@ fn (var g: G) hoist_consts() {
     let n = ins.len()
     g.blocks[pre].insts = ins[0..n - 1] + hoisted + [ins[n - 1]]
   }
+}
+
+/// The most constants hoist_consts moves out of a loop that calls on its
+/// hot path (each lives in a callee saved register or a stack slot).
+const HOIST_CALL_CONSTS = 4
+
+/// The machine instructions of inst's template (its lines).
+fn inst_lines(inst: Inst) -> Int {
+  var n = 1
+  for c in inst.text.bytes() {
+    if c == '\n' {
+      n += 1
+    }
+  }
+  n
 }
 
 /// The mnemonics hoist_invariants moves: arithmetic of registers that
