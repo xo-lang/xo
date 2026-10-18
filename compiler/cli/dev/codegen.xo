@@ -15,7 +15,10 @@
 // `xo asm --backend=B DIR` prints the code: arm64 functions start at a
 // `// func NAME` line, LLVM ones at `define ... @"x.NAME"(` and end at a
 // line `}`. A line `// func MOD.NAME` names a function of another
-// module (a std runtime module's) for the patterns below it.
+// module (a std runtime module's) for the patterns below it. A backend
+// key with an architecture, `// llvm/arm64: ...`, is checked only where
+// `xo asm` targets it (the host: LLVM's IR holds the target's inline
+// assembly, so arm64's AES rounds are not an x86_64 host's).
 
 use std/regexp
 use std/task
@@ -27,6 +30,8 @@ pub struct Pattern {
   pub line: Int
   pub func: Str
   pub backend: Str
+  /// the architecture the pattern needs ("" for any)
+  pub arch: Str = ""
   pub re: Str
   /// true: the code must not match.
   pub negate: Bool = false
@@ -50,16 +55,19 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       cur = t.trim_prefix("// func ").trim()
       continue
     }
-    for be in ["arm64", "llvm"] {
-      let head = "// ${be}: "
+    for key in ["arm64", "llvm", "llvm/arm64", "llvm/amd64"] {
+      let head = "// ${key}: "
       if !t.starts_with(head) {
         continue
       }
+      let parts = key.split("/")
+      let be = parts[0]
+      let arch = parts.get(1) ?? ""
       for m in item.find_all(t[head.len()..]) {
         match item.captures(m) {
           Some(c) => {
             let re = unescape(c[2] ?? "")
-            out.push(Pattern{file: file, line: i + 1, func: cur, backend: be, re: re, negate: (c[1] ?? "") == "-"})
+            out.push(Pattern{file: file, line: i + 1, func: cur, backend: be, arch: arch, re: re, negate: (c[1] ?? "") == "-"})
           }
           None => {}
         }
@@ -84,6 +92,8 @@ test "patterns" {
   expect(ps[2].func == "b" && ps[2].backend == "llvm" && ps[2].line == 6)
   let other = patterns("m.xo", "fn main() {}\n// func ct.pick\n// arm64: -\"csel\"\n")
   expect(other.len() == 1 && other[0].func == "ct.pick" && other[0].negate)
+  let ar = patterns("m.xo", "fn c() {\n  // llvm/arm64: \"aese\"\n}\n")
+  expect(ar.len() == 1 && ar[0].backend == "llvm" && ar[0].arch == "arm64")
 }
 
 /// functions cuts the output of `xo asm` into functions by name.
@@ -218,7 +228,8 @@ fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str
   for e in os.fs.read_dir(d).ok() ?? [] {
     if !e.is_dir && e.name.ends_with(".xo") {
       for p in patterns("${d}/${e.name}", os.fs.read_text("${d}/${e.name}").ok() ?? "") {
-        if p.backend == backend {
+        // an architecture's pattern only where the host is it
+        if p.backend == backend && (p.arch.is_empty() || h.host.ends_with("/${p.arch}")) {
           ps.push(p)
         }
       }

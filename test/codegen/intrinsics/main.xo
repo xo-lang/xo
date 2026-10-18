@@ -60,19 +60,19 @@ fn main(os: Os) {
 // The CPU's AES rounds.
 // func aesgcm.hw4
 // arm64: "aese v30.16b, v31.16b\n\taesmc v30.16b, v30.16b" "aese v30.16b, v31.16b\n\tldr q31"
-// llvm: "aese \$0.16b, \$2.16b\\0Aaesmc"
+// llvm/arm64: "aese \$0.16b, \$2.16b\\0Aaesmc"
 
 // SHA-256's compression with the CPU's instructions (decision 0231's
 // SHA-256 section): the state packed into v16 and v17, four rounds a
 // sha256h and sha256h2.
 // func sha256.block256
 // arm64: "sha256su0 v19.4s, v20.4s" "sha256h q16, q17, v31.4s\n\tsha256h2 q17, q18, v31.4s" "uzp1 v16.4s, v16.4s, v17.4s"
-// llvm: "sha256h \$\{0:q\}" "sha256su1 \$0.4s"
+// llvm/arm64: "sha256h \$\{0:q\}" "sha256su1 \$0.4s"
 
 // GHASH's carry-less products.
 // func aesgcm.Gcm.mul_hw
 // arm64: "pmull v30.1q, v30.1d, v31.1d" "umov x[0-9]+, v30.d\[1\]"
-// llvm: "pmull \$0.1q"
+// llvm/arm64: "pmull \$0.1q"
 
 // std/native/sys_c.xo (decision 0232): a strong C call, and weak
 // references read through the GOT (arm64) or compared with null (LLVM).

@@ -183,6 +183,107 @@ bytes stay clang's:
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
+## Stage 6 (Proposed, xo-fa, 2026-10-18): darwin/amd64 and windows/amd64
+
+The owner asked (2026-10-18, through the lead) for a plan and size for
+the amd64 backend on Windows and on macOS x86_64, ranked. Today both
+build through LLVM only: the amd64 backend emits ELF and links with
+elflink (stages 2a and 4).
+
+What exists to build on: the x86_64 encoder and ELF assembler
+(selfhost/macho enc_amd64.xo 1,479 lines, asm_amd64.xo 333); elflink's
+x86_64 links (1,992 lines, both arches); the Mach-O assembler, linker and
+compact unwind writer, arm64 only (asm.xo 1,340, link.xo 1,359,
+unwind.xo 291, obj.xo 235: CPU_TYPE_ARM64 and the ARM64_RELOC_* set
+hard coded); the Windows runtime in Xo that LLVM builds use
+(std/native/llrt windows.xo 1,335, sys_windows.xo 302, and unwind.xo's
+Windows path through RtlLookupFunctionEntry and RtlVirtualUnwind, which
+needs .pdata and .xdata for every Xo function); the winxc cross
+toolchain (lld-link, the xwin sysroot) and Wine under box64 in Docker
+for running Windows programs; the owner's Intel MacBook for darwin/amd64
+runs (a real CPU: SHA-NI, AES-NI, native speed).
+
+### 6a. darwin/amd64 (recommended first)
+
+- The calling convention is System V, as Linux: x86_call_locs, the
+  callee saved set and the frame stay. The emitter's changes are the
+  Mach-O spellings: `_sym` names, `_sym@GOTPCREL(%rip)` for library
+  data and weak references, thread locals through `_xo_tlocal@TLVP(%rip)`
+  and a call of the descriptor's thunk (the arm64 darwin form, x86
+  registers: the thunk preserves all but rax and rdi), `.subsections_via_symbols`.
+- Assembler: Mach-O x86_64 objects (CPU_TYPE_X86_64, the relocations
+  X86_64_RELOC_SIGNED(_1/_2/_4), BRANCH, GOT_LOAD, GOT, TLV, UNSIGNED,
+  SUBTRACTOR), sharing asm.xo's directive and section layer.
+- Linker: link.xo's x86_64 path: stubs (`jmp *GOT(%rip)`) and lazy
+  binding or chained fixups as for arm64, GOT and TLV relocations, the
+  load commands with CPU_TYPE_X86_64; no code signature is required on
+  Intel (keep the ad hoc one for parity).
+- Unwind: compact unwind for x86_64 (UNWIND_X86_64_MODE_RBP_FRAME with
+  the pushed registers' encoding; the emitter's frames are rbp frames, so
+  every function fits; frameless leaves use MODE_STACK_IMMD), from the
+  CFI the emitter already writes (cfi.xo reads it for arm64).
+- Size: about 1,500 to 2,500 lines (assembler relocations 300 to 500,
+  linker 600 to 1,000, compact unwind 200 to 300, emitter 200 to 400,
+  tests). Two to four days of one session.
+- Verification: the 190 goldens and the fixed point on the owner's Intel
+  MacBook (bench/results intel runs; xo cross built on the arm64 Mac and
+  copied over), byte comparison of the assembler against clang's
+  `-target x86_64-apple-macos` as stage 1 did for ELF.
+
+### 6b. windows/amd64
+
+- Calling convention (Win64): arguments in rcx, rdx, r8, r9 (each
+  position one register of either class: xmm0 to xmm3 for a Float in
+  that position), 32 bytes of shadow space above the return address that
+  every caller reserves, results in rax (and xmm0), callee saved rbx,
+  rbp, rdi, rsi, rsp, r12 to r15 and xmm6 to xmm15 (SysV saves no xmm).
+  Xo's own calls can keep the SysV like internal convention (as the
+  arm64 backend keeps one ABI) with Win64 only at the boundary: calls of
+  platform functions (sys_windows.xo's kernel32, ws2_32, bcrypt), the
+  exported entry and callbacks the OS makes (the vectored exception
+  handler, thread starts). regalloc gains the Win64 callee saved xmm set
+  where a function calls the platform.
+- Unwind and faults: .pdata (RUNTIME_FUNCTION per function) and .xdata
+  (UNWIND_INFO: UWOP_PUSH_NONVOL per pushed register, UWOP_SET_FPREG for
+  rbp, UWOP_ALLOC_SMALL/LARGE, the chained info for shrink wrapping's
+  region), so RtlVirtualUnwind walks Xo frames for the fault unwinder
+  and the profiler. Leaf functions without a frame need no entry.
+- Thread locals: the TLS index (`_tls_index`, `__tls_array` at gs:0x58),
+  `.tls$` sections and IMAGE_REL_AMD64_SECREL relocations, as clang
+  writes them.
+- Object and link: COFF objects (IMAGE_FILE_MACHINE_AMD64, the
+  IMAGE_REL_AMD64_REL32(_1.._5), ADDR64, ADDR32NB for .pdata, SECREL,
+  SECTION relocations, COMDAT none), linked by lld-link through the
+  winxc toolchain first (the import libraries from the xwin sysroot);
+  Xo's own PE linker (import tables, base relocations, the TLS directory,
+  the exception directory) as a later step, about the size of elflink.
+- Size: about 4,000 to 6,000 lines with lld-link (ABI boundary 500 to
+  800, .pdata/.xdata 500 to 800, COFF writer and relocations 800 to
+  1,200, TLS 200 to 300, the runtime's Win64 entry points 300 to 500,
+  tests), plus 2,500 to 3,500 for an own PE linker. One to two weeks of
+  one session.
+- Verification: the goldens under Wine with box64 (structured exceptions
+  work there; network and file system goldens have known Wine gaps,
+  toolchain.md), and on a Windows EC2 instance or CI runner once CI is
+  back (remote-windows.sh; agents do not start it themselves).
+
+### Order
+
+The lead suggested Windows first for its audience. The evidence for
+macOS first: (1) it is about a third of the work, because the System V
+convention and the rbp frames carry over unchanged; (2) it can be
+verified on real hardware now (the owner's Intel MacBook runs the
+goldens and the fixed point at native speed), while Windows has only
+Wine under box64 here, where wall times mean nothing and several
+goldens fail for Wine reasons; (3) it builds the second object format
+and the non ELF link path that Windows needs too (a relocation model
+per format, unwind tables from the same CFI), so Windows starts from a
+generalized assembler and linker. The case for Windows first is the
+audience, and that darwin/amd64 is a shrinking platform (Apple ships no
+Intel Macs). Proposed: 6a, then 6b with lld-link, then the own PE
+linker; reverse 6a and 6b if the owner weighs the audience above the
+verification gap.
+
 ## Consequences
 
 Stage 2a landed 2026-10-17: `xo build --backend=amd64` builds for

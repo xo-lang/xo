@@ -3482,7 +3482,12 @@ A windows/amd64 program cross linked as above:
     scripts/docker-wine.sh box64 $WORK 'wineboot -u >/dev/null 2>&1; sh /xo/scripts/golden-run.sh /work/w/P /xo/internal/llvm/testdata/golden/P'
 
 (golden-run.sh compares want.txt; use a copy with want_windows.txt in
-its place where a golden has one). Results 2026-10-16: 11 of the 17
+its place where a golden has one). Every golden at once: `scripts/wine-goldens.sh XO
+WORK [NAME...]` (2026-10-18, xo-fa) cross builds them on the Mac with
+the winxc toolchain and runs them under box64, each in a fresh
+wineserver, Box64's own lines dropped from standard output; use a new
+WORK per run (a new prefix; gotchas/wine-box64-harness.md). About 75
+minutes for the 192. Results 2026-10-16: 11 of the 17
 http*, net*, fs*, proc*, stdin* goldens pass (every http_*, net_echo,
 fs_cwd_path, fs_native); fs_paths_os needs the \\localhost\C$ share
 Wine lacks, fs_files and fs_ops_edges symbolic links, proc_cmd and
