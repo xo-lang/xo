@@ -39,3 +39,12 @@ the message starts with `warning:`, and scripts/bootstrap-xo.sh builds s2
 and s3 with XO_INLINE_STRICT=1, so a self build that falls back fails
 the fixed point. Measure RC, borrowing, and inlining changes with
 XO_INLINE_STRICT=1 set.
+
+Observed again (2026-10-18, xo-4, Go compiler audit): the new SSA cse
+pass, run inside inline_module after inlining, removed an operation that
+had a landing pad (its block branches on the landing), so x509's module
+failed the reference count check and was built without inlining.
+tlssrv.flush measured 3,667 to 353 instructions, a figure from the
+uninlined build; with the fix (cse keeps a value with a landing pad) it
+was 3,043. A pass added to inline_module is subject to the same
+fallback: measure it with XO_INLINE_STRICT=1.
