@@ -1,0 +1,294 @@
+// `xo run --watch` (decision 0267): build and run the program, then
+// watch its module's sources; after a change, rebuild and restart the
+// program only when the built binary changed (a test-only edit, a
+// comment, or a file the build does not read leaves it running). A
+// restart is a graceful handoff: SIGTERM, up to --grace for the program
+// to exit, then SIGKILL, then the new binary. A failed build keeps the
+// old program running. Each cycle builds in a child `xo build` (a build
+// that fails exits its process); the on-disk caches keep it fast.
+// --json prints one object a cycle, also written to
+// <module root>/.xo/watch/last.json. A stop request (SIGINT, SIGTERM;
+// core 7.5) stops the program as a restart would and ends the watch.
+
+use github.com/xo-lang/xo/compiler/check
+use std/task
+
+/// The files a cycle compares: path to "size:modified".
+struct Snapshot {
+  stamps: Map[Str, Str] = {}
+  hashes: Map[Str, Str] = {}
+}
+
+/// Whether the watcher looks at path: the sources and module files of
+/// the module tree, not its caches, test data, or dot directories.
+fn watched_path(rel: Str) -> Bool {
+  for part in rel.split("/") {
+    if part.starts_with(".") || part == "testdata" {
+      return false
+    }
+  }
+  let base = rel.split("/").last() ?? rel
+  base.ends_with(".xo") || base.ends_with(".c") || base.ends_with(".h") || base is "xo.mod" | "xo.lock" | "xo.work" | "xo.work.lock"
+}
+
+/// The watched files under root and their size and modified time.
+fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
+  var out: Map[Str, Str] = {}
+  let all = os.fs.walk(root).ok() ?? []
+  for fi in all {
+    if fi.is_dir {
+      continue
+    }
+    let rel = fi.path.trim_prefix(root + "/")
+    if watched_path(rel) {
+      out[fi.path] = "${fi.size}:${fi.modified.unix_millis()}"
+    }
+  }
+  out
+}
+
+/// The files whose stamp differs between old and now (added, removed,
+/// or changed), sorted.
+fn stamp_changes(old: Map[Str, Str], now: Map[Str, Str]) -> List[Str] {
+  var out: List[Str] = []
+  for (p, s) in now {
+    if old.get(p) != Some(s) {
+      out.push(p)
+    }
+  }
+  for (p, _) in old {
+    if !now.contains(p) {
+      out.push(p)
+    }
+  }
+  out.sort()
+}
+
+/// The flags of the `xo run` command line a cycle's `xo build` takes:
+/// every flag before the directory, but --watch and --grace.
+fn build_flags(args: List[Str]) -> List[Str] {
+  let vals = value_flags()
+  var out: List[Str] = []
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a == "--" || !a.starts_with("-") || a == "-" {
+      break
+    }
+    let name = a.trim_prefix("-").trim_prefix("-").split("=")[0]
+    let takes = !a.contains("=") && vals.contains(name) && i + 1 < args.len()
+    if !(name is "watch" | "grace") {
+      out.push(a)
+      if takes {
+        out.push(args[i + 1])
+      }
+    }
+    i += if takes { 2 } else { 1 }
+  }
+  out
+}
+
+/// The outcome of a cycle's build: its status and its output (the
+/// diagnostics; with --json the build's JSON result).
+struct Built {
+  ok: Bool
+  out: Str
+}
+
+fn build_once(os: Os, o: Opts, xo_bin: Str, flags: List[Str], out: Str) -> Built {
+  var words = ["build"] + flags + ["-o", out]
+  if o.json {
+    words.push("--json")
+  }
+  words.push(o.dirs[0])
+  let cmd = os.proc.cmd(xo_bin, words).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std)
+  match cmd.output() {
+    Ok(r) => {
+      let text = (r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? "")
+      Built{ok: r.code == 0, out: text}
+    }
+    Err(e) => Built{ok: false, out: "${e}"}
+  }
+}
+
+/// A running program: its process and the channel its waiter sends the
+/// exit status on.
+struct Running {
+  child: Child
+  done: Chan[Int]
+}
+
+/// Starts bin with the program's arguments on xo's own streams.
+fn start_prog(os: Os, o: Opts, bin: Str) -> Running? {
+  match os.proc.cmd(bin, o.prog_args).dir(o.wd).inherit().spawn() {
+    Ok(ch) => Some(Running{child: ch, done: Chan[Int].new(cap: 1)})
+    Err(e) => {
+      os.stdio.eprintln("xo run --watch: start ${bin}: ${e}")
+      None
+    }
+  }
+}
+
+/// Stops r: SIGTERM, up to grace for it to exit, then SIGKILL. Its
+/// status, or -1 when it was killed.
+fn stop_prog(os: Os, r: Running, grace: Duration) -> Int {
+  os.proc.kill(r.child.pid(), "TERM").ignore_err("it may have exited already")
+  select {
+    c = r.done.recv() => c ?? -1
+    after grace => {
+      r.child.kill()
+      let _ = r.done.recv()
+      -1
+    }
+  }
+}
+
+/// One cycle's report, as text on standard error or a JSON object on
+/// standard output (and in last.json).
+struct Cycle {
+  n: Int
+  changed: List[Str] = []
+  build: Str = ""
+  output: Str = ""
+  restarted: Bool = false
+  pid: Int = 0
+  exited: Int = -2
+}
+
+fn cycle_json(c: Cycle) -> Str {
+  var b = StrBuilder.new()
+  b.write("{\"cycle\":${c.n},\"changed\":[")
+  for (i, p) in c.changed.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    b.write(json_str(p))
+  }
+  b.write("],\"build\":${json_str(c.build)},\"output\":${json_str(c.output)},\"restarted\":${c.restarted},\"pid\":${c.pid}")
+  if c.exited != -2 {
+    b.write(",\"exited\":${c.exited}")
+  }
+  b.write("}")
+  b.freeze()
+}
+
+fn report(os: Os, o: Opts, dir: Str, c: Cycle) {
+  let j = cycle_json(c)
+  os.fs.write("${dir}/last.json", (j + "\n").bytes()).ignore_err("last.json is a convenience")
+  if o.json {
+    os.stdio.println(j)
+    return
+  }
+  if c.build == "exited" {
+    os.stdio.eprintln("xo run --watch: the program exited with status ${c.exited}; waiting for changes")
+    return
+  }
+  if !c.output.is_empty() {
+    os.stdio.eprint(c.output)
+  }
+  let what = match c.build {
+    "failed" => "build failed; the running program is unchanged"
+    "unchanged" => "the program did not change; not restarted"
+    _ => if c.restarted { "rebuilt; restarted (pid ${c.pid})" } else { "rebuilt" }
+  }
+  os.stdio.eprintln("xo run --watch: ${what}")
+}
+
+/// `xo run --watch`: its exit status (only on a setup failure; it runs
+/// until interrupted).
+fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
+  let xo_bin = check.executable(os.env, os.fs)
+  let root = abs_path(o.wd, line_root(os, o.wd, o.dirs[0]))
+  let dir = "${root}/.xo/watch"
+  match os.fs.create_dir_all(dir) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("xo run --watch: ${dir}: ${e}")
+      return 1
+    }
+  }
+  let bin = "${dir}/prog"
+  let next = "${dir}/next"
+  let flags = build_flags(args)
+  var n = 0
+  var running: Running? = None
+  var bin_hash = ""
+  var seen = snapshot(os, root)
+  // the first build; without it there is nothing to run until a change
+  var pending = true
+  var changed: List[Str] = []
+  while true {
+    if pending {
+      pending = false
+      n += 1
+      var c = Cycle{n: n, changed: changed}
+      let b = build_once(os, o, xo_bin, flags, next)
+      c.output = b.out
+      if !b.ok {
+        c.build = "failed"
+      } else if sha_of(os, next) == bin_hash && running.is_some() {
+        c.build = "unchanged"
+      } else {
+        c.build = "rebuilt"
+        if let Some(r) = running {
+          let _ = stop_prog(os, r, o.grace)
+          running = None
+        }
+        os.fs.rename(next, bin).ignore_err("start_prog reports a missing binary")
+        bin_hash = sha_of(os, bin)
+        running = start_prog(os, o, bin)
+        if let Some(r) = running {
+          c.restarted = n > 1
+          c.pid = r.child.pid()
+          let waiter_child = r.child
+          let waiter_done = r.done
+          let _w = os.tasks.spawn_background(fn() {
+            let code = waiter_child.wait().ok() ?? -1
+            let _ = waiter_done.try_send(code)
+          })
+        }
+      }
+      report(os, o, dir, c)
+      changed = []
+    }
+    // a tick: the program's exit, or 200 ms, then the sources
+    let done = match running {
+      Some(r) => r.done
+      None => Chan[Int].new(cap: 1)
+    }
+    select {
+      code = done.recv() => {
+        running = None
+        n += 1
+        report(os, o, dir, Cycle{n: n, build: "exited", exited: code ?? -1})
+      }
+      _s = task.stopping().recv() => {
+        if let Some(r) = running {
+          let _ = stop_prog(os, r, o.grace)
+        }
+        return 0
+      }
+      after 200ms => {}
+    }
+    let now = snapshot(os, root)
+    var diff = stamp_changes(seen, now)
+    if diff.is_empty() {
+      continue
+    }
+    // debounce: wait until the tree holds still for 100 ms
+    var cur = now
+    while true {
+      os.clock.sleep(100ms)
+      let again = snapshot(os, root)
+      if stamp_changes(cur, again).is_empty() {
+        break
+      }
+      cur = again
+    }
+    diff = stamp_changes(seen, cur)
+    seen = cur
+    changed = diff
+    pending = true
+  }
+  0
+}

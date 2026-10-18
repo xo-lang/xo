@@ -345,9 +345,8 @@ fn (var s: Session) agent_def(os: Os, target: Str, with_methods: Bool) -> J ! St
           ms.push(s.decl_json(m))
         }
       }
-      d = match d {
-        J.Obj(keys, vals, raws) => J.Obj(keys: keys + ["methods"], vals: vals + [jarr(ms)], raws: raws)
-        _ => d
+      if let J.Obj(keys, vals, raws) = d {
+        d = J.Obj(keys: keys + ["methods"], vals: vals + [jarr(ms)], raws: raws)
       }
     }
     out.push(d)

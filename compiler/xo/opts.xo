@@ -78,6 +78,11 @@ struct Opts {
   /// _test.xo tests run, as `use` names it below std (`json`,
   /// `native/http`, `native/llrt/scan`); "" for none.
   std_module: Str = ""
+  /// --watch (run, decision 0267): rebuild on a change, restart when the
+  /// binary changed; --grace: how long a restart waits for the program
+  /// to exit after SIGTERM.
+  watch: Bool = false
+  grace: Duration = 5s
   /// The directories (build, test, asm) or the one directory of run.
   dirs: List[Str] = []
   /// run: the program's arguments (after the directory, or after --).
@@ -89,12 +94,12 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace"]
 }
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support", "watch"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -435,6 +440,11 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.std = v
   } else if name == "std-module" {
     o.std_module = v
+  } else if name == "grace" {
+    o.grace = match Duration.parse(v) {
+      Ok(d) => d
+      Err(_) => usage(os, o.cmd, "invalid value \"${v}\" for flag -grace: parse error")
+    }
   } else if name == "wd" {
     o.wd = v
   } else if name == "cc" {
@@ -464,7 +474,9 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
 }
 
 fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
-  if name == "json" {
+  if name == "watch" {
+    o.watch = on
+  } else if name == "json" {
     o.json = on
     o.topts.json = on
   } else if name == "ci" {

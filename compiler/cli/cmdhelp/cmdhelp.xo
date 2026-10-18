@@ -217,7 +217,7 @@ fn run_text() -> Str {
 usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
-              [--stamp NAME=VALUE]... [dir] [-- args...]
+              [--stamp NAME=VALUE]... [--watch [--grace=D]] [dir] [-- args...]
 
 Build for the host and run the program in dir (default .) with args.
 --seed makes task interleavings reproducible. --record writes every
@@ -232,7 +232,12 @@ allocations into xo-heap.pprof and xo-heap.txt; cpu,heap takes both. A
 profile file that exists is not overwritten. --trace=FILE records the
 scheduler's execution trace (XO_TRACE, a native backend; decision 0240)
 into FILE, then writes FILE.json for ui.perfetto.dev and prints a summary
-(xo trace).
+(xo trace). --watch rebuilds after a change to the module's sources and
+restarts the program only when the built binary changed (an edit to a
+test or a comment does not restart it): SIGTERM, up to --grace (5s) for
+it to exit, then SIGKILL; a failed build keeps the old program running.
+With --json each cycle is a JSON line, the last also in
+.xo/watch/last.json at the module root (decision 0267).
 """
 }
 

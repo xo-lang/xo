@@ -48,7 +48,11 @@ Agreed scope (owner, 2026-10-18):
    an editor's save-by-rename and a touch without a change both behave.
    Polling, not kqueue or inotify: it is the same on every host and the
    list is small. std is watched only when it is outside the xo release
-   (an XO_STD checkout).
+   (an XO_STD checkout). Implementation note (2026-10-18, stage 1, run):
+   the watched set is the module tree's sources (.xo, .c, .h, xo.mod,
+   xo.lock, xo.work; not dot or testdata directories), compared by size
+   and modified time; no hash step, since a touch that changes nothing
+   only rebuilds, and the binary compare keeps the program running.
 4. `--json` prints one JSON object a cycle on standard output: `cycle`,
    `changed` (files), `diagnostics`, `build` ("rebuilt", "unchanged",
    "failed"), and for run `restarted` and `pid`, for test `passed`,
@@ -58,9 +62,12 @@ Agreed scope (owner, 2026-10-18):
    uses for caches) so an agent can read the current state without
    holding the stream.
 5. Both share one loop (compiler/xo/watch.xo): watch, debounce (a cycle
-   starts 100 ms after the last change seen), build in-process through
-   the same path as `xo build`/`xo test` (the parse cache and the
-   backend function cache stay warm across cycles), act.
+   starts once the tree held still for 100 ms), build, act. The build is
+   a child `xo build` (implementation note, 2026-10-18: the build path
+   exits its process on a failed build, so an in-process build would need
+   that path rewritten first); the on-disk caches (the bin cache, the
+   backend function cache) keep a cycle fast, the in-process parse cache
+   is lost between cycles.
 6. When it ships, spec/core.md 9's "Where tests live" note gains: `xo
    run --watch` compares the built program, so it needs no file-name
    exclusions for test files.

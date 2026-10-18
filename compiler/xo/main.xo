@@ -107,6 +107,14 @@ fn main(os: Os) ! {
     os.proc.exit(2)
   }
   var o = parse_args(os, args)
+  if o.watch {
+    if o.cmd != "run" {
+      os.stdio.eprintln("xo ${o.cmd}: --watch is a flag of xo run")
+      os.proc.exit(2)
+    }
+    // decision 0267: build, run, watch, rebuild, restart when changed
+    os.proc.exit(watch_run(os, o, args))
+  }
   let goos = host_os(os)
   var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
   ctx.bin_cache = bin_cache_dir(os, ctx, o.cmd == "test")
