@@ -172,7 +172,7 @@ fn close(fd: Int) {
 
 fn u64(var b: BytesBuilder, v: Int) {
   for i in 0..8 {
-    b.write_byte(UInt8(rt.int_wrap(4, v, 8 * i) & 255))
+    b.write_byte(UInt8(v.shr_logical(8 * i) & 255))
   }
 }
 
@@ -215,7 +215,7 @@ pub fn finish() {
   h.write("XORAW1".bytes())
   h.write_byte(UInt8(0))
   h.write_byte(UInt8(0))
-  u64(h, 1 | rt.int_wrap(3, 1, 32))
+  u64(h, 1 | (1).wrapping_shl(32))
   u64(h, ld(r, tracerec.R_T0))
   u64(h, ld(r, tracerec.R_WALL0))
   u64(h, rt.slot_load[Int](r + tracerec.R_LOST, 0, tracerec.ACQUIRE))
@@ -231,7 +231,7 @@ pub fn finish() {
     TargetArch.Amd64 => 2
     TargetArch.Wasm32 => 3
   }
-  u64(h, os_id | rt.int_wrap(3, arch_id, 8))
+  u64(h, os_id | arch_id.wrapping_shl(8))
   u64(h, 0)
   var ok = put_bytes(fd, h.freeze())
   // the chunks' events: the shared chunk first (owner 0)
@@ -255,7 +255,7 @@ pub fn finish() {
     while e < used {
       let k = ld(c + tracerec.HDR, e + 8)
       if (k & 255) == tracerec.K_SPAWN {
-        let site = rt.int_wrap(4, k, 8)
+        let site = k.shr_logical(8)
         if !sites.contains(site) {
           sites.push(site)
         }
@@ -268,7 +268,7 @@ pub fn finish() {
   var sb = BytesBuilder.new()
   for s in sites {
     let a = s & 281474976710655
-    let ln = rt.int_wrap(4, s, 48)
+    let ln = s.shr_logical(48)
     u64(sb, s)
     u64(sb, ln)
     sb.write(raw.str_at(a, ln).bytes())

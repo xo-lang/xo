@@ -19,15 +19,15 @@ use native/rt
 /// The errno values strerror has texts for (0 to NERR - 1).
 const NERR = 134
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
 /// a < b as unsigned words (addresses).
 fn ult(a: Int, b: Int) -> Bool {
-  let m = rt.int_wrap(3, 1, 63)
+  let m = (1).wrapping_shl(63)
   (a ^ m) < (b ^ m)
 }
 
@@ -70,7 +70,7 @@ fn copy_words(d: Int, s: Int, n: Int) -> Int {
   let n8 = n & -8
   while i < n8 {
     rt.mem_store(d, i, rt.mem_load(s, i, 8), 8)
-    i = rt.int_wrap(0, i, 8)
+    i = i.wrapping_add(8)
   }
   n8
 }
@@ -115,7 +115,7 @@ pub fn memmove(d: Int, s: Int, n: Int) -> Int {
   }
   var sp = addw(s, k)
   var dp = addw(d, k)
-  var b = rt.int_wrap(4, k, 5)
+  var b = k.shr_logical(5)
   while b > 0 {
     sp = subw(sp, 32)
     dp = subw(dp, 32)
@@ -125,7 +125,7 @@ pub fn memmove(d: Int, s: Int, n: Int) -> Int {
     rt.mem_store(dp, 0, rt.mem_load(sp, 0, 8), 8)
     b = subw(b, 1)
   }
-  var w = rt.int_wrap(4, k & 31, 3)
+  var w = (k & 31).shr_logical(3)
   while w > 0 {
     sp = subw(sp, 8)
     dp = subw(dp, 8)
@@ -148,7 +148,7 @@ pub fn memset(d: Int, c: Int, n: Int) -> Int {
   }
   let w = mulw(b, 72340172838076673)
   var dp = d
-  var k = rt.int_wrap(4, n, 5)
+  var k = n.shr_logical(5)
   while k > 0 {
     rt.mem_store(dp, 0, w, 8)
     rt.mem_store(dp, 8, w, 8)
@@ -157,7 +157,7 @@ pub fn memset(d: Int, c: Int, n: Int) -> Int {
     dp = addw(dp, 32)
     k = subw(k, 1)
   }
-  var r = rt.int_wrap(4, n & 31, 3)
+  var r = (n & 31).shr_logical(3)
   while r > 0 {
     rt.mem_store(dp, 0, w, 8)
     dp = addw(dp, 8)

@@ -104,12 +104,12 @@ const HOOK_BACK = 5
 pub fn rq_put(q: Int, x: Int) -> Int {
   let h = rt.slot_load(q, 0, ACQUIRE)
   let t = rt.mem_load(q, RQ_TAIL_AT, 8)
-  if rt.int_wrap(1, t, h) < RUNQ {
-    rt.slot_store(q, rt.int_wrap(0, RQ_SLOT, t & RUNQ_MASK), x, RELAXED)
+  if t.wrapping_sub(h) < RUNQ {
+    rt.slot_store(q, RQ_SLOT.wrapping_add(t & RUNQ_MASK), x, RELAXED)
     // sequentially consistent: ordered before the pusher's look at the
     // spinning and idle counts (xo_rt.c wakep), as a worker going idle
     // counts itself idle before it looks at the queues again
-    rt.slot_store(q, RQ_TAIL, rt.int_wrap(0, t, 1), SEQ_CST)
+    rt.slot_store(q, RQ_TAIL, t.wrapping_add(1), SEQ_CST)
     return 1
   }
   0
@@ -123,8 +123,8 @@ pub fn rq_get(q: Int) -> Int {
     if t == h {
       return 0
     }
-    let x = rt.slot_load(q, rt.int_wrap(0, RQ_SLOT, h & RUNQ_MASK), RELAXED)
-    if rt.slot_cas(q, 0, h, rt.int_wrap(0, h, 1), RELEASE) {
+    let x = rt.slot_load(q, RQ_SLOT.wrapping_add(h & RUNQ_MASK), RELAXED)
+    if rt.slot_cas(q, 0, h, h.wrapping_add(1), RELEASE) {
       return x
     }
   }
@@ -137,8 +137,8 @@ pub fn rq_grab(q: Int, batch: Int) -> Int {
   while true {
     let h = rt.slot_load(q, 0, ACQUIRE)
     let t = rt.slot_load(q, RQ_TAIL, ACQUIRE)
-    let all = rt.int_wrap(1, t, h)
-    let n = rt.int_wrap(1, all, all >> 1)
+    let all = t.wrapping_sub(h)
+    let n = all.wrapping_sub(all >> 1)
     if n <= 0 {
       return 0
     }
@@ -148,10 +148,10 @@ pub fn rq_grab(q: Int, batch: Int) -> Int {
     }
     var i = 0
     while i < n {
-      rt.slot_store(batch, i, rt.slot_load(q, rt.int_wrap(0, RQ_SLOT, rt.int_wrap(0, h, i) & RUNQ_MASK), RELAXED), RELAXED)
-      i = rt.int_wrap(0, i, 1)
+      rt.slot_store(batch, i, rt.slot_load(q, RQ_SLOT.wrapping_add(h.wrapping_add(i) & RUNQ_MASK), RELAXED), RELAXED)
+      i = i.wrapping_add(1)
     }
-    if rt.slot_cas(q, 0, h, rt.int_wrap(0, h, n), RELEASE) {
+    if rt.slot_cas(q, 0, h, h.wrapping_add(n), RELEASE) {
       return n
     }
   }
@@ -163,10 +163,10 @@ pub fn rq_put_batch(q: Int, batch: Int, n: Int) {
   let t = rt.mem_load(q, RQ_TAIL_AT, 8)
   var i = 0
   while i < n {
-    rt.slot_store(q, rt.int_wrap(0, RQ_SLOT, rt.int_wrap(0, t, i) & RUNQ_MASK), rt.slot_load(batch, i, RELAXED), RELAXED)
-    i = rt.int_wrap(0, i, 1)
+    rt.slot_store(q, RQ_SLOT.wrapping_add(t.wrapping_add(i) & RUNQ_MASK), rt.slot_load(batch, i, RELAXED), RELAXED)
+    i = i.wrapping_add(1)
   }
-  rt.slot_store(q, RQ_TAIL, rt.int_wrap(0, t, n), SEQ_CST)
+  rt.slot_store(q, RQ_TAIL, t.wrapping_add(n), SEQ_CST)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +182,8 @@ pub fn rq_put_batch(q: Int, batch: Int, n: Int) {
 /// pointer's, zero, so a walk of the new fiber's frames ends there (the
 /// other registers start with what the stack held: nothing reads them).
 pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
-  let end = rt.int_wrap(0, mem, size)
-  let top = rt.int_wrap(1, end, end & 15)
+  let end = mem.wrapping_add(size)
+  let top = end.wrapping_sub(end & 15)
   let start = rt.fiber_start_addr()
   match target.arch {
     TargetArch.Arm64 => {
@@ -191,19 +191,19 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
         TargetOs.Windows => {
           // x19 to x28, fp, lr, d8 to d15, the TEB's StackBase,
           // StackLimit, and DeallocationStack, a pad
-          let fr = rt.int_wrap(1, top, 192)
+          let fr = top.wrapping_sub(192)
           rt.mem_store(fr, 80, 0, 8)
           rt.mem_store(fr, 0, f, 8)
           rt.mem_store(fr, 8, main, 8)
           rt.mem_store(fr, 88, start, 8)
           rt.mem_store(fr, 160, top, 8)
-          rt.mem_store(fr, 168, rt.int_wrap(1, end, commit), 8)
+          rt.mem_store(fr, 168, end.wrapping_sub(commit), 8)
           rt.mem_store(fr, 176, mem, 8)
           fr
         }
         TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
           // x19 (f), x20 (main), x21 to x28, fp, lr (the start), d8 to d15
-          let fr = rt.int_wrap(1, top, 160)
+          let fr = top.wrapping_sub(160)
           rt.mem_store(fr, 80, 0, 8)
           rt.mem_store(fr, 0, f, 8)
           rt.mem_store(fr, 8, main, 8)
@@ -218,12 +218,12 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           // MXCSR and the x87 control word (53 bit precision), xmm6 to
           // xmm15, the TEB's three words, r15, r14, r13, r12 (main), rsi,
           // rdi, rbx (f), rbp, the return address (the start)
-          let fr = rt.int_wrap(1, top, 264)
+          let fr = top.wrapping_sub(264)
           rt.mem_store(fr, 248, 0, 8)
           rt.mem_store(fr, 0, 0x1F80, 4)
           rt.mem_store(fr, 4, 0x027F, 2)
           rt.mem_store(fr, 168, top, 8)
-          rt.mem_store(fr, 176, rt.int_wrap(1, end, commit), 8)
+          rt.mem_store(fr, 176, end.wrapping_sub(commit), 8)
           rt.mem_store(fr, 184, mem, 8)
           rt.mem_store(fr, 216, main, 8)
           rt.mem_store(fr, 240, f, 8)
@@ -233,7 +233,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
         TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
           // MXCSR and the x87 control word, r15, r14, r13, r12 (main),
           // rbx (f), rbp, the return address (the start)
-          let fr = rt.int_wrap(1, top, 64)
+          let fr = top.wrapping_sub(64)
           rt.mem_store(fr, 48, 0, 8)
           rt.mem_store(fr, 0, 0x1F80, 4)
           rt.mem_store(fr, 4, 0x037F, 2)
@@ -307,7 +307,7 @@ pub fn fiber_run(w: Int, f: Int) -> Int {
     if hooks != 0 {
       rt.sched_hook(HOOK_RUN, w, f)
     }
-    rt.stack_switch(rt.int_wrap(0, w, W_SCHED_SP), rt.mem_load(f, 0, 8))
+    rt.stack_switch(w.wrapping_add(W_SCHED_SP), rt.mem_load(f, 0, 8))
     if hooks != 0 {
       rt.sched_hook(HOOK_BACK, w, f)
     }
@@ -338,7 +338,7 @@ pub fn task_claim(t: Int) -> Int {
 /// ended or one of its queue entries was taken, 4: both): 1 when the
 /// caller must signal the joiner (the last one while it waits).
 pub fn scope_units_done(s: Int, units: Int) -> Int {
-  if rt.slot_add(s, S_PENDING, rt.int_wrap(1, 0, units), ACQ_REL) == rt.int_wrap(0, units, 1) { 1 } else { 0 }
+  if rt.slot_add(s, S_PENDING, (0).wrapping_sub(units), ACQ_REL) == units.wrapping_add(1) { 1 } else { 0 }
 }
 
 /// Records that a worker took task t's queue entry (t's last touch),

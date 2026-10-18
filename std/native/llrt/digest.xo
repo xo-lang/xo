@@ -46,7 +46,7 @@ fn finish(var h: List[Int], b: Bytes, lo: Int, hi: Int, total: Int) {
     t = rt.rs_push_word(t, 0, if k < 8 { k } else { 8 })
     k -= 8
   }
-  t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, total, 3), 0), 8)
+  t = rt.rs_push_word(t, total.wrapping_shl(3).swap_bytes(), 8)
   let tb = t.bytes()
   sha2.block256(h, tb, 0)
   if tb.len() > 64 {
@@ -59,7 +59,7 @@ fn words_bytes(ws: List[Int]) -> Bytes {
   var out = rt.rs_with_cap(ws.len() * 4)
   var k = 0
   while k + 1 < ws.len() {
-    out = rt.rs_push_word(out, rt.int_wrap(7, rt.int_wrap(3, ws[k], 32) | ws[k + 1], 0), 8)
+    out = rt.rs_push_word(out, (ws[k].wrapping_shl(32) | ws[k + 1]).swap_bytes(), 8)
     k += 2
   }
   out.bytes()
@@ -171,7 +171,7 @@ pub fn pbkdf2(password: Bytes, salt: Bytes, iterations: Int, key_len: Int) -> By
   var block = 1
   var left = key_len
   while left > 0 {
-    var u = hmac_words(st, salt, rt.int_wrap(7, block << 32, 0), 4)
+    var u = hmac_words(st, salt, (block << 32).swap_bytes(), 4)
     var t = u
     var i = 1
     while i < iterations {
@@ -305,8 +305,8 @@ fn index_alpha(rnd: Int, lanes: Int, segments: Int, threads: Int, n: Int, slice:
   }
   // phi: m - 1 - (m * (lo(rnd)^2 >> 32) >> 32)
   let p0 = rnd & M32
-  let p1 = rt.int_wrap(4, rt.int_wrap(2, p0, p0), 32)
-  let p2 = rt.int_wrap(4, rt.int_wrap(2, p1, m & M32), 32)
+  let p1 = p0.wrapping_mul(p0).shr_logical(32)
+  let p2 = p1.wrapping_mul(m & M32).shr_logical(32)
   r * lanes + (s + m - (p2 + 1)) % lanes
 }
 
@@ -586,14 +586,14 @@ fn sha512_feed(var st: List[Int], q: Int, k0: Int, p: Int, n: Int) -> Int {
 pub fn sha512_le(a: Bytes, b: Bytes, c: Bytes) -> List[Int] {
   var st = sha512_state(bytes_data(a), a.len(), bytes_data(b), b.len(), bytes_data(c), c.len())
   for j in 0..8 {
-    st[j] = rt.int_wrap(7, st[j], 0)
+    st[j] = st[j].swap_bytes()
   }
   st
 }
 
 /// The address of the first byte of b (its string object's data, as
 /// raw.data; no C call, and the wasm backend lowers it too).
-fn bytes_data(b: Bytes) -> Int { rt.int_wrap(0, rt.obj_addr(b), rt.layout(0)) }
+fn bytes_data(b: Bytes) -> Int { rt.obj_addr(b).wrapping_add(rt.layout(0)) }
 
 /// SHA-512's state after the an bytes at a, then the bn at b, then the
 /// cn at c, padded.
@@ -612,7 +612,7 @@ fn sha512_state(a: Int, an: Int, b: Int, bn: Int, c: Int, cn: Int) -> List[Int] 
   let end = if k < 112 { 128 } else { 256 }
   rt.mem_store(q, k, 0x80, 1)
   rt.mem_set(q + k + 1, 0, end - 8 - k - 1)
-  rt.mem_store(q, end - 8, rt.int_wrap(7, rt.int_wrap(3, rt.int_wrap(0, rt.int_wrap(0, an, bn), cn), 3), 0), 8)
+  rt.mem_store(q, end - 8, an.wrapping_add(bn).wrapping_add(cn).wrapping_shl(3).swap_bytes(), 8)
   digest_tables.sha512_block(st, q)
   if end == 256 {
     digest_tables.sha512_block(st, q + 128)

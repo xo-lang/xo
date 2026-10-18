@@ -98,7 +98,7 @@ pub fn loopback_pair() -> (Int, Int) {
   rt.mem_set(sa, 0, 16)
   rt.mem_store(sa, 0, 2, 2)
   rt.mem_store(sa, 4, 16777343, 4)
-  let lenp = rt.int_wrap(0, sa, 16)
+  let lenp = sa.wrapping_add(16)
   rt.mem_store(lenp, 0, 16, 4)
   var c = -1
   var s = -1

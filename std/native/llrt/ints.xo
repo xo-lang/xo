@@ -93,8 +93,8 @@ pub fn u64_div(a: Int, b: Int) -> Int {
   if a >= 0 {
     return a / b
   }
-  let q = rt.int_wrap(3, rt.int_wrap(4, a, 1) / b, 1)
-  let r = rt.int_wrap(1, a, rt.int_wrap(2, q, b))
+  let q = (a.shr_logical(1) / b).wrapping_shl(1)
+  let r = a.wrapping_sub(q.wrapping_mul(b))
   if (r ^ MIN_INT) >= (b ^ MIN_INT) {
     return q + 1
   }
@@ -106,7 +106,7 @@ pub fn u64_rem(a: Int, b: Int) -> Int {
   if a >= 0 && b > 0 {
     return a % b
   }
-  rt.int_wrap(1, a, rt.int_wrap(2, u64_div(a, b), b))
+  a.wrapping_sub(u64_div(a, b).wrapping_mul(b))
 }
 
 /// a / b rounded down (b > 0): `Time.unix()` (xo_floor_div).
@@ -127,23 +127,23 @@ pub fn str_hash(s: Str) -> Int {
   var i = 0
   while i + 8 <= n {
     let w = rt.bytes_word(b, i)
-    h = rt.int_wrap(2, h ^ (w & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 8) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 16) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 24) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 32) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 40) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 48) & 0xFF), 1099511628211)
-    h = rt.int_wrap(2, h ^ ((w >> 56) & 0xFF), 1099511628211)
+    h = (h ^ (w & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 8) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 16) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 24) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 32) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 40) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 48) & 0xFF)).wrapping_mul(1099511628211)
+    h = (h ^ ((w >> 56) & 0xFF)).wrapping_mul(1099511628211)
     i += 8
   }
   while i < n {
-    h = rt.int_wrap(2, h ^ Int(b[i]), 1099511628211)
+    h = (h ^ Int(b[i])).wrapping_mul(1099511628211)
     i += 1
   }
-  h = h ^ rt.int_wrap(4, h, 31)
-  h = rt.int_wrap(2, h, -7046029254386353131)
-  h ^ rt.int_wrap(4, h, 29)
+  h = h ^ h.shr_logical(31)
+  h = h.wrapping_mul(-7046029254386353131)
+  h ^ h.shr_logical(29)
 }
 
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /: b is not 0 and not
@@ -151,22 +151,22 @@ pub fn str_hash(s: Str) -> Int {
 /// std/llrt/xo_bytes.c xo_int_fits, a C call).
 pub fn fits(op: Int, a: Int, b: Int) -> Bool {
   if op == 0 {
-    let r = rt.int_wrap(0, a, b)
+    let r = a.wrapping_add(b)
     return ((a ^ r) & (b ^ r)) >= 0
   }
   if op == 1 {
-    let r = rt.int_wrap(1, a, b)
+    let r = a.wrapping_sub(b)
     return ((a ^ b) & (a ^ r)) >= 0
   }
   if op == 2 {
     // the signed high word of the product is the sign of the low one
-    let lo = rt.int_wrap(2, a, b)
-    var hi = rt.u64_mul_hi(a, b)
+    let lo = a.wrapping_mul(b)
+    var hi = a.mul_hi_unsigned(b)
     if a < 0 {
-      hi = rt.int_wrap(1, hi, b)
+      hi = hi.wrapping_sub(b)
     }
     if b < 0 {
-      hi = rt.int_wrap(1, hi, a)
+      hi = hi.wrapping_sub(a)
     }
     return hi == lo >> 63
   }
@@ -177,13 +177,13 @@ pub fn fits(op: Int, a: Int, b: Int) -> Bool {
 /// saturating_ methods' result.
 pub fn apply(op: Int, a: Int, b: Int) -> Int {
   if op == 0 {
-    return rt.int_wrap(0, a, b)
+    return a.wrapping_add(b)
   }
   if op == 1 {
-    return rt.int_wrap(1, a, b)
+    return a.wrapping_sub(b)
   }
   if op == 2 {
-    return rt.int_wrap(2, a, b)
+    return a.wrapping_mul(b)
   }
   a / b
 }

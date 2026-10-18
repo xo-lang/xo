@@ -267,7 +267,7 @@ pub fn roots() -> Int {
 /// it runs. The token shield_end takes: the start time and the flag.
 pub fn shield_begin() -> Int {
   let c = cur()
-  let tok = rt.int_wrap(3, sysio.mono_ns(), 1) | (rt.mem_load(c, C_UNWINDING, 4) & 1)
+  let tok = sysio.mono_ns().wrapping_shl(1) | (rt.mem_load(c, C_UNWINDING, 4) & 1)
   rt.mem_store(c, C_UNWINDING, 0, 4)
   rt.mem_store(c, C_SHIELD, rt.mem_load(c, C_SHIELD, 4) + 1, 4)
   tok

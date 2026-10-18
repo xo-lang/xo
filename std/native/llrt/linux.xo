@@ -155,7 +155,7 @@ pub fn clock_ns(id: Int, a: Int) -> Int {
     return r
   }
   // a timespec of the clock never overflows: wrapping arithmetic, as C's
-  rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+  rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
 }
 
 /// clock_gettime(2) of clock id into the timespec at ts: 0, or the
@@ -763,9 +763,9 @@ pub fn auxv_init(envp: Int) {
   }
   var p = envp
   while rt.mem_load(p, 0, 8) != 0 {
-    p = rt.int_wrap(0, p, 8)
+    p = p.wrapping_add(8)
   }
-  rt.mem_store(rt.static_word(W_AUXV), 0, rt.int_wrap(0, p, 8), 8)
+  rt.mem_store(rt.static_word(W_AUXV), 0, p.wrapping_add(8), 8)
 }
 
 /// getauxval(k): the value of entry k of the auxiliary vector, or 0 (off
@@ -783,7 +783,7 @@ pub fn auxval(k: Int) -> Int {
       if t == 0 || t == k {
         return if t == k { rt.mem_load(a, 8, 8) } else { 0 }
       }
-      a = rt.int_wrap(0, a, 16)
+      a = a.wrapping_add(16)
     }
   }
   auxval_proc(k)

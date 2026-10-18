@@ -70,7 +70,7 @@ pub fn append_u64(out: Str, v: Int) -> Str {
   }
   // 2^63 <= v < 2^64: v / 10 is (v >> 1) / 5 with a logical shift, and
   // the last digit is v - q * 10 (wrapping)
-  let q = rt.int_wrap(4, v, 1) / 5
-  let d = rt.int_wrap(1, v, rt.int_wrap(2, q, 10))
+  let q = v.shr_logical(1) / 5
+  let d = v.wrapping_sub(q.wrapping_mul(10))
   rt.rs_push_byte(num.append_int(out, q), 48 + d)
 }

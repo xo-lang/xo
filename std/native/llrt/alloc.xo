@@ -89,11 +89,11 @@ const RELAXED = 0
 pub fn alloc(h: Int, n: Int) -> Int {
   if n > rt.mem_load(h, MID_MAX, 8) {
     if rt.mem_load(h, COUNT, 8) != 0 {
-      rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-      rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+      rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+      rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
     }
     if rt.mem_load(h, RT_DEPTH, 8) != 0 {
-      rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+      rt.mem_store(h, RT_ALLOCS, rt.mem_load(h, RT_ALLOCS, 8).wrapping_add(1), 8)
     }
     rt.mem_store(h, LAST, n, 8)
     return rt.heap_big(n)
@@ -102,19 +102,19 @@ pub fn alloc(h: Int, n: Int) -> Int {
   var c = 65
   var size = 2048
   if n <= SMALL_MAX {
-    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
       c = 1
     }
-    size = rt.int_wrap(3, c, 4)
+    size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = rt.int_wrap(3, size, 1)
-      c = rt.int_wrap(0, c, 1)
+      size = size.wrapping_shl(1)
+      c = c.wrapping_add(1)
     }
   }
   // the class's words are at fl + FREE_LISTS, fl + NFREE, fl + MAG
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   var r = rt.mem_load(fl, FREE_LISTS, 8)
   if r == 0 && rt.mem_load(h, CENTRAL, 8) != 0 {
     // the class's list is empty: a magazine of blocks other threads freed
@@ -145,12 +145,12 @@ pub fn alloc(h: Int, n: Int) -> Int {
       var rem = MAG_BYTES
       var k = 12
       while k >= 0 {
-        let d = rt.int_wrap(3, size, k)
+        let d = size.wrapping_shl(k)
         if d <= rem {
-          rem = rt.int_wrap(1, rem, d)
-          q = q | rt.int_wrap(3, 1, k)
+          rem = rem.wrapping_sub(d)
+          q = q | (1).wrapping_shl(k)
         }
-        k = rt.int_wrap(1, k, 1)
+        k = k.wrapping_sub(1)
       }
       if q < 8 {
         q = 8
@@ -162,33 +162,33 @@ pub fn alloc(h: Int, n: Int) -> Int {
   if r != 0 {
     let next = rt.mem_load(r, 0, 8)
     rt.mem_store(fl, FREE_LISTS, next, 8)
-    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
     // the next pop reads the new head's link: start loading it now, so a
     // list freed long ago (cold) costs overlapped misses rather than one
     // stall per allocation (bench/results/xo1-speed-2026-10-13.md)
     rt.prefetch(next)
   } else {
-    let need = rt.int_wrap(0, size, 8)
+    let need = size.wrapping_add(8)
     let cur = rt.mem_load(h, BUMP_CUR, 8)
-    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+    if rt.mem_load(h, BUMP_END, 8).wrapping_sub(cur) < need {
       return rt.heap_grow(h, n)
     }
-    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(h, BUMP_CUR, cur.wrapping_add(need), 8)
     rt.mem_store(cur, 0, c, 8)
-    r = rt.int_wrap(0, cur, 8)
+    r = cur.wrapping_add(8)
   }
   rt.mem_store(h, LAST, size, 8)
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
-    rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+    rt.mem_store(h, RT_ALLOCS, rt.mem_load(h, RT_ALLOCS, 8).wrapping_add(1), 8)
   }
   if rt.mem_load(h, COUNT, 8) != 0 {
-    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    let ab = rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n)
+    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+    let ab = rt.mem_load(h, ABYTES, 8).wrapping_add(n)
     rt.mem_store(h, ABYTES, ab, 8)
     if ab >= rt.mem_load(h, SAMPLE_AT, 8) {
       // the heap profile's next sample (heapprof.xo, cabi.xo heap_grow)
       rt.mem_store(h, PSAMPLE, r, 8)
-      return rt.heap_grow(h, rt.int_wrap(0, n, SAMPLE))
+      return rt.heap_grow(h, n.wrapping_add(SAMPLE))
     }
   }
   r
@@ -205,31 +205,31 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
     return 0
   }
-  var c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+  var c = n.wrapping_add(15).shr_logical(4)
   if c == 0 {
     c = 1
   }
-  let size = rt.int_wrap(3, c, 4)
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let size = c.wrapping_shl(4)
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   var r = rt.mem_load(fl, FREE_LISTS, 8)
   if r != 0 {
     let next = rt.mem_load(r, 0, 8)
     rt.mem_store(fl, FREE_LISTS, next, 8)
-    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
     rt.prefetch(next)
   } else {
-    let need = rt.int_wrap(0, size, 8)
+    let need = size.wrapping_add(8)
     let cur = rt.mem_load(h, BUMP_CUR, 8)
-    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+    if rt.mem_load(h, BUMP_END, 8).wrapping_sub(cur) < need {
       return 0
     }
-    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(h, BUMP_CUR, cur.wrapping_add(need), 8)
     rt.mem_store(cur, 0, c, 8)
-    r = rt.int_wrap(0, cur, 8)
+    r = cur.wrapping_add(8)
   }
   rt.mem_store(h, LAST, size, 8)
   if rt.mem_load(h, COUNT, 8) != 0 {
-    if rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n) >= rt.mem_load(h, SAMPLE_AT, 8) {
+    if rt.mem_load(h, ABYTES, 8).wrapping_add(n) >= rt.mem_load(h, SAMPLE_AT, 8) {
       // the heap profile's next sample: the block goes back to its
       // class's list (a carved one is a free block of its class too) and
       // the caller's slow path takes it through alloc, which samples it;
@@ -237,11 +237,11 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
       // keeps no frame (a call here gave rl_new_n and rs_new_n one)
       rt.mem_store(r, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
       rt.mem_store(fl, FREE_LISTS, r, 8)
-      rt.mem_store(fl, NFREE, rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1), 8)
+      rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
       return 0
     }
-    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n), 8)
+    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+    rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
   }
   r
 }
@@ -249,17 +249,17 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
 /// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
 /// list, or to heapos.xo for a big block. Counts the free.
 pub fn free(h: Int, p: Int) {
-  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
-  let b = rt.int_wrap(1, p, 8)
+  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  let b = p.wrapping_sub(8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
     rt.heap_big_release(b)
     return
   }
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, p, 8)
-  rt.mem_store(fl, NFREE, rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1), 8)
+  rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
 }
 
 /// Before an allocation of n bytes on a heap of a program with threads
@@ -273,18 +273,18 @@ pub fn refill(h: Int, n: Int) {
   var c = 65
   var size = 2048
   if n <= SMALL_MAX {
-    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
       c = 1
     }
-    size = rt.int_wrap(3, c, 4)
+    size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = rt.int_wrap(3, size, 1)
-      c = rt.int_wrap(0, c, 1)
+      size = size.wrapping_shl(1)
+      c = c.wrapping_add(1)
     }
   }
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   if rt.mem_load(fl, FREE_LISTS, 8) != 0 {
     return
   }
@@ -314,12 +314,12 @@ pub fn refill(h: Int, n: Int) {
   var rem = MAG_BYTES
   var k = 12
   while k >= 0 {
-    let d = rt.int_wrap(3, size, k)
+    let d = size.wrapping_shl(k)
     if d <= rem {
-      rem = rt.int_wrap(1, rem, d)
-      q = q | rt.int_wrap(3, 1, k)
+      rem = rem.wrapping_sub(d)
+      q = q | (1).wrapping_shl(k)
     }
-    k = rt.int_wrap(1, k, 1)
+    k = k.wrapping_sub(1)
   }
   if q < 8 {
     q = 8
@@ -332,28 +332,28 @@ pub fn refill(h: Int, n: Int) {
 /// size becomes the heap's spare magazine, and the spare it replaces
 /// goes to the central list.
 pub fn free_mt(h: Int, p: Int) {
-  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
-  let b = rt.int_wrap(1, p, 8)
+  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  let b = p.wrapping_sub(8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
     rt.heap_big_release(b)
     return
   }
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, p, 8)
-  let nf = rt.int_wrap(0, rt.mem_load(fl, NFREE, 8), 1)
+  let nf = rt.mem_load(fl, NFREE, 8).wrapping_add(1)
   rt.mem_store(fl, NFREE, nf, 8)
   // nf >= max(MAG_BYTES / size, 8) without a division: nf >= q, q the
   // quotient, is (nf + 1) * size > MAG_BYTES
   if nf < 8 {
     return
   }
-  var size = rt.int_wrap(3, c, 4)
+  var size = c.wrapping_shl(4)
   if c > 64 {
-    size = rt.int_wrap(3, 2048, rt.int_wrap(1, c, 65))
+    size = (2048).wrapping_shl(c.wrapping_sub(65))
   }
-  if rt.int_wrap(2, rt.int_wrap(0, nf, 1), size) <= MAG_BYTES {
+  if nf.wrapping_add(1).wrapping_mul(size) <= MAG_BYTES {
     return
   }
   let old = rt.mem_load(fl, MAG, 8)
@@ -381,7 +381,7 @@ pub fn free_mt(h: Int, p: Int) {
 /// block from or to a big one, or a chunk to replace). A block it returns
 /// sets LAST.
 pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
-  let b = rt.int_wrap(1, p, 8)
+  let b = p.wrapping_sub(8)
   let hdr = rt.mem_load(b, 0, 8)
   let mid = rt.mem_load(h, MID_MAX, 8)
   // a big block (minus its size, at least the classes' limit); a size
@@ -389,7 +389,7 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   if hdr < -128 && n > mid {
     if n > old {
       if rt.mem_load(h, COUNT, 8) != 0 {
-        rt.mem_store(h, ABYTES, rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), rt.int_wrap(1, n, old)), 8)
+        rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n.wrapping_sub(old)), 8)
       }
     }
     rt.mem_store(h, LAST, n, 8)
@@ -401,15 +401,15 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   var c = 65
   var size = 2048
   if n <= SMALL_MAX {
-    c = rt.int_wrap(4, rt.int_wrap(0, n, 15), 4)
+    c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
       c = 1
     }
-    size = rt.int_wrap(3, c, 4)
+    size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = rt.int_wrap(3, size, 1)
-      c = rt.int_wrap(0, c, 1)
+      size = size.wrapping_shl(1)
+      c = c.wrapping_add(1)
     }
   }
   if c == hdr {
@@ -420,44 +420,44 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     return 0
   }
   // alloc's pop or carve
-  let fl = rt.int_wrap(0, h, rt.int_wrap(3, c, 3))
+  let fl = h.wrapping_add(c.wrapping_shl(3))
   var q = rt.mem_load(fl, FREE_LISTS, 8)
   if q != 0 {
     let next = rt.mem_load(q, 0, 8)
     rt.mem_store(fl, FREE_LISTS, next, 8)
-    rt.mem_store(fl, NFREE, rt.int_wrap(1, rt.mem_load(fl, NFREE, 8), 1), 8)
+    rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
     rt.prefetch(next)
   } else {
-    let need = rt.int_wrap(0, size, 8)
+    let need = size.wrapping_add(8)
     let cur = rt.mem_load(h, BUMP_CUR, 8)
-    if rt.int_wrap(1, rt.mem_load(h, BUMP_END, 8), cur) < need {
+    if rt.mem_load(h, BUMP_END, 8).wrapping_sub(cur) < need {
       return 0
     }
-    rt.mem_store(h, BUMP_CUR, rt.int_wrap(0, cur, need), 8)
+    rt.mem_store(h, BUMP_CUR, cur.wrapping_add(need), 8)
     rt.mem_store(cur, 0, c, 8)
-    q = rt.int_wrap(0, cur, 8)
+    q = cur.wrapping_add(8)
   }
   var due = false
   if rt.mem_load(h, COUNT, 8) != 0 {
-    rt.mem_store(h, ALLOCS, rt.int_wrap(0, rt.mem_load(h, ALLOCS, 8), 1), 8)
-    let ab = rt.int_wrap(0, rt.mem_load(h, ABYTES, 8), n)
+    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+    let ab = rt.mem_load(h, ABYTES, 8).wrapping_add(n)
     rt.mem_store(h, ABYTES, ab, 8)
     due = ab >= rt.mem_load(h, SAMPLE_AT, 8)
   }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {
-    rt.mem_store(h, RT_ALLOCS, rt.int_wrap(0, rt.mem_load(h, RT_ALLOCS, 8), 1), 8)
+    rt.mem_store(h, RT_ALLOCS, rt.mem_load(h, RT_ALLOCS, 8).wrapping_add(1), 8)
   }
   rt.mem_store(h, LAST, size, 8)
   rt.mem_copy(q, p, if old < n { old } else { n })
   // free's push of p
-  rt.mem_store(h, FREES, rt.int_wrap(0, rt.mem_load(h, FREES, 8), 1), 8)
-  let pl = rt.int_wrap(0, h, rt.int_wrap(3, hdr, 3))
+  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  let pl = h.wrapping_add(hdr.wrapping_shl(3))
   rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
   rt.mem_store(pl, FREE_LISTS, p, 8)
-  rt.mem_store(pl, NFREE, rt.int_wrap(0, rt.mem_load(pl, NFREE, 8), 1), 8)
+  rt.mem_store(pl, NFREE, rt.mem_load(pl, NFREE, 8).wrapping_add(1), 8)
   if due {
     rt.mem_store(h, PSAMPLE, q, 8)
-    return rt.heap_grow(h, rt.int_wrap(0, n, SAMPLE))
+    return rt.heap_grow(h, n.wrapping_add(SAMPLE))
   }
   q
 }

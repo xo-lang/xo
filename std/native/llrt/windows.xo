@@ -244,7 +244,7 @@ fn info(h: Int, link: Bool) -> (Stat, Int) {
 pub fn clock_ns(a: Int) -> Int {
   sys_windows.GetSystemTimePreciseAsFileTime(a)
   // 100 ns intervals since 1601-01-01
-  rt.int_wrap(2, rt.int_wrap(1, rt.mem_load(a, 0, 8), 116444736000000000), 100)
+  rt.mem_load(a, 0, 8).wrapping_sub(116444736000000000).wrapping_mul(100)
 }
 
 /// QueryPerformanceCounter in nanoseconds (as xo_win.c's clock_gettime
@@ -266,7 +266,7 @@ pub fn mono_ns(a: Int) -> Int {
   let c = rt.mem_load(a, 0, 8)
   // whole seconds and the rest, as the C did: no overflow for a
   // frequency below 9.2e9
-  rt.int_wrap(0, rt.int_wrap(2, c / q, 1000000000), rt.int_wrap(2, c % q, 1000000000) / q)
+  ((c / q).wrapping_mul(1000000000)).wrapping_add((c % q).wrapping_mul(1000000000) / q)
 }
 
 /// BCryptGenRandom of n bytes, 256 at a time (as the C runtime's

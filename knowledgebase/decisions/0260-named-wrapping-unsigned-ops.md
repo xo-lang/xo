@@ -3,8 +3,13 @@
 Status: Accepted (owner, 2026-10-18), with seed 0.21.0. Step 1 (the
 methods, their native and Go bodies, and the SSA builders' inline
 lowering: compiler/ssa call.xo word_method; golden int_word_methods)
-lands before the seed, which today's seed builds; the std migration of
-the rt.int_wrap calls and the repotest ban land after it.
+landed before the seed (34dab50f). Step 3, after seed 0.21.0: std's
+7,787 calls (7,557 rt.int_wrap, 230 rt.u64_mul_hi, in 68 files) are
+the methods, the generators emit them, scripts/fieldcheck.py reads
+them, and internal/repotest TestStdUsesWordMethods rejects the
+intrinsics elsewhere in std. The compiler binary and every
+internal/llvm golden (arm64 and LLVM backends) build byte identical
+before and after.
 
 ## Context
 
@@ -58,7 +63,8 @@ followed the runtime's style.
    (a rewrite of `rt.int_wrap(K, a, b)` to `a.METHOD(b)`, checked by the
    fixed point being byte identical, since the lowering is the same);
    `rt.int_wrap` then stays only as the methods' lowering, and a
-   repotest check rejects it outside std/native/prelude.xo. The crypto
+   repotest check rejects it outside std/native/prelude.xo (and its
+declaration in std/native/rt.xo). The crypto
    generators (scripts/x25519fe64.py, nistecmul4p.py, keccaklazy.py)
    emit the methods.
 5. **Seed.** An older xo does not know the new methods as intrinsics, so

@@ -411,7 +411,7 @@ fn fc_restore(s: Int, e: Int) {
     rt.mem_store(st, S_MASK0 + 8 * w, m, 8)
     while m != 0 {
       let o = 8 * (64 * w + rt.ctz(m))
-      m = m & rt.int_wrap(1, m, 1)
+      m = m & m.wrapping_sub(1)
       rt.mem_store(st, o, rt.mem_load(q, 0, 8), 8)
       rt.mem_store(st, S_VAL + o, rt.mem_load(q, 8, 8), 8)
       q = q + 16
@@ -435,7 +435,7 @@ fn lookup_frame(s: Int, pc: Int, darwin: Bool) -> Bool {
   // code moved (macOS 1.42x, then Linux 1.68x, 2026-10-17); a dozen hot
   // frames meet three in a set about 1% of layouts now
   // (gotchas/unwind-frame-cache-collisions.md)
-  let set = s + FC + 2 * FC_BYTES * ((rt.int_wrap(2, pc >> 2, -7046029254386353131) >> 57) & (FC_ENTRIES / 2 - 1))
+  let set = s + FC + 2 * FC_BYTES * (((pc >> 2).wrapping_mul(-7046029254386353131) >> 57) & (FC_ENTRIES / 2 - 1))
   if rt.mem_load(set, 0, 8) == pc {
     fc_restore(s, set)
     return true
@@ -477,7 +477,7 @@ fn lookup_frame(s: Int, pc: Int, darwin: Bool) -> Bool {
     var m = if w == 0 { m0 } else { m1 }
     while m != 0 {
       let o = 8 * (64 * w + rt.ctz(m))
-      m = m & rt.int_wrap(1, m, 1)
+      m = m & m.wrapping_sub(1)
       rt.mem_store(q, 0, rt.mem_load(st, o, 8), 8)
       rt.mem_store(q, 8, rt.mem_load(st, S_VAL + o, 8), 8)
       q = q + 16
@@ -515,7 +515,7 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int 
   rt.mem_store(regs, PC, lp, 8)
   let args = rt.mem_load(ctx, H_ARGS, 8)
   if args != 0 {
-    rt.mem_store(regs, sp_off(), rt.int_wrap(0, rt.mem_load(regs, sp_off(), 8), args), 8)
+    rt.mem_store(regs, sp_off(), rt.mem_load(regs, sp_off(), 8).wrapping_add(args), 8)
   }
   URC_INSTALL_CONTEXT
 }
@@ -966,7 +966,7 @@ fn restore_pairs(regs: Int, enc: Int, top: Int) {
   for k in 0..9 {
     // bits 0 to 4 the x pairs, 8 to 11 the d pairs (DWARF 72 is d8)
     let bit = if k < 5 { k } else { k + 3 }
-    if (enc & rt.int_wrap(3, 1, bit)) != 0 {
+    if (enc & (1).wrapping_shl(bit)) != 0 {
       let r = if k < 5 { 19 + 2 * k } else { 72 + 2 * (k - 5) }
       loc -= 8
       rt.mem_store(regs, 8 * r, rt.mem_load(loc, 0, 8), 8)
@@ -1038,10 +1038,10 @@ fn cstep_x64(s: Int, regs: Int, enc: Int) -> Bool {
     var u = 1
     var reg = 0
     while u < 7 && reg == 0 {
-      if (used & rt.int_wrap(3, 1, u)) == 0 {
+      if (used & (1).wrapping_shl(u)) == 0 {
         if renum == rt.mem_load(digits, 8 * i, 8) {
           reg = u
-          used = used | rt.int_wrap(3, 1, u)
+          used = used | (1).wrapping_shl(u)
         }
         renum += 1
       }
@@ -1239,7 +1239,7 @@ fn lookup(s: Int, pc: Int) -> Int {
 
 /// v, the low bits bits of a two's complement number, sign extended.
 fn sx(v: Int, bits: Int) -> Int {
-  let half = rt.int_wrap(3, 1, bits - 1)
+  let half = (1).wrapping_shl(bits - 1)
   if v >= half {
     return v - half - half
   }
@@ -1256,7 +1256,7 @@ fn uleb(p: Int) -> (Int, Int) {
     b = rt.mem_load(q, 0, 1)
     q += 1
     if shift < 64 {
-      v = v | rt.int_wrap(3, b & 127, shift)
+      v = v | (b & 127).wrapping_shl(shift)
     }
     shift += 7
   }
@@ -1273,12 +1273,12 @@ fn sleb(p: Int) -> (Int, Int) {
     b = rt.mem_load(q, 0, 1)
     q += 1
     if shift < 64 {
-      v = v | rt.int_wrap(3, b & 127, shift)
+      v = v | (b & 127).wrapping_shl(shift)
     }
     shift += 7
   }
   if shift < 64 && (b & 64) != 0 {
-    v = v | rt.int_wrap(3, -1, shift)
+    v = v | (-1).wrapping_shl(shift)
   }
   (v, q)
 }
@@ -1321,9 +1321,9 @@ fn read_ptr(p: Int, enc: Int, data: Int) -> (Int, Int) {
   if v != 0 {
     let app = enc & 112
     if app == 16 {
-      v = rt.int_wrap(0, v, p)
+      v = v.wrapping_add(p)
     } else if app == 48 {
-      v = rt.int_wrap(0, v, data)
+      v = v.wrapping_add(data)
     }
     if (enc & 128) != 0 {
       v = rt.mem_load(v, 0, 8)
@@ -1378,7 +1378,7 @@ fn copy_rules(dst: Int, src: Int) {
     rt.mem_store(dst, S_MASK0 + 8 * w, m, 8)
     while m != 0 {
       let o = 8 * (64 * w + rt.ctz(m))
-      m = m & rt.int_wrap(1, m, 1)
+      m = m & m.wrapping_sub(1)
       rt.mem_store(dst, o, rt.mem_load(src, o, 8), 8)
       rt.mem_store(dst, S_VAL + o, rt.mem_load(src, S_VAL + o, 8), 8)
     }
@@ -1453,8 +1453,8 @@ fn read_fde(s: Int, fde: Int, pc: Int) -> Bool {
   let (begin, p1) = read_ptr(body + 4, fenc, 0)
   let (range, p2) = read_val(p1, fenc)
   rt.mem_store(s, H_BEGIN, begin, 8)
-  rt.mem_store(s, H_END, rt.int_wrap(0, begin, range), 8)
-  if pc < begin || pc >= rt.int_wrap(0, begin, range) {
+  rt.mem_store(s, H_END, begin.wrapping_add(range), 8)
+  if pc < begin || pc >= begin.wrapping_add(range) {
     return false
   }
   var p = p2
@@ -1567,12 +1567,12 @@ fn set_rule(st: Int, r: Int, kind: Int, val: Int) {
     rt.mem_store(st, 8 * r, kind, 8)
     rt.mem_store(st, S_VAL + 8 * r, val, 8)
     let w = S_MASK0 + 8 * (r / 64)
-    rt.mem_store(st, w, rt.mem_load(st, w, 8) | rt.int_wrap(3, 1, r % 64), 8)
+    rt.mem_store(st, w, rt.mem_load(st, w, 8) | (1).wrapping_shl(r % 64), 8)
   }
 }
 
 /// Whether register r has a rule in the rule set at st.
-fn has_rule(st: Int, r: Int) -> Bool { (rt.mem_load(st, S_MASK0 + 8 * (r / 64), 8) & rt.int_wrap(3, 1, r % 64)) != 0 }
+fn has_rule(st: Int, r: Int) -> Bool { (rt.mem_load(st, S_MASK0 + 8 * (r / 64), 8) & (1).wrapping_shl(r % 64)) != 0 }
 
 /// Runs the call frame instructions from p to end on s's rule set
 /// (libgcc's execute_cfa_program): all of them for the CIE, else the
@@ -1594,12 +1594,12 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
     let lo = op & 63
     if hi == 64 {
       // DW_CFA_advance_loc
-      loc = rt.int_wrap(0, loc, rt.int_wrap(2, lo, ca))
+      loc = loc.wrapping_add(lo.wrapping_mul(ca))
     } else if hi == 128 {
       // DW_CFA_offset
       let (o, q) = uleb(p)
       p = q
-      set_rule(st, lo, R_OFFSET, rt.int_wrap(2, o, da))
+      set_rule(st, lo, R_OFFSET, o.wrapping_mul(da))
     } else if hi == 192 {
       // DW_CFA_restore
       restore(s, lo)
@@ -1612,13 +1612,13 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       p = q
     } else if op == 2 {
       // DW_CFA_advance_loc1, 2, 4
-      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 1), ca))
+      loc = loc.wrapping_add(rt.mem_load(p, 0, 1).wrapping_mul(ca))
       p += 1
     } else if op == 3 {
-      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 2), ca))
+      loc = loc.wrapping_add(rt.mem_load(p, 0, 2).wrapping_mul(ca))
       p += 2
     } else if op == 4 {
-      loc = rt.int_wrap(0, loc, rt.int_wrap(2, rt.mem_load(p, 0, 4), ca))
+      loc = loc.wrapping_add(rt.mem_load(p, 0, 4).wrapping_mul(ca))
       p += 4
     } else if op == 5 || op == 20 || op == 47 {
       // DW_CFA_offset_extended, val_offset, GNU_negative_offset_extended
@@ -1626,11 +1626,11 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       let (o, q2) = uleb(q)
       p = q2
       if op == 5 {
-        set_rule(st, r, R_OFFSET, rt.int_wrap(2, o, da))
+        set_rule(st, r, R_OFFSET, o.wrapping_mul(da))
       } else if op == 20 {
-        set_rule(st, r, R_VAL_OFFSET, rt.int_wrap(2, o, da))
+        set_rule(st, r, R_VAL_OFFSET, o.wrapping_mul(da))
       } else {
-        set_rule(st, r, R_OFFSET, rt.int_wrap(1, 0, rt.int_wrap(2, o, da)))
+        set_rule(st, r, R_OFFSET, (0).wrapping_sub(o.wrapping_mul(da)))
       }
     } else if op == 6 || op == 7 || op == 8 {
       // DW_CFA_restore_extended, undefined, same_value
@@ -1700,20 +1700,20 @@ fn exec(s: Int, p0: Int, end: Int, ra: Int, cie: Bool) -> Bool {
       let (r, q) = uleb(p)
       let (o, q2) = sleb(q)
       p = q2
-      set_rule(st, r, if op == 17 { R_OFFSET } else { R_VAL_OFFSET }, rt.int_wrap(2, o, da))
+      set_rule(st, r, if op == 17 { R_OFFSET } else { R_VAL_OFFSET }, o.wrapping_mul(da))
     } else if op == 18 {
       // DW_CFA_def_cfa_sf
       let (r, q) = uleb(p)
       let (o, q2) = sleb(q)
       p = q2
       rt.mem_store(st, S_CFA_REG, r, 8)
-      rt.mem_store(st, S_CFA_OFF, rt.int_wrap(2, o, da), 8)
+      rt.mem_store(st, S_CFA_OFF, o.wrapping_mul(da), 8)
       rt.mem_store(st, S_CFA_EXPR, 0, 8)
     } else if op == 19 {
       // DW_CFA_def_cfa_offset_sf
       let (o, q) = sleb(p)
       p = q
-      rt.mem_store(st, S_CFA_OFF, rt.int_wrap(2, o, da), 8)
+      rt.mem_store(st, S_CFA_OFF, o.wrapping_mul(da), 8)
     } else if op == 45 {
       // DW_CFA_AARCH64_negate_ra_state: the return address is signed
       rt.mem_store(st, S_RA_SIGNED, 1 - rt.mem_load(st, S_RA_SIGNED, 8), 8)
@@ -1752,21 +1752,21 @@ fn step(s: Int, regs: Int) -> Bool {
   if rt.mem_load(st, S_CFA_EXPR, 8) != 0 || cr < 0 || cr >= NREG {
     return false
   }
-  let cfa = rt.int_wrap(0, rt.mem_load(regs, 8 * cr, 8), rt.mem_load(st, S_CFA_OFF, 8))
+  let cfa = rt.mem_load(regs, 8 * cr, 8).wrapping_add(rt.mem_load(st, S_CFA_OFF, 8))
   let tmp = s + TMP
   var w = 0
   while w < 2 {
     var m = rt.mem_load(st, S_MASK0 + 8 * w, 8)
     while m != 0 {
       let o = 8 * (64 * w + rt.ctz(m))
-      m = m & rt.int_wrap(1, m, 1)
+      m = m & m.wrapping_sub(1)
       let k = rt.mem_load(st, o, 8)
       let v = rt.mem_load(st, S_VAL + o, 8)
       var x = rt.mem_load(regs, o, 8)
       if k == R_OFFSET {
-        x = rt.mem_load(rt.int_wrap(0, cfa, v), 0, 8)
+        x = rt.mem_load(cfa.wrapping_add(v), 0, 8)
       } else if k == R_VAL_OFFSET {
-        x = rt.int_wrap(0, cfa, v)
+        x = cfa.wrapping_add(v)
       } else if k == R_REG {
         if v < 0 || v >= NREG {
           return false
@@ -1786,7 +1786,7 @@ fn step(s: Int, regs: Int) -> Bool {
     var m = rt.mem_load(st, S_MASK0 + 8 * w, 8)
     while m != 0 {
       let o = 8 * (64 * w + rt.ctz(m))
-      m = m & rt.int_wrap(1, m, 1)
+      m = m & m.wrapping_sub(1)
       rt.mem_store(regs, o, rt.mem_load(tmp, o, 8), 8)
     }
     w += 1

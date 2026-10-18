@@ -26,15 +26,15 @@ const BACKSLASHES: Int = 6655295901103053916
 /// arm64): one bit a byte of a mask of rt.bytes_eq16.
 const NIBS: Int = 1229782938247303441
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
-fn shl(a: Int, k: Int) -> Int { rt.int_wrap(3, a, k) }
+fn shl(a: Int, k: Int) -> Int { a.wrapping_shl(k) }
 
-fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+fn shr(a: Int, k: Int) -> Int { a.shr_logical(k) }
 
 /// The high bit of each byte of w that is the byte of r (eight copies of
 /// one byte), exactly.

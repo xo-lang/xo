@@ -194,7 +194,7 @@ pub fn parse(der: Bytes) -> Parsed {
   if version < 0 {
     return fail("x509: malformed version")
   }
-  version = rt.int_wrap(0, version, 1)
+  version = version.wrapping_add(1)
   if version > 3 {
     return fail("x509: invalid version")
   }

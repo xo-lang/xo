@@ -61,9 +61,9 @@ const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
 /// n bytes of zeroed memory mapped from the system (heapos.xo map, which
 /// ends the program when the system refuses).
@@ -113,7 +113,7 @@ fn unlock(s: Int) {
 fn big_take(s: Int, total: Int) -> Int {
   var i = 0
   while i < BIG_N {
-    let e = addw(addw(s, S_BIG), rt.int_wrap(3, i, 4))
+    let e = addw(addw(s, S_BIG), i.wrapping_shl(4))
     let p = rt.mem_load(e, 0, 8)
     let n = rt.mem_load(e, 8, 8)
     if p != 0 && n >= total && n <= addw(total, total) {
@@ -133,7 +133,7 @@ fn big_keep(s: Int, h: Int, total: Int) -> Bool {
   }
   var i = 0
   while i < BIG_N {
-    let e = addw(addw(s, S_BIG), rt.int_wrap(3, i, 4))
+    let e = addw(addw(s, S_BIG), i.wrapping_shl(4))
     if rt.mem_load(e, 0, 8) == 0 {
       rt.mem_store(e, 0, h, 8)
       rt.mem_store(e, 8, total, 8)
@@ -147,7 +147,7 @@ fn big_keep(s: Int, h: Int, total: Int) -> Bool {
 /// malloc(n): a 16 byte aligned block of at least n bytes, or 0.
 pub fn malloc(n0: Int) -> Int {
   let n = if n0 == 0 { 1 } else { n0 }
-  if addw(n, 16) > rt.int_wrap(3, 1, MAX_SHIFT) {
+  if addw(n, 16) > (1).wrapping_shl(MAX_SHIFT) {
     let total = addw(n, 16 + PAGE - 1) & (0 - PAGE)
     let s = state()
     var p = 0
@@ -166,7 +166,7 @@ pub fn malloc(n0: Int) -> Int {
     return addw(p, 16)
   }
   var c = MIN_SHIFT
-  while rt.int_wrap(3, 1, c) < addw(n, 16) {
+  while (1).wrapping_shl(c) < addw(n, 16) {
     c = addw(c, 1)
   }
   let s = state()
@@ -174,12 +174,12 @@ pub fn malloc(n0: Int) -> Int {
     return 0
   }
   lock(s)
-  let head = addw(s, rt.int_wrap(3, c, 3))
+  let head = addw(s, c.wrapping_shl(3))
   var b = rt.mem_load(head, 0, 8)
   if b != 0 {
     rt.mem_store(head, 0, rt.mem_load(b, 0, 8), 8)
   } else {
-    let size = rt.int_wrap(3, 1, c)
+    let size = (1).wrapping_shl(c)
     var cur = rt.mem_load(s, S_CUR, 8)
     if cur == 0 || subw(rt.mem_load(s, S_END, 8), cur) < size {
       cur = map(REGION)
@@ -220,7 +220,7 @@ pub fn free(p: Int) {
   // a small block came from malloc, so the state exists
   let s = state()
   lock(s)
-  let head = addw(s, rt.int_wrap(3, c, 3))
+  let head = addw(s, c.wrapping_shl(3))
   rt.mem_store(h, 0, rt.mem_load(head, 0, 8), 8)
   rt.mem_store(head, 0, h, 8)
   unlock(s)
@@ -229,10 +229,10 @@ pub fn free(p: Int) {
 /// calloc(n, m): n * m zeroed bytes, or 0 (also when the product
 /// overflows).
 pub fn calloc(n: Int, m: Int) -> Int {
-  if rt.u64_mul_hi(n, m) != 0 || rt.int_wrap(2, n, m) < 0 {
+  if n.mul_hi_unsigned(m) != 0 || n.wrapping_mul(m) < 0 {
     return 0
   }
-  let t = rt.int_wrap(2, n, m)
+  let t = n.wrapping_mul(m)
   let p = malloc(t)
   if p != 0 {
     rt.mem_set(p, 0, t)
@@ -247,7 +247,7 @@ pub fn realloc(p: Int, n: Int) -> Int {
     return malloc(n)
   }
   let c = rt.mem_load(subw(p, 16), 0, 8)
-  let have = if c < 0 { subw(subw(0, c), 16) } else { subw(rt.int_wrap(3, 1, c), 16) }
+  let have = if c < 0 { subw(subw(0, c), 16) } else { subw((1).wrapping_shl(c), 16) }
   if n <= have && c >= 0 {
     return p
   }
@@ -285,7 +285,7 @@ const CACHE_BATCH = 32
 /// The size class of a small block of n bytes (n + 16 at most 2^MAX_SHIFT).
 fn class_of(n: Int) -> Int {
   var c = MIN_SHIFT
-  while rt.int_wrap(3, 1, c) < addw(n, 16) {
+  while (1).wrapping_shl(c) < addw(n, 16) {
     c = addw(c, 1)
   }
   c
@@ -315,11 +315,11 @@ fn refill(t: Int, c: Int) -> Int {
   if s == 0 {
     return 0
   }
-  let size = rt.int_wrap(3, 1, c)
-  let slot = addw(t, rt.int_wrap(3, c, 4))
+  let size = (1).wrapping_shl(c)
+  let slot = addw(t, c.wrapping_shl(4))
   var got = 0
   lock(s)
-  let head = addw(s, rt.int_wrap(3, c, 3))
+  let head = addw(s, c.wrapping_shl(3))
   while got < CACHE_BATCH {
     var b = rt.mem_load(head, 0, 8)
     if b != 0 {
@@ -349,8 +349,8 @@ fn refill(t: Int, c: Int) -> Int {
 /// shared list (lock taken here).
 fn drain(t: Int, c: Int) {
   let s = state()
-  let slot = addw(t, rt.int_wrap(3, c, 4))
-  let head = addw(s, rt.int_wrap(3, c, 3))
+  let slot = addw(t, c.wrapping_shl(4))
+  let head = addw(s, c.wrapping_shl(3))
   lock(s)
   var k = 0
   while k < CACHE_BATCH {
@@ -367,7 +367,7 @@ fn drain(t: Int, c: Int) {
 /// malloc through the thread's cache: a 16 byte aligned block of at
 /// least n bytes, or 0.
 fn malloc_tc(n: Int) -> Int {
-  if addw(n, 16) > rt.int_wrap(3, 1, MAX_SHIFT) {
+  if addw(n, 16) > (1).wrapping_shl(MAX_SHIFT) {
     return malloc(n)
   }
   let t = cache()
@@ -375,7 +375,7 @@ fn malloc_tc(n: Int) -> Int {
     return malloc(n)
   }
   let c = class_of(n)
-  let slot = addw(t, rt.int_wrap(3, c, 4))
+  let slot = addw(t, c.wrapping_shl(4))
   if rt.mem_load(slot, 0, 8) == 0 && refill(t, c) == 0 {
     return 0
   }
@@ -395,7 +395,7 @@ fn free_tc(p: Int) {
     free(p)
     return
   }
-  let slot = addw(t, rt.int_wrap(3, c, 4))
+  let slot = addw(t, c.wrapping_shl(4))
   rt.mem_store(h, 0, rt.mem_load(slot, 0, 8), 8)
   rt.mem_store(slot, 0, h, 8)
   let k = addw(rt.mem_load(slot, 8, 8), 1)
@@ -421,7 +421,7 @@ pub fn heap_large(n: Int) -> Int {
 /// (its first bytes kept), the address after its prefix.
 pub fn heap_large_resize(b: Int, n: Int) -> Int {
   let c = rt.mem_load(subw(b, 16), 0, 8)
-  let have = if c < 0 { subw(subw(0, c), 16) } else { subw(rt.int_wrap(3, 1, c), 16) }
+  let have = if c < 0 { subw(subw(0, c), 16) } else { subw((1).wrapping_shl(c), 16) }
   var nb = b
   if addw(n, 8) > have || c < 0 {
     nb = malloc_tc(addw(n, 8))

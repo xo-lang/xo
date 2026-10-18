@@ -26,7 +26,7 @@ fn alpha(k: Int) -> Int { rt.bytes_word(ALPHA, 4 * (k & 31)) & 0xFFFFFFFF }
 fn intn(g: Int, n: Int) -> Int { testworld.gen_intn(g, n) }
 
 /// The zigzag decoding of the UInt64 v (0, -1, 1, -2, ...).
-fn zigzag(v: Int) -> Int { rt.int_wrap(4, v, 1) ^ (0 - (v & 1)) }
+fn zigzag(v: Int) -> Int { v.shr_logical(1) ^ (0 - (v & 1)) }
 
 /// A collection's length: small, shrinking with depth (GenRand.Size).
 pub fn size(g: Int) -> Int {
@@ -120,7 +120,7 @@ pub fn str(g: Int) -> Str {
 }
 
 /// std/rt's Duration: milliseconds of genInt (wrapping as Go's int64).
-pub fn duration(g: Int) -> Int { rt.int_wrap(2, any_int(g), 1000000) }
+pub fn duration(g: Int) -> Int { any_int(g).wrapping_mul(1000000) }
 
 /// std/rt's Time: seconds of genInt from 2026-01-01 (wrapping).
-pub fn time(g: Int) -> Int { rt.int_wrap(0, 1767225600000000000, rt.int_wrap(2, any_int(g), 1000000000)) }
+pub fn time(g: Int) -> Int { (1767225600000000000).wrapping_add(any_int(g).wrapping_mul(1000000000)) }

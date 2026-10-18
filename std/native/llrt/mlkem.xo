@@ -56,11 +56,11 @@ pub const GROUP_SECP384R1_MLKEM1024: Int = 0x11ed
 // factor, a sum of two such products below 2^25), so nothing comes near
 // 2^63.
 
-fn add(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn add(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn sub(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn sub(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mul(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mul(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
 /// A polynomial's coefficients as raw memory, for the NTT's loops, whose
 /// every index is below N by their bounds (the arm64 backend checked each
@@ -72,7 +72,7 @@ fn coeffs(var f: List[Int]) -> Int {
     fault("mlkem: a polynomial of ${f.len()} coefficients")
   }
   f[0] = f[0]
-  rt.int_wrap(0, rt.obj_addr(f), rt.layout(2))
+  rt.obj_addr(f).wrapping_add(rt.layout(2))
 }
 
 /// The raw coefficients of f for reading only (f must have N elements).
@@ -80,7 +80,7 @@ fn coeffs_read(f: List[Int]) -> Int {
   if f.len() != N {
     fault("mlkem: a polynomial of ${f.len()} coefficients")
   }
-  rt.int_wrap(0, rt.obj_addr(f), rt.layout(2))
+  rt.obj_addr(f).wrapping_add(rt.layout(2))
 }
 
 /// The coefficient at byte offset o of the raw coefficients p (the loops
@@ -95,14 +95,14 @@ fn stc(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
 // stays a call in the NTT's loop (2026-10-15).
 
 fn fadd(a: Int, b: Int) -> Int {
-  let x = rt.int_wrap(1, rt.int_wrap(0, a, b), Q)
-  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
+  let x = a.wrapping_add(b).wrapping_sub(Q)
+  x.wrapping_add(x.shr_logical(63).wrapping_mul(Q))
 }
 
 /// a - b + q, reduced once: a - b when it is not negative.
 fn fsub(a: Int, b: Int) -> Int {
-  let x = rt.int_wrap(1, a, b)
-  rt.int_wrap(0, x, rt.int_wrap(2, rt.int_wrap(4, x, 63), Q))
+  let x = a.wrapping_sub(b)
+  x.wrapping_add(x.shr_logical(63).wrapping_mul(Q))
 }
 
 // Lazy reduction (the NTTs and their products): coefficients are Ints,
@@ -114,13 +114,13 @@ fn fsub(a: Int, b: Int) -> Int {
 
 /// x mod q up to one extra q: [0, 2q), for 0 <= x < 2^32.
 fn bred(x: Int) -> Int {
-  rt.int_wrap(1, x, rt.int_wrap(2, rt.int_wrap(4, rt.int_wrap(2, x, 1290167), 32), Q))
+  x.wrapping_sub(x.wrapping_mul(1290167).shr_logical(32).wrapping_mul(Q))
 }
 
 /// x mod q, for 0 <= x < 2^32.
 fn bfull(x: Int) -> Int {
-  let r = rt.int_wrap(1, rt.int_wrap(1, x, rt.int_wrap(2, rt.int_wrap(4, rt.int_wrap(2, x, 1290167), 32), Q)), Q)
-  rt.int_wrap(0, r, rt.int_wrap(2, rt.int_wrap(4, r, 63), Q))
+  let r = x.wrapping_sub(x.wrapping_mul(1290167).shr_logical(32).wrapping_mul(Q)).wrapping_sub(Q)
+  r.wrapping_add(r.shr_logical(63).wrapping_mul(Q))
 }
 
 /// Go's compress: round(2^d x / q) mod 2^d (no division: the quotient
@@ -128,18 +128,18 @@ fn bfull(x: Int) -> Int {
 /// decapsulation, so wrapping arithmetic only (decision 0222: a checked
 /// operation is a branch on its operands; 2026-10-18).
 fn compress(x: Int, d: Int) -> Int {
-  let dividend = rt.int_wrap(3, x, d)
-  var quotient = rt.int_wrap(4, rt.int_wrap(2, dividend, 5039), 24)
-  let remainder = rt.int_wrap(1, dividend, rt.int_wrap(2, quotient, Q))
-  quotient = rt.int_wrap(0, quotient, rt.int_wrap(4, rt.int_wrap(1, Q / 2, remainder), 63))
-  quotient = rt.int_wrap(0, quotient, rt.int_wrap(4, rt.int_wrap(1, Q + Q / 2, remainder), 63))
-  quotient & rt.int_wrap(1, rt.int_wrap(3, 1, d), 1)
+  let dividend = x.wrapping_shl(d)
+  var quotient = dividend.wrapping_mul(5039).shr_logical(24)
+  let remainder = dividend.wrapping_sub(quotient.wrapping_mul(Q))
+  quotient = quotient.wrapping_add(((Q / 2).wrapping_sub(remainder)).shr_logical(63))
+  quotient = quotient.wrapping_add(((Q + Q / 2).wrapping_sub(remainder)).shr_logical(63))
+  quotient & ((1).wrapping_shl(d)).wrapping_sub(1)
 }
 
 /// Go's decompress: round(q y / 2^d), by wrapping arithmetic as compress.
 fn decompress(y: Int, d: Int) -> Int {
-  let dividend = rt.int_wrap(2, y, Q)
-  rt.int_wrap(0, rt.int_wrap(4, dividend, d), rt.int_wrap(4, dividend, rt.int_wrap(1, d, 1)) & 1)
+  let dividend = y.wrapping_mul(Q)
+  dividend.shr_logical(d).wrapping_add(dividend.shr_logical(d.wrapping_sub(1)) & 1)
 }
 
 /// N zeros: a copy of a constant (the first write copies it: one
@@ -184,7 +184,7 @@ const GAMMAS: List[Int] = [17, 3312, 2761, 568, 583, 2746, 2649, 680, 1637, 1692
 
 /// The raw words of a constant list (ZETAS, GAMMAS): the constant keeps
 /// it alive.
-fn const_words(c: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(c), rt.layout(2)) }
+fn const_words(c: List[Int]) -> Int { rt.obj_addr(c).wrapping_add(rt.layout(2)) }
 
 /// The NTT (FIPS 203 Algorithm 9), in place, for coefficients below q.
 /// Lazy: t = zeta * f[j + len] is reduced to [0, 2q) by bred, f[j] + t and
@@ -215,7 +215,7 @@ fn ntt(f0: List[Int]) -> List[Int] {
       }
       j0 = add(end, lb)
     }
-    lb = rt.int_wrap(4, lb, 1)
+    lb = lb.shr_logical(1)
   }
   // len 2: the butterflies (j, j + 2) and (j + 1, j + 3)
   var j = 0
@@ -329,33 +329,33 @@ fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
   sha3.write(s, asn1.cat([rho, byte(ii), byte(jj)]))
   var a = ZEROS16
   a[0] = 0
-  let p = rt.int_wrap(0, rt.obj_addr(a), rt.layout(2))
+  let p = rt.obj_addr(a).wrapping_add(rt.layout(2))
   // the count's byte offset
   var o = 0
   while o < 8 * N {
     let lanes = sha3.next_block(s)
-    let lp = rt.int_wrap(0, rt.obj_addr(lanes), rt.layout(2))
+    let lp = rt.obj_addr(lanes).wrapping_add(rt.layout(2))
     var off = 0
     while off < SHAKE128_RATE && o < 8 * N {
       let w0 = ldc(lp, off)
       let w1 = ldc(lp, add(off, 8))
       let w2 = ldc(lp, add(off, 16))
       o = take(p, o, w0 & 4095)
-      o = take(p, o, rt.int_wrap(4, w0, 12) & 4095)
-      o = take(p, o, rt.int_wrap(4, w0, 24) & 4095)
-      o = take(p, o, rt.int_wrap(4, w0, 36) & 4095)
-      o = take(p, o, rt.int_wrap(4, w0, 48) & 4095)
-      o = take(p, o, rt.int_wrap(4, w0, 60) | ((w1 & 255) << 4))
-      o = take(p, o, rt.int_wrap(4, w1, 8) & 4095)
-      o = take(p, o, rt.int_wrap(4, w1, 20) & 4095)
-      o = take(p, o, rt.int_wrap(4, w1, 32) & 4095)
-      o = take(p, o, rt.int_wrap(4, w1, 44) & 4095)
-      o = take(p, o, rt.int_wrap(4, w1, 56) | ((w2 & 15) << 8))
-      o = take(p, o, rt.int_wrap(4, w2, 4) & 4095)
-      o = take(p, o, rt.int_wrap(4, w2, 16) & 4095)
-      o = take(p, o, rt.int_wrap(4, w2, 28) & 4095)
-      o = take(p, o, rt.int_wrap(4, w2, 40) & 4095)
-      o = take(p, o, rt.int_wrap(4, w2, 52))
+      o = take(p, o, w0.shr_logical(12) & 4095)
+      o = take(p, o, w0.shr_logical(24) & 4095)
+      o = take(p, o, w0.shr_logical(36) & 4095)
+      o = take(p, o, w0.shr_logical(48) & 4095)
+      o = take(p, o, w0.shr_logical(60) | ((w1 & 255) << 4))
+      o = take(p, o, w1.shr_logical(8) & 4095)
+      o = take(p, o, w1.shr_logical(20) & 4095)
+      o = take(p, o, w1.shr_logical(32) & 4095)
+      o = take(p, o, w1.shr_logical(44) & 4095)
+      o = take(p, o, w1.shr_logical(56) | ((w2 & 15) << 8))
+      o = take(p, o, w2.shr_logical(4) & 4095)
+      o = take(p, o, w2.shr_logical(16) & 4095)
+      o = take(p, o, w2.shr_logical(28) & 4095)
+      o = take(p, o, w2.shr_logical(40) & 4095)
+      o = take(p, o, w2.shr_logical(52))
       off += 24
     }
   }
@@ -369,7 +369,7 @@ fn sample_ntt(rho: Bytes, ii: Int, jj: Int) -> List[Int] {
 /// offset: o + 8 when d < q, else o.
 fn take(p: Int, o: Int, d: Int) -> Int {
   rt.mem_store(p, o, d, 8)
-  rt.int_wrap(0, o, rt.int_wrap(3, rt.int_wrap(4, rt.int_wrap(1, d, Q), 63), 3))
+  o.wrapping_add(d.wrapping_sub(Q).shr_logical(63).wrapping_shl(3))
 }
 
 /// A polynomial from the centered binomial distribution with eta 2
@@ -385,11 +385,11 @@ fn sample_cbd(s: Bytes, b: Int) -> List[Int] {
   var w = 0
   while w < 128 {
     let x = rt.bytes_word(bs, w)
-    let y = rt.int_wrap(0, x & 0x5555555555555555, rt.int_wrap(4, x, 1) & 0x5555555555555555)
+    let y = (x & 0x5555555555555555).wrapping_add(x.shr_logical(1) & 0x5555555555555555)
     var k = 0
     while k < 64 {
-      let d = rt.int_wrap(1, rt.int_wrap(4, y, k) & 3, rt.int_wrap(4, y, rt.int_wrap(0, k, 2)) & 3)
-      stc(p, o, rt.int_wrap(0, d, rt.int_wrap(2, rt.int_wrap(4, d, 63), Q)))
+      let d = (y.shr_logical(k) & 3).wrapping_sub(y.shr_logical(k.wrapping_add(2)) & 3)
+      stc(p, o, d.wrapping_add(d.shr_logical(63).wrapping_mul(Q)))
       o = add(o, 8)
       k = add(k, 4)
     }
@@ -436,7 +436,7 @@ fn encode_d(f: List[Int], d: Int) -> Bytes {
   var acc = 0
   var bits = 0
   for i in 0..N {
-    acc = acc | rt.int_wrap(3, compress(f[i], d), bits)
+    acc = acc | compress(f[i], d).wrapping_shl(bits)
     bits += d
     while bits >= 8 {
       out = rt.rs_push_byte(out, acc & 255)
@@ -455,11 +455,11 @@ fn decode_d(b: Bytes, d: Int) -> List[Int] {
   var p = 0
   for i in 0..N {
     while bits < d {
-      acc = acc | rt.int_wrap(3, Int(b[p]), bits)
+      acc = acc | Int(b[p]).wrapping_shl(bits)
       p += 1
       bits += 8
     }
-    f[i] = decompress(acc & (rt.int_wrap(3, 1, d) - 1), d)
+    f[i] = decompress(acc & ((1).wrapping_shl(d) - 1), d)
     acc = acc >> d
     bits -= d
   }
@@ -641,7 +641,7 @@ fn implicit_reject(c: Bytes, c1: Bytes, n: Int, kprime: Bytes, kbar: Bytes) -> B
   var i = 0
   while i < n {
     diff = diff | (rt.mem_load(pc, i, 1) ^ rt.mem_load(pc1, i, 1))
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   let same = ct.mask_eq(diff, 0)
   let out = rt.rs_set_len(rt.rs_with_cap(32), 32)
@@ -651,7 +651,7 @@ fn implicit_reject(c: Bytes, c1: Bytes, n: Int, kprime: Bytes, kbar: Bytes) -> B
   i = 0
   while i < 32 {
     rt.mem_store(po, i, ct.pick(same, rt.mem_load(pk, i, 1), rt.mem_load(pb, i, 1)), 1)
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   raw.alive(c)
   raw.alive(c1)

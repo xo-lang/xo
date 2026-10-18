@@ -92,23 +92,23 @@ func mixG(b *bytes.Buffer, a, bb, c, d int, x, y string) {
 		if x == "" {
 			return fmt.Sprintf("fbm(%s, %s)", p, q)
 		}
-		return fmt.Sprintf("rt.int_wrap(0, %s, %s)", p, q)
+		return fmt.Sprintf("%s.wrapping_add(%s)", p, q)
 	}
 	addm := func(p, q, m string) string {
 		if x == "" {
 			return add(p, q)
 		}
-		return fmt.Sprintf("rt.int_wrap(0, rt.int_wrap(0, %s, %s), %s)", p, q, m)
+		return fmt.Sprintf("%s.wrapping_add(%s).wrapping_add(%s)", p, q, m)
 	}
 	va, vb, vc, vd := fmt.Sprintf("v%d", a), fmt.Sprintf("v%d", bb), fmt.Sprintf("v%d", c), fmt.Sprintf("v%d", d)
 	fmt.Fprintf(b, "  %s = %s\n", va, addm(va, vb, x))
-	fmt.Fprintf(b, "  %s = rt.int_wrap(5, %s ^ %s, 32)\n", vd, vd, va)
+	fmt.Fprintf(b, "  %s = (%s ^ %s).rotate_right(32)\n", vd, vd, va)
 	fmt.Fprintf(b, "  %s = %s\n", vc, add(vc, vd))
-	fmt.Fprintf(b, "  %s = rt.int_wrap(5, %s ^ %s, 24)\n", vb, vb, vc)
+	fmt.Fprintf(b, "  %s = (%s ^ %s).rotate_right(24)\n", vb, vb, vc)
 	fmt.Fprintf(b, "  %s = %s\n", va, addm(va, vb, y))
-	fmt.Fprintf(b, "  %s = rt.int_wrap(5, %s ^ %s, 16)\n", vd, vd, va)
+	fmt.Fprintf(b, "  %s = (%s ^ %s).rotate_right(16)\n", vd, vd, va)
 	fmt.Fprintf(b, "  %s = %s\n", vc, add(vc, vd))
-	fmt.Fprintf(b, "  %s = rt.int_wrap(5, %s ^ %s, 63)\n", vb, vb, vc)
+	fmt.Fprintf(b, "  %s = (%s ^ %s).rotate_right(63)\n", vb, vb, vc)
 }
 
 // plus is the index x + k (x alone for 0): the arm64 backend addresses
@@ -150,13 +150,13 @@ func sha256Rounds(b *bytes.Buffer) {
 			w := fmt.Sprintf("w%d", r%16)
 			if r >= 16 {
 				x, y := fmt.Sprintf("w%d", (r-15)%16), fmt.Sprintf("w%d", (r-2)%16)
-				fmt.Fprintf(b, "  %s = rt.int_wrap(0, rt.int_wrap(0, %s, rt.int_wrap(6, %s, 7) ^ rt.int_wrap(6, %s, 18) ^ (%s >> 3)), rt.int_wrap(0, w%d, rt.int_wrap(6, %s, 17) ^ rt.int_wrap(6, %s, 19) ^ (%s >> 10))) & 0xFFFFFFFF\n",
+				fmt.Fprintf(b, "  %s = %s.wrapping_add(%s.rotate_right32(7) ^ %s.rotate_right32(18) ^ (%s >> 3)).wrapping_add(w%d.wrapping_add(%s.rotate_right32(17) ^ %s.rotate_right32(19) ^ (%s >> 10))) & 0xFFFFFFFF\n",
 					w, w, x, x, x, (r-7)%16, y, y, y)
 			}
-			fmt.Fprintf(b, "  let t%d = rt.int_wrap(0, rt.int_wrap(0, %s, rt.int_wrap(6, %s, 6) ^ rt.int_wrap(6, %s, 11) ^ rt.int_wrap(6, %s, 25)), rt.int_wrap(0, %s ^ (%s & (%s ^ %s)), rt.int_wrap(0, %d, %s)))\n",
+			fmt.Fprintf(b, "  let t%d = %s.wrapping_add(%s.rotate_right32(6) ^ %s.rotate_right32(11) ^ %s.rotate_right32(25)).wrapping_add((%s ^ (%s & (%s ^ %s))).wrapping_add((%d).wrapping_add(%s)))\n",
 				r, H, E, E, E, G, E, F, G, sha256K[r], w)
-			fmt.Fprintf(b, "  %s = rt.int_wrap(0, %s, t%d)\n", D, D, r)
-			fmt.Fprintf(b, "  %s = rt.int_wrap(0, t%d, rt.int_wrap(0, rt.int_wrap(6, %s, 2) ^ rt.int_wrap(6, %s, 13) ^ rt.int_wrap(6, %s, 22), (%s & %s) | (%s & (%s | %s))))\n",
+			fmt.Fprintf(b, "  %s = %s.wrapping_add(t%d)\n", D, D, r)
+			fmt.Fprintf(b, "  %s = t%d.wrapping_add((%s.rotate_right32(2) ^ %s.rotate_right32(13) ^ %s.rotate_right32(22)).wrapping_add((%s & %s) | (%s & (%s | %s))))\n",
 				H, r, A, A, A, A, B, C, A, B)
 		}
 		for k := 0; k < 8; k++ {
@@ -167,8 +167,8 @@ func sha256Rounds(b *bytes.Buffer) {
 	b.WriteString("/// into the state st (8 words).\n")
 	b.WriteString("pub fn sha256_block(var st: List[Int], blk: Bytes, i: Int) {\n")
 	for k := 0; k < 8; k++ {
-		fmt.Fprintf(b, "  let x%d = rt.int_wrap(7, rt.bytes_word(blk, i + %d), 0)\n", k, 8*k)
-		fmt.Fprintf(b, "  var w%d = rt.int_wrap(4, x%d, 32)\n", 2*k, k)
+		fmt.Fprintf(b, "  let x%d = rt.bytes_word(blk, i + %d).swap_bytes()\n", k, 8*k)
+		fmt.Fprintf(b, "  var w%d = x%d.shr_logical(32)\n", 2*k, k)
 		fmt.Fprintf(b, "  var w%d = x%d & 0xFFFFFFFF\n", 2*k+1, k)
 	}
 	rounds()
@@ -194,7 +194,7 @@ func sha512Rounds(b *bytes.Buffer) {
 	b.WriteString("/// address p into the state st (8 words).\n")
 	b.WriteString("pub fn sha512_block(var st: List[Int], p: Int) {\n")
 	for k := 0; k < 16; k++ {
-		fmt.Fprintf(b, "  var w%d = rt.int_wrap(7, rt.mem_load(p, %d, 8), 0)\n", k, 8*k)
+		fmt.Fprintf(b, "  var w%d = rt.mem_load(p, %d, 8).swap_bytes()\n", k, 8*k)
 	}
 	names := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
 	for k := 0; k < 8; k++ {
@@ -207,17 +207,17 @@ func sha512Rounds(b *bytes.Buffer) {
 		w := fmt.Sprintf("w%d", r%16)
 		if r >= 16 {
 			x, y := fmt.Sprintf("w%d", (r-15)%16), fmt.Sprintf("w%d", (r-2)%16)
-			fmt.Fprintf(b, "  %s = rt.int_wrap(0, rt.int_wrap(0, %s, rt.int_wrap(5, %s, 1) ^ rt.int_wrap(5, %s, 8) ^ rt.int_wrap(4, %s, 7)), rt.int_wrap(0, w%d, rt.int_wrap(5, %s, 19) ^ rt.int_wrap(5, %s, 61) ^ rt.int_wrap(4, %s, 6)))\n",
+			fmt.Fprintf(b, "  %s = %s.wrapping_add(%s.rotate_right(1) ^ %s.rotate_right(8) ^ %s.shr_logical(7)).wrapping_add(w%d.wrapping_add(%s.rotate_right(19) ^ %s.rotate_right(61) ^ %s.shr_logical(6)))\n",
 				w, w, x, x, x, (r-7)%16, y, y, y)
 		}
-		fmt.Fprintf(b, "  let t%d = rt.int_wrap(0, rt.int_wrap(0, %s, rt.int_wrap(5, %s, 14) ^ rt.int_wrap(5, %s, 18) ^ rt.int_wrap(5, %s, 41)), rt.int_wrap(0, %s ^ (%s & (%s ^ %s)), rt.int_wrap(0, %d, %s)))\n",
+		fmt.Fprintf(b, "  let t%d = %s.wrapping_add(%s.rotate_right(14) ^ %s.rotate_right(18) ^ %s.rotate_right(41)).wrapping_add((%s ^ (%s & (%s ^ %s))).wrapping_add((%d).wrapping_add(%s)))\n",
 			r, H, E, E, E, G, E, F, G, int64(sha512K[r]), w)
-		fmt.Fprintf(b, "  %s = rt.int_wrap(0, %s, t%d)\n", D, D, r)
-		fmt.Fprintf(b, "  %s = rt.int_wrap(0, t%d, rt.int_wrap(0, rt.int_wrap(5, %s, 28) ^ rt.int_wrap(5, %s, 34) ^ rt.int_wrap(5, %s, 39), (%s & %s) | (%s & (%s | %s))))\n",
+		fmt.Fprintf(b, "  %s = %s.wrapping_add(t%d)\n", D, D, r)
+		fmt.Fprintf(b, "  %s = t%d.wrapping_add((%s.rotate_right(28) ^ %s.rotate_right(34) ^ %s.rotate_right(39)).wrapping_add((%s & %s) | (%s & (%s | %s))))\n",
 			H, r, A, A, A, A, B, C, A, B)
 	}
 	for k := 0; k < 8; k++ {
-		fmt.Fprintf(b, "  st[%d] = rt.int_wrap(0, st[%d], %s)\n", k, k, names[k])
+		fmt.Fprintf(b, "  st[%d] = st[%d].wrapping_add(%s)\n", k, k, names[k])
 	}
 	b.WriteString("}\n")
 }
@@ -275,7 +275,7 @@ func digestTables() []byte {
 	}
 	b.WriteString("}\n")
 	b.WriteString("\n/// a + b + 2 * lo(a) * lo(b), wrapping (fBlaMka, RFC 9106 3.6).\n")
-	b.WriteString("fn fbm(a: Int, b: Int) -> Int { rt.int_wrap(0, rt.int_wrap(0, a, b), rt.int_wrap(3, rt.int_wrap(2, a & 0xFFFFFFFF, b & 0xFFFFFFFF), 1)) }\n")
+	b.WriteString("fn fbm(a: Int, b: Int) -> Int { a.wrapping_add(b).wrapping_add(((a & 0xFFFFFFFF).wrapping_mul(b & 0xFFFFFFFF)).wrapping_shl(1)) }\n")
 	for _, kind := range []string{"row", "column"} {
 		idx := func(k int) string {
 			if kind == "row" {

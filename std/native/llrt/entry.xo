@@ -218,10 +218,10 @@ fn atoll(a: Int) -> Int {
     if c < 48 || c > 57 {
       break
     }
-    v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c - 48)
+    v = v.wrapping_mul(10).wrapping_add(c - 48)
     i += 1
   }
-  if neg { rt.int_wrap(1, 0, v) } else { v }
+  if neg { (0).wrapping_sub(v) } else { v }
 }
 
 /// Installs the handlers (not in a test binary): SIGINT and SIGTERM
@@ -357,7 +357,7 @@ fn heapstats() {
   var sum = 0
   for c in 1..NCLASS + 1 {
     let n = heapos.nfree(c)
-    let size = if c <= 64 { c * 16 } else { rt.int_wrap(3, 2048, c - 65) }
+    let size = if c <= 64 { c * 16 } else { (2048).wrapping_shl(c - 65) }
     if n > 0 {
       var at = put(b, 0, "xo heapstats: class ")
       at = put_int(b, at, c)
@@ -378,7 +378,7 @@ fn heapstats() {
   at = put(b, at, " (")
   at = put_int(b, at, ch * CHUNK_MB)
   at = put(b, at, " MB), on free lists ")
-  at = put_int(b, at, rt.int_wrap(4, sum, 20))
+  at = put_int(b, at, sum.shr_logical(20))
   at = put(b, at, " MB\n")
   emit(b, at)
   release(b)

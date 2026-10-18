@@ -191,7 +191,7 @@ pub fn moved(a: Int, b: Int) {
   if k < 0 {
     return
   }
-  let p = rt.int_wrap(0, ld(r, R_SLOTS), rt.int_wrap(2, k, SLOT))
+  let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
   st(p, S_ADDR, b)
   st(p, S_FREED, if remember(r, b, k) { 0 } else { 2 })
 }
@@ -219,13 +219,13 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
       st(h, H_SAMPLE_AT, NEVER)
       return
     }
-    t = rt.int_wrap(0, ld(r, R_POOL), rt.int_wrap(2, i, T_SIZE))
+    t = ld(r, R_POOL).wrapping_add(i.wrapping_mul(T_SIZE))
     // the random state: the record's address and the clock, never 0
-    st(t, T_RNG, (h ^ rt.int_wrap(2, i, 40503)) | 1)
+    st(t, T_RNG, (h ^ i.wrapping_mul(40503)) | 1)
     st(h, H_PSTATE, t)
     first = rate > 1
   }
-  st(h, H_SAMPLE_AT, rt.int_wrap(0, ld(h, H_ABYTES), next_gap(t, rate)))
+  st(h, H_SAMPLE_AT, ld(h, H_ABYTES).wrapping_add(next_gap(t, rate)))
   if first {
     return
   }
@@ -234,7 +234,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
     let _l = rt.slot_add(r, R_LOST / 8, 1, RELAXED)
     return
   }
-  let p = rt.int_wrap(0, ld(r, R_SLOTS), rt.int_wrap(2, k, SLOT))
+  let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
   let d = unwind.prof_trace(t, p + 8, DEPTH)
   st(p, S_ADDR, a)
   st(p, S_SIZE, n)
@@ -246,7 +246,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
     // forgets it (a big block's header is minus its size already)
     let c = ld(a, -8)
     if c > 0 {
-      st(a, -8, rt.int_wrap(1, 0, c))
+      st(a, -8, (0).wrapping_sub(c))
     }
   }
   // the count last: a slot read with 0 is skipped
@@ -261,12 +261,12 @@ fn next_gap(t: Int, rate: Int) -> Int {
   }
   // xorshift64
   var x = ld(t, T_RNG)
-  x = x ^ rt.int_wrap(3, x, 13)
-  x = x ^ rt.int_wrap(4, x, 7)
-  x = x ^ rt.int_wrap(3, x, 17)
+  x = x ^ x.wrapping_shl(13)
+  x = x ^ x.shr_logical(7)
+  x = x ^ x.wrapping_shl(17)
   st(t, T_RNG, x)
   // u in (0, 1]: the top 53 bits plus 1, over 2^53
-  let u = Float(rt.int_wrap(0, rt.int_wrap(4, x, 11), 1)) / 9007199254740992.0
+  let u = Float(x.shr_logical(11).wrapping_add(1)) / 9007199254740992.0
   let g = -ln(u) * Float(rate)
   if g < 1.0 {
     return 1
@@ -296,7 +296,7 @@ fn ln(x: Float) -> Float {
 /// The address set's first probe for a.
 fn home(r: Int, a: Int) -> Int {
   // Fibonacci hashing of the block address (16 byte aligned)
-  rt.int_wrap(4, rt.int_wrap(2, rt.int_wrap(4, a, 4), -7046029254386353131), 40) & ld(r, R_MASK)
+  a.shr_logical(4).wrapping_mul(-7046029254386353131).shr_logical(40) & ld(r, R_MASK)
 }
 
 /// Adds a (sampled into slot k) to the address set: false when its
@@ -310,10 +310,10 @@ fn remember(r: Int, a: Int, k: Int) -> Bool {
     // freed and handed out again often: without reuse its tombstones
     // would fill its probes)
     let e = rt.slot_load(set, i, RELAXED)
-    if e <= 0 && rt.slot_cas(set, i, e, rt.int_wrap(0, k, 1), ACQ_REL) {
+    if e <= 0 && rt.slot_cas(set, i, e, k.wrapping_add(1), ACQ_REL) {
       return true
     }
-    i = rt.int_wrap(0, i, 1) & mask
+    i = i.wrapping_add(1) & mask
   }
   let _u = rt.slot_add(r, R_UNSET / 8, 1, RELAXED)
   false
@@ -333,14 +333,14 @@ fn forget(r: Int, a: Int) -> Int {
       return -1
     }
     if e > 0 {
-      let k = rt.int_wrap(1, e, 1)
-      let p = rt.int_wrap(0, slots, rt.int_wrap(2, k, SLOT))
+      let k = e.wrapping_sub(1)
+      let p = slots.wrapping_add(k.wrapping_mul(SLOT))
       if ld(p, S_ADDR) == a && ld(p, S_FREED) == 0 && rt.slot_cas(set, i, e, -1, ACQ_REL) {
         st(p, S_FREED, 1)
         return k
       }
     }
-    i = rt.int_wrap(0, i, 1) & mask
+    i = i.wrapping_add(1) & mask
   }
   -1
 }

@@ -139,7 +139,7 @@ fn blk_free(b: Int) {
 fn vec_room(v: Int, n: Int, size: Int) {
   let len = rt.mem_load(v, 8, 8)
   let cap = rt.mem_load(v, 16, 8)
-  if rt.int_wrap(0, len, n) <= cap {
+  if len.wrapping_add(n) <= cap {
     return
   }
   var c = if cap == 0 { 64 } else { 2 * cap }
@@ -163,18 +163,18 @@ fn vec_push(v: Int, x: Int) {
   if n >= rt.mem_load(v, 16, 8) {
     vec_room(v, 1, 8)
   }
-  rt.mem_store(rt.mem_load(v, 0, 8), rt.int_wrap(3, n, 3), x, 8)
-  rt.mem_store(v, 8, rt.int_wrap(0, n, 1), 8)
+  rt.mem_store(rt.mem_load(v, 0, 8), n.wrapping_shl(3), x, 8)
+  rt.mem_store(v, 8, n.wrapping_add(1), 8)
 }
 
 /// Appends the n bytes at p to the byte vector at v.
 fn vec_put(v: Int, p: Int, n: Int) {
   let len = rt.mem_load(v, 8, 8)
-  let end = rt.int_wrap(0, len, n)
+  let end = len.wrapping_add(n)
   if end > rt.mem_load(v, 16, 8) {
     vec_room(v, n, 1)
   }
-  rt.mem_copy(rt.int_wrap(0, rt.mem_load(v, 0, 8), len), p, n)
+  rt.mem_copy(rt.mem_load(v, 0, 8).wrapping_add(len), p, n)
   rt.mem_store(v, 8, end, 8)
 }
 
@@ -598,7 +598,7 @@ pub fn choices(s: Str) -> List[Int] {
       if ult(1844674407370955161, v) || (v == 1844674407370955161 && c > 5) {
         over = true
       }
-      v = rt.int_wrap(0, rt.int_wrap(2, v, 10), c)
+      v = v.wrapping_mul(10).wrapping_add(c)
       j += 1
     }
     if j == d0 {
@@ -607,7 +607,7 @@ pub fn choices(s: Str) -> List[Int] {
     if over {
       v = -1
     } else if neg {
-      v = rt.int_wrap(1, 0, v)
+      v = (0).wrapping_sub(v)
     }
     out.push(v)
     i = if j < n && b[j] == 44 { j + 1 } else { j }
@@ -631,19 +631,19 @@ fn pcg(a: Int) -> Int {
   let s_hi = rt.mem_load(a, 0, 8)
   let s_lo = rt.mem_load(a, 8, 8)
   // (hi, lo) = state * mul + inc, 128 bit
-  let lo = rt.int_wrap(2, s_lo, mul_lo)
-  let lo2 = rt.int_wrap(0, lo, inc_lo)
+  let lo = s_lo.wrapping_mul(mul_lo)
+  let lo2 = lo.wrapping_add(inc_lo)
   // the carry of lo + inc, without a branch: the top bit of
   // (lo & inc) | ((lo | inc) & ~lo2)
-  let c = rt.int_wrap(4, (lo & inc_lo) | ((lo | inc_lo) & (lo2 ^ -1)), 63)
-  let hi = rt.int_wrap(0, rt.int_wrap(0, rt.int_wrap(0, rt.u64_mul_hi(s_lo, mul_lo), rt.int_wrap(0, rt.int_wrap(2, s_hi, mul_lo), rt.int_wrap(2, s_lo, 2549297995355413924))), 6364136223846793005), c)
+  let c = ((lo & inc_lo) | ((lo | inc_lo) & (lo2 ^ -1))).shr_logical(63)
+  let hi = s_lo.mul_hi_unsigned(mul_lo).wrapping_add(s_hi.wrapping_mul(mul_lo).wrapping_add(s_lo.wrapping_mul(2549297995355413924))).wrapping_add(6364136223846793005).wrapping_add(c)
   rt.mem_store(a, 0, hi, 8)
   rt.mem_store(a, 8, lo2, 8)
   // DXSM
-  var h = hi ^ rt.int_wrap(4, hi, 32)
-  h = rt.int_wrap(2, h, -2696494805208442699)
-  h = h ^ rt.int_wrap(4, h, 48)
-  rt.int_wrap(2, h, lo2 | 1)
+  var h = hi ^ hi.shr_logical(32)
+  h = h.wrapping_mul(-2696494805208442699)
+  h = h ^ h.shr_logical(48)
+  h.wrapping_mul(lo2 | 1)
 }
 
 /// Whether Rand is the seeded generator (a test binary).
@@ -692,7 +692,7 @@ fn gen_alloc() -> Int {
   var o = G_DEPTH
   while o < G_SIZE {
     rt.mem_store(g, o, 0, 8)
-    o = rt.int_wrap(0, o, 8)
+    o = o.wrapping_add(8)
   }
   g
 }
@@ -759,19 +759,19 @@ pub fn gen_prop() -> Int {
 /// Go's (*rand.Rand).Uint64N (n not 0): a mask for powers of two, else
 /// Lemire's multiply with rejection.
 fn u64n(g: Int, n: Int) -> Int {
-  let m = rt.int_wrap(1, n, 1)
+  let m = n.wrapping_sub(1)
   if n & m == 0 {
     return pcg(g) & m
   }
   var x = pcg(g)
-  var hi = rt.u64_mul_hi(x, n)
-  var lo = rt.int_wrap(2, x, n)
+  var hi = x.mul_hi_unsigned(n)
+  var lo = x.wrapping_mul(n)
   if (lo ^ MIN_INT) < (n ^ MIN_INT) {
-    let thresh = ints.u64_rem(rt.int_wrap(1, 0, n), n)
+    let thresh = ints.u64_rem((0).wrapping_sub(n), n)
     while (lo ^ MIN_INT) < (thresh ^ MIN_INT) {
       x = pcg(g)
-      hi = rt.u64_mul_hi(x, n)
-      lo = rt.int_wrap(2, x, n)
+      hi = x.mul_hi_unsigned(n)
+      lo = x.wrapping_mul(n)
     }
   }
   hi
@@ -798,13 +798,13 @@ pub fn gen_draw(g: Int, n: Int) -> Int {
   if rt.mem_load(g, G_RECORDS, 8) == 0 {
     return v
   }
-  let r = rt.int_wrap(0, g, G_REC)
+  let r = g.wrapping_add(G_REC)
   let k = rt.mem_load(r, 8, 8)
   if k >= rt.mem_load(r, 16, 8) {
     vec_room(r, 1, 8)
   }
-  rt.mem_store(rt.mem_load(r, 0, 8), rt.int_wrap(3, k, 3), v, 8)
-  rt.mem_store(r, 8, rt.int_wrap(0, k, 1), 8)
+  rt.mem_store(rt.mem_load(r, 0, 8), k.wrapping_shl(3), v, 8)
+  rt.mem_store(r, 8, k.wrapping_add(1), 8)
   v
 }
 
@@ -862,7 +862,7 @@ pub fn write_raw(err: Bool, p: Int, n: Int) {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(l)
   }
-  vec_put(rt.int_wrap(0, s, off), p, n)
+  vec_put(s.wrapping_add(off), p, n)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)
   }

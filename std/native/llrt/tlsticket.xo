@@ -226,7 +226,7 @@ fn u24_at(b: Bytes, p: Int) -> Int { Int(b[p]) * 65536 + Int(b[p + 1]) * 256 + I
 fn u64_at(b: Bytes, p: Int) -> Int {
   var v = 0
   for i in 0..8 {
-    v = rt.int_wrap(3, v, 8) | Int(b[p + i])
+    v = v.wrapping_shl(8) | Int(b[p + i])
   }
   v
 }

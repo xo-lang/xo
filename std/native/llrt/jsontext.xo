@@ -99,13 +99,13 @@ const BYTE_INDEX: Int = 283686952306183
 
 const HEX: Bytes = b"0123456789abcdef"
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
-fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+fn shr(a: Int, k: Int) -> Int { a.shr_logical(k) }
 
 /// The high bit of each byte of w, as a JSON string's body has it, that
 /// ends a run of plain bytes: below 0x20, `"`, or `\` (the lowest

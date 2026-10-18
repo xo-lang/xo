@@ -201,7 +201,7 @@ fn err_text(e: Int) -> Str {
 
 /// A malloc'd zero terminated copy of s (the C frees it).
 fn cstr(s: Str) -> Int {
-  let a = rt.int_wrap(1, rt.heap_large(s.len() + 1), 8)
+  let a = rt.heap_large(s.len() + 1).wrapping_sub(8)
   let _n = raw.put_cstr(a, s)
   a
 }
@@ -535,7 +535,7 @@ pub fn listen(lists: Str, addr: Str) -> Int {
     fail(c, 4, "listen tcp ${addr}: address ${port}: invalid port")
     return 0
   }
-  let out = rt.int_wrap(1, rt.heap_large(NADDR * SA), 8)
+  let out = rt.heap_large(NADDR * SA).wrapping_sub(8)
   let n = resolve(host, port, if host.is_empty() { sock.af_inet6() } else { 0 }, true, out, NADDR)
   if n < 0 {
     mfree(out)
@@ -581,7 +581,7 @@ pub fn listen(lists: Str, addr: Str) -> Int {
     return 0
   }
   // the address bound (a port 0 picked), from getsockname
-  let sa = rt.int_wrap(1, rt.heap_large(136), 8)
+  let sa = rt.heap_large(136).wrapping_sub(8)
   rt.mem_set(sa, 0, 136)
   rt.mem_store(sa, 128, 128, 4)
   let _g = sock.sockname(fd, sa, sa + 128)
@@ -598,7 +598,7 @@ fn unix_addr(path: Str) -> Int {
   if path.len() >= sun_path_max() {
     return 0
   }
-  let sa = rt.int_wrap(1, rt.heap_large(sun_size()), 8)
+  let sa = rt.heap_large(sun_size()).wrapping_sub(8)
   rt.mem_set(sa, 0, sun_size())
   if os() == 2 {
     rt.mem_store(sa, 1, sock.AF_UNIX, 1)
@@ -788,7 +788,7 @@ pub fn dial_timeout(addr: Str, d: Int) -> Int {
     fail(c, 4, "dial tcp ${addr}: address ${port}: invalid port")
     return 0
   }
-  let out = rt.int_wrap(1, rt.heap_large(NADDR * SA), 8)
+  let out = rt.heap_large(NADDR * SA).wrapping_sub(8)
   let n = resolve(if host.is_empty() { "localhost" } else { host }, port, 0, false, out, NADDR)
   if n < 0 {
     mfree(out)

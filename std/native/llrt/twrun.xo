@@ -187,7 +187,7 @@ fn set_in_main(on: Bool) {
 /// std/native/llrt/stdin.xo's waits in a test binary).
 pub fn deadline(d: Int) -> Int {
   let now = if virt() { rt.slot_load[Int](tw(), 1, ACQUIRE) } else { sysio.mono_ns() }
-  let w = rt.int_wrap(0, now, d)
+  let w = now.wrapping_add(d)
   if d > 0 && w < now { 9223372036854775807 } else { w }
 }
 

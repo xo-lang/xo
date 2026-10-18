@@ -29,19 +29,19 @@ fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
 /// The address of the first limb of xs (valid while xs is alive and not
 /// resized).
-pub fn addr(xs: List[Int]) -> Int { rt.int_wrap(0, rt.obj_addr(xs), rt.layout(2)) }
+pub fn addr(xs: List[Int]) -> Int { rt.obj_addr(xs).wrapping_add(rt.layout(2)) }
 
 fn wbase(md: Mod) -> Int { addr(md.w) }
 
-fn m_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8) }
+fn m_at(md: Mod) -> Int { wbase(md).wrapping_add(8) }
 
-fn rr_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 8 * md.n) }
+fn rr_at(md: Mod) -> Int { wbase(md).wrapping_add(8 + 8 * md.n) }
 
-fn one_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 16 * md.n) }
+fn one_at(md: Mod) -> Int { wbase(md).wrapping_add(8 + 16 * md.n) }
 
-fn t_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 8 + 24 * md.n) }
+fn t_at(md: Mod) -> Int { wbase(md).wrapping_add(8 + 24 * md.n) }
 
-fn d_at(md: Mod) -> Int { rt.int_wrap(0, wbase(md), 24 + 40 * md.n) }
+fn d_at(md: Mod) -> Int { wbase(md).wrapping_add(24 + 40 * md.n) }
 
 /// A use of xs after its last raw access (nistec.xo's keep).
 pub fn keep(xs: List[Int]) {
@@ -54,27 +54,27 @@ pub fn keep(xs: List[Int]) {
 // Words (nistec.xo's)
 
 fn adc(h: Int, off: Int, x: Int, y: Int, cin: Int) -> Int {
-  let s1 = rt.int_wrap(0, x, y)
-  let s = rt.int_wrap(0, s1, cin)
+  let s1 = x.wrapping_add(y)
+  let s = s1.wrapping_add(cin)
   st(h, off, s)
   cpu.carry(x, y) | cpu.carry(s1, cin)
 }
 
 fn sbb(h: Int, off: Int, x: Int, y: Int, bin: Int) -> Int {
-  let d1 = rt.int_wrap(1, x, y)
-  let d = rt.int_wrap(1, d1, bin)
+  let d1 = x.wrapping_sub(y)
+  let d = d1.wrapping_sub(bin)
   st(h, off, d)
   cpu.borrow(x, y) | cpu.borrow(d1, bin)
 }
 
 fn mac(t: Int, off: Int, a: Int, b: Int, cin: Int) -> Int {
-  let lo = rt.int_wrap(2, a, b)
-  let hi = rt.u64_mul_hi(a, b)
+  let lo = a.wrapping_mul(b)
+  let hi = a.mul_hi_unsigned(b)
   let x = ld(t, off)
-  let s1 = rt.int_wrap(0, lo, x)
-  let s2 = rt.int_wrap(0, s1, cin)
+  let s1 = lo.wrapping_add(x)
+  let s2 = s1.wrapping_add(cin)
   st(t, off, s2)
-  rt.int_wrap(0, hi, cpu.carry(lo, x) + cpu.carry(s1, cin))
+  hi.wrapping_add(cpu.carry(lo, x) + cpu.carry(s1, cin))
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ pub fn from_bytes(b: Bytes, n: Int) -> List[Int]? {
         return None
       }
     } else {
-      xs[k / 8] = xs[k / 8] | rt.int_wrap(3, x, 8 * (k % 8))
+      xs[k / 8] = xs[k / 8] | x.wrapping_shl(8 * (k % 8))
     }
   }
   Some(xs)
@@ -105,7 +105,7 @@ pub fn to_bytes(xs: List[Int], len: Int) -> Bytes {
   var s = rt.rs_with_cap(len)
   var k = len - 1
   while k >= 0 {
-    let v = if k / 8 < xs.len() { rt.int_wrap(4, xs[k / 8], 8 * (k % 8)) & 255 } else { 0 }
+    let v = if k / 8 < xs.len() { xs[k / 8].shr_logical(8 * (k % 8)) & 255 } else { 0 }
     s = rt.rs_push_byte(s, v)
     k -= 1
   }
@@ -201,14 +201,14 @@ pub fn modulus(m: List[Int]) -> Mod {
   let m0 = m[0]
   var y = 1
   for _ in 0..6 {
-    y = rt.int_wrap(2, y, rt.int_wrap(1, 2, rt.int_wrap(2, m0, y)))
+    y = y.wrapping_mul((2).wrapping_sub(m0.wrapping_mul(y)))
   }
-  st(w, 0, rt.int_wrap(1, 0, y))
+  st(w, 0, (0).wrapping_sub(y))
   // R mod m: from 2^(bits-1), below m (m is odd, so above it), doubled
   // up to 2^(64 n) (as Go's rr; the modulus is public)
   let one = one_at(md)
   let top = md.bits - 1
-  st(one, 8 * (top / 64), rt.int_wrap(3, 1, top % 64))
+  st(one, 8 * (top / 64), (1).wrapping_shl(top % 64))
   var k = top
   while k < 64 * n {
     add_at(md, one, one, one)
@@ -223,7 +223,7 @@ pub fn modulus(m: List[Int]) -> Mod {
   var i = 63 - rt.clz(e)
   while i >= 0 {
     mul_at(md, rr, rr, rr)
-    if (rt.int_wrap(4, e, i) & 1) == 1 {
+    if (e.shr_logical(i) & 1) == 1 {
       add_at(md, rr, rr, rr)
     }
     i -= 1
@@ -270,9 +270,9 @@ pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
   let end4 = 8 * (len - len % 4)
   let end = 8 * len
   while o < end4 {
-    let o1 = rt.int_wrap(0, o, 8)
-    let o2 = rt.int_wrap(0, o, 16)
-    let o3 = rt.int_wrap(0, o, 24)
+    let o1 = o.wrapping_add(8)
+    let o2 = o.wrapping_add(16)
+    let o3 = o.wrapping_add(24)
     let a0 = ld(src, o)
     let a1 = ld(src, o1)
     let a2 = ld(src, o2)
@@ -281,52 +281,52 @@ pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
     let x1 = ld(dst, o1)
     let x2 = ld(dst, o2)
     let x3 = ld(dst, o3)
-    let l0 = rt.int_wrap(2, a0, k)
-    let h0 = rt.u64_mul_hi(a0, k)
+    let l0 = a0.wrapping_mul(k)
+    let h0 = a0.mul_hi_unsigned(k)
     let s0 = cpu.adc(x0, l0, 0)
     let k0 = cpu.adc_carry(x0, l0, 0)
     let t0 = cpu.adc(s0, cw, 0)
     let q0 = cpu.adc_carry(s0, cw, 0)
     let c0 = cpu.adc(h0, k0, q0)
     st(dst, o, t0)
-    let l1 = rt.int_wrap(2, a1, k)
-    let h1 = rt.u64_mul_hi(a1, k)
+    let l1 = a1.wrapping_mul(k)
+    let h1 = a1.mul_hi_unsigned(k)
     let s1 = cpu.adc(x1, l1, 0)
     let k1 = cpu.adc_carry(x1, l1, 0)
     let t1 = cpu.adc(s1, c0, 0)
     let q1 = cpu.adc_carry(s1, c0, 0)
     let c1 = cpu.adc(h1, k1, q1)
     st(dst, o1, t1)
-    let l2 = rt.int_wrap(2, a2, k)
-    let h2 = rt.u64_mul_hi(a2, k)
+    let l2 = a2.wrapping_mul(k)
+    let h2 = a2.mul_hi_unsigned(k)
     let s2 = cpu.adc(x2, l2, 0)
     let k2 = cpu.adc_carry(x2, l2, 0)
     let t2 = cpu.adc(s2, c1, 0)
     let q2 = cpu.adc_carry(s2, c1, 0)
     let c2 = cpu.adc(h2, k2, q2)
     st(dst, o2, t2)
-    let l3 = rt.int_wrap(2, a3, k)
-    let h3 = rt.u64_mul_hi(a3, k)
+    let l3 = a3.wrapping_mul(k)
+    let h3 = a3.mul_hi_unsigned(k)
     let s3 = cpu.adc(x3, l3, 0)
     let k3 = cpu.adc_carry(x3, l3, 0)
     let t3 = cpu.adc(s3, c2, 0)
     let q3 = cpu.adc_carry(s3, c2, 0)
     cw = cpu.adc(h3, k3, q3)
     st(dst, o3, t3)
-    o = rt.int_wrap(0, o, 32)
+    o = o.wrapping_add(32)
   }
   while o < end {
     let a = ld(src, o)
     let x = ld(dst, o)
-    let l = rt.int_wrap(2, a, k)
-    let h = rt.u64_mul_hi(a, k)
+    let l = a.wrapping_mul(k)
+    let h = a.mul_hi_unsigned(k)
     let s = cpu.adc(x, l, 0)
     let c = cpu.adc_carry(x, l, 0)
     let t = cpu.adc(s, cw, 0)
     let q = cpu.adc_carry(s, cw, 0)
     cw = cpu.adc(h, c, q)
     st(dst, o, t)
-    o = rt.int_wrap(0, o, 8)
+    o = o.wrapping_add(8)
   }
   cw
 }
@@ -337,7 +337,7 @@ fn prod_at(n: Int, t: Int, f: Int, g: Int) {
   rt.mem_set(t, 0, 8 * (2 * n + 2))
   var i = 0
   while i < n {
-    let ti = rt.int_wrap(0, t, 8 * i)
+    let ti = t.wrapping_add(8 * i)
     st(ti, 8 * n, mac_row(ti, f, ld(g, 8 * i), n))
     i += 1
   }
@@ -352,7 +352,7 @@ fn square_at(n: Int, t: Int, f: Int) {
   rt.mem_set(t, 0, 8 * (2 * n + 2))
   var i = 0
   while i < n - 1 {
-    let cw = mac_row(rt.int_wrap(0, t, 8 * (2 * i + 1)), rt.int_wrap(0, f, 8 * (i + 1)), ld(f, 8 * i), n - 1 - i)
+    let cw = mac_row(t.wrapping_add(8 * (2 * i + 1)), f.wrapping_add(8 * (i + 1)), ld(f, 8 * i), n - 1 - i)
     st(t, 8 * (i + n), cw)
     i += 1
   }
@@ -363,9 +363,9 @@ fn square_at(n: Int, t: Int, f: Int) {
   let end = 16 * n
   let end4 = end - end % 32
   while o < end4 {
-    let o1 = rt.int_wrap(0, o, 8)
-    let o2 = rt.int_wrap(0, o, 16)
-    let o3 = rt.int_wrap(0, o, 24)
+    let o1 = o.wrapping_add(8)
+    let o2 = o.wrapping_add(16)
+    let o3 = o.wrapping_add(24)
     let x0 = ld(t, o)
     let x1 = ld(t, o1)
     let x2 = ld(t, o2)
@@ -382,13 +382,13 @@ fn square_at(n: Int, t: Int, f: Int) {
     st(t, o1, d1)
     st(t, o2, d2)
     st(t, o3, d3)
-    o = rt.int_wrap(0, o, 32)
+    o = o.wrapping_add(32)
   }
   while o < end {
     let x = ld(t, o)
     st(t, o, cpu.adc(x, x, c))
     c = cpu.adc_carry(x, x, c)
-    o = rt.int_wrap(0, o, 8)
+    o = o.wrapping_add(8)
   }
   // the squares at words 2 i and 2 i + 1: the square is below 2^(128 n);
   // two limbs a step, one chain of four pairs
@@ -397,17 +397,17 @@ fn square_at(n: Int, t: Int, f: Int) {
   let fend = 8 * n
   let fend2 = fend - fend % 16
   while fo < fend2 {
-    let to = rt.int_wrap(0, fo, fo)
+    let to = fo.wrapping_add(fo)
     let fa = ld(f, fo)
-    let fb = ld(f, rt.int_wrap(0, fo, 8))
-    let la = rt.int_wrap(2, fa, fa)
-    let ha = rt.u64_mul_hi(fa, fa)
-    let lb = rt.int_wrap(2, fb, fb)
-    let hb = rt.u64_mul_hi(fb, fb)
+    let fb = ld(f, fo.wrapping_add(8))
+    let la = fa.wrapping_mul(fa)
+    let ha = fa.mul_hi_unsigned(fa)
+    let lb = fb.wrapping_mul(fb)
+    let hb = fb.mul_hi_unsigned(fb)
     let x0 = ld(t, to)
-    let x1 = ld(t, rt.int_wrap(0, to, 8))
-    let x2 = ld(t, rt.int_wrap(0, to, 16))
-    let x3 = ld(t, rt.int_wrap(0, to, 24))
+    let x1 = ld(t, to.wrapping_add(8))
+    let x2 = ld(t, to.wrapping_add(16))
+    let x3 = ld(t, to.wrapping_add(24))
     let s0 = cpu.adc(x0, la, c)
     let c0 = cpu.adc_carry(x0, la, c)
     let s1 = cpu.adc(x1, ha, c0)
@@ -417,24 +417,24 @@ fn square_at(n: Int, t: Int, f: Int) {
     let s3 = cpu.adc(x3, hb, c2)
     c = cpu.adc_carry(x3, hb, c2)
     st(t, to, s0)
-    st(t, rt.int_wrap(0, to, 8), s1)
-    st(t, rt.int_wrap(0, to, 16), s2)
-    st(t, rt.int_wrap(0, to, 24), s3)
-    fo = rt.int_wrap(0, fo, 16)
+    st(t, to.wrapping_add(8), s1)
+    st(t, to.wrapping_add(16), s2)
+    st(t, to.wrapping_add(24), s3)
+    fo = fo.wrapping_add(16)
   }
   while fo < fend {
-    let to = rt.int_wrap(0, fo, fo)
+    let to = fo.wrapping_add(fo)
     let fi = ld(f, fo)
-    let lo = rt.int_wrap(2, fi, fi)
-    let hi = rt.u64_mul_hi(fi, fi)
+    let lo = fi.wrapping_mul(fi)
+    let hi = fi.mul_hi_unsigned(fi)
     let x0 = ld(t, to)
-    let x1 = ld(t, rt.int_wrap(0, to, 8))
+    let x1 = ld(t, to.wrapping_add(8))
     let s0 = cpu.adc(x0, lo, c)
     let c0 = cpu.adc_carry(x0, lo, c)
     st(t, to, s0)
-    st(t, rt.int_wrap(0, to, 8), cpu.adc(x1, hi, c0))
+    st(t, to.wrapping_add(8), cpu.adc(x1, hi, c0))
     c = cpu.adc_carry(x1, hi, c0)
-    fo = rt.int_wrap(0, fo, 8)
+    fo = fo.wrapping_add(8)
   }
 }
 
@@ -447,17 +447,17 @@ fn redc_at(md: Mod, h: Int, t: Int) {
   let m = m_at(md)
   let inv = ld(wbase(md), 0)
   let tn = 8 * n
-  let end = rt.int_wrap(0, t, tn)
+  let end = t.wrapping_add(tn)
   var ext = 0
   var ti = t
   while ti != end {
-    let cw = mac_row(ti, m, rt.int_wrap(2, ld(ti, 0), inv), n)
+    let cw = mac_row(ti, m, ld(ti, 0).wrapping_mul(inv), n)
     let x = ld(ti, tn)
     // the sum and its carry before the store: one adcs and a cset
     let y = cpu.adc(x, cw, ext)
     ext = cpu.adc_carry(x, cw, ext)
     st(ti, tn, y)
-    ti = rt.int_wrap(0, ti, 8)
+    ti = ti.wrapping_add(8)
   }
   final_sub(md, h, end, ext)
 }
@@ -589,7 +589,7 @@ pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
     for _ in 0..4 {
       mul_at(md, pa, pa, pa)
     }
-    let digit = rt.int_wrap(4, e[w / 16], 4 * (w % 16)) & 15
+    let digit = e[w / 16].shr_logical(4 * (w % 16)) & 15
     // the entry of digit under a mask from all 16: each word the OR of
     // the 16 entries' words under their masks, in registers, one store
     let m0 = ct.mask_eq(0, digit)
@@ -610,9 +610,9 @@ pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
     let m15 = ct.mask_eq(15, digit)
     var o = 0
     while o < stride {
-      let ent = rt.int_wrap(0, pt, o)
-      st(ps, o, (ld(ent, 0) & m0) | (ld(ent, rt.int_wrap(2, stride, 1)) & m1) | (ld(ent, rt.int_wrap(2, stride, 2)) & m2) | (ld(ent, rt.int_wrap(2, stride, 3)) & m3) | (ld(ent, rt.int_wrap(2, stride, 4)) & m4) | (ld(ent, rt.int_wrap(2, stride, 5)) & m5) | (ld(ent, rt.int_wrap(2, stride, 6)) & m6) | (ld(ent, rt.int_wrap(2, stride, 7)) & m7) | (ld(ent, rt.int_wrap(2, stride, 8)) & m8) | (ld(ent, rt.int_wrap(2, stride, 9)) & m9) | (ld(ent, rt.int_wrap(2, stride, 10)) & m10) | (ld(ent, rt.int_wrap(2, stride, 11)) & m11) | (ld(ent, rt.int_wrap(2, stride, 12)) & m12) | (ld(ent, rt.int_wrap(2, stride, 13)) & m13) | (ld(ent, rt.int_wrap(2, stride, 14)) & m14) | (ld(ent, rt.int_wrap(2, stride, 15)) & m15))
-      o = rt.int_wrap(0, o, 8)
+      let ent = pt.wrapping_add(o)
+      st(ps, o, (ld(ent, 0) & m0) | (ld(ent, stride.wrapping_mul(1)) & m1) | (ld(ent, stride.wrapping_mul(2)) & m2) | (ld(ent, stride.wrapping_mul(3)) & m3) | (ld(ent, stride.wrapping_mul(4)) & m4) | (ld(ent, stride.wrapping_mul(5)) & m5) | (ld(ent, stride.wrapping_mul(6)) & m6) | (ld(ent, stride.wrapping_mul(7)) & m7) | (ld(ent, stride.wrapping_mul(8)) & m8) | (ld(ent, stride.wrapping_mul(9)) & m9) | (ld(ent, stride.wrapping_mul(10)) & m10) | (ld(ent, stride.wrapping_mul(11)) & m11) | (ld(ent, stride.wrapping_mul(12)) & m12) | (ld(ent, stride.wrapping_mul(13)) & m13) | (ld(ent, stride.wrapping_mul(14)) & m14) | (ld(ent, stride.wrapping_mul(15)) & m15))
+      o = o.wrapping_add(8)
     }
     mul_at(md, pa, pa, ps)
     w -= 1
@@ -634,7 +634,7 @@ pub fn exp_public(md: Mod, x: List[Int], e: Int) -> List[Int] {
   var i = 62 - rt.clz(e)
   while i >= 0 {
     mul_at(md, pa, pa, pa)
-    if (rt.int_wrap(4, e, i) & 1) == 1 {
+    if (e.shr_logical(i) & 1) == 1 {
       mul_at(md, pa, pa, px)
     }
     i -= 1

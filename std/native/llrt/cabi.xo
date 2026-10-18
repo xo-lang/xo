@@ -334,31 +334,31 @@ fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
 // string (or Bytes) objects, an and bn their lengths; the result is the
 // string object, its length stored at lenp (a Str result's convention).
 
-fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.rs_append(a, an, rt.int_wrap(0, b, 16), bn) }
+fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.rs_append(a, an, b.wrapping_add(16), bn) }
 
 fn obj_rs_append(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, bn), 8)
-  obj.rs_append(a, an, rt.int_wrap(0, b, 16), bn)
+  rt.mem_store(lenp, 0, an.wrapping_add(bn), 8)
+  obj.rs_append(a, an, b.wrapping_add(16), bn)
 }
 
 fn obj_rs_push_byte(a: Int, an: Int, x: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, 1), 8)
+  rt.mem_store(lenp, 0, an.wrapping_add(1), 8)
   obj.rs_push_byte(a, an, x)
 }
 
 fn obj_rs_push_word(a: Int, an: Int, w: Int, n: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, n), 8)
+  rt.mem_store(lenp, 0, an.wrapping_add(n), 8)
   obj.rs_push_word(a, an, w)
 }
 
 fn obj_rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int, lenp: Int) -> Int {
-  let k = rt.int_wrap(0, rt.int_wrap(0, lens & 15, (lens >> 4) & 15), rt.int_wrap(0, (lens >> 8) & 15, (lens >> 12) & 15))
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, k), 8)
+  let k = ((lens & 15).wrapping_add((lens >> 4) & 15)).wrapping_add(((lens >> 8) & 15).wrapping_add((lens >> 12) & 15))
+  rt.mem_store(lenp, 0, an.wrapping_add(k), 8)
   obj.rs_push_words(a, an, w0, w1, w2, w3, lens)
 }
 
 fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, rt.int_wrap(1, hi, lo)), 8)
+  rt.mem_store(lenp, 0, an.wrapping_add(hi.wrapping_sub(lo)), 8)
   obj.rs_append_bytes(a, an, b, lo, hi, mode)
 }
 
@@ -609,7 +609,7 @@ fn fault_raise_cur(m: Int, loc: Int, pers: Int) {
   rtsec.fault_leave()
   rt.mem_store(c, ctx.C_FAULTING, 1, 4)
   rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
-  let exc = rt.int_wrap(0, c, ctx.C_FAULT_EXC + 15) & -16
+  let exc = c.wrapping_add(ctx.C_FAULT_EXC + 15) & -16
   let _r = unwind.raise(exc, rt.mem_load(c, ctx.C_BOUNDARY, 8), pers, 0)
   fault.exit(c)
 }
@@ -829,7 +829,7 @@ fn obj_rs_of_int(v: Int, lenp: Int) -> Int { obj.rs_of_int(v, lenp) }
 fn obj_rs_concat_float(a: Int, an: Int, f: Float, lenp: Int) -> Int {
   let t = num.float_text(f)
   let n = t.len()
-  rt.mem_store(lenp, 0, rt.int_wrap(0, an, n), 8)
+  rt.mem_store(lenp, 0, an.wrapping_add(n), 8)
   let s = obj.rs_append(a, an, raw.data(t), n)
   // t is used after the copy, so it is released only then
   let _k = t.len()

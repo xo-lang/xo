@@ -83,7 +83,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   rt.mem_store(w, ENVP, e, 8)
   // the initial stack's layout (argv's NULL ended array, then envp's,
   // then the auxiliary vector): not an environ a setenv moved
-  if target.os == TargetOs.Linux && argv != 0 && envp == rt.int_wrap(0, argv, rt.int_wrap(3, argc + 1, 3)) {
+  if target.os == TargetOs.Linux && argv != 0 && envp == argv.wrapping_add((argc + 1).wrapping_shl(3)) {
     linux.auxv_init(envp)
   }
 }
@@ -177,9 +177,9 @@ pub fn real_env_get(name: Str) -> List[Str] {
       break
     }
     if entry_is(e, p, n, fold_case()) {
-      return [cstr(rt.int_wrap(0, e, rt.int_wrap(0, n, 1)))]
+      return [cstr(e.wrapping_add(n.wrapping_add(1)))]
     }
-    k = rt.int_wrap(0, k, 1)
+    k = k.wrapping_add(1)
   }
   []
 }
@@ -229,16 +229,16 @@ fn entry_is(e: Int, p: Int, n: Int, fold: Bool) -> Bool {
     }
     if fold {
       if a >= 65 && a <= 90 {
-        a = rt.int_wrap(0, a, 32)
+        a = a.wrapping_add(32)
       }
       if b >= 65 && b <= 90 {
-        b = rt.int_wrap(0, b, 32)
+        b = b.wrapping_add(32)
       }
     }
     if a != b {
       return false
     }
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   rt.mem_load(e, n, 1) == 61
 }
@@ -290,9 +290,9 @@ pub fn env_real_at(name: Str) -> Int {
       break
     }
     if entry_is(e, p, n, fold) {
-      return rt.int_wrap(0, e, rt.int_wrap(0, n, 1))
+      return e.wrapping_add(n.wrapping_add(1))
     }
-    k = rt.int_wrap(0, k, 1)
+    k = k.wrapping_add(1)
   }
   0
 }
@@ -316,7 +316,7 @@ pub fn env_vars() -> List[Str] {
       break
     }
     out.push(cstr(e))
-    k = rt.int_wrap(0, k, 1)
+    k = k.wrapping_add(1)
   }
   out.sort()
 }

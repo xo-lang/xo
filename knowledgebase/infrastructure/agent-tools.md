@@ -18,8 +18,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `wrapping_add|sub|mul`, `wrapping_shl`, `shr_logical`,
   `rotate_right[32]`, `swap_bytes`, `mul_hi_unsigned`,
   `lt_unsigned`/`le_unsigned`, lowered to the same instructions as the
-  rt.int_wrap intrinsics (spec/std.md). Prefer them over `rt.int_wrap`
-  in new code.
+  rt.int_wrap intrinsics (spec/std.md). std uses them throughout;
+  internal/repotest TestStdUsesWordMethods rejects `rt.int_wrap` and
+  `rt.u64_mul_hi` in std outside the methods' bodies.
 
 ## Debugging a wrong program or a fault
 
@@ -102,5 +103,4 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 ## Coming
 
 - `dbg` in pure and no-GC code (0265), vet hints for
-  copy-modify-store (0266); std moving from rt.int_wrap to the Int word
-  methods (0260 step 3, after seed 0.21.0).
+  copy-modify-store (0266).

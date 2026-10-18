@@ -7,8 +7,9 @@ big integers, on random operands and the fields' edges; then a planted
 mutation (one carry dropped in each function) must be caught, so the
 oracle is known to bite. Run it from the checkout root after
 regenerating either file. The interpreter knows only what the generators
-emit: let bindings of cpu.adc, cpu.adc_carry, cpu.carry, rt.int_wrap
-(ops 0 to 4), rt.u64_mul_hi, rt.ct_barrier, ld, st, ~x, and sub_p256's
+emit: let bindings of cpu.adc, cpu.adc_carry, cpu.carry, Int's word
+methods (wrapping_add, wrapping_sub, wrapping_mul, wrapping_shl,
+shr_logical, mul_hi_unsigned), rt.ct_barrier, ld, st, ~x, and sub_p256's
 call (its operands checked, not the call). Exit status 1 on any wrong
 case."""
 import random
@@ -32,10 +33,37 @@ def split(s):
     return r
 
 
+METHODS = ("wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_shl", "shr_logical",
+           "mul_hi_unsigned")
+
+
+def method_call(e):
+    """(name, receiver, argument) for RECV.NAME(ARG), the method outermost;
+    else None."""
+    if not e.endswith(")"):
+        return None
+    d = 0
+    for i in range(len(e) - 1, -1, -1):
+        d += e[i] == ")"
+        d -= e[i] == "("
+        if d == 0:
+            break
+    m = re.search(r"\.(\w+)$", e[:i])
+    if not m or m.group(1) not in METHODS:
+        return None
+    return m.group(1), e[:m.start()], e[i + 1:-1]
+
+
 def ev(e, env):
     e = e.strip()
     if e.startswith("~"):
         return (~ev(e[1:], env)) & M
+    mc = method_call(e)
+    if mc:
+        name, x, y = mc[0], ev(mc[1], env), ev(mc[2], env)
+        return {"wrapping_add": lambda: (x + y) & M, "wrapping_sub": lambda: (x - y) & M,
+                "wrapping_mul": lambda: (x * y) & M, "wrapping_shl": lambda: (x << y) & M,
+                "shr_logical": lambda: x >> y, "mul_hi_unsigned": lambda: (x * y) >> 64}[name]()
     m = re.fullmatch(r"(\w+(?:\.\w+)*)\((.*)\)", e)
     if m:
         fn, a = m.group(1), [ev(x, env) for x in split(m.group(2))]
@@ -45,14 +73,8 @@ def ev(e, env):
             return (a[0] + a[1] + a[2]) >> 64
         if fn == "cpu.carry":
             return (a[0] + a[1]) >> 64
-        if fn == "rt.u64_mul_hi":
-            return (a[0] * a[1]) >> 64
         if fn == "rt.ct_barrier":
             return a[0]
-        if fn == "rt.int_wrap":
-            op, x, y = a
-            return {0: lambda: (x + y) & M, 1: lambda: (x - y) & M, 2: lambda: (x * y) & M,
-                    3: lambda: (x << y) & M, 4: lambda: x >> y}[op]()
         if fn == "ld":
             return env["mem"][a[0]][a[1] // 8]
         raise ValueError(f"unknown function {fn}")

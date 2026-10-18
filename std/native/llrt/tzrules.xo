@@ -650,7 +650,7 @@ fn add_name(var w: List[Int], b: Bytes, lo: Int, hi: Int) -> Int {
     var x = 0
     var j = 0
     while j < 8 && k + j < hi {
-      x = x | rt.int_wrap(3, Int(b[k + j]), 8 * j)
+      x = x | Int(b[k + j]).wrapping_shl(8 * j)
       j += 1
     }
     w.push(x)
@@ -790,7 +790,7 @@ fn parse(data: Bytes, now: Int) -> List[Int]? {
       t = signed32(big4(data, txtimes + i * 4))
     } else {
       let q = txtimes + i * 8
-      t = rt.int_wrap(3, big4(data, q), 32) | big4(data, q + 4)
+      t = big4(data, q).wrapping_shl(32) | big4(data, q + 4)
     }
     let z = Int(data[txzones + i])
     if z >= nzone {

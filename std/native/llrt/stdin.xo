@@ -367,7 +367,7 @@ fn win_open() -> Int {
   if !pool.thread_start(rt.mem_load(ctx.svc(), ctx.SV_STDIN_PUMP, 8), rec) {
     let _c = sock.close(prog)
     let _d = sock.close(thr)
-    rt.heap_release(rt.int_wrap(1, rec, 8))
+    rt.heap_release(rec.wrapping_sub(8))
     return 0
   }
   poll.pd_new(prog, false)
@@ -381,9 +381,9 @@ fn win_open() -> Int {
 pub fn pump_main(rec: Int) -> Int {
   let h = rt.mem_load(rec, 0, 8)
   let s = rt.mem_load(rec, 8, 8)
-  rt.heap_release(rt.int_wrap(1, rec, 8))
+  rt.heap_release(rec.wrapping_sub(8))
   let buf = rt.heap_large(PUMP_BUF + 8)
-  let done = rt.int_wrap(0, buf, PUMP_BUF)
+  let done = buf.wrapping_add(PUMP_BUF)
   var go = true
   while go {
     rt.mem_store(done, 0, 0, 4)
@@ -396,16 +396,16 @@ pub fn pump_main(rec: Int) -> Int {
     }
     var at = 0
     while at < n {
-      let w = sock.send(s, rt.int_wrap(0, buf, at), rt.int_wrap(1, n, at), 0)
+      let w = sock.send(s, buf.wrapping_add(at), n.wrapping_sub(at), 0)
       if w <= 0 {
         go = false
         break
       }
-      at = rt.int_wrap(0, at, w)
+      at = at.wrapping_add(w)
     }
   }
   let _c = sock.close(s)
-  rt.heap_release(rt.int_wrap(1, buf, 8))
+  rt.heap_release(buf.wrapping_sub(8))
   0
 }
 

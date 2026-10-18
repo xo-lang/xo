@@ -24,9 +24,9 @@ const O_CREAT = 64
 const EINTR = 4
 const EINVAL = 22
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
 /// The system call number of the target's architecture: arm64 (the
 /// asm-generic table) or x86_64.
@@ -210,6 +210,6 @@ pub fn sigaddset(s: Int, sig0: Int) -> Int {
     return -1
   }
   let at = 8 * (k / 64)
-  rt.mem_store(s, at, rt.mem_load(s, at, 8) | rt.int_wrap(3, 1, k % 64), 8)
+  rt.mem_store(s, at, rt.mem_load(s, at, 8) | (1).wrapping_shl(k % 64), 8)
   0
 }

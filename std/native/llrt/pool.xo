@@ -226,7 +226,7 @@ pub fn futex_wait(a: Int, v: Int) {
       let _r = sys_darwin.__ulock_wait(16777217, a, v, 0)
     }
     3 => {
-      let cmp = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+      let cmp = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
       rt.mem_store(cmp, 0, v, 4)
       let _r = sys_windows.WaitOnAddress(a, cmp, 4, 4294967295)
     }
@@ -239,7 +239,7 @@ fn futex_wait_us(a: Int, v: Int, us: Int) {
   match layer() {
     1 => {
       // a relative struct timespec in the thread's scratch words
-      let ts = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+      let ts = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
       rt.mem_store(ts, 0, us / 1000000, 8)
       rt.mem_store(ts, 8, (us % 1000000) * 1000, 8)
       let _r = linux.futex(a, 128, v, ts)
@@ -248,7 +248,7 @@ fn futex_wait_us(a: Int, v: Int, us: Int) {
       let _r = sys_darwin.__ulock_wait(16777217, a, v, us)
     }
     3 => {
-      let cmp = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+      let cmp = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
       rt.mem_store(cmp, 0, v, 4)
       let ms = if us < 1000 { 1 } else { us / 1000 }
       let _r = sys_windows.WaitOnAddress(a, cmp, 4, ms)
@@ -290,7 +290,7 @@ pub fn lock_slow(l: Int) {
     if rt.slot_load(l, 0, RELAXED) == 0 && rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
       return
     }
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   while rt.slot_swap(l, 0, 2, ACQUIRE) != 0 {
     futex_wait(l, 2)
@@ -325,10 +325,10 @@ pub fn register_worker(p: Int, w: Int) {
   if n >= MAXW {
     let _r = rt.call_c2(rt.fn_addr("oom"), 0, 0)
   }
-  rt.mem_store(w, W_RNG, rt.int_wrap(2, w, -7046029254386353131) | 1, 8)
+  rt.mem_store(w, W_RNG, w.wrapping_mul(-7046029254386353131) | 1, 8)
   rt.mem_store(w, W_POOL, p, 8)
-  rt.mem_store(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, n, 3)), w, 8)
-  rt.slot_store(p, P_NW, rt.int_wrap(0, n, 1), SEQ_CST)
+  rt.mem_store(p, P_WS.wrapping_add(n.wrapping_shl(3)), w, 8)
+  rt.slot_store(p, P_NW, n.wrapping_add(1), SEQ_CST)
 }
 
 /// Starts a thread running the C function at f with arg (detached, a 64
@@ -343,10 +343,10 @@ pub fn thread_start(f: Int, arg: Int) -> Bool {
         let _s = sys_darwin.pthread_attr_setstacksize(a, THREAD_STACK)
         // PTHREAD_CREATE_DETACHED
         let _d = sys_darwin.pthread_attr_setdetachstate(a, 2)
-        ok = Int(sys_darwin.pthread_create(rt.int_wrap(0, a, 64), a, f, arg)) == 0
+        ok = Int(sys_darwin.pthread_create(a.wrapping_add(64), a, f, arg)) == 0
         let _x = sys_darwin.pthread_attr_destroy(a)
       }
-      rt.heap_release(rt.int_wrap(1, a, 8))
+      rt.heap_release(a.wrapping_sub(8))
       ok
     }
     3 => {
@@ -372,11 +372,11 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
     2 => {
       // pthread_attr_t (64 bytes), then the n pthread_t
       let a = rt.heap_large(64 + n * 8)
-      let ts = rt.int_wrap(0, a, 64)
+      let ts = a.wrapping_add(64)
       var started = 0
       if Int(sys_darwin.pthread_attr_init(a)) == 0 {
         let _s = sys_darwin.pthread_attr_setstacksize(a, size)
-        while started < n && Int(sys_darwin.pthread_create(rt.int_wrap(0, ts, started * 8), a, f, arg)) == 0 {
+        while started < n && Int(sys_darwin.pthread_create(ts.wrapping_add(started * 8), a, f, arg)) == 0 {
           started = started + 1
         }
         let _x = sys_darwin.pthread_attr_destroy(a)
@@ -386,7 +386,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
         let _j = sys_darwin.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
         i = i + 1
       }
-      rt.heap_release(rt.int_wrap(1, a, 8))
+      rt.heap_release(a.wrapping_sub(8))
       started == n
     }
     3 => {
@@ -409,7 +409,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
         let _c = sys_windows.CloseHandle(h)
         i = i + 1
       }
-      rt.heap_release(rt.int_wrap(1, hs, 8))
+      rt.heap_release(hs.wrapping_sub(8))
       started == n
     }
     _ => sanhook.thread_run(f, arg, size, n)
@@ -423,12 +423,12 @@ fn start_worker(p: Int) -> Bool {
   rt.mem_set(w, 0, W_SIZE)
   rt.mem_store(w, W_LIVE, 1, 4)
   register_worker(p, w)
-  rt.slot_store(p, P_ALIVE, rt.int_wrap(0, rt.slot_load(p, P_ALIVE, SEQ_CST), 1), SEQ_CST)
+  rt.slot_store(p, P_ALIVE, rt.slot_load(p, P_ALIVE, SEQ_CST).wrapping_add(1), SEQ_CST)
   if thread_start(rt.mem_load(p, P_WORKER_MAIN, 8), w) {
     return true
   }
   rt.mem_store(w, W_LIVE, 0, 4)
-  rt.slot_store(p, P_ALIVE, rt.int_wrap(1, rt.slot_load(p, P_ALIVE, SEQ_CST), 1), SEQ_CST)
+  rt.slot_store(p, P_ALIVE, rt.slot_load(p, P_ALIVE, SEQ_CST).wrapping_sub(1), SEQ_CST)
   false
 }
 
@@ -460,7 +460,7 @@ fn wakep(p: Int) {
       tracerec.ev(tracerec.K_WAKEP, 0, w, 0)
     }
     rt.slot_store(w, W_WAKEW_I, 1, RELEASE)
-    futex_wake(rt.int_wrap(0, w, W_WAKEW))
+    futex_wake(w.wrapping_add(W_WAKEW))
     return
   }
   let started = rt.slot_load(p, P_ALIVE, SEQ_CST) < ncpu && start_worker(p)
@@ -476,8 +476,8 @@ fn wakep(p: Int) {
 
 /// Adds the n items at src, then x unless it is 0, to the inject queue.
 fn inject_add(p: Int, src: Int, n: Int, x: Int) {
-  let im = rt.int_wrap(0, p, P_IMU)
-  let all = if x != 0 { rt.int_wrap(0, n, 1) } else { n }
+  let im = p.wrapping_add(P_IMU)
+  let all = if x != 0 { n.wrapping_add(1) } else { n }
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
     lock_slow(im)
   }
@@ -485,19 +485,19 @@ fn inject_add(p: Int, src: Int, n: Int, x: Int) {
   var cap = rt.mem_load(p, P_ICAP, 8)
   var head = rt.mem_load(p, P_IHEAD, 8)
   var buf = rt.mem_load(p, P_IBUF, 8)
-  if rt.int_wrap(0, len, all) > cap {
-    var nc = if cap != 0 { rt.int_wrap(3, cap, 1) } else { 64 }
-    while nc < rt.int_wrap(0, len, all) {
-      nc = rt.int_wrap(3, nc, 1)
+  if len.wrapping_add(all) > cap {
+    var nc = if cap != 0 { cap.wrapping_shl(1) } else { 64 }
+    while nc < len.wrapping_add(all) {
+      nc = nc.wrapping_shl(1)
     }
-    let nb = rt.heap_large(rt.int_wrap(3, nc, 3))
+    let nb = rt.heap_large(nc.wrapping_shl(3))
     var i = 0
     while i < len {
-      rt.mem_store(nb, rt.int_wrap(3, i, 3), rt.mem_load(buf, rt.int_wrap(3, rt.int_wrap(0, head, i) % cap, 3), 8), 8)
-      i = rt.int_wrap(0, i, 1)
+      rt.mem_store(nb, i.wrapping_shl(3), rt.mem_load(buf, (head.wrapping_add(i) % cap).wrapping_shl(3), 8), 8)
+      i = i.wrapping_add(1)
     }
     if buf != 0 {
-      rt.heap_release(rt.int_wrap(1, buf, 8))
+      rt.heap_release(buf.wrapping_sub(8))
     }
     buf = nb
     head = 0
@@ -508,11 +508,11 @@ fn inject_add(p: Int, src: Int, n: Int, x: Int) {
   }
   var i = 0
   while i < all {
-    let it = if i < n { rt.mem_load(src, rt.int_wrap(3, i, 3), 8) } else { x }
-    rt.mem_store(buf, rt.int_wrap(3, rt.int_wrap(0, rt.int_wrap(0, head, len), i) % cap, 3), it, 8)
-    i = rt.int_wrap(0, i, 1)
+    let it = if i < n { rt.mem_load(src, i.wrapping_shl(3), 8) } else { x }
+    rt.mem_store(buf, (head.wrapping_add(len).wrapping_add(i) % cap).wrapping_shl(3), it, 8)
+    i = i.wrapping_add(1)
   }
-  rt.slot_store(p, P_ILEN, rt.int_wrap(0, len, all), SEQ_CST)
+  rt.slot_store(p, P_ILEN, len.wrapping_add(all), SEQ_CST)
   unlock(im)
 }
 
@@ -523,7 +523,7 @@ fn inject_pop(p: Int, w: Int) -> Int {
   if rt.slot_load(p, P_ILEN, SEQ_CST) == 0 {
     return 0
   }
-  let im = rt.int_wrap(0, p, P_IMU)
+  let im = p.wrapping_add(P_IMU)
   var n = 0
   var first = 0
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
@@ -531,7 +531,7 @@ fn inject_pop(p: Int, w: Int) -> Int {
   }
   let len = rt.mem_load(p, P_ILEN_AT, 8)
   if len > 0 {
-    n = rt.int_wrap(0, len / rt.int_wrap(0, rt.mem_load(p, P_NCPU, 8), 1), 1)
+    n = (len / rt.mem_load(p, P_NCPU, 8).wrapping_add(1)).wrapping_add(1)
     if n > len {
       n = len
     }
@@ -546,17 +546,17 @@ fn inject_pop(p: Int, w: Int) -> Int {
     var head = rt.mem_load(p, P_IHEAD, 8)
     var i = 0
     while i < n {
-      let it = rt.mem_load(buf, rt.int_wrap(3, head, 3), 8)
+      let it = rt.mem_load(buf, head.wrapping_shl(3), 8)
       if i == 0 {
         first = it
       } else {
-        rt.mem_store(w, rt.int_wrap(0, W_BATCH, rt.int_wrap(3, rt.int_wrap(1, i, 1), 3)), it, 8)
+        rt.mem_store(w, W_BATCH.wrapping_add(i.wrapping_sub(1).wrapping_shl(3)), it, 8)
       }
-      head = rt.int_wrap(0, head, 1) % cap
-      i = rt.int_wrap(0, i, 1)
+      head = head.wrapping_add(1) % cap
+      i = i.wrapping_add(1)
     }
     rt.mem_store(p, P_IHEAD, head, 8)
-    rt.slot_store(p, P_ILEN, rt.int_wrap(1, len, n), RELAXED)
+    rt.slot_store(p, P_ILEN, len.wrapping_sub(n), RELAXED)
   }
   unlock(im)
   if n == 0 {
@@ -567,7 +567,7 @@ fn inject_pop(p: Int, w: Int) -> Int {
       stat(ST_INJECT)
     }
     if n > 1 {
-      sched.rq_put_batch(w, rt.int_wrap(0, w, W_BATCH), rt.int_wrap(1, n, 1))
+      sched.rq_put_batch(w, w.wrapping_add(W_BATCH), n.wrapping_sub(1))
     }
   }
   first
@@ -603,7 +603,7 @@ fn inject_get_scope(p: Int, s: Int) -> Int {
   if rt.slot_load(p, P_ILEN, SEQ_CST) == 0 {
     return 0
   }
-  let im = rt.int_wrap(0, p, P_IMU)
+  let im = p.wrapping_add(P_IMU)
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
     lock_slow(im)
   }
@@ -613,11 +613,11 @@ fn inject_get_scope(p: Int, s: Int) -> Int {
     let buf = rt.mem_load(p, P_IBUF, 8)
     let cap = rt.mem_load(p, P_ICAP, 8)
     let head = rt.mem_load(p, P_IHEAD, 8)
-    let x = rt.mem_load(buf, rt.int_wrap(3, head, 3), 8)
+    let x = rt.mem_load(buf, head.wrapping_shl(3), 8)
     if (x & 1) == 0 && rt.mem_load(x, T_SCOPE, 8) == s {
       it = x
-      rt.mem_store(p, P_IHEAD, rt.int_wrap(0, head, 1) % cap, 8)
-      rt.slot_store(p, P_ILEN, rt.int_wrap(1, len, 1), RELAXED)
+      rt.mem_store(p, P_IHEAD, head.wrapping_add(1) % cap, 8)
+      rt.slot_store(p, P_ILEN, len.wrapping_sub(1), RELAXED)
     }
   }
   unlock(im)
@@ -636,19 +636,19 @@ fn rq_put(p: Int, w: Int, x: Int) {
     }
     let h = rt.slot_load(w, 0, ACQUIRE)
     let t = rt.mem_load(w, RQ_TAIL_AT, 8)
-    if rt.int_wrap(1, t, h) < RUNQ {
+    if t.wrapping_sub(h) < RUNQ {
       // thieves took some meanwhile
       continue
     }
     // half of the ring into w's batch, taken with one compare and swap
-    let n = rt.int_wrap(1, t, h) >> 1
-    let batch = rt.int_wrap(0, w, W_BATCH)
+    let n = t.wrapping_sub(h) >> 1
+    let batch = w.wrapping_add(W_BATCH)
     var i = 0
     while i < n {
-      rt.mem_store(batch, rt.int_wrap(3, i, 3), rt.slot_load(w, rt.int_wrap(0, 17, rt.int_wrap(0, h, i) & 255), RELAXED), 8)
-      i = rt.int_wrap(0, i, 1)
+      rt.mem_store(batch, i.wrapping_shl(3), rt.slot_load(w, (17).wrapping_add(h.wrapping_add(i) & 255), RELAXED), 8)
+      i = i.wrapping_add(1)
     }
-    if rt.slot_cas(w, 0, h, rt.int_wrap(0, h, n), RELEASE) {
+    if rt.slot_cas(w, 0, h, h.wrapping_add(n), RELEASE) {
       inject_add(p, batch, n, x)
       return
     }
@@ -703,18 +703,18 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
     return 0
   }
   var r = rt.mem_load(w, W_RNG, 8)
-  r = r ^ rt.int_wrap(3, r, 13)
-  r = r ^ rt.int_wrap(4, r, 7)
-  r = r ^ rt.int_wrap(3, r, 17)
+  r = r ^ r.wrapping_shl(13)
+  r = r ^ r.shr_logical(7)
+  r = r ^ r.wrapping_shl(17)
   rt.mem_store(w, W_RNG, r, 8)
-  let start = rt.int_wrap(4, r, 1) % n
-  let batch = rt.int_wrap(0, w, W_BATCH)
+  let start = r.shr_logical(1) % n
+  let batch = w.wrapping_add(W_BATCH)
   rt.mem_store(w, W_GRACE_WAIT, 0, 8)
   var now = 0
   var i = 0
   while i < n {
-    let v = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, rt.int_wrap(0, start, i) % n, 3)), 8)
-    i = rt.int_wrap(0, i, 1)
+    let v = rt.mem_load(p, P_WS.wrapping_add((start.wrapping_add(i) % n).wrapping_shl(3)), 8)
+    i = i.wrapping_add(1)
     if v == w {
       continue
     }
@@ -725,7 +725,7 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
       if now == 0 {
         now = sysio.mono_ns()
       }
-      let left = rt.int_wrap(1, GRACE_NS, rt.int_wrap(1, now, ga))
+      let left = GRACE_NS.wrapping_sub(now.wrapping_sub(ga))
       if left > 0 {
         // readers its grant woke, theirs to run for a moment yet
         let seen = rt.mem_load(w, W_GRACE_WAIT, 8)
@@ -737,14 +737,14 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
     }
     let got = if nonempty { sched.rq_grab(v, batch) } else { 0 }
     if got > 0 {
-      t = rt.mem_load(batch, rt.int_wrap(3, rt.int_wrap(1, got, 1), 3), 8)
+      t = rt.mem_load(batch, got.wrapping_sub(1).wrapping_shl(3), 8)
       if got > 1 {
-        sched.rq_put_batch(w, batch, rt.int_wrap(1, got, 1))
+        sched.rq_put_batch(w, batch, got.wrapping_sub(1))
       }
     }
     if t == 0 && last != 0 {
       let x = rt.slot_load(v, W_NEXT_I, ACQUIRE)
-      if x != 0 && rt.int_wrap(1, sysio.mono_ns(), rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
+      if x != 0 && sysio.mono_ns().wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
         t = x
       }
     }
@@ -767,11 +767,11 @@ pub fn any_work(p: Int) -> Int {
   let n = rt.slot_load(p, P_NW, SEQ_CST)
   var i = 0
   while i < n {
-    let v = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
+    let v = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     if rt.slot_load(v, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) {
       return 1
     }
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   0
 }
@@ -812,16 +812,16 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
         rt.spin_hint()
         rt.spin_hint()
         rt.spin_hint()
-        i = rt.int_wrap(0, i, 1)
+        i = i.wrapping_add(1)
       }
     }
-    r = rt.int_wrap(0, r, 1)
+    r = r.wrapping_add(1)
   }
   let wait = rt.mem_load(w, W_GRACE_WAIT, 8)
   if t == 0 && wait > 0 {
     // a ring left alone for a grant's grace: wait it out, then take from
     // it (the readers' bound when the granting worker keeps computing)
-    let until = rt.int_wrap(0, sysio.mono_ns(), wait)
+    let until = sysio.mono_ns().wrapping_add(wait)
     while sysio.mono_ns() < until {
       rt.spin_hint()
       rt.spin_hint()
@@ -890,7 +890,7 @@ fn go_idle(p: Int, w: Int) -> Int {
   }
   while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
     stat(ST_IDLE_SLEEP)
-    futex_wait(rt.int_wrap(0, w, W_WAKEW), 0)
+    futex_wait(w.wrapping_add(W_WAKEW), 0)
   }
   if tracerec.built() && tracerec.on() {
     tracerec.ev(tracerec.K_IDLE, 1, w, 0)
@@ -906,7 +906,7 @@ pub fn worker_main(w: Int) -> Int {
   if layer() == 3 {
     // the stack the thread keeps for its stack overflow handler
     // (xo_rt.c on_overflow), past the guard page
-    let g = rt.int_wrap(0, rt.tlocal_addr(), TLS_SCRATCH_AT)
+    let g = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
     rt.mem_store(g, 0, 65536, 4)
     let _g = sys_windows.SetThreadStackGuarantee(g)
   }
@@ -932,7 +932,7 @@ pub fn worker_main(w: Int) -> Int {
     if spinning != 0 {
       spinning = 0
       rt.slot_add(p, P_SPINNING, -1, SEQ_CST)
-    } else if rt.int_wrap(3, rt.slot_load(p, P_SPINNING, SEQ_CST), 1) < rt.int_wrap(1, rt.slot_load(p, P_ALIVE, SEQ_CST), rt.slot_load(p, P_NIDLE, SEQ_CST)) {
+    } else if rt.slot_load(p, P_SPINNING, SEQ_CST).wrapping_shl(1) < rt.slot_load(p, P_ALIVE, SEQ_CST).wrapping_sub(rt.slot_load(p, P_NIDLE, SEQ_CST)) {
       // at most half the busy workers spin (Go's rule)
       rt.slot_add(p, P_SPINNING, 1, SEQ_CST)
       spinning = 1
@@ -999,7 +999,7 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
       // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
       let m = linux.mmap(0, size, 3, 16418, -1, 0)
       if m < 0 && m > -4096 {
-        rt.tlocal_set(4, rt.int_wrap(1, 0, m))
+        rt.tlocal_set(4, (0).wrapping_sub(m))
         return 0
       }
       // mprotect(PROT_NONE)
@@ -1024,8 +1024,8 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
         rt.tlocal_set(4, 0)
         return 0
       }
-      let top = rt.int_wrap(1, rt.int_wrap(0, m, size), WIN_COMMIT)
-      if sys_windows.VirtualAlloc(top, WIN_COMMIT, 4096, 4) == 0 || sys_windows.VirtualAlloc(rt.int_wrap(1, top, page), page, 4096, 260) == 0 {
+      let top = m.wrapping_add(size).wrapping_sub(WIN_COMMIT)
+      if sys_windows.VirtualAlloc(top, WIN_COMMIT, 4096, 4) == 0 || sys_windows.VirtualAlloc(top.wrapping_sub(page), page, 4096, 260) == 0 {
         rt.tlocal_set(4, 0)
         return 0
       }
@@ -1072,9 +1072,9 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
   var f = 0
   let nc = rt.mem_load(w, W_NFCACHE, 8)
   if nc > 0 {
-    let k = rt.int_wrap(1, nc, 1)
+    let k = nc.wrapping_sub(1)
     rt.mem_store(w, W_NFCACHE, k, 8)
-    f = rt.mem_load(w, rt.int_wrap(0, W_FCACHE, rt.int_wrap(3, k, 3)), 8)
+    f = rt.mem_load(w, W_FCACHE.wrapping_add(k.wrapping_shl(3)), 8)
   } else if rt.slot_load(fs, FS_LIST, RELAXED) != 0 {
     if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
       lock_slow(fs)
@@ -1082,14 +1082,14 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
     f = rt.mem_load(fs, FS_LIST_AT, 8)
     if f != 0 {
       rt.slot_store(fs, FS_LIST, rt.mem_load(f, F_NEXT, 8), RELAXED)
-      rt.mem_store(fs, FS_N, rt.int_wrap(1, rt.mem_load(fs, FS_N, 8), 1), 8)
+      rt.mem_store(fs, FS_N, rt.mem_load(fs, FS_N, 8).wrapping_sub(1), 8)
     }
     unlock(fs)
   }
   if f == 0 {
     stat(ST_FIBER_NEW)
     let page = rt.mem_load(fs, FS_PAGE, 8)
-    let size = rt.int_wrap(0, rt.mem_load(fs, FS_STACK, 8), page)
+    let size = rt.mem_load(fs, FS_STACK, 8).wrapping_add(page)
     let m = map_stack(size, page, rt.mem_load(w, W_HOOKS, 8))
     if m == 0 {
       // out of address space more often than of memory: cabi.xo says
@@ -1122,8 +1122,8 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
 fn fiber_free(fs: Int, w: Int, f: Int) {
   let nc = rt.mem_load(w, W_NFCACHE, 8)
   if nc < FCACHE {
-    rt.mem_store(w, rt.int_wrap(0, W_FCACHE, rt.int_wrap(3, nc, 3)), f, 8)
-    rt.mem_store(w, W_NFCACHE, rt.int_wrap(0, nc, 1), 8)
+    rt.mem_store(w, W_FCACHE.wrapping_add(nc.wrapping_shl(3)), f, 8)
+    rt.mem_store(w, W_NFCACHE, nc.wrapping_add(1), 8)
     return
   }
   if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
@@ -1133,7 +1133,7 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
   if n < FIBER_CACHE {
     rt.mem_store(f, F_NEXT, rt.mem_load(fs, FS_LIST_AT, 8), 8)
     rt.slot_store(fs, FS_LIST, f, RELAXED)
-    rt.mem_store(fs, FS_N, rt.int_wrap(0, n, 1), 8)
+    rt.mem_store(fs, FS_N, n.wrapping_add(1), 8)
     unlock(fs)
     return
   }
@@ -1143,7 +1143,7 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
   }
   rtstats.fiber_counted(-1)
   unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
-  rt.heap_release(rt.int_wrap(1, f, 8))
+  rt.heap_release(f.wrapping_sub(8))
 }
 
 // ---------------------------------------------------------------------------
@@ -1268,7 +1268,7 @@ fn signal(pl: Int, p: Int, handoff: Bool) {
     }
   } else if rt.mem_load(p, PK_SLEEPING, 4) != 0 {
     stat(ST_THREAD_WAKE)
-    futex_wake(rt.int_wrap(0, p, PK_SIGNALED_AT))
+    futex_wake(p.wrapping_add(PK_SIGNALED_AT))
   }
   unlock(p)
 }
@@ -1278,7 +1278,7 @@ fn node_canceled(n: Int) -> Bool { rt.slot_load(n, N_CANCELED, ACQUIRE) != 0 }
 
 /// Adds n below parent (canceled at once when parent is).
 pub fn node_link(n: Int, parent: Int) {
-  let pm = rt.int_wrap(0, parent, N_MU)
+  let pm = parent.wrapping_add(N_MU)
   if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
     lock_slow(pm)
   }
@@ -1303,7 +1303,7 @@ pub fn node_unlink(n: Int) {
   if p == 0 {
     return
   }
-  let pm = rt.int_wrap(0, p, N_MU)
+  let pm = p.wrapping_add(N_MU)
   if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
     lock_slow(pm)
   }
@@ -1337,7 +1337,7 @@ fn cancel_locked(pl: Int, n: Int) {
   }
   var c = rt.mem_load(n, N_CHILD, 8)
   while c != 0 {
-    let cm = rt.int_wrap(0, c, N_MU)
+    let cm = c.wrapping_add(N_MU)
     if !rt.slot_cas(cm, 0, 0, 1, ACQUIRE) {
       lock_slow(cm)
     }
@@ -1350,7 +1350,7 @@ fn cancel_locked(pl: Int, n: Int) {
 /// Cancels n and its subtree (core 7.2) and wakes every context blocked
 /// in it.
 pub fn node_cancel(pl: Int, n: Int) {
-  let m = rt.int_wrap(0, n, N_MU)
+  let m = n.wrapping_add(N_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
@@ -1360,7 +1360,7 @@ pub fn node_cancel(pl: Int, n: Int) {
 
 /// Sets the park of the context blocked at node n (0: none).
 pub fn node_set_waiter(n: Int, p: Int) {
-  let m = rt.int_wrap(0, n, N_MU)
+  let m = n.wrapping_add(N_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
@@ -1387,7 +1387,7 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
     cancelable = 0
   }
   let node = rt.mem_load(c, C_NODE, 8)
-  let p = rt.int_wrap(0, c, C_PARK)
+  let p = c.wrapping_add(C_PARK)
   if cancelable != 0 {
     node_set_waiter(node, p)
   }
@@ -1448,7 +1448,7 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
       }
     }
     stat(ST_THREAD_WAIT)
-    futex_wait(rt.int_wrap(0, p, PK_SIGNALED_AT), 0)
+    futex_wait(p.wrapping_add(PK_SIGNALED_AT), 0)
     if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
       lock_slow(p)
     }
@@ -1519,7 +1519,7 @@ pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
   } else {
     defer_check()
   }
-  let m = rt.int_wrap(0, s, S_MU)
+  let m = s.wrapping_add(S_MU)
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
@@ -1531,10 +1531,10 @@ pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
   // counted before a helper can find it in the list: the task runs and
   // its queue entry is taken (two units of two)
   rt.slot_add(s, S_PENDING, 4, 3)
-  node_link(rt.int_wrap(0, t, T_NODE), rt.mem_load(s, S_TASKS, 8))
+  node_link(t.wrapping_add(T_NODE), rt.mem_load(s, S_TASKS, 8))
   rt.mem_store(t, T_SNEXT, rt.mem_load(s, S_LIST, 8), 8)
   rt.mem_store(s, S_LIST, t, 8)
-  let n = rt.int_wrap(0, rt.mem_load(s, S_NLIST, 8), 1)
+  let n = rt.mem_load(s, S_NLIST, 8).wrapping_add(1)
   rt.mem_store(s, S_NLIST, n, 8)
   var dead = 0
   if n >= rt.mem_load(s, S_PRUNE_AT, 8) && rt.mem_load(s, S_CLOSING, 4) == 0 {
@@ -1562,7 +1562,7 @@ pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
 /// a server kept every connection's task).
 fn scope_prune(s: Int) -> Int {
   var dead = 0
-  var pp = rt.int_wrap(0, s, S_LIST)
+  var pp = s.wrapping_add(S_LIST)
   var n = rt.mem_load(s, S_NLIST, 8)
   while true {
     let u = rt.mem_load(pp, 0, 8)
@@ -1573,13 +1573,13 @@ fn scope_prune(s: Int) -> Int {
       rt.mem_store(pp, 0, rt.mem_load(u, T_SNEXT, 8), 8)
       rt.mem_store(u, T_SNEXT, dead, 8)
       dead = u
-      n = rt.int_wrap(1, n, 1)
+      n = n.wrapping_sub(1)
     } else {
-      pp = rt.int_wrap(0, u, T_SNEXT)
+      pp = u.wrapping_add(T_SNEXT)
     }
   }
   rt.mem_store(s, S_NLIST, n, 8)
-  let twice = rt.int_wrap(3, n, 1)
+  let twice = n.wrapping_shl(1)
   rt.mem_store(s, S_PRUNE_AT, if twice > 64 { twice } else { 64 }, 8)
   dead
 }
@@ -1597,7 +1597,7 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
   // decision 0251; ctx.xo C_WHY, C_PARK_FP)
   rt.mem_store(c, C_WHY, tracerec.WHY_JOIN, 8)
   rt.mem_store(c, C_PARK_FP, rt.frame_addr(), 8)
-  let m = rt.int_wrap(0, s, S_MU)
+  let m = s.wrapping_add(S_MU)
   // first the scope's tasks at the heads of this thread's own ring and
   // of the inject queue (where a full ring moved its older half): each
   // runs here and its entry is taken with it (units 4), where one run
@@ -1642,7 +1642,7 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
       t = rt.mem_load(t, T_SNEXT, 8)
     }
   }
-  let p = rt.int_wrap(0, c, C_PARK)
+  let p = c.wrapping_add(C_PARK)
   rt.mem_store(s, S_JOINER, p, 8)
   while true {
     park_reset(p)
@@ -1714,7 +1714,7 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   if at == 0 {
     rt.mem_store(w, W_DEFER_N, 0, 8)
     rt.slot_store(w, W_DEFER_AT_W, sysio.mono_ns(), SEQ_CST)
-  } else if !(rt.mem_load(p, P_NCPU, 8) < 2 && rt.mem_load(w, W_ROOT, 4) != 0) && rt.int_wrap(1, sysio.mono_ns(), at) >= DEFER_CHECK_NS {
+  } else if !(rt.mem_load(p, P_NCPU, 8) < 2 && rt.mem_load(w, W_ROOT, 4) != 0) && sysio.mono_ns().wrapping_sub(at) >= DEFER_CHECK_NS {
     // an older deferral is due: wake now for both
     rt.slot_store(w, W_DEFER_AT_W, 0, SEQ_CST)
     return false
@@ -1722,7 +1722,7 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   stat(ST_DEFER)
   if rt.slot_load(m, M_ASLEEP, SEQ_CST) != 0 && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
     rt.slot_store(m, M_WAKE, 1, RELEASE)
-    futex_wake(rt.int_wrap(0, m, M_WAKE_AT))
+    futex_wake(m.wrapping_add(M_WAKE_AT))
   }
   true
 }
@@ -1765,7 +1765,7 @@ pub fn mon_main(p: Int) -> Int {
   }
   var quiet = 0
   while true {
-    futex_wait_us(rt.int_wrap(0, m, M_WAKE_AT), 0, DEFER_US)
+    futex_wait_us(m.wrapping_add(M_WAKE_AT), 0, DEFER_US)
     stat(ST_MON_TICK)
     let busy = mon_scan(p)
     if tracerec.built() && tracerec.on() {
@@ -1775,7 +1775,7 @@ pub fn mon_main(p: Int) -> Int {
       quiet = 0
       continue
     }
-    quiet = rt.int_wrap(0, quiet, 1)
+    quiet = quiet.wrapping_add(1)
     if quiet < MON_IDLE_TICKS {
       continue
     }
@@ -1788,7 +1788,7 @@ pub fn mon_main(p: Int) -> Int {
       continue
     }
     while rt.slot_load(m, M_WAKE, ACQUIRE) == 0 {
-      futex_wait(rt.int_wrap(0, m, M_WAKE_AT), 0)
+      futex_wait(m.wrapping_add(M_WAKE_AT), 0)
     }
     rt.slot_store(m, M_WAKE, 0, RELAXED)
     quiet = 0
@@ -1805,23 +1805,23 @@ fn mon_scan(p: Int) -> Bool {
   var pending = false
   var i = 0
   while i < n {
-    let w = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
+    let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 {
       pending = true
-      if rt.int_wrap(1, now, at) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
+      if now.wrapping_sub(at) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
         let queued = rt.slot_load(w, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(w, 0, SEQ_CST) != rt.slot_load(w, RQ_TAIL, SEQ_CST)
         if queued {
           stat(ST_MON_WAKE)
           if tracerec.built() && tracerec.on() {
             // a late wake by the monitor: the deferral's age
-            tracerec.ev(tracerec.K_LATE, 1, w, rt.int_wrap(1, now, at))
+            tracerec.ev(tracerec.K_LATE, 1, w, now.wrapping_sub(at))
           }
           wakep(p)
         }
       }
     }
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
   pending
 }
@@ -1875,16 +1875,16 @@ fn defer_check_w(w: Int) {
   // the clock every 16th call (a clock read cost a ping pong 12% more
   // instructions on macOS): the bound is DEFER_CHECK_NS or 16 calls,
   // whichever is later
-  let n = rt.int_wrap(0, rt.mem_load(w, W_DEFER_N, 8), 1)
+  let n = rt.mem_load(w, W_DEFER_N, 8).wrapping_add(1)
   rt.mem_store(w, W_DEFER_N, n, 8)
-  if (n & 15) != 0 || rt.int_wrap(1, sysio.mono_ns(), at) < DEFER_CHECK_NS {
+  if (n & 15) != 0 || sysio.mono_ns().wrapping_sub(at) < DEFER_CHECK_NS {
     return
   }
   if rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
     stat(ST_MON_WAKE)
     if tracerec.built() && tracerec.on() {
       // a late wake by the waker's own check
-      tracerec.ev(tracerec.K_LATE, 2, w, rt.int_wrap(1, sysio.mono_ns(), at))
+      tracerec.ev(tracerec.K_LATE, 2, w, sysio.mono_ns().wrapping_sub(at))
     }
     wakep(rt.mem_load(w, W_POOL, 8))
   }
@@ -1916,12 +1916,12 @@ pub fn defer_off(p: Int) {
   let n = rt.slot_load(p, P_NW, SEQ_CST)
   var i = 0
   while i < n {
-    let w = rt.mem_load(p, rt.int_wrap(0, P_WS, rt.int_wrap(3, i, 3)), 8)
+    let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
       wakep(p)
     }
-    i = rt.int_wrap(0, i, 1)
+    i = i.wrapping_add(1)
   }
 }
 

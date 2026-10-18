@@ -554,7 +554,7 @@ pub fn parse_time(s: Str) -> Int? {
   if secs > -9000000000 && secs < 9000000000 {
     return Some(secs * 1000000000 + nsec)
   }
-  Some(rt.int_wrap(0, rt.int_wrap(2, secs, 1000000000), nsec))
+  Some(secs.wrapping_mul(1000000000).wrapping_add(nsec))
 }
 
 // ---------------------------------------------------------------------------

@@ -90,11 +90,11 @@ const SMALL_MAX = 1024
 /// The header bytes of a list object.
 const L_HDR = 24
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
 // ---------------------------------------------------------------------------
 // The heap through the heap word

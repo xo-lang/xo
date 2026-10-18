@@ -184,7 +184,7 @@ pub fn read_int64_tag(var s: Win, tag: Int) -> Int? {
   }
   var v = if Int(c.b[c.lo]) >= 128 { -1 } else { 0 }
   for i in c.lo..c.hi {
-    v = rt.int_wrap(0, v << 8, Int(c.b[i]))
+    v = (v << 8).wrapping_add(Int(c.b[i]))
   }
   s = t
   Some(v)

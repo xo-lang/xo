@@ -436,7 +436,7 @@ fn seal_cbc(k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
 }
 
 /// The mask 255 when the Int x is not negative, else 0.
-fn nonneg8(x: Int) -> Int { rt.int_wrap(1, rt.int_wrap(4, x, 63), 1) & 255 }
+fn nonneg8(x: Int) -> Int { x.shr_logical(63).wrapping_sub(1) & 255 }
 
 /// Go's extractPadding: how many bytes to remove (the padding and its
 /// length byte; one when the padding is bad, so the bytes go to the MAC)
@@ -454,10 +454,10 @@ pub fn extract_padding(p: Bytes) -> (Int, Int) {
     let b = Int(p[p.len() - 1 - i])
     good = good & ~((mask & pl) ^ (mask & b)) & 255
   }
-  good = good & (rt.int_wrap(3, good, 4) & 255)
-  good = good & (rt.int_wrap(3, good, 2) & 255)
-  good = good & (rt.int_wrap(3, good, 1) & 255)
-  good = rt.int_wrap(1, 0, rt.int_wrap(4, good, 7) & 1) & 255
+  good = good & (good.wrapping_shl(4) & 255)
+  good = good & (good.wrapping_shl(2) & 255)
+  good = good & (good.wrapping_shl(1) & 255)
+  good = (0).wrapping_sub(good.shr_logical(7) & 1) & 255
   ((pl & good) + 1, good)
 }
 
@@ -477,7 +477,7 @@ fn open_cbc(k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   }
   let (remove, good) = extract_padding(dec)
   var n = dec.len() - 20 - remove
-  n = ct.pick(ct.mask_bit(rt.int_wrap(4, n, 63)), 0, n)
+  n = ct.pick(ct.mask_bit(n.shr_logical(63)), 0, n)
   let remote = dec[n..n + 20]
   let local = mac_cbc(k, hdr[0..3], n, dec[0..n], dec[n + 20..dec.len()])
   let ok = (if ct.bytes_equal(local, remote) { 1 } else { 0 }) & good

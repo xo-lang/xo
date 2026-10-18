@@ -249,7 +249,7 @@ fn mgf1(hash: Int, seed: Bytes, n: Int) -> Bytes {
   var counter = 0
   while out.len() < n {
     var s = rt.rs_append_bytes(rt.rs_with_cap(seed.len() + 4), seed, 0, seed.len(), 0)
-    s = rt.rs_push_word(s, rt.int_wrap(7, rt.int_wrap(3, counter, 32), 0), 4)
+    s = rt.rs_push_word(s, counter.wrapping_shl(32).swap_bytes(), 4)
     let h = hsum(hash, s.bytes())
     out = rt.rs_append_bytes(out, h, 0, h.len(), 0)
     counter += 1
@@ -303,7 +303,7 @@ pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: 
   let h = em[em_len - hl - 1..em_len - 1]
   let top = 8 * em_len - em_bits
   // the top bits of EM's first byte above emBits, which must be 0
-  let top_mask = rt.int_wrap(3, 255, 8 - top) & 255
+  let top_mask = (255).wrapping_shl(8 - top) & 255
   if (Int(masked[0]) & top_mask) != 0 {
     return false
   }
@@ -357,7 +357,7 @@ pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> By
   db = rt.rs_append_bytes(db, salt, 0, salt.len(), 0)
   let masked = xor(db.bytes(), mgf1(hash, h, em_len - hl - 1))
   let top = 8 * em_len - em_bits
-  let first = Int(masked[0]) & (255 ^ (rt.int_wrap(3, 255, 8 - top) & 255))
+  let first = Int(masked[0]) & (255 ^ ((255).wrapping_shl(8 - top) & 255))
   var em = rt.rs_with_cap(em_len)
   em = rt.rs_push_byte(em, first)
   em = rt.rs_append_bytes(em, masked, 1, masked.len(), 0)
@@ -402,7 +402,7 @@ fn int_bytes(e: Int) -> Bytes {
   var started = false
   var i = 7
   while i >= 0 {
-    let x = rt.int_wrap(4, e, 8 * i) & 255
+    let x = e.shr_logical(8 * i) & 255
     if x != 0 || started || i == 0 {
       s = rt.rs_push_byte(s, x)
       started = true

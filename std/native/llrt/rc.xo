@@ -34,7 +34,7 @@ const ACQ_REL = 3
 pub fn inc(p: Int) {
   let c = rt.slot_load(p, 0, RELAXED)
   if c > 0 {
-    rt.mem_store(p, 0, rt.int_wrap(0, c, 1), 8)
+    rt.mem_store(p, 0, c.wrapping_add(1), 8)
     return
   }
   if c & SHARED != 0 {
@@ -55,7 +55,7 @@ pub fn dec_shared(p: Int) -> Int {
 pub fn dec(p: Int) -> Int {
   let c = rt.slot_load(p, 0, RELAXED)
   if c > 1 {
-    rt.mem_store(p, 0, rt.int_wrap(1, c, 1), 8)
+    rt.mem_store(p, 0, c.wrapping_sub(1), 8)
     return 0
   }
   if c == 1 {
@@ -89,7 +89,7 @@ pub fn claim(p: Int) -> Int {
 pub fn mark(p: Int) -> Int {
   let c = rt.slot_load(p, 0, RELAXED)
   if c > 0 {
-    rt.slot_store(p, 0, rt.int_wrap(1, 0, c), RELAXED)
+    rt.slot_store(p, 0, (0).wrapping_sub(c), RELAXED)
     return 1
   }
   0

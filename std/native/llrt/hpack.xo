@@ -160,7 +160,7 @@ fn get_int(b: Bytes, n: Int, i: Int, prefix: Int) -> (Int, Int, Int) {
     }
     let c = Int(b[j])
     j += 1
-    v = rt.int_wrap(0, v, rt.int_wrap(3, c & 127, m))
+    v = v.wrapping_add((c & 127).wrapping_shl(m))
     if (c & 128) == 0 {
       break
     }

@@ -23,10 +23,10 @@ pub struct Hasher {
 /// A new hash.
 pub fn new() -> Hasher { Hasher{st: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0], held: b"", total: 0} }
 
-fn rotl(x: Int, n: Int) -> Int { rt.int_wrap(6, x, 32 - n) }
+fn rotl(x: Int, n: Int) -> Int { x.rotate_right32(32 - n) }
 
 /// The big endian 32 bit word of b at i.
-fn be32(b: Bytes, i: Int) -> Int { rt.int_wrap(4, rt.int_wrap(7, rt.bytes_word(b, i), 0), 32) }
+fn be32(b: Bytes, i: Int) -> Int { rt.bytes_word(b, i).swap_bytes().shr_logical(32) }
 
 /// One 64 byte block of b from i into st.
 fn compress(var st: List[Int], b: Bytes, i: Int) {
@@ -75,7 +75,7 @@ fn compress(var st: List[Int], b: Bytes, i: Int) {
 }
 
 /// be32 near the end of b (bytes_word reads 8 bytes).
-fn be32_slow(b: Bytes, i: Int) -> Int { rt.int_wrap(3, Int(b[i]), 24) | rt.int_wrap(3, Int(b[i + 1]), 16) | rt.int_wrap(3, Int(b[i + 2]), 8) | Int(b[i + 3]) }
+fn be32_slow(b: Bytes, i: Int) -> Int { Int(b[i]).wrapping_shl(24) | Int(b[i + 1]).wrapping_shl(16) | Int(b[i + 2]).wrapping_shl(8) | Int(b[i + 3]) }
 
 /// The bytes lo..hi of b after a.
 fn cat(a: Bytes, b: Bytes, lo: Int, hi: Int) -> Bytes { rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(a.len() + hi - lo), a, 0, a.len(), 0), b, lo, hi, 0).bytes() }
@@ -118,7 +118,7 @@ pub fn (h: Hasher) sum() -> Bytes {
     t = rt.rs_push_word(t, 0, if k < 8 { k } else { 8 })
     k -= 8
   }
-  t = rt.rs_push_word(t, rt.int_wrap(7, rt.int_wrap(3, h.total, 3), 0), 8)
+  t = rt.rs_push_word(t, h.total.wrapping_shl(3).swap_bytes(), 8)
   let tb = t.bytes()
   var i = 0
   while i < tb.len() {
@@ -127,7 +127,7 @@ pub fn (h: Hasher) sum() -> Bytes {
   }
   var out = rt.rs_with_cap(SIZE)
   for w in st {
-    out = rt.rs_push_word(out, rt.int_wrap(7, rt.int_wrap(3, w, 32), 0), 4)
+    out = rt.rs_push_word(out, w.wrapping_shl(32).swap_bytes(), 4)
   }
   out.bytes()
 }

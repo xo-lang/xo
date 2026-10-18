@@ -681,7 +681,7 @@ fn parse(s: Sects, bias: Int, lo: Int, hi: Int, var out: Lines) {
   for i in 0..ra.len() {
     if i < 1048576 {
       let rowbit = if rf[i] < 0 { 0 } else { 1 }
-      keys.push(rt.int_wrap(3, ra[i] - lo, 21) | (rowbit << 20) | i)
+      keys.push((ra[i] - lo).wrapping_shl(21) | (rowbit << 20) | i)
     }
   }
   keys = keys.sort()
@@ -1174,7 +1174,7 @@ pub fn inline_chain(t: Lines, pc: Int, fname: Str) -> (List[Frame], Str, Int) {
   // deepest first
   var keys: List[Int] = []
   for i in by {
-    keys.push(rt.int_wrap(3, t.inl_depth[i], 32) | i)
+    keys.push(t.inl_depth[i].wrapping_shl(32) | i)
   }
   keys = keys.sort()
   var order: List[Int] = []
@@ -2033,7 +2033,7 @@ fn str_text(obj: Int, n: Int) -> Str {
 fn hex(x: Int) -> Str {
   var b = StrBuilder.new()
   for i in 0..16 {
-    let d = rt.int_wrap(4, x, 60 - 4 * i) & 15
+    let d = x.shr_logical(60 - 4 * i) & 15
     b.write("${Rune(if d < 10 { 48 + d } else { 87 + d })}")
   }
   b.freeze()

@@ -40,11 +40,11 @@ const D_LEN = 16
 const D_BUF = 24
 const DIR_BUF = 16384
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
 fn byte(a: Int, i: Int) -> Int { rt.mem_load(a, i, 1) }
 

@@ -161,12 +161,12 @@ pub fn new(cap: Int, drop: Int, lp: Int, ln: Int) -> Int {
 /// 1.19x to 1.12x the C's instructions on a buffered send and recv,
 /// bench/results/zero-c-perf-sweep-2026-10-15.md).
 fn slot(c: Int, i: Int) -> Int {
-  var k = rt.int_wrap(0, ld(c, CH_HEAD), i)
+  var k = ld(c, CH_HEAD).wrapping_add(i)
   let cap = ld(c, CH_CAP)
   if k >= cap {
-    k = rt.int_wrap(1, k, cap)
+    k = k.wrapping_sub(cap)
   }
-  rt.int_wrap(0, ld(c, CH_BUF), rt.int_wrap(3, k, 3))
+  ld(c, CH_BUF).wrapping_add(k.wrapping_shl(3))
 }
 
 /// Sends l without blocking (the lock held, c open): whether it did.
@@ -191,12 +191,12 @@ pub fn try_send_locked(c: Int, l: Int) -> Bool {
 pub fn try_recv_locked(c: Int) -> (Bool, Int) {
   if ld(c, CH_LEN) > 0 {
     let out = ld(slot(c, 0), 0)
-    var h = rt.int_wrap(0, ld(c, CH_HEAD), 1)
+    var h = ld(c, CH_HEAD).wrapping_add(1)
     if h >= ld(c, CH_CAP) {
       h = 0
     }
     st(c, CH_HEAD, h)
-    st(c, CH_LEN, rt.int_wrap(1, ld(c, CH_LEN), 1))
+    st(c, CH_LEN, ld(c, CH_LEN).wrapping_sub(1))
     let s = cq_take(c + CH_SENDQ)
     if s != 0 {
       let n = ld(c, CH_LEN)
@@ -256,7 +256,7 @@ pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
   let n = ld(c, CH_LEN)
   if ld(c + CH_RECVQ, Q_HEAD) == 0 && n < ld(c, CH_CAP) {
     st(slot(c, n), 0, l)
-    st(c, CH_LEN, rt.int_wrap(0, n, 1))
+    st(c, CH_LEN, n.wrapping_add(1))
     pool.unlock(c + CH_MU)
     return
   }
@@ -316,12 +316,12 @@ pub fn recv(c: Int) -> Int {
   let n = ld(c, CH_LEN)
   if n > 0 && ld(c + CH_SENDQ, Q_HEAD) == 0 {
     let out = ld(slot(c, 0), 0)
-    var h = rt.int_wrap(0, ld(c, CH_HEAD), 1)
+    var h = ld(c, CH_HEAD).wrapping_add(1)
     if h >= ld(c, CH_CAP) {
       h = 0
     }
     st(c, CH_HEAD, h)
-    st(c, CH_LEN, rt.int_wrap(1, n, 1))
+    st(c, CH_LEN, n.wrapping_sub(1))
     pool.unlock(c + CH_MU)
     return if out != 0 { out } else { tasks.empty_list() }
   }

@@ -159,33 +159,33 @@ pub fn large(n: Int) -> Int { large_room(n, n) }
 /// (at least n) bytes.
 fn large_room(n: Int, room: Int) -> Int {
   // the size word, the prefix, the bytes, rounded up to GRAIN
-  let need = rt.int_wrap(0, n, 16)
+  let need = n.wrapping_add(16)
   var m = take(need)
   if m == 0 {
-    let size = rt.int_wrap(0, rt.int_wrap(0, room, 16), GRAIN - 1) & (0 - GRAIN)
+    let size = room.wrapping_add(16).wrapping_add(GRAIN - 1) & (0 - GRAIN)
     m = map(size)
     rt.mem_store(m, 0, size, 8)
   }
-  rt.mem_store(m, 8, rt.int_wrap(1, 0, n), 8)
-  rt.int_wrap(0, m, 16)
+  rt.mem_store(m, 8, (0).wrapping_sub(n), 8)
+  m.wrapping_add(16)
 }
 
 /// The large block whose prefix is at b, made n bytes: in place when its
 /// mapping has the room, else a new block with its first bytes (the
 /// smaller size's), the old one given back.
 pub fn large_resize(b: Int, n: Int) -> Int {
-  let m = rt.int_wrap(1, b, 8)
-  if rt.int_wrap(0, n, 16) <= rt.mem_load(m, 0, 8) {
-    rt.mem_store(b, 0, rt.int_wrap(1, 0, n), 8)
-    return rt.int_wrap(0, b, 8)
+  let m = b.wrapping_sub(8)
+  if n.wrapping_add(16) <= rt.mem_load(m, 0, 8) {
+    rt.mem_store(b, 0, (0).wrapping_sub(n), 8)
+    return b.wrapping_add(8)
   }
-  let old = rt.int_wrap(1, 0, rt.mem_load(b, 0, 8))
+  let old = (0).wrapping_sub(rt.mem_load(b, 0, 8))
   // a growing block (a list's or a string's doubling) gets room for
   // twice n, so its next growth stays in place: the pages past what is
   // written are reserved, not used (realloc grows a large block in place
   // or remaps its pages)
-  let p = large_room(n, if n > old { rt.int_wrap(3, n, 1) } else { n })
-  rt.mem_copy(p, rt.int_wrap(0, b, 8), if old < n { old } else { n })
+  let p = large_room(n, if n > old { n.wrapping_shl(1) } else { n })
+  rt.mem_copy(p, b.wrapping_add(8), if old < n { old } else { n })
   release(b)
   p
 }
@@ -193,7 +193,7 @@ pub fn large_resize(b: Int, n: Int) -> Int {
 /// Gives back the large block whose prefix is at b: to the cache, or to
 /// the system when the cache is full.
 pub fn release(b: Int) {
-  let m = rt.int_wrap(1, b, 8)
+  let m = b.wrapping_sub(8)
   let size = rt.mem_load(m, 0, 8)
   if !keep(m, size) {
     unmap(m, size)
@@ -213,13 +213,13 @@ fn keep(m: Int, size: Int) -> Bool {
   }
   let bytes = rt.mem_load(t, 8, 8)
   let k = rt.mem_load(t, 16, 8)
-  if k >= CACHE_N || rt.int_wrap(0, bytes, size) > CACHE_MAX {
+  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX {
     clock_give()
     return false
   }
-  rt.mem_store(t, rt.int_wrap(0, 24, rt.int_wrap(3, k, 3)), m, 8)
-  rt.mem_store(t, 16, rt.int_wrap(0, k, 1), 8)
-  rt.mem_store(t, 8, rt.int_wrap(0, bytes, size), 8)
+  rt.mem_store(t, (24).wrapping_add(k.wrapping_shl(3)), m, 8)
+  rt.mem_store(t, 16, k.wrapping_add(1), 8)
+  rt.mem_store(t, 8, bytes.wrapping_add(size), 8)
   clock_give()
   true
 }
@@ -235,18 +235,18 @@ fn take(need: Int) -> Int {
   clock_take()
   let t = rt.mem_load(w, 0, 8)
   var k = rt.mem_load(t, 16, 8)
-  let most = rt.int_wrap(3, need, 2)
+  let most = need.wrapping_shl(2)
   while k > 0 {
-    k = rt.int_wrap(1, k, 1)
-    let at = rt.int_wrap(0, 24, rt.int_wrap(3, k, 3))
+    k = k.wrapping_sub(1)
+    let at = (24).wrapping_add(k.wrapping_shl(3))
     let m = rt.mem_load(t, at, 8)
     let size = rt.mem_load(m, 0, 8)
     if size >= need && size <= most {
       // the last entry fills the gap
-      let n = rt.int_wrap(1, rt.mem_load(t, 16, 8), 1)
-      rt.mem_store(t, at, rt.mem_load(t, rt.int_wrap(0, 24, rt.int_wrap(3, n, 3)), 8), 8)
+      let n = rt.mem_load(t, 16, 8).wrapping_sub(1)
+      rt.mem_store(t, at, rt.mem_load(t, (24).wrapping_add(n.wrapping_shl(3)), 8), 8)
       rt.mem_store(t, 16, n, 8)
-      rt.mem_store(t, 8, rt.int_wrap(1, rt.mem_load(t, 8, 8), size), 8)
+      rt.mem_store(t, 8, rt.mem_load(t, 8, 8).wrapping_sub(size), 8)
       clock_give()
       return m
     }
@@ -276,7 +276,7 @@ pub fn chunk(h: Int) {
   let c = map(CHUNK)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, 24, c, 8)
-  rt.mem_store(h, 32, rt.int_wrap(0, c, CHUNK), 8)
+  rt.mem_store(h, 32, c.wrapping_add(CHUNK), 8)
 }
 
 /// The chunks mapped so far.
@@ -440,8 +440,8 @@ pub fn live(lp: Int, tp: Int) {
   var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
   while h != 0 {
     let a = rt.mem_load(h, H_ALLOCS, 8)
-    l = rt.int_wrap(0, l, rt.int_wrap(1, a, rt.mem_load(h, H_FREES, 8)))
-    t = rt.int_wrap(0, t, a)
+    l = l.wrapping_add(a.wrapping_sub(rt.mem_load(h, H_FREES, 8)))
+    t = t.wrapping_add(a)
     h = rt.mem_load(h, H_NEXT, 8)
   }
   hlock_give()
@@ -456,7 +456,7 @@ pub fn nfree(c: Int) -> Int {
   hlock_take()
   var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
   while h != 0 {
-    n = rt.int_wrap(0, n, rt.mem_load(h, rt.int_wrap(0, H_NFREE, rt.int_wrap(3, c, 3)), 8))
+    n = n.wrapping_add(rt.mem_load(h, H_NFREE.wrapping_add(c.wrapping_shl(3)), 8))
     h = rt.mem_load(h, H_NEXT, 8)
   }
   hlock_give()

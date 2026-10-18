@@ -126,7 +126,7 @@ pub fn ev(kind: Int, aux: Int, a: Int, b: Int) {
   if r == 0 || ld(r, R_DONE) != 0 {
     return
   }
-  let now = rt.int_wrap(1, now(), ld(r, R_T0))
+  let now = now().wrapping_sub(ld(r, R_T0))
   let w = rt.tlocal_get(TLS_W)
   var at = 0
   if w == 0 {
@@ -148,14 +148,14 @@ pub fn ev(kind: Int, aux: Int, a: Int, b: Int) {
     let u = ld(c, C_USED)
     at = c + HDR + u
     st(at, 0, now)
-    st(at, 8, kind | rt.int_wrap(3, aux, 8))
+    st(at, 8, kind | aux.wrapping_shl(8))
     st(at, 16, a)
     st(at, 24, b)
     rt.slot_store[Int](c + C_USED, 0, u + EV, RELEASE)
     return
   }
   st(at, 0, now)
-  st(at, 8, kind | rt.int_wrap(3, aux, 8))
+  st(at, 8, kind | aux.wrapping_shl(8))
   st(at, 16, a)
   st(at, 24, b)
 }
@@ -164,5 +164,5 @@ pub fn ev(kind: Int, aux: Int, a: Int, b: Int) {
 /// (at most 255) packed in 56 bits.
 pub fn site(lp: Int, ln: Int) -> Int {
   let n = if ln > 255 { 255 } else { ln }
-  (lp & 281474976710655) | rt.int_wrap(3, n, 48)
+  (lp & 281474976710655) | n.wrapping_shl(48)
 }

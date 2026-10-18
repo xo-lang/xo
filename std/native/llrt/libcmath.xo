@@ -9,12 +9,12 @@
 use native/rt
 
 /// The bits of 1 << n (n from 0 to 63), wrapping.
-fn bit(n: Int) -> Int { rt.int_wrap(3, 1, n) }
+fn bit(n: Int) -> Int { (1).wrapping_shl(n) }
 
 /// v << n and v >> n (logical), wrapping.
-fn shl(v: Int, n: Int) -> Int { rt.int_wrap(3, v, n) }
+fn shl(v: Int, n: Int) -> Int { v.wrapping_shl(n) }
 
-fn shr(v: Int, n: Int) -> Int { rt.int_wrap(4, v, n) }
+fn shr(v: Int, n: Int) -> Int { v.shr_logical(n) }
 
 /// a < b as unsigned words.
 fn ult(a: Int, b: Int) -> Bool {

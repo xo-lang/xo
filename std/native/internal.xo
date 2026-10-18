@@ -303,7 +303,7 @@ fn probe_inherited() -> Int {
 /// The byte of tag t at i: rt_probe's "fill" and "check" pattern (every
 /// byte up to 4 KiB, then one in every 4 KiB page, and the last).
 fn probe_pat(t: Int, i: Int) -> Int {
-  rt.int_wrap(4, rt.int_wrap(0, rt.int_wrap(2, t, -7046029254386353131), rt.int_wrap(2, i, 31)), 56)
+  t.wrapping_mul(-7046029254386353131).wrapping_add(i.wrapping_mul(31)).shr_logical(56)
 }
 
 /// crypto_op's "rt.mem_check": libcstr's memcpy, memmove, and memset against
@@ -317,9 +317,9 @@ fn probe_mem_check() -> Int {
   var lb = mem_words(128)
   var lw = mem_words(128)
   var lt = mem_words(32)
-  let buf = rt.int_wrap(0, rt.obj_addr(lb), rt.layout(2))
-  let want = rt.int_wrap(0, rt.obj_addr(lw), rt.layout(2))
-  let tmp = rt.int_wrap(0, rt.obj_addr(lt), rt.layout(2))
+  let buf = rt.obj_addr(lb).wrapping_add(rt.layout(2))
+  let want = rt.obj_addr(lw).wrapping_add(rt.layout(2))
+  let tmp = rt.obj_addr(lt).wrapping_add(rt.layout(2))
   var bad = 0
   for n in 0..131 {
     for sa in 0..8 {

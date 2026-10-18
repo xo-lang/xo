@@ -21,7 +21,7 @@ pub fn add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int {
   while {
     // the wrapped sum overflowed when its sign differs from both
     // operands' (xo_atomic_add's __builtin_add_overflow)
-    let nv = rt.int_wrap(0, old, n)
+    let nv = old.wrapping_add(n)
     if ((old ^ nv) & (n ^ nv)) < 0 {
       rt.fault_at("integer overflow: ${old} + ${n} does not fit Int", at)
     }

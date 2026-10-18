@@ -173,7 +173,7 @@ pub fn clock_now() -> Int {
       return r
     }
     // a timespec of the wall clock never overflows: wrapping, as C's
-    return rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+    return rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
   }
   if f == CLOCK_LIBSYSTEM {
     return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_REALTIME)
@@ -200,17 +200,17 @@ pub fn mono_ns() -> Int {
   if f > 0 {
     // the timespec in words 5 and 6 of the thread's runtime table (an
     // address without a call, unlike obj.scratch's)
-    let a = rt.int_wrap(0, rt.tlocal_addr(), TLS_CLOCK_AT)
+    let a = rt.tlocal_addr().wrapping_add(TLS_CLOCK_AT)
     let r = rt.call_c2(f, linux.CLOCK_MONOTONIC, a)
     if r < 0 {
       return r
     }
-    return rt.int_wrap(0, rt.int_wrap(2, rt.mem_load(a, 0, 8), 1000000000), rt.mem_load(a, 8, 8))
+    return rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
   }
   if f == CLOCK_LIBSYSTEM {
     return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_MONOTONIC)
   }
-  clock_read(false, rt.int_wrap(0, rt.tlocal_addr(), TLS_CLOCK_AT))
+  clock_read(false, rt.tlocal_addr().wrapping_add(TLS_CLOCK_AT))
 }
 
 /// The wall clock (real) or the monotonic clock in nanoseconds, with 16

@@ -77,15 +77,15 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   }
   // as UInt64s: span = hi - lo, limit = MAX - MAX % span; draws at or
   // above limit are rejected
-  let span = rt.int_wrap(1, hi, lo)
-  let limit = rt.int_wrap(1, -1, max_rem(span))
+  let span = hi.wrapping_sub(lo)
+  let limit = (-1).wrapping_sub(max_rem(span))
   let flip = -9223372036854775807 - 1
   while true {
     let v = next_u64()
     if (v ^ flip) < (limit ^ flip) {
       // both below 2^63 (the common case): the signed remainder, inline
       let r = if v >= 0 && span > 0 { v % span } else { ints.u64_rem(v, span) }
-      return rt.int_wrap(0, lo, r)
+      return lo.wrapping_add(r)
     }
   }
   0
@@ -97,14 +97,14 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
 /// reaches it, where m = (2^63 - 1) mod span.
 fn max_rem(span: Int) -> Int {
   if span > 0 && span <= 4611686018427387904 {
-    let r = rt.int_wrap(0, rt.int_wrap(2, 9223372036854775807 % span, 2), 1)
+    let r = ((9223372036854775807 % span).wrapping_mul(2)).wrapping_add(1)
     return if r >= span { r - span } else { r }
   }
   ints.u64_rem(-1, span)
 }
 
 /// `rand.float()`: uniform in [0, 1) with 53 bits.
-pub fn next_float() -> Float { Float(rt.int_wrap(4, next_u64(), 11)) / 9007199254740992.0 }
+pub fn next_float() -> Float { Float(next_u64().shr_logical(11)) / 9007199254740992.0 }
 
 /// `rand.bool()`.
 pub fn next_bool() -> Bool { (next_u64() & 1) == 1 }

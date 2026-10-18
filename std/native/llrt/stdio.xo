@@ -60,7 +60,7 @@ const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
 
-fn add(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn add(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
 /// The mode, asking the test world first when it was not asked yet.
 fn mode(w: Int) -> Int {
@@ -103,7 +103,7 @@ fn unlock(w: Int, m: Int) {
 pub fn write_all(fd: Int, p: Int, n: Int) {
   var off = 0
   while off < n {
-    let w = write(fd, add(p, off), rt.int_wrap(1, n, off))
+    let w = write(fd, add(p, off), n.wrapping_sub(off))
     if w <= 0 {
       if w == 0 - linux.EINTR {
         continue

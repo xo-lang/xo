@@ -92,7 +92,7 @@ pub fn hook(kind: Int, w: Int, f: Int) {
   match kind {
     0 => {
       if a {
-        sys_c.weak___sanitizer_finish_switch_fiber(0, rt.int_wrap(0, w, W_ASAN_BOTTOM), rt.int_wrap(0, w, W_ASAN_SIZE))
+        sys_c.weak___sanitizer_finish_switch_fiber(0, w.wrapping_add(W_ASAN_BOTTOM), w.wrapping_add(W_ASAN_SIZE))
       }
     }
     1 => {
@@ -109,12 +109,12 @@ pub fn hook(kind: Int, w: Int, f: Int) {
         sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
       }
       if a {
-        sys_c.weak___sanitizer_start_switch_fiber(rt.int_wrap(0, f, F_ASAN_FAKE), rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
+        sys_c.weak___sanitizer_start_switch_fiber(f.wrapping_add(F_ASAN_FAKE), rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
       }
     }
     3 => {
       if a {
-        sys_c.weak___sanitizer_finish_switch_fiber(rt.mem_load(f, F_ASAN_FAKE, 8), rt.int_wrap(0, w, W_ASAN_BOTTOM), rt.int_wrap(0, w, W_ASAN_SIZE))
+        sys_c.weak___sanitizer_finish_switch_fiber(rt.mem_load(f, F_ASAN_FAKE, 8), w.wrapping_add(W_ASAN_BOTTOM), w.wrapping_add(W_ASAN_SIZE))
       }
     }
     4 => {
@@ -123,8 +123,8 @@ pub fn hook(kind: Int, w: Int, f: Int) {
       }
       if a {
         let stack = rt.mem_load(rt.mem_load(rt.mem_load(w, W_POOL, 8), P_FIBERS, 8), FS_STACK, 8)
-        let bottom = rt.int_wrap(0, rt.mem_load(f, F_MEM, 8), rt.int_wrap(1, rt.mem_load(f, F_SIZE, 8), stack))
-        sys_c.weak___sanitizer_start_switch_fiber(rt.int_wrap(0, w, W_ASAN_FAKE), bottom, stack)
+        let bottom = rt.mem_load(f, F_MEM, 8).wrapping_add(rt.mem_load(f, F_SIZE, 8).wrapping_sub(stack))
+        sys_c.weak___sanitizer_start_switch_fiber(w.wrapping_add(W_ASAN_FAKE), bottom, stack)
       }
     }
     5 => {
@@ -146,10 +146,10 @@ pub fn thread_start(f: Int, arg: Int, size: Int) -> Bool {
   if ok {
     let _s = sys_c.pthread_attr_setstacksize(a, size)
     let _d = sys_c.pthread_attr_setdetachstate(a, 1)
-    ok = Int(sys_c.pthread_create(rt.int_wrap(0, a, 64), a, f, arg)) == 0
+    ok = Int(sys_c.pthread_create(a.wrapping_add(64), a, f, arg)) == 0
     let _x = sys_c.pthread_attr_destroy(a)
   }
-  rt.heap_release(rt.int_wrap(1, a, 8))
+  rt.heap_release(a.wrapping_sub(8))
   ok
 }
 
@@ -159,11 +159,11 @@ pub fn thread_start(f: Int, arg: Int, size: Int) -> Bool {
 pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
   // pthread_attr_t (at most 64 bytes), then the n pthread_t
   let a = rt.heap_large(64 + n * 8)
-  let ts = rt.int_wrap(0, a, 64)
+  let ts = a.wrapping_add(64)
   var started = 0
   if Int(sys_c.pthread_attr_init(a)) == 0 {
     let _s = sys_c.pthread_attr_setstacksize(a, size)
-    while started < n && Int(sys_c.pthread_create(rt.int_wrap(0, ts, started * 8), a, f, arg)) == 0 {
+    while started < n && Int(sys_c.pthread_create(ts.wrapping_add(started * 8), a, f, arg)) == 0 {
       started = started + 1
     }
     let _x = sys_c.pthread_attr_destroy(a)
@@ -173,7 +173,7 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
     let _j = sys_c.pthread_join(rt.mem_load(ts, i * 8, 8), 0)
     i = i + 1
   }
-  rt.heap_release(rt.int_wrap(1, a, 8))
+  rt.heap_release(a.wrapping_sub(8))
   started == n
 }
 

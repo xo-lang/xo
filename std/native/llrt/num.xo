@@ -139,17 +139,17 @@ fn append_uint(out: Str, u: Int, sk: Int) -> Str {
 // An Int holds a UInt64's bits. The native backends lower these
 // intrinsics inline: wrapping +, -, *, the shifts, and umulh.
 
-fn addw(a: Int, b: Int) -> Int { rt.int_wrap(0, a, b) }
+fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
-fn subw(a: Int, b: Int) -> Int { rt.int_wrap(1, a, b) }
+fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
 
-fn mulw(a: Int, b: Int) -> Int { rt.int_wrap(2, a, b) }
+fn mulw(a: Int, b: Int) -> Int { a.wrapping_mul(b) }
 
 /// a << k (k mod 64), wrapping.
-fn shl(a: Int, k: Int) -> Int { rt.int_wrap(3, a, k) }
+fn shl(a: Int, k: Int) -> Int { a.wrapping_shl(k) }
 
 /// a >> k (k mod 64) as a UInt64 (zeros shifted in).
-fn shr(a: Int, k: Int) -> Int { rt.int_wrap(4, a, k) }
+fn shr(a: Int, k: Int) -> Int { a.shr_logical(k) }
 
 /// a < b as UInt64s.
 fn ult(a: Int, b: Int) -> Bool { (a ^ MIN_INT) < (b ^ MIN_INT) }
@@ -244,9 +244,9 @@ fn dbox(mant: Int, e2: Int, denorm: Bool) -> (Int, Int) {
   // zi, exact: the upper 128 bits of the 192 bit (2 mant + 1) << beta
   // times phi
   let u = shl(mant * 2 + 1, beta)
-  let rhi = rt.u64_mul_hi(u, ph)
+  let rhi = u.mul_hi_unsigned(ph)
   let rlo = mulw(u, ph)
-  let t = rt.u64_mul_hi(u, pl)
+  let t = u.mul_hi_unsigned(pl)
   let lo = addw(rlo, t)
   let zi = if ult(lo, rlo) { addw(rhi, 1) } else { rhi }
   let exact = lo == 0
@@ -283,7 +283,7 @@ fn dbox(mant: Int, e2: Int, denorm: Bool) -> (Int, Int) {
 /// (strconv.dboxParity64).
 fn parity(m: Int, ph: Int, pl: Int, beta: Int) -> Int {
   // the lower 128 bits of the 192 bit m * phi
-  let hl_hi = rt.u64_mul_hi(m, pl)
+  let hl_hi = m.mul_hi_unsigned(pl)
   let hi = addw(mulw(m, ph), hl_hi)
   let lo = mulw(m, pl)
   let p = shr(hi, 64 - beta) & 1
@@ -874,11 +874,11 @@ fn eisel_lemire(man0: Int, exp10: Int, neg: Bool) -> Int {
   let man = shl(man0, z)
   var ret_exp2 = exp2 + 63 + 1023 - z
   // multiplication
-  var xhi = rt.u64_mul_hi(man, ph)
+  var xhi = man.mul_hi_unsigned(ph)
   var xlo = mulw(man, ph)
   // wider approximation
   if (xhi & 0x1FF) == 0x1FF && ult(addw(xlo, man), man) {
-    let yhi = rt.u64_mul_hi(man, pl)
+    let yhi = man.mul_hi_unsigned(pl)
     let ylo = mulw(man, pl)
     var mhi = xhi
     let mlo = addw(xlo, yhi)

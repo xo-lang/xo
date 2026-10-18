@@ -16,8 +16,9 @@ fault path's code. LLVM folds both.
 
 Fix: in runtime modules, write byte offsets as literal constants
 (`const LEN = 8`, then `rt.mem_load(w, LEN, 8)`) and sums that cannot
-overflow (sizes, addresses) with `rt.int_wrap(0, a, b)` (and
-`rt.int_wrap(1, a, b)` for a difference). Keep the common path short and
+overflow (sizes, addresses) with `a.wrapping_add(b)` (and
+`a.wrapping_sub(b)` for a difference; decision 0260, formerly
+`rt.int_wrap(0, a, b)` and `rt.int_wrap(1, a, b)`). Keep the common path short and
 separate from the rare one (stdio.xo's `out` and `out_slow`). With
 these, the same workload is 0.788 of the C on arm64
 (bench/results/stdio-2026-10-14.md).

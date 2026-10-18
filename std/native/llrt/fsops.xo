@@ -576,7 +576,7 @@ fn find_newline(a: Int, lo: Int, hi: Int) -> Int {
   var i = lo
   while hi - i >= 8 {
     let y = rt.mem_load(a, i, 8) ^ NEWLINES
-    let m = ((rt.int_wrap(0, y & LOW7S, LOW7S) | y) ^ -1) & HIGHS
+    let m = (((y & LOW7S).wrapping_add(LOW7S) | y) ^ -1) & HIGHS
     if m != 0 {
       return i + (rt.ctz(m) >> 3)
     }

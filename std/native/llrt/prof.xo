@@ -383,7 +383,7 @@ pub fn finish() {
   b.write("XORAW1".bytes())
   b.write_byte(UInt8(0))
   b.write_byte(UInt8(0))
-  put(b, 2 | rt.int_wrap(3, 1, 32))
+  put(b, 2 | (1).wrapping_shl(32))
   put(b, if rc != 0 { ld(rc, R_T0) } else { 0 })
   put(b, 0)
   put(b, if rc != 0 { ld(rc, R_LOST) + ld(rc, R_NOREC) } else { 0 })
@@ -399,7 +399,7 @@ pub fn finish() {
     TargetArch.Amd64 => 2
     TargetArch.Wasm32 => 3
   }
-  put(b, os_id | rt.int_wrap(3, arch_id, 8))
+  put(b, os_id | arch_id.wrapping_shl(8))
   put(b, 0)
   var nh = 0
   var nc = 0
@@ -453,7 +453,7 @@ fn stop_cpu() -> Int {
 
 fn put(var b: BytesBuilder, v: Int) {
   for i in 0..8 {
-    b.write_byte(UInt8(rt.int_wrap(4, v, 8 * i) & 255))
+    b.write_byte(UInt8(v.shr_logical(8 * i) & 255))
   }
 }
 
@@ -583,7 +583,7 @@ fn symbols(lo: Int, hi: Int) -> Syms {
   var keys: List[Int] = []
   for i in 0..addrs.len() {
     if i < 16777216 {
-      keys.push(rt.int_wrap(3, addrs[i] - lo, 24) | i)
+      keys.push((addrs[i] - lo).wrapping_shl(24) | i)
     }
   }
   keys = keys.sort()
