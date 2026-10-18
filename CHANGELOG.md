@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- HTTP/2 server: -12.3% (arm64) and -8.2% (LLVM) instructions per
+  request on the callgrind benchmark: the request checks compare in
+  place, a request's parts are no longer packed and copied out again,
+  and the TLS layer copies less per record and per call. HTTP/1.1 over
+  TLS -5.7% on arm64.
+
 - darwin/amd64 (LLVM): a fault that task.isolate or a server's handler
   should catch no longer ends the program when the walk passes a frame
   with compact unwind information before a DWARF one (the unwinder's

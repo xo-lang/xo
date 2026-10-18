@@ -118,3 +118,33 @@ These are the baseline for the HTTP/2 std hunt; earlier h2 rows are not
 comparable (a different client write pattern and server path).
 Measured with five repeats each (arm64): -h2det alone 153,779 to
 164,030, -gap alone 186,267 to 189,048, both 167,304 to 167,616.
+
+## HTTP/2, the std side (2026-10-18)
+
+Deterministic h2 (above), N=100, REPS=3, medians, instructions per
+request; each row against the one before, on the same xo:
+
+| Change | arm64 | LLVM |
+|---|---|---|
+| main ca9173f4 | 167,325 | 131,673 |
+| h2w.request_check: one pass, compared in place (it made ten strings: four pseudo field values, five `to_lower`s, a list) | 162,363 (-3.0%) | 127,618 (-3.1%) |
+| tls13.cat2: an empty side is the other (record buffers) | 160,483 (-1.2%) | 126,047 (-1.2%) |
+| tlssrv read and write store the connection at its last use | 156,221 (-2.7%) | 124,469 (-1.3%) |
+| a stream's request parts stay Xo values (an Any of ReqParts) instead of a packed string copied out again | 150,723 (-3.5%) | 120,240 (-3.4%) |
+| tlssrv tests s12 for None before matching it | 146,682 (-2.7%) | 120,928 (+0.6%, within the spread) |
+
+In all, -12.3% (arm64) and -8.2% (LLVM). HTTP/1.1 over TLS also moved
+on arm64, 90,437 to 85,247 (-5.7%).
+
+Found and handed on (compiler side, not std):
+
+- tlssrv.flush and recv_some took a `var c: Conn` (over 1 KB): the
+  arm64 backend copied the whole record in and out around every call,
+  about 18,000 instructions a request (bench/perf/varparam reproduces
+  it: arm64 522 instructions a call, LLVM 21). Xo lang 4's frame homes.
+- `var c = match take_conn(t) { Some(x) => x ... }` shared every field of
+  the payload and then dropped the Option (`drop native.tlssrv.Conn?`,
+  16,677 a request on arm64). Xo Lang 2's payload move.
+- any_of marks its value shareable across tasks (Op.Share): a walk of
+  every heap leaf of Conn on each save, about 5,500 a request on arm64;
+  parked (it needs an escape fact or a seed with a new intrinsic).
