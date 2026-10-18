@@ -1409,6 +1409,15 @@ The tests of compiler/cli/dev and compiler/cli/cmdhelp (moved out of the
 sources 2026-10-18) run in internal/selfhost TestSelfhostCLIXoTests
 (merge tier). Last verified: 2026-10-18.
 
+std modules' own tests (decision 0262): a std module's tests, with its
+private functions, go in a `_test.xo` file beside its source
+(std/native/llrt/scan_test.xo for scan.xo) and run with `xo test
+--std-module=MODULE [--backend=llvm|arm64]`, MODULE as `use` names it
+below std (`json`, `native/http`, `native/llrt/scan`). Like `--std=DIR`
+it is a developer flag of xo1, not in `xo test -h`. internal/stdtest
+runs every such module: -short on the host's native backend, the
+default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
+
 ### Gate and fuzz runners (2026-10-18)
 
 - `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to

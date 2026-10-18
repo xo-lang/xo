@@ -60,7 +60,9 @@ That costs every time a std function needs checking on its own
   already names the std directory for every command. MODULE is as `use`
   names it below std (`json`, `native/http`, `native/llrt/scan`); the
   checker's `std_test` field holds its module path (`std/json` for a
-  plain name).
+  plain name). Like `--std=DIR` it is a developer flag of xo1: `xo
+  test -h` does not list it (TestCLIHelp keeps `--std` out of user
+  help), and toolchain.md documents it.
 - The test file of a single-file std module is `NAME_test.xo` beside
   `NAME.xo` (a runtime module loaded from its C path, `NAME_c.xo`, uses
   the same test file). The module under test is the run's only root
