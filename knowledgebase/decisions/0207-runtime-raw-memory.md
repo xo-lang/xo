@@ -324,6 +324,41 @@ other intrinsics of this decision it is internal to std. Measurements:
 bench/results/mem-copy-block-2026-10-17.md (bench/perf/xo branch 0.345
 of main's instructions on arm64, now 1.01 times LLVM's; 0.643 on amd64).
 
+## Amendment: calls within a no allocation module (Accepted, owner, 2026-10-18, with seed 0.21.0)
+
+The rule that a function of rc.xo, alloc.xo, or sched.xo calls no other
+function did not come from signal or async safety, or from reentrancy
+(rt.heap_grow already re-enters alloc): it came from the SSA builder,
+which adds a landing check after every call of a function and so gives
+the caller an unwind block that check_no_alloc refuses
+(gotchas/call-adds-landing-check.md), and from the arm64 code keeping no
+callee saved register when every call is the last thing on its path.
+
+- A function of a no allocation module may call another function of the
+  same module: the builder adds no landing check after such a call (the
+  callee keeps the same rule, so it cannot fault), and check_no_alloc
+  allows it (compiler/ssa contract.xo no_alloc_prefix, build.xo check).
+- Such a call should be in tail position, as the platform calls are, so
+  the caller's fast paths keep no callee saved register.
+- First use: alloc's magazine take (the spare or a central magazine, the
+  lock, the long division of the magazine's block count) moves to
+  refill_alloc, called in tail position when the class's list is empty
+  and the spare or the central slot has a magazine; refill_alloc installs
+  it and calls alloc again. x86-64's 8 caller saved registers made the
+  inlined take spoil alloc's frameless paths (Xo lang 5's amd64 HTTP
+  profile: alloc.alloc 2,062 instructions a plain request against arm64's
+  1,187).
+- Measured (callgrind, bench/perf/http plain and h2, N=200, 1,025
+  requests, instructions a request, main 8fddd08d against the change):
+  amd64 plain 36,632 to 35,945 (-1.9%), h2 105,076 to 103,267 (-1.7%);
+  arm64 plain 29,989 to 29,827 (-0.5%), h2 85,960 to 85,777 (-0.2%) (at
+  N=40, arm64 plain read +1.1%: 205 requests are too few for a 1% call);
+  the Mac sweep flat (4 faster, 1 slower at its spread, of 114).
+- Landing: an xo without the builder change rejects the new alloc.xo
+  (XO1201), so the compiler step landed first (5eb423b8) and alloc.xo
+  after seed 0.21.0, which carries it (the owner chose a minor version's
+  seeds over a chain hop).
+
 ## Consequences
 
 - C may call Xo, and Xo may read and write C memory: the remaining C
