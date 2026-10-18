@@ -34,3 +34,16 @@ Causes, each worth a commit (bench/results/perf-throughput-2026-10-08.md,
 
 How to spot it again: `XO_RTSTATS=1` (fiber_park, lock_slow per request)
 and `xo_rl_copy` under a `with` closure in `sample <pid> 5`.
+
+Addendum (2026-10-18, measured with `XO_LEAKCHECK=1` allocation counts
+on arm64): fix 2 still copies the list a change writes whenever anything
+that can fault follows it in the closure or is itself the change. That
+includes the put's own call and `st.next += 1`, which can overflow. The
+closure is `catches` and hands back the value it was given, so the
+original stays referenced. `m.with(fn(var st) { st.users.put(1, "u") })`
+is 1 list copy (the values list) per `with`. The same put on a local map
+or a struct field outside `with` is 0. The benchmark store's create (put,
+then `next_id += 1`) copies once per create: 0.72 a request in the HTTP
+callgrind mix. Lowering this further needs a different fault rule for
+`with`: a snapshot taken only on the fault path, or an undo log. That
+would be a new ADR amending decision 0082/0085, not a code fix.
