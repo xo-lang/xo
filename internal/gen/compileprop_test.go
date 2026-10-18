@@ -34,10 +34,11 @@ import (
 // XO_COMPILE_PROPS=N builds N (seeds 1..N) in the full suite (default
 // compilePropFull; bench/nightly.sh builds 500, decision 0111).
 // XO_COMPILE_PROP_SEED=S builds only seed S, and XO_COMPILE_PROP_KEEP=dir
-// keeps the programs there. The programs live in directories named by
-// their contents (xotool.TestProgramDir: an unchanged program reuses its
-// binaries across runs) and the builds go to temporary ones, so the test
-// runs beside the other top level tests.
+// keeps the programs there; XO_COMPILE_PROP_LLVM=1 also compares the
+// LLVM backend's run on an arm64 host. The programs live in directories
+// named by their contents (xotool.TestProgramDir: an unchanged program
+// reuses its binaries across runs) and the builds go to temporary ones,
+// so the test runs beside the other top level tests.
 func TestCompileProperty(t *testing.T) {
 	t.Parallel()
 	n := compilePropFull
@@ -64,6 +65,9 @@ func TestCompileProperty(t *testing.T) {
 		native = xotool.NativeBackend()
 	}
 	keep := os.Getenv("XO_COMPILE_PROP_KEEP")
+	// XO_COMPILE_PROP_LLVM=1 also builds each program with the LLVM
+	// backend where the native one is another, and compares its run
+	alsoLLVM := os.Getenv("XO_COMPILE_PROP_LLVM") == "1"
 	for seed := first; seed < first+n; seed++ {
 		seed := seed
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
@@ -105,6 +109,15 @@ func TestCompileProperty(t *testing.T) {
 			gr, nr := runProp(t, res.Binaries[xotool.Host()], out), runProp(t, nres.Binaries[xotool.Host()], out)
 			if gr != nr {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
+			}
+			if alsoLLVM && native != xotool.BackendLLVM {
+				lres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: xotool.BackendLLVM, Out: filepath.Join(out, "prog-llvm")})
+				if err != nil || lres.Failed {
+					t.Fatalf("seed %d: the llvm build failed: %v\n%s\n--- program\n%s", seed, err, diagText(lres), numbered(src))
+				}
+				if lr := runProp(t, lres.Binaries[xotool.Host()], out); gr != lr {
+					t.Errorf("seed %d: the llvm build runs differently\n--- go\n%s\n--- llvm\n%s\n--- program\n%s", seed, gr, lr, numbered(src))
+				}
 			}
 		})
 	}
