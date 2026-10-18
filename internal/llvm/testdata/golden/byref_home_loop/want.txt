@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ m=0 e=0 v=false
+D,XO1304,XO1305 m=1 e=1 v=false
+V m=0 e=0 v=true
+X1 m=0 e=0 v=false
+ m=1 e=0 v=false
+L m=0 e=0 v=false
+--- stderr

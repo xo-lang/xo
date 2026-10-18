@@ -648,6 +648,20 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       }
       continue
     }
+    // a parameter in registers whose memory the target still counts as
+    // holding it (a frame home takes a loop's parameter when its back
+    // edge passes it in place, byref.xo held_in): the memory is filled
+    // here too, or a call after the loop's exit passes a home no path
+    // wrote (ModCtx.load's check_effects when no hash was checked)
+    let hm = g.param_home(to, p)
+    if hm >= 0 {
+      let a = g.f.edges[e].args[i]
+      if let Some(es) = g.held.edge.get(e) {
+        if es[hm] != g.key_of(a) {
+          g.store_words_at(g.held.mems[hm].ptr, 0, g.words(a))
+        }
+      }
+    }
     let pw = g.vals[p]
     let aw = g.words(g.f.edges[e].args[i])
     for k in 0..pw.len() {

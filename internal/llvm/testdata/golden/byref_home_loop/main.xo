@@ -1,0 +1,326 @@
+// A large var value passed by reference from a loop and after it
+// (arm64 frame homes, 2026-10-18): a loop whose body passes the value
+// in place but copies it out keeps it in its frame home, so the loop's
+// entry edge stores it there; when the loop runs no time, a call after
+// it passed a home no path wrote (xo publish crashed in
+// modules.ModCtx.load's check_effects).
+struct Req {
+  path: Str
+  version: Str
+  line: Int = 0
+}
+
+struct MF {
+  path: Str = ""
+  dir: Str = ""
+  file: Str = ""
+  reqs: List[Req] = []
+  p1: Str = ""
+  p2: Str = ""
+  p3: Str = ""
+  p4: Str = ""
+  p5: Str = ""
+  p6: Str = ""
+  p7: Str = ""
+  p8: Str = ""
+}
+
+struct WF {
+  file: Str = ""
+  modules: List[MF] = []
+  q1: Str = ""
+  q2: Str = ""
+}
+
+struct Mod {
+  path: Str
+  version: Str = ""
+  dir: Str
+  workspace: Bool = false
+  direct: Bool = false
+}
+
+struct Problem {
+  code: Str
+  file: Str = ""
+  line: Int = 0
+  msg: Str = ""
+  module: Str = ""
+  notes: List[Str] = []
+}
+
+struct Lock {
+  file: Str
+  entries: Map[Str, Str] = {}
+  lines: Map[Str, Int] = {}
+  effects: Map[Str, List[Str]] = {}
+}
+
+struct Big {
+  main: MF? = None
+  work: WF? = None
+  modules: List[Mod] = []
+  hashes: Map[Str, Str] = {}
+  effects: Map[Str, List[Str]] = {}
+  locked: Map[Str, List[Str]] = {}
+  vendor: Bool = false
+  problems: List[Problem] = []
+}
+
+struct Opts {
+  no_workspace: Bool = false
+  no_vendor: Bool = false
+  update: Bool = false
+  extra: List[Req] = []
+}
+
+struct Item {
+  req: Req
+  file: Str
+}
+
+struct Ctx {
+  n: Int
+  files: Map[Str, Str]
+}
+
+fn add_problem(var b: Big, p: Problem) {
+  for q in b.problems {
+    if q.code == p.code && q.msg == p.msg && q.file == p.file && q.line == p.line {
+      return
+    }
+  }
+  b.problems.push(p)
+}
+
+fn (c: Ctx) read_mod(dir: Str) -> (MF?, List[Problem]) {
+  if c.files.contains("${dir}/bad") {
+    return (None, [Problem{code: "X1", msg: "bad"}])
+  }
+  (Some(MF{path: "example.com/${dir}", dir: dir, file: "${dir}/xo.mod"}), [])
+}
+
+fn (c: Ctx) find_work(dir: Str) -> (WF?, List[Problem]) {
+  if c.files.contains("${dir}/xo.work") {
+    return (Some(WF{file: "w", modules: [MF{path: "w1", dir: "w1"}]}), [])
+  }
+  (None, [])
+}
+
+fn (c: Ctx) read_lock(dir: Str) -> (Lock, List[Problem]) {
+  (Lock{file: "${dir}/xo.lock", entries: {"a 1": "h"}}, if c.n > 3 { [Problem{code: "L"}] } else { [] })
+}
+
+fn (c: Ctx) module_effects(dir: Str) -> List[Str] {
+  [dir]
+}
+
+fn (c: Ctx) check_effects(var b: Big, locks: Map[Str, Lock], roots: List[MF], opts: Opts) {
+  for m in b.modules {
+    if m.workspace {
+      continue
+    }
+    let cur = c.module_effects(m.dir)
+    b.effects[m.path] = cur
+    for r in roots {
+      let l = match locks.get(r.dir) {
+        Some(x) => x
+        None => continue
+      }
+      let locked = match l.effects.get(m.path) {
+        Some(x) => x
+        None => continue
+      }
+      if !b.locked.contains(m.path) {
+        b.locked[m.path] = locked
+      }
+      if locked.len() == cur.len() || opts.update {
+        continue
+      }
+      add_problem(b, Problem{code: "XO1317", file: l.file, msg: "${m.path} effects"})
+    }
+  }
+}
+
+fn (var c: Ctx) load_vendor(var b: Big, main: MF, opts: Opts) {
+  b.vendor = true
+  add_problem(b, Problem{code: "V", file: main.file})
+  var locks: Map[Str, Lock] = {}
+  locks[main.dir] = Lock{file: "l"}
+  c.n += 1
+  c.check_effects(b, locks, [main], opts)
+}
+
+fn (var c: Ctx) load(main_dir: Str, opts: Opts) -> Big {
+  var b = Big{}
+  let (main0, probs) = c.read_mod(main_dir)
+  for p in probs {
+    add_problem(b, p)
+  }
+  var main = match main0 {
+    Some(m) => m
+    None => return b
+  }
+  main.reqs = main.reqs + opts.extra
+  b.main = Some(main)
+  if !opts.no_workspace {
+    let (w, wprobs) = c.find_work(main_dir)
+    for p in wprobs {
+      add_problem(b, p)
+    }
+    b.work = w
+  }
+  if b.work == None && !opts.no_vendor && c.files.contains("${main_dir}/vendor") {
+    c.load_vendor(b, main, opts)
+    return b
+  }
+  var roots: List[MF] = [main]
+  var local: Map[Str, Bool] = {}
+  local[main.path] = true
+  if let Some(w) = b.work {
+    roots = []
+    for m in w.modules {
+      if m.dir == main.dir {
+        roots.push(main)
+      } else {
+        roots.push(m)
+      }
+      local[m.path] = true
+    }
+  }
+  var locks: Map[Str, Lock] = {}
+  for r in roots {
+    let (l, lprobs) = c.read_lock(r.dir)
+    for p in lprobs {
+      add_problem(b, p)
+    }
+    locks[r.dir] = l
+  }
+  var queue: List[Item] = []
+  var direct: Map[Str, Bool] = {}
+  for r in roots {
+    for q in r.reqs {
+      queue.push(Item{req: q, file: r.file})
+      if r.dir == main.dir {
+        direct[q.path] = true
+      }
+    }
+  }
+  var selected: Map[Str, Str] = {}
+  var dirs: Map[Str, Str] = {}
+  var visited: Map[Str, Bool] = {}
+  var failed: Map[Str, Bool] = {}
+  var qi = 0
+  while qi < queue.len() {
+    let it = queue[qi]
+    qi += 1
+    let p = it.req.path
+    let v = it.req.version
+    if local.contains(p) {
+      continue
+    }
+    let key = "${p} ${v}"
+    if visited.contains(key) {
+      continue
+    }
+    visited[key] = true
+    match selected.get(p) {
+      Some(cur) => {
+        if v > cur {
+          selected[p] = v
+        }
+      }
+      None => selected[p] = v
+    }
+    let dir = if v.len() > 3 {
+      var prob = Problem{code: "D", msg: v}
+      prob.file = it.file
+      prob.line = it.req.line
+      add_problem(b, prob)
+      failed[p] = true
+      continue
+    } else {
+      "cache/${p}"
+    }
+    dirs[key] = dir
+    let (mf0, mprobs) = c.read_mod(dir)
+    for q in mprobs {
+      add_problem(b, q)
+    }
+    let mf = match mf0 {
+      Some(x) => x
+      None => continue
+    }
+    b.hashes["${key}/xo.mod"] = "h${dir}"
+    for q in mf.reqs {
+      queue.push(Item{req: q, file: mf.file})
+    }
+  }
+  for p in selected.keys() {
+    if failed.contains(p) {
+      continue
+    }
+    let v = selected.get(p) ?? ""
+    let key = "${p} ${v}"
+    let dir = dirs.get(key) ?? ""
+    b.hashes[key] = "h${dir}"
+    b.modules.push(Mod{path: p, version: v, dir: dir, direct: direct.contains(p)})
+  }
+  if let Some(w) = b.work {
+    for m in w.modules {
+      if m.dir != main.dir {
+        b.modules.push(Mod{path: m.path, dir: m.dir, workspace: true, direct: direct.contains(m.path)})
+      }
+    }
+  }
+  b.modules = b.modules.sort_by(fn(m) { m.path })
+  for k in b.hashes.keys().sort() {
+    let got = b.hashes.get(k) ?? ""
+    var found = false
+    for r in roots {
+      let l = locks.get(r.dir) ?? Lock{file: ""}
+      let want = match l.entries.get(k) {
+        Some(x) => x
+        None => continue
+      }
+      found = true
+      if want != got {
+        add_problem(b, Problem{code: "XO1304", file: l.file, msg: "${k}: ${got} ${want}"})
+        failed[k] = true
+      }
+    }
+    if !found && !opts.update {
+      add_problem(b, Problem{code: "XO1305", file: main.file, msg: "no hash for ${k}"})
+    }
+  }
+  c.check_effects(b, locks, roots, opts)
+  if !failed.is_empty() {
+    var keep: List[Mod] = []
+    for m in b.modules {
+      if !failed.contains(m.path) {
+        keep.push(m)
+      }
+    }
+    b.modules = keep
+  }
+  b
+}
+
+fn show(b: Big) -> Str {
+  var codes: List[Str] = []
+  for p in b.problems {
+    codes.push(p.code)
+  }
+  "${codes.join(",")} m=${b.modules.len()} e=${b.effects.len()} v=${b.vendor}"
+}
+
+fn main(os: Os) {
+  var c = Ctx{n: 1, files: {"v/vendor": "", "bad/bad": "", "ws/xo.work": ""}}
+  os.stdio.println(show(c.load("d", Opts{})))
+  os.stdio.println(show(c.load("d", Opts{extra: [Req{path: "a", version: "1"}, Req{path: "b", version: "1234"}]})))
+  os.stdio.println(show(c.load("v", Opts{})))
+  os.stdio.println(show(c.load("bad", Opts{})))
+  os.stdio.println(show(c.load("ws", Opts{})))
+  c.n = 5
+  os.stdio.println(show(c.load("d", Opts{})))
+}

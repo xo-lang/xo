@@ -66,6 +66,22 @@ fn (g: G) mem_only(v: Int) -> Int {
   g.held.mem_only.get(v) ?? -1
 }
 
+/// The memory that block b's state counts as holding its parameter p,
+/// or -1.
+fn (g: G) param_home(b: Int, p: Int) -> Int {
+  if !g.has_held {
+    return -1
+  }
+  if let Some(st) = g.held.inb.get(b) {
+    for (i, k) in st.indexed() {
+      if k.k == -1 && k.v == p {
+        return i
+      }
+    }
+  }
+  -1
+}
+
 /// Puts base + off (bytes) in a register.
 fn (var g: G) addr_at(base: Int, off: Int) -> Int {
   if off == 0 {
