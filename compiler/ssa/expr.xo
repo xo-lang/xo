@@ -261,7 +261,10 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
         b.unsupported("this list literal")
         return b.undef(t)
       }
-      var l = b.call("list.new", t, "", [])
+      // room for every element at once: from empty, the pushes grew the
+      // list 4 times for 8 elements (sha256.new's state, aesgcm's
+      // sub_word: 180 growths a TLS handshake, 2026-10-18)
+      var l = if elems.len() >= 2 { b.call("list.new", t, "", [b.cint(elems.len())]) } else { b.call("list.new", t, "", []) }
       for el in elems {
         let v = b.value_as(el, b.m.types[t].elems[0])
         l = b.call("list.push", t, "", [l, v])
