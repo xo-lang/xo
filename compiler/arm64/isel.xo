@@ -2507,6 +2507,13 @@ fn (var g: G) field_op(v: Int) {
   let (off, n) = g.field_words(g.vty(u), fi)
   let mu = g.mem_only(u)
   if mu >= 0 {
+    if g.big_by_ref(x.ty) && g.read_in_place(v, mu, g.key_of(u)) {
+      // a large field of a value held in memory that holds it at every
+      // read: read there where used (a match on an optional TLS 1.2
+      // state loaded it whole on the TLS 1.3 path, tlssrv.recv_some)
+      g.stable[v] = g.addr_at(g.held.mems[mu].ptr, 8 * off)
+      return
+    }
     // a field of a value held in memory
     g.set(v, g.load_words(g.held.mems[mu].ptr, off, g.layout(x.ty)))
     return

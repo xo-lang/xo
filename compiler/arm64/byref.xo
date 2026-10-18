@@ -696,6 +696,43 @@ fn (g: G) other_field(v: Int, a: Int, m: Int) -> Bool {
   aux_int(g.f.values[fa].aux) != aux_int(g.f.values[v].aux)
 }
 
+/// Whether value v (a large part of the value memory m holds, key k)
+/// may be read in place: memory m holds k at every use of v and of the
+/// large fields and payloads read from it, none passed along an edge.
+fn (var g: G) read_in_place(v: Int, m: Int, k: HKey) -> Bool {
+  g.held_uses()
+  var work = [v]
+  var seen: Map[Int, Bool] = {}
+  while !work.is_empty() {
+    let w = work.pop() ?? 0
+    if seen.contains(w) {
+      continue
+    }
+    seen[w] = true
+    for u in g.held.us.get(w) ?? [] {
+      let x = g.f.values[u]
+      if !x.succs.is_empty() {
+        for e in x.succs {
+          if g.f.edges[e].args.contains(w) {
+            return false
+          }
+        }
+      }
+      let st = match g.held.before.get(u) {
+        Some(s) => s
+        None => return false
+      }
+      if st[m] != k {
+        return false
+      }
+      if (x.op is ssa.Op.Field | ssa.Op.Payload) && x.args[0] == w && g.big_by_ref(x.ty) {
+        work.push(u)
+      }
+    }
+  }
+  true
+}
+
 /// Whether set field v stores, into the value the pending call (state k)
 /// wrote a field of in place, that call's `var` result for that field.
 fn (g: G) field_done(v: Int, k: HKey) -> Bool {
