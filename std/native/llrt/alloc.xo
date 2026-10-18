@@ -67,7 +67,7 @@ const COUNT = 1864
 /// (COUNT) once ABYTES reaches SAMPLE_AT (the largest Int when not
 /// profiling), the sampled block kept in PSAMPLE for the hook, which
 /// rt.heap_grow calls with SAMPLE added to the size (cabi.xo heap_grow:
-/// alloc.xo makes no other call). A sampled block of a class has minus
+/// alloc.xo makes no other platform call). A sampled block of a class has minus
 /// its class in its header, so its free goes the way of a big block's
 /// (rt.heap_big_release, which tells the two apart).
 const SAMPLE_AT = 10344
@@ -118,45 +118,14 @@ pub fn alloc(h: Int, n: Int) -> Int {
   var r = rt.mem_load(fl, FREE_LISTS, 8)
   if r == 0 && rt.mem_load(h, CENTRAL, 8) != 0 {
     // the class's list is empty: a magazine of blocks other threads freed
-    // first (refill's take, written out: a function of this module calls
-    // no other, decision 0207), else the bump below. One size class
-    // computation an allocation, and no refill call while the list has
-    // blocks (2026-10-17: halloc called refill before every allocation)
-    var m = rt.mem_load(fl, MAG, 8)
-    if m != 0 {
-      rt.mem_store(fl, MAG, 0, 8)
-    } else {
-      // central_take: a magazine is linked by its first block's second word
-      let cen = rt.mem_load(h, CENTRAL, 8)
-      if rt.slot_load(cen, c, RELAXED) != 0 {
-        rt.heap_lock()
-        m = rt.slot_load(cen, c, RELAXED)
-        if m != 0 {
-          rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
-        }
-        rt.heap_unlock()
-      }
-    }
-    if m != 0 {
-      rt.mem_store(fl, FREE_LISTS, m, 8)
-      // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
-      // division: no `/`, which can fault)
-      var q = 0
-      var rem = MAG_BYTES
-      var k = 12
-      while k >= 0 {
-        let d = size.wrapping_shl(k)
-        if d <= rem {
-          rem = rem.wrapping_sub(d)
-          q = q | (1).wrapping_shl(k)
-        }
-        k = k.wrapping_sub(1)
-      }
-      if q < 8 {
-        q = 8
-      }
-      rt.mem_store(fl, NFREE, q, 8)
-      r = m
+    // first, when the heap's spare or the central list has one (read
+    // without the lock), taken out of line and the allocation done again
+    // (refill_alloc, a call in tail position: decision 0207's amendment);
+    // else the bump below. One size class computation an allocation on
+    // these paths, and no refill call while the list has blocks
+    // (2026-10-17: halloc called refill before every allocation)
+    if rt.mem_load(fl, MAG, 8) != 0 || rt.slot_load(rt.mem_load(h, CENTRAL, 8), c, RELAXED) != 0 {
+      return refill_alloc(h, n, c, size)
     }
   }
   if r != 0 {
@@ -192,6 +161,52 @@ pub fn alloc(h: Int, n: Int) -> Int {
     }
   }
   r
+}
+
+/// alloc's magazine take (decision 0207's amendment: a function of this
+/// module may call another, which keeps the same rule): the heap's spare
+/// magazine for class c (blocks of size bytes), else one from the central
+/// list, becomes the class's free list, and the allocation of n bytes is
+/// done again. Out of line so alloc's fast paths keep
+/// their registers (x86-64 has 8 caller saved ones to arm64's 18).
+fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  var m = rt.mem_load(fl, MAG, 8)
+  if m != 0 {
+    rt.mem_store(fl, MAG, 0, 8)
+  } else {
+    // central_take: a magazine is linked by its first block's second word
+    let cen = rt.mem_load(h, CENTRAL, 8)
+    rt.heap_lock()
+    m = rt.slot_load(cen, c, RELAXED)
+    if m != 0 {
+      rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
+    }
+    rt.heap_unlock()
+  }
+  if m != 0 {
+    rt.mem_store(fl, FREE_LISTS, m, 8)
+    // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
+    // division: no `/`, which can fault)
+    var q = 0
+    var rem = MAG_BYTES
+    var k = 12
+    while k >= 0 {
+      let d = size.wrapping_shl(k)
+      if d <= rem {
+        rem = rem.wrapping_sub(d)
+        q = q | (1).wrapping_shl(k)
+      }
+      k = k.wrapping_sub(1)
+    }
+    if q < 8 {
+      q = 8
+    }
+    rt.mem_store(fl, NFREE, q, 8)
+  }
+  // again: from the magazine, or, when another thread took the central
+  // one first (the slot read 0 under the lock), from the bump
+  alloc(h, n)
 }
 
 /// alloc's common cases, small enough for the arm64 inliner: a block of
