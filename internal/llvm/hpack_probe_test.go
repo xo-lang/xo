@@ -342,21 +342,33 @@ func probeH2HPACK(out *strings.Builder, addr string, p *testPKI) {
 			return 1
 		}, req(3, "/fields")}},
 	}
+	// The traces show the date field's representation: a new literal when
+	// the server's Date changed between two responses of a case, an index
+	// when it did not, and every later dynamic index moves with it. So the
+	// cases start just after a second boundary and run again when they
+	// crossed the next one (a run under load did, on one side only).
 	res := make([]string, len(seqs))
-	var wg sync.WaitGroup
-	for i, sc := range seqs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			h, err := h2Dial(addr, p)
-			if err != nil {
-				res[i] = err.Error()
-				return
-			}
-			res[i] = h2Seq(h, sc.steps)
-		}()
+	for try := 0; try < 5; try++ {
+		time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(time.Second + 20*time.Millisecond)))
+		start := time.Now().Unix()
+		var wg sync.WaitGroup
+		for i, sc := range seqs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				h, err := h2Dial(addr, p)
+				if err != nil {
+					res[i] = err.Error()
+					return
+				}
+				res[i] = h2Seq(h, sc.steps)
+			}()
+		}
+		wg.Wait()
+		if time.Now().Unix() == start {
+			break
+		}
 	}
-	wg.Wait()
 	for i, sc := range seqs {
 		fmt.Fprintf(out, "hpack %s: %s\n", sc.name, res[i])
 	}
@@ -388,6 +400,7 @@ func probeH2HPACK(out *strings.Builder, addr string, p *testPKI) {
 		{"never indexed literal", value(append(hpackStr(nil, "v", false), append([]byte{0x10}, append(hpackStr(nil, "x-n", true), hpackStr(nil, "w", true)...)...)...))},
 	}
 	rres := make([]string, len(raws))
+	var wg sync.WaitGroup
 	for i, rc := range raws {
 		wg.Add(1)
 		go func() {
