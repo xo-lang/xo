@@ -894,7 +894,11 @@ fn float_text(x: Float) -> Str {
 /// invariants lived in, and LLVM rebuilt them each iteration
 /// (bench/results/zero-c-perf-sweep-2026-10-15.md: testworld rand 1.08);
 /// on arm64, push_slow inlined into obj.rs_push_word made the push 31 to
-/// 128 instructions and the digests 5 to 8% slower (2026-10-16).
+/// 128 instructions and the digests 5 to 8% slower (2026-10-16). A
+/// map's rebuild (a table that grows) inlined into its put made every put
+/// save and spill for the rare growth: update, putget and copymut 1.9 to
+/// 2.6% fewer instructions out of line (2026-10-17; LLVM unchanged).
 pub fn cold_fn(name: Str) -> Bool {
-  name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow"
+  name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" ||
+    name.starts_with("xo.map.rebuild[")
 }
