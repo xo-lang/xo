@@ -41,6 +41,7 @@ fn (var g: G) function(fi: Int) {
     g.x86_merge_blocks()
     g.shrink_split()
     g.x86_retarget()
+    g.x86_carry_fuse()
     g.regalloc()
     g.x86_emit()
     return

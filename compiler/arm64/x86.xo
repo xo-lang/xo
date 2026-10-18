@@ -2085,3 +2085,258 @@ fn (var g: G) x86_merge_blocks() {
   g.hot = hot
   g.cold = cl
 }
+
+/// Whether an x86 template's lines write no flags (moves, loads and
+/// stores, lea, push and pop) and read none.
+fn x86_flag_neutral(inst: Inst) -> Bool {
+  if inst.kind == K_PMOVE {
+    return true
+  }
+  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault {
+    return false
+  }
+  for l in inst.text.split("\n") {
+    let m = l.trim().split(" ")[0]
+    if !(m.starts_with("mov") || m.starts_with("lea") || m.starts_with("push") || m.starts_with("pop")) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether x86 lines read the flags (adc, sbb, cmov, set, cmc).
+fn x86_lines_read_flags(text: Str) -> Bool {
+  for l in text.split("\n") {
+    let m = l.trim().split(" ")[0]
+    if m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("cmov") || m.starts_with("set") || m == "cmc" {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether an x86 template reads the flags.
+fn x86_reads_flags(inst: Inst) -> Bool {
+  inst.kind == K_PLAIN && inst.x86 && x86_lines_read_flags(inst.text)
+}
+
+/// The lines of a carry's save at the end of a template, for its last
+/// definition N: `setb $bdN` and `movzbl $bdN, $wdN` (cset cs after an
+/// add); "" when the template does not end so.
+fn x86_save_tail(inst: Inst) -> Str {
+  let n = inst.defs.len() - 1
+  if n < 0 {
+    return ""
+  }
+  let tail = "setb $bd${n}\nmovzbl $bd${n}, $wd${n}"
+  if inst.text == tail || inst.text.ends_with("\n" + tail) {
+    return tail
+  }
+  ""
+}
+
+/// Whether an x86 template may move across flag writers and readers: it
+/// reads no flags (no adc, sbb, cmov, set, jcc, cmc).
+fn x86_movable(inst: Inst) -> Bool {
+  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault || inst.keep || inst.frame {
+    return false
+  }
+  for l in inst.text.split("\n") {
+    let m = l.trim().split(" ")[0]
+    if m.is_empty() || m.ends_with(":") || m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("cmov") || m.starts_with("set") || m.starts_with("j") || m == "cmc" || m == "stc" || m == "clc" {
+      return false
+    }
+  }
+  true
+}
+
+/// Carries kept in CF across the links of an add chain (2026-10-18:
+/// x25519's fe64_mul, 300 instructions to arm64's 113). Each
+/// cpu.adc/adc_carry link saves its carry (`setb; movzbl`) and the next
+/// restores it (`btq $0`), as arm64's do with cset and cmp, which its
+/// later passes drop where nothing between writes the flags; here a
+/// mulq or imulq of the next product sits between them and writes the
+/// flags. When a saved carry is read by the restore alone, the
+/// instructions between that write flags and depend on nothing since
+/// the add before the save move above that add, and the save and the
+/// restore go: the add's CF reaches the next adc.
+fn (var g: G) x86_carry_fuse() {
+  // each register's reads and writes in the function
+  var nuse: Map[Int, Int] = {}
+  var ndef: Map[Int, Int] = {}
+  for b in g.hot + g.cold {
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        nuse[u] = (nuse.get(u) ?? 0) + 1
+      }
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+      }
+    }
+  }
+  for b in g.hot + g.cold {
+    var ins = g.take_insts(b)
+    var j = 0
+    while j < ins.len() {
+      let r = ins[j]
+      if r.kind != K_PLAIN || !r.x86 || r.text != "btq $0, $u0" || r.us.len() != 1 {
+        j += 1
+        continue
+      }
+      let k = r.us[0]
+      if (nuse.get(k) ?? 0) != 1 || (ndef.get(k) ?? 0) != 1 {
+        j += 1
+        continue
+      }
+      // the save: the nearest earlier definition of k, the last lines of
+      // its instruction (a split link's own cset, or an adds and cset in
+      // one template), k its last definition
+      var s = j - 1
+      while s >= 0 && !ins[s].defs.contains(k) {
+        s -= 1
+      }
+      if s < 0 || ins[s].kind != K_PLAIN || !ins[s].x86 || ins[s].defs[ins[s].defs.len() - 1] != k {
+        j += 1
+        continue
+      }
+      let tail = x86_save_tail(ins[s])
+      let own = ins[s].text == tail
+      if tail.is_empty() || (own && s < 1) || x86_lines_read_flags(ins[s].text[0..ins[s].text.len() - tail.len()]) {
+        j += 1
+        continue
+      }
+      // the next flag reader after the restore is an adc
+      var c = j + 1
+      while c < ins.len() && x86_flag_neutral(ins[c]) {
+        c += 1
+      }
+      if c >= ins.len() || !(ins[c].text.starts_with("adcq ") || ins[c].text.starts_with("adcl ")) {
+        j += 1
+        continue
+      }
+      // the add that set the flags the save read (the instruction before
+      // a split save, else the save's own), and the head of its chain:
+      // back over the instructions that read the flags (an adc reads the
+      // carry before it) and moves, to the one that writes them only; a
+      // flag writer moved above the head breaks no carry
+      let a = if own { s - 1 } else { s }
+      if ins[a].kind != K_PLAIN || !ins[a].x86 {
+        j += 1
+        continue
+      }
+      var h = a
+      if !(h == s && !own) {
+        while h > 0 && (x86_reads_flags(ins[h]) || x86_flag_neutral(ins[h])) {
+          h -= 1
+        }
+      }
+      if h != s && (x86_reads_flags(ins[h]) || x86_flag_neutral(ins[h]) || !ins[h].x86 || ins[h].kind != K_PLAIN) {
+        j += 1
+        continue
+      }
+      // between the save and the restore: moves stay, independent flag
+      // writers move above the head
+      var ok = true
+      var moved: List[Int] = []
+      var touched: List[Int] = []
+      var read: List[Int] = []
+      for x in h..s {
+        for d in ins[x].defs {
+          touched.push(d)
+        }
+        for u in ins[x].us {
+          read.push(u)
+        }
+      }
+      var skip_next = false
+      for x in s..j {
+        if skip_next {
+          skip_next = false
+          continue
+        }
+        let t = ins[x]
+        if x != s && t.kind == K_PMOVE && t.x86 && x + 1 < j && !x86_flag_neutral(ins[x + 1]) && x86_movable(ins[x + 1]) {
+          // a tie's copy and its operation move together
+          let o = ins[x + 1]
+          var unit_ok = true
+          for d in t.defs {
+            unit_ok = unit_ok && o.us.contains(d)
+          }
+          if unit_ok {
+            for u in t.us + o.us {
+              if touched.contains(u) && !t.defs.contains(u) {
+                unit_ok = false
+              }
+            }
+            for d in t.defs + o.defs {
+              if touched.contains(d) || read.contains(d) {
+                unit_ok = false
+              }
+            }
+          }
+          if unit_ok {
+            moved.push(x)
+            moved.push(x + 1)
+            skip_next = true
+            continue
+          }
+        }
+        if x != s && !x86_flag_neutral(t) {
+          if !x86_movable(t) {
+            ok = false
+            break
+          }
+          for u in t.us {
+            if touched.contains(u) {
+              ok = false
+            }
+          }
+          for d in t.defs {
+            if touched.contains(d) || read.contains(d) {
+              ok = false
+            }
+          }
+          if !ok {
+            break
+          }
+          moved.push(x)
+          continue
+        }
+        for d in t.defs {
+          touched.push(d)
+        }
+        for u in t.us {
+          read.push(u)
+        }
+      }
+      if !ok {
+        j += 1
+        continue
+      }
+      var out: List[Inst] = []
+      for x in 0..h {
+        out.push(ins[x])
+      }
+      for x in moved {
+        out.push(ins[x])
+      }
+      for x in h..ins.len() {
+        if x == j || moved.contains(x) || (x == s && own) {
+          continue
+        }
+        if x == s {
+          var t = ins[x]
+          t.text = t.text[0..t.text.len() - tail.len() - 1]
+          let _d = t.defs.pop()
+          out.push(t)
+          continue
+        }
+        out.push(ins[x])
+      }
+      ins = out
+      // the save and the restore are gone: look again from the head
+      j = h
+    }
+    g.put_insts(b, ins)
+  }
+}
