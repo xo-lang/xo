@@ -1550,9 +1550,16 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.set(v, [])
     }
     "rt.mem_copy_block" if g.x86 => {
-      // 32 bytes an iteration through xmm14 and xmm15 (the emitter's
-      // scratch registers), r11 the offset
-      g.x86_store("xorl %r11d, %r11d\ncmpq $u2, %r11\njae 2f\n1:\nmovups ($u1,%r11), %xmm14\nmovups 16($u1,%r11), %xmm15\nmovups %xmm14, ($u0,%r11)\nmovups %xmm15, 16($u0,%r11)\naddq $32, %r11\ncmpq $u2, %r11\njb 1b\n2:", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      // through xmm14 and xmm15 (the emitter's scratch registers), r11
+      // the offset: the odd 32 bytes first when n has them, then 64 an
+      // iteration (no register is left to test for 64 remaining; 11
+      // instructions per 64 bytes, 14 at 32 an iteration)
+      var t = ["xorl %r11d, %r11d", "testq $32, $u2", "je 1f", "movups ($u1), %xmm14", "movups 16($u1), %xmm15", "movups %xmm14, ($u0)", "movups %xmm15, 16($u0)", "movl $32, %r11d", "1:", "cmpq $u2, %r11", "jae 3f", "2:"]
+      for o in [0, 32] {
+        t = t + ["movups ${o}($u1,%r11), %xmm14", "movups ${o + 16}($u1,%r11), %xmm15", "movups %xmm14, ${o}($u0,%r11)", "movups %xmm15, ${o + 16}($u0,%r11)"]
+      }
+      t = t + ["addq $64, %r11", "cmpq $u2, %r11", "jb 2b", "3:"]
+      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
       g.set(v, [])
     }
     "rt.mem_copy_block" => {

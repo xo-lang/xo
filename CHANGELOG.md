@@ -11,6 +11,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   start with room for 8, and `to_upper`/`to_lower` of text already in
   that case return it without a copy: 3.0% (arm64) and 3.7% (LLVM)
   fewer instructions per request (bench/results/http-callgrind-2026-10-17.md).
+- x86_64 programs without a C library copy 64 bytes a loop iteration
+  (copying a large map: 21% fewer instructions, even with LLVM).
 
 - TLS servers on the native backends no longer copy a connection's state
   at every read and write (rt.any_take moves it out of its holder and

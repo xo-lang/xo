@@ -40,3 +40,20 @@ LLVM's builds are unchanged (the same loop). arm64 branch is now 1.01
 times LLVM's instructions (was 2.92 on main, 5.47 before e3b7139c);
 amd64 1.28. amd64's next step is 64 bytes an iteration, which needs two
 more vector scratch registers or saving them around the loop.
+
+## amd64 at 64 bytes an iteration (2026-10-17, later)
+
+With no register left to test for 64 bytes remaining, the amd64
+template copies the odd 32 bytes first (when n has bit 5), then 64 an
+iteration through xmm14 and xmm15 twice: 11 instructions per 64 bytes,
+14 before. Against main 6c9e561e (Docker cachegrind, I refs; 187 of 187
+amd64 goldens):
+
+| workload | amd64 base | amd64 new | LLVM amd64 |
+|---|---|---|---|
+| branch | 877773727 | 694883480 (0.792) | 686864245 |
+| copyset | 39863726 | 35860110 (0.900) | 28239816 |
+| strings | 21373162 | 21143695 (0.989) | 13789439 |
+| putget | 553366409 | 552907479 (0.999) | 373782520 |
+
+amd64 branch is now 1.01 times LLVM's instructions, as arm64 is.
