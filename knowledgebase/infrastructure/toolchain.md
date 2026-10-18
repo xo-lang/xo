@@ -1381,6 +1381,17 @@ run) has two modes (2026-10-18):
 - `ARCH=amd64` works with either mode; N, REPS, and SCENARIOS given
   explicitly override the mode's.
 
+### Tests in std/ and compiler/ (decision 0262, 2026-10-18)
+
+Repository convention, not a language rule (user code keeps inline
+`test` blocks): under std/ and compiler/, tests live only in `_test.xo`
+files. xo's source key (internal/xotool Inputs) takes every .xo file of
+compiler/ and the std files the compiler uses, so an inline test block
+there would rebuild xo for a test change; Inputs skips `_test.xo` files.
+A repotest check rejects a `test "` block elsewhere under std/ and
+compiler/ (with decision 0262's work; until then 14 inline blocks remain
+in compiler/cli cmdhelp and dev).
+
 ### Gate and fuzz runners (2026-10-18)
 
 - `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to
