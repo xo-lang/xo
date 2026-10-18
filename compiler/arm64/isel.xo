@@ -2552,6 +2552,14 @@ fn (var g: G) field_op(v: Int) {
 fn (var g: G) set_field_op(v: Int) {
   let x = g.f.values[v]
   let (off, n) = g.field_words(x.ty, aux_int(x.aux))
+  if g.has_held {
+    if let Some((m, at)) = g.held.nested.get(v) {
+      // stored in place in the field of the held value; the outer set
+      // field is then done
+      g.store_words_at(g.held.mems[m].ptr, at, g.words(x.args[1]))
+      return
+    }
+  }
   if g.has_held && g.held.set_done.contains(v) {
     // the call before it wrote the field in place (field homes)
     if g.mem_only(v) < 0 {

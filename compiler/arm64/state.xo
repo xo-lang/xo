@@ -53,6 +53,9 @@ struct Held {
   fbase: Map[(Int, Int), HKey] = {}
   /// set fields the call before them already wrote in place
   set_done: Map[Int, Bool] = {}
+  /// set fields of a field of a value held in a memory, stored there in
+  /// place (the outer set field is then done): memory, word offset
+  nested: Map[Int, (Int, Int)] = {}
   mem_only: Map[Int, Int] = {}
   us: Map[Int, List[Int]] = {}
   has_uses: Bool = false

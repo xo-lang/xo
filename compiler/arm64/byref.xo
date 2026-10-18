@@ -294,6 +294,27 @@ fn (var g: G) compute_held(mems: List[HMem]) {
               g.held.in_place[v] = m
               g.held.set_done[v] = true
               st[m] = HKey{v: v, k: -1}
+            } else if m >= 0 && st[m] == (HKey{v: x.args[1], k: -5}) && g.held.nested.contains(x.args[1]) {
+              // c.f = (c.f with k set): the inner set field stored it
+              g.held.in_place[v] = m
+              g.held.set_done[v] = true
+              st[m] = HKey{v: v, k: -1}
+            } else if g.op(u) == ssa.Op.Field {
+              // c.f.k = val, where c is held in a memory and the only use
+              // of the new c.f is c.f = it: stored in place
+              let c = g.f.values[u].args[0]
+              let mc = g.held_mem_of(g.vty(c))
+              if mc >= 0 && st[mc] == g.key_of(c) {
+                g.held_uses()
+                let us = g.held.us.get(v) ?? []
+                if us.len() == 1 && g.op(us[0]) == ssa.Op.SetField && g.f.values[us[0]].args[0] == c &&
+                  g.f.values[us[0]].args[1] == v && aux_int(g.f.values[us[0]].aux) == aux_int(g.f.values[u].aux) {
+                  let (fo, _fn) = g.field_words(g.vty(c), aux_int(g.f.values[u].aux))
+                  let (ko, _kn) = g.field_words(g.vty(u), aux_int(x.aux))
+                  g.held.nested[v] = (mc, fo + ko)
+                  st[mc] = HKey{v: v, k: -5}
+                }
+              }
             }
           }
           Jump => changed = g.set_edge(x.succs[0], st) || changed

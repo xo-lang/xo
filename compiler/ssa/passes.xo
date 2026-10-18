@@ -528,6 +528,121 @@ pub fn cse(var f: Func, m: Module) -> Bool {
   true
 }
 
+/// Replaces each field read of a tuple that is only read field by field
+/// (the inliner's return of a call with `var` parameters) by the tuple's
+/// operand, and drops the tuple (Go's generic rules, StructSelect of
+/// StructMake). Only a tuple whose counted operands are owned roots
+/// (tuple_operand_owned): a projection's retain made the tuple its owner,
+/// and without the tuple that count is on no leaf (the reference count
+/// check failed on cached_macho_objects' list.index element).
+/// False when nothing changed.
+pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
+  var us: Map[Int, List[Int]] = {}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        var l = us.get(a) ?? []
+        l.push(v)
+        us[a] = l
+      }
+      for e in f.values[v].succs {
+        for a in f.edges[e].args {
+          var l = us.get(a) ?? []
+          l.push(-1)
+          us[a] = l
+        }
+      }
+    }
+  }
+  for d in f.dbinds {
+    var l = us.get(d.value) ?? []
+    l.push(-1)
+    us[d.value] = l
+  }
+  var repl: Map[Int, Int] = {}
+  var dead: Map[Int, Bool] = {}
+  for bl in f.blocks {
+    for t in bl.instrs {
+      let x = f.values[t]
+      if x.op != Op.Tuple {
+        continue
+      }
+      let tu = us.get(t) ?? []
+      var ok = !tu.is_empty()
+      for a in x.args {
+        if !tuple_operand_owned(f, m, a) {
+          ok = false
+        }
+      }
+      for u in tu {
+        if u < 0 || f.values[u].op != Op.Field || f.values[u].args[0] != t {
+          ok = false
+          break
+        }
+        let i = match f.values[u].aux {
+          I(n) => n
+          _ => -1
+        }
+        if i < 0 || i >= x.args.len() {
+          ok = false
+          break
+        }
+      }
+      if !ok {
+        continue
+      }
+      for u in tu {
+        let i = match f.values[u].aux {
+          I(n) => n
+          _ => 0
+        }
+        repl[u] = x.args[i]
+        dead[u] = true
+      }
+      dead[t] = true
+    }
+  }
+  if dead.is_empty() {
+    return false
+  }
+  for bl in 0..f.blocks.len() {
+    var keep: List[Int] = []
+    for v in f.blocks[bl].instrs {
+      if dead.contains(v) {
+        continue
+      }
+      keep.push(v)
+      for k in 0..f.values[v].args.len() {
+        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+      }
+      for se in f.values[v].succs {
+        for k in 0..f.edges[se].args.len() {
+          f.edges[se].args[k] = find_repl(repl, f.edges[se].args[k])
+        }
+      }
+    }
+    f.blocks[bl].instrs = keep
+  }
+  true
+}
+
+/// Whether tuple operand a is not counted or is an owned root of the
+/// reference count pass (rc.xo kind): not a borrowed parameter, a
+/// constant, a projection (payload, capture, unbox, a list element) or a
+/// field of an aggregate.
+fn tuple_operand_owned(f: Func, m: Module, a: Int) -> Bool {
+  let x = f.values[a]
+  if x.ty < 0 || !m.heap(x.ty) {
+    return true
+  }
+  match x.op {
+    Param => x.block != 0
+    Const | Payload | Capture | Unbox | Field => false
+    Call => !is_proj_call(aux_name(x.aux))
+    _ => true
+  }
+}
+
 /// Whether cse may merge two operations of op (not compares: the
 /// emitter folds a compare used once into its branch's flags).
 fn cse_op(op: Op) -> Bool {

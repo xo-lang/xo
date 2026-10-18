@@ -398,6 +398,9 @@ fn inline_module(var m: ssa.Module) -> Bool {
     }
     // an inlined body repeats its caller's arithmetic (j + 1 tested,
     // then indexed with): computed once
+    if ssa.fold_tuple_fields(f, m) {
+      changed = true
+    }
     if ssa.cse(f, m) {
       changed = true
       // a block left only its jump joins the next
