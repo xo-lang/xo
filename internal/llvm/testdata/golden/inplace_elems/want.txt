@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+sum 684
+names xt1yt20zt300
+wide 29
+grow 16 43
+change 523
+--- stderr

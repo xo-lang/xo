@@ -14,7 +14,7 @@ pub fn passes() -> List[Str] {
     // module, before code generation
     "inline", "devirtualize", "fold_consts", "cancel_rc_pairs", "hoist_fields", "fold_tuples", "cse",
     // per function: SSA analyses isel uses
-    "lsr", "ranges",
+    "lsr", "ranges", "inplace_elems",
     // per function: MIR
     "mir_dce", "thread_const", "thread_cset", "thread", "jump_tables", "live_dce",
     "select_compares", "hoist_consts", "hoist_invariants", "reuse_flags", "place_latches", "mark_tails",

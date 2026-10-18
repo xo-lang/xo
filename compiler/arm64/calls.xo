@@ -707,6 +707,11 @@ fn (var g: G) call_op(v: Int) {
       g.bounds_check(v, l, i)
       let et = x.ty
       let base = g.elem_addr(l, i, x.args[1], et)
+      if base.idx == 0 && g.elem_in_place(v) {
+        // only read: its parts load from the list where used (inplace.xo)
+        g.stable[v] = g.addr_at(base.base, base.off)
+        return
+      }
       g.set(v, g.load_elem(base, et, false))
     }
     "list.take" => {

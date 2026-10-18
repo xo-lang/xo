@@ -1,0 +1,212 @@
+// Large list elements read where they lie (bench/results
+// xo-code-size-2026-10-18.md, fix 1).
+//
+// `list.index` of an element of IN_PLACE_MIN bytes or more copied every
+// word into registers, most of them spilled, to read a field or two: a
+// `for s in b.stmts` over the compiler's 167 word statements was 334
+// instructions per element. When the uses of the element read it (a
+// field, a payload, a tag, a retain or release of its parts; at most one
+// use takes it whole) and nothing between the read and those uses can
+// write or free the list's memory, the element is a stable value at its
+// address (byref.xo mem_of), and those reads load from the list.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+const IN_PLACE_MIN = 128
+
+/// Whether list element v (list.index) can be read in place.
+fn (var g: G) elem_in_place(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if !g.on("inplace_elems") || 8 * g.nwords(x.ty) < IN_PLACE_MIN {
+    return false
+  }
+  g.held_uses()
+  // the element and the large parts of it read in place in turn
+  var chain: Map[Int, Bool] = {}
+  var work = [v]
+  var use_blocks: Map[Int, Bool] = {}
+  // a use that needs the whole value loads it there (g.words); one is no
+  // worse than the copy, more would load it again each time
+  var whole = 0
+  while !work.is_empty() {
+    let w = work.pop() ?? 0
+    if chain.contains(w) {
+      continue
+    }
+    chain[w] = true
+    for u in g.held.us.get(w) ?? [] {
+      let ux = g.f.values[u]
+      if !ux.succs.is_empty() {
+        return false // passed on through a block edge
+      }
+      if ux.op is ssa.Op.Field | ssa.Op.Payload {
+        if ux.args[0] == w && g.big_by_ref(ux.ty) {
+          work.push(u) // read in place too (field_op, payload_op)
+        }
+      } else if !(ux.op is ssa.Op.Tag | ssa.Op.Retain | ssa.Op.Release) {
+        whole += 1
+        if whole > 1 {
+          return false
+        }
+      }
+      use_blocks[ux.block] = true
+    }
+  }
+  // the blocks between the read and its uses: reached from the read's
+  // block without passing it again, and reaching a use
+  let db = x.block
+  var fwd: Map[Int, Bool] = {}
+  var stack = g.succ_blocks(db)
+  while !stack.is_empty() {
+    let b = stack.pop() ?? 0
+    if b == db || fwd.contains(b) {
+      continue
+    }
+    fwd[b] = true
+    for s in g.succ_blocks(b) {
+      stack.push(s)
+    }
+  }
+  var back: Map[Int, Bool] = {}
+  var st2: List[Int] = []
+  for (b, _) in use_blocks.entries() {
+    if b != db {
+      st2.push(b)
+    }
+  }
+  while !st2.is_empty() {
+    let b = st2.pop() ?? 0
+    if b == db || back.contains(b) {
+      continue
+    }
+    back[b] = true
+    for e in g.f.blocks[b].preds {
+      st2.push(g.f.edges[e].from)
+    }
+  }
+  // a list reached through fields of a read only parameter: no callee
+  // can write it (value semantics) and the caller keeps it alive, so
+  // only this function's own release, move, or update of the parameter
+  // can change it (byref.xo reads such parameters in place)
+  let root = g.read_only_root(x.args[0])
+  // the read's own block from the read on
+  var after = false
+  for u in g.f.blocks[db].instrs {
+    if u == v {
+      after = true
+      continue
+    }
+    if after && !g.keeps_memory(u, chain, root) {
+      return false
+    }
+  }
+  for (b, _) in back.entries() {
+    if !fwd.contains(b) {
+      continue
+    }
+    for u in g.f.blocks[b].instrs {
+      if !g.keeps_memory(u, chain, root) {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The read only parameter (not `var`) that list l is a field of, through
+/// field and payload reads, or -1.
+fn (g: G) read_only_root(l: Int) -> Int {
+  var v = l
+  for _ in 0..16 {
+    let x = g.f.values[v]
+    if x.op is ssa.Op.Field | ssa.Op.Payload {
+      v = x.args[0]
+      continue
+    }
+    if x.op == ssa.Op.Param && x.block == 0 {
+      for (i, p) in g.params().indexed() {
+        if p == v && !g.is_var_param(g.fi, i) {
+          return v
+        }
+      }
+    }
+    return -1
+  }
+  -1
+}
+
+/// Whether v is root or a field or payload read of it.
+fn (g: G) part_of(v0: Int, root: Int) -> Bool {
+  var v = v0
+  for _ in 0..16 {
+    if v == root {
+      return true
+    }
+    let x = g.f.values[v]
+    if !(x.op is ssa.Op.Field | ssa.Op.Payload) {
+      return false
+    }
+    v = x.args[0]
+  }
+  false
+}
+
+/// The blocks block b's terminator jumps to.
+fn (g: G) succ_blocks(b: Int) -> List[Int] {
+  var out: List[Int] = []
+  let ins = g.f.blocks[b].instrs
+  if ins.is_empty() {
+    return out
+  }
+  for e in g.f.values[ins[ins.len() - 1]].succs {
+    out.push(g.f.edges[e].to)
+  }
+  out
+}
+
+/// Whether instruction u cannot write or free the list's memory. With a
+/// read only root: nothing that releases, moves (a call argument), or
+/// updates the root or a part of it. Without one: no call but the reads
+/// lowered in line, no release but of the element's own parts (chain),
+/// no field update.
+fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
+  let x = g.f.values[u]
+  if root >= 0 {
+    if x.op is ssa.Op.Release | ssa.Op.Drop | ssa.Op.Reuse | ssa.Op.SetField | ssa.Op.Call | ssa.Op.CallValue | ssa.Op.Share | ssa.Op.Box {
+      for a in x.args {
+        if g.part_of(a, root) && !(x.op == ssa.Op.Call && g.reads_only(x)) {
+          return false
+        }
+      }
+    }
+    return true
+  }
+  match x.op {
+    Call => g.reads_only(x)
+    CallValue | SetField | Drop | Reuse | Share | Box => false
+    Release => chain.contains(x.args[0]) || g.from_chain(x.args[0], chain)
+    _ => true
+  }
+}
+
+/// A call lowered in line that only reads its operands.
+fn (g: G) reads_only(x: ssa.Value) -> Bool {
+  aux_str(x.aux) is "list.len" | "list.index" | "str.len" | "str.eq" | "str.cmp" | "rt.landing" | "rt.unwinding" | "rt.rl_empty" | "rt.h_zero" | "rt.int_wrap"
+}
+
+/// Whether v is a part of a chain value (a field or payload read of it,
+/// as the reference counting releases a leaf).
+fn (g: G) from_chain(v0: Int, chain: Map[Int, Bool]) -> Bool {
+  var v = v0
+  for _ in 0..16 {
+    let x = g.f.values[v]
+    if !(x.op is ssa.Op.Field | ssa.Op.Payload) {
+      return false
+    }
+    v = x.args[0]
+    if chain.contains(v) {
+      return true
+    }
+  }
+  false
+}

@@ -176,6 +176,25 @@ module) is still to run: a full LTO link of xo with LLVM took over 40
 minutes and was stopped for the 0.21.0 seed checks; it will be redone
 without LTO.
 
+## Fix 1, first step (2026-10-18)
+
+compiler/arm64 inplace.xo: `list.index` of an element of 128 bytes or
+more is a stable value at its address (byref.xo `stable`, so field,
+payload, and tag reads and the release load from the list) when its
+uses read it, at most one takes it whole, and nothing between the read
+and the uses can change the list: for a list reached through fields of
+a read only parameter, no release, move (call argument), or update of
+that parameter; otherwise no call but in line reads. Optional pass
+`inplace_elems`.
+
+xo built by itself with the same compiler, the pass on against
+`XO_PASSES=-inplace_elems`: 40,491,972 to 39,915,536 bytes of
+`__text` (-576 KB, -1.4%). The first form (no calls at all between the
+read and the uses, no whole use) changed nothing measurable: the
+compiler's loops call `out.push` and wrap the element whole
+(`Node.NStmt(s)`). What remains is elements of lists held in locals and
+`var` parameters, and loop elements passed on as call arguments.
+
 ## Reproduce
 
 ```

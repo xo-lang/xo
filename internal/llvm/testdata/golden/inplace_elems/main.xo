@@ -1,0 +1,93 @@
+// Large list elements read in place (compiler/arm64 inplace.xo): reads of
+// a field, a payload, and a tag load from the list; a push or set of the
+// same list, a call, or a change of a copy between the read and a use
+// keeps the copy.
+
+struct Big {
+  name: Str
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  i: Int
+  j: Int
+  k: Int
+  l: Int
+  m: Int
+  n: Int
+  tags: List[Str]
+}
+
+enum Node {
+  Leaf(v: Int)
+  Wide(big: Big, extra: Str)
+}
+
+fn mk(name: Str, x: Int) -> Big {
+  Big{name: name, a: x, b: x + 1, c: x + 2, d: x + 3, e: x + 4, f: x + 5, g: x + 6, h: x + 7, i: x + 8, j: x + 9, k: x + 10, l: x + 11, m: x + 12, n: x + 13, tags: ["t${x}"]}
+}
+
+fn sum_fields(xs: List[Big]) -> Int {
+  var t = 0
+  for b in xs {
+    t += b.a + b.n + b.tags.len()
+  }
+  t
+}
+
+fn names(xs: List[Big]) -> Str {
+  var out = ""
+  for i in 0..xs.len() {
+    let b = xs[i]
+    out = out + b.name + b.tags[0]
+  }
+  out
+}
+
+fn wide(ns: List[Node]) -> Int {
+  var t = 0
+  for n in ns {
+    match n {
+      Node.Leaf(v) => t += v
+      Node.Wide(big, extra) => t += big.m + extra.len()
+    }
+  }
+  t
+}
+
+// the list changes between the read and the use: the copy must survive
+fn grow(var xs: List[Big]) -> Int {
+  let first = xs[0]
+  for k in 0..40 {
+    xs.push(mk("g${k}", k))
+  }
+  xs[0] = mk("replaced", 1000)
+  first.a + first.n + first.name.len()
+}
+
+fn edited(b0: Big) -> Big {
+  var b = b0
+  b.a = 500
+  b.tags.push("more")
+  b
+}
+
+// a copy changed after the read
+fn change(xs: List[Big]) -> Int {
+  let b = edited(xs[1])
+  b.a + xs[1].a + b.tags.len() + xs[1].tags.len()
+}
+
+fn main(os: Os) {
+  var xs = [mk("x", 1), mk("y", 20), mk("z", 300)]
+  os.stdio.println("sum ${sum_fields(xs)}")
+  os.stdio.println("names ${names(xs)}")
+  let ns = [Node.Leaf(v: 3), Node.Wide(big: mk("w", 7), extra: "abc"), Node.Leaf(v: 4)]
+  os.stdio.println("wide ${wide(ns)}")
+  os.stdio.println("grow ${grow(xs)} ${xs.len()}")
+  os.stdio.println("change ${change(xs)}")
+}
