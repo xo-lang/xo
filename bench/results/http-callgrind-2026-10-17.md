@@ -148,3 +148,19 @@ Found and handed on (compiler side, not std):
 - any_of marks its value shareable across tasks (Op.Share): a walk of
   every heap leaf of Conn on each save, about 5,500 a request on arm64;
   parked (it needs an escape fact or a seed with a new intrinsic).
+
+## The RC payload move, measured (2026-10-18)
+
+19a3540d (Xo Lang 2: a single-field payload of an owned enum that dies
+at the match takes the enum's ownership) on the HTTP benchmarks: xo
+built from its parent (61207c14) and from 1f77f593 (only 19a3540d in
+between in compiler/ and std/native), both servers built from
+1f77f593's std, N=100, REPS=3, medians:
+
+| Scenario | arm64 before | arm64 after | change | LLVM before | LLVM after | change |
+|---|---|---|---|---|---|---|
+| tls | 82,287 | 74,029 | -10.0% | 71,831 | 59,202 | -17.6% |
+| h2 | 141,525 | 125,102 | -11.6% | 120,547 | 94,536 | -21.6% |
+
+The take side of tlssrv (`var c = match take_conn(t) { Some(x) => x ...}`)
+no longer shares and drops the connection.
