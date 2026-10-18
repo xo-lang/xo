@@ -17,6 +17,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with compact unwind information before a DWARF one (the unwinder's
   frame cache reset the return address register; 13 tests on the Intel
   Mac).
+- An addition after a checked multiplication by a constant skips its
+  overflow check when the product's range proves it safe (Collatz: 7%
+  fewer instructions on x86_64, 4% on arm64).
 
 - HTTP/1.1 responses on the native backends take the Date header's text
   from a cache of the current second shared by the threads (a sequence

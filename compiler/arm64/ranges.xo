@@ -297,7 +297,26 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
       let c1 = sat_mul(a.lo, b.hi)
       let c2 = sat_mul(a.hi, b.lo)
       let c3 = sat_mul(a.hi, b.hi)
-      (Interval{lo: imin(imin(c0, c1), imin(c2, c3)), hi: imax(imax(c0, c1), imax(c2, c3))}, true)
+      var r = Interval{lo: imin(imin(c0, c1), imin(c2, c3)), hi: imax(imax(c0, c1), imax(c2, c3))}
+      // a checked Int product (one with a position; isel.xo add_sub's
+      // rule) faults on overflow, so past it the value is a
+      // multiple of a constant factor k within Int: at most (MAX / k) * k
+      // (2026-10-17: collatz's 3 * n + 1 kept its check, though 3 * n is
+      // at most MAX - 1; LLVM drops it)
+      var k = 0
+      for c in [x.args[0], x.args[1]] {
+        let (kc, is_k) = g.const_int(c)
+        if is_k {
+          k = kc
+        }
+      }
+      if k < 0 && k != MIN_INT {
+        k = -k
+      }
+      if k >= 2 && !x.pos.is_empty() {
+        r = Interval{lo: imax(r.lo, (MIN_INT / k) * k), hi: imin(r.hi, (MAX_INT / k) * k)}
+      }
+      (r, true)
     }
     Div => {
       let (a, ok) = g.range_get(x.args[0])
