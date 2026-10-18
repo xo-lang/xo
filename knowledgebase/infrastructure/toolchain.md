@@ -1355,6 +1355,32 @@ Last verified: 2026-10-07
   `TestPlantedTestCatches` in `bench/harness/test_harness.py`). Last
   verified: 2026-10-09.
 
+### HTTP callgrind: short or full
+
+`bench/perf/http/callgrind-docker.sh XO OUT` (decision 0180's quiet
+numbers: instructions per request under valgrind in Docker, the same run to
+run) has two modes (2026-10-18):
+
+- `MODE=short`: plain and tls, one repeat, N=30: about 3.3 minutes on
+  the Mac with a fresh linux xo, 1.8 with the one OUT already holds
+  (its commit stamp matches); repeats agree within about 0.3% (arm64) and
+  1% (LLVM tls). The default for a gate touching HTTP or the runtime.
+- `MODE=full` (the default): all five scenarios (plain, plain-newconn,
+  tls, tls-newconn, h2), REPS=2, N=100: 25 to 45 minutes. Run it nightly,
+  per batch, and for a change in:
+  - the TLS handshake (std/native/llrt tls13*, tls12*, tlssrv, x25519,
+    ed25519, nistec, mlkem, sha*, hkdf, hmac, x509*, tlscert,
+    tlsticket): tls-newconn;
+  - HTTP/2 (h2srv, h2w, hpack, hconn): h2;
+  - connection setup (accept, netconn, poll, the scheduler, pool,
+    tasks): plain-newconn;
+  - code generation across the board (compiler/ssa's RC and inliner,
+    compiler/arm64, compiler/llvm): all of them.
+  A change in http1, the router, or std/native/http.xo is covered by
+  short.
+- `ARCH=amd64` works with either mode; N, REPS, and SCENARIOS given
+  explicitly override the mode's.
+
 ## Package layout (P1, implemented parts)
 
 ```

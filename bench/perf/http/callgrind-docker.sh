@@ -14,6 +14,12 @@
 # and callgrind.sh measures each. OUT keeps the binaries, logs, and
 # results.txt. N, REPS, SCENARIOS pass through.
 #
+# MODE=short (2026-10-18, for gates): plain and tls only, one repeat,
+# N=30, a couple of minutes; MODE=full (the default) is every scenario,
+# REPS=2, N=100, for the nightly and per-batch runs and for changes that
+# need it (knowledgebase/infrastructure/toolchain.md "HTTP callgrind:
+# short or full"). N, REPS, SCENARIOS given explicitly win over MODE.
+#
 # ARCH=amd64 (2026-10-18): the container is linux/amd64 (Docker Desktop
 # emulates it: valgrind's counts are the guest's instructions, the same
 # run to run, only slower), the xo is a Go backend cross build (the
@@ -31,6 +37,18 @@ xo=$1
 out=$2
 shift 2
 arch=${ARCH:-arm64}
+case "${MODE:-full}" in
+short)
+	N=${N:-30}
+	REPS=${REPS:-1}
+	SCENARIOS=${SCENARIOS:-"plain tls"}
+	;;
+full) ;;
+*)
+	echo "callgrind-docker.sh: MODE is short or full, not $MODE" >&2
+	exit 2
+	;;
+esac
 if [ "$arch" = amd64 ]; then
 	backends=${*:-"amd64 llvm"}
 	xobe=go
