@@ -69,7 +69,9 @@ fn key_less(ha: Int, i: Int, j: Int) -> Bool {
 /// The indexes of the fields sorted by name (a merge sort; a handler sets
 /// few fields, so mostly the insertion of the first loop).
 pub fn sorted(ha: Int, hn: Int) -> List[Int] {
-  var ix: List[Int] = []
+  // sized to the fields: no growth, and no copy of the shared empty list
+  // at the first push (0.8 copies a response before)
+  var ix: List[Int] = List.with_capacity(hn)
   var i = 0
   while i < hn {
     var j = ix.len()
