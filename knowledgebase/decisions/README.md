@@ -252,3 +252,7 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0258-discarded-pure-results.md](0258-discarded-pure-results.md): Accepted (owner, 2026-10-17): error XO0209 for an expression statement discarding the result of a call with no effects, no `var` operands, and no handle, interface or function value in reach (`xs.reverse()`, `s.trim()`); fix `xs = xs.reverse()` or `let _ =`
 - [0259-external-bytes-to-str.md](0259-external-bytes-to-str.md): Proposed: one rule for raw external bytes (HTTP request lines, headers, environment, files, sockets) that are not valid UTF-8 becoming Str
 - [0260-named-wrapping-unsigned-ops.md](0260-named-wrapping-unsigned-ops.md): Proposed: named wrapping and unsigned operations in place of rt.int_wrap's numeric codes, and whether Xo gets an unsigned type
+- [0261-agent-commands.md](0261-agent-commands.md): Proposed: Agent-facing commands on xo lsp's engine (lookups, refactors, fixes as JSON with diff previews)
+- [0262-std-private-tests.md](0262-std-private-tests.md): Proposed: Private-function tests inside std (_test.xo with private access in std/native)
+- [0263-copy-lint.md](0263-copy-lint.md): Proposed: A perf lint for copy-prone shapes under xo vet
+- [0264-compare-and-provenance.md](0264-compare-and-provenance.md): Proposed: xo dev compare and build provenance stamps
