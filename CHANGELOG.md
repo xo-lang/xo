@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A Map's lists are sized at each rebuild for every entry until the next
+  one, so small maps (an HTTP request's headers) do not grow them:
+  plain HTTP -1.4% (arm64) and -1.2% (LLVM) instructions per request.
+
 - Plain HTTP/1.1 servers on the native backends: a request's header
   fields are copied once (not the whole line first), the field lists
   start with room for 8, and `to_upper`/`to_lower` of text already in

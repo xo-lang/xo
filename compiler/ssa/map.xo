@@ -275,9 +275,15 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   let nk = b.local()
   let nv = b.local()
   let nl = b.local()
-  b.write_var(nk, b.call("list.new", klt, "", []))
-  b.write_var(nv, b.call("list.new", vlt, "", []))
-  b.write_var(nl, b.call("list.new", llt, "", []))
+  // room for the entries the new table takes before the next rebuild
+  // (it is at least 8 and twice want, rebuilt past 3/4 full, so at most
+  // max(6, 1.5 * table) entries): 2 * want + 6, so the puts until then do
+  // not grow the lists (a 5 field HTTP header Map grew each at the fifth)
+  let twice = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
+  let room = b.add(Op.Add, it, Aux.None, [twice, b.cint(6)])
+  b.write_var(nk, b.call("list.new", klt, "", [room]))
+  b.write_var(nv, b.call("list.new", vlt, "", [room]))
+  b.write_var(nl, b.call("list.new", llt, "", [room]))
   let iv = b.local()
   let n0 = b.call("list.len", it, "", [keys])
   let (i, head, exit) = b.for_up_to_begin(n0, iv)
