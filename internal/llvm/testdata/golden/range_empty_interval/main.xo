@@ -1,0 +1,30 @@
+// The arm64 and LLVM range analyses once built an empty interval
+// (lo > hi) for a value no run computes, and the compiler faulted on it
+// (TestArithProperty seeds 444, 1502 and 1821, 2026-10-18).
+
+/// m always overflows, so its checked product's interval was empty and
+/// the subtraction negated its hi of MIN_INT.
+fn product(p: Int) -> Int {
+  if p > 100 {
+    let m = ((p & 1) - 4611686018427387904) * 3
+    return 5 - m
+  }
+  p
+}
+
+/// Inside both branches k >= 0 and k < 0 hold, so k's bounds were
+/// (0, -1) and the shift check computed 1 << 64.
+fn shift(acc: Int, k: Int) -> Int {
+  if k >= 0 {
+    if k < 0 {
+      return acc << k
+    }
+    return acc + k
+  }
+  acc
+}
+
+fn main(os: Os) {
+  os.stdio.println("product ${product(7)}")
+  os.stdio.println("shift ${shift(3, 4)}")
+}

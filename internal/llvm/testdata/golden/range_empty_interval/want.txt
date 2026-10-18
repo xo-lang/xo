@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+product 7
+shift 7
+--- stderr

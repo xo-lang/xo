@@ -131,7 +131,13 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
             let (ra, ok1) = g.range_get(ab.0)
             let (rb, ok2) = g.range_get(ab.1)
             if ok1 && ok2 && rb.hi > MIN_INT {
-              r = Interval{lo: imax(r.lo, ra.lo), hi: imin(r.hi, rb.hi - 1)}
+              // Empty only on a path no run takes (seeds 444, 1502 and
+              // 1821 of TestArithProperty): keep r, since every user of
+              // an interval assumes lo <= hi.
+              let m = Interval{lo: imax(r.lo, ra.lo), hi: imin(r.hi, rb.hi - 1)}
+              if m.lo <= m.hi {
+                r = m
+              }
             }
           }
           changed = g.range_set(v, r, ups, downs, grown) || changed
@@ -234,6 +240,13 @@ fn (g: G) less_on_entry(d: Int, a: Int, b: Int) -> Bool {
 /// and reports whether it changed.
 fn (var g: G) range_set(v: Int, r0: Interval, ups: List[Int], downs: List[Int], var grown: List[Int]) -> Bool {
   var r = r0
+  if r.lo > r.hi {
+    // empty: v is never computed (a checked product that always
+    // overflows, facts that contradict each other); every user of an
+    // interval assumes lo <= hi, so know nothing (TestArithProperty
+    // seed 1502: Sub negated an empty interval's hi of MIN_INT)
+    r = full_interval()
+  }
   let had = g.has_range[v]
   let old = g.ranges[v]
   if had && old == r {

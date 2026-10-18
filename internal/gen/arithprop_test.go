@@ -152,7 +152,9 @@ func TestArithProperty(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(tree, "m")); err == nil {
 				pkgs = append(pkgs, "./m/...")
 			}
-			if out, err := run(tree, "go", append([]string{"vet"}, pkgs...)...); err != nil {
+			// -bools=false: progen.Arith can write `a > b || a > b`, which
+			// the Go backend keeps as written (seeds 1315 and 1546)
+			if out, err := run(tree, "go", append([]string{"vet", "-bools=false"}, pkgs...)...); err != nil {
 				t.Errorf("seed %d: go vet: %v\n%s--- program\n%s", seed, err, out, numbered(src))
 			}
 			want := runProp(t, res.Binaries[xotool.Host()], dir)

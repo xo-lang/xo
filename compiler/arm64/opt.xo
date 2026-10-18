@@ -472,6 +472,9 @@ fn (var g: G) bounds_at(v: Int, d: Int) -> (Int, Int) {
     }
   }
   if !g.has_val[v] || g.vals[v].len() != 1 {
+    if lo > hi {
+      return (r.lo, r.hi)
+    }
     return (lo, hi)
   }
   let w = g.vals[v][0]
@@ -481,6 +484,11 @@ fn (var g: G) bounds_at(v: Int, d: Int) -> (Int, Int) {
   }
   if let Some(x) = g.cm.hi.get(w) {
     hi = imin(hi, x)
+  }
+  if lo > hi {
+    // facts that contradict each other hold only where no run goes;
+    // the callers assume lo <= hi
+    return (r.lo, r.hi)
   }
   (lo, hi)
 }
