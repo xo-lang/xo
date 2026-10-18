@@ -102,3 +102,19 @@ in static words 69 to 74 (a sequence lock: a reader that sees the
 sequence change, or a writer busy, formats it itself). Base 018e3969
 against the branch, the same xo, N=100, REPS=3, medians: arm64 31,787 to
 31,426 (-1.1%), LLVM 27,889 to 27,805 (-0.3%, within the spread).
+
+## HTTP/2 made deterministic (2026-10-17)
+
+The h2 scenario varied 5% to 7% between repeats on arm64
+(gotchas/h2-callgrind-count-races.md). callgrind.sh now runs loadgen
+with -h2det (each request's frames in one TLS record) and -gap 20ms (the
+server parked before each request). Main at ca9173f4, N=100, REPS=3:
+
+| Scenario | arm64 | LLVM |
+|---|---|---|
+| h2 | 167,052 / 167,325 / 167,429 (0.23%) | 131,594 / 131,673 / 131,773 (0.14%) |
+
+These are the baseline for the HTTP/2 std hunt; earlier h2 rows are not
+comparable (a different client write pattern and server path).
+Measured with five repeats each (arm64): -h2det alone 153,779 to
+164,030, -gap alone 186,267 to 189,048, both 167,304 to 167,616.

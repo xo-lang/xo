@@ -18,7 +18,9 @@
 // HTTP/2 (decision 0121): -h2 with an https:// URL speaks HTTP/2 only
 // (ALPN h2): the workers' requests share one connection as streams, as
 // net/http's client multiplexes them, and loadgen exits when the server
-// answers with another protocol.
+// answers with another protocol. -h2det also writes each request's frames
+// at once (h2det.go), so a request costs the server the same from run to
+// run.
 package main
 
 import (
@@ -74,6 +76,8 @@ func main() {
 	resume := flag.Bool("resume", false, "with https: keep TLS sessions (a client session cache), so new connections resume")
 	gencert := flag.String("gencert", "", "write cert.pem and key.pem for 127.0.0.1 into this directory and exit")
 	h2 := flag.Bool("h2", false, "with https: HTTP/2 only (the workers' requests are streams of one connection)")
+	gap := flag.Duration("gap", 0, "-route mode: a pause before each request, so a server is idle (waiting to read) when it comes (callgrind.sh's h2)")
+	h2det := flag.Bool("h2det", false, "with -h2: write each request's frames in one TLS write (h2det.go; callgrind.sh's deterministic counts)")
 	flag.Parse()
 	if *gencert != "" {
 		if err := genCert(*gencert); err != nil {
@@ -102,6 +106,13 @@ func main() {
 		tr.Protocols = new(http.Protocols)
 		tr.Protocols.SetHTTP2(true)
 	}
+	if *h2det {
+		if !*h2 || !strings.HasPrefix(*base, "https://") {
+			fmt.Fprintln(os.Stderr, "loadgen: -h2det needs -h2 and an https:// URL")
+			os.Exit(2)
+		}
+		*base = h2Det(tr, *base)
+	}
 	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 	waitReady(client, *base)
 	if *h2 {
@@ -120,7 +131,7 @@ func main() {
 		}
 	}
 	if *route != "" {
-		os.Exit(runRoute(client, *base, *route, *n))
+		os.Exit(runRoute(client, *base, *route, *n, *gap))
 	}
 
 	var peak atomic.Int64
@@ -229,10 +240,13 @@ func main() {
 // cycle (one worker cycle of the load: POST, GET, PATCH, GET, DELETE, and
 // a list every eighth). Prints {"requests": count} and returns the exit
 // status.
-func runRoute(c *http.Client, base, route string, n int) int {
+func runRoute(c *http.Client, base, route string, n int, gap time.Duration) int {
 	reqs := 0
 	do := func(method, path, body string, want int) []byte {
 		reqs++
+		if gap > 0 {
+			time.Sleep(gap)
+		}
 		data, code, err := call(c, method, base+path, body)
 		if err != nil || code != want {
 			fmt.Fprintf(os.Stderr, "loadgen: %s %s: status %d, %v\n", method, path, code, err)

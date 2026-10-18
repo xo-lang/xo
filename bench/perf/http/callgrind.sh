@@ -17,7 +17,11 @@
 # thread. Scenarios (SCENARIOS): plain (HTTP/1.1, one keep-alive
 # connection), plain-newconn (a connection per request), tls (one
 # keep-alive TLS connection), tls-newconn (a full TLS handshake per
-# request), h2 (HTTP/2 over TLS, the requests streams of one connection).
+# request), h2 (HTTP/2 over TLS, the requests streams of one connection;
+# loadgen's -h2det writes each request's frames in one TLS record and -gap
+# pauses 20 ms before each request so the server is waiting when it comes:
+# without them its count varied 5% between repeats, as the client's
+# flushes and the server's read attempts raced, 2026-10-17).
 # REPS (2) repeats each measurement; N (100) cycles.
 #
 # Prints one line per measurement: `<scenario> <name> <instructions per
@@ -47,7 +51,7 @@ run() {
 	plain-newconn) flags="-newconn" ;;
 	tls) scheme=https ;;
 	tls-newconn) scheme=https; flags="-newconn" ;;
-	h2) scheme=https; flags="-h2" ;;
+	h2) scheme=https; flags="-h2 -h2det -gap 20ms" ;;
 	*) echo "callgrind.sh: unknown scenario $sc" >&2; exit 2 ;;
 	esac
 	cg="$out/cg.$port"
