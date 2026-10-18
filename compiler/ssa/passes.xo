@@ -447,6 +447,9 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       if !cse_op(x.op) || x.ty < 0 || m.heap(x.ty) {
         continue
       }
+      // one with a landing stays (its block branches on the landing);
+      // it may still be the twin a later one takes
+      let lands = x.pad >= 0
       var key = "${op_name(x.op)} ${x.ty}"
       match x.aux {
         None => {}
@@ -488,10 +491,10 @@ pub fn cse(var f: Func, m: Module) -> Bool {
           break
         }
       }
-      if hit >= 0 {
+      if hit >= 0 && !lands {
         repl[v] = hit
         dead[v] = true
-      } else {
+      } else if hit < 0 {
         var next = prev
         next.push(v)
         have[key] = next
