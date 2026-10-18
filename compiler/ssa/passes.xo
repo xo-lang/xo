@@ -419,6 +419,123 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
   true
 }
 
+/// Replaces a pure operation by an identical one that dominates it
+/// (Go's cse pass: arithmetic, a field or tag of a value, with
+/// a type that is not counted, so no retain or release pairs with it).
+/// An earlier twin that faulted (overflow) never let control reach the
+/// later one. False when nothing changed.
+pub fn cse(var f: Func, m: Module) -> Bool {
+  if f.blocks.is_empty() {
+    return false
+  }
+  let idom = dominators(f)
+  var seen: List[Bool] = []
+  for _ in 0..f.blocks.len() {
+    seen.push(false)
+  }
+  var post: List[Int] = []
+  dom_walk(f, 0, seen, post)
+  var have: Map[Str, List[Int]] = {}
+  var repl: Map[Int, Int] = {}
+  var dead: Map[Int, Bool] = {}
+  var i = post.len() - 1
+  while i >= 0 {
+    let b = post[i]
+    i -= 1
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if !cse_op(x.op) || x.ty < 0 || m.heap(x.ty) {
+        continue
+      }
+      var key = "${op_name(x.op)} ${x.ty}"
+      match x.aux {
+        None => {}
+        I(n) => key = "${key} #${n}"
+        P(t, fl) => key = "${key} #${t}.${fl}"
+        _ => continue
+      }
+      // a constant operand by its value: each use site has its own Const
+      var args: List[Str] = []
+      var ok = true
+      for a0 in x.args {
+        let a = find_repl(repl, a0)
+        let y = f.values[a]
+        if y.op == Op.Const {
+          match y.aux {
+            I(n) => args.push("k${y.ty}=${n}")
+            B(t) => args.push("k${y.ty}=${t}")
+            _ => ok = false
+          }
+        } else {
+          args.push("v${a}")
+        }
+      }
+      if !ok {
+        continue
+      }
+      if args.len() == 2 && cse_commutes(x.op) && args[1] < args[0] {
+        args = [args[1], args[0]]
+      }
+      for a in args {
+        key = "${key} ${a}"
+      }
+      let prev = have.get(key) ?? []
+      var hit = -1
+      for u in prev {
+        let ub = f.values[u].block
+        if ub == b || dominates(idom, ub, b) {
+          hit = u
+          break
+        }
+      }
+      if hit >= 0 {
+        repl[v] = hit
+        dead[v] = true
+      } else {
+        var next = prev
+        next.push(v)
+        have[key] = next
+      }
+    }
+  }
+  if repl.is_empty() {
+    return false
+  }
+  for bl in 0..f.blocks.len() {
+    var keep: List[Int] = []
+    for v in f.blocks[bl].instrs {
+      if dead.contains(v) {
+        continue
+      }
+      keep.push(v)
+      for k in 0..f.values[v].args.len() {
+        f.values[v].args[k] = find_repl(repl, f.values[v].args[k])
+      }
+      for se in f.values[v].succs {
+        for k in 0..f.edges[se].args.len() {
+          f.edges[se].args[k] = find_repl(repl, f.edges[se].args[k])
+        }
+      }
+    }
+    f.blocks[bl].instrs = keep
+  }
+  for k in 0..f.dbinds.len() {
+    f.dbinds[k].value = find_repl(repl, f.dbinds[k].value)
+  }
+  true
+}
+
+/// Whether cse may merge two operations of op (not compares: the
+/// emitter folds a compare used once into its branch's flags).
+fn cse_op(op: Op) -> Bool {
+  op is Op.Add | Op.Sub | Op.Mul | Op.Neg | Op.And | Op.Or | Op.Xor | Op.Not | Op.Shl | Op.Shr | Op.IntConv | Op.Field | Op.Tag
+}
+
+/// Whether op's two operands may be swapped.
+fn cse_commutes(op: Op) -> Bool {
+  op is Op.Add | Op.Mul | Op.And | Op.Or | Op.Xor
+}
+
 /// Keeps the blocks keep marks, in order, and renumbers them in the
 /// values, edges, and the function's block references.
 fn remove_blocks(var f: Func, keep: List[Bool]) {
