@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 	// the http-diff driver used its own directory before it moved into testDir
 	testtmp.Sweep("xo-http-diff-")
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	// each xotool.Build in a directory of its own, removed after it
+	// (gotchas/property-tests-fill-build-dir.md)
+	os.Setenv("XO_TEST_BUILD_SCRATCH", "1")
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
 	os.MkdirAll(filepath.Join(dir, "crash"), 0o755)
 	code := m.Run()

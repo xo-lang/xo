@@ -192,7 +192,12 @@ func Build(dirs []string, o Options) (*Result, error) {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	cmd.Env = TestJobsEnv(append(append(os.Environ(), "PWD="+wd), o.Env...))
+	env := append(append(os.Environ(), "PWD="+wd), o.Env...)
+	if bd := buildScratch(mode, o.Env); bd != "" {
+		defer os.RemoveAll(bd)
+		env = append(env, "XO_BUILD_DIR="+bd)
+	}
+	cmd.Env = TestJobsEnv(env)
 	var b bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &b, &b
 	err = cmd.Run()
@@ -240,6 +245,39 @@ func Build(dirs []string, o Options) (*Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// buildScratch is a fresh directory under the test package's
+// $XO_BUILD_DIR for one `xo build`, which Build removes after it: xo
+// never prunes a build directory base the user chose (compiler/xo
+// cache.xo build_dir), and each new program adds a directory of its
+// generated code and objects, so a package's runs grew without bound
+// (18 GB in 17 minutes of internal/gen's property tests, 11 GB of
+// internal/llvm's full suite; gotchas/property-tests-fill-build-dir.md).
+// The binary is at Out, outside it. Only in a package whose TestMain
+// sets XO_TEST_BUILD_SCRATCH=1 (internal/gen, internal/llvm,
+// internal/arm64: cmd/xo's tests read their build directories); ""
+// (xo's own build directory) otherwise, when the caller sets
+// XO_BUILD_DIR in env, the mode is not ModeBuild, or with
+// XO_TEST_KEEP_BUILD=1.
+func buildScratch(mode string, env []string) string {
+	base := os.Getenv("XO_BUILD_DIR")
+	if base == "" || os.Getenv("XO_TEST_BUILD_SCRATCH") != "1" || mode != ModeBuild || os.Getenv("XO_TEST_KEEP_BUILD") == "1" {
+		return ""
+	}
+	for _, e := range env {
+		if strings.HasPrefix(e, "XO_BUILD_DIR=") {
+			return ""
+		}
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return ""
+	}
+	d, err := os.MkdirTemp(base, "b-")
+	if err != nil {
+		return ""
+	}
+	return d
 }
 
 // Clang is the C compiler of the LLVM backend, as xo finds it: $XO_CLANG,

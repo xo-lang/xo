@@ -37,6 +37,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	// each xotool.Build in a directory of its own, removed after it
+	// (gotchas/property-tests-fill-build-dir.md)
+	os.Setenv("XO_TEST_BUILD_SCRATCH", "1")
 	os.Setenv("XO_CRASH_DIR", filepath.Join(dir, "crash"))
 	// `use go` bindings (decision 0041) go to a cache the tests share, not
 	// into testdata, kept across runs under a key of the xo binary

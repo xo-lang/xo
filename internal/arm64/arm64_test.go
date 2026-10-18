@@ -33,6 +33,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv("XO_BUILD_DIR", filepath.Join(dir, "build"))
+	// each xotool.Build in a directory of its own, removed after it
+	// (gotchas/property-tests-fill-build-dir.md)
+	os.Setenv("XO_TEST_BUILD_SCRATCH", "1")
 	code := m.Run()
 	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)
