@@ -3,7 +3,8 @@
 # runtime, HTTP, TLS, or the compiler, run from the checkout to gate
 # (Xo Lang 3's gates, 2026-10-18). Each step writes OUTDIR/STEP.log and a
 # line STEP=STATUS to OUTDIR/gate.log; a failed step does not stop the
-# others. Run it in a heavy slot (scripts/lead/heavy.sh NAME
+# others, but a failed build stops the gate: every later step would run
+# the bin/xo of an earlier build (gotchas/gate-stale-xo-after-failed-build.md). Run it in a heavy slot (scripts/lead/heavy.sh NAME
 # scripts/gate-http.sh OUTDIR).
 #
 # Steps (default: all, in this order):
@@ -49,7 +50,13 @@ run() {
 for s in $steps; do
 	case $s in
 	build)
-		if [ "$bootstrap_cli" = 1 ]; then run build go run ./scripts/xobuild; fi ;;
+		if [ "$bootstrap_cli" = 1 ]; then
+			run build go run ./scripts/xobuild
+			if ! tail -1 "$log" | grep -q '^build=0$'; then
+				echo "gate=stopped (the build failed; bin/xo is an earlier build's)" >> "$log"
+				exit 1
+			fi
+		fi ;;
 	short)
 		run short go test -short -count=1 $(go list ./... | grep -v /runs/) ;;
 	llvm)
