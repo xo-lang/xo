@@ -79,6 +79,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   prints each scenario's instructions a request and the functions that
   changed most (decision 0264 stage 1; cgcompare.py prints the same and
   stays as the cross-check until stage 2's build stamps land).
+- Which build an xo is: `xo version --json` (or `-v`): commit, dirty
+  diff hash, source key, the xo that built it (decision 0264). The bench
+  runners (bench/perf/run.sh, llvm/native.sh, conc/run.sh,
+  http/callgrind-docker.sh) refuse an xo whose source key is not the
+  checkout's (`go run ./scripts/xobuild --key`); XO_BENCH_ANY=1
+  overrides.
 - `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
   nistec.xo's field code, interprets the generated Xo against Python big
   integers and checks that a planted dropped carry is caught.
@@ -95,7 +101,6 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Coming
 
-- Build provenance stamps and bench scripts that refuse a stale xo
-  (0264 stage 2), `dbg` in pure and no-GC code (0265), vet hints for
+- `dbg` in pure and no-GC code (0265), vet hints for
   copy-modify-store (0266); std moving from rt.int_wrap to the Int word
   methods (0260 step 3, after seed 0.21.0).

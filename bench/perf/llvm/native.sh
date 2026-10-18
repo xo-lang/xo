@@ -13,6 +13,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 out=${PERF_OUT:-$(mktemp -d)}
 xo=${XO:-$root/.tools/bin/xo}
+# decision 0264: refuse an xo that is not this checkout's build
+. "$root/bench/perf/xocheck.sh" "$xo" "$root"
+echo "# $XO_STAMP" >&2
 works=${WORKLOADS:-fib sieve nbody sort interp collatz strings}
 (cd "$here/go" && go build -o "$out/llperf-go" .)
 for w in $works; do

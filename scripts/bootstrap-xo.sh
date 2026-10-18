@@ -103,6 +103,23 @@ if command -v go >/dev/null 2>&1; then
 fi
 say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang} --version 2>/dev/null | head -1); XO_RTPACK=$XO_RTPACK"
 
+# the build stamps (decision 0264, compiler/xo/provenance.xo): the
+# commit and a hash of the uncommitted changes, the same for every stage
+# so s2 and s3 can be identical; no source key (it needs Go)
+stamps=""
+if [ -f "$root/compiler/xo/provenance.xo" ]; then
+  commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
+  dirty=""
+  if [ -n "$commit" ] && [ -n "$(git -C "$root" diff HEAD 2>/dev/null | head -c 1)" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      dirty=$(git -C "$root" diff HEAD | sha256sum | cut -c1-12)
+    else
+      dirty=$(git -C "$root" diff HEAD | shasum -a 256 | cut -c1-12)
+    fi
+  fi
+  stamps="--stamp XO_COMMIT=$commit --stamp XO_DIRTY=$dirty --stamp XO_BUILT_BY=bootstrap-xo.sh"
+fi
+
 # stage N: binary $2 builds compiler/xo into $out/sN/xo (with the
 # assembly beside it unless N is 1)
 stage() {
@@ -120,7 +137,7 @@ stage() {
   strict=0
   [ "$n" -gt 1 ] && strict=1
   if XO_INLINE_STRICT=$strict XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
-    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm compiler/xo >> "$log" 2>&1; then
+    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm $stamps compiler/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else
     say "FAIL: stage s$n (see $log)"

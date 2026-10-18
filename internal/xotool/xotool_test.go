@@ -120,3 +120,35 @@ func TestChainHops(t *testing.T) {
 		}
 	}
 }
+
+// TestStampArgs: a build of this checkout's compiler/xo is stamped with
+// its commit, source key, and seed (decision 0264); a tree without
+// compiler/xo/provenance.xo (an older one, a chain hop) is not.
+func TestStampArgs(t *testing.T) {
+	root := repoRoot(t)
+	args := StampArgs(root, "/a/b/seeds/0.20.0/xo")
+	got := map[string]string{}
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] != "--stamp" {
+			t.Fatalf("args %q", args)
+		}
+		name, value, _ := strings.Cut(args[i+1], "=")
+		got[name] = value
+	}
+	key, err := Key(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["XO_SOURCE_KEY"] != key || got["XO_BUILT_BY"] != "seeds/0.20.0/xo" {
+		t.Errorf("stamps %v, want key %s", got, key)
+	}
+	if c := got["XO_COMMIT"]; c != "" && !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(c) {
+		t.Errorf("XO_COMMIT %q", c)
+	}
+	if d := got["XO_DIRTY"]; d != "" && len(d) != 12 {
+		t.Errorf("XO_DIRTY %q", d)
+	}
+	if a := StampArgs(t.TempDir(), "seed"); a != nil {
+		t.Errorf("a tree without provenance.xo: %q", a)
+	}
+}

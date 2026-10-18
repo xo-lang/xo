@@ -5,6 +5,7 @@
 //	go run ./scripts/xobuild                 # build bin/xo if its sources changed
 //	XO_SEED=/path/to/xo go run ./scripts/xobuild
 //	go run ./scripts/xobuild --from-source   # only the go-compiler-final root and the seed chain
+//	go run ./scripts/xobuild --key           # print the source key, build nothing
 //
 // The seed and the cache are internal/xotool's: $XO_SEED, the checkout's
 // earlier bin/xo, the newest earlier build, `xo` on PATH, the newest
@@ -27,12 +28,15 @@ import (
 )
 
 func main() {
+	keyOnly := false
 	for _, a := range os.Args[1:] {
 		switch a {
 		case "--from-source", "-from-source":
 			os.Setenv("XO_SEED_FALLBACK", "from-source")
+		case "--key", "-key":
+			keyOnly = true
 		default:
-			fmt.Fprintf(os.Stderr, "xobuild: unknown argument %q (usage: xobuild [--from-source])\n", a)
+			fmt.Fprintf(os.Stderr, "xobuild: unknown argument %q (usage: xobuild [--from-source] [--key])\n", a)
 			os.Exit(2)
 		}
 	}
@@ -40,6 +44,17 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "xobuild:", err)
 		os.Exit(1)
+	}
+	if keyOnly {
+		// the source key a build of this checkout has (decision 0264:
+		// the bench scripts compare it with `xo version --json`)
+		key, err := xotool.Key(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "xobuild:", err)
+			os.Exit(1)
+		}
+		fmt.Println(key)
+		return
 	}
 	bin, err := xotool.Ensure(root, os.Stderr)
 	if err != nil {

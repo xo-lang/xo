@@ -1365,6 +1365,18 @@ Last verified: 2026-10-07
   `TestPlantedTestCatches` in `bench/harness/test_harness.py`). Last
   verified: 2026-10-09.
 
+### Build stamps and the bench guard (decision 0264, 2026-10-18)
+
+Every xo built by internal/xotool (scripts/xobuild, the tests) or by
+scripts/bootstrap-xo.sh carries build stamps: `xo version --json` prints
+the commit, `dirty` and the diff hash, the source key (internal/xotool
+Key; `go run ./scripts/xobuild --key` prints the checkout's), and the xo
+that built it. A cached build is shared by every commit with the same
+sources, so it keeps the commit that first built it; compare keys, not
+commits. bench/perf/xocheck.sh, sourced by the bench runners, refuses an
+xo whose key is not the checkout's (or that has no stamp) unless
+XO_BENCH_ANY=1, and sets XO_INLINE_STRICT=1. Last verified: 2026-10-18.
+
 ### HTTP callgrind: short or full
 
 `bench/perf/http/callgrind-docker.sh XO OUT` (decision 0180's quiet

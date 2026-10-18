@@ -1,3 +1,6 @@
-usage: xo version
+usage: xo version [--json | -v]
 
-Print the toolchain version and the host target.
+Print the toolchain version and the host target. --json and -v add
+what the binary was built from: the commit, whether the tree had
+uncommitted changes (and a hash of them), the source key, and the xo
+that built it (decision 0264).

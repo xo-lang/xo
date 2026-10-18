@@ -23,6 +23,9 @@ out=${KEEP:-$(mktemp -d)}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 xo=${XO:-$root/.tools/bin/xo}
+# decision 0264: refuse an xo that is not this checkout's build
+. "$root/bench/perf/xocheck.sh" "$xo" "$root"
+echo "# $XO_STAMP" >&2
 workloads=${WORKLOADS:-spawn fanout pingpong mutex rwmutex pmap}
 cargo=${CARGO:-}
 if [ -z "$cargo" ]; then

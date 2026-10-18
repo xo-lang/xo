@@ -58,6 +58,10 @@ else
 fi
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 mkdir -p "$out/xo/bin" "$out/srv"
+# decision 0264: refuse a darwin xo that is not this checkout's build;
+# the stamp goes with the results
+. "$root/bench/perf/xocheck.sh" "$xo" "$root"
+echo "$XO_STAMP" > "$out/stamp.txt"
 stamp="$(git -C "$root" rev-parse HEAD) $arch"
 if ! git -C "$root" diff --quiet HEAD -- compiler std; then
 	stamp="$stamp dirty"

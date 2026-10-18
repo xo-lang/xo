@@ -86,6 +86,10 @@ fn main(os: Os) ! {
   if !args.is_empty() && servers.is_command(args[0]) {
     os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION))
   }
+  if let Some(code) = version_cmd(os, args) {
+    // the build stamps (decision 0264)
+    os.proc.exit(code)
+  }
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }

@@ -1,0 +1,44 @@
+// Build provenance (decision 0264): what this xo was built from, set by
+// `xo build --stamp` in internal/xotool (scripts/xobuild, the tests'
+// builds) and scripts/bootstrap-xo.sh; empty in an unstamped build. `xo
+// version --json` and `xo version -v` print them; `xo version` alone is
+// unchanged (scripts read its words by position: seed-pack.sh, seed-cut.sh).
+// The stamps are not inputs of the source key (internal/xotool Key), so
+// a cached build of the same sources keeps the commit that first built
+// it: XO_SOURCE_KEY, not XO_COMMIT, says whether an xo matches a checkout.
+
+use github.com/xo-lang/xo/compiler/cli/core
+
+/// The commit of the tree it was built from.
+const XO_COMMIT: Str = ""
+/// The first 12 hex digits of the SHA-256 of `git diff HEAD` when the
+/// tree had changes to tracked files, else "".
+const XO_DIRTY: Str = ""
+/// internal/xotool Key of the sources it was built from.
+const XO_SOURCE_KEY: Str = ""
+/// The xo that built it (a seed, an earlier build, or a bootstrap stage).
+const XO_BUILT_BY: Str = ""
+
+/// `xo version --json` and `xo version -v`; None for any other form,
+/// which compiler/cli/core answers.
+fn version_cmd(os: Os, args: List[Str]) -> Int? {
+  if args.len() != 2 || !(args[0] is "version" | "--version") || !(args[1] is "--json" | "-v") {
+    return None
+  }
+  let goos = host_os(os)
+  let arch = host_arch()
+  if args[1] == "--json" {
+    os.stdio.println("{\\"version\\":${json_str(core.VERSION)},\\"goos\\":${json_str(goos)},\\"goarch\\":${json_str(arch)},\\"commit\\":${json_str(XO_COMMIT)},\\"dirty\\":${!XO_DIRTY.is_empty()},\\"diff_hash\\":${json_str(XO_DIRTY)},\\"source_key\\":${json_str(XO_SOURCE_KEY)},\\"built_by\\":${json_str(XO_BUILT_BY)}}")
+    return Some(0)
+  }
+  os.stdio.println("xo ${core.VERSION} ${goos}/${arch}")
+  if XO_COMMIT.is_empty() {
+    os.stdio.println("no build stamp (an xo built without internal/xotool or the bootstrap)")
+    return Some(0)
+  }
+  let dirty = if XO_DIRTY.is_empty() { "" } else { ", dirty ${XO_DIRTY}" }
+  os.stdio.println("commit ${XO_COMMIT}${dirty}")
+  os.stdio.println("source key ${XO_SOURCE_KEY}")
+  os.stdio.println("built by ${XO_BUILT_BY}")
+  Some(0)
+}

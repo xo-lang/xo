@@ -676,7 +676,10 @@ func BuildXo(root, seed, out string) error {
 	backend, env := hostBackend()
 	tmp := fmt.Sprintf("%s.%d.tmp", out, os.Getpid())
 	defer os.Remove(tmp)
-	o, err := runIn(root, env, seed, "build", "--backend="+backend, "--std="+xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp), xoPath(filepath.Join(root, CompilerDir(root), "xo")))
+	args := []string{"build", "--backend=" + backend, "--std=" + xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp)}
+	args = append(args, StampArgs(root, seed)...)
+	args = append(args, xoPath(filepath.Join(root, CompilerDir(root), "xo")))
+	o, err := runIn(root, env, seed, args...)
 	if err != nil {
 		return fmt.Errorf("%v\n%s", err, lastLines(o, 20))
 	}
@@ -772,4 +775,53 @@ func TestJobsEnv(env []string) []string {
 		}
 	}
 	return append(env, "XO_TEST_JOBS="+TestJobs)
+}
+
+// StampArgs are the `--stamp` flags of a build of root's compiler/xo
+// (decision 0264, compiler/xo provenance.xo): the commit, a hash of the
+// uncommitted changes to tracked files ("" for none), the source key,
+// and the seed that builds it. None when root's compiler has no
+// provenance.xo (an older tree, a seed chain hop) or the key cannot be
+// computed; the commit and diff are "" outside git.
+func StampArgs(root, seed string) []string {
+	if !isFile(filepath.Join(root, CompilerDir(root), "xo", "provenance.xo")) {
+		return nil
+	}
+	key, err := Key(root)
+	if err != nil {
+		return nil
+	}
+	commit, dirty := gitState(root)
+	return []string{
+		"--stamp", "XO_COMMIT=" + commit,
+		"--stamp", "XO_DIRTY=" + dirty,
+		"--stamp", "XO_SOURCE_KEY=" + key,
+		"--stamp", "XO_BUILT_BY=" + shortPath(seed),
+	}
+}
+
+// gitState is root's HEAD commit and, when tracked files differ from it,
+// the first 12 hex digits of the SHA-256 of `git diff HEAD`.
+func gitState(root string) (string, string) {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", ""
+	}
+	commit := strings.TrimSpace(string(out))
+	diff, err := exec.Command("git", "-C", root, "diff", "HEAD").Output()
+	if err != nil || len(diff) == 0 {
+		return commit, ""
+	}
+	sum := sha256.Sum256(diff)
+	return commit, hex.EncodeToString(sum[:])[:12]
+}
+
+// shortPath is p's last three elements (a seed's
+// seeds/0.20.0-b84c5c56/darwin-arm64/..., a cache entry's key/xo).
+func shortPath(p string) string {
+	parts := strings.Split(filepath.ToSlash(p), "/")
+	if len(parts) > 3 {
+		parts = parts[len(parts)-3:]
+	}
+	return strings.Join(parts, "/")
 }

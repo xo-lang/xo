@@ -18,6 +18,9 @@ out=${PERF_OUT:-$(mktemp -d)}
 reps=${REPS:-5}
 mono=${MONO:-0}
 xo=${XO:-$root/.tools/bin/xo}
+# decision 0264: refuse an xo that is not this checkout's build
+. "$root/bench/perf/xocheck.sh" "$xo" "$root"
+echo "# $XO_STAMP" >&2
 nomono=""
 if [ "$mono" = 1 ] && "$xo" build --help 2>&1 | grep -q -- -no-mono; then
 	nomono=--no-mono
