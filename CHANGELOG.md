@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Plain HTTP/1.1 servers on the native backends: a request's header
+  fields are copied once (not the whole line first), the field lists
+  start with room for 8, and `to_upper`/`to_lower` of text already in
+  that case return it without a copy: 3.0% (arm64) and 3.7% (LLVM)
+  fewer instructions per request (bench/results/http-callgrind-2026-10-17.md).
+
 - TLS servers on the native backends no longer copy a connection's state
   at every read and write (rt.any_take moves it out of its holder and
   back): 19% fewer instructions per request on arm64 and 27% on LLVM for

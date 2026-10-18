@@ -206,7 +206,19 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
 /// strings.ToLower (lower) or strings.ToUpper.
 pub fn map_case(s: Str, lower: Bool) -> Str {
   let b = s.bytes()
-  case_append(rt.rs_with_cap(b.len()), b, 0, lower)
+  // ASCII already in the case: s itself, no copy (`req.method.to_upper()`
+  // of every HTTP request)
+  let lo = if lower { 65 } else { 97 }
+  let hi = if lower { 90 } else { 122 }
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c >= 0x80 || (c >= lo && c <= hi) {
+      return case_append(rt.rs_with_cap(b.len()), b, 0, lower)
+    }
+    i += 1
+  }
+  s
 }
 
 /// `a.to_lower() == b.to_lower()` without making the lowered strings:

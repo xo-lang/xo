@@ -55,3 +55,19 @@ Measured base 8084d588 against the branch, N=100, REPS=2, medians:
 | tls | 116,265 | 94,555 | -18.7% | 104,474 | 76,211 | -27.1% |
 | tls-newconn | 2,642,508 | 2,610,058 | -1.2% | 2,316,521 | 2,277,409 | -1.7% |
 | h2 | 183,847 | 159,750 | -13.1% | 159,896 | 129,775 | -18.8% |
+
+## Plain HTTP/1.1, the std side (2026-10-17)
+
+LLVM's plain profile at main 83201cc2: a quarter of the 31k instructions
+is the heap (53 allocations a request), then the head parse and the
+headers Map. parse_head copied each field line before copying its key and
+value out of it (3 allocations a field; the line copy is only needed when
+a continuation line joins it), the key and value lists grew at the fifth
+field, and `req.method.to_upper()` copied "GET" on every request
+(unicode.map_case always allocated). Fixed in std (http1.xo, unicode.xo):
+47.6 allocations a request. Base 83201cc2 against the branch, N=100,
+REPS=3, medians:
+
+| Scenario | arm64 base | arm64 new | change | LLVM base | LLVM new | change |
+|---|---|---|---|---|---|---|
+| plain | 35,003 | 33,940 | -3.0% | 30,844 | 29,688 | -3.7% |

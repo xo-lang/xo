@@ -645,8 +645,9 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
   let query = if url.rawquery.is_empty() { [] } else { query_parts(url.rawquery) }
   // the header: lines up to an empty one
   var i = next0
-  var keys: List[Str] = []
-  var vals: List[Str] = []
+  // room for a usual request's fields: no growth (a copy) at the fifth
+  var keys: List[Str] = List.with_capacity(8)
+  var vals: List[Str] = List.with_capacity(8)
   if i < n && is_sp(Int(b[i])) {
     // malformed MIME header initial line (needs the line to say so)
     let (f2, _, _) = line_at(s, b, i, n, eof)
@@ -675,9 +676,12 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if find(s, 58, i, e) < 0 {
       return fail(BAD)
     }
-    // trim (spaces and tabs) and join continuation lines
+    // trim (spaces and tabs) and join continuation lines; the field is
+    // read from s itself unless a continuation line joins it (cont), so
+    // its key and value are the only copies
     let (a, z) = trim_sp(b, i, e)
-    var cont = rawb.str_slice(s, a, z)
+    var cont = ""
+    var joined = false
     i = nx
     while true {
       if i >= n {
@@ -697,6 +701,10 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
       if c >= n && !eof {
         return need(n)
       }
+      if !joined {
+        cont = rawb.str_slice(s, a, z)
+        joined = true
+      }
       cont = rt.rs_push_byte(cont, 32)
       let (f3, e3, nx3) = line_at(s, b, c, n, eof)
       if !f3 {
@@ -711,14 +719,17 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
       cont = rt.rs_append_bytes(cont, b, a3, z3, 0)
       i = nx3
     }
-    // key: up to the first colon; token bytes, or spaces (kept as is)
-    let cb = cont.bytes()
-    let cn = cb.len()
-    let colon = scan.find(cont, ":", 0)
-    if colon <= 0 {
+    // key: up to the first colon; token bytes, or spaces (kept as is);
+    // the field is src's bytes p0 to cn
+    let src = if joined { cont } else { s }
+    let p0 = if joined { 0 } else { a }
+    let cn = if joined { cont.len() } else { z }
+    let cb = src.bytes()
+    let colon = scan.find(src, ":", p0)
+    if colon <= p0 || colon >= cn {
       return fail(BAD)
     }
-    var x = 0
+    var x = p0
     while x < colon {
       let ch = Int(cb[x])
       if (cls(ch) & TCHAR) == 0 && ch != 32 {
@@ -740,8 +751,8 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if keys.len() == MAX_FIELDS {
       return fail(TOO_LARGE)
     }
-    keys.push(canonical_key(rawb.str_slice(cont, 0, colon)))
-    vals.push(rawb.str_slice(cont, v0, cn))
+    keys.push(canonical_key(rawb.str_slice(src, p0, colon)))
+    vals.push(rawb.str_slice(src, v0, cn))
   }
   if i > MAX_HEAD {
     return fail(TOO_LARGE)

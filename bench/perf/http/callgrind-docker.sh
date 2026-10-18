@@ -35,11 +35,19 @@ apt-get update > /dev/null 2>&1
 apt-get install -y --no-install-recommends valgrind > /dev/null 2>&1
 servers=""
 for b in $backends; do
-	(cd /work/srv && XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1)
+	if ! (cd /work/srv && XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1); then
+		echo "callgrind-docker.sh: the \$b server did not build:" >&2
+		tail -5 /work/build-\$b.log >&2
+		exit 1
+	fi
 	servers="\$servers \$b=/work/srv-\$b"
 done
 valgrind --version
 N=${N:-100} REPS=${REPS:-2} SCENARIOS="${SCENARIOS:-plain plain-newconn tls tls-newconn h2}" sh /work/callgrind.sh /work/run /work/loadgen \$servers
 INSIDE
 chmod +x "$out/inside.sh"
-XO_DOCKER_ROOT=1 "$root/scripts/docker-linux.sh" arm64 "$out" -- ./inside.sh | tee "$out/results.txt"
+# not through a pipe: its status is the container's
+st=0
+XO_DOCKER_ROOT=1 "$root/scripts/docker-linux.sh" arm64 "$out" -- ./inside.sh > "$out/results.txt" || st=$?
+cat "$out/results.txt"
+exit $st
