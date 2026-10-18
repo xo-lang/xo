@@ -2754,7 +2754,14 @@ call and its result, plus scheduler decisions.
   and none is queued, with the fault's first line only (no location or list
   of blocked tasks yet).
 - `dbg(expr)` prints the expression source and its `Debug` value, returns the
-  value, and is rejected by `xo build --ci`.
+  value, and is rejected by `xo build --ci` (decision 0265). It prints one
+  line on standard error, `[file.xo:LINE:COL] expr = value`, on every
+  backend, `--no-gc` included. It needs no capability: it is the one output
+  a function may produce without `Stdio`, and it is not part of a
+  function's effects, so adding one changes no signature. `xo build
+  --release` compiles `dbg(expr)` to `expr` (the value is computed, nothing
+  prints); `xo run` and `xo test` keep it. `xo vet` warns (XO0901), and
+  real-time functions reject it (XO1405) because its write blocks.
 
 ### 11.5 Debugger protocol
 

@@ -1658,6 +1658,17 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       b.dead()
       return b.undef(nt)
     }
+    if fname == "dbg" && args.len() == 1 {
+      // `[file:line:col] source = Debug text` on stderr, the value
+      // returned; a release build computes only the value (decision 0265)
+      let a = args[0].value
+      let v = b.value_as(a, nt)
+      if !b.release {
+        let head = b.const_str("[${b.pos(span)}] ${b.source_text(b.s.file, parser.expr_span(a))} = ")
+        b.eprintln_rt(b.append_debug(head, v, b.check_type(a)))
+      }
+      return v
+    }
     b.unsupported("the prelude function `${fname}`")
     return b.undef(nt)
   }

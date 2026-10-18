@@ -1,0 +1,38 @@
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Shape {
+  Dot
+  Circle(r: Int)
+  Rect(a: Point, b: Point)
+}
+
+// a pure function: dbg needs no capability and returns its value
+fn area(s: Shape) -> Int {
+  match dbg(s) {
+    Shape.Dot => 0
+    Shape.Circle(r) => dbg(3 * r * r)
+    Shape.Rect(a, b) => (b.x - a.x) * (b.y - a.y)
+  }
+}
+
+fn main(os: Os) {
+  let p = Point{x: 1, y: -2}
+  dbg(p)
+  let n = dbg(p.x + 41)
+  let s = dbg("tab\there \"q\"")
+  let xs = dbg([1, 2, 3])
+  let o: Int? = dbg(xs.first())
+  let none: Str? = None
+  dbg(none)
+  let m: Map[Str, Int] = {"a": 1}
+  dbg(m)
+  dbg((n, true, 2.5))
+  var total = 0
+  for sh in [Shape.Dot, Shape.Circle(r: 2), Shape.Rect(a: p, b: Point{x: 4, y: 3})] {
+    total += area(sh)
+  }
+  os.stdio.println("${n} ${s.len()} ${xs.len()} ${o ?? 0} ${total}")
+}

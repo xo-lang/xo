@@ -1,7 +1,7 @@
 # 0266: point copy-modify-store at Map.update (no new API)
 
-Status: Proposed (Xo Lang 2, 2026-10-18, from the owner's language survey
-through the lead; for owner review)
+Status: Accepted (owner, 2026-10-18; proposed by Xo Lang 2 from the
+owner's language survey through the lead)
 
 ## Context
 

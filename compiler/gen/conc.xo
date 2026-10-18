@@ -36,6 +36,10 @@ fn (var g: Gen) special_std(x: Expr, ci: check.CallInfo) -> (Str, Int, Bool) {
   if o.recv < 0 && g.oprelude(fo) && name == "dbg" {
     let a = args[0].value
     let v = g.val(a)
+    if g.opts.release && !g.opts.test_mode {
+      // a release build computes only the value (decision 0265)
+      return (v, CK_VALUE, true)
+    }
     return ("${r}Dbg(tk, ${v}, ${g.source(parser.expr_span(a)).quote()}, ${g.loc(span).quote()})", CK_CALL, true)
   }
   let spawn = g.is_std_method(fo, "prelude", "Scope", "spawn") || g.is_std_method(fo, "prelude", "Scope", "spawn_background")

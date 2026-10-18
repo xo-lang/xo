@@ -876,8 +876,9 @@ fn (var c: Checker) expr_stmt(x: Expr) {
     if !n.is_empty() {
       what = "`${n}(...)`"
     }
-    // `.ignore_err("reason")` is how a Result is discarded (core 2.6)
-    if n == "ignore_err" || n.ends_with(".ignore_err") {
+    // `.ignore_err("reason")` is how a Result is discarded (core 2.6);
+    // `dbg(x)` prints, its value returned for use in expressions (core 11.4)
+    if n == "ignore_err" || n.ends_with(".ignore_err") || n == "dbg" {
       return
     }
     for a in args {

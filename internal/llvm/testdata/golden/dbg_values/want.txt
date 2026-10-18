@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+42 12 3 1 27
+--- stderr
+[main.xo:23:3] p = Point{x: 1, y: -2}
+[main.xo:24:11] p.x + 41 = 42
+[main.xo:25:11] "tab\there \"q\"" = "tab\there \"q\""
+[main.xo:26:12] [1, 2, 3] = [1, 2, 3]
+[main.xo:27:17] xs.first() = Some(1)
+[main.xo:29:3] none = None
+[main.xo:31:3] m = {"a": 1}
+[main.xo:32:3] (n, true, 2.5) = (42, true, 2.5)
+[main.xo:14:9] s = Dot
+[main.xo:14:9] s = Circle(r: 2)
+[main.xo:16:24] 3 * r * r = 12
+[main.xo:14:9] s = Rect(a: Point{x: 1, y: -2}, b: Point{x: 4, y: 3})

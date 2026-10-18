@@ -42,12 +42,30 @@ func TestBuildRunLLVM(t *testing.T) {
 	if code != 70 || out.String() != "42\n" || !strings.Contains(errOut.String(), "fault: integer overflow: 9223372036854775807 * 2 does not fit Int at main.xo:1:28") {
 		t.Fatalf("run: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
-	// constructs outside the subset are build errors naming them
+	// dbg prints its line on stderr and returns the value (decision 0265);
+	// a release build only computes the value
 	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn head(xs: List[Int]) -> Int {\n  dbg(xs.len())\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:3: error XO1201: not available without a garbage collector (`--no-gc`) yet: the prelude function `dbg` (support is planned)") {
+	if code := run(t, []string{"run", "--backend=llvm", src}, &out, &errOut); code != 0 || out.String() != "1\n" || errOut.String() != "[main.xo:2:3] xs.len() = 1\n" {
+		t.Fatalf("dbg: exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"build", "--backend=llvm", "--release", "-o", bin, src}, &out, &errOut); code != 0 {
+		t.Fatalf("dbg --release: exit %d stderr %s", code, errOut.String())
+	}
+	if res, err := command(t, bin).CombinedOutput(); err != nil || string(res) != "1\n" {
+		t.Fatalf("dbg --release: %v %q", err, res)
+	}
+	// constructs outside the subset are build errors naming them
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn main(os: Os) {\n  let m: Map[Set[Int], Int] = {}\n  os.stdio.println(\"${m.len()}\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available without a garbage collector (`--no-gc`) yet: a Map key or Set element that holds a Map or Set (support is planned)") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 	// the deterministic scheduler is the Go backend's (decision 0068)
@@ -87,7 +105,7 @@ func TestNoGC(t *testing.T) {
 	if code := run(t, []string{"run", "--no-gc", src}, &out, &errOut); code != 0 || out.String() != "3\n" {
 		t.Fatalf("run --no-gc: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
-	write("fn head(xs: List[Int]) -> Int {\n  dbg(xs.len())\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${head([3])}\")\n}\n")
+	write("fn main(os: Os) {\n  let m: Map[Set[Int], Int] = {}\n  os.stdio.println(\"${m.len()}\")\n}\n")
 	out.Reset()
 	errOut.Reset()
 	if code := run(t, []string{"build", "--no-gc", "--json", src}, &out, &errOut); code != 1 {
@@ -104,7 +122,7 @@ func TestNoGC(t *testing.T) {
 		t.Fatalf("want one diagnostic: %s", out.String())
 	}
 	d := got.Diagnostics[0]
-	if d.Code != "XO1201" || d.Span.Line != 2 || d.Span.Col != 3 || !strings.Contains(d.Message, "`dbg`") || !strings.Contains(d.Message, "planned") {
+	if d.Code != "XO1201" || d.Span.Line != 2 || d.Span.Col != 31 || !strings.Contains(d.Message, "Map key or Set element") || !strings.Contains(d.Message, "planned") {
 		t.Errorf("diagnostic: %+v", d)
 	}
 	out.Reset()

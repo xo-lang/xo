@@ -1,7 +1,7 @@
 # 0265: dbg on every backend, compiled out of release builds
 
-Status: Proposed (Xo Lang 2, 2026-10-18, from the owner's language survey
-through the lead; for owner review)
+Status: Accepted (owner, 2026-10-18; proposed by Xo Lang 2 from the
+owner's language survey through the lead)
 
 ## Context
 
@@ -30,7 +30,8 @@ and only `--ci` (a separate gate) refuses it.
    generated code per type, with no heap beyond the line it builds and
    frees. Until a type's printer exists natively, its fields print as
    `<TypeName>` instead of XO1201, so dbg never blocks a build.
-2. Output: one line on standard error, `[file.xo:LINE] expr = value`,
+2. Output: one line on standard error, `[file.xo:LINE:COL] expr = value`
+   (the Go backend's format since core 11.4 first had dbg),
    written with a single write so concurrent tasks do not interleave
    within a line. Standard error is the only channel: no capability, no
    configuration.

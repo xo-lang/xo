@@ -363,6 +363,7 @@ test "a discarded result of a call that only computes it is XO0209 (decision 025
       xs.push(4)
       a.add(1)
       g(1)
+      dbg(xs.len())
       xs
     }
     """)])?
