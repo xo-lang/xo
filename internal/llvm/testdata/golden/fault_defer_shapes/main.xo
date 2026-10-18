@@ -1,0 +1,147 @@
+// A fault in a call whose value a pattern binds inside deferred code
+// (decision 0085): `let`, `for` over a list, Bytes, a Map, a channel. The
+// deferred code registered before it still runs, then the blocks around
+// it. Before 2026-10-17 the call's landing was dropped on LLVM and arm64
+// when the pattern's fail block came next, and the fault skipped the
+// rest (gotchas/native-deferred-block-fault-skips-defers.md).
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: fault ${info.msg}")
+    Err(_) => stdio.println("${label}: failed")
+  }
+}
+
+fn boom(label: Str) -> Int {
+  let parts = [label, "boom"]
+  if parts.len() > 1 {
+    fault("${label} faulted")
+  }
+  0
+}
+
+fn boom_at(label: Str, i: Int, at: Int) -> Int {
+  if i == at {
+    return boom(label)
+  }
+  i
+}
+
+// a let in a deferred block, the body done
+fn let_block(io: Stdio) -> Int uses stdio {
+  defer io.println("  1: first defer runs")
+  defer {
+    let y = boom("let block")
+    io.println("  1: not reached ${y}")
+  }
+  io.println("  1: body done")
+  1
+}
+
+// deferred blocks nested in deferred blocks
+fn nested_blocks(io: Stdio) -> Int uses stdio {
+  defer io.println("  2: outer first defer runs")
+  defer {
+    defer io.println("  2: inner first defer runs")
+    defer {
+      let y = boom("inner block")
+      io.println("  2: not reached ${y}")
+    }
+    io.println("  2: outer block body")
+  }
+  2
+}
+
+// a deferred block in each iteration of a loop: the second faults
+fn in_loop(io: Stdio) -> Int uses stdio {
+  defer io.println("  3: function defer runs")
+  var n = 0
+  for i in 0..3 {
+    defer io.println("  3: iteration ${i} first defer runs")
+    defer {
+      let y = boom_at("loop", i, 1)
+      io.println("  3: iteration ${i} defer got ${y}")
+    }
+    n += i
+  }
+  n
+}
+
+// for over a list inside a deferred block
+fn for_list(io: Stdio) -> Int uses stdio {
+  defer io.println("  4: first defer runs")
+  defer {
+    for x in [10, 20, 30] {
+      let y = boom_at("list", x, 20)
+      io.println("  4: element ${y}")
+    }
+  }
+  4
+}
+
+// for over Bytes inside a deferred block
+fn for_bytes(io: Stdio) -> Int uses stdio {
+  defer io.println("  5: first defer runs")
+  defer {
+    for c in b"abc" {
+      let y = boom_at("bytes", Int(c), 98)
+      io.println("  5: byte ${y}")
+    }
+  }
+  5
+}
+
+// for over a Map inside a deferred block
+fn for_map(io: Stdio) -> Int uses stdio {
+  var m: Map[Str, Int] = {}
+  m["a"] = 1
+  m["b"] = 2
+  defer io.println("  6: first defer runs")
+  defer {
+    for (k, v) in m {
+      let y = boom_at("map ${k}", v, 2)
+      io.println("  6: entry ${k} ${y}")
+    }
+  }
+  6
+}
+
+// for over a channel inside a deferred block
+fn for_chan(io: Stdio) -> Int uses stdio {
+  let ch: Chan[Int] = Chan.new(4)
+  ch.send(1)
+  ch.send(2)
+  ch.close()
+  defer io.println("  7: first defer runs")
+  defer {
+    for v in ch {
+      let y = boom_at("chan", v, 2)
+      io.println("  7: received ${y}")
+    }
+  }
+  7
+}
+
+// the body faults, then a let in a deferred block faults again
+fn body_then_block(io: Stdio) -> Int uses stdio {
+  defer io.println("  8: first defer runs")
+  defer {
+    let y = boom("second")
+    io.println("  8: not reached ${y}")
+  }
+  boom("body")
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  show(io, "1", task.isolate(fn() -> Int ! () { let_block(io) }))
+  show(io, "2", task.isolate(fn() -> Int ! () { nested_blocks(io) }))
+  show(io, "3", task.isolate(fn() -> Int ! () { in_loop(io) }))
+  show(io, "4", task.isolate(fn() -> Int ! () { for_list(io) }))
+  show(io, "5", task.isolate(fn() -> Int ! () { for_bytes(io) }))
+  show(io, "6", task.isolate(fn() -> Int ! () { for_map(io) }))
+  show(io, "7", task.isolate(fn() -> Int ! () { for_chan(io) }))
+  show(io, "8", task.isolate(fn() -> Int ! () { body_then_block(io) }))
+}

@@ -1,0 +1,29 @@
+exit 0
+--- stdout
+  1: body done
+  1: first defer runs
+1: fault let block faulted
+  2: outer block body
+  2: inner first defer runs
+  2: outer first defer runs
+2: fault inner block faulted
+  3: iteration 0 defer got 0
+  3: iteration 0 first defer runs
+  3: iteration 1 first defer runs
+  3: function defer runs
+3: fault loop faulted
+  4: element 10
+  4: first defer runs
+4: fault list faulted
+  5: byte 97
+  5: first defer runs
+5: fault bytes faulted
+  6: entry a 1
+  6: first defer runs
+6: fault map b faulted
+  7: received 1
+  7: first defer runs
+7: fault chan faulted
+  8: first defer runs
+8: fault second faulted
+--- stderr

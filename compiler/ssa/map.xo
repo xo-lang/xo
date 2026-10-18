@@ -822,11 +822,7 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   }
   let fail = b.new_block()
   b.pattern(elem, p, fail)
-  let cont = b.s.cur
-  b.s.cur = fail
-  b.seal(fail)
-  b.add(Op.Unreachable, -1, Aux.None, [])
-  b.s.cur = cont
+  b.end_fail(fail)
   b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()

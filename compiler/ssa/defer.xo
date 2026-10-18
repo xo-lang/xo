@@ -24,6 +24,13 @@ struct DFrame {
   outer: List[Int] = []
   has_outer: Bool = false
   cont: Map[Int, Int] = {}
+  /// The deferred statement whose code this block's deferred code runs
+  /// inside (zero or one element; a block of deferred code is a frame of
+  /// its own each time that code is lowered), and the blocks open then:
+  /// after a fault, once this block's deferred code has run, the
+  /// statement's fault continues (fault_cont at 0).
+  up: List[DLand] = []
+  up_at: List[Int] = []
 }
 
 /// The top level deferred statement being lowered (deferLanding): where a
@@ -35,6 +42,9 @@ struct DLand {
   tok: Int
   /// The number of open blocks when it began.
   base: Int
+  /// The shield level of its code: 1 at the top, one more for deferred
+  /// code of a block inside it (defer_landing_here).
+  lvl: Int = 1
 }
 
 /// Registers deferred code in the innermost open block (deferStmt).
@@ -86,14 +96,23 @@ fn (var b: Builder) snapshot() -> List[Int] {
 /// shielded (runDefers).
 fn (var b: Builder) run_defers(fr: Int) {
   let top = b.s.shield == 0
-  if top && !b.s.frames[fr].has_outer {
+  // deferred code of a block inside deferred code that fault_cont
+  // handles: its faults continue too, then the enclosing statement's
+  // (before 2026-10-17 they went past it,
+  // gotchas/native-deferred-block-fault-skips-defers.md)
+  let nested = !top && b.defer_landing_here()
+  if (top || nested) && !b.s.frames[fr].has_outer {
     let o = b.snapshot()
     b.s.frames[fr].outer = o
     b.s.frames[fr].has_outer = true
   }
+  if nested && b.s.frames[fr].up.is_empty() {
+    b.s.frames[fr].up = [b.s.defer_land[0]]
+    b.s.frames[fr].up_at = b.s.exits
+  }
   var i = b.s.frames[fr].stmts.len() - 1
   while i >= 0 && !b.is_dead() {
-    b.run_defer(fr, i, top)
+    b.run_defer(fr, i, top || nested)
     i -= 1
   }
 }
@@ -113,7 +132,7 @@ fn (var b: Builder) run_defer(fr: Int, i: Int, top: Bool) {
   let land = b.s.defer_land
   b.s.defer_land = []
   if top {
-    b.s.defer_land = [DLand{fr: fr, j: i, tok: tok, base: b.s.exits.len()}]
+    b.s.defer_land = [DLand{fr: fr, j: i, tok: tok, base: b.s.exits.len(), lvl: b.s.shield + 1}]
   }
   b.s.shield += 1
   b.stmt(d.body)
@@ -129,7 +148,7 @@ fn (var b: Builder) run_defer(fr: Int, i: Int, top: Bool) {
 /// fault_cont handles: not nested in other deferred code, and no scope
 /// opened inside it (deferLandingHere).
 fn (var b: Builder) defer_landing_here() -> Bool {
-  if b.s.defer_land.is_empty() || b.s.shield != 1 {
+  if b.s.defer_land.is_empty() || b.s.shield != b.s.defer_land[0].lvl {
     return false
   }
   let base = b.s.defer_land[0].base
@@ -187,6 +206,31 @@ fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
     b.run_defer(fr, j - 1, true)
     if !b.is_dead() {
       let next = b.fault_cont(fr, j - 1)
+      b.jump(next, [])
+    }
+  } else if !b.s.frames[fr].up.is_empty() {
+    // a block of deferred code: the blocks around it inside the
+    // enclosing deferred statement run their deferred code, innermost
+    // first, then that statement's fault continues (flush_landing's way)
+    let u = b.s.frames[fr].up[0]
+    let ua = b.s.frames[fr].up_at
+    // at the statement's level, with its landing: their faults continue
+    // the statement too (nested), not past it
+    b.s.shield = u.lvl
+    b.s.defer_land = [u]
+    var i = ua.len() - 1
+    while i >= u.base && !b.is_dead() {
+      b.s.exits = ua[0..i]
+      b.run_defers(ua[i])
+      i -= 1
+    }
+    b.s.shield = 0
+    b.s.defer_land = []
+    if !b.is_dead() {
+      if u.tok >= 0 {
+        b.rt("shield_abort", -1, [u.tok])
+      }
+      let next = b.fault_cont(u.fr, u.j)
       b.jump(next, [])
     }
   } else {
@@ -348,9 +392,11 @@ fn (var b: Builder) flush_landing() {
     // runs (fault_cont)
     let d = dl[0]
     let land = b.s.defer_land
-    b.s.defer_land = []
     // the blocks opened inside the statement run their deferred code
-    // first, innermost first
+    // first, innermost first; a fault in it continues the statement's
+    // too (run_defers sees the statement's landing: nested), where it
+    // went past it with no landing before 2026-10-17
+    b.s.defer_land = dl
     var i = at.len() - 1
     while i >= d.base && !b.is_dead() {
       b.s.exits = at[0..i]

@@ -1,0 +1,30 @@
+exit 0
+--- stdout
+  1: third defer runs
+  1: second defer starts 1
+  1: first defer runs (2)
+1: fault second defer faulted at main.xo:27:5
+  2: body done
+  2: third defer runs
+  2: first defer runs (1)
+2: fault defer on normal exit faulted at main.xo:27:5
+  3: inner first defer runs (1)
+  3: outer defer runs
+3: fault inner defer faulted at main.xo:27:5
+  4: body done
+  4: first defer runs
+4: fault first of two faulted at main.xo:27:5
+  5: callee body
+  5: caller defer runs (1)
+5: fault callee defer faulted at main.xo:27:5
+  6: earlier defer runs
+6: fault index 3 out of range for List of length 3 at main.xo:98:14
+  7: inner defer of the deferred block runs
+  7: outer defer runs
+7: fault nested faulted at main.xo:27:5
+  8: earlier defer runs
+  8 caught: fault 8 defer faulted at main.xo:27:5
+8: fault 8 sibling at main.xo:151:11
+  9: first defer of the canceled task runs
+9: fault canceled task defer faulted at main.xo:27:5
+--- stderr

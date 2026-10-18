@@ -40,6 +40,24 @@ fn (var b: Builder) block(bl: parser.Block) -> Int {
   last
 }
 
+/// Ends the fail block of an irrefutable pattern (one no value reaches)
+/// with unreachable and goes on where the pattern left off. The landing
+/// of an operation still pending (the value's call, in deferred code
+/// where check_then leaves it to flush_landing) is placed first, in the
+/// block of the operation: placed from the fail block it was dropped, so
+/// `defer { let y = f() }` sent a fault in f past the remaining deferred
+/// code (gotchas/native-deferred-block-fault-skips-defers.md).
+fn (var b: Builder) end_fail(fail: Int) {
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
+  let cont = b.s.cur
+  b.s.cur = fail
+  b.seal(fail)
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = cont
+}
+
 fn (var b: Builder) stmt(st: Stmt) {
   // the statement's line for the values it makes (decision 0239)
   let saved = b.s.line
@@ -67,11 +85,7 @@ fn (var b: Builder) stmt_body(st: Stmt) {
       let v = b.value(value)
       let fail = b.new_block()
       b.pattern(v, p, fail)
-      let cont = b.s.cur
-      b.s.cur = fail
-      b.seal(fail)
-      b.add(Op.Unreachable, -1, Aux.None, [])
-      b.s.cur = cont
+      b.end_fail(fail)
     }
     VarStmt(name: name, value: value, ..) => {
       let vo = b.c.var_of(b.s.file, name)
@@ -288,11 +302,7 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   }
   let fail = b.new_block()
   b.pattern(elem, p, fail)
-  let cont = b.s.cur
-  b.s.cur = fail
-  b.seal(fail)
-  b.add(Op.Unreachable, -1, Aux.None, [])
-  b.s.cur = cont
+  b.end_fail(fail)
   b.s.loops.push(LoopCtx{label: name, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)
   b.s.loops.pop()
