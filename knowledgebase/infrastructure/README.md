@@ -7,3 +7,4 @@
 - [playground.md](playground.md): the browser playground at xolang.dev/play: `cmd/xoplay`, `build.Generate`, the `xo_playground` tag, `scripts/build-playground.py`, the workers, sizes, and how it was verified.
 - [lead-session.md](lead-session.md): the lead session's resume point (2026-10-14): main, branches in flight, next steps; tools in scripts/lead.
 - [ci.md](ci.md): on demand CI (decision 0225): running `gh workflow run ci.yml`, the suites of scripts/ci/suite.sh, how the autostart, registration, and idle stop work, the runners, the AWS and GitHub App inventory, operations (add or remove runners, debugging, key rotation), measurements, and cost.
+- [agent-tools.md](agent-tools.md): one index of the tools built for agents (lookups, triage, tests, measuring, coordination) and when to use each

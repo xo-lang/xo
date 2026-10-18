@@ -18,6 +18,10 @@ implementation the language started with was deleted (decision 0215).
 
 ## Where things live
 
+- [`knowledgebase/infrastructure/agent-tools.md`](knowledgebase/infrastructure/agent-tools.md):
+  every agent tool (lookups, miscompile triage, std tests, measuring,
+  push queue and board) and when to use it; read it at the start of a
+  session.
 - Finding Xo code (decision 0261): use `xo def NAME` (`Type.method` or a
   bare name), `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`
   (a type's methods), and `xo symbols [--all]`, with `--dir=DIR` and
