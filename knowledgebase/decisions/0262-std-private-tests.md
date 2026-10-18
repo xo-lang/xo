@@ -54,6 +54,21 @@ That costs every time a std function needs checking on its own
    2, dev/codegen 2, dev/compare 5, dev/errorcheck 2, dev/goldens 2,
    dev/key 1) move to `_test.xo` files beside them.
 
+## Implementation (Xo Lang 3, 2026-10-18)
+
+- The flag is `--std-module=MODULE`, not `--std MODULE`: `--std=DIR`
+  already names the std directory for every command. MODULE is as `use`
+  names it below std (`json`, `native/http`, `native/llrt/scan`); the
+  checker's `std_test` field holds its module path (`std/json` for a
+  plain name).
+- The test file of a single-file std module is `NAME_test.xo` beside
+  `NAME.xo` (a runtime module loaded from its C path, `NAME_c.xo`, uses
+  the same test file). The module under test is the run's only root
+  module and is checked in full even in a lazy native check (decision
+  0247 leaves the other runtime bodies to the build).
+- internal/stdtest walks std/ (not std/rt or testdata) for `_test.xo`
+  files and runs each module on the tier's backends.
+
 ## Consequences
 
 - Model tests and edge-case tests of std live next to the code; goldens
