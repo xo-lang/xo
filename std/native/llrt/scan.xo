@@ -412,6 +412,29 @@ pub fn span(b: Bytes, from: Int, cls: Int) -> Int {
   i
 }
 
+/// The index of the first control byte (below 0x20, or 0x7F) of b from
+/// `from` to `to` (to <= b.len()), or to: eight bytes a step, the first
+/// match exact (a borrow can only mark bytes after it).
+pub fn ctl_at(b: Bytes, from: Int, to: Int) -> Int {
+  var i = from
+  while to - i >= 8 {
+    let w = rt.bytes_word(b, i)
+    let m = (subw(w, SPACES) & (w ^ -1) & HIGHS) | eq8(w, LOW7S)
+    if m != 0 {
+      return i + (rt.ctz(m) >> 3)
+    }
+    i += 8
+  }
+  while i < to {
+    let c = Int(b[i])
+    if c < 0x20 || c == 0x7F {
+      return i
+    }
+    i += 1
+  }
+  to
+}
+
 /// Bit 4k set when byte i + k of b is c, for the bytes from i to n =
 /// b.len() (fewer than 16, i < n): the last step of split and lines.
 fn tail16(b: Bytes, i: Int, n: Int, c: Int) -> Int {

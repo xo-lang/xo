@@ -76,3 +76,28 @@ test "count_cont counts continuation bytes in any range" for xs: List[Int], from
   }
   expect(count_cont(b, f, n) == want)
 }
+
+test "ctl_at finds the first control byte" for xs: List[Int], from: Int, to: Int {
+  let b = bytes_of(xs)
+  let n = b.len()
+  let f = if n == 0 { 0 } else { (from & 1023) % (n + 1) }
+  let t = if n == 0 { 0 } else { f + (to & 1023) % (n - f + 1) }
+  var want = t
+  var i = f
+  while i < t {
+    let c = Int(b[i])
+    if c < 0x20 || c == 0x7F {
+      want = i
+      break
+    }
+    i += 1
+  }
+  expect(ctl_at(b, f, t) == want)
+}
+
+test "ctl_at on header values" {
+  expect(ctl_at("Go-http-client/1.1".bytes(), 0, 18) == 18)
+  expect(ctl_at("a\tb".bytes(), 0, 3) == 1)
+  expect(ctl_at(hex("41424344454647487f"), 0, 9) == 8)
+  expect(ctl_at(hex("80ff9f20"), 0, 4) == 4)
+}

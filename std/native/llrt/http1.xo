@@ -56,7 +56,6 @@ const BAD_TE: Int = 6
 
 // The byte classes (http1_tables.CLASS).
 const TCHAR: Int = 1
-const VBYTE: Int = 2
 const HOSTB: Int = 4
 const HEX: Int = 8
 const USERINFO: Int = 16
@@ -698,6 +697,8 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
   var i = next0
   // room for a usual request's fields: no growth (a copy) at the fifth
   var keys: List[Str] = List.with_capacity(8)
+  // a name held a space (head_of answers 400 for it)
+  var spaced = false
   var vals: List[Str] = List.with_capacity(8)
   if i < n && is_sp(Int(b[i])) {
     // malformed MIME header initial line (needs the line to say so)
@@ -783,17 +784,28 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     var x = p0
     while x < colon {
       let ch = Int(cb[x])
-      if (cls(ch) & TCHAR) == 0 && ch != 32 {
-        return fail(BAD)
+      if (cls(ch) & TCHAR) == 0 {
+        if ch != 32 {
+          return fail(BAD)
+        }
+        // kept, for head_of's 400 "invalid header name"
+        spaced = true
       }
       x += 1
     }
+    // the value's bytes: no control byte but a tab (the table's
+    // VBYTE class), eight a
+    // step
     x = colon + 1
     while x < cn {
-      if (cls(Int(cb[x])) & VBYTE) == 0 {
+      let j = scan.ctl_at(cb, x, cn)
+      if j >= cn {
+        break
+      }
+      if cb[j] != 9 {
         return fail(BAD)
       }
-      x += 1
+      x = j + 1
     }
     var v0 = colon + 1
     while v0 < cn && is_sp(Int(cb[v0])) {
@@ -810,13 +822,44 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
   if i > MAX_HEAD {
     return fail(TOO_LARGE)
   }
-  head_of(method, target, major, minor, url, query, keys, vals, i, connect)
+  head_of(method, target, major, minor, url, query, keys, vals, i, connect, spaced)
 }
 
 /// The checks and merging of a head whose fields were read (the rest of
 /// hp_head): Go's Header, readTransfer, shouldClose, conn.readRequest.
-fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool) -> Parse {
+// The header names head_of looks for, by key_kind.
+const K_OTHER = 0
+const K_HOST = 1
+const K_TE = 2
+const K_CL = 3
+const K_TRAILER = 4
+const K_PRAGMA = 5
+const K_CC = 6
+const K_CONN = 7
+const K_EXPECT = 8
+
+/// The kind of a canonical header name: its length first, so most names
+/// are told apart without comparing their bytes.
+fn key_kind(key: Str) -> Int {
+  match key.len() {
+    4 => if key == "Host" { K_HOST } else { K_OTHER }
+    6 => if key == "Pragma" { K_PRAGMA } else if key == "Expect" { K_EXPECT } else { K_OTHER }
+    7 => if key == "Trailer" { K_TRAILER } else { K_OTHER }
+    10 => if key == "Connection" { K_CONN } else { K_OTHER }
+    13 => if key == "Cache-Control" { K_CC } else { K_OTHER }
+    14 => if key == "Content-Length" { K_CL } else { K_OTHER }
+    17 => if key == "Transfer-Encoding" { K_TE } else { K_OTHER }
+    _ => K_OTHER
+  }
+}
+
+fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool, spaced: Bool) -> Parse {
   let nraw = keys.len()
+  // each key's kind (key_kind), found once for the passes below
+  var kinds: List[Int] = List.with_capacity(nraw)
+  for key in keys {
+    kinds.push(key_kind(key))
+  }
   // counts per key, for Host and Content-Length checks
   var hosts = 0
   var tes = 0
@@ -826,13 +869,13 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   var host = ""
   var k = 0
   while k < nraw {
-    let key = keys[k]
-    if key == "Host" {
+    let kk = kinds[k]
+    if kk == K_HOST {
       hosts += 1
       host = vals[k]
-    } else if key == "Transfer-Encoding" {
+    } else if kk == K_TE {
       tes += 1
-    } else if key == "Content-Length" {
+    } else if kk == K_CL {
       let v = trim_ws(vals[k])
       if cls_n == 0 {
         first_cl = v
@@ -856,7 +899,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     }
     k = 0
     while k < nraw {
-      if keys[k] == "Transfer-Encoding" && !equal_fold(vals[k], "chunked") {
+      if kinds[k] == K_TE && !equal_fold(vals[k], "chunked") {
         return fail(BAD_TE)
       }
       k += 1
@@ -896,11 +939,12 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   k = 0
   while k < nraw {
     let key = keys[k]
+    let kk = kinds[k]
     k += 1
-    if key == "Host" || key == "Transfer-Encoding" {
+    if kk == K_HOST || kk == K_TE {
       continue
     }
-    if chunked && (key == "Content-Length" || key == "Trailer") {
+    if chunked && (kk == K_CL || kk == K_TRAILER) {
       continue
     }
     var e = -1
@@ -912,7 +956,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
       }
       y += 1
     }
-    if key == "Content-Length" && e >= 0 {
+    if kk == K_CL && e >= 0 {
       continue // deduplicated; its value as written first
     }
     if e >= 0 {
@@ -921,10 +965,10 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
       hn.push(key)
       hv.push(vals[k - 1])
     }
-    if key == "Pragma" && pragma < 0 {
+    if kk == K_PRAGMA && pragma < 0 {
       pragma = k - 1
     }
-    if key == "Cache-Control" {
+    if kk == K_CC {
       have_cc = true
     }
   }
@@ -944,14 +988,14 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   var have_ev = false
   k = 0
   while k < nraw {
-    if keys[k] == "Connection" {
+    if kinds[k] == K_CONN {
       has_close = has_close || has_token(vals[k], "close")
       has_ka = has_ka || has_token(vals[k], "keep-alive")
       if !have_cv {
         cv = vals[k]
         have_cv = true
       }
-    } else if keys[k] == "Expect" && !have_ev {
+    } else if kinds[k] == K_EXPECT && !have_ev {
       ev = vals[k]
       have_ev = true
     }
@@ -982,17 +1026,9 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
       x += 1
     }
   }
-  k = 0
-  while k < nraw {
-    let kb = keys[k].bytes()
-    var x = 0
-    while x < kb.len() {
-      if (cls(Int(kb[x])) & TCHAR) == 0 {
-        return fail_status(400, "invalid header name", used)
-      }
-      x += 1
-    }
-    k += 1
+  // parse_head let only token bytes and spaces into a name
+  if spaced {
+    return fail_status(400, "invalid header name", used)
   }
   // Connection close / keep-alive wishes (Header.get: the first value)
   let wants10ka = major == 1 && minor == 0 && server_token(cv, "keep-alive")
