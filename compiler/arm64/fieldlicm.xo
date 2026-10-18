@@ -53,6 +53,7 @@ fn hoist_fields(var f: ssa.Func, types: List[ssa.SType]) -> Bool {
   for l in loops {
     changed = hoist_loop(f, types, pr, l.0, l.1) || changed
   }
+  changed = drop_proven_pads(f, pr) || changed
   // then the fields kept in registers across a loop (promote_loop): each
   // adds a block, so the loops are found again after one
   for _ in 0..PROMOTE_MAX {
@@ -1020,12 +1021,48 @@ fn plain_type(types: List[ssa.SType], t: Int, d: Int) -> Bool {
   }
 }
 
+/// Gives every list.index whose index is proven in range (Proof.proven)
+/// no check and no landing (drop_pad): it cannot fault, and its landing
+/// split the block, so the loads of a loop body stayed in blocks of one
+/// load each, apart for cluster_mem; whether it changed f.
+fn drop_proven_pads(var f: ssa.Func, pr: Proof) -> Bool {
+  var changed = false
+  for b in 0..f.blocks.len() {
+    if b >= pr.idom.len() || (pr.idom[b] < 0 && b != pr.entry) {
+      continue
+    }
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || aux_str(x.aux) != "list.index" || x.args.len() != 2 || x.pos.is_empty() {
+        continue
+      }
+      if (x.pad >= 0 && !pad_droppable(f, b, x.pad)) || !pr.proven(f, b, x.args[1], x.args[0]) {
+        continue
+      }
+      f.values[v].pos = ""
+      if x.pad >= 0 {
+        var ins: List[Int] = []
+        for u in f.blocks[b].instrs {
+          if u != x.pad {
+            ins.push(u)
+          }
+        }
+        f.blocks[b].instrs = ins
+        drop_pad(f, b, x.pad)
+        f.values[v].pad = -1
+      }
+      changed = true
+    }
+  }
+  changed
+}
+
 /// Removes operation v from its block; its landing check, when it has
-/// one, goes too: the check's branch becomes a jump to its normal
-/// successor, and the cleanup only it reached becomes unreachable.
+/// one, goes too (drop_pad).
 fn remove_op(var f: ssa.Func, v: Int) {
   let b = f.values[v].block
-  let w = f.values[v].pad
+  // a check of another shape stays (it then lands nothing)
+  let w = if f.values[v].pad >= 0 && pad_droppable(f, b, f.values[v].pad) { f.values[v].pad } else { -1 }
   var ins: List[Int] = []
   for u in f.blocks[b].instrs {
     if u != v && u != w {
@@ -1033,9 +1070,27 @@ fn remove_op(var f: ssa.Func, v: Int) {
     }
   }
   f.blocks[b].instrs = ins
-  if w < 0 {
-    return
+  if w >= 0 {
+    drop_pad(f, b, w)
   }
+}
+
+/// Whether block b ends in a branch on landing check w, cleanup first
+/// (the shape drop_pad rewrites).
+fn pad_droppable(f: ssa.Func, b: Int, w: Int) -> Bool {
+  let t = f.term(b)
+  if t < 0 {
+    return false
+  }
+  let tv = f.values[t]
+  tv.op == ssa.Op.Branch && !tv.args.is_empty() && tv.args[0] == w && tv.succs.len() == 2 && f.values[w].block == b
+}
+
+/// The landing check w (already out of block b's instructions) goes: the
+/// branch on it that ends b becomes a jump to its normal successor, the
+/// cleanup only it reached becomes unreachable, and the successor is no
+/// longer a landing's rest (so merge_straight may join it to b).
+fn drop_pad(var f: ssa.Func, b: Int, w: Int) {
   let t = f.term(b)
   let tv = f.values[t]
   if tv.op != ssa.Op.Branch || tv.args.is_empty() || tv.args[0] != w || tv.succs.len() != 2 {
@@ -1044,6 +1099,7 @@ fn remove_op(var f: ssa.Func, v: Int) {
   let cleanup = tv.succs[0]
   f.values[t] = ssa.Value{op: ssa.Op.Jump, succs: [tv.succs[1]], block: b, line: tv.line, inl: tv.inl}
   kill_edge(f, cleanup)
+  f.land_rest.remove(f.edges[tv.succs[1]].to)
 }
 
 /// Removes edge e from its target's predecessors; a target left with

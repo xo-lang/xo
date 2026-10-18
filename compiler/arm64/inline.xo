@@ -366,6 +366,10 @@ fn inline_module(var m: ssa.Module) -> Bool {
     // into one function
     if hoist_fields(f, m.types) {
       changed = true
+      // a dropped landing (drop_proven_pads) leaves a jump to a block
+      // only it reaches: join them, so a loop body's loads are one
+      // block for cluster_mem
+      let _k = ssa.merge_straight(f, m, block_calls_inline(f))
     }
     m.funcs[fi] = f
   }
@@ -733,4 +737,22 @@ fn replace_uses(var f: ssa.Func, old: Int, x: Int) {
       }
     }
   }
+}
+
+/// block_calls, where the list reads emitted in line (list.index,
+/// list.len, list.get: a load and, unproven, a compare) and the landing
+/// checks (no code of their own) are not calls either: for the join after
+/// drop_proven_pads, whose blocks are a load each (decision 0257).
+fn block_calls_inline(f: ssa.Func) -> List[Bool] {
+  var out: List[Bool] = []
+  for bl in f.blocks {
+    var c = false
+    for v in bl.instrs {
+      let x = f.values[v]
+      let n = aux_str(x.aux)
+      c = c || (x.op == ssa.Op.Call && !inline_intrinsic(n) && !(n is "list.index" | "list.len" | "list.get" | "rt.landing" | "rt.unwinding"))
+    }
+    out.push(c)
+  }
+  out
 }
