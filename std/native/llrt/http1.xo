@@ -359,6 +359,10 @@ pub fn go_quote(s: Str) -> Str { neturl.go_quote(s) }
 /// textproto.CanonicalMIMEHeaderKey: unchanged when a byte is not a token
 /// byte.
 pub fn canonical_key(s: Str) -> Str {
+  let c = common_name(raw.data(s), s.len())
+  if !c.is_empty() {
+    return c
+  }
   let b = s.bytes()
   let n = b.len()
   var i = 0
@@ -393,6 +397,52 @@ pub fn canonical_key(s: Str) -> Str {
     i += 1
   }
   out
+}
+
+/// canonical_key of the n bytes at p, read in place: a common name
+/// (common_name) costs no copy, another one is copied out once.
+pub fn canonical_at(p: Int, n: Int) -> Str {
+  let c = common_name(p, n)
+  if !c.is_empty() {
+    return c
+  }
+  canonical_key(raw.str_at(p, n))
+}
+
+/// The canonical form, a constant, of the n bytes at p when they are a
+/// common header name in its canonical or its lower case form (HTTP/2
+/// sends lower case), else "": a request's names are almost always these
+/// (each canonical_key was a copy and a loop over its bytes, about 9 a
+/// plain HTTP/1.1 request; 2026-10-18).
+fn common_name(p: Int, n: Int) -> Str {
+  match n {
+    4 => one_of(p, n, "Host", "host")
+    6 => {
+      let a = one_of(p, n, "Accept", "accept")
+      if !a.is_empty() { a } else { one_of(p, n, "Cookie", "cookie") }
+    }
+    10 => {
+      let a = one_of(p, n, "User-Agent", "user-agent")
+      if !a.is_empty() { a } else { one_of(p, n, "Connection", "connection") }
+    }
+    12 => one_of(p, n, "Content-Type", "content-type")
+    13 => one_of(p, n, "Authorization", "authorization")
+    14 => one_of(p, n, "Content-Length", "content-length")
+    15 => {
+      let a = one_of(p, n, "Accept-Encoding", "accept-encoding")
+      if !a.is_empty() { a } else { one_of(p, n, "Accept-Language", "accept-language") }
+    }
+    _ => ""
+  }
+}
+
+/// canon when the n bytes at p are canon or lower (its lower case form),
+/// else "".
+fn one_of(p: Int, n: Int, canon: Str, lower: Str) -> Str {
+  if raw.mem_eq(p, raw.data(canon), n) || raw.mem_eq(p, raw.data(lower), n) {
+    return canon
+  }
+  ""
 }
 
 /// strings.EqualFold of ASCII letters.
@@ -751,7 +801,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if keys.len() == MAX_FIELDS {
       return fail(TOO_LARGE)
     }
-    keys.push(canonical_key(rawb.str_slice(src, p0, colon)))
+    keys.push(canonical_at(rawb.data(src) + p0, colon - p0))
     vals.push(rawb.str_slice(src, v0, cn))
   }
   if i > MAX_HEAD {
