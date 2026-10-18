@@ -46,6 +46,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   files.
 - `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps.
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
+- `scripts/codesize.py BINARY`: where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
 - `scripts/arm64-identity.sh`, `scripts/docker-goldens.sh`,
   `scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK` (the Intel laptop;
   owner rules in the lead's notes: one new directory, nothing deleted),
