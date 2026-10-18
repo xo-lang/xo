@@ -255,7 +255,14 @@ fn expand(var sk: List[Int], c: Int) {
 
 /// The AES key schedule of a 16, 24, or 32 byte key (the caller checks
 /// the length).
-pub fn new(key: Bytes) -> Cipher {
+pub fn new(key: Bytes) -> Cipher { schedule(key, true) }
+
+/// new, the bitsliced round keys (sk: the encryption without AES
+/// instructions, and every decryption) only when bitsliced is true or
+/// the CPU has no AES instructions: AES-GCM only encrypts, and with
+/// them its keys need only rk (the bitsliced schedule was about 55,000
+/// instructions of a TLS handshake on arm64; 2026-10-18).
+fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   let nk = key.len() / 4
   let nr = nk + 6
   let nkf = 4 * (nr + 1)
@@ -288,8 +295,9 @@ pub fn new(key: Bytes) -> Cipher {
     rk[2 * r + 1] = w[4 * r + 2] | shl(w[4 * r + 3], 32)
   }
   var sk: List[Int] = []
+  let hw = cpu.hw()
   var q = [0, 0, 0, 0, 0, 0, 0, 0]
-  var i = 0
+  var i = if bitsliced || (hw & cpu.HW_AES) == 0 { 0 } else { nkf }
   while i < nkf {
     q[0] = spread(w[i]) | shl(spread(w[i + 2]), 8)
     q[4] = spread(w[i + 1]) | shl(spread(w[i + 3]), 8)
@@ -304,7 +312,7 @@ pub fn new(key: Bytes) -> Cipher {
     expand(sk, (q[4] & 0x1111111111111111) | (q[5] & 0x2222222222222222) | (q[6] & 0x4444444444444444) | (q[7] & ~0x7777777777777777))
     i += 4
   }
-  Cipher{nr: nr, sk: sk, rk: rk, hw: cpu.hw()}
+  Cipher{nr: nr, sk: sk, rk: rk, hw: hw}
 }
 
 fn add_round_key(var q: List[Int], sk: List[Int], o: Int) {
@@ -817,7 +825,7 @@ fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
 
 /// The AES-GCM key of a 16, 24, or 32 byte AES key.
 pub fn new_gcm(key: Bytes) -> Gcm {
-  let c = new(key)
+  let c = schedule(key, false)
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
   encrypt4(c, io)
   let h1 = rt.int_wrap(7, io[0], 0)
