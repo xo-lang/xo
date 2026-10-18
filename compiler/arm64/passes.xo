@@ -1,0 +1,50 @@
+// The optional optimization passes of the native backends, by name, in
+// the order a build runs them: each can be turned off ($XO_PASSES,
+// ssa.Module passes_off) and the build stays correct, only slower or
+// larger. `xo dev bisect-pass` turns them off to find the first one
+// whose output diverges (miscompile triage).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Every optional pass, in the order a build runs them: the module
+/// passes (inline.xo, reach.xo), then per function the SSA analyses
+/// isel uses and the MIR passes (isel.xo function).
+pub fn passes() -> List[Str] {
+  [
+    // module, before code generation
+    "inline", "devirtualize", "fold_consts", "cancel_rc_pairs", "hoist_fields", "fold_tuples", "cse",
+    // per function: SSA analyses isel uses
+    "lsr", "ranges",
+    // per function: MIR
+    "mir_dce", "thread_const", "thread_cset", "thread", "jump_tables", "live_dce",
+    "select_compares", "hoist_consts", "hoist_invariants", "reuse_flags", "place_latches", "mark_tails",
+    "shrink_split", "cluster_mem", "x86_merge_blocks", "x86_carry_fuse",
+  ]
+}
+
+/// Whether pass name is on in m (not turned off by $XO_PASSES).
+pub fn pass_on(m: ssa.Module, name: Str) -> Bool {
+  !m.passes_off.contains(name)
+}
+
+/// The passes $XO_PASSES turns off (`-name` entries, comma separated),
+/// or why the value is wrong.
+pub fn parse_passes(v: Str) -> (List[Str], Str) {
+  var off: List[Str] = []
+  let all = passes()
+  for e0 in v.split(",") {
+    let e = e0.trim()
+    if e.is_empty() {
+      continue
+    }
+    if !e.starts_with("-") {
+      return ([], "XO_PASSES: ${e} is not -NAME (only turning passes off is supported)")
+    }
+    let n = e[1..e.len()]
+    if !all.contains(n) {
+      return ([], "XO_PASSES: no pass ${n}; the passes are ${all.join(", ")}")
+    }
+    off.push(n)
+  }
+  (off, "")
+}

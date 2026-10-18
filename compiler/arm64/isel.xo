@@ -22,37 +22,83 @@ fn (var g: G) function(fi: Int) {
   }
   g.begin_func(fi)
   g.isel()
-  g.dce()
-  g.thread_const()
-  g.thread_cset()
-  g.thread()
+  // the optional passes (passes.xo) unless $XO_PASSES turns them off
+  if g.on("mir_dce") {
+    g.dce()
+  }
+  if g.on("thread_const") {
+    g.thread_const()
+  }
+  if g.on("thread_cset") {
+    g.thread_cset()
+  }
+  if g.on("thread") {
+    g.thread()
+  }
   // a jump table's addresses are data in the text section
-  g.jump_tables()
-  g.dce()
-  g.live_dce()
-  g.select_compares()
-  g.hoist_consts()
-  g.hoist_invariants()
+  if g.on("jump_tables") {
+    g.jump_tables()
+  }
+  if g.on("mir_dce") {
+    g.dce()
+  }
+  if g.on("live_dce") {
+    g.live_dce()
+  }
+  if g.on("select_compares") {
+    g.select_compares()
+  }
+  if g.on("hoist_consts") {
+    g.hoist_consts()
+  }
+  if g.on("hoist_invariants") {
+    g.hoist_invariants()
+  }
   if g.x86 {
     // x86_64 (decision 0254): each branch keeps its compare (no reused
     // flags); the templates become x86
-    g.place_latches()
-    g.mark_tails()
-    g.x86_merge_blocks()
-    g.shrink_split()
+    if g.on("place_latches") {
+      g.place_latches()
+    }
+    if g.on("mark_tails") {
+      g.mark_tails()
+    }
+    if g.on("x86_merge_blocks") {
+      g.x86_merge_blocks()
+    }
+    if g.on("shrink_split") {
+      g.shrink_split()
+    }
     g.x86_retarget()
-    g.x86_carry_fuse()
+    if g.on("x86_carry_fuse") {
+      g.x86_carry_fuse()
+    }
     g.regalloc()
     g.x86_emit()
     return
   }
-  g.reuse_flags()
-  g.place_latches()
-  g.mark_tails()
-  g.shrink_split()
-  g.cluster_mem()
+  if g.on("reuse_flags") {
+    g.reuse_flags()
+  }
+  if g.on("place_latches") {
+    g.place_latches()
+  }
+  if g.on("mark_tails") {
+    g.mark_tails()
+  }
+  if g.on("shrink_split") {
+    g.shrink_split()
+  }
+  if g.on("cluster_mem") {
+    g.cluster_mem()
+  }
   g.regalloc()
   g.emit()
+}
+
+/// Whether optional pass name is on (passes.xo, $XO_PASSES).
+fn (g: G) on(name: Str) -> Bool {
+  g.m.passes_off.is_empty() || pass_on(g.m, name)
 }
 
 fn (var g: G) new_vreg(fp: Bool) -> Int {
@@ -490,8 +536,23 @@ fn (var g: G) isel() {
   let ptrs = g.plan_held()
   let idom = dominators_of(g.f, blocks)
   g.proof = new_proof(g.f, blocks)
-  g.plan_lsr(blocks, idom)
-  g.compute_ranges(blocks, idom)
+  if g.on("lsr") {
+    g.plan_lsr(blocks, idom)
+  } else {
+    g.lsr = {}
+    g.plans = []
+  }
+  if g.on("ranges") {
+    g.compute_ranges(blocks, idom)
+  } else {
+    // nothing known of any value's interval
+    g.ranges = []
+    g.has_range = []
+    for _ in 0..g.f.values.len() {
+      g.ranges.push(Interval{lo: 0, hi: 0})
+      g.has_range.push(false)
+    }
+  }
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})

@@ -30,6 +30,7 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
         std: check.std_dir(os.env, os.fs),
         cache: user_cache_dir(os, goos),
         host: "${goos}/${host_arch()}",
+        passes: arm64.passes(),
       }
       dev.run(os, h, args)
     }

@@ -333,6 +333,11 @@ pub struct Module {
   /// measurement knob, each callee's speed against its text
   /// (bench/results/inline-ledger-2026-10-17.md).
   pub inline_deny: List[Str] = []
+  /// The optional optimization passes turned off, by name ($XO_PASSES,
+  /// `-name` entries, comma separated; compiler/arm64 passes.xo
+  /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
+  /// passes off to find the one whose output diverges.
+  pub passes_off: List[Str] = []
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false

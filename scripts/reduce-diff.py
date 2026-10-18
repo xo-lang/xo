@@ -6,7 +6,9 @@ Usage:
 
 XO is an xo binary (go run ./scripts/xobuild prints one). A backend is
 `go` (the default Go backend), or a native one (`arm64`, `llvm`), which
-builds with --backend=NAME --no-gc. IN.xo is a single file program (it
+builds with --backend=NAME --no-gc. --crash keeps instead the programs
+the first backend builds and the second fails to build with the same
+compiler fault (its kind and location, crash_signature). IN.xo is a single file program (it
 becomes main.xo of a module). The reducer keeps the smallest program
 that still
 
@@ -63,9 +65,22 @@ def norm_stderr(s):
     return "".join(out)
 
 
+def crash_signature(stderr):
+    """A compiler fault without its operands: `fault: integer overflow:
+    -(-9223372036854775808) does not fit Int at arm64/ranges.xo:294:44`
+    is `integer overflow at arm64/ranges.xo:294:44`; other failures are
+    their last line."""
+    lines = stderr.strip().split("\n")
+    for line in lines:
+        m = re.match(r"fault: ([a-z ]+?)(:| [0-9-]).* at (\S+:\d+:\d+)$", line.strip())
+        if m:
+            return m.group(1) + " at " + m.group(3)
+    return lines[-1] if lines else ""
+
+
 class Reducer:
-    def __init__(self, xo, a, b, work, timeout, jobs, log):
-        self.xo, self.backends = xo, (a, b)
+    def __init__(self, xo, a, b, work, timeout, jobs, log, crash=False):
+        self.xo, self.backends, self.crash = xo, (a, b), crash
         self.work, self.timeout, self.jobs, self.log = work, timeout, jobs, log
         self.env = dict(os.environ, XO_GOCACHE=os.path.join(work, "gocache"),
                         XO_CRASH_DIR=os.path.join(work, "crash"))
@@ -75,16 +90,23 @@ class Reducer:
         self.tests = 0
 
     def build_run(self, d, backend):
-        """(exit status, stdout, normalized stderr) or None if it does not build or hangs."""
+        """(exit status, stdout, normalized stderr) or None if it does not build or hangs.
+        With --crash, a build of the second backend that fails is
+        ("crash", its fault signature, "")."""
         prog = os.path.join(d, "prog-" + backend)
-        args = [self.xo, "build"]
+        # the default backend is native (decision 0248): name go too
+        args = [self.xo, "build", "--backend=" + backend]
         if backend != "go":
-            args += ["--backend=" + backend, "--no-gc"]
+            args += ["--no-gc"]
         args += ["-o", prog, "."]
         try:
             p = subprocess.run(args, cwd=d, env=self.env, capture_output=True, text=True, timeout=600)
             if p.returncode != 0:
+                if self.crash and backend == self.backends[1]:
+                    return ("crash", crash_signature(p.stderr), "")
                 return None
+            if self.crash:
+                return (0, "", "")
             p = subprocess.run([prog], cwd=d, env=self.env, capture_output=True, text=True,
                                timeout=self.timeout)
         except subprocess.TimeoutExpired:
@@ -220,6 +242,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=30, help="seconds a run may take (default 30)")
     ap.add_argument("--no-ddmin", action="store_true", help="skip the ddmin pass")
     ap.add_argument("-q", "--quiet", action="store_true", help="no progress on stderr")
+    ap.add_argument("--crash", action="store_true",
+                    help="keep programs the first backend builds and the second fails to build with the same compiler fault")
     args = ap.parse_args()
     out = args.output or re.sub(r"(\.xo)?$", ".min.xo", args.input, count=1)
     xo = os.path.abspath(args.xo)
@@ -229,10 +253,12 @@ def main():
     work = tempfile.mkdtemp(prefix="xo-reduce-")
     try:
         log = (lambda *a: None) if args.quiet else (lambda *a: print(*a, file=sys.stderr, flush=True))
-        red = Reducer(xo, args.a, args.b, work, args.timeout, max(1, args.jobs), log)
+        red = Reducer(xo, args.a, args.b, work, args.timeout, max(1, args.jobs), log, args.crash)
         r = red.results(src)
         if r is None:
             sys.exit("reduce-diff: the input does not build with both backends (or a run timed out)")
+        if args.crash and r[1][0] != "crash":
+            sys.exit("reduce-diff: --crash: the input builds with %s" % args.b)
         if r[0] == r[1]:
             sys.exit("reduce-diff: the input runs alike on %s and %s" % (args.a, args.b))
         red.want_exit = (r[0][0], r[1][0])
@@ -253,7 +279,7 @@ def main():
             save(src)
         print(src, end="" if src.endswith("\n") else "\n")
         ra, rb = red.results(src)
-        log("reduce-diff: done after %d tests\n--- %s: exit %d\n%s%s--- %s: exit %d\n%s%s" % (
+        log("reduce-diff: done after %d tests\n--- %s: exit %s\n%s%s--- %s: exit %s\n%s%s" % (
             red.tests, args.a, ra[0], ra[1], ra[2], args.b, rb[0], rb[1], rb[2]))
     finally:
         # the Go build cache may hold read only directories

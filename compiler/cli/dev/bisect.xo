@@ -1,0 +1,145 @@
+// `xo dev bisect-pass [--backend=arm64|amd64] [--ref=go|off] DIR`:
+// miscompile triage. DIR's program is built with the native backend
+// with a prefix of the optional passes on and the rest off ($XO_PASSES,
+// compiler/arm64 passes.xo) and run (with its args.txt, env.txt and
+// stdin.txt, as a golden), and its run compared with the reference: the
+// Go backend's (--ref=go) or the native build's with every optional pass
+// off (--ref=off). A binary search finds the first pass whose turning
+// on makes the run diverge; a build that fails counts as diverging. It
+// then says whether turning off that pass alone is enough. Exit status:
+// 0 no divergence, 1 a culprit (or not a pass), 2 a usage error.
+
+use std/task
+use github.com/xo-lang/xo/compiler/cli/core
+
+/// One build and run of the program: its run laid out as a golden
+/// (compare.xo layout), or why the build failed.
+struct Attempt {
+  run: Bytes = "".bytes()
+  failed: Str = ""
+}
+
+fn (a: Attempt) text() -> Str {
+  if a.failed.is_empty() { a.run.to_str() ?? "(not UTF-8)" } else { "build failed: ${a.failed}" }
+}
+
+/// Whether two attempts behave alike (both failing counts as alike only
+/// with the same reason).
+fn alike(a: Attempt, b: Attempt) -> Bool {
+  if !a.failed.is_empty() || !b.failed.is_empty() {
+    return a.failed == b.failed
+  }
+  same(a.run, b.run, Rules{})
+}
+
+struct Bisect {
+  xo: Str
+  std: Str
+  dir: Str
+  out: Str
+  timeout: Duration
+}
+
+/// Builds the program with backend and the passes off, runs it.
+fn (b: Bisect) attempt(os: Os, backend: Str, off: List[Str]) -> Attempt uses (clock, env, fs.read, fs.write, proc) {
+  let bin = "${b.out}/prog-${backend}"
+  os.fs.remove(bin).ok()
+  var spec: List[Str] = []
+  for n in off {
+    spec.push("-${n}")
+  }
+  let c = os.proc.cmd(b.xo, ["build", "--backend=${backend}", "--std=${b.std}", "-o", bin, b.dir])
+    .set_env("XO_PASSES", spec.join(","))
+    .set_env("XO_BACKEND_CACHE", "off")
+    .set_env("XO_BIN_CACHE", "off")
+    .set_env("XO_BUILD_DIR", "${b.out}/build")
+  match task.with_timeout(os.clock, b.timeout, fn() { c.output() }) {
+    Ok(o) => {
+      if o.code != 0 {
+        let lines = (o.stderr.to_str() ?? "").trim().split("\n")
+        return Attempt{failed: lines[lines.len() - 1]}
+      }
+    }
+    Err(task.Timed.TimedOut) => return Attempt{failed: "timed out"}
+    Err(task.Timed.Failed(e)) => return Attempt{failed: "${e}"}
+  }
+  let h = harness(os.fs, b.dir)
+  var r = os.proc.cmd(bin, h.args).dir(b.dir).stdin(h.stdin)
+  for (k, v) in h.env {
+    r = r.set_env(k, v)
+  }
+  match task.with_timeout(os.clock, b.timeout, fn() { r.output() }) {
+    Ok(o) => Attempt{run: layout(o.code, o.stdout, o.stderr, Rules{})}
+    Err(task.Timed.TimedOut) => Attempt{run: "run timed out\n".bytes()}
+    Err(task.Timed.Failed(e)) => Attempt{run: "run failed: ${e}\n".bytes()}
+  }
+}
+
+/// The passes after the first k (those turned off when k are on).
+fn after(passes: List[Str], k: Int) -> List[Str] {
+  passes[k..passes.len()]
+}
+
+fn bisect_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
+  var fl = core.new_flags("dev bisect-pass")
+  fl.str_flag("backend", "arm64", "arm64 or amd64")
+  fl.str_flag("ref", "go", "go: the Go backend's run; off: the native run with every optional pass off")
+  fl.str_flag("out", "", "where binaries go (default under the cache)")
+  fl.int_flag("timeout", 120, "seconds a build or a run may take")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 || h.passes.is_empty() {
+    os.stdio.eprintln("usage: xo dev bisect-pass [--backend=arm64|amd64] [--ref=go|off] DIR")
+    return 2
+  }
+  let base = if h.cache.is_empty() { "/tmp/xo-dev" } else { "${h.cache}/xo/dev/bisect" }
+  var out = fl.get_str("out")
+  if out.is_empty() {
+    out = "${base}/${os.rand.int(0, 1000000000)}"
+  }
+  os.fs.create_dir_all(out).ok()
+  let b = Bisect{xo: h.xo, std: h.std, dir: fl.args[0], out: out, timeout: 1s * fl.get_int("timeout")}
+  let be = fl.get_str("backend")
+  let ps = h.passes
+  let n = ps.len()
+  let none = b.attempt(os, be, ps)
+  let refr = if fl.get_str("ref") == "off" { none } else { b.attempt(os, "go", []) }
+  let full = b.attempt(os, be, [])
+  let say = fn(s: Str) { os.stdio.println("bisect-pass: ${s}") }
+  if alike(full, refr) {
+    say("no divergence: with every optional pass on, the ${be} run is the reference's")
+    os.fs.remove_all(out).ok()
+    return 0
+  }
+  if !alike(none, refr) {
+    say("diverges with every optional pass off too: not an optional pass (isel, regalloc, the emitter, or the runtime)")
+    say("reference:\n${refr.text()}")
+    say("passes off:\n${none.text()}")
+    return 1
+  }
+  // passes[0..lo] on: alike; passes[0..hi] on: diverges
+  var lo = 0
+  var hi = n
+  while hi - lo > 1 {
+    let mid = (lo + hi) / 2
+    if alike(b.attempt(os, be, after(ps, mid)), refr) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  let culprit = ps[hi - 1]
+  say("first diverging pass: ${culprit} (the passes before it on, after it off)")
+  let alone = b.attempt(os, be, [culprit])
+  if alike(alone, refr) {
+    say("turning off ${culprit} alone (XO_PASSES=-${culprit}) is enough")
+  } else {
+    say("turning off ${culprit} alone is not enough: a later pass diverges too, or with it")
+  }
+  let bad = b.attempt(os, be, after(ps, hi))
+  say("reference:\n${refr.text()}")
+  say("with ${culprit} on:\n${bad.text()}")
+  os.fs.remove_all(out).ok()
+  1
+}

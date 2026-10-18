@@ -688,6 +688,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       }
       t = lap(os, phases, "dce", t)
     }
+    gm.passes_off = passes_off(os)
     gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
     // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
     // a release build without --debug-info
@@ -699,8 +700,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     gm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     let sd = dir_name(ctx.std.trim_suffix("/"))
     gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
-    // no per-function cache for amd64 yet (its canonical text is arm64's)
-    let (fc, fdir) = if march == "amd64" { (arm64.FnCache{}, "") } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
+    // no per-function cache for amd64 yet (its canonical text is
+    // arm64's), nor with passes off (XO_PASSES: its keys do not say so)
+    let (fc, fdir) = if march == "amd64" || !gm.passes_off.is_empty() { (arm64.FnCache{}, "") } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
@@ -1126,6 +1128,16 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
   os.clock.now()
 }
 
+/// The optional passes $XO_PASSES turns off (arm64 passes.xo); a wrong
+/// value fails the build.
+fn passes_off(os: Os) -> List[Str] {
+  let (off, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
+  if !err.is_empty() {
+    fail(os, err)
+  }
+  off
+}
+
 /// arm64's inlining of mi, and whether the inlined module is to be
 /// generated. When it does not verify the module is generated without
 /// inlining (slower, still correct): said on standard error with the
@@ -1139,6 +1151,7 @@ fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int) -> Bool {
   if !deny.is_empty() {
     mi.inline_deny = deny.split(",")
   }
+  mi.passes_off = passes_off(os)
   let errs = arm64.inline_check(mi, jobs, (os.env.get("XO_INLINE_BREAK") ?? "") == "1")
   if errs.is_empty() {
     return true

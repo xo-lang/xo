@@ -7,6 +7,8 @@
 //   xo dev goldens [flags] DIR...     build, run, and compare golden programs
 //   xo dev errorcheck [flags] DIR...  diagnostics against // ERROR comments
 //   xo dev codegen [flags] DIR...     assembly or IR against // arm64: patterns
+//   xo dev bisect-pass [flags] DIR    the first optional pass whose output
+//                                     diverges from the Go backend's
 //   xo dev dwarf [--func=NAME] FILE   the functions, variables, locations, and
 //                                     types of FILE's DWARF (decision 0253)
 //   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
@@ -24,10 +26,13 @@ pub struct Host {
   pub cache: Str
   /// GOOS/GOARCH of the host.
   pub host: Str
+  /// The native backends' optional passes in order (compiler/arm64
+  /// passes.xo), for bisect-pass.
+  pub passes: List[Str] = []
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|dwarf|unwind|debug|dump|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|debug|dump|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns
@@ -41,6 +46,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
     "goldens" => goldens_cmd(os, h, args[1..])
     "errorcheck" => errorcheck_cmd(os, h, args[1..])
     "codegen" => codegen_cmd(os, h, args[1..])
+    "bisect-pass" => bisect_cmd(os, h, args[1..])
     "dwarf" => dwarf_cmd(os, args[1..])
     "unwind" => unwind_cmd(os, args[1..])
     "debug" => debug_cmd(os, args[1..])

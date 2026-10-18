@@ -111,21 +111,21 @@ func TestCompileProperty(t *testing.T) {
 				return
 			}
 			if err != nil || nres.Failed {
-				t.Fatalf("seed %d: the native build (%s) failed: %v\n%s\n--- program\n%s", seed, native, err, diagText(nres), numbered(src))
+				t.Fatalf("seed %d: the native build (%s) failed: %v\n%s\n--- program\n%s%s", seed, native, err, buildText(nres), numbered(src), triage("compile", int64(seed), files, native, true))
 			}
 			// both run alike: the same exit status, output, and
 			// standard error (runProp)
 			gr, nr := runProp(t, res.Binaries[xotool.Host()], out), runProp(t, nres.Binaries[xotool.Host()], out)
 			if gr != nr {
-				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s", seed, gr, native, nr, numbered(src))
+				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s%s", seed, gr, native, nr, numbered(src), triage("compile", int64(seed), files, native, false))
 			}
 			if alsoLLVM && native != xotool.BackendLLVM {
 				lres, err := xotool.Build([]string{dir}, xotool.Options{NoGC: true, Backend: xotool.BackendLLVM, Out: filepath.Join(out, "prog-llvm")})
 				if err != nil || lres.Failed {
-					t.Fatalf("seed %d: the llvm build failed: %v\n%s\n--- program\n%s", seed, err, diagText(lres), numbered(src))
+					t.Fatalf("seed %d: the llvm build failed: %v\n%s\n--- program\n%s%s", seed, err, buildText(lres), numbered(src), triage("compile", int64(seed), files, xotool.BackendLLVM, true))
 				}
 				if lr := runProp(t, lres.Binaries[xotool.Host()], out); gr != lr {
-					t.Errorf("seed %d: the llvm build runs differently\n--- go\n%s\n--- llvm\n%s\n--- program\n%s", seed, gr, lr, numbered(src))
+					t.Errorf("seed %d: the llvm build runs differently\n--- go\n%s\n--- llvm\n%s\n--- program\n%s%s", seed, gr, lr, numbered(src), triage("compile", int64(seed), files, xotool.BackendLLVM, false))
 				}
 			}
 		})
