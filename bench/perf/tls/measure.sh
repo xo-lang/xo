@@ -18,7 +18,8 @@
 #
 # usage: bench/perf/tls/measure.sh <xo binary> <out dir> <backend...>
 # WORKLOADS overrides the list; TLSES the TLS sides ("xo"); PORT
-# the first listener's port (default 18120, the next 10 are taken too).
+# the first listener's port (default: from the PID, see below; the next
+# 10 and PORT+20 are taken too).
 set -e
 XO=$1
 OUT=$2
@@ -26,7 +27,11 @@ shift 2
 SRC=$(cd "$(dirname "$0")" && pwd)
 N=${N:-200}
 SIZE=${SIZE:-67108864}
-PORT=${PORT:-18120}
+# a base of its own unless PORT is set: one of 400 30-port buckets from
+# 20000 by this shell's PID (it takes PORT to PORT+10 and PORT+20), so
+# two sessions measuring at once do not reach each other's servers
+# (gotchas/tls-measure-port-collision.md)
+PORT=${PORT:-$((20000 + ($$ % 400) * 30))}
 mkdir -p "$OUT"
 (cd "$SRC/serve" && go build -o "$OUT/serve" .)
 for be in "$@"; do

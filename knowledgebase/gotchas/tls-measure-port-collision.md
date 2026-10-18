@@ -1,6 +1,6 @@
 # bench/perf/tls/measure.sh runs in two sessions at once fail certificate checks
 
-Status: Observed (Xo Lang 2, 2026-10-17).
+Status: Observed and fixed (Xo Lang 2, 2026-10-17).
 
 ## Symptom
 
@@ -21,7 +21,8 @@ and its client reached the other session's server, which has another CA.
 
 ## Fix
 
-Give each session its own ports: `PORT=19420 sh bench/perf/tls/measure.sh
-...` (any base no other session uses, 11 ports wide). Treat a
-certificate failure in a measurement as a port clash first, not a
-compiler bug.
+measure.sh now picks its base from its PID (one of 400 30-port buckets
+from 20000) unless PORT is set, so concurrent runs land on different
+ports. A certificate failure in a measurement is still worth checking
+as a port clash first (two runs in one bucket, or an explicit PORT
+shared), not as a compiler bug.
