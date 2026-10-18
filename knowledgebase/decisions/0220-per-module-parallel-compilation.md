@@ -383,16 +383,50 @@ s, borrow inference 1.1 s, the decoding of the cached reference
 counting 0.5 s, the emitter's keys 0.45 s, emit 0.5 s, assemble and
 link 1 s.
 
-Next (part 2), in order of the measured time left:
+Part 2 (design, 2026-10-18), in order of the measured time left:
 
-- **Chained per-function keys**: the reference counting key (stage C),
-  then an inlining key (the function before inlining and the version of
-  every callee body it can inline, which for an earlier function is its
-  inlined body, for a later one its body before), then the emitter's
-  key over those. An unchanged function is then never decoded or
-  inlined, only the changed ones and the callee bodies they inline.
+- **2a, the inliner per function by a chained key** (1.9 s after an
+  edit). arm64's inline_module visits the functions in order and copies
+  callee bodies as they are at that moment: a callee before the caller
+  has been inlined into already, one after it not. So the result for
+  function i depends on its own body before inlining, on which names it
+  can reach through inlinable callees, and on the version of each such
+  callee body: for a callee j < i the result of j, for j > i its body
+  before inlining. The key of i is the SHA-256 of:
+  - its body before inlining, by its reference counting key (stage C:
+    that key determines the pass's output, which is the inliner's
+    input);
+  - the inliner's settings (XO_PASSES's list, XO_INLINE_DENY);
+  - for each name in the closure of its names over the bodies before
+    inlining of every inlinable callee (the four sets of
+    inlinable_set: small, loopy, padded, few sites): the function's
+    index, its membership in each set, whether it is indirect, whether
+    it catches, its result count, and the version of its body: the key
+    of j for j < i, the reference counting key of j for j > i, "self"
+    for j = i.
+  Inlining copies names and never makes new ones, so the closure over
+  the bodies before inlining holds every name the inlined body can
+  reach; the membership bits carry the whole-program facts the sets are
+  built from (call site counts, sizes, loops). The keys are computed
+  before the pass in function order (each needs the keys before it, not
+  the results), so the driver reads every entry at once; a function
+  whose reference counting key is "" (not cached, 29 of xo's 9,520), and
+  every function whose closure reaches one as an earlier version, is
+  not cached. The entry: the function after inlining (ssa's codec of
+  stage C) and whether the pass changed it. XO_BACKEND_CACHE=verify
+  computes every function and fails on a difference.
+- **2b, no decoding of what nothing reads**: a function whose inlined
+  result is read from the cache needs its reference counting result
+  only as the body a later caller's miss copies; the decoding (0.5 s)
+  is done on demand.
+- **2c, the emitter's key from the chain**: the emitter's and the
+  verifier's keys hash the function after inlining again (0.45 s and
+  0.4 s); a key over the inlining key and the emitter's own facts (the
+  signatures of the functions named, address taken, the target, the
+  debug settings) replaces it, so an unchanged function's text is
+  placed without its SSA being built at all.
 - **Stage 2** (front end per module) for the checker and the SSA
-  builder.
+  builder (3.2 s).
 
 Invariant, tested by every change of this stage: the binary of a build
 with the cache warm, after an edit and after its revert, is the same
