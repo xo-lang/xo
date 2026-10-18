@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [new-rt-intrinsic-needs-wasm.md](new-rt-intrinsic-needs-wasm.md): Observed 2026-10-17: rt.mem_copy_block broke 20 wasm goldens; std/native/llrt is compiled for wasm too, so a new rt intrinsic needs a compiler/wasm/rt2.xo lowering and a wasm golden run
 - [compiler-switch-not-in-backend-cache-key.md](compiler-switch-not-in-backend-cache-key.md): Observed: an env-driven code generation switch (a temporary ssa.Module field) is not in fcache.xo's key, so builds mix modes; use XO_BACKEND_CACHE=off.
 - [duplicate-cabi-export-name.md](duplicate-cabi-export-name.md): Observed 2026-10-15: two cabi*.xo modules with the same function name collide as xo_x_<name> only at assembly; grep the cabi modules before adding an export.
 - [c-macro-tested-before-defined.md](c-macro-tested-before-defined.md): Observed 2026-10-15: xo_rt.c tested XO_TSAN and XO_ASAN 1,600 lines before defining them, so sanitizer builds never mapped the heap through the C library; heapos.xo now decides at run time.
