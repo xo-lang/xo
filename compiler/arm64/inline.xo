@@ -253,7 +253,11 @@ fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[
         if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
           padded[f.name] = true
         }
-      } else if !c.bad {
+      } else if !c.bad || (!c.hard && f.name.starts_with("xo.map.find[") && c.instrs <= INLINE_MAX_INSTRS) {
+        // a map's find: its blocks are mostly the joins of its tests (14
+        // for 36 instructions, over INLINE_MAX_BLOCKS), and put, get and
+        // update call it once each (2026-10-17: put and find 249M
+        // against LLVM's put 169M in update, find inlined there)
         small[f.name] = true
       } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
         loopy[f.name] = true
