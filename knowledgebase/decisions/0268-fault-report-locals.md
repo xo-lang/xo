@@ -1,15 +1,76 @@
-# 0268: Fault reports with the faulting frame's locals
+# 0268: Fault reports with the frames' locals
 
-Status: Proposed (xo-4, 2026-10-18; stub). To be filled in.
+Status: Proposed (xo-4, 2026-10-18; owner approved the item in the
+agents' survey recommendations; the design agreed with Xo Lang 3).
 
 ## Context
 
-A fault report on the native backends shows the frames, files, and
-lines (dwline.xo); the values of the faulting frame's variables need a
-debugger today.
+A native program's fault report (`XO_TRACEBACK`, fault.xo
+init_traceback; cabi.xo fault_traceback, prof.xo trace_text) lists the
+frames with their files and lines from the program's own DWARF
+(dwline.xo, decision 0239). Seeing the values that led to the fault
+needs a debugger (`xo debug`, decision 0253) or a rerun with prints; the
+agents' survey of 2026-10-18 ranked "the faulting frame's locals in the
+report" among the largest gains for finding bugs in Xo code.
+
+Decision 0252 makes the DWARF variables (DW_TAG_variable and
+formal_parameter, their types, location expressions and lists) the one
+source of truth for every consumer: lldb, gdb, `xo dev unwind --locals`
+(TestUnwind checks its values against lldb's). compiler/debug reads them
+from files; dwline.xo already reads the running program's DWARF at report
+time (Linux: /proc/self/exe's .debug_*; macOS: the dSYM next to the
+executable when its LC_UUID matches the image), with plain system calls
+and never in a signal handler.
 
 ## Decision
 
-To be written: with `XO_TRACEBACK=locals` (off by default) the report
-lists each frame's variables, read from the DWARF of decision 0252 with
-the reader rules of decision 0253 (llrt dwvars.xo beside dwline.xo).
+1. **Trigger**: `XO_TRACEBACK=locals` (a value of the existing variable),
+   off by default. Not on in debug builds by default: fault output goes
+   to standard error, which goldens and diff tests compare, and reading
+   DWARF after a fault adds time. `xo run` and `xo test` may set it under
+   a dev flag later.
+2. **Data**: the program's DWARF only (decision 0252), read as dwline.xo
+   reads it (decision 0253's reader rules); no side table in the binary
+   (it would cost bytes in every program and a second description to
+   keep consistent with the emitters').
+3. **Reader**: std/native/llrt dwvars.xo, beside dwline.xo, ported from
+   compiler/debug's variable and location decoding: per function the pc
+   ranges, its variables and parameters with names, types (base types,
+   structures and members, typedefs, pointers by name), and locations
+   (DW_OP_reg, regx, breg, bregx, fbreg, addr, piece; exprloc and DWARF 5
+   loclists).
+4. **Frames**: the trace block records each frame's frame pointer next
+   to its return address. The faulting frame's registers are those the
+   fault path saved (the trap context for a signal fault; the callee
+   saved registers and fp, sp at the raise for a software fault); a
+   caller frame has x19 to x28 (as the unwinder restores them), fp, and
+   sp. A variable in a register the frame does not have shows as
+   `<unavailable>`, as lldb shows it.
+5. **Values**: Int, Float, Bool, Rune as values; Str as its text
+   (bounded, escaped); a list or map as its length; other aggregates as
+   their type name and words. Reads go through a checked reader (the
+   address in a mapped range of the image or a heap chunk), so a bad
+   pointer prints `<bad address>` instead of faulting again.
+6. **Failure**: any failure while reading DWARF or values (no dSYM, a
+   form the reader does not know) prints the plain report as today,
+   with a note `(locals unavailable: REASON)`; the report is never lost.
+
+## Consequences
+
+- A fault report can answer "which value" without a rerun:
+  `XO_TRACEBACK=locals ./prog` prints, under each frame, `name = value`.
+- dwvars.xo is a second Xo reader of DWARF variables beside
+  compiler/debug's; a test runs both over the same binaries and compares
+  (as TestUnwind compares with lldb).
+- A release build without `--debug-info` has no DWARF: the report says
+  so.
+
+## Alternatives
+
+- **A compact locals table in an allocated section**: readable in the
+  fault path without files, but bytes in every binary and a second
+  description of the variables (Xo Lang 3, 2026-10-18).
+- **On by default in debug builds**: changes the standard error that
+  tests compare, and makes every fault slower.
+- **Print only the faulting frame**: cheaper, but a fault in a helper
+  (an index out of bounds in a std function) needs the caller's values.

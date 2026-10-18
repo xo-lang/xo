@@ -259,4 +259,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0265-debug-print-pure.md](0265-debug-print-pure.md): Proposed: dbg on every backend (native --no-gc too), one stderr line, compiled out of --release
 - [0266-map-update-or.md](0266-map-update-or.md): Proposed: no update_or (Map.update exists); vet hints XO0532 (copy-modify-store) and XO0533 (a mutated copy never stored)
 - [0267-watch.md](0267-watch.md): Accepted (stub): `xo run --watch` (restart only when the binary changed, graceful handoff) and `xo test --watch` (only affected tests), JSON events per cycle
-- [0268-fault-report-locals.md](0268-fault-report-locals.md): Proposed: XO_TRACEBACK=locals lists the faulting frame's variables in a fault report, from the program's own DWARF (0252, 0253)
+- [0268-fault-report-locals.md](0268-fault-report-locals.md): Proposed: XO_TRACEBACK=locals lists each frame's variables in a native fault report, from the program's own DWARF (0252) read as dwline.xo reads it (0253): llrt dwvars.xo, no side table
