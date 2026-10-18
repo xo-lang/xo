@@ -54,6 +54,13 @@ moved. Each step had its own failure:
    the function). JSON output has one object per scenario with the
    totals and the function rows, so an agent reads it without parsing
    tables.
+5. Inputs and the helper it replaces (lead, 2026-10-18): `xo dev
+   compare` reads the run directories of bench/perf/http with `ANN=1`
+   (per-function callgrind_annotate counts per run, aeb48d3b) and
+   replaces bench/perf/http/cgcompare.py (BASE/run NEW/run: per-request
+   totals and the top changed functions, generalizing Xo lang 5's
+   cgdiff); the owner wants profiling helpers in Xo. cgcompare.py's
+   output is the cross-check while it lands, then it is deleted.
 
 ## Consequences
 
