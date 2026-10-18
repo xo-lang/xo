@@ -215,6 +215,58 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   }
 }
 
+/// The body of the dupp, dropp, or sharep helper of an enum, struct, or
+/// tuple: the value at the pointer in x0 (kept in x19), its tag read
+/// there and each heap leaf of the variant it holds counted from there
+/// (leaf_call), where agg_rc takes every word and stores them all again
+/// (2026-10-17: `drop native.tlssrv.Conn?`, about 300 words, a 3.8 KB
+/// frame, 7,338 instructions against LLVM's 3,564 a TLS request; Xo
+/// Lang 3's HTTP callgrind).
+fn (var g: G) agg_rc_at(var b: List[Str], kind: Str, sym: Str, t: Int) {
+  let x = g.m.types[t]
+  var all: List[Leaf] = []
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, all)
+      }
+    }
+  } else {
+    g.heap_leaves(t, 0, all)
+  }
+  var out = 0
+  for l in all {
+    out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
+  }
+  let frame = out + 32
+  b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n\tstr x19, [sp, #${out + 16}]\n\tmov x19, x0\n")
+  let done = "${sym}_at_done"
+  if x.kind == ssa.Kind.Enum {
+    for (vi, v) in x.variants.indexed() {
+      var ls: List[Leaf] = []
+      for (fi, f) in v.fields.indexed() {
+        let (off, _) = g.payload_words(t, vi, fi)
+        g.heap_leaves(f.ty, off, ls)
+      }
+      if ls.is_empty() {
+        continue
+      }
+      let next = "${sym}_at_v${vi}"
+      b.push("\tldr x9, [x19]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
+      for (li, l) in ls.indexed() {
+        g.leaf_call(b, kind, l, "x19", 0, "${sym}_at${vi}l${li}")
+      }
+      b.push("\tb ${done}\n${next}:\n")
+    }
+  } else {
+    for (li, l) in all.indexed() {
+      g.leaf_call(b, kind, l, "x19", 0, "${sym}_atl${li}")
+    }
+  }
+  b.push("${done}:\n\tldr x19, [sp, #${out + 16}]\n${record_at("ldp", out)}\tadd sp, sp, #${frame}\n\tret\n\n")
+}
+
 /// The number of words an rc helper of leaf type t takes (a Str helper
 /// takes only the object).
 fn (var g: G) leaf_words(t: Int) -> Int {
@@ -310,6 +362,13 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
       g.helpers.push(b.join(""))
       return sym
     }
+  }
+  if g.kind(t) is ssa.Kind.Enum | ssa.Kind.Struct | ssa.Kind.Tuple {
+    // counted in place from the pointer (agg_rc_at), not every word
+    // loaded for the helper that takes them and stores them again
+    g.agg_rc_at(b, kind, sym, t)
+    g.helpers.push(b.join(""))
+    return sym
   }
   let inner = g.rc_helper(kind, t)
   let n = g.leaf_words(t)

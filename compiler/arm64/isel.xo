@@ -6,6 +6,9 @@ use github.com/xo-lang/xo/compiler/ssa
 /// The least heap leaves of a struct held in memory whose release calls
 /// its type's mem_drop helper; fewer are released one by one.
 const MEM_DROP_LEAVES = 1
+/// An enum of more words than this, held in memory, is counted through
+/// its helper's pointer form (rc_at).
+const RC_AT_WORDS = 8
 
 /// Generates function fi: instruction selection, the MIR passes,
 /// register allocation, and emission (function).
@@ -1106,6 +1109,9 @@ fn (var g: G) instr1(v: Int) {
       if g.op(a) == ssa.Op.Const || g.cancel_rc(v) {
         return // literals are immortal; see cancel_rc
       }
+      if g.rc_at(v, "dup", a) {
+        return
+      }
       g.retain(g.vty(a), g.words(a))
     }
     Release => {
@@ -1141,6 +1147,9 @@ fn (var g: G) instr1(v: Int) {
         }
         return
       }
+      if g.rc_at(v, "drop", a) {
+        return
+      }
       g.release(t, g.words(a))
     }
     Reuse => g.reuse(v)
@@ -1148,6 +1157,9 @@ fn (var g: G) instr1(v: Int) {
       let a = x.args[0]
       if g.op(a) == ssa.Op.Const {
         return // literals are immortal
+      }
+      if g.rc_at(v, "share", a) {
+        return
       }
       let h = g.rc_helper("share", g.vty(a))
       let ws = g.to_int(g.words(a), g.layout(g.vty(a)))
@@ -1392,6 +1404,23 @@ fn (g: G) join_tests(j: Int) -> Bool {
     known[v] = true
   }
   known.contains(g.arg(ins[n - 1], 0))
+}
+
+/// Counts value a (an enum of more than RC_AT_WORDS words, held in
+/// memory) through the pointer form of its helper (elem_helper:
+/// agg_rc_at), where its words would go to the helper as arguments,
+/// stored again in its frame; reports whether it did.
+fn (var g: G) rc_at(v: Int, kind: Str, a: Int) -> Bool {
+  let t = g.vty(a)
+  if g.kind(t) != ssa.Kind.Enum || g.nwords(t) <= RC_AT_WORDS || !g.heap(t) {
+    return false
+  }
+  let (ptr, ok) = g.mem_of(a)
+  if !ok {
+    return false
+  }
+  let _r = g.call(g.elem_helper(kind, t), regs([ptr]), [])
+  true
 }
 
 /// The word of an Int or Bool constant (a Bool is 0 or 1).
