@@ -173,9 +173,25 @@ fn perf_compare(os: Os, base: Str, new: Str, sc: Str, top: Int) -> PerfScenario?
   Some(PerfScenario{name: sc, base: tb, new: tn, rows: rows})
 }
 
+/// f rounded to the nearest integer, a half to the even one (Python's
+/// "%.0f", which cgcompare.py printed; a count over a request difference
+/// often ends in .5).
+fn perf_round(f: Float) -> Int {
+  let lo = f.floor()
+  let d = f - lo
+  let n = Int(lo)
+  if d > 0.5 {
+    return n + 1
+  }
+  if d < 0.5 {
+    return n
+  }
+  if n % 2 == 0 { n } else { n + 1 }
+}
+
 /// f rounded to an integer, right aligned in width w.
 fn perf_num(f: Float, w: Int) -> Str {
-  let s = "${Int(f.round())}"
+  let s = "${perf_round(f)}"
   if s.len() >= w {
     return s
   }
@@ -184,14 +200,14 @@ fn perf_num(f: Float, w: Int) -> Str {
 
 /// f with three decimals.
 fn perf_ratio(f: Float) -> Str {
-  let m = Int((f * 1000.0).round())
+  let m = perf_round(f * 1000.0)
   let frac = "${m % 1000}"
   "${m / 1000}.${"0".repeat(3 - frac.len())}${frac}"
 }
 
 fn perf_text(s: PerfScenario) -> Str {
   var b = StrBuilder.new()
-  b.write("== ${s.name}: base ${Int(s.base.round())} new ${Int(s.new.round())} ratio ${perf_ratio(s.new / s.base)}\n")
+  b.write("== ${s.name}: base ${perf_round(s.base)} new ${perf_round(s.new)} ratio ${perf_ratio(s.new / s.base)}\n")
   for r in s.rows {
     let name = if r.name.len() > 70 { r.name[0..70] } else { r.name }
     b.write("${perf_num(r.diff, 8)} ${perf_num(r.base, 8)} ${perf_num(r.new, 8)}  ${name}\n")
@@ -201,12 +217,12 @@ fn perf_text(s: PerfScenario) -> Str {
 
 fn perf_json(s: PerfScenario) -> Str {
   var b = StrBuilder.new()
-  b.write("{\"scenario\":${s.name.quote()},\"base\":${Int(s.base.round())},\"new\":${Int(s.new.round())},\"ratio\":${perf_ratio(s.new / s.base)},\"functions\":[")
+  b.write("{\"scenario\":${s.name.quote()},\"base\":${perf_round(s.base)},\"new\":${perf_round(s.new)},\"ratio\":${perf_ratio(s.new / s.base)},\"functions\":[")
   for (i, r) in s.rows.indexed() {
     if i > 0 {
       b.write(",")
     }
-    b.write("{\"name\":${r.name.quote()},\"diff\":${Int(r.diff.round())},\"base\":${Int(r.base.round())},\"new\":${Int(r.new.round())}}")
+    b.write("{\"name\":${r.name.quote()},\"diff\":${perf_round(r.diff)},\"base\":${perf_round(r.base)},\"new\":${perf_round(r.new)}}")
   }
   b.write("]}")
   b.freeze()

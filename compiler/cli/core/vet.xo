@@ -1045,7 +1045,10 @@ fn store_only_params(c: check.Checker, m: Int) -> List[Diag] {
         if p.is_var || p.is_self || k >= c.objs[fo].params.len() {
           continue
         }
-        let v = c.var_of(f, p.name)
+        // a parameter's local (the checker records parameters there, not
+        // by their name's position)
+        let pv = c.param_vars.get(fo) ?? []
+        let v = if k < pv.len() { pv[k] } else { -1 }
         let st = stored.get(v) ?? 0
         if v < 0 || st == 0 || st != (named.get(v) ?? 0) {
           continue
