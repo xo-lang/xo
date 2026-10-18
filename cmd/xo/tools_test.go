@@ -121,6 +121,19 @@ pub fn first(h: Holder) -> Str {
     None => ""
   }
 }
+
+pub struct Box {
+  w: Wide
+}
+
+fn keep(w: Wide) -> Box {
+  Box{w: w}
+}
+
+pub fn rebox(b: Box) -> Box {
+  let w = b.w
+  keep(w)
+}
 `
 
 func TestVetCLI(t *testing.T) {
@@ -147,7 +160,7 @@ func TestVetCLI(t *testing.T) {
 			t.Errorf("vet reported an error: %+v", d)
 		}
 	}
-	for _, c := range []string{"XO0530", "XO0703", "XO0900", "XO0901"} {
+	for _, c := range []string{"XO0530", "XO0531", "XO0703", "XO0900", "XO0901"} {
 		if !got[c] {
 			t.Errorf("missing %s in %s", c, out.String())
 		}

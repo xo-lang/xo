@@ -123,6 +123,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
   for fo in c.funcs_of(m) {
     out = out + unused_effects(c, fo)
   }
+  out = out + store_only_params(c, m)
   if let Some(d) = go_report(c, m) {
     out.push(d)
   }
@@ -761,6 +762,7 @@ fn walk_pat(p: parser.Pattern, var out: List[parser.Expr]) {
 
 fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
   match e {
+    Ident(_) => out.push(e)
     BinaryExpr(_, _, x, y) => {
       out.push(e)
       walk_expr(x, out)
@@ -787,6 +789,7 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
       }
     }
     ListLit(_, elems) => {
+      out.push(e)
       for x in elems {
         walk_expr(x, out)
       }
@@ -797,12 +800,14 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
       }
     }
     MapLit(_, entries) => {
+      out.push(e)
       for en in entries {
         walk_expr(en.key, out)
         walk_expr(en.value, out)
       }
     }
     StructLit(_, typ, fields) => {
+      out.push(e)
       walk_expr(typ, out)
       for f in fields {
         walk_expr(f.value, out)
@@ -893,4 +898,195 @@ fn walk_if(ie: parser.IfExpr, var out: List[parser.Expr]) {
   if let Some(x) = ie.els {
     walk_expr(x, out)
   }
+}
+
+// XO0531 (decision 0263): a parameter of a type with at least
+// COPY_THRESHOLD heap fields whose every use stores it (a struct
+// literal's field, a list or map literal's element, rt.any_of, a push,
+// put, or insert), while every caller passes a local it does not use
+// after the call. The parameter is borrowed, so storing it shares each
+// heap field, and the caller then drops its own copy: moving the store to
+// the caller's last use (or returning the value) does neither.
+
+/// The local the identifier e of file f refers to, or -1.
+fn local_of(c: check.Checker, f: Int, e: parser.Expr) -> Int {
+  match e {
+    Ident(id) => c.var_of(f, id)
+    ParenExpr(_, x) => local_of(c, f, x)
+    _ => -1
+  }
+}
+
+/// Whether call (a CallExpr) consumes its arguments: rt.any_of, or a
+/// method that stores its argument (push, put, insert).
+fn storing_call(fun: parser.Expr) -> Bool {
+  match fun {
+    SelectorExpr(_, x, sel) => {
+      let name = check.text(sel.name)
+      if name is "push" | "put" | "insert" | "push_front" | "set" {
+        return true
+      }
+      if name == "any_of" {
+        if let Ident(id) = x {
+          return check.text(id.name) == "rt"
+        }
+      }
+      false
+    }
+    _ => false
+  }
+}
+
+/// The locals nodes store (a direct operand of a storing position).
+fn stored_locals(c: check.Checker, f: Int, nodes: List[parser.Expr]) -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  for e in nodes {
+    match e {
+      StructLit(_, _, fields) => {
+        for fl in fields {
+          note_local(c, f, out, fl.value)
+        }
+      }
+      ListLit(_, elems) => {
+        for x in elems {
+          note_local(c, f, out, x)
+        }
+      }
+      MapLit(_, entries) => {
+        for en in entries {
+          note_local(c, f, out, en.value)
+        }
+      }
+      CallExpr(_, fun, args) => {
+        if storing_call(fun) {
+          for a in args {
+            note_local(c, f, out, a.value)
+          }
+        }
+      }
+      _ => {}
+    }
+  }
+  out
+}
+
+fn note_local(c: check.Checker, f: Int, var m: Map[Int, Int], x: parser.Expr) {
+  let v = local_of(c, f, x)
+  if v >= 0 {
+    m[v] = (m.get(v) ?? 0) + 1
+  }
+}
+
+/// How many times nodes name each local.
+fn local_uses(c: check.Checker, f: Int, nodes: List[parser.Expr]) -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  for e in nodes {
+    if let Ident(id) = e {
+      let v = c.var_of(f, id)
+      if v >= 0 {
+        out[v] = (out.get(v) ?? 0) + 1
+      }
+    }
+  }
+  out
+}
+
+/// A call's site: its file, the call's end, and the nodes of the
+/// declaration it is in.
+struct CallSite {
+  f: Int
+  end: Int
+  args: List[check.ArgParam]
+  nodes: List[parser.Expr]
+}
+
+fn store_only_params(c: check.Checker, m: Int) -> List[Diag] {
+  var out: List[Diag] = []
+  // the calls of the root modules, by callee
+  var calls: Map[Int, List[CallSite]] = {}
+  for rm in c.root_mods {
+    for f in c.mods[rm].files {
+      for d in c.files[f].ast.decls {
+        var nodes: List[parser.Expr] = []
+        walk_decl(d, nodes)
+        for e in nodes {
+          if let CallExpr(sp, _, _) = e {
+            if let Some(ci) = c.call_in(f, e) {
+              if ci.fn_obj >= 0 {
+                var l = calls.get(ci.fn_obj) ?? []
+                l.push(CallSite{f: f, end: sp.end.offset, args: ci.params, nodes: nodes})
+                calls[ci.fn_obj] = l
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  for f in c.mods[m].files {
+    for (i, d) in c.files[f].ast.decls.indexed() {
+      let fd = match d {
+        FnDecl(fd) => fd
+        _ => continue
+      }
+      let fo = if i < c.files[f].decl_objs.len() { c.files[f].decl_objs[i] } else { -1 }
+      if fo < 0 || fd.body.is_none() {
+        continue
+      }
+      let sites = calls.get(fo) ?? []
+      if sites.is_empty() {
+        continue
+      }
+      var nodes: List[parser.Expr] = []
+      walk_fn(fd, nodes)
+      let stored = stored_locals(c, f, nodes)
+      let uses = local_uses(c, f, nodes)
+      for (k, p) in fd.params.indexed() {
+        if p.is_var || p.is_self || k >= c.objs[fo].params.len() {
+          continue
+        }
+        let v = c.var_of(f, p.name)
+        let st = stored.get(v) ?? 0
+        if v < 0 || st == 0 || st != (uses.get(v) ?? 0) {
+          continue
+        }
+        let t = c.objs[fo].params[k].ty
+        let n = heap_fields(c, t, 0)
+        if n < COPY_THRESHOLD {
+          continue
+        }
+        // every caller passes a local it does not name after the call
+        var all_last = true
+        for s in sites {
+          if k >= s.args.len() {
+            all_last = false
+            break
+          }
+          let a = local_of(c, s.f, s.args[k].arg)
+          if a < 0 {
+            all_last = false
+            break
+          }
+          for e in s.nodes {
+            if let Ident(id) = e {
+              if id.span.start.offset >= s.end && c.var_of(s.f, id) == a {
+                all_last = false
+              }
+            }
+          }
+          if !all_last {
+            break
+          }
+        }
+        if !all_last {
+          continue
+        }
+        let name = check.text(p.name.name)
+        var dg = vdiag("XO0531", false, c.files[f].path, p.name.span, "`${name}` is borrowed, so storing it shares the ${n} heap fields of `${c.show(t)}`, and each caller drops its own copy after the call")
+        dg.notes.push(check.DNote{message: "store the value at the caller's last use, or return it from here, so it moves instead (decision 0263)"})
+        out.push(dg)
+      }
+    }
+  }
+  out
 }

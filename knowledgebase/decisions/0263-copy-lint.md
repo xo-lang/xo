@@ -1,8 +1,13 @@
 # 0263: A copy lint under xo vet
 
 Status: Accepted (owner, 2026-10-18, through the lead: "a perf lint for
-copy-prone shapes ... as warnings under xo vet"); XO0530 implemented 2026-10-18 (vet.xo
-payload_share, TestVetCLI); XO0531 not yet
+copy-prone shapes ... as warnings under xo vet"); implemented 2026-10-18: XO0530 (vet.xo
+payload_share) and XO0531 (vet.xo store_only_params), TestVetCLI.
+XO0531 counts a parameter's uses and its stores (a struct, list, or map
+literal's operand, rt.any_of, push, put, insert, set) and needs every
+call in the root modules to pass a local not named after the call, in
+source order (a call in a loop can still warn: best effort, as below).
+`--copy-threshold` is not implemented yet (the threshold is 8)
 
 ## Context
 
