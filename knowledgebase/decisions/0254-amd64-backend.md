@@ -183,11 +183,11 @@ bytes stay clang's:
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
-## Stage 6 (6a accepted, owner 2026-10-18; 6b and 6c Proposed): darwin/amd64 and windows/amd64
+## Stage 6 (6a and 6c accepted, owner 2026-10-18; 6b Proposed): darwin/amd64 and windows/amd64
 
 The owner chose darwin/amd64 first (2026-10-18, through the lead): the
 Intel MacBook verifies it on real hardware. 6a is in progress (xo-fa);
-the Windows convention (6c) is with the owner.
+6c (the Windows convention) accepted the same day.
 
 The owner asked (2026-10-18, through the lead) for a plan and size for
 the amd64 backend on Windows and on macOS x86_64, ranked. Today both
@@ -271,7 +271,18 @@ runs (a real CPU: SHA-NI, AES-NI, native speed).
   toolchain.md), and on a Windows EC2 instance or CI runner once CI is
   back (remote-windows.sh; agents do not start it themselves).
 
-### 6c. Xo's own calls on Windows use System V (Proposed, 2026-10-18)
+### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
+
+Accepted by the owner on 2026-10-18 (through the lead), for both code
+generators (LLVM's x86_64_sysvcc and the native backend): Xo to Xo calls
+use System V; Win64 applies only at the OS boundary (calls of Windows
+and C functions, the callbacks the OS makes: thread starts, the
+vectored exception and console handlers; the exports), through wrappers
+that preserve rdi, rsi and xmm6 to xmm15 for their Windows callers.
+Conditions: a test per boundary kind (thread start, the VEH fault path,
+the console handler, an export, a C callback) under Wine; .pdata and
+.xdata that unwind through Xo frames correctly; a real Windows
+measurement once EC2 is back. The order stays: 6a (darwin/amd64) first.
 
 One convention decision for both Windows/amd64 code generators, the
 LLVM backend's builds today and 6b's native backend: every call from Xo
