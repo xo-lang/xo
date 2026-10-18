@@ -2188,6 +2188,20 @@ test "retries after 503" {
 ```
 
 - `test` blocks may live in any file. They are compiled only by `xo test`.
+- Where tests live (a note, not a rule). Both places have the same access
+  to the module's private names; they differ in what else sees the edit:
+  - Inline `test` blocks keep a test next to the code it checks, so a
+    reader sees it as an example and an edit to the code updates it in
+    the same place; they suit small modules, examples, and one-file tools.
+  - A `_test.xo` file keeps tests out of the files the program is built
+    from. A tool that rebuilds or restarts on file changes (a file
+    watcher, a cached build of the program keyed by its source files)
+    then skips test-only edits by name, which it cannot do for an inline
+    test; `xo run --watch` does not need that, since it compares the
+    built program. Large modules and long running servers usually keep
+    their tests there. In the Xo repository, tests under `std/` and
+    `compiler/` live only in `_test.xo` files (decision 0262), because
+    the cached xo is keyed by those sources.
 - A test body has type `() ! Error`, so `?` fails the test with the error.
 - Inside a test block, and anywhere in a `_test.xo` file for `expect` and
   `testing`, three names are predeclared:
