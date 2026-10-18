@@ -12,6 +12,7 @@ use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/nistec
 use native/llrt/rand
+use native/llrt/raw
 use native/llrt/sha3
 use native/llrt/x25519
 use native/rt
@@ -143,20 +144,23 @@ fn bfull(x: Int) -> Int {
   rt.int_wrap(0, r, rt.int_wrap(2, rt.int_wrap(4, r, 63), Q))
 }
 
-/// Go's compress: round(2^d x / q) mod 2^d.
+/// Go's compress: round(2^d x / q) mod 2^d (no division: the quotient
+/// by a product and a shift, corrected twice by masks). x is secret in
+/// decapsulation, so wrapping arithmetic only (decision 0222: a checked
+/// operation is a branch on its operands; 2026-10-18).
 fn compress(x: Int, d: Int) -> Int {
   let dividend = rt.int_wrap(3, x, d)
-  var quotient = (dividend * 5039) >> 24
-  let remainder = dividend - quotient * Q
-  quotient += rt.int_wrap(4, Q / 2 - remainder, 63)
-  quotient += rt.int_wrap(4, Q + Q / 2 - remainder, 63)
-  quotient & (rt.int_wrap(3, 1, d) - 1)
+  var quotient = rt.int_wrap(4, rt.int_wrap(2, dividend, 5039), 24)
+  let remainder = rt.int_wrap(1, dividend, rt.int_wrap(2, quotient, Q))
+  quotient = rt.int_wrap(0, quotient, rt.int_wrap(4, rt.int_wrap(1, Q / 2, remainder), 63))
+  quotient = rt.int_wrap(0, quotient, rt.int_wrap(4, rt.int_wrap(1, Q + Q / 2, remainder), 63))
+  quotient & rt.int_wrap(1, rt.int_wrap(3, 1, d), 1)
 }
 
-/// Go's decompress: round(q y / 2^d).
+/// Go's decompress: round(q y / 2^d), by wrapping arithmetic as compress.
 fn decompress(y: Int, d: Int) -> Int {
-  let dividend = y * Q
-  (dividend >> d) + ((dividend >> (d - 1)) & 1)
+  let dividend = rt.int_wrap(2, y, Q)
+  rt.int_wrap(0, rt.int_wrap(4, dividend, d), rt.int_wrap(4, dividend, rt.int_wrap(1, d, 1)) & 1)
 }
 
 /// N zeros: a copy of a constant (the first write copies it: one
@@ -643,15 +647,37 @@ fn decaps_key(key: Key, c: Bytes, k: Int) -> Bytes {
   let kprime = g[0..32]
   let kbar = sha3.shake256(asn1.cat([key.z, c]), 32)
   let c1 = pke_encrypt(key.a, key.t, m, g[32..64], k)
+  implicit_reject(c, c1, n, kprime, kbar)
+}
+
+/// FIPS 203's implicit rejection: kprime when c and c1 (n bytes each)
+/// are equal, else kbar, the compare over every byte and the choice by
+/// mask (test/codegen/consttime checks it has no select: the words are
+/// read and written by address, so no length check or growth code is
+/// in it).
+fn implicit_reject(c: Bytes, c1: Bytes, n: Int, kprime: Bytes, kbar: Bytes) -> Bytes {
+  let pc = raw.bytes_addr(c)
+  let pc1 = raw.bytes_addr(c1)
   var diff = 0
-  for i in 0..n {
-    diff = diff | (Int(c[i]) ^ Int(c1[i]))
+  var i = 0
+  while i < n {
+    diff = diff | (rt.mem_load(pc, i, 1) ^ rt.mem_load(pc1, i, 1))
+    i = rt.int_wrap(0, i, 1)
   }
   let same = ct.mask_eq(diff, 0)
-  var out = rt.rs_with_cap(32)
-  for i in 0..32 {
-    out = rt.rs_push_byte(out, ct.pick(same, Int(kprime[i]), Int(kbar[i])))
+  let out = rt.rs_set_len(rt.rs_with_cap(32), 32)
+  let po = raw.data(out)
+  let pk = raw.bytes_addr(kprime)
+  let pb = raw.bytes_addr(kbar)
+  i = 0
+  while i < 32 {
+    rt.mem_store(po, i, ct.pick(same, rt.mem_load(pk, i, 1), rt.mem_load(pb, i, 1)), 1)
+    i = rt.int_wrap(0, i, 1)
   }
+  raw.alive(c)
+  raw.alive(c1)
+  raw.alive(kprime)
+  raw.alive(kbar)
   out.bytes()
 }
 

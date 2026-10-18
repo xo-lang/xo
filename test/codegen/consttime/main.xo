@@ -55,3 +55,30 @@ fn main(os: Os) {
 // func x25519.base
 // arm64: -"csel" -"cset"
 // llvm: -"select"
+
+// The other code on secrets (2026-10-18): P-256's scalar multiplications
+// (a window table read whole under masks, complete additions), Ed25519
+// signing's scalar product and sum, ML-KEM's compress (a product and
+// shifts for the quotient, never a division: KyberSlash) and its
+// decapsulation's implicit rejection (a mask from the whole ciphertext
+// compare, the key picked under it), and RSA's private exponentiation
+// (bigmod.exp's window table under masks). The branches left are loops
+// over public counts and bounds checks on public indices.
+// func nistec.pt_mul
+// arm64: -"csel" -"cset"
+// llvm: -"select"
+// func nistec.pt_mul_g
+// arm64: -"csel" -"cset"
+// llvm: -"select"
+// func ed25519.sc_muladd
+// arm64: -"csel" -"cset"
+// llvm: -"select"
+// func mlkem.compress
+// arm64: -"udiv" -"sdiv" -"csel" -"cset" -"\tb\." -"cbn?z" -"tbn?z"
+// llvm: -"udiv" -"sdiv" -"select" -"br i1"
+// func mlkem.implicit_reject
+// arm64: -"csel" -"cset"
+// llvm: "call i64 @\"x.ct.pick\"" -"select"
+// func bigmod.exp
+// arm64: -"csel" -"cset"
+// llvm: -"select"

@@ -183,6 +183,16 @@ var ctChecks = []ctCheck{
 	// loops over public counts)
 	{fn: "x25519.madd_digit", noSelect: true, full: true},
 	{fn: "x25519.base", noSelect: true, full: true},
+	// the other code on secrets (2026-10-18): P-256's scalar
+	// multiplications, Ed25519 signing's scalar arithmetic, ML-KEM's
+	// compress (no division, no branch) and implicit rejection, RSA's
+	// private exponentiation
+	{fn: "nistec.pt_mul", noSelect: true, full: true},
+	{fn: "nistec.pt_mul_g", noSelect: true, full: true},
+	{fn: "ed25519.sc_muladd", noSelect: true, full: true},
+	{fn: "mlkem.compress", branchFree: true, noSelect: true, full: true},
+	{fn: "mlkem.implicit_reject", noSelect: true, full: true},
+	{fn: "bigmod.exp", noSelect: true, full: true},
 }
 
 // TestConstantTimeLLVM compiles the LLVM IR xo emits for ctLLVMProg with

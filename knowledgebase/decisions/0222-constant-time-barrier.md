@@ -64,7 +64,13 @@ written, with no if-conversion or range reasoning across calls.
     ed25519.ge_cmov has no conditional branch, csel, or cset,
     ct.bytes_equal no csel, cbz, or tbz, ed25519.ge_mul and sc_reduce
     no csel or cset, x25519.madd_digit and base (the fixed base
-    public key, 2026-10-18) no csel or cset; the LLVM IR carries the barrier asm (twice in
+    public key, 2026-10-18) no csel or cset; and (2026-10-18)
+    nistec.pt_mul and pt_mul_g, ed25519.sc_muladd, mlkem.implicit_reject
+    (decapsulation's compare and choice, split out of decaps_key, whose
+    inlined length code has selects on public values), and bigmod.exp
+    (RSA's private exponentiation) no csel or cset, mlkem.compress no
+    division, branch, or select (KyberSlash; its arithmetic made
+    wrapping); the LLVM IR carries the barrier asm (twice in
     bytes_equal) or calls ct's masks. `xo dev codegen` gained `// func
     MOD.NAME` lines to name a function of another module (a std runtime
     module's).
@@ -83,7 +89,9 @@ written, with no if-conversion or range reasoning across calls.
     in x25519.xo's generated field code (now through the barrier,
     scripts/x25519fe64.py mul38) and selects in checked arithmetic's
     fault paths (now wrapping arithmetic). Their control: 20 and 5
-    selects without the barriers. On arm64 hosts it checks arm64; the same test
+    selects without the barriers. The P-256, Ed25519, ML-KEM, and RSA functions
+    are in the same full tier; AES-GCM's tag compare is ct.bytes_equal,
+    checked above. On arm64 hosts it checks arm64; the same test
     checks x86-64 on an amd64 host (the LLVM backend builds for the host
     only).
 - **crypto.equal is Xo** (std/native/crypto.xo calls ct.bytes_equal, as
