@@ -2422,6 +2422,13 @@ does (decision 0131).
   (10.1); fixes whose edits overlap in one round wait for the next round.
   `xo check --fix --json` adds `"applied": [{"file", "line", "rule",
   "title"}]` next to `modules` and `diagnostics`.
+- `xo build`, `xo run` and `xo test` print every error, but only the
+  warnings of files in the directories the command names (and the
+  directories below them); the others are counted on one line, and
+  `XO_WARNINGS=all` prints them. A build of `compiler/xo` does not show
+  `compiler/ssa`'s warnings although both are one module; `xo check` and
+  `xo vet` on a directory print all of its warnings, and `--json` output
+  holds every diagnostic.
 
 ### 10.3 Queries
 

@@ -417,14 +417,53 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     if o.json && o.cmd == "build" {
       os.stdio.print(build_json(false, [], ds))
     } else {
-      print_diags(os, ds)
+      print_diags(os, in_scope(os, o, ds))
     }
     os.proc.exit(1)
   }
   if !(o.json && o.cmd == "build") && ov.is_empty() {
-    print_diags(os, c.diags)
+    print_diags(os, in_scope(os, o, c.diags))
   }
   (c, gen_ds)
+}
+
+/// The diagnostics to print: every error, and the warnings of files in
+/// the directories the command names (a build of compiler/xo does not
+/// print compiler/ssa's warnings, though they are one module; `xo vet`
+/// and `xo check` on that directory do). XO_WARNINGS=all prints them
+/// all; the warnings left out are counted on one line.
+fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
+  if (os.env.get("XO_WARNINGS") ?? "") == "all" {
+    return ds
+  }
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  let abs = fn(p: Str) -> Str { if p.starts_with("/") { p } else { "${wd}/${p}".replace("/./", "/") } }
+  var roots: List[Str] = []
+  for d in o.dirs {
+    roots.push(abs(d.trim_suffix("/...").trim_suffix("/.").trim_suffix("/")) + "/")
+  }
+  if roots.is_empty() {
+    roots.push("${wd}/")
+  }
+  var out: List[check.Diag] = []
+  var left = 0
+  for d in ds {
+    var shown = !d.warning || d.file.is_empty()
+    let f = abs(d.file)
+    for r in roots {
+      // a directory covers the directories below it (decision 0210)
+      shown = shown || f.starts_with(r) || "${f}/" == r
+    }
+    if shown {
+      out.push(d)
+    } else {
+      left += 1
+    }
+  }
+  if left > 0 {
+    os.stdio.eprintln("xo: ${left} warning${if left == 1 { "" } else { "s" }} in files outside the directories built (XO_WARNINGS=all prints them)")
+  }
+  out
 }
 
 /// A native build (arm64 or llvm, or wasm): check, SSA, passes, code,
