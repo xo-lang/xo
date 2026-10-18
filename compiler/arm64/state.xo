@@ -327,6 +327,9 @@ struct G {
   has_ref_ptr: Bool = false
   areas: Map[Int, List[Int]] = {}
   mem_bytes: Int = 0
+  /// the homes in the frame (byref.xo plan_held): address register,
+  /// byte offset of the frame's memory
+  frame_homes: List[(Int, Int)] = []
   lazy_res: Map[(Int, Int), Bool] = {}
   /// read only parameters passed by reference: their address
   stable: Map[Int, Int] = {}
@@ -440,6 +443,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.has_ref_ptr = false
   g.areas = {}
   g.mem_bytes = 0
+  g.frame_homes = []
   g.lazy_res = {}
   g.stable = {}
 }

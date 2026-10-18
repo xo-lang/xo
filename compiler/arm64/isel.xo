@@ -581,6 +581,9 @@ fn (var g: G) isel() {
         }
       }
       let _e = g.add(Inst{kind: K_ENTRY, defs: defs})
+      for (r, off) in g.frame_homes {
+        g.pmove_srcs([r], [Src{kind: S_MEM, imm: off}])
+      }
       if g.has_ref_ptr {
         g.by_ref_entry(ptrs)
       }
@@ -633,8 +636,17 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
   let to = g.f.edges[e].to
   let ps = g.f.blocks[to].params
   for (i, p) in ps.indexed() {
-    if g.mem_only(p) >= 0 {
-      continue // passed in place
+    let m = g.mem_only(p)
+    if m >= 0 {
+      // passed in place; an edge whose memory holds another value
+      // stores the argument there (byref.xo held_in)
+      let a = g.f.edges[e].args[i]
+      if let Some(es) = g.held.edge.get(e) {
+        if es[m] != g.key_of(a) {
+          g.store_words_at(g.held.mems[m].ptr, 0, g.words(a))
+        }
+      }
+      continue
     }
     let pw = g.vals[p]
     let aw = g.words(g.f.edges[e].args[i])

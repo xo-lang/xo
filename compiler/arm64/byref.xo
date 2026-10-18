@@ -300,7 +300,8 @@ fn (g: G) held_in(b: Int, n: Int) -> List[HKey] {
   }
   if b == 0 {
     for (i, m) in g.held.mems.indexed() {
-      st[i] = g.key_of(m.param)
+      // a home in the frame holds nothing yet
+      st[i] = if m.param < 0 { h_bot() } else { g.key_of(m.param) }
     }
     return st
   }
@@ -322,12 +323,18 @@ fn (g: G) held_in(b: Int, n: Int) -> List[HKey] {
         continue
       }
       var all = true
+      var one = false
       for e in states {
         if (g.held.edge.get(e) ?? [])[i] != g.key_of(g.f.edges[e].args[pi]) {
           all = false
+        } else {
+          one = true
         }
       }
-      if all {
+      // a home in the frame also takes the parameter when one edge (a
+      // loop's back edge) passes it in place: the others store their
+      // argument there (isel.xo edge_moves), once before the loop
+      if all || (one && m.param < 0) {
         st[i] = HKey{v: p, k: -1}
         found = true
         break
@@ -353,7 +360,9 @@ fn (g: G) held_in(b: Int, n: Int) -> List[HKey] {
 fn (var g: G) find_mem_only() {
   var cands: Map[Int, Int] = {}
   for (i, m) in g.held.mems.indexed() {
-    cands[m.param] = i
+    if m.param >= 0 {
+      cands[m.param] = i
+    }
   }
   for (v, m) in g.held.in_place {
     cands[v] = m
@@ -572,16 +581,60 @@ fn (var g: G) by_ref_entry(ptrs: Map[Int, Int]) {
   }
 }
 
+/// Adds a home in the frame for each type of BY_REF_MIN bytes or more
+/// the function passes as a `var` argument by reference and has no
+/// parameter home for (seen): a value kept there across calls and loops
+/// is passed in place, not copied in and out of an area at every call
+/// (bench/perf/varparam: 522 instructions a call, LLVM 21).
+fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
+  for bl in g.f.blocks {
+    for v in bl.instrs {
+      let x = g.f.values[v]
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      if ci < 0 {
+        continue
+      }
+      let cb = g.by_ref_of(ci)
+      if cb.is_empty() {
+        continue
+      }
+      for (i, a) in x.args.indexed() {
+        if i >= cb.len() || !cb[i] || !g.is_var_param(ci, i) {
+          continue
+        }
+        let t = g.vty(a)
+        if seen.contains(t) {
+          continue
+        }
+        seen[t] = true
+        let r = g.new_vreg(false)
+        let off = g.mem_bytes
+        g.mem_bytes += 8 * g.nwords(t)
+        mems.push(HMem{t: t, param: -1, ptr: r})
+        g.frame_homes.push((r, off))
+      }
+    }
+  }
+}
+
 /// Finds the homes of the function and runs the dataflow; returns the
 /// address registers of the parameters passed by reference (planHeld).
 fn (var g: G) plan_held() -> Map[Int, Int] {
   let br = g.by_ref_of(g.fi)
-  if br.is_empty() {
-    return {}
-  }
   var ptrs: Map[Int, Int] = {}
   var mems: List[HMem] = []
   var seen: Map[Int, Bool] = {}
+  if br.is_empty() {
+    g.frame_homes_of(mems, seen)
+    if !mems.is_empty() {
+      g.stable = {}
+      g.compute_held(mems)
+    }
+    return {}
+  }
   for (i, p) in g.params().indexed() {
     if !br[i] {
       continue
@@ -597,6 +650,7 @@ fn (var g: G) plan_held() -> Map[Int, Int] {
       mems.push(HMem{t: t, param: p, ptr: r})
     }
   }
+  g.frame_homes_of(mems, seen)
   g.stable = {}
   g.compute_held(mems)
   // a function with no home still has an empty dataflow
