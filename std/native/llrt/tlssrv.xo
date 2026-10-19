@@ -281,7 +281,15 @@ pub fn srv_add(s: rthttp.Srv, a: Int, sr_tls: Int, c: Cert) {
 }
 
 /// Frees a server configuration (0: none).
-pub fn srv_free(h: Int) { free(h) }
+pub fn srv_free(h: Int) {
+  // a server's block holds its SrvTls in an Any (srv_of, put), not a
+  // connection's list (free)
+  let s = rt.mem_load(h, 0, 8)
+  if s != 0 {
+    tasks.h_release(s)
+  }
+  rt.heap_release(h - 8)
+}
 
 // ---------------------------------------------------------------------------
 // Connections
@@ -305,25 +313,76 @@ struct Conn {
   pend: Bytes
 }
 
+// A connection's block holds its Conn in a list of one that only the
+// connection's task reads (word 0: the list object, with the block's
+// reference; 0 while taken), not an Any: an Any's value is shared
+// (conc.xo one), and sharing the whole TLS state again at every read and
+// write cost 2,938 instructions a TLS request and 5,882 an HTTP/2 one
+// (arm64, 2026-10-19).
+
+/// A copy of the connection of block h, or None.
 fn load(h: Int) -> Conn? {
-  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
-  rt.any_get[Conn](a)
+  let w = rt.mem_load(h, 0, 8)
+  if w == 0 {
+    return None
+  }
+  let l = rt.obj_at[List[Conn]](w)
+  if l.is_empty() { None } else { Some(l[0]) }
 }
 
-/// The connection of block h moved out (rt.any_take: not copied, so it
-/// changes in place); save puts it back. A read and a write took a copy
-/// and dropped the old one, a dup and a drop of every buffer of the TLS
-/// state per call (bench/results/http-callgrind-2026-10-17.md).
+/// The connection of block h moved out (not copied, so it changes in
+/// place; the block holds none until save puts it back). A read and a
+/// write took a copy and dropped the old one, a dup and a drop of every
+/// buffer of the TLS state per call
+/// (bench/results/http-callgrind-2026-10-17.md).
 fn take_conn(h: Int) -> Conn? {
-  let a = rt.obj_at[rt.Any](rt.mem_load(h, 0, 8))
-  rt.any_take[Conn](a)
+  let w = rt.mem_load(h, 0, 8)
+  if w == 0 {
+    return None
+  }
+  // the block's reference becomes l's: l is the list's only one, so the
+  // pop moves the Conn out
+  var l = rt.obj_at[List[Conn]](w)
+  let _last = rc.dec(w)
+  rt.mem_store(h, 0, 0, 8)
+  l.pop()
 }
 
 /// Puts c in block h, and its handshake state in word 1 (handshake's
 /// check, which then needs no take).
 fn save(h: Int, c: Conn) {
-  put(h, rt.any_of(c))
   rt.mem_store(h, 8, c.done, 8)
+  var l: List[Conn] = []
+  l.push(c)
+  stash(h, l)
+}
+
+/// Puts the list of one l in block h, releasing the connection the
+/// block held. A caller pushes its Conn at the Conn's last use, so the
+/// push moves it (save's parameter is borrowed: its push copies every
+/// field).
+fn stash(h: Int, l: List[Conn]) {
+  let w = keep_list(l)
+  release_conn(h)
+  rt.mem_store(h, 0, w, 8)
+}
+
+/// The object of l with a reference more (keep's: l is borrowed, so the
+/// caller's own release comes after the increment, not at obj_addr, l's
+/// last use there).
+fn keep_list(l: List[Conn]) -> Int {
+  let w = rt.obj_addr(l)
+  rc.inc(w)
+  w
+}
+
+/// Releases the connection of block h, if any (take_conn's, dropped;
+/// tested first: an empty block's None is a Conn? of 2.5 KB zeroed and
+/// dropped, about 650 instructions at every read and write).
+fn release_conn(h: Int) {
+  if rt.mem_load(h, 0, 8) != 0 {
+    let _c = take_conn(h)
+  }
 }
 
 /// Replaces the Any in block h.
@@ -363,7 +422,7 @@ pub fn conn(h: Int, pd: Int) -> Int {
   for c in cs[1..cs.len()] {
     cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
   }
-  // the Any, the handshake state (save)
+  // the connection's list, the handshake state (save)
   let t = rt.heap_large(16)
   rt.mem_store(t, 0, 0, 8)
   rt.mem_store(t, 8, 0, 8)
@@ -466,12 +525,14 @@ fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
   if c.status == -2 {
     c.status = 0
   }
-  // save's body here, c's last use: c moves into the Any (save's
-  // parameter is borrowed, so its any_of shared every field of the
-  // connection and this frame then dropped them all: about 5,600
-  // instructions a call on arm64, 2026-10-18)
+  // save's body here, c's last use: c moves into the block (save's
+  // parameter is borrowed, so it copied every field of the connection
+  // and this frame then dropped them all: about 5,600 instructions a
+  // call on arm64, 2026-10-18)
   rt.mem_store(t, 8, c.done, 8)
-  put(t, rt.any_of(c))
+  var l: List[Conn] = []
+  l.push(c)
+  stash(t, l)
   out
 }
 
@@ -488,12 +549,14 @@ pub fn write(t: Int, p: Int, n: Int) -> Int {
   send(c, raw.str_at(p, n).bytes())
   let ok = flush(c)
   let st = c.status
-  // save's body here, c's last use: c moves into the Any (save's
-  // parameter is borrowed, so its any_of shared every field of the
-  // connection and this frame then dropped them all: about 5,600
-  // instructions a call on arm64, 2026-10-18)
+  // save's body here, c's last use: c moves into the block (save's
+  // parameter is borrowed, so it copied every field of the connection
+  // and this frame then dropped them all: about 5,600 instructions a
+  // call on arm64, 2026-10-18)
   rt.mem_store(t, 8, c.done, 8)
-  put(t, rt.any_of(c))
+  var l: List[Conn] = []
+  l.push(c)
+  stash(t, l)
   if ok { CC_OK } else if st == 0 { CC_ERR } else { st }
 }
 
@@ -549,10 +612,7 @@ pub fn free(h: Int) {
   if h == 0 {
     return
   }
-  let s = rt.mem_load(h, 0, 8)
-  if s != 0 {
-    tasks.h_release(s)
-  }
+  release_conn(h)
   rt.heap_release(h - 8)
 }
 
