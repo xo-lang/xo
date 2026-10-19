@@ -23,6 +23,19 @@ struct Patch {
   extra: json.Patch[Str]
 } derive Json
 
+// fixed fields around a Patch field, and a Patch field first: the
+// encoder merges the commas and keys it knows before the first Patch
+struct Mixed {
+  id: Int
+  note: json.Patch[Str]
+  name: Str
+} derive Json
+
+struct PatchFirst {
+  note: json.Patch[Str]
+  id: Int
+} derive Json
+
 fn main(os: Os) ! {
   let it = Item{id: 1, title: "a \"quoted\" <b>", tags: ["x", "y"], kind: Kind.Task(due: Time.from_unix(0)), meta: {"z": 1, "a": 2}, raw: b"hi"}
   let text = json.encode_str(it)
@@ -51,5 +64,11 @@ fn main(os: Os) ! {
   let p2 = json.decode_str[Patch](r#"{"title": null, "extra": "x"}"#)?
   os.stdio.println("patch ${p1.title is Value(_)} ${p1.extra is Absent} ${p2.title is Null} ${p2.extra is Value(_)}")
   os.stdio.println("patch encode ${json.encode_str(p1)} ${json.encode_str(p2)}")
+  let m1 = json.decode_str[Mixed](r#"{"id": 1, "name": "n"}"#)?
+  let m2 = json.decode_str[Mixed](r#"{"id": 2, "note": "x", "name": "n"}"#)?
+  let m3 = json.decode_str[Mixed](r#"{"id": 3, "note": null, "name": "n"}"#)?
+  let f1 = json.decode_str[PatchFirst](r#"{"id": 4}"#)?
+  let f2 = json.decode_str[PatchFirst](r#"{"note": "y", "id": 5}"#)?
+  os.stdio.println("mixed ${json.encode_str(m1)} ${json.encode_str(m2)} ${json.encode_str(m3)} ${json.encode_str(f1)} ${json.encode_str(f2)}")
   os.stdio.println("builtins ${json.encode_str([1, 2])} ${json.encode_str({"k": [true, false]})} ${json.encode_str(Some(1.25))} ${json.encode_str(#{"s"})}")
 }

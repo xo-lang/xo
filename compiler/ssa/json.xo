@@ -330,11 +330,15 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   }
   let tk = b.c.objs[obj].tkind
   if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
-    // {"f":v,...}; an Absent Patch field is left out
+    // {"f":v,...}; an Absent Patch field is left out. Until the first
+    // Patch field, whether a field needs its comma is known here, so the
+    // brace, the comma, and the key are one literal (one append): a
+    // User of three fields appends 4 literals, not 7, and tests nothing
     let av = b.local()
     let first = b.local()
-    b.write_var(av, b.lit(acc, "{"))
-    b.write_var(first, b.cbool(true))
+    var pend = "{"
+    var fixed = true
+    var any = false
     for f in b.c.objs[obj].fields {
       let fname = check.text(f.name)
       let fi = b.m.field_index(t, fname)
@@ -344,6 +348,13 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       let ft = b.c.subst(f.ty, sb)
       let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
       if b.is_json_patch(ft) {
+        if fixed {
+          // from here on, whether a field is the first is known only
+          // when the code runs
+          fixed = false
+          b.write_var(av, b.lit(if any { b.read(av) } else { acc }, pend))
+          b.write_var(first, b.cbool(!any))
+        }
         let absent = b.m.variant_index(b.vty(fv), "Absent")
         let tag = b.add(Op.Tag, it, Aux.None, [fv])
         let (no0, join0) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)]))
@@ -351,7 +362,20 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
         b.if_then_end(no0, join0)
         continue
       }
+      if fixed {
+        let comma = if any { "," } else { "" }
+        let key = "${pend}${comma}\"${fname}\":"
+        let l = b.lit(if any { b.read(av) } else { acc }, key)
+        b.write_var(av, b.json_sub(l, fv, ft))
+        pend = ""
+        any = true
+        continue
+      }
       b.json_field(av, first, fname, fv, ft)
+    }
+    if fixed {
+      b.retv(b.lit(if any { b.read(av) } else { acc }, "${pend}}"))
+      return
     }
     b.retv(b.lit(b.read(av), "}"))
     return
