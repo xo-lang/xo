@@ -435,6 +435,29 @@ pub fn ctl_at(b: Bytes, from: Int, to: Int) -> Int {
   to
 }
 
+/// The index of the first byte c (0 to 255) of the memory at p from
+/// `from` to `to`, or -1: eight bytes a step (unaligned loads; every
+/// target is little endian), for a buffer that is not a Bytes (http1.xo's
+/// connection input).
+pub fn mem_byte(p: Int, from: Int, to: Int, c: Int) -> Int {
+  let r = mulw(c, ONES)
+  var i = from
+  while to - i >= 8 {
+    let m = eq8(rt.mem_load(p, i, 8), r)
+    if m != 0 {
+      return i + (rt.ctz(m) >> 3)
+    }
+    i += 8
+  }
+  while i < to {
+    if rt.mem_load(p, i, 1) == c {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
 /// Bit 4k set when byte i + k of b is c, for the bytes from i to n =
 /// b.len() (fewer than 16, i < n): the last step of split and lines.
 fn tail16(b: Bytes, i: Int, n: Int, c: Int) -> Int {

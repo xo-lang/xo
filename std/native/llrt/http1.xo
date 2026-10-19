@@ -1423,18 +1423,22 @@ fn input(x: Int, n: Int) -> Str { if n <= 0 { "" } else { raw.str_at(xl(x, X_BUF
 fn head_len(x: Int) -> Int {
   let p = xl(x, X_BUF) + xl(x, X_OFF)
   let n = xl(x, X_N) - xl(x, X_OFF)
+  // from one \n to the next, eight bytes a step (a byte at a time was
+  // the largest cost of read_one)
   var i = 0
-  while i < n {
-    if rt.mem_load(p, i, 1) == 10 {
-      let e = i + 1
-      if e < n && rt.mem_load(p, e, 1) == 10 {
-        return e + 1
-      }
-      if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
-        return e + 2
-      }
+  while true {
+    let nl = scan.mem_byte(p, i, n, 10)
+    if nl < 0 {
+      return n
     }
-    i += 1
+    let e = nl + 1
+    if e < n && rt.mem_load(p, e, 1) == 10 {
+      return e + 1
+    }
+    if e + 1 < n && rt.mem_load(p, e, 1) == 13 && rt.mem_load(p, e + 1, 1) == 10 {
+      return e + 2
+    }
+    i = e
   }
   n
 }

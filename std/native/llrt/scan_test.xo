@@ -1,6 +1,8 @@
 // Tests of scan.xo's private helpers (decision 0262): `xo test
 // --std-module=native/llrt/scan`, run by internal/stdtest.
 
+use native/llrt/raw
+
 fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? "".bytes() }
 
 /// The bytes of xs, each taken mod 256.
@@ -93,6 +95,35 @@ test "ctl_at finds the first control byte" for xs: List[Int], from: Int, to: Int
     i += 1
   }
   expect(ctl_at(b, f, t) == want)
+}
+
+test "mem_byte finds the first byte c" for xs: List[Int], from: Int, to: Int, c: Int {
+  let b = bytes_of(xs)
+  let n = b.len()
+  let f = if n == 0 { 0 } else { (from & 1023) % (n + 1) }
+  let t = if n == 0 { 0 } else { f + (to & 1023) % (n - f + 1) }
+  let k = c & 255
+  var want = -1
+  var i = f
+  while i < t {
+    if Int(b[i]) == k {
+      want = i
+      break
+    }
+    i += 1
+  }
+  expect(mem_byte(raw.bytes_addr(b), f, t, k) == want)
+  raw.alive(b)
+}
+
+test "mem_byte in a request head" {
+  let b = "GET / HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
+  let p = raw.bytes_addr(b)
+  expect(mem_byte(p, 0, b.len(), 10) == 15)
+  expect(mem_byte(p, 16, b.len(), 10) == 24)
+  expect(mem_byte(p, 0, 15, 10) == -1)
+  expect(mem_byte(p, 0, b.len(), 0x80) == -1)
+  raw.alive(b)
 }
 
 test "ctl_at on header values" {
