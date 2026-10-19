@@ -140,6 +140,11 @@ pub const SV_AT_TW_END = 280
 /// word of its own would not do: ctx.xo's range is 16 to 17, and 18 is
 /// tzhost.xo's lock; using it hung programs at exit, 2026-10-17.)
 const SV_ROOTS = 288
+/// SV_ROOTS as the slot index rt.slot_* take (a word's, not a byte's:
+/// SV_ROOTS itself reached byte 2304 of this 296 byte record, past its
+/// end, from 2026-10-17 to 2026-10-19; every Windows program faulted on
+/// the garbage there, gotchas/svc-roots-slot-index.md)
+const SV_ROOTS_SLOT = 36
 const SV_SIZE = 296
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
 /// stack size, page size, where a fiber starts).
@@ -240,14 +245,14 @@ fn add_root(c: Int) {
   if sv == 0 {
     return
   }
-  var r = rt.slot_load[Int](sv, SV_ROOTS, 3)
+  var r = rt.slot_load[Int](sv, SV_ROOTS_SLOT, 3)
   if r == 0 {
     let blk = rt.heap_large(8 * (ROOTS_MAX + 1))
     rt.mem_set(blk, 0, 8 * (ROOTS_MAX + 1))
-    if !rt.slot_cas(sv, SV_ROOTS, 0, blk, 3) {
+    if !rt.slot_cas(sv, SV_ROOTS_SLOT, 0, blk, 3) {
       rt.heap_release(blk - 8)
     }
-    r = rt.slot_load[Int](sv, SV_ROOTS, 3)
+    r = rt.slot_load[Int](sv, SV_ROOTS_SLOT, 3)
   }
   let k = rt.slot_add[Int](r, 0, 1, 3)
   if k < ROOTS_MAX {
@@ -255,11 +260,15 @@ fn add_root(c: Int) {
   }
 }
 
+/// The services record's word at byte SV_ROOTS (ctx_test.xo: the word
+/// roots reads).
+fn roots_word() -> Int { rt.mem_load(svc(), SV_ROOTS, 8) }
+
 /// The registry of root contexts: its address (a count word, then the
 /// contexts), 0 before any.
 pub fn roots() -> Int {
   let sv = svc()
-  if sv == 0 { 0 } else { rt.slot_load[Int](sv, SV_ROOTS, 3) }
+  if sv == 0 { 0 } else { rt.slot_load[Int](sv, SV_ROOTS_SLOT, 3) }
 }
 
 /// Starts deferred code (xo_shield_begin): it is shielded from

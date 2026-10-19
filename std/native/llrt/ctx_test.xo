@@ -1,0 +1,12 @@
+// Tests of ctx.xo: `xo test --std-module=native/llrt/ctx`, run by
+// internal/stdtest.
+
+test "the root registry is the services record's word at SV_ROOTS" {
+  // the test's thread has a root context, so the registry exists
+  let _c = cur()
+  let r = roots()
+  expect(r != 0) == true
+  expect(SV_ROOTS_SLOT * 8) == SV_ROOTS
+  expect(SV_ROOTS + 8 <= SV_SIZE) == true
+  expect(roots_word()) == r
+}
