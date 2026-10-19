@@ -446,3 +446,70 @@ ranked, from the symbol table and one objdump pass:
    machine outliner 0.13, other functions 0.40.
 5. Symbols nm prints as `_x` (unnamed), 1.86 MB: not identified yet.
 
+## LLVM: count helpers' rare paths out of line (2026-10-19)
+
+The two largest LLVM causes above (1, releases on the rarely run paths,
+8.17 MB; 3, each inlined release's own slow path, 4.16 MB), in
+compiler/llvm gen.xo and func.xo:
+
+- The drop helper of Str, List, Box, Func, and Handle (alwaysinline)
+  keeps inline the decrement of a thread local count, the last
+  reference's free (one runtime call, as common as a decrement in hot
+  code), and the immortal check (a literal's count: no change); a shared
+  count's drop (its atomic decrement, maybe the free) is one cold
+  noinline function per type, `xo.dropslow.T`. The dup is unchanged.
+- A count helper called in a block that only a fault's cleanup reaches
+  (func.xo cold_blocks: from the blocks a landing check sends a fault
+  to, those the entry does not reach without passing through one) is a
+  call with the call site attribute `noinline cold` (#12), not its
+  inlined body.
+
+xo built by LLVM (split 12, no LTO, -O2), main b48b8156's xo against the
+change's, the same tree; `size -m`, and Xo Lang 2's cold.py over objdump
+for the cold pieces:
+
+| | main | the change |
+|---|---|---|
+| `__text` | 51.51 MB | 32.59 MB (-36.7%) |
+| the LLVM build of xo | 609 s | 372 s |
+| hot code | 38.42 MB | 30.84 MB |
+| cold pieces that release (landing pads, frees) | 8.57 MB (2,070) | 0.09 MB (415) |
+| other cold pieces (per site slow paths) | 4.17 MB (92,580) | 1.58 MB (51,955) |
+
+Two earlier shapes, measured and dropped: everything past the decrement
+out of line (dup's shared path too): 31.10 MB but HTTP about 1.5%
+slower (short mode), since a literal's immortal count took the out of
+line call on every dup and drop (xo.dropslow.Str 742 and the dup's 233
+instructions a request); the last reference's free inline but the
+immortal check out of line: 32.30 MB, speed inconclusive in short mode.
+
+HTTP callgrind on LLVM, MODE=full (N=100, REPS=2), main and the change
+interleaved, two rounds each, the median of four (repeats within about
+0.2%):
+
+| scenario | main | the change |
+|---|---|---|
+| plain | 22,473 | 22,215 (-1.1%) |
+| plain-newconn | 29,370 | 29,169 (-0.7%) |
+| tls | 52,682 | 52,370 (-0.6%) |
+| tls-newconn | 1,793,211 | 1,781,670 (-0.6%) |
+| h2 | 89,486 | 89,530 (+0.05%, inside main's 89,339 to 89,633) |
+
+xo.exe by the release recipe (`--targets=windows/amd64`, split 16,
+ThinLTO, O2, `XO_LLVM_JOBS=4`, winxc clang 23.1.3 on the Mac), main
+b48b8156 against the change: 80.56 MB to 63.65 MB (-21.0%), `.text`
+75.00 MB to 57.81 MB (-22.9%); the builds took 683 s and 238 s, the
+first at a higher load (not comparable).
+
+Pushed as c40c2514 (gate: -short, internal/llvm with
+XO_TEST_LLVM_OPT=O2, the fixed point).
+
+MODE=short's spread on LLVM is about 3% run to run (the same build read
+22,087 and 23,397), too wide to judge a 1% change: use MODE=full for
+LLVM speed checks.
+
+| xo `__text` | native arm64 | LLVM (split 12, no LTO, -O2) |
+|---|---|---|
+| 7724ca1e | 31.78 MB | 50.56 MB (1.59x) |
+| main b48b8156 | (unchanged) | 51.51 MB |
+| this change | (unchanged) | 32.59 MB (1.03x) |

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The LLVM backend keeps a release's rare paths out of line (a shared
+  count's drop, the releases of a fault's cleanup): xo built by LLVM
+  51.5 MB to 32.6 MB of code, xo.exe 80.6 MB to 63.7 MB, HTTP and TLS
+  unchanged or up to 1.1% fewer instructions.
 - The back-end cache keeps the SSA of each function body the front end
   built, keyed by its module's interface and the body's own text: a
   body whose module's view of the program did not change is replayed,
