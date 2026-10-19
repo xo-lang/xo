@@ -1067,7 +1067,8 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   } else if have_ev && !ev.is_empty() {
     expect_other = true
   }
-  var headers: List[Str] = []
+  // name and value pairs: sized, so no growth at the fifth field
+  var headers: List[Str] = List.with_capacity(2 * hn.len())
   var y = 0
   while y < hn.len() {
     headers.push(hn[y])

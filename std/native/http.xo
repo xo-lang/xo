@@ -315,7 +315,7 @@ fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, St
 fn dispatch(r: Router, req: Request) -> http.Response {
   let parts = split_path(req.path)
   // unescaped once for every route (was per route and segment)
-  var uparts: List[Str] = []
+  var uparts: List[Str] = List.with_capacity(parts.len())
   for p in parts {
     uparts.push(http1.path_unescape(p))
   }
@@ -956,7 +956,7 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   let (_, segs) = parse_pattern(testworld.fake_text(kind, i, 2))
   let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
   let parts = split_path(req.path)
-  var uparts: List[Str] = []
+  var uparts: List[Str] = List.with_capacity(parts.len())
   for p in parts {
     uparts.push(http1.path_unescape(p))
   }
