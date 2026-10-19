@@ -109,3 +109,19 @@ test "copy_runs: a call's stack arguments through x17" {
   expect(copy_runs(u + "\tldr x16, [x9]\n\tblr x16")) == "\tadd x16, sp, #96\n\tmov x17, sp\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tldr x16, [x9]\n\tblr x16"
   expect(copy_runs(u + "\tbl _f")) == "\tadd x16, sp, #96\n\tmov x17, sp\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tbl _f"
 }
+
+test "x86_copy_runs: pushq and popq word copies go 16 bytes at a time through xmm15" {
+  let t = "\tpushq 16(%rsp)\n\tpopq 64(%rsp)\n\tpushq 24(%rsp)\n\tpopq 72(%rsp)\n\tpushq 32(%rsp)\n\tpopq 80(%rsp)\n\tretq"
+  expect(x86_copy_runs(t)) == "\tmovdqu 16(%rsp), %xmm15\n\tmovdqu %xmm15, 64(%rsp)\n\tpushq 32(%rsp)\n\tpopq 80(%rsp)\n\tretq"
+}
+
+test "x86_copy_runs: overlapping ranges, two other bases, and a later read of r11 stay" {
+  let a = "\tpushq 16(%rsp)\n\tpopq 24(%rsp)\n\tpushq 24(%rsp)\n\tpopq 32(%rsp)\n\tretq"
+  expect(x86_copy_runs(a)) == a
+  let b = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%r12)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%r12)\n\tretq"
+  expect(x86_copy_runs(b)) == b
+  let c = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%rsp)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\taddq %r11, %rax\n\tretq"
+  expect(x86_copy_runs(c)) == c
+  let d = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%rsp)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\tmovq $1, %r11\n\tretq"
+  expect(x86_copy_runs(d)) == "\tmovdqu 8(%rbx), %xmm15\n\tmovdqu %xmm15, 16(%rsp)\n\tmovq $1, %r11\n\tretq"
+}

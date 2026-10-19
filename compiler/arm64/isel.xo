@@ -69,6 +69,9 @@ fn (var g: G) function(fi: Int) {
     if g.on("shrink_split") {
       g.shrink_split()
     }
+    if g.on("x86_mul_pair") {
+      g.x86_mul_pair()
+    }
     g.x86_retarget()
     if g.on("x86_carry_fuse") {
       g.x86_carry_fuse()

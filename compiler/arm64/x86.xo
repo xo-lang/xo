@@ -2155,6 +2155,76 @@ fn x86_movable(inst: Inst) -> Bool {
   true
 }
 
+/// A product's two halves in one mulq (2026-10-19: x25519's fe64_mul
+/// made each of its 16 products' low half with imulq and its high half
+/// with another mulq, 224 instructions to LLVM's one mulq a product):
+/// a block's `mul` (the low half, rt.int_wrap) and `umulh` (the high
+/// half, rt.u64_mul_hi) of the same two operands, in either order,
+/// become one x86 template at the first of them that defines both from
+/// rax and rdx. Its clobbers keep every value out of rax and rdx there
+/// (regalloc.xo). The second instruction goes; both wrote the flags, so
+/// nothing that reads them moves past a new writer.
+fn (var g: G) x86_mul_pair() {
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    var gone: List[Bool] = []
+    for _ in 0..ins.len() {
+      gone.push(false)
+    }
+    var i = 0
+    while i < ins.len() {
+      let lo_first = x86_mul_half(ins[i], "mul $d0, $u0, $u1")
+      if !lo_first && !x86_mul_half(ins[i], "umulh $d0, $u0, $u1") {
+        i += 1
+        continue
+      }
+      let other = if lo_first { "umulh $d0, $u0, $u1" } else { "mul $d0, $u0, $u1" }
+      let a = ins[i].us[0]
+      let c = ins[i].us[1]
+      var j = i + 1
+      var found = -1
+      while j < ins.len() && found < 0 {
+        let y = ins[j]
+        if !gone[j] && x86_mul_half(y, other) && ((y.us[0] == a && y.us[1] == c) || (y.us[0] == c && y.us[1] == a)) {
+          found = j
+        }
+        // an operand redefined: a later product of the same names is
+        // another product
+        if y.defs.contains(a) || y.defs.contains(c) {
+          j = ins.len()
+        }
+        j += 1
+      }
+      if found < 0 {
+        i += 1
+        continue
+      }
+      let lo = if lo_first { ins[i].defs[0] } else { ins[found].defs[0] }
+      let hi = if lo_first { ins[found].defs[0] } else { ins[i].defs[0] }
+      var p = ins[i]
+      p.text = "movq $u0, %rax\nmulq $u1\nmovq %rax, $d0\nmovq %rdx, $d1"
+      p.defs = [lo, hi]
+      p.x86 = true
+      p.clobbers = [XR_AX, XR_DX]
+      ins[i] = p
+      gone[found] = true
+      i += 1
+    }
+    var out: List[Inst] = []
+    for (k, inst) in ins.indexed() {
+      if !gone[k] {
+        out.push(inst)
+      }
+    }
+    g.blocks[b].insts = out
+  }
+}
+
+/// Whether inst is the plain product half text (x86_mul_pair).
+fn x86_mul_half(inst: Inst, text: Str) -> Bool {
+  inst.kind == K_PLAIN && !inst.x86 && !inst.has_fault && inst.text == text && inst.defs.len() == 1 && inst.us.len() == 2
+}
+
 /// Carries kept in CF across the links of an add chain (2026-10-18:
 /// x25519's fe64_mul, 300 instructions to arm64's 113). Each
 /// cpu.adc/adc_carry link saves its carry (`setb; movzbl`) and the next

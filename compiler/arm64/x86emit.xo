@@ -225,7 +225,7 @@ fn (var g: G) x86_emit() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_reload_peep(b.join("")))
+  g.text.push(x86_copy_runs(x86_reload_peep(b.join(""))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1250,6 +1250,141 @@ fn movq_ops(l: Str) -> (Str, Str, Bool) {
     return ("", "", false)
   }
   (ops[0], ops[1], true)
+}
+
+/// A function's text with each run of two or more word copies between
+/// memory, `pushq A; popq B` (the parallel moves' memory to memory copy,
+/// which keeps r11) or `movq A, %r11; movq %r11, B`, each next pair a
+/// word further on both sides, copied 16 bytes at a time through xmm15
+/// (a template's own register, free between instructions): `movdqu A,
+/// %xmm15; movdqu %xmm15, B`, the last word of an odd run as it was
+/// (2026-10-19: 23,285 words copied with pushq and popq and 5,727
+/// through r11 in internal/llvm's crypto_prims on linux/amd64, runs of
+/// 16 and more among them; the arm64 backend's lsr.xo copy_runs). Taken
+/// when one base is rsp and the other not, or both are the same
+/// register with the two ranges apart (so loading two words before
+/// storing them reads what the word by word copy read), and, for the
+/// r11 form, when nothing reads r11 after the run before writing it.
+fn x86_copy_runs(text: Str) -> Str {
+  if !text.contains("\tpopq ") && !text.contains("\tmovq %r11, ") {
+    return text
+  }
+  let ls = text.split("\n")
+  var out: List[Str] = List.with_capacity(ls.len())
+  var i = 0
+  let n = ls.len()
+  while i < n {
+    let (form, a, b, ok) = x86_copy_word(ls, i)
+    if !ok {
+      out.push(ls[i])
+      i += 1
+      continue
+    }
+    let (ab, ao, aok) = x86_base_off(a)
+    let (bb, bo, bok) = x86_base_off(b)
+    var k = 1
+    while aok && bok && i + 2 * k + 1 < n {
+      let (f2, a2, b2, ok2) = x86_copy_word(ls, i + 2 * k)
+      let (ab2, ao2, aok2) = x86_base_off(a2)
+      let (bb2, bo2, bok2) = x86_base_off(b2)
+      if !ok2 || f2 != form || !aok2 || !bok2 || ab2 != ab || bb2 != bb || ao2 != ao + 8 * k || bo2 != bo + 8 * k {
+        break
+      }
+      k += 1
+    }
+    let apart = ao + 8 * k <= bo || bo + 8 * k <= ao
+    let bases = (ab == "%rsp") != (bb == "%rsp") || (ab == bb && apart)
+    let free = form == 0 || x86_r11_dead(ls, i + 2 * k)
+    if k < 2 || !aok || !bok || !bases || !free {
+      for l in ls[i..i + 2 * k] {
+        out.push(l)
+      }
+      i += 2 * k
+      continue
+    }
+    var j = 0
+    while j + 2 <= k {
+      out.push("\tmovdqu ${x86_mem_at(ab, ao + 8 * j)}, %xmm15")
+      out.push("\tmovdqu %xmm15, ${x86_mem_at(bb, bo + 8 * j)}")
+      j += 2
+    }
+    if j < k {
+      out.push(ls[i + 2 * j])
+      out.push(ls[i + 2 * j + 1])
+    }
+    i += 2 * k
+  }
+  out.join("\n")
+}
+
+/// The word copy at lines i and i + 1 (x86_copy_runs): its form (0
+/// pushq and popq, 1 through r11), source, and destination.
+fn x86_copy_word(ls: List[Str], i: Int) -> (Int, Str, Str, Bool) {
+  if i + 1 >= ls.len() {
+    return (0, "", "", false)
+  }
+  let l = ls[i]
+  let m = ls[i + 1]
+  if l.starts_with("\tpushq ") && m.starts_with("\tpopq ") {
+    return (0, l["\tpushq ".len()..l.len()], m["\tpopq ".len()..m.len()], true)
+  }
+  let (s1, d1, ok1) = movq_ops(l)
+  let (s2, d2, ok2) = movq_ops(m)
+  if ok1 && ok2 && d1 == "%r11" && s2 == "%r11" && s1.ends_with(")") && d2.ends_with(")") {
+    return (1, s1, d2, true)
+  }
+  (0, "", "", false)
+}
+
+/// A memory operand `N(%reg)` or `(%reg)`: the register and the offset.
+fn x86_base_off(m: Str) -> (Str, Int, Bool) {
+  let open = m.find("(") ?? -1
+  if open < 0 || !m.ends_with(")") || m.contains(",") {
+    return ("", 0, false)
+  }
+  let base = m[open + 1..m.len() - 1]
+  if !gp64(base) && base != "%rsp" {
+    return ("", 0, false)
+  }
+  if open == 0 {
+    return (base, 0, true)
+  }
+  match Int.parse(m[0..open]) {
+    Some(off) => (base, off, true)
+    None => ("", 0, false)
+  }
+}
+
+/// The memory operand of reg plus off.
+fn x86_mem_at(reg: Str, off: Int) -> Str {
+  if off == 0 { "(${reg})" } else { "${off}(${reg})" }
+}
+
+/// Whether r11 is written before it is read from line i on: a line
+/// naming it that only writes it (a load or move into it from operands
+/// without it), or a call, a return, a jump, or a label first (r11 is
+/// a template's or a move's own, never live from one instruction's code
+/// into a branch's target).
+fn x86_r11_dead(ls: List[Str], i: Int) -> Bool {
+  var j = i
+  while j < ls.len() {
+    let l = ls[j]
+    j += 1
+    if l.is_empty() || l.starts_with("\t.") {
+      continue
+    }
+    if !l.starts_with("\t") {
+      return true
+    }
+    if l.contains("%r11") {
+      let (s, d, ok) = movq_ops(l)
+      return ok && d == "%r11" && !s.contains("%r11")
+    }
+    if l.starts_with("\tcall") || l.starts_with("\tret") || l.starts_with("\tjmp") {
+      return true
+    }
+  }
+  true
 }
 
 /// Whether s is a 64 bit general register (%rax ... %r15).
