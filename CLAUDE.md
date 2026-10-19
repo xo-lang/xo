@@ -131,7 +131,11 @@ Update the knowledgebase in the same change as the work, not later:
     and not `_test.xo` files), std/native/, std/llrt/, and the xo build
     code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
     scripts/xobuild, scripts/seed-chain.txt). Other merges (tests, docs,
-    test-only tooling) need vet and -short only. Long pass/fail runs go
+    test-only tooling) need vet and -short only. A gate skips the full
+    internal/llvm tests when every changed file is native backend only
+    (compiler/arm64, compiler/macho, internal/arm64, docs, bench
+    results; owner, 2026-10-18): scripts/gate.sh's llvm step does this,
+    XO_GATE_LLVM=1 forces it. Long pass/fail runs go
     to on demand CI, not the Mac's single heavy slot.
   - CI (decision 0225, owner 2026-10-14): GitHub Actions on self-hosted
     linux/arm64 EC2 runners (infra/ci-runners), started only by hand,
