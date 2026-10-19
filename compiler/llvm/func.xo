@@ -151,18 +151,22 @@ fn (var g: Gen) op(v: Int) -> Str {
 /// type after a store.
 fn (var g: Gen) rc_val_call(h: Str, a: Int) {
   let t = g.vty(a)
+  // in a fault's cleanup the helper stays a call (#12: noinline cold),
+  // not its inlined count test and slow path (8.17 MB of xo built by
+  // LLVM, bench/results/xo-code-size-2026-10-18.md)
+  let ca = if g.dbg_block >= 0 && g.dbg_block < g.cold.len() && g.cold[g.dbg_block] { " #12" } else { "" }
   if !g.rc_by_ptr(t) {
     let ta = g.typed(a)
-    g.emit("call void ${h}(${ta})")
+    g.emit("call void ${h}(${ta})${ca}")
     return
   }
   let m = g.lazy[a]
   if m >= 0 {
-    g.emit("call void ${h}(ptr ${g.held.mems[m].ptr})")
+    g.emit("call void ${h}(ptr ${g.held.mems[m].ptr})${ca}")
     return
   }
   if a < g.addr.len() && !g.addr[a].is_empty() {
-    g.emit("call void ${h}(ptr ${g.addr[a]})")
+    g.emit("call void ${h}(ptr ${g.addr[a]})${ca}")
     return
   }
   let lt = g.ll(t)
@@ -173,7 +177,68 @@ fn (var g: Gen) rc_val_call(h: Str, a: Int) {
   }
   let ta = g.typed(a)
   g.emit("store ${ta}, ptr ${p}")
-  g.emit("call void ${h}(ptr ${p})")
+  g.emit("call void ${h}(ptr ${p})${ca}")
+}
+
+/// The blocks of f that only a fault's cleanup reaches: from the blocks
+/// a landing check sends a fault to (instr: the first successor of the
+/// check's block), the blocks the entry does not reach without passing
+/// through one.
+fn (var g: Gen) cold_blocks() -> List[Bool] {
+  let nb = g.f.blocks.len()
+  var target: List[Bool] = []
+  var out: List[Bool] = []
+  for _ in 0..nb {
+    target.push(false)
+    out.push(false)
+  }
+  var any = false
+  for x in g.f.values {
+    if x.pad >= 0 && x.pad < g.blk.len() && g.blk[x.pad] >= 0 {
+      let ss = g.succs(g.blk[x.pad])
+      if !ss.is_empty() {
+        target[g.edge_to(ss[0])] = true
+        any = true
+      }
+    }
+  }
+  if !any || nb == 0 {
+    return out
+  }
+  // the entry's reach, not entering a cleanup
+  var normal: List[Bool] = []
+  for _ in 0..nb {
+    normal.push(false)
+  }
+  var work = [0]
+  normal[0] = true
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for e in g.succs(b) {
+      let to = g.edge_to(e)
+      if !normal[to] && !target[to] {
+        normal[to] = true
+        work.push(to)
+      }
+    }
+  }
+  for b in 0..nb {
+    if target[b] && !normal[b] {
+      out[b] = true
+      work.push(b)
+    }
+  }
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for e in g.succs(b) {
+      let to = g.edge_to(e)
+      if !normal[to] && !out[to] {
+        out[to] = true
+        work.push(to)
+      }
+    }
+  }
+  out
 }
 
 fn (var g: Gen) typed(v: Int) -> Str {
@@ -391,6 +456,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.pad = ""
   g.pads = []
   g.npad = 0
+  g.cold = g.cold_blocks()
   g.home = {}
   g.spare = {}
   g.rc_tmp = {}

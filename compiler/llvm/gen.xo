@@ -139,6 +139,9 @@ pub struct Gen {
   pad: Str = ""
   pads: List[Str] = []
   npad: Int = 0
+  /// Per block: reached only through a fault's cleanup (cold_blocks),
+  /// where the count helpers are called out of line
+  cold: List[Bool] = []
   /// Per LLVM struct type, the memory that carries a value of it passed
   /// by reference, and more for a call that passes several (decision
   /// 0145).
@@ -253,6 +256,8 @@ fn runtime_decls() -> Str {
     "attributes #8 = { nounwind noinline }",
     "attributes #10 = { uwtable noinline cold }",
     "attributes #11 = { uwtable noinline }",
+    "; a call of an alwaysinline count helper in a fault's cleanup: kept a call",
+    "attributes #12 = { noinline cold }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -920,19 +925,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         rc_inc(b, obj)
       } else if kind == "drop" {
-        rc_dec(b, obj)
-        if k == ssa.Kind.Str {
-          let po = b.tmp()
-          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rc_free(i64 ${po}) #8\n  br label %done\n")
-        } else {
-          let et = g.m.types[t].elems[0]
-          let sz = g.size(et)
-          let ef = g.elem_fn("drop", et)
-          // obj.xo's export, inlined at the call as the C entry
-          // xo_rl_free inlined it (XO_INLINE_CALL)
-          let po = b.tmp()
-          b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_free_n(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n  br label %done\n")
-        }
+        rc_dec_fast(b, obj, g.drop_slow_fn(t))
+        g.drop_free(b, t, obj)
       } else {
         rc_mark(b, obj)
         if k == ssa.Kind.List && g.heap(g.m.types[t].elems[0]) {
@@ -952,9 +946,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         rc_inc(b, "%x")
       } else if kind == "drop" {
-        rc_dec(b, "%x")
-        let px = b.tmp()
-        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_h_free(i64 ${px}) #8\n  br label %done\n")
+        rc_dec_fast(b, "%x", g.drop_slow_fn(t))
+        g.drop_free(b, t, "%x")
       } else {
         b.w("  br label %done\n")
       }
@@ -964,11 +957,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         rc_inc(b, "%x")
       } else if kind == "drop" {
-        rc_dec(b, "%x")
-        // deferred: a long chain of boxes is freed with a worklist
-        let df = g.box_drop_fn(t)
-        let px = b.tmp()
-        b.w("free:\n  ${px} = ptrtoint ptr %x to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${px}, i64 ptrtoint (ptr ${df} to i64)) #6\n  br label %done\n")
+        rc_dec_fast(b, "%x", g.drop_slow_fn(t))
+        g.drop_free(b, t, "%x")
       } else {
         rc_mark(b, "%x")
         if g.heap(g.m.types[t].elems[0]) {
@@ -990,13 +980,8 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       if kind == "dup" {
         rc_inc(b, env)
       } else if kind == "drop" {
-        rc_dec(b, env)
-        let dp = b.tmp()
-        let dfn = b.tmp()
-        // the drop function frees the environment; deferred so long
-        // chains do not recurse on the C stack
-        let pe = b.tmp()
-        b.w("free:\n  ${dp} = getelementptr i8, ptr ${env}, i64 8\n  ${dfn} = load i64, ptr ${dp}\n  ${pe} = ptrtoint ptr ${env} to i64\n  call void @xo_x_obj_rc_defer_n(i64 ${pe}, i64 ${dfn}) #6\n  br label %done\n")
+        rc_dec_fast(b, env, g.drop_slow_fn(t))
+        g.drop_free(b, t, env)
       } else {
         rc_mark(b, env)
         let sp = b.tmp()
@@ -1083,6 +1068,59 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
   name
 }
 
+/// The out of line half of the drop helper of t (Str, List, Box, Func,
+/// Handle): given the counted object (a Func's environment), the rest
+/// of rc_dec and the free; nounwind, cold, never inlined, one per type
+/// (each inlined release used to carry its own copy, which LLVM split
+/// into a cold piece: 4.16 MB of xo, bench/results/xo-code-size).
+fn (var g: Gen) drop_slow_fn(t: Int) -> Str {
+  let name = "@${"xo.dropslow.${g.m.types[t].name}".quote()}"
+  if g.emitted.contains(name) {
+    return name
+  }
+  g.emitted[name] = true
+  var b = H{}
+  b.w("define internal void ${name}(ptr %o) #3 {\n")
+  rc_dec(b, "%o")
+  g.drop_free(b, t, "%o")
+  b.w("done:\n  ret void\n}\n\n")
+  g.helpers.push(b.lines.join(""))
+  name
+}
+
+/// The %free block of t's drop helper for the counted object obj: the
+/// runtime's free, then `br label %done`.
+fn (var g: Gen) drop_free(var b: H, t: Int, obj: Str) {
+  let po = b.tmp()
+  b.w("free:\n  ${po} = ptrtoint ptr ${obj} to i64\n")
+  match g.kind(t) {
+    Str => b.w("  call void @xo_x_obj_rc_free(i64 ${po}) #8\n")
+    List => {
+      let et = g.m.types[t].elems[0]
+      let sz = g.size(et)
+      let ef = g.elem_fn("drop", et)
+      // obj.xo's export, inlined at the call as the C entry
+      // xo_rl_free inlined it (XO_INLINE_CALL)
+      b.w("  call void @xo_x_obj_rl_free_n(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n")
+    }
+    Handle => b.w("  call void @xo_x_obj_h_free(i64 ${po}) #8\n")
+    Box => {
+      // deferred: a long chain of boxes is freed with a worklist
+      let df = g.box_drop_fn(t)
+      b.w("  call void @xo_x_obj_rc_defer_n(i64 ${po}, i64 ptrtoint (ptr ${df} to i64)) #6\n")
+    }
+    Func => {
+      // the drop function frees the environment; deferred so long chains
+      // do not recurse on the C stack
+      let dp = b.tmp()
+      let dfn = b.tmp()
+      b.w("  ${dp} = getelementptr i8, ptr ${obj}, i64 8\n  ${dfn} = load i64, ptr ${dp}\n  call void @xo_x_obj_rc_defer_n(i64 ${po}, i64 ${dfn}) #6\n")
+    }
+    _ => {}
+  }
+  b.w("  br label %done\n")
+}
+
 // The count tests of decision 0058 (std/llrt/xo_rt.c, "Reference
 // counts"): a positive count is thread local, a negative count -n is
 // shared (atomic), and the immortal count of literals has bit 62 clear
@@ -1095,13 +1133,36 @@ fn rc_inc(var b: H, obj: Str) {
   let c = b.tmp()
   let slow = b.tmp()
   let c1 = b.tmp()
-  let sb = b.tmp()
-  let sh = b.tmp()
   b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
   b.w("  ${slow} = icmp slt i64 ${c}, 1\n  br i1 ${slow}, label %shared, label %inc, !prof !0\n")
   b.w("inc:\n  ${c1} = add i64 ${c}, 1\n  store i64 ${c1}, ptr ${obj}${TBAA_RC}\n  br label %done\n")
+  let sb = b.tmp()
+  let sh = b.tmp()
   b.w("shared:\n  ${sb} = and i64 ${c}, ${SHARED_BIT}\n  ${sh} = icmp ne i64 ${sb}, 0\n  br i1 ${sh}, label %atomic, label %done\n")
   b.w("atomic:\n  atomicrmw add ptr ${obj}, i64 -1 monotonic, align 8\n  br label %done\n")
+}
+
+/// A drop helper's inline half: the decrement of a thread local count
+/// above one; the last thread local reference branches to %free (the
+/// caller writes it: one call of the runtime's free, as common as a
+/// decrement on hot paths, so not behind a second call); a shared or
+/// immortal count calls slow (drop_slow_fn), out of line and cold, which
+/// does the rest. Ends in `br label %done` or `%free`.
+fn rc_dec_fast(var b: H, obj: Str, slow: Str) {
+  let c = b.tmp()
+  let s = b.tmp()
+  let c1 = b.tmp()
+  let one = b.tmp()
+  b.w("  ${c} = load atomic i64, ptr ${obj} unordered, align 8${TBAA_RC}\n")
+  b.w("  ${s} = icmp slt i64 ${c}, 2\n  br i1 ${s}, label %slow, label %dec, !prof !0\n")
+  b.w("dec:\n  ${c1} = sub i64 ${c}, 1\n  store i64 ${c1}, ptr ${obj}${TBAA_RC}\n  br label %done\n")
+  let sb = b.tmp()
+  let sh = b.tmp()
+  b.w("slow:\n  ${one} = icmp eq i64 ${c}, 1\n  br i1 ${one}, label %free, label %shared\n")
+  // an immortal count (bit 62 clear) is left alone inline; only a shared
+  // one (its atomic decrement, maybe the free) is out of line
+  b.w("shared:\n  ${sb} = and i64 ${c}, ${SHARED_BIT}\n  ${sh} = icmp ne i64 ${sb}, 0\n  br i1 ${sh}, label %atomic, label %done\n")
+  b.w("atomic:\n  call void ${slow}(ptr ${obj}) #3\n  br label %done\n")
 }
 
 /// The decrement of the count at obj, branching to %free when it was the
