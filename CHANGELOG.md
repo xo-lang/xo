@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The native TLS server keeps a connection's state where only its task
+  reads it, instead of sharing the whole state again at every read and
+  write: TLS requests 8.2% and HTTP/2 requests 9.2% fewer instructions
+  on arm64 (2.9% and 3.2% on LLVM).
 - Fix: every native program (the arm64, amd64 and LLVM backends, every
   OS) wrote a pointer past the end of the runtime's services record at
   start, since 67c52321 (2026-10-17, decision 0251's registry of root

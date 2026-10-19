@@ -243,3 +243,38 @@ static word HEAP (the thread local is set exactly when it becomes 0).
 Plain, base main against the branch: 25,060 to 24,555 instructions a
 request (-2.0%); the Mac sweep 0 slower, 2 faster (httpparse h1_url
 0.987, digest/none 0.990).
+
+## The TLS connection kept out of an Any (2026-10-19, Xo Lang 3)
+
+A function level ranking of tls and h2 (arm64, main 065bd1c1, ANN=1,
+the hashed helpers named from the server's `--asm`) put 2,938
+instructions a TLS request (7.3%) and 5,882 an HTTP/2 one (8.6%) in
+sharing large values: tlssrv.read and write ended with
+`put(t, rt.any_of(c))`, and any_of shares its value (conc.xo one), so
+every call walked the whole TLS state (obj_rl_share, then the share
+helpers of the tls13srv.Server's lists of large structs, frames of 1,280
+and 1,376 bytes), about 1,580 instructions a call. Only the connection's
+task reads that Any.
+
+6827ce1e: the block holds the Conn in a list of one that only its task
+reads (word 0 the list object with the block's reference; take_conn
+moves it out with obj_at, a decrement, and a pop of the then unique
+list; read and write push the Conn at its last use, so it moves, and
+keep_list takes the address through a borrowed parameter; an empty
+block's release builds no `Conn?`, 2.5 KB zeroed and dropped, about 650
+instructions a call), and a server's block (its SrvTls Any) has a free
+of its own. No new runtime operation, so no seed bump. Full mode
+callgrind (N=100, REPS=2), the change and its base interleaved, two
+rounds each, the median of four:
+
+| scenario | arm64 | LLVM |
+|---|---|---|
+| tls | 40,506 to 37,174 (-8.2%) | 51,460 to 49,982 (-2.9%) |
+| tls-newconn | 1,925,046 to 1,916,329 (-0.5%) | 1,781,736 to 1,775,870 (-0.3%) |
+| h2 | 68,188 to 61,902 (-9.2%) | 88,974 to 86,142 (-3.2%) |
+
+On the way: a local list's last use was `rt.obj_addr(l)`, so it was
+released there, before the `rc.inc` that should have kept it, and the
+server crashed in its first handshake (gotchas/raw-address-outlives-bytes.md,
+observed again); the first gate caught tlssrv.free freeing a server's
+block as a connection's.

@@ -36,3 +36,12 @@ call `raw.alive(b)` (or `raw.alive_str(s)`) after the last raw access,
 which keeps the value live to that point. Releases go after the last
 use even inside one call's arguments: `f(raw.data(s), s.len())` releases
 an owned `s` before `f` runs.
+
+Observed again (2026-10-19, Xo Lang 3, std/native/llrt/tlssrv.xo): a
+fresh list's address taken with `rt.obj_addr(l)` and then `rc.inc` for a
+block to keep: the list was released at obj_addr (its last use), before
+the increment, and the TLS server crashed in its first handshake. Take
+the address and count in a function whose parameter is the list
+(borrowed), as tlssrv.keep_list does, or call raw.alive after the
+increment.
+

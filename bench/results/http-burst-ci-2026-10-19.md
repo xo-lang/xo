@@ -71,3 +71,31 @@ first third p99 34 to 57 ms, last third 21 to 55), so neither runs the
 newest connection first. Telling accept queue drain from scheduling on
 the CI machine needs a run of burst-ci.sh with this loadgen (the owner
 decides).
+
+## The split on the CI runner: noise in the kernel's handshake (2026-10-19)
+
+The owner approved a second run with the split loadgen: CI run
+39327046284 (branch burst-split, c1153cbe, tested merged with main), the
+same runner type (16 CPUs, load average 1.72 at the start), the same
+blocks. Per block p99, milliseconds:
+
+| block | 1 | 2 | 3 | 4 | 5 | 6 | median |
+|---|---|---|---|---|---|---|---|
+| dial, go | 13.8 | 83.0 | 70.7 | 93.3 | 58.7 | 65.5 | 68.1 |
+| dial, xo | 74.3 | 110.9 | 48.0 | 14.4 | 82.5 | 51.7 | 63.0 |
+| dial to response, go | 83.5 | 6.8 | 7.5 | 12.8 | 7.0 | 6.6 | 7.3 |
+| dial to response, xo | 14.3 | 7.4 | 11.6 | 9.0 | 7.6 | 7.5 | 8.3 |
+
+Over the 300 rounds each (rounds-*.txt): wall p50 13.4 ms for Xo
+against 14.3 for Go (p10 13.0 against 13.8, p90 17.0 against 15.9),
+about 150 against 140 connections answered per millisecond at the
+median, rounds over 100 ms 6 against 8, no failed connection; minor
+faults 12,316 against 102,548.
+
+Conclusion: the latency p99 gap of the first run was the dial, the
+kernel's handshake and accept queue tail, which swings from block to
+block for both servers (13.8 to 93.3 ms for Go, 14.4 to 110.9 for Xo)
+and has about the same median; once connected, Xo's p99 is about 1 ms
+above Go's (8.3 against 7.3 ms), and its accept rate is higher. No
+accept loop change: several accepts per wake would target a drain rate
+that is already the faster one. The item is closed as noise.
