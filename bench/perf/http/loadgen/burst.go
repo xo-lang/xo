@@ -29,11 +29,17 @@ func runBurst(base string, n, reps int) int {
 	}
 	addr := u.Host
 	req := "GET /users/1 HTTP/1.1\r\nHost: " + addr + "\r\nConnection: close\r\n\r\n"
-	var all []time.Duration
+	var all, dials, serves []time.Duration
+	// dial to response by the order dials completed in each round: the
+	// first third, the middle, the last (a server that runs the newest
+	// connection first serves the first third last)
+	var thirds [3][]time.Duration
 	var fails, total int
 	var walls []time.Duration
 	for r := 0; r < reps; r++ {
 		lats := make([]time.Duration, n)
+		dl := make([]time.Duration, n)
+		done := make([]time.Time, n)
 		errs := make([]string, n)
 		var wg sync.WaitGroup
 		start := make(chan struct{})
@@ -49,6 +55,8 @@ func runBurst(base string, n, reps int) int {
 					return
 				}
 				defer c.Close()
+				dl[i] = time.Since(t0)
+				done[i] = time.Now()
 				c.SetDeadline(time.Now().Add(10 * time.Second))
 				if _, err := c.Write([]byte(req)); err != nil {
 					errs[i] = "write: " + err.Error()
@@ -84,6 +92,18 @@ func runBurst(base string, n, reps int) int {
 				continue
 			}
 			all = append(all, lats[i])
+			dials = append(dials, dl[i])
+			serves = append(serves, lats[i]-dl[i])
+		}
+		var ok []int
+		for i := 0; i < n; i++ {
+			if errs[i] == "" {
+				ok = append(ok, i)
+			}
+		}
+		sort.Slice(ok, func(a, b int) bool { return done[ok[a]].Before(done[ok[b]]) })
+		for k, i := range ok {
+			thirds[k*3/len(ok)] = append(thirds[k*3/len(ok)], lats[i]-dl[i])
 		}
 		fails += f
 		total += n
@@ -91,6 +111,8 @@ func runBurst(base string, n, reps int) int {
 		time.Sleep(200 * time.Millisecond)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	sort.Slice(dials, func(i, j int) bool { return dials[i] < dials[j] })
+	sort.Slice(serves, func(i, j int) bool { return serves[i] < serves[j] })
 	sort.Slice(walls, func(i, j int) bool { return walls[i] < walls[j] })
 	pct := func(xs []time.Duration, p float64) time.Duration {
 		if len(xs) == 0 {
@@ -99,6 +121,14 @@ func runBurst(base string, n, reps int) int {
 		return xs[int(float64(len(xs)-1)*p)].Round(time.Microsecond)
 	}
 	fmt.Printf("burst %d x %d: failed %d of %d; wall p50 %v max %v; latency p50 %v p99 %v max %v\n", n, reps, fails, total, pct(walls, 0.5), pct(walls, 1), pct(all, 0.5), pct(all, 0.99), pct(all, 1))
+	// where a connection's latency goes: the dial (the server's accept
+	// queue, until the kernel completes the handshake) and from the dial
+	// to the response's first line (accept, first read, the handler)
+	for k := range thirds {
+		sort.Slice(thirds[k], func(i, j int) bool { return thirds[k][i] < thirds[k][j] })
+	}
+	fmt.Printf("burst %d x %d: dial to response by dial order: first third p50 %v p99 %v; middle p50 %v p99 %v; last p50 %v p99 %v\n", n, reps, pct(thirds[0], 0.5), pct(thirds[0], 0.99), pct(thirds[1], 0.5), pct(thirds[1], 0.99), pct(thirds[2], 0.5), pct(thirds[2], 0.99))
+	fmt.Printf("burst %d x %d: dial p50 %v p99 %v max %v; dial to response p50 %v p99 %v max %v\n", n, reps, pct(dials, 0.5), pct(dials, 0.99), pct(dials, 1), pct(serves, 0.5), pct(serves, 0.99), pct(serves, 1))
 	if fails > 0 {
 		return 1
 	}

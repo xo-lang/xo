@@ -45,3 +45,29 @@ Per connection latency p99 by block (connect to first response line):
   in which accepted connections get their first read under a burst
   (accept to first read scheduling), not throughput. Left for later; a
   run of burst-ci.sh reproduces it, and no further CI run is planned.
+
+## Follow-up: where the latency goes, on the Mac (2026-10-19)
+
+`loadgen -burst` now also prints each connection's dial time (until the
+kernel completes the handshake: the accept queue) and its time from the
+dial to the response's first line (accept, first read, the handler),
+and the latter by the order the dials completed (first third, middle,
+last); burst-ci.sh prints every line. In Docker on the Mac (linux/arm64,
+servers on CPUs 0-5, loadgen on 6-11, 4 alternating blocks of 30 rounds,
+main 990ef859's xo; the Mac at a load average of 26 to 35 on 12 cores),
+latency p99 by block:
+
+| block | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| go | 77.2 ms | 79.7 ms | 80.4 ms | 110.9 ms |
+| xo | 79.2 ms | 77.6 ms | 58.3 ms | 80.0 ms |
+
+The CI run's gap does not reproduce here: rounds take about 3 times as
+long as on the CI runner (wall p50 38 to 64 ms against 14), the dial is
+most of a connection's latency for both servers (dial p99 48 to 78 ms,
+dial to response p99 31 to 56 ms), and both serve connections in about
+the order their dials completed (the first third waits longest:
+first third p99 34 to 57 ms, last third 21 to 55), so neither runs the
+newest connection first. Telling accept queue drain from scheduling on
+the CI machine needs a run of burst-ci.sh with this loadgen (the owner
+decides).
