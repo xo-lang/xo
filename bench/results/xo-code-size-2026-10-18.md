@@ -317,3 +317,21 @@ Fixes 1 (first step), 2 (chain_pads, b303289c), 4 and 5 together: xo
 9,387 functions, against the 40.18 MB baseline above (-7.59 MB, 18.9%);
 the binary is 36.26 MB. Top 10 functions 5.3% of `__text`, top 100
 22.7%. Go's `compile`: 10.3 MB.
+
+## Borrowed pair loop elements (2026-10-19, 01e51108)
+
+`for (i, x) in xs.indexed()` and `for (k, v) in m` built a tuple of the
+pair before matching the pattern; the tuple consumed the element, so
+each iteration retained and released its leaves where `for x in xs`
+borrows them (decision 0186 addendum). The builder now binds a two
+part tuple pattern's parts apart (compiler/ssa stmt.xo, map.xo).
+std/native http's match_parts loop, copied into a test program: 297 to
+249 instructions, 17 to 6 count operations; an indexed loop that only
+reads its elements: 65 to 37 instructions, no count operations.
+xo built by the base and the new compiler: `__text` 32,645,480 to
+32,238,276 bytes (-1.25%). HTTP callgrind (MODE=short, Linux arm64 in
+Docker, instructions per request): plain arm64 25,777 to 25,603
+(-0.68%); tls arm64 43,658 to 43,730 in one run and 43,870 to 43,806 in
+the next, within the scenario's run to run spread (llvm tls varied
+55,410 to 55,885 between runs of compilers that differ only in this
+change).
