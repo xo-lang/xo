@@ -248,47 +248,39 @@ fn isolated(f: fn() -> http.Response) -> http.Response {
   }
 }
 
-fn literals(segs: List[Seg]) -> Int {
-  // by index and field, as match_parts
+fn literals(rt: Route) -> Int {
   var n = 0
-  var i = 0
-  while i < segs.len() {
-    if segs[i].param.is_empty() {
+  for s in rt.segs {
+    if s.param.is_empty() {
       n += 1
     }
-    i += 1
   }
   n
 }
 
 /// Whether the route matches the path parts (unescaped, uparts), and its
 /// first Int segment that does not parse ("" when none).
-fn match_parts(segs: List[Seg], uparts: List[Str]) -> (Bool, Str) {
+fn match_parts(route: Route, uparts: List[Str]) -> (Bool, Str) {
   var bad = ""
-  // by index and field: a `for` binding of each Seg retained and dropped
-  // its two strings (every route, every request)
-  let n = segs.len()
-  var i = 0
-  while i < n {
-    if segs[i].rest {
+  for (i, s) in route.segs.indexed() {
+    if s.rest {
       return (true, bad)
     }
     if i >= uparts.len() {
       return (false, "")
     }
-    if segs[i].param.is_empty() {
-      if uparts[i] != segs[i].lit {
+    let part = uparts[i]
+    if s.param.is_empty() {
+      if part != s.lit {
         return (false, "")
       }
-      i += 1
       continue
     }
-    if segs[i].is_int && Int.parse(uparts[i]) is None && bad.is_empty() {
-      bad = segs[i].param
+    if s.is_int && Int.parse(part) is None && bad.is_empty() {
+      bad = s.param
     }
-    i += 1
   }
-  if uparts.len() != n {
+  if uparts.len() != route.segs.len() {
     return (false, "")
   }
   (true, bad)
@@ -298,11 +290,8 @@ fn match_parts(segs: List[Seg], uparts: List[Str]) -> (Bool, Str) {
 /// from the raw parts joined.
 fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, Str] {
   var params: Map[Str, Str] = {}
-  // by index and field, as match_parts
-  let segs = route.segs
-  var i = 0
-  while i < segs.len() {
-    if segs[i].rest {
+  for (i, s) in route.segs.indexed() {
+    if s.rest {
       var rest = ""
       if i < parts.len() {
         var tail: List[Str] = []
@@ -313,13 +302,12 @@ fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, St
         }
         rest = tail.join("/")
       }
-      params.put(segs[i].param, rest)
+      params.put(s.param, rest)
       return params
     }
-    if !segs[i].param.is_empty() && i < uparts.len() {
-      params.put(segs[i].param, uparts[i])
+    if !s.param.is_empty() && i < uparts.len() {
+      params.put(s.param, uparts[i])
     }
-    i += 1
   }
   params
 }
@@ -336,26 +324,21 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   var best_lits = 0
   var best_bad = ""
   var mismatch = false
-  // by index and field, as match_parts
-  var i = 0
-  while i < r.routes.len() {
-    let (ok, bad) = match_parts(r.routes[i].segs, uparts)
+  for (i, route) in r.routes.indexed() {
+    let (ok, bad) = match_parts(route, uparts)
     if !ok {
-      i += 1
       continue
     }
-    if !r.routes[i].method.is_empty() && r.routes[i].method != method {
+    if !route.method.is_empty() && route.method != method {
       mismatch = true
-      i += 1
       continue
     }
-    let lits = literals(r.routes[i].segs)
+    let lits = literals(route)
     if best < 0 || lits > best_lits {
       best = i
       best_lits = lits
       best_bad = bad
     }
-    i += 1
   }
   if best < 0 {
     if mismatch {
@@ -977,9 +960,9 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   for p in parts {
     uparts.push(http1.path_unescape(p))
   }
-  let (ok, _) = match_parts(route.segs, uparts)
+  let (ok, _) = match_parts(route, uparts)
   if !ok {
     return None
   }
-  Some((literals(route.segs), bind_params(route, parts, uparts)))
+  Some((literals(route), bind_params(route, parts, uparts)))
 }
