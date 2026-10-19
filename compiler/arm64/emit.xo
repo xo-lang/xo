@@ -323,7 +323,8 @@ fn (var g: G) emit() {
     ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
-  g.text.push(g.local_empty(g.far_tests(g.far_slots(pair_mem(reload_reuse(b.join(""), ext), ext)))))
+  let body = if g.x86 { b.join("") } else { copy_runs(b.join("")) }
+  g.text.push(g.local_empty(g.far_tests(g.far_slots(pair_mem(reload_reuse(body, ext), ext)))))
 }
 
 /// The number of instructions past which a function keeps adrp and add

@@ -288,3 +288,24 @@ binary make it about 270 KB (17%) larger. The Mac sweep (114 workloads,
 3 rounds): httpparse/h1_get 0.940 (faster beyond spread), ctx/none 1.005
 over a 1.002 spread (an empty program's startup), the rest inside
 spreads.
+
+## Fix 5, landed (2026-10-18, Xo lang 4)
+
+compiler/arm64 lsr.xo copy_runs, a text pass before reload_reuse:
+each run of four or more word copies through x16 or x17 (`ldr x16,
+[A, #a]` then `str x16, [B, #b]`, the next words after) becomes x16 =
+A + a, x17 = B + b, then `ldp`/`stp` of q30 and q31 (32 bytes each),
+a q pair and a d pair for the tail, up to 128 words a base. Most of
+these runs have offsets past the 504 bytes ldp of x registers reaches
+(4000 and more), so pairing x16 with x17 would have taken 241 of 4,177
+pairs in the HTTP server. Taken when one base is sp and the other not
+(or both sp with the ranges apart) and neither x16 nor x17 is read
+after the run before it is written (gotchas/arm64-text-pass-scratch-live.md).
+The x17 runs are a call's stack arguments (Xo lang 3's head_of(11 args)
+in http1.parse_head).
+xo's `__text` 38.43 to 35.37 MB (-3.06 MB, 8.0%; binary 42.15 to 39.07
+MB). The Mac sweep (114 workloads, 3 rounds): 0 slower, 5 faster
+beyond spread (httpparse h2_get 0.952, h2_varied 0.953, h1_get 0.988,
+tls aes128 0.962, text/none 0.994). The base xo was built before a
+rebase onto main 29ae8c4a, so the faster rows may include main's
+changes from that range.

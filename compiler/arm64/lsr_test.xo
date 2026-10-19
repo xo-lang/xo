@@ -43,3 +43,69 @@ test "pair_mem: d registers pair like x registers; an x and a d do not" {
   let u = "\tldr x10, [x9, #24]\n\tldr d17, [x9, #32]\n\tstr d22, [x9, #48]\n\tstr x11, [x9, #56]\n\tret"
   expect(pair_mem(u, "")) == u
 }
+
+test "copy_runs: four or more word copies go 32 bytes at a time through v30 and v31" {
+  var t = ""
+  var u = ""
+  for w in 0..5 {
+    t = t + "\tldr x16, [sp, #${4000 + 8 * w}]\n\tstr x16, [x20, #${16 + 8 * w}]\n"
+  }
+  expect(copy_runs(t + "\tret")) == "\tadd x16, sp, #4000\n\tadd x17, x20, #16\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tldr d30, [x16, #32]\n\tstr d30, [x17, #32]\n\tret"
+  for w in 0..3 {
+    u = u + "\tldr x16, [sp, #${8 * w}]\n\tstr x16, [x20, #${8 * w}]\n"
+  }
+  expect(copy_runs(u + "\tret")) == u + "\tret" // three: no fewer
+}
+
+test "copy_runs: two bases not sp, or overlapping sp ranges, stay" {
+  var t = ""
+  var u = ""
+  for w in 0..6 {
+    t = t + "\tldr x16, [x9, #${8 * w}]\n\tstr x16, [x20, #${8 * w}]\n"
+    u = u + "\tldr x16, [sp, #${8 * w}]\n\tstr x16, [sp, #${16 + 8 * w}]\n"
+  }
+  expect(copy_runs(t + "\tret")) == t + "\tret"
+  expect(copy_runs(u + "\tret")) == u + "\tret"
+}
+
+test "copy_runs: past 128 words the bases move on 1024 bytes; a large offset takes two adds" {
+  var t = ""
+  for w in 0..130 {
+    t = t + "\tldr x16, [x17, #${8 * w}]\n\tstr x16, [sp, #${5000 + 8 * w}]\n"
+  }
+  let r = copy_runs(t)
+  expect(r.starts_with("\tmov x16, x17\n\tadd x17, sp, #1, lsl #12\n\tadd x17, x17, #904\n\tldp q30, q31, [x16, #0]\n")) == true
+  expect(r.contains("\tstp q30, q31, [x17, #992]\n\tadd x16, x16, #1024\n\tadd x17, x17, #1024\n\tldr q30, [x16, #0]\n\tstr q30, [x17, #0]")) == true
+}
+
+test "copy_runs: debug rows among the copies go before them" {
+  var t = ""
+  for w in 0..4 {
+    t = t + "\tldr x16, [sp, #${8 * w}]\nLf_dl${w}:\n\tstr x16, [x20, #${8 * w}]\n"
+  }
+  expect(copy_runs(t + "\tret")) == "Lf_dl0:\nLf_dl1:\nLf_dl2:\nLf_dl3:\n\tmov x16, sp\n\tmov x17, x20\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tret"
+}
+
+test "copy_runs: stays when x16 or x17 is read after the run" {
+  var t = ""
+  var u = ""
+  for w in 0..4 {
+    t = t + "\tldr x16, [sp, #${8 * w}]\n\tstr x16, [x17, #${8 * w}]\n"
+    u = u + "\tldr x17, [sp, #${8 * w}]\n\tstr x17, [sp, #${64 + 8 * w}]\n"
+  }
+  let a = t + "\tstr x3, [x17, #32]\n\tret"
+  expect(copy_runs(a)) == a
+  let b = u + "\tblr x16\n\tret"
+  expect(copy_runs(b)) == b
+  let c = u + "1:\n\tbl _f"
+  expect(copy_runs(c)) == c
+}
+
+test "copy_runs: a call's stack arguments through x17" {
+  var u = ""
+  for w in 0..4 {
+    u = u + "\tldr x17, [sp, #${96 + 8 * w}]\n\tstr x17, [sp, #${8 * w}]\n"
+  }
+  expect(copy_runs(u + "\tldr x16, [x9]\n\tblr x16")) == "\tadd x16, sp, #96\n\tmov x17, sp\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tldr x16, [x9]\n\tblr x16"
+  expect(copy_runs(u + "\tbl _f")) == "\tadd x16, sp, #96\n\tmov x17, sp\n\tldp q30, q31, [x16, #0]\n\tstp q30, q31, [x17, #0]\n\tbl _f"
+}

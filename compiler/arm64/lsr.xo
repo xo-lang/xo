@@ -741,6 +741,291 @@ fn cluster_past(inst: Inst, k: Int, base: Int, off: Int) -> Bool {
   k == 1 && k2 == 1
 }
 
+/// A function's text with each run of four or more word copies through
+/// x16 or x17 (`ldr x16, [A, #a]` then `str x16, [B, #b]`, each next pair
+/// a word further on both sides) copied 32 bytes at a time: x16 = A + a
+/// and x17 = B + b, then load and store pairs of v30 and v31 (the
+/// emitter's scratch registers). These are the spill slot reloads of an
+/// aggregate's words stored into an object or a call's stack arguments,
+/// and back (2026-10-18: 6.28 MB of xo's 38.4 MB __text was word copies
+/// through x16). One base is sp and the other not (the object's words
+/// cannot overlap a spill slot), or both are sp with the two ranges
+/// apart, so loading four words before storing them reads what the word
+/// by word copy read; and neither x16 nor x17 is read after the run
+/// before it is written (scratch_dead). Before reload_reuse, which takes
+/// x16 to hold the run's last word's slot after it.
+fn copy_runs(text: Str) -> Str {
+  if !text.contains("\tstr x16, [") && !text.contains("\tstr x17, [") {
+    return text
+  }
+  let lines = text.split("\n")
+  var out: List[Str] = []
+  var i = 0
+  let n = lines.len()
+  while i < n {
+    let r = if lines[i].starts_with("\tldr x16, [") { "x16" } else { "x17" }
+    let ld = "\tldr ${r}, ["
+    let st = "\tstr ${r}, ["
+    let (aok, ab, ao) = x16_word(lines[i], ld)
+    let j = past_rows(lines, i + 1)
+    let (bok, bb, bo) = if aok && j < n { x16_word(lines[j], st) } else { (false, "", 0) }
+    if bok {
+      // the debug line rows and variable locations among the copies
+      // (decisions 0239, 0252): kept, before the copy, as pair_mem
+      // keeps them, so a build with debug information has the same code
+      var rows: List[Str] = []
+      for l in lines[i + 1..j] {
+        rows.push(l)
+      }
+      var e = j + 1
+      var k = 1
+      while true {
+        let c = past_rows(lines, e)
+        if c >= n {
+          break
+        }
+        let (cok, cb, co) = x16_word(lines[c], ld)
+        let d = past_rows(lines, c + 1)
+        if !cok || cb != ab || co != ao + 8 * k || d >= n {
+          break
+        }
+        let (dok, db, dof) = x16_word(lines[d], st)
+        if !dok || db != bb || dof != bo + 8 * k {
+          break
+        }
+        for l in lines[e..c] {
+          rows.push(l)
+        }
+        for l in lines[c + 1..d] {
+          rows.push(l)
+        }
+        e = d + 1
+        k += 1
+      }
+      let ok = k >= 4 && scratch_dead(lines, e, "16") && scratch_dead(lines, e, "17")
+      let code = if ok { copy_block(r, ab, ao, bb, bo, k) } else { [] }
+      if code.is_empty() {
+        for l in lines[i..e] {
+          out.push(l)
+        }
+      } else {
+        for l in rows + code {
+          out.push(l)
+        }
+      }
+      i = e
+      continue
+    }
+    out.push(lines[i])
+    i += 1
+  }
+  out.join("\n")
+}
+
+/// Whether x<r> (and w<r>) is not read from line i on before it is
+/// written: the first instruction naming it writes it without reading
+/// it, or a call, a return, an unconditional branch, or a block's label
+/// comes first (the emitter keeps nothing in x16 or x17 from one
+/// instruction of the function to the next; only a local label of one
+/// instruction's code, `1:`, or a branch to one, `1b`, may). Debug
+/// labels and directives are passed over.
+fn scratch_dead(lines: List[Str], i: Int, r: Str) -> Bool {
+  var j = i
+  while j < lines.len() {
+    let l = lines[j]
+    j += 1
+    if l.is_empty() || l.starts_with("\t.") || l.starts_with("//") {
+      continue
+    }
+    if !l.starts_with("\t") {
+      let name = label_def(l)
+      if !name.is_empty() && is_row_label(name) {
+        continue
+      }
+      return !is_digits(l[0..1])
+    }
+    let body = l[1..l.len()]
+    let sp = body.find(" ") ?? body.len()
+    let op = body[0..sp]
+    let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
+    let toks = reg_tokens(ops)
+    var at = -1
+    var t = 0
+    while t < toks.len() {
+      if toks[t] == "x${r}" || toks[t] == "w${r}" {
+        at = t
+        break
+      }
+      t += 1
+    }
+    if at < 0 {
+      if op == "ret" || op == "bl" || op == "b" {
+        if op == "b" && is_digits(ops[0..1]) {
+          return false
+        }
+        return true
+      }
+      if op.starts_with("b.") || op is "cbz" | "cbnz" | "tbz" | "tbnz" {
+        let tgt = last_operand(ops)
+        if !tgt.is_empty() && is_digits(tgt[0..1]) {
+          return false // a local label of the same instruction's code
+        }
+      }
+      if op is "br" | "blr" | "svc" {
+        return true
+      }
+      continue
+    }
+    if op.starts_with("ld") && !op.starts_with("ldx") && !op.starts_with("lda") {
+      // a load writes the registers before its address and reads those in it
+      let br = ops.find("[") ?? ops.len()
+      let dst = reg_tokens(ops[0..br])
+      if dst.contains("x${r}") || dst.contains("w${r}") {
+        return !reg_tokens(ops[br..ops.len()]).contains("x${r}")
+      }
+      return false
+    }
+    if op is "mov" | "movz" | "movn" | "adr" | "adrp" | "add" | "sub" | "and" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "mul" | "madd" | "msub" | "csel" | "csinc" | "neg" | "mvn" | "ubfx" | "sbfx" | "sxtw" | "uxtw" | "fmov" {
+      // a computation: its first operand is its result
+      return at == 0 && !toks[1..toks.len()].contains("x${r}") && !toks[1..toks.len()].contains("w${r}")
+    }
+    return false
+  }
+  true
+}
+
+/// The register names among an instruction's operands, in order.
+fn reg_tokens(ops: Str) -> List[Str] {
+  var out: List[Str] = []
+  let bs = ops.bytes()
+  var s = 0
+  var k = 0
+  while k <= bs.len() {
+    let word = k < bs.len() && ((bs[k] >= 'a' && bs[k] <= 'z') || (bs[k] >= '0' && bs[k] <= '9'))
+    if !word {
+      if k > s {
+        out.push(ops[s..k])
+      }
+      s = k + 1
+    }
+    k += 1
+  }
+  out
+}
+
+/// An instruction's last operand (after its last ", " or the only one).
+fn last_operand(ops: Str) -> Str {
+  let parts = ops.split(", ")
+  parts[parts.len() - 1]
+}
+
+/// The first line from i on that is not a debug line row's or variable
+/// location's label.
+fn past_rows(lines: List[Str], i: Int) -> Int {
+  var j = i
+  while j < lines.len() {
+    let name = label_def(lines[j])
+    if name.is_empty() || !is_row_label(name) {
+      break
+    }
+    j += 1
+  }
+  j
+}
+
+/// copy_runs's instructions for k words from [a + ao] to [b + bo], or
+/// none when that is not fewer than the 2k of the word copies or the
+/// bases do not allow it. Up to 128 words from one x16 and x17 (ldp of
+/// q registers reaches 1008 bytes), the next 128 from them plus 1024.
+fn copy_block(r: Str, a: Str, ao: Int, b: Str, bo: Int, k: Int) -> List[Str] {
+  let apart = ao + 8 * k <= bo || bo + 8 * k <= ao
+  // x16 = A + a goes first, so A may be x17 (not for a copy through x17,
+  // whose loads replaced it)
+  let bases = a != "x16" && b != "x16" && (r == "x16" || (a != "x17" && b != "x17"))
+  if k < 4 || !bases || !((a == "sp") != (b == "sp") || (a == "sp" && b == "sp" && apart)) {
+    return []
+  }
+  var out: List[Str] = []
+  var w = 0
+  while w < k {
+    let m = if k - w < 128 { k - w } else { 128 }
+    let s = if w == 0 { add_off("x16", a, ao) + add_off("x17", b, bo) } else { add_off("x16", "x16", 1024) + add_off("x17", "x17", 1024) }
+    if s.is_empty() {
+      return []
+    }
+    for l in s {
+      out.push(l)
+    }
+    var j = 0
+    while j + 4 <= m {
+      out.push("\tldp q30, q31, [x16, #${8 * j}]")
+      out.push("\tstp q30, q31, [x17, #${8 * j}]")
+      j += 4
+    }
+    if j + 2 <= m {
+      out.push("\tldr q30, [x16, #${8 * j}]")
+      out.push("\tstr q30, [x17, #${8 * j}]")
+      j += 2
+    }
+    if j < m {
+      out.push("\tldr d30, [x16, #${8 * j}]")
+      out.push("\tstr d30, [x17, #${8 * j}]")
+    }
+    w += m
+  }
+  if out.len() >= 2 * k {
+    return []
+  }
+  out
+}
+
+/// `dst = base + off` in one or two adds or subs (off within 24 bits),
+/// or none when it does not fit; a zero off is a mov.
+fn add_off(dst: Str, base: Str, off: Int) -> List[Str] {
+  let op = if off < 0 { "sub" } else { "add" }
+  let v = if off < 0 { -off } else { off }
+  if v == 0 {
+    return ["\tmov ${dst}, ${base}"]
+  }
+  if v < 4096 {
+    return ["\t${op} ${dst}, ${base}, #${v}"]
+  }
+  if v >= 16777216 {
+    return []
+  }
+  let hi = ["\t${op} ${dst}, ${base}, #${v >> 12}, lsl #12"]
+  if v & 4095 == 0 {
+    return hi
+  }
+  hi + ["\t${op} ${dst}, ${dst}, #${v & 4095}"]
+}
+
+/// Whether l is `<pre>A, #off]` with A sp or an x register (pre is
+/// `\tldr x16, [` or `\tstr x16, [`): the base and the offset.
+fn x16_word(l: Str, pre: Str) -> (Bool, Str, Int) {
+  let bad = (false, "", 0)
+  if !l.starts_with(pre) || !l.ends_with("]") {
+    return bad
+  }
+  let rest = l[pre.len()..l.len() - 1]
+  let c = rest.find(", #") ?? -1
+  if c < 0 {
+    return bad
+  }
+  let base = rest[0..c]
+  if base != "sp" && !is_xreg(base) {
+    return bad
+  }
+  let num = rest[c + 3..rest.len()]
+  if !is_signed_digits(num) {
+    return bad
+  }
+  match Int.parse(num) {
+    Some(off) => (true, base, off)
+    None => bad
+  }
+}
+
 /// Joins two loads of adjacent words through one base register into a
 /// load pair (pairLoads): two x registers or two d registers.
 fn pair_loads(text: Str) -> Str {
