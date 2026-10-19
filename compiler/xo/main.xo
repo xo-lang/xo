@@ -771,14 +771,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
     // no per-function cache for amd64 yet (its canonical text is
     // arm64's), nor with passes off (XO_PASSES: its keys do not say so)
-    let (fc, fdir) = if march == "amd64" || !gm.passes_off.is_empty() { (arm64.FnCache{}, "") } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
+    let (fc, fdir, fpk) = if march == "amd64" || !gm.passes_off.is_empty() { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
     let p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
-      fn_cache_store(os, fdir, p.stores)
+      fn_cache_store(os, fdir, fpk, fc, p.stores)
       cache_note(os, phases, "functions", p.reused, fc.keys.len())
       if !p.mismatches.is_empty() {
         fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")

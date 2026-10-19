@@ -82,27 +82,33 @@ fn self_id(os: Os) -> Str {
 /// B, compiler/arm64 fcache.xo): every function's key and the entries the
 /// cache holds for them, and the cache directory; none (an empty
 /// FnCache, "") when the cache is off, for a --release build, or for a
-/// module of one part.
-fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> (arm64.FnCache, Str) {
+/// module of one part. The entries come through the target's pack
+/// (cache_get_packed), which fn_cache_store updates.
+fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> (arm64.FnCache, Str, Pack) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || release {
-    return (arm64.FnCache{}, "")
+    return (arm64.FnCache{}, "", Pack{})
   }
   let id = self_id(os)
   if id.is_empty() {
-    return (arm64.FnCache{}, "")
+    return (arm64.FnCache{}, "", Pack{})
   }
   let keys = arm64.function_keys(m, tgoos, id, jobs)
   if keys.is_empty() {
-    return (arm64.FnCache{}, "")
+    return (arm64.FnCache{}, "", Pack{})
   }
-  let entries = cache_get_all(os, dir, "fn", keys, jobs)
-  (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir)
+  let (entries, pk) = cache_get_packed(os, dir, "fn", "${tgoos}-${m.goarch}", keys, jobs)
+  (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir, pk)
 }
 
-/// Stores the entries a cached generation made (fn_cache_load's dir).
-fn fn_cache_store(os: Os, dir: Str, stores: List[(Str, Bytes)]) {
-  if dir.is_empty() || stores.is_empty() {
+/// Stores the entries a cached generation made (fn_cache_load's dir),
+/// and updates the target's pack with them and the hits of fc.
+fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)]) {
+  if dir.is_empty() {
+    return
+  }
+  pack_store(os, pk, fc.entries, stores)
+  if stores.is_empty() {
     return
   }
   var n = 0
@@ -135,10 +141,11 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
   var t = os.clock.now()
   let plan = b.insert_rc_plan(id, jobs)
   t = lap(os, phases, "insert_rc.plan", t)
-  let entries = cache_get_all(os, dir, "rc", plan.keys, jobs)
+  let (entries, pk) = cache_get_packed(os, dir, "rc", b.m.goarch, plan.keys, jobs)
   t = lap(os, phases, "insert_rc.read", t)
   let out = b.insert_rc_apply(plan, entries, backend_cache_mode(os) == "verify", jobs)
   t = lap(os, phases, "insert_rc.apply", t)
+  pack_store(os, pk, entries, out.stores)
   var n = 0
   for (k, e) in out.stores {
     cache_put(os, entry_path(dir, "rc", k), e)
@@ -177,9 +184,10 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   var t = os.clock.now()
   let keys = arm64.inline_keys(mi, rc_keys)
   t = lap(os, phases, "inline.keys", t)
-  let entries = cache_get_all(os, dir, "inl", keys, jobs)
+  let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
   let out = arm64.inline_cached(mi, keys, entries, backend_cache_mode(os) == "verify", brk, jobs)
+  pack_store(os, pk, entries, out.stores)
   var n = 0
   for (k, e) in out.stores {
     cache_put(os, entry_path(dir, "inl", k), e)
@@ -370,4 +378,237 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   var p = cap_env(os, base, "XO_BACKEND_CACHE_MAX")
   p.burst = p.max_bytes / 8
   let _s = prune.run(os.fs, os.clock, dir, p)
+}
+
+// Packs (decision 0220 addendum stage D 2d): after an edit, reading the
+// entries as about 30,000 files cost 1.7 s of CPU (open, read, the used
+// mark's stat), so each build target (the working directory, the
+// command line without its flags and output path, and the target) also keeps its rc, inl, and fn entries
+// in a few segment files per kind, <cache>/pack/<slot>/<kind>/s-<hex>,
+// each read with one open. A segment is PACK_VERSION, a line, the count,
+// each entry's key and length (unsigned varints), then the entries' bytes
+// in that order. The loose files stay the shared store: a key the pack
+// lacks is read from its file, and stores go there too, so other
+// programs and targets keep their hits. A build appends one segment of
+// the entries it used that its pack lacked; past PACK_SEGS segments, or
+// a pack holding over twice what the build used, it writes one segment
+// of what it used and removes the segments it read. A target's first
+// build only creates the directory, so a program built once (a golden)
+// costs no second copy. Segments are written whole and renamed into
+// place (cache_put); a segment another build removed while this one
+// listed it reads as missing, and its keys come from the loose files.
+// The prune treats each segment as one entry, marked used when read.
+
+const PACK_VERSION = "xo pack v1"
+const PACK_SEGS = 4
+
+/// One kind's pack for a build target, as cache_get_packed read it.
+struct Pack {
+  /// The cache directory, for the prune's stored bytes.
+  root: Str = ""
+  /// <cache>/pack/<slot>/<kind>; "" when packs are not used.
+  dir: Str = ""
+  /// The segments read (file names).
+  segs: List[Str] = []
+  /// The entries those segments hold.
+  held: Int = 0
+  /// The keys whose entries came from the pack.
+  from_pack: Map[Str, Bool] = {}
+  /// The target's first build: no pack directory yet.
+  fresh: Bool = false
+}
+
+/// The pack directory of kind for this build and target: flags such as
+/// --phase-times and the output path (-o) do not change it, so a verify
+/// build or one with another output shares the edit loop's pack (the keys
+/// decide what an entry is; the target only groups the entries one edit
+/// loop uses).
+fn pack_dir(os: Os, dir: Str, kind: Str, target: Str) -> Str {
+  let cwd = os.fs.cwd_path().ok() ?? ""
+  var words: List[Str] = []
+  var skip = false
+  for a in os.env.args() {
+    if skip {
+      skip = false
+    } else if a == "-o" {
+      skip = true
+    } else if !a.starts_with("-") {
+      words.push(a)
+    }
+  }
+  let id = crypto.sha256("${PACK_VERSION}\n${cwd}\n${words.join("\n")}\n${target}\n".bytes()).to_hex()
+  "${dir}/pack/${id[0..32]}/${kind}"
+}
+
+/// cache_get_all through the build target's pack (above): the entries
+/// of keys the pack holds, the rest from the loose files.
+fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], jobs: Int) -> (Map[Str, Bytes], Pack) {
+  var p = Pack{root: dir, dir: pack_dir(os, dir, kind, target)}
+  var want: Map[Str, Bool] = {}
+  for k in keys {
+    if !k.is_empty() {
+      want[k] = true
+    }
+  }
+  var entries: Map[Str, Bytes] = {}
+  match os.fs.read_dir(p.dir) {
+    Ok(list) => {
+      for fi in list {
+        if !fi.name.starts_with("s-") || fi.name.contains(".") {
+          continue
+        }
+        let path = "${p.dir}/${fi.name}"
+        match os.fs.read(path) {
+          Ok(b) => {
+            prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
+            p.segs.push(fi.name)
+            for (k, lo, hi) in pack_index(b) {
+              p.held += 1
+              if want.contains(k) && !entries.contains(k) {
+                entries[k] = b[lo..hi]
+                p.from_pack[k] = true
+              }
+            }
+          }
+          Err(_) => {}
+        }
+      }
+    }
+    Err(_) => p.fresh = true
+  }
+  var rest: List[Str] = []
+  for (k, _) in want {
+    if !entries.contains(k) {
+      rest.push(k)
+    }
+  }
+  for (k, b) in cache_get_all(os, dir, kind, rest, jobs) {
+    entries[k] = b
+  }
+  (entries, p)
+}
+
+/// The keys of a segment with their bytes' range in b, [] when b is not
+/// a whole segment of this version.
+fn pack_index(b: Bytes) -> List[(Str, Int, Int)] {
+  let head = "${PACK_VERSION}\n".bytes()
+  if b.len() < head.len() || b[0..head.len()] != head {
+    return []
+  }
+  var pos = head.len()
+  let (n, p1) = get_uv(b, pos)
+  pos = p1
+  if n < 0 {
+    return []
+  }
+  var ks: List[(Str, Int)] = []
+  for _ in 0..n {
+    let (kl, p2) = get_uv(b, pos)
+    if kl < 0 || p2 + kl > b.len() {
+      return []
+    }
+    let k = b[p2..p2 + kl].to_str() ?? ""
+    let (len, p3) = get_uv(b, p2 + kl)
+    if len < 0 {
+      return []
+    }
+    ks.push((k, len))
+    pos = p3
+  }
+  var out: List[(Str, Int, Int)] = List.with_capacity(ks.len())
+  for (k, len) in ks {
+    if pos + len > b.len() {
+      return []
+    }
+    out.push((k, pos, pos + len))
+    pos += len
+  }
+  out
+}
+
+/// The unsigned varint at b[pos], and the position after it; -1 when b
+/// ends inside it or it is too long.
+fn get_uv(b: Bytes, pos: Int) -> (Int, Int) {
+  var v = 0
+  var shift = 0
+  var i = pos
+  while i < b.len() && shift < 63 {
+    let c = Int(b[i])
+    v = v | ((c & 127) << shift)
+    i += 1
+    if c < 128 {
+      return (v, i)
+    }
+    shift += 7
+  }
+  (-1, i)
+}
+
+fn put_uv(var w: BytesBuilder, v0: Int) {
+  var v = v0
+  while v >= 128 {
+    w.write_byte(UInt8((v & 127) | 128))
+    v = v >> 7
+  }
+  w.write_byte(UInt8(v))
+}
+
+/// Updates the build target's pack p after a build used entries (its
+/// hits, from the pack or the loose files) and stores (its new entries):
+/// see the section comment.
+fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Bytes)]) {
+  if p.dir.is_empty() {
+    return
+  }
+  if p.fresh {
+    os.fs.create_dir_all(p.dir).ignore_err("no pack: the loose files serve")
+    return
+  }
+  var used: List[(Str, Bytes)] = []
+  var extra: List[(Str, Bytes)] = []
+  var seen: Map[Str, Bool] = {}
+  for (k, b) in entries {
+    seen[k] = true
+    used.push((k, b))
+    if !p.from_pack.contains(k) {
+      extra.push((k, b))
+    }
+  }
+  for (k, b) in stores {
+    if !seen.contains(k) {
+      seen[k] = true
+      used.push((k, b))
+      extra.push((k, b))
+    }
+  }
+  if p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 {
+    pack_write(os, p, used)
+    for s in p.segs {
+      os.fs.remove("${p.dir}/${s}").ignore_err("another build compacted it")
+    }
+  } else if !extra.is_empty() {
+    pack_write(os, p, extra)
+  }
+}
+
+/// Writes items as a new segment of p.
+fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) {
+  var n = 0
+  for (_, b) in items {
+    n += b.len()
+  }
+  var w = BytesBuilder.with_capacity(n + 80 * items.len() + 32)
+  w.write_str("${PACK_VERSION}\n")
+  put_uv(w, items.len())
+  for (k, b) in items {
+    put_uv(w, k.len())
+    w.write_str(k)
+    put_uv(w, b.len())
+  }
+  for (_, b) in items {
+    w.write(b)
+  }
+  let data = w.freeze()
+  cache_put(os, "${p.dir}/s-${os.rand.bytes(8).to_hex()}", data)
+  prune_backend_cache(os, p.root, data.len())
 }
