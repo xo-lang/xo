@@ -72,6 +72,13 @@ fn w64_libc() -> Map[Str, Str] {
 /// integer registers in order and the doubles in xmm0 to xmm7, the rest
 /// on the stack past the return address. Out: Win64's positions.
 fn (g: G) w64_thunks(var out: List[Str]) {
+  // the C functions the module itself defines need none (cabi_wincrt.xo)
+  var own: Map[Str, Bool] = {}
+  for f in g.m.funcs {
+    if !f.export.is_empty() {
+      own[f.export] = true
+    }
+  }
   var names: List[Str] = []
   for (k, _) in g.w64 {
     names.push(k)
@@ -82,6 +89,9 @@ fn (g: G) w64_thunks(var out: List[Str]) {
     }
   }
   for sym in names.sort() {
+    if own.contains(sym) && w64_libc().contains(sym) {
+      continue
+    }
     let sig = g.w64.get(sym) ?? (w64_libc().get(sym) ?? "")
     out.push(w64_thunk(sym, sig))
   }
@@ -310,13 +320,15 @@ fn (g: G) win_text(text: Str) -> Str {
     return text
   }
   var to: Map[Str, Str] = {}
+  for (k, _) in w64_libc() {
+    to[k] = "xo_w64_${k}"
+  }
+  // the exports after: with no C runtime (cabi_wincrt.xo) memcpy and the
+  // others are the module's, called as System V functions
   for f in g.m.funcs {
     if !f.export.is_empty() {
       to[g.sym(f.export)] = g.fname(f.name)
     }
-  }
-  for (k, _) in w64_libc() {
-    to[k] = "xo_w64_${k}"
   }
   var out = StrBuilder.new()
   for line in text.split("\n") {

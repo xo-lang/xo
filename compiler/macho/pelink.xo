@@ -1,0 +1,605 @@
+// Xo's PE linker for windows/amd64 (decision 0254 stage 6b, step 4): COFF
+// objects (coff.xo's, and clang's for the zone data) into a PE32+
+// executable without lld-link. The sections merge by name into .text,
+// .rdata (with .xdata, the import tables, the TLS directory), .data (with
+// .bss), .pdata (the exception directory) and .tls; the relocations are
+// applied (REL32 and its _1 to _5, ADDR64 with a base relocation, ADDR32NB,
+// SECREL); a call of an imported function goes through a `jmp *IAT` thunk;
+// .reloc holds the base relocations; the COFF symbol table follows the
+// sections as lld-link's /debug:symtab writes it (the profiler and the
+// fault traceback read it, std/native/llrt/prof.xo coff_symbols). Which
+// DLL exports an imported function is the caller's (PEOpts.imports).
+
+const PE_BASE = 0x140000000
+const PE_SECT_ALIGN = 0x1000
+const PE_FILE_ALIGN = 0x200
+const IMAGE_REL_AMD64_ADDR32 = 2
+const IMAGE_REL_BASED_DIR64 = 10
+const IMAGE_SCN_MEM_DISCARDABLE = 0x2000000
+/// the output sections, in order
+const PO_TEXT = 0
+const PO_RDATA = 1
+const PO_DATA = 2
+const PO_PDATA = 3
+const PO_TLS = 4
+const PO_RELOC = 5
+
+/// The link's settings: the entry symbol, the DLL of each function the
+/// program may import (by symbol), the subsystem (3: the console), and
+/// the stack's reserve.
+pub struct PEOpts {
+  pub entry: Str
+  pub imports: Map[Str, Str]
+  pub subsystem: Int = 3
+  pub stack: Int = 1048576
+}
+
+/// An input section's place: its output section and offset there.
+struct PEPlace {
+  out: Int
+  off: Int
+}
+
+/// What a symbol of an object resolves to: an object's section and offset
+/// (sect >= 0), an import (imp, by name), the linker's _tls_index, or an
+/// absolute value.
+struct PETarget {
+  obj: Int = -1
+  sect: Int = -1
+  off: Int = 0
+  imp: Str = ""
+  /// a reference through `__imp_NAME`: the IAT slot, not the thunk
+  iat: Bool = false
+  tls_index: Bool = false
+  abs: Bool = false
+}
+
+/// The output section of input section s (-1: not in the image).
+fn pe_out(s: CSect) -> Int {
+  let n = s.name
+  if (s.chars & IMAGE_SCN_LNK_REMOVE) != 0 || n == ".drectve" || n.starts_with(".debug") || n == ".llvm_addrsig" {
+    return -1
+  }
+  if n == ".pdata" {
+    return PO_PDATA
+  }
+  if n.starts_with(".tls") {
+    return PO_TLS
+  }
+  if (s.chars & IMAGE_SCN_CNT_CODE) != 0 {
+    return PO_TEXT
+  }
+  if (s.chars & IMAGE_SCN_MEM_WRITE) != 0 {
+    return PO_DATA
+  }
+  PO_RDATA
+}
+
+/// An input section's alignment in bytes.
+fn pe_align(chars: Int) -> Int {
+  let k = (chars >> 20) & 0xf
+  if k == 0 { 16 } else { 1 << (k - 1) }
+}
+
+fn pe_up(v: Int, a: Int) -> Int { (v + a - 1) / a * a }
+
+fn put_le(var b: List[Int], at: Int, v: Int, n: Int) {
+  for k in 0..n {
+    b[at + k] = (v >> (8 * k)) & 0xff
+  }
+}
+
+fn get_le(b: List[Int], at: Int, n: Int) -> Int {
+  var v = 0
+  for k in 0..n {
+    v = v | (b[at + k] << (8 * k))
+  }
+  if n == 4 && (v & 0x80000000) != 0 {
+    v = v - 0x100000000
+  }
+  v
+}
+
+/// link_pe: the executable of objs, or why not.
+pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
+  // the input sections' places, in object order
+  var bufs: List[List[Int]] = [[], [], [], [], [], []]
+  var places: List[List[PEPlace]] = []
+  for ob in objs {
+    var ps: List[PEPlace] = []
+    for s in ob.sects {
+      let k = pe_out(s)
+      if k < 0 {
+        ps.push(PEPlace{out: -1, off: 0})
+        continue
+      }
+      while bufs[k].len() % pe_align(s.chars) != 0 {
+        bufs[k].push(if k == PO_TEXT { 0xcc } else { 0 })
+      }
+      let at = bufs[k].len()
+      if s.data.is_empty() {
+        for _ in 0..s.size {
+          bufs[k].push(0)
+        }
+      } else {
+        for x in s.data {
+          bufs[k].push(Int(x))
+        }
+      }
+      ps.push(PEPlace{out: k, off: at})
+    }
+    places.push(ps)
+  }
+  // the globals and the alternate names
+  var globals: Map[Str, (Int, Int)] = {}
+  var alt: Map[Str, Str] = {}
+  for (oi, ob) in objs.indexed() {
+    for (si, s) in ob.syms.indexed() {
+      if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
+        continue
+      }
+      if globals.contains(s.name) {
+        return Err("${ob.path}: ${s.name} is defined twice")
+      }
+      globals[s.name] = (oi, si)
+    }
+    for d in coff_directives(ob) {
+      let lo = d.to_lower()
+      if lo.starts_with("/alternatename:") || lo.starts_with("-alternatename:") {
+        let kv = d[15..d.len()].split("=")
+        if kv.len() == 2 {
+          alt[kv[0]] = kv[1]
+        }
+      }
+    }
+  }
+  // the imports the program uses, by DLL (in first use order) and name
+  var dlls: List[Str] = []
+  var by_dll: Map[Str, List[Str]] = {}
+  var used: Map[Str, Bool] = {}
+  var targets: List[List[PETarget]] = []
+  for ob in objs {
+    var ts: List[PETarget] = []
+    for _ in ob.syms {
+      ts.push(PETarget{})
+    }
+    targets.push(ts)
+  }
+  for (oi, ob) in objs.indexed() {
+    for (si, s) in ob.syms.indexed() {
+      if s.aux {
+        continue
+      }
+      if s.sect > 0 {
+        targets[oi][si] = PETarget{obj: oi, sect: s.sect - 1, off: s.value}
+        continue
+      }
+      if s.sect == -1 {
+        targets[oi][si] = PETarget{abs: true, off: s.value}
+        continue
+      }
+      if s.sect != 0 {
+        continue
+      }
+      // undefined: another object's, an alternate name's, the linker's,
+      // or an import
+      var name = s.name
+      var tries = 0
+      while !globals.contains(name) && alt.contains(name) && tries < 8 {
+        name = alt.get(name) ?? name
+        tries += 1
+      }
+      if let Some((go, gs)) = globals.get(name) {
+        let g = objs[go].syms[gs]
+        targets[oi][si] = PETarget{obj: go, sect: g.sect - 1, off: g.value}
+        continue
+      }
+      if name == "_tls_index" {
+        targets[oi][si] = PETarget{tls_index: true}
+        continue
+      }
+      let iat = name.starts_with("__imp_")
+      let fname = name.trim_prefix("__imp_")
+      if let Some(dll) = o.imports.get(fname) {
+        if !used.contains(fname) {
+          used[fname] = true
+          if !by_dll.contains(dll) {
+            dlls.push(dll)
+            by_dll[dll] = []
+          }
+          var l = by_dll.get(dll) ?? []
+          l.push(fname)
+          by_dll[dll] = l
+        }
+        targets[oi][si] = PETarget{imp: fname, iat: iat}
+        continue
+      }
+      // a symbol only relocations of removed sections name stays
+      // unresolved; one a kept section names is an error below
+    }
+  }
+  // the import thunks at the end of .text, the linker's _tls_index in
+  // .data
+  while bufs[PO_TEXT].len() % 16 != 0 {
+    bufs[PO_TEXT].push(0xcc)
+  }
+  var thunk_at: Map[Str, Int] = {}
+  for d in dlls {
+    for f in by_dll.get(d) ?? [] {
+      thunk_at[f] = bufs[PO_TEXT].len()
+      // jmp *IAT(%rip), its displacement patched below
+      for x in [0xff, 0x25, 0, 0, 0, 0, 0xcc, 0xcc] {
+        bufs[PO_TEXT].push(x)
+      }
+    }
+  }
+  while bufs[PO_DATA].len() % 8 != 0 {
+    bufs[PO_DATA].push(0)
+  }
+  let tls_index_at = bufs[PO_DATA].len()
+  for _ in 0..8 {
+    bufs[PO_DATA].push(0)
+  }
+  // .rdata's linker tables: the IAT first (as lld-link), then the import
+  // directory, the lookup tables, the names, and the TLS directory
+  while bufs[PO_RDATA].len() % 8 != 0 {
+    bufs[PO_RDATA].push(0)
+  }
+  let iat_start = bufs[PO_RDATA].len()
+  var iat_at: Map[Str, Int] = {}
+  var dll_iat: List[Int] = []
+  for d in dlls {
+    dll_iat.push(bufs[PO_RDATA].len())
+    for f in by_dll.get(d) ?? [] {
+      iat_at[f] = bufs[PO_RDATA].len()
+      for _ in 0..8 {
+        bufs[PO_RDATA].push(0)
+      }
+    }
+    for _ in 0..8 {
+      bufs[PO_RDATA].push(0)
+    }
+  }
+  let iat_size = bufs[PO_RDATA].len() - iat_start
+  let idir = bufs[PO_RDATA].len()
+  for _ in 0..20 * (dlls.len() + 1) {
+    bufs[PO_RDATA].push(0)
+  }
+  var dll_ilt: List[Int] = []
+  for d in dlls {
+    dll_ilt.push(bufs[PO_RDATA].len())
+    for _ in 0..8 * ((by_dll.get(d) ?? []).len() + 1) {
+      bufs[PO_RDATA].push(0)
+    }
+  }
+  var hint_at: Map[Str, Int] = {}
+  for d in dlls {
+    for f in by_dll.get(d) ?? [] {
+      while bufs[PO_RDATA].len() % 2 != 0 {
+        bufs[PO_RDATA].push(0)
+      }
+      hint_at[f] = bufs[PO_RDATA].len()
+      bufs[PO_RDATA].push(0)
+      bufs[PO_RDATA].push(0)
+      for c in f.bytes() {
+        bufs[PO_RDATA].push(Int(c))
+      }
+      bufs[PO_RDATA].push(0)
+    }
+  }
+  var dll_name_at: List[Int] = []
+  for d in dlls {
+    dll_name_at.push(bufs[PO_RDATA].len())
+    for c in d.bytes() {
+      bufs[PO_RDATA].push(Int(c))
+    }
+    bufs[PO_RDATA].push(0)
+  }
+  let has_tls = !bufs[PO_TLS].is_empty()
+  var tls_dir = -1
+  if has_tls {
+    while bufs[PO_RDATA].len() % 8 != 0 {
+      bufs[PO_RDATA].push(0)
+    }
+    tls_dir = bufs[PO_RDATA].len()
+    // the directory (40 bytes) and an empty callback list
+    for _ in 0..48 {
+      bufs[PO_RDATA].push(0)
+    }
+  }
+  // layout: the headers, then each section that has contents (.reloc's
+  // size known after the relocations: placed last)
+  let nsect_max = 6
+  let hdr = pe_up(64 + 4 + 20 + 240 + 40 * nsect_max, PE_FILE_ALIGN)
+  var rva: List[Int] = [0, 0, 0, 0, 0, 0]
+  var next = PE_SECT_ALIGN
+  for k in [PO_TEXT, PO_RDATA, PO_DATA, PO_PDATA, PO_TLS] {
+    if bufs[k].is_empty() {
+      continue
+    }
+    rva[k] = next
+    next = pe_up(next + bufs[k].len(), PE_SECT_ALIGN)
+  }
+  rva[PO_RELOC] = next
+  let sym_rva = fn(t: PETarget) -> Int {
+    if t.tls_index {
+      return rva[PO_DATA] + tls_index_at
+    }
+    if !t.imp.is_empty() {
+      return if t.iat { rva[PO_RDATA] + (iat_at.get(t.imp) ?? 0) } else { rva[PO_TEXT] + (thunk_at.get(t.imp) ?? 0) }
+    }
+    let p = places[t.obj][t.sect]
+    rva[p.out] + p.off + t.off
+  }
+  // the relocations
+  var based: List[Int] = []
+  for (oi, ob) in objs.indexed() {
+    for (si, s) in ob.sects.indexed() {
+      let p = places[oi][si]
+      if p.out < 0 {
+        continue
+      }
+      for r in s.relocs {
+        let t = targets[oi][r.sym]
+        if t.obj < 0 && t.imp.is_empty() && !t.tls_index && !t.abs {
+          return Err("${ob.path}: undefined symbol ${ob.syms[r.sym].name}")
+        }
+        let at = p.off + r.addr
+        let site = rva[p.out] + at
+        var buf = bufs[p.out]
+        if r.typ >= IMAGE_REL_AMD64_REL32 && r.typ <= IMAGE_REL_AMD64_REL32 + 5 {
+          let n = r.typ - IMAGE_REL_AMD64_REL32
+          let a = get_le(buf, at, 4)
+          let v = sym_rva(t) + a - (site + 4 + n)
+          if v < -0x80000000 || v > 0x7fffffff {
+            return Err("${ob.path}: REL32 out of range")
+          }
+          put_le(buf, at, v, 4)
+        } else if r.typ == IMAGE_REL_AMD64_ADDR64 {
+          let a = get_le(buf, at, 8)
+          put_le(buf, at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
+          if !t.abs {
+            based.push(site)
+          }
+        } else if r.typ == IMAGE_REL_AMD64_ADDR32NB {
+          put_le(buf, at, sym_rva(t) + get_le(buf, at, 4), 4)
+        } else if r.typ == IMAGE_REL_AMD64_SECREL {
+          // the offset in the target's output section (the TLS block)
+          let p2 = places[t.obj][t.sect]
+          put_le(buf, at, p2.off + t.off + get_le(buf, at, 4), 4)
+        } else {
+          return Err("${ob.path}: relocation type ${r.typ}")
+        }
+        bufs[p.out] = buf
+      }
+    }
+  }
+  // the thunks' displacements, the import tables, the TLS directory
+  for (f, at) in thunk_at {
+    let site = rva[PO_TEXT] + at + 2
+    put_le(bufs[PO_TEXT], at + 2, rva[PO_RDATA] + (iat_at.get(f) ?? 0) - (site + 4), 4)
+  }
+  for (di, d) in dlls.indexed() {
+    let e = idir + 20 * di
+    put_le(bufs[PO_RDATA], e, rva[PO_RDATA] + dll_ilt[di], 4)
+    put_le(bufs[PO_RDATA], e + 12, rva[PO_RDATA] + dll_name_at[di], 4)
+    put_le(bufs[PO_RDATA], e + 16, rva[PO_RDATA] + dll_iat[di], 4)
+    for (fi, f) in (by_dll.get(d) ?? []).indexed() {
+      let hn = rva[PO_RDATA] + (hint_at.get(f) ?? 0)
+      put_le(bufs[PO_RDATA], dll_ilt[di] + 8 * fi, hn, 8)
+      put_le(bufs[PO_RDATA], dll_iat[di] + 8 * fi, hn, 8)
+    }
+  }
+  if has_tls {
+    let d = tls_dir
+    put_le(bufs[PO_RDATA], d, PE_BASE + rva[PO_TLS], 8)
+    put_le(bufs[PO_RDATA], d + 8, PE_BASE + rva[PO_TLS] + bufs[PO_TLS].len(), 8)
+    put_le(bufs[PO_RDATA], d + 16, PE_BASE + rva[PO_DATA] + tls_index_at, 8)
+    put_le(bufs[PO_RDATA], d + 24, PE_BASE + rva[PO_RDATA] + d + 40, 8)
+    put_le(bufs[PO_RDATA], d + 36, 0x400000, 4)
+    for k in 0..4 {
+      based.push(rva[PO_RDATA] + d + 8 * k)
+    }
+  }
+  // .reloc: a block per 4 KiB page of DIR64 entries, each block a whole
+  // number of 4 byte words
+  let sorted = based.sort()
+  var i = 0
+  while i < sorted.len() {
+    let page = sorted[i] & ~0xfff
+    var j = i
+    while j < sorted.len() && (sorted[j] & ~0xfff) == page {
+      j += 1
+    }
+    var n = j - i
+    let pad = n % 2
+    let size = 8 + 2 * (n + pad)
+    var blk: List[Int] = []
+    for x in [page, size] {
+      for k in 0..4 {
+        blk.push((x >> (8 * k)) & 0xff)
+      }
+    }
+    for k in i..j {
+      let e = (IMAGE_REL_BASED_DIR64 << 12) | (sorted[k] & 0xfff)
+      blk.push(e & 0xff)
+      blk.push(e >> 8)
+    }
+    if pad == 1 {
+      blk.push(0)
+      blk.push(0)
+    }
+    bufs[PO_RELOC] = bufs[PO_RELOC] + blk
+    i = j
+    n = 0
+  }
+  // the entry
+  var entry = -1
+  if let Some((eo, es)) = globals.get(o.entry) {
+    let s = objs[eo].syms[es]
+    entry = sym_rva(PETarget{obj: eo, sect: s.sect - 1, off: s.value})
+  }
+  if entry < 0 {
+    return Err("the entry ${o.entry} is not defined")
+  }
+  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places))
+}
+
+/// The image: the DOS header, the PE headers and section table, the
+/// sections, then the COFF symbol table and string table.
+fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]]) -> Bytes {
+  let names = [".text", ".rdata", ".data", ".pdata", ".tls", ".reloc"]
+  let chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
+  var present: List[Int] = []
+  for k in 0..6 {
+    if !bufs[k].is_empty() {
+      present.push(k)
+    }
+  }
+  // file offsets
+  var foff: List[Int] = [0, 0, 0, 0, 0, 0]
+  var at = hdr
+  for k in present {
+    foff[k] = at
+    at += pe_up(bufs[k].len(), PE_FILE_ALIGN)
+  }
+  let symtab = at
+  // the symbol table: each object's external and static symbols that are
+  // in the image (not sections, not removed), with the output section's
+  // number and the offset in it
+  var syms: List[(Str, Int, Int, Int)] = []
+  for (oi, ob) in objs.indexed() {
+    for s in ob.syms {
+      if s.aux || s.sect <= 0 || !(s.class == IMAGE_SYM_CLASS_EXTERNAL || s.class == IMAGE_SYM_CLASS_STATIC) {
+        continue
+      }
+      let p = places[oi][s.sect - 1]
+      if p.out < 0 || s.name.starts_with(".") || s.name.is_empty() {
+        continue
+      }
+      var num = 0
+      for (pi, k) in present.indexed() {
+        if k == p.out {
+          num = pi + 1
+        }
+      }
+      syms.push((s.name, p.off + s.value, num, s.class))
+    }
+  }
+  var long: List[Bytes] = []
+  for (n, _, _, _) in syms {
+    if n.len() > 8 {
+      long.push(n.bytes())
+    }
+  }
+  let (strs, stroff) = coff_strtab(long)
+  var w = new_out(symtab + 18 * syms.len() + strs.len())
+  // the DOS header: MZ, e_lfanew at 0x3c
+  w.u16(0x5a4d)
+  w.zeros(58)
+  w.u32(64)
+  w.bytes("PE\0\0".bytes())
+  w.u16(IMAGE_FILE_MACHINE_AMD64)
+  w.u16(present.len())
+  w.u32(0)
+  w.u32(symtab)
+  w.u32(syms.len())
+  w.u16(240)
+  w.u16(0x22)
+  // the optional header (PE32+)
+  var code = 0
+  var idata = 0
+  for k in present {
+    let sz = pe_up(bufs[k].len(), PE_FILE_ALIGN)
+    if k == PO_TEXT {
+      code += sz
+    } else {
+      idata += sz
+    }
+  }
+  var image = PE_SECT_ALIGN
+  for k in present {
+    image = rva[k] + pe_up(bufs[k].len(), PE_SECT_ALIGN)
+  }
+  w.u16(0x20b)
+  w.u8(14)
+  w.u8(0)
+  w.u32(code)
+  w.u32(idata)
+  w.u32(0)
+  w.u32(entry)
+  w.u32(rva[PO_TEXT])
+  w.u64(PE_BASE)
+  w.u32(PE_SECT_ALIGN)
+  w.u32(PE_FILE_ALIGN)
+  w.u16(6)
+  w.u16(0)
+  w.u16(0)
+  w.u16(0)
+  w.u16(6)
+  w.u16(0)
+  w.u32(0)
+  w.u32(image)
+  w.u32(hdr)
+  w.u32(0)
+  w.u16(o.subsystem)
+  w.u16(0x8160)
+  w.u64(o.stack)
+  w.u64(0x1000)
+  w.u64(0x100000)
+  w.u64(0x1000)
+  w.u32(0)
+  w.u32(16)
+  // the data directories
+  let dirs: List[(Int, Int)] = [
+    (0, 0),
+    (if ndll > 0 { rva[PO_RDATA] + idir } else { 0 }, if ndll > 0 { 20 * (ndll + 1) } else { 0 }),
+    (0, 0),
+    (rva[PO_PDATA], bufs[PO_PDATA].len()),
+    (0, 0),
+    (rva[PO_RELOC], bufs[PO_RELOC].len()),
+    (0, 0), (0, 0), (0, 0),
+    (if has_tls { rva[PO_RDATA] + tls_dir } else { 0 }, if has_tls { 40 } else { 0 }),
+    (0, 0), (0, 0),
+    (if iat_size > 0 { rva[PO_RDATA] + iat_start } else { 0 }, iat_size),
+    (0, 0), (0, 0), (0, 0),
+  ]
+  for (r, s) in dirs {
+    w.u32(r)
+    w.u32(s)
+  }
+  for k in present {
+    w.name(names[k], 8)
+    w.u32(bufs[k].len())
+    w.u32(rva[k])
+    w.u32(pe_up(bufs[k].len(), PE_FILE_ALIGN))
+    w.u32(foff[k])
+    w.u32(0)
+    w.u32(0)
+    w.u16(0)
+    w.u16(0)
+    w.u32(chars[k])
+  }
+  w.zeros(hdr - w.n)
+  for k in present {
+    for x in bufs[k] {
+      w.u8(x)
+    }
+    w.zeros(pe_up(bufs[k].len(), PE_FILE_ALIGN) - bufs[k].len())
+  }
+  for (n, v, num, class) in syms {
+    if n.len() > 8 {
+      w.u32(0)
+      w.u32(stroff.get(n.bytes()) ?? 0)
+    } else {
+      w.name(n, 8)
+    }
+    w.u32(v)
+    w.u16(num)
+    w.u16(0)
+    w.u8(class)
+    w.u8(0)
+  }
+  w.bytes(strs)
+  w.done()
+}

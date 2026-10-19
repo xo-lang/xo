@@ -1,0 +1,39 @@
+// The C runtime of a windows/amd64 program linked with no C runtime
+// (decision 0254 stage 6b, step 4: Xo's PE linker, XO_WIN_NOCRT=1): the
+// C library functions generated code calls (memcpy, memmove, memset,
+// memcmp, fmod, strlen; Xo's, as an XO_NOLIBC Linux program's, libcstr.xo and
+// libcmath.xo) under their bare C names, and the process's entry. Only
+// such a build has them (compiler/ssa declare_exports). Nothing here may
+// fault or allocate Xo values.
+use native/llrt/entry
+use native/llrt/libcmath
+use native/llrt/libcstr
+use native/rt
+use native/sys_windows
+
+fn memcpy(d: Int, s: Int, n: Int) -> Int { libcstr.memcpy(d, s, n) }
+
+fn memmove(d: Int, s: Int, n: Int) -> Int { libcstr.memmove(d, s, n) }
+
+fn memset(d: Int, c: Int, n: Int) -> Int { libcstr.memset(d, c, n) }
+
+fn memcmp(a: Int, b: Int, n: Int) -> Int { libcstr.memcmp(a, b, n) }
+
+fn fmod(x: Float, y: Float) -> Float { libcmath.fmod(x, y) }
+
+/// (rt.sym_addr("strlen"), std/native/internal.xo's test hook)
+fn strlen(s: Int) -> Int { libcstr.strlen(s) }
+
+/// The process's entry (the PE's AddressOfEntryPoint): what cabi_c.main
+/// does when the C runtime's start calls it (Windows reads its own
+/// command line and environment, entry.xo), then the process ends with
+/// its status (returning would end only this thread).
+fn xo_win_start() -> Int {
+  entry.init()
+  let code = entry.main(0, 0, 0, rt.sym_addr("xo_entry"), 1)
+  match target.os {
+    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+  }
+  code
+}

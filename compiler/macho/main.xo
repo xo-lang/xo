@@ -8,6 +8,9 @@
 //   macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...
 //       link objects and archives into an executable (libSystem, and each
 //       --dylib, imported)
+//   macho pelink -o OUT.exe --entry=SYM [--import=SYM=DLL...] IN.obj...
+//       link windows/amd64 COFF objects into a PE32+ executable (decision
+//       0254 6b step 4; each imported function named with its DLL)
 //   macho elflink -o OUT [--interp=PATH] [--static] IN.o|IN.a...
 //       link linux/arm64 ELF objects and archives into an executable
 //       (glibc imported)
@@ -23,6 +26,10 @@ fn main(os: Os) ! {
   }
   if !args.is_empty() && args[0] == "elflink" {
     elflink_main(os, args)?
+    return
+  }
+  if !args.is_empty() && args[0] == "pelink" {
+    pelink_main(os, args)?
     return
   }
   if args.is_empty() || args[0] != "asm" {
@@ -179,3 +186,38 @@ fn fail(os: Os, msg: Str) -> Never {
   os.stdio.eprintln("macho: ${msg}")
   os.proc.exit(1)
 }
+
+fn pelink_main(os: Os, args: List[Str]) -> () ! FsErr {
+  var out = ""
+  var opts = PEOpts{entry: "", imports: {}}
+  var objs: List[CObj] = []
+  var i = 1
+  while i < args.len() {
+    let a = args[i]
+    if a == "-o" && i + 1 < args.len() {
+      out = args[i + 1]
+      i += 1
+    } else if a.starts_with("--entry=") {
+      opts.entry = a.trim_prefix("--entry=")
+    } else if a.starts_with("--import=") {
+      let kv = a.trim_prefix("--import=").split("=")
+      if kv.len() == 2 {
+        opts.imports[kv[0]] = kv[1]
+      }
+    } else {
+      match read_coff(a, os.fs.read(a)?) {
+        Ok(o) => objs.push(o)
+        Err(e) => fail(os, e)
+      }
+    }
+    i += 1
+  }
+  if out.is_empty() || objs.is_empty() || opts.entry.is_empty() {
+    usage(os)
+  }
+  match link_pe(objs, opts) {
+    Ok(b) => os.fs.write(out, b)?
+    Err(e) => fail(os, e)
+  }
+}
+

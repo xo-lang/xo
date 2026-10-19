@@ -867,6 +867,28 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
       }
       write_or_fail(os, dir_name(wbin), "", b"")
+      if nolibc(os, o, c, tgoos) {
+        // Xo's PE linker, no C runtime (decision 0254 6b step 4): the
+        // objects, the zone data's, imports by the table
+        var zsrcs: List[Str] = []
+        if uses_time {
+          let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata)
+          if !sel.err.is_empty() {
+            fail(os, sel.err)
+          }
+          match tz_object(os, dir, sel, tgoos, tgoarch) {
+            Ok(p) => zsrcs.push(p)
+            Err(e) => fail(os, "${e}")
+          }
+        }
+        let why = pe_link(os, wsrcs + zsrcs, wbin)
+        if !why.is_empty() {
+          fail(os, why)
+        }
+        t = lap(os, phases, "link", t)
+        bins.push((tg, wbin))
+        continue
+      }
       // the zone data (a C source clang compiles) and `use c`'s inputs
       let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march)
       let why = win_amd64_link(os, wsrcs + wlk.srcs, wbin, wlk.flags + wlk.link_only)

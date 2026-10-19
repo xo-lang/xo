@@ -137,6 +137,9 @@ fn tz_object(os: Os, dir: Str, sel: tzsel.TZSel, goos: Str, goarch: Str) -> Str 
   if goos == "linux" {
     return tz_object_elf(os, dir, sel, goarch == "amd64")
   }
+  if goos == "windows" {
+    return tz_object_coff(os, dir, sel)
+  }
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
   b.write_str("\t.section __TEXT,__const\n\t.globl _xo_tz_mode\n\t.p2align 3\n_xo_tz_mode:\n\t.quad ${sel.mode}\n")
@@ -260,3 +263,74 @@ fn asm_bytes(var b: BytesBuilder, data: Bytes) {
     i = end
   }
 }
+
+/// tz_object's COFF x86-64 form (windows/amd64 with Xo's PE linker,
+/// decision 0254 6b step 4): the ELF form's symbols in .rdata and .data.
+fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
+  var b = BytesBuilder.new()
+  b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
+  b.write_str("\t.section .rdata,\"dr\"\n\t.globl xo_tz_mode\n\t.p2align 3\nxo_tz_mode:\n\t.quad ${sel.mode}\n")
+  let zip = if sel.mode == 1 { sel.zip } else { "".bytes() }
+  b.write_str("\t.globl xo_tz_zip_len\n\t.p2align 3\nxo_tz_zip_len:\n\t.quad ${zip.len()}\n")
+  b.write_str("\t.globl xo_tz_zip\nxo_tz_zip:\n")
+  if zip.is_empty() {
+    b.write_str("\t.byte 0\n")
+  } else {
+    asm_bytes(b, zip)
+  }
+  let n = if sel.mode == 0 { sel.names.len() } else { 0 }
+  for i in 0..n {
+    b.write_str(".Lxo_tzd${i}:\n")
+    if sel.data[i].is_empty() {
+      b.write_str("\t.byte 0\n")
+    } else {
+      asm_bytes(b, sel.data[i])
+    }
+  }
+  for i in 0..n {
+    b.write_str(".Lxo_tzn${i}:\n")
+    asm_bytes(b, sel.names[i].bytes())
+    b.write_str("\t.byte 0\n")
+  }
+  b.write_str("\t.data\n\t.globl xo_tz_blobs\n\t.p2align 3\nxo_tz_blobs:\n")
+  for i in 0..n {
+    b.write_str("\t.quad .Lxo_tzn${i}\n\t.quad .Lxo_tzd${i}\n\t.quad ${sel.data[i].len()}\n")
+  }
+  b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
+  b.write_str("\t.p2align 3\n.Lxo_tzt:\n\t.quad ${sel.mode}\n\t.quad xo_tz_zip\n\t.quad ${zip.len()}\n\t.quad xo_tz_blobs\n")
+  b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 4\nxo_tz_table:\n\tleaq .Lxo_tzt(%rip), %rax\n\tretq\n")
+  let obj = match macho.assemble_coff_amd64(b.freeze()) {
+    Ok(o) => o
+    Err(e) => fault("the zone data does not assemble: ${e}")
+  }
+  let path = "${dir}/xo_tzdata.obj"
+  os.fs.write(path, obj)?
+  Ok(path)
+}
+
+/// Links the windows/amd64 COFF objects at paths into bin with Xo's PE
+/// linker (decision 0254 6b step 4): the entry xo_win_start
+/// (cabi_wincrt.xo), the imports by macho.pe_imports. "" or why not.
+fn pe_link(os: Os, paths: List[Str], bin: Str) -> Str {
+  var objs: List[macho.CObj] = []
+  for p in paths {
+    let b = match os.fs.read(p) {
+      Ok(b) => b
+      Err(e) => return "${p}: ${e}"
+    }
+    match macho.read_coff(p, b) {
+      Ok(o) => objs.push(o)
+      Err(e) => return e
+    }
+  }
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports()}) {
+    Ok(img) => {
+      match os.fs.write(bin, img) {
+        Ok(_) => ""
+        Err(e) => "${bin}: ${e}"
+      }
+    }
+    Err(e) => e
+  }
+}
+

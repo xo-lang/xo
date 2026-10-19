@@ -470,16 +470,22 @@ fn (var b: Builder) declare_exports() {
   }
   for p in paths.sort() {
     let mi = by_path.get(p) ?? -1
-    if p == "native/llrt/cabi_nolibc" {
+    if p == "native/llrt/cabi_wincrt" {
+      // a windows/amd64 program with no C runtime's (decision 0254 6b
+      // step 4)
+      if b.nolibc && b.goos == "windows" {
+        b.declare_exports_of(mi, true)
+      }
+    } else if p == "native/llrt/cabi_nolibc" {
       // the C that calls them is compiled only into XO_NOLIBC builds
-      if b.nolibc {
+      if b.nolibc && b.goos != "windows" {
         b.declare_exports_of(mi, false)
       }
     } else if p == "native/llrt/cabi_libc" {
       // the C library of an XO_NOLIBC build, under the C names (malloc,
       // memcpy, read): the C runtime calls them; a libc build
       // links the system's
-      if b.nolibc {
+      if b.nolibc && b.goos != "windows" {
         b.declare_exports_of(mi, true)
       }
     } else if p == "native/llrt/cabi_c" {

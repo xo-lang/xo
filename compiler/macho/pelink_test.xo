@@ -1,0 +1,109 @@
+// Xo's PE linker (pelink.xo, decision 0254 6b step 4) on a small
+// program of its own: imports through thunks and the IAT, a TLS variable
+// (_tls_index, @SECREL32, the TLS directory), an address in .data (a
+// base relocation), the entry, .pdata. The program prints a line and
+// exits with 42 under Wine (checked by hand, 2026-10-19).
+
+const PE_SAMPLE = r#"	.text
+	.globl start
+	.p2align 4
+start:
+	.seh_proc start
+	pushq %rbp
+	.seh_pushreg %rbp
+	movq %rsp, %rbp
+	subq $48, %rsp
+	.seh_stackalloc 48
+	.seh_endprologue
+	movl $-11, %ecx
+	callq GetStdHandle
+	movq %rax, %rcx
+	leaq msg(%rip), %rdx
+	movl $12, %r8d
+	leaq written(%rip), %r9
+	movq $0, 32(%rsp)
+	callq WriteFile
+	movq tl_slot(%rip), %rax
+	movl _tls_index(%rip), %eax
+	movq %gs:88, %rcx
+	movq (%rcx,%rax,8), %rax
+	movq xo_tl@SECREL32(%rax), %rcx
+	addl $7, %ecx
+	callq ExitProcess
+	ud2
+	.seh_endproc
+	.section .rdata,"dr"
+msg:
+	.ascii "hello pe!!\r\n"
+	.data
+	.p2align 3
+written:
+	.quad 0
+tl_slot:
+	.quad msg
+	.section .tls$,"dw"
+	.globl xo_tl
+xo_tl:
+	.quad 35
+"#
+
+fn pe_sample() -> Bytes {
+  let obj = match assemble_coff_amd64(PE_SAMPLE.bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let co = match read_coff("hi.obj", obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+  match link_pe([co], PEOpts{entry: "start", imports: {"GetStdHandle": "KERNEL32.dll", "WriteFile": "KERNEL32.dll", "ExitProcess": "KERNEL32.dll"}}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+}
+
+test "a PE: the headers, the entry, the directories" {
+  let b = pe_sample()
+  expect(rd16(b, 0)) == 0x5a4d
+  let pe = rd32(b, 0x3c)
+  expect(rd32(b, pe)) == 0x4550
+  expect(rd16(b, pe + 4)) == 0x8664
+  let opt = pe + 24
+  expect(rd16(b, opt)) == 0x20b
+  // the entry is .text's start (start is the only function)
+  expect(rd32(b, opt + 16)) == 0x1000
+  // the import, exception, base relocation, TLS and IAT directories
+  let dd = opt + 112
+  for k in [1, 3, 5, 9, 12] {
+    expect(rd32(b, dd + 8 * k) != 0) == true
+  }
+}
+
+test "a PE's imports: one DLL, three functions, by name" {
+  let b = pe_sample()
+  let pe = rd32(b, 0x3c)
+  let dd = pe + 24 + 112
+  expect(rd32(b, dd + 8 + 4)) == 40
+}
+
+test "an undefined symbol is an error" {
+  let obj = match assemble_coff_amd64("\t.text\n\t.globl start\nstart:\n\tcallq nowhere\n".bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let co = match read_coff("x.obj", obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+  match link_pe([co], PEOpts{entry: "start", imports: {}}) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.contains("undefined symbol nowhere")) == true
+  }
+}
+
+test "the import table covers every Windows function the runtime declares" {
+  let m = pe_imports()
+  expect(m.get("WriteFile") ?? "") == "KERNEL32.dll"
+  expect(m.get("WSAStartup") ?? "") == "WS2_32.dll"
+  expect(m.get("WaitOnAddress") ?? "") == "api-ms-win-core-synch-l1-2-0.dll"
+}

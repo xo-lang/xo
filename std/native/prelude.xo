@@ -7,6 +7,7 @@ use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/cabi_c
 use native/llrt/cabi_libc
+use native/llrt/cabi_wincrt
 use native/llrt/cabi_nolibc
 use native/llrt/cabi_poll
 use native/llrt/cabi_tw

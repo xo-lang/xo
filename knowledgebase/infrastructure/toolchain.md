@@ -3653,6 +3653,19 @@ alone, and `scripts/coff-compare.sh XO MACHO LLVM_MC WORK [NAME...]`
 compares its objects with llvm-mc's on the goldens (199 of 199 the same
 on 2026-10-19). Last verified: 2026-10-19.
 
+With `XO_WIN_NOCRT=1` (opt in until the owner decides decision 0254 6b
+step 4's import table and C runtime questions) a windows/amd64 program
+with no `use c` links with Xo's PE linker (compiler/macho pelink.xo;
+`macho pelink -o OUT.exe --entry=SYM [--import=SYM=DLL...] IN.obj...`)
+and no C runtime (std/native/llrt/cabi_wincrt.xo: Xo's memcpy, memmove,
+memset, memcmp, fmod, strlen and the process entry xo_win_start): no
+clang, no lld-link, no Windows SDK. Imports by
+compiler/macho/peimports.xo, generated with `python3 -I
+scripts/win-import-table.py SYSROOT > compiler/macho/peimports.xo` from
+an SDK's import libraries when std/native/sys_windows.xo gains a
+function. Wine under Box64 on 2026-10-19: hello 460 KB (1.4 MB with the C
+runtime) 5 of 5, the 31 golden subset 31 of 31. Last verified: 2026-10-19.
+
 ### Windows programs under Wine in Docker
 
 Since 2026-10-16 (xo-4): `scripts/docker-wine.sh MODE WORK COMMAND`
