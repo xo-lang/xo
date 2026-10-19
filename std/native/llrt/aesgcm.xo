@@ -357,6 +357,16 @@ fn mix_columns(var q: List[Int]) {
 
 /// Encrypts the four blocks of io in place, block b's bytes as the
 /// little endian words io[2b] (bytes 0 to 7) and io[2b + 1] (8 to 15).
+/// encrypt4 when only the first blocks (1 to 4) of io are wanted: the
+/// CPU's rounds encrypt just those (a tag's one counter block, a
+/// record's last chunk), the bitsliced code all four.
+fn encrypt_n(c: Cipher, var io: List[Int], blocks: Int) {
+  if (c.hw & cpu.HW_AES) != 0 {
+    return hw_n(c, io, blocks)
+  }
+  encrypt4(c, io)
+}
+
 fn encrypt4(c: Cipher, var io: List[Int]) {
   if (c.hw & cpu.HW_AES) != 0 {
     return hw4(c, io)
@@ -405,10 +415,13 @@ fn keep(xs: List[Int]) {
 /// block in place in io's words (a list its callers made, so not
 /// shared), the round keys walked by address with wrapping arithmetic
 /// (no checks in the loop).
-fn hw4(c: Cipher, var io: List[Int]) {
+fn hw4(c: Cipher, var io: List[Int]) { hw_n(c, io, 4) }
+
+/// hw4 of the first blocks (1 to 4) of io only.
+fn hw_n(c: Cipher, var io: List[Int], blocks: Int) {
   let kp = addr(c.rk)
   var st = addr(io)
-  let end = st.wrapping_add(64)
+  let end = st.wrapping_add(16 * blocks)
   let nr = c.nr
   while st != end {
     // the whole block in one unrolled intrinsic: the state stays in a
@@ -427,7 +440,7 @@ fn hw4(c: Cipher, var io: List[Int]) {
 /// The encryption of the 16 byte block b (crypto/aes's Encrypt).
 pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
-  encrypt4(c, io)
+  encrypt_n(c, io, 1)
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
 }
 
@@ -886,7 +899,10 @@ fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str {
       io[2 * b] = nlo
       io[2 * b + 1] = nhi | shl((ctr.wrapping_add(b) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 0)
     }
-    encrypt4(g.c, io)
+    // the blocks the bytes left need (a record's last chunk is often 1
+    // to 3)
+    let left = n.wrapping_sub(i)
+    encrypt_n(g.c, io, if left >= 64 { 4 } else { left.wrapping_add(15).shr_logical(4) })
     var k = 0
     while k < 8 {
       let off = i.wrapping_add(k.wrapping_shl(3))
@@ -906,6 +922,10 @@ fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str {
 /// The bytes of src from off to n (fewer than 8), little endian, zeros
 /// above.
 fn tail_word(src: Bytes, off: Int, n: Int) -> Int {
+  if n >= 8 {
+    // the top n - off bytes of the word that ends at n
+    return rt.bytes_word(src, n - 8).shr_logical(8 * (off + 8 - n))
+  }
   var w = 0
   var k = 0
   while off + k < n {
@@ -922,7 +942,7 @@ fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
   let (b1, b0) = g.ghash(a1, a0, data, n)
   let (y1, y0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * n))
   var io = [rt.bytes_word(nonce, 0), le32(nonce, 8) | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
-  encrypt4(g.c, io)
+  encrypt_n(g.c, io, 1)
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), y1.swap_bytes() ^ io[0], 8), y0.swap_bytes() ^ io[1], 8).bytes()
 }
 
