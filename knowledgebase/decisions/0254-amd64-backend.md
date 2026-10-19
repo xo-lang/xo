@@ -183,7 +183,7 @@ bytes stay clang's:
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.
 
-## Stage 6 (6a and 6c accepted, owner 2026-10-18; 6b Proposed): darwin/amd64 and windows/amd64
+## Stage 6 (6a and 6c accepted, owner 2026-10-18; 6b's plan accepted 2026-10-19): darwin/amd64 and windows/amd64
 
 The owner chose darwin/amd64 first (2026-10-18, through the lead): the
 Intel MacBook verifies it on real hardware. 6a is in progress (xo-fa);
@@ -306,6 +306,37 @@ literals, and tz_table because cc's link builds its zone data from C.
   work there; network and file system goldens have known Wine gaps,
   toolchain.md), and on a Windows EC2 instance or CI runner once CI is
   back (remote-windows.sh; agents do not start it themselves).
+
+6b, the plan (owner, 2026-10-19, through the lead; Xo Lang 2): build
+only what differs from linux/amd64, since 6c keeps Xo's own calls
+System V and the Xo function bodies match linux/amd64's.
+
+1. The assembly text goes through winxc's llvm-mc into COFF objects,
+   linked by lld-link, as stage 1 did for ELF with cc. Xo's own COFF
+   writer comes later, checked byte for byte against llvm-mc as the
+   Mach-O assembler was.
+2. Unwind from directives: the prologues write `.seh_proc`,
+   `.seh_pushreg`, `.seh_setframe`, `.seh_stackalloc`,
+   `.seh_endprologue` and `.seh_endproc`, and llvm-mc builds .pdata and
+   .xdata; no hand encoded UNWIND_INFO in this phase.
+3. Win64 only at the boundary, through thunks: generated System V to
+   Win64 shims for the platform calls (shadow space; rcx, rdx, r8, r9;
+   xmm6 to xmm15, rdi and rsi saved) and one Win64 to System V entry
+   shim for the callbacks the OS makes (thread starts, the vectored
+   exception handler, the executable's entry). No register allocation
+   for two conventions.
+4. Thread locals through one helper (`_tls_index`, gs:0x58) first;
+   inlined later.
+
+Tests per step, gates of 15 to 20 minutes: an identity test (for every
+golden, the windows/amd64 assembly against linux/amd64's: only boundary
+and thread local sites differ; text only, nothing runs); a Windows
+subset of about 30 goldens (platform calls, files, network, threads,
+thread locals, faults and unwinding, callbacks, processes) under Wine
+with box64 at each step, all 199 under Wine at milestones (LLVM's level
+is 190 of 199, the 7 Wine gaps known); -short and the fixed point; one
+real Windows run (through the owner) before any default changes. It
+lands in reviewable steps.
 
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 
