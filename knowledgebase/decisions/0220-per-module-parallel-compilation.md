@@ -594,3 +594,106 @@ Invariant, tested by every change of this stage: the binary of a build
 with the cache warm, after an edit and after its revert, is the same
 file as the binary of a build of the same source with
 XO_BACKEND_CACHE=off.
+
+## Addendum stage 2: the front end per function (design, 2026-10-19)
+
+Status: Accepted (the lead, 2026-10-19: per function, finer than the
+per module stage 2 above, which it replaces; diagnostics, constants and
+generics, and a verify test added). Not implemented yet.
+
+Measured first (main f33791fc, a warm build of xo under the CPU
+profiler, the Mac): 7.3 s of CPU, of which the SSA builder 2.86 s,
+serial (function bodies 1.9 s, the lazy check of runtime bodies inside
+it 0.51 s, uses_os_tasks 0.30 s), and the checker 1.43 s (function
+bodies 1.04 s). After an edit of xo the stage D gate measured the SSA
+builder at 2.1 s and the checker at 1.1 s of wall time, the largest
+phases left. The SSA builder reads the checker's tables for a body
+(each expression's type, call information, resolutions), so the check
+of a body can be skipped only when its SSA is not needed or is cached
+too: the unit is one function body, checked and built.
+
+### The key
+
+A body's key is checked in two parts, so that it can be computed
+before the body is checked:
+
+1. The direct key, SHA-256 of: "xo front cache v1"; the build's flags
+   the builder reads (tests, release, real_tests, goos, goarch, wasm,
+   nolibc, prof, trace_support, soft_cpu, conc, budgets, imm_rc, the
+   checker's native and lazy modes, the std_test path); the body's
+   source bytes, its file's path relative to the line root, and its
+   first line and column (the debug lines and fault locations); its
+   module's path and import table (alias to module path); for a method,
+   its receiver's declaration; for a generic function's instance, the
+   type arguments by their canonical names.
+2. The dependency trace, stored in the entry: every name the body
+   resolved outside itself, with what it resolved to (module scope,
+   imports, the prelude, methods and fields by receiver type), and for
+   each object resolved its interface hash: the SHA-256 of the checked
+   declaration (kind, type and effect signature, error type,
+   attributes, a function's borrowed and never flags as the checker
+   records them, a constant's value, a type's full definition with
+   fields, variants and method signatures, transitively for types held
+   by value). On a lookup the trace is replayed: each name resolved
+   again and each interface hashed again; any difference is a miss.
+   A new declaration that shadows a name the body used changes a
+   resolution; a changed field or signature changes a hash.
+
+The constants a body folds from other modules (their values) and the
+generic instances it requests (callee plus type arguments) are in the
+trace and the entry, so an edit of either misses (the lead's (2)).
+
+### The entry
+
+- The diagnostics the body's check produced, exactly (code, span,
+  message, notes, fixes; warnings, lints XO05xx, budget findings), and
+  the uses it marked (objects referenced, for the unused import and
+  unused function diagnostics of other declarations), replayed on a hit
+  in the order a cold check produces them (the lead's (1)).
+- The checker's effects outside the body that a hit must replay: the
+  open type variables it bound (none expected for a function with a
+  declared signature; a body that binds one is not cached), and its
+  never results.
+- When the body was built: its SSA Funcs, closures included, in the rc
+  codec's form (types and functions by name); the declares it made
+  (callee object by qualified name, type arguments by name), replayed
+  into the builder's queue in order; the counters it advanced (closure,
+  synthetic type, variable and call site numbers), stored relative and
+  rebased on a hit so every later name is the same as in a cold build;
+  the builder's side tables it wrote (constants, interfaces, type ids,
+  late types, use checks, thunks, natives, the modules it declared
+  from, need_conc and uses_net).
+- A body the check skipped but the builder needs uncached (a new
+  instance, a builder miss) is checked then, as check_lazy does for the
+  runtime today.
+
+Counted while building xo (main f33791fc): 8,506 function body jobs
+and 269 closure body jobs; 481 bodies request a generic instance (their
+type arguments are checker types, which an entry would have to name and
+rebuild) and 220 make closures. The first version caches only the
+bodies that do neither, about 92% of them; the rest are built as today.
+
+### Order of work
+
+1. The builder side: a hit skips body_of (and check_lazy for a runtime
+   body). Measure.
+2. The checker side: check_dirs defers the bodies of the root modules
+   as lazy mode defers the runtime's, a hit replays the diagnostics and
+   uses, a miss checks the body. Measure.
+3. Entries in the back-end cache's packs (bcache.xo), one kind ("fe").
+
+### Invariants and tests
+
+- A build with the cache warm, after an edit and after its revert, is
+  the same file as a build with XO_BACKEND_CACHE=off (stage D's
+  invariant).
+- The JSON diagnostics of a warm build (`xo check --json` and `xo build
+  --json`) equal a cold build's, for a program with warnings, lints and
+  budget findings, before and after an edit (the lead's (1)).
+- Verify mode (XO_BACKEND_CACHE=verify) checks and builds every body,
+  compares with its entry, and fails on a difference. A test edits a
+  type's field, a callee's signature, a constant's value, and adds a
+  declaration that shadows a name, and shows that exactly the dependent
+  bodies miss (the lead's (3)).
+- Wall time per edit reported as for stage D (constant edit, statement
+  edit, revert, second edit, warm), with the load average.

@@ -3,12 +3,41 @@
 of two callgrind.sh runs made with ANN=1 (OUT directories), base against
 new: each function's self count of the 2N run minus the N run, over the
 request difference (startup cancels), the totals and the largest changes.
-After Xo lang 5's cgdiff.py (2026-10-18)."""
+After Xo lang 5's cgdiff.py (2026-10-18). --xo-names (2026-10-19, first
+argument) matches names across backends: the native backends' xo_f_
+symbols (`.` as _2e, `_` doubled) and LLVM's `x.` names both become the
+Xo name, so a native run compares with an LLVM one (callgrind-docker.sh
+with one BACKEND per OUT, since ann files are named by scenario only).
+Without it the output is xo dev compare's (cmd/xo TestDevCompare)."""
 import os
 import re
 import sys
 
 SELF = re.compile(r"^\s*([\d,]+)\s+\(\s*[\d.]+%\)\s+(.*)$")
+
+
+XO_NAMES = False
+
+
+def xo_name(k):
+    if k.startswith("xo_f_"):
+        k = k[len("xo_f_"):]
+        out = []
+        i = 0
+        while i < len(k):
+            if k.startswith("_2e", i):
+                out.append(".")
+                i += 3
+            elif k.startswith("__", i):
+                out.append("_")
+                i += 2
+            else:
+                out.append(k[i])
+                i += 1
+        return "".join(out)
+    if k.startswith("x."):
+        return k[2:]
+    return k
 
 
 def load(path):
@@ -26,6 +55,8 @@ def load(path):
         name = re.sub(r"'\d+$", "", name.split(":")[-1].strip())
         if " " in name or not name:
             continue
+        if XO_NAMES:
+            name = xo_name(name)
         d[name] = d.get(name, 0) + int(m.group(1).replace(",", ""))
     return d
 
@@ -41,6 +72,10 @@ def per_request(out, sc):
 
 
 def main():
+    global XO_NAMES
+    if len(sys.argv) > 1 and sys.argv[1] == "--xo-names":
+        XO_NAMES = True
+        del sys.argv[1]
     if len(sys.argv) < 3:
         sys.exit("usage: cgcompare.py BASE NEW [SCENARIO...]")
     base, new = sys.argv[1], sys.argv[2]
