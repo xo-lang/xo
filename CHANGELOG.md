@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache keeps the SSA of each function body the front end
+  built, keyed by its module's interface and the body's own text: a
+  body whose module's view of the program did not change is replayed,
+  not built again (xo after an edit: the SSA phase about 2.5 times
+  shorter, 1.2 to 1.9 s less CPU). A program using tasks is
+  no longer built twice (the SSA phase of xo 3.7 s to 2.7 s cold).
+  XO_FE_CACHE=off turns it off.
 - Borrow inference runs its rounds on tasks (the same result: the
   greatest fixed point does not depend on the order): after an edit of
   xo, insert_rc.plan 1.1 s to 0.4 s of the wall time; --phase-times

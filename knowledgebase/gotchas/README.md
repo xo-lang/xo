@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [fe-cache-replay-queued-jobs.md](fe-cache-replay-queued-jobs.md): Observed 2026-10-19, fixed: the front end cache replayed a contract-wrapped body without the inner body job it queued, so the second build of a program with `ensures` failed loudly; entries are only recorded for bodies that queue declares' Body jobs alone.
 - [macho-asm-no-quad-in-text.md](macho-asm-no-quad-in-text.md): Observed 2026-10-18: compiler/macho rejects .quad (any data but .long and .p2align) in code; s1 builds, s2 fails; write constants in code as .long words
 - [arm64-text-pass-scratch-live.md](arm64-text-pass-scratch-live.md): Observed 2026-10-18: a text pass that writes x16 or x17 can break code that keeps an address in them across lines; check scratch_dead, keep debug row labels (TestDebugInfoSameCode)
 - [llvm-debug-info-default-on.md](llvm-debug-info-default-on.md): Observed 2026-10-19: only release builds leave out debug information, so --debug-info on an -O1 build changes nothing; compare -s against a plain build

@@ -620,7 +620,8 @@ XO_BACKEND_CACHE=off.
 
 Status: Accepted (the lead, 2026-10-19: per function, finer than the
 per module stage 2 above, which it replaces; diagnostics, constants and
-generics, and a verify test added). Not implemented yet.
+generics, and a verify test added). Step 1 implemented 2026-10-19
+(below), with a coarser key than this design.
 
 Measured first (main f33791fc, a warm build of xo under the CPU
 profiler, the Mac): 7.3 s of CPU, of which the SSA builder 2.86 s,
@@ -718,3 +719,79 @@ bodies that do neither, about 92% of them; the rest are built as today.
   bodies miss (the lead's (3)).
 - Wall time per edit reported as for stage D (constant edit, statement
   edit, revert, second edit, warm), with the load average.
+
+### Addendum stage 2, step 1: the builder side (implemented 2026-10-19)
+
+compiler/ssa fecache.xo, build.xo run_job_fe; compiler/xo bcache.xo
+fe_cached_build; entries are kind "fe" of the back-end cache, in the
+target's pack (2d) and as loose files.
+
+What was built differs from the design above in the key, for a simpler
+first version with the same invariant:
+
+- The key of a body (SHA-256): "xo front cache v1"; the builder's flags
+  (tests, release, real_tests, the target, wasm, nolibc, prof, trace,
+  soft_cpu, and the builder's own conc, budgets, scan and real-time
+  state); the interface closure of the body's module: every file of the
+  module and of each module it imports, transitively, std included,
+  with the function bodies cut out (so a type's field, a signature, a
+  constant's value or a new declaration anywhere the module can see
+  changes the key of all its bodies, and an edit inside another body
+  changes none); the body's file path, its position, and its
+  declaration's own text. This replaces the dependency trace: coarser
+  (an interface edit misses every body of the dependent modules, not
+  only the bodies that use the name), but with nothing to replay on a
+  lookup. Constants folded from other modules and the instances a body
+  requests are covered by the closure (the lead's (2)).
+- The entry is checked against the builder's state when the body's job
+  ran: a fingerprint of the module's types and functions so far
+  (Module.fe_h, an FNV hash of their names, and the table sizes). A hit
+  needs the same state, so the replay makes the same names and indexes
+  as a cold build; the entry stores the state after it, which the
+  replay sets.
+- The entry: the body's SSA Func in the rc codec's form; the types it
+  added; the order delta; each function it made, in order (a declare,
+  by the callee's module path, receiver and name; or a helper made
+  whole, such as xo.hash[T], encoded); the use checks; the variable
+  counter's delta; the modules it declared from; the target flag.
+- Not cached (built as before, counted as misses): generic instances
+  (a substitution), bodies that make closures or generic instances,
+  bodies that change any other side table (constants, interfaces, type
+  ids, call sites, thunks, natives, synthetic types, errors), and a body
+  wrapped for its contracts (`ensures`, or a var method of a type with
+  an invariant: the wrapper queues its inner body, which a replay does
+  not; found by the gate's contract goldens, now a case of
+  TestFrontCacheInterfaceEdits).
+- A replay that matched the state but does not reproduce the counts
+  fails the build ("does not replay (XO_FE_CACHE=off builds without
+  it)"), never a silent difference.
+- XO_FE_CACHE=off disables it; XO_BACKEND_CACHE=verify builds every
+  body and fails on one that differs from its entry; XO_FE_STATS=1
+  prints the misses by reason.
+- The runtime's lazy check of a body (check_lazy) runs before the
+  recording, so a hit skips it.
+- Also: a task program's first build, without concurrency, was
+  discarded and the program built again with it; build() now returns as
+  soon as it finds the program uses tasks (the SSA phase of xo 3.7 s to
+  2.7 s cold).
+
+Results on xo (gate fe2-g2 on f33791fc: -short, vet, arm64 and llvm
+full, identity 400 of 400 on arm64 and amd64, darwin goldens 199 of
+199, fixed point): 7,861 of 8,350 bodies replayed on a warm build,
+7,847 after a statement edit, 7,429 after a constant edit in
+compiler/cli/core (fix.xo's MAX_ROUNDS: every body of the module and of
+the modules importing it misses). Every cached binary the file of the
+cache-off build, verify clean. Per edit (main and the change
+interleaved step by step, load average 30 to 85 from other sessions,
+so the wall times are noisy): the SSA phase 4.6 to 9.2 s on main, 1.9
+to 4.0 s with the cache; user CPU 1.2 to 1.9 s less a build (10.1 to
+8.0 s); wall 1.6 to 4.3 s less in five of six steps (warm 18.0 to 16.4
+s, constant edit 19.2 to 14.8 s, statement edit 20.7 to 17.1 s, revert
+18.3 to 15.5 s, warm again 25.4 to 21.9 s), the second constant edit
+4.1 s slower with its check phase 6.4 s under load. Cold, the cache
+costs the recording and storing (the first build of a target).
+
+Tests: TestBackendCacheEditIdentity requires fe hits from the second
+build; TestFrontCacheInterfaceEdits edits a struct's field, a callee's
+signature and a constant, and shows the dependent bodies miss, the
+binary is the cache-off build's, and verify is clean (the lead's (3)).
