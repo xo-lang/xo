@@ -405,3 +405,44 @@ environment callbacks pass their pointers on. xo built by LLVM (split
 build 639 to 446 s. `XO_LLVM_OPT` other than O0 to O3 is now an error
 (gotcha llvm-opt-level-os-ignored).
 
+Pushed as 7724ca1e. From now on these tables carry an LLVM column next
+to native whenever code generation changes (owner, 2026-10-19):
+
+| xo `__text` | native arm64 | LLVM (split 12, no LTO, -O2) |
+|---|---|---|
+| main 05a33dad (before) | 31.78 MB | 89.82 MB (2.83x) |
+| 7724ca1e | 31.78 MB | 50.56 MB (1.59x) |
+
+xo.exe by the release recipe (`--targets=windows/amd64`, split 16,
+ThinLTO, O2, `XO_LLVM_JOBS=4`, winxc clang 23.1.3 on the Mac): 80.3 MB
+(was 160 MB), `.text` 74.7 MB; the build 341 s, of it 312 s in clang
+and the link, 6.79 GB peak RSS.
+
+HTTP callgrind (MODE=short, Linux arm64 in Docker, instructions per
+request, main f33791fc against 7724ca1e): llvm plain 22,237 and 22,261
+against 22,280 and 22,192 (two runs each; a first pair read 21,461
+against 22,294, outside the spread of the repeats), llvm tls 52,459
+against 51,933; arm64 unchanged by construction (24,442 against 24,675
+plain, 40,950 against 40,396 tls: the run to run spread).
+
+What remains of LLVM's 50.56 MB against native's 31.78 (7724ca1e),
+ranked, from the symbol table and one objdump pass:
+
+1. Releases on the rarely run paths, 8.17 MB: LLVM splits a function's
+   cold blocks out (113,092 `.cold.N` pieces, 12.66 MB in all), and the
+   2,062 that release values (landing pads and frees) hold 8.17 MB. The
+   count helpers of Str, List, Box, Func and Handle are `alwaysinline`
+   (attribute #4), so each release there is the full test, decrement
+   and slow path. Next: call them out of line from the pads (a `cold`
+   or `noinline` call site in a pad block).
+2. The functions both binaries have, 33.30 MB against 28.58 (+4.72 MB),
+   largely the inlined release fast paths of hot code.
+3. 92,273 small cold pieces of 45 bytes on average, 4.16 MB: each
+   inlined release's own slow path. Next: one out of line call for the
+   shared count and free path, the decrement inline.
+4. LLVM's own helpers, 2.8 MB: count helpers 1.42 MB (586 dup, drop,
+   share; 1,227 element, box, environment), other `xo.*` 0.28, map
+   instances 0.19, eq and hash 0.17, generic instances 0.16, the
+   machine outliner 0.13, other functions 0.40.
+5. Symbols nm prints as `_x` (unnamed), 1.86 MB: not identified yet.
+
