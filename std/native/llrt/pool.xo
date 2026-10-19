@@ -125,7 +125,18 @@ const FS_N = 16
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const FIBER_CACHE = 64
+/// The shared cache's takes and returns so far (under its lock): a worker
+/// that slept FIBER_TRIM_US with no change trims the cache (fiber_trim).
+const FS_OPS = 48
+/// The stacks the shared cache keeps: up to the recent peak, FIBER_CACHE
+/// at most, and FIBER_KEEP once the pool has been idle FIBER_TRIM_US
+/// (2026-10-19, Go's scavenger in spirit: with 64 at most, a burst of 2,000
+/// connections mapped and unmapped about 1,840 stacks, 116,000 minor
+/// faults per 150 bursts and server threads waiting on munmap's lock;
+/// Xo Lang 3's loadgen -burst on linux/arm64).
+const FIBER_CACHE = 4096
+const FIBER_KEEP = 64
+const FIBER_TRIM_US = 3000000
 
 /// xo_fiber (sched.xo): the mapping and its size, the task, the context,
 /// the state (word 5), the end flag, the cache's link, the hooks word.
@@ -888,6 +899,24 @@ fn go_idle(p: Int, w: Int) -> Int {
   if tracerec.built() && tracerec.on() {
     tracerec.ev(tracerec.K_IDLE, 0, w, 0)
   }
+  // with stacks past FIBER_KEEP cached, sleep FIBER_TRIM_US first: no
+  // wake up and no fiber taken or returned since, and the excess goes
+  // (the count and ops read under the cache's lock: plain words other
+  // workers write under it)
+  let fs = rt.mem_load(p, P_FIBERS, 8)
+  if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
+    lock_slow(fs)
+  }
+  let cached = rt.mem_load(fs, FS_N, 8)
+  let ops = rt.mem_load(fs, FS_OPS, 8)
+  unlock(fs)
+  if cached > FIBER_KEEP && rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+    stat(ST_IDLE_SLEEP)
+    futex_wait_us(w.wrapping_add(W_WAKEW), 0, FIBER_TRIM_US)
+    if rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+      fiber_trim(fs, ops)
+    }
+  }
   while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
     stat(ST_IDLE_SLEEP)
     futex_wait(w.wrapping_add(W_WAKEW), 0)
@@ -1083,6 +1112,7 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
     if f != 0 {
       rt.slot_store(fs, FS_LIST, rt.mem_load(f, F_NEXT, 8), RELAXED)
       rt.mem_store(fs, FS_N, rt.mem_load(fs, FS_N, 8).wrapping_sub(1), 8)
+      rt.mem_store(fs, FS_OPS, rt.mem_load(fs, FS_OPS, 8).wrapping_add(1), 8)
     }
     unlock(fs)
   }
@@ -1134,16 +1164,52 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
     rt.mem_store(f, F_NEXT, rt.mem_load(fs, FS_LIST_AT, 8), 8)
     rt.slot_store(fs, FS_LIST, f, RELAXED)
     rt.mem_store(fs, FS_N, n.wrapping_add(1), 8)
+    rt.mem_store(fs, FS_OPS, rt.mem_load(fs, FS_OPS, 8).wrapping_add(1), 8)
     unlock(fs)
     return
   }
   unlock(fs)
+  fiber_unmap(f)
+}
+
+/// Gives back fiber f's stack and record (fiber_free, fiber_trim).
+fn fiber_unmap(f: Int) {
   if rt.mem_load(f, F_HOOKS, 8) != 0 {
     sanhook.fiber_free(f)
   }
   rtstats.fiber_counted(-1)
   unmap_stack(rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), rt.mem_load(f, F_HOOKS, 8))
   rt.heap_release(f.wrapping_sub(8))
+}
+
+/// Unmaps the shared cache's stacks past FIBER_KEEP when no fiber was
+/// taken or returned since ops was read (go_idle, after FIBER_TRIM_US
+/// asleep): the list cut under the lock, the stacks unmapped after.
+fn fiber_trim(fs: Int, ops: Int) {
+  if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
+    lock_slow(fs)
+  }
+  let n = rt.mem_load(fs, FS_N, 8)
+  if n <= FIBER_KEEP || rt.mem_load(fs, FS_OPS, 8) != ops {
+    unlock(fs)
+    return
+  }
+  // keep the first FIBER_KEEP, cut the rest
+  var f = rt.mem_load(fs, FS_LIST_AT, 8)
+  var k = 1
+  while k < FIBER_KEEP {
+    f = rt.mem_load(f, F_NEXT, 8)
+    k = k.wrapping_add(1)
+  }
+  var rest = rt.mem_load(f, F_NEXT, 8)
+  rt.mem_store(f, F_NEXT, 0, 8)
+  rt.mem_store(fs, FS_N, FIBER_KEEP, 8)
+  unlock(fs)
+  while rest != 0 {
+    let next = rt.mem_load(rest, F_NEXT, 8)
+    fiber_unmap(rest)
+    rest = next
+  }
 }
 
 // ---------------------------------------------------------------------------

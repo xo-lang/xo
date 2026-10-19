@@ -147,8 +147,9 @@ const SV_ROOTS = 288
 const SV_ROOTS_SLOT = 36
 const SV_SIZE = 296
 /// The fiber cache's record's size (pool.xo FS_*: its lock, list, count,
-/// stack size, page size, where a fiber starts).
-const FS_SIZE = 48
+/// stack size, page size, where a fiber starts, the count of takes and
+/// returns).
+const FS_SIZE = 56
 
 /// Makes the services record at start (entry.xo init), with whether
 /// ThreadSanitizer is on, and the statistics' record.
