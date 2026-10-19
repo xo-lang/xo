@@ -116,6 +116,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   sourced in a subshell) of macOS binaries; internal/arm64
   TestCodesignAcceptsLinkerOutput checks that codesign accepts
   compiler/macho's output (code-signing.md).
+- `scripts/sign-windows.sh FILE.exe...`: Authenticode signing of
+  Windows executables with Azure Artifact Signing through jsign 7.5
+  (JSIGN_JAR, JAVA; the six AZURE_* credentials from the environment,
+  sourced in a subshell; billed per signature), then prints each file's
+  certificate subjects and whether the RFC 3161 timestamp is there;
+  internal/llvm TestWindowsCertTableAppends checks that a signed
+  layout still parses (code-signing.md "Windows").
 
 ## Coordinating (scripts/lead/README.md)
 

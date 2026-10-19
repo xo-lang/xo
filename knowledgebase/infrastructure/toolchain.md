@@ -3455,7 +3455,10 @@ gotchas/windows-cross-sysroot.md), then
 `XO_CLANG=<llvm>/bin/clang XO_AR=<llvm>/bin/llvm-ar XO_WINSYSROOT=DIR
 XO_LLVM_SPLIT=16 XO_LLVM_JOBS=16 XO_LLVM_LTO=thin xo build --backend=llvm
 --targets=windows/amd64 -o xo.exe ./compiler/xo` (1,362 s on 32 vCPU and
-64 GiB, 29.5 GB peak in use; the link alone about 22 GB). Natively on
+64 GiB, 29.5 GB peak in use; the link alone about 22 GB). On main d9f15415 (2026-10-18) this split build does not link
+(gotchas/windows-llvm-split-link.md); one module at O1 does: on the
+arm64 Mac with `XO_LLVM_OPT=O1 XO_LLVM_LTO=none XO_LLVM_JOBS=4` and no
+split, 2,972 s and 5.2 GB peak RSS, a 151 MB xo.exe. Natively on
 Windows: the same without XO_WINSYSROOT, XO_CLANG, XO_AR (1,544 s,
 35 GB peak in use on c7i.8xlarge; use `XO_REMOTE_TYPE=c7i.8xlarge`, 32
 GiB is too little for one module with full LTO and tight for this).

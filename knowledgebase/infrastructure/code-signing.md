@@ -1,7 +1,8 @@
-# Code signing (macOS)
+# Code signing (macOS and Windows)
 
 Signing and notarizing binaries that Xo's own Mach-O linker writes
-(compiler/macho, `--ld=macho`). Windows signing is not set up yet.
+(compiler/macho, `--ld=macho`), and Authenticode signing of Windows
+executables with Azure Artifact Signing ("Windows" below).
 
 Last verified: 2026-10-18 (the trial below).
 
@@ -87,3 +88,93 @@ rewrite. A byte appended after the linker's signature makes both the
 strict verification and the re-signing fail ("main executable failed
 strict validation"), so a linker that left data past __LINKEDIT fails
 the test.
+
+## Windows (Authenticode, Azure Artifact Signing)
+
+Last verified: 2026-10-19 (the trial below).
+
+The Azure portal calls the service Artifact Signing (it was Trusted
+Signing; the API and jsign still say TRUSTEDSIGNING). A signing account
+holds a certificate profile; the publisher identity is validated by
+Microsoft, and the service holds the key and renews its short lived
+certificates, so there is no key file to keep. The endpoint must match
+the account's region (`https://REGION.codesigning.azure.net`, shown on
+the account's overview page).
+
+### What worked (trial, 2026-10-19)
+
+Two windows/amd64 binaries from the LLVM backend, linked by lld-link
+(cross built on the arm64 Mac, toolchain.md "Windows cross builds on the
+Mac"): a hello world, and `xo` itself at main d9f15415 (one module at
+O1, `XO_LLVM_OPT=O1 XO_LLVM_LTO=none`, no split: 49.5 min and 5.2 GB
+peak RSS on the Mac, 151 MB; split builds do not link for Windows
+today, gotchas/windows-llvm-split-link.md).
+
+1. `scripts/sign-windows.sh hello.exe xo.exe`: one token request and
+   two signatures (one jsign call each), RFC 3161 timestamps from
+   `http://timestamp.acs.microsoft.com`.
+2. The signer: CN=Joseph Spurrier, issued by "Microsoft ID Verified CS
+   EOC CA 04" under "Microsoft ID Verified Code Signing PCA 2021"; the
+   timestamp (the unsigned attribute 1.3.6.1.4.1.311.3.3.1) present on
+   both.
+3. Structure (no Windows machine needed): the certificate table is 8
+   byte aligned and ends the file, the security directory names it, the
+   PE checksum is recomputed, and the Authenticode SHA-256 of the image
+   (the file without the checksum, the security directory entry, and the
+   table) is the digest the signature carries.
+4. Ran under Wine with Box64 (scripts/docker-wine.sh box64), unsigned
+   and signed alike: hello printed its line, `xo version` printed
+   `xo 0.21.0 windows/amd64`, and `xo check` reported a clean module and
+   one with two errors.
+
+Not checked yet: Windows' own verification (`signtool verify /pa /v`,
+or the file's Properties, Digital Signatures) and SmartScreen; both
+need a Windows machine. Next: re-sign Xo's own PE output when the amd64
+backend's Windows target and its PE linker land (decision 0254 stage
+6c), within the same few signatures.
+
+### The tools
+
+jsign 7.5 (a Java program; https://github.com/ebourg/jsign, the release
+jar `jsign-7.5.jar`, SHA-1 f71ce8b6df19371c5cbf084223f142f9f678a7bb,
+the same file on GitHub and Maven Central, its PGP signature good from
+Emmanuel Bourg, key F513C419E4B9D0AC). It signs PE files on any OS, no
+signtool. It needs a Java runtime: on macOS /usr/bin/java is a stub
+until a JDK is installed (`brew install openjdk`, then
+`JAVA=$(brew --prefix openjdk)/bin/java`). curl, python3 and openssl
+do the rest.
+
+### Credentials
+
+An Entra app registration holding the certificate profile signer role
+on the profile, through the client credentials flow. Six
+variables: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`,
+`AZURE_CODE_SIGNING_PROFILE`. Keep them in a mode 600 file outside the
+repository and source it in a subshell only:
+
+    ( set -a; . PATH/TO/azure.env; set +a
+      JSIGN_JAR=PATH/jsign-7.5.jar JAVA=PATH/java scripts/sign-windows.sh FILE.exe... )
+
+The script never puts the secret or the access token on a command line
+(where ps shows them) or in its output: the secret goes to curl through a
+config file (`client_secret@FILE`), the token to jsign as
+`--storepass file:FILE`, both in a mode 700 temporary directory removed
+on exit. Never print, copy, log, or commit the values, the token, or the
+file's path. Each signature is billed: sign seldom, and rehearse with a
+self-signed certificate first (jsign `--keystore KEY.p12 --storetype
+PKCS12`, the same output layout).
+
+### Verification
+
+    java -jar jsign-7.5.jar extract --format PEM FILE.exe   # writes FILE.exe.sig.pem
+    openssl pkcs7 -in FILE.exe.sig.pem -print_certs -noout  # the signer and its chain
+    openssl asn1parse -in FILE.exe.sig.pem | grep 1.3.6.1.4.1.311.3.3.1   # the RFC 3161 timestamp
+    signtool verify /pa /v FILE.exe                          # on Windows
+
+internal/llvm TestWindowsCertTableAppends (not -short; needs the Windows
+cross toolchain, skips without it): appends a signature shaped
+certificate table to an LLVM built windows/amd64 hello the way a signer
+does, sets the security directory and the checksum, and checks that
+debug/pe still parses it with every section before the table. No signing
+service is called.
