@@ -126,10 +126,19 @@ fn split_path(p: Str) -> List[Str] {
   if lo == hi {
     return []
   }
-  if lo == 0 && hi == b.len() {
-    return p.split("/")
+  // each segment sliced from p: no copy of the trimmed path to split
+  var out: List[Str] = List.with_capacity(4)
+  var st = lo
+  var i = lo
+  while i < hi {
+    if b[i] == 47 {
+      out.push(raw.str_slice(p, st, i))
+      st = i + 1
+    }
+    i += 1
   }
-  raw.str_slice(p, lo, hi).split("/")
+  out.push(raw.str_slice(p, st, hi))
+  out
 }
 
 fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {

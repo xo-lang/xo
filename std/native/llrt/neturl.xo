@@ -74,6 +74,10 @@ pub fn unescape(b: Bytes, s: Str, lo: Int, hi: Int, mode: Int) -> (Bool, Str) {
   // byte) that would make one stays a percent escape (decision 0259)
   var i = plain_end(b, lo, hi, mode)
   if i == hi {
+    // all of s (a path with no query): s itself, no copy
+    if lo == 0 && hi == s.len() {
+      return (true, scan.url_text(s))
+    }
     return (true, scan.url_text(rawb.str_slice(s, lo, hi)))
   }
   // runs of 8 bytes or more go over at once, other bytes seven at a time

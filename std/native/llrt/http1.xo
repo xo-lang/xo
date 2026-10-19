@@ -506,6 +506,27 @@ pub struct Parse {
   reason: Str
 }
 
+/// The method s[0..n]: a constant for the usual ones (no string a
+/// request), else a slice of s.
+fn method_of(s: Str, b: Bytes, n: Int) -> Str {
+  if n == 3 && b[0] == 71 && b[1] == 69 && b[2] == 84 {
+    return "GET"
+  }
+  if n == 4 && b[0] == 80 && b[1] == 79 && b[2] == 83 && b[3] == 84 {
+    return "POST"
+  }
+  if n == 3 && b[0] == 80 && b[1] == 85 && b[2] == 84 {
+    return "PUT"
+  }
+  if n == 4 && b[0] == 72 && b[1] == 69 && b[2] == 65 && b[3] == 68 {
+    return "HEAD"
+  }
+  if n == 6 && b[0] == 68 && b[1] == 69 && b[2] == 76 && b[3] == 69 && b[4] == 84 && b[5] == 69 {
+    return "DELETE"
+  }
+  rawb.str_slice(s, 0, n)
+}
+
 fn fail(res: Int) -> Parse { Parse{res: res, used: 0, head: no_head(), status: 0, reason: ""} }
 
 fn fail_status(code: Int, reason: Str, used: Int) -> Parse { Parse{res: STATUS, used: used, head: no_head(), status: code, reason: reason} }
@@ -684,7 +705,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
   } else {
     return fail(BAD) // malformed HTTP version
   }
-  let method = rawb.str_slice(s, 0, sp1)
+  let method = method_of(s, b, sp1)
   // outside bytes: an invalid byte stays a percent escape (decision 0259)
   let target = scan.url_text_at(rawb.data(s) + sp1 + 1, sp2 - sp1 - 1)
   let connect = method == "CONNECT"
