@@ -194,3 +194,20 @@ test "note_stored adds up, and a prune starts the count again" {
   expect(run(os.fs, os.clock, "c", Policy{burst: 200}).ran) == true
   expect(there(os, "c/aa/1")) == true
 }
+
+test "empty directories below the top level go once unused past the age limit" {
+  os.fs.create_dir_all("c/pack/s1/fn").or_fault("mkdir")
+  os.fs.create_dir_all("c/aa").or_fault("mkdir")
+  os.clock.advance(1h)
+  run(os.fs, os.clock, "c", Policy{})
+  // within the age limit: a target's first build left it, kept
+  expect(there(os, "c/pack/s1/fn")) == true
+  os.clock.advance(300h)
+  put(os, "c/pack/s2/fn/seg", 10)
+  run(os.fs, os.clock, "c", Policy{every: 0s})
+  expect(there(os, "c/pack/s1/fn")) == false
+  expect(there(os, "c/pack/s1")) == false
+  // not empty, or at the top level: kept
+  expect(there(os, "c/pack/s2/fn/seg")) == true
+  expect(there(os, "c/aa")) == true
+}

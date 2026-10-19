@@ -262,6 +262,38 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   if !b.fe.mismatches.is_empty() {
     fail(os, "XO_BACKEND_CACHE=verify: ${b.fe.mismatches.len()} function bodies' SSA differs from their front end cache entries, the first ${b.fe.mismatches[0]}")
   }
+  // the module check cache's entries: the modules checked in full now
+  var mn = 0
+  var mdiff: List[Str] = []
+  for (k, e) in c.mod_cache_entries(b.mod_scans) {
+    let p = entry_path(c.mod_cache_dir, "chk", k)
+    if c.mod_verify {
+      match os.fs.read(p) {
+        Ok(old) => {
+          if old != e {
+            for (m, mk) in c.mod_keys {
+              if mk == k {
+                mdiff.push(c.mods[m].path)
+              }
+            }
+          }
+          continue
+        }
+        Err(_) => {}
+      }
+    }
+    cache_put(os, p, e)
+    mn += e.len()
+  }
+  if !mdiff.is_empty() {
+    fail(os, "XO_BACKEND_CACHE=verify: ${mdiff.len()} modules' check differs from their cache entries, the first ${mdiff[0]}")
+  }
+  if mn > 0 {
+    prune_backend_cache(os, dir, mn)
+  }
+  if phases {
+    os.stdio.eprintln("cache chk ${c.mod_skip.len()}/${c.mod_keys.len()} modules")
+  }
   b
 }
 
@@ -749,4 +781,99 @@ fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) {
   let data = w.freeze()
   cache_put(os, "${p.dir}/s-${os.rand.bytes(8).to_hex()}", data)
   prune_backend_cache(os, p.root, data.len())
+}
+
+/// The file of the build target's parse list (parse_prefetch).
+fn parse_list_path(os: Os, dir: Str) -> Str {
+  "${pack_dir(os, dir, "parse", "")}/list"
+}
+
+/// The parse prefetch (decision 0220 addendum stage 2): the files the
+/// build target's last check parsed (parse_list_store) are read and
+/// parsed on tasks into the checker's parse cache before the check,
+/// which reuses a parse whose path, bytes, and mode match and parses
+/// any other file itself.
+fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
+  let data = os.fs.read(parse_list_path(os, dir)).ok() ?? b""
+  var todo: List[(Str, Bytes, Bool)] = []
+  for line in (data.to_str() ?? "").split("\n") {
+    let sig = line.starts_with("s ")
+    if !sig && !line.starts_with("f ") {
+      continue
+    }
+    let path = line[2..line.len()]
+    match os.fs.read(c.source_path(path)) {
+      Ok(b) => todo.push((path, b, sig))
+      Err(_) => {}
+    }
+  }
+  let n = todo.len()
+  if n == 0 {
+    return
+  }
+  let next = Atomic[Int].new(0)
+  let parsed = scope s {
+    var ts = []
+    for _ in 0..emit_jobs(os).min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Str, check.ParseEntry)] {
+        var mine: List[(Str, check.ParseEntry)] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          let (path, src, sig) = todo[i]
+          mine.push((path, check.parse_entry(path, src, sig)))
+        }
+        mine
+      }))
+    }
+    var all: List[(Str, check.ParseEntry)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  for (path, e) in parsed {
+    if !c.parse_cache.contains(path) {
+      c.parse_cache[path] = e
+    }
+  }
+}
+
+/// After the check: the files it parsed, as the build target's parse
+/// list, when they changed (from the target's second build); the parses of program files leave the parse
+/// cache (it carries std's alone to a process's next program).
+fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
+  var out = StrBuilder.new()
+  for (path, sig) in c.parsed {
+    out.write(if sig { "s " } else { "f " })
+    out.write(path)
+    out.write("\n")
+  }
+  let list = out.freeze().bytes()
+  let p = parse_list_path(os, dir)
+  match os.fs.read(p) {
+    Ok(old) => {
+      if old != list {
+        cache_put(os, p, list)
+      }
+    }
+    Err(_) => {
+      // a target's first build only makes the directory (as the packs
+      // do), so a program built once (a golden) leaves no list
+      if os.fs.exists(dir_name(p)).ok() ?? false {
+        cache_put(os, p, list)
+      } else {
+        os.fs.create_dir_all(dir_name(p)).ignore_err("only the prefetch")
+      }
+    }
+  }
+  var keep: Map[Str, check.ParseEntry] = {}
+  for (path, e) in c.parse_cache {
+    if path.starts_with("std/") {
+      keep[path] = e
+    }
+  }
+  c.parse_cache = keep
 }

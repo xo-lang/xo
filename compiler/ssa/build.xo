@@ -270,6 +270,9 @@ pub struct Builder {
   /// The front end cache (fecache.xo), and the recording of a body: the
   /// functions it declared.
   pub fe: FeCache = FeCache{}
+  /// Per program module: uses_os_tasks and uses_budgets of it, for the
+  /// module check cache.
+  pub mod_scans: Map[Int, (Bool, Bool)] = {}
   fe_rec: Bool = false
   /// per function a recorded body's declares made: the function object
   /// (-2 for a second function of the same declare)
@@ -1490,9 +1493,6 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
       return f
     }
   }
-  if !targs.is_empty() {
-    b.fe_gen = true
-  }
   let tps = b.type_params(fo)
   if targs.len() != tps.len() {
     b.unsupported("a generic call whose type arguments are not inferred (`${b.c.display_name(fo)}`)")
@@ -1532,6 +1532,9 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
       b.pend_skip = pend
       return f
     }
+    // a new instance: not replayed (fecache.xo); one made before is in
+    // the state a replay matches
+    b.fe_gen = true
     var n = 2
     while b.m.func_index(name) >= 0 {
       let base = name.split("#")[0]
@@ -1720,12 +1723,33 @@ fn (var b: Builder) main_fo_of() -> Int {
   b.c.mods[b.main_mod].members.get(b"main") ?? -1
 }
 
-/// Whether a user module reads `os.tasks` (build_tasks.go usesOsTasks).
+/// Whether a user module reads `os.tasks` (build_tasks.go usesOsTasks);
+/// with scan_budget, whether one uses budgets (uses_budgets). Every
+/// module is scanned, or its answer taken from the module check cache
+/// when its check was (compiler/check modcache.xo: its bodies are not
+/// checked, so not scanned), and the answers kept for that cache
+/// (mod_scans).
 fn (var b: Builder) uses_os_tasks() -> Bool {
+  var any = false
   for m in b.c.order {
     if b.c.mods[m].is_std || b.c.mods[m].native {
       continue
     }
+    let r = match b.c.mod_cached_scan(m) {
+      Some((t, bu)) => if b.scan_budget { bu } else { t }
+      None => b.mod_uses_tasks(m)
+    }
+    var sc = b.mod_scans.get(m) ?? (false, false)
+    sc = if b.scan_budget { (sc.0, r) } else { (r, sc.1) }
+    b.mod_scans[m] = sc
+    any = any || r
+  }
+  any
+}
+
+/// uses_os_tasks of module m alone.
+fn (var b: Builder) mod_uses_tasks(m: Int) -> Bool {
+  if !b.c.mods[m].is_std && !b.c.mods[m].native {
     for f in b.c.mods[m].files {
       for d in b.c.files[f].ast.decls {
         let found = match d {

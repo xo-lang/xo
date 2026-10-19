@@ -25,6 +25,7 @@ fn (var c: Checker) run() -> () ! Str {
       c.check_derives_comparable(m)
     }
   }
+  c.mod_cache_load()
   for m in c.order {
     if !c.mods[m].is_std {
       c.check_module(m)
@@ -63,6 +64,7 @@ fn (var c: Checker) run() -> () ! Str {
       c.check_unused_imports(m)
     }
   }
+  c.mod_cache_replay()
 }
 
 /// Reports XO0110 for the imports of module m never referenced.

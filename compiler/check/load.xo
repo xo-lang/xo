@@ -37,6 +37,19 @@ pub struct Checker {
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}
+  /// The module check cache (modcache.xo): its directory ("" off), the
+  /// flags in its keys, the program modules' keys, the modules skipped
+  /// (their bodies lazy) and their entries.
+  pub mod_cache_dir: Str = ""
+  pub mod_flags: Str = ""
+  pub mod_keys: Map[Int, Str] = {}
+  pub mod_skip: Map[Int, Bool] = {}
+  /// XO_BACKEND_CACHE=verify: every module checked, its entry compared
+  /// after the build (compiler/xo bcache.xo)
+  pub mod_verify: Bool = false
+  /// XO_CHK_CACHE=1: modules with an entry are skipped (opt in)
+  pub mod_skip_on: Bool = false
+  mod_entries: Map[Int, ModEntry] = {}
   /// $XO_LLRT_C: the runtime modules (or `all`) loaded from their C path,
   /// std/native/llrt/<name>_c.xo, where they have one (load.go
   /// LLRTUsesC; decisions 0193, 0206).
@@ -210,6 +223,9 @@ pub struct Checker {
   /// The parses of std files to reuse (parse_cached): empty in a fresh
   /// checker; a caller checking several programs passes it on.
   pub parse_cache: Map[Str, ParseEntry] = {}
+  /// The files parsed, by path, and whether as declarations only (the
+  /// driver's parse prefetch, compiler/xo bcache.xo).
+  pub parsed: List[(Str, Bool)] = []
 }
 
 /// A fresh checker reading std declarations from std_dir.
@@ -507,6 +523,7 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 /// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let r = c.parse_cached(path, src, sig)
+  c.parsed.push((path, sig))
   c.diags = c.diags + parse_diags(path, r.diags)
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
@@ -527,17 +544,34 @@ pub struct ParseEntry {
 /// checks many programs (xo dev goldens' builds, check --each, check
 /// --bench) carries parse_cache from one checker to the next.
 fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.ParseResult {
-  if !path.starts_with("std/") {
-    return parser.parse_file(path.bytes(), src, sig)
-  }
   if let Some(e) = c.parse_cache.get(path) {
     if e.sig == sig && e.src == src {
       return e.r
     }
   }
+  if !path.starts_with("std/") {
+    // a program file's parse is in the cache only when the driver
+    // parsed it ahead
+    return parser.parse_file(path.bytes(), src, sig)
+  }
   let r = parser.parse_file(path.bytes(), src, sig)
   c.parse_cache[path] = ParseEntry{src: src, sig: sig, r: r}
   r
+}
+
+/// A parse of src at path for parse_cache, made ahead of the check (the
+/// driver's parse prefetch parses on tasks).
+pub fn parse_entry(path: Str, src: Bytes, sig: Bool) -> ParseEntry {
+  ParseEntry{src: src, sig: sig, r: parser.parse_file(path.bytes(), src, sig)}
+}
+
+/// Where the checker reads the file it parses as path: std's under the
+/// std directory, the rest relative to the working directory.
+pub fn (c: Checker) source_path(path: Str) -> Str {
+  if path.starts_with("std/") {
+    return "${c.std_dir}/${path.trim_prefix("std/")}"
+  }
+  path
 }
 
 /// The diagnostics of the parse of the file at path, as the checker

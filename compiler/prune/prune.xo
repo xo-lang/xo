@@ -23,7 +23,10 @@
 // the margin covers a build of up to an hour after a refresh. Each entry
 // is restated just before it is removed, so one used since the walk
 // stays. Removal tolerates failures: another process may remove the same
-// entry. Decision 0223.
+// entry. Decision 0223. A cache of files also loses its empty
+// directories below the top level (the back-end cache's pack slots, one
+// per build target) once they are unused for longer than max_age; the
+// top level's (GOCACHE's 00 to ff) stay.
 
 /// An entry used within KEEP is never removed.
 pub const KEEP: Duration = 2h
@@ -152,7 +155,8 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   st.ran = true
   var kept: List[Entry] = []
   var total = 0
-  for e in entries(fs, clock, dir, p.dirs, p.keep) {
+  var subdirs: List[Entry] = []
+  for e in entries(fs, clock, dir, p.dirs, p.keep, subdirs) {
     let idle = clock.since(e.used)
     if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep && remove(fs, clock, e.path, p.dirs, p.keep) {
       st.removed.push(e.path)
@@ -171,6 +175,19 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
         st.removed.push(e.path)
         total -= e.size
       }
+    }
+  }
+  // empty directories below the top level, deepest first (walk lists
+  // parents before children); remove fails on one that is not empty
+  if p.max_age.nanos() > 0 {
+    var i = subdirs.len() - 1
+    while i >= 0 {
+      let d = subdirs[i]
+      let idle = clock.since(d.used)
+      if idle > p.max_age && idle >= p.keep {
+        fs.remove(d.path).ignore_err("not empty, or another process removed it")
+      }
+      i -= 1
     }
   }
   st.bytes = total
@@ -197,8 +214,9 @@ fn stored(fs: Fs, dir: Str) -> Int uses fs.read {
 }
 
 /// The entries of the cache in dir; files left under a temporary name
-/// (".tmp" in the name) for over keep are removed on the way.
-fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration) -> List[Entry] uses (fs.read, fs.write, clock) {
+/// (".tmp" in the name) for over keep are removed on the way. Without
+/// dirs, the directories below the top level go to subdirs in walk order.
+fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration, var subdirs: List[Entry]) -> List[Entry] uses (fs.read, fs.write, clock) {
   var out: List[Entry] = []
   if dirs {
     let top = match fs.read_dir(dir) {
@@ -230,7 +248,11 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration) -> List[E
     Err(_) => return out
   }
   for fi in all {
-    if fi.is_dir || !fi.path.trim_prefix("${dir}/").contains("/") {
+    let rel = fi.path.trim_prefix("${dir}/")
+    if fi.is_dir && rel.contains("/") {
+      subdirs.push(Entry{path: fi.path, size: 0, used: fi.modified})
+    }
+    if fi.is_dir || !rel.contains("/") {
       continue
     }
     if fi.name.contains(".tmp") {

@@ -391,6 +391,25 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
   c.std_test = std_test_path(o.std_module)
+  // the module check cache (decision 0220 addendum stage 2): a program
+  // module unchanged since its last full check is not checked again; for
+  // the builds only (a test build checks its tests' modules in full)
+  if native && ov.is_empty() && (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_FE_CACHE") ?? "") != "off" && backend_cache_mode(os) != "off" {
+    let host = host_os(os)
+    let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+    let id = if dir.is_empty() { "" } else { self_id(os) }
+    if !id.is_empty() {
+      c.mod_cache_dir = dir
+      c.mod_verify = backend_cache_mode(os) == "verify"
+      c.mod_flags = "${id}\nstd=${o.std} lazy=${c.lazy} llrt_c=${c.llrt_c.join(",")} std_test=${c.std_test}"
+      // opt in until the whole-program passes (solve_effects,
+      // flow_bodies, never results) cover a skipped module's bodies: a
+      // body checked lazily after them builds wrong (os_tasks lost its
+      // task's error, 2026-10-19)
+      c.mod_skip_on = (os.env.get("XO_CHK_CACHE") ?? "") == "1"
+      parse_prefetch(os, c, dir)
+    }
+  }
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
     offline = "1"
@@ -412,6 +431,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   match c.check_dirs_fetching(os, o.dirs, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, o.wd, p, v) }) {
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
+  }
+  if !c.mod_cache_dir.is_empty() {
+    parse_list_store(os, c, c.mod_cache_dir)
   }
   if !c.unsupported.is_empty() {
     fail_unsupported(os, "unsupported: ${c.unsupported}")

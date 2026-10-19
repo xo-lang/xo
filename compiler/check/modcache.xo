@@ -1,0 +1,440 @@
+// The module check cache (decision 0220 addendum stage 2, step 2): a
+// program module whose sources and whose imports' interfaces did not
+// change is not checked again. Its function bodies wait for check_lazy,
+// as the runtime's do (the SSA builder checks one only when it builds it
+// from source, a front end cache miss), and the diagnostics of its files
+// are the ones its last full check reported, replayed in their order.
+//
+// A module's interface is its files with every function body cut out;
+// its closure adds the interfaces of the modules it imports,
+// transitively, and of the standard library (iface_closures, also the
+// front end cache's key, compiler/ssa fecache.xo). Effects inferred from
+// a body stay in its module (a pub function declares its effects), so a
+// module's check reads nothing of another module's bodies.
+
+use std/crypto
+
+const MOD_CACHE_VERSION = "xo check cache v2"
+
+/// Per module: the SHA-256 of its interface closure (above).
+pub fn (c: Checker) iface_closures() -> List[Str] {
+  // the bodies' spans, per file
+  var cuts: Map[Int, List[(Int, Int)]] = {}
+  for o in c.objs {
+    if o.kind != ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 {
+      continue
+    }
+    if let Some(bd) = o.fn_decl[0].body {
+      var l = cuts.get(o.decl_file) ?? []
+      l.push((bd.span.start.offset, bd.span.end.offset))
+      cuts[o.decl_file] = l
+    }
+  }
+  var own: List[Str] = []
+  for md in c.mods {
+    var paths: List[(Str, Int)] = []
+    for f in md.files {
+      paths.push((c.files[f].path, f))
+    }
+    var h = BytesBuilder.new()
+    h.write_str("${md.path}\n")
+    for (p, f) in paths.sort_by(fn(e) { e.0 }) {
+      h.write_str("${p}\n")
+      let src = c.files[f].src
+      var at = 0
+      for (lo, hi) in (cuts.get(f) ?? []).sort_by(fn(e) { e.0 }) {
+        if lo >= at && hi <= src.len() {
+          h.write(src[at..lo])
+          h.write_str("{}")
+          at = hi
+        }
+      }
+      h.write(src[at..src.len()])
+      h.write_str("\n")
+    }
+    own.push(crypto.sha256(h.freeze()).to_hex())
+  }
+  var stdh = BytesBuilder.new()
+  for (mi, md) in c.mods.indexed() {
+    if md.is_std || md.is_prelude || md.native {
+      stdh.write_str("${md.path} ${own[mi]}\n")
+    }
+  }
+  let std_sum = crypto.sha256(stdh.freeze()).to_hex()
+  var out: List[Str] = []
+  for (mi, _) in c.mods.indexed() {
+    var seen: Map[Int, Bool] = {}
+    var work = [mi]
+    seen[mi] = true
+    while !work.is_empty() {
+      let m = work.pop() ?? -1
+      for f in c.mods[m].files {
+        for (_, im) in c.files[f].imports {
+          if im.module >= 0 && !seen.contains(im.module) {
+            seen[im.module] = true
+            work.push(im.module)
+          }
+        }
+      }
+    }
+    var lines: List[Str] = []
+    for (m, _) in seen {
+      lines.push("${c.mods[m].path} ${own[m]}")
+    }
+    out.push(crypto.sha256("${std_sum}\n${lines.sort().join("\n")}".bytes()).to_hex())
+  }
+  out
+}
+
+/// Whether module m's check may come from the cache: a program module
+/// (not std, not native).
+fn (c: Checker) mod_cacheable(m: Int) -> Bool {
+  !c.mods[m].is_std && !c.mods[m].native && !c.mods[m].is_prelude
+}
+
+/// The keys of the program modules (mod_cacheable) and the entries the
+/// cache holds for them: modules with an entry are skipped (mod_skip),
+/// their diagnostics and scans kept for replay. Runs after the
+/// signatures are resolved, before the bodies are checked.
+fn (var c: Checker) mod_cache_load() uses fs.read {
+  if c.mod_cache_dir.is_empty() {
+    return
+  }
+  let closures = c.iface_closures()
+  for m in c.order {
+    if !c.mod_cacheable(m) {
+      continue
+    }
+    var h = BytesBuilder.new()
+    h.write_str("${MOD_CACHE_VERSION}\n${c.mod_flags}\n${c.mods[m].path}\n${closures[m]}\n")
+    var paths: List[(Str, Int)] = []
+    for f in c.mods[m].files {
+      paths.push((c.files[f].path, f))
+    }
+    for (p, f) in paths.sort_by(fn(e) { e.0 }) {
+      h.write_str("${p}\n")
+      h.write(c.files[f].src)
+      h.write_str("\n")
+    }
+    let key = crypto.sha256(h.freeze()).to_hex()
+    c.mod_keys[m] = key
+    if c.mod_verify || !c.mod_skip_on {
+      continue
+    }
+    match c.fs.read("${c.mod_cache_dir}/chk/${key[0..2]}/${key}") {
+      Ok(d) => {
+        match decode_mod_entry(d) {
+          Some(e) => {
+            c.mod_skip[m] = true
+            c.mod_entries[m] = e
+          }
+          None => {}
+        }
+      }
+      Err(_) => {}
+    }
+  }
+}
+
+/// A module's cached check: its diagnostics in report order and the SSA
+/// builder's scans of its bodies (uses tasks, uses budgets).
+pub struct ModEntry {
+  pub diags: List[Diag] = []
+  /// The calls of std/time's zone in its bodies (compiler/tzsel reads
+  /// their name records): file, offset, line, column, and the module
+  /// path of the function they resolved to.
+  pub zones: List[(Str, Int, Int, Int, Str)] = []
+  pub tasks: Bool = false
+  pub budgets: Bool = false
+}
+
+/// The files of module m by path.
+fn (c: Checker) mod_paths(m: Int) -> Map[Str, Bool] {
+  var out: Map[Str, Bool] = {}
+  for f in c.mods[m].files {
+    out[c.files[f].path] = true
+  }
+  out
+}
+
+/// After the check: the diagnostics of a skipped module's files are its
+/// entry's (the declaration passes reported some again; the cached list,
+/// from a full check, has them in their place).
+fn (var c: Checker) mod_cache_replay() {
+  if c.mod_skip.is_empty() {
+    return
+  }
+  var skipped: Map[Str, Bool] = {}
+  for (m, _) in c.mod_skip {
+    for (p, _) in c.mod_paths(m) {
+      skipped[p] = true
+    }
+  }
+  var keep: List[Diag] = []
+  for d in c.diags {
+    if !skipped.contains(d.file) {
+      keep.push(d)
+    }
+  }
+  for m in c.order {
+    if c.mod_skip.contains(m) {
+      let e = c.mod_entries.get(m) ?? ModEntry{}
+      for d in e.diags {
+        keep.push(d)
+      }
+      for (file, off, line, col, mp) in e.zones {
+        c.names.push(NameRec{file: file, offset: off, line: line, col: col, name: b"zone", obj: c.zone_obj(mp)})
+      }
+    }
+  }
+  c.diags = keep
+}
+
+/// The function `zone` of the module at path mp, or -1.
+fn (c: Checker) zone_obj(mp: Str) -> Int {
+  for md in c.mods {
+    if md.path == mp {
+      if let Some(o) = md.members.get(b"zone") {
+        return o
+      }
+    }
+  }
+  -1
+}
+
+/// The zone calls of module m's bodies, as ModEntry.zones.
+fn (c: Checker) mod_zones(paths: Map[Str, Bool]) -> List[(Str, Int, Int, Int, Str)] {
+  var out: List[(Str, Int, Int, Int, Str)] = []
+  for rec in c.names {
+    if rec.obj < 0 || rec.obj >= c.objs.len() || (rec.name.to_str() ?? "") != "zone" || !paths.contains(rec.file) {
+      continue
+    }
+    let o = c.objs[rec.obj]
+    if o.kind != ObjKind.Func || o.module < 0 {
+      continue
+    }
+    let om = c.mods[o.module]
+    if om.path == "std/time" || om.implements == "std/time" {
+      out.push((rec.file, rec.offset, rec.line, rec.col, om.path))
+    }
+  }
+  out
+}
+
+/// Whether module m was skipped, and its cached scans.
+pub fn (c: Checker) mod_cached_scan(m: Int) -> Option[(Bool, Bool)] {
+  if !c.mod_skip.contains(m) {
+    return None
+  }
+  let e = c.mod_entries.get(m) ?? ModEntry{}
+  Some((e.tasks, e.budgets))
+}
+
+/// The entries to store after a build: each program module checked in
+/// full this time, with no error in its files, by its key, with the SSA
+/// builder's scans of it (scans: module to (tasks, budgets); a module
+/// the builder did not scan is not stored).
+pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)]) -> List[(Str, Bytes)] {
+  var out: List[(Str, Bytes)] = []
+  if c.mod_cache_dir.is_empty() {
+    return out
+  }
+  for (m, key) in c.mod_keys {
+    if c.mod_skip.contains(m) {
+      continue
+    }
+    let sc = scans.get(m)
+    if sc == None {
+      continue
+    }
+    let paths = c.mod_paths(m)
+    var e = ModEntry{}
+    var bad = false
+    for d in c.diags {
+      if d.file.is_empty() {
+        // a diagnostic of no file: which module's is not known
+        bad = true
+      }
+      if paths.contains(d.file) {
+        if !d.warning {
+          bad = true
+        }
+        e.diags.push(d)
+      }
+    }
+    if bad {
+      continue
+    }
+    let (t, b) = sc ?? (false, false)
+    e.tasks = t
+    e.budgets = b
+    e.zones = c.mod_zones(paths)
+    out.push((key, encode_mod_entry(e)))
+  }
+  out
+}
+
+// The entry's codec: lines of fields, each field's length first.
+
+fn put_s(var b: BytesBuilder, s: Str) {
+  b.write_str("${s.len()}:")
+  b.write_str(s)
+}
+
+fn put_i(var b: BytesBuilder, n: Int) {
+  put_s(b, "${n}")
+}
+
+fn put_span(var b: BytesBuilder, s: JSpan) {
+  put_s(b, s.file)
+  put_i(b, s.line)
+  put_i(b, s.col)
+  put_i(b, s.end_line)
+  put_i(b, s.end_col)
+}
+
+fn encode_mod_entry(e: ModEntry) -> Bytes {
+  var b = BytesBuilder.new()
+  put_s(b, MOD_CACHE_VERSION)
+  put_i(b, if e.tasks { 1 } else { 0 })
+  put_i(b, if e.budgets { 1 } else { 0 })
+  put_i(b, e.zones.len())
+  for (file, off, line, col, mp) in e.zones {
+    put_s(b, file)
+    put_i(b, off)
+    put_i(b, line)
+    put_i(b, col)
+    put_s(b, mp)
+  }
+  put_i(b, e.diags.len())
+  for d in e.diags {
+    put_s(b, d.code)
+    put_s(b, d.file)
+    put_i(b, d.line)
+    put_i(b, d.col)
+    put_i(b, d.end_line)
+    put_i(b, d.end_col)
+    put_s(b, d.message)
+    put_i(b, (if d.warning { 1 } else { 0 }) + (if d.note_sev { 2 } else { 0 }))
+    put_i(b, d.notes.len())
+    for n in d.notes {
+      put_s(b, n.message)
+      match n.span {
+        Some(sp) => {
+          put_i(b, 1)
+          put_span(b, sp)
+        }
+        None => put_i(b, 0)
+      }
+    }
+    put_i(b, d.fixes.len())
+    for fx in d.fixes {
+      put_s(b, fx.title)
+      put_i(b, fx.edits.len())
+      for ed in fx.edits {
+        put_span(b, ed.span)
+        put_s(b, ed.replace)
+      }
+    }
+  }
+  b.freeze()
+}
+
+/// The reader of an entry; ok turns false on a malformed one.
+struct ModR {
+  d: Bytes
+  at: Int = 0
+  ok: Bool = true
+}
+
+fn (var r: ModR) s() -> Str {
+  var n = 0
+  while r.at < r.d.len() && r.d[r.at] != ':' {
+    let ch = Int(r.d[r.at])
+    if ch < 48 || ch > 57 {
+      r.ok = false
+      return ""
+    }
+    n = n * 10 + (ch - 48)
+    r.at += 1
+  }
+  r.at += 1
+  if !r.ok || r.at + n > r.d.len() {
+    r.ok = false
+    return ""
+  }
+  let out = r.d[r.at..r.at + n].to_str() ?? ""
+  r.at += n
+  out
+}
+
+fn (var r: ModR) i() -> Int {
+  match Int.parse(r.s()) {
+    Some(n) => n
+    None => {
+      r.ok = false
+      0
+    }
+  }
+}
+
+fn (var r: ModR) span() -> JSpan {
+  JSpan{file: r.s(), line: r.i(), col: r.i(), end_line: r.i(), end_col: r.i()}
+}
+
+fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
+  var r = ModR{d: d}
+  if r.s() != MOD_CACHE_VERSION {
+    return None
+  }
+  var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1}
+  let nz = r.i()
+  if !r.ok || nz > d.len() {
+    return None
+  }
+  for _ in 0..nz {
+    e.zones.push((r.s(), r.i(), r.i(), r.i(), r.s()))
+  }
+  let n = r.i()
+  if !r.ok || n > d.len() {
+    return None
+  }
+  for _ in 0..n {
+    var x = Diag{code: r.s(), file: r.s(), line: r.i(), col: r.i(), end_line: r.i(), end_col: r.i(), message: r.s()}
+    let fl = r.i()
+    x.warning = fl & 1 != 0
+    x.note_sev = fl & 2 != 0
+    let nn = r.i()
+    if !r.ok || nn > d.len() {
+      return None
+    }
+    for _ in 0..nn {
+      var note = DNote{message: r.s()}
+      if r.i() == 1 {
+        note.span = Some(r.span())
+      }
+      x.notes.push(note)
+    }
+    let nf = r.i()
+    if !r.ok || nf > d.len() {
+      return None
+    }
+    for _ in 0..nf {
+      var fx = DFix{title: r.s(), edits: []}
+      let ne = r.i()
+      if !r.ok || ne > d.len() {
+        return None
+      }
+      for _ in 0..ne {
+        let sp = r.span()
+        fx.edits.push(DEdit{span: sp, replace: r.s()})
+      }
+      x.fixes.push(fx)
+    }
+    e.diags.push(x)
+  }
+  if !r.ok || r.at != d.len() {
+    return None
+  }
+  Some(e)
+}

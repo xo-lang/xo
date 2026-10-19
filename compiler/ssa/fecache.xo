@@ -44,74 +44,7 @@ pub struct FeCache {
 /// function that is not generic and has a body. flags are the build's
 /// (fe_flags).
 pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
-  // the bodies' spans, per file
-  var cuts: Map[Int, List[(Int, Int)]] = {}
-  for o in c.objs {
-    if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 {
-      continue
-    }
-    if let Some(bd) = o.fn_decl[0].body {
-      var l = cuts.get(o.decl_file) ?? []
-      l.push((bd.span.start.offset, bd.span.end.offset))
-      cuts[o.decl_file] = l
-    }
-  }
-  // each module's interface: its files without the bodies
-  var own: List[Str] = []
-  for md in c.mods {
-    var paths: List[(Str, Int)] = []
-    for f in md.files {
-      paths.push((c.files[f].path, f))
-    }
-    var h = BytesBuilder.new()
-    h.write_str("${md.path}\n")
-    for (p, f) in paths.sort_by(fn(e) { e.0 }) {
-      h.write_str("${p}\n")
-      let src = c.files[f].src
-      var at = 0
-      for (lo, hi) in (cuts.get(f) ?? []).sort_by(fn(e) { e.0 }) {
-        if lo >= at && hi <= src.len() {
-          h.write(src[at..lo])
-          h.write_str("{}")
-          at = hi
-        }
-      }
-      h.write(src[at..src.len()])
-      h.write_str("\n")
-    }
-    own.push(crypto.sha256(h.freeze()).to_hex())
-  }
-  // the standard library's interfaces, in every closure
-  var stdh = BytesBuilder.new()
-  for (mi, md) in c.mods.indexed() {
-    if md.is_std || md.is_prelude || md.native {
-      stdh.write_str("${md.path} ${own[mi]}\n")
-    }
-  }
-  let std_sum = crypto.sha256(stdh.freeze()).to_hex()
-  // each module's closure through its files' imports
-  var closure: Map[Int, Str] = {}
-  for (mi, _) in c.mods.indexed() {
-    var seen: Map[Int, Bool] = {}
-    var work = [mi]
-    seen[mi] = true
-    while !work.is_empty() {
-      let m = work.pop() ?? -1
-      for f in c.mods[m].files {
-        for (_, im) in c.files[f].imports {
-          if im.module >= 0 && !seen.contains(im.module) {
-            seen[im.module] = true
-            work.push(im.module)
-          }
-        }
-      }
-    }
-    var lines: List[Str] = []
-    for (m, _) in seen {
-      lines.push("${c.mods[m].path} ${own[m]}")
-    }
-    closure[mi] = crypto.sha256("${std_sum}\n${lines.sort().join("\n")}".bytes()).to_hex()
-  }
+  let closure = c.iface_closures()
   var keys: Map[Int, Str] = {}
   for (fo, o) in c.objs.indexed() {
     if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 || o.module < 0 || !o.tparams.is_empty() {
@@ -129,7 +62,7 @@ pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
       continue
     }
     var h = BytesBuilder.new()
-    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${closure.get(o.module) ?? ""}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
+    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${closure[o.module]}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
     h.write(src[fd.span.start.offset..fd.span.end.offset])
     keys[fo] = crypto.sha256(h.freeze()).to_hex()
   }
@@ -205,6 +138,21 @@ fn (var b: Builder) fe_begin() -> FeRec {
 fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   b.fe_rec = false
   if b.fe_gen || b.fe_fixed() != r.fixed || !b.m.funcs[fi].skip.is_empty() {
+    if b.fe_gen {
+      b.fe_skip("gen")
+    } else if b.fe_fixed() != r.fixed {
+      // which side table the body changed (XO_FE_STATS)
+      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nclos", "nsyn", "need_conc", "uses_net", "skipped_any", "errs", "seen_err"]
+      let was = r.fixed.split(" ")
+      let now = b.fe_fixed().split(" ")
+      for (i, n) in names.indexed() {
+        if i < was.len() && i < now.len() && was[i] != now[i] {
+          b.fe_skip("fixed.${n}")
+        }
+      }
+    } else {
+      b.fe_skip("skip")
+    }
     return None
   }
   // only declares' bodies queued: a contract's inner body (Job.Inner)
@@ -212,7 +160,10 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   for j in b.queue[r.nq..b.queue.len()] {
     match j {
       Body(..) => {}
-      _ => return None
+      _ => {
+        b.fe_skip("queue")
+        return None
+      }
     }
   }
   let fbo = encode_func(b.m, b.m.funcs[fi])
@@ -477,6 +428,11 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
 }
 
 /// A replay that does not fit, counted by reason (XO_FE_STATS).
+/// A body whose entry is not recorded, by reason (XO_FE_STATS).
+fn (var b: Builder) fe_skip(why: Str) {
+  b.fe_stats["skip.${why}"] = (b.fe_stats.get("skip.${why}") ?? 0) + 1
+}
+
 fn (var b: Builder) fe_miss(why: Str) -> Bool {
   b.fe_stats["miss.${why}"] = (b.fe_stats.get("miss.${why}") ?? 0) + 1
   false

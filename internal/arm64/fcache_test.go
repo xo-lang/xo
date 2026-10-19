@@ -230,6 +230,11 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		b.WriteString("fn use_p(p: P) -> Int {\n  p.a + 1\n}\n\n")
 		fmt.Fprintf(&b, "fn use_callee(n: Int) -> Int {\n  %s\n}\n\n", v.call)
 		fmt.Fprintf(&b, "fn body_only(n: Int) -> Int {\n  %s\n}\n\n", v.body)
+		// generic instances: the first use makes pick[Int], the second
+		// reuses it and is recorded
+		b.WriteString("fn pick[T](a: T, b: T, first: Bool) -> T {\n  if first { a } else { b }\n}\n\n")
+		b.WriteString("fn gen_a(n: Int) -> Int {\n  pick(n, 1, true)\n}\n\n")
+		b.WriteString("fn gen_b(n: Int) -> Int {\n  pick(n, 2, false)\n}\n\n")
 		// a contract wraps its body (Job.Inner): never replayed
 		b.WriteString("fn checked(n: Int) -> Int\n  requires n > 0\n  ensures result > n\n{\n  n + 1\n}\n\n")
 		for i := 0; i < 40; i++ {
@@ -239,7 +244,7 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		for i := 0; i < 40; i++ {
 			fmt.Fprintf(&b, "  s = s + g%d(s)\n", i)
 		}
-		b.WriteString("  os.stdio.println(\"${s} ${use_p(P{a: 4})} ${use_callee(5)} ${body_only(6)} ${checked(7)}\")\n}\n")
+		b.WriteString("  os.stdio.println(\"${s} ${use_p(P{a: 4})} ${use_callee(5)} ${body_only(6)} ${checked(7)} ${gen_a(8)} ${gen_b(9)}\")\n}\n")
 		return b.String()
 	}
 	build := func(t *testing.T, name string, env ...string) ([]byte, string) {
@@ -312,5 +317,124 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 				t.Errorf("%s: %d bodies from the cache, want at most %d (every body of the edited module missed)", s.v.name, h, full-40)
 			}
 		}
+	}
+}
+
+// TestModuleCheckDiagnostics: a module whose check comes from the module
+// check cache (decision 0220 addendum stage 2) reports the diagnostics of
+// its last full check, so `xo build --json` prints the same object warm
+// as cold, warning included, and after an edit of the module (checked
+// again) the new ones.
+func TestModuleCheckDiagnostics(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-chkcache-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gen := func(k int) string {
+		return fmt.Sprintf(`enum Shape {
+  Circle(r: Int)
+  Rect(w: Int, h: Int)
+  Empty
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => r * r * %d
+    _ => 0
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${area(Shape.Circle(r: 2))} ${area(Shape.Empty)}")
+}
+`, k)
+	}
+	build := func(t *testing.T) (string, string) {
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--json", "--phase-times", "-o", filepath.Join(work, "prog"), ".")
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_CHK_CACHE=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("build: %v\n%s\n%s", err, out.String(), errb.String())
+		}
+		return out.String(), errb.String()
+	}
+	skipped := func(log string) bool {
+		return regexp.MustCompile(`cache chk [1-9]\d*/\d+ modules`).MatchString(log)
+	}
+	for _, s := range []struct {
+		name string
+		k    int
+		hit  bool
+	}{{"cold", 3, false}, {"warm", 3, true}, {"edit", 4, false}, {"again", 4, true}} {
+		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(s.k)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, log := build(t)
+		if skipped(log) != s.hit {
+			t.Errorf("%s: module skipped %v, want %v:\n%s", s.name, skipped(log), s.hit, log)
+		}
+		if !strings.Contains(got, `"XO0305"`) {
+			t.Errorf("%s: the warning is missing:\n%s", s.name, got)
+		}
+		cold := exec.Command(xo, "build", "--backend=arm64", "--json", "-o", filepath.Join(work, "prog-off"), ".")
+		cold.Dir = src
+		cold.Env = append(os.Environ(), "XO_BACKEND_CACHE=off")
+		want, err := cold.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// the binaries' paths differ; the diagnostics must not
+		norm := func(s string) string {
+			return regexp.MustCompile(`"binaries": \{[^}]*\}`).ReplaceAllString(s, "")
+		}
+		if norm(got) != norm(string(want)) {
+			t.Errorf("%s: the JSON through the cache differs from the cache-off build's:\n%s\nwant:\n%s", s.name, got, want)
+		}
+	}
+	// verify checks every module and fails on an entry that differs
+	var entries []string
+	filepath.WalkDir(filepath.Join(work, "cache", "chk"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			entries = append(entries, p)
+		}
+		return nil
+	})
+	if len(entries) == 0 {
+		t.Fatal("no chk entries stored")
+	}
+	verify := func() ([]byte, error) {
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=verify", "XO_CHK_CACHE=1")
+		return cmd.CombinedOutput()
+	}
+	if log, err := verify(); err != nil {
+		t.Fatalf("verify: %v\n%s", err, log)
+	}
+	for _, e := range entries {
+		f, err := os.OpenFile(e, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WriteString("x")
+		f.Close()
+	}
+	if log, err := verify(); err == nil || !strings.Contains(string(log), "modules' check differs") {
+		t.Errorf("verify with changed entries: %v, want the module mismatch:\n%s", err, log)
 	}
 }
