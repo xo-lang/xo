@@ -192,17 +192,17 @@ LpGL1jtk_f2_b13:
 	b.hs LpGL1jtk_f2_fault2
 LpGL1jtk_f2_b13_c:
 	ldrb w9, [x12, x11]
-LpGL1jtk_f2_b15:
-	cbnz x9, LpGL1jtk_f2_b16
+LpGL1jtk_f2_b14:
+	cbnz x9, LpGL1jtk_f2_b15
 LpGL1jtk_f2_b31:
 	add x11, x11, #1
 	cmp x11, x13
 	b.lt LpGL1jtk_f2_b13
 	b LpGL1jtk_f2_b32
-LpGL1jtk_f2_b16:
+LpGL1jtk_f2_b15:
 	adds x20, x20, #1
 	b.vs LpGL1jtk_f2_fault3
-LpGL1jtk_f2_b18:
+LpGL1jtk_f2_b17:
 	mul x9, x11, x11
 	smulh x10, x11, x11
 	cmp x10, x9, asr #63
@@ -247,14 +247,6 @@ LpGL1jtk_f2_b5:
 	mov x21, x0
 	b LpGL1jtk_f2_b7
 LpGL1jtk_f2_b10:
-	mov x0, x21
-	bl _xo_hG9GOmRI4zL
-	b LpGL1jtk_f2_b26
-LpGL1jtk_f2_b14:
-	mov x0, x21
-	bl _xo_hG9GOmRI4zL
-	b LpGL1jtk_f2_b26
-LpGL1jtk_f2_b17:
 	mov x0, x21
 	bl _xo_hG9GOmRI4zL
 	b LpGL1jtk_f2_b26

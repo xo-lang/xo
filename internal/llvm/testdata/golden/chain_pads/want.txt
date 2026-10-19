@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+0: fault step 0 of 2
+1: fault step 1 of 2
+2: fault step 2 of 2
+3: fault step 3 of 2
+4: fault step 4 of 2
+5: fault step 5 of 2
+6: fault step 6 of 2
+7: ok 78
+--- stderr

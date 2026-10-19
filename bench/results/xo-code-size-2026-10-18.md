@@ -195,6 +195,51 @@ compiler's loops call `out.push` and wrap the element whole
 (`Node.NStmt(s)`). What remains is elements of lists held in locals and
 `var` parameters, and loop elements passed on as call arguments.
 
+## Fix 2, landing pads chained (2026-10-18)
+
+Where the releases of whole values come from: a count in compiler/arm64
+isel.xo's release of a whole struct held in registers (each heap leaf
+released apart; one held in memory already calls the type's `mem_drop`
+helper once), over xo built by itself: 327,438 leaf releases, 292,333
+of them (89%) on landing pads. Each call's pad released every leaf the
+function held at the call, so a value live across a run of calls was
+released leaf by leaf again on every one of their pads; `build_native`
+alone had 64,379. By root: block parameters 119k, entry parameters 52k,
+call results 137k (the `S` that `ssa.Builder.begin` returns, live until
+`end`, 68k).
+
+compiler/ssa chainpads.xo (`chain_pads`, in the reference counting
+after the landings are placed): a pad (field reads and releases, then
+the unwind exit) whose released leaves include all of a nearby pad's
+(the 32 nearest by block number; the same leaves count for the later
+of two) releases only the rest and goes to that pad, when each of its
+releases is all inside or all outside the other pad's leaves and the
+other pad reads from outside only values it reads too. Optional pass
+`chain_pads`.
+
+The first form, without the restriction below, saved 4.11 MB (40,077,208 to
+35,963,580 bytes). But the Mac sweep found httpparse h2_get and
+h2_varied 1.6% slower (reproduced), and callgrind of the HTTP server's
+h2 scenario +4.6% (84,668 to 88,544 instructions a request), nearly all
+in tlssrv.recv_some, feed, and send. Those take `var c: Conn` by
+reference. A pad after a call that writes a memory home starts with the
+home's contents unknown (byref.xo compute_held). A second way into a pad
+from such a pad left the home unknown at the pad's reads of the value,
+so the value was no longer held at every use and was loaded whole at
+entry (recv_some's fast path copied dozens of Conn words). Now a pad that
+reads a value of a type that may have a home is never a target: a struct
+or enum of 256 bytes or more that the function takes as a `var`
+parameter or passes to a callee's.
+
+With that rule, xo built by itself with the same compiler, the pass on
+against `XO_PASSES=-chain_pads`: 40,102,192 to 37,140,368 bytes of
+`__text` (-2.96 MB, -7.4%). Mac sweep, 114 workloads: 1 slower,
+fault/none 1.012 against a spread of 1.011, which a 5 round rerun put
+within its spread (1.008, spread 1.010). 1 faster: httpparse h1_chunked
+0.969. h2 callgrind 84,674 to 84,823 (+0.18%, within MODE noise). The
+golden chain_pads faults at each call of a run in turn, and the leak
+check finds every allocation released.
+
 ## Reproduce
 
 ```

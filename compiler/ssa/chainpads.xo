@@ -1,0 +1,261 @@
+// Landing pads chained (bench/results/xo-code-size-2026-10-18.md, fix 2).
+//
+// The landing pad of each call releases every leaf the function holds at
+// the call, then goes to the unwind exit, so a value live across a run of
+// calls is released on every one of their pads: the self build of xo had
+// 89 percent of its releases of values in registers (one call per heap
+// leaf) on landing pads, 64,000 in build_native alone. A pad whose
+// releases include all of another pad's releases the rest and goes to
+// that pad instead.
+
+/// The size from which the native backends pass a struct or enum `var`
+/// parameter by reference and keep it in a memory home (compiler/arm64
+/// byref.xo BY_REF_MIN).
+const HOME_MIN_BYTES = 256
+
+/// The pads each pad is compared with: the nearest by block number, where
+/// the builder puts the pads of the calls around it.
+const CHAIN_WINDOW = 32
+
+/// A block of field reads and releases that goes to the unwind exit: its
+/// releases (each with its leaves' keys), all the leaves they release,
+/// and the values it reads from other blocks.
+struct Pad {
+  bl: Int
+  rels: List[Int] = []
+  keys: List[List[Str]] = []
+  all: Set[Str] = #{}
+  ext: Set[Int] = #{}
+  // it reads a value of a type with a memory home (home_types)
+  home: Bool = false
+}
+
+/// Makes each pad that releases all of a pad's leaves and more (or the
+/// same leaves, for the later of two) release only the rest and go to
+/// that pad. Every leaf a pad releases is held on each path into it, and
+/// the values the target reads from other blocks are read by the pad too,
+/// so they are defined on its paths.
+fn (var r: Rc) chain_pads(var f: Func) {
+  let exit = f.unwind_exit
+  if exit < 0 {
+    return
+  }
+  let homes = r.home_types(f)
+  var pads: List[Pad] = []
+  for bl in 0..f.blocks.len() {
+    if let Some(p0) = r.pad_of(f, bl, exit) {
+      var p = p0
+      for a in p.ext {
+        p.home = p.home || homes.contains(f.values[a].ty)
+      }
+      pads.push(p)
+    }
+  }
+  if pads.len() < 2 {
+    return
+  }
+  // decided on the pads as they were, before any is changed: a chained
+  // pad still releases all its leaves, through the one it goes to
+  var to: List[Int] = []
+  for (i, p) in pads.indexed() {
+    var best = -1
+    let lo = (i - CHAIN_WINDOW).max(0)
+    let hi = (i + CHAIN_WINDOW + 1).min(pads.len())
+    for j in lo..hi {
+      let q = pads[j]
+      if j == i || q.home || q.all.len() > p.all.len() || (q.all.len() == p.all.len() && j > i) {
+        continue
+      }
+      if best >= 0 && q.all.len() <= pads[best].all.len() {
+        continue
+      }
+      if chains_to(p, q) {
+        best = j
+      }
+    }
+    to.push(best)
+  }
+  var any = false
+  for (i, p) in pads.indexed() {
+    let j = to[i]
+    if j < 0 {
+      continue
+    }
+    let q = pads[j]
+    var drop: Set[Int] = #{}
+    for (k, v) in p.rels.indexed() {
+      if q.all.contains(p.keys[k][0]) {
+        drop.add(v)
+      }
+    }
+    var ins: List[Int] = []
+    for v in f.blocks[p.bl].instrs {
+      if !drop.contains(v) {
+        ins.push(v)
+      }
+    }
+    f.blocks[p.bl].instrs = ins
+    let e = f.values[f.term(p.bl)].succs[0]
+    f.edges[e].to = q.bl
+    var ps: List[Int] = []
+    for pe in f.blocks[exit].preds {
+      if pe != e {
+        ps.push(pe)
+      }
+    }
+    f.blocks[exit].preds = ps
+    f.blocks[q.bl].preds.push(e)
+    any = true
+  }
+  if any {
+    // the field reads only the dropped releases used
+    remove_dead_fields(f)
+  }
+}
+
+/// The types of f's values that the native backends may keep in a memory
+/// home (compiler/arm64 byref.xo): structs and enums of HOME_MIN_BYTES or
+/// more that f takes as `var` parameters or passes to a callee's `var`
+/// parameters. A pad that reads such a value is not a target: a second
+/// way into it, from a pad after a call that writes the home, would leave
+/// the home's contents unknown there, and the value would be loaded whole
+/// where it is made instead of read in place (httpparse h2 1.6 percent
+/// more instructions, tlssrv.recv_some copying its Conn).
+fn (var r: Rc) home_types(f: Func) -> Set[Int] {
+  var out: Set[Int] = #{}
+  let ps = f.blocks[0].params
+  for i in f.var_params {
+    if i < ps.len() {
+      r.add_home(out, f.values[ps[i]].ty)
+    }
+  }
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op != Op.Call {
+        continue
+      }
+      for i in r.vparams.get(aux_name(x.aux)) ?? [] {
+        if i < x.args.len() {
+          r.add_home(out, f.values[x.args[i]].ty)
+        }
+      }
+    }
+  }
+  out
+}
+
+fn (var r: Rc) add_home(var out: Set[Int], t: Int) {
+  if t >= 0 && (r.types[t].kind is Kind.Struct | Kind.Enum) && 8 * r.words(t, 0) >= HOME_MIN_BYTES {
+    out.add(t)
+  }
+}
+
+/// The words of a value of type t (compiler/arm64 gen.xo layout).
+fn (var r: Rc) words(t: Int, depth: Int) -> Int {
+  if let Some(n) = r.nwords.get(t) {
+    return n
+  }
+  if depth > 64 {
+    return 0
+  }
+  let x = r.types[t]
+  var n = match x.kind {
+    Unit | Cap | Struct | Tuple | Enum => 0
+    Str | Func => 2
+    Int | Float | Bool | List | Box | Handle | Bad => 1
+  }
+  if x.kind == Kind.Struct {
+    for fd in x.fields {
+      n += r.words(fd.ty, depth + 1)
+    }
+  } else if x.kind == Kind.Tuple {
+    for e in x.elems {
+      n += r.words(e, depth + 1)
+    }
+  } else if x.kind == Kind.Enum {
+    var w = 0
+    for vt in x.variants {
+      var k = 0
+      for fd in vt.fields {
+        k += r.words(fd.ty, depth + 1)
+      }
+      w = w.max(k)
+    }
+    n = 1 + w
+  }
+  r.nwords[t] = n
+  n
+}
+
+/// Block bl as a pad, if it is one.
+fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
+  let b = f.blocks[bl]
+  if bl == exit || bl == 0 || !b.params.is_empty() || b.instrs.len() < 2 {
+    return None
+  }
+  let t = b.instrs[b.instrs.len() - 1]
+  let tx = f.values[t]
+  if tx.op != Op.Jump || f.edges[tx.succs[0]].to != exit || !f.edges[tx.succs[0]].args.is_empty() {
+    return None
+  }
+  var p = Pad{bl: bl}
+  var mine: Set[Int] = #{}
+  for v in b.instrs[0..b.instrs.len() - 1] {
+    let x = f.values[v]
+    if !(x.op is Op.Field | Op.Release) {
+      return None
+    }
+    for a in x.args {
+      if !mine.contains(a) {
+        p.ext.add(a)
+      }
+    }
+    mine.add(v)
+    if x.op == Op.Release {
+      var ks: List[Str] = []
+      for l in r.leaves(f, x.args[0]) {
+        let k = leaf_key(l)
+        if p.all.contains(k) {
+          return None // released twice: not a plain pad
+        }
+        p.all.add(k)
+        ks.push(k)
+      }
+      if ks.is_empty() {
+        return None
+      }
+      p.rels.push(v)
+      p.keys.push(ks)
+    }
+  }
+  if p.rels.is_empty() {
+    return None
+  }
+  Some(p)
+}
+
+/// Whether pad p can release the rest of q's leaves and go to q: q's
+/// leaves are all p's, each release of p is all in q or all outside it,
+/// and q reads from other blocks only what p reads.
+fn chains_to(p: Pad, q: Pad) -> Bool {
+  for k in q.all {
+    if !p.all.contains(k) {
+      return false
+    }
+  }
+  for ks in p.keys {
+    let inq = q.all.contains(ks[0])
+    for k in ks {
+      if q.all.contains(k) != inq {
+        return false
+      }
+    }
+  }
+  for a in q.ext {
+    if !p.ext.contains(a) {
+      return false
+    }
+  }
+  true
+}

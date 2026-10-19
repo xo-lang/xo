@@ -1,0 +1,84 @@
+// Landing pads chained (ssa chain_pads): a fault at each call of a run
+// unwinds through a pad that releases what died since the next call's
+// pad and goes on to it. Values held across every call, values made
+// between calls, a value given away midway, and a large struct whose
+// leaves are released together; the leak check counts every allocation.
+use std/task
+
+struct Big {
+  a: Str
+  b: List[Int]
+  c: Str
+  d: List[Str]
+  e: Str
+  pad0: Int = 0
+  pad1: Int = 0
+  pad2: Int = 0
+  pad3: Int = 0
+  pad4: Int = 0
+  pad5: Int = 0
+  pad6: Int = 0
+  pad7: Int = 0
+  pad8: Int = 0
+  pad9: Int = 0
+  pad10: Int = 0
+  pad11: Int = 0
+  pad12: Int = 0
+  pad13: Int = 0
+  pad14: Int = 0
+  pad15: Int = 0
+  pad16: Int = 0
+  pad17: Int = 0
+  pad18: Int = 0
+  pad19: Int = 0
+  pad20: Int = 0
+  pad21: Int = 0
+  pad22: Int = 0
+  pad23: Int = 0
+  pad24: Int = 0
+  pad25: Int = 0
+  pad26: Int = 0
+  pad27: Int = 0
+  pad28: Int = 0
+  pad29: Int = 0
+  pad30: Int = 0
+}
+
+fn step(at: Int, k: Int, s: Str) -> Int {
+  let parts = [s, "${k}"]
+  if at == k {
+    fault("step ${k} of ${parts.len()}")
+  }
+  s.len() + k
+}
+
+fn take(b: Big) -> Int {
+  b.a.len() + b.b.len() + b.d.len()
+}
+
+fn run(at: Int) -> Int {
+  let big = Big{a: "alpha", b: [1, 2, 3], c: "gamma", d: ["x", "y"], e: "eps"}
+  let held = ["held", "${at}"]
+  var n = step(at, 0, big.a)
+  n += step(at, 1, big.c)
+  let mid = "mid ${n}"
+  n += step(at, 2, mid)
+  let more = [mid, big.e]
+  n += step(at, 3, held[0])
+  n += take(big)
+  n += step(at, 4, more[1])
+  let late = "late ${n}"
+  n += step(at, 5, late)
+  n += step(at, 6, mid)
+  n + held.len() + more.len() + late.len()
+}
+
+fn main(os: Os) {
+  for at in 0..8 {
+    match task.isolate(fn() -> Int ! () { run(at) }) {
+      Ok(v) => os.stdio.println("${at}: ok ${v}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("${at}: fault ${info.msg}")
+      Err(_) => os.stdio.println("${at}: failed")
+    }
+  }
+}

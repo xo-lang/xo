@@ -50,6 +50,12 @@ struct Rc {
   fidx: Map[Str, Int] = {}
   borrowed: List[List[Bool]] = []
   fi: Int = -1
+  // chain_pads runs (XO_PASSES=-chain_pads turns it off)
+  chain: Bool = true
+  // each function's `var` parameter indexes, by name, and type word
+  // counts (chain_pads)
+  vparams: Map[Str, List[Int]] = {}
+  nwords: Map[Int, Int] = {}
   // the borrowed projections of function fi and their owners (decision
   // 0186, borrow.xo)
   bproj: Map[Int, Leaf] = {}
@@ -725,6 +731,9 @@ fn (var b: Builder) rc_prepare() -> Rc {
   var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
+    if !f.var_params.is_empty() {
+      r.vparams[f.name] = f.var_params
+    }
   }
   let n = b.m.funcs.len()
   for fi in 0..n {
@@ -734,6 +743,7 @@ fn (var b: Builder) rc_prepare() -> Rc {
     b.m.funcs[fi] = f
   }
   r.infer_borrows(b.m.funcs)
+  r.chain = !b.m.passes_off.contains("chain_pads")
   r
 }
 
@@ -901,6 +911,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.group_releases(f)
   r.sink_landings(f)
   prune_landings(f)
+  if r.chain {
+    r.chain_pads(f)
+  }
   renumber(f)
   f.borrowed = r.borrowed[fi]
 }
