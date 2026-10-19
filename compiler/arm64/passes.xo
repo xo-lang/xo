@@ -17,7 +17,7 @@ pub fn passes() -> List[Str] {
     "lsr", "ranges", "inplace_elems",
     // per function: MIR
     "mir_dce", "thread_const", "thread_cset", "thread", "jump_tables", "live_dce",
-    "select_compares", "hoist_consts", "hoist_invariants", "reuse_flags", "place_latches", "mark_tails",
+    "select_compares", "hoist_consts", "hoist_invariants", "reuse_loads", "reuse_flags", "place_latches", "mark_tails",
     "arg_slots", "shrink_split", "cluster_mem", "x86_merge_blocks", "x86_mul_pair", "x86_fold_loads", "x86_carry_fuse",
   ]
 }

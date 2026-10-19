@@ -1,0 +1,99 @@
+// Redundant loads (2026-10-19): a block's later load of the same word as
+// an earlier one (the same base register, offset, and width, the
+// template's text equal but for its definition) with nothing between
+// them that may write memory or redefine the base or the earlier value
+// becomes a register move from that value, which coalescing usually
+// removes. The amd64 backend loaded twice LLVM's words a request on the
+// plain HTTP server (bench/results/amd64-native-vs-llvm-2026-10-19.md,
+// the gap by cause); both native backends run it on the arm64 MIR,
+// before amd64's retarget.
+
+/// The opcodes of a template line that neither write memory nor have an
+/// effect beyond their definitions (reuse_loads: anything else ends every
+/// reuse).
+fn pure_op(op: Str) -> Bool {
+  op is "ldr" | "ldrb" | "ldrh" | "ldrsw" | "ldrsb" | "ldrsh" | "ldur" | "ldp" | "add" | "adds" | "sub" | "subs" | "mov" | "movz" | "movk" | "movn" | "and" | "ands" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "ror" | "mul" | "madd" | "msub" | "umulh" | "smulh" | "umull" | "smull" | "umaddl" | "smaddl" | "cmp" | "cmn" | "tst" | "csel" | "cset" | "csetm" | "csinc" | "csinv" | "csneg" | "cneg" | "neg" | "negs" | "mvn" | "ubfx" | "sbfx" | "ubfiz" | "sbfiz" | "bfi" | "bfxil" | "sxtw" | "sxth" | "sxtb" | "uxtw" | "uxth" | "uxtb" | "adc" | "adcs" | "sbc" | "sbcs" | "bic" | "orn" | "eon" | "clz" | "rev" | "rbit" | "extr" | "udiv" | "sdiv" | "fmov" | "fadd" | "fsub" | "fmul" | "fdiv" | "fneg" | "fabs" | "fsqrt" | "fcmp" | "fcsel" | "scvtf" | "ucvtf" | "fcvtzs" | "fcvtzu" | "fcvt"
+}
+
+/// Whether inst may write memory or synchronize (reuse_loads forgets
+/// every load past it).
+fn mir_may_write(inst: Inst) -> Bool {
+  if inst.kind == K_PMOVE {
+    return false
+  }
+  if inst.kind != K_PLAIN || inst.x86 {
+    return true
+  }
+  for l in inst.text.split("\n") {
+    let sp = l.find(" ") ?? l.len()
+    if !pure_op(l[0..sp]) {
+      return true
+    }
+  }
+  false
+}
+
+/// The reuse key of a single line load `ldr $d0, [$u0, #off]` (or its
+/// w and b forms): the text with its definition left out and its base
+/// the register's number; "" for anything else.
+fn load_key(inst: Inst) -> Str {
+  if inst.kind != K_PLAIN || inst.x86 || inst.has_fault || inst.defs.len() != 1 || inst.us.len() != 1 || inst.text.contains("\n") {
+    return ""
+  }
+  let t = inst.text
+  if !(t.starts_with("ldr ") || t.starts_with("ldrb ") || t.starts_with("ldrh ") || t.starts_with("ldrsw ")) {
+    return ""
+  }
+  let c = t.find(", [$u0") ?? -1
+  if c < 0 || !t.ends_with("]") {
+    return ""
+  }
+  let op = t[0..(t.find(" ") ?? 0)]
+  let dst = t[op.len() + 1..c]
+  // the definition's width form ($d0, $wd0) is part of the key
+  "${op} ${dst} [v${inst.us[0]}${t[c + 6..t.len()]}"
+}
+
+/// reuse_loads over every block (redundant loads, above).
+fn (var g: G) reuse_loads() {
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    // a key -> the value that holds it; a value -> the keys it holds or
+    // is the base of
+    var avail: Map[Str, Int] = {}
+    var dep: Map[Int, List[Str]] = {}
+    for k in 0..ins.len() {
+      let inst = ins[k]
+      let key = load_key(inst)
+      if !key.is_empty() {
+        if let Some(v) = avail.get(key) {
+          if v != inst.defs[0] {
+            ins[k] = Inst{kind: K_PMOVE, defs: [inst.defs[0]], srcs: [rsrc(v)], us: [v], line: inst.line, inl: inst.inl}
+          }
+        }
+      }
+      if mir_may_write(inst) {
+        avail = {}
+        dep = {}
+      }
+      // a definition ends what it held and what it was the base of
+      for d in ins[k].defs {
+        for kk in dep.get(d) ?? [] {
+          avail.remove(kk)
+        }
+        dep.remove(d)
+      }
+      if !key.is_empty() && !avail.contains(key) && inst.defs[0] != inst.us[0] {
+        let v = inst.defs[0]
+        avail[key] = v
+        var l1 = dep.get(v) ?? []
+        l1.push(key)
+        dep[v] = l1
+        var l2 = dep.get(inst.us[0]) ?? []
+        l2.push(key)
+        dep[inst.us[0]] = l2
+      }
+    }
+    g.blocks[b].insts = ins
+  }
+}

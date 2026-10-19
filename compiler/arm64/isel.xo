@@ -54,6 +54,9 @@ fn (var g: G) function(fi: Int) {
   if g.on("hoist_invariants") {
     g.hoist_invariants()
   }
+  if g.on("reuse_loads") {
+    g.reuse_loads()
+  }
   if g.x86 {
     // x86_64 (decision 0254): each branch keeps its compare (no reused
     // flags); the templates become x86
