@@ -73,6 +73,10 @@ fn fp_scratch(k: Int) -> Int {
 ///	[save_base, ...)          callee saved registers
 ///	[mem_off, ...)            memory of by reference arguments (byref.xo)
 ///	[rec, rec+16)             the frame record (x29, x30); x29 = sp + rec
+///
+/// A spilled value may live in a stack word instead of a spill slot
+/// (regalloc.xo SLOT_IN, SLOT_OUT, the pass arg_slots): a word of the
+/// calls' stack arguments, or one of this function's own past size.
 struct Frame {
   out_args: Int = 0
   out_off: Int = 0
@@ -124,7 +128,7 @@ fn (g: G) vloc(v: Int) -> (MLoc, Bool) {
     // Go's zero mloc: register 0
     return (MLoc{reg: 0}, false)
   }
-  (MLoc{reg: -1, base: "sp", off: g.fr.spill_base + 8 * l.slot}, true)
+  (MLoc{reg: -1, base: "sp", off: slot_off(g.fr, l.slot)}, true)
 }
 
 fn (var g: G) emit() {

@@ -100,7 +100,7 @@ fn (g: G) dv_op(r: Int) -> List[Int] {
     return [0x90] + uleb_bytes(64 + l.reg - FP_BASE) // DW_OP_regx: v0 to v31
   }
   if l.slot >= 0 && g.base == 0 && !g.fr.leaf {
-    return [0x8f] + sleb_bytes(g.fr.spill_base + 8 * l.slot) // DW_OP_breg31: sp
+    return [0x8f] + sleb_bytes(slot_off(g.fr, l.slot)) // DW_OP_breg31: sp
   }
   []
 }

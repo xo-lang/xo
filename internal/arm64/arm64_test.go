@@ -383,7 +383,7 @@ func TestGoldenRunPoison(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
-	names := []string{"byref_home_loop", "byref_held", "byref_struct", "byref_enum", "var_alias", "value_semantics", "structs", "closures", "maps", "conc_scopes", "fault_unwind", "json_text", "tls_nistec", "http_server"}
+	names := []string{"byref_home_loop", "byref_held", "byref_struct", "byref_enum", "var_alias", "value_semantics", "structs", "closures", "maps", "conc_scopes", "fault_unwind", "json_text", "tls_nistec", "http_server", "arg_slots"}
 	for _, name := range names {
 		dir := filepath.Join("..", "llvm", "testdata", "golden", name)
 		if _, err := os.Stat(dir); err != nil {
@@ -421,7 +421,7 @@ func TestGoldenRunSpill(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
-	names := []string{"cpu_prims", "tls_nistec", "crypto_prims", "overflow_add", "neg_overflow", "fault_unwind", "conc_scopes", "json_text", "maps", "closures"}
+	names := []string{"cpu_prims", "tls_nistec", "crypto_prims", "overflow_add", "neg_overflow", "fault_unwind", "conc_scopes", "json_text", "maps", "closures", "arg_slots", "chain_pads"}
 	for _, regs := range []string{"2", "4"} {
 		for _, name := range names {
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)

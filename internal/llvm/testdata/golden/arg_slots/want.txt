@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+0: fault check 0 one 0two
+1: fault check 1 twoyone 11
+2: fault check 2 twoy904981one 2y
+3: ok 2775606
+--- stderr

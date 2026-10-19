@@ -399,9 +399,24 @@ fn (var g: G) regalloc() {
     fixed.push([])
   }
   var pairs: List[Pair] = []
+  // stack words a register is copied to or from (spill slot hints, the
+  // pass arg_slots): a call's stack arguments and result words past the
+  // registers (SLOT_OUT + j), this function's own (SLOT_IN + k); and the
+  // positions where each call lets its callee write the words it takes
+  var whint: List[List[Int]] = []
+  var wclob: List[List[Int]] = []
+  let argslots = pass_on(g.m, "arg_slots") && !g.x86
+  if argslots {
+    for _ in 0..n {
+      whint.push([])
+    }
+  }
   for b in g.order {
     let wt = pow8(imin(g.blocks[b].depth, 6))
-    for inst in g.blocks[b].insts {
+    for (ik, inst) in g.blocks[b].insts.indexed() {
+      if argslots {
+        g.word_hints(inst, g.blocks[b].start + 4 * ik, whint, wclob)
+      }
       if inst.kind == K_PMOVE && !inst.nocoal {
         for (k, d) in inst.defs.indexed() {
           let a = inst.srcs[k]
@@ -504,6 +519,19 @@ fn (var g: G) regalloc() {
     }
   }
 
+  // each group's stack word hints, its members' together
+  var ghint: List[List[Int]] = []
+  if argslots {
+    for _ in 0..n {
+      ghint.push([])
+    }
+    for v in 1..n {
+      for h in whint[v] {
+        push_int(ghint, find_leader(leader, v), h)
+      }
+    }
+  }
+
   // allocation: greedy first fit in order of weight per length
   var order: List[Int] = []
   for v in 1..n {
@@ -579,6 +607,18 @@ fn (var g: G) regalloc() {
     g.slots = 0
     // the ranges each spill slot holds
     var slot_occ: List[List[Rng]] = []
+    // the ranges each stack word holds (wcode: its slot code): a call's
+    // words from the point its callee may write them
+    var wcode: List[Int] = []
+    var wocc: List[List[Rng]] = []
+    for (j, ps) in wclob.indexed() {
+      wcode.push(SLOT_OUT + j)
+      var rs: List[Rng] = []
+      for c in ps {
+        rs.push(Rng{s: c, e: c})
+      }
+      wocc.push(merge_ranges(rs))
+    }
     for v in by_prio {
       let fp = g.fp[v]
       // one allocation per register (concatenating made three)
@@ -627,6 +667,31 @@ fn (var g: G) regalloc() {
         }
         chosen = r
         break
+      }
+      if chosen < 0 && argslots && g.base == 0 && !fp {
+        // the stack word the value is copied to or from, when no value
+        // live at the same time holds it and no call in its range lets
+        // a callee write it: the copy goes (src and destination equal)
+        var w = -1
+        for h in ghint[v] {
+          var i = 0
+          while i < wcode.len() && wcode[i] != h {
+            i += 1
+          }
+          if i == wcode.len() {
+            wcode.push(h)
+            wocc.push([])
+          }
+          if !overlaps_sorted(wocc[i], ranges[v]) {
+            w = i
+            break
+          }
+        }
+        if w >= 0 {
+          insert_ranges(wocc, w, ranges[v])
+          g.loc[v] = Loc{reg: -1, slot: wcode[w]}
+          continue
+        }
       }
       if chosen < 0 {
         // a spill slot no value live at the same time holds (first fit,
@@ -931,4 +996,69 @@ fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
 
 fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
   lists[i].push(x)
+}
+
+/// Spill slot codes of stack words: SLOT_OUT + j is word j of the calls'
+/// stack argument area ([sp, #8j]), SLOT_IN + k word k of this
+/// function's own, in its caller's frame ([sp, #size + 8k]; read once at
+/// entry, written at the return). Below SLOT_IN: a spill slot.
+const SLOT_IN = 1 << 24
+const SLOT_OUT = 2 << 24
+
+/// The stack words inst copies registers to or from (word_hints): a
+/// call's stack arguments and results past the registers, the entry's
+/// stack parameters, the return's stack results; and for a call (at its
+/// position), the clobber point of each word it gives its callee.
+fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob: List[List[Int]]) {
+  if inst.kind == K_CALL && !inst.tail {
+    var nw = 0
+    for (k, l) in g.call_locs(inst.srcs, inst.vfix).indexed() {
+      if l.reg < 0 {
+        nw = imax(nw, l.slot + 1)
+        let a = inst.srcs[k]
+        if a.kind == S_REG && a.v != 0 {
+          push_int(whint, a.v, SLOT_OUT + l.slot)
+        }
+      }
+    }
+    for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
+      if l.reg < 0 {
+        nw = imax(nw, l.slot + 1)
+        if inst.defs[k] != 0 {
+          push_int(whint, inst.defs[k], SLOT_OUT + l.slot)
+        }
+      }
+    }
+    while wclob.len() < nw {
+      wclob.push([])
+    }
+    for j in 0..nw {
+      wclob[j].push(at + 1)
+    }
+  } else if inst.kind == K_ENTRY {
+    for (k, l) in g.param_locs(regs(inst.defs)).indexed() {
+      if l.reg < 0 && inst.defs[k] != 0 {
+        push_int(whint, inst.defs[k], SLOT_IN + l.slot)
+      }
+    }
+  } else if inst.kind == K_RET {
+    for (k, l) in g.abi_locs(inst.srcs).indexed() {
+      let a = inst.srcs[k]
+      if l.reg < 0 && a.kind == S_REG && a.v != 0 {
+        push_int(whint, a.v, SLOT_IN + l.slot)
+      }
+    }
+  }
+}
+
+/// The sp offset of spill slot code s in frame fr (a spill slot, a stack
+/// word of the calls, or one of this function's own).
+fn slot_off(fr: Frame, s: Int) -> Int {
+  if s >= SLOT_OUT {
+    return 8 * (s - SLOT_OUT)
+  }
+  if s >= SLOT_IN {
+    return fr.size + 8 * (s - SLOT_IN)
+  }
+  fr.spill_base + 8 * s
 }

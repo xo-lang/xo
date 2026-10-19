@@ -56,6 +56,19 @@ leave the 32,760 byte reach of a scaled `ldr`/`str` offset from sp.
   in `ssa.dominators` (map lookups); not frame related, recorded as the
   next speedup for huge functions.
 
+- Addendum (2026-10-19, pass arg_slots, compiler/arm64 regalloc.xo): a
+  spilled value copied to a stack word (a call's stack argument or
+  result past the registers, or this function's own stack parameter or
+  result) takes that word as its spill slot when no value live at the
+  same time holds it and no call in its range gives the word to its
+  callee (each call's words are clobbered at its position: a callee may
+  write the stack words it takes, its arguments as well as its results,
+  as AAPCS64 allows). The copy then goes, src and destination equal.
+  This function's own words are free once the entry has read them. Not
+  for x86_64, Float values, or far frames. xo's `__text` 32.24 to 31.52
+  MB (-2.21%), the HTTP server's assembly 3.7% fewer lines; golden
+  arg_slots (in the spill and poison runs); `XO_PASSES=-arg_slots`.
+
 ## Alternatives
 
 - **A second base register set once** (x28 = sp + 28 KiB): doubles the

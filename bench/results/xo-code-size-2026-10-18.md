@@ -335,3 +335,19 @@ Docker, instructions per request): plain arm64 25,777 to 25,603
 the next, within the scenario's run to run spread (llvm tls varied
 55,410 to 55,885 between runs of compilers that differ only in this
 change).
+
+## Spill slots in stack words (2026-10-19, pass arg_slots)
+
+Xo lang 4 counted 2,576 sp to sp word copies into return areas and
+2,338 into stack arguments in the HTTP server (about 2.6% of its
+instructions). Tagging each stack destination move of a call or return
+in the Linux arm64 assembly of bench/perf/http/xo by its source: 7,042
+call and 6,013 return moves from a spill slot, 3,241 and 3,479 from a
+register, 339 constants, none from a memory home. The register
+allocator now gives such a value the stack word itself as its spill
+slot (decision 0146 addendum). The HTTP server's assembly 610,039 to
+587,728 lines (-3.7%); xo `__text` 32,238,276 to 31,524,628 bytes
+(-2.21%). HTTP callgrind (MODE=short, instructions per request): plain
+arm64 25,687 to 25,649 (-0.15%), tls arm64 43,826 to 43,740 (within its
+spread); llvm unchanged by construction.
+
