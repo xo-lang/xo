@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v6"
+const RC_CACHE_VERSION = "xo rc cache v7"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -190,15 +190,6 @@ fn all_ops() -> List[Op] {
   [Op.Param, Op.Const, Op.Add, Op.Sub, Op.Mul, Op.Div, Op.Rem, Op.Neg, Op.And, Op.Or, Op.Xor, Op.Not, Op.Shl, Op.Shr, Op.Eq, Op.Ne, Op.Lt, Op.Le, Op.Gt, Op.Ge, Op.IntToFloat, Op.FloatToInt, Op.IntConv, Op.Struct, Op.Tuple, Op.Variant, Op.Field, Op.SetField, Op.Tag, Op.Payload, Op.Cap, Op.Undef, Op.Closure, Op.Capture, Op.CallValue, Op.Box, Op.Unbox, Op.FuncAddr, Op.Rebind, Op.Call, Op.Fault, Op.Retain, Op.Release, Op.Drop, Op.Reuse, Op.Share, Op.Jump, Op.Branch, Op.Return, Op.Unreachable]
 }
 
-fn put(var b: BytesBuilder, d: Bytes) {
-  b.write_str("${d.len()}:")
-  b.write(d)
-}
-
-fn put_s(var b: BytesBuilder, s: Str) {
-  put(b, s.bytes())
-}
-
 /// The name of type t, "" for none; false when the name does not lead
 /// back to t (two types of one name): the function is not cached.
 fn type_name_of(m: Module, t: Int) -> (Str, Bool) {
@@ -209,138 +200,254 @@ fn type_name_of(m: Module, t: Int) -> (Str, Bool) {
   (n, (m.type_at.get(n) ?? -1) == t)
 }
 
-fn put_types(var b: BytesBuilder, m: Module, ts: List[Int]) -> Bool {
-  put_s(b, "${ts.len()}")
-  for t in ts {
-    let (n, ok) = type_name_of(m, t)
-    if !ok {
-      return false
-    }
-    put_s(b, n)
-  }
-  true
+/// The writer of an entry (binary since v7, 2026-10-18: the text form
+/// took 3.4 s of CPU to read back after an edit of xo, and the entries
+/// of one build were about 450 MB): unsigned and zigzag varints, strings
+/// by length, and the type and opcode names in one table each entry
+/// refers to by index (0 for no type).
+struct EntryW {
+  b: BytesBuilder
+  names: Map[Str, Int] = {}
+  table: List[Str] = []
+  ok: Bool = true
 }
 
-/// Function f (after its reference counting) as an entry; none when it
-/// holds what an entry cannot (a Float constant, a type whose name is
-/// not its own).
+fn (var e: EntryW) uv(n: Int) {
+  var x = n
+  while true {
+    let low = x & 127
+    x = x.shr_logical(7)
+    if x == 0 {
+      e.b.write_byte(UInt8(low))
+      return
+    }
+    e.b.write_byte(UInt8(low | 128))
+  }
+}
+
+fn (var e: EntryW) sv(n: Int) {
+  e.uv(n.wrapping_shl(1) ^ (n >> 63))
+}
+
+fn (var e: EntryW) bytes(d: Bytes) {
+  e.uv(d.len())
+  e.b.write(d)
+}
+
+fn (var e: EntryW) str(s: Str) {
+  e.bytes(s.bytes())
+}
+
+fn (var e: EntryW) bool(x: Bool) {
+  e.uv(if x { 1 } else { 0 })
+}
+
+fn (var e: EntryW) ints(xs: List[Int]) {
+  e.uv(xs.len())
+  for x in xs {
+    e.sv(x)
+  }
+}
+
+/// A name of the entry's table, by index.
+fn (var e: EntryW) name(s: Str) {
+  match e.names.get(s) {
+    Some(i) => e.uv(i)
+    None => {
+      let i = e.table.len()
+      e.names[s] = i
+      e.table.push(s)
+      e.uv(i)
+    }
+  }
+}
+
+/// Type t by name (0 for none, else 1 + its name's index); not ok for a
+/// type whose name is not its own.
+fn (var e: EntryW) ty(m: Module, t: Int) {
+  if t < 0 {
+    e.uv(0)
+    return
+  }
+  let (n, ok) = type_name_of(m, t)
+  if !ok {
+    e.ok = false
+  }
+  match e.names.get(n) {
+    Some(i) => e.uv(i + 1)
+    None => {
+      let i = e.table.len()
+      e.names[n] = i
+      e.table.push(n)
+      e.uv(i + 1)
+    }
+  }
+}
+
+fn (var e: EntryW) types(m: Module, ts: List[Int]) {
+  e.uv(ts.len())
+  for t in ts {
+    e.ty(m, t)
+  }
+}
+
+/// Function f as an entry; none when it holds what an entry cannot (a
+/// Float constant, a type whose name is not its own).
 fn encode_func(m: Module, f: Func) -> Option[Bytes] {
-  var b = BytesBuilder.new()
-  put_s(b, RC_CACHE_VERSION)
-  put_s(b, f.name)
-  if !put_types(b, m, f.results) {
-    return None
-  }
-  put_s(b, ints_line(f.var_params))
-  put_s(b, "${f.indirect} ${f.entry} ${f.catches} ${f.unwind_exit}")
-  if !put_types(b, m, f.captures) {
-    return None
-  }
-  put_s(b, f.export)
-  put_s(b, f.file)
+  var e = EntryW{b: BytesBuilder.new()}
+  e.str(f.name)
+  e.types(m, f.results)
+  e.ints(f.var_params)
+  e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }))
+  e.sv(f.unwind_exit)
+  e.types(m, f.captures)
+  e.str(f.export)
+  e.str(f.file)
   var lr: List[Int] = []
   for (k, _) in f.land_rest {
     lr.push(k)
   }
-  put_s(b, ints_line(lr))
+  e.ints(lr.sort())
   var mv: List[Int] = []
   for (k, _) in f.moved {
     mv.push(k)
   }
-  put_s(b, ints_line(mv.sort()))
-  put_s(b, bools_text(f.borrowed))
-  put_s(b, f.skip)
-  put_s(b, "${f.blocks.len()}")
+  e.ints(mv.sort())
+  e.uv(f.borrowed.len())
+  for x in f.borrowed {
+    e.bool(x)
+  }
+  e.str(f.skip)
+  e.uv(f.blocks.len())
   for bl in f.blocks {
-    put_s(b, ints_line(bl.params))
-    put_s(b, ints_line(bl.instrs))
-    put_s(b, ints_line(bl.preds))
+    e.ints(bl.params)
+    e.ints(bl.instrs)
+    e.ints(bl.preds)
   }
-  put_s(b, "${f.values.len()}")
+  e.uv(f.values.len())
   for x in f.values {
-    put_s(b, op_name(x.op))
-    let (tn, ok) = type_name_of(m, x.ty)
-    if !ok {
-      return None
-    }
-    put_s(b, if x.ty < 0 { "-" } else { "t${tn}" })
-    put_s(b, ints_line(x.args))
+    e.name(op_name(x.op))
+    e.ty(m, x.ty)
+    e.ints(x.args)
     match x.aux {
-      None => put_s(b, "n")
-      I(n) => put_s(b, "i${n}")
-      F(_) => return None
-      B(v) => put_s(b, if v { "b1" } else { "b0" })
-      S(s) => put_s(b, "s${s}")
-      Bs(v) => {
-        put_s(b, "y")
-        put(b, v)
+      None => e.uv(0)
+      I(n) => {
+        e.uv(1)
+        e.sv(n)
       }
-      P(tag, field) => put_s(b, "p${tag} ${field}")
+      F(_) => return None
+      B(v) => e.uv(if v { 3 } else { 2 })
+      S(s) => {
+        e.uv(4)
+        e.str(s)
+      }
+      Bs(v) => {
+        e.uv(5)
+        e.bytes(v)
+      }
+      P(tag, field) => {
+        e.uv(6)
+        e.sv(tag)
+        e.sv(field)
+      }
     }
-    put_s(b, "${x.block} ${x.pad} ${x.line} ${x.inl}")
-    put_s(b, ints_line(x.succs))
-    put_s(b, x.pos)
+    e.sv(x.block)
+    e.sv(x.pad)
+    e.sv(x.line)
+    e.sv(x.inl)
+    e.ints(x.succs)
+    e.str(x.pos)
   }
-  put_s(b, "${f.edges.len()}")
-  for e in f.edges {
-    put_s(b, "${e.from} ${e.to}")
-    put_s(b, ints_line(e.args))
+  e.uv(f.edges.len())
+  for ed in f.edges {
+    e.sv(ed.from)
+    e.sv(ed.to)
+    e.ints(ed.args)
   }
-  put_s(b, "${f.dvars.len()}")
+  e.uv(f.dvars.len())
   for d in f.dvars {
-    put_s(b, d.name)
-    let (tn, ok) = type_name_of(m, d.ty)
-    if !ok {
-      return None
-    }
-    put_s(b, if d.ty < 0 { "-" } else { "t${tn}" })
-    put_s(b, "${d.line} ${d.param} ${d.inl}")
+    e.str(d.name)
+    e.ty(m, d.ty)
+    e.sv(d.line)
+    e.bool(d.param)
+    e.sv(d.inl)
   }
-  put_s(b, "${f.dbinds.len()}")
+  e.uv(f.dbinds.len())
   for d in f.dbinds {
-    put_s(b, "${d.dvar} ${d.value} ${d.line}")
+    e.sv(d.dvar)
+    e.sv(d.value)
+    e.sv(d.line)
   }
   // the inline sites (after the arm64 inliner, its cache: stage D 2a)
-  put_s(b, "${f.inl_sites.len()}")
+  e.uv(f.inl_sites.len())
   for st in f.inl_sites {
-    put_s(b, st.callee)
-    put_s(b, st.file)
-    put_s(b, "${st.call_line} ${st.parent}")
+    e.str(st.callee)
+    e.str(st.file)
+    e.sv(st.call_line)
+    e.sv(st.parent)
   }
-  Some(b.freeze())
+  if !e.ok {
+    return None
+  }
+  let body = e.b.freeze()
+  var h = EntryW{b: BytesBuilder.with_capacity(body.len() + 64 + 16 * e.table.len())}
+  h.str(RC_CACHE_VERSION)
+  h.uv(e.table.len())
+  for s in e.table {
+    h.str(s)
+  }
+  h.b.write(body)
+  Some(h.b.freeze())
 }
 
-/// A reader of length prefixed fields; ok turns false on a malformed
-/// entry.
-struct Fields {
+/// The reader of an entry; ok turns false on a malformed one.
+struct EntryR {
   d: Bytes
   at: Int = 0
   ok: Bool = true
+  /// the entry's names, as types of this module (-1: not one) and as
+  /// opcodes
+  tys: List[Int] = []
+  ops: List[Option[Op]] = []
 }
 
-fn (var r: Fields) raw() -> Bytes {
-  var n = 0
-  var i = r.at
-  while i < r.d.len() && r.d[i] != 58 {
-    let c = Int(r.d[i])
-    if c < 48 || c > 57 {
+fn (var r: EntryR) uv() -> Int {
+  var x = 0
+  var sh = 0
+  while true {
+    if r.at >= r.d.len() || sh > 63 {
       r.ok = false
-      return b""
+      return 0
     }
-    n = n * 10 + c - 48
-    i += 1
+    let c = Int(r.d[r.at])
+    r.at += 1
+    x = x | (c & 127).wrapping_shl(sh)
+    if c < 128 {
+      return x
+    }
+    sh += 7
   }
-  if i >= r.d.len() || i + 1 + n > r.d.len() {
+  x
+}
+
+fn (var r: EntryR) sv() -> Int {
+  let z = r.uv()
+  z.shr_logical(1) ^ (0 - (z & 1))
+}
+
+fn (var r: EntryR) bytes() -> Bytes {
+  let n = r.uv()
+  if !r.ok || n < 0 || r.at + n > r.d.len() {
     r.ok = false
     return b""
   }
-  let out = r.d[i + 1..i + 1 + n]
-  r.at = i + 1 + n
+  let out = r.d[r.at..r.at + n]
+  r.at += n
   out
 }
 
-fn (var r: Fields) str() -> Str {
-  match r.raw().to_str() {
+fn (var r: EntryR) str() -> Str {
+  match r.bytes().to_str() {
     Some(s) => s
     None => {
       r.ok = false
@@ -349,43 +456,46 @@ fn (var r: Fields) str() -> Str {
   }
 }
 
-fn (var r: Fields) int() -> Int {
-  match Int.parse(r.str()) {
-    Some(n) => n
-    None => {
-      r.ok = false
-      0
-    }
-  }
+fn (var r: EntryR) bool() -> Bool {
+  r.uv() == 1
 }
 
-fn (var r: Fields) ints() -> List[Int] {
-  let s = r.str()
+fn (var r: EntryR) ints() -> List[Int] {
+  let n = r.uv()
   var out: List[Int] = []
-  if s.is_empty() {
+  if !r.ok || n > r.d.len() {
+    r.ok = false
     return out
   }
-  for p in s.split(" ") {
-    match Int.parse(p) {
-      Some(n) => out.push(n)
-      None => r.ok = false
-    }
+  for _ in 0..n {
+    out.push(r.sv())
   }
   out
 }
 
-fn (var r: Fields) types(m: Module) -> List[Int] {
-  let n = r.int()
+/// A type by its table index (0: none); not ok for one this module does
+/// not have.
+fn (var r: EntryR) ty() -> Int {
+  let i = r.uv()
+  if i == 0 {
+    return -1
+  }
+  if i > r.tys.len() || r.tys[i - 1] < 0 {
+    r.ok = false
+    return -1
+  }
+  r.tys[i - 1]
+}
+
+fn (var r: EntryR) types() -> List[Int] {
+  let n = r.uv()
   var out: List[Int] = []
+  if !r.ok || n > r.d.len() {
+    r.ok = false
+    return out
+  }
   for _ in 0..n {
-    if !r.ok {
-      return out
-    }
-    let t = m.type_at.get(r.str()) ?? -1
-    if t < 0 {
-      r.ok = false
-    }
-    out.push(t)
+    out.push(r.ty())
   }
   out
 }
@@ -393,22 +503,28 @@ fn (var r: Fields) types(m: Module) -> List[Int] {
 /// The function of an entry with this module's type ids; none for a
 /// malformed entry, another version, or a type or opcode not known.
 fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
-  var r = Fields{d: d}
+  var r = EntryR{d: d}
   if r.str() != RC_CACHE_VERSION {
     return None
   }
-  var f = Func{name: r.str()}
-  f.results = r.types(m)
-  f.var_params = r.ints()
-  let flags = r.str().split(" ")
-  if flags.len() != 4 {
+  let nt = r.uv()
+  if !r.ok || nt > d.len() {
     return None
   }
-  f.indirect = flags[0] == "true"
-  f.entry = flags[1] == "true"
-  f.catches = flags[2] == "true"
-  f.unwind_exit = Int.parse(flags[3]) ?? -1
-  f.captures = r.types(m)
+  for _ in 0..nt {
+    let s = r.str()
+    r.tys.push(m.type_at.get(s) ?? -1)
+    r.ops.push(ops.get(s))
+  }
+  var f = Func{name: r.str()}
+  f.results = r.types()
+  f.var_params = r.ints()
+  let fl = r.uv()
+  f.indirect = fl & 1 != 0
+  f.entry = fl & 2 != 0
+  f.catches = fl & 4 != 0
+  f.unwind_exit = r.sv()
+  f.captures = r.types()
   f.export = r.str()
   f.file = r.str()
   for k in r.ints() {
@@ -417,124 +533,101 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
   for k in r.ints() {
     f.moved[k] = true
   }
-  let bs = r.str()
-  if bs.len() < 2 {
+  let nbw = r.uv()
+  if !r.ok || nbw > d.len() {
     return None
   }
-  for c in bs[1..bs.len() - 1].bytes() {
-    f.borrowed.push(c == 49)
+  for _ in 0..nbw {
+    f.borrowed.push(r.bool())
   }
   f.skip = r.str()
-  let nb = r.int()
+  let nb = r.uv()
+  if !r.ok || nb > d.len() {
+    return None
+  }
   for _ in 0..nb {
-    if !r.ok {
-      return None
-    }
     let ps = r.ints()
     let ins = r.ints()
     let pr = r.ints()
     f.blocks.push(Block{params: ps, instrs: ins, preds: pr})
   }
-  let nv = r.int()
+  let nv = r.uv()
+  if !r.ok || nv > d.len() {
+    return None
+  }
   for _ in 0..nv {
-    if !r.ok {
+    let oi = r.uv()
+    if !r.ok || oi >= r.ops.len() {
       return None
     }
-    let op = match ops.get(r.str()) {
+    let op = match r.ops[oi] {
       Some(o) => o
       None => return None
     }
-    let tn = r.str()
-    var ty = -1
-    if tn != "-" {
-      ty = m.type_at.get(tn[1..tn.len()]) ?? -1
-      if ty < 0 {
-        return None
-      }
-    }
+    let ty = r.ty()
     let args = r.ints()
-    let a = r.str()
-    var aux = Aux.None
-    if a.starts_with("i") {
-      aux = Aux.I(n: Int.parse(a[1..a.len()]) ?? 0)
-    } else if a == "b1" || a == "b0" {
-      aux = Aux.B(b: a == "b1")
-    } else if a.starts_with("s") {
-      aux = Aux.S(s: a[1..a.len()])
-    } else if a == "y" {
-      aux = Aux.Bs(b: r.raw())
-    } else if a.starts_with("p") {
-      let tf = a[1..a.len()].split(" ")
-      if tf.len() != 2 {
-        return None
+    let aux = match r.uv() {
+      0 => Aux.None
+      1 => Aux.I(n: r.sv())
+      2 => Aux.B(b: false)
+      3 => Aux.B(b: true)
+      4 => Aux.S(s: r.str())
+      5 => Aux.Bs(b: r.bytes())
+      6 => {
+        let tag = r.sv()
+        Aux.P(tag: tag, field: r.sv())
       }
-      aux = Aux.P(tag: Int.parse(tf[0]) ?? 0, field: Int.parse(tf[1]) ?? 0)
-    } else if a != "n" {
-      return None
+      _ => return None
     }
-    let bp = r.str().split(" ")
-    if bp.len() != 4 {
-      return None
-    }
+    let block = r.sv()
+    let pad = r.sv()
+    let line = r.sv()
+    let inl = r.sv()
     let succs = r.ints()
     let pos = r.str()
-    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: Int.parse(bp[0]) ?? -1, succs: succs, pos: pos, pad: Int.parse(bp[1]) ?? -1, line: Int.parse(bp[2]) ?? 0, inl: Int.parse(bp[3]) ?? -1})
+    if !r.ok {
+      return None
+    }
+    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: block, succs: succs, pos: pos, pad: pad, line: line, inl: inl})
   }
-  let ne = r.int()
+  let ne = r.uv()
+  if !r.ok || ne > d.len() {
+    return None
+  }
   for _ in 0..ne {
-    if !r.ok {
-      return None
-    }
-    let ft = r.str().split(" ")
-    if ft.len() != 2 {
-      return None
-    }
-    let args = r.ints()
-    f.edges.push(Edge{from: Int.parse(ft[0]) ?? -1, to: Int.parse(ft[1]) ?? -1, args: args})
+    let from = r.sv()
+    let to = r.sv()
+    f.edges.push(Edge{from: from, to: to, args: r.ints()})
   }
-  let ndv = r.int()
+  let ndv = r.uv()
+  if !r.ok || ndv > d.len() {
+    return None
+  }
   for _ in 0..ndv {
-    if !r.ok {
-      return None
-    }
     let name = r.str()
-    let tn = r.str()
-    var ty = -1
-    if tn != "-" {
-      ty = m.type_at.get(tn[1..tn.len()]) ?? -1
-      if ty < 0 {
-        return None
-      }
-    }
-    let lp = r.str().split(" ")
-    if lp.len() != 3 {
-      return None
-    }
-    f.dvars.push(DVar{name: name, ty: ty, line: Int.parse(lp[0]) ?? 0, param: lp[1] == "true", inl: Int.parse(lp[2]) ?? -1})
+    let ty = r.ty()
+    let line = r.sv()
+    let param = r.bool()
+    f.dvars.push(DVar{name: name, ty: ty, line: line, param: param, inl: r.sv()})
   }
-  let ndb = r.int()
+  let ndb = r.uv()
+  if !r.ok || ndb > d.len() {
+    return None
+  }
   for _ in 0..ndb {
-    if !r.ok {
-      return None
-    }
-    let vl = r.str().split(" ")
-    if vl.len() != 3 {
-      return None
-    }
-    f.dbinds.push(DBind{dvar: Int.parse(vl[0]) ?? -1, value: Int.parse(vl[1]) ?? -1, line: Int.parse(vl[2]) ?? 0})
+    let dv = r.sv()
+    let value = r.sv()
+    f.dbinds.push(DBind{dvar: dv, value: value, line: r.sv()})
   }
-  let nis = r.int()
+  let nis = r.uv()
+  if !r.ok || nis > d.len() {
+    return None
+  }
   for _ in 0..nis {
-    if !r.ok {
-      return None
-    }
     let callee = r.str()
     let file = r.str()
-    let cp = r.str().split(" ")
-    if cp.len() != 2 {
-      return None
-    }
-    f.inl_sites.push(InlSite{callee: callee, file: file, call_line: Int.parse(cp[0]) ?? 0, parent: Int.parse(cp[1]) ?? -1})
+    let cl = r.sv()
+    f.inl_sites.push(InlSite{callee: callee, file: file, call_line: cl, parent: r.sv()})
   }
   if !r.ok || r.at != d.len() {
     return None

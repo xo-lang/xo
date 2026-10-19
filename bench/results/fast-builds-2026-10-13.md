@@ -638,3 +638,24 @@ both edits; identity 392/392 on arm64 and amd64; goldens 195/195; the
 fixed point ok. Left after an edit: ssa 2.1 s, check 1.1 s, borrow
 inference 1.1 s, inline.apply 1.0 s, insert_rc.apply 0.5 s, verify 0.6
 s, assemble and link 0.9 s, emit 0.5 s, the keys 0.65 s.
+
+### Stage D part 2a.1: a binary codec (the Mac, 2026-10-18)
+
+The reference counting and inlining entries in a binary codec (rc cache
+v7, decision 0220 addendum stage D 2a.1). Steps as above (fe-g5.sh), on
+b97b65ee:
+
+| build | insert_rc.apply | inline.apply | wall | user CPU |
+|---|---|---|---|---|
+| cold | 7.51 s | 4.10 s | 32.38 s | 129.31 s |
+| warm | 0.38 s | 0.79 to 0.82 s | 8.97 to 9.11 s | 13.72 to 13.78 s |
+| constant edit | 0.38 s (0.50 in 2a) | 0.87 s (1.04) | 9.52 s (9.48) | 14.08 s (16.83) |
+| statement edit | 0.40 s | 0.92 s | 10.50 s | 15.97 s |
+| revert | 0.39 s | 0.85 s | 9.43 s | 14.12 s |
+
+The CPU drops by 2.7 s and the wall time does not move: the decoding
+ran on tasks beside the serial phases. Every cached binary the file of
+the cache-off build, verify clean after both edits, identity 394/394 on
+arm64 and amd64, goldens 196/196, the fixed point ok. Left after an
+edit (wall): ssa 2.1 s, check 1.2 s, insert_rc.plan 1.1 s, inline 1.4
+s, assemble and link 0.9 s, emit 0.6 s, fn_keys 0.4 s.

@@ -432,6 +432,17 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   build 9.8 s to 9.1 s; inlining after an edit 2.75 s to 1.6 s (9,520
   of 9,554 functions read); every cached binary the file the cache-off
   build writes, verify clean after both edits.
+- **2a.1, a binary codec for the entries** (implemented 2026-10-18,
+  compiler/ssa rccache.xo, rc cache v7): the reference counting and
+  inlining entries were text (one line per value, names and types
+  spelled out), and decoding them was the largest part of insert_rc.apply
+  and inline.apply after an edit. An entry is now the body as varints
+  (signed ones zigzag coded) after a header of the codec version and a
+  table of the names and types it uses, each written once; the reader
+  maps the table to the module's types and ops before the body. After a
+  one-constant edit of xo: insert_rc.apply 0.50 to 0.38 s, inline.apply
+  1.04 to 0.87 s, user CPU 16.8 to 14.1 s; the wall time stays 9.5 s
+  (the decoding ran on tasks beside other work).
 - **2b, no decoding of what nothing reads**: a function whose inlined
   result is read from the cache needs its reference counting result
   only as the body a later caller's miss copies; the decoding (0.5 s)
