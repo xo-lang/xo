@@ -145,6 +145,37 @@ fn (var g: Gen) op(v: Int) -> Str {
   vname(v)
 }
 
+/// Calls count helper h on value a: a big value (rc_by_ptr) by pointer,
+/// the memory that holds it when there is one (decision 0148's homes,
+/// decision 0147's unwritten memory), else the function's slot of its
+/// type after a store.
+fn (var g: Gen) rc_val_call(h: Str, a: Int) {
+  let t = g.vty(a)
+  if !g.rc_by_ptr(t) {
+    let ta = g.typed(a)
+    g.emit("call void ${h}(${ta})")
+    return
+  }
+  let m = g.lazy[a]
+  if m >= 0 {
+    g.emit("call void ${h}(ptr ${g.held.mems[m].ptr})")
+    return
+  }
+  if a < g.addr.len() && !g.addr[a].is_empty() {
+    g.emit("call void ${h}(ptr ${g.addr[a]})")
+    return
+  }
+  let lt = g.ll(t)
+  var p = g.rc_tmp.get(lt) ?? ""
+  if p.is_empty() {
+    p = g.alloca(lt)
+    g.rc_tmp[lt] = p
+  }
+  let ta = g.typed(a)
+  g.emit("store ${ta}, ptr ${p}")
+  g.emit("call void ${h}(ptr ${p})")
+}
+
 fn (var g: Gen) typed(v: Int) -> Str {
   let l = g.ll(g.f.values[v].ty)
   let o = g.op(v)
@@ -362,6 +393,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.npad = 0
   g.home = {}
   g.spare = {}
+  g.rc_tmp = {}
   g.held = Held{}
   g.has_held = false
   g.users_of = []
@@ -1138,27 +1170,21 @@ fn (var g: Gen) instr_body(v: Int) {
         g.cancel[r] = true
         return
       }
-      let h = g.rc_fn("dup", g.vty(a))
-      let ta = g.typed(a)
-      g.emit("call void ${h}(${ta})")
+      g.rc_val_call(g.rc_fn("dup", g.vty(a)), a)
     }
     Release => {
       let a = args[0]
       if g.cancel[v] {
         return
       }
-      let h = g.rc_fn("drop", g.vty(a))
-      let ta = g.typed(a)
-      g.emit("call void ${h}(${ta})")
+      g.rc_val_call(g.rc_fn("drop", g.vty(a)), a)
     }
     Share => {
       let a = args[0]
       if g.f.values[a].op == ssa.Op.Const {
         return // literals are immortal
       }
-      let h = g.rc_fn("share", g.vty(a))
-      let ta = g.typed(a)
-      g.emit("call void ${h}(${ta})")
+      g.rc_val_call(g.rc_fn("share", g.vty(a)), a)
     }
     Reuse => {
       let a = args[0]

@@ -144,6 +144,9 @@ pub struct Gen {
   /// 0145).
   home: Map[Str, Str] = {}
   spare: Map[Str, List[Str]] = {}
+  /// per LLVM type, the function's slot for a value of a big type given
+  /// to its count helper by pointer (rc_val_call)
+  rc_tmp: Map[Str, Str] = {}
   /// Per value: the memory nothing writes while the function runs that
   /// holds it (decision 0147), or "".
   addr: List[Str] = []
@@ -865,6 +868,26 @@ fn (var g: Gen) exports() {
   }
 }
 
+/// Whether the count helpers of t take a pointer to the value instead of
+/// the value: a struct, tuple, or enum of BY_REF_MIN bytes or more, whose
+/// helper reads only its counted fields where they are. By value, every
+/// release of a big struct copied all its words to the stack arguments
+/// first (xo built by LLVM: 11.15 MB of its 89.8, mostly xo.drop.Builder,
+/// .Gen, .Checker, .G; bench/results/xo-code-size-2026-10-18.md).
+fn (var g: Gen) rc_by_ptr(t: Int) -> Bool {
+  (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum) && g.size(t) >= BY_REF_MIN
+}
+
+/// The text calling helper h of t on the value at pointer p (loaded into
+/// tmp first when h takes the value).
+fn (var g: Gen) rc_at(h: Str, t: Int, p: Str, tmp: Str) -> Str {
+  if g.rc_by_ptr(t) {
+    return "  call void ${h}(ptr ${p})\n"
+  }
+  let lt = g.ll(t)
+  "  ${tmp} = load ${lt}, ptr ${p}\n  call void ${h}(${lt} ${tmp})\n"
+}
+
 fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
   let tname = g.m.types[t].name
   let name = "@${"xo.${kind}.${tname}".quote()}"
@@ -881,7 +904,12 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
       attr = "#4"
     }
   }
-  b.w("define internal void ${name}(${lt} %x) ${attr} {\n")
+  let by_ptr = g.rc_by_ptr(t)
+  if by_ptr {
+    b.w("define internal void ${name}(ptr %x) ${attr} {\n")
+  } else {
+    b.w("define internal void ${name}(${lt} %x) ${attr} {\n")
+  }
   match k {
     Str | List => {
       var obj = "%x"
@@ -991,19 +1019,31 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         if !g.heap(ft) {
           continue
         }
-        let fv = b.tmp()
-        b.w("  ${fv} = extractvalue ${lt} %x, ${i}\n")
         let hf = g.rc_fn(kind, ft)
         let fl = g.ll(ft)
+        if by_ptr {
+          // each field read where it is: the struct is never copied
+          let fp = b.tmp()
+          b.w("  ${fp} = getelementptr ${lt}, ptr %x, i32 0, i32 ${i}\n")
+          b.w(g.rc_at(hf, ft, fp, b.tmp()))
+          continue
+        }
+        let fv = b.tmp()
+        b.w("  ${fv} = extractvalue ${lt} %x, ${i}\n")
         b.w("  call void ${hf}(${fl} ${fv})\n")
       }
       b.w("  ret void\n")
     }
     Enum => {
-      let p = b.tmp()
-      b.w("  ${p} = alloca ${lt}\n  store ${lt} %x, ptr ${p}\n")
+      var p = "%x"
       let tag = b.tmp()
-      b.w("  ${tag} = extractvalue ${lt} %x, 0\n")
+      if by_ptr {
+        b.w("  ${tag} = load i64, ptr %x\n")
+      } else {
+        p = b.tmp()
+        b.w("  ${p} = alloca ${lt}\n  store ${lt} %x, ptr ${p}\n")
+        b.w("  ${tag} = extractvalue ${lt} %x, 0\n")
+      }
       var cases: List[Str] = []
       var bodies: List[Str] = []
       let nv = g.m.types[t].variants.len()
@@ -1026,13 +1066,9 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
             continue
           }
           let fp = b.tmp()
-          let fv = b.tmp()
-          let fl = g.ll(f.ty)
           bodies.push("  ${fp} = getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${fi}\n")
-          bodies.push("  ${fv} = load ${fl}, ptr ${fp}\n")
           let hf = g.rc_fn(kind, f.ty)
-          let fl2 = g.ll(f.ty)
-          bodies.push("  call void ${hf}(${fl2} ${fv})\n")
+          bodies.push(g.rc_at(hf, f.ty, fp, b.tmp()))
         }
         bodies.push("  br label %done\n")
       }
@@ -1170,8 +1206,7 @@ fn (var g: Gen) elem_fn(kind: Str, t: Int) -> Str {
   }
   g.emitted[name] = true
   let inner = g.rc_fn(kind, t)
-  let lt = g.ll(t)
-  g.helpers.push("define internal void ${name}(ptr %p) #1 {\n  %x = load ${lt}, ptr %p\n  call void ${inner}(${lt} %x)\n  ret void\n}\n\n")
+  g.helpers.push("define internal void ${name}(ptr %p) #1 {\n${g.rc_at(inner, t, "%p", "%x")}  ret void\n}\n\n")
   name
 }
 
@@ -1193,9 +1228,8 @@ fn (var g: Gen) box_drop_fn(t: Int) -> Str {
   b.push("define internal void ${name}(ptr %p) #1 {\n")
   if g.heap(et) {
     b.push("  %vp = getelementptr ${g.box_ll(t)}, ptr %p, i32 0, i32 1\n")
-    b.push("  %v = load ${g.ll(et)}, ptr %vp\n")
     let df = g.rc_fn("drop", et)
-    b.push("  call void ${df}(${g.ll(et)} %v)\n")
+    b.push(g.rc_at(df, et, "%vp", "%v"))
   }
   b.push("  %pi = ptrtoint ptr %p to i64\n  call void @xo_x_obj_rc_free(i64 %pi) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
@@ -1228,9 +1262,8 @@ fn (var g: Gen) env_drop_fn(fi: Int) -> Str {
       continue
     }
     b.push("  %p${i} = getelementptr ${el}, ptr %e, i32 0, i32 ${i + ENV_FIELDS}\n")
-    b.push("  %c${i} = load ${g.ll(c)}, ptr %p${i}\n")
     let df = g.rc_fn("drop", c)
-    b.push("  call void ${df}(${g.ll(c)} %c${i})\n")
+    b.push(g.rc_at(df, c, "%p${i}", "%c${i}"))
   }
   b.push("  %ei = ptrtoint ptr %e to i64\n  call void @xo_x_obj_rc_free(i64 %ei) #8\n  ret void\n}\n\n")
   g.helpers.push(b.join(""))
@@ -1253,9 +1286,8 @@ fn (var g: Gen) env_share_fn(fi: Int) -> Str {
       continue
     }
     b.push("  %p${i} = getelementptr ${el}, ptr %e, i32 0, i32 ${i + ENV_FIELDS}\n")
-    b.push("  %c${i} = load ${g.ll(c)}, ptr %p${i}\n")
     let sf = g.rc_fn("share", c)
-    b.push("  call void ${sf}(${g.ll(c)} %c${i})\n")
+    b.push(g.rc_at(sf, c, "%p${i}", "%c${i}"))
   }
   b.push("  ret void\n}\n\n")
   g.helpers.push(b.join(""))
@@ -1274,9 +1306,8 @@ fn (var g: Gen) box_share_fn(t: Int) -> Str {
   var b: List[Str] = []
   b.push("define internal void ${name}(ptr %p) #1 {\n")
   b.push("  %vp = getelementptr ${g.box_ll(t)}, ptr %p, i32 0, i32 1\n")
-  b.push("  %v = load ${g.ll(et)}, ptr %vp\n")
   let sf = g.rc_fn("share", et)
-  b.push("  call void ${sf}(${g.ll(et)} %v)\n")
+  b.push(g.rc_at(sf, et, "%vp", "%v"))
   b.push("  ret void\n}\n\n")
   g.helpers.push(b.join(""))
   name

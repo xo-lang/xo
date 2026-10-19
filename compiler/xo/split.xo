@@ -19,6 +19,8 @@ struct SplitConfig {
   single: Str = ""
   /// $XO_LLVM_OPT named the level (a test build is -O0 otherwise)
   opt_set: Bool = false
+  /// why the environment is wrong ("" when it is not)
+  err: Str = ""
 }
 
 /// LLVMSplitConfig from the environment.
@@ -44,6 +46,9 @@ fn split_config(os: Os) -> SplitConfig {
   if o is "O0" | "O1" | "O2" | "O3" {
     c.opt = "-${o}"
     c.opt_set = true
+  } else if !o.is_empty() {
+    // was ignored: an Os build ran at O2 (gotchas/llvm-opt-level-os-ignored.md)
+    c.err = "XO_LLVM_OPT=${o}: the level is O0, O1, O2, or O3"
   }
   c
 }

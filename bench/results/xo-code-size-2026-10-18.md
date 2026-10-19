@@ -391,3 +391,17 @@ command above (expected: most of the 11.15 MB); then count where
 inline_rt's loads and stores come from in its IR (`xo asm
 --backend=llvm` of compiler/xo, the function's landing pads).
 
+## LLVM: count helpers of big values by pointer (2026-10-19)
+
+The `xo.dup.T`, `xo.drop.T` and `xo.share.T` helpers of a struct, tuple
+or enum of 256 bytes or more (BY_REF_MIN) take a pointer and read each
+counted field where it is (compiler/llvm gen.xo rc_by_ptr, rc_at); a
+Release, Retain or Share passes the memory that holds the value (a
+`var` parameter's home, decision 0148, or decision 0147's unwritten
+memory), else the function's slot of the type after a store; a list
+update releases the old element where it is, and the element, box and
+environment callbacks pass their pointers on. xo built by LLVM (split
+12, no LTO, -O2, as above): `__text` 89.82 to 50.56 MB (-43.7%), the
+build 639 to 446 s. `XO_LLVM_OPT` other than O0 to O3 is now an error
+(gotcha llvm-opt-level-os-ignored).
+

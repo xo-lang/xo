@@ -647,6 +647,9 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       return Native{pc: c.parse_cache}
     }
     var split = split_config(os)
+    if !split.err.is_empty() {
+      fail(os, split.err)
+    }
     if release {
       split.opt = "-O2"
     } else if tests && !split.opt_set {

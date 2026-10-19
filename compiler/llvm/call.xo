@@ -156,10 +156,14 @@ fn (var g: Gen) call(v: Int) {
       let p = g.elem_ptr(et, l, a1)
       if g.heap(et) {
         let el = g.ll(et)
-        let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
         let h = g.rc_fn("drop", et)
-        let el2 = g.ll(et)
-        g.emit("call void ${h}(${el2} ${old})")
+        if g.rc_by_ptr(et) {
+          // the old element released where it is
+          g.emit("call void ${h}(ptr ${p})")
+        } else {
+          let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
+          g.emit("call void ${h}(${el} ${old})")
+        }
       }
       if g.kind(et) != ssa.Kind.Unit {
         let t2 = g.typed(args[2])
