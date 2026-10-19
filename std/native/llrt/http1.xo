@@ -964,10 +964,10 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   if chunked {
     clen = -1
   }
-  // the merged header, without the fields Go removes
-  // at most one entry a field: no growth (2.4 copies a request before)
-  var hn: List[Str] = List.with_capacity(nraw)
-  var hv: List[Str] = List.with_capacity(nraw)
+  // the merged header, without the fields Go removes, as Head.headers'
+  // name and value pairs (built here, not copied from two lists after);
+  // room for every field and Cache-Control: no growth
+  var headers: List[Str] = List.with_capacity(2 * nraw + 2)
   var pragma = -1
   var have_cc = false
   k = 0
@@ -981,23 +981,24 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     if chunked && (kk == K_CL || kk == K_TRAILER) {
       continue
     }
+    // e: the pair index of the name, -1 when new
     var e = -1
     var y = 0
-    while y < hn.len() {
-      if hn[y] == key {
+    while y < headers.len() {
+      if headers[y] == key {
         e = y
         break
       }
-      y += 1
+      y += 2
     }
     if kk == K_CL && e >= 0 {
       continue // deduplicated; its value as written first
     }
     if e >= 0 {
-      hv[e] = hv[e] + ", " + vals[k - 1]
+      headers[e + 1] = headers[e + 1] + ", " + vals[k - 1]
     } else {
-      hn.push(key)
-      hv.push(vals[k - 1])
+      headers.push(key)
+      headers.push(vals[k - 1])
     }
     if kk == K_PRAGMA && pragma < 0 {
       pragma = k - 1
@@ -1008,8 +1009,8 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   }
   // fixPragmaCacheControl: Pragma: no-cache without Cache-Control
   if pragma >= 0 && !have_cc && vals[pragma] == "no-cache" {
-    hn.push("Cache-Control")
-    hv.push("no-cache")
+    headers.push("Cache-Control")
+    headers.push("no-cache")
   }
   // req.Host: the URL's host, else the Host header
   let rhost = if url.host.is_empty() { host } else { url.host }
@@ -1078,14 +1079,6 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     expect100 = is11 && clen != 0
   } else if have_ev && !ev.is_empty() {
     expect_other = true
-  }
-  // name and value pairs: sized, so no growth at the fifth field
-  var headers: List[Str] = List.with_capacity(2 * hn.len())
-  var y = 0
-  while y < hn.len() {
-    headers.push(hn[y])
-    headers.push(hv[y])
-    y += 1
   }
   let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up}
   Parse{res: OK, used: used, head: head, status: 0, reason: ""}
