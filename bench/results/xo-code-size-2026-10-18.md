@@ -173,8 +173,8 @@ implemented here. The next experiment for each:
 
 The LLVM comparison (bytes per IR op against LLVM's build of the same
 module) is still to run: a full LTO link of xo with LLVM took over 40
-minutes and was stopped for the 0.21.0 seed checks; it will be redone
-without LTO.
+minutes and was stopped for the 0.21.0 seed checks; it was redone
+without LTO on 2026-10-19 (below, "LLVM without LTO").
 
 ## Fix 1, first step (2026-10-18)
 
@@ -350,4 +350,44 @@ slot (decision 0146 addendum). The HTTP server's assembly 610,039 to
 (-2.21%). HTTP callgrind (MODE=short, instructions per request): plain
 arm64 25,687 to 25,649 (-0.15%), tls arm64 43,826 to 43,740 (within its
 spread); llvm unchanged by construction.
+
+## LLVM without LTO (2026-10-19, main 05a33dad)
+
+xo (compiler/xo) built by the same xo with each backend on the Mac:
+arm64 70 s, 6.1 GB peak; LLVM with `XO_LLVM_SPLIT=12 XO_LLVM_JOBS=3
+XO_LLVM_LTO=none` 639 s at -O2 (the default), 1,180 s at O1, 6.0 GB peak.
+
+| Build | `__text` | `__unwind_info` + `__eh_frame` | Binary |
+|---|---|---|---|
+| arm64 | 31.78 MB | 0.42 MB | 34 MB |
+| LLVM -O2, no LTO | 89.82 MB | 4.10 MB | 112 MB |
+| LLVM O1, no LTO | 89.89 MB | | |
+
+LLVM's code is 2.83 times arm64's, and O1 is no smaller than -O2, so
+inlining is not the cause; the IR the LLVM emitter writes is. The 5,659
+functions both binaries name: 28.54 MB against 66.14 MB (2.3x); the
+rest of LLVM's 23.7 MB is its 104,744 other symbols (helpers such as
+`xo.drop.<type>`, map instances, outlined functions). By module: ssa
+6.29 to 19.39 MB, arm64 4.51 to 17.95, gen 3.85 to 14.83, check 4.86 to
+11.09.
+
+The largest cause found: the drop helpers of large structs take the
+struct by value, so each drop site copies every word to the stack
+arguments first. In the whole LLVM binary, 11.15 MB (12.4% of its 22.5
+million instructions) are runs of more than 40 loads and stores right
+before a call, 85% of them before `xo.drop.Builder` (0.71 million
+instructions), `xo.drop.Gen` (0.62 million), `xo.drop.Checker` (0.52
+million) and `xo.drop.G` (0.28 million). arm64.G.regalloc is 104 KB on
+arm64 and 993 KB on LLVM: 72% of its instructions are loads and stores,
+34% of them in 111 runs of up to 765 words before `xo.drop.G`, and 3,262
+calls of rl_free_n follow inline releases of G's lists. arm64.G.inline_rt
+(72 KB against 531 KB) has no such run but the same mix (75% loads and
+stores, 846 rl_free_n calls).
+
+Next experiments (compiler/llvm): give `xo.drop.T` and `xo.share.T` of a
+type of BY_REF_MIN (256) bytes or more a pointer parameter, as the
+arm64 backend's mem_drop reads a value in memory, and rebuild with the
+command above (expected: most of the 11.15 MB); then count where
+inline_rt's loads and stores come from in its IR (`xo asm
+--backend=llvm` of compiler/xo, the function's landing pads).
 
