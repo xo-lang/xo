@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache keeps functions with float constants too, and the
+  emitter's key comes from the inlining key instead of hashing the
+  function again: a one-constant edit of xo takes 14.1 s to 10.7 s of
+  CPU.
 - The back-end cache's reference counting and inlining entries are
   binary: a one-constant edit of xo takes 16.8 s to 14.1 s of CPU.
 - The back-end cache also keeps each function's inlining, under a key

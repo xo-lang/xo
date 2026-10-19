@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v7"
+const RC_CACHE_VERSION = "xo rc cache v8"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -170,7 +170,7 @@ fn key_aux(var b: BytesBuilder, a: Aux) {
   match a {
     None => b.write_str("n")
     I(n) => b.write_str("i${n}")
-    F(x) => b.write_str("f${x}")
+    F(x) => b.write_str("f${float_bits(x)}")
     B(x) => b.write_str("b${x}")
     S(s) => b.write_str("s${s.len()}:${s}")
     Bs(x) => {
@@ -335,7 +335,10 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
         e.uv(1)
         e.sv(n)
       }
-      F(_) => return None
+      F(x) => {
+        e.uv(7)
+        e.sv(float_bits(x))
+      }
       B(v) => e.uv(if v { 3 } else { 2 })
       S(s) => {
         e.uv(4)
@@ -577,6 +580,7 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
         let tag = r.sv()
         Aux.P(tag: tag, field: r.sv())
       }
+      7 => Aux.F(f: float_of_bits(r.sv()))
       _ => return None
     }
     let block = r.sv()

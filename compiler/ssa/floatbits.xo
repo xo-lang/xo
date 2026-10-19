@@ -1,0 +1,101 @@
+// The bits of a Float as an Int and back, exact for every value but a
+// NaN's payload: the arm64 emitter's constants and the back-end cache's
+// codec (rccache.xo) use them.
+
+const FB_MIN_INT = -9223372036854775807 - 1
+
+/// The bits of x, as Go's math.Float64bits reinterpreted as an Int: exact
+/// for every finite value and the infinities (a NaN gives Go's
+/// math.NaN() bits).
+pub fn float_bits(x: Float) -> Int {
+  if x.is_nan() {
+    return 0x7ff8000000000001
+  }
+  var neg = x < 0.0
+  var a = x
+  if neg {
+    a = -x
+  }
+  if a == 0.0 {
+    // the sign of a zero: 1/x is -Inf for -0.0
+    if 1.0 / x < 0.0 {
+      return FB_MIN_INT
+    }
+    return 0
+  }
+  var bits = 0
+  if a > 1.7976931348623157e308 {
+    bits = 0x7ff0000000000000
+  } else {
+    // a = m * 2^e with 1 <= m < 2
+    var e = 0
+    var m = a
+    while m >= 2.0 {
+      m = m / 2.0
+      e += 1
+    }
+    while m < 1.0 && e > -1022 {
+      m = m * 2.0
+      e -= 1
+    }
+    if m < 1.0 {
+      // subnormal: m * 2^-1022 with m < 1, the fraction is m * 2^52
+      bits = Int(m * 4503599627370496.0)
+    } else {
+      let frac = Int((m - 1.0) * 4503599627370496.0)
+      bits = (e + 1023) * 4503599627370496 + frac
+    }
+  }
+  if neg {
+    // set bit 63: the bits as a negative Int
+    return bits + FB_MIN_INT
+  }
+  bits
+}
+
+/// The Float of bits b (float_bits's inverse): float_of_bits(float_bits(x))
+/// is x for every x but a NaN, which gives a NaN.
+pub fn float_of_bits(b: Int) -> Float {
+  let neg = b < 0
+  let u = if neg { b - FB_MIN_INT } else { b }
+  let e = u >> 52
+  let frac = u & 4503599627370495
+  var v = 0.0
+  if e == 2047 {
+    let inf = 1.7976931348623157e308 * 2.0
+    v = if frac != 0 { inf - inf } else { inf }
+  } else if e == 0 {
+    // subnormal (or zero): frac * 2^-1074, exact since representable
+    v = Float(frac) * pow2(-1074)
+  } else {
+    v = (1.0 + Float(frac) / 4503599627370496.0) * pow2(e - 1023)
+  }
+  if neg {
+    return -v
+  }
+  v
+}
+
+/// 2^k for -1074 <= k <= 1023, by squaring (each factor a power of two
+/// in range, so every product is exact).
+fn pow2(k: Int) -> Float {
+  if k < -1022 {
+    // below the normal range: 2^-1022 halved, each halving exact
+    var v = pow2(-1022)
+    for _ in 0..(-1022 - k) {
+      v = v / 2.0
+    }
+    return v
+  }
+  var base = if k < 0 { 0.5 } else { 2.0 }
+  var n = if k < 0 { -k } else { k }
+  var v = 1.0
+  while n > 0 {
+    if n & 1 == 1 {
+      v = v * base
+    }
+    base = base * base
+    n = n >> 1
+  }
+  v
+}

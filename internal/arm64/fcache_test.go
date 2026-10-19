@@ -113,7 +113,10 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			}
 			fmt.Fprintf(&b, "  if x > %d {\n    f%d(x - 1) + %d\n  } else {\n    x * %d\n  }\n}\n\n", i, i+1, i, mul)
 		}
-		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)}\")\n}\n")
+		// Float constants: the reference counting entries keep them by
+		// their bits (rc cache v8; before, such a function was never cached)
+		b.WriteString("fn scale(x: Int) -> Float {\n  Float(x) * 0.1 + 2.5e-300 - 1.5\n}\n\n")
+		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)} ${scale(7)}\")\n}\n")
 		return b.String()
 	}
 	build := func(t *testing.T, name, target string, env ...string) ([]byte, string) {

@@ -151,6 +151,7 @@ pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes
   for fi in 0..n {
     if let Some((g, ch)) = post[fi] {
       m.funcs[fi] = g
+      m.funcs[fi].ckey = "inl ${keys[fi]}"
       out.changed = out.changed || ch
       out.reused += 1
       continue
@@ -158,6 +159,7 @@ pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes
     let ch = inline_one(m, st, fi)
     out.changed = out.changed || ch
     if fi < keys.len() && !keys[fi].is_empty() {
+      m.funcs[fi].ckey = "inl ${keys[fi]}"
       computed.push((fi, ch))
     }
   }

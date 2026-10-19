@@ -1,0 +1,19 @@
+// Tests of float_bits and float_of_bits (the back-end cache's codec
+// keeps Float constants by their bits).
+
+test "float_bits: known bits" {
+  expect(float_bits(1.0)) == 0x3ff0000000000000
+  expect(float_bits(0.0)) == 0
+  expect(float_bits(-2.0)) == -4611686018427387904
+  expect(float_bits(5e-324)) == 1
+}
+
+test "float_of_bits: the inverse of float_bits, zeros, subnormals, infinities" {
+  let inf = 1.7976931348623157e308 * 2.0
+  let z = 0.0
+  for x in [0.0, -z, 1.0, -1.5, 0.1, 3.141592653589793, 1e308, 1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 1e-310, -4.9e-320, inf, -inf, 123456789.123, 1.0 / 3.0] {
+    expect(float_bits(float_of_bits(float_bits(x)))) == float_bits(x)
+  }
+  expect(1.0 / float_of_bits(float_bits(-z)) < 0.0) == true
+  expect(float_of_bits(float_bits(inf - inf)).is_nan()) == true
+}

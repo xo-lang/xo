@@ -760,12 +760,16 @@ fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[St
   let entry = entries.get(key)
   if !verify {
     if let Some(e) = entry {
-      if let Some(g) = decode_func(m, e, ops) {
+      if let Some(g0) = decode_func(m, e, ops) {
+        var g = g0
+        g.ckey = "rc ${key}"
         return (g, "", b"", true, false)
       }
     }
   }
   r.rc_func(f, fi)
+  // the key determines the result (Func.ckey)
+  f.ckey = "rc ${key}"
   match encode_func(m, f) {
     Some(enc) => {
       match entry {

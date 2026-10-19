@@ -215,6 +215,7 @@ fn inline_break(var m: ssa.Module) -> Bool {
         let succs = m.funcs[fi].values[v].succs
         if !done && !succs.is_empty() {
           m.funcs[fi].edges[succs[0]].args.push(v)
+          m.funcs[fi].ckey = ""
           done = true
         }
       }

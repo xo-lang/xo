@@ -453,6 +453,22 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   signatures of the functions named, address taken, the target, the
   debug settings) replaces it, so an unchanged function's text is
   placed without its SSA being built at all.
+- **2c, first step: the emitter's key from the chain, and float
+  constants in the codec** (implemented 2026-10-18, rc cache v8, fn
+  cache v6): a function carries the key its body came from (Func.ckey:
+  `rc KEY` when insert_rc computed or read it, `inl KEY` when the
+  inlining did, cleared by any change after that), and the emitter's key
+  hashes that key and the signatures of the functions it names instead
+  of the whole inlined text. The codec gains float constants (tag 7, the
+  IEEE bits as a signed varint; compiler/ssa floatbits.xo), so a
+  function with one is cached instead of recomputed every build: 9,604
+  to 9,643 of 9,643 functions read on a warm build of xo. Measured on a
+  loaded Mac (fe-g6, on d8d934d4), a one-constant edit of xo:
+  insert_rc.apply 0.38 to 0.09 s, fn_keys 0.4 to 0.27 s, user CPU 14.1
+  to 10.7 s, wall 9.65 s (load average above 60; the wall time is not
+  comparable). Every cached binary the file of the cache-off build,
+  verify clean after both edits. The SSA is still built and decoded for
+  every function; the rest of 2c (skipping both) needs 2b.
 - **Stage 2** (front end per module) for the checker and the SSA
   builder (3.2 s).
 

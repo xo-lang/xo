@@ -301,6 +301,13 @@ pub struct Func {
   /// Why the builder left it incomplete (a construct outside the stages
   /// ported, decision 0150), or "": such a function is not compared.
   pub skip: Str = ""
+  /// The back-end cache's key of the function as it is now (decision 0220
+  /// addendum stage D 2c): "rc KEY" after insert_rc through the cache,
+  /// "inl KEY" after the inliner's cache, "" when unknown. The key
+  /// determines the function in full (its types by key), so the emitter's
+  /// key hashes it instead of the function's text. Not in the codec; a
+  /// pass that changes the function clears it.
+  pub ckey: Str = ""
 }
 
 /// A lowered program (ssa.Module).

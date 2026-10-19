@@ -659,3 +659,28 @@ the cache-off build, verify clean after both edits, identity 394/394 on
 arm64 and amd64, goldens 196/196, the fixed point ok. Left after an
 edit (wall): ssa 2.1 s, check 1.2 s, insert_rc.plan 1.1 s, inline 1.4
 s, assemble and link 0.9 s, emit 0.6 s, fn_keys 0.4 s.
+
+### Stage D part 2c, first step: the emitter key from the chain, float constants (the Mac, 2026-10-18)
+
+The emitter's key from the reference counting or inlining key the
+function came from, and float constants in the binary codec (rc cache
+v8, fn cache v6, decision 0220 addendum stage D 2c first step). Steps
+as above (fe-g6.sh), on d8d934d4 plus the change, with the machine's
+load average between 60 and 70 (other sessions' gates), so the wall
+times are not comparable with the sections above; the CPU and the
+phases inside the cache are:
+
+| build | rc reused | insert_rc.apply | fn_keys | wall | user CPU |
+|---|---|---|---|---|---|
+| warm | 9643/9643 (9604 before) | 0.14 to 0.16 s (0.38) | 0.30 to 0.37 s | 11.50 to 16.14 s | 11.38 to 12.21 s (13.72 to 13.78) |
+| constant edit | 9642/9643 | 0.09 s (0.38) | 0.27 s (0.4) | 9.65 s | 10.70 s (14.08) |
+| statement edit | 9618/9643 | 0.11 s (0.40) | 0.25 s | 14.50 s | 13.33 s (15.97) |
+| revert | 9643/9643 | 0.23 s (0.39) | 0.31 s | 10.49 s | 10.68 s (14.12) |
+
+Every cached binary the file of the cache-off build, verify clean after
+both edits, identity 394/394 on arm64 and amd64, goldens 196/196, the
+fixed point ok. The 39 functions with a float constant were recomputed
+on every build before (the codec had no float tag). Left after an edit
+(CPU, from a profile): the SSA builder 2.4 s and the checker 1.4 s
+(stage 2, per module), opening about 30,000 entry files 1.3 s, the
+debug sections 0.8 s, decoding the entries 0.8 s.

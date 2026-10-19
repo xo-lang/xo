@@ -1,6 +1,8 @@
 // Numbers and text the emitter prints (Go's strconv and fmt as the Go
 // emitter uses them), and the bits of Float constants.
 
+use github.com/xo-lang/xo/compiler/ssa
+
 const MAX_INT = 9223372036854775807
 const MIN_INT = -9223372036854775807 - 1
 
@@ -33,53 +35,9 @@ fn pow2i(k: Int) -> Int {
   n
 }
 
-/// The bits of x, as Go's math.Float64bits reinterpreted as an Int: exact
-/// for every finite value and the infinities (a NaN gives Go's
-/// math.NaN() bits).
+/// The bits of x (ssa.float_bits).
 fn float_bits(x: Float) -> Int {
-  if x.is_nan() {
-    return 0x7ff8000000000001
-  }
-  var neg = x < 0.0
-  var a = x
-  if neg {
-    a = -x
-  }
-  if a == 0.0 {
-    // the sign of a zero: 1/x is -Inf for -0.0
-    if 1.0 / x < 0.0 {
-      return MIN_INT
-    }
-    return 0
-  }
-  var bits = 0
-  if a > 1.7976931348623157e308 {
-    bits = 0x7ff0000000000000
-  } else {
-    // a = m * 2^e with 1 <= m < 2
-    var e = 0
-    var m = a
-    while m >= 2.0 {
-      m = m / 2.0
-      e += 1
-    }
-    while m < 1.0 && e > -1022 {
-      m = m * 2.0
-      e -= 1
-    }
-    if m < 1.0 {
-      // subnormal: m * 2^-1022 with m < 1, the fraction is m * 2^52
-      bits = Int(m * 4503599627370496.0)
-    } else {
-      let frac = Int((m - 1.0) * 4503599627370496.0)
-      bits = (e + 1023) * 4503599627370496 + frac
-    }
-  }
-  if neg {
-    // set bit 63: the bits as a negative Int
-    return bits + MIN_INT
-  }
-  bits
+  ssa.float_bits(x)
 }
 
 /// The bits of -0.0 normalized to those of 0.0 (the memo's key: Go's

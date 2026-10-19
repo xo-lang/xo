@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v5"
+const FN_CACHE_VERSION = "xo fn cache v6"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is
@@ -433,8 +433,9 @@ fn aux_text(a: ssa.Aux) -> Str {
 }
 
 /// The key of function fi: the SHA-256 of the compiler's identity, the
-/// target, the function's SSA printed in full with its types by key,
-/// and the signatures of itself and every function it names.
+/// target, the function's SSA printed in full with its types by key (or
+/// the back-end cache's key of it, Func.ckey, when set), and the
+/// signatures of itself and every function it names.
 fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_name: Map[Str, Int], tk: List[Str]) -> Str {
   let f = m.funcs[fi]
   var b = StrBuilder.new()
@@ -443,50 +444,65 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
   b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc}\n")
   b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
-  var lr: List[Int] = []
-  for (k, _) in f.land_rest {
-    lr.push(k)
-  }
-  b.write("land_rest ${ints_text(lr.sort())}\n")
-  for (bi, bl) in f.blocks.indexed() {
-    b.write("b${bi} ${ints_text(bl.params)} ${ints_text(bl.instrs)} ${ints_text(bl.preds)}\n")
-  }
   var names: List[Str] = []
   var seen: Map[Str, Bool] = {}
-  if m.debug_info {
-    // the line table's inputs (decision 0239): a change of lines alone
-    // makes another entry (they were left out until 2026-10-16, so a
-    // moved line kept its old rows)
-    b.write("file ${f.file.len()}:${f.file}\n")
-    for s in f.inl_sites {
-      b.write("inl ${s.callee.len()}:${s.callee} ${s.file.len()}:${s.file} ${s.call_line} ${s.parent}\n")
-    }
-    // the variables' inputs (decision 0252)
-    for d in f.dvars {
-      b.write("dvar ${d.name.len()}:${d.name} ${tk_of(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
-    }
-    for d in f.dbinds {
-      b.write("dbind ${d.dvar} ${d.value} ${d.line}\n")
-    }
-  }
-  for (vi, x) in f.values.indexed() {
-    b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, x.ty)} ${ints_text(x.args)} ${aux_text(x.aux)} ${x.block} ${ints_text(x.succs)} ${x.pad} ${x.pos.len()}:${x.pos}")
-    if m.debug_info {
-      b.write(" l${x.line} i${x.inl}")
-    }
-    b.write("\n")
-    match x.aux {
-      S(s) => {
+  if !f.ckey.is_empty() {
+    // the function by the back-end cache's key of it (Func.ckey, decision
+    // 0220 addendum stage D 2c), which determines what the text below
+    // prints and more (its lines always), then the names it uses
+    b.write("ckey ${f.ckey}\n")
+    for x in f.values {
+      if let S(s) = x.aux {
         if !seen.contains(s) {
           seen[s] = true
           names.push(s)
         }
       }
-      _ => {}
     }
-  }
-  for (ei, e) in f.edges.indexed() {
-    b.write("e${ei} ${e.from} ${e.to} ${ints_text(e.args)}\n")
+  } else {
+    var lr: List[Int] = []
+    for (k, _) in f.land_rest {
+      lr.push(k)
+    }
+    b.write("land_rest ${ints_text(lr.sort())}\n")
+    for (bi, bl) in f.blocks.indexed() {
+      b.write("b${bi} ${ints_text(bl.params)} ${ints_text(bl.instrs)} ${ints_text(bl.preds)}\n")
+    }
+    if m.debug_info {
+      // the line table's inputs (decision 0239): a change of lines alone
+      // makes another entry (they were left out until 2026-10-16, so a
+      // moved line kept its old rows)
+      b.write("file ${f.file.len()}:${f.file}\n")
+      for s in f.inl_sites {
+        b.write("inl ${s.callee.len()}:${s.callee} ${s.file.len()}:${s.file} ${s.call_line} ${s.parent}\n")
+      }
+      // the variables' inputs (decision 0252)
+      for d in f.dvars {
+        b.write("dvar ${d.name.len()}:${d.name} ${tk_of(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+      }
+      for d in f.dbinds {
+        b.write("dbind ${d.dvar} ${d.value} ${d.line}\n")
+      }
+    }
+    for (vi, x) in f.values.indexed() {
+      b.write("v${vi} ${ssa.op_name(x.op)} ${tk_of(tk, x.ty)} ${ints_text(x.args)} ${aux_text(x.aux)} ${x.block} ${ints_text(x.succs)} ${x.pad} ${x.pos.len()}:${x.pos}")
+      if m.debug_info {
+        b.write(" l${x.line} i${x.inl}")
+      }
+      b.write("\n")
+      match x.aux {
+        S(s) => {
+          if !seen.contains(s) {
+            seen[s] = true
+            names.push(s)
+          }
+        }
+        _ => {}
+      }
+    }
+    for (ei, e) in f.edges.indexed() {
+      b.write("e${ei} ${e.from} ${e.to} ${ints_text(e.args)}\n")
+    }
   }
   for n in names {
     b.write("callee ${n.len()}:${n} ${func_sig(m, n, taken, by_name, tk)}\n")

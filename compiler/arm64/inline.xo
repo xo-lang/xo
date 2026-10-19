@@ -384,6 +384,8 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
   var ch = false
   var f = m.funcs[fi]
   m.funcs[fi] = ssa.Func{name: ""}
+  // its cache key no longer names it (inline_cached sets the inliner's)
+  f.ckey = ""
   var here = false
   var loop_left = INLINE_LOOP_SITES
   for _ in 0..st.rounds {
