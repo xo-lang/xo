@@ -684,3 +684,30 @@ on every build before (the codec had no float tag). Left after an edit
 (CPU, from a profile): the SSA builder 2.4 s and the checker 1.4 s
 (stage 2, per module), opening about 30,000 entry files 1.3 s, the
 debug sections 0.8 s, decoding the entries 0.8 s.
+
+### Stage D part 2d: packs, one file per kind for a build target (the Mac, 2026-10-19)
+
+Decision 0220 addendum stage D 2d. Steps (scratchpad pkt/meas2.sh):
+main and the change built step by step in turn, each from its own
+copy of compiler/ and its own cache directory, so both saw the same
+load; then the constant edit under the CPU profiler (XO_PROF_HZ=1000).
+The machine's load average was 50 to 130 (other sessions' gates), so
+the wall times are not comparable; the phases inside the cache and the
+CPU are:
+
+| build | insert_rc.read | inline.read | fn_keys | user CPU | system CPU |
+|---|---|---|---|---|---|
+| warm2 | 0.21 s to 0.05 s | 0.25 s to 0.05 s | 0.49 s to 0.20 s | 11.27 s to 11.24 s | 3.58 s to 2.12 s |
+| warm3 | 0.43 s to 0.07 s | 0.51 s to 0.06 s | 0.41 s to 0.31 s | 11.53 s to 11.24 s | 4.20 s to 2.05 s |
+| constant edit | 0.30 s to 0.11 s | 0.30 s to 0.06 s | 0.34 s to 0.36 s | 11.95 s to 11.68 s | 4.19 s to 3.08 s |
+| statement edit | 0.42 s to 0.04 s | 0.35 s to 0.06 s | 0.60 s to 0.16 s | 13.30 s to 12.57 s | 4.28 s to 1.25 s |
+| revert | 0.27 s to 0.04 s | 0.39 s to 0.04 s | 0.34 s to 0.15 s | 11.21 s to 11.05 s | 3.40 s to 1.30 s |
+| second constant edit | 0.36 s to 0.06 s | 0.33 s to 0.11 s | 0.41 s to 0.21 s | 12.01 s to 11.66 s | 4.86 s to 2.31 s |
+
+In the profile of a third constant edit: _open 1.05 s to 0.06 s, the
+used marks' setattrlistat (0.38 s) and stat (0.13 s) gone,
+ssa.decode_func 0.86 s to 0.83 s (unchanged: 2b). Every cached binary
+the file of the cache-off build (warm, constant, statement, revert),
+verify clean after both edits on both trees. The pack of xo's target:
+rc 78 MB, inl 95 MB, fn 218 MB in one segment each after the second
+build, then deltas of 26 KB to 155 KB per edit.

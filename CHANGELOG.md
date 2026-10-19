@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache keeps each build target's entries in a few pack
+  files besides the per-entry files, read with one open each: after an
+  edit of xo, the cache's reads take 0.03 to 0.11 s instead of 0.2 to
+  0.5 s per phase, and the build 1.1 to 3 s less system CPU.
 - The back-end cache keeps functions with float constants too, and the
   emitter's key comes from the inlining key instead of hashing the
   function again: a one-constant edit of xo takes 14.1 s to 10.7 s of

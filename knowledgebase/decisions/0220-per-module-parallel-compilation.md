@@ -469,6 +469,46 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   comparable). Every cached binary the file of the cache-off build,
   verify clean after both edits. The SSA is still built and decoded for
   every function; the rest of 2c (skipping both) needs 2b.
+- **2d, packs: one file per kind for a build target** (implemented
+  2026-10-19, compiler/xo bcache.xo cache_get_packed, pack_store; the
+  lead's assignment, owner-approved). After an edit, reading the entries
+  as about 30,000 files (rc, inl, fn) cost about 1.4 s of CPU, nearly all
+  of it in the kernel: the opens (1.05 s in a profile of a one-constant
+  edit), the used marks' stat and time updates (0.5 s), and the reads.
+  Each build target (the working directory, the command line without
+  its flags and -o value, and the target) now also keeps its entries in
+  segment files, <cache>/pack/<slot>/<kind>/s-<hex>: the format version,
+  the count, each entry's key and length, then the entries' bytes. A
+  build reads its target's segments (one open each), takes the entries
+  it needs, and reads the rest from the loose files; afterwards it
+  appends one segment of the entries it used that its pack lacked, and
+  past four segments, or a pack holding over twice what it used, writes
+  one segment of what it used and removes the segments it read. The
+  loose files stay the shared, content-addressed store, written as
+  before, so other programs and targets keep their hits, and the entry
+  format and keys are unchanged (no cache version bump). A target's
+  first build only creates its directory, so a program built once (the
+  goldens) costs no second copy; an edit loop's target costs one more
+  copy of its entries (about 390 MB for xo: rc 78 MB, inl 95 MB, fn 218
+  MB). Segments are written whole and renamed into place; a segment
+  removed by another build while this one listed it reads as missing and
+  its keys come from the loose files. The prune treats each segment as
+  one entry, marked used when read.
+  Measured (the Mac, main and the change interleaved step by step, load
+  average 50 to 130 from other sessions, so the wall times are not
+  comparable): insert_rc.read 0.21 to 0.51 s to 0.03 to 0.11 s,
+  inline.read 0.25 to 0.51 s to 0.03 to 0.11 s, system CPU of a build 3.1
+  to 4.9 s to 0.9 to 2.5 s, user CPU unchanged (about 11.3 s); in a
+  profile of a one-constant edit, _open 1.05 s to 0.06 s and the used
+  marks (0.5 s) gone. Every cached binary the file of the cache-off build
+  (warm, constant edit, statement edit, revert), verify clean after both
+  edits; TestBackendCacheEditIdentity removes the loose entries after the
+  second builds, so its edit builds read from the packs alone.
+  Lazy decoding (2b) is not part of this step: the decoding
+  (ssa.decode_func, 0.8 s of CPU on tasks) is unchanged, since
+  inline_state, find_addr_taken, and drop_unreached read every reference
+  counting body before the walk; skipping a body's decoding needs
+  per-key summaries of what those passes read.
 - **Stage 2** (front end per module) for the checker and the SSA
   builder (3.2 s).
 
