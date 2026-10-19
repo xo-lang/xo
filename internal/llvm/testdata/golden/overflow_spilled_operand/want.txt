@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+f0 600
+f1 3
+--- stderr
+fault: integer overflow: 2147483650 + 9223372036854775804 does not fit Int at main.xo:78:3

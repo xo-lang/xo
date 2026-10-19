@@ -1007,16 +1007,21 @@ fn x86_label_at(tb: Bytes, i: Int) -> Bool {
 }
 
 /// Recomputes, in a fault stub, an operand of a checked add, sub, or neg
-/// whose register the result took (emit.xo recover_operand).
+/// whose register or spill slot the result took (emit.xo
+/// recover_operand). A spilled result is stored to its slot before the
+/// overflow branch, so an operand coalesced into the same slot (`acc +=
+/// x` with acc spilled) reads as the wrapped sum unless recomputed
+/// (2026-10-19: progen arith seeds 74, 111, 122, 123, 145, 174 printed
+/// an operand 2^64 off in the fault message).
 fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
   if inst.recover.is_empty() {
     return
   }
   let (dl, ok) = g.vloc(inst.defs[0])
-  if !ok || dl.reg < 0 {
+  if !ok {
     return
   }
-  let d = x86_reg(dl.reg, 8)
+  let d = if dl.reg >= 0 { x86_reg(dl.reg, 8) } else { x86_mem_ref(dl) }
   let args = inst.fargs
   var used: List[Int] = [dl.reg]
   for (k, l) in g.x86_call_locs(args, -1).indexed() {
@@ -1035,7 +1040,7 @@ fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) 
   }
   let tr = x86_reg(tmp, 8)
   for k in [0, 2] {
-    if !g.clobbered(args, k, dl.reg) {
+    if !g.x86_clobbered(args, k, dl) {
       continue
     }
     if inst.recover == "neg" {
@@ -1052,6 +1057,22 @@ fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) 
     }
     ms[k].src = MSrc{kind: M_LOC, l: MLoc{reg: tmp}}
   }
+}
+
+/// Whether fault argument k is where the result went (dl: the same
+/// register, or the same spill slot).
+fn (g: G) x86_clobbered(args: List[Src], k: Int, dl: MLoc) -> Bool {
+  if k >= args.len() || args[k].kind != S_REG || args[k].v == 0 {
+    return false
+  }
+  let (l, ok) = g.vloc(args[k].v)
+  if !ok {
+    return false
+  }
+  if dl.reg >= 0 {
+    return l.reg == dl.reg
+  }
+  l.reg < 0 && l.off == dl.off
 }
 
 /// Puts fault argument k in a register (or the scratch register).

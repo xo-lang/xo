@@ -1,0 +1,195 @@
+struct P {
+  a: Int
+  b: Int
+}
+
+enum E {
+  A(n: Int)
+  B(x: Int, y: Int)
+  C
+}
+
+fn f0(p0: Int) -> Int {
+  var acc = p0
+  acc += ((if ("-3" == "12") { (Int.parse("-3") ?? "-3".rune_count()) } else { p0 }) * p0)
+  if (([p0, acc].first() ?? p0) > ((p0 ^ p0) % (((1 - acc) % 7) + 8))) {
+    if ((p0 % ((acc % 7) + 8)) == (p0 + p0)) {
+      return (-(p0 - (-1)))
+    }
+    if ("xo" == "xo") {
+      return ([acc, p0, 71].first() ?? p0)
+    }
+  } else {
+    for i1 in 0..1 {
+      acc += i1
+      for i2 in 0..6 {
+        acc += i2
+        if ((i2 > i2) && (30 > i2)) {
+          continue
+        }
+        let v3 = (match (((i2 * i1)) % 3) {
+          0 => (if (Float(acc) / 9007199254740993.0).is_nan() { 7 } else { if (Float(acc) / 9007199254740993.0) < 0.5 { 3 } else { 5 } })
+          1 => (-(-p0))
+          2 => (match E.C {
+          A(n4) => n4 + (Int.parse("12") ?? "12".rune_count())
+          B(x5, y6) => (x5 - y6)
+          C => (if (p0 > acc) { 92 } else { p0 })
+        })
+          _ => (58 - (i2 % (-1)))
+        })
+        let v7 = (-([v3].filter(fn(x8: Int) -> Bool { x8 > v3 }).len() + [v3].filter(fn(x8: Int) -> Bool { x8 > v3 }).fold(0, fn(a: Int, x9: Int) -> Int { a ^ x9 })))
+        acc += v3
+        acc += v7
+      }
+      let v10 = (-(-i1))
+      acc += v10
+    }
+  }
+  acc + (-(acc + p0))
+}
+
+fn f1(p0: Int, p1: Int) -> Int {
+  var acc = p0 + p1
+  let t11 = (if (p0 > fn(x12: Int) -> Int { x12 ^ p0 }((-19))) { E.C } else { (if ((-4611686018427387904) < p1) { E.A(n: p1) } else { E.B(x: acc, y: p1) }) })
+  let v13 = p1
+  acc += ((match t11 {
+    A(n14) => n14 + fn(x17: Int) -> Int { x17 - acc }(v13)
+    B(x15, y16) => (x15 ^ y16)
+    C => (p0 - 6)
+  }) | (match ((P{a: v13, b: p0}.a) % 5) {
+    0 => (p0 + v13)
+    1 => (-p0)
+    _ => (v13 ^ 94)
+  }))
+  acc += v13
+  acc += (match t11 {
+    A(n18) => n18 + p0
+    B(x19, y20) => (x19 ^ y20)
+    C => ((-9) * (-2147483648))
+  })
+  acc + (-(acc - p0))
+}
+
+fn f2(p0: Int) -> Int {
+  var acc = p0
+  let v21 = (([2147483647, p0] + [p0].map(fn(x22: Int) -> Int { x22 - p0 })).len() + ([2147483647, p0] + [p0].map(fn(x22: Int) -> Int { x22 - p0 })).fold(0, fn(a: Int, x23: Int) -> Int { a ^ x23 }))
+  let t24 = E.B(x: (Int.parse("9223372036854775807") ?? "9223372036854775807".rune_count()), y: (if 0.1.is_nan() { 7 } else { if 0.1 < 0.5 { 3 } else { 5 } }))
+  acc += v21
+  acc += (match t24 {
+    A(n25) => n25 + ((-2147483648) / (-1))
+    B(x26, y27) => (x26 - y27)
+    C => P{a: p0, b: p0}.b
+  })
+  acc + f1(p0, (p0 + acc))
+}
+
+fn f3(p0: Int) -> Int {
+  var acc = p0
+  let v28 = ("12" + " pad ").to_upper().len()
+  if (fn(x29: Int) -> Int { x29 ^ (p0 ^ p0) }(v28) > p0) {
+    acc = (if Float((if (p0 != v28) { v28 } else { 95 })).is_nan() { 7 } else { if Float((if (p0 != v28) { v28 } else { 95 })) < 0.5 { 3 } else { 5 } })
+    acc += ((([6] + [p0]).len() + ([6] + [p0]).fold(0, fn(a: Int, x30: Int) -> Int { a ^ x30 })) >> (v28 & 7))
+    let t31 = [5].reverse().sort()
+    acc += (t31.len() + t31.fold(0, fn(a: Int, x32: Int) -> Int { a ^ x32 }))
+  }
+  let v33 = fn(x34: Int) -> Int { x34 ^ (if ("" == "12") { (acc - acc) } else { P{a: x34, b: (-13)}.b }) }(p0)
+  acc += v28
+  acc += v33
+  acc + ((p0 + 38) / (-1))
+}
+
+fn f4(p0: Int) -> Int {
+  var acc = p0
+  let v35 = ((f0(p0) | (p0 ^ acc)) & (Int.parse("-3".trim()) ?? "-3".trim().rune_count()))
+  if ((([77].len() + [77].fold(0, fn(a: Int, x36: Int) -> Int { a ^ x36 })) < (v35 ^ v35)) && ((Int.parse("") ?? "".rune_count()) != (v35 + v35))) {
+    let t37 = "héllo".replace("1", "-").to_lower()
+    acc += (Int.parse(t37) ?? t37.rune_count())
+  }
+  acc += v35
+  acc + "".to_upper().len()
+}
+
+fn s0(p0: Int, p1: Int, p2: Int) -> Str {
+  var acc = p0 + p1 + p2
+  match ((p1) % 3) {
+    0 => {
+      if (([p1, p0].len() + [p1, p0].fold(0, fn(a: Int, x38: Int) -> Int { a ^ x38 })) < (-([acc].first() ?? acc))) {
+        for i39 in 0..3 {
+          acc += i39
+          if !(p0 <= p0) {
+            continue
+          }
+          let v40 = 14
+          acc += v40
+        }
+        acc = f2(P{a: p0, b: p1}.a)
+        let v41 = (-p1)
+        acc += v41
+      }
+      if !(p0 != p0) {
+        return "r${(Int.parse("${(-Float(p1))}") ?? (-2))}"
+      }
+    }
+    _ => {
+      let v42 = P{a: (match ((acc) % 4) {
+        0 => p2
+        1 => p2
+        _ => 48
+      }), b: (match ((((match E.B(x: p1, y: p0) {
+        A(n43) => n43 + 27
+        B(x44, y45) => (x44 ^ y45)
+        C => 3
+      }) - (1 * acc))) % 4) {
+        0 => p2
+        1 => p0
+        2 => p2
+        _ => p2
+      })}.b
+      acc += v42
+    }
+  }
+  "${acc} ${(Float.parse("1e3") ?? 4.9e-324).abs()} ${"12".replace("1", "-").replace("1", "-")} ${(if (acc <= p2) { Float(acc) } else { 1e20 })}"
+}
+
+fn s1(p0: Int, p1: Int) -> Str {
+  var acc = p0 + p1
+  acc += ((p1 - p1) | (match E.B(x: p0, y: acc) {
+    A(n46) => n46 + "xo".len()
+    B(x47, y48) => (x47 - y48)
+    C => (match E.B(x: acc, y: p1) {
+    A(n49) => n49 + (-16)
+    B(x50, y51) => (x50 - y51)
+    C => p0
+  })
+  }))
+  for i52 in 0..1 {
+    acc += i52
+    if (Int(1e21) >= acc) {
+      break
+    }
+    let t53 = (P{a: i52, b: p0} with { a: fn(x54: Int) -> Int { x54 * acc }(i52) })
+    match (((Int.parse("${92}") ?? "${92}".rune_count())) % 5) {
+      0 => {
+        if (f0(f4(i52)) < (P{a: i52, b: i52} with { a: i52 }).a) {
+        } else {
+        }
+      }
+      1 => {
+      }
+      _ => {
+      }
+    }
+    acc += (t53.a ^ t53.b)
+  }
+  "${acc} ${(-(if (p1 > p0) { Float(p0) } else { Float(p0) }))} ${"f${(Float(p1) / Float(p0))}"} ${Float((-16))}"
+}
+
+fn main(os: Os) {
+  os.stdio.println("f0 ${f0(24)}")
+  os.stdio.println("f1 ${f1(3, 26)}")
+  os.stdio.println("f2 ${f2(42)}")
+  os.stdio.println("f3 ${f3(2)}")
+  os.stdio.println("f4 ${f4(19)}")
+  os.stdio.println("s0 ${s0(11, -4, 1)}")
+  os.stdio.println("s1 ${s1(41, -3)}")
+}
