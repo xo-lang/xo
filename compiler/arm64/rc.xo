@@ -49,10 +49,15 @@ fn (g: G) inc_text(obj: Str, t: Str, st: Str, lbl: Str, ret: Bool) -> Str {
 
 /// The code that releases the object at register obj (decText): it
 /// branches to free when that was the last reference, else to done (or
-/// returns, when done is empty).
+/// returns, when done is empty). One subs makes the new count and the
+/// test (2026-10-18, one instruction a release): le is a count of one
+/// (zero), a shared negative count, or the immortal one (its overflow
+/// sets V), and eq after it only a count of one; st's 64 bit register
+/// holds the new count, free until the atomic path.
 fn (g: G) dec_text(obj: Str, t: Str, st: Str, lbl: Str, free: Str, done: Str) -> Str {
   let end = if done.is_empty() { "ret" } else { "b ${done}" }
-  "\tldr ${t}, [${obj}]\n\tcmp ${t}, #1\n\tb.le ${lbl}_slow\n\tsub ${t}, ${t}, #1\n\tstr ${t}, [${obj}]\n\t${end}\n" +
+  let n = "x${st[1..st.len()]}"
+  "\tldr ${t}, [${obj}]\n\tsubs ${n}, ${t}, #1\n\tb.le ${lbl}_slow\n\tstr ${n}, [${obj}]\n\t${end}\n" +
     "${lbl}_slow:\n\tb.eq ${free}\n\ttbz ${t}, #62, ${lbl}_kept\n\t${g.atomic_dec(obj, t, st)}\n\tb.eq ${free}\n${lbl}_kept:\n\t${end}\n"
 }
 
@@ -122,21 +127,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
         }
         b.push("${ret}:\n\tret\n")
       } else {
-        let free = g.local("xo_${g.ns}${kind}${id}_free")
-        b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
-        b.push("${free}:\n")
-        if g.kind(t) == ssa.Kind.Str {
-          b.push("\tb ${g.sym("xo_x_obj_rc_free")}\n")
-        } else {
-          let et = g.m.types[t].elems[0]
-          b.push(imm_text(g.esize(et), "x1"))
-          if g.heap(et) {
-            b.push(g.addr("x2", g.elem_helper("drop", et)))
-          } else {
-            b.push("\tmov x2, #0\n")
-          }
-          b.push("\tb ${g.sym("xo_x_obj_rl_free_n")}\n")
-        }
+        g.str_list_drop(b, sym, g.local("xo_${g.ns}${kind}${id}_free"), t)
       }
     }
     _ => g.agg_rc(b, kind, sym, id, t)
@@ -144,6 +135,25 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   b.push("\n")
   g.helpers.push(b.join(""))
   sym
+}
+
+/// The body of the drop helper of a Str or List t (x0 the object), its
+/// labels from sym and free.
+fn (var g: G) str_list_drop(var b: List[Str], sym: Str, free: Str, t: Int) {
+  b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
+  b.push("${free}:\n")
+  if g.kind(t) == ssa.Kind.Str {
+    b.push("\tb ${g.sym("xo_x_obj_rc_free")}\n")
+    return
+  }
+  let et = g.m.types[t].elems[0]
+  b.push(imm_text(g.esize(et), "x1"))
+  if g.heap(et) {
+    b.push(g.addr("x2", g.elem_helper("drop", et)))
+  } else {
+    b.push("\tmov x2, #0\n")
+  }
+  b.push("\tb ${g.sym("xo_x_obj_rl_free_n")}\n")
 }
 
 /// The body of the dup, drop, or share helper of an enum, struct, or
@@ -367,6 +377,15 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
     // counted in place from the pointer (agg_rc_at), not every word
     // loaded for the helper that takes them and stores them again
     g.agg_rc_at(b, kind, sym, t)
+    g.helpers.push(b.join(""))
+    return sym
+  }
+  if kind == "drop" && g.kind(t) is ssa.Kind.Str | ssa.Kind.List {
+    // the element's drop in place, not a branch to the drop helper (a
+    // List[Str] freed by rl_free calls it for each element)
+    b.push("\tldr x0, [x0]\n")
+    g.str_list_drop(b, sym, "${sym}_free", t)
+    b.push("\n")
     g.helpers.push(b.join(""))
     return sym
   }

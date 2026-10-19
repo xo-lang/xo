@@ -227,3 +227,19 @@ code reads a list's length from its header without a null test, so it
 is an ABI change needing a seed; a pinned register would cost one
 allocatable register and C callbacks' entry.
 
+
+## Release helpers: one instruction less (2026-10-18, Xo lang 4)
+
+Not a size fix but the same helpers: compiler/arm64 rc.xo dec_text tests
+`subs n, t, #1; b.le` instead of `cmp t, #1; b.le; sub n, t, #1` (an
+immortal count overflows on the subtract, which sets V, so le still
+sends it to the slow path), and the `dropp` element callback of a
+List[Str] or List[List] carries the drop body instead of branching to
+the drop helper. On Xo lang 3's plain HTTP request profile (155 Str or
+List releases and 31 dropp calls a request) that is about 190
+instructions a request less, at no size cost. Inlining the fast path at
+the call sites was not taken: 16,959 drop Str sites in the HTTP server
+binary make it about 270 KB (17%) larger. The Mac sweep (114 workloads,
+3 rounds): httpparse/h1_get 0.940 (faster beyond spread), ctx/none 1.005
+over a 1.002 spread (an empty program's startup), the rest inside
+spreads.
