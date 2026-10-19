@@ -841,7 +841,10 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if colon <= p0 || colon >= cn {
       return fail(BAD)
     }
-    var x = p0
+    // a common name (common_name: its exact bytes, all token bytes) needs
+    // no check of each byte, and is its own canonical form
+    let common = common_name(rawb.data(src) + p0, colon - p0)
+    var x = if common.is_empty() { p0 } else { colon }
     while x < colon {
       let ch = Int(cb[x])
       if (cls(ch) & TCHAR) == 0 {
@@ -874,7 +877,7 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     if keys.len() == MAX_FIELDS {
       return fail(TOO_LARGE)
     }
-    keys.push(canonical_at(rawb.data(src) + p0, colon - p0))
+    keys.push(if common.is_empty() { canonical_key(raw.str_at(rawb.data(src) + p0, colon - p0)) } else { common })
     // a value may hold obs-text (RFC 9110): valid UTF-8 or U+FFFD
     // (decision 0259)
     vals.push(scan.text_at(rawb.data(src) + v0, cn - v0))
