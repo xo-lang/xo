@@ -31,6 +31,10 @@ pub struct FnCache {
   pub keys: List[Str] = []
   pub entries: Map[Str, Bytes] = {}
   pub verify: Bool = false
+  /// the key of each part (partcache.xo part_keys; [] for none) and the
+  /// entries the cache holds for them
+  pub part_keys: List[Str] = []
+  pub part_entries: Map[Str, Bytes] = {}
 }
 
 /// A function's canonical text and what placing it needs.
@@ -156,6 +160,7 @@ fn (var g: G) place_text(r: FnRec, wants: List[(Str, Want)]) {
     if !g.wanted.contains(k) {
       g.wanted[k] = true
       g.wants.push(w)
+      g.want_keys.push(k)
     }
   }
   g.set_ref_flags(g.ref_flags() | r.flags)

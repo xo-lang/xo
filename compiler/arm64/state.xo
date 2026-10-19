@@ -168,6 +168,9 @@ struct G {
   /// and the last file generates each once
   defer_helpers: Bool = false
   wants: List[Want] = []
+  /// the key of each of wants placed from a canonical text (place_text),
+  /// for the part cache (partcache.xo)
+  want_keys: List[Str] = []
   /// the last file of a split generation: the helper of each global name
   ext_keys: Map[Str, Str] = {}
   strs: Map[Bytes, Str] = {}

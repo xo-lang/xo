@@ -789,8 +789,14 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
-      fn_cache_store(os, fdir, fpk, fc, p.stores)
+      fn_cache_store(os, fdir, fpk, fc, p.stores, p.part_stores)
       cache_note(os, phases, "functions", p.reused, fc.keys.len())
+      if !fc.part_keys.is_empty() {
+        cache_note(os, phases, "parts", p.parts_reused, fc.part_keys.len())
+      }
+      if !p.part_mismatches.is_empty() {
+        fail(os, "XO_BACKEND_CACHE=verify: ${p.part_mismatches.len()} parts differ from their cache entries, the first part ${p.part_mismatches[0]}")
+      }
       if !p.mismatches.is_empty() {
         fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")
       }

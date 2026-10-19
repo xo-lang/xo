@@ -49,6 +49,12 @@ pub struct Program {
   pub stores: List[(Str, Bytes)] = []
   pub reused: Int = 0
   pub mismatches: List[Str] = []
+  /// the part cache (partcache.xo): its entries to store, the parts
+  /// read from entries, and the parts that differ from their entry
+  /// (verify)
+  pub part_stores: List[(Str, Bytes)] = []
+  pub parts_reused: Int = 0
+  pub part_mismatches: List[Int] = []
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly

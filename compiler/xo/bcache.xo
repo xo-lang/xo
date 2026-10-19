@@ -97,17 +97,43 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
   if keys.is_empty() {
     return (arm64.FnCache{}, "", Pack{})
   }
-  let (entries, pk) = cache_get_packed(os, dir, "fn", "${tgoos}-${m.goarch}", keys, jobs)
-  (arm64.FnCache{keys: keys, entries: entries, verify: backend_cache_mode(os) == "verify"}, dir, pk)
+  let verify = backend_cache_mode(os) == "verify"
+  let target = "${tgoos}-${m.goarch}"
+  // the parts first (stage D 2e, compiler/arm64 partcache.xo): a part
+  // read from its entry needs none of its functions' entries
+  let pkeys = arm64.part_keys(m, tgoos, keys)
+  let (pents, ppk) = cache_get_packed(os, dir, "part", target, pkeys, jobs)
+  var want = keys
+  if !verify && !pkeys.is_empty() {
+    let bounds = arm64.part_ranges(m)
+    want = []
+    for p in 0..pkeys.len() {
+      if !pkeys[p].is_empty() && pents.contains(pkeys[p]) {
+        continue
+      }
+      for fi in bounds[p]..bounds[p + 1] {
+        want.push(keys[fi])
+      }
+    }
+  }
+  let (entries, pk) = cache_get_packed(os, dir, "fn", target, want, jobs)
+  (arm64.FnCache{keys: keys, entries: entries, verify: verify, part_keys: pkeys, part_entries: pents}, dir, Pack{root: pk.root, dir: pk.dir, segs: pk.segs, held: pk.held, from_pack: pk.from_pack, fresh: pk.fresh, parts: ppk})
 }
 
 /// Stores the entries a cached generation made (fn_cache_load's dir),
-/// and updates the target's pack with them and the hits of fc.
-fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)]) {
+/// functions' and parts', and updates the target's packs with them and
+/// the hits of fc.
+fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)]) {
   if dir.is_empty() {
     return
   }
   pack_store(os, pk, fc.entries, stores)
+  // parts only in the target's pack: a part is one program's (its split,
+  // its namespace), and its text is large (xo: 34 parts, 328 MB), so
+  // no loose copy for other programs to share
+  if let Some(pp) = pk.parts {
+    pack_store(os, pp, fc.part_entries, part_stores)
+  }
   if stores.is_empty() {
     return
   }
@@ -476,6 +502,9 @@ struct Pack {
   from_pack: Map[Str, Bool] = {}
   /// The target's first build: no pack directory yet.
   fresh: Bool = false
+  /// fn_cache_load's: the pack of the parts' entries beside the
+  /// functions'
+  parts: Option[Pack] = None
 }
 
 /// The pack directory of kind for this build and target: flags such as
