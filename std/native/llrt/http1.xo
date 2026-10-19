@@ -440,10 +440,37 @@ fn common_name(p: Int, n: Int) -> Str {
 /// canon when the n bytes at p are canon or lower (its lower case form),
 /// else "".
 fn one_of(p: Int, n: Int, canon: Str, lower: Str) -> Str {
-  if raw.mem_eq(p, raw.data(canon), n) || raw.mem_eq(p, raw.data(lower), n) {
+  if eq_at(p, raw.data(canon), n) || eq_at(p, raw.data(lower), n) {
     return canon
   }
   ""
+}
+
+/// Whether the n bytes at p and q are equal: in words, the last one
+/// overlapping, every load inside the n bytes (a header name: 4 to 15
+/// bytes, where a C memcmp call cost more than the compare).
+fn eq_at(p: Int, q: Int, n: Int) -> Bool {
+  if n >= 8 {
+    var i = 0
+    while i + 8 <= n {
+      if rt.mem_load(p, i, 8) != rt.mem_load(q, i, 8) {
+        return false
+      }
+      i += 8
+    }
+    return i == n || rt.mem_load(p, n - 8, 8) == rt.mem_load(q, n - 8, 8)
+  }
+  if n >= 4 {
+    return rt.mem_load(p, 0, 4) == rt.mem_load(q, 0, 4) && rt.mem_load(p, n - 4, 4) == rt.mem_load(q, n - 4, 4)
+  }
+  var i = 0
+  while i < n {
+    if rt.mem_load(p, i, 1) != rt.mem_load(q, i, 1) {
+      return false
+    }
+    i += 1
+  }
+  true
 }
 
 /// strings.EqualFold of ASCII letters.

@@ -5,6 +5,8 @@
 // and after a dash, lower elsewhere), on case variants of the common
 // names and of others.
 
+use native/llrt/raw
+
 const CN_NAMES: List[Str] = ["Host", "Accept", "Cookie", "User-Agent", "Connection", "Content-Type", "Authorization", "Content-Length", "Accept-Encoding", "Accept-Language", "X-Request-Id", "Etag", "Hostname", "Accept-Charset", "Content-Types", "Te", "a", "x-a-b-c"]
 
 fn cn_reference(s: Str) -> Str {
@@ -57,4 +59,22 @@ test "canonical_key of any case mix is Go's" for which: Int, mask: Int {
 test "canonical_key keeps a name with a non-token byte" {
   expect(canonical_key("bad name") == "bad name")
   expect(canonical_key("x:y") == "x:y")
+}
+
+test "eq_at matches a byte compare at every length" for xs: List[Int], flip: Int {
+  let n = xs.len().min(40)
+  // b: a's bytes, one changed when flip says so
+  let k = if n == 0 { -1 } else { (flip & 1023) % n }
+  let change = k >= 0 && (flip & 1024) != 0
+  var wa = BytesBuilder.new()
+  var wb = BytesBuilder.new()
+  for (i, x) in xs.indexed() {
+    wa.write_byte(UInt8(x & 255))
+    wb.write_byte(UInt8(if change && i == k { ((x & 255) + 1) & 255 } else { x & 255 }))
+  }
+  let a = wa.freeze()
+  let b = wb.freeze()
+  expect(eq_at(raw.bytes_addr(a), raw.bytes_addr(b), n) == !change)
+  raw.alive(a)
+  raw.alive(b)
 }
