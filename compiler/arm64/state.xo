@@ -223,6 +223,14 @@ struct G {
   /// windows/amd64: the weak C symbols referenced (rt.sym_present and
   /// their calls), each an `/alternatename` to xo_absent (x86win.xo)
   wsyms: Map[Str, Bool] = {}
+  /// windows/amd64: the rsp offset of the frame's words for borrowed
+  /// registers (x86_borrow_at), -1 when the frame has none
+  borrow_at: Int = -1
+  /// windows/amd64: this emission borrowed a register with no frame
+  /// words for it (x86_emit emits the function again with them), and
+  /// whether the frame has them
+  borrow_short: Bool = false
+  borrow_words: Bool = false
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}

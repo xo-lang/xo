@@ -359,6 +359,20 @@ zone (gotchas/windows-amd64-red-zone.md), thread locals inline, the
 xmm saves of the task switch (only Xo code calls it), Xo's own COFF
 writer, and a real Windows run.
 
+6b, step 2 (2026-10-19): a function that borrows a register for a
+spilled operand is emitted again on windows/amd64 with three frame
+words for it (no red zone there, gotchas/windows-amd64-red-zone.md;
+no golden borrows, so no frame grows); the task switch keeps the
+runtime's fiber frame but saves and restores no xmm register (only
+System V Xo code calls it: 20 instructions of the 57); thread locals
+inline (_tls_index, gs:88, @SECREL32), as Linux's. Step 3: Xo's own COFF
+writer (compiler/macho, the amd64 assembler's front end with a COFF
+object: the sections, the symbol and string tables, the REL32, ADDR64,
+ADDR32NB and SECREL relocations, and .pdata and .xdata from the .seh
+directives), byte for byte against llvm-mc on every golden's
+windows/amd64 assembly as 6a's Mach-O assembler was; then a real
+Windows run (through the owner).
+
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 
 Accepted by the owner on 2026-10-18 (through the lead), for both code

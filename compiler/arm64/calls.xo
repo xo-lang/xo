@@ -1327,7 +1327,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
-    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" => {
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" || (g.x86 && g.os == "windows") => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its
       // moves, and its clobbers cost the scheduler's pingpong 9M
@@ -1643,6 +1643,15 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
 /// scheduler steals work, decision 0077), so a base is never kept across
 /// one.
 fn (var g: G) tl_base() -> Int {
+  if g.x86 && g.os == "windows" {
+    // the module's TLS block: the TEB's slot array (gs:88) at
+    // _tls_index, plus xo_tlocal's offset in the block (x86win.xo)
+    let d = g.new_vreg(false)
+    let t = g.new_vreg(false)
+    let i = g.add(Inst{kind: K_PLAIN, text: "movl _tls_index(%rip), $wd1\nmovq %gs:88, $d0\nmovq ($d0,$d1,8), $d0\nleaq xo_tlocal@SECREL32($d0), $d0", defs: [d, t], us: [], x86: true, keep: true})
+    let _i = i
+    return d
+  }
   if g.x86 && g.os == "darwin" {
     // the TLV descriptor's thunk: the table's address in rax, every
     // register but rax and rdi kept; a call, so the function makes its
@@ -2600,6 +2609,12 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 /// does not depend on the module (2026-10-17: it did, and a libc build's
 /// entry gave a no-libc build `.weak` lines).
 fn (var g: G) weak_ref(sym: Str) {
+  if g.x86 && g.os == "windows" {
+    // COFF: an `/alternatename` to xo_absent (x86win.xo w64_weak), not
+    // a weak external with its default symbol
+    g.wsyms[sym] = true
+    return
+  }
   let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
   g.store("${d} ${g.sym(sym)}", [])
 }

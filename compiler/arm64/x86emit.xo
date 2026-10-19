@@ -89,6 +89,32 @@ fn (g: G) x86_in_arg(k: Int) -> Int {
 
 fn (var g: G) x86_emit() {
   g.nfunc += 1
+  if g.os != "windows" {
+    g.x86_emit_once()
+    return
+  }
+  // windows/amd64 keeps frame words for borrowed registers only in a
+  // function that borrows one (x86_scratch_b): emitted again with them
+  // when the first emission borrowed
+  let text = g.text.len()
+  let (stubs, nstub, sites, stub_sites, ncs) = (g.stubs, g.nstub, g.sites, g.stub_sites, g.ncs)
+  g.borrow_words = false
+  g.borrow_short = false
+  g.x86_emit_once()
+  if g.borrow_short {
+    g.text = g.text[0..text]
+    g.stubs = stubs
+    g.nstub = nstub
+    g.sites = sites
+    g.stub_sites = stub_sites
+    g.ncs = ncs
+    g.borrow_words = true
+    g.borrow_short = false
+    g.x86_emit_once()
+  }
+}
+
+fn (var g: G) x86_emit_once() {
   var fr = Frame{out_args: g.out_arg_bytes()}
   var calls = false
   var stubs = false
@@ -108,7 +134,16 @@ fn (var g: G) x86_emit() {
   // rbp - 8); below them, from rsp: the stack arguments, $OUT, the spill
   // slots, the by reference memory. size is everything below rbp (an
   // incoming stack word is at rsp + size + 16).
-  fr.mem_off = fr.spill_base + 8 * g.slots
+  // windows/amd64 has no red zone (exception dispatch writes below rsp):
+  // a function that borrows a register (x86_emit's second emission)
+  // keeps X86_BORROWS words for them past the spill slots
+  g.borrow_at = -1
+  var borrows = 0
+  if g.os == "windows" && g.borrow_words {
+    g.borrow_at = fr.spill_base + 8 * g.slots
+    borrows = X86_BORROWS
+  }
+  fr.mem_off = fr.spill_base + 8 * (g.slots + borrows)
   let pushed = 8 * g.saved.len()
   fr.size = align16(fr.mem_off + g.mem_bytes + pushed)
   fr.save_base = fr.size - pushed
@@ -882,7 +917,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     b.push(st)
   }
   for (k, br) in borrowed.indexed() {
-    b.push("\t${if br >= FP_BASE { "movsd" } else { "movq" }} ${-8 * (k + 1)}(%rsp), ${x86_reg(br, 8)}\n")
+    b.push("\t${if br >= FP_BASE { "movsd" } else { "movq" }} ${g.x86_borrow_at(k)}(%rsp), ${x86_reg(br, 8)}\n")
   }
   if inst.has_fault {
     g.nstub += 1
@@ -927,17 +962,39 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   }
 }
 
-/// x86_scratch, or a borrowed register (x86_borrow), saved in the red
-/// zone at -8 (k + 1) from rsp for the k-th borrowed.
-fn (g: G) x86_scratch_b(var b: List[Str], fp: Bool, n: Int, taken: List[Int], own: Bool, var borrowed: List[Int]) -> Int {
+/// x86_scratch, or a borrowed register (x86_borrow), saved at
+/// x86_borrow_at for the k-th borrowed.
+fn (var g: G) x86_scratch_b(var b: List[Str], fp: Bool, n: Int, taken: List[Int], own: Bool, var borrowed: List[Int]) -> Int {
   let r = g.x86_scratch(fp, n, taken, own)
   if r >= 0 {
     return r
   }
   let br = x86_borrow(fp, taken + borrowed)
   borrowed.push(br)
-  b.push("\t${if fp { "movsd" } else { "movq" }} ${x86_reg(br, 8)}, ${-8 * borrowed.len()}(%rsp)\n")
+  if g.os == "windows" && g.borrow_at < 0 {
+    // the first emission (x86_emit): again, with the frame's words
+    g.borrow_short = true
+    return br
+  }
+  if g.os == "windows" && borrowed.len() > X86_BORROWS {
+    g.fail("amd64: more than ${X86_BORROWS} borrowed registers in one instruction")
+  }
+  b.push("\t${if fp { "movsd" } else { "movq" }} ${x86_reg(br, 8)}, ${g.x86_borrow_at(borrowed.len() - 1)}(%rsp)\n")
   br
+}
+
+/// The words for borrowed registers on windows/amd64 (x86_emit).
+const X86_BORROWS = 3
+
+/// The rsp offset where the k-th borrowed register is saved: the red
+/// zone (-8 (k + 1), System V keeps 128 bytes below rsp from signal
+/// handlers), or on windows/amd64, which has none, the frame's words
+/// past the spill slots.
+fn (g: G) x86_borrow_at(k: Int) -> Int {
+  if g.os == "windows" {
+    return g.borrow_at + 8 * k
+  }
+  -8 * (k + 1)
 }
 
 /// Whether a label (`name:`, a numeric local label) starts at byte i.
