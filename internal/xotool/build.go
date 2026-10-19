@@ -283,6 +283,10 @@ func buildScratch(mode string, env []string) string {
 // Clang is the C compiler of the LLVM backend, as xo finds it: $XO_CLANG,
 // else clang on PATH.
 func Clang() (string, error) {
+	// the test clang cache's real clang (EnableTestClangCache)
+	if c := os.Getenv(clangRealEnv); c != "" {
+		return exec.LookPath(c)
+	}
 	if c := os.Getenv("XO_CLANG"); c != "" {
 		return exec.LookPath(c)
 	}

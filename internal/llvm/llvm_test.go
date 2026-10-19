@@ -32,6 +32,13 @@ func TestMain(m *testing.M) {
 	xotool.EnableTestBinCache()
 	// identical C compiles (the sanitized drivers) reuse one binary too
 	xotool.EnableTestCCache()
+	// and xo's own clang runs (IR to an object or a linked program) whose
+	// IR did not change: most changes leave the LLVM backend's IR alone
+	clangDone, err := xotool.EnableTestClangCache()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	dir, err := testtmp.Dir("xo-llvm-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -49,6 +56,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)
+	clangDone()
 	os.Exit(code)
 }
 
@@ -204,15 +212,52 @@ func exe(p string) string {
 
 var leakRE = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
 
-// TestGolden builds every program under testdata/golden with the Go
-// backend and with the LLVM backend and requires the same exit status,
-// stdout, and fault messages, which must also match want.txt. Programs
-// that exit normally run again with XO_LEAKCHECK=1 and must free every
-// allocation.
+// TestGolden builds every program under testdata/golden with the LLVM
+// backend and requires want.txt's exit status, stdout, and fault
+// messages; with -golden-update it builds each with the Go backend too,
+// requires the same, and writes that as want.txt (2026-10-18: building
+// the Go reference on every run cost a Go backend build a program while
+// want.txt pins the output already). Programs that exit normally run
+// again with XO_LEAKCHECK=1 and must free every allocation. Programs
+// build at -O1 with no LTO (goldenEnv) but for o2Goldens.
 // shortGoldens are the golden programs TestGolden runs under -short too
 // (about a second each): native parity checked on every commit for the
 // cases with no Go backend golden of their own.
 var shortGoldens = map[string]bool{"crypto_prims": true, "tls_x509": true, "fault_defer_chain": true, "request_eq": true}
+
+// o2Goldens are the golden programs TestGolden and TestGoldenSplit build
+// at -O2, a release build's level (decision 0220): shortGoldens and
+// crypto, JSON, and TLS programs, whose loops the optimizer changes
+// most. The rest build at -O1 (2026-10-18: clang at -O2 with LTO was
+// most of internal/llvm's 50 minute run), which still runs the passes
+// that rely on the IR's attributes and metadata.
+var o2Goldens = map[string]bool{"crypto_prims": true, "tls_x509": true, "fault_defer_chain": true, "request_eq": true,
+	"crypto_mlkem": true, "native_crypto": true, "native_json": true, "json_text": true, "tls13_rfc8448": true, "tls_nistec": true, "cpu_sha256": true, "http_tls": true}
+
+// goldenOpt is the XO_LLVM_OPT setting of golden program dir (o2Goldens);
+// XO_TEST_LLVM_OPT (O0 to O3) sets every golden program's level, as
+// XO_TEST_LLVM_OPT=O2 for a change to what clang's optimizer sees.
+func goldenOpt(dir string) string {
+	if o := os.Getenv("XO_TEST_LLVM_OPT"); o != "" {
+		return "XO_LLVM_OPT=" + o
+	}
+	if o2Goldens[filepath.Base(dir)] {
+		return "XO_LLVM_OPT=O2"
+	}
+	return "XO_LLVM_OPT=O1"
+}
+
+// goldenEnv is the environment of a single module build of golden
+// program dir: goldenOpt's level, and no LTO at -O1 (the link's whole
+// program pass was most of an -O1 build's clang time; o2Goldens keep the
+// release build's full LTO, and TestGoldenSplit's shortGoldens ThinLTO).
+func goldenEnv(dir string) []string {
+	o := goldenOpt(dir)
+	if o == "XO_LLVM_OPT=O1" {
+		return []string{o, "XO_LLVM_LTO=none"}
+	}
+	return []string{o}
+}
 
 func TestGolden(t *testing.T) {
 	if _, err := xotool.Clang(); err != nil {
@@ -229,16 +274,16 @@ func TestGolden(t *testing.T) {
 				t.Skip("builds every golden program twice: -short runs shortGoldens")
 			}
 			t.Parallel()
-			goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
-			llRes, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM})
-			if goRes.String() != llRes.String() {
-				t.Errorf("LLVM backend differs from the Go backend\n--- go\n%s\n--- llvm\n%s", goRes, llRes)
-			}
+			llRes, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)})
 			if llRes.exit == 0 {
 				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
+				goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
+				if goRes.String() != llRes.String() {
+					t.Errorf("LLVM backend differs from the Go backend\n--- go\n%s\n--- llvm\n%s", goRes, llRes)
+				}
 				if err := os.WriteFile(wantPath, []byte(goRes.String()), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -255,9 +300,41 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestGoldenGoParity builds every program under testdata/golden with the
+// Go backend and requires want.txt: for most of them (157 of 179 on
+// 2026-10-18) the only check that the Go backend still builds and runs
+// them, since TestGolden no longer builds the Go reference. Skipped
+// unless XO_TEST_GO_PARITY=1: scripts/gate.sh's llvm step sets it for a
+// change to compiler/gen or std/rt, and the batch full tier always.
+func TestGoldenGoParity(t *testing.T) {
+	if os.Getenv("XO_TEST_GO_PARITY") != "1" {
+		t.Skip("XO_TEST_GO_PARITY=1 runs it (scripts/gate.sh for compiler/gen, std/rt)")
+	}
+	dirs, err := filepath.Glob(filepath.Join("testdata", "golden", "*"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no golden programs: %v", err)
+	}
+	for _, dir := range dirs {
+		dir := dir
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			t.Parallel()
+			res := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != res.String() {
+				t.Errorf("Go backend differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+			}
+		})
+	}
+}
+
 // TestGoldenSplit builds every golden program with its IR split into
-// three modules compiled separately (decision 0168), alternating ThinLTO
-// and no LTO (shortGoldens both), and requires want.txt and no allocation live at exit.
+// three modules compiled separately (decision 0168), with no LTO, and
+// shortGoldens with ThinLTO too (2026-10-18: ThinLTO for every other
+// program cost clang time and covered no more of xo's split), and
+// requires want.txt and no allocation live at exit.
 func TestGoldenSplit(t *testing.T) {
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found: the LLVM backend tests need it")
@@ -268,11 +345,10 @@ func TestGoldenSplit(t *testing.T) {
 	}
 	type run struct{ dir, lto string }
 	var runs []run
-	for i, dir := range dirs {
+	for _, dir := range dirs {
+		runs = append(runs, run{dir, "none"})
 		if shortGoldens[filepath.Base(dir)] {
-			runs = append(runs, run{dir, "none"}, run{dir, "thin"})
-		} else {
-			runs = append(runs, run{dir, []string{"none", "thin"}[i%2]})
+			runs = append(runs, run{dir, "thin"})
 		}
 	}
 	for _, r := range runs {
@@ -282,7 +358,7 @@ func TestGoldenSplit(t *testing.T) {
 				t.Skip("builds every golden program: -short runs shortGoldens")
 			}
 			t.Parallel()
-			res, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto}})
+			res, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto, goldenOpt(dir)}})
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)

@@ -74,8 +74,12 @@ func TestStrippedNoDWARF(t *testing.T) {
 // TestDebugInfoSameOutputLLVM stands in for the same code gate on the
 // LLVM backend, whose code can differ with debug information (decision
 // 0252: dbg.value calls move register allocation and the outliner): every
-// golden program built with --release --debug-info runs with the output of
-// its --release build.
+// golden program built with debug information runs with the output of
+// its build without: o2Goldens (and every program under
+// XO_TEST_LLVM_OPT) as release builds with and without --debug-info,
+// the rest at -O1 with no LTO (goldenEnv) stripped (-s) and not
+// (2026-10-18: two -O2 LTO builds of every golden were the largest part
+// of internal/llvm's 55 minute run).
 func TestDebugInfoSameOutputLLVM(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds every golden program twice")
@@ -92,8 +96,19 @@ func TestDebugInfoSameOutputLLVM(t *testing.T) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			var runs [2]runResult
-			for i, flags := range [][]string{{"--release"}, {"--release", "--debug-info"}} {
-				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Flags: flags})
+			// release builds (-O2, decision 0220) without and with
+			// --debug-info for o2Goldens; the rest at goldenEnv's level
+			// stripped (-s) and not (a build that is not a release build
+			// has debug information), so the second is TestGolden's build
+			// (the clang cache's, xotool.EnableTestClangCache)
+			pair := [][]string{{"-s"}, nil}
+			env := goldenEnv(dir)
+			if o2Goldens[filepath.Base(dir)] || os.Getenv("XO_TEST_LLVM_OPT") != "" {
+				pair = [][]string{{"--release"}, {"--release", "--debug-info"}}
+				env = nil
+			}
+			for i, flags := range pair {
+				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendLLVM, Flags: flags, Env: env})
 				if err != nil {
 					t.Fatalf("build %v: %v", flags, err)
 				}

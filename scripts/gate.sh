@@ -11,7 +11,9 @@
 #   arm64    the full tests of internal/arm64
 #   llvm     the full tests of internal/llvm, skipped when every file
 #            the branch changes is native backend only (owner,
-#            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it
+#            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
+#            with TestGoldenGoParity (XO_TEST_GO_PARITY=1) when the
+#            branch changes compiler/gen or std/rt (go_backend)
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
 #   alloff   internal/arm64's goldens with every optional pass off
@@ -60,6 +62,14 @@ native_only() {
   [ -n "$files" ] || return 1
   ! echo "$files" | grep -v -E '^(compiler/arm64/|compiler/macho/|internal/arm64/|knowledgebase/|bench/results/)|\.md$' | grep -q .
 }
+# go_backend: the branch changes the Go backend's code generator or its
+# runtime, so internal/llvm's goldens run on the Go backend too
+# (TestGoldenGoParity: TestGolden checks want.txt with the LLVM build
+# only since 2026-10-18).
+go_backend() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/gen/|std/rt/)'
+}
 for step in "$@"; do
   case $step in
   short)
@@ -71,6 +81,8 @@ for step in "$@"; do
   llvm)
     if [ "${XO_GATE_LLVM:-}" != 1 ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
+    elif go_backend; then
+      XO_TEST_GO_PARITY=1 full llvm ./internal/llvm
     else
       full llvm ./internal/llvm
     fi ;;

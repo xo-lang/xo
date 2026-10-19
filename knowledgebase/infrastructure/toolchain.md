@@ -378,7 +378,7 @@ go test ./internal/selfhost                             # merge tier (the defaul
                                                         # time of the full package before SSA stage 8 (2026-10-11, GOMAXPROCS=4): about 160 s with the binary cache warm (was 329 s), most of it TestSelfhostSSA (51 s) and the mutation tests; a cold cache (any change to the compiler) adds the builds of compiler/check and compiler/ssa with three backends, now built at the same time (they were one after another: about 740 s of the 1510 s cold run). The backends' subtests, the Go checker and SSA builder over every run, and the batches of the Xo binaries run in parallel (up to min(GOMAXPROCS, 4), `parallel` in lexer_test.go); coverage is unchanged
 scripts/selfhost-record-goldens.sh [--merge]            # records the Go side of every TestSelfhost* differential at the full tier's sizes (no Xo binary built) as hashes into $XO_SELFHOST_GOLDENS_DIR (default internal/selfhost/testdata/gogoldens, committed): per unit one line per whole dump, list, meta value, or family (the functions, helpers, files, declarations of a unit: member count and root hash), the member hashes once per kind in pool-<x>.txt; units keyed by kind, options, and input content (decision 0178 stage 7, format in internal/selfhost/gogoldens_test.go): 20,034 units, 6,405,857 bytes in 208 files (2,573,573 gzip -9), 1,789 s, max RSS 36.6 GB (GNU time, the whole script) on an r8g.8xlarge on demand, Linux arm64, 2026-10-13 (main 2c63a802; `scripts/remote-full.sh --on-demand --put rec.sh --cmd 'bash ~/rec.sh'`, the recording returned as base64 tar in the log); the run kinds key on the std tree too, so a std change shows as units to record again; the native run kinds (ssadump, asmdump, llvmdump) key on the recording host's GOOS/GOARCH, so a Linux recording replays fully on Linux only (on darwin/arm64: 96 units missing; record those on the Mac with RUN and --merge); RUN='<regexp>' limits the tests. Last verified: 2026-10-13
 XO_SELFHOST_GOLDENS=replay go test ./internal/selfhost  # the TestSelfhost* tests hash the Xo side's pieces and compare them with the recording instead of running the Go side (any tier); a unit with no recording fails the run and is named (inputs changed: record again), a piece that differs fails its test and is listed at the end with how to see both dumps; TestSelfhostCheckerHatches binds `use go` with xo-gobind as xo1's checker does; XO_SELFHOST_GOLDENS_DEBUG=<text> prints the key of the units whose label holds it. Same verdicts and logged counts as live on 2026-10-12 (-short: 121 s against 214 s; merge tier, the 16 differentials: 255 s against 373 s, recording of d9a9c2c; -short again on the merged tree f786e42: identical, 30 s against 39 s)
-go test -short ./...                                    # 15 to 19 s on the shared Mac at the default parallelism (35 s before 2026-10-14; ./cmd/xo alone 4 to 6 s, was 25 s; GOMAXPROCS=4 -p 2 -parallel 2 takes 45 s; bench/results/short-tests-2026-10-14.md; last verified: 2026-10-14): skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging. The tests keep caches across runs: XO_BIN_CACHE (<user cache>/xo/testbin), XO_CC_CACHE (<user cache>/xo/testcc, internal/llvm's C compiles, xotool.EnableTestCCache), <user cache>/xo/testgobind/<key> (internal/gen's `use go` bindings, xotool.TestGobindDir), <user cache>/xo/testprog (content keyed program directories, xotool.TestProgramDir); the last three remove entries unused for XO_CACHE_MAX_AGE (default 24 h, decision 0223). cmd/xo's tests are all parallel: set a test's environment and directory with setenv(t, ...) and chdir(t, ...) (cmd/xo/env_test.go), never t.Setenv, t.Chdir, or os.Setenv
+go test -short ./...                                    # 15 to 19 s on the shared Mac at the default parallelism (35 s before 2026-10-14; ./cmd/xo alone 4 to 6 s, was 25 s; GOMAXPROCS=4 -p 2 -parallel 2 takes 45 s; bench/results/short-tests-2026-10-14.md; last verified: 2026-10-14): skips race, cross compile, CLI build, replay, the --no-mono and --no-arenas golden lowerings, and the notes-service arena differential; use per commit, run the full suite before merging. The tests keep caches across runs: XO_BIN_CACHE (<user cache>/xo/testbin), XO_CC_CACHE (<user cache>/xo/testcc, internal/llvm's C compiles, xotool.EnableTestCCache, and xo's own clang runs, xotool.EnableTestClangCache), <user cache>/xo/testgobind/<key> (internal/gen's `use go` bindings, xotool.TestGobindDir), <user cache>/xo/testprog (content keyed program directories, xotool.TestProgramDir); the last three remove entries unused for XO_CACHE_MAX_AGE (default 24 h, decision 0223). cmd/xo's tests are all parallel: set a test's environment and directory with setenv(t, ...) and chdir(t, ...) (cmd/xo/env_test.go), never t.Setenv, t.Chdir, or os.Setenv
 scripts/linux-test.sh [arm64|amd64] [go test args...]  # the suite in a Linux container (Docker; see "Linux (containers)"): arm64 vet plus the full suite natively, amd64 -short plus internal/llvm under emulation
 bench/nightly.sh                                        # full suite (-timeout 120m) with XO_SELFHOST_TIER=full XO_RANGE_SEEDS=25 XO_LIST_SEEDS=40, -race on std/rt, vet, then TestArithProperty with XO_ARITH_PROPS=500 from a seed that moves every day (status line `arith=`); log in bench/results/nightly/DATE.log (gitignored), one line per run in summary.txt; schedule with cron (not installed)
 go test -race ./std/rt -run 'TestMutex|TestSched'      # runtime lock and scheduler under the race detector (Mutex.with_read readers, writers, cancellation; last verified 2026-10-08)
@@ -1450,6 +1450,60 @@ default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
   clock) and the Go fuzzer on FuzzHTTPDiff, SECONDS each (default 1800);
   new FuzzHTTPDiff failures land in internal/llvm/testdata/fuzz for
   review.
+
+### internal/llvm's full run (2026-10-19)
+
+internal/llvm's full tests took about 55 minutes of a heavy slot (3,333
+s on the shared Mac, 2026-10-18), most of it clang at -O2 with LTO on
+the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
+
+- **Clang cache**: TestMain points $XO_CLANG at a caching clang
+  (internal/xotool clangcache.go, the command internal/xotool/clangcache,
+  built per test binary), which keys each IR to object or link call on
+  clang and its version, the arguments, and the contents of every input
+  (not paths), in XO_CC_CACHE's directory (<user cache>/xo/testcc,
+  entries `clang-<key>`, trimmed after XO_CACHE_MAX_AGE). A change that
+  leaves the IR alone (an arm64 emitter change, a test change) skips
+  clang: TestGolden 279 s cold, 26 s warm. XO_CLANG_CACHE=off turns it
+  off; the -object_path_lto object lives in the entry, so dsymutil finds
+  a hit's DWARF.
+- **-O1 goldens**: TestGolden, TestGoldenSplit, TestDebugInfoSameOutputLLVM,
+  and TestGenGoldensNative build at XO_LLVM_OPT=O1 (single module builds
+  with no LTO), except the -O2 sample o2Goldens (llvm_test.go:
+  shortGoldens plus crypto_mlkem, native_crypto, native_json, json_text,
+  tls13_rfc8448, tls_nistec, cpu_sha256, http_tls), which build as a
+  release build would. `XO_TEST_LLVM_OPT=O2` (O0 to O3) builds every
+  golden at that level, as release builds in TestDebugInfoSameOutputLLVM:
+  use it for a change to what clang's optimizer sees (attributes,
+  metadata, intrinsics).
+- **No Go reference in TestGolden**: want.txt pins the output; the Go
+  backend builds only under `-golden-update` (which writes want.txt).
+  TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the
+  Go backend against want.txt; scripts/gate.sh's llvm step sets it when
+  the branch changes compiler/gen or std/rt, and the batch full tier
+  always should.
+- **TestGoldenSplit**: no LTO, ThinLTO too for shortGoldens only.
+- **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
+  --debug-info; the rest -s against a plain -O1 build (TestGolden's,
+  from the cache).
+
+Measured one at a time on the shared Mac (load averages 30 to 250, so
+read these as rough), four heaviest tests, seconds:
+
+| Test | main | items 3, 4 (all -O2) | + -O1 | + cache, cold | warm |
+|---|---|---|---|---|---|
+| TestGolden | 310 | 360 | 276 | 270 | 25 |
+| TestGoldenSplit | 250 | 211 | 126 | 170 | 38 |
+| TestDebugInfoSameOutputLLVM | 566 | 589 | 379 | 400 | 65 |
+| TestGenGoldensNative | 134 | 192 | 103 | 76 | 39 |
+
+(The last two rows' cache columns are the final form, -s pairs and -O1
+without LTO, at load averages of 85 to 190; the -O1 column of
+TestDebugInfoSameOutputLLVM compared two identical builds, fixed since.)
+The whole package (`go test ./internal/llvm`): 3,333 s on main, 1,692 s
+with a cold clang cache, 567 s warm (an unchanged IR), all passing.
+
+Last verified: 2026-10-19
 
 ## Package layout (P1, implemented parts)
 

@@ -43,7 +43,11 @@ func TestGenGoldensNative(t *testing.T) {
 			dir := filepath.Join("..", "gen", "testdata", "golden", name)
 			goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 			for _, be := range backends {
-				res, b := buildRun(t, dir, xotool.Options{Backend: be})
+				var env []string
+				if be == xotool.BackendLLVM {
+					env = goldenEnv(dir) // -O1 (o2Goldens names none of these)
+				}
+				res, b := buildRun(t, dir, xotool.Options{Backend: be, Env: env})
 				if goRes.String() != res.String() {
 					t.Errorf("%s backend differs from the Go backend\n--- go\n%s\n--- %s\n%s", be, goRes, be, res)
 				}
