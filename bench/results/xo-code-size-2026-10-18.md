@@ -309,3 +309,11 @@ beyond spread (httpparse h2_get 0.952, h2_varied 0.953, h1_get 0.988,
 tls aes128 0.962, text/none 0.994). The base xo was built before a
 rebase onto main 29ae8c4a, so the faster rows may include main's
 changes from that range.
+
+## Combined, main 0b9c7143 (2026-10-18, Xo lang 4)
+
+Fixes 1 (first step), 2 (chain_pads, b303289c), 4 and 5 together: xo
+(s3 of a fixed point from main 0b9c7143) has 32.59 MB of `__text` in
+9,387 functions, against the 40.18 MB baseline above (-7.59 MB, 18.9%);
+the binary is 36.26 MB. Top 10 functions 5.3% of `__text`, top 100
+22.7%. Go's `compile`: 10.3 MB.
