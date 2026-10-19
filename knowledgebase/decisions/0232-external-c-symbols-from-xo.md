@@ -77,7 +77,16 @@ sanitizer build.
   every reference to which is weak as a weak import (dyld leaves it 0).
   Windows: sym_present is false (no weak references yet; UNTESTED).
 - LLVM: `declare extern_weak`, and sym_present an `icmp ne ptr @sym,
-  null`.
+  null`. On Windows (amended 2026-10-19): COFF's extern_weak is a weak
+  external with a per-object default, and two objects' references to a
+  symbol nothing defines are a duplicate symbol in lld-link (a split
+  build's modules), so the symbol is declared plainly, every module
+  carries the linker option `/alternatename:sym=xo_absent`, the first
+  module defines xo_absent (module asm), and sym_present compares the
+  address with xo_absent's (a `[0 x i8]` global, so LLVM never folds the
+  comparison). sym_present of a sanitizer's symbol (`__tsan_`,
+  `__sanitizer_`) is false at compile time there: no sanitizer runtime
+  links on Windows (gotchas/windows-llvm-split-link.md).
 - macOS ld rejects a weak reference to a symbol no image defines, so
   the driver (selfhost/xo link.xo weak_undefined_args) and the Go tests'
   links (internal/xotool WeakUndefinedFlags) add `-Wl,-U,_sym` for each

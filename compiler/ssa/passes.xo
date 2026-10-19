@@ -180,6 +180,181 @@ fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
   b.m.funcs[fi].blocks[bl].instrs = ins
 }
 
+/// Folds the calls of functions that only return an integer or Bool
+/// constant the build's target decided (Func.target: std/native/llrt's
+/// `layer()`, whose `match target.os` the builder resolved, and
+/// sanhook's `tsan()` on Windows; not every constant function, which
+/// would change more code than this needs): each call
+/// becomes the constant, and a negation of a constant, an equality of two
+/// constants, and a branch on a constant are folded after it, so the
+/// arms for other targets are unreachable and cleanup drops them. Without
+/// it, a module of a split LLVM build (and any build at O0) kept the
+/// darwin arms' calls of pthread and mmap, which a Windows link cannot
+/// resolve (gotchas/windows-llvm-split-link.md). Calls with a landing
+/// check left are kept.
+pub fn (var b: Builder) fold_known_calls() {
+  var known: Map[Int, Aux] = {}
+  for fi in 0..b.m.funcs.len() {
+    if let Some(n) = known_result(b.m.funcs[fi]) {
+      known[fi] = n
+    }
+  }
+  if known.is_empty() {
+    return
+  }
+  for fi in 0..b.m.funcs.len() {
+    var hit = false
+    for vi in 0..b.m.funcs[fi].values.len() {
+      let v = b.m.funcs[fi].values[vi]
+      if v.op != Op.Call || !v.args.is_empty() || v.pad >= 0 || v.block < 0 {
+        continue
+      }
+      if let Some(a) = known.get(user_callee(b.m, v)) {
+        b.m.funcs[fi].values[vi].op = Op.Const
+        b.m.funcs[fi].values[vi].aux = a
+        hit = true
+      }
+    }
+    if hit {
+      var f = b.m.funcs[fi]
+      b.m.funcs[fi] = Func{name: ""}
+      fold_const_branches(f)
+      b.m.funcs[fi] = f
+    }
+  }
+}
+
+/// The integer or Bool constant function f returns when its body is only
+/// that: no parameters, and from the entry a chain of jumps through
+/// blocks of constants to a return of a constant (directly or through the
+/// block parameters the jumps bind, as the builder leaves a `match`).
+fn known_result(f: Func) -> Option[Aux] {
+  if !f.target || f.blocks.is_empty() || !f.blocks[0].params.is_empty() || f.indirect || f.entry || !f.export.is_empty() || !f.var_params.is_empty() || !f.captures.is_empty() {
+    return None
+  }
+  // the block parameters bound so far, to the constants they hold
+  var bound: Map[Int, Int] = {}
+  var bl = 0
+  for _ in 0..16 {
+    let ins = f.blocks[bl].instrs
+    if ins.is_empty() {
+      return None
+    }
+    for i in 0..ins.len() - 1 {
+      if f.values[ins[i]].op != Op.Const {
+        return None
+      }
+    }
+    let t = f.values[ins[ins.len() - 1]]
+    match t.op {
+      Op.Jump => {
+        let e = f.edges[t.succs[0]]
+        let ps = f.blocks[e.to].params
+        if e.args.len() != ps.len() {
+          return None
+        }
+        for i in 0..ps.len() {
+          let a = bound.get(e.args[i]) ?? e.args[i]
+          if f.values[a].op != Op.Const {
+            return None
+          }
+          bound[ps[i]] = a
+        }
+        bl = e.to
+      }
+      Op.Return => {
+        if t.args.len() != 1 {
+          return None
+        }
+        let r = f.values[bound.get(t.args[0]) ?? t.args[0]]
+        if r.op != Op.Const {
+          return None
+        }
+        if let I(n) = r.aux {
+          return Some(Aux.I(n: n))
+        }
+        if let B(x) = r.aux {
+          return Some(Aux.B(b: x))
+        }
+        return None
+      }
+      _ => return None
+    }
+  }
+  None
+}
+
+/// Folds the negations of a Bool constant, the integer equalities of two
+/// constants, and the branches on a constant of f into constants and jumps (the edge not taken leaves its
+/// target's predecessors; prune_func drops what became unreachable).
+fn fold_const_branches(var f: Func) {
+  for vi in 0..f.values.len() {
+    let v = f.values[vi]
+    if v.op == Op.Not && v.block >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
+      if let B(x) = f.values[v.args[0]].aux {
+        f.values[vi].op = Op.Const
+        f.values[vi].aux = Aux.B(b: !x)
+        f.values[vi].args = []
+      }
+      continue
+    }
+    // equality only: an ordering of an unsigned type's constants is not
+    // Int's
+    if v.block < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne) {
+      continue
+    }
+    if let Some(x) = const_int(f, v.args[0]) {
+      if let Some(y) = const_int(f, v.args[1]) {
+        f.values[vi].op = Op.Const
+        f.values[vi].aux = Aux.B(b: (x == y) == (v.op == Op.Eq))
+        f.values[vi].args = []
+      }
+    }
+  }
+  for bl in 0..f.blocks.len() {
+    let t = f.term(bl)
+    if t < 0 || f.values[t].op != Op.Branch || f.values[t].succs.len() != 2 {
+      continue
+    }
+    let cv = f.values[f.values[t].args[0]]
+    if cv.op != Op.Const {
+      continue
+    }
+    var taken = -1
+    if let B(x) = cv.aux {
+      taken = if x { 0 } else { 1 }
+    }
+    if taken < 0 {
+      continue
+    }
+    let keep = f.values[t].succs[taken]
+    let drop = f.values[t].succs[1 - taken]
+    let to = f.edges[drop].to
+    var preds: List[Int] = []
+    for e in f.blocks[to].preds {
+      if e != drop {
+        preds.push(e)
+      }
+    }
+    f.blocks[to].preds = preds
+    f.values[t].op = Op.Jump
+    f.values[t].args = []
+    f.values[t].succs = [keep]
+  }
+}
+
+/// The integer constant value v of f, or None.
+fn const_int(f: Func, v: Int) -> Option[Int] {
+  let x = f.values[v]
+  if x.op != Op.Const {
+    return None
+  }
+  if let I(n) = x.aux {
+    return Some(n)
+  }
+  None
+}
+
 // ---------------------------------------------------------------------------
 // addLandings
 
@@ -871,6 +1046,7 @@ pub fn (var b: Builder) cleanup_all() {
 /// unwind, landings, cleanup, rc (buildModule, BuildStages).
 pub fn (var b: Builder) write_passes(var out: StrBuilder) {
   b.prune_unwind()
+  b.fold_known_calls()
   out.write("== stage unwind\n")
   out.write(b.m.text())
   b.add_landings()
@@ -893,6 +1069,7 @@ pub fn (var b: Builder) write_passes(var out: StrBuilder) {
 /// compiler/arm64, decision 0158).
 pub fn (var b: Builder) run_passes() {
   b.prune_unwind()
+  b.fold_known_calls()
   b.add_landings()
   b.cleanup_all()
   b.insert_rc()

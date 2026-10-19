@@ -615,6 +615,15 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     lm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     let lsd = dir_name(ctx.std.trim_suffix("/"))
     lm.std_root = if lsd.starts_with("/") { lsd } else { "${lm.comp_dir}/${lsd}" }
+    // whole program dead function removal, as for the native backends
+    // below: a function only a folded target arm called (sanhook's
+    // ThreadSanitizer threads, which call pthread and mmap) is not
+    // emitted, so a split module or an O0 build does not reference
+    // symbols the target lacks (gotchas/windows-llvm-split-link.md)
+    if o.cmd != "asm" && (os.env.get("XO_DCE") ?? "") != "off" {
+      let _d = arm64.drop_unreached(lm)
+      t = lap(os, phases, "dce", t)
+    }
     var g = llvm.new_gen(lm)
     g.goarch = tgoarch
     g.goos = tgoos
@@ -1008,6 +1017,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "tz", t)
   // b.run_passes(), timed
   b.prune_unwind()
+  b.fold_known_calls()
   t = lap(os, o.phases, "prune_unwind", t)
   b.add_landings()
   t = lap(os, o.phases, "add_landings", t)

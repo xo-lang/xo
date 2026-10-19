@@ -308,6 +308,11 @@ pub struct Func {
   /// key hashes it instead of the function's text. Not in the codec; a
   /// pass that changes the function clears it.
   pub ckey: Str = ""
+  /// The builder resolved a test of the build's target in it (a `match`
+  /// or `if` on target.os or target.arch, or rt.sym_present on Windows):
+  /// only such a function's constant result is folded into its callers
+  /// (passes.xo fold_known_calls). Not in the codec.
+  pub target: Bool = false
 }
 
 /// A lowered program (ssa.Module).

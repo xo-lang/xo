@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows builds with the LLVM backend split into modules link again
+  (the release recipe for xo.exe, split 16 with ThinLTO: 294 s on the
+  Mac), and at -O0: shared globals get COFF comdats, weak C references
+  are alternate names, and calls of functions that only test the build
+  target (the runtime's layer()) fold to their constant.
 - The back-end cache no longer decodes a function's reference counting
   when its inlining is read from the cache too (the inliner's facts come
   from a small summary kept beside the entry): after an edit of xo,

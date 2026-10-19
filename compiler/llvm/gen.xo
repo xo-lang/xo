@@ -24,6 +24,9 @@ pub struct Gen {
   /// The alias scopes of the functions (noalias.xo).
   meta: List[Str] = []
   rt_decls: List[Str] = []
+  /// Windows: the C symbols referenced weakly (rt.sym_present and `weak_`
+  /// calls), each an `/alternatename` to xo_absent (weak_ref).
+  weak_syms: List[Str] = []
   /// The text of runtime_decls (the runtime calls declared there are not
   /// declared again).
   decls: Str = ""
@@ -389,6 +392,7 @@ pub fn (var g: Gen) generate() -> Str {
     }
     out.push("\n")
   }
+  out.push(g.weak_alternates())
   out.push(g.decls)
   out.push(g.rt_decls.join(""))
   out.push(g.types.join(""))

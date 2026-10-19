@@ -507,9 +507,11 @@ fn (var b: Builder) target_is(part: Str, vr: check.VRef) -> Bool? {
   let en = check.text(b.c.objs[vr.en].name)
   let (os_name, arch_name) = b.target_names()
   if part == "os" && en == "TargetOs" {
+    b.s.f.target = true
     return Some(b.variant_name(vr) == os_name)
   }
   if part == "arch" && en == "TargetArch" {
+    b.s.f.target = true
     return Some(b.variant_name(vr) == arch_name)
   }
   None

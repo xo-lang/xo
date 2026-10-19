@@ -1352,7 +1352,11 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
 /// rt.sym_present("name") (decision 0232): whether the C symbol name,
 /// weakly referenced (sys_c.xo's `weak_` declarations), was linked: the
 /// call `rt.pc.cp.<name>`, its address compared with 0; false in a wasm
-/// module. The argument is a string literal.
+/// module, and on Windows for a sanitizer's symbol (`__tsan_`,
+/// `__sanitizer_`: no sanitizer runtime links there), a result of the
+/// target that fold_known_calls folds (so the TSan helpers' pthread calls
+/// go, gotchas/windows-llvm-split-link.md). The argument is a string
+/// literal.
 fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
   let sym = match es[0] ?? fault("arg") {
     StringLit(s) => if s.parts.len() == 1 && s.parts[0].expr == None { check.text(s.parts[0].text) } else { "" }
@@ -1362,7 +1366,8 @@ fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
     b.unsupported("rt.sym_present of anything but a string literal")
     return b.cbool(false)
   }
-  if b.wasm {
+  if b.wasm || (b.target_os() == "windows" && (sym.starts_with("__tsan_") || sym.starts_with("__sanitizer_"))) {
+    b.s.f.target = true
     return b.cbool(false)
   }
   b.add(Op.Call, b.bool_t(), Aux.S(s: "rt.pc.cp.${sym}"), [])

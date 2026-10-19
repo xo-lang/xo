@@ -533,7 +533,60 @@ fn (var g: Gen) c_sym(name: Str) -> Str {
 /// into every module that uses it, and the linker keeps one of them (and
 /// of xo_rt.c's weak one, for code of earlier compilers).
 fn (var g: Gen) placeholder(sym: Str, init: Str) {
-  g.llvm_decl(sym, "${sym} = linkonce_odr hidden global ${init}, align 8")
+  g.llvm_decl(sym, "${g.comdat_decl(sym)}${sym} = linkonce_odr hidden global ${init}${g.comdat()}, align 8")
+}
+
+/// The `$name = comdat any` line of global sym on Windows ("" elsewhere):
+/// COFF folds the copies of a weak or linkonce_odr global that the
+/// modules of a split build each define only through a comdat (lld-link:
+/// "duplicate symbol", gotchas/windows-llvm-split-link.md); ELF and
+/// Mach-O fold them by their linkage.
+fn (g: Gen) comdat_decl(sym: Str) -> Str {
+  if g.os() != "windows" {
+    return ""
+  }
+  "\$${sym.trim_prefix("@")} = comdat any\n"
+}
+
+/// Whether the weak reference to the C symbol sym is an alternate name
+/// (Windows, where it is then recorded for weak_alternates): COFF has no
+/// extern_weak that links twice, each object's is a definition of the
+/// symbol (lld-link: "duplicate symbol" when nothing defines it, as a
+/// split build's modules do, gotchas/windows-llvm-split-link.md). The
+/// symbol is declared plainly, `/alternatename:sym=xo_absent` makes an
+/// undefined one xo_absent, and rt.sym_present compares its address
+/// with xo_absent's: a zero sized type, so LLVM never folds the
+/// comparison of the two globals.
+fn (var g: Gen) weak_ref(sym: Str) -> Bool {
+  if g.os() != "windows" {
+    return false
+  }
+  if !g.weak_syms.contains(sym) {
+    g.weak_syms.push(sym)
+  }
+  true
+}
+
+/// The linker options and xo_absent's definition (module asm, so a split
+/// build defines it in its first module only) of weak_ref's symbols.
+fn (g: Gen) weak_alternates() -> Str {
+  if g.weak_syms.is_empty() {
+    return ""
+  }
+  var opts: List[Str] = []
+  for s in g.weak_syms {
+    opts.push("!\"/alternatename:${s}=xo_absent\"")
+  }
+  var out = "!llvm.linker.options = !{!8}\n!8 = !{${opts.join(", ")}}\n"
+  for l in [".data", ".globl xo_absent", "xo_absent:", ".byte 0", ".text"] {
+    out = out + "module asm \"${l}\"\n"
+  }
+  out + "\n"
+}
+
+/// The `, comdat` of a global's definition on Windows ("" elsewhere).
+fn (g: Gen) comdat() -> Str {
+  if g.os() == "windows" { ", comdat" } else { "" }
 }
 
 /// Lowers the runtime intrinsics that are an instruction or two
@@ -804,7 +857,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // object for every module of a split build
       if !g.emitted.contains("@.xo.sys_words") {
         g.emitted["@.xo.sys_words"] = true
-        g.helpers.push("@.xo.sys_words = weak global [16 x i64] zeroinitializer, align 8\n\n")
+        g.helpers.push("${g.comdat_decl("@.xo.sys_words")}@.xo.sys_words = weak global [16 x i64] zeroinitializer${g.comdat()}, align 8\n\n")
       }
       g.set(v, "ptrtoint ptr @.xo.sys_words to i64")
     }
@@ -815,7 +868,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       if !g.emitted.contains("@.xo.static") {
         g.emitted["@.xo.static"] = true
         let dbg = if g.dbg_static >= 0 { ", !dbg !${g.dbg_static}" } else { "" }
-        g.helpers.push("@.xo.static = weak global [256 x i64] zeroinitializer, align 8${dbg}\n\n")
+        g.helpers.push("${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] zeroinitializer${g.comdat()}, align 8${dbg}\n\n")
       }
       let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
       g.set(v, "ptrtoint ptr ${p} to i64")
@@ -1346,6 +1399,12 @@ fn (var g: Gen) platform_call(v: Int) {
     // rt.sym_present (decision 0232): the weak symbol's address against
     // null (a function declaration, so a symbol with a C call
     // declaration too must be declared extern_weak the same way)
+    if g.weak_ref(sym) {
+      g.llvm_decl("@${sym}", "declare void @${sym}()")
+      g.llvm_decl("@xo_absent", "@xo_absent = external global [0 x i8]")
+      g.set(v, "icmp ne ptr @${sym}, @xo_absent")
+      return
+    }
     g.llvm_decl("@${sym}", "declare extern_weak void @${sym}()")
     g.set(v, "icmp ne ptr @${sym}, null")
     return
@@ -1411,7 +1470,7 @@ fn (var g: Gen) platform_call(v: Int) {
     decl_params = fixed.join(", ")
     fty = "(${decl_params}) "
   }
-  let dll = if os == "windows" { "dllimport " } else if os == "cw" { "extern_weak " } else { "" }
+  let dll = if os == "windows" { "dllimport " } else if os == "cw" && !g.weak_ref(sym) { "extern_weak " } else { "" }
   g.llvm_decl("@${sym}", "declare ${dll}${ret} @${sym}(${decl_params}) nounwind")
   let c = "call ${ret} ${fty}@${sym}(${args.join(", ")})"
   match rk {

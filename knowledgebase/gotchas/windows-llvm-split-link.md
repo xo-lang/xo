@@ -1,7 +1,7 @@
 # Windows LLVM builds split into modules do not link
 
 Status: Observed (2026-10-18, xo-fa, cross building xo.exe on the arm64
-Mac for the Windows signing trial, main d9f15415).
+Mac for the Windows signing trial, main d9f15415). Fixed 2026-10-19.
 
 Symptom: `xo build --backend=llvm --target=windows/amd64` with
 `XO_LLVM_SPLIT=N` stops in lld-link, two ways:
@@ -21,13 +21,42 @@ Cause: (1) compiler/llvm defines the shared runtime globals in every
 module as `weak` or `linkonce_odr` (call.xo: `.xo.static`,
 `.xo.sys_words`, the placeholders such as `xo_empty_list`). ELF and
 Mach-O fold those; COFF folds a definition only through a comdat, and
-the IR gives none. (2) std/native/llrt pool.xo and sanhook.xo choose the
-platform with `match layer()`; only an optimizer that sees layer()'s
-body folds the match. In a split module (and at O0) the darwin branch's
-calls stay, and Windows has no pthread or mmap to resolve them.
+the IR gave none. (2) COFF lowers `extern_weak` to a weak external whose
+default is a symbol of the object, so two objects' weak references to a
+symbol nothing defines (`__tsan_*` on Windows) are a duplicate symbol.
+(3) std/native/llrt pool.xo and sanhook.xo choose the platform with
+`match layer()`, and sanhook's ThreadSanitizer helpers call pthread and
+mmap behind `tsan()`; only an optimizer that sees layer()'s body folds
+the match. In a split module (and at O0) the darwin branch's calls
+stay, and Windows has no pthread or mmap to resolve them.
 
-Fix (to do, xo-fa, before decision 0254 stage 6c): put each such global
-in its own `comdat any` on COFF targets, and make the platform choice a
-compile time constant the front end folds (or declare the darwin and
-linux externs only for their targets); verify with the split 16 ThinLTO
-xo.exe. Until then build Windows binaries as one module at O1 or O2.
+Fix (2026-10-19, xo-fa):
+
+- compiler/llvm puts each shared global in its own `comdat any` on
+  Windows (call.xo comdat_decl, comdat).
+- A weak reference on Windows is a plain declaration plus the linker
+  option `/alternatename:sym=xo_absent` in every module, xo_absent
+  defined once (module asm, first module), and rt.sym_present compares
+  the address with xo_absent's (call.xo weak_ref, weak_alternates;
+  decision 0232).
+- The SSA builder marks a function that tests the build's target
+  (Func.target: `target.os`/`target.arch` matches, and sym_present of a
+  sanitizer's symbol on Windows, false there), and the pass
+  fold_known_calls (compiler/ssa passes.xo) replaces a call of such a
+  function whose body returns one constant (layer(), tsan()) by the
+  constant and folds the branches on it. Only those functions: not any
+  function returning a constant.
+- The LLVM path drops unreachable functions before generating
+  (arm64.drop_unreached, as the arm64 backend does; XO_DCE=off keeps
+  them).
+
+Verified: hello with `XO_LLVM_SPLIT=4` (no LTO and ThinLTO) and one
+module at O0, and xo.exe with the release recipe (split 16, ThinLTO,
+O2, `XO_LLVM_JOBS=4` on the arm64 Mac: 294 s, 6.0 GB peak RSS, a 160 MB
+xo.exe) link, and run under Wine (`xo version`, `xo check`); the sys_c
+golden prints 0101 split with ThinLTO. Wine goldens 190 of 199, the
+same 7 failures as main plus 2 that pass on rerun (load).
+
+To check after a change here: build hello for windows/amd64 with
+`XO_LLVM_SPLIT=4 XO_LLVM_LTO=thin` and with `XO_LLVM_OPT=O0` and run it
+under Wine (toolchain.md "Windows programs under Wine in Docker").
