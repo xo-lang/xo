@@ -447,6 +447,42 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   result is read from the cache needs its reference counting result
   only as the body a later caller's miss copies; the decoding (0.5 s)
   is done on demand.
+  Implemented (2026-10-19, compiler/arm64 inlsum.xo, inline.xo
+  inline_walk and inlinable_set, inlcache.xo inline_keys and
+  inline_cached, compiler/ssa rccache.xo LazyFn and force_lazy, rc.xo
+  rc_cached, compiler/xo bcache.xo rc_cached; the lead's assignment,
+  owner-approved). The obstacle was the inliner's whole-program facts:
+  the inline keys need the inlinable sets, which inline_walk built from
+  every body after reference counting. Those passes now read a summary
+  of each body instead (inlsum.xo FnSum: the block count, the adc pairs,
+  the counts of constants and of other values that are not calls,
+  whether a value has a landing pad and whether a list.set or list.take
+  call has one, the calls' names in body order, the names the values
+  refer to, indirect, catches, the result count), which inline_state
+  builds from the body for a decoded function and reads from the cache
+  for an undecoded one, so both cases take one code path. The summary
+  is an entry of its own kind (sum/, in the target's pack too) under the
+  function's reference counting key, stored when the function is
+  computed or decoded without one. With the arm64 and amd64 backends
+  (the LLVM and wasm backends read every body and are not lazy), a hit
+  whose summary the cache holds is left undecoded: the module holds a
+  shell (its name and the facts outside its body) and the entry
+  (ssa Module.lazy). inline_cached decodes, on tasks, the functions it
+  computes (no inline entry, or verify) and every function in their
+  name closures, which is everything inline_one can copy; a function
+  read from its inline entry replaces its shell without its reference
+  counting ever being decoded. inline_module and the module without
+  inlining (when the inlined module does not verify) decode the rest.
+  Measured (the Mac, main and the change interleaved, load average 11 to
+  20): ssa.decode_func 0.88 s to 0.48 s of CPU in a profile of a
+  one-constant edit, inline_state 0.23 s to 0.14 s; insert_rc.apply
+  about 0.075 s to 0.02 s, inline.keys 0.29 s to 0.16 s, inline.apply
+  0.60 s to 0.40 s; user CPU about 0.5 s less a build; wall 0.2 to 0.7
+  s less in six of seven paired builds (one revert was 4 s slower with
+  every phase slower, other load). Every cached binary the file of the
+  cache-off build, verify clean after both edits;
+  TestBackendCacheEditIdentity requires functions left undecoded from
+  the third build on, with the loose entries removed.
 - **2c, the emitter's key from the chain**: the emitter's and the
   verifier's keys hash the function after inlining again (0.45 s and
   0.4 s); a key over the inlining key and the emitter's own facts (the
@@ -504,11 +540,8 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   (warm, constant edit, statement edit, revert), verify clean after both
   edits; TestBackendCacheEditIdentity removes the loose entries after the
   second builds, so its edit builds read from the packs alone.
-  Lazy decoding (2b) is not part of this step: the decoding
-  (ssa.decode_func, 0.8 s of CPU on tasks) is unchanged, since
-  inline_state, find_addr_taken, and drop_unreached read every reference
-  counting body before the walk; skipping a body's decoding needs
-  per-key summaries of what those passes read.
+  Lazy decoding (2b, above) came next: the decoding (ssa.decode_func,
+  0.8 s of CPU on tasks) was unchanged by the packs.
 - **Stage 2** (front end per module) for the checker and the SSA
   builder (3.2 s).
 

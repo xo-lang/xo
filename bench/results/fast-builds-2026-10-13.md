@@ -711,3 +711,30 @@ the file of the cache-off build (warm, constant, statement, revert),
 verify clean after both edits on both trees. The pack of xo's target:
 rc 78 MB, inl 95 MB, fn 218 MB in one segment each after the second
 build, then deltas of 26 KB to 155 KB per edit.
+
+### Stage D part 2b: lazy decoding (the Mac, 2026-10-19)
+
+Decision 0220 addendum stage D 2b. Steps (scratchpad pkt/meas3.sh): as
+for 2d, main (bd9aacd3's parent, packs included) and the change
+interleaved step by step, load average 11 to 20:
+
+| build | insert_rc.apply | inline.keys | inline.apply | user CPU | wall |
+|---|---|---|---|---|---|
+| warm2 | 0.082 s to 0.029 s | 0.30 s to 0.17 s | 0.66 s to 0.41 s | 9.90 s to 9.06 s | 8.55 s to 7.90 s |
+| warm3 | 0.074 s to 0.016 s | 0.31 s to 0.16 s | 0.65 s to 0.35 s | 9.47 s to 8.93 s | 7.89 s to 7.14 s |
+| constant edit | 0.070 s to 0.028 s | 0.29 s to 0.18 s | 0.60 s to 0.48 s | 10.37 s to 9.86 s | 8.54 s to 8.23 s |
+| statement edit | 0.074 s to 0.019 s | 0.29 s to 0.16 s | 0.60 s to 0.37 s | 10.78 s to 10.27 s | 7.79 s to 7.47 s |
+| revert | 0.071 s to 0.037 s | 0.29 s to 0.26 s | 0.57 s to 0.73 s | 9.16 s to 9.59 s | 7.02 s to 11.00 s |
+| second constant edit | 0.084 s to 0.018 s | 0.30 s to 0.16 s | 0.60 s to 0.40 s | 9.76 s to 9.02 s | 7.94 s to 7.33 s |
+| warm4 | 0.095 s to 0.016 s | 0.30 s to 0.16 s | 0.66 s to 0.40 s | 9.31 s to 8.79 s | 8.50 s to 8.33 s |
+
+The revert row is other load: every phase of that build was slower,
+including the checker and the SSA builder, which the change does not
+touch (the gate's own revert build: 6.47 s wall, 8.29 s user CPU). In a
+profile of a constant edit: ssa.decode_func 0.88 s to 0.48 s of CPU,
+arm64.inline_state 0.23 s to 0.14 s. A cold build stores every
+function's summary (insert_rc.sums 1.2 s, the loose files' writes on
+tasks). Every cached binary the file of the cache-off build, verify
+clean after both edits; identity 398/398 on arm64 and amd64, goldens
+198/198, the fixed point ok (pushq's overlap gate on the rebased
+change).

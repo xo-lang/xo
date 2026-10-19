@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache no longer decodes a function's reference counting
+  when its inlining is read from the cache too (the inliner's facts come
+  from a small summary kept beside the entry): after an edit of xo,
+  0.4 s less CPU decoding and about 0.5 s less user CPU, the wall time
+  0.2 to 0.7 s shorter.
 - The back-end cache keeps each build target's entries in a few pack
   files besides the per-entry files, read with one open each: after an
   edit of xo, the cache's reads take 0.03 to 0.11 s instead of 0.2 to
