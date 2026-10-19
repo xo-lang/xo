@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix: every native program (the arm64, amd64 and LLVM backends, every
+  OS) wrote a pointer past the end of the runtime's services record at
+  start, since 67c52321 (2026-10-17, decision 0251's registry of root
+  contexts): ctx.xo passed the byte offset SV_ROOTS to rt.slot_*, which
+  takes a word index. On Linux, macOS and under Wine the heap word there
+  was 0 and the overwrite went unseen; on real Windows the environment
+  strings lay there and every program faulted before main (0xC0000005,
+  both backends). Regression test std/native/llrt/ctx_test.xo; gotcha
+  svc-roots-slot-index.
+
 - The LLVM backend keeps a release's rare paths out of line (a shared
   count's drop, the releases of a fault's cleanup): xo built by LLVM
   51.5 MB to 32.6 MB of code, xo.exe 80.6 MB to 63.7 MB, HTTP and TLS
