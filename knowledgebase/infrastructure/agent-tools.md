@@ -103,6 +103,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   (a large parameter only stored while each caller passes its last use),
   decision 0263.
 
+- `scripts/sign-macos.sh [--notarize] FILE...`: Developer ID signing
+  (XO_SIGN_IDENTITY) and notarization (credentials from the environment,
+  sourced in a subshell) of macOS binaries; internal/arm64
+  TestCodesignAcceptsLinkerOutput checks that codesign accepts
+  compiler/macho's output (code-signing.md).
+
 ## Coordinating (scripts/lead/README.md)
 
 - Heavy runs: `~/xo-lead/agents/heavy.sh NAME CMD...`.
