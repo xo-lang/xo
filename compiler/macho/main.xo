@@ -8,7 +8,8 @@
 //   macho link -o OUT [--minos=X.Y] [--sdk=X.Y] [--dylib=PATH...] IN.o|IN.a...
 //       link objects and archives into an executable (libSystem, and each
 //       --dylib, imported)
-//   macho pelink -o OUT.exe --entry=SYM [--import=SYM=DLL...] IN.obj...
+//   macho pelink -o OUT.exe --entry=SYM [--import=SYM=DLL...] [--manifest]
+//     [--version=A.B.C.D] [--icon=FILE.ico] IN.obj...
 //       link windows/amd64 COFF objects into a PE32+ executable (decision
 //       0254 6b step 4; each imported function named with its DLL)
 //   macho elflink -o OUT [--interp=PATH] [--static] IN.o|IN.a...
@@ -203,6 +204,20 @@ fn pelink_main(os: Os, args: List[Str]) -> () ! FsErr {
       let kv = a.trim_prefix("--import=").split("=")
       if kv.len() == 2 {
         opts.imports[kv[0]] = kv[1]
+      }
+    } else if a == "--manifest" {
+      opts.resources.push(PERes{typ: RT_MANIFEST, id: 1, data: pe_manifest()})
+    } else if a.starts_with("--version=") {
+      var parts: List[Int] = []
+      for f in a.trim_prefix("--version=").split(".") {
+        parts.push(Int.parse(f) ?? 0)
+      }
+      opts.resources.push(PERes{typ: RT_VERSION, id: 1, data: pe_version(parts, [("FileVersion", a.trim_prefix("--version="))])})
+    } else if a.starts_with("--icon=") {
+      let p = a.trim_prefix("--icon=")
+      match pe_icon(os.fs.read(p)?) {
+        Ok(rs) => opts.resources = opts.resources + rs
+        Err(e) => fail(os, "${p}: ${e}")
       }
     } else {
       match read_coff(a, os.fs.read(a)?) {

@@ -22,16 +22,18 @@ const PO_RDATA = 1
 const PO_DATA = 2
 const PO_PDATA = 3
 const PO_TLS = 4
-const PO_RELOC = 5
+const PO_RSRC = 5
+const PO_RELOC = 6
 
 /// The link's settings: the entry symbol, the DLL of each function the
-/// program may import (by symbol), the subsystem (3: the console), and
-/// the stack's reserve.
+/// program may import (by symbol), the subsystem (3: the console), the
+/// stack's reserve, and the resources (peres.xo; none: no .rsrc).
 pub struct PEOpts {
   pub entry: Str
   pub imports: Map[Str, Str]
   pub subsystem: Int = 3
   pub stack: Int = 1048576
+  pub resources: List[PERes] = []
 }
 
 /// An input section's place: its output section and offset there.
@@ -103,7 +105,7 @@ fn get_le(b: List[Int], at: Int, n: Int) -> Int {
 /// link_pe: the executable of objs, or why not.
 pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   // the input sections' places, in object order
-  var bufs: List[List[Int]] = [[], [], [], [], [], []]
+  var bufs: List[List[Int]] = [[], [], [], [], [], [], []]
   var places: List[List[PEPlace]] = []
   for ob in objs {
     var ps: List[PEPlace] = []
@@ -309,9 +311,9 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   }
   // layout: the headers, then each section that has contents (.reloc's
   // size known after the relocations: placed last)
-  let nsect_max = 6
+  let nsect_max = 7
   let hdr = pe_up(64 + 4 + 20 + 240 + 40 * nsect_max, PE_FILE_ALIGN)
-  var rva: List[Int] = [0, 0, 0, 0, 0, 0]
+  var rva: List[Int] = [0, 0, 0, 0, 0, 0, 0]
   var next = PE_SECT_ALIGN
   for k in [PO_TEXT, PO_RDATA, PO_DATA, PO_PDATA, PO_TLS] {
     if bufs[k].is_empty() {
@@ -319,6 +321,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
     }
     rva[k] = next
     next = pe_up(next + bufs[k].len(), PE_SECT_ALIGN)
+  }
+  // .rsrc (its data entries hold RVAs: built at its place)
+  if !o.resources.is_empty() {
+    rva[PO_RSRC] = next
+    bufs[PO_RSRC] = pe_rsrc(o.resources, next)
+    next = pe_up(next + bufs[PO_RSRC].len(), PE_SECT_ALIGN)
   }
   rva[PO_RELOC] = next
   let sym_rva = fn(t: PETarget) -> Int {
@@ -448,16 +456,16 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
 fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]]) -> Bytes {
-  let names = [".text", ".rdata", ".data", ".pdata", ".tls", ".reloc"]
-  let chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
+  let names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
+  let chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
   var present: List[Int] = []
-  for k in 0..6 {
+  for k in 0..7 {
     if !bufs[k].is_empty() {
       present.push(k)
     }
   }
   // file offsets
-  var foff: List[Int] = [0, 0, 0, 0, 0, 0]
+  var foff: List[Int] = [0, 0, 0, 0, 0, 0, 0]
   var at = hdr
   for k in present {
     foff[k] = at
@@ -554,7 +562,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
   let dirs: List[(Int, Int)] = [
     (0, 0),
     (if ndll > 0 { rva[PO_RDATA] + idir } else { 0 }, if ndll > 0 { 20 * (ndll + 1) } else { 0 }),
-    (0, 0),
+    (rva[PO_RSRC], bufs[PO_RSRC].len()),
     (rva[PO_PDATA], bufs[PO_PDATA].len()),
     (0, 0),
     (rva[PO_RELOC], bufs[PO_RELOC].len()),

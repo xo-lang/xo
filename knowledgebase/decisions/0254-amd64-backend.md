@@ -388,12 +388,14 @@ all 199 goldens' windows/amd64 assembly (scripts/coff-compare.sh);
 `xo build --backend=amd64 --targets=windows/amd64` uses it (--as=cc:
 clang's assembler), lld-link still links.
 
-### 6b, step 4: Xo's own PE linker, imports, and no C runtime (Status: Proposed, 2026-10-19)
+### 6b, step 4: Xo's own PE linker, imports, and no C runtime (Accepted, owner 2026-10-19)
 
-Implemented behind `XO_WIN_NOCRT=1` (the default is unchanged: the MSVC
-C runtime and lld-link), pending the owner's answer on two questions;
-the default changes, and this section's status becomes Accepted, only
-after it.
+The owner accepted both choices below on 2026-10-19: a windows/amd64
+program of the native backend with no `use c` is linked by Xo's PE
+linker with no C runtime by default (`XO_WIN_NOCRT=0` keeps the MSVC C
+runtime and lld-link; a program with `use c` always does), switched
+once the run of every golden under Wine in this mode reached the C
+runtime build's level and a run on real Windows passed.
 
 1. Imports. Recommended and implemented (B): a checked-in table, the
    DLL that exports each of std/native/sys_windows.xo's 113 functions
@@ -426,11 +428,25 @@ lld-link's /debug:symtab). With both choices `xo build --backend=amd64
 --targets=windows/amd64` needs no clang, no lld-link and no Windows
 SDK. Results under Wine with Box64 (2026-10-19): hello 460 KB against
 1.4 MB with the C runtime, 5 runs of 5; the 31 golden subset 31 of 31.
-Not yet: a run of every golden in this mode (one run failed in Wine's
-own prefix setup under Box64, every program exit 53, while the same
-executables pass by hand), a real Windows run, and the image's
-resources (an icon, a manifest, a version) and signing's checks with
-this linker's images.
+Every golden under Wine in this mode (2026-10-19): 194 of 202, the
+seven known Wine gaps and sys_c, fixed by cabi_wincrt.xo's getpid; a
+first run's 0 of 202 (every program exit 53) was Wine's own prefix
+setup stopping part way under Box64 (gotchas/wine-box64-harness.md).
+
+Resources: the linker writes .rsrc (compiler/macho peres.xo: a three
+level directory of ids, the data entries' RVAs) for the resources it is
+given, and xo build gives every such program the application manifest
+(the process code page UTF-8, longPathAware, asInvoker, Windows 10 and
+11 as supported) and the version information (VS_VERSIONINFO: the
+names from the executable's, the version from `--stamp VERSION=A.B.C`,
+else 0.0.0.0); an icon from an .ico file through `macho pelink
+--icon=FILE.ico` (xo build has no option for one yet). Signing: such an
+image, signed by jsign with a self signed certificate (no service
+call), checks with Xo lang 5's pecheck (the certificate table ends the
+file, 8 byte aligned, the checksum right) and authhash (the
+Authenticode hash in the signature), osslsigncode verify passes (its
+digest over the whole image, the COFF symbol table after the sections
+included), and it runs under Wine.
 
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 

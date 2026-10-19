@@ -47,7 +47,9 @@ xo_tl:
 	.quad 35
 "#
 
-fn pe_sample() -> Bytes {
+fn pe_sample() -> Bytes { pe_sample_res([]) }
+
+fn pe_sample_res(res: List[PERes]) -> Bytes {
   let obj = match assemble_coff_amd64(PE_SAMPLE.bytes()) {
     Ok(o) => o
     Err(e) => fault(e)
@@ -56,7 +58,7 @@ fn pe_sample() -> Bytes {
     Ok(c) => c
     Err(e) => fault(e)
   }
-  match link_pe([co], PEOpts{entry: "start", imports: {"GetStdHandle": "KERNEL32.dll", "WriteFile": "KERNEL32.dll", "ExitProcess": "KERNEL32.dll"}}) {
+  match link_pe([co], PEOpts{entry: "start", imports: {"GetStdHandle": "KERNEL32.dll", "WriteFile": "KERNEL32.dll", "ExitProcess": "KERNEL32.dll"}, resources: res}) {
     Ok(b) => b
     Err(e) => fault(e)
   }
@@ -106,4 +108,109 @@ test "the import table covers every Windows function the runtime declares" {
   expect(m.get("WriteFile") ?? "") == "KERNEL32.dll"
   expect(m.get("WSAStartup") ?? "") == "WS2_32.dll"
   expect(m.get("WaitOnAddress") ?? "") == "api-ms-win-core-synch-l1-2-0.dll"
+}
+
+/// The file offset of rva in PE image b, by its section table.
+fn pe_off(b: Bytes, rva: Int) -> Int {
+  let pe = rd32(b, 0x3c)
+  let n = rd16(b, pe + 6)
+  let sh = pe + 24 + 240
+  for i in 0..n {
+    let h = sh + 40 * i
+    let va = rd32(b, h + 12)
+    if rva >= va && rva < va + rd32(b, h + 8) {
+      return rd32(b, h + 20) + rva - va
+    }
+  }
+  -1
+}
+
+/// An icon file of two images (the images' bytes are not checked).
+fn two_icons() -> Bytes {
+  var b: List[Int] = []
+  res_le(b, 0, 2)
+  res_le(b, 1, 2)
+  res_le(b, 2, 2)
+  for (w, size, off) in [(16, 4, 38), (32, 6, 42)] {
+    b = b + [w, w, 0, 0]
+    res_le(b, 1, 2)
+    res_le(b, 32, 2)
+    res_le(b, size, 4)
+    res_le(b, off, 4)
+  }
+  b = b + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  var o = BytesBuilder.with_capacity(b.len())
+  for x in b {
+    o.write_byte(UInt8(x))
+  }
+  o.freeze()
+}
+
+test "a PE's resources: a directory of ids in order, subdirectories marked, the manifest's data" {
+  var res = [PERes{typ: RT_MANIFEST, id: 1, data: pe_manifest()}, PERes{typ: RT_VERSION, id: 1, data: pe_version([1, 2], [("ProductName", "t")])}]
+  match pe_icon(two_icons()) {
+    Ok(rs) => res = res + rs
+    Err(e) => fault(e)
+  }
+  let b = pe_sample_res(res)
+  let dd = rd32(b, 0x3c) + 24 + 112
+  let rva = rd32(b, dd + 16)
+  expect(rva != 0) == true
+  let root = pe_off(b, rva)
+  // no named entries; the types 3, 14, 16, 24 in order
+  expect(rd16(b, root + 12)) == 0
+  expect(rd16(b, root + 14)) == 4
+  var types: List[Int] = []
+  for k in 0..4 {
+    types.push(rd32(b, root + 16 + 8 * k))
+    expect(rd32(b, root + 20 + 8 * k) & 0x80000000) == 0x80000000
+  }
+  expect(types) == [3, 14, 16, 24]
+  // the icons: ids 1 and 2
+  let icons = root + (rd32(b, root + 20) & 0x7fffffff)
+  expect(rd16(b, icons + 14)) == 2
+  expect(rd32(b, icons + 16)) == 1
+  expect(rd32(b, icons + 24)) == 2
+  // the manifest: type 24, id 1, language 0x409, its data entry an RVA
+  let ids = root + (rd32(b, root + 20 + 8 * 3) & 0x7fffffff)
+  expect(rd32(b, ids + 16)) == 1
+  let langs = root + (rd32(b, ids + 20) & 0x7fffffff)
+  expect(rd32(b, langs + 16)) == 0x409
+  let entry = rd32(b, langs + 20)
+  expect(entry & 0x80000000) == 0
+  let de = root + entry
+  let at = pe_off(b, rd32(b, de))
+  let m = pe_manifest()
+  expect(rd32(b, de + 4)) == m.len()
+  expect(b[at..at + m.len()] == m) == true
+}
+
+test "the version information: the fixed part's signature and version, the lengths" {
+  let v = pe_version([1, 2, 3, 4], [("FileVersion", "1.2.3.4")])
+  expect(rd16(v, 0)) == v.len()
+  expect(rd16(v, 2)) == 52
+  // the key VS_VERSION_INFO (32 bytes from 6), padded to 40
+  expect(rd32(v, 40)) == 0xfeef04bd
+  expect(rd32(v, 48)) == 0x10002
+  expect(rd32(v, 52)) == 0x30004
+  expect(v.len() % 4) == 0
+}
+
+test "an icon file: its images and the group that lists them" {
+  match pe_icon(two_icons()) {
+    Ok(rs) => {
+      expect(rs.len()) == 3
+      expect(rs[0].data.len()) == 4
+      expect(rs[1].data.len()) == 6
+      expect(rs[2].typ) == RT_GROUP_ICON
+      // the group: header, two 14 byte entries, the second's id 2
+      expect(rs[2].data.len()) == 6 + 2 * 14
+      expect(rd16(rs[2].data, 6 + 14 + 12)) == 2
+    }
+    Err(e) => fault(e)
+  }
+  match pe_icon("not an icon".bytes()) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e) == "not an icon file"
+  }
 }

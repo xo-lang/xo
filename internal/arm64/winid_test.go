@@ -32,7 +32,8 @@ var winIdentityAllowed = map[string]bool{"cli_parse/attempt": true, "method_valu
 // has it off: one prologue per function) and inlining off for both (the
 // runtime inlined differs by OS). Normalized: directives (.seh against
 // .cfi), labels, the export calls' targets (Windows calls the function,
-// Linux the export's alias of it), thunk names, a leaf's fault stub
+// Linux the export's alias of it), the C runtime's functions Windows
+// with no C runtime calls as Xo's (cabi_wincrt.fmod for fmod), thunk names, a leaf's fault stub
 // (Windows jumps, Linux makes a frame record and calls), and literal
 // label numbers. The subset by default; XO_TEST_WIN_IDENTITY=all every
 // golden.
@@ -102,6 +103,7 @@ var (
 	reLocal    = regexp.MustCompile(`\.Lp\w+?_f\d+_`)
 	reLiteral  = regexp.MustCompile(`\.Lxo_p\w+?_(str|lit|k)\d+`)
 	reExport   = regexp.MustCompile(`\bxo_x_\w+`)
+	reWinCRT   = regexp.MustCompile(`\bxo_f_cabi__wincrt_2e(\w+)`)
 )
 
 // exportAliases maps each export of Linux text to the function its alias
@@ -144,6 +146,7 @@ func ownFuncsNorm(text string, alias map[string]string) map[string]string {
 			continue
 		}
 		s = reThunk.ReplaceAllString(s, "")
+		s = reWinCRT.ReplaceAllString(s, "$1")
 		s = reLocal.ReplaceAllString(s, ".L_")
 		s = reLiteral.ReplaceAllString(s, ".L$1")
 		s = reExport.ReplaceAllStringFunc(s, func(x string) string {

@@ -207,10 +207,10 @@ fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
 /// built on it (a static -nostdlib link of it cannot work).
 fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
   if tgoos == "windows" {
-    // the amd64 backend's windows/amd64 program with no C runtime, linked
-    // by Xo's PE linker (decision 0254 6b step 4; opt in until the
-    // owner's decision): no `use c`
-    return o.backend == "amd64" && (os.env.get("XO_WIN_NOCRT") ?? "") == "1" && !uses_c(c)
+    // the amd64 backend's windows/amd64 program with no `use c` has no C
+    // runtime and is linked by Xo's PE linker (decision 0254 6b step 4);
+    // XO_WIN_NOCRT=0 keeps the MSVC C runtime and lld-link
+    return o.backend == "amd64" && (os.env.get("XO_WIN_NOCRT") ?? "") != "0" && !uses_c(c)
   }
   if tgoos != "linux" || o.race {
     return false

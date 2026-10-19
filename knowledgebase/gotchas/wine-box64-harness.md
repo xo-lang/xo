@@ -36,3 +36,21 @@ gap (toolchain.md) or Box64 flakiness: about six programs a full run
 crash inside Wine's own code ("Unhandled illegal instruction at
 00006FFF...") and pass when run again; rerun a failure alone before
 calling it a bug.
+
+## A prefix whose wineboot stopped part way (Observed, 2026-10-19)
+
+Symptom: a run of every golden reports `ok 0 of 202`, every program
+`exit 53` with no output and no stderr, while the 31 golden subset with
+the same compiler passes, and each failing executable passes when run
+alone in another directory. Twice in a row on 2026-10-19, with the Mac's
+load at 20 to 48.
+
+Cause: the run's first `wineboot -u` under Box64 stopped part way
+(services.exe "c000001d", an illegal instruction, in Box64): the prefix
+had 419 files in system32 where a good one has about 787, and every
+`wine` in it exits 53, `wine cmd /c echo` included.
+
+Fix: scripts/wine-goldens.sh's run.sh probes the prefix after wineboot
+(`wine cmd /c echo xo-ok`) and makes it again, up to three times. When a
+run's summary shows every program failing with the same status, check
+the prefix before the programs.

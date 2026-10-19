@@ -903,7 +903,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
             Err(e) => fail(os, "${e}")
           }
         }
-        let why = pe_link(os, wsrcs + zsrcs, wbin)
+        let why = pe_link(os, wsrcs + zsrcs, wbin, o.stamps)
         if !why.is_empty() {
           fail(os, why)
         }

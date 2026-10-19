@@ -1,7 +1,8 @@
 // The C runtime of a windows/amd64 program linked with no C runtime
-// (decision 0254 stage 6b, step 4: Xo's PE linker, XO_WIN_NOCRT=1): the
+// (decision 0254 stage 6b, step 4: Xo's PE linker, the default with no
+// `use c`; XO_WIN_NOCRT=0 for the C runtime): the
 // C library functions generated code calls (memcpy, memmove, memset,
-// memcmp, fmod, strlen; Xo's, as an XO_NOLIBC Linux program's, libcstr.xo and
+// memcmp, fmod, strlen, getpid; Xo's, as an XO_NOLIBC Linux program's, libcstr.xo and
 // libcmath.xo) under their bare C names, and the process's entry. Only
 // such a build has them (compiler/ssa declare_exports). Nothing here may
 // fault or allocate Xo values.
@@ -23,6 +24,15 @@ fn fmod(x: Float, y: Float) -> Float { libcmath.fmod(x, y) }
 
 /// (rt.sym_addr("strlen"), std/native/internal.xo's test hook)
 fn strlen(s: Int) -> Int { libcstr.strlen(s) }
+
+/// The C runtime's getpid (std/native/sys_c.xo's strong reference):
+/// GetCurrentProcessId.
+fn getpid() -> Int32 {
+  match target.os {
+    TargetOs.Windows => Int32(Int(sys_windows.GetCurrentProcessId()))
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => Int32(0)
+  }
+}
 
 /// The process's entry (the PE's AddressOfEntryPoint): what cabi_c.main
 /// does when the C runtime's start calls it (Windows reads its own

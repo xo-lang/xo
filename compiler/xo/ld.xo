@@ -311,7 +311,7 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// Links the windows/amd64 COFF objects at paths into bin with Xo's PE
 /// linker (decision 0254 6b step 4): the entry xo_win_start
 /// (cabi_wincrt.xo), the imports by macho.pe_imports. "" or why not.
-fn pe_link(os: Os, paths: List[Str], bin: Str) -> Str {
+fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)]) -> Str {
   var objs: List[macho.CObj] = []
   for p in paths {
     let b = match os.fs.read(p) {
@@ -323,7 +323,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str) -> Str {
       Err(e) => return e
     }
   }
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports()}) {
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps)}) {
     Ok(img) => {
       match os.fs.write(bin, img) {
         Ok(_) => ""
@@ -334,3 +334,36 @@ fn pe_link(os: Os, paths: List[Str], bin: Str) -> Str {
   }
 }
 
+/// A Windows program's resources: the manifest (UTF-8, long paths) and
+/// the version information, named by the executable, its version that
+/// of the stamp VERSION (`--stamp VERSION=1.2.3`, any case, a leading v
+/// dropped), else 0.0.0.0.
+fn pe_resources(bin: Str, stamps: List[(Str, Str)]) -> List[macho.PERes] {
+  let segs = bin.split("/")
+  let file = segs[segs.len() - 1]
+  let name = file.trim_suffix(".exe")
+  var text = "0.0.0.0"
+  var parts: List[Int] = []
+  for (k, v) in stamps {
+    if k.to_lower() == "version" {
+      text = v
+      for f in v.trim_prefix("v").split(".") {
+        var n = 0
+        var any = false
+        for c in f.bytes() {
+          if c < '0' || c > '9' {
+            break
+          }
+          n = n * 10 + Int(c - '0')
+          any = true
+        }
+        if !any || parts.len() == 4 {
+          break
+        }
+        parts.push(n)
+      }
+    }
+  }
+  let strings = [("FileDescription", name), ("FileVersion", text), ("InternalName", name), ("OriginalFilename", file), ("ProductName", name), ("ProductVersion", text)]
+  [macho.PERes{typ: 24, id: 1, data: macho.pe_manifest()}, macho.PERes{typ: 16, id: 1, data: macho.pe_version(parts, strings)}]
+}

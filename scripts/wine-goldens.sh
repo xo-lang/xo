@@ -43,8 +43,17 @@ for d in $dirs; do
 done
 cat > "$W/run.sh" <<'RUN'
 #!/bin/sh
-wineboot -u >/dev/null 2>&1
-wineserver -w
+# the prefix, made again when its wineboot stopped part way (Box64:
+# every program then exits 53 with no output, gotchas/wine-box64-harness.md)
+for try in 1 2 3; do
+  wineboot -u >/dev/null 2>&1
+  wineserver -w
+  if wine cmd /c echo xo-ok 2>/dev/null | grep -aq xo-ok; then break; fi
+  echo "wine prefix broken (try $try), making it again"
+  wineserver -k >/dev/null 2>&1
+  wineserver -w >/dev/null 2>&1
+  rm -rf "${WINEPREFIX:?}"
+done
 mkdir -p /work/win/w /work/win/log
 : > /work/win/summary.txt
 for d in /work/win/gold/*; do

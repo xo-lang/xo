@@ -1,0 +1,282 @@
+// A PE image's resources (decision 0254 stage 6b, step 4): the .rsrc
+// section Xo's PE linker writes, its three level directory (type, id,
+// language) over the resources' data, and the resources a program gets:
+// the application manifest (UTF-8 as the process code page, long paths),
+// the version information, and an icon from an .ico file.
+
+const RT_ICON = 3
+const RT_GROUP_ICON = 14
+const RT_VERSION = 16
+const RT_MANIFEST = 24
+/// U.S. English, as rc writes a resource with no LANGUAGE statement
+const LANG_EN_US = 0x409
+
+/// A resource: its type, id, language, and data.
+pub struct PERes {
+  pub typ: Int
+  pub id: Int
+  pub lang: Int = LANG_EN_US
+  pub data: Bytes
+}
+
+fn res_le(var b: List[Int], v: Int, n: Int) {
+  for k in 0..n {
+    b.push((v >> (8 * k)) & 0xff)
+  }
+}
+
+fn res_pad(var b: List[Int], a: Int) {
+  while b.len() % a != 0 {
+    b.push(0)
+  }
+}
+
+/// A resource directory's header with n id entries (no named ones).
+fn res_dir(var b: List[Int], n: Int) {
+  res_le(b, 0, 4)
+  res_le(b, 0, 4)
+  res_le(b, 0, 4)
+  res_le(b, 0, 2)
+  res_le(b, n, 2)
+}
+
+/// s as UTF-16LE with its terminating NUL.
+fn res_utf16(var b: List[Int], s: Str) {
+  for r in s.runes() {
+    let c = Int(r)
+    if c >= 0x10000 {
+      let v = c - 0x10000
+      res_le(b, 0xd800 + (v >> 10), 2)
+      res_le(b, 0xdc00 + (v & 0x3ff), 2)
+    } else {
+      res_le(b, c, 2)
+    }
+  }
+  res_le(b, 0, 2)
+}
+
+/// pe_rsrc: the .rsrc section of res placed at rva: the root directory
+/// of the types, a directory of ids per type, a directory of languages
+/// per id, the data entries, then the data (each 8 byte aligned). Every
+/// directory's entries are ids in increasing order (no names).
+pub fn pe_rsrc(res: List[PERes], rva: Int) -> List[Int] {
+  var types: List[Int] = []
+  for r in res {
+    if !types.contains(r.typ) {
+      types.push(r.typ)
+    }
+  }
+  types = types.sort()
+  // the ids of each type and the resources of each (type, id), sorted
+  var ids: List[List[Int]] = []
+  for t in types {
+    var l: List[Int] = []
+    for r in res {
+      if r.typ == t && !l.contains(r.id) {
+        l.push(r.id)
+      }
+    }
+    ids.push(l.sort())
+  }
+  var leaves: List[List[Int]] = []
+  for (ti, t) in types.indexed() {
+    for id in ids[ti] {
+      var langs: List[Int] = []
+      for (ri, r) in res.indexed() {
+        if r.typ == t && r.id == id {
+          langs.push(ri)
+        }
+      }
+      leaves.push(langs.sort_by(fn(ri: Int) -> Int { res[ri].lang }))
+    }
+  }
+  // the offsets: the root, the type directories, the id directories, the
+  // data entries, the data
+  var at = 16 + 8 * types.len()
+  var type_dir: List[Int] = []
+  for l in ids {
+    type_dir.push(at)
+    at += 16 + 8 * l.len()
+  }
+  var id_dir: List[Int] = []
+  for l in leaves {
+    id_dir.push(at)
+    at += 16 + 8 * l.len()
+  }
+  var entry_at: Map[Int, Int] = {}
+  for l in leaves {
+    for ri in l {
+      entry_at[ri] = at
+      at += 16
+    }
+  }
+  var data_at: Map[Int, Int] = {}
+  for l in leaves {
+    for ri in l {
+      at = pe_up(at, 8)
+      data_at[ri] = at
+      at += res[ri].data.len()
+    }
+  }
+  var b: List[Int] = []
+  res_dir(b, types.len())
+  for (ti, t) in types.indexed() {
+    res_le(b, t, 4)
+    res_le(b, 0x80000000 | type_dir[ti], 4)
+  }
+  var leaf = 0
+  for l in ids {
+    res_dir(b, l.len())
+    for (k, id) in l.indexed() {
+      res_le(b, id, 4)
+      res_le(b, 0x80000000 | id_dir[leaf + k], 4)
+    }
+    leaf += l.len()
+  }
+  for l in leaves {
+    res_dir(b, l.len())
+    for ri in l {
+      res_le(b, res[ri].lang, 4)
+      res_le(b, entry_at.get(ri) ?? 0, 4)
+    }
+  }
+  for l in leaves {
+    for ri in l {
+      res_le(b, rva + (data_at.get(ri) ?? 0), 4)
+      res_le(b, res[ri].data.len(), 4)
+      res_le(b, 0, 4)
+      res_le(b, 0, 4)
+    }
+  }
+  for l in leaves {
+    for ri in l {
+      res_pad(b, 8)
+      for x in res[ri].data {
+        b.push(Int(x))
+      }
+    }
+  }
+  b
+}
+
+/// The application manifest every Xo program gets: the process code page
+/// UTF-8 (Windows 10 1903 and later), paths longer than MAX_PATH where
+/// the system allows them, Windows 10 and 11 as the supported OS, and no
+/// elevation.
+pub fn pe_manifest() -> Bytes {
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+    "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n" +
+    "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\r\n" +
+    "    <application>\r\n" +
+    "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\"/>\r\n" +
+    "    </application>\r\n" +
+    "  </compatibility>\r\n" +
+    "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n" +
+    "    <windowsSettings>\r\n" +
+    "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n" +
+    "      <longPathAware xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">true</longPathAware>\r\n" +
+    "    </windowsSettings>\r\n" +
+    "  </application>\r\n" +
+    "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n" +
+    "    <security>\r\n" +
+    "      <requestedPrivileges>\r\n" +
+    "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\"/>\r\n" +
+    "      </requestedPrivileges>\r\n" +
+    "    </security>\r\n" +
+    "  </trustInfo>\r\n" +
+    "</assembly>\r\n").bytes()
+}
+
+/// A version resource node: its length, its value's length (in words for
+/// a text value, typ 1; in bytes for binary, typ 0), its type, its key,
+/// its value, and its children, each 4 byte aligned.
+fn ver_node(key: Str, value: List[Int], vlen: Int, typ: Int, kids: List[List[Int]]) -> List[Int] {
+  var b: List[Int] = [0, 0]
+  res_le(b, vlen, 2)
+  res_le(b, typ, 2)
+  res_utf16(b, key)
+  res_pad(b, 4)
+  b = b + value
+  for k in kids {
+    res_pad(b, 4)
+    b = b + k
+  }
+  b[0] = b.len() & 0xff
+  b[1] = b.len() >> 8
+  b
+}
+
+/// The version information (VS_VERSIONINFO): the file and product
+/// version ver (up to four parts, each below 65536), an application's
+/// fixed information, and the strings (key, value) in U.S. English,
+/// Unicode (040904b0).
+pub fn pe_version(ver: List[Int], strings: List[(Str, Str)]) -> Bytes {
+  var v = [0, 0, 0, 0]
+  for (i, x) in ver.indexed() {
+    if i < 4 {
+      v[i] = x & 0xffff
+    }
+  }
+  let ms = (v[0] << 16) | v[1]
+  let ls = (v[2] << 16) | v[3]
+  var fixed: List[Int] = []
+  for x in [0xfeef04bd, 0x10000, ms, ls, ms, ls, 0x3f, 0, 0x40004, 1, 0, 0, 0] {
+    res_le(fixed, x, 4)
+  }
+  var strs: List[List[Int]] = []
+  for (k, val) in strings {
+    var u: List[Int] = []
+    res_utf16(u, val)
+    strs.push(ver_node(k, u, u.len() / 2, 1, []))
+  }
+  let table = ver_node("040904b0", [], 0, 1, strs)
+  let sfi = ver_node("StringFileInfo", [], 0, 1, [table])
+  var tr: List[Int] = []
+  res_le(tr, LANG_EN_US, 2)
+  res_le(tr, 1200, 2)
+  let vfi = ver_node("VarFileInfo", [], 0, 1, [ver_node("Translation", tr, 4, 0, [])])
+  let root = ver_node("VS_VERSION_INFO", fixed, 52, 0, [sfi, vfi])
+  var out = BytesBuilder.with_capacity(root.len())
+  for x in root {
+    out.write_byte(UInt8(x))
+  }
+  out.freeze()
+}
+
+/// pe_icon: the resources of the icon file ico (ICONDIR): each image an
+/// RT_ICON with ids from 1, and the RT_GROUP_ICON id 1 that lists them,
+/// or why ico is not an icon file.
+pub fn pe_icon(ico: Bytes) -> Result[List[PERes], Str] {
+  if ico.len() < 6 || rd16(ico, 0) != 0 || rd16(ico, 2) != 1 {
+    return Err("not an icon file")
+  }
+  let n = rd16(ico, 4)
+  if n == 0 || ico.len() < 6 + 16 * n {
+    return Err("an icon file with no images")
+  }
+  var out: List[PERes] = []
+  var group: List[Int] = []
+  res_le(group, 0, 2)
+  res_le(group, 1, 2)
+  res_le(group, n, 2)
+  for i in 0..n {
+    let e = 6 + 16 * i
+    let size = rd32(ico, e + 8)
+    let off = rd32(ico, e + 12)
+    if off + size > ico.len() {
+      return Err("icon image ${i + 1} is past the end of the file")
+    }
+    out.push(PERes{typ: RT_ICON, id: i + 1, data: ico[off..off + size]})
+    // GRPICONDIRENTRY: the ICONDIRENTRY's first 12 bytes and the id
+    for k in 0..12 {
+      group.push(Int(ico[e + k]))
+    }
+    res_le(group, i + 1, 2)
+  }
+  var g = BytesBuilder.with_capacity(group.len())
+  for x in group {
+    g.write_byte(UInt8(x))
+  }
+  out.push(PERes{typ: RT_GROUP_ICON, id: 1, data: g.freeze()})
+  Ok(out)
+}
