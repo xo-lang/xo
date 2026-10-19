@@ -365,8 +365,18 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       if fixed {
         let comma = if any { "," } else { "" }
         let key = "${pend}${comma}\"${fname}\":"
-        let l = b.lit(if any { b.read(av) } else { acc }, key)
-        b.write_var(av, b.json_sub(l, fv, ft))
+        let cur = if any { b.read(av) } else { acc }
+        if b.is_prelude_named(ft, ["Str"]) && b.prelude_impl("llrt_rs_append_json_body") >= 0 {
+          // a Str field's quotes go with the literals around it: the
+          // opening one ends the key, the closing one starts the next
+          // literal, and the value is one append when nothing in it
+          // needs escaping (jsontext.append_body)
+          b.write_var(av, b.json_rt("rs_append_json_body", b.str_t(), [b.lit(cur, "${key}\""), fv]))
+          pend = "\""
+          any = true
+          continue
+        }
+        b.write_var(av, b.json_sub(b.lit(cur, key), fv, ft))
         pend = ""
         any = true
         continue

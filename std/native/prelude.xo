@@ -2493,6 +2493,8 @@ fn llrt_json_float(src: Bytes, tape: List[Int], i: Int) -> Float { jsontext.floa
 
 fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
 
+fn llrt_rs_append_json_body(s: Str, t: Str) -> Str { jsontext.append_body(s, t) }
+
 fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }
 
 fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b) }

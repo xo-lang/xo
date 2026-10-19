@@ -879,7 +879,13 @@ fn short_escape(c: Int) -> Int {
 /// out + s as a JSON string: std/rt's appendJSONString (encoding/json
 /// without HTML escaping): `"`, `\`, and control bytes escaped, invalid
 /// UTF-8 as �, U+2028 and U+2029 as   and  .
-pub fn append_str(out: Str, s: Str) -> Str {
+pub fn append_str(out: Str, s: Str) -> Str { rt.rs_push_byte(append_body(rt.rs_push_byte(out, 34), s), 34) }
+
+/// out + s as the inside of a JSON string (append_str without its
+/// quotes): a derived encoder writes a Str field's quotes in its key
+/// and the next literal (compiler/ssa json.xo), one append, not three,
+/// when nothing needs escaping.
+pub fn append_body(out: Str, s: Str) -> Str {
   let b = s.bytes()
   let n = b.len()
   // the first byte to escape or check
@@ -901,12 +907,11 @@ pub fn append_str(out: Str, s: Str) -> Str {
       i += 1
     }
   }
-  var o = rt.rs_push_byte(out, 34)
   if i >= n {
     // nothing to escape
-    o = rt.rs_append_bytes(o, b, 0, n, 0)
-    return rt.rs_push_byte(o, 34)
+    return rt.rs_append_bytes(out, b, 0, n, 0)
   }
+  var o = out
   var start = 0
   while i < n {
     let c = Int(b[i])
@@ -948,7 +953,7 @@ pub fn append_str(out: Str, s: Str) -> Str {
   if n > start {
     o = rt.rs_append_bytes(o, b, start, n, 0)
   }
-  rt.rs_push_byte(o, 34)
+  o
 }
 
 /// out + f as std/json writes a Float (num.append_json_float).
