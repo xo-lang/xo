@@ -77,6 +77,8 @@ func main() {
 	gencert := flag.String("gencert", "", "write cert.pem and key.pem for 127.0.0.1 into this directory and exit")
 	h2 := flag.Bool("h2", false, "with https: HTTP/2 only (the workers' requests are streams of one connection)")
 	gap := flag.Duration("gap", 0, "-route mode: a pause before each request, so a server is idle (waiting to read) when it comes (callgrind.sh's h2)")
+	burst := flag.Int("burst", 0, "burst mode: dial this many connections at once (raw TCP, one GET /users/1 each, Connection: close), -reps times, and print the failures and the time until all are answered (burst.go)")
+	reps := flag.Int("reps", 10, "-burst mode: rounds")
 	h2det := flag.Bool("h2det", false, "with -h2: write each request's frames in one TLS write (h2det.go; callgrind.sh's deterministic counts)")
 	flag.Parse()
 	if *gencert != "" {
@@ -132,6 +134,9 @@ func main() {
 	}
 	if *route != "" {
 		os.Exit(runRoute(client, *base, *route, *n, *gap))
+	}
+	if *burst > 0 {
+		os.Exit(runBurst(*base, *burst, *reps))
 	}
 
 	var peak atomic.Int64
