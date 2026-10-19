@@ -5,17 +5,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestWinConsts compiles std/llrt/testdata/win_consts.c, the static
 // asserts of the Windows constants and layouts the native runtime's Xo
 // hard codes (sock.xo, cabi_net.xo, poll.xo; decision 0234), for
 // windows/amd64 and windows/arm64 with the Windows cross toolchain:
-// XO_CLANG and XO_WINSYSROOT, else the Mac's set-up in the user cache
+// XO_CLANG (as the user set it, xotool.UserClang) and XO_WINSYSROOT, else the Mac's set-up in the user cache
 // (knowledgebase/infrastructure/toolchain.md "Windows cross builds on the
 // Mac"). It skips where neither is there.
 func TestWinConsts(t *testing.T) {
-	clang, sysroot := os.Getenv("XO_CLANG"), os.Getenv("XO_WINSYSROOT")
+	clang, sysroot := xotool.UserClang(), os.Getenv("XO_WINSYSROOT")
 	if sysroot == "" {
 		if cache, err := os.UserCacheDir(); err == nil {
 			x := filepath.Join(cache, "xo", "winxc")

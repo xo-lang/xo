@@ -1466,7 +1466,9 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   leaves the IR alone (an arm64 emitter change, a test change) skips
   clang: TestGolden 279 s cold, 26 s warm. XO_CLANG_CACHE=off turns it
   off; the -object_path_lto object lives in the entry, so dsymutil finds
-  a hit's DWARF.
+  a hit's DWARF. A test that picks a clang of its own when $XO_CLANG is
+  unset (the Windows cross toolchain's) reads xotool.UserClang, $XO_CLANG
+  as the user set it.
 - **-O1 goldens**: TestGolden, TestGoldenSplit, TestDebugInfoSameOutputLLVM,
   and TestGenGoldensNative build at XO_LLVM_OPT=O1 (single module builds
   with no LTO), except the -O2 sample o2Goldens (llvm_test.go:

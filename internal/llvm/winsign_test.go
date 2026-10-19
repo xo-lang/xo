@@ -26,7 +26,7 @@ func TestWindowsCertTableAppends(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
 	}
-	clang, ar, sysroot := os.Getenv("XO_CLANG"), os.Getenv("XO_AR"), os.Getenv("XO_WINSYSROOT")
+	clang, ar, sysroot := xotool.UserClang(), os.Getenv("XO_AR"), os.Getenv("XO_WINSYSROOT")
 	if sysroot == "" {
 		if cache, err := os.UserCacheDir(); err == nil {
 			x := filepath.Join(cache, "xo", "winxc")

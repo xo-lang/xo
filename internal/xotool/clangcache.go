@@ -34,6 +34,22 @@ import (
 
 const clangRealEnv = "XO_CLANG_CACHED"
 
+// clangUserEnv keeps $XO_CLANG as it was before EnableTestClangCache
+// (UserClang).
+const clangUserEnv = "XO_CLANG_USER"
+
+// UserClang is $XO_CLANG as the user set it, "" for none: with the clang
+// cache on, $XO_CLANG names the cache's command, so a test that picks a
+// clang of its own when none is set (the Windows cross toolchain's, with
+// lld) reads this instead (2026-10-19: TestWindowsCertTableAppends ran
+// Apple's clang, which has no lld, through the cache).
+func UserClang() string {
+	if os.Getenv(clangRealEnv) != "" {
+		return os.Getenv(clangUserEnv)
+	}
+	return os.Getenv("XO_CLANG")
+}
+
 // EnableTestClangCache builds clangcache and makes it xo's clang for the
 // test binary (TestMain), with the real clang in $XO_CLANG_CACHED, when
 // the C compile cache is on (EnableTestCCache) and XO_CLANG_CACHE is not
@@ -57,6 +73,7 @@ func EnableTestClangCache() (func(), error) {
 		os.RemoveAll(dir)
 		return none, fmt.Errorf("building clangcache: %v\n%s", err, out)
 	}
+	os.Setenv(clangUserEnv, os.Getenv("XO_CLANG"))
 	os.Setenv(clangRealEnv, real)
 	os.Setenv("XO_CLANG", bin)
 	return func() { os.RemoveAll(dir) }, nil
