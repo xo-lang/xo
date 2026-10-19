@@ -738,3 +738,35 @@ tasks). Every cached binary the file of the cache-off build, verify
 clean after both edits; identity 398/398 on arm64 and amd64, goldens
 198/198, the fixed point ok (pushq's overlap gate on the rebased
 change).
+
+### Stage D part 2e: parts (the Mac, 2026-10-19)
+
+Decision 0220 addendum stage D 2e. Steps (scratchpad pkt/meas4.sh): as
+for 2d, main and the change interleaved step by step. The load average
+fell from above 100 to 7 during the run; the rows from the statement
+edit on are comparable:
+
+| build | emit | user CPU | system CPU | wall |
+|---|---|---|---|---|
+| statement edit | 0.45 s to 0.36 s | 9.73 s to 9.09 s | 0.69 s to 0.79 s | 7.28 s to 7.29 s |
+| revert | 0.46 s to 0.29 s | 8.34 s to 7.47 s | 0.70 s to 0.77 s | 6.70 s to 6.63 s |
+| second constant edit | 0.44 s to 0.31 s | 8.71 s to 7.76 s | 0.69 s to 0.70 s | 7.01 s to 6.84 s |
+| warm | 0.45 s to 0.31 s | 8.45 s to 7.44 s | 0.85 s to 1.00 s | 7.03 s to 7.03 s |
+
+In a profile of a constant edit: arm64.gen_part 0.91 s to 0.10 s of
+CPU, debug_sections 0.46 s to none, drop_own_weak 0.18 s to 0.09 s. The
+saved CPU ran on tasks beside other work, so the wall time moves by
+0.15 s at most. The pack of xo's target holds the parts (328 MB) and
+only the fn entries of the parts generated since (6 MB, from 218 MB).
+Every cached binary the file of the cache-off build, verify clean after
+both edits; in the gate (pcg.sh): identity 400/400 on arm64 and amd64,
+goldens 199/199, the fixed point ok, and the revert build 6.88 s and
+7.47 s of user CPU.
+
+What is left after an edit of xo (wall, the gate's statement edit):
+the SSA builder 2.1 s and the checker 1.1 s (stage 2, per module),
+insert_rc.plan 1.1 s (borrow inference 0.5 s of CPU and the reference
+counting keys 0.4 s on tasks: every function's key hashed again on every
+build, the next lever), inlining 0.7 s (inline.apply 0.39 s and the
+verification of the functions not verified before 0.34 s), assemble
+0.6 s (the edited part's), emit 0.4 s, link 0.3 s.

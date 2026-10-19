@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache keeps each part of a split build (its functions'
+  code, exception tables, and debug sections) under the keys of its
+  functions: an unchanged part is read, not generated (xo after an
+  edit: 0.8 s less CPU generating parts, the parts' 218 MB of function
+  entries no longer read).
 - Windows builds with the LLVM backend split into modules link again
   (the release recipe for xo.exe, split 16 with ThinLTO: 294 s on the
   Mac), and at -O0: shared globals get COFF comdats, weak C references

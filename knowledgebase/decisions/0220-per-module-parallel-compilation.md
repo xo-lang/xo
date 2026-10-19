@@ -542,6 +542,51 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   second builds, so its edit builds read from the packs alone.
   Lazy decoding (2b, above) came next: the decoding (ssa.decode_func,
   0.8 s of CPU on tasks) was unchanged by the packs.
+- **2e, parts** (implemented 2026-10-19, compiler/arm64 partcache.xo,
+  parallel.xo gen_part, compiler/xo bcache.xo fn_cache_load and
+  fn_cache_store; the lead's assignment, in place of caching each
+  function's DWARF, after a measurement: the debug sections were 0.44 s
+  of CPU of gen_part's 0.9 s, and every one of xo's 35 parts was
+  generated on every build only for the object cache to hash its text,
+  34 of 35 hitting). A part (gen_part's result before drop_own_weak,
+  which reads the whole module: its functions' placed text, its
+  exception tables, its debug sections, its data, the reference flags,
+  and the helpers it wants, by name as the fn entries keep them) is an
+  entry of the target's pack (kind part; no loose copy: a part is one
+  program's, and xo's are 328 MB of text in all) under the SHA-256 of:
+  the part cache's version and fn_key's header line (the fn cache
+  version, the compiler's identity through the fn keys, the target, the
+  architecture, XO_ARM64_REGS, XO_POISON_FRAMES, debug information, data
+  addresses in DWARF, nolibc); the compile directory and std's root
+  (the debug lines name them); with debug information, the keys of all
+  the module's types (a variable's type DIE names its fields and
+  variants, which a function's own key may not reach); the number of
+  parts, the part's index, its first and last function, and its label
+  namespace; and the fn keys of its functions in order. A part is
+  generated again when any of its functions' fn keys changes (their
+  text, address-taken state, callees' signatures, types: everything
+  fn_key covers), when a function is added, removed, or moved before
+  or inside it (the split's bounds and the order of the keys), when its
+  first function's name changes (its namespace), when the number of
+  parts changes, when any type of the module changes with debug
+  information on, or when a setting of the header changes; a part with a
+  function the fn cache does not key (fn key "") is never cached. The
+  driver reads the part entries first and the fn entries only of the
+  functions in parts it did not read (every function with verify, which
+  generates every part and fails the build when one differs from its
+  entry). The part entry does not record how many of its functions came
+  from the fn cache (a part read counts all its functions as reused), so
+  a verify build compares the same bytes. A target's parts are cached
+  from its third build (the pack is written by the second).
+  Measured (the Mac, main and the change interleaved step by step):
+  gen_part 0.91 s to 0.10 s of CPU in a profile of a constant edit,
+  debug_sections 0.46 s to none, drop_own_weak 0.18 s to 0.09 s; at a
+  load average under 16: emit 0.44 to 0.46 s to 0.29 to 0.36 s, user CPU
+  0.6 to 1.0 s less a build, wall 0 to 0.15 s less (the parts were
+  generated on tasks, so the CPU saved was mostly parallel). The fn pack
+  of xo's target drops from 218 MB to 6 MB (only the entries of parts
+  generated are read, so the compaction keeps those). Every cached
+  binary the file of the cache-off build, verify clean after both edits.
 - **Stage 2** (front end per module) for the checker and the SSA
   builder (3.2 s).
 
