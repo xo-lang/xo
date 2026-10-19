@@ -620,8 +620,9 @@ XO_BACKEND_CACHE=off.
 
 Status: Accepted (the lead, 2026-10-19: per function, finer than the
 per module stage 2 above, which it replaces; diagnostics, constants and
-generics, and a verify test added). Step 1 implemented 2026-10-19
-(below), with a coarser key than this design.
+generics, and a verify test added). Steps 1 and 2 implemented
+2026-10-19 (below), with a coarser key than this design; step 3 (packs)
+is part of step 1.
 
 Measured first (main f33791fc, a warm build of xo under the CPU
 profiler, the Mac): 7.3 s of CPU, of which the SSA builder 2.86 s,
@@ -795,3 +796,81 @@ Tests: TestBackendCacheEditIdentity requires fe hits from the second
 build; TestFrontCacheInterfaceEdits edits a struct's field, a callee's
 signature and a constant, and shows the dependent bodies miss, the
 binary is the cache-off build's, and verify is clean (the lead's (3)).
+
+### Addendum stage 2, step 2: the checker side, per module (implemented 2026-10-19, opt in)
+
+Opt in (XO_CHK_CACHE=1) until the whole-program passes cover a skipped
+module: the gate's llvm full tier (os_tasks, TestGenGoldensNative and
+TestErrorTracesNative) found that a skipped module's bodies, checked
+lazily when the SSA builder reaches them, are checked after the passes
+that run once over every checked body (solve_effects' fixed point over
+inferred effects, flow_bodies, the never results, the discards), so
+those passes never see them: a task closure's error was lost and the
+program exited 0 (gotchas/module-check-cache-skips-whole-program-passes.md).
+Verify did not catch it (it compares the diagnostics, not the tables
+the builder reads), nor did the identity runs (each program is built
+once, so the module cache never hits). The sound version needs each
+whole-program pass's results for the module's bodies in the entry and
+replayed (inferred effects, never results, the flow facts), or the
+skipped bodies checked before those passes when the front end cache
+does not hold them; next, with a test that builds every golden twice
+with XO_CHK_CACHE=1 and compares the binaries and outputs.
+
+compiler/check modcache.xo; entries are kind "chk" (loose files).
+
+The checker caches whole modules, not bodies: a body's check writes
+tables the SSA builder reads (each expression's type, the calls, the
+resolutions), so a skipped body must be one the builder does not need,
+and per module the builder already reads every body of a changed
+module. A program module (not std, not native, not the prelude) whose
+key matches is checked lazily: its signatures as always, its bodies
+only when the builder asks (check_lazy, as for the runtime).
+
+- The key: "xo check cache v2", xo's identity and the checker's flags
+  (std, lazy, the C runtime paths, std_test), the module's path, its
+  interface closure (as step 1's), and its files' full sources.
+- The entry: the module's diagnostics in report order (warnings, lints
+  XO05xx, budgets; a module with an error or a diagnostic of no file is
+  not stored), the calls of std/time's zone (compiler/tzsel reads their
+  name records), and the SSA builder's scans of its bodies (uses tasks,
+  uses budgets), which the builder reads instead of scanning.
+- On a hit the module's diagnostics are replaced by its entry's, so the
+  JSON diagnostics equal a cold build's (the lead's (1);
+  TestModuleCheckDiagnostics, before and after an edit).
+- Builds only (`xo build`, `xo run`, native, no overlay); `xo check` and
+  test builds check in full.
+- XO_BACKEND_CACHE=verify checks every module and fails when its entry
+  differs; the test changes the entries and expects the failure.
+
+Two more parts of the same change:
+
+- The parse prefetch (compiler/xo bcache.xo parse_prefetch): the
+  checker's parse was 0.65 s of a warm build's 0.97 s of check CPU on
+  xo, serial. After a check the driver writes the files it parsed (path
+  and mode) as the build target's parse list (pack/<slot>/parse/list);
+  the next build reads those files and parses them on tasks into the
+  checker's parse cache, which takes a parse whose path, bytes and mode
+  match and parses any other file itself. The parses of program files
+  leave the cache after the check, so a process checking several
+  programs carries std's alone, as before.
+- Generic instances made before: a body that calls a generic function
+  whose instance an earlier body made changes nothing a replay must
+  redo (the instance is in the state the entry's fingerprint matches),
+  so it is recorded; only a body that makes a new instance is not.
+  XO_FE_STATS=1 also counts the bodies not recorded, by reason: on xo
+  135 make a new instance, 73 make closures, 22 add constants, 1 a
+  thunk (427 made or reused instances before).
+
+Results on xo (module skip with XO_CHK_CACHE=1): 21 of 21 modules
+skipped on a warm build, 20 of 21 after an edit in compiler/cli/core;
+8,143 of 8,374 bodies replayed warm
+(7,882 before the generic change); the check phase about 0.6 to 0.3 s
+warm with the prefetch. Every cached binary the file of the cache-off
+build, verify clean. Wall per edit, measured 2026-10-19 with the
+module skip off (its default), main (step 1) against this change,
+interleaved, load average 18 to 22: a constant edit 9.01 to 8.43 s, a
+statement edit 9.71 to 8.73 s, the revert 8.22 to 7.46 s, a second
+constant edit 9.40 to 8.13 s (0.6 to 1.3 s less); the check phase 1.4
+to 2.0 s to 1.1 to 1.4 s; bodies replayed warm 7,915 to 8,201 of about
+8,420. A cold build is 2.9 s slower in wall (48.3 to 51.2 s, load 31 to
+45) and 1.3 s less in user CPU.

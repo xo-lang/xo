@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The files a build target's last build parsed are parsed on tasks
+  before the check, and the front end cache also keeps the bodies that
+  reuse generic instances made before (xo after an edit: 0.6 to 1.3 s
+  less wall, about 8.5 s). A module check cache (an unchanged module's
+  bodies checked only when the build needs them, its warnings replayed)
+  is opt in, XO_CHK_CACHE=1, until it covers the whole-program checks.
+- The back-end cache's prune removes empty directories (one per build
+  target) unused for a week.
 - The native TLS server keeps a connection's state where only its task
   reads it, instead of sharing the whole state again at every read and
   write: TLS requests 8.2% and HTTP/2 requests 9.2% fewer instructions
