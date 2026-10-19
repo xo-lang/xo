@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v1"
+const INLINE_CACHE_VERSION = "xo inline cache v2"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
@@ -47,11 +47,15 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
     let all = name_closure(st, i)
     var b = BytesBuilder.new()
     b.write_str(head)
-    b.write_str("self ${i} ${rc_keys[i]}\n")
+    // no function indices (they depend on the whole program, so a std
+    // function's key differed in every program, decision 0272): a callee
+    // is its name, and its place before or after i is the version below
+    b.write_str("self ${rc_keys[i]}\n")
     var ok = true
     for s in all.sort() {
       let ci = st.by_name.get(s) ?? -1
-      b.write_str("name ${s.len()}:${s} ${ci} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
+      let at = if ci < 0 { "-" } else if ci < i { "<" } else if ci > i { ">" } else { "=" }
+      b.write_str("name ${s.len()}:${s} ${at} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
       if ci >= 0 {
         let g = st.sums[ci]
         b.write_str(" ${g.indirect} ${g.catches} ${g.nres}")
