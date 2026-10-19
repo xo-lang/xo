@@ -368,7 +368,32 @@ pub fn str_eq(a: Int, an: Int, b: Int, bn: Int) -> Int {
   if a == b || an == 0 {
     return 1
   }
+  if an <= 16 {
+    return eq_short(a, b, an)
+  }
   if rt.mem_cmp(a, b, an) == 0 { 1 } else { 0 }
+}
+
+/// str_eq of n bytes, 1 to 16, with no call: two loads of each string
+/// that overlap and cover it (8 bytes from the start and 8 to the end
+/// from 8 bytes on, 4 and 4 from 4, 1, the middle, and the last below),
+/// never past either string's end (2026-10-19: the plain HTTP server
+/// compared methods, route literals, and header names of 3 to 15 bytes
+/// 18.9 times a request, each a call of memcmp; Xo Lang 3's profile).
+fn eq_short(a: Int, b: Int, n: Int) -> Int {
+  var x = 0
+  if n >= 8 {
+    let t = subw(n, 8)
+    x = (rt.mem_load(a, 0, 8) ^ rt.mem_load(b, 0, 8)) | (rt.mem_load(a, t, 8) ^ rt.mem_load(b, t, 8))
+  } else if n >= 4 {
+    let t = subw(n, 4)
+    x = (rt.mem_load(a, 0, 4) ^ rt.mem_load(b, 0, 4)) | (rt.mem_load(a, t, 4) ^ rt.mem_load(b, t, 4))
+  } else {
+    let m = n.shr_logical(1)
+    let t = subw(n, 1)
+    x = (rt.mem_load(a, 0, 1) ^ rt.mem_load(b, 0, 1)) | (rt.mem_load(a, m, 1) ^ rt.mem_load(b, m, 1)) | (rt.mem_load(a, t, 1) ^ rt.mem_load(b, t, 1))
+  }
+  if x == 0 { 1 } else { 0 }
 }
 
 /// The order of the an bytes at a and the bn bytes at b, -1, 0, or 1, as

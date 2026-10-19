@@ -1,0 +1,16 @@
+// Tests of obj.xo (decision 0262): `xo test --std-module=native/llrt/obj`,
+// run by internal/stdtest.
+
+test "Str == of 1 to 20 bytes: a difference at each place, and equal copies" {
+  let s = "abcdefghijklmnopqrst"
+  for n in 1..21 {
+    let a = s[0..n]
+    // a copy in another object (not the same address: str_eq's short path)
+    let c = a[0..n - 1] + a[n - 1..n]
+    expect(a == c) == true
+    for i in 0..n {
+      let b = a[0..i] + "#" + a[i + 1..n]
+      expect(a == b) == false
+    }
+  }
+}
