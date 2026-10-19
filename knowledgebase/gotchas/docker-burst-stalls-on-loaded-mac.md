@@ -1,6 +1,6 @@
 # Connection bursts in Docker on a loaded Mac stall the whole container
 
-Status: Observed (2026-10-19, Xo Lang 3).
+Status: Observed (2026-10-19, Xo Lang 3); confirmed on a quiet linux/arm64 CI runner the same day (bench/results/http-burst-ci-2026-10-19.md).
 
 ## Symptom
 
@@ -39,3 +39,14 @@ cache keeps 8 stacks per worker and 64 shared (std/native/llrt/pool.xo
 FCACHE, FIBER_CACHE), so a burst of 2,000 connections maps and unmaps
 about 1,840 fiber stacks each round: 116,000 minor faults per 150 rounds
 against 2,500 with a cache of 4,096 (and 5 to 7% less server CPU).
+
+## Confirmed (2026-10-19)
+
+CI run 39322714355 ran bench/perf/http/burst-ci.sh on a quiet 16 CPU
+linux/arm64 runner, servers and loadgen on separate CPUs, 300 rounds
+each: 6 rounds over 150 ms for both servers, maximum 280.5 ms for Xo
+and 335.1 ms for Go, no failures (bench/results/http-burst-ci-2026-10-19.md).
+The fiber stack churn above is fixed on main (4538689f,
+bench/results/fiber-stack-cache-2026-10-19.md): 12,663 minor faults
+against Go's 118,018 in that run. Open there: Xo's per connection
+latency p99 in a burst (85 to 117 ms against 64 to 92).
