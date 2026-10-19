@@ -73,6 +73,9 @@ fn (var g: G) function(fi: Int) {
       g.x86_mul_pair()
     }
     g.x86_retarget()
+    if g.on("x86_fold_loads") {
+      g.x86_fold_loads()
+    }
     if g.on("x86_carry_fuse") {
       g.x86_carry_fuse()
     }

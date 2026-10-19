@@ -125,3 +125,27 @@ test "x86_copy_runs: overlapping ranges, two other bases, and a later read of r1
   let d = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%rsp)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\tmovq $1, %r11\n\tretq"
   expect(x86_copy_runs(d)) == "\tmovdqu 8(%rbx), %xmm15\n\tmovdqu %xmm15, 16(%rsp)\n\tmovq $1, %r11\n\tretq"
 }
+
+test "x86_fold_into: a load becomes the memory source of its one reader" {
+  expect(x86_fold_into("adcq $u1, $d0", 1, "16")) == "adcq 16($u1), $d0"
+  expect(x86_fold_into("movq $u0, %rax\nmulq $u1\nmovq %rax, $d0\nmovq %rdx, $d1", 1, "")) == "movq $u0, %rax\nmulq ($u1)\nmovq %rax, $d0\nmovq %rdx, $d1"
+  expect(x86_fold_into("cmpq $u1, $u0", 1, "8")) == "cmpq 8($u1), $u0"
+  // not a destination, not read twice, not a longer token's prefix
+  expect(x86_fold_into("addq $u0, $u1", 1, "8")) == ""
+  expect(x86_fold_into("addq $u1, $d0\nsubq $u1, $d1", 1, "8")) == ""
+  expect(x86_fold_into("addq $u12, $d0", 1, "8")) == ""
+  expect(x86_fold_into("movq $u1, 8($u0)", 1, "8")) == ""
+}
+
+test "x86_load_line, x86_drop_load: one of a ldp's two loads goes" {
+  let (off, j, ok) = x86_load_line("movq 8($u0), $d1", 1)
+  expect(ok) == true
+  expect(off) == "8"
+  expect(j) == 0
+  let (_o2, _j2, ok2) = x86_load_line("movq 8($u0,$u1,8), $d1", 1)
+  expect(ok2) == false
+  let ld = Inst{kind: K_PLAIN, x86: true, text: "movq 0($u0), $d0\nmovq 8($u0), $d1", defs: [5, 6], us: [3]}
+  let r = x86_drop_load(ld, 0)
+  expect(r.text) == "movq 8($u0), $d0"
+  expect(r.defs) == [6]
+}

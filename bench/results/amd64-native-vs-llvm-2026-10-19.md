@@ -181,3 +181,30 @@ Every workload:
 Xo lang 4's first step (2026-10-19, in a gate when this was written):
 one mulq for a mul and umulh pair and vector copies of word runs; plain
 1.278 to 1.259, tls-newconn 1.249 to 1.209 on main a083d59b.
+
+## Closing the gap (2026-10-19, Xo lang 4)
+
+linux/amd64 callgrind (bench/perf/http/callgrind-docker.sh, ARCH=amd64,
+REPS=1, N=100), instructions a request, native against LLVM of the same
+main; LLVM plain 23,922, tls-newconn 2,972,410 (main a083d59b):
+
+| Step | plain | ratio | tls-newconn | ratio |
+|---|---|---|---|---|
+| main a083d59b | 30,566 | 1.278 | 3,713,594 | 1.249 |
+| 1: x86_mul_pair, x86_copy_runs | 30,118 | 1.259 | 3,594,873 | 1.209 |
+| 2: x86_fold_loads | 30,030 | 1.255 | 3,553,572 | 1.196 |
+
+1. compiler/arm64 x86.xo x86_mul_pair: a block's low (`mul`) and high
+   (`umulh`) halves of one product make one mulq (x25519 fe64_mul 224 to
+   200 instructions); x86emit.xo x86_copy_runs: runs of word copies
+   (pushq/popq, or through r11) move 16 bytes a movdqu through xmm15
+   (20,409 movdqu in the HTTP server).
+2. x86.xo x86_fold_loads: a single use load (`movq OFF(base)`) becomes
+   the memory source of its reader (add, adc, sub, sbb, logic, imul,
+   cmp, test, mov, mulq); crypto_prims' static instructions 427,107 to
+   410,150 (-4.0%), fe64_add 38 to 26 with no frame.
+
+Correctness at each step: the amd64 goldens in Docker (199/199, no C
+toolchain), progen arith 1..250 on amd64 (the six divergences seen there
+were on main too: an overflow message's operand, fixed separately,
+gotchas/amd64-fault-operand-spilled-slot.md).

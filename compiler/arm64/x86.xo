@@ -2225,6 +2225,273 @@ fn x86_mul_half(inst: Inst, text: Str) -> Bool {
   inst.kind == K_PLAIN && !inst.x86 && !inst.has_fault && inst.text == text && inst.defs.len() == 1 && inst.us.len() == 2
 }
 
+/// Loads folded into the instruction that reads them (2026-10-19: x86
+/// arithmetic takes a memory source, `addq 8(%rdx), %r9`, where the
+/// retargeted arm64 MIR loads every word into a register first; with 8
+/// caller saved registers x25519's fe64_add held 9 values and saved rbx,
+/// a frame in a leaf). A `movq OFF($uJ), $dN` line (a ldr's, or one of
+/// a ldp's two) whose definition has that one use, as the source of a
+/// later single use line of the block (`OP $uK, REG` for add, sub, adc,
+/// sbb, and, or, xor, imul, cmp, test, mov, or `mulq $uK`), becomes that
+/// source, `OP OFF($uK), REG` with use K the load's base, and the line
+/// goes. Not past a call, a store, or anything else that may write
+/// memory, nor past a definition of the base; not into an instruction
+/// with a fault (its stub reads the operands' registers).
+fn (var g: G) x86_fold_loads() {
+  var nuse: Map[Int, Int] = {}
+  var ndef: Map[Int, Int] = {}
+  for b in g.hot + g.cold {
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        nuse[u] = (nuse.get(u) ?? 0) + 1
+      }
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+      }
+    }
+  }
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    // a loaded value -> its instruction (cand) and base register (cbase)
+    var cand: Map[Int, Int] = {}
+    var cbase: Map[Int, Int] = {}
+    var gone: List[Bool] = []
+    for _ in 0..ins.len() {
+      gone.push(false)
+    }
+    for k in 0..ins.len() {
+      var inst = ins[k]
+      if inst.kind == K_PLAIN && inst.x86 && !inst.has_fault && inst.recover.is_empty() {
+        for u in 0..inst.us.len() {
+          let v = inst.us[u]
+          let li = cand.get(v) ?? -1
+          if li < 0 || (nuse.get(v) ?? 0) != 1 || (ndef.get(v) ?? 0) != 1 {
+            continue
+          }
+          let ld = ins[li]
+          let n = ld.defs.index_of(v) ?? -1
+          let line = x86_def_line(ld.text, n)
+          let (off, j, ok) = x86_load_line(line, n)
+          if !ok {
+            continue
+          }
+          let t = x86_fold_into(inst.text, u, off)
+          if t.is_empty() {
+            continue
+          }
+          inst.text = t
+          inst.us[u] = ld.us[j]
+          ins[k] = inst
+          ins[li] = x86_drop_load(ld, n)
+          if ins[li].defs.is_empty() {
+            gone[li] = true
+          }
+          cand.remove(v)
+          cbase.remove(v)
+        }
+      }
+      // what this instruction ends: memory written, a base redefined
+      if x86_may_write_mem(inst) {
+        cand = {}
+        cbase = {}
+      } else {
+        for d in inst.defs {
+          cand.remove(d)
+          cbase.remove(d)
+          var drop: List[Int] = []
+          for (v, bv) in cbase.entries() {
+            if bv == d {
+              drop.push(v)
+            }
+          }
+          for v in drop {
+            cand.remove(v)
+            cbase.remove(v)
+          }
+        }
+      }
+      // the loads it makes
+      if inst.kind == K_PLAIN && inst.x86 && !inst.has_fault && !inst.defs.is_empty() {
+        let ls = inst.text.split("\n")
+        if ls.len() == inst.defs.len() {
+          for (n, d) in inst.defs.indexed() {
+            let (_off, j, ok) = x86_load_line(x86_def_line(inst.text, n), n)
+            if ok && !inst.defs.contains(inst.us[j]) {
+              cand[d] = k
+              cbase[d] = inst.us[j]
+            }
+          }
+        }
+      }
+    }
+    var out: List[Inst] = []
+    for (k, inst) in ins.indexed() {
+      if !gone[k] {
+        out.push(inst)
+      }
+    }
+    g.blocks[b].insts = out
+  }
+}
+
+/// The line of text that writes `$dN` (x86_fold_loads), "" if none or
+/// several.
+fn x86_def_line(text: Str, n: Int) -> Str {
+  var found = ""
+  for l in text.split("\n") {
+    if l.ends_with(", $d${n}") {
+      if !found.is_empty() {
+        return ""
+      }
+      found = l
+    }
+  }
+  found
+}
+
+/// Whether l is `movq OFF($uJ), $dN`: OFF (with its parentheses' text
+/// left out) and J.
+fn x86_load_line(l: Str, n: Int) -> (Str, Int, Bool) {
+  let bad = ("", 0, false)
+  let tail = "), $d${n}"
+  if !l.starts_with("movq ") || !l.ends_with(tail) {
+    return bad
+  }
+  let body = l["movq ".len()..l.len() - tail.len()]
+  let open = body.find("($u") ?? -1
+  if open < 0 || body.contains(",") {
+    return bad
+  }
+  let off = body[0..open]
+  if !off.is_empty() && !is_signed_digits(off) {
+    return bad
+  }
+  match Int.parse(body[open + 3..body.len()]) {
+    Some(j) => (off, j, true)
+    None => bad
+  }
+}
+
+/// text with its one read of `$uK` as a source made the memory operand
+/// OFF($uK), or "" when it cannot take one.
+fn x86_fold_into(text: Str, k: Int, off: Str) -> Str {
+  let tok = "$u${k}"
+  let ls = text.split("\n")
+  var at = -1
+  for (i, l) in ls.indexed() {
+    let c = x86_tok_count(l, tok)
+    if c > 1 || (c == 1 && at >= 0) {
+      return ""
+    }
+    if c == 1 {
+      at = i
+    }
+  }
+  if at < 0 {
+    return ""
+  }
+  let l = ls[at]
+  let mem = "${off}(${tok})"
+  var nl = ""
+  for op in ["addq", "subq", "adcq", "sbbq", "andq", "orq", "xorq", "imulq", "cmpq", "testq", "movq"] {
+    let pre = "${op} ${tok}, "
+    if l.starts_with(pre) {
+      let dst = l[pre.len()..l.len()]
+      if dst.contains("(") || dst.contains(",") || dst.starts_with("$") && !(dst.starts_with("$d") || dst.starts_with("$u")) {
+        return ""
+      }
+      nl = "${op} ${mem}, ${dst}"
+    }
+  }
+  if l == "mulq ${tok}" {
+    nl = "mulq ${mem}"
+  }
+  if l == "imulq ${tok}" {
+    nl = "imulq ${mem}"
+  }
+  if nl.is_empty() {
+    return ""
+  }
+  var out: List[Str] = []
+  for (i, x) in ls.indexed() {
+    out.push(if i == at { nl } else { x })
+  }
+  out.join("\n")
+}
+
+/// The times register token tok (`$u3`) appears in l, not as a prefix
+/// of a longer one (`$u31`).
+fn x86_tok_count(l: Str, tok: Str) -> Int {
+  var c = 0
+  var i = 0
+  while i + tok.len() <= l.len() {
+    let j = l[i..l.len()].find(tok) ?? -1
+    if j < 0 {
+      break
+    }
+    let e = i + j + tok.len()
+    if e >= l.len() || !is_digits(l[e..e + 1]) {
+      c += 1
+    }
+    i = e
+  }
+  c
+}
+
+/// ld without its load of definition n: the line goes, the later
+/// definitions' tokens move down one.
+fn x86_drop_load(ld: Inst, n: Int) -> Inst {
+  var out = ld
+  var ls: List[Str] = []
+  for l in ld.text.split("\n") {
+    if l.ends_with(", $d${n}") {
+      continue
+    }
+    var x = l
+    var m = n + 1
+    while m < ld.defs.len() {
+      x = x.replace("$d${m}", "$d${m - 1}")
+      m += 1
+    }
+    ls.push(x)
+  }
+  out.text = ls.join("\n")
+  var ds: List[Int] = []
+  for (i, d) in ld.defs.indexed() {
+    if i != n {
+      ds.push(d)
+    }
+  }
+  out.defs = ds
+  out
+}
+
+/// Whether inst may write memory (x86_fold_loads keeps no load past
+/// it): anything but a plain x86 template or a register move, or a
+/// template line with a memory destination, a push, a pop, a call, an
+/// exchange, or a string or locked instruction.
+fn x86_may_write_mem(inst: Inst) -> Bool {
+  if inst.kind == K_PMOVE {
+    return false
+  }
+  if inst.kind != K_PLAIN || !inst.x86 {
+    return true
+  }
+  for l in inst.text.split("\n") {
+    if l.starts_with("push") || l.starts_with("pop") || l.starts_with("call") || l.starts_with("xchg") || l.starts_with("lock") || l.starts_with("cmpxchg") || l.starts_with("rep") || l.starts_with("stos") || l.starts_with("movs") {
+      return true
+    }
+    let parts = l.split(", ")
+    if parts.len() > 1 && parts[parts.len() - 1].contains("(") {
+      return true
+    }
+    if parts.len() == 1 && l.contains("(") && !l.starts_with("mulq") && !l.starts_with("imulq") && !l.starts_with("prefetch") {
+      return true
+    }
+  }
+  false
+}
+
 /// Carries kept in CF across the links of an add chain (2026-10-18:
 /// x25519's fe64_mul, 300 instructions to arm64's 113). Each
 /// cpu.adc/adc_carry link saves its carry (`setb; movzbl`) and the next
