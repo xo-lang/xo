@@ -14,6 +14,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   is opt in, XO_CHK_CACHE=1, until it covers the whole-program checks.
 - The back-end cache's prune removes empty directories (one per build
   target) unused for a week.
+- Fix: on Windows, `Fs.create_new` over a directory reported `IsDir`
+  instead of `Exists`, and over a dangling symbolic link it created the
+  link's target instead of reporting `Exists` (seen in the Windows golden
+  kit's run of fs_create_new, 2026-10-19).
 - The native TLS server keeps a connection's state where only its task
   reads it, instead of sharing the whole state again at every read and
   write: TLS requests 8.2% and HTTP/2 requests 9.2% fewer instructions

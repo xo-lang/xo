@@ -22,8 +22,10 @@ var winSubset = []string{"abs_fault", "arith", "clock_timers", "cli_fault", "con
 
 // winIdentityAllowed are the functions whose code differs by target for
 // a reason of the target's (register choices after a value one OS's
-// runtime makes known), not 6b's: checked 2026-10-19.
-var winIdentityAllowed = map[string]bool{"cli_parse/attempt": true, "method_values/main": true}
+// runtime makes known; a spill Linux keeps in the red zone below rsp,
+// which Windows does not have, so its frame is larger), not 6b's:
+// checked 2026-10-19.
+var winIdentityAllowed = map[string]bool{"byref_struct/merged": true, "cli_parse/attempt": true, "method_values/main": true}
 
 // TestWindowsAmd64Identity: the amd64 backend's windows/amd64 code of a
 // golden's own functions and the compiler's instances (not std's, whose

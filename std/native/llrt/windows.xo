@@ -73,12 +73,27 @@ pub fn open_write(path: Str) -> Int { open(path, GENERIC_WRITE, CREATE_ALWAYS, F
 fn open(path: Str, access: Int, disposition: Int, attr: Int) -> Int {
   let p = cpath(path)
   let w = wide(p)
-  let h = sys_windows.CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, disposition, attr, 0)
+  // a new file only (Fs.create_new, O_EXCL): a symbolic link at the path
+  // is there even when it dangles, so it is not followed (its target is
+  // not created); GetFileAttributesW reads the link itself too (Wine
+  // follows links in both, so a dangling one is still created there:
+  // fs_create_new stays a Wine gap)
+  if disposition == CREATE_NEW && attrs(p) != INVALID_FILE_ATTRIBUTES {
+    return -EEXIST
+  }
+  let flags = if disposition == CREATE_NEW { attr | FILE_FLAG_OPEN_REPARSE_POINT } else { attr }
+  let h = sys_windows.CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, disposition, flags, 0)
   // the last error read while w is alive: a release between the call
   // and GetLastError would run the allocator
   let le = keep(w, if h == -1 { Int(sys_windows.GetLastError()) } else { 0 })
   if h == -1 {
-    return -fix(p, dos_errno(le), true)
+    let e = dos_errno(le)
+    // CreateFileW refuses a new file over a directory as access denied;
+    // O_EXCL reports that anything is there
+    if disposition == CREATE_NEW && e == EACCES && attrs(p) != INVALID_FILE_ATTRIBUTES {
+      return -EEXIST
+    }
+    return -fix(p, e, true)
   }
   if Int(sys_windows.GetFileType(h)) == FILE_TYPE_UNKNOWN {
     // _wopen refuses a handle of an unknown type
