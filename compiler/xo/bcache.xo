@@ -125,7 +125,11 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
 /// 256 functions. verify computes every function and fails the build
 /// when an entry differs. Returns the functions' keys, [] when the cache
 /// is not used (the inliner's cache chains them, stage D part 2a).
-fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool) -> List[Str] {
+/// lazy (the arm64 and amd64 backends, whose inliner forces what it
+/// reads, stage D 2b): a hit whose inline summary the cache also holds
+/// (sum/, same key) is left undecoded (ssa Module.lazy); the summaries
+/// of the other functions are stored for the next build.
+fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool, lazy: Bool) -> List[Str] {
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   // (with XO_PASSES the entries' keys do not say which passes ran)
@@ -142,10 +146,35 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
   let plan = b.insert_rc_plan(id, jobs)
   t = lap(os, phases, "insert_rc.plan", t)
   let (entries, pk) = cache_get_packed(os, dir, "rc", b.m.goarch, plan.keys, jobs)
+  let (sums, spk) = if lazy { cache_get_packed(os, dir, "sum", b.m.goarch, plan.keys, jobs) } else { ({}, Pack{}) }
   t = lap(os, phases, "insert_rc.read", t)
-  let out = b.insert_rc_apply(plan, entries, backend_cache_mode(os) == "verify", jobs)
+  let out = b.insert_rc_apply(plan, entries, sums, backend_cache_mode(os) == "verify", jobs)
   t = lap(os, phases, "insert_rc.apply", t)
   pack_store(os, pk, entries, out.stores)
+  if lazy {
+    // the summaries of the functions decoded or computed here, on tasks
+    // (a cold build of xo: every function, 1.7 s on one)
+    var todo: List[Int] = []
+    for (fi, k) in plan.keys.indexed() {
+      if !k.is_empty() && !b.m.lazy.contains(fi) && !sums.contains(k) {
+        todo.push(fi)
+      }
+    }
+    let new_sums = sums_of(b.m, plan.keys, todo, jobs)
+    var sn = 0
+    for (k, e) in new_sums {
+      cache_put(os, entry_path(dir, "sum", k), e)
+      sn += e.len()
+    }
+    pack_store(os, spk, sums, new_sums)
+    if sn > 0 {
+      prune_backend_cache(os, dir, sn)
+    }
+    if phases {
+      os.stdio.eprintln("cache rc ${b.m.lazy.len()}/${plan.keys.len()} undecoded")
+    }
+    t = lap(os, phases, "insert_rc.sums", t)
+  }
   var n = 0
   for (k, e) in out.stores {
     cache_put(os, entry_path(dir, "rc", k), e)
@@ -159,6 +188,37 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool)
     fail(os, "XO_BACKEND_CACHE=verify: ${out.mismatches.len()} functions' reference counting differs from their cache entries, the first ${out.mismatches[0]}")
   }
   plan.keys
+}
+
+/// The encoded inline summaries (arm64 inlsum.xo) of functions idx of m,
+/// by their keys, on up to jobs tasks.
+fn sums_of(m: ssa.Module, keys: List[Str], idx: List[Int], jobs: Int) -> List[(Str, Bytes)] {
+  let n = idx.len()
+  let next = Atomic[Int].new(0)
+  scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Str, Bytes)] {
+        var mine: List[(Str, Bytes)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for j in i..(i + 64).min(n) {
+            let fi = idx[j]
+            mine.push((keys[fi], arm64.encode_sum(arm64.fn_sum(m.funcs[fi]))))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Str, Bytes)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
 }
 
 /// With --phase-times: `cache WHAT HITS/TOTAL reused` on stderr.

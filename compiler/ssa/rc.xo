@@ -722,7 +722,7 @@ const RC_MAX_CHUNKS = 64
 /// the types), so the module is the same for any number of jobs.
 pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
   let r = b.rc_prepare()
-  let _o = b.rc_run(r, [], {}, false, jobs)
+  let _o = b.rc_run(r, [], {}, {}, false, jobs)
 }
 
 /// The whole-program half of insert_rc: the `var` List parameters made
@@ -751,19 +751,23 @@ fn (var b: Builder) rc_prepare() -> Rc {
 /// (rccache.xo): read from the entry of its key when there is one (and
 /// not verify), else computed; returns the entry to store ("" key for
 /// none), whether it was read, and whether it differs from its entry.
-fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[Str, Bytes], verify: Bool, ops: Map[Str, Op]) -> (Func, Str, Bytes, Bool, Bool) {
+fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[Str, Bytes], sums: Map[Str, Bytes], verify: Bool, ops: Map[Str, Op]) -> (Func, Str, Bytes, Bool, Bool, Option[LazyFn]) {
   var f = f0
   if key.is_empty() {
     r.rc_func(f, fi)
-    return (f, "", b"", false, false)
+    return (f, "", b"", false, false, None)
   }
   let entry = entries.get(key)
   if !verify {
     if let Some(e) = entry {
+      // with its summary: not decoded until something needs the body
+      if let Some(sm) = sums.get(key) {
+        return (lazy_shell(f, key, r.borrowed[fi]), "", b"", true, false, Some(LazyFn{key: key, entry: e, sum: sm}))
+      }
       if let Some(g0) = decode_func(m, e, ops) {
         var g = g0
         g.ckey = "rc ${key}"
-        return (g, "", b"", true, false)
+        return (g, "", b"", true, false, None)
       }
     }
   }
@@ -773,11 +777,11 @@ fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[St
   match encode_func(m, f) {
     Some(enc) => {
       match entry {
-        Some(e) => return (f, "", b"", false, e != enc)
-        None => return (f, key, enc, false, false)
+        Some(e) => return (f, "", b"", false, e != enc, None)
+        None => return (f, key, enc, false, false, None)
       }
     }
-    None => (f, "", b"", false, false)
+    None => (f, "", b"", false, false, None)
   }
 }
 
@@ -786,7 +790,7 @@ fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[St
 /// read only the whole-program facts (the borrowed parameters, the
 /// types), so the module is the same for any number of jobs. With keys
 /// (insert_rc_plan), through the cache.
-fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
+fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], sums: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
   var r = r0
   let n = b.m.funcs.len()
   // the module without its functions, for the cache's codec (types)
@@ -807,10 +811,13 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], ve
         b.m.funcs[fi] = f
         continue
       }
-      let (g, sk, se, hit, diff) = r.rc_cached(mt, f, fi, keys[fi], entries, verify, ops)
+      let (g, sk, se, hit, diff, lz) = r.rc_cached(mt, f, fi, keys[fi], entries, sums, verify, ops)
       b.m.funcs[fi] = g
       if hit {
         out.reused += 1
+      }
+      if let Some(l) = lz {
+        out.lazy.push((fi, l))
       }
       if diff {
         out.mismatches.push(g.name)
@@ -869,10 +876,13 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], ve
               cl[i] = f
               continue
             }
-            let (g, sk, se, hit, diff) = rc.rc_cached(mt, f, fi, keys[fi], entries, verify, ops)
+            let (g, sk, se, hit, diff, lz) = rc.rc_cached(mt, f, fi, keys[fi], entries, sums, verify, ops)
             cl[i] = g
             if hit {
               o.reused += 1
+            }
+            if let Some(l) = lz {
+              o.lazy.push((fi, l))
             }
             if diff {
               o.mismatches.push(g.name)
@@ -899,6 +909,7 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], ve
     out.reused += o.reused
     out.mismatches = out.mismatches + o.mismatches
     out.stores = out.stores + o.stores
+    out.lazy = out.lazy + o.lazy
   }
   out
 }

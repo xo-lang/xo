@@ -161,6 +161,11 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
 				t.Errorf("%s %s: no function read from the cache, so the test compares nothing:\n%s", s.name, target, log)
 			}
+			// from the third build on, functions whose inlining is read
+			// from the cache are never decoded (stage D 2b)
+			if s.name != "first" && s.name != "again" && !regexp.MustCompile(`cache rc [1-9]\d*/\d+ undecoded`).MatchString(log) {
+				t.Errorf("%s %s: no function left undecoded, so the lazy path is not tested:\n%s", s.name, target, log)
+			}
 		}
 		if s.name == "again" {
 			// the second build of each target wrote its pack (decision
@@ -170,7 +175,7 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			if len(segs) < 4 {
 				t.Fatalf("after the second builds: %d pack segments, want at least rc and fn for each target", len(segs))
 			}
-			for _, kind := range []string{"rc", "inl", "fn"} {
+			for _, kind := range []string{"rc", "inl", "fn", "sum"} {
 				if err := os.RemoveAll(filepath.Join(work, "cache", kind)); err != nil {
 					t.Fatal(err)
 				}

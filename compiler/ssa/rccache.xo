@@ -27,6 +27,87 @@ pub struct RcOut {
   pub stores: List[(Str, Bytes)] = []
   pub reused: Int = 0
   pub mismatches: List[Str] = []
+  /// The hits left undecoded (insert_rc_apply's sums)
+  pub lazy: List[(Int, LazyFn)] = []
+}
+
+/// A function read from the cache but not decoded (Module.lazy): its
+/// key, its entry, and the inliner's summary of it (compiler/arm64
+/// inlsum.xo), which the cache keeps beside the entry under the same key.
+pub struct LazyFn {
+  pub key: Str
+  pub entry: Bytes
+  pub sum: Bytes
+}
+
+/// What stands in the module for a lazy function: its name and the
+/// facts outside its body (the passes before force_lazy read the
+/// summary, not the body).
+fn lazy_shell(f: Func, key: Str, borrowed: List[Bool]) -> Func {
+  Func{name: f.name, file: f.file, results: f.results, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, borrowed: borrowed, ckey: "rc ${key}"}
+}
+
+/// Decodes the lazy functions idx of m (all of them for idx []) in
+/// place, on up to jobs tasks; a function whose entry does not decode
+/// faults (its entry decoded when it was read: the codec is the same).
+pub fn force_lazy(var m: Module, idx: List[Int], jobs: Int) {
+  if m.lazy.is_empty() {
+    return
+  }
+  var todo: List[(Int, LazyFn)] = []
+  if idx.is_empty() {
+    for (fi, l) in m.lazy {
+      todo.push((fi, l))
+    }
+  } else {
+    for fi in idx {
+      if let Some(l) = m.lazy.get(fi) {
+        todo.push((fi, l))
+      }
+    }
+  }
+  if todo.is_empty() {
+    return
+  }
+  let mt = Module{types: m.types, type_at: m.type_at, goarch: m.goarch}
+  let ops = ops_by_name()
+  let n = todo.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Func)] {
+        var mine: List[(Int, Func)] = []
+        while true {
+          let i = next.add(16) - 16
+          if i >= n {
+            break
+          }
+          for j in i..(i + 16).min(n) {
+            let (fi, l) = todo[j]
+            match decode_func(mt, l.entry, ops) {
+              Some(g0) => {
+                var g = g0
+                g.ckey = "rc ${l.key}"
+                mine.push((fi, g))
+              }
+              None => fault("ssa.force_lazy: the cache entry of ${l.key} no longer decodes")
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Func)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  for (fi, g) in done {
+    m.funcs[fi] = g
+    m.lazy.remove(fi)
+  }
 }
 
 /// The first half of insert_rc_jobs with the cache: the `var` List
@@ -76,8 +157,15 @@ pub fn (var b: Builder) insert_rc_plan(id: Str, jobs: Int) -> RcPlan {
 /// The second half: every function's reference counting, read from its
 /// entry when the cache holds one (and not verify), else computed and
 /// encoded for the cache (verify: compared with the entry).
-pub fn (var b: Builder) insert_rc_apply(plan: RcPlan, entries: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
-  b.rc_run(plan.r, plan.keys, entries, verify, jobs)
+/// With sums (the inliner's summaries by key, decision 0220 addendum
+/// stage D 2b), a hit that has one is not decoded: the function is a
+/// shell and Module.lazy holds its entry until force_lazy.
+pub fn (var b: Builder) insert_rc_apply(plan: RcPlan, entries: Map[Str, Bytes], sums: Map[Str, Bytes], verify: Bool, jobs: Int) -> RcOut {
+  let out = b.rc_run(plan.r, plan.keys, entries, sums, verify, jobs)
+  for (fi, l) in out.lazy {
+    b.m.lazy[fi] = l
+  }
+  out
 }
 
 /// The key of function fi (before its reference counting): the SHA-256

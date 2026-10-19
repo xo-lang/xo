@@ -573,7 +573,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     // stays the host's (gotchas/wasm-target-os-is-the-host.md)
     tgoarch = "wasm"
   }
-  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", t)
+  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   t = lo.t
   let b = lo.b
   let tu = lo.tu
@@ -726,7 +726,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, march, false, t)
+      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, march, false, true, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -739,6 +739,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     let jobs = emit_jobs(os)
     // with the per-function cache (decision 0220 addendum stage B)
     var gm = if inl { mi } else { cur.m }
+    // the module without inlining holds the undecoded functions still
+    ssa.force_lazy(gm, [], jobs)
     // whole program dead function removal (arm64 reach.xo); not for `xo
     // asm`, which shows every function (xo dev codegen reads inlined ones)
     if o.cmd != "asm" && (os.env.get("XO_DCE") ?? "") != "off" {
@@ -964,7 +966,10 @@ struct Lowered {
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
 /// `target`), then the passes; fails as the build does.
-fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, t0: Time) -> Lowered {
+/// lazy: the arm64 and amd64 backends, whose inliner decodes the cached
+/// reference counting it reads (bcache.xo rc_cached); the module may
+/// then hold undecoded functions (ssa Module.lazy) until it inlines.
+fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, lazy: Bool, t0: Time) -> Lowered {
   // the runtime's profiler: in every build but a release one without
   // --profile-support (decision 0238); --profile asks for it too
   let prof = !release || o.profile_support || !o.profile.is_empty()
@@ -1010,7 +1015,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "cleanup", t)
   // the reference counting's optional pass (rc.xo chain_pads)
   b.m.passes_off = passes_off(os)
-  let rk = rc_cached(os, b, release, emit_jobs(os), o.phases)
+  let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t, rc_keys: rk}
 }

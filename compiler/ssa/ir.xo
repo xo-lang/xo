@@ -316,6 +316,11 @@ pub struct Module {
   /// binding records (`xo dev dump ssa --debug-vars`, decision 0252).
   pub show_dvars: Bool = false
   pub funcs: List[Func] = []
+  /// Functions whose reference counting a cache entry holds and that are
+  /// not decoded yet (decision 0220 addendum stage D 2b): by index, the
+  /// entry and the inliner's summary of it; the function is a shell
+  /// (rccache.xo lazy_shell) until force_lazy decodes it.
+  pub lazy: Map[Int, LazyFn] = {}
   /// The first function of each name.
   pub func_at: Map[Str, Int] = {}
   pub types: List[SType] = []

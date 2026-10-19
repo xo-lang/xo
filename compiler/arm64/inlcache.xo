@@ -37,20 +37,6 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
     return []
   }
   let st = inline_state(m)
-  // the names each function's body before inlining refers to
-  var names: List[List[Str]] = []
-  for f in m.funcs {
-    var seen: Map[Str, Bool] = {}
-    var ns: List[Str] = []
-    for x in f.values {
-      let s = aux_str(x.aux)
-      if !s.is_empty() && !seen.contains(s) {
-        seen[s] = true
-        ns.push(s)
-      }
-    }
-    names.push(ns)
-  }
   let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\n"
   var keys: List[Str] = []
   for i in 0..n {
@@ -58,32 +44,7 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
       keys.push("")
       continue
     }
-    // the closure of i's names over the bodies of inlinable callees
-    var seen: Map[Str, Bool] = {}
-    var all: List[Str] = []
-    var work: List[Str] = []
-    for s in names[i] {
-      seen[s] = true
-      all.push(s)
-      work.push(s)
-    }
-    while !work.is_empty() {
-      let s = work.pop() ?? ""
-      if !inlinable(st, s) {
-        continue
-      }
-      let ci = st.by_name.get(s) ?? -1
-      if ci < 0 {
-        continue
-      }
-      for t in names[ci] {
-        if !seen.contains(t) {
-          seen[t] = true
-          all.push(t)
-          work.push(t)
-        }
-      }
-    }
+    let all = name_closure(st, i)
     var b = BytesBuilder.new()
     b.write_str(head)
     b.write_str("self ${i} ${rc_keys[i]}\n")
@@ -92,8 +53,8 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
       let ci = st.by_name.get(s) ?? -1
       b.write_str("name ${s.len()}:${s} ${ci} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
       if ci >= 0 {
-        let g = m.funcs[ci]
-        b.write_str(" ${g.indirect} ${g.catches} ${g.results.len()}")
+        let g = st.sums[ci]
+        b.write_str(" ${g.indirect} ${g.catches} ${g.nres}")
         if inlinable(st, s) {
           let ver = if ci < i { keys[ci] } else if ci > i { rc_keys[ci] } else { "self" }
           if ver.is_empty() {
@@ -108,6 +69,38 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
     keys.push(if ok { crypto.sha256(b.freeze()).to_hex() } else { "" })
   }
   keys
+}
+
+/// The names function i's body refers to, closed over the bodies of the
+/// inlinable functions it names (inlining copies names, it makes none),
+/// in the order found (the summaries' names, inlsum.xo).
+fn name_closure(st: InlineState, i: Int) -> List[Str] {
+  var seen: Map[Str, Bool] = {}
+  var all: List[Str] = []
+  var work: List[Str] = []
+  for s in st.sums[i].names {
+    seen[s] = true
+    all.push(s)
+    work.push(s)
+  }
+  while !work.is_empty() {
+    let s = work.pop() ?? ""
+    if !inlinable(st, s) {
+      continue
+    }
+    let ci = st.by_name.get(s) ?? -1
+    if ci < 0 {
+      continue
+    }
+    for t in st.sums[ci].names {
+      if !seen.contains(t) {
+        seen[t] = true
+        all.push(t)
+        work.push(t)
+      }
+    }
+  }
+  all
 }
 
 /// Whether name s is in one of the inlinable sets.
@@ -147,10 +140,39 @@ pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes
   for (fi, g, ch) in decode_all(mt, hits, jobs) {
     post[fi] = Some((g, ch))
   }
+  // the bodies the walk reads (decision 0220 addendum stage D 2b): each
+  // function computed here and each it can inline (its name closure);
+  // a function read from its entry needs neither its own body before
+  // inlining nor, unless a computed one inlines it, decoding at all
+  if !m.lazy.is_empty() {
+    var need: Map[Int, Bool] = {}
+    for fi in 0..n {
+      if post[fi] is Some(_) {
+        continue
+      }
+      need[fi] = true
+      for s in name_closure(st, fi) {
+        let ci = st.by_name.get(s) ?? -1
+        if ci >= 0 {
+          need[ci] = true
+        }
+      }
+    }
+    var idx: List[Int] = []
+    for (fi, _) in need {
+      if m.lazy.contains(fi) {
+        idx.push(fi)
+      }
+    }
+    if !idx.is_empty() {
+      ssa.force_lazy(m, idx, jobs)
+    }
+  }
   var computed: List[(Int, Bool)] = []
   for fi in 0..n {
     if let Some((g, ch)) = post[fi] {
       m.funcs[fi] = g
+      m.lazy.remove(fi)
       m.funcs[fi].ckey = "inl ${keys[fi]}"
       out.changed = out.changed || ch
       out.reused += 1
@@ -174,6 +196,8 @@ pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes
       None => out.stores.push((k, enc))
     }
   }
+  // none should be left; any is decoded rather than built as a shell
+  ssa.force_lazy(m, [], jobs)
   if break_inline {
     out.changed = inline_break(m) || out.changed
   }

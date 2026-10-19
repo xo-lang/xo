@@ -136,82 +136,76 @@ fn args_key(f: ssa.Func, args: List[Int]) -> Str {
 
 /// Walks function fi and its callees (inline.go inlinableSet's walk):
 /// state is 1 while a function is walked, 2 once done.
-fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
+fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
   let f = m.funcs[fi]
+  // the body's facts (inlsum.xo fn_sum, or the cache's for an undecoded
+  // function), in the body's order
+  let s = sums[fi]
   state[f.name] = 1
   // the runtime's slow paths stay calls (ssa.cold_fn)
   // a function that catches its faults returns on one (ssa raises):
   // inlined, the fault would reach the caller
-  var c = InlineCost{instrs: 0, blocks: f.blocks.len(), bad: f.name == "main" || ssa.cold_fn(f.name) || f.catches || denied(m, f.name)}
+  var c = InlineCost{instrs: 0, blocks: s.blocks, bad: f.name == "main" || ssa.cold_fn(f.name) || s.catches || denied(m, f.name)}
   c.hard = c.bad
-  for bl in f.blocks {
-    c.instrs -= adc_pairs(f, bl.instrs)
-    for v in bl.instrs {
-      let x = f.values[v]
-      // landing pads of its own (decision 0085) are copied with the
-      // body since decision 0256: each copied value's pad is the copy of
-      // its check, and the callee's unwind exit re-raises into the
-      // caller's landing (inline_call); but not a pad of an operation
-      // that faults before it takes its operands (list.set, list.take):
-      // its cleanup releases them only for an owned root, and the
-      // callee's owned parameter can be a borrowed root of the caller
-      if x.pad >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && !x.pos.is_empty() {
-        c.bad = true
-        c.hard = true
-      }
-      if x.pad >= 0 {
-        c.pads = true
-      }
-      var ci = -1
-      if x.op == ssa.Op.Call {
-        ci = by_name.get(aux_str(x.aux)) ?? -1
-        if aux_str(x.aux) == "rt.frame_addr" {
-          // its frame is the function's own (decision 0233)
-          c.bad = true
-          c.hard = true
-        }
-        if ci < 0 && !inline_intrinsic(aux_str(x.aux)) {
-          c.leaf = false
-        }
-      }
-      if ci < 0 {
-        // in a leaf a constant is no instruction of its own (an
-        // immediate, or one mov the emitter shares): counting it kept
-        // arithmetic helpers (sub_p256's limbs) out of
-        // INLINE_MAX_INSTRS. Elsewhere it counts: free constants let
-        // the scheduler's run_item and steal_round into park_wait
-        // (sysio chan 1.019, 2026-10-16)
-        // a negative literal (Neg of a Const) folds as one
-        if x.op == ssa.Op.Const || (x.op != ssa.Op.Call && const_value(f, v) is Some(_)) {
-          c.consts += 1
-        } else {
-          c.instrs += 1
-        }
-        continue
-      }
-      let cname = m.funcs[ci].name
-      var k = InlineCost{instrs: 0, blocks: 0, bad: false}
-      let st = state.get(cname) ?? 0
-      if st == 1 {
-        c.bad = true // a cycle through f
-        c.hard = true
-        k.bad = true
-      } else if st == 2 {
-        k = costs.get(cname) ?? k
-      } else {
-        k = inline_walk(m, by_name, sites, ci, state, costs)
-      }
-      if k.bad || k.pads || k.few {
-        // a callee with pads is a call here unless its site passes a
-        // closure (find_call), so it counts as one
-        c.instrs += 1
+  c.instrs -= s.adc
+  // landing pads of its own (decision 0085) are copied with the body
+  // since decision 0256: each copied value's pad is the copy of its
+  // check, and the callee's unwind exit re-raises into the caller's
+  // landing (inline_call); but not a pad of an operation that faults
+  // before it takes its operands (list.set, list.take): its cleanup
+  // releases them only for an owned root, and the callee's owned
+  // parameter can be a borrowed root of the caller
+  if s.badpad {
+    c.bad = true
+    c.hard = true
+  }
+  if s.pads {
+    c.pads = true
+  }
+  // in a leaf a constant is no instruction of its own (an immediate, or
+  // one mov the emitter shares): counting it kept arithmetic helpers
+  // (sub_p256's limbs) out of INLINE_MAX_INSTRS. Elsewhere it counts:
+  // free constants let the scheduler's run_item and steal_round into
+  // park_wait (sysio chan 1.019, 2026-10-16); a negative literal (Neg of
+  // a Const) folds as one
+  c.consts += s.consts
+  c.instrs += s.instrs
+  for name in s.calls {
+    let ci = by_name.get(name) ?? -1
+    if name == "rt.frame_addr" {
+      // its frame is the function's own (decision 0233)
+      c.bad = true
+      c.hard = true
+    }
+    if ci < 0 {
+      if !inline_intrinsic(name) {
         c.leaf = false
-      } else {
-        c.instrs += k.instrs
-        c.consts += k.consts
-        c.blocks += k.blocks + 1
-        c.leaf = c.leaf && k.leaf
       }
+      c.instrs += 1
+      continue
+    }
+    let cname = m.funcs[ci].name
+    var k = InlineCost{instrs: 0, blocks: 0, bad: false}
+    let st = state.get(cname) ?? 0
+    if st == 1 {
+      c.bad = true // a cycle through f
+      c.hard = true
+      k.bad = true
+    } else if st == 2 {
+      k = costs.get(cname) ?? k
+    } else {
+      k = inline_walk(m, sums, by_name, sites, ci, state, costs)
+    }
+    if k.bad || k.pads || k.few {
+      // a callee with pads is a call here unless its site passes a
+      // closure (find_call), so it counts as one
+      c.instrs += 1
+      c.leaf = false
+    } else {
+      c.instrs += k.instrs
+      c.consts += k.consts
+      c.blocks += k.blocks + 1
+      c.leaf = c.leaf && k.leaf
     }
   }
   if !c.leaf {
@@ -236,27 +230,21 @@ fn inline_walk(m: ssa.Module, by_name: Map[Str, Int], sites: Map[Str, Int], fi: 
 /// The names of the inlinable functions of m (inline.go inlinableSet),
 /// of those inlinable only at a call inside a loop (INLINE_LOOP_*), and of
 /// those with landing pads, inlinable only at a call passing a closure.
-fn inlinable_set(m: ssa.Module, by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
+fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
   var state: Map[Str, Int] = {}
   var costs: Map[Str, InlineCost] = {}
   // the call sites of each function, not counting its own
   var sites: Map[Str, Int] = {}
-  for f in m.funcs {
-    for bl in f.blocks {
-      for v in bl.instrs {
-        let x = f.values[v]
-        if x.op == ssa.Op.Call {
-          let name = aux_str(x.aux)
-          if name != f.name {
-            sites[name] = (sites.get(name) ?? 0) + 1
-          }
-        }
+  for (fi, f) in m.funcs.indexed() {
+    for name in sums[fi].calls {
+      if name != f.name {
+        sites[name] = (sites.get(name) ?? 0) + 1
       }
     }
   }
   for fi in 0..m.funcs.len() {
     if (state.get(m.funcs[fi].name) ?? 0) == 0 {
-      let _c = inline_walk(m, by_name, sites, fi, state, costs)
+      let _c = inline_walk(m, sums, by_name, sites, fi, state, costs)
     }
   }
   var small: Map[Str, Bool] = {}
@@ -348,6 +336,8 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
 /// the last function of each name and the inlinable sets.
 struct InlineState {
   by_name: Map[Str, Int] = {}
+  /// every function's summary (inlsum.xo), which inline_keys reads too
+  sums: List[FnSum] = []
   small: Map[Str, Bool] = {}
   loopy: Map[Str, Bool] = {}
   padded: Map[Str, Bool] = {}
@@ -357,16 +347,19 @@ struct InlineState {
 
 fn inline_state(m: ssa.Module) -> InlineState {
   let by_name = funcs_by_name(m)
-  let (small, loopy, padded, fewl) = inlinable_set(m, by_name)
+  let sums = module_sums(m)
+  let (small, loopy, padded, fewl) = inlinable_set(m, sums, by_name)
   // XO_PASSES=-inline: no call is inlined (devirtualize, which runs
   // with the call search, neither); the other passes here still run
   let rounds = if pass_on(m, "inline") { 200 } else { 0 }
-  InlineState{by_name: by_name, small: small, loopy: loopy, padded: padded, fewl: fewl, rounds: rounds}
+  InlineState{by_name: by_name, sums: sums, small: small, loopy: loopy, padded: padded, fewl: fewl, rounds: rounds}
 }
 
 /// Inlines the calls of small functions in m and reports whether it
 /// changed anything.
 fn inline_module(var m: ssa.Module) -> Bool {
+  // every body (none undecoded: inline_cached forces what it needs)
+  ssa.force_lazy(m, [], 1)
   let st = inline_state(m)
   var changed = false
   for fi in 0..m.funcs.len() {

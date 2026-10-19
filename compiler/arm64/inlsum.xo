@@ -1,0 +1,177 @@
+// The inliner's summary of a function (decision 0220 addendum stage D
+// 2b): what inline_state (the inlinable sets: call sites, sizes, pads,
+// cycles) and inline_keys (the names a body refers to, and the facts of
+// the functions it names) read of a function's body after reference
+// counting. inline_state builds every function's summary from its body,
+// or reads it from the cache beside the function's reference counting
+// entry (same key) when the body is still undecoded (ssa Module.lazy), so
+// the sets and keys come from one code path either way; the identity of
+// cached and uncached builds tests that the summary holds what the walk
+// reads.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+const INLINE_SUM_VERSION = "xo inline sum v1"
+
+/// See the file comment; inline_walk reads it in the order of the body.
+pub struct FnSum {
+  blocks: Int = 0
+  /// adc_pairs over the blocks
+  adc: Int = 0
+  /// the values other than calls: constants (const_value) and the rest
+  consts: Int = 0
+  instrs: Int = 0
+  /// a value with a landing pad; a list.set or list.take call with one
+  pads: Bool = false
+  badpad: Bool = false
+  /// the calls' names, in the order of the blocks and their values
+  calls: List[Str] = []
+  /// the names of the values (aux), each once, in value order
+  names: List[Str] = []
+  indirect: Bool = false
+  catches: Bool = false
+  nres: Int = 0
+}
+
+/// The summary of f's body.
+pub fn fn_sum(f: ssa.Func) -> FnSum {
+  var s = FnSum{blocks: f.blocks.len(), indirect: f.indirect, catches: f.catches, nres: f.results.len()}
+  for bl in f.blocks {
+    s.adc += adc_pairs(f, bl.instrs)
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.pad >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && !x.pos.is_empty() {
+        s.badpad = true
+      }
+      if x.pad >= 0 {
+        s.pads = true
+      }
+      if x.op == ssa.Op.Call {
+        s.calls.push(aux_str(x.aux))
+      } else if x.op == ssa.Op.Const || const_value(f, v) is Some(_) {
+        s.consts += 1
+      } else {
+        s.instrs += 1
+      }
+    }
+  }
+  var seen: Map[Str, Bool] = {}
+  for x in f.values {
+    let n = aux_str(x.aux)
+    if !n.is_empty() && !seen.contains(n) {
+      seen[n] = true
+      s.names.push(n)
+    }
+  }
+  s
+}
+
+/// Every function's summary: a lazy one's from its cache entry, the
+/// others' from their bodies.
+fn module_sums(m: ssa.Module) -> List[FnSum] {
+  var out: List[FnSum] = List.with_capacity(m.funcs.len())
+  for (fi, f) in m.funcs.indexed() {
+    if let Some(l) = m.lazy.get(fi) {
+      match decode_sum(l.sum) {
+        Some(s) => out.push(s)
+        None => fault("arm64.module_sums: the inline summary of ${f.name} (${l.key}) does not decode")
+      }
+    } else {
+      out.push(fn_sum(f))
+    }
+  }
+  out
+}
+
+/// The cache entry of a summary.
+pub fn encode_sum(s: FnSum) -> Bytes {
+  var w = BytesBuilder.new()
+  w.write_str("${INLINE_SUM_VERSION}\n")
+  for v in [s.blocks, s.adc, s.consts, s.instrs, s.nres] {
+    sum_uv(w, v)
+  }
+  sum_uv(w, (if s.pads { 1 } else { 0 }) | (if s.badpad { 2 } else { 0 }) | (if s.indirect { 4 } else { 0 }) | (if s.catches { 8 } else { 0 }))
+  for xs in [s.calls, s.names] {
+    sum_uv(w, xs.len())
+    for x in xs {
+      sum_uv(w, x.len())
+      w.write_str(x)
+    }
+  }
+  w.freeze()
+}
+
+/// The summary of an entry, None when it is not one of this version.
+pub fn decode_sum(b: Bytes) -> FnSum? {
+  let head = "${INLINE_SUM_VERSION}\n".bytes()
+  if b.len() < head.len() || b[0..head.len()] != head {
+    return None
+  }
+  var r = SumReader{b: b, pos: head.len()}
+  var s = FnSum{}
+  s.blocks = r.uv()
+  s.adc = r.uv()
+  s.consts = r.uv()
+  s.instrs = r.uv()
+  s.nres = r.uv()
+  let fl = r.uv()
+  s.pads = (fl & 1) != 0
+  s.badpad = (fl & 2) != 0
+  s.indirect = (fl & 4) != 0
+  s.catches = (fl & 8) != 0
+  s.calls = r.strs()
+  s.names = r.strs()
+  if r.bad || r.pos != b.len() {
+    return None
+  }
+  Some(s)
+}
+
+struct SumReader {
+  b: Bytes
+  pos: Int
+  bad: Bool = false
+}
+
+fn (var r: SumReader) uv() -> Int {
+  var v = 0
+  var shift = 0
+  while r.pos < r.b.len() && shift < 63 {
+    let c = Int(r.b[r.pos])
+    r.pos += 1
+    v = v | ((c & 127) << shift)
+    if c < 128 {
+      return v
+    }
+    shift += 7
+  }
+  r.bad = true
+  0
+}
+
+fn (var r: SumReader) strs() -> List[Str] {
+  let n = r.uv()
+  var out: List[Str] = []
+  for _ in 0..n {
+    if r.bad {
+      return []
+    }
+    let k = r.uv()
+    if r.bad || r.pos + k > r.b.len() {
+      r.bad = true
+      return []
+    }
+    out.push(r.b[r.pos..r.pos + k].to_str() ?? "")
+    r.pos += k
+  }
+  out
+}
+
+fn sum_uv(var w: BytesBuilder, v0: Int) {
+  var v = v0
+  while v >= 128 {
+    w.write_byte(UInt8((v & 127) | 128))
+    v = v >> 7
+  }
+  w.write_byte(UInt8(v))
+}
