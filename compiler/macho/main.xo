@@ -35,6 +35,7 @@ fn main(os: Os) ! {
   var elf = false
   var amd64 = false
   var macho_amd64 = false
+  var coff_amd64 = false
   var i = 1
   while i < args.len() {
     let a = args[i]
@@ -48,6 +49,9 @@ fn main(os: Os) ! {
     } else if a == "--darwin-amd64" {
       // darwin/amd64 assembly into a Mach-O x86_64 object (stage 6a)
       macho_amd64 = true
+    } else if a == "--windows-amd64" {
+      // windows/amd64 assembly into a COFF object (decision 0254 6b)
+      coff_amd64 = true
     } else if a == "--amd64" {
       // linux/amd64 assembly into an ELF object (decision 0254)
       amd64 = true
@@ -66,7 +70,7 @@ fn main(os: Os) ! {
     let t0 = os.clock.now()
     var size = 0
     for _ in 0..repeat {
-      match if macho_amd64 { assemble_macho_amd64(src, minos) } else if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
+      match if coff_amd64 { assemble_coff_amd64(src) } else if macho_amd64 { assemble_macho_amd64(src, minos) } else if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
         Ok(b) => size = b.len()
         Err(e) => fail(os, "${ins[0]}: ${e}")
       }
@@ -78,7 +82,7 @@ fn main(os: Os) ! {
   if out.is_empty() {
     out = ins[0].trim_suffix(".s") + ".o"
   }
-  match if macho_amd64 { assemble_macho_amd64(src, minos) } else if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
+  match if coff_amd64 { assemble_coff_amd64(src) } else if macho_amd64 { assemble_macho_amd64(src, minos) } else if amd64 { assemble_elf_amd64(src) } else if elf { assemble_elf(src) } else { assemble_for(src, minos) } {
     Ok(b) => os.fs.write(out, b)?
     Err(e) => fail(os, "${ins[0]}: ${e}")
   }

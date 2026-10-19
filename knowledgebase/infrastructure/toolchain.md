@@ -3646,8 +3646,12 @@ scripts/wine-goldens-subset.txt)`). All goldens on 2026-10-19: 190 of
 201 (LLVM: 190 of 199), the 7 known Wine gaps and three Box64 flakes
 that pass on a rerun. internal/arm64 TestWindowsAmd64Identity compares
 the windows/amd64 and linux/amd64 code of the goldens' own functions
-(the subset; XO_TEST_WIN_IDENTITY=all every golden). Last verified:
-2026-10-19.
+(the subset; XO_TEST_WIN_IDENTITY=all every golden). Since step 3 the
+objects are Xo's (compiler/macho coff.xo; `--as=cc` assembles with
+clang); `macho asm --windows-amd64 -o OUT.obj IN.s` runs the COFF writer
+alone, and `scripts/coff-compare.sh XO MACHO LLVM_MC WORK [NAME...]`
+compares its objects with llvm-mc's on the goldens (199 of 199 the same
+on 2026-10-19). Last verified: 2026-10-19.
 
 ### Windows programs under Wine in Docker
 

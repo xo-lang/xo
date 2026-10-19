@@ -144,6 +144,8 @@ struct Sect {
   bytes: Bytes = "".bytes()
   /// filled directly (the unwind sections), not from items
   raw: Bool = false
+  /// COFF (coff.xo): the characteristics but the alignment
+  cchar: Int = 0
   /// ELF (elf.xo): sh_type, sh_flags, sh_entsize, the group signature
   /// symbol (-1 for none), the mapping state (0 none, 1 code, 2 data)
   etype: Int = 1
@@ -241,6 +243,10 @@ pub struct Asm {
   xfixes: List[XFx] = []
   /// x86-64: the CFA offset of the open frame, for .cfi_adjust_cfa_offset
   cfa_off: Int = 0
+  /// a COFF object (coff.xo; with elf for the ELF path's parse): the
+  /// functions' .seh unwind data
+  coff: Bool = false
+  sehs: List[Seh] = []
 }
 
 /// The bytes of code in section si so far: 4 a word, or the bytes of an
@@ -581,6 +587,9 @@ fn (var a: Asm) directive(l: Bytes) {
   }
   let d = bstr(l[0..k])
   let rest = trim(l[k..])
+  if a.coff && a.coff_directive(d, rest) {
+    return
+  }
   if a.elf && a.elf_directive(d, rest) {
     return
   }
@@ -1176,7 +1185,9 @@ fn (var a: Asm) emit_data(si: Int) {
           v = k
         } else if y < 0 {
           // a pointer: ARM64_RELOC_UNSIGNED, the addend in the contents
-          if a.elf && n == 4 && (a.sects[si].eflags & SHF_ALLOC) == 0 {
+          if a.coff {
+            v = a.coff_data_reloc(si, off, n, x, k)
+          } else if a.elf && n == 4 && (a.sects[si].eflags & SHF_ALLOC) == 0 {
             // R_AARCH64_ABS32 in a section not loaded: a debug section's
             // offset into another (.debug_info's abbreviation table,
             // decision 0239), which the link relocates as the sections

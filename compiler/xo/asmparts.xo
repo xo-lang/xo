@@ -50,6 +50,12 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Res
   out
 }
 
+/// A windows/amd64 COFF object of the amd64 backend's text src (decision
+/// 0254 6b step 3).
+fn assemble_coff(src: Str) -> Result[Bytes, Str] {
+  macho.assemble_coff_amd64(src.bytes())
+}
+
 fn assemble_one(src: Str, elf: Bool, amd64: Bool) -> Result[Bytes, Str] {
   if amd64 && !elf {
     // x86_64 Mach-O (decision 0254 stage 6a: darwin/amd64)

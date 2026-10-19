@@ -373,6 +373,21 @@ directives), byte for byte against llvm-mc on every golden's
 windows/amd64 assembly as 6a's Mach-O assembler was; then a real
 Windows run (through the owner).
 
+6b, step 3 (2026-10-19): compiler/macho coff.xo, the amd64 assembler's
+front end (asm_amd64.xo with the ELF path's parse) writing a COFF object:
+.text, .data and .bss first, `.section NAME,"FLAGS"`, the .seh
+directives (UNWIND_INFO written at .seh_handlerdata or .seh_endproc in
+function order, eight bytes at least; RUNTIME_FUNCTIONs in .pdata
+against the section symbols), REL32 plus the bytes past the field,
+ADDR64, ADDR32NB, SECREL with the addend in the contents, a reference
+to a symbol of its own section resolved even when global (as COFF's
+assemblers do: nothing interposes it), NOPs of up to 15 bytes, the
+sections' JamCRC checksums, the symbol table in first named order, and
+the tail merged string table. Its objects are llvm-mc's byte for byte on
+all 199 goldens' windows/amd64 assembly (scripts/coff-compare.sh);
+`xo build --backend=amd64 --targets=windows/amd64` uses it (--as=cc:
+clang's assembler), lld-link still links.
+
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 
 Accepted by the owner on 2026-10-18 (through the lead), for both code

@@ -117,7 +117,9 @@ fn (a: Asm) x86_short_reaches(br: XBr) -> Bool {
     if !a.x86_macho_local(br.sym, br.sect, br.atom) {
       return false
     }
-  } else if s.sect != br.sect || s.global || s.weak {
+  } else if s.sect != br.sect || ((s.global || s.weak) && !a.coff) {
+    // (COFF resolves a branch to a global symbol of its own section:
+    // nothing interposes it)
     return false
   }
 
@@ -257,9 +259,20 @@ fn x86_nop(n: Int) -> List[Int] {
 fn (var a: Asm) x86_pad(p: Int) {
   let al = pow2(p)
   var n = (al - a.code_len(a.cur) % al) % al
+  // COFF: LLVM's Windows target takes NOPs of up to 15 bytes, the ten
+  // byte one with 0x66 prefixes
+  let max = if a.coff { 15 } else { 10 }
   while n > 0 {
-    let k = n.min(10)
-    a.push_code(x86_nop(k))
+    let k = n.min(max)
+    if k > 10 {
+      var b: List[Int] = []
+      for _ in 0..k - 10 {
+        b.push(0x66)
+      }
+      a.push_code(b + x86_nop(10))
+    } else {
+      a.push_code(x86_nop(k))
+    }
     n -= k
   }
 }
@@ -287,7 +300,14 @@ fn (var a: Asm) x86_apply_fixes() {
       }
       continue
     }
-    let local = s.sect == f.sect && !s.global && !s.weak
+    let local = s.sect == f.sect && ((!s.global && !s.weak) || a.coff)
+    if a.coff && !(f.rel is "" | "PLT" && f.pcrel && local) {
+      a.coff_x86_fix(f)
+      if !a.err.is_empty() {
+        return
+      }
+      continue
+    }
     if f.rel is "" | "PLT" && f.pcrel && local {
       let v = s.off + f.addend - f.at
       if f.size == 1 && (v < -128 || v > 127) {
