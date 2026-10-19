@@ -159,7 +159,20 @@ fn name_ok(p: Int, n: Int) -> Bool {
 
 /// httpguts.ValidHeaderFieldValue: no control bytes but tab.
 fn value_ok(p: Int, n: Int) -> Bool {
+  // 8 bytes at a time while none is below 0x20 or 0x7f (a byte of 0x80
+  // or more is allowed: ~w keeps it out of the below test); a word with
+  // one (a tab, or a bad byte) goes to the byte loop from there
   var i = 0
+  while i + 8 <= n {
+    let w = rt.mem_load(p, i, 8)
+    let below = w.wrapping_sub(0x2020202020202020) & ~w & -9187201950435737472
+    let x = w ^ 0x7f7f7f7f7f7f7f7f
+    let del = x.wrapping_sub(0x0101010101010101) & ~x & -9187201950435737472
+    if (below | del) != 0 {
+      break
+    }
+    i += 8
+  }
   while i < n {
     let c = rt.mem_load(p, i, 1)
     if (c < 32 && c != 9) || c == 0x7f {
@@ -427,7 +440,9 @@ fn wire_name_ok(p: Int, n: Int) -> Bool {
 /// take, then whether a field was invalid, whether the list was cut, and
 /// whether a regular field came (after which a pseudo field is invalid).
 /// True when the field is kept.
-pub fn field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Bool {
+/// known: the name is one http1.h2_name_at matched (a valid lower case
+/// token or pseudo header), so its byte check is skipped.
+pub fn field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int, known: Bool) -> Bool {
   if rt.mem_load(st, 8, 8) != 0 || rt.mem_load(st, 16, 8) != 0 {
     return false
   }
@@ -442,7 +457,7 @@ pub fn field_keep(np: Int, nn: Int, vp: Int, vn: Int, st: Int) -> Bool {
     }
   } else {
     rt.mem_store(st, 24, 1, 8)
-    if !wire_name_ok(np, nn) {
+    if !known && !wire_name_ok(np, nn) {
       rt.mem_store(st, 8, 1, 8)
       return false
     }

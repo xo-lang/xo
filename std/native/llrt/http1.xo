@@ -437,6 +437,85 @@ fn common_name(p: Int, n: Int) -> Str {
   }
 }
 
+/// HTTP/2 header names h2srv's fragment keeps as constants: the index
+/// of the n bytes at p in H2_NAMES when they are one (lower case, as
+/// HTTP/2 sends them), else -1. fragment copied each name and value it
+/// kept out of the decoded block, about 8 copies an HTTP/2 request
+/// (2026-10-19).
+const H2_NAMES: List[Str] = [":path", ":method", ":scheme", ":authority", "accept-encoding", "host", "accept", "cookie", "user-agent", "content-type", "authorization", "content-length", "accept-language"]
+pub const H2_PATH = 0
+const H2_METHOD = 1
+const H2_SCHEME = 2
+const H2_ACCEPT_ENCODING = 4
+
+pub fn h2_name_at(p: Int, n: Int) -> Int {
+  match n {
+    4 => is_at(p, n, "host", 5)
+    5 => is_at(p, n, ":path", H2_PATH)
+    6 => {
+      let a = is_at(p, n, "accept", 6)
+      if a >= 0 { a } else { is_at(p, n, "cookie", 7) }
+    }
+    7 => {
+      let a = is_at(p, n, ":method", H2_METHOD)
+      if a >= 0 { a } else { is_at(p, n, ":scheme", H2_SCHEME) }
+    }
+    10 => {
+      let a = is_at(p, n, ":authority", 3)
+      if a >= 0 { a } else { is_at(p, n, "user-agent", 8) }
+    }
+    12 => is_at(p, n, "content-type", 9)
+    13 => is_at(p, n, "authorization", 10)
+    14 => is_at(p, n, "content-length", 11)
+    15 => {
+      let a = is_at(p, n, "accept-encoding", H2_ACCEPT_ENCODING)
+      if a >= 0 { a } else { is_at(p, n, "accept-language", 12) }
+    }
+    _ => -1
+  }
+}
+
+/// The n bytes at p as a constant when they are a common value of the
+/// header H2_NAMES[k] (:method, :scheme, accept-encoding), else "".
+pub fn h2_value_at(k: Int, p: Int, n: Int) -> Str {
+  if k == H2_METHOD {
+    return match n {
+      3 => {
+        let a = lit_at(p, n, "GET")
+        if !a.is_empty() { a } else { lit_at(p, n, "PUT") }
+      }
+      4 => {
+        let a = lit_at(p, n, "POST")
+        if !a.is_empty() { a } else { lit_at(p, n, "HEAD") }
+      }
+      5 => lit_at(p, n, "PATCH")
+      6 => lit_at(p, n, "DELETE")
+      _ => ""
+    }
+  }
+  if k == H2_SCHEME {
+    return if n == 5 { lit_at(p, n, "https") } else if n == 4 { lit_at(p, n, "http") } else { "" }
+  }
+  if k == H2_ACCEPT_ENCODING && n == 4 {
+    return lit_at(p, n, "gzip")
+  }
+  ""
+}
+
+/// H2_NAMES[k] (a qualified `http1.H2_NAMES[k]` reads as type
+/// arguments).
+pub fn h2_name(k: Int) -> Str { H2_NAMES[k] }
+
+/// k when the n bytes at p are s (n is its length), else -1.
+fn is_at(p: Int, n: Int, s: Str, k: Int) -> Int {
+  if eq_at(p, raw.data(s), n) { k } else { -1 }
+}
+
+/// s when the n bytes at p are s (n is its length), else "".
+fn lit_at(p: Int, n: Int, s: Str) -> Str {
+  if eq_at(p, raw.data(s), n) { s } else { "" }
+}
+
 /// canon when the n bytes at p are canon or lower (its lower case form),
 /// else "".
 fn one_of(p: Int, n: Int, canon: Str, lower: Str) -> Str {

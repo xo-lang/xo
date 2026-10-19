@@ -1287,12 +1287,15 @@ fn (var h: H2Conn) fragment() {
     if off + nn + vn > dn {
       break
     }
-    if h2w.field_keep(d + off, nn, d + off + nn, vn, c + C_HF) {
+    // a common name or value is a constant (http1.h2_name_at), not a
+    // copy
+    let k = http1.h2_name_at(d + off, nn)
+    if h2w.field_keep(d + off, nn, d + off + nn, vn, c + C_HF, k >= 0) {
       // outside bytes (decision 0259): :path keeps an invalid byte as a
       // percent escape, other values get U+FFFD
-      let nm = scan.text_at(raw.data(f.data) + off, nn)
-      h.values.push(if nm == ":path" { scan.url_text_at(raw.data(f.data) + off + nn, vn) } else { scan.text_at(raw.data(f.data) + off + nn, vn) })
-      h.names.push(nm)
+      let kv = if k < 0 { "" } else { http1.h2_value_at(k, d + off + nn, vn) }
+      h.values.push(if !kv.is_empty() { kv } else if k == http1.H2_PATH { scan.url_text_at(d + off + nn, vn) } else { scan.text_at(d + off + nn, vn) })
+      h.names.push(if k >= 0 { http1.h2_name(k) } else { scan.text_at(d + off, nn) })
     }
     off += nn + vn
   }
