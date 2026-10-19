@@ -770,3 +770,26 @@ counting keys 0.4 s on tasks: every function's key hashed again on every
 build, the next lever), inlining 0.7 s (inline.apply 0.39 s and the
 verification of the functions not verified before 0.34 s), assemble
 0.6 s (the edited part's), emit 0.4 s, link 0.3 s.
+
+### Stage D part 2f: borrow inference in parallel rounds (the Mac, 2026-10-19)
+
+Decision 0220 addendum stage D 2f. Steps (scratchpad pkt/iptime.sh and
+mem.sh): constant edits of xo after a cold and a warm build; the phases
+with --phase-times, the peak memory with /usr/bin/time -l against main.
+
+| build | insert_rc.borrows | insert_rc.types | insert_rc.keys | insert_rc.plan | wall | user CPU |
+|---|---|---|---|---|---|---|
+| main, constant edit (load 15) | 1.03 s | (in keys) | 0.44 s | 1.47 s | 9.01 s | 8.25 s |
+| constant edit (load 9) | 0.31 s | 2 ms | 0.10 s | 0.41 s | 6.45 s | 8.24 s |
+| constant edit (load 9) | 0.31 s | 2 ms | 0.10 s | 0.41 s | 6.38 s | 8.23 s |
+| constant edit (load 8) | 0.30 s | 2 ms | 0.10 s | 0.40 s | 6.20 s | 8.15 s |
+
+The main row is the split phases on main's serial inference (the first
+measurement, at a higher load); main's insert_rc.plan at a low load was
+1.1 s (stage 2e's table). Peak memory of a constant edit: 5.03 GB on
+main, 5.08 GB with the change. Every cached binary the file of the
+cache-off build.
+
+Left after an edit of xo (wall, load 8): the SSA builder about 2.0 s
+and the checker 1.0 s (stage 2), inlining 0.6 to 0.7 s, emit 0.3 s,
+assemble and link 0.6 s, insert_rc 0.46 s.

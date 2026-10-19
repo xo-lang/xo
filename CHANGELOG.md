@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Borrow inference runs its rounds on tasks (the same result: the
+  greatest fixed point does not depend on the order): after an edit of
+  xo, insert_rc.plan 1.1 s to 0.4 s of the wall time; --phase-times
+  shows insert_rc.borrows, insert_rc.types, and insert_rc.keys.
 - The back-end cache keeps each part of a split build (its functions'
   code, exception tables, and debug sections) under the keys of its
   functions: an unchanged part is read, not generated (xo after an

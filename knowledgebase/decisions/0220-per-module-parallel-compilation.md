@@ -587,6 +587,27 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   of xo's target drops from 218 MB to 6 MB (only the entries of parts
   generated are read, so the compaction keeps those). Every cached
   binary the file of the cache-off build, verify clean after both edits.
+- **2f, borrow inference in parallel rounds** (implemented 2026-10-19,
+  compiler/ssa rc.xo infer_borrows, borrow_round, borrow_scan; the
+  lead's next lever after 2e). insert_rc.plan was 1.1 s of the wall time
+  of an edit of xo, nearly all of it borrow inference (rc_prepare), one
+  task walking a work list; the keys were 0.1 s and the type keys 2 ms,
+  so caching either (the lead's first ideas) had little to gain. The
+  inference's scans are monotone and the flags only go from borrowed to
+  owned, so the greatest fixed point does not depend on the order of the
+  scans: a round now scans every dirty function on tasks against the
+  flags as the round began (each task with its own copy of the Rc and
+  its memo tables), then applies what the scans found and marks the
+  changed functions and their callers dirty for the next round; one
+  task (wasm, or under 64 functions) runs the same rounds in order.
+  --phase-times splits insert_rc.plan into insert_rc.borrows,
+  insert_rc.types, and insert_rc.keys. Measured (the Mac, load average
+  8 to 9, constant edits of xo): insert_rc.borrows about 1.0 s to 0.30 s,
+  insert_rc.plan 1.1 s to 0.40 s, the edit build 6.2 to 6.45 s wall and
+  8.2 s of user CPU; the peak memory unchanged (5.03 to 5.08 GB, a
+  constant edit, /usr/bin/time -l). Every cached binary the file of the
+  cache-off build, the identity and the fixed point unchanged (the same
+  flags as the serial inference).
 - **Stage 2** (front end per module) for the checker and the SSA
   builder (3.2 s).
 
