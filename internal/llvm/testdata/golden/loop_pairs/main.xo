@@ -1,0 +1,97 @@
+// Pair loops (`for (i, x) in xs.indexed()`, `for (k, v) in m`) bind the
+// pattern's parts apart, so an element the loop only reads is borrowed
+// from the list as in `for x in xs`: an element stored, moved, or kept
+// past an update of the list stays counted. The leak check counts every
+// allocation.
+struct Seg {
+  lit: Str
+  tags: List[Str]
+}
+
+fn read_only(segs: List[Seg], want: Str) -> Int {
+  var n = 0
+  for (i, s) in segs.indexed() {
+    if s.lit == want {
+      n += i + s.tags.len()
+    }
+  }
+  n
+}
+
+fn keep(segs: List[Seg]) -> List[Seg] {
+  var out: List[Seg] = []
+  for (i, s) in segs.indexed() {
+    if i % 2 == 0 {
+      out.push(s)
+    }
+  }
+  out
+}
+
+fn last_tag(segs: List[Seg]) -> Str {
+  var best = ""
+  for (_, s) in segs.indexed() {
+    for (j, t) in s.tags.indexed() {
+      if j == s.tags.len() - 1 {
+        best = t
+      }
+    }
+  }
+  best
+}
+
+fn grow(var xs: List[Str]) -> Int {
+  var n = 0
+  for (i, x) in xs.indexed() {
+    xs.push("${x}+")
+    xs[i] = "changed"
+    n += x.len()
+  }
+  n + xs.len()
+}
+
+fn total(m: Map[Str, List[Str]]) -> Int {
+  var n = 0
+  for (k, v) in m {
+    n += k.len() + v.len()
+  }
+  n
+}
+
+fn longest(m: Map[Str, Str]) -> Str {
+  var best = ""
+  for (k, v) in m {
+    if v.len() > best.len() {
+      best = "${k}=${v}"
+    }
+  }
+  best
+}
+
+fn pairs(xs: List[Str]) -> List[(Int, Str)] {
+  var out: List[(Int, Str)] = []
+  for p in xs.indexed() {
+    out.push(p)
+  }
+  out
+}
+
+fn main(os: Os) {
+  let segs = [Seg{lit: "a", tags: ["x"]}, Seg{lit: "b", tags: ["y", "z"]}, Seg{lit: "a", tags: []}]
+  os.stdio.println("read_only ${read_only(segs, "a")}")
+  let k = keep(segs)
+  os.stdio.println("keep ${k.len()} ${k[1].lit} ${k[1].tags.len()}")
+  os.stdio.println("last_tag ${last_tag(segs)}")
+  var g = ["ab", "c"]
+  os.stdio.println("grow ${grow(g)} ${g[0]} ${g[3]}")
+  var m: Map[Str, List[Str]] = {}
+  m.put("one", ["1"])
+  m.put("three", ["1", "2", "3"])
+  os.stdio.println("total ${total(m)}")
+  var s: Map[Str, Str] = {}
+  s.put("a", "xyz")
+  s.put("bb", "q")
+  os.stdio.println("longest ${longest(s)}")
+  let ps = pairs(["p", "q"])
+  os.stdio.println("pairs ${ps.len()} ${ps[1].0} ${ps[1].1}")
+}

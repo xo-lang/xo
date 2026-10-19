@@ -288,11 +288,25 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   b.s.cur = bodyb
   b.loop_tick(tick)
   var elem = -1
+  let fail = b.new_block()
   if list >= 0 {
     let i2 = b.read(idx)
     elem = b.call("list.index", b.m.types[b.vty(list)].elems[0], "", [list, i2])
     if pair_t >= 0 {
-      elem = b.add(Op.Tuple, pair_t, Aux.None, [i2, elem])
+      var els: List[Pattern] = []
+      if let TuplePat(elems: es, ..) = p {
+        els = es
+      }
+      if els.len() == 2 {
+        // `(i, x)` binds the index and the element apart: a tuple would
+        // consume the element, which then stays counted where a plain
+        // `for x in xs` borrows it from the list (decision 0186)
+        b.pattern(i2, els[0], fail)
+        b.pattern(elem, els[1], fail)
+        elem = -1
+      } else {
+        elem = b.add(Op.Tuple, pair_t, Aux.None, [i2, elem])
+      }
     }
   } else if bytes >= 0 {
     let i2 = b.read(idx)
@@ -300,8 +314,9 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   } else {
     elem = b.read(idx)
   }
-  let fail = b.new_block()
-  b.pattern(elem, p, fail)
+  if elem >= 0 {
+    b.pattern(elem, p, fail)
+  }
   b.end_fail(fail)
   b.s.loops.push(LoopCtx{label: name, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)

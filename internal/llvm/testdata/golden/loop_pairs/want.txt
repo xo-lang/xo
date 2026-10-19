@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+read_only 3
+keep 2 a 0
+last_tag z
+grow 7 changed c+
+total 12
+longest a=xyz
+pairs 2 1 q
+--- stderr

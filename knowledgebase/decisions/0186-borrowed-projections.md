@@ -110,6 +110,13 @@ guarantees, and every list update still gets a list held once.
 - Loops whose body changes the container (pushes, nested updates, `var`
   calls on the receiver) keep the old counting; making those borrow
   would need the element read again after the change.
+- Addendum (2026-10-19): a pair loop, `for (i, x) in xs.indexed()` or
+  `for (k, v) in m`, binds the tuple pattern's two parts apart
+  (compiler/ssa stmt.xo, map.xo) instead of building the pair: the
+  tuple consumed the element, so it was retained and released on every
+  iteration where `for x in xs` borrowed it. A pattern that keeps the
+  pair (`for p in xs.indexed()`) still builds it. xo's `__text` 32.65 to
+  32.24 MB (-1.25%); golden loop_pairs.
 
 ## Alternatives
 

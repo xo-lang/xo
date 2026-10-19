@@ -904,13 +904,27 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   let kt = map_key(b.m, t)
   let k = b.call("list.index", kt, "", [keys, i])
   var elem = k
+  let fail = b.new_block()
   if !set {
     let vt = map_val(b.m, t)
     let v = b.call("list.index", vt, "", [vals, i])
-    elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
+    var els: List[Pattern] = []
+    if let TuplePat(elems: es, ..) = p {
+      els = es
+    }
+    if els.len() == 2 {
+      // `(k, v)` binds the key and the value apart, both borrowed from
+      // the map's lists (a tuple consumed them; stmt.xo's indexed loop)
+      b.pattern(k, els[0], fail)
+      b.pattern(v, els[1], fail)
+      elem = -1
+    } else {
+      elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
+    }
   }
-  let fail = b.new_block()
-  b.pattern(elem, p, fail)
+  if elem >= 0 {
+    b.pattern(elem, p, fail)
+  }
   b.end_fail(fail)
   b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
   b.block(body)
