@@ -161,9 +161,15 @@ The script never puts the secret or the access token on a command line
 config file (`client_secret@FILE`), the token to jsign as
 `--storepass file:FILE`, both in a mode 700 temporary directory removed
 on exit. Never print, copy, log, or commit the values, the token, or the
-file's path. Each signature is billed: sign seldom, and rehearse with a
-self-signed certificate first (jsign `--keystore KEY.p12 --storetype
-PKCS12`, the same output layout).
+file's path. The account is on the Basic plan (owner, 2026-10-19): a
+monthly fee with a monthly signature quota (5,000 on Basic when this was
+written), then a small charge per signature; check the Azure portal for
+the current figures. A release signs only xo.exe, so the quota is not a
+constraint, but each signature is still a billed, owner-approved action:
+agents never sign on their own, and a session's permission settings may
+refuse the call (the owner then runs it). Rehearse with a self-signed
+certificate first (jsign `--keystore KEY.p12 --storetype PKCS12`, the
+same output layout). Last verified: 2026-10-19
 
 ### Verification
 
