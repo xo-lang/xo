@@ -388,6 +388,50 @@ all 199 goldens' windows/amd64 assembly (scripts/coff-compare.sh);
 `xo build --backend=amd64 --targets=windows/amd64` uses it (--as=cc:
 clang's assembler), lld-link still links.
 
+### 6b, step 4: Xo's own PE linker, imports, and no C runtime (Status: Proposed, 2026-10-19)
+
+Implemented behind `XO_WIN_NOCRT=1` (the default is unchanged: the MSVC
+C runtime and lld-link), pending the owner's answer on two questions;
+the default changes, and this section's status becomes Accepted, only
+after it.
+
+1. Imports. Recommended and implemented (B): a checked-in table, the
+   DLL that exports each of std/native/sys_windows.xo's 113 functions
+   (compiler/macho/peimports.xo: 84 KERNEL32, 20 WS2_32, 3 CRYPT32, 2
+   ntdll, 2 api-ms-win-core-synch-l1-2-0, bcrypt, SHELL32), generated
+   once from a Windows SDK's import libraries by
+   scripts/win-import-table.py and checked by a test, so a link needs no
+   SDK (as Go's syscall package names its DLLs). The alternative (A):
+   the linker reads the SDK's .lib import archives at every link, which
+   keeps a Windows sysroot a build dependency.
+2. The C runtime. Recommended and implemented: a windows/amd64 program
+   with no `use c` links no C runtime (as decision 0243's Linux
+   programs): std/native/llrt/cabi_wincrt.xo gives the C functions
+   generated code and the runtime call (memcpy, memmove, memset, memcmp,
+   fmod, strlen; Xo's, libcstr.xo and libcmath.xo, as XO_NOLIBC Linux
+   programs') under their C names, and the process entry xo_win_start
+   (the runtime's entry, then ExitProcess); the zone data is a COFF
+   object of Xo's (compiler/xo ld.xo tz_object_coff). A program with
+   `use c` keeps the C runtime and lld-link.
+
+The linker (compiler/macho pelink.xo, coffread.xo; `macho pelink`)
+reads COFF objects and writes a PE32+ executable: .text with `jmp *IAT`
+thunks for imported functions, .rdata (with .xdata, the IAT first, the
+import directory, lookup and name tables, the TLS directory), .data
+(with .bss and the linker's _tls_index), .pdata as the exception
+directory, .tls, .reloc (DIR64 base relocations; the image is dynamic
+base), alternate names from .drectve, and after the sections the COFF
+symbol table std/native/llrt/prof.xo's coff_symbols reads (as
+lld-link's /debug:symtab). With both choices `xo build --backend=amd64
+--targets=windows/amd64` needs no clang, no lld-link and no Windows
+SDK. Results under Wine with Box64 (2026-10-19): hello 460 KB against
+1.4 MB with the C runtime, 5 runs of 5; the 31 golden subset 31 of 31.
+Not yet: a run of every golden in this mode (one run failed in Wine's
+own prefix setup under Box64, every program exit 53, while the same
+executables pass by hand), a real Windows run, and the image's
+resources (an icon, a manifest, a version) and signing's checks with
+this linker's images.
+
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 
 Accepted by the owner on 2026-10-18 (through the lead), for both code
