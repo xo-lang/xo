@@ -14,7 +14,8 @@
 # one crash or hang in a long lived wineserver failed the rest,
 # gotchas/wine-box64-harness.md), Box64's own lines are dropped from its
 # standard output, and a program stops after $XO_GOLDEN_TIMEOUT seconds
-# (60). Known Wine gaps (symbolic links, the \\localhost share, sh,
+# (60); $XO_WINE_BACKEND picks the backend (llvm, the default, or amd64,
+# decision 0254 6b). Known Wine gaps (symbolic links, the \\localhost share, sh,
 # AF_UNIX, no PATH in the prefix) are in the toolchain notes.
 set -eu
 xo=$1
@@ -38,7 +39,7 @@ for d in $dirs; do
   n=$(basename "$d")
   cp -R "$d" "$W/gold/$n"
   if [ -f "$d/want_windows.txt" ]; then cp "$d/want_windows.txt" "$W/gold/$n/want.txt"; fi
-  (cd "$d" && "$xo" build --backend=llvm --target=windows/amd64 -o "$W/bin/$n.exe" . > "$W/blog/$n.txt" 2>&1) || echo "build failed: $n"
+  (cd "$d" && "$xo" build --backend="${XO_WINE_BACKEND:-llvm}" --target=windows/amd64 -o "$W/bin/$n.exe" . > "$W/blog/$n.txt" 2>&1) || echo "build failed: $n"
 done
 cat > "$W/run.sh" <<'RUN'
 #!/bin/sh

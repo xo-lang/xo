@@ -216,6 +216,13 @@ struct G {
   /// the task switch or the thread locals were used: sched.xo's
   /// functions are emitted (decision 0212)
   sched_ref: Bool = false
+  /// windows/amd64 (decision 0254 6b): the platform and C functions
+  /// called through a System V to Win64 thunk, by symbol, with their
+  /// arguments' kinds (`i` a word, `f` a double; x86win.xo)
+  w64: Map[Str, Str] = {}
+  /// windows/amd64: the weak C symbols referenced (rt.sym_present and
+  /// their calls), each an `/alternatename` to xo_absent (x86win.xo)
+  wsyms: Map[Str, Bool] = {}
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}

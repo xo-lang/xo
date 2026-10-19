@@ -104,6 +104,11 @@ fn (var g: G) function(fi: Int) {
 
 /// Whether optional pass name is on (passes.xo, $XO_PASSES).
 fn (g: G) on(name: Str) -> Bool {
+  if name == "shrink_split" && g.x86 && g.os == "windows" {
+    // the Win64 unwind data describes one prologue, at the function's
+    // start (x86win.xo)
+    return false
+  }
   g.m.passes_off.is_empty() || pass_on(g.m, name)
 }
 
@@ -1181,7 +1186,7 @@ fn (var g: G) instr1(v: Int) {
         // rt.fn_addr (decision 0233): a C ABI export's symbol
         g.set(v, [g.sym_addr(g.sym(n[1..n.len()]))])
       } else {
-        g.set(v, [g.sym_addr(g.fname(n))])
+        g.set(v, [g.sym_addr(g.c_entry_sym(n))])
       }
     }
     Rebind => {

@@ -81,7 +81,7 @@ fn (var g: G) generate() -> Program {
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
-  Program{asm: g.drop_own_weak(out.join("")), err: g.err, skipped: g.skipped}
+  Program{asm: g.win_text(g.drop_own_weak(out.join(""))), err: g.err, skipped: g.skipped}
 }
 
 /// The first lines of the assembly file.
@@ -104,6 +104,11 @@ fn (g: G) file_header(var out: List[Str]) {
 /// The system call trampolines the code uses (rt.sys_restorer,
 /// rt.sys_clone), in the text section.
 fn (g: G) trampolines(var out: List[Str]) {
+  if g.x86 && g.os == "windows" {
+    g.w64_thunks(out)
+    g.w64_weak(out)
+    return
+  }
   if g.x86 {
     g.x86_trampolines(out)
     return
@@ -135,7 +140,7 @@ fn (g: G) shared_code(var out: List[Str]) {
   if g.sched_ref {
     out.push(if g.x86 { x86_sched_asm(g.os, g.split) } else { sched_asm(g.os, g.split) })
   }
-  if g.personality_ref {
+  if g.personality_ref && g.os != "windows" {
     // the personality routine through a data word, as ELF compilers
     // refer to it from the unwind tables
     let p = personality_name(g.os)
@@ -264,6 +269,12 @@ fn (g: G) section(kind: Str) -> Str {
       _ => {}
     }
   }
+  if g.os == "windows" {
+    match kind {
+      "const" | "cstring" => return "\t.section .rdata,\"dr\"\n"
+      _ => {}
+    }
+  }
   match kind {
     "text" => "\t.text\n"
     "data" => "\t.data\n"
@@ -292,6 +303,11 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
 /// other files of a split assembly (generate_parallel) reach it, the
 /// program does not export it.
 fn (g: G) hidden_global(s: Str) -> Str {
+  if g.os == "windows" {
+    // COFF has no visibility: an executable exports nothing it does not
+    // name in an export table
+    return "\t.globl ${s}\n"
+  }
   if g.os == "darwin" {
     return "\t.globl ${s}\n\t.private_extern ${s}\n"
   }

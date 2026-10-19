@@ -1282,6 +1282,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         us.push(r)
       }
       let defs = g.new_vregs([false])
+      if g.x86 && g.os == "windows" {
+        // the address is an export's, a Win64 function: the thunk takes
+        // it after the arguments (x86win.xo)
+        let n = x.args.len() - 1
+        let _w = g.add(Inst{kind: K_CALL, sym: g.w64_sym("xo_callc${n}", "i".repeat(n + 1)), srcs: args, defs: defs, us: us})
+        g.clobber()
+        g.set(v, defs)
+        return true
+      }
       let _i = g.add(Inst{kind: K_CALL, cptr: true, srcs: args, defs: defs, us: us})
       g.clobber()
       g.set(v, defs)
@@ -2660,6 +2669,14 @@ fn (var g: G) c_sym_addr(name: Str) -> Int {
 /// compared with 0 (UNTESTED on Linux; false on Windows, where the
 /// arm64 emitter makes no weak references yet).
 fn (var g: G) sym_present(v: Int, sym: Str) {
+  if g.x86 && g.os == "windows" {
+    // the symbol, or xo_absent through its `/alternatename` (x86win.xo)
+    g.wsyms[sym] = true
+    let a = g.sym_addr(g.sym(sym))
+    let n = g.sym_addr(g.sym("xo_absent"))
+    g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, ne", [a, n])])
+    return
+  }
   if g.os == "windows" {
     g.set(v, [g.def1(false, "mov $d0, #0", [])])
     return
@@ -2687,7 +2704,9 @@ fn (var g: G) platform_call(v: Int) {
     g.sym_present(v, sym)
     return
   }
-  if os != g.os && os != "c" && os != "cw" {
+  // a weak C function on Windows: rt.sym_present is false there, so its
+  // calls never run (no weak references on COFF yet)
+  if (os != g.os && os != "c" && os != "cw") || (os == "cw" && g.os == "windows" && !g.x86) {
     g.store("brk #1", [])
     g.set(v, g.zeros(x.ty))
     return
@@ -2727,6 +2746,18 @@ fn (var g: G) platform_call(v: Int) {
       return
     }
   }
+  var call_sym = g.sym(sym)
+  if g.x86 && g.os == "windows" {
+    if os == "cw" {
+      g.wsyms[sym] = true
+    }
+    // Win64 through a thunk (x86win.xo)
+    var sig = StrBuilder.new()
+    for a in x.args {
+      sig.write(if g.vkind(a) == ssa.Kind.Float { "f" } else { "i" })
+    }
+    call_sym = g.w64_sym(sym, sig.freeze())
+  }
   var vfix = -1
   if g.os == "darwin" {
     // Apple arm64 passes the variadic arguments on the stack; x86_64's
@@ -2741,7 +2772,7 @@ fn (var g: G) platform_call(v: Int) {
       real.push(u)
     }
   }
-  let _i = g.add(Inst{kind: K_CALL, sym: g.sym(sym), srcs: args, defs: defs, us: real, vfix: vfix})
+  let _i = g.add(Inst{kind: K_CALL, sym: call_sym, srcs: args, defs: defs, us: real, vfix: vfix})
   g.clobber()
   if res.is_empty() {
     g.set(v, [])

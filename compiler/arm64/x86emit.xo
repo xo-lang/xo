@@ -116,6 +116,11 @@ fn (var g: G) x86_emit() {
     fr.size = 0
   }
   g.fr = fr
+  if g.os == "windows" {
+    // the Win64 unwind data describes one prologue, at the function's
+    // start (x86win.xo)
+    g.shrink = false
+  }
   g.shrink_plan()
   var b: List[Str] = []
   b.push("# func ${g.f.name}\n")
@@ -126,7 +131,11 @@ fn (var g: G) x86_emit() {
       pads = pads || inst.pad >= 0
     }
   }
-  g.cfi_start(b, pads)
+  if g.os == "windows" {
+    g.seh_start(b, pads)
+  } else {
+    g.cfi_start(b, pads)
+  }
   if !g.shrink {
     g.x86_prologue(b)
     g.x86_cfi_frame(b)
@@ -201,7 +210,7 @@ fn (var g: G) x86_emit() {
       }
     }
   }
-  if g.fr.leaf && !g.stubs.is_empty() {
+  if g.fr.leaf && !g.stubs.is_empty() && g.os != "windows" {
     // a leaf function's fault stubs make a frame record before their call
     b.push("\t.cfi_def_cfa %rbp, 16\n\t.cfi_offset %rbp, -16\n")
   }
@@ -215,12 +224,18 @@ fn (var g: G) x86_emit() {
     }
     g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t")
   }
+  let sites = g.sites + g.stub_sites
+  if g.os == "windows" {
+    g.seh_end(b, sites)
+    b.push("\n")
+    g.text.push(x86_copy_runs(x86_reload_peep(b.join(""))))
+    return
+  }
   b.push("\t.cfi_endproc\n")
   if g.os == "linux" {
     let fnm = g.fname(g.f.name)
     b.push("\t.size ${fnm}, .-${fnm}\n")
   }
-  let sites = g.sites + g.stub_sites
   if !sites.is_empty() {
     g.lsda(sites)
   }
@@ -235,12 +250,23 @@ fn (var g: G) x86_emit() {
 /// is inside it).
 fn (g: G) x86_prologue(var b: List[Str]) {
   let fr = g.fr
+  let win = g.os == "windows"
   if fr.leaf {
+    if win {
+      b.push("\t.seh_endprologue\n")
+    }
     return
   }
-  b.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+  b.push("\tpushq %rbp\n")
+  if win {
+    b.push("\t.seh_pushreg %rbp\n")
+  }
+  b.push("\tmovq %rsp, %rbp\n")
   for r in g.saved {
     b.push("\tpushq ${x86_reg(r, 8)}\n")
+    if win {
+      b.push("\t.seh_pushreg ${x86_reg(r, 8)}\n")
+    }
   }
   let rest = fr.size - 8 * g.saved.len()
   if rest > 0 {
@@ -255,13 +281,19 @@ fn (g: G) x86_prologue(var b: List[Str]) {
     } else {
       b.push("\tsubq $${rest}, %rsp\n")
     }
+    if win {
+      b.push("\t.seh_stackalloc ${rest}\n")
+    }
+  }
+  if win {
+    b.push("\t.seh_endprologue\n")
   }
 }
 
 /// The unwind rules of the frame x86_prologue makes: the CFA at rbp + 16,
 /// rbp and the pushed registers below it.
 fn (g: G) x86_cfi_frame(var b: List[Str]) {
-  if g.fr.leaf {
+  if g.fr.leaf || g.os == "windows" {
     return
   }
   b.push("\t.cfi_def_cfa %rbp, 16\n\t.cfi_offset %rbp, -16\n")
@@ -866,7 +898,12 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       sb.push("${lab}:\n")
       g.dl_stub_rows.push("${lab} ${inst.line} ${inst.inl}")
     }
-    if g.fr.leaf {
+    let win_leaf = g.fr.leaf && g.os == "windows"
+    if win_leaf {
+      // no frame: the raise goes in as if the leaf's caller called it
+      // (a jump, rsp as at the leaf's entry), which a leaf's missing
+      // Win64 unwind data describes (x86win.xo)
+    } else if g.fr.leaf {
       // a frame record for the unwinder
       sb.push("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
     } else if g.shrink && g.fl[g.cur] {
@@ -881,6 +918,8 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       let (from2, to2) = g.call_site_labels()
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
       sb.push("${from2}:\n\tcallq ${inst.ffn}\n${to2}:\n\tud2\n")
+    } else if win_leaf {
+      sb.push("\tjmp ${inst.ffn}\n")
     } else {
       sb.push("\tcallq ${inst.ffn}\n\tud2\n")
     }

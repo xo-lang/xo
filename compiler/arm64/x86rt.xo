@@ -438,6 +438,9 @@ fn x86_sched_asm(os: Str, split: Bool) -> Str {
   if os == "darwin" {
     return x86_sched_asm_darwin(split)
   }
+  if os == "windows" {
+    return x86_sched_asm_windows()
+  }
   var b: List[Str] = []
   b.push("\t.text\n")
   b.push(x86_sched_fn("xo_stack_switch", true, ["pushq %rbp", "pushq %rbx", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $8, %rsp", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "addq $8, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rbx", "popq %rbp", "retq"]))
@@ -469,8 +472,17 @@ fn x86_sched_fn(name: Str, global: Bool, body: List[Str]) -> Str {
 /// xo_entry on x86_64: Xo's main with zero words for its parameters.
 fn (var g: G) x86_entry(main: Int) {
   var b: List[Str] = []
-  g.func_header(b, g.sym("xo_entry"), true)
-  b.push("\t.cfi_startproc\n\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
+  let win = g.os == "windows"
+  if win {
+    // the runtime calls xo_entry as a C function: a Win64 shim of the
+    // System V entry below
+    let sysv = g.w64_entry_name()
+    b.push(w64_shim(g.sym("xo_entry"), sysv, "", false))
+    b.push("\t.p2align 4\n${sysv}:\n\t.seh_proc ${sysv}\n\tpushq %rbp\n\t.seh_pushreg %rbp\n\tmovq %rsp, %rbp\n\t.seh_endprologue\n")
+  } else {
+    g.func_header(b, g.sym("xo_entry"), true)
+    b.push("\t.cfi_startproc\n\tpushq %rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset %rbp, -16\n\tmovq %rsp, %rbp\n\t.cfi_def_cfa_register %rbp\n")
+  }
   var ngp = 0
   var nfp = 0
   for p in g.m.funcs[main].blocks[0].params {
@@ -491,7 +503,11 @@ fn (var g: G) x86_entry(main: Int) {
   if ngp > 6 || nfp > 8 {
     g.fail("main takes too many words")
   }
-  b.push("\tcallq ${g.fname(g.m.funcs[main].name)}\n\tpopq %rbp\n\t.cfi_def_cfa %rsp, 8\n\tretq\n\t.cfi_endproc\n\n")
+  if win {
+    b.push("\tcallq ${g.fname(g.m.funcs[main].name)}\n\tpopq %rbp\n\tretq\n\t.seh_endproc\n\n")
+  } else {
+    b.push("\tcallq ${g.fname(g.m.funcs[main].name)}\n\tpopq %rbp\n\t.cfi_def_cfa %rsp, 8\n\tretq\n\t.cfi_endproc\n\n")
+  }
   g.text.push(b.join(""))
 }
 
@@ -499,6 +515,10 @@ fn (var g: G) x86_entry(main: Int) {
 /// a Str result a frame that stores the length (rdx) through the pointer
 /// after the parameters.
 fn (var g: G) x86_exports() {
+  if g.os == "windows" {
+    g.w64_exports()
+    return
+  }
   for f in g.m.funcs {
     if f.export.is_empty() {
       continue

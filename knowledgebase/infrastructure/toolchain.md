@@ -3628,6 +3628,27 @@ bookworm's clang 14 (gotchas/clang14-arch-extension-crypto.md, fixed),
 and bookworm's clang 14 cannot read the LLVM backend's IR (opaque
 pointers need LLVM 15 or later). Last verified: 2026-10-15.
 
+### windows/amd64 with the native amd64 backend (decision 0254 6b)
+
+Since 2026-10-19 (step 1): `xo build --backend=amd64 --targets=windows/amd64`
+emits COFF-flavored x86_64 assembly (unwind data from `.seh` directives;
+Win64 only in thunks at the OS boundary, compiler/arm64 x86win.xo) and
+links it with clang's assembler and lld-link (compiler/xo link.xo
+win_amd64_link), from a Mac through winxc:
+
+    X=~/Library/Caches/xo/winxc
+    XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_WINSYSROOT=$X/winsysroot \
+      xo build --backend=amd64 --targets=windows/amd64 -o prog.exe .
+
+Under Wine: `XO_WINE_BACKEND=amd64 scripts/wine-goldens.sh XO WORK
+[NAME...]` (the per-step subset: `$(grep -v '^#'
+scripts/wine-goldens-subset.txt)`). All goldens on 2026-10-19: 190 of
+201 (LLVM: 190 of 199), the 7 known Wine gaps and three Box64 flakes
+that pass on a rerun. internal/arm64 TestWindowsAmd64Identity compares
+the windows/amd64 and linux/amd64 code of the goldens' own functions
+(the subset; XO_TEST_WIN_IDENTITY=all every golden). Last verified:
+2026-10-19.
+
 ### Windows programs under Wine in Docker
 
 Since 2026-10-16 (xo-4): `scripts/docker-wine.sh MODE WORK COMMAND`

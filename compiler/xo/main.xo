@@ -514,8 +514,8 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
     }
-    if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64") {
-      fail(os, "the amd64 backend builds for linux/amd64 and darwin/amd64, not ${tg} (decision 0254)")
+    if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64" | "windows/amd64") {
+      fail(os, "the amd64 backend builds for linux/amd64, darwin/amd64, and windows/amd64, not ${tg} (decision 0254)")
     }
     if backend == "llvm" && tg != host {
       let sysroot = if tg.starts_with("linux/") { os.env.get("XO_LINUXSYSROOT") ?? "" } else { winsysroot }
@@ -837,6 +837,30 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
+    if march == "amd64" && tgoos == "windows" {
+      // the amd64 backend's windows/amd64 program (decision 0254 6b):
+      // clang's assembler and lld-link (win_amd64_link)
+      let wbin = bin_path(dir, out, name, tg, false)
+      var wsrcs = [s]
+      if p.parts.len() > 1 {
+        wsrcs = []
+        for (i, part) in p.parts.indexed() {
+          let ps = "${dir}/prog-${tgoos}.${i}.s"
+          write_or_fail(os, dir, ps, part.bytes())
+          wsrcs.push(ps)
+        }
+      }
+      write_or_fail(os, dir_name(wbin), "", b"")
+      // the zone data (a C source clang compiles) and `use c`'s inputs
+      let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march)
+      let why = win_amd64_link(os, wsrcs + wlk.srcs, wbin, wlk.flags + wlk.link_only)
+      if !why.is_empty() {
+        fail(os, why)
+      }
+      t = lap(os, phases, "link", t)
+      bins.push((tg, wbin))
+      continue
+    }
     if tg != host && !(no_cc && tgoos == "linux") && !mac_x86 {
       // another target: its assembly only (internal/build buildArm64)
       if !o.json {

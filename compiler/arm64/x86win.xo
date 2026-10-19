@@ -1,0 +1,391 @@
+// windows/amd64 (decision 0254 stage 6b): what differs from linux/amd64.
+// Xo's own calls stay System V (6c), so the functions' bodies are
+// linux/amd64's; Win64 is only at the boundary, through thunks:
+//
+//   - a call of a platform or C library function goes through a System V
+//     to Win64 thunk (xo_w64_<sym>: the arguments moved to rcx, rdx, r8,
+//     r9 or xmm0 to xmm3 by position and the stack past them, 32 bytes of
+//     shadow space); rdi, rsi and xmm6 to xmm15, which Win64 keeps, are
+//     free for a System V caller, so the thunk saves nothing;
+//   - an export (the C ABI symbol a C caller, the C runtime, or the OS
+//     calls: rt.fn_addr's addresses, the personality, thread starts, the
+//     vectored and console handlers) is a Win64 to System V shim that
+//     keeps rdi, rsi and xmm6 to xmm15 for its Win64 caller; generated
+//     code calls the function itself (win_text);
+//   - rt.call_c2 and rt.call_c4 call an export's address, so with Win64;
+//   - the unwind data is the assembler's, from .seh directives: the
+//     prologue's pushes and allocation (rsp based: the body never moves
+//     rsp), and for a function with landing pads the personality as its
+//     handler with the GCC call site table as handler data, which
+//     std/native/llrt/unwind.xo win_raise reads;
+//   - thread locals through _tls_index and the TEB's slot array (gs:88).
+//
+// The assembler is llvm-mc (winxc's clang), the linker lld-link (the
+// plan of 2026-10-19 in decision 0254).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The start of a function's unwind data: its handler when it has
+/// landing pads (the personality export, whose address unwind.xo
+/// compares with RtlVirtualUnwind's handler).
+fn (var g: G) seh_start(var b: List[Str], pads: Bool) {
+  b.push("${g.func_begin()}:\n")
+  b.push("\t.seh_proc ${g.fname(g.f.name)}\n")
+  if pads {
+    b.push("\t.seh_handler ${g.sym(personality_name(g.os))}, @unwind, @except\n")
+  }
+}
+
+/// The end of a function's unwind data: the call site table (lsda's
+/// format) as the handler data, when the function has landing pads.
+fn (var g: G) seh_end(var b: List[Str], sites: List[CallSite]) {
+  if !sites.is_empty() {
+    let fb = g.func_begin()
+    let beg = g.local("${g.lbl_prefix()}_cst")
+    let end = g.local("${g.lbl_prefix()}_cste")
+    b.push("\t.seh_handlerdata\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")
+    for c in sites {
+      let pad = g.label(g.fwd(c.pad))
+      b.push("\t.uleb128 ${c.from}-${fb}\n\t.uleb128 ${c.to}-${c.from}\n\t.uleb128 ${pad}-${fb}\n\t.byte 0\n")
+    }
+    b.push("${end}:\n\t.text\n")
+  }
+  b.push("\t.seh_endproc\n")
+}
+
+/// The thunk symbol of a call of C or platform function sym with
+/// arguments of kinds sig (`i` a word, `f` a double), recorded for
+/// w64_thunks.
+fn (var g: G) w64_sym(sym: Str, sig: Str) -> Str {
+  g.w64[sym] = sig
+  "xo_w64_${sym}"
+}
+
+/// The C library functions generated code calls directly (templates),
+/// with their arguments' kinds: through thunks too.
+fn w64_libc() -> Map[Str, Str] {
+  {"memcpy": "iii", "memmove": "iii", "memset": "iii", "memcmp": "iii", "fmod": "ff"}
+}
+
+/// The System V to Win64 thunks of the module (w64_sym's), one global
+/// symbol each in the last file of a split assembly. In: System V's
+/// integer registers in order and the doubles in xmm0 to xmm7, the rest
+/// on the stack past the return address. Out: Win64's positions.
+fn (g: G) w64_thunks(var out: List[Str]) {
+  var names: List[Str] = []
+  for (k, _) in g.w64 {
+    names.push(k)
+  }
+  for (k, _) in w64_libc() {
+    if !g.w64.contains(k) {
+      names.push(k)
+    }
+  }
+  for sym in names.sort() {
+    let sig = g.w64.get(sym) ?? (w64_libc().get(sym) ?? "")
+    out.push(w64_thunk(sym, sig))
+  }
+}
+
+/// One thunk (w64_thunks): every argument is first stored in a scratch
+/// area from its System V place, then loaded into its Win64 place, so no
+/// move overwrites a source still to be read.
+fn w64_thunk(sym: Str, sig0: Str) -> Str {
+  // xo_callc<n> (rt.call_c2, rt.call_c4): the last word is the address
+  // to call, the others its arguments
+  let indirect = sym.starts_with("xo_callc")
+  let sig = if indirect { sig0[0..sig0.len() - 1] } else { sig0 }
+  let n = sig.len()
+  let bs = sig.bytes()
+  let nstack = if n > 4 { n - 4 } else { 0 }
+  // shadow space, the stack arguments, the scratch area (one word per
+  // argument), 16 byte aligned: entry rsp is 8 mod 16, and the push of
+  // rbp makes it 0
+  let scratch = 32 + 8 * nstack
+  let frame = (scratch + 8 * (n + 1) + 15) / 16 * 16
+  var b: List[Str] = []
+  let name = "xo_w64_${sym}"
+  b.push("\t.globl ${name}\n\t.p2align 4\n${name}:\n\t.seh_proc ${name}\n")
+  b.push("\tpushq %rbp\n\t.seh_pushreg %rbp\n\tmovq %rsp, %rbp\n")
+  if frame > 0 {
+    b.push("\tsubq $${frame}, %rsp\n\t.seh_stackalloc ${frame}\n")
+  }
+  b.push("\t.seh_endprologue\n")
+  let gp = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
+  var ni = 0
+  var nf = 0
+  var nmem = 0
+  // System V's places into the scratch area (the address too)
+  let nall = if indirect { n + 1 } else { n }
+  let ball = sig0.bytes()
+  for i in 0..nall {
+    let at = "${scratch + 8 * i}(%rsp)"
+    if ball[i] == 102 {
+      if nf < 8 {
+        b.push("\tmovsd %xmm${nf}, ${at}\n")
+      } else {
+        b.push("\tmovq ${16 + 8 * nmem}(%rbp), %rax\n\tmovq %rax, ${at}\n")
+        nmem += 1
+      }
+      nf += 1
+    } else {
+      if ni < 6 {
+        b.push("\tmovq ${gp[ni]}, ${at}\n")
+      } else {
+        b.push("\tmovq ${16 + 8 * nmem}(%rbp), %rax\n\tmovq %rax, ${at}\n")
+        nmem += 1
+      }
+      ni += 1
+    }
+  }
+  // Win64's places
+  let wgp = ["%rcx", "%rdx", "%r8", "%r9"]
+  for i in 0..n {
+    let at = "${scratch + 8 * i}(%rsp)"
+    if i < 4 {
+      if bs[i] == 102 {
+        b.push("\tmovsd ${at}, %xmm${i}\n")
+      } else {
+        b.push("\tmovq ${at}, ${wgp[i]}\n")
+      }
+    } else {
+      b.push("\tmovq ${at}, %rax\n\tmovq %rax, ${32 + 8 * (i - 4)}(%rsp)\n")
+    }
+  }
+  if indirect {
+    // System V's register after the arguments' (call_c's order)
+    b.push("\tmovq ${scratch + 8 * n}(%rsp), %r11\n\tcallq *%r11\n")
+  } else {
+    // `call`, not `callq`: win_text leaves it (it would send memcpy's
+    // call back into this thunk)
+    b.push("\tcall ${sym}\n")
+  }
+  b.push("\tmovq %rbp, %rsp\n\tpopq %rbp\n\tretq\n\t.seh_endproc\n\n")
+  b.join("")
+}
+
+/// The Win64 to System V shim named name that calls the System V
+/// function target with parameters of kinds sig (`i`, `f`), and with
+/// strres stores rdx (a Str result's length) through the pointer that
+/// follows the parameters (x86_exports' form). It keeps rdi, rsi and
+/// xmm6 to xmm15 for its Win64 caller.
+fn w64_shim(name: Str, target: Str, sig: Str, strres: Bool) -> Str {
+  let n = sig.len()
+  let bs = sig.bytes()
+  // the incoming positions: the parameters, then the length's pointer
+  let np = if strres { n + 1 } else { n }
+  // xmm6 to xmm15 (160), one word per incoming position, the length's
+  // pointer: 16 byte aligned after the three pushes and the return
+  // address (32 bytes)
+  let save = 160
+  let frame = (save + 8 * np + 8 + 15) / 16 * 16
+  var b: List[Str] = []
+  b.push("\t.globl ${name}\n\t.p2align 4\n${name}:\n\t.seh_proc ${name}\n")
+  b.push("\tpushq %rbp\n\t.seh_pushreg %rbp\n\tpushq %rdi\n\t.seh_pushreg %rdi\n\tpushq %rsi\n\t.seh_pushreg %rsi\n")
+  b.push("\tsubq $${frame}, %rsp\n\t.seh_stackalloc ${frame}\n")
+  for k in 0..10 {
+    b.push("\tmovdqu %xmm${6 + k}, ${16 * k}(%rsp)\n\t.seh_savexmm %xmm${6 + k}, ${16 * k}\n")
+  }
+  b.push("\t.seh_endprologue\n")
+  // the caller's stack positions: past our frame, the three pushes, the
+  // return address, and the shadow space
+  let incoming = frame + 24 + 8 + 32
+  let wgp = ["%rcx", "%rdx", "%r8", "%r9"]
+  for i in 0..np {
+    let at = "${save + 8 * i}(%rsp)"
+    if i < 4 {
+      if i < n && bs[i] == 102 {
+        b.push("\tmovsd %xmm${i}, ${at}\n")
+      } else {
+        b.push("\tmovq ${wgp[i]}, ${at}\n")
+      }
+    } else {
+      b.push("\tmovq ${incoming + 8 * (i - 4)}(%rsp), %rax\n\tmovq %rax, ${at}\n")
+    }
+  }
+  let gp = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"]
+  var ni = 0
+  var nf = 0
+  for i in 0..n {
+    let at = "${save + 8 * i}(%rsp)"
+    if bs[i] == 102 {
+      b.push("\tmovsd ${at}, %xmm${nf}\n")
+      nf += 1
+    } else {
+      b.push("\tmovq ${at}, ${gp[ni]}\n")
+      ni += 1
+    }
+  }
+  b.push("\tcallq ${target}\n")
+  if strres {
+    b.push("\tmovq ${save + 8 * n}(%rsp), %rcx\n\tmovq %rdx, (%rcx)\n")
+  }
+  for k in 0..10 {
+    b.push("\tmovdqu ${16 * k}(%rsp), %xmm${6 + k}\n")
+  }
+  b.push("\taddq $${frame}, %rsp\n\tpopq %rsi\n\tpopq %rdi\n\tpopq %rbp\n\tretq\n\t.seh_endproc\n\n")
+  b.join("")
+}
+
+/// Whether a shim's signature fits w64_shim: at most six integer and
+/// eight double parameters (System V's registers).
+fn w64_shim_fits(sig: Str) -> Bool {
+  var ni = 0
+  var nf = 0
+  for c in sig.bytes() {
+    if c == 102 {
+      nf += 1
+    } else {
+      ni += 1
+    }
+  }
+  ni <= 6 && nf <= 8
+}
+
+/// The symbol whose address FuncAddr of function n takes: the function,
+/// or on windows/amd64 for a C ABI entry function (Func.entry: a task's
+/// entry, a list's element drop, a constant's builder, which the runtime
+/// calls with rt.call_c2 and rt.call_c4, so with Win64) its Win64 shim.
+fn (g: G) c_entry_sym(n: Str) -> Str {
+  if g.x86 && g.os == "windows" {
+    let fi = g.by_name.get(n) ?? -1
+    if fi >= 0 && g.m.funcs[fi].entry && g.m.funcs[fi].export.is_empty() {
+      return "xo_w64e_${g.fname(n)}"
+    }
+  }
+  g.fname(n)
+}
+
+/// The C ABI exports on windows/amd64 (x86_exports): each a Win64 shim of
+/// its function; and the shims of the C ABI entry functions (c_entry_sym).
+fn (var g: G) w64_exports() {
+  for f in g.m.funcs {
+    if f.entry && f.export.is_empty() {
+      var esig = StrBuilder.new()
+      for p in f.blocks[0].params {
+        for fp in g.layout(f.values[p].ty) {
+          esig.write(if fp { "f" } else { "i" })
+        }
+      }
+      let es = esig.freeze()
+      if w64_shim_fits(es) {
+        g.text.push(w64_shim("xo_w64e_${g.fname(f.name)}", g.fname(f.name), es, false))
+      } else {
+        g.fail("the entry function ${f.name} takes too many words for Win64")
+      }
+      continue
+    }
+    if f.export.is_empty() {
+      continue
+    }
+    var sig = StrBuilder.new()
+    for p in f.blocks[0].params {
+      for fp in g.layout(f.values[p].ty) {
+        sig.write(if fp { "f" } else { "i" })
+      }
+    }
+    let s = sig.freeze()
+    if !w64_shim_fits(s) {
+      // more words than System V's registers: an alias of the System V
+      // function, as on Linux, which only Xo code calls (win_text sends
+      // its direct calls to the function itself)
+      g.text.push("\t.globl ${g.sym(f.export)}\n\t.p2align 4\n${g.sym(f.export)}:\n\tjmp ${g.fname(f.name)}\n\n")
+      continue
+    }
+    let strres = g.m.types[f.results[0]].kind == ssa.Kind.Str
+    g.text.push(w64_shim(g.sym(f.export), g.fname(f.name), s, strres))
+  }
+}
+
+/// xo_entry on windows/amd64: a Win64 shim of the System V entry (the C
+/// runtime's main calls it through the runtime, as a C function).
+fn (var g: G) w64_entry_name() -> Str { g.local("xo_entry_sysv") }
+
+/// Generated code's direct calls and jumps to exports go to the
+/// functions themselves (the export symbols are Win64 shims), and its
+/// calls of C library functions through their thunks. One pass over the
+/// text, as drop_own_weak; other OSes' text is returned as it is.
+fn (g: G) win_text(text: Str) -> Str {
+  if !(g.x86 && g.os == "windows") {
+    return text
+  }
+  var to: Map[Str, Str] = {}
+  for f in g.m.funcs {
+    if !f.export.is_empty() {
+      to[g.sym(f.export)] = g.fname(f.name)
+    }
+  }
+  for (k, _) in w64_libc() {
+    to[k] = "xo_w64_${k}"
+  }
+  var out = StrBuilder.new()
+  for line in text.split("\n") {
+    var l = line
+    for op in ["\tcallq ", "\tjmp "] {
+      if l.starts_with(op) {
+        let target = l[op.len()..l.len()]
+        if let Some(t) = to.get(target) {
+          // a shim's own call of its function is already direct
+          l = "${op}${t}"
+        }
+      }
+    }
+    out.write(l)
+    out.write("\n")
+  }
+  let s = out.freeze()
+  s[0..s.len() - 1]
+}
+
+/// The task switch and thread locals on windows/amd64 (x86_sched_asm).
+/// The switch keeps the frame std/native/llrt/sched.xo fiber_frame
+/// builds for windows/amd64 (the LLVM backend's Win64 switch's: rbp,
+/// rbx, rdi, rsi, r12 to r15, xmm6 to xmm15, MXCSR, the x87 control word,
+/// and the TEB's stack bounds), with System V's arguments (only Xo code
+/// calls it); a new fiber's function is an export (rt.fn_addr), so
+/// xo_fiber_entry calls it with Win64.
+fn x86_sched_asm_windows() -> Str {
+  var b: List[Str] = []
+  b.push("\t.text\n")
+  b.push(w64_sched_fn("xo_stack_switch", ["pushq %rbp", "pushq %rbx", "pushq %rdi", "pushq %rsi", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $192, %rsp", "movq %gs:0x1478, %rax", "movq %rax, 184(%rsp)", "movq %gs:0x10, %rax", "movq %rax, 176(%rsp)", "movq %gs:0x08, %rax", "movq %rax, 168(%rsp)", "movdqu %xmm6, 8(%rsp)", "movdqu %xmm7, 24(%rsp)", "movdqu %xmm8, 40(%rsp)", "movdqu %xmm9, 56(%rsp)", "movdqu %xmm10, 72(%rsp)", "movdqu %xmm11, 88(%rsp)", "movdqu %xmm12, 104(%rsp)", "movdqu %xmm13, 120(%rsp)", "movdqu %xmm14, 136(%rsp)", "movdqu %xmm15, 152(%rsp)", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "movdqu 8(%rsp), %xmm6", "movdqu 24(%rsp), %xmm7", "movdqu 40(%rsp), %xmm8", "movdqu 56(%rsp), %xmm9", "movdqu 72(%rsp), %xmm10", "movdqu 88(%rsp), %xmm11", "movdqu 104(%rsp), %xmm12", "movdqu 120(%rsp), %xmm13", "movdqu 136(%rsp), %xmm14", "movdqu 152(%rsp), %xmm15", "movq 168(%rsp), %rax", "movq %rax, %gs:0x08", "movq 176(%rsp), %rax", "movq %rax, %gs:0x10", "movq 184(%rsp), %rax", "movq %rax, %gs:0x1478", "addq $192, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rsi", "popq %rdi", "popq %rbx", "popq %rbp", "retq"]))
+  b.push(w64_sched_fn("xo_fiber_entry", ["subq $32, %rsp", "movq %rbx, %rcx", "callq *%r12", "ud2"]))
+  let tp = ["movl _tls_index(%rip), %eax", "movq %gs:88, %rcx", "movq (%rcx,%rax,8), %rax", "leaq xo_tlocal@SECREL32(%rax), %rax"]
+  b.push(w64_sched_fn("xo_tlocal_get", tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
+  b.push(w64_sched_fn("xo_tlocal_set", tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
+  b.push(w64_sched_fn("xo_tlocal_addr", tp + ["retq"]))
+  b.push("\t.section .tls$,\"dw\"\n\t.globl xo_tlocal\n\t.p2align 3\nxo_tlocal:\n")
+  b.push("\t.quad 0\n".repeat(16))
+  b.push("\t.text\n")
+  b.join("")
+}
+
+fn w64_sched_fn(name: Str, body: List[Str]) -> Str {
+  var b: List[Str] = ["\t.globl ${name}\n\t.p2align 4\n${name}:\n"]
+  for l in body {
+    b.push("\t${l}\n")
+  }
+  b.join("")
+}
+
+/// The weak C symbols on windows/amd64 (rt.sym_present, decision 0232):
+/// COFF has no weak undefined symbol a linker leaves 0, so each is an
+/// `/alternatename` (a linker option in the .drectve section) to
+/// xo_absent, defined here once; present, the symbol is itself, absent,
+/// xo_absent's address, which rt.sym_present compares with (the LLVM
+/// backend's form, gotchas/windows-llvm-split-link.md).
+fn (g: G) w64_weak(var out: List[Str]) {
+  out.push("\t.data\n\t.globl xo_absent\n\t.p2align 3\nxo_absent:\n\t.quad 0\n")
+  if g.wsyms.is_empty() {
+    return
+  }
+  var names: List[Str] = []
+  for (k, _) in g.wsyms {
+    names.push(k)
+  }
+  out.push("\t.section .drectve,\"yn\"\n")
+  for k in names.sort() {
+    out.push("\t.ascii \" /alternatename:${k}=xo_absent\"\n")
+  }
+  out.push("\t.text\n")
+}
+

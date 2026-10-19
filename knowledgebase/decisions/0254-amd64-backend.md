@@ -338,6 +338,27 @@ is 190 of 199, the 7 Wine gaps known); -short and the fixed point; one
 real Windows run (through the owner) before any default changes. It
 lands in reviewable steps.
 
+6b, step 1 (Xo Lang 2, 2026-10-19): `xo build --backend=amd64
+--targets=windows/amd64` builds from the Mac (llvm-mc through winxc's
+clang, lld-link). compiler/arm64 x86win.xo: `.seh` prologue codes (rsp
+based: rbp and the callee saved registers pushed, the allocation; no
+frame register, as the body never moves rsp), the personality as the
+handler with the call site table as handler data; System V to Win64
+thunks for platform calls, the C library functions templates call
+(memcpy, memmove, memset, memcmp, fmod) and rt.call_c2/4; Win64 to
+System V shims for the exports, xo_entry, and the C ABI entry functions
+(Func.entry: task entries, element drops, constant builders, which the
+runtime calls with rt.call_c*); generated code's direct calls of exports
+go to the functions; weak C symbols through `/alternatename` to
+xo_absent; the task switch keeps the runtime's windows/amd64 fiber frame
+(xmm6 to xmm15 and the TEB's stack bounds included), with System V's
+arguments; thread locals through _tls_index and gs:88; shrink wrapping
+and the leaf stubs' frame records off (a leaf's fault stub jumps).
+Under Wine with Box64: 190 of 201 goldens, LLVM's level. Next: the red
+zone (gotchas/windows-amd64-red-zone.md), thread locals inline, the
+xmm saves of the task switch (only Xo code calls it), Xo's own COFF
+writer, and a real Windows run.
+
 ### 6c. Xo's own calls on Windows use System V (Accepted, owner 2026-10-18)
 
 Accepted by the owner on 2026-10-18 (through the lead), for both code

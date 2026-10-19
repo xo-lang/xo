@@ -1,0 +1,34 @@
+# windows/amd64 per-step subset (decision 0254 6b): platform calls, files,
+# network, threads and tasks, thread locals, faults and unwinding,
+# callbacks, processes, floats, zone data. All goldens at milestones.
+abs_fault
+arith
+clock_timers
+cli_fault
+conc_channels
+conc_mutex
+conc_scopes
+conc_select
+conc_stress
+div_zero
+env_program
+fault_defer_chain
+fault_tasks
+fault_unwind
+float_libm
+fs_cwd_path
+fs_handles
+fs_native
+http_client
+http_server
+index_oob
+map_key_fault
+net_echo
+overflow_add
+proc_set_grace
+sys_files_clock
+task_budget
+task_native
+term_stdio
+tls13_server
+tz_table

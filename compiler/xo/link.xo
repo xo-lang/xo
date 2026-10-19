@@ -342,3 +342,25 @@ fn words(s: Str) -> List[Str] {
   }
   out
 }
+
+/// Assembles and links the amd64 backend's windows/amd64 assembly srcs
+/// into bin (decision 0254 6b, the plan's first step): clang
+/// ($XO_CLANG, else clang) assembles with LLVM's assembler and links
+/// with lld-link, the Windows sysroot of a cross build from
+/// $XO_WINSYSROOT, the libraries of sys_link_args. "" when it worked,
+/// else why not.
+fn win_amd64_link(os: Os, srcs: List[Str], bin: Str, flags: List[Str]) -> Str {
+  let clang = os.env.get("XO_CLANG") ?? "clang"
+  let sysroot = os.env.get("XO_WINSYSROOT") ?? ""
+  var args = ["--target=x86_64-pc-windows-msvc"]
+  if !sysroot.is_empty() {
+    args = args + ["-Xmicrosoft-windows-sys-root", sysroot]
+  }
+  args = args + flags + srcs + ["-o", bin] + sys_link_args("windows", [])
+  let (out, err) = combined(os, clang, args)
+  if !err.is_empty() {
+    return "${clang}: ${err}\n${out}"
+  }
+  ""
+}
+

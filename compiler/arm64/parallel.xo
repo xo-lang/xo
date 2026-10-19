@@ -32,6 +32,9 @@ struct Part {
   clone_ref: Bool = false
   sched_ref: Bool = false
   personality_ref: Bool = false
+  /// windows/amd64's thunks (G.w64)
+  w64: Map[Str, Str] = {}
+  wsyms: Map[Str, Bool] = {}
   wants: List[Want] = []
   /// the per-function cache (fcache.xo): new entries, functions reused,
   /// and functions whose text differs from their entry (verify)
@@ -294,6 +297,12 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
     g.clone_ref = g.clone_ref || part.clone_ref
     g.sched_ref = g.sched_ref || part.sched_ref
     g.personality_ref = g.personality_ref || part.personality_ref
+    for (k, sig) in part.w64 {
+      g.w64[k] = sig
+    }
+    for (k, _) in part.wsyms {
+      g.wsyms[k] = true
+    }
     // the helpers the part named, each generated once
     for w in part.wants {
       g.gen_want(w)
@@ -314,7 +323,7 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
   // the module's own symbols are not weak (weak_ref)
   var own: List[Str] = []
   for f in files {
-    own.push(g.drop_own_weak(f))
+    own.push(g.win_text(g.drop_own_weak(f)))
   }
   Program{asm: own.join(""), err: g.err, skipped: skipped + g.skipped, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches}
 }
@@ -404,7 +413,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   if os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }
-  var part = Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
+  var part = Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
   if !pkey.is_empty() {
     if let Some(enc) = encode_part(g, part) {
       match pentry {
