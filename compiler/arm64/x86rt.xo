@@ -34,10 +34,14 @@ fn x86_inc_text(obj: Str, lbl: Str, ret: Bool) -> Str {
 
 /// The code that releases the object at register obj (dec_text): to free
 /// at the last reference, else to done (or a return, when done is empty).
+/// subq sets the flags cmpq $1 did (le: the count was 1 or less, or the
+/// immortal 1 << 63, whose decrement overflows; e: it was 1), one
+/// instruction less a release (as arm64's subs, 2026-10-19); the slow
+/// path tests bit 62 of the count in memory, not of the decrement.
 fn x86_dec_text(obj: Str, lbl: Str, free: Str, done: Str) -> Str {
   let end = if done.is_empty() { "retq" } else { "jmp ${done}" }
-  "\tmovq (${obj}), %r11\n\tcmpq $1, %r11\n\tjle ${lbl}_slow\n\tsubq $1, %r11\n\tmovq %r11, (${obj})\n\t${end}\n" +
-    "${lbl}_slow:\n\tje ${free}\n\tbtq $62, %r11\n\tjnc ${lbl}_kept\n\tlock addq $1, (${obj})\n\tje ${free}\n${lbl}_kept:\n\t${end}\n"
+  "\tmovq (${obj}), %r11\n\tsubq $1, %r11\n\tjle ${lbl}_slow\n\tmovq %r11, (${obj})\n\t${end}\n" +
+    "${lbl}_slow:\n\tje ${free}\n\tbtq $62, (${obj})\n\tjnc ${lbl}_kept\n\tlock addq $1, (${obj})\n\tje ${free}\n${lbl}_kept:\n\t${end}\n"
 }
 
 /// The code that marks the object at register obj shared (mark_text).
@@ -103,21 +107,7 @@ fn (var g: G) x86_rc_body(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int
         }
         b.push("${ret}:\n\tretq\n")
       } else {
-        let free = g.local("xo_${g.ns}${kind}${id}_free")
-        b.push(x86_dec_text("%rdi", sym, free, ""))
-        b.push("${free}:\n")
-        if g.kind(t) == ssa.Kind.Str {
-          b.push("\tjmp ${g.sym("xo_x_obj_rc_free")}\n")
-        } else {
-          let et = g.m.types[t].elems[0]
-          b.push(x86_const_reg(g.esize(et), 6))
-          if g.heap(et) {
-            b.push("\tleaq ${g.elem_helper("drop", et)}(%rip), %rdx\n")
-          } else {
-            b.push("\txorl %edx, %edx\n")
-          }
-          b.push("\tjmp ${g.sym("xo_x_obj_rl_free_n")}\n")
-        }
+        g.x86_str_list_drop(b, sym, g.local("xo_${g.ns}${kind}${id}_free"), t)
       }
     }
     _ => g.x86_agg_rc(b, kind, sym, id, t)
@@ -227,9 +217,36 @@ fn x86_load_call(var b: List[Str], sym: Str, base: Str, off: Int, n: Int) {
   b.push("\tcallq ${sym}\n")
 }
 
+/// The drop of the Str or List object at rdi (rc_helper's, and the
+/// element callback's of a List of them, which loads it first: no jump to
+/// the drop helper, as arm64's str_list_drop, 2026-10-19): its release, to
+/// free at the last reference.
+fn (var g: G) x86_str_list_drop(var b: List[Str], sym: Str, free: Str, t: Int) {
+  b.push(x86_dec_text("%rdi", sym, free, ""))
+  b.push("${free}:\n")
+  if g.kind(t) == ssa.Kind.Str {
+    b.push("\tjmp ${g.sym("xo_x_obj_rc_free")}\n")
+    return
+  }
+  let et = g.m.types[t].elems[0]
+  b.push(x86_const_reg(g.esize(et), 6))
+  if g.heap(et) {
+    b.push("\tleaq ${g.elem_helper("drop", et)}(%rip), %rdx\n")
+  } else {
+    b.push("\txorl %edx, %edx\n")
+  }
+  b.push("\tjmp ${g.sym("xo_x_obj_rl_free_n")}\n")
+}
+
 /// The element callback body (elem_helper) of t on x86_64: rdi points to
 /// the element.
 fn (var g: G) x86_elem_body(var b: List[Str], kind: Str, sym: Str, t: Int) {
+  if kind == "drop" && g.kind(t) is ssa.Kind.Str | ssa.Kind.List {
+    b.push("\tmovq (%rdi), %rdi\n")
+    g.x86_str_list_drop(b, sym, "${sym}_free", t)
+    b.push("\n")
+    return
+  }
   if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
     var ls: List[Leaf] = []
     g.heap_leaves(t, 0, ls)
