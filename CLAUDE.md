@@ -135,7 +135,16 @@ Update the knowledgebase in the same change as the work, not later:
     internal/llvm tests when every changed file is native backend only
     (compiler/arm64, compiler/macho, internal/arm64, docs, bench
     results; owner, 2026-10-18): scripts/gate.sh's llvm step does this,
-    XO_GATE_LLVM=1 forces it. Long pass/fail runs go
+    XO_GATE_LLVM=1 forces it. internal/llvm's goldens build at -O1
+    with no LTO except an -O2 sample (llvm_test.go o2Goldens; owner,
+    2026-10-18); XO_TEST_LLVM_OPT=O2 builds every golden at -O2, for a
+    change to what clang's optimizer sees (noalias, ranges, poison
+    flags); a clang cache keyed on the IR (XO_CLANG_CACHE=off disables
+    it) lets an unchanged IR skip clang; TestGoldenGoParity
+    (XO_TEST_GO_PARITY=1, set by gate.sh for compiler/gen and std/rt)
+    checks the Go backend against want.txt. The batch full tier and
+    seed-final.sh set XO_TEST_LLVM_OPT=O2 and XO_TEST_GO_PARITY=1.
+    Long pass/fail runs go
     to on demand CI, not the Mac's single heavy slot.
   - CI (decision 0225, owner 2026-10-14): GitHub Actions on self-hosted
     linux/arm64 EC2 runners (infra/ci-runners), started only by hand,
