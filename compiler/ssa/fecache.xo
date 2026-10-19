@@ -1,0 +1,488 @@
+// The front end cache (decision 0220 addendum stage 2, step 1): a
+// function body's SSA, as the builder made it, by the hash of what the
+// building reads. A hit replays the body's effects on the builder (the
+// types it interned, the functions it declared, its unwinding checks)
+// and places its function from the entry instead of building it.
+//
+// The key (fe_keys, computed before the build from the checked program):
+// the build's flags, the interface closure of the body's module (its
+// files with every function body cut out, and the same of every module
+// it imports, transitively, and of the standard library), the body's
+// file, position, and declaration text. The flags only the builder knows
+// (concurrency, budgets) are in the entry and compared.
+//
+// A body is replayed only into the state it was recorded in: the entry
+// holds the fingerprint of the builder's state before the body (the
+// names of the types and functions so far, the sizes of its tables), so
+// the types and functions the replay adds get the indices a build would
+// give them. Bodies that touch other state (generic instances, closures,
+// constants, thunks) are not cached.
+
+use std/crypto
+use github.com/xo-lang/xo/compiler/check
+
+const FE_CACHE_VERSION = "xo front cache v1"
+
+/// The front end cache of one build: entries by key (fe_keys), the
+/// entries to store, and counts.
+pub struct FeCache {
+  pub on: Bool = false
+  /// every body built and compared with its entry
+  pub verify: Bool = false
+  /// per function object: its key ("" when not cached)
+  pub keys: Map[Int, Str] = {}
+  pub entries: Map[Str, Bytes] = {}
+  pub stores: List[(Str, Bytes)] = []
+  pub hits: Int = 0
+  pub misses: Int = 0
+  pub mismatches: List[Str] = []
+  /// qualified name to function object, built on the first replay
+  by_ident: Map[Str, Int] = {}
+}
+
+/// The keys of the bodies the builder may take from the cache: every
+/// function that is not generic and has a body. flags are the build's
+/// (fe_flags).
+pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
+  // the bodies' spans, per file
+  var cuts: Map[Int, List[(Int, Int)]] = {}
+  for o in c.objs {
+    if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 {
+      continue
+    }
+    if let Some(bd) = o.fn_decl[0].body {
+      var l = cuts.get(o.decl_file) ?? []
+      l.push((bd.span.start.offset, bd.span.end.offset))
+      cuts[o.decl_file] = l
+    }
+  }
+  // each module's interface: its files without the bodies
+  var own: List[Str] = []
+  for md in c.mods {
+    var paths: List[(Str, Int)] = []
+    for f in md.files {
+      paths.push((c.files[f].path, f))
+    }
+    var h = BytesBuilder.new()
+    h.write_str("${md.path}\n")
+    for (p, f) in paths.sort_by(fn(e) { e.0 }) {
+      h.write_str("${p}\n")
+      let src = c.files[f].src
+      var at = 0
+      for (lo, hi) in (cuts.get(f) ?? []).sort_by(fn(e) { e.0 }) {
+        if lo >= at && hi <= src.len() {
+          h.write(src[at..lo])
+          h.write_str("{}")
+          at = hi
+        }
+      }
+      h.write(src[at..src.len()])
+      h.write_str("\n")
+    }
+    own.push(crypto.sha256(h.freeze()).to_hex())
+  }
+  // the standard library's interfaces, in every closure
+  var stdh = BytesBuilder.new()
+  for (mi, md) in c.mods.indexed() {
+    if md.is_std || md.is_prelude || md.native {
+      stdh.write_str("${md.path} ${own[mi]}\n")
+    }
+  }
+  let std_sum = crypto.sha256(stdh.freeze()).to_hex()
+  // each module's closure through its files' imports
+  var closure: Map[Int, Str] = {}
+  for (mi, _) in c.mods.indexed() {
+    var seen: Map[Int, Bool] = {}
+    var work = [mi]
+    seen[mi] = true
+    while !work.is_empty() {
+      let m = work.pop() ?? -1
+      for f in c.mods[m].files {
+        for (_, im) in c.files[f].imports {
+          if im.module >= 0 && !seen.contains(im.module) {
+            seen[im.module] = true
+            work.push(im.module)
+          }
+        }
+      }
+    }
+    var lines: List[Str] = []
+    for (m, _) in seen {
+      lines.push("${c.mods[m].path} ${own[m]}")
+    }
+    closure[mi] = crypto.sha256("${std_sum}\n${lines.sort().join("\n")}".bytes()).to_hex()
+  }
+  var keys: Map[Int, Str] = {}
+  for (fo, o) in c.objs.indexed() {
+    if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 || o.module < 0 || !o.tparams.is_empty() {
+      continue
+    }
+    if o.recv >= 0 && !c.objs[o.recv].tparams.is_empty() {
+      continue
+    }
+    let fd = o.fn_decl[0]
+    if fd.body == None {
+      continue
+    }
+    let src = c.files[o.decl_file].src
+    if fd.span.end.offset > src.len() || fd.span.start.offset < 0 {
+      continue
+    }
+    var h = BytesBuilder.new()
+    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${closure.get(o.module) ?? ""}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
+    h.write(src[fd.span.start.offset..fd.span.end.offset])
+    keys[fo] = crypto.sha256(h.freeze()).to_hex()
+  }
+  keys
+}
+
+/// The builder's flags in a key, for build_program_cpu's arguments.
+pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool) -> Str {
+  "root=${line_root} tests=${tests} release=${release} real=${real_tests} os=${goos} arch=${goarch} wasm=${wasm} nolibc=${nolibc} prof=${prof} trace=${trace_support} soft=${soft_cpu}"
+}
+
+/// The flags the builder sets itself, compared with an entry's.
+fn (var b: Builder) fe_own_flags() -> Str {
+  "conc=${b.conc} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}"
+}
+
+/// FNV-1a over s, continued from h.
+fn fe_mix(h: Int, s: Str) -> Int {
+  var x = h
+  for c in s.bytes() {
+    x = (x ^ Int(c)).wrapping_mul(1099511628211)
+  }
+  (x ^ 10).wrapping_mul(1099511628211)
+}
+
+/// The fingerprint of the builder's state a body's replay needs: the
+/// names of the types and functions so far (Module.fe_h) and the sizes
+/// of the tables the builder reads.
+fn (b: Builder) fe_state() -> Str {
+  "${b.m.fe_h} ${b.m.types.len()} ${b.m.funcs.len()} ${b.m.order.len()} ${b.queue.len()} ${b.gens.len()} ${b.funcs.len()} ${b.plain.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.decl_mods.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.need_conc} ${b.uses_net} ${b.skipped_any}"
+}
+
+/// What a body may change and an entry not replay: when any differs
+/// after the body, it is not cached.
+fn (b: Builder) fe_fixed() -> Str {
+  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.need_conc} ${b.uses_net} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
+}
+
+/// A function object's qualified name: module path, receiver type, name.
+fn (b: Builder) fe_ident(fo: Int) -> Str {
+  let o = b.c.objs[fo]
+  let m = if o.module >= 0 { b.c.mods[o.module].path } else { "" }
+  let r = if o.recv >= 0 { txt(b.c.objs[o.recv].name) } else { "" }
+  "${m}|${r}|${txt(o.name)}"
+}
+
+fn txt(x: Bytes) -> Str {
+  x.to_str() ?? ""
+}
+
+/// The recording of one body: the state before it.
+struct FeRec {
+  state: Str
+  fixed: Str
+  nt: Int
+  nf: Int
+  no: Int
+  nq: Int
+  nc: Int
+  nvar: Int
+  mods: Map[Str, Bool]
+}
+
+fn (var b: Builder) fe_begin() -> FeRec {
+  b.fe_rec = true
+  b.fe_made = {}
+  b.fe_gen = false
+  FeRec{state: b.fe_state(), fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), no: b.m.order.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
+}
+
+/// The entry of the body just built into fi, none when it may not be
+/// cached.
+fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
+  b.fe_rec = false
+  if b.fe_gen || b.fe_fixed() != r.fixed || !b.m.funcs[fi].skip.is_empty() {
+    return None
+  }
+  // only declares' bodies queued: a contract's inner body (Job.Inner)
+  // is not replayed
+  for j in b.queue[r.nq..b.queue.len()] {
+    match j {
+      Body(..) => {}
+      _ => return None
+    }
+  }
+  let fbo = encode_func(b.m, b.m.funcs[fi])
+  if fbo == None {
+    return None
+  }
+  let fb = fbo ?? b""
+  var e = EntryW{b: BytesBuilder.new()}
+  e.str(FE_CACHE_VERSION)
+  e.str(b.fe_own_flags())
+  e.str(r.state)
+  e.uv(fi)
+  e.uv(r.nt)
+  e.uv(r.nf)
+  e.uv(r.nq)
+  // the types the body (and its declares) interned, in order
+  e.uv(b.m.types.len() - r.nt)
+  for t in r.nt..b.m.types.len() {
+    let x = b.m.types[t]
+    e.str(kind_text(x.kind))
+    e.str(x.name)
+    e.bool((b.m.type_at.get(x.name) ?? -1) == t)
+    e.uv(x.fields.len())
+    for f in x.fields {
+      e.str(f.name)
+      e.sv(f.ty)
+    }
+    e.uv(x.variants.len())
+    for v in x.variants {
+      e.str(v.name)
+      e.uv(v.fields.len())
+      for f in v.fields {
+        e.str(f.name)
+        e.sv(f.ty)
+      }
+    }
+    e.ints(x.elems)
+    e.sv(x.ret)
+    e.bool(x.coll)
+    e.sv(x.bits)
+    e.bool(x.unsigned)
+  }
+  e.ints(b.m.order[r.no..b.m.order.len()])
+  // the functions made, in order: a declare's (by the object, its
+  // further functions replayed by it) or one made whole (a helper such
+  // as xo.hash[T], encoded)
+  e.uv(b.m.funcs.len() - r.nf)
+  for i in r.nf..b.m.funcs.len() {
+    match b.fe_made.get(i) {
+      Some(fo) => {
+        if fo == -2 {
+          e.uv(2)
+        } else {
+          e.uv(1)
+          e.str(b.fe_ident(fo))
+        }
+      }
+      None => {
+        let hb = encode_func(b.m, b.m.funcs[i])
+        if hb == None {
+          return None
+        }
+        e.uv(3)
+        e.bool(b.m.funcs[i].target)
+        e.bytes(hb ?? b"")
+      }
+    }
+  }
+  e.uv(b.m.funcs.len())
+  e.uv(b.queue.len())
+  e.uv(b.checks.len() - r.nc)
+  for c in b.checks[r.nc..b.checks.len()] {
+    e.uv(c.fi)
+    e.uv(c.u)
+    e.str(c.callee)
+    e.sv(c.w)
+  }
+  e.sv(b.nvar - r.nvar)
+  var mods: List[Str] = []
+  for (k, _) in b.decl_mods {
+    if !r.mods.contains(k) {
+      mods.push(k)
+    }
+  }
+  e.uv(mods.len())
+  for k in mods.sort() {
+    e.str(k)
+  }
+  e.bool(b.m.funcs[fi].target)
+  e.sv(b.m.fe_h)
+  e.bytes(fb)
+  if !e.ok {
+    return None
+  }
+  Some(e.b.freeze())
+}
+
+/// Replays entry d for the body of fo into fi: true when it was placed,
+/// false (nothing changed) when the entry does not fit this state.
+fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
+  var r = EntryR{d: d}
+  if r.str() != FE_CACHE_VERSION {
+    return b.fe_miss("version")
+  }
+  if r.str() != b.fe_own_flags() {
+    return b.fe_miss("flags")
+  }
+  let st = r.str()
+  if st != b.fe_state() {
+    return b.fe_miss("state")
+  }
+  if r.uv() != fi || r.uv() != b.m.types.len() || r.uv() != b.m.funcs.len() || r.uv() != b.queue.len() {
+    return b.fe_miss("counts")
+  }
+  // read everything before changing anything
+  var kinds: Map[Str, Kind] = {}
+  for k in all_kinds() {
+    kinds[kind_text(k)] = k
+  }
+  var tys: List[(SType, Bool)] = []
+  let nt = r.uv()
+  if !r.ok || nt > d.len() {
+    return false
+  }
+  for _ in 0..nt {
+    let ko = kinds.get(r.str())
+    if ko == None {
+      return false
+    }
+    var x = SType{kind: ko ?? Kind.Bad, name: r.str()}
+    let named = r.bool()
+    let nf = r.uv()
+    for _ in 0..nf {
+      x.fields.push(SField{name: r.str(), ty: r.sv()})
+    }
+    let nv = r.uv()
+    for _ in 0..nv {
+      var v = SVariant{name: r.str()}
+      let nvf = r.uv()
+      for _ in 0..nvf {
+        v.fields.push(SField{name: r.str(), ty: r.sv()})
+      }
+      x.variants.push(v)
+    }
+    x.elems = r.ints()
+    x.ret = r.sv()
+    x.coll = r.bool()
+    x.bits = r.sv()
+    x.unsigned = r.bool()
+    if !r.ok || (named && b.m.type_at.contains(x.name)) {
+      return false
+    }
+    tys.push((x, named))
+  }
+  let order = r.ints()
+  let nd = r.uv()
+  if !r.ok || nd > d.len() {
+    return b.fe_miss("malformed")
+  }
+  if b.fe.by_ident.is_empty() {
+    for (fo, o) in b.c.objs.indexed() {
+      if o.kind == check.ObjKind.Func {
+        b.fe.by_ident[b.fe_ident(fo)] = fo
+      }
+    }
+  }
+  // per function made: 1 a declare (fo), 2 its further function, 3 a
+  // helper (encoded)
+  var made: List[(Int, Int, Bool, Bytes)] = []
+  for _ in 0..nd {
+    let k = r.uv()
+    if k == 1 {
+      let fo = b.fe.by_ident.get(r.str()) ?? -1
+      if fo < 0 {
+        return b.fe_miss("ident")
+      }
+      made.push((1, fo, false, b""))
+    } else if k == 2 {
+      made.push((2, -1, false, b""))
+    } else {
+      let tg = r.bool()
+      made.push((3, -1, tg, r.bytes()))
+    }
+  }
+  let nf1 = r.uv()
+  let nq1 = r.uv()
+  let nc = r.uv()
+  if !r.ok || nc > d.len() {
+    return false
+  }
+  var checks: List[UCheck] = []
+  for _ in 0..nc {
+    checks.push(UCheck{fi: r.uv(), u: r.uv(), callee: r.str(), w: r.sv()})
+  }
+  let dvar = r.sv()
+  let nm = r.uv()
+  if !r.ok || nm > d.len() {
+    return false
+  }
+  var mods: List[Str] = []
+  for _ in 0..nm {
+    mods.push(r.str())
+  }
+  let target = r.bool()
+  let h1 = r.sv()
+  let fb = r.bytes()
+  if !r.ok {
+    return false
+  }
+  // the types first, so the declares find them and make none
+  for (x, named) in tys {
+    let i = b.m.types.len()
+    if named {
+      b.m.type_at[x.name] = i
+    }
+    b.m.types.push(x)
+  }
+  for t in order {
+    b.m.order.push(t)
+  }
+  // the functions in their order: its types are all there now
+  let ops = ops_by_name()
+  let f = decode_func(b.m, fb, ops)
+  var bad = f == None
+  for (k, fo, tg, hb) in made {
+    if k == 1 {
+      let _ = b.declare(fo, [])
+    } else if k == 3 {
+      match decode_func(b.m, hb, ops) {
+        Some(h) => {
+          var g = h
+          g.target = tg
+          let i = b.m.funcs.len()
+          if !b.m.func_at.contains(g.name) {
+            b.m.func_at[g.name] = i
+          }
+          b.m.funcs.push(g)
+        }
+        None => bad = true
+      }
+    }
+  }
+  if bad || b.m.funcs.len() != nf1 || b.queue.len() != nq1 {
+    // the state matched but the replay did not: a builder bug, never a
+    // silent difference
+    b.why = "the front end cache's entry for ${b.m.funcs[fi].name} does not replay (XO_FE_CACHE=off builds without it)"
+    return true
+  }
+  var g = f ?? Func{name: ""}
+  g.target = target
+  b.m.funcs[fi] = g
+  for c in checks {
+    b.checks.push(c)
+  }
+  b.nvar += dvar
+  // the names' hash as the recorded build left it
+  b.m.fe_h = h1
+  for k in mods {
+    b.decl_mods[k] = true
+  }
+  true
+}
+
+/// A replay that does not fit, counted by reason (XO_FE_STATS).
+fn (var b: Builder) fe_miss(why: Str) -> Bool {
+  b.fe_stats["miss.${why}"] = (b.fe_stats.get("miss.${why}") ?? 0) + 1
+  false
+}
+
+
+fn all_kinds() -> List[Kind] {
+  [Kind.Unit, Kind.Int, Kind.Float, Kind.Bool, Kind.Str, Kind.Struct, Kind.Enum, Kind.Tuple, Kind.List, Kind.Cap, Kind.Func, Kind.Box, Kind.Handle, Kind.Bad]
+}

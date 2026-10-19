@@ -263,6 +263,17 @@ pub struct Builder {
   pub imm_rc: Bool = true
   /// The attribution of the std/log call call_as lowers next (logFrom).
   pend_log_from: Str = ""
+  /// The front end cache's misses by reason (XO_FE_STATS=1 prints them).
+  pub fe_stats: Map[Str, Int] = {}
+  /// A recorded body declared a generic instance.
+  fe_gen: Bool = false
+  /// The front end cache (fecache.xo), and the recording of a body: the
+  /// functions it declared.
+  pub fe: FeCache = FeCache{}
+  fe_rec: Bool = false
+  /// per function a recorded body's declares made: the function object
+  /// (-2 for a second function of the same declare)
+  fe_made: Map[Int, Int] = {}
 }
 
 /// logFrom: the attribution of the record the std/log function fo writes
@@ -338,7 +349,13 @@ pub fn build_program_support(c: check.Checker, line_root: Str, tests: Bool, rele
 
 /// build_program_support with soft_cpu (Builder.soft_cpu).
 pub fn build_program_cpu(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool) -> Builder uses fs.read {
+  build_program_fe(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, FeCache{})
+}
+
+/// build_program_cpu through the front end cache fe (fecache.xo).
+pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, fe: FeCache) -> Builder uses fs.read {
   var b = new_builder(c, line_root)
+  b.fe = fe
   b.soft_cpu = soft_cpu
   b.prof = prof
   b.trace_support = trace_support
@@ -363,6 +380,9 @@ pub fn build_program_cpu(c: check.Checker, line_root: Str, tests: Bool, release:
     b.trace_support = trace_support
     b.soft_cpu = soft_cpu
     b.conc = true
+    // the first build's entries and counts carry over (its stores were
+    // made without unwinding checks: their flags differ)
+    b.fe = fe
     b.build()
   }
   b.m.goarch = goarch
@@ -413,9 +433,13 @@ pub fn (var b: Builder) build() uses fs.read {
   let mf = b.declare(main_fo, [])
   if b.uses_os_tasks() {
     b.need_conc = true
-    if b.conc {
-      b.tasks_main(mf, b.fail_err(b.c.objs[main_fo].err))
+    if !b.conc {
+      // build_program_cpu builds the program again with unwinding
+      // checks and drops this one: building its bodies first was wasted
+      // (the SSA builder's time twice for a program with tasks)
+      return
     }
+    b.tasks_main(mf, b.fail_err(b.c.objs[main_fo].err))
   } else {
     let et = b.fail_err(b.c.objs[main_fo].err)
     if et >= 0 {
@@ -552,6 +576,53 @@ fn (var b: Builder) run_queue() {
 }
 
 fn (var b: Builder) run_job(j: Job) {
+  b.run_job_fe(j)
+}
+
+/// run_job0 through the front end cache for a body that is not generic.
+fn (var b: Builder) run_job_fe(j: Job) {
+  if !b.fe.on {
+    b.run_job0(j)
+    return
+  }
+  if let Body(fo, fi, sub) = j {
+    let key = b.fe.keys.get(fo) ?? ""
+    if sub.is_empty() && !key.is_empty() {
+      let entry = b.fe.entries.get(key)
+      if !b.fe.verify {
+        if let Some(e) = entry {
+          if b.fe_replay(e, fi) {
+            b.fe.hits += 1
+            return
+          }
+        }
+      }
+      b.fe.misses += 1
+      // the runtime's lazy check before the recording (a hit skips it)
+      b.check_lazy(fo)
+      let r = b.fe_begin()
+      b.run_job0(j)
+      let eo = b.fe_entry(r, fi)
+      if let Some(e) = eo {
+        match entry {
+          Some(old) => {
+            if b.fe.verify && old != e {
+              b.fe.mismatches.push(b.m.funcs[fi].name)
+            }
+          }
+          None => {}
+        }
+        if entry == None || entry != Some(e) {
+          b.fe.stores.push((key, e))
+        }
+      }
+      return
+    }
+  }
+  b.run_job0(j)
+}
+
+fn (var b: Builder) run_job0(j: Job) {
   match j {
     Body(fo, fi, sub) => b.body(fo, fi, sub)
     Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
@@ -1394,11 +1465,27 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
 /// The SSA function of fo instantiated with targs (checker types of its
 /// type parameters), declared and queued on first use (declare).
 fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
+  if !b.fe_rec || !targs.is_empty() {
+    return b.declare0(fo, targs)
+  }
+  // a recording (fecache.xo): the functions this declare makes
+  let n0 = b.m.funcs.len()
+  let f = b.declare0(fo, targs)
+  for i in n0..b.m.funcs.len() {
+    b.fe_made[i] = if i == n0 { fo } else { -2 }
+  }
+  f
+}
+
+fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
   if targs.is_empty() {
     // a function that is not generic has one instance, keyed by fo
     if let Some(f) = b.plain.get(fo) {
       return f
     }
+  }
+  if !targs.is_empty() {
+    b.fe_gen = true
   }
   let tps = b.type_params(fo)
   if targs.len() != tps.len() {

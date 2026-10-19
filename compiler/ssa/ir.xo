@@ -330,6 +330,9 @@ pub struct Module {
   pub func_at: Map[Str, Int] = {}
   pub types: List[SType] = []
   pub type_at: Map[Str, Int] = {}
+  /// The names of the types and functions so far, hashed in order (the
+  /// front end cache's state fingerprint, fecache.xo).
+  pub fe_h: Int = 0
   /// Named struct and enum types in creation order.
   pub order: List[Int] = []
   /// The build's target architecture (Builder.goarch), "" for the
@@ -451,6 +454,7 @@ pub fn (var m: Module) builtin(k: Kind) -> Int {
 fn (var m: Module) intern(t: SType) -> Int {
   let i = m.types.len()
   m.type_at[t.name] = i
+  m.fe_h = fe_mix(m.fe_h, t.name)
   m.types.push(t)
   i
 }
@@ -630,6 +634,7 @@ pub fn (var m: Module) new_func(name: Str, params: List[Int], results: List[Int]
   }
   let i = m.funcs.len()
   m.funcs.push(f)
+  m.fe_h = fe_mix(m.fe_h, name)
   if !m.func_at.contains(name) {
     m.func_at[name] = i
   }
