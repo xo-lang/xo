@@ -261,6 +261,47 @@ pub fn alloc_fast(h: Int, n: Int) -> Int {
   r
 }
 
+/// alloc_fast with other threads running (2026-10-19: the plain HTTP
+/// server, which has threads, took obj.halloc and alloc for all 34
+/// allocations a request): a block of n bytes (at most SMALL_MAX) popped
+/// from its class's free list on heap h, the calling thread's, and
+/// counted as alloc counts it; else 0. An empty list goes to alloc, which
+/// takes back a magazine of blocks other threads freed before carving
+/// from the chunk. Apart from alloc_fast so the one thread case keeps its
+/// code (a flag argument cost it two instructions an allocation).
+pub fn alloc_pop(h: Int, n: Int) -> Int {
+  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+    return 0
+  }
+  var c = n.wrapping_add(15).shr_logical(4)
+  if c == 0 {
+    c = 1
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let r = rt.mem_load(fl, FREE_LISTS, 8)
+  if r == 0 {
+    return 0
+  }
+  let next = rt.mem_load(r, 0, 8)
+  rt.mem_store(fl, FREE_LISTS, next, 8)
+  rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
+  rt.prefetch(next)
+  rt.mem_store(h, LAST, c.wrapping_shl(4), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    if rt.mem_load(h, ABYTES, 8).wrapping_add(n) >= rt.mem_load(h, SAMPLE_AT, 8) {
+      // the heap profile's next sample: back on the list, for alloc
+      // (alloc_fast)
+      rt.mem_store(r, 0, next, 8)
+      rt.mem_store(fl, FREE_LISTS, r, 8)
+      rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
+      return 0
+    }
+    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+    rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
+  }
+  r
+}
+
 /// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
 /// list, or to heapos.xo for a big block. Counts the free.
 pub fn free(h: Int, p: Int) {

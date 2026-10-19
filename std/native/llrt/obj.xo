@@ -222,6 +222,22 @@ fn try_new(h: Int, cap: Int, esize: Int) -> Int {
   l
 }
 
+/// try_new with other threads running: from the free list of h, the
+/// calling thread's heap record (alloc.alloc_pop), else 0.
+fn try_pop(h: Int, cap: Int, esize: Int) -> Int {
+  let b = addw(L_HDR, mulw(cap, esize))
+  if b > SMALL_MAX {
+    return 0
+  }
+  let l = alloc.alloc_pop(h, b)
+  if l != 0 {
+    rt.mem_store(l, 0, 1, 8)
+    rt.mem_store(l, 8, 0, 8)
+    rt.mem_store(l, 16, cap, 8)
+  }
+  l
+}
+
 /// A new empty list object with room for n elements (at least 4) of esize
 /// bytes (xo_rl_new_n).
 pub fn rl_new_n(n: Int, esize: Int) -> Int {
@@ -233,6 +249,22 @@ pub fn rl_new_n(n: Int, esize: Int) -> Int {
       return l
     }
     return rl_new(h, cap, esize)
+  }
+  rl_new_mt(cap, esize)
+}
+
+/// rl_new_n with other threads running, out of line so the one thread
+/// case keeps its code: from the calling thread's free list without a
+/// call to the heap (try_pop), else rl_new (2026-10-19: the plain HTTP
+/// server, which has threads, took halloc and alloc.alloc for all 34
+/// allocations a request).
+fn rl_new_mt(cap: Int, esize: Int) -> Int {
+  let t = rt.tlocal_get(TLS_HEAP)
+  if t != 0 {
+    let l = try_pop(t, cap, esize)
+    if l != 0 {
+      return l
+    }
   }
   rl_new(heap_word(), cap, esize)
 }
@@ -250,6 +282,20 @@ pub fn rl_grow_n(l: Int, esize: Int) -> Int {
       return rl_new(h, 4, esize)
     }
     return grow(h, l, esize)
+  }
+  rl_grow_mt(l, esize)
+}
+
+/// rl_grow_n with other threads running (rl_new_mt).
+fn rl_grow_mt(l: Int, esize: Int) -> Int {
+  if count(l) == IMMORTAL {
+    let t = rt.tlocal_get(TLS_HEAP)
+    if t != 0 {
+      let n = try_pop(t, 4, esize)
+      if n != 0 {
+        return n
+      }
+    }
   }
   rl_grow(heap_word(), l, esize)
 }
@@ -270,6 +316,19 @@ pub fn rl_free_n(l: Int, esize: Int, drop: Int) {
 }
 
 fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
+  // other threads run: the calling thread's heap record, when it has one
+  // and no real-time section is open (2026-10-19: the plain HTTP server,
+  // which has threads, took heap_word and rl_free here for all 26 frees
+  // a request)
+  let t = rt.tlocal_get(TLS_HEAP)
+  if t != 0 && rt.mem_load(t, RT_DEPTH, 8) == 0 && rt.mem_load(rt.static_word(HEAP), 0, 8) == 0 {
+    if drop == 0 {
+      alloc.free_mt(t, l)
+      return
+    }
+    rl_free(t | 1, l, esize, drop)
+    return
+  }
   let hw = heap_word()
   let h = hw & -2
   if rt.mem_load(h, RT_DEPTH, 8) != 0 && rt_defer(h, RT_LIST, l, esize, drop) {
@@ -624,7 +683,10 @@ fn rs_new(hw: Int, n: Int) -> Int {
 }
 
 /// rs_new from the calling thread's heap: a small block from its free
-/// list or chunk without a call (alloc.alloc_fast) when one thread runs.
+/// list or chunk without a call (alloc.alloc_fast) when one thread runs,
+/// from its free list when others do (2026-10-18: the plain HTTP server,
+/// which has threads, took halloc and alloc.alloc for all 34
+/// allocations a request).
 fn rs_new_n(n: Int) -> Int {
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h != 0 {
@@ -638,6 +700,21 @@ fn rs_new_n(n: Int) -> Int {
       }
     }
     return rs_new(h, n)
+  }
+  rs_new_mt(n)
+}
+
+/// rs_new_n with other threads running (rl_new_mt).
+fn rs_new_mt(n: Int) -> Int {
+  let t = rt.tlocal_get(TLS_HEAP)
+  let b = addw(S_HDR, n)
+  if t != 0 && b <= SMALL_MAX {
+    let s = alloc.alloc_pop(t, b)
+    if s != 0 {
+      rt.mem_store(s, 0, 1, 8)
+      rt.mem_store(s, 8, subw(rt.mem_load(t, H_LAST, 8), S_HDR), 8)
+      return s
+    }
   }
   rs_new(heap_word(), n)
 }

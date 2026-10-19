@@ -209,3 +209,28 @@ LLVM 4,143,682 to 3,174,248 (-23%).
 Where a handshake went before (arm64): x25519 31%, P-256 signing 16%,
 ML-KEM 13% and its SHAKE 7%, the runtime (allocation, counts) 10%,
 SHA-256/HMAC/HKDF 6%, AES-GCM 4%.
+
+## Allocation and free with threads running (2026-10-19, Xo lang 4)
+
+The plain HTTP server has threads (the scheduler's workers), so static
+word HEAP is 0 and llrt's allocation fast paths (alloc_fast inlined in
+rs_new_n, rl_new_n, rl_grow_n; free1 in rl_free_n), which serve only
+the one thread case, never ran: all 34 allocations a request went
+through obj.halloc and alloc.alloc (30 instructions each of their own),
+and all 26 frees through rl_free_n_slow (heap_word, a frame) and
+rl_free. New out of line paths for the other threads case (obj.xo
+rl_new_mt, rl_grow_mt, rs_new_mt, the head of rl_free_n_slow) take the
+calling thread's heap record from its thread local and pop the class's
+free list (alloc.alloc_pop: list only, so an empty list still goes to
+alloc, which takes back blocks other threads freed before carving) or
+free to it (alloc.free_mt). The one thread entry points keep main's
+code: a first version that added the branches inside them (and a flag
+argument to alloc_fast) made text/lines, split, trim and five others
+0.5% to 1.0% slower on the Mac (rl_free_n stopped being inlined into
+its export).
+
+Plain, N=100, one repeat, base main 8ac3ca0b against the branch:
+25,455 to 24,853 instructions a request (-2.4%). The Mac sweep (114
+workloads, 3 rounds): 0 slower, 2 faster (httpparse h2_get 0.985,
+h2_varied 0.979). Next: alloc.free_mt computes a class's magazine
+size with a multiply on every free (about 26 instructions a free).
