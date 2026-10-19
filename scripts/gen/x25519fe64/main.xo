@@ -104,29 +104,34 @@ fn (var g: Gen) chain(xs: List[Opd], ys: List[Opd], keep: Bool) -> (List[Str], S
   (r, c)
 }
 
-/// xs - ys with the borrow chained (bits.Sub64's borrow formula).
+/// xs - ys with the borrow chained: the first word x - y and the carry
+/// 1 ^ its borrow, each next one x + ~y with that carry in as cpu.adc and
+/// cpu.adc_carry, the borrow out 1 ^ the last carry. Both native backends
+/// make the rest of the chain a subtract with borrow (arm64 sbcs, x86 sbb:
+/// calls.xo inverted), where bits.Sub64's borrow formula (two cpu.borrow
+/// and an or a word) took 7 instructions a word on amd64 and 3 on arm64
+/// (2026-10-19). Not the first word as x + ~y + 1: LLVM joined its two
+/// carries with a conditional select (TestConstantTimeLLVM).
 fn (var g: Gen) sbb_chain(xs: List[Str], ys: List[Str]) -> (List[Str], Str) {
-  var b = ""
+  var c = ""
   var r: List[Str] = []
   for i in 0..xs.len() {
-    let x = xs[i]
     let y = ys[i]
-    let e = g.v("e")
-    g.emit("let ${e} = ${x}.wrapping_sub(${y})")
-    var bo = ""
-    if b == "" {
-      bo = g.v("b")
-      g.emit("let ${bo} = cpu.borrow(${x}, ${y})")
+    if c.is_empty() {
+      let e = g.v("e")
+      g.emit("let ${e} = ${xs[i]}.wrapping_sub(${y})")
+      c = g.v("k")
+      g.emit("let ${c} = 1 ^ cpu.borrow(${xs[i]}, ${y})")
       r.push(e)
-    } else {
-      let d = g.v("d")
-      g.emit("let ${d} = ${e}.wrapping_sub(${b})")
-      bo = g.v("b")
-      g.emit("let ${bo} = cpu.borrow(${x}, ${y}) | cpu.borrow(${e}, ${b})")
-      r.push(d)
+      continue
     }
-    b = bo
+    let ny = if y == "0" { "-1" } else { "~${y}" }
+    let (s, k) = g.adc(xs[i], ny, c)
+    c = k
+    r.push(s)
   }
+  let b = g.v("b")
+  g.emit("let ${b} = 1 ^ ${c}")
   (r, b)
 }
 

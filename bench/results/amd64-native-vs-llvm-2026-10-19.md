@@ -193,6 +193,7 @@ main; LLVM plain 23,922, tls-newconn 2,972,410 (main a083d59b):
 | main a083d59b | 30,566 | 1.278 | 3,713,594 | 1.249 |
 | 1: x86_mul_pair, x86_copy_runs | 30,118 | 1.259 | 3,594,873 | 1.209 |
 | 2: x86_fold_loads | 30,030 | 1.255 | 3,553,572 | 1.196 |
+| 3: loads with several reads folded, subtract with borrow chains | 29,283 | 1.224 | 3,453,221 | 1.162 |
 
 1. compiler/arm64 x86.xo x86_mul_pair: a block's low (`mul`) and high
    (`umulh`) halves of one product make one mulq (x25519 fe64_mul 224 to
@@ -204,7 +205,43 @@ main; LLVM plain 23,922, tls-newconn 2,972,410 (main a083d59b):
    cmp, test, mov, mulq); crypto_prims' static instructions 427,107 to
    410,150 (-4.0%), fe64_add 38 to 26 with no frame.
 
+3. x86.xo x86_fold_loads folds a load read several times when every
+   read can take the memory operand (fe64_mul's limbs, each a mulq's
+   rax); std's field subtractions (scripts/gen/x25519fe64 sbb_chain,
+   x25519 fe64_sub; nistec sub4, sub6, sub_m6) are x - y for the first
+   word with 1 ^ its borrow carried into an adc chain of ~y (subs and
+   sbcs on arm64, sub and sbb on x86, where bits.Sub64's formula took 7
+   instructions a word on amd64), the add backs adc chains too; arm64's
+   borrow_flag_peep keeps subs's carry flag into the first sbcs. The
+   first word is not x + ~y + 1: LLVM joined its two carries with a
+   conditional select (TestConstantTimeLLVM caught it). The Mac sweep:
+   tls/p384 0.963, the rest within spread.
+
 Correctness at each step: the amd64 goldens in Docker (199/199, no C
 toolchain), progen arith 1..250 on amd64 (the six divergences seen there
 were on main too: an overflow message's operand, fixed separately,
 gotchas/amd64-fault-operand-spilled-slot.md).
+
+### The rest of the gap by cause (after step 2)
+
+bench/perf/http/cgmix.py over callgrind --dump-instr=yes runs (native
+main b48b8156, LLVM main), instructions a request by bucket, native
+minus LLVM:
+
+| Bucket | plain native | plain LLVM | diff | tls-newconn native | LLVM | diff |
+|---|---|---|---|---|---|---|
+| load | 4,353 | 2,178 | +2,175 | 436,364 | 197,935 | +238,429 |
+| move (register) | 4,355 | 2,838 | +1,517 | 764,257 | 624,706 | +139,551 |
+| RC/drop helpers | 2,485 | 1,290 | +1,194 | 37,279 | 7,843 | +29,436 |
+| call/frame | 4,216 | 3,420 | +796 | 234,660 | 168,732 | +65,928 |
+| spill/stack | 2,465 | 2,004 | +461 | 473,848 | 254,947 | +218,901 |
+| branch/cmp | 7,776 | 7,348 | +428 | 295,794 | 281,363 | +14,431 |
+| overflow check (jo) | 357 | 302 | +55 | 12,912 | 7,338 | +5,573 |
+| ALU with memory | 69 | 314 | -245 | 188,634 | 126,394 | +62,240 |
+| ALU | 2,039 | 2,734 | -695 | 1,012,356 | 1,216,465 | -204,109 |
+
+Loads and spills are about 60% of both gaps (the leaders: http1
+parse_head and head_of, alloc.free_mt, map.put on plain; x25519
+fe64_mul and fe64_sq, sha256_block, keccak, nistec mul and mul4p on
+tls-newconn), then register moves (two operand ties, parallel moves),
+then the RC helpers LLVM inlines and call overhead.

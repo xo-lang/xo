@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """fieldcheck.py [--quick]: checks the generated field code of
-std/native/llrt (x25519.xo's fe64_mul and fe64_sq from
+std/native/llrt (x25519.xo's fe64_mul, fe64_sq, fe64_add, and fe64_sub from
 scripts/gen/x25519fe64, nistec.xo's mul4p and sqr4p from
 scripts/gen/nistecmul4p) by interpreting the generated Xo against Python's
 big integers, on random operands and the fields' edges; then a planted
 mutation (one carry dropped in each function) must be caught, so the
 oracle is known to bite. Run it from the checkout root after
 regenerating either file. The interpreter knows only what the generators
-emit: let bindings of cpu.adc, cpu.adc_carry, cpu.carry, Int's word
+emit: let bindings of cpu.adc, cpu.adc_carry, cpu.carry, cpu.borrow, x ^ y, Int's word
 methods (wrapping_add, wrapping_sub, wrapping_mul, wrapping_shl,
 shr_logical, mul_hi_unsigned), rt.ct_barrier, ld, st, ~x, and sub_p256's
 call (its operands checked, not the call). Exit status 1 on any wrong
@@ -56,6 +56,12 @@ def method_call(e):
 
 def ev(e, env):
     e = e.strip()
+    d = 0
+    for i, ch in enumerate(e):
+        d += ch == "("
+        d -= ch == ")"
+        if d == 0 and e.startswith(" ^ ", i):
+            return ev(e[:i], env) ^ ev(e[i + 3:], env)
     if e.startswith("~"):
         return (~ev(e[1:], env)) & M
     mc = method_call(e)
@@ -73,6 +79,8 @@ def ev(e, env):
             return (a[0] + a[1] + a[2]) >> 64
         if fn == "cpu.carry":
             return (a[0] + a[1]) >> 64
+        if fn == "cpu.borrow":
+            return 1 if a[0] < a[1] else 0
         if fn == "rt.ct_barrier":
             return a[0]
         if fn == "ld":
@@ -131,12 +139,19 @@ def nistec_cases(rnd, n):
 def check_x25519(src, rnd, n):
     p, edge, vals = x25519_cases(rnd, n)
     mul, sq = body(src, "fe64_mul"), body(src, "fe64_sq")
+    add, sub = body(src, "fe64_add"), body(src, "fe64_sub")
     bad = cases = 0
     for x in vals:
         for y in [rnd.choice(vals) for _ in range(3)] + edge[:4]:
             v, _ = run(mul, limbs(x), limbs(y))
             cases += 1
             bad += v % p != x * y % p or v >= 1 << 256
+            v, _ = run(add, limbs(x), limbs(y))
+            cases += 1
+            bad += v % p != (x + y) % p or v >= 1 << 256
+            v, _ = run(sub, limbs(x), limbs(y))
+            cases += 1
+            bad += v % p != (x - y) % p or v >= 1 << 256
         v, _ = run(sq, limbs(x), limbs(x))
         cases += 1
         bad += v % p != x * x % p or v >= 1 << 256
@@ -162,7 +177,9 @@ def check_nistec(src, rnd, n):
 def mutate(src, name):
     """src with one carry in fn name's body dropped (the sixth chained one)."""
     a = src.index(f"fn {name}(")
-    ms = list(re.finditer(r"cpu\.adc\((\w+), (\w+), (k\d+)\)", src[a:]))
+    end = src.index("\n}", a)
+    # operands are names, ~names, or -1 (fe64_sub's complements)
+    ms = list(re.finditer(r"cpu\.adc\(([~\w-]+), ([~\w-]+), (k\d+)\)", src[a:end]))
     m = ms[min(5, len(ms) - 1)]
     return src[:a + m.start()] + f"cpu.adc({m.group(1)}, {m.group(2)}, 0)" + src[a + m.end():]
 
@@ -170,7 +187,7 @@ def mutate(src, name):
 def main():
     n = 300 if "--quick" in sys.argv else 3000
     ok = True
-    for path, check, names in [("std/native/llrt/x25519.xo", check_x25519, ["fe64_mul", "fe64_sq"]),
+    for path, check, names in [("std/native/llrt/x25519.xo", check_x25519, ["fe64_mul", "fe64_sq", "fe64_add", "fe64_sub"]),
                                ("std/native/llrt/nistec.xo", check_nistec, ["mul4p", "sqr4p"])]:
         src = open(path).read()
         cases, bad = check(src, random.Random(7), n)

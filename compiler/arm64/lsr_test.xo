@@ -149,3 +149,15 @@ test "x86_load_line, x86_drop_load: one of a ldp's two loads goes" {
   expect(r.text) == "movq 8($u0), $d0"
   expect(r.defs) == [6]
 }
+
+test "borrow_flag_peep: subs's carry goes straight into sbcs when the borrow register dies" {
+  let t = "\tsubs x6, x13, x9\n\tcset x9, cc\n\teor x9, x9, #1\n\tcmp x9, #1\n\tsbcs x14, x14, x10\n\tcset x9, cs\n\tret"
+  expect(borrow_flag_peep(t)) == "\tsubs x6, x13, x9\n\tsbcs x14, x14, x10\n\tcset x9, cs\n\tret"
+  let u = "\tsubs x6, x13, x9\n\tcset x9, cc\n\teor x9, x9, #1\n\tcmp x9, #1\n\tsbcs x14, x14, x10\n\tadd x0, x9, #1\n\tret"
+  expect(borrow_flag_peep(u)) == u
+}
+
+test "borrow_flag_peep: the same with debug rows between the instructions" {
+  let t = "\tsubs x6, x13, x9\nLf_dl1:\n\tcset x9, cc\n\teor x9, x9, #1\nLf_dl2:\n\tcmp x9, #1\n\tsbcs x14, x14, x10\n\tcset x9, cs\n\tret"
+  expect(borrow_flag_peep(t)) == "\tsubs x6, x13, x9\nLf_dl1:\nLf_dl2:\n\tsbcs x14, x14, x10\n\tcset x9, cs\n\tret"
+}

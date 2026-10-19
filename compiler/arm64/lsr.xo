@@ -822,6 +822,107 @@ fn copy_runs(text: Str) -> Str {
   out.join("\n")
 }
 
+/// A function's text without the round trip of a borrow through a
+/// register into the next subtract with borrow: `subs A, B, C` then
+/// `cset X, cc`, `eor X, X, #1`, `cmp X, #1`, and `sbcs` or `adcs`, with X
+/// written before it is read after them, keeps subs's carry flag (C is 1
+/// when there was no borrow, what cmp X, #1 sets) and drops the three
+/// (2026-10-19: the field code's subtractions start x - y with 1 ^ its
+/// borrow carried into the chain, std/native/llrt x25519.xo fe64_sub,
+/// nistec.xo sub4, sub6, sub_m6; a constant carry in of 1 made LLVM join
+/// two carries with a conditional select).
+fn borrow_flag_peep(text: Str) -> Str {
+  if !text.contains("\teor ") || !text.contains(", cc\n") {
+    return text
+  }
+  let ls = text.split("\n")
+  var out: List[Str] = List.with_capacity(ls.len())
+  var i = 0
+  while i < ls.len() {
+    if ls[i].starts_with("\tsubs ") {
+      // the next four instructions, past debug row and variable labels
+      // (kept, after subs: a build with debug information has the same
+      // code, gotchas/arm64-text-pass-scratch-live.md)
+      var at: List[Int] = []
+      var rows: List[Str] = []
+      var j = i + 1
+      while j < ls.len() && at.len() < 4 {
+        let j2 = past_rows(ls, j)
+        for r in ls[j..j2] {
+          rows.push(r)
+        }
+        if j2 < ls.len() {
+          at.push(j2)
+        }
+        j = j2 + 1
+      }
+      if at.len() == 4 && ls[at[0]].starts_with("\tcset ") && ls[at[0]].ends_with(", cc") {
+        let x = ls[at[0]]["\tcset ".len()..ls[at[0]].len() - ", cc".len()]
+        let nx = ls[at[3]]
+        if is_xreg(x) && ls[at[1]] == "\teor ${x}, ${x}, #1" && ls[at[2]] == "\tcmp ${x}, #1" && (nx.starts_with("\tsbcs ") || nx.starts_with("\tadcs ")) && !nx.contains(x + ",") && !nx.ends_with(x) && scratch_free_after(ls, at[3], x) {
+          out.push(ls[i])
+          for r in rows {
+            out.push(r)
+          }
+          i = at[3]
+          continue
+        }
+      }
+    }
+    out.push(ls[i])
+    i += 1
+  }
+  out.join("\n")
+}
+
+/// Whether register x (an x register, or its w form) is written before it
+/// is read from line i on, within the block: a label, a branch, a call, or
+/// a return first counts as a read (the value may be live there).
+fn scratch_free_after(ls: List[Str], i: Int, x: Str) -> Bool {
+  let r = x[1..x.len()]
+  var j = i
+  while j < ls.len() {
+    let l = ls[j]
+    j += 1
+    if l.is_empty() || l.starts_with("\t.") {
+      continue
+    }
+    if !l.starts_with("\t") {
+      let name = label_def(l)
+      if !name.is_empty() && is_row_label(name) {
+        continue
+      }
+      return false
+    }
+    let body = l[1..l.len()]
+    let sp = body.find(" ") ?? body.len()
+    let op = body[0..sp]
+    let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
+    let toks = reg_tokens(ops)
+    if !toks.contains("x${r}") && !toks.contains("w${r}") {
+      if op.starts_with("b") || op.starts_with("cb") || op.starts_with("tb") || op == "ret" {
+        return false
+      }
+      continue
+    }
+    // named: dead only when the first operand is it and no later one reads it
+    if op.starts_with("st") || op.starts_with("cmp") || op.starts_with("cmn") || op.starts_with("tst") || op.starts_with("cb") || op.starts_with("tb") {
+      return false
+    }
+    let first = toks[0]
+    if first != "x${r}" && first != "w${r}" {
+      return false
+    }
+    for t in toks[1..toks.len()] {
+      if t == "x${r}" || t == "w${r}" {
+        return false
+      }
+    }
+    return true
+  }
+  false
+}
+
 /// Whether x<r> (and w<r>) is not read from line i on before it is
 /// written: the first instruction naming it writes it without reading
 /// it, or a call, a return, an unconditional branch, or a block's label

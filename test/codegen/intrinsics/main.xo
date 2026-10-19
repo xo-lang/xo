@@ -52,10 +52,11 @@ fn main(os: Os) {
 // func sha3.keccak
 // arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+, ror #63"
 
-// The final subtraction's borrows.
+// The final subtraction's borrows: f - g as f + ~g with a carry in of 1,
+// one subtract with borrow chain (2026-10-19), then the masked add back.
 // func nistec.sub4
-// arm64: "subs x[0-9]+, x[0-9]+, x[0-9]+\n\tcset x[0-9]+, cc"
-// llvm: "llvm.usub.with.overflow.i64"
+// arm64: "subs x[0-9]+, x[0-9]+, x[0-9]+\n\tsbcs x[0-9]+, x[0-9]+, x[0-9]+" "adcs"
+// llvm: "llvm.uadd.with.overflow.i64"
 
 // The CPU's AES rounds.
 // func aesgcm.hw4
