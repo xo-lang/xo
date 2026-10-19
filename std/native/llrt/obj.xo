@@ -321,7 +321,9 @@ fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
   // which has threads, took heap_word and rl_free here for all 26 frees
   // a request)
   let t = rt.tlocal_get(TLS_HEAP)
-  if t != 0 && rt.mem_load(t, RT_DEPTH, 8) == 0 && rt.mem_load(rt.static_word(HEAP), 0, 8) == 0 {
+  // (the thread local is set when the program goes threaded, when static
+  // word HEAP becomes 0: cabi.xo heap_threads)
+  if t != 0 && rt.mem_load(t, RT_DEPTH, 8) == 0 {
     if drop == 0 {
       alloc.free_mt(t, l)
       return

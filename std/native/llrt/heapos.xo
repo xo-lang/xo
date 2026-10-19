@@ -342,8 +342,13 @@ const W_HSIZE = 29
 /// sample, its thread state, and its sampled block: alloc.xo SAMPLE_AT,
 /// heapprof.xo H_PSTATE, alloc.xo PSAMPLE), the size classes' limit
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
-/// per size class, 1 to 72).
-const H_SIZE = 2152 + 32 * 256 + 24
+/// per size class, 1 to 72); then each class's magazine size (alloc.xo
+/// MAG_CAP, written by mag_caps).
+const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73
+/// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
+const H_MAG_CAP = 10368
+/// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
+const MAG_BYTES = 65536
 const MID_MAX = 262144
 const NCLASS1 = 73
 
@@ -352,6 +357,7 @@ const NCLASS1 = 73
 /// address.
 pub fn main_record() -> Int {
   let h = map(H_SIZE)
+  mag_caps(h)
   rt.mem_store(h, H_MID_MAX, MID_MAX, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
@@ -359,6 +365,36 @@ pub fn main_record() -> Int {
   rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
   h
+}
+
+/// Writes record h's magazine size of each class 1 to 72 (alloc.xo
+/// MAG_CAP): the blocks of MAG_BYTES, at least 8, which alloc.free_mt
+/// computed with a multiply on every free of a long list (2026-10-19).
+fn mag_caps(h: Int) {
+  var c = 1
+  while c < NCLASS1 {
+    var size = c.wrapping_shl(4)
+    if c > 64 {
+      size = (2048).wrapping_shl(c.wrapping_sub(65))
+    }
+    // MAG_BYTES / size by long division (no `/`: this module's rule)
+    var q = 0
+    var rem = MAG_BYTES
+    var k = 12
+    while k >= 0 {
+      let d = size.wrapping_shl(k)
+      if d <= rem {
+        rem = rem.wrapping_sub(d)
+        q = q | (1).wrapping_shl(k)
+      }
+      k = k.wrapping_sub(1)
+    }
+    if q < 8 {
+      q = 8
+    }
+    rt.mem_store(h, H_MAG_CAP.wrapping_add(c.wrapping_shl(3)), q, 8)
+    c = c.wrapping_add(1)
+  }
 }
 
 /// Stops the counting of allocations and frees (alloc.xo COUNT) on the
@@ -399,6 +435,7 @@ pub fn thread_heap() -> Int {
     return t
   }
   let h = map(rt.mem_load(rt.static_word(W_HSIZE), 0, 8))
+  mag_caps(h)
   let w = rt.static_word(W_HEAPS)
   hlock_take()
   let first = rt.mem_load(w, 0, 8)

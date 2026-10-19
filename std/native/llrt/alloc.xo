@@ -54,6 +54,10 @@ const LAST = 72
 const FREE_LISTS = 80
 const NFREE = 664
 const MAG = 1248
+/// Each class's magazine size (at h + MAG_CAP + 8 * c): the blocks of
+/// MAG_BYTES, at least 8 (heapos.xo mag_caps writes them when it makes
+/// the record).
+const MAG_CAP = 10368
 /// Whether the heap counts its allocations and their bytes (ALLOCS,
 /// ABYTES): from the record's start, off at the program's start unless
 /// XO_LEAKCHECK, XO_HEAPSTATS, or XO_RTSTATS is set (their reports read
@@ -400,16 +404,8 @@ pub fn free_mt(h: Int, p: Int) {
   rt.mem_store(fl, FREE_LISTS, p, 8)
   let nf = rt.mem_load(fl, NFREE, 8).wrapping_add(1)
   rt.mem_store(fl, NFREE, nf, 8)
-  // nf >= max(MAG_BYTES / size, 8) without a division: nf >= q, q the
-  // quotient, is (nf + 1) * size > MAG_BYTES
-  if nf < 8 {
-    return
-  }
-  var size = c.wrapping_shl(4)
-  if c > 64 {
-    size = (2048).wrapping_shl(c.wrapping_sub(65))
-  }
-  if nf.wrapping_add(1).wrapping_mul(size) <= MAG_BYTES {
+  // a magazine's worth (max(MAG_BYTES / size, 8), MAG_CAP)
+  if nf < rt.mem_load(fl, MAG_CAP, 8) {
     return
   }
   let old = rt.mem_load(fl, MAG, 8)

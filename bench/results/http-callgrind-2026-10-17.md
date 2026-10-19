@@ -234,3 +234,12 @@ Plain, N=100, one repeat, base main 8ac3ca0b against the branch:
 workloads, 3 rounds): 0 slower, 2 faster (httpparse h2_get 0.985,
 h2_varied 0.979). Next: alloc.free_mt computes a class's magazine
 size with a multiply on every free (about 26 instructions a free).
+
+Then (the same day): each heap record holds its classes' magazine sizes
+(alloc.xo MAG_CAP, written by heapos.xo mag_caps when the record is
+made), so free_mt compares the list's length with a load instead of
+the size computation and multiply, and rl_free_n_slow no longer reloads
+static word HEAP (the thread local is set exactly when it becomes 0).
+Plain, base main against the branch: 25,060 to 24,555 instructions a
+request (-2.0%); the Mac sweep 0 slower, 2 faster (httpparse h1_url
+0.987, digest/none 0.990).
