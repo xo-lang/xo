@@ -111,6 +111,13 @@ Update the knowledgebase in the same change as the work, not later:
     internal/arm64, cmd/xo, self-hosted builds, benchmarks) goes through
     the lead's machine-wide lock script, one at a time, and each agent
     logs its steps to a file the lead monitors.
+  - never wait idle (owner, 2026-10-19): while a gate, the push queue,
+    a Docker run or a long build runs, an agent works on its next item
+    in another worktree (or its measurements, docs, or the next step's
+    design); after posting a status or report it continues straight to
+    its next queued item instead of ending its turn. Only an empty queue
+    stops it: then it asks the lead for the next item. The board's NEXT
+    field always names one.
   - batched runs (owner, 2026-10-11, 2026-10-12): agents run no
     verification before reporting (no merge tier, no package suites),
     only `-short` and the targeted heavy runs their work depends on; the lead
