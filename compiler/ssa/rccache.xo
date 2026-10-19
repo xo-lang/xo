@@ -114,8 +114,14 @@ pub fn force_lazy(var m: Module, idx: List[Int], jobs: Int) {
 /// parameters made unique, borrow inference, and the key of every
 /// function (on up to jobs tasks) for the compiler of identity id.
 pub fn (var b: Builder) insert_rc_plan(id: Str, jobs: Int) -> RcPlan {
-  var r = b.rc_prepare()
-  let tk = type_keys(b.m)
+  let r = b.rc_prepare(jobs)
+  b.insert_rc_keys(r, type_keys(b.m), id, jobs)
+}
+
+/// insert_rc_plan's second half: every function's key, after
+/// rc_prepare (borrow inference) gave r, with the module's type keys tk
+/// (type_keys).
+pub fn (b: Builder) insert_rc_keys(r: Rc, tk: List[Str], id: Str, jobs: Int) -> RcPlan {
   let m = b.m
   let n = m.funcs.len()
   let rr = r

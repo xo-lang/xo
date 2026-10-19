@@ -488,7 +488,8 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
 // Borrow inference
 
 /// Marks the parameters no path of their function consumes (inferBorrows).
-fn (var r: Rc) infer_borrows(funcs: List[Func]) {
+/// The rounds scan their functions on up to jobs tasks (borrow_scan).
+fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
   r.borrowed = []
   for f in funcs {
     let ps = f.blocks[0].params
@@ -509,11 +510,14 @@ fn (var r: Rc) infer_borrows(funcs: List[Func]) {
     r.borrowed.push(bs)
   }
   // a function's flags depend on its own and its callees' (through the
-  // modes of its calls): after the first pass over every function, only
+  // modes of its calls): after the first round over every function, only
   // the callers of a function whose flags changed, and it, are scanned
-  // again. The flags only go from borrowed to owned, so the result is the
-  // fixed point of the scans in any order: the same as rescanning every
-  // function until none changes, in a fraction of the scans
+  // again. The flags only go from borrowed to owned and each scan is
+  // monotone in them, so the result is the greatest fixed point whatever
+  // the order: the same as rescanning every function until none changes.
+  // So a round scans its functions against the flags as the round began,
+  // on tasks (the serial walk was a second of an edit build of xo,
+  // decision 0220 addendum stage D 2f), and applies what they found
   let n = funcs.len()
   var callers: List[List[Int]] = []
   var dirty: List[Bool] = []
@@ -534,36 +538,21 @@ fn (var r: Rc) infer_borrows(funcs: List[Func]) {
       }
     }
   }
-  var changed = true
-  while changed {
-    changed = false
-    for (fi, f) in funcs.indexed() {
-      if !dirty[fi] {
-        continue
+  while true {
+    var todo: List[Int] = []
+    for fi in 0..n {
+      if dirty[fi] {
+        todo.push(fi)
+        dirty[fi] = false
       }
-      dirty[fi] = false
-      r.fi = fi
-      // the blocks that consume each borrowed parameter
-      var cons: Map[Int, List[Bool]] = {}
-      for bi in 0..f.blocks.len() {
-        for v in f.blocks[bi].instrs {
-          for u in r.leaf_uses(f, v) {
-            if u.m == Mode.Consume {
-              cons = r.consumed(f, u.l, bi, cons)
-            }
-          }
-          for e in f.values[v].succs {
-            for l in r.edge_uses(f, e) {
-              cons = r.consumed(f, l, bi, cons)
-            }
-          }
-        }
-      }
-      for (i, bs) in cons {
-        let pt = f.values[f.blocks[0].params[i]].ty
-        if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
+    }
+    if todo.is_empty() {
+      break
+    }
+    for (fi, owned) in r.borrow_round(funcs, todo, jobs) {
+      for i in owned {
+        if r.borrowed[fi][i] {
           r.borrowed[fi][i] = false
-          changed = true
           dirty[fi] = true
           for c in callers[fi] {
             dirty[c] = true
@@ -572,6 +561,78 @@ fn (var r: Rc) infer_borrows(funcs: List[Func]) {
       }
     }
   }
+}
+
+/// One round of infer_borrows: each function of todo scanned against the
+/// flags as they are (borrow_scan), on up to jobs tasks, each with its
+/// own copy of r (whose memo tables the scans fill).
+fn (r: Rc) borrow_round(funcs: List[Func], todo: List[Int], jobs: Int) -> List[(Int, List[Int])] {
+  let n = todo.len()
+  if target.arch == TargetArch.Wasm32 || jobs <= 1 || n < 64 {
+    var rr = r
+    var out: List[(Int, List[Int])] = []
+    for fi in todo {
+      out.push((fi, rr.borrow_scan(funcs[fi], fi)))
+    }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let base = r
+  scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 31) / 32) {
+      ts.push(s.spawn(fn() -> List[(Int, List[Int])] {
+        var rr = base
+        var mine: List[(Int, List[Int])] = []
+        while true {
+          let i = next.add(32) - 32
+          if i >= n {
+            break
+          }
+          for j in i..(i + 32).min(n) {
+            let fi = todo[j]
+            mine.push((fi, rr.borrow_scan(funcs[fi], fi)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[Int])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+}
+
+/// The borrowed parameters of function fi (f) that some path consumes,
+/// by r.borrowed (inferBorrows' scan of one function).
+fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
+  r.fi = fi
+  // the blocks that consume each borrowed parameter
+  var cons: Map[Int, List[Bool]] = {}
+  for bi in 0..f.blocks.len() {
+    for v in f.blocks[bi].instrs {
+      for u in r.leaf_uses(f, v) {
+        if u.m == Mode.Consume {
+          cons = r.consumed(f, u.l, bi, cons)
+        }
+      }
+      for e in f.values[v].succs {
+        for l in r.edge_uses(f, e) {
+          cons = r.consumed(f, l, bi, cons)
+        }
+      }
+    }
+  }
+  var owned: List[Int] = []
+  for (i, bs) in cons {
+    let pt = f.values[f.blocks[0].params[i]].ty
+    if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
+      owned.push(i)
+    }
+  }
+  owned
 }
 
 /// Records that block bl consumes leaf l when it is of a borrowed
@@ -721,13 +782,13 @@ const RC_MAX_CHUNKS = 64
 /// passes read only the whole-program facts (the borrowed parameters,
 /// the types), so the module is the same for any number of jobs.
 pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
-  let r = b.rc_prepare()
+  let r = b.rc_prepare(jobs)
   let _o = b.rc_run(r, [], {}, {}, false, jobs)
 }
 
 /// The whole-program half of insert_rc: the `var` List parameters made
 /// unique, then borrow inference.
-fn (var b: Builder) rc_prepare() -> Rc {
+pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
@@ -742,7 +803,7 @@ fn (var b: Builder) rc_prepare() -> Rc {
     reuse_var_params(f, b.m.types)
     b.m.funcs[fi] = f
   }
-  r.infer_borrows(b.m.funcs)
+  r.infer_borrows(b.m.funcs, jobs)
   r.chain = !b.m.passes_off.contains("chain_pads")
   r
 }

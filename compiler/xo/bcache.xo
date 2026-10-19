@@ -169,8 +169,15 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     return []
   }
   var t = os.clock.now()
-  let plan = b.insert_rc_plan(id, jobs)
-  t = lap(os, phases, "insert_rc.plan", t)
+  let t0 = t
+  // insert_rc_plan, its two halves timed
+  let r = b.rc_prepare(jobs)
+  t = lap(os, phases, "insert_rc.borrows", t)
+  let tk = ssa.type_keys(b.m)
+  t = lap(os, phases, "insert_rc.types", t)
+  let plan = b.insert_rc_keys(r, tk, id, jobs)
+  t = lap(os, phases, "insert_rc.keys", t)
+  let _p = lap(os, phases, "insert_rc.plan", t0)
   let (entries, pk) = cache_get_packed(os, dir, "rc", b.m.goarch, plan.keys, jobs)
   let (sums, spk) = if lazy { cache_get_packed(os, dir, "sum", b.m.goarch, plan.keys, jobs) } else { ({}, Pack{}) }
   t = lap(os, phases, "insert_rc.read", t)
