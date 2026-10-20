@@ -74,10 +74,11 @@ struct Db {}
 struct Tx {}
 struct Row {}
 
-/// Opens a database with a registered driver. `max_open` bounds concurrent
+/// Opens a database: "postgres" (decision 0278; `roots` is PEM for
+/// sslmode verify-ca and verify-full) natively. `max_open` bounds concurrent
 /// operations and open transactions (waiting is a cancellation point),
 /// `max_idle` and `max_lifetime` are passed to the driver.
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"") -> Db ! SqlErr uses net.dial
 /// An in memory database, optionally created with `schema` (`;` separated
 /// statements). Needs no capability.
 fn memory(schema: Str = "") -> Db ! SqlErr

@@ -17,6 +17,7 @@ use native/rt
 use native/rtsql
 use native/llrt/raw
 use native/llrt/sysio
+use native/llrt/pg
 
 // ---------------------------------------------------------------------------
 // Handles
@@ -219,9 +220,13 @@ fn memory(schema: Str = "") -> Db ! sql.SqlErr {
   new_db(tables)
 }
 
-fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! sql.SqlErr uses net.dial {
+fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m, roots: Bytes = b"") -> Db ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
+  }
+  if driver is "postgres" | "postgresql" {
+    // the driver is Xo and dials through net, so Net.only applies (decision 0278)
+    return open_driver(net, pg.PgDriver{roots: roots}, dsn, max_open: max_open, max_idle: max_idle, max_lifetime: max_lifetime)
   }
   if !rt.net_lists(net).is_empty() {
     // the driver dials by itself, so an allowlist cannot be enforced:

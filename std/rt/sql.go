@@ -309,7 +309,7 @@ func Testing_fake_db(tk *Task, schema string) Result[Sql_Db, Sql_SqlErr] {
 }
 
 // Sql_open is `sql.open(net, driver, dsn, ...)`.
-func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration) Result[Sql_Db, Sql_SqlErr] {
+func Sql_open(tk *Task, n Net, driver, dsn string, maxOpen, maxIdle int64, maxLife Duration, roots Bytes) Result[Sql_Db, Sql_SqlErr] {
 	if tk.Canceled() {
 		return sqlFail[Sql_Db](sqlTagCanceled)
 	}

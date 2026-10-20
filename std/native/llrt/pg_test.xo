@@ -1,0 +1,232 @@
+// std/sql's Postgres driver against a fake server on the test's FakeNet
+// (decision 0278): the startup and authentication exchanges, simple and
+// extended queries, errors in a result, a server that goes away, and
+// connection strings. The fake answers each message with the backend
+// messages a PostgreSQL 17 sends (recorded with pgx against a server in
+// Docker), so the driver's state machine is tested without a server.
+use std/sql
+use native/llrt/pgwire
+
+// ---- a fake backend ----
+
+fn be32(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(4)
+  for k in 0..4 {
+    b.write_byte(UInt8((n >> (24 - 8 * k)) & 255))
+  }
+  b.freeze()
+}
+
+fn be16(n: Int) -> Bytes { be32(n)[2..] }
+
+fn m(kind: Str, body: Bytes) -> Bytes { kind.bytes() + be32(body.len() + 4) + body }
+
+fn cs(s: Str) -> Bytes { s.bytes() + b"\x00" }
+
+fn auth_ok() -> Bytes { m("R", be32(0)) }
+fn auth_cleartext() -> Bytes { m("R", be32(3)) }
+fn ready() -> Bytes { m("Z", b"I") }
+fn key_data() -> Bytes { m("K", be32(77) + be32(1234)) }
+fn complete(tag: Str) -> Bytes { m("C", cs(tag)) }
+
+/// RowDescription with each column's name and type OID.
+fn row_desc(cols: List[(Str, Int)]) -> Bytes {
+  var b = be16(cols.len())
+  for (name, oid) in cols {
+    b = b + cs(name) + be32(0) + be16(0) + be32(oid) + be16(-1) + be32(-1) + be16(0)
+  }
+  m("T", b)
+}
+
+fn data_row(vals: List[Str?]) -> Bytes {
+  var b = be16(vals.len())
+  for v in vals {
+    b = b + match v {
+      Some(s) => be32(s.len()) + s.bytes()
+      None => be32(-1)
+    }
+  }
+  m("D", b)
+}
+
+fn error_resp(code: Str, msg: Str, constraint: Str) -> Bytes {
+  var b = cs("SERROR") + cs("C" + code) + cs("M" + msg)
+  if !constraint.is_empty() {
+    b = b + cs("n" + constraint)
+  }
+  m("E", b + b"\x00")
+}
+
+/// Reads one frontend message (or the startup packet when untyped) from c.
+fn read_msg(c: ServerConn, var buf: Bytes, untyped: Bool) -> (Str, Bytes, Bytes) ! NetErr {
+  while {
+    let need = if untyped { 4 } else { 5 }
+    if buf.len() >= need {
+      let n = if untyped { pgwire.get32(buf, 0) } else { 1 + pgwire.get32(buf, 1) }
+      if buf.len() >= n {
+        let kind = if untyped { "" } else { buf[0..1].to_str() ?? "?" }
+        let body = if untyped { buf[4..n] } else { buf[5..n] }
+        return (kind, body, buf[n..])
+      }
+    }
+    match c.read(4096)? {
+      Some(b) => buf = buf + b
+      None => return ("", b"", b"")
+    }
+  }
+  ("", b"", b"")
+}
+
+/// A fake server: after startup, answer(kind, body) gives the bytes for
+/// each message; the conversation ends at Terminate or end of stream.
+fn serve(l: Listener, hello: Bytes, answer: fn(Str, Bytes) -> Bytes) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    var buf = b""
+    let (_, _, rest) = read_msg(c, buf, true)?
+    buf = rest
+    c.write(hello)?
+    while {
+      let (kind, body, rest2) = read_msg(c, buf, false)?
+      buf = rest2
+      if kind.is_empty() || kind == "X" {
+        break
+      }
+      let out = answer(kind, body)
+      if out.is_empty() {
+        continue
+      }
+      c.write(out)?
+    }
+    c.close()
+  }
+}
+
+fn hello_trust() -> Bytes { auth_ok() + key_data() + ready() }
+
+fn dsn(addr: Str) -> Str { "postgres://app@${addr}/app?sslmode=disable" }
+
+// ---- tests ----
+
+test "trust login, a simple query, and an exec" {
+  let l = os.net.listen(":0").or_fault("listen")
+  os.tasks.spawn_background(fn() -> () ! NetErr {
+    serve(l, hello_trust(), fn(kind, body) {
+      if kind != "Q" {
+        return b""
+      }
+      let q = body[0..body.len() - 1].to_str() ?? ""
+      if q.starts_with("SELECT") {
+        return row_desc([("id", 23), ("name", 25), ("ok", 16), ("at", 1184)]) +
+          data_row([Some("1"), Some("a"), Some("t"), Some("2026-10-20 12:34:56.5+00")]) +
+          data_row([Some("2"), None, Some("f"), None]) + complete("SELECT 2") + ready()
+      }
+      complete("UPDATE 3") + ready()
+    })
+  })
+  let db = sql.open(os.net, "postgres", dsn(l.addr())).or_fault("open")
+  let rows = db.query("SELECT id, name, ok, at FROM t").or_fault("query")
+  expect(rows.len()) == 2
+  expect(rows[0].int("id")) == Ok(1)
+  expect(rows[0].str("name")) == Ok("a")
+  expect(rows[0].bool("ok")) == Ok(true)
+  expect(rows[0].time("at").map(fn(t) { t.unix_millis() })) == Ok(1792499696500)
+  expect(rows[1].str_opt("name")) == Ok(None)
+  expect(db.exec("UPDATE t SET x = 1").map(fn(r) { r.rows_affected })) == Ok(3)
+}
+
+test "an error in a result is the SqlErr of its SQLSTATE" {
+  let l = os.net.listen(":0").or_fault("listen")
+  os.tasks.spawn_background(fn() -> () ! NetErr {
+    serve(l, hello_trust(), fn(kind, body) {
+      if kind != "Q" {
+        return b""
+      }
+      let q = body[0..body.len() - 1].to_str() ?? ""
+      match q {
+        "-- ping" => complete("") + ready()
+        "dup" => error_resp("23505", "duplicate key value violates unique constraint \"t_name_key\"", "t_name_key") + ready()
+        "syntax" => error_resp("42601", "syntax error at or near \"SELEC\"", "") + ready()
+        "table" => error_resp("42P01", "relation \"nope\" does not exist", "") + ready()
+        "zero" => error_resp("22012", "division by zero", "") + ready()
+        _ => complete("SELECT 0") + ready()
+      }
+    })
+  })
+  let db = sql.open(os.net, "postgres", dsn(l.addr())).or_fault("open")
+  expect(db.exec("dup")) == Err(sql.SqlErr.Constraint(msg: "duplicate key value violates unique constraint \"t_name_key\"", code: "23505", name: "t_name_key"))
+  expect(db.exec("syntax")) == Err(sql.SqlErr.Syntax(msg: "syntax error at or near \"SELEC\""))
+  expect(db.exec("table")) == Err(sql.SqlErr.NoTable(name: "nope"))
+  expect(db.exec("zero")) == Err(sql.SqlErr.Server(code: "22012", msg: "division by zero"))
+  // the connection is still usable after an error
+  expect(db.exec("other").is_ok()) == true
+}
+
+test "cleartext and md5 passwords" {
+  let l = os.net.listen(":0").or_fault("listen")
+  let got: Mutex[List[Str]] = Mutex.new([])
+  os.tasks.spawn_background(fn() -> () ! NetErr {
+    serve(l, auth_cleartext(), fn(kind, body) {
+      if kind == "p" {
+        got.with(fn(var xs) { xs.push(body[0..body.len() - 1].to_str() ?? "?") })
+        return auth_ok() + ready()
+      }
+      complete("") + ready()
+    })
+  })
+  let db = sql.open(os.net, "postgres", "host=${l.addr().split(":")[0]} port=${l.addr().split(":")[1]} user=app password='p w' sslmode=disable").or_fault("open")
+  expect(db.ping().is_ok()) == true
+  expect(got.with(fn(xs) { xs })) == ["p w"]
+  expect(pgwire.md5_password("bob", "secret", b"\x01\x02\x03\x04").starts_with("md5")) == true
+}
+
+test "a server that goes away breaks the connection, and the pool reconnects" {
+  let l = os.net.listen(":0").or_fault("listen")
+  let calls = Atomic.new(0)
+  os.tasks.spawn_background(fn() -> () ! NetErr {
+    while let Ok(c) = l.accept() {
+      var buf = b""
+      let (_, _, rest) = read_msg(c, buf, true)?
+      buf = rest
+      c.write(hello_trust())?
+      let (kind, _, _) = read_msg(c, buf, false)?
+      if kind == "Q" && calls.add(1) == 2 {
+        // the second statement: the server closes the connection
+        c.close()
+        continue
+      }
+      c.write(complete("SELECT 0") + ready())?
+      c.close()
+    }
+  })
+  let db = sql.open(os.net, "postgres", dsn(l.addr()), max_open: 1).or_fault("open")
+  expect(db.exec("x")) == Err(sql.SqlErr.Conn(msg: "unexpected EOF"))
+  expect(db.exec("y").is_ok()) == true
+}
+
+test "connection strings: what is refused" {
+  expect(config("host=x sslmode=disable").err()) == Some(sql.SqlErr.Param(msg: "user is required: no environment is read"))
+  expect(config("user=a sslrootcert=/x").is_err()) == true
+  expect(config("user=a sslmode=sometimes").err()) == Some(sql.SqlErr.Param(msg: "sslmode is invalid: \"sometimes\""))
+  expect(config("postgres://a@h1:1,h2:2/db?statement_timeout=5s").map(fn(c) { (c.hosts, c.ports, c.database, c.sslmode, c.params) })) ==
+    Ok((["h1", "h2"], [1, 2], "db", "verify-full", [("statement_timeout", "5s")]))
+}
+
+test "TLS modes wait for decision 0281" {
+  let r = sql.open(os.net, "postgres", "postgres://a@127.0.0.1:1/db")
+  expect(r.err().map(fn(e) { "${e}".contains("decision 0281") })) == Some(true)
+}
+
+test "values: arrays, bytea, json, floats, timestamps" {
+  expect(decode_text(1007, "{1,NULL,3}")) == sql.SqlValue.Array(items: [sql.SqlValue.Integer(n: 1), sql.SqlValue.Null, sql.SqlValue.Integer(n: 3)])
+  expect(decode_text(1009, "{\"a b\",\"c\\\"d\",x}")) == sql.SqlValue.Array(items: [sql.SqlValue.Text(s: "a b"), sql.SqlValue.Text(s: "c\"d"), sql.SqlValue.Text(s: "x")])
+  expect(decode_text(1007, "{{1,2},{3,4}}")) == sql.SqlValue.Text(s: "{{1,2},{3,4}}")
+  expect(decode_text(17, "\\x00ff")) == sql.SqlValue.Blob(b: b"\x00\xff")
+  expect(decode_text(3802, "{\"k\": 1}")) == sql.SqlValue.JsonText(s: "{\"k\": 1}")
+  expect(decode_text(701, "Infinity")) == sql.SqlValue.Real(f: Float.parse("inf") ?? 0.0)
+  expect(decode_text(1184, "infinity")) == sql.SqlValue.Text(s: "infinity")
+  expect(decode_text(1114, "2026-10-20 01:02:03")) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-10-20T01:02:03Z") ?? Time.UNIX_EPOCH)
+  expect(decode_text(1184, "2026-10-20 01:02:03+05:30")) == sql.SqlValue.At(t: Time.parse_rfc3339("2026-10-19T19:32:03Z") ?? Time.UNIX_EPOCH)
+  expect(text_param(sql.SqlValue.Array(items: [sql.SqlValue.Text(s: "a\"b"), sql.SqlValue.Null, sql.SqlValue.Integer(n: 2)]))) == Some("{\"a\\\"b\",NULL,2}")
+  expect(text_param(sql.SqlValue.Real(f: Float.parse("-inf") ?? 0.0))) == Some("-Infinity")
+  expect(param_of(sql.SqlValue.Blob(b: b"\x01")).format) == 1
+}

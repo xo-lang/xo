@@ -1,0 +1,680 @@
+// The PostgreSQL frontend/backend protocol version 3 for std/sql's
+// Postgres driver (decision 0278): messages as pure Bytes functions, the
+// SCRAM-SHA-256 client (RFC 5802, RFC 7677), MD5 passwords, and libpq
+// connection strings in keyword and URL form. Ported from
+// github.com/jackc/pgx/v5 v5.11.0 (MIT; THIRD_PARTY_NOTICES): pgproto3's
+// message codecs, pgconn's auth_scram.go, config.go
+// (parseKeywordValueSettings), and parse_url.go (parseURLSettings).
+use std/crypto
+
+pub const PROTOCOL_3_0: Int = 196608      // 3 << 16
+pub const SSL_REQUEST_CODE: Int = 80877103
+pub const CANCEL_REQUEST_CODE: Int = 80877102
+
+// ---- byte order (std/binary, decision 0279, stands in here) ----
+
+fn be32(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(4)
+  b.write_byte(UInt8((n >> 24) & 255))
+  b.write_byte(UInt8((n >> 16) & 255))
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.freeze()
+}
+
+fn be16(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(2)
+  b.write_byte(UInt8((n >> 8) & 255))
+  b.write_byte(UInt8(n & 255))
+  b.freeze()
+}
+
+pub fn get32(b: Bytes, at: Int) -> Int {
+  let v = (Int(b[at]) << 24) | (Int(b[at + 1]) << 16) | (Int(b[at + 2]) << 8) | Int(b[at + 3])
+  // sign extend the 32 bit word
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+pub fn get16(b: Bytes, at: Int) -> Int {
+  let v = (Int(b[at]) << 8) | Int(b[at + 1])
+  if v >= 32768 { v - 65536 } else { v }
+}
+
+fn cstr(s: Str) -> Bytes { s.bytes() + b"\x00" }
+
+/// A typed message: the type byte, then the length (counting itself) and body.
+fn msg(kind: Str, body: Bytes) -> Bytes {
+  kind.bytes() + be32(body.len() + 4) + body
+}
+
+// ---- frontend messages ----
+
+pub fn startup(params: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(be32(PROTOCOL_3_0))
+  for (k, v) in params {
+    b.write(cstr(k))
+    b.write(cstr(v))
+  }
+  b.write_byte(0)
+  let body = b.freeze()
+  be32(body.len() + 4) + body
+}
+
+pub fn ssl_request() -> Bytes { be32(8) + be32(SSL_REQUEST_CODE) }
+
+pub fn cancel_request(pid: Int, secret: Bytes) -> Bytes {
+  be32(12 + secret.len()) + be32(CANCEL_REQUEST_CODE) + be32(pid) + secret
+}
+
+pub fn query(sql: Str) -> Bytes { msg("Q", cstr(sql)) }
+
+pub fn password(p: Str) -> Bytes { msg("p", cstr(p)) }
+
+pub fn sasl_initial(mechanism: Str, data: Bytes) -> Bytes {
+  msg("p", cstr(mechanism) + be32(data.len()) + data)
+}
+
+pub fn sasl_response(data: Bytes) -> Bytes { msg("p", data) }
+
+/// Parse of an unnamed statement; oids 0 lets the server infer types.
+pub fn parse(name: Str, sql: Str, oids: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(cstr(name))
+  b.write(cstr(sql))
+  b.write(be16(oids.len()))
+  for o in oids { b.write(be32(o)) }
+  msg("P", b.freeze())
+}
+
+/// A parameter: None is NULL; formats 0 text, 1 binary.
+pub struct Param {
+  pub format: Int
+  pub data: Bytes?
+}
+
+pub fn bind(portal: Str, stmt: Str, params: List[Param], result_formats: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(cstr(portal))
+  b.write(cstr(stmt))
+  b.write(be16(params.len()))
+  for p in params { b.write(be16(p.format)) }
+  b.write(be16(params.len()))
+  for p in params {
+    match p.data {
+      Some(d) => {
+        b.write(be32(d.len()))
+        b.write(d)
+      }
+      None => b.write(be32(-1))
+    }
+  }
+  b.write(be16(result_formats.len()))
+  for f in result_formats { b.write(be16(f)) }
+  msg("B", b.freeze())
+}
+
+/// Describe a portal ('P') or a statement ('S').
+pub fn describe(kind: Str, name: Str) -> Bytes { msg("D", kind.bytes() + cstr(name)) }
+
+pub fn execute(portal: Str, max_rows: Int) -> Bytes { msg("E", cstr(portal) + be32(max_rows)) }
+
+pub fn sync() -> Bytes { msg("S", b"") }
+
+pub fn terminate() -> Bytes { msg("X", b"") }
+
+// ---- backend messages ----
+
+pub struct Field {
+  pub name: Str
+  pub table_oid: Int
+  pub column: Int
+  pub type_oid: Int
+  pub size: Int
+  pub modifier: Int
+  pub format: Int
+}
+
+pub enum Backend {
+  AuthOk
+  AuthCleartext
+  AuthMd5(salt: Bytes)
+  AuthSasl(mechanisms: List[Str])
+  AuthSaslContinue(data: Bytes)
+  AuthSaslFinal(data: Bytes)
+  AuthOther(code: Int)
+  KeyData(pid: Int, secret: Bytes)
+  BindComplete
+  CloseComplete
+  CommandComplete(tag: Str)
+  DataRow(values: List[Bytes?])
+  EmptyQuery
+  Error(fields: Map[Str, Str])
+  Notice(fields: Map[Str, Str])
+  Notification(pid: Int, channel: Str, payload: Str)
+  NoData
+  ParamDescription(oids: List[Int])
+  ParamStatus(name: Str, value: Str)
+  ParseComplete
+  PortalSuspended
+  Ready(status: Str)
+  RowDesc(fields: List[Field])
+  Other(kind: Str, body: Bytes)
+}
+
+pub enum WireErr {
+  Short
+  Bad(msg: Str)
+}
+
+fn (e: WireErr) display() -> Str {
+  match e {
+    Short => "message cut short"
+    Bad(m) => "malformed message: ${m}"
+  }
+}
+
+/// A reader over a body: a position, failing with Bad instead of faulting.
+struct Rd {
+  b: Bytes
+  at: Int
+}
+
+fn (var r: Rd) i32() -> Int ! WireErr {
+  if r.at + 4 > r.b.len() { return Err(WireErr.Bad(msg: "int32 past the end")) }
+  let v = get32(r.b, r.at)
+  r.at += 4
+  v
+}
+
+fn (var r: Rd) i16() -> Int ! WireErr {
+  if r.at + 2 > r.b.len() { return Err(WireErr.Bad(msg: "int16 past the end")) }
+  let v = get16(r.b, r.at)
+  r.at += 2
+  v
+}
+
+fn (var r: Rd) cstr() -> Str ! WireErr {
+  var i = r.at
+  while i < r.b.len() && r.b[i] != 0 { i += 1 }
+  if i >= r.b.len() { return Err(WireErr.Bad(msg: "string without its terminating zero")) }
+  let s = r.b[r.at..i].to_str() ?? ""
+  r.at = i + 1
+  s
+}
+
+fn (var r: Rd) take(n: Int) -> Bytes ! WireErr {
+  if n < 0 || r.at + n > r.b.len() { return Err(WireErr.Bad(msg: "field past the end")) }
+  let v = r.b[r.at..r.at + n]
+  r.at += n
+  v
+}
+
+fn (r: Rd) rest() -> Bytes { r.b[r.at..] }
+
+fn fields(var r: Rd) -> Map[Str, Str] ! WireErr {
+  var out: Map[Str, Str] = {}
+  while r.at < r.b.len() && r.b[r.at] != 0 {
+    let code = r.b[r.at..r.at + 1].to_str() ?? "?"
+    r.at += 1
+    out.put(code, r.cstr()?)
+  }
+  out
+}
+
+/// The length of the next whole message at the start of `buf` (type byte
+/// and length included), or None when more bytes are needed.
+pub fn frame_len(buf: Bytes) -> Int? ! WireErr {
+  if buf.len() < 5 { return None }
+  let n = get32(buf, 1)
+  if n < 4 { return Err(WireErr.Bad(msg: "length ${n}")) }
+  if 1 + n > buf.len() { return None }
+  Some(1 + n)
+}
+
+/// Decodes one whole message (as frame_len measured it).
+pub fn decode(m: Bytes) -> Backend ! WireErr {
+  let kind = m[0..1].to_str() ?? "?"
+  var r = Rd{b: m[5..], at: 0}
+  match kind {
+    "R" => {
+      let code = r.i32()?
+      match code {
+        0 => Backend.AuthOk
+        3 => Backend.AuthCleartext
+        5 => Backend.AuthMd5(salt: r.take(4)?)
+        10 => {
+          var mechs: List[Str] = []
+          while r.at < r.b.len() && r.b[r.at] != 0 { mechs.push(r.cstr()?) }
+          Backend.AuthSasl(mechanisms: mechs)
+        }
+        11 => Backend.AuthSaslContinue(data: r.rest())
+        12 => Backend.AuthSaslFinal(data: r.rest())
+        _ => Backend.AuthOther(code: code)
+      }
+    }
+    "K" => {
+      let pid = r.i32()?
+      Backend.KeyData(pid: pid, secret: r.rest())
+    }
+    "2" => Backend.BindComplete
+    "3" => Backend.CloseComplete
+    "C" => Backend.CommandComplete(tag: r.cstr()?)
+    "D" => {
+      let n = r.i16()?
+      var vals: List[Bytes?] = List.with_capacity(n)
+      for _ in 0..n {
+        let len = r.i32()?
+        vals.push(if len == -1 { None } else { Some(r.take(len)?) })
+      }
+      Backend.DataRow(values: vals)
+    }
+    "I" => Backend.EmptyQuery
+    "E" => Backend.Error(fields: fields(r)?)
+    "N" => Backend.Notice(fields: fields(r)?)
+    "A" => {
+      let pid = r.i32()?
+      let ch = r.cstr()?
+      Backend.Notification(pid: pid, channel: ch, payload: r.cstr()?)
+    }
+    "n" => Backend.NoData
+    "t" => {
+      let n = r.i16()?
+      var oids: List[Int] = []
+      for _ in 0..n { oids.push(r.i32()? & 4294967295) }
+      Backend.ParamDescription(oids: oids)
+    }
+    "S" => {
+      let name = r.cstr()?
+      Backend.ParamStatus(name: name, value: r.cstr()?)
+    }
+    "1" => Backend.ParseComplete
+    "s" => Backend.PortalSuspended
+    "Z" => Backend.Ready(status: r.take(1)?.to_str() ?? "?")
+    "T" => {
+      let n = r.i16()?
+      var fs: List[Field] = List.with_capacity(n)
+      for _ in 0..n {
+        let name = r.cstr()?
+        let table = r.i32()? & 4294967295
+        let col = r.i16()?
+        let oid = r.i32()? & 4294967295
+        let size = r.i16()?
+        let modifier = r.i32()?
+        fs.push(Field{name: name, table_oid: table, column: col, type_oid: oid, size: size, modifier: modifier, format: r.i16()?})
+      }
+      Backend.RowDesc(fields: fs)
+    }
+    _ => Backend.Other(kind: kind, body: r.rest())
+  }
+}
+
+/// The rows a command tag reports: `INSERT 0 3` is 3, `UPDATE 2` is 2,
+/// `CREATE TABLE` is 0 (pgconn CommandTag.RowsAffected).
+pub fn rows_affected(tag: Str) -> Int {
+  let parts = tag.split(" ")
+  Int.parse(parts.last() ?? "") ?? 0
+}
+
+// ---------------------------------------------------------------------------
+// SCRAM-SHA-256 (pgconn auth_scram.go, without channel binding)
+
+pub struct Scram {
+  password: Str
+  nonce: Str
+  first_bare: Str
+  server_first: Str
+  salted: Bytes
+  auth_message: Str
+}
+
+pub enum ScramErr {
+  Bad(msg: Str)
+  ServerSignature
+}
+
+fn (e: ScramErr) display() -> Str {
+  match e {
+    Bad(m) => "scram: ${m}"
+    ServerSignature => "scram: invalid server signature"
+  }
+}
+
+/// Postgres sends an empty user name (n=); the startup message names the user.
+pub fn start(user: Str, password: Str, nonce: Str) -> (Scram, Str) {
+  let bare = "n=${user},r=${nonce}"
+  (Scram{password: password, nonce: nonce, first_bare: bare, server_first: "", salted: b"", auth_message: ""}, "n,,${bare}")
+}
+
+fn xor(a: Bytes, b: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(a.len())
+  for i in 0..a.len() { out.write_byte(a[i] ^ b[i]) }
+  out.freeze()
+}
+
+/// PBKDF2-HMAC-SHA256 with one block (32 bytes), RFC 5802's Hi.
+fn hi(password: Bytes, salt: Bytes, iterations: Int) -> Bytes {
+  var u = crypto.hmac_sha256(password, salt + b"\x00\x00\x00\x01")
+  var acc = u
+  for _ in 1..iterations {
+    u = crypto.hmac_sha256(password, u)
+    acc = xor(acc, u)
+  }
+  acc
+}
+
+/// Reads the server's first message and returns the client's final one.
+pub fn (var s: Scram) answer(server_first: Str) -> Str ! ScramErr {
+  var r = ""
+  var salt = b""
+  var iters = 0
+  for part in server_first.split(",") {
+    if part.starts_with("r=") { r = part.trim_prefix("r=") }
+    if part.starts_with("s=") { salt = Bytes.from_base64(part.trim_prefix("s=")).or_err(ScramErr.Bad(msg: "invalid salt"))? }
+    if part.starts_with("i=") { iters = Int.parse(part.trim_prefix("i=")) ?? 0 }
+  }
+  if !r.starts_with(s.nonce) || r.len() == s.nonce.len() {
+    return Err(ScramErr.Bad(msg: "invalid nonce"))
+  }
+  if salt.is_empty() { return Err(ScramErr.Bad(msg: "invalid salt")) }
+  if iters <= 0 { return Err(ScramErr.Bad(msg: "invalid iteration count")) }
+  s.server_first = server_first
+  s.salted = hi(s.password.bytes(), salt, iters)
+  let without_proof = "c=biws,r=${r}"
+  s.auth_message = "${s.first_bare},${server_first},${without_proof}"
+  let client_key = crypto.hmac_sha256(s.salted, b"Client Key")
+  let stored = crypto.sha256(client_key)
+  let sig = crypto.hmac_sha256(stored, s.auth_message.bytes())
+  "${without_proof},p=${xor(client_key, sig).to_base64()}"
+}
+
+/// Checks the server's final message (its signature).
+pub fn (s: Scram) finish(server_final: Str) -> () ! ScramErr {
+  if !server_final.starts_with("v=") { return Err(ScramErr.Bad(msg: "invalid server final message")) }
+  let got = Bytes.from_base64(server_final.trim_prefix("v=")).or_err(ScramErr.Bad(msg: "invalid server signature encoding"))?
+  let server_key = crypto.hmac_sha256(s.salted, b"Server Key")
+  let want = crypto.hmac_sha256(server_key, s.auth_message.bytes())
+  if !crypto.equal(got, want) { return Err(ScramErr.ServerSignature) }
+}
+
+
+// ---------------------------------------------------------------------------
+// Keyword/value connection strings (pgconn config.go)
+
+fn is_space(c: UInt8) -> Bool { c == 9 || c == 10 || c == 11 || c == 12 || c == 13 || c == 32 }
+
+fn trim_left(b: Bytes, at: Int) -> Int {
+  var i = at
+  while i < b.len() && is_space(b[i]) { i += 1 }
+  i
+}
+
+fn trim_both(s: Bytes) -> Bytes {
+  var lo = 0
+  var hi = s.len()
+  while lo < hi && is_space(s[lo]) { lo += 1 }
+  while hi > lo && is_space(s[hi - 1]) { hi -= 1 }
+  s[lo..hi]
+}
+
+fn unescape_kv(s: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(s.len())
+  var i = 0
+  while i < s.len() {
+    if s[i] == 92 {
+      i += 1
+      if i == s.len() { break }
+    }
+    out.write_byte(s[i])
+    i += 1
+  }
+  out.freeze()
+}
+
+fn text(b: Bytes) -> Str { b.to_str() ?? "" }
+
+pub fn parse_keyword_value(input: Str) -> Map[Str, Str] ! Str {
+  let s = input.bytes()
+  for c in s {
+    if c == 0 { return Err("forbidden NUL byte in connection string") }
+  }
+  var settings: Map[Str, Str] = {}
+  var at = trim_left(s, 0)
+  while at < s.len() {
+    var eq = at
+    while eq < s.len() && s[eq] != 61 { eq += 1 }
+    if eq == s.len() { return Err("invalid keyword/value") }
+    var key = text(trim_both(s[at..eq]))
+    let kb = key.bytes()
+    for i in 0..kb.len() {
+      if is_space(kb[i]) { return Err("missing \"=\" after ${text(kb[0..i]).quote()} in connection info string") }
+    }
+    at = trim_left(s, eq + 1)
+    var val = ""
+    if at == s.len() {
+      // empty value at the end
+    } else if s[at] != 39 {
+      var end = at
+      while end < s.len() {
+        if is_space(s[end]) { break }
+        if s[end] == 92 {
+          end += 1
+          if end == s.len() { break }
+        }
+        end += 1
+      }
+      let stop = if end > s.len() { s.len() } else { end }
+      val = text(unescape_kv(s[at..stop]))
+      at = trim_left(s, stop)
+    } else {
+      at += 1
+      var end = at
+      while end < s.len() {
+        if s[end] == 39 { break }
+        if s[end] == 92 {
+          end += 1
+          if end == s.len() { return Err("unterminated quoted string in connection info string") }
+        }
+        end += 1
+      }
+      if end >= s.len() { return Err("unterminated quoted string in connection info string") }
+      val = text(unescape_kv(s[at..end]))
+      at = trim_left(s, end + 1)
+    }
+    if key == "dbname" { key = "database" }
+    if key.is_empty() { return Err("invalid keyword/value") }
+    if key == "user" && val.is_empty() { continue }
+    settings.put(key, val)
+  }
+  settings
+}
+
+// ---------------------------------------------------------------------------
+// URL connection strings (pgconn parse_url.go)
+
+fn hex_digit(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  -1
+}
+
+/// uriDecode: percent escapes decoded, surrounding spaces trimmed, inner
+/// spaces an error; secret names the key whose value must not be shown.
+fn uri_decode(raw: Str, secret: Str) -> Str ! Str {
+  let fail = fn(secret_text: Str, public_text: Str) -> Str { if secret.is_empty() { public_text } else { secret_text } }
+  let b = raw.bytes()
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  while i < b.len() && b[i] == 32 { i += 1 }
+  while i < b.len() && b[i] != 32 {
+    if b[i] != 37 {
+      out.write_byte(b[i])
+      i += 1
+      continue
+    }
+    let hi = if i + 1 < b.len() { hex_digit(b[i + 1]) } else { -1 }
+    let lo = if i + 2 < b.len() { hex_digit(b[i + 2]) } else { -1 }
+    if hi < 0 || lo < 0 {
+      return Err(fail("invalid percent-encoded token in ${secret}", "invalid percent-encoded token: ${raw.quote()}"))
+    }
+    let c = hi * 16 + lo
+    if c == 0 {
+      return Err(fail("forbidden value %00 in percent-encoded value in ${secret}", "forbidden value %00 in percent-encoded value: ${raw.quote()}"))
+    }
+    out.write_byte(UInt8(c))
+    i += 3
+  }
+  while i < b.len() && b[i] == 32 { i += 1 }
+  if i < b.len() {
+    return Err(fail("unexpected spaces found in ${secret}, use percent-encoded spaces (%20) instead", "unexpected spaces found in ${raw.quote()}, use percent-encoded spaces (%20) instead"))
+  }
+  out.freeze().to_str().or_err("invalid UTF-8 in a connection string")
+}
+
+fn find_any(s: Str, chars: Str, from: Int) -> Int {
+  let b = s.bytes()
+  let cs = chars.bytes()
+  var i = from
+  while i < b.len() {
+    for c in cs {
+      if b[i] == c { return i }
+    }
+    i += 1
+  }
+  -1
+}
+
+/// parseURLSettings: postgres:// or postgresql:// URLs.
+pub fn parse_url(conn: Str) -> Map[Str, Str] ! Str {
+  for c in conn.bytes() {
+    if c == 0 { return Err("forbidden NUL byte in connection string") }
+  }
+  var p = ""
+  if conn.starts_with("postgresql://") {
+    p = conn.trim_prefix("postgresql://")
+  } else if conn.starts_with("postgres://") {
+    p = conn.trim_prefix("postgres://")
+  } else {
+    return Err("invalid URI propagated to internal parser routine")
+  }
+  var settings: Map[Str, Str] = {}
+  let at = find_any(p, "@/", 0)
+  if at >= 0 && p.bytes()[at] == 64 {
+    let userinfo = p[0..at]
+    p = p[at + 1..]
+    let (user, password, has_pw) = match userinfo.find(":") {
+      Some(i) => (userinfo[0..i], userinfo[i + 1..], true)
+      None => (userinfo, "", false)
+    }
+    if !user.is_empty() {
+      settings.put("user", uri_decode(user, "")?)
+    }
+    if has_pw && !password.is_empty() {
+      settings.put("password", uri_decode(password, "password")?)
+    }
+  }
+  var hosts = StrBuilder.new()
+  var ports = StrBuilder.new()
+  while {
+    if p.starts_with("[") {
+      let end = p.find("]").or_err("end of string reached when looking for matching \"]\" in IPv6 host address in URI")?
+      if end == 1 {
+        return Err("IPv6 host address may not be empty in URI")
+      }
+      hosts.write(p[1..end])
+      p = p[end + 1..]
+      if !p.is_empty() && !(p[0..1] is ":" | "/" | "?" | ",") {
+        return Err("unexpected character \"${p[0..1]}\" at position ${conn.len() - p.len() + 1} in URI (expected \":\" or \"/\")")
+      }
+    } else {
+      var i = find_any(p, ":/?,", 0)
+      if i < 0 { i = p.len() }
+      hosts.write(p[0..i])
+      p = p[i..]
+    }
+    if p.starts_with(":") {
+      p = p[1..]
+      var i = find_any(p, "/?,", 0)
+      if i < 0 { i = p.len() }
+      ports.write(p[0..i])
+      p = p[i..]
+    }
+    if !p.starts_with(",") {
+      break
+    }
+    p = p[1..]
+    hosts.write(",")
+    ports.write(",")
+  }
+  let hs = hosts.freeze()
+  let ps = ports.freeze()
+  if !hs.is_empty() {
+    settings.put("host", uri_decode(hs, "")?)
+  }
+  if !ps.is_empty() {
+    settings.put("port", uri_decode(ps, "")?)
+  }
+  if p.starts_with("/") {
+    var db = p[1..]
+    p = ""
+    if let Some(i) = db.find("?") {
+      p = db[i..]
+      db = db[0..i]
+    }
+    if !db.is_empty() {
+      settings.put("database", uri_decode(db, "")?)
+    }
+  }
+  if p.starts_with("?") {
+    var ssl_last = false
+    // Go's loop: pairs up to each '&' while any query is left
+    var params = p[1..]
+    while !params.is_empty() {
+      var pair = params
+      match params.find("&") {
+        Some(i) => {
+          pair = params[0..i]
+          params = params[i + 1..]
+        }
+        None => params = ""
+      }
+      let eq = pair.find("=").or_err("missing key/value separator \"=\" in URI query parameter: \"${pair}\"")?
+      let raw_key = pair[0..eq]
+      let raw_value = pair[eq + 1..]
+      if raw_value.contains("=") {
+        return Err("extra key/value separator \"=\" in URI query parameter: \"${raw_key}\"")
+      }
+      var key = uri_decode(raw_key, "")?
+      if key == "dbname" { key = "database" }
+      let secret = if key == "password" || key == "sslpassword" { key } else { "" }
+      let value = uri_decode(raw_value, secret)?
+      if key == "ssl" { ssl_last = true }
+      if key == "sslmode" { ssl_last = false }
+      settings.put(key, value)
+    }
+    if settings.get("ssl") == Some("true") {
+      let _ = settings.remove("ssl")
+      if ssl_last {
+        settings.put("sslmode", "require")
+      }
+    }
+  }
+  settings
+}
+
+/// A connection string in either form.
+pub fn parse_dsn(conn: Str) -> Map[Str, Str] ! Str {
+  if conn.starts_with("postgres://") || conn.starts_with("postgresql://") {
+    return parse_url(conn)
+  }
+  parse_keyword_value(conn)
+}
+
+// ---------------------------------------------------------------------------
+// MD5 passwords (pgconn: "md5" + md5(md5(password + user) + salt))
+
+pub fn md5_password(user: Str, password: Str, salt: Bytes) -> Str {
+  let inner = crypto.digest(crypto.Hash.Md5, (password + user).bytes()).to_hex()
+  "md5" + crypto.digest(crypto.Hash.Md5, inner.bytes() + salt).to_hex()
+}

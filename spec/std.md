@@ -1739,8 +1739,8 @@ pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 ## 10. std/sql
 
 Status: draft, implemented with an in memory driver only (2026-10-08). Real
-drivers are written in Xo (decision 0278): a Postgres driver for every
-native target is in progress (10.7 to 10.9 follow when it lands). Native builds
+drivers are written in Xo (decision 0278, 10.7): `sql.open(net,
+"postgres", dsn)` opens Postgres on every native target (10.8). Native builds
 (`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
 with the same results and error texts; there `sql.open` always reports an
 unknown driver (no Go drivers), `max_open` does not bound the in memory
@@ -1982,6 +1982,132 @@ pub fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: 
   later operations are `Closed`.
 - A `DriverConn` is used by one task at a time; the driver's waits are
   cancellation points that return `Canceled`.
+
+### 10.8 Postgres
+
+Status: implemented natively (decision 0278 stage C, 2026-10-20)
+without TLS yet: `sslmode` `require` and stronger need `tls.client`
+(decision 0281) and fail with `Conn` until it lands, so a network
+database is opened with `sslmode=disable` for now. The Go backend
+reports an unknown driver.
+
+```
+let db = sql.open(os.net, "postgres", "postgres://app:${pw}@db.internal:5432/app?sslmode=verify-full")?
+```
+
+`sql.open(net, "postgres", dsn, ...)` opens a PostgreSQL database
+(version 13 or later) through `net`; the driver is written in Xo and
+works on every native target. It dials through `net`, so an attenuated
+`Net` (3.2) limits which database hosts it can reach (an address
+outside the lists fails with `Conn("dial ...: denied by Net.only")`).
+
+`open` takes one more argument for this driver:
+
+```
+pub fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2,
+            max_lifetime: Duration = 30m, roots: Bytes = b"") -> Db ! SqlErr uses net.dial
+```
+
+`roots` is PEM: the certificates trusted instead of the system's for
+`verify-ca` and `verify-full` (a managed database's CA bundle, read by
+the caller with `Fs`). `open` connects once and checks the server
+(`ping`) before it returns, so a wrong password or host fails at `open`.
+
+**Connection strings** (pgx's `ParseConfig`): a URL
+`postgres://user:password@host:port/database?key=value&...` (also
+`postgresql://`; percent escapes decoded; several `host:port` pairs
+separated by `,` are tried in order) or keyword form `host=db
+port=5432 user=app password='x y' dbname=app sslmode=require`. Keys:
+`host` (a name, an IP, or an absolute directory for a Unix socket:
+`/var/run/postgresql` dials `unix:/var/run/postgresql/.s.PGSQL.5432`),
+`port` (5432), `user` (required: no environment is read), `password`,
+`dbname` (the user name), `sslmode`, `connect_timeout` (seconds, 0 for
+none), `application_name`, `search_path`, `timezone`, and
+`options`, and any other key are sent as startup parameters (run time
+settings, as pgx does: `statement_timeout=5s`). `sslrootcert`, `sslcert`,
+`sslkey`, `sslpassword`, `sslcrl`, `passfile`, `service`, and
+`servicefile` name files or secrets kept elsewhere and are `Param`. The
+driver also sends `client_encoding=UTF8`, `TimeZone=UTC`, and
+`DateStyle=ISO`.
+Nothing comes from `PG*` variables or `~/.pgpass`: configuration is the
+string and the arguments (read variables with `Env` and build the
+string). The password never appears in errors, logs, or `Debug` of a
+`Db`.
+
+**TLS** (`Conn.tls_client`, 3.2), by `sslmode`:
+
+| sslmode | TLS | Verification |
+|---|---|---|
+| `disable` | never | none |
+| `prefer` | when the server accepts SSLRequest | none |
+| `require` | always (else `Conn`) | none: encrypted, server not authenticated |
+| `verify-ca` | always | the chain, against `roots` or the system roots |
+| `verify-full` (default) | always | the chain and the host name |
+
+A Unix socket never uses TLS, whatever `sslmode` says (pgx). Authentication: trust, cleartext password, MD5, and
+SCRAM-SHA-256; a server that asks for another method (GSSAPI, SSPI,
+SCRAM-SHA-256-PLUS only) is `Conn("unsupported authentication method
+...")`.
+
+**Statements.** `$1`, `$2`, ... are Postgres's own placeholders. A
+statement without arguments runs with the simple query protocol, so
+`exec` takes a `;` separated script (a schema); with arguments it is
+one statement on the extended protocol (Parse, Bind, Execute, Sync, an
+unnamed statement each time). Results are read whole into `List[Row]`.
+`exec`'s `rows_affected` is the count of the command tag (`INSERT 0
+3` is 3); `last_insert_id` is 0: use `RETURNING id` with `query_one`.
+Transactions run `BEGIN`, `COMMIT`, and `ROLLBACK` on one connection
+held from `begin` to its end; a statement that fails inside a
+Postgres transaction aborts it (later statements are
+`Server("25P02", ...)` until `rollback`), unlike the in memory driver.
+
+**Pool.** `max_open` connections at most, `max_idle` kept open when
+unused, each closed after `max_lifetime`. A connection that fails at
+the socket or protocol level is dropped, and the operation fails with
+`Conn`; operations are not retried (a write may have run).
+
+**Cancellation.** When the task waiting on a statement is cancelled, the
+statement returns `Canceled` and the connection is dropped (closed, so
+the server stops the statement when it notices); sending CancelRequest
+first, as pgx does, is a later step. Deadlines are `task.with_timeout`.
+A COMMIT of a transaction that had failed is
+`Server("25P02", "commit unexpectedly resulted in rollback")` (pgx's
+ErrTxCommitRollback).
+
+### 10.9 Values by Postgres type
+
+Results are read in text format and decoded by the column's type:
+
+| Postgres type | SqlValue | Read with |
+|---|---|---|
+| `int2`, `int4`, `int8`, `oid` | `Integer` | `int` |
+| `float4`, `float8` | `Real` | `float` |
+| `bool` | `Flag` | `bool` |
+| `text`, `varchar`, `bpchar`, `name`, `citext` | `Text` | `str` |
+| `timestamptz` | `At` | `time` |
+| `timestamp` | `At`, the wall clock read as UTC | `time` |
+| `bytea` | `Blob` | `bytes` |
+| `json`, `jsonb` | `JsonText` | `json[T]`, `str` |
+| arrays of the types above (one dimension) | `Array` | `ints`, `strs`, `items` |
+| every other type (`numeric`, `uuid`, `date`, `time`, `interval`, `inet`, enums, ...) | `Text`, the server's text | `str` |
+
+NULL is `Null` everywhere. Accessors convert where no information is
+lost: `float` reads `Integer` and a `numeric` Text that parses as a
+Float; `time` reads a `date` Text as its midnight in UTC; `str` reads
+`JsonText`. Anything else is `Mismatch` as before.
+
+Parameters are sent in text format with the type left to the server
+(OID 0), except `Blob`, which is sent as binary `bytea`: `Integer` and
+`Real` as their decimal text (`NaN`, `Infinity`), `Flag` as `true` or
+`false`, `At` as RFC 3339 with nanoseconds, `JsonText` as is, `Array`
+as an array literal (`{1,2,NULL}`, elements quoted as Postgres
+requires). A UUID parameter is `sql.str(id)`: the server converts it.
+
+The values and accessors are 10.2 and 10.4's.
+
+`derive SqlRow` accepts `Bytes`, `List[Int]`, and `List[Str]` fields
+too. Column names that are not field names use the field's wire name
+(decision 0277, planned): `kind as "type": Str`.
 
 ---
 

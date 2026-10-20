@@ -1,5 +1,18 @@
 # std/sql changes
 
+## 2026-10-20: feature: a Postgres driver written in Xo
+
+- Kind: port
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: github.com/jackc/pgx/v5 v5.11.0 pgproto3 and pgconn (outside Go's std)
+- Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); the differential test against PostgreSQL in Docker
+
+`sql.open(net, "postgres", dsn)` opens PostgreSQL natively: protocol 3,
+SCRAM-SHA-256, MD5, and cleartext authentication, keyword and URL
+connection strings, simple and extended queries, and text results decoded
+by type. TLS (`sslmode` `require` and stronger) waits for decision 0281.
+
 ## 2026-10-20: feature: drivers written in Xo, opened with open_driver
 
 - Kind: feature

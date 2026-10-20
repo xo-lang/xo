@@ -1,0 +1,575 @@
+// std/sql's Postgres driver (decision 0278, spec/std.md 10.8 and 10.9):
+// a sql.Driver over the protocol of pgwire.xo, dialing through the Net
+// it is given. Connection flow, authentication, the simple and extended
+// query protocols, text format results decoded by type OID, and SQLSTATE
+// mapping follow github.com/jackc/pgx/v5 v5.11.0 pgconn (MIT;
+// THIRD_PARTY_NOTICES). Not yet: TLS (sslmode require and stronger need
+// std/tls, decision 0281), CancelRequest (a cancelled wait drops the
+// connection), LISTEN/NOTIFY, COPY.
+use std/sql
+use native/llrt/pgwire
+use native/llrt/rand
+
+/// Type OIDs (pg_type.dat).
+const OID_BOOL: Int = 16
+const OID_BYTEA: Int = 17
+const OID_NAME: Int = 19
+const OID_INT8: Int = 20
+const OID_INT2: Int = 21
+const OID_INT4: Int = 23
+const OID_TEXT: Int = 25
+const OID_OID: Int = 26
+const OID_JSON: Int = 114
+const OID_FLOAT4: Int = 700
+const OID_FLOAT8: Int = 701
+const OID_BPCHAR: Int = 1042
+const OID_VARCHAR: Int = 1043
+const OID_TIMESTAMP: Int = 1114
+const OID_TIMESTAMPTZ: Int = 1184
+const OID_JSONB: Int = 3802
+
+/// The element type of an array type OID, or -1.
+fn elem_of(oid: Int) -> Int {
+  match oid {
+    1000 => OID_BOOL
+    1001 => OID_BYTEA
+    1003 => OID_NAME
+    1005 => OID_INT2
+    1007 => OID_INT4
+    1016 => OID_INT8
+    1009 => OID_TEXT
+    1014 => OID_BPCHAR
+    1015 => OID_VARCHAR
+    1021 => OID_FLOAT4
+    1022 => OID_FLOAT8
+    1028 => OID_OID
+    199 => OID_JSON
+    3807 => OID_JSONB
+    1115 => OID_TIMESTAMP
+    1185 => OID_TIMESTAMPTZ
+    _ => -1
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+
+/// A connection's settings, from the connection string (pgconn Config).
+struct Config {
+  hosts: List[Str]
+  ports: List[Int]
+  user: Str
+  password: Str
+  database: Str
+  sslmode: Str
+  /// Startup parameters: application_name, search_path, options, and any
+  /// other key pgconn passes as a runtime parameter.
+  params: List[(Str, Str)]
+}
+
+/// Keys that name files or services: configuration must come from the
+/// string and open's arguments (capabilities, decision 0278).
+fn file_key(k: Str) -> Bool {
+  k is "sslrootcert" | "sslcert" | "sslkey" | "passfile" | "service" | "servicefile" | "sslpassword" | "sslcrl"
+}
+
+/// Keys the driver reads itself (pgconn's notRuntimeParams, less what it
+/// does not support).
+fn config_key(k: Str) -> Bool {
+  k is "host" | "port" | "user" | "password" | "database" | "sslmode" | "connect_timeout" | "target_session_attrs" | "sslnegotiation" | "sslsni" | "channel_binding" | "min_read_buffer_size"
+}
+
+fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: msg) }
+
+pub fn config(dsn: Str) -> Config ! sql.SqlErr {
+  let s = pgwire.parse_dsn(dsn).map_err(fn(e) { param_err("cannot parse the connection string: ${e}") })?
+  for k in s.keys() {
+    if file_key(k) {
+      return Err(param_err("${k}: pass certificates with open's roots argument and secrets in the connection string; no file is read"))
+    }
+  }
+  let user = s.get("user").or_err(param_err("user is required: no environment is read"))?
+  var hosts: List[Str] = []
+  for h in (s.get("host") ?? "localhost").split(",") {
+    hosts.push(if h.is_empty() { "localhost" } else { h })
+  }
+  var ports: List[Int] = []
+  for p in (s.get("port") ?? "").split(",") {
+    if p.is_empty() {
+      ports.push(5432)
+    } else {
+      let n = Int.parse(p).or_err(param_err("invalid port: ${p.quote()}"))?
+      if n < 1 || n > 65535 {
+        return Err(param_err("invalid port: ${p.quote()}"))
+      }
+      ports.push(n)
+    }
+  }
+  if ports.len() != 1 && ports.len() != hosts.len() {
+    return Err(param_err("could not match ${ports.len()} port numbers to ${hosts.len()} hosts"))
+  }
+  let sslmode = s.get("sslmode") ?? "verify-full"
+  if !(sslmode is "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full") {
+    return Err(param_err("sslmode is invalid: ${sslmode.quote()}"))
+  }
+  var params: List[(Str, Str)] = []
+  for (k, v) in s.entries() {
+    if !config_key(k) {
+      params.push((k, v))
+    }
+  }
+  Config{hosts: hosts, ports: ports, user: user, password: s.get("password") ?? "", database: s.get("database") ?? user,
+    sslmode: sslmode, params: params}
+}
+
+// ---------------------------------------------------------------------------
+// The driver
+
+pub struct PgDriver {
+  /// PEM roots for verify-ca and verify-full (open's roots argument).
+  pub roots: Bytes
+}
+
+pub struct PgConn {
+  c: Conn
+  /// Bytes read and not yet decoded.
+  buf: Mutex[Bytes]
+  broken: Atomic[Bool]
+  /// BackendKeyData, for a CancelRequest.
+  pid: Atomic[Int]
+}
+
+fn conn_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Conn(msg: msg) }
+
+fn (d: PgDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  let cfg = config(dsn)?
+  var last = conn_err("no host to connect to")
+  for (i, h) in cfg.hosts.indexed() {
+    let port = if cfg.ports.len() == 1 { cfg.ports[0] } else { cfg.ports[i] }
+    match connect_one(net, cfg, h, port) {
+      Ok(c) => return Ok(c)
+      Err(Canceled) => return Err(sql.SqlErr.Canceled)
+      // an authentication or server error is final, as pgconn's
+      Err(Server(code, msg)) => return Err(sql.SqlErr.Server(code: code, msg: msg))
+      Err(e) => last = e
+    }
+  }
+  Err(last)
+}
+
+fn net_err(e: NetErr) -> sql.SqlErr {
+  match e {
+    Canceled => sql.SqlErr.Canceled
+    _ => conn_err("${e}")
+  }
+}
+
+fn connect_one(net: Net, cfg: Config, host: Str, port: Int) -> PgConn ! sql.SqlErr uses net.dial {
+  // a Unix socket never uses TLS (pgconn configTLS gives none for one)
+  let unix = host.starts_with("/")
+  if !unix && cfg.sslmode is "require" | "verify-ca" | "verify-full" {
+    return Err(conn_err("sslmode ${cfg.sslmode} needs TLS on the connection, which std/sql's Postgres driver does not have yet (decision 0281); use sslmode=disable on a trusted network"))
+  }
+  let addr = if unix { "unix:${host}/.s.PGSQL.${port}" } else if host.contains(":") { "[${host}]:${port}" } else { "${host}:${port}" }
+  let c = net.dial(addr).map_err(net_err)?
+  let p = PgConn{c: c, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0)}
+  match handshake(p, cfg) {
+    Ok(_) => p
+    Err(e) => {
+      p.c.close()
+      Err(e)
+    }
+  }
+}
+
+fn (p: PgConn) send(data: Bytes) -> () ! sql.SqlErr uses net.dial {
+  match p.c.write(data) {
+    Ok(_) => Ok(())
+    Err(e) => {
+      p.broken.set(true)
+      Err(net_err(e))
+    }
+  }
+}
+
+/// The next backend message; a failure breaks the connection.
+fn (p: PgConn) recv() -> pgwire.Backend ! sql.SqlErr uses net.dial {
+  while {
+    let have = p.buf.with(fn(b) { b })
+    match pgwire.frame_len(have) {
+      Ok(Some(n)) => {
+        p.buf.with(fn(var b) { b = b[n..] })
+        return pgwire.decode(have[0..n]).map_err(fn(e) {
+          p.broken.set(true)
+          conn_err("${e}")
+        })
+      }
+      Ok(None) => {}
+      Err(e) => {
+        p.broken.set(true)
+        return Err(conn_err("${e}"))
+      }
+    }
+    match p.c.read(65536) {
+      Ok(Some(more)) => p.buf.with(fn(var b) { b = b + more })
+      Ok(None) => {
+        p.broken.set(true)
+        return Err(conn_err("unexpected EOF"))
+      }
+      Err(e) => {
+        p.broken.set(true)
+        return Err(net_err(e))
+      }
+    }
+  }
+  fault("unreachable")
+}
+
+/// The nonce of a SCRAM exchange: 18 random bytes as base64, as pgconn's
+/// clientNonceLen (the runtime's generator, seeded in tests; no Rand
+/// capability is passed to a driver).
+fn nonce() -> Str { rand.next_bytes(18).to_base64() }
+
+fn handshake(p: PgConn, cfg: Config) -> () ! sql.SqlErr uses net.dial {
+  var params = [("user", cfg.user), ("database", cfg.database), ("client_encoding", "UTF8"), ("TimeZone", "UTC"), ("DateStyle", "ISO")]
+  for kv in cfg.params {
+    params.push(kv)
+  }
+  p.send(pgwire.startup(params))?
+  var scram: pgwire.Scram? = None
+  while {
+    match p.recv()? {
+      AuthOk => {}
+      AuthCleartext => p.send(pgwire.password(cfg.password))?
+      AuthMd5(salt) => p.send(pgwire.password(pgwire.md5_password(cfg.user, cfg.password, salt)))?
+      AuthSasl(mechs) => {
+        if !mechs.contains("SCRAM-SHA-256") {
+          return Err(conn_err("server offers no supported SASL mechanism (${mechs.join(", ")})"))
+        }
+        let (s, first) = pgwire.start("", cfg.password, nonce())
+        scram = Some(s)
+        p.send(pgwire.sasl_initial("SCRAM-SHA-256", first.bytes()))?
+      }
+      AuthSaslContinue(data) => {
+        var s = scram.or_err(conn_err("unexpected SASL continue"))?
+        let fin = s.answer(data.to_str() ?? "").map_err(fn(e) { conn_err("${e}") })?
+        scram = Some(s)
+        p.send(pgwire.sasl_response(fin.bytes()))?
+      }
+      AuthSaslFinal(data) => {
+        let s = scram.or_err(conn_err("unexpected SASL final"))?
+        s.finish(data.to_str() ?? "").map_err(fn(e) { conn_err("${e}") })?
+      }
+      AuthOther(code) => return Err(conn_err("unsupported authentication method ${code}"))
+      KeyData(pid, _) => p.pid.set(pid)
+      Error(f) => return Err(server_err(f))
+      Ready(_) => return Ok(())
+      _ => {}
+    }
+  }
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Errors (pgconn PgError, mapped to SqlErr)
+
+fn server_err(f: Map[Str, Str]) -> sql.SqlErr {
+  let code = f.get("C") ?? ""
+  var msg = f.get("M") ?? ""
+  if let Some(d) = f.get("D") {
+    msg = msg + "\n" + d
+  }
+  if code.starts_with("23") {
+    return sql.SqlErr.Constraint(msg: msg, code: code, name: f.get("n") ?? "")
+  }
+  if code == "42601" {
+    return sql.SqlErr.Syntax(msg: msg)
+  }
+  if code == "42P01" {
+    // relation "x" does not exist
+    let parts = (f.get("M") ?? "").split("\"")
+    return sql.SqlErr.NoTable(name: if parts.len() >= 3 { parts[1] } else { msg })
+  }
+  if code.starts_with("08") || code == "57P01" {
+    return sql.SqlErr.Conn(msg: msg)
+  }
+  if code == "57014" {
+    return sql.SqlErr.Canceled
+  }
+  sql.SqlErr.Server(code: code, msg: msg)
+}
+
+// ---------------------------------------------------------------------------
+// Values
+
+/// A Float as Postgres reads it: NaN, Infinity, -Infinity, else its text.
+fn float_text(f: Float) -> Str {
+  let t = "${f}"
+  match t {
+    "+Inf" => "Infinity"
+    "-Inf" => "-Infinity"
+    _ => t
+  }
+}
+
+/// An array element in an array literal: quoted unless a number or bool.
+fn array_elem(v: sql.SqlValue) -> Str {
+  match v {
+    Null => "NULL"
+    Integer(n) => "${n}"
+    Real(f) => float_text(f)
+    Flag(b) => if b { "t" } else { "f" }
+    _ => {
+      let t = text_param(v) ?? ""
+      "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    }
+  }
+}
+
+/// A parameter's text (None: NULL).
+fn text_param(v: sql.SqlValue) -> Str? {
+  match v {
+    Null => None
+    Integer(n) => Some("${n}")
+    Text(s) => Some(s)
+    Real(f) => Some(float_text(f))
+    Flag(b) => Some(if b { "true" } else { "false" })
+    At(t) => Some(t.format_rfc3339())
+    Blob(b) => Some("\\x" + b.to_hex())
+    JsonText(s) => Some(s)
+    Array(xs) => Some("{" + xs.map(array_elem).join(",") + "}")
+  }
+}
+
+fn param_of(v: sql.SqlValue) -> pgwire.Param {
+  match v {
+    // bytea is sent in binary format: its bytes as they are
+    Blob(b) => pgwire.Param{format: 1, data: Some(b)}
+    _ => pgwire.Param{format: 0, data: text_param(v).map(fn(s) { s.bytes() })}
+  }
+}
+
+/// A timestamp's text in ISO DateStyle ("2026-10-20 15:04:05.123456+00",
+/// TimeZone UTC) as RFC 3339; utc adds Z to a timestamp without a zone.
+fn iso_to_rfc3339(s: Str, utc: Bool) -> Str {
+  var t = s.replace(" ", "T")
+  if utc {
+    return t + "Z"
+  }
+  // the offset: +HH, +HH:MM, or +HH:MM:SS after the time
+  let b = t.bytes()
+  var i = b.len() - 1
+  while i > 10 && b[i] != 43 && b[i] != 45 {
+    i -= 1
+  }
+  if i <= 10 {
+    return t
+  }
+  let off = t[i..]
+  let body = t[0..i]
+  if off.len() == 3 {
+    return body + off + ":00"
+  }
+  body + off
+}
+
+fn decode_text(oid: Int, s: Str) -> sql.SqlValue {
+  match oid {
+    16 => return sql.SqlValue.Flag(b: s == "t")
+    20 => return int_or_text(s)
+    21 => return int_or_text(s)
+    23 => return int_or_text(s)
+    26 => return int_or_text(s)
+    700 => return float_or_text(s)
+    701 => return float_or_text(s)
+    17 => {
+      if s.starts_with("\\x") {
+        if let Some(b) = Bytes.from_hex(s[2..]) {
+          return sql.SqlValue.Blob(b: b)
+        }
+      }
+      return sql.SqlValue.Text(s: s)
+    }
+    114 => return sql.SqlValue.JsonText(s: s)
+    3802 => return sql.SqlValue.JsonText(s: s)
+    1184 => return time_or_text(s, false)
+    1114 => return time_or_text(s, true)
+    _ => {}
+  }
+  let e = elem_of(oid)
+  if e >= 0 {
+    if let Some(items) = parse_array(s, e) {
+      return sql.SqlValue.Array(items: items)
+    }
+  }
+  sql.SqlValue.Text(s: s)
+}
+
+fn int_or_text(s: Str) -> sql.SqlValue {
+  match Int.parse(s) {
+    Some(n) => sql.SqlValue.Integer(n: n)
+    None => sql.SqlValue.Text(s: s)
+  }
+}
+
+fn float_or_text(s: Str) -> sql.SqlValue {
+  match Float.parse(s) {
+    Some(f) => sql.SqlValue.Real(f: f)
+    None => sql.SqlValue.Text(s: s)
+  }
+}
+
+fn time_or_text(s: Str, utc: Bool) -> sql.SqlValue {
+  match Time.parse_rfc3339(iso_to_rfc3339(s, utc)) {
+    Some(t) => sql.SqlValue.At(t: t)
+    // infinity, -infinity, years past Time's range
+    None => sql.SqlValue.Text(s: s)
+  }
+}
+
+/// A one dimensional array literal's elements ({1,2,NULL}, {"a b",c}),
+/// each decoded as elem; None for another shape (several dimensions,
+/// bounds), which then reads as Text.
+fn parse_array(s: Str, elem: Int) -> List[sql.SqlValue]? {
+  let b = s.bytes()
+  if b.len() < 2 || b[0] != 123 || b[b.len() - 1] != 125 {
+    return None
+  }
+  var out: List[sql.SqlValue] = []
+  if b.len() == 2 {
+    return Some(out)
+  }
+  var i = 1
+  while i < b.len() - 1 {
+    if b[i] == 123 {
+      return None
+    }
+    var cur = BytesBuilder.new()
+    var quoted = false
+    if b[i] == 34 {
+      quoted = true
+      i += 1
+      while i < b.len() - 1 && b[i] != 34 {
+        if b[i] == 92 && i + 1 < b.len() {
+          i += 1
+        }
+        cur.write_byte(b[i])
+        i += 1
+      }
+      i += 1
+    } else {
+      while i < b.len() - 1 && b[i] != 44 {
+        cur.write_byte(b[i])
+        i += 1
+      }
+    }
+    let t = cur.freeze().to_str() ?? ""
+    out.push(if !quoted && t == "NULL" { sql.SqlValue.Null } else { decode_text(elem, t) })
+    if i < b.len() - 1 && b[i] == 44 {
+      i += 1
+    }
+  }
+  Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// Queries
+
+/// One statement's results, read to ReadyForQuery: the last row set's
+/// columns and rows, the last command tag, and the first error.
+struct Results {
+  cols: List[Str]
+  oids: List[Int]
+  rows: List[List[sql.SqlValue]]
+  tag: Str
+}
+
+fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
+  var res = Results{cols: [], oids: [], rows: [], tag: ""}
+  var failed: sql.SqlErr? = None
+  while {
+    match p.recv()? {
+      RowDesc(fs) => {
+        res.cols = fs.map(fn(f) { f.name })
+        res.oids = fs.map(fn(f) { f.type_oid })
+        res.rows = []
+      }
+      DataRow(vals) => {
+        var row: List[sql.SqlValue] = List.with_capacity(vals.len())
+        for (i, v) in vals.indexed() {
+          let oid = if i < res.oids.len() { res.oids[i] } else { OID_TEXT }
+          row.push(match v {
+            Some(b) => decode_text(oid, b.to_str() ?? "")
+            None => sql.SqlValue.Null
+          })
+        }
+        res.rows.push(row)
+      }
+      CommandComplete(tag) => res.tag = tag
+      Error(f) => {
+        if failed.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      Ready(_) => {
+        if let Some(e) = failed {
+          return Err(e)
+        }
+        return res
+      }
+      _ => {}
+    }
+  }
+  res
+}
+
+fn (p: PgConn) run(q: Str, args: List[sql.SqlValue]) -> Results ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  if args.is_empty() {
+    // the simple query protocol: a ; separated script runs as one
+    p.send(pgwire.query(q))?
+  } else {
+    let params = args.map(param_of)
+    p.send(pgwire.parse("", q, []) + pgwire.bind("", "", params, [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
+  }
+  p.collect()
+}
+
+fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  let r = p.run(q, args)?
+  sql.DriverRows{columns: r.cols, rows: r.rows}
+}
+
+fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let r = p.run(q, args)?
+  sql.ExecResult{rows_affected: pgwire.rows_affected(r.tag), last_insert_id: 0}
+}
+
+fn (p: PgConn) begin() -> () ! sql.SqlErr uses net.dial {
+  let _ = p.run("BEGIN", [])?
+}
+
+fn (p: PgConn) commit() -> () ! sql.SqlErr uses net.dial {
+  let r = p.run("COMMIT", [])?
+  if r.tag == "ROLLBACK" {
+    // pgconn's ErrTxCommitRollback: the transaction had failed
+    return Err(sql.SqlErr.Server(code: "25P02", msg: "commit unexpectedly resulted in rollback"))
+  }
+}
+
+fn (p: PgConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  let _ = p.run("ROLLBACK", [])?
+}
+
+fn (p: PgConn) ping() -> () ! sql.SqlErr uses net.dial {
+  let _ = p.run("-- ping", [])?
+}
+
+fn (p: PgConn) close() {
+  let _ = p.c.write(pgwire.terminate()).is_ok()
+  p.c.close()
+}
+
+fn (p: PgConn) is_broken() -> Bool { p.broken.get() }

@@ -1,0 +1,892 @@
+// std/native/pgwire.xo's tests: the messages pgx v5.11.0 pgproto3 encodes
+// (vectors from a Go program), the SCRAM exchange of RFC 7677, and pgx's
+// connection string corpora with pgx's own results (decision 0278).
+
+fn s(x: Str) -> Str { (Bytes.from_hex(x) ?? b"").to_str() ?? "" }
+
+// Vectors from pgx v5.11.0 pgproto3 Encode (gopg/main.go in the scratchpad).
+
+test "encode startup" {
+  expect(startup([("user", "app")]).to_hex()) == "000000120003000075736572006170700000"
+}
+
+test "encode ssl" {
+  expect(ssl_request().to_hex()) == "0000000804d2162f"
+}
+
+test "encode query" {
+  expect(query("select 1").to_hex()) == "510000000d73656c656374203100"
+}
+
+test "encode password" {
+  expect(password("md5abc").to_hex()) == "700000000b6d643561626300"
+}
+
+test "encode sasl_initial" {
+  expect(sasl_initial("SCRAM-SHA-256", b"n,,n=,r=abc").to_hex()) == "7000000021534352414d2d5348412d323536000000000b6e2c2c6e3d2c723d616263"
+}
+
+test "encode sasl_response" {
+  expect(sasl_response(b"c=biws,r=x,p=y").to_hex()) == "7000000012633d626977732c723d782c703d79"
+}
+
+test "encode parse" {
+  expect(parse("", "select $1", [0]).to_hex()) == "50000000150073656c65637420243100000100000000"
+}
+
+test "encode bind" {
+  expect(bind("", "", [Param{format: 0, data: Some(b"42")}, Param{format: 1, data: None}], [0]).to_hex()) == "420000001c00000002000000010002000000023432ffffffff00010000"
+}
+
+test "encode describe" {
+  expect(describe("P", "").to_hex()) == "44000000065000"
+}
+
+test "encode execute" {
+  expect(execute("", 0).to_hex()) == "45000000090000000000"
+}
+
+test "encode sync" {
+  expect(sync().to_hex()) == "5300000004"
+}
+
+test "encode terminate" {
+  expect(terminate().to_hex()) == "5800000004"
+}
+
+test "encode cancel" {
+  expect(cancel_request(1234, Bytes.from_hex("0000162e") ?? b"").to_hex()) == "0000001004d2162e000004d20000162e"
+}
+
+test "decode b_auth_md5" {
+  let m = Bytes.from_hex("520000000c0000000501020304") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.AuthMd5(salt: Bytes.from_hex("01020304") ?? b""))
+}
+
+test "decode b_auth_sasl" {
+  let m = Bytes.from_hex("520000002a0000000a534352414d2d5348412d32353600534352414d2d5348412d3235362d504c55530000") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.AuthSasl(mechanisms: ["SCRAM-SHA-256", "SCRAM-SHA-256-PLUS"]))
+}
+
+test "decode b_key" {
+  let m = Bytes.from_hex("4b0000000c0000004d09080706") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.KeyData(pid: 77, secret: Bytes.from_hex("09080706") ?? b""))
+}
+
+test "decode b_rowdesc" {
+  let m = Bytes.from_hex("540000001b0001696400000040000001000000170004ffffffff0000") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.RowDesc(fields: [Field{name: "id", table_oid: 16384, column: 1, type_oid: 23, size: 4, modifier: -1, format: 0}]))
+}
+
+test "decode b_datarow" {
+  let m = Bytes.from_hex("440000001300030000000137ffffffff00000000") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.DataRow(values: [Some(b"7"), None, Some(b"")]))
+}
+
+test "decode b_complete" {
+  let m = Bytes.from_hex("430000000f494e534552542030203300") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.CommandComplete(tag: "INSERT 0 3"))
+}
+
+test "decode b_error" {
+  let m = Bytes.from_hex("4500000033534552524f5200433233353035004d6475706c6963617465206b6579006e75736572735f656d61696c5f6b65790000") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.Error(fields: {"S": "ERROR", "C": "23505", "M": "duplicate key", "n": "users_email_key"}))
+}
+
+test "decode b_ready" {
+  let m = Bytes.from_hex("5a0000000549") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.Ready(status: "I"))
+}
+
+test "decode b_notify" {
+  let m = Bytes.from_hex("410000000f000000056a6f6273003100") ?? b""
+  expect(frame_len(m)) == Ok(Some(m.len()))
+  expect(decode(m)) == Ok(Backend.Notification(pid: 5, channel: "jobs", payload: "1"))
+}
+
+test "a cut short frame waits" {
+  expect(frame_len(Bytes.from_hex("5a000000") ?? b"")) == Ok(None)
+  expect(frame_len(Bytes.from_hex("5a0000000549") ?? b"")) == Ok(Some(6))
+}
+
+test "rows affected" {
+  expect(rows_affected("INSERT 0 3")) == 3
+  expect(rows_affected("UPDATE 2")) == 2
+  expect(rows_affected("CREATE TABLE")) == 0
+}
+
+// RFC 7677 section 3's example exchange.
+test "scram-sha-256 RFC 7677 example" {
+  let (s0, first) = start("user", "pencil", "rOprNGfwEbeRWgbNEkqO")
+  expect(first) == "n,,n=user,r=rOprNGfwEbeRWgbNEkqO"
+  var s = s0
+  let fin = s.answer("r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096")
+  expect(fin) == Ok("c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=")
+  expect(s.finish("v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")) == Ok(())
+  expect(s.finish("v=AAAATRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")) == Err(ScramErr.ServerSignature)
+}
+
+test "scram rejects a nonce the client did not start" {
+  let (s0, _) = start("", "pw", "abc")
+  var s = s0
+  expect(s.answer("r=xyz123,s=AAAA,i=4096").is_err()) == true
+  expect(s.answer("r=abc,s=AAAA,i=4096").is_err()) == true
+}
+
+// pgx v5.11.0 parseKeywordValueSettingsCorpus; expected results from Go
+// (gokv in the scratchpad). Strings are hex so every byte survives.
+
+
+test "keyword value 0" {
+  let got = parse_keyword_value(s("")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([])
+  expect(got) == want
+}
+
+test "keyword value 1" {
+  let got = parse_keyword_value(s("686f73743d6c6f63616c686f7374")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6c6f63616c686f7374"))])
+  expect(got) == want
+}
+
+test "keyword value 2" {
+  let got = parse_keyword_value(s("686f73743d6c6f63616c686f737420757365723d6a61636b")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6c6f63616c686f7374")), (s("75736572"), s("6a61636b"))])
+  expect(got) == want
+}
+
+test "keyword value 3" {
+  let got = parse_keyword_value(s("686f73743d6c6f63616c686f737420757365723d6a61636b2070617373776f72643d73656372657420706f72743d353433322064626e616d653d6d796462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6d796462")), (s("686f7374"), s("6c6f63616c686f7374")), (s("70617373776f7264"), s("736563726574")), (s("706f7274"), s("35343332")), (s("75736572"), s("6a61636b"))])
+  expect(got) == want
+}
+
+test "keyword value 4" {
+  let got = parse_keyword_value(s("686f73743d276c6f63616c20686f737427")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6c6f63616c20686f7374"))])
+  expect(got) == want
+}
+
+test "keyword value 5" {
+  let got = parse_keyword_value(s("686f73743d272720757365723d6a61636b")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("")), (s("75736572"), s("6a61636b"))])
+  expect(got) == want
+}
+
+test "keyword value 6" {
+  let got = parse_keyword_value(s("686f73743d20757365723d2070617373776f72643d20706f72743d2064617461626173653d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("")), (s("686f7374"), s("757365723d")), (s("70617373776f7264"), s("706f72743d"))])
+  expect(got) == want
+}
+
+test "keyword value 7" {
+  let got = parse_keyword_value(s("757365723d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([])
+  expect(got) == want
+}
+
+test "keyword value 8" {
+  let got = parse_keyword_value(s("686f73743d782020757365723d79")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("78")), (s("75736572"), s("79"))])
+  expect(got) == want
+}
+
+test "keyword value 9" {
+  let got = parse_keyword_value(s("64626e616d653d666f6f20")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("666f6f"))])
+  expect(got) == want
+}
+
+test "keyword value 10" {
+  let got = parse_keyword_value(s("64626e616d653d666f6f09")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("666f6f"))])
+  expect(got) == want
+}
+
+test "keyword value 11" {
+  let got = parse_keyword_value(s("64626e616d653d27666f6f272020")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("666f6f"))])
+  expect(got) == want
+}
+
+test "keyword value 12" {
+  let got = parse_keyword_value(s("20686f73743d78")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("78"))])
+  expect(got) == want
+}
+
+test "keyword value 13" {
+  let got = parse_keyword_value(s("686f7374203d2078")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("78"))])
+  expect(got) == want
+}
+
+test "keyword value 14" {
+  let got = parse_keyword_value(s("686f73743d27615c5c6227")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("615c62"))])
+  expect(got) == want
+}
+
+test "keyword value 15" {
+  let got = parse_keyword_value(s("686f73743d27615c276227")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("612762"))])
+  expect(got) == want
+}
+
+test "keyword value 16" {
+  let got = parse_keyword_value(s("70617373776f72643d27705c277727")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("70617373776f7264"), s("702777"))])
+  expect(got) == want
+}
+
+test "keyword value 17" {
+  let got = parse_keyword_value(s("686f73743d615c5c62")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("615c62"))])
+  expect(got) == want
+}
+
+test "keyword value 18" {
+  let got = parse_keyword_value(s("686f73743d615c2762")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("612762"))])
+  expect(got) == want
+}
+
+test "keyword value 19" {
+  let got = parse_keyword_value(s("686f7374")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c6964206b6579776f72642f76616c7565"))
+  expect(got) == want
+}
+
+test "keyword value 20" {
+  let got = parse_keyword_value(s("3d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c6964206b6579776f72642f76616c7565"))
+  expect(got) == want
+}
+
+test "keyword value 21" {
+  let got = parse_keyword_value(s("3020303d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("6d697373696e6720223d222061667465722022302220696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 22" {
+  let got = parse_keyword_value(s("75732065723d6a61636b")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("6d697373696e6720223d22206166746572202275732220696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 23" {
+  let got = parse_keyword_value(s("3d20757365723d6a61636b")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c6964206b6579776f72642f76616c7565"))
+  expect(got) == want
+}
+
+test "keyword value 24" {
+  let got = parse_keyword_value(s("2761273d62")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("276127"), s("62"))])
+  expect(got) == want
+}
+
+test "keyword value 25" {
+  let got = parse_keyword_value(s("686f73743d27")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 26" {
+  let got = parse_keyword_value(s("686f73743d2761")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 27" {
+  let got = parse_keyword_value(s("5c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c6964206b6579776f72642f76616c7565"))
+  expect(got) == want
+}
+
+test "keyword value 28" {
+  let got = parse_keyword_value(s("686f73743d7800")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("666f7262696464656e204e554c206279746520696e20636f6e6e656374696f6e20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 29" {
+  let got = parse_keyword_value(s("783d785c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("78"), s("78"))])
+  expect(got) == want
+}
+
+test "keyword value 30" {
+  let got = parse_keyword_value(s("686f73743d615c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("61"))])
+  expect(got) == want
+}
+
+test "keyword value 31" {
+  let got = parse_keyword_value(s("3d275c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 32" {
+  let got = parse_keyword_value(s("303d275c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 33" {
+  let got = parse_keyword_value(s("686f73743d27615c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+test "keyword value 34" {
+  let got = parse_keyword_value(s("686f73743d27615c5c625c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e7465726d696e617465642071756f74656420737472696e6720696e20636f6e6e656374696f6e20696e666f20737472696e67"))
+  expect(got) == want
+}
+
+// pgx v5.11.0 parse_url_test.go's connection strings (parseURLSettingsCorpus and
+// the multi host corpus), with the settings or error pgx's parseURLSettings gives.
+
+test "url 0" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d757365723a73656372657440686f73743a31323334352f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("70617373776f7264"), s("736563726574")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 1" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d7573657240686f73743a31323334352f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 2" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d7573657240686f73742f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 3" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743a31323334352f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 4" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 5" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d7573657240686f73743a31323334352f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 6" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d7573657240686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 7" {
+  let got = parse_url(s("706f737467726573716c3a2f2f7572692d7573657240")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 8" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743a31323334352f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 9" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743a3132333435")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 10" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 11" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f7374")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 12" {
+  let got = parse_url(s("706f737467726573716c3a2f2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([])
+  expect(got) == want
+}
+
+test "url 13" {
+  let got = parse_url(s("706f737467726573716c3a2f2f3f686f7374616464723d3132372e302e302e31")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f737461646472"), s("3132372e302e302e31"))])
+  expect(got) == want
+}
+
+test "url 14" {
+  let got = parse_url(s("706f737467726573716c3a2f2f6578616d706c652e636f6d3f686f7374616464723d36332e312e322e34")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6578616d706c652e636f6d")), (s("686f737461646472"), s("36332e312e322e34"))])
+  expect(got) == want
+}
+
+test "url 15" {
+  let got = parse_url(s("706f737467726573716c3a2f2f2536386f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 16" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f64623f757365723d7572692d75736572")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 17" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f64623f757365723d7572692d7573657226706f72743d3132333435")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 18" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f64623f7525373365723d736f6d656f746865727573657226706f72743d3132333435")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("736f6d656f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 19" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743a31323334353f757365723d7572692d75736572")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 20" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f757365723d7572692d75736572")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 21" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 22" {
+  let got = parse_url(s("706f737467726573716c3a2f2f5b3a3a315d3a31323334352f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("3a3a31")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 23" {
+  let got = parse_url(s("706f737467726573716c3a2f2f5b3a3a315d2f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("3a3a31"))])
+  expect(got) == want
+}
+
+test "url 24" {
+  let got = parse_url(s("706f737467726573716c3a2f2f5b323030313a6462383a3a313233345d2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("323030313a6462383a3a31323334"))])
+  expect(got) == want
+}
+
+test "url 25" {
+  let got = parse_url(s("706f737467726573716c3a2f2f5b3230307a3a6462383a3a313233345d2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("3230307a3a6462383a3a31323334"))])
+  expect(got) == want
+}
+
+test "url 26" {
+  let got = parse_url(s("706f737467726573716c3a2f2f5b3a3a315d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("3a3a31"))])
+  expect(got) == want
+}
+
+test "url 27" {
+  let got = parse_url(s("706f7374677265733a2f2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([])
+  expect(got) == want
+}
+
+test "url 28" {
+  let got = parse_url(s("706f7374677265733a2f2f2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([])
+  expect(got) == want
+}
+
+test "url 29" {
+  let got = parse_url(s("706f7374677265733a2f2f2f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462"))])
+  expect(got) == want
+}
+
+test "url 30" {
+  let got = parse_url(s("706f7374677265733a2f2f7572692d75736572402f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 31" {
+  let got = parse_url(s("706f7374677265733a2f2f3f686f73743d2f706174682f746f2f736f636b65742f646972")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2f706174682f746f2f736f636b65742f646972"))])
+  expect(got) == want
+}
+
+test "url 32" {
+  let got = parse_url(s("706f7374677265733a2f2f40686f7374")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 33" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73743a2f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 34" {
+  let got = parse_url(s("706f7374677265733a2f2f3a31323334352f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 35" {
+  let got = parse_url(s("706f7374677265733a2f2f6f7468657275736572403f686f73743d2f6e6f2f737563682f6469726563746f7279")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2f6e6f2f737563682f6469726563746f7279")), (s("75736572"), s("6f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 36" {
+  let got = parse_url(s("706f7374677265733a2f2f6f7468657275736572402f3f686f73743d2f6e6f2f737563682f6469726563746f7279")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2f6e6f2f737563682f6469726563746f7279")), (s("75736572"), s("6f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 37" {
+  let got = parse_url(s("706f7374677265733a2f2f6f7468657275736572403a31323334353f686f73743d2f6e6f2f737563682f736f636b65742f70617468")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2f6e6f2f737563682f736f636b65742f70617468")), (s("706f7274"), s("3132333435")), (s("75736572"), s("6f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 38" {
+  let got = parse_url(s("706f7374677265733a2f2f6f7468657275736572403a31323334352f64623f686f73743d2f706174682f746f2f736f636b6574")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("2f706174682f746f2f736f636b6574")), (s("706f7274"), s("3132333435")), (s("75736572"), s("6f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 39" {
+  let got = parse_url(s("706f7374677265733a2f2f3a31323334352f64623f686f73743d2f706174682f746f2f736f636b6574")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("2f706174682f746f2f736f636b6574")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 40" {
+  let got = parse_url(s("706f7374677265733a2f2f3a31323334353f686f73743d2f706174682f746f2f736f636b6574")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2f706174682f746f2f736f636b6574")), (s("706f7274"), s("3132333435"))])
+  expect(got) == want
+}
+
+test "url 41" {
+  let got = parse_url(s("706f7374677265733a2f2f2532467661722532466c6962253246706f737467726573716c2f64626e616d65")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("64626e616d65")), (s("686f7374"), s("2f7661722f6c69622f706f737467726573716c"))])
+  expect(got) == want
+}
+
+test "url 42" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f202075736572203d207572692d75736572202620706f727420203d20313233343520")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("75736572"), s("7572692d75736572"))])
+  expect(got) == want
+}
+
+test "url 43" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f73736c6d6f64653d64697361626c65")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("73736c6d6f6465"), s("64697361626c65"))])
+  expect(got) == want
+}
+
+test "url 44" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f73736c6d6f64653d707265666572")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("73736c6d6f6465"), s("707265666572"))])
+  expect(got) == want
+}
+
+test "url 45" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f73736c6d6f64653d7665726966792d66756c6c")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("73736c6d6f6465"), s("7665726966792d66756c6c"))])
+  expect(got) == want
+}
+
+test "url 46" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73742f64623f7525376165723d736f6d656f746865727573657226706f72743d3132333435")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("706f7274"), s("3132333435")), (s("757a6572"), s("736f6d656f7468657275736572"))])
+  expect(got) == want
+}
+
+test "url 47" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f757a65723d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("757a6572"), s(""))])
+  expect(got) == want
+}
+
+test "url 48" {
+  let got = parse_url(s("706f7374677265733a2f2f5b3a3a31")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("656e64206f6620737472696e672072656163686564207768656e206c6f6f6b696e6720666f72206d61746368696e6720225d2220696e204950763620686f7374206164647265737320696e20555249"))
+  expect(got) == want
+}
+
+test "url 49" {
+  let got = parse_url(s("706f7374677265733a2f2f5b5d")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("4950763620686f73742061646472657373206d6179206e6f7420626520656d70747920696e20555249"))
+  expect(got) == want
+}
+
+test "url 50" {
+  let got = parse_url(s("706f7374677265733a2f2f5b3a3a315d7a")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e65787065637465642063686172616374657220227a2220617420706f736974696f6e20313720696e205552492028657870656374656420223a22206f7220222f2229"))
+  expect(got) == want
+}
+
+test "url 51" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f7a7a7a")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("6d697373696e67206b65792f76616c756520736570617261746f7220223d2220696e2055524920717565727920706172616d657465723a20227a7a7a22"))
+  expect(got) == want
+}
+
+test "url 52" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f76616c7565312676616c756532")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("6d697373696e67206b65792f76616c756520736570617261746f7220223d2220696e2055524920717565727920706172616d657465723a202276616c75653122"))
+  expect(got) == want
+}
+
+test "url 53" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f6b65793d6b65793d76616c7565")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("6578747261206b65792f76616c756520736570617261746f7220223d2220696e2055524920717565727920706172616d657465723a20226b657922"))
+  expect(got) == want
+}
+
+test "url 54" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73743f64626e616d653d255858666f6f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e3a2022255858666f6f22"))
+  expect(got) == want
+}
+
+test "url 55" {
+  let got = parse_url(s("706f737467726573716c3a2f2f6125303062")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("666f7262696464656e2076616c75652025303020696e2070657263656e742d656e636f6465642076616c75653a2022612530306222"))
+  expect(got) == want
+}
+
+test "url 56" {
+  let got = parse_url(s("706f737467726573716c3a2f2f257a7a")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e3a2022257a7a22"))
+  expect(got) == want
+}
+
+test "url 57" {
+  let got = parse_url(s("706f737467726573716c3a2f2f2531")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e3a2022253122"))
+  expect(got) == want
+}
+
+test "url 58" {
+  let got = parse_url(s("706f737467726573716c3a2f2f25")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e3a20222522"))
+  expect(got) == want
+}
+
+test "url 59" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f202075736572207573657220203d202075726920202620706f7274203d20313233343520313220")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e65787065637465642073706163657320666f756e6420696e202220207573657220757365722020222c207573652070657263656e742d656e636f6465642073706163657320282532302920696e7374656164"))
+  expect(got) == want
+}
+
+test "url 60" {
+  let got = parse_url(s("706f737467726573716c3a2f2f686f73743f20207573657220203d20207572692d7573657220202620706f7274203d20313233343520313220")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e65787065637465642073706163657320666f756e6420696e202220313233343520313220222c207573652070657263656e742d656e636f6465642073706163657320282532302920696e7374656164"))
+  expect(got) == want
+}
+
+test "url 61" {
+  let got = parse_url(s("706f7374677265733a2f2f68312c68322f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c6832")), (s("706f7274"), s("2c"))])
+  expect(got) == want
+}
+
+test "url 62" {
+  let got = parse_url(s("706f7374677265733a2f2f68312c68323a353433332f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c6832")), (s("706f7274"), s("2c35343333"))])
+  expect(got) == want
+}
+
+test "url 63" {
+  let got = parse_url(s("706f7374677265733a2f2f68313a353433332c68322f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c6832")), (s("706f7274"), s("353433332c"))])
+  expect(got) == want
+}
+
+test "url 64" {
+  let got = parse_url(s("706f7374677265733a2f2f68313a312c68323a322c68333a332f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c68322c6833")), (s("706f7274"), s("312c322c33"))])
+  expect(got) == want
+}
+
+test "url 65" {
+  let got = parse_url(s("706f7374677265733a2f2f61253243622f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("612c62"))])
+  expect(got) == want
+}
+
+test "url 66" {
+  let got = parse_url(s("706f7374677265733a2f2f68312c2c68322f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c2c6832")), (s("706f7274"), s("2c2c"))])
+  expect(got) == want
+}
+
+test "url 67" {
+  let got = parse_url(s("706f7374677265733a2f2f2c68322f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("2c6832")), (s("706f7274"), s("2c"))])
+  expect(got) == want
+}
+
+test "url 68" {
+  let got = parse_url(s("706f7374677265733a2f2f68312c2f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c")), (s("706f7274"), s("2c"))])
+  expect(got) == want
+}
+
+test "url 69" {
+  let got = parse_url(s("706f7374677265733a2f2f5b3a3a315d3a353433322c5b3a3a325d2f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("3a3a312c3a3a32")), (s("706f7274"), s("353433322c"))])
+  expect(got) == want
+}
+
+test "url 70" {
+  let got = parse_url(s("706f7374677265733a2f2f68313a312c68323a322f64623f706f72743d39")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("68312c6832")), (s("706f7274"), s("39"))])
+  expect(got) == want
+}
+
+test "url 71" {
+  let got = parse_url(s("706f7374677265733a2f2f68313a2532432f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6831")), (s("706f7274"), s("2c"))])
+  expect(got) == want
+}
+
+test "url 72" {
+  let got = parse_url(s("706f7374677265733a2f2f757365723a736563257a7a72657440686f73742f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e20696e2070617373776f7264"))
+  expect(got) == want
+}
+
+test "url 73" {
+  let got = parse_url(s("706f7374677265733a2f2f757365723a73656325303072657440686f73742f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("666f7262696464656e2076616c75652025303020696e2070657263656e742d656e636f6465642076616c756520696e2070617373776f7264"))
+  expect(got) == want
+}
+
+test "url 74" {
+  let got = parse_url(s("706f7374677265733a2f2f757365723a7365632072657440686f73742f6462")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("756e65787065637465642073706163657320666f756e6420696e2070617373776f72642c207573652070657263656e742d656e636f6465642073706163657320282532302920696e7374656164"))
+  expect(got) == want
+}
+
+test "url 75" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f70617373776f72643d736563257a7a726574")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e20696e2070617373776f7264"))
+  expect(got) == want
+}
+
+test "url 76" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f73736c70617373776f72643d736563257a7a726574")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Err(s("696e76616c69642070657263656e742d656e636f64656420746f6b656e20696e2073736c70617373776f7264"))
+  expect(got) == want
+}
+
+test "url 77" {
+  let got = parse_url(s("706f7374677265733a2f2f61406240686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("6240686f7374")), (s("75736572"), s("61"))])
+  expect(got) == want
+}
+
+test "url 78" {
+  let got = parse_url(s("706f7374677265733a2f2f757365723a70613a737340686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("70617373776f7264"), s("70613a7373")), (s("75736572"), s("75736572"))])
+  expect(got) == want
+}
+
+test "url 79" {
+  let got = parse_url(s("706f7374677265733a2f2f7573253430657240686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("75736572"), s("7573406572"))])
+  expect(got) == want
+}
+
+test "url 80" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64624078")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("64624078")), (s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 81" {
+  let got = parse_url(s("706f7374677265733a2f2f3a73656372657440686f73742f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("686f7374"), s("686f7374")), (s("70617373776f7264"), s("736563726574"))])
+  expect(got) == want
+}
+
+test "url 82" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f6170706c69636174696f6e5f6e616d653d612362")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6170706c69636174696f6e5f6e616d65"), s("612362")), (s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 83" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f6f7074696f6e733d2d632b7365617263685f70617468253344666f6f")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("6f7074696f6e73"), s("2d632b7365617263685f706174683d666f6f"))])
+  expect(got) == want
+}
+
+test "url 84" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f612f62")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("612f62")), (s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 85" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f6170706c69636174696f6e5f6e616d653d6669727374266170706c69636174696f6e5f6e616d653d7365636f6e64")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6170706c69636174696f6e5f6e616d65"), s("7365636f6e64")), (s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374"))])
+  expect(got) == want
+}
+
+test "url 86" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f73736c3d74727565")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("73736c6d6f6465"), s("72657175697265"))])
+  expect(got) == want
+}
+
+test "url 87" {
+  let got = parse_url(s("706f7374677265733a2f2f686f73742f64623f73736c3d66616c7365")).map(fn(m) { m.entries().sort() })
+  let want: Result[List[(Str, Str)], Str] = Ok([(s("6461746162617365"), s("6462")), (s("686f7374"), s("686f7374")), (s("73736c"), s("66616c7365"))])
+  expect(got) == want
+}
+
+test "md5 password: pgconn's md5 auth" {
+  // python: "md5" + md5(md5(b"secret" + b"bob").hexdigest().encode() + bytes([1,2,3,4])).hexdigest()
+  expect(md5_password("bob", "secret", Bytes.from_hex("01020304") ?? b"")) == "md5f21dfe33ff3a9e03dbc3e008251fe5cc"
+}
