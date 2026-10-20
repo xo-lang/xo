@@ -383,11 +383,15 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
 
 /// Whether entries a and b make the same body with the same effects on
 /// the builder (verify): their version, flags, and tail; what each found
-/// and made depends on the builder that recorded it.
+/// and made depends on the builder that recorded it, and the xo that
+/// recorded it (v8's recorder) is not compared.
 fn fe_same(a: Bytes, b: Bytes) -> Bool {
   var x = EntryR{d: a}
   var y = EntryR{d: b}
-  x.str() == y.str() && x.str() == y.str() && x.bytes() == y.bytes() && x.ok && y.ok
+  let same_head = x.str() == y.str() && x.str() == y.str()
+  let _xr = x.str()
+  let _yr = y.str()
+  same_head && x.bytes() == y.bytes() && x.ok && y.ok
 }
 
 /// Whether a commit of entry d would pass its checks here (fe_replay's,

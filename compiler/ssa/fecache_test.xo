@@ -1,0 +1,19 @@
+// Front end cache entries (decision 0271): the header verify compares.
+
+/// An entry's head as fe_entry writes it: version, own flags, recorder,
+/// then the tail (the body and its effects on the builder).
+fn head_entry(own: Str, recorder: Str, tail: Bytes) -> Bytes {
+  var e = EntryW{b: BytesBuilder.new()}
+  e.str(FE_CACHE_VERSION)
+  e.str(own)
+  e.str(recorder)
+  e.bytes(tail)
+  e.b.freeze()
+}
+
+test "verify compares the tail, not the xo that recorded the entry (fe_same)" {
+  let a = head_entry("conc=false", "xo-a", b"body one")
+  expect(fe_same(a, head_entry("conc=false", "xo-b", b"body one"))) == true
+  expect(fe_same(a, head_entry("conc=false", "xo-a", b"body two"))) == false
+  expect(fe_same(a, head_entry("conc=true", "xo-a", b"body one"))) == false
+}
