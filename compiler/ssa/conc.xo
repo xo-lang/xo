@@ -1359,7 +1359,10 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       return Some(b.call("list.index", st, "", [l, b.cint(0)]))
     }
     "Listener.accept" => {
-      let h = b.rt("listener_accept", b.m.handle("Conn", []), [recv])
+      // the handle the prelude declares: Conn, or ServerConn (decision
+      // 0280 phase 2), so this compiler builds either prelude
+      let okt = b.m.types[nt].variants[b.m.variant_index(nt, "Ok")].fields[0].ty
+      let h = b.rt("listener_accept", okt, [recv])
       return Some(b.net_result(h, nt))
     }
     "Listener.close" => {
