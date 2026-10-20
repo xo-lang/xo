@@ -116,3 +116,21 @@ fn (k: PrivateKey) public_key() -> PublicKey
 fn pem_decode(text: Str) -> List[PemBlock]
 /// pem.EncodeToMemory: KeyErr for a header key holding a colon.
 fn pem_encode(b: PemBlock) -> Str ! KeyErr
+
+/// RSA PKCS #1 v1.5 or ECDSA (ASN.1 DER) over msg hashed with h, or
+/// Ed25519 over msg itself; false for a key, hash, or signature that does
+/// not fit.
+fn verify(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+/// RSA PSS, any salt length (PSSSaltLengthAuto).
+fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+/// ECDSA with the fixed size r || s of JWS (RFC 7518 3.4).
+fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+/// RSA PKCS #1 v1.5, ECDSA (ASN.1 DER, a hedged nonce from r), or Ed25519.
+fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// RSA PSS with a salt as long as the hash, from r.
+fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// ECDSA as the fixed size r || s of JWS.
+fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+/// A new ECDSA or Ed25519 key from r (Go's GenerateKey); Rsa is KeyErr
+/// until prime generation lands.
+fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand

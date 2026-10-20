@@ -31,6 +31,7 @@ use native/llrt/nistec_g256
 use native/llrt/nistec_gtab
 use native/llrt/raw
 use native/llrt/rand
+use native/llrt/sha256
 use native/rt
 
 /// The curves (the `curve` argument of the functions below).
@@ -2602,9 +2603,98 @@ fn hash_int(c: Int, e: Int, hash: Bytes, curve: Int) {
 }
 
 /// The DER signature (r, s) of hash by the private key priv (a scalar in
-/// [1, n); empty otherwise), with a fresh nonce from the system's
-/// generator for each attempt.
-pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes {
+/// [1, n); empty otherwise), its nonce hedged with fresh bytes from the
+/// system's generator (sign_hedged).
+pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes { sign_hedged(curve, priv, hash, rand.next_bytes(size(curve))) }
+
+// The hedged nonce of Go's crypto/internal/fips140/ecdsa (Sign, newDRBG,
+// Generate; decision 0285): an HMAC_DRBG over SHA-512 (SP 800-90A)
+// instantiated with the entropy z, no nonce, and the block aligned
+// personalization of the private key and bits2octets(hash), so a z that
+// repeats or is all zeros still gives RFC 6979's deterministic nonce.
+
+fn hmac512(key: Bytes, parts: List[Bytes]) -> Bytes {
+  var k = key
+  if k.len() > 128 {
+    k = sha256.sum(sha256.HASH_SHA512, k)
+  }
+  var ipad = rt.rs_with_cap(128)
+  var opad = rt.rs_with_cap(128)
+  for i in 0..128 {
+    let b = if i < k.len() { Int(k[i]) } else { 0 }
+    ipad = rt.rs_push_byte(ipad, b ^ 0x36)
+    opad = rt.rs_push_byte(opad, b ^ 0x5c)
+  }
+  var inner = sha256.new(sha256.HASH_SHA512)
+  inner.write(ipad.bytes())
+  for p in parts {
+    inner.write(p)
+  }
+  var outer = sha256.new(sha256.HASH_SHA512)
+  outer.write(opad.bytes())
+  outer.write(inner.sum())
+  outer.sum()
+}
+
+/// n zero bytes.
+fn zeros(n: Int) -> Bytes {
+  var s = rt.rs_with_cap(n)
+  for _ in 0..n {
+    s = rt.rs_push_byte(s, 0)
+  }
+  s.bytes()
+}
+
+/// pad000: zeros to the next multiple of SHA-512's block after written.
+fn pad000(written: Int) -> Bytes {
+  let rem = written % 128
+  if rem == 0 { b"" } else { zeros(128 - rem) }
+}
+
+/// The HMAC_DRBG's key and value after instantiating it.
+fn drbg_new(entropy: Bytes, d: Bytes, h: Bytes) -> (Bytes, Bytes) {
+  var v = rt.rs_with_cap(64)
+  for _ in 0..64 {
+    v = rt.rs_push_byte(v, 1)
+  }
+  var vv = v.bytes()
+  var k = zeros(64)
+  let l0 = 64 + 1 + entropy.len()
+  for sep in [0, 1] {
+    let sb = if sep == 0 { b"\x00" } else { b"\x01" }
+    k = hmac512(k, [vv, sb, entropy, pad000(l0), d, pad000(d.len()), h])
+    vv = hmac512(k, [vv])
+  }
+  (k, vv)
+}
+
+/// Generate(n bytes): the output and the DRBG's next key and value.
+fn drbg_generate(k: Bytes, v0: Bytes, n: Int) -> (Bytes, Bytes, Bytes) {
+  var v = v0
+  var out = rt.rs_with_cap(n + 64)
+  while out.len() < n {
+    v = hmac512(k, [v])
+    out = rt.rs_append_bytes(out, v, 0, v.len(), 0)
+  }
+  let k2 = hmac512(k, [v, b"\x00"])
+  let v2 = hmac512(k2, [v])
+  (out.bytes()[0..n], k2, v2)
+}
+
+/// rightShift by 1 to 7 bits (P-521's candidates).
+fn right_shift(b: Bytes, sh: Int) -> Bytes {
+  var s = rt.rs_with_cap(b.len())
+  for i in 0..b.len() {
+    let hi = if i > 0 { (Int(b[i - 1]) << (8 - sh)) & 255 } else { 0 }
+    s = rt.rs_push_byte(s, (Int(b[i]) >> sh) | hi)
+  }
+  s.bytes()
+}
+
+/// The DER signature of hash by priv with the nonce of Go's hedged
+/// construction from the entropy z (size(curve) bytes); empty when priv
+/// is not a scalar in [1, n).
+pub fn sign_hedged(curve: Int, priv: Bytes, hash: Bytes, z: Bytes) -> Bytes {
   let w = workspace(curve)
   let c = base(w)
   let d = sk(c, 0)
@@ -2619,30 +2709,43 @@ pub fn sign(curve: Int, priv: Bytes, hash: Bytes) -> Bytes {
   let s = sk(c, 4)
   let t = sk(c, 5)
   hash_int(c, e, hash, curve)
+  var eb = rt.rs_with_cap(csize(c))
+  eb = put(c, eb, e)
+  let (dk0, dv0) = drbg_new(z, priv, eb.bytes())
+  var dk = dk0
+  var dv = dv0
   while true {
-    if scalar(c, k, random_scalar(curve), curve) {
+    let (cand0, k2, v2) = drbg_generate(dk, dv, size(curve))
+    dk = k2
+    dv = v2
+    let cand = if curve == P521 { right_shift(cand0, 7) } else { cand0 }
+    if scalar(c, k, cand, curve) {
       // r = x([k]G) mod n
       pt_mul_base(c, at(c, PA), k)
       pt_affine(c, r, t, at(c, PA))
       set_zero(c, t)
       add(c, r, r, t, mn)
-      if is_zero(c, r) == 0 {
-        // s = (e + r d) / k mod n
-        to_mont(c, t, d, mn)
-        mul(c, s, r, t, mn)
-        add(c, s, s, e, mn)
-        to_mont(c, t, k, mn)
-        inv(c, t, t, mn)
-        mul(c, s, s, t, mn)
-        if is_zero(c, s) == 0 {
-          var rb = rt.rs_with_cap(csize(c))
-          rb = put(c, rb, r)
-          var sb = rt.rs_with_cap(csize(c))
-          sb = put(c, sb, s)
-          keep(w)
-          return der_sig(rb.bytes(), sb.bytes())
-        }
+      if is_zero(c, r) != 0 {
+        keep(w)
+        return b""
       }
+      // s = (e + r d) / k mod n
+      to_mont(c, t, d, mn)
+      mul(c, s, r, t, mn)
+      add(c, s, s, e, mn)
+      to_mont(c, t, k, mn)
+      inv(c, t, t, mn)
+      mul(c, s, s, t, mn)
+      if is_zero(c, s) != 0 {
+        keep(w)
+        return b""
+      }
+      var rb = rt.rs_with_cap(csize(c))
+      rb = put(c, rb, r)
+      var sb = rt.rs_with_cap(csize(c))
+      sb = put(c, sb, s)
+      keep(w)
+      return der_sig(rb.bytes(), sb.bytes())
     }
   }
   b""

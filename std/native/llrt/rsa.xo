@@ -201,8 +201,7 @@ fn pad(b: Bytes, n: Int) -> Bytes {
 
 /// EMSA-PKCS1-v1_5 of the hashed message: 0x00 0x01 0xff.. 0x00
 /// DigestInfo, k bytes; empty when k is too small.
-fn pkcs1_encode(hash: Int, hashed: Bytes, k: Int) -> Bytes {
-  let prefix = digest_prefix(hash)
+fn pkcs1_encode(prefix: Bytes, hashed: Bytes, k: Int) -> Bytes {
   let tlen = prefix.len() + hashed.len()
   if k < tlen + 11 {
     return b""
@@ -223,7 +222,7 @@ pub fn verify_pkcs1(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes) -> Bool 
   if hashed.len() != hash_len(hash) {
     return false
   }
-  let em = pkcs1_encode(hash, hashed, k.n.len())
+  let em = pkcs1_encode(digest_prefix(hash), hashed, k.n.len())
   match public_op(k, sig) {
     Some(m) => em.len() > 0 && m == em
     None => false
@@ -233,7 +232,7 @@ pub fn verify_pkcs1(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes) -> Bool 
 /// The PKCS #1 v1.5 signature of the hashed message by k; empty on a
 /// failure.
 pub fn sign_pkcs1(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
-  let em = pkcs1_encode(hash, hashed, k.n.len())
+  let em = pkcs1_encode(digest_prefix(hash), hashed, k.n.len())
   if em.len() == 0 || hashed.len() != hash_len(hash) {
     return b""
   }
@@ -241,16 +240,34 @@ pub fn sign_pkcs1(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes {
 }
 
 // ---------------------------------------------------------------------------
+/// verify_pkcs1 with the DigestInfo prefix of any hash (decision 0285).
+pub fn verify_pkcs1_prefix(k: PublicKey, prefix: Bytes, hashed: Bytes, sig: Bytes) -> Bool {
+  let em = pkcs1_encode(prefix, hashed, k.n.len())
+  match public_op(k, sig) {
+    Some(m) => em.len() > 0 && m == em
+    None => false
+  }
+}
+
+/// sign_pkcs1 with the DigestInfo prefix of any hash; empty on a failure.
+pub fn sign_pkcs1_prefix(k: PrivateKey, prefix: Bytes, hashed: Bytes) -> Bytes {
+  let em = pkcs1_encode(prefix, hashed, k.n.len())
+  if em.len() == 0 {
+    return b""
+  }
+  private_op(k, em) ?? b""
+}
+
 // PSS (RFC 8017 8.1, 9.1)
 
 /// MGF1 of the seed with the hash, n bytes.
-fn mgf1(hash: Int, seed: Bytes, n: Int) -> Bytes {
+fn mgf1(hf: fn(Bytes) -> Bytes, seed: Bytes, n: Int) -> Bytes {
   var out = rt.rs_with_cap(n + 64)
   var counter = 0
   while out.len() < n {
     var s = rt.rs_append_bytes(rt.rs_with_cap(seed.len() + 4), seed, 0, seed.len(), 0)
     s = rt.rs_push_word(s, counter.wrapping_shl(32).swap_bytes(), 4)
-    let h = hsum(hash, s.bytes())
+    let h = hf(s.bytes())
     out = rt.rs_append_bytes(out, h, 0, h.len(), 0)
     counter += 1
   }
@@ -267,20 +284,25 @@ fn xor(x: Bytes, y: Bytes) -> Bytes {
 }
 
 /// H = Hash(0x00 x 8 || mHash || salt).
-fn pss_h(hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
+fn pss_h(hf: fn(Bytes) -> Bytes, hashed: Bytes, salt: Bytes) -> Bytes {
   var s = rt.rs_with_cap(8 + hashed.len() + salt.len())
   for _ in 0..8 {
     s = rt.rs_push_byte(s, 0)
   }
   s = rt.rs_append_bytes(s, hashed, 0, hashed.len(), 0)
-  hsum(hash, rt.rs_append_bytes(s, salt, 0, salt.len(), 0).bytes())
+  hf(rt.rs_append_bytes(s, salt, 0, salt.len(), 0).bytes())
 }
 
 /// Whether sig is a PSS signature (MGF1 with the same hash) of the hashed
 /// message by k, with a salt of salt_len bytes (-1: any length, Go's
 /// PSSSaltLengthAuto).
 pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: Int) -> Bool {
-  let hl = hash_len(hash)
+  verify_pss_fn(k, hash_len(hash), fn(b) { hsum(hash, b) }, hashed, sig, salt_len)
+}
+
+/// verify_pss with any hash: its length hl and function hf (std/crypto's
+/// hashes, decision 0285).
+pub fn verify_pss_fn(k: PublicKey, hl: Int, hf: fn(Bytes) -> Bytes, hashed: Bytes, sig: Bytes, salt_len: Int) -> Bool {
   if hashed.len() != hl {
     return false
   }
@@ -307,7 +329,7 @@ pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: 
   if (Int(masked[0]) & top_mask) != 0 {
     return false
   }
-  let db = xor(masked, mgf1(hash, h, masked.len()))
+  let db = xor(masked, mgf1(hf, h, masked.len()))
   // PS zeros (the top bits cleared), then 0x01, then the salt
   var i = 0
   while i < db.len() {
@@ -327,7 +349,7 @@ pub fn verify_pss(k: PublicKey, hash: Int, hashed: Bytes, sig: Bytes, salt_len: 
   if salt_len >= 0 && salt.len() != salt_len {
     return false
   }
-  pss_h(hash, hashed, salt) == h
+  pss_h(hf, hashed, salt) == h
 }
 
 /// The PSS signature of the hashed message by k with a random salt of
@@ -338,7 +360,11 @@ pub fn sign_pss(k: PrivateKey, hash: Int, hashed: Bytes) -> Bytes { sign_pss_sal
 /// sign_pss with the given salt (the hash's length; the tests' fixed
 /// salts, as RFC 8448's CertificateVerify).
 pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> Bytes {
-  let hl = hash_len(hash)
+  sign_pss_fn(k, hash_len(hash), fn(b) { hsum(hash, b) }, hashed, salt)
+}
+
+/// sign_pss_salt with any hash: its length hl and function hf.
+pub fn sign_pss_fn(k: PrivateKey, hl: Int, hf: fn(Bytes) -> Bytes, hashed: Bytes, salt: Bytes) -> Bytes {
   if hashed.len() != hl || salt.len() != hl {
     return b""
   }
@@ -348,14 +374,14 @@ pub fn sign_pss_salt(k: PrivateKey, hash: Int, hashed: Bytes, salt: Bytes) -> By
   if em_len < 2 * hl + 2 {
     return b""
   }
-  let h = pss_h(hash, hashed, salt)
+  let h = pss_h(hf, hashed, salt)
   var db = rt.rs_with_cap(em_len - hl - 1)
   for _ in 0..em_len - 2 * hl - 2 {
     db = rt.rs_push_byte(db, 0)
   }
   db = rt.rs_push_byte(db, 1)
   db = rt.rs_append_bytes(db, salt, 0, salt.len(), 0)
-  let masked = xor(db.bytes(), mgf1(hash, h, em_len - hl - 1))
+  let masked = xor(db.bytes(), mgf1(hf, h, em_len - hl - 1))
   let top = 8 * em_len - em_bits
   let first = Int(masked[0]) & (255 ^ ((255).wrapping_shl(8 - top) & 255))
   var em = rt.rs_with_cap(em_len)

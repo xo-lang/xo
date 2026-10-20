@@ -1159,3 +1159,185 @@ fn parse_private(der: Bytes) -> PrivateKey ! Str {
 }
 
 fn parse_private_key(der: Bytes) -> PrivateKey ! crypto.KeyErr { parse_private(der).map_err(fn(m) { key_err(m) }) }
+
+// ---------------------------------------------------------------------------
+// Signatures (crypto/rsa, crypto/ecdsa, crypto/ed25519 of go1.26; decision
+// 0285)
+
+/// The DigestInfo prefix of a hash (crypto/internal/fips140/rsa
+/// hashPrefixes).
+fn digest_info(h: crypto.Hash) -> Bytes {
+  let hex = match h {
+    Md5 => "3020300c06082a864886f70d020505000410"
+    Sha1 => "3021300906052b0e03021a05000414"
+    Sha224 => "302d300d06096086480165030402040500041c"
+    Sha256 => "3031300d060960864801650304020105000420"
+    Sha384 => "3041300d060960864801650304020205000430"
+    Sha512 => "3051300d060960864801650304020305000440"
+    Sha3_256 => "3031300d060960864801650304020805000420"
+    Sha3_512 => "3051300d060960864801650304020a05000440"
+  }
+  Bytes.from_hex(hex) ?? b""
+}
+
+/// Go's public key checks before an RSA operation (checkPublicKeySize,
+/// then fips140/rsa checkPublicKey): "" or the error.
+fn rsa_public_err(n: Bytes, e: Int) -> Str {
+  let bits = bits_of(n)
+  if bits < 1024 {
+    return "crypto/rsa: ${bits}-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)"
+  }
+  if (Int(n[n.len() - 1]) & 1) == 0 {
+    return "crypto/rsa: public modulus is even"
+  }
+  if e < 2 {
+    return "crypto/rsa: public exponent too small or negative"
+  }
+  if (e & 1) == 0 {
+    return "crypto/rsa: public exponent is even"
+  }
+  if e > 2147483647 {
+    return "crypto/rsa: public exponent too large"
+  }
+  ""
+}
+
+fn rsa_pub(k: PublicKey) -> rsa.PublicKey { rsa.PublicKey{n: k.n, e: k.e} }
+
+fn is_ecdsa(a: crypto.KeyAlg) -> Bool { a is EcdsaP224 | EcdsaP256 | EcdsaP384 | EcdsaP521 }
+
+fn verify(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
+  match k.kind {
+    Rsa => rsa_public_err(k.n, k.e).is_empty() && rsa.verify_pkcs1_prefix(rsa_pub(k), digest_info(h), digest(h, msg), sig)
+    Ed25519 => ed25519.verify(k.key, msg, sig)
+    _ => nistec.verify(nist_curve(k.kind), k.key, digest(h, msg), sig)
+  }
+}
+
+fn verify_pss(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
+  if k.kind != crypto.KeyAlg.Rsa || !rsa_public_err(k.n, k.e).is_empty() {
+    return false
+  }
+  rsa.verify_pss_fn(rsa_pub(k), h.size(), fn(b) { digest(h, b) }, digest(h, msg), sig, -1)
+}
+
+/// r || s (each the curve's size) as DER.
+fn raw_to_der(sig: Bytes, size: Int) -> Bytes? {
+  if sig.len() != 2 * size {
+    return None
+  }
+  Some(asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc_uint(sig[0..size]), asn1.enc_uint(sig[size..])])))
+}
+
+fn verify_raw_ecdsa(k: PublicKey, h: crypto.Hash, msg: Bytes, sig: Bytes) -> Bool {
+  if !is_ecdsa(k.kind) {
+    return false
+  }
+  match raw_to_der(sig, nistec.size(nist_curve(k.kind))) {
+    Some(der) => nistec.verify(nist_curve(k.kind), k.key, digest(h, msg), der)
+    None => false
+  }
+}
+
+fn sign(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  let z = if is_ecdsa(k.kind) { r.bytes(nistec.size(nist_curve(k.kind))) } else { b"" }
+  sign_z(k, h, msg, z)
+}
+
+/// sign with the ECDSA nonce's entropy z (size(curve) bytes).
+fn sign_z(k: PrivateKey, h: crypto.Hash, msg: Bytes, z: Bytes) -> Bytes ! crypto.KeyErr {
+  match k.kind {
+    Rsa => {
+      let e = rsa_public_err(k.rsa.n, k.rsa.e)
+      if !e.is_empty() {
+        return Err(key_err(e))
+      }
+      let s = rsa.sign_pkcs1_prefix(k.rsa, digest_info(h), digest(h, msg))
+      if s.is_empty() {
+        return Err(key_err("crypto/rsa: message too long for RSA key size"))
+      }
+      s
+    }
+    Ed25519 => ed25519.sign(k.d, msg)
+    _ => {
+      nistec.sign_hedged(nist_curve(k.kind), k.d, digest(h, msg), z)
+    }
+  }
+}
+
+fn sign_pss(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand { sign_pss_with(k, h, msg, r.bytes(h.size())) }
+
+/// sign_pss with the salt.
+fn sign_pss_with(k: PrivateKey, h: crypto.Hash, msg: Bytes, salt: Bytes) -> Bytes ! crypto.KeyErr {
+  if k.kind != crypto.KeyAlg.Rsa {
+    return Err(key_err("crypto: sign_pss needs an RSA key"))
+  }
+  let e = rsa_public_err(k.rsa.n, k.rsa.e)
+  if !e.is_empty() {
+    return Err(key_err(e))
+  }
+  let s = rsa.sign_pss_fn(k.rsa, h.size(), fn(b) { digest(h, b) }, digest(h, msg), salt)
+  if s.is_empty() {
+    return Err(key_err("crypto/rsa: message too long for RSA key size"))
+  }
+  s
+}
+
+/// The fixed size r || s of a DER ECDSA signature.
+fn der_to_raw(der: Bytes, size: Int) -> Bytes {
+  let t = asn1.read(der, 0, der.len())
+  let rt0 = asn1.read(der, t.lo, t.hi)
+  let st = asn1.read(der, rt0.next, t.hi)
+  let rb = asn1.uint_bytes(der, rt0) ?? b""
+  let sb = asn1.uint_bytes(der, st) ?? b""
+  var out = BytesBuilder.with_capacity(2 * size)
+  for part in [rb, sb] {
+    let m = if part.len() > 1 && part[0] == 0 { part[1..] } else { part }
+    for _ in 0..size - m.len() {
+      out.write_byte(0)
+    }
+    out.write(m)
+  }
+  out.freeze()
+}
+
+fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes ! crypto.KeyErr uses rand {
+  if !is_ecdsa(k.kind) {
+    return Err(key_err("crypto: sign_raw_ecdsa needs an ECDSA key"))
+  }
+  let der = sign(r, k, h, msg)?
+  der_to_raw(der, nistec.size(nist_curve(k.kind)))
+}
+
+fn generate_key(r: Rand, alg: crypto.KeyAlg) -> PrivateKey ! crypto.KeyErr uses rand {
+  match alg {
+    Rsa => Err(key_err("crypto: RSA key generation is not available yet (decision 0285)"))
+    Ed25519 => {
+      let seed = r.bytes(32)
+      PrivateKey{kind: alg, rsa: no_rsa(), d: seed, public: PublicKey{kind: alg, n: b"", e: 0, key: ed25519.public_key(seed)}}
+    }
+    _ => {
+      // Go's randomPoint: size(curve) bytes until a scalar in [1, n),
+      // P-521's shifted right by 7 bits
+      let c = nist_curve(alg)
+      while {
+        let b0 = r.bytes(nistec.size(c))
+        let b = if c == nistec.P521 { nist_shift7(b0) } else { b0 }
+        let p = nistec.public_key(c, b)
+        if !p.is_empty() {
+          return PrivateKey{kind: alg, rsa: no_rsa(), d: b, public: PublicKey{kind: alg, n: b"", e: 0, key: p}}
+        }
+      }
+      Err(key_err("unreachable"))
+    }
+  }
+}
+
+fn nist_shift7(b: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len())
+  for i in 0..b.len() {
+    let hi = if i > 0 { (Int(b[i - 1]) << 1) & 255 } else { 0 }
+    out.write_byte(UInt8((Int(b[i]) >> 7) | hi))
+  }
+  out.freeze()
+}
