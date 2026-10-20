@@ -51,6 +51,14 @@ fn routes() -> http.Router {
   r.handle("GET /hello", fn(req) { http.text(200, "hello, scheme \"${req.url.scheme}\"") })
   r.handle("POST /echo", fn(req) { http.text(200, "echo: ${req.body.to_str() ?? "?"}") })
   r.handle("GET /big", fn(_req) { http.text(200, "x".repeat(100000)) })
+  // a repeated query key and a form over HTTP/2 (h2srv's raw query, decision 0279)
+  r.handle("GET /q", fn(req) { http.text(200, "q=${req.query_all("q").join("|")} proto ok") })
+  r.handle("POST /form", fn(req) {
+    match req.form() {
+      Ok(f) => http.text(200, "form a=${f.all("a").join("|")} b=${f.get("b") ?? "-"}")
+      Err(e) => http.text(400, "${e}")
+    }
+  })
   r.handle("GET /moved", fn(_req) { http.empty(302).with_header("Location", "/hello") })
   // a gzip body over HTTP/2 (gotcha native-http-client-gzip-body)
   r.handle("GET /gzip", fn(_req) { http.Response{status: 200, headers: {"Content-Encoding": "gzip"}, body: archive.gzip("decoded over tls".bytes())} })
@@ -126,6 +134,8 @@ fn main(os: Os) {
     show(os, "hello", addrs, c.get(base + "/hello"))
     show(os, "echo", addrs, c.send(http.new_request("POST", base + "/echo", {}, "over tls".bytes())))
     show(os, "big", addrs, c.get(base + "/big"))
+    show(os, "query", addrs, c.get(base + "/q?q=2&q=1&x=0&q=3"))
+    show(os, "form", addrs, c.send(http.new_request("POST", base + "/form", {"Content-Type": "application/x-www-form-urlencoded"}, "a=1&b=two+words&a=2".bytes())))
     show(os, "moved", addrs, c.get(base + "/moved"))
     match c.get(base + "/gzip") {
       Ok(resp) => os.stdio.println("gzip: ${resp.status} encoding=${resp.header("Content-Encoding") ?? "-"} ${resp.text() ?? "?"}")

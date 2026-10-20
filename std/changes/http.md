@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-20: fix: the client sends a URL's query as given
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: net/http/client.go, net/url URL.RawQuery (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_form (repeated keys and their order); internal/llvm/testdata/golden/http_tls (HTTP/2)
+
+The client rebuilt a request's query from `url.query`, a map holding one
+value per key, so `client.get("http://h/s?q=a&q=b")` sent only `q=a`. It
+now sends the query as given unless `url.query` was changed.
+
 ## 2026-10-20: feature: Request.form and Request.query_all
 
 - Kind: feature

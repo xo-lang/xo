@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 "a b&c=d/é~": query "a+b%26c%3Dd%2F%C3%A9~" path "a%20b&c=d%2F%C3%A9~"
 "100%": query "100%25" path "100%25"
 "x+y": query "x%2By" path "x+y"
@@ -15,3 +17,4 @@ after q=one has lang false
 "a=1;b=2" error invalid semicolon separator in query
 "k=%zz" error invalid URL escape "%zz"
 "&&e=&" keys e encode "e="
+--- stderr

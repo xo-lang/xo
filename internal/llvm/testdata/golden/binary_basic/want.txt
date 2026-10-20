@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 0: be 0000 00000000 0000000000000000 le 0000000000000000 uvarint 00 varint 00
 1: be 0001 00000001 0000000000000001 le 0100000000000000 uvarint 01 varint 02
 258: be 0102 00000102 0000000000000102 le 0201000000000000 uvarint 8202 varint 8404
@@ -14,3 +16,4 @@ ac02: uvarint Some((300, 2)) varint Some((150, 2))
 ffffffffffffffffff01: uvarint Some((-1, 10)) varint Some((-9223372036854775808, 10))
 ffffffffffffffffff02: uvarint None varint None
 03: uvarint Some((3, 1)) varint Some((-2, 1))
+--- stderr

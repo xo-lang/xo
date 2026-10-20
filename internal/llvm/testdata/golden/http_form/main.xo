@@ -1,6 +1,7 @@
 // Request.form and query_all (decision 0279) through a router, in
-// process and from a raw HTTP/1.1 request over a real connection (the
-// server keeps the raw query), the same on every backend.
+// process, from a raw HTTP/1.1 request over a real connection (the
+// server keeps the raw query), and from the client (which sends the raw
+// query as given), the same on every backend.
 use std/http
 
 struct BadForm {
@@ -52,6 +53,13 @@ fn main(os: Os) ! {
     s.spawn_background(fn() -> () ! http.HttpErr { http.server(l, r).serve()? })
     os.stdio.println(raw(os.net, addr, "GET /search?q=a&q=b&q=c HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")?)
     os.stdio.println(raw(os.net, addr, "POST /login HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 11\r\n\r\ntag=x&tag=y")?)
+    // the client sends the raw query as given (Go's URL.RawQuery): repeated
+    // keys and their order survive; a request whose url.query was changed
+    // sends the changed map
+    let c = http.client(os.net)
+    os.stdio.println(c.get("http://${addr}/search?q=b&q=a&q=c&z=1")?.text() ?? "?")
+    let req = http.new_request("GET", "http://${addr}/search?q=old&q=older")
+    os.stdio.println(c.send(req with {url: req.url with {query: {"q": "new"}}})?.text() ?? "?")
     s.cancel()
   }
 }

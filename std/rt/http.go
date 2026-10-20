@@ -870,7 +870,7 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 	if tk.Canceled() {
 		return Err[Http_Response](clientErr(5, ""))
 	}
-	rawURL := urlString(req.F_url)
+	rawURL := requestURLString(req)
 	if req.F_url.F_scheme == "" || req.F_url.F_host == "" {
 		return Err[Http_Response](clientErr(1, "absolute URL required: "+rawURL))
 	}
@@ -886,6 +886,23 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 		return r
 	}
 	return fx(tk, "http.send", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_Response, Http_ClientErr] { return c.send(tk, req, rawURL) })
+}
+
+// requestURLString is the request's URL with its raw query as given (Go's
+// Client sends URL.RawQuery verbatim) while url.query still says what it
+// does, else urlString's query built from url.query.
+func requestURLString(req Http_Request) string {
+	if req.XRawQuery == "" {
+		return urlString(req.F_url)
+	}
+	pu := &url.URL{RawQuery: req.XRawQuery}
+	want := urlOf(nil, pu).F_query
+	if !EqAny(want, req.F_url.F_query) {
+		return urlString(req.F_url)
+	}
+	u := req.F_url
+	u.F_query = Map[string, string]{}
+	return urlString(u) + "?" + req.XRawQuery
 }
 
 // urlString renders a parsed URL.

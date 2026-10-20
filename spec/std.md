@@ -1096,7 +1096,8 @@ is skipped). `form()` (decision 0279) is Go's `PostForm`: the body of a
 POST, PUT, or PATCH whose `Content-Type` media type (before any `;`,
 without case) is `application/x-www-form-urlencoded`, parsed with
 `url.parse_query`; any other request gives empty `Values`, and a bad
-escape or `;` is `EscapeErr`. Its size is the body's, which the server
+escape or `;` is `EscapeErr` with no values (Go's `ParseForm` keeps the
+pairs parsed around the error; Xo returns the error alone). Its size is the body's, which the server
 already limits (`XO_HTTP_MAX_BODY`, 4.6). Media type parameters are not
 checked (Go's `mime.ParseMediaType` rejects some, such as an empty
 `boundary=`). A request built as a struct literal has no raw query:
@@ -1151,7 +1152,9 @@ struct UrlErr { msg: Str }
 ```
 
 Any HTTP status is a successful `Response`; only transport failures are
-`ClientErr`. The client does not retry. It follows up to 10 redirects for
+`ClientErr`. A request's query is sent as it was given (Go's `URL.RawQuery`:
+repeated keys and their order kept) unless its `url.query` was changed,
+then as `url.query` builds it. The client does not retry. It follows up to 10 redirects for
 `GET` and `HEAD`. `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An
 `https` URL is requested over TLS (4.6).

@@ -1,6 +1,11 @@
+exit 0
+--- stdout
 user=ann lee tags=a,b&c keys=user,tag
 user=- tags= keys=
 q=1 all=1|two words|€
 400 {"error":"invalid URL escape \"%zz\""}
 q=a all=a|b|c
 user=- tags=x,y keys=tag
+q=b all=b|a|c
+q=new all=new
+--- stderr

@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 base64 Std: +/+/YW55IGNhcm5hbCBwbGVhcw== back true
 base64 Url: -_-_YW55IGNhcm5hbCBwbGVhcw== back true
 base64 RawStd: +/+/YW55IGNhcm5hbCBwbGVhcw back true
@@ -20,3 +22,4 @@ decode32 "MZXW6": illegal base32 data at input byte 0
 decode32 "MZXW6==": illegal base32 data at input byte 7
 decode32 "MY======X": 66
 decode32 "mzxw6===": illegal base32 data at input byte 0
+--- stderr

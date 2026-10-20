@@ -10,6 +10,8 @@ empty: Io(msg: "http: with_tls needs a certificate")
 hello: 200 hello, scheme ""
 echo: 200 echo: over tls
 big: 200 (100000 bytes)
+query: 200 q=2|1|3 proto ok
+form: 200 form a=1|2 b=two words
 moved: 200 hello, scheme ""
 gzip: 200 encoding=- decoded over tls
 system roots: Protocol

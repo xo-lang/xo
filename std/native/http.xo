@@ -896,6 +896,28 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> http.Response ! http.Client
   c.send(new_request("POST", url, {"Content-Type": "application/json"}, js.encode(v)))
 }
 
+/// The query map raw parses to: each key's first value (parse_url_loose's).
+fn query_map(raw: Str) -> Map[Str, Str] {
+  var m: Map[Str, Str] = {}
+  let q = http1.query_parts(raw)
+  var i = 0
+  while i + 1 < q.len() {
+    m.put(q[i], q[i + 1])
+    i += 2
+  }
+  m
+}
+
+/// The text of a request's URL: its raw query as given (Go's Client sends
+/// URL.RawQuery verbatim, so repeated keys and their order survive) while
+/// url.query still says what it does, else the query built from url.query.
+fn request_url_string(req: Request) -> Str {
+  if req.raw_query.is_empty() || query_map(req.raw_query) != req.url.query {
+    return url_string(req.url)
+  }
+  url_string(req.url with {query: {}}) + "?" + req.raw_query
+}
+
 /// The text of a URL (std/rt's urlString).
 fn url_string(u: http.Url) -> Str {
   var s = ""
@@ -925,7 +947,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
   }
-  let raw = url_string(req.url)
+  let raw = request_url_string(req)
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
   }
