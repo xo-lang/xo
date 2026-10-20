@@ -1,0 +1,60 @@
+// rootpark (decision 0286 step 0; Xo Publish's repro): the loop task, which main's join runs inline on the
+// root thread, gets a tick every 20 ms from a ticker task while a worker
+// task computes jobs with no runtime calls, and prints how late the ticks
+// arrived. Before step 0 the root ran the job itself while the loop task
+// was parked, so a tick waited for the whole job.
+
+fn spin(n: Int) -> Int {
+  var x = 1
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    i += 1
+  }
+  x
+}
+
+fn main(os: Os) uses (stdio, clock) {
+  // None: a job is done
+  let events: Chan[Time?] = Chan.new(16)
+  let jobs: Chan[Int] = Chan.new(1)
+  scope sc {
+    sc.spawn_background(fn() {
+      for n in jobs {
+        let _ = spin(n)
+        events.send(None)
+      }
+    })
+    sc.spawn_background(fn() {
+      while {
+        os.clock.sleep(20ms)
+        events.send(Some(os.clock.now()))
+      }
+    })
+    let lp = sc.spawn(fn() {
+      var worst = 0
+      var late = 0
+      var n = 0
+      for _ in 0..2 {
+        jobs.send(200000000)
+        while {
+          match events.recv() {
+            Some(Some(t)) => {
+              let ms = os.clock.since(t).millis()
+              if ms > worst {
+                worst = ms
+              }
+              if ms > 10 {
+                late += 1
+              }
+              n += 1
+            }
+            _ => break
+          }
+        }
+      }
+      os.stdio.println("ticks over 10 ms late: ${late} of ${n}, worst ${worst} ms")
+    })
+    lp.await
+  }
+}

@@ -1,0 +1,69 @@
+// acceptbusy (decision 0286 step 0): an HTTP server serves from main's
+// body (its accept loop runs inline on the root thread) while two
+// handlers compute about 250 ms with no runtime calls; a client then times
+// a request for a small answer, three rounds, and prints the worst. Before
+// step 0 the root ran a computing handler itself while the accept loop was
+// parked, so the small request waited for it.
+use std/http
+
+fn spin(n: Int) -> Int {
+  var x = 12345
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    i += 1
+  }
+  x
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /fast", fn(_req) { http.text(200, "ok") })
+  r.handle("GET /cpu", fn(_req) { http.text(200, "${spin(200000000)}") })
+  r
+}
+
+fn client(os: Os, addr: Str) uses (stdio, net.dial, clock, proc) {
+  let c = http.client(os.net, timeout: 30s)
+  var worst = 0
+  for _ in 0..3 {
+    scope sc {
+      for _ in 0..2 {
+        sc.spawn(fn() {
+          let _ = c.get("http://${addr}/cpu").ignore_err("the load only")
+        })
+      }
+      // the handlers start computing
+      os.clock.sleep(30ms)
+      let t0 = os.clock.now()
+      match c.get("http://${addr}/fast") {
+        Ok(_) => {
+          let ms = os.clock.since(t0).millis()
+          if ms > worst {
+            worst = ms
+          }
+        }
+        Err(e) => os.stdio.println("fast: ${e}")
+      }
+    }
+  }
+  os.stdio.println("fast request worst ${worst} ms (busy)")
+  os.proc.exit(0)
+}
+
+fn main(os: Os) uses (stdio, net, clock, proc) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let addr = srv.addr()
+      scope sc {
+        sc.spawn_background(fn() { client(os, addr) })
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve: ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+}

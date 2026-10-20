@@ -1479,9 +1479,13 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
     unlock(p)
     var it = 0
     if rw != 0 {
-      it = find_work(pl, rw, 0)
-      if it == 0 {
-        it = steal_round(pl, rw, 0)
+      if root_hand_off(pl, rw) {
+        it = root_next(rw)
+      } else {
+        it = find_work(pl, rw, 0)
+        if it == 0 {
+          it = steal_round(pl, rw, 0)
+        }
       }
     }
     if it != 0 {
@@ -1533,6 +1537,40 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
   if cancelable != 0 {
     node_set_waiter(node, 0)
   }
+}
+
+/// Whether root record rw, parked with a task that runs on its own stack
+/// (main's body, or a task a join runs inline: it cannot move to another
+/// thread), leaves the work queued for anyone to the workers (decision
+/// 0286 step 0): when a worker is idle or can start, it wakes one for its
+/// ring and the inject queue and runs only its next item (root_next), the
+/// fiber its own task just woke (a channel's partner, which hands back in
+/// microseconds: a ping pong). Running the other work made the parked
+/// task's wake wait for the whole item: an 86 ms handler held an HTTP
+/// accept loop on the root while 10 workers were idle (found by Xo
+/// Publish). With every worker busy (or none) it helps as before
+/// (decision 0077).
+fn root_hand_off(p: Int, rw: Int) -> Bool {
+  if rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && rt.slot_load(p, P_ALIVE, SEQ_CST) >= rt.mem_load(p, P_NCPU, 8) {
+    return false
+  }
+  if rt.slot_load(p, P_ILEN, SEQ_CST) > 0 || rt.slot_load(rw, 0, SEQ_CST) != rt.slot_load(rw, RQ_TAIL, SEQ_CST) {
+    wakep(p)
+  }
+  true
+}
+
+/// The root's next item (0 for none), which its parked task woke.
+fn root_next(rw: Int) -> Int {
+  if rt.slot_load(rw, W_NEXT_I, RELAXED) == 0 {
+    return 0
+  }
+  let t = rt.slot_swap(rw, W_NEXT_I, 0, SEQ_CST)
+  if t != 0 && rt.slot_load(rw, W_DEFER_AT_W, RELAXED) != 0 {
+    // it runs its own work: no wake is owed
+    rt.slot_store(rw, W_DEFER_AT_W, 0, RELAXED)
+  }
+  t
 }
 
 // ---------------------------------------------------------------------------

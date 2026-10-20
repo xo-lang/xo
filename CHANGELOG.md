@@ -11,6 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   connection (Postgres's sslmode, SMTP STARTTLS, Redis). It verifies the
   certificate and host name by default; `Verify.ChainOnly` skips the
   name and `Verify.None` only encrypts (`xo vet` warns, XO0902).
+- A server whose handlers compute no longer stalls its accept loop: a
+  task running on main's thread (main's body, or a task its join runs)
+  no longer waits for work that thread took on while the task was parked,
+  when another worker is free to take it (decision 0286 step 0): HTTP
+  dial to response p99 with 8 computing clients 70 to 13 ms on a Mac.
 - `xo build --race --backend=arm64` on macOS: the arm64 backend checks
   races itself (decision 0273), with no clang: it calls
   ThreadSanitizer at the program's loads, stores, and atomics, and Xo's
