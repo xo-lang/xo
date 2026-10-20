@@ -103,6 +103,14 @@ fn parse_public_key(der: Bytes) -> PublicKey ! KeyErr
 fn marshal_public_key(k: PublicKey) -> Bytes
 fn (k: PublicKey) alg() -> KeyAlg
 
+/// A private key: Debug text `<privatekey>`, never key material.
+struct PrivateKey {}
+
+/// PKCS #8, PKCS #1, or SEC 1 EC DER, as Go's parsers tell them apart.
+fn parse_private_key(der: Bytes) -> PrivateKey ! KeyErr
+fn (k: PrivateKey) alg() -> KeyAlg
+fn (k: PrivateKey) public_key() -> PublicKey
+
 /// Every PEM block in text, in order (pem.Decode repeated on the rest);
 /// text outside blocks and malformed blocks are skipped.
 fn pem_decode(text: Str) -> List[PemBlock]

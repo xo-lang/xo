@@ -107,3 +107,72 @@ func Crypto_parse_public_key(_ *Task, der Bytes) Result[Crypto_PublicKey, Crypto
 }
 
 func Crypto_marshal_public_key(_ *Task, k Crypto_PublicKey) Bytes { return Bytes(k.der) }
+
+// Crypto_PrivateKey is `crypto.PrivateKey`: Go's key and its public key.
+// Debug never shows key material.
+type Crypto_PrivateKey struct {
+	k   any
+	pub Crypto_PublicKey
+}
+
+func (v Crypto_PrivateKey) XoEq(x any) bool {
+	o, ok := x.(Crypto_PrivateKey)
+	return ok && o.pub.der == v.pub.der
+}
+
+func (v Crypto_PrivateKey) XoHash() uint64 { return Hash(v.pub.der) }
+
+func (Crypto_PrivateKey) XoDebug(b *strings.Builder) { b.WriteString("<privatekey>") }
+
+func (v Crypto_PrivateKey) M_debug(*Task) string { return Debug(v) }
+
+func (v Crypto_PrivateKey) M_alg(tk *Task) Crypto_KeyAlg { return v.pub.M_alg(tk) }
+
+func (v Crypto_PrivateKey) M_public_key(*Task) Crypto_PublicKey { return v.pub }
+
+// Crypto_parse_private_key is x509.ParsePKCS8PrivateKey, following its
+// hints to ParsePKCS1PrivateKey and ParseECPrivateKey; encoding/asn1's
+// texts become `x509: malformed private key` (alone) or `malformed DER`
+// (after another message), X25519 keys PKCS #8's unknown algorithm, and
+// keys of more than two primes `crypto/rsa: multi-prime keys are not
+// supported`, as the native code says.
+func Crypto_parse_private_key(_ *Task, der Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr] {
+	b := []byte(der)
+	k, err := x509.ParsePKCS8PrivateKey(b)
+	if err != nil {
+		m := err.Error()
+		if strings.Contains(m, "use ParsePKCS1PrivateKey") {
+			k, err = x509.ParsePKCS1PrivateKey(b)
+		} else if strings.Contains(m, "use ParseECPrivateKey") {
+			k, err = x509.ParseECPrivateKey(b)
+		}
+	}
+	if err != nil {
+		m := err.Error()
+		if strings.HasPrefix(m, "asn1:") {
+			m = "x509: malformed private key"
+		} else if i := strings.Index(m, "asn1:"); i >= 0 {
+			m = m[:i] + "malformed DER"
+		}
+		return Err[Crypto_PrivateKey](keyErr(textOf(m)))
+	}
+	var pub any
+	switch x := k.(type) {
+	case *rsa.PrivateKey:
+		if len(x.Primes) > 2 {
+			return Err[Crypto_PrivateKey](keyErr("crypto/rsa: multi-prime keys are not supported"))
+		}
+		pub = &x.PublicKey
+	case *ecdsa.PrivateKey:
+		pub = &x.PublicKey
+	case ed25519.PrivateKey:
+		pub = x.Public()
+	default:
+		return Err[Crypto_PrivateKey](keyErr("x509: PKCS#8 wrapping contained private key with unknown algorithm: 1.3.101.110"))
+	}
+	m, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return Err[Crypto_PrivateKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: pub, der: string(m)}})
+}
