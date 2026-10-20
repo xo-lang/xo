@@ -2,12 +2,17 @@
 // (decision 0261 stage (a)): lookups for agents on `xo lsp`'s engine,
 // stateless (the directory checked from disk on each run, as a headless
 // Session) and JSON on standard output. A target is a position,
-// FILE:LINE:COL (1 based, the column in bytes), or a name: NAME, or
-// Type.member, matched against the declarations of the checked modules
-// (not std). Exit 0 with an answer, 1 when nothing matches or the program
-// does not check, 2 on a usage error.
+// FILE:LINE:COL (1 based, the column in bytes), or a name in any form code
+// writes it, resolved as `xo query def` resolves it (decision 0289): NAME,
+// Type.member, module.name, module.Type.member, an import's local name,
+// a module path (std/tls.client), a prelude method (Str.find), or a std
+// or runtime module the program does not import (tls.client,
+// pool.park_wait); a bare member name (check_dirs) matches the members of
+// the checked modules. Exit 0 with an answer, 1 when nothing matches or
+// the program does not check, 2 on a usage error.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/semantic
 
 /// Whether args (the command line after `xo`) is one of these commands:
 /// `xo doc` is one only with a name that is not a directory or an import
@@ -28,8 +33,16 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
       name = a
     }
   }
-  if name.is_empty() || name.contains("/") || name == "." {
+  if name.is_empty() || name == "." {
     return false
+  }
+  // a module path names a module (`xo doc std/tls`) unless its last
+  // segment names a declaration in it (`xo doc std/tls.client`)
+  if name.contains("/") {
+    let segs = name.split("/")
+    if !segs[segs.len() - 1].contains(".") {
+      return false
+    }
   }
   match os.fs.stat(name) {
     Ok(Some(_)) => false
@@ -37,11 +50,16 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
   }
 }
 
-/// A command's arguments: the target and --dir.
+/// A command's arguments: the target, --dir, and the output form
+/// (--json, --text; at a terminal text, else JSON, decision 0289).
 struct AgentArgs {
   target: Str
   dir: Str
   all: Bool
+  json: Bool = false
+  text: Bool = false
+  /// symbols: pub declarations only
+  pub_only: Bool = false
 }
 
 fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
@@ -50,9 +68,16 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
     if x.starts_with("--dir=") {
       a.dir = x.trim_prefix("--dir=")
     } else if x == "--all" {
+      // the default since decision 0289; kept for old command lines
       a.all = true
+    } else if x == "--pub" {
+      a.pub_only = true
     } else if x is "--json" | "-json" {
-      // JSON is the only output
+      a.json = true
+      a.text = false
+    } else if x is "--text" | "-text" {
+      a.text = true
+      a.json = false
     } else if x.starts_with("-") {
       return Err("xo ${cmd}: unknown flag ${x}")
     } else if a.target.is_empty() {
@@ -62,7 +87,7 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
     }
   }
   if a.target.is_empty() && cmd != "symbols" {
-    return Err("xo ${cmd}: usage: xo ${cmd} [--dir=DIR] NAME|FILE:LINE:COL")
+    return Err("xo ${cmd}: usage: xo ${cmd} [--dir=DIR] [--json|--text] NAME|FILE:LINE:COL")
   }
   Ok(a)
 }
@@ -84,33 +109,113 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   if let Some((file, _, _)) = position_of(a.target) {
     dir = dir_of(abs_of(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", file))
   }
-  var s = match agent_session(os, dir) {
+  // the std and runtime modules a name refers to load with the program
+  let preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
+  let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
+  var s = match agent_session(os, dir, preload) {
     Ok(x) => x
-    Err(e) => {
-      print_json(os, jobj(["error"], [jstr(e)]))
-      return 1
-    }
+    Err(e) => return fail(os, cmd, as_json, e)
   }
   let out = match cmd {
     "def" => s.agent_def(os, a.target, false)
     "doc" => s.agent_def(os, a.target, true)
     "refs" => s.agent_refs(os, a.target)
     "type" => s.agent_type(os, a.target)
-    _ => s.agent_symbols(os, a.all)
+    _ => s.agent_symbols(os, dir, a.pub_only)
   }
   match out {
     Ok(v) => {
-      print_json(os, v)
+      if as_json {
+        print_json(os, v)
+      } else {
+        os.stdio.print(agent_text(cmd, v))
+      }
       0
     }
-    Err(e) => {
-      print_json(os, jobj(["error"], [jstr(e)]))
-      1
-    }
+    Err(e) => fail(os, cmd, as_json, e)
   }
 }
 
 fn print_json(os: Os, v: J) uses stdio { os.stdio.println(encode(v, false)) }
+
+/// An error: {"error": ...} on standard output as JSON, else a line on
+/// standard error; exit status 1.
+fn fail(os: Os, cmd: Str, as_json: Bool, e: Str) -> Int uses stdio {
+  if as_json {
+    print_json(os, jobj(["error"], [jstr(e)]))
+  } else {
+    os.stdio.eprintln("xo ${cmd}: ${e}")
+  }
+  1
+}
+
+fn items_of(v: J, key: Str) -> List[J] {
+  match get(v, key) {
+    Some(J.Arr(items, _)) => items
+    _ => []
+  }
+}
+
+/// A declaration's text: `file:line:col: kind name`, its doc as `///`
+/// lines, and its signature (as `xo query def --text` writes one).
+fn decl_text(d: J, indent: Str) -> Str {
+  var b = StrBuilder.new()
+  let file = jstr_of(d, "file")
+  let at = if file.is_empty() { "" } else { "${file}:${int_of(get(d, "line"))}:${int_of(get(d, "col"))}: " }
+  b.write("${indent}${at}${jstr_of(d, "kind")} ${jstr_of(d, "name")}\n")
+  let doc = jstr_of(d, "doc")
+  if !doc.is_empty() {
+    for l in doc.trim_suffix("\n").split("\n") {
+      b.write("${indent}/// ${l}\n")
+    }
+  }
+  let sig = jstr_of(d, "signature")
+  if !sig.is_empty() {
+    for l in sig.split("\n") {
+      b.write("${indent}${l}\n")
+    }
+  }
+  b.freeze()
+}
+
+/// The text form of a command's JSON answer.
+fn agent_text(cmd: Str, v: J) -> Str {
+  var b = StrBuilder.new()
+  match cmd {
+    "def" | "doc" => {
+      for (i, d) in items_of(v, "declarations").indexed() {
+        if i > 0 {
+          b.write("\n")
+        }
+        b.write(decl_text(d, ""))
+        for m in items_of(d, "methods") {
+          b.write("\n")
+          b.write(decl_text(m, "  "))
+        }
+      }
+    }
+    "refs" => {
+      b.write(decl_text(get(v, "declaration") ?? J.Null, ""))
+      let refs = items_of(v, "references")
+      for r in refs {
+        let decl = match get(r, "declaration") {
+          Some(J.Bool(true)) => " (declaration)"
+          _ => ""
+        }
+        b.write("${jstr_of(r, "file")}:${int_of(get(r, "line"))}:${int_of(get(r, "col"))}${decl}\n")
+      }
+      b.write("${refs.len()} reference(s)\n")
+    }
+    "type" => b.write(decl_text(jobj(["kind", "name", "signature", "doc"], [get(v, "kind") ?? J.Null, get(v, "target") ?? J.Null, get(v, "signature") ?? J.Null, get(v, "doc") ?? J.Null]), ""))
+    _ => {
+      for d in items_of(v, "symbols") {
+        let sig = jstr_of(d, "signature").split("\n")[0]
+        b.write("${jstr_of(d, "file")}:${int_of(get(d, "line"))}: ${jstr_of(d, "kind")} ${jstr_of(d, "name")}  ${sig}\n")
+      }
+    }
+  }
+  b.freeze()
+}
 
 /// FILE:LINE:COL, when target is one.
 fn position_of(target: Str) -> (Str, Int, Int)? {
@@ -129,9 +234,9 @@ fn position_of(target: Str) -> (Str, Int, Int)? {
 
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open
 /// documents, with nothing written to standard output.
-fn agent_session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
+fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (stdio, fs, env) {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
-  var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true}
+  var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true, preload: preload}
   let d = abs_of(wd, dir)
   let entries = os.fs.read_dir(d).map_err(fn(e) { e.display() })?
   for fi in entries {
@@ -145,10 +250,18 @@ fn agent_session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
     }
   }
   if s.docs.is_empty() {
-    return Err("no .xo files in ${d}")
+    // a workspace or repository root: the modules under it, as `xo
+    // query` and `xo check` find them (decision 0289)
+    let v = check_view(os, s.std_dir, wd, {}, [d], preload)
+    if v.files.is_empty() && v.err.is_empty() {
+      return Err("no .xo files in or under ${d}")
+    }
+    s.use_view(v)
+    s.diags = v.diags
+  } else {
+    s.dirty = true
+    s.recheck(os)
   }
-  s.dirty = true
-  s.recheck(os)
   if !s.err.is_empty() {
     return Err(s.err)
   }
@@ -303,16 +416,49 @@ fn (var s: Session) at_position(os: Os, target: Str) -> Found ! Str {
 }
 
 /// The targets of a command: the identifier at a position, or the
-/// declarations of a name.
-fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str {
+/// declarations of a name: those `xo query def` resolves it to (one
+/// resolver for every tool, decision 0289), else the members of the
+/// checked modules whose qualified name ends with it.
+fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
   if position_of(target).is_some() {
     return Ok([s.at_position(os, target)?])
   }
-  let ds = s.declarations(target)
-  if ds.is_empty() {
-    return Err("no declaration named ${target}")
+  var out: List[Found] = []
+  let q = semantic.Session{c: s.res[0].c, wd: s.wd}
+  if let Ok(ds) = q.def(target) {
+    for d in ds {
+      if let Some(found) = s.found_at(d.pos.file, d.pos.line, d.pos.col) {
+        if !out.any(fn(x) { x.f == found.f && x.site.id.span.start.offset == found.site.id.span.start.offset }) {
+          out.push(found)
+        }
+      }
+    }
   }
-  Ok(ds)
+  if out.is_empty() {
+    out = s.declarations(target)
+  }
+  if out.is_empty() {
+    return Err("no declaration named ${target}${semantic.miss_hint(os, s.std_dir, target)}")
+  }
+  Ok(out)
+}
+
+/// The declaration whose name is at line:col of file (as the checker
+/// names it), if an identifier starts there.
+fn (var s: Session) found_at(file: Str, line: Int, col: Int) -> Found? {
+  let f = s.file_named(file)
+  if f < 0 {
+    return None
+  }
+  let off = offset_of(s.res[0].c.files[f].src, line, col)
+  for site in s.sites_of(f) {
+    if site.id.span.start.offset == off && !site.id.name.is_empty() {
+      let tg = s.resolve(f, site)
+      let name = s.target_name(tg)
+      return Some(Found{f: f, site: site, tg: tg, name: if name.is_empty() { check.text(site.id.name) } else { name }})
+    }
+  }
+  None
 }
 
 /// The JSON of a target's declaration: name, kind, signature, doc, and
@@ -368,8 +514,11 @@ fn (var s: Session) agent_refs(os: Os, target: Str) -> J ! Str {
   if tg.obj.is_empty() && tg.def_file.is_empty() {
     return Err("${target}: nothing to find references of")
   }
+  // a std declaration's uses are in std (other std modules, the prelude)
+  let df = s.file_named(tg.def_file)
+  let in_std = df >= 0 && s.res[0].c.files[df].module >= 0 && s.res[0].c.mods[s.res[0].c.files[df].module].is_std
   var refs: List[J] = []
-  for (f, r) in s.refs(tg) {
+  for (f, r) in s.refs_in(tg, in_std) {
     let sp = r.id.span
     let (k, v) = s.loc_json(f, sp.start.offset, sp.end.offset)
     let decl = s.res[0].c.files[f].path == tg.def_file && sp.start.offset == tg.def_start && sp.end.offset == tg.def_end
@@ -388,12 +537,16 @@ fn (var s: Session) agent_type(os: Os, target: Str) -> J ! Str {
   Ok(jobj(["target", "kind", "signature", "doc", "declaration"], [jstr(target), jstr(found.tg.what), jstr(sig), jstr(doc), s.decl_json(found)]))
 }
 
-/// `xo symbols [MODULE]`: the declarations of the checked module, pub
-/// ones only unless all.
-fn (var s: Session) agent_symbols(os: Os, all: Bool) -> J ! Str {
+/// `xo symbols [DIR]`: the declarations of the files of dir (not of the
+/// modules it imports), private ones too unless pub_only (decision 0289).
+fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool) -> J ! Str {
   let c = s.res[0].c
+  let d = abs_of(s.wd, dir)
   var out: List[J] = []
   for f in s.user_files() {
+    if dir_of(abs_of(s.wd, c.files[f].path)) != d {
+      continue
+    }
     for site in s.sites_of(f) {
       if site.id.name.is_empty() {
         continue
@@ -407,7 +560,7 @@ fn (var s: Session) agent_symbols(os: Os, all: Bool) -> J ! Str {
       if name.is_empty() {
         continue
       }
-      if !all && !c.objs[tg.oi].is_pub {
+      if pub_only && !c.objs[tg.oi].is_pub {
         continue
       }
       out.push(s.decl_json(Found{f: f, site: site, tg: tg, name: name}))

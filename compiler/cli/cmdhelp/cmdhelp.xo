@@ -324,13 +324,17 @@ are listed); 2 on usage errors. Default: .
 
 fn vet_text() -> Str {
   """
-usage: xo vet [--json] [dirs...]
+usage: xo vet [--json] [dirs or .xo files...]
 
 Advisory checks (never errors, exit 0): the warnings of check, unused
 declared effects (XO0703), x ?? [].f() precedence traps (XO0207), every
 .ignore_err reason (XO0208), use go packages and functions that perform
 go per module (XO1103), dbg(...) left in code (XO0901), tls.Verify.None
 (XO0902). Default: .
+
+A .xo file vets its directory and reports that file's findings. A
+directory of std (std, std/native, std/native/llrt) or a file in one is
+checked as std, its modules together.
 """
 }
 
@@ -351,8 +355,13 @@ kinds:
                            pkg.name, or <package path>.name): local names erased,
                            referenced definitions by their hashes (core 4.3)
 
---dir (default .) is the directory checked. JSON is the default when stdout
-is not a terminal.
+--dir (default .; for type, the file's directory) is the directory
+checked; a workspace or repository root checks the modules under it. A name
+is resolved in any form code writes it (decision 0289): name, Type.member,
+module.name, module.Type.member, an import's local name, main.name, a module
+path, a prelude method (Str.find), or a std or runtime module the program
+does not import (tls.client, pool.park_wait). Flags may come anywhere. JSON
+is the default when stdout is not a terminal.
 """
 }
 

@@ -381,6 +381,9 @@ struct Session {
   keys: Map[Str, Int] = {}
   /// a headless session (agent.xo's commands): no notifications written
   quiet: Bool = false
+  /// std and runtime modules to load with the program (agent.xo: those
+  /// the looked up name refers to, semantic.preloads_for)
+  preload: List[Str] = []
   /// the texts the published diagnostics' positions are in
   dfiles: Map[Str, Bytes] = {}
   /// `xo lsp` (run_lsp) checks each open directory on its own, in a
@@ -469,12 +472,13 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
 
 /// check_view: checks the modules of dirs with the open texts as the
 /// overlay. It reads no Session, so the server's worker task runs it.
-fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str]) -> View uses (fs, env) {
+fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str]) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
   }
   var c = new_lsp_checker(os, std_dir, wd, overlay)
+  c.preload = preload
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {
@@ -515,7 +519,7 @@ fn (var s: Session) use_view(v: View) {
 /// diagnostics.
 fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
   let overlay = s.overlay()
-  let v = check_view(os, s.std_dir, s.wd, overlay, dirs_of(overlay))
+  let v = check_view(os, s.std_dir, s.wd, overlay, dirs_of(overlay), s.preload)
   s.use_view(v)
   s.diags = v.diags
   s.dfiles = v.files
@@ -1179,7 +1183,7 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
         if j.patched {
           events.send(Ev.Patched(Pre{path: j.path, text: j.text, res: patched_check(os, std, wd, j.overlay, j.dirs, j.path)}))
         } else {
-          events.send(Ev.Checked(key: j.key, gen: j.gen, v: check_view(os, std, wd, j.overlay, j.dirs)))
+          events.send(Ev.Checked(key: j.key, gen: j.gen, v: check_view(os, std, wd, j.overlay, j.dirs, [])))
         }
       }
     })

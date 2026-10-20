@@ -30,6 +30,8 @@ func TestEditCLI(t *testing.T) {
 		{"change-sig", []string{"change-sig", "load", "(id: Int, step: Int = 1) -> Int"}, 0, "fn load(id: Int, step: Int = 1) -> Int"},
 		{"rejected", []string{"change-sig", "load", "(id: Int, step: Int) -> Int"}, 1, `"ok": false`},
 		{"dry run", []string{"--dry-run", "rename", "load", "fetch"}, 0, `"written": false`},
+		// a dry run shows its changes as a diff (decision 0289)
+		{"dry run diff", []string{"--dry-run", "rename", "load", "fetch"}, 0, `\n+fn fetch(id: Int) -> Int {\n`},
 		{"unknown op", []string{"bogus"}, 2, ""},
 		{"unknown name", []string{"rename", "nosuch", "x"}, 2, ""},
 	}
@@ -45,7 +47,8 @@ func TestEditCLI(t *testing.T) {
 				return
 			}
 			got := out.String()
-			if code == 0 && !strings.Contains(c.want, `"`) {
+			// a dry run's answer is its summary; otherwise the edited file
+			if code == 0 && !strings.Contains(c.want, `"`) && c.args[0] != "--dry-run" {
 				b, _ := os.ReadFile(filepath.Join(dir, "main.xo"))
 				got = string(b)
 				var res map[string]any

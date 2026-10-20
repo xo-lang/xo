@@ -148,12 +148,16 @@ fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, en
 
 /// refs: every identifier of the user files that names what tg names, by
 /// file key, in walk order.
-fn (var s: Session) refs(tg: LspTarget) -> List[(Int, Site)] {
+fn (var s: Session) refs(tg: LspTarget) -> List[(Int, Site)] { s.refs_in(tg, false) }
+
+/// refs, in the std modules' files too when with_std (`xo refs` of a std
+/// declaration, decision 0289).
+fn (var s: Session) refs_in(tg: LspTarget, with_std: Bool) -> List[(Int, Site)] {
   let c = s.res[0].c
   var paths: List[(Str, Int)] = []
   for (p, f) in s.keys {
     let m = c.files[f].module
-    if m >= 0 && !c.mods[m].is_std {
+    if m >= 0 && (with_std || !c.mods[m].is_std) {
       paths.push((p, f))
     }
   }

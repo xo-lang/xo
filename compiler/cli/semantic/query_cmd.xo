@@ -12,28 +12,32 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     os.stdio.eprint(query_usage())
     return 2
   }
-  let kind = args[0]
-  if kind.starts_with("-") && kind != "-" {
-    // a flag before the kind
-    os.stdio.eprint("xo query: want the kind before the flags, got ${kind}\n\n${query_usage()}")
-    return 2
-  }
+  // flags anywhere: before the kind, between, or after (decision 0289)
   var as_json = !os.stdio.stdout_is_tty()
   var dir = "."
+  var dir_set = false
+  var kind = ""
   var rest: List[Str] = []
-  for a in args[1..] {
+  for a in args {
     if a == "--json" || a == "-json" {
       as_json = true
     } else if a == "--text" || a == "-text" {
       as_json = false
     } else if a.starts_with("--dir=") {
       dir = a.trim_prefix("--dir=")
+      dir_set = true
     } else if a.starts_with("-") && a != "-" {
       os.stdio.eprint("xo query: unknown flag ${a}\n\n${query_usage()}")
       return 2
+    } else if kind.is_empty() {
+      kind = a
     } else {
       rest.push(a)
     }
+  }
+  if kind.is_empty() {
+    os.stdio.eprint(query_usage())
+    return 2
   }
   let want = if kind == "holes" { 0 } else { 1 }
   if rest.len() != want {
@@ -56,7 +60,10 @@ fn run_query(os: Os, args: List[Str]) -> Int {
         return 2
       }
     }
-    if !within(wd_of(os), file, dir) {
+    if !dir_set {
+      // the file's own directory, wherever the command runs
+      dirs = [dir_of(file)]
+    } else if !within(wd_of(os), file, dir) {
       dirs.push(dir_of(file))
     }
   }

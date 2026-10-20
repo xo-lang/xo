@@ -15,10 +15,24 @@ pub struct Session {
 /// their workspace unless exact (query.LoadExact). overlay replaces the
 /// sources of files by absolute path (check.CheckOverlay).
 pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses env, fs, proc {
+  load_session_for(os, dirs0, exact, overlay, [], false)
+}
+
+/// load_session with the std and runtime modules names refer to loaded
+/// too, imported or not (preloads_for), so a lookup of `tls.client` or
+/// `pool.park_wait` finds them.
+pub fn load_session_for(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool) -> Session ! Str uses env, fs, proc {
   let wd = wd_of(os)
-  var c = check.new_checker(os.fs, std_dir_of(os))
-  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  let std = std_dir_of(os)
+  var c = check.new_checker(os.fs, std)
+  for n in names {
+    for p in if wide { preloads_wide(os, std, n) } else { preloads_for(os, std, n) } {
+      if !c.preload.contains(p) {
+        c.preload.push(p)
+      }
+    }
+  }
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
   c.set_overlay(overlay)
@@ -28,6 +42,128 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
     return Err("the self hosted checker cannot check this program: ${c.unsupported}")
   }
   Ok(Session{c: c, wd: wd})
+}
+
+/// The std and runtime modules a name may refer to (decision 0289): the
+/// module of its import path (`std/tls.client`, `native/llrt/pool.f`), or
+/// the std module and the runtime module named by its first segment
+/// (`tls.client`, `pool.park_wait`), those std has a file for.
+pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
+  var cands: List[Str] = []
+  if let Some(i) = last_index(name, "/") {
+    let tail = name[i..]
+    let p = name[0..i + (tail.find(".") ?? tail.len())]
+    if p.starts_with("std/") || p.starts_with("native/llrt/") {
+      cands.push(p)
+    }
+  } else {
+    let first = name.split(".")[0]
+    if !first.is_empty() {
+      cands = ["std/${first}", "native/llrt/${first}"]
+    }
+  }
+  var out: List[Str] = []
+  for p in cands {
+    let file = if p.starts_with("std/") { "${std_dir}/${p.trim_prefix("std/")}.xo" } else { "${std_dir}/${p}.xo" }
+    if let Ok(Some(_)) = os.fs.stat(file) {
+      out.push(p)
+    }
+  }
+  out
+}
+
+/// preloads_for, widened for references and callers: with a std module,
+/// every std module; with a runtime module, every runtime module (their
+/// uses are in the other modules of the same tree, tasks.xo's call of
+/// pool.park_wait).
+pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  for p in preloads_for(os, std_dir, name) {
+    let (sub, prefix) = if p.starts_with("native/llrt/") { ("native/llrt/", "native/llrt/") } else { ("", "std/") }
+    if let Ok(es) = os.fs.read_dir("${std_dir}/${sub}") {
+      for fi in es {
+        if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") || fi.name.ends_with("_c.xo") {
+          continue
+        }
+        let q = "${prefix}${fi.name.trim_suffix(".xo")}"
+        if !out.contains(q) {
+          out.push(q)
+        }
+      }
+    }
+  }
+  out
+}
+
+/// What to add to "no declaration named NAME" (decision 0289): that
+/// min, max, and clamp are built into every ordered type, and the std
+/// functions of that name; "" for neither.
+pub fn miss_hint(os: Os, std_dir: Str, name: Str) -> Str uses fs.read {
+  var out = ""
+  let segs = name.split(".")
+  if segs.len() == 2 && segs[1] is "min" | "max" | "clamp" {
+    out = "; `${segs[1]}` is a built-in method of ordered types (Int, Float, Str, ...): `a.${segs[1]}(b)`"
+  }
+  let alts = std_suggestions(os, std_dir, name)
+  if !alts.is_empty() {
+    out = "${out}; did you mean ${alts.join(", ")}?"
+  }
+  out
+}
+
+/// The std and runtime functions named like name's last segment, as
+/// `module.name (file:line)`, for a name that resolves to nothing
+/// (`crypto.verify_pss` is `rsa.verify_pss`): a scan of the std files'
+/// `fn` lines, at most 5.
+pub fn std_suggestions(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
+  let segs = name.split(".")
+  let last = segs[segs.len() - 1]
+  if last.is_empty() || std_dir.is_empty() {
+    return []
+  }
+  var out: List[Str] = []
+  for sub in ["", "native/", "native/llrt/"] {
+    let entries = match os.fs.read_dir("${std_dir}/${sub}") {
+      Ok(es) => es
+      Err(_) => continue
+    }
+    for fi in entries {
+      if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") {
+        continue
+      }
+      let src = match os.fs.read("${std_dir}/${sub}${fi.name}") {
+        Ok(b) => b.to_str() ?? ""
+        Err(_) => continue
+      }
+      let module = fi.name.trim_suffix(".xo")
+      for (i, l) in src.split("\n").indexed() {
+        let t = l.trim_prefix("pub ")
+        if !t.starts_with("fn ") {
+          continue
+        }
+        // `fn name(`, `fn name[T](`, or a method `fn (r: T) name(`
+        let at = if t.starts_with("fn (") { (t.find(") ") ?? -1) + 2 } else { 3 }
+        if at < 2 {
+          continue
+        }
+        let r = t[at..]
+        if r.starts_with(last + "(") || r.starts_with(last + "[") {
+          // a method by its receiver's type (`fn (a: Atomic[Int]) max(`)
+          var qual = if sub == "native/" { "native/${module}" } else { module }
+          if t.starts_with("fn (") {
+            let recv = t[4..at - 2]
+            let ty = recv[(recv.find(": ") ?? -2) + 2..]
+            qual = ty[0..(ty.find("[") ?? ty.len())]
+          }
+          out.push("${qual}.${last} (std/${sub}${fi.name}:${i + 1})")
+          if out.len() >= 5 {
+            return out
+          }
+        }
+      }
+    }
+  }
+  out
 }
 
 /// The std declaration files: $XO_STD, else lib/xo/std of a release
@@ -276,6 +412,21 @@ fn (s: Session) resolve(name: Str) -> List[QDef] {
         add_defs(out, seen, s.lookup(m, parts[1..]))
       }
     }
+    // `main.f`: the program's own modules (main's module is named for
+    // its directory)
+    if parts[0] == "main" {
+      for m in s.c.root_mods {
+        add_defs(out, seen, s.lookup(m, parts[1..]))
+      }
+    }
+    // an import's local name as a program file writes it (`use x/y as z`)
+    for m in s.user_modules() {
+      for f in s.c.mods[m].files {
+        if let Some(im) = s.c.files[f].imports.get(parts[0].bytes()) {
+          add_defs(out, seen, s.lookup(im.module, parts[1..]))
+        }
+      }
+    }
   }
   for m in s.user_modules() {
     add_defs(out, seen, s.lookup(m, parts))
@@ -422,7 +573,37 @@ fn (s: Session) fn_def(f: Int) -> QDef {
       d.signature = fmt_decl(Decl.FnDecl(fd), s.c.files[obj.decl_file].src, true)
     }
   }
+  if d.signature.is_empty() {
+    // an interface method (or a prelude one) whose declaration text is not
+    // at hand: its signature from its parameters, result, error, and
+    // effects (decision 0289)
+    d.signature = s.method_sig(f)
+  }
   d
+}
+
+/// `fn Iface.name(params) -> R ! E uses X` of function object f, from its
+/// checked types.
+fn (s: Session) method_sig(f: Int) -> Str {
+  let o = s.c.objs[f]
+  var ps: List[Str] = []
+  for p in o.params {
+    let kw = if p.is_var { "var " } else { "" }
+    ps.push("${kw}${txt(p.name)}: ${s.c.show(p.ty)}")
+  }
+  var sig = "fn ${s.c.display_name(f)}(${ps.join(", ")})"
+  if o.result >= 0 && o.result != s.c.unit_ty {
+    sig = "${sig} -> ${s.c.show(o.result)}"
+  }
+  if o.err >= 0 {
+    sig = "${sig} ! ${s.c.show(o.err)}"
+  }
+  if let Some(u) = s.c.declared_text(f) {
+    if !u.is_empty() {
+      sig = "${sig} uses ${u}"
+    }
+  }
+  sig
 }
 
 fn (s: Session) type_def(t: Int) -> QDef {
@@ -854,7 +1035,9 @@ fn imports_json(r: ImportsResult) -> JVal {
 // The command (tools.go runQueryWith after the session is loaded)
 
 fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs, proc, stdio {
-  let s = match load_session(os, dirs, false, {}) {
+  // a name may be a std or runtime module's the program does not import
+  let names = if kind is "def" | "callers" | "effects" { rest } else { [] }
+  let s = match load_session_for(os, dirs, false, {}, names, kind == "callers") {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo query: ${e}")
@@ -891,7 +1074,9 @@ fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str
         res = JVal.Arr(items)
         text = b.freeze()
       }
-      Err(e) => err = e
+      Err(e) => {
+        err = e + miss_hint(os, std_dir_of(os), rest[0])
+      }
     }
     "callers" => match s.callers(rest[0]) {
       Ok((target, cs)) => {

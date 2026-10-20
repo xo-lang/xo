@@ -136,8 +136,15 @@ pub struct Session {
 /// (query.Load, LoadExact). The error is what cmd/xo prints after
 /// "xo <command>: ".
 pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses fs, proc, net, rand, env {
+  load_with(os, ctx, dirs, exact, overlay, [])
+}
+
+/// load with the std and runtime modules of preload (`std/tls`,
+/// `native/llrt/pool`) loaded too, imported or not (decision 0289).
+pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str]) -> Session ! Str uses fs, proc, net, rand, env {
   var c = new_checker(os, ctx)
   c.overlay = overlay
+  c.preload = preload
   let all = if exact { dirs } else { c.workspace_dirs(dirs) }
   c.check_dirs_fetching(os, all, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, ctx.wd, p, v) })?
   if !c.unsupported.is_empty() {

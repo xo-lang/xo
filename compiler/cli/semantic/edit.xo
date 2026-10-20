@@ -31,6 +31,8 @@ pub struct EditResult {
   pub diagnostics: List[check.Diag] = []
   /// the places that blocked the edit
   pub sites: List[Site] = []
+  /// a dry run's changes as a diff of the files (decision 0289)
+  pub diff: Str = ""
 }
 
 fn edit_result_json(r: EditResult) -> JVal {
@@ -40,6 +42,9 @@ fn edit_result_json(r: EditResult) -> JVal {
   }
   ms.push(("files", strs(r.files)))
   ms.push(("edits", JVal.Num(r.edits)))
+  if !r.diff.is_empty() {
+    ms.push(("diff", JVal.Text(r.diff)))
+  }
   var ds: List[JVal] = []
   for d in r.diagnostics {
     ds.push(diag_json(d))
@@ -176,6 +181,9 @@ fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str
     overlay[a] = src
     outs.push((a, src))
     s.res.files.push(name)
+    if s.dry {
+      s.res.diff = s.res.diff + line_diff(name, orig, src)
+    }
   }
   s.res.files = s.res.files.sort()
   s.res.edits = edits.len()
@@ -192,6 +200,76 @@ fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str
   write_all(os.fs, outs)?
   s.res.written = true
   Ok(s.res)
+}
+
+/// A diff of a file's lines, a before b, in unified form without
+/// context: a header per file, a `@@ -l,n +l,m @@` line per changed run
+/// of lines, then the old lines with `-` and the new with `+`. Lines are
+/// matched by a longest common subsequence over the part between the
+/// common first and last lines (an edit's files differ in a few places).
+fn line_diff(name: Str, a0: Bytes, b0: Bytes) -> Str {
+  let a = (a0.to_str() ?? "").split("\n")
+  let b = (b0.to_str() ?? "").split("\n")
+  var pre = 0
+  while pre < a.len() && pre < b.len() && a[pre] == b[pre] {
+    pre += 1
+  }
+  var suf = 0
+  while suf < a.len() - pre && suf < b.len() - pre && a[a.len() - 1 - suf] == b[b.len() - 1 - suf] {
+    suf += 1
+  }
+  let am = a[pre..a.len() - suf]
+  let bm = b[pre..b.len() - suf]
+  if am.is_empty() && bm.is_empty() {
+    return ""
+  }
+  // lcs[i][j]: the common subsequence of am[i..] and bm[j..], flattened
+  let w = bm.len() + 1
+  var lcs: List[Int] = []
+  for _ in 0..(am.len() + 1) * w {
+    lcs.push(0)
+  }
+  var i = am.len() - 1
+  while i >= 0 {
+    var j = bm.len() - 1
+    while j >= 0 {
+      lcs[i * w + j] = if am[i] == bm[j] { lcs[(i + 1) * w + j + 1] + 1 } else { lcs[(i + 1) * w + j].max(lcs[i * w + j + 1]) }
+      j -= 1
+    }
+    i -= 1
+  }
+  var out = StrBuilder.new()
+  out.write("--- ${name}\n+++ ${name}\n")
+  var x = 0
+  var y = 0
+  while x < am.len() || y < bm.len() {
+    if x < am.len() && y < bm.len() && am[x] == bm[y] {
+      x += 1
+      y += 1
+      continue
+    }
+    // a changed run: old lines while they are not kept, new ones likewise
+    let x0 = x
+    let y0 = y
+    while x < am.len() || y < bm.len() {
+      if x < am.len() && y < bm.len() && am[x] == bm[y] {
+        break
+      }
+      if y >= bm.len() || (x < am.len() && lcs[(x + 1) * w + y] >= lcs[x * w + y + 1]) {
+        x += 1
+      } else {
+        y += 1
+      }
+    }
+    out.write("@@ -${pre + x0 + 1},${x - x0} +${pre + y0 + 1},${y - y0} @@\n")
+    for k in x0..x {
+      out.write("-${am[k]}\n")
+    }
+    for k in y0..y {
+      out.write("+${bm[k]}\n")
+    }
+  }
+  out.freeze()
 }
 
 /// Writes every file through a temporary file and a rename, so a reader

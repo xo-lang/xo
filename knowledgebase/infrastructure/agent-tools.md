@@ -7,10 +7,21 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 ## Finding code (decision 0261)
 
 - `xo def NAME`, `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`
-  (a type's methods), `xo symbols [--all]`; `--dir=DIR`, `--json`. Use
-  them instead of grep for declarations, callers, types, and to check
+  (a type's methods), `xo symbols [DIR] [--pub]` (the directory's own
+  declarations); `--dir=DIR`, `--json` or `--text` (text at a terminal).
+  Use them instead of grep for declarations, callers, types, and to check
   that a method exists before calling it (`Map.update` existed while
   agents guessed `update_or`, 2026-10-18).
+- Names (decision 0289, the same in def, refs, doc, and `xo query`): write
+  them as code does: `check.Checker.check_dirs`, `Str.find`, `j.f` for
+  `use std/json as j`, `main.f`, `std/tls.client`; std and runtime
+  modules load when named (`tls.client`, `pool.park_wait`), so
+  `xo refs pool.park_wait` finds tasks.xo's call too. A miss suggests the
+  std functions of that name (`nosuchmod.park_wait` -> `pool.park_wait`).
+  `--dir` may be a workspace or repository root. Last verified:
+  2026-10-20.
+- `xo vet` takes a `.xo` file, a std directory (`xo vet std/native/llrt`,
+  every runtime module in one check, 0.6 s), or `--std-module=M`.
 
 ## Writing low-level arithmetic
 

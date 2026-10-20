@@ -68,7 +68,9 @@ fn run_doc(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     }
   } else {
     let dir = fl.get_str("dir")
-    let s = match load(os, ctx, [dir], false, {}) {
+    // a std or runtime module loads whether the program imports it or not
+    let pre = if target.starts_with("std/") || target.starts_with("native/llrt/") { [target] } else { [] }
+    let s = match load_with(os, ctx, [dir], false, {}, pre) {
       Ok(x) => x
       Err(e) => {
         os.stdio.eprintln("xo doc: ${e}")
@@ -215,7 +217,9 @@ fn build_doc(c: check.Checker, m: Int, all: Bool) -> DocModule {
   var out = DocModule{module: c.mods[m].path}
   var types: Map[Str, Int] = {}
   var methods: List[Item] = []
-  for d in surface(c, m, all) {
+  // a std declaration file writes no `pub`: all of it is the module's API
+  let std_decls = c.mods[m].is_std && c.mods[m].path.starts_with("std/")
+  for d in surface(c, m, all || std_decls) {
     let it = Item{def: d, examples: examples(d.doc)}
     if d.kind == "const" {
       out.constants.push(it)

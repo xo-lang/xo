@@ -515,17 +515,152 @@ func TestAgentCLI(t *testing.T) {
 		t.Errorf("doc Counter = %v", doc)
 	}
 
+	// the directory's own declarations, private ones too (decision 0289);
+	// --pub for the exported surface
 	syms := agentJSON(t, 0, "symbols", dir)["symbols"].([]any)
 	names := map[string]bool{}
 	for _, s := range syms {
 		names[s.(map[string]any)["name"].(string)] = true
 	}
-	if !names["Counter"] || !names["Counter.next"] || !names["load"] || names["read_it"] {
+	if !names["Counter"] || !names["Counter.next"] || !names["load"] || !names["read_it"] {
 		t.Errorf("symbols = %v", names)
 	}
-	all := agentJSON(t, 0, "symbols", "--all", dir)["symbols"].([]any)
-	if len(all) <= len(syms) {
-		t.Errorf("symbols --all (%d) not more than pub (%d)", len(all), len(syms))
+	pub := agentJSON(t, 0, "symbols", "--pub", dir)["symbols"].([]any)
+	for _, s := range pub {
+		if s.(map[string]any)["name"] == "read_it" {
+			t.Errorf("symbols --pub lists read_it: %v", pub)
+		}
+	}
+	if len(pub) >= len(syms) {
+		t.Errorf("symbols --pub (%d) not fewer than all (%d)", len(pub), len(syms))
+	}
+}
+
+// TestAgentNames covers the name forms of the 2026-10-20 tool polls
+// (decision 0289): every tool resolves a name as code writes it, std and
+// runtime modules the program does not import included.
+func TestAgentNames(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"main.xo": toolsProg,
+		"use.xo":  "use std/json as j\n\npub fn show_it(n: Int) -> Str {\n  j.encode_str(n)\n}\n",
+	})
+	d := "--dir=" + dir
+	firstFile := func(args ...string) string {
+		t.Helper()
+		ds := agentJSON(t, 0, args...)["declarations"].([]any)
+		if len(ds) == 0 {
+			t.Fatalf("%v: no declarations", args)
+		}
+		return ds[0].(map[string]any)["file"].(string)
+	}
+	// `xo def Str.find` failed while `xo query def Str.find` worked
+	if f := firstFile("def", d, "Str.find"); !strings.HasSuffix(f, "prelude.xo") {
+		t.Errorf("def Str.find in %s", f)
+	}
+	// std and runtime modules the program does not import
+	if f := firstFile("def", d, "tls.client"); !strings.HasSuffix(f, "std/tls.xo") {
+		t.Errorf("def tls.client in %s", f)
+	}
+	if f := firstFile("def", d, "pool.park_wait"); !strings.HasSuffix(f, "llrt/pool.xo") {
+		t.Errorf("def pool.park_wait in %s", f)
+	}
+	if f := firstFile("doc", d, "std/tls.client"); !strings.HasSuffix(f, "std/tls.xo") {
+		t.Errorf("doc std/tls.client in %s", f)
+	}
+	// an import's local name
+	if f := firstFile("def", d, "j.encode_str"); !strings.HasSuffix(f, "std/json.xo") {
+		t.Errorf("def j.encode_str in %s", f)
+	}
+	// a near miss names where the function is
+	miss := agentJSON(t, 1, "def", d, "nosuchmod.park_wait")["error"].(string)
+	if !strings.Contains(miss, "pool.park_wait") {
+		t.Errorf("def nosuchmod.park_wait: %s", miss)
+	}
+	// refs finds the runtime's cross-module call (tasks.xo's call of
+	// pool.park_wait)
+	refs := agentJSON(t, 0, "refs", d, "pool.park_wait")["references"].([]any)
+	tasks := false
+	for _, r := range refs {
+		if strings.HasSuffix(r.(map[string]any)["file"].(string), "llrt/tasks.xo") {
+			tasks = true
+		}
+	}
+	if !tasks {
+		t.Errorf("refs pool.park_wait has no call in tasks.xo: %v", refs)
+	}
+
+	// xo query: the same resolver, flags before the kind, the callers of
+	// the right park_wait
+	var out, errOut bytes.Buffer
+	if got := run(t, []string{"query", "--json", d, "callers", "pool.park_wait"}, &out, &errOut); got != 0 {
+		t.Fatalf("query callers pool.park_wait: exit %d: %s%s", got, out.String(), errOut.String())
+	}
+	if !strings.Contains(out.String(), "park_wait_n") || !strings.Contains(out.String(), "scope_join") {
+		t.Errorf("query callers pool.park_wait = %s", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if got := run(t, []string{"query", "--text", "effects", d, "main.load"}, &out, &errOut); got != 0 || !strings.Contains(out.String(), "fs.read") {
+		t.Errorf("query --text effects main.load: exit %d: %s%s", got, out.String(), errOut.String())
+	}
+	// query type finds the file's module without --dir
+	out.Reset()
+	errOut.Reset()
+	if got := run(t, []string{"query", "type", "--json", filepath.Join(dir, "main.xo") + ":30:7"}, &out, &errOut); got != 0 || !strings.Contains(out.String(), "Counter") {
+		t.Errorf("query type without --dir: exit %d: %s%s", got, out.String(), errOut.String())
+	}
+
+	// an interface method has a signature too (Lib 1, 2026-10-20)
+	out.Reset()
+	errOut.Reset()
+	if got := run(t, []string{"query", "def", "--json", d, "Fs.read"}, &out, &errOut); got != 0 || !strings.Contains(out.String(), `"fn Fs.read(`) {
+		t.Errorf("query def Fs.read: exit %d: %s%s", got, out.String(), errOut.String())
+	}
+
+	// --text: the declaration as text, not JSON
+	out.Reset()
+	errOut.Reset()
+	if got := run(t, []string{"def", "--text", d, "Counter.next"}, &out, &errOut); got != 0 || !strings.Contains(out.String(), "func Counter.next") || strings.HasPrefix(out.String(), "{") {
+		t.Errorf("def --text Counter.next: exit %d: %s%s", got, out.String(), errOut.String())
+	}
+}
+
+// TestVetStd covers xo vet of std and runtime modules (decision 0289):
+// checked as std, with no check errors, by --std-module or a std
+// directory; and xo vet of one file.
+func TestVetStd(t *testing.T) {
+	t.Parallel()
+	vet := func(args ...string) map[string]any {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if got := run(t, append([]string{"vet", "--json"}, args...), &out, &errOut); got != 0 {
+			t.Fatalf("vet %v: exit %d: %s%s", args, got, out.String(), errOut.String())
+		}
+		var v map[string]any
+		if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+			t.Fatalf("vet %v: not JSON: %v\n%s", args, err, out.String())
+		}
+		return v
+	}
+	for _, args := range [][]string{{"--std-module=native/llrt/pool"}, {"--std-module=json"}, {filepath.Join(repoRoot, "std", "native", "llrt")}} {
+		v := vet(args...)
+		if fmt.Sprint(v["check_errors"]) != "0" {
+			t.Errorf("vet %v: check_errors %v", args, v["check_errors"])
+		}
+	}
+	dir := writeFiles(t, map[string]string{"main.xo": toolsProg, "other.xo": "pub fn other() {\n  dbg(1)\n}\n"})
+	// DIR/... still means DIR (decision 0210)
+	vet(dir + "/...")
+	v := vet(filepath.Join(dir, "main.xo"))
+	ds, _ := v["diagnostics"].([]any)
+	if len(ds) == 0 {
+		t.Errorf("vet main.xo: no findings (want its dbg): %v", v)
+	}
+	for _, d := range ds {
+		if f, _ := d.(map[string]any)["span"].(map[string]any)["file"].(string); !strings.HasSuffix(f, "main.xo") {
+			t.Errorf("vet main.xo reports %s", f)
+		}
 	}
 }
 

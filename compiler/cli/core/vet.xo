@@ -11,32 +11,121 @@ use github.com/xo-lang/xo/compiler/parser
 fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   var fl = new_flags("vet")
   fl.bool_flag("json", "print the findings as JSON")
+  fl.str_flag("std-module", "", "vet one std or runtime module as `xo test --std-module` checks it, with its private declarations (json, native/http, native/llrt/pool)")
   if !fl.parse(os, args) {
     return 2
   }
-  var dirs = fl.args
-  if dirs.is_empty() {
-    dirs = ["."]
+  // what to vet (decision 0289): program directories; a .xo file (its
+  // directory, findings in that file only); std and runtime modules, each
+  // checked as the std module under test, named by --std-module or by a
+  // directory or file under std
+  var dirs: List[Str] = []
+  var files: List[Str] = []
+  var std_mods: List[Str] = []
+  let sm = fl.get_str("std-module")
+  if !sm.is_empty() {
+    std_mods.push(std_module_path(sm))
   }
-  let s = match load(os, ctx, dirs, true, {}) {
-    Ok(x) => x
-    Err(e) => {
-      os.stdio.eprintln("xo vet: ${e}")
-      return 2
+  let std_root = abs_path(ctx, ctx.std)
+  for a in fl.args {
+    if a.ends_with("...") {
+      // DIR/... is DIR (decision 0210): the loader reads it
+      dirs.push(a)
+      continue
     }
+    let ap = abs_path(ctx, a)
+    let is_dir = match os.fs.stat(ap) {
+      Ok(Some(i)) => i.is_dir
+      _ => false
+    }
+    let dir = if is_dir { ap } else { dir_of(ap) }
+    if !is_dir {
+      if !a.ends_with(".xo") {
+        os.stdio.eprintln("xo vet: ${a} is not a directory or a .xo file")
+        return 2
+      }
+      files.push(ap)
+    }
+    match rel_below(std_root, dir) {
+      Some(rel) => {
+        let sub = if rel == "." { "" } else { "${rel}/" }
+        if !(sub is "" | "native/" | "native/llrt/") {
+          os.stdio.eprintln("xo vet: ${a}: std modules are the files of std, std/native, and std/native/llrt")
+          return 2
+        }
+        let prefix = if sub.is_empty() { "std/" } else { sub }
+        let names = if is_dir { std_files(os, dir) } else { [base_of(ap)] }
+        for n in names {
+          if !n.ends_with("_test.xo") && !n.ends_with("_c.xo") && !(sub.is_empty() && n == "prelude.xo") {
+            std_mods.push("${prefix}${n.trim_suffix(".xo")}")
+          }
+        }
+      }
+      None => {
+        if !dirs.contains(dir) || is_dir {
+          dirs.push(if is_dir { a } else { dir })
+        }
+      }
+    }
+  }
+  if dirs.is_empty() && std_mods.is_empty() {
+    dirs = ["."]
   }
   var ds: List[Diag] = []
   var check_errors = 0
-  for d in s.diags {
-    if is_error(d) {
-      check_errors += 1
-    } else {
-      ds.push(d)
+  var mods: List[Str] = []
+  if !dirs.is_empty() {
+    let s = match load(os, ctx, dirs, true, {}) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo vet: ${e}")
+        return 2
+      }
     }
+    let (d, n) = vet_session(s.c, s.diags)
+    ds = ds + d
+    check_errors += n
+    mods = mods + s.mods
   }
-  for m in s.c.root_mods {
-    ds = ds + vet_module(s.c, m)
+  if !std_mods.is_empty() {
+    // one check: --std-module alone as the std module under test (with
+    // its private test file, decision 0262); a std directory's modules
+    // loaded together, in native mode for the runtime's
+    var c = new_checker(os, ctx)
+    c.native = std_mods.any(fn(p: Str) -> Bool { p.starts_with("native/") })
+    if std_mods.len() == 1 && !sm.is_empty() {
+      c.std_test = std_mods[0]
+    } else {
+      c.preload = std_mods
+    }
+    match c.check_dirs([]) {
+      Ok(_) => {}
+      Err(e) => {
+        os.stdio.eprintln("xo vet: ${e}")
+        return 2
+      }
+    }
+    var ms: List[Int] = []
+    for path in std_mods {
+      match c.mod_index.get(path) {
+        Some(m) => {
+          ms.push(m)
+          mods.push(path)
+        }
+        None => {
+          os.stdio.eprintln("xo vet: std module ${path} not found in ${ctx.std}")
+          return 2
+        }
+      }
+    }
+    let (d, n) = vet_modules(c, sort_diags(c.diags), ms, true)
+    ds = ds + d
+    check_errors += n
   }
+  if !files.is_empty() {
+    ds = ds.filter(fn(d: Diag) -> Bool { files.contains(abs_path(ctx, d.file)) || files.contains(join_path(dir_of(std_root), d.file)) })
+  }
+  let s = VetRun{mods: mods}
   ds = sort_diags(ds)
   if fl.get_bool("json") {
     os.stdio.print(indent_json(jobj([("modules", jstrs(s.mods)), ("diagnostics", diags_json(ds)), ("check_errors", "${check_errors}")])))
@@ -60,6 +149,60 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     os.stdio.eprintln("xo vet: the program has ${check_errors} check error(s), not repeated here; run `xo check`")
   }
   0
+}
+
+/// The modules vetted, for the summary.
+struct VetRun {
+  mods: List[Str]
+}
+
+/// The findings of a checked program's root modules: the warnings and
+/// notes of its check and the vet checks, and its count of check errors.
+fn vet_session(c: check.Checker, diags: List[Diag]) -> (List[Diag], Int) { vet_modules(c, diags, c.root_mods, false) }
+
+/// vet_session over modules ms; only the check's findings in their files
+/// when own (a std directory loads modules it does not vet).
+fn vet_modules(c: check.Checker, diags: List[Diag], ms: List[Int], own: Bool) -> (List[Diag], Int) {
+  var files: Set[Str] = #{}
+  for m in ms {
+    for f in c.mods[m].files {
+      files.add(c.files[f].path)
+    }
+  }
+  var ds: List[Diag] = []
+  var check_errors = 0
+  for d in diags {
+    if own && !files.contains(d.file) {
+      continue
+    }
+    if is_error(d) {
+      check_errors += 1
+    } else {
+      ds.push(d)
+    }
+  }
+  for m in ms {
+    ds = ds + vet_module(c, m)
+  }
+  (ds, check_errors)
+}
+
+/// A std module as `xo test --std-module` names it: json is std/json.
+fn std_module_path(m: Str) -> Str {
+  if m.starts_with("native/") || m.starts_with("std/") { m } else { "std/${m}" }
+}
+
+/// The .xo files of a std directory, sorted.
+fn std_files(os: Os, dir: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  if let Ok(es) = os.fs.read_dir(dir) {
+    for fi in es {
+      if !fi.is_dir && fi.name.ends_with(".xo") {
+        out.push(fi.name)
+      }
+    }
+  }
+  out.sort()
 }
 
 fn jspan(file: Str, sp: parser.Span) -> check.JSpan {

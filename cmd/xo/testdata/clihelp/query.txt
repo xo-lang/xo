@@ -13,5 +13,10 @@ kinds:
                            pkg.name, or <package path>.name): local names erased,
                            referenced definitions by their hashes (core 4.3)
 
---dir (default .) is the directory checked. JSON is the default when stdout
-is not a terminal.
+--dir (default .; for type, the file's directory) is the directory
+checked; a workspace or repository root checks the modules under it. A name
+is resolved in any form code writes it (decision 0289): name, Type.member,
+module.name, module.Type.member, an import's local name, main.name, a module
+path, a prelude method (Str.find), or a std or runtime module the program
+does not import (tls.client, pool.park_wait). Flags may come anywhere. JSON
+is the default when stdout is not a terminal.

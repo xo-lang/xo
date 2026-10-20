@@ -54,6 +54,11 @@ pub struct Checker {
   /// std/native/llrt/<name>_c.xo, where they have one (load.go
   /// LLRTUsesC; decisions 0193, 0206).
   pub llrt_c: List[Str] = []
+  /// Modules a name lookup reads that the program may not import (the
+  /// agent tools' resolver and `xo vet` of a std directory, decision
+  /// 0289): `std/NAME`, `native/NAME`, and `native/llrt/NAME`, loaded
+  /// with the program's modules, not roots.
+  pub preload: List[Str] = []
   /// The std module under test (`xo test --std-module`, decision 0262):
   /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
   /// That module's _test.xo file, beside its source, is loaded with it,
@@ -280,6 +285,19 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     c.mods[m].root = true
     c.root_mods.push(m)
   }
+  for p in c.preload {
+    if p.starts_with("native/llrt/") {
+      c.load_runtime_module(p)
+    } else if p.starts_with("std/") {
+      c.load_std(p.trim_prefix("std/"))
+    } else if p.starts_with("native/") {
+      // an implementation module loads with its std module (load_native,
+      // in native mode); an intrinsics module (native/rtcrypto) by itself
+      if c.load_std(p.trim_prefix("native/")) < 0 {
+        c.load_native_rt(p)
+      }
+    }
+  }
   if c.native {
     c.load_native()
   }
@@ -349,6 +367,11 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     }
     let sub = join(dir, e.name)
     if e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.is_vendor_dir(sub) {
+      continue
+    }
+    // the std tree of this checker (a checkout's std/ under a workspace
+    // root): its modules load as std, never as program directories
+    if !c.std_dir.is_empty() && c.abs(sub) == c.abs(c.std_dir) {
       continue
     }
     c.find_module_dirs(sub, false, out)
@@ -1075,7 +1098,6 @@ fn dir_of_path(p: Str) -> Str {
   }
   parts[0..parts.len() - 1].join("/")
 }
-
 
 /// A call an expression statement discards the value of (XO0209): its
 /// effects, file, span, type, callee text, and the fixes made where it
