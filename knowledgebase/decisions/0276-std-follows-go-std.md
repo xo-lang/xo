@@ -52,7 +52,31 @@ very stable.
 5. **Staying current.** Each Go release, the std agent reads its
    release notes and security fixes for the packages std ports, records
    which apply in the coverage table, and ports the fixes that do.
-6. **Order.** Gaps are ranked by backend need, from a survey of
+6. **A change log per module** (owner, 2026-10-20). Each std module
+   has `std/changes/MODULE.md` (std/changes/http.md, crypto.md, ...),
+   newest first, one entry per change that a user of the module could
+   notice: a fix, a port, a behavior change, a security fix, a new
+   function. The format is fixed so the website can publish the files as
+   they are:
+
+   ```
+   ## 2026-10-20: fix: chunked bodies ending without the final CRLF
+
+   - Kind: fix | port | behavior | security | feature | perf
+   - Commit: <short hash>
+   - Found by: ported Go test | differential test | fuzz | survey | user | review
+   - Go reference: net/http/internal/chunked.go (go1.25.3), or none
+   - Test: the test that pins it (file and name)
+
+   One or two sentences: what was wrong or new, and what a user sees.
+   ```
+
+   A bug fix's entry is part of the fix's commit. "Found by" is kept
+   because it measures how much each source of tests is worth (the
+   reason this decision ports Go's tests); the coverage table links each
+   module's log, and the root CHANGELOG.md keeps one line per release
+   pointing at them.
+7. **Order.** Gaps are ranked by backend need, from a survey of
    representative services written from the spec, not by Go's package
    list. Native coverage comes first: a module is done when it works on
    every native target, the Go backend, and wasm where the capability
