@@ -285,3 +285,38 @@ park_wait): one comparison read +330 instructions on plain, of which the
 scheduler functions were +1,616 and the rest +78
 (gotchas/scheduler-instruction-counts-spin.md). Compare per function
 without them.
+
+### 2026-10-20 (Xo lang 4): the rest of the steps, and two that did not pay
+
+Pushed, linux/amd64 callgrind (each the same xo with the change off and
+on, or main before and after):
+
+| Change | Commit | Effect |
+|---|---|---|
+| x86 divisions by narrow constants (multiply high), testq after a ZF op, memmove/memcpy of up to 16 bytes | 0112f85f | u64 117.8M to 87.8M, conv 296.3M to 252.3M, divmod 369.6M to 323.6M, shift 153.7M to 133.7M; json enc_small 147.4M to 129.0M; HTTP plain 28,233 to 27,998 |
+| branches on constants folded after the inliner (not with landings) | 33864ce5 | arm64 portable/checked 0.692 |
+| x86_sink_loads | a396740a | rsa sign2048 -5.9%, verify2048 -6.9% |
+| x86_const_imm (32 bit constants as immediates; lea adds, msub's product, branch compares) | de11c4e1 | unix -8.4%, arith8 -7.4%, conv -5.6%, float32 -5.6%, checked -4.4%, divmod -2.5% |
+
+native/LLVM on main de11c4e1: HTTP plain 27,726 / 22,731 = 1.220,
+tls-newconn 3,399,481 / 2,943,744 = 1.155. Compute benches (LLVM from
+the 1ff0e0bd runs): u64 1.60, conv 1.71, shift 1.44, checked 1.17,
+divmod 1.29, json enc_small 1.54, rsa sign2048 1.35.
+
+Did not pay:
+
+- bigmod.mac_row loading each word where it is used (the std source):
+  amd64 rsa sign2048 1.44 to 1.27 of LLVM, but arm64 rsa and the TLS
+  RSA and P-521 workloads 2 to 8.5% slower (dst's loads no longer pairs:
+  1 ldp against 7). x86_sink_loads does part of it for x86 only.
+- Str/List release's fast path (count above one, not shared: decrement
+  in line) at every site: amd64 HTTP plain -0.5% (within the scheduler's
+  spread), arm64 sweep 30 workloads 0.6 to 13% slower (digest/argon2
+  1.134, portable/arith32 1.054): most releases are of a last reference,
+  so the inline test runs and the helper is called anyway. A loops only
+  variant was also slower on text benches. The helper's call stays.
+
+Per function (plain), the native only costs are mostly functions LLVM
+inlines: http1 read_one, the drop helper, alloc.free_mt, obj.rl_free,
+map.put, obj_rl_copy_n, match_parts, scan.find, alloc_pop
+(knowledgebase: the inliner list Xo Lang 2 holds).
