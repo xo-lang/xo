@@ -848,7 +848,9 @@ collection, cannot be compared with `==` or `!=`, cannot be a `Map` key
 or `Set` element, and its type cannot `derive Eq`, `Hash`, or `Ord`
 (`XO0404`, with a note naming the field that holds the handle). Compare
 an identifying field instead (`a.id == b.id`). Interface values compare
-through their dynamic value and stay comparable; the opaque Go values of
+through their dynamic value and stay comparable; one whose dynamic value
+holds a handle or a function is equal to nothing, itself included (`==`
+is false, as for a function value), on every backend; the opaque Go values of
 `use go` bindings keep Go's equality (4.4). Automatic `Debug` is
 unaffected.
 

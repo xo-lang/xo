@@ -1,0 +1,47 @@
+// Values holding handles (a Mutex, an Atomic, a Chan) converted to an
+// interface: the native backends built an equality for the interface
+// value and failed ("equality of Mutex[List[Str]]"); such a value is not
+// comparable (core 2.9), so its interface equality is false, as for a
+// value holding a function (on the Go backend too, which compared them
+// with reflect.DeepEqual). Found by a database driver struct (decision
+// 0278).
+interface Counter {
+  fn bump(self, s: Str) -> Int
+}
+
+struct Log {
+  lines: Mutex[List[Str]]
+  hits: Atomic[Int]
+  events: Chan[Str]
+}
+
+fn (l: Log) bump(s: Str) -> Int {
+  l.hits.add(1)
+  let _ = l.events.try_send(s)
+  l.lines.with(fn(var xs) -> Int {
+    xs.push(s)
+    xs.len()
+  })
+}
+
+fn twice(c: Counter, s: Str) -> Int {
+  let _ = c.bump(s)
+  c.bump(s + "!")
+}
+
+fn main(os: Os) {
+  let log = Log{lines: Mutex.new([]), hits: Atomic.new(0), events: Chan.new(cap: 8)}
+  os.stdio.println("lines ${twice(log, "a")} hits ${log.hits.get()} first event ${log.events.try_recv() ?? "-"}")
+  let cs: List[Counter] = [log, log]
+  os.stdio.println("through a list ${cs[1].bump("b")}")
+  // == on interface values: false when the value holds a handle, even the
+  // same value (core 2.9), as for functions; true for equal plain values
+  let other: Counter = Plain{n: 1}
+  os.stdio.println("same handle value ${cs[0] == cs[1]}, plain ${other == Plain{n: 1}}, mixed ${cs[0] == other}")
+}
+
+struct Plain {
+  n: Int
+}
+
+fn (p: Plain) bump(s: Str) -> Int { p.n + s.len() }

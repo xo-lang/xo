@@ -182,8 +182,11 @@ fn (var b: Builder) eq_thunk(ct: Int, vt: Int) -> Str {
   let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [same]))
   b.retv(b.cbool(false))
   b.if_then_end(no, join)
-  if holds_kind(b.m, vt, Kind.Func, []) {
-    // a value holding a function equals nothing (std/rt's EqAny)
+  if holds_kind(b.m, vt, Kind.Func, []) || holds_kind(b.m, vt, Kind.Handle, []) {
+    // a value holding a function equals nothing (std/rt's EqAny); so does
+    // one holding a handle (Mutex, Chan, a connection: not comparable,
+    // core 2.9), which the emitters cannot compare (a driver struct
+    // holding a Mutex converted to an interface failed to build)
     b.retv(b.cbool(false))
     b.finish_fn()
     b.end(saved)

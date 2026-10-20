@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -103,8 +104,70 @@ func EqAny(a, b any) bool {
 	case Equaler:
 		return x.XoEq(b)
 	}
+	if holdsHandle(reflect.TypeOf(a)) {
+		// a value holding a handle (or a function) is not comparable
+		// (core 2.9): an interface value holding one equals nothing, as
+		// on the native backends
+		return false
+	}
 	return reflect.DeepEqual(a, b)
 }
+
+// handleTypes are the rt types of Xo's handles (core 2.9, decision 0112).
+var handleTypes = map[string]bool{
+	"Chan": true, "Mutex": true, "Atomic": true, "Scope": true, "Task": true, "Listener": true,
+	"Conn": true, "File": true, "FileLock": true, "Child": true, "Task_Group": true,
+	"Task_Semaphore": true, "Task_Once": true, "Http_Router": true, "Http_Server": true,
+	"Http_Client": true, "Http_BodyWriter": true, "Http_TlsCert": true, "Sql_Db": true,
+	"Sql_Tx": true, "Testing_FakeNet": true, "Testing_FakeClock": true, "Testing_MemFs": true,
+	"Testing_FakeEnv": true, "Testing_FakeStdio": true, "Testing_FakeProc": true,
+}
+
+var holdsHandleCache sync.Map // reflect.Type -> bool
+
+// holdsHandle reports whether a value of t holds a handle or a function,
+// directly or in a field, element, or pointee.
+func holdsHandle(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+	if v, ok := holdsHandleCache.Load(t); ok {
+		return v.(bool)
+	}
+	holdsHandleCache.Store(t, false) // a recursive type: assume none while walking
+	r := holdsHandleWalk(t)
+	holdsHandleCache.Store(t, r)
+	return r
+}
+
+func holdsHandleWalk(t reflect.Type) bool {
+	if t.PkgPath() == rtPkgPath {
+		name := t.Name()
+		if i := strings.IndexByte(name, '['); i >= 0 {
+			name = name[:i]
+		}
+		// rt's own value types (List, Map, Option, ...) are not walked:
+		// their internals are the runtime's
+		return handleTypes[name]
+	}
+	switch t.Kind() {
+	case reflect.Func:
+		return true
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return holdsHandle(t.Elem())
+	case reflect.Map:
+		return holdsHandle(t.Key()) || holdsHandle(t.Elem())
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if holdsHandle(t.Field(i).Type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var rtPkgPath = reflect.TypeFor[Unit]().PkgPath()
 
 var hashSeed = maphash.MakeSeed()
 

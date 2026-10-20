@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+lines 2 hits 2 first event a
+through a list 3
+same handle value false, plain true, mixed false
+--- stderr
