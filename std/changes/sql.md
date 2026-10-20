@@ -3,7 +3,7 @@
 ## 2026-10-20: feature: drivers written in Xo, opened with open_driver
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 17d32a65
 - Found by: survey
 - Go reference: none
 - Test: internal/llvm/testdata/golden/sql_driver
@@ -16,7 +16,7 @@ and cancellation.
 ## 2026-10-20: feature: bytes, JSON, and array values, and SQLSTATE codes
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: a7566d52
 - Found by: survey
 - Go reference: none
 - Test: internal/llvm/testdata/golden/sql_values; internal/llvm/testdata/golden/native_sql
@@ -29,7 +29,7 @@ memory driver has `BYTEA`, `JSON`, and `TYPE[]` columns.
 ## 2026-10-20: behavior: Constraint carries the SQLSTATE and the constraint's name
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: a7566d52
 - Found by: survey
 - Go reference: none
 - Test: internal/llvm/testdata/golden/native_sql; internal/gen/testdata/golden/sql_tx
