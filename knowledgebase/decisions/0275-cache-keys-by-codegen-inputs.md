@@ -159,19 +159,34 @@ one that changes too rarely costs correctness.
 
 ## Consequences
 
-- For a commit that touches only std/native, the driver, the tools, or
-  the docs (451 of 569 that week), the next build keeps its warm cache;
-  the suites' wall drops toward the warm figure (internal/arm64: 349 s
-  instead of 767 s, measured with an identical xo; the real figure
-  sits between, since std/native changes still invalidate the entries
-  of the functions that changed).
+Measured after the change (2026-10-20, CI, an r8g with 32 cores, load
+6 to 10; xo B is xo A plus a driver-only comment, so the same code
+generation key):
+
+| | xo A cold | xo B on A's cache | xo B cold |
+|---|---|---|---|
+| self-build of xo (`xo build ./compiler/xo`, 3 rounds; run 39480350461) | 29.0, 30.7, 30.3 s | 11.8, 12.6, 12.4 s | 30.2, 30.5, 29.7 s |
+| internal/arm64 suite (2 rounds; run 39465426358) | 889, 892 s | 926, 923 s | 933 s |
+
+- Per build the gain is real: after a rebuild that leaves code
+  generation alone, the next self-build reuses every rc, inline and fn
+  entry and 8532 of 8786 front end bodies, and takes 41% of the cold
+  time (insert_rc 5.9 to 1.2 s, inline 7.3 to 1.7 s, emit 6.1 to 0.7 s,
+  ssa 4.0 to 1.9 s; check, assemble and link unchanged). That is the
+  edit loop after a pull, and every gate's xobuild.
+- A test suite's wall does not change: its many small programs spend
+  their time elsewhere (building, linking, and running test binaries),
+  and the binary and test-run caches still key on xo's binary. The
+  767 s to 349 s "ceiling" measured on the Mac earlier the same day
+  came from running a suite twice with the same xo, which those caches
+  serve; it was wrongly attributed to this decision.
 - Every stamped xo of the same code generation sources shares entries,
   including xos built by different seeds; the fixed point is the
   evidence that makes that sound.
 - A bug in the driver or in xo's own std that changes output while the
   code generation sources don't change would serve stale entries until
-  verify mode or a golden catches it. Today the binary hash catches it
-  at once.
+  verify mode or a golden catches it. One such hole was found and fixed
+  the same day: `--stamp` values (gotchas/fe-cache-stamped-constants.md).
 
 ## Alternatives
 
