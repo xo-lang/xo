@@ -69,7 +69,14 @@ inlined and its closure call made direct, but map and filter were not.
   their operands: rejected after it failed verification of ordinary
   functions.
 
-## Addendum: one call site (Xo Lang 2, 2026-10-20)
+## Addendum: one call site (Xo Lang 2, 2026-10-20; reverted the same day)
+
+Reverted (2026-10-20): the arm64 backend's DWARF describes no variables
+of an inlined function (compiler/arm64 dwvars.xo skips a variable with
+an inline site), so a fault report's locals (decision 0268) lost the
+inlined callee's (internal/llvm TestFaultLocals/arm64: step inlined into
+main listed none). It lands again with inlined variables in the arm64
+DWARF. As landed:
 
 A function with landing pads and exactly one call site is inlined there
 too, up to INLINE_ONE_PADDED_INSTRS (150) expanded instructions, unless
