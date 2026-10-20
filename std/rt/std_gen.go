@@ -237,6 +237,7 @@ type Http_Request struct {
 	F_remote_ip string
 	XParams     Map[string, string]
 	XValues     *reqValues
+	XRawQuery   string
 }
 
 func (v Http_Request) XoEq(x any) bool {

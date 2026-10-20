@@ -1029,6 +1029,8 @@ struct Request {
 fn (r: Request) param(name: Str) -> Str             // faults if the pattern has no such segment
 fn (r: Request) param_int(name: Str) -> Int         // segment must be declared {name:Int}
 fn (r: Request) query(name: Str) -> Str?
+fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated key, in order
+fn (r: Request) form() -> url.Values ! url.EscapeErr   // an urlencoded POST, PUT, or PATCH body (20)
 fn (r: Request) header(name: Str) -> Str?           // case insensitive
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
@@ -1087,6 +1089,18 @@ fn me(req: http.Request) -> http.Response ! ApiErr {
 
 `with_header` returns a copy with the header set (canonical key), like
 `Response.with_header`.
+
+`query(name)` is the first value of a key and `query_all(name)` every
+value, in order (Go's `URL.Query()`; a pair with a `;` or a bad escape
+is skipped). `form()` (decision 0279) is Go's `PostForm`: the body of a
+POST, PUT, or PATCH whose `Content-Type` media type (before any `;`,
+without case) is `application/x-www-form-urlencoded`, parsed with
+`url.parse_query`; any other request gives empty `Values`, and a bad
+escape or `;` is `EscapeErr`. Its size is the body's, which the server
+already limits (`XO_HTTP_MAX_BODY`, 4.6). Media type parameters are not
+checked (Go's `mime.ParseMediaType` rejects some, such as an empty
+`boundary=`). A request built as a struct literal has no raw query:
+`query_all` gives its `url.query` value.
 
 ### 4.4 Server
 

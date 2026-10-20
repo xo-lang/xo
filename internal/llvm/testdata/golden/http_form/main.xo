@@ -1,0 +1,57 @@
+// Request.form and query_all (decision 0279) through a router, in
+// process and from a raw HTTP/1.1 request over a real connection (the
+// server keeps the raw query), the same on every backend.
+use std/http
+
+struct BadForm {
+  msg: Str
+}
+
+fn (e: BadForm) status() -> Int { 400 }
+
+fn (e: BadForm) display() -> Str { e.msg }
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("POST /login", fn(req) -> http.Response ! BadForm {
+    let f = req.form().map_err(fn(e) { BadForm{msg: "${e}"} })?
+    http.text(200, "user=${f.get("user") ?? "-"} tags=${f.all("tag").join(",")} keys=${f.keys().join(",")}")
+  })
+  r.handle("GET /search", fn(req) {
+    http.text(200, "q=${req.query("q") ?? "-"} all=${req.query_all("q").join("|")}")
+  })
+  r
+}
+
+/// The body of the response to a raw request sent on its own connection.
+fn raw(n: Net, addr: Str, request: Str) -> Str ! NetErr {
+  let c = n.dial(addr)?
+  c.write(request.bytes())?
+  var got = b""
+  while let Some(b) = c.read(4096)? {
+    got = got + b
+  }
+  c.close()
+  let text = got.to_str() ?? ""
+  text.split("\r\n\r\n").last() ?? ""
+}
+
+fn main(os: Os) ! {
+  let r = routes()
+  let form = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
+    body: b"user=ann+lee&tag=a&tag=b%26c")
+  os.stdio.println(r.call(form).text() ?? "?")
+  os.stdio.println(r.call(http.new_request("POST", "http://x/login", body: b"user=x")).text() ?? "?")
+  os.stdio.println(r.call(http.new_request("GET", "http://x/search?q=1&q=two+words&q=%E2%82%AC")).text() ?? "?")
+  let bad = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: b"user=%zz")
+  let resp = r.call(bad)
+  os.stdio.println("${resp.status} ${resp.text() ?? "?"}")
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() -> () ! http.HttpErr { http.server(l, r).serve()? })
+    os.stdio.println(raw(os.net, addr, "GET /search?q=a&q=b&q=c HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")?)
+    os.stdio.println(raw(os.net, addr, "POST /login HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 11\r\n\r\ntag=x&tag=y")?)
+    s.cancel()
+  }
+}

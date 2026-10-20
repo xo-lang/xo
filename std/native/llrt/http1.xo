@@ -1583,6 +1583,8 @@ pub struct Req {
   pub headers: List[Str]
   /// [key, value, ...]
   pub query: List[Str]
+  /// The URL's raw query, for Request.query_all (decision 0279).
+  pub rawquery: Str
 }
 
 /// The next request (its body read: body), or None when the connection
@@ -1997,7 +1999,7 @@ fn req_of(h: Head) -> Req {
       port = v
     }
   }
-  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query}
+  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery}
 }
 
 // ---------------------------------------------------------------------------

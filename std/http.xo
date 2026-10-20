@@ -7,6 +7,7 @@
 // - `Key[T]` is a handle; keys with the same name and type are the same key
 //   (std.md 4.3).
 use std/json
+use std/url
 
 struct Router {}
 type Next = fn(Request) -> Response
@@ -35,6 +36,11 @@ struct Request {
 fn (r: Request) param(name: Str) -> Str
 fn (r: Request) param_int(name: Str) -> Int
 fn (r: Request) query(name: Str) -> Str?
+/// Every value of name in the query, in order (decision 0279).
+fn (r: Request) query_all(name: Str) -> List[Str]
+/// The body of an `application/x-www-form-urlencoded` POST, PUT, or
+/// PATCH as Values; empty Values for any other request (decision 0279).
+fn (r: Request) form() -> url.Values ! url.EscapeErr
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request

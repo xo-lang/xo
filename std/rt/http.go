@@ -469,7 +469,47 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 	for k, v := range Map_All(headers) {
 		Map_put(tk, &h, textproto.CanonicalMIMEHeaderKey(k), v)
 	}
-	return Http_Request{F_method: strings.ToUpper(method), F_path: u.F_path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1"}
+	raw := ""
+	if pu, err := url.Parse(rawURL); err == nil {
+		raw = pu.RawQuery
+	}
+	return Http_Request{F_method: strings.ToUpper(method), F_path: u.F_path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1", XRawQuery: raw}
+}
+
+// M_query_all is `req.query_all(name)` (decision 0279): Go's
+// URL.Query()[name]; a request built as a struct literal has no raw
+// query, so its url.query value.
+func (r Http_Request) M_query_all(_ *Task, name string) List[string] {
+	if r.XRawQuery == "" {
+		if v := Map_get(nil, r.F_url.F_query, name); v.Some {
+			return ListOf(v.V)
+		}
+		return ListOf[string]()
+	}
+	q, _ := url.ParseQuery(r.XRawQuery)
+	var out []string
+	for k, vs := range q {
+		if urlText(k) == name {
+			for _, v := range vs {
+				out = append(out, urlText(v))
+			}
+		}
+	}
+	return ListOf(out...)
+}
+
+// M_form is `req.form()` (decision 0279): the body of an
+// application/x-www-form-urlencoded POST, PUT, or PATCH (Go's PostForm);
+// the media type is the Content-Type before any ";", without case.
+func (r Http_Request) M_form(tk *Task) Result[Url_Values, Url_EscapeErr] {
+	if r.F_method != "POST" && r.F_method != "PUT" && r.F_method != "PATCH" {
+		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
+	}
+	media, _, _ := strings.Cut(Map_get(nil, r.F_headers, "Content-Type").V, ";")
+	if strings.ToLower(strings.TrimSpace(media)) != "application/x-www-form-urlencoded" {
+		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
+	}
+	return Url_parse_query(tk, urlText(string(r.F_body)))
 }
 
 // parseURLLoose parses an absolute or a path only URL.

@@ -1,0 +1,72 @@
+use std/http
+use std/url
+
+// Request.form and query_all (decision 0279), with the cases of Go's
+// net/http request_test.go (go1.26.1) that apply: TestParseFormQuery's
+// PostForm, TestParseFormQueryMethods, TestParseFormUnknownContentType,
+// and TestParseFormSemicolonSeparator's query.
+
+fn form_of(method: Str, ct: Str?, body: Str) -> url.Values ! url.EscapeErr {
+  let headers: Map[Str, Str] = match ct {
+    Some(c) => {"Content-Type": c}
+    None => {}
+  }
+  request_form(new_request(method, "http://www.google.com/search?q=foo&q=bar&both=x&prio=1&orphan=nope&empty=not", headers: headers, body: body.bytes()))
+}
+
+test "go TestParseFormQuery: the body's values, not the query's" {
+  let f = form_of("POST", Some("application/x-www-form-urlencoded; param=value"), "z=post&both=y&prio=2&=nokey&orphan&empty=&").or_fault("parses")
+  expect(f.get("z")) == Some("post")
+  expect(f.has("q")) == false
+  expect(f.all("both")) == ["y"]
+  expect(f.get("prio")) == Some("2")
+  expect(f.all("orphan")) == [""]
+  expect(f.all("empty")) == [""]
+  expect(f.all("")) == ["nokey"]
+}
+
+test "go TestParseFormQuery: query_all keeps every query value" {
+  let r = new_request("POST", "http://www.google.com/search?q=foo&q=bar&both=x&prio=1&orphan=nope&empty=not")
+  expect(request_query_all(r, "q")) == ["foo", "bar"]
+  expect(request_query_all(r, "both")) == ["x"]
+  expect(request_query_all(r, "none")) == []
+  expect(request_query(r, "q")) == Some("foo")
+}
+
+test "go TestParseFormQueryMethods" {
+  for m in ["POST", "PATCH", "PUT", "FOO", "GET"] {
+    let f = form_of(m, Some("application/x-www-form-urlencoded; param=value"), "foo=bar").or_fault("parses")
+    expect(f.get("foo")) == if m is "POST" | "PATCH" | "PUT" { Some("bar") } else { None }
+  }
+}
+
+test "go TestParseFormUnknownContentType" {
+  // text/plain, no Content-Type (application/octet-stream), and an unknown
+  // type are not forms; Go's "text/plain; boundary=" parameter error needs
+  // mime.ParseMediaType, which Xo does not have yet: there it is no form
+  for ct in [Some("text/plain"), None, Some("application/unknown"), Some("text/plain; boundary=")] {
+    expect(form_of("POST", ct, "body").map(fn(v) { v.keys() })) == Ok([])
+  }
+  expect(form_of("POST", Some("Application/X-WWW-Form-URLEncoded"), "a=1").map(fn(v) { v.keys() })) == Ok(["a"])
+}
+
+test "go TestParseFormSemicolonSeparator: query_all skips a pair with a semicolon" {
+  let r = new_request("GET", "http://www.google.com/search?q=foo;q=bar&a=1")
+  expect(request_query_all(r, "a")) == ["1"]
+  expect(request_query_all(r, "q")) == []
+}
+
+test "a semicolon or a bad escape in a form body is an error" {
+  expect(form_of("POST", Some("application/x-www-form-urlencoded"), "a=1;b=2").is_err()) == true
+  expect(form_of("POST", Some("application/x-www-form-urlencoded"), "a=%zz")) == Err(url.EscapeErr{msg: "invalid URL escape \"%zz\""})
+}
+
+test "invalid UTF-8 in a form body stays escaped" {
+  let r = new_request("POST", "http://x/", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: b"a=\xff%41")
+  expect(request_form(r).map(fn(v) { v.get("a") })) == Ok(Some("%FFA"))
+}
+
+test "a request built as a struct literal reads url.query" {
+  let r = http.Request{method: "GET", path: "/", url: http.Url{scheme: "http", host: "x", port: None, path: "/", query: {"k": "v"}}, headers: {}, body: b"", remote_ip: "1.2.3.4"}
+  expect(r.query_all("k")) == ["v"]
+}

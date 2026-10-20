@@ -14,3 +14,4 @@ entries yet.
 - [base32.md](base32.md): std/base32 (spec/std.md 21)
 - [binary.md](binary.md): std/binary (spec/std.md 22)
 - [crypto.md](crypto.md): std/crypto (spec/std.md 11)
+- [http.md](http.md): std/http (spec/std.md 4)

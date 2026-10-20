@@ -908,6 +908,8 @@ pub struct H2Req {
   pub headers: List[Str]
   /// sorted keys and first values, one after the other
   pub query: List[Str]
+  /// the URL's raw query, for Request.query_all (decision 0279)
+  pub rawquery: Str
   pub body: Bytes
 }
 
@@ -949,6 +951,7 @@ struct ReqParts {
   host: Str
   headers: List[Str]
   query: List[Str]
+  rawquery: Str
 }
 
 /// Keeps the parts in a (an Any of ReqParts) in stream record st's
@@ -964,12 +967,12 @@ fn req_keep(st: Int, a: rt.Any) {
 fn req_take(st: Int) -> ReqParts {
   let p = ld(st, S_REQ)
   if p == 0 {
-    return ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: []}
+    return ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: [], rawquery: ""}
   }
   sto(st, S_REQ, 0)
   let parts = match rt.any_take[ReqParts](rt.obj_at[rt.Any](p)) {
     Some(x) => x
-    None => ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: []}
+    None => ReqParts{method: "", path: "", scheme: "", urlhost: "", host: "", headers: [], query: [], rawquery: ""}
   }
   tasks.h_release(p)
   parts
@@ -991,7 +994,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
   let body = bstr(st, S_BODY).bytes()
   bfree(st, S_BODY)
   http1.fault_probe(p.path, "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, body: body}
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body}
 }
 
 /// Runs the connection until a request is ready for a handler (then its
@@ -1538,7 +1541,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
     hdr.push(hv[i])
   }
   if method == "CONNECT" {
-    req_keep(st, rt.any_of(ReqParts{method: method, path: "", scheme: "", urlhost: auth, host: host, headers: hdr, query: []}))
+    req_keep(st, rt.any_of(ReqParts{method: method, path: "", scheme: "", urlhost: auth, host: host, headers: hdr, query: [], rawquery: ""}))
   } else {
     // the URL and its query, parsed by http1.h2_target (fragment)
     let t = h.tgt
@@ -1551,7 +1554,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       query.push(t[i])
       i += 1
     }
-    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query}))
+    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5]}))
   }
   flag(st, S_HEAD, method == "HEAD")
   sto(st, S_DECLEN, -1)

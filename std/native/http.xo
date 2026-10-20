@@ -3,6 +3,7 @@
 // net/http does.
 use std/http
 use std/json as js
+use std/url
 use std/log
 use std/task
 use native/llrt/hconn
@@ -35,6 +36,9 @@ struct Request {
   remote_ip: Str
   params: Map[Str, Str] = {}
   values: List[ReqValue] = []
+  /// The URL's raw query, for query_all (decision 0279); "" for a
+  /// request built as a struct literal (query_all then reads url.query).
+  raw_query: Str = ""
 }
 
 struct ReqValue {
@@ -390,6 +394,77 @@ fn request_param_int(r: Request, name: Str, at: rt.Loc) -> Int {
 
 fn request_query(r: Request, name: Str) -> Str? { r.url.query.get(name) }
 
+/// Every value of name in the query, in order (Go's URL.Query()[name]:
+/// pairs that do not parse are skipped, as Query ignores ParseQuery's
+/// error). A request built as a struct literal has no raw query: its
+/// url.query value, if any.
+fn request_query_all(r: Request, name: Str) -> List[Str] {
+  if r.raw_query.is_empty() {
+    return match r.url.query.get(name) {
+      Some(v) => [v]
+      None => []
+    }
+  }
+  var out: List[Str] = []
+  for pair in r.raw_query.split("&") {
+    if pair.is_empty() || pair.contains(";") {
+      continue
+    }
+    let (k0, v0) = match pair.find("=") {
+      Some(i) => (pair[0..i], pair[i + 1..])
+      None => (pair, "")
+    }
+    if let Ok(k) = url.query_unescape(k0) {
+      if k == name {
+        if let Ok(v) = url.query_unescape(v0) {
+          out.push(v)
+        }
+      }
+    }
+  }
+  out
+}
+
+/// The body of an `application/x-www-form-urlencoded` POST, PUT, or PATCH
+/// (Go's Request.ParseForm into PostForm): its media type is the
+/// Content-Type before any `;`, without case; any other request is empty
+/// Values. The body is already capped by the server (XO_HTTP_MAX_BODY),
+/// so there is no second limit (Go's 10 MB). Invalid UTF-8 in the body
+/// stays as `%XX` escapes (decision 0259).
+fn request_form(r: Request) -> url.Values ! url.EscapeErr {
+  if !(r.method is "POST" | "PUT" | "PATCH") {
+    return url.values()
+  }
+  let ct = header_get(r.headers, "Content-Type") ?? ""
+  let media = (ct.split(";").first() ?? "").trim().to_lower()
+  if media != "application/x-www-form-urlencoded" {
+    return url.values()
+  }
+  url.parse_query(form_text(r.body))
+}
+
+/// The body as Str, each byte of an invalid UTF-8 sequence as `%XX`.
+fn form_text(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  let hex = "0123456789ABCDEF".bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 8)
+  var i = 0
+  while i < b.len() {
+    let (c, n) = b.decode_rune(i)
+    if c == '\u{FFFD}' && n == 1 {
+      out.write_byte(37)
+      out.write_byte(hex[Int(b[i]) >> 4])
+      out.write_byte(hex[Int(b[i]) & 15])
+    } else {
+      out.write(b[i..i + n])
+    }
+    i += n
+  }
+  out.freeze().to_str() ?? ""
+}
+
 fn header_get(h: Map[Str, Str], name: Str) -> Str? {
   match h.get(http1.canonical_key(name)) {
     Some(v) => return Some(v)
@@ -470,7 +545,8 @@ fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes =
   }
   let parts = http1.url_parts(url, false)
   let path = if parts.is_empty() { url } else { parts[3] }
-  Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1"}
+  let raw = if parts.is_empty() { "" } else { parts[4] }
+  Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1", raw_query: raw}
 }
 
 fn parse_url(s: Str) -> http.Url ! http.UrlErr {
@@ -769,7 +845,7 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
     port = Some(q.port)
   }
   let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn())}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
@@ -797,7 +873,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
     port = Some(p)
   }
   let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn)}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery}
 }
 
 // ---------------------------------------------------------------------------
