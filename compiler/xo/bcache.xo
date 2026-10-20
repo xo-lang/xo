@@ -43,6 +43,18 @@ fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
 /// place within the same millisecond at the same size keeps the old
 /// identity (FileInfo has no inode or change time; xobuild and seed
 /// installs write a new file); XO_BACKEND_CACHE=off avoids the memo.
+/// The identity the backend caches key on (decision 0275): the code
+/// generation key stamped into this xo, so its entries are shared with
+/// every xo built from the same backend sources; xo's own binary
+/// (self_id) when unstamped. The binary and test run caches keep
+/// self_id: a link and a test run read the driver too.
+fn cache_id(os: Os) -> Str {
+  if XO_CODEGEN_KEY.len() == 64 {
+    return "codegen ${XO_CODEGEN_KEY}"
+  }
+  self_id(os)
+}
+
 fn self_id(os: Os) -> Str {
   let p = check.executable(os.env, os.fs)
   if p.is_empty() {
@@ -89,7 +101,7 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
   if dir.is_empty() || release {
     return (arm64.FnCache{}, "", Pack{})
   }
-  let id = self_id(os)
+  let id = cache_id(os)
   if id.is_empty() {
     return (arm64.FnCache{}, "", Pack{})
   }
@@ -171,7 +183,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     b.insert_rc_jobs(jobs)
     return []
   }
-  let id = self_id(os)
+  let id = cache_id(os)
   if id.is_empty() {
     b.insert_rc_jobs(jobs)
     return []
@@ -238,7 +250,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
 fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bool, real: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace: Bool, soft_cpu: Bool, heap_guard: Bool, phases: Bool) -> ssa.Builder {
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
-  let id = if dir.is_empty() || (os.env.get("XO_FE_CACHE") ?? "") == "off" { "" } else { self_id(os) }
+  let id = if dir.is_empty() || (os.env.get("XO_FE_CACHE") ?? "") == "off" { "" } else { cache_id(os) }
   if id.is_empty() {
     return ssa.build_program_guard(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
   }
@@ -399,7 +411,7 @@ fn verify_inlined(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int, release: Bo
   if dir.is_empty() || release || backend_cache_mode(os) == "verify" {
     return mi.verify_all_jobs(jobs)
   }
-  let id = self_id(os)
+  let id = cache_id(os)
   if id.is_empty() {
     return mi.verify_all_jobs(jobs)
   }

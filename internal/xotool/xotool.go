@@ -792,12 +792,21 @@ func StampArgs(root, seed string) []string {
 		return nil
 	}
 	commit, dirty := gitState(root)
-	return []string{
+	args := []string{
 		"--stamp", "XO_COMMIT=" + commit,
 		"--stamp", "XO_DIRTY=" + dirty,
 		"--stamp", "XO_SOURCE_KEY=" + key,
 		"--stamp", "XO_BUILT_BY=" + shortPath(seed),
 	}
+	// the code generation key (decision 0275), when this tree's xo has
+	// the constant; none (xo keys its caches on its own binary) when the
+	// closure cannot be computed
+	if src, err := os.ReadFile(filepath.Join(root, CompilerDir(root), "xo", "provenance.xo")); err == nil && bytes.Contains(src, []byte("const XO_CODEGEN_KEY: Str")) {
+		if ck, err := CodegenKey(root); err == nil {
+			args = append(args, "--stamp", "XO_CODEGEN_KEY="+ck)
+		}
+	}
+	return args
 }
 
 // gitState is root's HEAD commit and, when tracked files differ from it,

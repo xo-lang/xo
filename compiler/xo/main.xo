@@ -401,7 +401,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   if native && ov.is_empty() && (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_FE_CACHE") ?? "") != "off" && backend_cache_mode(os) != "off" {
     let host = host_os(os)
     let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
-    let id = if dir.is_empty() { "" } else { self_id(os) }
+    let id = if dir.is_empty() { "" } else { cache_id(os) }
     if !id.is_empty() {
       c.mod_cache_dir = dir
       c.mod_verify = backend_cache_mode(os) == "verify"

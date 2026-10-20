@@ -544,10 +544,18 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 			dirs = append(dirs, d)
 		}
 	}
-	build := func(i int, dir string, env ...string) ([]byte, error) {
+	// XO_TEST_WARM_XO (scripts/gate.sh warm, decision 0275): the first
+	// pass builds with that xo (the parent commit's), so the orders read
+	// entries an earlier xo wrote, as a cache keyed on the code generation
+	// key shares them across xo builds
+	warm := os.Getenv("XO_TEST_WARM_XO")
+	if warm == "" {
+		warm = xo
+	}
+	buildWith := func(bin string, i int, dir string, env ...string) ([]byte, error) {
 		out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
 		os.Remove(out)
-		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd := exec.Command(bin, "build", "--backend=arm64", "-o", out, ".")
 		cmd.Dir = dir
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
@@ -555,6 +563,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		}
 		return os.ReadFile(out)
 	}
+	build := func(i int, dir string, env ...string) ([]byte, error) { return buildWith(xo, i, dir, env...) }
 	// the first pass: 8 builds at once
 	next := make(chan int)
 	var wg sync.WaitGroup
@@ -565,7 +574,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				if _, err := build(i, dirs[i], "XO_BACKEND_CACHE=on"); err != nil {
+				if _, err := buildWith(warm, i, dirs[i], "XO_BACKEND_CACHE=on"); err != nil {
 					mu.Lock()
 					first = append(first, fmt.Sprintf("%s: %v", filepath.Base(dirs[i]), err))
 					mu.Unlock()

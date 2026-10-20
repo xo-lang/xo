@@ -186,7 +186,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
   if dir.is_empty() || srcs.len() < 2 {
     return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
   }
-  let id = self_id(os)
+  let id = cache_id(os)
   if id.is_empty() {
     return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
   }

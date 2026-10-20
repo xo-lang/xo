@@ -1368,6 +1368,27 @@ Last verified: 2026-10-07
   `TestPlantedTestCatches` in `bench/harness/test_harness.py`). Last
   verified: 2026-10-09.
 
+### The backend caches' identity (decision 0275, 2026-10-20)
+
+The backend caches (fe, chk, rc, inl, fn, part, obj, the inline verify
+keys) key on XO_CODEGEN_KEY, a stamp internal/xotool sets (StampArgs,
+CodegenKey): the SHA-256 of the backends (compiler/arm64, llvm, wasm,
+macho) and every compiler module they use, transitively, without test
+files, and core.VERSION. An xo rebuilt from changes that leave those
+files alone (compiler/xo, std, tools, docs) keeps its warm cache. An
+unstamped xo (bootstrap-xo.sh, a hand build) and a tree whose closure
+cannot be computed key on xo's own binary (self_id), as before; the
+binary and test run caches always do. internal/xotool
+TestCodegenInputsClassified fails on an environment variable, module
+field, or file system read of the driver or the closure that is not
+classified (key header, bypass, program content, link, or no effect);
+TestCodegenKeyChanges checks the key moves with every closure module
+and not with compiler/xo or a test. gate.sh's `warm` step builds the
+base's xo, fills a cache with it, and checks this xo's builds through
+it (TestFrontCacheAcrossPrograms, XO_TEST_WARM_XO) and TestGoldenRun
+with XO_BACKEND_CACHE=verify against the user cache. Last verified:
+2026-10-20
+
 ### Build stamps and the bench guard (decision 0264, 2026-10-18)
 
 Every xo built by internal/xotool (scripts/xobuild, the tests) or by

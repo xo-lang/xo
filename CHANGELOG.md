@@ -11,6 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   ThreadSanitizer at the program's loads, stores, and atomics, and Xo's
   linker links ThreadSanitizer's runtime (XO_RACE_RUNTIME names it until
   releases ship one). Linux and amd64 still use --backend=llvm.
+- The backend caches survive rebuilding xo: they key on a hash of the
+  code generation sources instead of xo's binary, so an xo rebuilt for
+  a change elsewhere (the driver, std, tools) builds from a warm cache;
+  an arm64 darwin build linked by xo's own linker also uses the binary
+  cache.
 - The TLS server seals a response without copying it first and takes a
   whole record without slicing it, and HTTP/2 header names are compared
   in words: TLS requests 2.2% and HTTP/2 requests about 2% fewer

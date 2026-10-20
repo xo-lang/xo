@@ -18,6 +18,10 @@ const XO_DIRTY: Str = ""
 const XO_SOURCE_KEY: Str = ""
 /// The xo that built it (a seed, an earlier build, or a bootstrap stage).
 const XO_BUILT_BY: Str = ""
+/// internal/xotool CodegenKey of the sources it was built from (decision
+/// 0275): the backends and the compiler modules they use. The backend
+/// caches key on it (bcache.xo cache_id); "" when unstamped.
+const XO_CODEGEN_KEY: Str = ""
 
 /// `xo version --json` and `xo version -v`; None for any other form,
 /// which compiler/cli/core answers.

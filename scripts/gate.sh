@@ -20,6 +20,13 @@
 #            (XO_PASSES, compiler/arm64 passes.xo)
 #   fp       the self rebuild fixed point (scripts/bootstrap-xo.sh); its
 #            output (about 3 GB) is removed after
+#   warm     the backend caches across xo builds (decision 0275): the
+#            parent commit's xo is built, then TestFrontCacheAcrossPrograms
+#            fills a cache with it and builds every program again with
+#            this xo, through the cache and with it off (XO_TEST_WARM_XO);
+#            then internal/arm64's TestGoldenRun with XO_BACKEND_CACHE=verify
+#            against the user cache, which every earlier xo warmed: a stale
+#            entry of another xo fails the build
 #
 # The branch's changes are counted from $XO_GATE_BASE, else the
 # merge-base of HEAD and origin/main.
@@ -101,6 +108,19 @@ for step in "$@"; do
       echo "fp: FAIL ($logs/fp.txt)"
     fi
     rm -rf "$tmp" ;;
+  warm)
+    base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+    pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-warm.XXXXXX")
+    if git worktree add -q --detach "$pw/tree" "$base" >"$logs/warm-base.txt" 2>&1 &&
+      (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/warm-base.txt" 2>&1; then
+      XO_TEST_WARM_XO=$pw/tree/bin/xo full warm-across ./internal/arm64 -run '^TestFrontCacheAcrossPrograms$'
+      XO_BACKEND_CACHE=verify full warm-verify ./internal/arm64 -run '^TestGoldenRun$'
+    else
+      failed=1
+      echo "warm: the base's xo did not build ($logs/warm-base.txt)"
+    fi
+    git worktree remove --force "$pw/tree" >/dev/null 2>&1
+    rm -rf "${pw:?}" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
