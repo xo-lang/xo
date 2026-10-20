@@ -2356,6 +2356,47 @@ fn x86_imm_into(text: Str, k: Int, n: Int) -> Str {
     return ""
   }
   let op = l[0..sp]
+  // an add as lea: `leaq ($uA,$uK), D` or `leaq ($uK,$uA), D` is
+  // `leaq N($uA), D`
+  if op is "leaq" | "leal" {
+    let rest = l[sp + 1..l.len()]
+    let w = if op == "leal" { "$wu" } else { "$u" }
+    let tk = "${w}${k}"
+    if rest.starts_with("(${tk},") || rest.contains(",${tk}), ") {
+      let close = rest.find("), ") ?? -1
+      if close < 0 || !rest.starts_with("(") {
+        return ""
+      }
+      let inner = rest[1..close].split(",")
+      if inner.len() != 2 {
+        return ""
+      }
+      let other = if inner[0] == tk { inner[1] } else { inner[0] }
+      if other == tk || !other.starts_with("$") {
+        return ""
+      }
+      var out = ls
+      out[at] = "${op} ${n}(${other})${rest[close + 1..rest.len()]}"
+      return out.join("\n")
+    }
+    return ""
+  }
+  // msub and madd's product into the scratch register: `movq $uA, %r11`
+  // then `imulq $uK, %r11` is `imulq $N, $uA, %r11`
+  if op == "imulq" && l == "imulq $u${k}, %r11" && at > 0 && ls[at - 1].starts_with("movq ") && ls[at - 1].ends_with(", %r11") {
+    let src = ls[at - 1]["movq ".len()..ls[at - 1].len() - ", %r11".len()]
+    if src.contains("%r11") {
+      return ""
+    }
+    var out: List[Str] = []
+    for (i, x) in ls.indexed() {
+      if i == at - 1 {
+        continue
+      }
+      out.push(if i == at { "imulq $${n}, ${src}, %r11" } else { x })
+    }
+    return out.join("\n")
+  }
   if !(op is "addq" | "subq" | "andq" | "orq" | "xorq" | "cmpq" | "testq" | "movq" | "addl" | "subl" | "andl" | "orl" | "xorl" | "cmpl" | "testl" | "movl") {
     return ""
   }
