@@ -1,4 +1,4 @@
-// The DWARF sections of a linux/arm64 executable (decision 0239): the
+// The DWARF sections of a linux/arm64 or linux/amd64 executable (decision 0239): the
 // inputs' .debug_line, .debug_abbrev, and .debug_info, which classify
 // leaves unplaced (not loaded), joined per section and kept in the
 // output as sections not loaded. Their relocations: a symbol in one of
@@ -87,7 +87,9 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
               v += l.sym_addr(d, i)
             }
           }
-          let width = if r.typ == R_AARCH64_ABS64 { 8 } else if r.typ == R_AARCH64_ABS32 { 4 } else { 0 }
+          // an x86_64 object's too (2026-10-20: its addresses were left 0,
+          // and no pc found a line or a variable)
+          let width = if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 { 8 } else if r.typ == R_AARCH64_ABS32 || r.typ == R_X86_64_32 { 4 } else { 0 }
           if width == 0 || r.off + width > bs.len() {
             continue
           }

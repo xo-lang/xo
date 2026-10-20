@@ -49,28 +49,70 @@ struct DvStub {
   adj: Int
 }
 
-/// op over a fault stub, or none: a traceback has the faulting frame's
-/// callee saved registers (x19 to x29) and sp at the call (decision 0268
-/// point 4), not the registers the stub's moves and the fault function
-/// overwrite.
-fn dv_stub_op(op: List[Int], adj: Int) -> List[Int] {
-  if op.len() == 1 && op[0] >= 0x50 + 19 && op[0] <= 0x50 + 29 {
-    return op
-  }
-  if op.len() >= 2 && op[0] == 0x8f && adj >= 0 {
-    // DW_OP_breg31: sp, plus how far the stub moved it
-    let off = sp_offset(op)
-    if off >= 0 {
-      return [0x8f] + sleb_bytes(off + adj)
+/// The DWARF register numbers of x86_64's general registers by their
+/// encoding (rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8 to r15): the
+/// System V ABI's order (rax 0, rdx 1, rcx 2, rbx 3, rsi 4, rdi 5, rbp 6,
+/// rsp 7).
+const X86_DW_GP: List[Int] = [0, 2, 1, 3, 7, 6, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15]
+
+/// dv_op on x86_64: a general register's DW_OP_reg, an xmm register's
+/// DW_OP_regx (17 and up), a spill slot's DW_OP_breg7 (rsp).
+fn (g: G) x86_dv_op(l: Loc) -> List[Int] {
+  if l.reg >= 0 {
+    if l.reg < FP_BASE {
+      if l.reg < X86_DW_GP.len() {
+        return [0x50 + X86_DW_GP[l.reg]]
+      }
+      return []
     }
+    return [0x90] + uleb_bytes(17 + l.reg - FP_BASE)
+  }
+  if l.slot >= 0 && g.base == 0 && !g.fr.leaf {
+    return [0x77] + sleb_bytes(slot_off(g.fr, l.slot)) // DW_OP_breg7: rsp
   }
   []
+}
+
+/// op over a fault stub, or none: a traceback has the faulting frame's
+/// callee saved registers (x19 to x29; rbx, rbp, r12 to r15) and sp at
+/// the call (decision 0268 point 4), not the registers the stub's moves
+/// and the fault function overwrite.
+fn dv_stub_op(op: List[Int], adj: Int, x86: Bool) -> List[Int] {
+  if op.len() == 1 && op[0] >= 0x50 && op[0] < 0x70 {
+    let n = op[0] - 0x50
+    let saved = if x86 { n is 3 | 6 | 12 | 13 | 14 | 15 } else { n >= 19 && n <= 29 }
+    return if saved { op } else { [] }
+  }
+  // DW_OP_breg31 (sp) or DW_OP_breg7 (rsp), plus how far the stub moved it
+  let sp_op = if x86 { 0x77 } else { 0x8f }
+  if op.len() >= 2 && op[0] == sp_op && adj >= 0 {
+    let off = sleb_value(op[1..op.len()])
+    return [sp_op] + sleb_bytes(off + adj)
+  }
+  []
+}
+
+/// The value of SLEB128 bytes bs.
+fn sleb_value(bs: List[Int]) -> Int {
+  var v = 0
+  var shift = 0
+  for b in bs {
+    v = v | (b & 127).wrapping_shl(shift)
+    shift += 7
+    if b & 128 == 0 {
+      if shift < 64 && b & 64 != 0 {
+        v = v | (-1).wrapping_shl(shift)
+      }
+      break
+    }
+  }
+  v
 }
 
 /// The location expression of a variable over stub s, from the binding
 /// defined last among mine with a word at s's instruction; empty when no
 /// word has a place there.
-fn dv_stub_expr(mine: List[DvBind], s: DvStub, nw: Int) -> List[Int] {
+fn dv_stub_expr(mine: List[DvBind], s: DvStub, nw: Int, x86: Bool) -> List[Int] {
   var best = -1
   for (bi, b) in mine.indexed() {
     var here = false
@@ -94,7 +136,7 @@ fn dv_stub_expr(mine: List[DvBind], s: DvStub, nw: Int) -> List[Int] {
     var op: List[Int] = []
     for sp in w {
       if sp.lo <= s.at && sp.hi > s.at {
-        op = dv_stub_op(sp.op, s.adj)
+        op = dv_stub_op(sp.op, s.adj, x86)
       }
     }
     any = any || !op.is_empty()
@@ -172,6 +214,9 @@ fn (g: G) dv_op(r: Int) -> List[Int] {
     return []
   }
   let l = g.loc[r]
+  if g.x86 {
+    return g.x86_dv_op(l)
+  }
   if l.reg >= 0 {
     if l.reg < 32 {
       return [0x50 + l.reg] // DW_OP_reg0 + n: x0 to x30
@@ -454,7 +499,7 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     }
     // over each fault stub: the places the faulting frame keeps
     for s in g.dv_stubs {
-      let expr = dv_stub_expr(mine, s, nw)
+      let expr = dv_stub_expr(mine, s, nw, g.x86)
       if expr.is_empty() {
         continue
       }

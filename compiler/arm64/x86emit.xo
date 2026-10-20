@@ -205,6 +205,11 @@ fn (var g: G) x86_emit_once() {
       emitted.push(mb)
     }
   }
+  // the variables' location ranges (decision 0252, as emit.xo): a label
+  // at the first emitted instruction at or past each boundary
+  let dvp = g.dv_plan()
+  var dv_labels: Map[Int, Str] = {}
+  var dv_next = 0
   for (bi, mb) in emitted.indexed() {
     var next = -1
     if bi + 1 < emitted.len() {
@@ -229,6 +234,14 @@ fn (var g: G) x86_emit_once() {
         break
       }
       g.pos = g.blocks[mb].start + 4 * k
+      if dv_next < dvp.need.len() && dvp.need[dv_next] <= g.pos / 4 {
+        let lab = g.local("${g.lbl_prefix()}_dv${g.pos / 4}")
+        b.push("${lab}:\n")
+        while dv_next < dvp.need.len() && dvp.need[dv_next] <= g.pos / 4 {
+          dv_labels[dvp.need[dv_next]] = lab
+          dv_next += 1
+        }
+      }
       if g.m.debug_info && inst.line != 0 && (inst.line != g.dl_last || inst.inl != g.dl_last_inl) {
         let lab = g.local("${g.lbl_prefix()}_dl${g.dl_n}")
         g.dl_n += 1
@@ -253,11 +266,16 @@ fn (var g: G) x86_emit_once() {
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
+    // the boundaries past the last emitted instruction: the end
+    while dv_next < dvp.need.len() {
+      dv_labels[dvp.need[dv_next]] = end
+      dv_next += 1
+    }
     var sites: List[Str] = []
     for s in g.f.inl_sites {
       sites.push("${s.callee}|${s.file}|${s.call_line}|${s.parent}")
     }
-    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t")
+    g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
   }
   let sites = g.sites + g.stub_sites
   if g.os == "windows" {
@@ -524,7 +542,7 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
 /// %r10` then `testq %r10, %r10`, 280 such tests in the portable bench).
 fn x86_zf_of(b: List[Str], r: Str) -> Bool {
   var i = b.len() - 1
-  while i >= 0 && b[i].starts_with("\t.loc") {
+  while i >= 0 && (b[i].starts_with("\t.loc") || x86_dbg_label(b[i].trim_suffix("\n"))) {
     i -= 1
   }
   if i < 0 || !b[i].starts_with("\t") {
@@ -986,14 +1004,24 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     var ms = g.x86_call_moves(inst.fargs, -1)
     g.x86_recover_operand(sb, inst, ms)
     g.x86_parallel(sb, ms)
+    // the variables' places over the stub (dwvars.xo DvStub): rsp moved 8
+    // by a leaf's frame record; a prologue moved it further (slots left
+    // out); a Windows leaf jumps (no return into the stub: none)
+    var dv_end = ""
+    if g.m.debug_info && g.pos >= 0 && !win_leaf {
+      dv_end = g.local("${g.lbl_prefix()}_dvs${g.nstub}")
+      let adj = if g.fr.leaf { 8 } else if g.shrink && g.fl[g.cur] { -1 } else { 0 }
+      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj})
+    }
+    let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
-      sb.push("${from2}:\n\tcallq ${inst.ffn}\n${to2}:\n\tud2\n")
+      sb.push("${from2}:\n\tcallq ${inst.ffn}\n${to2}:\n${after}\tud2\n")
     } else if win_leaf {
       sb.push("\tjmp ${inst.ffn}\n")
     } else {
-      sb.push("\tcallq ${inst.ffn}\n\tud2\n")
+      sb.push("\tcallq ${inst.ffn}\n${after}\tud2\n")
     }
     g.stubs.push(sb.join(""))
   }
@@ -1423,13 +1451,14 @@ fn x86_copy_runs(text: Str) -> Str {
   if !text.contains("\tpopq ") && !text.contains("\tmovq %r11, ") {
     return text
   }
-  let ls = text.split("\n")
+  let (ls, pre) = x86_lift_dbg(text)
   var out: List[Str] = List.with_capacity(ls.len())
   var i = 0
   let n = ls.len()
   while i < n {
     let (form, a, b, ok) = x86_copy_word(ls, i)
     if !ok {
+      x86_put_pre(out, pre, i, i + 1)
       out.push(ls[i])
       i += 1
       continue
@@ -1450,12 +1479,15 @@ fn x86_copy_runs(text: Str) -> Str {
     let bases = (ab == "%rsp") != (bb == "%rsp") || (ab == bb && apart)
     let free = form == 0 || x86_r11_dead(ls, i + 2 * k)
     if k < 2 || !aok || !bok || !bases || !free {
-      for l in ls[i..i + 2 * k] {
-        out.push(l)
+      for q in i..i + 2 * k {
+        x86_put_pre(out, pre, q, q + 1)
+        out.push(ls[q])
       }
       i += 2 * k
       continue
     }
+    // the run's debug labels before it (its words are copies)
+    x86_put_pre(out, pre, i, i + 2 * k)
     var j = 0
     while j + 2 <= k {
       out.push("\tmovdqu ${x86_mem_at(ab, ao + 8 * j)}, %xmm15")
@@ -1468,6 +1500,7 @@ fn x86_copy_runs(text: Str) -> Str {
     }
     i += 2 * k
   }
+  x86_put_pre(out, pre, n, n + 1)
   out.join("\n")
 }
 
@@ -1559,7 +1592,7 @@ fn rsp_slot(s: Str) -> Bool {
 /// destination, `pushq A; popq B; movq B, %r`, is `movq A, %r; movq %r,
 /// B` (2026-10-18, keccak).
 fn x86_reload_peep(text: Str) -> Str {
-  let ls = text.split("\n")
+  let (ls, pre) = x86_lift_dbg(text)
   var out: List[Str] = List.with_capacity(ls.len())
   var i = 0
   while i < ls.len() {
@@ -1571,6 +1604,7 @@ fn x86_reload_peep(text: Str) -> Str {
       if ok2 && rsp_slot(a) && rsp_slot(bslot) && s2 == bslot && gp64(d2) {
         // pushq computes A's address before rsp moves, popq B's after
         // it moves back: both are relative to the same rsp
+        x86_put_pre(out, pre, i, i + 3)
         out.push("\tmovq ${a}, ${d2}")
         out.push("\tmovq ${d2}, ${bslot}")
         i += 3
@@ -1585,11 +1619,13 @@ fn x86_reload_peep(text: Str) -> Str {
       // is stored directly when nothing reads r11 after (2026-10-19:
       // fe64_mul's spilled products)
       if ok1 && ok2 && gp64(s1) && s1 != "%r11" && d1 == "%r11" && s2 == "%r11" && d2.ends_with(")") && !d2.contains("%r11") && x86_r11_dead(ls, i + 2) {
+        x86_put_pre(out, pre, i, i + 2)
         out.push("\tmovq ${s1}, ${d2}")
         i += 2
         continue
       }
       if ok1 && ok2 && gp64(s1) && rsp_slot(d1) && s2 == d1 && gp64(d2) {
+        x86_put_pre(out, pre, i, i + 2)
         out.push(l)
         if d2 != s1 {
           out.push("\tmovq ${s1}, ${d2}")
@@ -1598,8 +1634,57 @@ fn x86_reload_peep(text: Str) -> Str {
         continue
       }
     }
+    x86_put_pre(out, pre, i, i + 1)
     out.push(l)
     i += 1
   }
+  x86_put_pre(out, pre, ls.len(), ls.len() + 1)
   out.join("\n")
+}
+
+/// text's lines without its debug labels (`..._dlN:`, `..._dvN:`,
+/// `..._dvsN:`: line rows and variable ranges, never branched to), and
+/// for each line the debug labels before it (the last entry: those after
+/// the last line). A text pass then sees the same instructions next to
+/// each other with and without debug information (2026-10-20: with
+/// x86_64's DWARF on, a label between a store and its reload kept the
+/// reload, TestAmd64DebugInfoSameCode).
+fn x86_lift_dbg(text: Str) -> (List[Str], List[List[Str]]) {
+  var ls: List[Str] = []
+  var pre: List[List[Str]] = [[]]
+  for l in text.split("\n") {
+    if x86_dbg_label(l) {
+      pre[pre.len() - 1].push(l)
+      continue
+    }
+    ls.push(l)
+    pre.push([])
+  }
+  (ls, pre)
+}
+
+/// Whether line l is a debug label (x86_lift_dbg).
+fn x86_dbg_label(l: Str) -> Bool {
+  if !l.ends_with(":") || l.starts_with("\t") {
+    return false
+  }
+  for tag in ["_dl", "_dvs", "_dv"] {
+    let i = last_index(l, tag)
+    if i > 0 && i + tag.len() < l.len() - 1 && is_digits(l[i + tag.len()..l.len() - 1]) {
+      return true
+    }
+  }
+  false
+}
+
+/// The debug labels before lines a to b (exclusive) of x86_lift_dbg's
+/// lines, onto out.
+fn x86_put_pre(var out: List[Str], pre: List[List[Str]], a: Int, b: Int) {
+  var j = a
+  while j < b && j < pre.len() {
+    for l in pre[j] {
+      out.push(l)
+    }
+    j += 1
+  }
 }

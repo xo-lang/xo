@@ -17,9 +17,12 @@ fn new_gen(m: ssa.Module, os0: Str) -> G {
   // "linux-amd64": x86_64 code for linux (decision 0254 stage 2)
   let x86 = os0.ends_with("-amd64")
   let os = if x86 { os0.trim_suffix("-amd64") } else { os0 }
+  // x86_64 has DWARF too since 2026-10-20: the variables' locations name
+  // x86_64's registers (dwvars.xo x86_dv_op). Not on Windows: its
+  // debuggers read CodeView and PDB, not DWARF, and the COFF writer and
+  // PE linker carry no .debug_ sections (gotchas/windows-no-dwarf.md)
   var g = G{m: m, os: os, x86: x86}
-  if x86 {
-    // the variables' locations name arm64 registers (dwvars.xo)
+  if x86 && os == "windows" {
     g.m.debug_info = false
   }
   for _ in 0..m.types.len() {
