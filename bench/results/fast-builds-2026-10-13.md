@@ -793,3 +793,37 @@ cache-off build.
 Left after an edit of xo (wall, load 8): the SSA builder about 2.0 s
 and the checker 1.0 s (stage 2), inlining 0.6 to 0.7 s, emit 0.3 s,
 assemble and link 0.6 s, insert_rc 0.46 s.
+
+## insert_rc on a cold build: where it goes, and step A (the Mac, 2026-10-19)
+
+A cold self-build of xo (main 8a0bd1e8's xo, fresh XO_BACKEND_CACHE_DIR
+and XO_BUILD_DIR, XO_PROF=cpu at 500 Hz read with xo prof): rc_run's
+tasks hold 29.3 s of CPU, 45% of all samples, for insert_rc.apply's 8.8
+s of wall. Timed one function at a time (a scratch hook, not kept), the
+9,915 functions take 53.6 s; the slowest are build_native 972 ms (2,728
+values), arm64.G.inline_rt 607, ssa.Builder.std_call 517, json_dec_body
+407, arm64.G.regalloc 399, and the top 40 hold only 10.4 s: about 100 to
+350 microseconds per SSA value in every large function, a per leaf cost,
+not a few outliers or work redone per callee or per type. Under walk,
+edge_need, edge_code, branch_code, and rc_ops: sorted_leaves (5.1 s
+cumulative, 2.7 s flat), an insertion sort of a block's whole live set
+at every edge and branch; and leaf keys as text ("${root}${path}":
+formatting, hashing, and comparing it) and leaf paths parsed with split
+at every retain and release (leaf_value 4.1 s).
+
+Step A (050aa530): live_in sorted once per block after liveness, and
+both sorts (sorted_leaves and the verifier's held) a stable O(n log n)
+sort_by in the same order. Cold self-builds, base 1ff0e0bd and the
+change interleaved, two rounds (load averages 32 to 82):
+
+| build | insert_rc.apply (wall) | user CPU |
+|---|---|---|
+| base | 16.2 s, 10.9 s | 139.5 s, 134.4 s |
+| step A | 6.5 s, 6.4 s | 122.8 s, 119.0 s |
+
+The output is the same: arm64-identity.sh on arm64 and amd64 (402
+compared, 0 differing each), XO_BACKEND_CACHE=verify on a self-build,
+and the fixed point. After step A the profile's remaining insert_rc
+time is mostly the text leaf keys (hash and compare of Str, the maps'
+puts and rebuilds, num.append_int) and leaf_value's path parsing: step
+B.

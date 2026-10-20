@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Reference counting insertion sorts each block's live set once, and in
+  O(n log n): a cold build of xo spends about 12% less CPU (insert_rc
+  16 to 6.5 s of wall).
 - HTTP/2 keeps common header names and values as constants, and AES-GCM
   encrypts only the counter blocks a record needs: HTTP/2 requests 4.6%
   (arm64) and 3.6% (LLVM) fewer instructions, TLS requests 1.3%.
