@@ -1543,6 +1543,15 @@ fn x86_reload_peep(text: Str) -> Str {
     if i + 1 < ls.len() {
       let (s1, d1, ok1) = movq_ops(l)
       let (s2, d2, ok2) = movq_ops(ls[i + 1])
+      // a register stored through r11 (a spilled definition's store after a
+      // template wrote it to r11, `movq %rax, %r11; movq %r11, 48(%rsp)`)
+      // is stored directly when nothing reads r11 after (2026-10-19:
+      // fe64_mul's spilled products)
+      if ok1 && ok2 && gp64(s1) && s1 != "%r11" && d1 == "%r11" && s2 == "%r11" && d2.ends_with(")") && !d2.contains("%r11") && x86_r11_dead(ls, i + 2) {
+        out.push("\tmovq ${s1}, ${d2}")
+        i += 2
+        continue
+      }
       if ok1 && ok2 && gp64(s1) && rsp_slot(d1) && s2 == d1 && gp64(d2) {
         out.push(l)
         if d2 != s1 {
