@@ -702,3 +702,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-backend-wide-tuples.md](go-backend-wide-tuples.md): Observed, fixed to 16: the Go backend failed go build on tuples wider than six (rt.Tuple7+ missing); over 16 still fails
 - [dwarf-vars-faulting-frame.md](dwarf-vars-faulting-frame.md): Observed: the faulting frame's locals were <unavailable> (ranges ended before the fault stub; register copies not followed)
 - [fe-cache-verify-reads-header-by-position.md](fe-cache-verify-reads-header-by-position.md): Observed: after FE_CACHE_VERSION v8 added the recorder to the header, fe_same compared it in place of the tail, so verify passed any body built by one xo; every entry reader changes with the writer
+- [std-gen-hand-edits.md](std-gen-hand-edits.md): std/rt/std_gen.go edited by hand drifted (seeds, a missing XoMark, newtype JSON); regenerate with scripts/stdgen, never by hand (Observed)

@@ -356,7 +356,7 @@ go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build di
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 XO_COMPILE_PROPS=1000 go test ./internal/gen -run TestCompileProperty   # every checked program builds (decision 0110): random programs over the optional syntax, built on Go and --no-gc and run alike (24 with -short, 150 in the full suite, about 4 min for 1000; XO_COMPILE_PROP_SEED=S one seed, XO_COMPILE_PROP_KEEP=<dir> keeps them; last verified: 2026-10-09)
-go test ./internal/gen -run TestStdTypes -update        # regenerate std/rt/std_gen.go from std/*.xo
+go run ./scripts/stdgen [-check]                       # regenerate std/rt/std_gen.go and std_sigs_gen.go from std/*.xo (-check: exit 1 when stale)
 go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical token dump of the Go lexer (or lexing time), same text as compiler/lexer
 go run ./cmd/xo run compiler/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
 go run ./cmd/xo build --backend=arm64 -o .tools/xolex compiler/lexer   # native build of the Xo lexer (also --backend=llvm)
@@ -1986,9 +1986,24 @@ Last verified: 2026-10-08. Rules and choices; details in
   `rt.Iface`, which consults adapters that package main registers with
   `rt.RegAdapter` for every concrete user type named in generated code and
   every interface generic code converts a type parameter to.
-- The std structs, enums, and interfaces are generated into
-  `std/rt/std_gen.go` by `gen.StdTypes`; `TestStdTypes` fails when it is
-  stale. Opaque std handles and every std function are hand written in rt.
+- The std structs, enums, newtypes, and interfaces are generated into
+  `std/rt/std_gen.go` by `go run ./scripts/stdgen` (internal/stdgen: a
+  program using every std module through `xo dev dump go --std-types`,
+  compiler/gen stdtypes.xo, then gofmt; never edit the file by hand).
+  Its third line records a hash of std/*.xo's type declarations:
+  internal/repotest's `TestStdGenCurrent` (-short, no xo) fails when a
+  declaration changed since, and internal/gen's `TestStdGenOutput` (full
+  tier, runs xo) when the file differs from the generator's output.
+  Fields only the runtime uses (Http_Request's XParams, XValues,
+  XRawQuery, XFields; Http_Response's XStream, XFields) are listed in
+  stdtypes.xo rt_extra_fields. Opaque std handles and every std function are hand
+  written in rt; the same command generates `std/rt/std_sigs_gen.go`, a
+  `var _ func(*Task, ...) R = Module_name` line for each std and prelude
+  function and method that has no Xo body and is not generic, nor a
+  method of a generic type (List, Map, Option, ...), nor `fault` or
+  `dbg` (lowered where called): 571 on 2026-10-20, a Go method as
+  `(*T).M_name`. `go vet ./std/rt` fails when a hand written signature
+  is not the one the Go backend calls. Last verified: 2026-10-20.
 - std/sql (2026-10-08, std.md 10): `std/sql.xo` declares Db, Tx, Row, SqlValue,
   SqlErr; `std/rt/sql.go` implements them over a Go `SqlBackend` interface
   (values nil, int64, string, float64, bool, Time; errors `*SqlError` by kind) with
@@ -2794,8 +2809,7 @@ Last verified: 2026-10-09.
   fakes included; `httpDenied` called from `Http_Client.M_send`, a
   `CheckRedirect` in `http_net.go`, `Sql_open` refuses an `onlyNet`).
   The interfaces' `only` methods are in std/prelude.xo and std/testing.xo;
-  `std/rt/std_gen.go` is regenerated with `go test ./internal/gen -run
-  TestStdTypes -update`. Native builds get XO1201 from the SSA builder's
+  `std/rt/std_gen.go` is regenerated with `go run ./scripts/stdgen`. Native builds get XO1201 from the SSA builder's
   fallback ("the method `Net.only`"). Tests: golden
   `internal/gen/testdata/golden/cap_attenuation`,
   `cmd/xo/attenuate_test.go`. Last verified: 2026-10-11.

@@ -16,13 +16,18 @@
 // package (format_prep, goblank.xo) and prints `== prepped` first.
 // --each generates every directory as a run of its own, each
 // preceded by `=== gen <dir>`. --wd is the working directory relative
-// paths are relative to (default $PWD).
+// paths are relative to (default $PWD). --std-types prints the std
+// types' Go declarations for std/rt/std_gen.go (stdtypes.xo) instead,
+// before gofmt, for the std modules the directories use; --std-sigs the
+// signature checks of the hand written std functions (std_sigs_gen.go).
 
 use github.com/xo-lang/xo/compiler/check
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var each = false
   var prep = false
+  var std_types_only = false
+  var std_sigs_only = false
   var opts = Opts{arenas: true}
   var std_dir = "std"
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
@@ -36,6 +41,11 @@ fn dump_body(os: Os, args: List[Str]) ! {
       each = true
     } else if a == "--prep" {
       prep = true
+    } else if a == "--std-types" {
+      std_types_only = true
+    } else if a == "--std-sigs" {
+      std_types_only = true
+      std_sigs_only = true
     } else if a.starts_with("--prep-check=") {
       // debugging: where format_prep fails to parse a Go file
       let src = os.fs.read_text(a.trim_prefix("--prep-check="))?
@@ -68,6 +78,24 @@ fn dump_body(os: Os, args: List[Str]) ! {
   let offline = os.env.get("XO_OFFLINE") ?? ""
   let work = os.env.get("XO_WORK") ?? ""
   let cbind = os.env.get("XO_CBIND_DIR") ?? ""
+  if std_types_only {
+    var c = check.new_checker(os.fs, std_dir)
+    c.set_mod_env(wd, modcache, home, xdg, offline, work)
+    c.check_dirs(dirs)?
+    // the program only names the modules: its unused imports (XO0110)
+    // are expected
+    for d in c.diags {
+      if !d.warning && d.code != "XO0110" {
+        return Err("the checker rejected ${dirs.join(" ")}: ${d.file}:${d.line}: ${d.code} ${d.message}")
+      }
+    }
+    if std_sigs_only {
+      os.stdio.print(std_sigs(c)?)
+    } else {
+      os.stdio.print(std_types(c)?)
+    }
+    return
+  }
   var runs: List[List[Str]] = [dirs]
   if each {
     runs = []
