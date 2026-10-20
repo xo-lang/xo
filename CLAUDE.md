@@ -149,8 +149,11 @@ Update the knowledgebase in the same change as the work, not later:
     flags); a clang cache keyed on the IR (XO_CLANG_CACHE=off disables
     it) lets an unchanged IR skip clang; TestGoldenGoParity
     (XO_TEST_GO_PARITY=1, set by gate.sh for compiler/gen and std/rt)
-    checks the Go backend against want.txt. The batch full tier and
-    seed-final.sh set XO_TEST_LLVM_OPT=O2 and XO_TEST_GO_PARITY=1.
+    checks the Go backend against want.txt. The batch full tier runs
+    the LLVM goldens at -O1 (with the -O2 sample) and
+    XO_TEST_GO_PARITY=1 (owner, 2026-10-20: native is the default, so
+    LLVM is the reference backend); only seed-final.sh (seeds and
+    releases) sets XO_TEST_LLVM_OPT=O2.
     Long pass/fail runs go
     to on demand CI, not the Mac's single heavy slot.
   - CI (decision 0225, owner 2026-10-14): GitHub Actions on self-hosted
