@@ -27,3 +27,19 @@ SELECT $1::bytea AS raw, length($1::bytea) AS len ;; X:
 SELECT $1::float8 AS big, $2::float8 AS small, $3::int8 AS min ;; F:1e300 | F:-0.000001 | I:-9223372036854775808
 INSERT INTO t (name) VALUES ($1) ;; T:c
 SELECT count(*) AS c FROM t WHERE n > $1 ;; I:1
+BEGIN
+INSERT INTO t (name) VALUES ('tx1')
+SELECT count(*) AS c FROM t WHERE name = 'tx1'
+ROLLBACK
+SELECT count(*) AS c FROM t WHERE name = 'tx1'
+BEGIN
+SELECT 1/0
+SELECT 1 AS after_error
+ROLLBACK
+BEGIN
+INSERT INTO t (name) VALUES ($1) ;; T:tx2
+COMMIT
+SELECT name FROM t WHERE name = $1 ;; T:tx2
+SELECT pg_typeof($1) AS ty ;; T:x
+SELECT $1::int4 + $2::int4 AS sum ;; I:2147483647 | I:1
+SELECT $1 AS untyped ;; I:5
