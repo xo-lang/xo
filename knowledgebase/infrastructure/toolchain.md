@@ -1469,6 +1469,15 @@ default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
 
 ### Gate and fuzz runners (2026-10-18)
 
+- `scripts/pg-diff.sh XO WORK [IMAGE...]` (decision 0278): the Postgres
+  differential test of std/sql's driver: the statements of
+  scripts/pgdiff/cases.txt through pgx's pgconn (scripts/pgdiff/gopgx, its
+  own Go module pinned to pgx v5.11.0) and through the Xo driver
+  (scripts/pgdiff/xo) against PostgreSQL in Docker (postgres:17-alpine and
+  postgres:14-alpine by default; the containers it starts are removed by
+  ID), outputs compared line by line. Runs outside the heavy lock. Last
+  verified: 2026-10-20.
+
 - `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to
   std/native, the runtime, HTTP, TLS, or the compiler, from the checkout
   under test: build (xobuild, unless XO_CLI is set), short, llvm goldens,

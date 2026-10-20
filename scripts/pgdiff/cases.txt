@@ -1,0 +1,18 @@
+DROP TABLE IF EXISTS t; CREATE TABLE t (id BIGSERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL, n INT4, f FLOAT8, b BOOL, at TIMESTAMPTZ, d BYTEA, j JSONB, tags TEXT[], ns INT8[])
+INSERT INTO t (name, n, f, b, at, d, j, tags, ns) VALUES ('a', 1, 1.5, true, '2026-10-20 12:34:56.123456+00', '\x00ff', '{"k": [1, 2]}', '{x,"y z",NULL}', '{1,NULL,3}')
+INSERT INTO t (name) VALUES ('b')
+SELECT * FROM t ORDER BY id
+SELECT 1 AS one, 'two' AS two, NULL::int AS three, 4.5::float4 AS four, 'NaN'::float8 AS nan, 'infinity'::float8 AS inf, '-infinity'::float8 AS ninf
+SELECT 12345678901234::int8 AS big, (-32768)::int2 AS small, 1.25::numeric AS num, '2026-10-20'::date AS d, '12:30:00'::time AS tm, '1 day 2 hours'::interval AS iv
+SELECT '2026-10-20 01:02:03'::timestamp AS ts, '2026-10-20 01:02:03+05:30'::timestamptz AS tz, 'infinity'::timestamptz AS tinf
+SELECT ARRAY[true, false] AS bs, ARRAY[1.5, 2.5]::float8[] AS fs, ARRAY['a"b', 'c\d', '']::text[] AS ts, ARRAY[]::int4[] AS empty
+SELECT '{"a": "b"}'::json AS js, '[1, "x", null]'::jsonb AS jb, 'é漢😀'::text AS uni
+INSERT INTO t (name) VALUES ('a')
+INSERT INTO t (name, n) VALUES (NULL, 1)
+SELEC 1
+SELECT * FROM missing_table
+SELECT 1/0
+SELECT nosuchcol FROM t
+UPDATE t SET n = n + 1 WHERE name = 'a'
+DELETE FROM t WHERE name = 'b'
+SELECT count(*) AS c FROM t

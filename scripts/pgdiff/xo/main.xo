@@ -1,0 +1,40 @@
+// The Xo side of the Postgres differential test (decision 0278): each
+// statement on standard input through std/sql's Postgres driver, printed
+// as the pgx reference prints it.
+use std/sql
+
+fn err_line(e: sql.SqlErr) -> Str {
+  match e {
+    Constraint(msg, code, _) => "error ${code} ${msg.lines()[0]}"
+    Syntax(msg) => "error 42601 ${msg.lines()[0]}"
+    NoTable(name) => "error 42P01 relation \"${name}\" does not exist"
+    Server(code, msg) => "error ${code} ${msg.lines()[0]}"
+    other => "error ${other}"
+  }
+}
+
+fn main(os: Os) ! {
+  let dsn = os.env.args().first().or_err("usage: diff DSN < cases")?
+  let db = sql.open(os.net, "postgres", dsn, max_open: 1)?
+  for line in os.stdio.lines()? {
+    if line.trim().is_empty() {
+      continue
+    }
+    os.stdio.println("== ${line}")
+    if line.starts_with("SELECT") {
+      match db.query(line) {
+        Ok(rows) => {
+          for r in rows {
+            os.stdio.println(r.debug())
+          }
+        }
+        Err(e) => os.stdio.println(err_line(e))
+      }
+    } else {
+      match db.exec(line) {
+        Ok(x) => os.stdio.println("affected ${x.rows_affected}")
+        Err(e) => os.stdio.println(err_line(e))
+      }
+    }
+  }
+}
