@@ -574,6 +574,22 @@ fn (var g: Gen) lower_func(fi: Int) {
     g.frame_attrs()
     attrs = "#9"
   }
+  if g.tsan && !g.tsan_runtime && race_unchecked(g.f.file) {
+    // --race leaves the runtime out, as Go's race detector does (decision
+    // 0273 mode 2): its per thread state and its hand offs between
+    // threads and fibers are not the program's, and what orders the
+    // program's tasks (spawn and await, channels, mutexes) it tells
+    // ThreadSanitizer itself. Each attribute set's twin without
+    // sanitize_thread (gen.xo)
+    attrs = match attrs {
+      "#1" => "#13"
+      "#7" => "#14"
+      "#9" => "#15"
+      "#10" => "#16"
+      "#11" => "#17"
+      _ => attrs
+    }
+  }
   let sp = if g.dbg_sp >= 0 { " !dbg !${g.dbg_sp}" } else { "" }
   let br0 = if g.dbg_sp >= 0 { "  br label %b0, !dbg ${g.dbg_loc()}\n" } else { "  br label %b0\n" }
   out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers}${sp} {\nentry:\n${g.allocas.join("")}${loads}${br0}")
@@ -1440,3 +1456,10 @@ fn (var g: Gen) ret(v: Int) {
   g.emit("ret ${rt} ${cur}")
 }
 
+/// Whether a function of the source file is the runtime's, which a
+/// --race build does not instrument (decision 0273 mode 2):
+/// std/native/llrt, but atomic.xo (Atomic's add and max: their atomics
+/// are the program's, on the cell the inline get and set use).
+pub fn race_unchecked(file: Str) -> Bool {
+  (file.contains("/native/llrt/") || file.starts_with("native/llrt/")) && !file.ends_with("llrt/atomic.xo")
+}

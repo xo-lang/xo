@@ -1,0 +1,26 @@
+// TestTSanSameThreadRace: a data race planted between four tasks
+// (internal.crypto_op "sysc.race_write": a plain load and store of a
+// shared word) that a --race build reports also between two task fibers
+// of one thread (XO_THREADS=1): their switches synchronize nothing
+// (sanhook.xo TSAN_NO_SYNC, gotchas/tsan-fiber-switch-sync.md). Four,
+// since a worker runs one task on its own context.
+use std/internal
+
+fn main(os: Os) {
+  var bb = BytesBuilder.with_capacity(8)
+  for _ in 0..8 {
+    bb.write_byte(0)
+  }
+  let shared = bb.freeze()
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        for _ in 0..3 {
+          let _r = internal.crypto_op("sysc.race_write", shared, b"", b"", b"")
+          os.clock.sleep(5ms)
+        }
+      })
+    }
+  }
+  os.stdio.println("done")
+}

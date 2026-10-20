@@ -1210,7 +1210,7 @@ func TestH2Sanitizers(t *testing.T) {
 			var bin string
 			var env []string
 			if san == "thread" {
-				bin = tsanBuild(t, flags, srcs)
+				bin = tsanBuildRuntime(t, flags, srcs)
 				env = []string{tsanOptions()}
 			} else {
 				bin = exe(filepath.Join(t.TempDir(), "prog"))

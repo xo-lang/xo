@@ -218,7 +218,9 @@ fn heap_big_resize(b: Int, n: Int) -> Int {
 /// counted already: one taken off).
 fn heap_big_release(b: Int) {
   let c = rt.mem_load(b, 0, 8)
-  if prof.supported() && c < 0 && c > -128 {
+  // (in a --race build every block is big: minus a small size
+  // is its prefix, not a sampled block's class)
+  if prof.supported() && c < 0 && c > -128 && !sanhook.user_mode() {
     heapprof.freed(b + 8)
     rt.mem_store(b, 0, 0 - c, 8)
     let h = obj.heap()

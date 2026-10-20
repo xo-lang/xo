@@ -38,6 +38,17 @@ const ST_FIBER_PARK = 6
 /// Whether ThreadSanitizer's runtime is linked.
 pub fn tsan() -> Bool { rt.sym_present("__tsan_switch_to_fiber") }
 
+/// A --race build (decision 0273, mode 2): ThreadSanitizer finds races
+/// between the program's tasks, two of one thread too; the runtime is not
+/// instrumented (compiler/llvm func.xo race_unchecked) and says what
+/// orders tasks itself (tasks.xo tsan, chans, mutexes); its fibers switch
+/// with no synchronization and its heap is the C library's (heapos.xo
+/// large_room), which resets a block's shadow memory. Not with
+/// xo_tsan_runtime linked (mode 1, the runtime's own race tests, built
+/// with XO_TSAN_RUNTIME=1): the runtime instrumented, fibers
+/// synchronizing at a switch, Xo's heap.
+pub fn user_mode() -> Bool { tsan() && !rt.sym_present("xo_tsan_runtime") }
+
 /// Whether AddressSanitizer's fiber API is linked (and not
 /// ThreadSanitizer's, which the C never paired with it).
 pub fn asan() -> Bool { !tsan() && rt.sym_present("__sanitizer_start_switch_fiber") }
@@ -68,6 +79,72 @@ pub fn fiber_free(f: Int) {
   }
 }
 
+/// A task starts running (tasks.xo run_claimed) on fiber fib, or on the
+/// thread whose worker record is w (0 for none) when it runs inline (an
+/// await or a scope's close helping): in a --race build (user_mode) its
+/// own ThreadSanitizer context for the run, as Go's race detector gives
+/// each goroutine a thread of its own: run inline, or after another task
+/// on a cached fiber, it would share that context and its accesses would
+/// be in program order with the other's. The context goes in the place
+/// a park's switches read (the fiber's, else the worker's). The context
+/// it ran in, for task_exit.
+pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
+  if !user_mode() {
+    return 0
+  }
+  let old = sys_c.weak___tsan_get_current_fiber()
+  // made at the spawn (task_new: ThreadSanitizer's fiber creation
+  // synchronizes with its creator, so it is made by the spawner, at the
+  // spawn), else now
+  let nf = if made != 0 { made } else { sys_c.weak___tsan_create_fiber(0) }
+  let slot = task_slot(fib, w)
+  if slot != 0 {
+    rt.mem_store(slot, 0, nf, 8)
+  }
+  sys_c.weak___tsan_switch_to_fiber(nf, 1)
+  old
+}
+
+/// A task's ThreadSanitizer context, made at its spawn by the spawner
+/// (task_enter takes it), or 0 outside a --race build.
+pub fn task_new() -> Int {
+  if !user_mode() {
+    return 0
+  }
+  sys_c.weak___tsan_create_fiber(0)
+}
+
+/// A task freed before it ran: its context, if it has one, goes.
+pub fn task_gone(f: Int) {
+  if f != 0 {
+    sys_c.weak___tsan_destroy_fiber(f)
+  }
+}
+
+/// The task's run ends: back to context old, the task's freed.
+pub fn task_exit(fib: Int, w: Int, old: Int) {
+  if !user_mode() {
+    return
+  }
+  let cur = sys_c.weak___tsan_get_current_fiber()
+  let slot = task_slot(fib, w)
+  if slot != 0 {
+    rt.mem_store(slot, 0, old, 8)
+  }
+  sys_c.weak___tsan_switch_to_fiber(old, 1)
+  sys_c.weak___tsan_destroy_fiber(cur)
+}
+
+fn task_slot(fib: Int, w: Int) -> Int {
+  if fib != 0 {
+    return fib + F_TSAN
+  }
+  if w != 0 {
+    return w + W_TSAN
+  }
+  0
+}
+
 /// ThreadSanitizer's release of a and acquire of a (the queues and parks
 /// in Xo are not instrumented).
 pub fn release(a: Int) {
@@ -81,6 +158,14 @@ pub fn acquire(a: Int) {
     sys_c.weak___tsan_acquire(a)
   }
 }
+
+/// __tsan_switch_to_fiber's flag at a fiber switch: in a --race build
+/// (user_mode) __tsan_switch_to_fiber_no_sync, 1: a switch orders nothing,
+/// as Go's race detector treats goroutine switches, so a race between two
+/// tasks of one thread shows; with 0 (the runtime's own race tests) every
+/// switch synchronized the fibers of a thread
+/// (gotchas/tsan-fiber-switch-sync.md).
+fn switch_flag() -> Int { if user_mode() { 1 } else { 0 } }
 
 /// The hooks around a fiber switch (sched.xo HOOK_*, called when the
 /// fiber's hooks word is set): 0 a fiber starts (on its stack), 1 it
@@ -97,7 +182,7 @@ pub fn hook(kind: Int, w: Int, f: Int) {
     }
     1 => {
       if t {
-        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), switch_flag())
       }
       if a {
         sys_c.weak___sanitizer_start_switch_fiber(0, rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
@@ -106,7 +191,7 @@ pub fn hook(kind: Int, w: Int, f: Int) {
     2 => {
       rtstats.count(ST_FIBER_PARK)
       if t {
-        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), 0)
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(w, W_TSAN, 8), switch_flag())
       }
       if a {
         sys_c.weak___sanitizer_start_switch_fiber(f.wrapping_add(F_ASAN_FAKE), rt.mem_load(w, W_ASAN_BOTTOM, 8), rt.mem_load(w, W_ASAN_SIZE, 8))
@@ -119,7 +204,7 @@ pub fn hook(kind: Int, w: Int, f: Int) {
     }
     4 => {
       if t {
-        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(f, F_TSAN, 8), 0)
+        sys_c.weak___tsan_switch_to_fiber(rt.mem_load(f, F_TSAN, 8), switch_flag())
       }
       if a {
         let stack = rt.mem_load(rt.mem_load(rt.mem_load(w, W_POOL, 8), P_FIBERS, 8), FS_STACK, 8)

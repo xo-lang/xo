@@ -20,6 +20,7 @@ use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
 use native/llrt/tracerec
+use native/llrt/sanhook
 use native/rt
 
 /// xo_sarm (88 bytes): the channel (a reference), send (a C int), a
@@ -93,6 +94,25 @@ fn queue(c: Int, send: Int) -> Int { c + (if send != 0 { chan.CH_SENDQ } else { 
 /// unwinding, -2 the `after` arm); a send arm on a closed channel faults
 /// at the ln bytes at lp.
 pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
+  // ThreadSanitizer (decision 0273: the runtime is not instrumented): a
+  // send arm's sender releases its channel, the chosen arm's acquires it
+  let n = ld4(s, SE_N)
+  var k = 0
+  while k < n {
+    let a = ld(s, SE_ARMS) + A_SIZE * k
+    if ld4(a, A_SEND) != 0 {
+      sanhook.release(ld(a, A_CH))
+    }
+    k += 1
+  }
+  let i = wait_body(s, lp, ln)
+  if i >= 0 && i < n {
+    sanhook.acquire(ld(ld(s, SE_ARMS) + A_SIZE * i, A_CH))
+  }
+  i
+}
+
+fn wait_body(s: Int, lp: Int, ln: Int) -> Int {
   let x = ctx.cur()
   if tasks.canceled(x) {
     return -1

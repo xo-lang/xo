@@ -20,6 +20,15 @@ fn weak___tsan_switch_to_fiber(fiber: Int, flags: Int)
 fn weak___tsan_acquire(addr: Int)
 fn weak___tsan_release(addr: Int)
 
+/// The C library's allocator, for a --race build's heap (decision 0273
+/// mode 2, heapos.xo large_room: its interceptors reset a block's shadow
+/// memory)
+fn weak_malloc(n: Int) -> Int
+fn weak_free(p: Int)
+/// Defined (int xo_tsan_runtime) by the runtime's own race tests' builds
+/// (decision 0273 mode 1, sanhook.xo user_mode)
+fn weak_xo_tsan_runtime() -> Int
+
 /// AddressSanitizer's fiber API: which stack runs.
 fn weak___sanitizer_start_switch_fiber(fake_stack_save: Int, bottom: Int, size: Int)
 fn weak___sanitizer_finish_switch_fiber(fake_stack_save: Int, bottom_old: Int, size_old: Int)

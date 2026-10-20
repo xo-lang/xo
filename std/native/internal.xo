@@ -66,8 +66,16 @@ fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
 /// The check of std/native/sys_c.xo (decision 0232): "present", three
 /// bytes: whether getpid returned a positive process ID (a strong C call),
 /// whether getpid is linked, whether ThreadSanitizer is (rt.sym_present
-/// of weak references; 0 in a build without it).
-fn sysc_op(what: Str) -> Bytes? {
+/// of weak references; 0 in a build without it). "race_write": a planted
+/// data race for the ThreadSanitizer test (internal/llvm TestTSanSameThreadRace).
+fn sysc_op(what: Str, a: Bytes) -> Bytes? {
+  if what == "race_write" {
+    // a data race on purpose (testdata/tsan_race): a plain load and
+    // store of a's first word, which the tasks calling it share
+    let p = raw.bytes_addr(a)
+    rt.mem_store(p, 0, rt.mem_load(p, 0, 8) + 1, 8)
+    return Some(a)
+  }
   if what == "heap_libc" {
     // whether the heap was mapped through the C library (a sanitizer
     // build, heapos.xo map)
@@ -452,7 +460,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "tls13" => tls13.op(what, a, b, c, d)
     "sha1" => sha1.op(what, a, b, c, d)
     "cpu" => cpu.op(what, a, b, c, d)
-    "sysc" => sysc_op(what)
+    "sysc" => sysc_op(what, a)
     "rt" => rt_op(what)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)

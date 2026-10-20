@@ -9,7 +9,9 @@
 // or allocate Xo values (rt.int_wrap for the arithmetic).
 use native/llrt/heapos
 use native/llrt/pool
+use native/llrt/sanhook
 use native/rt
+use native/sys_c
 
 // ---------------------------------------------------------------------------
 // Memory (xo_nolibc.c's nl_malloc): blocks up to 64 KiB come from free
@@ -367,6 +369,17 @@ fn drain(t: Int, c: Int) {
 /// malloc through the thread's cache: a 16 byte aligned block of at
 /// least n bytes, or 0.
 fn malloc_tc(n: Int) -> Int {
+  if sanhook.user_mode() {
+    // a --race build (decision 0273 mode 2): the C library's malloc,
+    // whose interceptor resets the block's shadow memory (heapos.xo
+    // large_room); the header as a big block's, minus its size
+    let m = sys_c.weak_malloc(addw(n, 16))
+    if m == 0 {
+      return 0
+    }
+    rt.mem_store(m, 0, subw(0, addw(n, 16)), 8)
+    return addw(m, 16)
+  }
   if addw(n, 16) > (1).wrapping_shl(MAX_SHIFT) {
     return malloc(n)
   }
@@ -388,6 +401,10 @@ fn malloc_tc(n: Int) -> Int {
 
 /// free through the thread's cache.
 fn free_tc(p: Int) {
+  if sanhook.user_mode() {
+    sys_c.weak_free(subw(p, 16))
+    return
+  }
   let h = subw(p, 16)
   let c = rt.mem_load(h, 0, 8)
   let t = rt.tlocal_get(TLS_CACHE)

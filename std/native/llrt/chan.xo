@@ -17,6 +17,7 @@ use native/llrt/obj
 use native/llrt/pool
 use native/llrt/tasks
 use native/llrt/tracerec
+use native/llrt/sanhook
 use native/rt
 
 /// xo_cent (64 bytes): the waiter's park, the address of its fired word
@@ -236,6 +237,13 @@ fn entry(x: Int, l: Int) -> Int {
 /// while the channel is full, a cancellation point that unwinds; sending
 /// on a closed channel faults at the ln bytes at lp.
 pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
+  // what the sender did happens before the receive (decision 0273:
+  // the runtime is not instrumented)
+  sanhook.release(c)
+  send_body(c, l, lp, ln)
+}
+
+fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
   pool.defer_check()
   let x = ctx.cur()
   // tasks.canceled inline: a call per send cost 15 instructions
@@ -305,6 +313,13 @@ pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
 /// list when the channel is closed and drained (and while unwinding); a
 /// cancellation point that unwinds.
 pub fn recv(c: Int) -> Int {
+  let r = recv_body(c)
+  // the send (or close) happens before what follows the receive
+  sanhook.acquire(c)
+  r
+}
+
+fn recv_body(c: Int) -> Int {
   pool.defer_check()
   let x = ctx.cur()
   if budget.canceled(x) {
@@ -365,6 +380,13 @@ pub fn recv(c: Int) -> Int {
 /// `ch.try_send(x)` (xo_chan_try_send): false (and x released) when the
 /// channel is full or closed.
 pub fn try_send(c: Int, l: Int) -> Int {
+  // what the sender did happens before the receive (decision 0273:
+  // the runtime is not instrumented)
+  sanhook.release(c)
+  try_send_body(c, l)
+}
+
+fn try_send_body(c: Int, l: Int) -> Int {
   pool.defer_check()
   pool.lock(c + CH_MU)
   let ok = ld4(c, CH_CLOSED) == 0 && try_send_locked(c, l)
@@ -378,6 +400,13 @@ pub fn try_send(c: Int, l: Int) -> Int {
 
 /// `ch.try_recv()` (xo_chan_try_recv): never blocks.
 pub fn try_recv(c: Int) -> Int {
+  let r = try_recv_body(c)
+  // the send (or close) happens before what follows the receive
+  sanhook.acquire(c)
+  r
+}
+
+fn try_recv_body(c: Int) -> Int {
   pool.defer_check()
   pool.lock(c + CH_MU)
   let (ok, got) = try_recv_locked(c)
@@ -388,6 +417,13 @@ pub fn try_recv(c: Int) -> Int {
 /// `ch.close()` (xo_chan_close): waiting receivers get None, waiting
 /// senders fault. Closing twice has no effect.
 pub fn close(c: Int) {
+  // what the sender did happens before the receive (decision 0273:
+  // the runtime is not instrumented)
+  sanhook.release(c)
+  close_body(c)
+}
+
+fn close_body(c: Int) {
   pool.lock(c + CH_MU)
   if ld4(c, CH_CLOSED) == 0 {
     st4(c, CH_CLOSED, 1)

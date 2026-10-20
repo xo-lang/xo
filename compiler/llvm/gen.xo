@@ -77,6 +77,10 @@ pub struct Gen {
   /// pass needs to instrument a function of IR it was given (the C
   /// frontend sets it; gotchas/tsan-needs-sanitize-thread-mark.md).
   pub tsan: Bool = false
+  /// With tsan, the runtime instrumented too (decision 0273 mode 1, the
+  /// runtime's own race tests: XO_TSAN_RUNTIME=1); else --race leaves
+  /// std/native/llrt out (func.xo race_unchecked).
+  pub tsan_runtime: Bool = false
 
   /// DWARF line tables (decision 0239; debug.xo): the metadata numbers
   /// made (from 1000000, past the fixed ones), the compile unit, the
@@ -258,6 +262,13 @@ fn runtime_decls() -> Str {
     "attributes #11 = { uwtable noinline }",
     "; a call of an alwaysinline count helper in a fault's cleanup: kept a call",
     "attributes #12 = { noinline cold }",
+    // a --race build's runtime functions (func.xo race_unchecked): not
+    // sanitize_thread (generate's replacement skips this spelling)
+    "attributes #13 = { \"xo-norace\" uwtable }",
+    "attributes #14 = { \"xo-norace\" uwtable \"no-builtins\" }",
+    "attributes #15 = { \"xo-norace\" uwtable noinline \"frame-pointer\"=\"all\" }",
+    "attributes #16 = { \"xo-norace\" uwtable noinline cold }",
+    "attributes #17 = { \"xo-norace\" uwtable noinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",

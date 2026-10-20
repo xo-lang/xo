@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -65,6 +66,20 @@ func tsanBuild(t *testing.T, flags, srcs []string) string {
 		t.Fatal(err)
 	}
 	return bin
+}
+
+// tsanBuildRuntime is tsanBuild for the runtime's own race tests
+// (decision 0273 mode 1): the binary also defines xo_tsan_runtime, which
+// tells the runtime so (sanhook.xo user_mode: fibers synchronize at a
+// switch, Xo's heap); its IR comes from xotool.LLVMIRRaceRuntime (the
+// runtime instrumented) or LLVMIR.
+func tsanBuildRuntime(t *testing.T, flags, srcs []string) string {
+	t.Helper()
+	c := filepath.Join(t.TempDir(), "xo_tsan_runtime.c")
+	if err := os.WriteFile(c, []byte("int xo_tsan_runtime = 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return tsanBuild(t, flags, append(append([]string{}, srcs...), c))
 }
 
 // asanFlags returns flags, without AddressSanitizer where it compiles but
@@ -222,7 +237,7 @@ func runRuntimeXo(t *testing.T, dir, more string, names []string) {
 	// --race marks every function sanitize_thread, the runtime's too:
 	// clang's ThreadSanitizer pass instruments only marked functions of IR
 	// it is given (gotchas/tsan-needs-sanitize-thread-mark.md)
-	ir, err := xotool.LLVMIRRace(dir)
+	ir, err := xotool.LLVMIRRaceRuntime(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +246,7 @@ func runRuntimeXo(t *testing.T, dir, more string, names []string) {
 		t.Fatal(err)
 	}
 	t1 := time.Now()
-	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	bin := tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll})
 	t.Logf("LLVM IR %v, ThreadSanitizer build %v", t1.Sub(t0), time.Since(t1))
 	check := func(out, what string) {
 		t.Helper()
@@ -346,7 +361,7 @@ func TestGoldenTasks(t *testing.T) {
 				t.Fatal(err)
 			}
 			// every function checked, the runtime's too (--race)
-			ir, err := xotool.LLVMIRRace(dir)
+			ir, err := xotool.LLVMIRRaceRuntime(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -354,7 +369,7 @@ func TestGoldenTasks(t *testing.T) {
 			if err := os.WriteFile(ll, ir, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+			bin := tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll})
 			for _, threads := range []string{"1", "2", ""} {
 				cmd := exec.Command(bin)
 				cmd.Dir = dir
@@ -438,6 +453,94 @@ func TestDeadlock(t *testing.T) {
 	}
 }
 
+// TestTSanSameThreadRace: a race planted between four tasks
+// (testdata/tsan_race) is reported by a --race build with one worker
+// thread between two task fibers (ThreadSanitizer threads with tid 0):
+// the runtime switches fibers without synchronizing them (sanhook.xo
+// TSAN_NO_SYNC); with __tsan_switch_to_fiber's flag 0 every switch
+// ordered the fibers of a thread and only a race with the worker's own
+// context was seen (gotchas/tsan-fiber-switch-sync.md).
+func TestTSanSameThreadRace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	ir, err := xotool.LLVMIRRace(filepath.Join("testdata", "tsan_race"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	text := stderr.String()
+	// the fibers: "Thread T4 (tid=0, running) created by thread T2"
+	fibers := map[string]bool{}
+	for _, m := range regexp.MustCompile(`Thread (T\d+) \(tid=0,`).FindAllStringSubmatch(text, -1) {
+		fibers[m[1]] = true
+	}
+	for _, rep := range strings.Split(text, "WARNING: ThreadSanitizer: data race")[1:] {
+		ts := regexp.MustCompile(`by thread (T\d+)`).FindAllStringSubmatch(rep, 2)
+		if len(ts) == 2 && ts[0][1] != ts[1][1] && fibers[ts[0][1]] && fibers[ts[1][1]] {
+			return
+		}
+	}
+	t.Errorf("no data race reported between two task fibers (stdout %q):\n%s", stdout.String(), text)
+}
+
+// TestRaceSyncTable: --race (decision 0273 mode 2) on each
+// synchronization a program has (testdata/race_sync): used correctly, no
+// race may be reported; with it left out, the race must be. With one
+// worker thread, where every task is a fiber of it, and with the
+// default. The table is what the runtime's explicit acquire and release
+// (tasks.xo, chan.xo, selects.xo, mutex.xo) are trusted by.
+func TestRaceSyncTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	ir, err := xotool.LLVMIRRace(filepath.Join("testdata", "race_sync"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ll := filepath.Join(t.TempDir(), "prog.ll")
+	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add"}
+	for _, c := range cases {
+		for _, threads := range []string{"1", ""} {
+			for _, sync := range []string{"1", "0"} {
+				cmd := exec.Command(bin)
+				cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS="+threads, "XO_RACE_CASE="+c, "XO_RACE_SYNC="+sync)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &stdout, &stderr
+				testtmp.Lifeline(t, cmd, time.Minute)
+				_ = cmd.Run()
+				raced := strings.Contains(stderr.String(), "WARNING: ThreadSanitizer: data race")
+				if !strings.Contains(stdout.String(), "done") {
+					t.Errorf("%s threads=%q sync=%s: did not finish (stdout %q):\n%s", c, threads, sync, stdout.String(), stderr.String())
+				} else if sync == "1" && raced {
+					t.Errorf("%s threads=%q: a race reported although synchronized:\n%s", c, threads, stderr.String())
+				} else if sync == "0" && !raced {
+					t.Errorf("%s threads=%q: no race reported without the synchronization", c, threads)
+				}
+			}
+		}
+	}
+}
+
 // TestSysCTSan: rt.sym_present of a weak reference (decision 0232,
 // std/native/sys_c.xo) is true when ThreadSanitizer's runtime is linked
 // (testdata/sysc_tsan prints 010101; the sys_c golden, without it,
@@ -459,7 +562,7 @@ func TestSysCTSan(t *testing.T) {
 	if err := os.WriteFile(ll, ir, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	bin := tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll})
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), tsanOptions())
 	out, err := cmd.CombinedOutput()

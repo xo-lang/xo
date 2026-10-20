@@ -10,6 +10,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the parts go to the tasks largest first and a part of large functions
   is cut further (xo's emit 11 to 8 s of wall on 8 tasks), and the
   passes after each function's generation split its text once.
+- --race checks the program's tasks, as Go's race detector checks
+  goroutines (decision 0273): a race between two tasks on one thread is
+  reported now (the runtime's fiber switches used to order them); the
+  runtime is left out of the check and says what orders tasks itself
+  (spawn and await, scopes, channels, select, mutexes, Atomic), each
+  tested both ways (a race reported without it, none with it). The
+  runtime's own race tests keep checking the runtime (XO_TSAN_RUNTIME=1).
 - XO_HEAP_GUARD=1 when building: the runtime's records end against an
   inaccessible page, so an overrun faults where it happens, and an
   rt.slot_* on a List checks its index (the class of the SV_ROOTS

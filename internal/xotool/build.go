@@ -364,12 +364,24 @@ func LLVMIRRace(dir string) ([]byte, error) {
 	return asm(dir, BackendLLVM, "", "--race")
 }
 
+// LLVMIRRaceRuntime is LLVMIRRace with the runtime instrumented too
+// (XO_TSAN_RUNTIME=1, decision 0273 mode 1): the runtime's own race tests,
+// whose binary also defines xo_tsan_runtime (internal/llvm
+// tsanBuildRuntime).
+func LLVMIRRaceRuntime(dir string) ([]byte, error) {
+	return asmEnv(dir, BackendLLVM, "", []string{"XO_TSAN_RUNTIME=1"}, "--race")
+}
+
 // Asm is `xo asm --backend=backend [--target=target] dir`: the assembly
 // (arm64) or the LLVM IR (llvm, one module) xo emits for the program in
 // dir, for the host or target ("" is the host).
 func Asm(dir, backend, target string) ([]byte, error) { return asm(dir, backend, target) }
 
 func asm(dir, backend, target string, flags ...string) ([]byte, error) {
+	return asmEnv(dir, backend, target, nil, flags...)
+}
+
+func asmEnv(dir, backend, target string, env []string, flags ...string) ([]byte, error) {
 	cli, err := Command()
 	if err != nil {
 		return nil, err
@@ -379,7 +391,7 @@ func asm(dir, backend, target string, flags ...string) ([]byte, error) {
 		args = append(args, "--target="+target)
 	}
 	cmd := exec.Command(cli[0], append(args, dir)...)
-	cmd.Env = append(os.Environ(), "XO_LLVM_SPLIT=1")
+	cmd.Env = append(append(os.Environ(), "XO_LLVM_SPLIT=1"), env...)
 	if os.Getenv("XO_NOLIBC") == "" {
 		// the tests link this code with clang and the C library (the
 		// sanitizers among them), or compare it with assembly recorded

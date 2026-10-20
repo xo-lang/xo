@@ -1,7 +1,9 @@
 # 0273: --race on the native backends with a prebuilt TSan runtime
 
 Status: Proposed (owner decision 2026-10-19, through the lead; Xo Lang 2).
-Stub claiming the number; filled in as the work lands.
+Part 1 (what --race checks, the two modes) accepted by the lead
+2026-10-20 and implemented on the LLVM backend; parts 2 and 3 (the
+native emitters, the prebuilt runtime) in progress.
 
 ## Context
 
@@ -11,19 +13,132 @@ owner wants `--race` on Xo's own native backends, shipped the way Go
 ships its race detector: a prebuilt runtime in the release archive and
 seeds, linked by Xo's own linkers, so `--race` needs no clang.
 
-## Decision (to be written)
+The first experiment (2026-10-20, darwin/arm64): the native backend's
+assembly linked with clang's ThreadSanitizer runtime runs (conc_channels
+equal to its golden), the runtime turns its fiber hooks on, and a
+`__tsan_write8` planted by hand in a function two tasks call is reported
+as a race between a task fiber and a worker thread. So linking, shadow
+memory, and fibers as ThreadSanitizer threads work; what was missing is
+what --race checks.
 
+Until 2026-10-20 --race checked the runtime and the program together:
+every function instrumented, the runtime's fibers switching with
+`__tsan_switch_to_fiber(f, 0)`, which makes a switch a synchronization.
+That ordered every task of a thread after the one before: a race between
+two tasks on one thread was never reported (four tasks on XO_THREADS=1:
+2 reports, all against the worker's own context; 20 once switches
+synchronize nothing; gotchas/tsan-fiber-switch-sync.md). Switching
+without synchronization while the runtime stays instrumented turns the
+runtime's per thread state into false races, one structure after another
+(the scheduler's hand offs, the allocator's thread caches, the heap
+record's counters, the spare task context, the deferred release queue):
+the fibers of one thread hand them on with no ordering ThreadSanitizer
+sees. Checking the runtime between threads and checking the program's
+tasks need opposite setups.
+
+## Decision
+
+### Part 1: two modes (LLVM backend, implemented)
+
+**Mode 2, `--race`: races between the program's tasks**, as Go's race
+detector finds races between goroutines:
+
+- The runtime (std/native/llrt) is not instrumented (compiler/llvm
+  func.xo race_unchecked: each attribute set's twin without
+  sanitize_thread, #13 to #17), but llrt/atomic.xo (Atomic's add and max:
+  their atomics are the program's, on the cell the inline get and set
+  use). The program and the rest of std are.
+- Every task runs in a ThreadSanitizer context of its own, made at its
+  spawn by the spawner (sanhook.xo task_new: a fiber's creation
+  synchronizes with its creator, so it is made at the spawn, ordering
+  only what came before it) and taken by tasks.xo run_claimed whether
+  the task runs on a fiber, on a cached fiber after another task, or
+  inline in an await or a scope's close; it goes in the place a park's
+  switches read and is freed at the run's end (or with a task that never
+  ran).
+- Fibers switch with no synchronization (`__tsan_switch_to_fiber_no_sync`).
+- The heap is the C library's malloc and free (heapos.xo large_room,
+  libcmem.xo malloc_tc: every block a big one), whose interceptors reset
+  a block's shadow memory, so a block another task freed is not a race
+  with its new owner (Go resets a block's shadow at allocation too).
+- The runtime tells ThreadSanitizer what orders tasks, at every
+  synchronization a program can use: a spawn releases the task, its run
+  acquires it; a task's end releases the task and its scope, an await
+  (finished before or waited for) acquires the task, a scope's close the
+  scope; a send, try_send, or close releases the channel, a receive or
+  try_recv acquires it; a select releases its send arms' channels and
+  acquires the chosen arm's; a lock or read lock acquires the mutex, an
+  unlock or read unlock releases it.
+
+The table that makes mode 2 trustworthy (internal/llvm
+TestRaceSyncTable, testdata/race_sync): each synchronization used
+correctly reports no race, and the same program with it left out reports
+one, with one worker thread (every task a fiber of it) and with the
+default:
+
+| synchronization | correct: no race | left out: a race |
+|---|---|---|
+| spawn | yes | yes |
+| await (join) | yes | yes |
+| scope close | yes | yes |
+| channel, unbuffered | yes | yes |
+| channel, buffered | yes | yes |
+| select | yes | yes |
+| mutex | yes | yes |
+| await of a finished task (its fast path) | yes | yes |
+| Atomic set and get | yes | yes |
+| Atomic add | yes | yes |
+
+TestTSanSameThreadRace: four tasks race on one thread, and a report
+between two task fibers is required.
+
+**Mode 1, the runtime's own race tests**: the runtime instrumented
+(XO_TSAN_RUNTIME=1 when building: compiler/llvm Gen.tsan_runtime), fibers
+synchronizing at a switch, Xo's own heap; the binary defines
+`xo_tsan_runtime` (internal/llvm tsanBuildRuntime), which the runtime
+reads (sanhook.xo user_mode). TestRuntime*, the task goldens under
+ThreadSanitizer, TestSysCTSan, TestH2Sanitizers, and the shared fault
+test run in it, as before. Races inside the runtime are found there and
+by the ordinary tests; a --race build does not exercise Xo's thread
+caches.
+
+### Parts 2 and 3 (to be written)
+
+- The native emitters (compiler/arm64 race.xo, in progress): a call of
+  `__tsan_readN` or `__tsan_writeN` before each load and store outside the
+  frame, and an atomic's order as `__tsan_acquire` after and
+  `__tsan_release` before; mode 2's runtime unchanged.
 - The runtime: LLVM compiler-rt's ThreadSanitizer (C++), at a pinned
   revision, built per platform by a maintainer script (never on users'
-  machines), shipped in lib/xo/race/<goos>-<goarch>.
+  machines), shipped in lib/xo/race/<goos>-<goarch>, linked by Xo's own
+  linkers.
 - License: Apache 2.0 with the LLVM exception, in THIRD_PARTY_NOTICES;
   the one non-Xo component of a build, linked only with --race.
-- Instrumentation by the native emitters: loads and stores of escaping
-  memory (__tsan_read/write), function entry and exit, atomics and
-  reference count operations as TSan atomics; the runtime's tsan()
-  hooks; the C library path on Linux for --race.
 
-## Consequences, Alternatives
+## Consequences
 
-To be written with the results of the steps (hand-instrumented
-experiment, arm64 emitter, amd64, packing).
+- A --race report is about the program's tasks, two of one thread too;
+  the runtime's frames are not in it.
+- A race inside the runtime is not a --race finding: mode 1 and the
+  ordinary tests are where those are found.
+- Every new synchronization in the runtime needs its release and
+  acquire, and a row in the table, or --race reports false races (left
+  out) or hides real ones (too broad).
+- A --race program allocates through the C library and makes a
+  ThreadSanitizer context per task: slower, as any race build is.
+- The leak check counts nothing under --race (every block the C
+  library's); the ordinary builds' leak checks stand.
+
+## Alternatives
+
+- Keep one mode, the runtime instrumented, and patch each piece of per
+  thread state as it shows up: tried (2026-10-20); each patch exposed the
+  next (the scheduler, three allocator layers, the spare context, the
+  deferred release queue), with no clear end, and runtime internals in the
+  program's reports.
+- Release and acquire on each block at free and alloc instead of the C
+  library's heap: every reused block would order the freeing task's past
+  before the next owner, hiding part of what --race is for.
+- ThreadSanitizer's Java heap API (`__tsan_java_alloc`, which resets a
+  range's shadow): needs one contiguous heap range declared at start,
+  which Xo's heap is not.

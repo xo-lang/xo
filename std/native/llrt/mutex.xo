@@ -16,6 +16,7 @@ use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
 use native/llrt/tracerec
+use native/llrt/sanhook
 use native/rt
 
 /// xo_mutex (88 bytes): the header, the lock of the fields below, a
@@ -240,6 +241,13 @@ fn held_del(c: Int, m: Int) {
 /// caller, who gives it back with unlock. The location is the ln bytes at
 /// lp.
 pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
+  let r = lock_body(m, lp, ln)
+  // the last unlock happens before the critical section (decision 0273)
+  sanhook.acquire(m)
+  r
+}
+
+fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
   pool.defer_check()
   let c = ctx.cur()
   let w = "with"
@@ -272,6 +280,12 @@ pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
 
 /// Gives the value l back and releases m (xo_mutex_unlock).
 pub fn unlock(m: Int, l: Int) {
+  // the critical section happens before the next lock (decision 0273)
+  sanhook.release(m)
+  unlock_body(m, l)
+}
+
+fn unlock_body(m: Int, l: Int) {
   pool.defer_check()
   pool.lock(m + M_MU)
   st(m, M_SLOT, l)
@@ -286,6 +300,13 @@ pub fn unlock(m: Int, l: Int) {
 /// release (grant_readers); a cancellation unwinds unless m was handed
 /// over first.
 pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
+  let r = rlock_body(m, lp, ln)
+  // the last unlock happens before the critical section (decision 0273)
+  sanhook.acquire(m)
+  r
+}
+
+fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   pool.defer_check()
   let c = ctx.cur()
   let w = "with_read"
@@ -339,6 +360,12 @@ pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
 /// Gives back a reader's reference l and its share of m
 /// (xo_mutex_runlock).
 pub fn runlock(m: Int, l: Int) {
+  // the critical section happens before the next lock (decision 0273)
+  sanhook.release(m)
+  runlock_body(m, l)
+}
+
+fn runlock_body(m: Int, l: Int) {
   pool.defer_check()
   if rc.dec(l) != 0 {
     // not reached: the Mutex holds the value

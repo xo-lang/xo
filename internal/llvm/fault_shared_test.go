@@ -57,7 +57,7 @@ func buildFaultShared(t *testing.T, tmp string) map[string]string {
 		bins[be] = res.Binaries[xotool.Host()]
 	}
 	// every function checked, the runtime's too (--race)
-	ir, err := xotool.LLVMIRRace(dir)
+	ir, err := xotool.LLVMIRRaceRuntime(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func buildFaultShared(t *testing.T, tmp string) map[string]string {
 	}
 	// tsanBuild's binary is in this test's temporary directory: kept
 	// beside the IR for the other test
-	tb, err := os.ReadFile(tsanBuild(t, []string{"-Wno-override-module"}, []string{ll}))
+	tb, err := os.ReadFile(tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll}))
 	if err != nil {
 		t.Fatal(err)
 	}

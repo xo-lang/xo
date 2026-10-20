@@ -30,6 +30,7 @@ use native/llrt/raw
 use native/llrt/sanhook
 use native/llrt/stdio
 use native/rt
+use native/sys_c
 use native/sys_darwin
 use native/sys_windows
 
@@ -158,6 +159,22 @@ pub fn large(n: Int) -> Int { large_room(n, n) }
 /// A large block of n bytes in a mapping with room for at least room
 /// (at least n) bytes.
 fn large_room(n: Int, room: Int) -> Int {
+  if sanhook.user_mode() {
+    // a --race build's heap (decision 0273 mode 2): every block from
+    // the C library's malloc, whose interceptor resets its shadow memory,
+    // so a block another task freed is not a race with its new owner (Xo's
+    // thread caches hand blocks between the fibers of one thread with no
+    // ordering it can see; Go's race detector resets a block's shadow at
+    // allocation too). The same layout: its size word, the prefix, the
+    // bytes.
+    let m = sys_c.weak_malloc(n.wrapping_add(16))
+    if m == 0 {
+      oom()
+    }
+    rt.mem_store(m, 0, n.wrapping_add(16), 8)
+    rt.mem_store(m, 8, (0).wrapping_sub(n), 8)
+    return m.wrapping_add(16)
+  }
   // the size word, the prefix, the bytes, rounded up to GRAIN
   let need = n.wrapping_add(16)
   var m = take(need)
@@ -194,6 +211,10 @@ pub fn large_resize(b: Int, n: Int) -> Int {
 /// the system when the cache is full.
 pub fn release(b: Int) {
   let m = b.wrapping_sub(8)
+  if sanhook.user_mode() {
+    sys_c.weak_free(m)
+    return
+  }
   let size = rt.mem_load(m, 0, 8)
   if !keep(m, size) {
     unmap(m, size)
@@ -358,7 +379,10 @@ const NCLASS1 = 73
 pub fn main_record() -> Int {
   let h = map(H_SIZE)
   mag_caps(h)
-  rt.mem_store(h, H_MID_MAX, MID_MAX, 8)
+  // a --race build (decision 0273 mode 2): every block a big one (alloc.xo's classes,
+  // free lists, chunks and magazines unused), from the C library's
+  // malloc (large_room)
+  rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() { 0 } else { MID_MAX }, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)

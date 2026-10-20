@@ -1,0 +1,169 @@
+// TestRaceSyncTable (decision 0273, --race mode 2): each synchronization
+// a program has, used correctly (XO_RACE_SYNC=1: no race may be
+// reported) and with it left out (XO_RACE_SYNC=0: the race must be
+// reported). Two tasks (or a task and main) touch one shared word with
+// internal.crypto_op "sysc.race_write" (a plain load and store); the case
+// is XO_RACE_CASE.
+use std/internal
+
+fn touch(shared: Bytes) {
+  let _r = internal.crypto_op("sysc.race_write", shared, b"", b"", b"")
+}
+
+// what main did before a spawn happens before the task
+fn spawn_case(shared: Bytes, sync: Bool) {
+  scope s {
+    if sync {
+      touch(shared)
+    }
+    let t = s.spawn(fn() { touch(shared) })
+    if !sync {
+      touch(shared)
+    }
+    t.await
+  }
+}
+
+// a task happens before what follows its await
+fn join_case(shared: Bytes, sync: Bool) {
+  scope s {
+    let t = s.spawn(fn() { touch(shared) })
+    if !sync {
+      touch(shared)
+    }
+    t.await
+    if sync {
+      touch(shared)
+    }
+  }
+}
+
+// a scope's tasks happen before what follows the scope
+fn scope_case(shared: Bytes, sync: Bool) {
+  scope s {
+    s.spawn(fn() { touch(shared) })
+    if !sync {
+      touch(shared)
+    }
+  }
+  if sync {
+    touch(shared)
+  }
+}
+
+// a send happens before the receive that gets it
+fn chan_case(shared: Bytes, sync: Bool, ch: Chan[Int]) {
+  scope s {
+    s.spawn(fn() {
+      touch(shared)
+      ch.send(1)
+    })
+    if sync {
+      let _v = ch.recv()
+      touch(shared)
+    } else {
+      touch(shared)
+      let _v = ch.recv()
+    }
+  }
+}
+
+// a send happens before the select arm that receives it
+fn select_case(shared: Bytes, sync: Bool) {
+  let ch = Chan[Int].new()
+  scope s {
+    s.spawn(fn() {
+      touch(shared)
+      ch.send(1)
+    })
+    if !sync {
+      touch(shared)
+    }
+    let _x = select {
+      v = ch.recv() => v ?? 0
+    }
+    if sync {
+      touch(shared)
+    }
+  }
+}
+
+// a mutex's critical sections are ordered
+fn mutex_case(shared: Bytes, sync: Bool) {
+  let m = Mutex[Int].new(0)
+  scope s {
+    for _ in 0..2 {
+      s.spawn(fn() {
+        if sync {
+          m.with(fn(var c) {
+            touch(shared)
+            c += 1
+          })
+        } else {
+          touch(shared)
+        }
+      })
+    }
+  }
+}
+
+// an await of a task that already finished (its fast path)
+fn await_done_case(os: Os, shared: Bytes, sync: Bool) {
+  scope s {
+    let t = s.spawn(fn() { touch(shared) })
+    os.clock.sleep(50ms)
+    if sync {
+      t.await
+      touch(shared)
+    } else {
+      touch(shared)
+      t.await
+    }
+  }
+}
+
+// an Atomic's set happens before the get that sees it
+fn atomic_case(os: Os, shared: Bytes, sync: Bool, add: Bool) {
+  let a = Atomic[Int].new(0)
+  scope s {
+    s.spawn(fn() {
+      touch(shared)
+      if add {
+        let _n = a.add(1)
+      } else {
+        a.set(1)
+      }
+    })
+    if sync {
+      while a.get() == 0 {
+        os.clock.sleep(1ms)
+      }
+    } else {
+      os.clock.sleep(50ms)
+    }
+    touch(shared)
+  }
+}
+
+fn main(os: Os) {
+  var bb = BytesBuilder.with_capacity(8)
+  for _ in 0..8 {
+    bb.write_byte(0)
+  }
+  let shared = bb.freeze()
+  let sync = (os.env.get("XO_RACE_SYNC") ?? "1") == "1"
+  match os.env.get("XO_RACE_CASE") ?? "" {
+    "spawn" => spawn_case(shared, sync)
+    "join" => join_case(shared, sync)
+    "scope" => scope_case(shared, sync)
+    "chan" => chan_case(shared, sync, Chan[Int].new())
+    "chan_buffered" => chan_case(shared, sync, Chan[Int].new(cap: 4))
+    "select" => select_case(shared, sync)
+    "mutex" => mutex_case(shared, sync)
+    "await_done" => await_done_case(os, shared, sync)
+    "atomic" => atomic_case(os, shared, sync, false)
+    "atomic_add" => atomic_case(os, shared, sync, true)
+    _ => os.stdio.println("unknown case")
+  }
+  os.stdio.println("done")
+}

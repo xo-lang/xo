@@ -64,7 +64,10 @@ pub const T_CTX = 224
 /// length; `xo dump`)
 pub const T_LOC_P = 232
 pub const T_LOC_N = 240
-const T_SIZE = 248
+/// A --race build's ThreadSanitizer context of the task (decision 0273,
+/// sanhook.xo task_new), made at its spawn, 0 once its run ended
+const T_TSAN = 248
+const T_SIZE = 256
 const T_DONE = 2
 
 /// xo_scope (464 bytes): the body's node, the lock of the list and the
@@ -356,6 +359,9 @@ pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
     }
     pool.unlock(t + T_MU)
   }
+  // the task's end happens before what follows its await (finished
+  // before, or waited for)
+  tsan(RT_TSAN_ACQUIRE, t)
   if ld4(t, T_UNWOUND) != 0 {
     if canceled(c) {
       return empty_list()
@@ -547,11 +553,16 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   st(t, T_BUD, bud)
   budget.retain(bud)
   tsan(RT_TSAN_RELEASE, t)
+  // its own ThreadSanitizer context (a --race build): made here, so what
+  // the spawner did before the spawn happens before the task, and nothing
+  // the spawner does after it
+  st(t, T_TSAN, sanhook.task_new())
   // linked into s, counted, and queued (pool.xo scope_add): the tasks it
   // pruned from s's list, or -1 when s has ended
   let r = pool.scope_add_at(pl, s, t, w, own)
   if r == -1 {
     budget.release(bud)
+    sanhook.task_gone(ld(t, T_TSAN))
     obj.free_obj(t)
     env_release(env)
     fault.raise_str_at("a task was started on a scope that has ended", lp, ln)
@@ -665,6 +676,8 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   }
   pool.scope_join(pl, s, c, f, rw)
   tsan(RT_TSAN_ACQUIRE, c + ctx.C_PARK)
+  // every task's end (its release of s) happens before the scope's close
+  tsan(RT_TSAN_ACQUIRE, s)
   budget.resume(c)
   pool.lock(s + S_MU)
   st4(s, S_CLOSED, 1)
@@ -749,6 +762,9 @@ fn env_release(env: Int) {
 }
 
 pub fn task_free(t: Int) {
+  // a task that never ran (canceled before it started) still has its
+  // ThreadSanitizer context
+  sanhook.task_gone(ld(t, T_TSAN))
   budget.release(ld(t, T_BUD))
   list_release(ld(t, T_RESULT), ld(t, T_DROP))
   mfree(ld(t, T_FAULT_MSG))
@@ -811,6 +827,14 @@ pub fn wl_wake(l: Int) {
 /// Runs task t, which the caller claimed, on this stack (a fiber, or a
 /// thread that helps); units (sched.xo scope_units_done) are over after.
 pub fn run_claimed(t: Int, units: Int) {
+  // the task's own ThreadSanitizer context for the run (a --race build,
+  // decision 0273), then what its spawn did happens before it runs (the
+  // spawn's release; the runtime is not instrumented)
+  let tfib = rt.tlocal_get(TLS_FIB)
+  let tw = rt.tlocal_get(TLS_W)
+  let tctx = sanhook.task_enter(tfib, tw, ld(t, T_TSAN))
+  st(t, T_TSAN, 0)
+  tsan(RT_TSAN_ACQUIRE, t)
   // the context: the thread's spare (an earlier run's), else a new one
   // from the runtime's malloc (the C's was on its stack; a heap block
   // and its free per run cost spawn heavy programs, the zero-C perf
@@ -874,6 +898,10 @@ pub fn run_claimed(t: Int, units: Int) {
     rt.heap_release(c - 8)
   }
   let s = ld(t, T_SCOPE)
+  // what the task did happens before its await and its scope's close
+  // (their acquires)
+  tsan(RT_TSAN_RELEASE, t)
+  tsan(RT_TSAN_RELEASE, s)
   pool.lock(t + T_MU)
   rt.slot_store[Int](t + T_STATE, 0, T_DONE, RELEASE)
   wl_wake(t + T_WAITERS)
@@ -885,4 +913,5 @@ pub fn run_claimed(t: Int, units: Int) {
     // the joiner waits for this signal, so s is still there
     park_signal(ld(s, S_JOINER))
   }
+  sanhook.task_exit(tfib, tw, tctx)
 }

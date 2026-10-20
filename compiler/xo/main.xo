@@ -676,6 +676,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     g.goos = tgoos
     // --race (decision 0241): ThreadSanitizer over every function
     g.tsan = o.race
+    g.tsan_runtime = o.race && (os.env.get("XO_TSAN_RUNTIME") ?? "") == "1"
     let ir = g.generate()
     t = lap(os, phases, "emit", t)
     if !g.err.is_empty() {
