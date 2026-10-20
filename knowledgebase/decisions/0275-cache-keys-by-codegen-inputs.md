@@ -1,7 +1,9 @@
 # 0275: Backend cache keys by code generation inputs, not xo's identity
 
-Status: Proposed (2026-10-20, Xo Lang 3; for review by the lead and the
-owner; no key changes before it is accepted)
+Status: Accepted (owner, 2026-10-20), with the lead's two conditions:
+a test that every data file and environment variable the code
+generation reads is keyed or classified, and the closure failing
+closed to self_id (both under "Safety net" below). Drafted by Xo Lang 3
 
 ## Context
 

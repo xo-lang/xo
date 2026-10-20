@@ -888,3 +888,19 @@ order, so part 25 of 36 started late.
 
 inline.verify: 1.7 to 2.7 s of wall at load 13 to 22 (verify_rc 5.2 s
 of CPU on tasks); the earlier 24 s readings were the load.
+
+## The inlining verifier stays on by default (owner, 2026-10-20)
+
+Proposed (compile-speed item 1): run the verifiers only with
+XO_VERIFY=1. Measured first: an ordinary build runs one verifier,
+inline.verify (verify_inlined; insert_rc's verifiers run only in
+tests), and it already skips the functions whose verify keys passed
+before, so after an edit it verifies only what changed. On a cold
+self-build of xo (main 274d4929, 200 Hz profiles) it took 1.7 s and
+2.7 s of wall of 37.8 s and 40.9 s builds (load 17 to 22) and verify_rc
+about 5.2 s of about 115 s of CPU (4.5%); on an edit build close to
+nothing. Kept on by the owner: about 5% of a cold build's CPU buys the
+field fallback (a module that does not verify is generated without
+inlining, slower but correct, gotchas/arm64-inline-verify-fallback.md),
+which an off-by-default verifier would turn into a miscompile. Do not
+re-propose without a new measurement that changes these figures.
