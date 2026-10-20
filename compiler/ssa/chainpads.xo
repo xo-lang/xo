@@ -215,7 +215,7 @@ fn (var r: Rc) pad_of(f: Func, bl: Int, exit: Int) -> Pad? {
     if x.op == Op.Release {
       var ks: List[Str] = []
       for l in r.leaves(f, x.args[0]) {
-        let k = leaf_key(l)
+        let k = leaf_skey(l)
         if p.all.contains(k) {
           return None // released twice: not a plain pad
         }
