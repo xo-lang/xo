@@ -278,3 +278,38 @@ released there, before the `rc.inc` that should have kept it, and the
 server crashed in its first handshake (gotchas/raw-address-outlives-bytes.md,
 observed again); the first gate caught tlssrv.free freeing a server's
 block as a connection's.
+
+## HTTP/2 header constants and AES-GCM's per record work (2026-10-19, Xo Lang 3)
+
+f8d367b7, the second and third levers of the tls and h2 ranking above:
+
+- h2srv fragment: a kept header's common name (the pseudo headers, host,
+  accept, cookie, user-agent, content-type, authorization,
+  content-length, accept-encoding, accept-language) and common value
+  (:method's GET, PUT, POST, HEAD, PATCH, DELETE; :scheme's https and
+  http; accept-encoding's gzip) are constants (http1.h2_name_at,
+  h2_value_at; an integer code per name, no Str compares), not copies:
+  string allocations an h2 request 36.6 to 27.4; a value's control
+  bytes are tested 8 at a time (h2w.value_ok), and a known name skips
+  the name's byte check.
+- AES-GCM: the CPU's rounds encrypt only the counter blocks a call needs
+  (encrypt_n: a tag's one block, a record's last chunk's 1 to 3, where
+  encrypt4 did four), and a record's last partial word is one load of
+  the word ending at n (tail_word), not a byte loop.
+
+Full mode callgrind, main 8a0bd1e8 and the change interleaved, two
+rounds each, the median of four:
+
+| scenario | arm64 | LLVM |
+|---|---|---|
+| tls | 37,132 to 36,664 (-1.3%) | 50,092 to 49,438 (-1.3%) |
+| tls-newconn | 1,882,383 to 1,881,659 (0.0%) | 1,766,659 to 1,765,645 (-0.1%) |
+| h2 | 61,761 to 58,932 (-4.6%) | 86,044 to 82,940 (-3.6%) |
+
+Measured and dropped: constants for HTTP/1's common header values
+(gzip, close, keep-alive, application/json): parse_head's checks cost
+about what the copies saved (about -0.3%, inside short mode's noise).
+
+With 6827ce1e the day's arm64 totals against 065bd1c1's ranking: tls
+40,358 to about 36,700, h2 68,030 to about 58,900 (short mode, ANN
+runs).

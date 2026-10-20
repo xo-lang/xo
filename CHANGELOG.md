@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- HTTP/2 keeps common header names and values as constants, and AES-GCM
+  encrypts only the counter blocks a record needs: HTTP/2 requests 4.6%
+  (arm64) and 3.6% (LLVM) fewer instructions, TLS requests 1.3%.
 - The files a build target's last build parsed are parsed on tasks
   before the check, and the front end cache also keeps the bodies that
   reuse generic instances made before (xo after an edit: 0.6 to 1.3 s
