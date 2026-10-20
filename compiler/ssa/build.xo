@@ -1097,7 +1097,7 @@ fn (var b: Builder) conc_type(obj: Int) -> Bool {
   }
   let n = b.obj_name(obj)
   if b.c.mods[om].is_prelude {
-    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn"
+    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn" | "ServerConn"
   }
   b.c.mods[om].path == "std/task" && n == "Group"
 }

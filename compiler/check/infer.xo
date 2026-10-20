@@ -480,7 +480,7 @@ fn (c: Checker) is_handle(o: Int) -> Bool {
   if c.mods[m].is_prelude {
     // File, FileLock (decision 0163) and Child (std.md 3.8) came after
     // decision 0112's list; they are handles too
-    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn" | "File" | "FileLock" | "Child"
+    return n is "Chan" | "Mutex" | "Atomic" | "Scope" | "Task" | "Listener" | "Conn" | "ServerConn" | "File" | "FileLock" | "Child"
   }
   if !c.mods[m].c_prefix.is_empty() {
     // an opaque C pointer of `use c` (decision 0116)

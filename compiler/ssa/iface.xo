@@ -361,6 +361,12 @@ fn (var b: Builder) method_on(name: Str, ct0: Int, recv: Int, args: List[Int], w
     let from_err = b.fail_err(b.c.subst(b.c.objs[im].err, sub))
     return b.adapt_result(r, from_err, want, to_err, at)
   }
+  if b.is_prelude_named(ct, ["Conn", "ServerConn"]) {
+    // a connection through Stream (decision 0280): the runtime calls
+    if let Some(r) = b.conn_method(name, recv, args, want) {
+      return r
+    }
+  }
   let m = b.method_of(ct, name)
   if m >= 0 {
     let targs = b.ty_args(ct)

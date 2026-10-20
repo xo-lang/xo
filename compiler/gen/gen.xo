@@ -989,7 +989,7 @@ fn (var g: Gen) named_type(t: Int) -> Str {
       return s
     }
     let r = g.rt()
-    if n is "Rune" | "Bytes" | "Duration" | "Time" | "Never" | "StrBuilder" | "BytesBuilder" | "Listener" | "Conn" {
+    if n is "Rune" | "Bytes" | "Duration" | "Time" | "Never" | "StrBuilder" | "BytesBuilder" | "Listener" | "Conn" | "ServerConn" {
       return r + n
     }
     if n is "List" | "Map" | "Set" | "Buf" | "Secret" | "Range" | "Option" | "Result" {

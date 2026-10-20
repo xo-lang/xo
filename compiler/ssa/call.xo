@@ -2064,7 +2064,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   if let Some(v) = b.test_cap_call(x, ci, key) {
     return Some(v)
   }
-  if !(rname is "Clock" | "Net" | "Listener" | "Conn" | "Proc" | "Env" | "Duration" | "Time" | "Bytes" | "Fs" | "StrBuilder" | "BytesBuilder" | "Rand") {
+  if !(rname is "Clock" | "Net" | "Listener" | "Conn" | "ServerConn" | "Proc" | "Env" | "Duration" | "Time" | "Bytes" | "Fs" | "StrBuilder" | "BytesBuilder" | "Rand") {
     if rname != "Str" || fname != "bytes" {
       return None
     }
@@ -2073,7 +2073,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let it = b.int_t()
   let st = b.str_t()
   let es = arg_exprs(b.c.objs[fo].params, args)
-  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" | "Proc.pipeline" {
+  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" | "ServerConn.read" | "ServerConn.write" | "Proc.pipeline" {
     // operations that wait: the program needs unwinding checks
     b.set_flag(1)
     if !b.conc {

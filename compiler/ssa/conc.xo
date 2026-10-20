@@ -1286,7 +1286,33 @@ fn (var b: Builder) net_err_func(et: Int) -> Str {
   name
 }
 
-/// The operations of Clock, Net, Listener, and Conn that wait or hold
+/// Conn's and ServerConn's read, write, and close on argument values, for
+/// a call through an interface (Stream, decision 0280): the runtime calls
+/// of wait_call's, with want (the interface method's result) as the
+/// result; None for another method.
+fn (var b: Builder) conn_method(name: Str, recv: Int, args: List[Int], want: Int) -> Int? {
+  if name == "close" && args.is_empty() {
+    b.rt("conn_close", -1, [recv])
+    return Some(b.unit())
+  }
+  if !(name is "read" | "write") || args.len() != 1 {
+    return None
+  }
+  // operations that wait: the program needs unwinding checks
+  b.set_flag(1)
+  if !b.conc {
+    return Some(b.undef(want))
+  }
+  if name == "read" {
+    let l = b.rt("conn_read", b.m.list(b.str_t()), [recv, args[0]])
+    let ok = b.m.types[want].variants[b.m.variant_index(want, "Ok")].fields[0].ty
+    return Some(b.net_result(b.pop_one(l, ok), want))
+  }
+  b.rt("conn_write", -1, [recv, args[0]])
+  Some(b.net_result(b.unit(), want))
+}
+
+/// The operations of Clock, Net, Listener, Conn, and ServerConn that wait or hold
 /// network handles (ioCall): the value, or None for any other key.
 fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt: Int) -> Int? {
   let it = b.int_t()
@@ -1340,16 +1366,16 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       b.rt("listener_close", -1, [recv])
       return Some(b.unit())
     }
-    "Conn.read" => {
+    "Conn.read" | "ServerConn.read" => {
       let l = b.rt("conn_read", b.m.list(st), [recv, b.io_arg(fo, es, 0, it)])
       let ok = b.m.types[nt].variants[b.m.variant_index(nt, "Ok")].fields[0].ty
       return Some(b.net_result(b.pop_one(l, ok), nt))
     }
-    "Conn.write" => {
+    "Conn.write" | "ServerConn.write" => {
       b.rt("conn_write", -1, [recv, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(b.unit(), nt))
     }
-    "Conn.close" => {
+    "Conn.close" | "ServerConn.close" => {
       b.rt("conn_close", -1, [recv])
       return Some(b.unit())
     }

@@ -484,6 +484,11 @@ func boundAddr(a net.Addr) string {
 // Conn is a connection.
 type Conn struct{ c net.Conn }
 
+// ServerConn is an accepted connection (decision 0280): the same value
+// as Conn, a distinct type in Xo only for the effects of its reads and
+// writes (net.listen).
+type ServerConn = Conn
+
 // netClosedText is the message of an operation on a closed listener or
 // connection (Go's net.ErrClosed, as the native runtime words it).
 const netClosedText = "use of closed network connection"

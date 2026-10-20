@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+echo 0: message 0 through an interface
+echo 1: message 1 through an interface
+echo 2: message 2 through an interface
+--- stderr

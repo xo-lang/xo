@@ -1,0 +1,46 @@
+// A connection's methods through an interface (decision 0280 phase 1):
+// an echo server and a client that read and write through Duplex, an
+// interface Conn satisfies, on every backend.
+interface Duplex {
+  fn read(self, max: Int) -> Bytes? ! NetErr uses net
+  fn write(self, data: Bytes) -> () ! NetErr uses net
+  fn close(self)
+}
+
+fn echo(c: Duplex) -> () ! NetErr {
+  while let Some(data) = c.read(5)? {
+    c.write(data)?
+  }
+}
+
+fn ask(c: Duplex, msg: Str) -> Str ! NetErr {
+  c.write(msg.bytes())?
+  var got = ""
+  while got.len() < msg.len() {
+    match c.read(64)? {
+      Some(b) => got = got + (b.to_str() ?? "?")
+      None => break
+    }
+  }
+  c.close()
+  got
+}
+
+fn main(os: Os) ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() {
+      while let Ok(c) = l.accept() {
+        s.spawn_background(fn() {
+          let _ = echo(c).is_ok()
+          c.close()
+        })
+      }
+    })
+    for i in 0..3 {
+      os.stdio.println("echo ${i}: ${ask(os.net.dial(addr)?, "message ${i} through an interface")?}")
+    }
+    l.close()
+  }
+}
