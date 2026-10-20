@@ -698,3 +698,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [root-inline-task-waits-for-helped-work.md](root-inline-task-waits-for-helped-work.md): Observed: a task the root thread runs inline (main's body, a task its join claims) helps with other work while parked and cannot move, so its wakes wait for a long computation; wait on a channel, not await (xo lsp, 0284)
 - [timing-test-inline-inputs.md](timing-test-inline-inputs.md): Observed: a dudect test that generates inputs between timings reports a false leak (bench/ct, P-256); prepare inputs first
 - [nan-ordering-in-ports.md](nan-ordering-in-ports.md): Observed: Xo orders NaN after +Inf, Go compares IEEE; ported Go numeric code needs is_nan guards before < and >
+- [go-backend-fused-float.md](go-backend-fused-float.md): Observed, fixed: the Go backend let Go fuse Float a*b+c into FMA on arm64; products now print as float64(a * b); golden float_no_fma

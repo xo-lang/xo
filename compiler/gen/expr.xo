@@ -969,6 +969,12 @@ fn (var g: Gen) binop(op: Str, a0: Str, b: Str, xt: Int, yt: Int, rt: Int, at: O
     if go_float_const(a) && go_float_const(b) {
       a = "${r}FVal(${a})"
     }
+    if op == "*" {
+      // a conversion rounds the product, which forbids Go's compiler from
+      // fusing it with an add or subtract into one FMA (it does on arm64):
+      // every Float operation rounds on every backend (decision 0287)
+      return g.go_type(xt) + "(" + a + " * " + b + ")"
+    }
     return "(" + a + " " + op + " " + b + ")"
   }
   let signed = g.is_signed(xt)
