@@ -21,7 +21,9 @@
 #      (scripts/bootstrap-xo.sh, s2 and s3 identical)
 #   4. push the commit to main (refused if main moved: rerun), then the
 #      annotated tag vVERSION with NOTES, pushed (a tag, not a release)
-#   5. darwin-arm64: xo at clang -O2, packed by scripts/seed-pack.sh
+#   5. darwin-arm64: xo at clang -O2 and ThreadSanitizer's runtime
+#      (scripts/race-runtime.sh, into the tree's lib/xo/race), packed by
+#      scripts/seed-pack.sh
 #   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64: cross built
 #      by that xo with the Go backend, packed with the checkout's std
 #   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
@@ -129,6 +131,9 @@ step "5. darwin-arm64 at -O2"
 out=$work/out
 mkdir -p "$out"
 XO_LLVM_OPT=O2 heavy "$log/xobuild-o2.log" go run ./scripts/xobuild || { tail "$log/xobuild-o2.log"; die "xobuild -O2 failed"; }
+# ThreadSanitizer's runtime for native --race (decision 0273 part 3) into
+# the tree's lib/xo/race, which seed-pack.sh packs
+heavy "$log/race-runtime.log" bash scripts/race-runtime.sh "$work/race" "$tree" || { tail "$log/race-runtime.log"; die "race-runtime.sh failed"; }
 [ "$(bin/xo version | awk '{print $2}')" = "$version" ] || die "bin/xo version: $(bin/xo version), want xo $version"
 XO_SEED_COMMIT=$commit XO_SEED_NOTE="native darwin/arm64 build at -O2, fixed point ok (seed-cut.sh)" \
   bash scripts/seed-pack.sh bin/xo "$out" > "$log/pack-darwin-arm64.log"

@@ -80,8 +80,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
 
 /// ThreadSanitizer's runtime for a native --race executable of tgoos and
 /// march (decision 0273 part 3), or why there is none: $XO_RACE_RUNTIME,
-/// else lib/xo/race/GOOS-ARCH/ next to xo's std (XO/../std, the release
-/// archive's and the seed's layout).
+/// else race/GOOS-ARCH/ beside xo's std: a release's lib/xo/race (std in
+/// lib/xo/std), a seed's or checkout's lib/xo/race (std in std/,
+/// scripts/race-runtime.sh writes it there).
 fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
   let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else { "libclang_rt.tsan.so" }
   let env = os.env.get("XO_RACE_RUNTIME") ?? ""
@@ -89,11 +90,13 @@ fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
     return (env, "")
   }
   let root = dir_name(ctx.std.trim_suffix("/"))
-  let p = "${root}/lib/xo/race/${tgoos}-${march}/${file}"
-  if os.fs.exists(p).ok() ?? false {
-    return (p, "")
+  let rel = "${tgoos}-${march}/${file}"
+  for p in ["${root}/race/${rel}", "${root}/lib/xo/race/${rel}"] {
+    if os.fs.exists(p).ok() ?? false {
+      return (p, "")
+    }
   }
-  ("", "--race: no ThreadSanitizer runtime for ${tgoos}/${march} (${p}; XO_RACE_RUNTIME names one): use --backend=llvm")
+  ("", "--race: no ThreadSanitizer runtime for ${tgoos}/${march} (${root}/lib/xo/race/${rel}; XO_RACE_RUNTIME names one): use --backend=llvm")
 }
 
 /// The objects a --ld=macho link takes from srcs, and why not ("" when

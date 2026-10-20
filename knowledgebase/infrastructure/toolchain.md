@@ -3931,8 +3931,13 @@ it cuts from that commit as is instead of refusing.
 seed-cut.sh stops at the first failure, before anything is pushed when
 the failure is in the bump, `-short` (internal/xotool, cmd/xo), or the
 gate (the bump's xo builds and runs hello, and the fixed point holds).
-After the push and tag it builds darwin-arm64 natively at clang -O2 and
-cross builds linux-arm64, linux-amd64, windows-amd64, and darwin-amd64
+After the push and tag it builds darwin-arm64 natively at clang -O2,
+builds ThreadSanitizer's runtime for native --race into the tree's
+lib/xo/race (scripts/race-runtime.sh: LLVM compiler-rt 23.1.3, its
+sources checked against pinned SHA-256 sums, built with clang, and cmake
+and ninja from PATH or a Python virtual environment in WORKDIR/race;
+the darwin-arm64 seed then holds xo/lib/xo/race, decision 0273; last
+verified: 2026-10-20), and cross builds linux-arm64, linux-amd64, windows-amd64, and darwin-amd64
 with that xo and the Go backend (about 25 s each), packs all five with
 seed-pack.sh into WORKDIR/out, and writes WORKDIR/out/SEED. Logs are in
 WORKDIR/logs. A failure after the push (a build or pack) is fixed and

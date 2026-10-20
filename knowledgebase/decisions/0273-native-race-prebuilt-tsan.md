@@ -154,11 +154,18 @@ fibers of one thread. amd64 (the x86 templates) is not instrumented yet.
   (TestRaceSyncTableArm64 builds with xo build on darwin, the runtime
   clang's until one is shipped: 40 of 40, 2026-10-20).
 - The runtime: LLVM compiler-rt's ThreadSanitizer (C++), at a pinned
-  revision, built per platform by a maintainer script (never on users'
-  machines), shipped in lib/xo/race/<goos>-<goarch>, linked by Xo's own
-  linkers.
-- License: Apache 2.0 with the LLVM exception, in THIRD_PARTY_NOTICES;
-  the one non-Xo component of a build, linked only with --race.
+  release (23.1.3, the source checked against its pinned SHA-256 sum;
+  21.1.8 crashed on macOS 27, gotchas/tsan-runtime-macos-version.md),
+  built per platform by scripts/race-runtime.sh (never on users'
+  machines; darwin/arm64 so far: the dylib), shipped in
+  lib/xo/race/<goos>-<goarch> with compiler-rt's LICENSE.TXT in
+  lib/xo/race: a release's lib/xo/race beside lib/xo/std (release.sh),
+  a seed's xo/lib/xo/race (seed-cut.sh builds it, seed-pack.sh packs
+  it); race_runtime looks in both. Not in the repository (/lib/ is
+  ignored).
+- License: Apache 2.0 with LLVM Exceptions, in THIRD_PARTY_NOTICES
+  (entry 2); the one non-Xo component of a build, loaded only with
+  --race.
 
 ## Consequences
 

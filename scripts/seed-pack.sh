@@ -9,7 +9,9 @@
 # writes, in the shape of the bucket's seeds/<seed>/ directory:
 #
 #   OUTDIR/<goos>-<goarch>.tar.gz          xo/bin/xo and xo/std (xo finds std
-#                                          at bin/../std), xo/SEED
+#                                          at bin/../std), xo/SEED, and
+#                                          xo/lib/xo/race when the layout
+#                                          has lib/xo/race (decision 0273)
 #   OUTDIR/<goos>-<goarch>.tar.gz.sha256   "<hex>  <goos>-<goarch>.tar.gz"
 #   OUTDIR/<goos>-<goarch>.info            version, commit, date, note (for the manifest)
 #   OUTDIR/manifest.txt                    rebuilt from every .info in OUTDIR
@@ -138,6 +140,13 @@ else
   cp -R "$std" "$stage/xo/std"
 fi
 [ -f "$stage/xo/std/prelude.xo" ] || die "packed std has no prelude.xo"
+# ThreadSanitizer's runtime for native --race (decision 0273 part 3), when
+# scripts/race-runtime.sh built it into the layout: xo/lib/xo/race
+race=$prefix/lib/xo/race
+if [ -d "$race" ]; then
+  mkdir -p "$stage/xo/lib/xo"
+  cp -R "$race" "$stage/xo/lib/xo/race"
+fi
 printf 'seed %s\nversion %s\ncommit %s\ndate %s\nplatform %s\n' "$seed" "$version" "$commit" "$date" "$plat" > "$stage/xo/SEED"
 
 tgz="$out/$plat.tar.gz"

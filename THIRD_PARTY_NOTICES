@@ -1,7 +1,8 @@
 Third-party notices
 
-Xo includes code copied or ported from the following projects. Their
-licenses apply to those parts, alongside LICENSE and std/LICENSE.
+Xo includes code copied or ported from, or binaries built from, the
+following projects. Their licenses apply to those parts, alongside
+LICENSE and std/LICENSE.
 
 1. The Go programming language and golang.org/x/crypto
 
@@ -47,3 +48,17 @@ licenses apply to those parts, alongside LICENSE and std/LICENSE.
    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+2. LLVM compiler-rt: ThreadSanitizer's runtime
+
+   Shipped as a binary, not in this repository: the release archives and
+   seeds hold lib/xo/race/<os>-<arch>/ (libclang_rt.tsan_osx_dynamic.dylib
+   on darwin/arm64), built from LLVM compiler-rt 23.1.3 by
+   scripts/race-runtime.sh, and loaded only by programs built with
+   --race on a native backend (decision 0273). Not part of any program
+   built without --race.
+
+   License: Apache License v2.0 with LLVM Exceptions, Copyright the LLVM
+   Project contributors; the full text is lib/xo/race/LICENSE.TXT beside
+   the runtime (compiler-rt's LICENSE.TXT) and
+   https://llvm.org/LICENSE.txt.

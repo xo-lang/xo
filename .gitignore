@@ -11,6 +11,8 @@ benchtask
 /xoplay
 bin/
 dist/
+# ThreadSanitizer's runtime, built by scripts/race-runtime.sh (decision 0273)
+/lib/
 
 # Editor and OS files
 .DS_Store

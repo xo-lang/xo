@@ -42,6 +42,10 @@
 #                                                        std/tzdata: the IANA zone
 #                                                        database std/time embeds,
 #                                                        decision 0094's addendum)
+#   xo-<version>-<os>-<arch>/lib/xo/race/                ThreadSanitizer's runtime for
+#                                                        native --race and its license
+#                                                        (decision 0273; when
+#                                                        scripts/race-runtime.sh built it)
 #   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md
 #
 # xo1 finds std and xo-gobind beside itself (bin/../lib/xo), so
@@ -113,6 +117,15 @@ layout() {
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
 		go build -trimpath -o "$stage/bin/xo-gobind$exe" ./cmd/xo-gobind
 	cp README.md CHANGELOG.md "$stage/"
+	# ThreadSanitizer's runtime for native --race (decision 0273 part 3),
+	# when scripts/race-runtime.sh built it for this target into the
+	# checkout's lib/xo/race, with its license
+	local plat="${target%/*}-${target#*/}"
+	if [ -d "lib/xo/race/$plat" ]; then
+		mkdir -p "$stage/lib/xo/race"
+		cp -R "lib/xo/race/$plat" "$stage/lib/xo/race/"
+		cp lib/xo/race/LICENSE.TXT "$stage/lib/xo/race/"
+	fi
 }
 
 targets="darwin/arm64 linux/arm64 linux/amd64"
