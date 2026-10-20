@@ -491,9 +491,12 @@ fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[O
         }
       }
       Err(task.Timed.TimedOut) => {
+        // where it waits, before the kill: a build that takes seconds
+        // alone timed out three times under load (2026-10-19, 20)
+        let where = hang_sample(os, cfg, p.name, ch.pid())
         ch.kill()
         child = None
-        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: timed out after ${cfg.timeout.seconds()} s"})
+        outs.push(Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: timed out after ${cfg.timeout.seconds()} s${where}"})
       }
       Err(task.Timed.Failed(e)) => {
         ch.kill()
@@ -507,6 +510,42 @@ fn worker(os: Os, cfg: Config, keys: Map[Str, Str], queue: Chan[Prog]) -> List[O
     ch.wait().ok()
   }
   outs
+}
+
+/// A stack sample of the build process pid, taken before a timeout kills
+/// it: darwin's `sample PID 5`, or on Linux gdb's backtrace of every
+/// thread when gdb is installed, written to OUT/hang-NAME.txt. The text
+/// to add to the failure: the file and the top of the call graph ("" when
+/// no sample could be taken).
+fn hang_sample(os: Os, cfg: Config, name: Str, pid: Int) -> Str {
+  let path = "${cfg.out}/hang-${name}.txt"
+  let ok = match target.os {
+    TargetOs.Darwin => {
+      match os.proc.cmd("sample", ["${pid}", "5", "-file", path]).output() {
+        Ok(out) => out.code == 0
+        Err(_) => false
+      }
+    }
+    TargetOs.Linux => {
+      match os.proc.cmd("gdb", ["-p", "${pid}", "-batch", "-ex", "thread apply all bt"]).output() {
+        Ok(out) => out.code == 0 && os.fs.write(path, out.stdout).is_ok()
+        Err(_) => false
+      }
+    }
+    _ => false
+  }
+  if !ok {
+    return ""
+  }
+  let text = (os.fs.read(path).ok() ?? b"").to_str() ?? ""
+  var lines = text.split("\n")
+  for (i, l) in lines.indexed() {
+    if l.starts_with("Call graph:") {
+      lines = lines[i..lines.len()]
+      break
+    }
+  }
+  "; stack sample ${path}:\n${lines[0..lines.len().min(30)].join("\n")}"
 }
 
 fn read_times(fs: Fs, path: Str) -> Map[Str, Int] uses fs.read {
