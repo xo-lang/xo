@@ -1986,3 +1986,14 @@ test "every amd64 form encodes as clang's assembler encodes it" {
   }
   expect(bad) == []
 }
+
+test "forms with no encoding are refused, not encoded as an address" {
+  // 2026-10-20: both came out of x86_const_imm and were assembled as
+  // loads from address 0 and 1
+  for ins in ["imulq $48, $0, %r11", "movq $1, %xmm14", "movd $1, %xmm0", "movq %xmm1, $3"] {
+    let r = encode_x86_line(ins.bytes())
+    expect(r.err.is_empty()) == false
+  }
+  // the valid three operand imul stays
+  expect(encode_x86_line("imulq $48, %r11, %r11".bytes()).err) == ""
+}

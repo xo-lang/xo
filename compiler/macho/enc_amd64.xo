@@ -1290,6 +1290,11 @@ fn (var e: XB) imul(size: Int, ops: List[XOp]) {
     return e.op_rm(size, [0x0f, 0xaf], dst.reg, false, ops[0])
   }
   let c = ops[0]
+  if c.kind != XO_IMM || ops[1].kind == XO_IMM {
+    // `imulq $N, $M, %r` assembled its second immediate as the address
+    // M (2026-10-20: a miscompile that read address 0)
+    return e.fail("imul with three operands takes an immediate, then a register or memory")
+  }
   if c.sym.is_empty() && fits8(c.imm) {
     e.op_rm(size, [0x6b], dst.reg, false, ops[1])
     return e.immn(c, 1)
@@ -1379,6 +1384,11 @@ fn (var e: XB) sse_store(p: Int, opc: List[Int], src: XOp, dst: XOp) {
 /// movq and movd between a general register (or memory) and an xmm
 /// register, and movq xmm to xmm.
 fn (var e: XB) movq_xmm(q: Bool, src: XOp, dst: XOp) {
+  if src.kind == XO_IMM || dst.kind == XO_IMM {
+    // no immediate form (2026-10-20: `movq $1, %xmm14` assembled as a
+    // load from address 1)
+    return e.fail("movq and movd to or from an xmm register take no immediate")
+  }
   let sx = src.kind == XO_REG && src.rclass == RC_XMM
   let dx = dst.kind == XO_REG && dst.rclass == RC_XMM
   if sx && dx {

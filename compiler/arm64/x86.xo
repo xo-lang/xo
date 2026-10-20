@@ -2381,20 +2381,13 @@ fn x86_imm_into(text: Str, k: Int, n: Int) -> Str {
     }
     return ""
   }
-  // msub and madd's product into the scratch register: `movq $uA, %r11`
-  // then `imulq $uK, %r11` is `imulq $N, $uA, %r11`
-  if op == "imulq" && l == "imulq $u${k}, %r11" && at > 0 && ls[at - 1].starts_with("movq ") && ls[at - 1].ends_with(", %r11") {
-    let src = ls[at - 1]["movq ".len()..ls[at - 1].len() - ", %r11".len()]
-    if src.contains("%r11") {
-      return ""
-    }
-    var out: List[Str] = []
-    for (i, x) in ls.indexed() {
-      if i == at - 1 {
-        continue
-      }
-      out.push(if i == at { "imulq $${n}, ${src}, %r11" } else { x })
-    }
+  // msub and madd's product into the scratch register: `imulq $uK,
+  // %r11` is `imulq $N, %r11, %r11` (r11 the source too: an allocated
+  // operand there was a spilled one's slot the emitter wrote as `$0`,
+  // and the HTTP server's http.match_parts read address 0, 2026-10-20)
+  if op == "imulq" && l == "imulq $u${k}, %r11" {
+    var out = ls
+    out[at] = "imulq $${n}, %r11, %r11"
     return out.join("\n")
   }
   if !(op is "addq" | "subq" | "andq" | "orq" | "xorq" | "cmpq" | "testq" | "movq" | "addl" | "subl" | "andl" | "orl" | "xorl" | "cmpl" | "testl" | "movl") {
@@ -2408,6 +2401,13 @@ fn x86_imm_into(text: Str, k: Int, n: Int) -> Str {
     }
   }
   if tok.is_empty() || (op.ends_with("l") && tok.starts_with("$u")) || (op.ends_with("q") && tok.starts_with("$wu")) {
+    return ""
+  }
+  // a mov's immediate goes only to memory or a general register (an
+  // xmm destination has no immediate form, and an allocated one may be
+  // a float's: `movq $1, %xmm14` loaded from address 1, 2026-10-20)
+  let dst = rest[tok.len()..rest.len()]
+  if op.starts_with("mov") && !(dst.contains("(") || dst.starts_with("%r") || dst.starts_with("%e")) {
     return ""
   }
   var out = ls
