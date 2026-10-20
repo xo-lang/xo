@@ -218,6 +218,44 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
   k.sum()
 }
 
+/// The cache key of a link by compiler/macho (no cc) of srcs for tgoos
+/// with flags: xo's own identity (it is the linker), the flags, the
+/// target, strip and nolibc, the sources (one outside dir by its
+/// contents), and every file of dir but its bin directory. "" when the
+/// cache is off or an input cannot be read. A test build linked by
+/// compiler/macho never used the cache (internal/arm64: 9 lookups in a
+/// full run, 2026-10-20).
+fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs: List[Str], strip: Bool, nolibc: Bool) -> Str {
+  if ctx.bin_cache.is_empty() {
+    return ""
+  }
+  let id = self_id(os)
+  if id.is_empty() {
+    return ""
+  }
+  var k = new_key("macho")
+  k.str(id)
+  k.strs(flags)
+  k.str("${tgoos} strip=${strip} nolibc=${nolibc}")
+  for s in srcs {
+    if s.starts_with("${dir}/") {
+      k.str(s.trim_prefix("${dir}/"))
+    } else {
+      match os.fs.read(s) {
+        Ok(b) => {
+          k.str(s)
+          k.data(b)
+        }
+        Err(_) => return ""
+      }
+    }
+  }
+  if !key_tree(os, k, dir, ["bin"]) {
+    return ""
+  }
+  k.sum()
+}
+
 /// goBinKey: the cache key of a go build in dir with args (without the
 /// output) for target t: the go command's identity, the arguments, the
 /// target, the race detector's C toolchain, and every file of dir but the

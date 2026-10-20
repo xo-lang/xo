@@ -998,10 +998,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     let srcs = progs + lk.srcs
     if no_cc {
-      write_or_fail(os, dir_name(bin), "", b"")
-      let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nolibc(os, o, c, tgoos))
-      if !why.is_empty() {
-        fail(os, why)
+      let nl = nolibc(os, o, c, tgoos)
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl)
+      let (mhit, mentry) = fetch_bin(os, ctx, mkey, bin)
+      if !mhit {
+        write_or_fail(os, dir_name(bin), "", b"")
+        let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nl)
+        if !why.is_empty() {
+          fail(os, why)
+        }
+        store_bin(os, ctx, mentry, bin)
       }
       t = lap(os, phases, "link", t)
       bins.push((tg, bin))
