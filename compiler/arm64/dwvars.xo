@@ -239,7 +239,7 @@ fn (var g: G) dv_plan() -> DvPlan {
   var symix: Map[Str, Int] = {}
   for d in g.f.dbinds {
     let dv = g.f.dvars[d.dvar]
-    if dv.inl >= 0 || !g.has_val[d.value] || !g.dv_type_ok(dv.ty) {
+    if !g.has_val[d.value] || !g.dv_type_ok(dv.ty) {
       continue
     }
     let ws = g.vals[d.value]
@@ -331,7 +331,7 @@ fn (var g: G) dv_plan() -> DvPlan {
 fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
   var out: List[Str] = []
   for (vi, dv) in g.f.dvars.indexed() {
-    if dv.inl >= 0 || !g.dv_type_ok(dv.ty) {
+    if !g.dv_type_ok(dv.ty) {
       continue
     }
     var mine: List[DvBind] = []
@@ -465,7 +465,9 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       entries.push("${s.lo} ${s.hi} ${bs.join(",")}")
     }
     let tn = g.m.types[dv.ty].name
-    out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}")
+    // the sixth field: its inline site (debug.xo nests it in that site's
+    // inlined_subroutine), -1 for the function's own
+    out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}|${dv.inl}")
   }
   out.join(";")
 }

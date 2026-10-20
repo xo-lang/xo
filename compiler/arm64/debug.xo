@@ -48,7 +48,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     if p.len() == 7 && !p[6].is_empty() {
       for v in p[6].split(";") {
         let q = v.split("|")
-        if q.len() != 5 {
+        if q.len() != 5 && q.len() != 6 {
           continue
         }
         var ents: List[DbgLoc] = []
@@ -60,7 +60,8 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
             }
           }
         }
-        vars.push(DbgVar{name: q[0], ty: q[1], param: q[2] == "1", line: Int.parse(q[3]) ?? 0, locs: ents})
+        let inl = if q.len() == 6 { Int.parse(q[5]) ?? -1 } else { -1 }
+        vars.push(DbgVar{name: q[0], ty: q[1], param: q[2] == "1", line: Int.parse(q[3]) ?? 0, locs: ents, inl: inl})
       }
     }
     recs.push(DbgFunc{file: fi, name: p[1], begin: p[2], end: p[3], rows: rows, sites: sites, vars: vars})
@@ -276,15 +277,16 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     for row in fr.rows {
       chains.push(site_chain(fr, row.site))
     }
-    inline_level(die, fr, chains, origin, 0, fr.rows.len(), 0)
-    // its variables (decision 0252), each with a location list
+    // the inlined calls, each with its callee's variables (in the first
+    // inlined_subroutine of its site)
+    var done: Map[Int, Bool] = {}
+    inline_level(die, fr, chains, origin, 0, fr.rows.len(), 0, tys, lists, done)
+    // its own variables (decision 0252), each with a location list
     for v in fr.vars {
-      die.uleb(if v.param { 9 } else { 8 })
-      die.str(v.name)
-      die.u32(tys.at.get(v.ty) ?? 0)
-      die.uleb(v.line / 4096)
-      die.uleb(lists.len())
-      lists.push((fr.begin, v.locs))
+      if v.inl >= 0 {
+        continue
+      }
+      dw_var(die, tys, lists, fr, v)
     }
     die.u8(0)
   }
@@ -384,6 +386,8 @@ struct DbgVar {
   param: Bool
   line: Int
   locs: List[DbgLoc]
+  /// the inline site it came in with (-1: the function's own)
+  inl: Int = -1
 }
 
 /// A location entry: from label start to label end, the bytes of a
@@ -707,7 +711,7 @@ fn file_index(file: Str, var files: List[Str], var at: Map[Str, Int]) -> Int {
 /// level `level` (0: called from the function itself): consecutive rows
 /// whose chain has the same site at that level make one, to the next
 /// row (or the function's end), with the deeper levels inside it.
-fn inline_level(var die: Dw, fr: DbgFunc, chains: List[List[Int]], origin: Map[Str, Int], i0: Int, i1: Int, level: Int) {
+fn inline_level(var die: Dw, fr: DbgFunc, chains: List[List[Int]], origin: Map[Str, Int], i0: Int, i1: Int, level: Int, tys: DwTys, var lists: List[(Str, List[DbgLoc])], var done: Map[Int, Bool]) {
   var i = i0
   while i < i1 {
     let s = if level < chains[i].len() { chains[i][level] } else { -1 }
@@ -729,10 +733,31 @@ fn inline_level(var die: Dw, fr: DbgFunc, chains: List[List[Int]], origin: Map[S
     die.uleb(cfile)
     die.uleb(site.call_line / 4096)
     die.uleb(site.call_line % 4096)
-    inline_level(die, fr, chains, origin, i, j, level + 1)
+    inline_level(die, fr, chains, origin, i, j, level + 1, tys, lists, done)
+    if !done.contains(s) {
+      // the inlined callee's variables (decision 0252 with 0268: a fault
+      // report shows them in the frame that inlined it)
+      done[s] = true
+      for v in fr.vars {
+        if v.inl == s {
+          dw_var(die, tys, lists, fr, v)
+        }
+      }
+    }
     die.u8(0)
     i = j
   }
+}
+
+/// A variable's entry (8, or 9 for a parameter) with a location list,
+/// its function's first label the list's base address.
+fn dw_var(var die: Dw, tys: DwTys, var lists: List[(Str, List[DbgLoc])], fr: DbgFunc, v: DbgVar) {
+  die.uleb(if v.param { 9 } else { 8 })
+  die.str(v.name)
+  die.u32(tys.at.get(v.ty) ?? 0)
+  die.uleb(v.line / 4096)
+  die.uleb(lists.len())
+  lists.push((fr.begin, v.locs))
 }
 
 /// The sites holding site s, outermost first (empty for none).

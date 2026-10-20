@@ -250,7 +250,7 @@ func TestDebugLineInlined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lldb: %v\n%s", err, bt)
 	}
-	if !regexp.MustCompile(`frame #0: .*scale at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main at main\.xo:12:\d+`).Match(bt) {
+	if !regexp.MustCompile(`frame #0: .*scale(\(.*\))? at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main at main\.xo:12:\d+`).Match(bt) {
 		t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
 	}
 }

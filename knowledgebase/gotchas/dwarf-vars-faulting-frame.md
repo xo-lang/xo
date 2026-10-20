@@ -20,5 +20,9 @@ slots are left out where the stub's prologue moved it). A register
 whose one definition is a parallel move from a variable's register is a
 place of that variable too. Still unavailable: a value in a caller
 saved register at the fault (the stub's moves and the fault function
-overwrite them; decision 0268's stage 2), and inlined functions'
-variables (stage 3). internal/llvm TestFaultLocalsFaultingFrame.
+overwrite them; decision 0268's stage 2). Inlined functions' variables
+(dwvars.xo skipped them) are described under their
+DW_TAG_inlined_subroutine since stage 3, and the runtime's reader shows
+an inlined copy outside its call's range where its list places it (the
+stub, past the body). internal/llvm TestFaultLocalsFaultingFrame,
+TestFaultLocalsInlined.

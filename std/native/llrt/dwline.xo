@@ -1571,7 +1571,7 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
   }
   let f = v.fns[fi]
   for vv in f.vars {
-    if vv.name.is_empty() || !in_scope(vv.within, pc - v.bias) {
+    if vv.name.is_empty() {
       continue
     }
     var ex = vv.expr
@@ -1580,6 +1580,15 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
       let (a, n) = list_expr(v, vv, pc - v.bias)
       ex = a
       exn = n
+    }
+    if !in_scope(vv.within, pc - v.bias) {
+      // outside its inlined call's range: shown only where its list
+      // places it (the arm64 backend's fault stubs, out of line past the
+      // body, carry the inlined callee's variables live at the fault,
+      // 2026-10-20)
+      if vv.list < 0 || exn == 0 {
+        continue
+      }
     }
     if exn == 0 {
       // an inlined copy without a location here is out of its scope (an
