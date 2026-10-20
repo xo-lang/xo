@@ -39,9 +39,9 @@ protocol is small, stable since PostgreSQL 7.4, and fully documented.
    `open` are the whole configuration, as capabilities require. Roots
    for a private CA are passed as PEM bytes (`roots:`), read by the
    caller with `Fs`.
-3. **TLS** uses `Conn.tls_client` (spec/std.md 3.2, owned by Xo Lang
-   3): the driver sends SSLRequest in plain text and upgrades the same
-   connection. `sslmode` maps onto its verification levels: `disable`
+3. **TLS** uses `tls.client(c, host, ...)` of std/tls (decision 0281,
+   owned by Xo Lang 3), whose `TlsConn` implements `Stream`: the driver
+   sends SSLRequest in plain text and upgrades the same connection. `sslmode` maps onto its `TlsVerify` levels: `disable`
    (no TLS), `prefer` (TLS when the server offers it, verification
    `None`, as libpq), `require` (`None`), `verify-ca` (`ChainOnly`),
    `verify-full` (`Full`). The default is `verify-full` (owner,
