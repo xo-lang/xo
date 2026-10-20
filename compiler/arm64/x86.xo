@@ -2225,6 +2225,337 @@ fn x86_mul_half(inst: Inst, text: Str) -> Bool {
   inst.kind == K_PLAIN && !inst.x86 && !inst.has_fault && inst.text == text && inst.defs.len() == 1 && inst.us.len() == 2
 }
 
+/// Constants as immediate operands (2026-10-20: arm64's MIR keeps a
+/// constant past its 12 bit immediates in a register, which hoist_consts
+/// moves out of the loop; x86_64 then spilled most of them, 16 in
+/// portable conv's loop, each use a reload through r11): a register
+/// whose one definition is a constant of 32 signed bits becomes `$N` as
+/// the first operand of an add, sub, and, or, xor, cmp (a branch's too),
+/// test, or mov
+/// (not an instruction with a fault, whose stub reads the operands'
+/// registers), and a constant left unread goes.
+fn (var g: G) x86_const_imm() {
+  var ndef: Map[Int, Int] = {}
+  var kval: Map[Int, Int] = {}
+  for b in 0..g.blocks.len() {
+    for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+      }
+      if inst.kind == K_PLAIN && inst.x86 && inst.defs.len() == 1 && inst.us.is_empty() && !inst.has_fault {
+        if let Some(n) = x86_const_def(inst.text) {
+          kval[inst.defs[0]] = n
+        }
+      }
+    }
+  }
+  if kval.is_empty() {
+    return
+  }
+  var nuse: Map[Int, Int] = {}
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    for k in 0..ins.len() {
+      var inst = ins[k]
+      // a plain line, or a branch's compare (`cmpq $u1, $u0`)
+      if (inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty())) && inst.x86 && !inst.has_fault && inst.recover.is_empty() {
+        var again = true
+        while again {
+          again = false
+          for (u, v) in inst.us.indexed() {
+            let n = kval.get(v) ?? MIN_INT
+            if n == MIN_INT || (ndef.get(v) ?? 0) != 1 || !imm32(n) {
+              continue
+            }
+            let t = x86_imm_into(inst.text, u, n)
+            if t.is_empty() {
+              continue
+            }
+            var us: List[Int] = []
+            for (j, w) in inst.us.indexed() {
+              if j != u {
+                us.push(w)
+              }
+            }
+            var text = t
+            for j in u + 1..inst.us.len() {
+              text = x86_tok_rename(text, j, j - 1)
+            }
+            inst.text = text
+            inst.us = us
+            again = true
+            break
+          }
+        }
+        ins[k] = inst
+      }
+      for u in ins[k].us {
+        nuse[u] = (nuse.get(u) ?? 0) + 1
+      }
+      // a call's arguments and a fault's (not in us)
+      for sr in ins[k].srcs + ins[k].fargs {
+        if sr.kind == S_REG {
+          nuse[sr.v] = (nuse.get(sr.v) ?? 0) + 1
+        }
+      }
+    }
+    g.put_insts(b, ins)
+  }
+  // the constants no instruction reads any more
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    var out: List[Inst] = List.with_capacity(ins.len())
+    for inst in ins {
+      if inst.kind == K_PLAIN && inst.x86 && inst.defs.len() == 1 && inst.us.is_empty() && kval.contains(inst.defs[0]) && (nuse.get(inst.defs[0]) ?? 0) == 0 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
+        continue
+      }
+      out.push(inst)
+    }
+    g.put_insts(b, out)
+  }
+}
+
+/// The constant a one line `movl $N, $wd0`, `movq $N, $d0`, or `movabsq
+/// $N, $d0` writes.
+fn x86_const_def(text: Str) -> Int? {
+  if text.contains("\n") {
+    return None
+  }
+  for (p, tail) in [("movl $", ", $wd0"), ("movq $", ", $d0"), ("movabsq $", ", $d0")] {
+    if text.starts_with(p) && text.ends_with(tail) {
+      let s = text[p.len()..text.len() - tail.len()]
+      if is_signed_digits(s) {
+        return Int.parse(s)
+      }
+    }
+  }
+  None
+}
+
+/// text with its one read of use K, the first operand of an add, sub,
+/// and, or, xor, cmp, test, or mov line (`$uK`, or `$wuK` in a 32 bit
+/// one), made the immediate `$N`; "" when it cannot be.
+fn x86_imm_into(text: Str, k: Int, n: Int) -> Str {
+  let ls = text.split("\n")
+  var at = -1
+  for (i, l) in ls.indexed() {
+    let c = x86_tok_count(l, "u${k}")
+    if c > 1 || (c == 1 && at >= 0) {
+      return ""
+    }
+    if c == 1 {
+      at = i
+    }
+  }
+  if at < 0 {
+    return ""
+  }
+  let l = ls[at]
+  let sp = l.find(" ") ?? -1
+  if sp < 0 {
+    return ""
+  }
+  let op = l[0..sp]
+  if !(op is "addq" | "subq" | "andq" | "orq" | "xorq" | "cmpq" | "testq" | "movq" | "addl" | "subl" | "andl" | "orl" | "xorl" | "cmpl" | "testl" | "movl") {
+    return ""
+  }
+  let rest = l[sp + 1..l.len()]
+  var tok = ""
+  for t in ["$u${k}, ", "$wu${k}, "] {
+    if rest.starts_with(t) {
+      tok = t
+    }
+  }
+  if tok.is_empty() || (op.ends_with("l") && tok.starts_with("$u")) || (op.ends_with("q") && tok.starts_with("$wu")) {
+    return ""
+  }
+  var out = ls
+  out[at] = "${op} $${n}, ${rest[tok.len()..rest.len()]}"
+  out.join("\n")
+}
+
+/// text with use token j (`$uJ`, `$wuJ`, ...: "uJ" not followed by a
+/// digit) renumbered to i.
+fn x86_tok_rename(text: Str, j: Int, i: Int) -> Str {
+  let from = "u${j}"
+  var out = ""
+  var p = 0
+  while p < text.len() {
+    let q = text[p..text.len()].find(from) ?? -1
+    if q < 0 {
+      out = out + text[p..text.len()]
+      break
+    }
+    let s = p + q
+    let e = s + from.len()
+    let prev_ok = s > 0 && (text[s - 1..s] == "$" || text[s - 1..s] == "w" || text[s - 1..s] == "b" || text[s - 1..s] == "h")
+    if prev_ok && (e >= text.len() || !is_digits(text[e..e + 1])) {
+      out = out + text[p..s] + "u${i}"
+    } else {
+      out = out + text[p..e]
+    }
+    p = e
+  }
+  out
+}
+
+/// Loads moved down to just before the first instruction of their block
+/// that reads them (2026-10-20: bigmod.mac_row loads a 4 word round's
+/// eight words first, which suits arm64's load pairs, and x86_64's 13
+/// registers spilled src, k, and three words: 66 instructions a round,
+/// 55 with the loads where they are read). A one line load (movq, movl,
+/// movzbl, movzwl) passes instructions that neither write memory nor
+/// define its base or index, and stores through the same base and index
+/// to bytes it does not read; it stops at anything else (a call, a
+/// store elsewhere, a load or store that may fault is not one).
+fn (var g: G) x86_sink_loads() {
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    // last to first: a load moves down once, past instructions already
+    // placed (first to first, two loads read by one instruction passed
+    // each other forever: a build of bench/perf/rsa hung, 2026-10-20)
+    var k = ins.len() - 1
+    while k >= 0 {
+      let (ok, lm, lw) = x86_sink_load(ins[k])
+      if !ok {
+        k -= 1
+        continue
+      }
+      let d = ins[k].defs[0]
+      var at = -1
+      var m = k + 1
+      // within X86_SINK_REACH instructions (a block of thousands, a
+      // generated table, stays linear)
+      while m < ins.len() && m - k <= X86_SINK_REACH {
+        let c = ins[m]
+        if c.us.contains(d) {
+          at = m
+          break
+        }
+        if c.kind != K_PLAIN && c.kind != K_PMOVE {
+          break
+        }
+        var redef = false
+        for u in ins[k].us {
+          redef = redef || c.defs.contains(u)
+        }
+        if redef || c.defs.contains(d) {
+          break
+        }
+        if x86_may_write_mem(c) && !x86_store_apart(c, lm, lw, ins[k]) {
+          break
+        }
+        m += 1
+      }
+      if at > k + 1 {
+        let l = ins[k]
+        var out: List[Inst] = List.with_capacity(ins.len())
+        for (i, x) in ins.indexed() {
+          if i == at {
+            out.push(l)
+          }
+          if i != k {
+            out.push(x)
+          }
+        }
+        ins = out
+      }
+      k -= 1
+    }
+    g.put_insts(b, ins)
+  }
+}
+
+/// How far past a load x86_sink_loads looks for its first read.
+const X86_SINK_REACH = 256
+
+/// Whether inst is a load x86_sink_loads moves: its memory operand
+/// (`D($uA)`, `D($uA,$uB)`, `D($uA,$uB,S)`) and width.
+fn x86_sink_load(inst: Inst) -> (Bool, Str, Int) {
+  let bad = (false, "", 0)
+  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault || !inst.recover.is_empty() || inst.early || inst.defs.len() != 1 || inst.text.contains("\n") || !inst.text.ends_with(", $d0") {
+    return bad
+  }
+  let sp = inst.text.find(" ") ?? -1
+  if sp < 0 {
+    return bad
+  }
+  let op = inst.text[0..sp]
+  let w = match op {
+    "movq" => 8
+    "movl" => 4
+    "movzwl" => 2
+    "movzbl" => 1
+    _ => 0
+  }
+  let mem = inst.text[sp + 1..inst.text.len() - ", $d0".len()]
+  if w == 0 || !mem.contains("(") || mem.contains("%") || mem.contains("$OUT") {
+    return bad
+  }
+  (true, mem, w)
+}
+
+/// Whether store c (one line `movX SRC, MEM`) writes only bytes apart
+/// from load l's (memory operand lm, width lw): the same base and index
+/// registers and scale, the displacements' byte ranges apart.
+fn x86_store_apart(c: Inst, lm: Str, lw: Int, l: Inst) -> Bool {
+  if c.kind != K_PLAIN || !c.x86 || c.has_fault || !c.recover.is_empty() || c.text.contains("\n") {
+    return false
+  }
+  let sp = c.text.find(" ") ?? -1
+  if sp < 0 {
+    return false
+  }
+  let w = match c.text[0..sp] {
+    "movq" => 8
+    "movl" => 4
+    "movw" => 2
+    "movb" => 1
+    _ => 0
+  }
+  let parts = c.text[sp + 1..c.text.len()].split(", ")
+  if w == 0 || parts.len() != 2 || parts[0].contains("(") {
+    return false
+  }
+  let (sd, sr, sok) = x86_sink_mem(parts[1], c.us)
+  let (ld, lr, lok) = x86_sink_mem(lm, l.us)
+  if !sok || !lok || sr != lr {
+    return false
+  }
+  sd + w <= ld || ld + lw <= sd
+}
+
+/// A memory operand's displacement and its registers and scale as
+/// "base,index,scale" of vreg numbers (us maps `$uK`).
+fn x86_sink_mem(m: Str, us: List[Int]) -> (Int, Str, Bool) {
+  let bad = (0, "", false)
+  let open = m.find("(") ?? -1
+  if open < 0 || !m.ends_with(")") {
+    return bad
+  }
+  let ds = m[0..open]
+  let disp = if ds.is_empty() { 0 } else { Int.parse(ds) ?? -999999999 }
+  if disp == -999999999 {
+    return bad
+  }
+  var regs: List[Str] = []
+  for (i, p) in m[open + 1..m.len() - 1].split(",").indexed() {
+    if i < 2 {
+      if !p.starts_with("$u") {
+        return bad
+      }
+      let j = Int.parse(p[2..p.len()]) ?? -1
+      if j < 0 || j >= us.len() {
+        return bad
+      }
+      regs.push("${us[j]}")
+    } else {
+      regs.push(p)
+    }
+  }
+  (disp, regs.join(","), true)
+}
+
 /// Loads folded into the instructions that read them (2026-10-19: x86
 /// arithmetic takes a memory source, `addq 8(%rdx), %r9`, where the
 /// retargeted arm64 MIR loads every word into a register first; with 8
