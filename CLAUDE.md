@@ -131,6 +131,17 @@ Update the knowledgebase in the same change as the work, not later:
     merges each report (`-short` and vet after each merge) and runs the
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
+  - batch mode is standing (owner, 2026-10-20, after a 4 hour trial:
+    26 pushes, 14 code, 7.7 slot-hours, against 9, 7, and 9.8 the 4
+    hours before): each push gates on -short, the fixed point when it
+    touches the self build paths below, the identity check when it
+    claims no output change, and the targeted tests its change needs,
+    through pushq.sh (its overlap gate after a rebase); no package
+    suites per push. Every 4 hours the lead runs the full tier on the
+    combined main (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at
+    -O1 with Go parity, plus the Docker amd64 goldens), bisects a
+    failure over that window's pushes, and the owner of the commit
+    fixes forward.
   - arm64 only (owner, 2026-10-14, replaces the platform runs at
     milestones): "testing on just the fastest machine and arch". Agents
     verify on the Mac (arm64); the full tier, when wanted, runs on one
