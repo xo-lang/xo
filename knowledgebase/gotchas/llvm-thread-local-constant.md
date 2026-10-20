@@ -44,3 +44,14 @@ call is left as a call to an external symbol. Docker's clang 19
 check `clang --version` on the runner image (infra/ci-runners) and
 raise it, or make the toolchain check reject a clang without the
 intrinsic.
+
+Known issue (Observed 2026-10-20, Xo lang 4; Linux is best effort): the
+fix needs LLVM 16 or later. clang 15 has no llvm.threadlocal.address, so
+it is an undefined function: CI run 39465426358 (linux/arm64, clang-15)
+failed internal/arm64 TestTraceback/llvm and TestTracebackInlined/llvm at
+the link (`undefined reference to llvm.threadlocal.address.p0` in
+xo_tlocal_addr, xo_tlocal_get, xo_tlocal_set). It predates 2026-10-20
+(compiler/llvm sched.xo, before decision 0249's move). Use clang 16 or
+later for the LLVM backend; a clang 15 fallback would need the address
+read made opaque another way (an inline asm `mrs` of tpidr_el0), so
+that LLVM cannot treat it as a constant.
