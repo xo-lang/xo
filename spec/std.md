@@ -1094,20 +1094,23 @@ fn me(req: http.Request) -> http.Response ! ApiErr {
 `query(name)` is the first value of a key and `query_all(name)` every
 value, in order (Go's `URL.Query()`; a pair with a `;` or a bad escape
 is skipped). `form()` (decision 0279) is Go's `PostForm`: the body of a
-POST, PUT, or PATCH whose `Content-Type` media type (before any `;`,
-without case) is `application/x-www-form-urlencoded`, parsed with
-`url.parse_query`; any other request gives empty `Values`, and a bad
-escape or `;` is `EscapeErr` with no values (Go's `ParseForm` keeps the
-pairs parsed around the error; Xo returns the error alone). Its size is the body's, which the server
-already limits (`XO_HTTP_MAX_BODY`, 4.6). Media type parameters are not
-checked (Go's `mime.ParseMediaType` rejects some, such as an empty
-`boundary=`). A request built as a struct literal has no raw query:
+POST, PUT, or PATCH whose `Content-Type` media type
+(`mime.parse_media_type`, 23; no header is `application/octet-stream`)
+is `application/x-www-form-urlencoded`, parsed with `url.parse_query`;
+any other request gives empty `Values`. A Content-Type that does not
+parse is `EscapeErr` with mime's text (`mime: invalid media parameter`
+for `text/plain; boundary=`, whatever the type, as Go's `ParseForm`),
+and a bad escape or `;` is `EscapeErr` with no values (Go's `ParseForm`
+keeps the pairs parsed around the error; Xo returns the error alone).
+Its size is the body's, which the server already limits
+(`XO_HTTP_MAX_BODY`, 4.6). A request built as a struct literal has no raw query:
 `query_all` gives its `url.query` value.
 
 `multipart_form()` (decision 0282) is Go's `ParseMultipartForm`: the
 `Content-Type` must parse (`mime.parse_media_type`) as
 `multipart/form-data` (else `request Content-Type isn't
-multipart/form-data`, any method) with a `boundary` (else `no multipart
+multipart/form-data`, any method; `multipart/mixed`, which Go accepts only
+in `MultipartReader`, is refused too) with a `boundary` (else `no multipart
 boundary param in Content-Type`); the body is read with
 `multipart.parse_form` (26), whose files stay in memory: the body is
 already limited by the server.
