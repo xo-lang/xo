@@ -13,6 +13,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/parser
 
 /// Whether args (the command line after `xo`) is one of these commands:
 /// `xo doc` is one only with a name that is not a directory or an import
@@ -427,8 +428,15 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
   let q = semantic.Session{c: s.res[0].c, wd: s.wd}
   if let Ok(ds) = q.def(target) {
     for d in ds {
-      if let Some(found) = s.found_at(d.pos.file, d.pos.line, d.pos.col) {
-        if !out.any(fn(x) { x.f == found.f && x.site.id.span.start.offset == found.site.id.span.start.offset }) {
+      // the identifier at the declaration, else (no identifier starts
+      // exactly there; Lib 1 saw Str.to_upper from a repository root,
+      // 2026-10-20) the declaration's object itself
+      let hit = match s.found_at(d.pos.file, d.pos.line, d.pos.col) {
+        Some(x) => Some(x)
+        None => s.found_obj(d)
+      }
+      if let Some(found) = hit {
+        if !out.any(fn(x) { x.f == found.f && x.site.id.span.start.offset == found.site.id.span.start.offset && x.name == found.name }) {
           out.push(found)
         }
       }
@@ -441,6 +449,21 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
     return Err("no declaration named ${target}${semantic.miss_hint(os, s.std_dir, target)}")
   }
   Ok(out)
+}
+
+/// A declaration found by the resolver, by its object (fields and
+/// variants have none), with the name's identifier made up from d.
+fn (var s: Session) found_obj(d: semantic.QDef) -> Found? {
+  if d.obj < 0 {
+    return None
+  }
+  var r = s.res[0]
+  let tg = r.obj_target(d.obj)
+  s.res[0] = r
+  let f = s.file_named(d.pos.file)
+  let at = parser.Pos{offset: tg.def_start, line: d.pos.line, col: d.pos.col}
+  let id = parser.Ident{span: parser.Span{start: at, end: at}, name: d.name.bytes()}
+  Some(Found{f: f, site: Site{id: id, field: "", index: 0, ctx: SiteCtx.Other}, tg: tg, name: d.name})
 }
 
 /// The declaration whose name is at line:col of file (as the checker

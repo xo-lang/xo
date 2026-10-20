@@ -18,3 +18,7 @@ test "literal escaping and codes" {
   expect(is_code("XO17")) == false
   expect(is_code("XA0179")) == false
 }
+
+test "flags first" {
+  expect(flags_first(["XO0179", "--title=t", "--ref=core 1"])) == ["--title=t", "--ref=core 1", "XO0179"]
+}

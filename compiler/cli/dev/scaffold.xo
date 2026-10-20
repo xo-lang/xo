@@ -33,6 +33,13 @@ fn repo_root(os: Os) -> Str uses (fs.read, env) {
   ""
 }
 
+/// args with the flags first, so they may follow the positional
+/// arguments (`new-code XO0179 --title=...`; core's flag parser stops at
+/// the first positional one).
+fn flags_first(args: List[Str]) -> List[Str] {
+  args.filter(fn(a) { a.starts_with("-") }) + args.filter(fn(a) { !a.starts_with("-") })
+}
+
 /// s as the inside of an Xo string literal.
 fn xo_lit(s: Str) -> Str {
   s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\${", "\\\${").replace("\n", "\\n")
@@ -89,7 +96,7 @@ fn new_code_cmd(os: Os, args: List[Str]) -> Int uses (env, fs.read, fs.write, st
   fl.str_flag("severity", "error", "error, warning, or note")
   fl.str_flag("component", "checker", "what reports it: lexer, parser, checker, vet, modules, ...")
   fl.str_flag("ref", "", "the spec section the summary cites, as `core 3.1`")
-  if !fl.parse(os, args) {
+  if !fl.parse(os, flags_first(args)) {
     return 2
   }
   let usage = "usage: xo dev new-code XOnnnn --title=TEXT [--severity=error|warning|note] [--component=NAME] [--ref=\"core 3.1\"]"
@@ -171,7 +178,7 @@ fn new_golden_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (env, fs.read, f
   fl.str_flag("dir", "internal/llvm/testdata/golden", "the golden directory, relative to the checkout")
   fl.str_flag("from", "", "a .xo file to use as the program (else a stub)")
   fl.bool_flag("no-run", "write the program only, no want.txt")
-  if !fl.parse(os, args) {
+  if !fl.parse(os, flags_first(args)) {
     return 2
   }
   if fl.args.len() != 1 || fl.args[0].contains("/") {
