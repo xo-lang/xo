@@ -1737,6 +1737,18 @@ type Sql_SqlValue_At struct {
 	F_t Time
 }
 
+type Sql_SqlValue_Blob struct {
+	F_b Bytes
+}
+
+type Sql_SqlValue_JsonText struct {
+	F_s string
+}
+
+type Sql_SqlValue_Array struct {
+	F_items List[Sql_SqlValue]
+}
+
 func (v Sql_SqlValue) XoEq(x any) bool {
 	o, ok := x.(Sql_SqlValue)
 	if !ok || o.Tag != v.Tag {
@@ -1758,6 +1770,15 @@ func (v Sql_SqlValue) XoEq(x any) bool {
 	case 6:
 		a, b := v.P.(Sql_SqlValue_At), o.P.(Sql_SqlValue_At)
 		return Eq(a.F_t, b.F_t)
+	case 7:
+		a, b := v.P.(Sql_SqlValue_Blob), o.P.(Sql_SqlValue_Blob)
+		return Eq(a.F_b, b.F_b)
+	case 8:
+		a, b := v.P.(Sql_SqlValue_JsonText), o.P.(Sql_SqlValue_JsonText)
+		return Eq(a.F_s, b.F_s)
+	case 9:
+		a, b := v.P.(Sql_SqlValue_Array), o.P.(Sql_SqlValue_Array)
+		return Eq(a.F_items, b.F_items)
 	}
 	return true
 }
@@ -1780,6 +1801,15 @@ func (v Sql_SqlValue) XoHash() uint64 {
 	case 6:
 		a := v.P.(Sql_SqlValue_At)
 		h = MixHash(h, Hash(a.F_t))
+	case 7:
+		a := v.P.(Sql_SqlValue_Blob)
+		h = MixHash(h, Hash(a.F_b))
+	case 8:
+		a := v.P.(Sql_SqlValue_JsonText)
+		h = MixHash(h, Hash(a.F_s))
+	case 9:
+		a := v.P.(Sql_SqlValue_Array)
+		h = MixHash(h, Hash(a.F_items))
 	}
 	return h
 }
@@ -1818,6 +1848,24 @@ func (v Sql_SqlValue) XoDebug(b *strings.Builder) {
 		b.WriteString("t: ")
 		DebugTo(b, a.F_t)
 		b.WriteString(")")
+	case 7:
+		a := v.P.(Sql_SqlValue_Blob)
+		b.WriteString("Blob(")
+		b.WriteString("b: ")
+		DebugTo(b, a.F_b)
+		b.WriteString(")")
+	case 8:
+		a := v.P.(Sql_SqlValue_JsonText)
+		b.WriteString("JsonText(")
+		b.WriteString("s: ")
+		DebugTo(b, a.F_s)
+		b.WriteString(")")
+	case 9:
+		a := v.P.(Sql_SqlValue_Array)
+		b.WriteString("Array(")
+		b.WriteString("items: ")
+		DebugTo(b, a.F_items)
+		b.WriteString(")")
 	}
 }
 
@@ -1833,7 +1881,9 @@ type Sql_SqlErr_Syntax struct {
 }
 
 type Sql_SqlErr_Constraint struct {
-	F_msg string
+	F_msg  string
+	F_code string
+	F_name string
 }
 
 type Sql_SqlErr_Param struct {
@@ -1861,6 +1911,11 @@ type Sql_SqlErr_Driver struct {
 	F_msg string
 }
 
+type Sql_SqlErr_Server struct {
+	F_code string
+	F_msg  string
+}
+
 func (v Sql_SqlErr) XoEq(x any) bool {
 	o, ok := x.(Sql_SqlErr)
 	if !ok || o.Tag != v.Tag {
@@ -1872,7 +1927,7 @@ func (v Sql_SqlErr) XoEq(x any) bool {
 		return Eq(a.F_msg, b.F_msg)
 	case 2:
 		a, b := v.P.(Sql_SqlErr_Constraint), o.P.(Sql_SqlErr_Constraint)
-		return Eq(a.F_msg, b.F_msg)
+		return Eq(a.F_msg, b.F_msg) && Eq(a.F_code, b.F_code) && Eq(a.F_name, b.F_name)
 	case 3:
 		a, b := v.P.(Sql_SqlErr_Param), o.P.(Sql_SqlErr_Param)
 		return Eq(a.F_msg, b.F_msg)
@@ -1891,6 +1946,9 @@ func (v Sql_SqlErr) XoEq(x any) bool {
 	case 9:
 		a, b := v.P.(Sql_SqlErr_Driver), o.P.(Sql_SqlErr_Driver)
 		return Eq(a.F_msg, b.F_msg)
+	case 10:
+		a, b := v.P.(Sql_SqlErr_Server), o.P.(Sql_SqlErr_Server)
+		return Eq(a.F_code, b.F_code) && Eq(a.F_msg, b.F_msg)
 	}
 	return true
 }
@@ -1904,6 +1962,8 @@ func (v Sql_SqlErr) XoHash() uint64 {
 	case 2:
 		a := v.P.(Sql_SqlErr_Constraint)
 		h = MixHash(h, Hash(a.F_msg))
+		h = MixHash(h, Hash(a.F_code))
+		h = MixHash(h, Hash(a.F_name))
 	case 3:
 		a := v.P.(Sql_SqlErr_Param)
 		h = MixHash(h, Hash(a.F_msg))
@@ -1923,6 +1983,10 @@ func (v Sql_SqlErr) XoHash() uint64 {
 	case 9:
 		a := v.P.(Sql_SqlErr_Driver)
 		h = MixHash(h, Hash(a.F_msg))
+	case 10:
+		a := v.P.(Sql_SqlErr_Server)
+		h = MixHash(h, Hash(a.F_code))
+		h = MixHash(h, Hash(a.F_msg))
 	}
 	return h
 }
@@ -1940,6 +2004,10 @@ func (v Sql_SqlErr) XoDebug(b *strings.Builder) {
 		b.WriteString("Constraint(")
 		b.WriteString("msg: ")
 		DebugTo(b, a.F_msg)
+		b.WriteString(", code: ")
+		DebugTo(b, a.F_code)
+		b.WriteString(", name: ")
+		DebugTo(b, a.F_name)
 		b.WriteString(")")
 	case 3:
 		a := v.P.(Sql_SqlErr_Param)
@@ -1982,10 +2050,18 @@ func (v Sql_SqlErr) XoDebug(b *strings.Builder) {
 		DebugTo(b, a.F_msg)
 		b.WriteString(")")
 	case 10:
-		b.WriteString("TxDone")
+		a := v.P.(Sql_SqlErr_Server)
+		b.WriteString("Server(")
+		b.WriteString("code: ")
+		DebugTo(b, a.F_code)
+		b.WriteString(", msg: ")
+		DebugTo(b, a.F_msg)
+		b.WriteString(")")
 	case 11:
-		b.WriteString("Closed")
+		b.WriteString("TxDone")
 	case 12:
+		b.WriteString("Closed")
+	case 13:
 		b.WriteString("Canceled")
 	}
 }

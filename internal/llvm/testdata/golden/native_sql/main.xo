@@ -126,7 +126,7 @@ fn main(os: Os) uses (stdio, net.dial) {
   show_exec(os, "exec select", db.exec("SELECT * FROM users"))
   show_exec(os, "empty", db.exec(" ; "))
   show_exec(os, "several args", db.exec("DELETE FROM tags; DELETE FROM tags", [sql.int(1)]))
-  show_exec(os, "bad type", db.exec("CREATE TABLE z (a BLOB)"))
+  show_exec(os, "bad type", db.exec("CREATE TABLE z (a MONEY)"))
   show_exec(os, "exists", db.exec("CREATE TABLE tags (a INT)"))
   // rows
   match db.query_one("SELECT * FROM users WHERE name = $1", [sql.str("bob")]) {

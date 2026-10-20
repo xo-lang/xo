@@ -11,7 +11,7 @@ fn transfer(db: sql.Db, from: Int, to: Int, amount: Int) -> () ! sql.SqlErr uses
   tx.exec("UPDATE accounts SET balance = balance - $1 WHERE id = $2", [sql.int(amount), sql.int(from)])?
   let left = tx.query_one("SELECT balance FROM accounts WHERE id = $1", [sql.int(from)])?.int("balance")?
   if left < 0 {
-    return Err(sql.SqlErr.Constraint("insufficient funds"))
+    return Err(sql.SqlErr.Constraint(msg: "insufficient funds", code: "23514", name: ""))
   }
   tx.exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", [sql.int(amount), sql.int(to)])?
   tx.commit()?
@@ -39,7 +39,7 @@ fn main(os: Os) ! {
   tx2.exec("UPDATE accounts SET balance = 0 WHERE id = 1")?
   match tx2.exec("INSERT INTO accounts VALUES (1, 9)") {
     Ok(_) => os.stdio.println("dup?")
-    Err(Constraint(_)) => os.stdio.println("duplicate key")
+    Err(Constraint(_, _, _)) => os.stdio.println("duplicate key")
     Err(e) => os.stdio.println("other ${e}")
   }
   tx2.commit()?

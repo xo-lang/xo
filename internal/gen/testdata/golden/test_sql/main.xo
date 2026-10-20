@@ -32,6 +32,6 @@ test "errors are typed" {
   let db = sql.memory("CREATE TABLE notes (id SERIAL, body TEXT, at TIMESTAMP, done BOOL, score REAL)")?
   expect(get(db, 99) is Err(NoRows))
   expect(db.query("SELECT * FROM missing") is Err(NoTable(_)))
-  expect(db.exec("INSERT INTO notes (body) VALUES (1)") is Err(Constraint(_)))
+  expect(db.exec("INSERT INTO notes (body) VALUES (1)") is Err(Constraint(_, _, _)))
   expect(db.exec("INSERT INTO notes (nope) VALUES (1)") is Err(Syntax(_)))
 }

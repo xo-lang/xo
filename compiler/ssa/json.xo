@@ -993,10 +993,21 @@ fn (var b: Builder) unbox_type(t: Int) -> Int {
 /// The Row accessor that reads a field of checker type ct, or ""
 /// (sqlAccessor).
 fn (var b: Builder) sql_accessor(ct: Int) -> Str {
-  for n in ["Int", "Float", "Str", "Bool", "Time"] {
+  for n in ["Int", "Float", "Str", "Bool", "Time", "Bytes"] {
     if b.is_prelude_named(ct, [n]) {
       return n.to_lower()
     }
+  }
+  if b.is_prelude_named(ct, ["List"]) {
+    // array columns (decision 0278)
+    let a = b.ty_args(ct)
+    if a.len() == 1 && b.is_prelude_named(a[0], ["Int"]) {
+      return "ints"
+    }
+    if a.len() == 1 && b.is_prelude_named(a[0], ["Str"]) {
+      return "strs"
+    }
+    return ""
   }
   if b.is_prelude_named(ct, ["Option"]) {
     let a = b.ty_args(ct)

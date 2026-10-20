@@ -181,7 +181,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver. Missing: any network driver (natively `sql.open` always reports an unknown driver), SqlValue for bytes, JSON, arrays, and UUID, driver error codes (SQLSTATE), prepared statements, row streaming. |
+| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A). Missing: any network driver (the Postgres driver is in progress, decision 0278), prepared statements, row streaming. |
 | database/sql/driver | none | planned | A driver interface in Xo so drivers are std/sql modules (Postgres first). |
 | compress/gzip, compress/flate | std/archive gzip, gunzip | done | In memory. Missing: streaming. |
 | compress/zlib | none | planned | Small on top of flate. |

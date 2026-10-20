@@ -6,8 +6,10 @@
 //   by a network driver. The in memory driver (`memory`) performs no I/O but
 //   keeps the same signatures, so code under test is typed like production
 //   code. Opening the in memory driver needs no capability.
-// - Real drivers are Go packages bound with `use go` and registered with
-//   `rt.RegisterSqlDriver`; none ships with the compiler yet.
+// - Network drivers are written in Xo (decision 0278): `open` knows
+//   "postgres" natively, and other drivers implement Driver and are opened
+//   with `open_driver`.
+use std/json
 
 /// A query parameter. `$1` is `args[0]`.
 enum SqlValue {
@@ -17,6 +19,12 @@ enum SqlValue {
   Real(f: Float)
   Flag(b: Bool)
   At(t: Time)
+  /// bytea and BLOB columns (decision 0278).
+  Blob(b: Bytes)
+  /// json and jsonb columns: the JSON text.
+  JsonText(s: Str)
+  /// A one dimensional array (Postgres `int8[]`, `text[]`, ...).
+  Array(items: List[SqlValue])
 }
 
 fn null() -> SqlValue
@@ -25,10 +33,18 @@ fn str(s: Str) -> SqlValue
 fn float(f: Float) -> SqlValue
 fn bool(b: Bool) -> SqlValue
 fn time(t: Time) -> SqlValue
+fn bytes(b: Bytes) -> SqlValue
+/// JsonText of `json.encode_str(v)`.
+fn json[T: Json](v: T) -> SqlValue
+fn array(items: List[SqlValue]) -> SqlValue
 
 enum SqlErr {
   Syntax(msg: Str)
-  Constraint(msg: Str)
+  /// A key, uniqueness, NOT NULL, check, or type violation: code is the
+  /// SQLSTATE (`23505` unique, `23503` foreign key, `23502` not null,
+  /// `23514` check, `42804` a value of another type), name the
+  /// constraint's ("" when there is none).
+  Constraint(msg: Str, code: Str, name: Str)
   /// The number of arguments does not match the placeholders.
   Param(msg: Str)
   NoTable(name: Str)
@@ -40,6 +56,8 @@ enum SqlErr {
   Mismatch(column: Str, msg: Str)
   Conn(msg: Str)
   Driver(msg: Str)
+  /// Any other error the server reports with an SQLSTATE code.
+  Server(code: Str, msg: Str)
   /// The transaction was already committed or rolled back.
   TxDone
   Closed
@@ -98,3 +116,13 @@ fn (r: Row) str_opt(name: Str) -> Str? ! SqlErr
 fn (r: Row) float_opt(name: Str) -> Float? ! SqlErr
 fn (r: Row) bool_opt(name: Str) -> Bool? ! SqlErr
 fn (r: Row) time_opt(name: Str) -> Time? ! SqlErr
+fn (r: Row) bytes(name: Str) -> Bytes ! SqlErr
+fn (r: Row) bytes_opt(name: Str) -> Bytes? ! SqlErr
+/// A json or jsonb column (or text) decoded into T; a decode error is
+/// Mismatch(column, msg).
+fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr
+/// An array of integers; a NULL element is Mismatch.
+fn (r: Row) ints(name: Str) -> List[Int] ! SqlErr
+fn (r: Row) strs(name: Str) -> List[Str] ! SqlErr
+/// An array's elements as values.
+fn (r: Row) items(name: Str) -> List[SqlValue] ! SqlErr

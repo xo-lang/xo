@@ -10,6 +10,7 @@
 // statement at a time, so it never waits on it) and drivers registered
 // from Go (`sql.open` reports an unknown driver, as std/rt does when none
 // is registered).
+use std/json as js
 use std/sql
 use std/task
 use native/rt
@@ -56,6 +57,12 @@ fn float(f: Float) -> sql.SqlValue { sql.SqlValue.Real(f: f) }
 fn bool(b: Bool) -> sql.SqlValue { sql.SqlValue.Flag(b: b) }
 
 fn time(t: Time) -> sql.SqlValue { sql.SqlValue.At(t: t) }
+
+fn bytes(b: Bytes) -> sql.SqlValue { sql.SqlValue.Blob(b: b) }
+
+fn json[T: Json](v: T) -> sql.SqlValue { sql.SqlValue.JsonText(s: js.encode_str(v)) }
+
+fn array(items: List[sql.SqlValue]) -> sql.SqlValue { sql.SqlValue.Array(items: items) }
 
 fn new_db(tables: Map[Str, Table]) -> Db {
   let w: Chan[Bool] = Chan.new(cap: 1)
@@ -258,6 +265,9 @@ fn type_name(v: sql.SqlValue) -> Str {
     Real(_) => "a float"
     Flag(_) => "a boolean"
     At(_) => "a time"
+    Blob(_) => "bytes"
+    JsonText(_) => "json"
+    Array(_) => "an array"
     Null => "a value"
   }
 }
@@ -346,6 +356,55 @@ fn (r: Row) time_opt(name: Str) -> Time? ! sql.SqlErr {
   }
 }
 
+fn (r: Row) bytes(name: Str) -> Bytes ! sql.SqlErr {
+  match r.get(name)? {
+    Blob(b) => b
+    v => Err(mismatch(name, "bytes", v))
+  }
+}
+
+fn (r: Row) bytes_opt(name: Str) -> Bytes? ! sql.SqlErr {
+  match r.get(name)? {
+    Null => None
+    Blob(b) => Some(b)
+    v => Err(mismatch(name, "bytes", v))
+  }
+}
+
+fn (r: Row) json[T: Json](name: Str) -> T ! sql.SqlErr {
+  let text = match r.get(name)? {
+    JsonText(s) => s
+    Text(s) => s
+    v => return Err(mismatch(name, "json", v))
+  }
+  js.decode_str[T](text).map_err(fn(e) { sql.SqlErr.Mismatch(column: name, msg: "${e}") })
+}
+
+fn (r: Row) items(name: Str) -> List[sql.SqlValue] ! sql.SqlErr {
+  match r.get(name)? {
+    Array(xs) => xs
+    v => Err(mismatch(name, "an array", v))
+  }
+}
+
+fn (r: Row) ints(name: Str) -> List[Int] ! sql.SqlErr {
+  r.items(name)?.map(fn(x) -> Int ! sql.SqlErr {
+    match x {
+      Integer(n) => n
+      v => Err(mismatch(name, "an array of integers", v))
+    }
+  })
+}
+
+fn (r: Row) strs(name: Str) -> List[Str] ! sql.SqlErr {
+  r.items(name)?.map(fn(x) -> Str ! sql.SqlErr {
+    match x {
+      Text(t) => t
+      v => Err(mismatch(name, "an array of text", v))
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Tables
 
@@ -355,6 +414,10 @@ const KT = 2
 const KR = 3
 const KB = 4
 const KTIME = 5
+const KBLOB = 6
+const KJSON = 7
+/// An array of elem (`INT[]`, `TEXT[]`, decision 0278).
+const KARR = 8
 
 struct Col {
   name: Str
@@ -364,6 +427,8 @@ struct Col {
   pk: Bool = false
   auto: Bool = false
   def: sql.SqlValue = sql.SqlValue.Null
+  /// The elements' kind of a KARR column.
+  elem: Int = 0
 }
 
 struct Table {
@@ -520,7 +585,7 @@ fn lex(q: Str) -> List[Tok] ! sql.SqlErr {
         }
       }
       let one = q[i..i + size]
-      if "(),*=<>;.+-/".contains(one) {
+      if "(),*=<>;.+-/[]".contains(one) {
         out.push(Tok{k: T_SYM, s: one})
         i += size
         continue
@@ -811,6 +876,9 @@ fn go_type(v: sql.SqlValue) -> Str {
     Real(_) => "float64"
     Flag(_) => "bool"
     At(_) => "rt.Time"
+    Blob(_) => "rt.Bytes"
+    JsonText(_) => "rt.SqlJSON"
+    Array(_) => "rt.Sql_SqlValue"
     Null => "<nil>"
   }
 }
@@ -850,6 +918,9 @@ fn sql_cmp(a: sql.SqlValue, b: sql.SqlValue) -> Int ! sql.SqlErr {
       return if !x { -1 } else { 1 }
     }
     (At(x), At(y)) => return if x < y { -1 } else if x > y { 1 } else { 0 }
+    // bytes in order compare as their hex text does
+    (Blob(x), Blob(y)) => return cmp_str(x.to_hex(), y.to_hex())
+    (JsonText(x), JsonText(y)) => return cmp_str(x, y)
     _ => {}
   }
   Err(sql.SqlErr.Driver(msg: "cannot compare ${go_type(a)} with ${go_type(b)}"))
@@ -1231,6 +1302,8 @@ fn col_def(var p: Parser) -> Col ! sql.SqlErr {
     }
     "bool" | "boolean" => c.kind = KB
     "timestamp" | "timestamptz" | "datetime" | "time" | "date" => c.kind = KTIME
+    "blob" | "bytea" => c.kind = KBLOB
+    "json" | "jsonb" => c.kind = KJSON
     _ => return Err(syntax("unknown column type ${ty}"))
   }
   if p.accept_sym("(") {
@@ -1238,6 +1311,11 @@ fn col_def(var p: Parser) -> Col ! sql.SqlErr {
       p.i += 1
     }
     p.expect_sym(")")?
+  }
+  if p.accept_sym("[") {
+    p.expect_sym("]")?
+    c.elem = c.kind
+    c.kind = KARR
   }
   while {
     if p.accept_kw("primary") {
@@ -1290,12 +1368,22 @@ fn kind_want(kind: Int) -> Str {
     2 => "text"
     3 => "a float"
     4 => "a boolean"
+    6 => "bytes"
+    7 => "json"
+    8 => "an array"
     _ => "a time"
   }
 }
 
 /// v converted to the column's kind.
 fn coerce(c: Col, v: sql.SqlValue) -> sql.SqlValue ! sql.SqlErr {
+  if c.kind == KARR {
+    if let Array(items) = v {
+      // each element to the column's element kind (NULL allowed)
+      let ec = Col{name: c.name, kind: c.elem}
+      return sql.SqlValue.Array(items: items.map(fn(x) { coerce(ec, x) })?)
+    }
+  }
   match v {
     Null => return v
     Integer(n) => {
@@ -1326,14 +1414,25 @@ fn coerce(c: Col, v: sql.SqlValue) -> sql.SqlValue ! sql.SqlErr {
         return v
       }
     }
+    Blob(_) => {
+      if c.kind == KBLOB {
+        return v
+      }
+    }
+    JsonText(_) => {
+      if c.kind == KJSON {
+        return v
+      }
+    }
+    Array(_) => {}
   }
-  Err(sql.SqlErr.Constraint(msg: "column ${c.name} expects ${kind_want(c.kind)}, got ${go_type(v)}"))
+  Err(sql.SqlErr.Constraint(msg: "column ${c.name} expects ${kind_want(c.kind)}, got ${go_type(v)}", code: "42804", name: ""))
 }
 
 fn check_row(t: Table, row: List[sql.SqlValue], skip: Int) -> () ! sql.SqlErr {
   for (i, c) in t.cols.indexed() {
     if row[i] is Null && c.not_null {
-      return Err(sql.SqlErr.Constraint(msg: "NOT NULL constraint failed: ${t.name}.${c.name}"))
+      return Err(sql.SqlErr.Constraint(msg: "NOT NULL constraint failed: ${t.name}.${c.name}", code: "23502", name: ""))
     }
     if c.unique && !(row[i] is Null) {
       for (j, o) in t.rows.indexed() {
@@ -1341,7 +1440,7 @@ fn check_row(t: Table, row: List[sql.SqlValue], skip: Int) -> () ! sql.SqlErr {
           continue
         }
         if let Ok(0) = sql_cmp(o[i], row[i]) {
-          return Err(sql.SqlErr.Constraint(msg: "UNIQUE constraint failed: ${t.name}.${c.name}"))
+          return Err(sql.SqlErr.Constraint(msg: "UNIQUE constraint failed: ${t.name}.${c.name}", code: "23505", name: ""))
         }
       }
     }

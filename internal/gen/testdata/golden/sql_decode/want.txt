@@ -13,7 +13,7 @@ mismatch note: expected text, found NULL
 no rows
 Syntax(msg: "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
 Syntax(msg: "RETURNING cannot use COUNT(*)")
-Constraint(msg: "NOT NULL constraint failed: items.name")
+Constraint(msg: "NOT NULL constraint failed: items.name", code: "23502", name: "")
 rows 3
 tx saw 1, after rollback 0
 --- stderr

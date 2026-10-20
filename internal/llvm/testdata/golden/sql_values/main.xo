@@ -1,0 +1,49 @@
+// std/sql's Blob, JsonText, and Array values, their accessors, derive
+// SqlRow with Bytes and list fields, and SQLSTATE codes in Constraint
+// (decision 0278), on the in memory driver, the same on every backend.
+use std/sql
+
+struct Doc {
+  id: Int
+  data: Bytes
+  thumb: Bytes?
+  tags: List[Str]
+  scores: List[Int]
+} derive SqlRow
+
+struct Meta {
+  k: Int
+  name: Str
+} derive Json
+
+fn show(r: Result[sql.ExecResult, sql.SqlErr]) -> Str {
+  match r {
+    Ok(x) => "ok ${x.rows_affected}"
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE docs (id SERIAL, data BYTEA NOT NULL, thumb BLOB, meta JSONB, tags TEXT[], scores INT[], name TEXT UNIQUE)")?
+  os.stdio.println(show(db.exec("INSERT INTO docs (data, meta, tags, scores, name) VALUES ($1, $2, $3, $4, $5)",
+    [sql.bytes(b"\x00\x01\xfe"), sql.json(Meta{k: 7, name: "seven"}), sql.array([sql.str("a"), sql.str("b c")]),
+     sql.array([sql.int(3), sql.int(-1)]), sql.str("first")])))
+  os.stdio.println(show(db.exec("INSERT INTO docs (data, thumb, tags, scores, name) VALUES ($1, $2, $3, $4, $5)",
+    [sql.bytes(b""), sql.bytes(b"img"), sql.array([]), sql.array([sql.null()]), sql.str("second")])))
+  for d in db.query_as[Doc]("SELECT * FROM docs WHERE id = 1")? {
+    os.stdio.println("doc ${d.id}: ${d.data.to_hex()} ${d.thumb.map(fn(t) { t.to_hex() }) ?? "none"} ${d.tags.join("|")} ${d.scores.len()}")
+  }
+  let row = db.query_one("SELECT * FROM docs WHERE name = $1", [sql.str("first")])?
+  let m = row.json[Meta]("meta")?
+  os.stdio.println("meta ${m.k} ${m.name} items ${row.items("scores")?.len()}")
+  os.stdio.println("second as Doc: ${db.query_one_as[Doc]("SELECT * FROM docs WHERE id = 2").err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("json of bytes: ${row.json[Meta]("data").err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("by bytes: ${db.query("SELECT id FROM docs WHERE data = $1", [sql.bytes(b"\x00\x01\xfe")])?.len()}")
+  os.stdio.println(show(db.exec("INSERT INTO docs (data, name) VALUES ($1, $2)", [sql.bytes(b"x"), sql.str("first")])))
+  os.stdio.println(show(db.exec("INSERT INTO docs (name) VALUES ($1)", [sql.str("third")])))
+  os.stdio.println(show(db.exec("INSERT INTO docs (data, tags) VALUES ($1, $2)", [sql.bytes(b"x"), sql.array([sql.int(1)])])))
+  match db.exec("INSERT INTO docs (data, name) VALUES ($1, $2)", [sql.bytes(b"y"), sql.str("first")]) {
+    Err(Constraint(_, code, _)) => os.stdio.println("matched code ${code}")
+    _ => os.stdio.println("no match")
+  }
+}

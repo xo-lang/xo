@@ -39,7 +39,8 @@ import (
 
 type memCol struct {
 	name    string
-	kind    byte // 'i', 't', 'r', 'b', 'T' (time)
+	kind    byte // 'i', 't', 'r', 'b', 'T' (time), 'B' (bytes), 'J' (json), 'A' (an array of elem)
+	elem    byte
 	notNull bool
 	unique  bool
 	pk      bool
@@ -165,6 +166,11 @@ func sqlErr(kind SqlKind, f string, a ...any) error {
 	return &SqlError{Kind: kind, Msg: fmt.Sprintf(f, a...)}
 }
 
+// sqlCodeErr is a constraint error with its SQLSTATE (decision 0278).
+func sqlCodeErr(code, f string, a ...any) error {
+	return &SqlError{Kind: SqlConstraint, Msg: fmt.Sprintf(f, a...), Code: code}
+}
+
 // ---------------------------------------------------------------------------
 // Lexer
 
@@ -271,7 +277,7 @@ func sqlLex(q string) ([]sqlTok, error) {
 					continue
 				}
 			}
-			if strings.ContainsRune("(),*=<>;.+-/", c) {
+			if strings.ContainsRune("(),*=<>;.+-/[]", c) {
 				out = append(out, sqlTok{k: tSym, s: string(c)})
 				i++
 				continue
@@ -602,6 +608,14 @@ func sqlCmp(a, b any) (int, error) {
 	case Time:
 		if y, ok := b.(Time); ok {
 			return sqlCmpInt(int64(x), int64(y)), nil
+		}
+	case Bytes:
+		if y, ok := b.(Bytes); ok {
+			return strings.Compare(string(x), string(y)), nil
+		}
+	case SqlJSON:
+		if y, ok := b.(SqlJSON); ok {
+			return strings.Compare(string(x), string(y)), nil
 		}
 	}
 	return 0, sqlErr(SqlDriver, "cannot compare %T with %T", a, b)
@@ -1077,6 +1091,10 @@ func memColDef(p *sqlParser) (memCol, error) {
 		c.kind = 'b'
 	case "timestamp", "timestamptz", "datetime", "time", "date":
 		c.kind = 'T'
+	case "blob", "bytea":
+		c.kind = 'B'
+	case "json", "jsonb":
+		c.kind = 'J'
 	default:
 		return c, sqlErr(SqlSyntax, "unknown column type %s", ty)
 	}
@@ -1087,6 +1105,12 @@ func memColDef(p *sqlParser) (memCol, error) {
 		if err := p.expectSym(")"); err != nil {
 			return c, err
 		}
+	}
+	if p.acceptSym("[") {
+		if err := p.expectSym("]"); err != nil {
+			return c, err
+		}
+		c.elem, c.kind = c.kind, 'A'
 	}
 	for {
 		switch {
@@ -1176,15 +1200,36 @@ func (c *memCol) coerce(v any) (any, error) {
 		if t, ok := v.(Time); ok {
 			return t, nil
 		}
+	case 'B':
+		if b, ok := v.(Bytes); ok {
+			return b, nil
+		}
+	case 'J':
+		if j, ok := v.(SqlJSON); ok {
+			return j, nil
+		}
+	case 'A':
+		if a, ok := v.(Sql_SqlValue); ok && a.Tag == 9 {
+			ec := &memCol{name: c.name, kind: c.elem}
+			var out []Sql_SqlValue
+			for _, x := range List_Slice(a.P.(Sql_SqlValue_Array).F_items) {
+				y, err := ec.coerce(sqlArgs(ListOf(x))[0])
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, sqlValueOf(y))
+			}
+			return Sql_SqlValue{Tag: 9, P: Sql_SqlValue_Array{F_items: ListFromSlice(out)}}, nil
+		}
 	}
-	want := map[byte]string{'i': "an integer", 't': "text", 'r': "a float", 'b': "a boolean", 'T': "a time"}[c.kind]
-	return nil, sqlErr(SqlConstraint, "column %s expects %s, got %T", c.name, want, v)
+	want := map[byte]string{'i': "an integer", 't': "text", 'r': "a float", 'b': "a boolean", 'T': "a time", 'B': "bytes", 'J': "json", 'A': "an array"}[c.kind]
+	return nil, sqlCodeErr("42804", "column %s expects %s, got %T", c.name, want, v)
 }
 
 func (t *memTable) checkRow(row []any, skip int) error {
 	for i, c := range t.cols {
 		if row[i] == nil && c.notNull {
-			return sqlErr(SqlConstraint, "NOT NULL constraint failed: %s.%s", t.name, c.name)
+			return sqlCodeErr("23502", "NOT NULL constraint failed: %s.%s", t.name, c.name)
 		}
 		if c.unique && row[i] != nil {
 			for j, o := range t.rows {
@@ -1192,7 +1237,7 @@ func (t *memTable) checkRow(row []any, skip int) error {
 					continue
 				}
 				if cmp, err := sqlCmp(o[i], row[i]); err == nil && cmp == 0 {
-					return sqlErr(SqlConstraint, "UNIQUE constraint failed: %s.%s", t.name, c.name)
+					return sqlCodeErr("23505", "UNIQUE constraint failed: %s.%s", t.name, c.name)
 				}
 			}
 		}

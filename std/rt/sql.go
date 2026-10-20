@@ -24,9 +24,13 @@ const (
 )
 
 // SqlError is the error a driver returns. Any other error is a Driver error.
+// Code is the SQLSTATE and Name the constraint of a SqlConstraint error
+// (decision 0278).
 type SqlError struct {
 	Kind SqlKind
 	Msg  string
+	Code string
+	Name string
 }
 
 func (e *SqlError) Error() string { return e.Msg }
@@ -44,7 +48,7 @@ type SqlOpener interface {
 }
 
 // SqlBackend is one database. Values are nil, int64, string, float64, bool,
-// and Time. Parameters are the positional arguments of $1, $2, ...
+// Time, Bytes, SqlJSON, and Sql_SqlValue (an Array, decision 0278). Parameters are the positional arguments of $1, $2, ...
 type SqlBackend interface {
 	Query(q string, args []any) (cols []string, rows [][]any, err error)
 	Exec(q string, args []any) (affected, lastInsertID int64, err error)
@@ -135,7 +139,7 @@ func (r Sql_Row) XoEq(x any) bool {
 		return false
 	}
 	for i := range r.cols {
-		if r.cols[i] != o.cols[i] || r.vals[i] != o.vals[i] {
+		if r.cols[i] != o.cols[i] || !EqAny(r.vals[i], o.vals[i]) {
 			return false
 		}
 	}
@@ -153,6 +157,7 @@ const (
 	sqlTagMismatch
 	sqlTagConn
 	sqlTagDriver
+	sqlTagServer
 	sqlTagTxDone
 	sqlTagClosed
 	sqlTagCanceled
@@ -164,8 +169,6 @@ func sqlMsgErr(tag int, msg string) Sql_SqlErr {
 	switch tag {
 	case sqlTagSyntax:
 		return sqlE(tag, Sql_SqlErr_Syntax{F_msg: msg})
-	case sqlTagConstraint:
-		return sqlE(tag, Sql_SqlErr_Constraint{F_msg: msg})
 	case sqlTagParam:
 		return sqlE(tag, Sql_SqlErr_Param{F_msg: msg})
 	case sqlTagNoTable:
@@ -183,7 +186,7 @@ func toSqlErr(err error) Sql_SqlErr {
 		case SqlSyntax:
 			return sqlMsgErr(sqlTagSyntax, se.Msg)
 		case SqlConstraint:
-			return sqlMsgErr(sqlTagConstraint, se.Msg)
+			return sqlE(sqlTagConstraint, Sql_SqlErr_Constraint{F_msg: se.Msg, F_code: se.Code, F_name: se.Name})
 		case SqlParam:
 			return sqlMsgErr(sqlTagParam, se.Msg)
 		case SqlNoTable:
@@ -215,6 +218,41 @@ func Sql_bool(_ *Task, b bool) Sql_SqlValue {
 	return Sql_SqlValue{Tag: 5, P: Sql_SqlValue_Flag{F_b: b}}
 }
 func Sql_time(_ *Task, t Time) Sql_SqlValue { return Sql_SqlValue{Tag: 6, P: Sql_SqlValue_At{F_t: t}} }
+func Sql_bytes(_ *Task, b Bytes) Sql_SqlValue {
+	return Sql_SqlValue{Tag: 7, P: Sql_SqlValue_Blob{F_b: b}}
+}
+func Sql_json[T any](tk *Task, v T) Sql_SqlValue {
+	return Sql_SqlValue{Tag: 8, P: Sql_SqlValue_JsonText{F_s: Json_encode_str(tk, v)}}
+}
+func Sql_array(_ *Task, items List[Sql_SqlValue]) Sql_SqlValue {
+	return Sql_SqlValue{Tag: 9, P: Sql_SqlValue_Array{F_items: items}}
+}
+
+// SqlJSON is the value of a json column (decision 0278): its text.
+type SqlJSON string
+
+// sqlValueOf is the SqlValue of a backend value (sqlArgs' inverse).
+func sqlValueOf(v any) Sql_SqlValue {
+	switch x := v.(type) {
+	case int64:
+		return Sql_SqlValue{Tag: 2, P: Sql_SqlValue_Integer{F_n: x}}
+	case string:
+		return Sql_SqlValue{Tag: 3, P: Sql_SqlValue_Text{F_s: x}}
+	case float64:
+		return Sql_SqlValue{Tag: 4, P: Sql_SqlValue_Real{F_f: x}}
+	case bool:
+		return Sql_SqlValue{Tag: 5, P: Sql_SqlValue_Flag{F_b: x}}
+	case Time:
+		return Sql_SqlValue{Tag: 6, P: Sql_SqlValue_At{F_t: x}}
+	case Bytes:
+		return Sql_SqlValue{Tag: 7, P: Sql_SqlValue_Blob{F_b: x}}
+	case SqlJSON:
+		return Sql_SqlValue{Tag: 8, P: Sql_SqlValue_JsonText{F_s: string(x)}}
+	case Sql_SqlValue:
+		return x
+	}
+	return Sql_SqlValue{Tag: 1}
+}
 
 func sqlArgs(args List[Sql_SqlValue]) []any {
 	xs := List_Slice(args)
@@ -231,6 +269,12 @@ func sqlArgs(args List[Sql_SqlValue]) []any {
 			out[i] = x.P.(Sql_SqlValue_Flag).F_b
 		case 6:
 			out[i] = x.P.(Sql_SqlValue_At).F_t
+		case 7:
+			out[i] = x.P.(Sql_SqlValue_Blob).F_b
+		case 8:
+			out[i] = SqlJSON(x.P.(Sql_SqlValue_JsonText).F_s)
+		case 9:
+			out[i] = x
 		}
 	}
 	return out
@@ -525,6 +569,12 @@ func sqlTypeName(v any) string {
 		return "a boolean"
 	case Time:
 		return "a time"
+	case Bytes:
+		return "bytes"
+	case SqlJSON:
+		return "json"
+	case Sql_SqlValue:
+		return "an array"
 	}
 	return "a value"
 }
@@ -627,4 +677,94 @@ func (r Sql_Row) M_bool_opt(_ *Task, name string) Result[Option[bool], Sql_SqlEr
 // M_time_opt is `row.time_opt(name)`.
 func (r Sql_Row) M_time_opt(_ *Task, name string) Result[Option[Time], Sql_SqlErr] {
 	return sqlColOpt(r, name, "a time", asTime)
+}
+
+func asBytes(v any) (Bytes, bool) { x, ok := v.(Bytes); return x, ok }
+
+func asItems(v any) (List[Sql_SqlValue], bool) {
+	if x, ok := v.(Sql_SqlValue); ok && x.Tag == 9 {
+		return x.P.(Sql_SqlValue_Array).F_items, true
+	}
+	return List[Sql_SqlValue]{}, false
+}
+
+// M_bytes is `row.bytes(name)` (decision 0278).
+func (r Sql_Row) M_bytes(_ *Task, name string) Result[Bytes, Sql_SqlErr] {
+	return sqlCol(r, name, "bytes", asBytes)
+}
+
+// M_bytes_opt is `row.bytes_opt(name)`.
+func (r Sql_Row) M_bytes_opt(_ *Task, name string) Result[Option[Bytes], Sql_SqlErr] {
+	return sqlColOpt(r, name, "bytes", asBytes)
+}
+
+// Sql_Row_json is `row.json[T](name)`: a json column, or text, decoded.
+func Sql_Row_json[T any](tk *Task, r Sql_Row, name string) Result[T, Sql_SqlErr] {
+	v, e := r.get(name)
+	if e != nil {
+		return Err[T](*e)
+	}
+	var text string
+	switch x := v.(type) {
+	case SqlJSON:
+		text = string(x)
+	case string:
+		text = x
+	default:
+		return Err[T](sqlMismatch(name, "json", v))
+	}
+	d := Json_decode_str[T](tk, text)
+	if !d.Ok {
+		return Err[T](sqlE(sqlTagMismatch, Sql_SqlErr_Mismatch{F_column: name, F_msg: d.E.M_display(tk)}))
+	}
+	return Ok[T, Sql_SqlErr](d.V)
+}
+
+// M_items is `row.items(name)`.
+func (r Sql_Row) M_items(_ *Task, name string) Result[List[Sql_SqlValue], Sql_SqlErr] {
+	return sqlCol(r, name, "an array", asItems)
+}
+
+func sqlElems[T any](r Sql_Row, name, want string, tag int, get func(Sql_SqlValue) T) Result[List[T], Sql_SqlErr] {
+	items := sqlCol(r, name, "an array", asItems)
+	if !items.Ok {
+		return Err[List[T]](items.E)
+	}
+	var out []T
+	for _, x := range List_Slice(items.V) {
+		if x.Tag != tag {
+			var got any
+			switch x.Tag {
+			case 2:
+				got = x.P.(Sql_SqlValue_Integer).F_n
+			case 3:
+				got = x.P.(Sql_SqlValue_Text).F_s
+			case 4:
+				got = x.P.(Sql_SqlValue_Real).F_f
+			case 5:
+				got = x.P.(Sql_SqlValue_Flag).F_b
+			case 6:
+				got = x.P.(Sql_SqlValue_At).F_t
+			case 7:
+				got = x.P.(Sql_SqlValue_Blob).F_b
+			case 8:
+				got = SqlJSON(x.P.(Sql_SqlValue_JsonText).F_s)
+			case 9:
+				got = x
+			}
+			return Err[List[T]](sqlMismatch(name, want, got))
+		}
+		out = append(out, get(x))
+	}
+	return Ok[List[T], Sql_SqlErr](ListFromSlice(out))
+}
+
+// M_ints is `row.ints(name)`: an array of integers.
+func (r Sql_Row) M_ints(_ *Task, name string) Result[List[int64], Sql_SqlErr] {
+	return sqlElems(r, name, "an array of integers", 2, func(x Sql_SqlValue) int64 { return x.P.(Sql_SqlValue_Integer).F_n })
+}
+
+// M_strs is `row.strs(name)`: an array of text.
+func (r Sql_Row) M_strs(_ *Task, name string) Result[List[string], Sql_SqlErr] {
+	return sqlElems(r, name, "an array of text", 3, func(x Sql_SqlValue) string { return x.P.(Sql_SqlValue_Text).F_s })
 }

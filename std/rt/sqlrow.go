@@ -36,6 +36,14 @@ func SqlRowField[T any](r Sql_Row, name string, dst *T) *Sql_SqlErr {
 		res = sqlColOpt(r, name, "a boolean", asBool)
 	case *Option[Time]:
 		res = sqlColOpt(r, name, "a time", asTime)
+	case *Bytes:
+		res = sqlCol(r, name, "bytes", asBytes)
+	case *Option[Bytes]:
+		res = sqlColOpt(r, name, "bytes", asBytes)
+	case *List[int64]:
+		res = r.M_ints(nil, name)
+	case *List[string]:
+		res = r.M_strs(nil, name)
 	default:
 		e := sqlE(sqlTagMismatch, Sql_SqlErr_Mismatch{F_column: name, F_msg: "the field type cannot be read from a column"})
 		return &e

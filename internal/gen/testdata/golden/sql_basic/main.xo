@@ -51,12 +51,12 @@ fn main(os: Os) ! {
   }
   match db.exec("INSERT INTO users (name) VALUES ('ann')") {
     Ok(_) => os.stdio.println("inserted?")
-    Err(Constraint(msg)) => os.stdio.println("constraint: ${msg}")
+    Err(Constraint(msg, _, _)) => os.stdio.println("constraint: ${msg}")
     Err(e) => os.stdio.println("other ${e}")
   }
   match db.exec("INSERT INTO users (age) VALUES (1)") {
     Ok(_) => os.stdio.println("inserted?")
-    Err(Constraint(msg)) => os.stdio.println("constraint: ${msg}")
+    Err(Constraint(msg, _, _)) => os.stdio.println("constraint: ${msg}")
     Err(e) => os.stdio.println("other ${e}")
   }
   // failed queries

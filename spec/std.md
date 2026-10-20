@@ -1624,8 +1624,8 @@ pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 ## 10. std/sql
 
 Status: draft, implemented with an in memory driver only (2026-10-08). Real
-drivers (Postgres, SQLite, ...) are Go packages bound with `use go` and
-registered with `rt.RegisterSqlDriver`; none ships yet. Native builds
+drivers are written in Xo (decision 0278): a Postgres driver for every
+native target is in progress (10.7 to 10.9 follow when it lands). Native builds
 (`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
 with the same results and error texts; there `sql.open` always reports an
 unknown driver (no Go drivers), `max_open` does not bound the in memory
@@ -1661,9 +1661,17 @@ allowed (core 6.2), so the same code runs against both.
 ### 10.2 Parameters and values
 
 ```
-enum SqlValue { Null, Integer(n: Int), Text(s: Str), Real(f: Float), Flag(b: Bool), At(t: Time) }
+enum SqlValue {
+  Null, Integer(n: Int), Text(s: Str), Real(f: Float), Flag(b: Bool), At(t: Time),
+  Blob(b: Bytes),                    // bytea, BLOB (decision 0278)
+  JsonText(s: Str),                  // json, jsonb: the JSON text
+  Array(items: List[SqlValue]),      // a one dimensional array
+}
 pub fn null() -> SqlValue
 pub fn int(n: Int) -> SqlValue       // also str, float, bool, time
+pub fn bytes(b: Bytes) -> SqlValue
+pub fn json[T: Json](v: T) -> SqlValue             // JsonText of json.encode_str(v)
+pub fn array(items: List[SqlValue]) -> SqlValue
 ```
 
 Parameters are written `$1`, `$2`, ... and passed as a `List[SqlValue]`
@@ -1698,6 +1706,10 @@ fn (r: Row) columns() -> List[Str]
 fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
 fn (r: Row) int(name: Str) -> Int ! SqlErr       // also str, float, bool, time
 fn (r: Row) int_opt(name: Str) -> Int? ! SqlErr  // also str_opt, float_opt, bool_opt, time_opt
+fn (r: Row) bytes(name: Str) -> Bytes ! SqlErr   // also bytes_opt
+fn (r: Row) json[T: Json](name: Str) -> T ! SqlErr   // a json column (or text) decoded; a decode error is Mismatch
+fn (r: Row) ints(name: Str) -> List[Int] ! SqlErr    // an array of integers; also strs; a NULL element is Mismatch
+fn (r: Row) items(name: Str) -> List[SqlValue] ! SqlErr  // an array's elements
 ```
 
 Accessors read by column name (the first column of that name). A missing
@@ -1717,11 +1729,13 @@ fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! Sql
 ```
 
 `derive SqlRow` is allowed on a struct without type parameters whose fields
-are `Int`, `Float`, `Str`, `Bool`, `Time`, or an `Option` of one of them
-(else XO0404 at the derive). `decode` reads each field from the column of
-the same name, or of its wire name (`created as "created_at": Time`), or
-under `derive SqlRow(case: ...)` (core 2.2, decision 0277), with the
-rules of the accessors above: a missing column is
+are `Int`, `Float`, `Str`, `Bool`, `Time`, `Bytes`, or an `Option` of one
+of them, or `List[Int]` or `List[Str]` (array columns, read with `ints`
+and `strs`; decision 0278), else XO0404 at the derive. `decode` reads
+each field from the column of the same name, or of its wire name
+(`created as "created_at": Time`), or under `derive SqlRow(case: ...)`
+(core 2.2, decision 0277), with the rules of the accessors above: a
+missing column is
 `NoColumn(name)`, a value of another type is `Mismatch(column, msg)`, NULL is
 `None` for an `Option` field and `Mismatch` for any other. Fields are read in
 declaration order and the first failure is returned. Columns without a field
@@ -1782,19 +1796,25 @@ A `Tx` is a handle: copies share the transaction.
 
 ```
 enum SqlErr {
-  Syntax(msg: Str), Constraint(msg: Str), Param(msg: Str), NoTable(name: Str),
+  Syntax(msg: Str), Constraint(msg: Str, code: Str, name: Str), Param(msg: Str), NoTable(name: Str),
   NoRows, NoColumn(name: Str), Mismatch(column: Str, msg: Str),
-  Conn(msg: Str), Driver(msg: Str), TxDone, Closed, Canceled
+  Conn(msg: Str), Driver(msg: Str), Server(code: Str, msg: Str), TxDone, Closed, Canceled
 } derive Display
 ```
 
 `Conn` is a lost or refused connection, `Driver` any other driver failure
 (including an unknown driver name), `Constraint` a key, uniqueness, NOT NULL,
-or type violation.
+check, or type violation, and `Server` any other error a server reports
+with an SQLSTATE code. `Constraint`'s `code` is the SQLSTATE (decision
+0278): `23505` unique, `23503` foreign key, `23502` not null, `23514`
+check, `42804` a value of another type; `name` is the constraint's name,
+`""` when the driver gives none (the in memory driver never does).
 
 The in memory driver (`memory`, `testing.fake_db`) supports: `CREATE TABLE [IF
 NOT EXISTS]` (types `INT`/`INTEGER`/`BIGINT`, `TEXT`/`VARCHAR`, `REAL`/`FLOAT`,
-`BOOL`, `TIMESTAMP`, `SERIAL`; `PRIMARY KEY` on a single integer column
+`BOOL`, `TIMESTAMP`, `SERIAL`, `BYTEA`/`BLOB` (`Blob` values), `JSON`/`JSONB`
+(`JsonText` values), and an array of any of them written `TYPE[]` (`Array`
+values whose elements are of TYPE or NULL); `PRIMARY KEY` on a single integer column
 auto-assigns keys; `NOT NULL`, `UNIQUE`, `DEFAULT literal`), `DROP TABLE`,
 `INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
 or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),

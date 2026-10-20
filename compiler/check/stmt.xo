@@ -571,13 +571,13 @@ fn (var c: Checker) check_sql_row_derive(t: Int, id: Ident) {
   for f in c.objs[t].fields {
     if !c.is_sql_column(f.ty) {
       let d = c.error("XO0404", id.span, "`derive SqlRow` needs every field to be a column type, but `${text(f.name)}` has type `${c.show(f.ty)}`")
-      c.note(d, "column types are Int, Float, Str, Bool, and Time, and an Option of one for a column that may be NULL (std.md 10.4)")
+      c.note(d, "column types are Int, Float, Str, Bool, Time, and Bytes, an Option of one for a column that may be NULL, and List[Int] and List[Str] for arrays (std.md 10.4)")
     }
   }
 }
 
 fn is_sql_column_name(n: Bytes) -> Bool {
-  (text(n)) is "Int" | "Float" | "Str" | "Bool" | "Time"
+  (text(n)) is "Int" | "Float" | "Str" | "Bool" | "Time" | "Bytes"
 }
 
 fn (c: Checker) is_sql_column(t: Int) -> Bool {
@@ -589,6 +589,11 @@ fn (c: Checker) is_sql_column(t: Int) -> Bool {
   if c.objs[o].name == b"Option" && c.tys[r].args.len() == 1 {
     let e = c.named_obj(c.tys[r].args[0])
     return e >= 0 && c.objs[e].module == c.prelude && is_sql_column_name(c.objs[e].name)
+  }
+  if c.objs[o].name == b"List" && c.tys[r].args.len() == 1 {
+    // array columns (decision 0278): Row.ints and Row.strs
+    let e = c.named_obj(c.tys[r].args[0])
+    return e >= 0 && c.objs[e].module == c.prelude && (text(c.objs[e].name)) is "Int" | "Str"
   }
   is_sql_column_name(c.objs[o].name)
 }

@@ -2,9 +2,9 @@ exit 0
 --- stdout
 insert ada: affected 1 id 1
 insert two: affected 2 id 3
-insert dup: error Constraint(msg: "UNIQUE constraint failed: users.name")
-insert null: error Constraint(msg: "NOT NULL constraint failed: users.name")
-insert type: error Constraint(msg: "column age expects an integer, got string")
+insert dup: error Constraint(msg: "UNIQUE constraint failed: users.name", code: "23505", name: "")
+insert null: error Constraint(msg: "NOT NULL constraint failed: users.name", code: "23502", name: "")
+insert type: error Constraint(msg: "column age expects an integer, got string", code: "42804", name: "")
 insert params: error Param(msg: "statement has 2 placeholders but 1 arguments were given")
 insert explicit id: affected 1 id 10
 returning: 1 [id=11 name="eve" twice=82]
@@ -33,7 +33,7 @@ negative limit: error Syntax(msg: "LIMIT and OFFSET need a non negative integer"
 exec select: error Syntax(msg: "exec cannot run a SELECT (use query)")
 empty: error Syntax(msg: "empty statement")
 several args: error Param(msg: "several statements cannot take arguments")
-bad type: error Syntax(msg: "unknown column type blob")
+bad type: error Syntax(msg: "unknown column type money")
 exists: error Syntax(msg: "table tags already exists")
 bob cols id,name,age,score,active,seen
 bob age Err(Mismatch(column: "age", msg: "expected an integer, found NULL")) Ok(None) Ok(true) Err(Mismatch(column: "age", msg: "expected text, found NULL"))
@@ -51,13 +51,13 @@ short: Mismatch(column: "age", msg: "expected an integer, found NULL")
 short one: NoColumn(name: "age")
 dee dee None
 update returning: 2 [name="ada" age=37 active=false; name="cy's" age=30 active=false]
-update unique: error Constraint(msg: "UNIQUE constraint failed: users.name")
+update unique: error Constraint(msg: "UNIQUE constraint failed: users.name", code: "23505", name: "")
 update all: affected 5 id 0
 delete returning: 1 [id=11 name="eve" age=41 score=2.5 active=true seen=NULL]
 delete: affected 2 id 0
 left: 2 [id=1 name="ada" score=2.5; id=3 name="cy's" score=0.75]
 tx insert: affected 2 id 2
-tx bad: error Constraint(msg: "NOT NULL constraint failed: tags.label")
+tx bad: error Constraint(msg: "NOT NULL constraint failed: tags.label", code: "23502", name: "")
 tx sees: 2 [id=1 label="a"; id=2 label="b"]
 db does not: 0 []
 committed
