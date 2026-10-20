@@ -5,6 +5,7 @@ use std/http
 use std/json as js
 use std/mime
 use std/multipart
+use std/time
 use std/url
 use std/log
 use std/task
@@ -1095,4 +1096,394 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
     return None
   }
   Some((literals(route), bind_params(route, parts, uparts)))
+}
+
+// ---------------------------------------------------------------------------
+// Cookies (std.md 4.3, decision 0288): net/http's cookie.go (go1.26.1)
+// ported; a byte Go drops with a log line is dropped silently.
+
+
+/// Go's Cookie.String.
+fn cookie_display(c: http.Cookie) -> Str {
+  if !cookie_token(c.name) {
+    return ""
+  }
+  var b = StrBuilder.new()
+  b.write(c.name)
+  b.write("=")
+  b.write(sanitize_cookie_value(c.value, c.quoted))
+  if !c.path.is_empty() {
+    b.write("; Path=")
+    b.write(sanitize_bytes(c.path, false))
+  }
+  if !c.domain.is_empty() && valid_cookie_domain(c.domain) {
+    // an invalid domain is dropped, which makes a host-only cookie; a
+    // leading dot is allowed but not sent
+    b.write("; Domain=")
+    b.write(if c.domain.starts_with(".") { c.domain[1..] } else { c.domain })
+  }
+  if let Some(t) = c.expires {
+    if time.civil(t, time.utc()).date.year >= 1601 {
+      b.write("; Expires=")
+      b.write(time.format(t, time.utc(), "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT"))
+    }
+  }
+  if c.max_age > 0 {
+    b.write("; Max-Age=${c.max_age}")
+  } else if c.max_age < 0 {
+    b.write("; Max-Age=0")
+  }
+  if c.http_only {
+    b.write("; HttpOnly")
+  }
+  if c.secure {
+    b.write("; Secure")
+  }
+  match c.same_site {
+    http.SameSite.Default => {}
+    http.SameSite.None => b.write("; SameSite=None")
+    http.SameSite.Lax => b.write("; SameSite=Lax")
+    http.SameSite.Strict => b.write("; SameSite=Strict")
+  }
+  if c.partitioned {
+    b.write("; Partitioned")
+  }
+  b.freeze()
+}
+
+/// Go's ParseCookie.
+fn parse_cookie(line: Str) -> List[http.Cookie] ! http.CookieErr {
+  if line.split(";").len() > COOKIE_MAX {
+    return Err(http.CookieErr{msg: "http: number of cookies exceeded limit"})
+  }
+  let parts = cookie_trim(line).split(";")
+  if parts.len() == 1 && parts[0].is_empty() {
+    return Err(http.CookieErr{msg: "http: blank cookie"})
+  }
+  var out: List[http.Cookie] = []
+  for p in parts {
+    let s = cookie_trim(p)
+    let (name, value) = match s.find("=") {
+      Some(i) => (s[0..i], s[i + 1..])
+      None => return Err(http.CookieErr{msg: "http: '=' not found in cookie"})
+    }
+    if !cookie_token(name) {
+      return Err(http.CookieErr{msg: "http: invalid cookie name"})
+    }
+    let (v, quoted, ok) = parse_cookie_value(value, true)
+    if !ok {
+      return Err(http.CookieErr{msg: "http: invalid cookie value"})
+    }
+    out.push(http.Cookie{name: name, value: v, quoted: quoted})
+  }
+  out
+}
+
+/// Go's ParseSetCookie (without Raw, RawExpires, and Unparsed).
+fn parse_set_cookie(line: Str) -> http.Cookie ! http.CookieErr {
+  let parts = cookie_trim(line).split(";")
+  if parts.len() == 1 && parts[0].is_empty() {
+    return Err(http.CookieErr{msg: "http: blank cookie"})
+  }
+  let first = cookie_trim(parts[0])
+  let (name0, value) = match first.find("=") {
+    Some(i) => (first[0..i], first[i + 1..])
+    None => return Err(http.CookieErr{msg: "http: '=' not found in cookie"})
+  }
+  let name = cookie_trim(name0)
+  if !cookie_token(name) {
+    return Err(http.CookieErr{msg: "http: invalid cookie name"})
+  }
+  let (v, quoted, ok) = parse_cookie_value(value, true)
+  if !ok {
+    return Err(http.CookieErr{msg: "http: invalid cookie value"})
+  }
+  var c = http.Cookie{name: name, value: v, quoted: quoted}
+  for i in 1..parts.len() {
+    let part = cookie_trim(parts[i])
+    if part.is_empty() {
+      continue
+    }
+    let (attr, val0) = match part.find("=") {
+      Some(k) => (part[0..k], part[k + 1..])
+      None => (part, "")
+    }
+    if !ascii_only(attr) {
+      continue
+    }
+    let (val, _, vok) = parse_cookie_value(val0, false)
+    if !vok {
+      continue
+    }
+    let la = attr.to_lower()
+    if la == "samesite" {
+      c.same_site = if !ascii_only(val) { http.SameSite.Default } else {
+        match val.to_lower() {
+          "lax" => http.SameSite.Lax
+          "strict" => http.SameSite.Strict
+          "none" => http.SameSite.None
+          _ => http.SameSite.Default
+        }
+      }
+    } else if la == "secure" {
+      c.secure = true
+    } else if la == "httponly" {
+      c.http_only = true
+    } else if la == "domain" {
+      c.domain = val
+    } else if la == "max-age" {
+      if let Some(secs) = Int.parse(val) {
+        if !(secs != 0 && val.starts_with("0")) {
+          c.max_age = if secs <= 0 { -1 } else { secs }
+        }
+      }
+    } else if la == "expires" {
+      c.expires = cookie_date(val)
+    } else if la == "path" {
+      c.path = val
+    } else if la == "partitioned" {
+      c.partitioned = true
+    }
+  }
+  c
+}
+
+fn request_cookie(r: Request, name: Str) -> http.Cookie? {
+  for c in read_cookies(r.headers, name) {
+    return Some(c)
+  }
+  None
+}
+
+fn request_cookies(r: Request) -> List[http.Cookie] { read_cookies(r.headers, "") }
+
+/// Go's AddCookie: name=value (sanitized) appended to the Cookie field.
+fn request_with_cookie(r: Request, c: http.Cookie) -> Request {
+  let s = "${sanitize_cookie_name(c.name)}=${sanitize_cookie_value(c.value, c.quoted)}"
+  let cur = header_get(r.headers, "Cookie") ?? ""
+  request_with_header(r, "Cookie", if cur.is_empty() { s } else { "${cur}; ${s}" })
+}
+
+/// Go's defaultCookieMaxNum.
+const COOKIE_MAX = 3000
+
+/// Go's readCookies over the Cookie field (several received fields are
+/// joined in the Map with ", ", which is not a cookie separator: split
+/// on it only between pairs).
+fn read_cookies(h: Map[Str, Str], filter: Str) -> List[http.Cookie] {
+  let line0 = header_get(h, "Cookie") ?? ""
+  if line0.is_empty() || line0.split(";").len() > COOKIE_MAX {
+    return []
+  }
+  var out: List[http.Cookie] = []
+  for part0 in cookie_trim(line0).split(";") {
+    let part = cookie_trim(part0)
+    if part.is_empty() {
+      continue
+    }
+    let (name0, val0) = match part.find("=") {
+      Some(i) => (part[0..i], part[i + 1..])
+      None => (part, "")
+    }
+    let name = cookie_trim(name0)
+    if !cookie_token(name) || (!filter.is_empty() && filter != name) {
+      continue
+    }
+    let (v, quoted, ok) = parse_cookie_value(val0, true)
+    if ok {
+      out.push(http.Cookie{name: name, value: v, quoted: quoted})
+    }
+  }
+  out
+}
+
+/// Whether every byte of s is ASCII.
+fn ascii_only(s: Str) -> Bool {
+  for b in s.bytes() {
+    if b >= 128 {
+      return false
+    }
+  }
+  true
+}
+
+/// textproto.TrimString: ASCII space and tab, CR, LF.
+fn cookie_trim(s: Str) -> Str {
+  let b = s.bytes()
+  var i = 0
+  var j = b.len()
+  while i < j && (b[i] == 32 || b[i] == 9 || b[i] == 10 || b[i] == 13) {
+    i += 1
+  }
+  while j > i && (b[j - 1] == 32 || b[j - 1] == 9 || b[j - 1] == 10 || b[j - 1] == 13) {
+    j -= 1
+  }
+  s[i..j]
+}
+
+/// httpguts.ValidHeaderFieldName: one or more token bytes.
+fn cookie_token(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for b in s.bytes() {
+    let ok = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 33 || (b >= 35 && b <= 39) || b == 42 || b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+fn valid_cookie_value_byte(b: UInt8) -> Bool { b >= 32 && b < 127 && b != 34 && b != 59 && b != 92 }
+
+fn valid_cookie_path_byte(b: UInt8) -> Bool { b >= 32 && b < 127 && b != 59 }
+
+/// Go's sanitizeOrWarn: s without the bytes that are not valid (value or
+/// path bytes), silently.
+fn sanitize_bytes(s: Str, value: Bool) -> Str {
+  var ok = true
+  for b in s.bytes() {
+    if !(if value { valid_cookie_value_byte(b) } else { valid_cookie_path_byte(b) }) {
+      ok = false
+      break
+    }
+  }
+  if ok {
+    return s
+  }
+  var out = BytesBuilder.with_capacity(s.len())
+  for b in s.bytes() {
+    if if value { valid_cookie_value_byte(b) } else { valid_cookie_path_byte(b) } {
+      out.write_byte(b)
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+/// Go's sanitizeCookieValue: quoted when it holds a space or a comma, or
+/// came quoted.
+fn sanitize_cookie_value(v: Str, quoted: Bool) -> Str {
+  let s = sanitize_bytes(v, true)
+  if s.contains(" ") || s.contains(",") || quoted { "\"${s}\"" } else { s }
+}
+
+/// Go's sanitizeCookieName: CR and LF as '-'.
+fn sanitize_cookie_name(n: Str) -> Str { n.replace("\n", "-").replace("\r", "-") }
+
+/// Go's parseCookieValue: the value without its quotes (when allowed),
+/// whether it was quoted, and whether every byte is a cookie-octet.
+fn parse_cookie_value(raw0: Str, allow_quote: Bool) -> (Str, Bool, Bool) {
+  var raw = raw0
+  var quoted = false
+  if allow_quote && raw.len() > 1 && raw.starts_with("\"") && raw.ends_with("\"") {
+    raw = raw[1..raw.len() - 1]
+    quoted = true
+  }
+  for b in raw.bytes() {
+    if !valid_cookie_value_byte(b) {
+      return ("", quoted, false)
+    }
+  }
+  (raw, quoted, true)
+}
+
+/// Go's validCookieDomain: a domain name (isCookieDomainName) or an IPv4
+/// address.
+fn valid_cookie_domain(v: Str) -> Bool { cookie_domain_name(v) || (!v.contains(":") && is_ipv4(v)) }
+
+fn is_ipv4(v: Str) -> Bool {
+  let parts = v.split(".")
+  if parts.len() != 4 {
+    return false
+  }
+  for p in parts {
+    if p.is_empty() || p.len() > 3 || (p.len() > 1 && p.starts_with("0")) {
+      return false
+    }
+    match Int.parse(p) {
+      Some(n) => if n > 255 { return false }
+      None => return false
+    }
+  }
+  true
+}
+
+/// Go's isCookieDomainName.
+fn cookie_domain_name(s0: Str) -> Bool {
+  if s0.is_empty() || s0.len() > 255 {
+    return false
+  }
+  let s = if s0.starts_with(".") { s0[1..] } else { s0 }
+  var last: UInt8 = 46
+  var ok = false
+  var partlen = 0
+  for c in s.bytes() {
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
+      ok = true
+      partlen += 1
+    } else if c >= 48 && c <= 57 {
+      partlen += 1
+    } else if c == 45 {
+      if last == 46 {
+        return false
+      }
+      partlen += 1
+    } else if c == 46 {
+      if last == 46 || last == 45 || partlen > 63 || partlen == 0 {
+        return false
+      }
+      partlen = 0
+    } else {
+      return false
+    }
+    last = c
+  }
+  if last == 45 || partlen > 63 {
+    return false
+  }
+  ok
+}
+
+/// An Expires value as Go's time.Parse reads it with RFC1123 or
+/// "Mon, 02-Jan-2006 15:04:05 MST" (the weekday and the zone's name are
+/// not checked; the time is taken as UTC), else None.
+fn cookie_date(v: Str) -> Time? {
+  let (_, rest) = match v.find(", ") {
+    Some(i) => (v[0..i], v[i + 2..])
+    None => return None
+  }
+  let f = rest.split(" ")
+  if f.len() != 4 && f.len() != 3 {
+    return None
+  }
+  let dmy = if f.len() == 4 { [f[0], f[1], f[2]] } else { f[0].split("-") }
+  let clock = if f.len() == 4 { f[3] } else { f[1] }
+  if dmy.len() != 3 || dmy[0].len() != 2 {
+    return None
+  }
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  var month = 0
+  for (i, m) in months.indexed() {
+    if m == dmy[1] {
+      month = i + 1
+    }
+  }
+  let hms = clock.split(":")
+  if month == 0 || hms.len() != 3 || dmy[2].len() != 4 {
+    return None
+  }
+  let day = Int.parse(dmy[0]) ?? -1
+  let year = Int.parse(dmy[2]) ?? -1
+  let h = Int.parse(hms[0]) ?? -1
+  let m = Int.parse(hms[1]) ?? -1
+  let s = Int.parse(hms[2]) ?? -1
+  if day < 0 || year < 0 || h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59 {
+    return None
+  }
+  let d = match time.date(year, month, day) {
+    Ok(x) => x
+    Err(_) => return None
+  }
+  time.instant(d, time.ClockTime{hour: h, minute: m, second: s, nanos: 0}, time.utc()).ok()
 }

@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-20: feature: cookies
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: net/http/cookie.go Cookie.String, ParseCookie, ParseSetCookie, readCookies, Request.Cookie, Cookies, AddCookie (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_cookies (the inputs of Go's cookie_test.go tables; arm64, LLVM, and the Go backend's net/http agree); std/native/http_test.xo (Go's TestCookieSanitizeValue, TestCookieSanitizePath, writeSetCookiesTests' domains and names)
+
+`http.Cookie` with `display()` (the Set-Cookie value), `parse_cookie`,
+`parse_set_cookie`, and `Request.cookie`, `cookies`, and `with_cookie`
+(decision 0288, part 1). Bytes and domains Go drops with a log line are
+dropped silently.
 ## 2026-10-20: change: form() parses the Content-Type as Go does
 
 - Kind: change

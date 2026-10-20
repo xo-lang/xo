@@ -74,3 +74,46 @@ test "a request built as a struct literal reads url.query" {
   let r = http.Request{method: "GET", path: "/", url: http.Url{scheme: "http", host: "x", port: None, path: "/", query: {"k": "v"}}, headers: {}, body: b"", remote_ip: "1.2.3.4"}
   expect(r.query_all("k")) == ["v"]
 }
+
+// Cookies (decision 0288): the cases of Go's cookie_test.go
+// (go1.26.1) whose invalid bytes Go drops with a log line, which golden
+// http_cookies leaves out (the Go backend logs them).
+
+test "go TestCookieSanitizeValue" {
+  let cases: List[(Str, Bool, Str)] = [
+    ("foo", false, "foo"),
+    ("foo;bar", false, "foobar"),
+    ("foo\\bar", false, "foobar"),
+    ("foo\"bar", false, "foobar"),
+    ("\u{0}\u{7e}\u{7f}\u{80}", false, "\u{7e}"),
+    ("withquotes", true, "\"withquotes\""),
+    ("\"withquotes\"", true, "\"withquotes\""),
+    ("a z", false, "\"a z\""),
+    (" z", false, "\" z\""),
+    ("a ", false, "\"a \""),
+    ("a,z", false, "\"a,z\""),
+    (",z", false, "\",z\""),
+    ("a,", false, "\"a,\""),
+    ("", true, "\"\""),
+  ]
+  for (input, quoted, want) in cases {
+    expect(sanitize_cookie_value(input, quoted)) == want
+  }
+}
+
+test "go TestCookieSanitizePath" {
+  expect(sanitize_bytes("/path", false)) == "/path"
+  expect(sanitize_bytes("/path with space/", false)) == "/path with space/"
+  expect(sanitize_bytes("/just;no;semicolon\u{0}orstuff/", false)) == "/justnosemicolonorstuff/"
+}
+
+test "go writeSetCookiesTests: domains and names" {
+  expect(cookie_display(http.Cookie{name: "cookie-5", value: "five", domain: "wrong;bad.abc"})) == "cookie-5=five"
+  expect(cookie_display(http.Cookie{name: "cookie-6", value: "six", domain: "bad-.abc"})) == "cookie-6=six"
+  expect(cookie_display(http.Cookie{name: "cookie-7", value: "seven", domain: "127.0.0.1"})) == "cookie-7=seven; Domain=127.0.0.1"
+  expect(cookie_display(http.Cookie{name: "cookie-8", value: "eight", domain: "::1"})) == "cookie-8=eight"
+  expect(cookie_display(http.Cookie{name: "cookie-16", value: "partitioned", same_site: http.SameSite.None, secure: true, path: "/", partitioned: true})) == "cookie-16=partitioned; Path=/; Secure; SameSite=None; Partitioned"
+  expect(cookie_display(http.Cookie{name: "\t", value: ""})) == ""
+  expect(cookie_display(http.Cookie{name: "a\nb", value: "v"})) == ""
+  expect(cookie_display(http.Cookie{name: "a\rb", value: "v"})) == ""
+}

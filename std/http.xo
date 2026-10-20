@@ -52,6 +52,50 @@ fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
 fn (r: Request) with_value[T](k: Key[T], v: T) -> Request
 fn (r: Request) value[T](k: Key[T]) -> T?
+/// The first cookie of that name in the Cookie fields (Go's
+/// Request.Cookie, decision 0288).
+fn (r: Request) cookie(name: Str) -> Cookie?
+/// Every cookie of the Cookie fields that parses (Go's Request.Cookies).
+fn (r: Request) cookies() -> List[Cookie]
+/// The request with name=value appended to its Cookie field (Go's
+/// Request.AddCookie).
+fn (r: Request) with_cookie(c: Cookie) -> Request
+
+/// An HTTP cookie (std.md 4.3, decision 0288; net/http's Cookie).
+struct Cookie {
+  name: Str
+  value: Str
+  /// whether the value was (or is to be) sent in double quotes
+  quoted: Bool = false
+  path: Str = ""
+  domain: Str = ""
+  expires: Time? = None
+  /// seconds: 0 unset, < 0 delete now (Max-Age=0), > 0 Max-Age
+  max_age: Int = 0
+  secure: Bool = false
+  http_only: Bool = false
+  same_site: SameSite = SameSite.Default
+  partitioned: Bool = false
+}
+
+enum SameSite {
+  Default
+  Lax
+  Strict
+  None
+} derive Display
+
+/// The Set-Cookie value (Go's Cookie.String); "" for a name that is not
+/// a token.
+fn (c: Cookie) display() -> Str
+/// The cookies of a Cookie field's value (Go's ParseCookie).
+fn parse_cookie(line: Str) -> List[Cookie] ! CookieErr
+/// The cookie of a Set-Cookie field's value (Go's ParseSetCookie).
+fn parse_set_cookie(line: Str) -> Cookie ! CookieErr
+
+struct CookieErr {
+  msg: Str
+} derive Display
 
 /// A typed request value key (std.md 4.3).
 struct Key[T] {}

@@ -343,6 +343,179 @@ func (v Http_Response) XoDebug(b *strings.Builder) {
 
 func (v Http_Response) M_debug(*Task) string { return Debug(v) }
 
+type Http_Cookie struct {
+	F_name        string
+	F_value       string
+	F_quoted      bool
+	F_path        string
+	F_domain      string
+	F_expires     Option[Time]
+	F_max_age     int64
+	F_secure      bool
+	F_http_only   bool
+	F_same_site   Http_SameSite
+	F_partitioned bool
+}
+
+func (v Http_Cookie) XoEq(x any) bool {
+	o, ok := x.(Http_Cookie)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_name, o.F_name) {
+		return false
+	}
+	if !Eq(v.F_value, o.F_value) {
+		return false
+	}
+	if !Eq(v.F_quoted, o.F_quoted) {
+		return false
+	}
+	if !Eq(v.F_path, o.F_path) {
+		return false
+	}
+	if !Eq(v.F_domain, o.F_domain) {
+		return false
+	}
+	if !Eq(v.F_expires, o.F_expires) {
+		return false
+	}
+	if !Eq(v.F_max_age, o.F_max_age) {
+		return false
+	}
+	if !Eq(v.F_secure, o.F_secure) {
+		return false
+	}
+	if !Eq(v.F_http_only, o.F_http_only) {
+		return false
+	}
+	if !Eq(v.F_same_site, o.F_same_site) {
+		return false
+	}
+	if !Eq(v.F_partitioned, o.F_partitioned) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Http_Cookie) XoHash() uint64 {
+	h := uint64(6158218133340513493)
+	h = MixHash(h, Hash(v.F_name))
+	h = MixHash(h, Hash(v.F_value))
+	h = MixHash(h, Hash(v.F_quoted))
+	h = MixHash(h, Hash(v.F_path))
+	h = MixHash(h, Hash(v.F_domain))
+	h = MixHash(h, Hash(v.F_expires))
+	h = MixHash(h, Hash(v.F_max_age))
+	h = MixHash(h, Hash(v.F_secure))
+	h = MixHash(h, Hash(v.F_http_only))
+	h = MixHash(h, Hash(v.F_same_site))
+	h = MixHash(h, Hash(v.F_partitioned))
+	return h
+}
+
+func (v Http_Cookie) XoDebug(b *strings.Builder) {
+	b.WriteString("Cookie{")
+	b.WriteString("name: ")
+	DebugTo(b, v.F_name)
+	b.WriteString(", value: ")
+	DebugTo(b, v.F_value)
+	b.WriteString(", quoted: ")
+	DebugTo(b, v.F_quoted)
+	b.WriteString(", path: ")
+	DebugTo(b, v.F_path)
+	b.WriteString(", domain: ")
+	DebugTo(b, v.F_domain)
+	b.WriteString(", expires: ")
+	DebugTo(b, v.F_expires)
+	b.WriteString(", max_age: ")
+	DebugTo(b, v.F_max_age)
+	b.WriteString(", secure: ")
+	DebugTo(b, v.F_secure)
+	b.WriteString(", http_only: ")
+	DebugTo(b, v.F_http_only)
+	b.WriteString(", same_site: ")
+	DebugTo(b, v.F_same_site)
+	b.WriteString(", partitioned: ")
+	DebugTo(b, v.F_partitioned)
+	b.WriteString("}")
+}
+
+func (v Http_Cookie) M_debug(*Task) string { return Debug(v) }
+
+type Http_SameSite struct {
+	Tag int
+	P   any
+}
+
+func (v Http_SameSite) XoEq(x any) bool {
+	o, ok := x.(Http_SameSite)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Http_SameSite) XoHash() uint64 {
+	h := MixHash(uint64(2908157735209124147), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Http_SameSite) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Default")
+	case 2:
+		b.WriteString("Lax")
+	case 3:
+		b.WriteString("Strict")
+	case 4:
+		b.WriteString("None")
+	}
+}
+
+func (v Http_SameSite) M_debug(*Task) string { return Debug(v) }
+
+func (v Http_SameSite) M_display(*Task) string { return Debug(v) }
+
+type Http_CookieErr struct {
+	F_msg string
+}
+
+func (v Http_CookieErr) XoEq(x any) bool {
+	o, ok := x.(Http_CookieErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Http_CookieErr) XoHash() uint64 {
+	h := uint64(5209948137120533001)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Http_CookieErr) XoDebug(b *strings.Builder) {
+	b.WriteString("CookieErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Http_CookieErr) M_debug(*Task) string { return Debug(v) }
+
+func (v Http_CookieErr) M_display(*Task) string { return Debug(v) }
+
 type Http_TlsErr struct {
 	F_msg string
 }

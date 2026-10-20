@@ -1035,6 +1035,28 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   //
 fn (r: Request) header(name: Str) -> Str?           // case insensitive
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+fn (r: Request) cookie(name: Str) -> Cookie?        // the first Cookie pair of that name (Go's Request.Cookie)
+fn (r: Request) cookies() -> List[Cookie]           // every Cookie pair that parses
+fn (r: Request) with_cookie(c: Cookie) -> Request   // name=value appended to Cookie (Go's AddCookie)
+
+struct Cookie {
+  name: Str
+  value: Str
+  quoted: Bool = false      // the value is (or was) in double quotes
+  path: Str = ""
+  domain: Str = ""
+  expires: Time? = None
+  max_age: Int = 0          // seconds; 0 unset, < 0 delete now (Max-Age=0)
+  secure: Bool = false
+  http_only: Bool = false
+  same_site: SameSite = SameSite.Default
+  partitioned: Bool = false
+}
+enum SameSite { Default, Lax, Strict, None }
+struct CookieErr { msg: Str }
+fn (c: Cookie) display() -> Str                     // the Set-Cookie value (Go's Cookie.String)
+pub fn parse_cookie(line: Str) -> List[Cookie] ! CookieErr      // Go's ParseCookie
+pub fn parse_set_cookie(line: Str) -> Cookie ! CookieErr        // Go's ParseSetCookie
 
 struct Key[T] {}                                   // handle
 pub fn key[T](name: Str) -> Key[T]
@@ -1087,6 +1109,23 @@ fn me(req: http.Request) -> http.Response ! ApiErr {
   http.json(200, user)
 }
 ```
+
+Cookies (decision 0288) are net/http's cookie.go: `display()` is
+`""` for a name that is not a token, quotes a value with a space or a
+comma (or `quoted`), drops the bytes a value or path may not hold, drops
+a domain that is not a domain name or IPv4 address (a leading dot is not
+sent), writes `Expires` in GMT (`Wed, 10 Nov 2010 23:00:00 GMT`) for a
+year from 1601, `Max-Age=0` for a negative `max_age`, and `SameSite`
+only when not `Default`. Go logs each dropped byte or domain; Xo drops
+them silently. `parse_set_cookie` reads every attribute Go does
+(`Expires` in RFC 1123 or `Mon, 02-Jan-2006 15:04:05 MST` form, the
+weekday and zone name not checked, as UTC), ignoring unknown ones; its
+errors are Go's (`http: blank cookie`, `http: '=' not found in cookie`,
+`http: invalid cookie name`, `http: invalid cookie value`); Go's `Raw`,
+`RawExpires` and `Unparsed` are not kept. `Request.cookies()` reads the
+`Cookie` field as Go's readCookies (invalid pairs skipped, at most 3000).
+Responses setting several cookies (`Response.with_cookie`, one
+`Set-Cookie` field each) come with decision 0288's second part.
 
 `with_header` returns a copy with the header set (canonical key), like
 `Response.with_header`.

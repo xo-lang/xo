@@ -1,7 +1,13 @@
 # 0288: HTTP header fields with repeated names, and cookies
 
-Status: Proposed (2026-10-20, Xo Lang 3; the spec text below is for the
-owner's approval before any code)
+Status: Accepted (owner, 2026-10-20), as drafted, with three additions
+the lead approved the same day: Cookie has `quoted: Bool = false` (Go's
+Quoted, which String needs to round-trip); Go's Raw, RawExpires and
+Unparsed are left out; a byte or domain Go drops with a log line is
+dropped silently. Part 1 (2026-10-20, Xo Lang 3): Cookie, SameSite,
+display, parse_cookie, parse_set_cookie, Request.cookie, cookies,
+with_cookie. Part 2: the fields behind the Map (header_values,
+add_header) and Response.with_cookie and cookies.
 
 ## Context
 

@@ -1,0 +1,155 @@
+exit 0
+--- stdout
+set Cookie-1=v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+set NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly
+  NID=99=YsDT5i3E-CXax- quoted=false path=/ domain=.google.ch expires=2011-11-23T01:05:03Z max_age=0 secure=false http_only=true same_site=Default partitioned=false | NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly
+set .ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly
+  .ASPXAUTH=7E3AA quoted=false path=/ domain= expires=2012-03-07T14:25:06Z max_age=0 secure=false http_only=true same_site=Default partitioned=false | .ASPXAUTH=7E3AA; Path=/; Expires=Wed, 07 Mar 2012 14:25:06 GMT; HttpOnly
+set ASP.NET_SessionId=foo; path=/; HttpOnly
+  ASP.NET_SessionId=foo quoted=false path=/ domain= expires=- max_age=0 secure=false http_only=true same_site=Default partitioned=false | ASP.NET_SessionId=foo; Path=/; HttpOnly
+set samesitedefault=foo; SameSite
+  samesitedefault=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesitedefault=foo
+set samesiteinvalidisdefault=foo; SameSite=invalid
+  samesiteinvalidisdefault=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesiteinvalidisdefault=foo
+set samesitelax=foo; SameSite=Lax
+  samesitelax=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Lax partitioned=false | samesitelax=foo; SameSite=Lax
+set samesitestrict=foo; SameSite=Strict
+  samesitestrict=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Strict partitioned=false | samesitestrict=foo; SameSite=Strict
+set samesitenone=foo; SameSite=None
+  samesitenone=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=None partitioned=false | samesitenone=foo; SameSite=None
+set special-1=a z
+  special-1=a z quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-1="a z"
+set special-2=" z"
+  special-2= z quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-2=" z"
+set special-3="a "
+  special-3=a  quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-3="a "
+set special-4=" "
+  special-4=  quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-4=" "
+set special-5=a,z
+  special-5=a,z quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-5="a,z"
+set special-6=",z"
+  special-6=,z quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-6=",z"
+set special-7=a,
+  special-7=a, quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-7="a,"
+set special-8=","
+  special-8=, quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-8=","
+set special-9 =","
+  special-9=, quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | special-9=","
+set cookie="quoted"
+  cookie=quoted quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | cookie="quoted"
+set ASP.NET_SessionId=foo; path=/; HttpOnly, .ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly
+  ASP.NET_SessionId=foo quoted=false path=/ domain= expires=2012-03-07T14:25:06Z max_age=0 secure=false http_only=true same_site=Default partitioned=false | ASP.NET_SessionId=foo; Path=/; Expires=Wed, 07 Mar 2012 14:25:06 GMT; HttpOnly
+parse Cookie-1=v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+parse Cookie-1=v$1;c2=v2
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+parse k1=
+  k1= quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | k1=
+parse 
+  error http: blank cookie
+parse equal-not-found
+  error http: '=' not found in cookie
+parse =v1
+  error http: invalid cookie name
+parse k1=\\
+  error http: invalid cookie value
+parse Cookie-1=v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+parse NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly
+  error http: '=' not found in cookie
+parse .ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly
+  error http: '=' not found in cookie
+parse ASP.NET_SessionId=foo; path=/; HttpOnly
+  error http: '=' not found in cookie
+parse samesitedefault=foo; SameSite
+  error http: '=' not found in cookie
+parse samesiteinvalidisdefault=foo; SameSite=invalid
+  samesiteinvalidisdefault=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesiteinvalidisdefault=foo
+  SameSite=invalid quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | SameSite=invalid
+parse samesitelax=foo; SameSite=Lax
+  samesitelax=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesitelax=foo
+  SameSite=Lax quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | SameSite=Lax
+parse samesitestrict=foo; SameSite=Strict
+  samesitestrict=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesitestrict=foo
+  SameSite=Strict quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | SameSite=Strict
+parse samesitenone=foo; SameSite=None
+  samesitenone=foo quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | samesitenone=foo
+  SameSite=None quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | SameSite=None
+parse 
+  error http: blank cookie
+parse equal-not-found
+  error http: '=' not found in cookie
+parse =v1
+  error http: invalid cookie name
+parse k1=\\
+  error http: invalid cookie value
+parse Cookie-1=v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+parse c2=v2
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+parse Cookie-1=v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+parse c2=v2
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+parse Cookie-1=v$1; c2=v2
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+parse Cookie-1=v$1; c2=v2
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+parse Cookie-1="v$1"; c2="v2"
+  Cookie-1=v$1 quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1="v$1"
+  c2=v2 quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2="v2"
+parse Cookie-1="v$1"; c2=v2;
+  error http: '=' not found in cookie
+parse 
+  error http: blank cookie
+parse ;a=
+  error http: '=' not found in cookie
+parse ;a=
+  error http: '=' not found in cookie
+request Cookie-1=v$1: 1 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+request c2=v2: 1 cookies, first Cookie-1 -
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+request Cookie-1=v$1: 1 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+request c2=v2: 1 cookies, first Cookie-1 -
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+request Cookie-1=v$1; c2=v2: 2 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+request Cookie-1=v$1; c2=v2: 2 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1=v$1
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+request Cookie-1="v$1"; c2="v2": 2 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1="v$1"
+  c2=v2 quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2="v2"
+request Cookie-1="v$1"; c2=v2;: 2 cookies, first Cookie-1 v$1
+  Cookie-1=v$1 quoted=true path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | Cookie-1="v$1"
+  c2=v2 quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | c2=v2
+request : 0 cookies, first Cookie-1 -
+request ;a=: 1 cookies, first Cookie-1 -
+  a= quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | a=
+request ;a=: 1 cookies, first Cookie-1 -
+  a= quoted=false path= domain= expires=- max_age=0 secure=false http_only=false same_site=Default partitioned=false | a=
+with_cookie: a=1; b="two words"; c="q"
+built cookie-1: cookie-1=v$1
+built cookie-2: cookie-2=two; Max-Age=3600
+built cookie-3: cookie-3=three; Domain=example.com
+built cookie-4: cookie-4=four; Path=/restricted/
+built cookie-6: cookie-6=six; Domain=127.0.0.1
+built cookie-7: cookie-7=seven; Expires=Wed, 10 Nov 2010 23:00:00 GMT
+built cookie-8: cookie-8=eight; Max-Age=0
+built cookie-9: cookie-9=expiring
+built cookie-10: cookie-10="a b"; HttpOnly; Secure
+built cookie-11: cookie-11=x; SameSite=Lax
+built cookie-12: cookie-12=x; SameSite=Strict
+built cookie-13: cookie-13=x; Secure; SameSite=None; Partitioned
+built cookie-14: cookie-14="a,b"
+built : 
+built bad name: 
+done
+--- stderr

@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/http: cookies, ported from net/http: `http.Cookie` and its
+  `display()` (a Set-Cookie value), `parse_cookie`, `parse_set_cookie`,
+  and `Request.cookie(name)`, `cookies()`, and `with_cookie`.
 - std/tls: a TLS client on a connection the program dialed
   (`tls.client(conn, host)`), for protocols that upgrade a plaintext
   connection (Postgres's sslmode, SMTP STARTTLS, Redis). It verifies the

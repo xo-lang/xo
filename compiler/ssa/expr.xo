@@ -1195,6 +1195,20 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
 
 /// e of file f (a default value, a constant) as a value of type t.
 fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
+  // a variant without fields, written as `None` or `Enum.Variant`: from
+  // t itself (a std declaration file's defaults, std/http's Cookie, are
+  // not checked as bodies, so the checker records no constructor there)
+  if b.tkind(t) == Kind.Enum {
+    let name = match e {
+      Ident(x) => check.text(x.name)
+      SelectorExpr(_, _, sel) => check.text(sel.name)
+      _ => ""
+    }
+    let i = if name.is_empty() { -1 } else { b.m.variant_index(t, name) }
+    if i >= 0 && user_fields(b.m.types[t].variants[i]).is_empty() {
+      return b.variant(t, name, [])
+    }
+  }
   let saved = b.s.file
   b.s.file = f
   let v = b.value_as(e, t)

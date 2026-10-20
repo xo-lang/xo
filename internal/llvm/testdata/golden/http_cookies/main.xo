@@ -1,0 +1,135 @@
+// Cookies (std.md 4.3, decision 0288): net/http's cookie.go ported, run
+// on the input lines of Go's cookie_test.go tables (readSetCookiesTests,
+// readCookiesTests, TestParseCookie, TestParseSetCookie) and on cookies
+// built in Xo. The Go backend runs net/http itself, so golden parity is
+// the differential test against Go.
+use std/http
+use std/time
+
+fn show(c: http.Cookie) -> Str {
+  let exp = match c.expires {
+    Some(t) => time.format(t, time.utc(), time.RFC3339)
+    None => "-"
+  }
+  "${c.name}=${c.value} quoted=${c.quoted} path=${c.path} domain=${c.domain} expires=${exp} max_age=${c.max_age} secure=${c.secure} http_only=${c.http_only} same_site=${c.same_site} partitioned=${c.partitioned} | ${c.display()}"
+}
+
+fn main(os: Os) {
+  for line in set_lines() {
+    match http.parse_set_cookie(line) {
+      Ok(c) => os.stdio.println("set ${line}\n  ${show(c)}")
+      Err(e) => os.stdio.println("set ${line}\n  error ${e.msg}")
+    }
+  }
+  for line in parse_lines() + cookie_lines() {
+    match http.parse_cookie(line) {
+      Ok(cs) => {
+        os.stdio.println("parse ${line}")
+        for c in cs {
+          os.stdio.println("  ${show(c)}")
+        }
+      }
+      Err(e) => os.stdio.println("parse ${line}\n  error ${e.msg}")
+    }
+  }
+  for line in cookie_lines() {
+    let r = http.new_request("GET", "http://x/", {"Cookie": line})
+    os.stdio.println("request ${line}: ${r.cookies().len()} cookies, first Cookie-1 ${r.cookie("Cookie-1").map(fn(c) { c.value }) ?? "-"}")
+    for c in r.cookies() {
+      os.stdio.println("  ${show(c)}")
+    }
+  }
+  var r = http.new_request("GET", "http://x/")
+  r = r.with_cookie(http.Cookie{name: "a", value: "1"})
+  r = r.with_cookie(http.Cookie{name: "b", value: "two words"})
+  r = r.with_cookie(http.Cookie{name: "c", value: "q", quoted: true})
+  os.stdio.println("with_cookie: ${r.header("Cookie") ?? "-"}")
+  let t = time.instant(time.date(2010, 11, 10).or_fault("date"), time.ClockTime{hour: 23, minute: 0, second: 0, nanos: 0}, time.utc()).or_fault("instant")
+  let built = [
+    http.Cookie{name: "cookie-1", value: "v$1"},
+    http.Cookie{name: "cookie-2", value: "two", max_age: 3600},
+    http.Cookie{name: "cookie-3", value: "three", domain: ".example.com"},
+    http.Cookie{name: "cookie-4", value: "four", path: "/restricted/"},
+    http.Cookie{name: "cookie-6", value: "six", domain: "127.0.0.1"},
+    http.Cookie{name: "cookie-7", value: "seven", expires: Some(t)},
+    http.Cookie{name: "cookie-8", value: "eight", max_age: -1},
+    http.Cookie{name: "cookie-9", value: "expiring", max_age: 0},
+    http.Cookie{name: "cookie-10", value: "a b", secure: true, http_only: true},
+    http.Cookie{name: "cookie-11", value: "x", same_site: http.SameSite.Lax},
+    http.Cookie{name: "cookie-12", value: "x", same_site: http.SameSite.Strict},
+    http.Cookie{name: "cookie-13", value: "x", same_site: http.SameSite.None, secure: true, partitioned: true},
+    http.Cookie{name: "cookie-14", value: "a,b"},
+    http.Cookie{name: "", value: "no name"},
+    http.Cookie{name: "bad name", value: "x"},
+  ]
+  for c in built {
+    os.stdio.println("built ${c.name}: ${c.display()}")
+  }
+  os.stdio.println("done")
+}
+
+fn set_lines() -> List[Str] {
+  [
+    "Cookie-1=v\$1",
+    "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly",
+    ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly",
+    "ASP.NET_SessionId=foo; path=/; HttpOnly",
+    "samesitedefault=foo; SameSite",
+    "samesiteinvalidisdefault=foo; SameSite=invalid",
+    "samesitelax=foo; SameSite=Lax",
+    "samesitestrict=foo; SameSite=Strict",
+    "samesitenone=foo; SameSite=None",
+    "special-1=a z",
+    "special-2=\" z\"",
+    "special-3=\"a \"",
+    "special-4=\" \"",
+    "special-5=a,z",
+    "special-6=\",z\"",
+    "special-7=a,",
+    "special-8=\",\"",
+    "special-9 =\",\"",
+    "cookie=\"quoted\"",
+    "ASP.NET_SessionId=foo; path=/; HttpOnly, .ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly",
+  ]
+}
+
+fn cookie_lines() -> List[Str] {
+  [
+    "Cookie-1=v\$1",
+    "c2=v2",
+    "Cookie-1=v\$1",
+    "c2=v2",
+    "Cookie-1=v\$1; c2=v2",
+    "Cookie-1=v\$1; c2=v2",
+    "Cookie-1=\"v\$1\"; c2=\"v2\"",
+    "Cookie-1=\"v\$1\"; c2=v2;",
+    "",
+    ";a=",
+    ";a=",
+  ]
+}
+
+fn parse_lines() -> List[Str] {
+  [
+    "Cookie-1=v\$1",
+    "Cookie-1=v\$1;c2=v2",
+    "k1=",
+    "",
+    "equal-not-found",
+    "=v1",
+    "k1=\\\\",
+    "Cookie-1=v\$1",
+    "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly",
+    ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly",
+    "ASP.NET_SessionId=foo; path=/; HttpOnly",
+    "samesitedefault=foo; SameSite",
+    "samesiteinvalidisdefault=foo; SameSite=invalid",
+    "samesitelax=foo; SameSite=Lax",
+    "samesitestrict=foo; SameSite=Strict",
+    "samesitenone=foo; SameSite=None",
+    "",
+    "equal-not-found",
+    "=v1",
+    "k1=\\\\",
+  ]
+}
