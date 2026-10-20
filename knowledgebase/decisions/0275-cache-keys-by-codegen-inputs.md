@@ -121,6 +121,7 @@ nolibc_start, poison_frames, race, inline_deny, passes_off):
 | XO_PASSES, --race (XO_NATIVE_RACE) | the fn cache is bypassed (compiler/xo main.xo:840): race is NOT in fn_key though isel instruments for it (compiler/arm64 isel.xo:62), so the bypass is the only guard; add race to fn_key's header as part of this decision |
 | XO_DCE, XO_LLRT_C, XO_CHECK_EAGER | change which functions exist or how they are checked; every entry is keyed by its function's content |
 | XO_LLVM_OPT, XO_LLVM_LTO, XO_LLVM_SPLIT, XO_SYSROOT, XO_CC, XO_CLANG, XO_WIN_NOCRT, XO_TSAN_RUNTIME | the cc and link steps: the object and binary keys hold the flags and the IR or assembly they read |
+| `--stamp` (decision 0264): rewrites root modules' constants after the check | was in no key (gotchas/fe-cache-stamped-constants.md, 2026-10-20): the front end cache keys program bodies by source text; now keyed by the stamps' hash (bcache.xo stamp_root) |
 | XO_EMIT_JOBS, XO_LLVM_JOBS, XO_TEST_JOBS | no effect on output by design (the parts never depend on the task count, L2 of fast-builds) |
 | cache, path, reporting and test settings (XO_BACKEND_CACHE*, XO_BIN_CACHE, XO_BUILD_DIR, XO_FE_STATS, XO_INLINE_REPORT, XO_INLINE_STRICT, XO_INLINE_BREAK, XO_MODCACHE, XO_WORK, XO_OFFLINE, XO_TEST_*, XO_TRACEBACK, XO_WARNINGS) | no effect on an entry's bytes (XO_INLINE_BREAK breaks the module on purpose and is a test switch; it joins the bypass list) |
 

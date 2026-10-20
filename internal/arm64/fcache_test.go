@@ -708,6 +708,55 @@ func TestFrontCacheOneWayFlags(t *testing.T) {
 	}
 }
 
+// TestFrontCacheStamps: a body that reads a stamped constant (--stamp,
+// decision 0264) is keyed by the stamp, so a second build with another
+// value in the same cache prints the new value (the front end cache keyed
+// it by the source text alone and replayed the first value; a seed's
+// `xo version` once named another build's commit). Native and LLVM.
+func TestFrontCacheStamps(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-festamp-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prog := "const VERSION: Str = \"dev\"\n\nfn line() -> Str { \"version ${VERSION}\" }\n\nfn main(os: Os) {\n  os.stdio.println(line())\n}\n"
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []string{"arm64", "llvm"} {
+		for _, v := range []string{"one", "two", "one"} {
+			out := filepath.Join(work, backend, v, "prog")
+			cmd := exec.Command(xo, "build", "--backend="+backend, "--stamp", "VERSION="+v, "-o", out, ".")
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"))
+			if log, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s %s: %v\n%s", backend, v, err, log)
+			}
+			got, err := exec.Command(out).Output()
+			if err != nil {
+				t.Fatalf("%s %s: run: %v", backend, v, err)
+			}
+			if want := "version " + v + "\n"; string(got) != want {
+				t.Errorf("%s, --stamp VERSION=%s: printed %q, want %q", backend, v, got, want)
+			}
+		}
+	}
+}
+
 // TestFrontCacheEntryDoesNotReplay: an entry whose checks pass and whose
 // commit fails (XO_FE_BREAK forces it for one function) does not fail
 // the build: the build is made again without the entry, with a warning
