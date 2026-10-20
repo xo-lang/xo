@@ -245,3 +245,43 @@ parse_head and head_of, alloc.free_mt, map.put on plain; x25519
 fe64_mul and fe64_sq, sha256_block, keccak, nistec mul and mul4p on
 tls-newconn), then register moves (two operand ties, parallel moves),
 then the RC helpers LLVM inlines and call overhead.
+
+### Compute benches by cause (2026-10-19 night, Xo lang 4)
+
+linux/amd64 callgrind (Docker, valgrind, one run each, XO_INLINE_STRICT=1),
+instructions of the whole run, native against LLVM on main 1ff0e0bd:
+
+| Bench | native | LLVM | ratio | where the difference is |
+|---|---|---|---|---|
+| portable u64 | 141,790,308 | 53,419,080 | 2.65 | UInt64 compares as xors and a signed compare |
+| portable conv | 296,272,375 | 139,201,100 | 2.13 | divisions by narrow constants as idivq |
+| portable shift | 189,730,792 | 91,388,434 | 2.08 | shift checks as two compares; a narrow constant amount in a register |
+| portable checked | 317,731,751 | 185,377,215 | 1.71 | checked_mul's dispatch on its constant op code, inlined and not folded |
+| portable divmod | 369,577,541 | 245,383,087 | 1.51 | idivq for narrow constant divisors |
+| json enc_small | 147,401,300 | 83,740,240 | 1.76 | memmove (34M against 10M: byte loops for short copies), obj.rs_append calls |
+| json small | 370,194,229 | 301,663,729 | 1.23 | |
+| json strings | 361,281,256 | 290,591,987 | 1.24 | |
+| rsa sign2048 | 1,413,945,083 | 983,777,184 | 1.44 | bigmod.mac_row (79%): eight words loaded up front, src, k and three words spilled |
+| rsa verify2048 | 54,485,101 | 36,104,253 | 1.51 | the same loop |
+
+Steps:
+
+1. UInt64 compares unflipped to unsigned conditions, a shift's range
+   check one unsigned compare, narrow constant shift amounts as
+   immediates (isel unflip, show.xo, state.xo const_word): portable u64
+   141.8M to 117.8M, shift 189.7M to 153.7M; arm64 sweep shift 0.808,
+   u64 0.911, conv 0.978, 0 slower.
+2. Next (gating): x86 divisions by narrow constants through the
+   multiply high (conv 296M to 262M, u64 to 87.8M, divmod to 347.6M
+   when measured with a general look-through; arm64 keeps sdiv, which is
+   fewer instructions there), testq dropped after an op that set ZF,
+   memmove and memcpy of up to 16 bytes as two overlapping loads and
+   stores, mac_row loading each word where it is used (amd64 loop 66 to
+   55 instructions a 4 word round, arm64 unchanged).
+
+The HTTP numbers above move by about 1.5% a request from one run to the
+next with the scheduler's spinning (pool.steal_round, find_work,
+park_wait): one comparison read +330 instructions on plain, of which the
+scheduler functions were +1,616 and the rest +78
+(gotchas/scheduler-instruction-counts-spin.md). Compare per function
+without them.

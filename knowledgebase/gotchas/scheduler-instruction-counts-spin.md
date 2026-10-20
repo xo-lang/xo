@@ -26,3 +26,12 @@ result is a set of rounds, not one number. Keep spin loop work (the
 thieves' peek) inline.
 
 Observed again (2026-10-13, decision 0212 stage 2): with the worker pool in Xo, arm64 ping pong measured 1.116 to 1.171 of the C path per round trip, and 1.037 with XO_SPIN_ROUNDS=0. The spinning worker's 32 pauses per round were a counted Xo loop (yield, add, compare, branch: 128 instructions) where clang unrolls the C's loop to 32 yields; unrolled by 8 in pool.xo, ping pong measured 1.028 and 1.034. Run the per operation pair with XO_SPIN_ROUNDS=0 as well to separate spin loop work from the operation's own code.
+
+Observed again (2026-10-19, Xo lang 4): the HTTP callgrind per request
+figures (bench/perf/http/callgrind-docker.sh, the 200 minus 100 request
+difference) moved by 1 to 1.5 percent between builds whose request code
+was the same: plain 28,146 against 28,476, where pool.steal_round,
+find_work, inject_pop, park_wait, and poll's pd_wait_ctx were +1,616 a
+request and every other function +78. Compare the annotated per
+function counts with the scheduler's functions left out before reading
+a change of 1 percent or less as a regression.
