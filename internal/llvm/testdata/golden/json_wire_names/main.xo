@@ -1,0 +1,71 @@
+// Field wire names (decision 0277) and newtype JSON (core 2.8, decision
+// 0097) on every backend.
+use std/json
+
+struct Event {
+  id: Str
+  kind as "type": Str
+  api_version as "apiVersion": Str
+  created as "Created": Int = 0
+  odd as "a\"b\\c": Int = 0
+} derive Json
+
+struct Camel {
+  user_id: Int
+  first_name: Str
+  zip as "ZIP": Str
+} derive Json(case: camel)
+
+struct Pascal {
+  user_id: Int
+} derive Json(case: pascal)
+
+struct Kebab {
+  user_id: Int
+} derive Json(case: kebab)
+
+struct Patchy {
+  display_name as "displayName": json.Patch[Str]
+} derive Json
+
+type Email struct(Str)
+
+struct Point {
+  x: Int
+  y: Int
+} derive Json
+
+type Spot struct(Point)
+
+struct Contact {
+  email: Email
+  spot: Spot
+  others: List[Email] = []
+} derive Json
+
+fn show[T: Json](os: Os, s: Str) {
+  match json.decode_str[T](s) {
+    Ok(v) => os.stdio.println("ok: ${json.encode_str(v)}")
+    Err(e) => os.stdio.println("err: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(json.encode_str(Event{id: "evt_1", kind: "charge.succeeded", api_version: "2024-06-20", created: 7}))
+  show[Event](os, "{\"id\":\"e\",\"type\":\"t\",\"apiVersion\":\"v\"}")
+  show[Event](os, "{\"id\":\"e\",\"kind\":\"t\",\"apiVersion\":\"v\"}")
+  show[Event](os, "{\"id\":\"e\",\"type\":\"t\",\"apiVersion\":\"v\",\"a\\\"b\\\\c\":3}")
+  os.stdio.println(json.encode_str(Camel{user_id: 1, first_name: "Ada", zip: "02139"}))
+  show[Camel](os, "{\"userId\":2,\"firstName\":\"Bo\",\"ZIP\":\"1\"}")
+  show[Camel](os, "{\"user_id\":2,\"firstName\":\"Bo\",\"ZIP\":\"1\"}")
+  os.stdio.println(json.encode_str(Pascal{user_id: 3}))
+  os.stdio.println(json.encode_str(Kebab{user_id: 4}))
+  os.stdio.println(json.encode_str(Patchy{display_name: json.Patch.Value("D")}))
+  show[Patchy](os, "{\"displayName\":null}")
+  os.stdio.println(json.encode_str(Email("a@x.io")))
+  let c = Contact{email: Email("a@x.io"), spot: Spot(Point{x: 1, y: 2}), others: [Email("b@x.io")]}
+  os.stdio.println(json.encode_str(c))
+  show[Contact](os, "{\"email\":\"c@x.io\",\"spot\":{\"x\":5,\"y\":6}}")
+  show[Contact](os, "{\"email\":3,\"spot\":{\"x\":5,\"y\":6}}")
+  show[Email](os, "\"d@x.io\"")
+}

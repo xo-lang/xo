@@ -187,12 +187,24 @@ fn decl_json(d: parser.Decl) -> Str {
         fo.opt("doc", doc_json_of(f.doc))
         fo.flag("pub", f.is_pub)
         fo.put("name", ident_json(f.name))
+        if let Some(w) = f.wire {
+          fo.str("wire", w)
+        }
         fo.put("type", type_json(f.typ))
         fo.opt("default", oexpr(f.default))
         fo.done()
       }))
       o.opt("invariant", oexpr(s.inv))
       o.list("derive", idents(s.derive))
+      if !s.derive_args.is_empty() {
+        o.list("derive_args", s.derive_args.map(fn(a: parser.DeriveArg) -> Str {
+          var ao = node("DeriveArg", a.span)
+          ao.put("derive", ident_json(a.derive))
+          ao.put("key", ident_json(a.key))
+          ao.put("value", ident_json(a.value))
+          ao.done()
+        }))
+      }
       o.done()
     }
     EnumDecl(e) => {

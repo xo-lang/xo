@@ -1,0 +1,34 @@
+// Field wire names (decision 0277): the checker's errors and warning.
+struct Dup {
+  kind: Str
+  other as "kind": Str // ERROR XO0411 "both have the key `kind`"
+} derive Json
+
+struct DupCase {
+  user_id: Int
+  other as "userId": Int // ERROR XO0411 "both have the key `userId`"
+} derive Json(case: camel)
+
+struct Empty {
+  name as "": Str // ERROR XO0412 "empty wire name"
+} derive Json
+
+struct BadCase {
+  a: Int
+} derive Json(case: shouty) // ERROR XO0413 "unknown case `shouty`"
+
+struct BadKey {
+  a: Int
+} derive Json(style: camel) // ERROR XO0413 "unknown argument `style`"
+
+struct BadDerive {
+  a: Int
+} derive Eq(case: camel) // ERROR XO0413 "takes no arguments"
+
+struct Unused {
+  a as "A": Int // ERROR XO0414 "wire name of field `a` is unused"
+}
+
+fn main(os: Os) {
+  os.stdio.println("${Unused{a: 1}.a}")
+}

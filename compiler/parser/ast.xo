@@ -131,6 +131,18 @@ pub struct StructDecl {
   pub fields: List[Field] = []
   pub inv: Expr? = None
   pub derive: List[Ident] = []
+  /// the derives' arguments, `derive Json(case: camel)` (decision 0277)
+  pub derive_args: List[DeriveArg] = []
+}
+
+/// An argument of a derive: `case: camel` in `derive Json(case: camel)`
+/// (decision 0277).
+pub struct DeriveArg {
+  pub span: Span
+  /// the derive it belongs to
+  pub derive: Ident
+  pub key: Ident
+  pub value: Ident
 }
 
 pub struct Field {
@@ -140,6 +152,11 @@ pub struct Field {
   pub name: Ident
   pub typ: Type
   pub default: Expr? = None
+  /// its name on the wire, `kind as "type": Str` (decision 0277): the
+  /// derived encoders' and decoders' key or column; None for the field's
+  /// own name
+  pub wire: Bytes? = None
+  pub wire_span: Span? = None
 }
 
 pub struct EnumDecl {

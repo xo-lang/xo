@@ -1,6 +1,6 @@
 # 0277: Field wire names (`field as "key"`)
 
-Status: Accepted (owner, 2026-10-20). Implementation assigned to Xo Lang 2.
+Status: Accepted (owner, 2026-10-20). Implemented by Xo Lang 2 (2026-10-20).
 
 ## Context
 
@@ -48,6 +48,31 @@ key next to its field is much better to work with.
    uses it is a warning.
 5. Enum variant names in JSON (`"Variant"`) are unchanged; renaming
    them is a separate decision if needed.
+
+### Implementation (Xo Lang 2, 2026-10-20)
+
+- The derives of item 2, confirmed against std and the compiler: `Json`
+  (keys) and `SqlRow` (columns). There is no Toml or Csv derive: std/toml
+  decodes into a struct through JSON (std/native/toml.xo `decode[T:
+  Json]`), so TOML keys follow the wire names with no code of their own,
+  and std/csv maps no structs. `OpenApi` and `Proto` generate nothing yet
+  (core 2.9). `case:` is accepted on `derive Json` and `derive SqlRow`.
+- The checker computes each field's JSON key and SqlRow column once
+  (check decl.xo wire_keys: FieldInfo.json_key, sql_key); every backend
+  reads them (compiler/ssa json.xo for the native, LLVM, and wasm
+  backends; compiler/gen json.xo for Go), and the field index stays the
+  field's name.
+- Codes: XO0411 two fields with one key under a derive the struct has,
+  XO0412 an empty wire name, XO0413 an unknown derive argument or case
+  value or an argument on another derive, XO0414 (warning) a wire name no
+  derive uses. A wire name with interpolation is a parse error
+  (XO0160).
+- The Go habit check (a Go field with a struct tag) now suggests the
+  json tag's key as the field's wire name.
+- Folded in (lead, 2026-10-20, found by Lib 1): a newtype has its
+  underlying value's JSON (core 2.8, decision 0097), which the checker and
+  the backends did not implement (a newtype field of a `derive Json`
+  struct was XO0404).
 
 ## Consequences
 

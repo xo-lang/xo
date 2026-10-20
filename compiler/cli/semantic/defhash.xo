@@ -589,11 +589,23 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
         ident_n(b, f.name)
         c.typ(b, f.typ)
         c.opt_expr(b, f.default)
+        if let Some(w) = f.wire {
+          // decision 0277; written only when present, so a struct
+          // without wire names keeps its hash
+          open(b, "Wire")
+          str(b, w)
+        }
       }
       c.opt_expr(b, x.inv)
       list_len(b, x.derive.len())
       for id in x.derive {
         ident_n(b, id)
+      }
+      for a in x.derive_args {
+        open(b, "DeriveArg")
+        ident_n(b, a.derive)
+        ident_n(b, a.key)
+        ident_n(b, a.value)
       }
     }
     EnumDecl(x) => {

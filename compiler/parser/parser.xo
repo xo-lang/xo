@@ -1161,6 +1161,21 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
       let fdoc = p.doc_for(fstart.line)
       let fpub = p.got(Kind.Pub)
       let fname = p.expect_ident("a field name")
+      // its wire name, `kind as "type": Str` (decision 0277)
+      var wire: Bytes? = None
+      var wire_span: Span? = None
+      if p.got(Kind.As) {
+        if !p.at(Kind.String) && !p.at(Kind.RawString) {
+          p.error_expected("a string literal, the field's name on the wire")
+        } else {
+          let (w, wsp, ok) = p.plain_string()
+          if !ok {
+            p.fail(UNEXPECTED_TOKEN, wsp, "a wire name is a plain string literal, without interpolation")
+          }
+          wire = Some(w)
+          wire_span = Some(wsp)
+        }
+      }
       var typ = Type.BadType(p.tok.span)
       if let Some(ft) = p.foreign_field(fname) {
         typ = ft
@@ -1168,7 +1183,7 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
         p.expect(Kind.Colon, "`:` after the field name")
         typ = p.parse_type()
       }
-      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ}
+      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ, wire: wire, wire_span: wire_span}
       if p.got(Kind.Assign) {
         f.default = Some(p.parse_expr())
       }
@@ -1184,25 +1199,46 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
     s.inv = Some(p.parse_expr())
   }
   if !p.bad {
-    s.derive = p.parse_derive()
+    let (ds, args) = p.parse_derive()
+    s.derive = ds
+    s.derive_args = args
   }
   s.span = p.span_from(start)
   s
 }
 
-/// An optional `derive A, B` after a type body.
-fn (var p: Parser) parse_derive() -> List[Ident] {
+/// An optional `derive A, B` after a type body, and the derives'
+/// arguments: `derive Json(case: camel)` (decision 0277), each `key:
+/// value` with identifiers, which the checker validates.
+fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
   var out: List[Ident] = []
+  var args: List[DeriveArg] = []
   if !is_word(p.peek_past_newlines(), b"derive") {
-    return out
+    return (out, args)
   }
   p.skip_newlines()
   p.next()
-  out.push(p.expect_ident("a derivable interface name"))
-  while p.got(Kind.Comma) {
-    out.push(p.expect_ident("a derivable interface name"))
+  while {
+    let d = p.expect_ident("a derivable interface name")
+    out.push(d)
+    if p.got(Kind.LParen) {
+      while !p.bad && !p.at(Kind.RParen) {
+        let astart = p.tok.span.start
+        let key = p.expect_ident("a derive argument name")
+        p.expect(Kind.Colon, "`:` after the derive argument's name")
+        let value = p.expect_ident("a derive argument value")
+        args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: value})
+        if !p.got(Kind.Comma) {
+          break
+        }
+      }
+      p.expect(Kind.RParen, "`)` after the derive's arguments")
+    }
+    if !p.got(Kind.Comma) {
+      break
+    }
   }
-  out
+  (out, args)
 }
 
 fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
@@ -1250,7 +1286,11 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
     p.braces_close(br)
   }
   if !p.bad {
-    e.derive = p.parse_derive()
+    let (ds, args) = p.parse_derive()
+    e.derive = ds
+    if !args.is_empty() {
+      p.fail(UNEXPECTED_TOKEN, args[0].span, "derive arguments apply to a struct's fields (decision 0277), not an enum")
+    }
   }
   e.span = p.span_from(start)
   e

@@ -179,10 +179,17 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
         if let Some(e) = fl.default {
           dflt.push(e)
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col})
+        var wire = b""
+        if let Some(w) = fl.wire {
+          if w.is_empty() {
+            c.error("XO0412", fl.wire_span ?? fl.name.span, "field `${text(fl.name.name)}` has an empty wire name; write a key, or leave out `as \"\"` to use the field's name")
+          }
+          wire = w
+        }
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire})
       }
-      c.objs[t].fields = fields
       c.objs[t].derives = c.derives_of(sd.derive)
+      c.objs[t].fields = c.wire_keys(sd, fields, c.objs[t].derives)
     }
     EnumDecl(d: ed) => {
       c.resolve_constraints(ed.type_params, c.objs[t].tparams, env)
@@ -279,6 +286,100 @@ fn (var c: Checker) resolve_constraints(tps: List[parser.TypeParam], ps: List[In
       }
     }
   }
+}
+
+/// The derives that map a field to an outside name (decision 0277): JSON
+/// keys (and TOML's, which std/toml decodes through JSON) and SqlRow
+/// columns. OpenApi and Proto generate nothing yet (core 2.9).
+const WIRE_DERIVES = ["Json", "SqlRow"]
+
+/// fields with their JSON keys and SqlRow columns set (decision 0277):
+/// a field's `as "key"`, else its name under its derive's `case:` rule,
+/// else its name. Checks the derive arguments (XO0413), two fields with
+/// one key under a derive the struct has (XO0411), and warns about wire
+/// names no derive uses (XO0414).
+fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], derives: List[Str]) -> List[FieldInfo] {
+  var fields = fields0
+  var json_case = ""
+  var sql_case = ""
+  for a in sd.derive_args {
+    let d = text(a.derive.name)
+    let k = text(a.key.name)
+    let v = text(a.value.name)
+    if !(d is "Json" | "SqlRow") {
+      c.error("XO0413", a.span, "`derive ${d}` takes no arguments; `case:` applies to `derive Json` and `derive SqlRow` (decision 0277)")
+      continue
+    }
+    if k != "case" {
+      c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes `case: snake | camel | pascal | kebab`")
+      continue
+    }
+    if !(v is "snake" | "camel" | "pascal" | "kebab") {
+      c.error("XO0413", a.value.span, "unknown case `${v}`; `case:` is one of snake, camel, pascal, kebab")
+      continue
+    }
+    if d == "Json" { json_case = v } else { sql_case = v }
+  }
+  var any_wire = false
+  for i in 0..fields.len() {
+    let f = fields[i]
+    any_wire = any_wire || !f.wire.is_empty()
+    fields[i].json_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, json_case) }
+    fields[i].sql_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, sql_case) }
+  }
+  for d in WIRE_DERIVES {
+    if !derives.contains(d) {
+      continue
+    }
+    var seen: Map[Bytes, Int] = {}
+    for (i, f) in fields.indexed() {
+      let key = if d == "Json" { f.json_key } else { f.sql_key }
+      if let Some(j) = seen.get(key) {
+        let sp = sd.fields[i].wire_span ?? sd.fields[i].name.span
+        c.error("XO0411", sp, "fields `${text(fields[j].name)}` and `${text(f.name)}` both have the key `${text(key)}` in `derive ${d}`; give one of them another wire name")
+      } else {
+        seen[key] = i
+      }
+    }
+  }
+  if any_wire && !derives.contains("Json") && !derives.contains("SqlRow") {
+    for fl in sd.fields {
+      if let Some(ws) = fl.wire_span {
+        c.warn("XO0414", ws, "the wire name of field `${text(fl.name.name)}` is unused: no derive of `${text(sd.name.name)}` maps fields to keys (`derive Json`, `derive SqlRow`)")
+      }
+    }
+  }
+  fields
+}
+
+/// name (a snake_case field name) under a `case:` rule (decision 0277):
+/// snake as is, camel `api_version` to `apiVersion`, pascal to
+/// `ApiVersion`, kebab to `api-version`; "" is the name as is.
+pub fn wire_case(name: Bytes, rule: Str) -> Bytes {
+  if rule is "" | "snake" {
+    return name
+  }
+  var b = BytesBuilder.new()
+  var up = rule == "pascal"
+  var first = true
+  for ch in name {
+    if ch == '_' {
+      if rule == "kebab" {
+        b.write_byte('-')
+      } else if !first {
+        up = true
+      }
+      continue
+    }
+    if up && ch >= 'a' && ch <= 'z' {
+      b.write_byte(ch - 32)
+    } else {
+      b.write_byte(ch)
+    }
+    up = false
+    first = false
+  }
+  b.freeze()
 }
 
 fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {

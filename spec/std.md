@@ -1261,7 +1261,8 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 
 | Xo | JSON |
 |---|---|
-| struct | object, keys are field names |
+| struct | object, keys are field names, or a field's wire name (`kind as "type": Str`), or the `derive Json(case: camel \| pascal \| kebab \| snake)` rule (core 2.2, decision 0277) |
+| newtype (`type Email struct(Str)`) | its underlying value's JSON (core 2.8) |
 | `T?` field | missing key or `null` decodes to `None`; `None` encodes as `null` |
 | field with a default | missing key decodes to the default |
 | other missing field | `DecodeErr` |
@@ -1689,7 +1690,9 @@ fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! Sql
 `derive SqlRow` is allowed on a struct without type parameters whose fields
 are `Int`, `Float`, `Str`, `Bool`, `Time`, or an `Option` of one of them
 (else XO0404 at the derive). `decode` reads each field from the column of
-the same name with the rules of the accessors above: a missing column is
+the same name, or of its wire name (`created as "created_at": Time`), or
+under `derive SqlRow(case: ...)` (core 2.2, decision 0277), with the
+rules of the accessors above: a missing column is
 `NoColumn(name)`, a value of another type is `Mismatch(column, msg)`, NULL is
 `None` for an `Option` field and `Mismatch` for any other. Fields are read in
 declaration order and the first failure is returned. Columns without a field

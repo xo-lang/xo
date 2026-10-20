@@ -631,7 +631,13 @@ fn is_json_builtin(n: Str) -> Bool {
 }
 
 /// Json (std.md 5), OpenApi, and Proto (derive only).
-fn (c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
+fn (var c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
+  c.serializable_in(t0, name, [])
+}
+
+/// is_serializable, with the newtypes being looked through (a newtype
+/// over a type that contains it is serializable when the rest is).
+fn (var c: Checker) serializable_in(t0: Int, name: Str, seen: List[Int]) -> Bool {
   let t = c.resolve(t0)
   let x = c.tys[t]
   match x.kind {
@@ -639,6 +645,19 @@ fn (c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
       let o = x.obj
       if c.derives(o, name) {
         return true
+      }
+      if c.objs[o].tkind == "newtype" && c.objs[o].target >= 0 {
+        // a newtype has its underlying value's JSON (core 2.8, decision
+        // 0097)
+        if name != "Json" {
+          return false
+        }
+        if seen.contains(o) {
+          return true
+        }
+        var seen2 = seen
+        seen2.push(o)
+        return c.serializable_in(c.subst(c.objs[o].target, c.args_subst(c.objs[o].tparams, x.args)), name, seen2)
       }
       if name != "Json" || c.objs[o].module != c.prelude {
         return false
@@ -648,10 +667,10 @@ fn (c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
         return true
       }
       if n is "List" | "Set" | "Option" {
-        return c.is_serializable(x.args[0], name)
+        return c.serializable_in(x.args[0], name, seen)
       }
       if n == "Map" {
-        return c.is_prelude(x.args[0], "Str") && c.is_serializable(x.args[1], name)
+        return c.is_prelude(x.args[0], "Str") && c.serializable_in(x.args[1], name, seen)
       }
       false
     }
@@ -661,7 +680,7 @@ fn (c: Checker) is_serializable(t0: Int, name: Str) -> Bool {
         return x.args.is_empty()
       }
       for e in x.args {
-        if !c.is_serializable(e, name) {
+        if !c.serializable_in(e, name, seen) {
           return false
         }
       }

@@ -521,17 +521,43 @@ fn (var p: Parser) foreign_field(name: Ident) -> Type? {
     p.add_fix(d, "insert `:`", [replace_range(name.span.end, t.span.start, ": ")])
     let typ = p.parse_type()
     if p.at(Kind.String) || p.at(Kind.RawString) {
-      // Go struct tags: `json:"name"`.
+      // Go struct tags: `json:"name"`; a json key becomes the field's
+      // wire name (decision 0277)
       let tag = p.tok
-      p.add_note(d, "Go struct tags have no Xo form: `derive Json` uses the field names (spec/std.md 5)")
+      let key = go_tag_key(txt(tag.value), "json")
+      if key.is_empty() || key == n {
+        p.add_note(d, "Go struct tags have no Xo form: `derive Json` uses the field names, and `${n} as \"key\": T` names a field's key (core 2.2)")
+      } else {
+        p.add_note(d, "Go struct tags have no Xo form: the field's JSON key is its wire name, `${n} as \"${key}\": ${txt(t.text)}` (core 2.2)")
+      }
       if d >= 0 && !p.diags[d].fixes.is_empty() {
         p.diags[d].fixes[0].edits.push(replace_range(p.before_blanks(tag.span.start), tag.span.end, ""))
+        if !key.is_empty() && key != n {
+          p.diags[d].fixes[0].edits.push(insert_at(name.span.end, " as \"${key}\""))
+        }
       }
       p.next()
     }
     return Some(typ)
   }
   None
+}
+
+/// The name a Go struct tag gives for key (`json:"name,omitempty"`:
+/// name), "" for none or "-".
+fn go_tag_key(tag: Str, key: Str) -> Str {
+  let at = tag.find("${key}:\"") ?? -1
+  if at < 0 {
+    return ""
+  }
+  let rest = tag[at + key.len() + 2..tag.len()]
+  let end = rest.find("\"") ?? -1
+  if end < 0 {
+    return ""
+  }
+  let v = rest[0..end]
+  let name = (v.split(","))[0]
+  if name == "-" { "" } else { name }
 }
 
 /// Swift's `throws` after the parameters.

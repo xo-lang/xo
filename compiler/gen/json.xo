@@ -26,12 +26,14 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     g.pl("\tw.ObjStart()")
     for (i, f) in fields.indexed() {
       let n = check.text(f.name)
+      // its key: the wire name or its case rule (decision 0277)
+      let k = check.text(f.json_key)
       if g.is_patch(f.ty) {
         g.pl("\tif !${rt}Json_Patch_PatchAbsent(v.${go_field(n)}) {")
-        g.pl("\t\tw.Field(${n.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
+        g.pl("\t\tw.Field(${k.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
         continue
       }
-      g.pl("\tw.Field(${n.quote()})")
+      g.pl("\tw.Field(${k.quote()})")
       g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
     }
     g.pl("\tw.ObjEnd()\n}\n")
@@ -42,7 +44,7 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     for (i, f) in fields.indexed() {
       let key = if i == 0 { "{" } else { "," }
       let n = check.text(f.name)
-      g.pl("\tw.Raw(${(key + json_key_text(n) + ":").quote()})")
+      g.pl("\tw.Raw(${(key + json_key_text(f.json_key) + ":").quote()})")
       g.pl("\t${g.json_enc_value(t, i, "v." + go_field(n))}")
     }
     if !fields.is_empty() {
@@ -56,7 +58,7 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   for (i, f) in fields.indexed() {
     let n = check.text(f.name)
     let d = g.json_default(t, i)
-    g.json_field(n, go_field(n), f.ty, d)
+    g.json_field(check.text(f.json_key), go_field(n), f.ty, d)
   }
   g.pl("\treturn nil\n}\n")
   g.gen_json_read(t)
@@ -82,8 +84,26 @@ fn (var g: Gen) json_default(t: Int, fi: Int) -> Str {
   ""
 }
 
-fn json_key_text(name: Str) -> Str {
-  "\"" + name + "\""
+/// key (a field's JSON key, decision 0277) as a JSON string: `"` and `\`
+/// escaped, control characters as \u00XX.
+fn json_key_text(key: Bytes) -> Str {
+  var b = BytesBuilder.new()
+  let hex = b"0123456789abcdef"
+  b.write_byte('"')
+  for ch in key {
+    if ch == '"' || ch == '\\' {
+      b.write_byte('\\')
+      b.write_byte(ch)
+    } else if ch < 0x20 {
+      b.write_str("\\u00")
+      b.write_byte(hex[Int(ch >> 4)])
+      b.write_byte(hex[Int(ch & 15)])
+    } else {
+      b.write_byte(ch)
+    }
+  }
+  b.write_byte('"')
+  check.text(b.freeze())
 }
 
 /// The statement that writes field fi held in expr (jsonEncValue).
@@ -149,7 +169,7 @@ fn (var g: Gen) gen_json_read(t: Int) {
     g.pl("\t\tswitch string(k) {")
     for (i, f) in fields.indexed() {
       let n = check.text(f.name)
-      g.pl("\t\tcase ${n.quote()}:")
+      g.pl("\t\tcase ${check.text(f.json_key).quote()}:")
       g.pl("\t\t\tif !${rt}JsonRead(tk, r, &v.${go_field(n)}) {\n\t\t\t\treturn false\n\t\t\t}")
       g.pl("\t\t\tseen[${i}] = true")
     }
@@ -174,8 +194,8 @@ fn (var g: Gen) gen_json_read(t: Int) {
   g.pl("\treturn true\n}\n")
 }
 
-/// The decoding of one object field into v.<go_name> (jsonField); dflt
-/// is the default statement ("" for none).
+/// The decoding of one object field, key name (the JSON key), into
+/// v.<go_name> (jsonField); dflt is the default statement ("" for none).
 fn (var g: Gen) json_field(name: Str, go_name: Str, t: Int, dflt: Str) {
   let rt = g.rt()
   g.pl("\tif e, ok := obj[${name.quote()}]; ok {")
@@ -269,7 +289,8 @@ fn (var g: Gen) gen_sql_row_struct(t: Int) {
   g.pl("func (v *${g.self_type(t)}) XoSqlRowDec(tk *${rt}Task, r ${rt}Sql_Row) *${rt}Sql_SqlErr {")
   for f in g.c.objs[t].fields {
     let n = check.text(f.name)
-    g.pl("\tif e := ${rt}SqlRowField(r, ${n.quote()}, &v.${go_field(n)}); e != nil {\n\t\treturn e\n\t}")
+    // its column: the wire name or its case rule (decision 0277)
+    g.pl("\tif e := ${rt}SqlRowField(r, ${check.text(f.sql_key).quote()}, &v.${go_field(n)}); e != nil {\n\t\treturn e\n\t}")
   }
   g.pl("\treturn nil\n}\n")
 }

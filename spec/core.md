@@ -630,6 +630,20 @@ pub struct User {
 - Structs are values. Assignment copies (cheaply: fields are shared because all
   builtin collections are immutable).
 - Fields may be separated by newlines or commas.
+- A field may name its key on the wire between its name and its type
+  (decision 0277): `kind as "type": Str`, `pub api_version as
+  "apiVersion": Str`, `created as "Created": Int = 0`. In Xo code the
+  field is still `kind`; the derives that map fields to outside names use
+  the wire name: `Json` keys (and TOML keys, which std/toml decodes
+  through JSON) and `SqlRow` columns (2.9). The name is a plain string
+  literal, not empty (`XO0412`).
+- `derive Json(case: camel)` (also `snake`, `pascal`, `kebab`, and the
+  same argument on `derive SqlRow`) converts every field without its own
+  wire name: `api_version` is `apiVersion` under camel, `ApiVersion`
+  under pascal, `api-version` under kebab; a field's `as "key"` always
+  wins. An unknown argument or case is `XO0413`; two fields with one key
+  under a derive the struct has are `XO0411`; a wire name on a struct
+  with neither derive is the warning `XO0414`.
 
 ### 2.3 Enums (sum types)
 
@@ -788,7 +802,9 @@ type Handler = fn(http.Request) -> http.Response ! Error uses net
 ```
 
 A newtype has the equality, hashing, and JSON of its underlying value
-(decision 0097):
+(decision 0097): `Email("a@x.io")` encodes as `"a@x.io"`, and a newtype
+field of a `derive Json` struct needs no derive of its own (a newtype
+whose underlying type is Json is Json):
 
 - `e.0` is the underlying value, typed with the newtype's type arguments
   (`Wrap[Int]`'s `.0` is `Int`); on a `var` it is assignable like a tuple
@@ -852,7 +868,8 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   derives are reserved, accepted only when every field derives them too
   (no builtin type implements them yet), and nothing is generated.
 - `SqlRow` (structs only) generates a decoder from a std/sql row: each field
-  is read from the column of the same name (`spec/std.md` 10.4).
+  is read from the column of the same name, or of its wire name or
+  `case:` rule (2.2; `spec/std.md` 10.4).
 
 ### 2.10 Implicit conversions
 
@@ -2570,6 +2587,10 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0408` | error | checker | const initializer is not a compile time value (core 3.1) |
 | `XO0409` | error | checker | invalid explicit conversion (core 2.1) |
 | `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
+| `XO0411` | error | checker | two fields have one wire key under a derive the struct has (core 2.2, decision 0277) |
+| `XO0412` | error | checker | empty wire name, `as ""` (core 2.2) |
+| `XO0413` | error | checker | unknown derive argument or `case:` value, or an argument on a derive that takes none (core 2.2) |
+| `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
@@ -2961,9 +2982,10 @@ FnType      = "fn" "(" [ FnTParam { "," FnTParam } ] ")" [ "->" Type ] [ ErrSpec
 FnTParam    = [ "var" ] Type .
 
 StructDecl  = "struct" ident [ TypeParams ] "{" { Field } "}" [ Invariant ] [ Derive ] .
-Field       = { DocComment } [ "pub" ] ident ":" Type [ "=" Expr ] .
+Field       = { DocComment } [ "pub" ] ident [ "as" ( string | rawstring ) ] ":" Type [ "=" Expr ] .
 Invariant   = "invariant" Expr .
-Derive      = "derive" QualName { "," QualName } .
+Derive      = "derive" DeriveItem { "," DeriveItem } .
+DeriveItem  = QualName [ "(" ident ":" ident { "," ident ":" ident } ")" ] .
 EnumDecl    = "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
 Variant     = { DocComment } ident [ "(" VField { "," VField } ")" ] .
 VField      = ident ":" Type | "from" Type .

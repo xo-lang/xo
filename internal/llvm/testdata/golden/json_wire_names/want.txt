@@ -1,0 +1,16 @@
+{"id":"evt_1","type":"charge.succeeded","apiVersion":"2024-06-20","Created":7,"a\"b\\c":0}
+ok: {"id":"e","type":"t","apiVersion":"v","Created":0,"a\"b\\c":0}
+err: at $: missing field `type`
+ok: {"id":"e","type":"t","apiVersion":"v","Created":0,"a\"b\\c":3}
+{"userId":1,"firstName":"Ada","ZIP":"02139"}
+ok: {"userId":2,"firstName":"Bo","ZIP":"1"}
+err: at $: missing field `userId`
+{"UserId":3}
+{"user-id":4}
+{"displayName":"D"}
+ok: {"displayName":null}
+"a@x.io"
+{"email":"a@x.io","spot":{"x":1,"y":2},"others":["b@x.io"]}
+ok: {"email":"c@x.io","spot":{"x":5,"y":6},"others":[]}
+err: at $.email: expected string
+ok: "d@x.io"

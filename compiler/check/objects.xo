@@ -36,6 +36,14 @@ pub struct FieldInfo {
   pub default: List[parser.Expr] = []
   pub line: Int
   pub col: Int
+  /// its name on the wire as written, `kind as "type"` (decision 0277);
+  /// empty for none
+  pub wire: Bytes = b""
+  /// its key in derived JSON and its column in a derived SqlRow: the wire
+  /// name, else the name under the derive's `case:` rule, else the name
+  /// (decision 0277; check decl.xo wire_keys)
+  pub json_key: Bytes = b""
+  pub sql_key: Bytes = b""
 }
 
 /// A field of an enum variant; a `from` field has no name.

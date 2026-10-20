@@ -269,9 +269,10 @@ fn (var g: Gen) gen_newtype(t: Int, sp: Span) {
   let self = g.self_type(t)
   g.gen_derived(t, self, [FieldRef{name: "0", code: "v.F0"}], [FieldRef{name: "0", code: "o.F0"}])
   g.mark_method(self, [FieldRef{name: "0", code: "v.F0"}], [o.target])
-  if g.derives(t, "Json") {
-    g.gen_json_newtype(t)
-  }
+  // a newtype has its underlying value's JSON (core 2.8, decision 0097),
+  // with or without a derive; the checker allows it where the underlying
+  // type is Json
+  g.gen_json_newtype(t)
   if g.opts.test_mode && !g.pkgs[g.p].in_rt {
     g.gen_gen_newtype(t)
   }

@@ -235,6 +235,9 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
       for (i, f) in s.fields.indexed() {
         head(out, d, "fields[${i}]", "Field", f.span)
         flag(out, "pub", f.is_pub)
+        if let Some(w) = f.wire {
+          attr(out, "wire", w)
+        }
         out.write("\n")
         dump_doc(out, d + 1, f.doc)
         dump_ident(out, d + 1, "name", f.name)
@@ -243,6 +246,13 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
       }
       dump_expr_opt(out, d, "invariant", s.inv)
       dump_idents(out, d, "derive", s.derive)
+      for (i, a) in s.derive_args.indexed() {
+        head(out, d, "derive_args[${i}]", "DeriveArg", a.span)
+        attr(out, "derive", a.derive.name)
+        attr(out, "key", a.key.name)
+        attr(out, "value", a.value.name)
+        out.write("\n")
+      }
     }
     EnumDecl(e) => {
       head(out, depth, label, "EnumDecl", e.span)

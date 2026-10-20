@@ -364,11 +364,13 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     var fixed = true
     var any = false
     for f in b.c.objs[obj].fields {
-      let fname = check.text(f.name)
-      let fi = b.m.field_index(t, fname)
+      let fi = b.m.field_index(t, check.text(f.name))
       if fi < 0 {
         continue
       }
+      // its key: the field's wire name or its case rule (decision 0277),
+      // escaped for the literal
+      let fname = json_key_text(f.json_key)
       let ft = b.c.subst(f.ty, sb)
       let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
       if b.is_json_patch(ft) {
@@ -414,6 +416,12 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     b.retv(b.lit(b.read(av), "}"))
     return
   }
+  if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
+    // its underlying value's JSON (core 2.8, decision 0097)
+    let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[0].ty, Aux.I(n: 0), [v]))
+    b.retv(b.json_sub(acc, fv, b.c.subst(b.c.objs[obj].target, sb)))
+    return
+  }
   if b.tkind(t) == Kind.Enum && tk == "enum" {
     let tag = b.add(Op.Tag, it, Aux.None, [v])
     for vo in b.c.objs[obj].variants {
@@ -455,6 +463,26 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   b.retv(acc)
 }
 
+/// key (a field's JSON key, decision 0277) as the text between a JSON
+/// string's quotes: `"` and `\` escaped, control characters as \u00XX.
+fn json_key_text(key: Bytes) -> Str {
+  var b = BytesBuilder.new()
+  let hex = b"0123456789abcdef"
+  for ch in key {
+    if ch == '"' || ch == '\\' {
+      b.write_byte('\\')
+      b.write_byte(ch)
+    } else if ch < 0x20 {
+      b.write_str("\\u00")
+      b.write_byte(hex[Int(ch >> 4)])
+      b.write_byte(hex[Int(ch & 15)])
+    } else {
+      b.write_byte(ch)
+    }
+  }
+  check.text(b.freeze())
+}
+
 /// One field of an object being encoded (jsonEnc's write).
 fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int) {
   let bt = b.bool_t()
@@ -468,7 +496,10 @@ fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int
 
 /// A field of an object a decoder reads (jsonDec's fieldSpec).
 struct JField {
+  /// the struct field's name
   name: Str
+  /// its JSON key (decision 0277: the wire name or its case rule)
+  key: Str
   ct: Int
   st: Int
   /// The default value (zero or one) and its file.
@@ -799,7 +830,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       if fi < 0 {
         continue
       }
-      fs.push(JField{name: fname, ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df})
+      fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df})
     }
     let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om))
     // the struct in SSA field order
@@ -816,6 +847,12 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
     }
     b.dec_ok(d, b.add(Op.Struct, t, Aux.None, sargs))
+    return
+  }
+  if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
+    // its underlying value's JSON (core 2.8, decision 0097)
+    let v = b.dec_child(d, b.c.subst(b.c.objs[obj].target, sb), i, b.const_str(""))
+    b.dec_ok(d, b.add(Op.Struct, t, Aux.None, [b.coerce(v, b.m.types[t].fields[0].ty)]))
     return
   }
   if b.tkind(t) == Kind.Enum && tk == "enum" {
@@ -896,7 +933,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.V
   b.if_then_end(no2, join2)
   var fs: List[JField] = []
   for (fi, f) in vo.fields.indexed() {
-    fs.push(JField{name: check.text(f.name), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
+    fs.push(JField{name: check.text(f.name), key: check.text(f.name), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
   }
   let vals = b.dec_fields(d, pay, ".${vname}", fs, false)
   b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
@@ -909,12 +946,12 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
   let bt = b.bool_t()
   var out: List[Int] = []
   for f in fs {
-    let j = b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.name)])
+    let j = b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.key)])
     let join = b.new_block()
     let res = b.s.f.add_param(join, f.st)
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
     b.s.cur = found
-    let fseg = b.const_str("${seg}.${f.name}")
+    let fseg = b.const_str("${seg}.${f.key}")
     let v = b.dec_child(d, f.ct, j, fseg)
     let cv = b.coerce(v, f.st)
     b.jump(join, [cv])
@@ -932,7 +969,7 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
       b.jump(join, [b.coerce(a, f.st)])
     } else {
       let p = b.const_str(seg)
-      let m = b.const_str("missing field `${f.name}`")
+      let m = b.const_str("missing field `${f.key}`")
       b.retv(b.dec_err(d, p, m))
     }
     b.seal(join)
@@ -1010,7 +1047,8 @@ fn (var b: Builder) sql_body(ct: Int, row_ct: Int, rt: Int) {
   }
   var vals: List[Int] = []
   for f in b.c.objs[obj].fields {
-    let col = b.const_str(check.text(f.name))
+    // its column: the wire name or its case rule (decision 0277)
+    let col = b.const_str(check.text(f.sql_key))
     let acc = b.sql_accessor(f.ty)
     let md = b.method_of(row_ct, acc)
     if acc.is_empty() || md < 0 {

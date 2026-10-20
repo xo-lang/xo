@@ -469,7 +469,12 @@ fn (var p: Printer) print_item(it: Item) {
     Field(fs) => {
       let f = fs[0]
       p.pub_kw(f.is_pub)
-      p.w(name_of(f.name) + ": ")
+      p.w(name_of(f.name))
+      if let Some(ws) = f.wire_span {
+        // its wire name (decision 0277), as written
+        p.w(" as " + p.text(ws))
+      }
+      p.w(": ")
       p.typ(f.typ)
       if let Some(d) = f.default {
         p.w(" = ")
@@ -921,21 +926,39 @@ fn (var p: Printer) struct_decl(s: parser.StructDecl) {
     p.expr(inv)
     p.done(eend(inv))
   }
-  p.derive(s.derive)
+  p.derive(s.derive, s.derive_args)
 }
 
-fn (var p: Printer) derive(ds: List[parser.Ident]) {
+/// ` derive A, B`, with each derive's arguments, `Json(case: camel)`
+/// (decision 0277).
+fn (var p: Printer) derive(ds: List[parser.Ident], args: List[parser.DeriveArg]) {
   if ds.is_empty() {
     return
   }
   p.w(" derive ")
+  var end = 0
   for (i, d) in ds.indexed() {
     if i > 0 {
       p.w(", ")
     }
     p.w(name_of(d))
+    end = end_off(d.span)
+    var first = true
+    for a in args {
+      if a.derive.span.start.offset != d.span.start.offset {
+        continue
+      }
+      p.w(if first { "(" } else { ", " })
+      first = false
+      p.w(name_of(a.key) + ": " + name_of(a.value))
+      end = end_off(a.value.span)
+    }
+    if !first {
+      p.w(")")
+      end = p.find(end, ')') + 1
+    }
   }
-  p.done(end_off(ds[ds.len() - 1].span))
+  p.done(end)
 }
 
 fn (var p: Printer) variant(v: parser.Variant) {
@@ -963,7 +986,7 @@ fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
     items.push(Item{start: off(v.span), end: end_off(v.span), k: ItemK.Variant([v])})
   }
   p.members(p.find(end, '{'), items)
-  p.derive(e.derive)
+  p.derive(e.derive, [])
 }
 
 fn (var p: Printer) iface_decl(d: parser.InterfaceDecl) {

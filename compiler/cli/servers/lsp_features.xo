@@ -371,6 +371,14 @@ fn (s: Session) describe(tg: LspTarget) -> (Str, Str) {
     }
     "field" => {
       let fl = c.objs[tg.oi].fields[tg.sub]
+      // its wire name, written or from a `case:` rule (decision 0277)
+      var wire = fl.wire
+      if wire.is_empty() && c.objs[tg.oi].derives.contains("Json") && fl.json_key != fl.name {
+        wire = fl.json_key
+      }
+      if !wire.is_empty() {
+        return ("${check.text(fl.name)} as ${check.text(wire).quote()}: ${c.show(fl.ty)}", "")
+      }
       return ("${check.text(fl.name)}: ${c.show(fl.ty)}", "")
     }
     "variant" => {
