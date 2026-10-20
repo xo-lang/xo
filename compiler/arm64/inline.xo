@@ -40,6 +40,9 @@ const INLINE_FEW_LOOP_INSTRS = 100
 const INLINE_LOOP_INSTRS = 60
 const INLINE_LOOP_BLOCKS = 24
 const INLINE_LOOP_SITES = 8
+/// A function with landing pads and one call site is inlined there up
+/// to this size
+const INLINE_ONE_PADDED_INSTRS = 150
 
 /// The last function of each name (Go's byName).
 fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
@@ -231,15 +234,23 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
 /// of those inlinable only at a call inside a loop (INLINE_LOOP_*), and of
 /// those with landing pads, inlinable only at a call passing a closure.
 fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
-  let (costs, _sites) = inline_costs(m, sums, by_name)
+  let (costs, sites) = inline_costs(m, sums, by_name)
   var small: Map[Str, Bool] = {}
   var loopy: Map[Str, Bool] = {}
   var padded: Map[Str, Bool] = {}
   var fewl: Map[Str, Bool] = {}
-  for f in m.funcs {
+  for (fi, f) in m.funcs.indexed() {
     if let Some(c) = costs.get(f.name) {
       if c.pads {
-        if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
+        if !c.hard && !c.bad && (sites.get(f.name) ?? 0) == 1 && c.instrs <= INLINE_ONE_PADDED_INSTRS && !updates_in_place(sums[fi]) {
+          // one site: the copy is the only body, so no loop grows a
+          // second one (decision 0256's reason to wait for a closure);
+          // the HTTP server's head_request and match_parts were calls
+          // where LLVM inlines them (Xo lang 4, 2026-10-19). Not one that
+          // updates a list in place: copied, the verifier no longer
+          // proves the list unique (sums_of's pushes in a task scope)
+          small[f.name] = true
+        } else if !c.hard && c.instrs <= INLINE_LOOP_INSTRS && c.blocks <= INLINE_LOOP_BLOCKS {
           padded[f.name] = true
         }
       } else if !c.bad && c.few {
@@ -256,6 +267,17 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
     }
   }
   (small, loopy, padded, fewl)
+}
+
+/// Whether a function's own body updates a list in place (ssa rc.xo
+/// is_update_call's operations).
+fn updates_in_place(s: FnSum) -> Bool {
+  for n in s.calls {
+    if n is "list.set" | "list.push" | "list.pop" | "list.take" {
+      return true
+    }
+  }
+  false
 }
 
 /// The expanded cost of each function of m and the call sites of each
