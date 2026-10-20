@@ -1,0 +1,144 @@
+// std/base64 on the native backends (decision 0279): Go's
+// encoding/base64 ported from base64.go of go1.26 (Encode, and Decode as
+// decodeQuantum does it; the 8 and 4 byte fast paths of Decode give the
+// same results and are not ported), with the same output and error
+// offsets. Go returns the bytes decoded before an error; Xo returns the
+// error alone.
+use std/base64
+
+const STD: Str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+const URL: Str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+fn decodeerr_display(e: base64.DecodeErr) -> Str { "illegal base64 data at input byte ${e.at}" }
+
+fn alphabet(enc: base64.Base64) -> Bytes {
+  match enc {
+    Std => STD.bytes()
+    RawStd => STD.bytes()
+    Url => URL.bytes()
+    RawUrl => URL.bytes()
+  }
+}
+
+fn padded(enc: base64.Base64) -> Bool { enc is Std | Url }
+
+/// The value of c in the alphabet, or -1.
+fn value(c: UInt8, url: Bool) -> Int {
+  if c >= 65 && c <= 90 { return Int(c) - 65 }
+  if c >= 97 && c <= 122 { return Int(c) - 71 }
+  if c >= 48 && c <= 57 { return Int(c) + 4 }
+  if url {
+    if c == 45 { return 62 }
+    if c == 95 { return 63 }
+  } else {
+    if c == 43 { return 62 }
+    if c == 47 { return 63 }
+  }
+  -1
+}
+
+fn encode(data: Bytes, enc: base64.Base64 = base64.Base64.Std) -> Str {
+  let a = alphabet(enc)
+  let pad = padded(enc)
+  var out = BytesBuilder.with_capacity((data.len() + 2) / 3 * 4)
+  let n = data.len() / 3 * 3
+  var si = 0
+  while si < n {
+    let v = (Int(data[si]) << 16) | (Int(data[si + 1]) << 8) | Int(data[si + 2])
+    out.write_byte(a[(v >> 18) & 63])
+    out.write_byte(a[(v >> 12) & 63])
+    out.write_byte(a[(v >> 6) & 63])
+    out.write_byte(a[v & 63])
+    si += 3
+  }
+  let remain = data.len() - si
+  if remain > 0 {
+    var v = Int(data[si]) << 16
+    if remain == 2 {
+      v = v | (Int(data[si + 1]) << 8)
+    }
+    out.write_byte(a[(v >> 18) & 63])
+    out.write_byte(a[(v >> 12) & 63])
+    if remain == 2 {
+      out.write_byte(a[(v >> 6) & 63])
+      if pad { out.write_byte(61) }
+    } else if pad {
+      out.write_byte(61)
+      out.write_byte(61)
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn is_nl(c: UInt8) -> Bool { c == 10 || c == 13 }
+
+fn decode(s: Str, enc: base64.Base64 = base64.Base64.Std) -> Bytes ! base64.DecodeErr {
+  let src = s.bytes()
+  let url = enc is Url | RawUrl
+  let pad = padded(enc)
+  var out = BytesBuilder.with_capacity(src.len() / 4 * 3 + 3)
+  var si = 0
+  while si < src.len() {
+    // decodeQuantum: up to four symbols, skipping \r and \n
+    var d = [0, 0, 0, 0]
+    var dlen = 4
+    var j = 0
+    var stop = false
+    while j < 4 {
+      if si == src.len() {
+        if j == 0 {
+          // only newlines after the last quantum
+          dlen = 0
+          break
+        }
+        if j == 1 || pad {
+          return Err(base64.DecodeErr{at: si - j})
+        }
+        dlen = j
+        break
+      }
+      let c = src[si]
+      si += 1
+      let v = value(c, url)
+      if v >= 0 {
+        d.set(j, v)
+        j += 1
+        continue
+      }
+      if is_nl(c) {
+        continue
+      }
+      if c != 61 || !pad {
+        return Err(base64.DecodeErr{at: si - 1})
+      }
+      // padding
+      if j < 2 {
+        return Err(base64.DecodeErr{at: si - 1})
+      }
+      if j == 2 {
+        while si < src.len() && is_nl(src[si]) { si += 1 }
+        if si == src.len() {
+          return Err(base64.DecodeErr{at: src.len()})
+        }
+        if src[si] != 61 {
+          return Err(base64.DecodeErr{at: si - 1})
+        }
+        si += 1
+      }
+      while si < src.len() && is_nl(src[si]) { si += 1 }
+      if si < src.len() {
+        stop = true
+      }
+      dlen = j
+      break
+    }
+    let val = (d[0] << 18) | (d[1] << 12) | (d[2] << 6) | d[3]
+    if dlen >= 2 { out.write_byte(UInt8((val >> 16) & 255)) }
+    if dlen >= 3 { out.write_byte(UInt8((val >> 8) & 255)) }
+    if dlen == 4 { out.write_byte(UInt8(val & 255)) }
+    if stop {
+      return Err(base64.DecodeErr{at: si})
+    }
+  }
+  out.freeze()
+}

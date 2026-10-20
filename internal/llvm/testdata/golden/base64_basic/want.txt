@@ -1,0 +1,22 @@
+base64 Std: +/+/YW55IGNhcm5hbCBwbGVhcw== back true
+base64 Url: -_-_YW55IGNhcm5hbCBwbGVhcw== back true
+base64 RawStd: +/+/YW55IGNhcm5hbCBwbGVhcw back true
+base64 RawUrl: -_-_YW55IGNhcm5hbCBwbGVhcw back true
+decode "Zm9v": 666f6f
+decode "Zm9vYg==": 666f6f62
+decode "Zm9vYg": illegal base64 data at input byte 4
+decode "Zm9v\r\nYmFy": 666f6f626172
+decode "Zm9v!": illegal base64 data at input byte 4
+decode "Zg=": illegal base64 data at input byte 3
+decode "Zg==Zg==": illegal base64 data at input byte 4
+decode "-_-_": illegal base64 data at input byte 0
+base32 Std: 7P736YLOPEQGGYLSNZQWYIDQNRSWC4Y= back true
+base32 Hex: VFVRUOBEF4G66OBIDPGMO83GDHIM2SO= back true
+base32 RawStd: 7P736YLOPEQGGYLSNZQWYIDQNRSWC4Y back true
+base32 RawHex: VFVRUOBEF4G66OBIDPGMO83GDHIM2SO back true
+decode32 "JBSWY3DPEHPK3PXP": 48656c6c6f21deadbeef
+decode32 "MZXW6===": 666f6f
+decode32 "MZXW6": illegal base32 data at input byte 0
+decode32 "MZXW6==": illegal base32 data at input byte 7
+decode32 "MY======X": 66
+decode32 "mzxw6===": illegal base32 data at input byte 0

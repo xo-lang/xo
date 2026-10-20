@@ -1,0 +1,25 @@
+// std/base64 (spec/std.md 21, decision 0279). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's encoding/base64:
+// the four alphabets of RFC 4648. Pure. `Bytes.to_base64` and
+// `from_base64` (std.md 2.2) are `Std`.
+
+/// RFC 4648 section 4 (`Std`, `+/`) and section 5 (`Url`, `-_`); the Raw
+/// forms write and read no `=` padding.
+enum Base64 {
+  Std
+  Url
+  RawStd
+  RawUrl
+}
+
+/// Displays as Go's CorruptInputError: `illegal base64 data at input byte 4`.
+struct DecodeErr {
+  at: Int
+}
+
+fn (e: DecodeErr) display() -> Str
+
+fn encode(data: Bytes, enc: Base64 = Base64.Std) -> Str
+/// `\r` and `\n` are skipped; anything else outside the alphabet, or
+/// padding where the encoding has none, is DecodeErr at its byte offset.
+fn decode(s: Str, enc: Base64 = Base64.Std) -> Bytes ! DecodeErr

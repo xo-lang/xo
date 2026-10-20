@@ -1,0 +1,28 @@
+// std/base64 and std/base32 (decision 0279): the RFC 4648 alphabets and
+// Go's error offsets, the same on every backend.
+use std/base32
+use std/base64
+
+fn main(os: Os) {
+  let data = b"\xfb\xff\xbfany carnal pleas"
+  for e in [base64.Base64.Std, base64.Base64.Url, base64.Base64.RawStd, base64.Base64.RawUrl] {
+    let s = base64.encode(data, e)
+    os.stdio.println("base64 ${e.debug()}: ${s} back ${base64.decode(s, e) == Ok(data)}")
+  }
+  for s in ["Zm9v", "Zm9vYg==", "Zm9vYg", "Zm9v\r\nYmFy", "Zm9v!", "Zg=", "Zg==Zg==", "-_-_"] {
+    match base64.decode(s) {
+      Ok(b) => os.stdio.println("decode ${s.quote()}: ${b.to_hex()}")
+      Err(err) => os.stdio.println("decode ${s.quote()}: ${err}")
+    }
+  }
+  for e in [base32.Base32.Std, base32.Base32.Hex, base32.Base32.RawStd, base32.Base32.RawHex] {
+    let s = base32.encode(data, e)
+    os.stdio.println("base32 ${e.debug()}: ${s} back ${base32.decode(s, e) == Ok(data)}")
+  }
+  for s in ["JBSWY3DPEHPK3PXP", "MZXW6===", "MZXW6", "MZXW6==", "MY======X", "mzxw6==="] {
+    match base32.decode(s, base32.Base32.Std) {
+      Ok(b) => os.stdio.println("decode32 ${s.quote()}: ${b.to_hex()}")
+      Err(err) => os.stdio.println("decode32 ${s.quote()}: ${err}")
+    }
+  }
+}

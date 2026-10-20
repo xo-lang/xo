@@ -1,0 +1,16 @@
+0: be 0000 00000000 0000000000000000 le 0000000000000000 uvarint 00 varint 00
+1: be 0001 00000001 0000000000000001 le 0100000000000000 uvarint 01 varint 02
+258: be 0102 00000102 0000000000000102 le 0201000000000000 uvarint 8202 varint 8404
+-1: be ffff ffffffff ffffffffffffffff le ffffffffffffffff uvarint ffffffffffffffffff01 varint 01
+70000: be 1170 00011170 0000000000011170 le 7011010000000000 uvarint f0a204 varint e0c508
+9223372036854775807: be ffff ffffffff 7fffffffffffffff le ffffffffffffff7f uvarint ffffffffffffffff7f varint feffffffffffffffff01
+-9223372036854775808: be 0000 00000000 8000000000000000 le 0000000000000080 uvarint 80808080808080808001 varint ffffffffffffffffff01
+at 0: u16 33023 65408 i16 -32513 -128 u32 2164195711 i32 2130837376
+at 2: u16 383 32513 i16 383 32513 u32 25100542 i32 -33521919
+at 4: u16 254 65024 i16 254 -512 u32 16646402 i32 33684992
+u64 -9151594272804437758 144675941136859008
+ac02: uvarint Some((300, 2)) varint Some((150, 2))
+80: uvarint None varint None
+ffffffffffffffffff01: uvarint Some((-1, 10)) varint Some((-9223372036854775808, 10))
+ffffffffffffffffff02: uvarint None varint None
+03: uvarint Some((3, 1)) varint Some((-2, 1))

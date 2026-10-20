@@ -1863,6 +1863,38 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
   and the RFC 8032 vectors. The checksum log of the module commands
   (decision 0124) signs and verifies tree heads with it.
 
+**Hashes and HMAC** (decision 0279, 2026-10-20; every backend):
+
+```
+enum Hash { Md5, Sha1, Sha224, Sha256, Sha384, Sha512, Sha3_256, Sha3_512 }
+fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 48, 64, 32, 64
+pub fn digest(h: Hash, data: Bytes) -> Bytes
+pub fn hmac(h: Hash, key: Bytes, msg: Bytes) -> Bytes
+
+struct Hasher {}                               // a value: copies are independent
+pub fn hasher(h: Hash) -> Hasher
+pub fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
+fn ([var] x: Hasher) write(data: Bytes)
+fn (x: Hasher) sum() -> Bytes                  // the digest so far; writing may continue
+fn (x: Hasher) written() -> Int
+```
+
+- The results are Go's (`md5.Sum`, `sha1.Sum`, `sha256.Sum224`, ...,
+  `sha3.Sum512`, `crypto/hmac`); `sha256(d)` and `hmac_sha256(k, m)`
+  are `digest(Sha256, d)` and `hmac(Sha256, k, m)`. HMAC hashes a key
+  longer than the hash's block first (the block is the rate for SHA-3,
+  as Go's).
+- `Md5` and `Sha1` are broken for collision resistance; they are for
+  protocols that require them (HMAC-SHA1 webhook signatures, TOTP,
+  Postgres MD5 authentication, Content-MD5). An `xo vet` note for them
+  outside an HMAC is planned.
+- A `Hasher` takes a large body a piece at a time (`var x =
+  crypto.hasher(Sha256)`, `x.write(chunk)` per chunk read from a `File`
+  or a `Conn`, then `x.sum()`). Natively the hashes are the TLS stack's
+  (std/native/llrt sha1.xo, sha256.xo, sha3.xo; SHA-256 with the CPU's
+  instructions) and MD5 is ported from Go's crypto/md5; Go's vectors for
+  each are in std/native/crypto_test.xo and llrt/md5_test.xo.
+
 Storing API tokens: tokens from `token` have 256 bits of entropy, so a
 plain `sha256` digest is enough (no salt or stretching needed) and can be
 looked up by value; compare the digest found with `equal`:
@@ -2610,3 +2642,64 @@ body.add("code", code)
 c.send(http.new_request("POST", token_url,
   headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body.encode().bytes()))?
 ```
+
+---
+
+## 21. std/base64 and std/base32
+
+Status: implemented on every backend (decision 0279, 2026-10-20): Go's
+encoding/base64 and encoding/base32 on the Go backend, ported natively
+(`std/native/base64.xo`, `base32.xo`; 3440 cases generated from Go in
+their `_test.xo` files); golden `base64_basic`. Pure.
+
+```
+// std/base64
+enum Base64 { Std, Url, RawStd, RawUrl }       // RFC 4648 sections 4 and 5; Raw: no padding
+struct DecodeErr { at: Int }                   // displays as `illegal base64 data at input byte 4`
+pub fn encode(data: Bytes, enc: Base64 = Std) -> Str
+pub fn decode(s: Str, enc: Base64 = Std) -> Bytes ! DecodeErr
+
+// std/base32
+enum Base32 { Std, Hex, RawStd, RawHex }       // RFC 4648 sections 6 and 7
+struct DecodeErr { at: Int }                   // displays as `illegal base32 data at input byte 4`
+pub fn encode(data: Bytes, enc: Base32 = Std) -> Str
+pub fn decode(s: Str, enc: Base32 = Std) -> Bytes ! DecodeErr
+```
+
+- Decoding follows Go's rules and error offsets (CorruptInputError):
+  base64 skips `\r` and `\n` anywhere; base32 removes them first and
+  counts the offset in what remains. A symbol outside the alphabet,
+  padding in a Raw encoding, missing or misplaced padding in a padded
+  one, and data after the padding are errors; the unused low bits of
+  the last symbol need not be zero (Go's default, not `Strict`). Go
+  returns the bytes decoded before an error; Xo returns the error.
+- `Bytes.to_base64` and `Bytes.from_base64` (2.2) are `Std`. JWTs and
+  cursors use `RawUrl`; TOTP secrets use base32 `RawStd` (remove spaces
+  and upper case them first).
+
+---
+
+## 22. std/binary
+
+Status: implemented on every backend (decision 0279, 2026-10-20): Go's
+encoding/binary on the Go backend, ported natively
+(`std/native/binary.xo`); golden `binary_basic`. Pure.
+
+```
+pub fn u16_be(n: Int) -> Bytes                 // the low 16 bits, 2 bytes; also u32_be (4), u64_be (8), and _le
+pub fn get_u16_be(b: Bytes, at: Int) -> Int    // also get_u32_be, get_u64_be, and _le
+pub fn get_i16_be(b: Bytes, at: Int) -> Int    // sign extended; also get_i32_be, get_i16_le, get_i32_le
+pub fn uvarint(n: Int) -> Bytes                // n as an unsigned 64 bit word (binary.AppendUvarint)
+pub fn varint(n: Int) -> Bytes                 // zig-zag (binary.AppendVarint)
+pub fn get_uvarint(b: Bytes, at: Int) -> (Int, Int)?   // value and length; None when cut short or past 64 bits
+pub fn get_varint(b: Bytes, at: Int) -> (Int, Int)?
+```
+
+- An Int is a 64 bit word here: a write keeps its low bits, and
+  `get_u64_*` of a value past 2^63 - 1 is negative (as the Int word
+  methods, decision 0260).
+- A `get_` whose bytes run past the end faults with `binary: N bytes
+  at A out of range for Bytes of length L`; `get_uvarint` and
+  `get_varint` return None instead, as Go's `n <= 0` (also for a
+  negative `at`).
+- Build messages with a `BytesBuilder`: `bb.write(binary.u32_be(len))`.

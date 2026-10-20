@@ -1,5 +1,6 @@
-// SHA-256, SHA-384, and SHA-512 (FIPS 180-4) for TLS (work item B31, decision
-// 0202): one shot (sum) and incremental (Hasher: write, a sum that does
+// SHA-224, SHA-256, SHA-384, and SHA-512 (FIPS 180-4) for TLS (work item
+// B31, decision 0202) and std/crypto's Hash (decision 0279; SHA-224 is
+// SHA-256 with its own initial state, cut to 28 bytes): one shot (sum) and incremental (Hasher: write, a sum that does
 // not consume it, clone), as Go's crypto/sha256 and crypto/sha512. The
 // compressions are digest_tables.xo's (sha256_block, and sha512_block,
 // which SHA-384 shares with SHA-512's Ed25519 use in digest.xo). Nothing
@@ -13,6 +14,10 @@ use native/rt
 pub const HASH_SHA256 = 0
 pub const HASH_SHA384 = 1
 pub const HASH_SHA512 = 2
+pub const HASH_SHA224 = 3
+
+/// SHA-224 and SHA-256 share the 32 bit compression and 64 byte blocks.
+fn is256(hash: Int) -> Bool { hash == HASH_SHA256 || hash == HASH_SHA224 }
 
 /// An incremental hash: the state words, the bytes of a partial block
 /// held, and the bytes written.
@@ -24,16 +29,19 @@ pub struct Hasher {
 }
 
 /// The digest's size in bytes.
-pub fn size(hash: Int) -> Int { if hash == HASH_SHA256 { 32 } else if hash == HASH_SHA384 { 48 } else { 64 } }
+pub fn size(hash: Int) -> Int { if hash == HASH_SHA256 { 32 } else if hash == HASH_SHA224 { 28 } else if hash == HASH_SHA384 { 48 } else { 64 } }
 
 /// The block size in bytes (HMAC's padded key).
-pub fn block_size(hash: Int) -> Int { if hash == HASH_SHA256 { 64 } else { 128 } }
+pub fn block_size(hash: Int) -> Int { if is256(hash) { 64 } else { 128 } }
 
-/// A new hash of hash (HASH_SHA256, HASH_SHA384, or HASH_SHA512).
+/// A new hash of hash (HASH_SHA224, HASH_SHA256, HASH_SHA384, or HASH_SHA512).
 pub fn new(hash: Int) -> Hasher {
   let st = if hash == HASH_SHA256 {
     // FIPS 180-4 5.3.3
     [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+  } else if hash == HASH_SHA224 {
+    // FIPS 180-4 5.3.2
+    [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4]
   } else if hash == HASH_SHA512 {
     // FIPS 180-4 5.3.5
     [7640891576956012808, -4942790177534073029, 4354685564936845355, -6534734903238641935, 5840696475078001361, -7276294671716946913, 2270897969802886507, 6620516959819538809]
@@ -97,7 +105,7 @@ fn keep_ints(st: List[Int]) {
 
 /// One block of b from i into st.
 fn compress(hash: Int, var st: List[Int], b: Bytes, i: Int) {
-  if hash == HASH_SHA256 {
+  if is256(hash) {
     block256(st, b, i)
     return
   }
@@ -168,9 +176,10 @@ pub fn (h: Hasher) sum() -> Bytes {
     i += bs
   }
   var out = rt.rs_with_cap(size(h.hash))
-  if h.hash == HASH_SHA256 {
-    for w in st {
-      out = rt.rs_push_word(out, w.wrapping_shl(32).swap_bytes(), 4)
+  if is256(h.hash) {
+    // SHA-224 keeps the first 7 of the 8 words
+    for j in 0..size(h.hash) / 4 {
+      out = rt.rs_push_word(out, st[j].wrapping_shl(32).swap_bytes(), 4)
     }
   } else {
     for j in 0..size(h.hash) / 8 {

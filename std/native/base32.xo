@@ -1,0 +1,127 @@
+// std/base32 on the native backends (decision 0279): Go's
+// encoding/base32 ported from base32.go of go1.26 (Encode, and
+// DecodeString: newlines stripped, then decode), with the same output
+// and error offsets. Go returns the bytes decoded before an error; Xo
+// returns the error alone.
+use std/base32
+
+const STD: Str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+const HEX: Str = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+
+fn decodeerr_display(e: base32.DecodeErr) -> Str { "illegal base32 data at input byte ${e.at}" }
+
+fn alphabet(enc: base32.Base32) -> Bytes {
+  match enc {
+    Std => STD.bytes()
+    RawStd => STD.bytes()
+    Hex => HEX.bytes()
+    RawHex => HEX.bytes()
+  }
+}
+
+fn padded(enc: base32.Base32) -> Bool { enc is Std | Hex }
+
+fn value(c: UInt8, hex: Bool) -> Int {
+  if hex {
+    if c >= 48 && c <= 57 { return Int(c) - 48 }
+    if c >= 65 && c <= 86 { return Int(c) - 55 }
+    return -1
+  }
+  if c >= 65 && c <= 90 { return Int(c) - 65 }
+  if c >= 50 && c <= 55 { return Int(c) - 24 }
+  -1
+}
+
+fn encode(data: Bytes, enc: base32.Base32 = base32.Base32.Std) -> Str {
+  let a = alphabet(enc)
+  var out = BytesBuilder.with_capacity((data.len() + 4) / 5 * 8)
+  var si = 0
+  while si < data.len() {
+    let remain = (data.len() - si).min(5)
+    // the block's 40 bits, zero filled past the data
+    var v = 0
+    for k in 0..5 {
+      v = (v << 8) | (if k < remain { Int(data[si + k]) } else { 0 })
+    }
+    // symbols carrying data: 2, 4, 5, 7, 8 for 1 to 5 bytes
+    let syms = (remain * 8 + 4) / 5
+    for k in 0..syms {
+      out.write_byte(a[(v >> (35 - 5 * k)) & 31])
+    }
+    if padded(enc) {
+      for _ in syms..8 { out.write_byte(61) }
+    }
+    si += 5
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn decode(s: Str, enc: base32.Base32 = base32.Base32.Std) -> Bytes ! base32.DecodeErr {
+  var stripped = BytesBuilder.with_capacity(s.len())
+  for c in s.bytes() {
+    if c != 10 && c != 13 { stripped.write_byte(c) }
+  }
+  let src = stripped.freeze()
+  let hex = enc is Hex | RawHex
+  let pad = padded(enc)
+  let olen = src.len()
+  var out = BytesBuilder.with_capacity(olen / 8 * 5 + 5)
+  var at = 0
+  var end = false
+  while at < olen && !end {
+    var d = [0, 0, 0, 0, 0, 0, 0, 0]
+    var dlen = 8
+    var j = 0
+    while j < 8 {
+      if at == olen {
+        if pad {
+          return Err(base32.DecodeErr{at: olen - (olen - at) - j})
+        }
+        dlen = j
+        end = true
+        break
+      }
+      let c = src[at]
+      at += 1
+      let rest = olen - at
+      if pad && c == 61 && j >= 2 && rest < 8 {
+        if rest + j < 7 {
+          return Err(base32.DecodeErr{at: olen})
+        }
+        for k in 0..7 - j {
+          if rest > k && src[at + k] != 61 {
+            return Err(base32.DecodeErr{at: olen - rest + k - 1})
+          }
+        }
+        dlen = j
+        end = true
+        if dlen == 1 || dlen == 3 || dlen == 6 {
+          return Err(base32.DecodeErr{at: olen - rest - 1})
+        }
+        break
+      }
+      let v = value(c, hex)
+      if v < 0 {
+        return Err(base32.DecodeErr{at: olen - rest - 1})
+      }
+      d.set(j, v)
+      j += 1
+    }
+    // Go's switch on dlen: 8, 7, 5, 4, 2 symbols give 5, 4, 3, 2, 1
+    // bytes; 1, 3, and 6 (only at the end of a Raw input) give none
+    let count = match dlen {
+      8 => 5
+      7 => 4
+      5 => 3
+      4 => 2
+      2 => 1
+      _ => 0
+    }
+    let bytes = [(d[0] << 3) | (d[1] >> 2), (d[1] << 6) | (d[2] << 1) | (d[3] >> 4), (d[3] << 4) | (d[4] >> 1),
+      (d[4] << 7) | (d[5] << 2) | (d[6] >> 3), (d[6] << 5) | d[7]]
+    for k in 0..count {
+      out.write_byte(UInt8(bytes[k] & 255))
+    }
+  }
+  out.freeze()
+}

@@ -1,0 +1,18 @@
+// std/binary (decision 0279): Go's byte orders and varints, the same on
+// every backend.
+use std/binary
+
+fn main(os: Os) {
+  for n in [0, 1, 258, -1, 70000, 9223372036854775807, -9223372036854775807 - 1] {
+    os.stdio.println("${n}: be ${binary.u16_be(n).to_hex()} ${binary.u32_be(n).to_hex()} ${binary.u64_be(n).to_hex()} le ${binary.u64_le(n).to_hex()} uvarint ${binary.uvarint(n).to_hex()} varint ${binary.varint(n).to_hex()}")
+  }
+  let b = Bytes.from_hex("80ff017f00fe0102") ?? b""
+  for at in [0, 2, 4] {
+    os.stdio.println("at ${at}: u16 ${binary.get_u16_be(b, at)} ${binary.get_u16_le(b, at)} i16 ${binary.get_i16_be(b, at)} ${binary.get_i16_le(b, at)} u32 ${binary.get_u32_be(b, at)} i32 ${binary.get_i32_le(b, at)}")
+  }
+  os.stdio.println("u64 ${binary.get_u64_be(b, 0)} ${binary.get_u64_le(b, 0)}")
+  for h in ["ac02", "80", "ffffffffffffffffff01", "ffffffffffffffffff02", "03"] {
+    let x = Bytes.from_hex(h) ?? b""
+    os.stdio.println("${h}: uvarint ${binary.get_uvarint(x, 0).debug()} varint ${binary.get_varint(x, 0).debug()}")
+  }
+}

@@ -4,14 +4,19 @@
 // (std/native/llrt/ct.xo and ed25519.xo, decision 0222), and random
 // bytes come from the Rand capability (the operating system's
 // generator).
+use std/crypto
 use native/llrt/ct
-use native/llrt/digest
+use native/llrt/digest as dg
 use native/llrt/ed25519
+use native/llrt/md5
+use native/llrt/sha1
+use native/llrt/sha256
+use native/llrt/sha3
 use native/rt
 
-fn sha256(data: Bytes) -> Bytes { digest.sha256(data) }
+fn sha256(data: Bytes) -> Bytes { dg.sha256(data) }
 
-fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { digest.hmac_sha256(key, msg) }
+fn hmac_sha256(key: Bytes, msg: Bytes) -> Bytes { dg.hmac_sha256(key, msg) }
 
 fn equal(a: Bytes, b: Bytes) -> Bool { ct.bytes_equal(a, b) }
 
@@ -22,7 +27,7 @@ fn random_bytes(r: Rand, n: Int, at: rt.Loc) -> Bytes uses rand {
   r.bytes(n)
 }
 
-fn token(r: Rand, n: Int = 32, at: rt.Loc) -> Str uses rand { digest.b64(random_bytes(r, n, at), true) }
+fn token(r: Rand, n: Int = 32, at: rt.Loc) -> Str uses rand { dg.b64(random_bytes(r, n, at), true) }
 
 fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, iterations: Int = 2, parallelism: Int = 1, at: rt.Loc) -> Str uses rand {
   let ok = parallelism >= 1 && parallelism <= 255 && memory_kib >= 8 * parallelism && memory_kib <= 4194304 && iterations >= 1 && iterations <= 1000
@@ -30,8 +35,8 @@ fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456, itera
     rt.fault_at("crypto.hash_password_argon2id: need parallelism in 1..=255, memory_kib in 8 * parallelism..=4194304, iterations in 1..=1000; got memory_kib ${memory_kib}, iterations ${iterations}, parallelism ${parallelism}", at)
   }
   let salt = random_bytes(r, 16, at)
-  let key = digest.argon2id(password.bytes(), salt, iterations, memory_kib, parallelism, 32)
-  "$argon2id$v=19$m=${memory_kib},t=${iterations},p=${parallelism}$" + digest.b64(salt, false) + "$" + digest.b64(key, false)
+  let key = dg.argon2id(password.bytes(), salt, iterations, memory_kib, parallelism, 32)
+  "$argon2id$v=19$m=${memory_kib},t=${iterations},p=${parallelism}$" + dg.b64(salt, false) + "$" + dg.b64(key, false)
 }
 
 fn hash_password(r: Rand, password: Str, iterations: Int = 600000, at: rt.Loc) -> Str uses rand {
@@ -39,11 +44,11 @@ fn hash_password(r: Rand, password: Str, iterations: Int = 600000, at: rt.Loc) -
     rt.fault_at("crypto.hash_password: iterations must be in 1..=100000000, got ${iterations}", at)
   }
   let salt = random_bytes(r, 16, at)
-  let key = digest.pbkdf2(password.bytes(), salt, iterations, 32)
-  "pbkdf2-sha256$" + "${iterations}$" + digest.b64(salt, false) + "$" + digest.b64(key, false)
+  let key = dg.pbkdf2(password.bytes(), salt, iterations, 32)
+  "pbkdf2-sha256$" + "${iterations}$" + dg.b64(salt, false) + "$" + dg.b64(key, false)
 }
 
-fn verify_password(password: Str, hash: Str) -> Bool { digest.verify_password(password, hash) }
+fn verify_password(password: Str, hash: Str) -> Bool { dg.verify_password(password, hash) }
 
 fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
   if seed.len() != 32 {
@@ -60,3 +65,141 @@ fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
 }
 
 fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool { ed25519.verify(public_key, msg, sig) }
+
+// ---------------------------------------------------------------------------
+// Hash, digest, hmac, and Hasher (decision 0279): the runtime's hashes
+// (md5.xo, sha1.xo, sha256.xo for SHA-224 to SHA-512, sha3.xo), HMAC as
+// Go's crypto/hmac builds it over each (RFC 2104: the key hashed when
+// longer than the block, then the inner and outer pads).
+
+fn hash_size(h: crypto.Hash) -> Int {
+  match h {
+    Md5 => 16
+    Sha1 => 20
+    Sha224 => 28
+    Sha256 => 32
+    Sha384 => 48
+    Sha512 => 64
+    Sha3_256 => 32
+    Sha3_512 => 64
+  }
+}
+
+/// HMAC's block size: Go's h.BlockSize() (the rate for SHA-3).
+fn block_of(h: crypto.Hash) -> Int {
+  match h {
+    Sha384 => 128
+    Sha512 => 128
+    Sha3_256 => 136
+    Sha3_512 => 72
+    _ => 64
+  }
+}
+
+enum State {
+  M5(h: md5.Hasher)
+  S1(h: sha1.Hasher)
+  S2(h: sha256.Hasher)
+  S3(s: sha3.Sponge)
+}
+
+struct Hasher {
+  hash: crypto.Hash
+  st: State
+  /// The outer padded key of an HMAC; empty for a plain hash.
+  opad: Bytes
+  total: Int
+}
+
+fn fresh(h: crypto.Hash) -> State {
+  match h {
+    Md5 => State.M5(h: md5.new())
+    Sha1 => State.S1(h: sha1.new())
+    Sha224 => State.S2(h: sha256.new(sha256.HASH_SHA224))
+    Sha256 => State.S2(h: sha256.new(sha256.HASH_SHA256))
+    Sha384 => State.S2(h: sha256.new(sha256.HASH_SHA384))
+    Sha512 => State.S2(h: sha256.new(sha256.HASH_SHA512))
+    Sha3_256 => State.S3(s: sha3.new_sha3_256())
+    Sha3_512 => State.S3(s: sha3.new_sha3_512())
+  }
+}
+
+fn absorb(st: State, data: Bytes) -> State {
+  match st {
+    M5(h) => {
+      var x = h
+      x.write(data)
+      State.M5(h: x)
+    }
+    S1(h) => {
+      var x = h
+      x.write(data)
+      State.S1(h: x)
+    }
+    S2(h) => {
+      var x = h
+      x.write(data)
+      State.S2(h: x)
+    }
+    S3(s) => {
+      var x = s
+      sha3.write(x, data)
+      State.S3(s: x)
+    }
+  }
+}
+
+fn finish(st: State) -> Bytes {
+  match st {
+    M5(h) => h.sum()
+    S1(h) => h.sum()
+    S2(h) => h.sum()
+    S3(s) => {
+      // sha3.sum squeezes: a copy keeps st able to absorb more
+      var x = s
+      sha3.sum(x)
+    }
+  }
+}
+
+fn digest(h: crypto.Hash, data: Bytes) -> Bytes { finish(absorb(fresh(h), data)) }
+
+/// The key as HMAC pads it: hashed when longer than the block, then
+/// XORed with the pad byte over the block.
+fn padded_key(h: crypto.Hash, key: Bytes, x: Int) -> Bytes {
+  let bs = block_of(h)
+  let k = if key.len() > bs { digest(h, key) } else { key }
+  var out = BytesBuilder.with_capacity(bs)
+  for i in 0..bs {
+    let v = if i < k.len() { Int(k[i]) } else { 0 }
+    out.write_byte(UInt8(v ^ x))
+  }
+  out.freeze()
+}
+
+fn hasher(h: crypto.Hash) -> Hasher { Hasher{hash: h, st: fresh(h), opad: b"", total: 0} }
+
+fn hmac_hasher(h: crypto.Hash, key: Bytes) -> Hasher {
+  Hasher{hash: h, st: absorb(fresh(h), padded_key(h, key, 0x36)), opad: padded_key(h, key, 0x5c), total: 0}
+}
+
+fn (var x: Hasher) write(data: Bytes) {
+  x.st = absorb(x.st, data)
+  x.total += data.len()
+}
+
+fn (x: Hasher) sum() -> Bytes {
+  let inner = finish(x.st)
+  if x.opad.is_empty() {
+    return inner
+  }
+  finish(absorb(absorb(fresh(x.hash), x.opad), inner))
+}
+
+fn (x: Hasher) written() -> Int { x.total }
+
+fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
+  var x = hmac_hasher(h, key)
+  x.write(msg)
+  x.sum()
+}

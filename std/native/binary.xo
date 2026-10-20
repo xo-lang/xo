@@ -1,0 +1,100 @@
+// std/binary on the native backends (decision 0279): Go's
+// encoding/binary byte orders (ByteOrder's Put and Uint methods) and
+// varints (varint.go of go1.26: AppendUvarint, AppendVarint, Uvarint,
+// Varint), ported.
+
+fn put(n: Int, size: Int, big: Bool) -> Bytes {
+  var out = BytesBuilder.with_capacity(size)
+  for k in 0..size {
+    let shift = if big { 8 * (size - 1 - k) } else { 8 * k }
+    out.write_byte(UInt8(n.shr_logical(shift) & 255))
+  }
+  out.freeze()
+}
+
+fn get(b: Bytes, at: Int, size: Int, big: Bool) -> Int {
+  if at < 0 || at + size > b.len() {
+    fault("binary: ${size} bytes at ${at} out of range for Bytes of length ${b.len()}")
+  }
+  var v = 0
+  for k in 0..size {
+    let i = if big { at + k } else { at + size - 1 - k }
+    v = v.wrapping_shl(8) | Int(b[i])
+  }
+  v
+}
+
+fn signed(v: Int, bits: Int) -> Int {
+  let top = 1 << (bits - 1)
+  if v >= top { v - (top << 1) } else { v }
+}
+
+fn u16_be(n: Int) -> Bytes { put(n, 2, true) }
+fn u32_be(n: Int) -> Bytes { put(n, 4, true) }
+fn u64_be(n: Int) -> Bytes { put(n, 8, true) }
+fn u16_le(n: Int) -> Bytes { put(n, 2, false) }
+fn u32_le(n: Int) -> Bytes { put(n, 4, false) }
+fn u64_le(n: Int) -> Bytes { put(n, 8, false) }
+
+fn get_u16_be(b: Bytes, at: Int) -> Int { get(b, at, 2, true) }
+fn get_u32_be(b: Bytes, at: Int) -> Int { get(b, at, 4, true) }
+fn get_u64_be(b: Bytes, at: Int) -> Int { get(b, at, 8, true) }
+fn get_u16_le(b: Bytes, at: Int) -> Int { get(b, at, 2, false) }
+fn get_u32_le(b: Bytes, at: Int) -> Int { get(b, at, 4, false) }
+fn get_u64_le(b: Bytes, at: Int) -> Int { get(b, at, 8, false) }
+fn get_i16_be(b: Bytes, at: Int) -> Int { signed(get(b, at, 2, true), 16) }
+fn get_i32_be(b: Bytes, at: Int) -> Int { signed(get(b, at, 4, true), 32) }
+fn get_i16_le(b: Bytes, at: Int) -> Int { signed(get(b, at, 2, false), 16) }
+fn get_i32_le(b: Bytes, at: Int) -> Int { signed(get(b, at, 4, false), 32) }
+
+fn uvarint(n: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(10)
+  var x = n
+  // x as an unsigned word: shr_logical brings in zeros
+  while !x.lt_unsigned(128) {
+    out.write_byte(UInt8((x & 127) | 128))
+    x = x.shr_logical(7)
+  }
+  out.write_byte(UInt8(x))
+  out.freeze()
+}
+
+fn varint(n: Int) -> Bytes {
+  // zig-zag: (n << 1) ^ (n >> 63)
+  uvarint(n.wrapping_shl(1) ^ (n >> 63))
+}
+
+/// varint.go Uvarint: at most 10 bytes; the tenth may only be 0 or 1.
+fn get_uvarint(b: Bytes, at: Int) -> (Int, Int)? {
+  if at < 0 {
+    return None
+  }
+  var x = 0
+  var s = 0
+  var i = 0
+  while at + i < b.len() {
+    if i == 10 {
+      return None
+    }
+    let c = Int(b[at + i])
+    if c < 128 {
+      if i == 9 && c > 1 {
+        return None
+      }
+      return Some((x | c.wrapping_shl(s), i + 1))
+    }
+    x = x | (c & 127).wrapping_shl(s)
+    s += 7
+    i += 1
+  }
+  None
+}
+
+fn get_varint(b: Bytes, at: Int) -> (Int, Int)? {
+  let (ux, n) = get_uvarint(b, at)?
+  var x = ux.shr_logical(1)
+  if ux & 1 != 0 {
+    x = x ^ -1
+  }
+  Some((x, n))
+}

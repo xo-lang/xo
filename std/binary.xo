@@ -1,0 +1,37 @@
+// std/binary (spec/std.md 22, decision 0279). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's encoding/binary
+// byte orders and varints as pure functions on Bytes. An Int is a 64 bit
+// word here: a write keeps its low bits, a 64 bit read past 2^63 - 1 is
+// negative (as the Int word methods, decision 0260).
+
+/// The low 16 bits of n, big endian (2 bytes); also the 32 (4 bytes) and
+/// 64 bit (8 bytes) forms and little endian ones.
+fn u16_be(n: Int) -> Bytes
+fn u32_be(n: Int) -> Bytes
+fn u64_be(n: Int) -> Bytes
+fn u16_le(n: Int) -> Bytes
+fn u32_le(n: Int) -> Bytes
+fn u64_le(n: Int) -> Bytes
+
+/// The unsigned 16 bit value at byte at, big endian; faults when the
+/// bytes run past the end. Also the 32 and 64 bit and little endian forms.
+fn get_u16_be(b: Bytes, at: Int) -> Int
+fn get_u32_be(b: Bytes, at: Int) -> Int
+fn get_u64_be(b: Bytes, at: Int) -> Int
+fn get_u16_le(b: Bytes, at: Int) -> Int
+fn get_u32_le(b: Bytes, at: Int) -> Int
+fn get_u64_le(b: Bytes, at: Int) -> Int
+/// The same, sign extended (Go's int16(binary.BigEndian.Uint16(b))).
+fn get_i16_be(b: Bytes, at: Int) -> Int
+fn get_i32_be(b: Bytes, at: Int) -> Int
+fn get_i16_le(b: Bytes, at: Int) -> Int
+fn get_i32_le(b: Bytes, at: Int) -> Int
+
+/// n as an unsigned 64 bit word in the varint encoding (binary.AppendUvarint).
+fn uvarint(n: Int) -> Bytes
+/// n zig-zag encoded (binary.AppendVarint).
+fn varint(n: Int) -> Bytes
+/// The value at byte at and the bytes it took; None when the input ends
+/// first or the value overflows 64 bits (binary.Uvarint's n <= 0).
+fn get_uvarint(b: Bytes, at: Int) -> (Int, Int)?
+fn get_varint(b: Bytes, at: Int) -> (Int, Int)?

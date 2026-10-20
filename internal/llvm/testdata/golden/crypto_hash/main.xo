@@ -1,0 +1,21 @@
+// std/crypto's Hash, digest, hmac, and Hasher (decision 0279): every
+// hash, HMAC with a short and a long key, and a Hasher fed in pieces,
+// the same on every backend.
+use std/crypto
+
+fn main(os: Os) {
+  let hs = [crypto.Hash.Md5, crypto.Hash.Sha1, crypto.Hash.Sha224, crypto.Hash.Sha256, crypto.Hash.Sha384,
+    crypto.Hash.Sha512, crypto.Hash.Sha3_256, crypto.Hash.Sha3_512]
+  let msg = "The quick brown fox jumps over the lazy dog".bytes()
+  let long_key = "k".repeat(200).bytes()
+  for h in hs {
+    os.stdio.println("${h.debug()} ${h.size()}: ${crypto.digest(h, msg).to_hex()}")
+    os.stdio.println("  hmac ${crypto.hmac(h, b"key", msg).to_hex()}")
+    os.stdio.println("  long ${crypto.hmac(h, long_key, msg).to_hex()}")
+    var x = crypto.hmac_hasher(h, b"key")
+    x.write(msg[0..10])
+    var y = x
+    x.write(msg[10..])
+    os.stdio.println("  pieces ${x.sum() == crypto.hmac(h, b"key", msg)} copy ${y.sum() == crypto.hmac(h, b"key", msg[0..10])} written ${x.written()} ${y.written()}")
+  }
+}

@@ -689,3 +689,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [dev-goldens-build-hang.md](dev-goldens-build-hang.md): Observed, open: dev golden builds timed out three times under load (crypto_prims, fs_cwd_path) though seconds alone; timed-out builds are now stack sampled (OUT/hang-NAME.txt); a Go-side hook is parked
 - [fe-cache-one-way-flags.md](fe-cache-one-way-flags.md): Observed: a body's set of a one-way flag (need_conc, uses_net) was hidden by a recording builder that had it already; entries record the sets (0271 step 1a fix 2)
 - [std-module-test-binary-shared.md](std-module-test-binary-shared.md): Observed: parallel `xo test --std-module` runs in one directory shared a build directory and ran each other's binary ("no test with this index"); the module is now a build directory variant.
+- [int-min-literal-native.md](int-min-literal-native.md): Observed: the literal -9223372036854775808 is XO1201 natively; write (-9223372036854775807 - 1)

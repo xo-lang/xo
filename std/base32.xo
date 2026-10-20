@@ -1,0 +1,25 @@
+// std/base32 (spec/std.md 21, decision 0279). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's encoding/base32:
+// the alphabets of RFC 4648. Pure.
+
+/// RFC 4648 section 6 (`Std`, `A-Z2-7`) and section 7 (`Hex`,
+/// `0-9A-V`); the Raw forms write and read no `=` padding.
+enum Base32 {
+  Std
+  Hex
+  RawStd
+  RawHex
+}
+
+/// Displays as Go's CorruptInputError: `illegal base32 data at input byte 4`.
+struct DecodeErr {
+  at: Int
+}
+
+fn (e: DecodeErr) display() -> Str
+
+fn encode(data: Bytes, enc: Base32 = Base32.Std) -> Str
+/// `\r` and `\n` are removed first; anything else outside the alphabet,
+/// or padding where the encoding has none, is DecodeErr at its byte
+/// offset in the input without them.
+fn decode(s: Str, enc: Base32 = Base32.Std) -> Bytes ! DecodeErr

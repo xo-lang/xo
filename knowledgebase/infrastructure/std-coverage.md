@@ -41,6 +41,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/archive | 18 | `std/changes/archive.md` |
 | std/toml | 19 | `std/changes/toml.md` |
 | std/url | 20 | `std/changes/url.md` |
+| std/base64, std/base32 | 21 | `std/changes/base64.md`, `std/changes/base32.md` |
+| std/binary | 22 | `std/changes/binary.md` |
 
 ## Go packages
 
@@ -55,10 +57,10 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
 | unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
 | encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths. Missing: key names other than the field name (camelCase and keyword keys such as `type`, Go's struct tags), a raw or dynamic value (json.RawMessage, any), streaming decoder, omitempty. |
-| encoding/base64 | prelude Bytes | partial | Standard padded encoding only. Missing: URL safe and unpadded (Raw) encodings, which JWTs and cursors use. |
-| encoding/base32 | none | planned | TOTP secrets (RFC 6238). |
+| encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
+| encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
 | encoding/hex | prelude Bytes | done | to_hex, from_hex. Dump is not offered. |
-| encoding/binary | none | planned | Big and little endian put/get on Bytes, varints; needed by wire protocols (Postgres, TOTP counters). Int word methods (swap_bytes) exist. |
+| encoding/binary | std/binary | done | Byte orders on Bytes and varints (decision 0279); no Read and Write of structs (no reflection). |
 | encoding/csv | std/csv | done | Native port (decision 0164); in memory, no streaming reader. |
 | encoding/pem | inside std/native/llrt (TLS) | partial | Parsed for http.tls_cert and with_roots; no public API. |
 | encoding/asn1 | inside std/native/llrt/asn1.xo | partial | Used by X.509; no public API. |
@@ -97,7 +99,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | math/big | inside std/native/llrt/bigmod.xo | planned | Needed for RSA and ECDSA keys from JWKs; no public big integer. |
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
-| hash | none | planned | A streaming hash interface (write, sum) for large bodies. |
+| hash | std/crypto Hasher | partial | A streaming hasher for the cryptographic hashes (decision 0279); no interface user types implement. |
 | hash/crc32 | inside std/archive | partial | Used by gzip and zip; no public API. |
 | hash/fnv, hash/adler32, hash/crc64, hash/maphash | none | planned | fnv and crc32 public functions are cheap ports; maphash is internal to Map. |
 
@@ -105,11 +107,11 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| crypto/sha256 | std/crypto | done | sha256, with the arm64 SHA2 instructions natively (decision 0231). Missing: a streaming hash. |
-| crypto/hmac | std/crypto | partial | hmac_sha256 only. Missing: HMAC over SHA-1, SHA-512 (Twilio, TOTP, AWS SNS v1, older GitHub signatures). |
-| crypto/sha1 | inside std/native/llrt/sha1.xo | partial | Exists for TLS; no public API. |
-| crypto/sha512, crypto/sha3 | inside std/native/llrt | partial | Exist for Ed25519 and ML-KEM; no public API. |
-| crypto/md5 | none | planned | Content-MD5 and legacy checksums (S3 ETags). |
+| crypto/sha256 | std/crypto | done | sha256 and Hash.Sha224, Sha256, with the arm64 SHA2 instructions natively (decision 0231). |
+| crypto/hmac | std/crypto hmac, hmac_hasher | done | Over every Hash (decision 0279). |
+| crypto/sha1 | std/crypto Hash.Sha1 | done | Decision 0279. |
+| crypto/sha512, crypto/sha3 | std/crypto Hash | done | SHA-384, SHA-512, SHA3-256, SHA3-512 (decision 0279); SHAKE is not public. |
+| crypto/md5 | std/crypto Hash.Md5 | done | Ported from Go (decision 0279); for protocols that require it. |
 | crypto/subtle | std/crypto equal | done | Constant time comparison. |
 | crypto/rand | prelude Rand, crypto.random_bytes, token | done | |
 | crypto/pbkdf2 | std/crypto hash_password | done | PBKDF2-HMAC-SHA256 in a PHC like string. |

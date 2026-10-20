@@ -3421,3 +3421,184 @@ func (v Url_EscapeErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Url_EscapeErr) M_debug(*Task) string { return Debug(v) }
+
+type Base64_Base64 struct {
+	Tag int
+	P   any
+}
+
+func (v Base64_Base64) XoEq(x any) bool {
+	o, ok := x.(Base64_Base64)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Base64_Base64) XoHash() uint64 {
+	h := MixHash(uint64(4139471707872057898), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Base64_Base64) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Std")
+	case 2:
+		b.WriteString("Url")
+	case 3:
+		b.WriteString("RawStd")
+	case 4:
+		b.WriteString("RawUrl")
+	}
+}
+
+func (v Base64_Base64) M_debug(*Task) string { return Debug(v) }
+
+type Base64_DecodeErr struct {
+	F_at int64
+}
+
+func (v Base64_DecodeErr) XoEq(x any) bool {
+	o, ok := x.(Base64_DecodeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_at, o.F_at) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Base64_DecodeErr) XoHash() uint64 {
+	h := uint64(8147598119414118494)
+	h = MixHash(h, Hash(v.F_at))
+	return h
+}
+
+func (v Base64_DecodeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("DecodeErr{")
+	b.WriteString("at: ")
+	DebugTo(b, v.F_at)
+	b.WriteString("}")
+}
+
+func (v Base64_DecodeErr) M_debug(*Task) string { return Debug(v) }
+
+type Base32_Base32 struct {
+	Tag int
+	P   any
+}
+
+func (v Base32_Base32) XoEq(x any) bool {
+	o, ok := x.(Base32_Base32)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Base32_Base32) XoHash() uint64 {
+	h := MixHash(uint64(4141859847128059127), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Base32_Base32) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Std")
+	case 2:
+		b.WriteString("Hex")
+	case 3:
+		b.WriteString("RawStd")
+	case 4:
+		b.WriteString("RawHex")
+	}
+}
+
+func (v Base32_Base32) M_debug(*Task) string { return Debug(v) }
+
+type Base32_DecodeErr struct {
+	F_at int64
+}
+
+func (v Base32_DecodeErr) XoEq(x any) bool {
+	o, ok := x.(Base32_DecodeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_at, o.F_at) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Base32_DecodeErr) XoHash() uint64 {
+	h := uint64(8147598119414118494)
+	h = MixHash(h, Hash(v.F_at))
+	return h
+}
+
+func (v Base32_DecodeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("DecodeErr{")
+	b.WriteString("at: ")
+	DebugTo(b, v.F_at)
+	b.WriteString("}")
+}
+
+func (v Base32_DecodeErr) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_Hash struct {
+	Tag int
+	P   any
+}
+
+func (v Crypto_Hash) XoEq(x any) bool {
+	o, ok := x.(Crypto_Hash)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Crypto_Hash) XoHash() uint64 {
+	h := MixHash(uint64(8353821047493437857), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Crypto_Hash) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Md5")
+	case 2:
+		b.WriteString("Sha1")
+	case 3:
+		b.WriteString("Sha224")
+	case 4:
+		b.WriteString("Sha256")
+	case 5:
+		b.WriteString("Sha384")
+	case 6:
+		b.WriteString("Sha512")
+	case 7:
+		b.WriteString("Sha3_256")
+	case 8:
+		b.WriteString("Sha3_512")
+	}
+}
+
+func (v Crypto_Hash) M_debug(*Task) string { return Debug(v) }

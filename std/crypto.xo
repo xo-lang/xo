@@ -31,3 +31,38 @@ fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
 /// Whether sig is a valid Ed25519 signature of msg by public_key; false
 /// for a key that is not 32 bytes or a signature that is not 64.
 fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
+
+/// The hashes of `digest`, `hmac`, and `Hasher` (decision 0279). Md5 and
+/// Sha1 are broken for collision resistance; they are here for protocols
+/// that require them (HMAC-SHA1 signatures, TOTP, Postgres MD5
+/// authentication, Content-MD5).
+enum Hash {
+  Md5
+  Sha1
+  Sha224
+  Sha256
+  Sha384
+  Sha512
+  Sha3_256
+  Sha3_512
+}
+
+/// The digest's size in bytes: 16, 20, 28, 32, 48, 64, 32, 64.
+fn (h: Hash) size() -> Int
+/// The digest of data with h (Go's md5.Sum, sha1.Sum, sha256.Sum224, ...).
+fn digest(h: Hash, data: Bytes) -> Bytes
+/// HMAC (RFC 2104) of msg keyed with key, over h (Go's crypto/hmac).
+fn hmac(h: Hash, key: Bytes, msg: Bytes) -> Bytes
+
+/// A hash being computed a piece at a time: a value, so copies are
+/// independent (`var x = crypto.hasher(Sha256)`, then `x.write(chunk)`).
+struct Hasher {}
+
+fn hasher(h: Hash) -> Hasher
+/// A Hasher computing HMAC over h keyed with key.
+fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
+fn (var x: Hasher) write(data: Bytes)
+/// The digest (or MAC) of what was written so far; writing may continue.
+fn (x: Hasher) sum() -> Bytes
+/// The bytes written so far.
+fn (x: Hasher) written() -> Int
