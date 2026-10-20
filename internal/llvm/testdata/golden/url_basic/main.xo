@@ -1,0 +1,33 @@
+// std/url (decision 0279): escaping, unescaping, and Values, the same on
+// every backend (Go's net/url on the Go backend, the port natively).
+use std/url
+
+fn show(r: Result[Str, url.EscapeErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s.quote()}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  for s in ["a b&c=d/é~", "100%", "x+y", ""] {
+    os.stdio.println("${s.quote()}: query ${url.query_escape(s).quote()} path ${url.path_escape(s).quote()}")
+  }
+  for s in ["a+b%20c", "%zz", "%4", "%E2%82%AC", "bad%82byte", "%2F+"] {
+    os.stdio.println("${s.quote()}: query ${show(url.query_unescape(s))} path ${show(url.path_unescape(s))}")
+  }
+  var v = url.values()
+  v.add("q", "dogs & cats")
+  v.add("lang", "en")
+  v.add("q", "7")
+  os.stdio.println("encode ${v.encode()} keys ${v.keys().join(",")} q ${v.all("q").join(",")} first ${v.get("q") ?? "-"}")
+  v.set("q", "one")
+  v.remove("lang")
+  os.stdio.println("after ${v.encode()} has lang ${v.has("lang")}")
+  for q in ["a=1&b=2&a=3", "x=%41&y", "a=1;b=2", "k=%zz", "&&e=&"] {
+    match url.parse_query(q) {
+      Ok(p) => os.stdio.println("${q.quote()} keys ${p.keys().join(",")} encode ${p.encode().quote()}")
+      Err(e) => os.stdio.println("${q.quote()} error ${e}")
+    }
+  }
+}

@@ -1,0 +1,247 @@
+// std/url on the native backends (decision 0279): Go's net/url escaping
+// and Values, ported from url.go of go1.26 (QueryEscape, PathEscape,
+// QueryUnescape, PathUnescape: escape and unescape with the
+// encodeQueryComponent and encodePathSegment modes; ParseQuery and
+// Values.Encode), with the same results and error texts. One difference,
+// spec/std.md 0: a decoded byte sequence that is not UTF-8 keeps each
+// invalid byte as its `%XX` escape, so Str stays valid UTF-8 (Go returns
+// the raw bytes).
+use std/url
+
+/// url.go defaultMaxParams: ParseQuery's limit on parameters.
+const MAX_PARAMS: Int = 10000
+
+const UPPER_HEX: Str = "0123456789ABCDEF"
+
+fn escapeerr_display(e: url.EscapeErr) -> Str { e.msg }
+
+fn escape_error(s: Str) -> url.EscapeErr { url.EscapeErr{msg: "invalid URL escape ${s.quote()}"} }
+
+fn is_unreserved(c: UInt8) -> Bool {
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 45 || c == 46 || c == 95 || c == 126
+}
+
+/// encoding_table.go: the bytes a mode leaves as they are. A query
+/// component keeps the unreserved bytes; a path segment also keeps
+/// `$ & + : = @` (RFC 3986 section 3.3 less `/`, `;`, `,`).
+fn keeps(c: UInt8, path: Bool) -> Bool {
+  if is_unreserved(c) {
+    return true
+  }
+  path && (c == 36 || c == 38 || c == 43 || c == 58 || c == 61 || c == 64)
+}
+
+fn escape(s: Str, path: Bool) -> Str {
+  let b = s.bytes()
+  var n = 0
+  for c in b {
+    if !keeps(c, path) {
+      n += 1
+    }
+  }
+  if n == 0 {
+    return s
+  }
+  let hex = UPPER_HEX.bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 2 * n)
+  for c in b {
+    if c == 32 && !path {
+      out.write_byte(43)
+    } else if keeps(c, path) {
+      out.write_byte(c)
+    } else {
+      out.write_byte(37)
+      out.write_byte(hex[Int(c) >> 4])
+      out.write_byte(hex[Int(c) & 15])
+    }
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn is_hex(c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
+fn unhex(c: UInt8) -> Int {
+  let v = Int(c)
+  if v <= 57 { v - 48 } else if v <= 70 { v - 55 } else { v - 87 }
+}
+
+fn unescape(s: Str, query: Bool) -> Str ! url.EscapeErr {
+  let b = s.bytes()
+  var i = 0
+  var escapes = 0
+  var plus = false
+  while i < b.len() {
+    if b[i] == 37 {
+      escapes += 1
+      if i + 2 >= b.len() || !is_hex(b[i + 1]) || !is_hex(b[i + 2]) {
+        let end = if i + 3 < b.len() { i + 3 } else { b.len() }
+        return Err(escape_error(text_of(b[i..end])))
+      }
+      i += 3
+    } else {
+      if b[i] == 43 && query {
+        plus = true
+      }
+      i += 1
+    }
+  }
+  if escapes == 0 && !plus {
+    return s
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  i = 0
+  while i < b.len() {
+    if b[i] == 37 {
+      out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
+      i += 3
+    } else {
+      out.write_byte(if b[i] == 43 && query { 32 } else { b[i] })
+      i += 1
+    }
+  }
+  text_of(out.freeze())
+}
+
+/// The bytes as Str, each byte of an invalid UTF-8 sequence as its `%XX`
+/// escape (decision 0259's rule for URL parts).
+fn text_of(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  let hex = UPPER_HEX.bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 8)
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if r == '\u{FFFD}' && n == 1 {
+      out.write_byte(37)
+      out.write_byte(hex[Int(b[i]) >> 4])
+      out.write_byte(hex[Int(b[i]) & 15])
+    } else {
+      out.write(b[i..i + n])
+    }
+    i += n
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn query_escape(s: Str) -> Str { escape(s, false) }
+
+fn query_unescape(s: Str) -> Str ! url.EscapeErr { unescape(s, true) }
+
+fn path_escape(s: Str) -> Str { escape(s, true) }
+
+fn path_unescape(s: Str) -> Str ! url.EscapeErr { unescape(s, false) }
+
+// ---------------------------------------------------------------------------
+// Values
+
+struct Values {
+  ks: List[Str]
+  vs: List[List[Str]]
+}
+
+fn values() -> Values { Values{ks: [], vs: []} }
+
+fn (v: Values) get(key: Str) -> Str? {
+  let i = v.ks.index_of(key)?
+  v.vs[i].first()
+}
+
+fn (v: Values) all(key: Str) -> List[Str] {
+  match v.ks.index_of(key) {
+    Some(i) => v.vs[i]
+    None => []
+  }
+}
+
+fn (v: Values) has(key: Str) -> Bool { v.ks.contains(key) }
+
+fn (v: Values) keys() -> List[Str] { v.ks }
+
+fn (v: Values) encode() -> Str {
+  var out = StrBuilder.new()
+  for k in v.ks.sort() {
+    let ek = query_escape(k)
+    for x in v.all(k) {
+      if out.len() > 0 {
+        out.write("&")
+      }
+      out.write(ek)
+      out.write("=")
+      out.write(query_escape(x))
+    }
+  }
+  out.freeze()
+}
+
+fn (var v: Values) add(key: Str, value: Str) {
+  match v.ks.index_of(key) {
+    Some(i) => {
+      var xs = v.vs[i]
+      xs.push(value)
+      v.vs.set(i, xs)
+    }
+    None => {
+      v.ks.push(key)
+      v.vs.push([value])
+    }
+  }
+}
+
+fn (var v: Values) set(key: Str, value: Str) {
+  match v.ks.index_of(key) {
+    Some(i) => v.vs.set(i, [value])
+    None => {
+      v.ks.push(key)
+      v.vs.push([value])
+    }
+  }
+}
+
+fn (var v: Values) remove(key: Str) {
+  if let Some(i) = v.ks.index_of(key) {
+    let _k = v.ks.remove_at(i)
+    let _v = v.vs.remove_at(i)
+  }
+}
+
+/// url.go parseQuery: pairs split on `&`, then `=`; an empty pair is
+/// skipped. Go keeps parsing after an error and returns the first; Xo
+/// returns the first error alone.
+fn parse_query(s: Str) -> Values ! url.EscapeErr {
+  if s.split("&").len() > MAX_PARAMS {
+    return Err(url.EscapeErr{msg: "number of URL query parameters exceeded limit"})
+  }
+  // the keys' positions in a Map, so many distinct keys stay linear
+  var at: Map[Str, Int] = {}
+  var ks: List[Str] = []
+  var vs: List[List[Str]] = []
+  for pair in s.split("&") {
+    if pair.contains(";") {
+      return Err(url.EscapeErr{msg: "invalid semicolon separator in query"})
+    }
+    if pair.is_empty() {
+      continue
+    }
+    let (k0, x0) = match pair.find("=") {
+      Some(i) => (pair[0..i], pair[i + 1..])
+      None => (pair, "")
+    }
+    let k = query_unescape(k0)?
+    let x = query_unescape(x0)?
+    match at.get(k) {
+      Some(i) => {
+        var xs = vs[i]
+        xs.push(x)
+        vs.set(i, xs)
+      }
+      None => {
+        at.put(k, ks.len())
+        ks.push(k)
+        vs.push([x])
+      }
+    }
+  }
+  Values{ks: ks, vs: vs}
+}

@@ -1,0 +1,17 @@
+"a b&c=d/é~": query "a+b%26c%3Dd%2F%C3%A9~" path "a%20b&c=d%2F%C3%A9~"
+"100%": query "100%25" path "100%25"
+"x+y": query "x%2By" path "x+y"
+"": query "" path ""
+"a+b%20c": query ok "a b c" path ok "a+b c"
+"%zz": query err invalid URL escape "%zz" path err invalid URL escape "%zz"
+"%4": query err invalid URL escape "%4" path err invalid URL escape "%4"
+"%E2%82%AC": query ok "€" path ok "€"
+"bad%82byte": query ok "bad%82byte" path ok "bad%82byte"
+"%2F+": query ok "/ " path ok "/+"
+encode lang=en&q=dogs+%26+cats&q=7 keys q,lang q dogs & cats,7 first dogs & cats
+after q=one has lang false
+"a=1&b=2&a=3" keys a,b encode "a=1&a=3&b=2"
+"x=%41&y" keys x,y encode "x=A&y="
+"a=1;b=2" error invalid semicolon separator in query
+"k=%zz" error invalid URL escape "%zz"
+"&&e=&" keys e encode "e="

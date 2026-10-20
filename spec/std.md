@@ -2552,3 +2552,61 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
 - `to_json` gives the JSON text, for code that wants to read a document
   without a struct (`json.decode[Map[Str, ...]]`) or print it.
 
+
+---
+
+## 20. std/url
+
+Status: implemented on every backend (decision 0279, 2026-10-20): Go's
+net/url (url.go of go1.26) on the Go backend, ported to Xo natively
+(`std/native/url.xo`, Go's escape, query, and Values tables in
+`url_test.xo`); golden `url_basic` on arm64, LLVM, Go, and wasm. Pure:
+no capability.
+
+```
+struct EscapeErr { msg: Str }        // displays as Go's text: `invalid URL escape "%zz"`
+
+pub fn query_escape(s: Str) -> Str   // space as +, as url.QueryEscape
+pub fn query_unescape(s: Str) -> Str ! EscapeErr
+pub fn path_escape(s: Str) -> Str    // one path segment: space as %20, / escaped
+pub fn path_unescape(s: Str) -> Str ! EscapeErr
+
+struct Values {}    // a value (not a handle): keys in first appearance order, each with its values in order
+pub fn values() -> Values
+pub fn parse_query(s: Str) -> Values ! EscapeErr   // a=1&b=2&a=3
+fn (v: Values) get(key: Str) -> Str?                // the first value
+fn (v: Values) all(key: Str) -> List[Str]           // every value, [] when missing
+fn (v: Values) has(key: Str) -> Bool
+fn (v: Values) keys() -> List[Str]
+fn (v: Values) encode() -> Str                      // sorted by key, as Values.Encode
+fn ([var] v: Values) add(key: Str, value: Str)
+fn ([var] v: Values) set(key: Str, value: Str)      // replaces every value of key
+fn ([var] v: Values) remove(key: Str)
+```
+
+- `query_escape` keeps letters, digits, `-`, `.`, `_`, and `~`, writes
+  a space as `+`, and every other byte as `%XX` (upper case hex);
+  `path_escape` also keeps `$ & + : = @` and writes a space as `%20`.
+- `query_unescape` decodes `+` as a space and `%XX`; `path_unescape`
+  leaves `+` alone. A `%` not followed by two hex digits is
+  `EscapeErr`, its text naming the escape (`invalid URL escape "%4"`).
+  A decoded byte sequence that is not UTF-8 keeps each invalid byte as
+  its `%XX` escape (section 0's rule for URL parts), where Go returns
+  the raw bytes.
+- `parse_query` splits on `&`, then the first `=`; an empty pair is
+  skipped and a pair without `=` has the value `""`. A `;` in a pair
+  (`invalid semicolon separator in query`), a bad escape, or more than
+  10000 parameters (`number of URL query parameters exceeded limit`) is
+  `EscapeErr`. Go keeps the pairs parsed around an error; Xo returns
+  the error alone.
+- `encode` writes the keys sorted (byte order), each value as
+  `key=value` with `query_escape`, joined by `&`; `parse_query` of it
+  gives the same keys and values (in sorted key order).
+
+```
+var body = url.values()
+body.add("grant_type", "authorization_code")
+body.add("code", code)
+c.send(http.new_request("POST", token_url,
+  headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body.encode().bytes()))?
+```

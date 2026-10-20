@@ -1,0 +1,331 @@
+use std/url
+
+// The escape, query, and Values tables of Go's net/url url_test.go
+// (go1.26: unescapeTests, queryEscapeTests, pathEscapeTests,
+// encodeQueryTests, parseTests), expected results from Go itself
+// (decision 0279). Strings are hex so every byte survives.
+
+fn h(x: Str) -> Str { (Bytes.from_hex(x) ?? b"").to_str() ?? "" }
+
+fn sorted(v: Values) -> List[(Str, List[Str])] { v.keys().sort().map(fn(k) { (k, v.all(k)) }) }
+
+test "query_unescape 1" {
+  expect(query_unescape(h(""))) == Ok(h(""))
+}
+
+test "path_unescape 2" {
+  expect(path_unescape(h(""))) == Ok(h(""))
+}
+
+test "query_unescape 3" {
+  expect(query_unescape(h("616263"))) == Ok(h("616263"))
+}
+
+test "path_unescape 4" {
+  expect(path_unescape(h("616263"))) == Ok(h("616263"))
+}
+
+test "query_unescape 5" {
+  expect(query_unescape(h("31253431"))) == Ok(h("3141"))
+}
+
+test "path_unescape 6" {
+  expect(path_unescape(h("31253431"))) == Ok(h("3141"))
+}
+
+test "query_unescape 7" {
+  expect(query_unescape(h("31253431253432253433"))) == Ok(h("31414243"))
+}
+
+test "path_unescape 8" {
+  expect(path_unescape(h("31253431253432253433"))) == Ok(h("31414243"))
+}
+
+test "query_unescape 9" {
+  expect(query_unescape(h("253461"))) == Ok(h("4a"))
+}
+
+test "path_unescape 10" {
+  expect(path_unescape(h("253461"))) == Ok(h("4a"))
+}
+
+test "query_unescape 11" {
+  expect(query_unescape(h("253646"))) == Ok(h("6f"))
+}
+
+test "path_unescape 12" {
+  expect(path_unescape(h("253646"))) == Ok(h("6f"))
+}
+
+test "query_unescape 13" {
+  expect(query_unescape(h("25"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
+}
+
+test "path_unescape 14" {
+  expect(path_unescape(h("25"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
+}
+
+test "query_unescape 15" {
+  expect(query_unescape(h("2561"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
+}
+
+test "path_unescape 16" {
+  expect(path_unescape(h("2561"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
+}
+
+test "query_unescape 17" {
+  expect(query_unescape(h("2531"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
+}
+
+test "path_unescape 18" {
+  expect(path_unescape(h("2531"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
+}
+
+test "query_unescape 19" {
+  expect(query_unescape(h("3132332534352536"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
+}
+
+test "path_unescape 20" {
+  expect(path_unescape(h("3132332534352536"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
+}
+
+test "query_unescape 21" {
+  expect(query_unescape(h("257a7a7a7a7a"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
+}
+
+test "path_unescape 22" {
+  expect(path_unescape(h("257a7a7a7a7a"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
+}
+
+test "query_unescape 23" {
+  expect(query_unescape(h("612b62"))) == Ok(h("612062"))
+}
+
+test "path_unescape 24" {
+  expect(path_unescape(h("612b62"))) == Ok(h("612b62"))
+}
+
+test "query_unescape 25" {
+  expect(query_unescape(h("6125323062"))) == Ok(h("612062"))
+}
+
+test "path_unescape 26" {
+  expect(path_unescape(h("6125323062"))) == Ok(h("612062"))
+}
+
+test "query_escape 27" {
+  expect(query_escape(h(""))) == h("")
+}
+
+test "query_escape 28" {
+  expect(query_escape(h("616263"))) == h("616263")
+}
+
+test "query_escape 29" {
+  expect(query_escape(h("6f6e652074776f"))) == h("6f6e652b74776f")
+}
+
+test "query_escape 30" {
+  expect(query_escape(h("313025"))) == h("3130253235")
+}
+
+test "query_escape 31" {
+  expect(query_escape(h("203f263d232b25213c3e23227b7d7c5c5e5b5d60e298ba093a2f40242728292a2c3b"))) == h("2b253346253236253344253233253242253235253231253343253345253233253232253742253744253743253543253545253542253544253630254532253938254241253039253341253246253430253234253237253238253239253241253243253342")
+}
+
+test "path_escape 32" {
+  expect(path_escape(h(""))) == h("")
+}
+
+test "path_escape 33" {
+  expect(path_escape(h("616263"))) == h("616263")
+}
+
+test "path_escape 34" {
+  expect(path_escape(h("6162632b646566"))) == h("6162632b646566")
+}
+
+test "path_escape 35" {
+  expect(path_escape(h("612f62"))) == h("6125324662")
+}
+
+test "path_escape 36" {
+  expect(path_escape(h("6f6e652074776f"))) == h("6f6e6525323074776f")
+}
+
+test "path_escape 37" {
+  expect(path_escape(h("313025"))) == h("3130253235")
+}
+
+test "path_escape 38" {
+  expect(path_escape(h("203f263d232b25213c3e23227b7d7c5c5e5b5d60e298ba093a2f40242728292a2c3b"))) == h("253230253346263d2532332b2532352532312533432533452532332532322537422537442537432535432535452535422535442536302545322539382542412530393a2532464024253237253238253239253241253243253342")
+}
+
+test "encode 39" {
+  var v = values()
+  expect(v.encode()) == h("")
+}
+
+test "encode 40" {
+  var v = values()
+  expect(v.encode()) == h("")
+}
+
+test "encode 41" {
+  var v = values()
+  v.add(h("6f65"), h("75746638"))
+  v.add(h("71"), h("70757070696573"))
+  expect(v.encode()) == h("6f653d7574663826713d70757070696573")
+}
+
+test "encode 42" {
+  var v = values()
+  v.add(h("71"), h("646f6773"))
+  v.add(h("71"), h("26"))
+  v.add(h("71"), h("37"))
+  expect(v.encode()) == h("713d646f677326713d25323626713d37")
+}
+
+test "encode 43" {
+  var v = values()
+  v.add(h("61"), h("6131"))
+  v.add(h("61"), h("6132"))
+  v.add(h("61"), h("6133"))
+  v.add(h("62"), h("6231"))
+  v.add(h("62"), h("6232"))
+  v.add(h("62"), h("6233"))
+  v.add(h("63"), h("6331"))
+  v.add(h("63"), h("6332"))
+  v.add(h("63"), h("6333"))
+  expect(v.encode()) == h("613d613126613d613226613d613326623d623126623d623226623d623326633d633126633d633226633d6333")
+}
+
+test "encode 44" {
+  var v = values()
+  v.add(h("61"), h("61"))
+  v.add(h("62"), h("62"))
+  v.add(h("63"), h("63"))
+  v.add(h("64"), h("64"))
+  v.add(h("65"), h("65"))
+  v.add(h("66"), h("66"))
+  v.add(h("67"), h("67"))
+  v.add(h("68"), h("68"))
+  v.add(h("69"), h("69"))
+  expect(v.encode()) == h("613d6126623d6226633d6326643d6426653d6526663d6626673d6726683d6826693d69")
+}
+
+test "parse 45" {
+  expect(parse_query(h("613d31")).map(sorted)) == Ok([(h("61"), [h("31")])])
+}
+
+test "parse 46" {
+  expect(parse_query(h("613d3126623d32")).map(sorted)) == Ok([(h("61"), [h("31")]), (h("62"), [h("32")])])
+}
+
+test "parse 47" {
+  expect(parse_query(h("613d3126613d3226613d62616e616e61")).map(sorted)) == Ok([(h("61"), [h("31"), h("32"), h("62616e616e61")])])
+}
+
+test "parse 48" {
+  expect(parse_query(h("61736369693d2533436b65792533412b30783930253345")).map(sorted)) == Ok([(h("6173636969"), [h("3c6b65793a20307839303e")])])
+}
+
+test "parse 49" {
+  expect(parse_query(h("613d313b623d32")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 50" {
+  expect(parse_query(h("613b623d31")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 51" {
+  expect(parse_query(h("613d253342")).map(sorted)) == Ok([(h("61"), [h("3b")])])
+}
+
+test "parse 52" {
+  expect(parse_query(h("61253342623d31")).map(sorted)) == Ok([(h("613b62"), [h("31")])])
+}
+
+test "parse 53" {
+  expect(parse_query(h("613d3126613d323b613d62616e616e61")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 54" {
+  expect(parse_query(h("613b6226633d31")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 55" {
+  expect(parse_query(h("613d3126623d323b613d3326633d34")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 56" {
+  expect(parse_query(h("613d3126623d323b633d33")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 57" {
+  expect(parse_query(h("3b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 58" {
+  expect(parse_query(h("613d313b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 59" {
+  expect(parse_query(h("613d31263b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 60" {
+  expect(parse_query(h("3b613d3126623d32")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+
+test "parse 61" {
+  expect(parse_query(h("613d3126623d323b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+}
+test "values keep first appearance order and replace with set" {
+  var v = values()
+  v.add("b", "1")
+  v.add("a", "2")
+  v.add("b", "3")
+  expect(v.keys()) == ["b", "a"]
+  expect(v.all("b")) == ["1", "3"]
+  expect(v.get("b")) == Some("1")
+  expect(v.get("c")) == None
+  v.set("b", "x")
+  expect(v.all("b")) == ["x"]
+  v.remove("b")
+  expect(v.has("b")) == false
+  expect(v.encode()) == "a=2"
+}
+
+test "values are values" {
+  var a = values()
+  a.add("k", "1")
+  var b = a
+  b.add("k", "2")
+  expect(a.all("k")) == ["1"]
+  expect(b.all("k")) == ["1", "2"]
+}
+
+test "invalid UTF-8 stays escaped" {
+  expect(query_unescape("a%82b")) == Ok("a%82b")
+  expect(query_unescape("%E2%82%AC+x")) == Ok("\u{20AC} x")
+  expect(path_unescape("%C3%A9%2F")) == Ok("\u{E9}/")
+}
+
+test "the parameter limit" {
+  expect(parse_query("a=1&".repeat(10000)).is_ok()) == false
+  expect(parse_query("a=1&".repeat(9999) + "a=1").map(fn(v) { v.all("a").len() })) == Ok(10000)
+}
+
+test "encode round trips" for pairs: List[(Str, Str)] {
+  var v = values()
+  for (k, x) in pairs {
+    v.add(k, x)
+  }
+  let back = parse_query(v.encode()).or_fault("encode output parses")
+  for k in v.keys() {
+    if !k.is_empty() || !v.all(k).is_empty() {
+      expect(back.all(k)) == v.all(k)
+    }
+  }
+}

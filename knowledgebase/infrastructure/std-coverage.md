@@ -40,6 +40,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/regexp | 17 | `std/changes/regexp.md` |
 | std/archive | 18 | `std/changes/archive.md` |
 | std/toml | 19 | `std/changes/toml.md` |
+| std/url | 20 | `std/changes/url.md` |
 
 ## Go packages
 
@@ -131,7 +132,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 |---|---|---|---|
 | net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP, a name lookup API (LookupHost, SRV, TXT, MX), IP and CIDR types, deadlines on a Conn. |
 | net/netip | none | planned | IP and prefix parsing (trusted proxies, allow lists). |
-| net/url | std/http parse_url, Url | partial | Absolute http and https URLs. Missing: query and path escaping (QueryEscape, PathEscape), Values with repeated keys and Encode, relative references, userinfo. |
+| net/url | std/url, std/http parse_url and Url | partial | Escaping (QueryEscape, PathEscape and their inverses) and Values (ParseQuery, Encode) are done (decision 0279). Missing: Request.form and query_all in std/http, relative references, userinfo, a full URL type outside std/http. |
 | net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming, TLS, HTTP/2. Missing: repeated header fields (http.Header: two Set-Cookie fields), cookies, form parsing (ParseForm, multipart), a streaming request body (whole body in memory, 64 MiB natively), ServeContent and FileServer (Range, If-Modified-Since), response compression, MaxBytesReader per route, timeouts per server. |
 | net/http (client) | std/http Client | partial | GET, send, post_json, redirects, gzip, HTTP/2, TLS roots. Missing: cookie jar, proxies, streaming response bodies, per request timeouts. |
 | net/http/httptest | std/testing FakeNet, Router.call | done | In process servers and fakes (section 8). |

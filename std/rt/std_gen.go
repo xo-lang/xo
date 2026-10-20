@@ -3390,3 +3390,34 @@ func (v Toml_DecodeErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Toml_DecodeErr) M_debug(*Task) string { return Debug(v) }
+
+type Url_EscapeErr struct {
+	F_msg string
+}
+
+func (v Url_EscapeErr) XoEq(x any) bool {
+	o, ok := x.(Url_EscapeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Url_EscapeErr) XoHash() uint64 {
+	h := uint64(8627430307471640473)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Url_EscapeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("EscapeErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Url_EscapeErr) M_debug(*Task) string { return Debug(v) }
