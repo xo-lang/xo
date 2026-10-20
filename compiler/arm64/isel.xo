@@ -81,9 +81,12 @@ fn (var g: G) function(fi: Int) {
       g.x86_mul_pair()
     }
     g.x86_retarget()
-    if g.on("x86_const_imm") {
-      g.x86_const_imm()
-    }
+    // off (2026-10-20): a miscompile, the amd64 HTTP server's
+    // http.match_parts read address 0 at its first request; on again
+    // with its fix and a test that runs the program
+    // if g.on("x86_const_imm") {
+    //   g.x86_const_imm()
+    // }
     if g.on("x86_sink_loads") {
       g.x86_sink_loads()
     }
