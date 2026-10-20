@@ -66,3 +66,26 @@ fn (var x: Hasher) write(data: Bytes)
 fn (x: Hasher) sum() -> Bytes
 /// The bytes written so far.
 fn (x: Hasher) written() -> Int
+
+// ---- public key signatures, keys, and PEM (decision 0285) ----
+
+/// A PEM block (encoding/pem): its type (`PUBLIC KEY`), headers, and
+/// decoded bytes.
+struct PemBlock {
+  kind: Str
+  headers: Map[Str, Str]
+  bytes: Bytes
+}
+
+/// Go's error texts (`x509: failed to parse public key`, ...).
+struct KeyErr {
+  msg: Str
+}
+
+fn (e: KeyErr) display() -> Str
+
+/// Every PEM block in text, in order (pem.Decode repeated on the rest);
+/// text outside blocks and malformed blocks are skipped.
+fn pem_decode(text: Str) -> List[PemBlock]
+/// pem.EncodeToMemory: KeyErr for a header key holding a colon.
+fn pem_encode(b: PemBlock) -> Str ! KeyErr

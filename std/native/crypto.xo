@@ -4,6 +4,7 @@
 // (std/native/llrt/ct.xo and ed25519.xo, decision 0222), and random
 // bytes come from the Rand capability (the operating system's
 // generator).
+use std/base64
 use std/crypto
 use native/llrt/ct
 use native/llrt/digest as dg
@@ -202,4 +203,227 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
   var x = hmac_hasher(h, key)
   x.write(msg)
   x.sum()
+}
+
+// ---------------------------------------------------------------------------
+// PEM (encoding/pem of go1.26, ported with the same results; decision 0285)
+
+fn keyerr_display(e: crypto.KeyErr) -> Str { e.msg }
+
+/// getLine: the line without its `\n` (and a `\r` before it), right
+/// trimmed of spaces and tabs; the rest; the bytes consumed.
+fn pem_line(b: Bytes, at: Int) -> (Bytes, Int, Int) {
+  var i = at
+  while i < b.len() && b[i] != 10 {
+    i += 1
+  }
+  var j = i
+  if i < b.len() {
+    j = i + 1
+    if i > at && b[i - 1] == 13 {
+      i -= 1
+    }
+  }
+  while i > at && (b[i - 1] == 32 || b[i - 1] == 9) {
+    i -= 1
+  }
+  (b[at..i], j, j - at)
+}
+
+fn pem_index(b: Bytes, from: Int, to: Int, p: Bytes) -> Int {
+  var i = from
+  while i + p.len() <= to {
+    var ok = true
+    for k in 0..p.len() {
+      if b[i + k] != p[k] {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+fn pem_last_index(b: Bytes, from: Int, to: Int, p: Bytes) -> Int {
+  var i = to - p.len()
+  while i >= from {
+    var ok = true
+    for k in 0..p.len() {
+      if b[i + k] != p[k] {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return i
+    }
+    i -= 1
+  }
+  -1
+}
+
+fn trim_space_bytes(b: Bytes) -> Bytes {
+  var s = 0
+  var e = b.len()
+  while s < e && (b[s] == 32 || b[s] == 9 || b[s] == 10 || b[s] == 13 || b[s] == 11 || b[s] == 12) {
+    s += 1
+  }
+  while e > s && (b[e - 1] == 32 || b[e - 1] == 9 || b[e - 1] == 10 || b[e - 1] == 13 || b[e - 1] == 11 || b[e - 1] == 12) {
+    e -= 1
+  }
+  b[s..e]
+}
+
+fn lossy_text(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write("${r}")
+    i += n
+  }
+  out.freeze()
+}
+
+/// pem.Decode from offset `at` of data: the block and the offset of the
+/// rest, or None (no more blocks).
+fn pem_decode_one(data: Bytes, at: Int) -> (crypto.PemBlock, Int)? {
+  let start = "\n-----BEGIN ".bytes()
+  let end = "\n-----END ".bytes()
+  let eol = "-----".bytes()
+  var rest = at
+  var end_trailer = 0
+  while {
+    if end_trailer < 0 || end_trailer > data.len() - rest {
+      return None
+    }
+    rest += end_trailer
+    let ei = pem_index(data, rest, data.len(), end)
+    if ei < 0 {
+      return None
+    }
+    var end_index = ei - rest
+    end_trailer = end_index + end.len()
+    let bi0 = pem_last_index(data, rest, rest + end_index, start[1..])
+    if bi0 < 0 || (bi0 > rest && data[bi0 - 1] != 10) {
+      continue
+    }
+    let begin_index = bi0 - rest
+    rest += begin_index + start.len() - 1
+    end_index -= begin_index + start.len() - 1
+    end_trailer -= begin_index + start.len() - 1
+    let (type_line0, next, consumed) = pem_line(data, rest)
+    rest = next
+    end_index -= consumed
+    end_trailer -= consumed
+    if type_line0.len() < eol.len() || type_line0[type_line0.len() - eol.len()..] != eol {
+      continue
+    }
+    let type_line = type_line0[0..type_line0.len() - eol.len()]
+    var headers: Map[Str, Str] = {}
+    var eof = false
+    while {
+      if rest >= data.len() {
+        eof = true
+        break
+      }
+      let (line, nx, c) = pem_line(data, rest)
+      let colon = pem_index(line, 0, line.len(), b":")
+      if colon < 0 {
+        break
+      }
+      headers.put(lossy_text(trim_space_bytes(line[0..colon])), lossy_text(trim_space_bytes(line[colon + 1..])))
+      rest = nx
+      end_index -= c
+      end_trailer -= c
+    }
+    if eof {
+      return None
+    }
+    if !headers.is_empty() && end_index < 0 {
+      continue
+    }
+    if end_trailer < 0 || rest + end_trailer > data.len() {
+      continue
+    }
+    let et = rest + end_trailer
+    let et_len = type_line.len() + eol.len()
+    if data.len() - et < et_len {
+      continue
+    }
+    let trailer = data[et..et + et_len]
+    if trailer[0..type_line.len()] != type_line || trailer[type_line.len()..] != eol {
+      continue
+    }
+    let (after, _, _) = pem_line(data, et + et_len)
+    if !after.is_empty() {
+      continue
+    }
+    var bytes = b""
+    if end_index > 0 {
+      var b64 = BytesBuilder.with_capacity(end_index)
+      for c in data[rest..rest + end_index] {
+        if c != 32 && c != 9 {
+          b64.write_byte(c)
+        }
+      }
+      // the base64 text is ASCII when it decodes; other bytes fail
+      match base64.decode(lossy_text(b64.freeze())) {
+        Ok(b) => bytes = b
+        Err(_) => continue
+      }
+    }
+    let (_, after_end, _) = pem_line(data, rest + end_index + end.len() - 1)
+    return Some((crypto.PemBlock{kind: lossy_text(type_line), headers: headers, bytes: bytes}, after_end))
+  }
+  None
+}
+
+fn pem_decode(text: Str) -> List[crypto.PemBlock] {
+  let data = text.bytes()
+  var out: List[crypto.PemBlock] = []
+  var at = 0
+  while let Some((b, next)) = pem_decode_one(data, at) {
+    out.push(b)
+    at = next
+  }
+  out
+}
+
+fn pem_encode(b: crypto.PemBlock) -> Str ! crypto.KeyErr {
+  for k in b.headers.keys() {
+    if k.contains(":") {
+      return Err(crypto.KeyErr{msg: "pem: cannot encode a header key that contains a colon"})
+    }
+  }
+  var out = StrBuilder.new()
+  out.write("-----BEGIN ${b.kind}-----\n")
+  if !b.headers.is_empty() {
+    if let Some(v) = b.headers.get("Proc-Type") {
+      out.write("Proc-Type: ${v}\n")
+    }
+    for k in b.headers.keys().sort() {
+      if k != "Proc-Type" {
+        out.write("${k}: ${b.headers.get(k) ?? ""}\n")
+      }
+    }
+    out.write("\n")
+  }
+  let enc = base64.encode(b.bytes)
+  var i = 0
+  while i < enc.len() {
+    let j = if i + 64 < enc.len() { i + 64 } else { enc.len() }
+    out.write(enc[i..j])
+    out.write("\n")
+    i = j
+  }
+  out.write("-----END ${b.kind}-----\n")
+  out.freeze()
 }

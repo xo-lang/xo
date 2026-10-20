@@ -3982,3 +3982,79 @@ func (v Multipart_MultipartErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Multipart_MultipartErr) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_PemBlock struct {
+	F_kind    string
+	F_headers Map[string, string]
+	F_bytes   Bytes
+}
+
+func (v Crypto_PemBlock) XoEq(x any) bool {
+	o, ok := x.(Crypto_PemBlock)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_kind, o.F_kind) {
+		return false
+	}
+	if !Eq(v.F_headers, o.F_headers) {
+		return false
+	}
+	if !Eq(v.F_bytes, o.F_bytes) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Crypto_PemBlock) XoHash() uint64 {
+	h := uint64(7199613609368237314)
+	h = MixHash(h, Hash(v.F_kind))
+	h = MixHash(h, Hash(v.F_headers))
+	h = MixHash(h, Hash(v.F_bytes))
+	return h
+}
+
+func (v Crypto_PemBlock) XoDebug(b *strings.Builder) {
+	b.WriteString("PemBlock{")
+	b.WriteString("kind: ")
+	DebugTo(b, v.F_kind)
+	b.WriteString(", headers: ")
+	DebugTo(b, v.F_headers)
+	b.WriteString(", bytes: ")
+	DebugTo(b, v.F_bytes)
+	b.WriteString("}")
+}
+
+func (v Crypto_PemBlock) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_KeyErr struct {
+	F_msg string
+}
+
+func (v Crypto_KeyErr) XoEq(x any) bool {
+	o, ok := x.(Crypto_KeyErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Crypto_KeyErr) XoHash() uint64 {
+	h := uint64(1874208499426846182)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Crypto_KeyErr) XoDebug(b *strings.Builder) {
+	b.WriteString("KeyErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Crypto_KeyErr) M_debug(*Task) string { return Debug(v) }
