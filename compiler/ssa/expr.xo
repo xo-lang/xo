@@ -551,23 +551,36 @@ fn (var b: Builder) test_world_call(e: Expr) -> Bool {
 /// Whether e is a call of native/llrt/prof.supported(): whether the
 /// runtime's profiler is built (Builder.prof, decision 0238's gating).
 fn (var b: Builder) prof_call(e: Expr) -> Bool {
+  b.llrt_flag_call(e, "native/llrt/prof", "supported")
+}
+
+/// Whether e is a call of native/llrt/libcmem.guard_on(): whether the
+/// build guards the runtime's records (Builder.heap_guard).
+fn (var b: Builder) guard_call(e: Expr) -> Bool {
+  b.llrt_flag_call(e, "native/llrt/libcmem", "guard_on")
+}
+
+/// Whether e is a call, with no arguments, of the function name of the
+/// module path (by its name in the module itself, or qualified).
+fn (var b: Builder) llrt_flag_call(e: Expr, path: Str, name: Str) -> Bool {
   let (fun, args) = match e {
     CallExpr(fun: fun, args: args, ..) => (fun, args)
     _ => return false
   }
-  let sel = match fun {
+  if args.len() != 0 {
+    return false
+  }
+  let id = match fun {
+    Ident(id: id) => id
     SelectorExpr(sel: sel, ..) => sel
     _ => return false
   }
-  if sel.name != b"supported" || args.len() != 0 {
-    return false
-  }
-  let r = b.c.ref_of(b.s.file, sel)
+  let r = b.c.ref_of(b.s.file, id)
   if r < 0 || b.c.objs[r].kind != check.ObjKind.Func {
     return false
   }
   let m = b.obj_mod(r)
-  m >= 0 && b.c.mods[m].path == "native/llrt/prof"
+  m >= 0 && b.c.mods[m].path == path && b.obj_name(r) == name
 }
 
 /// The value of e when it is a call of the runtime's OS layer number,
@@ -680,6 +693,9 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
   }
   if b.prof_call(e) {
     return Some(b.prof)
+  }
+  if b.guard_call(e) {
+    return Some(b.heap_guard)
   }
   if b.recorder_call(e) {
     // the execution trace's recorder: in a development build, and in a

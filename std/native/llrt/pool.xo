@@ -1998,3 +1998,71 @@ pub fn defer_off(p: Int) {
 pub fn alive(p: Int) -> Int { rt.slot_load(p, P_ALIVE, SEQ_CST) }
 
 pub fn cpus(p: Int) -> Int { rt.mem_load(p, P_NCPU, 8) }
+
+/// XO_HEAP_GUARD=1 (libcmem.xo guard_large): a read and write mapping of
+/// size bytes (a multiple of GUARD_PAGE) whose last GUARD_PAGE bytes are
+/// inaccessible, so an access past a block placed against them faults;
+/// its address, or 0. Under ThreadSanitizer, 0 (the C library's mappings
+/// only, as map_stack).
+pub fn guard_map(size: Int) -> Int {
+  let top = size.wrapping_sub(GUARD_PAGE)
+  match layer() {
+    1 => {
+      if sanhook.tsan() {
+        return 0
+      }
+      // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+      let m = linux.mmap(0, size, 3, 34, -1, 0)
+      if m < 0 && m > -4096 {
+        return 0
+      }
+      let _r = linux.mprotect(m.wrapping_add(top), GUARD_PAGE, 0)
+      m
+    }
+    2 => {
+      // MAP_PRIVATE | MAP_ANON
+      let m = sys_darwin.mmap(0, size, 3, 4098, -1, 0)
+      if m == -1 {
+        return 0
+      }
+      let _r = sys_darwin.mprotect(m.wrapping_add(top), GUARD_PAGE, 0)
+      m
+    }
+    3 => {
+      // MEM_RESERVE of it all, MEM_COMMIT (PAGE_READWRITE) of all but the
+      // last GUARD_PAGE bytes: a reserved page faults on any access
+      let m = sys_windows.VirtualAlloc(0, size, 8192, 4)
+      if m == 0 {
+        return 0
+      }
+      if sys_windows.VirtualAlloc(m, top, 4096, 4) == 0 {
+        let _f = sys_windows.VirtualFree(m, 0, 32768)
+        return 0
+      }
+      m
+    }
+    _ => 0
+  }
+}
+
+/// Unmaps a guard_map mapping of size bytes.
+pub fn guard_unmap(m: Int, size: Int) {
+  match layer() {
+    1 => {
+      let _r = linux.munmap(m, size)
+    }
+    2 => {
+      let _r = sys_darwin.munmap(m, size)
+    }
+    3 => {
+      // MEM_RELEASE
+      let _r = sys_windows.VirtualFree(m, 0, 32768)
+    }
+    _ => {}
+  }
+}
+
+/// The guard of guard_map and its granularity: 64 KiB, a multiple of
+/// every target's page (4 KiB, 16 KiB on darwin/arm64, 64 KiB on some
+/// Linux arm64 kernels) and Windows' allocation granularity.
+pub const GUARD_PAGE = 65536

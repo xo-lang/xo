@@ -245,6 +245,11 @@ pub struct Builder {
   /// recorder (decision 0240; the owner's rule, decision 0238's
   /// addendum): tracerec.built() is true unless release and not this.
   pub trace_support: Bool = false
+  /// XO_HEAP_GUARD=1 at build time: a call of native/llrt/guard.on is
+  /// true (target_test), so the runtime's records get a guard page after
+  /// them (llrt libcmem.xo heap_large), and an rt.slot_* on a List checks
+  /// its index against the length (json.xo slot_bounds).
+  pub heap_guard: Bool = false
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false
@@ -352,13 +357,19 @@ pub fn build_program_support(c: check.Checker, line_root: Str, tests: Bool, rele
 
 /// build_program_support with soft_cpu (Builder.soft_cpu).
 pub fn build_program_cpu(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool) -> Builder uses fs.read {
-  build_program_fe(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, FeCache{})
+  build_program_guard(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, false)
 }
 
-/// build_program_cpu through the front end cache fe (fecache.xo).
-pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, fe: FeCache) -> Builder uses fs.read {
+/// build_program_cpu with heap_guard (Builder.heap_guard).
+pub fn build_program_guard(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool) -> Builder uses fs.read {
+  build_program_fe(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, FeCache{})
+}
+
+/// build_program_guard through the front end cache fe (fecache.xo).
+pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache) -> Builder uses fs.read {
   var b = new_builder(c, line_root)
   b.fe = fe
+  b.heap_guard = heap_guard
   b.soft_cpu = soft_cpu
   b.prof = prof
   b.trace_support = trace_support
@@ -382,6 +393,7 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
     b.prof = prof
     b.trace_support = trace_support
     b.soft_cpu = soft_cpu
+    b.heap_guard = heap_guard
     b.conc = true
     // the first build's entries and counts carry over (its stores were
     // made without unwinding checks: their flags differ)
@@ -389,6 +401,7 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
     b.build()
   }
   b.m.goarch = goarch
+  b.m.heap_guard = heap_guard
   b
 }
 

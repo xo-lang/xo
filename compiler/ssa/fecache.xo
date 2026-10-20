@@ -69,9 +69,9 @@ pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
   keys
 }
 
-/// The builder's flags in a key, for build_program_cpu's arguments.
-pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool) -> Str {
-  "root=${line_root} tests=${tests} release=${release} real=${real_tests} os=${goos} arch=${goarch} wasm=${wasm} nolibc=${nolibc} prof=${prof} trace=${trace_support} soft=${soft_cpu}"
+/// The builder's flags in a key, for build_program_guard's arguments.
+pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool) -> Str {
+  "root=${line_root} tests=${tests} release=${release} real=${real_tests} os=${goos} arch=${goarch} wasm=${wasm} nolibc=${nolibc} prof=${prof} trace=${trace_support} soft=${soft_cpu} guard=${heap_guard}"
 }
 
 /// The flags the builder sets itself, compared with an entry's.

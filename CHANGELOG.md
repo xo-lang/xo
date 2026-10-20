@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- XO_HEAP_GUARD=1 when building: the runtime's records end against an
+  inaccessible page, so an overrun faults where it happens, and an
+  rt.slot_* on a List checks its index (the class of the SV_ROOTS
+  crash).
 - The native backend is the default on every host: amd64 on x86-64
   hosts (macOS, Linux, Windows) as arm64 on arm64 ones, chosen by the
   targets' architecture, so a default build needs no clang (decision

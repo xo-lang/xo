@@ -405,10 +405,66 @@ fn free_tc(p: Int) {
   }
 }
 
+/// Whether the build guards the runtime's records (XO_HEAP_GUARD=1 when
+/// building): false here, and the SSA builders fold a call of it to the
+/// build's answer (compiler/ssa expr.xo guard_call), so a build without
+/// it keeps none of guard_large's code.
+pub fn guard_on() -> Bool { false }
+
+/// The word before a guarded block's prefix (where malloc_tc keeps a
+/// block's class): no class or size has it.
+const GUARD_MAGIC = 0x4755415244424c4b
+
+/// XO_HEAP_GUARD=1's rt.heap_large: the block of n bytes ends against an
+/// inaccessible page (pool.xo guard_map), so a read or write past it
+/// faults at once (gotchas/svc-roots-slot-index.md: a slot index taken
+/// for a byte offset wrote 2 KiB past a 296 byte record, seen only on
+/// Windows). Below the prefix: GUARD_MAGIC, then the mapping's address;
+/// the mapping's first word is its size. n rounds up to 8 bytes, so an
+/// overrun of under 8 bytes past an odd n goes unseen. 0 when no mapping
+/// is made (out of address space, ThreadSanitizer): heap_large's block.
+fn guard_large(n: Int) -> Int {
+  let n8 = addw(n, 7) & subw(0, 8)
+  var size = addw(addw(n8, 32), pool.GUARD_PAGE - 1) & subw(0, pool.GUARD_PAGE)
+  size = addw(size, pool.GUARD_PAGE)
+  let m = pool.guard_map(size)
+  if m == 0 {
+    return 0
+  }
+  let end = addw(m, subw(size, pool.GUARD_PAGE))
+  let b = subw(subw(end, n8), 8)
+  rt.mem_store(m, 0, size, 8)
+  rt.mem_store(subw(b, 16), 0, GUARD_MAGIC, 8)
+  rt.mem_store(subw(b, 8), 0, m, 8)
+  rt.mem_store(b, 0, subw(0, n), 8)
+  addw(b, 8)
+}
+
+/// Whether the block whose prefix is at b is guard_large's (in a build
+/// that guards; its callers test guard_on first, which folds only as an
+/// if's condition, compiler/ssa target_test, so a build that does not
+/// guard keeps none of this).
+fn guarded(b: Int) -> Bool {
+  rt.mem_load(subw(b, 16), 0, 8) == GUARD_MAGIC
+}
+
+/// Unmaps guard_large's block whose prefix is at b.
+fn guard_release(b: Int) {
+  let m = rt.mem_load(subw(b, 8), 0, 8)
+  rt.mem_store(subw(b, 16), 0, 0, 8)
+  pool.guard_unmap(m, rt.mem_load(m, 0, 8))
+}
+
 /// rt.heap_large: a block of n bytes for the runtime's records, its
 /// 8 byte prefix minus n (the address after the prefix); the program
 /// ends when memory is out (was xo_rt.c's xo_heap_large over malloc).
 pub fn heap_large(n: Int) -> Int {
+  if guard_on() {
+    let g = guard_large(n)
+    if g != 0 {
+      return g
+    }
+  }
   let b = malloc_tc(addw(n, 8))
   if b == 0 {
     heapos.oom()
@@ -420,6 +476,15 @@ pub fn heap_large(n: Int) -> Int {
 /// rt.heap_large_resize: the block whose prefix is at b made n bytes
 /// (its first bytes kept), the address after its prefix.
 pub fn heap_large_resize(b: Int, n: Int) -> Int {
+  if guard_on() {
+    if guarded(b) {
+      let old = subw(0, rt.mem_load(b, 0, 8))
+      let nb = heap_large(n)
+      rt.mem_copy(nb, addw(b, 8), if old < n { old } else { n })
+      guard_release(b)
+      return nb
+    }
+  }
   let c = rt.mem_load(subw(b, 16), 0, 8)
   let have = if c < 0 { subw(subw(0, c), 16) } else { subw((1).wrapping_shl(c), 16) }
   var nb = b
@@ -438,7 +503,15 @@ pub fn heap_large_resize(b: Int, n: Int) -> Int {
 }
 
 /// rt.heap_release: gives back the block whose prefix is at b.
-pub fn heap_release(b: Int) { free_tc(b) }
+pub fn heap_release(b: Int) {
+  if guard_on() {
+    if guarded(b) {
+      guard_release(b)
+      return
+    }
+  }
+  free_tc(b)
+}
 
 /// getauxval(k): the value of k in the auxiliary vector _start found
 /// (libcio.xo start), or 0. No thread local is touched: the main

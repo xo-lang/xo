@@ -70,6 +70,9 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     for i in 1..ps.len() {
       vs.push(b.value_as(es[i] ?? fault("arg"), b.typ(ps[i].ty)))
     }
+    if b.heap_guard && b.m.types[b.vty(vs[0])].kind == Kind.List {
+      b.slot_bounds(x, name, vs[0], vs[1])
+    }
     return b.rt(name, nt, vs)
   }
   if name is "launder1" | "launder2" {
@@ -121,6 +124,27 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
   }
   b.unsupported("the intrinsic `${name}`")
   b.undef(nt)
+}
+
+/// XO_HEAP_GUARD=1 (Builder.heap_guard): a fault unless 0 <= i <
+/// l.len(), before rt.<name> on slot i of the List l (rt.xo's slot_*
+/// leave it unchecked; gotchas/svc-roots-slot-index.md).
+fn (var b: Builder) slot_bounds(x: Expr, name: Str, l: Int, i: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let st = b.str_t()
+  let n = b.call("list.len", it, "", [l])
+  let c1 = b.add(Op.Lt, bt, Aux.None, [i, b.cint(0)])
+  let c2 = b.add(Op.Ge, bt, Aux.None, [i, n])
+  let bad = b.add(Op.Or, bt, Aux.None, [c1, c2])
+  let (no, join) = b.if_then_begin(bad)
+  var msg = b.call("str.concat_int", st, "", [b.const_str("rt.${name}: slot "), i])
+  msg = b.call("str.concat", st, "", [msg, b.const_str(" out of range for List of length ")])
+  msg = b.call("str.concat_int", st, "", [msg, n])
+  let (span, _, _) = call_parts(x)
+  b.fault(msg, b.pos_line(span))
+  b.dead()
+  b.if_then_end(no, join)
 }
 
 // ---------------------------------------------------------------------------

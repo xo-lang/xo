@@ -1102,7 +1102,9 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   let prof = !release || o.profile_support || !o.profile.is_empty()
   // the amd64 backend lowers only cpu.xo's carry arithmetic yet
   let soft_cpu = o.backend == "amd64"
-  var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support, soft_cpu, o.phases)
+  // the runtime's overrun check (XO_HEAP_GUARD=1, ssa Builder.heap_guard)
+  let heap_guard = !wasm && (os.env.get("XO_HEAP_GUARD") ?? "") == "1"
+  var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support, soft_cpu, heap_guard, o.phases)
   b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)

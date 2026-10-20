@@ -1,0 +1,56 @@
+// Tests of libcmem.xo: `xo test --std-module=native/llrt/libcmem`, run by
+// internal/stdtest; built with XO_HEAP_GUARD=1 by internal/arm64
+// TestHeapGuard, where the overrun test must fault.
+
+use native/llrt/pool
+use native/rt
+
+test "a runtime record keeps its words through a resize and is released" {
+  let b = heap_large(296)
+  var i = 0
+  while i < 37 {
+    rt.mem_store(b, i * 8, i + 1, 8)
+    i += 1
+  }
+  let c = heap_large_resize(b - 8, 600)
+  i = 0
+  var bad = 0
+  while i < 37 {
+    if rt.mem_load(c, i * 8, 8) != i + 1 {
+      bad += 1
+    }
+    i += 1
+  }
+  expect(bad) == 0
+  rt.mem_store(c, 592, 7, 8)
+  expect(rt.mem_load(c, 592, 8)) == 7
+  heap_release(c - 8)
+}
+
+test "a guarded record ends against its guard" {
+  if guard_on() {
+    let b = heap_large(296)
+    // the mapping's address below the prefix, its size its first word
+    let m = rt.mem_load(b - 16, 0, 8)
+    expect(b + 296) == m + rt.mem_load(m, 0, 8) - pool.GUARD_PAGE
+    expect(guarded(b - 8)) == true
+    heap_release(b - 8)
+  }
+}
+
+test "an overrun of a guarded block faults" {
+  // SV_ROOTS's error (gotchas/svc-roots-slot-index.md): word 288 of a
+  // 296 byte block, byte 2304
+  if guard_on() {
+    let b = heap_large(296)
+    let _v = rt.slot_load(b, 288, 0)
+    heap_release(b - 8)
+  }
+}
+
+test "an rt.slot_* past a List's length faults" {
+  if guard_on() {
+    let xs: List[Int] = [0, 0, 0, 0]
+    let _v = rt.slot_add(xs, 4, 1, 0)
+  }
+}

@@ -34,3 +34,22 @@ offsets are bytes, give the slot index its own constant
 record's constants against the record's size. Found from the fault
 offset of the Application Error events (windiag.ps1), mapped with the
 programs' COFF symbol table.
+
+## Catching the class (2026-10-19)
+
+Build with XO_HEAP_GUARD=1 (decided with the lead after this bug): every
+runtime record (rt.heap_large) is mapped to end against an inaccessible
+64 KiB page, so a read or write past its end faults at that access on
+every OS and native backend, and an rt.slot_* on a List faults when its
+index is outside the length ("rt.slot_add: slot 4 out of range for List
+of length 4"). An rt.slot_* on an address is not checked by index: its
+size is not known there, and the guard page catches it instead. Tests:
+std/native/llrt/libcmem_test.xo (an overrun at word 288 of a 296 byte
+record faults), internal/arm64 TestHeapGuard and TestGoldenRunHeapGuard
+(every golden with XO_SELFHOST_TIER=full).
+
+Not covered: an underrun (a write before a record's start), and an
+overrun of under 8 bytes past a record whose size is not a multiple of
+8. A second mode could place each record at the start of its mapping
+behind a guard page instead (the Electric Fence trade: underruns caught,
+overruns not); not built.
