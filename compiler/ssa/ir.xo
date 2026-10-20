@@ -330,9 +330,17 @@ pub struct Module {
   pub func_at: Map[Str, Int] = {}
   pub types: List[SType] = []
   pub type_at: Map[Str, Int] = {}
-  /// The names of the types and functions so far, hashed in order (the
-  /// front end cache's state fingerprint, fecache.xo).
+  /// The names of the types and functions so far, hashed in order.
   pub fe_h: Int = 0
+  /// The front end cache's recording of a body (fecache.xo), while on:
+  /// the types and functions it found by name (their indices: fe_treads,
+  /// fe_freads), and what it made, in order (fe_ev: 1 a type, its index;
+  /// 2 an order entry, its type; 3 a function, its index). A declare
+  /// pauses it: the commit replays a declare whole.
+  pub fe_log: Bool = false
+  pub fe_treads: Map[Int, Bool] = {}
+  pub fe_freads: Map[Int, Bool] = {}
+  pub fe_ev: List[(Int, Int)] = []
   /// Named struct and enum types in creation order.
   pub order: List[Int] = []
   /// The build's target architecture (Builder.goarch), "" for the
@@ -449,6 +457,7 @@ fn kind_name(k: Kind) -> Str {
 pub fn (var m: Module) builtin(k: Kind) -> Int {
   let name = kind_name(k)
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: k, name: name})
@@ -459,11 +468,22 @@ fn (var m: Module) intern(t: SType) -> Int {
   m.type_at[t.name] = i
   m.fe_h = fe_mix(m.fe_h, t.name)
   m.types.push(t)
+  if m.fe_log {
+    m.fe_ev.push((1, i))
+  }
   i
+}
+
+/// Type t found by name, while a body records (Module.fe_log).
+fn (var m: Module) fe_seen(t: Int) {
+  if m.fe_log {
+    m.fe_treads[t] = true
+  }
 }
 
 pub fn (var m: Module) float32() -> Int {
   if let Some(t) = m.type_at.get("Float32") {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.Float, name: "Float32", bits: 32})
@@ -472,6 +492,7 @@ pub fn (var m: Module) float32() -> Int {
 /// The sized integer type named name (Int8 to UInt64, or Rune), or -1.
 pub fn (var m: Module) int_type(name: Str) -> Int {
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   let (bits, unsigned) = match name {
@@ -499,6 +520,7 @@ pub fn (var m: Module) tuple(elems: List[Int]) -> Int {
   }
   let name = "(${names.join(", ")})"
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.Tuple, name: name, elems: elems})
@@ -507,6 +529,7 @@ pub fn (var m: Module) tuple(elems: List[Int]) -> Int {
 pub fn (var m: Module) list(elem: Int) -> Int {
   let name = "List[${m.types[elem].name}]"
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.List, name: name, elems: [elem]})
@@ -515,6 +538,7 @@ pub fn (var m: Module) list(elem: Int) -> Int {
 pub fn (var m: Module) box_of(elem: Int) -> Int {
   let name = "Box[${m.types[elem].name}]"
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.Box, name: name, elems: [elem]})
@@ -522,6 +546,7 @@ pub fn (var m: Module) box_of(elem: Int) -> Int {
 
 pub fn (var m: Module) handle(name: Str, elems: List[Int]) -> Int {
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.Handle, name: name, elems: elems})
@@ -534,6 +559,7 @@ pub fn (var m: Module) func_type(params: List[Int], ret: Int) -> Int {
   }
   let name = "fn(${names.join(", ")}) -> ${m.types[ret].name}"
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return t
   }
   m.intern(SType{kind: Kind.Func, name: name, elems: params, ret: ret})
@@ -543,11 +569,15 @@ pub fn (var m: Module) func_type(params: List[Int], ret: Int) -> Int {
 /// is new; the second result reports that.
 pub fn (var m: Module) named(name: Str, k: Kind) -> (Int, Bool) {
   if let Some(t) = m.type_at.get(name) {
+    m.fe_seen(t)
     return (t, false)
   }
   let t = m.intern(SType{kind: k, name: name})
   if k is Kind.Struct | Kind.Enum {
     m.order.push(t)
+    if m.fe_log {
+      m.fe_ev.push((2, t))
+    }
   }
   (t, true)
 }
@@ -638,6 +668,9 @@ pub fn (var m: Module) new_func(name: Str, params: List[Int], results: List[Int]
   let i = m.funcs.len()
   m.funcs.push(f)
   m.fe_h = fe_mix(m.fe_h, name)
+  if m.fe_log {
+    m.fe_ev.push((3, i))
+  }
   if !m.func_at.contains(name) {
     m.func_at[name] = i
   }

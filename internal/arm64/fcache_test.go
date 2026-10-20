@@ -201,7 +201,10 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 // a struct's field, of a callee's signature, or of a constant's value
 // misses the bodies that use them, and the binary is the same file as a
 // build with XO_BACKEND_CACHE=off after each edit; an edit inside one
-// body leaves the others read from the cache.
+// body leaves the others read from the cache, also when the edited body
+// is early in the build and makes a type no other body has (an entry
+// holds no state of the builder, decision 0271: before, every later body
+// missed).
 func TestFrontCacheInterfaceEdits(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
@@ -220,9 +223,9 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	type variant struct {
-		name, field, sig, call, konst, body string
+		name, field, sig, call, konst, body, g0 string
 	}
-	base := variant{"first", "", "x: Int", "callee(n)", "3", "n * 2"}
+	base := variant{"first", "", "x: Int", "callee(n)", "3", "n * 2", ""}
 	gen := func(v variant) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "struct P {\n  a: Int\n%s}\n\nconst K = %s\n\n", v.field, v.konst)
@@ -238,6 +241,10 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		// a contract wraps its body (Job.Inner): never replayed
 		b.WriteString("fn checked(n: Int) -> Int\n  requires n > 0\n  ensures result > n\n{\n  n + 1\n}\n\n")
 		for i := 0; i < 40; i++ {
+			if i == 0 && v.g0 != "" {
+				fmt.Fprintf(&b, "fn g0(x: Int) -> Int {\n  %s\n}\n\n", v.g0)
+				continue
+			}
 			fmt.Fprintf(&b, "fn g%d(x: Int) -> Int {\n  x + %d\n}\n\n", i, i)
 		}
 		b.WriteString("fn main(os: Os) {\n  var s = 0\n")
@@ -278,11 +285,15 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		want string
 	}{
 		{base, ""},
-		{variant{"again", "", "x: Int", "callee(n)", "3", "n * 2"}, "all"},
-		{variant{"body", "", "x: Int", "callee(n)", "3", "n * 3"}, "some"},
-		{variant{"field", "  b: Int = 0\n", "x: Int", "callee(n)", "3", "n * 3"}, "std"},
-		{variant{"signature", "  b: Int = 0\n", "x: Int, y: Int", "callee(n, 1)", "3", "n * 3"}, "std"},
-		{variant{"const", "  b: Int = 0\n", "x: Int, y: Int", "callee(n, 1)", "4", "n * 3"}, "std"},
+		{variant{"again", "", "x: Int", "callee(n)", "3", "n * 2", ""}, "all"},
+		{variant{"body", "", "x: Int", "callee(n)", "3", "n * 3", ""}, "some"},
+		// the first body built after main makes a tuple type no other
+		// body has (one line, so no other body moves): the bodies built
+		// after it still hit
+		{variant{"newtype", "", "x: Int", "callee(n)", "3", "n * 3", "(x, true, \"g\").0"}, "some"},
+		{variant{"field", "  b: Int = 0\n", "x: Int", "callee(n)", "3", "n * 3", ""}, "std"},
+		{variant{"signature", "  b: Int = 0\n", "x: Int, y: Int", "callee(n, 1)", "3", "n * 3", ""}, "std"},
+		{variant{"const", "  b: Int = 0\n", "x: Int, y: Int", "callee(n, 1)", "4", "n * 3", ""}, "std"},
 	}
 	var full int
 	for _, s := range steps {

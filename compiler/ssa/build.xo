@@ -279,9 +279,12 @@ pub struct Builder {
   /// module check cache.
   pub mod_scans: Map[Int, (Bool, Bool)] = {}
   fe_rec: Bool = false
-  /// per function a recorded body's declares made: the function object
-  /// (-2 for a second function of the same declare)
-  fe_made: Map[Int, Int] = {}
+  /// A recording's top level declares (the function objects, in order of
+  /// Module.fe_ev, as event 4), its generic instances found (the key and
+  /// the name the body calls it by), and the first table it read that a
+  /// commit cannot replay (a skip reason, "" for none).
+  fe_greads: List[(Str, Str)] = []
+  fe_touched: Str = ""
 }
 
 /// logFrom: the attribution of the record the std/log function fo writes
@@ -1058,6 +1061,7 @@ fn (var b: Builder) named_type(t: Int) -> Int {
 fn (var b: Builder) poison(text: Str) -> Int {
   let name = "<unsupported: ${text}>"
   if let Some(t) = b.m.type_at.get(name) {
+    b.fe_touch("poison")
     return t
   }
   let i = b.m.types.len()
@@ -1487,16 +1491,35 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
 /// The SSA function of fo instantiated with targs (checker types of its
 /// type parameters), declared and queued on first use (declare).
 fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
-  if !b.fe_rec || !targs.is_empty() {
+  if !b.m.fe_log {
     return b.declare0(fo, targs)
   }
-  // a recording (fecache.xo): the functions this declare makes
-  let n0 = b.m.funcs.len()
-  let f = b.declare0(fo, targs)
-  for i in n0..b.m.funcs.len() {
-    b.fe_made[i] = if i == n0 { fo } else { -2 }
+  // a recording (fecache.xo): the commit replays a declare whole, so
+  // what it makes and finds is its own, not the body's
+  if targs.is_empty() {
+    b.m.fe_ev.push((4, fo))
   }
+  b.m.fe_log = false
+  let f = b.declare0(fo, targs)
+  b.m.fe_log = true
   f
+}
+
+/// m.func_index, noted while a body records (Module.fe_freads).
+fn (var b: Builder) fidx(name: Str) -> Int {
+  let i = b.m.func_index(name)
+  if i >= 0 && b.m.fe_log {
+    b.m.fe_freads[i] = true
+  }
+  i
+}
+
+/// A recorded body read a table a commit does not replay (fecache.xo):
+/// it is not cached, what names the reason (XO_FE_STATS).
+fn (var b: Builder) fe_touch(what: Str) {
+  if b.m.fe_log && b.fe_touched.is_empty() {
+    b.fe_touched = what
+  }
 }
 
 fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
@@ -1543,13 +1566,16 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
     if let Some(f) = b.funcs.get(key) {
       b.declaring = was
       b.pend_skip = pend
+      if b.fe_rec && !was {
+        // a recording found it: the commit finds it by the key
+        b.fe_greads.push((key, b.m.funcs[f].name))
+      }
       return f
     }
-    // a new instance: not replayed (fecache.xo); one made before is in
-    // the state a replay matches
+    // a new instance: not replayed (fecache.xo)
     b.fe_gen = true
     var n = 2
-    while b.m.func_index(name) >= 0 {
+    while b.fidx(name) >= 0 {
       let base = name.split("#")[0]
       name = "${base}#${n}"
       n += 1
@@ -2700,7 +2726,7 @@ fn (var b: Builder) zeroable(t: Int, seen: List[Int]) -> Bool {
 /// The function of the zero value of function type t (zeroFunc).
 fn (var b: Builder) zero_func(t: Int) -> Str {
   let name = "zero.${b.m.types[t].name}"
-  if b.m.func_index(name) >= 0 {
+  if b.fidx(name) >= 0 {
     return name
   }
   var ps = [t]
@@ -2780,11 +2806,11 @@ fn (var b: Builder) gen_func(name0: Str, params: List[Int], results: List[Int], 
 /// captures) ts, and whether it exists already: a helper of other types
 /// takes name0 with `#2`, `#3`, ... (helperName: helper names hold
 /// checker type names, which do not name the module).
-fn (b: Builder) helper_name(name0: Str, ts: List[Int], captures: Bool) -> (Str, Bool) {
+fn (var b: Builder) helper_name(name0: Str, ts: List[Int], captures: Bool) -> (Str, Bool) {
   var name = name0
   var i = 2
   while true {
-    let fi = b.m.func_index(name)
+    let fi = b.fidx(name)
     if fi < 0 {
       return (name, false)
     }

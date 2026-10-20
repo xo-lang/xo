@@ -44,7 +44,7 @@ fn (var b: Builder) hash_mix(h: Int, x: Int) -> Int {
 fn (var b: Builder) hash_func(t: Int) -> Str {
   let it = b.int_t()
   let name = "xo.hash[${b.m.types[t].name}]"
-  if b.m.func_index(name) >= 0 {
+  if b.fidx(name) >= 0 {
     return name
   }
   if b.tkind(t) is Kind.Float | Kind.Func | Kind.Handle | Kind.Cap {
@@ -505,7 +505,7 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   let _find = b.map_find(t)
   let rt = b.m.tuple([t, ot])
   var name = "xo.map.remove[${b.m.types[t].name}]"
-  let have = b.m.func_index(name)
+  let have = b.fidx(name)
   if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
     // Map[K, Bytes] lowers to the Map[K, Str] of Str values, but its
     // removed value is a Bytes?: one function per result type
@@ -1202,7 +1202,7 @@ fn inlineable_expr(e: Expr) -> Bool {
 /// with the list of a constant.
 fn (var b: Builder) drop_list(t: Int) -> Str {
   let name = "xo.droplist[${b.m.types[t].name}]"
-  if b.m.func_index(name) >= 0 {
+  if b.fidx(name) >= 0 {
     return name
   }
   let unit = b.unit_t()

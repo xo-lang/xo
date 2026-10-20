@@ -11,17 +11,18 @@
 // file, position, and declaration text. The flags only the builder knows
 // (concurrency, budgets) are in the entry and compared.
 //
-// A body is replayed only into the state it was recorded in: the entry
-// holds the fingerprint of the builder's state before the body (the
-// names of the types and functions so far, the sizes of its tables), so
-// the types and functions the replay adds get the indices a build would
-// give them. Bodies that touch other state (generic instances, closures,
-// constants, thunks) are not cached.
+// An entry holds no index and no state of the builder (decision 0271):
+// what the body found that was there before it, and what it made in
+// order, by name; the commit (fe_replay) checks the first and replays
+// the second, so the types and functions it adds get the indices a
+// serial build at this point gives them. Bodies that make or read other
+// state (new generic instances, closures, constants, thunks, type ids,
+// spawn sites) are not cached yet.
 
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v1"
+const FE_CACHE_VERSION = "xo front cache v2"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -88,13 +89,6 @@ fn fe_mix(h: Int, s: Str) -> Int {
   (x ^ 10).wrapping_mul(1099511628211)
 }
 
-/// The fingerprint of the builder's state a body's replay needs: the
-/// names of the types and functions so far (Module.fe_h) and the sizes
-/// of the tables the builder reads.
-fn (b: Builder) fe_state() -> Str {
-  "${b.m.fe_h} ${b.m.types.len()} ${b.m.funcs.len()} ${b.m.order.len()} ${b.queue.len()} ${b.gens.len()} ${b.funcs.len()} ${b.plain.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.decl_mods.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.need_conc} ${b.uses_net} ${b.skipped_any}"
-}
-
 /// What a body may change and an entry not replay: when any differs
 /// after the body, it is not cached.
 fn (b: Builder) fe_fixed() -> Str {
@@ -113,13 +107,11 @@ fn txt(x: Bytes) -> Str {
   x.to_str() ?? ""
 }
 
-/// The recording of one body: the state before it.
+/// The recording of one body: the module before it.
 struct FeRec {
-  state: Str
   fixed: Str
   nt: Int
   nf: Int
-  no: Int
   nq: Int
   nc: Int
   nvar: Int
@@ -128,18 +120,42 @@ struct FeRec {
 
 fn (var b: Builder) fe_begin() -> FeRec {
   b.fe_rec = true
-  b.fe_made = {}
   b.fe_gen = false
-  FeRec{state: b.fe_state(), fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), no: b.m.order.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
+  b.fe_greads = []
+  b.fe_touched = ""
+  b.m.fe_log = true
+  b.m.fe_treads = {}
+  b.m.fe_freads = {}
+  b.m.fe_ev = []
+  FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
+}
+
+/// The name of type t in an entry ("" for none); a type its name does
+/// not find (a second type of one name) keeps the body out.
+fn (var b: Builder) fe_tname(t: Int) -> Str {
+  if t < 0 {
+    return ""
+  }
+  let n = b.m.types[t].name
+  if (b.m.type_at.get(n) ?? -1) != t {
+    b.fe_touched = "shadowed"
+  }
+  n
 }
 
 /// The entry of the body just built into fi, none when it may not be
-/// cached.
+/// cached. It holds what the body found that was there before it (the
+/// commit's checks), what it made in order (types, order entries, whole
+/// functions, declares; the commit's replay), all by name, then the
+/// body: no index and no state of the builder (decision 0271).
 fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   b.fe_rec = false
-  if b.fe_gen || b.fe_fixed() != r.fixed || !b.m.funcs[fi].skip.is_empty() {
+  b.m.fe_log = false
+  if b.fe_gen || b.fe_fixed() != r.fixed || !b.m.funcs[fi].skip.is_empty() || !b.fe_touched.is_empty() {
     if b.fe_gen {
       b.fe_skip("gen")
+    } else if !b.fe_touched.is_empty() {
+      b.fe_skip("read.${b.fe_touched}")
     } else if b.fe_fixed() != r.fixed {
       // which side table the body changed (XO_FE_STATS)
       let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nclos", "nsyn", "need_conc", "uses_net", "skipped_any", "errs", "seen_err"]
@@ -166,30 +182,68 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       }
     }
   }
+  // the unwinding checks of the body itself
+  for c in b.checks[r.nc..b.checks.len()] {
+    if c.fi != fi {
+      b.fe_skip("checks")
+      return None
+    }
+  }
   let fbo = encode_func(b.m, b.m.funcs[fi])
   if fbo == None {
     return None
   }
-  let fb = fbo ?? b""
   var e = EntryW{b: BytesBuilder.new()}
   e.str(FE_CACHE_VERSION)
   e.str(b.fe_own_flags())
-  e.str(r.state)
-  e.uv(fi)
-  e.uv(r.nt)
-  e.uv(r.nf)
-  e.uv(r.nq)
-  // the types the body (and its declares) interned, in order
-  e.uv(b.m.types.len() - r.nt)
-  for t in r.nt..b.m.types.len() {
+  // what it found that was there before it
+  var reads: List[Str] = []
+  for (t, _) in b.m.fe_treads {
+    if t < r.nt {
+      reads.push("t ${b.m.types[t].name}")
+    }
+  }
+  for (i, _) in b.m.fe_freads {
+    if i < r.nf {
+      reads.push("f ${b.m.funcs[i].name}")
+    }
+  }
+  e.uv(reads.len())
+  for k in reads.sort() {
+    e.str(k)
+  }
+  e.uv(b.fe_greads.len())
+  for (k, n) in b.fe_greads {
+    e.str(k)
+    e.str(n)
+  }
+  // what it made, in order
+  e.uv(b.m.fe_ev.len())
+  var made_t: List[Int] = []
+  var made_f: List[Int] = []
+  for (k, x) in b.m.fe_ev {
+    e.uv(k)
+    if k == 1 {
+      let t = b.m.types[x]
+      e.str(kind_text(t.kind))
+      e.str(b.fe_tname(x))
+      made_t.push(x)
+    } else if k == 2 {
+      e.str(b.fe_tname(x))
+    } else if k == 3 {
+      e.str(b.m.funcs[x].name)
+      made_f.push(x)
+    } else {
+      e.str(b.fe_ident(x))
+    }
+  }
+  // the structure of the types made, by name
+  for t in made_t {
     let x = b.m.types[t]
-    e.str(kind_text(x.kind))
-    e.str(x.name)
-    e.bool((b.m.type_at.get(x.name) ?? -1) == t)
     e.uv(x.fields.len())
     for f in x.fields {
       e.str(f.name)
-      e.sv(f.ty)
+      e.str(b.fe_tname(f.ty))
     }
     e.uv(x.variants.len())
     for v in x.variants {
@@ -197,46 +251,29 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       e.uv(v.fields.len())
       for f in v.fields {
         e.str(f.name)
-        e.sv(f.ty)
+        e.str(b.fe_tname(f.ty))
       }
     }
-    e.ints(x.elems)
-    e.sv(x.ret)
+    e.uv(x.elems.len())
+    for el in x.elems {
+      e.str(b.fe_tname(el))
+    }
+    e.str(b.fe_tname(x.ret))
     e.bool(x.coll)
     e.sv(x.bits)
     e.bool(x.unsigned)
   }
-  e.ints(b.m.order[r.no..b.m.order.len()])
-  // the functions made, in order: a declare's (by the object, its
-  // further functions replayed by it) or one made whole (a helper such
-  // as xo.hash[T], encoded)
-  e.uv(b.m.funcs.len() - r.nf)
-  for i in r.nf..b.m.funcs.len() {
-    match b.fe_made.get(i) {
-      Some(fo) => {
-        if fo == -2 {
-          e.uv(2)
-        } else {
-          e.uv(1)
-          e.str(b.fe_ident(fo))
-        }
-      }
-      None => {
-        let hb = encode_func(b.m, b.m.funcs[i])
-        if hb == None {
-          return None
-        }
-        e.uv(3)
-        e.bool(b.m.funcs[i].target)
-        e.bytes(hb ?? b"")
-      }
+  // the functions made whole (helpers such as xo.hash[T])
+  for i in made_f {
+    let hb = encode_func(b.m, b.m.funcs[i])
+    if hb == None {
+      return None
     }
+    e.bool(b.m.funcs[i].target)
+    e.bytes(hb ?? b"")
   }
-  e.uv(b.m.funcs.len())
-  e.uv(b.queue.len())
   e.uv(b.checks.len() - r.nc)
   for c in b.checks[r.nc..b.checks.len()] {
-    e.uv(c.fi)
     e.uv(c.u)
     e.str(c.callee)
     e.sv(c.w)
@@ -253,16 +290,36 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     e.str(k)
   }
   e.bool(b.m.funcs[fi].target)
-  e.sv(b.m.fe_h)
-  e.bytes(fb)
+  e.bytes(fbo ?? b"")
+  if !b.fe_touched.is_empty() {
+    b.fe_skip(b.fe_touched)
+    return None
+  }
   if !e.ok {
     return None
   }
   Some(e.b.freeze())
 }
 
-/// Replays entry d for the body of fo into fi: true when it was placed,
-/// false (nothing changed) when the entry does not fit this state.
+/// One event of an entry (fe_entry): its kind, its name, and for a
+/// declare the function object.
+struct FeEv {
+  k: Int
+  s: Str
+  fo: Int = -1
+}
+
+/// Commits entry d for the body of function fi: true when it was placed,
+/// false (nothing changed) when the entry does not fit this module. The
+/// checks come first: what the body found must be here (else a build
+/// would make it where the body ran, so the entry is a miss), and each
+/// generic instance it calls is found by its key (its name may differ:
+/// `#n`). Then its events in order: a type made unless one of its name
+/// is here, an order entry for a type made now, a whole function made
+/// unless one of its name is here, a declare run as a build runs it.
+/// Then the types made get their fields, by name, and the functions
+/// their bodies. So the module grows as a serial build at this point
+/// grows it (decision 0271).
 fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   var r = EntryR{d: d}
   if r.str() != FE_CACHE_VERSION {
@@ -271,57 +328,37 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   if r.str() != b.fe_own_flags() {
     return b.fe_miss("flags")
   }
-  let st = r.str()
-  if st != b.fe_state() {
-    return b.fe_miss("state")
-  }
-  if r.uv() != fi || r.uv() != b.m.types.len() || r.uv() != b.m.funcs.len() || r.uv() != b.queue.len() {
-    return b.fe_miss("counts")
-  }
-  // read everything before changing anything
-  var kinds: Map[Str, Kind] = {}
-  for k in all_kinds() {
-    kinds[kind_text(k)] = k
-  }
-  var tys: List[(SType, Bool)] = []
-  let nt = r.uv()
-  if !r.ok || nt > d.len() {
-    return false
-  }
-  for _ in 0..nt {
-    let ko = kinds.get(r.str())
-    if ko == None {
-      return false
-    }
-    var x = SType{kind: ko ?? Kind.Bad, name: r.str()}
-    let named = r.bool()
-    let nf = r.uv()
-    for _ in 0..nf {
-      x.fields.push(SField{name: r.str(), ty: r.sv()})
-    }
-    let nv = r.uv()
-    for _ in 0..nv {
-      var v = SVariant{name: r.str()}
-      let nvf = r.uv()
-      for _ in 0..nvf {
-        v.fields.push(SField{name: r.str(), ty: r.sv()})
-      }
-      x.variants.push(v)
-    }
-    x.elems = r.ints()
-    x.ret = r.sv()
-    x.coll = r.bool()
-    x.bits = r.sv()
-    x.unsigned = r.bool()
-    if !r.ok || (named && b.m.type_at.contains(x.name)) {
-      return false
-    }
-    tys.push((x, named))
-  }
-  let order = r.ints()
-  let nd = r.uv()
-  if !r.ok || nd > d.len() {
+  let nr = r.uv()
+  if !r.ok || nr > d.len() {
     return b.fe_miss("malformed")
+  }
+  for _ in 0..nr {
+    let k = r.str()
+    let n = k.trim_prefix("t ").trim_prefix("f ")
+    if k.starts_with("t ") {
+      if !b.m.type_at.contains(n) {
+        return b.fe_miss("read")
+      }
+    } else if !b.m.func_at.contains(n) {
+      return b.fe_miss("read")
+    }
+  }
+  let ng = r.uv()
+  if !r.ok || ng > d.len() {
+    return b.fe_miss("malformed")
+  }
+  var renames: Map[Str, Str] = {}
+  for _ in 0..ng {
+    let k = r.str()
+    let n = r.str()
+    match b.funcs.get(k) {
+      Some(f) => {
+        if b.m.funcs[f].name != n {
+          renames[n] = b.m.funcs[f].name
+        }
+      }
+      None => return b.fe_miss("generic")
+    }
   }
   if b.fe.by_ident.is_empty() {
     for (fo, o) in b.c.objs.indexed() {
@@ -330,101 +367,235 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       }
     }
   }
-  // per function made: 1 a declare (fo), 2 its further function, 3 a
-  // helper (encoded)
-  var made: List[(Int, Int, Bool, Bytes)] = []
-  for _ in 0..nd {
+  var kinds: Map[Str, Kind] = {}
+  for k in all_kinds() {
+    kinds[kind_text(k)] = k
+  }
+  // read everything before changing anything
+  let ne = r.uv()
+  if !r.ok || ne > d.len() {
+    return b.fe_miss("malformed")
+  }
+  var evs: List[FeEv] = []
+  var nmt = 0
+  var nmf = 0
+  for _ in 0..ne {
     let k = r.uv()
     if k == 1 {
+      let ks = r.str()
+      if !kinds.contains(ks) {
+        return b.fe_miss("malformed")
+      }
+      evs.push(FeEv{k: 1, s: r.str(), fo: kind_index(kinds.get(ks) ?? Kind.Bad)})
+      nmt += 1
+    } else if k == 2 || k == 3 {
+      evs.push(FeEv{k: k, s: r.str()})
+      if k == 3 {
+        nmf += 1
+      }
+    } else if k == 4 {
       let fo = b.fe.by_ident.get(r.str()) ?? -1
       if fo < 0 {
         return b.fe_miss("ident")
       }
-      made.push((1, fo, false, b""))
-    } else if k == 2 {
-      made.push((2, -1, false, b""))
+      evs.push(FeEv{k: 4, s: "", fo: fo})
     } else {
-      let tg = r.bool()
-      made.push((3, -1, tg, r.bytes()))
+      return b.fe_miss("malformed")
     }
   }
-  let nf1 = r.uv()
-  let nq1 = r.uv()
+  var shapes: List[SType] = []
+  var shape_names: List[(List[Str], List[List[Str]], List[Str], Str)] = []
+  for _ in 0..nmt {
+    var x = SType{kind: Kind.Bad, name: ""}
+    var fnames: List[Str] = []
+    let nf = r.uv()
+    if !r.ok || nf > d.len() {
+      return b.fe_miss("malformed")
+    }
+    for _ in 0..nf {
+      x.fields.push(SField{name: r.str(), ty: -1})
+      fnames.push(r.str())
+    }
+    var vnames: List[List[Str]] = []
+    let nv = r.uv()
+    if !r.ok || nv > d.len() {
+      return b.fe_miss("malformed")
+    }
+    for _ in 0..nv {
+      var v = SVariant{name: r.str()}
+      var vn: List[Str] = []
+      let nvf = r.uv()
+      if !r.ok || nvf > d.len() {
+        return b.fe_miss("malformed")
+      }
+      for _ in 0..nvf {
+        v.fields.push(SField{name: r.str(), ty: -1})
+        vn.push(r.str())
+      }
+      x.variants.push(v)
+      vnames.push(vn)
+    }
+    var enames: List[Str] = []
+    let nel = r.uv()
+    if !r.ok || nel > d.len() {
+      return b.fe_miss("malformed")
+    }
+    for _ in 0..nel {
+      enames.push(r.str())
+    }
+    let rn = r.str()
+    x.coll = r.bool()
+    x.bits = r.sv()
+    x.unsigned = r.bool()
+    shapes.push(x)
+    shape_names.push((fnames, vnames, enames, rn))
+  }
+  var helpers: List[(Bool, Bytes)] = []
+  for _ in 0..nmf {
+    let tg = r.bool()
+    helpers.push((tg, r.bytes()))
+  }
   let nc = r.uv()
   if !r.ok || nc > d.len() {
-    return false
+    return b.fe_miss("malformed")
   }
   var checks: List[UCheck] = []
   for _ in 0..nc {
-    checks.push(UCheck{fi: r.uv(), u: r.uv(), callee: r.str(), w: r.sv()})
+    let u = r.uv()
+    let callee = r.str()
+    checks.push(UCheck{fi: fi, u: u, callee: renames.get(callee) ?? callee, w: r.sv()})
   }
   let dvar = r.sv()
   let nm = r.uv()
   if !r.ok || nm > d.len() {
-    return false
+    return b.fe_miss("malformed")
   }
   var mods: List[Str] = []
   for _ in 0..nm {
     mods.push(r.str())
   }
   let target = r.bool()
-  let h1 = r.sv()
   let fb = r.bytes()
   if !r.ok {
-    return false
+    return b.fe_miss("malformed")
   }
-  // the types first, so the declares find them and make none
-  for (x, named) in tys {
-    let i = b.m.types.len()
-    if named {
-      b.m.type_at[x.name] = i
+  // the events, as the body's build made them
+  var made_t: List[(Int, Int)] = []
+  var holes: List[(Int, Int)] = []
+  var ti = 0
+  var hi = 0
+  var now: Map[Str, Bool] = {}
+  for ev in evs {
+    if ev.k == 1 {
+      if !b.m.type_at.contains(ev.s) {
+        let t = b.m.intern(SType{kind: kind_at(ev.fo), name: ev.s})
+        made_t.push((t, ti))
+        now[ev.s] = true
+      }
+      ti += 1
+    } else if ev.k == 2 {
+      if now.contains(ev.s) {
+        b.m.order.push(b.m.type_at.get(ev.s) ?? -1)
+      }
+    } else if ev.k == 3 {
+      if !b.m.func_at.contains(ev.s) {
+        let i = b.m.new_func(ev.s, [], [])
+        holes.push((i, hi))
+      }
+      hi += 1
+    } else {
+      let _ = b.declare(ev.fo, [])
     }
-    b.m.types.push(x)
   }
-  for t in order {
-    b.m.order.push(t)
-  }
-  // the functions in their order: its types are all there now
-  let ops = ops_by_name()
-  let f = decode_func(b.m, fb, ops)
-  var bad = f == None
-  for (k, fo, tg, hb) in made {
-    if k == 1 {
-      let _ = b.declare(fo, [])
-    } else if k == 3 {
-      match decode_func(b.m, hb, ops) {
-        Some(h) => {
-          var g = h
-          g.target = tg
-          let i = b.m.funcs.len()
-          if !b.m.func_at.contains(g.name) {
-            b.m.func_at[g.name] = i
-          }
-          b.m.funcs.push(g)
-        }
-        None => bad = true
+  // the types made get their structure, by name
+  var bad = false
+  for (t, si) in made_t {
+    var x = shapes[si]
+    x.kind = b.m.types[t].kind
+    x.name = b.m.types[t].name
+    let (fnames, vnames, enames, rn) = shape_names[si]
+    for (i, n) in fnames.indexed() {
+      x.fields[i].ty = b.m.type_at.get(n) ?? -1
+      bad = bad || x.fields[i].ty < 0
+    }
+    for (i, vn) in vnames.indexed() {
+      for (j, n) in vn.indexed() {
+        x.variants[i].fields[j].ty = b.m.type_at.get(n) ?? -1
+        bad = bad || x.variants[i].fields[j].ty < 0
       }
     }
+    for n in enames {
+      let el = b.m.type_at.get(n) ?? -1
+      bad = bad || el < 0
+      x.elems.push(el)
+    }
+    x.ret = if rn.is_empty() { -1 } else { b.m.type_at.get(rn) ?? -2 }
+    bad = bad || x.ret == -2
+    b.m.types[t] = x
   }
-  if bad || b.m.funcs.len() != nf1 || b.queue.len() != nq1 {
-    // the state matched but the replay did not: a builder bug, never a
+  let ops = ops_by_name()
+  for (i, h) in holes {
+    let (tg, hb) = helpers[h]
+    match decode_func(b.m, hb, ops) {
+      Some(g0) => {
+        var g = g0
+        g.target = tg
+        fe_rename(g, renames)
+        b.m.funcs[i] = g
+      }
+      None => bad = true
+    }
+  }
+  let f = decode_func(b.m, fb, ops)
+  if bad || f == None {
+    // the checks passed but the commit did not: a builder bug, never a
     // silent difference
     b.why = "the front end cache's entry for ${b.m.funcs[fi].name} does not replay (XO_FE_CACHE=off builds without it)"
     return true
   }
   var g = f ?? Func{name: ""}
   g.target = target
+  fe_rename(g, renames)
   b.m.funcs[fi] = g
   for c in checks {
     b.checks.push(c)
   }
   b.nvar += dvar
-  // the names' hash as the recorded build left it
-  b.m.fe_h = h1
   for k in mods {
     b.decl_mods[k] = true
   }
   true
+}
+
+/// The names of generic instances a committed body calls, as this module
+/// names them (fe_replay's renames).
+fn fe_rename(var f: Func, renames: Map[Str, Str]) {
+  if renames.is_empty() {
+    return
+  }
+  for i in 0..f.values.len() {
+    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind {
+      if let S(s) = f.values[i].aux {
+        if let Some(n) = renames.get(s) {
+          f.values[i].aux = Aux.S(s: n)
+        }
+      }
+    }
+  }
+}
+
+fn kind_index(k: Kind) -> Int {
+  for (i, x) in all_kinds().indexed() {
+    if x == k {
+      return i
+    }
+  }
+  -1
+}
+
+fn kind_at(i: Int) -> Kind {
+  let ks = all_kinds()
+  if i >= 0 && i < ks.len() { ks[i] } else { Kind.Bad }
 }
 
 /// A replay that does not fit, counted by reason (XO_FE_STATS).

@@ -325,7 +325,7 @@ fn (var b: Builder) is_user_call(v: Int) -> Bool {
     return false
   }
   match x.aux {
-    S(s) => b.m.func_index(s) >= 0
+    S(s) => b.fidx(s) >= 0
     None | I(..) | F(..) | B(..) | Bs(..) | P(..) => false
   }
 }

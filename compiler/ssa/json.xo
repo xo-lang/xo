@@ -59,7 +59,7 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let tape = b.value_as(es[1] ?? fault("arg"), b.m.list(it))
     let i = b.value_as(es[2] ?? fault("arg"), it)
     let f = b.json_dec(ct)
-    let fi = b.m.func_index(f)
+    let fi = b.fidx(f)
     return b.call(f, b.m.funcs[fi].results[0], "", [src, tape, i])
   }
   if name is "slot_load" | "slot_store" | "slot_swap" | "slot_cas" | "slot_add" | "slot_addr" {
@@ -536,7 +536,7 @@ fn (var b: Builder) dec_child(d: Dec, xt: Int, j: Int, seg: Int) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
   let cn = b.json_dec(xt)
-  let cf = b.m.func_index(cn)
+  let cf = b.fidx(cn)
   if cf < 0 {
     return b.undef(b.typ(xt))
   }

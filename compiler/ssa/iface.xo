@@ -128,6 +128,7 @@ fn (var b: Builder) impl_text(ct: Int) -> Str {
 /// `==` on two interface values first compares them.
 fn (var b: Builder) type_id(ct: Int) -> Int {
   let key = b.impl_text(ct)
+  b.fe_touch("tids")
   var id = b.tids.get(key) ?? -1
   if id < 0 {
     id = b.tids.len() + 1
@@ -149,7 +150,7 @@ fn (var b: Builder) type_id(ct: Int) -> Int {
 /// do: they declare functions the queue builds, in the queue's order.
 /// Returns the function, or -1 when it exists.
 fn (var b: Builder) thunk_func(name: Str, params: List[Int], results: List[Int], captures: List[Int]) -> Int {
-  if b.m.func_index(name) >= 0 {
+  if b.fidx(name) >= 0 {
     return -1
   }
   let fi = b.m.new_func(name, params, results)

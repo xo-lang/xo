@@ -155,3 +155,55 @@ tasks never changes the output.
   own module, linked by name): changes every index and the inline and
   borrow passes' order, so the output differs from a serial build;
   rejected for the commit step that keeps it.
+
+## Order of work (lead, 2026-10-19)
+
+Relocatable entries first (the base of the rest, and of Xo Lang 3's
+std cache shipped across programs), then SSA bodies built in parallel
+through them, then the checker overlay.
+
+### Step 1a: entries by name, a serial commit (implemented 2026-10-20)
+
+compiler/ssa fecache.xo, ir.xo, build.xo. An entry of the front end
+cache (decision 0220's addendum) no longer holds the builder's state
+(the fingerprint of every name so far and the sizes of about 20
+tables) or any index:
+
+- What the body found that was there before it: each type found by
+  name (Module.fe_seen in the type constructors) and each function found
+  by name (Builder.fidx); each generic instance it calls, by its
+  instance key and the name the body calls it by.
+- What it made, in order (Module.fe_ev): a type (kind, name, then its
+  fields, variants, elements and result by name), an order entry, a
+  whole function (a helper such as xo.hash[T], in the codec), a declare
+  (the function's module, receiver and name). A declare pauses the
+  recording: the commit runs it as the build does, so what it makes is
+  its own.
+- The body itself, in the codec (types and callees by name, as before).
+
+The commit (fe_replay) checks first: every type and function found must
+be in the module (else a build would make it where the body ran: a
+miss, built instead), and every generic instance is found by its key;
+a different name (`#n`) is patched into the body's calls. Then it
+replays the events in order: a type made unless one of its name is
+there, an order entry for a type made now, a helper made unless there,
+a declare run; then the types made get their structure by name and the
+helpers and the body are decoded. The module grows as a serial build at
+that point grows it.
+
+Not cached yet (each a skip reason of XO_FE_STATS, step 1b's
+relocations): a body that reads a type id (iface.xo type_id), a spawn
+site (conc.xo), a constant slot (show.xo const_once), or a thunk; one
+that makes a closure, a new generic instance, or a contract wrapper.
+
+Results on xo (main 8a48ac13 against this, interleaved, load 26 to 45):
+binaries identical (identity 402 of 402, the fixed point, TestBackend
+CacheEditIdentity and TestFrontCacheInterfaceEdits, whose new step edits
+the first body built after main to make a type no other body has and
+requires the bodies after it to hit, verify clean); hits on a warm build
+8,233 of 8,483 (8,241 of 8,477 before: the new skip reasons consts 31,
+sites 18, thunks 6), the same after a constant or statement edit within
+8; cold SSA 3.07 s (2.9 s before; recording reads by index, not by
+name, which first took 7.0 s); edit builds the same within noise. The
+gain is the entries' independence: step 2 builds them in other
+builders, and they can be reused across programs.

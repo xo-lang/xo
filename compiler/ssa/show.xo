@@ -661,6 +661,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let it = b.int_t()
   let lt = b.m.list(t)
   let name = "xo.const[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]"
+  b.fe_touch("consts")
   var id = b.consts.get(c) ?? -1
   if id < 0 {
     id = b.consts.len()
