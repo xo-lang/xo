@@ -61,9 +61,11 @@ Update the knowledgebase in the same change as the work, not later:
   Status, Context, Decision, Consequences, Alternatives. To reverse a decision,
   add a new ADR and mark the old one `Superseded by NNNN`; never delete.
   Answering one of the spec's Appendix B open questions requires an ADR.
-  Claim the number first: sessions run in parallel, so before starting
-  work in a branch, commit a stub `NNNN-title.md` (Status: Proposed) and
-  its README line on main, then fill it in. `TestDecisionNumbersUnique`
+  Claim the number first: sessions run in parallel, so get it from
+  `~/xo-lead/agents/adr-claim.sh SLUG WHO` (it records the claim under a
+  lock and prints the next free number), then commit a stub
+  `NNNN-title.md` (Status: Proposed) and its README line on main, then
+  fill it in. `TestDecisionNumbersUnique`
   fails on a duplicate number.
 - **Gotchas**: when something breaks unexpectedly, behaves surprisingly, or
   costs more than one attempt to get right, add a gotcha with symptom, cause,
