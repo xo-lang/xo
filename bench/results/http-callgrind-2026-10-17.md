@@ -313,3 +313,32 @@ about what the copies saved (about -0.3%, inside short mode's noise).
 With 6827ce1e the day's arm64 totals against 065bd1c1's ranking: tls
 40,358 to about 36,700, h2 68,030 to about 58,900 (short mode, ANN
 runs).
+
+## TLS and h2 after the three levers: the next copies (2026-10-20, Xo Lang 3)
+
+Ranking at 274d4929 (arm64, short mode, ANN, per request; tls 36,555,
+h2 58,592): allocation and free about 5,750 (tls, 15.7%) and 9,550 (h2,
+16.3%), of which string allocations (obj_rs_with_cap) 21.9 and 26.9 a
+request, from raw.str_at copies (13.8 and 17), the record buffers of
+tlsrec.seal, Gcm.open, and tlsrec.nonce; AES-GCM 3,524 (tls, 9.6%); the
+HTTP/1 head 3,099 (tls, 8.5%); hpack Enc.encode 2,591 (h2, 4.4%). The
+frees are thread local (Xo lang 4: free_mt is the threaded program's
+free to its own heap, about 13 instructions each), so the lever is fewer
+allocations.
+
+- 5e0e3fcc: a TLS 1.3 write seals the caller's bytes in place
+  (tlsrec.seal_at: no str_at copy, no part slice, for the usual one
+  record), and a read buffer that is exactly one record is handed over,
+  not sliced. Against its parent: tls 36,409 to 35,621 (-2.2%), h2
+  58,278 to 57,730 (-0.9%). On the way: a call of tls13srv.send_at with
+  a local's c.s as its var argument copied the whole Server in and out
+  (253 instructions a write); through a var Conn parameter, as send
+  does, it costs nothing.
+- 3463c095: hpack's eq_at in words (the last one overlapping, every load
+  inside the bytes), where the byte loop of checked loads was about
+  1,000 instructions an h2 request: h2 58,009 to 57,288 (-1.2%),
+  Enc.encode 2,605 to 1,385.
+
+Each copy removed is worth 100 to 250 instructions at these request
+sizes; what is left of the record path (feed's body copy, Gcm.open's
+output, the nonce) is about one more percent.

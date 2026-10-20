@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The TLS server seals a response without copying it first and takes a
+  whole record without slicing it, and HTTP/2 header names are compared
+  in words: TLS requests 2.2% and HTTP/2 requests about 2% fewer
+  instructions.
 - A cold build of a large program spreads its code generation better:
   the parts go to the tasks largest first and a part of large functions
   is cut further (xo's emit 11 to 8 s of wall on 8 tasks), and the
