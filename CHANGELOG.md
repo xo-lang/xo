@@ -12,9 +12,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0270). Its code is still slower than LLVM's on amd64 (HTTP about 1.15
   times the instructions; on an Intel Mac JSON 1.24, RSA 1.44);
   `--backend=llvm` keeps LLVM's, and `--race` uses it.
-- Reference counting insertion sorts each block's live set once, and in
-  O(n log n): a cold build of xo spends about 12% less CPU (insert_rc
-  16 to 6.5 s of wall).
+- Reference counting insertion sorts each block's live set once, in
+  O(n log n), and keys leaves without building text: a cold build of xo
+  spends about 18% less CPU (insert_rc 16 to 6.5 s of wall after the
+  first step).
 - HTTP/2 keeps common header names and values as constants, and AES-GCM
   encrypts only the counter blocks a record needs: HTTP/2 requests 4.6%
   (arm64) and 3.6% (LLVM) fewer instructions, TLS requests 1.3%.

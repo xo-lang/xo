@@ -827,3 +827,14 @@ and the fixed point. After step A the profile's remaining insert_rc
 time is mostly the text leaf keys (hash and compare of Str, the maps'
 puts and rebuilds, num.append_int) and leaf_value's path parsing: step
 B.
+
+Step B (0c35242d): leaves are map keys as the tuple (root, path), not
+the text "${root}${path}" (no number formatting, no concatenation, and
+a short path hashed instead of the whole text), and leaf_value reads a
+path's field indexes from its bytes instead of split and Int.parse.
+Cold self-builds, 050aa530 (step A) and the change interleaved, two
+rounds, the Mac at load averages 55 to 60 (wall too noisy to use): user
+CPU 126.3 s and 127.5 s to 118.6 s and 114.4 s. The output is the same
+(identity 402/402 on arm64 and amd64, verify mode, the fixed point).
+Steps A and B together: a cold build of xo uses about 18% less CPU
+than 1ff0e0bd.
