@@ -1,0 +1,26 @@
+// std/mime (decision 0282): media types (RFC 2045 and 2231), Go's builtin
+// extension table, and content sniffing, the same on every backend.
+use std/mime
+
+fn show(r: Result[mime.MediaType, mime.MimeErr]) -> Str {
+  match r {
+    Ok(t) => "${t.kind} ${t.params.entries().sort().map(fn(p) { "${p.0}=${p.1.quote()}" }).join(" ")}"
+    Err(e) => "error ${e}"
+  }
+}
+
+fn main(os: Os) {
+  for v in ["text/html; charset=UTF-8", "Form-Data; name=\"f\"; filename*=utf-8''na%C3%AFve.txt", "attachment; title*0=\"a \"; title*1=b",
+      "text/plain;", "/x", "text/; a=b", "text/html; a", "a/b; c=1; c=2"] {
+    os.stdio.println("${v.quote()}: ${show(mime.parse_media_type(v))}")
+  }
+  os.stdio.println(mime.format_media_type("Text/HTML", {"charset": "utf-8", "title": "na\u{EF}ve \"q\""}))
+  os.stdio.println(mime.format_media_type("bad type/x", {}).quote())
+  for e in [".png", ".JPG", ".svg", ".nope"] {
+    os.stdio.println("${e}: ${mime.type_by_extension(e) ?? "-"}")
+  }
+  os.stdio.println("jpeg: ${mime.extensions_by_type("image/jpeg").map(fn(xs) { xs.join(",") }).ok() ?? "?"}")
+  for d in [b"<!doctype html><p>", b"\x89PNG\r\n\x1a\n....", b"%PDF-1.7", b"plain words", b"\x00\x01\x02", b""] {
+    os.stdio.println(mime.detect_content_type(d))
+  }
+}

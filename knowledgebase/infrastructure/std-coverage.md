@@ -44,6 +44,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/base64, std/base32 | 21 | `std/changes/base64.md`, `std/changes/base32.md` |
 | std/binary | 22 | `std/changes/binary.md` |
 | std/tls | 27 | `std/changes/tls.md` |
+| std/mime | 23 | `std/changes/mime.md` |
 
 ## Go packages
 
@@ -69,7 +70,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/gob | none | not planned | Go specific wire format; Xo programs exchange JSON. |
 | encoding/ascii85 | none | not planned | No backend use (PostScript and PDF). |
 | encoding | none | not planned | Interfaces only; Xo uses derive (Json, SqlRow). |
-| mime | none | planned | ParseMediaType (boundary, charset), FormatMediaType, TypeByExtension. |
+| mime | std/mime | partial | ParseMediaType, FormatMediaType, TypeByExtension and ExtensionsByType (Go's builtin table only, no system files), and net/http's DetectContentType (decision 0282). Missing: encoded words (WordEncoder, WordDecoder, RFC 2047). |
 | mime/multipart | none | planned | Browser file uploads (multipart/form-data) and multipart responses. |
 | mime/quotedprintable | none | planned | With an SMTP client, for mail bodies. |
 | html | none | planned | EscapeString for server rendered pages. |

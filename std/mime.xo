@@ -1,0 +1,35 @@
+// std/mime (spec/std.md 23, decision 0282). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's mime: media types
+// (RFC 2045, 2231), the extension table (Go's builtin one only, the same
+// on every OS), and content sniffing (net/http's DetectContentType). Pure.
+
+/// A media type: the type and subtype in lower case ("text/html") and its
+/// parameters, names in lower case.
+struct MediaType {
+  kind: Str
+  params: Map[Str, Str]
+}
+
+/// Go's error texts: `mime: no media type`, `mime: invalid media parameter`, ...
+struct MimeErr {
+  msg: Str
+}
+
+fn (e: MimeErr) display() -> Str
+
+/// `text/html; charset=utf-8` into its parts (mime.ParseMediaType): RFC
+/// 2231 continuations and charsets (utf-8, us-ascii) decoded.
+fn parse_media_type(v: Str) -> MediaType ! MimeErr
+/// The text of a media type and its parameters, sorted by name, quoted or
+/// RFC 2231 encoded as needed (mime.FormatMediaType); "" when the type or
+/// a name is not a token.
+fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str
+/// The type of an extension (".png" -> "image/png"), from Go's builtin
+/// table: an exact match, else without ASCII case.
+fn type_by_extension(ext: Str) -> Str?
+/// The extensions of a media type, sorted (mime.ExtensionsByType).
+fn extensions_by_type(kind: Str) -> List[Str] ! MimeErr
+/// The media type of data from its first 512 bytes (WHATWG MIME Sniffing,
+/// net/http's DetectContentType); "application/octet-stream" when nothing
+/// matches.
+fn detect_content_type(data: Bytes) -> Str

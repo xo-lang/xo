@@ -1,0 +1,24 @@
+exit 0
+--- stdout
+"text/html; charset=UTF-8": text/html charset="UTF-8"
+"Form-Data; name=\"f\"; filename*=utf-8''na%C3%AFve.txt": form-data filename="naïve.txt" name="f"
+"attachment; title*0=\"a \"; title*1=b": attachment title="a b"
+"text/plain;": text/plain 
+"/x": error mime: no media type
+"text/; a=b": error mime: expected token after slash
+"text/html; a": error mime: invalid media parameter
+"a/b; c=1; c=2": error mime: duplicate parameter name
+text/html; charset=utf-8; title*=utf-8''na%C3%AFve%20%22q%22
+""
+.png: image/png
+.JPG: image/jpeg
+.svg: image/svg+xml
+.nope: -
+jpeg: .jfif,.jpeg,.jpg,.pjp,.pjpeg
+text/html; charset=utf-8
+image/png
+application/pdf
+text/plain; charset=utf-8
+application/octet-stream
+text/plain; charset=utf-8
+--- stderr

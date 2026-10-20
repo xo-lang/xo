@@ -16,3 +16,4 @@ entries yet.
 - [crypto.md](crypto.md): std/crypto (spec/std.md 11)
 - [http.md](http.md): std/http (spec/std.md 4)
 - [tls.md](tls.md): std/tls (spec/std.md 27)
+- [mime.md](mime.md): std/mime (spec/std.md 23)

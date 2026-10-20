@@ -2720,6 +2720,48 @@ pub fn get_varint(b: Bytes, at: Int) -> (Int, Int)?
   `get_varint` return None instead, as Go's `n <= 0` (also for a
   negative `at`).
 - Build messages with a `BytesBuilder`: `bb.write(binary.u32_be(len))`.
+## 23. std/mime
+
+Status: implemented on every backend (decision 0282, 2026-10-20): Go's
+mime (mediatype.go, type.go of go1.26) and net/http's sniff.go, on the
+Go backend through Go's mime (the sniffing copied into std/rt) and
+ported natively (`std/native/mime.xo`; Go's results on 1,300 generated
+cases in `mime_test.xo`); golden `mime_basic`. Pure.
+
+```
+struct MediaType { kind: Str, params: Map[Str, Str] }   // kind and parameter names in lower case
+struct MimeErr { msg: Str }                              // Go's texts: `mime: invalid media parameter`
+
+pub fn parse_media_type(v: Str) -> MediaType ! MimeErr
+pub fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str
+pub fn type_by_extension(ext: Str) -> Str?               // ".png" -> "image/png"
+pub fn extensions_by_type(kind: Str) -> List[Str] ! MimeErr
+pub fn detect_content_type(data: Bytes) -> Str
+```
+
+- `parse_media_type` is `mime.ParseMediaType`: the type before any `;`
+  (lower cased, `type/subtype` or a single token, else `mime: no media
+  type`, `mime: expected slash after first token`, ...), then `name=value`
+  parameters (a token or a quoted string; a trailing `;` is allowed),
+  with RFC 2231 continuations (`title*0=`, `title*1=`) and charsets
+  (`filename*=utf-8''na%C3%AFve.txt`; utf-8 and us-ascii, others
+  dropped). A malformed parameter is `mime: invalid media parameter`, a
+  name given twice with different values `mime: duplicate parameter
+  name`. Go also returns the media type with the first error; Xo returns
+  the error alone. A value that decodes to bytes that are not UTF-8 is
+  dropped.
+- `format_media_type` is `mime.FormatMediaType`: lower cased type and
+  names, parameters sorted by name, a value written as a token, quoted
+  (`\"` and `\\` escaped), or RFC 2231 encoded when it holds a control or
+  non ASCII byte; `""` when the type or a name is not a token.
+- `type_by_extension` and `extensions_by_type` use Go's builtin table
+  only (64 extensions), the same on every OS: no `/etc/mime.types`, which
+  would be a file read outside the capabilities. A lookup tries the
+  extension as given, then lower cased.
+- `detect_content_type` is net/http's `DetectContentType` (the WHATWG
+  MIME Sniffing algorithm over the first 512 bytes):
+  `text/html; charset=utf-8`, `image/png`, `application/pdf`,
+  `text/plain; charset=utf-8`, ..., else `application/octet-stream`.
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the

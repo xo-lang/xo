@@ -3673,3 +3673,72 @@ func (v Crypto_Hash) XoDebug(b *strings.Builder) {
 }
 
 func (v Crypto_Hash) M_debug(*Task) string { return Debug(v) }
+
+type Mime_MediaType struct {
+	F_kind   string
+	F_params Map[string, string]
+}
+
+func (v Mime_MediaType) XoEq(x any) bool {
+	o, ok := x.(Mime_MediaType)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_kind, o.F_kind) {
+		return false
+	}
+	if !Eq(v.F_params, o.F_params) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mime_MediaType) XoHash() uint64 {
+	h := uint64(885866079015377678)
+	h = MixHash(h, Hash(v.F_kind))
+	h = MixHash(h, Hash(v.F_params))
+	return h
+}
+
+func (v Mime_MediaType) XoDebug(b *strings.Builder) {
+	b.WriteString("MediaType{")
+	b.WriteString("kind: ")
+	DebugTo(b, v.F_kind)
+	b.WriteString(", params: ")
+	DebugTo(b, v.F_params)
+	b.WriteString("}")
+}
+
+func (v Mime_MediaType) M_debug(*Task) string { return Debug(v) }
+
+type Mime_MimeErr struct {
+	F_msg string
+}
+
+func (v Mime_MimeErr) XoEq(x any) bool {
+	o, ok := x.(Mime_MimeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mime_MimeErr) XoHash() uint64 {
+	h := uint64(335488259967441887)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Mime_MimeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("MimeErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Mime_MimeErr) M_debug(*Task) string { return Debug(v) }

@@ -1,0 +1,557 @@
+// std/mime on the native backends (decision 0282): Go's mime ported from
+// mediatype.go, grammar.go, and type.go of go1.26 (ParseMediaType,
+// FormatMediaType, TypeByExtension and ExtensionsByType over the builtin
+// table only), with the same results and error texts; and net/http's
+// sniff.go (DetectContentType) in mime_sniff.xo. Go's ParseMediaType
+// also returns the media type with ErrInvalidMediaParameter; Xo returns
+// the error alone.
+use std/mime
+
+fn mimeerr_display(e: mime.MimeErr) -> Str { e.msg }
+
+fn err(msg: Str) -> mime.MimeErr { mime.MimeErr{msg: msg} }
+
+const UPPER_HEX: Str = "0123456789ABCDEF"
+
+/// grammar.go isTSpecial: ( ) < > @ , ; : \ " / [ ] ? =
+fn is_tspecial(c: UInt8) -> Bool {
+  c == 40 || c == 41 || c == 60 || c == 62 || c == 64 || c == 44 || c == 59 || c == 58 || c == 92 || c == 34 ||
+    c == 47 || c == 91 || c == 93 || c == 63 || c == 61
+}
+
+/// grammar.go isTokenChar: a US-ASCII character but space, controls, and tspecials.
+fn is_token_char(c: UInt8) -> Bool { c > 32 && c < 127 && !is_tspecial(c) }
+
+fn is_token(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for c in s.bytes() {
+    if !is_token_char(c) {
+      return false
+    }
+  }
+  true
+}
+
+/// mediatype.go needsEncoding: a value with a control or non ASCII byte.
+fn needs_encoding(s: Str) -> Bool {
+  for c in s.bytes() {
+    if (c < 32 || c > 126) && c != 9 {
+      return true
+    }
+  }
+  false
+}
+
+fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
+  var b = StrBuilder.new()
+  match kind.find("/") {
+    None => {
+      if !is_token(kind) {
+        return ""
+      }
+      b.write(kind.to_lower())
+    }
+    Some(i) => {
+      let major = kind[0..i]
+      let sub = kind[i + 1..]
+      if !is_token(major) || !is_token(sub) {
+        return ""
+      }
+      b.write(major.to_lower())
+      b.write("/")
+      b.write(sub.to_lower())
+    }
+  }
+  let hex = UPPER_HEX.bytes()
+  for attr in params.keys().sort() {
+    let value = params.get(attr) ?? ""
+    b.write("; ")
+    if !is_token(attr) {
+      return ""
+    }
+    b.write(attr.to_lower())
+    if needs_encoding(value) {
+      b.write("*=utf-8''")
+      var out = BytesBuilder.new()
+      for ch in value.bytes() {
+        if ch <= 32 || ch >= 127 || ch == 42 || ch == 39 || ch == 37 || is_tspecial(ch) {
+          out.write_byte(37)
+          out.write_byte(hex[Int(ch) >> 4])
+          out.write_byte(hex[Int(ch) & 15])
+        } else {
+          out.write_byte(ch)
+        }
+      }
+      b.write(out.freeze().to_str() ?? "")
+      continue
+    }
+    b.write("=")
+    if is_token(value) {
+      b.write(value)
+      continue
+    }
+    b.write("\"")
+    b.write(value.replace("\\", "\\\\").replace("\"", "\\\""))
+    b.write("\"")
+  }
+  b.freeze()
+}
+
+/// The token at the start of v and the rest (consumeToken).
+fn consume_token(v: Str) -> (Str, Str) {
+  let b = v.bytes()
+  var i = 0
+  while i < b.len() && is_token_char(b[i]) {
+    i += 1
+  }
+  (v[0..i], v[i..])
+}
+
+fn check_media_type_disposition(s: Str) -> () ! mime.MimeErr {
+  let (typ, rest0) = consume_token(s)
+  if typ.is_empty() {
+    return Err(err("mime: no media type"))
+  }
+  if rest0.is_empty() {
+    return Ok(())
+  }
+  if !rest0.starts_with("/") {
+    return Err(err("mime: expected slash after first token"))
+  }
+  let (sub, rest) = consume_token(rest0[1..])
+  if sub.is_empty() {
+    return Err(err("mime: expected token after slash"))
+  }
+  if !rest.is_empty() {
+    return Err(err("mime: unexpected content after media subtype"))
+  }
+}
+
+/// consumeValue: a token or a quoted string; ("", v) when malformed.
+fn consume_value(v: Str) -> (Str, Str) {
+  if v.is_empty() {
+    return ("", "")
+  }
+  if !v.starts_with("\"") {
+    return consume_token(v)
+  }
+  let b = v.bytes()
+  var out = BytesBuilder.new()
+  var i = 1
+  var end = -1
+  while i < b.len() {
+    let r = b[i]
+    if r == 34 {
+      end = i
+      break
+    }
+    if r == 92 && i + 1 < b.len() && is_tspecial(b[i + 1]) {
+      out.write_byte(b[i + 1])
+      i += 2
+      continue
+    }
+    if r == 13 || r == 10 {
+      break
+    }
+    out.write_byte(r)
+    i += 1
+  }
+  if end < 0 {
+    return ("", v)
+  }
+  (out.freeze().to_str() ?? "", v[end + 1..])
+}
+
+/// consumeMediaParam: (name, value, rest), or ("", "", v) when v does not
+/// start with a parameter.
+fn consume_media_param(v: Str) -> (Str, Str, Str) {
+  var rest = v.trim_start()
+  if !rest.starts_with(";") {
+    return ("", "", v)
+  }
+  rest = rest[1..].trim_start()
+  let (p0, r1) = consume_token(rest)
+  let param = p0.to_lower()
+  if param.is_empty() {
+    return ("", "", v)
+  }
+  rest = r1.trim_start()
+  if !rest.starts_with("=") {
+    return ("", "", v)
+  }
+  rest = rest[1..].trim_start()
+  let (value, rest2) = consume_value(rest)
+  if value.is_empty() && rest2 == rest {
+    return ("", "", v)
+  }
+  (param, value, rest2)
+}
+
+fn is_hex(c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
+fn unhex(c: UInt8) -> Int {
+  let v = Int(c)
+  if v <= 57 { v - 48 } else if v <= 70 { v - 55 } else { v - 87 }
+}
+
+/// percentHexUnescape; None for a bad escape.
+fn percent_hex_unescape(s: Str) -> Str? {
+  let b = s.bytes()
+  if !s.contains("%") {
+    return Some(s)
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  while i < b.len() {
+    if b[i] != 37 {
+      out.write_byte(b[i])
+      i += 1
+      continue
+    }
+    if i + 2 >= b.len() || !is_hex(b[i + 1]) || !is_hex(b[i + 2]) {
+      return None
+    }
+    out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
+    i += 3
+  }
+  // bytes that are not UTF-8 cannot be a Str: such a value is dropped as
+  // an undecodable one
+  out.freeze().to_str()
+}
+
+/// decode2231Enc: charset'language'value with utf-8 or us-ascii.
+fn decode_2231(v: Str) -> Str? {
+  let q1 = v.find("'")?
+  let charset = v[0..q1].to_lower()
+  let rest = v[q1 + 1..]
+  let q2 = rest.find("'")?
+  if !(charset is "us-ascii" | "utf-8") {
+    return None
+  }
+  percent_hex_unescape(rest[q2 + 1..])
+}
+
+fn parse_media_type(v0: Str) -> mime.MediaType ! mime.MimeErr {
+  let base = match v0.find(";") {
+    Some(i) => v0[0..i]
+    None => v0
+  }
+  let kind = base.to_lower().trim()
+  check_media_type_disposition(kind)?
+  var params: Map[Str, Str] = {}
+  // the RFC 2231 pieces of each name: name*, name*0, name*0*, ...
+  var cont: Map[Str, Map[Str, Str]] = {}
+  var v = v0[base.len()..]
+  while !v.is_empty() {
+    v = v.trim_start()
+    if v.is_empty() {
+      break
+    }
+    let (key, value, rest) = consume_media_param(v)
+    if key.is_empty() {
+      if rest.trim() == ";" {
+        // a trailing semicolon
+        break
+      }
+      return Err(err("mime: invalid media parameter"))
+    }
+    match key.find("*") {
+      Some(i) => {
+        let name = key[0..i]
+        var pieces = cont.get(name) ?? {}
+        if let Some(old) = pieces.get(key) {
+          if old != value {
+            return Err(err("mime: duplicate parameter name"))
+          }
+        }
+        pieces.put(key, value)
+        cont.put(name, pieces)
+      }
+      None => {
+        if let Some(old) = params.get(key) {
+          if old != value {
+            return Err(err("mime: duplicate parameter name"))
+          }
+        }
+        params.put(key, value)
+      }
+    }
+    v = rest
+  }
+  for (key, pieces) in cont.entries() {
+    if let Some(single) = pieces.get(key + "*") {
+      if let Some(d) = decode_2231(single) {
+        params.put(key, d)
+      }
+      continue
+    }
+    var buf = StrBuilder.new()
+    var valid = false
+    var n = 0
+    while {
+      let simple = "${key}*${n}"
+      if let Some(p) = pieces.get(simple) {
+        valid = true
+        buf.write(p)
+        n += 1
+        continue
+      }
+      match pieces.get(simple + "*") {
+        None => break
+        Some(p) => {
+          valid = true
+          if n == 0 {
+            if let Some(d) = decode_2231(p) {
+              buf.write(d)
+            }
+          } else {
+            buf.write(percent_hex_unescape(p) ?? "")
+          }
+        }
+      }
+      n += 1
+    }
+    if valid {
+      params.put(key, buf.freeze())
+    }
+  }
+  mime.MediaType{kind: kind, params: params}
+}
+
+// ---------------------------------------------------------------------------
+// Extensions (type.go, the builtin table only)
+
+/// Go's builtinTypesLower (type.go).
+const BUILTIN: List[(Str, Str)] = [
+  (".ai", "application/postscript"),
+  (".apk", "application/vnd.android.package-archive"),
+  (".apng", "image/apng"),
+  (".avif", "image/avif"),
+  (".bin", "application/octet-stream"),
+  (".bmp", "image/bmp"),
+  (".com", "application/octet-stream"),
+  (".css", "text/css; charset=utf-8"),
+  (".csv", "text/csv; charset=utf-8"),
+  (".doc", "application/msword"),
+  (".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+  (".ehtml", "text/html; charset=utf-8"),
+  (".eml", "message/rfc822"),
+  (".eps", "application/postscript"),
+  (".exe", "application/octet-stream"),
+  (".flac", "audio/flac"),
+  (".gif", "image/gif"),
+  (".gz", "application/gzip"),
+  (".htm", "text/html; charset=utf-8"),
+  (".html", "text/html; charset=utf-8"),
+  (".ico", "image/vnd.microsoft.icon"),
+  (".ics", "text/calendar; charset=utf-8"),
+  (".jfif", "image/jpeg"),
+  (".jpeg", "image/jpeg"),
+  (".jpg", "image/jpeg"),
+  (".js", "text/javascript; charset=utf-8"),
+  (".json", "application/json"),
+  (".m4a", "audio/mp4"),
+  (".mjs", "text/javascript; charset=utf-8"),
+  (".mp3", "audio/mpeg"),
+  (".mp4", "video/mp4"),
+  (".oga", "audio/ogg"),
+  (".ogg", "audio/ogg"),
+  (".ogv", "video/ogg"),
+  (".opus", "audio/ogg"),
+  (".pdf", "application/pdf"),
+  (".pjp", "image/jpeg"),
+  (".pjpeg", "image/jpeg"),
+  (".png", "image/png"),
+  (".ppt", "application/vnd.ms-powerpoint"),
+  (".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+  (".ps", "application/postscript"),
+  (".rdf", "application/rdf+xml"),
+  (".rtf", "application/rtf"),
+  (".shtml", "text/html; charset=utf-8"),
+  (".svg", "image/svg+xml"),
+  (".text", "text/plain; charset=utf-8"),
+  (".tif", "image/tiff"),
+  (".tiff", "image/tiff"),
+  (".txt", "text/plain; charset=utf-8"),
+  (".vtt", "text/vtt; charset=utf-8"),
+  (".wasm", "application/wasm"),
+  (".wav", "audio/wav"),
+  (".webm", "audio/webm"),
+  (".webp", "image/webp"),
+  (".xbl", "text/xml; charset=utf-8"),
+  (".xbm", "image/x-xbitmap"),
+  (".xht", "application/xhtml+xml"),
+  (".xhtml", "application/xhtml+xml"),
+  (".xls", "application/vnd.ms-excel"),
+  (".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+  (".xml", "text/xml; charset=utf-8"),
+  (".xsl", "text/xml; charset=utf-8"),
+  (".zip", "application/zip"),
+]
+
+fn type_by_extension(ext: Str) -> Str? {
+  for (k, v) in BUILTIN {
+    if k == ext {
+      return Some(v)
+    }
+  }
+  // Go lowers ASCII letters, or the whole text when it is not ASCII
+  let lower = ext.to_lower()
+  for (k, v) in BUILTIN {
+    if k == lower {
+      return Some(v)
+    }
+  }
+  None
+}
+
+fn extensions_by_type(kind: Str) -> List[Str] ! mime.MimeErr {
+  let t = parse_media_type(kind)?.kind
+  var out: List[Str] = []
+  for (k, v) in BUILTIN {
+    if (parse_media_type(v).ok() ?? mime.MediaType{kind: "", params: {}}).kind == t {
+      out.push(k)
+    }
+  }
+  out.sort()
+}
+
+// ---------------------------------------------------------------------------
+// Content sniffing (net/http sniff.go of go1.26: DetectContentType)
+
+enum Sig {
+  Html(p: Bytes)
+  Masked(mask: Bytes, pat: Bytes, skip_ws: Bool, ct: Str)
+  Exact(sig: Bytes, ct: Str)
+  Mp4
+  Text
+}
+
+fn sigs() -> List[Sig] {
+  var out: List[Sig] = []
+  for h in ["<!DOCTYPE HTML", "<HTML", "<HEAD", "<SCRIPT", "<IFRAME", "<H1", "<DIV", "<FONT", "<TABLE", "<A", "<STYLE",
+      "<TITLE", "<B", "<BODY", "<BR", "<P", "<!--"] {
+    out.push(Sig.Html(p: h.bytes()))
+  }
+  out = out + [
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF", pat: b"<?xml", skip_ws: true, ct: "text/xml; charset=utf-8"),
+    Sig.Exact(sig: b"%PDF-", ct: "application/pdf"),
+    Sig.Exact(sig: b"%!PS-Adobe-", ct: "application/postscript"),
+    Sig.Masked(mask: b"\xFF\xFF\x00\x00", pat: b"\xFE\xFF\x00\x00", skip_ws: false, ct: "text/plain; charset=utf-16be"),
+    Sig.Masked(mask: b"\xFF\xFF\x00\x00", pat: b"\xFF\xFE\x00\x00", skip_ws: false, ct: "text/plain; charset=utf-16le"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\x00", pat: b"\xEF\xBB\xBF\x00", skip_ws: false, ct: "text/plain; charset=utf-8"),
+    Sig.Exact(sig: b"\x00\x00\x01\x00", ct: "image/x-icon"),
+    Sig.Exact(sig: b"\x00\x00\x02\x00", ct: "image/x-icon"),
+    Sig.Exact(sig: b"BM", ct: "image/bmp"),
+    Sig.Exact(sig: b"GIF87a", ct: "image/gif"),
+    Sig.Exact(sig: b"GIF89a", ct: "image/gif"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00WEBPVP", skip_ws: false, ct: "image/webp"),
+    Sig.Exact(sig: b"\x89PNG\x0D\x0A\x1A\x0A", ct: "image/png"),
+    Sig.Exact(sig: b"\xFF\xD8\xFF", ct: "image/jpeg"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"FORM\x00\x00\x00\x00AIFF", skip_ws: false, ct: "audio/aiff"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF", pat: b"ID3", skip_ws: false, ct: "audio/mpeg"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF", pat: b"OggS\x00", skip_ws: false, ct: "application/ogg"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", pat: b"MThd\x00\x00\x00\x06", skip_ws: false, ct: "audio/midi"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00AVI ", skip_ws: false, ct: "video/avi"),
+    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00WAVE", skip_ws: false, ct: "audio/wave"),
+    Sig.Mp4,
+    Sig.Exact(sig: b"\x1A\x45\xDF\xA3", ct: "video/webm"),
+    Sig.Masked(mask: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF", pat: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00LP", skip_ws: false, ct: "application/vnd.ms-fontobject"),
+    Sig.Exact(sig: b"\x00\x01\x00\x00", ct: "font/ttf"),
+    Sig.Exact(sig: b"OTTO", ct: "font/otf"),
+    Sig.Exact(sig: b"ttcf", ct: "font/collection"),
+    Sig.Exact(sig: b"wOFF", ct: "font/woff"),
+    Sig.Exact(sig: b"wOF2", ct: "font/woff2"),
+    Sig.Exact(sig: b"\x1F\x8B\x08", ct: "application/x-gzip"),
+    Sig.Exact(sig: b"PK\x03\x04", ct: "application/zip"),
+    Sig.Exact(sig: b"Rar!\x1A\x07\x00", ct: "application/x-rar-compressed"),
+    Sig.Exact(sig: b"Rar!\x1A\x07\x01\x00", ct: "application/x-rar-compressed"),
+    Sig.Exact(sig: b"\x00\x61\x73\x6D", ct: "application/wasm"),
+    Sig.Text,
+  ]
+  out
+}
+
+fn is_ws(b: UInt8) -> Bool { b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
+
+fn has_prefix(data: Bytes, p: Bytes) -> Bool { data.len() >= p.len() && data[0..p.len()] == p }
+
+fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
+  match s {
+    Html(h) => {
+      let d = data[first..]
+      if d.len() < h.len() + 1 {
+        return ""
+      }
+      for i in 0..h.len() {
+        var db = d[i]
+        if h[i] >= 65 && h[i] <= 90 {
+          db = db & 0xDF
+        }
+        if h[i] != db {
+          return ""
+        }
+      }
+      let t = d[h.len()]
+      if t == 32 || t == 62 { "text/html; charset=utf-8" } else { "" }
+    }
+    Masked(mask, pat, skip_ws, ct) => {
+      let d = if skip_ws { data[first..] } else { data }
+      if pat.len() != mask.len() || d.len() < pat.len() {
+        return ""
+      }
+      for i in 0..pat.len() {
+        if (d[i] & mask[i]) != pat[i] {
+          return ""
+        }
+      }
+      ct
+    }
+    Exact(sig, ct) => if has_prefix(data, sig) { ct } else { "" }
+    Mp4 => {
+      if data.len() < 12 {
+        return ""
+      }
+      let box = (Int(data[0]) << 24) | (Int(data[1]) << 16) | (Int(data[2]) << 8) | Int(data[3])
+      if data.len() < box || box % 4 != 0 {
+        return ""
+      }
+      if data[4..8] != b"ftyp" {
+        return ""
+      }
+      var st = 8
+      while st < box {
+        if st != 12 && data[st..st + 3] == b"mp4" {
+          return "video/mp4"
+        }
+        st += 4
+      }
+      ""
+    }
+    Text => {
+      for b in data[first..] {
+        if b <= 8 || b == 11 || (b >= 14 && b <= 26) || (b >= 28 && b <= 31) {
+          return ""
+        }
+      }
+      "text/plain; charset=utf-8"
+    }
+  }
+}
+
+fn detect_content_type(data0: Bytes) -> Str {
+  let data = if data0.len() > 512 { data0[0..512] } else { data0 }
+  var first = 0
+  while first < data.len() && is_ws(data[first]) {
+    first += 1
+  }
+  for s in sigs() {
+    let ct = sig_match(s, data, first)
+    if !ct.is_empty() {
+      return ct
+    }
+  }
+  "application/octet-stream"
+}
