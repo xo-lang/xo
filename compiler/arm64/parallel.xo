@@ -230,7 +230,19 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
       parts.push(gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p], fc, part_key(fc, p)))
     }
   } else {
-    // each task takes the next part until none is left
+    // each task takes the next part until none is left, the largest
+    // first (SSA values): a large part taken last held the whole emit
+    // back (a cold build of xo: 1 part of 36 took 13.8 s of 111, and 8
+    // tasks finished in 11.3 s, 3.8 times one; 2026-10-19)
+    var cost: List[(Int, Int)] = []
+    for p in 0..np {
+      var nv = 0
+      for fi in bounds[p]..bounds[p + 1] {
+        nv += m.funcs[fi].values.len()
+      }
+      cost.push((p, nv))
+    }
+    let order = cost.sort_by(fn(e) { 0 - e.1 })
     let next = Atomic[Int].new(0)
     let done = scope s {
       var ts = []
@@ -238,10 +250,11 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
         ts.push(s.spawn(fn() -> List[(Int, Part)] {
           var mine: List[(Int, Part)] = []
           while true {
-            let p = next.add(1) - 1
-            if p >= np {
+            let k = next.add(1) - 1
+            if k >= np {
               break
             }
+            let p = order[k].0
             mine.push((p, gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p], fc, part_key(fc, p))))
           }
           mine
