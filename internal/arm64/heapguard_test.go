@@ -68,7 +68,10 @@ func TestGoldenRunHeapGuard(t *testing.T) {
 	if os.Getenv("XO_SELFHOST_TIER") == "full" {
 		dirs = goldenDirs(t)
 	} else {
-		for _, name := range []string{"conc_scopes", "fault_unwind", "fault_tasks", "http_server", "tls_nistec", "json_text", "maps", "closures"} {
+		// http_tls, http_stream, http_conn_fault and http_tls_keys grow
+		// raw.c_resize blocks, whose prefix word is data (2026-10-20: the
+		// guarded resize read it as the size)
+		for _, name := range []string{"conc_scopes", "fault_unwind", "fault_tasks", "http_server", "tls_nistec", "json_text", "maps", "closures", "http_tls", "http_stream", "http_conn_fault", "http_tls_keys"} {
 			dirs = append(dirs, filepath.Join("..", "llvm", "testdata", "golden", name))
 		}
 	}

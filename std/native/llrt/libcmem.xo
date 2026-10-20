@@ -495,11 +495,16 @@ pub fn heap_large(n: Int) -> Int {
 pub fn heap_large_resize(b: Int, n: Int) -> Int {
   if guard_on() {
     if guarded(b) {
-      let old = subw(0, rt.mem_load(b, 0, 8))
-      let nb = heap_large(n)
-      rt.mem_copy(nb, addw(b, 8), if old < n { old } else { n })
+      // the block's size from its mapping, not its prefix: raw.c_resize's
+      // blocks use the prefix word as data (and the copy keeps it, as the
+      // path below does)
+      let m = rt.mem_load(subw(b, 8), 0, 8)
+      let have = subw(subw(addw(m, rt.mem_load(m, 0, 8)), pool.GUARD_PAGE), b)
+      let nb = subw(heap_large(n), 8)
+      rt.mem_copy(nb, b, if have < addw(n, 8) { have } else { addw(n, 8) })
+      rt.mem_store(nb, 0, subw(0, n), 8)
       guard_release(b)
-      return nb
+      return addw(nb, 8)
     }
   }
   let c = rt.mem_load(subw(b, 16), 0, 8)
