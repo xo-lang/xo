@@ -115,7 +115,9 @@ func nativeArm64(t *testing.T) {
 // TestDevGoldensArm64 is scripts/selfhost-goldens.py's arm64 run.
 func TestDevGoldensArm64(t *testing.T) {
 	nativeArm64(t)
-	devGoldens(t, "--backend=arm64", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
+	// 240 s a build, as for LLVM: crypto_prims timed out at 120 s at load
+	// 49 to 71 on the Mac (2026-10-19), 4.0 s when idle
+	devGoldens(t, "--backend=arm64", "--timeout=240", "internal/llvm/testdata/golden", "internal/arm64/testdata/run")
 }
 
 // TestDevGoldensLLVM is scripts/selfhost-goldens.py with XO1_BACKEND=llvm.
