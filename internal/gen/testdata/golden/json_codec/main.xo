@@ -36,6 +36,15 @@ struct PatchFirst {
   id: Int
 } derive Json
 
+// a Str field's quotes go with the literals around it (compiler/ssa
+// json.xo): a Str field just before a Patch field and a Str field last,
+// each with and without bytes to escape
+struct StrEdges {
+  a: Str
+  p: json.Patch[Str]
+  z: Str
+} derive Json
+
 fn main(os: Os) ! {
   let it = Item{id: 1, title: "a \"quoted\" <b>", tags: ["x", "y"], kind: Kind.Task(due: Time.from_unix(0)), meta: {"z": 1, "a": 2}, raw: b"hi"}
   let text = json.encode_str(it)
@@ -70,5 +79,11 @@ fn main(os: Os) ! {
   let f1 = json.decode_str[PatchFirst](r#"{"id": 4}"#)?
   let f2 = json.decode_str[PatchFirst](r#"{"note": "y", "id": 5}"#)?
   os.stdio.println("mixed ${json.encode_str(m1)} ${json.encode_str(m2)} ${json.encode_str(m3)} ${json.encode_str(f1)} ${json.encode_str(f2)}")
+  let e1 = StrEdges{a: "x", p: json.Patch.Absent, z: "y"}
+  let e2 = StrEdges{a: "q\"\n", p: json.Patch.Value("v"), z: "\u{1}\\"}
+  let e3 = StrEdges{a: "", p: json.Patch.Null, z: ""}
+  os.stdio.println("str edges ${json.encode_str(e1)} ${json.encode_str(e2)} ${json.encode_str(e3)}")
+  let d2 = json.decode_str[StrEdges](json.encode_str(e2))?
+  os.stdio.println("str edges back ${d2.a == e2.a && d2.z == e2.z}")
   os.stdio.println("builtins ${json.encode_str([1, 2])} ${json.encode_str({"k": [true, false]})} ${json.encode_str(Some(1.25))} ${json.encode_str(#{"s"})}")
 }

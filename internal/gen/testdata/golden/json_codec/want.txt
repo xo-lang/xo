@@ -13,5 +13,7 @@ at $: invalid JSON: invalid character 'o' in literal null (expecting 'u')
 patch true true true true
 patch encode {"title":"new"} {"title":null,"extra":"x"}
 mixed {"id":1,"name":"n"} {"id":2,"note":"x","name":"n"} {"id":3,"note":null,"name":"n"} {"id":4} {"note":"y","id":5}
+str edges {"a":"x","z":"y"} {"a":"q\"\n","p":"v","z":"\u0001\\"} {"a":"","p":null,"z":""}
+str edges back true
 builtins [1,2] {"k":[true,false]} 1.25 ["s"]
 --- stderr
