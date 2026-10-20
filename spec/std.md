@@ -3167,15 +3167,15 @@ struct TlsErr { msg: Str }
 fn roots(pem: Bytes) -> Roots ! TlsErr
 struct TlsConn {}                                  // handle
 fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
-fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net
-fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net.dial
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net.dial
 fn (t: TlsConn) close()
 fn (t: TlsConn) alpn() -> Str                      // the protocol the server chose, "" for none
 fn (t: TlsConn) version() -> Str                   // "TLS 1.2" or "TLS 1.3"
 ```
 
 ```
-fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net {
+fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   let c = os.net.dial(addr)?
   c.write(ssl_request())?
   if c.read(1)? != Some(b"S") {
@@ -3218,9 +3218,8 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net {
   is covered by golden `tls_client` (every backend) and Docker
   differential tests against Go.
 - Effects: `client` is `net.dial`, since only a dialed connection is
-  upgraded. A TlsConn's `read` and `write` are `net`, as `Conn`'s are
-  until decision 0280 makes a dialed connection's `net.dial`; then
-  they narrow with it.
+  upgraded, and so are a TlsConn's `read` and `write`, as a dialed
+  `Conn`'s (decision 0280).
 - Backends: native (std/native/llrt/tlsio.xo, the http client's TLS, on
   the connection's descriptor) and Go (crypto/tls; `ChainOnly` as
   InsecureSkipVerify with a check of the chain alone). Wasm has no Net.

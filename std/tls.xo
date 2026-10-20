@@ -26,8 +26,8 @@ struct TlsConn {}
 /// Runs a TLS client handshake on c, which belongs to the result from
 /// then on (std.md 27).
 fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
-fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net
-fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (t: TlsConn) close()
 /// The protocol the server chose by ALPN, "" for none.
 fn (t: TlsConn) alpn() -> Str

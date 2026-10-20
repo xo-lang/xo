@@ -71,7 +71,7 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
   TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
 }
 
-fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net {
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   let h = match t.h {
     Some(x) => {
       if tlsio.handle_closed(x) {
@@ -96,7 +96,7 @@ fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net {
   Err(cc_err(-k, "read", tlsio.alert(h)))
 }
 
-fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net {
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
   let h = match t.h {
     Some(x) => {
       if tlsio.handle_closed(x) {
@@ -155,7 +155,7 @@ fn cc_err(status: Int, op: Str, alert: Str) -> NetErr {
 
 /// FakeNet's TlsConn reads the connection itself. The connection is
 /// marked upgraded, so its own read refuses: lift the mark around it.
-fn passthrough_read(c: Conn, max: Int) -> Bytes? ! NetErr uses net {
+fn passthrough_read(c: Conn, max: Int) -> Bytes? ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   netconn.conn_unupgrade(cn)
   let r = c.read(max)
@@ -163,7 +163,7 @@ fn passthrough_read(c: Conn, max: Int) -> Bytes? ! NetErr uses net {
   r
 }
 
-fn passthrough_write(c: Conn, data: Bytes) -> () ! NetErr uses net {
+fn passthrough_write(c: Conn, data: Bytes) -> () ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   netconn.conn_unupgrade(cn)
   let r = c.write(data)
