@@ -19,11 +19,10 @@ builds a new xo, so every gate's suites pay the cold wall; so does every
 developer build after a pull.
 
 How often the code generation actually changes: of the 569 commits to
-main from 2026-10-13 to 2026-10-20 that touched compiler/ or std/, 104
-touched the modules that generate code (compiler/ssa, arm64, check,
-parser, lexer, prune); 465 did not (397 of them only std/native, the
-native standard library and runtime, 68 the driver, the other backends,
-tools, or std outside native).
+main from 2026-10-13 to 2026-10-20 that touched compiler/ or std/, 118
+touched a non-test file of the code generation set below; 451 did not
+(391 of them std/native, the native standard library and runtime, and
+60 the driver, the tools, or std outside native).
 
 ## Decision (proposed)
 
@@ -32,10 +31,10 @@ tools, or std outside native).
    and seed-cut.sh compute it and pass it with `xo build --stamp`. It is
    the SHA-256 over, in a fixed order:
    - every file of the compiler modules that decide an entry's bytes
-     (the import closure of compiler/arm64, compiler/llvm, compiler/wasm
-     and compiler/macho within compiler/: today ssa, check, parser,
-     lexer, prune, arm64, llvm, wasm, macho, debug), by path and
-     contents;
+     (the backends and their import closure within compiler/: today
+     arm64, llvm, wasm, macho, ssa, check, parser, lexer, cli/bind,
+     cli/core/format, tzsel), by path and contents, the set computed from
+     the `use` lines, not listed by hand; `_test.xo` files left out;
    - core.VERSION and the cache format versions (each kind's
      *_CACHE_VERSION, already in its key; listed again so a forgotten
      bump is still covered by the sources);
@@ -58,7 +57,7 @@ neither the entry's key nor XO_CODEGEN_KEY. The inputs:
 
 | Input | Where it is keyed |
 |---|---|
-| The code generation sources (ssa, arm64, llvm, wasm, macho, check, parser, lexer, prune, debug) | XO_CODEGEN_KEY |
+| The code generation sources (the backends and their compiler/ import closure) | XO_CODEGEN_KEY |
 | The program's own sources and the std it compiles | each entry's key (function bodies, module hashes, std_sum) |
 | Flags (release, debug info, heap guard, poison frames, nolibc, regs, inline settings, XO_INLINE_DENY) | each entry's key header (fn_key, part_keys, rc and inline keys) |
 | Target (goos, goarch, nolibc) | each entry's key header |
@@ -81,9 +80,12 @@ The three unkeyed rows are the cost. How a mistake there is caught:
   passes_off, part constants) must be in the entry's key header; the
   rule is to put it there, as fn_key does. A review item for every
   driver change that adds a setting.
-- **Verify mode.** XO_BACKEND_CACHE=verify regenerates every entry and
-  compares; the gates already run with it (gate.sh). A stale entry from
-  an earlier xo shows as a verify mismatch in the next gate.
+- **Gates stay cold, plus a verify job.** gate.sh runs with
+  XO_BACKEND_CACHE=off, so a gate's verdict never depends on a cache;
+  this decision keeps that. A gate adds one warm run: the goldens with
+  XO_BACKEND_CACHE=verify against the user cache warmed by earlier xos,
+  which regenerates every entry and fails on any difference, so a stale
+  entry carried across xo builds shows in the next gate.
 - **The fixed point and the goldens** build the compiler and the
   goldens through warm caches carried over from earlier xo builds, so a
   wrong entry reaches a test that compares output.
@@ -102,7 +104,7 @@ one that changes too rarely costs correctness.
 ## Consequences
 
 - For a commit that touches only std/native, the driver, the tools, or
-  the docs (465 of 569 last week), the next build keeps its warm cache;
+  the docs (451 of 569 that week), the next build keeps its warm cache;
   the suites' wall drops toward the warm figure (internal/arm64: 349 s
   instead of 767 s, measured with an identical xo; the real figure
   sits between, since std/native changes still invalidate the entries
