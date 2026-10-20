@@ -95,6 +95,59 @@ The three unkeyed rows are the cost. How a mistake there is caught:
 - **An escape hatch.** XO_BACKEND_CACHE=off, and bumping a
   *_CACHE_VERSION, still clear any entry.
 
+### Audit of the inputs outside the closure (2026-10-20, main 2c4b0ff3)
+
+The tables the code generation reads are compiler sources inside the
+closure: the static word table (compiler/arm64 state.xo, gen.xo;
+TestStaticWords), the intrinsic lists (compiler/ssa call.xo, the
+backends' calls.xo and call.xo), the TSan tables (compiler/arm64
+race.xo, compiler/llvm), the Windows import table (compiler/macho
+pelink.xo; compiler/xo link.xo also names imports, but only for the
+link, whose binary cache keeps self_id), the part cut constants
+(compiler/arm64 parallel.xo). What the runtime defines (std/native/llrt
+rt.xo) is the program's std, an input of every entry's own key.
+
+What the driver (compiler/xo, outside the closure) hands the backends,
+by the environment and the module fields it sets
+(gm/lm/mi: comp_dir, std_root, debug_info, dw_data_addrs, nolibc,
+nolibc_start, poison_frames, race, inline_deny, passes_off):
+
+| Setting | Status |
+|---|---|
+| XO_ARM64_REGS, XO_POISON_FRAMES, XO_HEAP_GUARD, XO_NOLIBC, debug info, comp_dir, std_root | in the fn and part key headers |
+| XO_INLINE_DENY, XO_PASSES | in the inline key header (deny, passes) |
+| XO_PASSES, --race (XO_NATIVE_RACE) | the fn cache is bypassed (compiler/xo main.xo:840): race is NOT in fn_key though isel instruments for it (compiler/arm64 isel.xo:62), so the bypass is the only guard; add race to fn_key's header as part of this decision |
+| XO_DCE, XO_LLRT_C, XO_CHECK_EAGER | change which functions exist or how they are checked; every entry is keyed by its function's content |
+| XO_LLVM_OPT, XO_LLVM_LTO, XO_LLVM_SPLIT, XO_SYSROOT, XO_CC, XO_CLANG, XO_WIN_NOCRT, XO_TSAN_RUNTIME | the cc and link steps: the object and binary keys hold the flags and the IR or assembly they read |
+| XO_EMIT_JOBS, XO_LLVM_JOBS, XO_TEST_JOBS | no effect on output by design (the parts never depend on the task count, L2 of fast-builds) |
+| cache, path, reporting and test settings (XO_BACKEND_CACHE*, XO_BIN_CACHE, XO_BUILD_DIR, XO_FE_STATS, XO_INLINE_REPORT, XO_INLINE_STRICT, XO_INLINE_BREAK, XO_MODCACHE, XO_WORK, XO_OFFLINE, XO_TEST_*, XO_TRACEBACK, XO_WARNINGS) | no effect on an entry's bytes (XO_INLINE_BREAK breaks the module on purpose and is a test switch; it joins the bypass list) |
+
+### The guard test
+
+A Go test (internal/xotool, beside the stamp's computation) that fails
+on anything unclassified:
+
+- it collects every `env.get("...")` name and every module field
+  assignment in compiler/xo and in the closure, and every file read
+  (os.fs) in the closure, and requires each in a checked-in table with
+  one of the classes above ("key header", "bypass", "content keyed",
+  "cc/link keyed", "no output effect"); a new one fails until someone
+  classifies it;
+- for "key header" it requires the setting's name to appear in the key
+  header strings (fcache.xo fn_key, partcache.xo, inlcache.xo,
+  rccache.xo, fecache.xo), and for "bypass" in the bypass condition;
+- it changes one file of each closure module in a copy of the tree and
+  requires a new XO_CODEGEN_KEY, and changes compiler/xo, a std file,
+  and a doc and requires the same one.
+
+### Fail closed
+
+The closure is computed from the `use` lines. If any `use` of a closure
+module cannot be resolved to a directory, or a listed file cannot be
+read, the stamp is not set (empty), and xo falls back to self_id: no
+partial hash. The guard test checks this with a tree whose closure has
+an unresolvable `use`.
+
 When the key must change (the rule): any change to a file in the code
 generation set; any change to a cache format; a new input that decides
 an entry's bytes either goes into the entry's key or into the set. When
