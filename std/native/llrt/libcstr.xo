@@ -75,15 +75,46 @@ fn copy_words(d: Int, s: Int, n: Int) -> Int {
   n8
 }
 
+/// n bytes from s to d for n from 1 to 16, every load before any store
+/// (so they may overlap): two words, two halves, or two quarters that
+/// overlap in the middle, else a byte (2026-10-19: the byte loops of a
+/// short copy were most of json/enc_small's memmove, three times
+/// LLVM's on amd64).
+fn move_small(d: Int, s: Int, n: Int) {
+  if n >= 8 {
+    let t = subw(n, 8)
+    let a = rt.mem_load(s, 0, 8)
+    let b = rt.mem_load(s, t, 8)
+    rt.mem_store(d, 0, a, 8)
+    rt.mem_store(d, t, b, 8)
+    return
+  }
+  if n >= 4 {
+    let t = subw(n, 4)
+    let a = rt.mem_load(s, 0, 4)
+    let b = rt.mem_load(s, t, 4)
+    rt.mem_store(d, 0, a, 4)
+    rt.mem_store(d, t, b, 4)
+    return
+  }
+  if n >= 2 {
+    let t = subw(n, 2)
+    let a = rt.mem_load(s, 0, 2)
+    let b = rt.mem_load(s, t, 2)
+    rt.mem_store(d, 0, a, 2)
+    rt.mem_store(d, t, b, 2)
+    return
+  }
+  rt.mem_store(d, 0, byte(s, 0), 1)
+}
+
 /// memcpy: n bytes from s to d (not overlapping); d. From 8 bytes on,
 /// the tail is one word ending at n (overlapping bytes already copied:
 /// s and d do not overlap), so a short copy has no byte loop.
 pub fn memcpy(d: Int, s: Int, n: Int) -> Int {
   if n < 8 {
-    var j = 0
-    while j < n {
-      rt.mem_store(d, j, byte(s, j), 1)
-      j = addw(j, 1)
+    if n > 0 {
+      move_small(d, s, n)
     }
     return d
   }
@@ -98,9 +129,20 @@ pub fn memmove(d: Int, s: Int, n: Int) -> Int {
   if d == s || n <= 0 {
     return d
   }
+  if n <= 16 {
+    move_small(d, s, n)
+    return d
+  }
   // forward when d is below s or past its end (unsigned: addresses)
   if ult(d, s) || !ult(subw(d, s), n) {
     var i = copy_words(d, s, n)
+    if i < n && !ult(subw(s, d), 8) {
+      // the tail as one word ending at n: with s at least 8 bytes past
+      // d (or d past s's end) no store so far reached those bytes of s
+      let t = subw(n, 8)
+      rt.mem_store(d, t, rt.mem_load(s, t, 8), 8)
+      return d
+    }
     while i < n {
       rt.mem_store(d, i, byte(s, i), 1)
       i = addw(i, 1)

@@ -1,0 +1,57 @@
+// Tests of libcstr.xo's memory functions (decision 0262): `xo test
+// --std-module=native/llrt/libcstr`, run by internal/stdtest.
+
+use native/llrt/raw
+use native/rt
+
+/// A buffer of n bytes 0, 1, 2, ... (mod 251) and its address.
+fn buf(n: Int) -> (Bytes, Int) {
+  let b = raw.bytes_buf(n)
+  let a = raw.bytes_addr(b)
+  for i in 0..n {
+    rt.mem_store(a, i, i % 251, 1)
+  }
+  (b, a)
+}
+
+/// The n bytes at a.
+fn read(a: Int, n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..n {
+    out.push(rt.mem_load(a, i, 1))
+  }
+  out
+}
+
+test "memmove of 0 to 80 bytes, the destination 24 below to 24 above the source" {
+  for n in 0..81 {
+    for k in -24..25 {
+      let (b, a) = buf(200)
+      let s = 60
+      let d = s + k
+      // the expected bytes: s's n bytes, read before any is written
+      var want = read(a, 200)
+      let src = read(a + s, n)
+      for i in 0..n {
+        want[d + i] = src[i]
+      }
+      let r = memmove(a + d, a + s, n)
+      expect(r == a + d) == true
+      expect(read(a, 200) == want) == true
+      raw.alive(b)
+    }
+  }
+}
+
+test "memcpy of 0 to 40 bytes" {
+  for n in 0..41 {
+    let (b, a) = buf(100)
+    var want = read(a, 100)
+    for i in 0..n {
+      want[50 + i] = i % 251
+    }
+    let _r = memcpy(a + 50, a, n)
+    expect(read(a, 100) == want) == true
+    raw.alive(b)
+  }
+}

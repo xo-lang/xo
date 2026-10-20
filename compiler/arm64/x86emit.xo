@@ -518,13 +518,50 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
   }
 }
 
+/// Whether the last instruction in b (past debug rows) leaves ZF set by
+/// whether register r is zero: an and, or, xor, add, sub, or neg into
+/// r, or a shift of r by a nonzero constant (2026-10-19: `sarq $32,
+/// %r10` then `testq %r10, %r10`, 280 such tests in the portable bench).
+fn x86_zf_of(b: List[Str], r: Str) -> Bool {
+  var i = b.len() - 1
+  while i >= 0 && b[i].starts_with("\t.loc") {
+    i -= 1
+  }
+  if i < 0 || !b[i].starts_with("\t") {
+    return false
+  }
+  let l = b[i].trim()
+  let sp = l.find(" ") ?? -1
+  if sp < 0 {
+    return false
+  }
+  let op = l[0..sp]
+  let ops = l[sp + 1..l.len()].split(", ")
+  if ops[ops.len() - 1] != r {
+    return false
+  }
+  if op is "andq" | "orq" | "xorq" | "addq" | "subq" {
+    return ops.len() == 2
+  }
+  if op == "negq" {
+    return ops.len() == 1
+  }
+  if op is "sarq" | "shrq" | "shlq" {
+    // a count of 0 (or in %cl) leaves the flags
+    return ops.len() == 2 && ops[0].starts_with("$") && ops[0] != "$0"
+  }
+  false
+}
+
 fn (var g: G) x86_emit_condbr(var b: List[Str], inst: Inst, next: Int) {
   let t = g.fwd(inst.targets[0])
   let f = g.fwd(inst.targets[1])
   var cond = inst.cond
   if inst.cond == "cbnz" {
     let r = g.x86_use_reg(b, inst.us[0])
-    b.push("\ttestq ${r}, ${r}\n")
+    if !x86_zf_of(b, r) {
+      b.push("\ttestq ${r}, ${r}\n")
+    }
     cond = "ne"
   } else if inst.cond == "tbz" || inst.cond == "tbnz" {
     let r = g.x86_use_reg(b, inst.us[0])
