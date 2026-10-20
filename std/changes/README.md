@@ -18,3 +18,4 @@ entries yet.
 - [tls.md](tls.md): std/tls (spec/std.md 27)
 - [mime.md](mime.md): std/mime (spec/std.md 23)
 - [uuid.md](uuid.md): std/uuid (spec/std.md 24)
+- [mail.md](mail.md): std/mail (spec/std.md 25)

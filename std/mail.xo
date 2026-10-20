@@ -1,0 +1,26 @@
+// std/mail (spec/std.md 25, decision 0282). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's net/mail addresses
+// (RFC 5322 with RFC 2047 encoded words). Pure.
+
+/// A mail address: the display name (decoded) and `local@domain`.
+struct Address {
+  name: Str
+  address: Str
+}
+
+/// Go's error texts: `mail: no address`, `mail: missing @ in addr-spec`, ...
+struct MailErr {
+  msg: Str
+}
+
+fn (e: MailErr) display() -> Str
+
+/// `Ann Lee <ann@example.com>`, `ann@example.com (Ann)`, a quoted or
+/// RFC 2047 encoded name (mail.ParseAddress).
+fn parse_address(s: Str) -> Address ! MailErr
+/// A comma separated list, groups (`team: a@x, b@y;`) flattened
+/// (mail.ParseAddressList).
+fn parse_address_list(s: Str) -> List[Address] ! MailErr
+/// `"Ann Lee" <ann@example.com>`, the name quoted or RFC 2047 encoded as
+/// needed (Address.String).
+fn (a: Address) display() -> Str

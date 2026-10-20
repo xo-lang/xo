@@ -46,6 +46,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/tls | 27 | `std/changes/tls.md` |
 | std/mime | 23 | `std/changes/mime.md` |
 | std/uuid | 24 | `std/changes/uuid.md` |
+| std/mail | 25 | `std/changes/mail.md` |
 
 ## Go packages
 
@@ -147,7 +148,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
 | net/smtp | none | planned | Sending mail (STARTTLS, AUTH PLAIN); needs TLS on a Conn. |
-| net/mail | none | planned | Address parsing and message headers. |
+| net/mail | std/mail | partial | ParseAddress, ParseAddressList, Address.String with RFC 2047 words (decision 0282). Missing: ReadMessage, headers, ParseDate. |
 | net/textproto | inside std/native/llrt (http1) | partial | Header canonicalization for HTTP only. |
 | net/rpc, net/rpc/jsonrpc | none | not planned | Superseded by HTTP JSON APIs. |
 

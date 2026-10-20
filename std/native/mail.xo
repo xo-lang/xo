@@ -1,0 +1,812 @@
+// std/mail on the native backends (decision 0282): Go's net/mail address
+// parser (message.go of go1.26: addrParser, Address.String), with mime's
+// RFC 2047 encoded words (encodedword.go: WordDecoder for utf-8,
+// iso-8859-1, and us-ascii; the B and Q WordEncoders) and net/netip's
+// address syntax for domain literals, ported with the same results and
+// error texts.
+use std/mail
+
+fn mailerr_display(e: mail.MailErr) -> Str { e.msg }
+
+fn fail(msg: Str) -> mail.MailErr { mail.MailErr{msg: msg} }
+
+const UPPER_HEX: Str = "0123456789ABCDEF"
+
+// ---------------------------------------------------------------------------
+// Character classes (message.go isAtext, isQtext, isVchar, isWSP, isDtext)
+
+fn is_vchar(r: Rune) -> Bool { (r >= '!' && r <= '~') || Int(r) >= 128 }
+
+fn is_wsp(r: Rune) -> Bool { r == ' ' || r == '\t' }
+
+fn is_atext(r: Rune, dot: Bool) -> Bool {
+  if r == '.' {
+    return dot
+  }
+  if r == '(' || r == ')' || r == '<' || r == '>' || r == '[' || r == ']' || r == ':' || r == ';' || r == '@' || r == '\\' || r == ',' || r == '"' {
+    return false
+  }
+  is_vchar(r)
+}
+
+fn is_qtext(r: Rune) -> Bool { r != '\\' && r != '"' && is_vchar(r) }
+
+fn is_dtext(r: Rune) -> Bool { r != '[' && r != ']' && r != '\\' && is_vchar(r) }
+
+// ---------------------------------------------------------------------------
+// RFC 2047 encoded words (mime/encodedword.go)
+
+fn hex_of(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  -1
+}
+
+/// Go's %#02x of a byte: 0x and lower case hex, no padding.
+fn hex_byte(c: UInt8) -> Str {
+  let h = "0123456789abcdef"
+  let v = Int(c)
+  if v < 16 {
+    return "0x" + h[v..v + 1]
+  }
+  "0x" + h[v >> 4..(v >> 4) + 1] + h[v & 15..(v & 15) + 1]
+}
+
+fn q_decode(s: Str) -> Bytes ! Str {
+  let b = s.bytes()
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  var bad = ""
+  while i < b.len() {
+    let c = b[i]
+    if c == 95 {
+      out.write_byte(32)
+    } else if c == 61 {
+      if i + 2 >= b.len() {
+        bad = "mime: invalid RFC 2047 encoded-word"
+        break
+      }
+      if hex_of(b[i + 1]) < 0 {
+        bad = "mime: invalid hex byte ${hex_byte(b[i + 1])}"
+        break
+      }
+      if hex_of(b[i + 2]) < 0 {
+        bad = "mime: invalid hex byte ${hex_byte(b[i + 2])}"
+        break
+      }
+      out.write_byte(UInt8(hex_of(b[i + 1]) * 16 + hex_of(b[i + 2])))
+      i += 2
+    } else if (c <= 126 && c >= 32) || c == 10 || c == 13 || c == 9 {
+      out.write_byte(c)
+    } else {
+      bad = "mime: invalid RFC 2047 encoded-word"
+      break
+    }
+    i += 1
+  }
+  if !bad.is_empty() {
+    return Err(bad)
+  }
+  out.freeze()
+}
+
+/// The result of decoding a word: its text, or an error, and whether the
+/// word was an encoded word whose charset is not supported (message.go's
+/// charsetReaderError).
+enum Decoded {
+  Text(s: Str)
+  NotEncoded
+  Charset(msg: Str)
+}
+
+/// WordDecoder.Decode with net/mail's CharsetReader (every other charset
+/// is `charset not supported: "x"`).
+fn decode_word(word: Str) -> Decoded {
+  if word.len() < 8 || !word.starts_with("=?") || !word.ends_with("?=") || word.split("?").len() != 5 {
+    return Decoded.NotEncoded
+  }
+  let inner = word[2..word.len() - 2]
+  let parts = inner.split("?")
+  let charset = parts[0]
+  let enc = parts[1]
+  let text = parts[2]
+  if charset.is_empty() || enc.len() != 1 {
+    return Decoded.NotEncoded
+  }
+  let content = match enc {
+    "B" | "b" => match Bytes.from_base64(text) {
+      Some(b) => b
+      None => return Decoded.NotEncoded
+    }
+    "Q" | "q" => match q_decode(text) {
+      Ok(b) => b
+      Err(_) => return Decoded.NotEncoded
+    }
+    _ => return Decoded.NotEncoded
+  }
+  let lower = charset.to_lower()
+  if lower == "utf-8" {
+    // bytes that are not UTF-8 become U+FFFD each (decision 0259)
+    return Decoded.Text(s: lossy(content))
+  }
+  if lower == "iso-8859-1" {
+    var out = StrBuilder.new()
+    for c in content {
+      out.write("${Rune(Int(c))}")
+    }
+    return Decoded.Text(s: out.freeze())
+  }
+  if lower == "us-ascii" {
+    var out = StrBuilder.new()
+    for c in content {
+      out.write(if c >= 128 { "\u{FFFD}" } else { "${Rune(Int(c))}" })
+    }
+    return Decoded.Text(s: out.freeze())
+  }
+  Decoded.Charset(msg: "charset not supported: ${lower.quote()}")
+}
+
+fn lossy(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write("${r}")
+    i += n
+  }
+  out.freeze()
+}
+
+const MAX_CONTENT: Int = 63
+
+fn write_q(var out: StrBuilder, s: Bytes) {
+  let hex = UPPER_HEX
+  for c in s {
+    let v = Int(c)
+    if c == 32 {
+      out.write("_")
+    } else if c >= 33 && c <= 126 && c != 61 && c != 63 && c != 95 {
+      out.write("${Rune(v)}")
+    } else {
+      out.write("=" + hex[v >> 4..(v >> 4) + 1] + hex[v & 15..(v & 15) + 1])
+    }
+  }
+}
+
+/// WordEncoder.Encode with charset utf-8: the text when it needs no
+/// encoding, else encoded words of at most 75 bytes, split between runes.
+fn encode_word(q: Bool, s: Str) -> Str {
+  var needs = false
+  for r in s.runes() {
+    if (r < ' ' || r > '~') && r != '\t' {
+      needs = true
+    }
+  }
+  if !needs {
+    return s
+  }
+  let open = if q { "=?utf-8?q?" } else { "=?utf-8?b?" }
+  var words: List[Str] = []
+  let b = s.bytes()
+  if q {
+    var cur = StrBuilder.new()
+    var len = 0
+    var i = 0
+    while i < b.len() {
+      let c = b[i]
+      var n = 1
+      var enc = 1
+      if !(c >= 32 && c <= 126 && c != 61 && c != 63 && c != 95) {
+        n = b.decode_rune(i).1
+        enc = 3 * n
+      }
+      if len + enc > MAX_CONTENT {
+        words.push(cur.freeze())
+        cur = StrBuilder.new()
+        len = 0
+      }
+      write_q(cur, b[i..i + n])
+      len += enc
+      i += n
+    }
+    words.push(cur.freeze())
+  } else {
+    // base64: whole when it fits, else pieces of at most 47 bytes of text
+    if (b.len() + 2) / 3 * 4 <= MAX_CONTENT {
+      words.push(b.to_base64())
+    } else {
+      var last = 0
+      var len = 0
+      var i = 0
+      while i < b.len() {
+        let n = b.decode_rune(i).1
+        if len + n <= 47 {
+          len += n
+        } else {
+          words.push(b[last..i].to_base64())
+          last = i
+          len = n
+        }
+        i += n
+      }
+      words.push(b[last..].to_base64())
+    }
+  }
+  words.map(fn(w) { open + w + "?=" }).join(" ")
+}
+
+// ---------------------------------------------------------------------------
+// IP addresses of domain literals (net.ParseIP over netip.ParseAddr)
+
+fn ipv4_ok(s: Str) -> Bool {
+  let b = s.bytes()
+  var val = 0
+  var digits = 0
+  var dots = 0
+  for i in 0..b.len() {
+    let c = b[i]
+    if c >= 48 && c <= 57 {
+      if digits == 1 && val == 0 {
+        return false
+      }
+      val = val * 10 + Int(c) - 48
+      digits += 1
+      if val > 255 {
+        return false
+      }
+    } else if c == 46 {
+      if i == 0 || i == b.len() - 1 || b[i - 1] == 46 || dots == 3 {
+        return false
+      }
+      dots += 1
+      val = 0
+      digits = 0
+    } else {
+      return false
+    }
+  }
+  dots == 3
+}
+
+fn ipv6_ok(s0: Str) -> Bool {
+  if s0.contains("%") {
+    // a zone: net.ParseIP has none
+    return false
+  }
+  var s = s0.bytes()
+  var ellipsis = -1
+  if s.len() >= 2 && s[0] == 58 && s[1] == 58 {
+    ellipsis = 0
+    s = s[2..]
+    if s.is_empty() {
+      return true
+    }
+  }
+  var i = 0
+  while i < 16 {
+    var off = 0
+    var acc = 0
+    while off < s.len() && hex_of(s[off]) >= 0 {
+      acc = acc * 16 + hex_of(s[off])
+      if off > 3 || acc > 65535 {
+        return false
+      }
+      off += 1
+    }
+    if off == 0 {
+      return false
+    }
+    if off < s.len() && s[off] == 46 {
+      if ellipsis < 0 && i != 12 {
+        return false
+      }
+      if i + 4 > 16 {
+        return false
+      }
+      if !ipv4_ok(s.to_str() ?? "") {
+        return false
+      }
+      s = b""
+      i += 4
+      break
+    }
+    i += 2
+    s = s[off..]
+    if s.is_empty() {
+      break
+    }
+    if s[0] != 58 || s.len() == 1 {
+      return false
+    }
+    s = s[1..]
+    if s[0] == 58 {
+      if ellipsis >= 0 {
+        return false
+      }
+      ellipsis = i
+      s = s[1..]
+      if s.is_empty() {
+        break
+      }
+    }
+  }
+  if !s.is_empty() {
+    return false
+  }
+  if i < 16 {
+    return ellipsis >= 0
+  }
+  ellipsis < 0
+}
+
+fn ip_ok(s: Str) -> Bool {
+  for c in s.bytes() {
+    if c == 46 {
+      return ipv4_ok(s)
+    }
+    if c == 58 {
+      return ipv6_ok(s)
+    }
+    if c == 37 {
+      return false
+    }
+  }
+  false
+}
+
+// ---------------------------------------------------------------------------
+// The parser (message.go addrParser)
+
+struct P {
+  s: Str
+}
+
+fn (p: P) empty() -> Bool { p.s.is_empty() }
+
+fn (p: P) peek() -> UInt8 { p.s.bytes()[0] }
+
+fn (var p: P) consume(c: UInt8) -> Bool {
+  if p.empty() || p.peek() != c {
+    return false
+  }
+  p.s = p.s[1..]
+  true
+}
+
+fn (var p: P) skip_space() {
+  let b = p.s.bytes()
+  var i = 0
+  while i < b.len() && (b[i] == 32 || b[i] == 9) {
+    i += 1
+  }
+  p.s = p.s[i..]
+}
+
+fn (var p: P) consume_comment() -> (Str, Bool) {
+  var depth = 1
+  var comment = StrBuilder.new()
+  while !p.empty() && depth != 0 {
+    if p.peek() == 92 && p.s.len() > 1 {
+      p.s = p.s[1..]
+    } else if p.peek() == 40 {
+      depth += 1
+    } else if p.peek() == 41 {
+      depth -= 1
+    }
+    if depth > 0 {
+      // one byte: a character of the comment, as Go's p.s[:1]
+      let (r, n) = p.s.bytes().decode_rune(0)
+      comment.write(p.s[0..n])
+      p.s = p.s[n..]
+      let _ = r
+      continue
+    }
+    p.s = p.s[1..]
+  }
+  (comment.freeze(), depth == 0)
+}
+
+fn (var p: P) skip_cfws() -> Bool {
+  p.skip_space()
+  while p.consume(40) {
+    let (_, ok) = p.consume_comment()
+    if !ok {
+      return false
+    }
+    p.skip_space()
+  }
+  true
+}
+
+fn (var p: P) consume_quoted_string() -> Str ! mail.MailErr {
+  let b = p.s.bytes()
+  var i = 1
+  var out = StrBuilder.new()
+  var escaped = false
+  var closed = false
+  var bad = ""
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if escaped {
+      if !is_vchar(r) && !is_wsp(r) {
+        bad = "mail: bad character in quoted-string: ${r.quote()}"
+        break
+      }
+      out.write("${r}")
+      escaped = false
+    } else if is_qtext(r) || is_wsp(r) {
+      out.write("${r}")
+    } else if r == '"' {
+      closed = true
+      break
+    } else if r == '\\' {
+      escaped = true
+    } else {
+      bad = "mail: bad character in quoted-string: ${r.quote()}"
+      break
+    }
+    i += n
+  }
+  if !bad.is_empty() {
+    return Err(fail(bad))
+  }
+  if !closed {
+    return Err(fail("mail: unclosed quoted-string"))
+  }
+  p.s = p.s[i + 1..]
+  out.freeze()
+}
+
+fn (var p: P) consume_atom(dot: Bool, permissive: Bool) -> Str ! mail.MailErr {
+  let b = p.s.bytes()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if !is_atext(r, dot) {
+      break
+    }
+    i += n
+  }
+  if i == 0 {
+    return Err(fail("mail: invalid string"))
+  }
+  let atom = p.s[0..i]
+  p.s = p.s[i..]
+  if !permissive {
+    if atom.starts_with(".") {
+      return Err(fail("mail: leading dot in atom"))
+    }
+    if atom.contains("..") {
+      return Err(fail("mail: double dot in atom"))
+    }
+    if atom.ends_with(".") {
+      return Err(fail("mail: trailing dot in atom"))
+    }
+  }
+  atom
+}
+
+fn (var p: P) consume_domain_literal() -> Str ! mail.MailErr {
+  if !p.consume(91) {
+    return Err(fail("mail: missing \"[\" in domain-literal"))
+  }
+  let start = p.s
+  var n = 0
+  while {
+    if p.empty() {
+      return Err(fail("mail: unclosed domain-literal"))
+    }
+    if p.peek() == 93 {
+      break
+    }
+    let (r, size) = p.s.bytes().decode_rune(0)
+    if !is_dtext(r) {
+      return Err(fail("mail: bad character in domain-literal: ${r.quote()}"))
+    }
+    n += size
+    p.s = p.s[size..]
+  }
+  let dtext = start[0..n]
+  if !p.consume(93) {
+    return Err(fail("mail: unclosed domain-literal"))
+  }
+  if !ip_ok(dtext) {
+    return Err(fail("mail: invalid IP address in domain-literal: ${dtext.quote()}"))
+  }
+  "[" + dtext + "]"
+}
+
+/// consumeAddrSpec; the parser is unchanged when it fails.
+fn (var p: P) consume_addr_spec() -> Str ! mail.MailErr {
+  let orig = p.s
+  match p.addr_spec() {
+    Ok(s) => s
+    Err(e) => {
+      p.s = orig
+      Err(e)
+    }
+  }
+}
+
+fn (var p: P) addr_spec() -> Str ! mail.MailErr {
+  p.skip_space()
+  if p.empty() {
+    return Err(fail("mail: no addr-spec"))
+  }
+  var local = ""
+  if p.peek() == 34 {
+    local = p.consume_quoted_string()?
+    if local.is_empty() {
+      return Err(fail("mail: empty quoted string in addr-spec"))
+    }
+  } else {
+    local = p.consume_atom(true, false)?
+  }
+  if !p.consume(64) {
+    return Err(fail("mail: missing @ in addr-spec"))
+  }
+  p.skip_space()
+  if p.empty() {
+    return Err(fail("mail: no domain in addr-spec"))
+  }
+  let domain = if p.peek() == 91 { p.consume_domain_literal()? } else { p.consume_atom(true, false)? }
+  local + "@" + domain
+}
+
+fn (var p: P) consume_phrase() -> Str ! mail.MailErr {
+  var words: List[Str] = []
+  var prev_encoded = false
+  var failed = ""
+  while {
+    if !words.is_empty() {
+      if !p.skip_cfws() {
+        return Err(fail("mail: misformatted parenthetical comment"))
+      }
+    }
+    p.skip_space()
+    if p.empty() {
+      break
+    }
+    var word = ""
+    var encoded = false
+    if p.peek() == 34 {
+      match p.consume_quoted_string() {
+        Ok(w) => word = w
+        Err(e) => {
+          failed = e.msg
+          break
+        }
+      }
+    } else {
+      match p.consume_atom(true, true) {
+        Ok(w) => {
+          match decode_word(w) {
+            Text(t) => {
+              word = t
+              encoded = true
+            }
+            NotEncoded => word = w
+            Charset(msg) => {
+              failed = msg
+              break
+            }
+          }
+        }
+        Err(e) => {
+          failed = e.msg
+          break
+        }
+      }
+    }
+    if prev_encoded && encoded {
+      let last = words.pop() ?? ""
+      words.push(last + word)
+    } else {
+      words.push(word)
+    }
+    prev_encoded = encoded
+  }
+  if !failed.is_empty() && words.is_empty() {
+    return Err(fail("mail: missing word in phrase: ${failed}"))
+  }
+  words.join(" ")
+}
+
+fn (var p: P) consume_display_name_comment() -> Str ! mail.MailErr {
+  if !p.consume(40) {
+    return Err(fail("mail: comment does not start with ("))
+  }
+  let (comment, ok) = p.consume_comment()
+  if !ok {
+    return Err(fail("mail: misformatted parenthetical comment"))
+  }
+  var words: List[Str] = []
+  for w in comment.replace("\t", " ").split(" ") {
+    if w.is_empty() {
+      continue
+    }
+    match decode_word(w) {
+      Text(t) => words.push(t)
+      NotEncoded => words.push(w)
+      Charset(msg) => return Err(fail(msg))
+    }
+  }
+  words.join(" ")
+}
+
+fn (var p: P) parse_address(handle_group: Bool) -> List[mail.Address] ! mail.MailErr {
+  p.skip_space()
+  if p.empty() {
+    return Err(fail("mail: no address"))
+  }
+  if let Ok(spec) = p.consume_addr_spec() {
+    var name = ""
+    p.skip_space()
+    if !p.empty() && p.peek() == 40 {
+      name = p.consume_display_name_comment()?
+    }
+    return [mail.Address{name: name, address: spec}]
+  }
+  var name = ""
+  if p.peek() != 60 {
+    name = p.consume_phrase()?
+  }
+  p.skip_space()
+  if handle_group && p.consume(58) {
+    return p.consume_group_list()
+  }
+  if !p.consume(60) {
+    if name.runes().all(fn(r) { is_atext(r, true) }) {
+      return Err(fail("mail: missing '@' or angle-addr"))
+    }
+    return Err(fail("mail: no angle-addr"))
+  }
+  let spec = p.consume_addr_spec()?
+  if !p.consume(62) {
+    return Err(fail("mail: unclosed angle-addr"))
+  }
+  [mail.Address{name: name, address: spec}]
+}
+
+fn (var p: P) consume_group_list() -> List[mail.Address] ! mail.MailErr {
+  var group: List[mail.Address] = []
+  p.skip_space()
+  if p.consume(59) {
+    if !p.skip_cfws() {
+      return Err(fail("mail: misformatted parenthetical comment"))
+    }
+    return group
+  }
+  while {
+    p.skip_space()
+    group = group + p.parse_address(false)?
+    if !p.skip_cfws() {
+      return Err(fail("mail: misformatted parenthetical comment"))
+    }
+    if p.consume(59) {
+      if !p.skip_cfws() {
+        return Err(fail("mail: misformatted parenthetical comment"))
+      }
+      break
+    }
+    if !p.consume(44) {
+      return Err(fail("mail: expected comma"))
+    }
+  }
+  group
+}
+
+fn parse_address(s: Str) -> mail.Address ! mail.MailErr {
+  var p = P{s: s}
+  let addrs = p.parse_address(true)?
+  if !p.skip_cfws() {
+    return Err(fail("mail: misformatted parenthetical comment"))
+  }
+  if !p.empty() {
+    return Err(fail("mail: expected single address, got ${p.s.quote()}"))
+  }
+  if addrs.is_empty() {
+    return Err(fail("mail: empty group"))
+  }
+  if addrs.len() > 1 {
+    return Err(fail("mail: group with multiple addresses"))
+  }
+  addrs[0]
+}
+
+fn parse_address_list(s: Str) -> List[mail.Address] ! mail.MailErr {
+  var p = P{s: s}
+  var list: List[mail.Address] = []
+  while {
+    p.skip_space()
+    if p.consume(44) {
+      continue
+    }
+    list = list + p.parse_address(true)?
+    if !p.skip_cfws() {
+      return Err(fail("mail: misformatted parenthetical comment"))
+    }
+    if p.empty() {
+      break
+    }
+    if p.peek() != 44 {
+      return Err(fail("mail: expected comma"))
+    }
+    while p.consume(44) {
+      p.skip_space()
+    }
+    if p.empty() {
+      break
+    }
+  }
+  list
+}
+
+// ---------------------------------------------------------------------------
+// Address.String
+
+fn quote_string(s: Str) -> Str {
+  var out = StrBuilder.new()
+  out.write("\"")
+  for r in s.runes() {
+    if is_qtext(r) || is_wsp(r) {
+      out.write("${r}")
+    } else if is_vchar(r) {
+      out.write("\\")
+      out.write("${r}")
+    }
+  }
+  out.write("\"")
+  out.freeze()
+}
+
+fn address_display(a: mail.Address) -> Str {
+  var local = a.address
+  var domain = ""
+  // the last @
+  let b = a.address.bytes()
+  var at = -1
+  for i in 0..b.len() {
+    if b[i] == 64 {
+      at = i
+    }
+  }
+  if at >= 0 {
+    local = a.address[0..at]
+    domain = a.address[at + 1..]
+  }
+  var quote_local = false
+  let lb = local.bytes()
+  var i = 0
+  while i < lb.len() {
+    let (r, n) = lb.decode_rune(i)
+    if !is_atext(r, false) {
+      let ok_dot = r == '.' && i > 0 && lb[i - 1] != 46 && i < lb.len() - 1
+      if !ok_dot {
+        quote_local = true
+        break
+      }
+    }
+    i += n
+  }
+  if quote_local {
+    local = quote_string(local)
+  }
+  let s = "<" + local + "@" + domain + ">"
+  if a.name.is_empty() {
+    return s
+  }
+  if a.name.runes().all(fn(r) { (is_vchar(r) || is_wsp(r)) && Int(r) < 128 }) {
+    return quote_string(a.name) + " " + s
+  }
+  for c in "\"#$%&'(),.:;<>@[]^`{|}~".runes() {
+    if a.name.runes().contains(c) {
+      return encode_word(false, a.name) + " " + s
+    }
+  }
+  encode_word(true, a.name) + " " + s
+}

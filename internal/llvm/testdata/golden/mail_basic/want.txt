@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+"Ann Lee" ann@example.com "Ann Lee" <ann@example.com>
+"Ann" ann@example.com "Ann" <ann@example.com>
+"Jörg" j@x.de =?utf-8?q?J=C3=B6rg?= <j@x.de>
+"Q, R" q@r "Q, R" <q@r>
+error mail: missing '@' or angle-addr
+"" a@[127.0.0.1] <a@[127.0.0.1]>
+"" a@[1::2] <a@[1::2]>
+error mail: missing '@' or angle-addr
+a@b,c@d,e@f,g@h
+--- stderr

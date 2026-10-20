@@ -2770,7 +2770,9 @@ pub fn detect_content_type(data: Bytes) -> Str
 Status: implemented on every backend (decision 0282, 2026-10-20),
 following github.com/google/uuid v1.6.0 (outside Go's std; RFC 9562);
 google/uuid's Parse results on its test inputs in
-`std/native/uuid_test.xo`.
+`std/native/uuid_test.xo`; golden `uuid_basic`. A `Uuid` field of a
+`derive Json` struct waits for newtype JSON (a code bug against core 2.8,
+being fixed); until then store `u.0`.
 
 ```
 type Uuid struct(Str)                     // its canonical text, lower case 8-4-4-4-12: `u.0`
@@ -2786,8 +2788,8 @@ fn (u: Uuid) bytes() -> Bytes
 fn (u: Uuid) display() -> Str
 ```
 
-- A `Uuid` is a newtype over its canonical text, so equality and hashing
-  are the text's, and two UUIDs order as their texts do (`a.0 < b.0`,
+- A `Uuid` is a newtype over its canonical text, so equality, hashing,
+  and JSON (a string, core 2.8) are the text's, and two UUIDs order as their texts do (`a.0 < b.0`,
   which is the order of their bytes). It reads and writes as a Postgres
   `uuid` column through `sql.str(u.0)` and `uuid.parse(row.str(...)?)`.
 - `v4` is 122 random bits from `r` with the version 4 and variant bits
@@ -2801,6 +2803,39 @@ fn (u: Uuid) display() -> Str
   google/uuid, `{...}`, without checking the braces), or 32 hex digits;
   hex digits in either case. The result is the canonical lower case
   text.
+
+---
+
+## 25. std/mail
+
+Status: implemented on every backend (decision 0282, 2026-10-20): Go's
+net/mail addresses (message.go of go1.26) with mime's RFC 2047 encoded
+words, through net/mail on the Go backend and ported natively
+(`std/native/mail.xo`; Go's results on about 1,200 generated cases in
+`mail_test.xo`); golden `mail_basic`. Pure.
+
+```
+struct Address { name: Str, address: Str }   // the display name decoded; local@domain
+struct MailErr { msg: Str }                   // Go's texts: `mail: no address`, `mail: missing @ in addr-spec`
+
+pub fn parse_address(s: Str) -> Address ! MailErr
+pub fn parse_address_list(s: Str) -> List[Address] ! MailErr
+fn (a: Address) display() -> Str             // `"Ann Lee" <ann@example.com>`
+```
+
+- RFC 5322 as Go reads it: `name <local@domain>`, `local@domain
+  (comment)` (the comment is the name), quoted names and local parts,
+  domain literals holding an IP address (`a@[127.0.0.1]`), and groups
+  (`team: a@x, b@y;`, flattened by `parse_address_list`; one address
+  only for `parse_address`). Encoded words in names decode for utf-8,
+  iso-8859-1, and us-ascii; another charset is `charset not supported:
+  "koi8-r"`.
+- `display` is Go's `Address.String`: the local part quoted when it is
+  not a dot-atom, the name quoted when it is printable ASCII, else
+  RFC 2047 encoded (B encoding when it holds a special character, else
+  Q), in words of at most 75 bytes.
+- Message parsing (`ReadMessage`) and sending (SMTP) are later steps:
+  SMTP needs TLS on a connection (decision 0281).
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the

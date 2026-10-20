@@ -3792,3 +3792,72 @@ func (v Uuid_UuidErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Uuid_UuidErr) M_debug(*Task) string { return Debug(v) }
+
+type Mail_Address struct {
+	F_name    string
+	F_address string
+}
+
+func (v Mail_Address) XoEq(x any) bool {
+	o, ok := x.(Mail_Address)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_name, o.F_name) {
+		return false
+	}
+	if !Eq(v.F_address, o.F_address) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mail_Address) XoHash() uint64 {
+	h := uint64(5617541073871163912)
+	h = MixHash(h, Hash(v.F_name))
+	h = MixHash(h, Hash(v.F_address))
+	return h
+}
+
+func (v Mail_Address) XoDebug(b *strings.Builder) {
+	b.WriteString("Address{")
+	b.WriteString("name: ")
+	DebugTo(b, v.F_name)
+	b.WriteString(", address: ")
+	DebugTo(b, v.F_address)
+	b.WriteString("}")
+}
+
+func (v Mail_Address) M_debug(*Task) string { return Debug(v) }
+
+type Mail_MailErr struct {
+	F_msg string
+}
+
+func (v Mail_MailErr) XoEq(x any) bool {
+	o, ok := x.(Mail_MailErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mail_MailErr) XoHash() uint64 {
+	h := uint64(4862509094616838645)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Mail_MailErr) XoDebug(b *strings.Builder) {
+	b.WriteString("MailErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Mail_MailErr) M_debug(*Task) string { return Debug(v) }

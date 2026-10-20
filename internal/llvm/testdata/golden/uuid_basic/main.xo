@@ -1,0 +1,16 @@
+// std/uuid (decision 0282): parsing in every form, versions, and errors,
+// the same on every backend (random UUIDs are checked by shape only).
+use std/uuid
+
+fn main(os: Os) {
+  for s in ["6BA7B810-9DAD-11D1-80B4-00C04FD430C8", "urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8", "{6ba7b810-9dad-11d1-80b4-00c04fd430c8}",
+      "6ba7b8109dad11d180b400c04fd430c8", "6ba7b810-9dad-11d1-80b4-00c04fd430c", "urn:uid::6ba7b810-9dad-11d1-80b4-00c04fd430c8", "6ba7b810x9dad-11d1-80b4-00c04fd430c8"] {
+    match uuid.parse(s) {
+      Ok(u) => os.stdio.println("${u.display()} v${u.version()} ${u.bytes().len()} ${u.debug()}")
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+  let a = uuid.v4(os.rand)
+  let b = uuid.v7(os.rand, os.clock)
+  os.stdio.println("v4 ${a.version()} ${a.0.len()} v7 ${b.version()} ${uuid.parse(b.0) == Ok(b)} nil ${uuid.nil().0}")
+}

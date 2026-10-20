@@ -1,0 +1,13 @@
+// std/mail (decision 0282): Go's net/mail addresses, encoded words, groups, and
+// domain literals, the same on every backend.
+use std/mail
+
+fn main(os: Os) {
+  for s in ["Ann Lee <ann@example.com>", "ann@example.com (Ann)", "=?utf-8?q?J=C3=B6rg?= <j@x.de>", "\"Q, R\" <q@r>", "bad", "a@[127.0.0.1]", "a@[1::2]", "a@[999.0.0.1]"] {
+    match mail.parse_address(s) {
+      Ok(a) => os.stdio.println("${a.name.quote()} ${a.address} ${a.display()}")
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+  os.stdio.println("${mail.parse_address_list("a@b, team: c@d, e@f;, g@h").map(fn(xs) { xs.map(fn(a) { a.address }).join(",") }).ok() ?? "?"}")
+}
