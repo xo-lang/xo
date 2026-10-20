@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/mail, Go's net/mail address parsing
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: b83e86b8
 - Found by: survey
 - Go reference: net/mail/message.go, mime/encodedword.go, net/netip/netip.go (go1.26.1)
 - Test: std/native/mail_test.xo (Go's results on message_test.go's inputs and random address strings); internal/llvm/testdata/golden/mail_basic

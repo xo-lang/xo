@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/multipart, Go's mime/multipart in memory
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 4de48c2e
 - Found by: survey
 - Go reference: mime/multipart/multipart.go, formdata.go, writer.go; net/textproto/reader.go readMIMEHeader; mime/quotedprintable/reader.go (go1.26.1)
 - Test: std/native/multipart_test.xo (Go's results on 1,400 generated bodies); internal/llvm/testdata/golden/multipart_basic

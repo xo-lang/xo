@@ -3,7 +3,7 @@
 ## 2026-10-20: change: form() parses the Content-Type as Go does
 
 - Kind: change
-- Commit: (filled in after the push)
+- Commit: 11afca47
 - Found by: review (Xo Lang 3)
 - Go reference: net/http/request.go parsePostForm, TestParseFormUnknownContentType (go1.26.1)
 - Test: std/native/http_test.xo (go TestParseFormUnknownContentType); internal/llvm/testdata/golden/http_form
@@ -16,7 +16,7 @@ before.
 ## 2026-10-20: port: Request.multipart_form
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 4de48c2e
 - Found by: survey
 - Go reference: net/http/request.go ParseMultipartForm, multipartReader (go1.26.1)
 - Test: internal/llvm/testdata/golden/multipart_basic

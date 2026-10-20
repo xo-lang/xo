@@ -3,7 +3,7 @@
 ## 2026-10-20: security: hedged ECDSA nonces, the TLS server's signatures too
 
 - Kind: security
-- Commit: (filled in after the push)
+- Commit: 002ef1c4
 - Found by: review (Xo Lang lead, decision 0285)
 - Go reference: crypto/internal/fips140/ecdsa Sign and hmacdrbg.go (go1.26.1)
 - Test: std/native/crypto_test.xo (Go's signatures for given entropy, byte for byte; an all-zero entropy never repeats r); internal/llvm/testdata/golden/crypto_keys
@@ -17,7 +17,7 @@ with the generator's bytes, the private key, and the message hash.
 ## 2026-10-20: feature: public key signatures, keys, PEM, and JWK
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 9559946d to 9943f3c4
 - Found by: survey
 - Go reference: crypto/rsa, crypto/ecdsa, crypto/ed25519, crypto/x509 (key parsing), encoding/pem (go1.26.1); RFC 7517, RFC 8037
 - Test: std/native/crypto_test.xo (pem_test.go's inputs and random ones; 610 public and 531 private keys, generated, altered, and mutated; Go's signatures and 706 verdicts); internal/llvm/testdata/golden/crypto_keys; bench/ct
