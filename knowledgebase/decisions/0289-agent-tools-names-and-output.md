@@ -112,7 +112,8 @@ Res.resolve) into semantic, have servers use it from there, and rename a
 type by rewriting every identifier that resolves to it, with the edit's
 check-before-and-after rule unchanged.
 
-Not in this decision (the same fix-up list, later): fault report locals
+Not in this decision (the same fix-up list, later; type rename and
+rename speed were done the same day, see the addendum): fault report locals
 (`XO_TRACEBACK=locals` prints `<unavailable>` in the faulting frame on
 arm64: its variables' location ranges end before the cold fault stub
 the fault runs from, and inlined frames' variables are not described at
@@ -127,3 +128,28 @@ a diff in `--dry-run`, and rename speed.
   for text at a terminal four times; JSON stays the default in a pipe.
 - Vet each std module in its own check (the first version): 146 s for
   the runtime directory against 0.55 s for one check.
+
+## Addendum (2026-10-20): type rename and rename speed
+
+Item 7's rest, built as the design note above planned (landed in 643adbd9):
+
+- The identifier walk and resolution (`Walk`, `idents_of`, `IdentSite`,
+  `LspTarget`, `Res.resolve`) moved from compiler/cli/servers resolve.xo
+  to compiler/cli/semantic ident.xo. The server keeps its names through
+  aliases (servers idents.xo: `type Site = semantic.IdentSite`, and so
+  on), so the editor's code did not change.
+- `xo edit rename TYPE NEW` rewrites every identifier of the user files
+  that this resolution resolves to the type: its declaration, type
+  expressions, struct literals, patterns and variants, receivers, and
+  type arguments. The edit's rule is unchanged: the program must check
+  clean before and after, so a missed or colliding name rejects the edit.
+  cmd/xo TestEditRenameType renames a struct and an enum written in all
+  of those places across two files.
+- Rename speed: the edit's second check (of the edited program) reuses
+  the first check's std parses (`Checker.parse_cache`,
+  `semantic.load_session_pc`). The poll's 3 to 13 s were mostly the load
+  on the machine: the rename's own CPU time was 0.6 s.
+- Found while doing it: on a case-insensitive file system (macOS) the
+  module preload took `Chan.new` for the runtime module chan.xo. A
+  capitalized first segment names a type now, never a module, and module
+  files are matched by listing their directory, exact case.
