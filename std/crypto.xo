@@ -84,6 +84,25 @@ struct KeyErr {
 
 fn (e: KeyErr) display() -> Str
 
+enum KeyAlg {
+  Rsa
+  EcdsaP224
+  EcdsaP256
+  EcdsaP384
+  EcdsaP521
+  Ed25519
+}
+
+/// A public key: ==; Debug text `<publickey>`.
+struct PublicKey {}
+
+/// PKIX SubjectPublicKeyInfo (x509.ParsePKIXPublicKey) or PKCS #1
+/// RSAPublicKey DER.
+fn parse_public_key(der: Bytes) -> PublicKey ! KeyErr
+/// PKIX DER (x509.MarshalPKIXPublicKey).
+fn marshal_public_key(k: PublicKey) -> Bytes
+fn (k: PublicKey) alg() -> KeyAlg
+
 /// Every PEM block in text, in order (pem.Decode repeated on the rest);
 /// text outside blocks and malformed blocks are skipped.
 fn pem_decode(text: Str) -> List[PemBlock]

@@ -4058,3 +4058,44 @@ func (v Crypto_KeyErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Crypto_KeyErr) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_KeyAlg struct {
+	Tag int
+	P   any
+}
+
+func (v Crypto_KeyAlg) XoEq(x any) bool {
+	o, ok := x.(Crypto_KeyAlg)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Crypto_KeyAlg) XoHash() uint64 {
+	h := MixHash(uint64(684180126496898488), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Crypto_KeyAlg) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Rsa")
+	case 2:
+		b.WriteString("EcdsaP224")
+	case 3:
+		b.WriteString("EcdsaP256")
+	case 4:
+		b.WriteString("EcdsaP384")
+	case 5:
+		b.WriteString("EcdsaP521")
+	case 6:
+		b.WriteString("Ed25519")
+	}
+}
+
+func (v Crypto_KeyAlg) M_debug(*Task) string { return Debug(v) }

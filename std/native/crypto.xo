@@ -6,10 +6,12 @@
 // generator).
 use std/base64
 use std/crypto
+use native/llrt/asn1
 use native/llrt/ct
 use native/llrt/digest as dg
 use native/llrt/ed25519
 use native/llrt/md5
+use native/llrt/nistec
 use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/sha3
@@ -426,4 +428,293 @@ fn pem_encode(b: crypto.PemBlock) -> Str ! crypto.KeyErr {
   }
   out.write("-----END ${b.kind}-----\n")
   out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Public keys (crypto/x509 ParsePKIXPublicKey, ParsePKCS1PublicKey, and
+// MarshalPKIXPublicKey of go1.26; decision 0285)
+
+const OID_RSA: Str = "1.2.840.113549.1.1.1"
+const OID_EC: Str = "1.2.840.10045.2.1"
+const OID_ED25519: Str = "1.3.101.112"
+
+/// A public key: RSA's modulus and exponent, or an elliptic curve point
+/// (uncompressed) or an Ed25519 key in `key`.
+struct PublicKey {
+  kind: crypto.KeyAlg
+  n: Bytes
+  e: Int
+  key: Bytes
+}
+
+fn (k: PublicKey) alg() -> crypto.KeyAlg { k.kind }
+
+fn key_err(msg: Str) -> crypto.KeyErr { crypto.KeyErr{msg: msg} }
+
+/// An INTEGER's sign and magnitude as cryptobyte's ReadASN1Integer reads
+/// it: None unless t is a minimal INTEGER; (sign, magnitude) with sign -1,
+/// 0, or 1.
+fn big_int(b: Bytes, t: asn1.Tlv) -> (Int, Bytes)? {
+  if t.tag != asn1.INTEGER || t.hi == t.lo {
+    return None
+  }
+  if t.hi - t.lo > 1 {
+    let a = Int(b[t.lo])
+    let c = Int(b[t.lo + 1])
+    if (a == 0 && c < 128) || (a == 255 && c >= 128) {
+      return None
+    }
+  }
+  if Int(b[t.lo]) >= 128 {
+    return Some((-1, b""))
+  }
+  var lo = t.lo
+  while lo < t.hi - 1 && b[lo] == 0 {
+    lo += 1
+  }
+  if lo == t.hi - 1 && b[lo] == 0 {
+    return Some((0, b""))
+  }
+  Some((1, b[lo..t.hi]))
+}
+
+/// The curve of a named curve OID.
+fn curve_of(oid: Str) -> crypto.KeyAlg? {
+  match oid {
+    "1.3.132.0.33" => Some(crypto.KeyAlg.EcdsaP224)
+    "1.2.840.10045.3.1.7" => Some(crypto.KeyAlg.EcdsaP256)
+    "1.3.132.0.34" => Some(crypto.KeyAlg.EcdsaP384)
+    "1.3.132.0.35" => Some(crypto.KeyAlg.EcdsaP521)
+    _ => None
+  }
+}
+
+fn nist_curve(a: crypto.KeyAlg) -> Int {
+  match a {
+    EcdsaP224 => nistec.P224
+    EcdsaP384 => nistec.P384
+    EcdsaP521 => nistec.P521
+    _ => nistec.P256
+  }
+}
+
+fn curve_oid(a: crypto.KeyAlg) -> Str {
+  match a {
+    EcdsaP224 => "1.3.132.0.33"
+    EcdsaP384 => "1.3.132.0.34"
+    EcdsaP521 => "1.3.132.0.35"
+    _ => "1.2.840.10045.3.1.7"
+  }
+}
+
+fn curve_name(a: crypto.KeyAlg) -> Str {
+  match a {
+    EcdsaP224 => "P224"
+    EcdsaP384 => "P384"
+    EcdsaP521 => "P521"
+    _ => "P256"
+  }
+}
+
+/// A SubjectPublicKeyInfo's parts as encoding/asn1 unmarshals them (the
+/// fields in order; bytes after the last field of a SEQUENCE ignored):
+/// the algorithm OID, the parameters' full bytes, the key bits, and
+/// whether the element is all of der; None when der is not one.
+fn spki_parts(der: Bytes) -> (Str, Bytes, Bytes, Bool)? {
+  let t = asn1.read(der, 0, der.len())
+  if t.tag != asn1.SEQUENCE {
+    return None
+  }
+  let a = asn1.read(der, t.lo, t.hi)
+  if a.tag != asn1.SEQUENCE {
+    return None
+  }
+  let bs = asn1.read(der, a.next, t.hi)
+  if bs.tag != asn1.BIT_STRING {
+    return None
+  }
+  let o = asn1.read(der, a.lo, a.hi)
+  if o.tag != asn1.OID {
+    return None
+  }
+  let oid = asn1.oid(der, o)
+  if oid.is_empty() {
+    return None
+  }
+  var pfull = b""
+  if o.next < a.hi {
+    let pv = asn1.read(der, o.next, a.hi)
+    if pv.tag < 0 {
+      return None
+    }
+    pfull = der[o.next..pv.next]
+  }
+  // BIT STRING: the count of unused bits, which must be zero in its last byte
+  if bs.hi == bs.lo {
+    return None
+  }
+  let pad = Int(der[bs.lo])
+  if pad > 7 || (bs.hi - bs.lo == 1 && pad > 0) || (pad > 0 && (Int(der[bs.hi - 1]) & ((1 << pad) - 1)) != 0) {
+    return None
+  }
+  var bits = der[bs.lo + 1..bs.hi]
+  if pad > 0 {
+    // RightAlign: shift the bits right by the padding
+    var out = BytesBuilder.with_capacity(bits.len())
+    var carry = 0
+    for c in bits {
+      let v = Int(c)
+      out.write_byte(UInt8(((carry << (8 - pad)) | (v >> pad)) & 255))
+      carry = v & ((1 << pad) - 1)
+    }
+    bits = out.freeze()
+  }
+  Some((oid, pfull, bits, t.next == der.len()))
+}
+
+/// A PKCS #1 RSAPublicKey as encoding/asn1 unmarshals it: (N, E) or None.
+fn pkcs1_parts(der: Bytes) -> ((Int, Bytes), Int?, Bool)? {
+  let t = asn1.read(der, 0, der.len())
+  if t.tag != asn1.SEQUENCE {
+    return None
+  }
+  let nt = asn1.read(der, t.lo, t.hi)
+  let n = big_int(der, nt)?
+  let et = asn1.read(der, nt.next, t.hi)
+  if et.tag != asn1.INTEGER {
+    return None
+  }
+  Some((n, asn1.small_int(der, et), t.next == der.len()))
+}
+
+fn parse_pkcs1_public(der: Bytes) -> PublicKey ! crypto.KeyErr {
+  let (n, e, whole) = match pkcs1_parts(der) {
+    Some(p) => p
+    None => return Err(key_err("x509: malformed public key"))
+  }
+  let ev = match e {
+    Some(v) => v
+    None => return Err(key_err("x509: malformed public key"))
+  }
+  if !whole {
+    return Err(key_err("x509: malformed public key"))
+  }
+  if n.0 <= 0 || ev <= 0 {
+    return Err(key_err("x509: public key contains zero or negative value"))
+  }
+  if ev > 2147483647 {
+    return Err(key_err("x509: public key contains large public exponent"))
+  }
+  PublicKey{kind: crypto.KeyAlg.Rsa, n: n.1, e: ev, key: b""}
+}
+
+fn parse_public_key(der: Bytes) -> PublicKey ! crypto.KeyErr {
+  let (oid, params, data, whole) = match spki_parts(der) {
+    Some(p) => p
+    None => return parse_pkcs1_public(der)
+  }
+  if !whole {
+    return Err(key_err("x509: trailing data after ASN.1 of public-key"))
+  }
+  if oid == OID_RSA {
+    if params != b"\x05\x00" {
+      return Err(key_err("x509: RSA key missing NULL parameters"))
+    }
+    let t = asn1.read(data, 0, data.len())
+    if t.tag != asn1.SEQUENCE {
+      return Err(key_err("x509: invalid RSA public key"))
+    }
+    let nt = asn1.read(data, t.lo, t.hi)
+    let nv = match big_int(data, nt) {
+      Some(v) => v
+      None => return Err(key_err("x509: invalid RSA modulus"))
+    }
+    let et = asn1.read(data, nt.next, t.hi)
+    let e = asn1.small_int(data, et)
+    let ev = match e {
+      Some(v) => v
+      None => return Err(key_err("x509: invalid RSA public exponent"))
+    }
+    if nv.0 <= 0 {
+      return Err(key_err("x509: RSA modulus is not a positive number"))
+    }
+    if ev <= 0 {
+      return Err(key_err("x509: RSA public exponent is not a positive number"))
+    }
+    return PublicKey{kind: crypto.KeyAlg.Rsa, n: nv.1, e: ev, key: b""}
+  }
+  if oid == OID_EC {
+    let p = asn1.read(params, 0, params.len())
+    let coid = if p.tag == asn1.OID { asn1.oid(params, p) } else { "" }
+    if coid.is_empty() {
+      return Err(key_err("x509: invalid ECDSA parameters"))
+    }
+    let alg = match curve_of(coid) {
+      Some(a) => a
+      None => return Err(key_err("x509: unsupported elliptic curve"))
+    }
+    if data.is_empty() || data[0] != 4 {
+      return Err(key_err("ecdsa: invalid uncompressed public key"))
+    }
+    match nistec.point_check(nist_curve(alg), data) {
+      0 => ()
+      1 => return Err(key_err("invalid ${curve_name(alg)} point encoding"))
+      2 => return Err(key_err("invalid ${curve_name(alg)}Element encoding"))
+      _ => return Err(key_err("${curve_name(alg)} point not on curve"))
+    }
+    return PublicKey{kind: alg, n: b"", e: 0, key: data}
+  }
+  if oid == OID_ED25519 {
+    if !params.is_empty() {
+      return Err(key_err("x509: Ed25519 key encoded with illegal parameters"))
+    }
+    if data.len() != 32 {
+      return Err(key_err("x509: wrong Ed25519 public key size"))
+    }
+    return PublicKey{kind: crypto.KeyAlg.Ed25519, n: b"", e: 0, key: data}
+  }
+  Err(key_err("x509: unknown public key algorithm"))
+}
+
+fn oid_der(oid: Str) -> Bytes {
+  let parts = oid.split(".").map(fn(x) { Int.parse(x) ?? 0 })
+  var out = BytesBuilder.new()
+  var vals = [parts[0] * 40 + parts[1]]
+  for i in 2..parts.len() {
+    vals.push(parts[i])
+  }
+  for v in vals {
+    var groups: List[Int] = [v & 127]
+    var x = v >> 7
+    while x > 0 {
+      groups.push((x & 127) | 128)
+      x = x >> 7
+    }
+    var i = groups.len() - 1
+    while i >= 0 {
+      out.write_byte(UInt8(groups[i]))
+      i -= 1
+    }
+  }
+  asn1.enc(asn1.OID, out.freeze())
+}
+
+fn marshal_public_key(k: PublicKey) -> Bytes {
+  match k.kind {
+    Rsa => {
+      var e = BytesBuilder.new()
+      var started = false
+      for sh in [56, 48, 40, 32, 24, 16, 8, 0] {
+        let byte = (k.e >> sh) & 255
+        if byte != 0 || started || sh == 0 {
+          e.write_byte(UInt8(byte))
+          started = true
+        }
+      }
+      let body = asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc_uint(k.n), asn1.enc_uint(e.freeze())]))
+      asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc(asn1.SEQUENCE, asn1.cat([oid_der(OID_RSA), b"\x05\x00"])), asn1.enc(asn1.BIT_STRING, b"\x00" + body)]))
+    }
+    Ed25519 => asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc(asn1.SEQUENCE, oid_der(OID_ED25519)), asn1.enc(asn1.BIT_STRING, b"\x00" + k.key)]))
+    _ => asn1.enc(asn1.SEQUENCE, asn1.cat([asn1.enc(asn1.SEQUENCE, asn1.cat([oid_der(OID_EC), oid_der(curve_oid(k.kind))])), asn1.enc(asn1.BIT_STRING, b"\x00" + k.key)]))
+  }
 }

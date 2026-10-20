@@ -2688,6 +2688,29 @@ pub fn verify(curve: Int, pub_key: Bytes, hash: Bytes, sig: Bytes) -> Bool {
   ok
 }
 
+/// How b fails to be an uncompressed point of the curve, as nistec's
+/// SetBytes tells it: 0 it is one, 1 a wrong length or form, 2 a
+/// coordinate at or above p, 3 not on the curve. Every input is public.
+pub fn point_check(curve: Int, b: Bytes) -> Int {
+  let sz = size(curve)
+  if b.len() != 1 + 2 * sz || b[0] != 4 {
+    return 1
+  }
+  let w = workspace(curve)
+  let c = base(w)
+  let p = at(c, PA)
+  let mp = at(c, MP)
+  load(c, p, b, 1)
+  load(c, at(p, ES), b, 1 + sz)
+  if below(c, p, mp) == 0 || below(c, at(p, ES), mp) == 0 {
+    keep(w)
+    return 2
+  }
+  let ok = pt_decode(c, p, b, curve)
+  keep(w)
+  if ok { 0 } else { 3 }
+}
+
 /// The two integers of a DER ECDSA-Sig-Value (SEQUENCE of r and s), each
 /// left padded to n bytes; empty when sig is not one or an integer is
 /// longer than n bytes.
