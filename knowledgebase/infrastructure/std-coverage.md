@@ -48,6 +48,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/uuid | 24 | `std/changes/uuid.md` |
 | std/mail | 25 | `std/changes/mail.md` |
 | std/multipart | 26 | `std/changes/multipart.md` |
+| std/netip | 28 | `std/changes/netip.md` |
 
 ## Go packages
 
@@ -57,7 +58,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 |---|---|---|---|
 | strings | prelude Str | partial | Has contains, find, split, lines, trim*, replace, repeat, to_lower/upper, join, StrBuilder. Missing: last_index, count, fields, cut, equal_fold, index of a rune or any, split_n, title, Map, Replacer. |
 | bytes | prelude Bytes, BytesBuilder | partial | Has len, slicing, `+`, hex, base64, decode_rune, BytesBuilder. Missing: find, split, contains, equal, trim, has_prefix on Bytes; a Reader. |
-| strconv | prelude Int.parse, Float.parse, quote | partial | Base 10 Int and Float parsing and shortest Float text, Quote and QuoteRune exist. Missing: ParseInt and FormatInt in other bases (hex text of an Int), ParseBool, Unquote. |
+| strconv | prelude Int.parse, parse_base, to_str_base, Float.parse, Bool.parse, quote, unquote | done | ParseInt, FormatInt, ParseBool, Unquote added (decision 0287). Not planned: the Append functions (StrBuilder covers them). |
 | unicode | prelude Rune | partial | is_letter, is_digit, is_space, is_print, to_lower, to_upper (Go's tables, decision 0079). Missing: is_upper, is_lower, is_punct, is_control, range tables by name. |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
 | unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
@@ -99,8 +100,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| math | prelude Float | partial | floor, ceil, round, trunc, abs, sqrt, is_nan, Int pow and overflow checked arithmetic. Missing: pow, exp, log, sin and the trigonometric functions, inf and constants, hypot, mod. |
-| math/bits | prelude Int word methods | partial | rotate, swap_bytes, mul_hi_unsigned, unsigned compare (decision 0260). Missing: leading and trailing zeros, ones count. |
+| math | prelude Float | partial | Go's portable algorithms bit for bit on every backend (decision 0287): pow, exp, exp2, expm1, log, log2, log10, log1p, trigonometric and hyperbolic functions, cbrt, hypot, mod, is_inf, to_bits. Missing: constants (Float.PI, Float.INF; a compiler change), erf, gamma, Nextafter, FMA. |
+| math/bits | prelude Int word methods | done | rotate, swap_bytes, mul_hi_unsigned, unsigned compare (decision 0260); leading_zeros, trailing_zeros, ones_count (decision 0287). |
 | math/big | inside std/native/llrt/bigmod.xo | planned | Needed for RSA and ECDSA keys from JWKs; no public big integer. |
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
@@ -138,7 +139,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
 | net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP, a name lookup API (LookupHost, SRV, TXT, MX), IP and CIDR types, deadlines on a Conn. |
-| net/netip | none | planned | IP and prefix parsing (trusted proxies, allow lists). |
+| net/netip | std/netip | done | Addr, Prefix, ParseAddr, ParsePrefix, Contains, Masked, the Is predicates (decision 0287). Missing: AddrPort, Prefix.Overlaps, Next and Prev. |
 | net/url | std/url, std/http parse_url and Url | partial | Escaping (QueryEscape, PathEscape and their inverses) and Values (ParseQuery, Encode) are done (decision 0279). Request.form and query_all are in std/http. Missing: relative references, userinfo, a full URL type outside std/http. |
 | net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming, TLS, HTTP/2. Has Request.form (urlencoded) and query_all (decision 0279). Missing: repeated header fields (http.Header: two Set-Cookie fields), cookies, multipart forms, a streaming request body (whole body in memory, 64 MiB natively), ServeContent and FileServer (Range, If-Modified-Since), response compression, MaxBytesReader per route, timeouts per server. |
 | net/http (client) | std/http Client | partial | GET, send, post_json, redirects, gzip, HTTP/2, TLS roots. Missing: cookie jar, proxies, streaming response bodies, per request timeouts. |

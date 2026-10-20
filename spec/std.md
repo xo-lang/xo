@@ -89,7 +89,9 @@ When a value is passed where an interface type is expected (for example a
 
 ```
 Int.parse(s: Str) -> Int?
+Int.parse_base(s: Str, base: Int) -> Int?   // base 2 to 36, or 0 for 0b, 0o, 0x, 0 prefixes and _ separators
 Float.parse(s: Str) -> Float?
+Bool.parse(s: Str) -> Bool?                 // 1 t T TRUE true True, 0 f F FALSE false False
 Int(x: Float) -> Int                 // truncates toward zero; faults on NaN or out of range
 Float(x: Int) -> Float
 Int32(x: Int) -> Int32               // faults out of range; same for every sized type
@@ -109,9 +111,18 @@ fn (n: Int) mul_hi_unsigned(m: Int) -> Int   // the high word of the 128 bit pro
 fn (n: Int) lt_unsigned(m: Int) -> Bool      // also le_unsigned: compared as unsigned 64 bit words
 fn (n: Int) saturating_add(m: Int) -> Int    // also saturating_sub, saturating_mul
 fn (n: Int) checked_add(m: Int) -> Int?      // also checked_sub, checked_mul, checked_div
+fn (n: Int) to_str_base(base: Int) -> Str    // base 2 to 36, lower case digits
+fn (n: Int) leading_zeros() -> Int           // also trailing_zeros, ones_count: math/bits on the word
 
 fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sqrt
-fn (f: Float) is_nan() -> Bool
+fn (f: Float) is_nan() -> Bool               // also is_inf
+fn (f: Float) exp() -> Float                 // also exp2, expm1, log, log2, log10, log1p, sin, cos, tan,
+                                             // asin, acos, atan, sinh, cosh, tanh, cbrt
+fn (f: Float) pow(y: Float) -> Float
+fn (f: Float) atan2(x: Float) -> Float       // Go's Atan2(f, x)
+fn (f: Float) hypot(y: Float) -> Float
+fn (f: Float) mod(y: Float) -> Float         // Go's Mod: the remainder with the sign of f
+fn (f: Float) to_bits() -> Int               // the IEEE 754 bits; Float.from_bits(b) back
 ```
 
 Int's word methods (decision 0260) treat an `Int` as a 64 bit word for
@@ -127,6 +138,21 @@ value is out of range. The text of a Float (interpolation, Display,
 Debug) is the shortest that reads back the same value
 (`strconv.FormatFloat(f, 'g', -1, 64)`) with `.0` added to whole
 numbers: `1.0`, `0.1`, `1e+21`, `-0.0`, `+Inf`, `NaN`.
+
+`Int.parse_base`, `to_str_base`, and `Bool.parse` are Go's `ParseInt(s,
+base, 64)`, `FormatInt`, and `ParseBool` (decision 0287), None where Go
+returns an error; a base outside 0 and 2 to 36 faults (Go panics for
+FormatInt). Float's math functions (decision 0287) are Go's math package
+on every backend, bit for bit and on every architecture: Go's portable
+algorithms (exp.go, log.go, sin.go, ...) with every operation rounded,
+the same in a native build and on the Go backend (which runs a copy of
+them with each product rounded, not Go's package: Go fuses
+multiply-adds on arm64 and runs other assembly algorithms on amd64).
+Every Float operation in Xo rounds, on every backend: no backend fuses a
+multiply and an add (golden float_no_fma). Special values are Go's:
+`(-1.0).log()` is NaN, `(0.0).log()` is -Inf, `x.pow(0.0)` is 1.0. Float
+constants (`Float.PI`, `Float.INF`) are a later step; `Float.parse("inf")`
+gives infinity.
 
 A conversion is a call on the type name, `Float(n)`, not an associated
 function: there is no `Float.from(n)`. XO0601 for an unknown associated
@@ -168,6 +194,7 @@ Bytes.from_base64(s: Str) -> Bytes?
 fn (b: Bytes) rune_count() -> Int            // an invalid byte counts as one rune
 fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)  // the rune at byte i and its size
 fn (b: Bytes) quote() -> Str                 // also on Str: a quoted literal
+fn (s: Str) unquote() -> Str?                // Go's Unquote (decision 0287); None when s is not a literal or the text is not UTF-8
 
 fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space, to_lower, to_upper
 fn (r: Rune) is_print() -> Bool
@@ -3146,3 +3173,38 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net {
 - Backends: native (std/native/llrt/tlsio.xo, the http client's TLS, on
   the connection's descriptor) and Go (crypto/tls; `ChainOnly` as
   InsecureSkipVerify with a check of the chain alone). Wasm has no Net.
+
+---
+
+## 28. std/netip
+
+Status: implemented on every backend (decision 0287, 2026-10-20): Go's
+net/netip, ported natively (`std/native/netip.xo`; Go's results on 3,323
+address and prefix cases in `netip_test.xo`) and through net/netip on
+the Go backend. Pure.
+
+```
+struct Addr { bits: Int, ip: Bytes, zone: Str } derive Ord   // 32, 128, or 0; 16 bytes; an IPv6 zone
+struct Prefix { addr: Addr, len: Int }
+struct ParseErr { msg: Str }   // ParseAddr("1.2.3"): IPv4 address too short
+
+pub fn parse_addr(s: Str) -> Addr ! ParseErr
+pub fn parse_prefix(s: Str) -> Prefix ! ParseErr
+pub fn addr_from_bytes(b: Bytes) -> Addr?      // 4 or 16 bytes
+fn (a: Addr) is_4() -> Bool                   // also is_6, is_4in6, is_loopback, is_private,
+                                              // is_unspecified, is_link_local_unicast, is_multicast
+fn (a: Addr) unmap() -> Addr
+fn (a: Addr) bytes() -> Bytes                 // 4 or 16 bytes (AsSlice)
+fn (a: Addr) display() -> Str                 // 1.2.3.4, 2001:db8::1, ::ffff:1.2.3.4, fe80::1%eth0
+fn (p: Prefix) contains(a: Addr) -> Bool
+fn (p: Prefix) masked() -> Prefix
+fn (p: Prefix) display() -> Str
+```
+
+- Parsing is Go's ParseAddr and ParsePrefix, errors included: IPv4
+  without leading zeros, IPv6 with `::`, an embedded IPv4, and zones (not
+  in a prefix). An IPv4 address is kept as `::ffff:a.b.c.d` in `ip`, with
+  `bits` 32; `==` and the order are Go's (`Compare`: the bit length, the
+  bytes, then the zone).
+- A typical use, the client address behind trusted proxies:
+  `trusted.any(fn(p) { p.contains(peer) })`.

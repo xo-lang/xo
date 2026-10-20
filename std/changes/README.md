@@ -21,3 +21,5 @@ entries yet.
 - [mail.md](mail.md): std/mail (spec/std.md 25)
 - [multipart.md](multipart.md): std/multipart (spec/std.md 26)
 - [sql.md](sql.md): std/sql (spec/std.md 10)
+- [netip.md](netip.md): std/netip (spec/std.md 28)
+- [prelude.md](prelude.md): the prelude (builtin types and capabilities, spec/std.md 1 to 3)
