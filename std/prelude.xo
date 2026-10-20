@@ -147,6 +147,16 @@ struct Target {
 // Numbers (std.md 2.1)
 
 fn (static: Int) parse(s: Str) -> Int?
+/// Go's ParseInt(s, base, 64): base 2 to 36, or 0 for the 0b, 0o, 0x, and
+/// 0 prefixes and _ separators; None for text that is not a number in
+/// base or overflows Int; faults on another base (decision 0287).
+fn (static: Int) parse_base(s: Str, base: Int) -> Int?
+/// Go's FormatInt(n, base): base 2 to 36, lower case digits; faults on
+/// another base (decision 0287).
+fn (n: Int) to_str_base(base: Int) -> Str
+/// Go's ParseBool: 1, t, T, TRUE, true, True; 0, f, F, FALSE, false,
+/// False (decision 0287).
+fn (static: Bool) parse(s: Str) -> Bool?
 fn (static: Float) parse(s: Str) -> Float?
 fn (static: Int8) try(x: Int) -> Int8?
 fn (static: Int16) try(x: Int) -> Int16?
@@ -234,6 +244,9 @@ fn (b: Bytes) rune_count() -> Int
 fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
 fn (b: Bytes) quote() -> Str
 fn (s: Str) quote() -> Str
+/// Go's Unquote: a "..." or '...' literal with Go's escapes, or a `...`
+/// one; None when s is not one or the result is not UTF-8 (decision 0287).
+fn (s: Str) unquote() -> Str?
 
 fn (r: Rune) is_digit() -> Bool
 fn (r: Rune) is_letter() -> Bool

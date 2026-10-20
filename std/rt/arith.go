@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/bits"
 	"strconv"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -499,4 +500,43 @@ func validRune[T Integer](n T) bool {
 	}
 	u := uint64(n)
 	return u <= 0x10ffff && (u < 0xd800 || u > 0xdfff)
+}
+
+// Int_parse_base is `Int.parse_base(s, base)` (decision 0287).
+func Int_parse_base(_ *Task, s string, base int64) Option[int64] {
+	if base != 0 && (base < 2 || base > 36) {
+		FaultHere("Int.parse_base: base %d is not 0 or 2 to 36", base)
+	}
+	n, err := strconv.ParseInt(s, int(base), 64)
+	if err != nil {
+		return Option[int64]{}
+	}
+	return Some(n)
+}
+
+// Int_to_str_base is `n.to_str_base(base)` (decision 0287).
+func Int_to_str_base(_ *Task, n, base int64) string {
+	if base < 2 || base > 36 {
+		FaultHere("Int.to_str_base: base %d is not 2 to 36", base)
+	}
+	return strconv.FormatInt(n, int(base))
+}
+
+// Bool_parse is `Bool.parse(s)` (decision 0287).
+func Bool_parse(_ *Task, s string) Option[bool] {
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return Option[bool]{}
+	}
+	return Some(b)
+}
+
+// Str_unquote is `s.unquote()` (decision 0287): None also when the text is
+// not UTF-8 (a \x escape of a byte alone).
+func Str_unquote(_ *Task, s string) Option[string] {
+	u, err := strconv.Unquote(s)
+	if err != nil || !utf8.ValidString(u) {
+		return Option[string]{}
+	}
+	return Some(u)
 }

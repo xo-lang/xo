@@ -2638,3 +2638,281 @@ fn llrt_gen_enter(g: Int) { testworld.gen_enter(g) }
 fn llrt_gen_leave(g: Int) { testworld.gen_leave(g) }
 
 fn llrt_gen_deep(g: Int) -> Bool { testworld.gen_deep(g) }
+
+// ---------------------------------------------------------------------------
+// strconv (decision 0287): Go's ParseInt, FormatInt, ParseBool, and Unquote
+// (internal/strconv/atoi.go, strconv/quote.go of go1.26) with the same
+// results; every Go error is None.
+
+fn lower_byte(c: UInt8) -> UInt8 { c | 32 }
+
+/// underscoreOK: the separators sit between digits (or after a prefix).
+fn underscore_ok(s0: Str) -> Bool {
+  var b = s0.bytes()
+  if b.len() >= 1 && (b[0] == 45 || b[0] == 43) {
+    b = b[1..]
+  }
+  var saw = 94
+  var i = 0
+  var hex = false
+  if b.len() >= 2 && b[0] == 48 && (lower_byte(b[1]) == 98 || lower_byte(b[1]) == 111 || lower_byte(b[1]) == 120) {
+    i = 2
+    saw = 48
+    hex = lower_byte(b[1]) == 120
+  }
+  while i < b.len() {
+    let c = b[i]
+    if (c >= 48 && c <= 57) || (hex && lower_byte(c) >= 97 && lower_byte(c) <= 102) {
+      saw = 48
+    } else if c == 95 {
+      if saw != 48 {
+        return false
+      }
+      saw = 95
+    } else {
+      if saw == 95 {
+        return false
+      }
+      saw = 33
+    }
+    i += 1
+  }
+  saw != 95
+}
+
+fn int_parse_base(s: Str, base0: Int) -> Int? {
+  if base0 != 0 && (base0 < 2 || base0 > 36) {
+    let q = "?"
+    fault.raise_str_at("Int.parse_base: base ${base0} is not 0 or 2 to 36", raw.data(q), 0)
+  }
+  var b = s.bytes()
+  if b.is_empty() {
+    return None
+  }
+  var neg = false
+  if b[0] == 43 || b[0] == 45 {
+    neg = b[0] == 45
+    b = b[1..]
+  }
+  if b.is_empty() {
+    return None
+  }
+  let digits_start = b
+  var base = base0
+  if base0 == 0 {
+    base = 10
+    if b[0] == 48 {
+      if b.len() >= 3 && lower_byte(b[1]) == 98 {
+        base = 2
+        b = b[2..]
+      } else if b.len() >= 3 && lower_byte(b[1]) == 111 {
+        base = 8
+        b = b[2..]
+      } else if b.len() >= 3 && lower_byte(b[1]) == 120 {
+        base = 16
+        b = b[2..]
+      } else {
+        base = 8
+        b = b[1..]
+      }
+    }
+  }
+  // a negative accumulator holds -2^63, the most negative Int
+  var acc = 0
+  var underscores = false
+  for c in b {
+    if c == 95 && base0 == 0 {
+      underscores = true
+      continue
+    }
+    var d = 99
+    if c >= 48 && c <= 57 {
+      d = Int(c) - 48
+    } else if lower_byte(c) >= 97 && lower_byte(c) <= 122 {
+      d = Int(lower_byte(c)) - 87
+    }
+    if d >= base {
+      return None
+    }
+    acc = acc.checked_mul(base)?.checked_sub(d)?
+  }
+  if underscores && !underscore_ok(digits_start.to_str() ?? "") {
+    return None
+  }
+  if neg {
+    return Some(acc)
+  }
+  acc.checked_mul(-1)
+}
+
+fn int_to_str_base(n: Int, base: Int) -> Str {
+  if base < 2 || base > 36 {
+    let q = "?"
+    fault.raise_str_at("Int.to_str_base: base ${base} is not 2 to 36", raw.data(q), 0)
+  }
+  if n == 0 {
+    return "0"
+  }
+  let digits = "0123456789abcdefghijklmnopqrstuvwxyz".bytes()
+  var out = BytesBuilder.with_capacity(65)
+  // digits of the magnitude, from the negative side so -2^63 fits
+  var x = if n < 0 { n } else { -n }
+  var rev: List[UInt8] = []
+  while x != 0 {
+    let q = x / base
+    let r = q * base - x
+    rev.push(digits[r])
+    x = q
+  }
+  if n < 0 {
+    out.write_byte(45)
+  }
+  var i = rev.len() - 1
+  while i >= 0 {
+    out.write_byte(rev[i])
+    i -= 1
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn bool_parse(s: Str) -> Bool? {
+  match s {
+    "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true)
+    "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false)
+    _ => None
+  }
+}
+
+fn hex_digit(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  -1
+}
+
+fn str_unquote(s: Str) -> Str? {
+  let b = s.bytes()
+  if b.len() < 2 {
+    return None
+  }
+  let q = b[0]
+  if q == 96 {
+    // a raw literal: no backquote inside, carriage returns dropped
+    if b[b.len() - 1] != 96 {
+      return None
+    }
+    var out = BytesBuilder.with_capacity(b.len())
+    for i in 1..b.len() - 1 {
+      if b[i] == 96 {
+        return None
+      }
+      if b[i] != 13 {
+        out.write_byte(b[i])
+      }
+    }
+    return out.freeze().to_str()
+  }
+  if q != 34 && q != 39 {
+    return None
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 1
+  var runes = 0
+  var closed = false
+  while i < b.len() {
+    let c = b[i]
+    if c == q {
+      closed = true
+      i += 1
+      break
+    }
+    if c == 10 {
+      return None
+    }
+    if q == 39 && runes == 1 {
+      return None
+    }
+    if c >= 128 {
+      let (r, n) = b.decode_rune(i)
+      if r == '\u{FFFD}' && n == 1 {
+        return None
+      }
+      out.write(b[i..i + n])
+      i += n
+    } else if c != 92 {
+      out.write_byte(c)
+      i += 1
+    } else {
+      if i + 1 >= b.len() {
+        return None
+      }
+      let e = b[i + 1]
+      i += 2
+      let simple = match e {
+        97 => 7
+        98 => 8
+        102 => 12
+        110 => 10
+        114 => 13
+        116 => 9
+        118 => 11
+        92 => 92
+        _ => -1
+      }
+      if simple >= 0 {
+        out.write_byte(UInt8(simple))
+      } else if e == 39 || e == 34 {
+        if e != q {
+          return None
+        }
+        out.write_byte(e)
+      } else if e == 120 || e == 117 || e == 85 {
+        let n = if e == 120 { 2 } else if e == 117 { 4 } else { 8 }
+        if i + n > b.len() {
+          return None
+        }
+        var v = 0
+        for j in 0..n {
+          let h = hex_digit(b[i + j])
+          if h < 0 {
+            return None
+          }
+          v = v * 16 + h
+        }
+        i += n
+        if e == 120 {
+          out.write_byte(UInt8(v))
+        } else {
+          match Rune.try(v) {
+            Some(r) => out.write("${r}".bytes())
+            None => return None
+          }
+        }
+      } else if e >= 48 && e <= 55 {
+        if i + 2 > b.len() {
+          return None
+        }
+        var v = Int(e) - 48
+        for j in 0..2 {
+          let x = Int(b[i + j]) - 48
+          if x < 0 || x > 7 {
+            return None
+          }
+          v = v * 8 + x
+        }
+        i += 2
+        if v > 255 {
+          return None
+        }
+        out.write_byte(UInt8(v))
+      } else {
+        return None
+      }
+    }
+    runes += 1
+  }
+  if !closed || i != b.len() || (q == 39 && runes > 1) {
+    return None
+  }
+  out.freeze().to_str()
+}
