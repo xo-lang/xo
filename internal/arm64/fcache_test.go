@@ -449,3 +449,58 @@ fn main(os: Os) {
 		t.Errorf("verify with changed entries: %v, want the module mismatch:\n%s", err, log)
 	}
 }
+
+// TestFrontCacheAbsentHelper: a body's entry records the function names
+// it looked for and did not find (decision 0271 step 1a). fb removes from
+// a Map[Str, Bytes], which lowers to Map[Str, Str] with a Bytes? result:
+// alone, its helper is xo.map.remove[Map[Str, Str]]; after fa (a
+// Map[Str, Str] with a Str? result) has that name, fb's helper takes a
+// result suffix. fb's entry from the first build must not commit into the
+// second, where the name is fa's other function: the binary is the same
+// file as a build with XO_BACKEND_CACHE=off, and verify is clean.
+func TestFrontCacheAbsentHelper(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feabsent-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	funcs := "fn fb(n: Int) -> Int {\n  var m: Map[Str, Bytes] = {}\n  m[\"a\"] = b\"xy\"\n  let v = m.remove(\"a\") ?? b\"\"\n  v.len() + n\n}\n\n" +
+		"fn fa(n: Int) -> Int {\n  var m: Map[Str, Str] = {}\n  m[\"a\"] = \"xyz\"\n  let v = m.remove(\"a\") ?? \"\"\n  v.len() + n\n}\n\n"
+	build := func(name string, env ...string) []byte {
+		out := filepath.Join(work, name, "prog")
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = src
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for _, body := range []string{"os.stdio.println(\"${fb(1)}\")", "os.stdio.println(\"${fa(1)} ${fb(1)}\")"} {
+		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(funcs+"fn main(os: Os) {\n  "+body+"\n}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// the first build after the edit commits the entries of the last
+		on := build("on", "XO_BACKEND_CACHE=on")
+		off := build("off", "XO_BACKEND_CACHE=off")
+		if !bytes.Equal(on, off) {
+			t.Errorf("%q: the build through the front end cache differs from the build with XO_BACKEND_CACHE=off", body)
+		}
+		build("verify", "XO_BACKEND_CACHE=verify")
+	}
+}

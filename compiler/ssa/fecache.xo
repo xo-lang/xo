@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v2"
+const FE_CACHE_VERSION = "xo front cache v3"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -126,6 +126,7 @@ fn (var b: Builder) fe_begin() -> FeRec {
   b.m.fe_log = true
   b.m.fe_treads = {}
   b.m.fe_freads = {}
+  b.m.fe_fabsent = {}
   b.m.fe_ev = []
   FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
 }
@@ -196,6 +197,29 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   var e = EntryW{b: BytesBuilder.new()}
   e.str(FE_CACHE_VERSION)
   e.str(b.fe_own_flags())
+  // the body and what it does to the builder itself: the same whichever
+  // builder made the entry (fe_same compares this for verify)
+  var tl = EntryW{b: BytesBuilder.new()}
+  tl.uv(b.checks.len() - r.nc)
+  for c in b.checks[r.nc..b.checks.len()] {
+    tl.uv(c.u)
+    tl.str(c.callee)
+    tl.sv(c.w)
+  }
+  tl.sv(b.nvar - r.nvar)
+  var mods: List[Str] = []
+  for (k, _) in b.decl_mods {
+    if !r.mods.contains(k) {
+      mods.push(k)
+    }
+  }
+  tl.uv(mods.len())
+  for k in mods.sort() {
+    tl.str(k)
+  }
+  tl.bool(b.m.funcs[fi].target)
+  tl.bytes(fbo ?? b"")
+  e.bytes(tl.b.freeze())
   // what it found that was there before it
   var reads: List[Str] = []
   for (t, _) in b.m.fe_treads {
@@ -207,6 +231,21 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     if i < r.nf {
       reads.push("f ${b.m.funcs[i].name}")
     }
+  }
+  // what it looked for and did not find, and the functions it made
+  // whole: absent at a commit too (another function of the name may be
+  // another function)
+  var absent: Map[Str, Bool] = {}
+  for (n, _) in b.m.fe_fabsent {
+    absent[n] = true
+  }
+  for (k, x) in b.m.fe_ev {
+    if k == 3 {
+      absent[b.m.funcs[x].name] = true
+    }
+  }
+  for (n, _) in absent {
+    reads.push("a ${n}")
   }
   e.uv(reads.len())
   for k in reads.sort() {
@@ -272,25 +311,6 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     e.bool(b.m.funcs[i].target)
     e.bytes(hb ?? b"")
   }
-  e.uv(b.checks.len() - r.nc)
-  for c in b.checks[r.nc..b.checks.len()] {
-    e.uv(c.u)
-    e.str(c.callee)
-    e.sv(c.w)
-  }
-  e.sv(b.nvar - r.nvar)
-  var mods: List[Str] = []
-  for (k, _) in b.decl_mods {
-    if !r.mods.contains(k) {
-      mods.push(k)
-    }
-  }
-  e.uv(mods.len())
-  for k in mods.sort() {
-    e.str(k)
-  }
-  e.bool(b.m.funcs[fi].target)
-  e.bytes(fbo ?? b"")
   if !b.fe_touched.is_empty() {
     b.fe_skip(b.fe_touched)
     return None
@@ -299,6 +319,51 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     return None
   }
   Some(e.b.freeze())
+}
+
+/// Whether entries a and b make the same body with the same effects on
+/// the builder (verify): their version, flags, and tail; what each found
+/// and made depends on the builder that recorded it.
+fn fe_same(a: Bytes, b: Bytes) -> Bool {
+  var x = EntryR{d: a}
+  var y = EntryR{d: b}
+  x.str() == y.str() && x.str() == y.str() && x.bytes() == y.bytes() && x.ok && y.ok
+}
+
+/// Whether a commit of entry d would pass its checks here (fe_replay's,
+/// without changing anything): what the body found is here, what it
+/// found absent and made whole is not, its generic instances and
+/// declared functions are found.
+fn (var b: Builder) fe_applies(d: Bytes) -> Bool {
+  var r = EntryR{d: d}
+  if r.str() != FE_CACHE_VERSION || r.str() != b.fe_own_flags() {
+    return false
+  }
+  let _tail = r.bytes()
+  let nr = r.uv()
+  if !r.ok || nr > d.len() {
+    return false
+  }
+  for _ in 0..nr {
+    let k = r.str()
+    let n = k[2..k.len()]
+    let ok = if k.starts_with("t ") { b.m.type_at.contains(n) } else if k.starts_with("a ") { !b.m.func_at.contains(n) } else { b.m.func_at.contains(n) }
+    if !ok {
+      return false
+    }
+  }
+  let ng = r.uv()
+  if !r.ok || ng > d.len() {
+    return false
+  }
+  for _ in 0..ng {
+    let k = r.str()
+    let _n = r.str()
+    if !b.funcs.contains(k) {
+      return false
+    }
+  }
+  r.ok
 }
 
 /// One event of an entry (fe_entry): its kind, its name, and for a
@@ -328,16 +393,21 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   if r.str() != b.fe_own_flags() {
     return b.fe_miss("flags")
   }
+  let tail = r.bytes()
   let nr = r.uv()
   if !r.ok || nr > d.len() {
     return b.fe_miss("malformed")
   }
   for _ in 0..nr {
     let k = r.str()
-    let n = k.trim_prefix("t ").trim_prefix("f ")
+    let n = k[2..k.len()]
     if k.starts_with("t ") {
       if !b.m.type_at.contains(n) {
         return b.fe_miss("read")
+      }
+    } else if k.starts_with("a ") {
+      if b.m.func_at.contains(n) {
+        return b.fe_miss("absent")
       }
     } else if !b.m.func_at.contains(n) {
       return b.fe_miss("read")
@@ -455,28 +525,32 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     let tg = r.bool()
     helpers.push((tg, r.bytes()))
   }
-  let nc = r.uv()
-  if !r.ok || nc > d.len() {
+  if !r.ok {
+    return b.fe_miss("malformed")
+  }
+  var tr = EntryR{d: tail}
+  let nc = tr.uv()
+  if !tr.ok || nc > d.len() {
     return b.fe_miss("malformed")
   }
   var checks: List[UCheck] = []
   for _ in 0..nc {
-    let u = r.uv()
-    let callee = r.str()
-    checks.push(UCheck{fi: fi, u: u, callee: renames.get(callee) ?? callee, w: r.sv()})
+    let u = tr.uv()
+    let callee = tr.str()
+    checks.push(UCheck{fi: fi, u: u, callee: renames.get(callee) ?? callee, w: tr.sv()})
   }
-  let dvar = r.sv()
-  let nm = r.uv()
-  if !r.ok || nm > d.len() {
+  let dvar = tr.sv()
+  let nm = tr.uv()
+  if !tr.ok || nm > d.len() {
     return b.fe_miss("malformed")
   }
   var mods: List[Str] = []
   for _ in 0..nm {
-    mods.push(r.str())
+    mods.push(tr.str())
   }
-  let target = r.bool()
-  let fb = r.bytes()
-  if !r.ok {
+  let target = tr.bool()
+  let fb = tr.bytes()
+  if !tr.ok {
     return b.fe_miss("malformed")
   }
   // the events, as the body's build made them
@@ -498,10 +572,9 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         b.m.order.push(b.m.type_at.get(ev.s) ?? -1)
       }
     } else if ev.k == 3 {
-      if !b.m.func_at.contains(ev.s) {
-        let i = b.m.new_func(ev.s, [], [])
-        holes.push((i, hi))
-      }
+      // absent: checked above
+      let i = b.m.new_func(ev.s, [], [])
+      holes.push((i, hi))
       hi += 1
     } else {
       let _ = b.declare(ev.fo, [])

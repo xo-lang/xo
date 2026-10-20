@@ -207,3 +207,17 @@ sites 18, thunks 6), the same after a constant or statement edit within
 name, which first took 7.0 s); edit builds the same within noise. The
 gain is the entries' independence: step 2 builds them in other
 builders, and they can be reused across programs.
+
+Fix (2026-10-20, step 2's gate found it): the builder also branches on
+a function name being absent (map_remove gives its helper a result
+suffix when another helper of the name exists; helper_name tries `#2`,
+`#3`), and a function's name, unlike a type's, does not say what it
+is. A body recorded where xo.map.remove[Map[Str, Str]] was free made
+it for a Bytes? result; committed after another body had made the name
+for a Str? result, it called that one (1a, 2e0f5dce to the fix). An
+entry now holds the function names the body looked for and did not
+find, and the helpers it made; the commit requires them absent (else a
+miss). Verify compares an entry's leading part only: the body and what
+it does to the builder itself (checks, variable counter, modules,
+target), not what it found or made, which depend on the builder that
+recorded it (FE_CACHE_VERSION v3). Test: TestFrontCacheAbsentHelper.

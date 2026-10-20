@@ -340,6 +340,10 @@ pub struct Module {
   pub fe_log: Bool = false
   pub fe_treads: Map[Int, Bool] = {}
   pub fe_freads: Map[Int, Bool] = {}
+  /// the function names it looked for and did not find: a builder
+  /// branches on that (a helper's `#n` or result suffix), and function
+  /// names, unlike type names, do not say what they are
+  pub fe_fabsent: Map[Str, Bool] = {}
   pub fe_ev: List[(Int, Int)] = []
   /// Named struct and enum types in creation order.
   pub order: List[Int] = []

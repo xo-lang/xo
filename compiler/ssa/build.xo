@@ -623,6 +623,9 @@ fn (var b: Builder) run_job_fe(j: Job) {
         }
       }
       b.fe.misses += 1
+      // verify compares an entry a commit would take here, not one whose
+      // checks fail now (another build's entry, kept until replaced)
+      let applies = b.fe.verify && entry != None && b.fe_applies(entry ?? b"")
       // the runtime's lazy check before the recording (a hit skips it)
       b.check_lazy(fo)
       let r = b.fe_begin()
@@ -631,7 +634,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       if let Some(e) = eo {
         match entry {
           Some(old) => {
-            if b.fe.verify && old != e {
+            if applies && !fe_same(old, e) {
               b.fe.mismatches.push(b.m.funcs[fi].name)
             }
           }
@@ -1508,8 +1511,12 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
 /// m.func_index, noted while a body records (Module.fe_freads).
 fn (var b: Builder) fidx(name: Str) -> Int {
   let i = b.m.func_index(name)
-  if i >= 0 && b.m.fe_log {
-    b.m.fe_freads[i] = true
+  if b.m.fe_log {
+    if i >= 0 {
+      b.m.fe_freads[i] = true
+    } else {
+      b.m.fe_fabsent[name] = true
+    }
   }
   i
 }
