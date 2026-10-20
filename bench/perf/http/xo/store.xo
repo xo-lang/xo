@@ -53,12 +53,19 @@ fn same_email(a: Str, b: Str) -> Bool {
 /// The data protected by the store mutex.
 struct State {
   users: Map[Int, User]
+  /// each user's id by lowercased email, so the uniqueness check is a
+  /// lookup, as the Go server's byEmail (a scan of every user made a
+  /// 1M-user preload quadratic, 2026-10-20)
+  by_email: Map[Str, Int]
   next_id: Int
 }
 
 /// True when a user other than `except_id` already has `email`.
 fn (st: State) email_taken(email: Str, except_id: Int) -> Bool {
-  st.users.values().any(fn(u) { u.id != except_id && same_email(u.email, email) })
+  match st.by_email.get(email.to_lower()) {
+    Some(id) => id != except_id
+    None => false
+  }
 }
 
 /// In memory user store, safe under concurrent requests.
@@ -67,7 +74,7 @@ struct Store {
 }
 
 fn new_store() -> Store {
-  Store{state: Mutex.new(State{users: {}, next_id: 1})}
+  Store{state: Mutex.new(State{users: {}, by_email: {}, next_id: 1})}
 }
 
 fn (s: Store) create(input: NewUser) -> User ! ApiErr {
@@ -79,6 +86,7 @@ fn (s: Store) create(input: NewUser) -> User ! ApiErr {
     }
     let u = User{id: st.next_id, name: input.name, email: input.email, nickname: input.nickname}
     st.users.put(u.id, u)
+    st.by_email.put(u.email.to_lower(), u.id)
     st.next_id += 1
     u
   })
@@ -98,6 +106,7 @@ fn (s: Store) list() -> List[User] {
 fn (s: Store) update(id: Int, p: UserPatch) -> User ! ApiErr {
   s.state.with(fn(var st) -> User ! ApiErr {
     var u = st.users.get(id).or_err(ApiErr.NotFound(id: id))?
+    let old_email = u.email
     match p.name {
       Absent => ()
       Null => return Err(ApiErr.BadRequest(msg: "name cannot be null"))
@@ -119,14 +128,21 @@ fn (s: Store) update(id: Int, p: UserPatch) -> User ! ApiErr {
       return Err(ApiErr.Conflict(email: u.email))
     }
     st.users.put(id, u)
+    if !same_email(old_email, u.email) {
+      let _ = st.by_email.remove(old_email.to_lower())
+      st.by_email.put(u.email.to_lower(), id)
+    }
     u
   })
 }
 
 fn (s: Store) delete(id: Int) -> () ! ApiErr {
   s.state.with(fn(var st) -> () ! ApiErr {
-    if st.users.remove(id) is None {
-      return Err(ApiErr.NotFound(id: id))
+    match st.users.remove(id) {
+      Some(u) => {
+        let _ = st.by_email.remove(u.email.to_lower())
+      }
+      None => return Err(ApiErr.NotFound(id: id))
     }
   })
 }
