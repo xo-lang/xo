@@ -275,3 +275,61 @@ tls_nistec 1,039 of 2,018, http_tls 2,287 of 2,702. Cost: fe.keys 5 to
 10 ms to 11 to 18 ms and fe.read 7 to 10 ms to 16 to 48 ms a build; a
 hit saves about 100 ms of fe.build on tls_nistec. TestFrontCacheAcross
 Programs passes (every golden and run program, 1,286 s).
+
+### Step 1b, part 2: the variant a build reads, and the std hash memoized (2026-10-20)
+
+A build reads one variant when it knows which: after each build the
+cache stores a hint, the own flags the build ended with (fe_final_own),
+keyed by the cache id, the build's flags and the root modules' paths
+and absolute directories (bcache.xo fe_program_id, `<cache>/fe-hint/`).
+With a hint the build reads that variant only, and when the hint has
+unwinding checks (conc=true) it starts with them: a program that needs
+concurrency only in std bodies (an HTTP server, a TLS client) no longer
+builds every body once without them first. A wrong hint costs a build
+again with the other setting (build_program_fe: need_conc against
+conc), as the first build of such a program did before; the output is
+the same either way (byte identical to the cache-off build, first and
+hinted). With no hint (a program's first build) both common variants
+are read.
+
+A first try predicted the variant from the scans (tasks in the user's
+modules): wrong for http_tls, whose need for concurrency comes from std
+bodies, so its second build read the other variant and hit 0 of 2,702.
+
+The std tree hash is memoized in `<cache>/stdsum` by the std files'
+paths, sizes and modification times (recomputed when a file changed in
+the last 2 s).
+
+Measured (one fresh cache, json_text, tls_nistec, http_server, http_tls
+in order, three rounds; part 1 then part 2, ssa phase in ms):
+
+| program | round 1 hits | ssa r1 | ssa r2 | ssa r3 |
+|---|---|---|---|---|
+| json_text | 0 of 1,132 | 279, 277 | 107, 65 | 53, 42 |
+| tls_nistec | 1,039 of 2,018 | 300, 301 | 121, 84 | 77, 64 |
+| http_server | 0 of 2,359 | 602, 607 | 173, 101 | 124, 74 |
+| http_tls | 2,287 of 2,702 | 290, 288 | 217, 119 | 166, 82 |
+
+fe.keys 10 ms to 6 ms; fe.read on a warm build 14 ms to 6 ms; fe.build
+of http_server 90 ms to 54 ms and http_tls 135 ms to 63 ms (no wasted
+first build).
+
+### What is left in an edit, and the relocations (2026-10-20)
+
+Skips building xo (main's xo, cold): 250 of 8,534 bodies have no entry:
+generic instances 136, closures 59, constants 31, spawn sites 18,
+thunks 6, interface type numbers 0. The relocations (tids, sites,
+constants, closures) would add 114 bodies (1.3%), at most about 0.1 s a
+cold build; a warm rebuild already hits 8,284 and spends its 1.09 s of
+fe.build mostly committing entries. http_server skips 28 of 2,342,
+tls_nistec 12 of 2,000.
+
+A one-constant edit of xo after a warm build (three edits, load 28 to
+32): 5.5 to 5.8 s wall, 7.8 s user, 4.2 to 4.8 GB peak; check 0.86 to
+0.93 s, ssa 0.93 to 0.98 s (fe.build 0.71 to 0.73), inline 0.75 to
+0.85 s, insert_rc 0.52 to 0.57 s, prune_unwind, add_landings and cleanup
+0.53 s, emit 0.40 to 0.48 s, assemble 0.26 to 0.42 s, link 0.36 to
+0.38 s, fn_keys 0.15 to 0.20 s. The checker's bodies (0.49 s of a 1.1 s
+`xo check` of xo, flow 0.18 s, parsing 0.23 s, CPU profile) come first
+(the checker overlay, step 3), then the relocations; linking is 6.6% of
+an edit.

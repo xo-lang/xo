@@ -37,6 +37,9 @@ pub struct FeCache {
   pub hits: Int = 0
   pub misses: Int = 0
   pub mismatches: List[Str] = []
+  /// the build starts with unwinding checks (Builder.conc): the last
+  /// build of the program needed them (xo bcache.xo's hint)
+  pub start_conc: Bool = false
   /// qualified name to function object, built on the first replay
   by_ident: Map[Str, Int] = {}
 }
@@ -97,11 +100,18 @@ pub fn fe_variant(key: Str, own: Str) -> Str {
   crypto.sha256("${key}\n${own}".bytes()).to_hex()
 }
 
-/// The own flags of the builders the cache reads entries for before a
-/// build (the build's are known only as it runs): a program without
-/// tasks and one with, neither with budgets nor real time.
+/// The two common own flags (fe_own_flags): a build without and with
+/// concurrency, no budgets, no realtime. A build with no hint (its first)
+/// reads both variants of each key.
 pub fn fe_common_owns() -> List[Str] {
   ["conc=false budgets=false scan=false rt=false", "conc=true budgets=false scan=false rt=false"]
+}
+
+/// The own flags the build ended with: the hint for the next build of
+/// the program (the variant it reads, and whether it starts with
+/// unwinding checks).
+pub fn (var b: Builder) fe_final_own() -> Str {
+  b.fe_own_flags()
 }
 
 /// The builder's flags in a key, for build_program_guard's arguments.

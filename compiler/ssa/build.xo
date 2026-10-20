@@ -373,6 +373,28 @@ pub fn build_program_guard(c: check.Checker, line_root: Str, tests: Bool, releas
 
 /// build_program_guard through the front end cache fe (fecache.xo).
 pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache) -> Builder uses fs.read {
+  var b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, fe.start_conc)
+  b.build()
+  if b.need_conc != b.conc {
+    // built again with unwinding checks (a body needs concurrency), or
+    // without them when fe.start_conc guessed wrong: the first build is
+    // dropped, its stores and counts with it
+    b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, b.need_conc)
+    b.build()
+  }
+  b.m.goarch = goarch
+  b.m.heap_guard = heap_guard
+  b
+}
+
+/// contractOn: whether a contract clause marked debug (or not) is
+/// checked: always, except debug clauses of a release build.
+fn (b: Builder) contract_on(debug: Bool) -> Bool {
+  !debug || !b.release
+}
+
+/// A builder for build_program_fe, with or without unwinding checks.
+fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache, conc: Bool) -> Builder {
   var b = new_builder(c, line_root)
   b.fe = fe
   b.heap_guard = heap_guard
@@ -386,35 +408,8 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
   b.goos = goos
   b.goarch = goarch
   b.wasm = wasm
-  b.build()
-  if b.need_conc {
-    b = new_builder(c, line_root)
-    b.tests = tests
-    b.release = release
-    b.real_tests = real_tests
-    b.goos = goos
-    b.goarch = goarch
-    b.wasm = wasm
-    b.nolibc = nolibc
-    b.prof = prof
-    b.trace_support = trace_support
-    b.soft_cpu = soft_cpu
-    b.heap_guard = heap_guard
-    b.conc = true
-    // the first build's entries and counts carry over (its stores were
-    // made without unwinding checks: their flags differ)
-    b.fe = fe
-    b.build()
-  }
-  b.m.goarch = goarch
-  b.m.heap_guard = heap_guard
+  b.conc = conc
   b
-}
-
-/// contractOn: whether a contract clause marked debug (or not) is
-/// checked: always, except debug clauses of a release build.
-fn (b: Builder) contract_on(debug: Bool) -> Bool {
-  !debug || !b.release
 }
 
 /// A builder for the program c checked.

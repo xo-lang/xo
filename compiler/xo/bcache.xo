@@ -247,17 +247,46 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
 /// relative to dir and contents): the front end cache's key of a std
 /// body (ssa fe_keys), the same for every program. "" when dir cannot be
 /// walked (std bodies then share no key with another build).
-fn std_tree_sum(os: Os, dir: Str) -> Str {
+/// The hash is kept in the cache (cache/stdsum) under the files' paths,
+/// sizes and modification times, and read again only when those differ
+/// or a file changed in the last 2 s (a change within one clock tick).
+fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
   let all = match os.fs.walk(dir) {
     Ok(fs) => fs
     Err(_) => return ""
   }
   var paths: List[Str] = []
+  var stat: Map[Str, Str] = {}
+  let recent = os.clock.now().unix_millis() - 2000
+  var fresh = true
   for fi in all {
     if !fi.is_dir && fi.path.ends_with(".xo") {
       paths.push(fi.path)
+      stat[fi.path] = "${fi.size} ${fi.modified.unix_millis()}"
+      fresh = fresh && fi.modified.unix_millis() < recent
     }
   }
+  var sig = StrBuilder.new()
+  for p in paths.sort() {
+    sig.write("${p} ${stat.get(p) ?? ""}\n")
+  }
+  let sigh = crypto.sha256(sig.freeze().bytes()).to_hex()
+  let memo = "${cache}/stdsum"
+  if fresh && !cache.is_empty() {
+    let parts = ((os.fs.read(memo).ok() ?? b"").to_str() ?? "").split(" ")
+    if parts.len() == 2 && parts[0] == sigh {
+      return parts[1]
+    }
+  }
+  let sum = std_tree_hash(os, dir, paths)
+  if fresh && !cache.is_empty() && !sum.is_empty() {
+    cache_put(os, memo, "${sigh} ${sum}".bytes())
+  }
+  sum
+}
+
+/// The hash of the std sources paths under dir, read in full.
+fn std_tree_hash(os: Os, dir: Str, paths: List[Str]) -> Str {
   var h = BytesBuilder.new()
   for p in paths.sort() {
     match os.fs.read(p) {
@@ -269,6 +298,20 @@ fn std_tree_sum(os: Os, dir: Str) -> Str {
     }
   }
   crypto.sha256(h.freeze()).to_hex()
+}
+
+/// The program c checked, for the front end cache's hint: its root
+/// modules' paths and absolute directories (a root's dir is as named,
+/// "." for most builds).
+fn fe_program_id(os: Os, c: check.Checker) -> Str {
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  var b = StrBuilder.new()
+  for md in c.mods {
+    if md.root {
+      b.write("${md.path} ${abs_of(wd, md.dir)}\n")
+    }
+  }
+  b.freeze()
 }
 
 /// The SSA builder through the front end cache (decision 0220 addendum
@@ -284,11 +327,19 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   }
   var t = os.clock.now()
   var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify"}
-  fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", root, std_tree_sum(os, c.std_root()))
+  fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", root, std_tree_sum(os, c.std_root(), dir))
   t = lap(os, phases, "fe.keys", t)
+  // the own flags the last build of this program ended with (a hint):
+  // read that variant and start as it did; with none (its first build)
+  // read both common variants
+  let fl = ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
+  let hint_path = "${dir}/fe-hint/${crypto.sha256("${id}\n${fl}\n${fe_program_id(os, c)}".bytes()).to_hex()[0..32]}"
+  let hint = (os.fs.read(hint_path).ok() ?? b"").to_str() ?? ""
+  let owns = if hint.is_empty() { ssa.fe_common_owns() } else { [hint] }
+  fe.start_conc = hint.starts_with("conc=true ")
   var keys: List[Str] = []
   for (_, k) in fe.keys {
-    for own in ssa.fe_common_owns() {
+    for own in owns {
       keys.push(ssa.fe_variant(k, own))
     }
   }
@@ -297,6 +348,10 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   t = lap(os, phases, "fe.read", t)
   var b = ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, fe)
   t = lap(os, phases, "fe.build", t)
+  let fin = b.fe_final_own()
+  if fin != hint {
+    cache_put(os, hint_path, fin.bytes())
+  }
   var n = 0
   for (k, e) in b.fe.stores {
     cache_put(os, entry_path(dir, "fe", k), e)
