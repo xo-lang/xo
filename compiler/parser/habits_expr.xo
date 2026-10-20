@@ -249,7 +249,10 @@ fn (var p: Parser) foreign_primary() -> Expr? {
     _ => return None
   }
   let w = t.text
-  if (w == b"switch" || w == b"when") && same_line && p.rest_of_line_has(Kind.LBrace) && next.kind != Kind.Assign && next.kind != Kind.Dot {
+  // `when (x) {`, `when {`, `switch x {`: a subject or a brace follows;
+  // `when == x` or `switch + 1` is a variable of that name (a binding
+  // named when read as Kotlin, 2026-10-20)
+  if (w == b"switch" || w == b"when") && same_line && (next.kind is LParen | LBrace | Ident) && p.rest_of_line_has(Kind.LBrace) {
     return Some(p.foreign_switch())
   }
   if (w == b"try" || w == b"do") && next.kind == Kind.LBrace {

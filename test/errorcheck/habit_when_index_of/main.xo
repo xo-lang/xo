@@ -1,0 +1,21 @@
+// A variable named `when` (or `switch`) is a variable, not Kotlin's
+// `when (x) {` or Swift's `switch x {`: no diagnostic. `index_of` on a Str
+// is the other languages' name for `find` (the note and fix say so).
+
+fn pick(n: Int) -> Str {
+  let when = n
+  if when == 1 {
+    return "one"
+  }
+  let switch = when + 1
+  if switch > 2 {
+    return "many"
+  }
+  "two"
+}
+
+fn main(os: Os) {
+  let s = "hello"
+  let i = s.index_of("l") ?? 0 // ERROR XO0601 "has no field or method `index_of`"
+  os.stdio.println("${pick(i)}")
+}

@@ -507,6 +507,8 @@ fn method_habit(name: Str) -> Str {
     "firstOrNull" => "first"
     "lastOrNull" => "last"
     "isEmpty" => "is_empty"
+    // where a substring starts: Str.find (List has its own index_of)
+    "index_of" | "indexOf" | "index" | "search" => "find"
     _ => ""
   }
 }
@@ -527,6 +529,9 @@ fn method_habit_lang(name: Str) -> Str {
     "uppercase" | "lowercase" | "firstOrNull" | "lastOrNull" => "Kotlin"
     "sorted" | "reversed" => "Swift and Kotlin"
     "isEmpty" => "Kotlin and Swift"
+    "indexOf" | "index_of" => "TypeScript, Java, and Kotlin"
+    "index" => "Python"
+    "search" => "TypeScript"
     _ => ""
   }
 }
