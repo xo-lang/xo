@@ -586,16 +586,35 @@ struct Listener {}
 /// `:0` (std.md 3.2).
 fn (l: Listener) addr() -> Str
 /// Waits for the next connection (std.md 3.2, decision 0071).
-fn (l: Listener) accept() -> Conn ! NetErr uses net.listen
+fn (l: Listener) accept() -> ServerConn ! NetErr uses net.listen
 /// Stops listening; a waiting `accept` fails with `Io`.
 fn (l: Listener) close()
+/// A connection made by `Net.dial`: its reads and writes are `net.dial`
+/// (decision 0280).
 struct Conn {}
 /// At most max bytes (at most 1 MiB); None at the end of the stream.
-fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 /// Writes every byte of data.
-fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net
+fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net.dial
 /// Closes the connection; waiting reads and writes fail with `Io`.
 fn (c: Conn) close()
+/// A connection taken by `Listener.accept`: its reads and writes are
+/// `net.listen` (decision 0280).
+struct ServerConn {}
+/// At most max bytes (at most 1 MiB); None at the end of the stream.
+fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
+/// Writes every byte of data.
+fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
+/// Closes the connection; waiting reads and writes fail with `Io`.
+fn (c: ServerConn) close()
+
+/// Either kind of connection, for code that reads and writes both
+/// (decision 0280).
+interface Stream {
+  fn read(self, max: Int) -> Bytes? ! NetErr uses net
+  fn write(self, data: Bytes) -> () ! NetErr uses net
+  fn close(self)
+}
 
 interface Net {
   fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen

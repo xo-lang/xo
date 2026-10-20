@@ -6,7 +6,7 @@
 use std/tls
 
 /// Reads until the end of the stream.
-fn read_all(c: Conn) -> Bytes ! NetErr uses net {
+fn read_all(c: Stream) -> Bytes ! NetErr uses net {
   var b = BytesBuilder.new()
   while true {
     match c.read(65536)? {

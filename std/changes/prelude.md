@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-10-20: behavior: a connection's reads and writes take the effect of how it was made
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: none
+- Test: test/errorcheck/connection_effects; internal/llvm/testdata/golden/net_echo
+
+`Listener.accept` returns a `ServerConn`, whose reads and writes are
+`net.listen`; a `Conn` from `Net.dial` reads and writes under `net.dial`
+(they were `net`). The prelude interface `Stream` takes either. Code that
+named `Conn` for an accepted connection now names `ServerConn` or
+`Stream` (decision 0280).
 ## 2026-10-20: port: Go's math, bit for bit on every backend
 
 - Kind: port

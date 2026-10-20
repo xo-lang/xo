@@ -117,7 +117,7 @@ fn resp_of(v: J) -> Resp {
 
 /// Reads one line (to `\n`, which it includes) from a connection: the
 /// bytes, and whether the stream ended or failed first.
-fn read_line(c: Conn) -> (Bytes, Bool) uses net {
+fn read_line(c: Stream) -> (Bytes, Bool) uses net {
   var got = b""
   while {
     match c.read(65536) {
@@ -505,7 +505,7 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
   }
 }
 
-fn handle(os: Os, ex: Exec, s: Server, l: Listener, c: Conn) uses (net, proc, fs, env) {
+fn handle(os: Os, ex: Exec, s: Server, l: Listener, c: ServerConn) uses (net, proc, fs, env) {
   let (line, ended) = read_line(c)
   var resp = Resp{}
   var stop = false

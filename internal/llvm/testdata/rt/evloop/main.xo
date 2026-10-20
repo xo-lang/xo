@@ -70,7 +70,7 @@ fn test_timers(r: Run, clock: Clock) {
   r.check(fired, "select's after did not fire")
 }
 
-fn echo(c: Conn) {
+fn echo(c: ServerConn) {
   while true {
     match c.read(65536) {
       Ok(Some(b)) => if c.write(b) is Err(_) {

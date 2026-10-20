@@ -211,7 +211,7 @@ pub fn srv_free(a: Int) {
 // Connections
 
 /// Registers connection c (accepted by the listener) with server s.
-pub fn hc_new(s: rthttp.Srv, c: Conn) -> rthttp.HConn {
+pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   let a = srec(s)
   let cn = rt.obj_addr(c)
   let hc = tasks.new_handle(hconn.HC_SIZE, rt.fn_addr("hc_free"))

@@ -1,0 +1,38 @@
+// Decision 0280: reads and writes on a dialed Conn are net.dial, on an
+// accepted ServerConn net.listen; Stream takes either under net.
+pub fn fetch(n: Net) -> Bytes? ! NetErr uses net.dial {
+  let c = n.dial("127.0.0.1:1")?
+  c.write(b"ping")?
+  c.read(16)
+}
+
+pub fn answer(l: Listener) -> () ! NetErr uses net.listen {
+  let c = l.accept()?
+  c.write(b"pong")?
+}
+
+pub fn wrong_side(l: Listener) -> () ! NetErr uses (net.dial, net.listen) {
+  let c = l.accept()?
+  c.write(b"x")?
+}
+
+pub fn reads_accepted(c: ServerConn) -> Bytes? ! NetErr uses net.dial { // ERROR XO0701 "performs `net.listen`"
+  c.read(1)
+}
+
+pub fn reads_dialed(c: Conn) -> Bytes? ! NetErr uses net.listen { // ERROR XO0701 "performs `net.dial`"
+  c.read(1)
+}
+
+pub fn either(s: Stream) -> () ! NetErr uses net {
+  s.write(b"x")?
+}
+
+pub fn both(n: Net, l: Listener) -> () ! NetErr uses net {
+  either(n.dial("127.0.0.1:1")?)?
+  either(l.accept()?)?
+}
+
+fn main(os: Os) {
+  let _ = both(os.net, os.net.listen("127.0.0.1:0").or_fault("listen")).is_ok()
+}

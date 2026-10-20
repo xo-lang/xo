@@ -340,11 +340,14 @@ var (
 	_ func(*File, *Task) Result[Unit, FsErr]                                                             = (*File).M_close
 	_ func(*FileLock, *Task)                                                                             = (*FileLock).M_unlock
 	_ func(*Listener, *Task) string                                                                      = (*Listener).M_addr
-	_ func(*Listener, *Task) Result[Conn, NetErr]                                                        = (*Listener).M_accept
+	_ func(*Listener, *Task) Result[ServerConn, NetErr]                                                  = (*Listener).M_accept
 	_ func(*Listener, *Task)                                                                             = (*Listener).M_close
 	_ func(*Conn, *Task, int64) Result[Option[Bytes], NetErr]                                            = (*Conn).M_read
 	_ func(*Conn, *Task, Bytes) Result[Unit, NetErr]                                                     = (*Conn).M_write
 	_ func(*Conn, *Task)                                                                                 = (*Conn).M_close
+	_ func(*ServerConn, *Task, int64) Result[Option[Bytes], NetErr]                                      = (*ServerConn).M_read
+	_ func(*ServerConn, *Task, Bytes) Result[Unit, NetErr]                                               = (*ServerConn).M_write
+	_ func(*ServerConn, *Task)                                                                           = (*ServerConn).M_close
 	_ func(*Cmd, *Task, string) Cmd                                                                      = (*Cmd).M_dir
 	_ func(*Cmd, *Task, Env) Cmd                                                                         = (*Cmd).M_env
 	_ func(*Cmd, *Task, string, string) Cmd                                                              = (*Cmd).M_set_env

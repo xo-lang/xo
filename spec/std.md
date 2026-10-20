@@ -621,12 +621,28 @@ fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
 fn (n: Net) only(hosts: List[Str]) -> Net          // attenuation (below)
 fn (l: Listener) addr() -> Str                     // "host:port" actually bound
-fn (l: Listener) accept() -> Conn ! NetErr         uses net.listen
+fn (l: Listener) accept() -> ServerConn ! NetErr   uses net.listen
 fn (l: Listener) close()
-fn (c: Conn) read(max: Int) -> Bytes? ! NetErr     uses net   // None at the end of the stream
-fn (c: Conn) write(data: Bytes) -> () ! NetErr     uses net   // writes every byte
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr     uses net.dial    // None at the end of the stream
+fn (c: Conn) write(data: Bytes) -> () ! NetErr     uses net.dial    // writes every byte
 fn (c: Conn) close()
+fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen   // the same, on an accepted connection
+fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
+fn (c: ServerConn) close()
+
+interface Stream {                                 // either kind of connection
+  fn read(self, max: Int) -> Bytes? ! NetErr uses net
+  fn write(self, data: Bytes) -> () ! NetErr uses net
+  fn close(self)
+}
 ```
+
+A connection's reads and writes perform the effect of how it was made
+(decision 0280): a `Conn` from `dial` is `net.dial`, a `ServerConn` from
+`accept` is `net.listen`. So a client library declares `uses net.dial`
+alone though it reads and writes, and a function given only a
+`ServerConn` cannot dial. Both are handles with the same behavior;
+`Stream` takes either, under `net`.
 
 TCP connections (decision 0071): `accept` waits for the next connection;
 `read` returns at most `max` bytes (at most 1 MiB; fewer when fewer are
@@ -3250,7 +3266,7 @@ fn (p: Prefix) display() -> Str
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-339 declarations.
+345 declarations.
 
 ### Range
 
@@ -3718,16 +3734,32 @@ fn (l: FileLock) unlock()
 
 ```
 fn (l: Listener) addr() -> Str
-fn (l: Listener) accept() -> Conn ! NetErr uses net.listen
+fn (l: Listener) accept() -> ServerConn ! NetErr uses net.listen
 fn (l: Listener) close()
 ```
 
 ### Conn
 
 ```
-fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net
-fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net.dial
+fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (c: Conn) close()
+```
+
+### ServerConn
+
+```
+fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
+fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
+fn (c: ServerConn) close()
+```
+
+### Stream
+
+```
+fn read(self, max: Int) -> Bytes? ! NetErr uses net
+fn write(self, data: Bytes) -> () ! NetErr uses net
+fn close(self)
 ```
 
 ### Net

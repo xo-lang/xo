@@ -16,7 +16,9 @@ fn describe(e: NetErr) -> Str {
   }
 }
 
-fn echo(c: Conn) -> () ! NetErr {
+/// Either kind of connection (Stream, decision 0280): the server echoes on
+/// an accepted ServerConn through the interface.
+fn echo(c: Stream) -> () ! NetErr {
   while {
     match c.read(4)? {
       Some(data) => c.write(data)?
