@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 {"id":"evt_1","type":"charge.succeeded","apiVersion":"2024-06-20","Created":7,"a\"b\\c":0}
 ok: {"id":"e","type":"t","apiVersion":"v","Created":0,"a\"b\\c":0}
 err: at $: missing field `type`
@@ -14,3 +16,4 @@ ok: {"displayName":null}
 ok: {"email":"c@x.io","spot":{"x":5,"y":6},"others":[]}
 err: at $.email: expected string
 ok: "d@x.io"
+--- stderr
