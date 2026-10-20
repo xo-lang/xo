@@ -558,6 +558,11 @@ func TestAgentNames(t *testing.T) {
 	if f := firstFile("def", d, "Str.find"); !strings.HasSuffix(f, "prelude.xo") {
 		t.Errorf("def Str.find in %s", f)
 	}
+	// a type's member, not the runtime module chan.xo (which a
+	// case-insensitive file system finds for Chan.xo)
+	if f := firstFile("def", d, "Chan.new"); !strings.HasSuffix(f, "prelude.xo") {
+		t.Errorf("def Chan.new in %s", f)
+	}
 	// std and runtime modules the program does not import
 	if f := firstFile("def", d, "tls.client"); !strings.HasSuffix(f, "std/tls.xo") {
 		t.Errorf("def tls.client in %s", f)

@@ -370,13 +370,13 @@ fn edit_text() -> Str {
 usage: xo edit [--dry-run] [--dir=<dir>] <op> <args...>
 
 Semantic edits (core 10.4) through the checker's resolved symbols:
-  rename <name> <new name>           function, method, or constant
+  rename <name> <new name>           function, method, constant, or type
   add-field <Struct> <name: Type = default>
   change-sig <fn> "(params) -> Result ! Err"
 Every reference is rewritten at once, and the edit is rejected (nothing
 written, exit 1) unless the program checks clean before and after it;
 the JSON summary lists the files, the diagnostics, or the call sites
-that blocked it. Default dir: .
+that blocked it, and with --dry-run a diff of the changes. Default dir: .
 """
 }
 

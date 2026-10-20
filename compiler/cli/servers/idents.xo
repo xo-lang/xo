@@ -1,0 +1,22 @@
+// The identifier resolution of compiler/cli/semantic ident.xo under the
+// names the server's code uses (it lived here as resolve.xo until
+// decision 0289 moved it, so `xo edit rename` resolves as the editor does).
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/parser
+
+type Site = semantic.IdentSite
+type LspTarget = semantic.LspTarget
+type Res = semantic.Res
+type SiteCtx = semantic.SiteCtx
+type Walk = semantic.Walk
+type Expr = parser.Expr
+
+fn idents_of(c: check.Checker, f: Int) -> List[Site] { semantic.idents_of(c, f) }
+
+fn new_res(c: check.Checker) -> Res { semantic.new_res(c) }
+
+fn same_obj(a: LspTarget, b: LspTarget) -> Bool { semantic.same_obj(a, b) }
+
+fn walk_file(c: check.Checker, f: Int) -> Walk { semantic.walk_file(c, f) }

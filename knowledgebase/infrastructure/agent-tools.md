@@ -20,6 +20,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   std functions of that name (`nosuchmod.park_wait` -> `pool.park_wait`).
   `--dir` may be a workspace or repository root. Last verified:
   2026-10-20.
+- `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
+  constants, and types (a type through the editor's identifier
+  resolution, every place it is written); `--dry-run` prints a diff.
+  The edit's second check reuses the first's std parses.
 - `xo vet` takes a `.xo` file, a std directory (`xo vet std/native/llrt`,
   every runtime module in one check, 0.6 s), or `--std-module=M`.
 

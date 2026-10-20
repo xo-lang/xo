@@ -187,7 +187,8 @@ fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str
   }
   s.res.files = s.res.files.sort()
   s.res.edits = edits.len()
-  let cr = load_session(os, s.dirs, true, overlay)?
+  // the std files parse as they did in the first check
+  let cr = load_session_pc(os, s.dirs, true, overlay, [], false, s.q.c.parse_cache)?
   let errs = errors_of(cr.c.diags)
   if !errs.is_empty() {
     s.res.diagnostics = errs
@@ -439,7 +440,14 @@ fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) 
         _ => return Err("${target.quote()} has no declaration to rename")
       }
     }
-    _ => return Err("${target.quote()}: rename supports functions, methods, and constants so far (not types)")
+    Type => {
+      if txt(o.name) == new_name {
+        s.res.ok = true
+        return Ok(s.res)
+      }
+      return s.rename_type(os, obj, new_name)
+    }
+    _ => return Err("${target.quote()}: rename supports functions, methods, constants, and types")
   }
   let dn = match decl_name {
     Some(x) => x
@@ -480,6 +488,33 @@ fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) 
         }
       }
     }
+  }
+  s.apply(os, edits)
+}
+
+/// The rename of type obj (decision 0289): every identifier of the user
+/// files that the editor's resolution (ident.xo) resolves to it, its
+/// declaration, type expressions, struct literals, patterns, static calls,
+/// variants, and receivers alike; the edit's check before and after
+/// rejects a rename that misses one or collides.
+fn (var s: EditSession) rename_type(os: Os, obj: Int, new_name: Str) -> EditResult ! Str uses env, fs, proc {
+  var r = new_res(s.q.c)
+  var seen: Set[Str] = #{}
+  var edits: List[TextEdit] = []
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    for site in idents_of(s.q.c, f) {
+      if site.id.name.is_empty() {
+        continue
+      }
+      let tg = r.resolve(f, site)
+      if tg.what == "type" && tg.oi == obj {
+        add_ident(edits, seen, path, Some(site.id), new_name)
+      }
+    }
+  }
+  if edits.is_empty() {
+    return Err("no declaration or use of the type found")
   }
   s.apply(os, edits)
 }
@@ -732,7 +767,6 @@ fn edit_change_sig(os: Os, dirs: List[Str], dry: Bool, target: Str, sig0: Str) -
       for n in expr_nodes(Expr.Block(body)) {
         if let E(Ident(id)) = n {
           if s.q.c.var_of(o.decl_file, id) == pv {
-
             edits.push(TextEdit{file: dpath, start: id.span.start.offset, end: id.span.end.offset, text: to})
           }
         }

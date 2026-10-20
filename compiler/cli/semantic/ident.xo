@@ -1,6 +1,7 @@
 // What an identifier of a checked file names (internal/lsp resolve.go),
 // for `xo lsp`'s hover, definition, references, rename, and semantic
-// tokens. The Go server walks the syntax tree by reflection and looks at
+// tokens, and for `xo edit rename` of a type (decision 0289; moved here
+// from compiler/cli/servers so both use one resolution). The Go server walks the syntax tree by reflection and looks at
 // an identifier's parent and grandparent nodes; this walk visits the
 // identifiers in the same order (the fields of compiler/parser's nodes
 // are internal/ast's, in its order) and records for each the part of its
@@ -9,17 +10,15 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
 
-type Expr = parser.Expr
-type Pattern = parser.Pattern
-type Span = parser.Span
+pub type Span = parser.Span
 
-const MOD_DECLARATION = 1
-const MOD_READONLY = 2
-const MOD_DEFAULT_LIBRARY = 4
+pub const MOD_DECLARATION = 1
+pub const MOD_READONLY = 2
+pub const MOD_DEFAULT_LIBRARY = 4
 
 /// What resolve reads of an identifier's parent (and grandparent):
 /// resolve.go's switch on the parent's node type.
-enum SiteCtx {
+pub enum SiteCtx {
   /// A parent the switch does not name.
   Other
   /// The function declared (FuncOf, or the interface's method), -1 for
@@ -60,15 +59,15 @@ enum SiteCtx {
 
 /// One identifier with its place: the Go field of the parent holding it,
 /// its index there (-1 when the field is not a list), and the context.
-struct Site {
-  id: parser.Ident
-  field: Str
-  index: Int
-  ctx: SiteCtx
+pub struct IdentSite {
+  pub id: parser.Ident
+  pub field: Str
+  pub index: Int
+  pub ctx: SiteCtx
   /// The name of a property test's input (`test "x" for n: Int`): the Go
   /// checker records no binding for it (Info.VarOf is nil there; its
   /// uses have one).
-  no_var: Bool = false
+  pub no_var: Bool = false
 }
 
 /// What an identifier names (resolve.go target): its semantic token type
@@ -76,62 +75,62 @@ struct Site {
 /// entity, "" for none; what and oi, sub say which), its declaration
 /// (file as the checker names it, "" for none, and byte offsets), and the
 /// hover text of an entity without a declaration to print.
-struct LspTarget {
-  kind: Str = ""
-  mods: Int = 0
-  obj: Str = ""
-  what: Str = ""
-  oi: Int = -1
-  sub: Int = -1
-  def_file: Str = ""
-  def_start: Int = 0
-  def_end: Int = 0
-  label: Str = ""
+pub struct LspTarget {
+  pub kind: Str = ""
+  pub mods: Int = 0
+  pub obj: Str = ""
+  pub what: Str = ""
+  pub oi: Int = -1
+  pub sub: Int = -1
+  pub def_file: Str = ""
+  pub def_start: Int = 0
+  pub def_end: Int = 0
+  pub label: Str = ""
 }
 
 /// sameObj.
-fn same_obj(a: LspTarget, b: LspTarget) -> Bool {
+pub fn same_obj(a: LspTarget, b: LspTarget) -> Bool {
   if !a.obj.is_empty() || !b.obj.is_empty() {
     return a.obj == b.obj
   }
   !a.def_file.is_empty() && a.def_file == b.def_file && a.def_start == b.def_start && a.def_end == b.def_end
 }
 
-fn is_upper(name: Bytes) -> Bool {
+pub fn is_upper(name: Bytes) -> Bool {
   !name.is_empty() && name[0] >= 'A' && name[0] <= 'Z'
 }
 
 // ---------------------------------------------------------------------------
 // The walk (resolve.go idents)
 
-struct Walk {
-  c: check.Checker
-  f: Int
-  out: List[Site] = []
+pub struct Walk {
+  pub c: check.Checker
+  pub f: Int
+  pub out: List[IdentSite] = []
   /// The byte ranges that scope local bindings (blocks, functions,
   /// closures, loops, `if`, match and select arms), for completion's
   /// names in scope (lsp_complete.xo).
-  scopes: List[(Int, Int)] = []
+  pub scopes: List[(Int, Int)] = []
   /// The byte ranges of `let` and `var` statements: what one declares is
   /// not in scope inside it.
-  lets: List[(Int, Int)] = []
+  pub lets: List[(Int, Int)] = []
 }
 
-fn (var w: Walk) open_scope(sp: Span) {
+pub fn (var w: Walk) open_scope(sp: Span) {
   w.scopes.push((sp.start.offset, sp.end.offset))
 }
 
-fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: SiteCtx) {
-  w.out.push(Site{id: id, field: field, index: index, ctx: ctx})
+pub fn (var w: Walk) add(id: parser.Ident, field: Str, index: Int, ctx: SiteCtx) {
+  w.out.push(IdentSite{id: id, field: field, index: index, ctx: ctx})
 }
 
 /// The identifiers of file f of c in the Go walk's order.
-fn idents_of(c: check.Checker, f: Int) -> List[Site] {
+pub fn idents_of(c: check.Checker, f: Int) -> List[IdentSite] {
   walk_file(c, f).out
 }
 
 /// The walk of file f of c: its identifiers and scope ranges.
-fn walk_file(c: check.Checker, f: Int) -> Walk {
+pub fn walk_file(c: check.Checker, f: Int) -> Walk {
   var w = Walk{c: c, f: f}
   let file = c.files[f].ast
   for u in file.imports {
@@ -148,7 +147,7 @@ fn walk_file(c: check.Checker, f: Int) -> Walk {
   w
 }
 
-fn (var w: Walk) effects(es: List[parser.Effect]) {
+pub fn (var w: Walk) effects(es: List[parser.Effect]) {
   for e in es {
     w.add(e.name, "Name", -1, SiteCtx.Label)
     if let Some(s) = e.sub {
@@ -157,7 +156,7 @@ fn (var w: Walk) effects(es: List[parser.Effect]) {
   }
 }
 
-fn (var w: Walk) decl(d: parser.Decl, o: Int) {
+pub fn (var w: Walk) decl(d: parser.Decl, o: Int) {
   match d {
     FnDecl(x) => {
       let fo = if o >= 0 && w.c.objs[o].kind == check.ObjKind.Func { o } else { -1 }
@@ -236,7 +235,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
         w.string_lit(n)
       }
       for tp in x.params {
-        w.out.push(Site{id: tp.name, field: "Name", index: -1, ctx: SiteCtx.Param(vars: []), no_var: true})
+        w.out.push(IdentSite{id: tp.name, field: "Name", index: -1, ctx: SiteCtx.Param(vars: []), no_var: true})
         if let Some(t) = tp.typ {
           w.typ(t)
         }
@@ -258,7 +257,7 @@ fn (var w: Walk) decl(d: parser.Decl, o: Int) {
 
 /// A function declaration: fo is FuncOf (or the interface's method),
 /// pv the function whose parameter bindings its parameters are (FuncOf).
-fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
+pub fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
   w.open_scope(x.span)
   if let Some(r) = x.recv {
     w.add(r.name, "Name", -1, SiteCtx.Receiver(fo: pv))
@@ -278,7 +277,7 @@ fn (var w: Walk) fn_decl(x: parser.FnDecl, fo: Int, method: Bool, pv: Int) {
   }
 }
 
-fn (var w: Walk) type_params(tps: List[parser.TypeParam]) {
+pub fn (var w: Walk) type_params(tps: List[parser.TypeParam]) {
   for tp in tps {
     w.add(tp.name, "Name", -1, SiteCtx.TypeParam)
     if let Some(t) = tp.constraint {
@@ -287,7 +286,7 @@ fn (var w: Walk) type_params(tps: List[parser.TypeParam]) {
   }
 }
 
-fn (var w: Walk) params(ps: List[parser.Param], vars: List[Int]) {
+pub fn (var w: Walk) params(ps: List[parser.Param], vars: List[Int]) {
   for p in ps {
     let ctx = SiteCtx.Param(vars: vars)
     w.add(p.name, "Name", -1, ctx)
@@ -300,7 +299,7 @@ fn (var w: Walk) params(ps: List[parser.Param], vars: List[Int]) {
   }
 }
 
-fn (var w: Walk) err_spec(e: parser.ErrSpec?) {
+pub fn (var w: Walk) err_spec(e: parser.ErrSpec?) {
   if let Some(es) = e {
     if let Some(t) = es.typ {
       w.typ(t)
@@ -308,7 +307,7 @@ fn (var w: Walk) err_spec(e: parser.ErrSpec?) {
   }
 }
 
-fn (var w: Walk) clauses(cls: List[parser.Clause]) {
+pub fn (var w: Walk) clauses(cls: List[parser.Clause]) {
   for cl in cls {
     match cl {
       UsesClause(_, effects, _) => w.effects(effects)
@@ -323,7 +322,7 @@ fn (var w: Walk) clauses(cls: List[parser.Clause]) {
   }
 }
 
-fn (var w: Walk) const_decl(x: parser.ConstDecl, co: Int) {
+pub fn (var w: Walk) const_decl(x: parser.ConstDecl, co: Int) {
   let ctx = SiteCtx.ConstDecl(co: co)
   w.add(x.name, "Name", -1, ctx)
   if let Some(t) = x.typ {
@@ -332,7 +331,7 @@ fn (var w: Walk) const_decl(x: parser.ConstDecl, co: Int) {
   w.expr(x.value, "Value", -1, ctx, [])
 }
 
-fn (var w: Walk) typ(t: parser.Type) {
+pub fn (var w: Walk) typ(t: parser.Type) {
   match t {
     NamedType(_, path, args) => {
       for (i, id) in path.indexed() {
@@ -362,20 +361,20 @@ fn (var w: Walk) typ(t: parser.Type) {
   }
 }
 
-fn (var w: Walk) block(b: parser.Block) {
+pub fn (var w: Walk) block(b: parser.Block) {
   w.open_scope(b.span)
   for st in b.stmts {
     w.stmt(st)
   }
 }
 
-fn (var w: Walk) opt_label(l: parser.Ident?) {
+pub fn (var w: Walk) opt_label(l: parser.Ident?) {
   if let Some(id) = l {
     w.add(id, "Label", -1, SiteCtx.Label)
   }
 }
 
-fn (var w: Walk) stmt(st: parser.Stmt) {
+pub fn (var w: Walk) stmt(st: parser.Stmt) {
   match st {
     LetStmt(lsp, pattern, typ, value) => {
       w.lets.push((lsp.start.offset, lsp.end.offset))
@@ -446,7 +445,7 @@ fn (var w: Walk) stmt(st: parser.Stmt) {
   }
 }
 
-fn (var w: Walk) string_lit(s: parser.StringLit) {
+pub fn (var w: Walk) string_lit(s: parser.StringLit) {
   for p in s.parts {
     if let Some(e) = p.expr {
       w.expr(e, "Expr", -1, SiteCtx.Other, [])
@@ -454,7 +453,7 @@ fn (var w: Walk) string_lit(s: parser.StringLit) {
   }
 }
 
-fn (var w: Walk) field_inits(fs: List[parser.FieldInit], g: Expr) {
+pub fn (var w: Walk) field_inits(fs: List[parser.FieldInit], g: Expr) {
   for fi in fs {
     w.add(fi.name, "Name", -1, SiteCtx.FieldInit(g: [g]))
     w.expr(fi.value, "Value", -1, SiteCtx.Other, [])
@@ -464,7 +463,7 @@ fn (var w: Walk) field_inits(fs: List[parser.FieldInit], g: Expr) {
 /// An expression held by the field (and index) of a parent whose context
 /// for a direct identifier child is ctx; call is the call whose callee e
 /// is (empty otherwise).
-fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[Expr]) {
+pub fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[Expr]) {
   match e {
     Ident(id) => w.add(id, field, index, ctx)
     StringLit(s) => w.string_lit(s)
@@ -591,7 +590,7 @@ fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: List[
   }
 }
 
-fn (var w: Walk) if_expr(ie: parser.IfExpr) {
+pub fn (var w: Walk) if_expr(ie: parser.IfExpr) {
   w.open_scope(ie.span)
   if let Some(x) = ie.cond {
     w.expr(x, "Cond", -1, SiteCtx.Other, [])
@@ -608,7 +607,7 @@ fn (var w: Walk) if_expr(ie: parser.IfExpr) {
   }
 }
 
-fn (var w: Walk) pat_fields(fs: List[parser.PatField]) {
+pub fn (var w: Walk) pat_fields(fs: List[parser.PatField]) {
   for pf in fs {
     if let Some(n) = pf.name {
       w.add(n, "Name", -1, SiteCtx.PatField)
@@ -617,7 +616,7 @@ fn (var w: Walk) pat_fields(fs: List[parser.PatField]) {
   }
 }
 
-fn (var w: Walk) pat(p: Pattern) {
+pub fn (var w: Walk) pat(p: Pattern) {
   match p {
     BindPat(_, name) => w.add(name, "Name", -1, SiteCtx.Other)
     LitPat(_, value) => w.expr(value, "Value", -1, SiteCtx.Other, [])
@@ -661,14 +660,14 @@ fn (var w: Walk) pat(p: Pattern) {
 
 /// The checked program the resolution reads: the checker, and the line
 /// starts of its files (for positions given as line and column).
-struct Res {
-  c: check.Checker
-  lines: Map[Int, List[Int]] = {}
+pub struct Res {
+  pub c: check.Checker
+  pub lines: Map[Int, List[Int]] = {}
   /// The file index of each path the checker names.
-  idx: Map[Str, Int] = {}
+  pub idx: Map[Str, Int] = {}
 }
 
-fn new_res(c: check.Checker) -> Res {
+pub fn new_res(c: check.Checker) -> Res {
   var r = Res{c: c}
   for (i, f) in c.files.indexed() {
     if !r.idx.contains(f.path) {
@@ -680,7 +679,7 @@ fn new_res(c: check.Checker) -> Res {
 
 /// The byte offset of 1 based line and column in the file the checker
 /// names path, or -1.
-fn (var r: Res) offset_in(path: Str, line: Int, col: Int) -> Int {
+pub fn (var r: Res) offset_in(path: Str, line: Int, col: Int) -> Int {
   let f = r.idx.get(path) ?? -1
   if f < 0 || line <= 0 {
     return -1
@@ -705,7 +704,7 @@ fn (var r: Res) offset_in(path: Str, line: Int, col: Int) -> Int {
 }
 
 /// The declaration of a name at line:col of path, len bytes long.
-fn (var r: Res) def_at(t0: LspTarget, path: Str, line: Int, col: Int, len: Int) -> LspTarget {
+pub fn (var r: Res) def_at(t0: LspTarget, path: Str, line: Int, col: Int, len: Int) -> LspTarget {
   var t = t0
   let off = r.offset_in(path, line, col)
   if off >= 0 {
@@ -716,7 +715,7 @@ fn (var r: Res) def_at(t0: LspTarget, path: Str, line: Int, col: Int, len: Int) 
   t
 }
 
-fn with_def(t0: LspTarget, path: Str, sp: Span) -> LspTarget {
+pub fn with_def(t0: LspTarget, path: Str, sp: Span) -> LspTarget {
   var t = t0
   t.def_file = path
   t.def_start = sp.start.offset
@@ -724,13 +723,13 @@ fn with_def(t0: LspTarget, path: Str, sp: Span) -> LspTarget {
   t
 }
 
-fn (r: Res) is_std_mod(m: Int) -> Bool {
+pub fn (r: Res) is_std_mod(m: Int) -> Bool {
   m >= 0 && r.c.mods[m].is_std
 }
 
 /// The declaration name of object o's declaring decl (decl_file,
 /// decl_idx), if it has one.
-fn (r: Res) decl_name(o: Int) -> parser.Ident? {
+pub fn (r: Res) decl_name(o: Int) -> parser.Ident? {
   let f = r.c.objs[o].decl_file
   let i = r.c.objs[o].decl_idx
   if f < 0 || i < 0 || i >= r.c.files[f].ast.decls.len() {
@@ -748,7 +747,7 @@ fn (r: Res) decl_name(o: Int) -> parser.Ident? {
 }
 
 /// varTarget.
-fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> LspTarget {
+pub fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> LspTarget {
   let o = r.c.objs[v]
   var t = LspTarget{kind: "variable", obj: "o${v}", what: "local", oi: v}
   if o.local.contains("param") || o.local.contains("recv") {
@@ -762,7 +761,7 @@ fn (var r: Res) var_target(v: Int, id: parser.Ident, id_file: Str) -> LspTarget 
 }
 
 /// objTarget.
-fn (var r: Res) obj_target(o: Int) -> LspTarget {
+pub fn (var r: Res) obj_target(o: Int) -> LspTarget {
   let ob = r.c.objs[o]
   match ob.kind {
     Func => {
@@ -797,7 +796,7 @@ fn (var r: Res) obj_target(o: Int) -> LspTarget {
 }
 
 /// typeTarget.
-fn (var r: Res) type_target(to: Int) -> LspTarget {
+pub fn (var r: Res) type_target(to: Int) -> LspTarget {
   let ob = r.c.objs[to]
   var t = LspTarget{kind: "type", obj: "o${to}", what: "type", oi: to}
   if ob.tkind == "struct" {
@@ -819,20 +818,20 @@ fn (var r: Res) type_target(to: Int) -> LspTarget {
 }
 
 /// The file the checker names a type object's declaration by.
-fn (r: Res) type_file(to: Int) -> Str {
+pub fn (r: Res) type_file(to: Int) -> Str {
   let f = r.c.objs[to].decl_file
   if f >= 0 { r.c.files[f].path } else { r.c.objs[to].file }
 }
 
 /// variantTarget.
-fn (var r: Res) variant_target(en: Int, vi: Int) -> LspTarget {
+pub fn (var r: Res) variant_target(en: Int, vi: Int) -> LspTarget {
   let v = r.c.objs[en].variants[vi]
   let t = LspTarget{kind: "enumMember", obj: "v${en}.${vi}", what: "variant", oi: en, sub: vi}
   r.def_at(t, r.type_file(en), v.line, v.col, v.name.len())
 }
 
 /// A field of struct to (fieldOf) as a target, or None.
-fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> LspTarget? {
+pub fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> LspTarget? {
   for (i, fl) in r.c.objs[to].fields.indexed() {
     if fl.name == name {
       let t = LspTarget{kind: "property", mods: mods, obj: "f${to}.${i}", what: "field", oi: to, sub: i}
@@ -843,7 +842,7 @@ fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> LspTarget? {
 }
 
 /// namedObj: the Type object of a named type, or -1.
-fn (r: Res) named_obj(t: Int) -> Int {
+pub fn (r: Res) named_obj(t: Int) -> Int {
   if t < 0 {
     return -1
   }
@@ -851,7 +850,7 @@ fn (r: Res) named_obj(t: Int) -> Int {
   if r.c.tys[x].kind == check.TyKind.Named { r.c.tys[x].obj } else { -1 }
 }
 
-fn (r: Res) scope_get(m: Int, name: Bytes) -> Int {
+pub fn (r: Res) scope_get(m: Int, name: Bytes) -> Int {
   if m < 0 {
     return -1
   }
@@ -859,7 +858,7 @@ fn (r: Res) scope_get(m: Int, name: Bytes) -> Int {
 }
 
 /// typeName.
-fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> LspTarget {
+pub fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> LspTarget {
   var o = -1
   let name = path[path.len() - 1].name
   if path.len() == 1 {
@@ -882,7 +881,7 @@ fn (var r: Res) type_name(f: Int, path: List[parser.Ident], kind0: Str) -> LspTa
   LspTarget{kind: kind}
 }
 
-fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> LspTarget {
+pub fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> LspTarget {
   if i == 0 {
     let t = r.import_name(f, path[0])
     if !t.kind.is_empty() {
@@ -893,7 +892,7 @@ fn (var r: Res) type_or_import(f: Int, path: List[parser.Ident], i: Int) -> LspT
 }
 
 /// importName.
-fn (r: Res) import_name(f: Int, id: parser.Ident) -> LspTarget {
+pub fn (r: Res) import_name(f: Int, id: parser.Ident) -> LspTarget {
   let im = match r.c.files[f].imports.get(id.name) {
     Some(x) => x
     None => return LspTarget{}
@@ -914,7 +913,7 @@ fn (r: Res) import_name(f: Int, id: parser.Ident) -> LspTarget {
 }
 
 /// resolve: what the identifier at site of file f names.
-fn (var r: Res) resolve(f: Int, site: Site) -> LspTarget {
+pub fn (var r: Res) resolve(f: Int, site: IdentSite) -> LspTarget {
   let id = site.id
   let path = r.c.files[f].path
   let decl = fn(t: LspTarget) -> LspTarget { with_def(t, path, id.span) }
@@ -1107,7 +1106,7 @@ fn (var r: Res) resolve(f: Int, site: Site) -> LspTarget {
 }
 
 /// selector: the Sel of x, the callee of call when call holds one.
-fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> LspTarget {
+pub fn (var r: Res) selector(f: Int, x: Expr, call: List[Expr]) -> LspTarget {
   let (xx, sel) = match x {
     SelectorExpr(_, a, b) => (a, b)
     _ => return LspTarget{kind: "property"}

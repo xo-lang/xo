@@ -2497,7 +2497,10 @@ not type check.
   text search. An edit of a program that does not check clean is rejected
   before anything is computed.
 - `rename` renames a function, method, or constant and every call and use
-  as a value. The new name may repeat the target's qualifier.
+  as a value, or a type and every place it is written (type expressions,
+  struct literals, patterns, variants, receivers; decision 0289). The new
+  name may repeat the target's qualifier. With `--dry-run` the summary
+  carries a diff of the changes.
 - `add-field` adds `name: Type` to the struct declaration and
   `name: default` to every struct literal of the type. The default is a
   migration value; it is not kept as a declared field default. Without

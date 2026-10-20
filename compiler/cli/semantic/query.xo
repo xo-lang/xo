@@ -22,9 +22,17 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
 /// too, imported or not (preloads_for), so a lookup of `tls.client` or
 /// `pool.park_wait` finds them.
 pub fn load_session_for(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool) -> Session ! Str uses env, fs, proc {
+  load_session_pc(os, dirs0, exact, overlay, names, wide, {})
+}
+
+/// load_session_for reusing the std parses of an earlier check (pc, its
+/// Checker.parse_cache): `xo edit`'s check of the edited program
+/// (decision 0289).
+pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool, pc: Map[Str, check.ParseEntry]) -> Session ! Str uses env, fs, proc {
   let wd = wd_of(os)
   let std = std_dir_of(os)
   var c = check.new_checker(os.fs, std)
+  c.parse_cache = pc
   for n in names {
     for p in if wide { preloads_wide(os, std, n) } else { preloads_for(os, std, n) } {
       if !c.preload.contains(p) {
@@ -57,16 +65,22 @@ pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
       cands.push(p)
     }
   } else {
+    // a module's name is snake_case; `Chan.new` names a type's member
     let first = name.split(".")[0]
-    if !first.is_empty() {
+    let b = first.bytes()
+    if !first.is_empty() && b[0] >= 'a' && b[0] <= 'z' {
       cands = ["std/${first}", "native/llrt/${first}"]
     }
   }
   var out: List[Str] = []
   for p in cands {
-    let file = if p.starts_with("std/") { "${std_dir}/${p.trim_prefix("std/")}.xo" } else { "${std_dir}/${p}.xo" }
-    if let Ok(Some(_)) = os.fs.stat(file) {
-      out.push(p)
+    // listed, not stat'ed: a case-insensitive file system (macOS) finds
+    // chan.xo for Chan.xo
+    let (dir, base) = if p.starts_with("std/") { (std_dir, p.trim_prefix("std/")) } else { ("${std_dir}/native/llrt", p.trim_prefix("native/llrt/")) }
+    if let Ok(es) = os.fs.read_dir(dir) {
+      if es.any(fn(e) { !e.is_dir && e.name == "${base}.xo" }) {
+        out.push(p)
+      }
     }
   }
   out
