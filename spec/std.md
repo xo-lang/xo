@@ -1924,6 +1924,71 @@ fn (x: Hasher) written() -> Int
   instructions) and MD5 is ported from Go's crypto/md5; Go's vectors for
   each are in std/native/crypto_test.xo and llrt/md5_test.xo.
 
+**Public key signatures, keys, and PEM** (decision 0285, Accepted by
+the owner 2026-10-20; implemented in steps, PEM first):
+
+```
+enum KeyAlg { Rsa, EcdsaP256, EcdsaP384, EcdsaP521, Ed25519 }
+struct PublicKey {}          // a value: ==; Debug text `<publickey>`
+struct PrivateKey {}         // Debug text `<privatekey>`: never key material
+struct KeyErr { msg: Str }
+struct PemBlock { kind: Str, headers: Map[Str, Str], bytes: Bytes }
+
+pub fn pem_decode(text: Str) -> List[PemBlock]
+pub fn pem_encode(b: PemBlock) -> Str ! KeyErr
+pub fn parse_public_key(der: Bytes) -> PublicKey ! KeyErr
+pub fn parse_private_key(der: Bytes) -> PrivateKey ! KeyErr
+pub fn jwk_public_key(jwk: Str) -> PublicKey ! KeyErr
+pub fn marshal_public_key(k: PublicKey) -> Bytes
+fn (k: PublicKey) alg() -> KeyAlg
+fn (k: PrivateKey) alg() -> KeyAlg
+fn (k: PrivateKey) public_key() -> PublicKey
+pub fn verify(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+pub fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
+pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
+pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
+pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
+pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
+```
+
+- PEM is Go's `encoding/pem`: `pem_decode` is `pem.Decode` repeated on
+  the rest (text outside blocks and malformed blocks skipped; header text
+  and the type are Str, U+FFFD for bytes that are not UTF-8), and
+  `pem_encode` is `pem.EncodeToMemory` (64 column lines; `Proc-Type`
+  first, then the other headers sorted), `KeyErr` for a header key with
+  a colon.
+- `parse_public_key` reads a PKIX SubjectPublicKeyInfo (Go's
+  `ParsePKIXPublicKey`) or a PKCS #1 RSAPublicKey; `parse_private_key`
+  reads PKCS #8, PKCS #1, and SEC 1 EC keys (Go's `ParsePKCS8PrivateKey`,
+  `ParsePKCS1PrivateKey`, `ParseECPrivateKey`, tried in that order as
+  `tls.X509KeyPair` does). Errors carry Go's x509 texts (`x509: unsupported
+  elliptic curve`, ...); DER that does not parse at all is `x509:
+  malformed public key` or `x509: malformed private key` on every backend
+  (Go's encoding/asn1 texts name its internal structures). DSA and other
+  algorithms are `x509: unknown public key algorithm`.
+- `verify` hashes `msg` with `h` and checks RSA PKCS #1 v1.5 or ECDSA
+  ASN.1 DER (Go's `VerifyPKCS1v15`, `VerifyASN1`); `verify_raw_ecdsa`
+  takes the fixed size r || s form of JWS (RFC 7518 3.4). Ed25519 signs
+  the message itself and ignores `h`. A key and hash that do not fit, a
+  wrong length, or a malformed signature is `false`, never a fault.
+  `verify_pss` accepts any salt length (Go's `PSSSaltLengthAuto`);
+  `sign_pss` uses a salt as long as the hash (RFC 7518 PS256, TLS 1.3).
+- RSA keys verify from 1024 bits (Go 1.24's minimum) and sign from 2048;
+  `generate_key(r, Rsa)` is `KeyErr` until prime generation lands (import
+  RSA keys from PEM).
+- **Nonces.** ECDSA signing takes its nonce from an HMAC_DRBG seeded with
+  the private key, bytes from `r`, and the message hash (Go 1.24's hedged
+  construction): a `Rand` that repeats or returns zeros degrades to
+  deterministic RFC 6979 signing, so it cannot leak the key, and a test's
+  seeded `Rand` gives reproducible signatures. The Go backend passes `r`
+  to Go (it builds with `GODEBUG=cryptocustomrand=1`), so both backends
+  sign the same bytes for the same `Rand`.
+- **Timing.** Every operation on a private key or a nonce (scalar
+  multiplication, the nonce inversion, RSA's CRT exponentiation) runs in
+  time independent of the secret; bench/ct checks it with a Welch t-test
+  (on demand and nightly).
+
 Storing API tokens: tokens from `token` have 256 bits of entropy, so a
 plain `sha256` digest is enough (no salt or stretching needed) and can be
 looked up by value; compare the digest found with `equal`:
