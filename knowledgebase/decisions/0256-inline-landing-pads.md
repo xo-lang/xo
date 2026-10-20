@@ -68,3 +68,17 @@ inlined and its closure call made direct, but map and filter were not.
 - Treat retained borrowed roots like owned ones at operations that keep
   their operands: rejected after it failed verification of ordinary
   functions.
+
+## Addendum: one call site (Xo Lang 2, 2026-10-20)
+
+A function with landing pads and exactly one call site is inlined there
+too, up to INLINE_ONE_PADDED_INSTRS (150) expanded instructions, unless
+its body updates a list in place (list.set, push, pop, take): the copy
+is the only body, so no hot loop gains a second one. The in-place rule:
+copied, those updates fail the verifier's uniqueness proof (sums_of's
+pushes inside a task scope, and one inlined into arm64.inline_cached,
+broke xo's own build under XO_INLINE_STRICT=1). The cap: without it the
+HTTP server's native text grew 4.6% for 1.5 to 2.2% fewer instructions
+a request; with 150 it grows 1.0% for 0.7 to 1.9% on plain, plain-newconn
+and tls (bench/results/inline-one-site-pads-2026-10-20.md). Found with
+XO_INLINE_REPORT (each function's cost, sites, and how it is taken).

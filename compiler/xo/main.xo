@@ -1362,6 +1362,14 @@ fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str
     mi.inline_deny = deny.split(",")
   }
   mi.passes_off = passes_off(os)
+  // XO_INLINE_REPORT=NAME (a part of the names, or 1 for every function):
+  // how the inliner takes each, on standard error
+  let report = os.env.get("XO_INLINE_REPORT") ?? ""
+  if !report.is_empty() {
+    for l in arm64.inline_report(mi, report) {
+      os.stdio.eprintln(l)
+    }
+  }
   // arm64.inline_check(mi, jobs, ...), its two halves timed
   var t = os.clock.now()
   let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases)
