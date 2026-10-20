@@ -914,6 +914,34 @@ fn (var g: G) compare(v: Int) -> Cmp {
       return Cmp{text: "tst $u0, #${n}", us: [g.word(y)], cond: int_cond(o)}
     }
   }
+  // UInt64's order is compared as Int's with both sign bits flipped
+  // (compiler/ssa expr.xo compare): x ^ MIN < y ^ MIN is x < y unsigned,
+  // and a constant c compared so is c ^ MIN (2026-10-19: portable's u64
+  // loop made each a movabs, two xors, and a cmp on amd64)
+  if g.vkind(a) == ssa.Kind.Int && o != ssa.Op.Eq && o != ssa.Op.Ne {
+    let (oa, xa, ca, na) = g.unflip(a)
+    let (ob, xb, cb, nb) = g.unflip(b)
+    if oa && ob && !(ca && cb) {
+      var cond = uint_cond(o)
+      var x = xa
+      var y = xb
+      var yc = cb
+      var n = nb
+      if ca {
+        x = xb
+        y = xa
+        yc = true
+        n = na
+        cond = swap_cond(cond)
+      }
+      if yc && imm12(n) {
+        return Cmp{text: "cmp $u0, #${n}", us: [g.word(x)], cond: cond}
+      }
+      let wx = g.word(x)
+      let wy = if yc { g.imm(n) } else { g.word(y) }
+      return Cmp{text: "cmp $u0, $u1", us: [wx, wy], cond: cond}
+    }
+  }
   match g.vkind(a) {
     Int | Bool => {
       var cond = if g.vkind(a) == ssa.Kind.Bool { uint_cond(o) } else { int_cond(o) }
@@ -954,6 +982,25 @@ fn (var g: G) compare(v: Int) -> Cmp {
       Cmp{text: "cmp $u0, $u1", us: [0, 0], cond: "eq"}
     }
   }
+}
+
+/// An operand of a flipped UInt64 compare (compare): (true, x, false, 0)
+/// for x ^ MIN, (true, -1, true, c ^ MIN) for a constant c, else false.
+fn (g: G) unflip(a: Int) -> (Bool, Int, Bool, Int) {
+  let (k, kc) = g.const_int(a)
+  if kc {
+    return (true, -1, true, k ^ MIN_INT)
+  }
+  let x = g.f.values[a]
+  if x.op == ssa.Op.Xor && x.args.len() == 2 {
+    for i in 0..2 {
+      let (m, mc) = g.const_int(x.args[i])
+      if mc && m == MIN_INT {
+        return (true, x.args[1 - i], false, 0)
+      }
+    }
+  }
+  (false, -1, false, 0)
 }
 
 /// Lowers SSA value v.
@@ -2445,7 +2492,7 @@ fn (var g: G) sdiv_quot(xv: Int, a: Int, d: Int) -> Int {
 fn (var g: G) shift(v: Int) {
   let x = g.f.values[v]
   let a = g.word(x.args[0])
-  let (k, kc) = g.const_int(x.args[1])
+  let (k, kc) = g.const_word(x.args[1])
   if kc && k >= 0 && k < 64 {
     if x.op == ssa.Op.Shr {
       g.set(v, [g.def1(false, "asr $d0, $u0, #${k}", [a])])

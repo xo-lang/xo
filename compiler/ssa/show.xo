@@ -926,9 +926,10 @@ fn (var b: Builder) sized_op(code: Int, l: Int, r: Int, sp: Span) -> Int {
   } else if code == 5 || code == 6 {
     let bits = if u64 { 64 } else { b.m.types[t].bits }
     if !bconst || kb < 0 || kb >= bits {
-      let neg = b.add(Op.Lt, bt, Aux.None, [c, b.cint(0)])
-      let big = b.add(Op.Ge, bt, Aux.None, [c, b.cint(bits)])
-      b.sized_fail_if(b.add(Op.Or, bt, Aux.None, [neg, big]), code, l, r, sp)
+      // c < 0 or c >= bits: c >= bits as UInt64s, one unsigned compare
+      // on the native backends (isel.xo unflip) and LLVM (2026-10-19:
+      // two compares, two sets, an or, and a test on amd64)
+      b.sized_fail_if(b.ult(b.cint(bits - 1), c), code, l, r, sp)
     }
     if code == 6 {
       if u64 {

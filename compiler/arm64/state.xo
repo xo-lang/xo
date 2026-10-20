@@ -551,6 +551,20 @@ fn (g: G) const_int(v0: Int) -> (Int, Bool) {
   }
 }
 
+/// const_int through a narrow constant's word (compiler/ssa show.xo
+/// word: an IntConv to Int of a constant, the same number): a shift's
+/// amount (2026-10-19: `x >> 8` on UInt32 shifted by a register holding
+/// 8; not for every operand, which made narrow divisions by constants
+/// multiply by their magic numbers, more instructions than sdiv).
+fn (g: G) const_word(v0: Int) -> (Int, Bool) {
+  let v = g.through_params(v0)
+  let x = g.f.values[v]
+  if x.op == ssa.Op.IntConv && x.args.len() == 1 && g.m.types[x.ty].kind == ssa.Kind.Int && g.m.types[x.ty].bits == 0 {
+    return g.const_int(x.args[0])
+  }
+  g.const_int(v)
+}
+
 /// The value of an Int negation of an Int constant other than the
 /// minimum (a negative literal: `-7` is a negation in the SSA), as
 /// internal/arm64 negConst.
