@@ -20,7 +20,7 @@ domains (decision 0135) still show Namecheap's default 302 to `www`; their
 | Install Hugo | `CGO_ENABLED=0 GOBIN=$PWD/.tools/bin go install github.com/gohugoio/hugo@v0.167.0` (no Homebrew bottle on macOS 27) |
 | Preview | `.tools/bin/hugo server` (http://localhost:1313) |
 | Build | `.tools/bin/hugo --gc --minify` into `public/` |
-| Pull spec, release notes, and diagnostic code pages from this repo | `python3 scripts/sync-content.py` (default `../../codelang`, or `$XO_REPO`; builds `cmd/xo` for `xo explain --json` unless `$XO` is set) |
+| Pull spec, release notes, and diagnostic code pages from this repo | `python3 scripts/sync-content.py` (default `../xo`, the checkout next to the site in `xolang/`, or `$XO_REPO`; runs that checkout's `bin/xo` for `xo explain --json` unless `$XO` is set) |
 | Re-verify the tour's programs and record their output | `XO=path/to/xo scripts/check-examples.sh` (each `examples/tour/*` must check, run, and pass `xo test`; each `examples/mistakes/*` must fail `xo check`) |
 | Publish | push to `main`; `.github/workflows/pages.yml` deploys to GitHub Pages |
 | Rebuild the playground's WebAssembly (after compiler, std/rt, or Go changes) | `python3 scripts/build-playground.py` (infrastructure/playground.md) |
