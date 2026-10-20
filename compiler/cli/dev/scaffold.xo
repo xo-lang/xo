@@ -1,0 +1,234 @@
+// `xo dev new-code` and `xo dev new-golden` (2026-10-20 poll): write
+// every file the gate checks for a new diagnostic code or a new golden
+// program, so adding one is one command and the work left is the
+// compiler change itself.
+//
+//   xo dev new-code XOnnnn --title=TEXT [--severity=error|warning|note]
+//                  [--component=NAME] [--ref="core 3.1"]
+//     a row of compiler/cli/core/explain_data.xo and of spec/core.md 10.6
+//     (both in code order; internal/repotest keeps them equal), and a
+//     test/errorcheck case to fill in with the program that reports it
+//   xo dev new-golden NAME [--dir=DIR] [--from=FILE] [--no-run]
+//     DIR/NAME/main.xo (FILE's text, or a stub) and its want.txt, the
+//     output of `xo run` with this xo (DIR: internal/llvm/testdata/golden,
+//     which the arm64, LLVM, and Go golden runs all read)
+
+use github.com/xo-lang/xo/compiler/cli/core
+
+/// The checkout holding the working directory: the nearest directory at
+/// or above it with spec/core.md, or "".
+fn repo_root(os: Os) -> Str uses (fs.read, env) {
+  var d = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  while !d.is_empty() {
+    if let Ok(Some(_)) = os.fs.stat("${d}/spec/core.md") {
+      return d
+    }
+    if d == "/" {
+      break
+    }
+    let parts = d.split("/")
+    let up = parts[0..parts.len() - 1].join("/")
+    d = if up.is_empty() { "/" } else { up }
+  }
+  ""
+}
+
+/// s as the inside of an Xo string literal.
+fn xo_lit(s: Str) -> Str {
+  s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\${", "\\\${").replace("\n", "\\n")
+}
+
+/// Whether code is XO and four digits.
+fn is_code(code: Str) -> Bool {
+  if code.len() != 6 || !code.starts_with("XO") {
+    return false
+  }
+  for b in code[2..].bytes() {
+    if b < '0' || b > '9' {
+      return false
+    }
+  }
+  true
+}
+
+/// src with line inserted before the first line that row_code reads a
+/// code after code from (rows of one table, in code order), or after the
+/// last such row; None when no line is a row.
+fn insert_row(src: Str, code: Str, line: Str, row_code: fn(Str) -> Str) -> Str? {
+  let lines = src.split("\n")
+  var last = -1
+  for (i, l) in lines.indexed() {
+    let c = row_code(l)
+    if c.is_empty() {
+      continue
+    }
+    if c > code {
+      return Some((lines[0..i] + [line] + lines[i..]).join("\n"))
+    }
+    last = i
+  }
+  if last < 0 {
+    return None
+  }
+  Some((lines[0..last + 1] + [line] + lines[last + 1..]).join("\n"))
+}
+
+/// The code of an explain_data.xo row (`    "XO0160" => Some(`), or "".
+fn explain_row_code(l: Str) -> Str {
+  if l.starts_with("    \"XO") && l.contains("\" => Some(Expl{") { l[5..11] } else { "" }
+}
+
+/// The code of a core 10.6 table row (``| `XO0160` | ...``), or "".
+fn spec_row_code(l: Str) -> Str {
+  if l.starts_with("| `XO") && l.len() > 11 { l[3..9] } else { "" }
+}
+
+fn new_code_cmd(os: Os, args: List[Str]) -> Int uses (env, fs.read, fs.write, stdio) {
+  var fl = core.new_flags("dev new-code")
+  fl.str_flag("title", "", "the one line description (explain's title and summary, the spec row)")
+  fl.str_flag("severity", "error", "error, warning, or note")
+  fl.str_flag("component", "checker", "what reports it: lexer, parser, checker, vet, modules, ...")
+  fl.str_flag("ref", "", "the spec section the summary cites, as `core 3.1`")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  let usage = "usage: xo dev new-code XOnnnn --title=TEXT [--severity=error|warning|note] [--component=NAME] [--ref=\"core 3.1\"]"
+  if fl.args.len() != 1 || !is_code(fl.args[0].to_upper()) || fl.get_str("title").is_empty() {
+    os.stdio.eprintln(usage)
+    return 2
+  }
+  let code = fl.args[0].to_upper()
+  let sev = fl.get_str("severity")
+  if !(sev is "error" | "warning" | "note") {
+    os.stdio.eprintln("xo dev new-code: --severity is error, warning, or note, not ${sev.quote()}")
+    return 2
+  }
+  let title = fl.get_str("title")
+  let ref = fl.get_str("ref")
+  let summary = if ref.is_empty() { title } else { "${title} (${ref})" }
+  let root = repo_root(os)
+  if root.is_empty() {
+    os.stdio.eprintln("xo dev new-code: no spec/core.md at or above the working directory (run it in an Xo checkout)")
+    return 2
+  }
+  let ep = "${root}/compiler/cli/core/explain_data.xo"
+  let sp = "${root}/spec/core.md"
+  let ec = "${root}/test/errorcheck/${code.to_lower()}/main.xo"
+  let explain = os.fs.read_text(ep).ok() ?? ""
+  let spec = os.fs.read_text(sp).ok() ?? ""
+  if explain.contains("    \"${code}\" => Some(") {
+    os.stdio.eprintln("xo dev new-code: ${code} is already defined in ${ep}")
+    return 1
+  }
+  if let Ok(Some(_)) = os.fs.stat(ec) {
+    os.stdio.eprintln("xo dev new-code: ${ec} exists")
+    return 1
+  }
+  let row = "    \"${code}\" => Some(Expl{title: \"${xo_lit(title)}\", severity: \"${sev}\", summary: \"${xo_lit(summary)}\", detail: \"${xo_lit("TODO(${code}): what the diagnostic means, why Xo reports it, and how to fix it.")}\", example: \"\", fix: \"\"})"
+  let new_explain = match insert_row(explain, code, row, explain_row_code) {
+    Some(s) => s
+    None => {
+      os.stdio.eprintln("xo dev new-code: no code rows in ${ep}")
+      return 1
+    }
+  }
+  // the 10.6 table only: rows elsewhere in the spec start alike
+  let at = spec.find("### 10.6 Diagnostic codes") ?? -1
+  if at < 0 {
+    os.stdio.eprintln("xo dev new-code: no section 10.6 in ${sp}")
+    return 1
+  }
+  let rest = spec[at..]
+  let next = rest[4..].find("\n### ") ?? -1
+  let sec_end = if next < 0 { spec.len() } else { at + 4 + next }
+  let spec_row = "| `${code}` | ${sev} | ${fl.get_str("component")} | ${title} |"
+  let new_sec = match insert_row(spec[at..sec_end], code, spec_row, spec_row_code) {
+    Some(s) => s
+    None => {
+      os.stdio.eprintln("xo dev new-code: no code rows in section 10.6 of ${sp}")
+      return 1
+    }
+  }
+  let case = "// ${code}: ${title}.\n// Write the smallest program that reports it, mark the line with\n// `// ERROR ${code} \"part of the message\"`, and run\n// `xo dev errorcheck test/errorcheck/${code.to_lower()}`.\n\nfn main(os: Os) {\n  os.stdio.println(\"TODO\") // ERROR ${code}\n}\n"
+  let writes = [(ep, new_explain), (sp, spec[0..at] + new_sec + spec[sec_end..]), (ec, case)]
+  if let Err(e) = os.fs.create_dir_all("${root}/test/errorcheck/${code.to_lower()}") {
+    os.stdio.eprintln("xo dev new-code: ${e.display()}")
+    return 1
+  }
+  for (p, text) in writes {
+    if let Err(e) = os.fs.write(p, text.bytes()) {
+      os.stdio.eprintln("xo dev new-code: ${p}: ${e.display()}")
+      return 1
+    }
+    os.stdio.println("wrote ${p.trim_prefix(root + "/")}")
+  }
+  os.stdio.println("next: report ${code} in the ${fl.get_str("component")}, replace the TODO detail and add example and fix in explain_data.xo, write the errorcheck program; `go test ./internal/repotest -run TestSpecListsEveryCode` checks the tables")
+  0
+}
+
+fn new_golden_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (env, fs.read, fs.write, proc, stdio) {
+  var fl = core.new_flags("dev new-golden")
+  fl.str_flag("dir", "internal/llvm/testdata/golden", "the golden directory, relative to the checkout")
+  fl.str_flag("from", "", "a .xo file to use as the program (else a stub)")
+  fl.bool_flag("no-run", "write the program only, no want.txt")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 || fl.args[0].contains("/") {
+    os.stdio.eprintln("usage: xo dev new-golden NAME [--dir=DIR] [--from=FILE] [--no-run]")
+    return 2
+  }
+  let name = fl.args[0]
+  let root = repo_root(os)
+  if root.is_empty() {
+    os.stdio.eprintln("xo dev new-golden: no spec/core.md at or above the working directory (run it in an Xo checkout)")
+    return 2
+  }
+  let dir = "${root}/${fl.get_str("dir")}/${name}"
+  if let Ok(Some(_)) = os.fs.stat(dir) {
+    os.stdio.eprintln("xo dev new-golden: ${dir} exists")
+    return 1
+  }
+  let from = fl.get_str("from")
+  let src = if from.is_empty() {
+    "// ${name}: TODO what this golden program covers.\n\nfn main(os: Os) {\n  os.stdio.println(\"${xo_lit(name)}\")\n}\n"
+  } else {
+    match os.fs.read_text(from) {
+      Ok(t) => t
+      Err(e) => {
+        os.stdio.eprintln("xo dev new-golden: ${from}: ${e.display()}")
+        return 1
+      }
+    }
+  }
+  if let Err(e) = os.fs.create_dir_all(dir) {
+    os.stdio.eprintln("xo dev new-golden: ${e.display()}")
+    return 1
+  }
+  if let Err(e) = os.fs.write("${dir}/main.xo", src.bytes()) {
+    os.stdio.eprintln("xo dev new-golden: ${e.display()}")
+    return 1
+  }
+  os.stdio.println("wrote ${dir.trim_prefix(root + "/")}/main.xo")
+  if fl.get_bool("no-run") {
+    return 0
+  }
+  // want.txt is what the program prints now: check it before committing
+  let out = match os.proc.cmd(h.xo, ["run", "."]).dir(dir).set_env("XO_STD", h.std).set_env("PWD", dir).output() {
+    Ok(o) => o
+    Err(e) => {
+      os.stdio.eprintln("xo dev new-golden: xo run: ${e}")
+      return 1
+    }
+  }
+  if out.code != 0 {
+    os.stdio.eprintln("xo dev new-golden: xo run exited ${out.code}; no want.txt written:\n${(out.stderr.to_str() ?? "").trim()}")
+    return 1
+  }
+  if let Err(e) = os.fs.write("${dir}/want.txt", out.stdout) {
+    os.stdio.eprintln("xo dev new-golden: ${e.display()}")
+    return 1
+  }
+  os.stdio.println("wrote ${dir.trim_prefix(root + "/")}/want.txt (${out.stdout.len()} bytes): check it, then `xo dev goldens ${fl.get_str("dir")}`")
+  0
+}

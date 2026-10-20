@@ -1,0 +1,20 @@
+test "insert_row keeps code order" {
+  let src = "a\n    \"XO0101\" => Some(Expl{x})\n    \"XO0160\" => Some(Expl{x})\n    _ => None"
+  let got = insert_row(src, "XO0150", "    \"XO0150\" => Some(Expl{y})", explain_row_code) ?? ""
+  expect(got) == "a\n    \"XO0101\" => Some(Expl{x})\n    \"XO0150\" => Some(Expl{y})\n    \"XO0160\" => Some(Expl{x})\n    _ => None"
+  let last = insert_row(src, "XO0999", "    \"XO0999\" => Some(Expl{z})", explain_row_code) ?? ""
+  expect(last.ends_with("\"XO0999\" => Some(Expl{z})\n    _ => None")) == true
+  expect(insert_row("no rows", "XO0101", "x", explain_row_code).is_none()) == true
+}
+
+test "spec rows" {
+  expect(spec_row_code("| `XO0160` | error | parser | a token |")) == "XO0160"
+  expect(spec_row_code("| Code | Severity |")) == ""
+}
+
+test "literal escaping and codes" {
+  expect(xo_lit("a \"b\" \${c}\n\\")) == "a \\\"b\\\" \\\${c}\\n\\\\"
+  expect(is_code("XO0179")) == true
+  expect(is_code("XO17")) == false
+  expect(is_code("XA0179")) == false
+}
