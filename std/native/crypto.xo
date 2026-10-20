@@ -6,6 +6,7 @@
 // generator).
 use std/base64
 use std/crypto
+use std/json
 use native/llrt/asn1
 use native/llrt/bigmod
 use native/llrt/ct
@@ -1340,4 +1341,82 @@ fn nist_shift7(b: Bytes) -> Bytes {
     out.write_byte(UInt8((Int(b[i]) >> 7) | hi))
   }
   out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// JWK public keys (RFC 7517, 7518 6.2 and 6.3, RFC 8037; decision 0285)
+
+struct Jwk {
+  kty: Str
+  crv: Str?
+  n: Str?
+  e: Str?
+  x: Str?
+  y: Str?
+} derive Json
+
+/// A JWK member: unpadded base64url (RFC 7515 2).
+fn jwk_bytes(name: Str, v: Str?) -> Bytes ! crypto.KeyErr {
+  let s = match v {
+    Some(s) => s
+    None => return Err(key_err("jwk: missing member \"${name}\""))
+  }
+  match base64.decode(s, base64.Base64.RawUrl) {
+    Ok(b) => b
+    Err(_) => Err(key_err("jwk: member \"${name}\" is not unpadded base64url"))
+  }
+}
+
+fn jwk_public_key(jwk: Str) -> PublicKey ! crypto.KeyErr {
+  let j = match json.decode_str[Jwk](jwk) {
+    Ok(j) => j
+    Err(_) => return Err(key_err("jwk: malformed JSON"))
+  }
+  match j.kty {
+    "RSA" => {
+      let n = minimal(jwk_bytes("n", j.n)?)
+      let e = minimal(jwk_bytes("e", j.e)?)
+      if e.len() > 4 || n.is_empty() || (n.len() == 1 && n[0] == 0) {
+        return Err(key_err("jwk: invalid RSA key"))
+      }
+      var ev = 0
+      for b in e {
+        ev = ev * 256 + Int(b)
+      }
+      if ev <= 0 {
+        return Err(key_err("jwk: invalid RSA key"))
+      }
+      PublicKey{kind: crypto.KeyAlg.Rsa, n: n, e: ev, key: b""}
+    }
+    "EC" => {
+      let alg = match j.crv ?? "" {
+        "P-256" => crypto.KeyAlg.EcdsaP256
+        "P-384" => crypto.KeyAlg.EcdsaP384
+        "P-521" => crypto.KeyAlg.EcdsaP521
+        other => return Err(key_err("jwk: unsupported curve ${other.quote()}"))
+      }
+      let size = nistec.size(nist_curve(alg))
+      let x = jwk_bytes("x", j.x)?
+      let y = jwk_bytes("y", j.y)?
+      if x.len() != size || y.len() != size {
+        return Err(key_err("jwk: coordinates of the wrong size for ${j.crv ?? ""}"))
+      }
+      let point = b"\x04" + x + y
+      if nistec.point_check(nist_curve(alg), point) != 0 {
+        return Err(key_err("jwk: point not on the curve"))
+      }
+      PublicKey{kind: alg, n: b"", e: 0, key: point}
+    }
+    "OKP" => {
+      if j.crv != Some("Ed25519") {
+        return Err(key_err("jwk: unsupported curve ${(j.crv ?? "").quote()}"))
+      }
+      let x = jwk_bytes("x", j.x)?
+      if x.len() != 32 {
+        return Err(key_err("jwk: Ed25519 key of the wrong size"))
+      }
+      PublicKey{kind: crypto.KeyAlg.Ed25519, n: b"", e: 0, key: x}
+    }
+    other => Err(key_err("jwk: unsupported key type ${other.quote()}"))
+  }
 }

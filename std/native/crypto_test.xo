@@ -1,3 +1,4 @@
+use std/base64
 use std/crypto
 
 // Go's crypto/md5, sha1, sha256 (and Sum224), sha512 (and New384), sha3,
@@ -2749,5 +2750,32 @@ test "hedged nonces: an all-zero entropy never repeats r across messages" {
       expect(sign_z(k, crypto.Hash.Sha256, msg, z).or_fault("again")) == sig
     }
     expect(rs.to_set().len()) == 8
+  }
+}
+
+// RFC 7517 appendix A.1 (an EC P-256 key and an RSA key) and RFC 8037
+// appendix A.2 (an Ed25519 key), and what is refused.
+test "jwk public keys" {
+  let ec = jwk_public_key("{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4\",\"y\":\"4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM\",\"use\":\"enc\",\"kid\":\"1\"}").or_fault("ec")
+  expect(ec.alg()) == crypto.KeyAlg.EcdsaP256
+  let rsa_k = jwk_public_key("{\"kty\":\"RSA\",\"n\":\"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw\",\"e\":\"AQAB\",\"alg\":\"RS256\",\"kid\":\"2011-04-29\"}").or_fault("rsa")
+  expect((rsa_k.alg(), rsa_k.n.len(), rsa_k.e)) == (crypto.KeyAlg.Rsa, 256, 65537)
+  let ed = jwk_public_key("{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo\"}").or_fault("ed")
+  expect(ed.key.to_hex()) == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+  // RFC 8037 A.4: the signature of "eyJhbGciOiJFZERTQSJ9.RXhhbXBsZSBvZiBFZDI1NTE5IHNpZ25pbmc"
+  let sig = base64.decode("hgyY0il_MGCjP0JzlnLWG1PPOt7-09PGcvMg3AIbQR6dWbhijcNR4ki4iylGjg5BhVsPt9g7sVvpAr_MuM0KAg", base64.Base64.RawUrl).or_fault("sig")
+  expect(verify(ed, crypto.Hash.Sha256, "eyJhbGciOiJFZERTQSJ9.RXhhbXBsZSBvZiBFZDI1NTE5IHNpZ25pbmc".bytes(), sig)) == true
+  for (j, e) in [
+    ("{\"kty\":\"oct\",\"k\":\"AA\"}", "jwk: unsupported key type \"oct\""),
+    ("{\"kty\":\"EC\",\"crv\":\"P-192\",\"x\":\"AA\",\"y\":\"AA\"}", "jwk: unsupported curve \"P-192\""),
+    ("{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"AA\",\"y\":\"AA\"}", "jwk: coordinates of the wrong size for P-256"),
+    ("{\"kty\":\"RSA\",\"e\":\"AQAB\"}", "jwk: missing member \"n\""),
+    ("{\"kty\":\"RSA\",\"n\":\"AQAB==\",\"e\":\"AQAB\"}", "jwk: member \"n\" is not unpadded base64url"),
+    ("{\"kty\":\"OKP\",\"crv\":\"X25519\",\"x\":\"AA\"}", "jwk: unsupported curve \"X25519\""),
+  ] {
+    expect(jwk_public_key(j).map_err(fn(x) { x.msg })) == Err(e)
+  }
+  for j in ["[1]", "{\"KTY\":\"OKP\"}", "{\"kty\":1}", "{\"kty\":null}", "{\"kty\":\"RSA\",\"n\":5,\"e\":\"AQAB\"}"] {
+    expect(jwk_public_key(j).map_err(fn(x) { x.msg })) == Err("jwk: malformed JSON")
   }
 }

@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -9,8 +10,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"strconv"
 	"strings"
 )
 
@@ -312,4 +316,106 @@ func Crypto_generate_key(tk *Task, r Rand, alg Crypto_KeyAlg) Result[Crypto_Priv
 		return Err[Crypto_PrivateKey](keyErr(err.Error()))
 	}
 	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: s.Public(), der: string(m)}})
+}
+
+// Crypto_jwk_public_key follows the native code's rules and texts: the
+// members matched exactly (encoding/json alone would match them without
+// case), each a string or null.
+func Crypto_jwk_public_key(_ *Task, jwk string) Result[Crypto_PublicKey, Crypto_KeyErr] {
+	fail := func(m string) Result[Crypto_PublicKey, Crypto_KeyErr] { return Err[Crypto_PublicKey](keyErr(m)) }
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jwk), &raw); err != nil || raw == nil {
+		return fail("jwk: malformed JSON")
+	}
+	mem := map[string]*string{}
+	for _, name := range []string{"kty", "crv", "n", "e", "x", "y"} {
+		v, ok := raw[name]
+		if !ok || string(v) == "null" {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			return fail("jwk: malformed JSON")
+		}
+		mem[name] = &s
+	}
+	if mem["kty"] == nil {
+		return fail("jwk: malformed JSON")
+	}
+	b64 := func(name string) ([]byte, string) {
+		v := mem[name]
+		if v == nil {
+			return nil, "jwk: missing member \"" + name + "\""
+		}
+		b, err := base64.RawURLEncoding.DecodeString(*v)
+		if err != nil {
+			return nil, "jwk: member \"" + name + "\" is not unpadded base64url"
+		}
+		return b, ""
+	}
+	crv := ""
+	if mem["crv"] != nil {
+		crv = *mem["crv"]
+	}
+	var k any
+	switch kty := *mem["kty"]; kty {
+	case "RSA":
+		n, e1 := b64("n")
+		if e1 != "" {
+			return fail(e1)
+		}
+		e, e2 := b64("e")
+		if e2 != "" {
+			return fail(e2)
+		}
+		e = bytes.TrimLeft(e, "\x00")
+		nn := new(big.Int).SetBytes(n)
+		ev := new(big.Int).SetBytes(e)
+		if len(e) > 4 || nn.Sign() == 0 || ev.Sign() == 0 {
+			return fail("jwk: invalid RSA key")
+		}
+		k = &rsa.PublicKey{N: nn, E: int(ev.Int64())}
+	case "EC":
+		curves := map[string]elliptic.Curve{"P-256": elliptic.P256(), "P-384": elliptic.P384(), "P-521": elliptic.P521()}
+		c, ok := curves[crv]
+		if !ok {
+			return fail("jwk: unsupported curve " + strconv.Quote(crv))
+		}
+		size := (c.Params().BitSize + 7) / 8
+		x, e1 := b64("x")
+		if e1 != "" {
+			return fail(e1)
+		}
+		y, e2 := b64("y")
+		if e2 != "" {
+			return fail(e2)
+		}
+		if len(x) != size || len(y) != size {
+			return fail("jwk: coordinates of the wrong size for " + crv)
+		}
+		p, err := ecdsa.ParseUncompressedPublicKey(c, append(append([]byte{4}, x...), y...))
+		if err != nil {
+			return fail("jwk: point not on the curve")
+		}
+		k = p
+	case "OKP":
+		if crv != "Ed25519" {
+			return fail("jwk: unsupported curve " + strconv.Quote(crv))
+		}
+		x, e1 := b64("x")
+		if e1 != "" {
+			return fail(e1)
+		}
+		if len(x) != 32 {
+			return fail("jwk: Ed25519 key of the wrong size")
+		}
+		k = ed25519.PublicKey(x)
+	default:
+		return fail("jwk: unsupported key type " + strconv.Quote(kty))
+	}
+	m, err := x509.MarshalPKIXPublicKey(k)
+	if err != nil {
+		return fail(err.Error())
+	}
+	return Ok[Crypto_PublicKey, Crypto_KeyErr](Crypto_PublicKey{k: k, der: string(m)})
 }

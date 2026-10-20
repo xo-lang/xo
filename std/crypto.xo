@@ -102,6 +102,9 @@ fn parse_public_key(der: Bytes) -> PublicKey ! KeyErr
 /// PKIX DER (x509.MarshalPKIXPublicKey).
 fn marshal_public_key(k: PublicKey) -> Bytes
 fn (k: PublicKey) alg() -> KeyAlg
+/// A JWK's public key (RFC 7517; kty RSA, EC with crv P-256, P-384, or
+/// P-521, OKP with crv Ed25519; private members ignored).
+fn jwk_public_key(jwk: Str) -> PublicKey ! KeyErr
 
 /// A private key: Debug text `<privatekey>`, never key material.
 struct PrivateKey {}

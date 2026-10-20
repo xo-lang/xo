@@ -1,0 +1,26 @@
+exit 0
+--- stdout
+blocks PRIVATE KEY, PRIVATE KEY, PRIVATE KEY, EC PRIVATE KEY, PUBLIC KEY
+PRIVATE KEY: Rsa <privatekey>
+PRIVATE KEY: EcdsaP256 <privatekey>
+PRIVATE KEY: Ed25519 <privatekey>
+EC PRIVATE KEY: EcdsaP256 <privatekey>
+public Rsa same as the private key's: true; EC PKCS #8 and SEC 1 the same key: true
+pem round trip: true
+rsa 256 478e69eb1cad1806492b57778eed0756e90dc671736b606708064e949257aa68 true false
+ed25519 7d6c3501090f2967a65c09abbc10d7db36bcc0669d02f1eb3bfe85268e171a47afd42bade357bf551e6b23962c29e2938e9cf66a9730b8c6c89c45c6942a470a true
+Sha256: pss true ecdsa true raw 64 true wrong kind false
+Sha384: pss true ecdsa true raw 64 true wrong kind false
+Sha512: pss true ecdsa true raw 64 true wrong kind false
+jwk Ed25519 302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+jwk error: jwk: unsupported key type "oct"
+jwk error: jwk: coordinates of the wrong size for P-256
+jwk error: jwk: malformed JSON
+bad key: x509: malformed public key / x509: malformed private key
+bad key: x509: malformed public key / x509: malformed private key
+bad key: x509: malformed public key / x509: malformed private key
+generated EcdsaP256: true
+generated EcdsaP521: true
+generated Ed25519: true
+rsa generation: crypto: RSA key generation is not available yet (decision 0285)
+--- stderr
