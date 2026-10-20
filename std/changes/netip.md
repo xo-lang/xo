@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/netip, Go's net/netip addresses and prefixes
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: d7409fb1
 - Found by: survey
 - Go reference: net/netip/netip.go (go1.26.1)
 - Test: std/native/netip_test.xo (Go's results on 3,323 address and prefix cases)

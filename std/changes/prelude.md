@@ -3,7 +3,7 @@
 ## 2026-10-20: port: Go's math, bit for bit on every backend
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: c41388d3
 - Found by: survey
 - Go reference: math (exp.go, log.go, pow.go, sin.go, tan.go, trig_reduce.go, ...), math/bits (go1.26.1)
 - Test: std/native/llrt/gomath_test.xo (Go's results on 21,465 special and random cases); internal/llvm/testdata/golden/float_no_fma
@@ -18,7 +18,7 @@ architecture.
 ## 2026-10-20: fix: the Go backend no longer fuses Float multiply-adds
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: ecfabea4
 - Found by: test
 - Go reference: the Go spec, Arithmetic operators (fused multiply-add)
 - Test: internal/llvm/testdata/golden/float_no_fma
@@ -30,7 +30,7 @@ the last bit; a product now prints as `float64(a * b)`.
 ## 2026-10-20: port: Int.parse_base, Int.to_str_base, Bool.parse, Str.unquote
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 0f3ae3d0
 - Found by: survey
 - Go reference: strconv ParseInt, FormatInt, ParseBool, Unquote (go1.26.1)
 - Test: std/native/prelude_test.xo (Go's results on 2,813 random and quote_test.go cases)
