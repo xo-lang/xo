@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -502,5 +503,111 @@ func TestFrontCacheAbsentHelper(t *testing.T) {
 			t.Errorf("%q: the build through the front end cache differs from the build with XO_BACKEND_CACHE=off", body)
 		}
 		build("verify", "XO_BACKEND_CACHE=verify")
+	}
+}
+
+// TestFrontCacheAcrossPrograms: front end cache entries are shared by
+// every program built with one cache (a std body's key does not name the
+// program), so an entry recorded while building one program commits into
+// another. The golden and run programs are built into a shared cache by 8
+// builds at once (as `xo dev goldens -j 8` does), then again one at a time
+// in three other orders (each program now after others' entries) and with
+// the cache off, to one output path per program: each binary must be the
+// same file. Every program with XO_SELFHOST_TIER=full, else a sample.
+func TestFrontCacheAcrossPrograms(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fexprog-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	runs, err := filepath.Glob(filepath.Join("testdata", "run", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := append(goldenDirs(t), runs...)
+	var dirs []string
+	for i, d := range all {
+		if _, err := os.Stat(filepath.Join(d, "main.xo")); err != nil {
+			continue
+		}
+		if os.Getenv("XO_SELFHOST_TIER") == "full" || i%6 == 0 {
+			dirs = append(dirs, d)
+		}
+	}
+	build := func(i int, dir string, env ...string) ([]byte, error) {
+		out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("%v\n%s", err, log)
+		}
+		return os.ReadFile(out)
+	}
+	// the first pass: 8 builds at once
+	next := make(chan int)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var first []string
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				if _, err := build(i, dirs[i], "XO_BACKEND_CACHE=on"); err != nil {
+					mu.Lock()
+					first = append(first, fmt.Sprintf("%s: %v", filepath.Base(dirs[i]), err))
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for i := range dirs {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	for _, f := range first {
+		t.Errorf("first pass: %s", f)
+	}
+	n := len(dirs)
+	orders := [][]int{{}, {}, {}}
+	for i := 0; i < n; i++ {
+		orders[0] = append(orders[0], n-1-i)
+		orders[2] = append(orders[2], (i+n/2)%n)
+	}
+	for i := 1; i < n; i += 2 {
+		orders[1] = append(orders[1], i)
+	}
+	for i := 0; i < n; i += 2 {
+		orders[1] = append(orders[1], i)
+	}
+	for k, order := range orders {
+		for _, i := range order {
+			d := dirs[i]
+			on, err := build(i, d, "XO_BACKEND_CACHE=on")
+			if err != nil {
+				t.Errorf("order %d, %s through the cache: %v", k, filepath.Base(d), err)
+				continue
+			}
+			off, err := build(i, d, "XO_BACKEND_CACHE=off")
+			if err != nil {
+				t.Fatalf("%s: %v", filepath.Base(d), err)
+			}
+			if !bytes.Equal(on, off) {
+				t.Errorf("order %d, %s: the build through the shared cache differs from the build with XO_BACKEND_CACHE=off", k, filepath.Base(d))
+			}
+		}
 	}
 }

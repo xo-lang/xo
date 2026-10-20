@@ -221,3 +221,25 @@ miss). Verify compares an entry's leading part only: the body and what
 it does to the builder itself (checks, variable counter, modules,
 target), not what it found or made, which depend on the builder that
 recorded it (FE_CACHE_VERSION v3). Test: TestFrontCacheAbsentHelper.
+
+### Step 2: SSA bodies built in parallel (measured 2026-10-20, not landed)
+
+Built as designed (branch fa-fe-par): before the build, tasks with fresh
+builders record entries for the bodies the cache lacks (the target's
+last build list, or cold, the checker's calls from main), and the serial
+build commits them in its turn. Correct within a build once two more
+leaks of builder state were closed (a cold xo with 8 jobs byte identical
+to 1 job, verify clean, 5,054 of 8,495 bodies committed from tasks), but
+the gain is about nothing: cold SSA 2.44 s to 2.36 s on the Mac at load
+4, since the prebuild takes about 0.4 s and committing a body costs
+nearly as much as building it; warm builds were 0.3 s slower (the
+bodies that can never be cached were prebuilt each time). Not landed.
+The ceiling is the commit, not the building: a faster commit (no codec
+decode of a body until it is needed, as rc_cached's lazy shells) would
+be the next lever, not more tasks. The leaks it found: function names
+looked for and not found (fixed, d4d4b244), one-way flags (need_conc,
+uses_net; fixed in the entry format separately), and the declared-from
+module list (a delta relative to the recording builder, which only
+differed between builders). TestFrontCacheAcrossPrograms builds the
+goldens into one shared cache in several orders and compares each with a
+cache-off build: the guard for entries that cross programs.
