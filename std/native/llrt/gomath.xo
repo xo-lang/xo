@@ -1,0 +1,1013 @@
+// Go's math (decision 0287): the pure Go algorithms of go1.26's math
+// package (exp.go, log.go, log1p.go, expm1.go, pow.go, sin.go, tan.go,
+// trig_reduce.go, asin.go, atan.go, atan2.go, sinh.go, tanh.go, cbrt.go,
+// hypot.go, mod.go, frexp.go, ldexp.go), translated line by line with
+// every operation rounded to Float (no fused multiply-add), so the
+// results are Go's portable results on every backend and architecture:
+// the Go backend runs the same algorithms (std/rt/gomath_gen.go, Go's
+// source with each product wrapped in float64(...)). Constants that Go
+// folds exactly (Pi/2, 4/Pi, 1/Ln10, ...) are written as their float64
+// values. uint64 arithmetic is Int with the word methods.
+use native/rt
+
+const UVNAN: Int = 0x7FF8000000000001
+const UVINF: Int = 0x7FF0000000000000
+const MASK: Int = 0x7FF
+const SHIFT: Int = 52
+const BIAS: Int = 1023
+
+const PI: Float = 3.141592653589793
+const PI_2: Float = 1.5707963267948966
+const PI_4: Float = 0.7853981633974483
+const PI3_4: Float = 2.356194490192345
+const FOUR_PI: Float = 1.2732395447351628
+const INV_LN10: Float = 0.4342944819032518
+const INV_LN2: Float = 1.4426950408889634
+const SQRT2_2: Float = 0.7071067811865476
+const MAX_FLOAT: Float = 1.7976931348623157e+308
+
+fn bits(f: Float) -> Int { rt.float_bits(f) }
+
+fn from_bits(b: Int) -> Float { rt.float_from_bits(b) }
+
+pub fn inf(sign: Int) -> Float { if sign >= 0 { from_bits(UVINF) } else { from_bits(UVINF | (1).wrapping_shl(63)) } }
+
+pub fn nan() -> Float { from_bits(UVNAN) }
+
+pub fn is_nan(f: Float) -> Bool { f != f }
+
+/// Go's IsInf. Xo orders NaN after +Inf (core 2.1), where Go's IEEE
+/// comparisons are false: NaN is checked first here and in tanh, the two
+/// places a NaN reaches an ordering comparison in these algorithms.
+pub fn is_inf(f0: Float, sign: Int) -> Bool {
+  if is_nan(f0) {
+    return false
+  }
+  var f = f0
+  if sign == 0 {
+    f = abs(f)
+  } else if sign < 0 {
+    f = -f
+  }
+  f > MAX_FLOAT
+}
+
+pub fn abs(x: Float) -> Float { from_bits(bits(x) & ~(1).wrapping_shl(63)) }
+
+pub fn copysign(f: Float, sign: Float) -> Float {
+  let sb = (1).wrapping_shl(63)
+  from_bits((bits(f) & ~sb) | (bits(sign) & sb))
+}
+
+pub fn signbit(x: Float) -> Bool { bits(x) < 0 }
+
+/// normalize: a subnormal x scaled by 2^52.
+fn normalize(x: Float) -> (Float, Int) {
+  if abs(x) < 2.2250738585072014e-308 {
+    return (x * 4503599627370496.0, -52)
+  }
+  (x, 0)
+}
+
+pub fn frexp(f0: Float) -> (Float, Int) {
+  if f0 == 0.0 || is_inf(f0, 0) || is_nan(f0) {
+    return (f0, 0)
+  }
+  let (f, e0) = normalize(f0)
+  var x = bits(f)
+  let exp = e0 + (x.shr_logical(SHIFT) & MASK) - BIAS + 1
+  x = x & ~MASK.wrapping_shl(SHIFT)
+  x = x | (BIAS - 1).wrapping_shl(SHIFT)
+  (from_bits(x), exp)
+}
+
+pub fn ldexp(frac0: Float, exp0: Int) -> Float {
+  if frac0 == 0.0 || is_inf(frac0, 0) || is_nan(frac0) {
+    return frac0
+  }
+  let (frac, e) = normalize(frac0)
+  var exp = exp0 + e
+  var x = bits(frac)
+  exp = exp + (x.shr_logical(SHIFT) & MASK) - BIAS
+  if exp < -1075 {
+    return copysign(0.0, frac)
+  }
+  if exp > 1023 {
+    return if frac < 0.0 { inf(-1) } else { inf(1) }
+  }
+  var m = 1.0
+  if exp < -1022 {
+    exp = exp + 53
+    m = 1.1102230246251565e-16
+  }
+  x = x & ~MASK.wrapping_shl(SHIFT)
+  x = x | (exp + BIAS).wrapping_shl(SHIFT)
+  m * from_bits(x)
+}
+
+/// Go's trunc and Modf (the integer part rounded toward zero).
+pub fn trunc(x: Float) -> Float {
+  if abs(x) < 1.0 {
+    return copysign(0.0, x)
+  }
+  if is_nan(x) || is_inf(x, 0) {
+    return x
+  }
+  var b = bits(x)
+  let e = (b.shr_logical(SHIFT) & MASK) - BIAS
+  if e < 64 - 12 {
+    b = b & ~((1).wrapping_shl(64 - 12 - e) - 1)
+  }
+  from_bits(b)
+}
+
+pub fn modf(f: Float) -> (Float, Float) {
+  let i = trunc(f)
+  (i, copysign(f - i, f))
+}
+
+// ---------------------------------------------------------------------------
+// exp.go
+
+const LN2HI: Float = 0.6931471803691238
+const LN2LO: Float = 1.9082149292705877e-10
+
+pub fn exp(x: Float) -> Float {
+  let log2e = 1.4426950408889634
+  let overflow = 709.782712893384
+  let underflow = -745.1332191019411
+  let near_zero = 3.725290298461914e-09
+  if is_nan(x) {
+    return x
+  }
+  if x > overflow {
+    return inf(1)
+  }
+  if x < underflow {
+    return 0.0
+  }
+  if -near_zero < x && x < near_zero {
+    return 1.0 + x
+  }
+  var k = 0
+  if x < 0.0 {
+    k = Int(log2e * x - 0.5)
+  } else if x > 0.0 {
+    k = Int(log2e * x + 0.5)
+  }
+  let hi = x - Float(k) * LN2HI
+  let lo = Float(k) * LN2LO
+  expmulti(hi, lo, k)
+}
+
+pub fn exp2(x: Float) -> Float {
+  if is_nan(x) {
+    return x
+  }
+  if x > 1023.9999999999999 {
+    return inf(1)
+  }
+  if x < -1074.0 {
+    return 0.0
+  }
+  var k = 0
+  if x > 0.0 {
+    k = Int(x + 0.5)
+  } else if x < 0.0 {
+    k = Int(x - 0.5)
+  }
+  let t = x - Float(k)
+  let hi = t * LN2HI
+  let lo = -t * LN2LO
+  expmulti(hi, lo, k)
+}
+
+fn expmulti(hi: Float, lo: Float, k: Int) -> Float {
+  let p1 = 0.16666666666666666
+  let p2 = -0.0027777777777015593
+  let p3 = 6.613756321437934e-05
+  let p4 = -1.6533902205465252e-06
+  let p5 = 4.1381367970572385e-08
+  let r = hi - lo
+  let t = r * r
+  let c = r - t * (p1 + t * (p2 + t * (p3 + t * (p4 + t * p5))))
+  let y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi)
+  ldexp(y, k)
+}
+
+// ---------------------------------------------------------------------------
+// log.go, log10.go
+
+pub fn log(x: Float) -> Float {
+  let l1 = 0.6666666666666735
+  let l2 = 0.3999999999940942
+  let l3 = 0.2857142874366239
+  let l4 = 0.22222198432149784
+  let l5 = 0.1818357216161805
+  let l6 = 0.15313837699209373
+  let l7 = 0.14798198605116586
+  if is_nan(x) || is_inf(x, 1) {
+    return x
+  }
+  if x < 0.0 {
+    return nan()
+  }
+  if x == 0.0 {
+    return inf(-1)
+  }
+  let (f1_0, ki_0) = frexp(x)
+  var f1 = f1_0
+  var ki = ki_0
+  if f1 < SQRT2_2 {
+    f1 = f1 * 2.0
+    ki -= 1
+  }
+  let f = f1 - 1.0
+  let k = Float(ki)
+  let s = f / (2.0 + f)
+  let s2 = s * s
+  let s4 = s2 * s2
+  let t1 = s2 * (l1 + s4 * (l3 + s4 * (l5 + s4 * l7)))
+  let t2 = s4 * (l2 + s4 * (l4 + s4 * l6))
+  let r = t1 + t2
+  let hfsq = 0.5 * f * f
+  k * LN2HI - ((hfsq - (s * (hfsq + r) + k * LN2LO)) - f)
+}
+
+pub fn log10(x: Float) -> Float { log(x) * INV_LN10 }
+
+pub fn log2(x: Float) -> Float {
+  let (frac, exp) = frexp(x)
+  if frac == 0.5 {
+    return Float(exp - 1)
+  }
+  log(frac) * INV_LN2 + Float(exp)
+}
+
+// ---------------------------------------------------------------------------
+// log1p.go
+
+pub fn log1p(x: Float) -> Float {
+  let sqrt2m1 = 0.41421356237309503
+  let sqrt2halfm1 = -0.2928932188134525
+  let small = 1.862645149230957e-09
+  let tiny = 5.551115123125783e-17
+  let two53 = 9007199254740992.0
+  let lp1 = 0.6666666666666735
+  let lp2 = 0.3999999999940942
+  let lp3 = 0.2857142874366239
+  let lp4 = 0.22222198432149784
+  let lp5 = 0.1818357216161805
+  let lp6 = 0.15313837699209373
+  let lp7 = 0.14798198605116586
+  if x < -1.0 || is_nan(x) {
+    return nan()
+  }
+  if x == -1.0 {
+    return inf(-1)
+  }
+  if is_inf(x, 1) {
+    return inf(1)
+  }
+  let absx = abs(x)
+  var f = 0.0
+  var iu = 0
+  var k = 1
+  if absx < sqrt2m1 {
+    if absx < small {
+      if absx < tiny {
+        return x
+      }
+      return x - x * x * 0.5
+    }
+    if x > sqrt2halfm1 {
+      k = 0
+      f = x
+      iu = 1
+    }
+  }
+  var c = 0.0
+  if k != 0 {
+    var u = 0.0
+    if absx < two53 {
+      u = 1.0 + x
+      iu = bits(u)
+      k = iu.shr_logical(52) - 1023
+      if k > 0 {
+        c = 1.0 - (u - x)
+      } else {
+        c = x - (u - 1.0)
+      }
+      c = c / u
+    } else {
+      u = x
+      iu = bits(u)
+      k = iu.shr_logical(52) - 1023
+      c = 0.0
+    }
+    iu = iu & 0x000fffffffffffff
+    if iu < 0x0006a09e667f3bcd {
+      u = from_bits(iu | 0x3ff0000000000000)
+    } else {
+      k += 1
+      u = from_bits(iu | 0x3fe0000000000000)
+      iu = (0x0010000000000000 - iu).shr_logical(2)
+    }
+    f = u - 1.0
+  }
+  let hfsq = 0.5 * f * f
+  if iu == 0 {
+    if f == 0.0 {
+      if k == 0 {
+        return 0.0
+      }
+      c = c + Float(k) * LN2LO
+      return Float(k) * LN2HI + c
+    }
+    let r = hfsq * (1.0 - 0.6666666666666666 * f)
+    if k == 0 {
+      return f - r
+    }
+    return Float(k) * LN2HI - ((r - (Float(k) * LN2LO + c)) - f)
+  }
+  let s = f / (2.0 + f)
+  let z = s * s
+  let r = z * (lp1 + z * (lp2 + z * (lp3 + z * (lp4 + z * (lp5 + z * (lp6 + z * lp7))))))
+  if k == 0 {
+    return f - (hfsq - s * (hfsq + r))
+  }
+  Float(k) * LN2HI - ((hfsq - (s * (hfsq + r) + (Float(k) * LN2LO + c))) - f)
+}
+
+// ---------------------------------------------------------------------------
+// expm1.go
+
+pub fn expm1(x0: Float) -> Float {
+  let othreshold = 709.782712893384
+  let ln2x56 = 38.816242111356935
+  let ln2halfx3 = 1.0397207708399179
+  let ln2half = 0.34657359027997264
+  let invln2 = 1.4426950408889634
+  let tiny = 5.551115123125783e-17
+  let q1 = -0.03333333333333313
+  let q2 = 0.0015873015872548146
+  let q3 = -7.93650757867488e-05
+  let q4 = 4.008217827329362e-06
+  let q5 = -2.0109921818362437e-07
+  var x = x0
+  if is_inf(x, 1) || is_nan(x) {
+    return x
+  }
+  if is_inf(x, -1) {
+    return -1.0
+  }
+  var absx = x
+  var sign = false
+  if x < 0.0 {
+    absx = -absx
+    sign = true
+  }
+  if absx >= ln2x56 {
+    if sign {
+      return -1.0
+    }
+    if absx >= othreshold {
+      return inf(1)
+    }
+  }
+  var c = 0.0
+  var k = 0
+  if absx > ln2half {
+    var hi = 0.0
+    var lo = 0.0
+    if absx < ln2halfx3 {
+      if !sign {
+        hi = x - LN2HI
+        lo = LN2LO
+        k = 1
+      } else {
+        hi = x + LN2HI
+        lo = -LN2LO
+        k = -1
+      }
+    } else {
+      if !sign {
+        k = Int(invln2 * x + 0.5)
+      } else {
+        k = Int(invln2 * x - 0.5)
+      }
+      let t = Float(k)
+      hi = x - t * LN2HI
+      lo = t * LN2LO
+    }
+    x = hi - lo
+    c = (hi - x) - lo
+  } else if absx < tiny {
+    return x
+  } else {
+    k = 0
+  }
+  let hfx = 0.5 * x
+  let hxs = x * hfx
+  let r1 = 1.0 + hxs * (q1 + hxs * (q2 + hxs * (q3 + hxs * (q4 + hxs * q5))))
+  var t = 3.0 - r1 * hfx
+  var e = hxs * ((r1 - t) / (6.0 - x * t))
+  if k == 0 {
+    return x - (x * e - hxs)
+  }
+  e = (x * (e - c) - c)
+  e = e - hxs
+  if k == -1 {
+    return 0.5 * (x - e) - 0.5
+  }
+  if k == 1 {
+    if x < -0.25 {
+      return -2.0 * (e - (x + 0.5))
+    }
+    return 1.0 + 2.0 * (x - e)
+  }
+  if k <= -2 || k > 56 {
+    var y = 1.0 - (e - x)
+    y = from_bits(bits(y).wrapping_add(k.wrapping_shl(52)))
+    return y - 1.0
+  }
+  if k < 20 {
+    let tt = from_bits(0x3ff0000000000000 - (0x20000000000000).shr_logical(k))
+    var y = tt - (e - x)
+    y = from_bits(bits(y).wrapping_add(k.wrapping_shl(52)))
+    return y
+  }
+  t = from_bits((0x3ff - k).wrapping_shl(52))
+  var y = x - (e + t)
+  y = y + 1.0
+  y = from_bits(bits(y).wrapping_add(k.wrapping_shl(52)))
+  y
+}
+
+// ---------------------------------------------------------------------------
+// pow.go
+
+fn is_odd_int(x: Float) -> Bool {
+  if abs(x) >= 9007199254740992.0 {
+    return false
+  }
+  let (xi, xf) = modf(x)
+  xf == 0.0 && (Int(xi) & 1) == 1
+}
+
+pub fn pow(x: Float, y: Float) -> Float {
+  if y == 0.0 || x == 1.0 {
+    return 1.0
+  }
+  if y == 1.0 {
+    return x
+  }
+  if is_nan(x) || is_nan(y) {
+    return nan()
+  }
+  if x == 0.0 {
+    if y < 0.0 {
+      if signbit(x) && is_odd_int(y) {
+        return inf(-1)
+      }
+      return inf(1)
+    }
+    if y > 0.0 {
+      if signbit(x) && is_odd_int(y) {
+        return x
+      }
+      return 0.0
+    }
+  }
+  if is_inf(y, 0) {
+    if x == -1.0 {
+      return 1.0
+    }
+    if (abs(x) < 1.0) == is_inf(y, 1) {
+      return 0.0
+    }
+    return inf(1)
+  }
+  if is_inf(x, 0) {
+    if is_inf(x, -1) {
+      return pow(1.0 / x, -y)
+    }
+    if y < 0.0 {
+      return 0.0
+    }
+    if y > 0.0 {
+      return inf(1)
+    }
+  }
+  if y == 0.5 {
+    return x.sqrt()
+  }
+  if y == -0.5 {
+    return 1.0 / x.sqrt()
+  }
+  let (yi_0, yf_0) = modf(abs(y))
+  var yi = yi_0
+  var yf = yf_0
+  if yf != 0.0 && x < 0.0 {
+    return nan()
+  }
+  if yi >= 9223372036854775808.0 {
+    if x == -1.0 {
+      return 1.0
+    }
+    if (abs(x) < 1.0) == (y > 0.0) {
+      return 0.0
+    }
+    return inf(1)
+  }
+  var a1 = 1.0
+  var ae = 0
+  if yf != 0.0 {
+    if yf > 0.5 {
+      yf = yf - 1.0
+      yi = yi + 1.0
+    }
+    a1 = exp(yf * log(x))
+  }
+  let (x1_0, xe_0) = frexp(x)
+  var x1 = x1_0
+  var xe = xe_0
+  var i = Int(yi)
+  while i != 0 {
+    if xe < -4096 || 4096 < xe {
+      ae += xe
+      break
+    }
+    if (i & 1) == 1 {
+      a1 = a1 * x1
+      ae += xe
+    }
+    x1 = x1 * x1
+    xe = xe.wrapping_shl(1)
+    if x1 < 0.5 {
+      x1 = x1 + x1
+      xe -= 1
+    }
+    i = i >> 1
+  }
+  if y < 0.0 {
+    a1 = 1.0 / a1
+    ae = -ae
+  }
+  ldexp(a1, ae)
+}
+
+// ---------------------------------------------------------------------------
+// sin.go, tan.go, trig_reduce.go
+
+const PI4A: Float = 0.7853981256484985
+const PI4B: Float = 3.774894707930798e-08
+const PI4C: Float = 2.6951514290790595e-15
+const REDUCE_THRESHOLD: Float = 536870912.0
+
+const SIN0: Float = 1.5896230157654656e-10
+const SIN1: Float = -2.5050747762857807e-08
+const SIN2: Float = 2.7557313621385722e-06
+const SIN3: Float = -0.0001984126982958954
+const SIN4: Float = 0.008333333333322118
+const SIN5: Float = -0.1666666666666663
+const COS0: Float = -1.1358536521387682e-11
+const COS1: Float = 2.087570084197473e-09
+const COS2: Float = -2.755731417929674e-07
+const COS3: Float = 2.4801587288851704e-05
+const COS4: Float = -0.0013888888888873056
+const COS5: Float = 0.041666666666666595
+
+fn mpi4(i: Int) -> Int {
+  match i {
+    0 => 0x0000000000000001
+    1 => 0x45f306dc9c882a53
+    2 => -554312585572664447
+    3 => -5276763892624187261
+    4 => -242412250269775165
+    5 => 0x6e48dc74849ba5c0
+    6 => 0x0c925dd413a32439
+    7 => -271387810574676355
+    8 => -3385462365541201655
+    9 => -3226582509936509822
+    10 => 0x7323ac7306a673e9
+    11 => 0x3908bf177bf25076
+    12 => 0x3ff12fffbc0b301f
+    13 => -2423460969061230018
+    14 => -2707510419574615186
+    15 => -7022098299024845734
+    16 => -1562901285013036298
+    17 => 0x7a0e73ef14a525d4
+    18 => -2884908082597807600
+    _ => -6051042886442100905
+  }
+}
+
+/// a >> s for a uint64 and 0 <= s <= 64 (Go's: 0 at 64).
+fn shr64(a: Int, s: Int) -> Int { if s >= 64 { 0 } else { a.shr_logical(s) } }
+
+fn shl64(a: Int, s: Int) -> Int { if s >= 64 { 0 } else { a.wrapping_shl(s) } }
+
+/// Payne-Hanek reduction for x >= 2^29: (j, z) with z in [0, Pi/4).
+fn trig_reduce(x: Float) -> (Int, Float) {
+  if x < PI_4 {
+    return (0, x)
+  }
+  var ix = bits(x)
+  let exp = (ix.shr_logical(SHIFT) & MASK) - BIAS - SHIFT
+  ix = ix & ~MASK.wrapping_shl(SHIFT)
+  ix = ix | (1).wrapping_shl(SHIFT)
+  let digit = (exp + 61) / 64
+  let bitshift = (exp + 61) % 64
+  let z0 = shl64(mpi4(digit), bitshift) | shr64(mpi4(digit + 1), 64 - bitshift)
+  let z1 = shl64(mpi4(digit + 1), bitshift) | shr64(mpi4(digit + 2), 64 - bitshift)
+  let z2 = shl64(mpi4(digit + 2), bitshift) | shr64(mpi4(digit + 3), 64 - bitshift)
+  let z2hi = z2.mul_hi_unsigned(ix)
+  let z1hi = z1.mul_hi_unsigned(ix)
+  let z1lo = z1.wrapping_mul(ix)
+  let z0lo = z0.wrapping_mul(ix)
+  let lo = z1lo.wrapping_add(z2hi)
+  let carry = if lo.lt_unsigned(z1lo) { 1 } else { 0 }
+  var hi = z0lo.wrapping_add(z1hi).wrapping_add(carry)
+  var j = hi.shr_logical(61)
+  hi = hi.wrapping_shl(3) | lo.shr_logical(61)
+  let lz = rt.clz(hi)
+  let e = BIAS - (lz + 1)
+  hi = shl64(hi, lz + 1) | shr64(lo, 64 - (lz + 1))
+  hi = hi.shr_logical(64 - SHIFT)
+  hi = hi | e.wrapping_shl(SHIFT)
+  var z = from_bits(hi)
+  if (j & 1) == 1 {
+    j += 1
+    j = j & 7
+    z = z - 1.0
+  }
+  (j, z * PI_4)
+}
+
+/// The octant j and the reduced z of x >= 0 (sin, cos, tan).
+fn octant(x: Float, tan_mode: Bool) -> (Int, Float) {
+  if x >= REDUCE_THRESHOLD {
+    return trig_reduce(x)
+  }
+  var j = Int(x * FOUR_PI)
+  var y = Float(j)
+  if (j & 1) == 1 {
+    j += 1
+    y = y + 1.0
+  }
+  if !tan_mode {
+    j = j & 7
+  }
+  (j, ((x - y * PI4A) - y * PI4B) - y * PI4C)
+}
+
+fn sin_poly(z: Float, zz: Float) -> Float { z + z * zz * ((((((SIN0 * zz) + SIN1) * zz + SIN2) * zz + SIN3) * zz + SIN4) * zz + SIN5) }
+
+fn cos_poly(zz: Float) -> Float { 1.0 - 0.5 * zz + zz * zz * ((((((COS0 * zz) + COS1) * zz + COS2) * zz + COS3) * zz + COS4) * zz + COS5) }
+
+pub fn cos(x0: Float) -> Float {
+  if is_nan(x0) || is_inf(x0, 0) {
+    return nan()
+  }
+  var sign = false
+  let x = abs(x0)
+  let (j_0, z_0) = octant(x, false)
+  var j = j_0
+  var z = z_0
+  if j > 3 {
+    j -= 4
+    sign = !sign
+  }
+  if j > 1 {
+    sign = !sign
+  }
+  let zz = z * z
+  var y = if j == 1 || j == 2 { sin_poly(z, zz) } else { cos_poly(zz) }
+  if sign {
+    y = -y
+  }
+  y
+}
+
+pub fn sin(x0: Float) -> Float {
+  if x0 == 0.0 || is_nan(x0) {
+    return x0
+  }
+  if is_inf(x0, 0) {
+    return nan()
+  }
+  var sign = false
+  var x = x0
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  let (j_0, z_0) = octant(x, false)
+  var j = j_0
+  var z = z_0
+  if j > 3 {
+    sign = !sign
+    j -= 4
+  }
+  let zz = z * z
+  var y = if j == 1 || j == 2 { cos_poly(zz) } else { sin_poly(z, zz) }
+  if sign {
+    y = -y
+  }
+  y
+}
+
+pub fn tan(x0: Float) -> Float {
+  let p0 = -13093.693918138378
+  let p1 = 1153516.6483858742
+  let p2 = -17956525.197648488
+  let q1 = 13681.296347069296
+  let q2 = -1320892.3444021097
+  let q3 = 25008380.18233579
+  let q4 = -53869575.592945464
+  if x0 == 0.0 || is_nan(x0) {
+    return x0
+  }
+  if is_inf(x0, 0) {
+    return nan()
+  }
+  var sign = false
+  var x = x0
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  let (j, z) = octant(x, true)
+  let zz = z * z
+  var y = z
+  if zz > 1e-14 {
+    y = z + z * (zz * (((p0 * zz) + p1) * zz + p2) / ((((zz + q1) * zz + q2) * zz + q3) * zz + q4))
+  }
+  if (j & 2) == 2 {
+    y = -1.0 / y
+  }
+  if sign {
+    y = -y
+  }
+  y
+}
+
+// ---------------------------------------------------------------------------
+// asin.go, atan.go, atan2.go
+
+fn xatan(x: Float) -> Float {
+  let p0 = -0.8750608600031904
+  let p1 = -16.157537187333652
+  let p2 = -75.00855792314705
+  let p3 = -122.88666844901361
+  let p4 = -64.85021904942025
+  let q0 = 24.858464901423062
+  let q1 = 165.02700983169885
+  let q2 = 432.88106049129027
+  let q3 = 485.3903996359137
+  let q4 = 194.5506571482614
+  var z = x * x
+  z = z * ((((p0 * z + p1) * z + p2) * z + p3) * z + p4) / (((((z + q0) * z + q1) * z + q2) * z + q3) * z + q4)
+  x * z + x
+}
+
+fn satan(x: Float) -> Float {
+  let morebits = 6.123233995736766e-17
+  let tan3pio8 = 2.414213562373095
+  if x <= 0.66 {
+    return xatan(x)
+  }
+  if x > tan3pio8 {
+    return PI_2 - xatan(1.0 / x) + morebits
+  }
+  PI_4 + xatan((x - 1.0) / (x + 1.0)) + 0.5 * morebits
+}
+
+pub fn asin(x0: Float) -> Float {
+  if x0 == 0.0 {
+    return x0
+  }
+  var sign = false
+  var x = x0
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  if x > 1.0 {
+    return nan()
+  }
+  var temp = (1.0 - x * x).sqrt()
+  if x > 0.7 {
+    temp = PI_2 - satan(temp / x)
+  } else {
+    temp = satan(x / temp)
+  }
+  if sign {
+    temp = -temp
+  }
+  temp
+}
+
+pub fn acos(x: Float) -> Float { PI_2 - asin(x) }
+
+pub fn atan(x: Float) -> Float {
+  if x == 0.0 {
+    return x
+  }
+  if x > 0.0 {
+    return satan(x)
+  }
+  -satan(-x)
+}
+
+pub fn atan2(y: Float, x: Float) -> Float {
+  if is_nan(y) || is_nan(x) {
+    return nan()
+  }
+  if y == 0.0 {
+    if x >= 0.0 && !signbit(x) {
+      return copysign(0.0, y)
+    }
+    return copysign(PI, y)
+  }
+  if x == 0.0 {
+    return copysign(PI_2, y)
+  }
+  if is_inf(x, 0) {
+    if is_inf(x, 1) {
+      return if is_inf(y, 0) { copysign(PI_4, y) } else { copysign(0.0, y) }
+    }
+    return if is_inf(y, 0) { copysign(PI3_4, y) } else { copysign(PI, y) }
+  }
+  if is_inf(y, 0) {
+    return copysign(PI_2, y)
+  }
+  let q = atan(y / x)
+  if x < 0.0 {
+    if q <= 0.0 {
+      return q + PI
+    }
+    return q - PI
+  }
+  q
+}
+
+// ---------------------------------------------------------------------------
+// sinh.go, tanh.go
+
+pub fn sinh(x0: Float) -> Float {
+  let p0 = -630767.3640497717
+  let p1 = -89912.72022039509
+  let p2 = -2894.211355989564
+  let p3 = -26.30563213397497
+  let q0 = -630767.3640497717
+  let q1 = 15215.17378790019
+  let q2 = -173.6789535582337
+  var sign = false
+  var x = x0
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  var temp = 0.0
+  if x > 21.0 {
+    temp = exp(x) * 0.5
+  } else if x > 0.5 {
+    let ex = exp(x)
+    temp = (ex - 1.0 / ex) * 0.5
+  } else {
+    let sq = x * x
+    temp = (((p3 * sq + p2) * sq + p1) * sq + p0) * x
+    temp = temp / (((sq + q2) * sq + q1) * sq + q0)
+  }
+  if sign {
+    temp = -temp
+  }
+  temp
+}
+
+pub fn cosh(x0: Float) -> Float {
+  let x = abs(x0)
+  if x > 21.0 {
+    return exp(x) * 0.5
+  }
+  let ex = exp(x)
+  (ex + 1.0 / ex) * 0.5
+}
+
+pub fn tanh(x: Float) -> Float {
+  let p0 = -0.9643991794250523
+  let p1 = -99.28772310019185
+  let p2 = -1614.6876844170845
+  let q0 = 112.81167849163293
+  let q1 = 2235.4883906010045
+  let q2 = 4844.063053251255
+  if is_nan(x) {
+    return x
+  }
+  var z = abs(x)
+  if z > 44.014845965556525 {
+    return if x < 0.0 { -1.0 } else { 1.0 }
+  }
+  if z >= 0.625 {
+    let s = exp(2.0 * z)
+    z = 1.0 - 2.0 / (s + 1.0)
+    if x < 0.0 {
+      z = -z
+    }
+    return z
+  }
+  if x == 0.0 {
+    return x
+  }
+  let s = x * x
+  x + x * s * ((p0 * s + p1) * s + p2) / (((s + q0) * s + q1) * s + q2)
+}
+
+// ---------------------------------------------------------------------------
+// cbrt.go, hypot.go, mod.go
+
+pub fn cbrt(x0: Float) -> Float {
+  let b1 = 715094163
+  let b2 = 696219795
+  let c = 0.5428571428571428
+  let d = -0.7053061224489796
+  let e = 1.4142857142857144
+  let f = 1.6071428571428572
+  let g = 0.35714285714285715
+  if x0 == 0.0 || is_nan(x0) || is_inf(x0, 0) {
+    return x0
+  }
+  var sign = false
+  var x = x0
+  if x < 0.0 {
+    x = -x
+    sign = true
+  }
+  var t = from_bits(bits(x) / 3 + b1.wrapping_shl(32))
+  if x < 2.2250738585072014e-308 {
+    t = 18014398509481984.0
+    t = t * x
+    t = from_bits(bits(t) / 3 + b2.wrapping_shl(32))
+  }
+  var r = t * t / x
+  var s = c + r * t
+  t = t * (g + f / (s + e + d / s))
+  t = from_bits((bits(t) & (0xFFFFFFFFC).wrapping_shl(28)) + (1).wrapping_shl(30))
+  s = t * t
+  r = x / s
+  let w = t + t
+  r = (r - t) / (w + r)
+  t = t + t * r
+  if sign {
+    t = -t
+  }
+  t
+}
+
+pub fn hypot(p0: Float, q0: Float) -> Float {
+  var p = abs(p0)
+  var q = abs(q0)
+  if is_inf(p, 1) || is_inf(q, 1) {
+    return inf(1)
+  }
+  if is_nan(p) || is_nan(q) {
+    return nan()
+  }
+  if p < q {
+    let t = p
+    p = q
+    q = t
+  }
+  if p == 0.0 {
+    return 0.0
+  }
+  q = q / p
+  p * (1.0 + q * q).sqrt()
+}
+
+pub fn mod(x: Float, y0: Float) -> Float {
+  if y0 == 0.0 || is_inf(x, 0) || is_nan(x) || is_nan(y0) {
+    return nan()
+  }
+  let y = abs(y0)
+  let (yfr, yexp) = frexp(y)
+  var r = x
+  if x < 0.0 {
+    r = -x
+  }
+  while r >= y {
+    let (rfr_0, rexp_0) = frexp(r)
+    var rfr = rfr_0
+    var rexp = rexp_0
+    if rfr < yfr {
+      rexp -= 1
+    }
+    r = r - ldexp(y, rexp - yexp)
+  }
+  if x < 0.0 {
+    r = -r
+  }
+  r
+}

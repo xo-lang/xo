@@ -193,6 +193,10 @@ fn (n: Int) mul_hi_unsigned(m: Int) -> Int
 fn (n: Int) lt_unsigned(m: Int) -> Bool
 /// Whether n <= m as unsigned 64 bit words.
 fn (n: Int) le_unsigned(m: Int) -> Bool
+/// math/bits on the 64 bit word (decision 0287).
+fn (n: Int) leading_zeros() -> Int
+fn (n: Int) trailing_zeros() -> Int
+fn (n: Int) ones_count() -> Int
 fn (n: Int) saturating_add(m: Int) -> Int
 fn (n: Int) saturating_sub(m: Int) -> Int
 fn (n: Int) saturating_mul(m: Int) -> Int
@@ -208,6 +212,37 @@ fn (f: Float) trunc() -> Float
 fn (f: Float) abs() -> Float
 fn (f: Float) sqrt() -> Float
 fn (f: Float) is_nan() -> Bool
+/// Go's math, its portable algorithms with every operation rounded, so
+/// the results are the same bits on every backend and architecture
+/// (decision 0287).
+fn (f: Float) pow(y: Float) -> Float
+fn (f: Float) exp() -> Float
+fn (f: Float) exp2() -> Float
+fn (f: Float) expm1() -> Float
+fn (f: Float) log() -> Float
+fn (f: Float) log2() -> Float
+fn (f: Float) log10() -> Float
+fn (f: Float) log1p() -> Float
+fn (f: Float) sin() -> Float
+fn (f: Float) cos() -> Float
+fn (f: Float) tan() -> Float
+fn (f: Float) asin() -> Float
+fn (f: Float) acos() -> Float
+fn (f: Float) atan() -> Float
+fn (f: Float) sinh() -> Float
+fn (f: Float) cosh() -> Float
+fn (f: Float) tanh() -> Float
+fn (f: Float) cbrt() -> Float
+/// atan(f / x) in the quadrant of (x, f), as Go's Atan2(f, x).
+fn (f: Float) atan2(x: Float) -> Float
+fn (f: Float) hypot(y: Float) -> Float
+/// Go's Mod: the remainder of f / y with the sign of f.
+fn (f: Float) mod(y: Float) -> Float
+fn (f: Float) is_inf() -> Bool
+/// The IEEE 754 bits of f, and the Float of bits b (Go's Float64bits,
+/// Float64frombits).
+fn (f: Float) to_bits() -> Int
+fn (static: Float) from_bits(b: Int) -> Float
 
 // ---------------------------------------------------------------------------
 // Str, Rune, Bytes (std.md 2.2)

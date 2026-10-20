@@ -13,6 +13,7 @@ use native/llrt/cabi_poll
 use native/llrt/cabi_tw
 use native/llrt/fault
 use native/llrt/fsops
+use native/llrt/gomath
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -2916,3 +2917,60 @@ fn str_unquote(s: Str) -> Str? {
   }
   out.freeze().to_str()
 }
+
+// ---------------------------------------------------------------------------
+// math (decision 0287): std/native/llrt/gomath.xo, Go's portable algorithms
+
+fn float_pow(f: Float, y: Float) -> Float { gomath.pow(f, y) }
+
+fn float_exp(f: Float) -> Float { gomath.exp(f) }
+
+fn float_exp2(f: Float) -> Float { gomath.exp2(f) }
+
+fn float_expm1(f: Float) -> Float { gomath.expm1(f) }
+
+fn float_log(f: Float) -> Float { gomath.log(f) }
+
+fn float_log2(f: Float) -> Float { gomath.log2(f) }
+
+fn float_log10(f: Float) -> Float { gomath.log10(f) }
+
+fn float_log1p(f: Float) -> Float { gomath.log1p(f) }
+
+fn float_sin(f: Float) -> Float { gomath.sin(f) }
+
+fn float_cos(f: Float) -> Float { gomath.cos(f) }
+
+fn float_tan(f: Float) -> Float { gomath.tan(f) }
+
+fn float_asin(f: Float) -> Float { gomath.asin(f) }
+
+fn float_acos(f: Float) -> Float { gomath.acos(f) }
+
+fn float_atan(f: Float) -> Float { gomath.atan(f) }
+
+fn float_sinh(f: Float) -> Float { gomath.sinh(f) }
+
+fn float_cosh(f: Float) -> Float { gomath.cosh(f) }
+
+fn float_tanh(f: Float) -> Float { gomath.tanh(f) }
+
+fn float_cbrt(f: Float) -> Float { gomath.cbrt(f) }
+
+fn float_atan2(f: Float, x: Float) -> Float { gomath.atan2(f, x) }
+
+fn float_hypot(f: Float, y: Float) -> Float { gomath.hypot(f, y) }
+
+fn float_mod(f: Float, y: Float) -> Float { gomath.mod(f, y) }
+
+fn float_is_inf(f: Float) -> Bool { gomath.is_inf(f, 0) }
+
+fn float_to_bits(f: Float) -> Int { rt.float_bits(f) }
+
+fn float_from_bits(b: Int) -> Float { rt.float_from_bits(b) }
+
+fn int_leading_zeros(n: Int) -> Int { rt.clz(n) }
+
+fn int_trailing_zeros(n: Int) -> Int { rt.ctz(n) }
+
+fn int_ones_count(n: Int) -> Int { rt.popcount(n) }
