@@ -97,6 +97,142 @@ func (v Archive_ArchiveErr) XoDebug(b *strings.Builder) {
 
 func (v Archive_ArchiveErr) M_debug(*Task) string { return Debug(v) }
 
+type Base32_Base32 struct {
+	Tag int
+	P   any
+}
+
+func (v Base32_Base32) XoEq(x any) bool {
+	o, ok := x.(Base32_Base32)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Base32_Base32) XoHash() uint64 {
+	h := MixHash(uint64(4141859847128059127), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Base32_Base32) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Std")
+	case 2:
+		b.WriteString("Hex")
+	case 3:
+		b.WriteString("RawStd")
+	case 4:
+		b.WriteString("RawHex")
+	}
+}
+
+func (v Base32_Base32) M_debug(*Task) string { return Debug(v) }
+
+type Base32_DecodeErr struct {
+	F_at int64
+}
+
+func (v Base32_DecodeErr) XoEq(x any) bool {
+	o, ok := x.(Base32_DecodeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_at, o.F_at) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Base32_DecodeErr) XoHash() uint64 {
+	h := uint64(8147598119414118494)
+	h = MixHash(h, Hash(v.F_at))
+	return h
+}
+
+func (v Base32_DecodeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("DecodeErr{")
+	b.WriteString("at: ")
+	DebugTo(b, v.F_at)
+	b.WriteString("}")
+}
+
+func (v Base32_DecodeErr) M_debug(*Task) string { return Debug(v) }
+
+type Base64_Base64 struct {
+	Tag int
+	P   any
+}
+
+func (v Base64_Base64) XoEq(x any) bool {
+	o, ok := x.(Base64_Base64)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Base64_Base64) XoHash() uint64 {
+	h := MixHash(uint64(4139471707872057898), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Base64_Base64) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Std")
+	case 2:
+		b.WriteString("Url")
+	case 3:
+		b.WriteString("RawStd")
+	case 4:
+		b.WriteString("RawUrl")
+	}
+}
+
+func (v Base64_Base64) M_debug(*Task) string { return Debug(v) }
+
+type Base64_DecodeErr struct {
+	F_at int64
+}
+
+func (v Base64_DecodeErr) XoEq(x any) bool {
+	o, ok := x.(Base64_DecodeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_at, o.F_at) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Base64_DecodeErr) XoHash() uint64 {
+	h := uint64(8147598119414118494)
+	h = MixHash(h, Hash(v.F_at))
+	return h
+}
+
+func (v Base64_DecodeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("DecodeErr{")
+	b.WriteString("at: ")
+	DebugTo(b, v.F_at)
+	b.WriteString("}")
+}
+
+func (v Base64_DecodeErr) M_debug(*Task) string { return Debug(v) }
+
 type Cli_CliErr struct {
 	Tag int
 	P   any
@@ -177,6 +313,168 @@ func (v Cli_CliErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Cli_CliErr) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_Hash struct {
+	Tag int
+	P   any
+}
+
+func (v Crypto_Hash) XoEq(x any) bool {
+	o, ok := x.(Crypto_Hash)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Crypto_Hash) XoHash() uint64 {
+	h := MixHash(uint64(8353821047493437857), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Crypto_Hash) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Md5")
+	case 2:
+		b.WriteString("Sha1")
+	case 3:
+		b.WriteString("Sha224")
+	case 4:
+		b.WriteString("Sha256")
+	case 5:
+		b.WriteString("Sha384")
+	case 6:
+		b.WriteString("Sha512")
+	case 7:
+		b.WriteString("Sha3_256")
+	case 8:
+		b.WriteString("Sha3_512")
+	}
+}
+
+func (v Crypto_Hash) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_PemBlock struct {
+	F_kind    string
+	F_headers Map[string, string]
+	F_bytes   Bytes
+}
+
+func (v Crypto_PemBlock) XoEq(x any) bool {
+	o, ok := x.(Crypto_PemBlock)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_kind, o.F_kind) {
+		return false
+	}
+	if !Eq(v.F_headers, o.F_headers) {
+		return false
+	}
+	if !Eq(v.F_bytes, o.F_bytes) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Crypto_PemBlock) XoHash() uint64 {
+	h := uint64(7199613609368237314)
+	h = MixHash(h, Hash(v.F_kind))
+	h = MixHash(h, Hash(v.F_headers))
+	h = MixHash(h, Hash(v.F_bytes))
+	return h
+}
+
+func (v Crypto_PemBlock) XoDebug(b *strings.Builder) {
+	b.WriteString("PemBlock{")
+	b.WriteString("kind: ")
+	DebugTo(b, v.F_kind)
+	b.WriteString(", headers: ")
+	DebugTo(b, v.F_headers)
+	b.WriteString(", bytes: ")
+	DebugTo(b, v.F_bytes)
+	b.WriteString("}")
+}
+
+func (v Crypto_PemBlock) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_KeyErr struct {
+	F_msg string
+}
+
+func (v Crypto_KeyErr) XoEq(x any) bool {
+	o, ok := x.(Crypto_KeyErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Crypto_KeyErr) XoHash() uint64 {
+	h := uint64(1874208499426846182)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Crypto_KeyErr) XoDebug(b *strings.Builder) {
+	b.WriteString("KeyErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Crypto_KeyErr) M_debug(*Task) string { return Debug(v) }
+
+type Crypto_KeyAlg struct {
+	Tag int
+	P   any
+}
+
+func (v Crypto_KeyAlg) XoEq(x any) bool {
+	o, ok := x.(Crypto_KeyAlg)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Crypto_KeyAlg) XoHash() uint64 {
+	h := MixHash(uint64(684180126496898488), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Crypto_KeyAlg) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Rsa")
+	case 2:
+		b.WriteString("EcdsaP224")
+	case 3:
+		b.WriteString("EcdsaP256")
+	case 4:
+		b.WriteString("EcdsaP384")
+	case 5:
+		b.WriteString("EcdsaP521")
+	case 6:
+		b.WriteString("Ed25519")
+	}
+}
+
+func (v Crypto_KeyAlg) M_debug(*Task) string { return Debug(v) }
 
 type Csv_CsvErr struct {
 	F_line   int64
@@ -297,53 +595,6 @@ func (v Http_Request) XoDebug(b *strings.Builder) {
 }
 
 func (v Http_Request) M_debug(*Task) string { return Debug(v) }
-
-type Http_Response struct {
-	F_status  int64
-	F_headers Map[string, string]
-	F_body    Bytes
-	XStream   func(*Task, Http_BodyWriter) Result[Unit, IoErr]
-	XFields   []string
-}
-
-func (v Http_Response) XoEq(x any) bool {
-	o, ok := x.(Http_Response)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_status, o.F_status) {
-		return false
-	}
-	if !Eq(v.F_headers, o.F_headers) {
-		return false
-	}
-	if !Eq(v.F_body, o.F_body) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Http_Response) XoHash() uint64 {
-	h := uint64(4655440091083047384)
-	h = MixHash(h, Hash(v.F_status))
-	h = MixHash(h, Hash(v.F_headers))
-	h = MixHash(h, Hash(v.F_body))
-	return h
-}
-
-func (v Http_Response) XoDebug(b *strings.Builder) {
-	b.WriteString("Response{")
-	b.WriteString("status: ")
-	DebugTo(b, v.F_status)
-	b.WriteString(", headers: ")
-	DebugTo(b, v.F_headers)
-	b.WriteString(", body: ")
-	DebugTo(b, v.F_body)
-	b.WriteString("}")
-}
-
-func (v Http_Response) M_debug(*Task) string { return Debug(v) }
 
 type Http_Cookie struct {
 	F_name        string
@@ -517,6 +768,53 @@ func (v Http_CookieErr) XoDebug(b *strings.Builder) {
 func (v Http_CookieErr) M_debug(*Task) string { return Debug(v) }
 
 func (v Http_CookieErr) M_display(*Task) string { return Debug(v) }
+
+type Http_Response struct {
+	F_status  int64
+	F_headers Map[string, string]
+	F_body    Bytes
+	XStream   func(*Task, Http_BodyWriter) Result[Unit, IoErr]
+	XFields   []string
+}
+
+func (v Http_Response) XoEq(x any) bool {
+	o, ok := x.(Http_Response)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_status, o.F_status) {
+		return false
+	}
+	if !Eq(v.F_headers, o.F_headers) {
+		return false
+	}
+	if !Eq(v.F_body, o.F_body) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Http_Response) XoHash() uint64 {
+	h := uint64(4655440091083047384)
+	h = MixHash(h, Hash(v.F_status))
+	h = MixHash(h, Hash(v.F_headers))
+	h = MixHash(h, Hash(v.F_body))
+	return h
+}
+
+func (v Http_Response) XoDebug(b *strings.Builder) {
+	b.WriteString("Response{")
+	b.WriteString("status: ")
+	DebugTo(b, v.F_status)
+	b.WriteString(", headers: ")
+	DebugTo(b, v.F_headers)
+	b.WriteString(", body: ")
+	DebugTo(b, v.F_body)
+	b.WriteString("}")
+}
+
+func (v Http_Response) M_debug(*Task) string { return Debug(v) }
 
 type Http_TlsErr struct {
 	F_msg string
@@ -983,6 +1281,393 @@ func (v Log_Record) XoDebug(b *strings.Builder) {
 }
 
 func (v Log_Record) M_debug(*Task) string { return Debug(v) }
+
+type Mail_Address struct {
+	F_name    string
+	F_address string
+}
+
+func (v Mail_Address) XoEq(x any) bool {
+	o, ok := x.(Mail_Address)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_name, o.F_name) {
+		return false
+	}
+	if !Eq(v.F_address, o.F_address) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mail_Address) XoHash() uint64 {
+	h := uint64(5617541073871163912)
+	h = MixHash(h, Hash(v.F_name))
+	h = MixHash(h, Hash(v.F_address))
+	return h
+}
+
+func (v Mail_Address) XoDebug(b *strings.Builder) {
+	b.WriteString("Address{")
+	b.WriteString("name: ")
+	DebugTo(b, v.F_name)
+	b.WriteString(", address: ")
+	DebugTo(b, v.F_address)
+	b.WriteString("}")
+}
+
+func (v Mail_Address) M_debug(*Task) string { return Debug(v) }
+
+type Mail_MailErr struct {
+	F_msg string
+}
+
+func (v Mail_MailErr) XoEq(x any) bool {
+	o, ok := x.(Mail_MailErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mail_MailErr) XoHash() uint64 {
+	h := uint64(4862509094616838645)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Mail_MailErr) XoDebug(b *strings.Builder) {
+	b.WriteString("MailErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Mail_MailErr) M_debug(*Task) string { return Debug(v) }
+
+type Mime_MediaType struct {
+	F_kind   string
+	F_params Map[string, string]
+}
+
+func (v Mime_MediaType) XoEq(x any) bool {
+	o, ok := x.(Mime_MediaType)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_kind, o.F_kind) {
+		return false
+	}
+	if !Eq(v.F_params, o.F_params) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mime_MediaType) XoHash() uint64 {
+	h := uint64(885866079015377678)
+	h = MixHash(h, Hash(v.F_kind))
+	h = MixHash(h, Hash(v.F_params))
+	return h
+}
+
+func (v Mime_MediaType) XoDebug(b *strings.Builder) {
+	b.WriteString("MediaType{")
+	b.WriteString("kind: ")
+	DebugTo(b, v.F_kind)
+	b.WriteString(", params: ")
+	DebugTo(b, v.F_params)
+	b.WriteString("}")
+}
+
+func (v Mime_MediaType) M_debug(*Task) string { return Debug(v) }
+
+type Mime_MimeErr struct {
+	F_msg string
+}
+
+func (v Mime_MimeErr) XoEq(x any) bool {
+	o, ok := x.(Mime_MimeErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Mime_MimeErr) XoHash() uint64 {
+	h := uint64(335488259967441887)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Mime_MimeErr) XoDebug(b *strings.Builder) {
+	b.WriteString("MimeErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Mime_MimeErr) M_debug(*Task) string { return Debug(v) }
+
+type Multipart_Part struct {
+	F_name     string
+	F_filename Option[string]
+	F_headers  Map[string, string]
+	F_data     Bytes
+}
+
+func (v Multipart_Part) XoEq(x any) bool {
+	o, ok := x.(Multipart_Part)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_name, o.F_name) {
+		return false
+	}
+	if !Eq(v.F_filename, o.F_filename) {
+		return false
+	}
+	if !Eq(v.F_headers, o.F_headers) {
+		return false
+	}
+	if !Eq(v.F_data, o.F_data) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Multipart_Part) XoHash() uint64 {
+	h := uint64(3703633581522572959)
+	h = MixHash(h, Hash(v.F_name))
+	h = MixHash(h, Hash(v.F_filename))
+	h = MixHash(h, Hash(v.F_headers))
+	h = MixHash(h, Hash(v.F_data))
+	return h
+}
+
+func (v Multipart_Part) XoDebug(b *strings.Builder) {
+	b.WriteString("Part{")
+	b.WriteString("name: ")
+	DebugTo(b, v.F_name)
+	b.WriteString(", filename: ")
+	DebugTo(b, v.F_filename)
+	b.WriteString(", headers: ")
+	DebugTo(b, v.F_headers)
+	b.WriteString(", data: ")
+	DebugTo(b, v.F_data)
+	b.WriteString("}")
+}
+
+func (v Multipart_Part) M_debug(*Task) string { return Debug(v) }
+
+type Multipart_Form struct {
+	F_values Url_Values
+	F_files  Map[string, List[Multipart_Part]]
+}
+
+func (v Multipart_Form) XoEq(x any) bool {
+	o, ok := x.(Multipart_Form)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_values, o.F_values) {
+		return false
+	}
+	if !Eq(v.F_files, o.F_files) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Multipart_Form) XoHash() uint64 {
+	h := uint64(62995846707495128)
+	h = MixHash(h, Hash(v.F_values))
+	h = MixHash(h, Hash(v.F_files))
+	return h
+}
+
+func (v Multipart_Form) XoDebug(b *strings.Builder) {
+	b.WriteString("Form{")
+	b.WriteString("values: ")
+	DebugTo(b, v.F_values)
+	b.WriteString(", files: ")
+	DebugTo(b, v.F_files)
+	b.WriteString("}")
+}
+
+func (v Multipart_Form) M_debug(*Task) string { return Debug(v) }
+
+type Multipart_MultipartErr struct {
+	F_msg string
+}
+
+func (v Multipart_MultipartErr) XoEq(x any) bool {
+	o, ok := x.(Multipart_MultipartErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Multipart_MultipartErr) XoHash() uint64 {
+	h := uint64(847542325698524748)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Multipart_MultipartErr) XoDebug(b *strings.Builder) {
+	b.WriteString("MultipartErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Multipart_MultipartErr) M_debug(*Task) string { return Debug(v) }
+
+type Netip_Addr struct {
+	F_bits int64
+	F_ip   Bytes
+	F_zone string
+}
+
+func (v Netip_Addr) XoEq(x any) bool {
+	o, ok := x.(Netip_Addr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_bits, o.F_bits) {
+		return false
+	}
+	if !Eq(v.F_ip, o.F_ip) {
+		return false
+	}
+	if !Eq(v.F_zone, o.F_zone) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Netip_Addr) XoHash() uint64 {
+	h := uint64(4717154846560898334)
+	h = MixHash(h, Hash(v.F_bits))
+	h = MixHash(h, Hash(v.F_ip))
+	h = MixHash(h, Hash(v.F_zone))
+	return h
+}
+
+func (v Netip_Addr) XoCmp(x any) int {
+	o := x.(Netip_Addr)
+	if c := Cmp(v.F_bits, o.F_bits); c != 0 {
+		return c
+	}
+	if c := Cmp(v.F_ip, o.F_ip); c != 0 {
+		return c
+	}
+	if c := Cmp(v.F_zone, o.F_zone); c != 0 {
+		return c
+	}
+	return 0
+}
+
+func (v Netip_Addr) XoDebug(b *strings.Builder) {
+	b.WriteString("Addr{")
+	b.WriteString("bits: ")
+	DebugTo(b, v.F_bits)
+	b.WriteString(", ip: ")
+	DebugTo(b, v.F_ip)
+	b.WriteString(", zone: ")
+	DebugTo(b, v.F_zone)
+	b.WriteString("}")
+}
+
+func (v Netip_Addr) M_debug(*Task) string { return Debug(v) }
+
+type Netip_Prefix struct {
+	F_addr Netip_Addr
+	F_len  int64
+}
+
+func (v Netip_Prefix) XoEq(x any) bool {
+	o, ok := x.(Netip_Prefix)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_addr, o.F_addr) {
+		return false
+	}
+	if !Eq(v.F_len, o.F_len) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Netip_Prefix) XoHash() uint64 {
+	h := uint64(4689125948188886363)
+	h = MixHash(h, Hash(v.F_addr))
+	h = MixHash(h, Hash(v.F_len))
+	return h
+}
+
+func (v Netip_Prefix) XoDebug(b *strings.Builder) {
+	b.WriteString("Prefix{")
+	b.WriteString("addr: ")
+	DebugTo(b, v.F_addr)
+	b.WriteString(", len: ")
+	DebugTo(b, v.F_len)
+	b.WriteString("}")
+}
+
+func (v Netip_Prefix) M_debug(*Task) string { return Debug(v) }
+
+type Netip_ParseErr struct {
+	F_msg string
+}
+
+func (v Netip_ParseErr) XoEq(x any) bool {
+	o, ok := x.(Netip_ParseErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Netip_ParseErr) XoHash() uint64 {
+	h := uint64(499690382562842948)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Netip_ParseErr) XoDebug(b *strings.Builder) {
+	b.WriteString("ParseErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Netip_ParseErr) M_debug(*Task) string { return Debug(v) }
 
 type TargetOs struct {
 	Tag int
@@ -2283,6 +2968,59 @@ func (v Sql_ExecResult) XoDebug(b *strings.Builder) {
 
 func (v Sql_ExecResult) M_debug(*Task) string { return Debug(v) }
 
+type Sql_Driver interface {
+	M_connect(tk *Task, p0 Net, p1 string) Result[Sql_DriverConn, Sql_SqlErr]
+}
+
+type Sql_DriverConn interface {
+	M_query(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_DriverRows, Sql_SqlErr]
+	M_exec(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]
+	M_begin(tk *Task) Result[Unit, Sql_SqlErr]
+	M_commit(tk *Task) Result[Unit, Sql_SqlErr]
+	M_rollback(tk *Task) Result[Unit, Sql_SqlErr]
+	M_ping(tk *Task) Result[Unit, Sql_SqlErr]
+	M_close(tk *Task)
+	M_is_broken(tk *Task) bool
+}
+
+type Sql_DriverRows struct {
+	F_columns List[string]
+	F_rows    List[List[Sql_SqlValue]]
+}
+
+func (v Sql_DriverRows) XoEq(x any) bool {
+	o, ok := x.(Sql_DriverRows)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_columns, o.F_columns) {
+		return false
+	}
+	if !Eq(v.F_rows, o.F_rows) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Sql_DriverRows) XoHash() uint64 {
+	h := uint64(1690444802796448442)
+	h = MixHash(h, Hash(v.F_columns))
+	h = MixHash(h, Hash(v.F_rows))
+	return h
+}
+
+func (v Sql_DriverRows) XoDebug(b *strings.Builder) {
+	b.WriteString("DriverRows{")
+	b.WriteString("columns: ")
+	DebugTo(b, v.F_columns)
+	b.WriteString(", rows: ")
+	DebugTo(b, v.F_rows)
+	b.WriteString("}")
+}
+
+func (v Sql_DriverRows) M_debug(*Task) string { return Debug(v) }
+
 type Task_Timed[tp_E any] struct {
 	Tag int
 	P   any
@@ -2703,76 +3441,6 @@ func (v Testing_FsOp) XoDebug(b *strings.Builder) {
 }
 
 func (v Testing_FsOp) M_debug(*Task) string { return Debug(v) }
-
-type Tls_Verify struct {
-	Tag int
-	P   any
-}
-
-func (v Tls_Verify) XoEq(x any) bool {
-	o, ok := x.(Tls_Verify)
-	if !ok || o.Tag != v.Tag {
-		return false
-	}
-	switch v.Tag {
-	}
-	return true
-}
-
-func (v Tls_Verify) XoHash() uint64 {
-	h := MixHash(uint64(7406372850315573347), uint64(v.Tag))
-	switch v.Tag {
-	}
-	return h
-}
-
-func (v Tls_Verify) XoDebug(b *strings.Builder) {
-	switch v.Tag {
-	case 1:
-		b.WriteString("Full")
-	case 2:
-		b.WriteString("ChainOnly")
-	case 3:
-		b.WriteString("None")
-	}
-}
-
-func (v Tls_Verify) M_debug(*Task) string { return Debug(v) }
-
-func (v Tls_Verify) M_display(*Task) string { return Debug(v) }
-
-type Tls_TlsErr struct {
-	F_msg string
-}
-
-func (v Tls_TlsErr) XoEq(x any) bool {
-	o, ok := x.(Tls_TlsErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Tls_TlsErr) XoHash() uint64 {
-	h := uint64(1735216609364297291)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Tls_TlsErr) XoDebug(b *strings.Builder) {
-	b.WriteString("TlsErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Tls_TlsErr) M_debug(*Task) string { return Debug(v) }
-
-func (v Tls_TlsErr) M_display(*Task) string { return Debug(v) }
 
 type Time_ZoneErr struct {
 	Tag int
@@ -3614,6 +4282,76 @@ func (v Time_LayoutErr) XoDebug(b *strings.Builder) {
 
 func (v Time_LayoutErr) M_debug(*Task) string { return Debug(v) }
 
+type Tls_Verify struct {
+	Tag int
+	P   any
+}
+
+func (v Tls_Verify) XoEq(x any) bool {
+	o, ok := x.(Tls_Verify)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Tls_Verify) XoHash() uint64 {
+	h := MixHash(uint64(7406372850315573347), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Tls_Verify) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Full")
+	case 2:
+		b.WriteString("ChainOnly")
+	case 3:
+		b.WriteString("None")
+	}
+}
+
+func (v Tls_Verify) M_debug(*Task) string { return Debug(v) }
+
+func (v Tls_Verify) M_display(*Task) string { return Debug(v) }
+
+type Tls_TlsErr struct {
+	F_msg string
+}
+
+func (v Tls_TlsErr) XoEq(x any) bool {
+	o, ok := x.(Tls_TlsErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Tls_TlsErr) XoHash() uint64 {
+	h := uint64(1735216609364297291)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Tls_TlsErr) XoDebug(b *strings.Builder) {
+	b.WriteString("TlsErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Tls_TlsErr) M_debug(*Task) string { return Debug(v) }
+
+func (v Tls_TlsErr) M_display(*Task) string { return Debug(v) }
+
 type Toml_TomlErr struct {
 	F_line int64
 	F_msg  string
@@ -3744,256 +4482,6 @@ func (v Url_EscapeErr) XoDebug(b *strings.Builder) {
 
 func (v Url_EscapeErr) M_debug(*Task) string { return Debug(v) }
 
-type Base64_Base64 struct {
-	Tag int
-	P   any
-}
-
-func (v Base64_Base64) XoEq(x any) bool {
-	o, ok := x.(Base64_Base64)
-	if !ok || o.Tag != v.Tag {
-		return false
-	}
-	switch v.Tag {
-	}
-	return true
-}
-
-func (v Base64_Base64) XoHash() uint64 {
-	h := MixHash(uint64(4139471707872057898), uint64(v.Tag))
-	switch v.Tag {
-	}
-	return h
-}
-
-func (v Base64_Base64) XoDebug(b *strings.Builder) {
-	switch v.Tag {
-	case 1:
-		b.WriteString("Std")
-	case 2:
-		b.WriteString("Url")
-	case 3:
-		b.WriteString("RawStd")
-	case 4:
-		b.WriteString("RawUrl")
-	}
-}
-
-func (v Base64_Base64) M_debug(*Task) string { return Debug(v) }
-
-type Base64_DecodeErr struct {
-	F_at int64
-}
-
-func (v Base64_DecodeErr) XoEq(x any) bool {
-	o, ok := x.(Base64_DecodeErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_at, o.F_at) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Base64_DecodeErr) XoHash() uint64 {
-	h := uint64(8147598119414118494)
-	h = MixHash(h, Hash(v.F_at))
-	return h
-}
-
-func (v Base64_DecodeErr) XoDebug(b *strings.Builder) {
-	b.WriteString("DecodeErr{")
-	b.WriteString("at: ")
-	DebugTo(b, v.F_at)
-	b.WriteString("}")
-}
-
-func (v Base64_DecodeErr) M_debug(*Task) string { return Debug(v) }
-
-type Base32_Base32 struct {
-	Tag int
-	P   any
-}
-
-func (v Base32_Base32) XoEq(x any) bool {
-	o, ok := x.(Base32_Base32)
-	if !ok || o.Tag != v.Tag {
-		return false
-	}
-	switch v.Tag {
-	}
-	return true
-}
-
-func (v Base32_Base32) XoHash() uint64 {
-	h := MixHash(uint64(4141859847128059127), uint64(v.Tag))
-	switch v.Tag {
-	}
-	return h
-}
-
-func (v Base32_Base32) XoDebug(b *strings.Builder) {
-	switch v.Tag {
-	case 1:
-		b.WriteString("Std")
-	case 2:
-		b.WriteString("Hex")
-	case 3:
-		b.WriteString("RawStd")
-	case 4:
-		b.WriteString("RawHex")
-	}
-}
-
-func (v Base32_Base32) M_debug(*Task) string { return Debug(v) }
-
-type Base32_DecodeErr struct {
-	F_at int64
-}
-
-func (v Base32_DecodeErr) XoEq(x any) bool {
-	o, ok := x.(Base32_DecodeErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_at, o.F_at) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Base32_DecodeErr) XoHash() uint64 {
-	h := uint64(8147598119414118494)
-	h = MixHash(h, Hash(v.F_at))
-	return h
-}
-
-func (v Base32_DecodeErr) XoDebug(b *strings.Builder) {
-	b.WriteString("DecodeErr{")
-	b.WriteString("at: ")
-	DebugTo(b, v.F_at)
-	b.WriteString("}")
-}
-
-func (v Base32_DecodeErr) M_debug(*Task) string { return Debug(v) }
-
-type Crypto_Hash struct {
-	Tag int
-	P   any
-}
-
-func (v Crypto_Hash) XoEq(x any) bool {
-	o, ok := x.(Crypto_Hash)
-	if !ok || o.Tag != v.Tag {
-		return false
-	}
-	switch v.Tag {
-	}
-	return true
-}
-
-func (v Crypto_Hash) XoHash() uint64 {
-	h := MixHash(uint64(8353821047493437857), uint64(v.Tag))
-	switch v.Tag {
-	}
-	return h
-}
-
-func (v Crypto_Hash) XoDebug(b *strings.Builder) {
-	switch v.Tag {
-	case 1:
-		b.WriteString("Md5")
-	case 2:
-		b.WriteString("Sha1")
-	case 3:
-		b.WriteString("Sha224")
-	case 4:
-		b.WriteString("Sha256")
-	case 5:
-		b.WriteString("Sha384")
-	case 6:
-		b.WriteString("Sha512")
-	case 7:
-		b.WriteString("Sha3_256")
-	case 8:
-		b.WriteString("Sha3_512")
-	}
-}
-
-func (v Crypto_Hash) M_debug(*Task) string { return Debug(v) }
-
-type Mime_MediaType struct {
-	F_kind   string
-	F_params Map[string, string]
-}
-
-func (v Mime_MediaType) XoEq(x any) bool {
-	o, ok := x.(Mime_MediaType)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_kind, o.F_kind) {
-		return false
-	}
-	if !Eq(v.F_params, o.F_params) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Mime_MediaType) XoHash() uint64 {
-	h := uint64(885866079015377678)
-	h = MixHash(h, Hash(v.F_kind))
-	h = MixHash(h, Hash(v.F_params))
-	return h
-}
-
-func (v Mime_MediaType) XoDebug(b *strings.Builder) {
-	b.WriteString("MediaType{")
-	b.WriteString("kind: ")
-	DebugTo(b, v.F_kind)
-	b.WriteString(", params: ")
-	DebugTo(b, v.F_params)
-	b.WriteString("}")
-}
-
-func (v Mime_MediaType) M_debug(*Task) string { return Debug(v) }
-
-type Mime_MimeErr struct {
-	F_msg string
-}
-
-func (v Mime_MimeErr) XoEq(x any) bool {
-	o, ok := x.(Mime_MimeErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Mime_MimeErr) XoHash() uint64 {
-	h := uint64(335488259967441887)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Mime_MimeErr) XoDebug(b *strings.Builder) {
-	b.WriteString("MimeErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Mime_MimeErr) M_debug(*Task) string { return Debug(v) }
-
 type Uuid_Uuid struct {
 	F0 string
 }
@@ -4043,491 +4531,3 @@ func (v Uuid_UuidErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Uuid_UuidErr) M_debug(*Task) string { return Debug(v) }
-
-type Mail_Address struct {
-	F_name    string
-	F_address string
-}
-
-func (v Mail_Address) XoEq(x any) bool {
-	o, ok := x.(Mail_Address)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_name, o.F_name) {
-		return false
-	}
-	if !Eq(v.F_address, o.F_address) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Mail_Address) XoHash() uint64 {
-	h := uint64(5617541073871163912)
-	h = MixHash(h, Hash(v.F_name))
-	h = MixHash(h, Hash(v.F_address))
-	return h
-}
-
-func (v Mail_Address) XoDebug(b *strings.Builder) {
-	b.WriteString("Address{")
-	b.WriteString("name: ")
-	DebugTo(b, v.F_name)
-	b.WriteString(", address: ")
-	DebugTo(b, v.F_address)
-	b.WriteString("}")
-}
-
-func (v Mail_Address) M_debug(*Task) string { return Debug(v) }
-
-type Mail_MailErr struct {
-	F_msg string
-}
-
-func (v Mail_MailErr) XoEq(x any) bool {
-	o, ok := x.(Mail_MailErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Mail_MailErr) XoHash() uint64 {
-	h := uint64(4862509094616838645)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Mail_MailErr) XoDebug(b *strings.Builder) {
-	b.WriteString("MailErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Mail_MailErr) M_debug(*Task) string { return Debug(v) }
-
-type Multipart_Part struct {
-	F_name     string
-	F_filename Option[string]
-	F_headers  Map[string, string]
-	F_data     Bytes
-}
-
-func (v Multipart_Part) XoEq(x any) bool {
-	o, ok := x.(Multipart_Part)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_name, o.F_name) {
-		return false
-	}
-	if !Eq(v.F_filename, o.F_filename) {
-		return false
-	}
-	if !Eq(v.F_headers, o.F_headers) {
-		return false
-	}
-	if !Eq(v.F_data, o.F_data) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Multipart_Part) XoHash() uint64 {
-	h := uint64(3703633581522572959)
-	h = MixHash(h, Hash(v.F_name))
-	h = MixHash(h, Hash(v.F_filename))
-	h = MixHash(h, Hash(v.F_headers))
-	h = MixHash(h, Hash(v.F_data))
-	return h
-}
-
-func (v Multipart_Part) XoDebug(b *strings.Builder) {
-	b.WriteString("Part{")
-	b.WriteString("name: ")
-	DebugTo(b, v.F_name)
-	b.WriteString(", filename: ")
-	DebugTo(b, v.F_filename)
-	b.WriteString(", headers: ")
-	DebugTo(b, v.F_headers)
-	b.WriteString(", data: ")
-	DebugTo(b, v.F_data)
-	b.WriteString("}")
-}
-
-func (v Multipart_Part) M_debug(*Task) string { return Debug(v) }
-
-type Multipart_Form struct {
-	F_values Url_Values
-	F_files  Map[string, List[Multipart_Part]]
-}
-
-func (v Multipart_Form) XoEq(x any) bool {
-	o, ok := x.(Multipart_Form)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_values, o.F_values) {
-		return false
-	}
-	if !Eq(v.F_files, o.F_files) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Multipart_Form) XoHash() uint64 {
-	h := uint64(62995846707495128)
-	h = MixHash(h, Hash(v.F_values))
-	h = MixHash(h, Hash(v.F_files))
-	return h
-}
-
-func (v Multipart_Form) XoDebug(b *strings.Builder) {
-	b.WriteString("Form{")
-	b.WriteString("values: ")
-	DebugTo(b, v.F_values)
-	b.WriteString(", files: ")
-	DebugTo(b, v.F_files)
-	b.WriteString("}")
-}
-
-func (v Multipart_Form) M_debug(*Task) string { return Debug(v) }
-
-type Multipart_MultipartErr struct {
-	F_msg string
-}
-
-func (v Multipart_MultipartErr) XoEq(x any) bool {
-	o, ok := x.(Multipart_MultipartErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Multipart_MultipartErr) XoHash() uint64 {
-	h := uint64(847542325698524748)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Multipart_MultipartErr) XoDebug(b *strings.Builder) {
-	b.WriteString("MultipartErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Multipart_MultipartErr) M_debug(*Task) string { return Debug(v) }
-
-type Crypto_PemBlock struct {
-	F_kind    string
-	F_headers Map[string, string]
-	F_bytes   Bytes
-}
-
-func (v Crypto_PemBlock) XoEq(x any) bool {
-	o, ok := x.(Crypto_PemBlock)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_kind, o.F_kind) {
-		return false
-	}
-	if !Eq(v.F_headers, o.F_headers) {
-		return false
-	}
-	if !Eq(v.F_bytes, o.F_bytes) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Crypto_PemBlock) XoHash() uint64 {
-	h := uint64(7199613609368237314)
-	h = MixHash(h, Hash(v.F_kind))
-	h = MixHash(h, Hash(v.F_headers))
-	h = MixHash(h, Hash(v.F_bytes))
-	return h
-}
-
-func (v Crypto_PemBlock) XoDebug(b *strings.Builder) {
-	b.WriteString("PemBlock{")
-	b.WriteString("kind: ")
-	DebugTo(b, v.F_kind)
-	b.WriteString(", headers: ")
-	DebugTo(b, v.F_headers)
-	b.WriteString(", bytes: ")
-	DebugTo(b, v.F_bytes)
-	b.WriteString("}")
-}
-
-func (v Crypto_PemBlock) M_debug(*Task) string { return Debug(v) }
-
-type Crypto_KeyErr struct {
-	F_msg string
-}
-
-func (v Crypto_KeyErr) XoEq(x any) bool {
-	o, ok := x.(Crypto_KeyErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Crypto_KeyErr) XoHash() uint64 {
-	h := uint64(1874208499426846182)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Crypto_KeyErr) XoDebug(b *strings.Builder) {
-	b.WriteString("KeyErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Crypto_KeyErr) M_debug(*Task) string { return Debug(v) }
-
-type Crypto_KeyAlg struct {
-	Tag int
-	P   any
-}
-
-func (v Crypto_KeyAlg) XoEq(x any) bool {
-	o, ok := x.(Crypto_KeyAlg)
-	if !ok || o.Tag != v.Tag {
-		return false
-	}
-	switch v.Tag {
-	}
-	return true
-}
-
-func (v Crypto_KeyAlg) XoHash() uint64 {
-	h := MixHash(uint64(684180126496898488), uint64(v.Tag))
-	switch v.Tag {
-	}
-	return h
-}
-
-func (v Crypto_KeyAlg) XoDebug(b *strings.Builder) {
-	switch v.Tag {
-	case 1:
-		b.WriteString("Rsa")
-	case 2:
-		b.WriteString("EcdsaP224")
-	case 3:
-		b.WriteString("EcdsaP256")
-	case 4:
-		b.WriteString("EcdsaP384")
-	case 5:
-		b.WriteString("EcdsaP521")
-	case 6:
-		b.WriteString("Ed25519")
-	}
-}
-
-func (v Crypto_KeyAlg) M_debug(*Task) string { return Debug(v) }
-
-type Sql_Driver interface {
-	M_connect(tk *Task, p0 Net, p1 string) Result[Sql_DriverConn, Sql_SqlErr]
-}
-
-type Sql_DriverConn interface {
-	M_query(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_DriverRows, Sql_SqlErr]
-	M_exec(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]
-	M_begin(tk *Task) Result[Unit, Sql_SqlErr]
-	M_commit(tk *Task) Result[Unit, Sql_SqlErr]
-	M_rollback(tk *Task) Result[Unit, Sql_SqlErr]
-	M_ping(tk *Task) Result[Unit, Sql_SqlErr]
-	M_close(tk *Task)
-	M_is_broken(tk *Task) bool
-}
-
-type Sql_DriverRows struct {
-	F_columns List[string]
-	F_rows    List[List[Sql_SqlValue]]
-}
-
-func (v Sql_DriverRows) XoEq(x any) bool {
-	o, ok := x.(Sql_DriverRows)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_columns, o.F_columns) {
-		return false
-	}
-	if !Eq(v.F_rows, o.F_rows) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Sql_DriverRows) XoHash() uint64 {
-	h := uint64(1690444802796448442)
-	h = MixHash(h, Hash(v.F_columns))
-	h = MixHash(h, Hash(v.F_rows))
-	return h
-}
-
-func (v Sql_DriverRows) XoDebug(b *strings.Builder) {
-	b.WriteString("DriverRows{")
-	b.WriteString("columns: ")
-	DebugTo(b, v.F_columns)
-	b.WriteString(", rows: ")
-	DebugTo(b, v.F_rows)
-	b.WriteString("}")
-}
-
-func (v Sql_DriverRows) M_debug(*Task) string { return Debug(v) }
-
-type Netip_Addr struct {
-	F_bits int64
-	F_ip   Bytes
-	F_zone string
-}
-
-func (v Netip_Addr) XoEq(x any) bool {
-	o, ok := x.(Netip_Addr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_bits, o.F_bits) {
-		return false
-	}
-	if !Eq(v.F_ip, o.F_ip) {
-		return false
-	}
-	if !Eq(v.F_zone, o.F_zone) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Netip_Addr) XoHash() uint64 {
-	h := uint64(4717154846560898334)
-	h = MixHash(h, Hash(v.F_bits))
-	h = MixHash(h, Hash(v.F_ip))
-	h = MixHash(h, Hash(v.F_zone))
-	return h
-}
-
-func (v Netip_Addr) XoCmp(x any) int {
-	o := x.(Netip_Addr)
-	if c := Cmp(v.F_bits, o.F_bits); c != 0 {
-		return c
-	}
-	if c := Cmp(v.F_ip, o.F_ip); c != 0 {
-		return c
-	}
-	if c := Cmp(v.F_zone, o.F_zone); c != 0 {
-		return c
-	}
-	return 0
-}
-
-func (v Netip_Addr) XoDebug(b *strings.Builder) {
-	b.WriteString("Addr{")
-	b.WriteString("bits: ")
-	DebugTo(b, v.F_bits)
-	b.WriteString(", ip: ")
-	DebugTo(b, v.F_ip)
-	b.WriteString(", zone: ")
-	DebugTo(b, v.F_zone)
-	b.WriteString("}")
-}
-
-func (v Netip_Addr) M_debug(*Task) string { return Debug(v) }
-
-type Netip_Prefix struct {
-	F_addr Netip_Addr
-	F_len  int64
-}
-
-func (v Netip_Prefix) XoEq(x any) bool {
-	o, ok := x.(Netip_Prefix)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_addr, o.F_addr) {
-		return false
-	}
-	if !Eq(v.F_len, o.F_len) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Netip_Prefix) XoHash() uint64 {
-	h := uint64(4689125948188886363)
-	h = MixHash(h, Hash(v.F_addr))
-	h = MixHash(h, Hash(v.F_len))
-	return h
-}
-
-func (v Netip_Prefix) XoDebug(b *strings.Builder) {
-	b.WriteString("Prefix{")
-	b.WriteString("addr: ")
-	DebugTo(b, v.F_addr)
-	b.WriteString(", len: ")
-	DebugTo(b, v.F_len)
-	b.WriteString("}")
-}
-
-func (v Netip_Prefix) M_debug(*Task) string { return Debug(v) }
-
-type Netip_ParseErr struct {
-	F_msg string
-}
-
-func (v Netip_ParseErr) XoEq(x any) bool {
-	o, ok := x.(Netip_ParseErr)
-	if !ok {
-		return false
-	}
-	if !Eq(v.F_msg, o.F_msg) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Netip_ParseErr) XoHash() uint64 {
-	h := uint64(499690382562842948)
-	h = MixHash(h, Hash(v.F_msg))
-	return h
-}
-
-func (v Netip_ParseErr) XoDebug(b *strings.Builder) {
-	b.WriteString("ParseErr{")
-	b.WriteString("msg: ")
-	DebugTo(b, v.F_msg)
-	b.WriteString("}")
-}
-
-func (v Netip_ParseErr) M_debug(*Task) string { return Debug(v) }
