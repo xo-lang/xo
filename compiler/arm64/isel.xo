@@ -57,6 +57,11 @@ fn (var g: G) function(fi: Int) {
   if g.on("reuse_loads") {
     g.reuse_loads()
   }
+  // ThreadSanitizer's calls (decision 0273), before the passes that
+  // assume a call free stretch (reuse_flags, mark_tails, shrink_split)
+  if g.m.race && !g.x86 {
+    g.race_instrument()
+  }
   if g.x86 {
     // x86_64 (decision 0254): each branch keeps its compare (no reused
     // flags); the templates become x86

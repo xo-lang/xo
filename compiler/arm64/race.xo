@@ -1,0 +1,366 @@
+// --race on the arm64 backend (decision 0273, mode 2: the program's
+// functions; the runtime's are left out and say what orders tasks
+// themselves): ThreadSanitizer's calls
+// added to a function's machine instructions after selection, before
+// register allocation (the calls are K_CALL, so the allocator keeps
+// values across them as across any call). Each load and store whose
+// address is not in the frame calls __tsan_readN or __tsan_writeN with
+// its address first; an atomic with acquire order calls __tsan_acquire
+// after it and one with release order __tsan_release before it, so the
+// runtime's synchronization (channels, mutexes, the run queues) orders
+// what it orders. Not instrumented: frame accesses (sp, x29, $OUT), the
+// hand written templates of several lines but an atomic's (race_line),
+// templates with fixed registers, an exclusive load and
+// store pair (a call between them would clear the monitor), and an
+// access between an instruction that sets the flags and one that reads
+// them (the call clobbers them).
+
+/// A memory access of a plain instruction: its address operand parsed.
+struct RaceAccess {
+  /// 0 none, 1 read, 2 write
+  kind: Int = 0
+  size: Int = 0
+  /// the base vreg (template use index resolved), -1 when not a vreg
+  base: Int = -1
+  /// an immediate offset, or the vreg of a register offset (off_reg)
+  off: Int = 0
+  off_reg: Int = -1
+  /// the register offset's extension (", lsl #3"), "" for none
+  ext: Str = ""
+  /// acquire, release (atomics)
+  acq: Bool = false
+  rel: Bool = false
+  atomic: Bool = false
+}
+
+/// The use index of a template operand `$uN` or `$wuN`, or -1.
+fn race_use(op: Str) -> Int {
+  let t = op.trim()
+  if t.starts_with("$u") {
+    return Int.parse(t.trim_prefix("$u")) ?? -1
+  }
+  if t.starts_with("$wu") {
+    return Int.parse(t.trim_prefix("$wu")) ?? -1
+  }
+  -1
+}
+
+/// The width in bytes of a data register operand of a template, or 0.
+fn race_reg_size(op: Str) -> Int {
+  let t = op.trim()
+  if t.starts_with("$wd") || t.starts_with("$wu") || t == "wzr" {
+    return 4
+  }
+  if t.starts_with("$d") || t.starts_with("$u") || t == "xzr" {
+    return 8
+  }
+  if t.starts_with("$sd") || t.starts_with("$su") {
+    return 4
+  }
+  if t.starts_with("$qd") || t.starts_with("$qu") {
+    return 16
+  }
+  if t.starts_with("$dd") || t.starts_with("$du") {
+    return 8
+  }
+  if t.starts_with("w") {
+    return 4
+  }
+  if t.starts_with("x") || t.starts_with("d") {
+    return 8
+  }
+  if t.starts_with("s") {
+    return 4
+  }
+  if t.starts_with("q") {
+    return 16
+  }
+  0
+}
+
+/// The access of instruction x, or kind 0 for none or one not handled.
+fn race_access(x: Inst) -> RaceAccess {
+  let none = RaceAccess{}
+  if x.kind != K_PLAIN || x.x86 || x.frame {
+    return none
+  }
+  let text = race_line(x.text)
+  let sp = text.find(" ") ?? -1
+  if sp < 0 {
+    return none
+  }
+  let mn = text[0..sp]
+  let rest = text[sp + 1..text.len()]
+  let lb = rest.find("[") ?? -1
+  let rb = rest.find("]") ?? -1
+  if lb < 0 || rb < lb {
+    return none
+  }
+  var a = RaceAccess{}
+  let regs = rest[0..lb].split(",")
+  let first = if regs.is_empty() { "" } else { regs[0] }
+  if mn is "ldr" | "ldur" {
+    a.kind = 1
+    a.size = race_reg_size(first)
+  } else if mn is "str" | "stur" {
+    a.kind = 2
+    a.size = race_reg_size(first)
+  } else if mn is "ldrb" | "ldurb" | "ldrsb" {
+    a.kind = 1
+    a.size = 1
+  } else if mn is "strb" | "sturb" {
+    a.kind = 2
+    a.size = 1
+  } else if mn is "ldrh" | "ldurh" | "ldrsh" {
+    a.kind = 1
+    a.size = 2
+  } else if mn is "strh" | "sturh" {
+    a.kind = 2
+    a.size = 2
+  } else if mn is "ldrsw" | "ldursw" {
+    a.kind = 1
+    a.size = 4
+  } else if mn is "ldp" | "ldnp" {
+    a.kind = 1
+    a.size = 2 * race_reg_size(first)
+  } else if mn is "stp" | "stnp" {
+    a.kind = 2
+    a.size = 2 * race_reg_size(first)
+  } else if mn is "ldar" {
+    a.kind = 1
+    a.size = race_reg_size(first)
+    a.atomic = true
+    a.acq = true
+  } else if mn is "stlr" {
+    a.kind = 2
+    a.size = race_reg_size(first)
+    a.atomic = true
+    a.rel = true
+  } else if mn is "ldarb" | "ldarh" {
+    a.kind = 1
+    a.size = if mn == "ldarb" { 1 } else { 2 }
+    a.atomic = true
+    a.acq = true
+  } else if mn is "stlrb" | "stlrh" {
+    a.kind = 2
+    a.size = if mn == "stlrb" { 1 } else { 2 }
+    a.atomic = true
+    a.rel = true
+  } else if race_lse(mn) {
+    // a read modify write (LSE): its order by its suffix
+    a.kind = 2
+    a.size = 8
+    a.atomic = true
+    a.acq = mn.ends_with("al") || mn.ends_with("a") || mn.ends_with("alb") || mn.ends_with("ab")
+    a.rel = mn.ends_with("al") || mn.ends_with("l") || mn.ends_with("alb") || mn.ends_with("lb")
+    if !a.acq && !a.rel {
+      return none
+    }
+  } else {
+    return none
+  }
+  if a.size == 0 {
+    return none
+  }
+  // [base], [base, #imm], [base, reg], [base, reg, ext]; a post index
+  // ([base], #imm) reads at base; a pre index ([base, #imm]!) at base+imm
+  let inside = rest[lb + 1..rb].split(",")
+  let bu = race_use(inside[0])
+  if bu < 0 || bu >= x.us.len() {
+    return none
+  }
+  a.base = x.us[bu]
+  if inside.len() >= 2 {
+    let o = inside[1].trim()
+    if o.starts_with("#") {
+      match Int.parse(o.trim_prefix("#")) {
+        Some(n) => a.off = n
+        // not a plain decimal (an expression the template kept)
+        None => return none
+      }
+      if inside.len() > 2 {
+        return none
+      }
+    } else {
+      let ou = race_use(o)
+      if ou < 0 || ou >= x.us.len() {
+        return none
+      }
+      a.off_reg = x.us[ou]
+      if inside.len() == 3 {
+        let e = inside[2].trim()
+        if !(e.starts_with("lsl #") || e.starts_with("sxtw") || e.starts_with("uxtw")) {
+          return none
+        }
+        a.ext = ", ${e}"
+      } else if inside.len() > 3 {
+        return none
+      }
+    }
+  }
+  a
+}
+
+/// The line of template text t that race_access parses: t itself, or of
+/// a template of several lines its one atomic (the compare and swap's
+/// `mov`, `cas`, `cmp`, `cset`); "" for several lines with no atomic or
+/// more than one (the hand written crypto templates: not instrumented).
+fn race_line(t: Str) -> Str {
+  let s = t.trim()
+  if !s.contains("\n") {
+    return s
+  }
+  var found = ""
+  var n = 0
+  for l in s.split("\n") {
+    let l2 = l.trim()
+    let sp = l2.find(" ") ?? -1
+    let mn = if sp < 0 { l2 } else { l2[0..sp] }
+    if mn.starts_with("ldar") || mn.starts_with("stlr") || race_lse(mn) {
+      found = l2
+      n += 1
+    }
+  }
+  if n == 1 { found } else { "" }
+}
+
+/// Whether mnemonic mn is an LSE read modify write (ldadd, ldclr, ldset,
+/// ldeor, swp, cas and their ordered and sized forms).
+fn race_lse(mn: Str) -> Bool {
+  mn.starts_with("ldadd") || mn.starts_with("ldclr") || mn.starts_with("ldset") || mn.starts_with("ldeor") || mn.starts_with("swp") || mn.starts_with("cas")
+}
+
+/// Whether instruction text t sets the condition flags.
+fn race_sets_flags(t: Str) -> Bool {
+  let s = t.trim()
+  s.starts_with("cmp ") || s.starts_with("cmn ") || s.starts_with("tst ") || s.starts_with("adds ") || s.starts_with("subs ") || s.starts_with("ands ") || s.starts_with("ccmp ") || s.starts_with("ccmn ") || s.starts_with("fcmp ") || s.starts_with("negs ") || s.starts_with("bics ") || s.starts_with("adcs ") || s.starts_with("sbcs ")
+}
+
+/// Whether instruction text t reads the condition flags.
+fn race_reads_flags(t: Str) -> Bool {
+  let s = t.trim()
+  s.starts_with("csel ") || s.starts_with("cset ") || s.starts_with("csetm ") || s.starts_with("csinc ") || s.starts_with("csinv ") || s.starts_with("csneg ") || s.starts_with("cinc ") || s.starts_with("cinv ") || s.starts_with("cneg ") || s.starts_with("ccmp ") || s.starts_with("ccmn ") || s.starts_with("adc ") || s.starts_with("adcs ") || s.starts_with("sbc ") || s.starts_with("sbcs ") || s.starts_with("fcsel ")
+}
+
+/// Whether the flags are live across instruction i of block b: set
+/// before it (no call between) and read after it (before they are set
+/// again), or read by the block's conditional branch with no setter
+/// between.
+fn (g: G) race_flags_live(b: Int, i: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  var set = false
+  var k = i - 1
+  while k >= 0 {
+    let x = ins[k]
+    if x.kind != K_PLAIN {
+      break
+    }
+    if race_sets_flags(x.text) {
+      set = true
+      break
+    }
+    k -= 1
+  }
+  if !set {
+    return false
+  }
+  k = i + 1
+  while k < ins.len() {
+    let x = ins[k]
+    if x.kind == K_CONDBR {
+      // a branch whose text is empty reads the flags set before it
+      return x.text.is_empty() && !(x.cond is "cbz" | "cbnz" | "tbz" | "tbnz")
+    }
+    if x.kind != K_PLAIN {
+      return false
+    }
+    if race_reads_flags(x.text) {
+      return true
+    }
+    if race_sets_flags(x.text) {
+      return false
+    }
+    k += 1
+  }
+  false
+}
+
+/// The instructions that put access a's address in a new vreg.
+fn (var g: G) race_addr(a: RaceAccess, var out: List[Inst]) -> Int {
+  let d = g.new_vreg(false)
+  if a.off_reg >= 0 {
+    out.push(Inst{kind: K_PLAIN, text: "add $d0, $u0, $u1${a.ext}", defs: [d], us: [a.base, a.off_reg]})
+  } else if a.off >= 0 && a.off < 4096 {
+    out.push(Inst{kind: K_PLAIN, text: "add $d0, $u0, #${a.off}", defs: [d], us: [a.base]})
+  } else if a.off < 0 && a.off > -4096 {
+    out.push(Inst{kind: K_PLAIN, text: "sub $d0, $u0, #${0 - a.off}", defs: [d], us: [a.base]})
+  } else {
+    let k = g.new_vreg(false)
+    out.push(Inst{kind: K_PLAIN, text: mov_imm(a.off), defs: [k]})
+    out.push(Inst{kind: K_PLAIN, text: "add $d0, $u0, $u1", defs: [d], us: [a.base, k]})
+  }
+  d
+}
+
+/// A call of ThreadSanitizer's function name with the address in vreg d.
+fn (g: G) race_call(name: Str, d: Int, line: Int) -> Inst {
+  Inst{kind: K_CALL, sym: g.sym(name), srcs: [rsrc(d)], us: [d], line: line}
+}
+
+/// ThreadSanitizer's access function for a: __tsan_read8, __tsan_write2.
+fn race_fn(a: RaceAccess) -> Str {
+  let n = if a.size is 1 | 2 | 4 | 8 | 16 { a.size } else { 8 }
+  if a.kind == 1 { "__tsan_read${n}" } else { "__tsan_write${n}" }
+}
+
+/// Whether a function of the source file is the runtime's, which --race
+/// does not instrument (decision 0273 mode 2, as compiler/llvm func.xo
+/// race_unchecked): std/native/llrt but atomic.xo.
+fn race_unchecked(file: Str) -> Bool {
+  (file.contains("/native/llrt/") || file.starts_with("native/llrt/")) && !file.ends_with("llrt/atomic.xo")
+}
+
+/// race_instrument: the ThreadSanitizer calls of the function (see the
+/// top of the file); none in the runtime's (race_unchecked), nor in the
+/// runtime's code inlined into the program's (an instruction's innermost
+/// inline site names the file it came from).
+fn (var g: G) race_instrument() {
+  if race_unchecked(g.f.file) {
+    return
+  }
+  var skip_site: List[Bool] = []
+  for s in g.f.inl_sites {
+    skip_site.push(race_unchecked(s.file))
+  }
+  for b in 0..g.blocks.len() {
+    let ins = g.blocks[b].insts
+    var out: List[Inst] = []
+    for (i, x) in ins.indexed() {
+      let a = race_access(x)
+      if a.kind == 0 || (x.inl >= 0 && x.inl < skip_site.len() && skip_site[x.inl]) || g.race_flags_live(b, i) {
+        out.push(x)
+        continue
+      }
+      if a.atomic {
+        if a.rel {
+          let d = g.race_addr(a, out)
+          out.push(g.race_call("__tsan_release", d, x.line))
+        }
+        out.push(x)
+        if a.acq {
+          var after: List[Inst] = []
+          let d = g.race_addr(a, after)
+          for y in after {
+            out.push(y)
+          }
+          out.push(g.race_call("__tsan_acquire", d, x.line))
+        }
+        continue
+      }
+      let d = g.race_addr(a, out)
+      out.push(g.race_call(race_fn(a), d, x.line))
+      out.push(x)
+    }
+    g.blocks[b].insts = out
+  }
+}

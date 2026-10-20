@@ -461,21 +461,16 @@ func TestDeadlock(t *testing.T) {
 // ordered the fibers of a thread and only a race with the worker's own
 // context was seen (gotchas/tsan-fiber-switch-sync.md).
 func TestTSanSameThreadRace(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a program with ThreadSanitizer")
-	}
-	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
-		t.Skipf("ThreadSanitizer does not run here: %s", why)
-	}
-	ir, err := xotool.LLVMIRRace(filepath.Join("testdata", "tsan_race"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ll := filepath.Join(t.TempDir(), "prog.ll")
-	if err := os.WriteFile(ll, ir, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	sameThreadRace(t, raceBuild(t, "tsan_race", xotool.BackendLLVM))
+}
+
+// TestTSanSameThreadRaceArm64 is TestTSanSameThreadRace on the arm64
+// backend's --race (decision 0273 part 2).
+func TestTSanSameThreadRaceArm64(t *testing.T) {
+	sameThreadRace(t, raceBuild(t, "tsan_race", xotool.BackendArm64))
+}
+
+func sameThreadRace(t *testing.T, bin string) {
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS=1")
 	var stdout, stderr bytes.Buffer
@@ -503,21 +498,67 @@ func TestTSanSameThreadRace(t *testing.T) {
 // default. The table is what the runtime's explicit acquire and release
 // (tasks.xo, chan.xo, selects.xo, mutex.xo) are trusted by.
 func TestRaceSyncTable(t *testing.T) {
+	raceSyncTable(t, raceBuild(t, "race_sync", xotool.BackendLLVM))
+}
+
+// TestRaceSyncTableArm64 is TestRaceSyncTable on the arm64 backend's
+// --race (decision 0273 part 2: compiler/arm64 race.xo instruments the
+// program's loads, stores, and atomics; the runtime is mode 2's).
+func TestRaceSyncTableArm64(t *testing.T) {
+	raceSyncTable(t, raceBuild(t, "race_sync", xotool.BackendArm64))
+}
+
+// raceBuild builds testdata/name with --race (decision 0273 mode 2) on
+// backend: llvm (its IR through clang's -fsanitize=thread) or arm64 (its
+// assembly, already instrumented, linked with clang's ThreadSanitizer
+// runtime).
+func raceBuild(t *testing.T, name, backend string) string {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("builds a program with ThreadSanitizer")
 	}
 	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
 		t.Skipf("ThreadSanitizer does not run here: %s", why)
 	}
-	ir, err := xotool.LLVMIRRace(filepath.Join("testdata", "race_sync"))
+	dir := filepath.Join("testdata", name)
+	if backend == xotool.BackendLLVM {
+		ir, err := xotool.LLVMIRRace(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ll := filepath.Join(t.TempDir(), "prog.ll")
+		if err := os.WriteFile(ll, ir, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	}
+	if !xotool.Arm64Host() {
+		t.Skip("the arm64 backend's --race runs on an arm64 host")
+	}
+	asm, err := xotool.Arm64Race(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ll := filepath.Join(t.TempDir(), "prog.ll")
-	if err := os.WriteFile(ll, ir, 0o644); err != nil {
+	src := filepath.Join(t.TempDir(), "prog.s")
+	if err := os.WriteFile(src, asm, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := tsanBuild(t, []string{"-Wno-override-module"}, []string{ll})
+	// macOS's ld leaves a weak reference nothing defines 0 only when told
+	// (-U), as the xo driver tells it for each
+	var flags []string
+	if runtime.GOOS == "darwin" {
+		seen := map[string]bool{}
+		for _, m := range regexp.MustCompile(`(?m)^\s*\.weak_reference\s+(\S+)`).FindAllSubmatch(asm, -1) {
+			if n := string(m[1]); !seen[n] {
+				seen[n] = true
+				flags = append(flags, "-Wl,-U,"+n)
+			}
+		}
+	}
+	return tsanBuild(t, flags, []string{src})
+}
+
+func raceSyncTable(t *testing.T, bin string) {
 	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add"}
 	for _, c := range cases {
 		for _, threads := range []string{"1", ""} {

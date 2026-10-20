@@ -222,7 +222,9 @@ fn main(os: Os) ! {
   if !(o.linker is "" | "cc" | "macho") {
     fail(os, "--ld=${o.linker}: want cc or macho")
   }
-  if o.race && backend != "llvm" {
+  // the arm64 backend's --race (decision 0273) is in progress: on with
+  // XO_NATIVE_RACE=1 until it links ThreadSanitizer's runtime itself
+  if o.race && backend != "llvm" && !(backend == "arm64" && (os.env.get("XO_NATIVE_RACE") ?? "") == "1") {
     fail(os, "the ${backend} backend does not support --race: use --backend=llvm (ThreadSanitizer) or --backend=go (Go's race detector)")
   }
   if o.holes {
@@ -819,6 +821,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       t = lap(os, phases, "dce", t)
     }
     gm.passes_off = passes_off(os)
+    gm.race = o.race
     gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
     gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
     // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
@@ -832,8 +835,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let sd = dir_name(ctx.std.trim_suffix("/"))
     gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
     // no per-function cache for amd64 yet (its canonical text is
-    // arm64's), nor with passes off (XO_PASSES: its keys do not say so)
-    let (fc, fdir, fpk) = if march == "amd64" || !gm.passes_off.is_empty() { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
+    // arm64's), nor with passes off (XO_PASSES: its keys do not say so),
+    // nor for --race (its instrumented code has the same keys)
+    let (fc, fdir, fpk) = if march == "amd64" || !gm.passes_off.is_empty() || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }

@@ -2,8 +2,9 @@
 
 Status: Proposed (owner decision 2026-10-19, through the lead; Xo Lang 2).
 Part 1 (what --race checks, the two modes) accepted by the lead
-2026-10-20 and implemented on the LLVM backend; parts 2 and 3 (the
-native emitters, the prebuilt runtime) in progress.
+2026-10-20 and implemented on the LLVM backend; part 2 on the arm64
+backend (2026-10-20, behind XO_NATIVE_RACE=1 until part 3); part 3 (the
+prebuilt runtime, Xo's linkers) and amd64 in progress.
 
 ## Context
 
@@ -102,12 +103,47 @@ test run in it, as before. Races inside the runtime are found there and
 by the ordinary tests; a --race build does not exercise Xo's thread
 caches.
 
-### Parts 2 and 3 (to be written)
+### Part 2: the arm64 backend (implemented, behind XO_NATIVE_RACE=1)
 
-- The native emitters (compiler/arm64 race.xo, in progress): a call of
-  `__tsan_readN` or `__tsan_writeN` before each load and store outside the
-  frame, and an atomic's order as `__tsan_acquire` after and
-  `__tsan_release` before; mode 2's runtime unchanged.
+compiler/arm64 race.xo, a pass over a function's machine instructions
+after selection and before register allocation (its calls are K_CALL,
+so the allocator keeps values across them as across any call), when the
+module is built with --race (ssa Module.race):
+
+- each load and store whose address is not in the frame calls
+  `__tsan_readN` or `__tsan_writeN` (N its width: 1, 2, 4, 8, 16; a pair
+  load or store one call of both words) with the address, computed into
+  a new register (`add` or `sub` of the immediate, `add` of a register
+  offset with its extension);
+- an atomic with release order (`stlr`, an LSE read modify write or
+  compare and swap with `l` or `al`) calls `__tsan_release` before it, one
+  with acquire order (`ldar`, `a` or `al`) `__tsan_acquire` after it: the
+  same edges the LLVM backend's instrumentation of an atomic gives;
+- the runtime is not instrumented, as in mode 1's LLVM build: a function
+  of std/native/llrt but atomic.xo (race_unchecked, the same rule as
+  compiler/llvm func.xo's), and an instruction the arm64 inliner copied
+  from such a function into the program's (its innermost inline site's
+  file);
+- not instrumented: frame accesses (sp, x29, outgoing arguments), the
+  hand written templates of several lines (the crypto kernels) but the
+  one atomic line of a template such as compare and swap's `mov`, `cas`,
+  `cmp`, `cset` (race_line), templates with fixed registers, an
+  exclusive load and store pair (a call between them clears the
+  monitor), and an access between an instruction that sets the flags and
+  one that reads them (the call clobbers them).
+
+The per function back-end cache is off with --race (its keys do not say
+so). Until part 3 the driver accepts `--race --backend=arm64` only with
+XO_NATIVE_RACE=1, for `xo asm`, linked with clang's ThreadSanitizer
+runtime (macOS's ld given `-U` for each weak reference). The table above
+holds on it too (internal/llvm TestRaceSyncTableArm64, all 40 runs; the
+first run reported a false race for Atomic add, whose compare and swap,
+a template of four lines, was not instrumented, so its release was
+missing), and TestTSanSameThreadRaceArm64 reports a race between two task
+fibers of one thread. amd64 (the x86 templates) is not instrumented yet.
+
+### Part 3 (to be written)
+
 - The runtime: LLVM compiler-rt's ThreadSanitizer (C++), at a pinned
   revision, built per platform by a maintainer script (never on users'
   machines), shipped in lib/xo/race/<goos>-<goarch>, linked by Xo's own

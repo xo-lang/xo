@@ -380,6 +380,10 @@ pub struct Module {
   /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
   /// passes off to find the one whose output diverges.
   pub passes_off: List[Str] = []
+  /// --race on the arm64 backend (decision 0273): ThreadSanitizer's calls
+  /// at loads, stores, and atomics (compiler/arm64 race.xo); set by the
+  /// driver.
+  pub race: Bool = false
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false
