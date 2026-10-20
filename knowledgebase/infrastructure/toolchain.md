@@ -3580,6 +3580,7 @@ Three scripts:
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
     scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME...]   # a Linux xo of the checkout cross built here, then linux-goldens.sh in Docker (amd64 with no C toolchain); 2026-10-18
     scripts/arm64-identity.sh BASE_XO NEW_XO [BACKEND]    # the arm64 (or amd64) output of every golden and compiler/xo, darwin and linux, byte compared; for changes meant for another target; 2026-10-18
+    scripts/arm64-identity.sh --own-std BASE_XO NEW_XO [BACKEND]    # for a change to std and the compiler together: each xo on its own checkout's std, source positions and label-only lines normalized (gotchas/identity-std-and-compiler.md); 2026-10-20
     scripts/macho-link-compare.sh XO WORK                 # every golden for darwin/amd64 linked by Xo's linker and by Apple's ld, compared layout independently; 2026-10-18
     scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK [BACKEND]   # every golden built for darwin/amd64 here, run on an Intel Mac over ssh in a NEW REMOTE_DIR (nothing deleted there; ask the owner first); 2026-10-18
     scripts/golden-run.sh BINARY GOLDEN_DIR                # one golden, on a writable copy of its directory
