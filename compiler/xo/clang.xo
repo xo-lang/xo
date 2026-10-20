@@ -12,6 +12,38 @@ fn find_clang(os: Os) -> Str {
   look_path(os, "clang")
 }
 
+/// The major version of an LLVM clang (`clang version N...`), or 0 for
+/// none or another compiler: Apple's clang numbers its versions apart
+/// from LLVM's (its 15 is LLVM 16), and a --cc that is not clang has no
+/// such line.
+fn clang_major(os: Os, clang: Str) -> Int {
+  let (out, err) = combined(os, clang, ["--version"])
+  if !err.is_empty() {
+    return 0
+  }
+  parse_clang_major(out)
+}
+
+/// The version line's major number (clang_major), 0 when there is none.
+fn parse_clang_major(out: Str) -> Int {
+  let first = out.split("\n")[0]
+  if first.contains("Apple clang") {
+    return 0
+  }
+  let i = first.find("clang version ") ?? -1
+  if i < 0 {
+    return 0
+  }
+  let rest = first[i + "clang version ".len()..first.len()]
+  let dot = rest.find(".") ?? rest.len()
+  Int.parse(rest[0..dot]) ?? 0
+}
+
+/// The oldest LLVM clang the LLVM backend builds with: the generated IR
+/// calls llvm.threadlocal.address (LLVM 16), which clang 15 links as an
+/// undefined function (gotchas/llvm-thread-local-constant.md).
+const CLANG_MIN = 16
+
 /// ClangTargetAttrs: the LLVM function attributes of the target clang
 /// compiles C for by default (its -target-cpu and -target-feature
 /// arguments, from `clang -###`, decision 0119); "" when clang reports

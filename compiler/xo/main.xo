@@ -662,6 +662,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "the LLVM backend needs clang: install it or set XO_CLANG")
       }
     }
+    let cmaj = clang_major(os, cc)
+    if cmaj > 0 && cmaj < CLANG_MIN {
+      print_diags(os, [check.Diag{code: "XO1505", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "the LLVM backend needs clang ${CLANG_MIN} or later, but ${cc} is clang ${cmaj}: install a newer clang and set XO_CLANG, or build with a native backend (the default)"}])
+      os.proc.exit(1)
+    }
     // DWARF line tables (decision 0239), as for arm64 below
     var lm = b.m
     lm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
