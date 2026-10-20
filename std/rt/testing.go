@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -968,7 +969,10 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 	defer f.n.mu.Unlock()
 	if _, ok := unixPath(addr); ok {
 		// an in memory Unix domain socket (decision 0190)
-		l := &memListener{n: f.n, addr: addr, served: newEvent()}
+		if old := f.n.listeners[addr]; old != nil && !old.closed {
+			return Err[Listener](netErr(4, "address already in use"))
+		}
+		l := &memListener{n: f.n, addr: addr, served: newEvent(), q: memQueue{changed: newEvent()}}
 		f.n.listeners[addr] = l
 		return Ok[Listener, NetErr](Listener{mem: l})
 	}
@@ -980,7 +984,11 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		f.n.nextPort++
 		port = fmt.Sprint(49151 + f.n.nextPort)
 	}
-	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent()}
+	if old := f.n.listeners[host+":"+port]; old != nil && !old.closed {
+		return Err[Listener](netErr(4, "address already in use"))
+	}
+	pn, _ := strconv.Atoi(port)
+	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent(), q: memQueue{changed: newEvent()}, port: pn}
 	f.n.listeners[l.addr] = l
 	if host == "127.0.0.1" {
 		f.n.listeners["localhost:"+port] = l
@@ -988,12 +996,34 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 	return Ok[Listener, NetErr](Listener{mem: l})
 }
 
-// M_dial fails: raw connections are not faked.
+// M_dial connects to the in memory listener at addr (decision 0292):
+// Refused when there is none; else the connection waits in its backlog
+// for accept.
 func (f Testing_FakeNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
 	if f.n.real != nil {
 		return f.n.real.M_dial(tk, addr)
 	}
-	return Err[Conn](netErr(2, ""))
+	if tk.Canceled() {
+		return Err[Conn](netErr(5, ""))
+	}
+	f.n.mu.Lock()
+	l := f.n.listeners[addr]
+	if l != nil && l.closed {
+		l = nil
+	}
+	if l != nil {
+		f.n.nextPort++
+	}
+	port := 49151 + f.n.nextPort
+	f.n.mu.Unlock()
+	if l == nil {
+		return Err[Conn](netErr(2, ""))
+	}
+	client, server := newMemPair(l.addr, port)
+	if !l.q.push(server) {
+		return Err[Conn](netErr(2, ""))
+	}
+	return Ok[Conn, NetErr](Conn{c: client})
 }
 
 func matchFake(method, prefix string, r *route, req Http_Request, rawURL string) (Map[string, string], bool) {
@@ -1070,12 +1100,26 @@ type memListener struct {
 	n      *fakeNet
 	addr   string
 	served *event // fired when serve starts
+	// the raw connections dialed to it (decision 0292)
+	q      memQueue
+	port   int
+	closed bool
 
 	mu       sync.Mutex
 	r        *Http_Router
 	stop     *stopState // of the serving program
 	inflight int
 	drained  *event // fired when inflight drops to 0 while draining
+}
+
+// close stops the listener's raw connections (decision 0292): a waiting
+// accept fails, the queued connections are reset, and its address is
+// free again.
+func (l *memListener) close() {
+	l.n.mu.Lock()
+	l.closed = true
+	l.n.mu.Unlock()
+	l.q.close()
 }
 
 // begin starts a request on the listener: it reports the router and the

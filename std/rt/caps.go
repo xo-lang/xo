@@ -532,6 +532,10 @@ func (l Listener) M_accept(tk *Task) Result[Conn, NetErr] {
 		return Err[Conn](netErr(5, ""))
 	}
 	return fx(tk, "net.accept", true, nil, func() Result[Conn, NetErr] {
+		if l.mem != nil {
+			// FakeNet (decision 0292): the next dialed connection
+			return l.mem.q.accept(tk)
+		}
 		if l.l == nil {
 			return Err[Conn](netErr(4, "accept on a listener without a socket"))
 		}
@@ -562,6 +566,9 @@ func (l Listener) M_close(*Task) {
 	if l.l != nil {
 		l.l.Close()
 	}
+	if l.mem != nil {
+		l.mem.close()
+	}
 }
 
 // M_read is `c.read(max)` (decision 0071): at most max bytes (at most 1
@@ -579,6 +586,9 @@ func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 		}
 		if connUpgraded(c.c) {
 			return Err[Option[Bytes]](netErr(4, upgradedText))
+		}
+		if m, ok := c.c.(*memEnd); ok {
+			return m.read(tk, max)
 		}
 		buf := make([]byte, min(max, 1<<20))
 		var n int
@@ -611,6 +621,9 @@ func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 		}
 		if connUpgraded(c.c) {
 			return Err[Unit](netErr(4, upgradedText))
+		}
+		if m, ok := c.c.(*memEnd); ok {
+			return m.write(tk, data)
 		}
 		canceled, err := interruptible(tk, c.c.SetWriteDeadline, func() error {
 			_, e := c.c.Write([]byte(data))

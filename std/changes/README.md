@@ -23,3 +23,4 @@ entries yet.
 - [sql.md](sql.md): std/sql (spec/std.md 10)
 - [netip.md](netip.md): std/netip (spec/std.md 28)
 - [prelude.md](prelude.md): the prelude (builtin types and capabilities, spec/std.md 1 to 3)
+- [testing.md](testing.md): std/testing (spec/std.md 8)

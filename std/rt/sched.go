@@ -44,9 +44,12 @@ const (
 	waitAccept
 	waitMutexRead
 	waitGoCall
+	waitNetAccept
+	waitNetRead
+	waitNetWrite
 )
 
-var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)", "Mutex.with_read", "Go call"}
+var waitOps = [...]string{"", "receive", "send", "select", "Mutex.with", "Semaphore.with", "await", "scope end", "Once.get", "sleep", "with_timeout", "stop wait", "serve", "drain", "advance", "connect (the listener is not served yet)", "Mutex.with_read", "Go call", "accept", "read", "write"}
 
 // waitTarget is an object a thread can block on. It describes itself for
 // reports and names the threads that can end the wait, when they are known

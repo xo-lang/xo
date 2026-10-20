@@ -1,0 +1,98 @@
+// FakeNet's raw connections (decision 0292, std.md 8.1): a test's dial
+// reaches its in memory listener; accept gives the paired end; 64 KiB
+// per direction; close ends the peer's stream and fails its writes; a
+// closed listener resets its backlog; Refused without a listener;
+// "address already in use"; also natively (cmd/xo TestNoGCTests).
+use std/tls
+
+/// Reads until the end of the stream.
+fn read_all(c: Conn) -> Bytes ! NetErr uses net {
+  var b = BytesBuilder.new()
+  while true {
+    match c.read(65536)? {
+      Some(x) => b.write(x)
+      None => break
+    }
+  }
+  b.freeze()
+}
+
+test "a dial reaches the listener at its address, both ways" {
+  let l = os.net.listen("db.test:5432")?
+  expect(l.addr()) == "db.test:5432"
+  let server = os.tasks.spawn(fn() ! NetErr {
+    let s = l.accept()?
+    let got = s.read(100)? ?? b""
+    s.write(b"echo: " + got)?
+    s.close()
+  })
+  let c = os.net.dial("db.test:5432")?
+  c.write(b"hello")?
+  expect(read_all(c)?) == b"echo: hello"
+  server.await?
+  c.close()
+}
+
+test "a dial without a listener is Refused" {
+  match os.net.dial("nothing.test:1") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "Refused"
+  }
+}
+
+test "a second listener on a busy address fails" {
+  let l = os.net.listen("127.0.0.1:7000")?
+  match os.net.listen("127.0.0.1:7000") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "Io(msg: \"address already in use\")"
+  }
+  l.close()
+  let again = os.net.listen("127.0.0.1:7000")?
+  again.close()
+}
+
+test "a write larger than the buffer waits for the reader" {
+  let l = os.net.listen(":0")?
+  let big = "x".repeat(200000).bytes()
+  let writer = os.tasks.spawn(fn() ! NetErr {
+    let c = os.net.dial(l.addr())?
+    c.write(big)?
+    c.close()
+  })
+  let s = l.accept()?
+  expect(read_all(s)?.len()) == 200000
+  writer.await?
+}
+
+test "writing to a closed peer fails; a closed listener resets its backlog" {
+  let l = os.net.listen(":0")?
+  let c = os.net.dial(l.addr())?
+  let s = l.accept()?
+  s.close()
+  expect(c.read(10)?) == None
+  match c.write(b"late") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}") == "Io(msg: \"write tcp: connection reset by peer\")"
+  }
+  let queued = os.net.dial(l.addr())?
+  l.close()
+  expect(queued.read(10)?) == None
+  match l.accept() {
+    Ok(_) => expect(false) == true
+    Err(e) => expect("${e}".contains("closed")) == true
+  }
+}
+
+test "tls.client passes a FakeNet connection's bytes through" {
+  let l = os.net.listen("pg.test:5432")?
+  let server = os.tasks.spawn(fn() ! NetErr {
+    let s = l.accept()?
+    let got = s.read(100)? ?? b""
+    s.write(got + b"!")?
+  })
+  let c = os.net.dial("pg.test:5432")?
+  let t = tls.client(c, "pg.test")?
+  t.write(b"plain")?
+  expect(t.read(100)?) == Some(b"plain!")
+  server.await?
+}

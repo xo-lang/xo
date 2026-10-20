@@ -1587,6 +1587,22 @@ fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, incl
   a real socket's backlog (a test that never serves it reports a deadlock
   naming the wait); after `serve` returns, requests fail with
   `ClientErr.Connect`.
+- Raw connections (decision 0292): `os.net.dial(addr)` connects to the
+  open in memory listener at `addr` and returns at once, the connection
+  waiting in the listener's backlog until `accept()` returns its other
+  end; without one it fails with `Refused`. `listen` takes a host name
+  too (`listen("db.test:5432")` listens at exactly that address, so a
+  program dialing its configured host reaches the fake), and fails with
+  `Io("address already in use")` while another listener has the
+  address. What one end writes the other reads, in order; a read returns
+  what is buffered (at most the size asked) and waits while nothing is;
+  each direction buffers 64 KiB and a write waits for room. Closing one
+  end ends the other's reads (`None` after the bytes it holds) and fails
+  its writes (`Io("write tcp: connection reset by peer")`); closing the
+  listener resets the connections still in its backlog. Reads, writes,
+  and accept are task waits (cancellation, the virtual clock, the
+  deadlock report), and `tls.client` passes the bytes through as on
+  every FakeNet connection (27).
 
 ### 8.2 FakeClock
 

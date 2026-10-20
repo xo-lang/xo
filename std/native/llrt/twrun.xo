@@ -71,7 +71,9 @@ const TW_EPOCH = 1767225600000000000
 /// the requests running, the clients waiting in begin (they hold no
 /// reference), whether the listener is gone (the last waiting client
 /// frees this), its wait list (accept, clients waiting for serve,
-/// drain: two words), and the next record.
+/// drain: two words), the next record, and its backlog of raw
+/// connections dialed to it (decision 0292: the first and last ME
+/// records, linked by ME_QNEXT).
 const ML_L = 0
 const ML_ADDR = 8
 const ML_ALIAS = 16
@@ -83,7 +85,31 @@ const ML_NBEGIN = 56
 const ML_FREED = 64
 const ML_WAITERS = 72
 const ML_NEXT = 88
-const ML_SIZE = 96
+const ML_QHEAD = 96
+const ML_QTAIL = 104
+const ML_SIZE = 112
+
+/// One direction of a raw in memory connection (decision 0292, std/rt's
+/// memPipe): a ring of PIPE_CAP bytes (a heap block), the offset of its
+/// first byte and the bytes held, whether the writer closed (reads end
+/// after the bytes held) and whether the reader closed (writes fail),
+/// its wait list (two words), and the ends that still hold it.
+const P_BUF = 0
+const P_START = 8
+const P_LEN = 16
+const P_WCLOSED = 24
+const P_RCLOSED = 32
+const P_WAITERS = 40
+const P_REFS = 56
+const P_SIZE = 64
+const PIPE_CAP = 65536
+
+/// One end of a raw in memory connection: the pipe it reads, the pipe it
+/// writes, and the next end in a listener's backlog.
+const ME_IN = 0
+const ME_OUT = 8
+const ME_QNEXT = 16
+const ME_SIZE = 24
 
 /// A listener's mem (netconn.xo L_MEM, asserted in xo_rt.c): the ML record.
 const L_MEM = 32
@@ -401,8 +427,11 @@ fn blk_str(b: Int) -> Str { raw.str_at(b + 8, ld(b, 0)) }
 fn blk_eq(b: Int, p: Int, n: Int) -> Bool { b != 0 && ld(b, 0) == n && raw.mem_eq(b + 8, p, n) }
 
 /// Wakes every waiter of listener ml (xo_rt.c wl_wake).
-fn wake(ml: Int) {
-  var e = ld(ml, ML_WAITERS)
+fn wake(ml: Int) { wake_list(ml + ML_WAITERS) }
+
+/// Wakes every waiter of the wait list at l.
+fn wake_list(l: Int) {
+  var e = ld(l, 0)
   while e != 0 {
     tasks.park_signal(ld(e, 0))
     e = ld(e, 16)
@@ -502,6 +531,7 @@ pub fn ml_free(ml: Int) {
   st(ml, ML_ROUTER, 0)
   st(ml, ML_CLOSED, 1)
   st(ml, ML_L, 0)
+  backlog_reset(ml)
   wake(ml)
   let keep = ld(ml, ML_NBEGIN) > 0
   st(ml, ML_FREED, if keep { 1 } else { 0 })
@@ -514,28 +544,244 @@ pub fn ml_free(ml: Int) {
   }
 }
 
-/// The listener of ml closes.
+/// The listener of ml closes: a waiting accept fails, and the raw
+/// connections in its backlog are reset.
 pub fn ml_close(ml: Int) {
   lock()
   st(ml, ML_CLOSED, 1)
+  backlog_reset(ml)
   wake(ml)
   unlock()
 }
 
-/// accept on ml: waits until the listener closes (true) or the task is
-/// canceled (false); requests reach a served router in process, never as
+/// accept on ml: the next raw connection dialed to it (an ME record,
+/// decision 0292), 0 when the listener closes, -1 when the task is
+/// canceled; HTTP requests reach a served router in process, never as
 /// connections.
-pub fn ml_accept(ml: Int) -> Bool {
+pub fn ml_accept(ml: Int) -> Int {
   lock()
-  var ok = true
-  while ld(ml, ML_CLOSED) == 0 {
+  while true {
+    let q = ld(ml, ML_QHEAD)
+    if q != 0 {
+      st(ml, ML_QHEAD, ld(q, ME_QNEXT))
+      if ld(ml, ML_QHEAD) == 0 {
+        st(ml, ML_QTAIL, 0)
+      }
+      st(q, ME_QNEXT, 0)
+      unlock()
+      return q
+    }
+    if ld(ml, ML_CLOSED) != 0 {
+      unlock()
+      return 0
+    }
     if !wait(ml) {
-      ok = false
-      break
+      unlock()
+      return -1
     }
   }
+  0
+}
+
+// ---------------------------------------------------------------------------
+// Raw in memory connections (decision 0292, std/rt memconn.go)
+
+fn pipe_new() -> Int {
+  let p = rt.heap_large(P_SIZE)
+  rt.mem_set(p, 0, P_SIZE)
+  st(p, P_BUF, rt.heap_large(PIPE_CAP))
+  st(p, P_REFS, 2)
+  p
+}
+
+/// Drops an end's hold on pipe p, freeing it with the last; the lock
+/// held.
+fn pipe_drop(p: Int) {
+  st(p, P_REFS, ld(p, P_REFS) - 1)
+  if ld(p, P_REFS) == 0 {
+    rt.heap_release(ld(p, P_BUF) - 8)
+    rt.heap_release(p - 8)
+  }
+}
+
+/// Closes end me, the lock held: its peer's reads end after the bytes
+/// held and its peer's writes fail.
+fn me_close_locked(me: Int) {
+  let out = ld(me, ME_OUT)
+  st(out, P_WCLOSED, 1)
+  wake_list(out + P_WAITERS)
+  let inp = ld(me, ME_IN)
+  st(inp, P_RCLOSED, 1)
+  st(inp, P_LEN, 0)
+  wake_list(inp + P_WAITERS)
+}
+
+/// Closes and frees end me, the lock held.
+fn me_release(me: Int) {
+  me_close_locked(me)
+  pipe_drop(ld(me, ME_IN))
+  pipe_drop(ld(me, ME_OUT))
+  rt.heap_release(me - 8)
+}
+
+/// Resets the raw connections in ml's backlog (closed, freed), the lock
+/// held.
+fn backlog_reset(ml: Int) {
+  var q = ld(ml, ML_QHEAD)
+  while q != 0 {
+    let next = ld(q, ME_QNEXT)
+    me_release(q)
+    q = next
+  }
+  st(ml, ML_QHEAD, 0)
+  st(ml, ML_QTAIL, 0)
+}
+
+/// FakeNet.dial(addr) (netconn.xo dial in the test world): the dialer's
+/// end of a new raw connection, its other end queued in the backlog of
+/// the open listener at addr; 0 when there is none (Refused).
+pub fn dial(addr: Str) -> Int {
+  lock()
+  let ml = find(addr, false)
+  if ml == 0 || ld(ml, ML_CLOSED) != 0 {
+    unlock()
+    return 0
+  }
+  let a = pipe_new()
+  let b = pipe_new()
+  let client = rt.heap_large(ME_SIZE)
+  let server = rt.heap_large(ME_SIZE)
+  st(client, ME_IN, a)
+  st(client, ME_OUT, b)
+  st(client, ME_QNEXT, 0)
+  st(server, ME_IN, b)
+  st(server, ME_OUT, a)
+  st(server, ME_QNEXT, 0)
+  let tail = ld(ml, ML_QTAIL)
+  if tail == 0 {
+    st(ml, ML_QHEAD, server)
+  } else {
+    st(tail, ME_QNEXT, server)
+  }
+  st(ml, ML_QTAIL, server)
+  wake(ml)
   unlock()
-  ok
+  client
+}
+
+/// Whether an open listener has the address addr (host:port; a host
+/// left out is 127.0.0.1), for FakeNet.listen's "address already in
+/// use"; port 0 picks a free one.
+pub fn in_use(addr: Str) -> Bool {
+  if addr.starts_with("unix:") {
+    lock()
+    let m = find(addr, false)
+    let busy = m != 0 && ld(m, ML_CLOSED) == 0
+    unlock()
+    return busy
+  }
+  let i = last_colon(addr)
+  if i < 0 || i == addr.len() - 1 || raw.str_slice(addr, i + 1, addr.len()) == "0" {
+    return false
+  }
+  let hp = if i == 0 { "127.0.0.1${addr}" } else { addr }
+  lock()
+  let m = find(hp, false)
+  let busy = m != 0 && ld(m, ML_CLOSED) == 0
+  unlock()
+  busy
+}
+
+/// Reads at most max bytes from end me into a: the count, 0 at the end
+/// of the stream, -1 canceled, -2 when me is closed.
+pub fn me_read(me: Int, a: Int, max: Int) -> Int {
+  lock()
+  let p = ld(me, ME_IN)
+  while true {
+    if ld(p, P_RCLOSED) != 0 {
+      unlock()
+      return -2
+    }
+    let held = ld(p, P_LEN)
+    if held > 0 {
+      let n = if held < max { held } else { max }
+      let start = ld(p, P_START)
+      let first = if start + n <= PIPE_CAP { n } else { PIPE_CAP - start }
+      rt.mem_copy(a, ld(p, P_BUF) + start, first)
+      if first < n {
+        rt.mem_copy(a + first, ld(p, P_BUF), n - first)
+      }
+      st(p, P_START, (start + n) % PIPE_CAP)
+      st(p, P_LEN, held - n)
+      wake_list(p + P_WAITERS)
+      unlock()
+      return n
+    }
+    if ld(p, P_WCLOSED) != 0 {
+      unlock()
+      return 0
+    }
+    if !tasks.wl_wait_as(ctx.cur(), lock_word(), p + P_WAITERS, true, 0) {
+      unlock()
+      return -1
+    }
+  }
+  0
+}
+
+/// Writes the n bytes at a to end me, waiting while its pipe is full: 0,
+/// or -1 canceled, -2 when me is closed, -3 when the peer closed.
+pub fn me_write(me: Int, a: Int, n: Int) -> Int {
+  lock()
+  let p = ld(me, ME_OUT)
+  var off = 0
+  while true {
+    if ld(p, P_WCLOSED) != 0 {
+      unlock()
+      return -2
+    }
+    if ld(p, P_RCLOSED) != 0 {
+      unlock()
+      return -3
+    }
+    let held = ld(p, P_LEN)
+    let room = PIPE_CAP - held
+    if room > 0 && off < n {
+      let k = if room < n - off { room } else { n - off }
+      let at = (ld(p, P_START) + held) % PIPE_CAP
+      let first = if at + k <= PIPE_CAP { k } else { PIPE_CAP - at }
+      rt.mem_copy(ld(p, P_BUF) + at, a + off, first)
+      if first < k {
+        rt.mem_copy(ld(p, P_BUF), a + off + first, k - first)
+      }
+      st(p, P_LEN, held + k)
+      off += k
+      wake_list(p + P_WAITERS)
+    }
+    if off == n {
+      unlock()
+      return 0
+    }
+    if !tasks.wl_wait_as(ctx.cur(), lock_word(), p + P_WAITERS, true, 0) {
+      unlock()
+      return -1
+    }
+  }
+  0
+}
+
+/// `c.close()` of end me.
+pub fn me_close(me: Int) {
+  lock()
+  me_close_locked(me)
+  unlock()
+}
+
+/// The connection of end me is freed.
+pub fn me_free(me: Int) {
+  lock()
+  me_release(me)
+  unlock()
 }
 
 /// The ML record of listener l, or 0 when it is a real one.

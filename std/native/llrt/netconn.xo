@@ -46,11 +46,14 @@ const L_MEM = 32
 const L_UNLINK = 40
 const L_SIZE = 48
 
-/// A connection (xo_rt.c xo_conn): its descriptor, and whether std/tls
-/// took it over (decision 0281: then its own read and write fail).
+/// A connection (xo_rt.c xo_conn): its descriptor, whether std/tls
+/// took it over (decision 0281: then its own read and write fail), and
+/// in the test world its end of a raw in memory connection (twrun.xo ME,
+/// decision 0292; then the descriptor is 0).
 const C_PD = 16
 const C_UP = 24
-const C_SIZE = 32
+const C_MEM = 32
+const C_SIZE = 40
 
 /// The error of a read or write on a connection std/tls took over.
 const UPGRADED_TEXT = "use of a connection upgraded to TLS"
@@ -472,6 +475,18 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
   let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
   st(cn, C_PD, pd)
   st(cn, C_UP, 0)
+  st(cn, C_MEM, 0)
+  ok(c)
+  cn
+}
+
+/// The connection of end me of a raw in memory connection (decision
+/// 0292).
+fn conn_new_mem(c: Int, me: Int) -> Int {
+  let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
+  st(cn, C_PD, 0)
+  st(cn, C_UP, 0)
+  st(cn, C_MEM, me)
   ok(c)
   cn
 }
@@ -492,7 +507,12 @@ pub fn conn_upgraded(cn: Int) -> Bool { ld(cn, C_UP) != 0 }
 
 /// A connection's free function (the services record's).
 pub fn conn_free(cn: Int) {
-  poll.pd_free(ld(cn, C_PD))
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    twrun.me_free(me)
+  } else {
+    poll.pd_free(ld(cn, C_PD))
+  }
   obj.free_obj(cn)
 }
 
@@ -536,6 +556,10 @@ pub fn listen(lists: Str, addr: Str) -> Int {
   }
   if twflags.fake(TW_REAL_NET) {
     // FakeNet.listen: an in memory listener (std/rt's memListener)
+    if twrun.in_use(addr) {
+      fail(c, 4, "address already in use")
+      return 0
+    }
     let l = new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
     let ml = twrun.listen(addr, l)
     st(l, L_MEM, ml)
@@ -705,9 +729,14 @@ pub fn listener_accept(l: Int) -> Int {
   // only the test world makes in memory listeners (folded elsewhere,
   // decision 0246)
   if twflags.on() && ml != 0 {
-    // the test world: requests reach a served router in process, never
-    // as connections, so accept waits until the listener closes
-    if !twrun.ml_accept(ml) {
+    // the test world: the next raw connection dialed to it (decision
+    // 0292); HTTP requests reach a served router in process, never as
+    // connections
+    let me = twrun.ml_accept(ml)
+    if me > 0 {
+      return conn_new_mem(c, me)
+    }
+    if me < 0 {
       fail(c, 5, "")
     } else {
       fail(c, 4, "accept tcp ${a}: ${CLOSED_TEXT}")
@@ -792,9 +821,14 @@ pub fn dial_timeout(addr: Str, d: Int) -> Int {
     return 0
   }
   if twflags.fake(TW_REAL_NET) {
-    // FakeNet.dial: raw connections are not faked (Refused)
-    fail(c, 2, "")
-    return 0
+    // FakeNet.dial (decision 0292): the in memory listener at addr, or
+    // Refused without one
+    let me = twrun.dial(addr)
+    if me == 0 {
+      fail(c, 2, "")
+      return 0
+    }
+    return conn_new_mem(c, me)
   }
   if addr.starts_with("unix:") {
     return unix_dial(c, addr, when)
@@ -944,6 +978,23 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
     fail(c, 4, UPGRADED_TEXT)
     return 0
   }
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    let buf = raw.bytes_buf(max)
+    let r = twrun.me_read(me, raw.bytes_addr(buf), max)
+    if r > 0 {
+      ok(c)
+      return read_list(buf, r, np)
+    }
+    if r == 0 {
+      ok(c)
+    } else if r == -1 {
+      fail(c, 5, "")
+    } else {
+      fail(c, 4, "read tcp: ${CLOSED_TEXT}")
+    }
+    return 0
+  }
   let pd = ld(cn, C_PD)
   if !poll.pd_begin(pd) {
     fail(c, 4, "read tcp: ${CLOSED_TEXT}")
@@ -957,7 +1008,7 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
     if r > 0 {
       poll.pd_end(pd)
       ok(c)
-      return list_of(rt.cast[Bytes, Str](raw.bytes_len(buf, r)), np)
+      return read_list(buf, r, np)
     }
     if r == 0 {
       poll.pd_end(pd)
@@ -987,6 +1038,11 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
   0
 }
 
+/// The first r bytes read into buf as a read's result list (the bytes a
+/// connection read are the program's own data, not text to validate:
+/// decision 0259's one cast of this file).
+fn read_list(buf: Bytes, r: Int, np: Int) -> Int { list_of(rt.cast[Bytes, Str](raw.bytes_len(buf, r)), np) }
+
 /// `c.write(data)` of the n bytes at p: writes every byte.
 pub fn conn_write(cn: Int, p: Int, n: Int) {
   let c = ctx.cur()
@@ -996,6 +1052,20 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
   }
   if ld(cn, C_UP) != 0 {
     fail(c, 4, UPGRADED_TEXT)
+    return
+  }
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    let r = twrun.me_write(me, p, n)
+    if r == 0 {
+      ok(c)
+    } else if r == -1 {
+      fail(c, 5, "")
+    } else if r == -2 {
+      fail(c, 4, "write tcp: ${CLOSED_TEXT}")
+    } else {
+      fail(c, 4, "write tcp: connection reset by peer")
+    }
     return
   }
   let pd = ld(cn, C_PD)
@@ -1037,4 +1107,11 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
 }
 
 /// `c.close()`.
-pub fn conn_close(cn: Int) { poll.pd_close(ld(cn, C_PD)) }
+pub fn conn_close(cn: Int) {
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    twrun.me_close(me)
+    return
+  }
+  poll.pd_close(ld(cn, C_PD))
+}
