@@ -1986,11 +1986,10 @@ pub fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: 
 
 ### 10.8 Postgres
 
-Status: implemented natively (decision 0278 stage C, 2026-10-20)
-without TLS yet: `sslmode` `require` and stronger need `tls.client`
-(decision 0281) and fail with `Conn` until it lands, so a network
-database is opened with `sslmode=disable` for now. The Go backend
-reports an unknown driver.
+Status: implemented natively (decision 0278 stage C, 2026-10-20), TLS
+through std/tls's `tls.client` (decision 0281); checked against pgx on
+PostgreSQL 17 and 14, and 17 with TLS (scripts/pg-diff.sh). The Go
+backend reports an unknown driver.
 
 ```
 let db = sql.open(os.net, "postgres", "postgres://app:${pw}@db.internal:5432/app?sslmode=verify-full")?
@@ -2035,13 +2034,15 @@ string and the arguments (read variables with `Env` and build the
 string). The password never appears in errors, logs, or `Debug` of a
 `Db`.
 
-**TLS** (`Conn.tls_client`, 3.2), by `sslmode`:
+**TLS** (std/tls's `tls.client`, 27: SSLRequest in plain text, then the
+handshake on the same connection), by `sslmode`:
 
 | sslmode | TLS | Verification |
 |---|---|---|
 | `disable` | never | none |
+| `allow` | only when a plain connection is refused | none |
 | `prefer` | when the server accepts SSLRequest | none |
-| `require` | always (else `Conn`) | none: encrypted, server not authenticated |
+| `require` | always (else `Conn("server refused TLS connection")`) | none: encrypted, server not authenticated; the chain when `roots` is given (libpq's rule, as pgx) |
 | `verify-ca` | always | the chain, against `roots` or the system roots |
 | `verify-full` (default) | always | the chain and the host name |
 

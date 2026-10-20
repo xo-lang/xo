@@ -13,9 +13,11 @@ test "connection strings: what is refused" {
     Ok((["h1", "h2"], [1, 2], "db", "verify-full", [("statement_timeout", "5s")]))
 }
 
-test "TLS modes wait for decision 0281" {
-  let r = sql.open(os.net, "postgres", "postgres://a@127.0.0.1:1/db")
-  expect(r.err().map(fn(e) { "${e}".contains("decision 0281") })) == Some(true)
+test "a refused connection is a Conn error in every TLS mode" {
+  for mode in ["disable", "prefer", "require", "verify-full"] {
+    let r = sql.open(os.net, "postgres", "postgres://a@127.0.0.1:1/db?sslmode=${mode}")
+    expect(r.err().map(fn(e) { e is Conn(..) })) == Some(true)
+  }
 }
 
 test "values: arrays, bytea, json, floats, timestamps" {

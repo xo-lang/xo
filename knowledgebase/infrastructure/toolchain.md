@@ -1475,8 +1475,12 @@ default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
   own Go module pinned to pgx v5.11.0) and through the Xo driver
   (scripts/pgdiff/xo) against PostgreSQL in Docker (postgres:17-alpine and
   postgres:14-alpine by default; the containers it starts are removed by
-  ID), outputs compared line by line. Runs outside the heavy lock. Last
-  verified: 2026-10-20.
+  ID), outputs compared line by line; then (TLS=0 skips it)
+  postgres:17-alpine with ssl=on and a test CA made with openssl: every
+  statement over sslmode=verify-full, and the ok or fail outcome of each
+  sslmode with right, wrong, and no roots (`PG_ROOTS` for the Xo side,
+  `sslrootcert` for pgx). Runs outside the heavy lock. Last verified:
+  2026-10-20.
 
 - `scripts/gate-http.sh OUTDIR [STEP...]`: the gate for a change to
   std/native, the runtime, HTTP, TLS, or the compiler, from the checkout

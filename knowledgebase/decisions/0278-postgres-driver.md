@@ -44,7 +44,9 @@ protocol is small, stable since PostgreSQL 7.4, and fully documented.
    sends SSLRequest in plain text and upgrades the same connection. `sslmode` maps onto its `TlsVerify` levels: `disable`
    (no TLS), `prefer` (TLS when the server offers it, verification
    `None`, as libpq), `require` (`None`), `verify-ca` (`ChainOnly`),
-   `verify-full` (`Full`). The default is `verify-full` (owner,
+   `verify-full` (`Full`); `require` with `roots` given checks the chain, as
+   `verify-ca` (libpq's rule, which pgx follows; found by the TLS
+   differential test, 2026-10-20). The default is `verify-full` (owner,
    2026-10-20), not libpq's and pgx's `prefer`: a connection string
    without `sslmode` gets TLS with the chain and host name verified,
    and one that names `sslmode` keeps its meaning. A Unix socket never

@@ -1,5 +1,18 @@
 # std/sql changes
 
+## 2026-10-20: feature: Postgres over TLS
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: github.com/jackc/pgx/v5 pgconn (configTLS, SSLRequest)
+- Test: scripts/pg-diff.sh (PostgreSQL 17 with ssl=on: 45 statements over verify-full and 9 sslmode outcomes, the same as pgx); std/native/llrt/pg_test.xo
+
+The driver sends SSLRequest and upgrades the connection with std/tls's
+`tls.client` (decision 0281) for `prefer`, `require`, `verify-ca`, and
+`verify-full` (the default), and tries TLS after a refused plain
+connection for `allow`; `require` with `roots` checks the chain, as libpq.
+
 ## 2026-10-20: feature: Row.value
 
 - Kind: feature

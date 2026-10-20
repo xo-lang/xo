@@ -3,10 +3,11 @@
 // it is given. Connection flow, authentication, the simple and extended
 // query protocols, text format results decoded by type OID, and SQLSTATE
 // mapping follow github.com/jackc/pgx/v5 v5.11.0 pgconn (MIT;
-// THIRD_PARTY_NOTICES). Not yet: TLS (sslmode require and stronger need
-// std/tls, decision 0281), CancelRequest (a cancelled wait drops the
+// THIRD_PARTY_NOTICES). TLS through std/tls (decision 0281): SSLRequest,
+// then tls.client with the sslmode's verification. Not yet: CancelRequest (a cancelled wait drops the
 // connection), LISTEN/NOTIFY, COPY.
 use std/sql
+use std/tls
 use native/llrt/pgwire
 use native/llrt/rand
 
@@ -130,8 +131,36 @@ pub struct PgDriver {
   pub roots: Bytes
 }
 
+/// A connection to the server: plain, or upgraded to TLS after
+/// SSLRequest.
+enum Link {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+fn (l: Link) read(max: Int) -> Bytes? ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max)
+    Tls(t) => t.read(max)
+  }
+}
+
+fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data)
+    Tls(t) => t.write(data)
+  }
+}
+
+fn (l: Link) close() {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
 pub struct PgConn {
-  c: Conn
+  c: Link
   /// Bytes read and not yet decoded.
   buf: Mutex[Bytes]
   broken: Atomic[Bool]
@@ -146,7 +175,7 @@ fn (d: PgDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses
   var last = conn_err("no host to connect to")
   for (i, h) in cfg.hosts.indexed() {
     let port = if cfg.ports.len() == 1 { cfg.ports[0] } else { cfg.ports[i] }
-    match connect_one(net, cfg, h, port) {
+    match connect_one(net, cfg, d.roots, h, port) {
       Ok(c) => return Ok(c)
       Err(Canceled) => return Err(sql.SqlErr.Canceled)
       // an authentication or server error is final, as pgconn's
@@ -164,15 +193,75 @@ fn net_err(e: NetErr) -> sql.SqlErr {
   }
 }
 
-fn connect_one(net: Net, cfg: Config, host: Str, port: Int) -> PgConn ! sql.SqlErr uses net.dial {
+fn connect_one(net: Net, cfg: Config, roots: Bytes, host: Str, port: Int) -> PgConn ! sql.SqlErr uses net.dial {
   // a Unix socket never uses TLS (pgconn configTLS gives none for one)
   let unix = host.starts_with("/")
-  if !unix && cfg.sslmode is "require" | "verify-ca" | "verify-full" {
-    return Err(conn_err("sslmode ${cfg.sslmode} needs TLS on the connection, which std/sql's Postgres driver does not have yet (decision 0281); use sslmode=disable on a trusted network"))
-  }
   let addr = if unix { "unix:${host}/.s.PGSQL.${port}" } else if host.contains(":") { "[${host}]:${port}" } else { "${host}:${port}" }
+  let mode = if unix { "disable" } else { cfg.sslmode }
+  if mode == "allow" {
+    // pgconn's order for allow: plain first, then TLS without checks
+    return match connect_link(net, cfg, roots, host, addr, "disable") {
+      Ok(p) => Ok(p)
+      Err(Server(code, msg)) => connect_link(net, cfg, roots, host, addr, "require").map_err(fn(_) { sql.SqlErr.Server(code: code, msg: msg) })
+      Err(e) => Err(e)
+    }
+  }
+  connect_link(net, cfg, roots, host, addr, mode)
+}
+
+/// Dials addr, upgrades to TLS as mode says (SSLRequest, then std/tls's
+/// client: decision 0281), and runs the startup handshake.
+fn connect_link(net: Net, cfg: Config, roots: Bytes, host: Str, addr: Str, mode: Str) -> PgConn ! sql.SqlErr uses net.dial {
   let c = net.dial(addr).map_err(net_err)?
-  let p = PgConn{c: c, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0)}
+  var link = Link.Plain(c: c)
+  if mode != "disable" {
+    match c.write(pgwire.ssl_request()) {
+      Ok(_) => ()
+      Err(e) => {
+        c.close()
+        return Err(net_err(e))
+      }
+    }
+    let answer = match c.read(1) {
+      Ok(Some(b)) => b
+      Ok(None) => b""
+      Err(e) => {
+        c.close()
+        return Err(net_err(e))
+      }
+    }
+    if answer == b"S" {
+      // libpq's rule, which pgx follows: require with root certificates
+      // given checks the chain, as verify-ca
+      let verify = match mode {
+        "verify-full" => tls.Verify.Full
+        "verify-ca" => tls.Verify.ChainOnly
+        "require" => if roots.is_empty() { tls.Verify.None } else { tls.Verify.ChainOnly }
+        _ => tls.Verify.None
+      }
+      var rs: tls.Roots? = None
+      if !roots.is_empty() {
+        match tls.roots(roots) {
+          Ok(r) => rs = Some(r)
+          Err(e) => {
+            c.close()
+            return Err(sql.SqlErr.Param(msg: "roots: ${e}"))
+          }
+        }
+      }
+      let t = tls.client(c, host, roots: rs, verify: verify).map_err(net_err)?
+      link = Link.Tls(t: t)
+    } else if answer == b"N" {
+      if mode != "prefer" {
+        c.close()
+        return Err(conn_err("server refused TLS connection"))
+      }
+    } else {
+      c.close()
+      return Err(conn_err("server responded to SSLRequest with ${answer.quote()}"))
+    }
+  }
+  let p = PgConn{c: link, buf: Mutex.new(b""), broken: Atomic.new(false), pid: Atomic.new(0)}
   match handshake(p, cfg) {
     Ok(_) => p
     Err(e) => {

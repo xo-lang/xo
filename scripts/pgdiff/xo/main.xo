@@ -41,8 +41,20 @@ fn args(s: Str) -> List[sql.SqlValue] {
 }
 
 fn main(os: Os) ! {
-  let dsn = os.env.args().first().or_err("usage: diff DSN < cases")?
-  let db = sql.open(os.net, "postgres", dsn, max_open: 1)?
+  let argv = os.env.args()
+  // PG_ROOTS: a PEM file of the roots to trust (pgx's sslrootcert)
+  let roots = match os.env.get("PG_ROOTS") {
+    Some(path) => os.fs.read(path)?
+    None => b""
+  }
+  if argv.first() == Some("probe") {
+    // whether a connection opens and answers a ping: "ok" or "fail"
+    let r = sql.open(os.net, "postgres", argv[1], max_open: 1, roots: roots)
+    os.stdio.println(if r.is_ok() && r.map(fn(db) { db.ping().is_ok() }) == Ok(true) { "ok" } else { "fail" })
+    return
+  }
+  let dsn = argv.first().or_err("usage: diff DSN < cases")?
+  let db = sql.open(os.net, "postgres", dsn, max_open: 1, roots: roots)?
   for line in os.stdio.lines()? {
     if line.trim().is_empty() {
       continue

@@ -203,6 +203,19 @@ func params(s string) [][]byte {
 
 func main() {
 	ctx := context.Background()
+	if os.Args[1] == "probe" {
+		// whether a connection opens and answers a ping: "ok" or "fail"
+		c, err := pgconn.Connect(ctx, os.Args[2])
+		if err == nil {
+			err = c.Ping(ctx)
+		}
+		if err != nil {
+			fmt.Println("fail")
+		} else {
+			fmt.Println("ok")
+		}
+		return
+	}
 	c, err := pgconn.Connect(ctx, os.Args[1])
 	if err != nil {
 		fmt.Println("connect:", err)
