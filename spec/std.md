@@ -1031,6 +1031,7 @@ fn (r: Request) param_int(name: Str) -> Int         // segment must be declared 
 fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated key, in order
 fn (r: Request) form() -> url.Values ! url.EscapeErr   // an urlencoded POST, PUT, or PATCH body (20)
+fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   // decision 0282
 fn (r: Request) header(name: Str) -> Str?           // case insensitive
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
@@ -1102,6 +1103,14 @@ already limits (`XO_HTTP_MAX_BODY`, 4.6). Media type parameters are not
 checked (Go's `mime.ParseMediaType` rejects some, such as an empty
 `boundary=`). A request built as a struct literal has no raw query:
 `query_all` gives its `url.query` value.
+
+`multipart_form()` (decision 0282) is Go's `ParseMultipartForm`: the
+`Content-Type` must parse (`mime.parse_media_type`) as
+`multipart/form-data` (else `request Content-Type isn't
+multipart/form-data`, any method) with a `boundary` (else `no multipart
+boundary param in Content-Type`); the body is read with
+`multipart.parse_form` (26), whose files stay in memory: the body is
+already limited by the server.
 
 ### 4.4 Server
 
@@ -2836,6 +2845,54 @@ fn (a: Address) display() -> Str             // `"Ann Lee" <ann@example.com>`
   Q), in words of at most 75 bytes.
 - Message parsing (`ReadMessage`) and sending (SMTP) are later steps:
   SMTP needs TLS on a connection (decision 0281).
+
+---
+
+## 26. std/multipart
+
+Status: implemented on every backend (decision 0282, 2026-10-20): Go's
+mime/multipart over a body in memory, with net/textproto's header reader
+and mime/quotedprintable's decoder, ported natively
+(`std/native/multipart.xo`: Go's results on 1,400 generated bodies in
+`multipart_test.xo`) and through mime/multipart on the Go backend;
+golden `multipart_basic`. Pure except `random_boundary`.
+
+```
+struct Part { name: Str, filename: Str?, headers: Map[Str, Str], data: Bytes }
+struct Form { values: url.Values, files: Map[Str, List[Part]] }
+struct MultipartErr { msg: Str }
+
+pub fn parse(body: Bytes, boundary: Str) -> List[Part] ! MultipartErr
+pub fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> Form ! MultipartErr
+pub fn write(parts: List[Part], boundary: Str) -> Bytes
+pub fn form_data_content_type(boundary: Str) -> Str
+pub fn random_boundary(r: Rand) -> Str uses rand
+```
+
+- `parse` is `Reader.NextPart` with each part read whole: the preamble
+  and epilogue skipped, `\r\n` or bare `\n` lines, a part whose
+  `Content-Transfer-Encoding` is `quoted-printable` decoded (and that
+  header removed), Go's errors as text (`multipart: NextPart: EOF` for a
+  body that ends without its closing boundary, `unexpected EOF` for a
+  part cut short, `malformed MIME header line: ...`). A part's `name` is
+  Content-Disposition `form-data`'s `name` and `filename` the last
+  element of its `filename` (Go's `FileName`; `/` separated on every
+  OS); `headers` holds the first value of each header, keys canonical.
+- `parse_form` is `Reader.ReadForm` with the 32 MB of http's
+  `ParseMultipartForm`: parts without a name are skipped, parts without a
+  file name become `values` (in order of appearance), the others `files`;
+  more than `max_parts` parts, or Go's memory and header limits, give
+  `multipart: message too large`. Files stay in memory (Go writes those
+  over the limit to disk). On the Go backend the header limits are per
+  part (Go's NextPart), not per form.
+- Text from the body (values, header values, names) is valid UTF-8,
+  U+FFFD for each invalid byte (decision 0259); `data` is the bytes.
+- `write` is `Writer` with `SetBoundary(boundary)`: parts in order, each
+  part's headers sorted, a `Content-Disposition` made from `name` and
+  `filename` (Go's `CreateFormField` and `CreateFormFile`, with
+  `Content-Type: application/octet-stream` for a file) when the part has
+  none. The boundary is used as given.
+- Streaming parts waits for a streaming request body.
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the

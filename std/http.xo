@@ -7,6 +7,7 @@
 // - `Key[T]` is a handle; keys with the same name and type are the same key
 //   (std.md 4.3).
 use std/json
+use std/multipart
 use std/url
 
 struct Router {}
@@ -41,6 +42,11 @@ fn (r: Request) query_all(name: Str) -> List[Str]
 /// The body of an `application/x-www-form-urlencoded` POST, PUT, or
 /// PATCH as Values; empty Values for any other request (decision 0279).
 fn (r: Request) form() -> url.Values ! url.EscapeErr
+/// The body of a `multipart/form-data` request as a Form (Go's
+/// ParseMultipartForm with its 32 MB limit); MultipartErr `request
+/// Content-Type isn't multipart/form-data` or `no multipart boundary param
+/// in Content-Type` for any other (decision 0282).
+fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request

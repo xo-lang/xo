@@ -1,0 +1,75 @@
+// std/multipart and Request.multipart_form (decision 0282): parsing,
+// forms, quoted-printable parts, Go's errors, writing, and an upload
+// through a router and a real server, the same on every backend.
+use std/http
+use std/multipart
+
+struct BadForm {
+  msg: Str
+}
+
+fn (e: BadForm) status() -> Int { 400 }
+
+fn (e: BadForm) display() -> Str { e.msg }
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("POST /upload", fn(req) -> http.Response ! BadForm {
+    let f = req.multipart_form().map_err(fn(e) { BadForm{msg: "${e}"} })?
+    var files: List[Str] = []
+    for k in f.files.keys().sort() {
+      for p in f.files.get(k) ?? [] {
+        files.push("${k}=${p.filename ?? "-"}:${p.data.len()}:${p.headers.get("Content-Type") ?? "-"}")
+      }
+    }
+    http.text(200, "title=${f.values.get("title") ?? "-"} tags=${f.values.all("tag").join(",")} files=${files.join(" ")}")
+  })
+  r
+}
+
+fn show(ps: List[multipart.Part]) -> Str {
+  ps.map(fn(p) { "${p.name}|${p.filename ?? "-"}|${p.data.to_str() ?? "?"}" }).join(" ; ")
+}
+
+fn main(os: Os) ! {
+  let body = "preamble\r\n--b\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHello\r\n--b\r\nContent-Disposition: form-data; name=\"note\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\ncaf=C3=A9 soft=\r\nbreak\r\n--b\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"../dir/a.txt\"\r\nContent-Type: text/plain\r\n\r\nline1\r\nline2\r\n--b--\r\nepilogue".bytes()
+  match multipart.parse(body, "b") {
+    Ok(ps) => os.stdio.println(show(ps))
+    Err(e) => os.stdio.println("error ${e}")
+  }
+  let f = multipart.parse_form(body, "b")?
+  os.stdio.println("${f.values.keys().join(",")} ${f.values.get("note") ?? "-"} ${(f.files.get("doc") ?? []).len()}")
+  for (b, bd) in [("--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx", "b"), ("x", ""), ("--b\r\n\x01bad\r\n\r\n", "b"), ("--b\r\nA: 1\r\n\r\nx\r\n--b\r\nA: 2\r\n\r\ny\r\n--b--", "b")] {
+    match multipart.parse_form(b.bytes(), bd, max_parts: 1) {
+      Ok(f) => os.stdio.println("ok ${f.values.keys().len()}")
+      Err(e) => os.stdio.println("error ${e}")
+    }
+  }
+  let parts = [
+    multipart.Part{name: "title", filename: None, headers: {}, data: b"Report"},
+    multipart.Part{name: "tag", filename: None, headers: {}, data: b"a"},
+    multipart.Part{name: "tag", filename: None, headers: {}, data: b"b"},
+    multipart.Part{name: "doc", filename: Some("r.csv"), headers: {"Content-Type": "text/csv"}, data: b"1,2\r\n3,4"},
+    multipart.Part{name: "img", filename: Some("x.bin"), headers: {}, data: b"\x00\x01--q"},
+  ]
+  let boundary = "q-1"
+  let up = multipart.write(parts, boundary)
+  os.stdio.println("${up.len()} ${show(multipart.parse(up, boundary)?)}")
+  let ct = multipart.form_data_content_type(boundary)
+  let r = routes()
+  os.stdio.println(r.call(http.new_request("POST", "http://x/upload", headers: {"Content-Type": ct}, body: up)).text() ?? "?")
+  for c in ["text/plain", "multipart/form-data", "multipart/form-data; boundary=\"", ""] {
+    let resp = r.call(http.new_request("POST", "http://x/upload", headers: {"Content-Type": c}, body: up))
+    os.stdio.println("${resp.status} ${resp.text() ?? "?"}")
+  }
+  let rb = multipart.random_boundary(os.rand)
+  os.stdio.println("random ${rb.len()} ${multipart.parse(multipart.write(parts, rb), rb)?.len()}")
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  scope s {
+    s.spawn_background(fn() -> () ! http.HttpErr { http.server(l, r).serve()? })
+    let c = http.client(os.net)
+    os.stdio.println(c.send(http.new_request("POST", "http://${addr}/upload", headers: {"Content-Type": ct}, body: up))?.text() ?? "?")
+    s.cancel()
+  }
+}

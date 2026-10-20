@@ -16,7 +16,7 @@ func Mail_parse_address(_ *Task, s string) Result[Mail_Address, Mail_MailErr] {
 	if err != nil {
 		return Err[Mail_Address](Mail_MailErr{F_msg: err.Error()})
 	}
-	return Ok[Mail_Address, Mail_MailErr](Mail_Address{F_name: a.Name, F_address: a.Address})
+	return Ok[Mail_Address, Mail_MailErr](Mail_Address{F_name: textOf(a.Name), F_address: textOf(a.Address)})
 }
 
 func Mail_parse_address_list(_ *Task, s string) Result[List[Mail_Address], Mail_MailErr] {
@@ -26,7 +26,7 @@ func Mail_parse_address_list(_ *Task, s string) Result[List[Mail_Address], Mail_
 	}
 	out := make([]Mail_Address, len(as))
 	for i, a := range as {
-		out[i] = Mail_Address{F_name: a.Name, F_address: a.Address}
+		out[i] = Mail_Address{F_name: textOf(a.Name), F_address: textOf(a.Address)}
 	}
 	return Ok[List[Mail_Address], Mail_MailErr](ListFromSlice(out))
 }

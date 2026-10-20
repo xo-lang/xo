@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-20: port: Request.multipart_form
+
+- Kind: port
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: net/http/request.go ParseMultipartForm, multipartReader (go1.26.1)
+- Test: internal/llvm/testdata/golden/multipart_basic
+
+`req.multipart_form()` reads a `multipart/form-data` body as a
+`multipart.Form` with Go's Content-Type checks and error texts (decision
+0282).
+
 ## 2026-10-20: fix: the client sends a URL's query as given
 
 - Kind: fix

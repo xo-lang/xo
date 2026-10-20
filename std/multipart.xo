@@ -1,0 +1,44 @@
+// std/multipart (spec/std.md 26, decision 0282). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's mime/multipart in
+// memory: the body is a request's, already capped by the server. Pure
+// except random_boundary.
+use std/url
+
+/// One part. `name` is the form field (Content-Disposition `form-data`'s
+/// `name`, else ""); `filename` its file name, the last path element as
+/// Go's FileName; `headers` the first value of each header, keys in
+/// canonical form (Content-Type).
+struct Part {
+  name: Str
+  filename: Str?
+  headers: Map[Str, Str]
+  data: Bytes
+}
+
+/// A form: the fields without a file name, and the file parts by field.
+struct Form {
+  values: url.Values
+  files: Map[Str, List[Part]]
+}
+
+/// Go's error texts: `multipart: NextPart: EOF`, `multipart: message too
+/// large`, `unexpected EOF`, `malformed MIME header line: ...`.
+struct MultipartErr {
+  msg: Str
+}
+
+fn (e: MultipartErr) display() -> Str
+
+/// Every part (Reader.NextPart, each part read whole; a
+/// quoted-printable part decoded).
+fn parse(body: Bytes, boundary: Str) -> List[Part] ! MultipartErr
+/// Reader.ReadForm with Go's limits (the 32 MB of http's
+/// ParseMultipartForm, `max_parts`, 10,000 headers).
+fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> Form ! MultipartErr
+/// A body of the parts (Writer): each part's headers sorted, a
+/// Content-Disposition from `name` and `filename` when the part has none.
+fn write(parts: List[Part], boundary: Str) -> Bytes
+/// `multipart/form-data; boundary=...` (Writer.FormDataContentType).
+fn form_data_content_type(boundary: Str) -> Str
+/// 60 hex digits from 30 random bytes (Writer's boundary).
+fn random_boundary(r: Rand) -> Str uses rand

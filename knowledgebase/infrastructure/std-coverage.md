@@ -47,6 +47,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/mime | 23 | `std/changes/mime.md` |
 | std/uuid | 24 | `std/changes/uuid.md` |
 | std/mail | 25 | `std/changes/mail.md` |
+| std/multipart | 26 | `std/changes/multipart.md` |
 
 ## Go packages
 
@@ -73,8 +74,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/ascii85 | none | not planned | No backend use (PostScript and PDF). |
 | encoding | none | not planned | Interfaces only; Xo uses derive (Json, SqlRow). |
 | mime | std/mime | partial | ParseMediaType, FormatMediaType, TypeByExtension and ExtensionsByType (Go's builtin table only, no system files), and net/http's DetectContentType (decision 0282). Missing: encoded words (WordEncoder, WordDecoder, RFC 2047). |
-| mime/multipart | none | planned | Browser file uploads (multipart/form-data) and multipart responses. |
-| mime/quotedprintable | none | planned | With an SMTP client, for mail bodies. |
+| mime/multipart | std/multipart | partial | Reader (NextPart, ReadForm), Writer, Request.multipart_form, in memory (decision 0282). Missing: streaming parts, multipart/mixed responses. |
+| mime/quotedprintable | inside std/native/multipart | partial | The decoder, for quoted-printable parts. Missing: a public module and the encoder (with an SMTP client). |
 | html | none | planned | EscapeString for server rendered pages. |
 | html/template | none | planned | Contextual escaping templates; after html. |
 | text/template | none | planned | Config and mail templates; after html/template. |

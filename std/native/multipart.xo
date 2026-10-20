@@ -1,0 +1,808 @@
+// std/multipart on the native backends (decision 0282): Go's mime/multipart
+// reader (multipart.go, formdata.go of go1.26: NextPart, the part reader's
+// scanUntilBoundary, ReadForm's limits), net/textproto's readMIMEHeader,
+// and mime/quotedprintable's Reader, over a body in memory, ported with the
+// same results and error texts. Go reads through 4096 byte bufio buffers;
+// the two places where that shows (a boundary search line, and a
+// quoted-printable line, longer than the buffer: `bufio: buffer full`) are
+// kept.
+use std/mime
+use std/multipart
+use std/url
+
+fn multiparterr_display(e: multipart.MultipartErr) -> Str { e.msg }
+
+fn fail(msg: Str) -> multipart.MultipartErr { multipart.MultipartErr{msg: msg} }
+
+const BUF: Int = 4096
+const MAX_HEADER_SIZE: Int = 10485760
+const MAX_HEADERS: Int = 10000
+/// http's defaultMaxMemory, the ReadForm limit of ParseMultipartForm.
+const MAX_MEMORY: Int = 33554432
+
+const TOO_LARGE: Str = "multipart: message too large"
+const UNEXPECTED_EOF: Str = "unexpected EOF"
+
+/// Outside bytes as Str: U+FFFD for each byte of an invalid sequence
+/// (decision 0259).
+fn text_of(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write("${r}")
+    i += n
+  }
+  out.freeze()
+}
+
+fn has_prefix(b: Bytes, at: Int, p: Bytes) -> Bool {
+  if b.len() - at < p.len() {
+    return false
+  }
+  for i in 0..p.len() {
+    if b[at + i] != p[i] {
+      return false
+    }
+  }
+  true
+}
+
+fn index_of(b: Bytes, from: Int, p: Bytes) -> Int {
+  var i = from
+  while i + p.len() <= b.len() {
+    if has_prefix(b, i, p) {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Go's %q of bytes (strconv.Quote of a string holding them).
+fn go_q(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s.quote()
+  }
+  var out = StrBuilder.new()
+  out.write("\"")
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if r == '\u{FFFD}' && n == 1 {
+      let h = "0123456789abcdef"
+      let v = Int(b[i])
+      out.write("\\x" + h[v >> 4..(v >> 4) + 1] + h[v & 15..(v & 15) + 1])
+    } else {
+      let q = b[i..i + n].to_str().or_fault("rune").quote()
+      out.write(q[1..q.len() - 1])
+    }
+    i += n
+  }
+  out.write("\"")
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// The reader (multipart.go Reader over bufio, the body in memory)
+
+struct R {
+  buf: Bytes
+  pos: Int
+  nl: Bytes
+  nl_dash_boundary: Bytes
+  dash_boundary_dash: Bytes
+  dash_boundary: Bytes
+  parts_read: Int
+}
+
+fn new_reader(body: Bytes, boundary: Str) -> R {
+  let b = "\r\n--${boundary}--".bytes()
+  R{buf: body, pos: 0, nl: b[0..2], nl_dash_boundary: b[0..b.len() - 2], dash_boundary_dash: b[2..], dash_boundary: b[2..b.len() - 2], parts_read: 0}
+}
+
+/// bufio.Reader.ReadSlice('\n') with a 4096 byte buffer: the line and
+/// "" , "EOF" (no newline before the end), or "bufio: buffer full".
+fn (var r: R) read_slice() -> (Bytes, Str) {
+  let end = if r.buf.len() - r.pos > BUF { r.pos + BUF } else { r.buf.len() }
+  var i = r.pos
+  while i < end {
+    if r.buf[i] == 10 {
+      let line = r.buf[r.pos..i + 1]
+      r.pos = i + 1
+      return (line, "")
+    }
+    i += 1
+  }
+  let line = r.buf[r.pos..end]
+  r.pos = end
+  if end == r.buf.len() {
+    return (line, "EOF")
+  }
+  (line, "bufio: buffer full")
+}
+
+fn skip_lwsp(b: Bytes) -> Bytes {
+  var i = 0
+  while i < b.len() && (b[i] == 32 || b[i] == 9) {
+    i += 1
+  }
+  b[i..]
+}
+
+fn (r: R) is_final_boundary(line: Bytes) -> Bool {
+  if !has_prefix(line, 0, r.dash_boundary_dash) {
+    return false
+  }
+  let rest = skip_lwsp(line[r.dash_boundary_dash.len()..])
+  rest.is_empty() || rest == r.nl
+}
+
+fn (var r: R) is_boundary_delimiter_line(line: Bytes) -> Bool {
+  if !has_prefix(line, 0, r.dash_boundary) {
+    return false
+  }
+  let rest = skip_lwsp(line[r.dash_boundary.len()..])
+  if r.parts_read == 0 && rest.len() == 1 && rest[0] == 10 {
+    r.nl = r.nl[1..]
+    r.nl_dash_boundary = r.nl_dash_boundary[1..]
+  }
+  rest == r.nl
+}
+
+/// matchAfterPrefix: -1 not a boundary, 0 need more, +1 a boundary.
+fn match_after_prefix(b: Bytes, at: Int, prefix: Bytes, eof: Bool) -> Int {
+  if b.len() - at == prefix.len() {
+    return if eof { 1 } else { 0 }
+  }
+  let c = b[at + prefix.len()]
+  if c == 32 || c == 9 || c == 13 || c == 10 {
+    return 1
+  }
+  if c == 45 {
+    if b.len() - at == prefix.len() + 1 {
+      return if eof { -1 } else { 0 }
+    }
+    if b[at + prefix.len() + 1] == 45 {
+      return 1
+    }
+  }
+  -1
+}
+
+/// scanUntilBoundary over the rest of the body: the bytes of data before
+/// the boundary and how the part goes on: "" (more data), "EOF" (the part
+/// ends), or the read error; `eof` once the body is known to end there.
+fn (r: R) scan(total: Int, eof: Bool) -> (Int, Str) {
+  let b = r.buf[r.pos..]
+  let read_err = if eof { UNEXPECTED_EOF } else { "" }
+  if total == 0 {
+    if has_prefix(b, 0, r.dash_boundary) {
+      match match_after_prefix(b, 0, r.dash_boundary, eof) {
+        -1 => return (r.dash_boundary.len(), "")
+        0 => return (0, "")
+        _ => return (0, "EOF")
+      }
+    }
+    if has_prefix(r.dash_boundary, 0, b) {
+      return (0, read_err)
+    }
+  }
+  let i = index_of(b, 0, r.nl_dash_boundary)
+  if i >= 0 {
+    match match_after_prefix(b, i, r.nl_dash_boundary, eof) {
+      -1 => return (i + r.nl_dash_boundary.len(), "")
+      0 => return (i, "")
+      _ => return (i, "EOF")
+    }
+  }
+  if has_prefix(r.nl_dash_boundary, 0, b) {
+    return (0, read_err)
+  }
+  var j = b.len() - 1
+  while j >= 0 && b[j] != r.nl_dash_boundary[0] {
+    j -= 1
+  }
+  if j >= 0 && has_prefix(r.nl_dash_boundary, 0, b[j..]) {
+    return (j, "")
+  }
+  (b.len(), read_err)
+}
+
+/// A part's raw data (partReader read to its end): the bytes and ""
+/// (ended at its boundary) or the read error.
+fn (var r: R) read_part() -> (Bytes, Str) {
+  var out = BytesBuilder.new()
+  var total = 0
+  var eof = false
+  var err = ""
+  while {
+    let (n, e) = r.scan(total, eof)
+    if n == 0 && e.is_empty() {
+      // Go peeks one byte more: the body has ended here
+      eof = true
+      continue
+    }
+    out.write(r.buf[r.pos..r.pos + n])
+    r.pos += n
+    total += n
+    if !e.is_empty() {
+      err = if e == "EOF" { "" } else { e }
+      break
+    }
+  }
+  (out.freeze(), err)
+}
+
+// ---------------------------------------------------------------------------
+// Headers (net/textproto readMIMEHeader)
+
+/// bufio ReadLine for textproto: the line without its `\n` or `\r\n`;
+/// None at the end of the body.
+fn (var r: R) read_line() -> Bytes? {
+  if r.pos >= r.buf.len() {
+    return None
+  }
+  var i = r.pos
+  while i < r.buf.len() && r.buf[i] != 10 {
+    i += 1
+  }
+  if i == r.buf.len() {
+    let line = r.buf[r.pos..]
+    r.pos = i
+    return Some(line)
+  }
+  var e = i
+  if e > r.pos && r.buf[e - 1] == 13 {
+    e -= 1
+  }
+  let line = r.buf[r.pos..e]
+  r.pos = i + 1
+  Some(line)
+}
+
+fn trim_lwsp(b: Bytes) -> Bytes {
+  var s = 0
+  while s < b.len() && (b[s] == 32 || b[s] == 9) {
+    s += 1
+  }
+  var e = b.len()
+  while e > s && (b[e - 1] == 32 || b[e - 1] == 9) {
+    e -= 1
+  }
+  b[s..e]
+}
+
+fn valid_field_byte(c: UInt8) -> Bool {
+  (c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 46 || c == 94 || c == 95 || c == 96 || c == 124 || c == 126
+}
+
+fn valid_value_byte(c: UInt8) -> Bool { c >= 32 && c != 127 || c == 9 }
+
+/// canonicalMIMEHeaderKey: None when a byte is not allowed.
+fn canonical_key(k: Bytes) -> Str? {
+  if k.is_empty() {
+    return None
+  }
+  var spaces = false
+  for c in k {
+    if c == 32 {
+      spaces = true
+    } else if !valid_field_byte(c) {
+      return None
+    }
+  }
+  if spaces {
+    return k.to_str()
+  }
+  var out = BytesBuilder.with_capacity(k.len())
+  var upper = true
+  for c0 in k {
+    var c = c0
+    if upper && c >= 97 && c <= 122 {
+      c -= 32
+    } else if !upper && c >= 65 && c <= 90 {
+      c += 32
+    }
+    out.write_byte(c)
+    upper = c == 45
+  }
+  out.freeze().to_str()
+}
+
+/// A header block's result: the headers (every value, in order), or the
+/// end of the body ("EOF") or an error text.
+struct Header {
+  keys: List[Str]
+  values: List[List[Str]]
+}
+
+fn (var h: Header) add(k: Str, v: Str) {
+  match h.keys.index_of(k) {
+    Some(i) => {
+      var vs = h.values[i]
+      vs.push(v)
+      h.values.set(i, vs)
+    }
+    None => {
+      h.keys.push(k)
+      h.values.push([v])
+    }
+  }
+}
+
+fn (h: Header) get(k: Str) -> Str {
+  match h.keys.index_of(k) {
+    Some(i) => h.values[i][0]
+    None => ""
+  }
+}
+
+fn (h: Header) count() -> Int {
+  var n = 0
+  for vs in h.values {
+    n += vs.len()
+  }
+  n
+}
+
+/// readContinuedLineSlice: the logical line (continuations joined by one
+/// space), or the error ("EOF" at the end of the body).
+fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
+  let line = match r.read_line() {
+    Some(l) => l
+    None => return Err("EOF")
+  }
+  if lim0 >= 0 && line.len() > lim0 {
+    return Err("message too large")
+  }
+  if line.is_empty() {
+    return line
+  }
+  if index_of(line, 0, b":") < 0 {
+    return Err("malformed MIME header: missing colon: ${go_q(line)}")
+  }
+  var out = BytesBuilder.new()
+  out.write(trim_lwsp(line))
+  var n = trim_lwsp(line).len()
+  let lim = if lim0 < 0 { 9223372036854775807 } else { lim0 } - n
+  while r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
+    while r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
+      r.pos += 1
+    }
+    out.write_byte(32)
+    n += 1
+    if n >= lim {
+      return Err("message too large")
+    }
+    match r.read_line() {
+      Some(l) => {
+        if l.len() > lim - n {
+          return Err("message too large")
+        }
+        let t = trim_lwsp(l)
+        out.write(t)
+        n += t.len()
+      }
+      None => break
+    }
+  }
+  out.freeze()
+}
+
+fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
+  var h = Header{keys: [], values: []}
+  var max_memory = max_memory0 - 400
+  var max_headers = max_headers0
+  if r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
+    let line = r.read_line() ?? b""
+    if line.len() > 80 {
+      return Err("message too large")
+    }
+    return Err("malformed MIME header initial line: ${text_of(line)}")
+  }
+  while {
+    let kv = r.read_continued(max_memory)?
+    if kv.is_empty() {
+      return h
+    }
+    let c = index_of(kv, 0, b":")
+    if c < 0 {
+      return Err("malformed MIME header line: ${text_of(kv)}")
+    }
+    let key = match canonical_key(kv[0..c]) {
+      Some(k) => k
+      None => return Err("malformed MIME header line: ${text_of(kv)}")
+    }
+    let v = kv[c + 1..]
+    for b in v {
+      if !valid_value_byte(b) {
+        return Err("malformed MIME header line: ${text_of(kv)}")
+      }
+    }
+    max_headers -= 1
+    if max_headers < 0 {
+      return Err("message too large")
+    }
+    let value = skip_lwsp(v)
+    if !h.keys.contains(key) {
+      max_memory -= key.len() + 200
+    }
+    max_memory -= value.len()
+    if max_memory < 0 {
+      return Err("message too large")
+    }
+    h.add(key, text_of(value))
+  }
+  h
+}
+
+// ---------------------------------------------------------------------------
+// Quoted-printable (mime/quotedprintable Reader)
+
+fn qp_hex(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  -1
+}
+
+fn hex2(c: UInt8) -> Str {
+  let h = "0123456789abcdef"
+  let v = Int(c)
+  h[v >> 4..(v >> 4) + 1] + h[v & 15..(v & 15) + 1]
+}
+
+fn is_qp_ws(c: UInt8) -> Bool { c == 10 || c == 13 || c == 32 || c == 9 }
+
+/// The decoded data and its error ("" when none): `end` is how the raw data
+/// ended ("" at its boundary, else the part's read error), which the
+/// decoder reports after the data, as Go's bufio passes it on.
+fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
+  var out = BytesBuilder.with_capacity(raw.len())
+  var pos = 0
+  var err = ""
+  while {
+    if pos >= raw.len() {
+      err = end
+      break
+    }
+    // ReadSlice('\n') on a 4096 byte buffer
+    var stop = if raw.len() - pos > BUF { pos + BUF } else { raw.len() }
+    var nl = -1
+    for i in pos..stop {
+      if raw[i] == 10 {
+        nl = i
+        break
+      }
+    }
+    var rerr = ""
+    var whole = b""
+    if nl >= 0 {
+      whole = raw[pos..nl + 1]
+      pos = nl + 1
+    } else {
+      whole = raw[pos..stop]
+      pos = stop
+      rerr = if stop == raw.len() { if end.is_empty() { "EOF" } else { end } } else { "bufio: buffer full" }
+    }
+    let has_lf = whole.len() > 0 && whole[whole.len() - 1] == 10
+    let has_cr = whole.len() > 1 && whole[whole.len() - 2] == 13 && has_lf
+    var e = whole.len()
+    while e > 0 && is_qp_ws(whole[e - 1]) {
+      e -= 1
+    }
+    var line = BytesBuilder.new()
+    var bad = ""
+    if e > 0 && whole[e - 1] == 61 {
+      let right = skip_lwsp(whole[e..])
+      line.write(whole[0..e - 1])
+      let rs_lf = right.len() > 0 && right[0] == 10
+      let rs_crlf = right.len() > 1 && right[0] == 13 && right[1] == 10
+      if !rs_lf && !rs_crlf && !(right.is_empty() && e - 1 > 0 && rerr == "EOF") {
+        bad = "quotedprintable: invalid bytes after =: ${go_q(right)}"
+      }
+    } else {
+      line.write(whole[0..e])
+      if has_lf {
+        line.write(if has_cr { b"\r\n" } else { b"\n" })
+      }
+    }
+    let l = line.freeze()
+    var i = 0
+    while i < l.len() {
+      var c = l[i]
+      if c == 61 {
+        if l.len() - i - 1 < 2 {
+          if l.len() - i >= 2 && l[i + 1] != 13 && l[i + 1] != 10 {
+            c = 61
+          } else {
+            err = UNEXPECTED_EOF
+            break
+          }
+        } else if qp_hex(l[i + 1]) < 0 || qp_hex(l[i + 2]) < 0 {
+          if l[i + 1] != 13 && l[i + 1] != 10 {
+            c = 61
+          } else {
+            let x = if qp_hex(l[i + 1]) < 0 { l[i + 1] } else { l[i + 2] }
+            err = "quotedprintable: invalid hex byte 0x${hex2(x)}"
+            break
+          }
+        } else {
+          c = UInt8(qp_hex(l[i + 1]) * 16 + qp_hex(l[i + 2]))
+          i += 2
+        }
+      } else if c == 9 || c == 13 || c == 10 || c >= 128 {
+        // as it is
+      } else if c < 32 || c > 126 {
+        err = "quotedprintable: invalid unescaped byte 0x${hex2(c)} in body"
+        break
+      }
+      out.write_byte(c)
+      i += 1
+    }
+    if !err.is_empty() {
+      break
+    }
+    if !bad.is_empty() {
+      err = bad
+      break
+    }
+    if !rerr.is_empty() {
+      err = if rerr == "EOF" { "" } else { rerr }
+      break
+    }
+  }
+  (out.freeze(), err)
+}
+
+// ---------------------------------------------------------------------------
+// Parts
+
+/// A part as NextPart returns it: its headers, and whether its body is
+/// quoted-printable (the Content-Transfer-Encoding header removed).
+struct Next {
+  header: Header
+  qp: Bool
+}
+
+/// nextPart: Some(part) at a part's headers, None at the end of the parts,
+/// or the error.
+fn (var r: R) next_part(max_header_size: Int, max_headers: Int) -> Next? ! Str {
+  if r.dash_boundary == b"--" {
+    return Err("multipart: boundary is empty")
+  }
+  var expect_new = false
+  while {
+    let (line, e) = r.read_slice()
+    if e == "EOF" && r.is_final_boundary(line) {
+      return None
+    }
+    if !e.is_empty() {
+      return Err("multipart: NextPart: ${e}")
+    }
+    if r.is_boundary_delimiter_line(line) {
+      r.parts_read += 1
+      let h = match r.read_header(max_header_size, max_headers) {
+        Ok(h) => h
+        Err(m) => {
+          if m == "EOF" {
+            return None
+          }
+          return Err(if m == "message too large" { TOO_LARGE } else { m })
+        }
+      }
+      var qp = false
+      var hd = h
+      if h.get("Content-Transfer-Encoding").to_lower() == "quoted-printable" {
+        qp = true
+        let i = hd.keys.index_of("Content-Transfer-Encoding") ?? 0
+        let _k = hd.keys.remove_at(i)
+        let _v = hd.values.remove_at(i)
+      }
+      return Some(Next{header: hd, qp: qp})
+    }
+    if r.is_final_boundary(line) {
+      return None
+    }
+    if expect_new {
+      return Err("multipart: expecting a new Part; got line ${go_q(line)}")
+    }
+    if r.parts_read == 0 {
+      continue
+    }
+    if line == r.nl {
+      expect_new = true
+      continue
+    }
+    return Err("multipart: unexpected line in Next(): ${go_q(line)}")
+  }
+  None
+}
+
+/// The part's data and its read error ("" when none), decoded when
+/// quoted-printable.
+fn (var r: R) part_data(n: Next) -> (Bytes, Str) {
+  let (raw, e) = r.read_part()
+  if n.qp {
+    return qp_decode(raw, e)
+  }
+  (raw, e)
+}
+
+/// filepath.Base on a Unix path.
+fn base(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  var s = p
+  while s.len() > 1 && s.ends_with("/") {
+    s = s[0..s.len() - 1]
+  }
+  if s == "/" {
+    return "/"
+  }
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 {
+    i -= 1
+  }
+  s[i + 1..]
+}
+
+/// FormName and FileName from Content-Disposition.
+fn names(h: Header) -> (Str, Str) {
+  match mime.parse_media_type(h.get("Content-Disposition")) {
+    Ok(m) => {
+      let name = if m.kind == "form-data" { m.params.get("name") ?? "" } else { "" }
+      let f = m.params.get("filename") ?? ""
+      (name, if f.is_empty() { "" } else { base(f) })
+    }
+    Err(_) => ("", "")
+  }
+}
+
+fn first_values(h: Header) -> Map[Str, Str] {
+  var m: Map[Str, Str] = {}
+  for i in 0..h.keys.len() {
+    m.put(h.keys[i], h.values[i][0])
+  }
+  m
+}
+
+fn to_part(h: Header, data: Bytes) -> multipart.Part {
+  let (name, file) = names(h)
+  multipart.Part{name: name, filename: if file.is_empty() { None } else { Some(file) }, headers: first_values(h), data: data}
+}
+
+fn parse(body: Bytes, boundary: Str) -> List[multipart.Part] ! multipart.MultipartErr {
+  var r = new_reader(body, boundary)
+  var parts: List[multipart.Part] = []
+  while {
+    let n = match r.next_part(MAX_HEADER_SIZE, MAX_HEADERS) {
+      Ok(Some(n)) => n
+      Ok(None) => break
+      Err(m) => return Err(fail(m))
+    }
+    let (data, e) = r.part_data(n)
+    if !e.is_empty() {
+      return Err(fail(e))
+    }
+    parts.push(to_part(n.header, data))
+  }
+  parts
+}
+
+fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> multipart.Form ! multipart.MultipartErr {
+  var r = new_reader(body, boundary)
+  var values = url.values()
+  var files: Map[Str, List[multipart.Part]] = {}
+  var parts_left = max_parts
+  var max_headers = MAX_HEADERS
+  var max_file_memory = MAX_MEMORY
+  var max_memory = MAX_MEMORY + 10485760
+  while {
+    let n = match r.next_part(max_memory, max_headers) {
+      Ok(Some(n)) => n
+      Ok(None) => break
+      Err(m) => return Err(fail(m))
+    }
+    if parts_left <= 0 {
+      return Err(fail(TOO_LARGE))
+    }
+    parts_left -= 1
+    let (name, file) = names(n.header)
+    if name.is_empty() {
+      // Go's Close drains the part, its errors dropped
+      let _d = r.part_data(n)
+      continue
+    }
+    max_memory -= name.len() + 200
+    if max_memory < 0 {
+      return Err(fail(TOO_LARGE))
+    }
+    let (data, e) = r.part_data(n)
+    if file.is_empty() {
+      if data.len() > max_memory {
+        return Err(fail(TOO_LARGE))
+      }
+      if !e.is_empty() {
+        return Err(fail(e))
+      }
+      max_memory -= data.len()
+      values.add(name, text_of(data))
+      continue
+    }
+    var hsize = 400
+    for i in 0..n.header.keys.len() {
+      hsize += n.header.keys[i].len() + 200
+      for v in n.header.values[i] {
+        hsize += v.len()
+      }
+    }
+    max_memory -= hsize + 300
+    if max_memory < 0 {
+      return Err(fail(TOO_LARGE))
+    }
+    max_headers -= n.header.count()
+    if !e.is_empty() {
+      return Err(fail(e))
+    }
+    if data.len() <= max_file_memory {
+      max_file_memory -= data.len()
+      max_memory -= data.len()
+    }
+    var fs = files.get(name) ?? []
+    fs.push(to_part(n.header, data))
+    files.put(name, fs)
+  }
+  multipart.Form{values: values, files: files}
+}
+
+// ---------------------------------------------------------------------------
+// Writing (writer.go)
+
+fn escape_quotes(s: Str) -> Str { s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "%0D").replace("\n", "%0A") }
+
+fn write(parts: List[multipart.Part], boundary: Str) -> Bytes {
+  var out = BytesBuilder.new()
+  var first = true
+  for p in parts {
+    out.write(if first { "--${boundary}\r\n" } else { "\r\n--${boundary}\r\n" }.bytes())
+    first = false
+    var h = p.headers
+    if !h.contains("Content-Disposition") {
+      let d = match p.filename {
+        Some(f) => "form-data; name=\"${escape_quotes(p.name)}\"; filename=\"${escape_quotes(f)}\""
+        None => "form-data; name=\"${escape_quotes(p.name)}\""
+      }
+      h.put("Content-Disposition", d)
+      if p.filename != None && !h.contains("Content-Type") {
+        h.put("Content-Type", "application/octet-stream")
+      }
+    }
+    for k in h.keys().sort() {
+      out.write("${k}: ${h.get(k) ?? ""}\r\n".bytes())
+    }
+    out.write(b"\r\n")
+    out.write(p.data)
+  }
+  out.write("\r\n--${boundary}--\r\n".bytes())
+  out.freeze()
+}
+
+fn form_data_content_type(boundary: Str) -> Str {
+  var b = boundary
+  for c in "()<>@,;:\\\"/[]?= ".runes() {
+    if boundary.runes().contains(c) {
+      b = "\"${boundary}\""
+      break
+    }
+  }
+  "multipart/form-data; boundary=${b}"
+}
+
+fn random_boundary(r: Rand) -> Str uses rand { r.bytes(30).to_hex() }

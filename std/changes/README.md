@@ -19,3 +19,4 @@ entries yet.
 - [mime.md](mime.md): std/mime (spec/std.md 23)
 - [uuid.md](uuid.md): std/uuid (spec/std.md 24)
 - [mail.md](mail.md): std/mail (spec/std.md 25)
+- [multipart.md](multipart.md): std/multipart (spec/std.md 26)

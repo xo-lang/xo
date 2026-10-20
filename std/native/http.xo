@@ -3,6 +3,8 @@
 // net/http does.
 use std/http
 use std/json as js
+use std/mime
+use std/multipart
 use std/url
 use std/log
 use std/task
@@ -441,6 +443,28 @@ fn request_form(r: Request) -> url.Values ! url.EscapeErr {
     return url.values()
   }
   url.parse_query(form_text(r.body))
+}
+
+/// net/http multipartReader then ReadForm (decision 0282): the
+/// Content-Type must be multipart/form-data with a boundary.
+fn request_multipart_form(r: Request) -> multipart.Form ! multipart.MultipartErr {
+  let not_multipart = multipart.MultipartErr{msg: "request Content-Type isn't multipart/form-data"}
+  let ct = header_get(r.headers, "Content-Type") ?? ""
+  if ct.is_empty() {
+    return Err(not_multipart)
+  }
+  let m = match mime.parse_media_type(ct) {
+    Ok(m) => m
+    Err(_) => return Err(not_multipart)
+  }
+  if m.kind != "multipart/form-data" {
+    return Err(not_multipart)
+  }
+  let boundary = match m.params.get("boundary") {
+    Some(b) => b
+    None => return Err(multipart.MultipartErr{msg: "no multipart boundary param in Content-Type"})
+  }
+  multipart.parse_form(r.body, boundary)
 }
 
 /// The body as Str, each byte of an invalid UTF-8 sequence as `%XX`.

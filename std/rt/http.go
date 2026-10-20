@@ -512,6 +512,25 @@ func (r Http_Request) M_form(tk *Task) Result[Url_Values, Url_EscapeErr] {
 	return Url_parse_query(tk, urlText(string(r.F_body)))
 }
 
+// M_multipart_form is `req.multipart_form()` (decision 0282): net/http's
+// multipartReader checks, then std/multipart's parse_form.
+func (r Http_Request) M_multipart_form(tk *Task) Result[Multipart_Form, Multipart_MultipartErr] {
+	notMultipart := Err[Multipart_Form](Multipart_MultipartErr{F_msg: "request Content-Type isn't multipart/form-data"})
+	ct := headerGet(r.F_headers, "Content-Type").V
+	if ct == "" {
+		return notMultipart
+	}
+	m := Mime_parse_media_type(tk, ct)
+	if !m.Ok || m.V.F_kind != "multipart/form-data" {
+		return notMultipart
+	}
+	b := Map_get(tk, m.V.F_params, "boundary")
+	if !b.Some {
+		return Err[Multipart_Form](Multipart_MultipartErr{F_msg: "no multipart boundary param in Content-Type"})
+	}
+	return Multipart_parse_form(tk, r.F_body, b.V, 1000)
+}
+
 // parseURLLoose parses an absolute or a path only URL.
 func parseURLLoose(raw string) Http_Url { return parseURLArena(nil, raw) }
 
