@@ -168,7 +168,7 @@ fn (var b: Builder) scope_expr(e: Expr) -> Int {
     ScopeExpr(name: name, body: body, ..) => (name, body)
     _ => fault("not a scope")
   }
-  b.need_conc = true
+  b.set_flag(1)
   let t = b.nat_of(e)
   if !b.conc {
     return b.undef(t)
@@ -628,7 +628,7 @@ fn (var b: Builder) finish_task(fi: Int, k: Int, t: Int, l: Int, failed: Int) {
 
 /// `t.await`: the task's result (await, a cancellation point).
 fn (var b: Builder) await_expr(e: Expr, x: Expr) -> Int {
-  b.need_conc = true
+  b.set_flag(1)
   let t = b.nat_of(e)
   if !b.conc {
     return b.undef(t)
@@ -666,7 +666,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   if recv == "task" && fname == "isolate" {
     return b.isolate(x)
   }
-  b.need_conc = true
+  b.set_flag(1)
   if !b.conc {
     return b.undef(nt)
   }
@@ -898,7 +898,7 @@ fn (var b: Builder) elem_check(e: Expr) -> Int {
 /// `for p in ch` (forChan, core 3.5, 7.3): receives until the channel is
 /// closed and drained; each receive is a cancellation point.
 fn (var b: Builder) for_chan(label: Bytes, p: Pattern, iter: Expr, bound: List[Expr], body: parser.Block) {
-  b.need_conc = true
+  b.set_flag(1)
   let h = b.value(iter)
   if !b.conc {
     return
@@ -944,7 +944,7 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
     SelectExpr(arms: arms, ..) => arms
     _ => fault("not a select")
   }
-  b.need_conc = true
+  b.set_flag(1)
   let t = b.type_of(e)
   if !b.conc {
     return b.undef(t)
@@ -1316,14 +1316,14 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       return Some(res)
     }
     "Net.listen" => {
-      b.uses_net = true
+      b.set_flag(2)
       // the Net's attenuation lists first (Net.only, decision 0175)
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
       let h = b.rt("net_listen", b.m.handle("Listener", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Net.dial" => {
-      b.uses_net = true
+      b.set_flag(2)
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
       let h = b.rt("net_dial", b.m.handle("Conn", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))

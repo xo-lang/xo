@@ -611,3 +611,62 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		}
 	}
 }
+
+// TestFrontCacheOneWayFlags guards the entry format: a body that sets one
+// of the builder's one-way flags (uses_net here, need_conc alike) records
+// the set, even when the recording builder had the flag already (decision
+// 0271 step 1a). b dials, and so did a before it; after an edit a no
+// longer dials, and the binary is the same file as a build with
+// XO_BACKEND_CACHE=off, and verify is clean. A serial build passed this
+// before the fix too (the commit's declares mark the network's modules,
+// and the task scan sets need_conc before any body): the masking broke
+// bodies recorded in other builders (step 2's prebuild).
+func TestFrontCacheOneWayFlags(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feflags-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dial := "match net.dial(\"127.0.0.1:1\") {\n    Ok(_) => 1\n    Err(_) => 0\n  }"
+	gen := func(a string) string {
+		return "fn a(net: Net) -> Int {\n  " + a + "\n}\n\nfn b(net: Net) -> Int {\n  " + dial + "\n}\n\n" +
+			"fn main(os: Os) {\n  os.stdio.println(\"${a(os.net)} ${b(os.net)}\")\n}\n"
+	}
+	build := func(name string, env ...string) []byte {
+		out := filepath.Join(work, name, "prog")
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = src
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for i, a := range []string{dial, "0"} {
+		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(a)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// the first build after the edit commits the entries of the last
+		on := build("on", "XO_BACKEND_CACHE=on")
+		off := build("off", "XO_BACKEND_CACHE=off")
+		if !bytes.Equal(on, off) {
+			t.Errorf("step %d: the build through the front end cache differs from the build with XO_BACKEND_CACHE=off", i)
+		}
+		build("verify", "XO_BACKEND_CACHE=verify")
+	}
+}

@@ -243,3 +243,11 @@ module list (a delta relative to the recording builder, which only
 differed between builders). TestFrontCacheAcrossPrograms builds the
 goldens into one shared cache in several orders and compares each with a
 cache-off build: the guard for entries that cross programs.
+Fix 2 (2026-10-20): need_conc and uses_net are one-way flags a body
+sets; an entry recorded by a builder that had one set already carried
+nothing. A serial build is covered in practice (the commit's declares
+mark the network's modules; the task scan sets need_conc first), but
+bodies recorded elsewhere (step 2) lost the network's exports. Bodies
+set them through set_flag, the entry carries the bits and the commit
+sets them again (FE_CACHE_VERSION v4). Test, a guard of the format:
+TestFrontCacheOneWayFlags.

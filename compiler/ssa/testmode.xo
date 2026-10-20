@@ -72,7 +72,7 @@ fn (var b: Builder) build_tests() {
   let bt = b.bool_t()
   let tasks = b.uses_os_tasks()
   if tasks {
-    b.need_conc = true
+    b.set_flag(1)
   }
   let unit = b.unit_t()
   let fi = b.m.new_func("main", [], [unit])
@@ -373,7 +373,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Stdio.output" => return Some(b.tw_rt("test_output", st, [b.cint(1)]))
     "Stdio.errors" => return Some(b.tw_rt("test_output", st, [b.cint(2)]))
     "Clock.advance" => {
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return Some(b.undef(nt))
       }
@@ -573,7 +573,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
   let it = b.int_t()
   let st = b.str_t()
   let bt = b.bool_t()
-  b.need_conc = true
+  b.set_flag(1)
   if !b.conc {
     return b.undef(it)
   }

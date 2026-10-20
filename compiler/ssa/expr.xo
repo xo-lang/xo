@@ -1008,7 +1008,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
     if b.tkind(t) == Kind.Handle {
       // os.tasks (core 7.1, decision 0109): the group of the scope around
       // main (tasks_main)
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return b.undef(t)
       }

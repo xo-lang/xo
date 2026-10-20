@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v3"
+const FE_CACHE_VERSION = "xo front cache v4"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -92,7 +92,7 @@ fn fe_mix(h: Int, s: Str) -> Int {
 /// What a body may change and an entry not replay: when any differs
 /// after the body, it is not cached.
 fn (b: Builder) fe_fixed() -> Str {
-  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.need_conc} ${b.uses_net} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
+  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
 }
 
 /// A function object's qualified name: module path, receiver type, name.
@@ -127,6 +127,7 @@ fn (var b: Builder) fe_begin() -> FeRec {
   b.m.fe_treads = {}
   b.m.fe_freads = {}
   b.m.fe_fabsent = {}
+  b.fe_flagbits = 0
   b.m.fe_ev = []
   FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
 }
@@ -159,7 +160,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       b.fe_skip("read.${b.fe_touched}")
     } else if b.fe_fixed() != r.fixed {
       // which side table the body changed (XO_FE_STATS)
-      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nclos", "nsyn", "need_conc", "uses_net", "skipped_any", "errs", "seen_err"]
+      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nclos", "nsyn", "skipped_any", "errs", "seen_err"]
       let was = r.fixed.split(" ")
       let now = b.fe_fixed().split(" ")
       for (i, n) in names.indexed() {
@@ -218,6 +219,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     tl.str(k)
   }
   tl.bool(b.m.funcs[fi].target)
+  tl.uv(b.fe_flagbits)
   tl.bytes(fbo ?? b"")
   e.bytes(tl.b.freeze())
   // what it found that was there before it
@@ -549,6 +551,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     mods.push(tr.str())
   }
   let target = tr.bool()
+  let flagbits = tr.uv()
   let fb = tr.bytes()
   if !tr.ok {
     return b.fe_miss("malformed")
@@ -634,6 +637,12 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     b.checks.push(c)
   }
   b.nvar += dvar
+  if (flagbits & 1) != 0 {
+    b.need_conc = true
+  }
+  if (flagbits & 2) != 0 {
+    b.uses_net = true
+  }
   for k in mods {
     b.decl_mods[k] = true
   }

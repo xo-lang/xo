@@ -112,7 +112,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
       return v
     }
     if b.is_proc_run(fo) {
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return b.undef(b.nat_of(x))
       }
@@ -128,7 +128,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
       return v
     }
     if b.native_waits(fo) {
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return b.undef(b.nat_of(x))
       }
@@ -1794,7 +1794,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       if fname is "write" | "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes" | "stdin_is_tty" | "stdout_is_tty" | "stderr_is_tty" | "width" {
         if stdio_reads(fname) {
           // reads wait on the event loop
-          b.need_conc = true
+          b.set_flag(1)
           if !b.conc {
             return b.undef(nt)
           }
@@ -2029,7 +2029,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     // fsCall: the function fs_<name> of the native prelude
     if fname == "lock" {
       // waits, polling on the event loop's timers (decision 0172)
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return Some(b.undef(b.nat_of(x)))
       }
@@ -2048,7 +2048,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     // a test's FakeStdio: the same functions, whose runtime reads the
     // input set_input gave and has no terminal (std/llrt/xo_stdin.c)
     if stdio_reads(fname) {
-      b.need_conc = true
+      b.set_flag(1)
       if !b.conc {
         return Some(b.undef(b.nat_of(x)))
       }
@@ -2075,7 +2075,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let es = arg_exprs(b.c.objs[fo].params, args)
   if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" | "Proc.pipeline" {
     // operations that wait: the program needs unwinding checks
-    b.need_conc = true
+    b.set_flag(1)
     if !b.conc {
       return Some(b.undef(nt))
     }

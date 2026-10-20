@@ -285,6 +285,9 @@ pub struct Builder {
   /// commit cannot replay (a skip reason, "" for none).
   fe_greads: List[(Str, Str)] = []
   fe_touched: Str = ""
+  /// the one-way flags a recorded body set (set_flag): 1 need_conc, 2
+  /// uses_net; a builder that had them already would otherwise hide it
+  fe_flagbits: Int = 0
 }
 
 /// logFrom: the attribution of the record the std/log function fo writes
@@ -451,7 +454,7 @@ pub fn (var b: Builder) build() uses fs.read {
   }
   let mf = b.declare(main_fo, [])
   if b.uses_os_tasks() {
-    b.need_conc = true
+    b.set_flag(1)
     if !b.conc {
       // build_program_cpu builds the program again with unwinding
       // checks and drops this one: building its bodies first was wasted
@@ -966,7 +969,7 @@ fn (var b: Builder) named_type(t: Int) -> Int {
   if tk == "struct" {
     if b.conc_type(obj) {
       // a handle of the runtime (build_conc.go concType)
-      b.need_conc = true
+      b.set_flag(1)
       var hname = oname
       if !b.is_prelude_mod(om) {
         hname = "task.Group"
@@ -1506,6 +1509,20 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
   let f = b.declare0(fo, targs)
   b.m.fe_log = true
   f
+}
+
+/// Sets need_conc (k 1) or uses_net (k 2), noted while a body records:
+/// its entry sets them again when committed (fecache.xo), whatever the
+/// recording builder had set before.
+fn (var b: Builder) set_flag(k: Int) {
+  if k == 1 {
+    b.need_conc = true
+  } else {
+    b.uses_net = true
+  }
+  if b.m.fe_log {
+    b.fe_flagbits = b.fe_flagbits | k
+  }
 }
 
 /// m.func_index, noted while a body records (Module.fe_freads).
