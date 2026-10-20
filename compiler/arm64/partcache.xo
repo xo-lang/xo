@@ -19,7 +19,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
-const PART_CACHE_VERSION = "xo part cache v1"
+const PART_CACHE_VERSION = "xo part cache v2"
 
 /// The key of each part of m for os from the functions' keys (fkeys,
 /// fcache.xo function_keys), "" for a part with a function not cached;
@@ -33,7 +33,11 @@ pub fn part_keys(m: ssa.Module, os: Str, fkeys: List[Str]) -> List[Str] {
   let np = bounds.len() - 1
   var head = StrBuilder.new()
   head.write("${PART_CACHE_VERSION}\n${FN_CACHE_VERSION}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} guard=${m.heap_guard} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc}\n")
-  head.write("comp_dir ${m.comp_dir.len()}:${m.comp_dir}\nstd_root ${m.std_root.len()}:${m.std_root}\nparts ${np}\n")
+  // no part count, part index, or function indexes (v2): a part's
+  // output reads none of them (its labels count from 0 in its
+  // namespace), and a cut that moves (a value cut, an added function)
+  // left every later part's key changed
+  head.write("comp_dir ${m.comp_dir.len()}:${m.comp_dir}\nstd_root ${m.std_root.len()}:${m.std_root}\n")
   if m.debug_info {
     head.write("types ${crypto.sha256(ssa.type_keys(m).join("\n").bytes()).to_hex()}\n")
   }
@@ -44,7 +48,7 @@ pub fn part_keys(m: ssa.Module, os: Str, fkeys: List[Str]) -> List[Str] {
     let hi = bounds[p + 1]
     var b = StrBuilder.new()
     b.write(h)
-    b.write("part ${p} ${lo} ${hi} ${names[p].len()}:${names[p]}\n")
+    b.write("part ${names[p].len()}:${names[p]}\n")
     var ok = true
     for fi in lo..hi {
       if fkeys[fi].is_empty() {

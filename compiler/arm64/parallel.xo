@@ -11,13 +11,18 @@ use github.com/xo-lang/xo/compiler/ssa
 /// A module of fewer functions than PART_FUNCS is one part. A larger one
 /// is cut by its contents (decision 0220 addendum): after a function whose
 /// name hashes to 0 modulo PART_CUT once the part has PART_MIN functions,
-/// or at PART_MAX functions; a short last part joins the one before. An
-/// edit moves the cuts of its own part at most, so the other parts'
-/// assembly (and their cached objects) stay the same.
+/// or at PART_MAX functions, or once the part holds PART_VALUES SSA
+/// values (a part of large functions: one of 120 functions held 12% of
+/// a cold build of xo's emit, 2026-10-19); a short last part joins the
+/// one before. An edit moves the cuts of its own part, and a value cut
+/// after it up to the next name cut, so the other parts' assembly (and
+/// their cached objects) stay the same; the parts never depend on the
+/// number of tasks.
 const PART_FUNCS = 256
 const PART_MIN = 64
 const PART_CUT = 128
 const PART_MAX = 512
+const PART_VALUES = 60000
 
 /// What one part generated: its assembly (text, helpers, call site
 /// tables, data), its failure and skipped functions, and the program
@@ -166,11 +171,14 @@ pub fn part_bounds(m: ssa.Module) -> List[Int] {
   }
   var out = [0]
   var start = 0
+  var vals = 0
   for (fi, f) in m.funcs.indexed() {
     let k = fi + 1 - start
-    if fi + 1 < n && k >= PART_MIN && (k >= PART_MAX || fnv(f.name) % PART_CUT == 0) {
+    vals += f.values.len()
+    if fi + 1 < n && ((k >= PART_MIN && (k >= PART_MAX || fnv(f.name) % PART_CUT == 0)) || vals >= PART_VALUES) {
       out.push(fi + 1)
       start = fi + 1
+      vals = 0
     }
   }
   if out.len() > 1 && n - start < PART_MIN {
