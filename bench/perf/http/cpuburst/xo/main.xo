@@ -1,0 +1,34 @@
+// The cpuburst server (bench/perf/http/cpuburst/README.md): GET /users/1,
+// a small JSON answer, and GET /cpu, about 86 ms of compute with no
+// runtime calls. MODE=spawn serves from a spawned task instead of main's
+// body.
+use std/http
+
+fn main(os: Os) ! {
+  let addr = "127.0.0.1:${os.env.get("PORT") ?? "18095"}"
+  var r = http.router()
+  r.handle("GET /users/{id:Int}", fn(req) { http.text(200, "{\"id\":${req.param_int("id")},\"name\":\"a\"}") })
+  r.handle("POST /users", fn(_req) { http.text(201, "{\"id\":1}") })
+  r.handle("GET /users", fn(_req) { http.text(200, "[]") })
+  r.handle("GET /cpu", fn(_req) { http.text(200, "${spin(60000000)}") })
+  let srv = http.server(os.net.listen(addr)?, r)
+  if (os.env.get("MODE") ?? "") == "spawn" {
+    scope sc {
+      let _ = sc.spawn(fn() { srv.serve().ok() })
+    }
+  } else {
+    srv.serve()?
+  }
+  Ok(())
+}
+
+/// About 86 ms on an M-series core (an LCG chain in 31 bits, no overflow).
+fn spin(n: Int) -> Int {
+  var x = 12345
+  var i = 0
+  while i < n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    i += 1
+  }
+  x
+}
