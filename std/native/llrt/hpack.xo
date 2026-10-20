@@ -89,22 +89,42 @@ fn static_at(k: Int) -> (Int, Int, Int) {
   (w & 0xFFFF, (w >> 16) & 0xFF, (w >> 24) & 0xFF)
 }
 
-/// Whether b[lo..lo+n] equals t[off..off+n].
+/// Whether b[lo..lo+n] equals t[off..off+n] (both ranges inside their
+/// bytes: every caller checks the lengths first). In words, the last one
+/// overlapping, every load inside the n bytes: a header name is 4 to 15
+/// bytes, and the byte loop's checked loads were about 1,000
+/// instructions an HTTP/2 request (2026-10-20).
 fn eq_at(b: Bytes, lo: Int, t: Bytes, off: Int, n: Int) -> Bool {
-  var i = 0
-  while i + 8 <= n {
-    if rt.bytes_word(b, lo + i) != rt.bytes_word(t, off + i) {
-      return false
+  let p = raw.bytes_addr(b) + lo
+  let q = raw.bytes_addr(t) + off
+  var same = true
+  if n >= 8 {
+    var i = 0
+    while i + 8 <= n {
+      if rt.mem_load(p, i, 8) != rt.mem_load(q, i, 8) {
+        same = false
+        break
+      }
+      i += 8
     }
-    i += 8
-  }
-  while i < n {
-    if b[lo + i] != t[off + i] {
-      return false
+    if same && i < n {
+      same = rt.mem_load(p, n - 8, 8) == rt.mem_load(q, n - 8, 8)
     }
-    i += 1
+  } else if n >= 4 {
+    same = rt.mem_load(p, 0, 4) == rt.mem_load(q, 0, 4) && rt.mem_load(p, n - 4, 4) == rt.mem_load(q, n - 4, 4)
+  } else {
+    var i = 0
+    while i < n {
+      if rt.mem_load(p, i, 1) != rt.mem_load(q, i, 1) {
+        same = false
+        break
+      }
+      i += 1
+    }
   }
-  true
+  raw.alive(b)
+  raw.alive(t)
+  same
 }
 
 /// The static table's entry for the name b[nlo..nlo+nn] and the value
