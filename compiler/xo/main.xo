@@ -635,7 +635,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // the build directory (buildDir, then the backend's subdirectory)
   let mode = if tests { 1 } else { 0 }
   let variant = if release { "release" } else { "" }
-  let bdir = match build_dir(os, ctx, o.wd, o.dirs, mode, false, false, false, [variant]) {
+  // --std-module names no directory: the module keeps two std modules'
+  // test binaries apart (gotchas/std-module-test-binary-shared.md)
+  let smod = if o.std_module.is_empty() { "" } else { "std-module=${o.std_module}" }
+  let bdir = match build_dir(os, ctx, o.wd, o.dirs, mode, false, false, false, [variant, smod]) {
     Ok(d) => d
     Err(e) => fail(os, "${e}")
   }

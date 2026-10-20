@@ -614,7 +614,10 @@ fn (var b: Builder) run_job_fe(j: Job) {
     return
   }
   if let Body(fo, fi, sub) = j {
-    let key = b.fe.keys.get(fo) ?? ""
+    // the entry of this builder's own flags (concurrency, budgets): a
+    // body differs by them, and programs of either kind share the cache
+    let k0 = b.fe.keys.get(fo) ?? ""
+    let key = if k0.is_empty() { "" } else { fe_variant(k0, b.fe_own_flags()) }
     if sub.is_empty() && !key.is_empty() {
       let entry = b.fe.entries.get(key)
       if !b.fe.verify {

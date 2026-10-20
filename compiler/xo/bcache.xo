@@ -243,6 +243,34 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   plan.keys
 }
 
+/// The hash of every std source under dir (its .xo files, by path
+/// relative to dir and contents): the front end cache's key of a std
+/// body (ssa fe_keys), the same for every program. "" when dir cannot be
+/// walked (std bodies then share no key with another build).
+fn std_tree_sum(os: Os, dir: Str) -> Str {
+  let all = match os.fs.walk(dir) {
+    Ok(fs) => fs
+    Err(_) => return ""
+  }
+  var paths: List[Str] = []
+  for fi in all {
+    if !fi.is_dir && fi.path.ends_with(".xo") {
+      paths.push(fi.path)
+    }
+  }
+  var h = BytesBuilder.new()
+  for p in paths.sort() {
+    match os.fs.read(p) {
+      Ok(b) => {
+        h.write_str("${p.trim_prefix("${dir}/")} ${b.len()}\n")
+        h.write(b)
+      }
+      Err(_) => return ""
+    }
+  }
+  crypto.sha256(h.freeze()).to_hex()
+}
+
 /// The SSA builder through the front end cache (decision 0220 addendum
 /// stage 2, compiler/ssa fecache.xo): the keys of the program's bodies,
 /// their entries from the target's "fe" pack, the build, then the new
@@ -256,11 +284,13 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   }
   var t = os.clock.now()
   var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify"}
-  fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}")
+  fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", root, std_tree_sum(os, c.std_root()))
   t = lap(os, phases, "fe.keys", t)
   var keys: List[Str] = []
   for (_, k) in fe.keys {
-    keys.push(k)
+    for own in ssa.fe_common_owns() {
+      keys.push(ssa.fe_variant(k, own))
+    }
   }
   let (entries, pk) = cache_get_packed(os, dir, "fe", "${tgoos}/${tgoarch}", keys, 8)
   fe.entries = entries

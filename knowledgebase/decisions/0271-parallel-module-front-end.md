@@ -251,3 +251,27 @@ bodies recorded elsewhere (step 2) lost the network's exports. Bodies
 set them through set_flag, the entry carries the bits and the commit
 sets them again (FE_CACHE_VERSION v4). Test, a guard of the format:
 TestFrontCacheOneWayFlags.
+
+### Step 1b, part 1: keys a std body shares across programs (2026-10-20)
+
+For Xo Lang 3's shared std cache (decision 0272). A body of std, the
+prelude or the native runtime is keyed by a hash of every std source
+(std_tree_sum, compiler/xo bcache.xo: 185 files, 3.4 MB on 2026-10-20)
+and whether the build has a root (its positions name std files the same
+either way), not by the std modules this program loads (std_sum) or the
+root; a program module's body keeps its interface closure and the root,
+and so does a std module that is the build's root (`xo test
+--std-module`: its functions are named and built as the main module's),
+and every std body keys on the std modules that are the build's root
+("" for a program), since a std body names that module's functions
+unprefixed there.
+An entry is stored under its key and the builder's own flags (a body of
+a program with tasks differs from one without: fe_variant), and a build
+reads the two common variants (no tasks, tasks). FE_CACHE_VERSION v7.
+
+Measured (one fresh cache, built in order; main 0 everywhere):
+http_server 0 of 2,359, json_text 0 of 1,132 (the first without tasks),
+tls_nistec 1,039 of 2,018, http_tls 2,287 of 2,702. Cost: fe.keys 5 to
+10 ms to 11 to 18 ms and fe.read 7 to 10 ms to 16 to 48 ms a build; a
+hit saves about 100 ms of fe.build on tls_nistec. TestFrontCacheAcross
+Programs passes (every golden and run program, 1,286 s).

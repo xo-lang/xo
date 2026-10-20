@@ -3,6 +3,7 @@ package arm64
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -513,7 +514,11 @@ func TestFrontCacheAbsentHelper(t *testing.T) {
 // builds at once (as `xo dev goldens -j 8` does), then again one at a time
 // in three other orders (each program now after others' entries) and with
 // the cache off, to one output path per program: each binary must be the
-// same file. Every program with XO_SELFHOST_TIER=full, else a sample.
+// same file. Every program with XO_SELFHOST_TIER=full, else a sample. The
+// std modules with tests run their tests (xo test --std-module) among
+// them, each pass of each order: a std module under test is the build's
+// root, so its functions are named as main's (2026-10-20: a std body
+// recorded there called "svc" for stop.svc in other builds).
 func TestFrontCacheAcrossPrograms(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -552,7 +557,30 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 	if warm == "" {
 		warm = xo
 	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	filepath.WalkDir(filepath.Join(root, "std"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, "_test.xo") && !strings.Contains(p, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
+			rel, _ := filepath.Rel(filepath.Join(root, "std"), p)
+			dirs = append(dirs, "std:"+strings.TrimSuffix(filepath.ToSlash(rel), "_test.xo"))
+		}
+		return nil
+	})
 	buildWith := func(bin string, i int, dir string, env ...string) ([]byte, error) {
+		if m, ok := strings.CutPrefix(dir, "std:"); ok {
+			// a std module's tests, on that xo's own std (bin/../std): they
+			// must pass (no binary to compare)
+			std := filepath.Join(filepath.Dir(filepath.Dir(bin)), "std")
+			cmd := exec.Command(bin, "test", "--std-module="+m, "--backend=arm64")
+			cmd.Dir = root
+			cmd.Env = append(append(os.Environ(), "XO_STD="+std, "PWD="+root, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+			if log, err := cmd.CombinedOutput(); err != nil {
+				return nil, fmt.Errorf("%v\n%s", err, log)
+			}
+			return nil, nil
+		}
 		out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
 		os.Remove(out)
 		cmd := exec.Command(bin, "build", "--backend=arm64", "-o", out, ".")

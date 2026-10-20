@@ -228,6 +228,11 @@ pub struct Checker {
   pub parsed: List[(Str, Bool)] = []
 }
 
+/// The directory the checker reads std from.
+pub fn (c: Checker) std_root() -> Str {
+  c.std_dir
+}
+
 /// A fresh checker reading std declarations from std_dir.
 pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
   var c = Checker{fs: fs, std_dir: std_dir}

@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v4"
+const FE_CACHE_VERSION = "xo front cache v7"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -43,9 +43,24 @@ pub struct FeCache {
 
 /// The keys of the bodies the builder may take from the cache: every
 /// function that is not generic and has a body. flags are the build's
-/// (fe_flags).
-pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
+/// (fe_flags). A body of std, the prelude or the native runtime is keyed
+/// by std_sum (every std source, xo bcache.xo std_tree_sum) and whether
+/// the build has a root (its positions name std files the same either
+/// way), not by what this program loads, so its entry serves every
+/// program (decision 0271 step 1b, for the shared std cache); a program
+/// module's body by its interface closure and the root.
+pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int, Str] {
   let closure = c.iface_closures()
+  // a std module the build has as its root (xo test --std-module): its
+  // functions are named as the main module's (unprefixed), so a std body
+  // calling them names them so; std bodies key on it ("" for a program)
+  var std_roots: List[Str] = []
+  for md in c.mods {
+    if md.root && (md.is_std || md.is_prelude || md.native) {
+      std_roots.push(md.path)
+    }
+  }
+  let rootsk = std_roots.sort().join(",")
   var keys: Map[Int, Str] = {}
   for (fo, o) in c.objs.indexed() {
     if o.kind != check.ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 || o.module < 0 || !o.tparams.is_empty() {
@@ -62,17 +77,36 @@ pub fn fe_keys(c: check.Checker, flags: Str) -> Map[Int, Str] {
     if fd.span.end.offset > src.len() || fd.span.start.offset < 0 {
       continue
     }
+    let md = c.mods[o.module]
+    // a root module (a std module under test, --std-module) is the
+    // program's own: its functions are named and built as the main
+    // module's
+    let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${root}" }
     var h = BytesBuilder.new()
-    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${closure[o.module]}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
+    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
     h.write(src[fd.span.start.offset..fd.span.end.offset])
     keys[fo] = crypto.sha256(h.freeze()).to_hex()
   }
   keys
 }
 
+/// The key of body key's entry for a builder of own flags own
+/// (fe_own_flags): entries of a program with tasks and of one without
+/// differ, and both are kept.
+pub fn fe_variant(key: Str, own: Str) -> Str {
+  crypto.sha256("${key}\n${own}".bytes()).to_hex()
+}
+
+/// The own flags of the builders the cache reads entries for before a
+/// build (the build's are known only as it runs): a program without
+/// tasks and one with, neither with budgets nor real time.
+pub fn fe_common_owns() -> List[Str] {
+  ["conc=false budgets=false scan=false rt=false", "conc=true budgets=false scan=false rt=false"]
+}
+
 /// The builder's flags in a key, for build_program_guard's arguments.
 pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool) -> Str {
-  "root=${line_root} tests=${tests} release=${release} real=${real_tests} os=${goos} arch=${goarch} wasm=${wasm} nolibc=${nolibc} prof=${prof} trace=${trace_support} soft=${soft_cpu} guard=${heap_guard}"
+  "tests=${tests} release=${release} real=${real_tests} os=${goos} arch=${goarch} wasm=${wasm} nolibc=${nolibc} prof=${prof} trace=${trace_support} soft=${soft_cpu} guard=${heap_guard}"
 }
 
 /// The flags the builder sets itself, compared with an entry's.
