@@ -1,0 +1,466 @@
+// std/netip on the native backends (decision 0287): Go's net/netip
+// (netip.go of go1.26: ParseAddr, parseIPv4Fields, parseIPv6, String,
+// ParsePrefix, Prefix.Contains and Masked, the Is predicates), ported
+// with the same results and error texts.
+use std/netip
+
+fn parseerr_display(e: netip.ParseErr) -> Str { e.msg }
+
+fn addr_err(input: Str, msg: Str, at: Str) -> netip.ParseErr {
+  if at.is_empty() {
+    return netip.ParseErr{msg: "ParseAddr(${input.quote()}): ${msg}"}
+  }
+  netip.ParseErr{msg: "ParseAddr(${input.quote()}): ${msg} (at ${at.quote()})"}
+}
+
+fn zero16() -> BytesBuilder {
+  var b = BytesBuilder.with_capacity(16)
+  for _ in 0..16 {
+    b.write_byte(0)
+  }
+  b
+}
+
+/// The IPv4 address of 4 bytes, as Go keeps it: ::ffff:a.b.c.d.
+fn from4(b: Bytes) -> netip.Addr {
+  var out = BytesBuilder.with_capacity(16)
+  for _ in 0..10 {
+    out.write_byte(0)
+  }
+  out.write_byte(255)
+  out.write_byte(255)
+  out.write(b)
+  netip.Addr{bits: 32, ip: out.freeze(), zone: ""}
+}
+
+fn addr_from_bytes(b: Bytes) -> netip.Addr? {
+  if b.len() == 4 {
+    return Some(from4(b))
+  }
+  if b.len() == 16 {
+    return Some(netip.Addr{bits: 128, ip: b, zone: ""})
+  }
+  None
+}
+
+/// parseIPv4Fields over input[off..end]: the four octets or the error.
+fn ipv4_fields(input: Str, off: Int, end: Int) -> Bytes ! netip.ParseErr {
+  let s = input.bytes()[off..end]
+  var fields = BytesBuilder.with_capacity(4)
+  var val = 0
+  var pos = 0
+  var dig = 0
+  var i = 0
+  while i < s.len() {
+    let c = s[i]
+    if c >= 48 && c <= 57 {
+      if dig == 1 && val == 0 {
+        return Err(addr_err(input, "IPv4 field has octet with leading zero", ""))
+      }
+      val = val * 10 + Int(c) - 48
+      dig += 1
+      if val > 255 {
+        return Err(addr_err(input, "IPv4 field has value >255", ""))
+      }
+    } else if c == 46 {
+      if i == 0 || i == s.len() - 1 || s[i - 1] == 46 {
+        return Err(addr_err(input, "IPv4 field must have at least one digit", s[i..].to_str() ?? ""))
+      }
+      if pos == 3 {
+        return Err(addr_err(input, "IPv4 address too long", ""))
+      }
+      fields.write_byte(UInt8(val))
+      pos += 1
+      val = 0
+      dig = 0
+    } else {
+      return Err(addr_err(input, "unexpected character", s[i..].to_str() ?? ""))
+    }
+    i += 1
+  }
+  if pos < 3 {
+    return Err(addr_err(input, "IPv4 address too short", ""))
+  }
+  fields.write_byte(UInt8(val))
+  fields.freeze()
+}
+
+fn hexval(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  -1
+}
+
+fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
+  var s = input
+  var zone = ""
+  match input.find("%") {
+    Some(i) => {
+      s = input[0..i]
+      zone = input[i + 1..]
+      if zone.is_empty() {
+        return Err(addr_err(input, "zone must be a non-empty string", ""))
+      }
+    }
+    None => ()
+  }
+  var ip: List[Int] = []
+  for _ in 0..16 {
+    ip.push(0)
+  }
+  var ellipsis = -1
+  var b = s.bytes()
+  if b.len() >= 2 && b[0] == 58 && b[1] == 58 {
+    ellipsis = 0
+    b = b[2..]
+    if b.is_empty() {
+      return netip.Addr{bits: 128, ip: zero16().freeze(), zone: zone}
+    }
+  }
+  var i = 0
+  while i < 16 {
+    var off = 0
+    var acc = 0
+    while off < b.len() && hexval(b[off]) >= 0 {
+      acc = acc * 16 + hexval(b[off])
+      if off > 3 {
+        return Err(addr_err(input, "each group must have 4 or less digits", b.to_str() ?? ""))
+      }
+      if acc > 65535 {
+        return Err(addr_err(input, "IPv6 field has value >=2^16", b.to_str() ?? ""))
+      }
+      off += 1
+    }
+    if off == 0 {
+      return Err(addr_err(input, "each colon-separated field must have at least one digit", b.to_str() ?? ""))
+    }
+    if off < b.len() && b[off] == 46 {
+      if ellipsis < 0 && i != 12 {
+        return Err(addr_err(input, "embedded IPv4 address must replace the final 2 fields of the address", b.to_str() ?? ""))
+      }
+      if i + 4 > 16 {
+        return Err(addr_err(input, "too many hex fields to fit an embedded IPv4 at the end of the address", b.to_str() ?? ""))
+      }
+      var end = input.len()
+      if zone.len() > 0 {
+        end -= zone.len() + 1
+      }
+      let f = ipv4_fields(input, end - b.len(), end)?
+      for k in 0..4 {
+        ip.set(i + k, Int(f[k]))
+      }
+      b = b""
+      i += 4
+      break
+    }
+    ip.set(i, acc >> 8)
+    ip.set(i + 1, acc & 255)
+    i += 2
+    b = b[off..]
+    if b.is_empty() {
+      break
+    }
+    if b[0] != 58 {
+      return Err(addr_err(input, "unexpected character, want colon", b.to_str() ?? ""))
+    }
+    if b.len() == 1 {
+      return Err(addr_err(input, "colon must be followed by more characters", b.to_str() ?? ""))
+    }
+    b = b[1..]
+    if b[0] == 58 {
+      if ellipsis >= 0 {
+        return Err(addr_err(input, "multiple :: in address", b.to_str() ?? ""))
+      }
+      ellipsis = i
+      b = b[1..]
+      if b.is_empty() {
+        break
+      }
+    }
+  }
+  if !b.is_empty() {
+    return Err(addr_err(input, "trailing garbage after address", b.to_str() ?? ""))
+  }
+  if i < 16 {
+    if ellipsis < 0 {
+      return Err(addr_err(input, "address string too short", ""))
+    }
+    let n = 16 - i
+    var j = i - 1
+    while j >= ellipsis {
+      ip.set(j + n, ip[j])
+      j -= 1
+    }
+    for k in ellipsis..ellipsis + n {
+      ip.set(k, 0)
+    }
+  } else if ellipsis >= 0 {
+    return Err(addr_err(input, "the :: must expand to at least one field of zeros", ""))
+  }
+  var out = BytesBuilder.with_capacity(16)
+  for v in ip {
+    out.write_byte(UInt8(v))
+  }
+  netip.Addr{bits: 128, ip: out.freeze(), zone: zone}
+}
+
+fn parse_addr(s: Str) -> netip.Addr ! netip.ParseErr {
+  for c in s.bytes() {
+    if c == 46 {
+      return Ok(from4(ipv4_fields(s, 0, s.len())?))
+    }
+    if c == 58 {
+      return parse_ipv6(s)
+    }
+    if c == 37 {
+      return Err(addr_err(s, "missing IPv6 address", ""))
+    }
+  }
+  Err(addr_err(s, "unable to parse IP", ""))
+}
+
+fn addr_is_4(a: netip.Addr) -> Bool { a.bits == 32 }
+
+fn addr_is_6(a: netip.Addr) -> Bool { a.bits == 128 }
+
+fn addr_is_4in6(a: netip.Addr) -> Bool {
+  if a.bits != 128 {
+    return false
+  }
+  for k in 0..10 {
+    if a.ip[k] != 0 {
+      return false
+    }
+  }
+  a.ip[10] == 255 && a.ip[11] == 255
+}
+
+fn addr_unmap(a: netip.Addr) -> netip.Addr {
+  if addr_is_4in6(a) {
+    return netip.Addr{bits: 32, ip: a.ip, zone: ""}
+  }
+  a
+}
+
+fn addr_is_loopback(a0: netip.Addr) -> Bool {
+  let a = addr_unmap(a0)
+  if a.bits == 32 {
+    return a.ip[12] == 127
+  }
+  if a.bits == 128 {
+    for k in 0..15 {
+      if a.ip[k] != 0 {
+        return false
+      }
+    }
+    return a.ip[15] == 1
+  }
+  false
+}
+
+fn addr_is_private(a0: netip.Addr) -> Bool {
+  let a = addr_unmap(a0)
+  if a.bits == 32 {
+    let b0 = a.ip[12]
+    let b1 = a.ip[13]
+    return b0 == 10 || (b0 == 172 && (b1 & 240) == 16) || (b0 == 192 && b1 == 168)
+  }
+  if a.bits == 128 {
+    return (a.ip[0] & 254) == 252
+  }
+  false
+}
+
+fn addr_is_unspecified(a: netip.Addr) -> Bool {
+  if !a.zone.is_empty() {
+    return false
+  }
+  if a.bits == 32 {
+    return a.ip[12] == 0 && a.ip[13] == 0 && a.ip[14] == 0 && a.ip[15] == 0
+  }
+  if a.bits == 128 {
+    for c in a.ip {
+      if c != 0 {
+        return false
+      }
+    }
+    return true
+  }
+  false
+}
+
+fn addr_is_link_local_unicast(a0: netip.Addr) -> Bool {
+  let a = addr_unmap(a0)
+  if a.bits == 32 {
+    return a.ip[12] == 169 && a.ip[13] == 254
+  }
+  if a.bits == 128 {
+    return a.ip[0] == 254 && (a.ip[1] & 192) == 128
+  }
+  false
+}
+
+fn addr_is_multicast(a0: netip.Addr) -> Bool {
+  let a = addr_unmap(a0)
+  if a.bits == 32 {
+    return (a.ip[12] & 240) == 224
+  }
+  if a.bits == 128 {
+    return a.ip[0] == 255
+  }
+  false
+}
+
+fn addr_bytes(a: netip.Addr) -> Bytes {
+  if a.bits == 32 {
+    return a.ip[12..]
+  }
+  if a.bits == 128 {
+    return a.ip
+  }
+  b""
+}
+
+fn string4(ip: Bytes) -> Str { "${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}" }
+
+fn group(ip: Bytes, i: Int) -> Int { Int(ip[2 * i]) * 256 + Int(ip[2 * i + 1]) }
+
+fn hex16(v: Int) -> Str {
+  let h = "0123456789abcdef"
+  var out = ""
+  var started = false
+  for sh in [12, 8, 4, 0] {
+    let d = (v >> sh) & 15
+    if d != 0 || started || sh == 0 {
+      out = out + h[d..d + 1]
+      started = true
+    }
+  }
+  out
+}
+
+fn string6(a: netip.Addr) -> Str {
+  var zs = 255
+  var ze = 255
+  var i = 0
+  while i < 8 {
+    var j = i
+    while j < 8 && group(a.ip, j) == 0 {
+      j += 1
+    }
+    let l = j - i
+    if l >= 2 && l > ze - zs {
+      zs = i
+      ze = j
+    }
+    i += 1
+  }
+  var out = StrBuilder.new()
+  i = 0
+  while i < 8 {
+    if i == zs {
+      out.write("::")
+      i = ze
+      if i >= 8 {
+        break
+      }
+    } else if i > 0 {
+      out.write(":")
+    }
+    out.write(hex16(group(a.ip, i)))
+    i += 1
+  }
+  if !a.zone.is_empty() {
+    out.write("%")
+    out.write(a.zone)
+  }
+  out.freeze()
+}
+
+fn addr_display(a: netip.Addr) -> Str {
+  if a.bits == 0 {
+    return "invalid IP"
+  }
+  if a.bits == 32 {
+    return string4(a.ip)
+  }
+  if addr_is_4in6(a) {
+    let z = if a.zone.is_empty() { "" } else { "%${a.zone}" }
+    return "::ffff:${string4(a.ip)}${z}"
+  }
+  string6(a)
+}
+
+fn prefix_err(input: Str, msg: Str) -> netip.ParseErr { netip.ParseErr{msg: "netip.ParsePrefix(${input.quote()}): ${msg}"} }
+
+fn parse_prefix(s: Str) -> netip.Prefix ! netip.ParseErr {
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 {
+    i -= 1
+  }
+  if i < 0 {
+    return Err(prefix_err(s, "no '/'"))
+  }
+  let ip = match parse_addr(s[0..i]) {
+    Ok(a) => a
+    Err(e) => return Err(prefix_err(s, e.msg))
+  }
+  if ip.bits == 128 && !ip.zone.is_empty() {
+    return Err(prefix_err(s, "IPv6 zones cannot be present in a prefix"))
+  }
+  let bits_str = s[i + 1..]
+  let bb = bits_str.bytes()
+  if bb.len() > 1 && (bb[0] < 49 || bb[0] > 57) {
+    return Err(prefix_err(s, "bad bits after slash: ${bits_str.quote()}"))
+  }
+  let n = match Int.parse(bits_str) {
+    Some(n) => n
+    None => return Err(prefix_err(s, "bad bits after slash: ${bits_str.quote()}"))
+  }
+  let max = if ip.bits == 128 { 128 } else { 32 }
+  if n < 0 || n > max {
+    return Err(prefix_err(s, "prefix length out of range"))
+  }
+  netip.Prefix{addr: ip, len: n}
+}
+
+/// The 16 bytes with only the first k bits kept.
+fn mask(ip: Bytes, k: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(16)
+  for i in 0..16 {
+    let keep = k - 8 * i
+    if keep >= 8 {
+      out.write_byte(ip[i])
+    } else if keep <= 0 {
+      out.write_byte(0)
+    } else {
+      out.write_byte(ip[i] & UInt8((255 << (8 - keep)) & 255))
+    }
+  }
+  out.freeze()
+}
+
+fn prefix_contains(p: netip.Prefix, a: netip.Addr) -> Bool {
+  if p.addr.bits == 0 || !a.zone.is_empty() || a.bits == 0 || p.addr.bits != a.bits {
+    return false
+  }
+  let k = if a.bits == 32 { p.len + 96 } else { p.len }
+  mask(a.ip, k) == mask(p.addr.ip, k)
+}
+
+fn prefix_masked(p: netip.Prefix) -> netip.Prefix {
+  if p.addr.bits == 0 {
+    return p
+  }
+  let k = if p.addr.bits == 32 { p.len + 96 } else { p.len }
+  netip.Prefix{addr: netip.Addr{bits: p.addr.bits, ip: mask(p.addr.ip, k), zone: ""}, len: p.len}
+}
+
+fn prefix_display(p: netip.Prefix) -> Str {
+  if p.addr.bits == 0 {
+    return "invalid Prefix"
+  }
+  "${addr_display(p.addr)}/${p.len}"
+}

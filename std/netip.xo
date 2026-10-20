@@ -1,0 +1,49 @@
+// std/netip (spec/std.md 28, decision 0287). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's net/netip: IP
+// addresses and prefixes as values. Pure.
+
+/// An IP address: `bits` is 32 for IPv4, 128 for IPv6, 0 for the zero
+/// value; `ip` its 16 bytes (an IPv4 address as ::ffff:a.b.c.d); `zone`
+/// an IPv6 zone. The order is Go's Addr.Compare.
+struct Addr {
+  bits: Int
+  ip: Bytes
+  zone: Str
+} derive Ord
+
+/// An address and a prefix length.
+struct Prefix {
+  addr: Addr
+  len: Int
+}
+
+/// Go's texts: `ParseAddr("1.2.3"): IPv4 address too short`.
+struct ParseErr {
+  msg: Str
+}
+
+fn (e: ParseErr) display() -> Str
+
+/// Go's ParseAddr: IPv4 (no leading zeros), IPv6, IPv4 in IPv6, zones.
+fn parse_addr(s: Str) -> Addr ! ParseErr
+/// Go's ParsePrefix: `10.0.0.0/8`, `2001:db8::/32`.
+fn parse_prefix(s: Str) -> Prefix ! ParseErr
+/// The address of 4 or 16 bytes (AddrFrom4, AddrFrom16); None for another length.
+fn addr_from_bytes(b: Bytes) -> Addr?
+fn (a: Addr) is_4() -> Bool
+fn (a: Addr) is_6() -> Bool
+fn (a: Addr) is_4in6() -> Bool
+/// An IPv4 in IPv6 address as IPv4 (its zone dropped), others as they are.
+fn (a: Addr) unmap() -> Addr
+fn (a: Addr) is_loopback() -> Bool
+fn (a: Addr) is_private() -> Bool
+fn (a: Addr) is_unspecified() -> Bool
+fn (a: Addr) is_link_local_unicast() -> Bool
+fn (a: Addr) is_multicast() -> Bool
+/// 4 bytes for IPv4, 16 for IPv6 (Go's AsSlice).
+fn (a: Addr) bytes() -> Bytes
+/// Go's String: `1.2.3.4`, `2001:db8::1`, `::ffff:1.2.3.4`, `fe80::1%eth0`.
+fn (a: Addr) display() -> Str
+fn (p: Prefix) contains(a: Addr) -> Bool
+fn (p: Prefix) masked() -> Prefix
+fn (p: Prefix) display() -> Str
